@@ -1,0 +1,35 @@
+# Build outputs
+build/
+out/
+x64/
+Release/
+Debug/
+*.dll
+*.lib
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.pch
+*.idb
+
+# vcpkg
+vcpkg_installed/
+
+# IDE
+.vs/
+.vscode/
+*.suo
+*.user
+*.sln.docstates
+CMakeSettings.json
+CMakePresets.json
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+nul
+
+# Archives (keep tracked but ignore changes)
+# Package Files for Analysis/

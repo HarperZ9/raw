@@ -312,9 +312,18 @@ float  EInteriorFactor;
 float  FieldOfView;
 float4 Weather;
 
-//--- SkyrimBridge data parameters (must be after Timer for SB_Retain) ---
-#define SB_WEATHER_PARAMS
-#include "Helper/SkyrimBridge.fxh"
+//--- SkyrimBridge data parameters (inline — full header overflows constant buffer) ---
+#define SKYRIMBRIDGE_FXH 1
+float4 SB_Render_Frame;       // .x = frameCount
+float4 SB_Interior_Flags;     // .x = isInterior
+float4 SB_Precipitation;      // .y = intensity
+float4 SB_Weather_Flags;      // .w = isSnowing
+float4 SB_Fog_Density;        // .y = fogDensity
+float4 SB_Wind;               // .x = speed, .y = direction, .z = raw
+float4 SB_Lightning;          // .z = flashIntensity
+float4 SB_FX_Damage;          // .x = fire, .y = frost, .z = shock
+float4 SB_Precip_Surface;     // .x = wetness
+bool SB_IsActive() { return SB_Render_Frame.x > 0.0; }
 
 //--- SkyrimBridge Lens ---
 #ifdef SKYRIMBRIDGE_FXH

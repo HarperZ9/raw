@@ -374,8 +374,24 @@ Texture2D UnderwaterNoiseTex <string ResourceName="Textures/UnderwaterNoise.png"
 
 // Common helper (provides FastLinDepth, sRGB2Lin, Lin2sRGB, BicubicFilter, PI, DELTA, etc.)
 #include "Helper/enbHelper_Common.fxh"
-// SkyrimBridge integration (provides SB_Sun_Direction, SB_Atmos_Sunlight, SB_Wind, etc.)
-#include "Helper/SkyrimBridge.fxh"
+// SkyrimBridge data parameters (inline — full header overflows constant buffer)
+#define SKYRIMBRIDGE_FXH 1
+float4 SB_Render_Frame;       // .x = frameCount
+float4 SB_Camera_Info;        // .y = near, .z = far
+float4 SB_Atmos_Sunlight;     // .rgb = sunlight color, .a = intensity
+float4 SB_Fog_FarColor;       // .rgb = far fog color
+float4 SB_Interior_Flags;     // .x = isInterior
+float4 SB_Player_Water;       // .x = isUnderwater, .z = submersionDepth
+float4 SB_Sun_Direction;      // .xyz = sun direction
+float4 SB_Sun_NDC;            // .xy = NDC position
+float4 SB_Time;               // .w = dayProgress
+float4 SB_Wind;               // .x = speed
+bool SB_IsActive() { return SB_Render_Frame.x > 0.0; }
+float SB_LinearizeDepth(float rawDepth) {
+    float n = SB_Camera_Info.y;
+    float f = SB_Camera_Info.z;
+    return n * f / (f - rawDepth * (f - n));
+}
 // PixelSize and ScreenRes provided by enbHelper_Common.fxh
 
 // Correct depth linearization: SB when active, fallback otherwise

@@ -413,8 +413,14 @@ float4 tempInfo2;
 //=============================================================================//
 //                    SkyrimBridge External Data Parameters                     //
 //=============================================================================//
-#define SB_WEATHER_PARAMS
-#include "Helper/SkyrimBridge.fxh"
+#define SKYRIMBRIDGE_FXH 1   // Inline params only — full header overflows constant buffer
+float4 SB_Render_Frame;       // .x = frameCount
+float4 SB_Lightning;          // .y = isFlashing, .z = flashIntensity
+float4 SB_Precipitation;      // .x = type (0=none,1=rain,2=snow), .y = intensity
+float4 SB_IS_HDR;             // .y = game bloomScale
+float4 SB_Fog_Density;        // .x = fogDensity
+float4 SB_Light_Summary;      // .z = total luminous flux
+bool SB_IsActive() { return SB_Render_Frame.x > 0.0; }
 
 
 //=============================================================================//

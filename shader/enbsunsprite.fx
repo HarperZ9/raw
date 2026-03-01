@@ -316,8 +316,14 @@ float  FieldOfView;
 float4 Weather;
 float4 LightParameters;
 
-//--- SkyrimBridge data parameters (must be after Timer for SB_Retain) ---
-#include "Helper/SkyrimBridge.fxh"
+//--- SkyrimBridge data parameters (inline — full header overflows constant buffer) ---
+#define SKYRIMBRIDGE_FXH 1
+float4 SB_Render_Frame;       // .x = frameCount
+float4 SB_Sun_Color;          // .rgb = sun color
+float4 SB_Lightning;          // .y = isFlashing, .z = flashIntensity
+float4 SB_Fog_Density;        // .y = fogDensity
+float4 SB_Interior_Flags;     // .x = isInterior
+bool SB_IsActive() { return SB_Render_Frame.x > 0.0; }
 
 // ─────────────────── SkyrimBridge Enhancements ─────────────────────────────
 #ifdef SKYRIMBRIDGE_FXH

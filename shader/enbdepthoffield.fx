@@ -67,7 +67,22 @@ float4 tempInfo2;
 //=============================================================================//
 //                    SkyrimBridge External Data                                //
 //=============================================================================//
-#include "Helper/SkyrimBridge.fxh"
+// Inline params only — full header (102 float4s) overflows constant buffer
+#define SKYRIMBRIDGE_FXH 1
+float4 SB_Render_Frame;       // .x = frameCount
+float4 SB_Camera_Info;        // .y = near, .z = far
+float4 SB_FX_Vision;          // .x = nightEye
+float4 SB_Interior_Flags;     // .x = isInterior
+float4 SB_Player_Combat;      // .x = combatIntensity
+float4 SB_Player_Water;       // .x = isUnderwater
+float4 SB_UI_Menus;           // .x = isInMenu, .y = isInDialogue
+float4 SB_XHair_Info;         // .x = hasTarget, .y = distance
+bool SB_IsActive() { return SB_Render_Frame.x > 0.0; }
+float SB_LinearizeDepth(float rawDepth) {
+    float n = SB_Camera_Info.y;
+    float f = SB_Camera_Info.z;
+    return n * f / (f - rawDepth * (f - n));
+}
 
 
 //=============================================================================//

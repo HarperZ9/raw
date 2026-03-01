@@ -72,7 +72,33 @@ float4 tempInfo2;
 //=============================================================================//
 //                    SkyrimBridge External Data Parameters                     //
 //=============================================================================//
-#include "Helper/SkyrimBridge.fxh"
+// Inline params only — full header (102 float4s) overflows constant buffer
+#define SKYRIMBRIDGE_FXH 1
+float4 SB_Render_Frame;        // .x = frameCount
+float4 SB_Camera_Info;         // .x = fov, .y = near, .z = far, .w = aspect
+float4 SB_Atmos_Ambient;       // .rgb = ambient color
+float4 SB_Atmos_Sunlight;      // .rgb = sunlight color
+float4 SB_Fog_FarColor;        // .rgb = far fog color
+float4 SB_Interior_DirDir;     // .xyz = interior directional light direction
+float4 SB_Interior_Flags;      // .x = isInterior
+float4 SB_Lightning;           // .z = flashIntensity
+float4 SB_Masser_Direction;    // .xyz = masser direction
+float4 SB_Player_Combat;       // .x = combatIntensity
+float4 SB_Player_Position;     // .xyz = position, .w = worldY
+float4 SB_Precipitation;       // .y = intensity
+float4 SB_Sun_Direction;       // .xyz = sun direction
+float4 SB_Sun_NDC;             // .xy = NDC position
+float4 SB_Time;                // .x = gameHour, .y = sunrise, .z = sunset
+float4 SB_Weather_Transition;  // .x = transition progress
+bool SB_IsActive() { return SB_Render_Frame.x > 0.0; }
+float SB_LinearizeDepth(float rawDepth) {
+    float n = SB_Camera_Info.y;
+    float f = SB_Camera_Info.z;
+    return n * f / (f - rawDepth * (f - n));
+}
+bool SB_IsNight() { return SB_Time.x < SB_Time.y || SB_Time.x > SB_Time.z; }
+float2 SB_SunScreenUV() { return SB_Sun_NDC.xy * float2(0.5, -0.5) + 0.5; }
+float SB_SmoothWeatherTransition() { return SB_Weather_Transition.x; }
 
 
 //=============================================================================//

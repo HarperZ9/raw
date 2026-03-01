@@ -528,9 +528,27 @@ float4 tempInfo2;
 
 //=============================================================================//
 //                    SkyrimBridge External Data Parameters                     //
+//                                                                             //
+//  INLINE only — enbeffect.fx has ~268 UI params; including the full          //
+//  SkyrimBridge.fxh (102 params) overflows ENB's constant buffer.             //
+//  Only the params actually referenced by this shader are declared.           //
 //=============================================================================//
-#define SB_WEATHER_PARAMS
-#include "Helper/SkyrimBridge.fxh"
+#define SKYRIMBRIDGE_FXH 1   // Prevent accidental full-header inclusion
+
+// Core: SB_IsActive() sentinel
+float4 SB_Render_Frame;        // .x = frameCount, .y = deltaTime
+
+// Reactive effects (ApplySkyrimBridgeEffects)
+float4 SB_Lightning;           // .y = isFlashing, .z = flashIntensity
+float4 SB_Precipitation;       // .y = intensity
+float4 SB_FX_Vision;           // .x = nightEye strength
+
+// AGIS (disabled by default — kept for future use)
+float4 SB_IS_Cinematic;        // .x = sat, .y = bri, .z = con, .w = tintAlpha
+float4 SB_IS_CineTint;         // .rgb = tint color
+
+// Inline helpers
+bool SB_IsActive() { return SB_Render_Frame.x > 0.0; }
 
 
 //=============================================================================//

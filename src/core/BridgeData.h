@@ -3,10 +3,11 @@
 //  BridgeData.h — The data contract between SkyrimBridge and ENB shaders
 //
 //  Every parameter pushed to ENB is defined here as a named float4.
-//  The HLSL mirror is in shader/SkyrimBridge.fxh.
+//  The HLSL mirror is in shader/Helper/SkyrimBridge.fxh (v2.0).
 //
 //  NAMING: SB_ prefix avoids collision with ENB/game parameters.
-//  PACKING: One float4 per semantic group. Total ~40 float4s = 160 floats.
+//  PACKING: One float4 per semantic group.
+//  Total: 102 float4 params across 17 domains.
 //=============================================================================
 
 #include <cstdint>
@@ -73,6 +74,7 @@ namespace SB
         Float4 Lightning;       // .x = frequency, .y = isFlashing(0/1), .z = flashIntensity, .w = timeSinceFlash(sec)
         Float4 Flags;           // .x = isPleasant, .y = isCloudy, .z = isRainy, .w = isSnowy
         Float4 Transition;      // .x = transition% [0,1], .y = outgoingWeatherID, .z = currentWeatherID, .w = 0
+        Float4 PrecipSurface;   // .x = surface wetness [0,1], .y = puddle depth, .z = snow accumulation, .w = 0
     };
 
     // ── 5. PLAYER ───────────────────────────────────────────────────────
@@ -140,6 +142,81 @@ namespace SB
         Float4 Jitter;          // .xy = TAA jitter offset (NDC), .z = frameIndex%16 (for blue noise), .w = 0
     };
 
+    // ── 11. IMAGE SPACE — Game's post-processing state (IMODs) ────────
+
+    struct ImageSpaceData
+    {
+        Float4 HDR;             // .x = eyeAdaptSpeed, .y = bloomScale, .z = bloomThreshold, .w = sunlightScale
+        Float4 Cinematic;       // .x = saturation, .y = brightness, .z = contrast, .w = tintAlpha
+        Float4 CineTint;        // .rgb = cinematic tint color, .a = 0
+        Float4 DOF;             // .x = strength, .y = distance, .z = range, .w = vignetteRadius
+        Float4 IMOD;            // .x = hasActiveIMOD(0/1), .y = imodStrength, .z = imodFadeIn, .w = imodElapsed
+        Float4 IMODTint;        // .rgb = IMOD tint color, .a = blur amount
+    };
+
+    // ── 12. NEARBY LIGHTS — 3 nearest point/spot lights ───────────────
+
+    struct LightData
+    {
+        Float4 Light0PosRad;    // .xyz = world position, .w = radius
+        Float4 Light0Color;     // .rgb = color, .a = intensity
+        Float4 Light1PosRad;
+        Float4 Light1Color;
+        Float4 Light2PosRad;
+        Float4 Light2Color;
+        Float4 Summary;         // .x = total nearby count, .y = nearest distance, .z = total luminous flux, .w = dominant hue [0,1]
+    };
+
+    // ── 13. ACTOR VALUES — Resistances, combat stats, skills ──────────
+
+    struct ActorValueData
+    {
+        Float4 Resist;          // .x = fireResist%, .y = frostResist%, .z = shockResist%, .w = magicResist%
+        Float4 Resist2;         // .x = poisonResist%, .y = diseaseResist%, .z = damageResist (armor), .w = 0
+        Float4 Combat;          // .x = attackDamageMult, .y = weaponSpeedMult, .z = critChance, .w = unarmedDmg
+        Float4 Movement;        // .x = speedMult, .y = carryWeight, .z = inventoryWeight, .w = encumbranceRatio
+        Float4 SkillCombat;     // .x = oneHanded, .y = twoHanded, .z = archery, .w = block
+        Float4 SkillMagic;      // .x = alteration, .y = conjuration, .z = destruction, .w = illusion
+        Float4 SkillMagic2;     // .x = restoration, .y = enchanting, .z = alchemy, .w = 0
+        Float4 SkillStealth;    // .x = lightArmor, .y = sneak, .z = lockpicking, .w = pickpocket
+    };
+
+    // ── 14. CROSSHAIR / LOOK-AT TARGET ────────────────────────────────
+
+    struct CrosshairData
+    {
+        Float4 Info;            // .x = hasTarget(0/1), .y = distance, .z = formType (enum), .w = isActor(0/1)
+        Float4 Pos;             // .xyz = target world position, .w = boundingRadius
+        Float4 Actor;           // .x = healthPct, .y = level, .z = isHostile(0/1), .w = isEssential(0/1)
+    };
+
+    // ── 15. EQUIPMENT — Weapons, armor, torch state ───────────────────
+
+    struct EquipmentData
+    {
+        Float4 Right;           // .x = weaponType, .y = baseDamage, .z = isEnchanted(0/1), .w = enchantCharge [0,1]
+        Float4 Left;            // .x = itemType, .y = damage/armorRating, .z = isEnchanted(0/1), .w = isSpell(0/1)
+        Float4 Armor;           // .x = totalArmorRating, .y = isWearingHeavy(0/1), .z = isWearingLight(0/1), .w = isWearingRobes(0/1)
+        Float4 Flags;           // .x = weaponDrawn(0/1), .y = hasBow(0/1), .z = hasTorch(0/1), .w = isTwoHanding(0/1)
+    };
+
+    // ── 16. QUEST STATE ───────────────────────────────────────────────
+
+    struct QuestData
+    {
+        Float4 Progress;        // .x = mainQuestStage, .y = totalQuestsCompleted, .z = activeQuestCount, .w = activeObjectiveCount
+        Float4 Tracked;         // .x = trackedQuestStage, .y = questType, .z = questFormID (low 16 bits), .w = hasObjectiveMarker(0/1)
+    };
+
+    // ── 17. UI / MENU STATE ───────────────────────────────────────────
+
+    struct UIStateData
+    {
+        Float4 Menus;           // .x = isInMenu(0/1), .y = isInDialogue(0/1), .z = isInInventory(0/1), .w = isInMap(0/1)
+        Float4 HUD;             // .x = isHUDVisible(0/1), .y = isCrosshairVisible(0/1), .z = isInCinematicMode(0/1), .w = isLoading(0/1)
+        Float4 Detail;          // .x = isInCrafting(0/1), .y = isInBook(0/1), .z = isInLockpick(0/1), .w = isInConsole(0/1)
+    };
+
     // ── Aggregate ───────────────────────────────────────────────────────
 
     struct AllData
@@ -154,6 +231,13 @@ namespace SB
         ShadowData      shadow;
         EffectsData     effects;
         RenderData      render;
+        ImageSpaceData  imageSpace;
+        LightData       lights;
+        ActorValueData  actorValues;
+        CrosshairData   crosshair;
+        EquipmentData   equipment;
+        QuestData       quest;
+        UIStateData     uiState;
     };
 
     // ── Parameter name table ────────────────────────────────────────────
@@ -169,12 +253,16 @@ namespace SB
     extern const ParamEntry kParamTable[];
     extern const std::size_t kParamCount;
 
-    // Target shader files
+    // Target shader files — every .fx that includes SkyrimBridge.fxh
     inline constexpr const char* kTargetShaders[] = {
         "enbsunsprite.fx",
         "enbeffectprepass.fx",
         "enbeffect.fx",
         "enbeffectpostpass.fx",
         "enblens.fx",
+        "enbunderwater.fx",
+        "enbdepthoffield.fx",
+        "enbbloom.fx",
+        "enbadaptation.fx",
     };
 }

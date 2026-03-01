@@ -31,6 +31,18 @@
 #include "EffectsTracker.h"
 #include "RenderTracker.h"
 
+// v2 expansion trackers (domains 11-17)
+#include "ImageSpaceTracker.h"
+#include "LightTracker.h"
+#include "ActorValueTracker.h"
+#include "CrosshairTracker.h"
+#include "EquipmentTracker.h"
+#include "QuestTracker.h"
+#include "UIStateTracker.h"
+
+// Phase 2: Weather parameter computer (replaces enbParmLink)
+#include "WeatherParameterComputer.h"
+
 // ── Game readiness flag ─────────────────────────────────────────────────────
 // ENB callbacks fire during D3D initialization, before game singletons exist.
 // We must not access any RE:: singletons until kDataLoaded fires.
@@ -75,6 +87,7 @@ void __stdcall OnENBFrame(int a_callbackType)
     // Collect all game state
     SB::AllData data{};
 
+    // Phase 1: Core trackers (domains 1-10)
     data.celestial  = SB::CelestialTracker::Update();
     data.atmosphere = SB::AtmosphereTracker::Update();
     data.fog        = SB::FogTracker::Update();
@@ -86,12 +99,31 @@ void __stdcall OnENBFrame(int a_callbackType)
     data.effects    = SB::EffectsTracker::Update();
     data.render     = SB::RenderTracker::Update(dt);
 
+    // v2 expansion trackers (domains 11-17)
+    // PHASED ROLLOUT: Enable one at a time after confirming the pipeline works
+    // with passthrough shaders + the proven 10 core domains.
+    // Uncomment each tracker individually and test for stability.
+    //
+    // data.imageSpace  = SB::ImageSpaceTracker::Update();
+    // data.lights      = SB::LightTracker::Update();
+    // data.actorValues = SB::ActorValueTracker::Update();
+    // data.crosshair   = SB::CrosshairTracker::Update();
+    // data.equipment   = SB::EquipmentTracker::Update();
+    // data.quest       = SB::QuestTracker::Update();
+    // data.uiState     = SB::UIStateTracker::Update();
+
     // Update debug GUI with current data
     SB::DebugGUI::SetData(data);
 
     // Push to ENB if enabled
     if (SB::DebugGUI::IsDataPushEnabled()) {
         ENBInterface::PushAllData(data);
+
+        // Phase 2: Weather-reactive parameter computation
+        // Classifies current weather, interpolates per-parameter values
+        // from WeatherParams.ini, pushes computed params to ENB shaders.
+        // Replaces what enbParmLink expressions previously handled.
+        SB::WeatherParameterComputer::Get().Update(dt);
     }
 }
 
@@ -143,6 +175,16 @@ static void OnMessage(SKSE::MessagingInterface::Message* a_msg)
             SKSE::log::warn("SkyrimBridge: D3D11 hook failed — debug GUI unavailable");
         }
 
+        // Phase 2: Initialize weather parameter computer
+        // Looks for WeatherParams.ini and WeatherClasses.ini in the config directory.
+        // MO2 virtualizes Data/, so this path resolves through the VFS.
+        {
+            auto configDir = std::filesystem::path("Data/SKSE/Plugins/SkyrimBridge");
+            SB::WeatherParameterComputer::Get().Initialize(configDir);
+            SKSE::log::info("SkyrimBridge: WeatherParameterComputer initialized (config: {})",
+                configDir.string());
+        }
+
         // Log initial game state for debugging
         if (auto* sky = RE::Sky::GetSingleton()) {
             SKSE::log::info("SkyrimBridge: Sky OK — weather={}, masser={}, secunda={}",
@@ -153,10 +195,10 @@ static void OnMessage(SKSE::MessagingInterface::Message* a_msg)
 
         // Show in-game notification when data is loaded
         if (ENBInterface::IsLoaded()) {
-            ShowNotification("SkyrimBridge v1.0.0 - ENB connected (INSERT for debug GUI)");
+            ShowNotification("SkyrimBridge v3.0.0 - ENB connected (INSERT for debug GUI)");
             SKSE::log::info("SkyrimBridge: displayed startup notification");
         } else {
-            ShowNotification("SkyrimBridge v1.0.0 - No ENB (INSERT for debug GUI)");
+            ShowNotification("SkyrimBridge v3.0.0 - No ENB (INSERT for debug GUI)");
         }
         break;
 
@@ -204,7 +246,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
         logger->flush_on(spdlog::level::info);
         spdlog::set_default_logger(std::move(logger));
 
-        SKSE::log::info("SkyrimBridge v1.0.0 loaded — {} parameters defined",
+        SKSE::log::info("SkyrimBridge v3.0.0 loaded — {} parameters defined",
             SB::kParamCount);
         SKSE::log::info("Log path: {}", logPath.string());
     }

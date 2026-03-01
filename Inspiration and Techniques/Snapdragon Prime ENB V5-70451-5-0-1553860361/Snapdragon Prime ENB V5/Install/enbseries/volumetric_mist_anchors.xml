@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<WorldSpaces>
+    <worldspace id="0000003C">
+        <anchor index="0" x="200000" y="-200000" z="-14000"/>
+        <anchor index="1" x="-200000" y="200000" z="-14000"/>
+        <anchor index="2" x="-200000" y="-200001" z="-14000"/>
+        <anchor index="3" x="200000" y="200000" z="-14000"/>
+    </worldspace>
+</WorldSpaces>

@@ -8,6 +8,7 @@
 
 #include "ENBInterface.h"
 #include "BridgeData.h"
+#include <cstring>
 #include <string>
 
 namespace ENBInterface
@@ -40,15 +41,17 @@ namespace ENBInterface
                                 const char* name, const SB::Float4& value)
     {
         if (!SetParameter) return;
-        SetParameter(shader, group, name, const_cast<SB::Float4*>(&value), sizeof(SB::Float4));
+        SetParameter(shader, group, name,
+                     const_cast<void*>(static_cast<const void*>(&value)), 16);
     }
 
     // Set a Float4 parameter to all target shaders (uses empty group)
     inline void SetFloat4(const char* name, const SB::Float4& value)
     {
         if (!SetParameter) return;
+        void* ptr = const_cast<void*>(static_cast<const void*>(&value));
         for (const auto* shader : SB::kTargetShaders) {
-            SetParameter(shader, "", name, const_cast<SB::Float4*>(&value), sizeof(SB::Float4));
+            SetParameter(shader, "", name, ptr, 16);
         }
     }
 

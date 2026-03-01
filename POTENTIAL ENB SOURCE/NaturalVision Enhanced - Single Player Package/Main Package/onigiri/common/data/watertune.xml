@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- NaturalVision Enhanced by Razed -->
+<!-- https://razedmods.com -->
+<!-- Do not copy or distribute. -->
+
+<MainWaterTune>
+  <WaterColor value="0x1A00191C" />
+  <RippleScale value="0.020000" />
+  <OceanFoamScale value="0.040000" />
+  <SpecularFalloff value="500.000000" />
+  <FogPierceIntensity value="1.100000" />
+  <RefractionBlend value="0.800000" />
+  <RefractionExponent value="0.450000" />
+  <WaterCycleDepth value="0.000000" />
+  <WaterCycleFade value="6.000000" />
+  <WaterLightningDepth value="10.000000" />
+  <WaterLightningFade value="10.000000" />
+  <DeepWaterModDepth value="0.000000" />
+  <DeepWaterModFade value="6.000000" />
+  <GodRaysLerpStart value="0.000000" />
+  <GodRaysLerpEnd value="500.000000" />
+  <DisturbFoamScale value="0.050000" />
+  <FogMin x="-4000.000000" y="-4000.000000" />
+  <FogMax x="4500.000000" y="8000.000000" />
+</MainWaterTune>

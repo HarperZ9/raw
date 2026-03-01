@@ -16,7 +16,7 @@
 namespace ENBInterface
 {
     // ── ENB SDK type definitions ────────────────────────────────────────
-    // These match the types defined in Boris's enbseries SDK header.
+    // These match Boris Vorontsov's enbseries SDK and doodlum's enb-api.
     // We define our own to avoid Windows.h conflicts with CommonLibSSE-NG.
 
     // Callback types for ENB
@@ -37,6 +37,8 @@ namespace ENBInterface
     using ENBGUICallback = void(__stdcall*)(void);
 
     // ── SDK function signatures ─────────────────────────────────────────
+    // All ENB SDK exports use __stdcall calling convention.
+    // Get/SetParameter use a flat (void* value, int size) interface.
 
     // Returns the SDK version number (e.g., 1001 for SDK v1.001).
     using _ENBGetSDKVersion = long(__stdcall*)();

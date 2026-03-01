@@ -169,7 +169,7 @@ float UIR_Decay          < string UIGroup = "GodRays"; string UIName="|- Rays - 
 float UIR_Density        < string UIGroup = "GodRays"; string UIName="|- Rays - Density";                     float UIMin= 0.1; float UIMax= 2.0; > = { 0.8};
 float UIR_SunPosX        < string UIGroup = "GodRays"; string UIName="|- Rays - Sun Screen X (0=left)";       float UIMin= 0.0; float UIMax= 1.0; > = { 0.5};
 float UIR_SunPosY        < string UIGroup = "GodRays"; string UIName="|- Rays - Sun Screen Y (0=top)";        float UIMin=-0.5; float UIMax= 1.0; > = { 0.0};
-int   UIR_Samples        < string UIGroup = "GodRays"; string UIName="|- Rays - Sample Count (perf)";         int   UIMin=   8; int   UIMax=  64; > = {  32};
+int   UIR_Samples        < string UIGroup = "GodRays"; string UIName="|- Rays - Sample Count (perf)";         int   UIMin=   8; int   UIMax=  24; > = {  24};
 float UIR_AbsorbTint     < string UIGroup = "GodRays"; string UIName="|- Rays - Absorption Tinting";          float UIMin= 0.0; float UIMax= 1.0; > = { 0.5};
 
 
@@ -374,10 +374,90 @@ Texture2D UnderwaterNoiseTex <string ResourceName="Textures/UnderwaterNoise.png"
 
 // Common helper (provides FastLinDepth, sRGB2Lin, Lin2sRGB, BicubicFilter, PI, DELTA, etc.)
 #include "Helper/enbHelper_Common.fxh"
-// SkyrimBridge integration (provides SB_Sun_Direction, SB_Atmos_Sunlight, SB_Weather_Wind, etc.)
+// SkyrimBridge integration (provides SB_Sun_Direction, SB_Atmos_Sunlight, SB_Wind, etc.)
 #include "Helper/SkyrimBridge.fxh"
-static const float2 PixelSize = _HLP_PixelSize;
-static const float2 ScreenRes = _HLP_ScreenRes;
+// PixelSize and ScreenRes provided by enbHelper_Common.fxh
+
+// Correct depth linearization: SB when active, fallback otherwise
+float GetLinearDepth(float rawDepth)
+{
+    if (SB_IsActive()) return SB_LinearizeDepth(rawDepth);
+    return FastLinDepth(rawDepth, 200.0);
+}
+
+
+//----------------------------------------------------------------------------------------------//
+//  SkyrimBridge Helper Functions (must be defined before first use in pixel shaders)           //
+//----------------------------------------------------------------------------------------------//
+
+// SkyrimBridge: use actual sun direction for god rays when available
+float2 GetUnderwaterSunPos()
+{
+    if (SB_IsActive())
+        return SB_Sun_NDC.xy * 0.5 + 0.5;  // NDC [-1,1] -> screen [0,1]
+    // Fallback: UI-configured sun position
+    return float2(UIR_SunPosX, UIR_SunPosY);
+}
+
+// SkyrimBridge: tint caustics by actual sunlight color
+float3 GetCausticTint()
+{
+    if (SB_IsActive())
+        return SB_Atmos_Sunlight.rgb * SB_Atmos_Sunlight.a;
+    return float3(0.8, 0.95, 1.0);  // cool default (original hardcoded value)
+}
+
+// SkyrimBridge: modulate wave intensity by wind speed
+float GetWindWaveScale()
+{
+    if (SB_IsActive())
+        return lerp(1.0, 1.5, saturate(SB_Wind.x / 20.0));
+    return 1.0;
+}
+
+// SkyrimBridge: bioluminescence only at night
+float GetBiolumIntensity()
+{
+    if (SB_IsActive())
+    {
+        float nightFactor = 1.0 - saturate(SB_Time.w); // .w = dayProgress [0,1]
+        return nightFactor;
+    }
+    return 1.0;
+}
+
+// SkyrimBridge: interior water detection — reduce caustics 60%, disable god rays
+bool IsInteriorWater()
+{
+    if (SB_IsActive())
+        return SB_Interior_Flags.x > 0.5;
+    return EInteriorFactor > 0.5;
+}
+
+float GetInteriorCausticScale()
+{
+    return IsInteriorWater() ? 0.4 : 1.0;
+}
+
+// SkyrimBridge: fog tint blend for underwater color
+float3 GetUnderwaterFogTint()
+{
+    if (SB_IsActive())
+    {
+        float3 fogCol = SB_Fog_FarColor.rgb;
+        if (dot(fogCol, 1.0) > 0.01)
+            return fogCol;
+    }
+    return float3(0.01, 0.06, 0.10);  // default deep ocean tint
+}
+
+// SkyrimBridge: submersion depth for Beer-Lambert absorption
+float GetSubmersionDepth()
+{
+    if (SB_IsActive())
+        return max(SB_Player_Water.z, 0.0);  // submersionDepth in world units
+    return 1.0;  // default: assume 1 unit below surface
+}
 
 
 //----------------------------------------------------------------------------------------------//
@@ -414,7 +494,7 @@ float GetTime()
 
 float SampleUnderwaterMask(float2 Coords)
 {
-    return TextureMask.Sample(Point_Sampler, Coords).x;
+    return TextureMask.SampleLevel(Point_Sampler, Coords, 0).x;
 }
 
 // Water refractive index (Cauchy equation for seawater, 20°C)
@@ -437,15 +517,15 @@ static const float  COS_CRITICAL   = 0.6614; // cos(48.6°)
 float SampleAnimatedNoise(float2 uv, float speed, float timeOffset)
 {
     float2 noiseUV = uv + frac((Timer.x + timeOffset) * 16777.21 * speed);
-    return UnderwaterNoiseTex.Sample(Linear_Sampler_Noise, noiseUV).x;
+    return UnderwaterNoiseTex.SampleLevel(Linear_Sampler_Noise, noiseUV, 0).x;
 }
 
 // Two-component animated noise (uses flipped UV for decorrelation)
 float2 SampleAnimatedNoiseVec(float2 uv, float speed, float timeOffset)
 {
     float2 noiseUV = uv + frac((Timer.x + timeOffset) * 16777.21 * speed);
-    return float2(UnderwaterNoiseTex.Sample(Linear_Sampler_Noise,       noiseUV).x,
-                  UnderwaterNoiseTex.Sample(Linear_Sampler_Noise, 1.0 - noiseUV).x);
+    return float2(UnderwaterNoiseTex.SampleLevel(Linear_Sampler_Noise,       noiseUV, 0).x,
+                  UnderwaterNoiseTex.SampleLevel(Linear_Sampler_Noise, 1.0 - noiseUV, 0).x);
 }
 
 // Fractal Brownian Motion using the noise texture — multi-octave for organic distortion
@@ -537,15 +617,15 @@ float ComputeCaustics(float2 worldUV, float time)
 
     // Layer 1: slow drift
     float2 uv1 = worldUV * scale + float2(time * spd * 0.7, time * spd * 0.5);
-    float  c1  = UnderwaterNoiseTex.Sample(Linear_Sampler_Noise, uv1).x;
+    float  c1  = UnderwaterNoiseTex.SampleLevel(Linear_Sampler_Noise, uv1, 0).x;
 
     // Layer 2: counter-drift at slightly different frequency
     float2 uv2 = worldUV * scale * 1.37 + float2(-time * spd * 0.5, time * spd * 0.65);
-    float  c2  = UnderwaterNoiseTex.Sample(Linear_Sampler_Noise, uv2).x;
+    float  c2  = UnderwaterNoiseTex.SampleLevel(Linear_Sampler_Noise, uv2, 0).x;
 
     // Layer 3: fine detail
     float2 uv3 = worldUV * scale * 2.13 + float2(time * spd * 0.3, -time * spd * 0.4);
-    float  c3  = UnderwaterNoiseTex.Sample(Linear_Sampler_Noise, uv3).x;
+    float  c3  = UnderwaterNoiseTex.SampleLevel(Linear_Sampler_Noise, uv3, 0).x;
 
     float caustic = (c1 + c2 + c3) / 3.0;
     caustic = pow(saturate(caustic), UIC_Sharpness);
@@ -641,11 +721,15 @@ float3 ApplyBeerLambert(float3 color, float linearDepth)
     float3 absorption = float3(UIA_AbsorbR, UIA_AbsorbG, UIA_AbsorbB);
     float  depth      = linearDepth * UIA_DepthScale;
 
+    // SkyrimBridge: account for player submersion depth
+    float submersion = GetSubmersionDepth();
+    depth += submersion * 0.1;  // bias absorption by how deep player is
+
     // Transmittance per wavelength channel
     float3 T = exp(-absorption * depth * UIA_Density);
 
-    // Water fog / ambient scatter color
-    float3 fogColor = float3(UIA_FogR, UIA_FogG, UIA_FogB);
+    // Water fog / ambient scatter color — SB fog tint blend
+    float3 fogColor = lerp(float3(UIA_FogR, UIA_FogG, UIA_FogB), GetUnderwaterFogTint(), 0.4);
 
     // In-scattering: Henyey-Greenstein-inspired directional scatter
     float3 scatter = fogColor * UIA_ScatterAmount * (1.0 - T);
@@ -835,7 +919,7 @@ BubbleResult ComputeBubbles(float2 uv, float time, float3 sceneColor)
 
             // Refraction: offset sample behind bubble
             float2 refractOffset = surfaceDir * UIBB_Refraction * PixelSize * 20.0;
-            float3 behindColor   = TextureColor.Sample(Linear_Sampler, uv + refractOffset).rgb;
+            float3 behindColor   = TextureColor.SampleLevel(Linear_Sampler, uv + refractOffset, 0).rgb;
 
             // Bubble body: thin film of air creates slight color shift
             // Approximate thin-film interference with bubble wall thickness
@@ -1130,7 +1214,7 @@ float3 ApplyWetLens(float3 color, float2 texcoord, float time, float uwMask)
         float2 refractDir = (local - dropPos) / radius;
         float2 refractUV  = texcoord + refractDir * UIWL_Refraction * PixelSize * 15.0 * nz;
 
-        float3 refractedColor = TextureColor.Sample(Linear_Sampler_Mirror, refractUV).rgb;
+        float3 refractedColor = TextureColor.SampleLevel(Linear_Sampler_Mirror, refractUV, 0).rgb;
 
         // Droplet edge darkening and highlight
         float edgeDark  = smoothstep(0.5, 1.0, normDist) * 0.3;
@@ -1154,7 +1238,7 @@ float3 ApplyWetLens(float3 color, float2 texcoord, float time, float uwMask)
 
         // Streaks cause slight vertical refraction
         float2 streakRefract = float2(0, streak * 3.0) * PixelSize;
-        float3 streakColor = TextureColor.Sample(Linear_Sampler, texcoord + streakRefract).rgb;
+        float3 streakColor = TextureColor.SampleLevel(Linear_Sampler, texcoord + streakRefract, 0).rgb;
 
         finalColor = lerp(finalColor, streakColor, streak * 0.5);
     }
@@ -1190,49 +1274,6 @@ float2 ComputeCurrentOffset(float2 uv, float time)
 
 
 //================================================================================
-// SKYRIMBRIDGE HELPER FUNCTIONS
-//================================================================================
-// When SkyrimBridge is active, these functions pull live game data for more
-// accurate lighting. Otherwise they fall back to the shader's existing defaults.
-
-// SkyrimBridge: use actual sun direction for god rays when available
-float2 GetUnderwaterSunPos()
-{
-    if (SB_IsActive())
-        return SB_Sun_NDC.xy * 0.5 + 0.5;  // NDC [-1,1] → screen [0,1]
-    // Fallback: UI-configured sun position
-    return float2(UIR_SunPosX, UIR_SunPosY);
-}
-
-// SkyrimBridge: tint caustics by actual sunlight color
-float3 GetCausticTint()
-{
-    if (SB_IsActive())
-        return SB_Atmos_Sunlight.rgb * SB_Atmos_Sunlight.a;
-    return float3(0.8, 0.95, 1.0);  // cool default (original hardcoded value)
-}
-
-// SkyrimBridge: modulate wave intensity by wind speed
-float GetWindWaveScale()
-{
-    if (SB_IsActive())
-        return lerp(1.0, 1.5, saturate(SB_Weather_Wind.x / 20.0));
-    return 1.0;
-}
-
-// SkyrimBridge: bioluminescence only at night
-float GetBiolumIntensity()
-{
-    if (SB_IsActive())
-    {
-        float nightFactor = 1.0 - saturate(SB_Celestial_Time.z); // .z = dayProgress
-        return nightFactor;
-    }
-    return 1.0;
-}
-
-
-//================================================================================
 // VERTEX SHADER
 //================================================================================
 
@@ -1251,8 +1292,8 @@ VertexShaderOutput VS_Draw(VertexShaderInput IN)
 
 float4 PS_WaveDistortion(VertexShaderOutput IN) : SV_Target
 {
-    float centerDepth = FastLinDepth(TextureDepth.Sample(Point_Sampler, IN.texcoord).x, 200.0);
-    float distAmount  = pow(centerDepth, UIW_DepthCurve);
+    float centerDepth = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, IN.texcoord, 0).x);
+    float distAmount  = pow(abs(centerDepth), UIW_DepthCurve);
           distAmount *= UIW_Amount * 0.1 * SampleUnderwaterMask(IN.texcoord);
     // SkyrimBridge: modulate wave intensity by wind speed
           distAmount *= GetWindWaveScale();
@@ -1274,16 +1315,16 @@ float4 PS_WaveDistortion(VertexShaderOutput IN) : SV_Target
     distVec *= distAmount;
     float2 distCoords = IN.texcoord + distVec;
 
-    float4 centerColor = float4(TextureColor.Sample(Point_Sampler, IN.texcoord).rgb, centerDepth);
+    float4 centerColor = float4(TextureColor.SampleLevel(Point_Sampler, IN.texcoord, 0).rgb, centerDepth);
 
     // Chromatic dispersion: offset R and B along the distortion vector
     float4 color;
-    color.r = TextureColor.Sample(Linear_Sampler, distCoords + distVec * UIW_Dispersion).r;
-    color.g = TextureColor.Sample(Linear_Sampler, distCoords).g;
-    color.b = TextureColor.Sample(Linear_Sampler, distCoords - distVec * UIW_Dispersion).b;
+    color.r = TextureColor.SampleLevel(Linear_Sampler, distCoords + distVec * UIW_Dispersion, 0).r;
+    color.g = TextureColor.SampleLevel(Linear_Sampler, distCoords, 0).g;
+    color.b = TextureColor.SampleLevel(Linear_Sampler, distCoords - distVec * UIW_Dispersion, 0).b;
 
     // Depth-aware edge protection
-    float distDepth  = FastLinDepth(TextureDepth.Sample(Point_Sampler, distCoords).x, 200.0);
+    float distDepth  = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, distCoords, 0).x);
     float depthDelta = saturate((centerDepth - distDepth) * 100.0);
           color.w    = distDepth;
 
@@ -1313,10 +1354,10 @@ float PS_DrawBlurMask(VertexShaderOutput IN) : SV_Target
             depth += RenderTargetRGBA64.SampleLevel(Linear_Sampler, IN.texcoord + offsets[i], 0).w;
         depth /= 4.0;
     #else
-        float depth = RenderTargetRGBA64.Sample(Point_Sampler, IN.texcoord).w;
+        float depth = RenderTargetRGBA64.SampleLevel(Point_Sampler, IN.texcoord, 0).w;
     #endif
 
-    float mask = SampleUnderwaterMask(IN.texcoord) * pow(depth, UIB_DepthCurve);
+    float mask = SampleUnderwaterMask(IN.texcoord) * pow(abs(depth), UIB_DepthCurve);
 
     float noise = SampleAnimatedNoise(IN.texcoord, 0.1 * UIB_AnimSpeed, 0.0);
           mask *= lerp(1.0, noise, UIB_AnimWeight);
@@ -1331,8 +1372,8 @@ float PS_DrawBlurMask(VertexShaderOutput IN) : SV_Target
 
 float4 PS_GaussBlur(VertexShaderOutput IN, uniform float2 Axis, uniform Texture2D InputTex) : SV_Target
 {
-    float  mask  = RenderTargetR16F.Sample(Point_Sampler, IN.texcoord).x;
-    float3 color = InputTex.Sample(Point_Sampler, IN.texcoord).rgb;
+    float  mask  = RenderTargetR16F.SampleLevel(Point_Sampler, IN.texcoord, 0).x;
+    float3 color = InputTex.SampleLevel(Point_Sampler, IN.texcoord, 0).rgb;
 
     float sigma       = UIB_MaxAmount * mask + DELTA;
     float offsetScale = 1.0 - sqrt(saturate(sigma / 3.0)) * 0.5;
@@ -1383,8 +1424,8 @@ float4 PS_GaussBlur(VertexShaderOutput IN, uniform float2 Axis, uniform Texture2
 float4 PS_VolumetricComposite(VertexShaderOutput IN) : SV_Target
 {
     float  uwMask      = SampleUnderwaterMask(IN.texcoord);
-    float3 color       = TextureColor.Sample(Point_Sampler, IN.texcoord).rgb;
-    float  linearDepth = FastLinDepth(TextureDepth.Sample(Point_Sampler, IN.texcoord).x, 200.0);
+    float3 color       = TextureColor.SampleLevel(Point_Sampler, IN.texcoord, 0).rgb;
+    float  linearDepth = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, IN.texcoord, 0).x);
     float  time        = GetTime();
 
     // Skip all processing for pixels outside the underwater mask
@@ -1427,6 +1468,9 @@ float4 PS_VolumetricComposite(VertexShaderOutput IN) : SV_Target
         causticMask   *= lerp(0.3, 1.0, saturate(sceneLum * 2.0));
         causticMask   *= ENightDayFactor;
 
+        // SkyrimBridge: interior water reduces caustics by 60%
+        causticMask *= GetInteriorCausticScale();
+
         // SkyrimBridge: tint caustics by actual sunlight color when available
         float3 causticColor = GetCausticTint();
         color += caustic * causticMask * causticColor;
@@ -1435,7 +1479,7 @@ float4 PS_VolumetricComposite(VertexShaderOutput IN) : SV_Target
 
     // --- God Rays (with absorption tinting) ---
     #if ENABLE_GOD_RAYS
-    if (UIR_Enable > 0.5 && ENightDayFactor > 0.1)
+    if (UIR_Enable > 0.5 && ENightDayFactor > 0.1 && !IsInteriorWater())
     {
         // SkyrimBridge: use actual sun screen position when available
         float2 sunPos   = GetUnderwaterSunPos();
@@ -1457,7 +1501,7 @@ float4 PS_VolumetricComposite(VertexShaderOutput IN) : SV_Target
             float3 raySample = TextureColor.SampleLevel(Linear_Sampler, clampedUV, 0).rgb;
             float  rayLum    = dot(raySample, LUM_WEIGHTS);
 
-            float rayDepth = FastLinDepth(TextureDepth.SampleLevel(Point_Sampler, clampedUV, 0).x, 200.0);
+            float rayDepth = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, clampedUV, 0).x);
             float depthW   = exp(-rayDepth * 3.0);
 
             // Absorption-tinted ray accumulation: light loses red first
@@ -1555,9 +1599,9 @@ float4 PS_LensDistortion(VertexShaderOutput IN) : SV_Target
         color.g = BicubicFilter(TextureColor, distortCoords).g;
         color.b = BicubicFilter(TextureColor, distortCoords - distortVec * UID_Chroma).b;
     #else
-        color.r = TextureColor.Sample(Linear_Sampler, distortCoords + distortVec * UID_Chroma).r;
-        color.g = TextureColor.Sample(Linear_Sampler, distortCoords).g;
-        color.b = TextureColor.Sample(Linear_Sampler, distortCoords - distortVec * UID_Chroma).b;
+        color.r = TextureColor.SampleLevel(Linear_Sampler, distortCoords + distortVec * UID_Chroma, 0).r;
+        color.g = TextureColor.SampleLevel(Linear_Sampler, distortCoords, 0).g;
+        color.b = TextureColor.SampleLevel(Linear_Sampler, distortCoords - distortVec * UID_Chroma, 0).b;
     #endif
 
     #if FILLING_METHOD == 2
@@ -1582,7 +1626,7 @@ float4 PS_LensDistortion(VertexShaderOutput IN) : SV_Target
         float  dist = length(centeredUV);
 
         // Depth-based "pressure" warp: vignette tightens with depth
-        float linearDepth = FastLinDepth(TextureDepth.Sample(Point_Sampler, IN.texcoord).x, 200.0);
+        float linearDepth = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, IN.texcoord, 0).x);
         float pressureWarp = 1.0 - linearDepth * UIV_PressureWarp;
         float effectiveRadius = UIV_Radius * max(pressureWarp, 0.3);
 

@@ -1,0 +1,2 @@
+
+#define PilgrimQuality 2

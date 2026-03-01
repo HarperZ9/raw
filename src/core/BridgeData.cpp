@@ -52,6 +52,7 @@ namespace SB
         ENTRY(weather.Lightning,            "SB_Lightning"),
         ENTRY(weather.Flags,                "SB_Weather_Flags"),
         ENTRY(weather.Transition,           "SB_Weather_Transition"),
+        ENTRY(weather.PrecipSurface,        "SB_Precip_Surface"),
 
         // ── Player ──────────────────────────────────────────────────────
         ENTRY(player.Position,              "SB_Player_Position"),
@@ -113,6 +114,53 @@ namespace SB
         // ── Render State ────────────────────────────────────────────────
         ENTRY(render.FrameInfo,             "SB_Render_Frame"),
         ENTRY(render.Jitter,                "SB_Render_Jitter"),
+
+        // ── ImageSpace ─────────────────────────────────────────────────
+        ENTRY(imageSpace.HDR,               "SB_IS_HDR"),
+        ENTRY(imageSpace.Cinematic,         "SB_IS_Cinematic"),
+        ENTRY(imageSpace.CineTint,          "SB_IS_CineTint"),
+        ENTRY(imageSpace.DOF,               "SB_IS_DOF"),
+        ENTRY(imageSpace.IMOD,              "SB_IS_IMOD"),
+        ENTRY(imageSpace.IMODTint,          "SB_IS_IMODTint"),
+
+        // ── Nearby Lights ──────────────────────────────────────────────
+        ENTRY(lights.Light0PosRad,          "SB_Light0_PosRad"),
+        ENTRY(lights.Light0Color,           "SB_Light0_Color"),
+        ENTRY(lights.Light1PosRad,          "SB_Light1_PosRad"),
+        ENTRY(lights.Light1Color,           "SB_Light1_Color"),
+        ENTRY(lights.Light2PosRad,          "SB_Light2_PosRad"),
+        ENTRY(lights.Light2Color,           "SB_Light2_Color"),
+        ENTRY(lights.Summary,               "SB_Light_Summary"),
+
+        // ── Actor Values ───────────────────────────────────────────────
+        ENTRY(actorValues.Resist,           "SB_AV_Resist"),
+        ENTRY(actorValues.Resist2,          "SB_AV_Resist2"),
+        ENTRY(actorValues.Combat,           "SB_AV_Combat"),
+        ENTRY(actorValues.Movement,         "SB_AV_Movement"),
+        ENTRY(actorValues.SkillCombat,      "SB_AV_SkillCombat"),
+        ENTRY(actorValues.SkillMagic,       "SB_AV_SkillMagic"),
+        ENTRY(actorValues.SkillMagic2,      "SB_AV_SkillMagic2"),
+        ENTRY(actorValues.SkillStealth,     "SB_AV_SkillStealth"),
+
+        // ── Crosshair ─────────────────────────────────────────────────
+        ENTRY(crosshair.Info,               "SB_XHair_Info"),
+        ENTRY(crosshair.Pos,                "SB_XHair_Pos"),
+        ENTRY(crosshair.Actor,              "SB_XHair_Actor"),
+
+        // ── Equipment ──────────────────────────────────────────────────
+        ENTRY(equipment.Right,              "SB_Equip_Right"),
+        ENTRY(equipment.Left,               "SB_Equip_Left"),
+        ENTRY(equipment.Armor,              "SB_Equip_Armor"),
+        ENTRY(equipment.Flags,              "SB_Equip_Flags"),
+
+        // ── Quest ──────────────────────────────────────────────────────
+        ENTRY(quest.Progress,               "SB_Quest_Progress"),
+        ENTRY(quest.Tracked,                "SB_Quest_Tracked"),
+
+        // ── UI State ───────────────────────────────────────────────────
+        ENTRY(uiState.Menus,                "SB_UI_Menus"),
+        ENTRY(uiState.HUD,                  "SB_UI_HUD"),
+        ENTRY(uiState.Detail,               "SB_UI_Detail"),
     };
 
     const std::size_t kParamCount = sizeof(kParamTable) / sizeof(kParamTable[0]);

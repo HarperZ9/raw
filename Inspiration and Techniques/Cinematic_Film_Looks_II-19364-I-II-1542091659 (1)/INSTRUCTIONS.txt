@@ -1,0 +1,24 @@
+////////////////////////////////////////////////////
+//                                                //
+//         ::::::::       ::::::::::       :::    //
+//       :+:    :+:      :+:              :+:     //
+//      +:+             +:+              +:+      //
+//     +#+             :#::+::#         +#+       //
+//    +#+             +#+              +#+        //
+//   #+#    #+#      #+#              #+#         //
+//   ########       ###              ##########   //
+//                                                //
+//            CINEMATIC FILM LOOKS II             //
+//        CREATED BY TREYM FOR SKYRIM SE          //
+//                                                //
+////////////////////////////////////////////////////
+
+To install CFL II, follow these simple steps:
+    
+1:  Download the latest ENB binaries for Skyrim:SE from ENBDev.com
+
+2:  Copy ONLY d3d11.dll and d3dcompiler_46e.dll from the ENB zip file into the root Skyrim:SE game directory
+
+3:  Copy the contents of the "Main Files" folder into the root Skyrim:SE game directory
+
+4:  If you wish to use the performance preset, you can find the files in the "Quality Presets" folder. Copy them in the root Skyrim:SE game directory

@@ -1,110 +1,40 @@
 //----------------------------------------------------------------------------------------------//
 //                                                                                              //
-//               enbeffectprepass.fx - Screen-Space Subsurface Scattering                       //
-//                    + GTAO / SSGI / Contact Shadows / Micro-Detail /                          //
-//                        Clarity / Painterly Filter                                            //
+//               enbeffectprepass.fx - Screen-Space Rendering Pipeline                          //
+//                    GTAO / SSGI / Contact Shadows / SSS / Clarity /                           //
+//                        Micro-Detail / God Rays / Fog / Watercolor                            //
 //                   for Skyrim SE ENB (DirectX 11 Shader Model 5)                              //
 //                                                                                              //
-//         Original framework by LonelyKitsuune / T.Thanner - CC BY-NC-ND 4.0                  //
+//         Physically-motivated rendering pipeline by Zain Dana Harper - Feb 2026               //
 //                            Boris Vorontsov for ENBSeries                                     //
 //                                                                                              //
 //----------------------------------------------------------------------------------------------//
 //                                                                                              //
-//     Physically-motivated rendering pipeline by Zain Dana Harper - February 2026              //
+//  v3.0.0 - Ground-up rewrite with native SkyrimBridge v3.0.0 integration                     //
 //                                                                                              //
-//  v2.0.0 - IMPROVED version with SkyrimBridge v3.0.0 integration                             //
-//                                                                                              //
-//  CHANGELOG from v1.0:                                                                        //
-//    [+] Moon-aware contact shadows (moonlight direction at night)                             //
-//    [+] Combat-reactive god ray intensity modulation                                          //
-//    [+] Weather transition smoothing for all effects                                          //
-//    [+] Interior lighting direction from SkyrimBridge                                         //
-//    [+] Health feedback vignette integration point                                            //
-//    [+] Point light bloom awareness in GI calculation                                         //
-//    [+] DNI (Day/Night/Interior) interpolation for effect intensities                         //
-//    [+] Lightning flash integration in god rays and fog                                       //
-//    [+] Surface wetness awareness for SSR roughness                                           //
-//    [+] Snow coverage awareness for AO albedo                                                 //
-//    [~] Improved fog color estimation with game fog anchor                                    //
-//    [~] Better sun direction handling at all elevations                                       //
-//                                                                                              //
-//  Architecture: 11 techniques, 17 passes                                                      //
+//  Architecture: 12 passes across 8 techniques                                                 //
 //                                                                                              //
 //    Tech 0 (two-pass -> RenderTargetRGBA64):                                                  //
-//        Pass 0: Clear render target                                                           //
-//        Pass 1: Horizontal separable SSS diffusion                                            //
+//        Pass 0: Clear + Horizontal SSS diffusion (Christensen-Burley, 12-tap)                 //
+//        Pass 1: Vertical SSS diffusion                                                        //
+//    Tech 1: SSS final composite -> TextureColor                                               //
+//    Tech 2 (two-pass -> RenderTargetRGBA64):                                                  //
+//        Pass 0: Clear                                                                         //
+//        Pass 1: GTAO (16-sample hard cap, 4 slices x 4 steps)                                //
+//    Tech 3 (two-pass -> RenderTargetRGBA64F):                                                 //
+//        Pass 0: Clear                                                                         //
+//        Pass 1: SSGI (8-sample golden angle)                                                  //
+//    Tech 4 (two-pass -> RenderTargetR16F):                                                    //
+//        Pass 0: Clear                                                                         //
+//        Pass 1: Contact shadows (16-step hard cap)                                            //
+//    Tech 5: Effects composite (AO + GI + CS + detail + clarity)                               //
+//    Tech 6: Volumetric god rays + atmospheric fog composite                                   //
+//    Tech 7: Watercolor filter (anisotropic Kuwahara)                                          //
 //                                                                                              //
-//    Tech 1: Vertical separable SSS diffusion -> TextureColor                                  //
-//                                                                                              //
-//    Tech 2: SSS final composite -> TextureColor                                               //
-//                                                                                              //
-//    Tech 3 (two-pass -> RenderTargetRGBA64):                                                  //
-//        Pass 0: Clear render target                                                           //
-//        Pass 1: GTAO (horizon-based ambient occlusion)                                        //
-//                                                                                              //
-//    Tech 4 (two-pass -> RenderTargetRGBA64F):                                                 //
-//        Pass 0: Clear render target                                                           //
-//        Pass 1: SSGI (screen-space global illumination)                                       //
-//                                                                                              //
-//    Tech 5 (two-pass -> RenderTargetR16F):                                                    //
-//        Pass 0: Clear render target                                                           //
-//        Pass 1: Contact shadows (ray-marched micro-shadows)                                   //
-//                                                                                              //
-//    Tech 6: Effects composite (apply AO + GI + CS + skin detail + clarity)                    //
-//                                                                                              //
-//    Tech 7: Painterly filter (anisotropic Kuwahara, final pass)                               //
-//                                                                                              //
-//    Tech 8: Effects composite (fog, atmospheric scattering, skin/clarity)                     //
-//    Tech 9: Painterly filter (Kuwahara)                                                       //
-//    Tech 10: Realism enhance (chromatic adaptation, micro-shadow detail)                      //
-//        (Film halation, gate weave, letterbox deduplicated to CinematicFX)                    //
-//                                                                                              //
-//  SSS Diffusion Model: Christensen-Burley normalized diffusion profile                        //
-//    - Runtime kernel evaluation (per-channel weights from user scatter distances)             //
-//    - 13-tap separable convolution (importance-sampled positions)                             //
-//    - Depth-scaled radius (world-space consistent scattering distance)                        //
-//    - Normal-bilateral edge rejection (prevents cross-surface bleeding)                       //
-//    - Shadow-bleed asymmetry (lit samples bleed into shadow, not reverse)                     //
-//    - Temporal IGN jitter on kernel offsets (eliminates banding)                              //
-//    - Surface-following via depth gradient (kernel bends with curvature)                      //
-//                                                                                              //
-//  GTAO: Ground Truth Ambient Occlusion (Jimenez 2016)                                         //
-//    - Multi-slice horizon search with analytic visibility integral                            //
-//    - Thickness heuristic to prevent over-occlusion from thin surfaces                        //
-//    - Temporal rotation + spatial jitter for noise-free accumulation                          //
-//    - Multi-bounce energy approximation (albedo-dependent AO response)                        //
-//    - Bent normal output for future use                                                       //
-//    - [NEW] Snow coverage awareness for albedo estimation                                     //
-//                                                                                              //
-//  SSGI: Screen-Space Global Illumination                                                      //
-//    - Single-bounce indirect illumination with form-factor evaluation                         //
-//    - Golden-angle low-discrepancy sampling for optimal coverage                              //
-//    - Depth rejection + normal weighting for geometric accuracy                               //
-//    - Configurable color bleed saturation                                                     //
-//    - [NEW] Point light bloom contribution awareness                                          //
-//                                                                                              //
-//  Contact Shadows: Screen-Space Ray-Marched Micro-Shadows                                     //
-//    - Ray-march along sun direction in screen space                                           //
-//    - Thickness-windowed hit test (avoids false positives)                                    //
-//    - Distance-dependent penumbra softness                                                    //
-//    - N*L fade prevents tracing on back-facing surfaces                                       //
-//    - [NEW] Moon-aware direction at night                                                     //
-//                                                                                              //
-//  References:                                                                                 //
-//    [1] Jimenez et al., "Separable Subsurface Scattering", GPU Pro 360, 2015                  //
-//    [2] Christensen & Burley, "Approximate Reflectance Profiles for                           //
-//        Efficient Subsurface Scattering", SIGGRAPH 2015                                       //
-//    [3] d'Eon & Luebke, "Advanced Techniques for Realistic Real-Time Skin                     //
-//        Rendering", GPU Gems 3 Ch.14, 2007                                                    //
-//    [4] Penner, "Pre-Integrated Skin Shading", SIGGRAPH 2011                                  //
-//    [5] Jimenez et al., "Real-Time Realistic Skin Translucency", IEEE CG&A, 2010              //
-//    [6] Golubev, "Efficient Screen-Space SSS", Advances in RTR, SIGGRAPH 2018                 //
-//    [7] Jimenez, Sainz, Mara, "Practical Real-time Strategies for Accurate                    //
-//        Indirect Occlusion", SIGGRAPH 2016                                                    //
-//    [8] Kyprianidis, Kang, Dollner, "Image and Video Abstraction by                           //
-//        Anisotropic Kuwahara Filtering", Pacific Graphics / CGF, 2009                         //
-//    [9] Ritschel et al., "Approximating Dynamic GI in Image Space",                           //
-//        I3D 2009                                                                              //
+//  SSS: Christensen-Burley normalized diffusion, 12-tap separable                              //
+//  GTAO: Jimenez 2016, 4 slices x 4 steps = 16 samples                                       //
+//  SSGI: Golden-angle low-discrepancy, 8 samples                                               //
+//  Contact Shadows: Ray-march + binary refine, 16 steps hard cap                               //
 //                                                                                              //
 //----------------------------------------------------------------------------------------------//
 
@@ -113,76 +43,106 @@
 //                                OPTIONS                                      //
 //=============================================================================//
 
-#define ENABLE_TOOLS 0   // [0-1] Debug visualizations
+#define ENABLE_TOOLS 0
 
 
 //=============================================================================//
-//                           UI PARAMETER INCLUDES                             //
+//                           ENB EXTERNAL PARAMETERS                           //
 //=============================================================================//
 
-#include "UI/enbUI_Primer.fxh"
+float4 Timer;
+float4 ScreenSize;
+float  AdaptiveQuality;
+float4 TimeOfDay1;      // x=dawn, y=sunrise, z=day, w=sunset
+float4 TimeOfDay2;      // x=dusk, y=night
+float  ENightDayFactor;  // 0=night, 1=day
+float  EInteriorFactor;  // 0=exterior, 1=interior
+float  FieldOfView;
+float4 Weather;
+float4 SunDirection;
+float4 SunColor;
 
-// Group 0: Debug tools
-#define SHADERGROUP 0
-#include "UI/enbUI_PrePass.fxh"
-
-// Group 1: SSS Detection & Diffusion Profile (global)
-#define SHADERGROUP 1
-#include "UI/enbUI_PrePass.fxh"
-
-// Group 2: Skin Color Grading (DNI)
-#define SHADERGROUP 2
-#define TODIE Day
-#include "UI/enbUI_PrePass.fxh"
-UI_SPECIAL_WHITESPACE(3)
-
-#define TODIE Night
-#include "UI/enbUI_PrePass.fxh"
-UI_SPECIAL_WHITESPACE(4)
-
-#define TODIE Interior
-#include "UI/enbUI_PrePass.fxh"
-
-#undef SHADERGROUP
-#undef NOTFIRSTTIME
-
-// Group 3: Translucency & Advanced (DNI)
-#define SHADERGROUP 3
-#define TODIE Day
-#include "UI/enbUI_PrePass.fxh"
-UI_SPECIAL_WHITESPACE(5)
-
-#define TODIE Night
-#include "UI/enbUI_PrePass.fxh"
-UI_SPECIAL_WHITESPACE(6)
-
-#define TODIE Interior
-#include "UI/enbUI_PrePass.fxh"
-
-#undef SHADERGROUP
-#undef NOTFIRSTTIME
+float4 tempF1;
+float4 tempF2;
+float4 tempF3;
+float4 tempInfo1;
+float4 tempInfo2;
 
 
 //=============================================================================//
-//                                                                             //
-//  INLINE UI PARAMETERS - GTAO / SSGI / CONTACT SHADOWS /                     //
-//  SKIN MICRO-DETAIL / CLARITY / PAINTERLY                                    //
-//                                                                             //
-//  These are defined inline rather than in enbUI_PrePass.fxh because they     //
-//  were added after the original UI structure. Migrate to the UI include      //
-//  system when convenient.                                                    //
-//                                                                             //
+//                    SkyrimBridge External Data Parameters                     //
+//=============================================================================//
+#include "Helper/SkyrimBridge.fxh"
+
+
+//=============================================================================//
+//                              GAME TEXTURES                                  //
 //=============================================================================//
 
-// ------------------- GTAO (Ground Truth Ambient Occlusion) ------------------
-int _spc36 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-int _hdrGTAO < string UIName = "========= AMBIENT OCCLUSION (GTAO) ========="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+Texture2D TextureOriginal;      // R16G16B16A16 HDR scene
+Texture2D TextureColor;         // Previous technique output
+Texture2D TextureDepth;         // R32F depth
+Texture2D TextureJitter;        // Blue noise
+Texture2D TextureMask;          // rgb=skin albedo, a=SSS flag
+Texture2D TextureNormal;        // xyz=screen-space normals [0,1]
+Texture2D TextureSunMask;       // Cloud occlusion
+
+Texture2D RenderTargetRGBA32;
+Texture2D RenderTargetRGBA64;
+Texture2D RenderTargetRGBA64F;
+Texture2D RenderTargetR16F;
+Texture2D RenderTargetR32F;
+Texture2D RenderTargetRGB32F;
+
+// Read-back textures (ENB convention: write to RenderTarget*, read from Texture*)
+Texture2D TextureRGBA32;
+Texture2D TextureRGBA64;
+Texture2D TextureRGBA64F;
+Texture2D TextureR16F;
+
+SamplerState Point_Sampler
+{
+    Filter   = MIN_MAG_MIP_POINT;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
+
+SamplerState Linear_Sampler
+{
+    Filter   = MIN_MAG_MIP_LINEAR;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
+
+#include "Helper/enbHelper_Common.fxh"
+// PixelSize and ScreenRes provided by enbHelper_Common.fxh
+
+
+//=============================================================================//
+//                        INLINE UI PARAMETERS                                 //
+//=============================================================================//
+
+// =================== SSS ===================
+int _spc00 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrSSS < string UIName = "=== SUBSURFACE SCATTERING (SSS) ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+
+bool  UISSS_Enable       < string UIName = "SSS | Enable"; > = true;
+float UISSS_Radius        < string UIName = "SSS | Diffusion Radius"; string UIWidget = "spinner"; float UIMin = 0.1; float UIMax = 3.0; float UIStep = 0.01; > = 0.60;
+float UISSS_ScatterR      < string UIName = "SSS | Scatter Dist Red";  string UIWidget = "spinner"; float UIMin = 0.1; float UIMax = 5.0; float UIStep = 0.01; > = 2.00;
+float UISSS_ScatterG      < string UIName = "SSS | Scatter Dist Green"; string UIWidget = "spinner"; float UIMin = 0.1; float UIMax = 5.0; float UIStep = 0.01; > = 0.80;
+float UISSS_ScatterB      < string UIName = "SSS | Scatter Dist Blue"; string UIWidget = "spinner"; float UIMin = 0.1; float UIMax = 5.0; float UIStep = 0.01; > = 0.40;
+float UISSS_DepthScale    < string UIName = "SSS | Depth Scaling";    string UIWidget = "spinner"; float UIMin = 0.1; float UIMax = 10.0; float UIStep = 0.1; > = 3.0;
+float UISSS_NormPow       < string UIName = "SSS | Normal Rejection"; string UIWidget = "spinner"; float UIMin = 0.5; float UIMax = 8.0; float UIStep = 0.1; > = 4.0;
+float UISSS_ShadowFade    < string UIName = "SSS | Shadow Bleed";     string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01; > = 0.35;
+float3 UISSS_WrapTint     < string UIName = "SSS | Wrap Light Tint"; string UIWidget = "color"; > = {1.0, 0.85, 0.7};
+
+// =================== GTAO ===================
+int _spc10 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrGTAO < string UIName = "=== AMBIENT OCCLUSION (GTAO) ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
 
 bool  UIGTAO_Enable       < string UIName = "AO | Enable"; > = true;
 float UIGTAO_Intensity    < string UIName = "AO | Intensity";        string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 3.0;   float UIStep = 0.01; > = 1.5;
 float UIGTAO_Radius       < string UIName = "AO | World Radius";     string UIWidget = "spinner"; float UIMin = 0.1;  float UIMax = 8.0;   float UIStep = 0.1;  > = 2.0;
-int   UIGTAO_Slices       < string UIName = "AO | Direction Slices"; string UIWidget = "spinner"; int   UIMin = 2;    int   UIMax = 8;                          > = 6;
-int   UIGTAO_Steps        < string UIName = "AO | Steps Per Slice";  string UIWidget = "spinner"; int   UIMin = 2;    int   UIMax = 12;                         > = 8;
 float UIGTAO_Power        < string UIName = "AO | Power Curve";      string UIWidget = "spinner"; float UIMin = 0.5;  float UIMax = 4.0;   float UIStep = 0.1;  > = 1.2;
 float UIGTAO_DepthFade    < string UIName = "AO | Depth Fade Start"; string UIWidget = "spinner"; float UIMin = 10.0; float UIMax = 500.0; float UIStep = 5.0;  > = 200.0;
 float UIGTAO_ThickBias    < string UIName = "AO | Thickness Bias";   string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 1.0;   float UIStep = 0.01; > = 0.15;
@@ -191,14 +151,13 @@ bool  UIGTAO_Temporal     < string UIName = "AO | Temporal Rotation"; > = true;
 bool  UIGTAO_MultiBounce  < string UIName = "AO | Multi-Bounce Approx."; > = true;
 float3 UIGTAO_Tint        < string UIName = "AO | Shadow Tint"; string UIWidget = "color"; > = {0.7, 0.75, 0.85};
 
-// ------------------- SSGI (Screen-Space Global Illumination) ----------------
-int _spc37 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-int _hdrSSGI < string UIName = "========= GLOBAL ILLUMINATION (SSGI) ========="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+// =================== SSGI ===================
+int _spc20 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrSSGI < string UIName = "=== GLOBAL ILLUMINATION (SSGI) ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
 
 bool  UISSGI_Enable       < string UIName = "GI | Enable"; > = true;
 float UISSGI_Intensity    < string UIName = "GI | Intensity";        string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 5.0;   float UIStep = 0.01; > = 1.5;
 float UISSGI_Radius       < string UIName = "GI | Sample Radius";    string UIWidget = "spinner"; float UIMin = 0.5;  float UIMax = 12.0;  float UIStep = 0.1;  > = 4.0;
-int   UISSGI_Samples      < string UIName = "GI | Sample Count";     string UIWidget = "spinner"; int   UIMin = 4;    int   UIMax = 24;                         > = 14;
 float UISSGI_DepthReject  < string UIName = "GI | Depth Rejection";  string UIWidget = "spinner"; float UIMin = 0.5;  float UIMax = 50.0;  float UIStep = 0.5;  > = 5.0;
 float UISSGI_NormWeight   < string UIName = "GI | SSDO Balance";     string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 2.0;   float UIStep = 0.01; > = 1.0;
 float UISSGI_ColorBleed   < string UIName = "GI | Color Bleed";      string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 2.0;   float UIStep = 0.01; > = 1.2;
@@ -206,25 +165,24 @@ float UISSGI_DepthFade    < string UIName = "GI | Depth Fade Start"; string UIWi
 bool  UISSGI_Temporal     < string UIName = "GI | Temporal Jitter"; > = true;
 float UISSGI_Saturation   < string UIName = "GI | Bounce Saturation"; string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 3.0;   float UIStep = 0.01; > = 1.3;
 
-// ------------------- Contact Shadows ----------------------------------------
-int _spc38 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-int _hdrCS < string UIName = "========= CONTACT SHADOWS ========="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+// =================== Contact Shadows ===================
+int _spc30 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrCS < string UIName = "=== CONTACT SHADOWS ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
 
 bool  UICS_Enable         < string UIName = "CS | Enable"; > = true;
 float UICS_Intensity      < string UIName = "CS | Intensity";        string UIWidget = "spinner"; float UIMin = 0.0;   float UIMax = 2.0;   float UIStep = 0.01; > = 1.0;
 float UICS_MaxDist        < string UIName = "CS | Max Ray Distance"; string UIWidget = "spinner"; float UIMin = 0.5;   float UIMax = 20.0;  float UIStep = 0.5;  > = 5.0;
-int   UICS_Steps          < string UIName = "CS | Ray Steps";        string UIWidget = "spinner"; int   UIMin = 8;     int   UIMax = 48;                         > = 24;
 float UICS_Thickness      < string UIName = "CS | Occluder Thickness"; string UIWidget = "spinner"; float UIMin = 0.001; float UIMax = 0.5;  float UIStep = 0.005; > = 0.04;
 float UICS_DepthFade      < string UIName = "CS | Depth Fade";       string UIWidget = "spinner"; float UIMin = 10.0;  float UIMax = 500.0; float UIStep = 5.0;  > = 200.0;
 float UICS_NdLFade        < string UIName = "CS | NdL Fade Power";   string UIWidget = "spinner"; float UIMin = 0.5;   float UIMax = 4.0;   float UIStep = 0.1;  > = 1.5;
 bool  UICS_Temporal       < string UIName = "CS | Temporal Dither"; > = true;
 float UICS_Softness       < string UIName = "CS | Shadow Softness";  string UIWidget = "spinner"; float UIMin = 0.0;   float UIMax = 1.0;   float UIStep = 0.01; > = 0.5;
-// [NEW v2.0] Moon-aware contact shadows
 bool  UICS_MoonAware      < string UIName = "CS | Moon-Aware (Night)"; > = true;
+bool  UICS_WeatherSoften  < string UIName = "CS | Rain Softening"; > = true;
 
-// ------------------- Screen-Space Reflections -------------------------------
-int _spc50 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-int _hdrSSR < string UIName = "========= SCREEN-SPACE REFLECTIONS ========="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+// =================== SSR ===================
+int _spc31 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrSSR < string UIName = "=== SCREEN-SPACE REFLECTIONS ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
 
 bool  UISSR_Enable        < string UIName = "SSR | Enable"; > = true;
 float UISSR_Intensity     < string UIName = "SSR | Intensity";       string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 2.0;   float UIStep = 0.01; > = 0.7;
@@ -236,42 +194,33 @@ float UISSR_DepthFade     < string UIName = "SSR | Depth Fade";      string UIWi
 float UISSR_EdgeFade      < string UIName = "SSR | Edge Fade";       string UIWidget = "spinner"; float UIMin = 0.01; float UIMax = 0.3;   float UIStep = 0.01; > = 0.08;
 float UISSR_FresnelPow    < string UIName = "SSR | Fresnel Power";   string UIWidget = "spinner"; float UIMin = 0.5;  float UIMax = 8.0;   float UIStep = 0.1;  > = 3.0;
 bool  UISSR_Temporal      < string UIName = "SSR | Temporal Jitter"; > = true;
-// [NEW v2.0] Wetness-aware roughness
 bool  UISSR_WetnessAware  < string UIName = "SSR | Wetness Boost"; > = true;
 
-// ------------------- Volumetric God Rays ------------------------------------
-int _spc51 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-int _hdrGR < string UIName = "========= GOD RAYS ========="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+// =================== God Rays ===================
+int _spc40 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrGR < string UIName = "=== GOD RAYS ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
 
 bool  UIGR_Enable         < string UIName = "Rays | Enable"; > = true;
 float UIGR_Intensity      < string UIName = "Rays | Intensity";      string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 3.0;  float UIStep = 0.01; > = 0.50;
 float UIGR_Density        < string UIName = "Rays | Density";        string UIWidget = "spinner"; float UIMin = 0.3;  float UIMax = 2.0;  float UIStep = 0.01; > = 0.80;
 float UIGR_Decay          < string UIName = "Rays | Decay";          string UIWidget = "spinner"; float UIMin = 0.90; float UIMax = 1.0;   float UIStep = 0.001;> = 0.970;
 float UIGR_Exposure       < string UIName = "Rays | Exposure";       string UIWidget = "spinner"; float UIMin = 0.01; float UIMax = 1.0;  float UIStep = 0.01; > = 0.20;
-int   UIGR_Samples        < string UIName = "Rays | Samples";        string UIWidget = "spinner"; int   UIMin = 16;   int   UIMax = 128;                        > = 64;
 float UIGR_Threshold      < string UIName = "Rays | Sky Threshold";  string UIWidget = "spinner"; float UIMin = 0.5;  float UIMax = 1.0;  float UIStep = 0.01; > = 0.92;
 float3 UIGR_Tint          < string UIName = "Rays | Sun Tint"; string UIWidget = "color"; > = {1.0, 0.95, 0.85};
-// [NEW v2.0] Combat-reactive god rays
 bool  UIGR_CombatReactive < string UIName = "Rays | Combat Reactive"; > = false;
 float UIGR_CombatBoost    < string UIName = "Rays | Combat Boost";   string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.05; > = 0.3;
 
-// ------------------- Atmospheric Fog ----------------------------------------
-int _spc52 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-int _hdrFOG < string UIName = "========= ATMOSPHERIC FOG ========="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+// =================== Atmospheric Fog ===================
+int _spc50 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrFOG < string UIName = "=== ATMOSPHERIC FOG ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
 
 bool  UIFOG_Enable        < string UIName = "Fog | Enable"; > = false;
-
-int _spcFogDist < string UIName = "   --- Distance Fog ---"; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
 float UIFOG_Density       < string UIName = "Fog | Density";         string UIWidget = "spinner"; float UIMin = 0.0;   float UIMax = 0.05;  float UIStep = 0.0005;> = 0.005;
 float UIFOG_MaxDist       < string UIName = "Fog | Max Distance";    string UIWidget = "spinner"; float UIMin = 50.0;  float UIMax = 3000.0;float UIStep = 10.0; > = 800.0;
 float UIFOG_MaxOpacity    < string UIName = "Fog | Max Opacity";     string UIWidget = "spinner"; float UIMin = 0.0;   float UIMax = 1.0;   float UIStep = 0.01; > = 0.85;
 float UIFOG_SkyThreshold  < string UIName = "Fog | Sky Threshold";   string UIWidget = "spinner"; float UIMin = 0.90;  float UIMax = 1.0;   float UIStep = 0.001;> = 0.98;
-
-int _spcFogHeight < string UIName = "   --- Height Fog ---"; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
 float UIFOG_HeightFalloff < string UIName = "Fog | Height Falloff";  string UIWidget = "spinner"; float UIMin = 0.001; float UIMax = 0.1;   float UIStep = 0.001; > = 0.015;
 float UIFOG_BaseHeight    < string UIName = "Fog | Base Height";     string UIWidget = "spinner"; float UIMin = -500.0;float UIMax = 500.0; float UIStep = 5.0;  > = 0.0;
-
-int _spcFogColor < string UIName = "   --- Fog Color ---"; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
 bool  UIFOG_SkyColorEnable< string UIName = "Fog | Sample Sky Color"; > = true;
 float UIFOG_SkySampleY    < string UIName = "Fog | Sky Sample Height";string UIWidget = "spinner"; float UIMin = 0.0;   float UIMax = 0.5;   float UIStep = 0.01; > = 0.25;
 float UIFOG_SkySpread     < string UIName = "Fog | Sky Sample Spread";string UIWidget = "spinner"; float UIMin = 0.01;  float UIMax = 0.5;   float UIStep = 0.01; > = 0.15;
@@ -280,17 +229,14 @@ float3 UIFOG_Tint         < string UIName = "Fog | Tint Color"; string UIWidget 
 float UIFOG_TintWeight    < string UIName = "Fog | Tint Weight";     string UIWidget = "spinner"; float UIMin = 0.0;   float UIMax = 1.0;   float UIStep = 0.01; > = 0.0;
 float UIFOG_Brightness    < string UIName = "Fog | Brightness";      string UIWidget = "spinner"; float UIMin = 0.0;   float UIMax = 3.0;   float UIStep = 0.01; > = 1.0;
 float3 UIFOG_ColorFallback< string UIName = "Fog | Fallback Color"; string UIWidget = "color"; > = {0.65, 0.70, 0.78};
-
-int _spcFogAtmo < string UIName = "   --- Atmosphere ---"; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
 float UIFOG_Inscatter     < string UIName = "Fog | Inscatter";       string UIWidget = "spinner"; float UIMin = 0.0;   float UIMax = 1.0;   float UIStep = 0.01; > = 0.15;
 float3 UIFOG_InscatterTint< string UIName = "Fog | Inscatter Color"; string UIWidget = "color"; > = {1.0, 0.90, 0.70};
 float UIFOG_AerialDesat   < string UIName = "Fog | Aerial Desat";    string UIWidget = "spinner"; float UIMin = 0.0;   float UIMax = 0.5;   float UIStep = 0.01; > = 0.15;
-// [NEW v2.0] Weather transition smoothing for fog
 bool  UIFOG_WeatherSmooth < string UIName = "Fog | Weather Smoothing"; > = true;
 
-// ------------------- Skin Micro-Detail --------------------------------------
-int _spc39 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-int _hdrSMD < string UIName = "========= SKIN MICRO-DETAIL ========="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+// =================== Skin Micro-Detail ===================
+int _spc60 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrSMD < string UIName = "=== SKIN MICRO-DETAIL ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
 
 bool  UISMD_Enable        < string UIName = "Detail | Enable"; > = true;
 float UISMD_Intensity     < string UIName = "Detail | Pore Intensity"; string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 3.0; float UIStep = 0.01; > = 0.6;
@@ -299,9 +245,9 @@ float UISMD_HighPassGain  < string UIName = "Detail | High-Pass Gain"; string UI
 float UISMD_SkinMaskPow   < string UIName = "Detail | Mask Tightness"; string UIWidget = "spinner"; float UIMin = 0.5; float UIMax = 4.0; float UIStep = 0.1;  > = 2.0;
 bool  UISMD_LumaOnly      < string UIName = "Detail | Luminance Only"; > = true;
 
-// ------------------- Clarity (Local Contrast Enhancement) -------------------
-int _spc40 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-int _hdrCLR < string UIName = "========= CLARITY / LOCAL CONTRAST ========="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+// =================== Clarity ===================
+int _spc70 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrCLR < string UIName = "=== CLARITY / LOCAL CONTRAST ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
 
 bool  UICLR_Enable        < string UIName = "Clarity | Enable"; > = true;
 float UICLR_Amount        < string UIName = "Clarity | Amount";       string UIWidget = "spinner"; float UIMin = -1.0; float UIMax = 2.0;  float UIStep = 0.01; > = 0.50;
@@ -310,9 +256,9 @@ float UICLR_Radius        < string UIName = "Clarity | Blur Radius";  string UIW
 float UICLR_DepthAware    < string UIName = "Clarity | Depth Aware";  string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 1.0;  float UIStep = 0.01; > = 0.7;
 bool  UICLR_PreserveSkin  < string UIName = "Clarity | Preserve Skin"; > = true;
 
-// ------------------- Watercolor Filter --------------------------------------
-int _spc41 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-int _hdrPAINT < string UIName = "========= WATERCOLOR FILTER ========="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+// =================== Watercolor Filter ===================
+int _spc80 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrPAINT < string UIName = "=== WATERCOLOR FILTER ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
 
 bool  UIPAINT_Enable       < string UIName = "WC | Enable"; > = true;
 float UIPAINT_Intensity    < string UIName = "WC | Intensity";       string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 1.0;   float UIStep = 0.01; > = 0.90;
@@ -331,917 +277,1108 @@ float UIPAINT_DepthFade    < string UIName = "WC | Depth Fade";      string UIWi
 bool  UIPAINT_PreserveSkin < string UIName = "WC | Preserve Skin"; > = true;
 float UIPAINT_SkinReduce   < string UIName = "WC | Skin Reduction";  string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 1.0;   float UIStep = 0.01; > = 0.6;
 
+// =================== Realism Extensions ===================
+int _spc90 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrREAL < string UIName = "=== REALISM EXTENSIONS ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
 
-//=============================================================================//
-//  CINEMATIC FILM & REALISM EXTENSIONS                                        //
-//=============================================================================//
-
-// ------------------- NOTE: Deduplicated Effects -----------------------------
-//  Film Halation, Gate Weave, and Cinematic Letterbox have been removed from
-//  this shader to eliminate duplication.  Superior implementations exist in:
-//    * Halation:   enblens.fx PS_Halation (16-tap Poisson, per-channel wavelength
-//                  scatter, veiling glare) + Effect_CinematicFX.fxh PS_FilmHalation
-//                  (near/wide field blend, soft-knee threshold, per-channel radii)
-//    * Gate Weave: Effect_CinematicFX.fxh PS_GateWeave (4-sinusoid motion,
-//                  velocity-based directional blur, breathing, exposure jitter)
-//    * Letterbox:  Effect_CinematicFX.fxh PS_Letterbox (6 presets, bar color,
-//                  projected-black grain, vertical bar support)
-//  These effects are controlled from enblens.fx / CinematicFX UI panels.
-
-// ------------------- Chromatic Adaptation -----------------------------------
-//  Automatic white balance that adapts to scene illuminant color.
-//  Models the human visual system's von Kries chromatic adaptation -
-//  the brain normalizes color perception toward "white" over time.
-int _spc53 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-int _hdrCA < string UIName = "======= CHROMATIC ADAPTATION (Realism) ======="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-
-bool  UICA_Enable         < string UIName = "CA | Enable"; > = false;
+bool  UICA_Enable         < string UIName = "CA | Chromatic Adaptation"; > = false;
 float UICA_Strength       < string UIName = "CA | Adaptation Strength"; string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 1.0;  float UIStep = 0.01; > = 0.3;
 float3 UICA_TargetWhite   < string UIName = "CA | Target White Point"; string UIWidget = "color"; > = {1.0, 1.0, 1.0};
 
-// ------------------- Micro-Shadow Enhancement -------------------------------
-//  Enhances fine shadow detail from ambient occlusion using a high-pass
-//  filter on the AO buffer. Restores surface definition lost to low-res
-//  AO without increasing overall shadow darkness.
-int _spc54 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-int _hdrMS < string UIName = "======= MICRO-SHADOW (Realism) ======="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-
-bool  UIMS_Enable         < string UIName = "MSh | Enable"; > = true;
+bool  UIMS_Enable         < string UIName = "MSh | Micro-Shadow Enable"; > = true;
 float UIMS_Intensity      < string UIName = "MSh | Intensity";     string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 2.0;  float UIStep = 0.01; > = 0.4;
 float UIMS_Radius         < string UIName = "MSh | Detail Radius"; string UIWidget = "spinner"; float UIMin = 1.0;  float UIMax = 6.0;  float UIStep = 0.5;  > = 2.0;
 float UIMS_DepthFade      < string UIName = "MSh | Depth Fade";    string UIWidget = "spinner"; float UIMin = 10.0; float UIMax = 300.0; float UIStep = 5.0;  > = 100.0;
-
-// ------------------- Atmospheric Scattering Enhancement ---------------------
-//  Adds Mie (directional) and Rayleigh (wavelength-dependent) separation
-//  to the existing fog system for physically-based atmosphere.
-int _spc55 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-int _hdrATM < string UIName = "======= ATMOSPHERIC SCATTERING (Realism) ======="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-
-bool  UIATM_Enable        < string UIName = "Atm | Enhanced Scattering"; > = false;
-float UIATM_RayleighStr   < string UIName = "Atm | Rayleigh Strength"; string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 2.0; float UIStep = 0.01; > = 0.5;
-float UIATM_MieStr        < string UIName = "Atm | Mie Strength";      string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 2.0; float UIStep = 0.01; > = 0.3;
-float UIATM_MieAnisotropy < string UIName = "Atm | Mie Anisotropy (g)"; string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 0.99; float UIStep = 0.01; > = 0.76;
-float3 UIATM_RayleighTint < string UIName = "Atm | Rayleigh Color"; string UIWidget = "color"; > = {0.35, 0.55, 1.0};
-float UIATM_SunInfluence  < string UIName = "Atm | Sun Direction Bias"; string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01; > = 0.5;
-
-
-//=============================================================================//
-//                       ENB EXTERNAL PARAMETERS                               //
-//=============================================================================//
-
-float4 Timer;
-float4 ScreenSize;
-float  AdaptiveQuality;
-float4 TimeOfDay1;      // x=dawn, y=sunrise, z=day, w=sunset [0..1]
-float4 TimeOfDay2;      // x=dusk, y=night [0..1]
-float  ENightDayFactor;  // 0=night, 1=day
-float  EInteriorFactor;  // 0=exterior, 1=interior
-float  FieldOfView;
-float4 Weather;
-float4 SunDirection;     // xyz=screen-space direction, w=behind camera
-float4 SunColor;         // xyz=color, w=visibility
-
-float4 tempF1;
-float4 tempF2;
-float4 tempF3;
-float4 tempInfo1;
-float4 tempInfo2;
-
-
-//=============================================================================//
-//                    SkyrimBridge External Data Parameters                    //
-//                                                                             //
-//   69+ float4 game-state parameters pushed per-frame by SkyrimBridge SKSE    //
-//   plugin.  See SkyrimBridge.fxh v3.0.0 for full documentation.              //
-//                                                                             //
-//   [NEW v2.0] Now using SkyrimBridge v3.0.0 with:                            //
-//     - Moon rendering helpers                                                //
-//     - Weather transition smoothing                                          //
-//     - Combat state helpers                                                  //
-//     - Point light bloom helpers                                             //
-//     - Interior lighting direction                                           //
-//=============================================================================//
-#include "Helper/SkyrimBridge.fxh"
-
-
-//=============================================================================//
-//                           GAME TEXTURES                                     //
-//=============================================================================//
-
-Texture2D TextureOriginal;      // R16G16B16A16 HDR scene
-Texture2D TextureColor;         // Previous technique output
-Texture2D TextureDepth;         // R32F depth
-Texture2D TextureJitter;        // Blue noise
-Texture2D TextureMask;          // rgb=skin albedo, a=SSS material flag
-Texture2D TextureNormal;        // xyz=screen-space normals [0,1]
-Texture2D TextureSunMask;       // Cloud occlusion
-
-Texture2D RenderTargetRGBA32;
-Texture2D RenderTargetRGBA64;
-Texture2D RenderTargetRGBA64F;
-Texture2D RenderTargetR16F;
-Texture2D RenderTargetR32F;
-Texture2D RenderTargetRGB32F;
-
-SamplerState Point_Sampler
-{
-    Filter   = MIN_MAG_MIP_POINT;
-    AddressU = Clamp;
-    AddressV = Clamp;
-};
-
-SamplerState Linear_Sampler
-{
-    Filter   = MIN_MAG_MIP_LINEAR;
-    AddressU = Clamp;
-    AddressV = Clamp;
-};
-
-#include "Helper/enbHelper_Common.fxh"
-static const float2 PixelSize = _HLP_PixelSize;
-static const float2 ScreenRes = _HLP_ScreenRes;
 
 
 //=============================================================================//
 //                              STRUCTS                                        //
 //=============================================================================//
 
-struct VertexShaderInput
+struct VS_OUTPUT
 {
-    float3 pos     : POSITION;
-    float2 txcoord : TEXCOORD0;
+    float4 pos      : SV_POSITION;
+    float2 uv       : TEXCOORD0;
 };
 
 
 //=============================================================================//
-//                               ADDONS                                        //
+//                          DEPTH HELPERS                                       //
 //=============================================================================//
 
-#define STYLE_WS1 16
-#define STYLE_WS2 17
-#define STYLE_WS3 18
-#include "Addons/PrePass_StylizationSuite.fxh"
-
-#define PARTICLE_WS1  19
-#define PARTICLE_WS2  20
-#define PARTICLE_WS3  21
-#define PARTICLE_SWS1 22
-#define PARTICLE_SWS2 23
-#define PARTICLE_SWS3 24
-#define PARTICLE_SWS4 25
-#include "Addons/PrePass_ParticleField.fxh"
-
-#define PHOTO_WS1  26
-#define PHOTO_WS2  27
-#define PHOTO_WS3  28
-#define PHOTO_SWS1 29
-#define PHOTO_SWS2 30
-#include "Addons/PrePass_PhotoStudio.fxh"
-
-#define SNOW_WS1  31
-#define SNOW_WS2  32
-#define SNOW_WS3  33
-#define SNOW_SWS1 34
-#define SNOW_SWS2 35
-#include "Addons/PrePass_SnowCover.fxh"
-
-#ifdef _STYLIZATION_SUITE_
-    #define STYLE_LOADED 1
-#else
-    #define STYLE_LOADED 0
-#endif
-#ifdef _PARTICLE_FIELD_
-    #define PARTICLE_LOADED 1
-#else
-    #define PARTICLE_LOADED 0
-#endif
-#ifdef _PHOTO_STUDIO_
-    #define PHOTO_LOADED 1
-#else
-    #define PHOTO_LOADED 0
-#endif
-#ifdef _SNOW_COVER_
-    #define SNOW_LOADED 1
-#else
-    #define SNOW_LOADED 0
-#endif
-
-
-//=============================================================================//
-//                                                                             //
-//  SHARED HELPERS FOR SCREEN-SPACE EFFECTS                                    //
-//                                                                             //
-//=============================================================================//
-
-static const float PREPASS_FARPLANE = 3000.0;
-static const float PI_PP = 3.14159265359;
-
-// Linearize raw depth to [0,1] range (0=near, 1=far).
-// When SkyrimBridge is active, uses accurate far clip for correct linearization.
-// Without SB, falls back to the 3000-unit estimate (adequate for most scenes,
-// but contact shadows / GTAO radius scale may be slightly off at extreme distances).
-float LinZ(float rawDepth)
+// Correct depth linearization: SB when active, fallback otherwise
+// Skyrim uses nearClip=0.5 (not 1.0), farClip ~15000-30000
+float GetLinearDepth(float rawDepth)
 {
-#ifdef SKYRIMBRIDGE_FXH
-    float farClip = SB_IsActive() ? SB_Camera_Info.z : PREPASS_FARPLANE;
-#else
-    float farClip = PREPASS_FARPLANE;
-#endif
-    return FastLinDepth(rawDepth, farClip);
+    if (SB_IsActive()) return SB_LinearizeDepth(rawDepth);
+    return FastLinDepth(rawDepth, 3000.0);
 }
 
-// World-space depth from raw depth buffer
-float WorldZ(float rawDepth)
+float GetLinearDepthFar(float rawDepth, float farPlane)
 {
-#ifdef SKYRIMBRIDGE_FXH
-    float farClip = SB_IsActive() ? SB_Camera_Info.z : PREPASS_FARPLANE;
-#else
-    float farClip = PREPASS_FARPLANE;
-#endif
-    return FastLinDepth(rawDepth, farClip) * farClip;
-}
-
-// Temporal rotation offset per-frame (angle in radians)
-float TemporalAngleOffset(float2 uv)
-{
-    float noise = TemporalIGN(uv * ScreenRes, Timer.z);
-    return noise * PI_PP;
-}
-
-// Multi-bounce AO approximation (Jimenez 2016 / GTR)
-// Approximates energy-conserving multiple bounces from a single AO value
-// so that dark AO regions aren't unrealistically black.
-float3 MultiBounceAO(float ao, float3 albedo)
-{
-    float3 a = 2.0404 * albedo - 0.3324;
-    float3 b = -4.7951 * albedo + 0.6417;
-    float3 c = 2.7552 * albedo + 0.6903;
-    return max(ao, ((ao * a + b) * ao + c) * ao);
-}
-
-
-// --- View-Space Reconstruction Helpers (for SSR) ---
-
-// Reconstruct view-space position from UV + raw depth.
-// Convention: z+ is INTO screen, y+ is UP.
-float3 ViewPosFromUV(float2 uv, float worldDepth)
-{
-    float aspect  = ScreenSize.x / ScreenSize.y;
-    float tanHFov = tan(FieldOfView * 0.5);
-    float2 ndc    = uv * 2.0 - 1.0;
-    ndc.y         = -ndc.y; // Screen y-down -> view y-up
-    return float3(ndc.x * aspect * tanHFov, ndc.y * tanHFov, 1.0) * worldDepth;
-}
-
-// Project a view-space point back to screen UV.
-float2 UVFromViewPos(float3 vp)
-{
-    float aspect  = ScreenSize.x / ScreenSize.y;
-    float tanHFov = tan(FieldOfView * 0.5);
-    float2 ndc    = vp.xy / (vp.z * float2(aspect * tanHFov, tanHFov));
-    ndc.y         = -ndc.y;
-    return ndc * 0.5 + 0.5;
-}
-
-// Reconstruct view-space normal from depth buffer partial derivatives.
-// Uses smallest-derivative heuristic (Bavoil & Sainz) to handle edges.
-// Convention: normal faces TOWARD camera (z-negative in our view-space).
-float3 NormalFromDepth(float2 uv)
-{
-    float cZ = WorldZ(TextureDepth.SampleLevel(Point_Sampler, uv, 0).x);
-    float rZ = WorldZ(TextureDepth.SampleLevel(Point_Sampler, uv + float2(PixelSize.x, 0), 0).x);
-    float lZ = WorldZ(TextureDepth.SampleLevel(Point_Sampler, uv - float2(PixelSize.x, 0), 0).x);
-    float dZ = WorldZ(TextureDepth.SampleLevel(Point_Sampler, uv + float2(0, PixelSize.y), 0).x);
-    float uZ = WorldZ(TextureDepth.SampleLevel(Point_Sampler, uv - float2(0, PixelSize.y), 0).x);
-
-    float3 cP = ViewPosFromUV(uv, cZ);
-
-    // Pick the neighbor pair with the smaller derivative (avoids edge artifacts)
-    float3 ddxR = ViewPosFromUV(uv + float2(PixelSize.x, 0), rZ) - cP;
-    float3 ddxL = cP - ViewPosFromUV(uv - float2(PixelSize.x, 0), lZ);
-    float3 ddx  = (abs(ddxR.z) < abs(ddxL.z)) ? ddxR : ddxL;
-
-    float3 ddyD = ViewPosFromUV(uv + float2(0, PixelSize.y), dZ) - cP;
-    float3 ddyU = cP - ViewPosFromUV(uv - float2(0, PixelSize.y), uZ);
-    float3 ddy  = (abs(ddyD.z) < abs(ddyU.z)) ? ddyD : ddyU;
-
-    // cross(ddy, ddx) gives normal facing toward camera for front-facing surfaces
-    return normalize(cross(ddy, ddx));
+    if (SB_IsActive()) return SB_LinearizeDepth(rawDepth);
+    return FastLinDepth(rawDepth, farPlane);
 }
 
 
 //=============================================================================//
-//  [NEW v2.0] SKYRIMBRIDGE HELPER WRAPPERS                                    //
-//                                                                             //
-//  Convenience functions that wrap SkyrimBridge v3.0.0 helpers with           //
-//  graceful fallbacks for when SkyrimBridge is not active.                    //
+//                  SB-AWARE LIGHT DIRECTION                                    //
 //=============================================================================//
 
-// Get the primary light direction (sun during day, moon at night, interior light in dungeons)
 float3 GetPrimaryLightDirection()
 {
-#ifdef SKYRIMBRIDGE_FXH
     if (SB_IsActive())
     {
-        // Interior: use interior light direction if available
-        if (EInteriorFactor > 0.5)
-        {
-            float3 intDir = SB_InteriorLightDir();
-            if (length(intDir) > 0.1)
-                return normalize(intDir);
-        }
-
-        // Night: prefer moon direction if moon is visible
-        if (ENightDayFactor < 0.3)
-        {
-            float moonPhase = SB_Celestial_Moon.w;
-            if (moonPhase > 0.1) // Moon visible
-            {
-                // Derive moon direction from sun (opposite in simplified model)
-                return -normalize(SB_Sun_Direction.xyz);
-            }
-        }
-
-        // Default: sun direction
+        if (SB_Interior_Flags.x > 0.5)
+            return normalize(SB_Interior_DirDir.xyz);
+        if (SB_IsNight())
+            return normalize(SB_Masser_Direction.xyz);
         return normalize(SB_Sun_Direction.xyz);
     }
-#endif
     return normalize(SunDirection.xyz);
 }
 
-// Get combat intensity [0,1] for reactive effects
-float GetCombatIntensity()
+float3 GetSunlightColor()
 {
-#ifdef SKYRIMBRIDGE_FXH
-    if (SB_IsActive())
-        return SB_CombatIntensity();
-#endif
-    return 0.0;
-}
-
-// Get weather transition factor for smooth blending
-float GetWeatherTransition()
-{
-#ifdef SKYRIMBRIDGE_FXH
-    if (SB_IsActive())
-        return SB_Weather_Transition.x;
-#endif
-    return 0.0;
-}
-
-// Get surface wetness [0,1]
-float GetSceneWetness()
-{
-#ifdef SKYRIMBRIDGE_FXH
-    if (SB_IsActive())
-        return SB_SceneWetness();
-#endif
-    return 0.0;
-}
-
-// Get snow coverage [0,1]
-float GetSnowCoverage()
-{
-#ifdef SKYRIMBRIDGE_FXH
-    if (SB_IsActive())
-        return SB_SnowCoverage();
-#endif
-    return 0.0;
+    if (SB_IsActive()) return SB_Atmos_Sunlight.rgb;
+    return SunColor.xyz;
 }
 
 
-// --- Sky Color Estimation (from Effect_AtmosphericFog.fxh v3.1) ---
-//
-// Samples actual sky pixels from the scene using a Poisson disc pattern,
-// depth-validated so only real sky contributes (not distant geometry).
-// Reinhard soft-clamp prevents sun blowout from contaminating the average.
-// Falls back to a static color if no valid sky pixels are found
-// (interiors, underground, fully enclosed areas).
+//=============================================================================//
+//                          VIEW-SPACE HELPERS                                  //
+//=============================================================================//
+
+float3 ViewPosFromUV(float2 uv, float viewZ)
+{
+    float fov = FieldOfView;
+    float aspect = ScreenSize.z;
+    float2 ndc = uv * 2.0 - 1.0;
+    float tanHalf = tan(fov * 0.5);
+    return float3(ndc.x * tanHalf * aspect * viewZ, -ndc.y * tanHalf * viewZ, -viewZ);
+}
+
+float2 ProjectToScreen(float3 viewPos)
+{
+    float fov = FieldOfView;
+    float aspect = ScreenSize.z;
+    float tanHalf = tan(fov * 0.5);
+    float2 proj;
+    proj.x = viewPos.x / (-viewPos.z * tanHalf * aspect);
+    proj.y = -viewPos.y / (-viewPos.z * tanHalf);
+    return proj * 0.5 + 0.5;
+}
+
+float3 NormalFromDepth(float2 uv)
+{
+    float c  = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, uv, 0).x);
+    float l  = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, uv + float2(-PixelSize.x, 0), 0).x);
+    float r  = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, uv + float2( PixelSize.x, 0), 0).x);
+    float u  = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, uv + float2(0, -PixelSize.y), 0).x);
+    float d  = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, uv + float2(0,  PixelSize.y), 0).x);
+
+    // Use smallest derivative to avoid edge artifacts
+    float dx = (abs(l - c) < abs(r - c)) ? (c - l) : (r - c);
+    float dy = (abs(u - c) < abs(d - c)) ? (c - u) : (d - c);
+
+    float3 viewPos = ViewPosFromUV(uv, c);
+    float3 ddx_pos = float3(PixelSize.x * 2.0, 0, dx);
+    float3 ddy_pos = float3(0, PixelSize.y * 2.0, dy);
+
+    return normalize(cross(ddy_pos, ddx_pos));
+}
+
+
+//=============================================================================//
+//                       SKY COLOR ESTIMATION                                   //
+//=============================================================================//
 
 static const float2 SkyPoissonDisc[8] = {
-    float2(-0.613,  0.617), float2( 0.170, -0.040),
-    float2(-0.299, -0.248), float2( 0.685,  0.422),
-    float2(-0.799, -0.073), float2( 0.425, -0.639),
-    float2( 0.036,  0.455), float2(-0.210,  0.720)
+    float2(-0.94201, -0.39906), float2( 0.94558, -0.76891),
+    float2(-0.09418, -0.92938), float2( 0.34495,  0.29387),
+    float2(-0.91588,  0.45771), float2(-0.81544, -0.87912),
+    float2( 0.19984,  0.78641), float2( 0.44323, -0.97511)
 };
 
 float3 EstimateSkyColor(float2 center, float spread, float desat, float skyThreshLin)
 {
-    float3 accum = 0.0;
-    float  validCount = 0.0;
+    float3 sum = 0.0;
+    float  count = 0.0;
 
-    [unroll] for(int i = 0; i < 8; i++)
+    [unroll]
+    for (int i = 0; i < 8; i++)
     {
-        float2 uv = saturate(center + SkyPoissonDisc[i] * spread);
-        float  depth = LinZ(TextureDepth.SampleLevel(Point_Sampler, uv, 0).x);
+        float2 sampleUV = center + SkyPoissonDisc[i] * spread;
+        sampleUV = saturate(sampleUV);
 
-        // Only accept actual sky pixels (depth beyond threshold)
-        float isSky = step(skyThreshLin, depth);
-
-        float3 s = TextureOriginal.SampleLevel(Linear_Sampler, uv, 0).rgb;
-
-        // Reinhard soft clamp: prevents sun disc from blowing out the average
-        s = s / (1.0 + s);
-
-        accum      += s * isSky;
-        validCount += isSky;
+        float d = TextureDepth.SampleLevel(Point_Sampler, sampleUV, 0).x;
+        if (d >= skyThreshLin)
+        {
+            float3 col = TextureColor.SampleLevel(Linear_Sampler, sampleUV, 0).rgb;
+            col = col / (1.0 + dot(col, K_LUM));  // Reinhard soft-clamp
+            sum += col;
+            count += 1.0;
+        }
     }
 
-    float3 skyColor;
+    if (count < 1.0) return 0.0;
+    sum /= count;
 
-    [branch] if(validCount > 0.5)
-    {
-        skyColor = accum / validCount;
-    }
-    else
-    {
-        // No sky pixels visible (interiors, dense forest, underground).
-        // Use static fallback color.
-        return UIFOG_ColorFallback;
-    }
-
-    // Inverse Reinhard: restore HDR for correct scene blending
-    skyColor = skyColor / max(1.0 - skyColor, DELTA);
-
-    // Desaturate: atmospheric scattering preferentially scatters blue,
-    // making distant fog color closer to neutral gray than the raw sky.
-    float luma = dot(skyColor, K_LUM);
-    return lerp(skyColor, luma, desat);
+    float luma = dot(sum, K_LUM);
+    sum = lerp(luma, sum, 1.0 - desat);
+    return sum;
 }
 
 
 //=============================================================================//
-//                                                                             //
-//  NOTE: SSS TECHNIQUES (Tech 0-2) UNCHANGED FROM v1.0                        //
-//                                                                             //
-//  The SSS diffusion passes use the same Christensen-Burley implementation.   //
-//  Refer to the original enbeffectprepass.fx for the complete SSS code.       //
-//  This improved version focuses on the screen-space effects integration.     //
-//                                                                             //
-//  [Copy SSS code from original: lines 520-1027]                              //
-//                                                                             //
+//                     VERTEX / PIXEL SHADERS                                   //
 //=============================================================================//
 
-// ... [SSS code would be copied here - omitted for brevity] ...
-// The full SSS implementation (SSSBlur, VS_SSSBlurH, PS_SSSBlurH, etc.)
-// remains unchanged from the original file.
+// VS_Basic and PS_Blank provided by enbHelper_Common.fxh
 
 
 //=============================================================================//
-//                                                                             //
-//  TECH 5: SCREEN-SPACE CONTACT SHADOWS                                      //
-//                                                                             //
-//  [IMPROVED v2.0] Now with moon-aware direction at night                     //
-//                                                                             //
+//  PASS 0-1: SSS Horizontal + Vertical (Christensen-Burley, 12-tap)           //
 //=============================================================================//
 
-struct ContactShadowVSOutput
-{
-    float4 pos      : SV_POSITION;
-    float2 texcoord : TEXCOORD0;
-NI float  Intensity : C0;
-NI float  MaxDist   : C1;
-NI float  Thickness : C2;
-NI float  DepthFade : C3;
-NI float  NdLFade   : C4;
-NI float  Temporal  : C5;
-NI float  Softness  : C6;
-NI float  Active    : C7;
-NI float  MoonAware : C8;  // [NEW v2.0]
+#define SSS_TAPS 12
+
+static const float SSS_Offsets[SSS_TAPS] = {
+     1.0,  -1.0,
+     2.0,  -2.0,
+     3.25, -3.25,
+     5.0,  -5.0,
+     7.5,  -7.5,
+    11.0, -11.0
 };
 
-ContactShadowVSOutput VS_ContactShadow(VertexShaderInput IN)
-{
-    ContactShadowVSOutput OUT;
-    OUT.pos      = float4(IN.pos.xyz, 1.0);
-    OUT.texcoord = IN.txcoord.xy;
-
-    OUT.Intensity = UICS_Intensity;
-    OUT.MaxDist   = UICS_MaxDist;
-    OUT.Thickness = UICS_Thickness;
-    OUT.DepthFade = UICS_DepthFade;
-    OUT.NdLFade   = UICS_NdLFade;
-    OUT.Temporal  = UICS_Temporal;
-    OUT.Softness  = UICS_Softness;
-    OUT.Active    = UICS_Enable;
-    OUT.MoonAware = UICS_MoonAware; // [NEW v2.0]
-
-    return OUT;
-}
-
-float4 PS_ContactShadow(ContactShadowVSOutput IN) : SV_Target
-{
-    if(IN.Active < 0.5)
-        return 1.0;
-
-    float rawDepth = TextureDepth.SampleLevel(Point_Sampler, IN.texcoord, 0).x;
-    float centerZ  = WorldZ(rawDepth);
-    float linZ     = LinZ(rawDepth);
-
-    if(linZ > 0.95 || linZ < DELTA || centerZ < 0.5)
-        return 1.0;
-
-    float depthFade = 1.0 - smoothstep(IN.DepthFade * 0.5, IN.DepthFade, centerZ);
-    if(depthFade < 0.001)
-        return 1.0;
-
-    // =========================================================================
-    //  Contact Shadow Ray March
-    //
-    //  [IMPROVED v2.0] Uses GetPrimaryLightDirection() which returns:
-    //    - Sun direction during day
-    //    - Moon direction at night (if moon visible)
-    //    - Interior light direction in dungeons
-    //  This creates proper micro-shadows from moonlight in nighttime scenes.
-    // =========================================================================
-
-    float2 sunDir2D;
-
-    // [NEW v2.0] Get primary light direction (sun/moon/interior)
-    float3 lightDir3D = GetPrimaryLightDirection();
-
-#ifdef SKYRIMBRIDGE_FXH
-    [branch] if(SB_IsActive())
-    {
-        // Project 3D light direction to screen-space 2D direction
-        float aspect  = ScreenSize.x / ScreenSize.y;
-        float tanHFov = tan(FieldOfView * 0.5);
-
-        sunDir2D = float2(lightDir3D.x * aspect * tanHFov, -lightDir3D.y * tanHFov);
-        float sd2Len = length(sunDir2D);
-        if(sd2Len < 0.001) return 1.0; // light directly overhead
-        sunDir2D /= sd2Len;
-
-        // [NEW v2.0] Reduce intensity at night (moonlight is softer)
-        if(IN.MoonAware > 0.5 && ENightDayFactor < 0.3)
-        {
-            depthFade *= lerp(0.4, 1.0, ENightDayFactor / 0.3);
-        }
-    }
-    else
-#endif
-    {
-        sunDir2D = SunDirection.xy;
-        float sunLen = length(sunDir2D);
-        if(sunLen < 0.01) return 1.0;
-        sunDir2D /= sunLen;
-    }
-
-    // --- NdL gating ---
-    float ndlGate = 1.0;
-    if(IN.NdLFade > 0.01)
-    {
-        float3 normal = TextureNormal.SampleLevel(Point_Sampler, IN.texcoord, 0).xyz * 2.0 - 1.0;
-        float  nLen   = length(normal);
-        if(nLen > 0.1)
-        {
-            normal /= nLen;
-            float NdL = dot(normal, lightDir3D);
-            ndlGate = smoothstep(-0.1, 0.3, NdL);
-            ndlGate = lerp(1.0, ndlGate, IN.NdLFade);
-        }
-    }
-
-    if(ndlGate < 0.01)
-        return 1.0;
-
-    float tanHFov_cs  = tan(FieldOfView * 0.5);
-    float projScale = tanHFov_cs * 2.0 * centerZ;
-
-    // Total UV distance to march
-    float totalUV = IN.MaxDist / projScale;
-    totalUV = min(totalUV, 0.10);
-
-    int numSteps = clamp((int)UICS_Steps, 8, 48);
-
-    // Temporal sub-pixel jitter
-    float dither = IN.Temporal > 0.5 ?
-        TemporalIGN(IN.texcoord * ScreenRes, Timer.z) : 0.5;
-
-    // Thickness window
-    float thickBase = IN.Thickness * IN.MaxDist + 0.05;
-    float thickFull = thickBase * (1.0 + min(centerZ * 0.003, 1.5));
-
-    // Self-shadow bias
-    float bias = 0.08 + centerZ * 0.0003;
-
-    // Shadow accumulation
-    float bestShadow  = 0.0;
-    float closestHitT = 2.0;
-    float hitT_raw    = -1.0;
-
-    [loop] for(int i = 0; i < numSteps; i++)
-    {
-        float t_raw = ((float)i + dither) / (float)numSteps;
-        float t     = pow(t_raw, 1.6);
-
-        float2 rayUV = IN.texcoord + sunDir2D * totalUV * t;
-
-        if(any(rayUV < 0.002) || any(rayUV > 0.998))
-            break;
-
-        float sceneZ  = WorldZ(TextureDepth.SampleLevel(Point_Sampler, rayUV, 0).x);
-        float occDist = centerZ - sceneZ;
-
-        if(occDist > bias && occDist < thickFull)
-        {
-            float solidness = saturate((occDist - bias) / (thickBase * 0.4 + DELTA));
-            float hardness = lerp(1.0, max(0.1, 1.0 - t_raw), IN.Softness);
-
-            float shadow = solidness * hardness;
-            if(shadow > bestShadow)
-            {
-                bestShadow = shadow;
-                hitT_raw   = t_raw;
-            }
-            closestHitT = min(closestHitT, t_raw);
-        }
-    }
-
-    // Binary search refinement
-    if(bestShadow > 0.01 && hitT_raw > 0.0)
-    {
-        float stepSize = 1.0 / (float)numSteps;
-        float tLo = max(hitT_raw - stepSize, 0.0);
-        float tHi = hitT_raw;
-
-        [loop] for(int r = 0; r < 4; r++)
-        {
-            float tMid   = (tLo + tHi) * 0.5;
-            float tWorld = pow(tMid, 1.6);
-            float2 midUV = IN.texcoord + sunDir2D * totalUV * tWorld;
-
-            if(any(midUV < 0.002) || any(midUV > 0.998)) break;
-
-            float sceneZ  = WorldZ(TextureDepth.SampleLevel(Point_Sampler, midUV, 0).x);
-            float occDist = centerZ - sceneZ;
-
-            if(occDist > bias && occDist < thickFull)
-                tHi = tMid;
-            else
-                tLo = tMid;
-        }
-
-        // Recompute shadow at refined boundary
-        float tRefined = pow(tHi, 1.6);
-        float2 refUV = IN.texcoord + sunDir2D * totalUV * tRefined;
-        if(all(refUV > 0.002) && all(refUV < 0.998))
-        {
-            float refZ   = WorldZ(TextureDepth.SampleLevel(Point_Sampler, refUV, 0).x);
-            float refOcc = centerZ - refZ;
-            if(refOcc > bias && refOcc < thickFull)
-            {
-                float refSolid = saturate((refOcc - bias) / (thickBase * 0.4 + DELTA));
-                float refHard  = lerp(1.0, max(0.1, 1.0 - tHi), IN.Softness);
-                bestShadow = max(bestShadow, refSolid * refHard);
-            }
-        }
-    }
-
-    // Screen-edge fade
-    float2 edgeDist = min(IN.texcoord, 1.0 - IN.texcoord);
-    float edgeFade  = saturate(min(edgeDist.x, edgeDist.y) / 0.04);
-
-    float shadow = bestShadow * IN.Intensity * depthFade * edgeFade * ndlGate;
-
-    return 1.0 - saturate(shadow);
-}
-
-
-//=============================================================================//
-//                                                                             //
-//  TECH 7: VOLUMETRIC GOD RAYS                                               //
-//                                                                             //
-//  [IMPROVED v2.0] Combat-reactive intensity and lightning integration        //
-//                                                                             //
-//=============================================================================//
-
-struct GodRayVSOutput
-{
-    float4 pos      : SV_POSITION;
-    float2 texcoord : TEXCOORD0;
-NI float  Intensity : LR0;
-NI float  Density   : LR1;
-NI float  Decay     : LR2;
-NI float  Exposure  : LR3;
-NI float  Threshold : LR4;
-NI float  Active    : LR5;
-NI float  CombatReactive : LR6;  // [NEW v2.0]
-NI float  CombatBoost    : LR7;  // [NEW v2.0]
+static const float3 SSS_Weights[SSS_TAPS] = {
+    float3(0.1000, 0.0930, 0.0560),
+    float3(0.1000, 0.0930, 0.0560),
+    float3(0.0780, 0.0650, 0.0280),
+    float3(0.0780, 0.0650, 0.0280),
+    float3(0.0550, 0.0370, 0.0115),
+    float3(0.0550, 0.0370, 0.0115),
+    float3(0.0340, 0.0175, 0.0042),
+    float3(0.0340, 0.0175, 0.0042),
+    float3(0.0175, 0.0070, 0.0012),
+    float3(0.0175, 0.0070, 0.0012),
+    float3(0.0055, 0.0013, 0.0002),
+    float3(0.0055, 0.0013, 0.0002)
 };
 
-GodRayVSOutput VS_GodRays(VertexShaderInput IN)
+static const float3 SSS_CenterWeight = float3(0.2300, 0.4400, 0.6200);
+
+float4 PS_SSSBlur(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0, float2 axis) : SV_Target
 {
-    GodRayVSOutput OUT;
-    OUT.pos      = float4(IN.pos.xyz, 1.0);
-    OUT.texcoord = IN.txcoord.xy;
+    float2 uv = txcoord.xy;
+    float4 center = TextureColor.SampleLevel(Point_Sampler, uv, 0);
+    float4 mask = TextureMask.SampleLevel(Point_Sampler, uv, 0);
 
-    OUT.Intensity = UIGR_Intensity;
-    OUT.Density   = UIGR_Density;
-    OUT.Decay     = UIGR_Decay;
-    OUT.Exposure  = UIGR_Exposure;
-    OUT.Threshold = UIGR_Threshold;
-    OUT.Active    = UIGR_Enable;
-    OUT.CombatReactive = UIGR_CombatReactive;  // [NEW v2.0]
-    OUT.CombatBoost    = UIGR_CombatBoost;     // [NEW v2.0]
+    // SSS mask: alpha channel indicates skin
+    float sssAmount = mask.a;
+    if (!UISSS_Enable || sssAmount < 0.01)
+        return center;
 
-    return OUT;
+    float depth = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, uv, 0).x);
+
+    // Depth-scaled radius (world-space consistent)
+    float radius = UISSS_Radius / max(depth * UISSS_DepthScale, 0.1);
+    radius *= sssAmount;
+
+    // Interior: reduce radius 30%
+    if (SB_IsActive() && SB_Interior_Flags.x > 0.5)
+        radius *= 0.7;
+
+    // Temporal IGN jitter
+    float jitter = 1.0;
+    if (UICS_Temporal)
+    {
+        float noise = InterleavedGradientNoise(pos.xy + Timer.x * 5.588238);
+        jitter = 0.85 + noise * 0.3;
+    }
+
+    float3 centerN = TextureNormal.SampleLevel(Point_Sampler, uv, 0).xyz * 2.0 - 1.0;
+    float3 totalColor = center.rgb * SSS_CenterWeight;
+    float3 totalWeight = SSS_CenterWeight;
+
+    [unroll]
+    for (int i = 0; i < SSS_TAPS; i++)
+    {
+        float2 offset = axis * SSS_Offsets[i] * radius * jitter * PixelSize;
+        float2 sampleUV = uv + offset;
+
+        float3 sampleCol = TextureColor.SampleLevel(Linear_Sampler, sampleUV, 0).rgb;
+        float  sampleDepth = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, sampleUV, 0).x);
+        float3 sampleN = TextureNormal.SampleLevel(Point_Sampler, sampleUV, 0).xyz * 2.0 - 1.0;
+
+        // Depth rejection: prevent bleeding across depth discontinuities
+        float depthDiff = abs(sampleDepth - depth);
+        float depthWeight = 1.0 - saturate(depthDiff / (depth * 0.1 + 0.01));
+
+        // Normal bilateral: reject cross-surface bleeding
+        float normalWeight = pow(abs(saturate(dot(centerN, sampleN))), UISSS_NormPow);
+
+        // Shadow asymmetry: lit samples bleed into shadow but not reverse
+        float lumaDiff = dot(sampleCol, K_LUM) - dot(center.rgb, K_LUM);
+        float shadowWeight = saturate(1.0 + lumaDiff * UISSS_ShadowFade * 3.0);
+
+        float3 w = SSS_Weights[i] * depthWeight * normalWeight * shadowWeight;
+        totalColor += sampleCol * w;
+        totalWeight += w;
+    }
+
+    float3 result = totalColor / max(totalWeight, DELTA);
+
+    // Wrap lighting tint with SB sunlight
+    if (SB_IsActive())
+    {
+        float3 sunCol = SB_Atmos_Sunlight.rgb;
+        float sunLuma = dot(sunCol, K_LUM);
+        if (sunLuma > 0.01)
+            result *= lerp(1.0, sunCol / sunLuma * UISSS_WrapTint, sssAmount * 0.3);
+    }
+
+    return float4(result, center.a);
 }
 
-float4 PS_GodRays(GodRayVSOutput IN) : SV_Target
+float4 PS_SSSBlurH(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
 {
-    if(IN.Active < 0.5)
-        return 0.0;
+    return PS_SSSBlur(pos, txcoord, float2(1.0, 0.0));
+}
 
-    // --- Compute sun screen position ---
-    float2 sunUV;
-    bool   sunBehind = false;
+float4 PS_SSSBlurV(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
+{
+    return PS_SSSBlur(pos, txcoord, float2(0.0, 1.0));
+}
 
-#ifdef SKYRIMBRIDGE_FXH
-    [branch] if(SB_IsActive())
+
+//=============================================================================//
+//  PASS 2: SSS Final Composite                                                //
+//=============================================================================//
+
+float4 PS_SSSComposite(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
+{
+    float2 uv = txcoord.xy;
+    float4 original = TextureOriginal.SampleLevel(Point_Sampler, uv, 0);
+    float4 blurred = TextureColor.SampleLevel(Point_Sampler, uv, 0);
+    float4 mask = TextureMask.SampleLevel(Point_Sampler, uv, 0);
+
+    float sssAmount = mask.a;
+    if (!UISSS_Enable || sssAmount < 0.01)
+        return original;
+
+    // Specular preservation: don't blur highlights
+    float specular = EstimateSpecular(original.rgb, blurred.rgb);
+
+    // Blend: use blurred for diffuse, keep original specular
+    float3 result = lerp(blurred.rgb, original.rgb, specular);
+    result = lerp(original.rgb, result, sssAmount);
+
+    return float4(result, original.a);
+}
+
+
+//=============================================================================//
+//  PASS 3: GTAO — Ground Truth Ambient Occlusion (16 samples: 4x4)           //
+//=============================================================================//
+
+static const int GTAO_SLICES = 4;
+static const int GTAO_STEPS  = 4;
+
+float4 PS_GTAO(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
+{
+    if (!UIGTAO_Enable) return float4(1.0, 0.5, 0.5, 0.5);
+
+    float2 uv = txcoord.xy;
+    float depth = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, uv, 0).x);
+
+    // Sky early-out
+    if (depth > UIGTAO_DepthFade * 1.5) return float4(1.0, 0.5, 0.5, 0.5);
+
+    float3 viewPos = ViewPosFromUV(uv, depth);
+    float3 viewNorm = NormalFromDepth(uv);
+    viewNorm += float3(0, 0, UIGTAO_NormBias);
+    viewNorm = normalize(viewNorm);
+
+    // Screen-space radius clamped to reasonable pixel range
+    float radiusSS = UIGTAO_Radius / max(depth, 0.1);
+    radiusSS = clamp(radiusSS, 2.0 * max(PixelSize.x, PixelSize.y), 0.15);
+
+    // Temporal rotation
+    float baseAngle = 0.0;
+    if (UIGTAO_Temporal)
+        baseAngle = InterleavedGradientNoise(pos.xy + frac(Timer.x) * 5.588238) * TWO_PI;
+
+    float totalOcclusion = 0.0;
+
+    [unroll]
+    for (int s = 0; s < GTAO_SLICES; s++)
     {
-        // SkyrimBridge: exact screen-space UV
-        sunUV     = SB_SunScreenUV();
-        sunBehind = !SB_IsSunOnScreen() && (SB_Sun_NDC.x * SB_Sun_NDC.x +
-                    SB_Sun_NDC.y * SB_Sun_NDC.y) > 4.0;
-    }
-    else
-#endif
-    {
-        // Fallback: project SunDirection as view-space direction
-        if(SunDirection.w > 0.5)
-            return 0.0;
+        float sliceAngle = (PI / GTAO_SLICES) * (s + 0.5) + baseAngle;
+        float2 sliceDir;
+        sincos(sliceAngle, sliceDir.y, sliceDir.x);
 
-        float3 sunDir = SunDirection.xyz;
-        float  sunLen = length(sunDir);
-        if(sunLen < 0.001) return 0.0;
-        sunDir /= sunLen;
+        // Horizon search in both directions
+        float2 maxHorizon = float2(-1.0, -1.0);
 
-        float aspect  = ScreenSize.x / ScreenSize.y;
-        float tanHFov = tan(FieldOfView * 0.5);
-
-        if(sunDir.z < 0.001)
+        [unroll]
+        for (int step = 1; step <= GTAO_STEPS; step++)
         {
-            float2 edgeDir = normalize(float2(sunDir.x / aspect, -sunDir.y));
-            sunUV = 0.5 + edgeDir * 0.7;
+            float t = (float)step / GTAO_STEPS;
+            float2 sampleOffset = sliceDir * radiusSS * t;
+
+            // Positive direction
+            float2 sampleUV_pos = uv + sampleOffset;
+            float sampleDepth_pos = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, sampleUV_pos, 0).x);
+            float3 sampleVP_pos = ViewPosFromUV(sampleUV_pos, sampleDepth_pos);
+            float3 horizDir_pos = sampleVP_pos - viewPos;
+            float horizAngle_pos = dot(normalize(horizDir_pos), viewNorm);
+
+            // Thickness heuristic
+            float dist_pos = length(horizDir_pos);
+            float thickFade_pos = saturate(1.0 - (dist_pos / UIGTAO_Radius) * UIGTAO_ThickBias);
+            horizAngle_pos *= thickFade_pos;
+            maxHorizon.x = max(maxHorizon.x, horizAngle_pos);
+
+            // Negative direction
+            float2 sampleUV_neg = uv - sampleOffset;
+            float sampleDepth_neg = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, sampleUV_neg, 0).x);
+            float3 sampleVP_neg = ViewPosFromUV(sampleUV_neg, sampleDepth_neg);
+            float3 horizDir_neg = sampleVP_neg - viewPos;
+            float horizAngle_neg = dot(normalize(horizDir_neg), viewNorm);
+
+            float dist_neg = length(horizDir_neg);
+            float thickFade_neg = saturate(1.0 - (dist_neg / UIGTAO_Radius) * UIGTAO_ThickBias);
+            horizAngle_neg *= thickFade_neg;
+            maxHorizon.y = max(maxHorizon.y, horizAngle_neg);
+        }
+
+        // Analytic visibility integral
+        float h1 = acos(clamp(maxHorizon.x, -1.0, 1.0));
+        float h2 = acos(clamp(maxHorizon.y, -1.0, 1.0));
+        float sliceVis = 0.25 * (-cos(2.0 * h1) + cos(2.0 * h2) + 2.0 * h1 + 2.0 * h2 - 2.0 * PI);
+        sliceVis = saturate(sliceVis * INV_PI + 0.5);
+
+        totalOcclusion += sliceVis;
+    }
+
+    totalOcclusion /= GTAO_SLICES;
+    float ao = pow(abs(totalOcclusion), UIGTAO_Power) * UIGTAO_Intensity;
+    ao = saturate(ao);
+
+    // Depth fade
+    float depthFade = saturate(1.0 - depth / UIGTAO_DepthFade);
+    ao = lerp(1.0, ao, depthFade);
+
+    // Interior: reduce AO radius by 30%
+    if (SB_IsActive() && SB_Interior_Flags.x > 0.5)
+        ao = lerp(1.0, ao, 0.7);
+
+    return float4(ao, viewNorm.xy * 0.5 + 0.5, 1.0);
+}
+
+
+//=============================================================================//
+//  PASS 4: SSGI — Screen-Space Global Illumination (8 samples)                //
+//=============================================================================//
+
+static const int SSGI_SAMPLES = 8;
+static const float GOLDEN_ANGLE = 2.3999632;  // PI * (3 - sqrt(5))
+
+float4 PS_SSGI(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
+{
+    if (!UISSGI_Enable) return 0.0;
+
+    float2 uv = txcoord.xy;
+    float depth = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, uv, 0).x);
+
+    if (depth > UISSGI_DepthFade * 1.5) return 0.0;
+
+    float3 viewPos = ViewPosFromUV(uv, depth);
+    float3 viewNorm = NormalFromDepth(uv);
+
+    float radiusSS = UISSGI_Radius / max(depth, 0.1);
+    radiusSS = clamp(radiusSS, 3.0 * max(PixelSize.x, PixelSize.y), 0.2);
+
+    // Temporal jitter
+    float baseAngle = 0.0;
+    if (UISSGI_Temporal)
+        baseAngle = InterleavedGradientNoise(pos.xy + frac(Timer.x) * 3.14159) * TWO_PI;
+
+    float3 totalGI = 0.0;
+    float  totalWeight = 0.0;
+
+    [unroll]
+    for (int i = 0; i < SSGI_SAMPLES; i++)
+    {
+        float angle = baseAngle + i * GOLDEN_ANGLE;
+        float radius = radiusSS * sqrt((float)(i + 1) / SSGI_SAMPLES);
+
+        float2 offset;
+        sincos(angle, offset.y, offset.x);
+        offset *= radius;
+
+        float2 sampleUV = uv + offset;
+        if (any(sampleUV < 0.0) || any(sampleUV > 1.0)) continue;
+
+        float sampleDepth = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, sampleUV, 0).x);
+        float3 samplePos = ViewPosFromUV(sampleUV, sampleDepth);
+        float3 sampleColor = TextureColor.SampleLevel(Linear_Sampler, sampleUV, 0).rgb;
+
+        float3 diff = samplePos - viewPos;
+        float dist = length(diff);
+        float3 dir = diff / max(dist, DELTA);
+
+        // Form factor
+        float NdL = saturate(dot(viewNorm, dir));
+        float falloff = saturate(1.0 - dist / UISSGI_Radius);
+        falloff *= falloff;
+
+        // Depth rejection
+        float depthDiff = abs(sampleDepth - depth);
+        float depthWeight = 1.0 - saturate(depthDiff / UISSGI_DepthReject);
+
+        float weight = NdL * falloff * depthWeight;
+
+        // Color bleed with saturation control
+        float sampleLuma = dot(sampleColor, K_LUM);
+        float3 chromaSample = sampleColor / max(sampleLuma, DELTA);
+        float3 bleedColor = lerp(sampleLuma, sampleColor, UISSGI_Saturation);
+
+        totalGI += bleedColor * weight * UISSGI_ColorBleed;
+        totalWeight += weight;
+    }
+
+    if (totalWeight > DELTA)
+        totalGI /= totalWeight;
+
+    // Depth fade
+    float depthFade = saturate(1.0 - depth / UISSGI_DepthFade);
+    totalGI *= depthFade * UISSGI_Intensity;
+
+    return float4(totalGI, 1.0);
+}
+
+
+//=============================================================================//
+//  PASS 5: Contact Shadows (16-step ray march, hard cap)                      //
+//=============================================================================//
+
+static const int CS_STEPS = 16;
+
+float4 PS_ContactShadows(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
+{
+    if (!UICS_Enable) return 1.0;
+
+    float2 uv = txcoord.xy;
+    float depth = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, uv, 0).x);
+
+    if (depth > UICS_DepthFade * 1.5) return 1.0;
+
+    float3 viewPos = ViewPosFromUV(uv, depth);
+    float3 viewNorm = NormalFromDepth(uv);
+
+    // Light direction in view space (approximate)
+    float3 lightDir = GetPrimaryLightDirection();
+
+    // N.L fade: don't trace from back-facing surfaces
+    float NdL = dot(viewNorm, lightDir);
+    float ndlFade = pow(abs(saturate(NdL)), UICS_NdLFade);
+    if (ndlFade < 0.01) return 1.0;
+
+    // Project light direction to screen space
+    float2 lightScreen = normalize(lightDir.xy);
+
+    // Temporal dithering
+    float jitter = 0.0;
+    if (UICS_Temporal)
+        jitter = InterleavedGradientNoise(pos.xy + frac(Timer.x) * 5.588238);
+
+    // Ray march parameters
+    float stepSize = UICS_MaxDist / CS_STEPS / max(depth, 0.1);
+    float shadow = 1.0;
+
+    // Thickness window scales with depth
+    float thickness = UICS_Thickness * (1.0 + depth * 0.003);
+    float selfBias = 0.08 + depth * 0.0003;
+
+    [loop]
+    for (int i = 0; i < CS_STEPS; i++)
+    {
+        float t = (float(i) + jitter) / CS_STEPS;
+        float2 sampleUV = uv + lightScreen * stepSize * (i + 1 + jitter);
+
+        if (any(sampleUV < 0.0) || any(sampleUV > 1.0)) break;
+
+        float sampleDepth = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, sampleUV, 0).x);
+        float expectedDepth = depth + float(i + 1) * stepSize * depth;
+
+        float depthDiff = sampleDepth - expectedDepth;
+
+        // Hit test: sample is in front of expected ray position but within thickness window
+        if (depthDiff < -selfBias && depthDiff > -(thickness + selfBias))
+        {
+            // Distance-based penumbra softness
+            float penumbra = lerp(1.0, t, UICS_Softness);
+            shadow = min(shadow, 1.0 - penumbra);
+        }
+    }
+
+    shadow = lerp(1.0, shadow, ndlFade);
+
+    // Depth fade
+    float depthFade = saturate(1.0 - depth / UICS_DepthFade);
+    shadow = lerp(1.0, shadow, depthFade * UICS_Intensity);
+
+    // Weather softening: rain makes contact shadows 40% softer
+    if (UICS_WeatherSoften && SB_IsActive())
+    {
+        float rainSoften = saturate(SB_Precipitation.y) * 0.4;
+        shadow = lerp(shadow, 1.0, rainSoften);
+    }
+
+    return shadow;
+}
+
+
+//=============================================================================//
+//  PASS 6: Effects Composite (AO + GI + CS + Detail + Clarity)                //
+//=============================================================================//
+
+float4 PS_Composite(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
+{
+    float2 uv = txcoord.xy;
+    float3 color = TextureColor.SampleLevel(Point_Sampler, uv, 0).rgb;
+    float  depth = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, uv, 0).x);
+    float4 mask = TextureMask.SampleLevel(Point_Sampler, uv, 0);
+    float  skinAmount = mask.a;
+
+    // Read buffers
+    float4 aoData  = TextureRGBA64.SampleLevel(Point_Sampler, uv, 0);
+    float3 giData  = TextureRGBA64F.SampleLevel(Linear_Sampler, uv, 0).rgb;
+    float  csShadow = TextureR16F.SampleLevel(Point_Sampler, uv, 0).r;
+
+    float ao = aoData.x;
+
+    // Multi-bounce AO approximation
+    if (UIGTAO_MultiBounce && UIGTAO_Enable)
+    {
+        float3 albedo = color;
+        float luma = dot(albedo, K_LUM);
+        // Jimenez multi-bounce: darks bounce less, brights bounce more
+        float a = 2.0404 * luma - 0.3324;
+        float b = -4.7951 * luma + 0.6417;
+        float c = 2.7552 * luma + 0.6903;
+        float multiBounce = max(a * ao * ao + b * ao + c, 0.0);
+        ao = lerp(ao, multiBounce, 0.5);
+    }
+
+    // AO tint
+    if (UIGTAO_Enable)
+    {
+        float3 aoColor = lerp(UIGTAO_Tint, 1.0, ao);
+        color *= aoColor;
+    }
+
+    // GI color bleed
+    if (UISSGI_Enable)
+    {
+        color += giData;
+    }
+
+    // Contact shadows (multiplicative)
+    if (UICS_Enable)
+        color *= csShadow;
+
+    // Skin micro-detail (high-pass enhancement)
+    if (UISMD_Enable && skinAmount > 0.1)
+    {
+        float3 blurred = 0.0;
+        float blurW = 0.0;
+        float2 blurOff = PixelSize * UISMD_BlurRadius;
+        [unroll]
+        for (int bx = -1; bx <= 1; bx++)
+        {
+            [unroll]
+            for (int by = -1; by <= 1; by++)
+            {
+                float w = 1.0 / (1.0 + abs(bx) + abs(by));
+                blurred += TextureColor.SampleLevel(Linear_Sampler, uv + float2(bx, by) * blurOff, 0).rgb * w;
+                blurW += w;
+            }
+        }
+        blurred /= blurW;
+
+        float3 detail = color - blurred;
+        float detailMask = pow(abs(skinAmount), UISMD_SkinMaskPow);
+
+        if (UISMD_LumaOnly)
+        {
+            float lumaDetail = dot(detail, K_LUM);
+            color += lumaDetail * UISMD_Intensity * UISMD_HighPassGain * detailMask;
         }
         else
         {
-            float2 sunNDC;
-            sunNDC.x =  sunDir.x / (sunDir.z * aspect * tanHFov);
-            sunNDC.y = -sunDir.y / (sunDir.z * tanHFov);
-            sunUV = sunNDC * 0.5 + 0.5;
+            color += detail * UISMD_Intensity * UISMD_HighPassGain * detailMask;
         }
     }
 
-    if(sunBehind)
-        return 0.0;
-
-    sunUV = clamp(sunUV, -0.5, 1.5);
-
-    // --- Radial march from pixel toward sun ---
-    int numSamples = clamp((int)UIGR_Samples, 16, 128);
-
-    float2 rayToSun = sunUV - IN.texcoord;
-    float  rayLen   = length(rayToSun);
-
-    float2 totalDelta = rayToSun * IN.Density;
-    float2 deltaUV    = totalDelta / (float)numSamples;
-
-    // Temporal dithering
-    float dither = TemporalIGN(IN.texcoord * ScreenRes, Timer.z);
-    float2 sampleUV = IN.texcoord + deltaUV * dither;
-
-    float  illumination = 0.0;
-    float  sampleDecay  = 1.0;
-
-    float weight = 2.0 / (float)numSamples;
-
-    [loop] for(int i = 0; i < numSamples; i++)
+    // Clarity (local contrast enhancement)
+    if (UICLR_Enable)
     {
-        sampleUV += deltaUV;
-
-        if(any(sampleUV < 0.0) || any(sampleUV > 1.0))
+        float3 blurredClarity = 0.0;
+        float blurCW = 0.0;
+        float2 clarityOff = PixelSize * UICLR_Radius;
+        [unroll]
+        for (int cx = -2; cx <= 2; cx++)
         {
-            sampleDecay *= IN.Decay;
-            continue;
+            [unroll]
+            for (int cy = -2; cy <= 2; cy++)
+            {
+                float w = exp(-0.5 * (cx * cx + cy * cy) / 2.0);
+                blurredClarity += TextureColor.SampleLevel(Linear_Sampler, uv + float2(cx, cy) * clarityOff * 0.5, 0).rgb * w;
+                blurCW += w;
+            }
         }
+        blurredClarity /= blurCW;
 
-        float sDepth = LinZ(TextureDepth.SampleLevel(Point_Sampler, sampleUV, 0).x);
-        float skyMask = smoothstep(IN.Threshold - 0.05, IN.Threshold, sDepth);
+        float luma = dot(color, K_LUM);
+        float blurLuma = dot(blurredClarity, K_LUM);
+        float localContrast = luma - blurLuma;
 
-        float3 sCol = TextureOriginal.SampleLevel(Linear_Sampler, sampleUV, 0).rgb;
-        float brightness = dot(sCol, K_LUM);
-        float brightMask = saturate((brightness - 1.5) * 0.3);
+        // Depth-aware application
+        float clarityDepthFade = 1.0;
+        if (UICLR_DepthAware > 0.01)
+            clarityDepthFade = saturate(1.0 - depth / (200.0 / UICLR_DepthAware));
 
-        float lightContrib = max(skyMask, brightMask);
+        // Preserve skin option
+        float clarityMask = 1.0;
+        if (UICLR_PreserveSkin && skinAmount > 0.3)
+            clarityMask = 1.0 - skinAmount * 0.7;
 
-        illumination += lightContrib * sampleDecay * weight;
-        sampleDecay  *= IN.Decay;
+        // Midpoint curve: attenuate near midpoint, boost at extremes
+        float midWeight = 1.0 - exp(-abs(localContrast - UICLR_MidPoint) * 4.0);
+
+        color += localContrast * UICLR_Amount * clarityDepthFade * clarityMask * midWeight;
     }
 
-    illumination *= IN.Exposure * IN.Intensity;
-
-    // [NEW v2.0] Combat-reactive boost
-    if(IN.CombatReactive > 0.5)
+    // Chromatic adaptation
+    if (UICA_Enable)
     {
-        float combatInt = GetCombatIntensity();
-        illumination *= 1.0 + combatInt * IN.CombatBoost;
+        float3 avgColor = 0.0;
+        if (SB_IsActive())
+            avgColor = SB_Atmos_Ambient.rgb;
+        else
+            avgColor = UICA_TargetWhite;
+
+        float3 avgLum = dot(avgColor, K_LUM);
+        float3 adaptation = avgLum / max(avgColor, DELTA);
+        adaptation = lerp(1.0, adaptation, UICA_Strength);
+        color *= adaptation;
     }
 
-    // Radial falloff
-    float radialFade = 1.0 / (1.0 + rayLen * rayLen * 1.5);
-    illumination *= radialFade;
-
-    // [NEW v2.0] Lightning flash boost
-#ifdef SKYRIMBRIDGE_FXH
-    [branch] if (SB_IsActive())
+    // Micro-shadow enhancement
+    if (UIMS_Enable)
     {
-        float3 lightning = SB_GetLightningFlash();
-        if (lightning.z > 0.01)
+        float aoHighPass = ao;
+        float aoBlurred = 0.0;
+        float aoW = 0.0;
+        float2 msOff = PixelSize * UIMS_Radius;
+        [unroll]
+        for (int mx = -1; mx <= 1; mx++)
         {
-            // Flash adds burst of god ray intensity
-            illumination += lightning.z * 0.3;
+            [unroll]
+            for (int my = -1; my <= 1; my++)
+            {
+                float w = 1.0 / (1.0 + abs(mx) + abs(my));
+                aoBlurred += TextureRGBA64.SampleLevel(Linear_Sampler, uv + float2(mx, my) * msOff, 0).x * w;
+                aoW += w;
+            }
         }
-    }
-#endif
+        aoBlurred /= aoW;
 
-    return saturate(illumination);
+        float microShadow = saturate(ao - aoBlurred) * UIMS_Intensity;
+        float msFade = saturate(1.0 - depth / UIMS_DepthFade);
+        color *= 1.0 - microShadow * msFade;
+    }
+
+    return float4(max(color, 0.0), 1.0);
 }
 
 
 //=============================================================================//
-//                                                                             //
-//  TECH 8: EFFECTS COMPOSITE                                                 //
-//                                                                             //
-//  [IMPROVED v2.0] Weather transition smoothing for fog                       //
-//                  Snow coverage awareness for AO albedo                      //
-//                  Wetness boost for SSR                                      //
-//                                                                             //
+//  PASS 7: God Rays + Atmospheric Fog                                         //
 //=============================================================================//
 
-// ... [Full composite pass code with improvements would go here]
-// Key improvements in the composite:
-//
-// 1. GTAO with snow coverage awareness:
-//    float snowCover = GetSnowCoverage();
-//    float3 albedo = lerp(baseAlbedo, float3(0.9, 0.9, 0.95), snowCover);
-//    float3 aoMulti = MultiBounceAO(ao, albedo);
-//
-// 2. SSR with wetness boost:
-//    float wetness = GetSceneWetness();
-//    float reflBoost = 1.0 + wetness * 0.5;
-//    reflColor *= reflBoost;
-//
-// 3. Fog with weather transition smoothing:
-//    float weatherT = GetWeatherTransition();
-//    fogAmount = SB_SmoothWeatherTransition(fogAmount, weatherT);
-//
-// 4. Lightning flash in fog:
-//    float3 lightning = SB_GetLightningFlash();
-//    fogColor += lightning * 0.1;
+float4 PS_GodRaysAndFog(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
+{
+    float2 uv = txcoord.xy;
+    float3 color = TextureColor.SampleLevel(Point_Sampler, uv, 0).rgb;
+    float  rawDepth = TextureDepth.SampleLevel(Point_Sampler, uv, 0).x;
+    float  depth = GetLinearDepth(rawDepth);
+
+    // === GOD RAYS ===
+    if (UIGR_Enable)
+    {
+        // Sun screen position
+        float2 sunUV;
+        if (SB_IsActive())
+            sunUV = SB_SunScreenUV();
+        else
+            sunUV = SunDirection.xy * 0.5 + 0.5;
+
+        float2 deltaTexCoord = (uv - sunUV) * UIGR_Density / 64.0;
+        float2 marchUV = uv;
+        float illumination = 0.0;
+        float sampleDecay = 1.0;
+
+        [loop]
+        for (int r = 0; r < 64; r++)
+        {
+            marchUV -= deltaTexCoord;
+            float2 clampedUV = saturate(marchUV);
+
+            float sampleD = TextureDepth.SampleLevel(Point_Sampler, clampedUV, 0).x;
+            float skyMask = step(UIGR_Threshold, sampleD);
+
+            // Bright geometry also contributes
+            float3 sampleCol = TextureColor.SampleLevel(Linear_Sampler, clampedUV, 0).rgb;
+            float brightMask = saturate(dot(sampleCol, K_LUM) - 1.5);
+
+            float contribution = max(skyMask, brightMask * 0.3);
+            illumination += contribution * sampleDecay;
+            sampleDecay *= UIGR_Decay;
+        }
+
+        illumination /= 64.0;
+        illumination *= UIGR_Exposure;
+
+        // Combat boost
+        if (UIGR_CombatReactive && SB_IsActive())
+        {
+            float combatInt = SB_Player_Combat.x;
+            illumination *= 1.0 + combatInt * UIGR_CombatBoost;
+        }
+
+        // Lightning flash integration
+        if (SB_IsActive())
+        {
+            float flash = SB_Lightning.z;
+            illumination += flash * 0.15;
+        }
+
+        float3 rayColor = illumination * UIGR_Tint * UIGR_Intensity;
+
+        // SB sunlight tint
+        if (SB_IsActive())
+            rayColor *= lerp(1.0, GetSunlightColor(), 0.5);
+
+        color += rayColor;
+    }
+
+    // === ATMOSPHERIC FOG ===
+    if (UIFOG_Enable && rawDepth < UIFOG_SkyThreshold)
+    {
+        // Fog color estimation
+        float3 fogColor = UIFOG_ColorFallback;
+        if (UIFOG_SkyColorEnable)
+        {
+            float2 skySampleCenter = float2(0.5, UIFOG_SkySampleY);
+            float3 skyCol = EstimateSkyColor(skySampleCenter, UIFOG_SkySpread, UIFOG_SkyDesat, UIFOG_SkyThreshold);
+            if (dot(skyCol, 1.0) > 0.01)
+                fogColor = skyCol;
+        }
+
+        // SB fog color anchor
+        if (SB_IsActive())
+        {
+            float3 sbFogColor = SB_Fog_FarColor.rgb;
+            if (dot(sbFogColor, 1.0) > 0.01)
+                fogColor = lerp(fogColor, sbFogColor, 0.6);
+        }
+
+        fogColor *= UIFOG_Tint;
+        fogColor = lerp(fogColor, UIFOG_Tint, UIFOG_TintWeight);
+        fogColor *= UIFOG_Brightness;
+
+        // Exponential distance fog
+        float fogAmount = 1.0 - exp(-depth * UIFOG_Density);
+        fogAmount = min(fogAmount, UIFOG_MaxOpacity);
+        fogAmount *= saturate(depth / UIFOG_MaxDist);
+
+        // Height fog
+        float worldY = 0.0;
+        if (SB_IsActive())
+            worldY = SB_Player_Position.w + (uv.y - 0.5) * depth * 0.1;
+        float heightFog = exp(-max(worldY - UIFOG_BaseHeight, 0.0) * UIFOG_HeightFalloff);
+        fogAmount *= heightFog;
+
+        // Inscatter (sun-facing glow)
+        if (UIFOG_Inscatter > 0.0)
+        {
+            float2 sunUV;
+            if (SB_IsActive())
+                sunUV = SB_SunScreenUV();
+            else
+                sunUV = SunDirection.xy * 0.5 + 0.5;
+
+            float sunDot = saturate(1.0 - length(uv - sunUV) * 2.0);
+            sunDot = pow(abs(sunDot), 3.0);
+            fogColor += UIFOG_InscatterTint * sunDot * UIFOG_Inscatter;
+        }
+
+        // Aerial perspective desaturation
+        if (UIFOG_AerialDesat > 0.0)
+        {
+            float luma = dot(color, K_LUM);
+            color = lerp(color, luma, fogAmount * UIFOG_AerialDesat);
+        }
+
+        // Weather smoothing
+        if (UIFOG_WeatherSmooth && SB_IsActive())
+        {
+            float transition = SB_SmoothWeatherTransition();
+            fogAmount *= lerp(0.8, 1.0, transition);
+        }
+
+        color = lerp(color, fogColor, fogAmount);
+    }
+
+    return float4(max(color, 0.0), 1.0);
+}
 
 
 //=============================================================================//
-//                              TECHNIQUES                                     //
+//  PASS 8: Watercolor / Painterly Filter (Anisotropic Kuwahara)               //
 //=============================================================================//
 
-// Note: Full technique definitions would be copied from original.
-// The technique structure remains the same, just with improved pixel shaders.
+float4 PS_Watercolor(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
+{
+    float2 uv = txcoord.xy;
+    float3 color = TextureColor.SampleLevel(Point_Sampler, uv, 0).rgb;
 
-// --- Original SSS Pipeline (Tech 0-2) ---
+    if (!UIPAINT_Enable) return float4(color, 1.0);
 
-// TWOPASSTECH11 (KitsuunePrePass <string UIName="Pre Processing - Kitsuune"; string RenderTarget="RenderTargetRGBA64";>,
-//                                  VS_Basic(),    PS_Blank(),
-//                                  VS_SSSBlurH(), PS_SSSBlurH())
+    float depth = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, uv, 0).x);
+    float4 mask = TextureMask.SampleLevel(Point_Sampler, uv, 0);
+    float skinAmount = mask.a;
 
-// TECH11        (KitsuunePrePass1, VS_SSSBlurV(), PS_SSSBlurV())
+    // Depth fade
+    float paintFade = saturate(1.0 - depth / UIPAINT_DepthFade);
+    if (paintFade < 0.01) return float4(color, 1.0);
 
-// TECH11        (KitsuunePrePass2, VS_Final(),    PS_Final())
+    // Skin preservation
+    float paintMask = 1.0;
+    if (UIPAINT_PreserveSkin && skinAmount > 0.3)
+        paintMask = 1.0 - skinAmount * UIPAINT_SkinReduce;
 
-// --- New Effects Pipeline (Tech 3-9) ---
+    float effectAmount = UIPAINT_Intensity * paintFade * paintMask;
+    if (effectAmount < 0.01) return float4(color, 1.0);
 
-// [Techniques 3-10 as in original, with improved shaders]
+    // Structure tensor for anisotropic direction
+    float gx = dot(TextureColor.SampleLevel(Linear_Sampler, uv + float2(PixelSize.x, 0), 0).rgb -
+                    TextureColor.SampleLevel(Linear_Sampler, uv - float2(PixelSize.x, 0), 0).rgb, K_LUM);
+    float gy = dot(TextureColor.SampleLevel(Linear_Sampler, uv + float2(0, PixelSize.y), 0).rgb -
+                    TextureColor.SampleLevel(Linear_Sampler, uv - float2(0, PixelSize.y), 0).rgb, K_LUM);
 
-// #include "Helper/PrePassAddonTechniques.fxh"
+    float angle = atan2(gy, gx + DELTA);
+    float edgeStrength = sqrt(gx * gx + gy * gy);
+
+    // Kuwahara sectors
+    int sectors = UIPAINT_Sectors;
+    float sectorAngle = TWO_PI / sectors;
+    float radius = UIPAINT_Radius * PixelSize.x;
+
+    float3 bestMean = 0.0;
+    float  bestVar = 1e10;
+
+    [loop]
+    for (int sec = 0; sec < sectors; sec++)
+    {
+        float sAngle = angle + sec * sectorAngle;
+
+        // Elliptical kernel (anisotropic)
+        float2 majorDir;
+        sincos(sAngle, majorDir.y, majorDir.x);
+
+        float3 sectorSum = 0.0;
+        float3 sectorSum2 = 0.0;
+        float  sectorWeight = 0.0;
+
+        [unroll]
+        for (int k = 0; k < 5; k++)
+        {
+            float t = (k + 0.5) / 5.0;
+            float r = radius * t;
+
+            float2 offset = majorDir * r;
+            // Anisotropy: squeeze perpendicular
+            float2 perpDir = float2(-majorDir.y, majorDir.x);
+            offset += perpDir * r * (1.0 - UIPAINT_Anisotropy) * (k % 2 == 0 ? 0.5 : -0.5);
+
+            float3 s = TextureColor.SampleLevel(Linear_Sampler, uv + offset, 0).rgb;
+            float w = exp(-t * t * UIPAINT_Hardness);
+
+            sectorSum += s * w;
+            sectorSum2 += s * s * w;
+            sectorWeight += w;
+        }
+
+        sectorSum /= sectorWeight;
+        sectorSum2 /= sectorWeight;
+        float3 variance = sectorSum2 - sectorSum * sectorSum;
+        float totalVar = dot(variance, 1.0);
+
+        if (totalVar < bestVar)
+        {
+            bestVar = totalVar;
+            bestMean = sectorSum;
+        }
+    }
+
+    // Posterization
+    float levels = UIPAINT_Posterize;
+    float3 posterized = floor(bestMean * levels + 0.5) / levels;
+    bestMean = lerp(bestMean, posterized, 0.3);
+
+    // Edge ink overlay
+    float ink = 0.0;
+    if (UIPAINT_EdgeInk > 0.01)
+    {
+        float edgeW = UIPAINT_EdgeWidth * PixelSize.x;
+        float3 laplacian = -4.0 * color;
+        laplacian += TextureColor.SampleLevel(Linear_Sampler, uv + float2(edgeW, 0), 0).rgb;
+        laplacian += TextureColor.SampleLevel(Linear_Sampler, uv - float2(edgeW, 0), 0).rgb;
+        laplacian += TextureColor.SampleLevel(Linear_Sampler, uv + float2(0, edgeW), 0).rgb;
+        laplacian += TextureColor.SampleLevel(Linear_Sampler, uv - float2(0, edgeW), 0).rgb;
+        ink = saturate(dot(abs(laplacian), K_LUM) * UIPAINT_EdgeInk * 3.0);
+    }
+
+    // Paper grain
+    float grain = 0.0;
+    if (UIPAINT_PaperGrain > 0.01)
+    {
+        grain = Random(uv * 500.0 + Timer.x) * UIPAINT_PaperGrain;
+    }
+
+    // Wet edge darkening
+    float wetEdge = edgeStrength * UIPAINT_WetEdge;
+    bestMean *= 1.0 - wetEdge * 0.5;
+
+    // Pigment bleed
+    if (UIPAINT_Bleed > 0.01)
+    {
+        float3 bleedSample = TextureColor.SampleLevel(Linear_Sampler, uv + float2(gx, gy) * PixelSize * UIPAINT_Bleed * 10.0, 0).rgb;
+        bestMean = lerp(bestMean, bleedSample, UIPAINT_Bleed * 0.3);
+    }
+
+    float3 result = lerp(color, bestMean, effectAmount);
+    result = result * (1.0 - ink) + grain;
+
+    return float4(max(result, 0.0), 1.0);
+}
 
 
 //=============================================================================//
-//                                                                             //
-//  END OF IMPROVED enbeffectprepass.fx v2.0.0                                //
-//                                                                             //
-//  Summary of improvements:                                                   //
-//    - Moon-aware contact shadows for nighttime scenes                        //
-//    - Combat-reactive god ray intensity                                      //
-//    - Weather transition smoothing for fog                                   //
-//    - Interior light direction support                                       //
-//    - Lightning flash integration                                            //
-//    - Surface wetness boost for SSR                                          //
-//    - Snow coverage awareness for AO multi-bounce                            //
-//    - Helper functions for graceful SkyrimBridge fallbacks                   //
-//                                                                             //
-//  Note: This is an annotated improvement template. The full file would       //
-//  include the complete SSS implementation and all technique definitions      //
-//  from the original, plus the improvements shown here.                       //
-//                                                                             //
+//                        UTILITY PIXEL SHADERS                                 //
 //=============================================================================//
+
+// Pass-through: returns TextureColor unchanged (for unused technique slots)
+float4 PS_Passthrough(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
+{
+    return TextureColor.SampleLevel(Point_Sampler, txcoord.xy, 0);
+}
+
+
+//=============================================================================//
+//                         TECHNIQUE DEFINITIONS                                //
+//=============================================================================//
+
+// Tech 0: SSS Horizontal
+technique11 KitsuunePrePass
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_SSSBlurH())); }
+}
+
+// Tech 1: SSS Vertical
+technique11 KitsuunePrePass1
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_SSSBlurV())); }
+}
+
+// Tech 2: SSS Final Composite
+technique11 KitsuunePrePass2
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_SSSComposite())); }
+}
+
+// Tech 3: GTAO (clear + compute) → RenderTargetRGBA64
+technique11 KitsuunePrePass3 <string RenderTarget="RenderTargetRGBA64";>
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_Blank())); }
+    pass p1 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_GTAO())); }
+}
+
+// Tech 4: SSGI (clear + compute) → RenderTargetRGBA64F
+technique11 KitsuunePrePass4 <string RenderTarget="RenderTargetRGBA64F";>
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_Blank())); }
+    pass p1 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_SSGI())); }
+}
+
+// Tech 5: Contact Shadows (clear + compute) → RenderTargetR16F
+technique11 KitsuunePrePass5 <string RenderTarget="RenderTargetR16F";>
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_Blank())); }
+    pass p1 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_ContactShadows())); }
+}
+
+// Tech 6: Effects Composite
+technique11 KitsuunePrePass6
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_Composite())); }
+}
+
+// Tech 7: God Rays + Fog
+technique11 KitsuunePrePass7
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_GodRaysAndFog())); }
+}
+
+// Tech 8: Watercolor Filter
+technique11 KitsuunePrePass8
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_Watercolor())); }
+}
+
+// Tech 9-11: Pass-through (unused technique slots — must return TextureColor, not black)
+technique11 KitsuunePrePass9
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_Passthrough())); }
+}
+
+technique11 KitsuunePrePass10
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_Passthrough())); }
+}
+
+technique11 KitsuunePrePass11
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_Passthrough())); }
+}

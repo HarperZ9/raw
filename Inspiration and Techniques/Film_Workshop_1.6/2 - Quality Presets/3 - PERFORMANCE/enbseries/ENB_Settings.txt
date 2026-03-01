@@ -1,0 +1,31 @@
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// TREYM'S FILM WORKSHOP 1.6
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+//// PRESET NAME
+#define ENB_NAME "FILM WORKSHOP"
+
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+//// ENABLE POST PROCESSING EFFECTS BELOW
+//// ALL EFFECTS MUST BE ADJUSTED FROM ENB MENU IN-GAME
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+#define ACTIVATE_CHROMA     0     // Physically based chromatic aberration
+#define ACTIVATE_VIGNETTE   0     // Lens vignette
+#define ACTIVATE_GRADING    1     // Advanced color grading
+#define ACTIVATE_GRAIN      0     // Film grain
+
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+//// MODE SWITCHES
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+#define ACTIVATE_SCOPES     0     // Advanced scopes for color grading
+                                  // leave off when not using
+
+#define MONITOR_219         0     // 21:9 Monitor mode
+
+#define CUSTOM_MODE         0     // 1 = CUSTOM LUT PACK MODE
+				  // 2 = USER LUT MODE
+				  // Disables the film and grading stages 
+				  // and uses a custom LUT
+				  // enbseries/Custom/LUT.png

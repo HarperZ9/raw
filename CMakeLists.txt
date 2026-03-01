@@ -48,6 +48,15 @@ add_commonlibsse_plugin(
         src/core/EffectsTracker.cpp
         src/core/RenderTracker.cpp
 
+        # v2 expansion trackers (domains 11-17)
+        src/core/ImageSpaceTracker.cpp
+        src/core/LightTracker.cpp
+        src/core/ActorValueTracker.cpp
+        src/core/CrosshairTracker.cpp
+        src/core/EquipmentTracker.cpp
+        src/core/QuestTracker.cpp
+        src/core/UIStateTracker.cpp
+
         # Phase 2: Weather Parameter Computer
         src/WeatherParameterComputer.cpp
 

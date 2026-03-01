@@ -8,6 +8,10 @@ namespace SB::WeatherTracker
     static float s_timeSinceFlash = 99.f;
     static bool  s_wasFlashing    = false;
 
+    // Persistent state for surface accumulation
+    static float s_wetness        = 0.f;
+    static float s_snowAccum      = 0.f;
+
     WeatherData Update(float a_deltaTime)
     {
         WeatherData data{};
@@ -78,6 +82,24 @@ namespace SB::WeatherTracker
                 sky->lastWeather->GetFormID() & 0xFFFF);
         data.Transition.z = static_cast<float>(
             w->GetFormID() & 0xFFFF);
+
+        // ── Precipitation surface accumulation ────────────────────────
+        // Wetness builds up during rain, dries out otherwise.
+        // Snow accumulates during snow, melts otherwise.
+        float precipIntensity = data.Precipitation.y;
+        if (isRain) {
+            s_wetness = std::min(1.0f, s_wetness + precipIntensity * a_deltaTime * 0.1f);
+        } else {
+            s_wetness = std::max(0.0f, s_wetness - a_deltaTime * 0.02f);
+        }
+        if (isSnow) {
+            s_snowAccum = std::min(1.0f, s_snowAccum + precipIntensity * a_deltaTime * 0.05f);
+        } else {
+            s_snowAccum = std::max(0.0f, s_snowAccum - a_deltaTime * 0.01f);
+        }
+        data.PrecipSurface.x = s_wetness;
+        data.PrecipSurface.y = s_wetness * 0.3f;  // puddle depth (simplified)
+        data.PrecipSurface.z = s_snowAccum;
 
         return data;
     }

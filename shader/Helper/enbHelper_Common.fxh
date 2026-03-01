@@ -26,23 +26,36 @@
 //  Section 1: Core macros, constants, and utility functions                    //
 //=============================================================================//
 
+#ifndef LUM_709
 #define LUM_709  float3(0.2125, 0.7154, 0.0721)
+#endif
+#ifndef LUM_601
 #define LUM_601  float3(0.2989, 0.5870, 0.1140)
+#endif
+#ifndef K_LUM
 #define K_LUM    float3(0.25,   0.60,   0.15)
+#endif
+#ifndef ALT_LUM
 #define ALT_LUM  float3(0.25,   0.50,   0.25)
+#endif
+#ifndef N_LUM
 #define N_LUM    0.333333
+#endif
+#ifndef DELTA
 #define DELTA    1e-6
+#endif
+#ifndef PI
 #define PI       3.1415926535897932384626433832795
+#endif
+#ifndef TWO_PI
 #define TWO_PI   6.2831853071795864769252867665590
+#endif
+#ifndef INV_PI
 #define INV_PI   0.3183098861837906715377675267450
+#endif
 
-//Pixel size / screen resolution — provided as macros for internal helper use.
-//NOT declared as variables here to avoid X3003 redefinition in shaders that
-//declare their own PixelSize/ScreenRes.  Each .fx file should declare:
-//  static const float2 PixelSize = _HLP_PixelSize;
-//  static const float2 ScreenRes = _HLP_ScreenRes;
-#define _HLP_PixelSize float2(ScreenSize.y, ScreenSize.y * ScreenSize.z)
-#define _HLP_ScreenRes float2(ScreenSize.x, ScreenSize.x * ScreenSize.w)
+static const float2 PixelSize = float2(ScreenSize.y, ScreenSize.y * ScreenSize.z);
+static const float2 ScreenRes = float2(ScreenSize.x, ScreenSize.x * ScreenSize.w);
 
 #define NI nointerpolation
 
@@ -73,7 +86,7 @@ void ScaleScreenQuad_Mult(inout float2 Pos, float2 Scale)
 }
 
 void ScaleScreenQuad_Res(inout float2 Pos, float2 TargetRes)
-{ ScaleScreenQuad_Mult(Pos, TargetRes / _HLP_ScreenRes); }
+{ ScaleScreenQuad_Mult(Pos, TargetRes / ScreenRes); }
 
 
 //----------------------------------------------------------------------------------------------//
@@ -122,7 +135,7 @@ float4 BicubicFilter(Texture2D InputTex, float2 texcoord, float2 texSize)
 }
 
 float4 BicubicFilter(Texture2D InputTex, float2 texcoord)
-{ return BicubicFilter(InputTex, texcoord, _HLP_ScreenRes); }
+{ return BicubicFilter(InputTex, texcoord, ScreenRes); }
 
 
 //----------------------------------------------------------------------------------------------//
@@ -485,7 +498,7 @@ static const float3 SSS_KernelWeights[SSS_KERNEL_SIZE] = {
 float EstimateCurvature(Texture2D NormalTex, SamplerState Samp, float2 UV)
 {
     float3 NC = NormalTex.SampleLevel(Samp, UV, 0).xyz * 2.0 - 1.0;
-    float2 _ps = _HLP_PixelSize;
+    float2 _ps = PixelSize;
     float3 NL = NormalTex.SampleLevel(Samp, UV + float2(-_ps.x, 0), 0).xyz * 2.0 - 1.0;
     float3 NR = NormalTex.SampleLevel(Samp, UV + float2( _ps.x, 0), 0).xyz * 2.0 - 1.0;
     float3 NU = NormalTex.SampleLevel(Samp, UV + float2(0, -_ps.y), 0).xyz * 2.0 - 1.0;
@@ -499,7 +512,7 @@ float EstimateCurvature(Texture2D NormalTex, SamplerState Samp, float2 UV)
 // Extended curvature with configurable radius (for different LOD scales)
 float EstimateCurvature(Texture2D NormalTex, SamplerState Samp, float2 UV, float Radius)
 {
-    float2 Offset = _HLP_PixelSize * Radius;
+    float2 Offset = PixelSize * Radius;
 
     float3 NC = NormalTex.SampleLevel(Samp, UV, 0).xyz * 2.0 - 1.0;
     float3 NL = NormalTex.SampleLevel(Samp, UV + float2(-Offset.x, 0), 0).xyz * 2.0 - 1.0;

@@ -1,0 +1,27 @@
+/////////////////////////////////////////////////////////
+//                                                     //
+//                    FILM WORKSHOP                    //
+//                   CREATED BY TREYM                  //
+//                                                     //
+/////////////////////////////////////////////////////////
+
+1) // ENB BINARIES
+Go to http://enbdev.com/download_mod_fallout4.htm
+-- and download the latest ENB binaries (you'll only need
+-- the dll files from the zip)
+
+2) // ENB INSTALLATION
+Place the d3d11.dll and d3dcompiler_46e.dll files into
+-- the root Fallout 4 directory
+
+3) // MAIN FILES
+Extract the contents of the Film Workshop zip file
+-- into the root Fallout 4 directory
+
+4) // QUALITY PRESET
+Extract the contents of your desired quality level
+-- preset into the root Fallout 4 directory
+
+5) // OPTIONAL FILES
+Extract the contents of any optional files from each
+-- folder within the '3 - Optional Files' folder

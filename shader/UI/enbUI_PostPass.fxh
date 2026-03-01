@@ -59,11 +59,11 @@ UI_SPECIAL_WHITESPACE(1)
 #endif //NOTFIRSTTIME
 
 UI_ELEMENT(_KCGS_TODIE_Header,					               TO_STRING(|------- TODIE -------------------------------------))
-float  SEPARATE_VAR(UICG_Brightness)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Brightness);							float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
-float  SEPARATE_VAR(UICG_Contrast)				<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Contrast);								float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
-float  SEPARATE_VAR(UICG_GammaCurve)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Gamma Curve);							float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
-float  SEPARATE_VAR(UICG_Saturation)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Saturation);							float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
-float  SEPARATE_VAR(UICG_Vibrance)				<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Vibrance);								float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
+float  SEPARATE_VAR(UICG_Brightness)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Brightness);							float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
+float  SEPARATE_VAR(UICG_Contrast)				<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Contrast);								float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
+float  SEPARATE_VAR(UICG_GammaCurve)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Gamma Curve);							float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
+float  SEPARATE_VAR(UICG_Saturation)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Saturation);							float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
+float  SEPARATE_VAR(UICG_Vibrance)				<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Vibrance);								float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
 float3 SEPARATE_VAR(UICG_Tint)					<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Tint);					string UIWidget="Color";	      > = {1.0, 1.0, 1.0};
 float  SEPARATE_VAR(UICG_BlackLevelIn)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Black Level In);     float UIStep=1.0; float UIMin=  0.0; float UIMax=511.0; > = {0.0};
 float  SEPARATE_VAR(UICG_WhiteLevelIn)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - White Level In);     float UIStep=1.0; float UIMin=  0.0; float UIMax=511.0; > = {255.0};
@@ -73,14 +73,14 @@ float3 SEPARATE_VAR(UICG_ChannelMixRed)			<string UIGroup = "CG.KiSuite"; string
 float3 SEPARATE_VAR(UICG_ChannelMixGreen)		<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Channel Mix Green);					string UIWidget="Color";		      > = {0.0, 1.0, 0.0};
 float3 SEPARATE_VAR(UICG_ChannelMixBlue)		<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Channel Mix Blue);					string UIWidget="Color";		      > = {0.0, 0.0, 1.0};
 int SEPARATE_VAR(_SWS1) < string UIName = SPECIAL_WHITESPACE_60; int UIMin = 0; int UIMax = 0; > = {0};
-float  SEPARATE_VAR(UICG_HighlSat)				<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Highlight Saturation);					float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HighlBright)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Highlight Brightness);					float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
+float  SEPARATE_VAR(UICG_HighlSat)				<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Highlight Saturation);					float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HighlBright)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Highlight Brightness);					float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
 float3 SEPARATE_VAR(UICG_HighlTint)				<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Highlight Tint);						string UIWidget="Color";		      > = {1.0, 1.0, 1.0};
-float  SEPARATE_VAR(UICG_MidtoSat)				<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Midtone Saturation);					float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
-float  SEPARATE_VAR(UICG_MidtoBright)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Midtone Brightness);					float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
+float  SEPARATE_VAR(UICG_MidtoSat)				<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Midtone Saturation);					float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
+float  SEPARATE_VAR(UICG_MidtoBright)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Midtone Brightness);					float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
 float3 SEPARATE_VAR(UICG_MidtoTint)				<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Midtone Tint);							string UIWidget="Color";		      > = {1.0, 1.0, 1.0};
-float  SEPARATE_VAR(UICG_ShadoSat)				<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Shadow Saturation);					float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
-float  SEPARATE_VAR(UICG_ShadoBright)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Shadow Brightness);					float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
+float  SEPARATE_VAR(UICG_ShadoSat)				<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Shadow Saturation);					float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
+float  SEPARATE_VAR(UICG_ShadoBright)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Shadow Brightness);					float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
 float3 SEPARATE_VAR(UICG_ShadoTint)				<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Shadow Tint);							string UIWidget="Color";		      > = {1.0, 1.0, 1.0};
 int SEPARATE_VAR(_SWS2) < string UIName = SPECIAL_WHITESPACE_61; int UIMin = 0; int UIMax = 0; > = {0};
 float  SEPARATE_VAR(UICG_HueShiftRed)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Hue Shift Red);						float UIMin=-10.0; float UIMax= 10.0; > = {0.0};
@@ -91,29 +91,29 @@ float  SEPARATE_VAR(UICG_HueShiftCyan)			<string UIGroup = "CG.KiSuite"; string 
 float  SEPARATE_VAR(UICG_HueShiftBlue)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Hue Shift Blue);						float UIMin=-10.0; float UIMax= 10.0; > = {0.0};
 float  SEPARATE_VAR(UICG_HueShiftMagenta)		<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Hue Shift Magenta);					float UIMin=-10.0; float UIMax= 10.0; > = {0.0};
 int SEPARATE_VAR(_SWS3) < string UIName = SPECIAL_WHITESPACE_62; int UIMin = 0; int UIMax = 0; > = {0};
-float  SEPARATE_VAR(UICG_HueSatRed)				<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Saturation Red);						float UIMin= -1.0; float UIMax=  2.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueSatOrange)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Saturation Orange);					float UIMin= -1.0; float UIMax=  2.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueSatYellow)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Saturation Yellow);					float UIMin= -1.0; float UIMax=  2.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueSatGreen)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Saturation Green);						float UIMin= -1.0; float UIMax=  2.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueSatCyan)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Saturation Cyan);						float UIMin= -1.0; float UIMax=  2.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueSatBlue)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Saturation Blue);						float UIMin= -1.0; float UIMax=  2.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueSatMagenta)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Saturation Magenta);					float UIMin= -1.0; float UIMax=  2.0; > = {1.0};
+float  SEPARATE_VAR(UICG_HueSatRed)				<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Saturation Red);						float UIMin= -1.0; float UIMax=  2.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueSatOrange)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Saturation Orange);					float UIMin= -1.0; float UIMax=  2.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueSatYellow)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Saturation Yellow);					float UIMin= -1.0; float UIMax=  2.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueSatGreen)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Saturation Green);						float UIMin= -1.0; float UIMax=  2.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueSatCyan)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Saturation Cyan);						float UIMin= -1.0; float UIMax=  2.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueSatBlue)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Saturation Blue);						float UIMin= -1.0; float UIMax=  2.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueSatMagenta)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Saturation Magenta);					float UIMin= -1.0; float UIMax=  2.0; > = {0.0};
 int SEPARATE_VAR(_SWS4) < string UIName = SPECIAL_WHITESPACE_63; int UIMin = 0; int UIMax = 0; > = {0};
-float  SEPARATE_VAR(UICG_HueBrightRed)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Brightness Red);						float UIMin= -1.0; float UIMax=  1.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueBrightOrange)		<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Brightness Orange);					float UIMin= -1.0; float UIMax=  1.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueBrightYellow)		<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Brightness Yellow);					float UIMin= -1.0; float UIMax=  1.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueBrightGreen)		<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Brightness Green);						float UIMin= -1.0; float UIMax=  1.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueBrightCyan)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Brightness Cyan);						float UIMin= -1.0; float UIMax=  1.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueBrightBlue)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Brightness Blue);						float UIMin= -1.0; float UIMax=  1.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueBrightMagenta)		<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Brightness Magenta);					float UIMin= -1.0; float UIMax=  1.0; > = {1.0};
+float  SEPARATE_VAR(UICG_HueBrightRed)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Brightness Red);						float UIMin= -1.0; float UIMax=  1.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueBrightOrange)		<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Brightness Orange);					float UIMin= -1.0; float UIMax=  1.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueBrightYellow)		<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Brightness Yellow);					float UIMin= -1.0; float UIMax=  1.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueBrightGreen)		<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Brightness Green);						float UIMin= -1.0; float UIMax=  1.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueBrightCyan)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Brightness Cyan);						float UIMin= -1.0; float UIMax=  1.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueBrightBlue)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Brightness Blue);						float UIMin= -1.0; float UIMax=  1.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueBrightMagenta)		<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Brightness Magenta);					float UIMin= -1.0; float UIMax=  1.0; > = {0.0};
 int SEPARATE_VAR(_SWS5) < string UIName = SPECIAL_WHITESPACE_64; int UIMin = 0; int UIMax = 0; > = {0};
-float  SEPARATE_VAR(UICG_HueConRed)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Contrast Red);						float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueConOrange)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Contrast Orange);					float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueConYellow)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Contrast Yellow);					float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueConGreen)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Contrast Green);						float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueConCyan)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Contrast Cyan);						float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueConBlue)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Contrast Blue);						float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
-float  SEPARATE_VAR(UICG_HueConMagenta)		<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Contrast Magenta);					float UIMin= -1.0; float UIMax=  3.0; > = {1.0};
+float  SEPARATE_VAR(UICG_HueConRed)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Contrast Red);						float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueConOrange)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Contrast Orange);					float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueConYellow)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Contrast Yellow);					float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueConGreen)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Contrast Green);						float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueConCyan)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Contrast Cyan);						float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueConBlue)			<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Contrast Blue);						float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
+float  SEPARATE_VAR(UICG_HueConMagenta)		<string UIGroup = "CG.KiSuite"; string UIName=TO_STRING(|- TODIE - Contrast Magenta);					float UIMin= -1.0; float UIMax=  3.0; > = {0.0};
 
 
 

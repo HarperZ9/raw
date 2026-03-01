@@ -1,0 +1,43 @@
+////////////////////////////////////////////////////
+//                                                //
+//         ::::::::       ::::::::::       :::    //
+//       :+:    :+:      :+:              :+:     //
+//      +:+             +:+              +:+      //
+//     +#+             :#::+::#         +#+       //
+//    +#+             +#+              +#+        //
+//   #+#    #+#      #+#              #+#         //
+//   ########       ###              ##########   //
+//                                                //
+//            CINEMATIC FILM LOOKS II             //
+//        CREATED BY TREYM FOR SKYRIM SE          //
+//                                                //
+////////////////////////////////////////////////////
+
+// ENB QUALITY /////////////////////////////////////
+
+#define SMAA_PRESET 1
+// For "CFL II - AA" TECHNIQUE
+// 1 = Low  |  2 = Medium  |  3 = High |  4 = Ultra
+
+#define ENABLE_FXAA 0
+// For "CFL II - AA" TECHNIQUE
+// 0 = Off | 1 = On
+
+// ADVANCED FEATURES ///////////////////////////////
+
+#define FANCY_MSGBOX 0
+// Activates a nice blur effect for CFL message boxes
+// Ignored if using CFL Performance Mode
+
+#define COLORBLIND_ASSIST 0
+// This shader shifts hues into ranges that colorblind
+// individuals can see.
+
+#define ACTIVATE_HSL 0
+// Advanced per-hue shifting for color grading
+
+#define USER_LUT 0
+// Custom LUT support
+// File located at "enbseries/Include/Textures/LUTs/CustomLut.png"
+// CFL is expecting LOG input, so you need to grab screenshots with
+// enbeffectpostpass disabled and grade the LOG (flat) image.

@@ -101,24 +101,68 @@ namespace ENBInterface
         if (!SetParameter)
             return;
 
+        static bool s_firstPush = true;
+        static std::size_t s_pushCount = 0;
+
         // Get pointer to raw bytes of AllData
         const auto* rawData = reinterpret_cast<const char*>(&a_data);
+
+        int totalSuccess = 0;
+        int totalFail = 0;
 
         // Iterate through all parameters and push to all target shaders
         for (std::size_t i = 0; i < SB::kParamCount; ++i) {
             const auto& entry = SB::kParamTable[i];
-            const void* paramData = rawData + entry.offset;
+            // Pointer to this parameter's float4 data (16 bytes)
+            void* paramData = const_cast<void*>(
+                static_cast<const void*>(rawData + entry.offset));
 
-            // Push to each target shader
+            // Push to each target shader — every SB param is a float4 (16 bytes)
             for (const auto* shader : SB::kTargetShaders) {
-                SetParameter(
+                int result = SetParameter(
                     shader,
-                    "",  // empty category
+                    "",             // empty category
                     entry.name,
-                    const_cast<void*>(paramData),  // ENB API takes non-const void*
-                    sizeof(SB::Float4)             // each parameter is a Float4 (16 bytes)
+                    paramData,
+                    16              // sizeof(float) * 4
                 );
+
+                if (s_firstPush) {
+                    if (result)
+                        ++totalSuccess;
+                    else
+                        ++totalFail;
+                }
             }
         }
+
+        if (s_firstPush) {
+            // Log the sentinel value to confirm data is populated
+            SKSE::log::info("SkyrimBridge: first push — SB_Render_Frame.x = {:.1f}",
+                a_data.render.FrameInfo.x);
+            SKSE::log::info("SkyrimBridge: first push — {} succeeded, {} failed out of {} total calls",
+                totalSuccess, totalFail,
+                SB::kParamCount * std::size(SB::kTargetShaders));
+
+            // Log per-shader breakdown on first push
+            if (totalFail > 0) {
+                for (const auto* shader : SB::kTargetShaders) {
+                    int shaderOk = 0, shaderFail = 0;
+                    for (std::size_t i = 0; i < SB::kParamCount; ++i) {
+                        const auto& entry = SB::kParamTable[i];
+                        void* pd = const_cast<void*>(
+                            static_cast<const void*>(rawData + entry.offset));
+
+                        int r = SetParameter(shader, "", entry.name, pd, 16);
+                        if (r) ++shaderOk; else ++shaderFail;
+                    }
+                    SKSE::log::info("  {} — {} ok, {} fail", shader, shaderOk, shaderFail);
+                }
+            }
+
+            s_firstPush = false;
+        }
+
+        ++s_pushCount;
     }
 }

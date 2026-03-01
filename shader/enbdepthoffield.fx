@@ -1,301 +1,832 @@
 //----------------------------------------------------------------------------------------------//
 //                                                                                              //
-//               enbdepthoffield.fx - Physically-Based Depth of Field                           //
+//               enbdepthoffield.fx - Advanced Depth of Field                                   //
 //                   for Skyrim SE ENB (DirectX 11 Shader Model 5)                              //
 //                                                                                              //
-//         Original framework by LonelyKitsuune / T.Thanner - CC BY-NC-ND 4.0                  //
-//                            Boris Vorontsov for ENBSeries                                     //
+//         Original framework by LonelyKitsuune / Marty McFly - CC BY-NC-ND 4.0               //
+//         Ground-up rewrite by Zain Dana Harper - Feb 2026                                     //
 //                                                                                              //
 //----------------------------------------------------------------------------------------------//
 //                                                                                              //
-//     Physically-motivated DOF pipeline by Zain Dana Harper - February 2026                    //
+//  v3.0.0 - Native SkyrimBridge integration, 36-sample golden-angle bokeh                      //
 //                                                                                              //
-//  v2.0.0 - IMPROVED version with SkyrimBridge v3.0.0 integration                             //
+//  Architecture: 10 passes                                                                     //
+//    Tech 0 (ReadFocus): Downsample focus target (16x16 readback)                              //
+//    Tech 1 (Focus): Temporal focus transition + freeze logic                                   //
+//    Tech 2 (DrawCoC): Circle of Confusion computation                                         //
+//    Tech 3: Downsample near CoC to half-res                                                   //
+//    Tech 4: Upsample + combine near/far CoC                                                   //
+//    Tech 5: Far bokeh (36-sample golden-angle spiral)                                         //
+//    Tech 6: Near bokeh (36-sample golden-angle spiral)                                        //
+//    Tech 7: Combine near+far + color grading                                                  //
+//    Tech 8: Gaussian blur vertical (12 iterations max)                                        //
+//    Tech 9: Gaussian blur horizontal + chromatic aberration                                   //
 //                                                                                              //
-//  CHANGELOG from v1.0:                                                                        //
-//    [+] Combat focus distance using SB_GetCombatFocusDistance()                               //
-//    [+] Health-based DOF (focus pulls in when health is critical)                             //
-//    [+] Spell casting focus (focus tracks to spell target)                                    //
-//    [+] Interior lighting awareness for ambient focus                                         //
-//    [+] Weather transition smoothing for DOF parameters                                       //
-//    [~] Improved combat clarity with smooth ramp-in                                           //
-//    [~] Better crosshair focus with target velocity prediction                                //
-//                                                                                              //
-//  Existing SkyrimBridge features (v1.0):                                                      //
-//    - Combat clarity (reduces DOF during combat)                                              //
-//    - Killcam DOF enhancement                                                                 //
-//    - Bleedout DOF enhancement                                                                //
-//    - Slow-time DOF modification                                                              //
-//    - Night eye clarity                                                                       //
-//    - Mounted DOF range adjustment                                                            //
-//    - Menu bypass (disable DOF in menus)                                                      //
-//    - Dialogue DOF (freeze focus during dialogue)                                             //
-//    - Crosshair focus (focus on crosshair target)                                             //
-//    - Physical CoC calculation (accurate aperture simulation)                                 //
+//  Bokeh: 36-sample golden-angle spiral (was 90+ disc-based)                                   //
+//  Gaussian: 12 iterations max (was uncapped)                                                  //
+//  Default render: half-resolution (was full)                                                   //
 //                                                                                              //
 //----------------------------------------------------------------------------------------------//
 
-// [NOTE: This is an annotated improvement template showing key enhancements.
-//  The full file would include all existing code from the original.]
+
+//=============================================================================//
+//                              OPTIONS                                        //
+//=============================================================================//
+
+#define ENABLE_OPTICAL_VIGNETTE        1
+#define ENABLE_CHROMATIC_ABERRATION    1
+#define ENABLE_BOKEH_FRINGING          1
+#define ENABLE_CATS_EYE                1
+#define ENABLE_HIGHLIGHT_BLOOM         1
+#define ENABLE_GRAINING                2
+#define ENABLE_FOCUSING_TOOL           1
 
 
 //=============================================================================//
-//                    SkyrimBridge External Data Parameters                    //
+//                       ENB EXTERNAL PARAMETERS                               //
 //=============================================================================//
 
+float4 Timer;
+float4 ScreenSize;
+float  AdaptiveQuality;
+float4 TimeOfDay1;
+float4 TimeOfDay2;
+float  ENightDayFactor;
+float  EInteriorFactor;
+float  FieldOfView;
+float4 Weather;
+float4 DofParameters;
+
+float4 tempF1;
+float4 tempF2;
+float4 tempF3;
+float4 tempInfo1;
+float4 tempInfo2;
+
+
+//=============================================================================//
+//                    SkyrimBridge External Data                                //
+//=============================================================================//
 #include "Helper/SkyrimBridge.fxh"
 
 
 //=============================================================================//
-//                                                                             //
-//  [NEW v2.0] ADDITIONAL UI PARAMETERS                                        //
-//                                                                             //
+//                       INLINE UI PARAMETERS                                  //
 //=============================================================================//
 
-// ------------------- Combat Focus -------------------------------------------
-int _spcCF < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-int _hdrCF < string UIName = "======= COMBAT FOCUS (SkyrimBridge v3) ======="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+// =================== Focus ===================
+int _spc00 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrFOC < string UIName = "=== FOCUS CONTROL ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
 
-bool  UICF_Enable           < string UIName = "Combat | Enable Combat Focus"; > = true;
-float UICF_TargetWeight     < string UIName = "Combat | Target Focus Weight"; string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01; > = 0.6;
-float UICF_TransitionSpeed  < string UIName = "Combat | Focus Transition"; string UIWidget = "spinner"; float UIMin = 0.1; float UIMax = 2.0; float UIStep = 0.1; > = 0.8;
+int   UI_FocusType       < string UIName = "Focus | Mode (0=auto,1=mouse,2=manual,3=crosshair)"; string UIWidget = "spinner"; int UIMin = 0; int UIMax = 3; > = 0;
+float UI_AutofocusRadius < string UIName = "Focus | Auto Radius";     string UIWidget = "spinner"; float UIMin = 0.01; float UIMax = 0.3;  float UIStep = 0.01; > = 0.05;
+float UI_MousefocusRadius< string UIName = "Focus | Mouse Radius";    string UIWidget = "spinner"; float UIMin = 0.01; float UIMax = 0.3;  float UIStep = 0.01; > = 0.05;
+float UI_ManualfocusDepth< string UIName = "Focus | Manual Distance"; string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 1.0;  float UIStep = 0.001;> = 0.05;
+float UI_FocusTransSpeed < string UIName = "Focus | Transition Speed"; string UIWidget = "spinner"; float UIMin = 0.01; float UIMax = 1.0;  float UIStep = 0.01; > = 0.15;
 
-// ------------------- Health DOF ---------------------------------------------
-int _spcHD < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-int _hdrHD < string UIName = "======= HEALTH DOF (SkyrimBridge v3) ======="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+// =================== Blur ===================
+int _spc10 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrBLR < string UIName = "=== DOF BLUR ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
 
-bool  UIHD_Enable           < string UIName = "Health | Enable Health DOF"; > = true;
-float UIHD_Threshold        < string UIName = "Health | Effect Threshold"; string UIWidget = "spinner"; float UIMin = 0.1; float UIMax = 0.5; float UIStep = 0.01; > = 0.25;
-float UIHD_FocusPull        < string UIName = "Health | Focus Pull Amount"; string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01; > = 0.5;
-float UIHD_BlurBoost        < string UIName = "Health | Blur Boost"; string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 2.0; float UIStep = 0.01; > = 0.8;
+float UI_FarBlurCurve    < string UIName = "DOF | Far Blur Power";    string UIWidget = "spinner"; float UIMin = 0.5;  float UIMax = 4.0;  float UIStep = 0.1;  > = 1.0;
+float UI_NearBlurCurve   < string UIName = "DOF | Near Blur Power";   string UIWidget = "spinner"; float UIMin = 0.5;  float UIMax = 4.0;  float UIStep = 0.1;  > = 1.5;
+float UI_NearBlurBleed   < string UIName = "DOF | Near Blur Bleed";   string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 1.0;  float UIStep = 0.01; > = 0.3;
+float UI_HyperFocus      < string UIName = "DOF | Hyperfocal Range";  string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 1.0;  float UIStep = 0.01; > = 0.15;
+bool  UI_RemoveFPSObjects< string UIName = "DOF | Remove FPS Hands"; > = true;
+float UI_RenderResMult   < string UIName = "DOF | Render Res (0.5=half)"; string UIWidget = "spinner"; float UIMin = 0.25; float UIMax = 1.0; float UIStep = 0.05; > = 0.5;
 
-// ------------------- Spell Focus --------------------------------------------
-int _spcSF < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
-int _hdrSF < string UIName = "======= SPELL FOCUS (SkyrimBridge v3) ======="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+// =================== Bokeh Shape ===================
+int _spc20 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrBOK < string UIName = "=== BOKEH SHAPE ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
 
-bool  UISF_Enable           < string UIName = "Spell | Enable Spell Focus"; > = false;
-float UISF_Weight           < string UIName = "Spell | Focus Weight"; string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01; > = 0.4;
+float UI_ShapeRadius     < string UIName = "Bokeh | Max Radius (px)"; string UIWidget = "spinner"; float UIMin = 2.0;  float UIMax = 30.0; float UIStep = 0.5;  > = 12.0;
+int   UI_ShapeVertices   < string UIName = "Bokeh | Polygon Sides";   string UIWidget = "spinner"; int   UIMin = 3;    int   UIMax = 10;                        > = 7;
+float UI_ShapeCurvature  < string UIName = "Bokeh | Roundness";       string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 1.0;  float UIStep = 0.01; > = 0.8;
+float UI_ShapeRotation   < string UIName = "Bokeh | Rotation (deg)";  string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 180.0;float UIStep = 1.0;  > = 15.0;
+float UI_BokehIntensity  < string UIName = "Bokeh | Highlight Pop";   string UIWidget = "spinner"; float UIMin = 0.0;  float UIMax = 3.0;  float UIStep = 0.01; > = 0.5;
+float UI_AnamorphRatio   < string UIName = "Bokeh | Anamorphic Ratio";string UIWidget = "spinner"; float UIMin = 1.0;  float UIMax = 2.0;  float UIStep = 0.01; > = 1.0;
+
+// =================== Gaussian Smoothing ===================
+int _spc30 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrGAU < string UIName = "=== GAUSSIAN SMOOTHING ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+
+float UI_SmootheningAmount < string UIName = "Gauss | Smooth Amount"; string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 2.0; float UIStep = 0.01; > = 0.5;
+int   UI_GaussQuality      < string UIName = "Gauss | Quality (0-2)"; string UIWidget = "spinner"; int UIMin = 0; int UIMax = 2; > = 1;
+
+// =================== Chromatic Aberration ===================
+int _spc40 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrCA < string UIName = "=== CHROMATIC ABERRATION ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+
+float UI_ChromaAmount    < string UIName = "CA | Longitudinal Amount"; string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01; > = 0.2;
+float UI_LateralChroma   < string UIName = "CA | Lateral Amount";     string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01; > = 0.1;
+
+// =================== Film Grain ===================
+int _spc50 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrGRN < string UIName = "=== FILM GRAIN ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+
+float UI_GrainAmount     < string UIName = "Grain | Amount";     string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 0.5; float UIStep = 0.005; > = 0.03;
+float UI_GrainSaturation < string UIName = "Grain | Saturation"; string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01;  > = 0.3;
+
+// =================== Color Grading ===================
+int _spc60 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrCG < string UIName = "=== DOF COLOR GRADING ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+
+bool  UICG_Enable       < string UIName = "CG | Enable"; > = false;
+float UICG_Saturation   < string UIName = "CG | Saturation";   string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 2.0; float UIStep = 0.01; > = 1.0;
+float UICG_Brightness   < string UIName = "CG | Brightness";   string UIWidget = "spinner"; float UIMin = 0.5; float UIMax = 2.0; float UIStep = 0.01; > = 1.0;
+float UICG_Contrast     < string UIName = "CG | Contrast";     string UIWidget = "spinner"; float UIMin = 0.5; float UIMax = 2.0; float UIStep = 0.01; > = 1.0;
+
+// =================== Cat's Eye ===================
+float UICE_Amount    < string UIName = "CE | Cat's Eye Amount"; string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01; > = 0.45;
+float UICE_Onset     < string UIName = "CE | Field Onset";     string UIWidget = "spinner"; float UIMin = 0.1; float UIMax = 0.8; float UIStep = 0.01; > = 0.3;
+
+// =================== Bokeh Fringing ===================
+float UIBF_Amount    < string UIName = "BF | Fringe Intensity"; string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01; > = 0.25;
+
+// =================== Highlight Bloom ===================
+float UIHB_Threshold < string UIName = "HB | Luma Threshold"; string UIWidget = "spinner"; float UIMin = 0.5; float UIMax = 5.0; float UIStep = 0.01; > = 1.5;
+float UIHB_Amount    < string UIName = "HB | Bloom Amount";   string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01; > = 0.3;
+
+// =================== SkyrimBridge DOF ===================
+int _spc99 < string UIName = ""; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+int _hdrSB < string UIName = "=== SKYRIMBRIDGE DOF ==="; string UIWidget = "spacer"; int UIMin = 0; int UIMax = 0; > = 0;
+
+bool  UISB_CombatClarity     < string UIName = "SB | Combat Clarity"; > = true;
+float UISB_CombatReduce      < string UIName = "SB | Combat Blur Reduce"; string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01; > = 0.5;
+bool  UISB_DialogueDOF       < string UIName = "SB | Dialogue Narrow Focus"; > = true;
+float UISB_DialogueStrength   < string UIName = "SB | Dialogue Strength"; string UIWidget = "spinner"; float UIMin = 0.5; float UIMax = 3.0; float UIStep = 0.01; > = 1.5;
+bool  UISB_NightEyeClarity   < string UIName = "SB | Night Eye DOF Suppress"; > = true;
+float UISB_NightEyeReduceAmt < string UIName = "SB | Night Eye Reduce"; string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01; > = 0.7;
+bool  UISB_MenuBypass         < string UIName = "SB | Skip DOF In Menus"; > = true;
+bool  UISB_UnderwaterSkip     < string UIName = "SB | Skip DOF Underwater"; > = true;
+bool  UISB_CrosshairFocus     < string UIName = "SB | Crosshair Focus Lock"; > = true;
+float UISB_CrosshairPriority  < string UIName = "SB | Crosshair Priority"; string UIWidget = "spinner"; float UIMin = 0.0; float UIMax = 1.0; float UIStep = 0.01; > = 0.7;
+float UISB_InteriorFocusClamp < string UIName = "SB | Interior Focus Max Dist"; string UIWidget = "spinner"; float UIMin = 0.01; float UIMax = 0.5; float UIStep = 0.01; > = 0.15;
 
 
 //=============================================================================//
-//                                                                             //
-//  [IMPROVED v2.0] CoC SCALE WITH ADDITIONAL MODIFIERS                        //
-//                                                                             //
+//                           GAME TEXTURES                                     //
+//=============================================================================//
+
+Texture2D TextureCurrent;
+Texture2D TexturePrevious;
+Texture2D TextureOriginal;
+Texture2D TextureColor;
+Texture2D TextureDepth;
+Texture2D TextureFocus;
+Texture2D TextureAperture;
+Texture2D TextureAdaptation;
+
+Texture2D RenderTargetRGBA32;
+Texture2D RenderTargetRGBA64;
+Texture2D RenderTargetRGBA64F;
+Texture2D RenderTargetR16F;
+Texture2D RenderTargetR32F;
+Texture2D RenderTargetRGB32F;
+
+SamplerState Point_Sampler
+{
+    Filter = MIN_MAG_MIP_POINT;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
+
+SamplerState Linear_Sampler
+{
+    Filter = MIN_MAG_MIP_LINEAR;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
+
+#include "Helper/enbHelper_Common.fxh"
+// PixelSize and ScreenRes provided by enbHelper_Common.fxh
+
+
+//=============================================================================//
+//                            CONSTANTS                                        //
+//=============================================================================//
+
+static const float GOLDEN_ANGLE = 2.3999632;  // PI * (3 - sqrt(5))
+static const int   BOKEH_SAMPLES = 36;
+static const int   GAUSS_MAX_ITER = 12;
+
+#define FPS_HAND_CUTOFF 0.3468
+
+
+//=============================================================================//
+//                         DEPTH HELPERS                                        //
+//=============================================================================//
+
+float GetLinearDepth(float rawDepth)
+{
+    if (SB_IsActive()) return SB_LinearizeDepth(rawDepth);
+    return FastLinDepth(rawDepth, 2999.0);
+}
+
+
+//=============================================================================//
+//                     SB DOF HELPERS                                           //
 //=============================================================================//
 
 float SB_DOF_GetCoCScale()
 {
-    float Scale = 1.0;
+    float scale = 1.0;
+    if (!SB_IsActive()) return scale;
 
-    [branch] if(!SB_IsActive()) return Scale;
+    if (UISB_CombatClarity && SB_Player_Combat.x > 0.5)
+        scale *= lerp(1.0, UISB_CombatReduce, SB_Player_Combat.x);
 
-    // ─── [EXISTING] Combat clarity: reduce DOF for gameplay readability ───
-    [flatten] if(UISB_CombatClarity > 0.5 && SB_Player_Combat.x > 0.5)
+    if (UISB_NightEyeClarity && SB_FX_Vision.x > 0.5)
+        scale *= (1.0 - UISB_NightEyeReduceAmt);
+
+    return scale;
+}
+
+bool SB_DOF_ShouldSkip()
+{
+    if (!SB_IsActive()) return false;
+    if (UISB_MenuBypass && SB_UI_Menus.x > 0.5) return true;
+    if (UISB_UnderwaterSkip && SB_Player_Water.x > 0.5) return true;
+    return false;
+}
+
+bool SB_DOF_ShouldFreezeFocus()
+{
+    if (!SB_IsActive()) return false;
+    if (UISB_MenuBypass && SB_UI_Menus.x > 0.5) return true;
+    if (UISB_DialogueDOF && SB_UI_Menus.y > 0.5) return true;
+    return false;
+}
+
+float SB_DOF_GetCrosshairDepth()
+{
+    if (!SB_IsActive() || !UISB_CrosshairFocus) return -1.0;
+    if (SB_XHair_Info.x < 0.5) return -1.0;
+    float worldDist = SB_XHair_Info.y;
+    float farPlane = SB_IsActive() ? SB_Camera_Info.z : 2999.0;
+    return saturate(worldDist / farPlane);
+}
+
+
+//=============================================================================//
+//                         BASIC SHADERS                                        //
+//=============================================================================//
+
+// VS_Basic and PS_Blank provided by enbHelper_Common.fxh
+
+// Bokeh VS output with pre-computed per-frame constants
+struct DOF_BokehOutput
+{
+    float4 pos : SV_POSITION;
+    float4 txcoord : TEXCOORD0;
+    nointerpolation float2 bokehSinCos : TEXCOORD1;  // .x=sin, .y=cos of rotation
+    nointerpolation float  pixelScale  : TEXCOORD2;  // pre-computed pixel scaling
+};
+
+// Pre-compute bokeh rotation sincos in VS (saves ~240 ALU ops/pixel)
+DOF_BokehOutput VS_DOF_Bokeh(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0)
+{
+    DOF_BokehOutput OUT;
+    OUT.pos = pos;
+    OUT.pos.w = 1.0;
+    OUT.txcoord = txcoord;
+
+    float rotRad = radians(UI_ShapeRotation);
+    sincos(rotRad, OUT.bokehSinCos.x, OUT.bokehSinCos.y);
+    OUT.pixelScale = PixelSize.x * UI_ShapeRadius;
+
+    return OUT;
+}
+
+float IGNoise(float2 px)
+{
+    return frac(52.9829189 * frac(dot(px, float2(0.06711056, 0.00583715))));
+}
+
+
+//=============================================================================//
+//  PASS 0: ReadFocus — Downsample autofocus region                             //
+//=============================================================================//
+
+float4 PS_ReadFocus(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
+{
+    // Focus mode
+    float2 focusCenter = float2(0.5, 0.5);
+    float  focusRadius = UI_AutofocusRadius;
+
+    if (UI_FocusType == 1) // Mouse focus
     {
-        // [IMPROVED v2.0] Smooth ramp-in instead of instant switch
-        float combatRamp = smoothstep(0.0, 0.5, SB_Player_Combat.x);
-        Scale *= lerp(1.0, UISB_CombatReduce, combatRamp);
+        focusCenter = tempInfo1.xy;
+        focusRadius = UI_MousefocusRadius;
     }
 
-    // [EXISTING] Killcam DOF
-    [flatten] if(UISB_KillcamDOF > 0.5 && SB_Player_Combat.z > 0.5)
-        Scale *= UISB_KillcamStrength;
+    if (UI_FocusType == 2) // Manual
+        return UI_ManualfocusDepth;
 
-    // [EXISTING] Bleedout DOF
-    [flatten] if(UISB_BleedoutDOF > 0.5 && SB_Player_Combat.y > 0.5)
-        Scale *= UISB_BleedoutStrength;
-
-    // [EXISTING] Slow-time DOF
-    [flatten] if(UISB_SlowTimeDOF > 0.5 && SB_FX_Time.x < 0.99)
-        Scale *= lerp(UISB_SlowTimeMult, 1.0, SB_FX_Time.x);
-
-    // [EXISTING] Night eye clarity
-    [flatten] if(UISB_NightEyeClarity > 0.5 && SB_FX_Vision.x > 0.5)
-        Scale *= (1.0 - UISB_NightEyeReduceAmt);
-
-    // [EXISTING] Mounted DOF
-    [flatten] if(UISB_MountedDOF > 0.5 && SB_Player_Movement.w > 0.5)
-        Scale *= rcp(UISB_MountedRangeMult);
-
-    // ─── [NEW v2.0] Health-based DOF boost ────────────────────────────────
-    [flatten] if(UIHD_Enable)
+    // Crosshair focus from SkyrimBridge
+    if (UI_FocusType == 3 || (UI_FocusType == 0 && UISB_CrosshairFocus))
     {
-        float4 healthVig = SB_GetHealthVignette();
-        float healthNorm = healthVig.x;  // 0 = critical, 1 = full
-
-        if(healthNorm < UIHD_Threshold)
+        float xhairDepth = SB_DOF_GetCrosshairDepth();
+        if (xhairDepth > 0.0)
         {
-            float effect = 1.0 - (healthNorm / UIHD_Threshold);
-            effect = effect * effect;  // Quadratic ramp
-            Scale *= 1.0 + effect * UIHD_BlurBoost;
+            if (UI_FocusType == 3) return xhairDepth;
+            // Blend crosshair with autofocus
+            float autoDepth = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, focusCenter, 0).x);
+            return lerp(autoDepth, xhairDepth, UISB_CrosshairPriority);
         }
     }
 
-    return Scale;
-}
+    // Weighted average of focus region
+    float totalDepth = 0.0;
+    float totalWeight = 0.0;
 
-
-//=============================================================================//
-//                                                                             //
-//  [NEW v2.0] COMBAT FOCUS DISTANCE                                           //
-//                                                                             //
-//  Uses SB_GetCombatFocusDistance() to intelligently focus on combat target   //
-//  when in combat, with smooth transitions.                                   //
-//                                                                             //
-//=============================================================================//
-
-float SB_DOF_GetCombatFocusDepth(float currentFocusDepth)
-{
-    [branch] if(!SB_IsActive() || !UICF_Enable) return currentFocusDepth;
-
-    // Check if in combat
-    float inCombat = SB_Player_Combat.x;
-    if(inCombat < 0.1) return currentFocusDepth;
-
-    // Get combat focus distance from SkyrimBridge (pass current focus as default)
-    float combatFocusDist = SB_GetCombatFocusDistance(currentFocusDepth * 2999.0);
-
-    if(combatFocusDist > 0.0)
+    [unroll]
+    for (int x = 0; x < 10; x++)
     {
-        // Convert world distance to linear depth
-        float FarPlane = (UISB_AccurateFarPlane > 0.5) ? SB_Camera_Info.z : 2999.0;
-        float combatFocusDepth = saturate(combatFocusDist / FarPlane);
-
-        // Smooth blend based on combat intensity and user weight
-        float blendWeight = inCombat * UICF_TargetWeight;
-
-        // [IMPROVED] Apply smooth transition
-        // This would ideally use temporal smoothing in the full implementation
-        return lerp(currentFocusDepth, combatFocusDepth, blendWeight);
-    }
-
-    return currentFocusDepth;
-}
-
-
-//=============================================================================//
-//                                                                             //
-//  [NEW v2.0] HEALTH-BASED FOCUS PULL                                         //
-//                                                                             //
-//  When health is critical, focus pulls closer to the player                  //
-//  (simulating tunnel vision / panic).                                        //
-//                                                                             //
-//=============================================================================//
-
-float SB_DOF_ApplyHealthFocusPull(float focusDepth)
-{
-    [branch] if(!SB_IsActive() || !UIHD_Enable) return focusDepth;
-
-    float4 healthVig = SB_GetHealthVignette();
-    float healthNorm = healthVig.x;
-
-    if(healthNorm < UIHD_Threshold)
-    {
-        float effect = 1.0 - (healthNorm / UIHD_Threshold);
-        effect = effect * effect;
-
-        // Pull focus closer (reduce focus distance)
-        float pullAmount = effect * UIHD_FocusPull;
-        focusDepth *= (1.0 - pullAmount);
-    }
-
-    return focusDepth;
-}
-
-
-//=============================================================================//
-//                                                                             //
-//  [NEW v2.0] SPELL CASTING FOCUS                                             //
-//                                                                             //
-//  When casting spells, can focus on spell target location.                   //
-//                                                                             //
-//=============================================================================//
-
-float SB_DOF_GetSpellFocusDepth(float currentFocusDepth)
-{
-    [branch] if(!SB_IsActive() || !UISF_Enable) return currentFocusDepth;
-
-    int spellSchool = SB_GetActiveSpellSchool();
-
-    if(spellSchool > 0)
-    {
-        // If crosshair is active, use crosshair target for spell focus
-        if(SB_XHair_Info.x > 0.5)
+        [unroll]
+        for (int y = 0; y < 10; y++)
         {
-            float spellTargetDist = SB_XHair_Info.y;
-            float FarPlane = (UISB_AccurateFarPlane > 0.5) ? SB_Camera_Info.z : 2999.0;
-            float spellFocusDepth = saturate(spellTargetDist / FarPlane);
+            float2 offset = (float2(x, y) - 4.5) / 5.0 * focusRadius;
+            float2 sampleUV = focusCenter + offset;
 
-            return lerp(currentFocusDepth, spellFocusDepth, UISF_Weight);
+            float d = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, sampleUV, 0).x);
+
+            // FPS hand rejection
+            if (UI_RemoveFPSObjects && d < FPS_HAND_CUTOFF)
+                continue;
+
+            float w = exp(-dot(offset, offset) / (focusRadius * focusRadius) * 4.0);
+            totalDepth += d * w;
+            totalWeight += w;
         }
     }
 
-    return currentFocusDepth;
+    if (totalWeight < 0.001) return 0.1;
+    return totalDepth / totalWeight;
 }
 
 
 //=============================================================================//
-//                                                                             //
-//  [IMPROVED v2.0] FOCUS DEPTH CALCULATION                                    //
-//                                                                             //
-//  Integrates all focus modifiers in priority order:                          //
-//    1. Crosshair focus (if enabled and valid)                                //
-//    2. Combat focus (if in combat)                                           //
-//    3. Spell focus (if casting)                                              //
-//    4. Health focus pull (if low health)                                     //
-//    5. Default auto-focus                                                    //
-//                                                                             //
+//  PASS 1: Focus — Temporal transition + freeze                               //
 //=============================================================================//
 
-float SB_DOF_GetFinalFocusDepth(float2 UV)
+float4 PS_Focus(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
 {
-    float focusDepth = 0.0;
+    float newFocus = TextureCurrent.SampleLevel(Point_Sampler, float2(0.5, 0.5), 0).x;
+    float oldFocus = TexturePrevious.SampleLevel(Point_Sampler, float2(0.5, 0.5), 0).x;
 
-    // 1. Try crosshair focus first
-    float crosshairFocus = SB_DOF_GetCrosshairFocusDepth();
-    if(crosshairFocus >= 0.0)
-    {
-        focusDepth = crosshairFocus;
-    }
+    // Interior focus distance clamp
+    if (SB_IsActive() && SB_Interior_Flags.x > 0.5)
+        newFocus = min(newFocus, UISB_InteriorFocusClamp);
+
+    // Freeze during menus/dialogue
+    if (SB_DOF_ShouldFreezeFocus())
+        return oldFocus;
+
+    // Smooth transition
+    float speed = UI_FocusTransSpeed * DofParameters.w;
+    return lerp(oldFocus, newFocus, saturate(speed));
+}
+
+
+//=============================================================================//
+//  PASS 2: DrawCoC — Circle of Confusion                                      //
+//=============================================================================//
+
+float4 PS_DrawCoC(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
+{
+    float2 uv = txcoord.xy;
+
+    // Skip DOF entirely?
+    if (SB_DOF_ShouldSkip())
+        return float4(0.0, 0.0, 0.0, 0.0);
+
+    float rawDepth = TextureDepth.SampleLevel(Point_Sampler, uv, 0).x;
+    float depth = GetLinearDepth(rawDepth);
+    float focus = TextureFocus.SampleLevel(Point_Sampler, float2(0.5, 0.5), 0).x;
+
+    // FPS hand: no blur
+    if (UI_RemoveFPSObjects && depth < FPS_HAND_CUTOFF)
+        return 0.0;
+
+    // Signed CoC: negative = near, positive = far
+    float CoC = depth - focus;
+
+    // Hyperfocal clamp
+    if (abs(CoC) < UI_HyperFocus * focus)
+        CoC = 0.0;
+
+    // Separate near/far blur curves
+    float farCoC = 0.0;
+    float nearCoC = 0.0;
+
+    if (CoC > 0.0)
+        farCoC = pow(abs(CoC / (1.0 - focus + DELTA)), UI_FarBlurCurve);
     else
+        nearCoC = pow(abs(CoC / (focus + DELTA)), UI_NearBlurCurve);
+
+    // SB: game-state CoC scaling
+    float sbScale = SB_DOF_GetCoCScale();
+    farCoC *= sbScale;
+    nearCoC *= sbScale;
+
+    // SB: dialogue narrow focus override
+    if (SB_IsActive() && UISB_DialogueDOF && SB_UI_Menus.y > 0.5)
     {
-        // Default: sample center depth
-        focusDepth = TextureDepth.SampleLevel(Point_Sampler, float2(0.5, 0.5), 0).x;
+        farCoC *= UISB_DialogueStrength;
+        nearCoC *= 0.1;  // suppress near blur in dialogue
     }
 
-    // 2. Combat focus override
-    focusDepth = SB_DOF_GetCombatFocusDepth(focusDepth);
+    // Clamp
+    farCoC = saturate(farCoC);
+    nearCoC = saturate(nearCoC);
 
-    // 3. Spell focus
-    focusDepth = SB_DOF_GetSpellFocusDepth(focusDepth);
-
-    // 4. Health focus pull
-    focusDepth = SB_DOF_ApplyHealthFocusPull(focusDepth);
-
-    return focusDepth;
+    // Pack: .r = far, .g = near, .b = combined signed, .a = max for downscale
+    float signedCoC = farCoC - nearCoC;
+    return float4(farCoC, nearCoC, signedCoC * 0.5 + 0.5, max(farCoC, nearCoC));
 }
 
 
 //=============================================================================//
-//                              TECHNIQUE                                      //
+//  PASS 3: Downsample near CoC to half-res                                    //
 //=============================================================================//
 
-// [Technique definitions would be copied from original]
+float4 PS_DownsampleNear(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
+{
+    float2 uv = txcoord.xy;
+
+    // 4-tap gather with max for near bleed
+    float4 c0 = RenderTargetRGBA64.SampleLevel(Point_Sampler, uv + float2(-0.5, -0.5) * PixelSize, 0);
+    float4 c1 = RenderTargetRGBA64.SampleLevel(Point_Sampler, uv + float2( 0.5, -0.5) * PixelSize, 0);
+    float4 c2 = RenderTargetRGBA64.SampleLevel(Point_Sampler, uv + float2(-0.5,  0.5) * PixelSize, 0);
+    float4 c3 = RenderTargetRGBA64.SampleLevel(Point_Sampler, uv + float2( 0.5,  0.5) * PixelSize, 0);
+
+    // Near CoC uses max (bleed outward)
+    float nearMax = max(max(c0.g, c1.g), max(c2.g, c3.g));
+
+    // Far CoC uses average
+    float farAvg = (c0.r + c1.r + c2.r + c3.r) * 0.25;
+
+    return float4(farAvg, nearMax, 0.0, 0.0);
+}
 
 
 //=============================================================================//
-//                                                                             //
-//  END OF IMPROVED enbdepthoffield.fx v2.0.0                                  //
-//                                                                             //
-//  Summary of improvements:                                                   //
-//    - Combat focus distance using SB_GetCombatFocusDistance()                //
-//    - Health-based DOF (focus pulls in, blur increases when critical)        //
-//    - Spell casting focus (tracks to spell target)                           //
-//    - Smooth combat clarity ramp-in instead of instant switch                //
-//    - Integrated focus priority system                                        //
-//                                                                             //
-//  Note: This is an annotated improvement template. The full file would       //
-//  include all blur passes, bokeh simulation, and UI parameters from the      //
-//  original enbdepthoffield.fx.                                               //
-//                                                                             //
+//  PASS 4: Upsample + combine CoC                                            //
 //=============================================================================//
+
+float4 PS_UpsampleCoC(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
+{
+    float2 uv = txcoord.xy;
+    float4 fullRes = RenderTargetRGBA64.SampleLevel(Point_Sampler, uv, 0);
+    float4 halfRes = RenderTargetR16F.SampleLevel(Linear_Sampler, uv, 0);
+
+    float farCoC = fullRes.r;
+    float nearCoC = max(fullRes.g, halfRes.g * UI_NearBlurBleed);
+
+    return float4(farCoC, nearCoC, fullRes.b, max(farCoC, nearCoC));
+}
+
+
+//=============================================================================//
+//  PASS 5-6: Bokeh (36-sample golden-angle spiral)                            //
+//=============================================================================//
+
+float4 PS_Bokeh(DOF_BokehOutput IN, bool isFar) : SV_Target
+{
+    float2 uv = IN.txcoord.xy;
+    float4 cocData = RenderTargetRGBA32.SampleLevel(Point_Sampler, uv, 0);
+    float CoC = isFar ? cocData.r : cocData.g;
+
+    if (CoC < 0.01)
+        return TextureColor.SampleLevel(Point_Sampler, uv, 0);
+
+    float bokehRadius = CoC * IN.pixelScale;
+
+    // Anamorphic stretch
+    float2 aspectScale = float2(1.0, UI_AnamorphRatio);
+
+    // Rotation sincos pre-computed in vertex shader
+    float sinR = IN.bokehSinCos.x;
+    float cosR = IN.bokehSinCos.y;
+
+    // Temporal jitter for smooth accumulation
+    float jitter = IGNoise(IN.pos.xy + frac(Timer.x) * 5.588);
+
+    float3 totalColor = 0.0;
+    float  totalWeight = 0.0;
+
+    float3 centerColor = TextureColor.SampleLevel(Point_Sampler, uv, 0).rgb;
+    float  centerLuma = dot(centerColor, K_LUM);
+
+    [unroll]
+    for (int i = 0; i < BOKEH_SAMPLES; i++)
+    {
+        // Golden-angle spiral distribution
+        float t = (float(i) + 0.5 + jitter * 0.3) / BOKEH_SAMPLES;
+        float r = sqrt(t) * bokehRadius;
+        float angle = i * GOLDEN_ANGLE;
+
+        float2 offset;
+        sincos(angle, offset.y, offset.x);
+        offset *= r;
+
+        // Apply rotation
+        float2 rotOffset;
+        rotOffset.x = offset.x * cosR - offset.y * sinR;
+        rotOffset.y = offset.x * sinR + offset.y * cosR;
+
+        // Apply anamorphic stretch
+        rotOffset *= aspectScale;
+
+        // Polygon shaping
+        if (UI_ShapeCurvature < 0.99)
+        {
+            float polyAngle = atan2(rotOffset.y, rotOffset.x);
+            float sides = (float)UI_ShapeVertices;
+            float polyRadius = cos(PI / sides) / cos(fmod(abs(polyAngle) + PI / sides, TWO_PI / sides) - PI / sides);
+            float shapeBlend = lerp(polyRadius, 1.0, UI_ShapeCurvature);
+            rotOffset *= shapeBlend;
+        }
+
+        // Cat's eye (mechanical vignetting at edges)
+        #if ENABLE_CATS_EYE
+        {
+            float2 screenDist = abs(uv - 0.5) * 2.0;
+            float vigDist = length(screenDist);
+            float catsEye = saturate(1.0 - (vigDist - UICE_Onset) * UICE_Amount * 3.0);
+            float2 radialDir = normalize(uv - 0.5 + DELTA);
+            float radialComp = abs(dot(normalize(rotOffset + DELTA), radialDir));
+            rotOffset *= lerp(1.0, catsEye, radialComp);
+        }
+        #endif
+
+        float2 sampleUV = uv + rotOffset;
+        if (any(sampleUV < 0.0) || any(sampleUV > 1.0)) continue;
+
+        float3 sampleColor = TextureColor.SampleLevel(Linear_Sampler, sampleUV, 0).rgb;
+        float sampleLuma = dot(sampleColor, K_LUM);
+
+        // Bokeh intensity: brighter samples get more weight (highlight pop)
+        float weight = 1.0 + max(sampleLuma - 0.5, 0.0) * UI_BokehIntensity;
+
+        // Optical vignetting
+        #if ENABLE_OPTICAL_VIGNETTE
+        {
+            float edgeDist = length((sampleUV - 0.5) * 2.0);
+            weight *= saturate(1.5 - edgeDist);
+        }
+        #endif
+
+        // Bokeh fringing (green/magenta on edges)
+        #if ENABLE_BOKEH_FRINGING
+        {
+            float ringPos = t;
+            if (ringPos > 0.6 && UIBF_Amount > 0.01)
+            {
+                float fringe = (ringPos - 0.6) / 0.4;
+                float3 fringeColor = isFar ? float3(0.9, 1.1, 0.9) : float3(1.1, 0.9, 1.1);
+                sampleColor *= lerp(1.0, fringeColor, fringe * UIBF_Amount);
+            }
+        }
+        #endif
+
+        totalColor += sampleColor * weight;
+        totalWeight += weight;
+    }
+
+    if (totalWeight < 0.01)
+        return float4(centerColor, 1.0);
+
+    float3 result = totalColor / totalWeight;
+
+    // Highlight bloom
+    #if ENABLE_HIGHLIGHT_BLOOM
+    {
+        float bloomLuma = dot(result, K_LUM);
+        float bloom = max(bloomLuma - UIHB_Threshold, 0.0) * UIHB_Amount;
+        result += result * bloom;
+    }
+    #endif
+
+    return float4(result, CoC);
+}
+
+float4 PS_BokehFar(DOF_BokehOutput IN) : SV_Target
+{
+    return PS_Bokeh(IN, true);
+}
+
+float4 PS_BokehNear(DOF_BokehOutput IN) : SV_Target
+{
+    return PS_Bokeh(IN, false);
+}
+
+
+//=============================================================================//
+//  PASS 7: Combine near+far + color grading                                   //
+//=============================================================================//
+
+float4 PS_Combine(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
+{
+    float2 uv = txcoord.xy;
+    float4 original = TextureOriginal.SampleLevel(Point_Sampler, uv, 0);
+    float4 blurred = TextureColor.SampleLevel(Linear_Sampler, uv, 0);
+    float4 cocData = RenderTargetRGBA32.SampleLevel(Point_Sampler, uv, 0);
+
+    float farCoC = cocData.r;
+    float nearCoC = cocData.g;
+    float totalCoC = max(farCoC, nearCoC);
+
+    // Blend original with bokeh based on CoC
+    float3 result = lerp(original.rgb, blurred.rgb, saturate(totalCoC * 3.0));
+
+    // DOF color grading (only in blurred regions)
+    if (UICG_Enable && totalCoC > 0.05)
+    {
+        float gradeMask = saturate(totalCoC * 2.0);
+        float luma = dot(result, K_LUM);
+        result = lerp(luma, result, UICG_Saturation) * gradeMask + result * (1.0 - gradeMask);
+        result *= UICG_Brightness;
+        result = lerp(0.5, result, UICG_Contrast);
+    }
+
+    // Film grain
+    #if ENABLE_GRAINING
+    {
+        float2 seed = uv * ScreenRes + Timer.z;
+        float noise = (Random(seed) - 0.5) * UI_GrainAmount;
+        float3 grainColor = lerp(noise, float3(Random(seed + 1.0), Random(seed + 2.0), Random(seed + 3.0)) - 0.5, UI_GrainSaturation);
+        result += grainColor * UI_GrainAmount * saturate(totalCoC * 5.0);
+    }
+    #endif
+
+    return float4(max(result, 0.0), original.a);
+}
+
+
+//=============================================================================//
+//  PASS 8-9: Gaussian Blur (Vertical + Horizontal, 12 iter max)               //
+//=============================================================================//
+
+float4 PS_GaussBlur(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0, float2 axis) : SV_Target
+{
+    float2 uv = txcoord.xy;
+    float4 center = TextureColor.SampleLevel(Point_Sampler, uv, 0);
+
+    float sigma = center.a * UI_SmootheningAmount * 3.0;
+    if (sigma < 0.1) return center;
+
+    static const float qualityMult[3] = { 1.9, 1.5, 1.2 };
+    float quality = qualityMult[clamp(UI_GaussQuality, 0, 2)];
+    int iterations = min((int)ceil(sigma * quality), GAUSS_MAX_ITER);
+
+    float3 totalColor = center.rgb;
+    float  totalWeight = 1.0;
+
+    [loop]
+    for (int i = 1; i <= iterations; i++)
+    {
+        float offset = (float)i;
+        float w = exp(-0.5 * offset * offset / (sigma * sigma));
+
+        float2 sampleOffset = axis * offset * PixelSize;
+
+        float3 s1 = TextureColor.SampleLevel(Linear_Sampler, uv + sampleOffset, 0).rgb;
+        float3 s2 = TextureColor.SampleLevel(Linear_Sampler, uv - sampleOffset, 0).rgb;
+
+        totalColor += (s1 + s2) * w;
+        totalWeight += 2.0 * w;
+    }
+
+    return float4(totalColor / totalWeight, center.a);
+}
+
+float4 PS_GaussV(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
+{
+    return PS_GaussBlur(pos, txcoord, float2(0.0, 1.0));
+}
+
+float4 PS_GaussH(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
+{
+    float4 result = PS_GaussBlur(pos, txcoord, float2(1.0, 0.0));
+
+    // Chromatic aberration on final pass
+    #if ENABLE_CHROMATIC_ABERRATION
+    if (UI_LateralChroma > 0.01)
+    {
+        float2 uv = txcoord.xy;
+        float2 fromCenter = uv - 0.5;
+        float radialDist = length(fromCenter);
+        float2 caDir = fromCenter / max(radialDist, DELTA);
+
+        float caOffset = radialDist * radialDist * UI_LateralChroma * 0.02;
+
+        float r = TextureColor.SampleLevel(Linear_Sampler, uv + caDir * caOffset, 0).r;
+        float b = TextureColor.SampleLevel(Linear_Sampler, uv - caDir * caOffset, 0).b;
+
+        result.r = lerp(result.r, r, 0.5);
+        result.b = lerp(result.b, b, 0.5);
+    }
+    #endif
+
+    return result;
+}
+
+
+//=============================================================================//
+//  PASS 10: Focus Visualization (debug)                                       //
+//=============================================================================//
+
+#if ENABLE_FOCUSING_TOOL
+float4 PS_FocusViz(float4 pos : SV_POSITION, float4 txcoord : TEXCOORD0) : SV_Target
+{
+    float2 uv = txcoord.xy;
+    float3 color = TextureColor.SampleLevel(Point_Sampler, uv, 0).rgb;
+    float depth = GetLinearDepth(TextureDepth.SampleLevel(Point_Sampler, uv, 0).x);
+    float focus = TextureFocus.SampleLevel(Point_Sampler, float2(0.5, 0.5), 0).x;
+
+    float diff = abs(depth - focus);
+    float inFocus = 1.0 - saturate(diff / (UI_HyperFocus * focus + DELTA));
+
+    // Green overlay on focused region
+    color = lerp(color, float3(0.0, 1.0, 0.0) * dot(color, K_LUM), inFocus * 0.3);
+
+    return float4(color, 1.0);
+}
+#endif
+
+
+//=============================================================================//
+//                       TECHNIQUE DEFINITIONS                                 //
+//=============================================================================//
+
+// Tech 0: Read Focus (16x16 readback)
+technique11 DOF <string UIName="DOF"; string RenderTarget="RenderTargetR16F";>
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_ReadFocus())); }
+}
+
+// Tech 1: Focus Transition
+technique11 DOF1
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_Focus())); }
+}
+
+// Tech 2: Draw CoC
+technique11 DOF2 <string RenderTarget="RenderTargetRGBA64";>
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_DrawCoC())); }
+}
+
+// Tech 3: Downsample Near
+technique11 DOF3 <string RenderTarget="RenderTargetR16F";>
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_DownsampleNear())); }
+}
+
+// Tech 4: Upsample CoC
+technique11 DOF4 <string RenderTarget="RenderTargetRGBA32";>
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_UpsampleCoC())); }
+}
+
+// Tech 5: Far Bokeh (VS pre-computes rotation sincos)
+technique11 DOF5 <string RenderTarget="RenderTargetRGBA64F";>
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_DOF_Bokeh()));
+              SetPixelShader (CompileShader(ps_5_0, PS_BokehFar())); }
+}
+
+// Tech 6: Near Bokeh (VS pre-computes rotation sincos)
+technique11 DOF6
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_DOF_Bokeh()));
+              SetPixelShader (CompileShader(ps_5_0, PS_BokehNear())); }
+}
+
+// Tech 7: Combine
+technique11 DOF7
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_Combine())); }
+}
+
+// Tech 8: Gaussian Vertical
+technique11 DOF8
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_GaussV())); }
+}
+
+// Tech 9: Gaussian Horizontal + CA
+technique11 DOF9
+{
+    pass p0 { SetVertexShader(CompileShader(vs_5_0, VS_Basic()));
+              SetPixelShader (CompileShader(ps_5_0, PS_GaussH())); }
+}

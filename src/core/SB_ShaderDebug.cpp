@@ -40,51 +40,60 @@ ShaderDebug::fnD3DCompile2 ShaderDebug::s_origD3DCompile2 = nullptr;
 //  IAT patching — must be defined before Install() which calls them
 // ═══════════════════════════════════════════════════════════════════════════
 
-// IAT patching: scan all loaded modules for imports of the target function
-// and redirect them to our hook.
-template<typename FnPtr>
-static void PatchAllIATEntries(FnPtr target, FnPtr hook, FnPtr& original)
+// Check if a memory range is readable (avoids crashes on bad PE data)
+static bool IsMemoryReadable(const void* addr, SIZE_T size)
 {
-    original = target; // Save original before any patching
+    MEMORY_BASIC_INFORMATION mbi;
+    if (VirtualQuery(addr, &mbi, sizeof(mbi)) == 0)
+        return false;
+    if (mbi.State != MEM_COMMIT)
+        return false;
+    constexpr DWORD readableFlags = PAGE_READONLY | PAGE_READWRITE
+        | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE
+        | PAGE_EXECUTE_WRITECOPY | PAGE_WRITECOPY;
+    return (mbi.Protect & readableFlags) != 0;
+}
 
-    HANDLE hProcess = GetCurrentProcess();
-    HMODULE hMods[256];
-    DWORD cbNeeded;
-
-    if (!EnumProcessModules(hProcess, hMods, sizeof(hMods), &cbNeeded))
-        return;
-
-    DWORD numModules = cbNeeded / sizeof(HMODULE);
-
-    for (DWORD i = 0; i < numModules; i++)
+// Patch a single module's IAT for d3dcompiler_47.dll imports.
+// Wrapped in SEH to survive modules with non-standard PE layouts
+// (e.g. MO2's usvfs_x64.dll virtual filesystem hook).
+template<typename FnPtr>
+static void PatchModuleIAT(BYTE* base, FnPtr target, FnPtr hook, FnPtr& original)
+{
+    __try
     {
-        BYTE* base = reinterpret_cast<BYTE*>(hMods[i]);
-
-        // Parse PE headers to find IAT
         auto* dosHeader = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
-        if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE) continue;
+        if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE) return;
+
+        // Sanity check e_lfanew
+        if (dosHeader->e_lfanew < 0 || dosHeader->e_lfanew > 0x10000000) return;
 
         auto* ntHeaders = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dosHeader->e_lfanew);
-        if (ntHeaders->Signature != IMAGE_NT_SIGNATURE) continue;
+        if (!IsMemoryReadable(ntHeaders, sizeof(IMAGE_NT_HEADERS))) return;
+        if (ntHeaders->Signature != IMAGE_NT_SIGNATURE) return;
 
         auto& importDir = ntHeaders->OptionalHeader
             .DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-        if (importDir.Size == 0) continue;
+        if (importDir.Size == 0 || importDir.VirtualAddress == 0) return;
 
         auto* importDesc = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(
             base + importDir.VirtualAddress);
+        if (!IsMemoryReadable(importDesc, sizeof(IMAGE_IMPORT_DESCRIPTOR))) return;
 
         for (; importDesc->Name != 0; importDesc++)
         {
-            // Check if this import is from d3dcompiler_47.dll
+            if (!IsMemoryReadable(importDesc, sizeof(IMAGE_IMPORT_DESCRIPTOR))) break;
+
             const char* dllName = reinterpret_cast<const char*>(
                 base + importDesc->Name);
+            if (!IsMemoryReadable(dllName, 22)) continue; // strlen("d3dcompiler_47.dll")+1
+
             if (_stricmp(dllName, "d3dcompiler_47.dll") != 0)
                 continue;
 
-            // Walk the IAT entries
             auto* thunk = reinterpret_cast<IMAGE_THUNK_DATA*>(
                 base + importDesc->FirstThunk);
+            if (!IsMemoryReadable(thunk, sizeof(IMAGE_THUNK_DATA))) continue;
 
             for (; thunk->u1.Function != 0; thunk++)
             {
@@ -98,7 +107,38 @@ static void PatchAllIATEntries(FnPtr target, FnPtr hook, FnPtr& original)
                     VirtualProtect(funcPtr, sizeof(FnPtr), oldProt, &oldProt);
                 }
             }
+            return; // Found the d3dcompiler import — no need to keep scanning
         }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        // Module has a corrupt or non-standard PE layout — skip it silently
+    }
+}
+
+// IAT patching: scan all loaded modules for imports of the target function
+// and redirect them to our hook.
+template<typename FnPtr>
+static void PatchAllIATEntries(FnPtr target, FnPtr hook, FnPtr& original)
+{
+    original = target; // Save original before any patching
+
+    HANDLE hProcess = GetCurrentProcess();
+    HMODULE hMods[512];
+    DWORD cbNeeded;
+
+    if (!EnumProcessModules(hProcess, hMods, sizeof(hMods), &cbNeeded))
+        return;
+
+    DWORD numModules = cbNeeded / sizeof(HMODULE);
+    if (numModules > static_cast<DWORD>(std::size(hMods)))
+        numModules = static_cast<DWORD>(std::size(hMods));
+
+    for (DWORD i = 0; i < numModules; i++)
+    {
+        BYTE* base = reinterpret_cast<BYTE*>(hMods[i]);
+        if (!base) continue;
+        PatchModuleIAT(base, target, hook, original);
     }
 }
 

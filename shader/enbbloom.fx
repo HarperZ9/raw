@@ -753,8 +753,8 @@ float GetSBBloomModulation()
         mod *= 1.0 - isRain * SB_Precipitation.y * UISB_RainDampening;
         mod *= 1.0 - isSnow * SB_Precipitation.y * UISB_SnowDampening;
 
-        // Respect game's bloom scale intent
-        float gameScale = SB_IS_HDR.y; // game's bloomScale
+        // Respect game's bloom scale intent (clamp to prevent zero killing bloom)
+        float gameScale = max(SB_IS_HDR.y, 0.01); // game's bloomScale, never zero
         mod = lerp(mod, mod * gameScale, UISB_GameBloomRespect);
 
         // Weather Parameter: per-weather bloom intensity (Phase 2 — stubbed)

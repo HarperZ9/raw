@@ -1272,25 +1272,25 @@ float3 ApplySkyrimBridgeEffects(float3 color)
 {
     [branch] if (!SB_IsActive()) return color;
     
-    // Lightning flash: momentary exposure spike
-    float flashIntensity = SB_Lightning.z * SB_Lightning.y;
+    // Lightning flash: momentary exposure spike (saturate for safety)
+    float flashIntensity = saturate(SB_Lightning.z) * saturate(SB_Lightning.y);
     if (flashIntensity > 0.01)
     {
         float flashEV = flashIntensity * 0.5;  // Up to +0.5 EV during flash
         color *= exp2(flashEV);
     }
-    
-    // Precipitation: atmospheric desaturation
-    float precipIntensity = SB_Precipitation.y;
+
+    // Precipitation: atmospheric desaturation (saturate for safety)
+    float precipIntensity = saturate(SB_Precipitation.y);
     if (precipIntensity > 0.01)
     {
         float desat = precipIntensity * 0.1;  // Up to 10% desaturation in heavy rain
         float luma = dot(color, K_LUM);
         color = lerp(color, luma, desat);
     }
-    
-    // Night Eye: exposure adaptation boost
-    float nightEye = SB_FX_Vision.x;
+
+    // Night Eye: exposure adaptation boost (saturate for safety)
+    float nightEye = saturate(SB_FX_Vision.x);
     if (nightEye > 0.01)
     {
         color *= exp2(nightEye * 0.8);  // Brighten the scene

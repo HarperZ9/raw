@@ -103,17 +103,16 @@ void __stdcall OnENBFrame(int a_callbackType)
     data.render     = SB::RenderTracker::Update(dt);
 
     // v2 expansion trackers (domains 11-17)
-    // PHASED ROLLOUT: Enable one at a time after confirming the pipeline works
-    // with passthrough shaders + the proven 10 core domains.
-    // Uncomment each tracker individually and test for stability.
-    //
-    // data.imageSpace  = SB::ImageSpaceTracker::Update();
-    // data.lights      = SB::LightTracker::Update();
-    // data.actorValues = SB::ActorValueTracker::Update();
-    // data.crosshair   = SB::CrosshairTracker::Update();
-    // data.equipment   = SB::EquipmentTracker::Update();
-    // data.quest       = SB::QuestTracker::Update();
-    // data.uiState     = SB::UIStateTracker::Update();
+    // Domains 11, 12, 14, 15, 17 are required by active shaders —
+    // leaving them disabled pushes zeros that break bloom (SB_IS_HDR.y=0),
+    // adaptation (SB_IS_HDR.x=0), DOF (SB_XHair_Info), etc.
+    data.imageSpace  = SB::ImageSpaceTracker::Update();   // d11: bloom, effect, adaptation need SB_IS_HDR/Cinematic
+    data.lights      = SB::LightTracker::Update();        // d12: bloom, adaptation need SB_Light_Summary
+    // data.actorValues = SB::ActorValueTracker::Update(); // d13: no shader currently uses these
+    data.crosshair   = SB::CrosshairTracker::Update();    // d14: DOF needs SB_XHair_Info
+    data.equipment   = SB::EquipmentTracker::Update();    // d15: adaptation needs SB_Equip_Flags (torch)
+    // data.quest       = SB::QuestTracker::Update();      // d16: no shader currently uses these (perf concern)
+    data.uiState     = SB::UIStateTracker::Update();      // d17: DOF, adaptation need SB_UI_Menus/HUD
 
     // Update debug GUI with current data
     SB::DebugGUI::SetData(data);

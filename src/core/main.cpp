@@ -43,6 +43,9 @@
 // Phase 2: Weather parameter computer (replaces enbParmLink)
 #include "WeatherParameterComputer.h"
 
+// Shader compilation diagnostics
+#include "SB_ShaderDebug.h"
+
 // ── Game readiness flag ─────────────────────────────────────────────────────
 // ENB callbacks fire during D3D initialization, before game singletons exist.
 // We must not access any RE:: singletons until kDataLoaded fires.
@@ -171,6 +174,17 @@ static void OnMessage(SKSE::MessagingInterface::Message* a_msg)
         // Initialize D3D11 hook for ImGui overlay
         if (D3D11Hook::Init()) {
             SKSE::log::info("SkyrimBridge: D3D11 hook initialized — press INSERT to toggle debug GUI");
+
+            // Install ShaderDebug compilation diagnostics
+            // Uses D3D11Hook's device/context/swapChain for overlay rendering
+            // IAT-hooks D3DCompile/D3DCompile2 to intercept all shader compilation
+            auto* dev = D3D11Hook::GetDevice();
+            auto* ctx = D3D11Hook::GetContext();
+            auto* sc  = D3D11Hook::GetSwapChain();
+            if (dev && ctx && sc) {
+                SB::Debug::ShaderDebug::Get().Install(dev, ctx, sc);
+                SKSE::log::info("SkyrimBridge: ShaderDebug installed — F10 toggle, F11 clear");
+            }
         } else {
             SKSE::log::warn("SkyrimBridge: D3D11 hook failed — debug GUI unavailable");
         }

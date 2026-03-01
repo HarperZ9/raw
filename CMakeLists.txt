@@ -65,12 +65,16 @@ add_commonlibsse_plugin(
 
         # Phase 4: ParmLink Compatibility Layer
         src/ParmLinkCompat.cpp
+
+        # Shader Compilation Diagnostics
+        src/core/SB_ShaderDebug.cpp
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     imgui::imgui
     d3d11
     dxgi
+    d3dcompiler
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -82,6 +86,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     ENABLE_SKYRIM_SE=1
     ENABLE_SKYRIM_AE=1
     SKYRIMBRIDGE_V3=1
+    HAS_SKSE=1
 )
 
 # Precompiled header

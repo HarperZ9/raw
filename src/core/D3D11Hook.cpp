@@ -1,5 +1,6 @@
 #include "D3D11Hook.h"
 #include "DebugGUI.h"
+#include "SB_ShaderDebug.h"
 
 #include <d3d11.h>
 #include <dxgi.h>
@@ -146,6 +147,17 @@ namespace D3D11Hook
             ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
         }
 
+        // Render ShaderDebug overlay (independent of ImGui — has its own D3D11 pipeline)
+        auto& shaderDbg = SB::Debug::ShaderDebug::Get();
+        if (shaderDbg.IsInstalled()) {
+            shaderDbg.ProcessInput();
+            if (shaderDbg.IsOverlayVisible()) {
+                if (!shaderDbg.IsOverlayInited())
+                    shaderDbg.InitOverlayResources();
+                shaderDbg.RenderOverlay();
+            }
+        }
+
         return s_originalPresent(swapChain, syncInterval, flags);
     }
 
@@ -283,4 +295,8 @@ namespace D3D11Hook
     {
         s_guiVisible = a_visible;
     }
+
+    ID3D11Device* GetDevice() { return s_device; }
+    ID3D11DeviceContext* GetContext() { return s_context; }
+    IDXGISwapChain* GetSwapChain() { return s_swapChain; }
 }

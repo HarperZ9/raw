@@ -1,5 +1,6 @@
 #include "EquipmentTracker.h"
 #include <RE/Skyrim.h>
+#include <bit>
 
 namespace SB::EquipmentTracker
 {
@@ -88,11 +89,11 @@ namespace SB::EquipmentTracker
                 data.Armor.w = 1.0f;
         }
 
-        // ── Equipment flags ───────────────────────────────────────────
+        // ── Equipment flags (packed uint bitfield) ─────────────────────
+        uint32_t equipBits = 0;
         auto* actorState = actor->AsActorState();
-        if (actorState) {
-            data.Flags.x = actorState->IsWeaponDrawn() ? 1.f : 0.f;
-        }
+        if (actorState && actorState->IsWeaponDrawn())
+            equipBits |= (1u << 0);
 
         // Check for bow
         if (rightObj) {
@@ -100,11 +101,10 @@ namespace SB::EquipmentTracker
             if (weapon) {
                 auto wtype = weapon->GetWeaponType();
                 if (wtype == RE::WEAPON_TYPE::kBow || wtype == RE::WEAPON_TYPE::kCrossbow)
-                    data.Flags.y = 1.0f;
-                // Two-handing
+                    equipBits |= (1u << 1);
                 if (wtype == RE::WEAPON_TYPE::kTwoHandSword ||
                     wtype == RE::WEAPON_TYPE::kTwoHandAxe)
-                    data.Flags.w = 1.0f;
+                    equipBits |= (1u << 3);
             }
         }
 
@@ -112,8 +112,13 @@ namespace SB::EquipmentTracker
         if (leftObj) {
             auto* light = leftObj->As<RE::TESObjectLIGH>();
             if (light)
-                data.Flags.z = 1.0f;
+                equipBits |= (1u << 2);
         }
+
+        data.Flags.x = std::bit_cast<float>(equipBits);
+        data.Flags.y = 0.0f;
+        data.Flags.z = 0.0f;
+        data.Flags.w = 0.0f;
 
         return data;
     }

@@ -1,5 +1,0 @@
-1. Copy the 'onigiri' and 'reshade-shaders' folders to your Grand Theft Auto V Enhanced game folder
-2. Paste them in there and replace files
-3. Launch GTAV Enhanced and switch to 'Cloudy' weather
-
-Note: These clouds are currently experimental and may contain various bugs such as flicker and depth related issues. We will improve these clouds in future updates and bring them to additional weathers.

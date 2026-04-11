@@ -100,6 +100,10 @@ namespace SB::Diag
         const auto* rawData = reinterpret_cast<const char*>(&a_data);
         int shaderCount = static_cast<int>(std::size(SB::kTargetShaders));
 
+        ENBInterface::ENBParameter param;
+        param.Size = 16;
+        param.Type = ENBInterface::ENBParameterType::ENBParam_COLOR4;
+
         for (int s = 0; s < shaderCount; s++)
         {
             auto& ss = g_shaderStats[s];
@@ -107,15 +111,13 @@ namespace SB::Diag
             for (std::size_t p = 0; p < SB::kParamCount; p++)
             {
                 const auto& entry = SB::kParamTable[p];
-                void* valuePtr = const_cast<void*>(
-                    static_cast<const void*>(rawData + entry.offset));
+                std::memcpy(param.Data, rawData + entry.offset, 16);
 
                 int result = ENBInterface::SetParameter(
+                    nullptr,
                     SB::kTargetShaders[s],
-                    "",
                     entry.name,
-                    valuePtr,
-                    16  // sizeof(float) * 4
+                    &param
                 );
 
                 auto& ps = ss.params[p];

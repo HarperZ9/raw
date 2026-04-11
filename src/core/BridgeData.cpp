@@ -18,17 +18,14 @@ namespace SB
 {
     const ParamEntry kParamTable[] = {
         // ── Celestial ───────────────────────────────────────────────────
-        ENTRY(celestial.SunNDC,             "SB_Sun_NDC"),
+        // NDC params removed — derivable from direction + VP in shader
         ENTRY(celestial.SunDirection,       "SB_Sun_Direction"),
         ENTRY(celestial.SunColor,           "SB_Sun_Color"),
-        ENTRY(celestial.MasserNDC,          "SB_Masser_NDC"),
         ENTRY(celestial.MasserDirection,    "SB_Masser_Direction"),
-        ENTRY(celestial.SecundaNDC,         "SB_Secunda_NDC"),
         ENTRY(celestial.SecundaDirection,   "SB_Secunda_Direction"),
         ENTRY(celestial.TimeData,           "SB_Time"),
-        // Convenience aliases for shaders using simplified naming
-        ENTRY(celestial.SunNDC,             "SB_Celestial_Sun"),
-        ENTRY(celestial.MasserNDC,          "SB_Celestial_Moon"),
+        ENTRY(celestial.TimeSegments1,      "SB_Time_Segments1"),
+        ENTRY(celestial.TimeSegments2,      "SB_Time_Segments2"),
 
         // ── Atmosphere ──────────────────────────────────────────────────
         ENTRY(atmosphere.SkyUpper,          "SB_Atmos_SkyUpper"),
@@ -53,6 +50,10 @@ namespace SB
         ENTRY(weather.Flags,                "SB_Weather_Flags"),
         ENTRY(weather.Transition,           "SB_Weather_Transition"),
         ENTRY(weather.PrecipSurface,        "SB_Precip_Surface"),
+        ENTRY(weather.WindLive,             "SB_Wind_Live"),
+        ENTRY(weather.PrecipLive,           "SB_Precip_Live"),
+        ENTRY(weather.CloudCover,           "SB_Cloud_Cover"),
+        ENTRY(weather.AuroraFade,           "SB_Aurora_Fade"),
 
         // ── Player ──────────────────────────────────────────────────────
         ENTRY(player.Position,              "SB_Player_Position"),
@@ -61,36 +62,15 @@ namespace SB
         ENTRY(player.Combat,                "SB_Player_Combat"),
         ENTRY(player.Water,                 "SB_Player_Water"),
 
-        // ── Camera scalar data ──────────────────────────────────────────
-        ENTRY(camera.Info,                  "SB_Camera_Info"),
-        ENTRY(camera.Angles,                "SB_Camera_Angles"),
+        // ── Camera (optimized: 8 params, rest derivable in shader) ──────
+        ENTRY(camera.Params,                "SB_Camera_Params"),
         ENTRY(camera.WorldPos,              "SB_Camera_WorldPos"),
-
-        // ── Camera matrices (each is 4 rows) ───────────────────────────
-        ENTRY(camera.ViewMatrix.row[0],     "SB_View_Row0"),
-        ENTRY(camera.ViewMatrix.row[1],     "SB_View_Row1"),
-        ENTRY(camera.ViewMatrix.row[2],     "SB_View_Row2"),
-        ENTRY(camera.ViewMatrix.row[3],     "SB_View_Row3"),
-
-        ENTRY(camera.ProjMatrix.row[0],     "SB_Proj_Row0"),
-        ENTRY(camera.ProjMatrix.row[1],     "SB_Proj_Row1"),
-        ENTRY(camera.ProjMatrix.row[2],     "SB_Proj_Row2"),
-        ENTRY(camera.ProjMatrix.row[3],     "SB_Proj_Row3"),
-
-        ENTRY(camera.ViewProjMatrix.row[0], "SB_ViewProj_Row0"),
-        ENTRY(camera.ViewProjMatrix.row[1], "SB_ViewProj_Row1"),
-        ENTRY(camera.ViewProjMatrix.row[2], "SB_ViewProj_Row2"),
-        ENTRY(camera.ViewProjMatrix.row[3], "SB_ViewProj_Row3"),
-
-        ENTRY(camera.PrevViewProj.row[0],   "SB_PrevVP_Row0"),
-        ENTRY(camera.PrevViewProj.row[1],   "SB_PrevVP_Row1"),
-        ENTRY(camera.PrevViewProj.row[2],   "SB_PrevVP_Row2"),
-        ENTRY(camera.PrevViewProj.row[3],   "SB_PrevVP_Row3"),
-
-        ENTRY(camera.InvViewProj.row[0],    "SB_InvVP_Row0"),
-        ENTRY(camera.InvViewProj.row[1],    "SB_InvVP_Row1"),
-        ENTRY(camera.InvViewProj.row[2],    "SB_InvVP_Row2"),
-        ENTRY(camera.InvViewProj.row[3],    "SB_InvVP_Row3"),
+        ENTRY(camera.ViewRow0,              "SB_View_Row0"),
+        ENTRY(camera.ViewRow1,              "SB_View_Row1"),
+        ENTRY(camera.ViewRow2,              "SB_View_Row2"),
+        ENTRY(camera.PrevWorldPos,          "SB_PrevCamera_Pos"),
+        ENTRY(camera.PrevViewRow0,          "SB_PrevView_Row0"),
+        ENTRY(camera.PrevViewRow1,          "SB_PrevView_Row1"),
 
         // ── Interior ────────────────────────────────────────────────────
         ENTRY(interior.IsInterior,          "SB_Interior_Flags"),
@@ -99,6 +79,7 @@ namespace SB
         ENTRY(interior.DirectionalDir,      "SB_Interior_DirDir"),
         ENTRY(interior.InteriorFogColor,    "SB_Interior_FogColor"),
         ENTRY(interior.InteriorFogDist,     "SB_Interior_FogDist"),
+        ENTRY(interior.LightingTemplate,    "SB_Interior_Template"),
 
         // ── Shadow/Directional ──────────────────────────────────────────
         ENTRY(shadow.LightDirection,        "SB_Shadow_Direction"),
@@ -112,8 +93,10 @@ namespace SB
         ENTRY(effects.MiscEffects,          "SB_FX_Misc"),
 
         // ── Render State ────────────────────────────────────────────────
+        // DepthParams removed — derivable from Camera_Params (near/far)
         ENTRY(render.FrameInfo,             "SB_Render_Frame"),
         ENTRY(render.Jitter,                "SB_Render_Jitter"),
+        ENTRY(render.StencilInfo,           "SB_Render_StencilInfo"),
 
         // ── ImageSpace ─────────────────────────────────────────────────
         ENTRY(imageSpace.HDR,               "SB_IS_HDR"),
@@ -161,6 +144,63 @@ namespace SB
         ENTRY(uiState.Menus,                "SB_UI_Menus"),
         ENTRY(uiState.HUD,                  "SB_UI_HUD"),
         ENTRY(uiState.Detail,               "SB_UI_Detail"),
+
+        // ── Computed Feedback ─────────────────────────────────────────
+        ENTRY(feedback.Luminance,           "SB_Computed_Luminance"),
+        ENTRY(feedback.Scene,               "SB_Computed_Scene"),
+        ENTRY(feedback.SceneStats,          "SB_Computed_SceneStats"),
+        ENTRY(feedback.SceneColor,          "SB_Computed_SceneColor"),
+        ENTRY(feedback.Histogram,           "SB_Computed_Histogram"),
+        ENTRY(feedback.Temporal,            "SB_Computed_Temporal"),
+        ENTRY(feedback.ENBReadback,         "SB_ENB_Readback"),
+        ENTRY(feedback.ENBReadback4,        "SB_ENB_Readback4"),
+
+        // ── Region / Location ────────────────────────────────────────
+        ENTRY(region.Location,              "SB_Region_Location"),
+        ENTRY(region.Region,                "SB_Region_Region"),
+        ENTRY(region.Worldspace,            "SB_Region_Worldspace"),
+
+        // ── Audio / Music ────────────────────────────────────────────
+        ENTRY(audio.Music,                  "SB_Audio_Music"),
+        ENTRY(audio.Ambient,                "SB_Audio_Ambient"),
+
+        // ── NPC Detection ────────────────────────────────────────────
+        ENTRY(npcDetect.Nearest,            "SB_NPC_Nearest"),
+        ENTRY(npcDetect.NearestPos,         "SB_NPC_NearestPos"),
+        ENTRY(npcDetect.Summary,            "SB_NPC_Summary"),
+        ENTRY(npcDetect.Threat,             "SB_NPC_Threat"),
+
+        // ── Performance ──────────────────────────────────────────────
+        ENTRY(perf.Timing,                  "SB_Perf_Timing"),
+        ENTRY(perf.Budget,                  "SB_Perf_Budget"),
+
+        // ── Scene Composition ───────────────────────────────────────
+        ENTRY(scene.MaterialCounts1,        "SB_Scene_MatCount1"),
+        ENTRY(scene.MaterialCounts2,        "SB_Scene_MatCount2"),
+        ENTRY(scene.DrawStats,              "SB_Scene_DrawStats"),
+        ENTRY(scene.CharLight,              "SB_Scene_CharLight"),
+        ENTRY(scene.AmbientSpec,            "SB_Scene_AmbientSpec"),
+        ENTRY(scene.MaterialProps1,         "SB_Scene_MatProps1"),
+        ENTRY(scene.MaterialProps2,         "SB_Scene_MatProps2"),
+        ENTRY(scene.ShaderFlags,            "SB_Scene_ShaderFlags"),
+        ENTRY(scene.EngineState,            "SB_Engine_State"),
+        ENTRY(scene.EngineTimers,           "SB_Engine_Timers"),
+        ENTRY(scene.DirAmbient1,            "SB_DirAmbient_X"),
+        ENTRY(scene.DirAmbient2,            "SB_DirAmbient_Y"),
+        ENTRY(scene.DirAmbient3,            "SB_DirAmbient_Z"),
+        ENTRY(scene.SunGlare,              "SB_Sun_Glare"),
+
+        // Tier B: Per-draw geometry + water/effect shader observation
+        ENTRY(scene.GeometryInfo,          "SB_Scene_GeomInfo"),
+        ENTRY(scene.WaterPlane,            "SB_Water_Plane"),
+        ENTRY(scene.WaterColor,            "SB_Water_Color"),
+        ENTRY(scene.WaterParams,           "SB_Water_Params"),
+        ENTRY(scene.WaterWave,             "SB_Water_Wave"),
+        ENTRY(scene.EffectShader,          "SB_Effect_Shader"),
+        ENTRY(scene.EffectColor,           "SB_Effect_Color"),
+
+        // ── Theme ─────────────────────────────────────────────────────
+        ENTRY(theme.Config,                "SB_Theme_Config"),
     };
 
     const std::size_t kParamCount = sizeof(kParamTable) / sizeof(kParamTable[0]);

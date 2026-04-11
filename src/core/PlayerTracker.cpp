@@ -1,5 +1,6 @@
 #include "PlayerTracker.h"
 #include <RE/Skyrim.h>
+#include <bit>
 #include <cmath>
 
 namespace SB::PlayerTracker
@@ -72,18 +73,41 @@ namespace SB::PlayerTracker
         bool isRiding = player->IsOnMount();
         data.Movement.w = isRiding ? 1.f : 0.f;
 
-        // ── Combat ──────────────────────────────────────────────────────
-        data.Combat.x = actor->IsInCombat()  ? 1.f : 0.f;
+        // ── Combat (packed uint bitfield) ─────────────────────────────
+        uint32_t combatBits = 0;
+        if (actor->IsInCombat()) combatBits |= (1u << 0);
         if (actorState) {
-            data.Combat.y = actorState->IsBleedingOut() ? 1.f : 0.f;
-            data.Combat.w = actorState->IsWeaponDrawn() ? 1.f : 0.f;
+            if (actorState->IsBleedingOut()) combatBits |= (1u << 1);
+            if (actorState->IsWeaponDrawn()) combatBits |= (1u << 3);
         }
         // Kill move detection: check camera state
         auto* cam = RE::PlayerCamera::GetSingleton();
         if (cam) {
             bool isKillCam = (cam->currentState ==
                 cam->cameraStates[RE::CameraState::kVATS]);
-            data.Combat.z = isKillCam ? 1.f : 0.f;
+            if (isKillCam) combatBits |= (1u << 2);
+        }
+        data.Combat.x = std::bit_cast<float>(combatBits);
+
+        // Beast form detection via race FormID
+        // WerewolfBeastRace = 0x0CDD84 (Skyrim.esm), VampireLordRace = 0x00283A (Dawnguard)
+        if (auto* race = player->GetRace()) {
+            uint32_t raceBase = race->GetFormID() & 0x00FFFFFFu;
+            if (raceBase == 0x0CDD84u)
+                data.Combat.y = 1.f;  // Werewolf
+            else if (raceBase == 0x00283Au)
+                data.Combat.y = 2.f;  // Vampire Lord
+        }
+
+        // Calendar time scale (game speed multiplier, default 20)
+        if (auto* calendar = RE::Calendar::GetSingleton()) {
+            data.Combat.z = calendar->GetTimescale();
+        }
+
+        // Number of active combat opponents (from combat group)
+        if (actor->IsInCombat()) {
+            auto* combatGroup = actor->GetCombatGroup();
+            data.Combat.w = combatGroup ? static_cast<float>(combatGroup->targets.size()) : 0.f;
         }
 
         // ── Water ───────────────────────────────────────────────────────

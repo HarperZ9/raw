@@ -61,7 +61,7 @@ namespace SB::CrosshairTracker
             }
 
             data.Actor.y = static_cast<float>(targetActor->GetLevel());
-            data.Actor.z = targetActor->IsHostileToActor(player) ? 1.f : 0.f;
+            data.Actor.z = (player && targetActor->IsHostileToActor(player)) ? 1.f : 0.f;
 
             // Essential flag
             bool essential = targetActor->IsEssential();

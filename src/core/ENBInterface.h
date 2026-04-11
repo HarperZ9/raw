@@ -1,119 +1,96 @@
 #pragma once
 //=============================================================================
-//  ENBInterface.h — Runtime resolution of ENBSeries SDK functions
+//  ENBInterface.h — STUB (ENB support removed)
 //
-//  Based on the ENB SDK by Boris Vorontsov (enbdev.com) and
-//  doodlum's enb-api wrapper (github.com/doodlum/enb-api).
-//
-//  ENB for Skyrim SE ships as d3d11.dll (DX11 wrapper). It exports
-//  C functions that third-party plugins can call to read/write shader
-//  parameters and register per-frame callbacks.
+//  Type definitions preserved for backward compatibility with backend systems
+//  that haven't been fully cleaned up yet. All functions are inline no-ops.
 //=============================================================================
 
 #include "BridgeData.h"
 #include <cstdint>
+#include <cstring>
 
 namespace ENBInterface
 {
-    // ── ENB SDK type definitions ────────────────────────────────────────
-    // These match Boris Vorontsov's enbseries SDK and doodlum's enb-api.
-    // We define our own to avoid Windows.h conflicts with CommonLibSSE-NG.
+    // ── ENB SDK type definitions (preserved for compile compatibility) ────
 
-    // Callback types for ENB
     enum class CallbackType : int
     {
-        EndFrame = 0,       // After Present
-        BeginFrame = 1,     // Before Present
-        PreSave = 2,        // Before config/screenshot save
-        PostLoad = 3,       // After config load
-        OnInit = 4          // ENB initialization
+        EndFrame = 1,
+        BeginFrame = 2,
+        PreSave = 3,
+        PostLoad = 4,
+        OnInit = 5,
+        OnExit = 6,
+        PreReset = 7,
+        PostReset = 8
     };
 
-    // Callback invoked once per frame.
-    //   a_callbackType indicates the phase of rendering
+    enum class ENBParameterType : long
+    {
+        ENBParam_NONE       = 0,
+        ENBParam_FLOAT      = 1,
+        ENBParam_INT        = 2,
+        ENBParam_HEX        = 3,
+        ENBParam_BOOL       = 4,
+        ENBParam_COLOR3     = 5,
+        ENBParam_COLOR4     = 6,
+        ENBParam_VECTOR3    = 7,
+        ENBParam_FORCEDWORD = 0x7fffffff
+    };
+
+    struct ENBParameter
+    {
+        unsigned char    Data[16];
+        unsigned long    Size;
+        ENBParameterType Type;
+
+        ENBParameter()
+            : Size(0), Type(ENBParameterType::ENBParam_NONE)
+        {
+            for (int k = 0; k < 16; k++) Data[k] = 0;
+        }
+    };
+
     using ENBCallbackFunction = void(__stdcall*)(int a_callbackType);
 
-    // GUI rendering callback (for ImGui integration)
-    using ENBGUICallback = void(__stdcall*)(void);
-
-    // ── SDK function signatures ─────────────────────────────────────────
-    // All ENB SDK exports use __stdcall calling convention.
-    // Get/SetParameter use a flat (void* value, int size) interface.
-
-    // Returns the SDK version number (e.g., 1001 for SDK v1.001).
-    using _ENBGetSDKVersion = long(__stdcall*)();
-
-    // Returns the ENBSeries binary version.
-    using _ENBGetVersion = long(__stdcall*)();
-
-    // Registers a callback invoked each frame.
+    using _ENBGetSDKVersion       = long(__stdcall*)();
+    using _ENBGetVersion          = long(__stdcall*)();
     using _ENBSetCallbackFunction = void(__stdcall*)(ENBCallbackFunction a_func);
+    using _ENBGetParameter        = int(__stdcall*)(const char*, const char*, const char*, ENBParameter*);
+    using _ENBSetParameter        = int(__stdcall*)(const char*, const char*, const char*, ENBParameter*);
 
-    // Gets a shader parameter value.
-    //   a_filename:  Shader filename (e.g., "enbsunsprite.fx")
-    //   a_category:  UI category in ENB editor, or empty string
-    //   a_keyname:   Parameter name as declared in the shader
-    //   a_value:     Pointer to output buffer
-    //   a_size:      Size of the output buffer in bytes
-    // Returns non-zero on success.
-    using _ENBGetParameter = int(__stdcall*)(
-        const char* a_filename,
-        const char* a_category,
-        const char* a_keyname,
-        void*       a_value,
-        int         a_size
-    );
+    enum class ENBStateType : long { IsEditorActive = 1 };
+    using _ENBGetState = long(__stdcall*)(ENBStateType);
 
-    // Sets a shader parameter value.
-    //   Same signature as Get, but writes TO the shader.
-    // Returns non-zero on success.
-    using _ENBSetParameter = int(__stdcall*)(
-        const char* a_filename,
-        const char* a_category,
-        const char* a_keyname,
-        void*       a_value,
-        int         a_size
-    );
-
-    // GUI-related functions (available in newer ENB SDK versions)
-    // Returns true if ENB GUI is currently being rendered
-    using _ENBIsEditorActive = int(__stdcall*)();
-
-    // Register a callback for GUI rendering (ImGui context)
-    using _ENBSetGUICallback = void(__stdcall*)(ENBGUICallback a_func);
-
-    // Get ENB's D3D11 device (for custom rendering)
-    using _ENBGetD3D11Device = void*(__stdcall*)();
-
-    // ── Resolved function pointers ──────────────────────────────────────
-    // These are populated by Init() and remain valid for the process lifetime.
-
+    // ── All function pointers are null (ENB not supported) ──────────────
     inline _ENBGetSDKVersion       GetSDKVersion       = nullptr;
     inline _ENBGetVersion          GetVersion          = nullptr;
     inline _ENBSetCallbackFunction SetCallbackFunction = nullptr;
     inline _ENBGetParameter        GetParameter        = nullptr;
     inline _ENBSetParameter        SetParameter        = nullptr;
-    inline _ENBIsEditorActive      IsEditorActive      = nullptr;
-    inline _ENBSetGUICallback      SetGUICallback      = nullptr;
-    inline _ENBGetD3D11Device      GetD3D11Device      = nullptr;
+    inline _ENBGetState            GetState            = nullptr;
 
-    // ── Initialization ──────────────────────────────────────────────────
+    // ── Stub functions (always return false/empty) ──────────────────────
+    inline bool Init()                { return false; }
+    inline bool IsLoaded()            { return false; }
+    inline bool IsGUISupported()      { return false; }
+    inline bool IsEditorOpen()        { return false; }
+    inline bool IsEffectsWindowOpen() { return false; }
 
-    // Resolves ENB SDK functions from d3d11.dll.
-    // Must be called AFTER ENB has loaded (kPostLoad or kPostPostLoad).
-    // Returns true if ENB was found and all functions were resolved.
-    bool Init();
+    struct PushStats
+    {
+        int dirtyParams = 0, totalParams = 0, setParamCalls = 0;
+        int setParamSuccess = 0, setParamFail = 0;
+        std::size_t pushCount = 0;
+        bool firstPushDone = false;
+    };
 
-    // Returns true if Init() succeeded and ENB functions are available.
-    bool IsLoaded();
+    inline const PushStats& GetPushStats()
+    {
+        static PushStats s;
+        return s;
+    }
 
-    // Returns true if ENB GUI integration is supported (newer ENB versions)
-    bool IsGUISupported();
-
-    // ── SkyrimBridge data push ──────────────────────────────────────────
-
-    // Pushes all parameters from AllData to all target shaders.
-    // This iterates through kParamTable and calls SetParameter for each
-    // parameter to each shader in kTargetShaders.
-    void PushAllData(const SB::AllData& a_data);
+    inline void PushAllData(const SB::AllData&) {}
 }

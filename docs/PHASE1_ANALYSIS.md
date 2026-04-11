@@ -5,7 +5,7 @@
 Three third-party tools currently provide "real-time weather-per-parameter" ENB adjustments:
 **enbParmLink.dll**, **ENBExtender** (CameraData/AtmosphereData/EnhancedLightingData/Lenses),
 and **KiLoader** (plugin loader). This analysis reverse-engineers their architecture and
-maps every capability to SkyrimBridge equivalents — establishing that SkyrimBridge can
+maps every capability to Playground equivalents — establishing that Playground can
 fully replace all three with a single, more powerful solution.
 
 ---
@@ -56,7 +56,7 @@ float4 CameraData0;  // .x = worldPosX, .y = worldPosY, .z = worldPosZ, .w = FOV
 float4 CameraData1;  // .x = nearClip, .y = farClip, .z = pitch, .w = yaw
 float4 CameraData2;  // .x = roll, .y = isFirstPerson, .z = isThirdPerson
 ```
-→ **SkyrimBridge equivalent**: `SB_Camera_Info`, `SB_Camera_Angles`, `SB_Camera_WorldPos`
+→ **Playground equivalent**: `SB_Camera_Info`, `SB_Camera_Angles`, `SB_Camera_WorldPos`
   (SB provides MORE: full View/Proj/VP/InvVP/PrevVP matrices — ENB Extender does not)
 
 #### ENB Extender (AtmosphereData.fxh)
@@ -68,7 +68,7 @@ float4 AtmosData3;  // .rgb = directional ambient
 float4 AtmosData4;  // .x = fogNearDist, .y = fogFarDist, .z = fogNearColor.r...
 float4 AtmosData5;  // fog far color
 ```
-→ **SkyrimBridge equivalent**: `SB_Sun_Direction`, `SB_Sun_Color`, `SB_Atmos_Ambient`,
+→ **Playground equivalent**: `SB_Sun_Direction`, `SB_Sun_Color`, `SB_Atmos_Ambient`,
   `SB_Atmos_Sunlight`, `SB_Fog_NearColor`, `SB_Fog_FarColor`, `SB_Fog_Density`
   (SB provides MORE: 8 atmosphere channels, fog height data, weather transition %)
 
@@ -79,7 +79,7 @@ float4 EnhLightData1;  // .rgb = shadow caster diffuse
 float4 EnhLightData2;  // .rgb = shadow caster ambient
 float4 EnhLightData3;  // interior ambient + directional
 ```
-→ **SkyrimBridge equivalent**: `SB_Shadow_Direction`, `SB_Shadow_Diffuse`,
+→ **Playground equivalent**: `SB_Shadow_Direction`, `SB_Shadow_Diffuse`,
   `SB_Shadow_Ambient`, `SB_Interior_*`
   (SB provides MORE: full interior lighting template, interior fog, 3 nearby lights)
 
@@ -100,7 +100,7 @@ bloom := lerp(bloomDay, bloomNight, nightFactor);
 // Pushes to specific shader parameters
 enb.setFloat("enbbloom.fx", "ExternalParameters", "WeatherBloom", bloom);
 ```
-→ **SkyrimBridge equivalent**: All game memory reads are replaced by typed trackers
+→ **Playground equivalent**: All game memory reads are replaced by typed trackers
   (no raw memory addresses, no ASLR issues, no version-specific offsets).
   The expression evaluation is replaced by C++ computation in the tracker layer.
 
@@ -108,7 +108,7 @@ enb.setFloat("enbbloom.fx", "ExternalParameters", "WeatherBloom", bloom);
 
 ## 2. Capability Gap Analysis
 
-| Capability | ENB Extender | ParmLink | SkyrimBridge v2.0 |
+| Capability | ENB Extender | ParmLink | Playground v2.0 |
 |---|---|---|---|
 | Camera position/FOV | ✅ Basic | ❌ | ✅ + matrices |
 | Sun/moon position | ✅ Direction only | ❌ | ✅ + NDC, phases, both moons |
@@ -134,7 +134,7 @@ enb.setFloat("enbbloom.fx", "ExternalParameters", "WeatherBloom", bloom);
 
 ### Key Finding
 
-SkyrimBridge already covers **100%** of ENB Extender's data and **~90%** of ParmLink's
+Playground already covers **100%** of ENB Extender's data and **~90%** of ParmLink's
 game-state reading capability through typed, version-safe trackers. The two remaining
 gaps are:
 
@@ -165,21 +165,21 @@ Pilgrim's approach via ParmLink:
 ## 4. Recommended Architecture (Phases 2-4)
 
 ### Phase 2: WeatherParameterComputer (C++)
-- New tracker in SkyrimBridge that reads current/previous weather FormIDs
+- New tracker in Playground that reads current/previous weather FormIDs
 - Classifies weathers into categories (clear, cloudy, rain, snow, fog, ash, etc.)
 - For each registered shader parameter, interpolates between category values
 - Pushes pre-computed weather-adjusted values as new SB_ float4 parameters
 - Users configure per-weather values in an INI file (not an expression language)
 
 ### Phase 3: SharedMemoryBridge
-- Named shared memory region: `SkyrimBridge_GameState`
+- Named shared memory region: `Playground_GameState`
 - Writes AllData struct every frame
 - External apps read without touching the game process
 - Header-only C client library for external tools
 
 ### Phase 4: ParmLink Replacement
 - Parse enbParmLink.cfg-compatible expression files
-- Replace `addr.*` memory reads with SkyrimBridge typed data
-- Replace `enb.*` reads with SkyrimBridge state
+- Replace `addr.*` memory reads with Playground typed data
+- Replace `enb.*` reads with Playground state
 - Evaluate expressions using compiled C++ lambdas (no runtime parsing)
 - Full backward compatibility: drop-in replacement for enbParmLink.dll

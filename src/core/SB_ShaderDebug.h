@@ -1,6 +1,6 @@
 #pragma once
 // ═══════════════════════════════════════════════════════════════════════════
-//  SkyrimBridge — Shader Compilation Diagnostics (SB_ShaderDebug)
+//  Playground — Shader Compilation Diagnostics (SB_ShaderDebug)
 //
 //  Hooks D3DCompile to intercept all ENB/game shader compilation.
 //  On failure, captures the error blob, parses it into structured records
@@ -13,7 +13,7 @@
 //    2. Errors are captured automatically via D3DCompile IAT hooks.
 //    3. Call ProcessInput() and RenderOverlay() from D3D11Hook's Present.
 //    4. Press the configurable hotkey (default: F10) to toggle the overlay.
-//    5. Errors are written to Data/SKSE/Plugins/SkyrimBridge_ShaderErrors.log
+//    5. Errors are written to Data/SKSE/Plugins/Playground_ShaderErrors.log
 //
 //  Requirements:
 //    - d3dcompiler_47.dll must be loadable (ships with ENB and Windows 10+)
@@ -21,7 +21,7 @@
 //    - SKSE for logging (optional, falls back to OutputDebugString)
 //
 //  Author: Zain Dana Harper
-//  License: Same as SkyrimBridge
+//  License: Same as Playground
 // ═══════════════════════════════════════════════════════════════════════════
 
 #include <d3d11.h>
@@ -160,15 +160,19 @@ namespace SB::Debug
 
         // ─── Lifecycle ──────────────────────────────────────────────────
 
-        // Install hooks. Call once after obtaining D3D11 device + context.
-        // device: the ID3D11Device* (for creating overlay GPU resources)
-        // context: the immediate ID3D11DeviceContext* (for rendering overlay)
-        // swapChain: the IDXGISwapChain* (for hooking Present to draw overlay)
+        // Phase 1: Install D3DCompile IAT hooks as early as possible.
+        // Call from SKSEPlugin_Load — no D3D11 device needed.
+        // This captures all shader compilations including ENB's early ones.
+        void InstallHooksEarly();
+
+        // Phase 2: Provide D3D11 resources for overlay rendering.
+        // Call after D3D11 device is available (kDataLoaded).
         void Install(ID3D11Device* device, ID3D11DeviceContext* context,
                      IDXGISwapChain* swapChain);
 
         void Shutdown();
         bool IsInstalled() const { return m_installed; }
+        bool AreHooksInstalled() const { return m_hooksInstalled; }
 
         // ─── Error queries ──────────────────────────────────────────────
 
@@ -185,6 +189,9 @@ namespace SB::Debug
 
         // Clear all recorded errors/warnings
         void ClearAll();
+
+        // Get cached source for a compilation (by source filename)
+        std::string GetCachedSource(const std::string& sourceFile) const;
 
         // ─── Overlay control ────────────────────────────────────────────
 
@@ -210,6 +217,14 @@ namespace SB::Debug
         // Get the log file path
         const std::filesystem::path& LogPath() const { return m_logPath; }
 
+        // ─── Shader source capture to disk ───────────────────────────────
+
+        void SetCaptureEnabled(bool enabled) { m_captureEnabled = enabled; }
+        bool IsCaptureEnabled() const { return m_captureEnabled; }
+        void SetCapturePath(const std::filesystem::path& dir) { m_capturePath = dir; }
+        const std::filesystem::path& CapturePath() const { return m_capturePath; }
+        int  CapturedCount() const { return m_capturedCount; }
+
         // ─── Overlay rendering (called from D3D11Hook::HookedPresent) ──
 
         void InitOverlayResources();
@@ -223,7 +238,6 @@ namespace SB::Debug
 
         // ─── D3DCompile hook ────────────────────────────────────────────
 
-        // Original D3DCompile function pointer
         using fnD3DCompile = HRESULT(WINAPI*)(
             LPCVOID pSrcData, SIZE_T SrcDataSize,
             LPCSTR pSourceName, const D3D_SHADER_MACRO* pDefines,
@@ -240,7 +254,6 @@ namespace SB::Debug
             LPCSTR pTarget, UINT Flags1, UINT Flags2,
             ID3DBlob** ppCode, ID3DBlob** ppErrorMsgs);
 
-        // D3DCompile2 hook (ENB may use either)
         using fnD3DCompile2 = HRESULT(WINAPI*)(
             LPCVOID pSrcData, SIZE_T SrcDataSize,
             LPCSTR pSourceName, const D3D_SHADER_MACRO* pDefines,
@@ -299,6 +312,11 @@ namespace SB::Debug
                                LPCSTR pTarget, ID3DBlob** ppErrorMsgs,
                                double elapsedMs);
 
+        // Write captured shader source + DXBC to disk
+        void CaptureShaderToDisk(LPCSTR pSourceName, LPCSTR pEntrypoint,
+                                 LPCSTR pTarget, LPCVOID pSrcData,
+                                 SIZE_T srcSize, ID3DBlob* pCode);
+
         // ─── Overlay rendering (internal helpers) ────────────────────
 
         void RenderErrorPanel();
@@ -316,7 +334,8 @@ namespace SB::Debug
 
         // ─── State ──────────────────────────────────────────────────────
 
-        bool m_installed = false;
+        bool m_installed      = false;
+        bool m_hooksInstalled = false;
 
         // D3D11 resources
         ID3D11Device*              m_device  = nullptr;
@@ -357,7 +376,7 @@ namespace SB::Debug
         // Source code cache (for snippet extraction)
         // Key: filename, Value: file contents (read on first error in that file)
         std::unordered_map<std::string, std::string> m_sourceCache;
-        std::mutex m_sourceCacheMtx;
+        mutable std::mutex m_sourceCacheMtx;
 
         // Overlay state
         bool    m_overlayVisible   = false;
@@ -375,6 +394,12 @@ namespace SB::Debug
         // Log file
         std::filesystem::path m_logPath;
         bool                  m_logHeaderWritten = false;
+
+        // Shader source capture
+        bool                  m_captureEnabled = true;
+        std::filesystem::path m_capturePath;
+        int                   m_capturedCount  = 0;
+        std::unordered_set<uint64_t> m_capturedHashes;  // Avoid duplicate captures
 
         // Frame counter (for overlay animation / timing)
         uint64_t m_frameCount = 0;

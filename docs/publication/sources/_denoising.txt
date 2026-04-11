@@ -1,0 +1,1117 @@
+SkyrimBridge Volume 7
+Noise Reduction, Signal Quality & Bilateral Filtering
+Edge-Preserving Denoising for ENB Pixel Shader Pipelines
+Agent 5 — March 2026
+Target Shaders: SB_GTAO.fx | SB_SSR.fx | SB_ContactShadows.fx | SB_VolumetricFog.fx | SB_DenoiseCore.fxh | enbeffectpostpass.fx
+
+
+Section 1: Bilateral Filter Theory & GBuffer-Guided Filtering
+
+1.1 Standard Bilateral Filter
+The bilateral filter (Tomasi & Manduchi, ICCV 1998) combines spatial proximity weighting with value-similarity weighting to smooth noise while preserving edges. For each pixel p, the filtered output is the weighted average of neighbors q, where the weight is the product of a spatial Gaussian (distance between p and q) and a range Gaussian (value difference between p and q). The spatial weight ensures far-away pixels contribute less; the range weight ensures dissimilar pixels (across edges) contribute less. The normalization denominator is the sum of all combined weights.
+In the ENB context, the standard bilateral filter is rarely used directly because the noisy signal (AO, shadows, reflections) is not a good range guide for itself. A noisy AO buffer has random fluctuations that the range kernel cannot distinguish from real edges. This motivates the joint bilateral approach.
+
+1.2 Joint/Cross Bilateral Filtering for ENB
+Joint bilateral filtering replaces the noisy signal in the range kernel with a noise-free guide image. In ENB shaders, the GBuffer provides two excellent guides: linearized depth from TextureDepth (separates objects at different distances) and reconstructed world-space normals from depth derivatives (separates surfaces at different orientations). These are noise-free because the depth buffer comes directly from rasterization, not from a stochastic process.
+ENB compatibility: Fully compatible. Both depth and normal reconstruction use only TextureDepth and FieldOfView, which are ENB-native. SkyrimBridge enhances this with SB_LinearDepth(uv) and SB_GetWorldNormal(uv) but the standalone fallback using depth derivatives works without the plugin.
+
+1.3 Weight Function Options and ENB-Specific Tradeoffs
+
+
+The combined weight formula multiplies all edge-stopping terms: w(p,q) = w_spatial * w_depth * w_normal. A luminance weight w_luma is optionally added for color-domain filtering (SSR) but omitted for scalar signals (AO, shadows).
+
+1.4 Sigma Parameter Tuning for Skyrim SE
+Skyrim SE has a very large depth range (near ~5, far ~250000+) which makes absolute depth differences meaningless for bilateral weights. The depth weight must be normalized. Two approaches work:
+Approach 1 — Relative depth difference: depthDiff = abs(z_center - z_sample) / max(z_center, 0.001). This normalizes to a percentage. Use σ_z = 0.02 (reject samples more than 2% depth difference). This naturally scales with distance: at z=100 allows ±2 units; at z=10000 allows ±200 units.
+Approach 2 — SVGF gradient normalization: w_z = exp(-|z_p - z_q| / (σ_z * |grad_z · (p-q)| + ε)). Compute grad_z from finite differences of the linearized depth buffer. Use σ_z = 1.0. The gradient term automatically handles sloped surfaces (floors, roads) where adjacent pixels have different depths but belong to the same surface.
+For normals, σ_n = 64–128 works well. Higher values preserve more creases. The cosine power weight naturally ranges from 0 to 1, and at σ_n=128, normals differing by more than ~7° receive less than 50% weight.
+
+1.5 Complete HLSL: JointBilateralFilter() for SB_DenoiseCore.fxh
+SB_DenoiseCore.fxh — Generic Joint Bilateral Filter
+// ═══════════════════════════════════════════════════════════════
+//  Joint Bilateral Filter — GBuffer-guided edge-preserving blur
+//  Works with any scalar or RGB signal stored in a render target.
+//  Guide signals: linearized depth + depth-derived normals.
+// ═══════════════════════════════════════════════════════════════
+ 
+#ifndef SB_DENOISE_CORE_FXH
+#define SB_DENOISE_CORE_FXH
+ 
+// ─── Configuration ───────────────────────────────────────────
+static const float DENOISE_SIGMA_DEPTH   = 0.02;   // Relative depth threshold
+static const float DENOISE_SIGMA_NORMAL  = 64.0;   // Normal cosine power
+static const float DENOISE_SIGMA_LUMA    = 4.0;    // Luminance sigma (SSR only)
+static const float DENOISE_EPSILON       = 1e-6;
+ 
+// ─── Depth linearization (ENB-native fallback) ──────────────
+float SB_Denoise_LinearDepth(float rawDepth) {
+#ifdef SKYRIMBRIDGE_FXH
+    return SB_LinearDepth(rawDepth);
+#else
+    // Skyrim SE: near=5, far=250000 approximation
+    return (5.0 * 250000.0) / (250000.0 - rawDepth * (250000.0 - 5.0));
+#endif
+}
+ 
+// ─── Normal reconstruction (Bavoil-Sainz smallest derivative) ─
+float3 SB_Denoise_GetNormal(float2 uv, float2 pixelSize) {
+#ifdef SKYRIMBRIDGE_FXH
+    return SB_GetWorldNormal(uv);
+#else
+    float cZ = SB_Denoise_LinearDepth(
+        TextureDepth.SampleLevel(PointSampler, uv, 0).x);
+    float lZ = SB_Denoise_LinearDepth(
+        TextureDepth.SampleLevel(PointSampler, uv - float2(pixelSize.x, 0), 0).x);
+    float rZ = SB_Denoise_LinearDepth(
+        TextureDepth.SampleLevel(PointSampler, uv + float2(pixelSize.x, 0), 0).x);
+    float uZ = SB_Denoise_LinearDepth(
+        TextureDepth.SampleLevel(PointSampler, uv - float2(0, pixelSize.y), 0).x);
+    float dZ = SB_Denoise_LinearDepth(
+        TextureDepth.SampleLevel(PointSampler, uv + float2(0, pixelSize.y), 0).x);
+ 
+    float tanHFov = tan(FieldOfView * 0.5 * 3.14159265 / 180.0);
+    float aspect  = ScreenSize.z;
+ 
+    float3 cP = float3((uv * 2.0 - 1.0) * float2(aspect, -1) * tanHFov * cZ, cZ);
+    float3 lP = float3(((uv - float2(pixelSize.x, 0)) * 2.0 - 1.0)
+                 * float2(aspect, -1) * tanHFov * lZ, lZ);
+    float3 rP = float3(((uv + float2(pixelSize.x, 0)) * 2.0 - 1.0)
+                 * float2(aspect, -1) * tanHFov * rZ, rZ);
+    float3 uP = float3(((uv - float2(0, pixelSize.y)) * 2.0 - 1.0)
+                 * float2(aspect, -1) * tanHFov * uZ, uZ);
+    float3 dP = float3(((uv + float2(0, pixelSize.y)) * 2.0 - 1.0)
+                 * float2(aspect, -1) * tanHFov * dZ, dZ);
+ 
+    float3 dx = (abs(lZ - cZ) < abs(rZ - cZ)) ? (cP - lP) : (rP - cP);
+    float3 dy = (abs(uZ - cZ) < abs(dZ - cZ)) ? (cP - uP) : (dP - cP);
+    return normalize(cross(dy, dx));
+#endif
+}
+ 
+// ─── Edge-stopping weight computation ────────────────────────
+float SB_Denoise_DepthWeight(float z_center, float z_sample) {
+    float relDiff = abs(z_center - z_sample) / max(z_center, 1.0);
+    return exp(-relDiff / DENOISE_SIGMA_DEPTH);
+}
+ 
+float SB_Denoise_NormalWeight(float3 n_center, float3 n_sample) {
+    return pow(max(0.0, dot(n_center, n_sample)), DENOISE_SIGMA_NORMAL);
+}
+ 
+float SB_Denoise_LumaWeight(float l_center, float l_sample, float variance) {
+    float sigma = DENOISE_SIGMA_LUMA * sqrt(max(variance, 1e-10));
+    return exp(-abs(l_center - l_sample) / max(sigma, DENOISE_EPSILON));
+}
+ 
+// ─── Generic N-tap joint bilateral filter ────────────────────
+// sigmaOverride: per-call depth sigma override (0 = use default)
+// useNormals: set false for signals where normal edge-stopping hurts
+float4 SB_JointBilateralFilter(
+    Texture2D    signalTex,
+    SamplerState signalSampler,
+    float2       uv,
+    float2       pixelSize,
+    float2       offsets[12],  // Kernel offsets in pixel units
+    float        weights[12], // Spatial kernel weights
+    int          numTaps,
+    float        sigmaOverride,
+    bool         useNormals
+) {
+    float  centerRaw = TextureDepth.SampleLevel(PointSampler, uv, 0).x;
+    float  centerZ   = SB_Denoise_LinearDepth(centerRaw);
+    float3 centerN   = useNormals ?
+        SB_Denoise_GetNormal(uv, pixelSize) : float3(0, 0, 1);
+    float4 centerVal = signalTex.SampleLevel(signalSampler, uv, 0);
+ 
+    float  sigZ      = (sigmaOverride > 0.0) ? sigmaOverride : DENOISE_SIGMA_DEPTH;
+ 
+    float4 acc       = centerVal;
+    float  wTotal    = 1.0;
+ 
+    [unroll] for (int i = 0; i < numTaps; i++) {
+        if (i >= numTaps) break; // Safety for unroll
+        float2 sUV  = uv + offsets[i] * pixelSize;
+ 
+        // Bounds check (ENB has no clamp-to-border)
+        if (any(sUV < 0.001) || any(sUV > 0.999)) continue;
+ 
+        float  sRaw = TextureDepth.SampleLevel(PointSampler, sUV, 0).x;
+        float  sZ   = SB_Denoise_LinearDepth(sRaw);
+        float4 sVal = signalTex.SampleLevel(signalSampler, sUV, 0);
+ 
+        // Combined edge-stopping weight
+        float w = weights[i];
+        w *= exp(-abs(centerZ - sZ) / (max(centerZ, 1.0) * sigZ + 0.001));
+ 
+        if (useNormals) {
+            float3 sN = SB_Denoise_GetNormal(sUV, pixelSize);
+            w *= pow(max(0.0, dot(centerN, sN)), DENOISE_SIGMA_NORMAL);
+        }
+ 
+        acc    += sVal * w;
+        wTotal += w;
+    }
+ 
+    return acc / max(wTotal, DENOISE_EPSILON);
+}
+ 
+#endif // SB_DENOISE_CORE_FXH
+
+
+1.6 ENB Compatibility Assessment
+
+Section 2: The À-Trous Wavelet Transform (Complete Implementation)
+
+2.1 Algorithm Overview
+The edge-avoiding à-trous wavelet transform (Dammertz, Sewtz, Hanika, Lensch, HPG 2010) is the single most important spatial denoising algorithm for real-time rendering. It applies a small fixed kernel (5×5 B3-spline with weights [1/16, 1/4, 3/8, 1/4, 1/16]) at exponentially increasing dilation rates (1, 2, 4, 8, 16) across 5 passes. Each pass has identical computational cost (25 non-zero taps) but the effective filter radius doubles. After 5 iterations, the effective footprint covers approximately 65×65 pixels from only 125 total texture fetches — a 34× reduction compared to a direct kernel of equal size.
+Edge-stopping functions are integrated by multiplying each tap weight by GBuffer-derived similarity weights (depth, normal, luminance). This prevents the filter from blurring across geometric or material boundaries.
+
+2.2 ENB Mapping: Technique Passes and RT Ping-Pong
+Critical constraint: Each à-trous iteration requires one full technique pass in the ENB .fx file. A 5-level filter consumes 5 technique slots. Combined with the effect computation pass, temporal accumulation pass, and bilateral upsample pass, a complete denoise pipeline consumes 8–10 technique slots per effect. Against the 128 technique limit per .fx file, this is manageable but must be budgeted carefully.
+
+ENB cannot read and write the same render target simultaneously. The à-trous chain requires ping-pong between two RTs:
+
+
+Format consideration: RenderTargetRGBA64F is R16G16B16A16F (full half-float precision for intermediate data). RenderTargetRGBA32 is R8G8B8A8_UNORM (only 8-bit per channel). For AO (scalar [0,1]) and contact shadows (near-binary), 8-bit intermediate precision is acceptable. For SSR (HDR color), RenderTargetRGBA64F must be used for both ping-pong targets — requiring use of a TextureCustom slot as the second buffer, or encoding HDR data via RGBM packing into RGBA32.
+
+2.3 Edge-Stopping Functions with SVGF Variance Guidance
+The SVGF improvement to the à-trous filter makes the luminance sigma adaptive: regions with high variance (noisy) get aggressive smoothing; regions with low variance (converged) preserve detail. This is the single most impactful enhancement for low-sample-count screen-space effects.
+Variance is computed from temporal moments: accumulate first moment (luminance mean) and second moment (luminance squared mean) alongside the signal during temporal accumulation. Variance = secondMoment - firstMoment². A 3×3 spatial pre-filter on the variance prevents single-pixel variance spikes from creating splotchy filter-width artifacts.
+
+2.4 Dolp et al. 2024 Bit-Permutation Optimization
+ENB compatibility: INCOMPATIBLE as designed. The Dolp permutation technique requires compute shaders with shared memory (groupshared) to achieve cache-coherent memory access. ENB cannot dispatch compute shaders. However, the underlying insight — that dilated taps at high iteration levels destroy L1 cache utilization — still applies to pixel shaders.
+
+Workaround for ENB pixel shaders: Instead of the compute-shader permutation, we apply two pixel-shader-friendly mitigations:
+(1) Reduce iteration count. For AO and contact shadows, 3 iterations (dilation 1, 2, 4, effective radius 13×13) is sufficient. The signal is low-frequency enough that 5 iterations provide diminishing returns. This avoids the worst cache degradation at dilations 8 and 16.
+(2) Half-resolution execution. Running the à-trous filter at half resolution (the native effect resolution) means dilation 4 in half-res space corresponds to dilation 8 in full-res space. The effective full-res footprint of a 3-iteration half-res filter is 25×25 pixels — more than adequate for AO and shadows. Cache performance improves because the half-res buffer is 4× smaller, fitting more of it in L1.
+(3) For SSR where more iterations are needed (roughness-dependent), consider a separable approximation: horizontal à-trous (3 iterations) followed by vertical à-trous (3 iterations), using 1D 5-tap kernels. This is not mathematically equivalent but the visual difference is negligible for specular denoising.
+
+2.5 Complete HLSL: 5-Level À-Trous Pipeline
+SB_DenoiseCore.fxh — À-Trous Wavelet Filter Core
+// ═══════════════════════════════════════════════════════════════
+//  À-Trous Wavelet Filter — Edge-Avoiding with SVGF Variance
+//  Single function called at different dilation levels.
+//  Each call = one ENB technique pass.
+// ═══════════════════════════════════════════════════════════════
+ 
+// B3-spline kernel weights (1D: [1/16, 1/4, 3/8, 1/4, 1/16])
+// 2D: outer product gives 5x5 kernel
+static const float ATROUS_KERNEL_1D[5] = {
+    0.0625, 0.25, 0.375, 0.25, 0.0625
+};
+ 
+// Optimized: only sample the 5 non-zero positions per row
+// in the 2D kernel (cross pattern + diagonals)
+static const int2 ATROUS_OFFSETS_2D[25] = {
+    int2(-2,-2), int2(-1,-2), int2(0,-2), int2(1,-2), int2(2,-2),
+    int2(-2,-1), int2(-1,-1), int2(0,-1), int2(1,-1), int2(2,-1),
+    int2(-2, 0), int2(-1, 0), int2(0, 0), int2(1, 0), int2(2, 0),
+    int2(-2, 1), int2(-1, 1), int2(0, 1), int2(1, 1), int2(2, 1),
+    int2(-2, 2), int2(-1, 2), int2(0, 2), int2(1, 2), int2(2, 2)
+};
+ 
+float SB_ATrousKernelWeight2D(int idx) {
+    int x = idx % 5;
+    int y = idx / 5;
+    return ATROUS_KERNEL_1D[x] * ATROUS_KERNEL_1D[y];
+}
+ 
+// ─── Variance pre-filter (3x3 Gaussian on variance buffer) ──
+float SB_PreFilterVariance(Texture2D varianceTex, float2 uv,
+                           float2 pixelSize) {
+    float total = 0.0;
+    float wSum  = 0.0;
+    static const float G3x3[9] = {
+        0.0625, 0.125, 0.0625,
+        0.125,  0.25,  0.125,
+        0.0625, 0.125, 0.0625
+    };
+    [unroll] for (int y = -1; y <= 1; y++)
+    [unroll] for (int x = -1; x <= 1; x++) {
+        float2 sUV = uv + float2(x, y) * pixelSize;
+        float  v   = varianceTex.SampleLevel(PointSampler, sUV, 0).r;
+        float  w   = G3x3[(y+1)*3 + (x+1)];
+        total += v * w;
+        wSum  += w;
+    }
+    return total / max(wSum, 1e-6);
+}
+ 
+// ─── Main à-trous filter pass ─────────────────────────────────
+// iterationLevel: 0=dilation 1, 1=dilation 2, 2=dilation 4, etc.
+// sigmaLumaScale: decreases per iteration (SVGF: 2^(-level))
+float4 SB_ATrousFilter(
+    Texture2D    signalTex,       // Input (noisy or previous iteration)
+    Texture2D    varianceTex,     // Variance buffer (from temporal accum)
+    float2       uv,
+    float2       pixelSize,
+    int          iterationLevel,  // 0, 1, 2, 3, 4
+    float        sigmaLumaScale, // Per-level luminance sigma multiplier
+    bool         useVariance,     // Enable SVGF variance guidance
+    bool         filterVariance   // Also filter variance (output in .a)
+) {
+    int stepSize = 1 << iterationLevel; // 1, 2, 4, 8, 16
+ 
+    float  centerRaw = TextureDepth.SampleLevel(PointSampler, uv, 0).x;
+    float  centerZ   = SB_Denoise_LinearDepth(centerRaw);
+    float3 centerN   = SB_Denoise_GetNormal(uv, pixelSize);
+    float4 centerVal = signalTex.SampleLevel(PointSampler, uv, 0);
+    float  centerL   = dot(centerVal.rgb, float3(0.2126, 0.7152, 0.0722));
+ 
+    float  variance  = useVariance ?
+        SB_PreFilterVariance(varianceTex, uv, pixelSize) : 1.0;
+ 
+    // Adaptive luminance sigma: higher variance = more blur
+    float sigmaL = DENOISE_SIGMA_LUMA * sigmaLumaScale
+                 * sqrt(max(variance, 1e-10));
+ 
+    float4 acc     = centerVal * ATROUS_KERNEL_1D[2] * ATROUS_KERNEL_1D[2];
+    float  wTotal  = ATROUS_KERNEL_1D[2] * ATROUS_KERNEL_1D[2]; // center weight
+    float  varAcc  = variance * wTotal;
+ 
+    [unroll] for (int i = 0; i < 25; i++) {
+        if (i == 12) continue; // Skip center (already accumulated)
+ 
+        int2   offset = ATROUS_OFFSETS_2D[i] * stepSize;
+        float2 sUV    = uv + float2(offset) * pixelSize;
+ 
+        if (any(sUV < 0.001) || any(sUV > 0.999)) continue;
+ 
+        float  sRaw = TextureDepth.SampleLevel(PointSampler, sUV, 0).x;
+        float  sZ   = SB_Denoise_LinearDepth(sRaw);
+        float4 sVal = signalTex.SampleLevel(PointSampler, sUV, 0);
+        float  sL   = dot(sVal.rgb, float3(0.2126, 0.7152, 0.0722));
+ 
+        // Kernel weight
+        float h = SB_ATrousKernelWeight2D(i);
+ 
+        // Depth edge-stopping (relative difference)
+        float dz = abs(centerZ - sZ) / max(centerZ, 1.0);
+        float w_z = exp(-dz / (DENOISE_SIGMA_DEPTH + 1e-6));
+ 
+        // Normal edge-stopping
+        float3 sN  = SB_Denoise_GetNormal(sUV, pixelSize);
+        float  w_n = pow(max(0.0, dot(centerN, sN)), DENOISE_SIGMA_NORMAL);
+ 
+        // Luminance edge-stopping (variance-guided)
+        float  w_l = exp(-abs(centerL - sL) / max(sigmaL, 1e-6));
+ 
+        float w = h * w_z * w_n * w_l;
+ 
+        acc    += sVal * w;
+        wTotal += w;
+ 
+        if (filterVariance) {
+            float sVar = varianceTex.SampleLevel(PointSampler, sUV, 0).r;
+            varAcc += sVar * w;
+        }
+    }
+ 
+    float4 result = acc / max(wTotal, 1e-6);
+    if (filterVariance) {
+        result.a = varAcc / max(wTotal, 1e-6);
+    }
+    return result;
+}
+
+
+2.6 ENB Technique Declarations
+SB_GTAO.fx — 3-level à-trous technique chain (example)
+// ─── Technique chain: 3-level à-trous for GTAO ─────────────────
+// Reads half-res AO from temporal accumulation output.
+// Ping-pongs between RenderTargetRGBA64F and RenderTargetRGBA32.
+ 
+float4 PS_ATrous_AO(float4 pos : SV_Position, float2 uv : TEXCOORD,
+                    uniform int level) : SV_Target {
+    // Half-res pixel size (effect runs at half resolution)
+    float2 halfPixel = float2(ScreenSize.y, ScreenSize.y * ScreenSize.z) * 2.0;
+    // luminance sigma halves each level: 1.0, 0.5, 0.25
+    float sigmaScale = pow(0.5, float(level));
+    // For AO, useVariance=false (scalar signal, simpler)
+    return SB_ATrousFilter(
+        (level % 2 == 0) ? RenderTargetRGBA32Tex : RenderTargetRGBA64FTex,
+        RenderTargetR16FTex,  // variance buffer (if used)
+        uv, halfPixel, level, sigmaScale,
+        false, false  // no variance guidance for AO, keep it simple
+    );
+}
+ 
+technique11 ATrous_AO_Level0 <string UIName="GTAO Denoise L0";>
+{ pass p0 {
+    SetVertexShader(CompileShader(vs_5_0, VS_Quad()));
+    SetPixelShader(CompileShader(ps_5_0, PS_ATrous_AO(0)));
+} }
+ 
+technique11 ATrous_AO_Level1
+    <string UIName="GTAO Denoise L1"; string RenderTarget="RenderTargetRGBA32";>
+{ pass p0 {
+    SetVertexShader(CompileShader(vs_5_0, VS_Quad()));
+    SetPixelShader(CompileShader(ps_5_0, PS_ATrous_AO(1)));
+} }
+ 
+technique11 ATrous_AO_Level2 <string UIName="GTAO Denoise L2";>
+{ pass p0 {
+    SetVertexShader(CompileShader(vs_5_0, VS_Quad()));
+    SetPixelShader(CompileShader(ps_5_0, PS_ATrous_AO(2)));
+} }
+
+
+2.7 Performance Analysis
+Recommendation: Use 3-level half-res for GTAO and contact shadows (0.15ms, more than adequate coverage). Use 3-level full-res or roughness-dependent level count for SSR (0.25–0.45ms). Volumetric fog at quarter-res benefits from only 2 levels (0.05ms).
+
+Section 3: Denoising SSAO (SB_GTAO-Specific)
+
+3.1 Current State and Problem
+SB_GTAO.fx currently computes 8–16 samples per pixel at half resolution with temporal accumulation via exponential moving average and bilinear upsample to full resolution. No spatial filter is applied. At 8 samples, visible per-pixel noise appears as grain in the AO buffer. At 16 samples the noise is reduced but still visible on smooth surfaces, and the cost doubles.
+Goal: Achieve noise-free AO from 8 samples per pixel (equivalent visual quality to 32+ samples) by adding a 3-pass spatial denoise chain at half resolution, consuming ≤0.2ms additional GPU time.
+
+3.2 Pipeline: Temporal-Then-Spatial
+Ordering matters critically. Temporal accumulation first, then spatial filtering. This is because: (a) temporal accumulation is free sample multiplication — rotating the hemisphere sampling pattern each frame and blending 90% history / 10% current effectively gives 10× the sample count over 10 frames; (b) spatial filtering after temporal means the input is already partially converged, so the spatial filter can use a tighter luminance sigma and preserve more detail; (c) the reverse order (spatial then temporal) would blur the signal before temporal accumulation, preventing the temporal filter from seeing the fine per-frame variation it needs to converge correctly.
+
+3.3 Edge-Stopping Tuning for AO
+AO has specific edge-stopping requirements different from general-purpose denoising:
+Depth weight is the primary guard. AO should not bleed from one object onto another. Use relative depth threshold σ_z = 0.015 (tighter than default 0.02) because AO is a contact phenomenon — even small depth differences indicate separate objects.
+Normal weight preserves creases. Geometric corners where two surfaces meet at sharp angles should maintain their dark AO even though the bilateral filter wants to average them with the brighter surrounding surface. Use σ_n = 128 (very sharp — normals diverging by more than ~5° get near-zero weight).
+Luminance weight on the AO value itself prevents dark AO regions from bleeding into light regions and vice versa. Use a moderate σ_l = 0.1 (AO values are [0,1] so this is 10% of the range). Without this weight, thin dark AO bands (e.g. where a character’s foot meets the ground) can smear into surrounding lit areas.
+
+3.4 Complete HLSL: 3-Pass AO Denoise Chain
+SB_GTAO.fx — AO-specific à-trous with optimized edge stopping
+// ═══════════════════════════════════════════════════════════════
+//  GTAO Denoise Pipeline (Half-Resolution)
+//  Input:  Temporally accumulated AO in RenderTargetRGBA64F
+//          .r = AO [0,1], .g = linearized depth, .b = sentinel
+//  Output: Denoised AO in RenderTargetRGBA64F after 3 passes
+// ═══════════════════════════════════════════════════════════════
+ 
+static const float AO_SIGMA_DEPTH  = 0.015;
+static const float AO_SIGMA_NORMAL = 128.0;
+static const float AO_SIGMA_LUMA   = 0.1;
+ 
+float4 PS_ATrous_GTAO(float4 pos : SV_Position, float2 uv : TEXCOORD,
+                      uniform int level,
+                      uniform Texture2D inputTex) : SV_Target {
+    int stepSize = 1 << level;
+    // Half-res pixel size
+    float2 px = float2(ScreenSize.y, ScreenSize.y * ScreenSize.z) * 2.0;
+ 
+    float4 centerData = inputTex.SampleLevel(PointSampler, uv, 0);
+    float  centerAO   = centerData.r;
+    float  centerZ    = centerData.g; // Pre-packed linear depth
+    float3 centerN    = SB_Denoise_GetNormal(uv, px);
+ 
+    float  acc    = centerAO * 0.140625; // center 2D weight: 3/8 * 3/8
+    float  wTotal = 0.140625;
+ 
+    // Reduced 13-tap cross pattern (skip corners for AO — less important)
+    static const int2 offsets13[12] = {
+        int2(-2, 0), int2(-1, 0), int2(1, 0), int2(2, 0),
+        int2(0, -2), int2(0, -1), int2(0, 1), int2(0, 2),
+        int2(-1,-1), int2(1,-1),  int2(-1,1), int2(1,1)
+    };
+    static const float weights13[12] = {
+        0.015625, 0.09375, 0.09375, 0.015625,
+        0.015625, 0.09375, 0.09375, 0.015625,
+        0.0625,   0.0625,  0.0625,  0.0625
+    };
+ 
+    [unroll] for (int i = 0; i < 12; i++) {
+        int2   off = offsets13[i] * stepSize;
+        float2 sUV = uv + float2(off) * px;
+        if (any(sUV < 0.001) || any(sUV > 0.999)) continue;
+ 
+        float4 sData = inputTex.SampleLevel(PointSampler, sUV, 0);
+        float  sAO   = sData.r;
+        float  sZ    = sData.g;
+ 
+        // Depth edge-stopping (tight for AO)
+        float dz  = abs(centerZ - sZ) / max(centerZ, 1.0);
+        float w_z = exp(-dz / AO_SIGMA_DEPTH);
+ 
+        // Normal edge-stopping
+        float3 sN  = SB_Denoise_GetNormal(sUV, px);
+        float  w_n = pow(max(0.0, dot(centerN, sN)), AO_SIGMA_NORMAL);
+ 
+        // AO value edge-stopping (prevent dark/light bleeding)
+        float  w_l = exp(-abs(centerAO - sAO) / AO_SIGMA_LUMA);
+ 
+        float w = weights13[i] * w_z * w_n * w_l;
+        acc    += sAO * w;
+        wTotal += w;
+    }
+ 
+    float result = acc / max(wTotal, 1e-6);
+    return float4(result, centerZ, centerData.b, centerData.a);
+}
+ 
+// Three technique passes (ping-pong RGBA64F <-> RGBA32)
+technique11 GTAO_Denoise0
+    <string UIName="GTAO Spatial L0"; string RenderTarget="RenderTargetRGBA32";>
+{ pass p0 {
+    SetVertexShader(CompileShader(vs_5_0, VS_Quad()));
+    SetPixelShader(CompileShader(ps_5_0,
+        PS_ATrous_GTAO(0, RenderTargetRGBA64FTex)));
+} }
+ 
+technique11 GTAO_Denoise1
+    <string UIName="GTAO Spatial L1"; string RenderTarget="RenderTargetRGBA64F";>
+{ pass p0 {
+    SetVertexShader(CompileShader(vs_5_0, VS_Quad()));
+    SetPixelShader(CompileShader(ps_5_0,
+        PS_ATrous_GTAO(1, RenderTargetRGBA32Tex)));
+} }
+ 
+technique11 GTAO_Denoise2
+    <string UIName="GTAO Spatial L2"; string RenderTarget="RenderTargetRGBA32";>
+{ pass p0 {
+    SetVertexShader(CompileShader(vs_5_0, VS_Quad()));
+    SetPixelShader(CompileShader(ps_5_0,
+        PS_ATrous_GTAO(2, RenderTargetRGBA64FTex)));
+} }
+
+
+3.5 Expected Quality Improvement
+
+Section 4: Denoising SSR (SB_SSR-Specific)
+
+4.1 SSR-Specific Challenges
+Screen-space reflections present four unique denoising challenges not found in AO or shadows:
+(1) Binary hit/miss noise. When a ray fails to intersect geometry, the pixel has no reflection data at all — not just a noisy value, but a complete absence. This creates harsh transitions between reflected and non-reflected regions that bilateral filtering cannot smooth gracefully.
+(2) Roughness-dependent filter width. A mirror surface (roughness ≈ 0) should receive zero spatial filtering — any blur destroys the sharp reflection. A rough surface (roughness ≈ 0.5) benefits from aggressive spatial filtering because the true reflected signal is inherently blurry. The filter width must vary continuously with surface roughness.
+(3) Reflection-specific temporal reprojection. Standard camera-motion reprojection (project surface point with PreviousViewProjectionMatrix) is WRONG for reflections. The reflected content moves independently of the reflecting surface. During camera rotation, the reflected image sweeps across the surface faster than the surface itself moves in screen space.
+(4) Firefly noise. A single bright reflected pixel (sun reflection, specular highlight) can dominate the temporal average if not clamped, creating persistent bright dots that take many frames to fade.
+
+4.2 Hit-Point Reprojection for ENB
+The correct temporal reprojection for SSR stores the ray hit distance during tracing and computes a virtual position by extending the view ray by this distance beyond the surface. This virtual point is reprojected using PreviousViewProjectionMatrix, correctly tracking reflected objects across frames.
+ENB compatibility: Fully compatible. ENB provides PreviousViewProjectionMatrix natively. The hit distance must be stored during the SSR trace pass — pack it into the alpha channel of the half-res reflection RT (RenderTargetRGBA64F has full 16-bit alpha).
+
+SB_SSR.fx — Reflection-aware temporal reprojection
+// ═══════════════════════════════════════════════════════════════
+//  SSR Temporal Accumulation with Hit-Point Reprojection
+//  Correctly tracks reflected content across camera motion.
+// ═══════════════════════════════════════════════════════════════
+ 
+float4 PS_SSR_TemporalAccum(float4 pos : SV_Position,
+                            float2 uv : TEXCOORD) : SV_Target {
+    float4 current = RenderTargetRGBA64FTex.SampleLevel(PointSampler, uv, 0);
+    float  hitDist = current.a; // Stored during SSR trace pass
+    float  rawZ    = TextureDepth.SampleLevel(PointSampler, uv, 0).x;
+ 
+    // ─── Reconstruct hit point world position ─────────────
+    float4 surfClip = float4(uv * 2.0 - 1.0, rawZ, 1.0);
+    surfClip.y = -surfClip.y;
+    float4 surfWorld = mul(surfClip, InverseViewProjectionMatrix);
+    surfWorld.xyz /= surfWorld.w;
+ 
+    // View direction from camera to surface
+    float3 viewDir = normalize(surfWorld.xyz - CameraPosition.xyz);
+ 
+    // Surface normal for reflection
+    float2 px = float2(ScreenSize.y, ScreenSize.y * ScreenSize.z);
+    float3 normal = SB_Denoise_GetNormal(uv, px);
+ 
+    // Reflect view direction around surface normal
+    float3 reflDir = reflect(viewDir, normal);
+ 
+    // Virtual hit position = surface + hitDist * reflDir
+    float3 virtualPos = surfWorld.xyz + reflDir * hitDist;
+ 
+    // Reproject virtual position to previous frame UV
+    float4 prevClip = mul(float4(virtualPos, 1.0), PreviousViewProjectionMatrix);
+    float2 prevUV   = (prevClip.xy / prevClip.w) * float2(0.5, -0.5) + 0.5;
+ 
+    // Validity check
+    bool valid = all(prevUV > 0.005) && all(prevUV < 0.995)
+              && prevClip.w > 0.0 && hitDist > 0.01;
+ 
+    // ─── Neighborhood clamping (firefly suppression) ──────
+    float3 nMin = current.rgb;
+    float3 nMax = current.rgb;
+    [unroll] for (int y = -1; y <= 1; y++)
+    [unroll] for (int x = -1; x <= 1; x++) {
+        if (x == 0 && y == 0) continue;
+        float3 s = RenderTargetRGBA64FTex.SampleLevel(
+            PointSampler, uv + float2(x, y) * px, 0).rgb;
+        nMin = min(nMin, s);
+        nMax = max(nMax, s);
+    }
+ 
+    float4 history = TextureCustom01.SampleLevel(LinearSampler, prevUV, 0);
+    history.rgb = clamp(history.rgb, nMin, nMax); // Firefly clamp
+ 
+    // ─── Blend (higher alpha = more responsive) ───────────
+    float alpha = valid ? 0.05 : 1.0; // 95% history when valid
+    // Reduce history trust for rough surfaces (more spatial needed)
+    // Assume roughness stored in some channel or from SkyrimBridge
+    float4 result;
+    result.rgb = lerp(history.rgb, current.rgb, alpha);
+    result.a   = hitDist; // Preserve for next frame
+    return result;
+}
+
+
+4.3 Roughness-Dependent Spatial Filter
+After temporal accumulation, apply spatial filtering with width proportional to surface roughness. Mirror surfaces (roughness < 0.05) skip filtering entirely. Rough surfaces (roughness > 0.3) use the full 3-level à-trous chain. The roughness value can come from SkyrimBridge material data (SB_Material_Roughness) or be estimated from the depth-derived normal variation (higher variation = rougher micro-surface).
+ENB workaround for missing roughness: Without SkyrimBridge, estimate roughness from the local normal variance in a 3×3 neighborhood. High normal variance indicates geometric complexity that correlates with visual roughness. This is an approximation but prevents mirror-like surfaces from being blurred.
+
+4.4 Technique Budget
+Technique passes consumed: 6 (trace + temporal + 3×à-trous + upsample). Well within the 128 technique budget.
+
+Section 5: Denoising Contact Shadows
+
+5.1 Signal Characteristics
+Contact shadows produce a nearly binary signal: 0.0 (fully shadowed) or 1.0 (fully lit), with a narrow penumbra region where values fall between 0.1 and 0.9. The denoising goal is fundamentally different from AO or SSR: preserve the sharp umbra edge, smooth only the penumbra region, and respond quickly to light direction changes.
+
+5.2 Small Kernel Approach
+Large à-trous filters are counterproductive for contact shadows because they destroy the sharp shadow edges that are the entire point of the effect. Instead, use a 5×5 joint bilateral with aggressive depth edge-stopping. The kernel is small enough to run in a single pass.
+
+5.3 Penumbra-Aware Filtering
+SB_ContactShadows.fx — Penumbra-adaptive bilateral
+// ═══════════════════════════════════════════════════════════════
+//  Contact Shadow Denoise — Penumbra-aware 5x5 bilateral
+//  Sharp in umbra, smooth in penumbra, skips fully lit regions.
+// ═══════════════════════════════════════════════════════════════
+ 
+static const float CS_SIGMA_DEPTH  = 0.01; // Very tight depth threshold
+static const float CS_SIGMA_NORMAL = 64.0;
+static const float CS_PENUMBRA_LO  = 0.05; // Below this = hard shadow
+static const float CS_PENUMBRA_HI  = 0.95; // Above this = fully lit
+ 
+float4 PS_ContactShadow_Denoise(float4 pos : SV_Position,
+                                float2 uv : TEXCOORD) : SV_Target {
+    float2 px = float2(ScreenSize.y, ScreenSize.y * ScreenSize.z) * 2.0;
+    // Half-res shadow buffer
+    float4 centerData = RenderTargetR16FTex.SampleLevel(PointSampler, uv, 0);
+    float  centerSh   = centerData.r; // Shadow value [0,1]
+ 
+    // Skip filtering in fully shadowed or fully lit regions
+    // (no noise there, and we want to preserve sharp edges)
+    if (centerSh < CS_PENUMBRA_LO || centerSh > CS_PENUMBRA_HI) {
+        return centerData;
+    }
+ 
+    float centerZ  = SB_Denoise_LinearDepth(
+        TextureDepth.SampleLevel(PointSampler, uv, 0).x);
+    float3 centerN = SB_Denoise_GetNormal(uv, px);
+ 
+    // Adaptive kernel size: wider in penumbra center, narrower at edges
+    float penumbraT = smoothstep(CS_PENUMBRA_LO, 0.5, centerSh)
+                    * smoothstep(CS_PENUMBRA_HI, 0.5, centerSh);
+    // penumbraT = 0 at hard edges, 1 in mid-penumbra
+ 
+    float acc    = centerSh;
+    float wTotal = 1.0;
+ 
+    [unroll] for (int y = -2; y <= 2; y++)
+    [unroll] for (int x = -2; x <= 2; x++) {
+        if (x == 0 && y == 0) continue;
+ 
+        float2 sUV = uv + float2(x, y) * px;
+        if (any(sUV < 0.001) || any(sUV > 0.999)) continue;
+ 
+        float sRaw = TextureDepth.SampleLevel(PointSampler, sUV, 0).x;
+        float sZ   = SB_Denoise_LinearDepth(sRaw);
+        float sSh  = RenderTargetR16FTex.SampleLevel(PointSampler, sUV, 0).r;
+ 
+        // Spatial weight: Gaussian falloff
+        float dist2 = float(x*x + y*y);
+        float w_s   = exp(-dist2 / (2.0 * (1.0 + 2.0 * penumbraT)));
+ 
+        // Depth edge-stopping
+        float dz  = abs(centerZ - sZ) / max(centerZ, 1.0);
+        float w_z = exp(-dz / CS_SIGMA_DEPTH);
+ 
+        // Normal edge-stopping
+        float3 sN  = SB_Denoise_GetNormal(sUV, px);
+        float  w_n = pow(max(0.0, dot(centerN, sN)), CS_SIGMA_NORMAL);
+ 
+        float w = w_s * w_z * w_n * penumbraT; // Scale entire weight by penumbra
+        acc    += sSh * w;
+        wTotal += w;
+    }
+ 
+    return float4(acc / max(wTotal, 1e-6), centerData.gba);
+}
+
+
+5.4 Temporal Accumulation with Light Direction Rejection
+Contact shadow temporal history must be rejected when the sun direction changes rapidly. SkyrimBridge provides SB_Shadow_Direction which tracks the primary light direction across weather transitions. When the dot product between current and previous light directions drops below a threshold (e.g., 0.95), the temporal blend factor alpha increases toward 1.0, forcing the filter to rely more on the current frame.
+ENB standalone fallback: Without SkyrimBridge, use a higher base alpha (0.15 instead of 0.05) to maintain responsiveness. Weather transitions happen over several seconds, so the reduced temporal accumulation will naturally reconverge.
+
+5.5 Cost Summary
+Technique passes consumed: 4 (trace + temporal + denoise + upsample).
+
+Section 6: Denoising Volumetric Fog
+
+6.1 Unique Challenges at Quarter Resolution
+SB_VolumetricFog.fx runs at quarter resolution (each fog pixel covers a 4×4 block of screen pixels), making the bilateral upsample the most critical step. Additionally, fog is a volumetric phenomenon — temporal reprojection must account for the 3D position of each fog sample, not just the 2D screen position.
+
+6.2 3D World-Space Temporal Reprojection
+SB_VolumetricFog.fx — World-space fog reprojection
+// ═══════════════════════════════════════════════════════════════
+//  Volumetric Fog Temporal Accumulation
+//  Uses world-space reprojection for correct 3D fog tracking.
+// ═══════════════════════════════════════════════════════════════
+ 
+float4 PS_FogTemporalAccum(float4 pos : SV_Position,
+                           float2 uv : TEXCOORD) : SV_Target {
+    // Quarter-res fog result
+    float4 current = RenderTargetRGBA64FTex.SampleLevel(PointSampler, uv, 0);
+    // .rgb = inscattered light, .a = transmittance
+ 
+    // Reconstruct world position at this fog sample depth
+    float rawZ = TextureDepth.SampleLevel(PointSampler, uv, 0).x;
+    float4 clipPos = float4(uv * 2.0 - 1.0, rawZ, 1.0);
+    clipPos.y = -clipPos.y;
+    float4 worldPos = mul(clipPos, InverseViewProjectionMatrix);
+    worldPos.xyz /= worldPos.w;
+ 
+    // Reproject to previous frame
+    float4 prevClip = mul(float4(worldPos.xyz, 1.0),
+                          PreviousViewProjectionMatrix);
+    float2 prevUV = (prevClip.xy / prevClip.w) * float2(0.5, -0.5) + 0.5;
+ 
+    bool valid = all(prevUV > 0.01) && all(prevUV < 0.99)
+              && prevClip.w > 0.0;
+ 
+    // Sample previous fog (stored in TextureCustom02)
+    float4 history = TextureCustom02.SampleLevel(LinearSampler, prevUV, 0);
+ 
+    // Blend: 95% history for stable fog, 5% current for responsiveness
+    // Increase current weight during weather transitions
+    float alpha = valid ? 0.05 : 1.0;
+ 
+#ifdef SKYRIMBRIDGE_FXH
+    // Faster convergence during weather transitions
+    float transition = SB_Weather_TransitionProgress.x;
+    alpha = lerp(alpha, max(alpha, 0.15), transition);
+#endif
+ 
+    float4 result;
+    result.rgb = lerp(history.rgb, current.rgb, alpha);
+    result.a   = lerp(history.a,   current.a,   alpha);
+    return result;
+}
+
+
+6.3 2-Level À-Trous at Quarter Resolution
+At quarter resolution, the fog buffer is so small (480×270 at 1080p, 640×360 at 1440p) that even 2 à-trous iterations cover a substantial area. The edge-stopping functions use only depth (fog has no meaningful normal signal at quarter-res). Dilation levels 1 and 2 give an effective 5×5 quarter-res coverage = 20×20 full-res pixel influence.
+
+6.4 Bilateral Upsample: Quarter to Full Resolution
+This is the highest-impact step for volumetric fog visual quality. Without bilateral upsampling, fog bleeds onto foreground objects (characters, trees, buildings) creating visible halos at silhouette edges.
+
+SB_VolumetricFog.fx — Quarter-res bilateral upsample
+// ═══════════════════════════════════════════════════════════════
+//  Bilateral Upsample: Quarter-Res Fog → Full-Res
+//  Uses 4 nearest quarter-res samples weighted by depth similarity.
+//  Fallback: nearest-depth sample when all weights are near zero.
+// ═══════════════════════════════════════════════════════════════
+ 
+float4 PS_FogBilateralUpsample(float4 pos : SV_Position,
+                               float2 uv : TEXCOORD) : SV_Target {
+    float2 quarterPixel = float2(ScreenSize.y, ScreenSize.y * ScreenSize.z) * 4.0;
+ 
+    // Full-resolution depth at this pixel
+    float fullZ = SB_Denoise_LinearDepth(
+        TextureDepth.SampleLevel(PointSampler, uv, 0).x);
+ 
+    // 4 nearest quarter-res texel centers
+    float2 quarterUV = uv - fmod(uv, quarterPixel) + quarterPixel * 0.5;
+    float2 sampleUVs[4] = {
+        quarterUV,
+        quarterUV + float2(quarterPixel.x, 0),
+        quarterUV + float2(0, quarterPixel.y),
+        quarterUV + quarterPixel
+    };
+ 
+    // Standard bilinear fractions
+    float2 f = frac(uv / quarterPixel - 0.5);
+    float bilinW[4] = {
+        (1.0 - f.x) * (1.0 - f.y),
+        f.x * (1.0 - f.y),
+        (1.0 - f.x) * f.y,
+        f.x * f.y
+    };
+ 
+    float4 result    = 0;
+    float  wTotal    = 0;
+    float  bestW     = 0;
+    float4 bestSample = 0;
+    float  depthThreshold = 0.02; // 2% relative depth difference
+ 
+    [unroll] for (int i = 0; i < 4; i++) {
+        float2 sUV = sampleUVs[i];
+        if (any(sUV < 0.001) || any(sUV > 0.999)) continue;
+ 
+        float4 fog = RenderTargetRGBA32Tex.SampleLevel(PointSampler, sUV, 0);
+        float  sZ  = SB_Denoise_LinearDepth(
+            TextureDepth.SampleLevel(PointSampler, sUV, 0).x);
+ 
+        // Depth similarity weight
+        float relDiff = abs(fullZ - sZ) / max(fullZ, 1.0);
+        float dw = 1.0 / (relDiff / depthThreshold + 1.0);
+ 
+        float w = bilinW[i] * dw;
+        result  += fog * w;
+        wTotal  += w;
+ 
+        // Track best single sample for fallback
+        if (dw > bestW) { bestW = dw; bestSample = fog; }
+    }
+ 
+    // Fallback: if all weights are near-zero, use nearest-depth sample
+    if (wTotal < 0.001) return bestSample;
+    return result / wTotal;
+}
+
+
+6.5 Banding Prevention in Fog
+Banding artifacts in volumetric fog come from two sources: limited ray march steps (16–32) creating regular density intervals, and 10-bit output quantization in enbeffectpostpass.fx. The ray-march banding is resolved by adding blue noise jitter to the ray start offset during tracing (already implemented in SB_VolumetricFog.fx) plus temporal accumulation. The output banding is resolved by the triangular-PDF dither described in Section 9.
+
+6.6 Cost Summary
+Technique passes consumed: 5 (march + temporal + 2×à-trous + upsample).
+
+Section 7: Sampling Strategies — Blue Noise, R2, IGN, Sobol
+
+7.1 Overview
+All sampling patterns serve the same pipeline: generate a well-distributed per-pixel value, use it to stochastically jitter the effect computation (ray direction, sample offset, etc.), animate it across frames so temporal accumulation integrates the noise. The choice of pattern affects convergence rate, texture dependency, and cost.
+
+7.2 Complete HLSL Implementations
+SB_DenoiseCore.fxh — All five sampling patterns
+// ═══════════════════════════════════════════════════════════════
+//  Sampling Pattern Library for SkyrimBridge Effects
+//  All patterns include frame-animated variants.
+// ═══════════════════════════════════════════════════════════════
+ 
+// ─── 1. Blue Noise Texture with R2 Temporal Animation ────────
+// Requires: TextureCustom08 bound to a 128x128 blue noise LUT
+// R2 offset ensures each frame sees different noise values
+// while maintaining spatial blue-noise distribution.
+ 
+float SB_BlueNoise(float2 pixelCoord, float frameIndex) {
+    static const float PHI2     = 1.3247179572;
+    static const float INV_PHI2 = 1.0 / PHI2;        // ~0.7548776662
+    static const float INV_PHI2_SQ = 1.0 / (PHI2*PHI2); // ~0.5698402910
+ 
+    // R2 temporal offset
+    float2 offset = frac(float2(INV_PHI2, INV_PHI2_SQ) * frameIndex + 0.5);
+    float2 noiseUV = frac(pixelCoord / 128.0 + offset);
+    return TextureCustom08.SampleLevel(LinearSampler, noiseUV, 0).r;
+}
+ 
+// Frame-animated variant for 2D sampling
+float2 SB_BlueNoise2D(float2 pixelCoord, float frameIndex) {
+    static const float PHI2     = 1.3247179572;
+    static const float INV_PHI2 = 1.0 / PHI2;
+    static const float INV_PHI2_SQ = 1.0 / (PHI2*PHI2);
+    float2 offset = frac(float2(INV_PHI2, INV_PHI2_SQ) * frameIndex + 0.5);
+    float2 noiseUV = frac(pixelCoord / 128.0 + offset);
+    return TextureCustom08.SampleLevel(LinearSampler, noiseUV, 0).rg;
+}
+ 
+// ─── 2. Interleaved Gradient Noise (Jorge Jimenez) ───────────
+// No texture dependency. 3 FP multiplies. Near-blue spectral properties.
+// Critical property: every 3x3 block has ~uniform distribution [0,9)/9.
+ 
+float SB_InterleavedGradientNoise(float2 pixelCoord) {
+    return frac(52.9829189 * frac(dot(pixelCoord, float2(0.06711056, 0.00583715))));
+}
+ 
+// Frame-animated: shift pixel coord by 5.588238 per frame
+float SB_IGN_Animated(float2 pixelCoord, float frameIndex) {
+    float2 animatedCoord = pixelCoord + 5.588238 * frameIndex;
+    return frac(52.9829189 * frac(dot(animatedCoord,
+        float2(0.06711056, 0.00583715))));
+}
+ 
+// Alternative golden-ratio temporal animation (simpler)
+float SB_IGN_GoldenAnim(float2 pixelCoord, float frameIndex) {
+    float base = SB_InterleavedGradientNoise(pixelCoord);
+    return frac(base + frameIndex * 0.6180339887);
+}
+ 
+// ─── 3. Roberts R2 Quasi-Random Sequence ─────────────────────
+// Provably optimal low-discrepancy for 2D among Kronecker sequences.
+// No texture, no coprime selection. Single-line generation.
+ 
+float2 SB_R2Sequence(int sampleIndex) {
+    static const float A1 = 0.7548776662; // 1/phi2
+    static const float A2 = 0.5698402910; // 1/phi2^2
+    return frac(float2(A1, A2) * float(sampleIndex) + 0.5);
+}
+ 
+// Per-pixel animated variant
+float2 SB_R2_PerPixel(float2 pixelCoord, float frameIndex, int sampleIndex) {
+    float2 base = SB_R2Sequence(sampleIndex);
+    // XOR with pixel-dependent hash for per-pixel decorrelation
+    float pixelHash = SB_InterleavedGradientNoise(pixelCoord);
+    return frac(base + pixelHash);
+}
+ 
+// ─── 4. Owen-Scrambled Sobol (Burley 2020 hash approach) ─────
+// O(N^{-3/2}) convergence for smooth functions.
+// Uses bit-reversal hash for Owen scrambling without lookup tables.
+ 
+uint SB_ReverseBits32(uint x) {
+    x = ((x >> 1) & 0x55555555u) | ((x & 0x55555555u) << 1);
+    x = ((x >> 2) & 0x33333333u) | ((x & 0x33333333u) << 2);
+    x = ((x >> 4) & 0x0F0F0F0Fu) | ((x & 0x0F0F0F0Fu) << 4);
+    x = ((x >> 8) & 0x00FF00FFu) | ((x & 0x00FF00FFu) << 8);
+    return (x >> 16) | (x << 16);
+}
+ 
+uint SB_OwenHash(uint x, uint seed) {
+    x ^= x * 0x3D20ADEAu;
+    x += seed;
+    x *= (seed >> 16) | 1u;
+    x ^= x * 0x05526C56u;
+    x ^= x * 0x53A22864u;
+    return x;
+}
+ 
+float SB_OwenScrambledSobol(uint index, uint dimension, uint seed) {
+    // Simple Sobol direction numbers for first 2 dimensions
+    uint result = 0u;
+    uint i = index;
+    uint d = (dimension == 0u) ? 0x80000000u : 0xC0000000u;
+    [loop] for (int bit = 0; bit < 16 && i != 0u; bit++) {
+        if (i & 1u) result ^= d;
+        i >>= 1u;
+        d >>= 1u;
+        if (dimension > 0u) d ^= (d >> 1u);
+    }
+    // Owen scramble
+    result = SB_OwenHash(result, seed);
+    return float(result) / 4294967296.0;
+}
+ 
+// ─── 5. Golden Angle Spiral (Vogel Disc) ─────────────────────
+// Optimal disc sampling: uniform distribution, no clumping.
+// Application: AO hemisphere, DoF gather, shadow PCF.
+ 
+float2 SB_GoldenAngleSpiral(int sampleIndex, int totalSamples) {
+    static const float GOLDEN_ANGLE = 2.39996323; // pi * (3 - sqrt(5))
+    float r     = sqrt(float(sampleIndex) / float(totalSamples));
+    float theta = float(sampleIndex) * GOLDEN_ANGLE;
+    return float2(r * cos(theta), r * sin(theta));
+}
+ 
+// Frame-animated: rotate entire pattern per frame
+float2 SB_GoldenAngleSpiral_Animated(int sampleIndex, int totalSamples,
+                                     float frameIndex) {
+    static const float GOLDEN_ANGLE = 2.39996323;
+    float r     = sqrt(float(sampleIndex) / float(totalSamples));
+    float theta = float(sampleIndex) * GOLDEN_ANGLE + frameIndex * GOLDEN_ANGLE;
+    return float2(r * cos(theta), r * sin(theta));
+}
+
+
+7.3 Comparison Table
+ENB recommendation: Use IGN as the default noise source (zero texture cost, TAA-compatible). Reserve blue noise texture (TextureCustom08) for effects that benefit most from spatial blue-noise distribution: volumetric fog dithering and final-output dithering. Use R2 for multi-sample loops where progressive refinement matters (GTAO hemisphere directions). Use golden angle spiral for fixed-count disc sampling (DoF gather).
+
+Section 8: Bilateral Upsampling (Production Implementation)
+
+8.1 The Problem with Bilinear Upsampling
+When a half-resolution effect (GTAO, SSR, contact shadows) is bilinearly interpolated to full resolution, the interpolation crosses depth discontinuities at object silhouettes. This creates visible halos: the half-res texel behind a foreground object bleeds its value (dark AO, fog color) into the foreground edge. The halo is 1–2 pixels wide at half-res (2–4 pixels at full-res) and is most visible against high-contrast backgrounds (character against bright sky).
+
+8.2 Joint Bilateral Upsample for ENB
+The solution (Kopf et al. 2007) weights the 4 nearest half-res samples by their depth similarity to the current full-res pixel. Samples at similar depth receive bilinear-like weights; samples at very different depth (behind/in-front of the current surface) receive near-zero weight. The result preserves edge sharpness at depth discontinuities while maintaining smooth interpolation on continuous surfaces.
+
+SB_DenoiseCore.fxh — Generic Bilateral Upsample
+// ═══════════════════════════════════════════════════════════════
+//  Bilateral Upsample — Half-Res or Quarter-Res to Full-Res
+//  Works with any effect buffer. Depth-guided edge preservation.
+//  Fallback: nearest-depth sample when all weights approach zero.
+// ═══════════════════════════════════════════════════════════════
+ 
+// scaleFactor: 2 for half-res, 4 for quarter-res
+float4 SB_BilateralUpsample(
+    Texture2D    lowResTex,     // Half-res or quarter-res effect
+    SamplerState lowResSampler,
+    float2       uv,            // Full-res UV
+    float2       fullPixelSize, // Full-res pixel size
+    int          scaleFactor,   // 2 = half-res, 4 = quarter-res
+    float        depthThreshold // Relative depth tolerance (0.02 typical)
+) {
+    float2 lowPixelSize = fullPixelSize * float(scaleFactor);
+ 
+    // Full-res depth at current pixel
+    float fullZ = SB_Denoise_LinearDepth(
+        TextureDepth.SampleLevel(PointSampler, uv, 0).x);
+ 
+    // Find the 4 nearest low-res texel centers
+    float2 lowUV = uv - fmod(uv, lowPixelSize) + lowPixelSize * 0.5;
+ 
+    float2 offsets[4] = {
+        float2(0, 0),
+        float2(lowPixelSize.x, 0),
+        float2(0, lowPixelSize.y),
+        lowPixelSize
+    };
+ 
+    // Bilinear fractions
+    float2 f = frac(uv / lowPixelSize - 0.5);
+    float bilinWeights[4] = {
+        (1.0 - f.x) * (1.0 - f.y),
+        f.x * (1.0 - f.y),
+        (1.0 - f.x) * f.y,
+        f.x * f.y
+    };
+ 
+    float4 acc      = 0;
+    float  wTotal   = 0;
+    float  bestDW   = 0;
+    float4 bestVal  = 0;
+ 
+    [unroll] for (int i = 0; i < 4; i++) {
+        float2 sUV = lowUV + offsets[i];
+        if (any(sUV < 0.001) || any(sUV > 0.999)) continue;
+ 
+        float4 sVal = lowResTex.SampleLevel(lowResSampler, sUV, 0);
+        float  sZ   = SB_Denoise_LinearDepth(
+            TextureDepth.SampleLevel(PointSampler, sUV, 0).x);
+ 
+        // Depth similarity weight (inverse distance)
+        float relDiff = abs(fullZ - sZ) / max(fullZ, 1.0);
+        float dw = 1.0 / (relDiff / depthThreshold + 1.0);
+ 
+        float w = bilinWeights[i] * dw;
+        acc    += sVal * w;
+        wTotal += w;
+ 
+        if (dw > bestDW) { bestDW = dw; bestVal = sVal; }
+    }
+ 
+    // Fallback: nearest-depth sample
+    return (wTotal > 0.001) ? (acc / wTotal) : bestVal;
+}
+
+
+8.3 Checkerboard Rendering Extension
+Checkerboard rendering alternates which half of pixels are computed each frame: even frames render pixels where (x+y)%2==0, odd frames render the complement. Combined with temporal accumulation and bilateral upsampling of the missing pixels, this achieves 50% cost reduction with minimal quality loss.
+ENB compatibility: Fully compatible. The checkerboard pattern is determined by pixel position and frame count (available via Timer or SkyrimBridge SB_Render_Frame.x). Missing pixels are reconstructed using depth-weighted averaging of the 4 nearest computed neighbors. Temporal history from the previous frame provides the alternate-pattern data.
+
+8.4 Performance
+The standard 4-tap bilateral upsample is recommended for all effects. The 16-tap variant provides marginally better quality at thin geometry but the 2.5× cost increase is rarely justified.
+
+Section 9: Dithering & Banding Prevention
+
+9.1 The R10G10B10A2 Banding Problem
+enbeffectpostpass.fx writes to R10G10B10A2 format, providing only 1024 discrete values per color channel and 4 values for alpha. In areas of smooth gradients (sky, fog, shadows), the 10-bit quantization creates visible banding steps — alternating bands of slightly different brightness/color where the gradient would otherwise be smooth. This is especially visible in dark scenes where the eye is more sensitive to contrast differences.
+
+9.2 Triangular-PDF Dither (Vlachos GDC 2015)
+Alex Vlachos (Valve) presented a screen-space dither technique for VR rendering that adds a triangular-distribution noise value scaled to exactly 1 LSB of the output format. Triangular PDF is preferred over uniform because it completely decorrelates both the mean and variance of quantization error from the input signal (Lipshitz & Vanderkooy), making the quantization error independent of the original value.
+
+9.3 Blue Noise Spatial Distribution
+Using blue noise for the spatial dither pattern ensures the quantization noise is distributed uniformly in frequency space with no low-frequency clumps. When the eye naturally integrates over a local neighborhood (spatial integration), blue noise dithering appears almost entirely smooth, while white noise retains visible patterns.
+
+enbeffectpostpass.fx — Triangular-PDF Blue Noise Dither
+// ═══════════════════════════════════════════════════════════════
+//  Triangular-PDF Dither with Blue Noise Distribution
+//  Applied AFTER tonemapping, BEFORE framebuffer write.
+//  Eliminates visible banding in R10G10B10A2 output.
+// ═══════════════════════════════════════════════════════════════
+ 
+// Option A: Blue noise texture (highest quality)
+float3 SB_TriangularDither_BlueNoise(float2 pixelCoord, float frameIndex) {
+    // Sample blue noise texture with temporal animation
+    float2 noiseUV = frac(pixelCoord / 128.0
+        + frac(float2(0.7548776662, 0.5698402910) * frameIndex + 0.5));
+    float3 noise = TextureCustom08.SampleLevel(PointSampler, noiseUV, 0).rgb;
+ 
+    // Map [0,1] uniform to [-1,1] range
+    noise = noise * 2.0 - 1.0;
+ 
+    // Convert uniform to triangular PDF via inverse CDF
+    // tri(x) = sign(x) * (1 - sqrt(1 - |x|))
+    noise = sign(noise) * (1.0 - sqrt(1.0 - abs(noise)));
+ 
+    // Scale to 1 LSB of R10G10B10A2 = 1/1023
+    return noise * (1.0 / 1023.0);
+}
+ 
+// Option B: Algebraic (no texture, using Vlachos-style hash)
+float3 SB_TriangularDither_Algebraic(float2 pixelCoord, float time) {
+    float3 dither = dot(float2(171.0, 231.0), pixelCoord + time).xxx;
+    dither.rgb = frac(dither.rgb / float3(103.0, 71.0, 97.0));
+ 
+    // Two uniform values → triangular via sum-and-shift
+    float3 dither2 = dot(float2(131.0, 201.0), pixelCoord + time * 1.7).xxx;
+    dither2.rgb = frac(dither2.rgb / float3(89.0, 107.0, 113.0));
+ 
+    // Sum of two uniform [0,1] = triangular [0,2], shift to [-1,1]
+    float3 tri = (dither + dither2) - 1.0;
+ 
+    return tri * (1.0 / 1023.0);
+}
+ 
+// ─── Integration into postpass output ────────────────────────
+float4 PS_FinalOutput(float4 pos : SV_Position,
+                      float2 uv : TEXCOORD) : SV_Target {
+    float3 color = TextureColor.Sample(LinearSampler, uv).rgb;
+ 
+    // All tonemapping/color grading already applied upstream
+ 
+    // Add dither as the LAST operation before output
+    float2 pixelCoord = uv * float2(ScreenSize.x, ScreenSize.x * ScreenSize.z);
+ 
+#ifdef SKYRIMBRIDGE_FXH
+    float frameIdx = SB_Render_Frame.x;
+#else
+    float frameIdx = Timer.x * 1000.0; // Approximate frame counter
+#endif
+ 
+    color += SB_TriangularDither_BlueNoise(pixelCoord, frameIdx);
+ 
+    // Clamp to valid range (dither can push slightly outside)
+    color = saturate(color);
+ 
+    return float4(color, 1.0);
+}
+
+
+9.4 Visual Improvement
+Before dithering: visible banding steps in sky gradients (typically 3–5 visible bands at sunset), shadow falloff areas (hard color steps), and fog density gradients. After dithering: smooth gradients with no visible banding. The dither noise itself is invisible at normal viewing distance because blue noise distributes energy only in high spatial frequencies. With temporal animation (changing the blue noise offset each frame), TAA further integrates the dither over time, producing sub-bit-depth precision.
+
+9.5 ENB-Specific Considerations
+Alpha channel: Do NOT dither the alpha channel in enbeffectpostpass.fx. The 2-bit alpha (R10G10B10A2) has only 4 possible values and dithering would create visible flicker between the 4 discrete states. Output alpha = 1.0 always in postpass.
+Pipeline placement: The dither must be the absolute last operation in enbeffectpostpass.fx, after all color grading, sharpening, vignette, and letterboxing. Any subsequent color transformation would redistribute the dither noise, potentially creating visible patterns.
+
+Section 10: Integration Summary
+
+10.1 Per-Effect Denoising Cost
+
+10.2 Technique Budget Accounting
+All effects remain well within the 128 technique limit even with full denoise chains.
+
+10.3 Render Target Usage Map
+
+10.4 Migration Path
+Phase 1 (Immediate): Add triangular-PDF dither to enbeffectpostpass.fx. Zero risk, immediate visual improvement for banding. One line of code change.
+Phase 2 (Low risk): Add bilateral upsample functions to SB_DenoiseCore.fxh. Replace bilinear upsample calls in SB_GTAO.fx, SB_ContactShadows.fx, SB_VolumetricFog.fx with SB_BilateralUpsample(). Immediate edge-halo elimination. 3 files changed, each change is a single function swap.
+Phase 3 (Medium): Add 3-level à-trous to SB_GTAO.fx. This adds 3 technique passes but allows reducing sample count from 16 to 8 for net GPU time savings. Test at half resolution first, verify no regressions.
+Phase 4 (Medium): Add temporal + spatial denoise to SB_ContactShadows.fx. Enables higher visual quality from fewer ray march steps.
+Phase 5 (Advanced): Add hit-point reprojection and roughness-dependent denoise to SB_SSR.fx. Most complex change due to reflection-specific reprojection, but highest quality payoff.
+Phase 6 (Advanced): Add 3D world-space temporal reprojection and bilateral upsample to SB_VolumetricFog.fx. Eliminates fog bleeding and banding simultaneously.
+
+10.5 Incompatibilities Resolved
+
+10.6 Function Quick-Reference Table
+
+10.7 Academic Citations
+Tomasi & Manduchi, “Bilateral Filtering for Gray and Color Images,” ICCV 1998.
+Dammertz, Sewtz, Hanika, Lensch, “Edge-Avoiding À-Trous Wavelet Transform for fast Global Illumination Filtering,” HPG 2010.
+Schied, Kaplanyan, Wyman, et al., “Spatiotemporal Variance-Guided Filtering: Real-time Reconstruction for Path-traced Global Illumination,” HPG 2017 / JCGT 2018.
+Dolp, Hanika, Dachsbacher, “A Fast GPU Schedule For À-Trous Wavelet-Based Denoisers,” I3D/HPG 2024.
+Kopf, Cohen, Lischinski, Uyttendaele, “Joint Bilateral Upsampling,” SIGGRAPH 2007.
+Vlachos, “Advanced VR Rendering,” GDC 2015 (Valve / Steam).
+Jimenez, “Next Generation Post Processing in Call of Duty: Advanced Warfare,” SIGGRAPH 2014.
+Stachowiak, “Stochastic Screen-Space Reflections,” SIGGRAPH 2015 (EA DICE).
+Burley, “Practical Hash-based Owen Scrambling,” JCGT 2020 (Walt Disney Animation).
+Wronski, “Volumetric Fog: Unified Compute Shader Based Solution to Atmospheric Scattering,” SIGGRAPH 2014 (Ubisoft).
+Wolfe, Donnelly, Lopes, “Scalar Spatiotemporal Blue Noise Masks,” EGSR 2022 (NVIDIA/EA SEED).
+Heitz, Belcour, “A Low-Discrepancy Sampler that Distributes Monte Carlo Errors as Blue Noise in Screen Space,” SIGGRAPH 2019.
+Grenier, “Reprojecting Reflections,” Autodesk Stingray, 2017.
+Barré-Brisebois, Andersson, “Shiny Pixels and Beyond: Real-Time Raytracing at SEED,” GDC 2018 (EA SEED).
+Bavoil, Sainz, “Stable SSAO in Battlefield 3 with Selective Temporal Filtering,” GDC 2012 (NVIDIA/EA DICE).
+Roberts, “The Unreasonable Effectiveness of Quasirandom Sequences,” extremelearning.com.au, 2018.
+Peters, “Free Blue Noise Textures,” momentsingraphics.de (CC0 licensed).

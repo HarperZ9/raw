@@ -1,5 +1,6 @@
 #include "UIStateTracker.h"
 #include <RE/Skyrim.h>
+#include <bit>
 
 namespace SB::UIStateTracker
 {
@@ -11,18 +12,22 @@ namespace SB::UIStateTracker
         if (!ui)
             return data;
 
-        // ── Menu state ────────────────────────────────────────────────
-        data.Menus.x = ui->IsShowingMenus() ? 1.f : 0.f;
-        data.Menus.y = ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME) ? 1.f : 0.f;
-        data.Menus.z = ui->IsMenuOpen(RE::InventoryMenu::MENU_NAME) ? 1.f : 0.f;
-        data.Menus.w = ui->IsMenuOpen(RE::MapMenu::MENU_NAME) ? 1.f : 0.f;
+        // ── Menu state (packed uint bitfield) ────────────────────────
+        uint32_t menuBits = 0;
+        if (ui->IsShowingMenus())                                menuBits |= (1u << 0);
+        if (ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME))        menuBits |= (1u << 1);
+        if (ui->IsMenuOpen(RE::InventoryMenu::MENU_NAME))       menuBits |= (1u << 2);
+        if (ui->IsMenuOpen(RE::MapMenu::MENU_NAME))             menuBits |= (1u << 3);
+        data.Menus.x = std::bit_cast<float>(menuBits);
+        data.Menus.y = 0.0f;
+        data.Menus.z = 0.0f;
+        data.Menus.w = 0.0f;
 
-        // ── HUD state ─────────────────────────────────────────────────
-        data.HUD.x = ui->IsMenuOpen(RE::HUDMenu::MENU_NAME) ? 1.f : 0.f;
-
-        // Crosshair visibility — tracked via HUD subtitles/crosshair
-        // When menus are open, crosshair is typically hidden
-        data.HUD.y = (!ui->IsShowingMenus() && data.HUD.x > 0.5f) ? 1.f : 0.f;
+        // ── HUD state (packed uint bitfield) ─────────────────────────
+        uint32_t hudBits = 0;
+        bool hudOpen = ui->IsMenuOpen(RE::HUDMenu::MENU_NAME);
+        if (hudOpen)                                             hudBits |= (1u << 0);
+        if (!ui->IsShowingMenus() && hudOpen)                    hudBits |= (1u << 1);
 
         // Cinematic mode: check for letterbox bars / kill cam
         auto* cam = RE::PlayerCamera::GetSingleton();
@@ -31,17 +36,25 @@ namespace SB::UIStateTracker
                 (cam->currentState == cam->cameraStates[RE::CameraState::kTween]) ||
                 (cam->currentState == cam->cameraStates[RE::CameraState::kVATS]) ||
                 (cam->currentState == cam->cameraStates[RE::CameraState::kBleedout]);
-            data.HUD.z = isThirdPersonCinematic ? 1.f : 0.f;
+            if (isThirdPersonCinematic)                          hudBits |= (1u << 2);
         }
 
-        // Loading screen detection
-        data.HUD.w = ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME) ? 1.f : 0.f;
+        if (ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME))         hudBits |= (1u << 3);
+        data.HUD.x = std::bit_cast<float>(hudBits);
+        data.HUD.y = 0.0f;
+        data.HUD.z = 0.0f;
+        data.HUD.w = 0.0f;
 
-        // ── Detail menu state ─────────────────────────────────────────
-        data.Detail.x = ui->IsMenuOpen(RE::CraftingMenu::MENU_NAME) ? 1.f : 0.f;
-        data.Detail.y = ui->IsMenuOpen(RE::BookMenu::MENU_NAME) ? 1.f : 0.f;
-        data.Detail.z = ui->IsMenuOpen(RE::LockpickingMenu::MENU_NAME) ? 1.f : 0.f;
-        data.Detail.w = ui->IsMenuOpen(RE::Console::MENU_NAME) ? 1.f : 0.f;
+        // ── Detail menu state (packed uint bitfield) ─────────────────
+        uint32_t detailBits = 0;
+        if (ui->IsMenuOpen(RE::CraftingMenu::MENU_NAME))        detailBits |= (1u << 0);
+        if (ui->IsMenuOpen(RE::BookMenu::MENU_NAME))            detailBits |= (1u << 1);
+        if (ui->IsMenuOpen(RE::LockpickingMenu::MENU_NAME))     detailBits |= (1u << 2);
+        if (ui->IsMenuOpen(RE::Console::MENU_NAME))             detailBits |= (1u << 3);
+        data.Detail.x = std::bit_cast<float>(detailBits);
+        data.Detail.y = 0.0f;
+        data.Detail.z = 0.0f;
+        data.Detail.w = 0.0f;
 
         return data;
     }

@@ -2,12 +2,13 @@
 setlocal EnableDelayedExpansion
 
 :: ═══════════════════════════════════════════════════════════════════════════
-::  SkyrimBridge v3.0 — Deployment Script
+::  Playground v3.0 — Deployment Script
 ::
 ::  Deploys shaders, DLL, and config to the MO2 mod directory.
 ::
 ::  Usage:
 ::    deploy.bat              — Deploy full shaders + DLL + config
+::    deploy.bat build        — Build Release, then deploy everything
 ::    deploy.bat passthrough  — Deploy passthrough diagnostic shaders
 ::    deploy.bat restore      — Restore full shaders from backup
 ::    deploy.bat backup       — Back up current deployed shaders
@@ -17,15 +18,17 @@ setlocal EnableDelayedExpansion
 :: ═══════════════════════════════════════════════════════════════════════════
 
 :: ── Configuration ─────────────────────────────────────────────────────────
-set "SHADER_SRC=C:\Users\Zain\SKSE\SkyrimBridge_v3\shader"
-set "PASSTHROUGH_SRC=C:\Users\Zain\SKSE\SkyrimBridge_v3\shader\_passthrough"
-set "BUILD_DIR=C:\Users\Zain\SKSE\SkyrimBridge_v3\build\Release"
-set "CONFIG_SRC=C:\Users\Zain\SKSE\SkyrimBridge_v3\config"
+set "PROJECT_DIR=C:\Users\Zain\SKSE\Playground"
+set "SHADER_SRC=%PROJECT_DIR%\shader"
+set "PASSTHROUGH_SRC=%PROJECT_DIR%\shader\_passthrough"
+set "BUILD_DIR=%PROJECT_DIR%\build\Release"
+set "CONFIG_SRC=%PROJECT_DIR%\config"
 
-set "ENB_MOD=E:\Modlists\SkyGroundChronicles\mods\ENB of the Elders"
+set "ENB_MOD=E:\Modlists\SkyGroundChronicles\mods\Playground"
 set "ENB_DST=%ENB_MOD%\ROOT\enbseries"
+set "ROOT_DST=%ENB_MOD%\ROOT"
 set "DLL_DST=%ENB_MOD%\SKSE\plugins"
-set "CFG_DST=%ENB_MOD%\SKSE\plugins\SkyrimBridge"
+set "CFG_DST=%ENB_MOD%\SKSE\plugins\Playground"
 
 set "BACKUP_DIR=%ENB_DST%\_backup_rewrite"
 
@@ -37,17 +40,36 @@ if /i "%CMD%"=="passthrough" goto :deploy_passthrough
 if /i "%CMD%"=="restore"     goto :restore_backup
 if /i "%CMD%"=="backup"      goto :create_backup
 if /i "%CMD%"=="check"       goto :check_manifest
+if /i "%CMD%"=="build"       goto :build_and_deploy
 if /i "%CMD%"=="full"        goto :deploy_full
 echo Unknown command: %CMD%
-echo Usage: deploy.bat [full^|passthrough^|restore^|backup^|check]
+echo Usage: deploy.bat [full^|build^|passthrough^|restore^|backup^|check]
 exit /b 1
+
+
+:: ═══════════════════════════════════════════════════════════════════════════
+:build_and_deploy
+:: ═══════════════════════════════════════════════════════════════════════════
+echo.
+echo === Build + Deploy ===
+echo.
+echo Building Release...
+cmake --build build --config Release --parallel
+if errorlevel 1 (
+    echo.
+    echo BUILD FAILED — aborting deploy.
+    exit /b 1
+)
+echo.
+echo Build succeeded — deploying...
+goto :deploy_full
 
 
 :: ═══════════════════════════════════════════════════════════════════════════
 :deploy_full
 :: ═══════════════════════════════════════════════════════════════════════════
 echo.
-echo === SkyrimBridge Full Deployment ===
+echo === Playground Full Deployment ===
 echo.
 
 :: Deploy root .fx files
@@ -80,16 +102,48 @@ if not exist "%ENB_DST%\Addons" mkdir "%ENB_DST%\Addons"
 xcopy /Y /S /Q "%SHADER_SRC%\Addons\*" "%ENB_DST%\Addons\" >nul
 echo   Done (%SHADER_SRC%\Addons\)
 
-:: Deploy DLL
+:: Deploy SKSE plugin DLLs
 echo.
-echo Deploying DLL...
+echo Deploying SKSE DLLs...
 if not exist "%DLL_DST%" mkdir "%DLL_DST%"
-if exist "%BUILD_DIR%\SkyrimBridge_v3.dll" (
-    copy /Y "%BUILD_DIR%\SkyrimBridge_v3.dll" "%DLL_DST%\" >nul
-    echo   SkyrimBridge_v3.dll
+if exist "%BUILD_DIR%\Playground.dll" (
+    copy /Y "%BUILD_DIR%\Playground.dll" "%DLL_DST%\" >nul
+    echo   Playground.dll [SKSE plugin]
 ) else (
-    echo   WARNING: DLL not found at %BUILD_DIR%\SkyrimBridge_v3.dll
-    echo   Run build.bat first!
+    echo   WARNING: DLL not found at %BUILD_DIR%\Playground.dll
+    echo   Run: deploy.bat build
+)
+if exist "%BUILD_DIR%\enbhelperse.dll" (
+    copy /Y "%BUILD_DIR%\enbhelperse.dll" "%DLL_DST%\" >nul
+    echo   enbhelperse.dll [SKSE plugin]
+)
+
+:: Deploy d3d11.dll proxy to ROOT (MO2 overlays onto Stock Game dir)
+:: This REPLACES ENB's d3d11.dll — cannot coexist
+echo.
+echo Deploying d3d11.dll proxy to ROOT...
+if not exist "%ROOT_DST%" mkdir "%ROOT_DST%"
+if exist "%BUILD_DIR%\d3d11.dll" (
+    copy /Y "%BUILD_DIR%\d3d11.dll" "%ROOT_DST%\" >nul
+    echo   d3d11.dll [D3D11 proxy — replaces ENB d3d11.dll]
+) else (
+    echo   WARNING: d3d11.dll not found — proxy will not load!
+)
+
+:: Deploy d3dcompiler proxies to ROOT (shader capture support)
+for %%f in (d3dcompiler_47.dll d3dcompiler_46e.dll D3DCompiler_43.dll) do (
+    if exist "%BUILD_DIR%\%%f" (
+        copy /Y "%BUILD_DIR%\%%f" "%ROOT_DST%\" >nul
+        echo   %%f [shader compiler proxy]
+    )
+)
+
+:: Deploy ENB dllplugin
+echo.
+echo Deploying ENB plugin...
+if exist "%BUILD_DIR%\Playground_ENB.dllplugin" (
+    copy /Y "%BUILD_DIR%\Playground_ENB.dllplugin" "%ROOT_DST%\" >nul
+    echo   Playground_ENB.dllplugin
 )
 
 :: Deploy config
@@ -104,6 +158,14 @@ if exist "%CONFIG_SRC%\WeatherClasses.ini" (
     copy /Y "%CONFIG_SRC%\WeatherClasses.ini" "%CFG_DST%\" >nul
     echo   WeatherClasses.ini
 )
+if exist "%CONFIG_SRC%\FeedbackConfig.ini" (
+    copy /Y "%CONFIG_SRC%\FeedbackConfig.ini" "%CFG_DST%\" >nul
+    echo   FeedbackConfig.ini
+)
+if exist "%CONFIG_SRC%\WriteBackConfig.ini" (
+    copy /Y "%CONFIG_SRC%\WriteBackConfig.ini" "%CFG_DST%\" >nul
+    echo   WriteBackConfig.ini
+)
 
 echo.
 echo === Full deployment complete ===
@@ -114,7 +176,7 @@ goto :check_manifest
 :deploy_passthrough
 :: ═══════════════════════════════════════════════════════════════════════════
 echo.
-echo === SkyrimBridge Passthrough Deployment (Diagnostic Mode) ===
+echo === Playground Passthrough Deployment (Diagnostic Mode) ===
 echo.
 
 :: Backup first
@@ -246,21 +308,27 @@ for %%f in (
 echo Checking Helper/ ...
 for %%f in (
     SkyrimBridge.fxh
+    SkyrimBridge_CB.fxh
     enbHelper_Common.fxh
     enbHelper_Debug.fxh
     enbHelper_Dither.fxh
     PrePassAddonTechniques.fxh
+    EotE_Common.fxh
+    EotE_Tonemappers.fxh
     Effect_AtmosphericFog.fxh
+    Effect_CAS.fxh
     Effect_CinematicFX.fxh
     Effect_CRTShader.fxh
     Effect_ProceduralLensDirt.fxh
     Effect_ProceduralWeatherFX.fxh
+    Effect_WeatherLUT.fxh
     enbUI_CinematicFX.fxh
     enbUI_CRT.fxh
     enbUI_DepthOfField.fxh
     enbUI_Fog.fxh
     enbUI_Lens.fxh
     enbUI_PostPass.fxh
+    enbUI_Primer.fxh
 ) do (
     if exist "%ENB_DST%\Helper\%%f" (
         set /a FOUND+=1
@@ -276,6 +344,7 @@ for %%f in (
     enbUI_Primer.fxh
     enbUI_PrePass.fxh
     enbUI_SunSprite.fxh
+    enbUI_SkyrimBridge.fxh
     enbUI_CinematicFX.fxh
     enbUI_CRT.fxh
     enbUI_DepthOfField.fxh
@@ -312,30 +381,45 @@ for %%f in (
     )
 )
 
-:: Check DLL
-echo Checking DLL...
-if exist "%DLL_DST%\SkyrimBridge_v3.dll" (
-    set /a FOUND+=1
-) else (
-    echo   MISSING: SkyrimBridge_v3.dll
-    set /a MISSING+=1
+:: Check SKSE DLLs
+echo Checking SKSE DLLs...
+for %%f in (Playground.dll enbhelperse.dll) do (
+    if exist "%DLL_DST%\%%f" (
+        set /a FOUND+=1
+    ) else (
+        echo   MISSING: SKSE\plugins\%%f
+        set /a MISSING+=1
+    )
+)
+
+:: Check ROOT DLLs (proxy + ENB plugin)
+echo Checking ROOT DLLs...
+for %%f in (d3d11.dll Playground_ENB.dllplugin) do (
+    if exist "%ROOT_DST%\%%f" (
+        set /a FOUND+=1
+    ) else (
+        echo   MISSING: ROOT\%%f
+        set /a MISSING+=1
+    )
 )
 
 :: Check config
 echo Checking config...
-if exist "%CFG_DST%\WeatherParams.ini" (
-    set /a FOUND+=1
-) else (
-    echo   MISSING: config\WeatherParams.ini
-    set /a MISSING+=1
+for %%f in (WeatherParams.ini FeedbackConfig.ini WriteBackConfig.ini) do (
+    if exist "%CFG_DST%\%%f" (
+        set /a FOUND+=1
+    ) else (
+        echo   MISSING: config\%%f
+        set /a MISSING+=1
+    )
 )
 
 :: Summary
 echo.
-if !MISSING! EQU 0 (
+if "!MISSING!"=="0" (
     echo All !FOUND! files present. Deployment verified.
 ) else (
-    echo WARNING: !MISSING! file(s) missing, !FOUND! file(s) present.
+    echo WARNING: !MISSING! file^(s^) missing, !FOUND! file^(s^) present.
 )
 echo.
-exit /b !MISSING!
+exit /b 0

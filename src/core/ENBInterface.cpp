@@ -15,6 +15,13 @@ namespace ENBInterface
 {
     static bool g_loaded = false;
     static bool g_guiSupported = false;
+    static void* g_enbModule = nullptr;   // saved for diagnostics
+    static PushStats g_pushStats{};
+
+    const PushStats& GetPushStats()
+    {
+        return g_pushStats;
+    }
 
     bool Init()
     {
@@ -25,7 +32,7 @@ namespace ENBInterface
             enbModule = GetModuleHandleW(L"d3d11_enb.dll");
         }
         if (!enbModule) {
-            SKSE::log::info("SkyrimBridge: d3d11.dll not found (ENB not installed?)");
+            SKSE::log::info("Playground: d3d11.dll not found (ENB not installed?)");
             return false;
         }
 
@@ -34,15 +41,15 @@ namespace ENBInterface
             GetProcAddress(enbModule, "ENBGetSDKVersion"));
 
         if (!GetSDKVersion) {
-            SKSE::log::info("SkyrimBridge: d3d11.dll is not ENBSeries (no SDK exports)");
+            SKSE::log::info("Playground: d3d11.dll is not ENBSeries (no SDK exports)");
             return false;
         }
 
         long sdkVer = GetSDKVersion();
-        SKSE::log::info("SkyrimBridge: ENB SDK version {}", sdkVer);
+        SKSE::log::info("Playground: ENB SDK version {}", sdkVer);
 
         if (sdkVer < 1000) {
-            SKSE::log::warn("SkyrimBridge: ENB SDK version {} too old (need >= 1000)", sdkVer);
+            SKSE::log::warn("Playground: ENB SDK version {} too old (need >= 1000)", sdkVer);
             return false;
         }
 
@@ -59,29 +66,34 @@ namespace ENBInterface
         SetParameter = reinterpret_cast<_ENBSetParameter>(
             GetProcAddress(enbModule, "ENBSetParameter"));
 
-        // Resolve optional GUI functions (may not be available in all ENB versions)
-        IsEditorActive = reinterpret_cast<_ENBIsEditorActive>(
-            GetProcAddress(enbModule, "ENBIsEditorActive"));
+        // Resolve v1001 SDK functions (exported by ENB v504+)
+        GetState = reinterpret_cast<_ENBGetState>(
+            GetProcAddress(enbModule, "ENBGetState"));
 
-        SetGUICallback = reinterpret_cast<_ENBSetGUICallback>(
-            GetProcAddress(enbModule, "ENBSetGUICallback"));
+        GetRenderInfo = reinterpret_cast<_ENBGetRenderInfo>(
+            GetProcAddress(enbModule, "ENBGetRenderInfo"));
 
-        GetD3D11Device = reinterpret_cast<_ENBGetD3D11Device>(
-            GetProcAddress(enbModule, "ENBGetD3D11Device"));
+        GetGameIdentifier = reinterpret_cast<_ENBGetGameIdentifier>(
+            GetProcAddress(enbModule, "ENBGetGameIdentifier"));
 
         if (!SetCallbackFunction || !SetParameter) {
-            SKSE::log::error("SkyrimBridge: Failed to resolve ENB SDK functions");
+            SKSE::log::error("Playground: Failed to resolve ENB SDK functions");
             return false;
         }
 
         if (GetVersion) {
-            SKSE::log::info("SkyrimBridge: ENBSeries binary version {}", GetVersion());
+            SKSE::log::info("Playground: ENBSeries binary version {}", GetVersion());
         }
 
-        // Check GUI support
-        g_guiSupported = (IsEditorActive != nullptr);
-        SKSE::log::info("SkyrimBridge: GUI support: {}", g_guiSupported ? "yes" : "no");
+        // Check GUI support — ATB functions (TwNewBar etc.) are resolved separately
+        // by ENBGuiIntegration. ENBGetState provides editor state detection.
+        g_guiSupported = true;  // ATB is available if we got this far
+        SKSE::log::info("Playground: GUI support: yes (GetState={}, GetRenderInfo={}, GetGameIdentifier={})",
+            GetState ? "yes" : "no",
+            GetRenderInfo ? "yes" : "no",
+            GetGameIdentifier ? "yes" : "no");
 
+        g_enbModule = enbModule;
         g_loaded = true;
         return true;
     }
@@ -96,6 +108,20 @@ namespace ENBInterface
         return g_loaded;
     }
 
+    bool IsEditorOpen()
+    {
+        if (GetState)
+            return GetState(ENBStateType::IsEditorActive) != 0;
+        return false;  // can't detect — assume closed
+    }
+
+    bool IsEffectsWindowOpen()
+    {
+        if (GetState)
+            return GetState(ENBStateType::IsEffectsWndActive) != 0;
+        return false;
+    }
+
     void PushAllData(const SB::AllData& a_data)
     {
         if (!SetParameter)
@@ -104,65 +130,70 @@ namespace ENBInterface
         static bool s_firstPush = true;
         static std::size_t s_pushCount = 0;
 
-        // Get pointer to raw bytes of AllData
-        const auto* rawData = reinterpret_cast<const char*>(&a_data);
+        // Dirty tracking: store previous frame's data, only push changed params
+        static SB::AllData s_prevData{};
+        static bool s_hasPrevData = false;
 
+        const auto* rawData = reinterpret_cast<const char*>(&a_data);
+        const auto* prevRaw = reinterpret_cast<const char*>(&s_prevData);
+
+        // Reusable ENBParameter struct — all SB params are float4 (COLOR4, 16 bytes)
+        ENBParameter param;
+        param.Size = 16;
+        param.Type = ENBParameterType::ENBParam_COLOR4;
+
+        int dirtyCount = 0;
         int totalSuccess = 0;
         int totalFail = 0;
 
-        // Iterate through all parameters and push to all target shaders
         for (std::size_t i = 0; i < SB::kParamCount; ++i) {
             const auto& entry = SB::kParamTable[i];
-            // Pointer to this parameter's float4 data (16 bytes)
-            void* paramData = const_cast<void*>(
-                static_cast<const void*>(rawData + entry.offset));
 
-            // Push to each target shader — every SB param is a float4 (16 bytes)
+            // Skip unchanged parameters (after first frame)
+            if (s_hasPrevData && std::memcmp(rawData + entry.offset, prevRaw + entry.offset, 16) == 0)
+                continue;
+
+            ++dirtyCount;
+            std::memcpy(param.Data, rawData + entry.offset, 16);
+
             for (const auto* shader : SB::kTargetShaders) {
-                int result = SetParameter(
-                    shader,
-                    "",             // empty category
-                    entry.name,
-                    paramData,
-                    16              // sizeof(float) * 4
-                );
-
+                int result = SetParameter(nullptr, shader, entry.name, &param);
                 if (s_firstPush) {
-                    if (result)
-                        ++totalSuccess;
-                    else
-                        ++totalFail;
+                    if (result) ++totalSuccess; else ++totalFail;
                 }
             }
         }
 
         if (s_firstPush) {
-            // Log the sentinel value to confirm data is populated
-            SKSE::log::info("SkyrimBridge: first push — SB_Render_Frame.x = {:.1f}",
-                a_data.render.FrameInfo.x);
-            SKSE::log::info("SkyrimBridge: first push — {} succeeded, {} failed out of {} total calls",
-                totalSuccess, totalFail,
-                SB::kParamCount * std::size(SB::kTargetShaders));
-
-            // Log per-shader breakdown on first push
+            SKSE::log::info("Playground: first push — {}/{} succeeded ({} dirty params x {} shaders)",
+                totalSuccess, dirtyCount * std::size(SB::kTargetShaders),
+                dirtyCount, std::size(SB::kTargetShaders));
             if (totalFail > 0) {
-                for (const auto* shader : SB::kTargetShaders) {
-                    int shaderOk = 0, shaderFail = 0;
-                    for (std::size_t i = 0; i < SB::kParamCount; ++i) {
-                        const auto& entry = SB::kParamTable[i];
-                        void* pd = const_cast<void*>(
-                            static_cast<const void*>(rawData + entry.offset));
-
-                        int r = SetParameter(shader, "", entry.name, pd, 16);
-                        if (r) ++shaderOk; else ++shaderFail;
-                    }
-                    SKSE::log::info("  {} — {} ok, {} fail", shader, shaderOk, shaderFail);
-                }
+                SKSE::log::warn("Playground: first push — {} SetParameter calls failed", totalFail);
             }
-
             s_firstPush = false;
         }
 
+        // Store current frame for next-frame comparison
+        s_prevData = a_data;
+        s_hasPrevData = true;
         ++s_pushCount;
+
+        // Update push stats for debug GUI
+        g_pushStats.dirtyParams     = dirtyCount;
+        g_pushStats.totalParams     = static_cast<int>(SB::kParamCount);
+        g_pushStats.setParamCalls   = dirtyCount * static_cast<int>(std::size(SB::kTargetShaders));
+        g_pushStats.pushCount       = s_pushCount;
+        g_pushStats.firstPushDone   = !s_firstPush || s_pushCount > 0;
+        if (s_pushCount == 1) {
+            g_pushStats.setParamSuccess = totalSuccess;
+            g_pushStats.setParamFail    = totalFail;
+        }
+
+        // Periodic dirty-ratio log (sparse: only at milestones)
+        if (s_pushCount == 300 || s_pushCount == 3000) {
+            SKSE::log::info("Playground: push #{} — {}/{} params dirty",
+                s_pushCount, dirtyCount, SB::kParamCount);
+        }
     }
 }

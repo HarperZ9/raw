@@ -1,5 +1,6 @@
 #include "WeatherTracker.h"
 #include <RE/Skyrim.h>
+#include <bit>
 #include <cmath>
 
 namespace SB::WeatherTracker
@@ -67,11 +68,16 @@ namespace SB::WeatherTracker
         data.Lightning.z = 0.f;  // flashIntensity
         data.Lightning.w = s_timeSinceFlash;
 
-        // ── Weather flags ───────────────────────────────────────────────
-        data.Flags.x = flags.any(RE::TESWeather::WeatherDataFlag::kPleasant) ? 1.f : 0.f;
-        data.Flags.y = flags.any(RE::TESWeather::WeatherDataFlag::kCloudy)   ? 1.f : 0.f;
-        data.Flags.z = isRain ? 1.f : 0.f;
-        data.Flags.w = isSnow ? 1.f : 0.f;
+        // ── Weather flags (packed uint bitfield) ──────────────────────
+        uint32_t flagBits = 0;
+        if (flags.any(RE::TESWeather::WeatherDataFlag::kPleasant)) flagBits |= (1u << 0);
+        if (flags.any(RE::TESWeather::WeatherDataFlag::kCloudy))   flagBits |= (1u << 1);
+        if (isRain) flagBits |= (1u << 2);
+        if (isSnow) flagBits |= (1u << 3);
+        data.Flags.x = std::bit_cast<float>(flagBits);
+        data.Flags.y = 0.0f;
+        data.Flags.z = 0.0f;
+        data.Flags.w = 0.0f;
 
         // ── Transition ──────────────────────────────────────────────────
         data.Transition.x = sky->currentWeatherPct;
@@ -100,6 +106,46 @@ namespace SB::WeatherTracker
         data.PrecipSurface.x = s_wetness;
         data.PrecipSurface.y = s_wetness * 0.3f;  // puddle depth (simplified)
         data.PrecipSurface.z = s_snowAccum;
+
+        // ── Tier A: Live Sky singleton values ─────────────────────────
+        // These read the engine's live state, not TESWeather form data.
+        data.WindLive.x = sky->windSpeed;
+        data.WindLive.y = sky->windAngle;
+        data.WindLive.z = std::cos(sky->windAngle);  // wind direction X
+        data.WindLive.w = std::sin(sky->windAngle);  // wind direction Z
+
+        // Precipitation particle density (live from engine)
+        if (sky->precip) {
+            data.PrecipLive.x = sky->precip->currentParticleDensity;
+            data.PrecipLive.y = sky->precip->lastParticleDensity;
+        }
+        data.PrecipLive.z = sky->flash;              // lightning flash intensity
+        data.PrecipLive.w = sky->currentGameHour;
+
+        // Cloud coverage (average + max from 32 layers)
+        if (sky->clouds) {
+            float sumAlpha = 0.0f;
+            float maxAlpha = 0.0f;
+            int activeLayers = 0;
+            for (int i = 0; i < sky->clouds->numLayers && i < 32; ++i) {
+                float a = sky->clouds->alphas[i];
+                if (a > 0.001f) {
+                    sumAlpha += a;
+                    activeLayers++;
+                    if (a > maxAlpha) maxAlpha = a;
+                }
+            }
+            data.CloudCover.x = activeLayers > 0 ? sumAlpha / static_cast<float>(activeLayers) : 0.0f;
+            data.CloudCover.y = static_cast<float>(activeLayers);
+            data.CloudCover.z = maxAlpha;
+        }
+        data.CloudCover.w = sky->currentWeatherPct;
+
+        // Aurora fade curves
+        data.AuroraFade.x = sky->auroraIn;
+        data.AuroraFade.y = sky->auroraOut;
+        data.AuroraFade.z = sky->auroraInStart;
+        data.AuroraFade.w = sky->auroraOutStart;
 
         return data;
     }

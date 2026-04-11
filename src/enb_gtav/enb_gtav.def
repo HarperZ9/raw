@@ -1,0 +1,93 @@
+LIBRARY d3d11
+
+EXPORTS
+    ; ==========================================================================
+    ; ENBSeries v0.492 for GTA V — Export Table (72 exports)
+    ; Matches original d3d11.dll export table exactly for full SDK compatibility.
+    ; ==========================================================================
+
+    ; === D3D11 Proxy Functions (6) ===
+    ; Core functions: ASM trampolines -> real d3d11.dll
+    D3D11CoreCreateDevice          = Trampoline_D3D11CoreCreateDevice
+    D3D11CoreCreateLayeredDevice   = Trampoline_D3D11CoreCreateLayeredDevice
+    D3D11CoreGetLayeredDeviceSize  = Trampoline_D3D11CoreGetLayeredDeviceSize
+    D3D11CoreRegisterLayers        = Trampoline_D3D11CoreRegisterLayers
+    ; Create functions: our C++ implementations (aliased to avoid dllimport clash)
+    D3D11CreateDevice              = ENB_D3D11CreateDevice_Impl
+    D3D11CreateDeviceAndSwapChain  = ENB_D3D11CreateDeviceAndSwapChain_Impl
+
+    ; === ENB SDK API (8) ===
+    ENBGetSDKVersion
+    ENBGetVersion
+    ENBGetGameIdentifier
+    ENBGetParameter
+    ENBSetParameter
+    ENBSetCallbackFunction
+    ENBGetRenderInfo
+    ENBGetState
+
+    ; === ENB Internal API (9) ===
+    API_SetRawD3DMode
+    API_GetD3D11Device
+    API_GetD3D11DeviceContext
+    API_GetDXGISwapChain
+    API_BeforePresent
+    API_AfterPresent
+    API_SetWindow
+    API_BeforeDisplayModeChange
+    API_AfterDisplayModeChange
+
+    ; === ENB D3D11 Alternatives (2) ===
+    ENBD3D11CreateDevice
+    ENBD3D11CreateDeviceAndSwapChain
+
+    ; === AntTweakBar Shim Exports (46) ===
+    TwInit
+    TwTerminate
+    TwDraw
+    TwNewBar
+    TwDeleteBar
+    TwDeleteAllBars
+    TwAddVarRW
+    TwAddVarRO
+    TwAddVarCB
+    TwAddButton
+    TwAddSeparator
+    TwRemoveVar
+    TwRemoveAllVars
+    TwDefine
+    TwDefineEnum
+    TwDefineEnumFromString
+    TwDefineStruct
+    TwGetParam
+    TwSetParam
+    TwGetBarByIndex
+    TwGetBarByName
+    TwGetBarCount
+    TwGetBarName
+    TwGetBottomBar
+    TwGetTopBar
+    TwSetBottomBar
+    TwSetTopBar
+    TwRefreshBar
+    TwSetBarFontSize
+    TwGetCurrentWindow
+    TwSetCurrentWindow
+    TwWindowExists
+    TwWindowSize
+    TwGetLastError
+    TwHandleErrors
+    TwKeyPressed
+    TwKeyTest
+    TwMouseButton
+    TwMouseMotion
+    TwMouseWheel
+    TwEventWin
+    TwEventWin32
+    TwCopyCDStringToClientFunc
+    TwCopyCDStringToLibrary
+    TwCopyStdStringToClientFunc
+    TwCopyStdStringToLibrary
+
+    ; === Data Exports (1) ===
+    NvOptimusEnablement DATA

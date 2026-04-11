@@ -1,5 +1,6 @@
 #include "InteriorTracker.h"
 #include <RE/Skyrim.h>
+#include <bit>
 #include <cmath>
 
 namespace SB::InteriorTracker
@@ -29,19 +30,27 @@ namespace SB::InteriorTracker
         auto* cell = player->GetParentCell();
         if (!cell) return data;
 
-        data.IsInterior.x = cell->IsInteriorCell() ? 1.f : 0.f;
+        bool isInterior = cell->IsInteriorCell();
 
-        if (!cell->IsInteriorCell())
-            return data;
-
-        // ── Interior lighting data ─────────────────────────────────────────
-        auto* ld = cell->GetLighting();
-        if (!ld) {
-            data.IsInterior.y = 0.f;
+        if (!isInterior) {
+            data.IsInterior = {};
             return data;
         }
 
-        data.IsInterior.y = 1.f;  // has lighting data
+        // ── Interior lighting data ─────────────────────────────────────────
+        auto* ld = cell->GetLighting();
+
+        // Pack interior flags into uint bitfield
+        uint32_t flagBits = 0;
+        flagBits |= (1u << 0);  // bit0: isInterior
+        if (ld) flagBits |= (1u << 1);  // bit1: hasLightingTemplate
+        data.IsInterior.x = std::bit_cast<float>(flagBits);
+        data.IsInterior.y = 0.0f;
+        data.IsInterior.z = 0.0f;
+        data.IsInterior.w = 0.0f;
+
+        if (!ld)
+            return data;
 
         // Ambient color (Color type has red/green/blue/alpha members)
         data.AmbientColor = {
@@ -79,6 +88,17 @@ namespace SB::InteriorTracker
         data.InteriorFogDist.y = ld->fogFar;
         data.InteriorFogDist.z = ld->fogPower;
         data.InteriorFogDist.w = ld->clipDist;
+
+        // Lighting template FormID (ENB Helper SE/Plus compatibility)
+        auto& cellData = cell->GetRuntimeData();
+        if (cellData.lightingTemplate) {
+            data.LightingTemplate.x = static_cast<float>(cellData.lightingTemplate->GetFormID());
+        }
+        // Inheritance flags from interior data
+        if (ld) {
+            data.LightingTemplate.y = static_cast<float>(
+                ld->lightingTemplateInheritanceFlags.underlying());
+        }
 
         return data;
     }

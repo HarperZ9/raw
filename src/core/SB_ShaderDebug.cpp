@@ -1,6 +1,8 @@
 #include "SB_ShaderDebug.h"
+#include "ShaderCache.h"
+#include "ShaderPreProcessor.h"
 
-// SkyrimBridge is always built as an SKSE plugin
+// Playground is always built as an SKSE plugin
 #define HAS_SKSE 1
 
 // For SKSE logging — falls back to OutputDebugString if unavailable
@@ -142,19 +144,102 @@ static void PatchAllIATEntries(FnPtr target, FnPtr hook, FnPtr& original)
     }
 }
 
-template<typename FnPtr>
-static void InstallInlineHook(FnPtr target, FnPtr hook, FnPtr& original)
-{
-    // Uses IAT patching — catches all statically linked D3DCompile calls.
-    // For maximum coverage (GetProcAddress-resolved calls), replace with
-    // MinHook or Detours.
-    PatchAllIATEntries(target, hook, original);
-}
+// NOTE: GetProcAddress IAT hook removed — ENB v504 statically links its
+// own D3D shader compiler and never calls the system d3dcompiler_47.dll.
+// The d3dcompiler_47 proxy DLL (separate build target) handles capture of
+// any callers that do use the system DLL.  IAT patching of D3DCompile
+// (above) still catches our own ImGui/compute compilations.
 
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Install / Shutdown
 // ═══════════════════════════════════════════════════════════════════════════
+
+// ── Phase 1: Early hook installation ──────────────────────────────────
+// Called from SKSEPlugin_Load — before ENB compiles shaders.
+// No D3D11 device needed. Just IAT hooks + file paths.
+
+void ShaderDebug::InstallHooksEarly()
+{
+    if (m_hooksInstalled) return;
+
+    // ── Set up log/capture file paths ────────────────────────────────
+    char exePath[MAX_PATH];
+    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+    auto basePath = std::filesystem::path(exePath).parent_path()
+                    / "Data" / "SKSE" / "Plugins";
+    m_logPath = basePath / "Playground_ShaderErrors.log";
+    EnsureLogDirectory();
+
+    if (m_capturePath.empty())
+        m_capturePath = basePath / "Playground" / "ShaderCapture";
+
+    // ── Hook D3DCompile from d3dcompiler_47.dll ──────────────────────
+    //
+    // Two-layer strategy:
+    //   1) IAT patching: catches callers that statically import D3DCompile
+    //   2) GetProcAddress hook: catches ENB and others that resolve dynamically
+    //
+    // No inline/trampoline hooks — those require prologue relocation which
+    // is fragile across different d3dcompiler_47.dll builds.
+
+    HMODULE hCompiler = GetModuleHandleA("d3dcompiler_47.dll");
+    if (!hCompiler)
+    {
+        // Pre-load it so we can resolve the real function pointers now.
+        // ENB will also load it later, but GetModuleHandle will return
+        // the same handle since it's already in the process.
+        hCompiler = LoadLibraryA("d3dcompiler_47.dll");
+    }
+
+    if (hCompiler)
+    {
+        auto pD3DCompile = reinterpret_cast<fnD3DCompile>(
+            GetProcAddress(hCompiler, "D3DCompile"));
+        auto pD3DCompile2 = reinterpret_cast<fnD3DCompile2>(
+            GetProcAddress(hCompiler, "D3DCompile2"));
+
+        // Save the real function pointers FIRST
+        if (pD3DCompile)
+            s_origD3DCompile = pD3DCompile;
+        if (pD3DCompile2)
+            s_origD3DCompile2 = pD3DCompile2;
+
+        // IAT patch D3DCompile across all currently loaded modules.
+        // This catches our own ImGui/compute compilations and anything
+        // else that statically imports d3dcompiler_47.dll.
+        if (pD3DCompile)
+        {
+            PatchAllIATEntries(pD3DCompile, HookD3DCompile, s_origD3DCompile);
+            s_origD3DCompile = pD3DCompile;  // restore after IAT patching
+            SB_LOG_INFO("ShaderDebug: IAT-patched D3DCompile at {:p}",
+                        reinterpret_cast<void*>(pD3DCompile));
+        }
+
+        if (pD3DCompile2)
+        {
+            PatchAllIATEntries(pD3DCompile2, HookD3DCompile2, s_origD3DCompile2);
+            s_origD3DCompile2 = pD3DCompile2;
+            SB_LOG_INFO("ShaderDebug: IAT-patched D3DCompile2 at {:p}",
+                        reinterpret_cast<void*>(pD3DCompile2));
+        }
+    }
+    else
+    {
+        SB_LOG_ERROR("ShaderDebug: d3dcompiler_47.dll not found — "
+                     "shader error capture unavailable");
+    }
+
+    WriteLogHeader();
+
+    m_hooksInstalled = true;
+    SB_LOG_INFO("ShaderDebug: IAT hooks installed early — "
+                "captures ImGui/compute compilations (ENB uses static compiler)");
+}
+
+
+// ── Phase 2: D3D11 resource setup ────────────────────────────────────
+// Called at kDataLoaded after D3D11 device is available.
 
 void ShaderDebug::Install(ID3D11Device* device, ID3D11DeviceContext* context,
                           IDXGISwapChain* swapChain)
@@ -165,72 +250,16 @@ void ShaderDebug::Install(ID3D11Device* device, ID3D11DeviceContext* context,
     m_context   = context;
     m_swapChain = swapChain;
 
-    // ── Set up log file path ──────────────────────────────────────────
-    // Resolve relative to game executable directory
-    char exePath[MAX_PATH];
-    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
-    m_logPath = std::filesystem::path(exePath).parent_path()
-                / "Data" / "SKSE" / "Plugins" / "SkyrimBridge_ShaderErrors.log";
-    EnsureLogDirectory();
-
-    // ── Hook D3DCompile from d3dcompiler_47.dll ──────────────────────
-    //
-    // ENB loads d3dcompiler_47.dll to compile its .fx shaders at runtime.
-    // We hook the export table (IAT) of the ENB module, or if that fails,
-    // patch the function directly via trampoline.
-    //
-    // Strategy: Find the d3dcompiler DLL, get the function addresses,
-    // and install inline hooks (MinHook-style) or IAT patches.
-
-    HMODULE hCompiler = GetModuleHandleA("d3dcompiler_47.dll");
-    if (!hCompiler)
-    {
-        // Try loading it ourselves — ENB may load it lazily
-        hCompiler = LoadLibraryA("d3dcompiler_47.dll");
-    }
-
-    if (hCompiler)
-    {
-        // Get original function addresses
-        auto pD3DCompile = reinterpret_cast<fnD3DCompile>(
-            GetProcAddress(hCompiler, "D3DCompile"));
-        auto pD3DCompile2 = reinterpret_cast<fnD3DCompile2>(
-            GetProcAddress(hCompiler, "D3DCompile2"));
-
-        if (pD3DCompile)
-        {
-            s_origD3DCompile = pD3DCompile;
-            InstallInlineHook(pD3DCompile, HookD3DCompile, s_origD3DCompile);
-            SB_LOG_INFO("ShaderDebug: hooked D3DCompile at {:p}",
-                        reinterpret_cast<void*>(pD3DCompile));
-        }
-
-        if (pD3DCompile2)
-        {
-            s_origD3DCompile2 = pD3DCompile2;
-            InstallInlineHook(pD3DCompile2, HookD3DCompile2, s_origD3DCompile2);
-            SB_LOG_INFO("ShaderDebug: hooked D3DCompile2 at {:p}",
-                        reinterpret_cast<void*>(pD3DCompile2));
-        }
-    }
-    else
-    {
-        SB_LOG_ERROR("ShaderDebug: d3dcompiler_47.dll not found — "
-                     "shader error capture unavailable");
-    }
-
-    // NOTE: Present hook is NOT installed here — overlay rendering is
-    // driven by D3D11Hook::HookedPresent() which calls our public
-    // ProcessInput() and RenderOverlay() methods.
-
-    // ── Write log header ─────────────────────────────────────────────
-    WriteLogHeader();
+    // If hooks weren't installed early, do it now (fallback)
+    if (!m_hooksInstalled)
+        InstallHooksEarly();
 
     m_installed = true;
-    SB_LOG_INFO("ShaderDebug: installed — errors will be captured and displayed");
+    SB_LOG_INFO("ShaderDebug: fully installed — overlay + capture ready");
     SB_LOG_INFO("ShaderDebug: log file: {}", m_logPath.string());
-    SB_LOG_INFO("ShaderDebug: press {} to toggle overlay, {} to clear",
-                "F10", "F11");
+    SB_LOG_INFO("ShaderDebug: captured {} compilations during early init",
+                m_attempts.size());
+    SB_LOG_INFO("ShaderDebug: press F10 to toggle overlay, F11 to clear");
 }
 
 void ShaderDebug::Shutdown()
@@ -254,11 +283,79 @@ HRESULT WINAPI ShaderDebug::HookD3DCompile(
     ID3DBlob** ppCode, ID3DBlob** ppErrorMsgs)
 {
     auto& self = Get();
+
+    // ── Pre-process: parse annotations & transform source ─────────────
+    // Guard: null/empty source passes straight through to real D3DCompile
+    if (!pSrcData || SrcDataSize == 0) {
+        return s_origD3DCompile(pSrcData, SrcDataSize, pSourceName, pDefines, pInclude,
+                                pEntrypoint, pTarget, Flags1, Flags2, ppCode, ppErrorMsgs);
+    }
+
+    std::string sourceName = pSourceName ? pSourceName : "";
+    std::string rawSource(reinterpret_cast<const char*>(pSrcData), SrcDataSize);
+
+    // Diagnostic: detect if ENB shaders contain SB_ parameter declarations
+    {
+        static int s_enbShaderCount = 0;
+        std::string nameLower = sourceName;
+        for (auto& c : nameLower) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+        bool isENBShader = (nameLower.find("enb") != std::string::npos);
+
+        if (isENBShader && s_enbShaderCount < 20) {
+            bool hasSB = (rawSource.find("SB_Sun_Direction") != std::string::npos);
+            bool hasCB = (rawSource.find("SkyrimBridge_CB") != std::string::npos);
+            SKSE::log::info("ShaderDebug: ENB shader '{}' ({}B, entry={}) — SB_params={}, SB_CB={}",
+                sourceName, SrcDataSize, pEntrypoint ? pEntrypoint : "?",
+                hasSB ? "YES" : "no", hasCB ? "YES" : "no");
+            ++s_enbShaderCount;
+        }
+    }
+
+    SB::PreProcessResult ppResult;
+    try {
+        ppResult = SB::ShaderPreProcessor::Get().Process(rawSource, sourceName);
+    } catch (...) {
+        // If pre-processor throws, fall back to original source
+        ppResult.cleanedSource = std::move(rawSource);
+    }
+
+    // Use cleaned source for cache + compile (annotations stripped, fxgroups transformed)
+    const char* compileSource = ppResult.cleanedSource.c_str();
+    SIZE_T compileSize = ppResult.cleanedSource.size();
+
+    // Build extended defines array if #pragma uidefine produced extras
+    std::vector<D3D_SHADER_MACRO> extDefines;
+    const D3D_SHADER_MACRO* finalDefines = pDefines;
+    if (!ppResult.extraDefines.empty()) {
+        // Copy existing defines
+        if (pDefines) {
+            for (auto* d = pDefines; d->Name; ++d)
+                extDefines.push_back(*d);
+        }
+        // Append uidefine-generated defines
+        for (auto& dp : ppResult.extraDefines)
+            extDefines.push_back({ dp.name.c_str(), dp.value.c_str() });
+        // Null terminator
+        extDefines.push_back({ nullptr, nullptr });
+        finalDefines = extDefines.data();
+    }
+
+    // Cache check — skip real compilation if we have a cached blob
+    auto& cache = SB::ShaderCache::Get();
+    if (cache.IsEnabled() && ppCode) {
+        if (cache.TryGetCached(compileSource, compileSize, finalDefines,
+                               pEntrypoint, pTarget, Flags1, Flags2, ppCode))
+        {
+            if (ppErrorMsgs) *ppErrorMsgs = nullptr;
+            return S_OK;
+        }
+    }
+
     auto startTime = std::chrono::high_resolution_clock::now();
 
-    // Call the real D3DCompile
+    // Call the real D3DCompile with cleaned source
     HRESULT hr = s_origD3DCompile(
-        pSrcData, SrcDataSize, pSourceName, pDefines, pInclude,
+        compileSource, compileSize, pSourceName, finalDefines, pInclude,
         pEntrypoint, pTarget, Flags1, Flags2, ppCode, ppErrorMsgs);
 
     auto endTime = std::chrono::high_resolution_clock::now();
@@ -266,9 +363,20 @@ HRESULT WINAPI ShaderDebug::HookD3DCompile(
         endTime - startTime).count();
 
     // Record the attempt regardless of success/failure
-    self.RecordCompilation(hr, pSrcData, SrcDataSize,
+    self.RecordCompilation(hr, compileSource, compileSize,
                            pSourceName, pEntrypoint, pTarget,
                            ppErrorMsgs, elapsedMs);
+
+    // Cache store — save successful compilations (hash cleaned source)
+    if (cache.IsEnabled() && SUCCEEDED(hr) && ppCode && *ppCode) {
+        cache.StoreCached(compileSource, compileSize, finalDefines,
+                          pEntrypoint, pTarget, Flags1, Flags2, *ppCode);
+    }
+
+    // Capture shader source + DXBC to disk (if enabled)
+    self.CaptureShaderToDisk(pSourceName, pEntrypoint, pTarget,
+                             compileSource, compileSize,
+                             (ppCode && *ppCode) ? *ppCode : nullptr);
 
     return hr;
 }
@@ -283,10 +391,58 @@ HRESULT WINAPI ShaderDebug::HookD3DCompile2(
     ID3DBlob** ppCode, ID3DBlob** ppErrorMsgs)
 {
     auto& self = Get();
+
+    // Guard: null/empty source passes straight through
+    if (!pSrcData || SrcDataSize == 0) {
+        return s_origD3DCompile2(pSrcData, SrcDataSize, pSourceName, pDefines, pInclude,
+                                 pEntrypoint, pTarget, Flags1, Flags2,
+                                 SecondaryDataFlags, pSecondaryData, SecondaryDataSize,
+                                 ppCode, ppErrorMsgs);
+    }
+
+    // ── Pre-process: parse annotations & transform source ─────────────
+    std::string sourceName = pSourceName ? pSourceName : "";
+    std::string rawSource(reinterpret_cast<const char*>(pSrcData), SrcDataSize);
+
+    SB::PreProcessResult ppResult;
+    try {
+        ppResult = SB::ShaderPreProcessor::Get().Process(rawSource, sourceName);
+    } catch (...) {
+        ppResult.cleanedSource = std::move(rawSource);
+    }
+
+    const char* compileSource = ppResult.cleanedSource.c_str();
+    SIZE_T compileSize = ppResult.cleanedSource.size();
+
+    // Build extended defines array if #pragma uidefine produced extras
+    std::vector<D3D_SHADER_MACRO> extDefines;
+    const D3D_SHADER_MACRO* finalDefines = pDefines;
+    if (!ppResult.extraDefines.empty()) {
+        if (pDefines) {
+            for (auto* d = pDefines; d->Name; ++d)
+                extDefines.push_back(*d);
+        }
+        for (auto& dp : ppResult.extraDefines)
+            extDefines.push_back({ dp.name.c_str(), dp.value.c_str() });
+        extDefines.push_back({ nullptr, nullptr });
+        finalDefines = extDefines.data();
+    }
+
+    // Cache check — skip real compilation if we have a cached blob
+    auto& cache = SB::ShaderCache::Get();
+    if (cache.IsEnabled() && ppCode) {
+        if (cache.TryGetCached(compileSource, compileSize, finalDefines,
+                               pEntrypoint, pTarget, Flags1, Flags2, ppCode))
+        {
+            if (ppErrorMsgs) *ppErrorMsgs = nullptr;
+            return S_OK;
+        }
+    }
+
     auto startTime = std::chrono::high_resolution_clock::now();
 
     HRESULT hr = s_origD3DCompile2(
-        pSrcData, SrcDataSize, pSourceName, pDefines, pInclude,
+        compileSource, compileSize, pSourceName, finalDefines, pInclude,
         pEntrypoint, pTarget, Flags1, Flags2,
         SecondaryDataFlags, pSecondaryData, SecondaryDataSize,
         ppCode, ppErrorMsgs);
@@ -295,9 +451,20 @@ HRESULT WINAPI ShaderDebug::HookD3DCompile2(
     double elapsedMs = std::chrono::duration<double, std::milli>(
         endTime - startTime).count();
 
-    self.RecordCompilation(hr, pSrcData, SrcDataSize,
+    self.RecordCompilation(hr, compileSource, compileSize,
                            pSourceName, pEntrypoint, pTarget,
                            ppErrorMsgs, elapsedMs);
+
+    // Cache store — save successful compilations (hash cleaned source)
+    if (cache.IsEnabled() && SUCCEEDED(hr) && ppCode && *ppCode) {
+        cache.StoreCached(compileSource, compileSize, finalDefines,
+                          pEntrypoint, pTarget, Flags1, Flags2, *ppCode);
+    }
+
+    // Capture shader source + DXBC to disk (if enabled)
+    self.CaptureShaderToDisk(pSourceName, pEntrypoint, pTarget,
+                             compileSource, compileSize,
+                             (ppCode && *ppCode) ? *ppCode : nullptr);
 
     return hr;
 }
@@ -399,6 +566,100 @@ void ShaderDebug::RecordCompilation(
     {
         m_attempts.erase(m_attempts.begin());
     }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Shader source capture to disk
+// ═══════════════════════════════════════════════════════════════════════════
+
+void ShaderDebug::CaptureShaderToDisk(
+    LPCSTR pSourceName, LPCSTR pEntrypoint, LPCSTR pTarget,
+    LPCVOID pSrcData, SIZE_T srcSize, ID3DBlob* pCode)
+{
+    if (!m_captureEnabled || m_capturePath.empty())
+        return;
+    if (!pSrcData || srcSize == 0)
+        return;
+
+    // FNV-1a hash for dedup + filename
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    auto* bytes = static_cast<const uint8_t*>(pSrcData);
+    for (SIZE_T i = 0; i < srcSize; ++i) {
+        hash ^= bytes[i];
+        hash *= 0x100000001b3ULL;
+    }
+    // Mix in entry point
+    if (pEntrypoint) {
+        for (auto* p = pEntrypoint; *p; ++p) {
+            hash ^= static_cast<uint8_t>(*p);
+            hash *= 0x100000001b3ULL;
+        }
+    }
+
+    // Skip if already captured
+    if (m_capturedHashes.count(hash))
+        return;
+    m_capturedHashes.insert(hash);
+
+    // Build filename: sourceName_entryPoint_hash
+    std::string baseName;
+    if (pSourceName) {
+        baseName = pSourceName;
+        // Strip path separators
+        auto slash = baseName.find_last_of("\\/");
+        if (slash != std::string::npos)
+            baseName = baseName.substr(slash + 1);
+        // Strip extension
+        auto dot = baseName.find_last_of('.');
+        if (dot != std::string::npos)
+            baseName = baseName.substr(0, dot);
+    } else {
+        baseName = "memory";
+    }
+    if (pEntrypoint)
+        baseName += std::string("_") + pEntrypoint;
+
+    char hashStr[20];
+    snprintf(hashStr, sizeof(hashStr), "_%016llX", static_cast<unsigned long long>(hash));
+    baseName += hashStr;
+
+    // Ensure capture directory exists
+    std::error_code ec;
+    std::filesystem::create_directories(m_capturePath, ec);
+
+    // Save HLSL source
+    {
+        auto hlslPath = m_capturePath / (baseName + ".hlsl");
+        std::ofstream ofs(hlslPath, std::ios::binary);
+        if (ofs.is_open()) {
+            // Write header comment
+            ofs << "// Captured shader source\n";
+            ofs << "// Source: " << (pSourceName ? pSourceName : "<memory>") << "\n";
+            ofs << "// Entry:  " << (pEntrypoint ? pEntrypoint : "?") << "\n";
+            ofs << "// Target: " << (pTarget ? pTarget : "?") << "\n";
+            ofs << "// Size:   " << srcSize << " bytes\n";
+            ofs << "// Hash:   0x" << hashStr + 1 << "\n";  // skip leading underscore
+            ofs << "//\n\n";
+            ofs.write(static_cast<const char*>(pSrcData), srcSize);
+            ofs.close();
+        }
+    }
+
+    // Save compiled DXBC if available
+    if (pCode && pCode->GetBufferSize() > 0) {
+        auto dxbcPath = m_capturePath / (baseName + ".dxbc");
+        std::ofstream ofs(dxbcPath, std::ios::binary);
+        if (ofs.is_open()) {
+            ofs.write(static_cast<const char*>(pCode->GetBufferPointer()),
+                      pCode->GetBufferSize());
+            ofs.close();
+        }
+    }
+
+    ++m_capturedCount;
+    SB_LOG_INFO("ShaderCapture: saved '{}' ({} bytes HLSL{})",
+        baseName, srcSize, pCode ? " + DXBC" : "");
 }
 
 
@@ -656,7 +917,7 @@ void ShaderDebug::WriteLogHeader()
     localtime_s(&tmBuf, &time);
 
     file << "╔══════════════════════════════════════════════════════════════════╗\n";
-    file << "║       SkyrimBridge — Shader Compilation Diagnostic Log         ║\n";
+    file << "║       Playground — Shader Compilation Diagnostic Log            ║\n";
     file << "╚══════════════════════════════════════════════════════════════════╝\n";
     file << "\n";
     file << "  Session: " << std::put_time(&tmBuf, "%Y-%m-%d %H:%M:%S") << "\n";
@@ -821,6 +1082,15 @@ void ShaderDebug::ClearAll()
     m_totalSuccess = 0;
     m_scrollOffset = 0;
     SB_LOG_INFO("ShaderDebug: all errors cleared");
+}
+
+std::string ShaderDebug::GetCachedSource(const std::string& sourceFile) const
+{
+    std::lock_guard<std::mutex> lk(m_sourceCacheMtx);
+    auto it = m_sourceCache.find(sourceFile);
+    if (it != m_sourceCache.end())
+        return it->second;
+    return {};
 }
 
 

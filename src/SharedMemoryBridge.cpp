@@ -61,7 +61,7 @@ bool SharedMemoryBridge::Initialize()
 
     m_active.store(true, std::memory_order_release);
     SKSE::log::info("SharedMemoryBridge: initialized ({} bytes shared as '{}')",
-        size, "SkyrimBridge_GameState");
+        size, "Playground_GameState");
 
     return true;
 }
@@ -102,7 +102,7 @@ void SharedMemoryBridge::WriteFrame(const AllData& data, float deltaTime, uint32
     m_pData->header.deltaTime  = deltaTime;
     m_pData->header.gameHour   = data.celestial.TimeData.x;
 
-    // Weather info
+    // Weather info (null-safe — Sky may not be ready during early frames)
     auto* sky = RE::Sky::GetSingleton();
     if (sky && sky->currentWeather) {
         m_pData->header.weatherFormID   = sky->currentWeather->GetFormID();
@@ -112,8 +112,8 @@ void SharedMemoryBridge::WriteFrame(const AllData& data, float deltaTime, uint32
     }
 
     m_pData->header.isInterior = (data.interior.IsInterior.x > 0.5f) ? 1 : 0;
-    m_pData->header.isInMenu   = 0; // TODO: Add UIState tracker;
-    m_pData->header.isLoading  = 0; // TODO: Add UIState tracker;
+    m_pData->header.isInMenu   = (data.uiState.Menus.x > 0.5f) ? 1 : 0;
+    m_pData->header.isLoading  = (data.uiState.HUD.w > 0.5f) ? 1 : 0;
 
     // ─── AllData bulk copy ──────────────────────────────────────────
 

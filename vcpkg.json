@@ -1,8 +1,8 @@
 {
     "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
-    "name": "skyrimbridge-v3",
+    "name": "playground",
     "version-semver": "3.0.0",
-    "description": "SkyrimBridge v3.0 - Weather-reactive ENB parameters, shared memory bridge, and ParmLink compatibility",
+    "description": "Playground — Rendering platform for Creation Engine",
     "license": "MIT",
     "dependencies": [
         "commonlibsse-ng",

@@ -6,6 +6,7 @@
 //=============================================================================
 
 #include "ParmLinkCompat.h"
+#include "CompatDetect.h"
 #include "Trackers.h"
 #include "ENBInterface_v3.h"
 
@@ -14,7 +15,6 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
-#include <regex>
 #include <cmath>
 
 namespace SB
@@ -27,6 +27,13 @@ namespace SB
 void ParmLinkCompat::Initialize(const std::filesystem::path& gameDir)
 {
     std::lock_guard lock(m_mutex);
+
+    // If the original enbParmLink.dll is loaded, defer to it entirely
+    if (CompatDetect::Get().HasENBParmLink()) {
+        SKSE::log::info("ParmLinkCompat: enbParmLink.dll detected — "
+            "deferring expression evaluation to it");
+        return;
+    }
 
     // Register all variable bindings
     RegisterENBVariables();
@@ -147,13 +154,11 @@ void ParmLinkCompat::RegisterSkyrimBridgeVariables()
 
     // Lambdas call GetData() directly for fresh data each frame
 
-    // Camera
-    RegisterVariable("sb.fov", []() { return GetData().camera.Info.x; }, "Camera FOV degrees");
-    RegisterVariable("sb.nearClip", []() { return GetData().camera.Info.y; }, "Near clip");
-    RegisterVariable("sb.farClip", []() { return GetData().camera.Info.z; }, "Far clip");
-    RegisterVariable("sb.aspectRatio", []() { return GetData().camera.Info.w; }, "Aspect ratio");
-    RegisterVariable("sb.cameraPitch", []() { return GetData().camera.Angles.x; }, "Camera pitch (rad)");
-    RegisterVariable("sb.cameraYaw", []() { return GetData().camera.Angles.y; }, "Camera yaw (rad)");
+    // Camera (Params: .x=FOV rad, .y=near, .z=far, .w=aspect)
+    RegisterVariable("sb.fov", []() { return GetData().camera.Params.x * 57.2957795f; }, "Camera FOV degrees");
+    RegisterVariable("sb.nearClip", []() { return GetData().camera.Params.y; }, "Near clip");
+    RegisterVariable("sb.farClip", []() { return GetData().camera.Params.z; }, "Far clip");
+    RegisterVariable("sb.aspectRatio", []() { return GetData().camera.Params.w; }, "Aspect ratio");
 
     // Player
     RegisterVariable("sb.playerPosX", []() { return GetData().player.Position.x; }, "Player X");
@@ -316,87 +321,334 @@ CompiledExpression ParmLinkCompat::CompileExpression(const std::string& line)
 }
 
 
+//=============================================================================
+//  ExprParser — Recursive-descent expression compiler
+//
+//  Compiles ParmLink/ExprTk-style math expressions into std::function<float()>
+//  lambdas at config load time. No per-frame string parsing.
+//
+//  Supported:
+//    Arithmetic:  + - * / % (unary -)
+//    Comparison:  < > <= >= == !=
+//    Logical:     && || !
+//    Ternary:     condition ? true_val : false_val
+//    Grouping:    ( )
+//    Functions (1-arg): sin cos tan asin acos atan sqrt abs exp exp2
+//                       log log2 log10 floor ceil round frac sign
+//                       saturate radians degrees
+//    Functions (2-arg): pow atan2 min max fmod step
+//    Functions (3-arg): lerp mix clamp smoothstep
+//    Literals:    1.0  .5  3e-2  1.5f
+//    Variables:   sb.playerHealth  enb.fNightDayFactor  (dot-separated)
+//=============================================================================
+
+namespace  // anonymous — file-local only
+{
+
+class ExprParser
+{
+public:
+    using Getter    = std::function<float()>;
+    using VarLookup = std::function<float(const std::string&)>;
+
+    ExprParser(const std::string& src, VarLookup lookup)
+        : m_src(src), m_pos(0), m_lookup(std::move(lookup))
+    {
+        NextToken();
+    }
+
+    Getter Parse()
+    {
+        auto result = ParseTernary();
+        return result ? result : []() { return 0.0f; };
+    }
+
+private:
+    // ── Token ───────────────────────────────────────────────────────────
+
+    enum TokType {
+        TOK_NUM, TOK_IDENT,
+        TOK_PLUS, TOK_MINUS, TOK_STAR, TOK_SLASH, TOK_PERCENT,
+        TOK_LPAREN, TOK_RPAREN, TOK_COMMA,
+        TOK_LT, TOK_GT, TOK_LE, TOK_GE, TOK_EQ, TOK_NE,
+        TOK_AND, TOK_OR, TOK_NOT,
+        TOK_QUESTION, TOK_COLON,
+        TOK_END
+    };
+
+    struct Token { TokType type = TOK_END; float num = 0.0f; std::string str; };
+
+    // ── Lexer ───────────────────────────────────────────────────────────
+
+    void SkipWS() { while (m_pos < m_src.size() && (m_src[m_pos]==' '||m_src[m_pos]=='\t')) ++m_pos; }
+
+    void NextToken()
+    {
+        SkipWS();
+        if (m_pos >= m_src.size()) { m_tok = {TOK_END}; return; }
+
+        char c = m_src[m_pos];
+
+        // Number: 1  1.5  .5  3e-2  1.5f
+        if (std::isdigit(c) || (c=='.' && m_pos+1<m_src.size() && std::isdigit(m_src[m_pos+1]))) {
+            size_t s = m_pos;
+            while (m_pos < m_src.size() && (std::isdigit(m_src[m_pos]) || m_src[m_pos]=='.')) ++m_pos;
+            if (m_pos < m_src.size() && (m_src[m_pos]=='e'||m_src[m_pos]=='E')) {
+                ++m_pos;
+                if (m_pos < m_src.size() && (m_src[m_pos]=='+'||m_src[m_pos]=='-')) ++m_pos;
+                while (m_pos < m_src.size() && std::isdigit(m_src[m_pos])) ++m_pos;
+            }
+            if (m_pos < m_src.size() && (m_src[m_pos]=='f'||m_src[m_pos]=='F')) ++m_pos;
+            m_tok.type = TOK_NUM;
+            try { m_tok.num = std::stof(m_src.substr(s, m_pos - s)); } catch (...) { m_tok.num = 0.0f; }
+            return;
+        }
+
+        // Identifier: alpha/_ followed by alnum/_ and dots (for sb.foo)
+        if (std::isalpha(c) || c=='_') {
+            size_t s = m_pos;
+            while (m_pos < m_src.size() && (std::isalnum(m_src[m_pos]) || m_src[m_pos]=='_' || m_src[m_pos]=='.'))
+                ++m_pos;
+            m_tok = {TOK_IDENT, 0.0f, m_src.substr(s, m_pos - s)};
+            return;
+        }
+
+        // Operators / punctuation
+        ++m_pos;
+        switch (c) {
+            case '+': m_tok={TOK_PLUS};   return;
+            case '-': m_tok={TOK_MINUS};  return;
+            case '*': m_tok={TOK_STAR};   return;
+            case '/': m_tok={TOK_SLASH};  return;
+            case '%': m_tok={TOK_PERCENT};return;
+            case '(': m_tok={TOK_LPAREN}; return;
+            case ')': m_tok={TOK_RPAREN}; return;
+            case ',': m_tok={TOK_COMMA};  return;
+            case '?': m_tok={TOK_QUESTION}; return;
+            case ':': m_tok={TOK_COLON};  return;
+            case '!': if (m_pos<m_src.size()&&m_src[m_pos]=='='){++m_pos;m_tok={TOK_NE};}else m_tok={TOK_NOT}; return;
+            case '<': if (m_pos<m_src.size()&&m_src[m_pos]=='='){++m_pos;m_tok={TOK_LE};}else m_tok={TOK_LT}; return;
+            case '>': if (m_pos<m_src.size()&&m_src[m_pos]=='='){++m_pos;m_tok={TOK_GE};}else m_tok={TOK_GT}; return;
+            case '=': if (m_pos<m_src.size()&&m_src[m_pos]=='='){++m_pos;m_tok={TOK_EQ};}else m_tok={TOK_END}; return;
+            case '&': if (m_pos<m_src.size()&&m_src[m_pos]=='&'){++m_pos;m_tok={TOK_AND};}else m_tok={TOK_END}; return;
+            case '|': if (m_pos<m_src.size()&&m_src[m_pos]=='|'){++m_pos;m_tok={TOK_OR};}else m_tok={TOK_END}; return;
+            default:  m_tok={TOK_END}; return;
+        }
+    }
+
+    // ── Recursive-Descent Parser ────────────────────────────────────────
+    // Precedence (low → high):
+    //   ternary  →  ||  →  &&  →  comparison  →  +/-  →  */%  →  unary  →  primary
+
+    Getter ParseTernary()
+    {
+        auto cond = ParseOr();
+        if (m_tok.type == TOK_QUESTION) {
+            NextToken();
+            auto yes = ParseTernary();
+            if (m_tok.type == TOK_COLON) NextToken();
+            auto no  = ParseTernary();
+            return [cond,yes,no]() { return cond() > 0.5f ? yes() : no(); };
+        }
+        return cond;
+    }
+
+    Getter ParseOr()
+    {
+        auto L = ParseAnd();
+        while (m_tok.type == TOK_OR) {
+            NextToken();
+            auto R = ParseAnd();
+            L = [l=L,r=R]() { return (l()>0.5f || r()>0.5f) ? 1.f : 0.f; };
+        }
+        return L;
+    }
+
+    Getter ParseAnd()
+    {
+        auto L = ParseCmp();
+        while (m_tok.type == TOK_AND) {
+            NextToken();
+            auto R = ParseCmp();
+            L = [l=L,r=R]() { return (l()>0.5f && r()>0.5f) ? 1.f : 0.f; };
+        }
+        return L;
+    }
+
+    Getter ParseCmp()
+    {
+        auto L = ParseAdd();
+        while (m_tok.type>=TOK_LT && m_tok.type<=TOK_NE) {
+            auto op = m_tok.type; NextToken();
+            auto R = ParseAdd();
+            switch (op) {
+                case TOK_LT: L=[l=L,r=R](){return l()<r()  ?1.f:0.f;}; break;
+                case TOK_GT: L=[l=L,r=R](){return l()>r()  ?1.f:0.f;}; break;
+                case TOK_LE: L=[l=L,r=R](){return l()<=r() ?1.f:0.f;}; break;
+                case TOK_GE: L=[l=L,r=R](){return l()>=r() ?1.f:0.f;}; break;
+                case TOK_EQ: L=[l=L,r=R](){return std::abs(l()-r())<1e-6f?1.f:0.f;}; break;
+                case TOK_NE: L=[l=L,r=R](){return std::abs(l()-r())>=1e-6f?1.f:0.f;}; break;
+                default: break;
+            }
+        }
+        return L;
+    }
+
+    Getter ParseAdd()
+    {
+        auto L = ParseMul();
+        while (m_tok.type==TOK_PLUS || m_tok.type==TOK_MINUS) {
+            bool add = m_tok.type==TOK_PLUS; NextToken();
+            auto R = ParseMul();
+            if (add) L=[l=L,r=R](){return l()+r();};
+            else     L=[l=L,r=R](){return l()-r();};
+        }
+        return L;
+    }
+
+    Getter ParseMul()
+    {
+        auto L = ParseUnary();
+        while (m_tok.type==TOK_STAR || m_tok.type==TOK_SLASH || m_tok.type==TOK_PERCENT) {
+            auto op = m_tok.type; NextToken();
+            auto R = ParseUnary();
+            if      (op==TOK_STAR)    L=[l=L,r=R](){return l()*r();};
+            else if (op==TOK_SLASH)   L=[l=L,r=R](){float d=r();return d!=0.f?l()/d:0.f;};
+            else                      L=[l=L,r=R](){float d=r();return d!=0.f?std::fmod(l(),d):0.f;};
+        }
+        return L;
+    }
+
+    Getter ParseUnary()
+    {
+        if (m_tok.type==TOK_MINUS) { NextToken(); auto v=ParseUnary(); return [v](){return -v();}; }
+        if (m_tok.type==TOK_NOT)   { NextToken(); auto v=ParseUnary(); return [v](){return v()>0.5f?0.f:1.f;}; }
+        return ParsePrimary();
+    }
+
+    Getter ParsePrimary()
+    {
+        // Number literal
+        if (m_tok.type == TOK_NUM) {
+            float val = m_tok.num; NextToken();
+            return [val]() { return val; };
+        }
+
+        // Parenthesized sub-expression
+        if (m_tok.type == TOK_LPAREN) {
+            NextToken();
+            auto val = ParseTernary();
+            if (m_tok.type == TOK_RPAREN) NextToken();
+            return val;
+        }
+
+        // Identifier: variable or function call
+        if (m_tok.type == TOK_IDENT) {
+            std::string name = m_tok.str; NextToken();
+            if (m_tok.type == TOK_LPAREN)
+                return ParseFunc(name);
+            // Variable
+            auto lk = m_lookup;
+            return [lk,name]() { return lk(name); };
+        }
+
+        // Unknown token — skip and return 0
+        NextToken();
+        return []() { return 0.0f; };
+    }
+
+    // ── Built-in Function Dispatch ──────────────────────────────────────
+
+    Getter ParseFunc(const std::string& name)
+    {
+        NextToken(); // consume '('
+        std::vector<Getter> args;
+        if (m_tok.type != TOK_RPAREN) {
+            args.push_back(ParseTernary());
+            while (m_tok.type == TOK_COMMA) { NextToken(); args.push_back(ParseTernary()); }
+        }
+        if (m_tok.type == TOK_RPAREN) NextToken();
+
+        const size_t n = args.size();
+
+        // ── 1-argument functions ────────────────────────────────────────
+        if (n == 1) {
+            auto a = args[0];
+            if (name=="sin")      return [a](){return std::sin(a());};
+            if (name=="cos")      return [a](){return std::cos(a());};
+            if (name=="tan")      return [a](){return std::tan(a());};
+            if (name=="asin")     return [a](){return std::asin(std::clamp(a(),-1.f,1.f));};
+            if (name=="acos")     return [a](){return std::acos(std::clamp(a(),-1.f,1.f));};
+            if (name=="atan")     return [a](){return std::atan(a());};
+            if (name=="sqrt")     return [a](){return std::sqrt(std::max(0.f,a()));};
+            if (name=="abs")      return [a](){return std::abs(a());};
+            if (name=="exp")      return [a](){return std::exp(a());};
+            if (name=="exp2")     return [a](){return std::exp2(a());};
+            if (name=="log")      return [a](){float v=a();return v>0.f?std::log(v):0.f;};
+            if (name=="log2")     return [a](){float v=a();return v>0.f?std::log2(v):0.f;};
+            if (name=="log10")    return [a](){float v=a();return v>0.f?std::log10(v):0.f;};
+            if (name=="floor")    return [a](){return std::floor(a());};
+            if (name=="ceil")     return [a](){return std::ceil(a());};
+            if (name=="round")    return [a](){return std::round(a());};
+            if (name=="trunc")    return [a](){return std::trunc(a());};
+            if (name=="frac")     return [a](){float v=a();return v-std::floor(v);};
+            if (name=="sign")     return [a](){float v=a();return v>0.f?1.f:(v<0.f?-1.f:0.f);};
+            if (name=="saturate") return [a](){return std::clamp(a(),0.f,1.f);};
+            if (name=="radians")  return [a](){return a()*0.01745329252f;};
+            if (name=="degrees")  return [a](){return a()*57.2957795131f;};
+        }
+
+        // ── 2-argument functions ────────────────────────────────────────
+        if (n == 2) {
+            auto a=args[0], b=args[1];
+            if (name=="pow")   return [a,b](){return std::pow(a(),b());};
+            if (name=="atan2") return [a,b](){return std::atan2(a(),b());};
+            if (name=="min")   return [a,b](){return std::min(a(),b());};
+            if (name=="max")   return [a,b](){return std::max(a(),b());};
+            if (name=="fmod")  return [a,b](){float d=b();return d!=0.f?std::fmod(a(),d):0.f;};
+            if (name=="step")  return [a,b](){return b()>=a()?1.f:0.f;};
+        }
+
+        // ── 3-argument functions ────────────────────────────────────────
+        if (n == 3) {
+            auto a=args[0], b=args[1], c=args[2];
+            if (name=="lerp"||name=="mix")
+                return [a,b,c](){float t=c();return a()+(b()-a())*t;};
+            if (name=="clamp")
+                return [a,b,c](){return std::clamp(a(),b(),c());};
+            if (name=="smoothstep")
+                return [a,b,c](){
+                    float e0=a(),e1=b(),x=c();
+                    float t=std::clamp((x-e0)/(e1-e0+1e-7f),0.f,1.f);
+                    return t*t*(3.f-2.f*t);
+                };
+        }
+
+        // Unknown function — return 0
+        return []() { return 0.0f; };
+    }
+
+    // ── Data ────────────────────────────────────────────────────────────
+
+    std::string m_src;
+    size_t      m_pos;
+    Token       m_tok;
+    VarLookup   m_lookup;
+};
+
+}  // anonymous namespace
+
+
 std::function<float()> ParmLinkCompat::CompileMathExpr(const std::string& expr)
 {
-    // Simple recursive-descent expression compiler
-    // Supports: +, -, *, /, parentheses, variables, number literals
-    // Built-in functions: lerp(), smoothstep(), clamp(), min(), max(),
-    //                     sin(), cos(), sqrt(), abs(), pow(), exp(), log()
-    //
-    // For complex expressions, we fall back to a tree-walking evaluator.
-    // ParmLink uses ExprTk which supports arbitrary C-like math.
-    // We cover the 95% case with this simpler approach.
+    if (expr.empty())
+        return []() { return 0.0f; };
 
-    // First, check for simple variable reference
-    if (expr.find_first_of("+-*/()") == std::string::npos) {
-        std::string var = expr;
-        var.erase(0, var.find_first_not_of(" \t"));
-        var.erase(var.find_last_not_of(" \t;") + 1);
-
-        // Number literal?
-        try {
-            float val = std::stof(var);
-            return [val]() { return val; };
-        } catch (...) {}
-
-        // Variable reference
-        return [this, var]() { return GetVariable(var); };
-    }
-
-    // For the lerp() pattern specifically (by far the most common in ParmLink):
-    //   lerp(a, b, t)  →  a + (b - a) * t
-    std::regex lerpRe(R"(lerp\(\s*(.+?)\s*,\s*(.+?)\s*,\s*(.+?)\s*\))");
-    std::smatch lm;
-    if (std::regex_search(expr, lm, lerpRe)) {
-        auto getA = CompileMathExpr(lm[1].str());
-        auto getB = CompileMathExpr(lm[2].str());
-        auto getT = CompileMathExpr(lm[3].str());
-        return [getA, getB, getT]() {
-            float a = getA(), b = getB(), t = getT();
-            return a + (b - a) * std::clamp(t, 0.0f, 1.0f);
-        };
-    }
-
-    // smoothstep(edge0, edge1, x)
-    std::regex ssRe(R"(smoothstep\(\s*(.+?)\s*,\s*(.+?)\s*,\s*(.+?)\s*\))");
-    if (std::regex_search(expr, lm, ssRe)) {
-        auto getE0 = CompileMathExpr(lm[1].str());
-        auto getE1 = CompileMathExpr(lm[2].str());
-        auto getX  = CompileMathExpr(lm[3].str());
-        return [getE0, getE1, getX]() {
-            float e0 = getE0(), e1 = getE1(), x = getX();
-            float t = std::clamp((x - e0) / (e1 - e0 + 1e-7f), 0.0f, 1.0f);
-            return t * t * (3.0f - 2.0f * t);
-        };
-    }
-
-    // clamp(x, min, max)
-    std::regex clampRe(R"(clamp\(\s*(.+?)\s*,\s*(.+?)\s*,\s*(.+?)\s*\))");
-    if (std::regex_search(expr, lm, clampRe)) {
-        auto getX   = CompileMathExpr(lm[1].str());
-        auto getMin = CompileMathExpr(lm[2].str());
-        auto getMax = CompileMathExpr(lm[3].str());
-        return [getX, getMin, getMax]() {
-            return std::clamp(getX(), getMin(), getMax());
-        };
-    }
-
-    // Fallback: for simple arithmetic like "a * b + c", we do a basic
-    // tokenize-and-evaluate approach
-    // This captures the vast majority of real ParmLink expressions
-
-    // For truly complex expressions, users should migrate to WeatherParams.ini
-    // (Phase 2) which doesn't need expression parsing at all
-
-    // Store expression as a string for runtime evaluation
-    // NOTE: In production, this should be replaced with a proper expression tree
-    // compiler. For now, we log a warning and return a constant.
-    SKSE::log::warn("ParmLinkCompat: complex expression not yet compiled: '{}'", expr);
-    return [expr, this]() -> float {
-        // Simple arithmetic fallback: try to evaluate as a+b, a*b, etc.
-        // This is placeholder — full ExprTk integration would go here
-        return 0.0f;
-    };
+    // Compile via recursive-descent parser — handles all arithmetic, comparisons,
+    // ternary, logical ops, 25+ math functions, variables, and number literals.
+    // Expressions are parsed once at config load and evaluated as native lambdas.
+    ExprParser parser(expr, [this](const std::string& name) { return GetVariable(name); });
+    return parser.Parse();
 }
 
 

@@ -71,20 +71,14 @@ void OnENBFrame(float deltaTime)
     data.effects     = EffectsTracker::Update();
     data.render      = RenderTracker::Update(deltaTime);
 
-    // Phase 1 expansion trackers — TODO: implement these trackers
-    // These will unlock the remaining 62 unused shader parameters.
-    // See IMPROVEMENT_PLAN.md Section 3.1 for implementation details.
-#ifdef SKYRIMBRIDGE_EXPANSION_TRACKERS
+    // v2 expansion trackers (domains 11-17) — all enabled
     data.imageSpace  = ImageSpaceTracker::Update();
     data.lights      = LightTracker::Update();
     data.actorValues = ActorValueTracker::Update();
     data.crosshair   = CrosshairTracker::Update();
-
-    // Phase 2 expansion trackers
     data.equipment   = EquipmentTracker::Update();
     data.quests      = QuestTracker::Update();
     data.uiState     = UIStateTracker::Update();
-#endif
 
 
     // ─────────────────────────────────────────────────────────────────

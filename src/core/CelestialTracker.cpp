@@ -1,5 +1,4 @@
 #include "CelestialTracker.h"
-#include "Projection.h"
 #include <RE/Skyrim.h>
 #include <cmath>
 
@@ -79,35 +78,47 @@ namespace SB::CelestialTracker
             return data;
 
         // ── Sun ─────────────────────────────────────────────────────────
+        // Only direction needed — NDC derivable in shader from dir + VP
         RE::NiPoint3 sunPos{};
         if (sky->sun && GetSkyObjectPos(sky->sun, sunPos)) {
-            data.SunNDC       = Projection::WorldToNDC(sunPos);
-            auto dir          = Projection::DirectionAndElevation(sunPos);
-            data.SunDirection = dir;
-            data.SunNDC.w     = dir.w;  // pack elevation into NDC.w too
+            float len = std::sqrt(sunPos.x*sunPos.x + sunPos.y*sunPos.y + sunPos.z*sunPos.z);
+            if (len > 1e-6f) {
+                data.SunDirection.x = sunPos.x / len;
+                data.SunDirection.y = sunPos.y / len;
+                data.SunDirection.z = sunPos.z / len;
+            }
+            // Elevation angle (rad) — angle above horizon
+            data.SunDirection.w = std::asin(std::clamp(data.SunDirection.z, -1.0f, 1.0f));
         }
 
-        // Sun color from current weather (will be refined by AtmosphereTracker)
+        // Sun color from current weather
         if (sky->currentWeather) {
-            auto* w = sky->currentWeather;
-            // data.sunGlare
-            data.SunColor.w = w->data.sunGlare;
+            data.SunColor.w = sky->currentWeather->data.sunGlare;
         }
 
         // ── Masser ──────────────────────────────────────────────────────
+        // Direction only — phase brightness packed into .w
         RE::NiPoint3 masserPos{};
         if (sky->masser && GetSkyObjectPos(sky->masser, masserPos)) {
-            data.MasserNDC       = Projection::WorldToNDC(masserPos);
-            data.MasserDirection = Projection::DirectionAndElevation(masserPos);
-            data.MasserNDC.w     = PhaseBrightness(true);  // true = Masser
+            float len = std::sqrt(masserPos.x*masserPos.x + masserPos.y*masserPos.y + masserPos.z*masserPos.z);
+            if (len > 1e-6f) {
+                data.MasserDirection.x = masserPos.x / len;
+                data.MasserDirection.y = masserPos.y / len;
+                data.MasserDirection.z = masserPos.z / len;
+            }
+            data.MasserDirection.w = PhaseBrightness(true);
         }
 
         // ── Secunda ─────────────────────────────────────────────────────
         RE::NiPoint3 secundaPos{};
         if (sky->secunda && GetSkyObjectPos(sky->secunda, secundaPos)) {
-            data.SecundaNDC       = Projection::WorldToNDC(secundaPos);
-            data.SecundaDirection = Projection::DirectionAndElevation(secundaPos);
-            data.SecundaNDC.w     = PhaseBrightness(false);  // false = Secunda
+            float len = std::sqrt(secundaPos.x*secundaPos.x + secundaPos.y*secundaPos.y + secundaPos.z*secundaPos.z);
+            if (len > 1e-6f) {
+                data.SecundaDirection.x = secundaPos.x / len;
+                data.SecundaDirection.y = secundaPos.y / len;
+                data.SecundaDirection.z = secundaPos.z / len;
+            }
+            data.SecundaDirection.w = PhaseBrightness(false);
         }
 
         // ── Time ────────────────────────────────────────────────────────
@@ -119,17 +130,64 @@ namespace SB::CelestialTracker
         }
 
         // Sunrise/sunset from climate
+        float sunriseBegin = 6.0f, sunriseEnd = 8.0f;
+        float sunsetBegin = 17.0f, sunsetEnd = 19.5f;
+
         if (sky->currentClimate) {
             auto* climate = sky->currentClimate;
-            // TESClimate timing data is in the Timing struct.
-            // sunrise/sunset begin/end are packed as hours.
             auto& timing = climate->timing;
-            // timing.sunrise.begin/end, timing.sunset.begin/end
-            // These are uint8_t values representing 10-minute intervals (0-143).
-            // Convert: hour = value * 10 / 60 = value / 6.0
-            data.TimeData.y = static_cast<float>(timing.sunrise.begin) / 6.0f;
-            data.TimeData.z = static_cast<float>(timing.sunset.end) / 6.0f;
+            // uint8_t values: 10-minute intervals (0-143). hour = value / 6.0
+            sunriseBegin = static_cast<float>(timing.sunrise.begin) / 6.0f;
+            sunriseEnd   = static_cast<float>(timing.sunrise.end)   / 6.0f;
+            sunsetBegin  = static_cast<float>(timing.sunset.begin)  / 6.0f;
+            sunsetEnd    = static_cast<float>(timing.sunset.end)    / 6.0f;
+            data.TimeData.y = sunriseBegin;
+            data.TimeData.z = sunsetEnd;
         }
+
+        // ── Time-of-day segments ─────────────────────────────────────────
+        float h = data.TimeData.x;  // gameHour [0,24)
+
+        auto smoothstep = [](float edge0, float edge1, float x) -> float {
+            float t = (x - edge0) / (edge1 - edge0);
+            t = t < 0.f ? 0.f : (t > 1.f ? 1.f : t);
+            return t * t * (3.f - 2.f * t);
+        };
+
+        float dawnStart = sunriseBegin - 1.0f;
+        float duskEnd   = sunsetEnd + 1.0f;
+
+        // Dawn: ramps before sunrise, fades as sunrise completes
+        data.TimeSegments1.x = smoothstep(dawnStart, sunriseBegin, h)
+                             * (1.f - smoothstep(sunriseBegin, sunriseEnd, h));
+        // Sunrise: active during sunrise period
+        data.TimeSegments1.y = smoothstep(sunriseBegin, sunriseBegin + 0.5f, h)
+                             * (1.f - smoothstep(sunriseEnd - 0.5f, sunriseEnd, h));
+        // Day: full daylight
+        data.TimeSegments1.z = smoothstep(sunriseEnd, sunriseEnd + 0.5f, h)
+                             * (1.f - smoothstep(sunsetBegin - 0.5f, sunsetBegin, h));
+        // Sunset: active during sunset period
+        data.TimeSegments1.w = smoothstep(sunsetBegin, sunsetBegin + 0.5f, h)
+                             * (1.f - smoothstep(sunsetEnd - 0.5f, sunsetEnd, h));
+        // Dusk: fades after sunset
+        data.TimeSegments2.x = smoothstep(sunsetEnd - 0.5f, sunsetEnd, h)
+                             * (1.f - smoothstep(sunsetEnd, duskEnd, h));
+        // Night: dark period (wraps around midnight)
+        float nightIn  = smoothstep(duskEnd, duskEnd + 0.5f, h);
+        float nightOut = 1.f - smoothstep(dawnStart - 0.5f, dawnStart, h);
+        data.TimeSegments2.y = (h > 12.f) ? nightIn : nightOut;
+        // Golden hour: ~1h after sunrise + ~1h before sunset
+        float ghM = smoothstep(sunriseBegin, sunriseEnd, h)
+                  * (1.f - smoothstep(sunriseEnd, sunriseEnd + 1.0f, h));
+        float ghE = smoothstep(sunsetBegin - 1.0f, sunsetBegin, h)
+                  * (1.f - smoothstep(sunsetBegin, sunsetEnd, h));
+        data.TimeSegments2.z = ghM > ghE ? ghM : ghE;
+        // Blue hour: twilight fringe before sunrise + after sunset
+        float bhM = smoothstep(dawnStart, sunriseBegin, h)
+                  * (1.f - smoothstep(sunriseBegin, sunriseBegin + 0.5f, h));
+        float bhE = smoothstep(sunsetEnd - 0.5f, sunsetEnd, h)
+                  * (1.f - smoothstep(sunsetEnd, duskEnd, h));
+        data.TimeSegments2.w = bhM > bhE ? bhM : bhE;
 
         return data;
     }

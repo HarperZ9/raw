@@ -765,7 +765,7 @@ float4 PS_Anamorphic(AnamVSOutput IN) : SV_Target
     float2 UV_G = UV;
     float2 UV_B = UV;
 
-    [branch] if(UIANAM_ChromaH > 0.01)
+    if(UIANAM_ChromaH > 0.01)
     {
         float2 C = UV * 2.0 - 1.0;
         float  Fringe = length(C) * UIANAM_ChromaH * PixelSize.x * 3.0;
@@ -785,7 +785,7 @@ float4 PS_Anamorphic(AnamVSOutput IN) : SV_Target
     //  (v2 bug: paired [0,1] which double-counted the center pixel,
     //  producing an asymmetric PSF with artificially high center weight.)
     //
-    [branch] if(UIANAM_HBlur > 0.01)
+    if(UIANAM_HBlur > 0.01)
     {
         //Field curvature — cylindrical element has worse aberrations off-axis
         float2 C = UV * 2.0 - 1.0;
@@ -830,7 +830,7 @@ float4 PS_Anamorphic(AnamVSOutput IN) : SV_Target
         BlurG += TextureColor.SampleLevel(Linear_Sampler, UV_G + float2( BOC * StepX, 0), 0).rgb * BWC;
         BlurG += TextureColor.SampleLevel(Linear_Sampler, UV_G + float2(-BOC * StepX, 0), 0).rgb * BWC;
 
-        [branch] if(UIANAM_ChromaH > 0.01)
+        if(UIANAM_ChromaH > 0.01)
         {
             //--- Red channel (shifted left) ---
             BlurR  = TextureColor.SampleLevel(Linear_Sampler, UV_R, 0).rgb * W0;
@@ -870,7 +870,7 @@ float4 PS_Anamorphic(AnamVSOutput IN) : SV_Target
     //  Bright specular highlights produce distinctive vertical streaks.
     //  Uses a 5-tap vertical Gaussian on thresholded highlights only, then
     //  screen-blends the streak onto the result.
-    [branch] if(UIANAM_Streak > 0.01)
+    if(UIANAM_Streak > 0.01)
     {
         float  Luma = dot(Color, float3(0.2126, 0.7152, 0.0722));
         float  StreakThresh = saturate((Luma - 0.7) * 3.0);  //soft knee at 0.7

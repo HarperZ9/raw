@@ -1,5 +1,6 @@
 #include "RenderTracker.h"
 #include <RE/Skyrim.h>
+#include <cmath>
 
 namespace SB::RenderTracker
 {
@@ -21,17 +22,29 @@ namespace SB::RenderTracker
         }
 
         // ── TAA jitter ──────────────────────────────────────────────────
-        // Skyrim's TAA applies a subpixel jitter to the projection matrix.
-        // If we can read the jitter offset, shaders can unjitter for
-        // clean motion vectors and temporal accumulation.
-        //
-        // The jitter is typically stored in BSGraphics::State or applied
-        // as a projection matrix offset.  For now we provide the frame
-        // index for Halton/blue noise sequences in the shader.
+        // R2 quasirandom sub-pixel jitter — DISABLED until TAAManager is tested.
+        // Zero jitter prevents ENB shaders from sampling offset UVs.
+        data.Jitter.x = 0.0f;
+        data.Jitter.y = 0.0f;
         data.Jitter.z = static_cast<float>(s_frameCount % 16);
 
-        // Halton(2,3) sequence for 16 frames — computed in shader.
-        // We just provide the index.
+        // Time dilation factor from global time multiplier
+        // < 1.0 = slow motion (Slow Time shout), > 1.0 = sped up, 1.0 = normal
+        data.Jitter.w = RE::BSTimer::GetCurrentGlobalTimeMult();
+
+        // DepthParams removed — derivable from SB_Camera_Params (near/far)
+
+        // Stencil buffer metadata (classification scheme info for shaders)
+        // Skyrim uses D24S8 or D32S8. Stencil classifications:
+        //   0=sky, 1=terrain, 2=actor, etc. (engine-defined)
+        data.StencilInfo.x = 1.f;  // stencil exists
+        data.StencilInfo.y = 16.f; // SRV slot t16 (convention)
+        data.StencilInfo.z = 8.f;  // 8-bit stencil
+
+        // Game freeze/pause state from Main singleton
+        if (auto* main = RE::Main::GetSingleton()) {
+            data.StencilInfo.w = main->freezeTime ? 1.f : 0.f;
+        }
 
         return data;
     }

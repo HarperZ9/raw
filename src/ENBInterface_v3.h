@@ -22,7 +22,11 @@ namespace ENBInterface
                          const char* name, float value)
     {
         if (!SetParameter) return;
-        SetParameter(shader, group, name, &value, sizeof(float));
+        ENBParameter param;
+        param.Size = sizeof(float);
+        param.Type = ENBParameterType::ENBParam_FLOAT;
+        std::memcpy(param.Data, &value, sizeof(float));
+        SetParameter(nullptr, shader, name, &param);
     }
 
     // Get a single float parameter from a specific shader
@@ -31,7 +35,10 @@ namespace ENBInterface
     {
         float value = 0.0f;
         if (GetParameter) {
-            GetParameter(shader, group, name, &value, sizeof(float));
+            ENBParameter outParam;
+            if (GetParameter(nullptr, shader, name, &outParam) && outParam.Size >= 4) {
+                std::memcpy(&value, outParam.Data, sizeof(float));
+            }
         }
         return value;
     }
@@ -41,17 +48,23 @@ namespace ENBInterface
                                 const char* name, const SB::Float4& value)
     {
         if (!SetParameter) return;
-        SetParameter(shader, group, name,
-                     const_cast<void*>(static_cast<const void*>(&value)), 16);
+        ENBParameter param;
+        param.Size = 16;
+        param.Type = ENBParameterType::ENBParam_COLOR4;
+        std::memcpy(param.Data, &value, 16);
+        SetParameter(nullptr, shader, name, &param);
     }
 
-    // Set a Float4 parameter to all target shaders (uses empty group)
+    // Set a Float4 parameter to all target shaders
     inline void SetFloat4(const char* name, const SB::Float4& value)
     {
         if (!SetParameter) return;
-        void* ptr = const_cast<void*>(static_cast<const void*>(&value));
+        ENBParameter param;
+        param.Size = 16;
+        param.Type = ENBParameterType::ENBParam_COLOR4;
+        std::memcpy(param.Data, &value, 16);
         for (const auto* shader : SB::kTargetShaders) {
-            SetParameter(shader, "", name, ptr, 16);
+            SetParameter(nullptr, shader, name, &param);
         }
     }
 
@@ -59,8 +72,12 @@ namespace ENBInterface
     inline void SetFloatAll(const char* name, float value)
     {
         if (!SetParameter) return;
+        ENBParameter param;
+        param.Size = sizeof(float);
+        param.Type = ENBParameterType::ENBParam_FLOAT;
+        std::memcpy(param.Data, &value, sizeof(float));
         for (const auto* shader : SB::kTargetShaders) {
-            SetParameter(shader, "", name, &value, sizeof(float));
+            SetParameter(nullptr, shader, name, &param);
         }
     }
 }

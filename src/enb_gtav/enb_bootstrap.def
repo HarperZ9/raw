@@ -1,0 +1,10 @@
+LIBRARY version
+
+EXPORTS
+    ; Forward version.dll exports to our implementations
+    GetFileVersionInfoA     = ENB_GetFileVersionInfoA
+    GetFileVersionInfoSizeA = ENB_GetFileVersionInfoSizeA
+    GetFileVersionInfoSizeW = ENB_GetFileVersionInfoSizeW
+    GetFileVersionInfoW     = ENB_GetFileVersionInfoW
+    VerQueryValueA          = ENB_VerQueryValueA
+    VerQueryValueW          = ENB_VerQueryValueW

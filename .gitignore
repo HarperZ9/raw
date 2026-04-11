@@ -31,5 +31,10 @@ desktop.ini
 .DS_Store
 nul
 
+# ENB shader captures (third-party IP — NEVER commit)
+ENBShaderCapture/
+**/ENBShaderCapture/
+*.dxbc
+
 # Archives (keep tracked but ignore changes)
 # Package Files for Analysis/

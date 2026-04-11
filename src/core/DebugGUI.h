@@ -29,4 +29,29 @@ namespace SB::DebugGUI
 
     // Toggle data push on/off
     void SetDataPushEnabled(bool a_enabled);
+
+    // Tracker health info (fed from main.cpp's TrackerHealth system)
+    struct TrackerHealthInfo
+    {
+        const char* name;
+        int  consecutiveErrors;
+        int  totalErrors;
+        bool disabled;
+    };
+    void SetTrackerHealth(const TrackerHealthInfo* a_info, int a_count);
+
+    // Shader pre-processor stats
+    struct PreProcessorStats
+    {
+        int processCount;
+        int cacheHits;
+        int parameterCount;
+        int separatedCount;
+        int shaderCount;
+        int externBindingCount;
+        int externPushCount;
+        int weatherSepCount;
+        int weatherINICount;
+    };
+    void SetPreProcessorStats(const PreProcessorStats& a_stats);
 }

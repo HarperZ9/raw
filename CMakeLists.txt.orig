@@ -1,0 +1,341 @@
+cmake_minimum_required(VERSION 3.24)
+
+# Use static triplet for vcpkg
+set(VCPKG_TARGET_TRIPLET "x64-windows-static" CACHE STRING "")
+
+# Use static runtime (/MT instead of /MD)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "")
+
+project(
+    Playground
+    VERSION 1.0.0
+    LANGUAGES CXX
+)
+
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Find dependencies
+find_package(CommonLibSSE REQUIRED CONFIG)
+find_package(imgui CONFIG REQUIRED)
+
+# ============================================================================
+# Playground — Rendering platform for Creation Engine
+#
+# All source files are under src/:
+#   src/core/    — Trackers, rendering systems, GPU compute, debug tools
+#   src/         — Weather params, shared memory, ParmLink compat
+# ============================================================================
+
+add_commonlibsse_plugin(
+    ${PROJECT_NAME}
+    AUTHOR "Zain Dana Harper"
+    SOURCES
+        # Phase 1: Core Playground
+        src/core/main.cpp
+        src/core/BridgeData.cpp
+        # ENBInterface.cpp removed — ENB support dropped
+        src/core/DebugGUI.cpp
+        src/core/D3D11Hook.cpp
+        src/core/CelestialTracker.cpp
+        src/core/AtmosphereTracker.cpp
+        src/core/FogTracker.cpp
+        src/core/WeatherTracker.cpp
+        src/core/PlayerTracker.cpp
+        src/core/CameraTracker.cpp
+        src/core/InteriorTracker.cpp
+        src/core/ShadowTracker.cpp
+        src/core/EffectsTracker.cpp
+        src/core/RenderTracker.cpp
+
+        # v2 expansion trackers (domains 11-17)
+        src/core/ImageSpaceTracker.cpp
+        src/core/LightTracker.cpp
+        src/core/ActorValueTracker.cpp
+        src/core/CrosshairTracker.cpp
+        src/core/EquipmentTracker.cpp
+        src/core/QuestTracker.cpp
+        src/core/UIStateTracker.cpp
+
+        # Phase 2: Weather Parameter Computer
+        src/WeatherParameterComputer.cpp
+
+        # Phase 3: Shared Memory Bridge
+        src/SharedMemoryBridge.cpp
+
+        # Phase 4: ParmLink Compatibility Layer
+        src/ParmLinkCompat.cpp
+
+        # Shader Compilation Diagnostics
+        src/core/SB_ShaderDebug.cpp
+
+        # Feedback Loop: GPU read-back for material-aware post-processing
+        src/core/FeedbackProcessor.cpp
+
+        # Domain A: Write game state back via CommonLibSSE (INI-driven rules)
+        src/core/WriteBackProcessor.cpp
+
+        # EditorID cache (replaces NativeEditorID Fix)
+        src/core/EditorIDCache.cpp
+
+        # Compatibility detection (NativeEditorID Fix, po3_Tweaks)
+        src/core/CompatDetect.cpp
+
+        # v3 expansion trackers (domains 19-22)
+        src/core/RegionTracker.cpp
+        src/core/AudioTracker.cpp
+        src/core/NPCDetectTracker.cpp
+        src/core/PerfMonitor.cpp
+
+        # Scene composition observer (BeginTechnique hook + BSShaderManager state)
+        src/core/SceneObserver.cpp
+
+        # Engine-level binary patches (BSSpinLock threshold reduction)
+        src/core/EngineFixes.cpp
+
+        # Papyrus script bridge (native functions for mod authors)
+        src/core/PapyrusBridge.cpp
+
+        # Backend enhancement: shader bytecode cache
+        src/core/ShaderCache.cpp
+
+        # Annotation pre-processor
+        src/core/ShaderPreProcessor.cpp
+
+        # Extern binding injection
+        src/core/ExternBindingProcessor.cpp
+
+        # Weather separation engine (per-weather per-ToD parameter values)
+        src/core/WeatherSeparationEngine.cpp
+
+        # Parameter binding engine (conditional param-to-param binding)
+        src/core/ParameterBindingEngine.cpp
+
+        # ENBGuiIntegration.cpp removed — ENB support dropped
+
+        # Weather Editor: real-time weather record editing + preset system
+        src/core/WeatherEditor.cpp
+
+        # Clustered forward+ lighting (Light Limit Fix replacement)
+        src/core/ClusteredLighting.cpp
+
+        # Rendering pipeline: 7 shader systems
+        src/core/ToneMapManager.cpp
+        src/core/AtmosphereRenderer.cpp
+        src/core/MaterialClassifier.cpp
+        src/core/GTAORenderer.cpp
+        src/core/ContactShadowRenderer.cpp
+        src/core/SkylightingRenderer.cpp
+        src/core/SSRRenderer.cpp
+        src/core/SDSMCascades.cpp
+        src/core/SSGIRenderer.cpp
+        src/core/SharedGPUResources.cpp
+        src/core/VolumetricClouds.cpp
+        src/core/FrameGenerator.cpp
+        src/core/TemporalSuperRes.cpp
+        src/core/MotionVectorGen.cpp
+
+        # Extended renderers (Grass, TreeLOD, Water, Cubemaps)
+        src/core/GrassLightingRenderer.cpp
+        src/core/TreeLODLightingRenderer.cpp
+        src/core/WaterBlendingRenderer.cpp
+        src/core/DynamicCubemapRenderer.cpp
+
+        # GPU compute infrastructure + effects
+        src/core/ComputeManager.cpp
+        src/core/SRVInjector.cpp
+        src/core/LuminanceHistogram.cpp
+        src/core/HiZPyramid.cpp
+        src/core/LUTManager.cpp
+        src/core/TAAManager.cpp
+        src/core/RenderPassManager.cpp
+        src/core/RenderPipeline.cpp
+        src/core/PhaseDispatcher.cpp
+        src/core/PipelineTest.cpp
+        src/core/SceneData.cpp
+
+        # Feature lifecycle management
+        src/core/FeatureManager.cpp
+
+        # Unified diagnostics system
+        src/core/SystemHealth.cpp
+        src/core/CompatibilityProbe.cpp
+        src/core/ProxyDiagnostics.cpp
+        src/core/BootDiagnostics.cpp
+
+        # Scene compositor (proxy-only mode composite pass)
+        src/core/SceneCompositor.cpp
+
+        # New rendering pipeline: 6 systems (Tier 1-4)
+        src/core/BloomRenderer.cpp
+        src/core/ColorPipeline.cpp
+        src/core/DenoiseManager.cpp
+        src/core/DoFRenderer.cpp
+        src/core/LensRenderer.cpp
+        src/core/UnderwaterRenderer.cpp
+
+        # New compute systems (Tier 5)
+        src/core/VolumetricLightingRenderer.cpp
+        src/core/SubsurfaceScatteringRenderer.cpp
+        src/core/IndirectSpecularRenderer.cpp
+        src/core/ScreenSpaceDecalRenderer.cpp
+        src/core/ParticleLightingRenderer.cpp
+
+        # GPU profiler and frame capture diagnostics
+        src/core/GPUProfiler.cpp
+        src/core/FrameCapture.cpp
+
+        # Debug visualization overlays
+        src/core/DebugRenderer.cpp
+        src/core/NavMeshVisualizer.cpp
+        src/core/SkeletonVisualizer.cpp
+
+)
+
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    imgui::imgui
+    d3d11
+    dxgi
+    d3dcompiler
+)
+
+target_include_directories(${PROJECT_NAME} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+)
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    ENABLE_SKYRIM_SE=1
+    ENABLE_SKYRIM_AE=1
+    SKYRIMBRIDGE_V3=1
+    PLAYGROUND=1
+    HAS_SKSE=1
+)
+
+# Precompiled header
+target_precompile_headers(${PROJECT_NAME} PRIVATE
+    src/core/PCH.h
+)
+
+# Create config directory in output (must be before copy)
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/config"
+    COMMENT "Creating config directory"
+)
+
+# Install configuration files to the build output
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/config/WeatherParams.ini"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/config/WeatherParams.ini"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/config/WriteBackConfig.ini"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/config/WriteBackConfig.ini"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/config/FeedbackConfig.ini"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/config/FeedbackConfig.ini"
+    COMMENT "Copying config files to build directory"
+)
+
+# ENB targets (enbhelperse, Playground_ENB, d3dcompiler proxies) removed —
+# ENB support dropped in favor of native rendering pipeline.
+
+# ============================================================================
+# d3d11.dll — Playground D3D11 Proxy
+#
+# Full D3D11 API proxy. Wraps Device, Context, and SwapChain for complete
+# rendering pipeline control including HDR swap chain creation, draw call
+# interception, phase detection, and RT redirection.
+#
+# Standalone DLL with NO game/SKSE/vcpkg dependencies.
+# Place in game directory to intercept all D3D11 calls.
+# Real d3d11.dll loaded from System32.
+# ============================================================================
+
+enable_language(ASM_MASM)
+
+add_library(d3d11_proxy SHARED
+    src/d3d11_proxy/proxy_main.cpp
+    src/d3d11_proxy/WrappedDevice.cpp
+    src/d3d11_proxy/WrappedContext.cpp
+    src/d3d11_proxy/WrappedSwapChain.cpp
+    src/d3d11_proxy/ShaderManager.cpp
+    src/d3d11_proxy/RenderPhaseDetector.cpp
+    src/d3d11_proxy/CBDirtyTracker.cpp
+    src/d3d11_proxy/MaterialPipeline.cpp
+    src/d3d11_proxy/AlbedoExtractor.cpp
+    src/d3d11_proxy/OcclusionCuller.cpp
+    src/d3d11_proxy/d3d11_trampolines.asm
+    src/d3d11_proxy/d3d11_proxy.def
+)
+
+set_target_properties(d3d11_proxy PROPERTIES
+    OUTPUT_NAME "d3d11"
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+)
+
+target_include_directories(d3d11_proxy PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d11_proxy
+)
+
+target_compile_definitions(d3d11_proxy PRIVATE
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN
+)
+
+target_link_libraries(d3d11_proxy PRIVATE
+    # NOTE: Do NOT link dxgi.lib — having dxgi.dll in our import table forces
+    # DXGI to load during our DLL_PROCESS_ATTACH, corrupting the graphics stack
+    # initialization order. ENB's d3d11.dll does NOT import dxgi.dll.
+    # We load CreateDXGIFactory1 lazily via GetProcAddress when needed.
+)
+
+# NOTE: Do NOT link d3d11.lib — we ARE d3d11.dll and re-export its functions.
+# The d3d11.h header is included for type definitions only.
+
+# ============================================================================
+# ENB GTA V — ENBSeries v0.492 Rebuild for GTA V Legacy (DX11)
+#
+# Standalone DLL (d3d11.dll) that wraps D3D11, injects post-processing,
+# and exposes the ENB SDK for plugin compatibility.
+#
+# Zero external dependencies — links only kernel32/user32.
+# Real d3d11.dll loaded from System32 at runtime.
+# ============================================================================
+
+add_library(enb_gtav SHARED
+    src/enb_gtav/enb_main.cpp
+    src/enb_gtav/ENBState.cpp
+    src/enb_gtav/ENBExports_SDK.cpp
+    src/enb_gtav/ENBExports_API.cpp
+    src/enb_gtav/ENBExports_TwShim.cpp
+    src/enb_gtav/enb_trampolines.asm
+    src/enb_gtav/enb_gtav.def
+)
+
+set_target_properties(enb_gtav PROPERTIES
+    OUTPUT_NAME "d3d11"
+    SUFFIX ".dll"
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+)
+
+target_include_directories(enb_gtav PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/enb_gtav
+)
+
+target_compile_definitions(enb_gtav PRIVATE
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN
+    ENB_GTAV=1
+)
+
+# Do NOT link d3d11.lib or dxgi.lib — we ARE d3d11.dll.
+# Do NOT link any vcpkg packages — this is a standalone DLL.
+target_link_libraries(enb_gtav PRIVATE
+    # Only implicit kernel32/user32 from Windows SDK
+)

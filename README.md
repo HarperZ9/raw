@@ -47,7 +47,6 @@ Dynamic Cubemap, SDSM, Indirect Specular, Screen-Space Decals, Particle Lighting
 ## Build
 
 ```
-cd RAW
 cmake -B build -S . -DVCPKG_TARGET_TRIPLET=x64-windows-static
 cmake --build build --config Release --target RAW --target d3d11_proxy
 ```

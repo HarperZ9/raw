@@ -203,3 +203,24 @@ AgX Punchy, PBR Neutral (Khronos), Uncharted 2, Lottes, Uchimura
 | DoFRenderer | Physical thin-lens, N-gon bokeh | Compiles |
 | SceneCompositor | AO/shadow/GI/SSR/cloud compositing | Compiles |
 | + 18 more | Volumetric, SSS, clouds, atmosphere, TSR, frame gen, etc. | Compiles, deferred-init |
+
+---
+
+## Depth Acquisition (the actual mechanism) — added 2026-06-05 audit
+
+> Keystone fact, previously undocumented. The game depth buffer is acquired
+> **zero-copy via typeless format upgrade**, NOT via DSV ownership.
+
+- `WrappedDevice::CreateTexture2D` (DepthIntercept) detects depth textures and upgrades
+  the format to typeless (`D24_UNORM_S8_UINT -> R24G8_TYPELESS`,
+  `D32_FLOAT -> R32_TYPELESS`) and adds `D3D11_BIND_SHADER_RESOURCE`.
+- An SRV is created directly on the game's own depth texture and exposed as
+  `ProxyInterface->gameDepthSRV`. No copy, no latency. This is the ReShade/ENB-standard
+  approach and is the working path for all screen-space effects.
+
+**Disabled dead logic:** the "depth ownership" path (`DepthOwnership.cpp`, DSV
+substitution) is inert. `DepthOwn_SubstituteDSV` returns the game DSV unchanged
+(`return gameDSV; // DISABLED`, line 170) because substitution produced wrong depth
+values. Its call site in `WrappedContext::OMSetRenderTargets` is a live no-op. The file
+is still compiled (CMakeLists line 154) but does nothing. Do not re-enable without first
+understanding that failure mode.

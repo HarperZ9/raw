@@ -157,3 +157,32 @@ Do them in dependency order — compositor first, then effects that feed it.
 - Do NOT build a "platform" or "SDK" — build a mod that works
 - Do NOT optimize for performance until there are visible results to optimize
 - Do NOT write more shader code without testing the last batch first
+
+---
+
+## ⚠ Ground-Truth Status (2026-06-05 audit) — supersedes conflicting statements above
+
+A full-codebase audit found the "Current State" summary above (dated 2026-03-19) overstates
+build status. Corrected, verifiable facts:
+
+| Claim above | Ground truth | Evidence |
+|---|---|---|
+| "28 effect renderers … Effects compile" | ~28 renderers are *authored*, but **17 are excluded from the build** | `CMakeLists.txt` lines 93–109 (commented `# src/core/*.cpp`) |
+| Phase 4A.2–4A.5 marked `[x]` (Atmosphere, SSS, VolLight, TSR) | Implemented in *source* only — **all four are build-excluded**, none validated in-game | same CMake block; `main.cpp` `// [DISABLED]` init guards |
+| (implied) all effects use external HLSL | **TemporalSuperRes embeds its shaders as C++ strings** (`kUpscaleCS`, `kSharpenPS`) — buildable, but violates the "external HLSL only" convention | `TemporalSuperRes.cpp:85,267` |
+
+**Accurate taxonomy of the ~28 renderers:**
+- **~6 enabled by default** ("Active Effects" in README) — GTAO, Contact Shadows, Skylighting,
+  SSR, SSGI, Scene Compositor, plus the post chain (Bloom/Color/ToneMap/TAA/Histogram) built but default-off.
+- **~11 compile** in the current build.
+- **17 excluded from the build** (source preserved): SDSM, GrassLighting, TreeLOD, WaterBlending,
+  DynamicCubemap, VolumetricClouds, VolumetricLighting, SubsurfaceScattering, IndirectSpecular,
+  ScreenSpaceDecal, ParticleLighting, DoF, Lens, Underwater, Atmosphere, FrameGenerator, TemporalSuperRes.
+
+`[x]` in this roadmap means **implemented in source**, NOT *in the build* or *validated in-game*.
+
+**Depth blocker (historical):** resolved via typeless-format-upgrade interception
+(`WrappedDevice::CreateTexture2D`), not DSV ownership — see `ARCHITECTURE.md` › "Depth Acquisition".
+The `DepthOwnership.cpp` DSV-substitution path is disabled dead logic.
+
+See `STATUS.md` for the full per-module concreteness heatmap and the current plan of action.

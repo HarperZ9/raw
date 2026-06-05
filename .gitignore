@@ -38,3 +38,18 @@ ENBShaderCapture/
 
 # Archives (keep tracked but ignore changes)
 # Package Files for Analysis/
+
+# Proprietary reverse-engineering archive — DO NOT COMMIT (quarantined 2026-06-05)
+# See _LINEAGE_ARCHIVE/PROPRIETARY_ARCHIVE_MANIFEST.md. Files kept on disk, untracked.
+ENB Binary Dump/
+ENB Forum Archives/
+Engine Resources Skyrim/
+Engine Resources FO4/
+FULL_SOURCE.txt
+
+# Local-only / never commit
+secrets/
+**/secrets/
+.warden-safe-cache/
+**/.warden-safe-cache/
+*.precal

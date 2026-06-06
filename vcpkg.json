@@ -1,0 +1,39 @@
+{
+    "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+    "name": "playground",
+    "version-semver": "3.0.0",
+    "description": "Playground — Rendering platform for Creation Engine",
+    "license": "MIT",
+    "dependencies": [
+        "commonlibsse-ng",
+        {
+            "name": "imgui",
+            "features": ["dx11-binding", "win32-binding"]
+        },
+        {
+            "name": "rmlui",
+            "features": ["freetype"]
+        },
+        "freetype"
+    ],
+    "vcpkg-configuration": {
+        "default-registry": {
+            "kind": "git",
+            "repository": "https://github.com/microsoft/vcpkg",
+            "baseline": "6bc1613f18f850c60d906575296f982c6dfcc9e0"
+        },
+        "registries": [
+            {
+                "kind": "git",
+                "repository": "https://gitlab.com/colorglass/vcpkg-colorglass",
+                "baseline": "6309841a1ce770409708a67a9ba5c26c537d2937",
+                "packages": [
+                    "commonlibsse-ng",
+                    "commonlibsse-ng-se",
+                    "commonlibsse-ng-ae",
+                    "commonlibsse-ng-vr"
+                ]
+            }
+        ]
+    }
+}

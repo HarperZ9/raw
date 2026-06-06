@@ -1,0 +1,16 @@
+
+# eyes tool generated artifacts
+tools/eyes/_selftest/
+tools/eyes/eyes_out/
+__pycache__/
+*.pyc
+tools/eyes/live/
+tools/eyes/build_manifest.json
+
+# CMake / build output (regenerated; never commit)
+build/
+/build/
+out/
+*.obj
+*.pdb
+CMakeLists.txt.orig

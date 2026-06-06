@@ -1,0 +1,9 @@
+#!/bin/sh
+# Coherence membrane write-gate (Tier W.2) -- commit-msg hook.
+# Blocks ONLY on (a) failing membrane selftests or (b) a fix-claim an oracle
+# contradicts. Missing python/deps never blocks. Bypass: git commit --no-verify
+root="$(git rev-parse --show-toplevel)"
+python "$root/tools/eyes/membrane_gate.py" check "$1" "$root/tools/eyes/live"
+rc=$?
+[ "$rc" -eq 1 ] && exit 1
+exit 0

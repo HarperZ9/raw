@@ -8,7 +8,7 @@
 
 > A D3D11 rendering platform for Skyrim SE — proxy-based pipeline ownership with mid-frame effect dispatch via SKSE plugin.
 
-Copyright (c) 2026 Zain D. Harper (papacr0w). All rights reserved.
+Copyright (c) 2026 Zain D. Harper (papacr0w). MIT-licensed — see `LICENSE`.
 
 A D3D11 rendering platform for Skyrim SE. Proxy-based pipeline ownership
 with mid-frame effect dispatch via SKSE plugin.
@@ -55,7 +55,6 @@ Dynamic Cubemap, SDSM, Indirect Specular, Screen-Space Decals, Particle Lighting
 ## Build
 
 ```
-cd RAW
 cmake -B build -S . -DVCPKG_TARGET_TRIPLET=x64-windows-static
 cmake --build build --config Release --target RAW --target d3d11_proxy
 ```

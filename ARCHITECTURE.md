@@ -1,6 +1,6 @@
 # RAW Architecture Reference
 
-Copyright (c) 2026 Zain D. Harper (papacr0w). All rights reserved.
+Copyright (c) 2026 Zain D. Harper (papacr0w). MIT-licensed — see `LICENSE`.
 
 ---
 
@@ -222,5 +222,5 @@ AgX Punchy, PBR Neutral (Khronos), Uncharted 2, Lottes, Uchimura
 substitution) is inert. `DepthOwn_SubstituteDSV` returns the game DSV unchanged
 (`return gameDSV; // DISABLED`, line 170) because substitution produced wrong depth
 values. Its call site in `WrappedContext::OMSetRenderTargets` is a live no-op. The file
-is still compiled (CMakeLists line 154) but does nothing. Do not re-enable without first
+is still compiled (CMakeLists line 156) but does nothing. Do not re-enable without first
 understanding that failure mode.

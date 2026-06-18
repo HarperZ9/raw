@@ -1,7 +1,7 @@
 # RAW — Project Lineage (Canon)
 
 > The canonical record of the rendering lineage that produced RAW. One evolving
-> D3D11 post-processing line: **APEX -> SkyrimBridge (SKSE) -> Playground -> RAW**.
+> D3D11 post-processing line: **APEX -> Skyrim-Bridge (SKSE) -> FO4-Bridge -> Playground -> RAW**.
 > APEX was the early prototype; RAW is the current and most modern generation.
 > Authored throughout by Zain Dana Harper. All RAW code is clean-room original
 > (MIT) -- inspired by published techniques, derived from no third-party source.
@@ -16,11 +16,13 @@ Each generation kept the idea and discarded the scaffolding:
 
 1. **APEX** proved you could own the frame from a `d3d11.dll` proxy and inject a
    post-process stack with an in-game UI.
-2. **SkyrimBridge** proved you could lift live engine state (weather, celestial,
+2. **Skyrim-Bridge** proved you could lift live engine state (weather, celestial,
    camera, player) out of Skyrim per frame and feed it to shaders.
-3. **Playground** fused the two -- stopped being a guest of ENB and became the host:
+3. **FO4-Bridge** carried the per-frame engine-state bridge across to Fallout 4
+   (the `enb-bridge-f4` repo), proving the data-bridge approach generalized beyond Skyrim.
+4. **Playground** fused the lines -- stopped being a guest of ENB and became the host:
    a pipeline-owning proxy with phase detection and mid-frame dispatch.
-4. **RAW** kept Playground's architecture wholesale and modernized the form --
+5. **RAW** kept Playground's architecture wholesale and modernized the form --
    modular `src/core` + `src/d3d11_proxy`, external-HLSL-only, clean depth model,
    complete dev-tooling.
 
@@ -44,9 +46,9 @@ Each generation kept the idea and discarded the scaffolding:
 - **IP:** clean. README credits Boris Vorontsov (ENB), the Community Shaders team, and
   Pascal Gilcher as conceptual inspiration; no third-party source was copied.
 
-## Generation 2 -- SkyrimBridge (the SKSE generation)
+## Generation 2 -- Skyrim-Bridge (the SKSE generation)
 
-- **Location:** `C:\Users\Zain\SKSE\PlaygroundOldSources` (SkyrimBridge v1-v3).
+- **Location:** `C:\Users\Zain\SKSE\PlaygroundOldSources` (Skyrim-Bridge v1-v3).
 - **Identity:** An SKSE64 plugin that ran alongside ENB. It extracted ~70 float4
   engine-state parameters per frame (celestial, atmosphere, fog, weather, camera,
   player, interior, shadow) across ~10 tracker subsystems and pushed them into ENB
@@ -63,7 +65,22 @@ Each generation kept the idea and discarded the scaffolding:
   a pipeline-owning design and does not port.
 - **IP:** clean. CREDITS acknowledge Boris Vorontsov, doodlum, and CommonLibSSE-NG.
 
-## Generation 3 -- Playground (direct parent)
+## Generation 3 -- FO4-Bridge (the Fallout 4 crossing)
+
+- **Identity:** The Fallout 4 counterpart of Skyrim-Bridge -- the `enb-bridge-f4` repo. An
+  F4SE plugin that ran alongside ENB and pushed per-frame engine-state parameters into ENB
+  shaders, the same data-bridge pattern carried across from Skyrim to Fallout 4's engine.
+  (confidence: moderate -- identified as the `enb-bridge-f4` repo; specifics carried at the
+  lineage level only.)
+- **Pioneered (carried forward):** proved the per-frame engine-state bridge was not
+  Skyrim-specific. The cross-engine port hardened the bridge concept that RAW's
+  `SceneObserver` / `SceneData` / `WeatherParameterManager` ultimately inherit.
+- **Non-transferable (incompatible by design):** like Skyrim-Bridge, it is an ENB-as-host
+  data bridge, not a pipeline owner; the ENB-binding layer has no analogue in RAW's
+  pipeline-owning design and does not port.
+- **IP:** clean -- original bridge code; no third-party rendering source copied.
+
+## Generation 4 -- Playground (direct parent)
 
 - **Location:** `C:\Users\Zain\SKSE\Playground` (RAW lives at `Playground\RAW\`).
 - **Identity:** The pivot from guest to host. A d3d11 proxy + SKSE plugin that owns the
@@ -85,9 +102,10 @@ Each generation kept the idea and discarded the scaffolding:
   headers; `.fx` files reference ENB algorithms by name but copy no code). The research
   folders are NOT -- see "Non-transferable for IP reasons" below.
 
-## Generation 4 -- RAW (current)
+## Generation 5 -- RAW (current)
 
-- **Location:** `C:\Users\Zain\SKSE\Playground\RAW` -- own CMakeLists; build from here.
+- **Location:** standalone public repo `github.com/HarperZ9/raw` (default branch `master`),
+  extracted from `Playground\RAW\` into its own repository; own CMakeLists, build from the repo root.
 - **Identity:** The modern generation. `src/core` (~40 modules) + `src/d3d11_proxy`
   (COM-wrapped proxy). External-HLSL-only (86 shaders, F12 hot-reload). Complete
   dev-tooling (in-game shader-error overlay, source viewer, GPU profiler, effect
@@ -106,7 +124,7 @@ Each generation kept the idea and discarded the scaffolding:
 | d3d11 proxy + Present-hook frame ownership | APEX | `src/d3d11_proxy/*`, `D3D11Hook` |
 | In-game ImGui debug UI + runtime shader compile | APEX | `DebugGUI`, `ShaderLoader`, `SB_ShaderDebug` |
 | Config + preset persistence | APEX | `ConfigManager` |
-| Per-frame engine-state extraction | SkyrimBridge | `SceneObserver`, `SceneData`, `WeatherParameterManager` |
+| Per-frame engine-state extraction | Skyrim-Bridge / FO4-Bridge | `SceneObserver`, `SceneData`, `WeatherParameterManager` |
 | Pipeline ownership + 9-phase detection | Playground | `RenderPhaseDetector`, `PhaseDispatcher` |
 | Mid-frame dispatch + pass registry | Playground | `RenderPipeline`, `RenderPassManager` |
 | HiZ reversed-Z + SRV slot map (t17-t38) | Playground | `HiZPyramid`, `SRVInjector`, `ARCHITECTURE.md` |
@@ -117,7 +135,7 @@ Each generation kept the idea and discarded the scaffolding:
 
 **Technical / architecturally incompatible -- superseded, not portable:**
 - APEX's unified single-file core and post-process-only model.
-- SkyrimBridge's ENB-as-host `ENBSetParameter` binding (RAW replaces ENB; mutually exclusive).
+- Skyrim-Bridge / FO4-Bridge's ENB-as-host `ENBSetParameter` binding (RAW replaces ENB; mutually exclusive).
 - Embedded `.fx` ENB-stage shader framework assumptions (RAW is external-HLSL compute).
 
 **Non-transferable for IP reasons -- archived separately, NEVER enter RAW or a release:**

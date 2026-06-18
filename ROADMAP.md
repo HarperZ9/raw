@@ -1,6 +1,6 @@
 # RAW — Development Roadmap
 
-Copyright (c) 2026 Zain D. Harper (papacr0w). All rights reserved.
+Copyright (c) 2026 Zain D. Harper (papacr0w). MIT-licensed — see `LICENSE`.
 
 ---
 

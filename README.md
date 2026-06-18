@@ -1,6 +1,6 @@
 # RAW — Rendering Advancement Workshop
 
-![license: proprietary](https://img.shields.io/badge/license-proprietary-lightgrey.svg)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-23-00599C.svg)
 ![HLSL](https://img.shields.io/badge/shaders-HLSL-5C2D91.svg)
 ![version](https://img.shields.io/badge/version-1.0.0-informational.svg)

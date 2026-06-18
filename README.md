@@ -1,5 +1,13 @@
 # RAW — Rendering Advancement Workshop
 
+![license: proprietary](https://img.shields.io/badge/license-proprietary-lightgrey.svg)
+![C++](https://img.shields.io/badge/C%2B%2B-23-00599C.svg)
+![HLSL](https://img.shields.io/badge/shaders-HLSL-5C2D91.svg)
+![version](https://img.shields.io/badge/version-1.0.0-informational.svg)
+![rendering research](https://img.shields.io/badge/domain-rendering%20research-2A6F97.svg)
+
+> A D3D11 rendering platform for Skyrim SE — proxy-based pipeline ownership with mid-frame effect dispatch via SKSE plugin.
+
 Copyright (c) 2026 Zain D. Harper (papacr0w). All rights reserved.
 
 A D3D11 rendering platform for Skyrim SE. Proxy-based pipeline ownership

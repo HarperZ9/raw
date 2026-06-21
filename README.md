@@ -1,6 +1,6 @@
 # RAW — Rendering Advancement Workshop
 
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
+[![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE.md)
 ![C++](https://img.shields.io/badge/C%2B%2B-23-00599C.svg)
 ![HLSL](https://img.shields.io/badge/shaders-HLSL-5C2D91.svg)
 ![version](https://img.shields.io/badge/version-1.0.0-informational.svg)
@@ -8,12 +8,29 @@
 
 > A D3D11 rendering platform for Skyrim SE — proxy-based pipeline ownership with mid-frame effect dispatch via SKSE plugin.
 
-Copyright (c) 2026 Zain D. Harper (papacr0w). MIT-licensed — see `LICENSE`.
+Copyright (c) 2026 Zain D. Harper (papacr0w). AGPL-3.0-or-later — see `LICENSE`; commercial licensing available.
 
 A D3D11 rendering platform for Skyrim SE. Proxy-based pipeline ownership
 with mid-frame effect dispatch via SKSE plugin.
 
 **Status: Active development. Core effects functional, tuning in progress.**
+
+## What this is becoming
+
+RAW is the seed of a **native, dependency-free rendering engine + algorithm simulator** — a two-way
+surface where a model and a person *see the same rendered frame and cross-examine it in real time*: the
+verification target (*is this right?*) and the creative-improvement target (*make this better*) as one
+loop. It is meant to feed gallery tools and serve as a reusable resource library — a showcase that this
+work has value in any creative or technical workflow.
+
+**Honest scope:** today RAW is a D3D11 proxy for Skyrim SE with the rendering effects below. The
+real-time two-way cross-examination and the dependency-free native renderer (no DirectX/driver) are the
+**telos** — stated as direction, not as shipped. Part of an AI-accountability toolkit
+([HarperZ9](https://github.com/HarperZ9)): the rendering eye (`eye.raw_rendering`) turns frames into
+witnessed, checkable observations.
+
+> **Not affiliated with or endorsed by Bethesda Softworks or ENBSeries.** For use with a legally-owned
+> copy of the base game. Provided as-is, without warranty.
 
 ## Active Effects
 

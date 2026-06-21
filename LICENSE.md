@@ -1,26 +1,24 @@
 # RAW — Rendering Advancement Workshop
 
-MIT License
+GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)
 
 Copyright (c) 2026 Zain D. Harper (papacr0w)
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This program is free software: you can redistribute it and/or modify it under the
+terms of the GNU Affero General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later version.
+The full license text is in `LICENSE`.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+**Commercial licensing.** The author retains copyright and offers separate
+commercial licenses for use the AGPL does not permit (e.g. closed-source or
+proprietary integration). Contact the author.
+
+**Disclaimer.** Not affiliated with or endorsed by Bethesda Softworks or ENBSeries.
+For use with a legally-owned copy of the base game. Provided as-is, without warranty.
 
 ## Third-Party Licenses
 
@@ -37,3 +35,15 @@ MIT License - Copyright (c) Microsoft Corporation
 
 ### DirectX 11 Headers
 Copyright (c) Microsoft Corporation. Licensed under the MIT License.
+
+### FreeType
+The FreeType Project License (FTL) / GPLv2 dual — Copyright (c) The FreeType Project.
+https://freetype.org
+
+### RmlUi
+MIT License — Copyright (c) RmlUi contributors.
+https://github.com/mikke89/RmlUi
+
+### stb_image (bundled: src/vendor/stb_image.h)
+Public domain (Unlicense) or MIT — Copyright (c) Sean Barrett (nothings/stb).
+https://github.com/nothings/stb

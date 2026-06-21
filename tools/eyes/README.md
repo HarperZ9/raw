@@ -31,6 +31,24 @@ Because dump filenames carry the pass name (`frame0042_GTAO.bmp`, `..._SSR.bmp`,
 | `attribute DIR` | Every capture in a folder → per-pass metrics + **attribution** (which pass is the likely source of green cast / black output). Reads .bmp/.png/.jpg. |
 | `selftest` | Generates synthetic scene / green-tint / black / blown captures and verifies every metric + the attribution fire correctly. 8/8 expected. |
 
+## Health receipts
+
+`raw_health.py` emits the compact receipt consumed by ORCA and the wider organ
+exchange.
+
+```
+python tools/eyes/raw_health.py receipt "<path>/live"
+python tools/eyes/raw_health.py receipt "<path>/RAW"
+```
+
+The first form reads runtime telemetry from a live directory and stays strict:
+missing always-on runtime artifacts are reported as failures. The second form
+detects a RAW source root and emits `mode: source-state`, including source hash,
+build-manifest freshness, and DLL presence. A source-state receipt reports
+overall `warn` when no live runtime telemetry was measured, which lets ORCA say
+"RAW source/build is available, but no live session was observed" instead of
+misreading the source tree as a broken live renderer.
+
 ## Flags (objective artifact detectors)
 
 - `GREEN_CAST` / `MAGENTA_CAST` — `green_index` (mean G ÷ mean R,B) outside [0.85, 1.15].

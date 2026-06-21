@@ -25,6 +25,21 @@ The host reader treats a missing/empty file as clean/zero, never an error.
 | `ranges.jsonl` | `RangeOracle::EmitRanges` | `raw_eyes.read_ranges` | **gated** `[Diagnostics] GpuReadback` + wired pass | `ranges_ok` |
 | `metrics.jsonl` + `latest.json` | `LiveBridge::Tick`/`EmitMetrics` | `raw_eyes.watch` | always (per frame) | trend (advisory) |
 
+## RAW health receipt modes
+
+`raw_health.py receipt` emits the compact JSON receipt used by ORCA organ
+exchange. It has two modes:
+
+- `mode: runtime-live` is emitted for runtime `live/` directories. It runs
+  `verify_runtime.verify`, `raw_eyes.watch`, optional capture attribution, and
+  optional GPU trace validation. Missing always-on runtime artifacts remain a
+  hard health failure.
+- `mode: source-state` is emitted when the input path is a RAW source root. It
+  reports source markers, source hash, build-manifest freshness, and
+  `build/Release/RAW.dll` plus `d3d11.dll` presence. Runtime telemetry is
+  `not-applicable` in this mode, and the overall receipt is `warn` when no live
+  runtime telemetry was measured.
+
 ## Field reference
 
 Every key a reader CONSUMES is listed here and is written by the emitter (audit-verified).

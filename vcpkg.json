@@ -1,9 +1,9 @@
 {
     "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
-    "name": "playground",
+    "name": "raw",
     "version-semver": "3.0.0",
-    "description": "Playground — Rendering platform for Creation Engine",
-    "license": "MIT",
+    "description": "RAW — Rendering Advancement Workshop (rendering + verification engine; seed of a native two-way simulator)",
+    "license": "AGPL-3.0-or-later",
     "dependencies": [
         "commonlibsse-ng",
         {

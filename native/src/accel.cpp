@@ -1,7 +1,10 @@
 #include "raw/accel.hpp"
 namespace raw {
-void LinearAccel::build(const Scene& s){
-    tris.clear();
+void LinearAccel::build(const Scene& s, Arena* arena){
+    tris = std::vector<Tri, ArenaAllocator<Tri>>(ArenaAllocator<Tri>(arena));
+    std::size_t count = 0;
+    for (const Mesh& m : s.meshes) count += m.indices.size() / 3;
+    tris.reserve(count);
     for (const Mesh& m : s.meshes)
         for (size_t i=0;i+2<m.indices.size();i+=3)
             tris.push_back(Tri{ m.positions[m.indices[i]],

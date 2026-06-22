@@ -30,6 +30,24 @@ L0/L1: *every organ emits the IR*). The **cdev ledger** witnesses it (`record_fa
 ledger's `recall --verify` re-checks it later → MATCH / DRIFT / UNVERIFIABLE. An organ that
 cannot produce a Certificate for what it did has not finished its action.
 
+## 1.5 · Layer 0 — the accountable substrate (down to the metal)
+
+The organism is native **all the way down** — not stdlib-allocator-on-top, but its own
+memory substrate, with the **actuator-accountability principle applied to memory itself**.
+Inspiration: hand-written `malloc` in x86 assembly (Mxy) — own the allocation, don't inherit it.
+
+- **Native allocators** — arena / bump / pool / stack. No hidden `malloc` on the hot path;
+  deterministic layout (data-oriented; the CUDA lesson: layout > compute).
+- **Memory as a gated actuator** — every allocation is **bounded** by an arena budget,
+  **witnessed** (allocation/free events are recordable), and **fail-closed** (over-budget →
+  refuse, never grow unboundedly). The heap obeys the same gate→act→witness contract as the
+  fs/os actuators. Out-of-budget is **UNVERIFIABLE/denied**, not a silent `malloc` success.
+- **Assembly / SIMD hot paths** — the perception inner loops (rasterize, ray, reconcile) may
+  drop to intrinsics or hand assembly where it earns its cost; the substrate is the place the
+  organism touches the machine directly, accountably.
+- High-level organs ride on this substrate; the accountability contract is identical at every
+  altitude (low-level allocation ↔ high-level actuation) — one membrane, top to bottom.
+
 ## 2 · The three organ classes, graded by reversibility
 
 Accountability is **graded by how hard the action is to undo.** This is the load-bearing
@@ -80,6 +98,29 @@ actuation) · `proof-surface` (the gate).
   until it is gated, performed, re-perceived, and witnessed. Hard-to-reverse / outward-facing
   actions require `needs-human`.
 
+## 2.5 · The membrane — CreativeLigandProtocol (the organism's boundary)
+
+A cell is defined by its membrane: what crosses, what is held, what is actively kept
+confidential. The organism's membrane is the **CreativeLigandProtocol** (full spec:
+`c:/dev/creative-ligand-protocol-spec.md`, converged/Interval-0). It governs how the organism
+gets creative help from **external** frontier reasoning **without disclosing its sealed core**.
+
+- **ligand / receptor.** The membrane sends generic, public, source-free **operators
+  (ligands)** over a **sealed local fitness surface (receptor)** that holds the *delta* — the
+  genuinely surprising core — which never crosses. Specificity is resolved locally at the
+  receptor, never propagated (signal-transduction model).
+- **`privacy_atpase`.** Confidentiality is an **actively-maintained non-equilibrium state**
+  (Na/K-ATPase): every turn the pump spends budget to rotate handles, plant decoy receptors as
+  a leakage meter, cap feedback, and run an all-observables reconstruction probe — stop pumping
+  and it leaks. This is the operator's IO boundary made literal (the `safe_*` channel membrane).
+- **Honest bound (from the spec §7):** controlled, *measured*, actively-maintained leakage for
+  turn/epoch scope vs an honest-but-curious provider; targets (l,b)-inextractability, **not**
+  zero-leakage or DP. It cannot protect what the frontier prior would generate unprompted — only
+  the delta. A trusted TEE, when available, dominates the membrane.
+- **Build path is its own** (spec §15): Stage-0 build/no-build gate first (it may correctly say
+  "don't build the membrane"), then a ~250-line OCH MVP. Separate axis from perception; mapped
+  here as the boundary the whole organism breathes through, not built in raw's increments.
+
 ## 3 · How raw joins the body
 
 raw is the **sight** organ. Increment 1 (in progress) builds its internal reconcile (a
@@ -118,17 +159,32 @@ WORLD ──► [SENSES: raw·perceptv·perceivers] ──Certificate──► [
 Not crossed (honest): the entropy floor, the bandwidth wall, Bell nonlocality. The organism
 does not make computation more powerful — it makes it **accountable**. Different axis.
 
-## 5 · Build order
+## 5 · Build order (integration- and expansion-first)
 
-1. **raw engine core** (increment 1, in progress) — the sight organ's internal reconcile.
-2. **raw → Certificate + ledger bridge** (increment 2) — wire sight into the body using the
-   shared form. First cross-organ, cross-language seam (native C++ organ → witnessed form →
-   Python spine).
-3. **Actuator accountability contract** (increment 3) — formalize the gate→act→re-perceive→
-   witness loop as the shared contract; the `workstation`/`accountable-surface` organs
-   already implement it — wire them to the same Certificate + ledger, actuators gated hardest.
-4. **Generalize** — each organ-class's accountability contract documented in the atlas;
-   the Certificate becomes the organism's bloodstream.
+Principle: every increment ends with a **working, witnessed artifact**, and every organ
+exposes the **same Certificate seam** so the next organ docks without rearchitecture. Build a
+thin vertical that proves the body, then widen — never a wide layer that proves nothing.
+
+**Axis A — the perception organ + substrate (in flight, near-term):**
+1. **raw engine core** (increment 1, in progress) — the sight organ's internal reconcile
+   (raster approximation vs ray-traced ground truth → error map + verdict). *Task 1 done+green.*
+2. **Accountable substrate** (increment 2) — replace the engine's ad-hoc allocation with a
+   native bounded/witnessed **arena allocator** (Layer 0). Demonstrates "memory as a gated
+   actuator" inside the sense organ. Native, fits raw, informed by the malloc/assembly ethos.
+3. **raw → Certificate + ledger bridge** (increment 3) — emit the shared witnessed form; record
+   to the cdev ledger. First cross-organ, cross-language seam (C++ organ → Certificate → Python
+   spine). After this, raw is *in the body*.
+
+**Axis B — the body's contracts (parallel, mapped):**
+4. **Actuator accountability contract** — formalize gate→act→re-perceive→witness as the shared
+   contract; `workstation`/`accountable-surface` already implement it — wire them to the same
+   Certificate + ledger; actuators gated hardest.
+5. **Membrane (CreativeLigandProtocol)** — its own Stage-0 build/no-build gate first (spec §15);
+   separate axis (external-reasoning confidentiality), not a raw increment.
+
+**Then generalize** — each organ-class contract documented in `project-docs/atlas`; the
+Certificate becomes the organism's bloodstream; new senses/actuators/modalities are new
+bindings on the same seam.
 
 ## 6 · Honest bounds
 

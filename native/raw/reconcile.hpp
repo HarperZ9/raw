@@ -1,5 +1,6 @@
 #pragma once
 #include "raw/image.hpp"
+#include "raw/arena.hpp"
 #include <cstdint>
 namespace raw {
 struct ReconcileResult {
@@ -9,5 +10,5 @@ struct ReconcileResult {
     bool withinTolerance{false};
 };
 ReconcileResult reconcile(const Buffer<float>& approx, const Buffer<float>& truth,
-                          const Buffer<uint8_t>& mask, float tolerance);
+                          const Buffer<uint8_t>& mask, float tolerance, Arena* arena = nullptr);
 }

@@ -112,31 +112,45 @@ heap (`nullptr`). Every existing test constructs the default (heap) form and is 
 
 ## 4 · The witness & fail-closed proof (CLI, `app/main.cpp`)
 
+The budget is **measured, not a magic constant** — a two-pass run grounds it in the frame's
+real footprint:
+
 ```text
-backing = heap slab of `budget` bytes (the ONE real malloc; everything else bumps within it)
-Arena arena(backing.data(), budget)
-try {
-    Scene s        = buildTestScene(W, H, &arena)
-    GBuffer g      = rasterize(s, W, H, &arena)
-    LinearAccel a; a.build(s, &arena)
-    aoRT           = computeRTAO(g, a, 64, 2.0f, &arena)
-    aoSS           = computeSSAO(g, 24, 2.0f, &arena)
-    rec            = reconcile(aoSS, aoRT, g.mask, 0.12f, &arena)
-    frame          = shade(g, aoRT, s, &arena)
-    write frame/AO/error images
-    Certificate aoCert    = certificate_from_reconcile(rec, 0.12f)   // refuted (DIVERGENT)
-    Certificate arenaCert = certificate_from_arena(arena.stats())     // verified (BOUNDED)
-    write certificate.json (aoCert) + arena_certificate.json (arenaCert)
-    print both; print arena_witness(arena.stats())
-} catch (std::bad_alloc&) {
-    // budget too small => the frame BREACHED. Witness it, fail-closed.
-    print certificate_from_arena(arena.stats())   // refuted (BREACHED), refusals > 0
-    return non-zero
-}
+render_frame(Arena* arena) -> { rec, frame, aoRT, aoSS } :
+    Scene s        = buildTestScene(W, H, arena)
+    GBuffer g      = rasterize(s, W, H, arena)
+    LinearAccel a; a.build(s, arena)
+    aoRT           = computeRTAO(g, a, 64, 2.0f, arena)
+    aoSS           = computeSSAO(g, 24, 2.0f, arena)
+    rec            = reconcile(aoSS, aoRT, g.mask, 0.12f, arena)
+    frame          = shade(g, aoRT, s, arena)
+
+// PASS 1 — MEASURE: a computed generous slab (no magic 32 MB); read the true footprint.
+slabUB = (size_t)W*H * PER_PIXEL_UPPER * 2 + 1<<20      // PER_PIXEL_UPPER = 65 B (all 9 planes)
+vector<unsigned char> slab1(slabUB); Arena measure(slab1.data(), slabUB)
+render_frame(&measure)                                  // discard outputs; we want the number
+H = measure.stats().high_water                          // the MEASURED frame footprint
+
+// PASS 2 — TIGHT, WITNESSED: budget == exactly the measured footprint H.
+vector<unsigned char> slab2(H); Arena arena(slab2.data(), H)   // the ONE real malloc per pass
+auto out = render_frame(&arena)                         // deterministic => fits exactly
+write frame/AO/error images from `out`
+Certificate aoCert    = certificate_from_reconcile(out.rec, 0.12f)  // refuted (DIVERGENT)
+Certificate arenaCert = certificate_from_arena(arena.stats())       // verified (BOUNDED), used==H==budget
+write certificate.json (aoCert) + arena_certificate.json (arenaCert)
+print both; print arena_witness(arena.stats())          // budget=H used=H high_water=H refusals=0
+assert arena.stats().refusals == 0                      // pass-2 must fit at exactly H
 ```
 
-- **BOUNDED demo:** a generous fixed budget (the frame's real footprint at 256² is ≈ 4.3 MB;
-  use 32 MB) → no refusals → `arenaCert` verified, `high_water` reports the true footprint.
+- **Measured-budget demo:** pass 1 measures `H` (the true cumulative footprint, ≈ 4.3 MB at
+  256²); pass 2 renders within a budget of **exactly `H`** → `refusals == 0`, `used == budget ==
+  high_water == H` → `arenaCert` verified (BOUNDED). The frame fitting in exactly its measured
+  footprint is the witness — no arbitrary constant. Determinism (fixed scene, hash-based
+  sampling, `reserve()`d geometry) guarantees pass 2 reproduces pass 1's `H` exactly.
+- **Fail-closed:** any single arena allocation that would exceed the budget throws
+  `std::bad_alloc`; the CLI catches it, emits `certificate_from_arena(...)` (refuted / BREACHED,
+  `refusals > 0`), and exits non-zero. (Reachable in the demo only if measurement is bypassed;
+  it is the contract the BREACH test exercises directly.)
 - **BREACH proof (test):** a deliberately tiny budget → an allocation throws `std::bad_alloc`
   mid-frame → the test asserts the throw **and** `arena.stats().refusals > 0` **and**
   `certificate_from_arena(...)` → `refuted` / `verdict=BREACHED`. This is the real gate: the
@@ -162,17 +176,22 @@ try {
    each gain a trailing `Arena* = nullptr` and construct their output with it. Test: each
    output Buffer is arena-backed when an arena is passed; pixel values are identical to the
    heap path (the arena changes *where* memory lives, never *what* is computed).
-7. **CLI: budgeted frame + both Certificates + BREACH test** — wire §4. Test (in-process,
-   `test_frame_arena.cpp`): a generous budget renders the whole frame with `refusals == 0` and
-   `certificate_from_arena` → `verified`/BOUNDED; a tiny budget throws `std::bad_alloc` and
-   witnesses `refusals > 0` / BREACHED. The CLI emits `arena_certificate.json` alongside
-   `certificate.json`.
+7. **CLI: measured-budget frame + both Certificates + the gate tests** — wire §4 (two-pass:
+   measure `H`, then render at budget `H`). Test (in-process, `test_frame_arena.cpp`):
+   (a) **measured-budget BOUNDED** — render the frame in a generous slab to get `H`, then a
+   fresh `Arena(H)` renders it again with `refusals == 0` and `used == high_water == H` and
+   `certificate_from_arena` → `verified`; (b) **fail-closed BREACH** — `Arena(tiny)` makes the
+   frame throw `std::bad_alloc`, and after catching, `refusals > 0` and `certificate_from_arena`
+   → `refuted`/BREACHED; (c) **pixel-identical** — a frame rendered through the arena is
+   byte-for-byte equal to the same frame rendered on the heap (memory moved, render unchanged).
+   The CLI emits `arena_certificate.json` alongside `certificate.json`.
 
 ## 6 · Success criteria
 
 - The full frame (geometry + buffers) renders with **zero heap allocations on the frame path
   except the single backing slab** — verified by `arena.stats().allocations` accounting for the
-  frame's vectors and `high_water` ≈ the computed footprint.
+  frame's vectors. The budget is **measured** (`high_water` of a measure pass), and pass 2
+  renders at exactly that budget with `used == budget == high_water == H` and `refusals == 0`.
 - **Identical pixels**: the arena path produces byte-identical `frame.ppm` / AO outputs to the
   heap path (the retrofit moves memory, it does not change the render). A test compares a
   heap-rendered buffer against an arena-rendered one pixel-for-pixel.

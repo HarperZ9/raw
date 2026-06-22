@@ -5,7 +5,8 @@ namespace raw {
 struct Ray { Vec3 o, d; };
 struct Tri { Vec3 a, b, c; };
 struct AABB {
-    Vec3 mn, mx;
+    Vec3 mn{ 1e30f,  1e30f,  1e30f};
+    Vec3 mx{-1e30f, -1e30f, -1e30f};
     void grow(Vec3 p){
         mn = {std::min(mn.x,p.x),std::min(mn.y,p.y),std::min(mn.z,p.z)};
         mx = {std::max(mx.x,p.x),std::max(mx.y,p.y),std::max(mx.z,p.z)}; }

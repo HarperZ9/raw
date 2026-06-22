@@ -1,11 +1,14 @@
 #pragma once
 #include "raw/vec.hpp"
+#include "raw/arena_allocator.hpp"
 #include <vector>
 #include <string>
 namespace raw {
 template<class T> struct Buffer {
     int w{0}, h{0};
-    std::vector<T> px;
+    std::vector<T, ArenaAllocator<T>> px;
+    Buffer() = default;                                  // heap (default allocator)
+    explicit Buffer(Arena* a) : px(ArenaAllocator<T>(a)) {}  // arena-backed
     void resize(int W, int H){ w=W; h=H; px.assign((size_t)W*H, T{}); }
     T& at(int x,int y){ return px[(size_t)y*w + x]; }
     const T& at(int x,int y) const { return px[(size_t)y*w + x]; }

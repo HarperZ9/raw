@@ -14,4 +14,8 @@ struct Certificate {
     std::vector<std::pair<std::string, std::string>> evidence; // ordered (key,value) pairs
 };
 std::string to_json(const Certificate& c);
+struct ReconcileResult;   // fwd (defined in raw/reconcile.hpp)
+struct ArenaStats;        // fwd (defined in raw/arena.hpp)
+Certificate certificate_from_reconcile(const ReconcileResult& r, float tolerance);
+Certificate certificate_from_arena(const ArenaStats& s);
 }

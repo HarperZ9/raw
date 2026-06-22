@@ -1,0 +1,23 @@
+cmake_minimum_required(VERSION 3.24)
+project(raw_native LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+file(GLOB LIB_SRCS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
+add_library(raw_native STATIC ${LIB_SRCS})
+target_include_directories(raw_native PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+
+enable_testing()
+file(GLOB TEST_SRCS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.cpp")
+foreach(t ${TEST_SRCS})
+    get_filename_component(name ${t} NAME_WE)
+    add_executable(${name} ${t})
+    target_link_libraries(${name} PRIVATE raw_native)
+    target_include_directories(${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    add_test(NAME ${name} COMMAND ${name})
+endforeach()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/app/main.cpp")
+    add_executable(raw_native_cli app/main.cpp)
+    target_link_libraries(raw_native_cli PRIVATE raw_native)
+endif()

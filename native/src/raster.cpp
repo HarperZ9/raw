@@ -4,8 +4,8 @@
 #include <cmath>
 #include <limits>
 namespace raw {
-GBuffer rasterize(const Scene& scene, int w, int h){
-    GBuffer g; g.resize(w,h);
+GBuffer rasterize(const Scene& scene, int w, int h, Arena* arena){
+    GBuffer g(arena); g.resize(w,h);
     for (auto& d : g.depth.px) d = std::numeric_limits<float>::infinity();
     Mat4 view = scene.camera.view();
     Mat4 proj = scene.camera.proj();

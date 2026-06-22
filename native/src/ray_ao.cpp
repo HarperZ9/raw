@@ -15,8 +15,8 @@ static void basis(Vec3 n, Vec3& t, Vec3& b){
     t = normalize(cross(a, n)); b = cross(n, t);
 }
 Buffer<float> computeRTAO(const GBuffer& g, const LinearAccel& accel,
-                          int samples, float radius){
-    Buffer<float> ao; ao.resize(g.w, g.h);
+                          int samples, float radius, Arena* arena){
+    Buffer<float> ao(arena); ao.resize(g.w, g.h);
     for (int y=0;y<g.h;++y) for (int x=0;x<g.w;++x){
         if (!g.mask.at(x,y)){ ao.at(x,y)=1.0f; continue; }
         Vec3 p = g.position.at(x,y);

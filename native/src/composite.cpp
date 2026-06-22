@@ -1,8 +1,8 @@
 #include "raw/composite.hpp"
 #include <algorithm>
 namespace raw {
-Buffer<Vec3> shade(const GBuffer& g, const Buffer<float>& ao, const Scene& s){
-    Buffer<Vec3> img; img.resize(g.w,g.h);
+Buffer<Vec3> shade(const GBuffer& g, const Buffer<float>& ao, const Scene& s, Arena* arena){
+    Buffer<Vec3> img(arena); img.resize(g.w,g.h);
     Vec3 ldir = s.lights.empty() ? Vec3{0,-1,0} : s.lights[0].dir;
     float li = s.lights.empty() ? 1.0f : s.lights[0].intensity;
     for (int y=0;y<g.h;++y) for (int x=0;x<g.w;++x){

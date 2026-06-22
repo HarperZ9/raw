@@ -7,8 +7,8 @@ static float hash01(uint32_t x, uint32_t y, uint32_t s){
     h = (h ^ (h>>13)) * 1274126177u; h ^= h>>16;
     return (h & 0xFFFFFFu) / float(0x1000000);
 }
-Buffer<float> computeSSAO(const GBuffer& g, int samples, float radius){
-    Buffer<float> ao; ao.resize(g.w,g.h);
+Buffer<float> computeSSAO(const GBuffer& g, int samples, float radius, Arena* arena){
+    Buffer<float> ao(arena); ao.resize(g.w,g.h);
     const int R = 6; // screen-space sampling radius in pixels
     for (int y=0;y<g.h;++y) for (int x=0;x<g.w;++x){
         if (!g.mask.at(x,y)){ ao.at(x,y)=1.0f; continue; }

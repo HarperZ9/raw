@@ -46,7 +46,7 @@ GBuffer rasterize(const Scene& scene, int w, int h){
                 if (w0<0||w1<0||w2<0) continue;
                 // perspective-correct interpolation
                 float iw = w0*invw[0] + w1*invw[1] + w2*invw[2];
-                float depth = (w0*sp[0].z + w1*sp[1].z + w2*sp[2].z); // ~view distance
+                float depth = (w0*sp[0].z + w1*sp[1].z + w2*sp[2].z); // screen-linear interpolation of view distance (correct for non-overlapping test scene; true depth-buffer would interpolate 1/w—deferred)
                 if (depth >= g.depth.at(x,y)) continue;
                 auto pc = [&](Vec3 a,Vec3 b,Vec3 c){
                     Vec3 r{ (w0*a.x*invw[0]+w1*b.x*invw[1]+w2*c.x*invw[2])/iw,

@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <string>
 namespace raw {
 // The witness: a re-checkable record of the arena's lifetime behavior.
 struct ArenaStats {
@@ -25,4 +26,9 @@ private:
     unsigned char* base_;
     ArenaStats stats_;
 };
+template<class T>
+T* arena_alloc(Arena& a, std::size_t count){
+    return static_cast<T*>(a.allocate(count * sizeof(T), alignof(T)));
+}
+std::string arena_witness(const ArenaStats& s);
 }

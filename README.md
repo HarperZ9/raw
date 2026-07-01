@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/brand/raw-hero.png" alt="Raw: Native Rendering Research Engine">
+</p>
+
 # RAW — Rendering Advancement Workshop
 
 [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE.md)

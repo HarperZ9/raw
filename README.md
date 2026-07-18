@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/brand/raw-hero.png" alt="Raw: Native Rendering Research Engine">
+  <img src=".github/assets/zentropy-banner.png" alt="Raw: Native Rendering Research Engine">
 </p>
 
 # RAW — Rendering Advancement Workshop
@@ -145,3 +145,7 @@ Requires: VS2022, CMake 3.24+, vcpkg (x64-windows-static), CommonLibSSE-NG.
 
 - `ARCHITECTURE.md` — depth conventions, SRV slots, pipeline rules
 - `LICENSE.md` — copyright and third-party licenses
+
+---
+
+**[Zentropy Labs](https://github.com/ZentropyLabs-ai)** · order out of entropy. An independent lab building evidence-first tools that leave a re-checkable artifact behind. Built by Zain Dana Harper in Seattle. The full workbench is at [Project Telos](https://harperz9.github.io).

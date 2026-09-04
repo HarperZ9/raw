@@ -1,0 +1,28 @@
+{
+  "cards": [
+    {
+      "file": "raw-facts.svg",
+      "kicker": "counts, not adjectives",
+      "title": "What the engine declares, and where each number is read from",
+      "source": "shaders, source and manifest, on this checkout",
+      "heads": ["the engine declares", "how many", "where the number comes from"],
+      "alt": "A table of thirteen rows: what the engine declares, how many of each there are, and where the number is read from. The render-phase enum names nine phases, and the proxy classifies each frame across them. The weather system carries nine categories that modulate effect intensity. Six effects are active, and of those six one is verified in-game today while the rest are still being tuned. Three post-processing stages are in the build. The debug tonemapper list holds seven real tone curves alongside a linear passthrough. Seventeen renderers are kept in source but removed from the build. The d3d11 proxy wraps three objects: the device, the context and the swap chain. The shader directory holds eighty-five HLSL files loaded from disk, plus one shared include. Every target builds to the C++23 standard, and the license is AGPL-3.0. The marked row is the honest null: the engine can capture per-pass frame time to CSV, but no such capture is committed here, so no measured frame time is published.",
+      "footnote": "Every count is read from the shader directory, the source enum, the README table or the build manifest that declares it, and tools/art/check_repo_facts.py reads those same files and rebuilds each number. The marked row is the honest null: no measured per-pass frame time is committed in this repository.",
+      "fields": [
+        { "key": "render phases", "value": "nine of them", "note": "The RenderPhase enum in the d3d11 proxy holds nine values, and the DSV-unbind heuristic classifies each frame across them, matching the README." },
+        { "key": "weather categories", "value": "nine of them", "note": "The WeatherCategory enum lists nine real categories from clear to special, past a Count sentinel, and the weather system modulates effect intensity per category." },
+        { "key": "active effects", "value": "six of them", "note": "The Active Effects table in the README lists six: GTAO, contact shadows, skylighting, SSR, SSGI and the scene compositor." },
+        { "key": "verified in-game", "value": "one of six", "note": "Of those six, one carries a verified-in-game status today. The rest read as functional-but-tuning, and the card keeps that honest rather than rounding up." },
+        { "key": "post stages", "value": "three of them", "note": "The Active Post-Processing table lists three stages: bloom, the AgX color pipeline and the tone-map manager, each marked in-build." },
+        { "key": "tone curves", "value": "seven of them", "note": "The tonemapper list in the debug GUI holds eight entries: seven real tone curves past a linear passthrough, and the color pipeline exposes AgX by default." },
+        { "key": "disabled renderers", "value": "seventeen of them", "note": "Seventeen renderers are kept in source but removed from the build pending polish, named one after another in the README disabled list." },
+        { "key": "proxy objects", "value": "three of them", "note": "The d3d11.dll proxy wraps three objects: the device, the context and the swap chain, each a Wrapped class in the proxy source." },
+        { "key": "shader files", "value": "85 on disk", "note": "The Shaders directory holds 85 HLSL files loaded from disk at run time, with F12 hot-reload and no shader strings embedded in the binary." },
+        { "key": "shared include", "value": "one of them", "note": "One shared HLSL include, SharedRAW.hlsli, carries the common utilities every shader pulls in through the standard include handler." },
+        { "key": "language standard", "value": "C++23", "note": "The CMake project sets the C++ standard to 23 for every target it builds, on the shaders-from-disk proxy and the SKSE plugin alike." },
+        { "key": "license", "value": "AGPL-3.0", "note": "The vcpkg manifest declares the license as AGPL-3.0-or-later, matching the README badge and the copyright line, with commercial licensing available." },
+        { "key": "measured frame time", "value": "none in the tree", "note": "The engine can capture per-pass timings to CSV with F10, but no such capture is committed here, so no measured frame time is published.", "tone": "drift" }
+      ]
+    }
+  ]
+}

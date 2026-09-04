@@ -2,3 +2,9 @@
 *.docx binary
 *.png binary
 *.bmp binary
+
+# The README card is rendered from a spec and byte-compared against the
+# committed SVG, so both the drawing and its spec must stay LF whatever the
+# global rule above becomes.
+docs/art/*.svg text eol=lf
+docs/art/*.json text eol=lf

@@ -1,0 +1,24 @@
+name: art
+
+# The README card is rendered from a spec and describes the engine by number.
+# Two ways it can rot: the drawing drifts from its spec, or the numbers drift
+# from the code they claim to read. One job guards both. No path filter, since
+# the facts gate reads the source enums, the README tables and the build
+# manifest, so a change anywhere in those can invalidate a count.
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  card:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: the drawing matches its spec, byte for byte
+        run: python tools/art/check_repo_art.py
+      - name: the numbers are true of the code
+        run: python tools/art/check_repo_facts.py

@@ -36,6 +36,10 @@ witnessed, checkable observations.
 > **Not affiliated with or endorsed by Bethesda Softworks or ENBSeries.** For use with a legally-owned
 > copy of the base game. Provided as-is, without warranty.
 
+<p align="center">
+  <img src="docs/art/raw-facts.svg" alt="A table of thirteen rows: what the engine declares, how many of each there are, and where the number is read from. The render-phase enum names nine phases, and the proxy classifies each frame across them. The weather system carries nine categories that modulate effect intensity. Six effects are active, and of those six one is verified in-game today while the rest are still being tuned. Three post-processing stages are in the build. The debug tonemapper list holds seven real tone curves alongside a linear passthrough. Seventeen renderers are kept in source but removed from the build. The d3d11 proxy wraps three objects: the device, the context and the swap chain. The shader directory holds eighty-five HLSL files loaded from disk, plus one shared include. Every target builds to the C++23 standard, and the license is AGPL-3.0. The marked row is the honest null: the engine can capture per-pass frame time to CSV, but no such capture is committed here, so no measured frame time is published.">
+</p>
+
 ## Active Effects
 
 | Effect | Algorithm | Status |

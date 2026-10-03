@@ -2,6 +2,13 @@
   <img src=".github/assets/banner.png" alt="Raw: Native Rendering Research Engine">
 </p>
 
+> **Archived history.** This repository holds the original RAW: a Direct3D 11 effects platform for
+> Skyrim SE. Active work moved to [raw-native](https://github.com/HarperZ9/raw-native), a
+> dependency-free C++23 CPU renderer that checks fast screen-space ambient occlusion against a
+> ray-traced reference and writes a certificate with the verdict. Download it from the
+> [raw-native releases](https://github.com/HarperZ9/raw-native/releases). The Skyrim code below stays
+> public as a record and is no longer developed.
+
 # RAW — Rendering Advancement Workshop
 
 [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE.md)

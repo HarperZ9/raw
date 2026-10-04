@@ -1,22 +1,24 @@
-<p align="center">
-  <img src=".github/assets/banner.png" alt="Raw: Native Rendering Research Engine">
-</p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/HarperZ9/raw/master/docs/art/hero-dark.svg">
+  <img src="https://raw.githubusercontent.com/HarperZ9/raw/master/docs/art/hero-light.svg" alt="raw: D3D11 rendering platform for Skyrim SE with mid-frame effect dispatch. Parallel rays pass through a lens drawn in fine lines, gather at a bright core and spread out past it." width="100%">
+</picture>
+
+# raw
+
+D3D11 rendering platform for Skyrim SE with mid-frame effect dispatch.
+
+```
+cmake -B build -S . -DVCPKG_TARGET_TRIPLET=x64-windows-static
+```
+
+[![license](https://img.shields.io/badge/license-AGPL--3.0-e6e1d6?style=flat-square&labelColor=1a1712)](https://github.com/HarperZ9/raw/blob/master/LICENSE)
+![C++23](https://img.shields.io/badge/language-C%2B%2B23-e6e1d6?style=flat-square&labelColor=1a1712)
 
 > **Paused.** This repository holds the original RAW, a Direct3D 11 effects platform for Skyrim SE.
 > Work on it is paused, and the author plans to return to it. The new standalone renderer is
 > [raw-native](https://github.com/HarperZ9/raw-native), a dependency-free C++23 renderer that checks
 > fast screen-space ambient occlusion against a ray-traced reference and writes a certificate with
 > the verdict. Download it from the [raw-native releases](https://github.com/HarperZ9/raw-native/releases).
-
-# RAW — Rendering Advancement Workshop
-
-[![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE.md)
-![C++](https://img.shields.io/badge/C%2B%2B-23-00599C.svg)
-![HLSL](https://img.shields.io/badge/shaders-HLSL-5C2D91.svg)
-![version](https://img.shields.io/badge/version-1.0.0-informational.svg)
-![rendering research](https://img.shields.io/badge/domain-rendering%20research-2A6F97.svg)
-
-> A D3D11 rendering platform for Skyrim SE — proxy-based pipeline ownership with mid-frame effect dispatch via SKSE plugin.
 
 Copyright (c) 2026 Zain D. Harper (papacr0w). AGPL-3.0-or-later — see `LICENSE`; commercial licensing available.
 

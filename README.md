@@ -20,7 +20,7 @@ cmake -B build -S . -DVCPKG_TARGET_TRIPLET=x64-windows-static
 > fast screen-space ambient occlusion against a ray-traced reference and writes a certificate with
 > the verdict. Download it from the [raw-native releases](https://github.com/HarperZ9/raw-native/releases).
 
-Copyright (c) 2026 Zain D. Harper (papacr0w). AGPL-3.0-or-later — see `LICENSE`; commercial licensing available.
+Copyright (c) 2026 Zain D. Harper (papacr0w). AGPL-3.0-or-later, see `LICENSE`; commercial licensing available.
 
 A D3D11 rendering platform for Skyrim SE. Proxy-based pipeline ownership
 with mid-frame effect dispatch via SKSE plugin.
@@ -29,15 +29,15 @@ with mid-frame effect dispatch via SKSE plugin.
 
 ## What this is becoming
 
-RAW is the seed of a **native, dependency-free rendering engine + algorithm simulator** — a two-way
+RAW is the seed of a **native, dependency-free rendering engine + algorithm simulator**: a two-way
 surface where a model and a person *see the same rendered frame and cross-examine it in real time*: the
 verification target (*is this right?*) and the creative-improvement target (*make this better*) as one
-loop. It is meant to feed gallery tools and serve as a reusable resource library — a showcase that this
+loop. It is meant to feed gallery tools and serve as a reusable resource library, a showcase that this
 work has value in any creative or technical workflow.
 
 **Honest scope:** today RAW is a D3D11 proxy for Skyrim SE with the rendering effects below. The
 real-time two-way cross-examination and the dependency-free native renderer (no DirectX/driver) are the
-**telos** — stated as direction, not as shipped. Part of an AI-accountability toolkit
+**telos**, stated as direction, not as shipped. Part of an AI-accountability toolkit
 ([HarperZ9](https://github.com/HarperZ9)): the rendering eye (`eye.raw_rendering`) turns frames into
 witnessed, checkable observations.
 
@@ -69,14 +69,14 @@ witnessed, checkable observations.
 
 ## Architecture
 
-- **RendererBase** — shared base class for all renderers (state, init, enable)
-- **SharedRAW.hlsli** — common HLSL utilities (`#include` enabled via `D3D_COMPILE_STANDARD_FILE_INCLUDE`)
-- **d3d11.dll proxy** — wraps Device, Context, SwapChain
-- **Phase detection** — DSV-unbind heuristic classifies 9 render phases
-- **Mid-frame dispatch** — effects run at PostGeometry; PrePresent fallback for legacy mode
-- **HiZ pyramid** — standard-to-reversed-Z depth with mip chain
-- **External HLSL only** — no embedded shader strings; all shaders loaded from disk, F12 hot-reload
-- **Weather system** — 9 categories, auto-modulates effect intensities
+- **RendererBase**: shared base class for all renderers (state, init, enable)
+- **SharedRAW.hlsli**: common HLSL utilities (`#include` enabled via `D3D_COMPILE_STANDARD_FILE_INCLUDE`)
+- **d3d11.dll proxy**: wraps Device, Context, SwapChain
+- **Phase detection**: DSV-unbind heuristic classifies 9 render phases
+- **Mid-frame dispatch**: effects run at PostGeometry; PrePresent fallback for legacy mode
+- **HiZ pyramid**: standard-to-reversed-Z depth with mip chain
+- **External HLSL only**: no embedded shader strings; all shaders loaded from disk, F12 hot-reload
+- **Weather system**: 9 categories, auto-modulates effect intensities
 
 ## Disabled (source preserved, removed from build)
 
@@ -124,7 +124,7 @@ F5 dumps BMP files you can inspect at full resolution in any image viewer.
 ## Build
 
 ```bash
-cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
 cmake --build build --config Release --target RAW --parallel
 cmake --build build --config Release --target d3d11_proxy --parallel
 ```
@@ -155,8 +155,8 @@ Requires: VS2022, CMake 3.24+, vcpkg (x64-windows-static), CommonLibSSE-NG.
 
 ## Documentation
 
-- `ARCHITECTURE.md` — depth conventions, SRV slots, pipeline rules
-- `LICENSE.md` — copyright and third-party licenses
+- `ARCHITECTURE.md`: depth conventions, SRV slots, pipeline rules
+- `LICENSE.md`: copyright and third-party licenses
 
 ---
 

@@ -30,7 +30,7 @@ Each generation kept the idea and discarded the scaffolding:
 
 ## Generation 1 -- APEX (prototype)
 
-- **Location:** `C:\Users\Zain\APEX` (kept as archive; not part of RAW's build).
+- **Location:** a private folder, `APEX` (kept as archive; not part of RAW's build).
 - **Identity:** Standalone D3D11 post-processing injector for Bethesda games. A proxy
   `d3d11.dll` that forwards the real system DLL, VTable-hooks `IDXGISwapChain::Present`
   plus context methods, captures the final frame, and runs an ordered post-process stack
@@ -48,7 +48,7 @@ Each generation kept the idea and discarded the scaffolding:
 
 ## Generation 2 -- Skyrim-Bridge (the SKSE generation)
 
-- **Location:** `C:\Users\Zain\SKSE\PlaygroundOldSources` (Skyrim-Bridge v1-v3).
+- **Location:** a private folder, `SKSE/PlaygroundOldSources` (Skyrim-Bridge v1-v3).
 - **Identity:** An SKSE64 plugin that ran alongside ENB. It extracted ~70 float4
   engine-state parameters per frame (celestial, atmosphere, fog, weather, camera,
   player, interior, shadow) across ~10 tracker subsystems and pushed them into ENB
@@ -82,7 +82,7 @@ Each generation kept the idea and discarded the scaffolding:
 
 ## Generation 4 -- Playground (direct parent)
 
-- **Location:** `C:\Users\Zain\SKSE\Playground` (RAW lives at `Playground\RAW\`).
+- **Location:** a private folder, `SKSE/Playground` (RAW lives at `Playground/RAW/`).
 - **Identity:** The pivot from guest to host. A d3d11 proxy + SKSE plugin that owns the
   whole frame: 9-phase render detection, mid-frame dispatch, HiZ depth, a fixed SRV slot
   map, compute infrastructure, and ~11-22 renderers. Replaces ENB and Community Shaders

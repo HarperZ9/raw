@@ -15,10 +15,12 @@ cmake -B build -S . -DVCPKG_TARGET_TRIPLET=x64-windows-static
 ![C++23](https://img.shields.io/badge/language-C%2B%2B23-e6e1d6?style=flat-square&labelColor=1a1712)
 
 > **Paused.** This repository holds the original RAW, a Direct3D 11 effects platform for Skyrim SE.
-> Work on it is paused, and the author plans to return to it. The new standalone renderer is
-> [raw-native](https://github.com/HarperZ9/raw-native), a dependency-free C++23 renderer that checks
-> fast screen-space ambient occlusion against a ray-traced reference and writes a certificate with
-> the verdict. Download it from the [raw-native releases](https://github.com/HarperZ9/raw-native/releases).
+> Work on it is paused, and the author plans to return to it. The standalone renderer that followed
+> it is a dependency-free C++23 renderer that checks fast screen-space ambient occlusion against a
+> ray-traced reference and writes a certificate with the verdict. It now lives in
+> [superframe](https://github.com/HarperZ9/superframe) under
+> [`native/`](https://github.com/HarperZ9/superframe/tree/main/native). Builds up to v0.8.0 are on
+> the [raw-native releases](https://github.com/HarperZ9/raw-native/releases) page.
 
 Copyright (c) 2026 Zain D. Harper (papacr0w). AGPL-3.0-or-later, see `LICENSE`; commercial licensing available.
 

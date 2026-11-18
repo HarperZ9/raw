@@ -1,0 +1,41 @@
+# The engine's lighting against the game's own: Riverwood by day, the Bannered Mare, a camera move
+# and Riverwood at night, from the saved state (no Survival Mode prompt). The hour and the weather
+# are set before each cell load, so the load applies them at once (set after it, the sun eases
+# toward the new hour over a minute). Then 'tfc 1' gives a free camera with the world's clock
+# stopped, so the steps of a keyframe (game, ours matched, controls, each improvement) see the
+# same frame.
+start load rawharness
+scene riverwood_day
+console set gamehour to 13
+console fw 81a
+console coc riverwood
+wait load
+console fw 81a
+wait 4
+console tfc 1
+wait 2
+keyframe still steps=all hold=40
+mouse 900 0
+wait 2
+keyframe turned steps=game,match,improved hold=40
+walk w 4 keyframe=moving steps=game,match,improved hold=20
+console tfc
+scene bannered_mare
+console coc whiterunbanneredmare
+wait load
+wait 4
+console tfc 1
+wait 2
+keyframe still steps=all hold=40
+console tfc
+scene riverwood_night
+console set gamehour to 23
+console coc riverwood
+wait load
+console fw 81a
+wait 4
+console tfc 1
+wait 2
+keyframe still steps=all hold=40
+minimise 8
+quit

@@ -112,6 +112,21 @@ are under dE 2 in a Riverwood dump (`tools/lighting/diag.py`). The rest of the d
 foliage (the soft-lighting texture), in our 3 x 3 filter on the cascades against the game's mask,
 and indoors where the game's per-object light lists leave a light off an object we light.
 
+**Rerun after the harness fixes (2026-11-18, later), both resolutions complete, quit by `qqq`:**
+
+| Scene | 2160p dE76 | 1080p dE76 |
+|---|---|---|
+| Bannered Mare, by the fire | 2.95 | 3.21 |
+| Riverwood 23:00 | 2.86 | 2.93 |
+| Riverwood 13:00 | 2.54 | 2.56 |
+| Riverwood, turned | 2.80 | 2.99 |
+| Riverwood, walking | 2.52 | 2.80 |
+
+The match statistics compare buffers at the end of the opaque pass, so the composite switch below
+does not move them; it shows in the final frames. Full-size before-and-after pairs per improvement:
+`ingame-lighting-2026-11-18-<scene>-<improvement>-before-after-1to1-2160.jpg` in the plan folder.
+In them "before" carries the game's AO and fog and "after" ours in their place.
+
 Controls in every scene: `match_game_mask` uses the game's own sun mask instead of our cascade
 lookup (the share of the difference our shadow filtering causes); `control_half_viewport` draws
 only the top-left quarter and must fail the coverage check, and does.
@@ -119,6 +134,17 @@ only the top-left quarter and must fail the coverage check, and does.
 **Coverage check.** For every lit step the pass must change the output in all four quadrants,
 each at least half as often as the busiest. Every lit step passed; the half-viewport control
 failed in every scene.
+
+## Ours replaces the game's
+
+After the opaque pass the game draws one full-screen composite into its HDR colour (pixel shader
+with an 11-vector buffer 2, read from its disassembly): the scene copy plus reflections, times its
+AO texture (t1), then its distance fog, `lerp(colour, fog colour, f)` with
+`f = min(pow(saturate(z c0.y - c0.x), c0.z), c0.w)`. With `Ao` on in mode 2 the proxy binds a white
+texture at t1 for that one draw; with `VolumetricFog` on it binds a copy of buffer 2 with
+`c0.w = 0`. The game's own bindings go back right after the draw (`src/d3d11_proxy/GameComposite.cpp`).
+The game's reflections and its volumetric light shafts stay. Matched mode leaves the composite as
+the game drew it.
 
 ## Improvements, each behind its own switch
 
@@ -171,12 +197,21 @@ GPU timestamps on the D3D12 queue, mean over the frames of each step, RTX 4090, 
 | bridge (copies and the fence round trip) | 0.68 ms | 0.89 ms | 0.76 to 2.7 ms |
 
 At 1080p: matched 0.07 ms, improved 0.43 ms in Riverwood. The bridge's cost is mostly the fence
-round trip on the D3D11 queue; indoors it reached 2.7 ms in some steps, cause not found.
+round trip on the D3D11 queue; indoors it reached 2.7 ms in some steps.
+
+**The indoor fence cost, what was tested.** In the inn the D3D11 queue sits idle 2.8 to 6.3 ms at
+the hand-over while our pass takes 0.4 to 2.2 ms: 2.4 to 4.1 ms of "fence sync", against 0.33 to
+0.56 ms outdoors. First hypothesis: the GPU reaches the hand-over before the CPU has submitted the
+D3D12 list, so it waits on the CPU. The bridge now logs, every 300 frames, whether the copy-in had
+already executed on the GPU at the moment of submit, and the CPU time from the D3D11 flush to the
+submit. Result: 0 or 1 of 300 frames indoors and out, and 50 to 66 microseconds. Rejected. The
+extra time is on the GPU side, between the D3D11 signal and the end of the D3D12 list. Not found
+yet; the next measurement places the D3D12 list's start on a common clock with the D3D11
+timestamps (`ID3D12CommandQueue::GetClockCalibration` against QPC samples taken beside D3D11
+timestamp queries).
 
 ## Limits
 
-- The game's own AO and fog still run after the pass. With `Ao` and `VolumetricFog` on, ambient
-  occlusion and haze are applied twice.
 - Foliage's soft-lighting texture, the specular colour per pixel, glow maps and emissive light are
   not in the G-buffer (the emissive target was empty in every scene).
 - First-person models keep the game's lighting: their normals do not exist in the pixel shader.

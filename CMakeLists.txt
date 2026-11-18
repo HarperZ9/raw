@@ -390,7 +390,7 @@ add_custom_command(
     VERBATIM)
 target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/BridgeLighting.cpp src/d3d12_bridge/LightClusters.cpp
     ${RAW_BRIDGE_GEN}/ShadowAtlas_CS.h)
-target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/SceneLights.cpp)
+target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/SceneLights.cpp src/d3d11_proxy/GameComposite.cpp)
 if(RAW_ENGINE_DIR)
     set(RAW_LIGHT_HLSL ${RAW_SHARE_HLSL}/Lighting.hlsl)
     set(RAW_LIGHTFOG_HLSL ${RAW_SHARE_HLSL}/LightFog.hlsl)

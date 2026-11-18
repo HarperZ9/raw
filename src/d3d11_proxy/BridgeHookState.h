@@ -55,6 +55,8 @@ bool LightingAtOpaque(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr);
 void LightingOnPresent(bool worldFrame);
 // LightingSchedule.cpp: the steps of a capture set and the frames that run them.
 void LightingMakeSteps();
+// The current [Lighting] tuning to the pass, and the game's AO and fog off where ours replace them.
+void LightingApplyTuning();
 void LightingScheduleOnPresent(bool worldFrame);
 // BridgeHookLightingStats.cpp.
 void LightingLogGeometry(IDXGISwapChain* sc, const D3D11_TEXTURE2D_DESC& backbuffer);

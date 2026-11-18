@@ -101,6 +101,10 @@ struct D3D12Bridge::Impl
     uint64_t lastWaited = 0;      // last value the D3D12 queue waits for
     uint64_t skew       = 0;
     uint64_t frames     = 0;      // Execute calls that submitted
+    // The hand-over cost: how often the D3D11 queue had already executed the copy-in when the CPU
+    // submitted the D3D12 list (the GPU then waits on the CPU), and the CPU time from Flush to submit.
+    uint32_t caughtUp = 0, handOvers = 0;
+    double   flushToSubmitUs = 0;
 
     bool CreateDevice12(ID3D11Device* dev);
     bool CreateShared(SharedTex& t, DXGI_FORMAT fmt, D3D12_RESOURCE_FLAGS flags,

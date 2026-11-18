@@ -21,7 +21,8 @@ from pathlib import Path
 
 DOCS = Path(os.path.expanduser("~")) / "Documents" / "My Games" / "Skyrim Special Edition"
 SETTINGS = ("SkyrimCustom.ini", "SkyrimPrefs.ini")
-PROXY_FILES = ("d3d11_proxy.ini", "d3d11_proxy.log", "raw_harness_go.txt", "raw_harness_done.txt", "raw_harness_status.txt")
+PROXY_FILES = ("d3d11_proxy.ini", "d3d11_proxy.log", "raw_harness_go.txt", "raw_harness_done.txt", "raw_harness_status.txt",
+               "rawbat.txt")
 
 
 def sha(p: Path) -> str:
@@ -222,10 +223,25 @@ def mouse_click() -> None:
         time.sleep(0.12)
 
 
+# Commands after which the game closes the console itself: a cell load ('coc') does, and so does
+# entering the free camera ('tfc 1'); leaving it ('tfc') does not. A close key typed after them
+# was processed after the load and opened the console again, so every later command went into
+# the world as key presses (the inventory and the map opened, the next coc never ran). Seen in
+# eight harness runs, found from screenshots of the missed cell changes.
+CLOSES_CONSOLE = ("tfc 1", "qqq")
+CLOSES_CONSOLE_FIRST_WORD = ("coc", "qqq")
+
+
 def console(line: str) -> None:
-    type_text("`"); time.sleep(0.6)
-    type_text(line + "\n"); time.sleep(0.5)
-    type_text("`"); time.sleep(0.4)
+    # Slow on purpose: a toggle key lost while the game hitches (right after a cell load) leaves the
+    # console in the other state, and the next command goes into the world as key presses.
+    time.sleep(1.0)
+    type_text("`", 0.12); time.sleep(1.0)
+    type_text(line + "\n", 0.08); time.sleep(0.8)
+    words = line.lower().split()
+    if " ".join(words) not in CLOSES_CONSOLE and (not words or words[0] not in CLOSES_CONSOLE_FIRST_WORD):
+        type_text("`", 0.12)
+    time.sleep(1.0)
 
 
 def status(game: Path) -> dict:

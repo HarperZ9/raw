@@ -14,6 +14,7 @@
 #include "ProxyAPI.h"
 #include "ProxyLog.h"
 #include "SceneLights.h"
+#include "GameComposite.h"
 
 #include <algorithm>
 #include <cmath>
@@ -32,9 +33,15 @@ namespace
 {
 int s_failures = 0;
 UINT s_shadowSide = 4096;
-void Tune() { if (Bridge()) raw::bridge::LightingPassTune(Bridge()->ActivePass(), Cfg().light); }
 
 } // namespace
+
+void LightingApplyTuning()
+{
+    const LightingTuning& t = Cfg().light;
+    if (Bridge()) raw::bridge::LightingPassTune(Bridge()->ActivePass(), t);
+    GameComposite_Set({t.mode == 2 && t.ao, t.mode == 2 && t.volumetricFog});
+}
 
 void LoadLightingConfig(const std::string& ini)
 {
@@ -97,7 +104,7 @@ bool LightingEnsure()
     c.lightingPass = true;
     c.shadowMapSize = s_shadowSide;
     if (!b->Initialize(pi->device, pi->context, c, &Log)) { ++s_failures; return false; }
-    Tune();
+    LightingApplyTuning();
     return true;
 }
 
@@ -122,7 +129,7 @@ void LightingOnPresent(bool worldFrame)
 {
     if (GetAsyncKeyState(VK_F10) & 1) {
         Cfg().light.mode = (Cfg().light.mode + 1) % 3;
-        if (Bridge()) raw::bridge::LightingPassTune(Bridge()->ActivePass(), Cfg().light);
+        LightingApplyTuning();
         Log("[Lighting] F10: mode %d", Cfg().light.mode);
     }
     LightingScheduleOnPresent(worldFrame);

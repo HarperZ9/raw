@@ -12,7 +12,7 @@ python tools/harness/run.py lighting --game <Skyrim folder> --enb-backup <ENB ba
 | Phase | What happens |
 |---|---|
 | Before | The ENB backup and the game folder are checked file by file against `SHA256SUMS`; `SkyrimCustom.ini` and `SkyrimPrefs.ini` must equal their backups (made on first use). Any mismatch stops the run before anything is copied. |
-| Deploy | The proxy `d3d11.dll` and a harness ini (`[Lighting] Harness=1`); the resolution (`iSize W/H`), tutorials off and `bAlwaysActive=1` in the settings files. |
+| Deploy | The proxy `d3d11.dll` and a harness ini (`[Lighting] Harness=1`). For the run only: `SkyrimPrefs.ini` `[Display] iSize W`, `iSize H` (the test's resolution) and `[Interface] bShowTutorials=0`; `SkyrimCustom.ini` `[General] bAlwaysActive=1`. All three come back from the backups after the run, checked by hash. |
 | Run | The game starts through SKSE; the script runs line by line. |
 | Quit | `qqq` in the console; `taskkill` only if the game is still up 60 s later (`quit_cleanly` in the report says which). |
 | After | The proxy log and every capture are collected, captures become PNG, ENB is restored with `restore-enb.cmd`, the settings files are copied back, and every hash is checked again. |
@@ -23,9 +23,12 @@ python tools/harness/run.py lighting --game <Skyrim folder> --enb-backup <ENB ba
 A new game started from the main menu (`coc` from the menu) shows the Survival Mode message box,
 and the earlier session scripts answered it with key presses that the box ignored. What works:
 
-1. Run the game at the display's own resolution. The game's `iSize W/H` was 3840 x 2160 on a
-   1920 x 1080 display mode, so the borderless window showed only its top-left quarter and the
-   box's buttons were off screen. The frame itself was whole in every capture.
+1. Run the game at the display's own resolution. The finding behind the quarter screen: the game
+   was set to 3840 x 2160 (`iSize W/H` in `SkyrimPrefs.ini`) while Windows ran the display at
+   1920 x 1080. Nothing in RAW changes either setting for good: the harness sets `iSize` for the
+   length of a run and restores the file afterwards, and never touches the display mode. On that
+   display the borderless 4K window showed only its top-left quarter and the box's buttons were off
+   screen. The frame itself was whole in every capture.
 2. The box ignores the arrow keys and Enter sent as scan codes, and its cursor ignores absolute
    mouse positions. It follows relative mouse motion: from where it starts, (0.494, 0.516) of the
    frame, a move of (0.037 w / 1.92, 0.244 h / 1.54) lands on **No** (gains measured in game at
@@ -51,6 +54,25 @@ install changes.
 | `walk <key> <seconds> keyframe=<name> ...` | holds a key; with a keyframe the capture runs while the camera moves |
 | `minimise <seconds>` | minimises the window and records how many frames the game presented meanwhile |
 | `quit` | |
+
+**The console's own closes.** A cell load (`coc`) and entering the free camera (`tfc 1`) close the
+console by themselves. The earlier runner typed its close key after them anyway; the key landed
+after the load and opened the console again, so the next commands went into the world as key
+presses (screenshots showed the inventory and the map open, and the next `coc` never ran). The
+runner now skips the close key after those commands. Leaving the free camera (`tfc`) did not
+close the console reliably, so the lighting test no longer uses the free camera; the steps of a
+keyframe follow each other frame by frame with NPC AI off (`tai`).
+
+**A cell change must show.** After a `coc` the runner needs the proxy's heartbeat to report a
+loading screen (10 or more presents without the world) or a change of the cell's decoded lighting
+(a cell still in memory loads without a loading screen). It types the `coc` once more, then stops
+the run with the reason and a screenshot of what the screen showed.
+
+**Quitting.** `qqq`, again `qqq`, then `WM_CLOSE`, 20 s each; `taskkill` only after that. The report
+names the step that ended the game (`quit_by`).
+
+**`bat` files.** The runner can write several console lines to a file and run them with `bat`.
+With a `coc` among them the game stopped presenting in two runs, so no test uses it.
 
 Input goes through `SendInput`, which needs the game window in the foreground. Every key checks
 that it is; a key never goes to another window, and a step that cannot type stops the run with

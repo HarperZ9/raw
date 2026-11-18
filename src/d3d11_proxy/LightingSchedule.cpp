@@ -5,6 +5,7 @@
 // Original work, MIT.
 #include "BridgeHookState.h"
 #include "ProxyLog.h"
+#include "SceneLights.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -96,7 +97,7 @@ void HarnessResult(const Step& st, const std::string& stats)
     fclose(f);
 }
 
-void Tune() { if (Bridge()) raw::bridge::LightingPassTune(Bridge()->ActivePass(), Cfg().light); }
+void Tune() { LightingApplyTuning(); }
 
 void TimingSample()
 {
@@ -138,12 +139,22 @@ void LightingScheduleOnPresent(bool worldFrame)
     if (Cfg().harness) {
         // A heartbeat for the harness: presents and world frames, every 30 presents. It tells the
         // harness whether the game still renders (minimised, behind other windows).
-        static uint64_t presents = 0, world = 0;
+        // loads: how many times the world came back after 10 or more presents without it (a
+        // loading screen), so the harness can tell that a cell change happened.
+        static uint64_t presents = 0, world = 0, loads = 0, gap = 0;
         ++presents; world += worldFrame;
+        if (!worldFrame) ++gap;
+        else { if (gap >= 10) ++loads; gap = 0; }
         if (presents % 30 == 0) {
             FILE* f = nullptr;
             if (fopen_s(&f, GameFile("raw_harness_status.txt").c_str(), "w") == 0 && f) {
-                fprintf(f, "presents=%llu world=%llu active=%d\n", (unsigned long long)presents, (unsigned long long)world, s_req.active ? 1 : 0);
+                // cell: a signature of the decoded cell lighting (sun shadows or not, ambient). A coc into
+                // a cell still in memory shows no loading screen; the signature still changes.
+                const raw::bridge::SceneLighting& l = SceneLights_Frame();
+                const long long cell = (l.hasCascades ? 1000000000LL : 0) + (long long)(l.ambient[0][3] * 1000.0f) * 10000 +
+                                       (long long)(l.ambient[2][3] * 1000.0f) * 10 + (l.hasSun ? 1 : 0);
+                fprintf(f, "presents=%llu world=%llu loads=%llu cell=%lld active=%d\n", (unsigned long long)presents,
+                        (unsigned long long)world, (unsigned long long)loads, cell, s_req.active ? 1 : 0);
                 fclose(f);
             }
         }

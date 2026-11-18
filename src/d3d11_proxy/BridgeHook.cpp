@@ -38,6 +38,7 @@
 #include "ProxyLog.h"
 #include "RenderPhaseDetector.h"
 #include "SceneLights.h"
+#include "GameComposite.h"
 #include <cstdlib>
 #include <cstring>
 
@@ -244,6 +245,7 @@ void BridgeHook_OnTargets(ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetV
             s_f.normalTex = rt[2];
             s_f.motionTex = rt[1];
             s_f.sceneTex = rt[0];
+            if (Cfg().lighting) GameComposite_SetScene(rt[0]);
             s_f.depthTex = ResourceOf(dsv);
         }
     }

@@ -34,6 +34,7 @@ import time
 from pathlib import Path
 
 import game as G
+from actions import Actions
 
 HERE = Path(__file__).resolve().parent
 ALL_STEPS = ("game,match,match_game_mask,control_half_viewport,improved_base,improved_soft,improved_ggx,improved_fog,"
@@ -56,7 +57,7 @@ Hold=40
 """
 
 
-class Runner:
+class Runner(Actions):
     def __init__(self, a: argparse.Namespace):
         self.a = a
         self.inst = G.Install(Path(a.game), Path(a.enb_backup), Path(a.settings_backup))
@@ -74,8 +75,9 @@ class Runner:
     def world(self) -> int:
         return G.status(self.inst.game).get("world", 0)
 
-    def wait_load(self, timeout: float = 120) -> None:
-        """A cell load: world frames stop (the loading screen), then 300 more are drawn."""
+    def wait_load(self, timeout: float = 120) -> bool:
+        """A cell load: world frames stop (the loading screen), then 300 more are drawn. True when
+        the loading screen was seen."""
         start = time.time()
         last, still = self.world(), 0.0
         # A load into the cell the player already stands in draws on without a loading screen:
@@ -88,7 +90,37 @@ class Runner:
         base = self.world()
         while time.time() - start < timeout and self.world() < base + 300:
             time.sleep(0.5)
-        self.log(f"cell up after {time.time() - start:.0f} s (world frames {self.world()})")
+        seen = still >= 1.5
+        self.log(f"cell up after {time.time() - start:.0f} s (world frames {self.world()}, loading screen {'seen' if seen else 'not seen'})")
+        return seen
+
+    def bat(self, lines: list[str]) -> None:
+        """Several console commands from one console line: they go into a file beside the game and
+        'bat' runs them in order. One open and one close of the console, so a lost toggle cannot
+        leave later commands typed into the world. With a coc among them, a loading screen must follow."""
+        lines = [l.strip() for l in lines if l.strip()]
+        (self.inst.game / "rawbat.txt").write_text("\n".join(lines) + "\n")
+        if any(l.lower().startswith("coc ") for l in lines):
+            self.change_cell("bat rawbat")
+        else:
+            G.console("bat rawbat")
+            self.log(f"bat: {' | '.join(lines)}")
+
+    def change_cell(self, line: str) -> None:
+        """A coc, typed once more if no loading screen follows; a second miss stops the run, so a
+        capture never measures the cell before."""
+        for attempt in (1, 2):
+            before = G.status(self.inst.game)
+            G.console(line)
+            self.log(f"console: {line} (attempt {attempt})")
+            self.wait_load()
+            after = G.status(self.inst.game)
+            # A loading screen, or the cell's decoded lighting changed (a cell still in memory loads
+            # with no loading screen).
+            if after.get("loads", 0) > before.get("loads", 0) or after.get("cell") != before.get("cell"):
+                return
+            self.shot(f"cell_change_missed_{self.scene}_{attempt}")   # what the screen showed instead
+        raise RuntimeError(f"the cell change did not take: {line}")
 
     def wait_menu(self, timeout: float = 150) -> None:
         """The main menu: the game has been presenting for a while and the window takes input."""
@@ -117,72 +149,6 @@ class Runner:
         self.log(f"keyframe {self.scene}/{name}: {answer} after {time.time() - start:.0f} s")
         self.report["keyframes"].append({"scene": self.scene, "keyframe": name, "answer": answer})
 
-    def prepare(self, save: str) -> None:
-        """New game state has the Survival Mode message box up. At a resolution the screen can
-        show, the keyboard moves to No and Enter accepts it; a click on No follows in case the
-        box ignored the keys. Then the state is saved for 'start load'."""
-        time.sleep(8)
-        G.focus()
-        self.shot("prepare_1_prompt")
-        # The message box cursor starts near the centre, at (0.494, 0.516) of the frame, and follows
-        # relative mouse motion only, at a gain measured in game (1.92 across, 1.54 down at 1080p).
-        # No sits at (0.531, 0.760). A picture follows each move and each click.
-        w, h = (int(x) for x in self.a.resolution.split("x"))
-        for k in range(int(self.a.prompt_tries)):
-            G.mouse_move(int((0.531 - 0.494) * w / 1.92), int((0.760 - 0.516) * h / 1.54), steps=10)
-            time.sleep(0.5)
-            self.shot(f"prepare_2_moved_{k}")
-            G.mouse_click()
-            time.sleep(2)
-            self.shot(f"prepare_3_clicked_{k}")
-        G.console(f"save {save}")
-        time.sleep(6)
-        self.shot("prepare_4_saved")
-        self.log(f"typed save {save}")
-
-    def click(self, fx: float, fy: float) -> None:
-        h = G.window()
-        rect = G.wintypes.RECT()
-        G.u32.GetClientRect(h, G.ctypes.byref(rect))
-        pt = G.wintypes.POINT(int(rect.right * fx), int(rect.bottom * fy))
-        G.u32.ClientToScreen(h, G.ctypes.byref(pt))
-        sw, sh = G.u32.GetSystemMetrics(0), G.u32.GetSystemMetrics(1)
-        for flags in (0x8001, 0x0002, 0x0004):   # move (absolute), left down, left up
-            i = G.INPUT(type=0)
-            i.mi = G.MI(int(pt.x * 65535 / max(sw - 1, 1)), int(pt.y * 65535 / max(sh - 1, 1)), 0, flags, 0, None)
-            G.u32.SendInput(1, G.ctypes.byref(i), G.ctypes.sizeof(G.INPUT))
-            time.sleep(0.1)
-        self.log(f"clicked at {fx:.3f}, {fy:.3f} of the window")
-
-    def shot(self, name: str) -> None:
-        try:
-            from PIL import ImageGrab
-            im = ImageGrab.grab()
-            im.thumbnail((1600, 900))
-            im.save(self.out / f"desktop_{name}.png")
-        except Exception as e:   # a missing screenshot never stops a run
-            self.log(f"desktop screenshot failed: {e}")
-
-    def minimise(self, seconds: float) -> None:
-        w, hh = (int(x) for x in self.a.resolution.split("x"))
-        if w > G.u32.GetSystemMetrics(0) or hh > G.u32.GetSystemMetrics(1):
-            # A window larger than the display did not come back from a minimise (2160p on 1080p).
-            self.log("minimise skipped: the window is larger than the display")
-            self.report["minimised"] = {"skipped": "window larger than the display"}
-            return
-        h = G.window()
-        before = G.status(self.inst.game)
-        G.u32.ShowWindow(h, 6)   # SW_MINIMIZE
-        time.sleep(seconds)
-        after = G.status(self.inst.game)
-        G.u32.ShowWindow(h, 9)   # SW_RESTORE
-        time.sleep(2)
-        if not G.focus(20):
-            self.log("the window did not come back to the foreground after the minimise")
-        drew = after.get("presents", 0) - before.get("presents", 0)
-        self.report["minimised"] = {"seconds": seconds, "presents": drew, "world_frames": after.get("world", 0) - before.get("world", 0)}
-        self.log(f"minimised {seconds:.0f} s: {drew} presents")
-
     def command(self, words: list[str]) -> bool:
         op, args = words[0], words[1:]
         opts = dict(w.split("=", 1) for w in args if "=" in w)
@@ -198,6 +164,10 @@ class Runner:
             self.prepare(plain[0])
         elif op == "scene":
             self.scene = plain[0]
+        elif op == "bat":
+            self.bat(" ".join(args).split("|"))
+        elif op == "console" and args and args[0].lower() == "coc":
+            self.change_cell(" ".join(args))
         elif op == "console":
             G.console(" ".join(args))
             self.log(f"console: {' '.join(args)}")
@@ -247,13 +217,7 @@ class Runner:
                 line = line.split("#", 1)[0].strip()
                 if line and not self.command(shlex.split(line, posix=False)):
                     break
-            G.console("qqq")
-            self.log("typed qqq")
-            for _ in range(60):
-                if not G.running():
-                    break
-                time.sleep(1)
-            self.report["quit_cleanly"] = not G.running()
+            self.quit()
             ok = True
         except Exception as e:
             self.report["error"] = f"{type(e).__name__}: {e}"
@@ -276,6 +240,25 @@ class Runner:
             self.log(f"report: {self.out / 'report.json'}; ENB {self.report['install_after']['game_after']}, "
                      f"settings restored {self.report['install_after']['settings_restored']}")
         return 0 if ok else 1
+
+    def quit(self) -> None:
+        """qqq, typed twice if needed, then WM_CLOSE; taskkill in the finally block is the last resort.
+        The report names the step that ended the game."""
+        for how in ("qqq", "qqq again", "WM_CLOSE"):
+            try:
+                if how == "WM_CLOSE":
+                    G.u32.PostMessageW(G.window(), 0x0010, 0, 0)
+                else:
+                    G.console("qqq")
+            except RuntimeError as e:
+                self.log(f"quit by {how}: {e}")
+            for _ in range(20):
+                if not G.running():
+                    self.report["quit_cleanly"], self.report["quit_by"] = True, how
+                    self.log(f"the game quit by {how}")
+                    return
+                time.sleep(1)
+        self.report["quit_cleanly"], self.report["quit_by"] = False, "taskkill"
 
     def compact(self) -> None:
         """Captures as PNG; the BMPs go."""

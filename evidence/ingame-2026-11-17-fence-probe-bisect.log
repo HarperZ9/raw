@@ -1,0 +1,14 @@
+21:[FenceProbe] after device creation: tid=67824 dev=0000021EEBE44AA0 ctx(given)=0000021FE102D008 ctx(own)=0000021FE102D008 flags=0x0 fl=0xB000 QI Device5=0x00000000 Context4=0x00000000 driverCommandLists=1
+22:[FenceProbe] after device creation: local fence Signal=0x00000000 completed=1; shared fence Signal=0x00000000 completed=1
+32427:[FenceProbe] first Present: tid=6548 dev=0000021EEBE44AA0 ctx(given)=0000021FE102D008 ctx(own)=0000021FE102D008 flags=0x0 fl=0xB000 QI Device5=0x00000000 Context4=0x00000000 driverCommandLists=1
+32428:[FenceProbe] first Present: local fence Signal=0x00000000 completed=1; shared fence Signal=0x00000000 completed=1
+32430:[FenceProbe] bridge: before D3D12 device: tid=6548 dev=0000021EEBE44AA0 ctx(given)=0000021FE102D008 ctx(own)=0000021FE102D008 flags=0x0 fl=0xB000 QI Device5=0x00000000 Context4=0x00000000 driverCommandLists=1
+32431:[FenceProbe] bridge: before D3D12 device: local fence Signal=0x00000000 completed=1; shared fence Signal=0x00000000 completed=1
+32433:[FenceProbe] bridge: after D3D12 device: tid=6548 dev=0000021EEBE44AA0 ctx(given)=0000021FE102D008 ctx(own)=0000021FE102D008 flags=0x0 fl=0xB000 QI Device5=0x00000000 Context4=0x00000000 driverCommandLists=1
+32434:[FenceProbe] bridge: after D3D12 device: local fence Signal=0x00000000 completed=1; shared fence Signal=0x00000000 completed=1
+32435:[FenceProbe] bridge: after shared textures: tid=6548 dev=0000021EEBE44AA0 ctx(given)=0000021FE102D008 ctx(own)=0000021FE102D008 flags=0x0 fl=0xB000 QI Device5=0x00000000 Context4=0x00000000 driverCommandLists=1
+32436:[FenceProbe] bridge: after shared textures: local fence Signal=0x00000000 completed=1; shared fence Signal=0x00000000 completed=1
+32437:[FenceProbe] bridge: after views and queries: tid=6548 dev=0000021EEBE44AA0 ctx(given)=0000021FE102D008 ctx(own)=0000021FE102D008 flags=0x0 fl=0xB000 QI Device5=0x00000000 Context4=0x00000000 driverCommandLists=1
+32438:[FenceProbe] bridge: after views and queries: local fence Signal=0x00000000 completed=1; shared fence Signal=0x00000000 completed=1
+32442:[D3D12Bridge] self-test: D3D11 Signal 0x80070057, D3D11->fence NOT seen, D3D12 round trip FAILED
+32445:[D3D12Bridge] self-test: D3D11 Signal 0x80070057, D3D11->fence NOT seen, D3D12 round trip FAILED

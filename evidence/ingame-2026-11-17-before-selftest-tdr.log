@@ -1,0 +1,4 @@
+32425:[D3D12Bridge] heartbeat t=54374843ms frame 0: executed=0 (UI 0, Present 0), depth 0, fence D3D12=0 waited=0 completed=0 tid=52936
+32437:[D3D12Bridge] heartbeat t=54375000ms frame 1: executed=1 (UI 0, Present 1), depth 0, fence D3D12=2 waited=1 completed=0 tid=52936
+32447:[D3D12Bridge] heartbeat t=54375000ms frame 2: executed=2 (UI 0, Present 2), depth 0, fence D3D12=4 waited=3 completed=0 tid=52936
+32455:[D3D12Bridge] heartbeat t=54377015ms frame 3: executed=3 (UI 0, Present 3), depth 0, fence D3D12=6 waited=5 completed=0 tid=24348

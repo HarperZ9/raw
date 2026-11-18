@@ -1,0 +1,14 @@
+32424:[D3D12Bridge] config: enabled=1 mode=1 density=0.00012 near=15 far=353840 marker=1
+32426:[D3D12Bridge] D3D12 device on 'NVIDIA GeForce RTX 4090' (LUID 00000000:0000F27C, same adapter as D3D11)
+32427:[D3D12Bridge] ID3D11DeviceContext4::Signal at 00007FFA81DA9080 in nvwgf2umx.dll
+32428:[D3D12Bridge] ID3D11DeviceContext4::Wait at 00007FFA81DA9070 in nvwgf2umx.dll
+32429:[D3D12Bridge] device creation flags 0x0, feature level 0xB000
+32430:[D3D12Bridge] self-test: D3D11 Signal 0x80070057, D3D11->fence NOT seen, D3D12 round trip FAILED
+32431:[D3D12Bridge] fence created on D3D11 and opened on D3D12: 0x00000000
+32432:[D3D12Bridge] device creation flags 0x0, feature level 0xB000
+32433:[D3D12Bridge] self-test: D3D11 Signal 0x80070057, D3D11->fence NOT seen, D3D12 round trip FAILED
+32434:[D3D12Bridge] fence self-test failed; bridge stays off
+32445:[D3D12Bridge] D3D12 device on 'NVIDIA GeForce RTX 4090' (LUID 00000000:0000F27C, same adapter as D3D11)
+32446:[D3D12Bridge] ID3D11DeviceContext4::Signal at 00007FFA81DA9080 in nvwgf2umx.dll
+build-bridge/run5.log:32752:[D3D12Bridge] heartbeat t=54392046ms frame 300: executed=295 (UI 0, Present 299), depth 0, fence D3D12=590 waited=589 completed=18446744073709551615 tid=24348
+build-bridge/run5.log:32762:[D3D12Bridge] heartbeat t=54408500ms frame 3000: executed=2995 (UI 0, Present 2999), depth 0, fence D3D12=5990 waited=5989 completed=18446744073709551615 tid=24348

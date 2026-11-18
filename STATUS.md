@@ -121,3 +121,10 @@ until the core stack ships.
 RAW is an **infrastructure success with a validation deficit**: the concrete backend (interception,
 depth, dispatch, HiZ, dev-tooling) is genuinely built to a high bar, so the next month's entire return
 comes from validating and fixing the effects that already run on it — not from writing more.
+
+## 2026-11-17: D3D12 bridge, stage 1
+RAW's own D3D12 device beside the game's D3D11 device (`src/d3d12_bridge/`, hook in
+`src/d3d11_proxy/BridgeHook.cpp`). The offline round-trip test passes with its controls; the
+measured bridge cost offline is about 0.36 ms at 1080p and 0.38 ms at 2160p (median, GPU shared with
+another process). In game the pass runs: the main menu capture shows the markers and the depth haze, at a mean
+bridge cost of 0.42 to 1.36 ms per frame at 2160p. Details, measurements and the stage 2 list: `docs/D3D12_BRIDGE.md`.

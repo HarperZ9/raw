@@ -16,6 +16,7 @@
 #include "ProxyAPI.h"
 #include "ProxyLog.h"
 #include "DepthOwnership.h"
+#include "BridgeHook.h"
 #include <vector>
 
 namespace SB::Proxy
@@ -602,6 +603,7 @@ HRESULT STDMETHODCALLTYPE WrappedSwapChain::Present(UINT SyncInterval, UINT Flag
 
     if (ctx) ctx->Release();
 
+    BridgeHook_OnPresent();   // D3D12 bridge: fallback run + timing readback
     RenderPhaseDetector::Get().OnPresent();
     return m_real->Present(SyncInterval, Flags);
 }
@@ -792,6 +794,7 @@ HRESULT STDMETHODCALLTYPE WrappedSwapChain::Present1(UINT SyncInterval, UINT Pre
 
     if (ctx) ctx->Release();
 
+    BridgeHook_OnPresent();   // D3D12 bridge: fallback run + timing readback
     RenderPhaseDetector::Get().OnPresent();
     return m_real1->Present1(SyncInterval, PresentFlags, pPresentParameters);
 }

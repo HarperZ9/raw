@@ -15,6 +15,11 @@ project(
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# RAW_BUILD_PLUGIN=OFF builds only the d3d11 proxy, the D3D12 bridge and its
+# test, which need nothing beyond the Windows SDK.
+option(RAW_BUILD_PLUGIN "Build the SKSE plugin (needs CommonLibSSE via vcpkg)" ON)
+
+if(RAW_BUILD_PLUGIN)
 find_package(CommonLibSSE REQUIRED CONFIG)
 find_package(imgui CONFIG REQUIRED)
 find_package(RmlUi CONFIG REQUIRED)
@@ -136,6 +141,8 @@ target_precompile_headers(${PROJECT_NAME} PRIVATE
     src/core/PCH.h
 )
 
+endif() # RAW_BUILD_PLUGIN
+
 # ============================================================================
 # d3d11.dll — RAW D3D11 Proxy
 # ============================================================================
@@ -179,6 +186,7 @@ target_link_libraries(d3d11_proxy PRIVATE)
 # Binding ledger (eyes substrate #1) — added 2026-06-05
 target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/BindingLedger.cpp)
 
+if(RAW_BUILD_PLUGIN)
 # Live bridge (coherence membrane Tier 0.1) — was added as a file but never built
 target_sources(RAW PRIVATE src/core/LiveBridge.cpp)
 
@@ -189,3 +197,55 @@ add_custom_command(TARGET RAW POST_BUILD
             "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/Shaders"
     COMMENT "coherence membrane: build-freshness manifest"
     VERBATIM)
+endif() # RAW_BUILD_PLUGIN
+
+# ============================================================================
+# D3D12 bridge (stage 1): RAW's own D3D12 device beside the game's D3D11 one,
+# sharing textures and a fence. No dependencies beyond the Windows SDK.
+# ============================================================================
+
+find_program(RAW_FXC fxc
+    HINTS "$ENV{WindowsSdkVerBinPath}/x64"
+          "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64")
+if(NOT RAW_FXC)
+    message(FATAL_ERROR "fxc.exe not found; run from a Visual Studio developer prompt")
+endif()
+
+set(RAW_BRIDGE_GEN ${CMAKE_CURRENT_BINARY_DIR}/bridge_shaders)
+set(RAW_FOG_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/DepthFog.hlsl)
+set(RAW_DEPTHCOPY_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/DepthCopy.hlsl)
+add_custom_command(
+    OUTPUT ${RAW_BRIDGE_GEN}/DepthFog_VS.h ${RAW_BRIDGE_GEN}/DepthFog_PS.h ${RAW_BRIDGE_GEN}/DepthCopy_CS.h
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_BRIDGE_GEN}
+    COMMAND ${RAW_FXC} /nologo /T vs_5_1 /E VSMain /O3 /Vn g_DepthFogVS /Fh ${RAW_BRIDGE_GEN}/DepthFog_VS.h ${RAW_FOG_HLSL}
+    COMMAND ${RAW_FXC} /nologo /T ps_5_1 /E PSMain /O3 /Vn g_DepthFogPS /Fh ${RAW_BRIDGE_GEN}/DepthFog_PS.h ${RAW_FOG_HLSL}
+    COMMAND ${RAW_FXC} /nologo /T cs_5_0 /E CSMain /O3 /Vn g_DepthCopyCS /Fh ${RAW_BRIDGE_GEN}/DepthCopy_CS.h ${RAW_DEPTHCOPY_HLSL}
+    DEPENDS ${RAW_FOG_HLSL} ${RAW_DEPTHCOPY_HLSL}
+    COMMENT "fxc: bridge shaders -> bytecode headers"
+    VERBATIM)
+
+add_library(raw_d3d12_bridge STATIC
+    src/d3d12_bridge/D3D12Bridge.cpp
+    src/d3d12_bridge/BridgeFrame.cpp
+    src/d3d12_bridge/DepthFogPass.cpp
+    src/d3d12_bridge/BridgeSelfTest.cpp
+    src/d3d12_bridge/FenceProbe.cpp
+    ${RAW_BRIDGE_GEN}/DepthFog_VS.h
+    ${RAW_BRIDGE_GEN}/DepthFog_PS.h
+    ${RAW_BRIDGE_GEN}/DepthCopy_CS.h
+)
+target_include_directories(raw_d3d12_bridge
+    PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge
+    PRIVATE ${RAW_BRIDGE_GEN})
+target_compile_definitions(raw_d3d12_bridge PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+# d3d12.dll and dxgi.dll are loaded at runtime; only the d3d11 import is needed.
+
+target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/BridgeHook.cpp)
+target_link_libraries(d3d11_proxy PRIVATE raw_d3d12_bridge)
+
+add_executable(bridge_roundtrip tests/bridge_roundtrip/main.cpp)
+target_link_libraries(bridge_roundtrip PRIVATE raw_d3d12_bridge d3d11)
+# Own folder: next to the proxy, the test would load our d3d11.dll and get a
+# wrapped device instead of the system one.
+set_target_properties(bridge_roundtrip PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)

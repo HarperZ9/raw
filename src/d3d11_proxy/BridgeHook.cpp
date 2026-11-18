@@ -104,6 +104,7 @@ bool EnsureBridge(ID3D11Texture2D* backbuffer)
     c.height = bb.Height;
     c.colorFormat = bb.Format;
     c.debugLayer = s_cfg.debugLayer;
+    c.probeStages = s_initFailures == 0;
     if (s_bridge->Initialize(pi->device, pi->context, c, &Log)) return true;
     ++s_initFailures;
     return false;
@@ -222,13 +223,23 @@ void AccumulateTimings()
 }
 } // namespace
 
+void BridgeHook_OnDeviceCreated(ID3D11Device* realDevice, ID3D11DeviceContext* realContext)
+{
+    if (PG_IsSafeMode()) return;
+    if (!s_started) { s_started = true; LoadHookConfig(); }
+    if (s_cfg.enabled) raw::bridge::ProbeFenceSupport(realDevice, realContext, &Log, "after device creation");
+}
+
 void BridgeHook_OnPresent()
 {
     if (PG_IsSafeMode()) return;
     if (!s_started) {
         s_started = true;
         LoadHookConfig();
-        if (!s_cfg.enabled) return;
+    }
+    if (s_cfg.enabled && !s_bridge) {
+        if (auto* pi = PG_GetProxyInterface())
+            raw::bridge::ProbeFenceSupport(pi->device, pi->context, &Log, "first Present");
         s_bridge = new raw::bridge::D3D12Bridge();
         RenderPhaseDetector::Get().RegisterPhaseChangeCallback(OnPhase);
     }

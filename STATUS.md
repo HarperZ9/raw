@@ -125,6 +125,6 @@ comes from validating and fixing the effects that already run on it — not from
 ## 2026-11-17: D3D12 bridge, stage 1
 RAW's own D3D12 device beside the game's D3D11 device (`src/d3d12_bridge/`, hook in
 `src/d3d11_proxy/BridgeHook.cpp`). The offline round-trip test passes with its controls; the
-measured bridge cost is about 0.37 ms at 1080p and 0.42 ms at 2160p (median, GPU shared with
-another process). In game the fence self-test fails (`Signal` returns E_INVALIDARG) and the bridge
-stays off safely. Details, measurements and the stage 2 list: `docs/D3D12_BRIDGE.md`.
+measured bridge cost offline is about 0.36 ms at 1080p and 0.38 ms at 2160p (median, GPU shared with
+another process). In game the pass runs: the main menu capture shows the markers and the depth haze, at a mean
+bridge cost of 0.42 to 1.36 ms per frame at 2160p. Details, measurements and the stage 2 list: `docs/D3D12_BRIDGE.md`.

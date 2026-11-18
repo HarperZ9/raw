@@ -46,6 +46,7 @@ still imports only KERNEL32; d3d12.dll and dxgi.dll are loaded at runtime.
   a wrapped device that does not answer `ID3D11Device5`. Copied next to the proxy on purpose
   (`bridge_roundtrip_viaproxy.exe`) it takes the real device from `PG_GetProxyInterface`, which
   reproduces the in-game process layout.
+- **D3D11 signals before D3D12 submits.** See "What broke, and the fix" below.
 - **Self-test before any GPU wait.** A first in-game run queued D3D11 `Wait` while D3D11
   `Signal` was failing; the D3D11 queue blocked, both devices were removed (fence completed value
   became UINT64_MAX, `CreateTexture2D` returned 0x887A0005) and the game froze on the intro.
@@ -68,43 +69,71 @@ Options: `--warp`, `--skyrim-like` (DXGI 1.0 adapter, `D3D11CreateDeviceAndSwapC
 chain on a hidden window), `--frames N`, `--out file.json`. All pass on the RTX 4090, on WARP, in
 Skyrim-like mode, through the proxy, and renamed to `SkyrimSE.exe`.
 
-## Measured cost (RTX 4090, 2026-11-17, `evidence/bridge-roundtrip-rtx4090.json`)
+## Measured cost offline (RTX 4090, 2026-11-17, `evidence/bridge-roundtrip-rtx4090.json`)
 
-Median over 472 frames. Another process held the GPU at 30 to 99 percent during every run, so
-treat the medians as under load; the p95 (about 45 to 52 ms) is dominated by that contention.
+Median over 232 frames, after the submit-order fix. Another process held the GPU
+at about 30 percent during the run. The p95 bridge cost is 0.381 ms at 1080p and 0.454 ms at
+2160p (an earlier run under heavier contention had p95 near 50 ms).
 
 | | 1920x1080 | 3840x2160 |
 |---|---|---|
-| depth copy (D3D11 CS) | 0.024 ms | 0.028 ms |
-| colour in (copy) | 0.007 ms | 0.023 ms |
-| colour out (copy) | 0.007 ms | 0.023 ms |
-| fence round trip (stall minus D3D12 pass) | 0.332 ms | 0.345 ms |
-| **bridge cost** | **0.371 ms** | **0.420 ms** |
+| depth copy (D3D11 CS) | 0.025 ms | 0.028 ms |
+| colour in (copy) | 0.008 ms | 0.024 ms |
+| colour out (copy) | 0.007 ms | 0.024 ms |
+| fence round trip (stall minus D3D12 pass) | 0.316 ms | 0.305 ms |
+| **bridge cost** | **0.355 ms** | **0.381 ms** |
 | D3D12 haze pass | 0.007 ms | 0.024 ms |
 
 The fence round trip dominates. Stage 2 removes it by owning the whole frame on D3D12.
 
 ## In game (Skyrim SE 1.6.1170 with SKSE, 2026-11-17)
 
-- The ENB files were backed up to a dated backup folder (232 files, SHA256SUMS,
-  `restore-enb.cmd`) and restored after testing; all 232 hashes matched.
-- The proxy loads, the bridge creates its D3D12 device on the game's adapter and its shared
-  textures, and the game reaches data-loaded with the bridge present.
-- **Stopped at the fence:** in the game process `ID3D11DeviceContext4::Signal` returns
-  E_INVALIDARG for both fence routes (created on D3D12 and opened on D3D11, and created on D3D11
-  and opened on D3D12). The vtable entry resolves to the NVIDIA driver (`nvwgf2umx.dll`), so the
-  call is not hooked. The self-test catches it and the bridge stays off; the game keeps running
-  and responding. Logs: `evidence/ingame-2026-11-17-*.log`.
-- Ruled out offline (each passes): a DXGI 1.0 adapter with `D3D11CreateDeviceAndSwapChain` and a
-  blit swap chain, running through the proxy, the exe named `SkyrimSE.exe`, an open
-  TIMESTAMP_DISJOINT query on the context (`RAW_TEST_OPEN_DISJOINT=1`). The only compat layer
-  on the game exe is HIGHDPIAWARE. Not yet tested: whatever else in the game process changes the
-  device (Steam overlay, the game's own device use from more than one thread, an NVIDIA profile
-  keyed on the full path).
-- Next probe: call `Signal` once right after `D3D11CreateDeviceAndSwapChain` returns, inside
-  the proxy, before the game touches the device. If it works there, something the game does
-  later breaks it; if not, the device is created in a mode that rejects monitored fences. The
-  fallback if fences stay unusable: keyed mutexes (`IDXGIKeyedMutex`) on the shared textures.
+**The D3D12 pass runs in game.** At the main menu (3840x2160) the backbuffer read from the GPU
+shows the four marker swatches top-left, and the haze over every far pixel; the near logo
+geometry stays clear, so the pass is reading the game's depth. The bridge ran on every frame
+(7,600+ frames in one session) and the game kept running and responding.
+
+Frame cost in game, mean over each 300-frame window, GPU timestamps, 19 windows
+(`evidence/ingame-2026-11-17-bridge-running.log`):
+
+| | first window (intro) | menu windows, range |
+|---|---|---|
+| bridge cost | 0.42 ms | 0.53 to 1.36 ms |
+| of which fence round trip | 0.33 ms | 0.39 to 1.10 ms |
+| depth copy + colour in + colour out | 0.09 ms | 0.13 to 0.34 ms |
+| D3D12 haze pass | 0.026 ms | 0.034 to 0.065 ms |
+
+The menu windows vary with whatever else the GPU is doing; another worker shared the GPU
+during this session. The fence round trip is still the largest part.
+
+### What broke, and the fix
+
+The first in-game runs failed in `ID3D11DeviceContext4::Signal` with E_INVALIDARG for both fence
+routes. The bisect (`evidence/ingame-2026-11-17-fence-probe-bisect.log`):
+
+- `ProbeFenceSupport` right after `D3D11CreateDeviceAndSwapChain`, at the first Present, and
+  between every bridge setup stage: local and shared D3D11 fences signal and complete every time.
+  So the device was never in a mode that rejects fences, the context is the device's own
+  immediate context (same pointer both ways, QI for Device5 and Context4 succeeds), the device
+  flags are 0 at feature level 11_0, and the game renders from a different thread than the one
+  that created the device without that mattering.
+- The difference was ordering. The bridge queued the D3D12 `Wait(n)` and `Signal(n+1)` before
+  D3D11 issued `Signal(n)`. In the game process D3D11 then rejected `Signal(n)` with E_INVALIDARG,
+  apparently because a higher value was already pending on the shared fence. Offline the same
+  order worked, so this depends on timing or on the process.
+- Fix: the D3D12 command list is still recorded first, but it is submitted (queue `Wait`,
+  `ExecuteCommandLists`, `Signal`) only after D3D11 has signalled and flushed. The self-test uses
+  the same order. Keyed mutexes were not needed.
+
+### Limits of this result
+
+- The menu never enters the UI phase as `RenderPhaseDetector` sees it, so the pass ran at
+  Present (`FallbackAtPresent`) and the haze also covers the menu text. A gameplay scene with a
+  detected UI phase is the next capture.
+- The capture is the backbuffer read back on the GPU (`CaptureFrame` in the ini), not a desktop
+  screenshot.
+- ENB backup and restore: 232 files with SHA256SUMS, restored with `restore-enb.cmd` after every
+  session, all hashes matching.
 
 ## Older vertex and geometry shader work (searched 2026-11-17)
 
@@ -118,7 +147,7 @@ The fence round trip dominates. Stage 2 removes it by owning the whole frame on 
 
 ## Stage 2 (full takeover) needs
 
-1. A working fence in the game process (above), or keyed mutexes as the fallback.
+1. UI-phase detection in menus, so the pass composites under the HUD everywhere.
 2. A D3D11 call translation layer on D3D12: resources (textures, buffers, views) created on
    D3D12 and handed to the game through the wrapped device; state objects mapped to PSOs with a
    cache keyed by shader hashes plus state; draw recording into D3D12 command lists; constant

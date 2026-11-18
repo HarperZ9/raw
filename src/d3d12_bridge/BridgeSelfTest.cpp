@@ -49,10 +49,13 @@ bool D3D12Bridge::Impl::SelfTestOnce()
     log("[D3D12Bridge] device creation flags 0x%X, feature level 0x%X",
         dev11->GetCreationFlags(), (unsigned)dev11->GetFeatureLevel());
     const uint64_t a = nextValue, b = a + 1;
-    queue->Wait(fence12.Get(), a);
-    queue->Signal(fence12.Get(), b);
+    // D3D11 signals before the D3D12 queue holds a pending Signal(b): in the
+    // game process D3D11 rejected Signal(a) with E_INVALIDARG while a higher
+    // value was already pending from D3D12.
     HRESULT hs = ctx11->Signal(fence11.Get(), a);
     ctx11->Flush();
+    queue->Wait(fence12.Get(), a);
+    queue->Signal(fence12.Get(), b);
     bool d11 = SUCCEEDED(hs) && CpuWait(a, 1000);
     bool d12 = d11 && CpuWait(b, 1000);
     log("[D3D12Bridge] self-test: D3D11 Signal 0x%08X, D3D11->fence %s, D3D12 round trip %s",

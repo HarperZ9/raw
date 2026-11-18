@@ -207,11 +207,14 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                (unsigned)hrDev, (unsigned)hrCtx);
         return false;
     }
-    bool ok = m->CreateDevice12(dev)
+    const bool probe = cfg.probeStages;
+    auto stage = [&](const char* where) { if (probe) ProbeFenceSupport(dev, ctx, m->log, where); return true; };
+    bool ok = stage("bridge: before D3D12 device") && m->CreateDevice12(dev) && stage("bridge: after D3D12 device")
         && m->CreateShared(m->colorIn, cfg.colorFormat, kSharedColour, "colour-in")
         && m->CreateShared(m->depthIn, kSharedDepthFormat, kSharedDepth, "depth-in")
         && m->CreateShared(m->colorOut, cfg.colorFormat, kSharedColour, "colour-out")
-        && m->CreateViews() && m->CreateDepthCopy() && m->CreateQueries();
+        && stage("bridge: after shared textures")
+        && m->CreateViews() && m->CreateDepthCopy() && m->CreateQueries() && stage("bridge: after views and queries");
     if (ok) {
         m->pass = MakeDepthFogPass();
         ok = m->pass->Create(m->dev12.Get(), cfg.colorFormat, m->log);

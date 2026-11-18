@@ -61,6 +61,7 @@ struct BridgeConfig
     DXGI_FORMAT colorFormat    = DXGI_FORMAT_R8G8B8A8_UNORM;  // the game's frame format
     bool        debugLayer     = false;
     DWORD       cpuWaitTimeout = 2000;  // ms; a longer wait marks the bridge unhealthy
+    bool        probeStages    = false; // log ProbeFenceSupport between setup stages
 };
 
 // GPU times for one frame, in milliseconds.
@@ -96,6 +97,10 @@ public:
 };
 
 std::unique_ptr<IBridgePass> MakeDepthFogPass();
+
+// Logs whether dev can create and signal D3D11 fences (local and shared) right
+// now, with the device flags, feature level, thread and context identity.
+bool ProbeFenceSupport(ID3D11Device* dev, ID3D11DeviceContext* ctx, LogFn log, const char* where);
 
 class D3D12Bridge
 {

@@ -112,8 +112,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     k.dims[2] = 1.0f / k.dims[0];
     k.dims[3] = 1.0f / k.dims[1];
 
-    // D3D12 first, so its queue is already parked on the fence when the
-    // D3D11 signal lands; recording time then never shows up as a stall.
+    // Record the D3D12 list first so recording time never shows up as a
+    // stall. Submit it only after the D3D11 Signal: in the game process D3D11
+    // rejects Signal(v1) with E_INVALIDARG once D3D12 has a pending Signal(v2).
     auto* cl = m->cl.Get();
     ds.alloc->Reset();
     cl->Reset(ds.alloc.Get(), nullptr);
@@ -138,13 +139,6 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         m->ready = false;
         return false;
     }
-    ID3D12CommandList* lists[] = {cl};
-    m->queue->Wait(m->fence12.Get(), waitValue);
-    m->queue->ExecuteCommandLists(1, lists);
-    m->queue->Signal(m->fence12.Get(), v2);
-    ds.fenceValue = v2;
-    m->lastWaited = waitValue;
-    m->lastD12 = v2;
 
     // D3D11: copy in, hand over, take back, copy out.
     D11Slot& s = m->SlotFor(frame);
@@ -156,13 +150,20 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     HRESULT hs = c->Signal(m->fence11.Get(), v1);
     c->Flush();
     if (FAILED(hs)) {
-        // Never queue a GPU wait the other side cannot satisfy: release the
-        // D3D12 queue from the CPU and turn the bridge off.
+        // Never queue a GPU wait the other side cannot satisfy.
         m->log("[D3D12Bridge] D3D11 Signal failed 0x%08X; bridge off", (unsigned)hs);
-        m->fence12->Signal(v2);
+        c->End(s.disjoint.Get());
+        s.open = false;
         m->ready = false;
         return false;
     }
+    ID3D12CommandList* lists[] = {cl};
+    m->queue->Wait(m->fence12.Get(), waitValue);
+    m->queue->ExecuteCommandLists(1, lists);
+    m->queue->Signal(m->fence12.Get(), v2);
+    ds.fenceValue = v2;
+    m->lastWaited = waitValue;
+    m->lastD12 = v2;
     HRESULT hw = c->Wait(m->fence11.Get(), v2);
     if (FAILED(hw)) m->log("[D3D12Bridge] D3D11 Wait failed 0x%08X", (unsigned)hw);
     c->End(s.ts[4].Get());

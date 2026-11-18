@@ -229,6 +229,7 @@ add_library(raw_d3d12_bridge STATIC
     src/d3d12_bridge/BridgeFrame.cpp
     src/d3d12_bridge/DepthFogPass.cpp
     src/d3d12_bridge/BridgeSelfTest.cpp
+    src/d3d12_bridge/FenceProbe.cpp
     ${RAW_BRIDGE_GEN}/DepthFog_VS.h
     ${RAW_BRIDGE_GEN}/DepthFog_PS.h
     ${RAW_BRIDGE_GEN}/DepthCopy_CS.h

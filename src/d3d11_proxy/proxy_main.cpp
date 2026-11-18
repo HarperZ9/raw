@@ -17,6 +17,7 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include "BridgeHook.h"
 #include <Windows.h>
 
 // We re-export D3D11CreateDevice* from this DLL, so we must not let the
@@ -507,6 +508,9 @@ extern "C" HRESULT WINAPI SB_D3D11CreateDeviceAndSwapChain(
     s_proxyInterface.swapChain      = realSC;
     s_proxyInterface.backbufferFormat = pSwapChainDesc ? modifiedDesc.BufferDesc.Format
                                                        : DXGI_FORMAT_UNKNOWN;
+
+    // D3D12 bridge: probe fence support on the fresh device
+    SB::Proxy::BridgeHook_OnDeviceCreated(realDevice, realContext);
 
     // Initialize render phase detector with backbuffer size
     if (pSwapChainDesc)

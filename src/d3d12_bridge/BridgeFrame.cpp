@@ -19,6 +19,7 @@ void D3D12Bridge::Impl::OpenD11Slot(D11Slot& s, uint64_t frame)
     s.frame = frame;
     s.hasDepth = false;
     s.hasNormal = false;
+    s.hasMotion = false;
     s.executed = false;
 }
 
@@ -75,8 +76,23 @@ bool D3D12Bridge::CaptureNormal(ID3D11Texture2D* normalTex)
     auto* c = m->ctx11.Get();
     c->End(s.ts[2].Get());
     c->CopyResource(m->normalIn.tex11.Get(), normalTex);
+    if (m->pendingMotion) {
+        c->CopyResource(m->motionIn.tex11.Get(), m->pendingMotion);
+        m->pendingMotion = nullptr;
+        s.hasMotion = true;
+    }
     c->End(s.ts[3].Get());
     s.hasNormal = true;
+    return true;
+}
+
+bool D3D12Bridge::CaptureMotion(ID3D11Texture2D* motionTex)
+{
+    if (!m->ready || !motionTex || !m->motionIn.tex11) return false;
+    D3D11_TEXTURE2D_DESC d{};
+    motionTex->GetDesc(&d);
+    if (d.Width != m->cfg.width || d.Height != m->cfg.height || d.SampleDesc.Count != 1 || d.Format != m->cfg.motionFormat) return false;
+    m->pendingMotion = motionTex;
     return true;
 }
 
@@ -115,6 +131,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     fc.k.dims[3] = 1.0f / fc.k.dims[1];
     fc.camera = m->camera;
     fc.hasNormal = s.hasNormal;
+    fc.hasMotion = s.hasMotion;
 
     // The pass records first, so recording time never shows up as a stall,
     // and submits only after the D3D11 Signal: in the game process D3D11

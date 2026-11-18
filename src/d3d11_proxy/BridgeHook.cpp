@@ -59,6 +59,7 @@ struct FrameState
     ID3D11Resource* backbuffer = nullptr;
     ID3D11Resource* normalTex = nullptr;
     ID3D11Resource* depthTex = nullptr;
+    ID3D11Resource* motionTex = nullptr;
     bool normalBound = false, captured = false, ran = false, inBackbuffer = false;
     uint32_t drawsAtBind = 0;
 };
@@ -113,6 +114,8 @@ bool EnsureBridge(ID3D11Texture2D* backbuffer)
     c.enginePass = Cfg().enginePass;
     c.passRetireMs = static_cast<DWORD>(Cfg().retireTimeoutMs);
     c.normalFormat = DXGI_FORMAT_R8G8B8A8_UNORM;   // the game's normal target
+    c.realtimeAo = Cfg().realtimeAo;
+    if (c.realtimeAo) c.motionFormat = DXGI_FORMAT_R16G16_FLOAT;   // the game's motion vectors
     if (s_bridge->Initialize(pi->device, pi->context, c, &Log)) {
         s_bridge->TuneEngine(Cfg().tune);
         return true;
@@ -187,6 +190,7 @@ void CaptureOpaque(ID3D11DeviceContext* real)
     const raw::bridge::CameraConstants cam = ReadCamera(real);
     s_bridge->SetCamera(cam);
     const bool depthOk = SUCCEEDED(hr) && s_bridge->CaptureDepth(srv);
+    if (s_f.motionTex) s_bridge->CaptureMotion(static_cast<ID3D11Texture2D*>(s_f.motionTex));
     const bool normalOk = s_bridge->CaptureNormal(static_cast<ID3D11Texture2D*>(s_f.normalTex));
     if (srv) srv->Release();
     if (depthOk && normalOk) ++s_captures;
@@ -254,6 +258,7 @@ void BridgeHook_OnTargets(ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetV
         if (FullSize(rt[0], DXGI_FORMAT_R16G16B16A16_FLOAT, bb) && FullSize(rt[1], DXGI_FORMAT_R16G16_FLOAT, bb) &&
             FullSize(rt[2], DXGI_FORMAT_R8G8B8A8_UNORM, bb) && FullSize(rt[3], DXGI_FORMAT_R8G8_UNORM, bb)) {
             s_f.normalTex = rt[2];
+            s_f.motionTex = rt[1];
             s_f.depthTex = ResourceOf(dsv);
         }
     }

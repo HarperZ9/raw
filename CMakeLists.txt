@@ -297,7 +297,23 @@ if(RAW_ENGINE_DIR)
         DEPENDS ${RAW_GTAO_HLSL} ${RAW_PACK_HLSL} ${RAW_COMP_HLSL}
         COMMENT "dxc: engine pass shaders -> DXIL headers"
         VERBATIM)
+    # The engine's real-time AO: its pass, its noise and its shaders (one HLSL file, five entries).
+    set(RAW_AORT_HLSL ${E}/src/rhi/d3d12/hw_shaders/ao_rt.hlsl)
+    set(RAW_AORT_HEADERS ${RAW_ENGINE_GEN}/ao_rt_vs.h ${RAW_ENGINE_GEN}/ao_rt_prefilter.h ${RAW_ENGINE_GEN}/ao_rt_level.h
+        ${RAW_ENGINE_GEN}/ao_rt_trace.h ${RAW_ENGINE_GEN}/ao_rt_resolve.h)
+    add_custom_command(
+        OUTPUT ${RAW_AORT_HEADERS}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T vs_6_0 -E vs -DPASS=0 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_rt_vs.h -Vn kDxil_ao_rt_vs ${RAW_AORT_HLSL}
+        COMMAND ${RAW_DXC} -T ps_6_0 -E fs -DPASS=0 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_rt_prefilter.h -Vn kDxil_ao_rt_prefilter ${RAW_AORT_HLSL}
+        COMMAND ${RAW_DXC} -T ps_6_0 -E fs -DPASS=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_rt_level.h -Vn kDxil_ao_rt_level ${RAW_AORT_HLSL}
+        COMMAND ${RAW_DXC} -T ps_6_0 -E fs -DPASS=2 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_rt_trace.h -Vn kDxil_ao_rt_trace ${RAW_AORT_HLSL}
+        COMMAND ${RAW_DXC} -T ps_6_0 -E fs -DPASS=3 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_rt_resolve.h -Vn kDxil_ao_rt_resolve ${RAW_AORT_HLSL}
+        DEPENDS ${RAW_AORT_HLSL}
+        COMMENT "dxc: real-time AO shaders -> DXIL headers"
+        VERBATIM)
     target_sources(raw_d3d12_bridge PRIVATE
+        src/d3d12_bridge/RealtimeAoPass.cpp ${E}/src/renderer/ao_realtime.cpp ${E}/src/renderer/ao_noise.cpp ${RAW_AORT_HEADERS}
         src/d3d12_bridge/EnginePass.cpp
         ${RAW_ENGINE_GEN}/post_gtao.h ${RAW_ENGINE_GEN}/game_pack.h
         ${RAW_ENGINE_GEN}/ao_composite_vs.h ${RAW_ENGINE_GEN}/ao_composite_fs.h)
@@ -316,6 +332,10 @@ if(RAW_ENGINE_DIR)
     add_executable(engine_gtao_check EXCLUDE_FROM_ALL tests/engine_gtao/main.cpp tests/engine_gtao/gtao_precision.cpp)
     target_link_libraries(engine_gtao_check PRIVATE raw_d3d12_bridge raw_engine_reference d3d11)
     set_target_properties(engine_gtao_check PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
+    # ao_realtime_check: the real-time AO behind the bridge, scored against the 16 x 16 reference.
+    add_executable(ao_realtime_check EXCLUDE_FROM_ALL tests/ao_realtime/main.cpp)
+    target_link_libraries(ao_realtime_check PRIVATE raw_d3d12_bridge raw_engine_reference d3d11)
+    set_target_properties(ao_realtime_check PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
     message(STATUS "RAW: engine pass on, RHI from ${E}")
 endif()
 

@@ -5,11 +5,11 @@
 namespace raw::bridge
 {
 
-bool D3D12Bridge::TuneEngine(const EngineTuning& t) { return m->pass && EnginePassTune(m->pass.get(), t); }
+bool D3D12Bridge::TuneEngine(const EngineTuning& t) { return m->pass && (EnginePassTune(m->pass.get(), t) || RealtimeAoTune(m->pass.get(), t)); }
 
 bool D3D12Bridge::ReadEngineVisibility(std::vector<float>* out)
 {
-    return m->ready && out && EnginePassReadVisibility(m->pass.get(), out);
+    return m->ready && out && (EnginePassReadVisibility(m->pass.get(), out) || RealtimeAoReadVisibility(m->pass.get(), out));
 }
 
 bool D3D12Bridge::ReadShared(Shared which, std::vector<uint8_t>* out, UINT* rowBytes)

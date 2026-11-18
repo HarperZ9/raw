@@ -111,7 +111,7 @@ bool D3D12Bridge::Impl::CreatePass()
     h.height = cfg.height;
     h.retireTimeoutMs = cfg.passRetireMs;
     h.log = log;
-    pass = cfg.enginePass ? MakeEnginePass() : MakeDepthFogPass();
+    pass = !cfg.enginePass ? MakeDepthFogPass() : cfg.realtimeAo ? MakeRealtimeAoPass() : MakeEnginePass();
     if (!pass) { log("[D3D12Bridge] this build carries no engine pass (RAW_ENGINE=OFF)"); return false; }
     return pass->Create(h);
 }
@@ -182,6 +182,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         && m->CreateShared(m->colorOut, cfg.colorFormat, kSharedColour, "colour-out")
         && (cfg.normalFormat == DXGI_FORMAT_UNKNOWN
             || m->CreateShared(m->normalIn, cfg.normalFormat, kSharedColour, "normal-in"))
+        && (cfg.motionFormat == DXGI_FORMAT_UNKNOWN
+            || m->CreateShared(m->motionIn, cfg.motionFormat, kSharedColour, "motion-in"))
         && stage("bridge: after shared textures")
         && m->CreateDepthCopy() && m->CreateQueries() && stage("bridge: after views and queries")
         && m->CreatePass();

@@ -47,9 +47,18 @@ void LoadConfig()
     c.tune.slices = static_cast<uint32_t>(i("AoSlices", 0));
     c.tune.steps = static_cast<uint32_t>(i("AoSteps", 0));
     c.tune.strength = f("AoStrength", 1.0f);
+    GetPrivateProfileStringA("D3D12Bridge", "AoMode", "reference", text, MAX_PATH, ini.c_str());
+    c.realtimeAo = c.enginePass && _stricmp(text, "realtime") == 0;
+    c.tune.noise = i("AoNoise", 1) != 0;
+    c.tune.temporal = i("AoTemporal", 1) != 0;
+    c.tune.levels = i("AoLevels", 1) != 0;
+    c.tune.maxHistory = f("AoHistory", 32.0f);
+    c.tune.depthTolerance = f("AoDepthTolerance", 0.1f);
+    c.tune.motionScale[0] = f("AoMotionScaleX", 1.0f);
+    c.tune.motionScale[1] = f("AoMotionScaleY", 1.0f);
     g_bridgeHookActive = c.enabled;
     Log("[D3D12Bridge] config: enabled=%d pass=%s mode=%.0f radius=%g slices=%u steps=%u strength=%g",
-        c.enabled, c.enginePass ? "engine" : "haze", k.mode, c.tune.radius, c.tune.slices, c.tune.steps,
+        c.enabled, !c.enginePass ? "haze" : c.realtimeAo ? "engine, real-time AO" : "engine", k.mode, c.tune.radius, c.tune.slices, c.tune.steps,
         c.tune.strength);
 }
 } // namespace SB::Proxy::hook

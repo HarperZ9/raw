@@ -28,6 +28,7 @@ struct Analysis
     size_t    specAfter = kNone;    uint32_t specReg = 0, specComp = 0;
     size_t    glossBefore = kNone;  uint32_t glossMask = 0; std::vector<uint32_t> glossOperand;
     std::vector<uint32_t> emitA, emitB;
+    std::vector<uint32_t> vcolOperand;   // the vertex colour input, as the shader reads it
     size_t    waterBefore = kNone;  std::vector<uint32_t> waterOperand;
 };
 

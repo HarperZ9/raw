@@ -5,7 +5,8 @@
 // The patched shader computes exactly what the original computes and writes
 // four more render targets:
 //
-//   SV_Target4  albedo        rgb: the base colour before lighting; a: the draw's alpha
+//   SV_Target4  albedo        rgb: the base colour before lighting, times the vertex colour where the
+//                             shader multiplies the lit result by one; a: the draw's alpha
 //   SV_Target5  specular      r: the normal map's specular mask; g: gloss, log2(shininess) / 13;
 //                             b: material class / 255; a: the draw's alpha
 //   SV_Target6  emissive      rgb: emitted light in linear units; a: the draw's alpha
@@ -59,6 +60,7 @@ struct PatchInfo
     bool        specularMask = false;   // the normal map's alpha is sampled
     bool        gloss = false;          // a shininess exponent was found
     bool        emissive = false;       // an emissive term was found
+    bool        vertexColour = false;   // the albedo carries the vertex colour the lit result is multiplied by
     bool        normal = false;         // the layer carries a normal
     bool        depth = false;          // the layer carries SV_Position.z
     const char* refused = nullptr;      // why no patch was made

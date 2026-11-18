@@ -49,6 +49,19 @@ float4 main(In i) : SV_Target0 {
     return float4(f * w[1].rgb + frame[42].w, 1);
 })";
 
+// A second water pass: the same wave normal, lit by a point light, with no fixed direction
+// and no buffer 12 declared.
+inline const char* kWaterLight = R"(
+cbuffer Material : register(b1) { float4 w[8]; }
+cbuffer Lights : register(b2) { float4 geo[30]; }
+float4 main(In i) : SV_Target0 {
+    float3 n = tNormal.Sample(s1, i.uv).xyz * 2 - float3(1, 1, 2);
+    n = w[6].x * n + float3(0, 0, 1);
+    n = normalize(n);
+    float3 l = normalize(geo[6].xyz - i.world);
+    return float4(pow(saturate(dot(l, n)), w[3].z) * geo[14].xyz, 1);
+})";
+
 // An effect draw: small material and geometry buffers, alpha from the texture.
 inline const char* kEffect = R"(
 cbuffer A : register(b1) { float4 a[3]; }

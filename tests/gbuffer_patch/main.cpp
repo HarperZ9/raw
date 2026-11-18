@@ -124,6 +124,14 @@ void WaterCase(Bench& b)
     b.Draw(patched, q);
     Check(!Near(q[7], kDepth, nx / s + 0.5f, ny / s + 0.5f, 1.0f, 1e-2f), "control: a view matrix with two rows swapped fails");
     Show("layer", p[7]);
+    // The second form: wave normal 1 * (0.2, 0, 0) + (0, 0, 1), the same normal as above.
+    const std::vector<uint8_t> code2 = Bench::Compile((std::string(kCommon) + kWaterLight).c_str(), "ps_5_0");
+    PatchInfo info2;
+    const std::vector<uint8_t> patched2 = Patched(code2, &info2);
+    SetView(b, false);
+    Check(info2.kind == ShaderKind::Water, "a water light pass with no fixed direction is found by its wave normal");
+    if (patched2.empty() || !b.Draw(patched2, q)) { Check(false, "draws"); return; }
+    Check(Near(q[7], kDepth, nx / s + 0.5f, ny / s + 0.5f, 1.0f, 1e-4f), "its layer carries the same normal, with buffer 12 declared by the patch");
 }
 
 void EffectCase(Bench& b)
@@ -136,7 +144,7 @@ void EffectCase(Bench& b)
     Pixel o[kTargets], p[kTargets], q[kTargets];
     if (patched.empty() || !b.Draw(code, o) || !b.Draw(patched, p)) { Check(false, "draws"); return; }
     Check(memcmp(o, p, 3 * sizeof(Pixel)) == 0, "outputs 0 to 2 are bit-identical to the original's");
-    Check(Near(p[7], kDepth, 0, 0, 0), "layer: depth, no normal (0, 0), alpha 0.3 is not covered");
+    Check(Near(p[7], kDepth, 0.3f, -1, 1), "layer: depth, no normal (alpha 0.3 in g, -1 in b), covered");
     Check(Near(p[4], 0, 0, 0, 0.3f) && Near(p[5], 0, 0, float(material::Effect) / 255.0f, 0.3f), "material targets: zero, class effect");
     // The layer blend: colour by the output's own alpha, so an uncovered draw leaves the target alone.
     D3D11_BLEND_DESC bd{};
@@ -149,7 +157,12 @@ void EffectCase(Bench& b)
     ComPtr<ID3D11BlendState> blend;
     b.dev->CreateBlendState(&bd, &blend);
     b.Draw(patched, q, blend.Get());
-    Check(Near(q[7], -1, -1, -1, 0), "with the layer blend an uncovered draw leaves the layer's colour at its clear value");
+    Check(Near(q[7], kDepth, 0.3f, -1, 1), "with the layer blend a draw with alpha 0.3 replaces the layer");
+    float mat[36] = {};                      // the same draw with alpha 0
+    mat[8] = mat[9] = mat[10] = 1.0f;
+    b.SetConstants(1, mat, 9);
+    b.Draw(patched, q, blend.Get());
+    Check(Near(q[7], -1, -1, -1, 0), "with the layer blend a draw with alpha 0 leaves the layer's colour at its clear value");
 }
 } // namespace
 

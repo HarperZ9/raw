@@ -10,8 +10,8 @@
 //                             b: material class / 255; a: the draw's alpha
 //   SV_Target6  emissive      rgb: emitted light in linear units; a: the draw's alpha
 //   SV_Target7  layer         r: SV_Position.z; gb: the view normal in the game's two-channel
-//                             encoding, (0, 0) when the shader has no normal; a: 1 where the
-//                             draw's alpha is at least 0.5
+//                             encoding, or (the draw's alpha, -1) when the shader has no normal;
+//                             a: 1 where the draw's alpha is at least 1/255
 //
 // How: every write to an original output goes to a new temporary instead, taps
 // copy intermediate values where the shader holds them, and before each ret
@@ -30,6 +30,7 @@ namespace raw::dxbc
 {
 
 constexpr uint32_t kAlbedoTarget = 4, kSpecularTarget = 5, kEmissiveTarget = 6, kLayerTarget = 7;
+constexpr float kLayerAlpha = 1.0f / 255.0f;   // a draw enters the layer where its alpha reaches this
 
 enum class ShaderKind : uint8_t
 {

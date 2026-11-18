@@ -100,21 +100,23 @@ void CloseInterval(ID3D11DeviceContext* ctx)
     Interval& iv = s.intervals.back();
     iv.phaseClose = RenderPhaseDetector::Get().GetCurrentPhase();
     if (iv.draws == 0) return;
-    auto touch = [&](const ViewRef& v, bool depth) {
+    auto touch = [&](const ViewRef& v, bool depth, bool sceneColour) {
         if (v.tex < 0) return;
         TexRec& t = s.tex[v.tex];
         t.written = true;
         t.draws += iv.draws;
         ++(depth ? t.dsIntervals : t.rtIntervals);
-        if (s.history && FullSize(t)) {
+        // History=1 keeps every full-size target; History=2 keeps only the HDR colour in slot 0,
+        // which is all the coverage report reads.
+        if ((s.history == 1 || (s.history == 2 && sceneColour && t.fmt == DXGI_FORMAT_R16G16B16A16_FLOAT)) && FullSize(t)) {
             char name[48];
             sprintf_s(name, "t%02d_i%03d", t.id, iv.seq);
             if (DumpTexture(ctx, v.tex, name)) iv.history.push_back(t.id);
         }
     };
-    for (UINT k = 0; k < iv.numRt; ++k) touch(iv.rt[k], false);
+    for (UINT k = 0; k < iv.numRt; ++k) touch(iv.rt[k], false, k == 0);
     // A read-only depth view cannot change the depth, so it needs no copy.
-    if (iv.ds.tex >= 0 && !(iv.ds.flags & D3D11_DSV_READ_ONLY_DEPTH)) touch(iv.ds, true);
+    if (iv.ds.tex >= 0 && !(iv.ds.flags & D3D11_DSV_READ_ONLY_DEPTH)) touch(iv.ds, true, false);
 }
 
 } // namespace ledger
@@ -135,7 +137,7 @@ void LoadConfig()
     s.minDraws = i("MinDraws", 500);
     s.captures = i("Captures", 1);
     s.every = i("Every", 600);
-    s.history = i("History", 1) != 0;
+    s.history = i("History", 1);
     char out[MAX_PATH]{};
     GetPrivateProfileStringA("FrameLedger", "OutDir", "", out, MAX_PATH, ini.c_str());
     s.outRoot = out;

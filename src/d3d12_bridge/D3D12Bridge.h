@@ -246,6 +246,13 @@ public:
     bool ShareAndRead(ID3D11Texture2D* src, UINT slice, std::vector<uint8_t>* out, UINT* rowBytes,
                       DXGI_FORMAT* sharedFormat);
 
+    // The stencil byte of a D24S8 buffer, as R8_UINT. Same contract as ShareAndRead.
+    bool ShareStencilAndRead(ID3D11Texture2D* depthStencil, std::vector<uint8_t>* out, UINT* rowBytes);
+    // A 3D texture, as a 2D atlas of its depth slices: slice z at tile (z % columns, z / columns).
+    // The atlas keeps the volume's format (typeless forms cross as their float or unorm form).
+    bool ShareVolumeAndRead(ID3D11Texture3D* volume, std::vector<uint8_t>* out, UINT* rowBytes, UINT* columns,
+                            DXGI_FORMAT* sharedFormat);
+
     // Timings for a frame executed earlier. block=false returns false if the
     // GPU has not finished it; the game polls the oldest ring slot.
     bool ReadTimings(uint64_t frame, bool block, BridgeTimings* out);

@@ -17,6 +17,7 @@
 #include "ProxyLog.h"
 #include "DepthOwnership.h"
 #include "BridgeHook.h"
+#include "GBufferComplete.h"
 #include "FrameLedger.h"
 #include <vector>
 
@@ -604,6 +605,7 @@ HRESULT STDMETHODCALLTYPE WrappedSwapChain::Present(UINT SyncInterval, UINT Flag
 
     if (ctx) ctx->Release();
 
+    GBuffer_OnPresent();
     BridgeHook_OnPresent();   // D3D12 bridge: fallback run + timing readback
     FrameLedger_OnPresent();   // frame-buffer inventory, when armed
     RenderPhaseDetector::Get().OnPresent();
@@ -796,6 +798,7 @@ HRESULT STDMETHODCALLTYPE WrappedSwapChain::Present1(UINT SyncInterval, UINT Pre
 
     if (ctx) ctx->Release();
 
+    GBuffer_OnPresent();
     BridgeHook_OnPresent();   // D3D12 bridge: fallback run + timing readback
     FrameLedger_OnPresent();   // frame-buffer inventory, when armed
     RenderPhaseDetector::Get().OnPresent();

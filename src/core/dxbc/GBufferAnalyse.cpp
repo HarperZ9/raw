@@ -19,7 +19,9 @@ void ReadDeclarations(const Program& p, Analysis* a)
     for (size_t i = 0; i < a->body; ++i) {
         const auto& t = code[i].tok;
         switch (code[i].opcode) {
-            case op::DclConstantBuffer: if (t.size() >= 4 && t[2] < 16) a->cb[t[2]] = t[3]; break;
+            case op::DclConstantBuffer:
+                if (t.size() >= 4 && t[2] < 16) { a->cb[t[2]] = t[3]; a->anyCbAt = i; if (t[2] == 12) a->cb12At = i; }
+                break;
             case op::DclResource:       if (t.size() >= 3 && t[2] < 32) a->texDim[t[2]] = (t[0] >> 11) & 0x1F; break;
             case op::DclTemps:          a->temps = t[1]; a->tempsAt = i; break;
             case op::DclOutput:         if (t.size() >= 3 && t[2] < 8) a->outMask[t[2]] = uint8_t((t[1] >> 4) & 0xF); break;
@@ -145,11 +147,12 @@ void FindSpecular(const std::vector<Instruction>& code, const std::vector<int>& 
     }
 }
 
-// A water surface tests its normal against one fixed direction with a
-// saturated dot product. The other operand is the world-space normal.
+// The world-space normal of a water surface. Two forms, both read from the game's water shaders:
+// a saturated dot product of the normal with one fixed direction; or the wave normal built as
+// amplitude * sample + (0, 0, 1) with the amplitude in buffer 1, then normalised with rsq and mul.
 void FindWaterNormal(const std::vector<Instruction>& code, Analysis* a)
 {
-    static const float kDir[3] = {-0.099f, -0.099f, 0.99f};
+    static const float kDir[3] = {-0.099f, -0.099f, 0.99f}, kUp[3] = {0.0f, 0.0f, 1.0f};
     for (size_t i = a->body; i < code.size(); ++i) {
         const Instruction& in = code[i];
         if (in.opcode != op::Dp3 || !(in.tok[0] & (1u << 13)) || in.ops.size() != 3) continue;
@@ -159,6 +162,26 @@ void FindWaterNormal(const std::vector<Instruction>& code, Analysis* a)
             if (memcmp(&in.tok[o.at + 1], kDir, sizeof kDir) != 0) continue;
             a->waterBefore = i;
             a->waterOperand = in.OperandTokens(3 - k);
+            return;
+        }
+    }
+    for (size_t i = a->body; i < code.size(); ++i) {
+        const Instruction& in = code[i];
+        if (in.opcode != op::Mad || in.ops.size() != 4 || in.ops[0].type != type::Temp || in.ops[0].Mask() != 7) continue;
+        const Operand &amp = in.ops[1], &up = in.ops[3];
+        if (amp.type != type::ConstantBuffer || amp.index[0] != 1 || up.type != type::Immediate32 || up.components != 2) continue;
+        if (memcmp(&in.tok[up.at + 1], kUp, sizeof kUp) != 0) continue;
+        const uint32_t reg = in.ops[0].index[0];
+        for (size_t j = i + 2; j < code.size(); ++j) {
+            const Instruction& mul = code[j];
+            if (mul.opcode != op::Mul || code[j - 1].opcode != op::Rsq || mul.ops.size() != 3 || mul.ops[0].type != type::Temp) continue;
+            const bool reads = (mul.ops[1].type == type::Temp && mul.ops[1].index[0] == reg) ||
+                               (mul.ops[2].type == type::Temp && mul.ops[2].index[0] == reg);
+            uint32_t c[4] = {}, n = 0;
+            for (uint32_t k = 0; k < 4; ++k) if (mul.ops[0].Mask() >> k & 1) c[n++] = k;
+            if (!reads || n != 3) continue;
+            a->waterBefore = j + 1;
+            a->waterOperand = Src(type::Temp, mul.ops[0].index[0], Swz(c[0], c[1], c[2], c[2]));
             return;
         }
     }
@@ -208,7 +231,7 @@ bool Analyse(const Container& c, const Program& p, Analysis* a)
         if (a->info.materialClass != material::Landscape) FindSpecular(code, depth, a);
         else { const size_t keep = a->specAfter; FindSpecular(code, depth, a); a->specAfter = keep; a->info.specularMask = false; }
         a->info.normal = true;
-    } else if (a->waterBefore != kNone && a->cb[12] >= 3) {
+    } else if (a->waterBefore != kNone && a->anyCbAt != kNone) {
         a->info.kind = ShaderKind::Water;
         a->info.materialClass = material::Water;
         a->info.normal = true;

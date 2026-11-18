@@ -5,6 +5,7 @@
 #include "FrameLedger.h"
 #include "BridgeHook.h"
 #include "MaterialPipeline.h"
+#include "GBufferComplete.h"
 #include "CBDirtyTracker.h"
 #include "OcclusionCuller.h"
 #include "ProxyAPI.h"
@@ -225,6 +226,7 @@ void STDMETHODCALLTYPE WrappedContext::PSSetShader(ID3D11PixelShader* pPS, ID3D1
     // Check for shader replacement
     auto* replacement = ShaderManager::Get().GetReplacementPS(pPS);
     m_real->PSSetShader(replacement ? replacement : pPS, ppCI, NumCI);
+    if (g_gbufferActive) GBuffer_OnPixelShader(pPS);
 
     // Fire shader bind callbacks + phase detector
     uint64_t psHash = ShaderManager::Get().GetPSHash(pPS);
@@ -287,6 +289,7 @@ void STDMETHODCALLTYPE WrappedContext::Draw(UINT VertexCount, UINT StartVertexLo
     RenderPhaseDetector::Get().OnDraw(VertexCount, false);
     for (auto& cb : g_drawCallbacks)
         if (cb) cb(VertexCount, 1);
+    if (g_gbufferActive) GBuffer_BeforeDraw(m_real);
     m_real->Draw(VertexCount, StartVertexLocation);
 }
 
@@ -302,6 +305,7 @@ void STDMETHODCALLTYPE WrappedContext::DrawIndexed(UINT IndexCount, UINT StartIn
         return;
     for (auto& cb : g_drawCallbacks)
         if (cb) cb(IndexCount, 1);
+    if (g_gbufferActive) GBuffer_BeforeDraw(m_real);
     m_real->DrawIndexed(IndexCount, StartIndexLocation, BaseVertexLocation);
 }
 
@@ -315,6 +319,7 @@ void STDMETHODCALLTYPE WrappedContext::DrawInstanced(UINT VertexCountPerInstance
     RenderPhaseDetector::Get().OnDraw(VertexCountPerInstance, false);
     for (auto& cb : g_drawCallbacks)
         if (cb) cb(VertexCountPerInstance, InstanceCount);
+    if (g_gbufferActive) GBuffer_BeforeDraw(m_real);
     m_real->DrawInstanced(VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation);
 }
 
@@ -328,6 +333,7 @@ void STDMETHODCALLTYPE WrappedContext::DrawIndexedInstanced(UINT IndexCountPerIn
     RenderPhaseDetector::Get().OnDraw(IndexCountPerInstance, true);
     for (auto& cb : g_drawCallbacks)
         if (cb) cb(IndexCountPerInstance, InstanceCount);
+    if (g_gbufferActive) GBuffer_BeforeDraw(m_real);
     m_real->DrawIndexedInstanced(IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, StartInstanceLocation);
 }
 
@@ -372,9 +378,14 @@ void STDMETHODCALLTYPE WrappedContext::OMSetRenderTargets(UINT NumViews, ID3D11R
     ++m_rtSwitches;
     RenderPhaseDetector::Get().OnRTChange(NumViews, ppRTVs, pDSV);  // detect with game's DSV
     if (g_bridgeHookActive) BridgeHook_OnTargets(m_real, NumViews, ppRTVs, actualDSV);
-    if (g_frameLedgerArmed) FrameLedgerHooks::OnTargets(m_real, NumViews, ppRTVs, actualDSV);
+    // G-buffer completion: RAW's own targets join the game's list for four kinds of span.
+    ID3D11RenderTargetView* gbViews[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+    UINT gbCount = 0;
+    const bool gbAdds = g_gbufferActive && GBuffer_OnTargets(m_real, NumViews, ppRTVs, actualDSV, gbViews, &gbCount);
+    if (g_frameLedgerArmed) FrameLedgerHooks::OnTargets(m_real, gbAdds ? gbCount : NumViews, gbAdds ? gbViews : ppRTVs, actualDSV);
     for (auto& cb : g_rtChangeCallbacks)
         if (cb) cb(NumViews, ppRTVs, pDSV);
+    if (gbAdds) { m_real->OMSetRenderTargets(gbCount, gbViews, actualDSV); return; }
 
     // G-buffer MRT injection
     auto& phase = RenderPhaseDetector::Get();
@@ -404,6 +415,7 @@ void STDMETHODCALLTYPE WrappedContext::OMSetRenderTargetsAndUnorderedAccessViews
     ++m_rtSwitches;
     RenderPhaseDetector::Get().OnRTChange(NumRTVs, ppRTVs, pDSV);
     if (g_bridgeHookActive) BridgeHook_OnTargets(m_real, NumRTVs, ppRTVs, actualDSV);
+    if (g_gbufferActive) { ID3D11RenderTargetView* none[8]; UINT c = 0; GBuffer_OnTargets(m_real, 0, nullptr, nullptr, none, &c); }
     if (g_frameLedgerArmed) FrameLedgerHooks::OnTargets(m_real, NumRTVs, ppRTVs, actualDSV);
     for (auto& cb : g_rtChangeCallbacks)
         if (cb) cb(NumRTVs, ppRTVs, pDSV);
@@ -415,6 +427,7 @@ void STDMETHODCALLTYPE WrappedContext::OMSetBlendState(ID3D11BlendState* pBS, co
     if (PG_IsSafeMode()) { m_real->OMSetBlendState(pBS, BlendFactor, SampleMask); return; }
 
     ++m_totalBlend;
+    if (g_gbufferActive) GBuffer_OnBlendState(pBS, BlendFactor, SampleMask);
 
     // Normalize null blend factor to default {1,1,1,1}
     float bf[4] = {1.f, 1.f, 1.f, 1.f};

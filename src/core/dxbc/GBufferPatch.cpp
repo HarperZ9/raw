@@ -93,10 +93,12 @@ void LayerOutput(const Analysis& a, const Regs& r, const T& alpha, Code* e)
     } else if (a.info.normal) {
         e->push_back(Make(op::Mov, {Out(L, Y | Z), Rd(r.shadow[2], Swz(0, 0, 1, 1))}));   // output 2 holds the encoded normal
     } else {
-        e->push_back(Make(op::Mov, {Out(L, Y | Z), All(0)}));                            // (0, 0): no normal
+        // No normal: g holds the draw's alpha and b is -1, a value no encoded normal takes.
+        e->push_back(Make(op::Mov, {Out(L, Y), alpha}));
+        e->push_back(Make(op::Mov, {Out(L, Z), All(-1)}));
     }
     if (a.outMask[0] & W) {
-        e->push_back(Make(op::Ge, {Tmp(s, X), alpha, All(0.5f)}));
+        e->push_back(Make(op::Ge, {Tmp(s, X), alpha, All(kLayerAlpha)}));
         e->push_back(Make(op::And, {Tmp(s, X), Rd(s, kX), ImmBits(0x3F800000u)}));
         e->push_back(Make(op::Mov, {Out(L, W), Rd(s, kX)}));
     } else {
@@ -133,11 +135,18 @@ std::multimap<size_t, Instruction> Taps(const Analysis& a, const Regs& r)
     return t;
 }
 
-void Declare(const Analysis& a, Code* out)
+void Declare(const Analysis& a, const Code& code, Code* out)
 {
     for (uint32_t k = kAlbedoTarget; k <= kLayerTarget; ++k) {
         Instruction d;
         d.tok = {op::DclOutput | 3u << 24, Out(k, XYZW)[0], k};
+        d.Decode();
+        out->push_back(d);
+    }
+    if (a.info.kind == ShaderKind::Water && a.cb12At == kNone) {
+        // The view rotation is in buffer 12, which the game keeps bound; this shader did not declare it.
+        Instruction d = code[a.anyCbAt];
+        d.tok[2] = 12; d.tok[3] = 3;
         d.Decode();
         out->push_back(d);
     }
@@ -189,13 +198,14 @@ bool PatchForGBuffer(const void* bytecode, size_t size, const PatchOptions& opti
     const Regs r(a.temps);
     code[a.tempsAt].tok[1] = a.temps + Regs::kCount;
     if (a.posDeclAt != kNone) code[a.posDeclAt].tok[1] |= Z << 4;      // the shader now reads SV_Position.z
+    if (a.info.kind == ShaderKind::Water && a.cb12At != kNone && code[a.cb12At].tok[3] < 3) code[a.cb12At].tok[3] = 3;
     ShadowOutputs(code, a.body, r);
     const auto taps = Taps(a, r);
     const Code epilogue = Epilogue(a, r, options);
     Code next;
     next.reserve(code.size() + 64);
     for (size_t i = 0; i < code.size(); ++i) {
-        if (i == a.body) Declare(a, &next);
+        if (i == a.body) Declare(a, code, &next);
         const auto range = taps.equal_range(i);
         for (auto it = range.first; it != range.second; ++it) next.push_back(it->second);
         if (code[i].opcode == op::Ret) next.insert(next.end(), epilogue.begin(), epilogue.end());

@@ -16,6 +16,8 @@ struct Analysis
     uint32_t  texDim[32] = {};      // resource dimension of each texture slot (3 is 2D, 6 is a cube)
     uint32_t  temps = 0;
     size_t    tempsAt = kNone;      // index of dcl_temps
+    size_t    anyCbAt = kNone;      // index of some constant buffer declaration
+    size_t    cb12At = kNone;       // index of the declaration of buffer 12
     uint8_t   outMask[8] = {};      // declared write mask of each colour output
     int       posReg = -1;          // the input register that carries SV_Position
     size_t    posDeclAt = kNone;    // index of its declaration, when the shader reads it

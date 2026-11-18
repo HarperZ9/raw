@@ -363,3 +363,17 @@ set_target_properties(gbuffer_patch_check PROPERTIES CXX_STANDARD 20 CXX_STANDAR
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
 target_compile_definitions(gbuffer_patch_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(gbuffer_patch_check PRIVATE raw_dxbc d3d11 d3dcompiler)
+target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/GBufferComplete.cpp src/d3d11_proxy/GBufferVariants.cpp)
+target_link_libraries(d3d11_proxy PRIVATE raw_dxbc)
+
+# Stencil and 3D volumes across the bridge (BridgeShareMore.cpp).
+set(RAW_SHARE_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders)
+add_custom_command(
+    OUTPUT ${RAW_BRIDGE_GEN}/StencilCopy_CS.h ${RAW_BRIDGE_GEN}/VolumeCopy_CS.h
+    COMMAND ${RAW_FXC} /nologo /T cs_5_0 /E CSMain /O3 /Vn g_StencilCopyCS /Fh ${RAW_BRIDGE_GEN}/StencilCopy_CS.h ${RAW_SHARE_HLSL}/StencilCopy.hlsl
+    COMMAND ${RAW_FXC} /nologo /T cs_5_0 /E CSMain /O3 /Vn g_VolumeCopyCS /Fh ${RAW_BRIDGE_GEN}/VolumeCopy_CS.h ${RAW_SHARE_HLSL}/VolumeCopy.hlsl
+    DEPENDS ${RAW_SHARE_HLSL}/StencilCopy.hlsl ${RAW_SHARE_HLSL}/VolumeCopy.hlsl
+    COMMENT "fxc: stencil and volume copies -> bytecode headers"
+    VERBATIM)
+target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/BridgeShareMore.cpp
+    ${RAW_BRIDGE_GEN}/StencilCopy_CS.h ${RAW_BRIDGE_GEN}/VolumeCopy_CS.h)

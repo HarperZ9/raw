@@ -24,7 +24,7 @@
 //    MinDraws=500
 //    Captures=1                  how many frames to capture
 //    Every=600                   gameplay frames between captures
-//    History=1                   keep full-size colour targets after every interval
+//    History=1                   keep full-size colour targets after every interval (2: only the HDR colour)
 //
 //  Outside an armed frame every hook is one branch on g_frameLedgerArmed.
 //  Original work, MIT.

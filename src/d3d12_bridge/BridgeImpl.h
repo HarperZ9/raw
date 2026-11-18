@@ -47,6 +47,7 @@ struct D3D12Bridge::Impl
     ComPtr<ID3D11DeviceContext4> ctx11;
     ComPtr<ID3D11Fence>          fence11;
     ComPtr<ID3D11ComputeShader>  depthCS;     // DepthCopy.hlsl
+    ComPtr<ID3D11ComputeShader>  stencilCS, volumeCS;   // StencilCopy.hlsl, VolumeCopy.hlsl; made on first use
     ComPtr<ID3D11UnorderedAccessView> depthUAV;
 
     // D3D12 (ours)
@@ -72,6 +73,8 @@ struct D3D12Bridge::Impl
     };
     std::vector<Extra> extras;
     Extra* ExtraFor(UINT w, UINT h, DXGI_FORMAT fmt, bool uav);
+    // One compute copy on the D3D11 queue from src into the extra's texture, then a D3D12 read of it.
+    bool ComputeCopyAndRead(ID3D11ComputeShader* cs, ID3D11ShaderResourceView* src, Extra* e, std::vector<uint8_t>* out, UINT* rowBytes);
 
     SharedTex shared[kSharedCount];
     SharedTex& colorIn  = shared[static_cast<UINT>(Shared::ColorIn)];

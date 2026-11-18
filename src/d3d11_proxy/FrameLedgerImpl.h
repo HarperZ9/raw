@@ -54,7 +54,8 @@ struct Event   // a clear, copy or dispatch, placed after interval `afterSeq` op
 struct State
 {
     // config
-    bool enabled = false, history = true, loaded = false;
+    bool enabled = false, loaded = false;
+    int  history = 1;               // 0 none, 1 every full-size target after every interval, 2 only the HDR colour
     int after = 600, minDraws = 500, captures = 1, every = 600;
     std::string outRoot;
     // run

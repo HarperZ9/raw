@@ -1,0 +1,111 @@
+{
+ "capture": "000",
+ "size": [
+  3840,
+  2160
+ ],
+ "class_share_percent": {
+  "none": 7.179,
+  "lit": 54.241,
+  "environment-mapped": 0.198,
+  "glow-mapped": 0.006,
+  "landscape": 1.2,
+  "soft-lit": 24.715,
+  "parallax": 11.227,
+  "distant": 1.234
+ },
+ "first_person_percent": 0.0,
+ "first_person_with_normal": null,
+ "emissive_nonzero_percent": 0.0,
+ "emissive_max": 0.0,
+ "gloss_set_percent": 43.536,
+ "layer_covered_percent": 8.724,
+ "layer_with_normal_percent": 0.602,
+ "checks": [
+  {
+   "check": "every pixel with opaque depth and a game normal carries a material class",
+   "pass": true,
+   "pixels": 7603229,
+   "with_class": 0.9999952651695747
+  },
+  {
+   "check": "albedo is written wherever a class is",
+   "pass": true,
+   "share": 0.999940771313365
+  },
+  {
+   "check": "control: sky pixels carry no class",
+   "pass": true,
+   "share_without": 1.0
+  },
+  {
+   "check": "layer depth is at or in front of the scene depth",
+   "pass": true,
+   "pixels": 723622,
+   "share": 1.0
+  },
+  {
+   "check": "control: the opposite order fails",
+   "pass": true,
+   "share": 0.0
+  },
+  {
+   "check": "layer normals of water point along the world's up axis in view space (mean dot over 0.9)",
+   "pass": true,
+   "pixels": 49938,
+   "mean_dot": 0.9922686825257624,
+   "unit_length_error": 4.440892098500626e-16
+  },
+  {
+   "check": "control: x and y swapped",
+   "pass": true,
+   "mean_dot": -0.025883762044544796
+  }
+ ],
+ "coverage": {
+  "classes": [
+   {
+    "class": "sky",
+    "pixels": 573446,
+    "percent": 6.914,
+    "described": 573446,
+    "described_percent_of_class": 100.0,
+    "by": "nothing to describe"
+   },
+   {
+    "class": "opaque",
+    "pixels": 6988687,
+    "percent": 84.258,
+    "described": 6940026,
+    "described_percent_of_class": 99.3,
+    "by": "game depth, normal, motion; RAW albedo, specular, gloss, emissive, class"
+   },
+   {
+    "class": "water",
+    "pixels": 49934,
+    "percent": 0.602,
+    "described": 49934,
+    "described_percent_of_class": 100.0,
+    "by": "RAW layer: depth, normal"
+   },
+   {
+    "class": "blended",
+    "pixels": 682333,
+    "percent": 8.226,
+    "described": 672907,
+    "described_percent_of_class": 98.62,
+    "by": "RAW layer: depth of the nearest blended surface that shows, its normal or its alpha"
+   },
+   {
+    "class": "first person",
+    "pixels": 0,
+    "percent": 0.0,
+    "described": 0,
+    "described_percent_of_class": null,
+    "by": "game normal bound by RAW, class with the first-person flag, depth in the prepass copy"
+   }
+  ],
+  "described_percent": 99.3,
+  "missing_percent": 0.7
+ }
+}

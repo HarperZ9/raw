@@ -1,0 +1,40 @@
+{
+ "checks": [
+  {
+   "check": "motion vectors equal the reprojection with the previous view-projection and the camera's step (0.5 px)",
+   "pixels": 1940415,
+   "within_half_pixel": 0.9993496236629793,
+   "camera_motion_px_median": 3.989575158853776,
+   "camera_motion_px_max": 7.573429546311177,
+   "camera_step_units": [
+    -0.005,
+    -0.007,
+    -0.071
+   ],
+   "pass": true
+  },
+  {
+   "check": "control: the camera's step left out",
+   "pixels": 1940415,
+   "within_half_pixel": 0.3329710397002703,
+   "camera_motion_px_median": 0.0,
+   "camera_motion_px_max": 0.0,
+   "camera_step_units": [
+    -0.005,
+    -0.007,
+    -0.071
+   ],
+   "pass": true
+  },
+  {
+   "check": "frame N+1 fetched from frame N along the motion vectors agrees best",
+   "mean_abs_difference": {
+    "with the motion vectors": 0.004010878037661314,
+    "with no motion": 0.01646428182721138,
+    "with the motion negated": 0.029178746044635773
+   },
+   "motion_px_median": 3.8117362294880643,
+   "pass": true
+  }
+ ]
+}

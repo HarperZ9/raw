@@ -12,6 +12,10 @@ from __future__ import annotations
 RGBA16F, RG16F, RGBA8, RG8, D24S8, R16T, R16F, R32F, RGB10A2, R11G11B10F = 10, 34, 28, 49, 44, 53, 54, 41, 24, 26
 
 ROLE_TEXT = {
+    "raw_albedo": ("RAW albedo", "RAW's own target: base colour before lighting, written by the patched shaders."),
+    "raw_specular": ("RAW specular", "RAW's own target: specular mask, gloss, material class."),
+    "raw_emissive": ("RAW emissive", "RAW's own target: emitted light."),
+    "raw_layer": ("RAW layer", "RAW's own target: depth and normal (or alpha) of the nearest water or blended surface."),
     "backbuffer": ("Frame (backbuffer)", "The finished frame: the game's final blit, then the HUD on top."),
     "scene_hdr": ("Scene colour, HDR", "Lit scene in linear light. Opaque pass target 0; blended draws, the game's own AO, fog and bloom land here later."),
     "motion_vectors": ("Motion vectors", "Opaque pass target 1. Screen-space velocity: (current NDC - previous NDC) * (-0.5, 0.5), from the game's lighting shader."),
@@ -44,11 +48,33 @@ ROLE_TEXT = {
 }
 
 
+RAW_SLOTS = {4: "raw_albedo", 5: "raw_specular", 6: "raw_emissive", 7: "raw_layer"}
+
+
+def split_raw_targets(manifest: dict) -> dict[int, str]:
+    """RAW's own targets sit in slots 4 to 7 of the spans it extends (docs/FRAME_BUFFERS.md,
+    "Shader patches"). This names them and trims every span's list back to the game's own
+    targets, in place, so the rules below see the frame the game drew. The first-person span
+    keeps the game's normal target RAW binds in slot 2."""
+    own: dict[int, str] = {}
+    for iv in manifest["intervals"]:
+        if iv.get("raw_split"):
+            own.update(iv["raw_targets"]); continue
+        extra = {r["tex"]: RAW_SLOTS[k] for k, r in enumerate(iv["rt"]) if k >= 4 and r["tex"] >= 0}
+        iv["raw_targets"] = extra
+        iv["raw_added_normal"] = bool(extra) and len(iv["rt"]) > 3 and iv["rt"][3]["tex"] < 0 and iv["rt"][2]["tex"] >= 0
+        iv["rt"] = [r for r in iv["rt"][:4] if r["tex"] >= 0]
+        iv["raw_split"] = True
+        own.update(extra)
+    return own
+
+
 def assign(manifest: dict) -> dict[int, str]:
+    raw_own = split_raw_targets(manifest)
     tex = {t["id"]: t for t in manifest["textures"]}
     bw, bh = manifest["backbuffer"]
     ivs = [iv for iv in manifest["intervals"] if iv["draws"] > 0]
-    role: dict[int, str] = {}
+    role: dict[int, str] = dict(raw_own)
 
     def full(t): return t["dim"] == 2 and t["array"] == 1 and t["w"] == bw and t["h"] == bh
     def put(i, name):

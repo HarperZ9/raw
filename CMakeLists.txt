@@ -346,6 +346,38 @@ target_link_libraries(bridge_roundtrip PRIVATE raw_d3d12_bridge d3d11)
 set_target_properties(bridge_roundtrip PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
 
+# ----------------------------------------------------------------------------
+# G-buffer completion (docs/FRAME_BUFFERS.md, "Shader patches"): the DXBC
+# patcher as its own library, and its check against known scenes.
+# ----------------------------------------------------------------------------
+add_library(raw_dxbc STATIC
+    src/core/dxbc/DxbcContainer.cpp
+    src/core/dxbc/DxbcProgram.cpp
+    src/core/dxbc/GBufferAnalyse.cpp
+    src/core/dxbc/GBufferPatch.cpp)
+set_target_properties(raw_dxbc PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_executable(gbuffer_patch_check tests/gbuffer_patch/main.cpp)
+set_target_properties(gbuffer_patch_check PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
+target_compile_definitions(gbuffer_patch_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(gbuffer_patch_check PRIVATE raw_dxbc d3d11 d3dcompiler)
+target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/GBufferComplete.cpp src/d3d11_proxy/GBufferVariants.cpp)
+target_link_libraries(d3d11_proxy PRIVATE raw_dxbc)
+
+# Stencil and 3D volumes across the bridge (BridgeShareMore.cpp).
+set(RAW_SHARE_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders)
+add_custom_command(
+    OUTPUT ${RAW_BRIDGE_GEN}/StencilCopy_CS.h ${RAW_BRIDGE_GEN}/VolumeCopy_CS.h
+    COMMAND ${RAW_FXC} /nologo /T cs_5_0 /E CSMain /O3 /Vn g_StencilCopyCS /Fh ${RAW_BRIDGE_GEN}/StencilCopy_CS.h ${RAW_SHARE_HLSL}/StencilCopy.hlsl
+    COMMAND ${RAW_FXC} /nologo /T cs_5_0 /E CSMain /O3 /Vn g_VolumeCopyCS /Fh ${RAW_BRIDGE_GEN}/VolumeCopy_CS.h ${RAW_SHARE_HLSL}/VolumeCopy.hlsl
+    DEPENDS ${RAW_SHARE_HLSL}/StencilCopy.hlsl ${RAW_SHARE_HLSL}/VolumeCopy.hlsl
+    COMMENT "fxc: stencil and volume copies -> bytecode headers"
+    VERBATIM)
+target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/BridgeShareMore.cpp
+    ${RAW_BRIDGE_GEN}/StencilCopy_CS.h ${RAW_BRIDGE_GEN}/VolumeCopy_CS.h)
+
 # ============================================================================
 # D3D11-to-D3D12 translation layer (stage 2): ID3D11Device and
 # ID3D11DeviceContext implemented on a D3D12 device. Windows SDK only.

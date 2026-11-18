@@ -1,0 +1,253 @@
+// GBufferAnalyse: reflection of one pixel shader. Reads the declarations,
+// names the shader kind and finds where the values a patch exports are held.
+// Every rule here was read from disassemblies of shaders the game compiled
+// (docs/FRAME_BUFFERS.md, "Shader patches"). Original work, MIT.
+#include "GBufferPatchImpl.h"
+
+#include <cstring>
+
+namespace raw::dxbc
+{
+namespace
+{
+bool IsSample(uint32_t o) { return o == op::Sample || o == op::SampleL || o == op::SampleD || o == op::SampleB; }
+
+void ReadDeclarations(const Program& p, Analysis* a)
+{
+    const auto& code = p.Code();
+    a->body = p.FirstBody();
+    for (size_t i = 0; i < a->body; ++i) {
+        const auto& t = code[i].tok;
+        switch (code[i].opcode) {
+            case op::DclConstantBuffer:
+                if (t.size() >= 4 && t[2] < 16) { a->cb[t[2]] = t[3]; a->anyCbAt = i; if (t[2] == 12) a->cb12At = i; }
+                break;
+            case op::DclResource:       if (t.size() >= 3 && t[2] < 32) a->texDim[t[2]] = (t[0] >> 11) & 0x1F; break;
+            case op::DclTemps:          a->temps = t[1]; a->tempsAt = i; break;
+            case op::DclOutput:         if (t.size() >= 3 && t[2] < 8) a->outMask[t[2]] = uint8_t((t[1] >> 4) & 0xF); break;
+            case op::DclInputPsSiv:     if (t.size() >= 4 && t[3] == 1) { a->posReg = int(t[2]); a->posDeclAt = i; } break;
+            default: break;
+        }
+    }
+}
+
+// Nesting depth of each instruction: 0 outside every if, loop and switch.
+std::vector<int> Depths(const std::vector<Instruction>& code)
+{
+    std::vector<int> d(code.size(), 0);
+    int depth = 0;
+    for (size_t i = 0; i < code.size(); ++i) {
+        const uint32_t o = code[i].opcode;
+        if (o == op::Endif || o == op::Endloop || o == op::Endswitch) --depth;
+        d[i] = depth;
+        if (o == op::If || o == op::Loop || o == op::Switch) ++depth;
+    }
+    return d;
+}
+
+bool ReadsBuffer(const Instruction& in, uint32_t slot)
+{
+    for (const Operand& o : in.ops)
+        if (o.type == type::ConstantBuffer && o.index[0] == slot) return true;
+    return false;
+}
+bool SamplesSlot(const Instruction& in, uint32_t slot)
+{
+    return IsSample(in.opcode) && in.ops.size() >= 3 && in.ops[2].type == type::Resource && in.ops[2].index[0] == slot;
+}
+// The destination component that receives texture channel ch, or -1.
+int ChannelAt(const Instruction& sample, uint32_t ch)
+{
+    const uint32_t mask = sample.ops[0].Mask();
+    for (uint32_t c = 0; c < 4; ++c)
+        if ((mask >> c & 1) && sample.ops[2].Swizzle(c) == ch) return int(c);
+    return -1;
+}
+size_t FirstSample(const std::vector<Instruction>& code, const std::vector<int>& depth, size_t from, uint32_t slot)
+{
+    for (size_t i = from; i < code.size(); ++i)
+        if (SamplesSlot(code[i], slot) && depth[i] == 0 && code[i].ops[0].type == type::Temp) return i;
+    return kNone;
+}
+
+// The base colour. The shader samples slot 0 into a register and keeps the
+// colour there (blending more layers into it, tinting it) until lighting
+// starts: the first read of the light constants (buffer 2) or of the shadow
+// mask (slot 14). The tap goes before that instruction. If the register is
+// reused for something else first, the tap goes right after the sample.
+void FindAlbedo(const std::vector<Instruction>& code, const std::vector<int>& depth, bool lit, Analysis* a)
+{
+    const size_t s = FirstSample(code, depth, a->body, 0);
+    if (s == kNone) return;
+    const int r = ChannelAt(code[s], 0), g = ChannelAt(code[s], 1), b = ChannelAt(code[s], 2);
+    if (r < 0 || g < 0 || b < 0) return;
+    const uint32_t reg = code[s].ops[0].index[0];
+    const uint32_t comps = 1u << r | 1u << g | 1u << b;
+    size_t tap = s + 1, opener = kNone;
+    bool inPlace = false;
+    for (size_t i = s + 1; lit && i < code.size(); ++i) {
+        const bool lighting = ReadsBuffer(code[i], 2) || SamplesSlot(code[i], 14);
+        if (depth[i] == 0) {
+            if (lighting) { tap = i; inPlace = true; break; }
+            const uint32_t o = code[i].opcode;
+            if (o == op::If || o == op::Loop || o == op::Switch) opener = i;
+        } else if (lighting && opener != kNone) { tap = opener; inPlace = true; break; }
+        const Instruction& in = code[i];
+        if (!in.ops.empty() && in.ops[0].type == type::Temp && in.ops[0].index[0] == reg && (in.ops[0].Mask() & comps)) {
+            bool readsSelf = false;
+            for (size_t k = 1; k < in.ops.size(); ++k)
+                readsSelf |= in.ops[k].type == type::Temp && in.ops[k].index[0] == reg;
+            if (!readsSelf) break;                      // the register now holds something else
+        }
+    }
+    a->albedoBefore = tap;
+    a->albedoReg = reg;
+    a->albedoSwz = Swz(uint32_t(r), uint32_t(g), uint32_t(b), uint32_t(b));
+    a->info.albedo = true;
+    a->info.albedoInPlace = inPlace;
+}
+
+void FindSpecular(const std::vector<Instruction>& code, const std::vector<int>& depth, Analysis* a)
+{
+    // The specular mask: alpha of the normal map in slot 1.
+    const size_t n = FirstSample(code, depth, a->body, 1);
+    const int alpha = n == kNone ? -1 : ChannelAt(code[n], 3);
+    if (alpha >= 0) {
+        a->specAfter = n; a->specReg = code[n].ops[0].index[0]; a->specComp = uint32_t(alpha);
+        a->info.specularMask = true;
+    }
+    // Gloss: the shader raises a dot product to the shininess with log, mul, exp.
+    for (size_t i = a->body; i + 2 < code.size(); ++i) {
+        if (code[i].opcode != op::Log || code[i + 1].opcode != op::Mul || code[i + 2].opcode != op::Exp) continue;
+        const Instruction& mul = code[i + 1];
+        if (mul.ops.size() != 3 || code[i].ops.empty() || code[i].ops[0].type != type::Temp) continue;
+        const uint32_t logReg = code[i].ops[0].index[0];
+        const bool first = mul.ops[1].type == type::Temp && mul.ops[1].index[0] == logReg;
+        const bool second = mul.ops[2].type == type::Temp && mul.ops[2].index[0] == logReg;
+        if (first == second) continue;
+        const uint32_t mask = mul.ops[0].Mask();
+        if (mask == 0 || (mask & (mask - 1))) continue;  // one component
+        a->glossBefore = i + 1; a->glossMask = mask;
+        a->glossOperand = mul.OperandTokens(first ? 2 : 1);
+        a->info.gloss = true;
+        break;
+    }
+    // Emissive: colour * scale from one element of buffer 1 joins the lit sum (as a mad into the
+    // sum, or as a product added to it) before the base colour multiplies it.
+    for (size_t i = a->body; i < code.size(); ++i) {
+        const Instruction& in = code[i];
+        const bool mad = in.opcode == op::Mad && in.ops.size() == 4, mul = in.opcode == op::Mul && in.ops.size() == 3;
+        if ((!mad && !mul) || depth[i] != 0 || in.ops[0].Mask() != 7) continue;
+        const Operand &x = in.ops[1], &y = in.ops[2];
+        if (x.type != type::ConstantBuffer || y.type != type::ConstantBuffer || x.index[0] != 1 || y.index[0] != 1 ||
+            x.index[1] != y.index[1] || x.relative[1] || y.relative[1]) continue;
+        a->emitA = in.OperandTokens(1); a->emitB = in.OperandTokens(2);
+        a->info.emissive = true;
+        break;
+    }
+}
+
+// The world-space normal of a water surface. Two forms, both read from the game's water shaders:
+// a saturated dot product of the normal with one fixed direction; or the wave normal built as
+// amplitude * sample + (0, 0, 1) with the amplitude in buffer 1, then normalised with rsq and mul.
+void FindWaterNormal(const std::vector<Instruction>& code, Analysis* a)
+{
+    static const float kDir[3] = {-0.099f, -0.099f, 0.99f}, kUp[3] = {0.0f, 0.0f, 1.0f};
+    for (size_t i = a->body; i < code.size(); ++i) {
+        const Instruction& in = code[i];
+        if (in.opcode != op::Dp3 || !(in.tok[0] & (1u << 13)) || in.ops.size() != 3) continue;
+        for (size_t k = 1; k < 3; ++k) {
+            const Operand& o = in.ops[k];
+            if (o.type != type::Immediate32 || o.components != 2) continue;
+            if (memcmp(&in.tok[o.at + 1], kDir, sizeof kDir) != 0) continue;
+            a->waterBefore = i;
+            a->waterOperand = in.OperandTokens(3 - k);
+            return;
+        }
+    }
+    for (size_t i = a->body; i < code.size(); ++i) {
+        const Instruction& in = code[i];
+        if (in.opcode != op::Mad || in.ops.size() != 4 || in.ops[0].type != type::Temp || in.ops[0].Mask() != 7) continue;
+        const Operand &amp = in.ops[1], &up = in.ops[3];
+        if (amp.type != type::ConstantBuffer || amp.index[0] != 1 || up.type != type::Immediate32 || up.components != 2) continue;
+        if (memcmp(&in.tok[up.at + 1], kUp, sizeof kUp) != 0) continue;
+        const uint32_t reg = in.ops[0].index[0];
+        for (size_t j = i + 2; j < code.size(); ++j) {
+            const Instruction& mul = code[j];
+            if (mul.opcode != op::Mul || code[j - 1].opcode != op::Rsq || mul.ops.size() != 3 || mul.ops[0].type != type::Temp) continue;
+            const bool reads = (mul.ops[1].type == type::Temp && mul.ops[1].index[0] == reg) ||
+                               (mul.ops[2].type == type::Temp && mul.ops[2].index[0] == reg);
+            uint32_t c[4] = {}, n = 0;
+            for (uint32_t k = 0; k < 4; ++k) if (mul.ops[0].Mask() >> k & 1) c[n++] = k;
+            if (!reads || n != 3) continue;
+            a->waterBefore = j + 1;
+            a->waterOperand = Src(type::Temp, mul.ops[0].index[0], Swz(c[0], c[1], c[2], c[2]));
+            return;
+        }
+    }
+}
+
+uint8_t LightingClass(const Analysis& a)
+{
+    bool sixLayers = a.cb[1] >= 13;
+    for (int s = 0; s < 6; ++s) sixLayers &= a.texDim[s] == 3;
+    if (sixLayers) return material::Landscape;
+    for (int s = 0; s < 32; ++s) if (a.texDim[s] == 6) return material::EnvironmentMapped;
+    if (a.texDim[6]) return material::GlowMapped;
+    if (a.texDim[12]) return material::SoftLit;
+    if (a.texDim[3] || a.texDim[8]) return material::Parallax;
+    return material::Lit;
+}
+} // namespace
+
+bool Analyse(const Container& c, const Program& p, Analysis* a)
+{
+    const auto& code = p.Code();
+    auto refuse = [&](const char* why) { a->info.refused = why; a->info.kind = ShaderKind::Unknown; return false; };
+    if (!p.IsPixelShader()) return refuse("not a pixel shader");
+    ReadDeclarations(p, a);
+    if (a->tempsAt == kNone) return refuse("no temporaries declared");
+    if (!a->outMask[0]) return refuse("no colour output 0");
+    for (int k = 4; k < 8; ++k) if (a->outMask[k]) return refuse("already writes outputs 4 to 7");
+    for (size_t i = a->body; i < code.size(); ++i) {
+        const uint32_t o = code[i].opcode;
+        if (code[i].bad) return refuse("an instruction could not be decoded");
+        if (o == op::Retc || o == op::Call || o == op::Callc || o == op::Label) return refuse("conditional return or call");
+    }
+    std::vector<SignatureElement> in;
+    if (c.ReadSignature(FourCC('I', 'S', 'G', 'N'), &in))
+        for (const SignatureElement& e : in)
+            if (e.systemValue == 1) a->posReg = int(e.reg);
+    a->info.depth = a->posReg >= 0;
+
+    const std::vector<int> depth = Depths(code);
+    const bool threeOut = a->outMask[1] && (a->outMask[2] & 3) == 3;
+    FindWaterNormal(code, a);
+    if (a->cb[2] >= 30 && a->cb[1] >= 9 && threeOut && a->texDim[0] == 3) {
+        a->info.kind = ShaderKind::Lighting;
+        a->info.materialClass = LightingClass(*a);
+        FindAlbedo(code, depth, true, a);
+        // A landscape samples colour layers from slots 0 to 5; slot 1 is not a normal map there.
+        if (a->info.materialClass != material::Landscape) FindSpecular(code, depth, a);
+        else { const size_t keep = a->specAfter; FindSpecular(code, depth, a); a->specAfter = keep; a->info.specularMask = false; }
+        a->info.normal = true;
+    } else if (a->waterBefore != kNone && a->anyCbAt != kNone) {
+        a->info.kind = ShaderKind::Water;
+        a->info.materialClass = material::Water;
+        a->info.normal = true;
+    } else if (a->cb[1] == 3 && a->cb[2] == 9) {
+        a->info.kind = ShaderKind::Effect;
+        a->info.materialClass = material::Effect;
+    } else if (a->cb[12] && !a->cb[1] && threeOut && a->texDim[0] == 3) {
+        a->info.kind = ShaderKind::DistantLod;
+        a->info.materialClass = material::DistantLod;
+        FindAlbedo(code, depth, false, a);
+        a->info.normal = true;
+    } else {
+        a->info.kind = ShaderKind::Generic;
+    }
+    if (a->info.kind != ShaderKind::Water) a->waterBefore = kNone;
+    return true;
+}
+
+} // namespace raw::dxbc

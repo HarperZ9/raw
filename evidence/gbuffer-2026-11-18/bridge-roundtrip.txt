@@ -1,0 +1,61 @@
+[PASS] fixture textures created
+[D3D12Bridge] D3D12 device on 'NVIDIA GeForce RTX 4090' (LUID 00000000:0000F27C, same adapter as D3D11)
+[D3D12Bridge] ID3D11DeviceContext4::Signal at 00007FFA81DA9080 in C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_0373d825005116d0\nvwgf2umx.dll
+[D3D12Bridge] ID3D11DeviceContext4::Wait at 00007FFA81DA9070 in C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_0373d825005116d0\nvwgf2umx.dll
+[D3D12Bridge] device creation flags 0x0, feature level 0xB000
+[D3D12Bridge] self-test: D3D11 Signal 0x00000000, D3D11->fence seen, D3D12 round trip ok
+[D3D12Bridge] ready: 256x128 colour fmt 28, depth as R32F, normals fmt 0, pass 'depth-fog'
+[PASS] bridge initialised (D3D12 device on the D3D11 adapter, shared textures and fence)
+[PASS] identity round trip submitted
+       identity: 0 mismatches, max delta 0
+[PASS] identity: every pixel identical after D3D11 -> D3D12 -> D3D11
+[PASS] banded R24G8 depth copied into shared depth
+       haze/banded: 0 mismatches, max delta 1
+[PASS] haze over banded depth matches the CPU reference (tol 2/255)
+[PASS] depth-stencil texture copied into shared depth
+       haze/depth-stencil: 0 mismatches, max delta 1
+[PASS] haze over a cleared depth-stencil matches the CPU reference
+[PASS] comparator self-check: one corrupted reference pixel is reported
+       control: D3D12 waits for 1009, D3D11 signalled 9; D3D12 done=0, D3D11 done=0 after 750 ms
+[PASS] CONTROL: wrong fence value is detected (both queues stall, CPU wait times out)
+[PASS] CONTROL: stall released by signalling the awaited value from the CPU
+[PASS] after the control, a correct round trip passes again
+[D3D12Bridge] D3D12 device on 'NVIDIA GeForce RTX 4090' (LUID 00000000:0000F27C, same adapter as D3D11)
+[D3D12Bridge] ID3D11DeviceContext4::Signal at 00007FFA81DA9080 in C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_0373d825005116d0\nvwgf2umx.dll
+[D3D12Bridge] ID3D11DeviceContext4::Wait at 00007FFA81DA9070 in C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_0373d825005116d0\nvwgf2umx.dll
+[D3D12Bridge] device creation flags 0x0, feature level 0xB000
+[D3D12Bridge] self-test: D3D11 Signal 0x00000000, D3D11->fence seen, D3D12 round trip ok
+[D3D12Bridge] ready: 256x128 colour fmt 28, depth as R32F, normals fmt 0, pass 'depth-fog'
+[PASS] on-demand share: R16 depth array, layer 1 (a shadow cascade) reads the same on D3D12 (crossed as format 56)
+[PASS] CONTROL: R16 depth array, layer 1 (a shadow cascade) against one changed value is reported
+[PASS] on-demand share: RGBA16F cube map, face 4 (reflections) reads the same on D3D12 (crossed as format 10)
+[PASS] CONTROL: RGBA16F cube map, face 4 (reflections) against one changed value is reported
+[PASS] on-demand share: RG16F (motion vectors) reads the same on D3D12 (crossed as format 34)
+[PASS] CONTROL: RG16F (motion vectors) against one changed value is reported
+[PASS] on-demand share: RG8 (mask) reads the same on D3D12 (crossed as format 49)
+[PASS] CONTROL: RG8 (mask) against one changed value is reported
+[PASS] on-demand share: R11G11B10F reads the same on D3D12 (crossed as format 26)
+[PASS] CONTROL: R11G11B10F against one changed value is reported
+[PASS] on-demand share: D24S8 at 512x512, as float depth reads the same on D3D12 (crossed as format 41)
+[PASS] CONTROL: D24S8 at 512x512, as float depth against one changed value is reported
+[PASS] stencil of a D24S8 buffer: every byte read on D3D12 equals the cleared value
+[PASS] control: another stencil value is not accepted
+[PASS] 3D R16F volume: every texel of every slice read on D3D12 equals the D3D11 texel
+[PASS] control: the slices shifted by one are not accepted
+[D3D12Bridge] D3D12 device on 'NVIDIA GeForce RTX 4090' (LUID 00000000:0000F27C, same adapter as D3D11)
+[D3D12Bridge] ID3D11DeviceContext4::Signal at 00007FFA81DA9080 in C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_0373d825005116d0\nvwgf2umx.dll
+[D3D12Bridge] ID3D11DeviceContext4::Wait at 00007FFA81DA9070 in C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_0373d825005116d0\nvwgf2umx.dll
+[D3D12Bridge] device creation flags 0x0, feature level 0xB000
+[D3D12Bridge] self-test: D3D11 Signal 0x00000000, D3D11->fence seen, D3D12 round trip ok
+[D3D12Bridge] ready: 1920x1080 colour fmt 28, depth as R32F, normals fmt 0, pass 'depth-fog'
+       1920x1080: bridge cost median 0.339 ms (depth 0.025, in 0.008, out 0.008, sync 0.299), D3D12 pass 0.007 ms, n=232
+[PASS] timestamps read back on both queues
+[D3D12Bridge] D3D12 device on 'NVIDIA GeForce RTX 4090' (LUID 00000000:0000F27C, same adapter as D3D11)
+[D3D12Bridge] ID3D11DeviceContext4::Signal at 00007FFA81DA9080 in C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_0373d825005116d0\nvwgf2umx.dll
+[D3D12Bridge] ID3D11DeviceContext4::Wait at 00007FFA81DA9070 in C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_0373d825005116d0\nvwgf2umx.dll
+[D3D12Bridge] device creation flags 0x0, feature level 0xB000
+[D3D12Bridge] self-test: D3D11 Signal 0x00000000, D3D11->fence seen, D3D12 round trip ok
+[D3D12Bridge] ready: 3840x2160 colour fmt 28, depth as R32F, normals fmt 0, pass 'depth-fog'
+       3840x2160: bridge cost median 0.391 ms (depth 0.029, in 0.024, out 0.024, sync 0.314), D3D12 pass 0.025 ms, n=232
+[PASS] timestamps read back on both queues
+ALL CHECKS PASSED: 0 check(s) failed

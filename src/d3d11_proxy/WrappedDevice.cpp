@@ -6,6 +6,7 @@
 #include "WrappedContext.h"
 #include "ShaderManager.h"
 #include "MaterialPipeline.h"
+#include "GBufferComplete.h"
 #include "DepthIntercept.h"
 #include "ProxyAPI.h"
 #include "ProxyLog.h"
@@ -366,6 +367,7 @@ HRESULT STDMETHODCALLTYPE WrappedDevice::CreatePixelShader(
     HRESULT hr = m_real->CreatePixelShader(pShaderBytecode, BytecodeLength, pClassLinkage, ppPixelShader);
     if (SUCCEEDED(hr) && ppPixelShader && *ppPixelShader) {
         ShaderManager::Get().OnPixelShaderCreated(pShaderBytecode, BytecodeLength, *ppPixelShader);
+        GBuffer_OnPixelShaderCreated(*ppPixelShader, pShaderBytecode, BytecodeLength);
         MaterialPipeline::Get().OnPixelShaderCreated(
             m_real, pShaderBytecode, BytecodeLength, *ppPixelShader);
     }

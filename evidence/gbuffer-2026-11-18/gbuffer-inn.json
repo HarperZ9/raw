@@ -1,0 +1,45 @@
+{
+ "capture": "000",
+ "size": [
+  3840,
+  2160
+ ],
+ "class_share_percent": {
+  "none": 0.007,
+  "lit": 93.192,
+  "environment-mapped": 6.722,
+  "glow-mapped": 0.002,
+  "soft-lit": 0.077
+ },
+ "first_person_percent": 6.424,
+ "first_person_with_normal": 0.0,
+ "emissive_nonzero_percent": 0.0,
+ "emissive_max": 0.0,
+ "gloss_set_percent": 97.082,
+ "layer_covered_percent": 0.004,
+ "layer_with_normal_percent": 0.004,
+ "checks": [
+  {
+   "check": "every pixel with opaque depth and a game normal carries a material class",
+   "pass": true,
+   "pixels": 7745419,
+   "with_class": 0.9999234386157805
+  },
+  {
+   "check": "albedo is written wherever a class is",
+   "pass": true,
+   "share": 0.9999334443157406
+  },
+  {
+   "check": "layer depth is at or in front of the scene depth",
+   "pass": true,
+   "pixels": 291,
+   "share": 0.979381443298969
+  },
+  {
+   "check": "control: the opposite order fails",
+   "pass": true,
+   "share": 0.020618556701030927
+  }
+ ]
+}

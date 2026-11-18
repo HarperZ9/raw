@@ -1,0 +1,80 @@
+{
+ "capture": "000",
+ "width": 3840,
+ "height": 2160,
+ "checks": [
+  {
+   "check": "every captured buffer reads back at its stated size with finite floats",
+   "pass": true,
+   "buffers": 55,
+   "non_finite": []
+  },
+  {
+   "check": "view depth from the depth buffer equals the game's own view depth (relative 1e-4)",
+   "pass": true,
+   "pixels": 7065324,
+   "within": 1.0,
+   "median_relative_error": 2.0392339427740462e-06,
+   "game_depth_clamp": 10000.0
+  },
+  {
+   "check": "CONTROL: a projection term off by 1 % fails the depth check",
+   "pass": true,
+   "within": 0.0
+  },
+  {
+   "check": "measured: pixels whose depth the opaque pass changed after the prepass copy",
+   "pass": true,
+   "fraction": 0.0179,
+   "note": "the game's own view depth, and so its own AO, does not see these"
+  },
+  {
+   "check": "decoded normals have unit length (1e-9)",
+   "pass": true,
+   "pixels": 7604496,
+   "worst": 2.220446049250313e-16
+  },
+  {
+   "check": "encode(decode(texel)) returns the texel: the decode is the inverse of the game's write",
+   "pass": true,
+   "pixels": 7596965,
+   "identical": 1.0,
+   "outside_write_domain": 0.00099
+  },
+  {
+   "check": "on flat patches of the depth buffer the decoded normal is within 30 degrees of the plane (median), also on the patches that look at the camera",
+   "pass": true,
+   "flat_patches": 422,
+   "median_degrees": 14.99,
+   "p90_degrees": 32.69,
+   "camera_facing_patches": 32,
+   "camera_facing_median_degrees": 12.47,
+   "note": "the normal target carries normal maps and smoothed vertex normals, so it differs from the flat geometry"
+  },
+  {
+   "check": "CONTROL: the decode with x and y swapped fails the flat-patch check",
+   "pass": true,
+   "median_degrees": 69.07
+  },
+  {
+   "check": "CONTROL: the decode with z flipped fails on the patches that look at the camera",
+   "pass": true,
+   "camera_facing_median_degrees": 105.35
+  },
+  {
+   "check": "measured: drawn pixels whose normal points away from the viewer (cosine over 0.25)",
+   "pass": true,
+   "fraction": 0.13069,
+   "note": "two-sided foliage keeps its front-face normal on back faces"
+  },
+  {
+   "check": "motion vectors equal the reprojection with the game's current and previous view-projection (0.5 px)",
+   "pass": true,
+   "pixels": 475228,
+   "within": 0.99779,
+   "camera_motion_px": 0.0,
+   "note": "pixels outside are surfaces that moved on their own (wind, actors)"
+  }
+ ],
+ "failed": 0
+}

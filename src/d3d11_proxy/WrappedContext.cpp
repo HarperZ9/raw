@@ -2,6 +2,8 @@
 #include "ShaderManager.h"
 #include "RenderPhaseDetector.h"
 #include "BindingLedger.h"
+#include "FrameLedger.h"
+#include "BridgeHook.h"
 #include "MaterialPipeline.h"
 #include "CBDirtyTracker.h"
 #include "OcclusionCuller.h"
@@ -206,6 +208,7 @@ void STDMETHODCALLTYPE WrappedContext::VSSetShader(ID3D11VertexShader* pVS, ID3D
     uint64_t vsHash = ShaderManager::Get().GetVSHash(pVS);
     uint64_t psHash = ShaderManager::Get().GetPSHash(m_currentPS);
     RenderPhaseDetector::Get().OnShaderBind(psHash, vsHash);
+    if (g_frameLedgerArmed) FrameLedgerHooks::OnShaders(psHash, vsHash, m_currentPS);
     for (auto& cb : g_shaderBindCallbacks)
         if (cb) cb(m_currentPS, pVS);
 }
@@ -227,6 +230,7 @@ void STDMETHODCALLTYPE WrappedContext::PSSetShader(ID3D11PixelShader* pPS, ID3D1
     uint64_t psHash = ShaderManager::Get().GetPSHash(pPS);
     uint64_t vsHash = ShaderManager::Get().GetVSHash(m_currentVS);
     RenderPhaseDetector::Get().OnShaderBind(psHash, vsHash);
+    if (g_frameLedgerArmed) FrameLedgerHooks::OnShaders(psHash, vsHash, pPS);
     {   // Coherence membrane (Tier 3.2): which compiled variant is actually BOUND.
         static std::unordered_set<uint64_t> g_seenUse;
         uint64_t key = psHash ^ (vsHash * 1099511628211ULL);
@@ -277,6 +281,7 @@ void STDMETHODCALLTYPE WrappedContext::Draw(UINT VertexCount, UINT StartVertexLo
 {
     if (PG_IsSafeMode()) { m_real->Draw(VertexCount, StartVertexLocation); return; }
     BindingLedger::Get().OnDraw("Draw");
+    if (g_frameLedgerArmed) FrameLedgerHooks::OnDraw(m_real, "Draw", VertexCount, 1);
 
     ++m_drawCalls;
     RenderPhaseDetector::Get().OnDraw(VertexCount, false);
@@ -289,6 +294,7 @@ void STDMETHODCALLTYPE WrappedContext::DrawIndexed(UINT IndexCount, UINT StartIn
 {
     if (PG_IsSafeMode()) { m_real->DrawIndexed(IndexCount, StartIndexLocation, BaseVertexLocation); return; }
     BindingLedger::Get().OnDraw("DrawIndexed");
+    if (g_frameLedgerArmed) FrameLedgerHooks::OnDraw(m_real, "DrawIndexed", IndexCount, 1);
 
     ++m_drawCalls;
     RenderPhaseDetector::Get().OnDraw(IndexCount, true);
@@ -303,6 +309,7 @@ void STDMETHODCALLTYPE WrappedContext::DrawInstanced(UINT VertexCountPerInstance
 {
     if (PG_IsSafeMode()) { m_real->DrawInstanced(VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation); return; }
     BindingLedger::Get().OnDraw("DrawInstanced");
+    if (g_frameLedgerArmed) FrameLedgerHooks::OnDraw(m_real, "DrawInstanced", VertexCountPerInstance, InstanceCount);
 
     ++m_drawCalls;
     RenderPhaseDetector::Get().OnDraw(VertexCountPerInstance, false);
@@ -315,6 +322,7 @@ void STDMETHODCALLTYPE WrappedContext::DrawIndexedInstanced(UINT IndexCountPerIn
 {
     if (PG_IsSafeMode()) { m_real->DrawIndexedInstanced(IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, StartInstanceLocation); return; }
     BindingLedger::Get().OnDraw("DrawIndexedInstanced");
+    if (g_frameLedgerArmed) FrameLedgerHooks::OnDraw(m_real, "DrawIndexedInstanced", IndexCountPerInstance, InstanceCount);
 
     ++m_drawCalls;
     RenderPhaseDetector::Get().OnDraw(IndexCountPerInstance, true);
@@ -363,6 +371,8 @@ void STDMETHODCALLTYPE WrappedContext::OMSetRenderTargets(UINT NumViews, ID3D11R
 
     ++m_rtSwitches;
     RenderPhaseDetector::Get().OnRTChange(NumViews, ppRTVs, pDSV);  // detect with game's DSV
+    if (g_bridgeHookActive) BridgeHook_OnTargets(m_real, NumViews, ppRTVs, actualDSV);
+    if (g_frameLedgerArmed) FrameLedgerHooks::OnTargets(m_real, NumViews, ppRTVs, actualDSV);
     for (auto& cb : g_rtChangeCallbacks)
         if (cb) cb(NumViews, ppRTVs, pDSV);
 
@@ -393,6 +403,8 @@ void STDMETHODCALLTYPE WrappedContext::OMSetRenderTargetsAndUnorderedAccessViews
 
     ++m_rtSwitches;
     RenderPhaseDetector::Get().OnRTChange(NumRTVs, ppRTVs, pDSV);
+    if (g_bridgeHookActive) BridgeHook_OnTargets(m_real, NumRTVs, ppRTVs, actualDSV);
+    if (g_frameLedgerArmed) FrameLedgerHooks::OnTargets(m_real, NumRTVs, ppRTVs, actualDSV);
     for (auto& cb : g_rtChangeCallbacks)
         if (cb) cb(NumRTVs, ppRTVs, pDSV);
     m_real->OMSetRenderTargetsAndUnorderedAccessViews(NumRTVs, ppRTVs, actualDSV, UAVStartSlot, NumUAVs, ppUAVs, pUAVInitialCounts);
@@ -453,6 +465,7 @@ void STDMETHODCALLTYPE WrappedContext::OMSetDepthStencilState(ID3D11DepthStencil
 
 void STDMETHODCALLTYPE WrappedContext::ClearRenderTargetView(ID3D11RenderTargetView* pRTV, const FLOAT ColorRGBA[4])
 {
+    if (g_frameLedgerArmed) FrameLedgerHooks::OnClearTarget(pRTV, ColorRGBA);
     m_real->ClearRenderTargetView(pRTV, ColorRGBA);
 }
 
@@ -463,6 +476,7 @@ void STDMETHODCALLTYPE WrappedContext::ClearDepthStencilView(ID3D11DepthStencilV
     PreClearDepthCopy(m_real, pDSV);
 
     RenderPhaseDetector::Get().OnClearDepth(pDSV);
+    if (g_frameLedgerArmed) FrameLedgerHooks::OnClearDepth(pDSV, ClearFlags, Depth, Stencil);
     m_real->ClearDepthStencilView(pDSV, ClearFlags, Depth, Stencil);
 }
 
@@ -558,6 +572,7 @@ void STDMETHODCALLTYPE WrappedContext::Dispatch(UINT X, UINT Y, UINT Z)
 {
     BindingLedger::Get().OnDispatch("Dispatch");
     m_real->Dispatch(X, Y, Z);
+    if (g_frameLedgerArmed) FrameLedgerHooks::OnDispatch(m_real, X, Y, Z);
 }
 
 void STDMETHODCALLTYPE WrappedContext::DispatchIndirect(ID3D11Buffer* pBufferForArgs, UINT AlignedByteOffsetForArgs)
@@ -769,11 +784,13 @@ void STDMETHODCALLTYPE WrappedContext::SOSetTargets(UINT NumBuffers, ID3D11Buffe
 void STDMETHODCALLTYPE WrappedContext::CopySubresourceRegion(ID3D11Resource* pDst, UINT DstSub, UINT DstX, UINT DstY, UINT DstZ, ID3D11Resource* pSrc, UINT SrcSub, const D3D11_BOX* pSrcBox)
 {
     m_real->CopySubresourceRegion(pDst, DstSub, DstX, DstY, DstZ, pSrc, SrcSub, pSrcBox);
+    if (g_frameLedgerArmed) FrameLedgerHooks::OnCopy(m_real, pDst, pSrc, false);
 }
 
 void STDMETHODCALLTYPE WrappedContext::CopyResource(ID3D11Resource* pDst, ID3D11Resource* pSrc)
 {
     m_real->CopyResource(pDst, pSrc);
+    if (g_frameLedgerArmed) FrameLedgerHooks::OnCopy(m_real, pDst, pSrc, true);
 }
 
 // Coherence membrane (Tier 1.2): CB overflow witness — a constant buffer written past
@@ -837,6 +854,7 @@ FLOAT STDMETHODCALLTYPE WrappedContext::GetResourceMinLOD(ID3D11Resource* pResou
 void STDMETHODCALLTYPE WrappedContext::ResolveSubresource(ID3D11Resource* pDst, UINT DstSub, ID3D11Resource* pSrc, UINT SrcSub, DXGI_FORMAT Format)
 {
     m_real->ResolveSubresource(pDst, DstSub, pSrc, SrcSub, Format);
+    if (g_frameLedgerArmed) FrameLedgerHooks::OnCopy(m_real, pDst, pSrc, false);
 }
 
 void STDMETHODCALLTYPE WrappedContext::ExecuteCommandList(ID3D11CommandList* pCL, BOOL RestoreContextState)

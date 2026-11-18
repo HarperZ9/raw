@@ -15,6 +15,7 @@
 #include <Windows.h>
 #include <cstdio>
 #include <cstdarg>
+#include <share.h>
 
 namespace SB::Proxy
 {
@@ -27,7 +28,7 @@ inline void LogInit(const char* path)
 {
     if (g_logInitialized) return;
     InitializeCriticalSection(&g_logCS);
-    fopen_s(&g_logFile, path, "w");
+    g_logFile = _fsopen(path, "w", _SH_DENYNO);   // readable while the game runs
     g_logInitialized = true;
     if (g_logFile)
         fprintf(g_logFile, "[SkyrimBridge d3d11 Proxy] Log started\n");

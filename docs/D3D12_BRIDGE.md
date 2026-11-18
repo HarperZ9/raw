@@ -18,7 +18,9 @@ If a frame never enters the UI phase (menus, intro), the pass runs at Present in
 
 | file | role |
 |---|---|
-| `src/d3d12_bridge/D3D12Bridge.h` | public API, `PassConstants`, `IBridgePass` seam |
+| `src/d3d12_bridge/D3D12Bridge.h` | public API, `PassConstants`, `HostResources`, `IBridgePass` seam |
+| `src/d3d12_bridge/EnginePass.cpp` | the Playground engine's RHI and GTAO behind the seam |
+| `src/d3d12_bridge/BridgeShare.cpp`, `BridgeReadback.cpp` | on-demand sharing of any game buffer, D3D12 reads |
 | `src/d3d12_bridge/D3D12Bridge.cpp` | D3D12 device by LUID, shared textures, views, queries |
 | `src/d3d12_bridge/BridgeFrame.cpp` | depth capture, the round trip, GPU timestamps on both queues |
 | `src/d3d12_bridge/BridgeSelfTest.cpp` | fence self-test with CPU waits only, D3D11-created fence fallback |
@@ -159,3 +161,102 @@ routes. The bisect (`evidence/ingame-2026-11-17-fence-probe-bisect.log`):
 5. superframe `native/` behind `IBridgePass`: its RHI needs an adopt-device constructor (LUID),
    import of an external texture as a `TextureHandle`, and queue-level wait and signal on an
    external fence in place of `submitAndWait`.
+
+## The Playground engine behind the seam (2026-11-18)
+
+The pass seam now hands a pass the bridge's device, queue, fence and shared textures
+(`HostResources` in `D3D12Bridge.h`). A pass records and closes its own commands, the bridge
+signals the shared fence from D3D11 and flushes, and only then the pass submits: record,
+D3D11 Signal and Flush, submit. `DepthFogPass` moved onto this seam with its own command
+list, views and timestamps. `EnginePass` puts the engine's RHI (superframe `native/`) on the
+same seam: `adoptDevice`, `importTexture`, `endRecording`, `submit` with the bridge's fence,
+`retire`. D3D12 timestamps now come from the pass; for the engine pass that is the RHI.
+
+Build with the engine: `-DRAW_ENGINE_DIR=<superframe>/native`. It needs superframe main with
+host frames and with post passes that index across dispatch rows (a 3840 x 2160 frame has more
+pixels than one dispatch row covers). With the engine linked the proxy delay-loads d3d12.dll
+and dxgi.dll; its load-time imports are KERNEL32 and USER32.
+
+The first engine pass is the engine's checked GTAO, unchanged. `GamePack.hlsl` builds the
+view-space G-buffer the engine reads from the game's depth and normal targets
+(`docs/FRAME_BUFFERS.md`), `post_gtao` computes visibility, `AoComposite.hlsl` multiplies the
+frame by it in linear light. The pass runs after the game's final blit and before the HUD.
+Without normals or a camera the pass leaves the frame unchanged; it never falls back to depth
+alone.
+
+```ini
+[D3D12Bridge]
+Enabled=1
+Pass=engine      ; haze keeps the built-in depth haze
+AoRadius=35      ; game units
+AoSlices=4       ; 0 keeps the engine's 16
+AoSteps=8        ; 0 keeps the engine's 16
+```
+
+### Checks
+
+`tests/engine_gtao` (`engine_gtao_check.exe`) sends a depth buffer, a normal target and a frame
+through the real path (D3D11 textures, the bridge, the engine pass on D3D12, back) and compares
+the visibility with the engine's CPU reference `raw::post::gtao` at the engine's own bound:
+1e-3 a pixel on 99.9 % of drawn pixels. A control with another radius must fail.
+
+| Input | Size | Slices x steps | Pixels outside 1e-3 | Bound 0.1 % |
+|---|---|---|---|---|
+| synthetic scene | 640 x 360 | 16 x 16 | 0.015 % | met |
+| captured gameplay frame | 3840 x 2160 | 16 x 16 | 0.440 % | not met |
+| captured gameplay frame | 3840 x 2160 | 4 x 8 | 0.500 % | not met |
+| visibility computed in the game, same frame's shared buffers | 3840 x 2160 | 4 x 8 | 0.505 % | not met |
+
+On game content the pass does not meet the engine's bound. The mean visibility agrees to four
+places (0.7406 both ways at 16 x 16) and the median difference is 4.8e-6; the differences sit
+at depth edges. 960 x 540 windows of the same buffers give 0.11 % and 0.19 %, which points at
+float32 sample positions at large pixel coordinates flipping a nearest-texel choice. That
+cause is inferred from the windows and has not been proven. The in-game result equals the
+offline result, so the game path adds no error of its own.
+
+The round-trip test and its wrong-fence control still pass, with six on-demand share cases
+and their controls added.
+
+### Cost (RTX 4090, 3840 x 2160, GPU timestamps)
+
+| | Engine pass | of which GTAO | Bridge cost |
+|---|---|---|---|
+| offline, 16 x 16, GPU otherwise idle | 199.4 ms | 198.5 ms | 1.07 ms |
+| offline, 4 x 8, GPU idle at the start of the run | 25.3 ms | 24.4 ms | 0.62 ms |
+| offline, 4 x 8, another process at 95 to 100 % | 25.9 to 29.3 ms | 25.0 to 28.0 ms | 0.56 to 0.78 ms, and 339 and 794 ms in two runs |
+| in game, 4 x 8, another process at 99 to 100 % | 24.2 to 27.5 ms | 24.1 to 26.6 ms | 0.56 and 0.58 ms in two windows, 9.9 and 30.6 ms in two |
+
+In-game values are means over 60-frame windows in a loaded outdoor scene
+(`evidence/frame-buffers-2026-11-18/ingame-engine-gtao.log`). No in-game number was taken on
+an idle GPU: another job held it during every session. The engine's GTAO is a reference-grade
+pass (512 depth samples a pixel at its defaults); at 4K it is far from a real-time budget, and
+a cheaper pass checked against it is the next step.
+
+The pack step costs 0.75 ms and the composite 0.08 ms. The normal copy on D3D11 costs 0.04 ms.
+
+### What broke, and the fix
+
+The first in-game run with the engine pass at 16 x 16 froze the game. The frame before had not
+retired within the pass's 2 s limit, the bridge treated that as fatal and turned itself off, and
+the game's D3D11 queue was left waiting for a fence value nobody would signal. Windows logged a
+display driver event (nvlddmkm 153) at the same time; which of the two came first is unknown.
+With another process loading the GPU, hand-offs between the two devices were later measured at
+hundreds of milliseconds.
+
+Changes: the pass waits up to 15 s for the frame before; when a pass fails, the bridge signals
+the awaited fence value from the CPU before it turns off, so the game keeps rendering; a bridge
+that turned itself off stays off. The 4 x 8 run after these changes ran 277 gameplay frames
+with no failure. The fence release on failure has not been exercised in game since.
+
+### Limits
+
+- The engine's RHI retires one submission before it records the next, so the CPU waits for
+  the GPU once a frame. A ring of command lists in the RHI would remove that wait.
+- The engine's camera model has no principal-point offset. Positions are rebuilt from depth
+  with the frame's projection scale and depth terms; the sub-pixel jitter of temporal
+  anti-aliasing (under half a pixel) is not applied.
+- The composite runs on the tone-mapped frame and darkens direct light too. Applying
+  visibility to ambient light only needs the HDR scene before the game's own post chain.
+- The hook follows the game's targets. A frame with no world (menus) does not bind them, so
+  menus run the pass at Present.
+- `tests/engine_gtao/main.cpp` is over the 300-line file limit and needs a split.

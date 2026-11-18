@@ -55,15 +55,6 @@ bool D3D12Bridge::Impl::CreateDevice12(ID3D11Device* dev)
     D3D12_COMMAND_QUEUE_DESC qd{};
     qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
     if (FAILED(dev12->CreateCommandQueue(&qd, IID_PPV_ARGS(&queue)))) return false;
-    queue->GetTimestampFrequency(&d12Freq);
-    for (auto& s : d12)
-        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&s.alloc))))
-            return false;
-    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, d12[0].alloc.Get(),
-                                        nullptr, IID_PPV_ARGS(&cl))))
-        return false;
-    cl->Close();
-
     // One fence, created on D3D12, opened on D3D11.
     HANDLE h = nullptr;
     if (FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&fence12))) ||
@@ -81,6 +72,7 @@ bool D3D12Bridge::Impl::CreateDevice12(ID3D11Device* dev)
 bool D3D12Bridge::Impl::CreateShared(SharedTex& t, DXGI_FORMAT fmt,
                                      D3D12_RESOURCE_FLAGS flags, const char* name)
 {
+    sharedFormat[&t - shared] = fmt;
     D3D12_HEAP_PROPERTIES hp{};
     hp.Type = D3D12_HEAP_TYPE_DEFAULT;
     D3D12_RESOURCE_DESC rd{};
@@ -105,52 +97,26 @@ bool D3D12Bridge::Impl::CreateShared(SharedTex& t, DXGI_FORMAT fmt,
     return true;
 }
 
-bool D3D12Bridge::Impl::CreateViews()
+bool D3D12Bridge::Impl::CreatePass()
 {
-    D3D12_DESCRIPTOR_HEAP_DESC hd{};
-    hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-    hd.NumDescriptors = 2;
-    hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-    if (FAILED(dev12->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&srvHeap)))) return false;
-    hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-    hd.NumDescriptors = 1;
-    hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-    if (FAILED(dev12->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&rtvHeap)))) return false;
-
-    UINT inc = dev12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-    D3D12_CPU_DESCRIPTOR_HANDLE cpu = srvHeap->GetCPUDescriptorHandleForHeapStart();
-    D3D12_SHADER_RESOURCE_VIEW_DESC sd{};
-    sd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-    sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    sd.Texture2D.MipLevels = 1;
-    sd.Format = cfg.colorFormat;
-    dev12->CreateShaderResourceView(colorIn.res12.Get(), &sd, cpu);
-    cpu.ptr += inc;
-    sd.Format = kSharedDepthFormat;
-    dev12->CreateShaderResourceView(depthIn.res12.Get(), &sd, cpu);
-    dev12->CreateRenderTargetView(colorOut.res12.Get(), nullptr,
-                                  rtvHeap->GetCPUDescriptorHandleForHeapStart());
-    return true;
+    HostResources h;
+    h.device = dev12.Get();
+    h.queue = queue.Get();
+    h.fence = fence12.Get();
+    for (UINT k = 0; k < kSharedCount; ++k) {
+        h.tex[k] = shared[k].res12.Get();
+        h.format[k] = sharedFormat[k];
+    }
+    h.width = cfg.width;
+    h.height = cfg.height;
+    h.log = log;
+    pass = cfg.enginePass ? MakeEnginePass() : MakeDepthFogPass();
+    if (!pass) { log("[D3D12Bridge] this build carries no engine pass (RAW_ENGINE=OFF)"); return false; }
+    return pass->Create(h);
 }
 
 bool D3D12Bridge::Impl::CreateQueries()
 {
-    D3D12_QUERY_HEAP_DESC qh{};
-    qh.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
-    qh.Count = 2 * kRing;
-    if (FAILED(dev12->CreateQueryHeap(&qh, IID_PPV_ARGS(&tsHeap)))) return false;
-    D3D12_HEAP_PROPERTIES hp{};
-    hp.Type = D3D12_HEAP_TYPE_READBACK;
-    D3D12_RESOURCE_DESC rd{};
-    rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    rd.Width = sizeof(uint64_t) * 2 * kRing;
-    rd.Height = rd.DepthOrArraySize = rd.MipLevels = 1;
-    rd.SampleDesc.Count = 1;
-    rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    if (FAILED(dev12->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
-            D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&tsReadback))))
-        return false;
-
     D3D11_QUERY_DESC dq{D3D11_QUERY_TIMESTAMP_DISJOINT, 0};
     D3D11_QUERY_DESC tq{D3D11_QUERY_TIMESTAMP, 0};
     for (auto& s : d11) {
@@ -213,12 +179,11 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         && m->CreateShared(m->colorIn, cfg.colorFormat, kSharedColour, "colour-in")
         && m->CreateShared(m->depthIn, kSharedDepthFormat, kSharedDepth, "depth-in")
         && m->CreateShared(m->colorOut, cfg.colorFormat, kSharedColour, "colour-out")
+        && (cfg.normalFormat == DXGI_FORMAT_UNKNOWN
+            || m->CreateShared(m->normalIn, cfg.normalFormat, kSharedColour, "normal-in"))
         && stage("bridge: after shared textures")
-        && m->CreateViews() && m->CreateDepthCopy() && m->CreateQueries() && stage("bridge: after views and queries");
-    if (ok) {
-        m->pass = MakeDepthFogPass();
-        ok = m->pass->Create(m->dev12.Get(), cfg.colorFormat, m->log);
-    }
+        && m->CreateDepthCopy() && m->CreateQueries() && stage("bridge: after views and queries")
+        && m->CreatePass();
     if (!ok) { m->log("[D3D12Bridge] initialisation failed; bridge stays off"); Shutdown(); return false; }
     if (!m->SelfTest()) {
         m->log("[D3D12Bridge] fence self-test failed; bridge stays off");
@@ -226,8 +191,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         return false;
     }
     m->ready = true;
-    m->log("[D3D12Bridge] ready: %ux%u colour fmt %d, depth as R32F, pass '%s'",
-           cfg.width, cfg.height, (int)cfg.colorFormat, m->pass->Name());
+    m->log("[D3D12Bridge] ready: %ux%u colour fmt %d, depth as R32F, normals fmt %d, pass '%s'",
+           cfg.width, cfg.height, (int)cfg.colorFormat, (int)cfg.normalFormat, m->pass->Name());
     return true;
 }
 
@@ -238,9 +203,10 @@ void D3D12Bridge::Shutdown()
         m->CpuWait(m->lastD12, m->cfg.cpuWaitTimeout);
         if (m->ctx11) m->ctx11->Flush();
     }
+    m->pass.reset();   // before the device and the textures it borrows
     LogFn log = m->log;
     if (m->cpuEvent) CloseHandle(m->cpuEvent);
-    *m = Impl{};
+    m = std::make_unique<Impl>();
     m->log = log;
 }
 

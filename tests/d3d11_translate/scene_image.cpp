@@ -23,6 +23,7 @@ bool Readback(SceneCtx& c, ID3D11Texture2D* rgba8Tex, Image& out)
     ComPtr<ID3D11Texture2D> st;
     HRESULT hr = c.dev->CreateTexture2D(&td, nullptr, &st);
     if (FAILED(hr)) return Fail("readback", "CreateTexture2D(staging)", hr);
+    if (c.onReadback) c.onReadback(c.user, rgba8Tex);
     c.ctx->CopyResource(st.Get(), rgba8Tex);
     D3D11_MAPPED_SUBRESOURCE m{};
     hr = c.ctx->Map(st.Get(), 0, D3D11_MAP_READ, 0, &m);

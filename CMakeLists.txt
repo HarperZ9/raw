@@ -249,3 +249,62 @@ target_link_libraries(bridge_roundtrip PRIVATE raw_d3d12_bridge d3d11)
 # wrapped device instead of the system one.
 set_target_properties(bridge_roundtrip PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
+
+# ============================================================================
+# D3D11-to-D3D12 translation layer (stage 2): ID3D11Device and
+# ID3D11DeviceContext implemented on a D3D12 device. Windows SDK only.
+# ============================================================================
+
+set(RAW_TX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/dx12/translate)
+set(RAW_TX_GEN ${CMAKE_CURRENT_BINARY_DIR}/tx_shaders)
+set(RAW_MIPGEN_HLSL ${RAW_TX_DIR}/shaders/MipGen.hlsl)
+add_custom_command(
+    OUTPUT ${RAW_TX_GEN}/MipGen_VS.h ${RAW_TX_GEN}/MipGen_PS.h
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_TX_GEN}
+    COMMAND ${RAW_FXC} /nologo /T vs_5_0 /E VSMain /O3 /Vn g_MipGenVS /Fh ${RAW_TX_GEN}/MipGen_VS.h ${RAW_MIPGEN_HLSL}
+    COMMAND ${RAW_FXC} /nologo /T ps_5_0 /E PSMain /O3 /Vn g_MipGenPS /Fh ${RAW_TX_GEN}/MipGen_PS.h ${RAW_MIPGEN_HLSL}
+    DEPENDS ${RAW_MIPGEN_HLSL}
+    COMMENT "fxc: translation layer shaders -> bytecode headers"
+    VERBATIM)
+
+add_library(raw_dx12_translate STATIC
+    ${RAW_TX_DIR}/tx_alloc.cpp
+    ${RAW_TX_DIR}/tx_track.cpp
+    ${RAW_TX_DIR}/tx_imports.cpp
+    ${RAW_TX_DIR}/tx_device.cpp
+    ${RAW_TX_DIR}/tx_submit.cpp
+    ${RAW_TX_DIR}/tx_resource.cpp
+    ${RAW_TX_DIR}/tx_views.cpp
+    ${RAW_TX_DIR}/tx_reflect.cpp
+    ${RAW_TX_DIR}/tx_state.cpp
+    ${RAW_TX_DIR}/tx_pipeline.cpp
+    ${RAW_TX_DIR}/tx_swapchain.cpp
+    ${RAW_TX_DIR}/tx_ctx_set.cpp
+    ${RAW_TX_DIR}/tx_ctx_get.cpp
+    ${RAW_TX_DIR}/tx_ctx_draw.cpp
+    ${RAW_TX_DIR}/tx_ctx_data.cpp
+    ${RAW_TX_DIR}/tx_ctx_copy.cpp
+    ${RAW_TX_DIR}/tx_ctx_misc.cpp
+    ${RAW_TX_GEN}/MipGen_VS.h
+    ${RAW_TX_GEN}/MipGen_PS.h
+)
+target_include_directories(raw_dx12_translate PUBLIC ${RAW_TX_DIR} PRIVATE ${RAW_TX_GEN})
+target_compile_definitions(raw_dx12_translate PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(raw_dx12_translate PUBLIC dxguid)
+if(MSVC)
+    target_compile_options(raw_dx12_translate PRIVATE /W4)
+endif()
+
+# Call-stream recorder/replayer and the offline proof (no game involved).
+add_subdirectory(src/dx12/translate/record)
+add_subdirectory(tests/d3d11_translate)
+add_executable(d3d11_translate_suite
+    tests/d3d11_translate/main.cpp
+    tests/d3d11_translate/suite_controls.cpp
+    tests/d3d11_translate/suite_replay.cpp
+    tests/d3d11_translate/suite_bench.cpp)
+target_link_libraries(d3d11_translate_suite PRIVATE tx_scenes raw_dx12_translate raw_d3d11_record d3d11 d3dcompiler dxguid)
+target_compile_definitions(d3d11_translate_suite PRIVATE _CRT_SECURE_NO_WARNINGS)
+# Own folder: next to the proxy the exe would load RAW's d3d11.dll.
+set_target_properties(d3d11_translate_suite PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)

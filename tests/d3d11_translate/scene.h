@@ -32,6 +32,9 @@ struct SceneCtx {
     std::vector<uint64_t> values;   // exact scalars to compare (query results)
     std::vector<double> recordMs;   // per frame: first call until Flush returned
     std::vector<double> totalMs;    // per frame: first call until the GPU finished
+    // Called with the texture a scene reads back as its final image (optional).
+    void (*onReadback)(void* user, ID3D11Texture2D* tex) = nullptr;
+    void* user = nullptr;
 };
 
 struct Scene {

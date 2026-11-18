@@ -151,6 +151,10 @@ routes. The bisect (`evidence/ingame-2026-11-17-fence-probe-bisect.log`):
 
 ## Stage 2 (full takeover) needs
 
+Items 2 to 4 now exist as an offline-proven layer: `src/dx12/translate/`, described in
+`docs/D3D11_TO_D3D12.md`, with the call-stream recorder in `docs/D3D11_CALL_STREAM.md`. It has
+not run a game frame yet.
+
 1. UI-phase detection in menus, so the pass composites under the HUD everywhere.
 2. A D3D11 call translation layer on D3D12: resources (textures, buffers, views) created on
    D3D12 and handed to the game through the wrapped device; state objects mapped to PSOs with a

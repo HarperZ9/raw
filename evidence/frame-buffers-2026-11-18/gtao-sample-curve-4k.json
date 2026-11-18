@@ -1,0 +1,95 @@
+{
+ "width": 3840,
+ "height": 2160,
+ "radius_game_units": 35,
+ "rows": [
+  {
+   "slices": 16,
+   "steps": 16,
+   "samples_per_pixel": 512,
+   "pass_ms": 192.889,
+   "gtao_ms": 192.045,
+   "outside_1e-3_vs_cpu_reference_percent": 0.03901,
+   "mean_abs_diff_vs_16x16": 0.0,
+   "rms_diff_vs_16x16": 0.0,
+   "pixels_over_0.05_percent": 0.0
+  },
+  {
+   "slices": 8,
+   "steps": 16,
+   "samples_per_pixel": 256,
+   "pass_ms": 97.651,
+   "gtao_ms": 96.828,
+   "outside_1e-3_vs_cpu_reference_percent": 0.02612,
+   "mean_abs_diff_vs_16x16": 0.02798,
+   "rms_diff_vs_16x16": 0.05741,
+   "pixels_over_0.05_percent": 18.652
+  },
+  {
+   "slices": 8,
+   "steps": 8,
+   "samples_per_pixel": 128,
+   "pass_ms": 50.66,
+   "gtao_ms": 49.819,
+   "outside_1e-3_vs_cpu_reference_percent": 0.02073,
+   "mean_abs_diff_vs_16x16": 0.06238,
+   "rms_diff_vs_16x16": 0.12349,
+   "pixels_over_0.05_percent": 31.326
+  },
+  {
+   "slices": 4,
+   "steps": 8,
+   "samples_per_pixel": 64,
+   "pass_ms": 25.484,
+   "gtao_ms": 24.635,
+   "outside_1e-3_vs_cpu_reference_percent": 0.01371,
+   "mean_abs_diff_vs_16x16": 0.07195,
+   "rms_diff_vs_16x16": 0.14034,
+   "pixels_over_0.05_percent": 33.143
+  },
+  {
+   "slices": 4,
+   "steps": 4,
+   "samples_per_pixel": 32,
+   "pass_ms": 13.179,
+   "gtao_ms": 12.33,
+   "outside_1e-3_vs_cpu_reference_percent": 0.01178,
+   "mean_abs_diff_vs_16x16": 0.12882,
+   "rms_diff_vs_16x16": 0.23281,
+   "pixels_over_0.05_percent": 43.213
+  },
+  {
+   "slices": 2,
+   "steps": 8,
+   "samples_per_pixel": 32,
+   "pass_ms": 13.216,
+   "gtao_ms": 12.339,
+   "outside_1e-3_vs_cpu_reference_percent": 0.00753,
+   "mean_abs_diff_vs_16x16": 0.10377,
+   "rms_diff_vs_16x16": 0.17946,
+   "pixels_over_0.05_percent": 49.682
+  },
+  {
+   "slices": 2,
+   "steps": 4,
+   "samples_per_pixel": 16,
+   "pass_ms": 7.002,
+   "gtao_ms": 6.148,
+   "outside_1e-3_vs_cpu_reference_percent": 0.00627,
+   "mean_abs_diff_vs_16x16": 0.15232,
+   "rms_diff_vs_16x16": 0.26027,
+   "pixels_over_0.05_percent": 55.879
+  },
+  {
+   "slices": 1,
+   "steps": 4,
+   "samples_per_pixel": 8,
+   "pass_ms": 3.962,
+   "gtao_ms": 3.115,
+   "outside_1e-3_vs_cpu_reference_percent": 0.00877,
+   "mean_abs_diff_vs_16x16": 0.32185,
+   "rms_diff_vs_16x16": 0.43521,
+   "pixels_over_0.05_percent": 82.249
+  }
+ ]
+}

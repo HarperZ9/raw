@@ -24,6 +24,8 @@
 //    AoRadius=35          engine pass: radius in game units; AoSlices, AoSteps
 //                         (0 keeps the engine's 16 and 16), AoStrength=1
 //    FallbackAtPresent=1  DebugLayer=0  TimingLogEvery=600
+//    RetireTimeoutMs=15000  engine pass: how long a frame waits for the one before
+//    TestStallAtBridgeFrame=0  test only: stall the pass at that gameplay frame
 //    CaptureFrame=0       absolute frame for d3d12_bridge_capture.bmp beside the exe
 //    CaptureAfter=0       bridge frames in gameplay before the capture set
 //    CaptureDir=          absolute folder for the capture set
@@ -63,53 +65,9 @@ struct FrameState
 FrameState s_f;
 bool     s_started = false, s_wasReady = false;
 int      s_initFailures = 0;
-uint64_t s_frame = 0, s_atUI = 0, s_atPresent = 0, s_captures = 0, s_bridgeFrames = 0;
+uint64_t s_offFrames = 0, s_frame = 0, s_atUI = 0, s_atPresent = 0, s_captures = 0, s_bridgeFrames = 0;
 raw::bridge::BridgeTimings s_sum{};
 uint32_t s_samples = 0;
-
-void LoadHookConfig()
-{
-    Config& c = Cfg();
-    char path[MAX_PATH]{};
-    GetModuleFileNameA(nullptr, path, MAX_PATH);
-    std::string ini(path);
-    ini = ini.substr(0, ini.rfind('\\') + 1) + "d3d11_proxy.ini";
-    auto i = [&](const char* k, int d) { return GetPrivateProfileIntA("D3D12Bridge", k, d, ini.c_str()); };
-    auto f = [&](const char* k, float d) {
-        char buf[64]{};
-        GetPrivateProfileStringA("D3D12Bridge", k, "", buf, sizeof(buf), ini.c_str());
-        return buf[0] ? std::strtof(buf, nullptr) : d;
-    };
-    char text[MAX_PATH]{};
-    GetPrivateProfileStringA("D3D12Bridge", "Pass", "haze", text, MAX_PATH, ini.c_str());
-    c.enginePass = _stricmp(text, "engine") == 0;
-    GetPrivateProfileStringA("D3D12Bridge", "CaptureDir", "", text, MAX_PATH, ini.c_str());
-    c.captureDir = text;
-    c.enabled = i("Enabled", 0) != 0;
-    c.fallbackAtPresent = i("FallbackAtPresent", 1) != 0;
-    c.debugLayer = i("DebugLayer", 0) != 0;
-    c.timingLogEvery = i("TimingLogEvery", 600);
-    c.captureFrame = i("CaptureFrame", 0);
-    c.captureAfter = i("CaptureAfter", 0);
-    auto& k = c.k;
-    k.mode = static_cast<float>(i("Mode", 1));
-    k.marker = static_cast<float>(i("Marker", c.enginePass ? 0 : 1));
-    k.density = f("Density", k.density);
-    k.fogColor[0] = f("FogR", k.fogColor[0]);
-    k.fogColor[1] = f("FogG", k.fogColor[1]);
-    k.fogColor[2] = f("FogB", k.fogColor[2]);
-    k.maxOpacity = f("MaxOpacity", k.maxOpacity);
-    k.nearZ = f("Near", k.nearZ);
-    k.farZ = f("Far", k.farZ);
-    c.tune.radius = f("AoRadius", 35.0f);
-    c.tune.slices = static_cast<uint32_t>(i("AoSlices", 0));
-    c.tune.steps = static_cast<uint32_t>(i("AoSteps", 0));
-    c.tune.strength = f("AoStrength", 1.0f);
-    g_bridgeHookActive = c.enabled;
-    Log("[D3D12Bridge] config: enabled=%d pass=%s mode=%.0f radius=%g slices=%u steps=%u strength=%g",
-        c.enabled, c.enginePass ? "engine" : "haze", k.mode, c.tune.radius, c.tune.slices, c.tune.steps,
-        c.tune.strength);
-}
 
 ID3D11Resource* ResourceOf(ID3D11View* v)
 {
@@ -153,6 +111,7 @@ bool EnsureBridge(ID3D11Texture2D* backbuffer)
     c.debugLayer = Cfg().debugLayer;
     c.probeStages = s_initFailures == 0;
     c.enginePass = Cfg().enginePass;
+    c.passRetireMs = static_cast<DWORD>(Cfg().retireTimeoutMs);
     c.normalFormat = DXGI_FORMAT_R8G8B8A8_UNORM;   // the game's normal target
     if (s_bridge->Initialize(pi->device, pi->context, c, &Log)) {
         s_bridge->TuneEngine(Cfg().tune);
@@ -171,7 +130,14 @@ void RunOnBackbuffer(bool beforeUI)
     if (EnsureBridge(bb)) {
         raw::bridge::PassConstants k = Cfg().k;
         k.frame = static_cast<float>(s_frame & 0xFFFF);
-        if (s_bridge->Execute(bb, bb, k)) {
+        // Test of the failure path: one frame whose pass waits for a fence value D3D11 never
+        // signals. The next frame cannot retire it, the pass fails, and the bridge must release
+        // the game's D3D11 queue.
+        const bool stall = beforeUI && Cfg().testStallAt > 0 && s_bridgeFrames + 1 == static_cast<uint64_t>(Cfg().testStallAt);
+        if (stall) { s_bridge->SetWaitSkew(1000); Log("[D3D12Bridge] test: stalling the pass at gameplay bridge frame %d", Cfg().testStallAt); }
+        const bool ran = s_bridge->Execute(bb, bb, k);
+        if (stall) s_bridge->SetWaitSkew(0);
+        if (ran) {
             s_f.ran = true;
             ++(beforeUI ? s_atUI : s_atPresent);
             if (beforeUI) ++s_bridgeFrames;
@@ -301,14 +267,14 @@ void BridgeHook_OnTargets(ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetV
 void BridgeHook_OnDeviceCreated(ID3D11Device* realDevice, ID3D11DeviceContext* realContext)
 {
     if (PG_IsSafeMode()) return;
-    if (!s_started) { s_started = true; LoadHookConfig(); }
+    if (!s_started) { s_started = true; LoadConfig(); }
     if (Cfg().enabled) raw::bridge::ProbeFenceSupport(realDevice, realContext, &Log, "after device creation");
 }
 
 void BridgeHook_OnPresent()
 {
     if (PG_IsSafeMode()) return;
-    if (!s_started) { s_started = true; LoadHookConfig(); }
+    if (!s_started) { s_started = true; LoadConfig(); }
     if (Cfg().enabled && !s_bridge) {
         s_bridge = new raw::bridge::D3D12Bridge();
         InstallShareCheck();
@@ -321,6 +287,9 @@ void BridgeHook_OnPresent()
             (unsigned long long)s_atPresent, (unsigned long long)s_captures,
             (unsigned long long)s_bridge->LastD3D12Value(), (unsigned long long)s_bridge->CompletedValue());
     if (!s_f.ran && Cfg().fallbackAtPresent) RunOnBackbuffer(false);
+    if (s_wasReady && !s_bridge->Ready() && ++s_offFrames % 120 == 0 && s_offFrames <= 1200)
+        Log("[D3D12Bridge] bridge off for %llu frames; the game still presents (frame %llu)",
+            (unsigned long long)s_offFrames, (unsigned long long)s_frame);
     if (s_bridge->Ready()) AccumulateTimings();
     if (Cfg().captureFrame > 0 && s_frame == static_cast<uint64_t>(Cfg().captureFrame)) {
         char path[MAX_PATH]{};

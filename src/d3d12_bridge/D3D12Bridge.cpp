@@ -109,6 +109,7 @@ bool D3D12Bridge::Impl::CreatePass()
     }
     h.width = cfg.width;
     h.height = cfg.height;
+    h.retireTimeoutMs = cfg.passRetireMs;
     h.log = log;
     pass = cfg.enginePass ? MakeEnginePass() : MakeDepthFogPass();
     if (!pass) { log("[D3D12Bridge] this build carries no engine pass (RAW_ENGINE=OFF)"); return false; }

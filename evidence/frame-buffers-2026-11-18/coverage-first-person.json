@@ -1,0 +1,865 @@
+{
+ "width": 3840,
+ "height": 2160,
+ "pixels": 8294400,
+ "classes": [
+  {
+   "class": "sky",
+   "pixels": 560393,
+   "percent": 6.7563,
+   "real_in_game_buffers": "nothing to describe",
+   "missing": ""
+  },
+  {
+   "class": "opaque",
+   "pixels": 7094280,
+   "percent": 85.531,
+   "real_in_game_buffers": "depth, normal, motion",
+   "missing": "albedo, specular and gloss, emissive, material class (never written by the game)"
+  },
+  {
+   "class": "opaque_no_normal",
+   "pixels": 32849,
+   "percent": 0.396,
+   "real_in_game_buffers": "depth, motion",
+   "missing": "normal"
+  },
+  {
+   "class": "water",
+   "pixels": 0,
+   "percent": 0.0,
+   "real_in_game_buffers": "none for the water surface",
+   "missing": "water depth, normal, motion"
+  },
+  {
+   "class": "blended",
+   "pixels": 117929,
+   "percent": 1.4218,
+   "real_in_game_buffers": "none for the blended surface",
+   "missing": "depth, normal, motion of the blended surface"
+  },
+  {
+   "class": "late",
+   "pixels": 488949,
+   "percent": 5.8949,
+   "real_in_game_buffers": "colour and motion only",
+   "missing": "depth in the scene depth buffer, normal"
+  }
+ ],
+ "surface_data_real": {
+  "pixels": 7654673,
+  "percent": 92.2872
+ },
+ "surface_data_missing": {
+  "pixels": 639727,
+  "percent": 7.7128
+ },
+ "spans": [
+  {
+   "interval": 83,
+   "class": "water",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 86,
+   "class": "blended",
+   "draws": 80,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 88,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 90,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 91,
+   "class": "blended",
+   "draws": 3,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 93,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 95,
+   "class": "blended",
+   "draws": 3,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 97,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 99,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 100,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 102,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 104,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 106,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 108,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 109,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 111,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 113,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 115,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 117,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 119,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 121,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 123,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 125,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 127,
+   "class": "blended",
+   "draws": 3,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 129,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 131,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 133,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 135,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 137,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 139,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 141,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 143,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 145,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 147,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 149,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 151,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 153,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 155,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 43745
+  },
+  {
+   "interval": 157,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 159,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 161,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 163,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 165,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 167,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 169,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 171,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 173,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 175,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 177,
+   "class": "blended",
+   "draws": 3,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 179,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 181,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 183,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 185,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 186,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 188,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 190,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 192,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 194,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 196,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 198,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 200,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 202,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 204,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 206,
+   "class": "blended",
+   "draws": 3,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 208,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 210,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 212,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 214,
+   "class": "blended",
+   "draws": 4,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 216,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 218,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 220,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 222,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 224,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 226,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 228,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 230,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 232,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 234,
+   "class": "blended",
+   "draws": 4,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 236,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 238,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 240,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 242,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 244,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 245,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 247,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 249,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 251,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 72456
+  },
+  {
+   "interval": 253,
+   "class": "blended",
+   "draws": 4,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 255,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 257,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 259,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 261,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 263,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 265,
+   "class": "blended",
+   "draws": 3,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 267,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 269,
+   "class": "blended",
+   "draws": 3,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 271,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 273,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 274,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 276,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 278,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 280,
+   "class": "blended",
+   "draws": 4,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 281,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 283,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 285,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 287,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 289,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 291,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 293,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 294,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 296,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 298,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 299,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 301,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 303,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 305,
+   "class": "blended",
+   "draws": 3,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 306,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 308,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 309,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 311,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 312,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 314,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 316,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 317,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 319,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 320,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 322,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 324,
+   "class": "blended",
+   "draws": 2,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 325,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 327,
+   "class": "blended",
+   "draws": 3,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 329,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 3784
+  },
+  {
+   "interval": 330,
+   "class": "blended",
+   "draws": 1,
+   "pixels_changed": 0
+  },
+  {
+   "interval": 331,
+   "class": "late",
+   "draws": 5,
+   "pixels_changed": 488949
+  },
+  {
+   "interval": 332,
+   "class": "late",
+   "draws": 1,
+   "pixels_changed": 0
+  }
+ ],
+ "opaque_end_interval": 34,
+ "method": "class of the last scene draw span that changed the pixel; spans from before/after copies of the scene colour"
+}

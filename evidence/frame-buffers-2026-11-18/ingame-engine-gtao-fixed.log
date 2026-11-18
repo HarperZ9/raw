@@ -1,0 +1,15 @@
+[D3D12Bridge] config: enabled=1 pass=engine mode=1 radius=35 slices=4 steps=8 strength=1
+[D3D12Bridge] opaque pass done at frame 2039: depth 1, normals 1, camera 1 (tanHalfFovY 0.47199, aspect 1.7778, near 15.000, far 353468)
+[D3D12Bridge] opaque pass done at frame 2040: depth 1, normals 1, camera 1 (tanHalfFovY 0.47199, aspect 1.7778, near 15.000, far 353468)
+[D3D12Bridge] opaque pass done at frame 2041: depth 1, normals 1, camera 1 (tanHalfFovY 0.47199, aspect 1.7778, near 15.000, far 353468)
+[D3D12Bridge] mean over 60 frames: D3D12 pass 0.646 ms (pack 0.062, gtao 0.581, composite 0.002); bridge cost 0.454 ms (depth copy 0.001, normal copy 0.001, copy in 0.044, copy out 0.037, fence sync 0.371); D3D11 stall 1.016 ms; runs before UI=3 at Present=2039, opaque captures=3
+[D3D12Bridge] mean over 60 frames: D3D12 pass 25.948 ms (pack 0.770, gtao 25.103, composite 0.075); bridge cost 0.536 ms (depth copy 0.047, normal copy 0.037, copy in 0.032, copy out 0.030, fence sync 0.391); D3D11 stall 26.339 ms; runs before UI=63 at Present=2039, opaque captures=63
+[D3D12Bridge] mean over 60 frames: D3D12 pass 25.518 ms (pack 0.757, gtao 24.688, composite 0.073); bridge cost 0.504 ms (depth copy 0.044, normal copy 0.035, copy in 0.030, copy out 0.029, fence sync 0.365); D3D11 stall 25.884 ms; runs before UI=123 at Present=2039, opaque captures=123
+[D3D12Bridge] capture set: frame with the pass and the D3D12 reads written to E:\raw-capture\game7\bridge
+[D3D12Bridge] capture set done
+[D3D12Bridge] mean over 60 frames: D3D12 pass 22.968 ms (pack 0.684, gtao 22.218, composite 0.066); bridge cost 0.511 ms (depth copy 0.044, normal copy 0.036, copy in 0.030, copy out 0.028, fence sync 0.372); D3D11 stall 23.340 ms; runs before UI=184 at Present=2039, opaque captures=184
+[D3D12Bridge] mean over 60 frames: D3D12 pass 25.517 ms (pack 0.757, gtao 24.686, composite 0.073); bridge cost 0.524 ms (depth copy 0.044, normal copy 0.036, copy in 0.030, copy out 0.029, fence sync 0.385); D3D11 stall 25.902 ms; runs before UI=244 at Present=2039, opaque captures=244
+gpu at 45 s: 100 %, 4113 MiB
+gpu at 68 s: 100 %, 4149 MiB
+gpu at 87 s: 100 %, 4149 MiB
+gpu at 109 s: 13 %, 4309 MiB

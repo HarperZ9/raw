@@ -67,6 +67,7 @@ struct BridgeConfig
     // The game's normal target format, or UNKNOWN to share no normals.
     DXGI_FORMAT normalFormat   = DXGI_FORMAT_UNKNOWN;
     bool        enginePass     = false; // run the Playground engine's pass instead of the depth haze
+    DWORD       passRetireMs   = 15000; // how long the engine pass waits for the frame before
 };
 
 // GPU time of one retired submission, by the pass's own timestamps.
@@ -109,6 +110,7 @@ struct HostResources
     ID3D12Resource*     tex[kSharedCount] = {};
     DXGI_FORMAT         format[kSharedCount] = {};
     UINT                width = 0, height = 0;
+    DWORD               retireTimeoutMs = 15000;
     LogFn               log = nullptr;
 };
 

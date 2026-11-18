@@ -79,6 +79,9 @@ int  Track(ID3D11Resource* res);                       // texture id, or -1 for 
 ViewRef RefOf(ID3D11View* view);
 // Copies texture `id` to its staging clone and writes it as <dir>/<name>.rawtex.
 bool DumpTexture(ID3D11DeviceContext* ctx, int id, const char* name, bool shareCheck = false);
+// Ends the open interval: counts its writes and keeps full-size targets (History=1).
+void CloseInterval(ID3D11DeviceContext* ctx);
+bool FullSize(const TexRec& t);
 void WriteManifest();
 void DumpShaders();
 const char* FormatName(DXGI_FORMAT f);

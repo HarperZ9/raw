@@ -200,19 +200,35 @@ through the real path (D3D11 textures, the bridge, the engine pass on D3D12, bac
 the visibility with the engine's CPU reference `raw::post::gtao` at the engine's own bound:
 1e-3 a pixel on 99.9 % of drawn pixels. A control with another radius must fail.
 
-| Input | Size | Slices x steps | Pixels outside 1e-3 | Bound 0.1 % |
-|---|---|---|---|---|
-| synthetic scene | 640 x 360 | 16 x 16 | 0.015 % | met |
-| captured gameplay frame | 3840 x 2160 | 16 x 16 | 0.440 % | not met |
-| captured gameplay frame | 3840 x 2160 | 4 x 8 | 0.500 % | not met |
-| visibility computed in the game, same frame's shared buffers | 3840 x 2160 | 4 x 8 | 0.505 % | not met |
+| Input | Size | Slices x steps | Outside 1e-3, first build | Outside 1e-3, after the fix | Bound 0.1 % |
+|---|---|---|---|---|---|
+| synthetic scene | 640 x 360 | 16 x 16 | 0.015 % | 0.0009 % | met |
+| captured gameplay frame | 3840 x 2160 | 16 x 16 | 0.440 % | 0.040 % | met after the fix |
+| captured gameplay frame | 3840 x 2160 | 4 x 8 | 0.500 % | 0.013 % | met after the fix |
+| visibility computed in the game, same frame's shared buffers | 3840 x 2160 | 4 x 8 | 0.505 % | 0.013 % | met after the fix |
 
-On game content the pass does not meet the engine's bound. The mean visibility agrees to four
-places (0.7406 both ways at 16 x 16) and the median difference is 4.8e-6; the differences sit
-at depth edges. 960 x 540 windows of the same buffers give 0.11 % and 0.19 %, which points at
-float32 sample positions at large pixel coordinates flipping a nearest-texel choice. That
-cause is inferred from the windows and has not been proven. The in-game result equals the
-offline result, so the game path adds no error of its own.
+**The cause of the first build's miss, and the fix.** The inputs were not the cause: the GPU pass
+and the reference read the same packed G-buffer, positions are view-space (rebuilt from depth,
+never world-space), and the depth and normal decoding pass their own checks
+(`docs/FRAME_BUFFERS.md`). The miss was inside the pass. `tests/engine_gtao/gtao_precision.*` is
+a copy of the pass with the floating-point type of each stage as a parameter; all in double it
+equals the reference exactly. On the in-game buffers, against the reference:
+
+| Variant | Outside 1e-3 |
+|---|---|
+| all float (the GPU's arithmetic) | 0.463 % |
+| sample coordinates in double, the rest float | 0.459 % |
+| horizon math in double, the rest float | 0.462 % |
+| slice direction in double, the rest float | 0.011 % |
+| all float, slice direction from the projection's derivative | 0.011 % |
+
+One stage carried the whole error: the slice's screen direction. The pass projected the pixel
+and a point 1e-3 of its depth away and subtracted the two. In float32 that subtraction turns the
+direction by about 1e-4, and over a radius of a few hundred pixels that moves a sample into the
+next pixel. Large pixel coordinates and the half-texel convention were not the cause: sample
+coordinates in double changed nothing. The engine's shader now takes the direction from the
+derivative of the projection along the slice (HarperZ9/superframe#119), which points the same way
+and subtracts no nearly equal numbers. The bound stays at 0.1 %.
 
 The round-trip test and its wrong-fence control still pass, with six on-demand share cases
 and their controls added.
@@ -229,8 +245,32 @@ and their controls added.
 In-game values are means over 60-frame windows in a loaded outdoor scene
 (`evidence/frame-buffers-2026-11-18/ingame-engine-gtao.log`). No in-game number was taken on
 an idle GPU: another job held it during every session. The engine's GTAO is a reference-grade
-pass (512 depth samples a pixel at its defaults); at 4K it is far from a real-time budget, and
-a cheaper pass checked against it is the next step.
+pass (512 depth samples a pixel at its defaults); at 4K it is far from a real-time budget. The
+real-time form (half-resolution trace, temporal accumulation on the game's motion vectors, a
+depth hierarchy) is not built yet; the sample-count curve below is its starting point.
+
+Sample-count curve on the captured frame, 3840 x 2160, GPU idle at the start
+(`tools/frame_buffers/ao_curve.py`, `evidence/frame-buffers-2026-11-18/gtao-sample-curve-4k.json`).
+Accuracy is against the pass at its defaults; the last column is the GPU against the CPU
+reference at the same setting, which stays under the 0.1 % bound everywhere.
+
+| Slices x steps | Depth samples a pixel | Pass | Mean abs. difference to 16 x 16 | Pixels over 0.05 away | Outside 1e-3 of the reference |
+|---|---|---|---|---|---|
+| 16 x 16 | 512 | 192.9 ms | 0 | 0 % | 0.039 % |
+| 8 x 16 | 256 | 97.7 ms | 0.028 | 18.7 % | 0.026 % |
+| 8 x 8 | 128 | 50.7 ms | 0.062 | 31.3 % | 0.021 % |
+| 4 x 8 | 64 | 25.5 ms | 0.072 | 33.1 % | 0.014 % |
+| 2 x 8 | 32 | 13.2 ms | 0.104 | 49.7 % | 0.008 % |
+| 4 x 4 | 32 | 13.2 ms | 0.129 | 43.2 % | 0.012 % |
+| 2 x 4 | 16 | 7.0 ms | 0.152 | 55.9 % | 0.006 % |
+| 1 x 4 | 8 | 4.0 ms | 0.322 | 82.2 % | 0.009 % |
+
+Cost is linear in samples, about 0.38 ms for each sample a pixel at this size, plus 0.8 ms to
+pack the G-buffer. Fewer fixed directions lose accuracy fast: the pass has no noise, so a cut
+in directions is a bias and not a variance. Under 1.5 ms at 2160p needs a quarter of the
+pixels (half-resolution trace with a depth-aware upsample), about 8 samples a pixel with
+per-pixel rotated directions, and accumulation over frames with the game's motion vectors.
+None of that is built yet. The 1 x 4 row at a quarter of the pixels would cost about 1 ms.
 
 The pack step costs 0.75 ms and the composite 0.08 ms. The normal copy on D3D11 costs 0.04 ms.
 
@@ -246,7 +286,12 @@ hundreds of milliseconds.
 Changes: the pass waits up to 15 s for the frame before; when a pass fails, the bridge signals
 the awaited fence value from the CPU before it turns off, so the game keeps rendering; a bridge
 that turned itself off stays off. The 4 x 8 run after these changes ran 277 gameplay frames
-with no failure. The fence release on failure has not been exercised in game since.
+with no failure.
+
+The release was then tested in game on purpose (`TestStallAtBridgeFrame=40`, `RetireTimeoutMs=400`):
+at the 40th gameplay frame the pass waited for a fence value nobody signals, the next frame gave
+up after 400 ms, the bridge signalled the awaited value from the CPU and turned itself off, and
+the game went on presenting (600 further frames logged, `evidence/frame-buffers-2026-11-18/ingame-fence-release-test.log`).
 
 ### Limits
 
@@ -259,4 +304,3 @@ with no failure. The fence release on failure has not been exercised in game sin
   visibility to ambient light only needs the HDR scene before the game's own post chain.
 - The hook follows the game's targets. A frame with no world (menus) does not bind them, so
   menus run the pass at Present.
-- `tests/engine_gtao/main.cpp` is over the 300-line file limit and needs a split.

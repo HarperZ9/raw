@@ -187,7 +187,8 @@ target_link_libraries(d3d11_proxy PRIVATE)
 target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/BindingLedger.cpp)
 
 # Frame-buffer inventory: every target the game writes in one frame (docs/FRAME_BUFFERS.md)
-target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/FrameLedger.cpp src/d3d11_proxy/FrameLedgerDump.cpp)
+target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/FrameLedger.cpp src/d3d11_proxy/FrameLedgerEvents.cpp
+    src/d3d11_proxy/FrameLedgerDump.cpp)
 
 if(RAW_BUILD_PLUGIN)
 # Live bridge (coherence membrane Tier 0.1) — was added as a file but never built
@@ -246,7 +247,8 @@ target_compile_definitions(raw_d3d12_bridge PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
 # Without the engine, d3d12.dll and dxgi.dll are loaded at runtime and only the
 # d3d11 import is needed. With it (RAW_ENGINE_DIR below) the proxy delay-loads both.
 
-target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/BridgeHook.cpp src/d3d11_proxy/BridgeHookCapture.cpp)
+target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/BridgeHook.cpp src/d3d11_proxy/BridgeHookConfig.cpp
+    src/d3d11_proxy/BridgeHookCapture.cpp)
 target_link_libraries(d3d11_proxy PRIVATE raw_d3d12_bridge)
 
 # ----------------------------------------------------------------------------
@@ -311,7 +313,7 @@ if(RAW_ENGINE_DIR)
     add_library(raw_engine_reference STATIC EXCLUDE_FROM_ALL
         ${E}/src/renderer/post_gtao.cpp ${E}/src/renderer/bvh.cpp ${RAW_ENGINE_CORE})
     target_include_directories(raw_engine_reference PUBLIC ${E})
-    add_executable(engine_gtao_check EXCLUDE_FROM_ALL tests/engine_gtao/main.cpp)
+    add_executable(engine_gtao_check EXCLUDE_FROM_ALL tests/engine_gtao/main.cpp tests/engine_gtao/gtao_precision.cpp)
     target_link_libraries(engine_gtao_check PRIVATE raw_d3d12_bridge raw_engine_reference d3d11)
     set_target_properties(engine_gtao_check PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
     message(STATUS "RAW: engine pass on, RHI from ${E}")

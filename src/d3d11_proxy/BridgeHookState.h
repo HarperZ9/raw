@@ -10,6 +10,8 @@ struct Config
 {
     bool enabled = false, fallbackAtPresent = true, debugLayer = false, enginePass = false;
     int  timingLogEvery = 600;
+    int  retireTimeoutMs = 15000;  // engine pass: wait for the frame before (a tiny value tests the failure path)
+    int  testStallAt = 0;          // test: at this gameplay bridge frame the pass waits for a value nobody signals
     int  captureFrame = 0;         // absolute frame for the backbuffer BMP (0 = never)
     int  captureAfter = 0;         // bridge frames before the gameplay capture set (0 = never)
     std::string captureDir;        // absolute; the gameplay capture set goes here
@@ -18,6 +20,7 @@ struct Config
 };
 
 Config& Cfg();
+void LoadConfig();   // reads the ini into Cfg() and sets g_bridgeHookActive
 raw::bridge::D3D12Bridge* Bridge();
 
 // Writes the backbuffer (8-bit RGBA or BGRA) as a 32-bit BMP: what the game

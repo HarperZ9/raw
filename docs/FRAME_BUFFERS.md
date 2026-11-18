@@ -228,8 +228,22 @@ Two more gaps do not show up per pixel:
   got their final depth later in the opaque pass, so the game's own AO does not see them. RAW
   reads the depth buffer at the end of the opaque pass.
 
-No first-person geometry was on screen in this frame (no weapon drawn), so that class has no
-measurement yet.
+**First person.** The frame above has no weapon drawn. A second capture with an axe in hand
+(another spot in the same cell, so the other shares differ) measures the class:
+
+| Class | Share |
+|---|---|
+| Opaque, normal written | 85.53 % |
+| Sky | 6.76 % |
+| Late draws on the prepass depth copy: the first-person model | 5.89 % |
+| Blended draws | 1.42 % |
+| Opaque, normal left at its clear value | 0.40 % |
+
+The first-person model is drawn late against the copy of the depth buffer taken after the
+prepass. It writes colour and motion. It writes no normal, and its depth never reaches the
+scene depth buffer, so a pass that reads depth and normals sees the world behind the weapon.
+Real surface data in that frame: 92.29 %, missing 7.71 %
+(`evidence/frame-buffers-2026-11-18/coverage-first-person.json`).
 
 ## Closing the gaps: shader-patch routes
 
@@ -243,7 +257,7 @@ outputs to shaders that already hold the data and binds extra targets for those 
 | Opaque pixels with no normal (0.62 %) | Every opaque-pass shader writes output 2, so these pixels were not shaded by the opaque pass: depth comes from the prepass or from the 18 normal-and-motion draws | Find the draws by diffing the normal target per draw, then patch the shader that leaves them, or write the normal in the prepass shader for those meshes. |
 | Blended surfaces (8.25 %) | 293 draws with 21 shaders write colour, a mask and a second colour; depth is read-only for 285 of them | Bind a second, small G-buffer for this span (depth, normal, motion). Patch the 21 shaders to write `SV_Position.z`, their normal and their motion to it. Keep the nearest layer with a MIN blend on depth; a pass that needs all layers reads the per-draw list instead. |
 | Water (0.60 %) | One draw writes colour and the water mask | Patch the water shader to write its surface depth, its normal after the wave normal maps, and motion into the same second G-buffer. |
-| First-person and other late draws | 6 draws write colour and motion against the prepass depth copy | Patch them to write a normal, and record their own projection from their constants, since a first-person model can use another field of view. Needs a frame with a weapon drawn to measure. |
+| First-person and other late draws (5.89 % with a weapon drawn) | 6 draws write colour and motion against the prepass depth copy | Patch them to write a normal, and record their own projection from their constants, since a first-person model can use another field of view. |
 | The game's stale view depth | not a shader gap | RAW's pass already reads the final depth. |
 
 ## Checks
@@ -263,7 +277,8 @@ outputs to shaders that already hold the data and binds extra targets for those 
 | Motion vectors equal the reprojection with the game's matrices, 0.5 px | 99.78 % of opaque pixels; the rest moved on their own |
 
 The motion check is weak in this frame: the camera stood still, so the expected camera motion
-is zero. A frame with the camera moving would test the matrices.
+is zero. A frame with the camera moving would test the matrices. Three scripted attempts did
+not produce one: a new-game prompt paused the game at the capture each time.
 
 Sharing is checked in the round-trip test (`tests/bridge_roundtrip`, six on-demand cases with
 controls) and in the capture itself, as described above.

@@ -66,7 +66,7 @@ public:
         // How long a frame may wait for the one before. Generous on purpose: with
         // another process loading the GPU, the hand-offs between the two devices
         // were seen to take hundreds of milliseconds (docs/D3D12_BRIDGE.md).
-        hd.retireTimeoutMs = 15000;
+        hd.retireTimeoutMs = host.retireTimeoutMs;
         m_dev = adoptDevice(hd, m_err);
         if (!m_dev) return Fail("adoptDevice");
 

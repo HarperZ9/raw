@@ -1,6 +1,6 @@
 # RAW — Development Roadmap
 
-Copyright (c) 2026 Zain D. Harper (papacr0w). AGPL-3.0-or-later — see `LICENSE`; commercial licensing available.
+Copyright (c) 2026 Zain D. Harper (papacr0w). MIT, see `LICENSE`.
 
 > **Telos:** this roadmap's near-term phases harden the *responsive* engine; the horizon is a two-way,
 > real-time human↔model cross-examination surface and a **dependency-free native renderer** (no

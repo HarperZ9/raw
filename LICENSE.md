@@ -1,21 +1,10 @@
 # RAW — Rendering Advancement Workshop
 
-GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)
+MIT License (SPDX: MIT)
 
 Copyright (c) 2026 Zain D. Harper (papacr0w)
 
-This program is free software: you can redistribute it and/or modify it under the
-terms of the GNU Affero General Public License as published by the Free Software
-Foundation, either version 3 of the License, or (at your option) any later version.
 The full license text is in `LICENSE`.
-
-This program is distributed in the hope that it will be useful, but WITHOUT ANY
-WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
-
-**Commercial licensing.** The author retains copyright and offers separate
-commercial licenses for use the AGPL does not permit (e.g. closed-source or
-proprietary integration). Contact the author.
 
 **Disclaimer.** Not affiliated with or endorsed by Bethesda Softworks or ENBSeries.
 For use with a legally-owned copy of the base game. Provided as-is, without warranty.

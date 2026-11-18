@@ -3,7 +3,7 @@
     "name": "raw",
     "version-semver": "3.0.0",
     "description": "RAW — Rendering Advancement Workshop (rendering + verification engine; seed of a native two-way simulator)",
-    "license": "AGPL-3.0-or-later",
+    "license": "MIT",
     "dependencies": [
         "commonlibsse-ng",
         {

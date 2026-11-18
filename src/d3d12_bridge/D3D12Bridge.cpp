@@ -70,15 +70,15 @@ bool D3D12Bridge::Impl::CreateDevice12(ID3D11Device* dev)
 }
 
 bool D3D12Bridge::Impl::CreateShared(SharedTex& t, DXGI_FORMAT fmt,
-                                     D3D12_RESOURCE_FLAGS flags, const char* name)
+                                     D3D12_RESOURCE_FLAGS flags, const char* name, UINT texW, UINT texH)
 {
     sharedFormat[&t - shared] = fmt;
     D3D12_HEAP_PROPERTIES hp{};
     hp.Type = D3D12_HEAP_TYPE_DEFAULT;
     D3D12_RESOURCE_DESC rd{};
     rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    rd.Width = cfg.width;
-    rd.Height = cfg.height;
+    rd.Width = texW ? texW : cfg.width;
+    rd.Height = texH ? texH : cfg.height;
     rd.DepthOrArraySize = 1;
     rd.MipLevels = 1;
     rd.Format = fmt;
@@ -110,8 +110,10 @@ bool D3D12Bridge::Impl::CreatePass()
     h.width = cfg.width;
     h.height = cfg.height;
     h.retireTimeoutMs = cfg.passRetireMs;
+    h.shadowSide = cfg.shadowMapSize;
     h.log = log;
-    pass = !cfg.enginePass ? MakeDepthFogPass() : cfg.realtimeAo ? MakeRealtimeAoPass() : MakeEnginePass();
+    pass = cfg.lightingPass ? MakeLightingPass()
+         : !cfg.enginePass ? MakeDepthFogPass() : cfg.realtimeAo ? MakeRealtimeAoPass() : MakeEnginePass();
     if (!pass) { log("[D3D12Bridge] this build carries no engine pass (RAW_ENGINE=OFF)"); return false; }
     return pass->Create(h);
 }
@@ -184,6 +186,7 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
             || m->CreateShared(m->normalIn, cfg.normalFormat, kSharedColour, "normal-in"))
         && (cfg.motionFormat == DXGI_FORMAT_UNKNOWN
             || m->CreateShared(m->motionIn, cfg.motionFormat, kSharedColour, "motion-in"))
+        && (!cfg.lightingPass || m->CreateLightingShared())
         && stage("bridge: after shared textures")
         && m->CreateDepthCopy() && m->CreateQueries() && stage("bridge: after views and queries")
         && m->CreatePass();

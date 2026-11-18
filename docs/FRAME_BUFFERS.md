@@ -359,7 +359,9 @@ entered the layer (0.11 %).
 - **Opaque pixels with no normal (0.59 %).** Unchanged.
 - **Motion of water and blended surfaces.** The layer has depth, and camera motion follows from
   it. Object motion is not written.
-- **Albedo is the texture colour** with tints and blended layers, before vertex colour.
+- **Albedo is the texture colour** with tints and blended layers, times the vertex colour where the
+  lit shader multiplies its result by one (35 of the 50 lit shaders in the Riverwood capture, 23 of 26
+  indoors; docs/LIGHTING.md). The other 15 multiply by none that the two signatures find.
 - **Cost.** The frame time with and without the patches was not measured.
 
 ## Lights and shadow maps

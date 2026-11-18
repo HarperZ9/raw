@@ -6,6 +6,7 @@ namespace raw::bridge
 {
 
 bool D3D12Bridge::TuneEngine(const EngineTuning& t) { return m->pass && (EnginePassTune(m->pass.get(), t) || RealtimeAoTune(m->pass.get(), t)); }
+IBridgePass* D3D12Bridge::ActivePass() { return m->pass.get(); }
 
 bool D3D12Bridge::ReadEngineVisibility(std::vector<float>* out)
 {

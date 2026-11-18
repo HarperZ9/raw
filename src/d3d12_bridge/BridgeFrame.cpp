@@ -20,6 +20,8 @@ void D3D12Bridge::Impl::OpenD11Slot(D11Slot& s, uint64_t frame)
     s.hasDepth = false;
     s.hasNormal = false;
     s.hasMotion = false;
+    s.hasSurface = false;
+    s.hasShadows = false;
     s.executed = false;
 }
 
@@ -132,6 +134,11 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     fc.camera = m->camera;
     fc.hasNormal = s.hasNormal;
     fc.hasMotion = s.hasMotion;
+    if (m->cfg.lightingPass) {
+        fc.lighting = &m->lighting;
+        fc.hasSurface = s.hasSurface;
+        fc.hasShadows = s.hasShadows;
+    }
 
     // The pass records first, so recording time never shows up as a stall,
     // and submits only after the D3D11 Signal: in the game process D3D11

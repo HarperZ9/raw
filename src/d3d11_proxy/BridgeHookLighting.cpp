@@ -1,0 +1,131 @@
+// BridgeHook, lighting form: the engine lights the frame at the end of the opaque pass
+// (docs/LIGHTING.md). Keys of [Lighting] in d3d11_proxy.ini:
+//   Mode=1              0 the game's lighting, 1 ours matched to the game, 2 ours improved; F10 cycles
+//   SoftShadows=1 GgxSpecular=1 VolumetricFog=1 ContactShadows=1 Ao=1   the improvements (Mode=2)
+//   Cascades=1          the sun's shadow from the decoded cascades (0: the game's shadow mask)
+//   View=0              1 world normals, 2 sun shadow, 3 ambient, 9 test control: the top-left quarter only
+//   FogDensity FogAnisotropy FogLightScale FogSunScale FogMaxDistance SoftRange ContactLength AoStrength
+//   ShadowMapSize=4096  one cascade's side (the game's iShadowMapResolution)
+//   CaptureAfter=0      world frames before the capture set: each step holds Hold frames, then its
+//   Hold=45             backbuffer and the match statistics go to CaptureDir (Scene names the files)
+// Needs [D3D12Bridge] Enabled=1 Pass=lighting and [GBuffer] Enabled=1. Original work, MIT.
+#include "BridgeHookState.h"
+#include "GBufferComplete.h"
+#include "ProxyAPI.h"
+#include "ProxyLog.h"
+#include "SceneLights.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <direct.h>
+#include <vector>
+
+namespace SB::Proxy::hook
+{
+using raw::bridge::LightingTuning;
+using raw::bridge::Shared;
+
+namespace
+{
+int s_failures = 0;
+UINT s_shadowSide = 4096;
+void Tune() { if (Bridge()) raw::bridge::LightingPassTune(Bridge()->ActivePass(), Cfg().light); }
+
+} // namespace
+
+void LoadLightingConfig(const std::string& ini)
+{
+    LightingTuning& t = Cfg().light;
+    auto i = [&](const char* k, int d) { return GetPrivateProfileIntA("Lighting", k, d, ini.c_str()); };
+    auto f = [&](const char* k, float d) {
+        char buf[64]{};
+        GetPrivateProfileStringA("Lighting", k, "", buf, sizeof(buf), ini.c_str());
+        return buf[0] ? std::strtof(buf, nullptr) : d;
+    };
+    t.mode = i("Mode", 1);
+    t.softShadows = i("SoftShadows", 1) != 0; t.ggxSpecular = i("GgxSpecular", 1) != 0;
+    t.volumetricFog = i("VolumetricFog", 1) != 0; t.contactShadows = i("ContactShadows", 1) != 0;
+    t.ao = i("Ao", 1) != 0; t.cascades = i("Cascades", 1) != 0; t.view = i("View", 0);
+    t.fogDensity = f("FogDensity", t.fogDensity); t.fogAnisotropy = f("FogAnisotropy", t.fogAnisotropy);
+    t.fogLightScale = f("FogLightScale", t.fogLightScale); t.fogSunScale = f("FogSunScale", t.fogSunScale);
+    t.fogMaxDistance = f("FogMaxDistance", t.fogMaxDistance); t.softRange = f("SoftRange", t.softRange);
+    t.contactLength = f("ContactLength", t.contactLength); t.aoStrength = f("AoStrength", t.aoStrength);
+    Cfg().lightCaptureAfter = i("CaptureAfter", 0);
+    Cfg().lightHold = i("Hold", 45);
+    s_shadowSide = static_cast<UINT>(i("ShadowMapSize", 4096));
+    Cfg().lightDump = i("Dump", 0) != 0;
+    Cfg().harness = i("Harness", 0) != 0;
+    char text[MAX_PATH]{};
+    GetPrivateProfileStringA("Lighting", "CaptureDir", "", text, MAX_PATH, ini.c_str());
+    Cfg().lightCaptureDir = text;
+    GetPrivateProfileStringA("Lighting", "Scene", "scene", text, MAX_PATH, ini.c_str());
+    Cfg().lightScene = text;
+    g_sceneLightsActive = Cfg().enabled;
+    LightingMakeSteps();
+    Log("[Lighting] config: mode %d, soft %d ggx %d fog %d contact %d ao %d cascades %d, capture after %d", t.mode, t.softShadows,
+        t.ggxSpecular, t.volumetricFog, t.contactShadows, t.ao, t.cascades, Cfg().lightCaptureAfter);
+}
+
+bool LightingEnsure()
+{
+    raw::bridge::D3D12Bridge* b = Bridge();
+    if (!b || Cfg().light.mode <= 0) return false;
+    auto* pi = PG_GetProxyInterface();
+    ID3D11Texture2D* bb = nullptr;
+    if (!pi || !pi->device || !pi->context || !pi->swapChain || FAILED(pi->swapChain->GetBuffer(0, IID_PPV_ARGS(&bb))) || !bb) return false;
+    D3D11_TEXTURE2D_DESC d{};
+    bb->GetDesc(&d);
+    bb->Release();
+    if (b->Ready()) {
+        if (b->Config().width == d.Width && b->Config().height == d.Height) return b->Config().lightingPass;
+        // The swap chain was resized: every shared target is the old size, so the bridge is made again.
+        Log("[Lighting] backbuffer now %ux%u (bridge %ux%u): making the bridge again", d.Width, d.Height, b->Config().width, b->Config().height);
+        b->Shutdown();
+    }
+    if (s_failures >= 3 || !GBuffer_Textures().albedo) return false;
+    LightingLogGeometry(pi->swapChain, d);
+    raw::bridge::BridgeConfig c;
+    c.width = d.Width; c.height = d.Height;
+    c.colorFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    c.normalFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+    c.motionFormat = DXGI_FORMAT_R16G16_FLOAT;
+    c.debugLayer = Cfg().debugLayer;
+    c.passRetireMs = static_cast<DWORD>(Cfg().retireTimeoutMs);
+    c.lightingPass = true;
+    c.shadowMapSize = s_shadowSide;
+    if (!b->Initialize(pi->device, pi->context, c, &Log)) { ++s_failures; return false; }
+    Tune();
+    return true;
+}
+
+bool LightingAtOpaque(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr)
+{
+    raw::bridge::D3D12Bridge* b = Bridge();
+    if (!b || !b->Ready() || !sceneHdr) return false;
+    SceneLights_SetCamera(real);
+    const GBufferTextures g = GBuffer_Textures();
+    ID3D11Texture2D* mask = SceneLights_ShadowMask();
+    b->CaptureSurface(g.albedo, g.specular, mask ? mask : g.albedo);
+    if (ID3D11Texture2D* cascades = SceneLights_Cascades()) b->CaptureShadows(cascades);
+    raw::bridge::SceneLighting l = SceneLights_Frame();
+    if (!mask)
+        for (uint32_t k = 0; k < l.lightCount; ++k) l.lights[k].shadowChannel = -1;
+    b->SetLighting(l);
+    raw::bridge::PassConstants k = Cfg().k;
+    return b->Execute(sceneHdr, sceneHdr, k);
+}
+
+void LightingOnPresent(bool worldFrame)
+{
+    if (GetAsyncKeyState(VK_F10) & 1) {
+        Cfg().light.mode = (Cfg().light.mode + 1) % 3;
+        if (Bridge()) raw::bridge::LightingPassTune(Bridge()->ActivePass(), Cfg().light);
+        Log("[Lighting] F10: mode %d", Cfg().light.mode);
+    }
+    LightingScheduleOnPresent(worldFrame);
+}
+
+} // namespace SB::Proxy::hook

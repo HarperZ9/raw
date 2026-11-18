@@ -121,3 +121,10 @@ until the core stack ships.
 RAW is an **infrastructure success with a validation deficit**: the concrete backend (interception,
 depth, dispatch, HiZ, dev-tooling) is genuinely built to a high bar, so the next month's entire return
 comes from validating and fixing the effects that already run on it — not from writing more.
+
+## 2026-11-17: D3D12 bridge, stage 1
+RAW's own D3D12 device beside the game's D3D11 device (`src/d3d12_bridge/`, hook in
+`src/d3d11_proxy/BridgeHook.cpp`). The offline round-trip test passes with its controls; the
+measured bridge cost is about 0.37 ms at 1080p and 0.42 ms at 2160p (median, GPU shared with
+another process). In game the fence self-test fails (`Signal` returns E_INVALIDARG) and the bridge
+stays off safely. Details, measurements and the stage 2 list: `docs/D3D12_BRIDGE.md`.

@@ -30,6 +30,8 @@ struct SceneCtx {
     uint32_t frames = 1;         // frames to render (timing runs use more)
     // outputs
     std::vector<uint64_t> values;   // exact scalars to compare (query results)
+    std::vector<double> callMs;     // per frame: first call until the last draw call (or the last
+                                    // FinishCommandList) returned, before any submission
     std::vector<double> recordMs;   // per frame: first call until Flush returned
     std::vector<double> totalMs;    // per frame: first call until the GPU finished
     // Called with the texture a scene reads back as its final image (optional).

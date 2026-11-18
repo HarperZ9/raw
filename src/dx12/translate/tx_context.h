@@ -109,7 +109,7 @@ public:
     TX_STAGE_DECL(PS, ID3D11PixelShader)
     TX_STAGE_DECL(CS, ID3D11ComputeShader)
 
-    // input assembler, output merger, rasterizer (tx_ctx_set.cpp, tx_ctx_get.cpp)
+    // input assembler, output merger, rasterizer (tx_ctx_bind.cpp, tx_ctx_get.cpp)
     STDMETHODIMP_(void) IASetInputLayout(ID3D11InputLayout*) override;
     STDMETHODIMP_(void) IASetVertexBuffers(UINT, UINT, ID3D11Buffer* const*, const UINT*, const UINT*) override;
     STDMETHODIMP_(void) IASetIndexBuffer(ID3D11Buffer*, DXGI_FORMAT, UINT) override;

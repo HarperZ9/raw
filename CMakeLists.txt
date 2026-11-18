@@ -279,7 +279,10 @@ add_library(raw_dx12_translate STATIC
     ${RAW_TX_DIR}/tx_state.cpp
     ${RAW_TX_DIR}/tx_pipeline.cpp
     ${RAW_TX_DIR}/tx_swapchain.cpp
-    ${RAW_TX_DIR}/tx_ctx_set.cpp
+    ${RAW_TX_DIR}/tx_ctx_core.cpp
+    ${RAW_TX_DIR}/tx_ctx_bind.cpp
+    ${RAW_TX_DIR}/tx_ctx_compute.cpp
+    ${RAW_TX_DIR}/tx_query.cpp
     ${RAW_TX_DIR}/tx_ctx_get.cpp
     ${RAW_TX_DIR}/tx_ctx_draw.cpp
     ${RAW_TX_DIR}/tx_ctx_data.cpp
@@ -301,6 +304,7 @@ add_subdirectory(tests/d3d11_translate)
 add_executable(d3d11_translate_suite
     tests/d3d11_translate/main.cpp
     tests/d3d11_translate/suite_controls.cpp
+    tests/d3d11_translate/suite_getters.cpp
     tests/d3d11_translate/suite_replay.cpp
     tests/d3d11_translate/suite_bench.cpp)
 target_link_libraries(d3d11_translate_suite PRIVATE tx_scenes raw_dx12_translate raw_d3d11_record d3d11 d3dcompiler dxguid)

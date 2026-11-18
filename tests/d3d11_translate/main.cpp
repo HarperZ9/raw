@@ -74,7 +74,7 @@ bool RunOnce(const Scene& s, const RunCfg& cfg, RunOut& out)
     out.ok = s.run(c, out.img);
     ctx->ClearState();
     ctx->Flush();
-    out.values = c.values; out.recordMs = c.recordMs; out.totalMs = c.totalMs;
+    out.values = c.values; out.callMs = c.callMs; out.recordMs = c.recordMs; out.totalMs = c.totalMs;
     if (cfg.be == Backend::Translate) out.stats = raw::tx::GetStats(dev.Get());
     else if (cfg.debug) out.d3d11Messages = DrainD3D11(dev.Get());
     ctx.Reset();
@@ -151,6 +151,7 @@ int main(int argc, char** argv)
         if (o.scene.empty()) {
             RunControls(o, t);
             RunReflection(t);
+            RunGetters(o, t);
             RunSwapChain(o, t);
             RunReplay(o, t);
         }

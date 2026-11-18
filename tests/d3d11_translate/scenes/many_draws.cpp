@@ -53,11 +53,12 @@ void RecordWorker(Worker* w, const Shared* s)
     w->hr = w->dc->FinishCommandList(FALSE, w->list.ReleaseAndGetAddressOf());
 }
 
-bool RecordThreaded(SceneCtx& c, State& st)
+bool RecordThreaded(SceneCtx& c, State& st, LARGE_INTEGER* tCalls)
 {
     for (Worker& w : st.workers) st.threads.emplace_back(RecordWorker, &w, &st.s);
     for (std::thread& t : st.threads) t.join();
     st.threads.clear();
+    QueryPerformanceCounter(tCalls);   // every list is recorded and closed; nothing is submitted yet
     bool ok = true;
     for (Worker& w : st.workers) {
         if (!w.ok || FAILED(w.hr) || !w.list) {
@@ -77,10 +78,15 @@ double Ms(const LARGE_INTEGER& a, const LARGE_INTEGER& b, const LARGE_INTEGER& f
 bool Frame(SceneCtx& c, State& st)
 {
     c.ctx->ClearRenderTargetView(st.s.rt.rtv.Get(), kClear);
-    LARGE_INTEGER t0, t1, t2;
+    LARGE_INTEGER t0, tc, t1, t2;
     QueryPerformanceCounter(&t0);
-    bool ok = st.workers.empty() ? RecordRange(c.ctx, st.s, st.immCb, 0, c.drawCount, false)
-                                 : RecordThreaded(c, st);
+    bool ok;
+    if (st.workers.empty()) {
+        ok = RecordRange(c.ctx, st.s, st.immCb, 0, c.drawCount, false);
+        QueryPerformanceCounter(&tc);
+    } else {
+        ok = RecordThreaded(c, st, &tc);
+    }
     c.ctx->End(st.done.Get());
     c.ctx->Flush();
     QueryPerformanceCounter(&t1);
@@ -88,6 +94,7 @@ bool Frame(SceneCtx& c, State& st)
     ok = WaitQuery(c.ctx, st.done.Get(), &finished, sizeof(finished)) && ok;
     QueryPerformanceCounter(&t2);
     for (Worker& w : st.workers) w.list.Reset();
+    c.callMs.push_back(Ms(t0, tc, st.freq));
     c.recordMs.push_back(Ms(t0, t1, st.freq));
     c.totalMs.push_back(Ms(t0, t2, st.freq));
     return ok;

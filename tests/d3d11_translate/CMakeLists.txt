@@ -25,6 +25,12 @@ add_library(tx_scenes STATIC
     scenes/msaa_resolve.cpp
     scenes/mip_generation.cpp
     scenes/occlusion_query.cpp
+    scenes/gbuffer_frame.cpp
+    scenes/gbuffer_frame_res.cpp
+    scenes/volumes_cubes_arrays.cpp
+    scenes/volumes_cubes_arrays_res.cpp
+    scenes/volumes_cubes_arrays_shaders.cpp
+    scenes/volumes_cubes_arrays_passes.cpp
 )
 target_include_directories(tx_scenes PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(tx_scenes PUBLIC d3d11 d3dcompiler dxguid)

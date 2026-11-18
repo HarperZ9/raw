@@ -16,6 +16,8 @@ bool RunDynamicVb(SceneCtx& c, Image& out);
 bool RunMsaaResolve(SceneCtx& c, Image& out);
 bool RunMipGeneration(SceneCtx& c, Image& out);
 bool RunOcclusionQuery(SceneCtx& c, Image& out);
+bool RunGbufferFrame(SceneCtx& c, Image& out);
+bool RunVolumesCubesArrays(SceneCtx& c, Image& out);
 
 const std::vector<Scene>& AllScenes()
 {
@@ -34,6 +36,8 @@ const std::vector<Scene>& AllScenes()
         {"msaa_resolve", RunMsaaResolve, 2},
         {"mip_generation", RunMipGeneration, 2},
         {"occlusion_query", RunOcclusionQuery, 1},
+        {"gbuffer_frame", RunGbufferFrame, 2},
+        {"volumes_cubes_arrays", RunVolumesCubesArrays, 2},
     };
     return scenes;
 }

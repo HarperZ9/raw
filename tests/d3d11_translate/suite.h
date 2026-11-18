@@ -21,7 +21,7 @@ struct RunOut {
     bool ok = false;           // the scene's own checks passed
     Image img;
     std::vector<uint64_t> values;
-    std::vector<double> recordMs, totalMs;
+    std::vector<double> callMs, recordMs, totalMs;
     raw::tx::Stats stats;      // Translate only
     uint32_t d3d11Messages = 0;   // D3D11 debug-layer warnings and errors
     unsigned long leftRefs = 0;   // device references left after the scene
@@ -46,6 +46,7 @@ double Median(std::vector<double> v, size_t skip);
 void RunScenes(const Opts& o, Tally& t);        // each scene on both back ends
 void RunControls(const Opts& o, Tally& t);      // defects that must be caught
 void RunReflection(Tally& t);                   // bytecode readers against D3DReflect
+void RunGetters(const Opts& o, Tally& t);       // set-then-get on both back ends
 void RunSwapChain(const Opts& o, Tally& t);     // D3D12 swap chain, Present, resize
 void RunReplay(const Opts& o, Tally& t);        // record on D3D11, replay on both
 void RunBench(const Opts& o, Tally& t);         // many_draws timings

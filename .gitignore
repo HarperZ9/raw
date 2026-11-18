@@ -32,3 +32,6 @@ dist/
 .envrc
 .envrc.local
 build-bridge/
+
+# dx12 translate build trees
+build-*/

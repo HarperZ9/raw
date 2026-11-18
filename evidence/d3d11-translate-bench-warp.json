@@ -1,0 +1,15 @@
+{
+  "adapter": "WARP",
+  "passed": 8,
+  "failed": 0,
+  "results": [
+    {"check": "d3d11_immediate_10000", "pass": true, "detail": "draws 10000, threads 0, call_ms 59.116, record_ms 59.158, total_ms 61.306, call_us_per_draw 5.912, max diff to D3D11 immediate 0"},
+    {"check": "d3d11_deferred_10000", "pass": true, "detail": "draws 10000, threads 4, call_ms 0.476, record_ms 58.685, total_ms 58.700, call_us_per_draw 0.048, max diff to D3D11 immediate 0"},
+    {"check": "d3d12_translated_immediate_10000", "pass": true, "detail": "draws 10000, threads 0, call_ms 1.383, record_ms 64.007, total_ms 64.602, call_us_per_draw 0.138, max diff to D3D11 immediate 0"},
+    {"check": "d3d12_translated_deferred_10000", "pass": true, "detail": "draws 10000, threads 4, call_ms 0.951, record_ms 62.303, total_ms 63.705, call_us_per_draw 0.095, max diff to D3D11 immediate 0"},
+    {"check": "d3d11_immediate_50000", "pass": true, "detail": "draws 50000, threads 0, call_ms 301.027, record_ms 301.061, total_ms 301.082, call_us_per_draw 6.021, max diff to D3D11 immediate 0"},
+    {"check": "d3d11_deferred_50000", "pass": true, "detail": "draws 50000, threads 4, call_ms 0.882, record_ms 271.113, total_ms 271.122, call_us_per_draw 0.018, max diff to D3D11 immediate 0"},
+    {"check": "d3d12_translated_immediate_50000", "pass": true, "detail": "draws 50000, threads 0, call_ms 6.502, record_ms 294.842, total_ms 295.057, call_us_per_draw 0.130, max diff to D3D11 immediate 0"},
+    {"check": "d3d12_translated_deferred_50000", "pass": true, "detail": "draws 50000, threads 4, call_ms 3.047, record_ms 285.663, total_ms 286.149, call_us_per_draw 0.061, max diff to D3D11 immediate 0"}
+  ]
+}

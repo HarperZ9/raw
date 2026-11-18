@@ -1,0 +1,3 @@
+{"inputs":"in-game capture set","width":3840,"height":2160,"radius":35.000,"slices":4,"steps":8,
+ "gtao":{"pixels":7698132,"outside_1e-3":38881,"worst":5.5441e-01,"bound_fraction":0.001},
+ "control_wrong_radius":{"pixels":7698132,"outside_1e-3":5266667},"failed_checks":1}

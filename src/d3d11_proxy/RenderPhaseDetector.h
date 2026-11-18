@@ -75,6 +75,7 @@ public:
 
     uint32_t GetDrawsInPhase(RenderPhase phase) const;
     uint32_t GetPhaseTransitions() const { return m_transitions; }
+    uint32_t GetTotalDrawsThisFrame() const { return m_totalDrawsThisFrame; }
 
     // ── Configuration ────────────────────────────────────────────────
 

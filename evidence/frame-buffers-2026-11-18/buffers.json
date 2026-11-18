@@ -1,0 +1,862 @@
+[
+ {
+  "id": 3,
+  "role": "reflection_cube",
+  "title": "Reflection cube map",
+  "holds": "Six HDR faces; the game refreshes some faces each frame.",
+  "size": "512x512, 6 layers",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "316 draws",
+  "first_write": 2,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "03_reflection_cube_0_rgb.png",
+   "03_reflection_cube_0_alpha.png",
+   "03_reflection_cube_1_rgb.png",
+   "03_reflection_cube_1_alpha.png",
+   "03_reflection_cube_2_rgb.png",
+   "03_reflection_cube_2_alpha.png",
+   "03_reflection_cube_3_rgb.png",
+   "03_reflection_cube_3_alpha.png",
+   "03_reflection_cube_4_rgb.png",
+   "03_reflection_cube_4_alpha.png",
+   "03_reflection_cube_5_rgb.png"
+  ]
+ },
+ {
+  "id": 4,
+  "role": "reflection_cube_depth",
+  "title": "Reflection cube depth",
+  "holds": "Depth and stencil for the cube map faces.",
+  "size": "512x512",
+  "format": "R24G8_TYPELESS",
+  "written_by": "316 draws",
+  "first_write": 2,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11 (as R32F depth)",
+  "images": [
+   "04_reflection_cube_depth_depth.png",
+   "04_reflection_cube_depth_stencil.png"
+  ]
+ },
+ {
+  "id": 5,
+  "role": "shadow_maps_small",
+  "title": "Second shadow map set",
+  "holds": "16-bit depth array at low resolution, drawn before the cascades.",
+  "size": "512x512, 2 layers",
+  "format": "R16_TYPELESS",
+  "written_by": "254 draws",
+  "first_write": 6,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "05_shadow_maps_small_0_depth.png",
+   "05_shadow_maps_small_1_depth.png"
+  ]
+ },
+ {
+  "id": 6,
+  "role": "shadow_cascades",
+  "title": "Sun shadow cascades",
+  "holds": "16-bit depth, one array layer per cascade, drawn before the scene.",
+  "size": "4096x4096, 2 layers",
+  "format": "R16_TYPELESS",
+  "written_by": "2753 draws",
+  "first_write": 10,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "06_shadow_cascades_0_depth.png",
+   "06_shadow_cascades_1_depth.png"
+  ]
+ },
+ {
+  "id": 7,
+  "role": "volumetric_volume",
+  "title": "Volumetric lighting volume",
+  "holds": "3D float texture written by compute dispatches.",
+  "size": "320x192x90",
+  "format": "R16_FLOAT",
+  "written_by": "46 dispatches",
+  "first_write": 13,
+  "captured": true,
+  "shared": "not yet (3D)",
+  "images": [
+   "07_volumetric_volume_45_value.png"
+  ]
+ },
+ {
+  "id": 8,
+  "role": "volumetric_volume",
+  "title": "Volumetric lighting volume",
+  "holds": "3D float texture written by compute dispatches.",
+  "size": "320x192x90",
+  "format": "R16_FLOAT",
+  "written_by": "46 dispatches",
+  "first_write": 13,
+  "captured": true,
+  "shared": "not yet (3D)",
+  "images": [
+   "08_volumetric_volume_45_value.png"
+  ]
+ },
+ {
+  "id": 2,
+  "role": "depth_main",
+  "title": "Depth and stencil",
+  "holds": "The scene's depth buffer (24-bit, 0 near, 1 far) and 8-bit stencil.",
+  "size": "3840x2160",
+  "format": "R24G8_TYPELESS",
+  "written_by": "4285 draws",
+  "first_write": 14,
+  "captured": true,
+  "shared": "every frame, as R32F depth",
+  "images": [
+   "02_depth_main_depth.png",
+   "02_depth_main_stencil.png"
+  ]
+ },
+ {
+  "id": 9,
+  "role": "depth_copy_prepass",
+  "title": "Depth after the depth prepass",
+  "holds": "A copy of the depth buffer taken right after the prepass; later bound as depth for a few late draws.",
+  "size": "3840x2160",
+  "format": "R24G8_TYPELESS",
+  "written_by": "6 draws, copy",
+  "first_write": 14,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11 (as R32F depth)",
+  "images": [
+   "09_depth_copy_prepass_depth.png",
+   "09_depth_copy_prepass_stencil.png"
+  ]
+ },
+ {
+  "id": 10,
+  "role": "shadow_mask",
+  "title": "Shadow mask",
+  "holds": "One full-screen draw before the opaque pass. R: 1 lit, 0 in the sun's shadow.",
+  "size": "3840x2160",
+  "format": "R8G8B8A8_UNORM",
+  "written_by": "1 draws",
+  "first_write": 15,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "10_shadow_mask_rgb.png"
+  ]
+ },
+ {
+  "id": 1,
+  "role": "motion_vectors",
+  "title": "Motion vectors",
+  "holds": "Opaque pass target 1. Screen-space velocity: (current NDC - previous NDC) * (-0.5, 0.5), from the game's lighting shader.",
+  "size": "3840x2160",
+  "format": "R16G16_FLOAT",
+  "written_by": "2229 draws",
+  "first_write": 16,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "01_motion_vectors_xy.png"
+  ]
+ },
+ {
+  "id": 11,
+  "role": "normals_masks",
+  "title": "Normals and masks",
+  "holds": "Opaque pass target 2. RG: view-space normal, n.xy / sqrt(8 - 8 n.z) + 0.5. A: specular mask the game's reflections read. B: a small per-material value.",
+  "size": "3840x2160",
+  "format": "R8G8B8A8_UNORM",
+  "written_by": "2208 draws",
+  "first_write": 16,
+  "captured": true,
+  "shared": "every frame",
+  "images": [
+   "11_normals_masks_encoded.png",
+   "11_normals_masks_normal.png",
+   "11_normals_masks_alpha.png",
+   "11_normals_masks_blue_x8.png"
+  ]
+ },
+ {
+  "id": 12,
+  "role": "scene_hdr",
+  "title": "Scene colour, HDR",
+  "holds": "Lit scene in linear light. Opaque pass target 0; blended draws, the game's own AO, fog and bloom land here later.",
+  "size": "3840x2160",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "2493 draws",
+  "first_write": 16,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "12_scene_hdr_rgb.png",
+   "12_scene_hdr_alpha.png"
+  ]
+ },
+ {
+  "id": 13,
+  "role": "snow_mask",
+  "title": "Two-channel opaque mask",
+  "holds": "Opaque pass target 3. G marks snow-shaded surfaces in this frame; R stays near zero.",
+  "size": "3840x2160",
+  "format": "R8G8_UNORM",
+  "written_by": "2190 draws",
+  "first_write": 16,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "13_snow_mask_r.png",
+   "13_snow_mask_g.png"
+  ]
+ },
+ {
+  "id": 14,
+  "role": "half_normals",
+  "title": "Normals and masks, half size",
+  "holds": "Downsample of the normal target for the game's reflections.",
+  "size": "1920x1080",
+  "format": "R8G8B8A8_UNORM",
+  "written_by": "1 draws",
+  "first_write": 36,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "14_half_normals_encoded.png",
+   "14_half_normals_normal.png",
+   "14_half_normals_alpha.png",
+   "14_half_normals_blue_x8.png"
+  ]
+ },
+ {
+  "id": 15,
+  "role": "ssr",
+  "title": "Screen-space reflections",
+  "holds": "Half-size HDR targets of the game's reflection passes (trace, then filters).",
+  "size": "1920x1080",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "1 draws",
+  "first_write": 38,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "15_ssr_rgb.png",
+   "15_ssr_alpha.png"
+  ]
+ },
+ {
+  "id": 16,
+  "role": "ssr",
+  "title": "Screen-space reflections",
+  "holds": "Half-size HDR targets of the game's reflection passes (trace, then filters).",
+  "size": "1920x1080",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "1 dispatches",
+  "first_write": 40,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "16_ssr_rgb.png",
+   "16_ssr_alpha.png"
+  ]
+ },
+ {
+  "id": 17,
+  "role": "ssr",
+  "title": "Screen-space reflections",
+  "holds": "Half-size HDR targets of the game's reflection passes (trace, then filters).",
+  "size": "1920x1080",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "1 dispatches",
+  "first_write": 41,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "17_ssr_rgb.png",
+   "17_ssr_alpha.png"
+  ]
+ },
+ {
+  "id": 18,
+  "role": "linear_depth_pyramid",
+  "title": "View depth pyramid",
+  "holds": "View depth as float with a full mip chain, built for the game's own ambient occlusion.",
+  "size": "3840x2160, 12 mips",
+  "format": "R32_FLOAT",
+  "written_by": "12 draws",
+  "first_write": 43,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "18_linear_depth_pyramid_value.png"
+  ]
+ },
+ {
+  "id": 19,
+  "role": "game_ao",
+  "title": "The game's ambient occlusion",
+  "holds": "Full-size 8-bit targets of the game's own AO: packed result, then two blur passes.",
+  "size": "3840x2160",
+  "format": "R8G8B8A8_UNORM",
+  "written_by": "1 draws",
+  "first_write": 56,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "19_game_ao_rgb.png"
+  ]
+ },
+ {
+  "id": 20,
+  "role": "game_ao",
+  "title": "The game's ambient occlusion",
+  "holds": "Full-size 8-bit targets of the game's own AO: packed result, then two blur passes.",
+  "size": "3840x2160",
+  "format": "R8G8B8A8_UNORM",
+  "written_by": "1 draws",
+  "first_write": 57,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "20_game_ao_rgb.png"
+  ]
+ },
+ {
+  "id": 21,
+  "role": "game_ao",
+  "title": "The game's ambient occlusion",
+  "holds": "Full-size 8-bit targets of the game's own AO: packed result, then two blur passes.",
+  "size": "3840x2160",
+  "format": "R8G8B8A8_UNORM",
+  "written_by": "1 draws",
+  "first_write": 58,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "21_game_ao_rgb.png",
+   "21_game_ao_alpha.png"
+  ]
+ },
+ {
+  "id": 22,
+  "role": "scene_r11",
+  "title": "Scene colour, packed float",
+  "holds": "One full-screen draw into an R11G11B10 target between the game's AO and its composite.",
+  "size": "3840x2160",
+  "format": "R11G11B10_FLOAT",
+  "written_by": "1 draws",
+  "first_write": 59,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "22_scene_r11_rgb.png"
+  ]
+ },
+ {
+  "id": 23,
+  "role": "scene_hdr_copy",
+  "title": "Scene colour copy",
+  "holds": "A copy of the scene colour taken before the blended draws; the source for refraction.",
+  "size": "3840x2160",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "copy",
+  "first_write": 61,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "23_scene_hdr_copy_rgb.png"
+  ]
+ },
+ {
+  "id": 24,
+  "role": "water_target",
+  "title": "Water colour target",
+  "holds": "HDR target drawn with the scene depth; holds the visible water surface in this frame.",
+  "size": "3840x2160",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "21 draws",
+  "first_write": 62,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "24_water_target_rgb.png"
+  ]
+ },
+ {
+  "id": 25,
+  "role": "water_normals_mask",
+  "title": "Water mask target",
+  "holds": "10-bit target written together with the scene colour by one draw; alpha marks the water area.",
+  "size": "3840x2160",
+  "format": "R10G10B10A2_UNORM",
+  "written_by": "1 draws",
+  "first_write": 83,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "25_water_normals_mask_rgb.png",
+   "25_water_normals_mask_alpha.png"
+  ]
+ },
+ {
+  "id": 26,
+  "role": "blend_mask",
+  "title": "Blended-draw mask",
+  "holds": "Two-channel target bound with the scene colour for every blended draw.",
+  "size": "3840x2160",
+  "format": "R8G8_UNORM",
+  "written_by": "293 draws",
+  "first_write": 86,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "26_blend_mask_r.png",
+   "26_blend_mask_g.png"
+  ]
+ },
+ {
+  "id": 27,
+  "role": "blend_colour",
+  "title": "Blended-draw colour",
+  "holds": "HDR target bound with the scene colour for every blended draw (clouds, mist, effects).",
+  "size": "3840x2160",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "293 draws",
+  "first_write": 86,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "27_blend_colour_rgb.png"
+  ]
+ },
+ {
+  "id": 28,
+  "role": "volumetric_resolve",
+  "title": "Volumetric lighting, screen",
+  "holds": "Full-size single-channel float: the volume resolved to the screen (draw, then compute filters).",
+  "size": "3840x2160",
+  "format": "R16_FLOAT",
+  "written_by": "1 draws",
+  "first_write": 299,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "28_volumetric_resolve_value.png"
+  ]
+ },
+ {
+  "id": 29,
+  "role": "depth_copy_scene",
+  "title": "Depth after the scene",
+  "holds": "A copy of the depth buffer taken after the last scene draw, for the post chain.",
+  "size": "3840x2160",
+  "format": "R24G8_TYPELESS",
+  "written_by": "copy",
+  "first_write": 299,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11 (as R32F depth)",
+  "images": [
+   "29_depth_copy_scene_depth.png",
+   "29_depth_copy_scene_stencil.png"
+  ]
+ },
+ {
+  "id": 30,
+  "role": "volumetric_resolve",
+  "title": "Volumetric lighting, screen",
+  "holds": "Full-size single-channel float: the volume resolved to the screen (draw, then compute filters).",
+  "size": "3840x2160",
+  "format": "R16_FLOAT",
+  "written_by": "1 dispatches",
+  "first_write": 300,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "30_volumetric_resolve_value.png"
+  ]
+ },
+ {
+  "id": 31,
+  "role": "volumetric_resolve",
+  "title": "Volumetric lighting, screen",
+  "holds": "Full-size single-channel float: the volume resolved to the screen (draw, then compute filters).",
+  "size": "3840x2160",
+  "format": "R16_FLOAT",
+  "written_by": "1 dispatches",
+  "first_write": 301,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "31_volumetric_resolve_value.png"
+  ]
+ },
+ {
+  "id": 32,
+  "role": "post_hdr",
+  "title": "HDR post chain",
+  "holds": "Downsampled HDR targets: bloom and blur steps.",
+  "size": "960x540",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "1 dispatches",
+  "first_write": 303,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "32_post_hdr_rgb.png",
+   "32_post_hdr_alpha.png"
+  ]
+ },
+ {
+  "id": 33,
+  "role": "post_hdr",
+  "title": "HDR post chain",
+  "holds": "Downsampled HDR targets: bloom and blur steps.",
+  "size": "960x540",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "1 draws",
+  "first_write": 304,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "33_post_hdr_rgb.png"
+  ]
+ },
+ {
+  "id": 34,
+  "role": "post_hdr",
+  "title": "HDR post chain",
+  "holds": "Downsampled HDR targets: bloom and blur steps.",
+  "size": "240x540",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "1 draws",
+  "first_write": 305,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "34_post_hdr_rgb.png"
+  ]
+ },
+ {
+  "id": 35,
+  "role": "post_hdr",
+  "title": "HDR post chain",
+  "holds": "Downsampled HDR targets: bloom and blur steps.",
+  "size": "240x540",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "5 draws",
+  "first_write": 306,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "35_post_hdr_rgb.png"
+  ]
+ },
+ {
+  "id": 36,
+  "role": "post_hdr",
+  "title": "HDR post chain",
+  "holds": "Downsampled HDR targets: bloom and blur steps.",
+  "size": "120x540",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "1 draws",
+  "first_write": 307,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "36_post_hdr_rgb.png"
+  ]
+ },
+ {
+  "id": 37,
+  "role": "post_hdr",
+  "title": "HDR post chain",
+  "holds": "Downsampled HDR targets: bloom and blur steps.",
+  "size": "960x540",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "2 draws",
+  "first_write": 308,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "37_post_hdr_rgb.png"
+  ]
+ },
+ {
+  "id": 38,
+  "role": "post_hdr",
+  "title": "HDR post chain",
+  "holds": "Downsampled HDR targets: bloom and blur steps.",
+  "size": "960x540",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "4 draws",
+  "first_write": 309,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "38_post_hdr_rgb.png",
+   "38_post_hdr_alpha.png"
+  ]
+ },
+ {
+  "id": 39,
+  "role": "post_hdr",
+  "title": "HDR post chain",
+  "holds": "Downsampled HDR targets: bloom and blur steps.",
+  "size": "240x135",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "1 draws",
+  "first_write": 310,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "39_post_hdr_rgb.png"
+  ]
+ },
+ {
+  "id": 40,
+  "role": "post_hdr",
+  "title": "HDR post chain",
+  "holds": "Downsampled HDR targets: bloom and blur steps.",
+  "size": "240x135",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "1 draws",
+  "first_write": 311,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "40_post_hdr_rgb.png"
+  ]
+ },
+ {
+  "id": 41,
+  "role": "post_hdr",
+  "title": "HDR post chain",
+  "holds": "Downsampled HDR targets: bloom and blur steps.",
+  "size": "240x135",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "2 draws",
+  "first_write": 312,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "41_post_hdr_rgb.png"
+  ]
+ },
+ {
+  "id": 42,
+  "role": "post_hdr",
+  "title": "HDR post chain",
+  "holds": "Downsampled HDR targets: bloom and blur steps.",
+  "size": "240x540",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "3 draws",
+  "first_write": 313,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "42_post_hdr_rgb.png"
+  ]
+ },
+ {
+  "id": 43,
+  "role": "post_hdr",
+  "title": "HDR post chain",
+  "holds": "Downsampled HDR targets: bloom and blur steps.",
+  "size": "120x540",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "3 draws",
+  "first_write": 319,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "43_post_hdr_rgb.png"
+  ]
+ },
+ {
+  "id": 44,
+  "role": "post_hdr",
+  "title": "HDR post chain",
+  "holds": "Downsampled HDR targets: bloom and blur steps.",
+  "size": "120x540",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "3 draws",
+  "first_write": 320,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "44_post_hdr_rgb.png"
+  ]
+ },
+ {
+  "id": 45,
+  "role": "luminance",
+  "title": "Luminance chain",
+  "holds": "Shrinking HDR targets down to a few pixels: the exposure measurement.",
+  "size": "60x34",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "1 draws",
+  "first_write": 331,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "45_luminance_rgb.png"
+  ]
+ },
+ {
+  "id": 46,
+  "role": "luminance",
+  "title": "Luminance chain",
+  "holds": "Shrinking HDR targets down to a few pixels: the exposure measurement.",
+  "size": "15x9",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "1 draws",
+  "first_write": 332,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "46_luminance_rgb.png"
+  ]
+ },
+ {
+  "id": 47,
+  "role": "luminance",
+  "title": "Luminance chain",
+  "holds": "Shrinking HDR targets down to a few pixels: the exposure measurement.",
+  "size": "4x3",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "1 draws",
+  "first_write": 333,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "47_luminance_rgb.png"
+  ]
+ },
+ {
+  "id": 48,
+  "role": "luminance",
+  "title": "Luminance chain",
+  "holds": "Shrinking HDR targets down to a few pixels: the exposure measurement.",
+  "size": "2x2",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "1 draws",
+  "first_write": 334,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "48_luminance_rgb.png"
+  ]
+ },
+ {
+  "id": 49,
+  "role": "post_hdr",
+  "title": "HDR post chain",
+  "holds": "Downsampled HDR targets: bloom and blur steps.",
+  "size": "960x540",
+  "format": "R16G16B16A16_FLOAT",
+  "written_by": "1 draws",
+  "first_write": 336,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "49_post_hdr_rgb.png",
+   "49_post_hdr_alpha.png"
+  ]
+ },
+ {
+  "id": 50,
+  "role": "post_ldr",
+  "title": "Display-referred post chain",
+  "holds": "8-bit targets after the tone map: tone-mapped frame, temporal anti-aliasing outputs, reduced copies.",
+  "size": "3840x2160",
+  "format": "R8G8B8A8_UNORM",
+  "written_by": "1 draws",
+  "first_write": 337,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "50_post_ldr_rgb.png"
+  ]
+ },
+ {
+  "id": 51,
+  "role": "post_ldr",
+  "title": "Display-referred post chain",
+  "holds": "8-bit targets after the tone map: tone-mapped frame, temporal anti-aliasing outputs, reduced copies.",
+  "size": "3840x2160",
+  "format": "R8G8B8A8_UNORM",
+  "written_by": "1 draws",
+  "first_write": 338,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "51_post_ldr_rgb.png"
+  ]
+ },
+ {
+  "id": 52,
+  "role": "post_ldr",
+  "title": "Display-referred post chain",
+  "holds": "8-bit targets after the tone map: tone-mapped frame, temporal anti-aliasing outputs, reduced copies.",
+  "size": "3840x2160",
+  "format": "R8G8B8A8_UNORM",
+  "written_by": "1 draws",
+  "first_write": 338,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "52_post_ldr_rgb.png"
+  ]
+ },
+ {
+  "id": 53,
+  "role": "post_ldr",
+  "title": "Display-referred post chain",
+  "holds": "8-bit targets after the tone map: tone-mapped frame, temporal anti-aliasing outputs, reduced copies.",
+  "size": "960x540",
+  "format": "R8G8B8A8_UNORM",
+  "written_by": "1 draws, 1 dispatches",
+  "first_write": 340,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "53_post_ldr_rgb.png",
+   "53_post_ldr_alpha.png"
+  ]
+ },
+ {
+  "id": 54,
+  "role": "post_ldr",
+  "title": "Display-referred post chain",
+  "holds": "8-bit targets after the tone map: tone-mapped frame, temporal anti-aliasing outputs, reduced copies.",
+  "size": "960x540",
+  "format": "R8G8B8A8_UNORM",
+  "written_by": "1 dispatches",
+  "first_write": 341,
+  "captured": true,
+  "shared": "on demand; D3D12 read equals D3D11",
+  "images": [
+   "54_post_ldr_rgb.png",
+   "54_post_ldr_alpha.png"
+  ]
+ },
+ {
+  "id": 0,
+  "role": "backbuffer",
+  "title": "Frame (backbuffer)",
+  "holds": "The finished frame: the game's final blit, then the HUD on top.",
+  "size": "3840x2160",
+  "format": "R8G8B8A8_UNORM",
+  "written_by": "17 draws",
+  "first_write": 343,
+  "captured": true,
+  "shared": "every frame",
+  "images": [
+   "00_backbuffer_rgb.png"
+  ]
+ }
+]

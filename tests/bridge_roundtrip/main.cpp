@@ -11,6 +11,7 @@
 //
 // Exit code 0 only when every check holds.
 #include "fixtures.h"
+#include "extra_shares.h"
 #include <dxgi.h>
 #include <cstdarg>
 #include <cstdio>
@@ -222,6 +223,12 @@ int main(int argc, char** argv)
     Rig r;
     if (!r.Create(warp, skyrimLike)) { printf("[FAIL] D3D11 device\n"); return 2; }
     Correctness(r);
+    {
+        D3D12Bridge b;
+        BridgeConfig cfg; cfg.width = 256; cfg.height = 128; cfg.debugLayer = true;
+        if (b.Initialize(r.dev.Get(), r.ctx.Get(), cfg, Log)) fx::ExtraShares(r.dev.Get(), b, Check);
+        else Check(false, "bridge for the on-demand shares initialised");
+    }
     std::string p1 = Perf(r, 1920, 1080, frames), p2 = Perf(r, 3840, 2160, frames);
     if (outPath) {
         FILE* f = nullptr;

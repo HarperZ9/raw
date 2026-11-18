@@ -1,0 +1,128 @@
+{
+ "spans": [
+  {
+   "span": "reflection cube faces",
+   "bound_targets": 1,
+   "draws": 316,
+   "blended_draws": 19,
+   "depth_writing_draws": 297,
+   "pixel_shaders": 7,
+   "draws_by_sv_target_outputs": {
+    "0,1,2": 316
+   }
+  },
+  {
+   "span": "depth only (prepass, shadow maps)",
+   "bound_targets": 0,
+   "draws": 5020,
+   "blended_draws": 21,
+   "depth_writing_draws": 4999,
+   "pixel_shaders": 10,
+   "draws_by_sv_target_outputs": {
+    "no bytecode": 2720,
+    "0": 2300
+   }
+  },
+  {
+   "span": "full-screen passes",
+   "bound_targets": 1,
+   "draws": 58,
+   "blended_draws": 4,
+   "depth_writing_draws": 0,
+   "pixel_shaders": 26,
+   "draws_by_sv_target_outputs": {
+    "0": 57,
+    "0,1": 1
+   }
+  },
+  {
+   "span": "opaque set (colour, motion, normals, mask)",
+   "bound_targets": 4,
+   "draws": 2190,
+   "blended_draws": 44,
+   "depth_writing_draws": 152,
+   "pixel_shaders": 54,
+   "draws_by_sv_target_outputs": {
+    "0,1,2": 2121,
+    "0,1,2,3": 69
+   }
+  },
+  {
+   "span": "normals and motion only",
+   "bound_targets": 2,
+   "draws": 18,
+   "blended_draws": 0,
+   "depth_writing_draws": 18,
+   "pixel_shaders": 1,
+   "draws_by_sv_target_outputs": {
+    "0,1": 18
+   }
+  },
+  {
+   "span": "water colour target",
+   "bound_targets": 1,
+   "draws": 21,
+   "blended_draws": 3,
+   "depth_writing_draws": 0,
+   "pixel_shaders": 3,
+   "draws_by_sv_target_outputs": {
+    "0": 21
+   }
+  },
+  {
+   "span": "water (colour, water mask)",
+   "bound_targets": 2,
+   "draws": 1,
+   "blended_draws": 0,
+   "depth_writing_draws": 0,
+   "pixel_shaders": 1,
+   "draws_by_sv_target_outputs": {
+    "0,1": 1
+   }
+  },
+  {
+   "span": "blended set (colour, mask, blend colour)",
+   "bound_targets": 3,
+   "draws": 293,
+   "blended_draws": 293,
+   "depth_writing_draws": 8,
+   "pixel_shaders": 21,
+   "draws_by_sv_target_outputs": {
+    "0,1,2": 293
+   }
+  },
+  {
+   "span": "scene colour only, with depth",
+   "bound_targets": 1,
+   "draws": 2,
+   "blended_draws": 2,
+   "depth_writing_draws": 0,
+   "pixel_shaders": 1,
+   "draws_by_sv_target_outputs": {
+    "0,1,2": 2
+   }
+  },
+  {
+   "span": "late draws on the prepass depth copy (colour, motion)",
+   "bound_targets": 2,
+   "draws": 5,
+   "blended_draws": 0,
+   "depth_writing_draws": 0,
+   "pixel_shaders": 3,
+   "draws_by_sv_target_outputs": {
+    "0,1,2": 5
+   }
+  },
+  {
+   "span": "HUD",
+   "bound_targets": 2,
+   "draws": 16,
+   "blended_draws": 15,
+   "depth_writing_draws": 0,
+   "pixel_shaders": 3,
+   "draws_by_sv_target_outputs": {
+    "0": 16
+   }
+  }
+ ]
+}

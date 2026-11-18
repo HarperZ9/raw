@@ -9,7 +9,8 @@
 //    D3D11: depth -> shared R32F depth        (end of the opaque pass; a tiny
 //           compute pass, since D3D11 cannot open D3D12 depth-stencils)
 //    D3D11: copy scene -> shared colour, Signal(fence, n)
-//    D3D12: Wait(fence, n), render pass -> shared output, Signal(fence, n+1)
+//    D3D12: the pass records first; after the D3D11 Signal it submits
+//           Wait(fence, n), its list, Signal(fence, n+1)
 //    D3D11: Wait(fence, n+1), copy shared output -> the game's frame
 //
 //  The D3D11 side issues copies, Signal and Wait, plus the depth compute
@@ -32,6 +33,7 @@
 #include <dxgi1_6.h>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 namespace raw::bridge
 {
@@ -62,6 +64,19 @@ struct BridgeConfig
     bool        debugLayer     = false;
     DWORD       cpuWaitTimeout = 2000;  // ms; a longer wait marks the bridge unhealthy
     bool        probeStages    = false; // log ProbeFenceSupport between setup stages
+    // The game's normal target format, or UNKNOWN to share no normals.
+    DXGI_FORMAT normalFormat   = DXGI_FORMAT_UNKNOWN;
+    bool        enginePass     = false; // run the Playground engine's pass instead of the depth haze
+    DWORD       passRetireMs   = 15000; // how long the engine pass waits for the frame before
+};
+
+// GPU time of one retired submission, by the pass's own timestamps.
+struct PassTimings
+{
+    uint64_t submission = 0;        // which Submit, counted from 0
+    double totalMs = 0;
+    double stageMs[4] = {};         // pass-defined stages; unused ones stay 0
+    const char* stageName[4] = {};
 };
 
 // GPU times for one frame, in milliseconds.
@@ -72,31 +87,89 @@ struct BridgeTimings
     double   copyInMs     = 0;  // D3D11: scene -> shared colour
     double   stallMs      = 0;  // D3D11 queue idle between Signal and the end of Wait
     double   copyOutMs    = 0;  // D3D11: shared output -> frame
-    double   passMs       = 0;  // D3D12: the pass itself
+    double   normalCopyMs = 0;  // D3D11: normals -> shared normals
+    double   passMs       = 0;  // D3D12: the pass itself, by the pass's own timestamps
+    PassTimings pass;           // the pass's stages
     double   syncMs       = 0;  // stallMs - passMs: what the fence round trip costs
-    double   bridgeCostMs = 0;  // depthCopy + copyIn + copyOut + sync
+    double   bridgeCostMs = 0;  // depthCopy + normalCopy + copyIn + copyOut + sync
 };
 
-// A pass that runs on the D3D12 side. DepthFogPass is the first; the
-// superframe native/ backend is meant to sit behind this same seam.
-struct PassIO
+// The textures both devices share. Each is render-target capable with
+// simultaneous access and sits in D3D12_RESOURCE_STATE_COMMON whenever no
+// D3D12 submission is running.
+enum class Shared : UINT { ColorIn, Depth, Normal, ColorOut, Count };
+constexpr UINT kSharedCount = static_cast<UINT>(Shared::Count);
+
+// What the bridge hands a pass: its device, its queue, its fence and the
+// shared textures. The pass records and submits on them and owns none of them.
+struct HostResources
 {
-    D3D12_GPU_DESCRIPTOR_HANDLE inputs;   // t0 colour, t1 depth
-    D3D12_CPU_DESCRIPTOR_HANDLE output;   // RTV of the shared output
-    UINT width, height;
+    ID3D12Device*       device = nullptr;
+    ID3D12CommandQueue* queue  = nullptr;   // the bridge's direct queue
+    ID3D12Fence*        fence  = nullptr;   // shared with D3D11
+    ID3D12Resource*     tex[kSharedCount] = {};
+    DXGI_FORMAT         format[kSharedCount] = {};
+    UINT                width = 0, height = 0;
+    DWORD               retireTimeoutMs = 15000;
+    LogFn               log = nullptr;
 };
 
+// The game camera for the frame, from the game's own per-frame constants.
+// valid=false means the bridge has no projection and a pass that needs one
+// must leave the frame unchanged.
+struct CameraConstants
+{
+    bool  valid = false;
+    float proj[16] = {};        // view to clip, row-major as the game stores it
+    float tanHalfFovY = 0, aspect = 0, nearZ = 0, farZ = 0;
+};
+
+struct FrameConstants
+{
+    PassConstants   k;
+    CameraConstants camera;
+    bool            hasNormal = false;   // the shared normal texture holds this frame's normals
+};
+
+// A pass that runs on the D3D12 side. One frame, in the order the game
+// process needs (docs/D3D12_BRIDGE.md, "What broke, and the fix"):
+//
+//   Record()    record and close this frame's commands; nothing is queued
+//   the bridge signals the shared fence from D3D11 and flushes
+//   Submit()    queue Wait(waitValue), the recorded list, queue Signal(signalValue)
+//
+// Record() of the next frame may wait for the last submission to retire.
+// DepthFogPass is the built-in pass; EnginePass puts the Playground engine's
+// RHI (superframe native/) behind the same seam.
 class IBridgePass
 {
 public:
     virtual ~IBridgePass() = default;
     virtual const char* Name() const = 0;
-    virtual bool Create(ID3D12Device* dev, DXGI_FORMAT outFormat, LogFn log) = 0;
-    virtual void Record(ID3D12GraphicsCommandList* cl, const PassIO& io,
-                        const PassConstants& k) = 0;
+    virtual bool Create(const HostResources& host) = 0;
+    virtual bool Record(const FrameConstants& frame) = 0;
+    virtual bool Submit(uint64_t waitValue, uint64_t signalValue) = 0;
+    // CPU wait for the last submission. False when it did not end in time.
+    virtual bool Retire(DWORD timeoutMs) = 0;
+    // Timings of the most recent retired submission; false when there is none yet.
+    virtual bool LastTimings(PassTimings* out) = 0;
+};
+
+// Knobs of the engine pass. Zero keeps the engine's own default.
+struct EngineTuning
+{
+    float    radius   = 0;     // GTAO radius in game units (the engine's default is 0.5)
+    uint32_t slices   = 0;     // GTAO slices (16)
+    uint32_t steps    = 0;     // GTAO steps a side (16)
+    float    strength = 1.0f;  // how much of the visibility the composite applies
 };
 
 std::unique_ptr<IBridgePass> MakeDepthFogPass();
+// Null when the build carries no engine (RAW_ENGINE=OFF).
+std::unique_ptr<IBridgePass> MakeEnginePass();
+
+bool EnginePassTune(IBridgePass* pass, const EngineTuning& t);
+bool EnginePassReadVisibility(IBridgePass* pass, std::vector<float>* out);
 
 // Logs whether dev can create and signal D3D11 fences (local and shared) right
 // now, with the device flags, feature level, thread and context identity.
@@ -123,10 +196,34 @@ public:
     // Call at the end of the opaque pass.
     bool CaptureDepth(ID3D11ShaderResourceView* depthSrv);
 
+    // D3D11 queue: copy the game's normal target into the shared normal
+    // texture. Formats must match BridgeConfig::normalFormat.
+    bool CaptureNormal(ID3D11Texture2D* normalTex);
+
+    // The camera for the next Execute.
+    void SetCamera(const CameraConstants& camera);
+
+    // Engine pass only: its knobs, and the visibility it computed for the last
+    // frame (one float a pixel, top row first). False without an engine pass.
+    bool TuneEngine(const EngineTuning& t);
+    bool ReadEngineVisibility(std::vector<float>* out);
+
+    // A D3D12-side read of a shared texture, as tight rows: proof of what
+    // crossed the bridge. Waits for the queue. Slow; for captures and tests.
+    bool ReadShared(Shared which, std::vector<uint8_t>* out, UINT* rowBytes);
+
     // One round trip. colorSrc and colorDst may be the same texture (the
     // backbuffer). Returns false if the bridge is not ready.
     bool Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                  const PassConstants& k);
+
+    // Any other game buffer, on demand: copies mip 0 of one slice of a D3D11
+    // texture (an array layer or a cube face) into a texture both devices
+    // share, then reads that texture on D3D12. Colour and 16-bit depth cross
+    // as their own bytes; D24S8 crosses as R32_FLOAT depth. `sharedFormat`
+    // is the format on the D3D12 side. Slow: for captures and tests.
+    bool ShareAndRead(ID3D11Texture2D* src, UINT slice, std::vector<uint8_t>* out, UINT* rowBytes,
+                      DXGI_FORMAT* sharedFormat);
 
     // Timings for a frame executed earlier. block=false returns false if the
     // GPU has not finished it; the game polls the oldest ring slot.

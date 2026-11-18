@@ -9,7 +9,7 @@ namespace raw::bridge
 using Microsoft::WRL::ComPtr;
 
 constexpr UINT kRing = 4;          // frames in flight for allocators and queries
-constexpr UINT kD11Stamps = 6;     // depth0 depth1 in0 in1 stall-end out-end
+constexpr UINT kD11Stamps = 8;     // depth0 depth1 normal0 normal1 in0 in1 stall-end out-end
 
 struct D11Slot
 {
@@ -17,15 +17,16 @@ struct D11Slot
     ComPtr<ID3D11Query> ts[kD11Stamps];
     bool     open      = false;   // disjoint begun
     bool     hasDepth  = false;
+    bool     hasNormal = false;
     bool     executed  = false;
     uint64_t frame     = ~0ull;
 };
 
 struct D12Slot
 {
-    ComPtr<ID3D12CommandAllocator> alloc;
-    uint64_t fenceValue = 0;      // D3D12 signal that retires this slot
-    uint64_t frameTag   = ~0ull;  // frame whose timestamps the slot holds
+    uint64_t    frameTag = ~0ull;  // frame whose pass timings the slot holds
+    bool        havePass = false;
+    PassTimings pass;
 };
 
 struct SharedTex
@@ -51,17 +52,34 @@ struct D3D12Bridge::Impl
     HMODULE                            d3d12Dll = nullptr;
     ComPtr<ID3D12Device>               dev12;
     ComPtr<ID3D12CommandQueue>         queue;
-    ComPtr<ID3D12GraphicsCommandList>  cl;
     ComPtr<ID3D12Fence>                fence12;
-    ComPtr<ID3D12DescriptorHeap>       srvHeap;   // shader visible: colour, depth
-    ComPtr<ID3D12DescriptorHeap>       rtvHeap;   // output
-    ComPtr<ID3D12QueryHeap>            tsHeap;
-    ComPtr<ID3D12Resource>             tsReadback;
     HANDLE                             cpuEvent = nullptr;
-    uint64_t                           d12Freq = 1;
+    // ReadShared's own list (BridgeReadback.cpp), made on first use.
+    ComPtr<ID3D12CommandAllocator>     readAlloc;
+    ComPtr<ID3D12GraphicsCommandList>  readList;
+    ComPtr<ID3D12Fence>                readFence;
+    uint64_t                           readValue = 0;
 
-    SharedTex colorIn, depthIn, colorOut;
+    // Textures made on demand for ShareAndRead, one per size and format.
+    struct Extra
+    {
+        UINT w = 0, h = 0;
+        DXGI_FORMAT fmt = DXGI_FORMAT_UNKNOWN;
+        bool uav = false;
+        SharedTex tex;
+        ComPtr<ID3D11UnorderedAccessView> uav11;
+    };
+    std::vector<Extra> extras;
+    Extra* ExtraFor(UINT w, UINT h, DXGI_FORMAT fmt, bool uav);
+
+    SharedTex shared[kSharedCount];
+    SharedTex& colorIn  = shared[static_cast<UINT>(Shared::ColorIn)];
+    SharedTex& depthIn  = shared[static_cast<UINT>(Shared::Depth)];
+    SharedTex& normalIn = shared[static_cast<UINT>(Shared::Normal)];
+    SharedTex& colorOut = shared[static_cast<UINT>(Shared::ColorOut)];
+    DXGI_FORMAT sharedFormat[kSharedCount] = {};
     std::unique_ptr<IBridgePass> pass;
+    CameraConstants camera;
 
     D12Slot  d12[kRing];
     D11Slot  d11[kRing];
@@ -74,16 +92,33 @@ struct D3D12Bridge::Impl
     bool CreateDevice12(ID3D11Device* dev);
     bool CreateShared(SharedTex& t, DXGI_FORMAT fmt, D3D12_RESOURCE_FLAGS flags,
                       const char* name);
-    bool CreateViews();
+    bool CreatePass();
+    void HarvestPassTimings();
     bool CreateDepthCopy();
     bool SelfTest();
     bool SelfTestOnce();
     bool FenceFromD3D11();
     bool CreateQueries();
     bool CpuWait(uint64_t value, DWORD timeoutMs);
+    bool ReadTexture12(ID3D12Resource* tex, uint64_t waitValue, std::vector<uint8_t>* out, UINT* rowBytes);
     D11Slot& SlotFor(uint64_t frame) { return d11[frame % kRing]; }
     void OpenD11Slot(D11Slot& s, uint64_t frame);
 };
 
 constexpr DXGI_FORMAT kSharedDepthFormat = DXGI_FORMAT_R32_FLOAT;
+
+// CPU wait until `fence` reaches `value`. The event is auto-reset and may
+// carry a wake from an older wait, so the loop re-reads the fence.
+inline bool WaitFence(ID3D12Fence* fence, uint64_t value, HANDLE event, DWORD timeoutMs)
+{
+    if (!fence) return false;
+    const ULONGLONG deadline = GetTickCount64() + timeoutMs;
+    while (fence->GetCompletedValue() < value) {
+        const ULONGLONG now = GetTickCount64();
+        if (now >= deadline) return false;
+        fence->SetEventOnCompletion(value, event);
+        WaitForSingleObject(event, static_cast<DWORD>(deadline - now));
+    }
+    return true;
+}
 } // namespace raw::bridge

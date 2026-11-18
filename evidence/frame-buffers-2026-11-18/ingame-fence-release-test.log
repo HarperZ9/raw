@@ -1,0 +1,17 @@
+[D3D12Bridge] config: enabled=1 pass=engine mode=1 radius=35 slices=4 steps=8 strength=1
+[D3D12Bridge] self-test: D3D11 Signal 0x00000000, D3D11->fence seen, D3D12 round trip ok
+[FrameLedger] config: enabled=0 after=600 minDraws=500 captures=1 every=600 history=1 out=
+[D3D12Bridge] test: stalling the pass at gameplay bridge frame 40
+[EnginePass] begin: d3d12: the submission did not finish in 400 ms; a fence it waits on may never be signalled
+[D3D12Bridge] pass 'engine-gtao' failed to record; releasing fence value 9280 and turning the bridge off
+[D3D12Bridge] the bridge turned itself off at frame 4139 and stays off
+[D3D12Bridge] bridge off for 120 frames; the game still presents (frame 4258)
+[D3D12Bridge] bridge off for 240 frames; the game still presents (frame 4378)
+[D3D12Bridge] bridge off for 360 frames; the game still presents (frame 4498)
+[D3D12Bridge] bridge off for 480 frames; the game still presents (frame 4618)
+[D3D12Bridge] bridge off for 600 frames; the game still presents (frame 4738)
+[D3D12Bridge] bridge off for 720 frames; the game still presents (frame 4858)
+[D3D12Bridge] bridge off for 840 frames; the game still presents (frame 4978)
+[D3D12Bridge] bridge off for 960 frames; the game still presents (frame 5098)
+[D3D12Bridge] bridge off for 1080 frames; the game still presents (frame 5218)
+[D3D12Bridge] bridge off for 1200 frames; the game still presents (frame 5338)

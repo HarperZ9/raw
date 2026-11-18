@@ -1,0 +1,6 @@
+{"inputs":"synthetic","width":640,"height":360,"adapter":"hardware","radius":35.000,"slices":16,"steps":16,
+ "gtao":{"pixels":230400,"outside_1e-3":35,"worst":4.7741e-02,"bound_fraction":0.001,"cpu_reference_s":0.2},
+ "control_wrong_radius":{"pixels":230400,"outside_1e-3":35098},
+ "shared_depth_off":0,
+ "gpu_ms":{"pass":5.5490,"pack":0.0339,"gtao":5.5101,"composite":0.0050,"bridge_cost":0.4181,"frames":10},
+ "failed_checks":0}

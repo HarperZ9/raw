@@ -7,6 +7,11 @@
 > the live frame** — not visual quality. Scale 0–5: 5 = production-solid backbone ·
 > 3 = wired + dispatched but unvalidated in-game · 1 = scaffold · 0 = stub/dead.
 
+> **2026-11-18:** the D3D12 bridge runs the Playground engine's GTAO in game, fed by the
+> game's own depth, normals and camera, and a one-frame ledger captures every buffer the game
+> writes (55 in the measured frame, 53 shared with D3D12). See `docs/D3D12_BRIDGE.md` and
+> `docs/FRAME_BUFFERS.md`. The audit below dates from 2026-06-05.
+
 ## Verified counts (the numbers other docs disagreed on)
 - **~28** effect/post renderers authored.
 - **17** excluded from the build right now — `CMakeLists.txt` lines 93–109 (commented).

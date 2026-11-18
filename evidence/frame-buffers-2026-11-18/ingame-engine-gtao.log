@@ -1,0 +1,22 @@
+[D3D12Bridge] config: enabled=1 pass=engine mode=1 radius=35 slices=4 steps=8 strength=1
+[EnginePass] engine RHI 'd3d12' on the bridge's device: 3840x2160, 348 MB of pass buffers
+[D3D12Bridge] ready: 3840x2160 colour fmt 28, depth as R32F, normals fmt 28, pass 'engine-gtao'
+[FrameLedger] config: enabled=1 after=260 minDraws=500 captures=1 every=600 history=1 out=E:\raw-capture\game6
+[D3D12Bridge] opaque pass done at frame 17786: depth 1, normals 1, camera 1 (tanHalfFovY 0.47199, aspect 1.7778, near 15.000, far 353468)
+[D3D12Bridge] opaque pass done at frame 17787: depth 1, normals 1, camera 1 (tanHalfFovY 0.47199, aspect 1.7778, near 15.000, far 353468)
+[D3D12Bridge] opaque pass done at frame 17788: depth 1, normals 1, camera 1 (tanHalfFovY 0.47199, aspect 1.7778, near 15.000, far 353468)
+[D3D12Bridge] mean over 60 frames: D3D12 pass 14.350 ms (pack 0.444, gtao 13.862, composite 0.043); bridge cost 0.432 ms (depth copy 0.026, normal copy 0.020, copy in 0.029, copy out 0.027, fence sync 0.331); D3D11 stall 14.680 ms; runs before UI=36 at Present=17786, opaque captures=36
+[D3D12Bridge] mean over 60 frames: D3D12 pass 25.880 ms (pack 0.761, gtao 25.023, composite 0.096); bridge cost 30.580 ms (depth copy 0.045, normal copy 0.036, copy in 0.400, copy out 0.031, fence sync 30.067); D3D11 stall 55.948 ms; runs before UI=96 at Present=17786, opaque captures=96
+[D3D12Bridge] capture set: frame with the pass and the D3D12 reads written to E:\raw-capture\game6\bridge
+[D3D12Bridge] capture set done
+[D3D12Bridge] mean over 60 frames: D3D12 pass 24.241 ms (composite 0.698); bridge cost 0.584 ms (depth copy 0.046, normal copy 0.036, copy in 0.034, copy out 0.031, fence sync 0.437); D3D11 stall 24.678 ms; runs before UI=157 at Present=17786, opaque captures=157
+[D3D12Bridge] mean over 60 frames: D3D12 pass 24.920 ms (pack 0.748, gtao 24.098, composite 0.075); bridge cost 0.558 ms (depth copy 0.046, normal copy 0.036, copy in 0.031, copy out 0.029, fence sync 0.416); D3D11 stall 25.336 ms; runs before UI=217 at Present=17786, opaque captures=217
+[FrameLedger] armed capture 0 into E:\raw-capture\game6\000 (backbuffer 3840x2160)
+[FrameLedger] capture 0 done: 55 textures tracked, 55 dumped, 346 intervals, 7940 draws
+[D3D12Bridge] mean over 60 frames: D3D12 pass 27.509 ms (pack 0.775, gtao 26.591, composite 0.143); bridge cost 9.909 ms (depth copy 0.048, normal copy 0.038, copy in 0.033, copy out 0.034, fence sync 9.757); D3D11 stall 37.265 ms; runs before UI=277 at Present=17786, opaque captures=277
+gpu at 232 s: 100 %, 3639 MiB
+gpu at 251 s: 11 %, 4058 MiB
+gpu at 270 s: 100 %, 4516 MiB
+gpu at 289 s: 99 %, 6621 MiB
+gpu at 308 s: 100 %, 6570 MiB
+gpu at 327 s: 100 %, 6544 MiB

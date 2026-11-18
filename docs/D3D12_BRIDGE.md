@@ -151,6 +151,10 @@ routes. The bisect (`evidence/ingame-2026-11-17-fence-probe-bisect.log`):
 
 ## Stage 2 (full takeover) needs
 
+Items 2 to 4 now exist as an offline-proven layer: `src/dx12/translate/`, described in
+`docs/D3D11_TO_D3D12.md`, with the call-stream recorder in `docs/D3D11_CALL_STREAM.md`. It has
+not run a game frame yet.
+
 1. UI-phase detection in menus, so the pass composites under the HUD everywhere.
 2. A D3D11 call translation layer on D3D12: resources (textures, buffers, views) created on
    D3D12 and handed to the game through the wrapped device; state objects mapped to PSOs with a
@@ -466,7 +470,9 @@ averaged 8 to 25 ms: single long stalls while another process held the GPU.
 The moving-camera check in `docs/FRAME_BUFFERS.md` confirms the pass's motion convention
 (previous uv = uv + motion) on game frames.
 
-### What broke
+### Open defect: the D3D12 device is lost at the main menu
+
+Status: open, cause not found. Workaround: `FallbackAtPresent=0`.
 
 Two of the first four sessions with the real-time pass lost the D3D12 device at the main menu
 (`DXGI_ERROR_DEVICE_RESET`, 0x887A0007, after 519 and 277 bridge frames; the display driver logged

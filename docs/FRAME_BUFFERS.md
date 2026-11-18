@@ -34,6 +34,9 @@ The tools in `tools/frame_buffers/` read a capture:
 | `check_decode.py <capture>` | the decode checks, with controls |
 | `coverage.py <capture>` | the coverage report and a class map |
 | `shaders.py <capture>` | which outputs the frame's pixel shaders write, per kind of draw span |
+| `gbuffer.py <capture>` | RAW's own targets: decode checks, coverage after the patches, a picture per channel |
+| `lights.py <capture>` | sun, point lights and shadow cascade matrices, with checks |
+| `motion.py <capture> <next capture>` | motion vectors against a moving camera |
 
 Captured images show game content, so they stay out of this repository. The image names in the
 table are the files `inventory.py` writes.
@@ -260,6 +263,152 @@ outputs to shaders that already hold the data and binds extra targets for those 
 | First-person and other late draws (5.89 % with a weapon drawn) | 6 draws write colour and motion against the prepass depth copy | Patch them to write a normal, and record their own projection from their constants, since a first-person model can use another field of view. |
 | The game's stale view depth | not a shader gap | RAW's pass already reads the final depth. |
 
+## Shader patches: the data the game does not write
+
+With `[GBuffer] Enabled=1` the proxy makes the game's own shaders write what is missing. It adds
+render targets to four kinds of draw span and swaps each pixel shader, the first time a span uses
+it, for a patched form (`src/core/dxbc/`, `src/d3d11_proxy/GBufferComplete.*`). The patched shader
+runs every instruction of the original in the original order. Writes to the original outputs go to
+new temporaries, taps copy intermediate values where the shader holds them, and before each `ret`
+the temporaries are written to the outputs and to four more targets.
+
+| Target | Format | Bound in | Holds |
+|---|---|---|---|
+| Albedo (slot 4) | R8G8B8A8_UNORM | opaque set, first-person draws | rgb: base colour before lighting |
+| Specular (slot 5) | R8G8B8A8_UNORM | opaque set, first-person draws | r: the normal map's specular mask; g: gloss, log2(shininess) / 13; b: material class / 255 |
+| Emissive (slot 6) | R11G11B10_FLOAT | opaque set, first-person draws | base colour times the material's emissive colour and scale |
+| Layer (slot 7) | R32G32B32A32_FLOAT | water draws, blended draws | r: depth of the nearest water or blended surface (cleared to 1); gb: its view normal in the game's encoding, or (alpha, -1) when its shader has no normal |
+
+Blend states are swapped for variants with per-target blending. The material targets follow the
+colour target's blend, a decal keeps the class under it, and a blended draw replaces the layer
+only where it shows (alpha of at least 1/255, or a blend that does not weigh by alpha).
+
+**Shader kinds, from reflection of the bytecode alone.** There is no hash table: constant buffer
+sizes, bound texture slots and instruction patterns decide.
+
+| Kind | Rule | Taps |
+|---|---|---|
+| Lighting | buffer 2 of 30 vectors, buffer 1 of 9 or more, three outputs, a 2D texture in slot 0 | Base colour: the register that receives the slot 0 sample, read where lighting starts (the first read of buffer 2 or of the shadow mask), so blended landscape layers and tints are included. Specular mask: alpha of the slot 1 sample. Gloss: the multiplier between `log` and `exp`. Emissive: colour times scale from one element of buffer 1. |
+| Distant | buffer 12, no material buffer, three outputs | Base colour right after the sample. |
+| Water | a saturated dot product of a normal with one fixed direction, or a wave normal built as amplitude times sample plus (0, 0, 1) | The world normal, turned to view space with the view rotation in buffer 12. |
+| Effect, generic | everything else with a colour output | None: depth and alpha only. |
+
+Material classes name what a lighting shader binds: lit, environment-mapped (a cube map),
+glow-mapped (slot 6), landscape (six colour layers), soft-lit (slot 12), parallax (slot 3 or 8),
+distant. Draws of the first-person model add 128. Skin, hair and eyes are not told apart: that
+needs the engine's technique id, which the bytecode does not carry.
+
+### Checks on known scenes
+
+`tests/gbuffer_patch` (`gbuffer_patch_check.exe`) compiles test shaders with the same structure,
+patches them and draws one triangle at a known depth into eight float targets: 24 checks, on the
+GPU and on WARP. The original outputs come back bit-identical. Albedo, mask, gloss, class,
+emissive, layer depth and layer normal equal the values the scene fixes. The controls are a wrong
+tint, a view matrix with two rows swapped and a draw with alpha 0. The container hash is checked
+against the compiler's own.
+
+`gbuffer_patch_check --dir <capture>` patches every pixel shader of a capture and creates each one
+on the device. In the Riverwood capture all 118 container hashes equal the computed hash, 115
+shaders are patched and created, and 3 are left alone (no temporaries; trivial fills). Of the 50
+lighting shaders, the base colour is found in 50 (49 read in place), the specular mask in 42 (the
+8 landscape shaders have none in slot 1), gloss in 35 and an emissive term in 47.
+
+### Checks in game
+
+`python tools/frame_buffers/gbuffer.py <capture>` (`evidence/gbuffer-2026-11-18/`):
+
+| Check | Riverwood, day | The Bannered Mare (interior) |
+|---|---|---|
+| Opaque pixels with a game normal that carry a class | 7,603,229 of 7,603,229 | 99.992 % of 7,745,419 |
+| Albedo written where a class is | 99.994 % | 99.993 % |
+| Control: sky pixels carry no class | 100 % | no sky |
+| Layer depth at or in front of the scene depth | 723,622 of 723,622 | 97.9 % of 291 |
+| Water normals along the world's up axis in view space | mean dot 0.992 over 49,938 pixels | no water |
+| Control: x and y swapped | mean dot -0.026 | |
+| Pixels with emissive light | 0 | 0 |
+
+No lit draw in either scene carries an emissive colour in its material constants, so the emissive
+target stays empty there, and its path is checked only on the test scene. Light from glow maps and
+from effect draws (candle flames) is not exported.
+
+### Coverage after the patches
+
+Riverwood in daylight, 3840 x 2160, by the method of the coverage section above: the class of the
+last scene span that changed each pixel (`History=2` keeps the HDR colour after every span).
+
+| Class | Share | Described | By |
+|---|---|---|---|
+| Sky | 6.91 % | all | nothing to describe |
+| Opaque | 84.26 % | 99.30 % of the class | game depth, normal, motion; RAW albedo, specular, gloss, class |
+| Water | 0.60 % | 100 % | layer: depth and normal |
+| Blended | 8.23 % | 98.62 % of the class | layer: depth, and normal or alpha |
+
+**Described: 99.30 % of the frame. Missing: 0.70 %.** Before the patches: 90.54 % and 9.46 %.
+What is left: opaque pixels with no game normal (0.59 %) and blended pixels whose draws never
+entered the layer (0.11 %).
+
+### What the patches do not reach
+
+- **First-person normals.** The first-person model gets albedo, specular, gloss and its class flag
+  (6.42 % of the interior frame). RAW binds the game's normal target for those draws, and the
+  shader writes (0.5, 0.5) there for every pixel: its view-space normal inputs are zero in
+  first-person draws, so the normal does not exist in the pixel shader. It needs a vertex shader
+  patch or the draw's world matrix. The first-person depth is in the prepass depth copy with its
+  own projection: the same field of view with the near plane at 5 units (A = 1.00001,
+  B = 5.00007).
+- **Opaque pixels with no normal (0.59 %).** Unchanged.
+- **Motion of water and blended surfaces.** The layer has depth, and camera motion follows from
+  it. Object motion is not written.
+- **Albedo is the texture colour** with tints and blended layers, before vertex colour.
+- **Cost.** The frame time with and without the patches was not measured.
+
+## Lights and shadow maps
+
+`python tools/frame_buffers/lights.py <capture>` decodes both from the per-draw constants.
+
+- **Sun and point lights** sit in pixel buffer 2 of every lit draw, in that draw's model space:
+  `[0]` sun direction, `[1]` sun colour, `[29].x` the light count (at most 7), `[15 + i]` position
+  and radius, `[22 + i]` colour. The draw's world matrix (vertex buffer 2, rows 0 to 2,
+  translation relative to the camera) takes them to world space, and its scale scales the radius.
+- **Shadow cascades** sit in pixel buffer 2 of the shadow-mask draw: one 3 x 4 matrix per cascade
+  (rows 16 to 18 and 19 to 21) from camera-relative world position to shadow-map (u, v, depth),
+  the depth bias of each in `[2].y` and `[2].z`, and in buffer 0 `[2].x` the scene depth where
+  cascade 1 takes over.
+
+| Check | Riverwood | Interior |
+|---|---|---|
+| One light seen from ten or more draws lands on one world position | 1 light, 71 draws, spread 0.005 units | 7 lights, up to 110 draws each, spread 0.0002 units |
+| Control: without the world matrix | 38 positions for 18 lights | 198 positions for 31 lights |
+| One-tap shadow test with the decoded matrices against the game's shadow mask | 99.36 % of 274,925 pixels agree | no sun shadows |
+| Control: the two cascade matrices swapped | 56.5 % | |
+
+Lights seen by fewer than ten draws are listed and not counted as confirmed (17 of 18 outdoors,
+24 of 31 indoors). Some come from draws whose space the world matrix does not explain. The tool
+draws a ring at every light inside the frame (22 in the interior frame).
+
+## Motion vectors with the camera moving
+
+`python tools/frame_buffers/motion.py <capture N> <capture N+1>`, on two frames in a row in the
+interior while the camera moved (median 4.0 pixels a frame, up to 7.6):
+
+| Check | Result |
+|---|---|
+| Motion target equals the reprojection of each opaque pixel (0.5 px) | 99.93 % of 1,940,415 sampled pixels |
+| Control: the camera's step left out | 33.3 % |
+| Frame N+1 fetched from frame N at uv + motion, mean absolute difference | 0.0040 |
+| The same with no motion, and with the motion negated | 0.0165 and 0.0292 |
+
+World positions are relative to the camera, so a camera that only translates leaves the two
+view-projections equal. The step is in the draws: each carries its world matrix and the one of the
+frame before. The previous position of a pixel is `uv + motion`.
+
+## Stencil and 3D volumes
+
+`D3D12Bridge::ShareStencilAndRead` carries the stencil byte of a D24S8 buffer as R8_UINT, and
+`ShareVolumeAndRead` carries a 3D texture as a 2D atlas of its depth slices. Each is one small
+compute copy on the D3D11 queue. `tests/bridge_roundtrip` reads both back on D3D12 and compares
+every byte, with a control each. Neither has been run on the game's own stencil or volumes yet.
+
 ## Checks
 
 `python tools/frame_buffers/check_decode.py <capture>` on the captured frame:
@@ -290,9 +439,8 @@ controls) and in the capture itself, as described above.
 - A buffer the game writes several times is captured after its last write. Full-size targets
   are also kept after every span.
 - Mip levels above 0 are not captured (the view-depth pyramid has 12).
-- The stencil byte and the 3D volumes do not cross to D3D12 yet.
+- The stencil byte and the 3D volumes cross on demand ("Stencil and 3D volumes" below); the capture's per-texture share check still covers 2D textures only.
 - Role names describe what a buffer held in this frame. Four are named from their content
   alone and not from a decoded shader: the two-channel opaque mask, the water mask target, and
   the two targets of the blended span.
-- Shadow map matrices and the light list are in the per-draw constants of the capture. Their
-  layout is not decoded yet.
+- Shadow map matrices and the light list are decoded ("Lights and shadow maps" below).

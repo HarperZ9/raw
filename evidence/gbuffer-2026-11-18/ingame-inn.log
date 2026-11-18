@@ -1,0 +1,130 @@
+[D3D12Bridge] config: enabled=1 pass=engine, real-time AO mode=1 radius=35 slices=0 steps=0 strength=1
+[GBuffer] config: enabled=1
+[FrameLedger] config: enabled=1 after=7000 minDraws=500 captures=2 every=1 history=0 out=E:\raw-gbuf-capture\inn
+[GBuffer] frame 600: spans in the window opaque 0, first person 0, blended 0, water 0; shader swaps 0; patched shaders 0, left alone 0, refused by the device 0; blend variants 0
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer] frame 1200: spans in the window opaque 0, first person 0, blended 0, water 0; shader swaps 0; patched shaders 0, left alone 0, refused by the device 0; blend variants 0
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer] frame 1800: spans in the window opaque 0, first person 0, blended 0, water 0; shader swaps 0; patched shaders 0, left alone 0, refused by the device 0; blend variants 0
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer] frame 2400: spans in the window opaque 0, first person 0, blended 0, water 0; shader swaps 0; patched shaders 0, left alone 0, refused by the device 0; blend variants 0
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer] frame 3000: spans in the window opaque 0, first person 0, blended 0, water 0; shader swaps 0; patched shaders 0, left alone 0, refused by the device 0; blend variants 0
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer] frame 3600: spans in the window opaque 0, first person 0, blended 0, water 0; shader swaps 0; patched shaders 0, left alone 0, refused by the device 0; blend variants 0
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer] frame 4200: spans in the window opaque 0, first person 0, blended 0, water 0; shader swaps 0; patched shaders 0, left alone 0, refused by the device 0; blend variants 0
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[GBuffer] targets 3840x2160: created (albedo and specular RGBA8, emissive R11G11B10F, layer RGBA32F, 221 MB)
+[RealtimeAo] engine RHI 'd3d12' on the bridge's device: 3840x2160, motion vectors shared, 145 MB of pass textures
+[D3D12Bridge] ready: 3840x2160 colour fmt 28, depth as R32F, normals fmt 28, pass 'engine-ao-realtime'
+[RealtimeAo] frame passed through: camera missing, normals missing
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.461 ms (depth levels 0.018, trace 0.295, resolve 0.148); bridge cost 7.238 ms (depth copy 0.028, normal copy 0.061, copy in 0.031, copy out 0.032, fence sync 7.086); D3D11 stall 7.547 ms; runs before UI=302 at Present=0, opaque captures=301
+[GBuffer] frame 4800: spans in the window opaque 398, first person 397, blended 1977, water 0; shader swaps 52355; patched shaders 51, left alone 0, refused by the device 0; blend variants 9
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 46253, distant 1199, effect 0, water 0, generic 398
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 1588, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 1732, distant 0, effect 1185, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.460 ms (depth levels 0.016, trace 0.296, resolve 0.148); bridge cost 0.464 ms (depth copy 0.028, normal copy 0.062, copy in 0.030, copy out 0.027, fence sync 0.318); D3D11 stall 0.779 ms; runs before UI=602 at Present=0, opaque captures=601
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.460 ms (depth levels 0.016, trace 0.296, resolve 0.147); bridge cost 3.157 ms (depth copy 0.028, normal copy 0.062, copy in 0.030, copy out 0.027, fence sync 3.011); D3D11 stall 3.471 ms; runs before UI=902 at Present=0, opaque captures=901
+[GBuffer] frame 5400: spans in the window opaque 600, first person 600, blended 3000, water 0; shader swaps 78789; patched shaders 53, left alone 0, refused by the device 0; blend variants 10
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 69732, distant 1800, effect 67, water 0, generic 600
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 2400, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 2390, distant 0, effect 1800, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.455 ms (depth levels 0.017, trace 0.297, resolve 0.141); bridge cost 20.502 ms (depth copy 0.028, normal copy 0.058, copy in 0.114, copy out 0.035, fence sync 20.267); D3D11 stall 20.722 ms; runs before UI=1202 at Present=0, opaque captures=1201
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.461 ms (depth levels 0.016, trace 0.296, resolve 0.149); bridge cost 0.478 ms (depth copy 0.029, normal copy 0.061, copy in 0.030, copy out 0.027, fence sync 0.331); D3D11 stall 0.792 ms; runs before UI=1502 at Present=0, opaque captures=1501
+[GBuffer] frame 6000: spans in the window opaque 600, first person 600, blended 3000, water 0; shader swaps 68474; patched shaders 53, left alone 0, refused by the device 0; blend variants 10
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 59318, distant 1800, effect 1200, water 0, generic 600
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 2400, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 1356, distant 0, effect 1800, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.461 ms (depth levels 0.016, trace 0.296, resolve 0.149); bridge cost 0.474 ms (depth copy 0.029, normal copy 0.061, copy in 0.030, copy out 0.027, fence sync 0.326); D3D11 stall 0.787 ms; runs before UI=1802 at Present=0, opaque captures=1801
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.456 ms (depth levels 0.017, trace 0.297, resolve 0.142); bridge cost 24.355 ms (depth copy 0.028, normal copy 0.060, copy in 0.030, copy out 0.034, fence sync 24.203); D3D11 stall 24.659 ms; runs before UI=2102 at Present=0, opaque captures=2101
+[GBuffer] frame 6600: spans in the window opaque 600, first person 600, blended 3000, water 0; shader swaps 66600; patched shaders 53, left alone 0, refused by the device 0; blend variants 10
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 57600, distant 1800, effect 1200, water 0, generic 600
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 2400, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 1200, distant 0, effect 1800, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.460 ms (depth levels 0.017, trace 0.296, resolve 0.148); bridge cost 0.528 ms (depth copy 0.030, normal copy 0.061, copy in 0.030, copy out 0.028, fence sync 0.378); D3D11 stall 0.839 ms; runs before UI=2402 at Present=0, opaque captures=2401
+[D3D12Bridge] capture set: frame with the pass and the D3D12 reads written to E:\raw-gbuf-capture\inn\ao
+[D3D12Bridge] capture set done
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.460 ms (depth levels 0.016, trace 0.295, resolve 0.148); bridge cost 0.475 ms (depth copy 0.030, normal copy 0.061, copy in 0.030, copy out 0.027, fence sync 0.327); D3D11 stall 0.787 ms; runs before UI=2703 at Present=0, opaque captures=2702
+[GBuffer] frame 7200: spans in the window opaque 600, first person 600, blended 3000, water 0; shader swaps 66558; patched shaders 53, left alone 0, refused by the device 0; blend variants 10
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 57558, distant 1800, effect 1200, water 0, generic 600
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 2400, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 1200, distant 0, effect 1800, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.450 ms (depth levels 0.017, trace 0.296, resolve 0.137); bridge cost 23.215 ms (depth copy 0.029, normal copy 0.056, copy in 0.043, copy out 0.031, fence sync 23.056); D3D11 stall 23.506 ms; runs before UI=3003 at Present=0, opaque captures=3002
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.447 ms (depth levels 0.016, trace 0.295, resolve 0.136); bridge cost 0.580 ms (depth copy 0.028, normal copy 0.052, copy in 0.027, copy out 0.029, fence sync 0.444); D3D11 stall 0.892 ms; runs before UI=3303 at Present=0, opaque captures=3302
+[GBuffer] frame 7800: spans in the window opaque 600, first person 600, blended 2449, water 0; shader swaps 42759; patched shaders 53, left alone 0, refused by the device 0; blend variants 10
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 36535, distant 1800, effect 86, water 0, generic 600
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 2400, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 94, distant 0, effect 1244, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.448 ms (depth levels 0.016, trace 0.295, resolve 0.136); bridge cost 0.450 ms (depth copy 0.028, normal copy 0.052, copy in 0.027, copy out 0.026, fence sync 0.317); D3D11 stall 0.765 ms; runs before UI=3603 at Present=0, opaque captures=3602
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.446 ms (depth levels 0.016, trace 0.297, resolve 0.133); bridge cost 24.527 ms (depth copy 0.028, normal copy 0.053, copy in 0.045, copy out 0.030, fence sync 24.371); D3D11 stall 24.817 ms; runs before UI=3903 at Present=0, opaque captures=3902
+[GBuffer] frame 8400: spans in the window opaque 600, first person 600, blended 2400, water 0; shader swaps 40800; patched shaders 53, left alone 0, refused by the device 0; blend variants 10
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 34800, distant 1800, effect 0, water 0, generic 600
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 2400, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 1200, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.452 ms (depth levels 0.016, trace 0.295, resolve 0.140); bridge cost 0.617 ms (depth copy 0.028, normal copy 0.055, copy in 0.027, copy out 0.030, fence sync 0.477); D3D11 stall 0.928 ms; runs before UI=4203 at Present=0, opaque captures=4202
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.451 ms (depth levels 0.016, trace 0.295, resolve 0.139); bridge cost 0.458 ms (depth copy 0.028, normal copy 0.055, copy in 0.027, copy out 0.026, fence sync 0.322); D3D11 stall 0.772 ms; runs before UI=4503 at Present=0, opaque captures=4502
+[GBuffer] frame 9000: spans in the window opaque 600, first person 600, blended 2400, water 0; shader swaps 40800; patched shaders 53, left alone 0, refused by the device 0; blend variants 10
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 34800, distant 1800, effect 0, water 0, generic 600
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 2400, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 1200, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.448 ms (depth levels 0.016, trace 0.297, resolve 0.134); bridge cost 24.009 ms (depth copy 0.027, normal copy 0.055, copy in 0.195, copy out 0.030, fence sync 23.702); D3D11 stall 24.149 ms; runs before UI=4803 at Present=0, opaque captures=4802
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.451 ms (depth levels 0.017, trace 0.295, resolve 0.139); bridge cost 0.695 ms (depth copy 0.028, normal copy 0.054, copy in 0.027, copy out 0.029, fence sync 0.556); D3D11 stall 1.007 ms; runs before UI=5103 at Present=0, opaque captures=5102
+[GBuffer] frame 9600: spans in the window opaque 600, first person 600, blended 2448, water 0; shader swaps 44332; patched shaders 53, left alone 0, refused by the device 0; blend variants 10
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 38077, distant 1800, effect 0, water 0, generic 600
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 2400, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 255, distant 0, effect 1200, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.450 ms (depth levels 0.016, trace 0.295, resolve 0.139); bridge cost 0.459 ms (depth copy 0.028, normal copy 0.054, copy in 0.027, copy out 0.026, fence sync 0.323); D3D11 stall 0.773 ms; runs before UI=5403 at Present=0, opaque captures=5402
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.446 ms (depth levels 0.016, trace 0.296, resolve 0.133); bridge cost 18.903 ms (depth copy 0.028, normal copy 0.053, copy in 0.042, copy out 0.029, fence sync 18.751); D3D11 stall 19.197 ms; runs before UI=5703 at Present=0, opaque captures=5702
+[GBuffer] frame 10200: spans in the window opaque 600, first person 600, blended 2462, water 0; shader swaps 48357; patched shaders 53, left alone 0, refused by the device 0; blend variants 10
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 41757, distant 1800, effect 0, water 0, generic 600
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 2400, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 600, distant 0, effect 1200, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.449 ms (depth levels 0.017, trace 0.296, resolve 0.137); bridge cost 6.476 ms (depth copy 0.028, normal copy 0.053, copy in 0.027, copy out 0.030, fence sync 6.338); D3D11 stall 6.787 ms; runs before UI=6003 at Present=0, opaque captures=6002
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.449 ms (depth levels 0.016, trace 0.295, resolve 0.137); bridge cost 0.449 ms (depth copy 0.028, normal copy 0.053, copy in 0.027, copy out 0.026, fence sync 0.315); D3D11 stall 0.764 ms; runs before UI=6303 at Present=0, opaque captures=6302
+[GBuffer] frame 10800: spans in the window opaque 600, first person 600, blended 2791, water 0; shader swaps 48158; patched shaders 53, left alone 0, refused by the device 0; blend variants 10
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 41558, distant 1800, effect 0, water 0, generic 600
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 2400, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 600, distant 0, effect 1200, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.449 ms (depth levels 0.016, trace 0.295, resolve 0.138); bridge cost 0.461 ms (depth copy 0.028, normal copy 0.053, copy in 0.027, copy out 0.026, fence sync 0.327); D3D11 stall 0.777 ms; runs before UI=6603 at Present=0, opaque captures=6602
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.448 ms (depth levels 0.017, trace 0.297, resolve 0.135); bridge cost 24.497 ms (depth copy 0.028, normal copy 0.053, copy in 0.137, copy out 0.030, fence sync 24.249); D3D11 stall 24.697 ms; runs before UI=6903 at Present=0, opaque captures=6902
+[GBuffer] frame 11400: spans in the window opaque 600, first person 600, blended 2619, water 0; shader swaps 48009; patched shaders 53, left alone 0, refused by the device 0; blend variants 10
+[GBuffer]   opaque: state changes by shader kind: unpatched 0, lighting 41409, distant 1800, effect 0, water 0, generic 600
+[GBuffer]   first person: state changes by shader kind: unpatched 0, lighting 2400, distant 0, effect 0, water 0, generic 0
+[GBuffer]   blended: state changes by shader kind: unpatched 0, lighting 600, distant 0, effect 1200, water 0, generic 0
+[GBuffer]   water: state changes by shader kind: unpatched 0, lighting 0, distant 0, effect 0, water 0, generic 0
+[FrameLedger] capture 0 done: 48 textures tracked, 48 dumped, 85 intervals, 1623 draws
+[FrameLedger] capture 1 done: 48 textures tracked, 48 dumped, 85 intervals, 1623 draws
+[D3D12Bridge] mean over 300 frames: D3D12 pass 0.500 ms (depth levels 0.018, trace 0.331, resolve 0.150); bridge cost 0.660 ms (depth copy 0.031, normal copy 0.059, copy in 0.031, copy out 0.033, fence sync 0.507); D3D11 stall 1.006 ms; runs before UI=7203 at Present=0, opaque captures=7202

@@ -444,3 +444,35 @@ The test also runs on a synthetic scene with the D3D12 debug layer on
 - Under motion the noise sequence a surface sees is no longer low-discrepancy in time, so
   convergence is slower than on a still frame.
 - The composite still runs on the tone-mapped frame and darkens direct light too.
+
+## Real-time AO in game (2026-11-18)
+
+`Pass=engine`, `AoMode=realtime`, `AoRadius=35`, `FallbackAtPresent=0`, the rest at its defaults,
+3840 x 2160, with the G-buffer patches on (`docs/FRAME_BUFFERS.md`). Means over 300-frame windows,
+GPU timestamps (`evidence/gbuffer-2026-11-18/ingame-*.log`). The game itself kept the GPU near
+100 %, and another process used it during parts of both sessions.
+
+| | Riverwood, day (9,303 frames) | The Bannered Mare (7,203 frames) |
+|---|---|---|
+| AO pass on D3D12, median of the windows | 0.70 ms (0.70 to 0.74) | 0.45 ms (0.45 to 0.50) |
+| of which depth levels, trace, resolve | 0.04, 0.48, 0.19 ms | 0.02, 0.30, 0.14 ms |
+| depth and normal copies on D3D11 | 0.14 ms | 0.08 ms |
+| **AO in the frame** | **0.84 ms** | **0.53 ms** |
+| bridge hand-off (fence), median | 0.35 ms | 0.33 ms |
+
+The hand-off is the bridge's own cost and leaves with the D3D11 device. In a few windows it
+averaged 8 to 25 ms: single long stalls while another process held the GPU.
+
+The moving-camera check in `docs/FRAME_BUFFERS.md` confirms the pass's motion convention
+(previous uv = uv + motion) on game frames.
+
+### What broke
+
+Two of the first four sessions with the real-time pass lost the D3D12 device at the main menu
+(`DXGI_ERROR_DEVICE_RESET`, 0x887A0007, after 519 and 277 bridge frames; the display driver logged
+event 153 at the same time). The bridge released its fence and turned itself off, the screen
+stayed black and the session ended without gameplay. In the menu the pass has no camera and no
+normals and still ran its three stages at Present. The cause is not found, and the logs of the two
+sessions were not kept. With `FallbackAtPresent=0` the pass runs only in frames with a world; the
+four sessions after that change ran without a failure (up to 9,303 frames). Until the cause is
+found, use `FallbackAtPresent=0` with `AoMode=realtime`.

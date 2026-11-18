@@ -12,6 +12,10 @@ from __future__ import annotations
 RGBA16F, RG16F, RGBA8, RG8, D24S8, R16T, R16F, R32F, RGB10A2, R11G11B10F = 10, 34, 28, 49, 44, 53, 54, 41, 24, 26
 
 ROLE_TEXT = {
+    "raw_albedo": ("RAW albedo", "RAW's own target: base colour before lighting, written by the patched shaders."),
+    "raw_specular": ("RAW specular", "RAW's own target: specular mask, gloss, material class."),
+    "raw_emissive": ("RAW emissive", "RAW's own target: emitted light."),
+    "raw_layer": ("RAW layer", "RAW's own target: depth and normal (or alpha) of the nearest water or blended surface."),
     "backbuffer": ("Frame (backbuffer)", "The finished frame: the game's final blit, then the HUD on top."),
     "scene_hdr": ("Scene colour, HDR", "Lit scene in linear light. Opaque pass target 0; blended draws, the game's own AO, fog and bloom land here later."),
     "motion_vectors": ("Motion vectors", "Opaque pass target 1. Screen-space velocity: (current NDC - previous NDC) * (-0.5, 0.5), from the game's lighting shader."),

@@ -19,6 +19,8 @@ struct D11Slot
     bool     hasDepth  = false;
     bool     hasNormal = false;
     bool     hasMotion = false;
+    bool     hasSurface = false;   // albedo, specular and shadow mask copied (lighting pass)
+    bool     hasShadows = false;   // the cascade atlas written (lighting pass)
     bool     executed  = false;
     uint64_t frame     = ~0ull;
 };
@@ -83,6 +85,11 @@ struct D3D12Bridge::Impl
     SharedTex& colorOut = shared[static_cast<UINT>(Shared::ColorOut)];
     SharedTex& motionIn = shared[static_cast<UINT>(Shared::Motion)];
     ID3D11Texture2D* pendingMotion = nullptr;   // set by CaptureMotion, copied by CaptureNormal
+    // Lighting pass (BridgeLighting.cpp).
+    SceneLighting lighting;
+    ComPtr<ID3D11ComputeShader> shadowCS;           // ShadowAtlas.hlsl
+    ComPtr<ID3D11UnorderedAccessView> shadowUAV;
+    bool CreateLightingShared();
     DXGI_FORMAT sharedFormat[kSharedCount] = {};
     std::unique_ptr<IBridgePass> pass;
     CameraConstants camera;
@@ -94,10 +101,14 @@ struct D3D12Bridge::Impl
     uint64_t lastWaited = 0;      // last value the D3D12 queue waits for
     uint64_t skew       = 0;
     uint64_t frames     = 0;      // Execute calls that submitted
+    // The hand-over cost: how often the D3D11 queue had already executed the copy-in when the CPU
+    // submitted the D3D12 list (the GPU then waits on the CPU), and the CPU time from Flush to submit.
+    uint32_t caughtUp = 0, handOvers = 0;
+    double   flushToSubmitUs = 0;
 
     bool CreateDevice12(ID3D11Device* dev);
     bool CreateShared(SharedTex& t, DXGI_FORMAT fmt, D3D12_RESOURCE_FLAGS flags,
-                      const char* name);
+                      const char* name, UINT w = 0, UINT h = 0);
     bool CreatePass();
     void HarvestPassTimings();
     bool CreateDepthCopy();

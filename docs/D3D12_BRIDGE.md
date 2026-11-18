@@ -21,6 +21,9 @@ If a frame never enters the UI phase (menus, intro), the pass runs at Present in
 | `src/d3d12_bridge/D3D12Bridge.h` | public API, `PassConstants`, `HostResources`, `IBridgePass` seam |
 | `src/d3d12_bridge/EnginePass.cpp` | the Playground engine's RHI and GTAO behind the seam |
 | `src/d3d12_bridge/RealtimeAoPass.cpp` | the engine's real-time AO behind the seam (`AoMode=realtime`) |
+| `src/d3d12_bridge/LightingPass.cpp`, `LightClusters.cpp`, `BridgeLighting.cpp` | the engine's deferred lighting of the frame (`Pass=lighting`, docs/LIGHTING.md) |
+| `src/d3d11_proxy/SceneLights.cpp` | the frame's lights, sun, ambient and cascades, decoded from the game's constants at its draws |
+| `tools/harness/` | the unattended test harness (docs/HARNESS.md) |
 | `src/d3d12_bridge/BridgeShare.cpp`, `BridgeReadback.cpp` | on-demand sharing of any game buffer, D3D12 reads |
 | `src/d3d12_bridge/D3D12Bridge.cpp` | D3D12 device by LUID, shared textures, views, queries |
 | `src/d3d12_bridge/BridgeFrame.cpp` | depth capture, the round trip, GPU timestamps on both queues |

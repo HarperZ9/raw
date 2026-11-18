@@ -1,0 +1,35 @@
+# The engine's lighting against the game's own, from the saved state in Riverwood (no Survival
+# Mode prompt): the Bannered Mare, Riverwood at night, Riverwood by day, then a turn and a camera
+# move. Every scene is a real cell change; the harness types a coc twice at most and stops if no
+# loading screen follows. The hour is set before a coc into another cell, so the loads apply it at
+# once. No free camera: whether 'tfc' closes the console itself varied from run to run, and a
+# wrong guess sent later commands into the world as key presses. The steps of a keyframe follow
+# each other frame by frame; wind and people still move between them.
+start load rawharness
+console tai
+scene bannered_mare
+console coc whiterunbanneredmare
+wait 8
+keyframe still steps=all hold=40
+scene riverwood_night
+console set gamehour to 23
+console coc riverwood
+wait 8
+console fw 81a
+wait 4
+keyframe still steps=all hold=40
+scene riverwood_day
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+console coc riverwood
+wait 8
+console fw 81a
+wait 4
+keyframe still steps=all hold=40
+mouse 900 0
+wait 2
+keyframe turned steps=game,match,improved hold=40
+walk w 4 keyframe=moving steps=game,match,improved hold=20
+minimise 8
+quit

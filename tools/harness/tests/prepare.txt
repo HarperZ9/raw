@@ -1,0 +1,5 @@
+# One-time state for the other tests: a new game in Riverwood with the Survival Mode prompt
+# answered No, saved as rawharness. Run at the display's own resolution so the click lands.
+start new coc riverwood
+prepare rawharness
+quit

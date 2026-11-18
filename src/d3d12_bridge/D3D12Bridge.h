@@ -35,6 +35,8 @@
 #include <memory>
 #include <vector>
 
+#include "SceneLighting.h"
+
 namespace raw::bridge
 {
 
@@ -71,6 +73,11 @@ struct BridgeConfig
     // The game's motion-vector target format (R16G16_FLOAT), or UNKNOWN to share none.
     DXGI_FORMAT motionFormat   = DXGI_FORMAT_UNKNOWN;
     bool        realtimeAo     = false; // with enginePass: the engine's real-time AO instead of its reference GTAO
+    // The engine's deferred lighting (LightingPass.cpp). The bridge then runs at the end of the
+    // opaque pass on the HDR scene colour (colorFormat R16G16B16A16_FLOAT) and also shares
+    // RAW's albedo and specular targets, the game's shadow mask and its sun cascades.
+    bool        lightingPass   = false;
+    UINT        shadowMapSize  = 4096;  // one cascade's side; the atlas holds two side by side
 };
 
 // GPU time of one retired submission, by the pass's own timestamps.
@@ -100,7 +107,7 @@ struct BridgeTimings
 // The textures both devices share. Each is render-target capable with
 // simultaneous access and sits in D3D12_RESOURCE_STATE_COMMON whenever no
 // D3D12 submission is running.
-enum class Shared : UINT { ColorIn, Depth, Normal, ColorOut, Motion, Count };
+enum class Shared : UINT { ColorIn, Depth, Normal, ColorOut, Motion, Albedo, Specular, ShadowMask, ShadowAtlas, Count };
 constexpr UINT kSharedCount = static_cast<UINT>(Shared::Count);
 
 // What the bridge hands a pass: its device, its queue, its fence and the
@@ -114,6 +121,7 @@ struct HostResources
     DXGI_FORMAT         format[kSharedCount] = {};
     UINT                width = 0, height = 0;
     DWORD               retireTimeoutMs = 15000;
+    UINT                shadowSide = 0;     // lighting pass: one cascade's side in the atlas
     LogFn               log = nullptr;
 };
 
@@ -131,6 +139,9 @@ struct FrameConstants
 {
     PassConstants   k;
     CameraConstants camera;
+    const SceneLighting* lighting = nullptr;   // lighting pass: the frame's decoded lights; null otherwise
+    bool            hasSurface = false;  // the shared albedo, specular and shadow-mask textures hold this frame
+    bool            hasShadows = false;  // the shared shadow atlas holds this frame's sun cascades
     bool            hasNormal = false;   // the shared normal texture holds this frame's normals
     bool            hasMotion = false;   // the shared motion texture holds this frame's motion vectors
 };
@@ -187,6 +198,7 @@ bool EnginePassReadVisibility(IBridgePass* pass, std::vector<float>* out);
 std::unique_ptr<IBridgePass> MakeRealtimeAoPass();
 bool RealtimeAoTune(IBridgePass* pass, const EngineTuning& t);
 bool RealtimeAoReadVisibility(IBridgePass* pass, std::vector<float>* out);
+std::unique_ptr<IBridgePass> MakeLightingPass();   // LightingPass.h; null without an engine
 
 // Logs whether dev can create and signal D3D11 fences (local and shared) right
 // now, with the device flags, feature level, thread and context identity.
@@ -224,9 +236,19 @@ public:
     // The camera for the next Execute.
     void SetCamera(const CameraConstants& camera);
 
+    // Lighting pass only (BridgeLighting.cpp). RAW's albedo and specular targets and the game's
+    // shadow mask, all full size RGBA8, into their shared textures.
+    bool CaptureSurface(ID3D11Texture2D* albedo, ID3D11Texture2D* specular, ID3D11Texture2D* shadowMask);
+    // The game's sun cascades (a 2D array of 16-bit depth, one layer a cascade) into the shared
+    // R32F atlas, cascade k at x offset k * shadowMapSize. A small compute copy on the D3D11 queue.
+    bool CaptureShadows(ID3D11Texture2D* cascades);
+    // The decoded lights of this frame for the next Execute; the bridge keeps a copy.
+    void SetLighting(const SceneLighting& lighting);
+
     // Engine pass only: its knobs, and the visibility it computed for the last
     // frame (one float a pixel, top row first). False without an engine pass.
     bool TuneEngine(const EngineTuning& t);
+    IBridgePass* ActivePass();   // the pass behind the seam, for its own knobs (LightingPassTune)
     bool ReadEngineVisibility(std::vector<float>* out);
 
     // A D3D12-side read of a shared texture, as tight rows: proof of what

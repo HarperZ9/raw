@@ -37,6 +37,8 @@
 #include "ProxyAPI.h"
 #include "ProxyLog.h"
 #include "RenderPhaseDetector.h"
+#include "SceneLights.h"
+#include "GameComposite.h"
 #include <cstdlib>
 #include <cstring>
 
@@ -60,6 +62,7 @@ struct FrameState
     ID3D11Resource* normalTex = nullptr;
     ID3D11Resource* depthTex = nullptr;
     ID3D11Resource* motionTex = nullptr;
+    ID3D11Resource* sceneTex = nullptr;   // the HDR scene colour of the opaque set
     bool normalBound = false, captured = false, ran = false, inBackbuffer = false;
     uint32_t drawsAtBind = 0;
 };
@@ -149,35 +152,16 @@ void RunOnBackbuffer(bool beforeUI)
     bb->Release();
 }
 
-// The game's view-to-clip matrix: the second matrix of its per-frame constant
-// buffer (vertex slot 12), as the game last wrote it.
-raw::bridge::CameraConstants ReadCamera(ID3D11DeviceContext* real)
-{
-    raw::bridge::CameraConstants cam;
-    ID3D11Buffer* cb = nullptr;
-    real->VSGetConstantBuffers(12, 1, &cb);
-    if (!cb) return cam;
-    const uint8_t* p = CBDirtyTracker::Get().GetShadowData(cb);
-    const uint32_t size = CBDirtyTracker::Get().GetShadowSize(cb);
-    cb->Release();
-    if (!p || size < 128) return cam;
-    memcpy(cam.proj, p + 64, 64);
-    const float* m = cam.proj;
-    // A perspective projection along +z: w = z, depth = m[10] + m[11] / z.
-    cam.valid = m[14] == 1.0f && m[15] == 0.0f && m[0] > 0.0f && m[5] > 0.0f && m[10] > 1.0f && m[11] < 0.0f;
-    if (!cam.valid) return cam;
-    cam.tanHalfFovY = 1.0f / m[5];
-    cam.aspect = m[5] / m[0];
-    cam.nearZ = -m[11] / m[10];
-    cam.farZ = -m[11] / (m[10] - 1.0f);
-    return cam;
-}
-
 // End of the opaque pass: depth and normals into the shared textures.
 void CaptureOpaque(ID3D11DeviceContext* real)
 {
     s_f.captured = true;
+    if (Cfg().lighting && !LightingEnsure()) return;
     if (!s_bridge->Ready() || !s_f.depthTex || !s_f.normalTex) return;
+    // The opaque set is still bound. Where its depth-stencil view is writable (interiors), D3D11
+    // refuses a shader view of the same depth and the copy reads zeros; the game binds its next
+    // targets right after this, so the set is released here.
+    real->OMSetRenderTargets(0, nullptr, nullptr);
     ID3D11Device* dev = nullptr;
     real->GetDevice(&dev);
     D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
@@ -194,6 +178,7 @@ void CaptureOpaque(ID3D11DeviceContext* real)
     const bool normalOk = s_bridge->CaptureNormal(static_cast<ID3D11Texture2D*>(s_f.normalTex));
     if (srv) srv->Release();
     if (depthOk && normalOk) ++s_captures;
+    if (Cfg().lighting && depthOk && normalOk) s_f.ran = LightingAtOpaque(real, s_f.sceneTex);
     static int logged = 0;
     if (logged++ < 3)
         Log("[D3D12Bridge] opaque pass done at frame %llu: depth %d, normals %d, camera %d (tanHalfFovY %.5f, "
@@ -238,7 +223,7 @@ void BridgeHook_OnTargets(ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetV
     for (UINT k = 0; k < n && k < 4; ++k) rt[k] = ResourceOf(rtvs ? rtvs[k] : nullptr);
 
     // The span that just ended.
-    if (s_f.inBackbuffer && draws > s_f.drawsAtBind && s_f.captured && !s_f.ran) RunOnBackbuffer(true);
+    if (s_f.inBackbuffer && draws > s_f.drawsAtBind && s_f.captured && !s_f.ran && !Cfg().lighting) RunOnBackbuffer(true);
     if (s_f.normalBound && !s_f.captured) {
         bool still = false;
         for (ID3D11Resource* r : rt) still |= r == s_f.normalTex;
@@ -259,12 +244,15 @@ void BridgeHook_OnTargets(ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetV
             FullSize(rt[2], DXGI_FORMAT_R8G8B8A8_UNORM, bb) && FullSize(rt[3], DXGI_FORMAT_R8G8_UNORM, bb)) {
             s_f.normalTex = rt[2];
             s_f.motionTex = rt[1];
+            s_f.sceneTex = rt[0];
+            if (Cfg().lighting) GameComposite_SetScene(rt[0]);
             s_f.depthTex = ResourceOf(dsv);
         }
     }
     s_f.normalBound = false;
     if (s_f.normalTex)
         for (ID3D11Resource* r : rt) s_f.normalBound |= r == s_f.normalTex;
+    if (Cfg().lighting) SceneLights_SetOpaque(s_f.normalBound);
     s_f.inBackbuffer = rt[0] && rt[0] == s_f.backbuffer;
     s_f.drawsAtBind = draws;
 }
@@ -291,7 +279,7 @@ void BridgeHook_OnPresent()
             (unsigned long long)s_bridge->FramesExecuted(), (unsigned long long)s_atUI,
             (unsigned long long)s_atPresent, (unsigned long long)s_captures,
             (unsigned long long)s_bridge->LastD3D12Value(), (unsigned long long)s_bridge->CompletedValue());
-    if (!s_f.ran && Cfg().fallbackAtPresent) RunOnBackbuffer(false);
+    if (!s_f.ran && Cfg().fallbackAtPresent && !Cfg().lighting) RunOnBackbuffer(false);
     if (s_wasReady && !s_bridge->Ready() && ++s_offFrames % 120 == 0 && s_offFrames <= 1200)
         Log("[D3D12Bridge] bridge off for %llu frames; the game still presents (frame %llu)",
             (unsigned long long)s_offFrames, (unsigned long long)s_frame);
@@ -302,7 +290,8 @@ void BridgeHook_OnPresent()
         std::string out(path);
         CaptureBackbuffer(out.substr(0, out.rfind('\\') + 1) + "d3d12_bridge_capture.bmp");
     }
-    if (s_f.ran && s_f.captured) CaptureStep(s_bridgeFrames);
+    if (Cfg().lighting) { LightingOnPresent(s_f.captured); SceneLights_OnPresent(); }
+    else if (s_f.ran && s_f.captured) CaptureStep(s_bridgeFrames);
     s_f = {};
     ++s_frame;
 }

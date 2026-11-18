@@ -6,6 +6,8 @@
 #include "BridgeHook.h"
 #include "MaterialPipeline.h"
 #include "GBufferComplete.h"
+#include "SceneLights.h"
+#include "GameComposite.h"
 #include "CBDirtyTracker.h"
 #include "OcclusionCuller.h"
 #include "ProxyAPI.h"
@@ -289,8 +291,11 @@ void STDMETHODCALLTYPE WrappedContext::Draw(UINT VertexCount, UINT StartVertexLo
     RenderPhaseDetector::Get().OnDraw(VertexCount, false);
     for (auto& cb : g_drawCallbacks)
         if (cb) cb(VertexCount, 1);
+    if (g_sceneLightsActive) SceneLights_BeforeDraw(m_real);
     if (g_gbufferActive) GBuffer_BeforeDraw(m_real);
+    if (g_sceneLightsActive) GameComposite_BeforeDraw(m_real, VertexCount);
     m_real->Draw(VertexCount, StartVertexLocation);
+    if (g_sceneLightsActive) GameComposite_AfterDraw(m_real);
 }
 
 void STDMETHODCALLTYPE WrappedContext::DrawIndexed(UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation)
@@ -305,8 +310,11 @@ void STDMETHODCALLTYPE WrappedContext::DrawIndexed(UINT IndexCount, UINT StartIn
         return;
     for (auto& cb : g_drawCallbacks)
         if (cb) cb(IndexCount, 1);
+    if (g_sceneLightsActive) SceneLights_BeforeDraw(m_real);
     if (g_gbufferActive) GBuffer_BeforeDraw(m_real);
+    if (g_sceneLightsActive) GameComposite_BeforeDraw(m_real, IndexCount);
     m_real->DrawIndexed(IndexCount, StartIndexLocation, BaseVertexLocation);
+    if (g_sceneLightsActive) GameComposite_AfterDraw(m_real);
 }
 
 void STDMETHODCALLTYPE WrappedContext::DrawInstanced(UINT VertexCountPerInstance, UINT InstanceCount, UINT StartVertexLocation, UINT StartInstanceLocation)
@@ -319,6 +327,7 @@ void STDMETHODCALLTYPE WrappedContext::DrawInstanced(UINT VertexCountPerInstance
     RenderPhaseDetector::Get().OnDraw(VertexCountPerInstance, false);
     for (auto& cb : g_drawCallbacks)
         if (cb) cb(VertexCountPerInstance, InstanceCount);
+    if (g_sceneLightsActive) SceneLights_BeforeDraw(m_real);
     if (g_gbufferActive) GBuffer_BeforeDraw(m_real);
     m_real->DrawInstanced(VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation);
 }
@@ -333,6 +342,7 @@ void STDMETHODCALLTYPE WrappedContext::DrawIndexedInstanced(UINT IndexCountPerIn
     RenderPhaseDetector::Get().OnDraw(IndexCountPerInstance, true);
     for (auto& cb : g_drawCallbacks)
         if (cb) cb(IndexCountPerInstance, InstanceCount);
+    if (g_sceneLightsActive) SceneLights_BeforeDraw(m_real);
     if (g_gbufferActive) GBuffer_BeforeDraw(m_real);
     m_real->DrawIndexedInstanced(IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, StartInstanceLocation);
 }

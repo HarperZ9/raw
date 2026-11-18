@@ -187,6 +187,44 @@ void FindWaterNormal(const std::vector<Instruction>& code, Analysis* a)
     }
 }
 
+// The vertex colour, a four-component interpolated input. Two signatures, both read from the
+// game's lit shaders: the output alpha is the alpha times its w (mul o0.w, x, vK.w; 31 of the 50
+// lit shaders of the Riverwood frame), or the lit sum times the base colour is multiplied by it
+// right after (mul rA.xyz, rB.xyz, vK.xyz). Inputs declared with fewer components (view and light
+// vectors) and inputs read by dp4 (the projected positions behind the motion vectors) are not it.
+void FindVertexColour(const std::vector<Instruction>& code, const std::vector<int>& depth, Analysis* a)
+{
+    if (a->albedoBefore == kNone) return;
+    uint32_t declMask[32] = {};
+    bool dp4[32] = {};
+    for (size_t i = 0; i < code.size(); ++i) {
+        const Instruction& in = code[i];
+        if (in.opcode == op::DclInputPs && in.tok.size() >= 3 && in.tok[2] < 32) declMask[in.tok[2]] = (in.tok[1] >> 4) & 0xF;
+        if (in.opcode == op::Dp4)
+            for (const Operand& o : in.ops) if (o.type == type::Input && o.index[0] < 32) dp4[o.index[0]] = true;
+    }
+    auto colour = [&](const Operand& o) {
+        return o.type == type::Input && !o.relative[0] && o.index[0] < 32 && int(o.index[0]) != a->posReg &&
+               declMask[o.index[0]] == 0xF && !dp4[o.index[0]];
+    };
+    int reg = -1;
+    for (size_t i = a->body; i < code.size() && reg < 0; ++i) {
+        const Instruction& in = code[i];
+        if (in.opcode != op::Mul || in.ops.size() != 3 || in.ops[0].type != type::Output || in.ops[0].index[0] != 0 || in.ops[0].Mask() != 8) continue;
+        for (size_t k = 1; k < 3; ++k)
+            if (colour(in.ops[k]) && in.ops[k].Swizzle(0) == 3) reg = int(in.ops[k].index[0]);
+    }
+    for (size_t i = a->albedoBefore; i < code.size() && reg < 0; ++i) {
+        const Instruction& in = code[i];
+        if (in.opcode != op::Mul || in.ops.size() != 3 || depth[i] != 0 || in.ops[0].type != type::Temp || in.ops[0].Mask() != 7) continue;
+        for (size_t k = 1; k < 3; ++k)
+            if (colour(in.ops[k]) && in.ops[k].Swizzle(0) == 0 && in.ops[k].Swizzle(1) == 1 && in.ops[k].Swizzle(2) == 2) reg = int(in.ops[k].index[0]);
+    }
+    if (reg < 0) return;
+    a->vcolOperand = Src(type::Input, uint32_t(reg), Swz(0, 1, 2, 2));
+    a->info.vertexColour = true;
+}
+
 uint8_t LightingClass(const Analysis& a)
 {
     bool sixLayers = a.cb[1] >= 13;
@@ -227,6 +265,7 @@ bool Analyse(const Container& c, const Program& p, Analysis* a)
         a->info.kind = ShaderKind::Lighting;
         a->info.materialClass = LightingClass(*a);
         FindAlbedo(code, depth, true, a);
+        FindVertexColour(code, depth, a);
         // A landscape samples colour layers from slots 0 to 5; slot 1 is not a normal map there.
         if (a->info.materialClass != material::Landscape) FindSpecular(code, depth, a);
         else { const size_t keep = a->specAfter; FindSpecular(code, depth, a); a->specAfter = keep; a->info.specularMask = false; }

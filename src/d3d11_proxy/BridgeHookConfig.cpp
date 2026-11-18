@@ -23,6 +23,7 @@ void LoadConfig()
     char text[MAX_PATH]{};
     GetPrivateProfileStringA("D3D12Bridge", "Pass", "haze", text, MAX_PATH, ini.c_str());
     c.enginePass = _stricmp(text, "engine") == 0;
+    c.lighting = _stricmp(text, "lighting") == 0;
     GetPrivateProfileStringA("D3D12Bridge", "CaptureDir", "", text, MAX_PATH, ini.c_str());
     c.captureDir = text;
     c.enabled = i("Enabled", 0) != 0;
@@ -57,8 +58,9 @@ void LoadConfig()
     c.tune.motionScale[0] = f("AoMotionScaleX", 1.0f);
     c.tune.motionScale[1] = f("AoMotionScaleY", 1.0f);
     g_bridgeHookActive = c.enabled;
+    if (c.lighting) LoadLightingConfig(ini);
     Log("[D3D12Bridge] config: enabled=%d pass=%s mode=%.0f radius=%g slices=%u steps=%u strength=%g",
-        c.enabled, !c.enginePass ? "haze" : c.realtimeAo ? "engine, real-time AO" : "engine", k.mode, c.tune.radius, c.tune.slices, c.tune.steps,
+        c.enabled, c.lighting ? "lighting" : !c.enginePass ? "haze" : c.realtimeAo ? "engine, real-time AO" : "engine", k.mode, c.tune.radius, c.tune.slices, c.tune.steps,
         c.tune.strength);
 }
 } // namespace SB::Proxy::hook

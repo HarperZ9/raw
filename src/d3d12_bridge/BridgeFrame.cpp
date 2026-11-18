@@ -20,6 +20,8 @@ void D3D12Bridge::Impl::OpenD11Slot(D11Slot& s, uint64_t frame)
     s.hasDepth = false;
     s.hasNormal = false;
     s.hasMotion = false;
+    s.hasSurface = false;
+    s.hasShadows = false;
     s.executed = false;
 }
 
@@ -132,6 +134,11 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     fc.camera = m->camera;
     fc.hasNormal = s.hasNormal;
     fc.hasMotion = s.hasMotion;
+    if (m->cfg.lightingPass) {
+        fc.lighting = &m->lighting;
+        fc.hasSurface = s.hasSurface;
+        fc.hasShadows = s.hasShadows;
+    }
 
     // The pass records first, so recording time never shows up as a stall,
     // and submits only after the D3D11 Signal: in the game process D3D11
@@ -156,6 +163,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     c->End(s.ts[5].Get());
     HRESULT hs = c->Signal(m->fence11.Get(), v1);
     c->Flush();
+    LARGE_INTEGER qf, q0, q1;
+    QueryPerformanceFrequency(&qf);
+    QueryPerformanceCounter(&q0);
     if (FAILED(hs)) {
         // Never queue a GPU wait the other side cannot satisfy.
         m->log("[D3D12Bridge] D3D11 Signal failed 0x%08X; bridge off", (unsigned)hs);
@@ -171,6 +181,16 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         s.open = false;
         m->ready = false;
         return false;
+    }
+    QueryPerformanceCounter(&q1);
+    // Already executed on the GPU when the D3D12 list was only now submitted: the queue idles on the CPU.
+    m->caughtUp += c->GetData(s.ts[5].Get(), nullptr, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK;
+    m->flushToSubmitUs += double(q1.QuadPart - q0.QuadPart) * 1e6 / double(qf.QuadPart);
+    if (++m->handOvers == 300) {
+        m->log("[D3D12Bridge] hand-over over 300 frames: the GPU had already reached it at submit in %u, CPU flush-to-submit mean %.1f us",
+               m->caughtUp, m->flushToSubmitUs / 300.0);
+        m->caughtUp = m->handOvers = 0;
+        m->flushToSubmitUs = 0;
     }
     m->lastWaited = waitValue;
     m->lastD12 = v2;

@@ -248,7 +248,8 @@ target_compile_definitions(raw_d3d12_bridge PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
 # d3d11 import is needed. With it (RAW_ENGINE_DIR below) the proxy delay-loads both.
 
 target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/BridgeHook.cpp src/d3d11_proxy/BridgeHookConfig.cpp
-    src/d3d11_proxy/BridgeHookCapture.cpp)
+    src/d3d11_proxy/BridgeHookCapture.cpp src/d3d11_proxy/BridgeHookLighting.cpp
+    src/d3d11_proxy/BridgeHookLightingStats.cpp src/d3d11_proxy/LightingSchedule.cpp)
 target_link_libraries(d3d11_proxy PRIVATE raw_d3d12_bridge)
 
 # ----------------------------------------------------------------------------
@@ -377,6 +378,34 @@ add_custom_command(
     VERBATIM)
 target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/BridgeShareMore.cpp
     ${RAW_BRIDGE_GEN}/StencilCopy_CS.h ${RAW_BRIDGE_GEN}/VolumeCopy_CS.h)
+
+# The engine's deferred lighting of the game frame (docs/LIGHTING.md): the proxy decodes the
+# frame's lights (SceneLights.cpp), the bridge shares the surface targets and the sun cascades
+# (BridgeLighting.cpp), and with the engine linked the pass lights the frame (LightingPass.cpp).
+add_custom_command(
+    OUTPUT ${RAW_BRIDGE_GEN}/ShadowAtlas_CS.h
+    COMMAND ${RAW_FXC} /nologo /T cs_5_0 /E CSMain /O3 /Vn g_ShadowAtlasCS /Fh ${RAW_BRIDGE_GEN}/ShadowAtlas_CS.h ${RAW_SHARE_HLSL}/ShadowAtlas.hlsl
+    DEPENDS ${RAW_SHARE_HLSL}/ShadowAtlas.hlsl
+    COMMENT "fxc: shadow atlas copy -> bytecode header"
+    VERBATIM)
+target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/BridgeLighting.cpp src/d3d12_bridge/LightClusters.cpp
+    ${RAW_BRIDGE_GEN}/ShadowAtlas_CS.h)
+target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/SceneLights.cpp src/d3d11_proxy/GameComposite.cpp)
+if(RAW_ENGINE_DIR)
+    set(RAW_LIGHT_HLSL ${RAW_SHARE_HLSL}/Lighting.hlsl)
+    set(RAW_LIGHTFOG_HLSL ${RAW_SHARE_HLSL}/LightFog.hlsl)
+    set(RAW_LIGHT_HEADERS ${RAW_ENGINE_GEN}/light_vs.h ${RAW_ENGINE_GEN}/light_fs.h ${RAW_ENGINE_GEN}/light_fog_fs.h)
+    add_custom_command(
+        OUTPUT ${RAW_LIGHT_HEADERS}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T vs_6_0 -E vs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/light_vs.h -Vn kDxil_light_vs ${RAW_LIGHT_HLSL}
+        COMMAND ${RAW_DXC} -T ps_6_0 -E fs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/light_fs.h -Vn kDxil_light_fs ${RAW_LIGHT_HLSL}
+        COMMAND ${RAW_DXC} -T ps_6_0 -E fs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/light_fog_fs.h -Vn kDxil_light_fog_fs ${RAW_LIGHTFOG_HLSL}
+        DEPENDS ${RAW_LIGHT_HLSL} ${RAW_LIGHTFOG_HLSL} ${RAW_SHARE_HLSL}/LightingCommon.hlsli
+        COMMENT "dxc: lighting pass shaders -> DXIL headers"
+        VERBATIM)
+    target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/LightingPass.cpp ${RAW_LIGHT_HEADERS})
+endif()
 
 # ============================================================================
 # D3D11-to-D3D12 translation layer (stage 2): ID3D11Device and

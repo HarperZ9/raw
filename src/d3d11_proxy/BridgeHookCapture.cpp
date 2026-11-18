@@ -2,6 +2,7 @@
 // the check that a game buffer read on D3D12 equals its D3D11 bytes.
 // Original work, MIT.
 #include "BridgeHookState.h"
+#include "CBDirtyTracker.h"
 #include "FrameLedger.h"
 #include "ProxyAPI.h"
 #include "ProxyLog.h"
@@ -87,8 +88,8 @@ void CaptureStep(uint64_t bridgeFrames)
         std::vector<float> vis;
         if (Bridge()->ReadEngineVisibility(&vis))
             WriteRows(c.captureDir + "\\engine_visibility.bin", bc.width, bc.height, bc.width * 4, vis.data(), vis.size() * 4);
-        static const char* kNames[raw::bridge::kSharedCount] = {"color_in", "depth", "normal", "color_out", "motion"};
-        for (UINT k = 0; k < raw::bridge::kSharedCount; ++k) {
+        static const char* kNames[5] = {"color_in", "depth", "normal", "color_out", "motion"};
+        for (UINT k = 0; k < 5; ++k) {
             std::vector<uint8_t> bytes;
             UINT row = 0;
             if (Bridge()->ReadShared(static_cast<Shared>(k), &bytes, &row))
@@ -134,5 +135,30 @@ static int ShareCheck(ID3D11Texture2D* tex, UINT slice, const void* rows, UINT r
 }
 
 void InstallShareCheck() { g_ledgerShareCheck = &ShareCheck; }
+
+// The game's view-to-clip matrix: the second matrix of its per-frame constant
+// buffer (vertex slot 12), as the game last wrote it.
+raw::bridge::CameraConstants ReadCamera(ID3D11DeviceContext* real)
+{
+    raw::bridge::CameraConstants cam;
+    ID3D11Buffer* cb = nullptr;
+    real->VSGetConstantBuffers(12, 1, &cb);
+    if (!cb) return cam;
+    const uint8_t* p = CBDirtyTracker::Get().GetShadowData(cb);
+    const uint32_t size = CBDirtyTracker::Get().GetShadowSize(cb);
+    cb->Release();
+    if (!p || size < 128) return cam;
+    memcpy(cam.proj, p + 64, 64);
+    const float* m = cam.proj;
+    // A perspective projection along +z: w = z, depth = m[10] + m[11] / z.
+    cam.valid = m[14] == 1.0f && m[15] == 0.0f && m[0] > 0.0f && m[5] > 0.0f && m[10] > 1.0f && m[11] < 0.0f;
+    if (!cam.valid) return cam;
+    cam.tanHalfFovY = 1.0f / m[5];
+    cam.aspect = m[5] / m[0];
+    cam.nearZ = -m[11] / m[10];
+    cam.farZ = -m[11] / (m[10] - 1.0f);
+    return cam;
+}
+
 
 } // namespace SB::Proxy::hook

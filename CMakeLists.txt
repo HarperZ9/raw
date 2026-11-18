@@ -345,3 +345,21 @@ target_link_libraries(bridge_roundtrip PRIVATE raw_d3d12_bridge d3d11)
 # wrapped device instead of the system one.
 set_target_properties(bridge_roundtrip PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
+
+# ----------------------------------------------------------------------------
+# G-buffer completion (docs/FRAME_BUFFERS.md, "Shader patches"): the DXBC
+# patcher as its own library, and its check against known scenes.
+# ----------------------------------------------------------------------------
+add_library(raw_dxbc STATIC
+    src/core/dxbc/DxbcContainer.cpp
+    src/core/dxbc/DxbcProgram.cpp
+    src/core/dxbc/GBufferAnalyse.cpp
+    src/core/dxbc/GBufferPatch.cpp)
+set_target_properties(raw_dxbc PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_executable(gbuffer_patch_check tests/gbuffer_patch/main.cpp)
+set_target_properties(gbuffer_patch_check PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
+target_compile_definitions(gbuffer_patch_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(gbuffer_patch_check PRIVATE raw_dxbc d3d11 d3dcompiler)

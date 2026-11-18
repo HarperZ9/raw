@@ -87,7 +87,7 @@ void CaptureStep(uint64_t bridgeFrames)
         std::vector<float> vis;
         if (Bridge()->ReadEngineVisibility(&vis))
             WriteRows(c.captureDir + "\\engine_visibility.bin", bc.width, bc.height, bc.width * 4, vis.data(), vis.size() * 4);
-        static const char* kNames[raw::bridge::kSharedCount] = {"color_in", "depth", "normal", "color_out"};
+        static const char* kNames[raw::bridge::kSharedCount] = {"color_in", "depth", "normal", "color_out", "motion"};
         for (UINT k = 0; k < raw::bridge::kSharedCount; ++k) {
             std::vector<uint8_t> bytes;
             UINT row = 0;

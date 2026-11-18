@@ -9,6 +9,7 @@ namespace SB::Proxy::hook
 struct Config
 {
     bool enabled = false, fallbackAtPresent = true, debugLayer = false, enginePass = false;
+    bool realtimeAo = false;       // Pass=engine with AoMode=realtime: the engine's real-time AO
     int  timingLogEvery = 600;
     int  retireTimeoutMs = 15000;  // engine pass: wait for the frame before (a tiny value tests the failure path)
     int  testStallAt = 0;          // test: at this gameplay bridge frame the pass waits for a value nobody signals

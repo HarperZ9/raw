@@ -68,6 +68,9 @@ struct BridgeConfig
     DXGI_FORMAT normalFormat   = DXGI_FORMAT_UNKNOWN;
     bool        enginePass     = false; // run the Playground engine's pass instead of the depth haze
     DWORD       passRetireMs   = 15000; // how long the engine pass waits for the frame before
+    // The game's motion-vector target format (R16G16_FLOAT), or UNKNOWN to share none.
+    DXGI_FORMAT motionFormat   = DXGI_FORMAT_UNKNOWN;
+    bool        realtimeAo     = false; // with enginePass: the engine's real-time AO instead of its reference GTAO
 };
 
 // GPU time of one retired submission, by the pass's own timestamps.
@@ -97,7 +100,7 @@ struct BridgeTimings
 // The textures both devices share. Each is render-target capable with
 // simultaneous access and sits in D3D12_RESOURCE_STATE_COMMON whenever no
 // D3D12 submission is running.
-enum class Shared : UINT { ColorIn, Depth, Normal, ColorOut, Count };
+enum class Shared : UINT { ColorIn, Depth, Normal, ColorOut, Motion, Count };
 constexpr UINT kSharedCount = static_cast<UINT>(Shared::Count);
 
 // What the bridge hands a pass: its device, its queue, its fence and the
@@ -129,6 +132,7 @@ struct FrameConstants
     PassConstants   k;
     CameraConstants camera;
     bool            hasNormal = false;   // the shared normal texture holds this frame's normals
+    bool            hasMotion = false;   // the shared motion texture holds this frame's motion vectors
 };
 
 // A pass that runs on the D3D12 side. One frame, in the order the game
@@ -162,6 +166,15 @@ struct EngineTuning
     uint32_t slices   = 0;     // GTAO slices (16)
     uint32_t steps    = 0;     // GTAO steps a side (16)
     float    strength = 1.0f;  // how much of the visibility the composite applies
+    // The real-time pass only (RealtimeAoPass.cpp). Zero slices and steps mean 2 and 16.
+    bool     noise = true;            // blue-noise slice turn and step offset
+    bool     temporal = true;         // accumulate over frames along the motion vectors
+    bool     levels = true;           // far steps read the coarser depth levels
+    float    maxHistory = 32.0f;      // frames the running mean holds
+    float    levelBias = 1.0f;        // depth level of a step = log2(its spacing in half-size texels) - levelBias
+    float    depthTolerance = 0.1f;   // history further than this fraction of the depth is rejected
+    float    motionScale[2] = {1.0f, 1.0f};   // previous uv = uv + motion * scale (a wrong value is a test control)
+    bool     resetHistory = false;    // drop the accumulated frames at the next frame
 };
 
 std::unique_ptr<IBridgePass> MakeDepthFogPass();
@@ -170,6 +183,10 @@ std::unique_ptr<IBridgePass> MakeEnginePass();
 
 bool EnginePassTune(IBridgePass* pass, const EngineTuning& t);
 bool EnginePassReadVisibility(IBridgePass* pass, std::vector<float>* out);
+// The engine's real-time AO behind the same seam; null and false without an engine.
+std::unique_ptr<IBridgePass> MakeRealtimeAoPass();
+bool RealtimeAoTune(IBridgePass* pass, const EngineTuning& t);
+bool RealtimeAoReadVisibility(IBridgePass* pass, std::vector<float>* out);
 
 // Logs whether dev can create and signal D3D11 fences (local and shared) right
 // now, with the device flags, feature level, thread and context identity.
@@ -199,6 +216,10 @@ public:
     // D3D11 queue: copy the game's normal target into the shared normal
     // texture. Formats must match BridgeConfig::normalFormat.
     bool CaptureNormal(ID3D11Texture2D* normalTex);
+
+    // The game's motion-vector target for this frame. Call before CaptureNormal:
+    // the copy runs with the normal copy and is timed with it.
+    bool CaptureMotion(ID3D11Texture2D* motionTex);
 
     // The camera for the next Execute.
     void SetCamera(const CameraConstants& camera);

@@ -243,6 +243,9 @@ std::unique_ptr<IBridgePass> MakeDepthFogPass() { return std::make_unique<DepthF
 std::unique_ptr<IBridgePass> MakeEnginePass() { return nullptr; }
 bool EnginePassTune(IBridgePass*, const EngineTuning&) { return false; }
 bool EnginePassReadVisibility(IBridgePass*, std::vector<float>*) { return false; }
+std::unique_ptr<IBridgePass> MakeRealtimeAoPass() { return nullptr; }
+bool RealtimeAoTune(IBridgePass*, const EngineTuning&) { return false; }
+bool RealtimeAoReadVisibility(IBridgePass*, std::vector<float>*) { return false; }
 #endif
 
 } // namespace raw::bridge

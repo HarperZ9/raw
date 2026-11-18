@@ -20,6 +20,7 @@ If a frame never enters the UI phase (menus, intro), the pass runs at Present in
 |---|---|
 | `src/d3d12_bridge/D3D12Bridge.h` | public API, `PassConstants`, `HostResources`, `IBridgePass` seam |
 | `src/d3d12_bridge/EnginePass.cpp` | the Playground engine's RHI and GTAO behind the seam |
+| `src/d3d12_bridge/RealtimeAoPass.cpp` | the engine's real-time AO behind the seam (`AoMode=realtime`) |
 | `src/d3d12_bridge/BridgeShare.cpp`, `BridgeReadback.cpp` | on-demand sharing of any game buffer, D3D12 reads |
 | `src/d3d12_bridge/D3D12Bridge.cpp` | D3D12 device by LUID, shared textures, views, queries |
 | `src/d3d12_bridge/BridgeFrame.cpp` | depth capture, the round trip, GPU timestamps on both queues |
@@ -29,6 +30,7 @@ If a frame never enters the UI phase (menus, intro), the pass runs at Present in
 | `src/d3d12_bridge/shaders/DepthCopy.hlsl` | D3D11 compute copy of depth into the shared R32F texture |
 | `src/d3d11_proxy/BridgeHook.cpp` | phase hooks, ini, timing log, backbuffer capture to BMP |
 | `tests/bridge_roundtrip/` | standalone round-trip test with controls |
+| `tests/ao_realtime/` | the real-time AO against the 16 x 16 reference, with cost at each step and controls |
 | `config/d3d11_proxy.ini` | `[D3D12Bridge]` keys (off by default in code; on in this sample) |
 
 Build without vcpkg: `cmake -S . -B build-bridge -G Ninja -DCMAKE_BUILD_TYPE=Release -DRAW_BUILD_PLUGIN=OFF`
@@ -270,7 +272,7 @@ pack the G-buffer. Fewer fixed directions lose accuracy fast: the pass has no no
 in directions is a bias and not a variance. Under 1.5 ms at 2160p needs a quarter of the
 pixels (half-resolution trace with a depth-aware upsample), about 8 samples a pixel with
 per-pixel rotated directions, and accumulation over frames with the game's motion vectors.
-None of that is built yet. The 1 x 4 row at a quarter of the pixels would cost about 1 ms.
+That pass is built now: see "Real-time AO" below.
 
 The pack step costs 0.75 ms and the composite 0.08 ms. The normal copy on D3D11 costs 0.04 ms.
 
@@ -304,3 +306,141 @@ the game went on presenting (600 further frames logged, `evidence/frame-buffers-
   visibility to ambient light only needs the HDR scene before the game's own post chain.
 - The hook follows the game's targets. A frame with no world (menus) does not bind them, so
   menus run the pass at Present.
+
+## Real-time AO (2026-11-18)
+
+`Pass=engine` with `AoMode=realtime` runs the engine's real-time AO (`RealtimeAoPass.cpp`; the
+pass itself is superframe `native/raw/renderer/ao_realtime.hpp`). It computes the same GTAO
+integral as the reference pass at a frame budget. On the captured gameplay frame at
+3840 x 2160 the pass takes **0.66 ms** on the RTX 4090, plus 0.18 ms for the D3D11 copies
+that feed it: **0.84 ms** of AO in the frame, under the 1.5 ms target.
+
+```ini
+[D3D12Bridge]
+Enabled=1
+Pass=engine
+AoMode=realtime   ; reference (default) keeps the 16 x 16 pass above
+AoRadius=35       ; game units
+AoSlices=2        ; 0 means 2
+AoSteps=16        ; a side; 0 means 16
+AoNoise=1         ; blue-noise slice turn and step offset
+AoTemporal=1      ; accumulate along the game's motion vectors
+AoLevels=1        ; far steps read coarser depth levels
+AoHistory=32      ; frames the running mean holds
+AoDepthTolerance=0.1
+;AoMotionScaleX=1 ; previous uv = uv + motion * scale; change only to test
+;AoMotionScaleY=1
+```
+
+### How a frame runs
+
+1. **Inputs, no pack step.** The engine's RHI reads the shared textures directly: depth as
+   R32F, the normal target in the game's own encoding, the motion-vector target (shared
+   every frame like the normals; its copy runs inside the normal copy's timestamps) and
+   the frame. The 0.75 ms pack and the two texture-to-buffer copies of the reference path
+   are gone.
+2. **Depth levels (0.04 ms).** View depth at half resolution, one pixel of each 2 x 2 block,
+   then three coarser levels. A level texel is the mean of the texels within 10 % of the
+   nearest one, so it stands for the front surface of its block.
+3. **Trace at half resolution (0.47 ms).** Two slices a pixel, 16 steps a side. The slice
+   turn and the step offset come from a 64 x 64 blue-noise field, generated at start by
+   void and cluster and moved each frame by a rank-1 sequence. Depth at a step is
+   interpolated in 1 / depth at the exact position; where the four texels span more than
+   10 % the nearest one answers alone. A step reads the level whose texels are about half
+   the step spacing.
+4. **Resolve at full resolution (0.15 ms).** A depth-weighted upsample, then a running mean
+   along the game's motion vectors. The traced pixel of each block cycles through all four
+   in four frames; a pixel's own trace weighs 1 and a value borrowed from its neighbours
+   0.15, so the history keeps full-resolution detail. History is rejected where it is off
+   screen or held a surface at another depth (10 %). A pixel with under 7 frames of history
+   takes a 4 x 4 depth-weighted mean of this frame. The same pass writes the frame times
+   the visibility into the shared output.
+
+**The depth hierarchy is built on the D3D12 side.** The proxy lineage has `src/core/HiZPyramid`,
+which was not reused, for three measured or read reasons. It keeps the maximum of the raw
+depth value, written for reversed depth; this game's depth is 0 near and 1 far, so its
+levels hold the farthest surface, and a horizon search needs the nearest. It lives in the
+SKSE plugin sources, which the proxy build does not compile. And it is one mip-chained D3D11
+texture, while the bridge shares single-level textures: every level would cross with its own
+copy (0.02 to 0.03 ms each at this size) after the D3D11 build. Building four levels on D3D12
+costs 0.037 ms in total and cuts the trace from 0.68 to 0.47 ms.
+
+### Cost and accuracy, step by step
+
+`tests/ao_realtime` (`ao_realtime_check.exe`) sends the captured buffers through the real
+path and scores the visibility against the engine's reference GTAO at 16 slices by 16 steps
+on the same buffers: mean absolute difference over the 7,698,584 drawn pixels, and the share
+of those pixels more than 0.05 away. Times are D3D12 timestamps from the RHI, median of 60
+frames, with the 10th and 90th percentiles. Another process was on the GPU: `nvidia-smi` read
+100 % before the run, and a second run read the same medians within 0.01 ms
+(`evidence/realtime-ao-2026-11-18/ao-realtime-captured-4k.json`). No run on an idle GPU was
+possible in this session.
+
+| Step | Pass, ms (p10 to p90) | Levels, trace, resolve | Mean difference to 16 x 16 | Over 0.05 | Mean difference to 48 x 48 |
+|---|---|---|---|---|---|
+| Reference pass, 16 x 16, full resolution (table above) | 192.9 | | 0 | 0 % | 0.062 |
+| Reference pass, 4 x 8, full resolution (table above) | 25.5 | | 0.072 | 33.1 % | |
+| 1. Half resolution, 2 fixed slices x 16, depth-aware upsample, one frame | 0.567 (0.564 to 0.569) | 0.037, 0.433, 0.096 | 0.091 | 47.3 % | 0.107 |
+| 2. Blue noise, 1 slice x 16, one frame | 0.613 (0.611 to 0.618) | 0.038, 0.432, 0.144 | 0.086 | 49.9 % | 0.102 |
+| 2. Blue noise, 2 slices x 16, one frame | 0.861 (0.858 to 0.868) | 0.038, 0.679, 0.144 | 0.071 | 41.1 % | 0.090 |
+| 3. Accumulation, 4 frames | 0.868 (0.861 to 0.877) | 0.038, 0.677, 0.151 | 0.062 | 37.5 % | 0.082 |
+| 3. Accumulation, 32 frames | 0.865 (0.860 to 0.869) | 0.037, 0.680, 0.149 | 0.044 | 26.9 % | 0.065 |
+| **4. Depth levels, 32 frames: the final configuration** | **0.659** (0.657 to 0.661) | 0.038, 0.473, 0.149 | **0.050** | 29.9 % | 0.060 |
+| Final, first frame: every pixel without history | 0.661 (0.658 to 0.669) | 0.037, 0.473, 0.153 | 0.077 | 43.0 % | 0.086 |
+| Final, 64 frames | 0.659 (0.658 to 0.661) | 0.038, 0.473, 0.149 | 0.048 | 28.3 % | 0.058 |
+| 1 slice x 6 | 0.296 (0.296 to 0.297) | 0.037, 0.108, 0.150 | 0.088 | 44.0 % | 0.126 |
+| 1 slice x 16 | 0.446 (0.445 to 0.448) | 0.037, 0.259, 0.150 | 0.059 | 36.5 % | 0.068 |
+| 1 slice x 24 | 0.645 (0.642 to 0.649) | 0.037, 0.458, 0.149 | 0.069 | 43.1 % | 0.058 |
+| 1 slice x 32 | 0.893 (0.889 to 0.900) | 0.037, 0.706, 0.149 | 0.072 | 42.2 % | 0.049 |
+| 2 slices x 24 | 0.928 (0.924 to 0.933) | 0.037, 0.741, 0.149 | 0.057 | 33.7 % | 0.045 |
+
+The D3D11 copies that feed the pass (depth through the compute copy, normals, motion
+vectors) add 0.18 ms in every row. The fence round trip and the two frame copies are the
+bridge's own cost and are the same for any pass.
+
+**What the last column shows.** On this frame the 16 x 16 reference is not at its own limit.
+Against the same pass at 48 x 48 it differs by 0.062 on average and reads brighter (signed
+mean +0.059): near geometry has an AO radius of several hundred pixels, and 16 steps a side
+pass over occluders. So a mean difference to the 16 x 16 reference near 0.05 is the floor
+for a pass that finds more of them. The final configuration is 0.050 from the 16 x 16
+reference and 0.060 from the 48 x 48 one, a little closer to the dense result than the
+16 x 16 reference is. More steps move the pass towards the dense reference and away from
+the 16 x 16 one (the 1 x 32 and 2 x 24 rows). The depth levels do the same: they cost
+accuracy against 16 x 16 (0.044 to 0.050) and gain it against 48 x 48 (0.065 to 0.060).
+
+### Controls
+
+| Control | Result |
+|---|---|
+| Twice the radius | 0.112 against 0.050: reported |
+| Pan of 12 frames at 8 pixels a frame, right motion vectors | 0.058 over the frame, 0.077 where the reference is occluded (4,272,942 pixels under 0.9) |
+| The same pan, zero motion vectors, depth rejection on | 0.119 and 0.152 |
+| The same pan, zero motion vectors, depth rejection off | 0.154 and 0.184: ghosting, reported |
+
+The pan is synthesised: each frame shows the captured buffers moved 8 pixels to the right,
+with the edge repeated, and the reference is computed on the moved buffers. The captured
+frame has a still camera, so no real pair of frames exists yet. With the right vectors the
+error after 12 frames of motion (0.058) sits between the first frame (0.077) and 32 still
+frames (0.050). A wrong vector smears the history across the frame; the depth rejection
+catches part of it, and the metric shows the rest.
+
+The test also runs on a synthetic scene with the D3D12 debug layer on
+(`evidence/realtime-ao-2026-11-18/ao-realtime-synthetic.json`); `bridge_roundtrip` and
+`engine_gtao_check` still pass.
+
+### Limits
+
+- **Not yet run in game.** The pass, the motion-vector share and the ini keys are built and
+  tested offline through the bridge; the in-game capture is the next step.
+- **The motion-vector sign is taken from the decoded shader** (previous uv = uv + motion) and
+  is untested on a moving camera. `AoMotionScaleX` and `AoMotionScaleY` flip it without a
+  rebuild.
+- **One frame of one outdoor scene**, heavy with grass and foliage. Interiors will score
+  differently.
+- **Blended surfaces, water and the first-person model** have no depth or normal in the
+  buffers yet (`docs/FRAME_BUFFERS.md`), so the pass sees the surface behind them.
+- The motion vector has no depth component: a camera moving fast along its view axis can
+  trip the 10 % depth rejection and restart the history.
+- Under motion the noise sequence a surface sees is no longer low-discrepancy in time, so
+  convergence is slower than on a still frame.
+- The composite still runs on the tone-mapped frame and darkens direct light too.

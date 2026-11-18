@@ -18,6 +18,7 @@ struct D11Slot
     bool     open      = false;   // disjoint begun
     bool     hasDepth  = false;
     bool     hasNormal = false;
+    bool     hasMotion = false;
     bool     executed  = false;
     uint64_t frame     = ~0ull;
 };
@@ -77,6 +78,8 @@ struct D3D12Bridge::Impl
     SharedTex& depthIn  = shared[static_cast<UINT>(Shared::Depth)];
     SharedTex& normalIn = shared[static_cast<UINT>(Shared::Normal)];
     SharedTex& colorOut = shared[static_cast<UINT>(Shared::ColorOut)];
+    SharedTex& motionIn = shared[static_cast<UINT>(Shared::Motion)];
+    ID3D11Texture2D* pendingMotion = nullptr;   // set by CaptureMotion, copied by CaptureNormal
     DXGI_FORMAT sharedFormat[kSharedCount] = {};
     std::unique_ptr<IBridgePass> pass;
     CameraConstants camera;

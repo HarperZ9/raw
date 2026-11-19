@@ -32,7 +32,8 @@ public:
                   ID3D12Resource* (*native)(ID3D11Resource*));
     // Records the builds and the trace; uniform: the lighting pass's cbuffer P for this frame.
     bool Record(const void* uniform, size_t bytes, ID3D12Resource* depth, ID3D12Resource* normal, ID3D12Resource* spec,
-                ID3D12Resource* motion);
+                ID3D12Resource* motion, ID3D12Resource* colour);
+    ID3D12Resource* Bounce() const { return m_skyReady ? m_sky.Bounce() : nullptr; }
     bool Submit(ID3D12CommandQueue* q);
     bool Active() const { return m_tune.enabled && m_ready; }
     ID3D12Resource* Visibility() const { return m_vis.Get(); }

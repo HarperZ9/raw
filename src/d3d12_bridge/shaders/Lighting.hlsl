@@ -21,6 +21,7 @@ Texture2D<float4> AoHist  : register(t6);
 Texture2D<float4> GameLit : register(t7);
 Texture2D<float4> SoftMap : register(t8);
 Texture2D<float4> RtVis   : register(t9);    // RtShadow.hlsl: sun and three lights' ray-traced visibility
+Texture2D<float4> RtBounce : register(t11);  // RtSky.cpp: one bounce of indirect light (exteriors)
 Texture2D<float4> RtIdx   : register(t10);   // which lights, index + 1 over 255   // RAW's emissive target: for soft-lit draws the game's soft-lighting colour
 
 uint clusterOf(float2 px, float z) {
@@ -172,11 +173,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // the game's ambient: their cell ambient is set for an enclosed room.
     const float skyVis = rt && (flags.x & FLAG_SKY) != 0u && sunColour.w > 0.5f ? RtIdx.Load(ip).w : 1.0f;
     amb *= lerp(1.0f, skyVis, cluster.w);
+    // Where the sky is blocked, the blocking surfaces send their own light: the bounce the sky rays found.
+    const float3 bounce = rt && (flags.x & FLAG_BOUNCE) != 0u && sunColour.w > 0.5f ? RtBounce.Load(ip).rgb * proj.w : 0.0f.xxx;
+    amb += bounce;
 
     if (flags.w == 1u) { return float4(s.n * 0.5f + 0.5f, game.a); }
     if (flags.w == 2u) { return float4(sunShadow.xxx, game.a); }
     if (flags.w == 3u) { return float4(amb, game.a); }
     if (flags.w == 4u) { return float4(skyVis.xxx, game.a); }
+    if (flags.w == 5u) { return float4(bounce, game.a); }
 
     float3 lit = knee3(albedo * (diff + amb));
     // The game's lobe exists only in shaders with a shininess exponent (gloss > 0).

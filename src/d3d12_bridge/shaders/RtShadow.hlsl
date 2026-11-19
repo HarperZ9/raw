@@ -28,7 +28,8 @@ RWTexture2D<float4> Vis    : register(u0);
 RWTexture2D<float4> Lights : register(u1);
 RWByteAddressBuffer Coords : register(u2);        // float2 per triangle corner
 RWTexture2D<unorm float> Masks[] : register(u0, space1);
-RWTexture2D<unorm float> SkyRaw : register(u3);   // RtSky.cpp: one sky ray's result
+RWTexture2D<float4> SkyRaw : register(u3);        // RtSky.cpp: one sky ray's bounce (rgb) and sky (a)
+Texture2D<float4> GameColour : register(t5);      // the game's lit frame: the radiance of what a sky ray hits
 cbuffer R : register(b1) { float sunLength, sourceRadius, sunCone, frameIndex, alphaRef, termDist, skyLength, rPad1; };
 
 uint clusterOf(float2 px, float z) {
@@ -77,6 +78,39 @@ float candidateAlpha(RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLA
     return lerp(lerp(v00, v10, fa.x), lerp(v01, v11, fa.x), fa.y);
 }
 
+// The distance to the first hit, or -1 when the ray leaves (alpha-tested like visible()).
+float hitDistance(float3 o, float3 d, float tMax) {
+    RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q;
+    RayDesc r;
+    r.Origin = o; r.Direction = d; r.TMin = 0.0f; r.TMax = tMax;
+    q.TraceRayInline(Scene, 0, 0xFF, r);
+    [loop] while (q.Proceed()) {
+        if (q.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
+            const uint id = q.CandidateInstanceID();
+            if (id == 0u) { q.CommitNonOpaqueTriangleHit(); continue; }
+            const uint2 rec = Records[id - 1u];
+            const uint a = (rec.x + q.CandidatePrimitiveIndex() * 3u) * 8u;
+            const float2 b = q.CandidateTriangleBarycentrics();
+            const float2 uv = asfloat(Coords.Load2(a)) * (1.0f - b.x - b.y) + asfloat(Coords.Load2(a + 8u)) * b.x + asfloat(Coords.Load2(a + 16u)) * b.y;
+            uint w, h;
+            Masks[NonUniformResourceIndex(rec.y)].GetDimensions(w, h);
+            if (Masks[NonUniformResourceIndex(rec.y)][uint2(frac(uv) * float2(w, h)) % uint2(w, h)] >= alphaRef) { q.CommitNonOpaqueTriangleHit(); }
+        }
+    }
+    return q.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? q.CommittedRayT() : -1.0f;
+}
+
+// The light a point sends back toward the ray: its colour in the game's frame where it is on screen
+// and not hidden; otherwise a dim share of the cell's ambient.
+float3 hitRadiance(float3 hp) {
+    const float4 s = screenOf(hp);
+    if (s.w > 1.0f && all(s.xy >= 0.0f) && s.x < dims.x && s.y < dims.y) {
+        const float zs = viewZOf(Depth.Load(int3(s.xy, 0)));
+        if (abs(zs - s.w) < 0.03f * s.w + 4.0f) { return min(GameColour.Load(int3(s.xy, 0)).rgb, 16.0f.xxx); }
+    }
+    return 0.25f * float3(ambient[0].w, ambient[1].w, ambient[2].w);
+}
+
 float visible(float3 o, float3 d, float tMin, float tMax) {
     RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q;
     RayDesc r;
@@ -110,6 +144,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     const int3 ip = int3(id.xy, 0);
     float4 vis = 1.0f, idx = 0.0f;
     float sky = 1.0f;
+    float3 bounce = 0.0f;
     const float d = Depth.Load(ip);
     const uint base = uint(Spec.Load(ip).z * 255.0f + 0.5f) & 127u;
     if (d < 1.0f && base != 0u && base < 7u) {
@@ -130,7 +165,10 @@ void main(uint3 id : SV_DispatchThreadID) {
             // Game space has z up. Below the horizon a ray stands for the ground term: seen.
             const float2 rs = float2(hash(px, frameIndex * 0.754877f + 3.0f), hash(px.yx, frameIndex * 0.569840f + 11.0f));
             const float3 sd = cosineDir(n, rs);
-            if (sd.z > 0.0f) { sky = visible(o, sd, 0.0f, skyLength); }
+            if (sd.z > 0.0f) {
+                const float t = hitDistance(o, sd, skyLength);
+                if (t >= 0.0f) { sky = 0.0f; bounce = hitRadiance(o + sd * t); }
+            }
         }
         // The three lights that would light this pixel most (colour luminance x window x n.l).
         uint best[3] = {~0u, ~0u, ~0u};
@@ -163,5 +201,5 @@ void main(uint3 id : SV_DispatchThreadID) {
     }
     Vis[id.xy] = vis;
     Lights[id.xy] = float4(idx.xyz, sky);
-    if (skyLength > 0.0f && ((id.x + id.y + uint(frameIndex)) & 1u) == 0u) { SkyRaw[id.xy] = sky; }
+    if (skyLength > 0.0f && ((id.x + id.y + uint(frameIndex)) & 1u) == 0u) { SkyRaw[id.xy] = float4(bounce, sky); }
 }

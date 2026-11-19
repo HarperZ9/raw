@@ -10,7 +10,7 @@
 
 cbuffer P : register(b0) {
     float4 dims;            // W, H, 1/W, 1/H
-    float4 proj;            // projA, projB (depth = A - B / viewZ), frame index, pad
+    float4 proj;            // projA, projB (depth = A - B / viewZ), frame index, bounce strength
     float4 clipToWorld[4];
     float4 worldToClip[4];
     float4 viewToWorld[3];
@@ -31,7 +31,7 @@ cbuffer P : register(b0) {
 
 static const uint FLAG_MATCH = 1u, FLAG_SOFT = 2u, FLAG_GGX = 4u, FLAG_FOG = 8u, FLAG_CONTACT = 16u, FLAG_AO = 32u,
                   FLAG_CASCADES = 64u, FLAG_SURFACE = 128u, FLAG_SHADOWS = 256u,
-                  FLAG_FOG_REPLACES = 512u, FLAG_RT = 1024u, FLAG_SKY = 2048u;   // our fog takes the game's distance fog's place (off: the game's runs after ours)
+                  FLAG_FOG_REPLACES = 512u, FLAG_RT = 1024u, FLAG_SKY = 2048u, FLAG_BOUNCE = 4096u;   // our fog takes the game's distance fog's place (off: the game's runs after ours)
 static const float PI = 3.14159265358979f;
 
 float4 vs(uint i : SV_VertexID) : SV_Position {

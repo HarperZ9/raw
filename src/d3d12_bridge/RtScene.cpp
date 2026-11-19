@@ -76,7 +76,8 @@ bool RtScene::Pipeline(std::string& err)
     D3D12_DESCRIPTOR_RANGE uav{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 3, 0, 0, 0};   // its own table, set at descriptor 3: vis, lights, alpha coordinates
     D3D12_DESCRIPTOR_RANGE masks{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, UINT(-1), 0, 1, 0};   // u0 space1 onward, at descriptor 6
     D3D12_DESCRIPTOR_RANGE skyRaw{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 3, 0, 0};          // u3, RtSky's
-    D3D12_ROOT_PARAMETER p[8]{};
+    D3D12_DESCRIPTOR_RANGE colour{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 5, 0, 0};          // t5, the game's frame (RtSky's)
+    D3D12_ROOT_PARAMETER p[9]{};
     p[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; p[0].Descriptor = {0, 0};
     p[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; p[1].Constants = {1, 0, 8};
     p[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; p[2].Descriptor = {3, 0};
@@ -85,7 +86,8 @@ bool RtScene::Pipeline(std::string& err)
     p[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; p[5].Descriptor = {4, 0};
     p[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[6].DescriptorTable = {1, &masks};
     p[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[7].DescriptorTable = {1, &skyRaw};
-    D3D12_ROOT_SIGNATURE_DESC rs{8, p, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    p[8].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[8].DescriptorTable = {1, &colour};
+    D3D12_ROOT_SIGNATURE_DESC rs{9, p, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ComPtr<ID3DBlob> blob, errs;
     if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errs))) {
         err = errs ? static_cast<const char*>(errs->GetBufferPointer()) : "root signature";
@@ -209,7 +211,7 @@ void RtScene::SetDraws(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>
 }
 
 bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, ID3D12Resource* normal, ID3D12Resource* spec,
-                     ID3D12Resource* motion)
+                     ID3D12Resource* motion, ID3D12Resource* colour)
 {
     m_recorded = false;
     if (!Active() || !uniform || bytes > kCb) return false;
@@ -341,7 +343,8 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
     cl->SetComputeRootSignature(m_root.Get());
     cl->SetPipelineState(m_pso.Get());
     cl->SetComputeRootConstantBufferView(0, m_cb[slot]->GetGPUVirtualAddress());
-    const bool sky = m_skyReady && m_tune.sky;
+    const bool sky = m_skyReady && m_tune.sky && colour;
+    if (sky) m_sky.SetColour(colour);
     const float rc[8] = {m_tune.sunLength, m_tune.sourceRadius, m_tune.sunCone, float(m_frame & 0xFFFF), m_tune.alphaRef, m_tune.termDist,
                          sky ? m_tune.skyLength : 0.0f, 0.0f};
     cl->SetComputeRoot32BitConstants(1, 8, rc, 0);
@@ -352,6 +355,7 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
     cl->SetComputeRootShaderResourceView(5, m_alpha.RecordsAddress());
     cl->SetComputeRootDescriptorTable(6, {g.ptr + 6 * inc});
     cl->SetComputeRootDescriptorTable(7, {g.ptr + UINT64(m_skyReady ? m_sky.RawDescriptor() : 3) * inc});   // off: never written
+    cl->SetComputeRootDescriptorTable(8, {g.ptr + UINT64(sky ? m_sky.ColourDescriptor() : 0) * inc});         // off: never read
     cl->Dispatch((m_w + 7) / 8, (m_h + 7) / 8, 1);
     if (sky) m_sky.Record(cl, m_cb[slot]->GetGPUVirtualAddress(), motion, m_frame, 1.0f);
     else m_sky.Reset();

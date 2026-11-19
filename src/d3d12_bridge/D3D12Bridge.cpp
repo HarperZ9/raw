@@ -146,6 +146,10 @@ bool D3D12Bridge::Impl::CreateRt()
     shared[static_cast<UINT>(Shared::RtLights)].res12 = rt->Lights();
     sharedFormat[static_cast<UINT>(Shared::RtVisibility)] = DXGI_FORMAT_R8G8B8A8_UNORM;
     sharedFormat[static_cast<UINT>(Shared::RtLights)] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    if (rt->Bounce()) {
+        shared[static_cast<UINT>(Shared::RtBounce)].res12 = rt->Bounce();
+        sharedFormat[static_cast<UINT>(Shared::RtBounce)] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    }
     return true;
 }
 

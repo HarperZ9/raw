@@ -192,7 +192,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
             if (LightingPassUniform(m->pass.get(), &u, &ub))
                 rtOk = m->rt->Record(u, ub, m->depthIn.res12.Get(), m->normalIn.res12.Get(),
                                      m->shared[static_cast<UINT>(Shared::Specular)].res12.Get(),
-                                     fc.hasMotion ? m->motionIn.res12.Get() : nullptr);
+                                     fc.hasMotion ? m->motionIn.res12.Get() : nullptr, m->colorIn.res12.Get());
         }
         if (!m->HandToHost(hand) || (rtOk && !m->rt->Submit(m->queue.Get())) || !m->pass->Submit(0, v2)) {
             m->log("[D3D12Bridge] attached hand-over failed; bridge off");

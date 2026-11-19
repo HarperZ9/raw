@@ -266,7 +266,10 @@ The surfaces followed the game's weather:
 | Rain, later | 1 | 0.88 | 0 |
 | Snow | 0.90 (slowly drying) | | 1 |
 
-The soak, puddle and snow times were short for the test. The game's cloud report sets the cloud cover.
+The soak, puddle and snow times were short for the test. With RAW's tone map on (rt5-wx-6), the frames' mean pixel values follow
+the game's: dry 88 against 91, rain 70 against 66, snow 98 against 98. One earlier session (rt5-wx-4) stopped
+when the engine module did not answer its first `weather` command in 180 s; the rerun passed, and the cause
+is not found. The game's cloud report sets the cloud cover.
 Image: `weather-e2e-dry-rain-snow-game-vs-raw`.
 
 **Engine lights.** `RAW_EngineLights` joins the decoded light list (`SceneLights.cpp`, `[Lighting]
@@ -275,8 +278,8 @@ of 0.999. Lights that no visible draw carries join unshadowed, and the rays shad
 is the one that existed: clusters, plus three ray-traced lights a pixel. No ReSTIR is built yet.
 
 **Rain and snow.** `Weather.hlsli` adds rain rings on puddles while rain falls: a world-fixed grid of drops
-that tilts the water's normal and bends the reflection lookup. Puddles hide more of the ground (albedo times
-0.18). Snow albedo sits near 0.56 with glints that follow the camera. At 0.8, then 0.68, snow clipped to white
+that tilts the water's normal and bends the reflection lookup. Wet ground keeps 0.75 of its albedo and puddles 0.4. At 0.6 and 0.18
+the rain frame's lower half read 23 of 255 against the game's 50. Snow albedo sits near 0.56 with glints that follow the camera. At 0.8, then 0.68, snow clipped to white
 in the game's tone map. In full sun it still reads near white without RAW's tone map.
 
 **Clouds** (`Clouds.hlsl`, `CloudCommon.hlsli`, `[Lighting] Clouds`, `CloudCover` and related keys). One

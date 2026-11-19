@@ -40,8 +40,10 @@ def load(path):
     with open(path, "rb") as f:
         r = _Reader(f.read())
     fmt = r.take("<i")
+    if fmt == 5:
+        return _load5(r)
     if fmt != 2:
-        raise ValueError(f"expected address library format 2, got {fmt}")
+        raise ValueError(f"expected address library format 2 or 5, got {fmt}")
     version = r.take("<4i")
     name_len = r.take("<i")
     r.p += name_len
@@ -58,3 +60,13 @@ def load(path):
         out[ident] = off
         prev_id, prev_off = ident, off
     return tuple(version), ptr_size, out
+
+
+def _load5(r):
+    """Format 5 (1.7.99 and later): a 96-byte header (format, four version numbers, the exe name, the pointer size at
+    0x54, the id count at 0x5C), then one uint32 RVA per id, indexed by id; 0 marks an id with no address. Layout read
+    from the files themselves; no reader code copied."""
+    version = struct.unpack_from("<4i", r.d, 4)
+    ptr_size, count = struct.unpack_from("<i", r.d, 0x54)[0], struct.unpack_from("<I", r.d, 0x5C)[0]
+    offs = struct.unpack_from(f"<{count}I", r.d, 0x60)
+    return tuple(version), ptr_size, {i: o for i, o in enumerate(offs) if o}

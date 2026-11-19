@@ -1,5 +1,6 @@
 // Live engine state (RAW engine runtime). Original work, MIT. See rt_livestate.h.
 #include "rt_livestate.h"
+#include "rt_version.h"
 
 #include <windows.h>
 
@@ -15,10 +16,11 @@
 namespace raw::rt {
 namespace {
 
-constexpr uint32_t kShaderState = 0x2033060, kGraphicsState = 0x328CC20;
+
 constexpr uint32_t kMaxLights = 512;
 
 const uint8_t* g_base = nullptr;
+uint32_t kShaderState = 0, kGraphicsState = 0;   // from the version table at LiveStateInit
 std::string g_out;
 uint64_t g_frame = 0;
 uint32_t g_every = 0;
@@ -141,6 +143,7 @@ void AddEmitters(Snapshot* s) {
 
 bool Read(Snapshot* s) {
     __try {
+        if (!kShaderState || !kGraphicsState) return false;
         const uint8_t* st = g_base + kShaderState;
         std::memcpy(s->timers, st + 0x20, sizeof s->timers);
         s->interior = st[0x44] != 0;
@@ -215,6 +218,7 @@ void Append(const std::string& line) {
 
 void LiveStateInit(const Image& img, const std::string& outDir, bool exportEmitters) {
     g_base = img.base; g_out = outDir; g_exportEmitters = exportEmitters;
+    kShaderState = Addr("BSShaderManager::State::GetSingleton"); kGraphicsState = Addr("BSGraphics::State::GetSingleton");
 }
 
 void LiveStateExportEmitters(bool on) { g_exportEmitters = on; }

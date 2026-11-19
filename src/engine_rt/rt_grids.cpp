@@ -1,5 +1,6 @@
 // Live loaded-grid size (RAW engine runtime). Original work, MIT. See rt_grids.h.
 #include "rt_grids.h"
+#include "rt_version.h"
 
 #include <windows.h>
 
@@ -13,13 +14,12 @@
 namespace raw::rt {
 namespace {
 
-constexpr uint32_t kTesSingleton = 0x31872C8;   // TES* (engine map, singletons.tsv)
-constexpr uint32_t kGridOffset = 0x78;           // TES::gridCells, a GridCellArray*
+// TES* (TES::Singleton) and TES::gridCells, a GridCellArray*, from the version table
 uint32_t g_capacity = 0;                         // the largest length seen: what the cell array holds
 // Inline detours (they catch vtable and direct calls alike): GridArray::DetachAll 0x221380 (GridCellArray slot 1),
 // GridCellArray::KillAll 0x221990 (slot 2), and 0x2216C0, the routine every grid builder calls with the new array
 // (sub_19BF30 after reading and clamping uGridsToLoad, sub_1999E0, sub_1A2A00; engine map call graph).
-constexpr uint32_t kDetachAll = 0x221380, kKillAll = 0x221990, kBuild = 0x2216C0;
+
 const Image* g_img = nullptr;
 const std::vector<RefTarget>* g_refs = nullptr;
 uint32_t g_pending = 0;                          // a length waiting for the grid to empty
@@ -35,8 +35,10 @@ struct Grid { uint8_t* arr = nullptr; int32_t x = 0, y = 0; uint32_t length = 0;
 
 bool Read(const Image& img, Grid* g) {
     uint64_t tes = 0, arr = 0, xy = 0, len = 0;
-    if (!ReadU64(img.base + kTesSingleton, &tes) || !tes) return false;
-    if (!ReadU64(reinterpret_cast<void*>(tes + kGridOffset), &arr) || !arr) return false;
+    const uint32_t single = Addr("TES::Singleton"), cells = Off("off:TES::gridCells");
+    if (!single || !cells) return false;
+    if (!ReadU64(img.base + single, &tes) || !tes) return false;
+    if (!ReadU64(reinterpret_cast<void*>(tes + cells), &arr) || !arr) return false;
     if (!ReadU64(reinterpret_cast<void*>(arr + 0x08), &xy) || !ReadU64(reinterpret_cast<void*>(arr + 0x10), &len)) return false;
     if (!ReadU64(reinterpret_cast<void*>(arr + 0x18), &g->cells)) return false;
     g->arr = reinterpret_cast<uint8_t*>(arr);
@@ -89,9 +91,9 @@ uint64_t BuildHook(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
 
 std::string Hooks(const Image& img) {
     std::string out;
-    out += "DetachAll " + InstallDetour(img, kDetachAll, reinterpret_cast<void*>(&DetachAllHook), reinterpret_cast<void**>(&g_detachAll));
-    out += "; KillAll " + InstallDetour(img, kKillAll, reinterpret_cast<void*>(&KillAllHook), reinterpret_cast<void**>(&g_killAll));
-    out += "; build " + InstallDetour(img, kBuild, reinterpret_cast<void*>(&BuildHook), reinterpret_cast<void**>(&g_build));
+    out += "DetachAll " + InstallDetour(img, Addr("fn:GridArray::DetachAll"), reinterpret_cast<void*>(&DetachAllHook), reinterpret_cast<void**>(&g_detachAll));
+    out += "; KillAll " + InstallDetour(img, Addr("fn:GridCellArray::KillAll"), reinterpret_cast<void*>(&KillAllHook), reinterpret_cast<void**>(&g_killAll));
+    out += "; build " + InstallDetour(img, Addr("fn:GridCellArray::Build"), reinterpret_cast<void*>(&BuildHook), reinterpret_cast<void**>(&g_build));
     return out;
 }
 

@@ -23,6 +23,7 @@ void WriteAbsJump(uint8_t* at, const void* target) {
 
 std::string InstallDetour(const Image& img, uint32_t rva, void* hook, void** original) {
     char b[192];
+    if (!rva) return "refused: not in this version's table";
     if (!img.InText(rva)) return "refused: not in the code section";
     uint8_t* fn = const_cast<uint8_t*>(img.base) + rva;
     ZydisDecoder dec;

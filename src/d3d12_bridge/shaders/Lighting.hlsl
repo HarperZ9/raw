@@ -22,6 +22,7 @@ Texture2D<float4> GameLit : register(t7);
 Texture2D<float4> SoftMap : register(t8);
 Texture2D<float4> RtVis   : register(t9);    // RtShadow.hlsl: sun and three lights' ray-traced visibility
 Texture2D<float4> RtBounce : register(t11);  // RtSky.cpp: one bounce of indirect light (exteriors)
+Texture2D<float4> RtRefl   : register(t12);  // RtShadow.hlsl: reflected radiance, confidence
 Texture2D<float4> RtIdx   : register(t10);   // which lights, index + 1 over 255   // RAW's emissive target: for soft-lit draws the game's soft-lighting colour
 
 uint clusterOf(float2 px, float z) {
@@ -188,5 +189,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Landscape shaders carry no lobe (their slot 1 is a colour layer); the exponent found in parallax
     // shaders belongs to another term (a lobe there doubles the error, tools/lighting/fitsoft.py).
     lit += (flags.x & FLAG_GGX) != 0u ? spec : spec * (lobe ? s.mask * resScale.w : 0.0f);
+    // Ray-traced reflection on glossy surfaces, weighted by Schlick Fresnel at the view angle and the
+    // game's specular mask; where the ray found nothing the game had on screen, nothing is added.
+    if (rt && (flags.x & FLAG_REFLECT) != 0u && lobe) {
+        const float4 rf = RtRefl.Load(ip);
+        const float nv = saturate(dot(s.n, s.v));
+        const float fr = s.f0 + (1.0f - s.f0) * pow(1.0f - nv, 5.0f);
+        lit += rf.rgb * rf.a * fr * saturate(s.mask * resScale.w) * (1.0f - s.alpha);
+        if (flags.w == 6u) { return float4(rf.rgb * rf.a, game.a); }
+    }
     return float4(knee3(lit), game.a);
 }

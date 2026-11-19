@@ -28,9 +28,10 @@ RWTexture2D<float4> Vis    : register(u0);
 RWTexture2D<float4> Lights : register(u1);
 RWByteAddressBuffer Coords : register(u2);        // float2 per triangle corner
 RWTexture2D<unorm float> Masks[] : register(u0, space1);
+RWTexture2D<float4> Refl : register(u4);          // reflected radiance, confidence (1: the hit is on screen)
 RWTexture2D<float4> SkyRaw : register(u3);        // RtSky.cpp: one sky ray's bounce (rgb) and sky (a)
 Texture2D<float4> GameColour : register(t5);      // the game's lit frame: the radiance of what a sky ray hits
-cbuffer R : register(b1) { float sunLength, sourceRadius, sunCone, frameIndex, alphaRef, termDist, skyLength, rPad1; };
+cbuffer R : register(b1) { float sunLength, sourceRadius, sunCone, frameIndex, alphaRef, termDist, skyLength, reflectLength; };
 
 uint clusterOf(float2 px, float z) {
     const uint tx = min(uint(px.x * dims.z * TILES_X), TILES_X - 1u);
@@ -102,12 +103,19 @@ float hitDistance(float3 o, float3 d, float tMax) {
 
 // The light a point sends back toward the ray: its colour in the game's frame where it is on screen
 // and not hidden; otherwise a dim share of the cell's ambient.
-float3 hitRadiance(float3 hp) {
+bool onScreen(float3 hp, out float3 c) {
     const float4 s = screenOf(hp);
+    c = 0.0f;
     if (s.w > 1.0f && all(s.xy >= 0.0f) && s.x < dims.x && s.y < dims.y) {
         const float zs = viewZOf(Depth.Load(int3(s.xy, 0)));
-        if (abs(zs - s.w) < 0.03f * s.w + 4.0f) { return min(GameColour.Load(int3(s.xy, 0)).rgb, 16.0f.xxx); }
+        if (abs(zs - s.w) < 0.03f * s.w + 4.0f) { c = min(GameColour.Load(int3(s.xy, 0)).rgb, 16.0f.xxx); return true; }
     }
+    return false;
+}
+
+float3 hitRadiance(float3 hp) {
+    float3 c;
+    if (onScreen(hp, c)) { return c; }
     return 0.25f * float3(ambient[0].w, ambient[1].w, ambient[2].w);
 }
 
@@ -199,6 +207,29 @@ void main(uint3 id : SV_DispatchThreadID) {
             idx[k] = float(best[k] + 1u) / 255.0f;
         }
     }
+    // Reflection: glossy lit surfaces (the game's lobe, not foliage), one ray around the mirror
+    // direction spread by the roughness.
+    float4 refl = 0.0f;
+    if (reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u) {
+        const float4 sp = Spec.Load(ip);
+        if (sp.y > 0.002f && sp.x > 0.02f) {
+            const float2 px = float2(id.xy);
+            const float3 p = worldAt(px, d);
+            const float3 n = worldNormal(Normal.Load(ip));
+            const float3 v = normalize(-p);
+            const float shin = exp2(sp.y * 13.0f), alpha = clamp(sqrt(2.0f / (shin + 2.0f)), 0.03f, 1.0f);
+            const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
+            const float3 rd = jitterDir(reflect(-v, n), alpha * 0.5f, rr);
+            const float3 ng = geometricNormal(px, p, n);
+            if (dot(rd, ng) > 0.0f) {
+                const float3 o = p + ng * (0.5f + 0.003f * viewZOf(d));
+                const float t = hitDistance(o, rd, reflectLength);
+                float3 c;
+                if (t >= 0.0f && onScreen(o + rd * t, c)) { refl = float4(c, 1.0f); }
+            }
+        }
+    }
+    Refl[id.xy] = refl;
     Vis[id.xy] = vis;
     Lights[id.xy] = float4(idx.xyz, sky);
     if (skyLength > 0.0f && ((id.x + id.y + uint(frameIndex)) & 1u) == 0u) { SkyRaw[id.xy] = float4(bounce, sky); }

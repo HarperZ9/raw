@@ -167,6 +167,8 @@ struct RtTuning
     float    termDist = 48.0f;       // game units: near hits ignored where the surface turns from the sun
     bool     sky = true;             // sky visibility (RtSky): one ray a pixel into the upper hemisphere
     float    skyLength = 6000.0f;    // game units: a sky ray that travels this far sees sky
+    bool     reflect = true;         // one reflection ray on glossy pixels (needs the sky pass's colour input)
+    float    reflectLength = 8000.0f;
 };
 
 struct RtFrameStats
@@ -178,7 +180,7 @@ struct RtFrameStats
     uint64_t uvBytes = 0;
 };
 
-enum class Shared : UINT { ColorIn, Depth, Normal, ColorOut, Motion, Albedo, Specular, ShadowMask, ShadowAtlas, Emissive, RtVisibility, RtLights, RtBounce, Count };
+enum class Shared : UINT { ColorIn, Depth, Normal, ColorOut, Motion, Albedo, Specular, ShadowMask, ShadowAtlas, Emissive, RtVisibility, RtLights, RtBounce, RtReflect, Count };
 constexpr UINT kSharedCount = static_cast<UINT>(Shared::Count);
 
 // What the bridge hands a pass: its device, its queue, its fence and the

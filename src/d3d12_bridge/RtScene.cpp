@@ -57,13 +57,13 @@ bool RtScene::Buffer(ComPtr<ID3D12Resource>& r, uint64_t bytes, D3D12_HEAP_TYPE 
     return true;
 }
 
-bool RtScene::Texture(ComPtr<ID3D12Resource>& r, const wchar_t* name)
+bool RtScene::Texture(ComPtr<ID3D12Resource>& r, const wchar_t* name, DXGI_FORMAT format)
 {
     D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
     D3D12_RESOURCE_DESC d{};
     d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     d.Width = m_w; d.Height = m_h; d.DepthOrArraySize = 1; d.MipLevels = 1; d.SampleDesc.Count = 1;
-    d.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    d.Format = format;
     d.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
     if (FAILED(m_dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&r)))) return false;
     r->SetName(name);
@@ -77,7 +77,8 @@ bool RtScene::Pipeline(std::string& err)
     D3D12_DESCRIPTOR_RANGE masks{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, UINT(-1), 0, 1, 0};   // u0 space1 onward, at descriptor 6
     D3D12_DESCRIPTOR_RANGE skyRaw{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 3, 0, 0};          // u3, RtSky's
     D3D12_DESCRIPTOR_RANGE colour{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 5, 0, 0};          // t5, the game's frame (RtSky's)
-    D3D12_ROOT_PARAMETER p[9]{};
+    D3D12_DESCRIPTOR_RANGE refl{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 4, 0, 0};            // u4, the reflection output
+    D3D12_ROOT_PARAMETER p[10]{};
     p[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; p[0].Descriptor = {0, 0};
     p[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; p[1].Constants = {1, 0, 8};
     p[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; p[2].Descriptor = {3, 0};
@@ -87,7 +88,8 @@ bool RtScene::Pipeline(std::string& err)
     p[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[6].DescriptorTable = {1, &masks};
     p[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[7].DescriptorTable = {1, &skyRaw};
     p[8].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[8].DescriptorTable = {1, &colour};
-    D3D12_ROOT_SIGNATURE_DESC rs{9, p, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    p[9].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[9].DescriptorTable = {1, &refl};
+    D3D12_ROOT_SIGNATURE_DESC rs{10, p, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ComPtr<ID3DBlob> blob, errs;
     if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errs))) {
         err = errs ? static_cast<const char*>(errs->GetBufferPointer()) : "root signature";
@@ -114,7 +116,8 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
               Buffer(m_tlas, kTlas, D3D12_HEAP_TYPE_DEFAULT, AS, true, L"rt tlas") &&
               Buffer(m_tlasScratch, kTlas, D3D12_HEAP_TYPE_DEFAULT, UA, true, L"rt tlas scratch") &&
               Buffer(m_tsRead, 3 * 3 * 8, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, false, L"rt timestamps") &&
-              Texture(m_vis, L"rt visibility") && Texture(m_lights, L"rt light index");
+              Texture(m_vis, L"rt visibility") && Texture(m_lights, L"rt light index") &&
+              Texture(m_refl, L"rt reflection", DXGI_FORMAT_R16G16B16A16_FLOAT);
     for (int k = 0; ok && k < 3; ++k)
         ok = Buffer(m_inst[k], kMaxInstances * sizeof(D3D12_RAYTRACING_INSTANCE_DESC), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, false, L"rt instances") &&
              Buffer(m_cb[k], kCb, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, false, L"rt uniform") &&
@@ -122,7 +125,7 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
     if (!ok) { err = "resources"; return false; }
     D3D12_QUERY_HEAP_DESC qd{D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 9, 0};
     // 0..2 the G-buffer, 3 and 4 the outputs, then RtAlpha's: its coordinates (5), masks (6...), staging.
-    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 5 + RtAlpha::Descriptors() + RtSky::Descriptors(),
+    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 5 + RtAlpha::Descriptors() + RtSky::Descriptors() + 1,
                                   D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
     if (FAILED(m_dev->CreateQueryHeap(&qd, IID_PPV_ARGS(&m_ts))) || FAILED(m_dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&m_heap))) ||
         FAILED(m_dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_alloc[0].Get(), nullptr, IID_PPV_ARGS(&m_list))) ||
@@ -337,16 +340,23 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
         ud.Format = DXGI_FORMAT_R8G8B8A8_UNORM; ud.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
         m_dev->CreateUnorderedAccessView(outs[k], nullptr, &ud, {h.ptr + (3 + k) * inc});
     }
-    D3D12_RESOURCE_BARRIER in2[2] = {Transition(outs[0], D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
-                                     Transition(outs[1], D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)};
-    cl->ResourceBarrier(2, in2);
+    const UINT reflAt = 5 + RtAlpha::Descriptors() + RtSky::Descriptors();
+    {
+        D3D12_UNORDERED_ACCESS_VIEW_DESC ud{};
+        ud.Format = DXGI_FORMAT_R16G16B16A16_FLOAT; ud.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+        m_dev->CreateUnorderedAccessView(m_refl.Get(), nullptr, &ud, {h.ptr + reflAt * inc});
+    }
+    D3D12_RESOURCE_BARRIER in2[3] = {Transition(outs[0], D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+                                     Transition(outs[1], D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+                                     Transition(m_refl.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)};
+    cl->ResourceBarrier(3, in2);
     cl->SetComputeRootSignature(m_root.Get());
     cl->SetPipelineState(m_pso.Get());
     cl->SetComputeRootConstantBufferView(0, m_cb[slot]->GetGPUVirtualAddress());
     const bool sky = m_skyReady && m_tune.sky && colour;
     if (sky) m_sky.SetColour(colour);
     const float rc[8] = {m_tune.sunLength, m_tune.sourceRadius, m_tune.sunCone, float(m_frame & 0xFFFF), m_tune.alphaRef, m_tune.termDist,
-                         sky ? m_tune.skyLength : 0.0f, 0.0f};
+                         sky ? m_tune.skyLength : 0.0f, sky && m_tune.reflect ? m_tune.reflectLength : 0.0f};
     cl->SetComputeRoot32BitConstants(1, 8, rc, 0);
     cl->SetComputeRootShaderResourceView(2, m_tlas->GetGPUVirtualAddress());
     D3D12_GPU_DESCRIPTOR_HANDLE g = m_heap->GetGPUDescriptorHandleForHeapStart();
@@ -356,12 +366,14 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
     cl->SetComputeRootDescriptorTable(6, {g.ptr + 6 * inc});
     cl->SetComputeRootDescriptorTable(7, {g.ptr + UINT64(m_skyReady ? m_sky.RawDescriptor() : 3) * inc});   // off: never written
     cl->SetComputeRootDescriptorTable(8, {g.ptr + UINT64(sky ? m_sky.ColourDescriptor() : 0) * inc});         // off: never read
+    cl->SetComputeRootDescriptorTable(9, {g.ptr + UINT64(reflAt) * inc});
     cl->Dispatch((m_w + 7) / 8, (m_h + 7) / 8, 1);
     if (sky) m_sky.Record(cl, m_cb[slot]->GetGPUVirtualAddress(), motion, m_frame, 1.0f);
     else m_sky.Reset();
-    D3D12_RESOURCE_BARRIER out2[2] = {Transition(outs[0], D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
-                                      Transition(outs[1], D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON)};
-    cl->ResourceBarrier(2, out2);
+    D3D12_RESOURCE_BARRIER out2[3] = {Transition(outs[0], D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
+                                      Transition(outs[1], D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
+                                      Transition(m_refl.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON)};
+    cl->ResourceBarrier(3, out2);
     cl->EndQuery(m_ts.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot * 3 + 2);
     cl->ResolveQueryData(m_ts.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot * 3, 3, m_tsRead.Get(), slot * 24);
     if (FAILED(cl->Close())) return false;

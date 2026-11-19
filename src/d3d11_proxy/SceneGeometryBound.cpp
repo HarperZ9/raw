@@ -13,6 +13,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <unordered_set>
 #include <unordered_map>
 
 namespace SB::Proxy::geom
@@ -174,6 +175,40 @@ ID3D11ShaderResourceView* AlphaTexture(ID3D11DeviceContext* real)
     v->GetDesc(&d);
     if (d.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D) { v->Release(); return nullptr; }
     return v;
+}
+
+namespace
+{
+bool g_follow = true;
+std::mutex g_followM;
+std::unordered_set<uint64_t> g_alphaRanges;   // index ranges a discarding draw has drawn
+uint64_t g_followed = 0;
+} // namespace
+
+void SetAlphaFollow(bool on) { g_follow = on; }
+uint64_t AlphaFollowed() { return g_followed; }
+
+bool AlphaFollows(ID3D11DeviceContext* real, UINT indexCount, UINT startIndex, INT baseVertex)
+{
+    if (!g_follow || indexCount < 3) return false;
+    DXGI_FORMAT f = DXGI_FORMAT_UNKNOWN;
+    UINT io = 0;
+    ID3D11Buffer* ib = nullptr;
+    if (Layer(real)) ib = raw::tx::PeekIndexBuffer(real, &f, &io);
+    else { real->IAGetIndexBuffer(&ib, &f, &io); if (ib) ib->Release(); }
+    if (!ib) return false;
+    // The index buffer and the range in it: one mesh's, whichever actor draws it (several share one mesh's buffers).
+    const uint64_t key = (reinterpret_cast<uint64_t>(ib) * 0x9E3779B97F4A7C15ull) ^ (uint64_t(io) << 7) ^ (uint64_t(startIndex) << 21) ^
+                         (uint64_t(indexCount) * 1099511628211ull) ^ (uint64_t(uint32_t(baseVertex)) << 43);
+    std::lock_guard<std::mutex> g(g_followM);
+    if (IsDiscardPs(BoundPs(real))) {
+        if (g_alphaRanges.size() > 65536) g_alphaRanges.clear();   // a bound: released buffers' addresses come back
+        g_alphaRanges.insert(key);
+        return false;
+    }
+    if (g_alphaRanges.count(key) == 0) return false;
+    ++g_followed;
+    return true;
 }
 
 ID3D11Buffer* VertexBuffer(ID3D11DeviceContext* real, UINT slot, UINT* stride, UINT* offset)

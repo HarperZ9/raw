@@ -154,6 +154,7 @@ struct RtDraw
     ID3D11Buffer* blendVb = nullptr;     // the stream with the blend indices and weights (a reference)
     UINT blendStride = 0, blendVbOffset = 0, idxOffset = 0, wOffset = 0;
     float* bones = nullptr;              // 960 floats, owned (delete[] in ReleaseRtDraw)
+    uint32_t skinRecord = 0;             // alpha-tested skinned draws: RtAlpha's record + 1 (RtScene sets it; ~0u: none this frame)
     // [RT] SkinVbCheck=1 (diagnosis of the actor sheet): the vertex and blend streams' bytes from the draw's first
     // vertex, read back at the game's draw; owned (delete[] in ReleaseRtDraw).
     float viewProj[16] = {};             // actors: the draw's view-projection (vertex cb12 rows 8 to 11) at the draw

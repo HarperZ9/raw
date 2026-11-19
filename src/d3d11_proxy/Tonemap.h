@@ -3,9 +3,12 @@
 // tone map pixel shader is replaced by hash through the shader manager; for its draw the proxy binds
 // RAW's values at pixel buffer 5 and puts the game's binding back after. Keys in [Lighting] (a live edit
 // applies): Tonemap (1 on), Exposure (0 the game's, 1 a camera's), ExposureBias (stops), ExposureMinLum,
-// ExposureMaxLum, ExposureKey, ToneCurve (0 the game's, 1 filmic), ToneWhite, ToneView (1 shows the
-// exposure). Original work, MIT.
+// ExposureMaxLum, ExposureKey, ExposureAdapt, ExposureRef, ToneCurve (0 the game's, 1 filmic), ToneWhite, ToneView (1 shows
+// the exposure), ToneX0 to ToneX5 (free values for the shader, for live tuning). With [HotReload] on, Tonemap.hlsl in
+// the shader folder replaces the built-in shader and a change to it recompiles at the next tone map draw.
+// Original work, MIT.
 #include <d3d11.h>
+#include <string>
 
 namespace SB::Proxy
 {
@@ -22,10 +25,14 @@ struct TonemapSettings
     int curve = 1;           // 0 the game's curve, 1 filmic
     float white = 0.6f;      // the filmic curve's input scale
     int view = 0;
+    float adapt = 1.0f;      // the share of the scene's change of average the exposure follows (1 full, as a camera; 0 none)
+    float ref = 0.46f;       // the average the exposure is fixed to where it does not follow (Riverwood at 13:00 reads 0.46)
+    float x[6] = {};         // ToneX0..5: free values for Tonemap.hlsl (live tuning)
 };
 
 void Tonemap_Set(const TonemapSettings& t);
 void Tonemap_OnDevice(ID3D11Device* dev);   // compiles RAW's shader once and registers it (when enabled)
+void Tonemap_SetSource(const std::wstring& file);   // [HotReload] ShaderDir\Tonemap.hlsl: watched, compiled live
 void Tonemap_BeforeDraw(ID3D11DeviceContext* real);
 void Tonemap_AfterDraw(ID3D11DeviceContext* real);
 }

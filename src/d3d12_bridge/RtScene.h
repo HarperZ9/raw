@@ -120,6 +120,8 @@ private:
     uint64_t m_fenceValue = 0, m_slotValue[3] = {};
     bool m_recorded = false;
     std::unordered_map<Key, uint32_t, KeyHash> m_meshOf;
+    std::unordered_map<Key, uint32_t, KeyHash> m_skinRecOf;   // alpha-tested skinned meshes: RtAlpha record + 1 (0: could not join)
+    void SkinRecords(std::vector<ID3D11Resource*>& toHand, ID3D12Resource* (*native)(ID3D11Resource*));
     std::vector<Mesh> m_meshes;
     std::vector<uint32_t> m_build;    // meshes whose BLAS this frame builds
     std::vector<RtDraw> m_draws;

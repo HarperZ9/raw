@@ -211,7 +211,7 @@ void RtScene::Evict()
         CloseHandle(e);
     }
     for (Mesh& m : m_meshes) { if (m.vb) m.vb->Release(); if (m.ib) m.ib->Release(); }
-    m_meshes.clear(); m_meshOf.clear(); m_build.clear(); m_lastKeys.clear(); m_lastMesh.clear();
+    m_meshes.clear(); m_meshOf.clear(); m_skinRecOf.clear(); m_build.clear(); m_lastKeys.clear(); m_lastMesh.clear();
     m_blasUsed = 0;
     m_alpha.Reset();
     m_cache.Reset();   // a new cell: the old cells' light means nothing here
@@ -265,7 +265,7 @@ void RtScene::SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resou
     m_skin.SetCamera(m_tune.cameraPos);
     m_skin.SetCheck(m_tune.skinCull, m_tune.skinRatio, m_tune.skinMin, 120, m_log);
     const double s0 = NowUs();
-    if (m_skinReady && m_tune.skin) m_skin.SetDraws(m_draws, toHand, native);
+    if (m_skinReady && m_tune.skin) { SkinRecords(toHand, native); m_skin.SetDraws(m_draws, toHand, native); }
     else { std::vector<RtDraw> none; m_skin.SetDraws(none, toHand, native); }
     m_cpuSkinUs += NowUs() - s0;
     std::vector<Key>& keys = m_keys;   // reused: no allocation per frame
@@ -335,6 +335,40 @@ void RtScene::SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resou
     m_lastKeys.swap(keys);
     m_lastMesh = m_drawMesh;
     if (m_tune.incremental) StageDraws();
+}
+
+// Alpha-tested skinned draws (hair, fur, leaves): their coordinates and mask join RtAlpha once per mesh, as a rigid
+// alpha mesh's do; the coordinates do not move with the bones, so the record holds while the BLAS is rebuilt each
+// frame. A mesh with no room this frame waits (skinRecord ~0u: left out of this frame); one that cannot join stays out.
+// The face normals RtAlpha would take from the bind pose are left out (the coordinates are passed as their own
+// stream), so an off-screen hit on one faces the ray.
+void RtScene::SkinRecords(std::vector<ID3D11Resource*>& toHand, ID3D12Resource* (*native)(ID3D11Resource*))
+{
+    for (RtDraw& d : m_draws) {
+        if (!d.skinned || !d.alphaKind) continue;
+        d.skinRecord = ~0u;
+        if (!m_tune.alpha) continue;
+        const Key k{uintptr_t(d.vb), uintptr_t(d.ib), uint64_t(d.vbOffset) << 32 | d.ibOffset,
+                    uint64_t(d.startIndex) << 32 | uint32_t(d.baseVertex) ^ uint64_t(d.indexCount) << 12};
+        auto it = m_skinRecOf.find(k);
+        if (it != m_skinRecOf.end()) { d.skinRecord = it->second ? it->second : ~0u; continue; }
+        if (!m_alpha.Room()) continue;
+        D3D11_BUFFER_DESC vd{};
+        d.vb->GetDesc(&vd);
+        ID3D12Resource* v12 = native(d.vb);
+        ID3D12Resource* i12 = native(d.ib);
+        const int64_t vStart = int64_t(d.vbOffset) + int64_t(d.baseVertex) * d.stride;
+        const uint32_t isz = d.ibFormat == DXGI_FORMAT_R16_UINT ? 2 : 4;
+        const uint64_t iStart = uint64_t(d.ibOffset) + uint64_t(d.startIndex) * isz;
+        uint32_t rec = 0;
+        if (v12 && i12 && vStart >= 0 && uint64_t(vStart) < vd.ByteWidth) {
+            RtDraw t = d;   // a view of d: the coordinates as their own stream (no bind-pose normals); no references taken
+            if (!t.uvVb) { t.uvVb = d.vb; t.uvVbOffset = d.vbOffset; t.uvStride = d.stride; }
+            rec = m_alpha.AddMesh(t, v12, i12, uint64_t(vStart), iStart, d.indexCount / 3, true, toHand, native);
+        }
+        m_skinRecOf.emplace(k, rec);
+        d.skinRecord = rec ? rec : ~0u;
+    }
 }
 
 bool RtScene::Submit(ID3D12CommandQueue* q)

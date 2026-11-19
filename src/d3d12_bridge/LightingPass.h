@@ -75,6 +75,8 @@ struct LightingTuning
     bool  rtIncremental = true;     // RtIncremental: the scene's per-draw lookups once a frame, instances staged
     bool  rtCamSteps = false;       // RtCamSteps: the camera's place from the summed steps (RtScene::SetCamera)
     int   rtSkinFilter = 0;         // RtSkinFilter: diagnosis, which skinned draws join (SceneSkin.cpp)
+    bool  rtSkinAlpha = true;       // RtSkinAlpha: alpha-tested skinned draws join, cut by their texture's alpha (SceneSkin.cpp, RtSkin.cpp)
+    bool  rtAlphaFollow = true;     // RtAlphaFollow: a draw of an index range its prepass alpha-tested joins alpha-tested (SceneGeometryBound.cpp)
     bool  rtActorView = true;       // RtActorView: actor draws whose view-projection is not the main view's stay out (SceneSkin.cpp)
     bool  rtActors = true;          // skinned draws on the main depth target outside the opaque set (people, the player) join
     bool  rtFar = true;             // RtFar: distant LOD (class 7) gets sun shadows, sky and a bounce by a march through the depth (RtShadow.hlsl)

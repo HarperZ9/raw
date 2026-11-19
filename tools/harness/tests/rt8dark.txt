@@ -1,0 +1,32 @@
+# Dark actors in improved mode: Aela (base 1A696) placed in the inn, game against improved, then one term off at a
+# time (RT entirely, actors out of the RT scene, the untraced lights' shared ray, screen-space soft shadows, the skin
+# blur) and the views of the light received (13), the ambient (3) and the untraced lights' share (14).
+start load rawharness
+console tai
+scene inn
+console coc whiterunbanneredmare
+wait 10
+console player.placeatme 1A696
+walk s 1.0
+wait 3
+keyframe c_red steps=game,improved hold=60
+reload ini RtShadows=0
+keyframe c_nort steps=improved hold=40
+reload ini RtShadows=1 RtActors=0
+keyframe c_noactors steps=improved hold=40
+reload ini RtActors=1 RtRest=0
+keyframe c_norest steps=improved hold=40
+reload ini RtRest=1 SoftShadows=0
+keyframe c_nosoft steps=improved hold=40
+reload ini SoftShadows=1 Sss=0
+keyframe c_nosss steps=improved hold=40
+reload ini Sss=0.75 View=13
+keyframe c_v13 steps=improved hold=30
+reload ini View=3
+keyframe c_v3 steps=improved hold=30
+reload ini View=14
+keyframe c_v14 steps=improved hold=30
+reload ini View=12
+keyframe c_v12 steps=improved hold=30
+reload ini View=0
+quit

@@ -27,7 +27,7 @@ namespace
 std::vector<raw::bridge::RtDraw> g_frame;
 // Why draws were left out, and how many alpha-tested ones joined, since the start.
 struct Counts { uint64_t alphaNoTexture = 0, alphaNoUv = 0, alphaOff = 0, noLayout = 0, badFormat = 0, noBuffers = 0,
-                         alphaJoined[5] = {}, opaque = 0, opaqueMat = 0; } g_n;
+                         alphaJoined[5] = {}, opaque = 0, opaqueMat = 0, alphaFollowed = 0; } g_n;
 bool g_alphaOn = true;
 bool g_matOn = true;
 
@@ -62,6 +62,7 @@ bool HasDiscard(const void* bc, size_t n)
 
 void SceneGeometry_SetAlpha(bool on) { g_alphaOn = on; }
 void SceneGeometry_SetMaterials(bool on) { g_matOn = on; }
+void SceneGeometry_SetAlphaFollow(bool on) { geom::SetAlphaFollow(on); }
 
 // Byte size of a vertex element format, for D3D11_APPEND_ALIGNED_ELEMENT offsets.
 static UINT FormatBytes(DXGI_FORMAT f)
@@ -125,12 +126,14 @@ void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT start
     // A skinned layout goes the skinned way whether or not the lit-draw decode found a world block: the
     // actors' draws carry one (434,193 of 538,843 skinned opaque-set draws in Riverwood), and as rigid
     // meshes their bind-pose positions under that matrix put nothing where the body is.
-    if (SceneSkin_OnDraw(real, bound, indexCount, startIndex, baseVertex)) return;
+    const bool follows = geom::AlphaFollows(real, indexCount, startIndex, baseVertex);
+    if (SceneSkin_OnDraw(real, bound, indexCount, startIndex, baseVertex, follows)) return;
     const float* w = SceneLights_DrawWorld();
     if (!w || indexCount < 3) return;
     SceneSkin_NoteMainView(real);   // the main view, from the frame's first rigid lit draw
     uint8_t alpha = geom::AlphaKindOf(geom::BoundPs(real));
     if (!alpha) alpha = BlendAlpha(real);
+    if (!alpha && follows) { alpha = raw::bridge::RtAlphaDiscard; ++g_n.alphaFollowed; }   // its prepass tested the alpha
     if (alpha && !g_alphaOn) { ++g_n.alphaOff; return; }
     if (!bound) { ++g_n.noLayout; return; }
     const Layout& L = *bound;
@@ -174,11 +177,11 @@ std::vector<raw::bridge::RtDraw> SceneGeometry_Take()
     if (++frames % 600 == 1)
         Log("[RT] frame %llu: %zu draws captured; so far %llu opaque (%llu with a colour texture), alpha-tested joined %llu discard / %llu coverage / %llu foliage / %llu blend; "
             "left out: %llu alpha without coordinates, %llu alpha without a 2D texture, %llu alpha (RtAlpha=0), %llu no layout, "
-            "%llu position format, %llu no buffers",
+            "%llu position format, %llu no buffers; %llu rigid draws alpha-tested by their prepass",
             (unsigned long long)frames, g_frame.size(), (unsigned long long)g_n.opaque, (unsigned long long)g_n.opaqueMat, (unsigned long long)g_n.alphaJoined[1],
             (unsigned long long)g_n.alphaJoined[2], (unsigned long long)g_n.alphaJoined[3], (unsigned long long)g_n.alphaJoined[4], (unsigned long long)g_n.alphaNoUv,
             (unsigned long long)g_n.alphaNoTexture, (unsigned long long)g_n.alphaOff, (unsigned long long)g_n.noLayout,
-            (unsigned long long)g_n.badFormat, (unsigned long long)g_n.noBuffers);
+            (unsigned long long)g_n.badFormat, (unsigned long long)g_n.noBuffers, (unsigned long long)g_n.alphaFollowed);
     if (frames % 600 == 1) SceneSkin_Log();
     std::vector<raw::bridge::RtDraw> out;
     out.swap(g_frame);

@@ -1,0 +1,6 @@
+# One long session for live tuning (docs/HARNESS.md, "Live session"): load the save, stop the AI, then run the command
+# files dropped in the inbox until one says `end`. The inbox is <out>/inbox (run.py replaces {out}).
+start load rawharness
+console tai
+listen {out}/inbox
+quit

@@ -28,12 +28,19 @@ ID3D11Buffer* VertexBuffer(ID3D11DeviceContext* real, UINT slot, UINT* stride, U
 ID3D11Buffer* IndexBuffer(ID3D11DeviceContext* real, DXGI_FORMAT* format, UINT* offset);
 // What a draw captured on this context gives its references back with (RtDraw::drop).
 void (*DropFor(ID3D11DeviceContext* real))(raw::bridge::RtDraw&);
+// Alpha by the mesh (RtAlphaFollow): a draw of an index range some draw has tested for alpha (its pixel shader
+// discards) is alpha-tested too. The game alpha-tests its actors' hair and fur and its trees' needles in the depth
+// prepass and draws the colour with depth EQUAL and a shader that does not discard, so the colour draw alone reads as
+// opaque. Call once a draw; true: this draw's index range was alpha-tested by an earlier draw.
+bool AlphaFollows(ID3D11DeviceContext* real, UINT indexCount, UINT startIndex, INT baseVertex);
+void SetAlphaFollow(bool on);
+uint64_t AlphaFollowed();   // draws marked so far
 std::vector<raw::bridge::RtDraw>& Frame();             // the frame's draws so far
 } // namespace geom
 
 void SceneGeometry_CensusWith(const geom::Layout* L, int call);   // the census with the layout already looked up
 // true: a skinned layout. L is the bound layout's record (nullptr: none).
-bool SceneSkin_OnDraw(ID3D11DeviceContext* real, const geom::Layout* L, UINT indexCount, UINT startIndex, INT baseVertex);
+bool SceneSkin_OnDraw(ID3D11DeviceContext* real, const geom::Layout* L, UINT indexCount, UINT startIndex, INT baseVertex, bool alphaFollows);
 void SceneSkin_Log();
 // [RT] SkinPrepassCheck (SceneSkinPrepass.cpp): the actors' prepass draws kept, their colour draws compared with them.
 bool SceneSkin_PrepassCheckOn();

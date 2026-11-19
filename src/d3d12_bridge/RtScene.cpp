@@ -147,7 +147,12 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
     if (!ok) { err = "resources"; return false; }
     D3D12_QUERY_HEAP_DESC qd{D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 9, 0};
     // 0..2 the G-buffer, 3 and 4 the outputs, then RtAlpha's: its coordinates (5), masks (6...), staging.
-    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 5 + RtAlpha::Descriptors() + RtSky::Descriptors() + 1,
+#ifdef RAW_HAS_OMM
+    constexpr UINT kOmmDescriptors = RtOmm::Descriptors();
+#else
+    constexpr UINT kOmmDescriptors = 0;
+#endif
+    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 5 + RtAlpha::Descriptors() + RtSky::Descriptors() + 1 + kOmmDescriptors,
                                   D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
     if (FAILED(m_dev->CreateQueryHeap(&qd, IID_PPV_ARGS(&m_ts))) || FAILED(m_dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&m_heap))) ||
         FAILED(m_dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_alloc[0].Get(), nullptr, IID_PPV_ARGS(&m_list))) ||
@@ -158,6 +163,29 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
     std::string skyErr;
     m_skyReady = m_sky.Create(m_dev.Get(), m_heap.Get(), 5 + RtAlpha::Descriptors(), width, height, skyErr);
     if (!m_skyReady && m_log) m_log("[RT] sky visibility off: %s", skyErr.c_str());
+#ifdef RAW_HAS_OMM
+    // Opacity micromaps: DXR 1.2, and a trace pipeline that lets its ray queries use them (the shader is
+    // below shader model 6.9, so the pipeline flag does it). Either missing: the candidate loop alone.
+    if (o5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_2) {
+        std::string ommErr;
+        const UINT flags = D3D12_PIPELINE_STATE_FLAG_RAYQUERY_ALLOW_OPACITY_MICROMAPS_ON_PRE_SM69_SHADERS;
+        D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
+        pd.pRootSignature = m_root.Get();
+        pd.CS = {kDxil_rt_shadow, sizeof kDxil_rt_shadow};
+        pd.Flags = D3D12_PIPELINE_STATE_FLAGS(flags);
+        ComPtr<ID3D12PipelineState> pso;
+        if (!m_omm.Create(m_dev.Get(), m_heap.Get(), 5 + RtAlpha::Descriptors() + RtSky::Descriptors() + 1, 5, 6, ommErr)) {
+            if (m_log) m_log("[RT] opacity micromaps off: %s", ommErr.c_str());
+        } else if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) {
+            if (m_log) m_log("[RT] opacity micromaps off: the runtime refused the pipeline flag (the system runtime, not the Agility SDK?)");
+        } else {
+            m_pso = pso;
+            m_psoFlags = flags;
+            m_ommOn = true;
+            if (m_log) m_log("[RT] opacity micromaps on: level %u, 4-state, baked from the alpha masks", RtOmm::kLevel);
+        }
+    }
+#endif
     m_ready = true;
     if (m_log) m_log("[RT] scene ready on the layer's device: %ux%u, BLAS heap %llu MB, %u instances at most", width, height,
                      (unsigned long long)(kBlasHeap >> 20), kMaxInstances);
@@ -178,6 +206,9 @@ void RtScene::Evict()
     m_meshes.clear(); m_meshOf.clear(); m_build.clear();
     m_blasUsed = 0;
     m_alpha.Reset();
+#ifdef RAW_HAS_OMM
+    m_omm.Reset();
+#endif
     ++m_stats.resets;
 }
 
@@ -231,6 +262,13 @@ void RtScene::SetDraws(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>
                 // Alpha-tested: its coordinates and mask join RtAlpha, or the mesh stays out (a solid card).
                 if (m_tune.alpha) m.alphaRecord = m_alpha.AddMesh(d, v12, i12, vStart, iStart, t.IndexCount / 3, toHand, native);
                 if (!m.alphaRecord) { m.failed = true; ++m_stats.skipped; m.vb->Release(); m.ib->Release(); m.vb = m.ib = nullptr; }
+#ifdef RAW_HAS_OMM
+                else if (m_ommOn && m_tune.omm) {
+                    uint32_t info[4];
+                    m_alpha.Info(m.alphaRecord - 1, info);
+                    m.omm = m_omm.Add(t.IndexCount / 3, info[0], info[1], info[2], info[3]);
+                }
+#endif
             }
             if (!m.failed) { toHand.push_back(d.vb); toHand.push_back(d.ib); }
         }
@@ -278,7 +316,10 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
     // Alpha-tested meshes first seen this frame: their coordinates and masks.
     ID3D12DescriptorHeap* heaps[1] = {m_heap.Get()};
     cl->SetDescriptorHeaps(1, heaps);
-    const bool prepared = m_alpha.Record(cl, slot);
+    bool prepared = m_alpha.Record(cl, slot);
+#ifdef RAW_HAS_OMM
+    if (m_ommOn) prepared = m_omm.Record(cl, m_tune.alphaRef) || prepared;   // after the masks, before the BLASes
+#endif
 
     // BLAS builds for the new meshes, each from the game's own buffers.
     uint64_t scratchAt = 0;
@@ -290,6 +331,14 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
         g.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
         g.Flags = m.alphaRecord ? D3D12_RAYTRACING_GEOMETRY_FLAG_NONE : D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
         g.Triangles = m.tri;
+#ifdef RAW_HAS_OMM
+        D3D12_RAYTRACING_GEOMETRY_OMM_LINKAGE_DESC link{};
+        if (m.omm) {
+            link = m_omm.Linkage(m.omm);
+            g.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_OMM_TRIANGLES;
+            g.OmmTriangles = {&m.tri, &link};
+        }
+#endif
         D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS in{};
         in.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
         in.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
@@ -408,6 +457,9 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
     m_stats.newTriangles = tris; m_stats.triangles = sceneTris; m_stats.blasBytes = m_blasUsed;
     m_stats.alphaInstances = alphaN; m_stats.alphaMeshes = m_alpha.Meshes(); m_stats.masks = m_alpha.Masks();
     m_stats.noMask = m_alpha.NoMask(); m_stats.uvBytes = m_alpha.PoolBytes();
+#ifdef RAW_HAS_OMM
+    m_stats.ommArrays = m_omm.Arrays();
+#endif
     m_recorded = true;
     return true;
 }
@@ -431,6 +483,7 @@ bool RtScene::Reload(const std::vector<uint8_t>& shadow, const std::vector<uint8
     D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
     pd.pRootSignature = m_root.Get();
     pd.CS = {shadow.data(), shadow.size()};
+    pd.Flags = D3D12_PIPELINE_STATE_FLAGS(m_psoFlags);
     ComPtr<ID3D12PipelineState> pso;
     if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) { err = "the device refused the reloaded RtShadow.hlsl"; return false; }
     if (m_fence->GetCompletedValue() < m_fenceValue) {

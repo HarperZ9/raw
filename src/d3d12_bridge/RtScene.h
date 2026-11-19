@@ -11,6 +11,9 @@
 #include "D3D12Bridge.h"
 #include "RtAlpha.h"
 #include "RtSky.h"
+#ifdef RAW_HAS_OMM
+#include "RtOmm.h"
+#endif
 #include <wrl/client.h>
 #include <string>
 #include <unordered_map>
@@ -52,6 +55,7 @@ private:
         D3D12_RAYTRACING_GEOMETRY_TRIANGLES_DESC tri{};
         uint64_t blas = 0, bytes = 0, seen = 0;
         uint32_t alphaRecord = 0;   // RtAlpha record + 1; 0: opaque
+        uint64_t omm = 0;           // its opacity micromap array, when it has one
         bool built = false, failed = false;
     };
     struct Key { uintptr_t vb, ib; uint64_t a, b; bool operator==(const Key& o) const { return vb == o.vb && ib == o.ib && a == o.a && b == o.b; } };
@@ -88,6 +92,11 @@ private:
     RtAlpha m_alpha;
     RtSky m_sky;
     bool m_skyReady = false;
+    bool m_ommOn = false;
+    UINT m_psoFlags = 0;
+#ifdef RAW_HAS_OMM
+    RtOmm m_omm;
+#endif
 };
 
 } // namespace raw::bridge

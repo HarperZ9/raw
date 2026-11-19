@@ -94,16 +94,16 @@ bool MakeDevice()
 // One level: returns the number of rays that disagree with the pattern (or -1 on an API failure).
 // Builds a level-`level` 2-state micromap from `bits` on the unit triangle and traces one ray at each
 // point; returns per ray (hit | candidates << 1), or an empty vector on an API failure.
-std::vector<uint32_t> Trace(uint32_t level, const std::vector<uint8_t>& bits, const std::vector<float>& pts,
+std::vector<uint32_t> Trace(uint32_t level, const std::vector<uint8_t>& bits, const std::vector<float>& pts, bool four,
                             ID3D12RootSignature* root, ID3D12PipelineState* pso)
 {
     const uint32_t count = uint32_t(pts.size() / 2);
     // The micromap array: one micromap (level, 2-state), its descriptor, the histogram.
     ComPtr<ID3D12Resource> input = Upload(bits.data(), bits.size());
     D3D12_RAYTRACING_OPACITY_MICROMAP_DESC desc{};
-    desc.ByteOffset = 0; desc.SubdivisionLevel = level; desc.Format = D3D12_RAYTRACING_OPACITY_MICROMAP_FORMAT_OC1_2_STATE;
+    desc.ByteOffset = 0; desc.SubdivisionLevel = level; desc.Format = four ? D3D12_RAYTRACING_OPACITY_MICROMAP_FORMAT_OC1_4_STATE : D3D12_RAYTRACING_OPACITY_MICROMAP_FORMAT_OC1_2_STATE;
     ComPtr<ID3D12Resource> descs = Upload(&desc, sizeof desc);
-    D3D12_RAYTRACING_OPACITY_MICROMAP_HISTOGRAM_ENTRY hist{1, level, D3D12_RAYTRACING_OPACITY_MICROMAP_FORMAT_OC1_2_STATE};
+    D3D12_RAYTRACING_OPACITY_MICROMAP_HISTOGRAM_ENTRY hist{1, level, desc.Format};
     D3D12_RAYTRACING_OPACITY_MICROMAP_ARRAY_DESC ad{};
     ad.NumOmmHistogramEntries = 1; ad.pOmmHistogram = &hist;
     ad.InputBuffer = input->GetGPUVirtualAddress();
@@ -203,18 +203,19 @@ std::vector<uint32_t> Derive(uint32_t level, ID3D12RootSignature* root, ID3D12Pi
     for (uint32_t j = 0; j < 2 * level; ++j) {
         std::vector<uint8_t> bits((count + 7) / 8, 0);
         for (uint32_t i = 0; i < count; ++i) if ((i >> j) & 1u) bits[i >> 3] |= uint8_t(1u << (i & 7));
-        const std::vector<uint32_t> r = Trace(level, bits, pts, root, pso);
+        const std::vector<uint32_t> r = Trace(level, bits, pts, false, root, pso);
         if (r.size() != count) return {};
         for (uint32_t c = 0; c < count; ++c) idx[c] |= (r[c] & 1u) << j;
     }
     return idx;
 }
 
-int CheckLevel(uint32_t level, ID3D12RootSignature* root, ID3D12PipelineState* pso, int* candidates)
+// four: the 4-state format, two bits per micro-triangle (transparent 0, opaque 1), as RtOmmBake packs them.
+int CheckLevel(uint32_t level, bool four, ID3D12RootSignature* root, ID3D12PipelineState* pso, int* candidates)
 {
     const uint32_t n = 1u << level, count = n * n;
     // A random pattern placed in micromap order with raw::omm::Index; the rays in grid order.
-    std::vector<uint8_t> bits((count + 7) / 8, 0);
+    std::vector<uint8_t> bits(four ? (count + 3) / 4 : (count + 7) / 8, 0);
     const std::vector<float> pts = Centres(level);
     std::vector<uint32_t> want;
     uint32_t seed = 12345u + level;
@@ -223,10 +224,11 @@ int CheckLevel(uint32_t level, ID3D12RootSignature* root, ID3D12PipelineState* p
         seed = seed * 1664525u + 1013904223u;
         const uint32_t on = (seed >> 16) & 1u;
         if (idx >= count) return 100000;
-        if (on) bits[idx >> 3] |= uint8_t(1u << (idx & 7));
+        if (on && four) bits[idx >> 2] |= uint8_t(1u << (2 * (idx & 3)));
+        else if (on) bits[idx >> 3] |= uint8_t(1u << (idx & 7));
         want.push_back(on);
     }
-    const std::vector<uint32_t> r = Trace(level, bits, pts, root, pso);
+    const std::vector<uint32_t> r = Trace(level, bits, pts, four, root, pso);
     if (r.size() != count) return -1;
     int bad = 0;
     *candidates = 0;
@@ -276,13 +278,15 @@ int main(int argc, char** argv)
     }
     // The table in use (OmmTable.h) must place every micro-triangle where the hardware reads it.
     int failed = 0;
-    for (uint32_t level = 1; level <= 5; ++level) {
-        int cand = 0;
-        const int bad = CheckLevel(level, root.Get(), pso.Get(), &cand);
-        const bool ok = bad == 0 && cand == 0;
-        failed += !ok;
-        std::printf("%s level %u: %u micro-triangles, %d rays disagree, %d candidates\n", ok ? "PASS" : "FAIL", level, 1u << (2 * level), bad, cand);
-    }
-    std::printf("%s\n", failed ? "FAIL" : "PASS: the micromap table matches the hardware at levels 1 to 5");
+    for (int four = 0; four < 2; ++four)
+        for (uint32_t level = 1; level <= 5; ++level) {
+            int cand = 0;
+            const int bad = CheckLevel(level, four != 0, root.Get(), pso.Get(), &cand);
+            const bool ok = bad == 0 && cand == 0;
+            failed += !ok;
+            std::printf("%s %s level %u: %u micro-triangles, %d rays disagree, %d candidates\n", ok ? "PASS" : "FAIL", four ? "4-state" : "2-state",
+                        level, 1u << (2 * level), bad, cand);
+        }
+    std::printf("%s\n", failed ? "FAIL" : "PASS: the micromap table and both bit packings match the hardware at levels 1 to 5");
     return failed ? 1 : 0;
 }

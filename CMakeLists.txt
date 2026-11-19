@@ -21,6 +21,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(RAW_AGILITY_DIR "" CACHE PATH "DirectX 12 Agility SDK build/native folder")
 if(RAW_AGILITY_DIR)
     include_directories(BEFORE SYSTEM ${RAW_AGILITY_DIR}/include)
+    add_compile_definitions(RAW_HAS_OMM=1)
 endif()
 
 # RAW_BUILD_PLUGIN=OFF builds only the d3d11 proxy, the D3D12 bridge and its
@@ -496,6 +497,17 @@ if(RAW_ENGINE_DIR)
     target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtScene.cpp src/d3d12_bridge/RtAlpha.cpp src/d3d12_bridge/RtSky.cpp
                    ${RAW_ENGINE_GEN}/rt_shadow.h ${RAW_ENGINE_GEN}/rt_alpha_uv.h ${RAW_ENGINE_GEN}/rt_alpha_mask.h
                    ${RAW_ENGINE_GEN}/rt_sky_filter.h)
+    if(RAW_AGILITY_DIR)
+        set(RAW_RTOMM_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtOmmBake.hlsl)
+        add_custom_command(
+            OUTPUT ${RAW_ENGINE_GEN}/rt_omm_bake.h
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+            COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_omm_bake.h -Vn kDxil_rt_omm_bake ${RAW_RTOMM_HLSL}
+            DEPENDS ${RAW_RTOMM_HLSL}
+            COMMENT "dxc: opacity micromap bake -> DXIL header"
+            VERBATIM)
+        target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtOmm.cpp ${RAW_ENGINE_GEN}/rt_omm_bake.h)
+    endif()
 endif()
 target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/ShaderCompiler.cpp)
 # The opacity micromap index check (tests/omm_check): needs the Agility SDK's headers and, to run, its runtime.

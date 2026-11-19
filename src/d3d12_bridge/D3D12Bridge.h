@@ -174,6 +174,7 @@ struct RtTuning
     bool     reflect = true;         // one reflection ray on glossy pixels (needs the sky pass's colour input)
     float    reflectLength = 8000.0f;
     bool     debug = false;          // RtDebug: the reflection output shows the primary ray's view of the scene
+    bool     omm = true;             // opacity micromaps for alpha-tested meshes (Agility SDK, DXR 1.2)
 };
 
 struct RtFrameStats
@@ -181,7 +182,7 @@ struct RtFrameStats
     uint32_t draws = 0, skipped = 0, resets = 0, instances = 0, meshes = 0, newMeshes = 0;
     uint64_t newTriangles = 0, triangles = 0, blasBytes = 0;
     double   buildMs = 0, traceMs = 0;
-    uint32_t alphaInstances = 0, alphaMeshes = 0, masks = 0, noMask = 0;
+    uint32_t alphaInstances = 0, alphaMeshes = 0, masks = 0, noMask = 0, ommArrays = 0;
     uint64_t uvBytes = 0;
 };
 

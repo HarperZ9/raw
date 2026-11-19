@@ -123,3 +123,35 @@ opt-in:
   the mask or the screen-space march.
 - Sky visibility, RT GI with a radiance cache, RT reflections and ReSTIR use this scene next. They
   need the game's materials in the rays (bindless texture access from the hit).
+
+## Agility SDK and opacity micromaps (2026-11-19)
+
+On the Agility SDK 1.620.1 runtime (docs/TX_IN_GAME.md), the RTX 4090 reports shader model 6.9 and
+DXR tier 1.2, with opacity micromaps and shader execution reordering (and reordering that reorders). On the
+system runtime it reports 6.8 and 1.2.
+
+**Opacity micromaps** (`RtOmm`, `RtOmmBake.hlsl`, `[Lighting] RtOmm=1`). Each new alpha-tested mesh gets
+a level-4, 4-state micromap array: 256 micro-triangles per triangle, each classified from its alpha mask
+at its corners and centre (opaque, transparent, or unknown, which the ray query resolves as before), and
+built in the same frame as the BLAS that links to it. The order in which a micromap lists its
+micro-triangles is a space-filling curve that the DXR specification only draws; `tests/omm_check
+--derive` reads it from the GPU into `OmmTable.h`, and the plain `omm_check` places a random pattern
+with that table and confirms every ray in both the 2-state and 4-state packings, levels 1 to 5
+(1,364 micro-triangles each way). A closed-form curve written from memory matched only at levels 1 and 2.
+
+| Riverwood 13:00, 3840 x 2160, one run each | trace (sun, 3 lights, sky, bounce, reflections) |
+|---|---|
+| system runtime (rt2-p1) | 2.26 ms |
+| Agility runtime, no micromaps (rt2-ag-1) | 1.84 ms |
+| Agility runtime, micromaps (rt2-omm-1, 80 arrays) | 1.64 ms |
+
+The sun-visibility view is the same with and without micromaps (leaf patterns match; the remaining pixel
+differences follow the camera and the ray jitter). Single runs: the spread between runs is not measured.
+
+**Cell changes.** After a loading screen the mesh cache is dropped (more than 0.5 s without a world
+frame). Before this the night view, reached after the inn, traced in 7.95 ms and read mean dE76 12.6
+(stale shapes from the previous cell); after it, 1.70 ms and 5.75.
+
+Not done: shader execution reordering needs the traces moved from inline ray queries in compute to a
+ray-generation pipeline (or shader model 6.9 `MaybeReorderThread` where it applies to compute); shader
+model 6.9 long and cooperative vectors are not used yet.

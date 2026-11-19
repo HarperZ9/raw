@@ -309,6 +309,8 @@ Luminance of the class-7 pixels, game / improved / control without it:
 - The mean stays within 4 of the game's, so the LOD does not pop.
 - The shading spread rises 7 to 10 % where fog leaves the trees visible. In the fogged vista it does not.
 - It costs 0.03 ms in the light pass (0.265 to 0.295 ms).
+- After the merge with master (#33), the turned vista read 139.6 against the game's 134.0, with a spread of 22.5 against
+  22.7 without it. The spread gain did not repeat there, and the LOD came out 5.6 brighter. Tuning is open.
 - The effect is small. The side-by-side crop is `ingame-ec7-2026-11-19-tree-lod-nolod-vs-raw-crop.png` in the plan
   folder.
 

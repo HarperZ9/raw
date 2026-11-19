@@ -460,3 +460,32 @@ or accumulation differs and the cause is not found.
   lighting), and the game's next draws read RAW's output, so moving AO, clouds or fog to a compute queue overlaps
   nothing without a frame of latency or a split of the engine pass's queue. Not measured.
 - Water refraction: the game's water still refracts the frame RAW lit, through its own shader.
+
+## The bed's depth, the actors' streams, and the shared ray's cost (2026-11-19, later)
+
+Run rt6-next-1, 2160p. ENB 232 of 232, settings restored by hash.
+
+**The bed under the water.** `BridgeHook.cpp` now copies the game's depth when the four-target opaque set ends
+(`D3D12Bridge::CaptureBedDepth`, R24G8 read as R24_UNORM_X8). The game writes its water's depth after that point,
+inside the span RAW's end-of-opaque copy follows. The water pass reads this copy as its bed. `WaterView=4` now reads
+blue to green over the whole river (a bed at every water pixel), where it read red before. The caustics show on
+the shallow bed by the shore (`caustics-shore-game-raw-view-1to1`). Red, green and blue now sample the net 0.35
+units apart; at 0.9 units the colour fringes read as a rainbow.
+
+**The actors' streams at the draw against the trace** (`[RT] SkinVbCheck=1`). Each actor draw's vertex and blend
+streams are read back at the game's draw, and RtSkin's check skins the floating vertex again on the CPU from
+those bytes with the draw's palette:
+
+| Floating vertex | RtSkin on the GPU (camera-relative) | the game's bytes on the CPU (world) |
+|---|---|---|
+| 1381, bone 10 | 993.7, 2547.7, 1532.2 | 18228.3, -44065.2, 1464.8 |
+
+With the camera near 17222, -46525, -100, the CPU result is about 1006, 2460, 1565 camera-relative, within about
+90 units of the GPU's (the camera moves between the draw and the check's log). The other floating vertices agree in
+the same way. So RtSkin reads the same streams and palette the game's draw saw, and skins them as the game's
+shader does. The floating corners are where these draws' own data puts them. What remains open is which view
+these draws are drawn for: the next check compares each actor draw's view-projection (cb12 rows 8 to 11) with the
+main camera's, to find draws on the main depth target that belong to another pass.
+
+**The shared shadow ray's cost.** The trace now skips the ray when `RtRest=0` (`GI_REST`). In the inn, off and on
+twice in one run: 1.75 and 1.82 ms off, 1.87 and 1.87 ms on, so about 0.09 ms for the ray.

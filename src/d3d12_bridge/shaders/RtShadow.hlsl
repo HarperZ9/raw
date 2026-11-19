@@ -232,7 +232,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         // (weighted reservoir sampling over the whole list, so the pick is exact), gets one shadow ray on the
         // sky ray's turn. Its visibility, filtered over pixels and frames, is the share of all those lights'
         // light that arrives (the ratio estimator of Heitz et al. 2018).
-        if (skyLength > 0.0f && skyTurn(id.xy)) {
+        if (skyLength > 0.0f && skyTurn(id.xy) && (giFlags & GI_REST) != 0u) {
             float total = 0.0f;
             uint pick = ~0u;
             [loop] for (uint w2 = 0u; w2 < 4u; w2++) {

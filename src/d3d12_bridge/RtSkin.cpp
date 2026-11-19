@@ -117,7 +117,12 @@ void RtSkin::SetDraws(std::vector<RtDraw>& draws, std::vector<ID3D11Resource*>& 
         std::memcpy(c + 12, m_cam, 12);
         std::memcpy(j.c, c, sizeof c);
         m_boneData.insert(m_boneData.end(), d.bones, d.bones + 960);
-        m_jobs.push_back(j);
+        if (d.diagVb) {
+            j.diagVb.assign(d.diagVb, d.diagVb + d.diagVbBytes);
+            j.diagBv.assign(d.diagBv, d.diagBv + d.diagBvBytes);
+            j.diagBones.assign(d.bones, d.bones + 960);
+        }
+        m_jobs.push_back(std::move(j));
         outFirst += count;
         idxFirst += j.indexCount;
         m_vertices += count;
@@ -167,6 +172,28 @@ void RtSkin::ReadStats(uint32_t slot)
                 m_log("[RT]     floating vertex %u: skinned %.1f %.1f %.1f, %.0f units in front of the game's surface, bones %u %u %u %u, weights %.3f %.3f "
                       "%.3f %.3f", w[40], sp[0], sp[1], sp[2], ahead, w[44] & 255, (w[44] >> 8) & 255, (w[44] >> 16) & 255, w[44] >> 24,
                       half(w[45] & 0xFFFF), half(w[45] >> 16), half(w[46] & 0xFFFF), half(w[46] >> 16));
+                // SkinVbCheck: the same vertex from the bytes the game's draw saw, skinned on the CPU with the draw's palette.
+                const uint32_t v = w[40];
+                if (!m.diagVb.empty() && m.posFmt && uint64_t(v) * m.stride + m.posOffset + 12 <= m.diagVb.size() &&
+                    uint64_t(v) * m.bStride + m.wOffset + 8 <= m.diagBv.size() && uint64_t(v) * m.bStride + m.idxOffset + 4 <= m.diagBv.size()) {
+                    float p[3];
+                    std::memcpy(p, m.diagVb.data() + size_t(v) * m.stride + m.posOffset, 12);
+                    uint32_t iw, ww[2];
+                    std::memcpy(&iw, m.diagBv.data() + size_t(v) * m.bStride + m.idxOffset, 4);
+                    std::memcpy(ww, m.diagBv.data() + size_t(v) * m.bStride + m.wOffset, 8);
+                    const float wt[4] = {half(ww[0] & 0xFFFF), half(ww[0] >> 16), half(ww[1] & 0xFFFF), half(ww[1] >> 16)};
+                    float o[3] = {};
+                    for (int b = 0; b < 4; ++b) {
+                        const uint32_t row = std::min<uint32_t>(uint32_t(float((iw >> (8 * b)) & 255) / 255.0f * 765.01f), 237u);
+                        for (int r = 0; r < 3; ++r) {
+                            const float* R = m.diagBones.data() + (row + r) * 4;
+                            o[r] += wt[b] * (R[0] * p[0] + R[1] * p[1] + R[2] * p[2] + R[3]);
+                        }
+                    }
+                    m_log("[RT]     the same vertex at the game's draw: position %.2f %.2f %.2f, bones %u %u %u %u, weights %.3f %.3f %.3f %.3f, "
+                          "skinned on the CPU %.1f %.1f %.1f (world, before the camera is taken off)", p[0], p[1], p[2], iw & 255, (iw >> 8) & 255,
+                          (iw >> 16) & 255, iw >> 24, wt[0], wt[1], wt[2], wt[3], o[0], o[1], o[2]);
+                }
             }
             for (int v = 0; v < 3 && w[3]; ++v) {
                 const uint32_t* x = w + 5 + v * 11;
@@ -283,7 +310,11 @@ bool RtSkin::Record(ID3D12GraphicsCommandList4* cl, uint32_t slot, ID3D12Resourc
     cl->CopyBufferRegion(m_statsRead[slot].Get(), 0, m_stats[slot].Get(), 0, uint64_t(m_jobs.size()) * kStatWords * 4);
     trans(m_stats[slot].Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     m_meta[slot].clear();
-    for (const Job& j : m_jobs) m_meta[slot].push_back({j.indexCount, j.c[8], j.c[1], j.posFmt, j.actor});
+    for (const Job& j : m_jobs) {
+        Meta m{j.indexCount, j.c[8], j.c[1], j.posFmt, j.actor, j.diagVb, j.diagBv, j.diagBones};
+        m.posOffset = j.c[2]; m.bStride = j.c[5]; m.idxOffset = j.c[6]; m.wOffset = j.c[7];
+        m_meta[slot].push_back(std::move(m));
+    }
     uint64_t blasAt = 0, scratchAt = 0;
     for (Job& j : m_jobs) {
         D3D12_RAYTRACING_GEOMETRY_DESC g{};

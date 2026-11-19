@@ -77,6 +77,7 @@ void LightingApplyTuning()
         rt.sky = t.rtSky;
         rt.skyLength = t.rtSkyLength;
         rt.reflect = t.rtReflect;
+        rt.rest = t.rtRest;
         rt.debug = t.rtDebug != 0;
         rt.debugView = t.rtDebug;
         rt.omm = t.rtOmm;
@@ -250,6 +251,13 @@ bool LightingAtOpaque(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr)
     b->SetRtDraws(SceneGeometry_Take());
     raw::bridge::PassConstants k = Cfg().k;
     return b->Execute(sceneHdr, sceneHdr, k);
+}
+
+void LightingCaptureBed(ID3D11Resource* depth)
+{
+    raw::bridge::D3D12Bridge* b = Bridge();
+    const LightingTuning& t = Cfg().light;
+    if (b && b->Ready() && t.mode == 2 && t.water && t.rtShadows) b->CaptureBedDepth(depth);
 }
 
 bool LightingAtWater(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr, bool water)

@@ -98,6 +98,47 @@ static void CheckPaletteAgainstGpu(ID3D11DeviceContext* real, ID3D11Buffer* cb, 
     if (dev) dev->Release();
 }
 
+// [RT] SkinVbCheck=1: the actor draw's vertex and blend streams read back at the draw (a stall), from its first
+// vertex, up to 256 KB each, so RtSkin's check can compare a floating vertex with what the game's draw saw.
+static void ReadStreamsAtDraw(ID3D11DeviceContext* real, raw::bridge::RtDraw& d)
+{
+    static int on = -1;
+    if (on < 0) {
+        char path[MAX_PATH]{};
+        GetModuleFileNameA(nullptr, path, MAX_PATH);
+        std::string ini(path);
+        ini = ini.substr(0, ini.rfind(char(92)) + 1) + "d3d11_proxy.ini";
+        on = GetPrivateProfileIntA("RT", "SkinVbCheck", 0, ini.c_str());
+    }
+    if (on <= 0) return;
+    ID3D11Device* dev = nullptr;
+    real->GetDevice(&dev);
+    auto read = [&](ID3D11Buffer* b, uint64_t start, uint8_t** out, uint32_t* bytes) {
+        D3D11_BUFFER_DESC bd{};
+        b->GetDesc(&bd);
+        if (start >= bd.ByteWidth) return;
+        const uint32_t n = uint32_t(std::min<uint64_t>(bd.ByteWidth - start, 256u << 10));
+        D3D11_BUFFER_DESC sd{};
+        sd.ByteWidth = bd.ByteWidth; sd.Usage = D3D11_USAGE_STAGING; sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        ID3D11Buffer* st = nullptr;
+        if (FAILED(dev->CreateBuffer(&sd, nullptr, &st)) || !st) return;
+        real->CopyResource(st, b);
+        D3D11_MAPPED_SUBRESOURCE m{};
+        if (SUCCEEDED(real->Map(st, 0, D3D11_MAP_READ, 0, &m))) {
+            *out = new uint8_t[n];
+            std::memcpy(*out, static_cast<const uint8_t*>(m.pData) + start, n);
+            *bytes = n;
+            real->Unmap(st, 0);
+        }
+        st->Release();
+    };
+    if (dev) {
+        read(d.vb, uint64_t(d.vbOffset) + uint64_t(int64_t(d.baseVertex) * d.stride), &d.diagVb, &d.diagVbBytes);
+        read(d.blendVb, uint64_t(d.blendVbOffset) + uint64_t(int64_t(d.baseVertex) * d.blendStride), &d.diagBv, &d.diagBvBytes);
+        dev->Release();
+    }
+}
+
 bool SceneSkin_OnDraw(ID3D11DeviceContext* real, const Layout* bound, UINT indexCount, UINT startIndex, INT baseVertex)
 {
     static uint32_t seen = 0, logged = 0;
@@ -146,6 +187,7 @@ bool SceneSkin_OnDraw(ID3D11DeviceContext* real, const Layout* bound, UINT index
         d.indexCount = indexCount; d.startIndex = startIndex; d.baseVertex = baseVertex;
         d.bones = new float[960];
         std::memcpy(d.bones, bones, 3840);
+        if (actor) ReadStreamsAtDraw(real, d);
         ++g_skinJoined;
         if (actor) {   // which vertex shaders skin the actors, with their streams (RtSkin diagnosis; [RT] DumpSkinVs)
             static std::unordered_map<uint64_t, uint32_t> vsSeen;

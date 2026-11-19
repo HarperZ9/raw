@@ -65,7 +65,8 @@ struct FrameState
     ID3D11Resource* motionTex = nullptr;
     ID3D11Resource* sceneTex = nullptr;   // the HDR scene colour of the opaque set
     bool normalBound = false, captured = false, ran = false, inBackbuffer = false;
-    bool waterSeen = false, compositeOpen = false, waterRan = false;   // RtWater: the game's water span, then its composite
+    bool waterSeen = false, compositeOpen = false, waterRan = false;
+    bool opaqueSet = false, bedCaptured = false;   // RtWater: the bed's depth, copied when the four-target opaque set ends   // RtWater: the game's water span, then its composite
     uint32_t drawsAtBind = 0;
 };
 FrameState s_f;
@@ -272,6 +273,13 @@ void BridgeHook_OnTargets(ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetV
             LightingAtWater(real, s_f.sceneTex, false);
         }
     }
+    // The four-target opaque set just ended: the depth still holds the bed under the water. The game writes the
+    // water's depth later in the opaque pass (rt6-wat-4: RAW's end-of-opaque copy already holds the surface).
+    if (s_f.opaqueSet && !s_f.bedCaptured && Cfg().lighting && s_f.depthTex) {
+        s_f.bedCaptured = true;
+        LightingCaptureBed(s_f.depthTex);
+    }
+    s_f.opaqueSet = n >= 4 && rt[0] && rt[0] == s_f.sceneTex && rt[2] == s_f.normalTex && rt[3];
     s_f.normalBound = false;
     if (s_f.normalTex)
         for (ID3D11Resource* r : rt) s_f.normalBound |= r == s_f.normalTex;

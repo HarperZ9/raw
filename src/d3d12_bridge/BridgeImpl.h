@@ -100,6 +100,10 @@ struct D3D12Bridge::Impl
     SharedTex& motionIn = shared[static_cast<UINT>(Shared::Motion)];
     SharedTex waterIn, waterOut;   // attached only, made on first use: the frame with the game's water, and with RAW's (RtWater)
     bool waterFailed = false;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> bed11;   // the bed's depth (CaptureBedDepth), same typeless format as the game's
+    ID3D12Resource* bed12 = nullptr;
+    DXGI_FORMAT bedSrv = DXGI_FORMAT_UNKNOWN;
+    uint64_t bedFrame = ~0ull;                        // frames when it was last copied
     ID3D11Texture2D* pendingMotion = nullptr;   // set by CaptureMotion, copied by CaptureNormal
     // Lighting pass (BridgeLighting.cpp).
     SceneLighting lighting;

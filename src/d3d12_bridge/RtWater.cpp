@@ -90,7 +90,7 @@ void LogDeviceRemoved(ID3D12Device* dev, LogFn log)
 
 bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* depth, ID3D12Resource* layer, ID3D12Resource* albedo,
                           ID3D12Resource* spec, ID3D12Resource* colourIn, ID3D12Resource* colourOut, bool water, float sssWidth,
-                          float sssStrength, bool* resultInColourIn)
+                          float sssStrength, bool* resultInColourIn, ID3D12Resource* bed, DXGI_FORMAT bedFormat)
 {
     m_wRecorded = false;
     *resultInColourIn = false;
@@ -133,7 +133,9 @@ bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* dep
         sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         m_dev->CreateShaderResourceView(r, &sd, cpu(k));
     };
-    srv(depth, DXGI_FORMAT_R32_FLOAT, 0);
+    // t0: the bed's own depth where it was captured this frame (the game's depth before its water), else RAW's
+    // opaque copy, which already holds the water's surface (no caustics then).
+    if (bed && bedFormat != DXGI_FORMAT_UNKNOWN) srv(bed, bedFormat, 0); else srv(depth, DXGI_FORMAT_R32_FLOAT, 0);
     srv(layer, DXGI_FORMAT_R32G32B32A32_FLOAT, 1);
     srv(albedo, DXGI_FORMAT_R8G8B8A8_UNORM, 2);
     srv(colourIn, DXGI_FORMAT_R16G16B16A16_FLOAT, 6);

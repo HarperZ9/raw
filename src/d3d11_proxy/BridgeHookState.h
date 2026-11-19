@@ -53,6 +53,8 @@ bool LightingEnsure();
 bool LightingAtOpaque(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr);
 // Right after the game composites its water into the HDR colour: RAW's water on top (RtWater.hlsl),
 // improved mode with RT on raw::tx. True when it ran.
+// The depth as the four-target opaque set leaves it, before the game writes its water's depth (RtWater's bed).
+void LightingCaptureBed(ID3D11Resource* depth);
 // water false: no water this frame, the skin's scattering alone (at the first blended span).
 bool LightingAtWater(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr, bool water);
 // Once a frame at Present: the hotkey, the capture set and its statistics.

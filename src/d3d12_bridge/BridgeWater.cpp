@@ -9,6 +9,37 @@
 namespace raw::bridge
 {
 
+bool D3D12Bridge::CaptureBedDepth(ID3D11Resource* depth)
+{
+    if (!m->ready || !m->attached || !depth) return false;
+    D3D11_RESOURCE_DIMENSION dim{};
+    depth->GetType(&dim);
+    if (dim != D3D11_RESOURCE_DIMENSION_TEXTURE2D) return false;
+    D3D11_TEXTURE2D_DESC d{};
+    static_cast<ID3D11Texture2D*>(depth)->GetDesc(&d);
+    if (!m->bed11) {
+        const DXGI_FORMAT srv = d.Format == DXGI_FORMAT_R24G8_TYPELESS || d.Format == DXGI_FORMAT_D24_UNORM_S8_UINT ? DXGI_FORMAT_R24_UNORM_X8_TYPELESS
+                              : d.Format == DXGI_FORMAT_R32_TYPELESS || d.Format == DXGI_FORMAT_D32_FLOAT ? DXGI_FORMAT_R32_FLOAT
+                              : d.Format == DXGI_FORMAT_R32G8X24_TYPELESS ? DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS : DXGI_FORMAT_UNKNOWN;
+        D3D11_TEXTURE2D_DESC b = d;
+        b.BindFlags = D3D11_BIND_SHADER_RESOURCE; b.CPUAccessFlags = 0; b.MiscFlags = 0; b.Usage = D3D11_USAGE_DEFAULT;
+        if (b.Format == DXGI_FORMAT_D24_UNORM_S8_UINT) b.Format = DXGI_FORMAT_R24G8_TYPELESS;
+        if (b.Format == DXGI_FORMAT_D32_FLOAT) b.Format = DXGI_FORMAT_R32_TYPELESS;
+        ComPtr<ID3D11Texture2D> t;
+        if (srv == DXGI_FORMAT_UNKNOWN || d.SampleDesc.Count != 1 || FAILED(m->dev11->CreateTexture2D(&b, nullptr, &t)) || !(m->bed12 = m->cfg.layer.native(t.Get()))) {
+            m->log("[RT] bed depth off: the game's depth is format %d, %u samples", int(d.Format), d.SampleDesc.Count);
+            m->bedSrv = DXGI_FORMAT_UNKNOWN;
+            return false;
+        }
+        m->bed11 = t;
+        m->bedSrv = srv;
+        m->log("[RT] bed depth: %ux%u, format %d, read as %d", d.Width, d.Height, int(b.Format), int(srv));
+    }
+    m->ctx11->CopyResource(m->bed11.Get(), depth);
+    m->bedFrame = m->frames;
+    return true;
+}
+
 bool D3D12Bridge::ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, bool water, float sssWidth, float sssStrength)
 {
     if (!m->ready || !m->attached || !m->cfg.lightingPass || !m->rt || !m->rt->Active() || !sceneHdr || !layer || m->waterFailed) return false;
@@ -30,9 +61,10 @@ bool D3D12Bridge::ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, 
     bool inB = false;
     if (!m->rt->RecordWater(u, ub, m->depthIn.res12.Get(), layer12, m->shared[static_cast<UINT>(Shared::Albedo)].res12.Get(),
                             m->shared[static_cast<UINT>(Shared::Specular)].res12.Get(), m->waterIn.res12.Get(), m->waterOut.res12.Get(),
-                            water, sssWidth, sssStrength, &inB))
+                            water, sssWidth, sssStrength, &inB, m->bedFrame + 1 >= m->frames ? m->bed12 : nullptr, m->bedSrv))
         return false;
-    const std::vector<ID3D11Resource*> hand{layer, m->waterIn.tex11.Get(), m->waterOut.tex11.Get()};
+    std::vector<ID3D11Resource*> hand{layer, m->waterIn.tex11.Get(), m->waterOut.tex11.Get()};
+    if (m->bed11) hand.push_back(m->bed11.Get());
     if (!m->HandToHost(hand) || !m->rt->SubmitWater(m->queue.Get())) {
         m->log("[RT] water hand-over failed; water off");
         m->waterFailed = true;

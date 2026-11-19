@@ -109,7 +109,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float3 at = camPosW.xyz + pb - sr * (depthV / max(-sr.z, 0.2f));      // where it crossed the surface
                 const float t = camPosW.w;
                 const float sc = max(waterB.y, 1.0f);
-                const float3 net = float3(causticNet(at.xy + 0.9f, t, sc), causticNet(at.xy, t, sc), causticNet(at.xy - 0.9f, t, sc));
+                const float3 net = float3(causticNet(at.xy + 0.35f, t, sc), causticNet(at.xy, t, sc), causticNet(at.xy - 0.35f, t, sc));
                 const float sunVis = sunColour.w > 0.5f ? visible(pb + float3(0.0f, 0.0f, 1.0f + 0.002f * length(pb)), l, 0.0f, sunLength) : 1.0f;
                 const float through = exp(-waterA.z * (depthV + length(pb - p)));    // down to the bed and back up to the eye
                 const float focus = saturate(depthV / 30.0f);                          // a thin film focuses nothing

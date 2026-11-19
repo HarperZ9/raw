@@ -144,7 +144,7 @@ struct RtDraw
     uint8_t alphaKind = 0;               // RtAlpha*
     UINT uvOffset = 0;
     DXGI_FORMAT uvFormat = DXGI_FORMAT_UNKNOWN;
-    ID3D11ShaderResourceView* alphaSrv = nullptr;   // a reference, released with the draw
+    ID3D11ShaderResourceView* alphaSrv = nullptr;   // t0, the colour texture (opaque draws too, RtMaterials); a reference
     ID3D11Buffer* uvVb = nullptr;        // the coordinates' own vertex buffer when not the position's (a reference)
     UINT uvStride = 0, uvVbOffset = 0;
 };
@@ -175,6 +175,16 @@ struct RtTuning
     float    reflectLength = 8000.0f;
     bool     debug = false;          // RtDebug: the reflection output shows the primary ray's view of the scene
     bool     omm = true;             // opacity micromaps for alpha-tested meshes (Agility SDK, DXR 1.2)
+    // Off-screen hits (docs/RAYTRACING.md, "Materials and the radiance cache"): every mesh keeps its
+    // texture coordinates, face normals and a small copy of its colour texture, so a ray that lands
+    // off screen is shaded from the game's own material; a world-space hash grid of irradiance gives
+    // those hits their indirect light and carries further bounces.
+    bool     materials = true;       // colour texture, coordinates and normals for every mesh
+    uint32_t matSide = 128;          // the largest side of a colour copy, texels
+    bool     cache = true;           // the world-space radiance cache
+    float    cacheCell = 16.0f;      // game units: the finest cell, doubling with distance
+    int      debugView = 0;          // 1 the primary ray (RtDebug=1), 2 the cache at each pixel, 3 the hit's colour copy
+    float    cameraPos[3] = {};      // the camera in a world frame that stays put (SceneLighting::cameraStep summed)
 };
 
 struct RtFrameStats
@@ -184,6 +194,9 @@ struct RtFrameStats
     double   buildMs = 0, traceMs = 0;
     uint32_t alphaInstances = 0, alphaMeshes = 0, masks = 0, noMask = 0, ommArrays = 0;
     uint64_t uvBytes = 0;
+    uint32_t matMeshes = 0, albedos = 0, noAlbedo = 0, cacheCells = 0;
+    uint64_t albedoBytes = 0;
+    double   cacheMs = 0;
 };
 
 enum class Shared : UINT { ColorIn, Depth, Normal, ColorOut, Motion, Albedo, Specular, ShadowMask, ShadowAtlas, Emissive, RtVisibility, RtLights, RtBounce, RtReflect, Count };

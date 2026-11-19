@@ -192,6 +192,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         std::vector<ID3D11Resource*> hand;
         bool rtOk = false;
         if (fc.rt) {
+            m->rt->SetCamera(m->lighting.cameraStep, m->lighting.cameraSteps, m->lighting.posAdjust);
             m->rt->SetDraws(std::move(m->pendingDraws), hand, m->cfg.layer.native);
             const void* u = nullptr;
             size_t ub = 0;

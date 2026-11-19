@@ -1,0 +1,39 @@
+# Off-screen hits (docs/RAYTRACING.md, "Materials and the radiance cache"): Riverwood by day, with
+# materials and the cache on, then each off; the colour copies (RtDebug=3, View=7), the cache at each
+# pixel (RtDebug=2, View=7), the bounce (View=5) and reflections (View=6) with and without. Then the
+# Bannered Mare and Riverwood at night.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+keyframe still steps=game,improved_no_rt,improved hold=90
+reload ini RtDebug=3 View=7
+keyframe albedo steps=improved hold=40
+reload ini RtDebug=2 View=7
+keyframe cache steps=improved hold=60
+reload ini RtDebug=0 View=5
+keyframe bouncevis steps=improved hold=60
+reload ini View=6
+keyframe reflvis steps=improved hold=60
+reload ini RtMaterials=0 RtCache=0 View=5
+keyframe bouncevis_old steps=improved hold=60
+reload ini View=6
+keyframe reflvis_old steps=improved hold=60
+reload ini View=0
+keyframe old steps=improved hold=60
+reload ini RtMaterials=1 RtCache=1
+keyframe new steps=improved hold=90
+scene bannered_mare
+console coc whiterunbanneredmare
+wait 8
+keyframe still steps=game,improved_no_rt,improved hold=60
+reload ini View=6
+keyframe reflvis steps=improved hold=60
+reload ini View=0
+scene riverwood_night
+console set gamehour to 23
+console coc riverwood
+wait 8
+keyframe still steps=game,improved_no_rt,improved hold=60
+quit

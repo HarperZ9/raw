@@ -471,18 +471,21 @@ target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/SceneGeometry.cpp)
 if(RAW_ENGINE_DIR)
     set(RAW_RTSHADOW_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtShadow.hlsl)
     add_custom_command(
-        OUTPUT ${RAW_ENGINE_GEN}/rt_shadow.h
+        OUTPUT ${RAW_ENGINE_GEN}/rt_shadow.h ${RAW_ENGINE_GEN}/rt_shadow_debug.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
         COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow.h -Vn kDxil_rt_shadow ${RAW_RTSHADOW_HLSL}
+        COMMAND ${RAW_DXC} -T cs_6_6 -E main -DRT_DEBUG=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow_debug.h -Vn kDxil_rt_shadow_debug ${RAW_RTSHADOW_HLSL}
         DEPENDS ${RAW_RTSHADOW_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli
         COMMENT "dxc: ray-traced shadows -> DXIL header"
         VERBATIM)
     set(RAW_RTALPHA_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtAlphaUv.hlsl)
     add_custom_command(
-        OUTPUT ${RAW_ENGINE_GEN}/rt_alpha_uv.h ${RAW_ENGINE_GEN}/rt_alpha_mask.h
+        OUTPUT ${RAW_ENGINE_GEN}/rt_alpha_uv.h ${RAW_ENGINE_GEN}/rt_alpha_mask.h ${RAW_ENGINE_GEN}/rt_alpha_albedo.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
         COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_alpha_uv.h -Vn kDxil_rt_alpha_uv ${RAW_RTALPHA_HLSL}
         COMMAND ${RAW_DXC} -T cs_6_6 -E mask ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_alpha_mask.h -Vn kDxil_rt_alpha_mask ${RAW_RTALPHA_HLSL}
+        COMMAND ${RAW_DXC} -T cs_6_6 -E mask -DALBEDO=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_alpha_albedo.h -Vn kDxil_rt_alpha_albedo ${RAW_RTALPHA_HLSL}
         DEPENDS ${RAW_RTALPHA_HLSL}
         COMMENT "dxc: ray-tracing alpha coordinates and masks -> DXIL headers"
         VERBATIM)
@@ -494,9 +497,18 @@ if(RAW_ENGINE_DIR)
         DEPENDS ${RAW_RTSKY_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
         COMMENT "dxc: sky visibility filter -> DXIL header"
         VERBATIM)
-    target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtScene.cpp src/d3d12_bridge/RtAlpha.cpp src/d3d12_bridge/RtSky.cpp
+    set(RAW_RTCACHE_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCache.hlsl)
+    add_custom_command(
+        OUTPUT ${RAW_ENGINE_GEN}/rt_cache_resolve.h
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T cs_6_6 -E resolve ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_cache_resolve.h -Vn kDxil_rt_cache_resolve ${RAW_RTCACHE_HLSL}
+        DEPENDS ${RAW_RTCACHE_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli
+        COMMENT "dxc: radiance cache resolve -> DXIL header"
+        VERBATIM)
+    target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtScene.cpp src/d3d12_bridge/RtSceneRecord.cpp src/d3d12_bridge/RtAlpha.cpp
+                   src/d3d12_bridge/RtAlphaTex.cpp src/d3d12_bridge/RtSky.cpp src/d3d12_bridge/RtCache.cpp
                    ${RAW_ENGINE_GEN}/rt_shadow.h ${RAW_ENGINE_GEN}/rt_alpha_uv.h ${RAW_ENGINE_GEN}/rt_alpha_mask.h
-                   ${RAW_ENGINE_GEN}/rt_sky_filter.h)
+                   ${RAW_ENGINE_GEN}/rt_alpha_albedo.h ${RAW_ENGINE_GEN}/rt_sky_filter.h ${RAW_ENGINE_GEN}/rt_cache_resolve.h)
     if(RAW_AGILITY_DIR)
         set(RAW_RTOMM_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtOmmBake.hlsl)
         add_custom_command(

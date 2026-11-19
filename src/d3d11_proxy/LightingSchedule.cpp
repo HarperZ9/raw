@@ -188,11 +188,13 @@ void LightingScheduleOnPresent(bool worldFrame)
     if (b && b->Ready()) {
         raw::bridge::RtFrameStats r;
         if (b->RtStats(&r)) {
-            char x[600];
+            char x[900];
             snprintf(x, sizeof x, "%s\"rt_draws\":%u,\"rt_instances\":%u,\"rt_meshes\":%u,\"rt_skipped\":%u,\"rt_triangles\":%llu,\"rt_blas_mb\":%.1f,\"rt_build_ms\":%.4f,\"rt_trace_ms\":%.4f,"
-                     "\"rt_alpha_instances\":%u,\"rt_alpha_meshes\":%u,\"rt_masks\":%u,\"rt_no_mask\":%u,\"rt_uv_mb\":%.2f,\"rt_omm_arrays\":%u",
+                     "\"rt_alpha_instances\":%u,\"rt_alpha_meshes\":%u,\"rt_masks\":%u,\"rt_no_mask\":%u,\"rt_uv_mb\":%.2f,\"rt_omm_arrays\":%u,"
+                     "\"rt_mat_meshes\":%u,\"rt_albedos\":%u,\"rt_no_albedo\":%u,\"rt_albedo_mb\":%.1f,\"rt_cache_cells\":%u,\"rt_cache_ms\":%.4f",
                      stats.empty() ? "" : ",", r.draws, r.instances, r.meshes, r.skipped, (unsigned long long)r.triangles, double(r.blasBytes) / 1048576.0, r.buildMs, r.traceMs,
-                     r.alphaInstances, r.alphaMeshes, r.masks, r.noMask, double(r.uvBytes) / 1048576.0, r.ommArrays);
+                     r.alphaInstances, r.alphaMeshes, r.masks, r.noMask, double(r.uvBytes) / 1048576.0, r.ommArrays,
+                     r.matMeshes, r.albedos, r.noAlbedo, double(r.albedoBytes) / 1048576.0, r.cacheCells, r.cacheMs);
             stats += x;
         }
     }

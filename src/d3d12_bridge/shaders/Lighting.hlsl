@@ -175,7 +175,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float skyVis = rt && (flags.x & FLAG_SKY) != 0u && sunColour.w > 0.5f ? RtIdx.Load(ip).w : 1.0f;
     amb *= lerp(1.0f, skyVis, cluster.w);
     // Where the sky is blocked, the blocking surfaces send their own light: the bounce the sky rays found.
-    const float3 bounce = rt && (flags.x & FLAG_BOUNCE) != 0u && sunColour.w > 0.5f ? RtBounce.Load(ip).rgb * proj.w : 0.0f.xxx;
+    // Interiors too (FLAG_BOUNCE_IN, at RtBounceInterior): lamp-lit walls send their light on.
+    const bool bounceHere = sunColour.w > 0.5f || (flags.x & FLAG_BOUNCE_IN) != 0u;
+    const float3 bounce = rt && (flags.x & FLAG_BOUNCE) != 0u && bounceHere ? RtBounce.Load(ip).rgb * proj.w : 0.0f.xxx;
     amb += bounce;
 
     if (flags.w == 1u) { return float4(s.n * 0.5f + 0.5f, game.a); }

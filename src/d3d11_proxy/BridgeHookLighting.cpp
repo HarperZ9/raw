@@ -55,12 +55,18 @@ void LightingApplyTuning()
         rt.sky = t.rtSky;
         rt.skyLength = t.rtSkyLength;
         rt.reflect = t.rtReflect;
-        rt.debug = t.rtDebug;
+        rt.debug = t.rtDebug != 0;
+        rt.debugView = t.rtDebug;
         rt.omm = t.rtOmm;
+        rt.materials = t.rtMaterials;
+        rt.matSide = uint32_t(t.rtMatSide);
+        rt.cache = t.rtCache;
+        rt.cacheCell = t.rtCacheCell;
         Bridge()->TuneRt(rt);
     }
     g_sceneGeometryActive = Cfg().enabled && t.rtShadows && TxMode_Get() == 1;
     SceneGeometry_SetAlpha(t.rtAlpha);
+    SceneGeometry_SetMaterials(t.rtMaterials);
     GameComposite_Set({t.mode == 2 && t.ao, t.mode == 2 && t.volumetricFog && t.fogReplacesGame});
 }
 
@@ -84,9 +90,14 @@ void LoadLightingConfig(const std::string& ini)
     t.rtSkyStrength = f("RtSkyStrength", t.rtSkyStrength);
     t.rtSkyLength = f("RtSkyLength", t.rtSkyLength);
     t.rtBounce = f("RtBounce", t.rtBounce);
+    t.rtBounceInterior = f("RtBounceInterior", t.rtBounceInterior);
     t.rtReflect = i("RtReflect", 1) != 0;
-    t.rtDebug = i("RtDebug", 0) != 0;
+    t.rtDebug = i("RtDebug", 0);
     t.rtOmm = i("RtOmm", 1) != 0;
+    t.rtMaterials = i("RtMaterials", 1) != 0;
+    t.rtMatSide = i("RtMatSide", t.rtMatSide);
+    t.rtCache = i("RtCache", 1) != 0;
+    t.rtCacheCell = f("RtCacheCell", t.rtCacheCell);
     t.ao = i("Ao", 1) != 0; t.fogReplacesGame = i("FogReplacesGame", 0) != 0; t.cascades = i("Cascades", 0) != 0; t.view = i("View", 0);
     // Cascades=0: the sun's shadow is the game's own filtered mask (match dE76 2.23 against 2.53 with
     // our cascade lookup, which also drew hard twig streaks on the ground).

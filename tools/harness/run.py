@@ -27,6 +27,7 @@ Original work, MIT.
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import shlex
 import shutil
@@ -293,7 +294,10 @@ class Runner(Actions):
             self.inst.set_option("SkyrimCustom.ini", "General", "bAlwaysActive", "1")
             # direct: SkyrimSE.exe itself, with no SKSE in the process (RAW's raw_skse.dll hosts the plugins)
             exe = "SkyrimSE.exe" if self.a.launch == "direct" else "skse64_loader.exe"
-            subprocess.Popen([str(self.inst.game / exe)], cwd=self.inst.game)
+            # Started bare, SkyrimSE.exe hands itself back to Steam, which opens the launcher instead (2026-11-19);
+            # the app id in the environment lets it run in place.
+            env = {**os.environ, "SteamAppId": "489830", "SteamGameId": "489830"} if self.a.launch == "direct" else None
+            subprocess.Popen([str(self.inst.game / exe)], cwd=self.inst.game, env=env)
             self.log(f"launched {exe} at {w}x{h}")
             for line in script:
                 line = line.split("#", 1)[0].strip()

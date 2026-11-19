@@ -5510,3 +5510,6 @@ range:PapyrusCode.end	range	0x1470000	measured	used in game on 1.6.1170 (engine 
 off:TES::gridCells	offset	0x78	measured	used in game on 1.6.1170 (engine control 1 to 7)
 off:TESObjectCELL::worldSpace	offset	0x128	measured	used in game on 1.6.1170 (engine control 1 to 7)
 off:SkyrimVM::impl	offset	0x200	commonlib	CommonLibSSE-NG layout notes, not yet used by RAW
+fn:BGSSaveLoadManager::Save_Impl	function	0x60FD40	addrlib	Address Library id 35727 (SKSE host save hook)
+fn:BGSSaveLoadManager::Load_Impl	function	0x610480	addrlib	Address Library id 35728 (SKSE host load hook)
+off:UI::menuMap	offset	0x128	commonlib	CommonLibSSE-NG layout (SKSE host DataLoaded)

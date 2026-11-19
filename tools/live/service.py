@@ -178,6 +178,7 @@ class Service:
             self.s.log(f"service error: {type(e).__name__}: {e}")
             (self.dir / "service_error.txt").write_text(traceback.format_exc(), encoding="utf-8")
         finally:
+            self.carry_ini()   # the session's ini as it ended, for the next service: <session>/carried-<n>.ini
             after = self.s.teardown("the service is stopping")
             self.write_state()
             (self.dir / "report.json").write_text(json.dumps(self.s.report, indent=1), encoding="utf-8")

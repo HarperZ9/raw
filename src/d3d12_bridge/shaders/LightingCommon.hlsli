@@ -31,7 +31,7 @@ cbuffer P : register(b0) {
 
 static const uint FLAG_MATCH = 1u, FLAG_SOFT = 2u, FLAG_GGX = 4u, FLAG_FOG = 8u, FLAG_CONTACT = 16u, FLAG_AO = 32u,
                   FLAG_CASCADES = 64u, FLAG_SURFACE = 128u, FLAG_SHADOWS = 256u,
-                  FLAG_FOG_REPLACES = 512u;   // our fog takes the game's distance fog's place (off: the game's runs after ours)
+                  FLAG_FOG_REPLACES = 512u, FLAG_RT = 1024u;   // our fog takes the game's distance fog's place (off: the game's runs after ours)
 static const float PI = 3.14159265358979f;
 
 float4 vs(uint i : SV_VertexID) : SV_Position {

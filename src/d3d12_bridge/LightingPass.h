@@ -39,6 +39,7 @@ struct LightingTuning
     float contactLength = 40.0f;    // game units
     float aoStrength = 0.7f;        // the game's own AO still multiplies the frame after this pass
     float clusterFar = 40000.0f;    // the last depth slice ends here
+    bool  rtShadows = false;        // improved: ray-traced sun and point-light shadows on the game's geometry (attached to raw::tx)
 };
 
 // Lights into clusters: out[cluster] holds one bit per light index.
@@ -46,6 +47,7 @@ void BuildClusters(const SceneLighting& s, float nearZ, float farZ, uint32_t (*o
 
 std::unique_ptr<IBridgePass> MakeLightingPass();
 bool LightingPassTune(IBridgePass* pass, const LightingTuning& t);
+bool LightingPassUniform(IBridgePass* pass, const void** data, size_t* bytes);   // cbuffer P as filled for this frame
 bool LightingPassReload(IBridgePass* pass, const std::vector<uint8_t>& vs, const std::vector<uint8_t>& fs,
                         const std::vector<uint8_t>& fogFs, std::string& err);
 

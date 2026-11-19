@@ -2,6 +2,7 @@
 // Private state of D3D12Bridge, shared by D3D12Bridge.cpp (setup) and
 // BridgeFrame.cpp (per-frame work).
 #include "D3D12Bridge.h"
+#include "RtScene.h"
 #include <wrl/client.h>
 
 namespace raw::bridge
@@ -54,7 +55,11 @@ struct D3D12Bridge::Impl
     ComPtr<ID3D12Fence> ownFence;          // the pass's own retirement fence when attached
     uint64_t ownValue = 0;
     bool CreateAttached(SharedTex& t, DXGI_FORMAT fmt, bool uav, const char* name, UINT w, UINT h);
-    bool HandToHost();
+    bool HandToHost(const std::vector<ID3D11Resource*>& extra);
+    std::unique_ptr<RtScene> rt;           // attached only
+    std::vector<RtDraw> pendingDraws;
+    RtTuning rtTune;
+    bool CreateRt();
     bool AttachLayer();                     // every shared texture to COMMON, the layer's work submitted
     ComPtr<ID3D11Fence>          fence11;
     ComPtr<ID3D11ComputeShader>  depthCS;     // DepthCopy.hlsl

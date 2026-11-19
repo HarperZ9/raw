@@ -125,7 +125,37 @@ struct BridgeTimings
 // The textures both devices share. Each is render-target capable with
 // simultaneous access and sits in D3D12_RESOURCE_STATE_COMMON whenever no
 // D3D12 submission is running.
-enum class Shared : UINT { ColorIn, Depth, Normal, ColorOut, Motion, Albedo, Specular, ShadowMask, ShadowAtlas, Emissive, Count };
+// One rigid opaque lit draw of the frame, for the ray-tracing scene (RtScene.h). The buffers carry a
+// reference the bridge releases.
+struct RtDraw
+{
+    ID3D11Buffer* vb = nullptr;
+    UINT vbOffset = 0, stride = 0, posOffset = 0;
+    DXGI_FORMAT posFormat = DXGI_FORMAT_UNKNOWN;
+    ID3D11Buffer* ib = nullptr;
+    DXGI_FORMAT ibFormat = DXGI_FORMAT_R16_UINT;
+    UINT ibOffset = 0, indexCount = 0, startIndex = 0;
+    INT baseVertex = 0;
+    float world[12] = {};   // model to camera-relative world, rows (the game's vertex buffer 2)
+};
+
+struct RtTuning
+{
+    bool     enabled = false;        // attached to raw::tx only
+    float    sunLength = 8000.0f;    // sun rays, game units
+    float    sourceRadius = 6.0f;    // point lights' size for the penumbra, game units
+    float    sunCone = 0.0093f;      // the sun's angular radius in radians, widened a little
+    uint32_t maxNewPerFrame = 400;   // BLAS builds a frame
+};
+
+struct RtFrameStats
+{
+    uint32_t draws = 0, skipped = 0, resets = 0, instances = 0, meshes = 0, newMeshes = 0;
+    uint64_t newTriangles = 0, triangles = 0, blasBytes = 0;
+    double   buildMs = 0, traceMs = 0;
+};
+
+enum class Shared : UINT { ColorIn, Depth, Normal, ColorOut, Motion, Albedo, Specular, ShadowMask, ShadowAtlas, Emissive, RtVisibility, RtLights, Count };
 constexpr UINT kSharedCount = static_cast<UINT>(Shared::Count);
 
 // What the bridge hands a pass: its device, its queue, its fence and the
@@ -162,6 +192,7 @@ struct FrameConstants
     bool            hasShadows = false;  // the shared shadow atlas holds this frame's sun cascades
     bool            hasNormal = false;   // the shared normal texture holds this frame's normals
     bool            hasMotion = false;   // the shared motion texture holds this frame's motion vectors
+    bool            rt = false;          // the RT visibility and light textures hold this frame
 };
 
 // A pass that runs on the D3D12 side. One frame, in the order the game
@@ -266,6 +297,10 @@ public:
 
     // Engine pass only: its knobs, and the visibility it computed for the last
     // frame (one float a pixel, top row first). False without an engine pass.
+    // Ray tracing on the game's geometry (attached to raw::tx only).
+    void SetRtDraws(std::vector<RtDraw>&& draws);
+    void TuneRt(const RtTuning& t);
+    bool RtStats(RtFrameStats* out);
     bool TuneEngine(const EngineTuning& t);
     IBridgePass* ActivePass();   // the pass behind the seam, for its own knobs (LightingPassTune)
     bool ReadEngineVisibility(std::vector<float>* out);

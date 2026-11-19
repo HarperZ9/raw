@@ -1,0 +1,18 @@
+# Ray-traced shadows on the game's own geometry, on raw::tx's device (docs/RAYTRACING.md): Riverwood
+# by day and at night, and the Bannered Mare. Each view: the game, ours improved without and with RT,
+# and RT alone on the base.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+keyframe still steps=game,improved_no_rt,improved,improved_base,improved_rt hold=60
+scene bannered_mare
+console coc whiterunbanneredmare
+wait 8
+keyframe still steps=game,improved_no_rt,improved,improved_base,improved_rt hold=60
+scene riverwood_night
+console set gamehour to 23
+console coc riverwood
+wait 8
+keyframe still steps=game,improved_no_rt,improved,improved_base,improved_rt hold=60
+quit

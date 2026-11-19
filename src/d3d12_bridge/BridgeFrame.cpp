@@ -1,6 +1,7 @@
 // D3D12Bridge per-frame work: depth capture, the fence round trip, and GPU
 // timestamps on both queues. Original work, MIT.
 #include "BridgeImpl.h"
+#include "LightingPass.h"
 
 namespace raw::bridge
 {
@@ -100,6 +101,23 @@ bool D3D12Bridge::CaptureMotion(ID3D11Texture2D* motionTex)
 
 void D3D12Bridge::SetCamera(const CameraConstants& camera) { m->camera = camera; }
 
+void D3D12Bridge::SetRtDraws(std::vector<RtDraw>&& draws)
+{
+    for (RtDraw& d : m->pendingDraws) { if (d.vb) d.vb->Release(); if (d.ib) d.ib->Release(); }
+    m->pendingDraws = std::move(draws);
+    if (!m->rt) {
+        for (RtDraw& d : m->pendingDraws) { if (d.vb) d.vb->Release(); if (d.ib) d.ib->Release(); }
+        m->pendingDraws.clear();
+    }
+}
+void D3D12Bridge::TuneRt(const RtTuning& t) { m->rtTune = t; if (m->rt) m->rt->Tune(t); }
+bool D3D12Bridge::RtStats(RtFrameStats* out)
+{
+    if (!m->rt || !out) return false;
+    *out = m->rt->Stats();
+    return true;
+}
+
 // Stores the pass's newest retired timings under the frame they belong to.
 void D3D12Bridge::Impl::HarvestPassTimings()
 {
@@ -134,6 +152,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     fc.camera = m->camera;
     fc.hasNormal = s.hasNormal;
     fc.hasMotion = s.hasMotion;
+    fc.rt = m->attached && m->rt && m->rt->Active() && m->cfg.lightingPass;
     if (m->cfg.lightingPass) {
         fc.lighting = &m->lighting;
         fc.hasSurface = s.hasSurface;
@@ -164,7 +183,17 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     if (m->attached) {
         // One queue: the layer submits what D3D11 recorded so far with every shared texture in
         // COMMON, the pass follows on the same queue, and the copy-out lands in the layer's next list.
-        if (!m->HandToHost() || !m->pass->Submit(0, v2)) {
+        std::vector<ID3D11Resource*> hand;
+        bool rtOk = false;
+        if (fc.rt) {
+            m->rt->SetDraws(std::move(m->pendingDraws), hand, m->cfg.layer.native);
+            const void* u = nullptr;
+            size_t ub = 0;
+            if (LightingPassUniform(m->pass.get(), &u, &ub))
+                rtOk = m->rt->Record(u, ub, m->depthIn.res12.Get(), m->normalIn.res12.Get(),
+                                     m->shared[static_cast<UINT>(Shared::Specular)].res12.Get());
+        }
+        if (!m->HandToHost(hand) || (rtOk && !m->rt->Submit(m->queue.Get())) || !m->pass->Submit(0, v2)) {
             m->log("[D3D12Bridge] attached hand-over failed; bridge off");
             c->End(s.disjoint.Get());
             s.open = false;

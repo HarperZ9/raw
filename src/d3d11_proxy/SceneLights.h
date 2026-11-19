@@ -36,4 +36,7 @@ const raw::bridge::SceneLighting& SceneLights_Frame();
 ID3D11Texture2D* SceneLights_ShadowMask();
 ID3D11Texture2D* SceneLights_Cascades();
 void SceneLights_OnPresent();
+// The current draw's world matrix (3 rows) when SceneLights_BeforeDraw counted it as a lit draw of
+// the opaque set; null otherwise. Valid until the next draw.
+const float* SceneLights_DrawWorld();
 }

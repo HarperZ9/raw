@@ -457,6 +457,19 @@ target_link_libraries(raw_dx12_translate PUBLIC dxguid)
 target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/TxMode.cpp src/d3d11_proxy/TxHarness.cpp)
 # Hot reload (docs/HOT_RELOAD.md): shaders and parameters while the game runs.
 target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/HotReload.cpp src/d3d11_proxy/Overlay.cpp)
+# Ray tracing on the game's geometry (docs/RAYTRACING.md), on raw::tx's device.
+target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/SceneGeometry.cpp)
+if(RAW_ENGINE_DIR)
+    set(RAW_RTSHADOW_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtShadow.hlsl)
+    add_custom_command(
+        OUTPUT ${RAW_ENGINE_GEN}/rt_shadow.h
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T cs_6_5 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow.h -Vn kDxil_rt_shadow ${RAW_RTSHADOW_HLSL}
+        DEPENDS ${RAW_RTSHADOW_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
+        COMMENT "dxc: ray-traced shadows -> DXIL header"
+        VERBATIM)
+    target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtScene.cpp ${RAW_ENGINE_GEN}/rt_shadow.h)
+endif()
 target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/ShaderCompiler.cpp)
 target_link_libraries(d3d11_proxy PRIVATE raw_dx12_translate)
 # A map file and a PDB beside d3d11.dll, so a fault's module offset in the log names a function.

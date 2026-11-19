@@ -120,7 +120,7 @@ void LightingMakeSteps()
 {
     const LightingTuning base = Cfg().light;
     auto with = [&](int mode, auto edit) { LightingTuning t = base; t.mode = mode; edit(t); return t; };
-    auto none = [](LightingTuning& t) { t.softShadows = t.ggxSpecular = t.volumetricFog = t.contactShadows = t.ao = false; };
+    auto none = [](LightingTuning& t) { t.softShadows = t.ggxSpecular = t.volumetricFog = t.contactShadows = t.ao = t.rtShadows = false; };
     s_all = {
         {"game", with(0, [](LightingTuning&) {})},
         {"match", with(1, [](LightingTuning&) {})},
@@ -132,6 +132,8 @@ void LightingMakeSteps()
         {"improved_fog", with(2, [&](LightingTuning& t) { none(t); t.volumetricFog = true; })},
         {"improved_contact", with(2, [&](LightingTuning& t) { none(t); t.contactShadows = true; })},
         {"improved_ao", with(2, [&](LightingTuning& t) { none(t); t.ao = true; })},
+        {"improved_rt", with(2, [&](LightingTuning& t) { none(t); t.rtShadows = true; })},
+        {"improved_no_rt", with(2, [&](LightingTuning& t) { t.rtShadows = false; })},
         {"improved", with(2, [](LightingTuning&) {})},
         {"game_after", with(0, [](LightingTuning&) {})},
     };
@@ -183,6 +185,15 @@ void LightingScheduleOnPresent(bool worldFrame)
     CaptureBackbuffer(Cfg().lightCaptureDir + "\\" + Cfg().lightScene + "_" + st.name + ".bmp");
     std::string stats;
     if (b && b->Ready()) LightingStats(st.name, st.t.mode, &stats);
+    if (b && b->Ready()) {
+        raw::bridge::RtFrameStats r;
+        if (b->RtStats(&r)) {
+            char x[400];
+            snprintf(x, sizeof x, "%s\"rt_draws\":%u,\"rt_instances\":%u,\"rt_meshes\":%u,\"rt_skipped\":%u,\"rt_triangles\":%llu,\"rt_blas_mb\":%.1f,\"rt_build_ms\":%.4f,\"rt_trace_ms\":%.4f",
+                     stats.empty() ? "" : ",", r.draws, r.instances, r.meshes, r.skipped, (unsigned long long)r.triangles, double(r.blasBytes) / 1048576.0, r.buildMs, r.traceMs);
+            stats += x;
+        }
+    }
     if (Cfg().harness) HarnessResult(st, stats);
     if (b && b->Ready() && Cfg().lightDump && std::strcmp(st.name, "match") == 0) LightingDump();
     if (s_timed)

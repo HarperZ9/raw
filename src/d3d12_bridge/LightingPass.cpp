@@ -39,9 +39,9 @@ struct LightUniform
 static_assert(sizeof(LightUniform) == 30 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16, "layout of cbuffer P");
 static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
-constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512;
+constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024;
 constexpr RasterBinding U = RasterBinding::Uniform, T = RasterBinding::Texture;
-constexpr RasterBinding kLightLayout[10] = {U, T, T, T, T, T, T, T, T, T};
+constexpr RasterBinding kLightLayout[12] = {U, T, T, T, T, T, T, T, T, T, T, T};
 constexpr RasterBinding kFogLayout[4] = {U, T, T, T};
 
 class LightingPass final : public IBridgePass
@@ -72,6 +72,8 @@ public:
         m_out = import(Shared::ColorOut, TextureFormat::RGBA16Float, TextureUsage::RenderTarget);
         m_motion = import(Shared::Motion, TextureFormat::RG16Float, S);
         m_soft = import(Shared::Emissive, TextureFormat::RGBA16Float, S);
+        m_rtVis = import(Shared::RtVisibility, TextureFormat::RGBA8Unorm, S);
+        m_rtIdx = import(Shared::RtLights, TextureFormat::RGBA8Unorm, S);
         if (!m_game.valid() || !m_depth.valid() || !m_normal.valid() || !m_albedo.valid() || !m_spec.valid() || !m_mask.valid() ||
             !m_atlas.valid() || !m_out.valid()) return Fail("importTexture");
         const TextureUsage RT = TextureUsage::RenderTarget | TextureUsage::Sampled;
@@ -125,8 +127,9 @@ public:
             for (uint32_t k = 1; k <= 3; ++k) c->timestamp(k);
         }
         const TextureHandle aoVis = ao ? m_ao.history() : m_game;   // unused without the flag
-        const RasterBind light[10] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_normal, {}}, {{}, m_albedo, {}}, {{}, m_spec, {}},
-                                     {{}, m_mask, {}}, {{}, m_atlas, {}}, {{}, aoVis, {}}, {{}, m_game, {}}, {{}, m_soft.valid() ? m_soft : m_game, {}}};
+        const RasterBind light[12] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_normal, {}}, {{}, m_albedo, {}}, {{}, m_spec, {}},
+                                     {{}, m_mask, {}}, {{}, m_atlas, {}}, {{}, aoVis, {}}, {{}, m_game, {}}, {{}, m_soft.valid() ? m_soft : m_game, {}},
+                                     {{}, m_rtVis.valid() ? m_rtVis : m_game, {}}, {{}, m_rtIdx.valid() ? m_rtIdx : m_game, {}}};
         Draw(*c, m_lit, m_lightPipe, light);
         c->timestamp(4);
         const RasterBind fog[4] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}};
@@ -164,6 +167,7 @@ public:
     }
 
     void Tune(const LightingTuning& t) { m_tune = t; }
+    void Uniform(const void** d, size_t* n) const { *d = &m_u; *n = sizeof m_u; }
 
     // Hot reload: new DXIL for the lighting and fog pipelines. Both are made before either is
     // swapped in, so a failure keeps the frame on the old pair. The old pipelines stay alive
@@ -210,6 +214,7 @@ private:
                   (t.contactShadows ? kContact : 0u) | (t.ao ? kAo : 0u);
         if (t.cascades) f |= kCascades;
         if (t.fogReplacesGame) f |= kFogReplaces;
+        if (frame.rt && t.rtShadows && m_rtVis.valid() && m_rtIdx.valid()) f |= kRt;
         if (frame.hasShadows && s.hasCascades) f |= kShadows;
         u.flags[0] = f; u.flags[1] = s.lightCount; u.flags[2] = s.cascades; u.flags[3] = uint32_t(t.view);
         std::memcpy(u.clipToWorld, s.clipToWorld, 64);
@@ -262,7 +267,7 @@ private:
     std::unique_ptr<Device> m_dev;
     std::string m_err;
     ao_rt::Pass m_ao;
-    TextureHandle m_soft, m_game, m_depth, m_normal, m_albedo, m_spec, m_mask, m_atlas, m_out, m_motion, m_lit, m_aoOut;
+    TextureHandle m_rtVis, m_rtIdx, m_soft, m_game, m_depth, m_normal, m_albedo, m_spec, m_mask, m_atlas, m_out, m_motion, m_lit, m_aoOut;
     BufferHandle m_uniform;
     RasterPipelineHandle m_lightPipe, m_fogPipe;
     LightUniform m_u{};
@@ -275,6 +280,14 @@ private:
 } // namespace
 
 std::unique_ptr<IBridgePass> MakeLightingPass() { return std::make_unique<LightingPass>(); }
+
+bool LightingPassUniform(IBridgePass* pass, const void** data, size_t* bytes)
+{
+    auto* p = dynamic_cast<LightingPass*>(pass);
+    if (!p) return false;
+    p->Uniform(data, bytes);
+    return true;
+}
 
 bool LightingPassReload(IBridgePass* pass, const std::vector<uint8_t>& vs, const std::vector<uint8_t>& fs, const std::vector<uint8_t>& fogFs,
                         std::string& err)

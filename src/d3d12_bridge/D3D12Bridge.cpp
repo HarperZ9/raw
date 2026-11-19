@@ -124,12 +124,29 @@ bool D3D12Bridge::Impl::CreateAttached(SharedTex& t, DXGI_FORMAT fmt, bool uav, 
     return true;
 }
 
-bool D3D12Bridge::Impl::HandToHost()
+bool D3D12Bridge::Impl::HandToHost(const std::vector<ID3D11Resource*>& extra)
 {
-    ID3D11Resource* list[kSharedCount];
-    UINT n = 0;
-    for (auto& t : shared) if (t.tex11) list[n++] = t.tex11.Get();
-    return SUCCEEDED(cfg.layer.prepare(ctx11.Get(), list, n, D3D12_RESOURCE_STATE_COMMON));
+    std::vector<ID3D11Resource*> list(extra);
+    for (auto& t : shared) if (t.tex11) list.push_back(t.tex11.Get());
+    return SUCCEEDED(cfg.layer.prepare(ctx11.Get(), list.data(), UINT(list.size()), D3D12_RESOURCE_STATE_COMMON));
+}
+
+// The ray-tracing scene on the layer's device; its two outputs join the pass's inputs.
+bool D3D12Bridge::Impl::CreateRt()
+{
+    rt = std::make_unique<RtScene>();
+    std::string err;
+    if (!rt->Create(dev12.Get(), cfg.width, cfg.height, log, err)) {
+        log("[RT] off: %s", err.c_str());
+        rt.reset();
+        return true;   // the lighting pass runs without it
+    }
+    rt->Tune(rtTune);
+    shared[static_cast<UINT>(Shared::RtVisibility)].res12 = rt->Visibility();
+    shared[static_cast<UINT>(Shared::RtLights)].res12 = rt->Lights();
+    sharedFormat[static_cast<UINT>(Shared::RtVisibility)] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sharedFormat[static_cast<UINT>(Shared::RtLights)] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    return true;
 }
 
 bool D3D12Bridge::Impl::CreatePass()
@@ -229,6 +246,7 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         && (!cfg.lightingPass || m->CreateLightingShared())
         && stage("bridge: after shared textures")
         && m->CreateDepthCopy() && m->CreateQueries() && m->CreateProbe() && stage("bridge: after views and queries")
+        && (!m->attached || !cfg.lightingPass || m->CreateRt())
         && m->CreatePass();
     if (!ok) { m->log("[D3D12Bridge] initialisation failed; bridge stays off"); Shutdown(); return false; }
     if (!m->attached && !m->SelfTest()) {
@@ -250,6 +268,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->pass.reset();   // before the device and the textures it borrows
+    m->rt.reset();
     LogFn log = m->log;
     if (m->cpuEvent) CloseHandle(m->cpuEvent);
     m = std::make_unique<Impl>();

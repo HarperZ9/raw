@@ -19,7 +19,9 @@ Texture2D<float4> Spec    : register(t3);
 Texture2D<float4> Mask    : register(t4);
 Texture2D<float4> AoHist  : register(t6);
 Texture2D<float4> GameLit : register(t7);
-Texture2D<float4> SoftMap : register(t8);   // RAW's emissive target: for soft-lit draws the game's soft-lighting colour
+Texture2D<float4> SoftMap : register(t8);
+Texture2D<float4> RtVis   : register(t9);    // RtShadow.hlsl: sun and three lights' ray-traced visibility
+Texture2D<float4> RtIdx   : register(t10);   // which lights, index + 1 over 255   // RAW's emissive target: for soft-lit draws the game's soft-lighting colour
 
 uint clusterOf(float2 px, float z) {
     const uint tx = min(uint(px.x * dims.z * TILES_X), TILES_X - 1u);
@@ -115,6 +117,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 lift = s.n * (0.3f + 0.002f * z);                 // ray origins off the surface
     const float4 m4 = Mask.Load(ip);
 
+    const bool rt = !match && (flags.x & FLAG_RT) != 0u;
+    const float4 rv = rt ? RtVis.Load(ip) : 1.0f.xxxx;
+    const uint3 rIdx = rt ? uint3(RtIdx.Load(ip).xyz * 255.0f + 0.5f) : uint3(0u, 0u, 0u);
     float3 diff = 0.0f, spec = 0.0f;
     float sunShadow = 1.0f;
     if (sunDir.w > 0.5f) {
@@ -125,6 +130,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // and went black (riverwood_day bush 0.267 -> 0.232 in luminance).
         if (!match && (flags.x & FLAG_CONTACT) != 0u && base != 5u && sunShadow > 0.0f && dot(s.n, sunDir.xyz) > 0.0f)
             sunShadow *= screenShadow(p + lift, sunDir.xyz, tune.w, 0.02f, jit, 12u);
+        if (rt) { sunShadow = min(sunShadow, rv.x); }   // the game's mask keeps what the scene lacks (skinned actors, foliage)
         addLight(s, sunDir.xyz, sunColour.rgb * sunShadow, sunColour.rgb, diff, spec);
     }
 
@@ -145,7 +151,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const int ch = int(lightColS[li].w);
             if (ch >= 0 && ch <= 3) { sh = m4[ch]; }   // interiors without sun shadows use channel 0 too
             float3 c = lightColS[li].rgb * att;
-            if (!match && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
+            const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;
+            if (slot != 0u) { sh = min(sh, rv[slot]); }
+            if (!match && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
                 sh *= screenShadow(p + lift, l, min(dist, tune.z), 4.0f / max(dist, 1.0f), jit, 10u);
                 --softLeft;
             }

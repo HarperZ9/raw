@@ -16,6 +16,7 @@
 #include "SceneLights.h"
 #include "GameComposite.h"
 #include "HotReload.h"
+#include "SceneGeometry.h"
 #include "TxMode.h"
 #include "Translate.h"
 #include "Overlay.h"
@@ -45,6 +46,12 @@ void LightingApplyTuning()
 {
     const LightingTuning& t = Cfg().light;
     if (Bridge()) raw::bridge::LightingPassTune(Bridge()->ActivePass(), t);
+    if (Bridge()) {
+        raw::bridge::RtTuning rt;
+        rt.enabled = t.mode == 2 && t.rtShadows && TxMode_Get() == 1;
+        Bridge()->TuneRt(rt);
+    }
+    g_sceneGeometryActive = Cfg().enabled && t.rtShadows && TxMode_Get() == 1;
     GameComposite_Set({t.mode == 2 && t.ao, t.mode == 2 && t.volumetricFog && t.fogReplacesGame});
 }
 
@@ -60,6 +67,7 @@ void LoadLightingConfig(const std::string& ini)
     t.mode = i("Mode", 1);
     t.softShadows = i("SoftShadows", 1) != 0; t.ggxSpecular = i("GgxSpecular", 1) != 0;
     t.volumetricFog = i("VolumetricFog", 1) != 0; t.contactShadows = i("ContactShadows", 1) != 0;
+    t.rtShadows = i("RtShadows", 0) != 0;   // opt-in: card and facet artifacts (docs/RAYTRACING.md)
     t.ao = i("Ao", 1) != 0; t.fogReplacesGame = i("FogReplacesGame", 0) != 0; t.cascades = i("Cascades", 0) != 0; t.view = i("View", 0);
     // Cascades=0: the sun's shadow is the game's own filtered mask (match dE76 2.23 against 2.53 with
     // our cascade lookup, which also drew hard twig streaks on the ground).
@@ -140,6 +148,7 @@ bool LightingAtOpaque(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr)
     if (!mask)
         for (uint32_t k = 0; k < l.lightCount; ++k) l.lights[k].shadowChannel = -1;
     b->SetLighting(l);
+    b->SetRtDraws(SceneGeometry_Take());
     raw::bridge::PassConstants k = Cfg().k;
     return b->Execute(sceneHdr, sceneHdr, k);
 }
@@ -153,6 +162,7 @@ void LightingOnPresent(bool worldFrame)
     }
     HotReload_OnPresent();
     Overlay_Draw();
+    SceneGeometry_Drop();   // draws of a frame that never reached the bridge (it was off, or not yet made)
     LightingScheduleOnPresent(worldFrame);
 }
 

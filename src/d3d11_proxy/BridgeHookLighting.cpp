@@ -79,6 +79,7 @@ void LightingApplyTuning()
         rt.reflect = t.rtReflect;
         rt.rest = t.rtRest;
         rt.restReuse = t.rtRestReuse;
+        rt.farLod = t.rtFar;
         rt.debug = t.rtDebug != 0;
         rt.debugView = t.rtDebug;
         rt.omm = t.rtOmm;
@@ -126,6 +127,7 @@ void LoadLightingConfig(const std::string& ini)
     t.rtReflect = i("RtReflect", 1) != 0;
     t.rtRest = i("RtRest", 1) != 0;
     t.rtRestReuse = i("RtRestReuse", 1) != 0;
+    t.rtFar = i("RtFar", 1) != 0;
     t.rtDebug = i("RtDebug", 0);
     t.rtOmm = i("RtOmm", 1) != 0;
     t.rtMaterials = i("RtMaterials", 1) != 0;
@@ -133,7 +135,7 @@ void LoadLightingConfig(const std::string& ini)
     t.rtCache = i("RtCache", 1) != 0;
     t.rtCacheCell = f("RtCacheCell", t.rtCacheCell);
     t.rtSkin = i("RtSkin", 1) != 0;
-    t.rtSkinCull = i("RtSkinCull", 1) != 0; t.rtSkinRatio = f("RtSkinRatio", t.rtSkinRatio); t.rtSkinMin = f("RtSkinMin", t.rtSkinMin);
+    t.rtSkinCull = i("RtSkinCull", 1); t.rtSkinRatio = f("RtSkinRatio", t.rtSkinRatio); t.rtSkinMin = f("RtSkinMin", t.rtSkinMin);
     t.wetness = f("Wetness", t.wetness);
     t.snow = f("Snow", t.snow);
     // The game's weather drives Wetness, Puddles and Snow once the engine module reports it

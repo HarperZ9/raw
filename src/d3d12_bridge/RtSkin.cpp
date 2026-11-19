@@ -175,6 +175,10 @@ void RtSkin::ReadStats(uint32_t slot)
                 m_log("[RT]     floating vertex %u: skinned %.1f %.1f %.1f, %.0f units in front of the game's surface, bones %u %u %u %u, weights %.3f %.3f "
                       "%.3f %.3f", w[40], sp[0], sp[1], sp[2], ahead, w[44] & 255, (w[44] >> 8) & 255, (w[44] >> 16) & 255, w[44] >> 24,
                       half(w[45] & 0xFFFF), half(w[45] >> 16), half(w[46] & 0xFFFF), half(w[46] >> 16));
+                float dz[3];
+                std::memcpy(dz, w + 49, 12);
+                m_log("[RT]       at pixel %u %u: the corner's view depth %.1f; the game's depth there %.7f (view depth %.1f); the nearest in 5 x 5 at "
+                      "view depth %.1f", w[48] & 0xFFFF, w[48] >> 16, dz[0], dz[1], dz[2], dz[0] + ahead + 8.0f + 0.02f * dz[0]);
                 // SkinVbCheck: the same vertex from the bytes the game's draw saw, skinned on the CPU with the draw's palette.
                 const uint32_t v = w[40];
                 if (!m.diagVb.empty() && m.posFmt && uint64_t(v) * m.stride + m.posOffset + 12 <= m.diagVb.size() &&
@@ -296,7 +300,7 @@ bool RtSkin::Record(ID3D12GraphicsCommandList4* cl, uint32_t slot, ID3D12Resourc
         uint32_t c[40] = {};
         std::memcpy(c, j.c, 10 * 4);
         c[10] = uint32_t(j.iStart); c[11] = j.ibFormat == DXGI_FORMAT_R16_UINT ? 0u : 1u; c[12] = j.indexCount / 3; c[13] = j.idxFirst;
-        c[14] = k; c[15] = m_filter ? 1u : 0u;
+        c[14] = k; c[15] = uint32_t(m_filter < 0 ? 0 : m_filter);
         std::memcpy(c + 16, &m_ratio, 4); std::memcpy(c + 17, &m_minUnits, 4);
         std::memcpy(c + 18, cam, sizeof cam);   // projA, projB, worldToClip, screen (0: no floating check)
         cl->SetComputeRootDescriptorTable(1, {gpu0.ptr + UINT64(at + 5) * m_inc});

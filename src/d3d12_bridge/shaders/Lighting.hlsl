@@ -124,6 +124,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (base == 7u && (cls & 128u) == 0u) {
         if (flags.w == 14u) { return float4(worldNormal(Normal.Load(ip)) * 0.5f + 0.5f, game.a); }
         if (flags.w == 15u) { return float4(Albedo.Load(ip).rgb, game.a); }
+        // Views 2, 4 and 5 on distant LOD: the sun, sky and bounce of the march through the depth (RtShadow.hlsl, RtFar).
+        if (flags.w == 2u) { return float4(RtVis.Load(ip).xxx, game.a); }
+        if (flags.w == 4u) { return float4(RtIdx.Load(ip).www, game.a); }
+        if (flags.w == 5u) { return float4(RtBounce.Load(ip).rgb * proj.w, game.a); }
         if ((flags.x & FLAG_MATCH) != 0u || (flags.x & FLAG_LOD) == 0u || sunDir.w < 0.5f) { return game; }
         return float4(distantLit(ip, at.xy, d), game.a);
     }
@@ -138,7 +142,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float z = viewZOf(d), jit = ign(px);
     Surface s;
     s.n = worldNormal(Normal.Load(ip));
-    s.v = normalize(-p);
+    s.v = normalize(eyeAt() - p);
     s.shin = exp2(sp.y * 13.0f);
     s.mask = sp.x;
     bool lobe = sp.y > 0.002f && base != 4u && base != 6u;   // the game's own shader had a lobe here

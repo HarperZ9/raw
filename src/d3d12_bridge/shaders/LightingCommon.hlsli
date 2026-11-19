@@ -55,6 +55,17 @@ float3 worldAt(float2 px, float d) {
     return w.xyz / w.w;
 }
 
+// The eye in the game's camera-relative space. Float4 40 of the per-frame constants, which that space is relative to,
+// is the eye in first person but follows the player in third person, so the eye is read from the projection: the
+// point clip space sends to infinity, clipToWorld x (0, 0, 1, 0). The third-person primary-ray view traced from the
+// origin drew the player about 15 % larger than the game (rt7-hair-2). Past 2,000 units the matrix is taken as not
+// projective and the origin stands in.
+float3 eyeAt() {
+    const float4 e = float4(clipToWorld[0].z, clipToWorld[1].z, clipToWorld[2].z, clipToWorld[3].z);
+    const float3 p = abs(e.w) > 1.0e-9f ? e.xyz / e.w : 0.0f.xxx;
+    return dot(p, p) < 2000.0f * 2000.0f ? p : 0.0f.xxx;
+}
+
 // A camera-relative world point to (pixel x, pixel y, depth-buffer value, view z).
 float4 screenOf(float3 p) {
     const float4 q = float4(p, 1.0f);

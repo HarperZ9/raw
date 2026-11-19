@@ -1,0 +1,28 @@
+# Distant LOD marched through the depth buffer (RtFar): the vista over Riverwood from 12,000 units up, game against
+# improved with RtFar off and on, and the sun, sky and bounce views on the distant LOD; then the view at ground level
+# along the valley.
+start load rawharness
+console tai
+scene vista
+console set gamehour to 16
+console coc riverwood
+wait 8
+bat tcl|player.setpos z 12000|player.setangle x 15
+wait 15
+keyframe a steps=game,improved hold=60
+reload ini RtFar=0
+keyframe a_off steps=improved hold=60
+reload ini RtFar=1 View=2
+keyframe a_sun steps=improved hold=30
+reload ini View=4
+keyframe a_sky steps=improved hold=60
+reload ini View=5
+keyframe a_bounce steps=improved hold=30
+reload ini View=0
+bat player.setangle z 180
+wait 8
+keyframe b steps=game,improved hold=60
+reload ini RtFar=0
+keyframe b_off steps=improved hold=60
+reload ini RtFar=1
+quit

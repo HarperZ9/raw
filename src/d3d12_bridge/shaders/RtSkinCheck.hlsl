@@ -25,7 +25,7 @@ RWByteAddressBuffer Idx : register(u1);
 RWByteAddressBuffer Stats : register(u2);   // per job kStatWords uints (RtSkin.h)
 Texture2D<float> Depth : register(t3);      // the game's depth (R32 copy)
 
-static const uint kStatWords = 48u;
+static const uint kStatWords = 52u;
 
 // How far in front of the game's surface a skinned point lands (game units; <= 0 behind it or off screen).
 float inFront(float3 s) {
@@ -42,6 +42,17 @@ float inFront(float3 s) {
     }
     const float zScene = projB / max(projA - d, 1.0e-7f);
     return zScene - c.w - (8.0f + 0.02f * c.w);
+}
+
+// Where a point lands and what the game drew at that pixel (the log's first floating corner).
+void probe(float3 s, out uint px, out float viewZ, out float dCentre, out float zCentre) {
+    const float4 c = float4(dot(w2c[0], float4(s, 1.0f)), dot(w2c[1], float4(s, 1.0f)), dot(w2c[2], float4(s, 1.0f)), dot(w2c[3], float4(s, 1.0f)));
+    const float2 ndc = c.xy / max(c.w, 1.0e-3f);
+    const int2 p = clamp(int2((ndc.x * 0.5f + 0.5f) * screen.x, (0.5f - ndc.y * 0.5f) * screen.y), int2(0, 0), int2(screen) - 1);
+    px = uint(p.x) | (uint(p.y) << 16);
+    viewZ = c.w;
+    dCentre = Depth.Load(int3(p, 0));
+    zCentre = projB / max(projA - dCentre, 1.0e-7f);
 }
 
 uint word(ByteAddressBuffer b, uint a) {
@@ -123,6 +134,10 @@ void main(uint3 id : SV_DispatchThreadID) {
                 Stats.Store(base + 44u * 4u, word(Bv, b + idxOffset));
                 Stats.Store2(base + 45u * 4u, uint2(word(Bv, b + wOffset), word(Bv, b + wOffset + 4u)));
                 Stats.Store(base + 47u * 4u, asuint(max(f0, max(f1, f2))));
+                uint px; float vz, dc, zc;
+                probe(skinned(i[k]), px, vz, dc, zc);
+                Stats.Store(base + 48u * 4u, px);
+                Stats.Store3(base + 49u * 4u, uint3(asuint(vz), asuint(dc), asuint(zc)));
             }
         }
     }
@@ -131,7 +146,8 @@ void main(uint3 id : SV_DispatchThreadID) {
     Stats.InterlockedAdd(base, 1u, dummy);
     if (range) { Stats.InterlockedAdd(base + 4u, 1u, dummy); }
     if (stretched) { Stats.InterlockedAdd(base + 8u, 1u, dummy); }
-    const bool drop = range || ((stretched || floating) && filter != 0u);
+    // filter: 0 keeps every triangle, 1 drops stretched and floating ones, 2 stretched ones only.
+    const bool drop = range || (stretched && filter != 0u) || (floating && filter == 1u);
     const uint o = (idxFirst + t * 3u) * 4u;
     Idx.Store3(o, drop ? uint3(0u, 0u, 0u) : uint3(i[0], i[1], i[2]));
 }

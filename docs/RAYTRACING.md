@@ -530,3 +530,51 @@ with the destination's channels mapped (ps `6a2383091a33f594`, `18d10e9ba7f68469
 register after the game had reused it and turned an NPC's skin black (rt6-next-4); it now taps right after the tint
 when the register is overwritten before lighting (rt6-next-5: skin correct). The NPC's red hair still reads blonde,
 so the hair's tint comes some other way; not found.
+
+## Hair, the skin tint, the actors' depth test and the eye (2026-11-19, later)
+
+Runs rt7-hair-2 (2160p) and the Riverwood capture E:/raw-capture/rt7-hair/000 (1080p, kept out of the repo). ENB 232 of
+232 after each session, settings restored by hash.
+
+**Hair.** Five hair shaders in the capture (ps `a27b51950814d269`, `bcbe8960ef3af1ff`, `02af80891653b90e`,
+`75f69061522952c5`, `d1b9e4d1f461f33f`) build the tint as lerp(1, cb1[1], vertex colour y), with `add rT.xyz, cb1[1],
+-1` then `mad rT.xyz, v12.y, rT, 1`, after lighting has begun, and multiply the lit colour by it at the end. The albedo
+tap at lighting read the grey texture alone, which is why red hair read blonde. `FindHairTint` (GBufferAnalyse.cpp)
+finds the pair, and the patch multiplies the albedo by rT once it is built (`hairTint` in the survey). In rt7-hair-2 the
+inn NPC's dark hair reads dark in improved mode, as in the game (`ingame-rt7-2026-11-19-hair-saadia-game-vs-improved-3x`).
+The red-haired NPC of rt6-next-5 was not in view in this run, so that case still needs a look.
+
+**The skin tint, corrected.** The #34 tint follow was wrong for the two skin shaders (ps `6a2383091a33f594`,
+`18d10e9ba7f68469`). They compute b * b + 2 b t (1 - b) and write it back into the base register, so the base register at
+lighting already holds the tinted colour; the follow read the 2 b t (1 - b) part alone. It is now a fallback, used only
+when the base register is overwritten before lighting. `gbuffer_patch_check` has a skin case and a hair case, each with
+controls; with the #34 code both fail (skin albedo 0.256 / 0.144 / 0.048 against 0.296 / 0.304 / 0.408 expected).
+
+**The actors' colour draws test EQUAL.** In the capture every actor colour draw has depth write off and depth function 3
+(EQUAL) against a prepass of draws with no pixel shader (2,726 in the frame). A colour-draw triangle the prepass did not
+put there is never seen in the game. `[RT] SkinPrepassCheck=1` (SceneSkinPrepass.cpp) keeps each prepass draw by its
+streams and compares the colour draw with it: index range, palette row by row, vertex shader. In rt7-hair-2 it matched
+none, because it kept only draws with a world block and the prepass draws carry none; it now keeps every one, not yet run.
+
+**The floating corners' depth.** The check now logs the pixel and the game's depth at the first floating corner
+(`RtSkinCull=2` drops stretched triangles only). In third person at Riverwood the corners sit at the player's depth (about
+150 units) on pixels where the game shows the background (450 to 1,100 units), at least two pixels outside the game's
+silhouette. Primary-ray views with `RtSkinCull` 0, 1 and 2 look alike.
+
+**The eye.** The third-person primary-ray view draws the player about 15 % larger than the game, magnified about the screen
+centre (left edge 1,097 against 1,210, top 685 against about 720), while the sky mask agrees with the game's at 97 % of
+pixels. The view traced from the origin of the camera-relative space, which is float4 40 of the per-frame constants and
+follows the player in third person. A ray from a point about 20 units nearer the player crosses more of the player.
+`eyeAt()` (LightingCommon.hlsli) now takes the eye from the projection, clipToWorld x (0, 0, 1, 0), for the primary ray,
+the lighting's and the water's view vectors, the reflection rays and the distant LOD. `[SceneLights]` logs the view-to-world
+translation beside float4 40 to check it. Not yet run in game.
+
+**Distant LOD marched through the depth** (`[Lighting] RtFar`, on). Class 7 (terrain, tree and object LOD past the loaded
+cells) is not in the ray-tracing scene. `farOccluded` (RtShadow.hlsl) marches its sun ray and its sky rays through the
+depth buffer in steps that grow by a third, and counts only other class-7 pixels as occluders, nearer than the point by
+0.4 % to a quarter of its distance plus 2,000 units. A ridge then shadows the valley past the cascades, a slope under a
+ridge sees less sky, and the ridge's colour in the game's frame is the bounce, which `distantLit` adds. Views 2, 4 and 5
+show the sun, sky and bounce on class 7. Not yet run in game.
+
+**Not run:** the tone-map order test (tests/rt7tone.txt) and the distant-LOD vista (tests/rt7far.txt). Steam updated the
+game to 1.7.104 during the session, and SKSE 2.2.6 refuses to start it.

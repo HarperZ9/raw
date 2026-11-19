@@ -133,6 +133,8 @@ std::multimap<size_t, Instruction> Taps(const Analysis& a, const Regs& r)
     t.emplace(a.body, Make(op::Mov, {Tmp(r.water, XYZW), Imm4(0, 0, 1, 0)}));
     if (a.albedoBefore != kNone)
         t.emplace(a.albedoBefore, Make(op::Mov, {Tmp(r.albedo, XYZ), Rd(a.albedoReg, a.albedoSwz)}));
+    if (a.tintBefore != kNone)   // after the albedo copy when both land on one instruction (a multimap keeps insertion order)
+        t.emplace(a.tintBefore, Make(op::Mul, {Tmp(r.albedo, XYZ), Rd(r.albedo), Rd(a.tintReg, Swz(0, 1, 2, 2))}));
     if (a.info.specularMask)
         t.emplace(a.specAfter + 1, Make(op::Mov, {Tmp(r.albedo, W), Rd(a.specReg, Swz(a.specComp, a.specComp, a.specComp, a.specComp))}));
     if (a.info.gloss)

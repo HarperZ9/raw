@@ -63,7 +63,7 @@ void water(uint3 id : SV_DispatchThreadID) {
         const float3 p = worldAt(px, L.x);
         if (p.z < 0.0f) {   // the surface is below the camera: seen from above
             float3 n = nL;
-            const float3 v = normalize(-p);
+            const float3 v = normalize(eyeAt() - p);
             if (weather.w > 0.0f) {   // rain falling: drops ring the water
                 const float2 g = rainRings((camPosW.xyz + p).xy, camPosW.w) * (0.35f * weather.w);
                 n = normalize(n + float3(-g, 0.0f));

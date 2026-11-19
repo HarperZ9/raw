@@ -1,0 +1,7 @@
+# A frame capture in the Bannered Mare (D3D11, no patches) to find the hair pixel shader: the draw that writes the
+# NPC's hair pixels, its bytecode and its constants. FrameLedger arms itself after the cell has drawn for a while.
+start load rawharness
+console tai
+console coc whiterunbanneredmare
+wait 75
+quit

@@ -19,7 +19,7 @@ namespace raw::bridge
 class RtSkin
 {
 public:
-    static constexpr uint32_t kMaxDraws = 512, kMaxVertices = 65536, kStatWords = 48, kPerDraw = 6;
+    static constexpr uint32_t kMaxDraws = 512, kMaxVertices = 65536, kStatWords = 52, kPerDraw = 6;
     static constexpr uint64_t kPool = 32ull << 20, kBlas = 96ull << 20, kScratch = 32ull << 20, kBones = kMaxDraws * 3840ull;
     static constexpr uint64_t kIdx = 16ull << 20, kStats = kMaxDraws * kStatWords * 4ull;
     // per slot, per draw: two streams, the pool, the index pool, the stats and the game's index buffer
@@ -34,7 +34,7 @@ public:
     uint32_t Place(D3D12_RAYTRACING_INSTANCE_DESC* out, uint32_t room, uint32_t slot, uint64_t& tris) const;
     void SetCamera(const float pos[3]) { for (int k = 0; k < 3; ++k) m_cam[k] = pos[k]; }
     // RtSkinCheck.hlsl: stretched triangles made degenerate (filter), and the counts logged every logEvery frames.
-    void SetCheck(bool filter, float ratio, float minUnits, uint32_t logEvery, void (*log)(const char*, ...))
+    void SetCheck(int filter, float ratio, float minUnits, uint32_t logEvery, void (*log)(const char*, ...))
     {
         m_filter = filter; m_ratio = ratio; m_minUnits = minUnits; m_logEvery = logEvery; m_log = log;
     }
@@ -58,7 +58,7 @@ private:
     struct Meta { uint32_t indexCount, count, stride, posFmt; bool actor; std::vector<uint8_t> diagVb, diagBv; std::vector<float> diagBones;
                   uint32_t posOffset = 0, bStride = 0, idxOffset = 0, wOffset = 0; uint64_t psHash = 0; uint32_t blendInfo = 0; };
     void ReadStats(uint32_t slot);
-    bool m_filter = true;
+    int m_filter = 1;   // 0 none, 1 stretched and floating, 2 stretched only
     float m_ratio = 4.0f, m_minUnits = 24.0f;
     uint32_t m_logEvery = 0, m_checkFrames = 0;
     uint64_t m_stretched = 0, m_floating = 0;

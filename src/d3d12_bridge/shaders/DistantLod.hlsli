@@ -26,7 +26,7 @@ float3 distantLit(int3 ip, float2 at, float d) {
     const float u = float(l - r) / float(l + r + 1), v = float(b - t) / float(t + b + 1);
     const float2 lim = dims.xy - 1.0f;
     const float3 right = normalize(worldAt(float2(min(px.x + 1.0f, lim.x), px.y), d) - p + 1.0e-4f);
-    const float3 toCam = normalize(-p);
+    const float3 toCam = normalize(eyeAt() - p);
     const float3 canopy = normalize(right * (0.85f * u) + float3(0.0f, 0.0f, 0.3f + 0.4f * v) + toCam * sqrt(max(1.0f - u * u, 0.15f)));
     const float3 n = normalize(lerp(worldNormal(Normal.Load(ip)), canopy, 0.7f));
     const bool rt = (flags.x & FLAG_RT) != 0u;
@@ -37,6 +37,8 @@ float3 distantLit(int3 ip, float2 at, float d) {
     float3 amb = float3(dot(ambient[0].xyz, n) + ambient[0].w, dot(ambient[1].xyz, n) + ambient[1].w, dot(ambient[2].xyz, n) + ambient[2].w);
     const float skyVis = rt && (flags.x & FLAG_SKY) != 0u && sunColour.w > 0.5f ? RtIdx.Load(ip).w : 1.0f;
     amb *= lerp(1.0f, skyVis, cluster.w);
+    // What the ridges that block the sky send back (RtShadow.hlsl, farOccluded; [Lighting] RtFar), as the near bounce is.
+    if (rt && (flags.x & FLAG_BOUNCE) != 0u && sunColour.w > 0.5f) { amb += RtBounce.Load(ip).rgb * proj.w; }
     return knee3(knee3(albedo * (sunColour.rgb * (nl * sh) + max(amb, 0.0f))));
 }
 

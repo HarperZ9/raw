@@ -13,6 +13,7 @@ void SceneGeometry_SetAlpha(bool on);   // [Lighting] RtAlpha: alpha-tested draw
 void SceneGeometry_SetMaterials(bool on);
 void SceneGeometry_SetSkin(bool on, int boneSlot);   // [Lighting] RtSkin, RtSkinBones: skinned draws join, bones from that vertex buffer slot   // [Lighting] RtMaterials: opaque draws carry their coordinates and colour texture too
 void SceneGeometry_SetActors(bool on);
+void SceneGeometry_SetActorView(bool on);   // RtActorView: actor draws on another view than the main one stay out
 void SceneGeometry_SetSkinFilter(int f);   // [Lighting] RtSkinFilter, diagnosis (SceneSkin.cpp)   // [Lighting] RtActors: skinned draws on the main depth target outside the opaque set join
 // The render targets just bound: the main depth target (the opaque set's), the number of colour targets and
 // the first one's format and width; after the frame's capture, joined draws wait for the next frame.

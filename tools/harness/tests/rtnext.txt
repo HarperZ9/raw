@@ -1,0 +1,35 @@
+# Follow-ups to raw#33: the bed's depth for the caustics (WaterView 4 green where a bed is found), the actors'
+# streams at the draw against the trace ([RT] SkinVbCheck=1, third person), and the shared shadow ray's cost
+# (RtRest off and on in the inn, where the trace now skips the ray when it is off).
+start load rawharness
+console tai
+scene river
+console set gamehour to 13
+wait 12
+mouse -1500 -150
+walk w 2.5
+wait 3
+keyframe a steps=game,improved hold=40
+reload ini WaterView=4
+keyframe a_bed steps=improved hold=30
+reload ini WaterView=2
+keyframe a_caustics steps=improved hold=30
+reload ini WaterView=0
+scene third
+walk f 0.15
+wait 6
+keyframe b steps=game,improved hold=150
+walk f 0.15
+console coc whiterunbanneredmare
+wait 10
+scene inn
+keyframe c steps=game,improved hold=60
+reload ini RtRest=0
+keyframe c_norest steps=improved hold=120
+reload ini RtRest=1
+keyframe c_rest steps=improved hold=120
+reload ini RtRest=0
+keyframe c_norest2 steps=improved hold=120
+reload ini RtRest=1
+keyframe c_rest2 steps=improved hold=120
+quit

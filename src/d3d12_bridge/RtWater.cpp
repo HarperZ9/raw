@@ -17,7 +17,7 @@ using namespace rtdetail;
 
 namespace
 {
-constexpr UINT kWaterSlot = 7;   // descriptors a frame in flight: depth, layer, albedo, out, out, coordinates, colour
+constexpr UINT kWaterSlot = 8;   // descriptors a frame in flight: depth, layer, albedo, out, out, coordinates, colour, the frame before the water
 }
 
 void RtScene::CreateWater()
@@ -90,7 +90,7 @@ void LogDeviceRemoved(ID3D12Device* dev, LogFn log)
 
 bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* depth, ID3D12Resource* layer, ID3D12Resource* albedo,
                           ID3D12Resource* spec, ID3D12Resource* colourIn, ID3D12Resource* colourOut, bool water, float sssWidth,
-                          float sssStrength, bool* resultInColourIn)
+                          float sssStrength, bool* resultInColourIn, ID3D12Resource* bed, DXGI_FORMAT bedFormat, ID3D12Resource* preWater)
 {
     m_wRecorded = false;
     *resultInColourIn = false;
@@ -133,7 +133,9 @@ bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* dep
         sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         m_dev->CreateShaderResourceView(r, &sd, cpu(k));
     };
-    srv(depth, DXGI_FORMAT_R32_FLOAT, 0);
+    // t0: the bed's own depth where it was captured this frame (the game's depth before its water), else RAW's
+    // opaque copy, which already holds the water's surface (no caustics then).
+    if (bed && bedFormat != DXGI_FORMAT_UNKNOWN) srv(bed, bedFormat, 0); else srv(depth, DXGI_FORMAT_R32_FLOAT, 0);
     srv(layer, DXGI_FORMAT_R32G32B32A32_FLOAT, 1);
     srv(albedo, DXGI_FORMAT_R8G8B8A8_UNORM, 2);
     srv(colourIn, DXGI_FORMAT_R16G16B16A16_FLOAT, 6);
@@ -145,6 +147,7 @@ bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* dep
     cd.Format = DXGI_FORMAT_R32_TYPELESS; cd.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
     cd.Buffer.NumElements = UINT(RtAlpha::kPool / 4); cd.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
     m_dev->CreateUnorderedAccessView(m_alpha.Pool(), nullptr, &cd, cpu(5));
+    m_dev->CreateUnorderedAccessView(preWater ? preWater : colourOut, nullptr, &ud, cpu(7));   // u4: the frame before the water
 
     m_wAlloc[slot]->Reset();
     m_wList->Reset(m_wAlloc[slot].Get(), nullptr);
@@ -157,6 +160,10 @@ bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* dep
     D3D12_RESOURCE_BARRIER in[2] = {Transition(colourOut, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
                                     Transition(colourIn, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)};
     cl->ResourceBarrier(2, in);
+    if (preWater && water) {   // read as a UAV (u4): textures are never promoted to it from COMMON
+        D3D12_RESOURCE_BARRIER pw = Transition(preWater, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        cl->ResourceBarrier(1, &pw);
+    }
     const D3D12_GPU_DESCRIPTOR_HANDLE g = m_heap->GetGPUDescriptorHandleForHeapStart();
     auto gpu = [&](UINT k) { return D3D12_GPU_DESCRIPTOR_HANDLE{g.ptr + UINT64(k) * inc}; };
     if (water) {
@@ -164,7 +171,7 @@ bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* dep
     cl->SetPipelineState(m_waterPso.Get());
     cl->SetComputeRootConstantBufferView(0, m_wCb[slot]->GetGPUVirtualAddress());
     const float rc[8] = {m_tune.sunLength, m_tune.sourceRadius, m_tune.sunCone, float(m_frame & 0xFFFF), m_tune.alphaRef, m_tune.termDist,
-                         0.0f, m_tune.reflect ? m_tune.reflectLength * 2.5f : 0.0f};
+                         preWater ? 1.0f : 0.0f, m_tune.reflect ? m_tune.reflectLength * 2.5f : 0.0f};   // skyLength's slot: refraction on
     cl->SetComputeRoot32BitConstants(1, 8, rc, 0);
     cl->SetComputeRootShaderResourceView(2, m_tlas->GetGPUVirtualAddress());
     cl->SetComputeRootDescriptorTable(3, gpu(at));
@@ -173,7 +180,7 @@ bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* dep
     cl->SetComputeRootDescriptorTable(6, gpu(6));
     cl->SetComputeRootDescriptorTable(7, gpu(m_skyReady ? m_sky.RawDescriptor() : 3));   // never written by this kernel
     cl->SetComputeRootDescriptorTable(8, gpu(at + 6));
-    cl->SetComputeRootDescriptorTable(9, gpu(5 + RtAlpha::Descriptors() + RtSky::Descriptors()));
+    cl->SetComputeRootDescriptorTable(9, gpu(at + 7));
     cl->SetComputeRootDescriptorTable(10, gpu(5 + RtAlpha::NormalOffset()));
     cl->SetComputeRootDescriptorTable(11, gpu(5 + RtAlpha::AlbedoOffset()));
     cl->SetComputeRootDescriptorTable(12, gpu(m_cache.Descriptor()));
@@ -184,7 +191,12 @@ bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* dep
     std::memcpy(gc + 3, &m_tune.cacheCell, 4);
     gc[4] = RtCache::kSlots; gc[5] = giFlags; gc[6] = 0; gc[7] = uint32_t(m_frame);
     cl->SetComputeRoot32BitConstants(14, 8, gc, 0);
+    cl->SetComputeRootDescriptorTable(15, gpu(m_skyReady ? m_sky.ReservoirDescriptor(m_frame) : 3));   // not read by the water kernel
     cl->Dispatch((m_w + 7) / 8, (m_h + 7) / 8, 1);
+    }
+    if (preWater && water) {
+        D3D12_RESOURCE_BARRIER pw = Transition(preWater, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
+        cl->ResourceBarrier(1, &pw);
     }
     if (sss) {
         // In: the water's result (or the frame, without water); out: the other texture.

@@ -1,0 +1,25 @@
+# raw#34 round 5: the albedo tint follow redone (the NPC's skin must not go black; her hair against the game's),
+# the skin check testing points along each edge (third person, primary-ray view), and the river with the defaults.
+start load rawharness
+console tai
+scene inn
+console coc whiterunbanneredmare
+wait 10
+keyframe c steps=game,improved hold=60
+scene river
+console coc riverwood
+wait 10
+console set gamehour to 13
+wait 6
+walk f 0.15
+wait 6
+keyframe b steps=game,improved hold=200
+reload ini RtDebug=1 View=7
+keyframe b_primary steps=improved hold=40
+reload ini RtDebug=0 View=0
+walk f 0.15
+mouse -1500 -150
+walk w 2.5
+wait 3
+keyframe a steps=game,improved hold=60
+quit

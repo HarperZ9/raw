@@ -1,0 +1,34 @@
+# raw#34 round 4: the NPC hair with the material tint followed (the inn, first, so the view faces the hearth), the
+# shared ray with ReSTIR reuse off and on (cost, and View 14 for the noise), then third person with the skinned
+# draws that bind no pixel shader left out (the skin check's floating count in the log; primary-ray view), and the
+# river at 1:1 for the narrower caustic fringes.
+start load rawharness
+console tai
+scene inn
+console coc whiterunbanneredmare
+wait 10
+keyframe c steps=game,improved hold=60
+reload ini RtRestReuse=0
+keyframe c_noreuse steps=improved hold=120
+reload ini View=14
+keyframe c_noreuse_vis steps=improved hold=40
+reload ini RtRestReuse=1
+keyframe c_reuse_vis steps=improved hold=40
+reload ini View=0
+keyframe c_reuse steps=improved hold=120
+reload ini RtRestReuse=0
+keyframe c_noreuse2 steps=improved hold=120
+reload ini RtRestReuse=1
+keyframe c_reuse2 steps=improved hold=120
+scene river
+console coc riverwood
+wait 10
+console set gamehour to 13
+wait 6
+walk f 0.15
+wait 6
+keyframe b steps=game,improved hold=300
+reload ini RtDebug=1 View=7
+keyframe b_primary steps=improved hold=40
+reload ini RtDebug=0 View=0
+quit

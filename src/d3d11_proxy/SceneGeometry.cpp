@@ -128,6 +128,7 @@ void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT start
     if (SceneSkin_OnDraw(real, bound, indexCount, startIndex, baseVertex)) return;
     const float* w = SceneLights_DrawWorld();
     if (!w || indexCount < 3) return;
+    SceneSkin_NoteMainView(real);   // the main view, from the frame's first rigid lit draw
     uint8_t alpha = geom::AlphaKindOf(geom::BoundPs(real));
     if (!alpha) alpha = BlendAlpha(real);
     if (alpha && !g_alphaOn) { ++g_n.alphaOff; return; }
@@ -182,6 +183,7 @@ std::vector<raw::bridge::RtDraw> SceneGeometry_Take()
     std::vector<raw::bridge::RtDraw> out;
     out.swap(g_frame);
     SceneSkin_Took(out);   // the last frame's actors drawn after its capture
+    SceneSkin_FilterViews(out);
     return out;
 }
 

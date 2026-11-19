@@ -10,7 +10,7 @@ RWByteAddressBuffer FaceNormals : register(u5);           // octahedral, two sno
 RWTexture2D<unorm float4> Albedos[4096] : register(u0, space2);
 cbuffer G : register(b2) { float3 camPos; float cacheCell; uint cacheSlots, giFlags, debugView, giFrame; };
 
-static const uint GI_MATERIALS = 1u, GI_CACHE = 2u;
+static const uint GI_MATERIALS = 1u, GI_CACHE = 2u, GI_REST = 4u, GI_REUSE = 8u;
 
 struct Hit { float t; uint id, prim; float2 bary; float3x4 o2w; };
 

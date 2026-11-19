@@ -37,4 +37,7 @@ bool SceneSkin_OnDraw(ID3D11DeviceContext* real, const geom::Layout* L, UINT ind
 void SceneSkin_Log();
 void SceneSkin_Took(std::vector<raw::bridge::RtDraw>& out);   // the carry from the frame before joins
 void SceneSkin_Drop(std::vector<raw::bridge::RtDraw>& frame); // skinned draws after the capture are kept
+bool SceneSkin_ReadView(ID3D11DeviceContext* real, float out[16]);   // vertex cb12 rows 8 to 11, the draw's view-projection
+void SceneSkin_NoteMainView(ID3D11DeviceContext* real);              // the frame's main view, from a rigid lit draw
+void SceneSkin_FilterViews(std::vector<raw::bridge::RtDraw>& out);   // actor draws on another view leave (RtActorView)
 } // namespace SB::Proxy

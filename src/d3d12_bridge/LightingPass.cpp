@@ -271,7 +271,7 @@ private:
         u.clouds[3] = t.cloudShadow * (1.0f - 0.85f * t.weatherCloud);
         u.cloudWind[0] = t.cloudWindX; u.cloudWind[1] = t.cloudWindY; u.cloudWind[2] = t.cloudDensity; u.cloudWind[3] = t.cloudHistory;
         u.waterA[0] = t.waterReflect; u.waterA[1] = t.waterCaustics; u.waterA[2] = t.waterAbsorb; u.waterA[3] = t.waterGlint;
-        u.waterB[0] = float(t.waterView); u.waterB[1] = t.waterCausticCell; u.waterB[2] = 0.0f; u.waterB[3] = 0.0f;
+        u.waterB[0] = float(t.waterView); u.waterB[1] = t.waterCausticCell; u.waterB[2] = t.waterRefract; u.waterB[3] = 0.0f;
         std::memcpy(u.prevWorldToClip, m_prevWorldToClip, 64);
         std::memcpy(m_prevWorldToClip, s.worldToClip, 64);
         u.camPos[3] = float(double(GetTickCount64() % 3600000ull) / 1000.0);   // seconds, for the rain's rings and the snow's glints

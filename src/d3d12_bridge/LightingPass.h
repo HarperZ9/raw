@@ -74,16 +74,20 @@ struct LightingTuning
     bool  rtIncremental = true;     // RtIncremental: the scene's per-draw lookups once a frame, instances staged
     bool  rtCamSteps = false;       // RtCamSteps: the camera's place from the summed steps (RtScene::SetCamera)
     int   rtSkinFilter = 0;         // RtSkinFilter: diagnosis, which skinned draws join (SceneSkin.cpp)
+    bool  rtActorView = true;       // RtActorView: actor draws whose view-projection is not the main view's stay out (SceneSkin.cpp)
     bool  rtActors = true;          // skinned draws on the main depth target outside the opaque set (people, the player) join
+    bool  rtRestReuse = true;       // RtRestReuse: ReSTIR's temporal and spatial reuse for the shared ray (RtShadow.hlsl)
     bool  rtRest = true;            // RtRest: every light past the three traced ones shadowed by one ray to a light picked by its share (RtShadow.hlsl)
     bool  rtReflect = true;         // glossy surfaces: one ray-traced reflection ray, the hit's colour in the game's frame
     // Water (RtWater.hlsl), after the game composites its water: improved mode with RT on raw::tx.
     bool  water = true;             // Water
     float waterReflect = 1.0f;      // WaterReflect: the ray-traced reflection's share of the Fresnel weight
     float waterCaustics = 1.0f;     // WaterCaustics
-    float waterAbsorb = 0.004f;     // WaterAbsorb: extinction a game unit (about 250 units, 3.5 m, to a third)
+    float waterAbsorb = 0.010f;     // WaterAbsorb: extinction a game unit for green (red 2.2x, blue 0.7x); 0.004 read as glass
     float waterGlint = 1.0f;        // WaterGlint: the sun on the waves
     float waterCausticCell = 70.0f; // WaterCausticCell: game units across a cell of the caustic net
+    float waterRefract = 0.65f;     // WaterRefract: RAW's refraction through the bed's colour in place of the game's water body, 0 to 1
+    bool  waterBed = true;          // WaterBed: the bed's depth captured before the water (caustics, refraction)
     int   waterView = 0;            // WaterView: 1 the reflection, 2 the caustics, 3 Fresnel
     float sss = 0.75f;              // Sss: screen-space scattering on skin (Sss.hlsl), 0 off to 1
     float sssWidth = 0.5f;          // SssWidth: the red's scattering width, game units (green 0.42, blue 0.22 of it); 1.0 washed out the pores

@@ -32,6 +32,9 @@ RWTexture2D<unorm float> Masks[] : register(u0, space1);
 RWTexture2D<float4> Refl : register(u4);          // reflected radiance, confidence (1: the hit is on screen)
 RWTexture2D<float4> SkyRaw : register(u3);        // RtSky.cpp: one sky ray's bounce (rgb) and sky (a)
 Texture2D<float4> GameColour : register(t5);      // the game's lit frame: the radiance of what a sky ray hits
+RWTexture2D<float4> ResIn  : register(u9);        // last frame's reservoirs: light + 1, W, M, view z (RtRestReuse)
+RWTexture2D<float4> ResOut : register(u10);
+Texture2D<float2> Motion   : register(t7);        // the game's motion vectors (uv units, to last frame)
 cbuffer R : register(b1) { float sunLength, sourceRadius, sunCone, frameIndex, alphaRef, termDist, skyLength, reflectLength; };
 
 uint clusterOf(float2 px, float z) {
@@ -61,6 +64,14 @@ float3 jitterDir(float3 d, float spread, float2 r) {
     const float3 b = cross(d, t);
     const float a = 6.2831853f * r.x, s = spread * sqrt(r.y);
     return normalize(d + (t * cos(a) + b * sin(a)) * s);
+}
+
+// How much light li would give the point (luminance x window x n.l): the trace's light choice and ReSTIR's target.
+float lightShare(uint li, float3 p, float3 n) {
+    const float3 toL = lightPosR[li].xyz - p;
+    const float dist = length(toL);
+    const float x = saturate(dist / lightPosR[li].w);
+    return dot(lightColS[li].rgb, float3(0.2126f, 0.7152f, 0.0722f)) * (1.0f - x * x) * saturate(dot(n, toL / max(dist, 1.0e-4f)));
 }
 
 // The alpha of a candidate hit on an alpha-tested mesh.
@@ -165,7 +176,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     float4 vis = 1.0f, idx = 0.0f;
     float sky = 1.0f;
     float3 bounce = 0.0f;
-    float restCode = 0.0f;   // 4 + 2 x visibility when an untraced light was sampled (RtSkyFilter decodes it)
+    float restCode = 0.0f;   // 4 + 2 x the untraced lights' share in fifteenths, when one was sampled (RtSkyFilter decodes it)
     const float d = Depth.Load(ip);
     const uint base = uint(Spec.Load(ip).z * 255.0f + 0.5f) & 127u;
     if (d < 1.0f && base != 0u && (base < 7u || base == 10u)) {   // 10: skin
@@ -228,11 +239,14 @@ void main(uint3 id : SV_DispatchThreadID) {
             vis[k + 1u] = visible(o, toC / max(len, 1.0e-4f), 0.0f, max(len - sourceRadius - 1.0f, 0.0f));
             idx[k] = float(best[k] + 1u) / 255.0f;
         }
-        // Every other light of the cluster: one of them, picked in proportion to the light it would give
-        // (weighted reservoir sampling over the whole list, so the pick is exact), gets one shadow ray on the
-        // sky ray's turn. Its visibility, filtered over pixels and frames, is the share of all those lights'
-        // light that arrives (the ratio estimator of Heitz et al. 2018).
-        if (skyLength > 0.0f && skyTurn(id.xy)) {
+        // Every other light of the cluster. Each frame, every pixel picks one of them in proportion to the light it
+        // would give (weighted reservoir sampling over the whole list: the pick is exact). With RtRestReuse the pick
+        // is then resampled against last frame's reservoirs here and at two neighbours, found along the motion
+        // vector (ReSTIR's temporal and spatial reuse, Bitterli et al. 2020; target the unshadowed light, history
+        // capped at 20 samples, a neighbour kept only at the same view depth). On the sky ray's turn the kept light
+        // gets one shadow ray, and p(y) V(y) W over the exact unshadowed sum is the share of all those lights'
+        // light that arrives (the ratio estimator of Heitz et al. 2018), filtered with the sky rays.
+        if ((giFlags & GI_REST) != 0u) {
             float total = 0.0f;
             uint pick = ~0u;
             [loop] for (uint w2 = 0u; w2 < 4u; w2++) {
@@ -241,20 +255,43 @@ void main(uint3 id : SV_DispatchThreadID) {
                     const uint li = w2 * 32u + firstbitlow(b2);
                     b2 &= b2 - 1u;
                     if (li >= flags.y || li == best[0] || li == best[1] || li == best[2]) { continue; }
-                    const float3 toL = lightPosR[li].xyz - p;
-                    const float dist = length(toL);
-                    const float x = saturate(dist / lightPosR[li].w);
-                    const float sc = dot(lightColS[li].rgb, float3(0.2126f, 0.7152f, 0.0722f)) * (1.0f - x * x) * saturate(dot(n, toL / max(dist, 1.0e-4f)));
+                    const float sc = lightShare(li, p, n);
                     if (sc <= 0.0f) { continue; }
                     total += sc;
                     if (hash(px + float(li) * 0.37f, frameIndex * 0.917f + 13.0f) * total < sc) { pick = li; }
                 }
             }
-            if (pick != ~0u) {
+            float wsum = total, M = pick != ~0u ? 1.0f : 0.0f;
+            if ((giFlags & GI_REUSE) != 0u && total > 0.0f) {
+                const float2 mv = Motion.Load(ip);
+                const float2 prev = px + mv * dims.xy;
+                [unroll] for (uint k = 0u; k < 3u; k++) {
+                    const float a = hash(px, frameIndex * 0.37f + float(k) * 3.1f) * 6.2831853f;
+                    const float rad = k == 0u ? 0.0f : 4.0f + 12.0f * hash(px.yx, frameIndex * 0.53f + float(k));
+                    const int2 q = int2(prev + float2(cos(a), sin(a)) * rad);
+                    if (any(q < 0) || q.x >= int(dims.x) || q.y >= int(dims.y)) { continue; }
+                    const float4 rq = ResIn[q];
+                    if (rq.x < 0.5f || abs(rq.w - z) > 0.05f * z) { continue; }
+                    const uint yq = uint(rq.x + 0.5f) - 1u;
+                    if (yq >= flags.y || yq == best[0] || yq == best[1] || yq == best[2]) { continue; }
+                    const float mq = min(rq.z, 20.0f);
+                    const float wq = lightShare(yq, p, n) * rq.y * mq;
+                    M += mq;
+                    if (wq <= 0.0f) { continue; }
+                    wsum += wq;
+                    if (hash(px + float(k) * 1.7f, frameIndex * 0.811f + 29.0f) * wsum < wq) { pick = yq; }
+                }
+            }
+            const float py = pick != ~0u ? lightShare(pick, p, n) : 0.0f;
+            const float W = py > 0.0f && M > 0.0f ? wsum / (M * py) : 0.0f;
+            ResOut[id.xy] = float4(pick != ~0u ? float(pick + 1u) : 0.0f, W, M, z);
+            if (pick != ~0u && skyLength > 0.0f && skyTurn(id.xy)) {
                 const float3 c = lightPosR[pick].xyz + (float3(r.y, r.x, frac(r.x * 1.7f + 0.3f)) * 2.0f - 1.0f) * sourceRadius;
                 const float3 toC = c - o;
                 const float len = length(toC);
-                restCode = 4.0f + 2.0f * visible(o, toC / max(len, 1.0e-4f), 0.0f, max(len - sourceRadius - 1.0f, 0.0f));
+                const float v = visible(o, toC / max(len, 1.0e-4f), 0.0f, max(len - sourceRadius - 1.0f, 0.0f));
+                const float share = saturate(py * v * W / max(total, 1.0e-6f));
+                restCode = 4.0f + 2.0f * round(share * 15.0f);   // + sky (0 or 1); RtSkyFilter decodes q = (a - 4 - sky) / 2
             }
         }
     }

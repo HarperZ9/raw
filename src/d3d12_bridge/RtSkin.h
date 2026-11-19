@@ -51,8 +51,12 @@ private:
         DXGI_FORMAT ibFormat; uint32_t indexCount, idxFirst, posFmt, ibBytes;
         bool actor;
         uint64_t blas = 0; bool built = false;
+        std::vector<uint8_t> diagVb, diagBv;   // SkinVbCheck: the streams as the game's draw saw them
+        std::vector<float> diagBones;
+        uint64_t psHash = 0; uint32_t blendInfo = 0;
     };
-    struct Meta { uint32_t indexCount, count, stride, posFmt; bool actor; };
+    struct Meta { uint32_t indexCount, count, stride, posFmt; bool actor; std::vector<uint8_t> diagVb, diagBv; std::vector<float> diagBones;
+                  uint32_t posOffset = 0, bStride = 0, idxOffset = 0, wOffset = 0; uint64_t psHash = 0; uint32_t blendInfo = 0; };
     void ReadStats(uint32_t slot);
     bool m_filter = true;
     float m_ratio = 4.0f, m_minUnits = 24.0f;

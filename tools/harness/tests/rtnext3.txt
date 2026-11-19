@@ -1,0 +1,27 @@
+# raw#34 round 3: the water's refraction share and absorption (defaults 0.65 and 0.010, then 1.0 and 0.012, then
+# 0.4 and 0.008), the actors' floating draws with their pixel shaders and states in the log (third person), and the
+# NPC hair in the inn with the material tint followed into the albedo.
+start load rawharness
+console tai
+scene river
+console set gamehour to 13
+wait 12
+mouse -1500 -150
+walk w 2.5
+wait 3
+keyframe a steps=game,improved hold=60
+reload ini WaterRefract=1 WaterAbsorb=0.012
+keyframe a_full steps=improved hold=40
+reload ini WaterRefract=0.4 WaterAbsorb=0.008
+keyframe a_light steps=improved hold=40
+reload ini WaterRefract=0.65 WaterAbsorb=0.010
+scene third
+walk f 0.15
+wait 6
+keyframe b steps=game,improved hold=300
+walk f 0.15
+console coc whiterunbanneredmare
+wait 10
+scene inn
+keyframe c steps=game,improved hold=60
+quit

@@ -102,8 +102,16 @@ void main(uint3 id : SV_DispatchThreadID) {
     }
     bool floating = false;
     if (!range && screen.x > 0.0f) {
-        const float f0 = inFront(skinned(i[0])), f1 = inFront(skinned(i[1])), f2 = inFront(skinned(i[2]));
-        floating = f0 > 0.0f || f1 > 0.0f || f2 > 0.0f;
+        const float3 s0 = skinned(i[0]), s1 = skinned(i[1]), s2 = skinned(i[2]);
+        const float f0 = inFront(s0), f1 = inFront(s1), f2 = inFront(s2);
+        // Points along the edges too: the sheet's long triangles run from the body to corners off the top of the
+        // screen, where no corner can be tested (rt6-next-4, primary-ray view), but their edges cross the sky.
+        float fe = 0.0f;
+        [unroll] for (uint e = 0u; e < 3u; e++) {
+            const float3 a0 = e == 0u ? s0 : e == 1u ? s1 : s2, a1 = e == 0u ? s1 : e == 1u ? s2 : s0;
+            fe = max(fe, max(inFront(lerp(a0, a1, 0.25f)), max(inFront(lerp(a0, a1, 0.5f)), inFront(lerp(a0, a1, 0.75f)))));
+        }
+        floating = f0 > 0.0f || f1 > 0.0f || f2 > 0.0f || fe > 0.0f;
         if (floating) {
             uint first;
             Stats.InterlockedCompareExchange(base + 39u * 4u, 0u, 1u, first);

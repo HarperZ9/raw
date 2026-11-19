@@ -1,0 +1,36 @@
+# raw#34 round 2: the water's refraction through the bed's colour (WaterRefract 0 and 1, WaterView 6 the body), the
+# water list's cost with the bed's depth off and on (WaterBed, twice each), the narrower caustic fringes at 1:1, and
+# the actors' views ([RT] actor views in the log; third person with RtActorView 1, then 0, primary-ray view).
+start load rawharness
+console tai
+scene river
+console set gamehour to 13
+wait 12
+mouse -1500 -150
+walk w 2.5
+wait 3
+keyframe a steps=game,improved hold=60
+reload ini WaterRefract=0
+keyframe a_norefr steps=improved hold=60
+reload ini WaterRefract=1 WaterView=6
+keyframe a_body steps=improved hold=30
+reload ini WaterView=2
+keyframe a_caustics steps=improved hold=30
+reload ini WaterView=0 WaterBed=0
+keyframe a_nobed steps=improved hold=120
+reload ini WaterBed=1
+keyframe a_bed steps=improved hold=120
+reload ini WaterBed=0
+keyframe a_nobed2 steps=improved hold=120
+reload ini WaterBed=1
+keyframe a_bed2 steps=improved hold=120
+scene third
+walk f 0.15
+wait 6
+keyframe b steps=game,improved hold=60
+reload ini RtDebug=1 View=7
+keyframe b_primary steps=improved hold=40
+reload ini RtActorView=0
+keyframe b_primary_allviews steps=improved hold=40
+reload ini RtActorView=1 RtDebug=0 View=0
+quit

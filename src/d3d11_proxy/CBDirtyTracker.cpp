@@ -60,8 +60,9 @@ bool CBDirtyTracker::InterceptMap(ID3D11DeviceContext* realCtx, ID3D11Resource* 
                                    UINT Subresource, D3D11_MAP MapType, UINT MapFlags,
                                    D3D11_MAPPED_SUBRESOURCE* pMappedResource)
 {
-    // Only intercept WRITE_DISCARD on subresource 0; [Proxy] CBDirtyTracker=0 turns the tracker off
-    if (!PG_CBDirtyTracker() || MapType != D3D11_MAP_WRITE_DISCARD || Subresource != 0)
+    // Only intercept WRITE_DISCARD on subresource 0; [Proxy] CBDirtyTracker=0 turns the tracker off unless
+    // the bridge reads the shadows (SetShadowsRequired)
+    if (!(PG_CBDirtyTracker() || s_required) || MapType != D3D11_MAP_WRITE_DISCARD || Subresource != 0)
         return false;
 
     auto* entry = GetOrCreateEntry(pResource);

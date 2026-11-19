@@ -60,6 +60,12 @@ Hold=40
 """
 
 
+def empty_rt_scene(rows: list[dict]) -> list[str]:
+    """Keyframes whose improved step ran the ray trace (rt_draws reported) with no draw in the scene."""
+    return [f"{r.get('scene')}/{r.get('keyframe')}" for r in rows
+            if str(r.get("step", "")).startswith("improved") and "rt_draws" in r and r.get("rt_draws", 0) == 0]
+
+
 class Runner(Actions):
     def __init__(self, a: argparse.Namespace):
         self.a = a
@@ -302,6 +308,13 @@ class Runner(Actions):
             results = self.out / "harness_results.jsonl"
             if results.exists():
                 self.report["results"] = [json.loads(l) for l in results.read_text().splitlines() if l.strip()]
+                empty = empty_rt_scene(self.report["results"])
+                if empty:
+                    # The bridge ran with ray tracing and the scene held nothing: the capture is broken
+                    # (2026-11-19: the constant-buffer shadows were off, so no draw was decoded).
+                    ok = False
+                    self.report["error"] = f"ray-tracing scene empty at {', '.join(empty)}: 0 draws captured"
+                    self.log(f"failed: {self.report['error']}")
             self.compact()
             (self.out / "report.json").write_text(json.dumps(self.report, indent=1))
             self.log(f"report: {self.out / 'report.json'}; ENB {self.report['install_after']['game_after']}, "

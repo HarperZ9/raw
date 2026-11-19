@@ -1,5 +1,6 @@
 // Engine control: settings, the go-file protocol and frame time. Original work, MIT.
 #include "rt_control.h"
+#include "rt_disasm.h"
 #include "rt_version.h"
 
 #include <windows.h>
@@ -25,6 +26,7 @@
 #include "rt_livestate.h"
 #include "rt_weather.h"
 #include "rt_papyrus.h"
+#include "rt_pcount.h"
 #include "rt_passes.h"
 #include "rt_peek.h"
 #include "rt_sampler.h"
@@ -108,6 +110,7 @@ std::string Stats(const char* name, size_t frames) {
                   name, v.size(), v.empty() ? 0 : sum / double(v.size()), med, p99, mx);
     std::string out = buf;
     out.insert(out.size() - 1, PapyrusStats());
+    out.insert(out.size() - 1, PapyrusCountStats());
     out.insert(out.size() - 1, PassesStats());
     out.insert(out.size() - 1, VTimeStats());
     out.insert(out.size() - 1, DrawStatsStats());
@@ -146,6 +149,7 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             return;
         } else if (op == "measure") {
             PapyrusReset();
+            PapyrusCountStats();   // the count's baseline: the report gives the updates completed inside the measure
             PassesReset();
             VTimeReset();
             DrawStatsReset();
@@ -182,7 +186,7 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             PassesSetFit(n);
             Result("{\"cmd\":\"fit\",\"authored\":" + std::to_string(n) + "}");
         } else if (op == "papyrus") {
-            Result(PapyrusCommand(a, b));
+            Result(a == "count" ? PapyrusCountJson() : PapyrusCommand(a, b));
         } else if (op == "viewports") {
             Result(PassesViewports());
         } else if (op == "probe") {
@@ -233,6 +237,9 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             if (!ok) Result("{\"cmd\":\"sample\",\"error\":\"already running\"}");
         } else if (op == "peek") {
             Result(Peek(*g_img, *g_refs, a, b));
+        } else if (op == "disasm") {
+            // disasm <0xrva|table name> [0xbytes]: a listing for local analysis, written to the run's output folder only
+            Result(DisasmFunction(*g_img, AddrArg(a), uint32_t(std::strtoul(b.c_str(), nullptr, 16)), g_out));
         } else if (op == "dump") {
             Result(DumpDepthTargets(*g_img, *g_refs));
         } else if (op == "capture") {
@@ -253,6 +260,7 @@ void ControlInit(const Image& img, const std::vector<RefTarget>* refs, const std
     QueryPerformanceFrequency(&g_freq);
     const std::string ini = gameDir + "d3d11_proxy.ini";
     CascadesInit(img, refs, ini);
+    PapyrusCountInit(img, refs);
     g_emittersAtStart = GetPrivateProfileIntA("EngineRT", "Emitters", 1, ini.c_str()) != 0;
 }
 

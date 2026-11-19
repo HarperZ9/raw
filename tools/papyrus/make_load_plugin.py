@@ -34,12 +34,12 @@ class Strings:
         return self.list.index(s)
 
 
-def script(name: str, iterations: int, interval: float, native: bool) -> bytes:
+def script(name: str, iterations: int, interval: float, native: bool, counter: bool = True) -> bytes:
     S = Strings()
     I = lambda s: (IDENT, S(s))  # noqa: E731
     for s in (name, "Quest", "", "conditional", "hidden"):
         S(s)
-    none, int_t, bool_t = S("None"), S("Int"), S("Bool")
+    none, int_t, bool_t, float_t, glob_t = S("None"), S("Int"), S("Bool"), S("Float"), S("GlobalVariable")
     register = (OP["callmethod"], [I("RegisterForSingleUpdate"), I("self"), I("::NoneVar"), (INT, 1), (FLOAT, interval)])
     on_init = pex.Function(ret=none, locals=[(S("::NoneVar"), none)],
                            code=[register, (OP["return"], [(NONE, None)])])
@@ -54,13 +54,24 @@ def script(name: str, iterations: int, interval: float, native: bool) -> bytes:
         (OP["iadd"], [I("acc"), I("acc"), I("m")]),         # 5
         (OP["iadd"], [I("i"), I("i"), (INT, 1)]),           # 6
         (OP["jmp"], [(INT, -5)]),                           # 7 -> 2
-        register,                                           # 8
-        (OP["return"], [(NONE, None)]),                     # 9
     ]
+    if counter:
+        # the running count of completed updates, written to the quest's own global (one native call per update)
+        code += [
+            (OP["iadd"], [I("::count_var"), I("::count_var"), (INT, 1)]),                       # 8
+            (OP["cast"], [I("f"), I("::count_var")]),                                            # 9
+            (OP["callmethod"], [I("SetValue"), I("::Counter_var"), I("::NoneVar"), (INT, 1), I("f")]),  # 10
+        ]
+    code += [register, (OP["return"], [(NONE, None)])]
     on_update = pex.Function(ret=none, locals=[(S("i"), int_t), (S("acc"), int_t), (S("m"), int_t), (S("t"), bool_t),
-                                                (S("::NoneVar"), none)], code=code)
+                                                (S("f"), float_t), (S("::NoneVar"), none)], code=code)
+    vars_, props = [], []
+    if counter:
+        vars_ = [(S("::count_var"), int_t, 0, (INT, 0)), (S("::Counter_var"), glob_t, 0, (NONE, None))]
+        props = [{"name": S("Counter"), "type": glob_t, "doc": S(""), "user_flags": 0, "flags": 7,
+                  "auto_var": S("::Counter_var")}]
     obj = {"name": S(name), "parent": S("Quest"), "doc": S(""), "user_flags": 0, "auto_state": S(""),
-           "vars": [], "props": [], "states": [(S(""), [(S("OnInit"), on_init), (S("OnUpdate"), on_update)])]}
+           "vars": vars_, "props": props, "states": [(S(""), [(S("OnInit"), on_init), (S("OnUpdate"), on_update)])]}
     s = {"major": 3, "minor": 2, "game": 1, "time": int(time.time()), "source": name + ".psc", "user": "raw",
          "machine": "raw", "strings": S.list, "debug": None,
          "user_flags": [(S("conditional"), 1), (S("hidden"), 0)], "objects": [obj]}
@@ -76,13 +87,14 @@ def main() -> int:
     ap.add_argument("--quests", type=int, default=32, help="quests in all, half of each script")
     ap.add_argument("--iterations", type=int, default=500)
     ap.add_argument("--interval", type=float, default=0.01, help="seconds between updates")
+    ap.add_argument("--no-counter", action="store_true", help="leave out the per-quest update counters")
     a = ap.parse_args()
     out = Path(a.out)
     (out / "Scripts").mkdir(parents=True, exist_ok=True)
     for name, native in (("RAWLoadArith", False), ("RAWLoadNative", True)):
-        (out / "Scripts" / f"{name}.pex").write_bytes(script(name, a.iterations, a.interval, native))
+        (out / "Scripts" / f"{name}.pex").write_bytes(script(name, a.iterations, a.interval, native, not a.no_counter))
     quests = [(f"RAWLoadQuest{i:02d}", ["RAWLoadNative" if i % 2 else "RAWLoadArith"]) for i in range(a.quests)]
-    (out / "RAWPapyrusLoad.esp").write_bytes(esp.plugin("RAW", quests))
+    (out / "RAWPapyrusLoad.esp").write_bytes(esp.plugin("RAW", quests, counters=not a.no_counter))
     print(f"{out}: RAWPapyrusLoad.esp with {a.quests} quests, {a.iterations} iterations per update, every {a.interval} s")
     return 0
 

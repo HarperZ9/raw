@@ -186,12 +186,18 @@ static bool StartTiming(ID3D11DeviceContext* ctx) {
     g_ctx = ctx;
     g_ctx->GetDevice(&g_dev);
     D3D11_QUERY_DESC dq{D3D11_QUERY_TIMESTAMP_DISJOINT, 0}, tq{D3D11_QUERY_TIMESTAMP, 0};
+    bool ok = true;
     for (auto& f : g_frames) {
-        if (FAILED(g_dev->CreateQuery(&dq, &f.disjoint))) return false;
-        for (auto& q : f.ts)
-            if (FAILED(g_dev->CreateQuery(&tq, &q))) return false;
+        ok = ok && SUCCEEDED(g_dev->CreateQuery(&dq, &f.disjoint));
+        for (auto& q : f.ts) ok = ok && SUCCEEDED(g_dev->CreateQuery(&tq, &q));
     }
-    return true;
+    if (ok) return true;
+    // A partial set would hold the device's timestamp slots for nothing and starve the bridge's queries after it.
+    for (auto& f : g_frames) {
+        if (f.disjoint) { f.disjoint->Release(); f.disjoint = nullptr; }
+        for (auto& q : f.ts) if (q) { q->Release(); q = nullptr; }
+    }
+    return false;
 }
 
 void PassesOnPresent(ID3D11DeviceContext* ctx) {
@@ -244,8 +250,8 @@ std::string PassesStats() {
         std::snprintf(b, sizeof b, "%s\"%s\":%.1f", l ? "," : "", kNames[l], double(g_draws[l]) / cf);
         out += b;
     }
-    std::snprintf(b, sizeof b, "},\"gpu_frames\":%llu,\"gpu_marks_dropped\":%llu", (unsigned long long)g_gpuFrames,
-                  (unsigned long long)g_dropped);
+    std::snprintf(b, sizeof b, "},\"gpu_timing\":%s,\"gpu_frames\":%llu,\"gpu_marks_dropped\":%llu", g_timing ? "true" : "false",
+                  (unsigned long long)g_gpuFrames, (unsigned long long)g_dropped);
     out += b;
     PassesReset();
     return out;

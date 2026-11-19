@@ -453,6 +453,10 @@ add_library(raw_dx12_translate STATIC
     ${RAW_TX_DIR}/tx_state.cpp
     ${RAW_TX_DIR}/tx_pipeline.cpp
     ${RAW_TX_DIR}/tx_swapchain.cpp
+    ${RAW_TX_DIR}/tx_stream.cpp
+    ${RAW_TX_DIR}/tx_ctx_bind_om.cpp
+    ${RAW_TX_DIR}/tx_ctx_desc.cpp
+    ${RAW_TX_DIR}/tx_stream_play.cpp
     ${RAW_TX_DIR}/tx_ctx_core.cpp
     ${RAW_TX_DIR}/tx_ctx_bind.cpp
     ${RAW_TX_DIR}/tx_ctx_compute.cpp

@@ -5,7 +5,8 @@ namespace raw::tx {
 
 extern const void* g_contextVtable;   // tx_host.cpp
 
-Context::Context(Device* dev, bool deferred) : dev_(dev), deferred_(deferred), holds_(!deferred)
+Context::Context(Device* dev, bool deferred, bool replay)
+    : replay_(replay), dev_(dev), deferred_(deferred), holds_(replay ? BindHolds::kNone : deferred ? BindHolds::kAtomic : BindHolds::kPlain)
 {
     g_contextVtable = *reinterpret_cast<void* const*>(this);
     chunks_.Init(&dev->slab, !deferred && dev->renameRing);   // the immediate context renames through the ring
@@ -13,11 +14,13 @@ Context::Context(Device* dev, bool deferred) : dev_(dev), deferred_(deferred), h
     if (!deferred_) rec_.tracker.EnableSlots();   // the immediate context's list: hash-free state lookups
     dev_->OpenRecording(rec_);
     BeginList();
-    if (deferred_) dev_->AddRef();
+    if (deferred_ && !replay_) dev_->AddRef();
 }
 
 Context::~Context()
 {
+    if (stale_) EndStream();
+    if (!pending_.empty()) SubmitPending();
     ResetState();
     holds_.ReleaseAll();
     if (rec_.cl) rec_.cl->Close();
@@ -81,6 +84,7 @@ void Context::BeginList()
 
 const Chunk* Context::Pin(TBuffer* b)
 {
+    if (replay_ && b->core.store == Store::Renamed) return &override_[b];   // the address the segment recorded
     if (!deferred_ || b->core.store != Store::Renamed) return &b->core.chunk;
     auto ins = renames_.try_emplace(b);
     if (ins.second) { ins.first->second.chunk = b->core.chunk; b->IntAddRef(); }
@@ -135,6 +139,10 @@ void Context::ResetState()
     dirty_ = D_ALL;
 }
 
-STDMETHODIMP_(void) Context::ClearState() { ResetState(); }
+STDMETHODIMP_(void) Context::ClearState()
+{
+    if (stale_) EndStream();
+    ResetState();
+}
 
 }  // namespace raw::tx

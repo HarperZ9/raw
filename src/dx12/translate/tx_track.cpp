@@ -170,7 +170,9 @@ void Tracker::Resolve(std::vector<D3D12_RESOURCE_BARRIER>& fixups)
         uint32_t* cur = first + r->subs;
         for (uint32_t i = 0; i < r->subs; ++i) {
             if (first[i] == kUnknownState) continue;
-            if (r->global[i] != first[i])
+            const bool drop = (faults & FaultSkipBarrier) && r->global[i] == D3D12_RESOURCE_STATE_RENDER_TARGET &&
+                              (first[i] & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);   // the control's defect here too
+            if (r->global[i] != first[i] && !drop)
                 fixups.push_back(Transition(r->res.Get(), i, r->global[i], first[i]));
             r->global[i] = cur[i];
         }

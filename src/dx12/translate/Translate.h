@@ -35,6 +35,10 @@ struct CreateParams {
     // The ring's pages in CPU-cached (write-back) system memory instead of write-combined upload memory:
     // writes into them need no write-combining drain. An experiment; off by default.
     bool ringWriteBack = false;
+    // Worker threads that translate the immediate context's draws into D3D12 command lists in parallel
+    // (tx_stream.h); 0: every call is translated on the application's thread, as before.
+    uint32_t workers = 0;
+    uint32_t segmentDraws = 256;   // draws a worker's segment takes
 };
 
 struct Stats {

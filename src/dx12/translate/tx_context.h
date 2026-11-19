@@ -7,67 +7,11 @@
 #pragma once
 #include "tx_device.h"
 #include "tx_holds.h"
+#include "tx_stream.h"
+
+#include "tx_state.h"
 
 namespace raw::tx {
-
-enum StageIndex { S_VS, S_HS, S_DS, S_GS, S_PS, S_CS, S_COUNT };
-
-enum Dirty : uint32_t {
-    D_PSO = 1, D_RT = 2, D_VP = 4, D_SC = 8, D_BF = 0x10, D_SREF = 0x20, D_TOPO = 0x40,
-    D_VB = 0x80, D_IB = 0x100, D_UAV = 0x400, D_CSUAV = 0x800,
-    D_SRV0 = 0x1000,     // << stage
-    D_SAMP0 = 0x40000,   // << stage
-    // State scans at the next draw (ScanGraphics): which bindings may need a transition. A vertex or index
-    // buffer, or one stage's shader resources, rescans only that part; anything that can move a resource out
-    // of a state the list already holds (copies, clears, targets, compute, a new list) sets D_SCAN, all parts.
-    D_SCAN_IA = 0x200,
-    D_SCAN_OM = 0x1000000,
-    D_SCAN_SRV0 = 0x2000000,   // << graphics stage (VS..PS)
-    D_SCAN = D_SCAN_IA | D_SCAN_OM | (D_SCAN_SRV0 * 0x1F),
-    D_ALL = 0xFFFFFFFFu,
-};
-
-struct ShaderSlot {
-    ShaderData* sd = nullptr;
-    void* obj = nullptr;
-    void (*drop)(BindHolds&, void*) = nullptr;   // gives the binding's reference back
-};
-struct BufSlot {
-    TBuffer* buf = nullptr;
-    const Chunk* chunk = nullptr;   // where the buffer's current memory is described
-    UINT stride = 0, offset = 0;
-};
-struct StageState {
-    ShaderSlot sh;
-    BufSlot cb[14];
-    TSRV* srv[128] = {};
-    TSampler* samp[16] = {};
-    uint32_t srvHi = 0;
-};
-struct State {
-    StageState st[S_COUNT];
-    TInputLayout* layout = nullptr;
-    BufSlot vb[32];
-    uint32_t vbHi = 0;
-    BufSlot ib;
-    DXGI_FORMAT ibFmt = DXGI_FORMAT_UNKNOWN;
-    D3D11_PRIMITIVE_TOPOLOGY topo = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
-    TRTV* rtv[8] = {};
-    uint32_t rtCount = 0;
-    TDSV* dsv = nullptr;
-    TUAV* uav[8] = {};
-    TUAV* csUav[8] = {};
-    TBlend* blend = nullptr;
-    float factor[4] = {1, 1, 1, 1};
-    UINT sampleMask = 0xFFFFFFFFu;
-    TDepthStencil* ds = nullptr;
-    UINT stencilRef = 0;
-    TRaster* rs = nullptr;
-    D3D11_VIEWPORT vp[16] = {};
-    UINT vpCount = 0;
-    D3D11_RECT sc[16] = {};
-    UINT scCount = 0;
-};
 
 // A buffer a deferred context touched: its own copy of the buffer's memory.
 struct Rename {
@@ -98,7 +42,8 @@ struct PsoEntry { ID3D12PipelineState* pso; RootSig* root; };
 
 class Context final : public ID3D11DeviceContext {
 public:
-    Context(Device* dev, bool deferred);
+    // replay: a worker's context for segments of the immediate context (tx_stream.h); holds no references.
+    Context(Device* dev, bool deferred, bool replay = false);
     ~Context();
 
     // IUnknown, ID3D11DeviceChild
@@ -195,12 +140,21 @@ public:
             out[i] = (stage < S_COUNT && start + i < 14) ? s_.st[stage].cb[start + i].buf : nullptr;
     }
     const State& Bound() const { return s_; }
-    BindHolds& Holds() { return holds_; }   // the shadow state, for the host's per-draw reads
+    BindHolds& Holds() { return holds_; }
+
+    // ---- parallel translation (tx_stream.cpp, tx_stream_play.cpp) ----
+    void EnableStream(StreamPool* p, uint32_t segmentDraws) { pool_ = p; segDraws_ = segmentDraws ? segmentDraws : 256; }
+    void EndStream();                          // the segments stop; the immediate context's list carries on
+    void BeginReplay(const Segment& s);
+    void ReplayChunk(TBuffer* b, uint64_t va);
+    void SetReplayVa(TBuffer* b, uint64_t va) { if (b && va) override_[b].va = va; }
+    void EndReplay(Segment& s);
+    void StreamStatsLog(uint64_t frames);     // segments, streamed draws and waits per frame, then reset   // the shadow state, for the host's per-draw reads
     uint64_t FlushInternal();                 // submits the open list; returns its serial
     void Sync();                              // flush and wait for the GPU
     void Shutdown();
-    ID3D12GraphicsCommandList* Cl() { return rec_.cl.Get(); }
-    Recording& Rec() { return rec_; }
+    ID3D12GraphicsCommandList* Cl() { if (stale_) EndStream(); return rec_.cl.Get(); }
+    Recording& Rec() { if (stale_) EndStream(); return rec_; }   // a host recording: the segments end first
     ChunkCache& Chunks() { return chunks_; }
     void MarkDirty(uint32_t d) { dirty_ |= d; }
     uint32_t AllocDescs(uint32_t n);          // index into the shader-visible heap
@@ -236,6 +190,37 @@ private:
     void CopyTexture(ResCore& dst, UINT dsub, UINT x, UINT y, UINT z, ResCore& src, UINT ssub, const D3D11_BOX* box);
     void StagingCpuCopy(ResCore& dst, UINT dsub, UINT x, UINT y, UINT z, ResCore& src, UINT ssub, const D3D11_BOX* box);
     void ClearUav(ID3D11UnorderedAccessView* v, const UINT* ui, const FLOAT* fl);
+
+    // ---- parallel translation ----
+    template <class T> void SHold(Segment& s, T* o)
+    {
+        if (!o) return;
+        holds_.Add(o);
+        s.held.push_back(&o->imm);
+    }
+    template <class T> void SObj(T* o) { seg_->words.push_back(reinterpret_cast<uint64_t>(o)); SHold(*seg_, o); }
+    void SHead(StreamOp op, uint32_t stage = 0, uint32_t start = 0, uint32_t n = 0)
+    {
+        seg_->words.push_back(uint64_t(op) | uint64_t(stage) << 8 | uint64_t(start) << 16 | uint64_t(n) << 32);
+    }
+    void SBuf(TBuffer* b);                     // a buffer and its GPU address when renamed
+    bool StreamDraw();                         // true: this draw goes into a segment
+    void SegDrawn() { if (++seg_->draws >= segDraws_) CutSegment(); }
+    void BeginSegment();
+    void CutSegment();
+    uint64_t SubmitPending();
+    void DropSegment(Segment* s);
+
+    StreamPool* pool_ = nullptr;               // the immediate context with workers
+    uint32_t segDraws_ = 256;
+    uint32_t openQueries_ = 0;                 // begun and not ended: no segments meanwhile
+    Segment* seg_ = nullptr;                   // being recorded
+    bool stale_ = false;                       // the open list's D3D12 state is not the shadow's (segments ran)
+    struct Pending { std::unique_ptr<Recording> rec; Segment* seg = nullptr; };
+    std::vector<Pending> pending_;             // closed, in call order, not yet submitted
+    StreamStats sstats_;
+    bool replay_ = false;
+    std::unordered_map<const TBuffer*, Chunk> override_;   // replay: renamed buffers' GPU addresses
 
     Device* dev_;
     bool deferred_;

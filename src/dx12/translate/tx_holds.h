@@ -15,7 +15,8 @@ namespace raw::tx {
 
 class BindHolds {
 public:
-    explicit BindHolds(bool plain) : plain_(plain) {}
+    enum Mode { kAtomic, kPlain, kNone };   // None: a replay context, whose segment holds what it binds (tx_stream.h)
+    explicit BindHolds(Mode m) : plain_(m == kPlain), none_(m == kNone) {}
     BindHolds(const BindHolds&) = delete;
     BindHolds& operator=(const BindHolds&) = delete;
 
@@ -23,6 +24,7 @@ public:
     void Assign(T*& slot, T* v)
     {
         if (slot == v) return;
+        if (none_) { slot = v; return; }
         if (!plain_) { IntAssign(slot, v); return; }
         if (v && v->imm.n++ == 0 && !v->imm.pinned) PinNew(v);
         if (slot) --slot->imm.n;
@@ -85,7 +87,7 @@ private:
                             [](void* p) { static_cast<T*>(p)->IntRelease(); }});
     }
 
-    bool plain_;
+    bool plain_, none_;
     std::vector<Pin> pins_;
     size_t cursor_ = 0;
 };

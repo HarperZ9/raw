@@ -7,48 +7,6 @@ static constexpr uint32_t kShaderRead =
     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 static constexpr uint32_t kGraphicsTableBits = (D_SRV0 * 0x1F) | (D_SAMP0 * 0x1F) | D_UAV;
 
-uint32_t Context::AllocDescs(uint32_t n)
-{
-    if (descBase_ == ~0u || descUsed_ + n > Device::kDescPage) {
-        if (descBase_ != ~0u) rec_.retire.descPages.push_back(descBase_);
-        descBase_ = dev_->AllocDescPage();
-        descUsed_ = 0;
-        if (descBase_ == ~0u) return 0;
-    }
-    descUsed_ += n;
-    return descBase_ + descUsed_ - n;
-}
-
-D3D12_GPU_DESCRIPTOR_HANDLE Context::GpuHandle(uint32_t index) const
-{
-    D3D12_GPU_DESCRIPTOR_HANDLE h = dev_->gpuHeap->GetGPUDescriptorHandleForHeapStart();
-    h.ptr += UINT64(index) * dev_->srvInc;
-    return h;
-}
-
-D3D12_CPU_DESCRIPTOR_HANDLE Context::CpuHandle(uint32_t index) const
-{
-    D3D12_CPU_DESCRIPTOR_HANDLE h = dev_->gpuHeap->GetCPUDescriptorHandleForHeapStart();
-    h.ptr += SIZE_T(index) * dev_->srvInc;
-    return h;
-}
-
-D3D12_CPU_DESCRIPTOR_HANDLE Context::NullSrvFor(const ShaderData* sd, uint32_t slot)
-{
-    uint8_t dim = sd && slot < sd->srvDim.size() && sd->srvDim[slot] ? sd->srvDim[slot] : uint8_t(4);
-    if (dim > 11) dim = 4;
-    if (!nullSrv_[dim].ptr) nullSrv_[dim] = dev_->NullSrv(dim);
-    return nullSrv_[dim];
-}
-
-D3D12_CPU_DESCRIPTOR_HANDLE Context::NullUavFor(const ShaderData* sd, uint32_t slot)
-{
-    uint8_t dim = sd && slot < sd->uavDim.size() && sd->uavDim[slot] ? sd->uavDim[slot] : uint8_t(4);
-    if (dim > 11) dim = 4;
-    if (!nullUav_[dim].ptr) nullUav_[dim] = dev_->NullUav(dim);
-    return nullUav_[dim];
-}
-
 static uint8_t TopoType(D3D11_PRIMITIVE_TOPOLOGY t)
 {
     if (t == D3D11_PRIMITIVE_TOPOLOGY_POINTLIST) return D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT;
@@ -272,21 +230,38 @@ bool Context::PrepareDraw(bool indexed)
 STDMETHODIMP_(void) Context::Draw(UINT n, UINT start)
 {
     TX_TRACE("Context::Draw");
+    if (pool_ && StreamDraw()) { SHead(SO_Draw, 0, 0, n); seg_->words.push_back(start); return SegDrawn(); }
+    if (stale_) EndStream();
     if (PrepareDraw(false)) Cl()->DrawInstanced(n, 1, start, 0);
 }
 STDMETHODIMP_(void) Context::DrawIndexed(UINT n, UINT start, INT base)
 {
     TX_TRACE("Context::DrawIndexed");
+    if (pool_ && StreamDraw()) { SHead(SO_DrawIndexed, 0, 0, n); seg_->words.push_back(uint64_t(start) | uint64_t(uint32_t(base)) << 32); return SegDrawn(); }
+    if (stale_) EndStream();
     if (PrepareDraw(true)) Cl()->DrawIndexedInstanced(n, 1, start, base, 0);
 }
 STDMETHODIMP_(void) Context::DrawInstanced(UINT n, UINT inst, UINT start, UINT startInst)
 {
     TX_TRACE("Context::DrawInstanced");
+    if (pool_ && StreamDraw()) {
+        SHead(SO_DrawInstanced, 0, 0, n);
+        seg_->words.push_back(uint64_t(inst) | uint64_t(start) << 32); seg_->words.push_back(startInst);
+        return SegDrawn();
+    }
+    if (stale_) EndStream();
     if (PrepareDraw(false)) Cl()->DrawInstanced(n, inst, start, startInst);
 }
 STDMETHODIMP_(void) Context::DrawIndexedInstanced(UINT n, UINT inst, UINT start, INT base, UINT startInst)
 {
     TX_TRACE("Context::DrawIndexedInstanced");
+    if (pool_ && StreamDraw()) {
+        SHead(SO_DrawIndexedInstanced, 0, 0, n);
+        seg_->words.push_back(uint64_t(inst) | uint64_t(start) << 32);
+        seg_->words.push_back(uint64_t(uint32_t(base)) | uint64_t(startInst) << 32);
+        return SegDrawn();
+    }
+    if (stale_) EndStream();
     if (PrepareDraw(true)) Cl()->DrawIndexedInstanced(n, inst, start, base, startInst);
 }
 STDMETHODIMP_(void) Context::DrawAuto() { CountUnsupported(dev_, "DrawAuto (stream output)"); }

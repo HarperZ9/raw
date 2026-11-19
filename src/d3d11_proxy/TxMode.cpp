@@ -22,6 +22,7 @@ struct TxConfig {
     bool debugLayer = false, wrap = false, renameRing = true, ringWriteBack = false;
     char agilityPath[MAX_PATH] = {};
     UINT agilityVersion = 0;
+    UINT workers = 0, segmentDraws = 256;
 };
 TxConfig& C() { static TxConfig c; return c; }
 
@@ -43,6 +44,10 @@ void Load()
     // [Translate] RenameRing (default 1) and RingWriteBack (default 0): how buffer renames get their memory.
     C().renameRing = GetPrivateProfileIntA("Translate", "RenameRing", 1, ini.c_str()) != 0;
     C().ringWriteBack = GetPrivateProfileIntA("Translate", "RingWriteBack", 0, ini.c_str()) != 0;
+    // [Translate] Workers (default 0): threads that turn the game's draws into D3D12 command lists in parallel;
+    // SegmentDraws (default 256): the draws each worker's list takes.
+    C().workers = GetPrivateProfileIntA("Translate", "Workers", 0, ini.c_str());
+    C().segmentDraws = GetPrivateProfileIntA("Translate", "SegmentDraws", 256, ini.c_str());
     if (C().mode) Log("[Tx] translate mode %s%s", C().mode == 1 ? "on: the game runs on raw::tx (D3D12)" : "native: system D3D11 behind the harness wrapper",
                       C().debugLayer ? ", D3D12 debug layer on" : "");
 }
@@ -112,6 +117,8 @@ HRESULT MakeTx(IDXGIAdapter* adapter, ID3D11Device** dev, ID3D11DeviceContext** 
     p.agilityVersion = C().agilityVersion;
     p.renameRing = C().renameRing;
     p.ringWriteBack = C().ringWriteBack;
+    p.workers = C().workers;
+    p.segmentDraws = C().segmentDraws;
     DXGI_ADAPTER_DESC ad{};
     if (adapter && SUCCEEDED(adapter->GetDesc(&ad))) p.adapter = &ad.AdapterLuid;
     ID3D11Device* d = nullptr;

@@ -16,6 +16,7 @@ namespace raw::tx {
 using Microsoft::WRL::ComPtr;
 class Device;
 class Context;
+class StreamPool;
 
 void Log(const char* fmt, ...);
 void LogIid(const char* where, REFIID r);

@@ -41,6 +41,11 @@ bool MakeDevice(const RunCfg& cfg, ComPtr<ID3D11Device>& dev, ComPtr<ID3D11Devic
         static const char* agility = std::getenv("RAW_TX_AGILITY_PATH");
         static const char* agilityVersion = std::getenv("RAW_TX_AGILITY_VERSION");
         if (agility && agilityVersion) { p.agilityPath = agility; p.agilityVersion = uint32_t(atoi(agilityVersion)); }
+        // RAW_TX_WORKERS and RAW_TX_SEGMENT: the immediate context's draws translated on worker threads.
+        static const char* workers = std::getenv("RAW_TX_WORKERS");
+        static const char* segment = std::getenv("RAW_TX_SEGMENT");
+        if (workers) p.workers = uint32_t(atoi(workers));
+        if (segment) p.segmentDraws = uint32_t(atoi(segment));
         hr = raw::tx::CreateDevice(p, &dev, &ctx);
     } else {
         const D3D_FEATURE_LEVEL want = D3D_FEATURE_LEVEL_11_0;

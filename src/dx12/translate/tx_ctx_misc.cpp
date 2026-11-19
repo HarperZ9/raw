@@ -5,6 +5,7 @@ namespace raw::tx {
 
 STDMETHODIMP_(void) Context::ClearRenderTargetView(ID3D11RenderTargetView* view, const FLOAT color[4])
 {
+    RunBreak(__func__);
     TX_TRACE("Context::ClearRenderTargetView");
     TRTV* v = static_cast<TRTV*>(view);
     if (!v) return;
@@ -17,6 +18,7 @@ STDMETHODIMP_(void) Context::ClearRenderTargetView(ID3D11RenderTargetView* view,
 
 STDMETHODIMP_(void) Context::ClearDepthStencilView(ID3D11DepthStencilView* view, UINT flags, FLOAT depth, UINT8 stencil)
 {
+    RunBreak(__func__);
     TX_TRACE("Context::ClearDepthStencilView");
     TDSV* v = static_cast<TDSV*>(view);
     if (!v) return;
@@ -36,6 +38,7 @@ STDMETHODIMP_(void) Context::ClearDepthStencilView(ID3D11DepthStencilView* view,
 
 void Context::ClearUav(ID3D11UnorderedAccessView* view, const UINT* ui, const FLOAT* fl)
 {
+    RunBreak(__func__);
     TUAV* v = static_cast<TUAV*>(view);
     if (!v || !v->core->tr) return;
     ResCore& c = *v->core;
@@ -65,21 +68,25 @@ static bool HeapQuery(const TQuery* q, QueryHeapKind* heap, D3D12_QUERY_TYPE* ty
 
 STDMETHODIMP_(void) Context::Begin(ID3D11Asynchronous* a)
 {
+    RunBreak(__func__);
     TX_TRACE("Context::Begin");
     TQuery* q = static_cast<TQuery*>(a);
     QueryHeapKind heap; D3D12_QUERY_TYPE type;
     if (!q || !HeapQuery(q, &heap, &type) || type == D3D12_QUERY_TYPE_TIMESTAMP) return;
     Cl()->BeginQuery(dev_->qh[heap].heap.Get(), type, q->slot);
     ++rec_.cmdCount;
+    ++openQueries_;   // a D3D12 query begins and ends in one list: draws stay on this one until End
 }
 
 STDMETHODIMP_(void) Context::End(ID3D11Asynchronous* a)
 {
+    RunBreak(__func__);
     TX_TRACE("Context::End");
     TQuery* q = static_cast<TQuery*>(a);
     if (!q) return;
     QueryHeapKind heap; D3D12_QUERY_TYPE type;
     if (HeapQuery(q, &heap, &type)) {
+        if (type != D3D12_QUERY_TYPE_TIMESTAMP && openQueries_) --openQueries_;
         QueryHeap& h = dev_->qh[heap];
         Cl()->EndQuery(h.heap.Get(), type, q->slot);
         Cl()->ResolveQueryData(h.heap.Get(), type, q->slot, 1, h.readback.Get(), UINT64(q->slot) * h.stride);
@@ -132,6 +139,9 @@ STDMETHODIMP_(FLOAT) Context::GetResourceMinLOD(ID3D11Resource*) { return 0.0f; 
 uint64_t Context::FlushInternal()
 {
     if (deferred_) return 0;
+    holds_.Drain(1024);   // pins of objects the game released and nothing binds give their reference back
+    RunBreak(__func__);
+    if (!pending_.empty()) return SubmitPending();
     if (rec_.cmdCount == 0 && !dev_->UploadPending()) return dev_->LastSubmitted();
     rec_.cl->Close();
     Recording* r = &rec_;
@@ -193,7 +203,7 @@ STDMETHODIMP_(void) Context::ExecuteCommandList(ID3D11CommandList* list, BOOL re
     TX_TRACE("Context::ExecuteCommandList");
     if (deferred_ || !list) return;
     TCommandList* l = static_cast<TCommandList*>(list);
-    if (rec_.cmdCount) FlushInternal();   // what the immediate context recorded runs first
+    if (rec_.cmdCount || stale_ || !pending_.empty()) FlushInternal();   // what the immediate context recorded runs first
     Recording* r = &l->rec;
     dev_->Submit(&r, 1, false);
     for (auto& kv : l->renames) {         // the buffers the list wrote now hold its contents

@@ -40,15 +40,15 @@ uint64_t g_census[4][2][2] = {};   // opaque-set draws by call (indexed, indexed
 
 void SceneGeometry_SetActors(bool on) { g_actors = on; }
 void SceneGeometry_SetSkinFilter(int f) { g_skinFilter = f; }
-void SceneGeometry_Census(ID3D11DeviceContext* real, int call)
+void SceneGeometry_CensusWith(const Layout* L, int call)
 {
     if (!SceneLights_Opaque() || call < 0 || call > 3) return;
-    ID3D11InputLayout* il = nullptr;
-    real->IAGetInputLayout(&il);
-    Layout L;
-    const bool skinned = geom::FindLayout(il, L) && L.blendIdx.set;
-    if (il) il->Release();
-    ++g_census[call][skinned][SceneLights_DrawWorld() != nullptr];
+    ++g_census[call][L && L->blendIdx.set][SceneLights_DrawWorld() != nullptr];
+}
+void SceneGeometry_Census(ID3D11DeviceContext* real, int call)
+{
+    if (!SceneLights_Opaque() || call < 0 || call > 3) return;   // the lookup only for the opaque set's draws
+    SceneGeometry_CensusWith(geom::LayoutOf(geom::BoundLayout(real)), call);
 }
 void SceneGeometry_OnTargets(bool mainDepth, UINT rtvs, DXGI_FORMAT rt0, UINT rt0Width, bool opaqueCaptured)
 {
@@ -98,15 +98,11 @@ static void CheckPaletteAgainstGpu(ID3D11DeviceContext* real, ID3D11Buffer* cb, 
     if (dev) dev->Release();
 }
 
-bool SceneSkin_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT startIndex, INT baseVertex)
+bool SceneSkin_OnDraw(ID3D11DeviceContext* real, const Layout* bound, UINT indexCount, UINT startIndex, INT baseVertex)
 {
     static uint32_t seen = 0, logged = 0;
-    ID3D11InputLayout* il = nullptr;
-    real->IAGetInputLayout(&il);
-    Layout L;
-    const bool found = geom::FindLayout(il, L);
-    if (il) il->Release();
-    if (!found || !L.blendIdx.set) return false;
+    if (!bound || !bound->blendIdx.set) return false;
+    const Layout& L = *bound;
     // A skinned draw with a world block is an actor's: RtActors=0 sends it the rigid way, as before.
     const bool actor = SceneLights_DrawWorld() != nullptr;
     if (actor && !g_actors) return false;
@@ -123,10 +119,7 @@ bool SceneSkin_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT startInde
     bool alpha = false;
     if (g_skinOn && formatOk && open) {
         // Alpha-tested skinned draws (tree leaves) would be solid cards: left out until the rays test them.
-        ID3D11PixelShader* ps = nullptr;
-        real->PSGetShader(&ps, nullptr, nullptr);
-        alpha = geom::IsDiscardPs(ps);
-        if (ps) ps->Release();
+        alpha = geom::IsDiscardPs(geom::BoundPs(real));
         alpha = alpha || BlendAlpha(real) != raw::bridge::RtAlphaNone;
     }
     if (g_skinOn) { if (!open) ++g_skinNotOpaque; else if (!formatOk) ++g_skinFormat; else if (alpha) ++g_skinAlpha; }
@@ -141,10 +134,11 @@ bool SceneSkin_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT startInde
         const bool half = L.pos.format == DXGI_FORMAT_R16G16B16A16_FLOAT;
         if ((g_skinFilter == 1 && half) || (g_skinFilter == 2 && !half) || (g_skinFilter == 3 && actor) || (g_skinFilter == 4 && !actor)) return true;
         raw::bridge::RtDraw d;
+        d.drop = geom::DropFor(real);
         UINT stride = 0, offset = 0, bs = 0, bo = 0;
-        real->IAGetVertexBuffers(L.pos.slot, 1, &d.vb, &stride, &offset);
-        real->IAGetVertexBuffers(L.blendIdx.slot, 1, &d.blendVb, &bs, &bo);
-        real->IAGetIndexBuffer(&d.ib, &d.ibFormat, &d.ibOffset);
+        d.vb = geom::VertexBuffer(real, L.pos.slot, &stride, &offset);
+        d.blendVb = geom::VertexBuffer(real, L.blendIdx.slot, &bs, &bo);
+        d.ib = geom::IndexBuffer(real, &d.ibFormat, &d.ibOffset);
         if (!d.vb || !d.ib || !d.blendVb) { raw::bridge::ReleaseRtDraw(d); return true; }
         d.skinned = true; d.actor = actor;
         d.stride = stride; d.vbOffset = offset; d.posOffset = L.pos.offset; d.posFormat = L.pos.format;

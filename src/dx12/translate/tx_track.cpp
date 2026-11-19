@@ -46,7 +46,8 @@ void Tracker::Reset()
 Tracker::Local& Tracker::Add(const std::shared_ptr<TrackedRes>& r)
 {
     Local& l = locals_.emplace_back();
-    l.r = r;
+    l.r = r.get();
+    if (!epoch_) l.own = r;
     const uint32_t n = r->subs * 2;
     if (n > 8) l.heap.reset(new uint32_t[n]);
     uint32_t* s = l.S();
@@ -164,12 +165,14 @@ void Tracker::Flush(ID3D12GraphicsCommandList* cl)
 void Tracker::Resolve(std::vector<D3D12_RESOURCE_BARRIER>& fixups)
 {
     for (Local& l : locals_) {
-        TrackedRes* r = l.r.get();
+        TrackedRes* r = l.r;
         uint32_t* first = l.S();
         uint32_t* cur = first + r->subs;
         for (uint32_t i = 0; i < r->subs; ++i) {
             if (first[i] == kUnknownState) continue;
-            if (r->global[i] != first[i])
+            const bool drop = (faults & FaultSkipBarrier) && r->global[i] == D3D12_RESOURCE_STATE_RENDER_TARGET &&
+                              (first[i] & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);   // the control's defect here too
+            if (r->global[i] != first[i] && !drop)
                 fixups.push_back(Transition(r->res.Get(), i, r->global[i], first[i]));
             r->global[i] = cur[i];
         }
@@ -178,9 +181,10 @@ void Tracker::Resolve(std::vector<D3D12_RESOURCE_BARRIER>& fixups)
 
 void Tracker::Keep(std::vector<std::shared_ptr<TrackedRes>>& out, bool move)
 {
+    if (epoch_) return;   // plain pointers: DestroyCore's retire keeps a destroyed resource (see Local)
     out.reserve(out.size() + locals_.size());
-    if (move) for (Local& l : locals_) out.push_back(std::move(l.r));
-    else for (const Local& l : locals_) out.push_back(l.r);
+    if (move) for (Local& l : locals_) out.push_back(std::move(l.own));
+    else for (const Local& l : locals_) out.push_back(l.own);
 }
 
 }  // namespace raw::tx

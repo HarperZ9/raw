@@ -9,25 +9,26 @@ void Context::SetShader(int stage, T* s)
 {
     ShaderSlot& slot = s_.st[stage].sh;
     if (slot.obj == s) return;
-    if (slot.obj) slot.ref(slot.obj, -1);
-    slot = ShaderSlot{};
-    if (s) {
-        s->IntAddRef();
-        slot.obj = s;
-        slot.sd = s->sd;
-        slot.ref = [](void* p, int delta) {
-            if (delta > 0) static_cast<T*>(p)->IntAddRef(); else static_cast<T*>(p)->IntRelease();
-        };
-    }
+    if (seg_) { SHead(SO_Shader, uint32_t(stage)); SObj(s); }
+    T* cur = static_cast<T*>(slot.obj);   // a stage binds one shader type
+    holds_.Assign(cur, s);
+    slot.obj = cur;
+    slot.sd = s ? s->sd : nullptr;
+    slot.drop = s ? [](BindHolds& h, void* p) { T* t = static_cast<T*>(p); h.Assign<T>(t, nullptr); } : nullptr;
+    slot.hold = s ? &s->imm : nullptr;
     dirty_ |= D_PSO;
 }
 
 void Context::SetCB(int stage, UINT start, UINT n, ID3D11Buffer* const* b)
 {
+    if (seg_) {
+        SHead(SO_CB, uint32_t(stage), start, n);
+        for (UINT i = 0; i < n; ++i) SBuf(b ? static_cast<TBuffer*>(b[i]) : nullptr);
+    }
     for (UINT i = 0; i < n && start + i < 14; ++i) {
         BufSlot& s = s_.st[stage].cb[start + i];
         TBuffer* nb = b ? static_cast<TBuffer*>(b[i]) : nullptr;
-        IntAssign(s.buf, nb);
+        holds_.Assign(s.buf, nb);
         s.chunk = nb ? Pin(nb) : nullptr;
     }
 }
@@ -57,7 +58,7 @@ void Context::UnbindSrvsOf(const ResCore* core, const SubRange& range)
         StageState& s = s_.st[st];
         for (uint32_t i = 0; i < s.srvHi; ++i) {
             if (!s.srv[i] || s.srv[i]->core != core || !Overlap(range, s.srv[i]->range)) continue;
-            IntAssign<TSRV>(s.srv[i], nullptr);
+            holds_.Assign<TSRV>(s.srv[i], nullptr);
             dirty_ |= D_SRV0 << st;
         }
     }
@@ -65,23 +66,33 @@ void Context::UnbindSrvsOf(const ResCore* core, const SubRange& range)
 
 void Context::SetSRV(int stage, UINT start, UINT n, ID3D11ShaderResourceView* const* v)
 {
+    if (seg_) {
+        SHead(SO_SRV, uint32_t(stage), start, n);
+        for (UINT i = 0; i < n; ++i) SObj(v ? static_cast<TSRV*>(v[i]) : nullptr);
+    }
     StageState& s = s_.st[stage];
     for (UINT i = 0; i < n && start + i < 128; ++i) {
         TSRV* nv = v ? static_cast<TSRV*>(v[i]) : nullptr;
         if (nv && stage != S_CS && TargetConflict(nv)) nv = nullptr;
         if (s.srv[start + i] == nv) continue;
-        IntAssign(s.srv[start + i], nv);
+        holds_.Assign(s.srv[start + i], nv);
         if (nv && start + i + 1 > s.srvHi) s.srvHi = start + i + 1;
         dirty_ |= (D_SRV0 << stage) | (stage < S_CS ? D_SCAN_SRV0 << stage : 0u);
+        if (start + i < 64) s.srvScan |= 1ull << (start + i);
+        else dirty_ |= D_SCAN_ALLSRV;
     }
 }
 
 void Context::SetSamp(int stage, UINT start, UINT n, ID3D11SamplerState* const* p)
 {
+    if (seg_) {
+        SHead(SO_Samp, uint32_t(stage), start, n);
+        for (UINT i = 0; i < n; ++i) SObj(p ? static_cast<TSampler*>(p[i]) : nullptr);
+    }
     for (UINT i = 0; i < n && start + i < 16; ++i) {
         TSampler* ns = p ? static_cast<TSampler*>(p[i]) : nullptr;
         if (s_.st[stage].samp[start + i] == ns) continue;
-        IntAssign(s_.st[stage].samp[start + i], ns);
+        holds_.Assign(s_.st[stage].samp[start + i], ns);
         dirty_ |= D_SAMP0 << stage;
     }
 }
@@ -101,20 +112,28 @@ TX_STAGE_SET(CS, ID3D11ComputeShader, S_CS)
 STDMETHODIMP_(void) Context::IASetInputLayout(ID3D11InputLayout* l)
 {
     TX_TRACE("Context::IASetInputLayout");
-    IntAssign(s_.layout, static_cast<TInputLayout*>(l));
+    if (seg_) { SHead(SO_Layout); SObj(static_cast<TInputLayout*>(l)); }
+    holds_.Assign(s_.layout, static_cast<TInputLayout*>(l));
     dirty_ |= D_PSO;
 }
 
 STDMETHODIMP_(void) Context::IASetVertexBuffers(UINT start, UINT n, ID3D11Buffer* const* b, const UINT* strides, const UINT* offsets)
 {
     TX_TRACE("Context::IASetVertexBuffers");
+    if (seg_) {
+        SHead(SO_VB, 0, start, n);
+        for (UINT i = 0; i < n; ++i) {
+            SBuf(b ? static_cast<TBuffer*>(b[i]) : nullptr);
+            seg_->words.push_back(uint64_t(strides ? strides[i] : 0) | uint64_t(offsets ? offsets[i] : 0) << 32);
+        }
+    }
     bool changed = false;
     for (UINT i = 0; i < n && start + i < 32; ++i) {
         BufSlot& s = s_.vb[start + i];
         TBuffer* nb = b ? static_cast<TBuffer*>(b[i]) : nullptr;
         const UINT stride = strides ? strides[i] : 0, offset = offsets ? offsets[i] : 0;
         if (s.buf == nb && s.stride == stride && s.offset == offset) continue;   // a rename sets D_VB itself
-        IntAssign(s.buf, nb);
+        holds_.Assign(s.buf, nb);
         s.chunk = nb ? Pin(nb) : nullptr;
         s.stride = stride;
         s.offset = offset;
@@ -127,9 +146,10 @@ STDMETHODIMP_(void) Context::IASetVertexBuffers(UINT start, UINT n, ID3D11Buffer
 STDMETHODIMP_(void) Context::IASetIndexBuffer(ID3D11Buffer* b, DXGI_FORMAT f, UINT offset)
 {
     TX_TRACE("Context::IASetIndexBuffer");
+    if (seg_) { SHead(SO_IB, uint32_t(f)); SBuf(static_cast<TBuffer*>(b)); seg_->words.push_back(offset); }
     TBuffer* nb = static_cast<TBuffer*>(b);
     if (s_.ib.buf == nb && s_.ib.offset == offset && s_.ibFmt == f) return;   // a rename sets D_IB itself
-    IntAssign(s_.ib.buf, nb);
+    holds_.Assign(s_.ib.buf, nb);
     s_.ib.chunk = nb ? Pin(nb) : nullptr;
     s_.ib.offset = offset;
     if (s_.ibFmt != f) dirty_ |= D_PSO;
@@ -140,108 +160,10 @@ STDMETHODIMP_(void) Context::IASetIndexBuffer(ID3D11Buffer* b, DXGI_FORMAT f, UI
 STDMETHODIMP_(void) Context::IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY t)
 {
     TX_TRACE("Context::IASetPrimitiveTopology");
+    if (seg_) SHead(SO_Topo, uint32_t(t));
     if (s_.topo == t) return;
     s_.topo = t;
     dirty_ |= D_TOPO | D_PSO;
-}
-
-void Context::SetTargets(UINT n, ID3D11RenderTargetView* const* rtv, ID3D11DepthStencilView* dsv, bool)
-{
-    if (n > 8) n = 8;
-    uint32_t hi = 0;
-    for (UINT i = 0; i < 8; ++i) {
-        TRTV* v = (i < n && rtv) ? static_cast<TRTV*>(rtv[i]) : nullptr;
-        IntAssign(s_.rtv[i], v);
-        if (v) hi = i + 1;
-    }
-    s_.rtCount = hi;
-    IntAssign(s_.dsv, static_cast<TDSV*>(dsv));
-    dirty_ |= D_RT | D_PSO | D_SCAN | D_SC;
-    for (uint32_t i = 0; i < hi; ++i)
-        if (s_.rtv[i]) UnbindSrvsOf(s_.rtv[i]->core, s_.rtv[i]->range);
-    const UINT ro = D3D11_DSV_READ_ONLY_DEPTH | D3D11_DSV_READ_ONLY_STENCIL;
-    if (s_.dsv && (s_.dsv->desc.Flags & ro) == 0) UnbindSrvsOf(s_.dsv->core, s_.dsv->range);
-}
-
-STDMETHODIMP_(void) Context::OMSetRenderTargets(UINT n, ID3D11RenderTargetView* const* rtv, ID3D11DepthStencilView* dsv)
-{
-    TX_TRACE("Context::OMSetRenderTargets");
-    SetTargets(n, rtv, dsv, false);
-    for (auto& u : s_.uav) IntAssign<TUAV>(u, nullptr);
-    dirty_ |= D_UAV;
-}
-
-STDMETHODIMP_(void) Context::OMSetRenderTargetsAndUnorderedAccessViews(UINT nRtv, ID3D11RenderTargetView* const* rtv,
-    ID3D11DepthStencilView* dsv, UINT uavStart, UINT nUav, ID3D11UnorderedAccessView* const* uav, const UINT*)
-{
-    TX_TRACE("Context::OMSetRenderTargetsAndUnorderedAccessViews");
-    if (nRtv != D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL) SetTargets(nRtv, rtv, dsv, false);
-    if (nUav == D3D11_KEEP_UNORDERED_ACCESS_VIEWS) return;
-    for (auto& u : s_.uav) IntAssign<TUAV>(u, nullptr);
-    for (UINT i = 0; i < nUav && uavStart + i < 8; ++i)
-        IntAssign(s_.uav[uavStart + i], uav ? static_cast<TUAV*>(uav[i]) : nullptr);
-    dirty_ |= D_UAV | D_SCAN;
-}
-
-STDMETHODIMP_(void) Context::OMSetBlendState(ID3D11BlendState* b, const FLOAT f[4], UINT mask)
-{
-    TX_TRACE("Context::OMSetBlendState");
-    IntAssign(s_.blend, static_cast<TBlend*>(b));
-    for (int i = 0; i < 4; ++i) s_.factor[i] = f ? f[i] : 1.0f;
-    s_.sampleMask = mask;
-    dirty_ |= D_PSO | D_BF;
-}
-
-STDMETHODIMP_(void) Context::OMSetDepthStencilState(ID3D11DepthStencilState* d, UINT ref)
-{
-    TX_TRACE("Context::OMSetDepthStencilState");
-    IntAssign(s_.ds, static_cast<TDepthStencil*>(d));
-    s_.stencilRef = ref;
-    dirty_ |= D_PSO | D_SREF;
-}
-
-STDMETHODIMP_(void) Context::RSSetState(ID3D11RasterizerState* r)
-{
-    TX_TRACE("Context::RSSetState");
-    IntAssign(s_.rs, static_cast<TRaster*>(r));
-    dirty_ |= D_PSO | D_SC;
-}
-
-STDMETHODIMP_(void) Context::RSSetViewports(UINT n, const D3D11_VIEWPORT* v)
-{
-    TX_TRACE("Context::RSSetViewports");
-    s_.vpCount = n > 16 ? 16 : n;
-    if (v) memcpy(s_.vp, v, s_.vpCount * sizeof(D3D11_VIEWPORT));
-    dirty_ |= D_VP | D_SC;
-}
-
-STDMETHODIMP_(void) Context::RSSetScissorRects(UINT n, const D3D11_RECT* r)
-{
-    TX_TRACE("Context::RSSetScissorRects");
-    s_.scCount = n > 16 ? 16 : n;
-    if (r) memcpy(s_.sc, r, s_.scCount * sizeof(D3D11_RECT));
-    dirty_ |= D_SC;
-}
-
-STDMETHODIMP_(void) Context::CSSetUnorderedAccessViews(UINT start, UINT n, ID3D11UnorderedAccessView* const* u, const UINT*)
-{
-    TX_TRACE("Context::CSSetUnorderedAccessViews");
-    for (UINT i = 0; i < n && start + i < 8; ++i)
-        IntAssign(s_.csUav[start + i], u ? static_cast<TUAV*>(u[i]) : nullptr);
-    dirty_ |= D_CSUAV;
-}
-
-STDMETHODIMP_(void) Context::SOSetTargets(UINT n, ID3D11Buffer* const* b, const UINT*)
-{
-    TX_TRACE("Context::SOSetTargets");
-    for (UINT i = 0; i < n; ++i)
-        if (b && b[i]) { CountUnsupported(dev_, "SOSetTargets (stream output)"); return; }
-}
-
-STDMETHODIMP_(void) Context::SetPredication(ID3D11Predicate* p, BOOL)
-{
-    TX_TRACE("Context::SetPredication");
-    if (p) CountUnsupported(dev_, "SetPredication");
 }
 
 }  // namespace raw::tx

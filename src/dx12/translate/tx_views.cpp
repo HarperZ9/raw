@@ -39,7 +39,9 @@ static void SetRange(SubRange& r, const ResCore& c, uint32_t mip0, uint32_t mipN
 template <class V>
 static V* NewView(Device* dev, ResCore* core, D3D12_DESCRIPTOR_HEAP_TYPE heap)
 {
+    static std::atomic<uint64_t> next{1};
     V* v = new V(dev);
+    v->uid = next.fetch_add(1, std::memory_order_relaxed);   // creation, not per draw
     v->core = core;
     core->intRef(core->self, +1);
     v->heap = heap;

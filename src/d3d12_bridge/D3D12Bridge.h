@@ -154,11 +154,15 @@ struct RtDraw
     ID3D11Buffer* blendVb = nullptr;     // the stream with the blend indices and weights (a reference)
     UINT blendStride = 0, blendVbOffset = 0, idxOffset = 0, wOffset = 0;
     float* bones = nullptr;              // 960 floats, owned (delete[] in ReleaseRtDraw)
+    // How the references are given back; nullptr: Release. The RAW proxy on raw::tx takes them as the
+    // layer's plain host references (raw::tx::HoldBuffer, HoldView): no locked instruction per draw.
+    void (*drop)(RtDraw&) = nullptr;
 };
 enum : uint8_t { RtAlphaNone = 0, RtAlphaDiscard = 1, RtAlphaCoverage = 2, RtAlphaFoliage = 3, RtAlphaBlend = 4 };
 
 inline void ReleaseRtDraw(RtDraw& d)
 {
+    if (d.drop) d.drop(d);   // gives back vb, ib, alphaSrv, uvVb and blendVb, and clears them
     if (d.vb) d.vb->Release();
     if (d.ib) d.ib->Release();
     if (d.alphaSrv) d.alphaSrv->Release();
@@ -167,6 +171,12 @@ inline void ReleaseRtDraw(RtDraw& d)
     delete[] d.bones;
     d.vb = nullptr; d.ib = nullptr; d.alphaSrv = nullptr; d.uvVb = nullptr; d.blendVb = nullptr; d.bones = nullptr;
 }
+
+// [Lighting] Deterministic=1, a test switch: every per-frame noise seed of the bridge's passes (the
+// lighting's dither, the ray tracing's sample and sky-turn seeds, the GI's frame) is pinned to 0, so the
+// same scene gives the same frame and a pixel diff between builds is a test (tools/harness/tests/txdet.txt).
+// The history buffers still alternate and the cache still ages; with fixed inputs they settle.
+inline bool g_deterministic = false;
 
 struct RtTuning
 {

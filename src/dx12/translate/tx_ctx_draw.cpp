@@ -7,48 +7,6 @@ static constexpr uint32_t kShaderRead =
     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 static constexpr uint32_t kGraphicsTableBits = (D_SRV0 * 0x1F) | (D_SAMP0 * 0x1F) | D_UAV;
 
-uint32_t Context::AllocDescs(uint32_t n)
-{
-    if (descBase_ == ~0u || descUsed_ + n > Device::kDescPage) {
-        if (descBase_ != ~0u) rec_.retire.descPages.push_back(descBase_);
-        descBase_ = dev_->AllocDescPage();
-        descUsed_ = 0;
-        if (descBase_ == ~0u) return 0;
-    }
-    descUsed_ += n;
-    return descBase_ + descUsed_ - n;
-}
-
-D3D12_GPU_DESCRIPTOR_HANDLE Context::GpuHandle(uint32_t index) const
-{
-    D3D12_GPU_DESCRIPTOR_HANDLE h = dev_->gpuHeap->GetGPUDescriptorHandleForHeapStart();
-    h.ptr += UINT64(index) * dev_->srvInc;
-    return h;
-}
-
-D3D12_CPU_DESCRIPTOR_HANDLE Context::CpuHandle(uint32_t index) const
-{
-    D3D12_CPU_DESCRIPTOR_HANDLE h = dev_->gpuHeap->GetCPUDescriptorHandleForHeapStart();
-    h.ptr += SIZE_T(index) * dev_->srvInc;
-    return h;
-}
-
-D3D12_CPU_DESCRIPTOR_HANDLE Context::NullSrvFor(const ShaderData* sd, uint32_t slot)
-{
-    uint8_t dim = sd && slot < sd->srvDim.size() && sd->srvDim[slot] ? sd->srvDim[slot] : uint8_t(4);
-    if (dim > 11) dim = 4;
-    if (!nullSrv_[dim].ptr) nullSrv_[dim] = dev_->NullSrv(dim);
-    return nullSrv_[dim];
-}
-
-D3D12_CPU_DESCRIPTOR_HANDLE Context::NullUavFor(const ShaderData* sd, uint32_t slot)
-{
-    uint8_t dim = sd && slot < sd->uavDim.size() && sd->uavDim[slot] ? sd->uavDim[slot] : uint8_t(4);
-    if (dim > 11) dim = 4;
-    if (!nullUav_[dim].ptr) nullUav_[dim] = dev_->NullUav(dim);
-    return nullUav_[dim];
-}
-
 static uint8_t TopoType(D3D11_PRIMITIVE_TOPOLOGY t)
 {
     if (t == D3D11_PRIMITIVE_TOPOLOGY_POINTLIST) return D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT;
@@ -127,9 +85,21 @@ void Context::ScanGraphics(const RootSig* root)
     }
     for (int st = 0; st < 5; ++st) {
         if (!(d & (D_SCAN_SRV0 << st))) continue;
-        uint32_t n = root->sb[st].srvCount < s_.st[st].srvHi ? root->sb[st].srvCount : s_.st[st].srvHi;
-        for (uint32_t i = 0; i < n; ++i) {
-            TSRV* v = s_.st[st].srv[i];
+        StageState& ss = s_.st[st];
+        uint32_t n = root->sb[st].srvCount < ss.srvHi ? root->sb[st].srvCount : ss.srvHi;
+        // Only the slots bound anew, unless something may have moved a bound resource out of the read state.
+        uint64_t slots = (d & D_SCAN_ALLSRV) || n > 64 ? ~0ull : ss.srvScan;
+        if (n < 64) slots &= (1ull << n) - 1;
+        ss.srvScan = 0;
+        if (slots == ~0ull) {
+            for (uint32_t i = 0; i < n; ++i) {
+                TSRV* v = ss.srv[i];
+                if (v && v->core->tr) t.RequireRange(v->core->tr, v->range, v->core->mips, v->core->slices, kShaderRead);
+            }
+            continue;
+        }
+        for (; slots; slots &= slots - 1) {
+            TSRV* v = ss.srv[std::countr_zero(slots)];
             if (v && v->core->tr) t.RequireRange(v->core->tr, v->range, v->core->mips, v->core->slices, kShaderRead);
         }
     }
@@ -150,13 +120,31 @@ void Context::ApplyTables(const RootSig* root, int first, int last, bool compute
         StageState& s = s_.st[st];
         if (p.srv >= 0 && (dirty_ & (D_SRV0 << st))) {
             UINT n = b.srvCount;
-            uint32_t base = AllocDescs(n);
-            D3D12_CPU_DESCRIPTOR_HANDLE src[128];
-            for (UINT i = 0; i < n; ++i) src[i] = (i < s.srvHi && s.srv[i]) ? s.srv[i]->h : NullSrvFor(s.sh.sd, i);
-            D3D12_CPU_DESCRIPTOR_HANDLE dst = CpuHandle(base);
-            dev_->d3d->CopyDescriptors(1, &dst, &n, n, src, nullptr, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-            if (compute) cl->SetComputeRootDescriptorTable(p.srv, GpuHandle(base));
-            else cl->SetGraphicsRootDescriptorTable(p.srv, GpuHandle(base));
+            uint64_t keys[128];
+            for (UINT i = 0; i < n; ++i) {
+                const TSRV* v = i < s.srvHi ? s.srv[i] : nullptr;
+                uint8_t dim = s.sh.sd && i < s.sh.sd->srvDim.size() ? s.sh.sd->srvDim[i] : 0;
+                keys[i] = v ? v->uid : (uint64_t(1) << 63) | dim;   // a null descriptor: its dimension
+            }
+            const uint64_t hash = HashBytes(keys, n * sizeof(uint64_t), n);
+            uint32_t base = tables_.Find(keys, n, hash);
+            if (base == ~0u) {
+                ++tables_.misses;
+                base = AllocDescs(n);
+                D3D12_CPU_DESCRIPTOR_HANDLE src[128];
+                for (UINT i = 0; i < n; ++i) src[i] = (i < s.srvHi && s.srv[i]) ? s.srv[i]->h : NullSrvFor(s.sh.sd, i);
+                D3D12_CPU_DESCRIPTOR_HANDLE dst = CpuHandle(base);
+                dev_->d3d->CopyDescriptors(1, &dst, &n, n, src, nullptr, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                tables_.Put(keys, n, hash, base);
+            } else {
+                ++tables_.hits;
+            }
+            const D3D12_GPU_DESCRIPTOR_HANDLE h = GpuHandle(base);
+            if (h.ptr != srvTable_[st].ptr) {   // the same table on the same root signature: nothing to set
+                if (compute) cl->SetComputeRootDescriptorTable(p.srv, h);
+                else cl->SetGraphicsRootDescriptorTable(p.srv, h);
+                srvTable_[st] = h;
+            }
         }
         if (p.samp >= 0 && (dirty_ & (D_SAMP0 << st))) {
             uint32_t ids[16];
@@ -248,9 +236,9 @@ bool Context::PrepareDraw(bool indexed)
         cl->SetGraphicsRootSignature(cur_.root->rs.Get());
         root_ = cur_.root;
         memset(cbVa_, 0xFF, sizeof(cbVa_[0]) * 5);
-        for (int i = 0; i < 5; ++i) sampKey_[i] = ~0ull;
+        for (int i = 0; i < 5; ++i) { sampKey_[i] = ~0ull; srvTable_[i].ptr = 0; }   // root arguments start unset
         // Another root signature can read more shader-resource or UAV slots than the last scan covered.
-        dirty_ |= kGraphicsTableBits | D_SCAN_OM | (D_SCAN_SRV0 * 0x1F);
+        dirty_ |= kGraphicsTableBits | D_SCAN_OM | (D_SCAN_SRV0 * 0x1F) | D_SCAN_ALLSRV;
     }
     if (pso_ != cur_.pso) { cl->SetPipelineState(cur_.pso); pso_ = cur_.pso; }
     if (dirty_ & D_SCAN) ScanGraphics(root_);   // any of the scan parts
@@ -272,21 +260,38 @@ bool Context::PrepareDraw(bool indexed)
 STDMETHODIMP_(void) Context::Draw(UINT n, UINT start)
 {
     TX_TRACE("Context::Draw");
+    if (pool_ && !replay_ && StreamDraw()) { SHead(SO_Draw, 0, 0, n); seg_->words.push_back(start); return SegDrawn(); }
+    if (seg_ || stale_) EndStream(__func__);
     if (PrepareDraw(false)) Cl()->DrawInstanced(n, 1, start, 0);
 }
 STDMETHODIMP_(void) Context::DrawIndexed(UINT n, UINT start, INT base)
 {
     TX_TRACE("Context::DrawIndexed");
+    if (pool_ && !replay_ && StreamDraw()) { SHead(SO_DrawIndexed, 0, 0, n); seg_->words.push_back(uint64_t(start) | uint64_t(uint32_t(base)) << 32); return SegDrawn(); }
+    if (seg_ || stale_) EndStream(__func__);
     if (PrepareDraw(true)) Cl()->DrawIndexedInstanced(n, 1, start, base, 0);
 }
 STDMETHODIMP_(void) Context::DrawInstanced(UINT n, UINT inst, UINT start, UINT startInst)
 {
     TX_TRACE("Context::DrawInstanced");
+    if (pool_ && !replay_ && StreamDraw()) {
+        SHead(SO_DrawInstanced, 0, 0, n);
+        seg_->words.push_back(uint64_t(inst) | uint64_t(start) << 32); seg_->words.push_back(startInst);
+        return SegDrawn();
+    }
+    if (seg_ || stale_) EndStream(__func__);
     if (PrepareDraw(false)) Cl()->DrawInstanced(n, inst, start, startInst);
 }
 STDMETHODIMP_(void) Context::DrawIndexedInstanced(UINT n, UINT inst, UINT start, INT base, UINT startInst)
 {
     TX_TRACE("Context::DrawIndexedInstanced");
+    if (pool_ && !replay_ && StreamDraw()) {
+        SHead(SO_DrawIndexedInstanced, 0, 0, n);
+        seg_->words.push_back(uint64_t(inst) | uint64_t(start) << 32);
+        seg_->words.push_back(uint64_t(uint32_t(base)) | uint64_t(startInst) << 32);
+        return SegDrawn();
+    }
+    if (seg_ || stale_) EndStream(__func__);
     if (PrepareDraw(true)) Cl()->DrawIndexedInstanced(n, inst, start, base, startInst);
 }
 STDMETHODIMP_(void) Context::DrawAuto() { CountUnsupported(dev_, "DrawAuto (stream output)"); }

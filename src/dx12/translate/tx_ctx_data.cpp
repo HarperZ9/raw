@@ -40,12 +40,15 @@ STDMETHODIMP Context::Map(ID3D11Resource* res, UINT sub, D3D11_MAP type, UINT fl
     if (c->store == Store::Renamed) {
         ++g_map[0];
         TBuffer* b = static_cast<TBuffer*>(res);
-        if (type == D3D11_MAP_WRITE_DISCARD) RenameBuffer(b);
-        else if (type != D3D11_MAP_WRITE_NO_OVERWRITE) return E_INVALIDARG;
+        if (type == D3D11_MAP_WRITE_DISCARD) {
+            RenameBuffer(b);
+            if (seg_) { SHead(SO_Chunk); SBuf(b); }   // the segment's later draws read the new memory
+        } else if (type != D3D11_MAP_WRITE_NO_OVERWRITE) return E_INVALIDARG;
         out->pData = Pin(b)->cpu;
         out->RowPitch = out->DepthPitch = UINT(c->bytes);
         return S_OK;
     }
+    RunBreak(__func__);
     if (c->store == Store::Staging) {
         ++g_map[1];
         if (deferred_) return E_INVALIDARG;
@@ -98,6 +101,7 @@ STDMETHODIMP_(void) Context::Unmap(ID3D11Resource* res, UINT sub)
     ResCore* c = CoreOf(res);
     if (!c || c->store != Store::Committed || !c->mapChunk.res) { ++g_unmap[2]; return; }   // renamed: nothing to do
     TX_TRACE("Context::Unmap");
+    RunBreak(__func__);
     Chunk ch = c->mapChunk;
     ++g_unmap[c->IsBuffer() ? 0 : 1];
     g_unmapBytes += ch.size;
@@ -126,6 +130,7 @@ STDMETHODIMP_(void) Context::Unmap(ID3D11Resource* res, UINT sub)
 
 void Context::WriteTexture(ResCore& c, UINT sub, const D3D11_BOX* box, const void* data, UINT rowPitch, UINT depthPitch)
 {
+    RunBreak(__func__);
     uint32_t w, h, d;
     MipSize(c, sub % c.mips, w, h, d);
     UINT x = 0, y = 0, z = 0;
@@ -154,6 +159,7 @@ STDMETHODIMP_(void) Context::UpdateSubresource(ID3D11Resource* res, UINT sub, co
     TX_TRACE("Context::UpdateSubresource");
     ResCore* c = CoreOf(res);
     if (!c || !data) return;
+    if (!c->IsBuffer() || c->store != Store::Renamed) RunBreak(__func__);   // a renamed buffer is written here, like Map
     if (!c->IsBuffer()) { WriteTexture(*c, sub, box, data, rowPitch, depthPitch); return; }
     uint64_t off = box ? box->left : 0;
     uint64_t n = box ? uint64_t(box->right) - box->left : c->bytes;
@@ -166,6 +172,7 @@ STDMETHODIMP_(void) Context::UpdateSubresource(ID3D11Resource* res, UINT sub, co
         uint8_t* cur = Pin(b)->cpu;
         if (n != c->bytes) memcpy(cur, old, c->bytes);   // a partial update keeps the rest
         memcpy(cur + off, data, n);
+        if (seg_) { SHead(SO_Chunk); SBuf(b); }
         return;
     }
     if (c->store == Store::Staging) {

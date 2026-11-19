@@ -165,6 +165,8 @@ void LoadLightingConfig(const std::string& ini)
     t.rtIncremental = i("RtIncremental", 1) != 0;
     t.rtSkinFilter = i("RtSkinFilter", 0);
     t.rtCamSteps = i("RtCamSteps", 0) != 0;
+    raw::bridge::g_deterministic = i("Deterministic", 0) != 0;   // test switch: pinned noise seeds (D3D12Bridge.h)
+    if (raw::bridge::g_deterministic) Log("[Lighting] Deterministic=1: the bridge's noise seeds are pinned (a test setting)");
     t.ao = i("Ao", 1) != 0; t.fogReplacesGame = i("FogReplacesGame", 0) != 0; t.cascades = i("Cascades", 0) != 0; t.view = i("View", 0);
     // Cascades=0: the sun's shadow is the game's own filtered mask (match dE76 2.23 against 2.53 with
     // our cascade lookup, which also drew hard twig streaks on the ground).

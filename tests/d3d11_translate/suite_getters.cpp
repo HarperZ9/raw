@@ -3,6 +3,7 @@
 // that a render target cannot stay bound as a shader input, and reset on
 // ClearState. Running it on D3D11 first checks the test itself.
 #include "suite.h"
+#include <atomic>
 
 namespace suite {
 
@@ -109,6 +110,58 @@ static int Sequence(ID3D11DeviceContext* x, const Objects& o)
     return bad;
 }
 
+// Counts its references: set as private data on an object, it is released when the object dies.
+struct Sentinel final : IUnknown {
+    std::atomic<ULONG> n{1};
+    STDMETHODIMP QueryInterface(REFIID r, void** o) override
+    {
+        if (r != __uuidof(IUnknown)) { *o = nullptr; return E_NOINTERFACE; }
+        *o = this; AddRef(); return S_OK;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return ++n; }
+    STDMETHODIMP_(ULONG) Release() override { return --n; }
+};
+static const GUID kSentinelGuid = {0x7a1c2e55, 0x31f0, 0x4b8e, {0x9d, 0x42, 0x0e, 0x6b, 0x51, 0xa3, 0xc7, 0x19}};
+
+// A view bound while the application drops its reference stays alive while bound, and dies once unbound
+// (after a Flush: the immediate context gives its binding references back there). Returns wrong answers.
+// The sentinels outlive every device: a runtime may destroy an object later than its last release.
+static Sentinel g_sentinels[16];
+static int g_sentinelAt = 0;
+
+static int Lifetime(ID3D11Device* dev, ID3D11DeviceContext* x)
+{
+    int bad = 0;
+    for (int round = 0; round < 3; ++round) {
+        Target rt;
+        if (!MakeTarget(dev, 8, 8, DXGI_FORMAT_R8G8B8A8_UNORM, rt) || g_sentinelAt >= 16) return 100;
+        Sentinel& s = g_sentinels[g_sentinelAt++];
+        ID3D11ShaderResourceView* v = rt.srv.Detach();
+        v->SetPrivateDataInterface(kSentinelGuid, &s);
+        const UINT slot = round;   // the same object bound in a few slots and rebound, as the game does
+        x->PSSetShaderResources(slot, 1, &v);
+        x->VSSetShaderResources(slot, 1, &v);
+        x->PSSetShaderResources(slot, 1, &v);
+        v->Release();
+        rt = Target{};
+        x->Flush();
+        if (s.n != 2) ++bad;   // still bound: alive
+        ID3D11ShaderResourceView* none = nullptr;
+        x->PSSetShaderResources(slot, 1, &none);
+        x->Flush();
+        if (s.n != 2) ++bad;   // still bound to the vertex stage
+        x->VSSetShaderResources(slot, 1, &none);
+        x->Flush();
+        if (x->GetType() == D3D11_DEVICE_CONTEXT_DEFERRED) {
+            // A deferred context's recorded commands keep what they used until its command list goes.
+            ComPtr<ID3D11CommandList> cl;
+            if (FAILED(x->FinishCommandList(FALSE, &cl))) ++bad;
+        }
+        if (s.n != 1) ++bad;   // unbound and released: gone
+    }
+    return bad;
+}
+
 void RunGetters(const Opts& o, Tally& t)
 {
     int bad[2] = {-1, -1};
@@ -133,6 +186,31 @@ void RunGetters(const Opts& o, Tally& t)
     char d[160];
     snprintf(d, sizeof(d), "24 set-then-get checks: %d wrong on D3D11, %d wrong on D3D12, device references left %lu", bad[0], bad[1], refs);
     t.Add(bad[0] == 0 && bad[1] == 0 && refs == 0, "state_getters", d);
+}
+
+void RunLifetime(const Opts& o, Tally& t)
+{
+    int bad[2] = {-1, -1};
+    unsigned long refs = 99;
+    for (int be = 0; be < 2; ++be) {
+        RunCfg cfg;
+        cfg.be = be ? Backend::Translate : Backend::D3D11;
+        cfg.hardware = o.hardware;
+        cfg.debug = false;
+        ComPtr<ID3D11Device> dev;
+        ComPtr<ID3D11DeviceContext> ctx;
+        if (!MakeDevice(cfg, dev, ctx)) continue;
+        bad[be] = Lifetime(dev.Get(), ctx.Get());
+        ComPtr<ID3D11DeviceContext> dc;
+        if (SUCCEEDED(dev->CreateDeferredContext(0, &dc))) bad[be] += Lifetime(dev.Get(), dc.Get());
+        dc.Reset();
+        ctx.Reset();
+        if (be) refs = dev.Reset();
+    }
+    char d[160];
+    snprintf(d, sizeof(d), "18 checks on the immediate and a deferred context: %d wrong on D3D11, %d wrong on D3D12, device references left %lu",
+             bad[0], bad[1], refs);
+    t.Add(bad[0] == 0 && bad[1] == 0 && refs == 0, "binding_lifetime", d);
 }
 
 }  // namespace suite

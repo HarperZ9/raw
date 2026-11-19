@@ -137,9 +137,10 @@ uint32_t RtScene::PlaceInto(D3D12_RAYTRACING_INSTANCE_DESC* inst, uint32_t slot,
         if (m.alpha && !m_tune.alpha) continue;   // RtAlpha=0 live: the alpha-tested meshes leave the scene
         D3D12_RAYTRACING_INSTANCE_DESC& x = inst[n++];
         std::memcpy(x.Transform, d.world, sizeof x.Transform);
-        x.InstanceID = m.alphaRecord; x.InstanceMask = 0xFF; x.InstanceContributionToHitGroupIndex = 0;
+        x.InstanceID = m.alphaRecord | (d.lodLand ? kLodLandBit : 0u); x.InstanceMask = 0xFF; x.InstanceContributionToHitGroupIndex = 0;
         x.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE |
-                  (m.alpha ? D3D12_RAYTRACING_INSTANCE_FLAG_NONE : D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE);
+                  (d.lodLand ? D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_NON_OPAQUE :   // its BLAS geometry is opaque
+               m.alpha ? D3D12_RAYTRACING_INSTANCE_FLAG_NONE : D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE);
         alphaN += m.alpha;
         x.AccelerationStructure = heap + m.blas;
         sceneTris += m.tri.IndexCount / 3;
@@ -281,11 +282,12 @@ void RtScene::RecordTrace(ID3D12GraphicsCommandList4* cl, uint32_t slot, bool sk
     // debug view, the frame.
     const uint32_t giFlags = (m_tune.materials ? 1u : 0u) | (cache ? 2u : 0u) | (m_tune.rest && m_skyReady ? 4u : 0u) |
                              (m_tune.restReuse && m_skyReady ? 8u : 0u) | (m_tune.farLod ? 16u : 0u);
-    uint32_t gc[8];
+    uint32_t gc[12];
     std::memcpy(gc, m_tune.cameraPos, 12);
     std::memcpy(gc + 3, &m_tune.cacheCell, 4);
     gc[4] = RtCache::kSlots; gc[5] = giFlags; gc[6] = uint32_t(m_tune.debugView); gc[7] = g_deterministic ? 0u : uint32_t(m_frame);
-    cl->SetComputeRoot32BitConstants(14, 8, gc, 0);
+    std::memcpy(gc + 8, m_lodRect, 16);   // the loaded area, where distant land stays out of the rays
+    cl->SetComputeRoot32BitConstants(14, 12, gc, 0);
     cl->SetComputeRootDescriptorTable(15, {g.ptr + UINT64(m_skyReady ? m_sky.ReservoirDescriptor(m_frame) : 3) * inc});   // off: never read
     cl->Dispatch((m_w + 7) / 8, (m_h + 7) / 8, 1);
 }

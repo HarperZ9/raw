@@ -9,7 +9,9 @@
 //                             shader multiplies the lit result by one; a: the draw's alpha
 //   SV_Target5  specular      r: the normal map's specular mask; g: gloss, log2(shininess) / 13;
 //                             b: material class / 255; a: the draw's alpha
-//   SV_Target6  emissive      rgb: emitted light in linear units; a: the draw's alpha
+//   SV_Target6  emissive      rgb: emitted light in linear units (soft-lit and skin: the soft-lighting
+//                             map; environment-mapped: the cube map's colour times its mask; any other shader
+//                             that adds the character light: -(that light) - 1/1024); a: the draw's alpha
 //   SV_Target7  layer         r: SV_Position.z; gb: the view normal in the game's two-channel
 //                             encoding, or (the draw's alpha, -1) when the shader has no normal;
 //                             a: 1 where the draw's alpha is at least 1/255
@@ -61,6 +63,8 @@ struct PatchInfo
     bool        gloss = false;          // a shininess exponent was found
     bool        emissive = false;       // an emissive term was found
     bool        softLight = false;      // soft-lit: the slot 12 sample goes to the emissive target in place of emission
+    bool        charLight = false;      // the actors' fixed-direction fill light (slot 11 scale) goes to the emissive target
+    bool        envMap = false;         // environment-mapped: the cube's colour times its mask goes to the emissive target
     bool        hairTint = false;       // the albedo is multiplied by the hair's tint, lerp(1, tint, vertex colour)
     bool        vertexColour = false;   // the albedo carries the vertex colour the lit result is multiplied by
     bool        normal = false;         // the layer carries a normal

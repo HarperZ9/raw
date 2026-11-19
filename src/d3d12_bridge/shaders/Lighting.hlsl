@@ -153,7 +153,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // fitted on one frame (0.15, tools/lighting/fitsoft.py) stood in; it lost the warm back light.
     // Skin too: the body and hands shaders read the same soft-lighting map at t12 (the patch writes it to the emissive
     // target), and without it the arms read darker than the game's (rt6-tm-1).
-    s.soft = base == 5u || skin ? SoftMap.Load(ip).rgb : 0.0f.xxx;
+    s.soft = base == 5u || skin ? max(SoftMap.Load(ip).rgb, 0.0f.xxx) : 0.0f.xxx;   // negative: the character light (below)
     // Softer since the hands and bodies joined the class (rt6-wat-3): at 0.55 / 0.22 / 0.12 the arms read orange
     // against the game's brown.
     s.wrap = skin && !match ? float3(0.30f, 0.12f, 0.06f) : 0.0f.xxx;
@@ -289,7 +289,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (flags.w == 7u) { return float4(RtRefl.Load(ip).rgb, game.a); }   // RtDebug=1: the primary-ray view
     if (flags.w == 8u) { return float4(wet.wet, wet.puddle, wet.snow, game.a); }   // weather: wet red, puddles green, snow blue
 
-    float3 lit = knee3(albedo * (diff + amb));
+    // Environment-mapped (class 2: armour, leather, metal): the game adds its cube map's colour times the env mask
+    // times the light the surface receives, before the knee (ps 955d1a31636cbbe4). The patched shader writes that
+    // colour times mask to RAW's emissive target, and RAW lights it with its own received light, in both modes.
+    const float3 envRefl = base == 2u && (flags.x & FLAG_ENV) != 0u ? max(SoftMap.Load(ip).rgb, 0.0f.xxx) : 0.0f.xxx;
+    if (flags.w == 18u) { return float4(envRefl, game.a); }   // view 18: the environment map's reflection (class 2)
+    // The character light: a white fill the game's actor (and many object) shaders add to the light sum, from two fixed
+    // directions and a scale read from slot 11 (GBufferAnalyse.cpp, FindCharLight). Outside classes 2 and 5 the patch
+    // writes it to the emissive target as -(light) - 1/1024; emitted light is never negative.
+    const float ea = base != 2u && base != 5u ? SoftMap.Load(ip).r : 0.0f;
+    const float charLight = (flags.x & FLAG_CHAR) != 0u && ea < 0.0f ? max(-ea - 1.0f / 1024.0f, 0.0f) : 0.0f;
+    if (flags.w == 19u) { return float4(charLight.xxx, game.a); }   // view 19: the character light
+    float3 lit = knee3((albedo + envRefl) * (diff + amb + charLight));
     if (flags.w == 16u) { return float4(albedo, game.a); }   // view 16: the G-buffer base colour the pass lights
     if (flags.w == 17u) { return float4(saturate(game.rgb / max(knee3(lit), 1.0e-3f) * 0.25f), game.a); }   // view 17: the game's frame over RAW's diffuse (0.25 = equal)
     // The game's lobe exists only in shaders with a shininess exponent (gloss > 0).

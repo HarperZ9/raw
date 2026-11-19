@@ -138,6 +138,11 @@ struct RtDraw
     UINT ibOffset = 0, indexCount = 0, startIndex = 0;
     INT baseVertex = 0;
     float world[12] = {};   // model to camera-relative world, rows (the game's vertex buffer 2)
+    // Distant land (the game's LOD terrain chunks): the game's vertex shader hides the part of them inside the loaded
+    // cells, under the full-detail ground. The rays skip their hits inside lodRect (centre xy, half size zw, camera-
+    // relative), the rectangle the draw's vertex buffer 0 carries in its first row (SceneGeometry.cpp).
+    bool lodLand = false;
+    float lodRect[4] = {};
     // Alpha-tested draws (a discard in the pixel shader, alpha to coverage, soft-lit foliage): the
     // texture coordinate element in the position's vertex buffer and the texture whose alpha cuts
     // the surface (pixel shader t0). The rays test that alpha (RtScene, RtShadow.hlsl).

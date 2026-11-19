@@ -8,11 +8,17 @@
 StructuredBuffer<uint4> Mats : register(t6);              // colour copy + 1 (0 none), first face normal, flags (1 alpha, 2 normals)
 RWByteAddressBuffer FaceNormals : register(u5);           // octahedral, two snorm16, one per triangle
 RWTexture2D<unorm float4> Albedos[4096] : register(u0, space2);
-cbuffer G : register(b2) { float3 camPos; float cacheCell; uint cacheSlots, giFlags, debugView, giFrame; };
+cbuffer G : register(b2) { float3 camPos; float cacheCell; uint cacheSlots, giFlags, debugView, giFrame; float4 lodRect; };
 
 static const uint GI_MATERIALS = 1u, GI_CACHE = 2u, GI_REST = 4u, GI_REUSE = 8u, GI_FAR = 16u;
 
 struct Hit { float t; uint id, prim; float2 bary; float3x4 o2w; };
+
+// Distant land (the game's LOD terrain chunks) carries LOD_LAND in its instance ID over its record + 1. Inside the
+// loaded area (lodRect: centre xy, half size zw, camera-relative) the game's vertex shader keeps it under the
+// full-detail ground, so a hit there is no surface the frame has (RtScene.cpp, SceneGeometry.cpp).
+static const uint LOD_LAND = 0x800000u, RECORD_BITS = 0x7FFFFFu;
+bool lodHidden(uint id, float3 hp) { return (id & LOD_LAND) != 0u && all(abs(hp.xy - lodRect.xy) < lodRect.zw); }
 
 // The first hit along a ray, alpha-tested like visible(); false when the ray leaves the scene.
 bool traceHit(float3 o, float3 d, float tMax, out Hit h) {
@@ -22,8 +28,9 @@ bool traceHit(float3 o, float3 d, float tMax, out Hit h) {
     q.TraceRayInline(Scene, 0, 0xFF, r);
     [loop] while (q.Proceed()) {
         if (q.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
-            const uint id = q.CandidateInstanceID();
-            if (id == 0u) { q.CommitNonOpaqueTriangleHit(); continue; }
+            const uint full = q.CandidateInstanceID(), id = full & RECORD_BITS;
+            if (lodHidden(full, o + d * q.CandidateTriangleRayT())) { continue; }
+            if (id == 0u || Records[id - 1u].z == 0u) { q.CommitNonOpaqueTriangleHit(); continue; }   // no mask: opaque
             const uint4 rec = Records[id - 1u];
             const uint a = (rec.x + q.CandidatePrimitiveIndex() * 3u) * 8u;
             const float2 b = q.CandidateTriangleBarycentrics();
@@ -34,7 +41,7 @@ bool traceHit(float3 o, float3 d, float tMax, out Hit h) {
     }
     h.t = -1.0f; h.id = 0u; h.prim = 0u; h.bary = 0.0f; h.o2w = (float3x4)0;
     if (q.CommittedStatus() != COMMITTED_TRIANGLE_HIT) { return false; }
-    h.t = q.CommittedRayT(); h.id = q.CommittedInstanceID(); h.prim = q.CommittedPrimitiveIndex();
+    h.t = q.CommittedRayT(); h.id = q.CommittedInstanceID() & RECORD_BITS; h.prim = q.CommittedPrimitiveIndex();
     h.bary = q.CommittedTriangleBarycentrics(); h.o2w = q.CommittedObjectToWorld3x4();
     return true;
 }

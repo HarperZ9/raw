@@ -15,6 +15,7 @@
 #include "../core/dxbc/GBufferPatch.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace SB::Proxy
@@ -27,7 +28,7 @@ namespace
 std::vector<raw::bridge::RtDraw> g_frame;
 // Why draws were left out, and how many alpha-tested ones joined, since the start.
 struct Counts { uint64_t alphaNoTexture = 0, alphaNoUv = 0, alphaOff = 0, noLayout = 0, badFormat = 0, noBuffers = 0,
-                         alphaJoined[5] = {}, opaque = 0, opaqueMat = 0, alphaFollowed = 0; } g_n;
+                         alphaJoined[5] = {}, opaque = 0, opaqueMat = 0, alphaFollowed = 0, lodLand = 0; } g_n;
 bool g_alphaOn = true;
 bool g_matOn = true;
 
@@ -111,6 +112,26 @@ void SceneGeometry_OnPixelShader(ID3D11PixelShader* ps, const void* bc, size_t n
 
 namespace
 {
+// Distant land: the game's LOD terrain chunks, a uniform scale of 4 or more (4, 8, 16, 32) with no rotation, whose
+// vertex buffer 0 starts with the loaded area (centre xy, half size zw near 2.5 cells; 1042, -12, 10225, 10225 beside
+// Riverwood, 2026-11-19). The chunks lie under the loaded cells too, where the game's vertex shader keeps them below the
+// full-detail ground; as written in their vertex buffers they stand up to tens of units above it in hollows, and every
+// sun, sky and light ray from the ground beneath them hit them (the black patch beside Riverwood, docs/RAYTRACING.md).
+bool LodLand(ID3D11DeviceContext* real, const float* w, float rect[4])
+{
+    const float s = w[0];
+    if (s < 3.9f || std::fabs(w[5] - s) > 1e-3f || std::fabs(w[10] - s) > 1e-3f) return false;
+    if (std::fabs(w[1]) + std::fabs(w[2]) + std::fabs(w[4]) + std::fabs(w[6]) + std::fabs(w[8]) + std::fabs(w[9]) > 1e-3f) return false;
+    ID3D11Buffer* cb = nullptr;
+    real->VSGetConstantBuffers(0, 1, &cb);
+    uint32_t size = 0;
+    const uint8_t* p = cb ? CBDirtyTracker::Get().Shadow(cb, &size) : nullptr;
+    if (cb) cb->Release();
+    if (!p || size < 16) return false;
+    std::memcpy(rect, p, 16);
+    return rect[2] > 1000.0f && rect[3] > 1000.0f && rect[2] < 1.0e6f && rect[3] < 1.0e6f;
+}
+
 bool UvFormatOk(DXGI_FORMAT f)
 {
     return f == DXGI_FORMAT_R16G16_FLOAT || f == DXGI_FORMAT_R32G32_FLOAT || f == DXGI_FORMAT_R16G16B16A16_FLOAT ||
@@ -167,6 +188,8 @@ void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT start
     d.stride = stride; d.vbOffset = offset; d.posOffset = L.pos.offset; d.posFormat = pf;
     d.indexCount = indexCount; d.startIndex = startIndex; d.baseVertex = baseVertex;
     std::memcpy(d.world, w, sizeof d.world);
+    // Alpha-tested too: most of the land's draws follow a prepass that tested the alpha (AlphaFollows).
+    if (LodLand(real, w, d.lodRect)) { d.lodLand = true; ++g_n.lodLand; }
     if (alpha) ++g_n.alphaJoined[alpha]; else ++g_n.opaque;
     g_frame.push_back(d);   // the Get calls added the references the bridge releases
 }
@@ -177,11 +200,12 @@ std::vector<raw::bridge::RtDraw> SceneGeometry_Take()
     if (++frames % 600 == 1)
         Log("[RT] frame %llu: %zu draws captured; so far %llu opaque (%llu with a colour texture), alpha-tested joined %llu discard / %llu coverage / %llu foliage / %llu blend; "
             "left out: %llu alpha without coordinates, %llu alpha without a 2D texture, %llu alpha (RtAlpha=0), %llu no layout, "
-            "%llu position format, %llu no buffers; %llu rigid draws alpha-tested by their prepass",
+            "%llu position format, %llu no buffers; %llu rigid draws alpha-tested by their prepass; %llu distant-land draws",
             (unsigned long long)frames, g_frame.size(), (unsigned long long)g_n.opaque, (unsigned long long)g_n.opaqueMat, (unsigned long long)g_n.alphaJoined[1],
             (unsigned long long)g_n.alphaJoined[2], (unsigned long long)g_n.alphaJoined[3], (unsigned long long)g_n.alphaJoined[4], (unsigned long long)g_n.alphaNoUv,
             (unsigned long long)g_n.alphaNoTexture, (unsigned long long)g_n.alphaOff, (unsigned long long)g_n.noLayout,
-            (unsigned long long)g_n.badFormat, (unsigned long long)g_n.noBuffers, (unsigned long long)g_n.alphaFollowed);
+            (unsigned long long)g_n.badFormat, (unsigned long long)g_n.noBuffers, (unsigned long long)g_n.alphaFollowed,
+            (unsigned long long)g_n.lodLand);
     if (frames % 600 == 1) SceneSkin_Log();
     std::vector<raw::bridge::RtDraw> out;
     out.swap(g_frame);

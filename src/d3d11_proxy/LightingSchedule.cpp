@@ -136,6 +136,10 @@ void LightingMakeSteps()
         {"improved_no_rt", with(2, [&](LightingTuning& t) { t.rtShadows = false; })},
         {"improved", with(2, [](LightingTuning&) {})},
         {"improved_no_lod", with(2, [](LightingTuning& t) { t.distantLod = false; })},   // control: distant LOD keeps the game's light
+        {"match_no_env", with(1, [](LightingTuning& t) { t.envMap = false; })},           // control: no environment-map term
+        {"improved_no_env", with(2, [](LightingTuning& t) { t.envMap = false; })},
+        {"match_no_char", with(1, [](LightingTuning& t) { t.charLight = false; })},       // control: no character light
+        {"improved_no_char", with(2, [](LightingTuning& t) { t.charLight = false; })},
         {"view_classes", with(2, [](LightingTuning& t) { t.view = 12; })},
         {"view_lod_normal", with(2, [](LightingTuning& t) { t.view = 14; })},            // distant LOD: its G-buffer normal
         {"view_lod_albedo", with(2, [](LightingTuning& t) { t.view = 15; })},            // distant LOD: its G-buffer base colour

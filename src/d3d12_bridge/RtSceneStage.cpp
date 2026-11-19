@@ -18,9 +18,11 @@ bool RtScene::Instance(uint32_t mi, const RtDraw& d, D3D12_RAYTRACING_INSTANCE_D
     const Mesh& m = m_meshes[mi];
     if (m.alpha && !m_tune.alpha) return false;   // RtAlpha=0 live: the alpha-tested meshes leave the scene
     std::memcpy(x.Transform, d.world, sizeof x.Transform);
-    x.InstanceID = m.alphaRecord; x.InstanceMask = 0xFF; x.InstanceContributionToHitGroupIndex = 0;
+    // Distant land is tested hit by hit (RtShadow.hlsl, lodHidden): not opaque, and marked in the ID's top bit.
+    x.InstanceID = m.alphaRecord | (d.lodLand ? kLodLandBit : 0u); x.InstanceMask = 0xFF; x.InstanceContributionToHitGroupIndex = 0;
     x.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE |
-              (m.alpha ? D3D12_RAYTRACING_INSTANCE_FLAG_NONE : D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE);
+              (d.lodLand ? D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_NON_OPAQUE :   // its BLAS geometry is opaque
+               m.alpha ? D3D12_RAYTRACING_INSTANCE_FLAG_NONE : D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE);
     x.AccelerationStructure = m_blasHeap->GetGPUVirtualAddress() + m.blas;
     tris = m.tri.IndexCount / 3;
     return true;

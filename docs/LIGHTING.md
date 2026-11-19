@@ -79,6 +79,22 @@ What the G-buffer patch needed for it (`src/core/dxbc/`):
   shaders have none (slot 1 is a colour layer there) and the exponent found in parallax shaders
   belongs to another term; a lobe on either doubles their error.
 
+- **The character light** (2026-11-19, rt9). Most lit shaders of actors (and many objects) add a white fill
+  the frame's lights do not carry: `(x sat(n . (0.577, 0.577, 0.577)) + y sat(n.yz . (0.164, -0.986)))` times
+  `clamp(t11.y z, 0, w)`, with x, y, z, w from pixel buffer 1 element 14, joining the light sum before the
+  albedo multiplies it (ps 9a4ea5fb8b14fb98, the player's armour in the Bannered Mare: element 14 is
+  0.75, 0.3, 2, 0.75). The patch copies the product (`FindCharLight`) to the emissive target as
+  `-(light) - 1/1024`, and RAW adds it to its own received light in both modes (`CharLight=1`; view 19
+  shows it). The alpha channels of RAW's targets are never written (the game's blend state masks them to
+  rgb), so it travels in the colour; environment-mapped (class 2) and soft-lit (class 5) shaders keep
+  their own colour there and their character light is left out. 25 of 25 shaders carrying it in the inn
+  ledger were tapped. This was most of the characters' deficit (Tuned live, below).
+- **The environment map** (class 2). The game samples its cube along the reflected view, multiplies by
+  the env mask and scales, and multiplies that by the received light before adding it (ps
+  955d1a31636cbbe4). The patch copies the masked colour (`FindEnvMap`, 8 of 8 class-2 shaders in the
+  inn) to the emissive target; RAW lights it with its own light (`EnvMap=1`; view 18). In the inn it
+  shows on pottery and glass. The player's iron armour does not use it.
+
 Not in the G-buffer, so approximated, each named where it is used:
 
 - the material's specular colour: the frame's median (1.0 in every scene measured)

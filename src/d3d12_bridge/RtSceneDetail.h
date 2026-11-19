@@ -6,6 +6,7 @@
 namespace raw::bridge::rtdetail
 {
 constexpr uint32_t kMaxInstances = 16384;
+constexpr uint32_t kLodLandBit = 0x800000u;   // InstanceID: a distant-land chunk (RtShadow.hlsl, LOD_LAND)
 constexpr uint64_t kBlasHeap = 768ull << 20, kScratch = 256ull << 20, kTlas = 32ull << 20, kCb = 64 * 1024;
 constexpr uint64_t Align(uint64_t v, uint64_t a) { return (v + a - 1) & ~(a - 1); }
 

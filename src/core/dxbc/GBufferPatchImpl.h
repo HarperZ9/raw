@@ -32,6 +32,8 @@ struct Analysis
     size_t    waterBefore = kNone;  std::vector<uint32_t> waterOperand;
     size_t    tintBefore = kNone;   uint32_t tintReg = 0;   // the hair's tint, lerp(1, cb1 tint, vertex colour): albedo *= it here
     size_t    softAfter = kNone;    uint32_t softReg = 0, softSwz = 0;   // the soft-lighting map (slot 12) of soft-lit shaders
+    size_t    charBefore = kNone;   std::vector<uint32_t> charA, charB;   // the character light: a * b joins the light sum here
+    size_t    envAfter = kNone;     uint32_t envReg = 0, envSwz = 0;     // the cube map's colour times its mask (environment-mapped)
 };
 
 // Fills the declarations, the kind, the material class and the taps. False

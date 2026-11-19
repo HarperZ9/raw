@@ -267,11 +267,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     float3 amb = float3(dot(ambient[0].xyz, s.n) + ambient[0].w, dot(ambient[1].xyz, s.n) + ambient[1].w,
                         dot(ambient[2].xyz, s.n) + ambient[2].w);
     // Foliage gets a third of the AO: screen-space AO over-occludes thin geometry.
-    if ((flags.x & FLAG_AO) != 0u) { amb *= lerp(1.0f, AoHist.Load(ip).x, tune2.x * (base == 5u ? 0.35f : 1.0f)); }
+    const float aoTerm = (flags.x & FLAG_AO) != 0u ? lerp(1.0f, AoHist.Load(ip).x, tune2.x * (base == 5u ? 0.35f : 1.0f)) : 1.0f;
     // Exteriors: the sky the pixel sees (RtSky.cpp), in the light-index output's alpha. Interiors keep
     // the game's ambient: their cell ambient is set for an enclosed room.
     const float skyVis = rt && (flags.x & FLAG_SKY) != 0u && sunColour.w > 0.5f ? RtIdx.Load(ip).w : 1.0f;
-    amb *= lerp(1.0f, skyVis, cluster.w);
+    // One occlusion, not two: the ray-traced sky's visibility already holds the near occluders the screen-space AO
+    // finds, and the product of both (with the game's own AO after this pass) crushed creases and rock bases.
+    amb *= min(aoTerm, lerp(1.0f, skyVis, cluster.w));
     // Where the sky is blocked, the blocking surfaces send their own light: the bounce the sky rays found.
     // Interiors too (FLAG_BOUNCE_IN, at RtBounceInterior): lamp-lit walls send their light on.
     const bool bounceHere = sunColour.w > 0.5f || (flags.x & FLAG_BOUNCE_IN) != 0u;

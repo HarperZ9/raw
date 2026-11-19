@@ -5514,3 +5514,4 @@ off:SkyrimVM::impl	offset	0x210	medium	CommonLibSSE-NG layout notes (1.7.x), not
 fn:BGSSaveLoadManager::Save_Impl	function	0x6227F0	al	Address Library v13 id 35727 (SKSE host save hook)
 fn:BGSSaveLoadManager::Load_Impl	function	0x622F30	al	Address Library v13 id 35728 (SKSE host load hook)
 off:UI::menuMap	offset	0x128	medium	CommonLibSSE-NG 1.7.x layout shows no change; not yet checked in game
+site:Papyrus.OpcodeQuota	site	0x14CF114	high	read in the opcode loop listing on 1.7.104 (cmp r15d, 100; jb), engine control 8

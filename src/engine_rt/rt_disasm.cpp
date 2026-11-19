@@ -17,7 +17,7 @@ std::string DisasmFunction(const Image& img, uint32_t rva, uint32_t maxBytes, co
     if (fi >= 0 && !maxBytes) end = img.funcs[size_t(fi)].second;
     if (!img.InText(rva) || !img.InText(end - 1)) return "{\"cmd\":\"disasm\",\"error\":\"outside the code section\"}";
     char name[64];
-    std::snprintf(name, sizeof name, "\disasm_%X.txt", rva);
+    std::snprintf(name, sizeof name, "\\disasm_%X.txt", rva);
     FILE* f = std::fopen((outDir + name).c_str(), "w");
     if (!f) return "{\"cmd\":\"disasm\",\"error\":\"cannot write\"}";
     ZydisDisassembledInstruction in;

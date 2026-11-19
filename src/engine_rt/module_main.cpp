@@ -31,6 +31,7 @@
 #include "rt_view.h"
 #include "rt_weather.h"
 #include "rt_version.h"
+#include "rt_pquota.h"
 
 namespace {
 
@@ -131,6 +132,9 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
             Log("opcode loop %s timed at %zu call sites: %s", l, n, sites.c_str());
         }
     }
+    // the Papyrus opcode quota (rt_pquota.h): patched now, before the VM runs a script; 0 leaves the game's 100
+    if (const int q = IniInt("PapyrusQuota", 0); q > 0)
+        Log("papyrus quota %d: %s", q, raw::rt::PapyrusQuotaInstall(g_img, uint32_t(q)).c_str());
     // weather for the ray-tracing worker (rt_weather.h); Weather=0 turns the per-frame read off
     if (IniInt("Weather", 1)) {
         raw::rt::WeatherInit(g_img);

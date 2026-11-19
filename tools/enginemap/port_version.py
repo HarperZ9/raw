@@ -279,6 +279,11 @@ def main():
             i = int(rule[2], 16)
             if v and i < len(v["slots"]):
                 val, conf, src = v["slots"][i], "high", f"rtti slot {rule[2]}"
+        elif rule[0] == "infn":
+            # an instruction inside a function the table already holds, at the same offset; the code checks its bytes
+            base = next((o[2] for o in out if o[0] == rule[1] and o[2]), None)
+            if base:
+                val, conf, src = base + int(rule[2], 16), "low", f"{rule[1]} + 0x{rule[2]}"
         elif rule[0] == "given":
             val, conf, src = int(rule[1], 16), rule[2], " ".join(rule[3:])
         elif rule[0] == "same":

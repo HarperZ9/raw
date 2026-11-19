@@ -1,0 +1,5 @@
+# For local analysis (listings stay in the run folder): the Papyrus opcode loop and the VM's tasklet update, to find
+# what caps a stack at about 200 opcodes a frame (engine control 8).
+start load rawharness
+engine disasm fn:BSScript::Internal::CodeTasklet::OpcodeLoop; disasm fn:BSScript::Internal::VirtualMachine::UpdateTasklets
+quit

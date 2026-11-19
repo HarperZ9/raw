@@ -334,8 +334,111 @@ byte. The plugin goes in for one run, and Plugins.txt comes back by hash. Riverw
 - Not measured: how many updates complete each second, where a faster VM would show. That needs a completion counter
   in the plugin, read back by the module.
 
-Still to do:
+Still to do (engine control 7; items 1 to 3 are answered in engine control 8):
 - Drive the cascade split by replacing the setup at slot 0x10.
 - Grow the grid past its startup size, through the builder.
 - Count script completions.
 - Check the emitter lights against the RT worker's ReSTIR.
+
+### GPU time with the full renderer, cascades, Papyrus throughput, grid growth (engine control 8)
+
+Measured on 1.7.104, the runtime Steam installed on 2026-11-19, at 1080p, through the version layer (`docs/VERSIONS.md`).
+ENB checked 232 of 232 after every session.
+
+**GPU time per pass under raw::tx. Working.** `GpuTiming=1` stopped the bridge in engine control 7 because the layer's
+timestamp heap held 4,096 slots. RAW's pass timing alone holds 5 x 1,024, so the bridge, created after it, failed at
+its queries. The heap now holds 16,384, a full heap is logged once, and a partial set of timing queries is released.
+Every measure reports `gpu_timing`. GPU ms per frame, improved mode:
+
+| View | Frame | Geometry | RAW's passes and the rest (`unknown`) | UI | Depth prepass | Shadow atlas |
+|---|---|---|---|---|---|---|
+| Riverwood, 13:00 | 10.46 | 4.99 | 3.74 | 0.87 | 0.58 | 0.19 |
+| Bannered Mare, 22:00 | 3.31 | 1.94 | 0.35 | 0.71 | 0.05 | 0 (depth4 0.19) |
+
+The GPU frame matches the CPU frame (10.46 against 10.46 ms), so Riverwood is GPU-bound at this setting. The bridge,
+RAW's lighting and the RT passes land in `unknown`, because they run between the game's phases. Labelling them is open.
+
+**Cascades. RAW drives the split through the setting; no replacement is needed.** The setup (`fn:BSShadowDirectionalLight::SetupCascades`,
+slot 0x10) was read for local analysis on 1.7.104. With D = fShadowDistance, N = iNumSplits and F = fFirstSliceDistance:
+- The first split, as a fraction of D, is min(D / N, max(F, 500)) / D. The later splits are spaced linearly from it to 1.
+- Each split fraction becomes a distance by the practical split scheme: the mean of the logarithmic and the uniform
+  split between the near and far planes (weight 0.5), plus fSplitOverlap.
+
+F moves the inner cascade live. Riverwood, D 10000, N 2, half-widths decoded by the proxy:
+
+| fFirstSliceDistance | Inner half-width | Outer | Shadow atlas GPU |
+|---|---|---|---|
+| 300 (clamped to 500) | 483 | 13,302 | 0.189 ms |
+| 1,250 | 994 | 13,218 | 0.192 ms |
+| 4,000 (the default here) | about 2,900 | about 12,500 | 0.192 ms |
+| 6,000 (clamped to D / N) | 3,725 | 12,443 | 0.191 ms |
+
+- The split costs nothing to move. At 300, near shadows on the bush and the rocks are visibly sharper than at 6,000:
+  22 % of pixels differ by more than 6 of 255.
+- Crop: `ingame-ec8-2026-11-19-cascade-first300-vs-first6000-1.7.104.png` in the plan folder.
+- RAW's per-scene presets (`cascades preset`, `auto`) set F and D, so they drive the split as they stand.
+- Engine control 7 saw no movement on 1.6.1170. That run waited 30 frames after the change, against a decode logged
+  every 600 frames, so the reading was most likely taken before the change. This is inferred: 1.6.1170 is no longer
+  installed to recheck.
+
+**Papyrus throughput. Counted, and the budget is not what limits it.** Each test quest writes its count of completed
+updates to its own global (`tools/papyrus/make_load_plugin.py`), and the module reads them at every measure
+(`rt_pcount.cpp`). 32 quests: 16 run an integer loop, 16 call `GetFormID` each iteration. Every update ends with two
+natives (SetValue, RegisterForSingleUpdate 0.01 s). Updates per second across 16 quests, 1,200 frames per measure:
+
+| Iterations per update | Game's budget | Fixed 4 ms | Fixed 8 ms | Adaptive, 60 fps target | Adaptive, 120 fps target | Native-call quests |
+|---|---|---|---|---|---|---|
+| 0 | 330 | 343 | 338 | 329 | 340 | the same as arithmetic |
+| 500 | 74.6 | 75.7 | 75.0 | 75.9 | 74.4 | 2.4 to 3.7 |
+| 5,000 | 9.7 | 9.8 | 9.8 | 9.7 | 9.8 | 0 to 1.2 |
+
+- RAW's budget control changes nothing: every arm is within 5 % of the game's own. The VM used 0.05 to 0.07 ms of CPU
+  a frame against a 1.2 ms budget, so the budget never binds.
+- The floor is the update cycle itself: 20.6 updates a second per quest at 0 iterations, about 48 ms or 4 to 5 frames.
+  That is two frame-synchronised natives plus the 0.01 s timer.
+- Arithmetic runs at about 200 opcodes per stack per frame, at both 500 and 5,000 iterations (3,000 opcodes take
+  165 ms; 30,000 take 1.59 s). The VM's CPU over those opcodes works out to about 21 ns each. The interpreter is not
+  slow per opcode: it is scheduled to a fixed quota per frame.
+- A native call costs one frame. 500 `GetFormID` calls take about 6.4 s per update.
+
+**Decision on native dispatch.** Compiling Papyrus to native code would remove the 21 ns per opcode. The numbers say
+that is not the limit:
+- Arithmetic is held by the per-frame opcode quota.
+- Native-heavy scripts are held by one native per frame.
+- A native path would help only by also leaving the quota behind.
+
+The first steps, in order:
+1. Find and lift the per-frame quota (a data patch if it is a constant). Expected: 500-iteration updates 4x faster and
+   5,000-iteration updates 34x faster, down to the 48 ms floor. To be measured.
+2. Run read-only natives such as `GetFormID` without the frame wait.
+3. Build native dispatch only where the VM's CPU then shows up in the frame.
+
+The opcode-loop hook installs at one call site on 1.7.104 but counts no calls. The loop is reached another way, which is
+open.
+
+**Grid growth past the startup size. Working.** The game has its own resize, `fn:TES::SetupGrid` (0x1A1340 on
+1.7.104, found through its listing). It:
+- writes uGridsToLoad
+- allocates a new GridCellArray on the game's heap, sized by the constructor (odd, at least 5)
+- centres it where the old one was and moves every cell both arrays hold
+- destroys the old array through its vtable
+
+`grids <n>` past the capacity calls it only while a worldspace change has emptied the grid, so no cell moves and no job
+thread walks a loaded grid. Startup grids 5 with uExterior Cell Buffer 144; each change went through WhiterunWorld:
+
+| Step | Length | Loaded cells | Riverwood frame | Vista (12,000 up) frame |
+|---|---|---|---|---|
+| startup | 5 | 25 | | |
+| grow to 7 | 7 | 49 | 11.7 ms | |
+| grow to 9 | 9 | 81 | 13.0 ms | 8.5 ms |
+| grow to 11 | 11 | 121 | 14.6 ms | 10.7 ms |
+| back to 5 | 5 (capacity 11) | 25 | 10.3 ms | |
+
+The session ran stable and the game quit cleanly with the grown array. The vista captures are mostly cloud
+(`ingame-ec8-2026-11-19-grids-5-9-11-vista-1.7.104.png`). Larger grids need the cell buffer at startup; 144 covers 11.
+
+Still to do:
+- Label RAW's passes in the GPU timing.
+- Find the Papyrus per-frame opcode quota, and lift it.
+- Find how the opcode loop is reached on 1.7.104.
+- Give the 1.7.104 table its own values for `fn:TES::SetupGrid` and the other Address Library fallbacks.

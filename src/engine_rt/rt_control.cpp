@@ -27,6 +27,7 @@
 #include "rt_weather.h"
 #include "rt_papyrus.h"
 #include "rt_pcount.h"
+#include "rt_pquota.h"
 #include "rt_passes.h"
 #include "rt_peek.h"
 #include "rt_sampler.h"
@@ -186,7 +187,7 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             PassesSetFit(n);
             Result("{\"cmd\":\"fit\",\"authored\":" + std::to_string(n) + "}");
         } else if (op == "papyrus") {
-            Result(a == "count" ? PapyrusCountJson() : PapyrusCommand(a, b));
+            Result(a == "count" ? PapyrusCountJson() : a == "quota" ? PapyrusQuotaCommand(b) : PapyrusCommand(a, b));
         } else if (op == "viewports") {
             Result(PassesViewports());
         } else if (op == "probe") {

@@ -33,6 +33,9 @@ struct Counts { uint64_t alphaNoTexture = 0, alphaNoUv = 0, alphaOff = 0, noLayo
                          alphaJoined[5] = {}, opaque = 0, opaqueMat = 0; } g_n;
 bool g_alphaOn = true;
 bool g_matOn = true;
+bool g_skinOn = true;
+int g_boneSlot = 10;
+uint64_t g_skinJoined = 0, g_skinNoBones = 0;
 
 // True when the shader bytecode holds a discard instruction (SM4/5 opcode 13).
 bool HasDiscard(const void* bc, size_t n)
@@ -65,6 +68,7 @@ bool HasDiscard(const void* bc, size_t n)
 
 void SceneGeometry_SetAlpha(bool on) { g_alphaOn = on; }
 void SceneGeometry_SetMaterials(bool on) { g_matOn = on; }
+void SceneGeometry_SetSkin(bool on, int boneSlot) { g_skinOn = on; g_boneSlot = boneSlot; }
 
 // Byte size of a vertex element format, for D3D11_APPEND_ALIGNED_ELEMENT offsets.
 static UINT FormatBytes(DXGI_FORMAT f)
@@ -158,17 +162,41 @@ ID3D11ShaderResourceView* AlphaTexture(ID3D11DeviceContext* real)
 // Diagnosis for skinned actors (their per-frame BLAS, docs/RAYTRACING.md): a draw the lit-draw decode
 // did not count whose input layout carries blend indices. Logs its layout and the sizes of the vertex
 // constant buffers bound, a few times, so the bone palette's slot and layout can be read off the log.
-static void SkinnedProbe(ID3D11DeviceContext* real, UINT indexCount)
+static void SkinnedProbe(ID3D11DeviceContext* real, UINT indexCount, UINT startIndex, INT baseVertex)
 {
     static uint32_t seen = 0, logged = 0;
-    if (logged >= 12) return;
     ID3D11InputLayout* il = nullptr;
     real->IAGetInputLayout(&il);
     Layout L;
     bool found;
     { std::lock_guard<std::mutex> g(g_m); auto it = g_layouts.find(il); found = it != g_layouts.end(); if (found) L = it->second; }
     if (il) il->Release();
-    if (!found || !L.blendIdx.set || (++seen % 97) != 1) return;
+    if (!found || !L.blendIdx.set) return;
+    if (g_skinOn && SceneLights_Opaque() && indexCount >= 3 && L.blendW.set && L.blendIdx.format == DXGI_FORMAT_R8G8B8A8_UNORM &&
+        L.blendW.format == DXGI_FORMAT_R16G16B16A16_FLOAT && L.blendW.slot == L.blendIdx.slot &&
+        (L.pos.format == DXGI_FORMAT_R32G32B32A32_FLOAT || L.pos.format == DXGI_FORMAT_R32G32B32_FLOAT || L.pos.format == DXGI_FORMAT_R16G16B16A16_FLOAT)) {
+        // A skinned draw of the opaque set: its streams, index range and bone palette (RtSkin.h).
+        ID3D11Buffer* bb[1] = {};
+        real->VSGetConstantBuffers(UINT(g_boneSlot), 1, bb);
+        const uint8_t* bones = bb[0] && CBDirtyTracker::Get().GetShadowSize(bb[0]) >= 3840 ? CBDirtyTracker::Get().GetShadowData(bb[0]) : nullptr;
+        if (bb[0]) bb[0]->Release();
+        if (!bones) { ++g_skinNoBones; return; }
+        raw::bridge::RtDraw d;
+        UINT stride = 0, offset = 0, bs = 0, bo = 0;
+        real->IAGetVertexBuffers(L.pos.slot, 1, &d.vb, &stride, &offset);
+        real->IAGetVertexBuffers(L.blendIdx.slot, 1, &d.blendVb, &bs, &bo);
+        real->IAGetIndexBuffer(&d.ib, &d.ibFormat, &d.ibOffset);
+        if (!d.vb || !d.ib || !d.blendVb) { raw::bridge::ReleaseRtDraw(d); return; }
+        d.skinned = true;
+        d.stride = stride; d.vbOffset = offset; d.posOffset = L.pos.offset; d.posFormat = L.pos.format;
+        d.blendStride = bs; d.blendVbOffset = bo; d.idxOffset = L.blendIdx.offset; d.wOffset = L.blendW.offset;
+        d.indexCount = indexCount; d.startIndex = startIndex; d.baseVertex = baseVertex;
+        d.bones = new float[960];
+        std::memcpy(d.bones, bones, 3840);
+        ++g_skinJoined;
+        g_frame.push_back(d);
+    }
+    if (logged >= 12 || (++seen % 97) != 1) return;
     ID3D11Buffer* cb[14] = {};
     real->VSGetConstantBuffers(0, 14, cb);
     char sizes[256]{};
@@ -188,7 +216,7 @@ static void SkinnedProbe(ID3D11DeviceContext* real, UINT indexCount)
 void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT startIndex, INT baseVertex)
 {
     const float* w = SceneLights_DrawWorld();
-    if (!w) SkinnedProbe(real, indexCount);
+    if (!w) SkinnedProbe(real, indexCount, startIndex, baseVertex);
     if (!w || indexCount < 3) return;
     ID3D11PixelShader* ps = nullptr;
     real->PSGetShader(&ps, nullptr, nullptr);
@@ -252,6 +280,9 @@ std::vector<raw::bridge::RtDraw> SceneGeometry_Take()
             (unsigned long long)g_n.alphaJoined[2], (unsigned long long)g_n.alphaJoined[3], (unsigned long long)g_n.alphaJoined[4], (unsigned long long)g_n.alphaNoUv,
             (unsigned long long)g_n.alphaNoTexture, (unsigned long long)g_n.alphaOff, (unsigned long long)g_n.noLayout,
             (unsigned long long)g_n.badFormat, (unsigned long long)g_n.noBuffers);
+    if (frames % 600 == 1)
+        Log("[RT] skinned draws so far: %llu joined, %llu without a bone palette at vertex slot %d", (unsigned long long)g_skinJoined,
+            (unsigned long long)g_skinNoBones, g_boneSlot);
     std::vector<raw::bridge::RtDraw> out;
     out.swap(g_frame);
     return out;

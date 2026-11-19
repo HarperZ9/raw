@@ -256,6 +256,7 @@ void SceneLights_BeforeDraw(ID3D11DeviceContext* real)
 }
 
 void SceneLights_SetOpaque(bool open) { S().opaque = open; }
+bool SceneLights_Opaque() { return S().opaque; }
 
 void SceneLights_SetCamera(ID3D11DeviceContext* real)
 {

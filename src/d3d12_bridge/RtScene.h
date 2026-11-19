@@ -12,6 +12,7 @@
 #include "RtAlpha.h"
 #include "RtSky.h"
 #include "RtCache.h"
+#include "RtSkin.h"
 #ifdef RAW_HAS_OMM
 #include "RtOmm.h"
 #endif
@@ -109,6 +110,8 @@ private:
     RtCache m_cache;
     bool m_cacheReady = false;
     bool m_evictPending = false;
+    RtSkin m_skin;
+    bool m_skinReady = false;
     bool m_ommOn = false;
     UINT m_psoFlags = 0;
 #ifdef RAW_HAS_OMM

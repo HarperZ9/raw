@@ -147,6 +147,12 @@ struct RtDraw
     ID3D11ShaderResourceView* alphaSrv = nullptr;   // t0, the colour texture (opaque draws too, RtMaterials); a reference
     ID3D11Buffer* uvVb = nullptr;        // the coordinates' own vertex buffer when not the position's (a reference)
     UINT uvStride = 0, uvVbOffset = 0;
+    // Skinned draws (RtSkin.h): positions are skinned on the GPU each frame from the blend stream and
+    // the draw's bone palette (vertex constant buffer, 240 rows of float4 = 80 bones of 3 rows).
+    bool skinned = false;
+    ID3D11Buffer* blendVb = nullptr;     // the stream with the blend indices and weights (a reference)
+    UINT blendStride = 0, blendVbOffset = 0, idxOffset = 0, wOffset = 0;
+    float* bones = nullptr;              // 960 floats, owned (delete[] in ReleaseRtDraw)
 };
 enum : uint8_t { RtAlphaNone = 0, RtAlphaDiscard = 1, RtAlphaCoverage = 2, RtAlphaFoliage = 3, RtAlphaBlend = 4 };
 
@@ -156,7 +162,9 @@ inline void ReleaseRtDraw(RtDraw& d)
     if (d.ib) d.ib->Release();
     if (d.alphaSrv) d.alphaSrv->Release();
     if (d.uvVb) d.uvVb->Release();
-    d.vb = nullptr; d.ib = nullptr; d.alphaSrv = nullptr; d.uvVb = nullptr;
+    if (d.blendVb) d.blendVb->Release();
+    delete[] d.bones;
+    d.vb = nullptr; d.ib = nullptr; d.alphaSrv = nullptr; d.uvVb = nullptr; d.blendVb = nullptr; d.bones = nullptr;
 }
 
 struct RtTuning
@@ -175,6 +183,7 @@ struct RtTuning
     float    reflectLength = 8000.0f;
     bool     debug = false;          // RtDebug: the reflection output shows the primary ray's view of the scene
     bool     omm = true;             // opacity micromaps for alpha-tested meshes (Agility SDK, DXR 1.2)
+    bool     skin = true;            // skinned actors: a BLAS each frame from their skinned positions (RtSkin)
     // Off-screen hits (docs/RAYTRACING.md, "Materials and the radiance cache"): every mesh keeps its
     // texture coordinates, face normals and a small copy of its colour texture, so a ray that lands
     // off screen is shaded from the game's own material; a world-space hash grid of irradiance gives
@@ -194,7 +203,8 @@ struct RtFrameStats
     double   buildMs = 0, traceMs = 0;
     uint32_t alphaInstances = 0, alphaMeshes = 0, masks = 0, noMask = 0, ommArrays = 0;
     uint64_t uvBytes = 0;
-    uint32_t matMeshes = 0, albedos = 0, noAlbedo = 0, cacheCells = 0;
+    uint32_t matMeshes = 0, albedos = 0, noAlbedo = 0, cacheCells = 0, skinDraws = 0, skinBuilt = 0;
+    uint64_t skinVertices = 0;
     uint64_t albedoBytes = 0;
     double   cacheMs = 0;
 };

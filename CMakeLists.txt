@@ -505,6 +505,14 @@ if(RAW_ENGINE_DIR)
         DEPENDS ${RAW_RTCACHE_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli
         COMMENT "dxc: radiance cache resolve -> DXIL header"
         VERBATIM)
+    add_custom_command(
+        OUTPUT ${RAW_ENGINE_GEN}/rt_skin.h
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_skin.h -Vn kDxil_rt_skin ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtSkin.hlsl
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtSkin.hlsl
+        COMMENT "dxc: skinned positions for the ray-tracing scene -> DXIL header"
+        VERBATIM)
+    target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtSkin.cpp ${RAW_ENGINE_GEN}/rt_skin.h)
     target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtScene.cpp src/d3d12_bridge/RtSceneRecord.cpp src/d3d12_bridge/RtAlpha.cpp
                    src/d3d12_bridge/RtAlphaTex.cpp src/d3d12_bridge/RtSky.cpp src/d3d12_bridge/RtCache.cpp
                    ${RAW_ENGINE_GEN}/rt_shadow.h ${RAW_ENGINE_GEN}/rt_alpha_uv.h ${RAW_ENGINE_GEN}/rt_alpha_mask.h

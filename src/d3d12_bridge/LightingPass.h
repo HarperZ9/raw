@@ -54,6 +54,8 @@ struct LightingTuning
     int   rtMatSide = 128;          // the largest side of a colour copy
     bool  rtCache = true;           // the world-space radiance cache for off-screen hits and further bounces
     float rtCacheCell = 16.0f;      // game units, the finest cell
+    bool  rtSkin = true;            // skinned actors join the scene with a BLAS a frame
+    int   rtSkinBones = 10;         // the vertex constant buffer slot that holds the current bone palette
     bool  rtReflect = true;         // glossy surfaces: one ray-traced reflection ray, the hit's colour in the game's frame
 };
 

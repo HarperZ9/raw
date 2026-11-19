@@ -62,11 +62,13 @@ void LightingApplyTuning()
         rt.matSide = uint32_t(t.rtMatSide);
         rt.cache = t.rtCache;
         rt.cacheCell = t.rtCacheCell;
+        rt.skin = t.rtSkin;
         Bridge()->TuneRt(rt);
     }
     g_sceneGeometryActive = Cfg().enabled && t.rtShadows && TxMode_Get() == 1;
     SceneGeometry_SetAlpha(t.rtAlpha);
     SceneGeometry_SetMaterials(t.rtMaterials);
+    SceneGeometry_SetSkin(t.rtSkin, t.rtSkinBones);
     GameComposite_Set({t.mode == 2 && t.ao, t.mode == 2 && t.volumetricFog && t.fogReplacesGame});
 }
 
@@ -98,6 +100,8 @@ void LoadLightingConfig(const std::string& ini)
     t.rtMatSide = i("RtMatSide", t.rtMatSide);
     t.rtCache = i("RtCache", 1) != 0;
     t.rtCacheCell = f("RtCacheCell", t.rtCacheCell);
+    t.rtSkin = i("RtSkin", 1) != 0;
+    t.rtSkinBones = i("RtSkinBones", 10);
     t.ao = i("Ao", 1) != 0; t.fogReplacesGame = i("FogReplacesGame", 0) != 0; t.cascades = i("Cascades", 0) != 0; t.view = i("View", 0);
     // Cascades=0: the sun's shadow is the game's own filtered mask (match dE76 2.23 against 2.53 with
     // our cascade lookup, which also drew hard twig streaks on the ground).

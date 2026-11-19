@@ -31,7 +31,7 @@ class Context;
 
 enum StreamOp : uint8_t {
     SO_Shader, SO_CB, SO_SRV, SO_Samp, SO_Layout, SO_VB, SO_IB, SO_Topo, SO_RT, SO_RTUAV, SO_Blend, SO_DS, SO_RS,
-    SO_VP, SO_SC, SO_CSUAV, SO_Chunk, SO_Draw, SO_DrawIndexed, SO_DrawInstanced, SO_DrawIndexedInstanced,
+    SO_VP, SO_SC, SO_CSUAV, SO_Chunk, SO_Copy, SO_CopyRegion, SO_Draw, SO_DrawIndexed, SO_DrawInstanced, SO_DrawIndexedInstanced,
 };
 
 // One run of calls for a worker. Words are 64-bit; a record is a header word (op, stage, start, count)
@@ -42,14 +42,14 @@ struct Segment {
     std::vector<std::pair<void*, uint64_t>> va;   // renamed buffers bound at the start: their GPU address then
     std::vector<ImmHold*> held;                   // given back after submission
     std::unique_ptr<Recording> out;               // the worker's closed list
-    uint32_t draws = 0;
+    uint32_t draws = 0, copies = 0;
     uint32_t startDirty = 0;   // the context's dirty flags when it opened (an inline replay starts from them)
     bool lazy = false;         // the immediate list is not split yet (Context::Commit)
     std::atomic<bool> done{false};
 };
 
 struct StreamStats {
-    uint64_t segments = 0, draws = 0, ends = 0, queryDraws = 0, inlined = 0;
+    uint64_t segments = 0, draws = 0, ends = 0, queryDraws = 0, inlined = 0, directRuns = 0;
     const char* why[8] = {};   // what ended the runs, the first eight kinds
     uint64_t whyN[8] = {};
     double waitUs = 0;   // the application's thread waiting for the workers at submission

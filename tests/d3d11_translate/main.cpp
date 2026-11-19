@@ -48,6 +48,8 @@ bool MakeDevice(const RunCfg& cfg, ComPtr<ID3D11Device>& dev, ComPtr<ID3D11Devic
         if (segment) p.segmentDraws = uint32_t(atoi(segment));
         static const char* segMin = std::getenv("RAW_TX_SEGMENT_MIN");   // shorter runs replayed on the immediate context
         if (segMin) p.segmentMin = uint32_t(atoi(segMin));
+        static const char* predict = std::getenv("RAW_TX_PREDICT");   // 0: every run recorded
+        if (predict) p.predictRuns = atoi(predict) != 0;
         hr = raw::tx::CreateDevice(p, &dev, &ctx);
     } else {
         const D3D_FEATURE_LEVEL want = D3D_FEATURE_LEVEL_11_0;

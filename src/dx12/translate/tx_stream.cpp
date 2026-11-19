@@ -18,12 +18,12 @@ void Context::SBuf(TBuffer* b)
 // the same list (InlineReplay), so short runs between other calls cost no extra lists.
 void Context::BeginSegment()
 {
-    auto* s = new Segment;
+    Segment* s = nullptr;
+    if (!freeSegs_.empty()) { s = freeSegs_.back(); freeSegs_.pop_back(); }
+    else { s = new Segment; s->words.reserve(16384); s->held.reserve(4096); s->start = std::make_unique<State>(); }
     s->lazy = !stale_;
     s->startDirty = dirty_;
-    s->words.reserve(16384);
-    s->start = std::make_unique<State>(s_);
-    s->held.reserve(4096);
+    *s->start = s_;
     auto buf = [&](TBuffer* b) {
         if (!b) return;
         SHold(*s, b);
@@ -88,9 +88,28 @@ void Context::InlineReplay(Segment* s)
     DropSegment(s);
 }
 
+bool Context::StreamCopy(ResCore* d, ResCore* s, bool& recorded)
+{
+    recorded = false;
+    if (!pool_ || !d || !s || d->store != Store::Committed || s->store != Store::Committed) return false;
+    if (seg_ || stale_) {
+        if (!seg_) BeginSegment();
+        recorded = true;
+        ++seg_->copies;
+    }
+    return true;   // not recorded: straight to the immediate list, and the run goes on
+}
+
 bool Context::StreamDraw()
 {
+    ++runDraws_;
     if (openQueries_) { ++sstats_.queryDraws; return false; }
+    if (!runMode_) {
+        const bool longLast = runIndex_ < lastRuns_.size() && lastRuns_[runIndex_] >= minDraws_;
+        runMode_ = longLast || stale_ || !predict_ ? 1 : 2;   // a run right after a segment keeps recording (no split)
+        if (runMode_ == 2) ++sstats_.directRuns;
+    }
+    if (runMode_ == 2) return false;
     if (!seg_) BeginSegment();
     ++sstats_.draws;
     return true;
@@ -102,7 +121,7 @@ void Context::CutSegment()
     Segment* s = seg_;
     if (!s) return;
     seg_ = nullptr;
-    if (!s->draws) { DropSegment(s); return; }   // binds only: the shadow state already holds them
+    if (s->words.empty() || (!s->draws && !s->copies)) { DropSegment(s); return; }   // binds only: the shadow state holds them
     Pending p;
     p.seg = s;
     pending_.push_back(std::move(p));
@@ -131,7 +150,9 @@ void Context::EndStream(const char* why)
 void Context::DropSegment(Segment* s)
 {
     for (ImmHold* h : s->held) --h->n;   // the pins go back at a later Drain
-    delete s;
+    s->words.clear(); s->va.clear(); s->held.clear(); s->out.reset();
+    s->draws = 0; s->copies = 0; s->lazy = false; s->done.store(false, std::memory_order_relaxed);
+    if (freeSegs_.size() < 256) freeSegs_.push_back(s); else delete s;
 }
 
 // Every closed list in call order, then the open one, as one submission. The workers finish first.
@@ -172,7 +193,8 @@ void Context::StreamStatsLog(uint64_t frames)
     int at = 0;
     for (int k = 0; k < 8 && sstats_.why[k]; ++k)
         at += snprintf(why + at, sizeof why - at, " %s %.1f", sstats_.why[k], sstats_.whyN[k] / n);
-    Log("  runs ended by (per frame):%s; draws kept on the immediate list by an open query %.0f", why, sstats_.queryDraws / n);
+    Log("  runs ended by (per frame):%s; draws kept on the immediate list by an open query %.0f; runs sent straight to the list "
+        "(short last frame) %.1f", why, sstats_.queryDraws / n, sstats_.directRuns / n);
     sstats_ = StreamStats{};
 }
 

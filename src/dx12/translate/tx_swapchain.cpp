@@ -173,6 +173,7 @@ STDMETHODIMP SwapChain::Present(UINT sync, UINT flags)
     t.Flush(cl);
     ++ctx->Rec().cmdCount;
     ctx->MarkDirty(D_SCAN);
+    ctx->FrameRuns();
     const uint64_t serial = ctx->FlushInternal();
     // Sync 0 is a tearing present when the chain allows it; the flag is invalid with any other interval.
     if (sync == 0 && tearing_ && !(flags & DXGI_PRESENT_TEST)) flags |= DXGI_PRESENT_ALLOW_TEARING;

@@ -143,9 +143,10 @@ public:
     BindHolds& Holds() { return holds_; }
 
     // ---- parallel translation (tx_stream.cpp, tx_stream_play.cpp) ----
-    void EnableStream(StreamPool* p, uint32_t segmentDraws, uint32_t minDraws)
+    void EnableStream(StreamPool* p, uint32_t segmentDraws, uint32_t minDraws, bool predict)
     {
         pool_ = p;
+        predict_ = predict;
         segDraws_ = segmentDraws ? segmentDraws : 256;
         minDraws_ = minDraws > segDraws_ ? segDraws_ : minDraws;
     }
@@ -209,12 +210,31 @@ private:
         seg_->words.push_back(uint64_t(op) | uint64_t(stage) << 8 | uint64_t(start) << 16 | uint64_t(n) << 32);
     }
     void SBuf(TBuffer* b);                     // a buffer and its GPU address when renamed
+    void SRes(ResCore* c)                      // a resource, held
+    {
+        seg_->words.push_back(reinterpret_cast<uint64_t>(c->self));
+        c->hold(holds_, c->self);
+        seg_->held.push_back(c->imm);
+    }
+    // A copy between two committed resources needs nothing from the application's thread: it is recorded
+    // while draws are, and does not end the run. True: recorded (or there is no run to keep).
+    bool StreamCopy(ResCore* d, ResCore* s, bool& recorded);
     bool StreamDraw();                         // true: this draw goes into a segment
     void SegDrawn()
     {
         ++seg_->draws;
         if (seg_->lazy && seg_->draws >= minDraws_) Commit();
         if (seg_->draws >= segDraws_) CutSegment();
+    }
+    // A call that is not a binding or a draw ends the run of draws: the run's length is noted for the next
+    // frame's prediction (a run whose place in the frame was short last frame goes straight to the list).
+    void RunBreak(const char* why)
+    {
+        if (!pool_) return;
+        if (runDraws_) { if (runIndex_ < 4096) { if (runIndex_ >= lastRuns_.size()) lastRuns_.resize(runIndex_ + 1, 0); lastRuns_[runIndex_] = runDraws_; } ++runIndex_; }
+        runDraws_ = 0;
+        runMode_ = 0;
+        if (seg_ || stale_) EndStream(why);
     }
     void BeginSegment();
     void Commit();                             // a lazy segment splits the list and goes to the workers
@@ -226,6 +246,14 @@ private:
     StreamPool* pool_ = nullptr;               // the immediate context with workers
     uint32_t segDraws_ = 256, minDraws_ = 64;
     uint32_t openQueries_ = 0;                 // begun and not ended: no segments meanwhile
+    std::vector<uint32_t> lastRuns_;           // draws in each run of the last frames, by its place in the frame
+    uint32_t runIndex_ = 0, runDraws_ = 0;
+    uint8_t runMode_ = 0;
+    bool predict_ = true;                      // this run: 0 not decided, 1 recorded, 2 straight to the list
+    std::vector<Segment*> freeSegs_;           // reused: no allocation per segment
+  public:
+    void FrameRuns() { RunBreak("Present"); runIndex_ = 0; }   // the swap chain, at every Present
+  private:
     Segment* seg_ = nullptr;                   // being recorded
     bool stale_ = false;                       // the open list's D3D12 state is not the shadow's (segments ran)
     struct Pending { std::unique_ptr<Recording> rec; Segment* seg = nullptr; };

@@ -191,6 +191,16 @@ void ReplayWords(Context* c, const Segment& s)
             else c->RSSetScissorRects(UINT(*w++), nullptr);
             break;
         case SO_Chunk: c->ReplayChunk(P<TBuffer>(w[0]), w[1]); w += 2; break;
+        case SO_Copy: c->CopyResource(P<ID3D11Resource>(w[0]), P<ID3D11Resource>(w[1])); w += 2; break;
+        case SO_CopyRegion: {
+            D3D11_BOX box{};
+            const uint64_t* a = w + 2;
+            if (n) memcpy(&box, a + 3, sizeof box);
+            c->CopySubresourceRegion(P<ID3D11Resource>(w[0]), UINT(a[0]), UINT(a[1]), UINT(a[1] >> 32), UINT(a[2]),
+                                     P<ID3D11Resource>(w[1]), UINT(a[0] >> 32), n ? &box : nullptr);
+            w += 5 + (n ? 3 : 0);
+            break;
+        }
         case SO_Draw: c->Draw(n, UINT(*w++)); break;
         case SO_DrawIndexed: c->DrawIndexed(n, UINT(*w), INT(uint32_t(*w >> 32))); ++w; break;
         case SO_DrawInstanced: c->DrawInstanced(n, UINT(w[0]), UINT(w[0] >> 32), UINT(w[1])); w += 2; break;

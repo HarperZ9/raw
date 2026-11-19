@@ -140,7 +140,7 @@ STDMETHODIMP_(void) Context::SOSetTargets(UINT n, ID3D11Buffer* const* b, const 
 STDMETHODIMP_(void) Context::SetPredication(ID3D11Predicate* p, BOOL)
 {
     TX_TRACE("Context::SetPredication");
-    if (seg_ || stale_) EndStream(__func__);
+    RunBreak(__func__);
     if (p) CountUnsupported(dev_, "SetPredication");
 }
 

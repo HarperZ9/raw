@@ -40,6 +40,7 @@ struct CreateParams {
     uint32_t workers = 0;
     uint32_t segmentDraws = 256;   // draws a worker's segment takes
     uint32_t segmentMin = 64;      // a shorter run between other calls stays on the application's thread
+    bool predictRuns = true;       // a run short in the last frame goes straight to the list (off: every run is recorded)
 };
 
 struct Stats {

@@ -5,7 +5,7 @@ namespace raw::tx {
 
 STDMETHODIMP_(void) Context::ClearRenderTargetView(ID3D11RenderTargetView* view, const FLOAT color[4])
 {
-    if (seg_ || stale_) EndStream(__func__);
+    RunBreak(__func__);
     TX_TRACE("Context::ClearRenderTargetView");
     TRTV* v = static_cast<TRTV*>(view);
     if (!v) return;
@@ -18,7 +18,7 @@ STDMETHODIMP_(void) Context::ClearRenderTargetView(ID3D11RenderTargetView* view,
 
 STDMETHODIMP_(void) Context::ClearDepthStencilView(ID3D11DepthStencilView* view, UINT flags, FLOAT depth, UINT8 stencil)
 {
-    if (seg_ || stale_) EndStream(__func__);
+    RunBreak(__func__);
     TX_TRACE("Context::ClearDepthStencilView");
     TDSV* v = static_cast<TDSV*>(view);
     if (!v) return;
@@ -38,7 +38,7 @@ STDMETHODIMP_(void) Context::ClearDepthStencilView(ID3D11DepthStencilView* view,
 
 void Context::ClearUav(ID3D11UnorderedAccessView* view, const UINT* ui, const FLOAT* fl)
 {
-    if (seg_ || stale_) EndStream(__func__);
+    RunBreak(__func__);
     TUAV* v = static_cast<TUAV*>(view);
     if (!v || !v->core->tr) return;
     ResCore& c = *v->core;
@@ -68,7 +68,7 @@ static bool HeapQuery(const TQuery* q, QueryHeapKind* heap, D3D12_QUERY_TYPE* ty
 
 STDMETHODIMP_(void) Context::Begin(ID3D11Asynchronous* a)
 {
-    if (seg_ || stale_) EndStream(__func__);
+    RunBreak(__func__);
     TX_TRACE("Context::Begin");
     TQuery* q = static_cast<TQuery*>(a);
     QueryHeapKind heap; D3D12_QUERY_TYPE type;
@@ -80,7 +80,7 @@ STDMETHODIMP_(void) Context::Begin(ID3D11Asynchronous* a)
 
 STDMETHODIMP_(void) Context::End(ID3D11Asynchronous* a)
 {
-    if (seg_ || stale_) EndStream(__func__);
+    RunBreak(__func__);
     TX_TRACE("Context::End");
     TQuery* q = static_cast<TQuery*>(a);
     if (!q) return;
@@ -140,7 +140,7 @@ uint64_t Context::FlushInternal()
 {
     if (deferred_) return 0;
     holds_.Drain(1024);   // pins of objects the game released and nothing binds give their reference back
-    if (seg_ || stale_) EndStream(__func__);
+    RunBreak(__func__);
     if (!pending_.empty()) return SubmitPending();
     if (rec_.cmdCount == 0 && !dev_->UploadPending()) return dev_->LastSubmitted();
     rec_.cl->Close();

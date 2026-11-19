@@ -19,8 +19,10 @@ Context::Context(Device* dev, bool deferred, bool replay)
 
 Context::~Context()
 {
-    if (seg_ || stale_) EndStream(__func__);
+    RunBreak(__func__);
     if (!pending_.empty()) SubmitPending();
+    for (Segment* sg : freeSegs_) delete sg;
+    freeSegs_.clear();
     ResetState();
     holds_.ReleaseAll();
     if (rec_.cl) rec_.cl->Close();
@@ -141,7 +143,7 @@ void Context::ResetState()
 
 STDMETHODIMP_(void) Context::ClearState()
 {
-    if (seg_ || stale_) EndStream(__func__);
+    RunBreak(__func__);
     ResetState();
 }
 

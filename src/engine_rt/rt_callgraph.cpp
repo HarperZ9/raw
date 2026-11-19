@@ -165,6 +165,34 @@ void Walk(Ctx& c, uint32_t fn, uint64_t end, bool leaf) {
 
 }  // namespace
 
+std::string ProbeFunction(const Image& img, uint32_t rva) {
+    ZydisDecoder dec;
+    ZydisDecoderInit(&dec, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
+    const long fi = img.FuncIndex(rva);
+    const uint64_t end = fi >= 0 ? img.funcs[size_t(fi)].second : std::min<uint64_t>(uint64_t(rva) + 4096, img.textEnd);
+    std::string out = "{\"cmd\":\"probe\",\"function\":\"0x" + [&] { char b[16]; std::snprintf(b, sizeof b, "%X", rva); return std::string(b); }() + "\",\"ops\":[";
+    ZydisDecodedInstruction in;
+    ZydisDecodedOperand op[ZYDIS_MAX_OPERAND_COUNT];
+    bool first = true;
+    for (uint64_t p = rva; p < end && ZYAN_SUCCESS(ZydisDecoderDecodeFull(&dec, img.base + p, size_t(end - p), &in, op)); p += in.length) {
+        for (unsigned i = 0; i < in.operand_count_visible; ++i) {
+            const auto& o = op[i];
+            const bool mem = o.type == ZYDIS_OPERAND_TYPE_MEMORY && o.mem.base == ZYDIS_REGISTER_RIP;
+            const bool rel = o.type == ZYDIS_OPERAND_TYPE_IMMEDIATE && o.imm.is_relative && in.meta.category == ZYDIS_CATEGORY_CALL;
+            if (!mem && !rel) continue;
+            ZyanU64 t = 0;
+            ZydisCalcAbsoluteAddress(&in, &o, p, &t);
+            const char* acc = rel ? "call" : in.mnemonic == ZYDIS_MNEMONIC_LEA ? "addr" : (o.actions & ZYDIS_OPERAND_ACTION_MASK_WRITE) ? "write" : "read";
+            char b[128];
+            std::snprintf(b, sizeof b, "%s[\"0x%llX\",\"0x%llX\",\"%s\",\"%s\",%u]", first ? "" : ",", (unsigned long long)p,
+                          (unsigned long long)t, acc, ZydisMnemonicGetString(in.mnemonic), unsigned(o.size / 8));
+            out += b;
+            first = false;
+        }
+    }
+    return out + "]}";
+}
+
 CallGraphStats RunCallGraph(const Image& img, const std::vector<RefTarget>& refs, const std::string& dir) {
     const auto t0 = std::chrono::steady_clock::now();
     auto open = [&](const char* n) { return std::fopen((dir + "\\" + n).c_str(), "w"); };

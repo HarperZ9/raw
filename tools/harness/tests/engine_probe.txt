@@ -1,0 +1,7 @@
+# Probes for the shadow atlas: the render-target table and its textures, and the memory each shadow
+# function reads and writes (addresses only).
+start load rawharness
+console tai
+wait 10
+engine dump; probe 14F00D0; probe 14F0480; probe 640120; probe 14CF210; probe 1512230; probe 14CBB90
+quit

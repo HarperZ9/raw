@@ -119,6 +119,10 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
                                                            uint32_t(std::strtoul(b.c_str(), nullptr, 10)));
             if (g_invalidate) g_invalidate();
             Result("{\"cmd\":\"atlas\",\"result\":\"" + line + "\"}");
+        } else if (op == "probe") {
+            Result(ProbeFunction(*g_img, uint32_t(std::strtoul(a.c_str(), nullptr, 16))));
+        } else if (op == "dump") {
+            Result(DumpDepthTargets(*g_img, *g_refs));
         } else if (op == "capture") {
             const bool ok = CaptureBackbuffer(ctx, sc, g_out + "\\" + a + ".bmp");
             Result("{\"cmd\":\"capture\",\"name\":\"" + a + "\",\"ok\":" + (ok ? "true" : "false") + "}");

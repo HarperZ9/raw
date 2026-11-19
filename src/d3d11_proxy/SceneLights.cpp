@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 #include <cstring>
 #include <vector>
 
@@ -275,8 +276,24 @@ void SceneLights_OnPresent()
 {
     State& s = S();
     static uint64_t frame = 0;
-    if (++frame % 600 == 1 && s.frame.litDraws) {
+    // [SceneLights] LogEvery: how often the frame's decoded lighting goes to the log (600 presents by default)
+    static const uint64_t every = [] {
+        char exe[MAX_PATH];
+        GetModuleFileNameA(nullptr, exe, MAX_PATH);
+        std::string ini(exe);
+        ini = ini.substr(0, ini.rfind('\\') + 1) + "d3d11_proxy.ini";
+        const int n = GetPrivateProfileIntA("SceneLights", "LogEvery", 600, ini.c_str());
+        return uint64_t(n > 0 ? n : 600);
+    }();
+    if (++frame % every == 1 && s.frame.litDraws) {
         const SceneLighting& f = SceneLights_Frame();
+        if (f.hasCascades) {
+            // the length of each cascade's first matrix row is 1 / its half-width in world units
+            auto len = [](const float* r) { return std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]); };
+            const float l0 = len(f.cascade[0][0]), l1 = len(f.cascade[1][0]);
+            Log("[SceneLights] frame %llu: cascade half-widths %.1f %.1f", (unsigned long long)frame, l0 > 0 ? 1.0f / l0 : 0.0f,
+                l1 > 0 ? 1.0f / l1 : 0.0f);
+        }
         Log("[SceneLights] frame %llu: %u lit draws, %u lights from %u sightings (%u over the limit, %u copies at a wrong place), sun %d (%.3f %.3f %.3f, colour %.3f %.3f %.3f), "
             "ambient w %.3f %.3f %.3f, cascades %u (split %.6f), knee %.4f, specular scale %.3f",
             (unsigned long long)frame, f.litDraws, f.lightCount, f.lightSightings, f.droppedLights, f.phantomLights, f.hasSun, f.sunDirection[0],

@@ -94,6 +94,38 @@ std::string ResizeShadowAtlasLive(ID3D11DeviceContext* ctx, const Image& img, co
     return line;
 }
 
+std::string DumpDepthTargets(const Image& img, const std::vector<RefTarget>& refs) {
+    std::string out = "{\"cmd\":\"dump\"";
+    auto find = [&](const char* n) -> const RefTarget* {
+        for (const auto& x : refs) if (x.name == n) return &x;
+        return nullptr;
+    };
+    char buf[160];
+    if (const RefTarget* m = find("BSGraphics::RenderTargetManager::GetSingleton")) {
+        uint8_t* mgr = *reinterpret_cast<uint8_t**>(const_cast<uint8_t*>(img.base) + m->rva);
+        out += ",\"table\":[";
+        for (int i = 0; mgr && i < 12; ++i) {
+            const auto* e = reinterpret_cast<const uint32_t*>(mgr + 0xC78 + 0x10 * i);
+            std::snprintf(buf, sizeof buf, "%s[%u,%u,%u]", i ? "," : "", e[0], e[1], e[2]);
+            out += buf;
+        }
+        out += "]";
+    }
+    if (const RefTarget* r = find("Renderer::GetRendererData")) {
+        uint8_t* data = *reinterpret_cast<uint8_t**>(const_cast<uint8_t*>(img.base) + r->rva);
+        out += ",\"textures\":[";
+        for (int i = 0; data && i < 12; ++i) {
+            auto* ds = reinterpret_cast<DepthStencilData*>(data + 0x1FA8 + 0x98 * i);
+            D3D11_TEXTURE2D_DESC td = {};
+            if (ds->texture) ds->texture->GetDesc(&td);
+            std::snprintf(buf, sizeof buf, "%s[%u,%u,%u,%u]", i ? "," : "", td.Width, td.Height, td.ArraySize, unsigned(td.Format));
+            out += buf;
+        }
+        out += "]";
+    }
+    return out + "}";
+}
+
 void AtlasOnPresent() {
     for (auto it = g_retired.begin(); it != g_retired.end();) {
         if (--it->presentsLeft <= 0) {

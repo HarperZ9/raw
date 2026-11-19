@@ -15,5 +15,7 @@ namespace raw::rt {
 std::string ResizeShadowAtlasLive(ID3D11DeviceContext* ctx, const Image& img, const std::vector<RefTarget>& refs,
                                   int entry, uint32_t size);
 void AtlasOnPresent();
+// The render-target table's depth entries and the textures behind them, as one JSON line.
+std::string DumpDepthTargets(const Image& img, const std::vector<RefTarget>& refs);
 
 }  // namespace raw::rt

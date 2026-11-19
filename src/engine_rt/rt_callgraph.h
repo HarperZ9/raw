@@ -21,6 +21,10 @@ struct CallGraphStats {
     double ms = 0;
 };
 
+// Every RIP-relative memory operand and direct call in one function, as one JSON line (addresses,
+// mnemonics and access only).
+std::string ProbeFunction(const Image& img, uint32_t rva);
+
 // refs must be sorted by rva. Writes the cg_*.tsv files into dir.
 CallGraphStats RunCallGraph(const Image& img, const std::vector<RefTarget>& refs, const std::string& dir);
 

@@ -1,0 +1,43 @@
+# Every RAW feature once, on whatever runtime is installed (docs/VERSIONS.md): the per-feature pass table.
+# The module picks its address table by the exe (raw_engine_out/engine_rt.log, "version:"); addresses here are
+# table names, so the same test runs on 1.6.1170 and 1.7.104.
+# tx and the bridge: the game on D3D12 and RAW's lighting (keyframe game/improved); RT: the RT scene (the harness fails
+# an empty one); weather: weather after fw; lights: lights with flags; view: camera, cell, worldspace, hour; grids: the
+# array and a live 7 -> 5 -> 7 through Whiterun; atlas: a live rebuild 4096 -> 8192 -> 4096 at the startup size; cascades
+# and GPU time per pass: measure; live state: live 300.
+start load rawharness
+console tai
+scene version
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+console coc riverwood
+wait 8
+console fw 81a
+wait 6
+engine view; weather; lights; grids; cascades; viewports; live 300; papyrus count
+keyframe riverwood steps=game,improved hold=40
+engine measure version_riverwood 600; capture version_riverwood
+console fw 10a241
+wait 10
+engine weather; wait 60; weather
+engine atlas 2 8192; wait 60; capture atlas_8192; atlas 2 4096; wait 60; capture atlas_4096
+engine emitters; lights
+engine grids 5
+console coc whiterun
+wait 8
+engine grids; view
+console coc riverwood
+wait 8
+engine grids 7
+console coc whiterun
+wait 8
+console coc riverwood
+wait 8
+engine grids; view; measure version_back 300
+console set gamehour to 22
+console coc whiterunbanneredmare
+wait 8
+keyframe inn steps=game,improved hold=40
+engine lights; view; measure version_inn 300
+quit

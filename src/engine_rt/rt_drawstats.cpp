@@ -1,5 +1,6 @@
 // Draw statistics per submission pass (RAW engine runtime). Original work, MIT. See rt_drawstats.h.
 #include "rt_drawstats.h"
+#include "rt_version.h"
 
 #include <windows.h>
 #include <intrin.h>
@@ -15,17 +16,17 @@ namespace {
 
 using Fn = uint64_t (*)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
-struct ShaderClass { const char* name; uint32_t vtable; };
-// vtable RVAs from the engine map (SkyrimSE 1.6.1170); the slots are BSShader's
+struct ShaderClass { const char* name; const char* vtable; };
+// vtables from the version table (rt_version.h); the slots are BSShader's
 constexpr ShaderClass kShaders[] = {
-    {"Lighting", 0x1ABE4C0}, {"Utility", 0x1AC1BF8},  {"Grass", 0x1AB66C0},       {"Effect", 0x1ABFB50},
-    {"Water", 0x1ABE840},    {"Sky", 0x1ABF118},      {"DistantTree", 0x1ABFF38}, {"Particle", 0x1AC3A80},
-    {"Blood", 0x1AB82B8},
+    {"Lighting", "vtable:BSLightingShader"}, {"Utility", "vtable:BSUtilityShader"},  {"Grass", "vtable:BSGrassShader"},
+    {"Effect", "vtable:BSEffectShader"},     {"Water", "vtable:BSWaterShader"},      {"Sky", "vtable:BSSkyShader"},
+    {"DistantTree", "vtable:BSDistantTreeShader"}, {"Particle", "vtable:BSParticleShader"}, {"Blood", "vtable:BSBloodSplatterShader"},
 };
 constexpr int kShaderCount = int(std::size(kShaders));
 enum Kind : int { kTech = 0, kMat = 1, kGeo = 2 };
 constexpr uint32_t kSlotOf[3] = {2, 4, 6};
-constexpr uint32_t kAccumVtable = 0x1AB6190, kAccumSlot = 0x2A;
+constexpr uint32_t kAccumSlot = 0x2A;
 constexpr int kPasses = 33;          // 32 passes in frame order, then "outside a pass"
 constexpr int kHooks = kShaderCount * 3;
 constexpr size_t kMeshSet = 8192;    // per pass, generation-stamped
@@ -127,6 +128,7 @@ constexpr std::array<void*, sizeof...(I)> Table(std::integer_sequence<int, I...>
 const auto kHookFns = Table(std::make_integer_sequence<int, kHooks>{});
 
 bool Swap(const Image& img, uint32_t vtable, uint32_t slot, void* hook, Fn* orig) {
+    if (!vtable) return false;   // not in this version's table
     auto* entry = reinterpret_cast<uint64_t*>(const_cast<uint8_t*>(img.base) + vtable) + slot;
     if (!img.InText(uint32_t(*entry - uint64_t(img.base)))) return false;
     *orig = reinterpret_cast<Fn>(*entry);
@@ -159,9 +161,9 @@ std::string DrawStatsInstall(const Image& img) {
         for (int k = 0; k < 3; ++k) {
             HookInfo& h = g_info[s * 3 + k];
             h.shader = s; h.kind = k;
-            n += Swap(img, kShaders[s].vtable, kSlotOf[k], kHookFns[size_t(s * 3 + k)], &h.orig);
+            n += Swap(img, Addr(kShaders[s].vtable), kSlotOf[k], kHookFns[size_t(s * 3 + k)], &h.orig);
         }
-    const bool accum = Swap(img, kAccumVtable, kAccumSlot, reinterpret_cast<void*>(&AccumHook), &g_accumOrig);
+    const bool accum = Swap(img, Addr("vtable:BSShaderAccumulator"), kAccumSlot, reinterpret_cast<void*>(&AccumHook), &g_accumOrig);
     g_installed = true;
     char b[128];
     std::snprintf(b, sizeof b, "drawstats: %d of %d shader slots hooked, accumulator %s", n, kHooks, accum ? "hooked" : "failed");

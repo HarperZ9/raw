@@ -120,13 +120,31 @@ void Context::ApplyTables(const RootSig* root, int first, int last, bool compute
         StageState& s = s_.st[st];
         if (p.srv >= 0 && (dirty_ & (D_SRV0 << st))) {
             UINT n = b.srvCount;
-            uint32_t base = AllocDescs(n);
-            D3D12_CPU_DESCRIPTOR_HANDLE src[128];
-            for (UINT i = 0; i < n; ++i) src[i] = (i < s.srvHi && s.srv[i]) ? s.srv[i]->h : NullSrvFor(s.sh.sd, i);
-            D3D12_CPU_DESCRIPTOR_HANDLE dst = CpuHandle(base);
-            dev_->d3d->CopyDescriptors(1, &dst, &n, n, src, nullptr, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-            if (compute) cl->SetComputeRootDescriptorTable(p.srv, GpuHandle(base));
-            else cl->SetGraphicsRootDescriptorTable(p.srv, GpuHandle(base));
+            uint64_t keys[128];
+            for (UINT i = 0; i < n; ++i) {
+                const TSRV* v = i < s.srvHi ? s.srv[i] : nullptr;
+                uint8_t dim = s.sh.sd && i < s.sh.sd->srvDim.size() ? s.sh.sd->srvDim[i] : 0;
+                keys[i] = v ? v->uid : (uint64_t(1) << 63) | dim;   // a null descriptor: its dimension
+            }
+            const uint64_t hash = HashBytes(keys, n * sizeof(uint64_t), n);
+            uint32_t base = tables_.Find(keys, n, hash);
+            if (base == ~0u) {
+                ++tables_.misses;
+                base = AllocDescs(n);
+                D3D12_CPU_DESCRIPTOR_HANDLE src[128];
+                for (UINT i = 0; i < n; ++i) src[i] = (i < s.srvHi && s.srv[i]) ? s.srv[i]->h : NullSrvFor(s.sh.sd, i);
+                D3D12_CPU_DESCRIPTOR_HANDLE dst = CpuHandle(base);
+                dev_->d3d->CopyDescriptors(1, &dst, &n, n, src, nullptr, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                tables_.Put(keys, n, hash, base);
+            } else {
+                ++tables_.hits;
+            }
+            const D3D12_GPU_DESCRIPTOR_HANDLE h = GpuHandle(base);
+            if (h.ptr != srvTable_[st].ptr) {   // the same table on the same root signature: nothing to set
+                if (compute) cl->SetComputeRootDescriptorTable(p.srv, h);
+                else cl->SetGraphicsRootDescriptorTable(p.srv, h);
+                srvTable_[st] = h;
+            }
         }
         if (p.samp >= 0 && (dirty_ & (D_SAMP0 << st))) {
             uint32_t ids[16];
@@ -218,7 +236,7 @@ bool Context::PrepareDraw(bool indexed)
         cl->SetGraphicsRootSignature(cur_.root->rs.Get());
         root_ = cur_.root;
         memset(cbVa_, 0xFF, sizeof(cbVa_[0]) * 5);
-        for (int i = 0; i < 5; ++i) sampKey_[i] = ~0ull;
+        for (int i = 0; i < 5; ++i) { sampKey_[i] = ~0ull; srvTable_[i].ptr = 0; }   // root arguments start unset
         // Another root signature can read more shader-resource or UAV slots than the last scan covered.
         dirty_ |= kGraphicsTableBits | D_SCAN_OM | (D_SCAN_SRV0 * 0x1F) | D_SCAN_ALLSRV;
     }

@@ -82,6 +82,8 @@ void Context::BeginList()
     memset(cbVa_, 0xFF, sizeof(cbVa_));
     memset(cbBuf_, 0, sizeof(cbBuf_));
     for (auto& k : sampKey_) k = ~0ull;
+    tables_.Reset();
+    for (auto& h : srvTable_) h.ptr = 0;
 }
 
 const Chunk* Context::Pin(TBuffer* b)

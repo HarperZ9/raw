@@ -198,6 +198,15 @@ void Context::StreamStatsLog(uint64_t frames)
     sstats_ = StreamStats{};
 }
 
+void Context::TableStatsLog(uint64_t frames)
+{
+    if (!frames) return;
+    const uint64_t all = tables_.hits + tables_.misses;
+    Log("shader-resource tables per frame: %.0f, %.0f of them reused within the list (%.0f%%)", double(all) / frames,
+        double(tables_.hits) / frames, all ? 100.0 * double(tables_.hits) / double(all) : 0.0);
+    tables_.hits = tables_.misses = 0;
+}
+
 // ---- the pool ----
 
 StreamPool::StreamPool(Device* dev, uint32_t workers) : dev_(dev)

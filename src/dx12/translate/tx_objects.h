@@ -87,6 +87,7 @@ struct TView final : Child<I> {
     SubRange range;
     DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
     D desc{};
+    uint64_t uid = 0;   // never reused (a descriptor slot or an address may be): the table cache's key
     explicit TView(Device* d) : Child<I>(d) {}
     ~TView() override;
     bool QIExtra(REFIID r, void** o) override

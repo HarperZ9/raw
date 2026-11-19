@@ -10,6 +10,7 @@
 #include "tx_stream.h"
 
 #include "tx_state.h"
+#include "tx_tables.h"
 
 namespace raw::tx {
 
@@ -155,7 +156,8 @@ public:
     void ReplayChunk(TBuffer* b, uint64_t va);
     void SetReplayVa(TBuffer* b, uint64_t va) { if (b && va) override_[b].va = va; }
     void EndReplay(Segment& s);
-    void StreamStatsLog(uint64_t frames);     // segments, streamed draws and waits per frame, then reset   // the shadow state, for the host's per-draw reads
+    void StreamStatsLog(uint64_t frames);
+    void TableStatsLog(uint64_t frames);       // shader-resource table reuse per frame, then reset     // segments, streamed draws and waits per frame, then reset   // the shadow state, for the host's per-draw reads
     uint64_t FlushInternal();                 // submits the open list; returns its serial
     void Sync();                              // flush and wait for the GPU
     void Shutdown();
@@ -280,6 +282,8 @@ private:
     D3D12_GPU_VIRTUAL_ADDRESS cbVa_[S_COUNT][14];
     const TBuffer* cbBuf_[S_COUNT][14];
     uint64_t sampKey_[S_COUNT];
+    TableCache tables_;                   // shader-resource tables copied in this list (tx_tables.h)
+    D3D12_GPU_DESCRIPTOR_HANDLE srvTable_[S_COUNT] = {};   // the table last set per stage in this list
     D3D12_CPU_DESCRIPTOR_HANDLE nullSrv_[12] = {}, nullUav_[12] = {};
     D3D12_CPU_DESCRIPTOR_HANDLE NullSrvFor(const ShaderData* sd, uint32_t slot);
     D3D12_CPU_DESCRIPTOR_HANDLE NullUavFor(const ShaderData* sd, uint32_t slot);

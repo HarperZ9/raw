@@ -181,7 +181,7 @@ STDMETHODIMP SwapChain::Present(UINT sync, UINT flags)
     if (flags & DXGI_PRESENT_TEST) return hr;
     const uint64_t frame = presents_++;
     frameSerial_[frame % 8] = serial;
-    if (presents_ % 600 == 0) { MapStatsLog(600); ctx->StreamStatsLog(600); }
+    if (presents_ % 600 == 0) { MapStatsLog(600); ctx->StreamStatsLog(600); ctx->TableStatsLog(600); }
     dev_->Reclaim();
     // At most `latency` frames queued: the CPU waits for the oldest to leave the queue, as the system
     // runtime does inside Present.

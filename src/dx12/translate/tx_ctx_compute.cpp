@@ -38,6 +38,7 @@ bool Context::PrepareDispatch()
     ID3D12GraphicsCommandList* cl = Cl();
     if (croot_ != root) {
         cl->SetComputeRootSignature(root->rs.Get());
+        srvTable_[S_CS].ptr = 0;
         croot_ = root;
         memset(cbVa_[S_CS], 0xFF, sizeof(cbVa_[S_CS]));
         sampKey_[S_CS] = ~0ull;

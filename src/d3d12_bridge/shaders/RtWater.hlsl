@@ -20,6 +20,7 @@
 #define Layer Normal
 #define BedAlbedo Spec
 #define WaterOut Vis
+#define PreWater Refl   // u4: the HDR colour just before the game composites its water (RAW's lit bed), when skyLength > 0.5
 
 // The distance from a point to the nearest wall between moving cells: 0 on the walls. The walls of
 // a cell field whose centres drift slowly read as the bright net that waves focus onto a bed.
@@ -116,8 +117,27 @@ void water(uint3 id : SV_DispatchThreadID) {
                 caus = BedAlbedo.Load(ip).rgb * sunColour.rgb * (l.z * sunVis * through * focus * waterA.y) * net;
             }
 
+            // Refraction through the bed's own colour, from the frame RAW lit before the game composited its water: the
+            // bed seen through the surface, bent by the wave normal in proportion to the depth, dimmed per channel
+            // (red first) and filled in by light the water scatters (its tint under the sky's ambient).
+            float3 body = game.rgb;
+            const bool refr = skyLength > 0.5f && dBed < 1.0f && waterB.z > 0.0f;
+            if (refr) {
+                const float3 pb = worldAt(px, dBed);
+                const float depthV = max(p.z - pb.z, 0.0f);
+                const float4 s2 = screenOf(pb + float3(n.x, n.y, 0.0f) * (depthV * 0.6f));
+                int2 q = int2(clamp(s2.xy, 0.0f.xx, dims.xy - 1.0f));
+                // A bent look-up that lands on something above the water keeps the straight one.
+                const float4 Lq = Layer.Load(int3(q, 0));
+                if (s2.w <= 0.0f || Depth.Load(int3(q, 0)) <= Lq.x || Lq.z < 0.0f) { q = int2(id.xy); }
+                const float3 bed = PreWater[q].rgb;
+                const float path = length(worldAt(float2(q), Depth.Load(int3(q, 0))) - p);
+                const float3 T = exp(-waterA.z * float3(2.2f, 1.0f, 0.7f) * path);
+                const float3 scatter = float3(0.05f, 0.10f, 0.11f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.0f.xxx) * 2.0f;
+                body = lerp(game.rgb, (bed + caus) * T + scatter * (1.0f - T), saturate(waterB.z));
+            }
             const uint view = uint(waterB.x + 0.5f);
-            col = lerp(game.rgb, refl, saturate(F * waterA.x)) + caus * (1.0f - F) + glint;
+            col = refr ? lerp(body, refl, saturate(F * waterA.x)) + glint : lerp(game.rgb, refl, saturate(F * waterA.x)) + caus * (1.0f - F) + glint;
             if (view == 1u) { col = refl; }
             else if (view == 2u) { col = caus * 4.0f; }
             else if (view == 3u) { col = float3(F, nv, 1.0f); }
@@ -125,6 +145,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float dv = dBed < 1.0f ? p.z - worldAt(px, dBed).z : -1.0f;
                 col = dv < 1.0f ? float3(1.0f, 0.0f, 0.0f) : float3(0.0f, saturate(dv / 200.0f), 1.0f - saturate(dv / 200.0f));
             }
+            else if (view == 6u) { col = body; }   // the water's body alone: the bent bed, dimmed and filled in
             else if (view == 5u) { col = F > 0.25f ? float3(1.0f, 0.0f, 0.0f) : F > 0.06f ? float3(0.0f, 1.0f, 0.0f) : float3(0.0f, 0.0f, 1.0f); }
         }
     }

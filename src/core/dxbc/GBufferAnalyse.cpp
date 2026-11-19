@@ -85,24 +85,39 @@ void FindAlbedo(const std::vector<Instruction>& code, const std::vector<int>& de
     const uint32_t comps = 1u << r | 1u << g | 1u << b;
     size_t tap = s + 1, opener = kNone;
     bool inPlace = false;
+    uint32_t reg2 = reg, sw[3] = {uint32_t(r), uint32_t(g), uint32_t(b)};
+    uint32_t comps2 = comps;
     for (size_t i = s + 1; lit && i < code.size(); ++i) {
         const bool lighting = ReadsBuffer(code[i], 2) || SamplesSlot(code[i], 14);
+        // A tint from the material (cb1) multiplied into another register before lighting (the hair's and the
+        // tinted skin's colour: ps 6a2383091a33f594 and 18d10e9ba7f68469 in the Riverwood capture) is the albedo.
+        if (depth[i] == 0 && !lighting && code[i].opcode == op::Mul && code[i].ops.size() == 3 && code[i].ops[0].type == type::Temp &&
+            code[i].ops[0].index[0] != reg2 && (code[i].ops[0].Mask() & 7u) == 7u && ReadsBuffer(code[i], 1)) {
+            for (int k = 1; k <= 2; ++k) {
+                const auto& o = code[i].ops[k];
+                if (o.type == type::Temp && o.index[0] == reg2 && o.Swizzle(0) == sw[0] && o.Swizzle(1) == sw[1] && o.Swizzle(2) == sw[2]) {
+                    reg2 = code[i].ops[0].index[0];
+                    sw[0] = 0; sw[1] = 1; sw[2] = 2; comps2 = 7u;
+                    break;
+                }
+            }
+        }
         if (depth[i] == 0) {
             if (lighting) { tap = i; inPlace = true; break; }
             const uint32_t o = code[i].opcode;
             if (o == op::If || o == op::Loop || o == op::Switch) opener = i;
         } else if (lighting && opener != kNone) { tap = opener; inPlace = true; break; }
         const Instruction& in = code[i];
-        if (!in.ops.empty() && in.ops[0].type == type::Temp && in.ops[0].index[0] == reg && (in.ops[0].Mask() & comps)) {
+        if (!in.ops.empty() && in.ops[0].type == type::Temp && in.ops[0].index[0] == reg2 && (in.ops[0].Mask() & comps2) && i != s) {
             bool readsSelf = false;
             for (size_t k = 1; k < in.ops.size(); ++k)
-                readsSelf |= in.ops[k].type == type::Temp && in.ops[k].index[0] == reg;
-            if (!readsSelf) break;                      // the register now holds something else
+                readsSelf |= in.ops[k].type == type::Temp && in.ops[k].index[0] == reg2;
+            if (!readsSelf && !(reg2 != reg && in.opcode == op::Mul && ReadsBuffer(in, 1))) break;   // the register now holds something else
         }
     }
     a->albedoBefore = tap;
-    a->albedoReg = reg;
-    a->albedoSwz = Swz(uint32_t(r), uint32_t(g), uint32_t(b), uint32_t(b));
+    a->albedoReg = reg2;
+    a->albedoSwz = Swz(sw[0], sw[1], sw[2], sw[2]);
     a->info.albedo = true;
     a->info.albedoInPlace = inPlace;
 }

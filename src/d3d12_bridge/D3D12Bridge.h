@@ -156,6 +156,10 @@ struct RtDraw
     float* bones = nullptr;              // 960 floats, owned (delete[] in ReleaseRtDraw)
     // [RT] SkinVbCheck=1 (diagnosis of the actor sheet): the vertex and blend streams' bytes from the draw's first
     // vertex, read back at the game's draw; owned (delete[] in ReleaseRtDraw).
+    float viewProj[16] = {};             // actors: the draw's view-projection (vertex cb12 rows 8 to 11) at the draw
+    bool hasView = false;
+    uint64_t psHash = 0;                 // actors: the draw's pixel shader (diagnosis)
+    uint32_t blendInfo = 0;              // actors: colour write mask of target 0 | blend on << 8 | depth write << 9
     uint8_t* diagVb = nullptr; uint8_t* diagBv = nullptr;
     uint32_t diagVbBytes = 0, diagBvBytes = 0;
     // How the references are given back; nullptr: Release. The RAW proxy on raw::tx takes them as the
@@ -198,6 +202,7 @@ struct RtTuning
     float    skyLength = 6000.0f;    // game units: a sky ray that travels this far sees sky
     bool     reflect = true;         // one reflection ray on glossy pixels (needs the sky pass's colour input)
     bool     rest = true;            // RtRest: one shared shadow ray for the lights past the three traced ones
+    bool     restReuse = true;       // RtRestReuse: that ray's light resampled against last frame's reservoirs (ReSTIR reuse)
     float    reflectLength = 8000.0f;
     bool     debug = false;          // RtDebug: the reflection output shows the primary ray's view of the scene
     bool     omm = true;             // opacity micromaps for alpha-tested meshes (Agility SDK, DXR 1.2)
@@ -386,6 +391,7 @@ public:
     bool ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, bool water, float sssWidth, float sssStrength);
     // Attached only: a copy of the game's depth as the opaque set leaves it (the bed under the water), for ExecuteWater.
     bool CaptureBedDepth(ID3D11Resource* depth);
+    bool CapturePreWater(ID3D11Resource* sceneHdr);   // attached only: the HDR colour before the water composite
     bool ReloadWater(const std::vector<uint8_t>& water, const std::vector<uint8_t>& sss, std::string& err);   // hot reload: RtWater.hlsl, Sss.hlsl
     bool ReloadRt(const std::vector<uint8_t>& shadow, const std::vector<uint8_t>& sky, std::string& err);   // hot reload
     bool TuneEngine(const EngineTuning& t);

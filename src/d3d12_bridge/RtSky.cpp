@@ -36,7 +36,9 @@ bool RtSky::Create(ID3D12Device5* dev, ID3D12DescriptorHeap* heap, uint32_t base
     if (!Tex(dev, m_raw, width, height, H, L"rt sky rays (bounce rgb, sky a)") ||
         !Tex(dev, m_hist[0], width, height, H, L"rt sky history 0") || !Tex(dev, m_hist[1], width, height, H, L"rt sky history 1") ||
         !Tex(dev, m_bhist[0], width, height, H, L"rt bounce history 0") || !Tex(dev, m_bhist[1], width, height, H, L"rt bounce history 1") ||
-        !Tex(dev, m_bounce, width, height, H, L"rt bounce", D3D12_RESOURCE_STATE_COMMON)) {
+        !Tex(dev, m_bounce, width, height, H, L"rt bounce", D3D12_RESOURCE_STATE_COMMON) ||
+        !Tex(dev, m_res[0], width, height, DXGI_FORMAT_R32G32B32A32_FLOAT, L"rt light reservoirs 0") ||
+        !Tex(dev, m_res[1], width, height, DXGI_FORMAT_R32G32B32A32_FLOAT, L"rt light reservoirs 1")) {
         err = "sky textures"; return false;
     }
     const D3D12_CPU_DESCRIPTOR_HANDLE cpu = heap->GetCPUDescriptorHandleForHeapStart();
@@ -49,6 +51,9 @@ bool RtSky::Create(ID3D12Device5* dev, ID3D12DescriptorHeap* heap, uint32_t base
     uav(m_raw.Get(), H, 3); uav(m_hist[1].Get(), H, 4); uav(m_hist[0].Get(), H, 5);
     uav(m_bhist[0].Get(), H, 6); uav(m_bhist[1].Get(), H, 7); uav(m_bounce.Get(), H, 8);
     uav(m_bhist[1].Get(), H, 9); uav(m_bhist[0].Get(), H, 10); uav(m_bounce.Get(), H, 11);
+    const DXGI_FORMAT R = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    uav(m_res[0].Get(), R, 14); uav(m_res[1].Get(), R, 15); uav(m_res[1].Get(), R, 17); uav(m_res[0].Get(), R, 18);
+    SetMotion(nullptr);
 
     // Root: the lighting pass's uniform (b0), constants (b1), depth (t0), motion (t2), the rays and the
     // two histories (u0..u2, one table per parity), the light-index output (u3).
@@ -88,6 +93,17 @@ bool RtSky::Reload(const void* dxil, size_t bytes, std::string& err)
     if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) { err = "the device refused the reloaded RtSkyFilter.hlsl"; return false; }
     m_pso = pso;
     return true;
+}
+
+void RtSky::SetMotion(ID3D12Resource* motion)
+{
+    // No motion: a null view reads zero (the reuse then looks at the same pixel).
+    D3D12_SHADER_RESOURCE_VIEW_DESC sd{};
+    sd.Format = DXGI_FORMAT_R16G16_FLOAT; sd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D; sd.Texture2D.MipLevels = 1;
+    sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    const D3D12_CPU_DESCRIPTOR_HANDLE cpu = m_heap->GetCPUDescriptorHandleForHeapStart();
+    m_dev->CreateShaderResourceView(motion, &sd, {cpu.ptr + SIZE_T(m_base + 16) * m_inc});
+    m_dev->CreateShaderResourceView(motion, &sd, {cpu.ptr + SIZE_T(m_base + 19) * m_inc});
 }
 
 void RtSky::SetColour(ID3D12Resource* colour)

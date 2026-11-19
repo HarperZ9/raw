@@ -62,10 +62,11 @@ public:
     // The result is in colourOut, or back in colourIn when both ran (*inB false: colourOut holds it).
     bool RecordWater(const void* uniform, size_t bytes, ID3D12Resource* depth, ID3D12Resource* layer, ID3D12Resource* albedo,
                      ID3D12Resource* spec, ID3D12Resource* colourIn, ID3D12Resource* colourOut, bool water, float sssWidth,
-                     float sssStrength, bool* resultInColourIn, ID3D12Resource* bed = nullptr, DXGI_FORMAT bedFormat = DXGI_FORMAT_UNKNOWN);
+                     float sssStrength, bool* resultInColourIn, ID3D12Resource* bed = nullptr, DXGI_FORMAT bedFormat = DXGI_FORMAT_UNKNOWN,
+                     ID3D12Resource* preWater = nullptr);
     bool SubmitWater(ID3D12CommandQueue* q);
     bool ReloadWater(const std::vector<uint8_t>& water, const std::vector<uint8_t>& sss, std::string& err);   // hot reload
-    static constexpr UINT kWaterDescriptors = 33;   // 7 + 4 a frame in flight
+    static constexpr UINT kWaterDescriptors = 36;   // 8 + 4 a frame in flight
 
 private:
     struct Mesh

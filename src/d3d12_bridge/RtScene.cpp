@@ -63,7 +63,9 @@ bool RtScene::Pipeline(std::string& err)
     D3D12_DESCRIPTOR_RANGE normals{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 5, 0, 0};
     D3D12_DESCRIPTOR_RANGE albedo{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, RtAlpha::kMaxAlbedo, 0, 2, 0};
     D3D12_DESCRIPTOR_RANGE cache{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, RtCache::Descriptors(), 6, 0, 0};
-    D3D12_ROOT_PARAMETER p[15]{};
+    // The reservoirs (u9 in, u10 out) and the motion vectors (t7), RtSky's (RtRestReuse).
+    D3D12_DESCRIPTOR_RANGE resv[2] = {{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 9, 0, 0}, {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 7, 0, 2}};
+    D3D12_ROOT_PARAMETER p[16]{};
     p[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; p[0].Descriptor = {0, 0};
     p[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; p[1].Constants = {1, 0, 8};
     p[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; p[2].Descriptor = {3, 0};
@@ -79,7 +81,8 @@ bool RtScene::Pipeline(std::string& err)
     p[12].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[12].DescriptorTable = {1, &cache};
     p[13].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; p[13].Descriptor = {6, 0};
     p[14].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; p[14].Constants = {2, 0, 8};
-    D3D12_ROOT_SIGNATURE_DESC rs{15, p, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    p[15].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[15].DescriptorTable = {2, resv};
+    D3D12_ROOT_SIGNATURE_DESC rs{16, p, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ComPtr<ID3DBlob> blob, errs;
     if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errs))) {
         err = errs ? static_cast<const char*>(errs->GetBufferPointer()) : "root signature";

@@ -29,7 +29,7 @@ cbuffer P : register(b0) {
     float4 clouds;          // cover 0 to 1, floor height, thickness (absolute world units), shadow strength (CloudCommon.hlsli)
     float4 cloudWind;       // wind x, y (units a second), density scale, history weight
     float4 waterA;          // RtWater.hlsl: reflection strength, caustic strength, absorption a unit, glint strength
-    float4 waterB;          // RtWater.hlsl: view (1 reflection, 2 caustics, 3 Fresnel), caustic cell size (units), 0, 0
+    float4 waterB;          // RtWater.hlsl: view (1 reflection, 2 caustics, 3 Fresnel), caustic cell size (units), refraction share, 0
     float4 prevWorldToClip[4];   // last frame's worldToClip (the clouds' history)
     float4 lightPosR[MAX_LIGHTS];   // xyz, radius
     float4 lightColS[MAX_LIGHTS];   // rgb, shadow-mask channel (-1 none)

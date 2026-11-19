@@ -228,6 +228,7 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
     cl->ResourceBarrier(3, in3);
     const bool sky = m_skyReady && m_tune.sky && colour;
     if (sky) m_sky.SetColour(colour);
+    if (m_skyReady) m_sky.SetMotion(motion);
     const bool cache = m_cacheReady && m_tune.cache && sky;
     RecordTrace(cl, slot, sky, cache);
     if (sky) m_sky.Record(cl, m_cb[slot]->GetGPUVirtualAddress(), motion, m_frame, 1.0f);
@@ -278,12 +279,14 @@ void RtScene::RecordTrace(ID3D12GraphicsCommandList4* cl, uint32_t slot, bool sk
     cl->SetComputeRootShaderResourceView(13, m_alpha.MaterialsAddress());
     // b2: the camera's place, the finest cell, the table size, what runs (1 materials, 2 cache), the
     // debug view, the frame.
-    const uint32_t giFlags = (m_tune.materials ? 1u : 0u) | (cache ? 2u : 0u) | (m_tune.rest ? 4u : 0u);
+    const uint32_t giFlags = (m_tune.materials ? 1u : 0u) | (cache ? 2u : 0u) | (m_tune.rest && m_skyReady ? 4u : 0u) |
+                             (m_tune.restReuse && m_skyReady ? 8u : 0u);
     uint32_t gc[8];
     std::memcpy(gc, m_tune.cameraPos, 12);
     std::memcpy(gc + 3, &m_tune.cacheCell, 4);
     gc[4] = RtCache::kSlots; gc[5] = giFlags; gc[6] = uint32_t(m_tune.debugView); gc[7] = g_deterministic ? 0u : uint32_t(m_frame);
     cl->SetComputeRoot32BitConstants(14, 8, gc, 0);
+    cl->SetComputeRootDescriptorTable(15, {g.ptr + UINT64(m_skyReady ? m_sky.ReservoirDescriptor(m_frame) : 3) * inc});   // off: never read
     cl->Dispatch((m_w + 7) / 8, (m_h + 7) / 8, 1);
 }
 

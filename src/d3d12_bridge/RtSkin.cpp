@@ -117,6 +117,7 @@ void RtSkin::SetDraws(std::vector<RtDraw>& draws, std::vector<ID3D11Resource*>& 
         std::memcpy(c + 12, m_cam, 12);
         std::memcpy(j.c, c, sizeof c);
         m_boneData.insert(m_boneData.end(), d.bones, d.bones + 960);
+        j.psHash = d.psHash; j.blendInfo = d.blendInfo;
         if (d.diagVb) {
             j.diagVb.assign(d.diagVb, d.diagVb + d.diagVbBytes);
             j.diagBv.assign(d.diagBv, d.diagBv + d.diagBvBytes);
@@ -165,7 +166,9 @@ void RtSkin::ReadStats(uint32_t slot)
             const uint32_t* w = s + k * kStatWords;
             const Meta& m = meta[k];
             m_log("[RT]   draw %zu: %s, %s positions, stride %u, %u vertices, %u triangles: %u stretched, %u floating, %u past the count; first "
-                  "stretched at triangle %u", k, m.actor ? "actor" : "tree", m.posFmt ? "float" : "half", m.stride, m.count, w[0], w[2], w[38], w[1], w[4]);
+                  "stretched at triangle %u; ps %016llx, colour mask %u, blend %d, depth write %d", k, m.actor ? "actor" : "tree", m.posFmt ? "float" : "half",
+                  m.stride, m.count, w[0], w[2], w[38], w[1], w[4], (unsigned long long)m.psHash, m.blendInfo & 15u, int((m.blendInfo >> 8) & 1u),
+                  int((m.blendInfo >> 9) & 1u));
             if (w[39]) {
                 float sp[3], ahead;
                 std::memcpy(sp, w + 41, 12); std::memcpy(&ahead, w + 47, 4);
@@ -312,7 +315,7 @@ bool RtSkin::Record(ID3D12GraphicsCommandList4* cl, uint32_t slot, ID3D12Resourc
     m_meta[slot].clear();
     for (const Job& j : m_jobs) {
         Meta m{j.indexCount, j.c[8], j.c[1], j.posFmt, j.actor, j.diagVb, j.diagBv, j.diagBones};
-        m.posOffset = j.c[2]; m.bStride = j.c[5]; m.idxOffset = j.c[6]; m.wOffset = j.c[7];
+        m.posOffset = j.c[2]; m.bStride = j.c[5]; m.idxOffset = j.c[6]; m.wOffset = j.c[7]; m.psHash = j.psHash; m.blendInfo = j.blendInfo;
         m_meta[slot].push_back(std::move(m));
     }
     uint64_t blasAt = 0, scratchAt = 0;

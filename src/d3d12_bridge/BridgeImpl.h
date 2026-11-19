@@ -104,6 +104,8 @@ struct D3D12Bridge::Impl
     ID3D12Resource* bed12 = nullptr;
     DXGI_FORMAT bedSrv = DXGI_FORMAT_UNKNOWN;
     uint64_t bedFrame = ~0ull;                        // frames when it was last copied
+    SharedTex preWater;                               // CapturePreWater: the HDR colour before the water composite
+    uint64_t preWaterFrame = ~0ull;
     ID3D11Texture2D* pendingMotion = nullptr;   // set by CaptureMotion, copied by CaptureNormal
     // Lighting pass (BridgeLighting.cpp).
     SceneLighting lighting;

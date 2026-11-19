@@ -40,6 +40,18 @@ bool D3D12Bridge::CaptureBedDepth(ID3D11Resource* depth)
     return true;
 }
 
+bool D3D12Bridge::CapturePreWater(ID3D11Resource* sceneHdr)
+{
+    if (!m->ready || !m->attached || !sceneHdr || m->waterFailed) return false;
+    if (!m->preWater.tex11 && !m->CreateAttached(m->preWater, DXGI_FORMAT_R16G16B16A16_FLOAT, true, "water-before", 0, 0)) {
+        m->log("[RT] refraction off: no texture for the frame before the water");
+        return false;
+    }
+    m->ctx11->CopyResource(m->preWater.tex11.Get(), sceneHdr);
+    m->preWaterFrame = m->frames;
+    return true;
+}
+
 bool D3D12Bridge::ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, bool water, float sssWidth, float sssStrength)
 {
     if (!m->ready || !m->attached || !m->cfg.lightingPass || !m->rt || !m->rt->Active() || !sceneHdr || !layer || m->waterFailed) return false;
@@ -61,10 +73,12 @@ bool D3D12Bridge::ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, 
     bool inB = false;
     if (!m->rt->RecordWater(u, ub, m->depthIn.res12.Get(), layer12, m->shared[static_cast<UINT>(Shared::Albedo)].res12.Get(),
                             m->shared[static_cast<UINT>(Shared::Specular)].res12.Get(), m->waterIn.res12.Get(), m->waterOut.res12.Get(),
-                            water, sssWidth, sssStrength, &inB, m->bedFrame + 1 >= m->frames ? m->bed12 : nullptr, m->bedSrv))
+                            water, sssWidth, sssStrength, &inB, m->bedFrame + 1 >= m->frames ? m->bed12 : nullptr, m->bedSrv,
+                            m->preWaterFrame + 1 >= m->frames ? m->preWater.res12.Get() : nullptr))
         return false;
     std::vector<ID3D11Resource*> hand{layer, m->waterIn.tex11.Get(), m->waterOut.tex11.Get()};
     if (m->bed11) hand.push_back(m->bed11.Get());
+    if (m->preWater.tex11) hand.push_back(m->preWater.tex11.Get());
     if (!m->HandToHost(hand) || !m->rt->SubmitWater(m->queue.Get())) {
         m->log("[RT] water hand-over failed; water off");
         m->waterFailed = true;

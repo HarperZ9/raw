@@ -266,7 +266,10 @@ void BridgeHook_OnTargets(ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetV
         if (n == 1 && rt[0] != s_f.sceneTex && dsv && ResourceOf(dsv) == s_f.depthTex && FullSize(rt[0], DXGI_FORMAT_R16G16B16A16_FLOAT, bb))
             s_f.waterSeen = true;
         else if (s_f.waterSeen && !s_f.waterRan && n >= 2 && rt[0] == s_f.sceneTex && rt[1] && FullSize(rt[1], DXGI_FORMAT_R10G10B10A2_UNORM, bb))
+        {
             s_f.compositeOpen = true;
+            LightingCapturePreWater(s_f.sceneTex);   // before the composite draws: the bed as RAW lit it
+        }
         else if (!s_f.waterSeen && !s_f.waterRan && n == 3 && rt[0] == s_f.sceneTex && dsv) {
             // No water this frame: the skin's scattering runs where the water would have, before the blended draws.
             s_f.waterRan = true;

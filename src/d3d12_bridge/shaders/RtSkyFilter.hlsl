@@ -17,12 +17,14 @@ RWTexture2D<float4>      BOut    : register(u5);
 RWTexture2D<float4>      Bounce  : register(u6);   // the lighting pass's input
 cbuffer F : register(b1) { uint hasMotion, reset, maxFrames, fPad; };
 
-// Raw alpha: sky (0 or 1) + 2 x the untraced light's visibility + 4 where one was sampled (RtShadow.hlsl).
+// Raw alpha: sky (0 or 1), plus 4 + 2 q where the untraced lights' share was sampled, q its value in fifteenths
+// (RtShadow.hlsl).
 float4 decodeRaw(float4 v, out float rest, out float has) {
     has = v.a >= 3.5f ? 1.0f : 0.0f;
-    const float a = v.a - 4.0f * has;
-    rest = a >= 1.5f ? 1.0f : 0.0f;
-    return float4(v.rgb, a - 2.0f * rest);
+    const float t = v.a - 4.0f * has;
+    const float q = has > 0.5f ? floor(t * 0.5f) : 0.0f;
+    rest = q / 15.0f;
+    return float4(v.rgb, t - 2.0f * q);
 }
 
 float4 meanAround(int2 p, float z, int r, out float rest) {

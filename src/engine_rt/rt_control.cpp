@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <mutex>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -17,6 +18,9 @@
 #include "rt_capture.h"
 #include "rt_papyrus.h"
 #include "rt_passes.h"
+#include "rt_peek.h"
+#include "rt_sampler.h"
+#include "rt_vtime.h"
 
 namespace raw::rt {
 namespace {
@@ -38,7 +42,9 @@ const RefTarget* Find(const std::string& name) {
     return nullptr;
 }
 
+std::mutex g_resultMutex;  // the sampler writes from its own thread
 void Result(const std::string& json) {
+    std::lock_guard<std::mutex> lock(g_resultMutex);
     // every line carries the present it was written at, to line results up with the proxy's own log
     std::string line = json;
     if (!line.empty() && line.back() == '}') line.insert(line.size() - 1, ",\"present\":" + std::to_string(g_presents));
@@ -62,40 +68,8 @@ std::string Stats(const char* name, size_t frames) {
     std::string out = buf;
     out.insert(out.size() - 1, PapyrusStats());
     out.insert(out.size() - 1, PassesStats());
+    out.insert(out.size() - 1, VTimeStats());
     return out;
-}
-
-// peek <global name or 0xRVA> <off>... <bytes>: from the global's address, each offset dereferences the pointer
-// held there and adds itself; the last number is how many bytes to show as 64-bit words. Game data only, read
-// under structured exception handling.
-static bool ReadU64(const void* p, uint64_t* v) {
-    __try { *v = *static_cast<const volatile uint64_t*>(p); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
-}
-std::string Peek(const std::string& name, const std::string& rest) {
-    uint64_t addr = 0;
-    if (name.rfind("0x", 0) == 0) addr = uint64_t(g_img->base) + std::strtoull(name.c_str(), nullptr, 16);
-    else if (const RefTarget* r = Find(name)) addr = uint64_t(g_img->base) + r->rva;
-    else return "{\"cmd\":\"peek\",\"error\":\"no such global\"}";
-    std::vector<uint64_t> nums;
-    std::istringstream in(rest);
-    for (std::string t; in >> t;) nums.push_back(std::strtoull(t.c_str(), nullptr, 0));
-    if (nums.empty()) return "{\"cmd\":\"peek\",\"error\":\"no byte count\"}";
-    const size_t bytes = std::min<uint64_t>(nums.back(), 512);
-    nums.pop_back();
-    for (uint64_t off : nums) {
-        uint64_t v = 0;
-        if (!ReadU64(reinterpret_cast<void*>(addr), &v)) return "{\"cmd\":\"peek\",\"error\":\"unreadable on the way\"}";
-        addr = v + off;
-    }
-    std::string out = "{\"cmd\":\"peek\",\"name\":\"" + name + "\",\"path\":\"" + rest + "\",\"words\":[";
-    char b[32];
-    for (size_t i = 0; i < bytes; i += 8) {
-        uint64_t v = 0;
-        if (!ReadU64(reinterpret_cast<void*>(addr + i), &v)) { out += i ? ",null" : "null"; continue; }
-        std::snprintf(b, sizeof b, "%s\"0x%llX\"", i ? "," : "", (unsigned long long)v);
-        out += b;
-    }
-    return out + "]}";
 }
 
 void PollGoFile() {
@@ -130,6 +104,7 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
         } else if (op == "measure") {
             PapyrusReset();
             PassesReset();
+            VTimeReset();
             g_cmds.push_front("report " + a + " " + b);
             g_wait = std::atoi(b.c_str());
             return;
@@ -163,8 +138,26 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             Result(PassesViewports());
         } else if (op == "probe") {
             Result(ProbeFunction(*g_img, uint32_t(std::strtoul(a.c_str(), nullptr, 16))));
+        } else if (op == "vtime") {
+            // vtime <0xvtable> <0xslot> <label>: CPU time of a vtable slot from now on
+            std::istringstream rest(b);
+            std::string slot, label;
+            rest >> slot >> label;
+            Result("{\"cmd\":\"vtime\",\"result\":\"" + VTimeSlot(*g_img, uint32_t(std::strtoul(a.c_str(), nullptr, 16)),
+                                                                      uint32_t(std::strtoul(slot.c_str(), nullptr, 16)), label) + "\"}");
+        } else if (op == "ltime") {
+            // ltime <0xsite> <label>: CPU time of the function a RIP-relative lea at site hands on
+            Result("{\"cmd\":\"ltime\",\"result\":\"" + VTimeLea(*g_img, uint32_t(std::strtoul(a.c_str(), nullptr, 16)), b) + "\"}");
+        } else if (op == "sample") {
+            // sample <seconds> [lo hi]: the profiler runs in the background and writes its own result line
+            std::istringstream rest(b);
+            std::string lo = "0x1420000", hi = "0x1470000";
+            rest >> lo >> hi;
+            const bool ok = StartSampler(*g_img, std::atof(a.c_str()), uint32_t(std::strtoul(lo.c_str(), nullptr, 16)),
+                                         uint32_t(std::strtoul(hi.c_str(), nullptr, 16)), &Result);
+            if (!ok) Result("{\"cmd\":\"sample\",\"error\":\"already running\"}");
         } else if (op == "peek") {
-            Result(Peek(a, b));
+            Result(Peek(*g_img, *g_refs, a, b));
         } else if (op == "dump") {
             Result(DumpDepthTargets(*g_img, *g_refs));
         } else if (op == "capture") {
@@ -242,8 +235,10 @@ void ControlOnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     }
     g_last = now;
     ++g_presents;
+    if (g_presents == 1) SamplerNoteRenderThread();
     AtlasOnPresent();
     PassesOnPresent(ctx);
+    VTimeOnPresent();
     if (!g_busy) {
         static unsigned tick = 0;
         if (++tick % 15 == 0) PollGoFile();

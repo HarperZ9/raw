@@ -567,7 +567,10 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_capture.cpp
         src/engine_rt/rt_atlas.cpp
         src/engine_rt/rt_passes.cpp
-        src/engine_rt/rt_papyrus.cpp)
+        src/engine_rt/rt_papyrus.cpp
+        src/engine_rt/rt_sampler.cpp
+        src/engine_rt/rt_vtime.cpp
+        src/engine_rt/rt_peek.cpp)
     set_target_properties(raw_engine PROPERTIES
         CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

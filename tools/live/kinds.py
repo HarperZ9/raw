@@ -132,7 +132,6 @@ def console(s: LiveSession, a: dict, out: Path) -> dict:
     line = a["command"].strip()
     if line.split()[0].lower() in ("coc", "cow", "load"):
         s.change_cell(line)
-        s.last_move = line.lower()
     else:
         G.console(line)
         s.log(f"console: {line}")
@@ -174,8 +173,11 @@ def move(s: LiveSession, a: dict, out: Path) -> dict:
     # types it again and the keys land in the world (ray tracing worker, 2026-11-19). The same target is a no-op.
     if line.lower() == getattr(s, "last_move", "") and not a.get("again"):
         return {"typed": None, "already_there": line, "view": _view(s)}
-    s.change_cell(line)
-    s.last_move = line.lower()
+    s.force_move = bool(a.get("again"))
+    try:
+        s.change_cell(line)
+    finally:
+        s.force_move = False
     return {"typed": line, "view": _view(s)}
 
 
@@ -244,6 +246,7 @@ def script(s: LiveSession, a: dict, out: Path) -> dict:
     s.out = out
     first = len(s.report["steps"])
     for line in a["lines"]:
+        s.check_cancel()   # req.py cancel <id> stops a script between two lines
         line = line.split("#", 1)[0].strip()
         if line and line not in ("quit", "end"):
             s.command(shlex.split(line, posix=False))

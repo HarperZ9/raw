@@ -25,7 +25,8 @@ from live_queue import LiveQueue, now_ms, write_json   # noqa: E402
 from session import ABORT_MB, START_MB, G, LiveSession, avail_mb   # noqa: E402
 import kinds   # noqa: E402
 
-MAX_RESTARTS = 6
+MAX_RESTARTS = 6        # unasked restarts (crash, memory, a failed start) within RESTART_WINDOW_S
+RESTART_WINDOW_S = 1800
 
 
 class Service:
@@ -84,13 +85,16 @@ class Service:
         dst.write_text("\n".join(keep) + "\n", encoding="utf-8")
         self.s.a.ini = str(dst)
 
-    def restart(self, why: str, carry: bool = True) -> None:
-        self.restarts.append({"time": time.strftime("%H:%M:%S"), "why": why})
+    def restart(self, why: str, carry: bool = True, asked: bool = False) -> None:
+        """asked: a worker's restart request. Only unasked restarts count toward the loop guard (2026-11-19: seven
+        asked restarts for new proxy builds stopped the service)."""
+        self.restarts.append({"time": time.strftime("%H:%M:%S"), "t": time.time(), "why": why, "asked": asked})
         if carry:
             self.carry_ini()
         self.s.teardown(why)
-        if len(self.restarts) > MAX_RESTARTS:
-            raise RuntimeError(f"{len(self.restarts)} restarts; the service stops rather than loop")
+        unasked = [r for r in self.restarts if not r["asked"] and time.time() - r["t"] < RESTART_WINDOW_S]
+        if len(unasked) > MAX_RESTARTS:
+            raise RuntimeError(f"{len(unasked)} unasked restarts in {RESTART_WINDOW_S // 60} min; the service stops instead of looping")
         self.bring_up(f"restart {len(self.restarts)}")
 
     def health(self) -> None:
@@ -110,6 +114,7 @@ class Service:
         out.mkdir(parents=True, exist_ok=True)
         started = now_ms()
         self.current = {"id": rid, "kind": kind, "requester": req.get("requester")}
+        self.s.current_id, self.s.cancel_dir = rid, Path(self.cfg.root) / "cancel"
         self.write_state()
         self.s.log(f"request {rid} ({req.get('requester')}): {kind} {json.dumps(args)[:200]}")
         result = {"id": rid, "kind": kind, "requester": req.get("requester"), "args": args, "ok": True, "error": None}
@@ -127,7 +132,7 @@ class Service:
                     self.s.a.shaders = args["shaders"]
                 if args.get("ini"):   # a new ini replaces the carried edits
                     self.s.a.ini = args["ini"]
-                self.restart(args.get("why", f"asked by {req.get('requester')}"), carry=not args.get("ini"))
+                self.restart(args.get("why", f"asked by {req.get('requester')}"), carry=not args.get("ini"), asked=True)
                 data = {"up": self.s.up, "resolution": self.s.a.resolution, "dll": self.s.a.dll, "shaders": self.s.a.shaders, "ini": self.s.a.ini}
             elif kind in kinds.HANDLERS:
                 if not self.s.up:
@@ -177,6 +182,7 @@ class Service:
             self.s.log(f"service error: {type(e).__name__}: {e}")
             (self.dir / "service_error.txt").write_text(traceback.format_exc(), encoding="utf-8")
         finally:
+            self.carry_ini()   # the session's ini as it ended, for the next service: <session>/carried-<n>.ini
             after = self.s.teardown("the service is stopping")
             self.write_state()
             (self.dir / "report.json").write_text(json.dumps(self.s.report, indent=1), encoding="utf-8")
@@ -198,6 +204,7 @@ def main() -> int:
     p.add_argument("--versions", default=str(HERE.parent.parent / "data" / "versions"))
     p.add_argument("--resolution", default="3840x2160")
     p.add_argument("--save", default="rawharness")
+    p.add_argument("--save-cell", default="riverwood", help="the cell the save starts in, so a coc to it is skipped")
     p.add_argument("--restore-only", action="store_true", help="restore the install after a killed service, then exit")
     cfg = p.parse_args()
     svc = Service(cfg)

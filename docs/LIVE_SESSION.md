@@ -34,6 +34,7 @@ succeeded, 1 when it failed (the reason is in `error`), and 3 when no answer cam
 | `script` | `lines` (a list) | Harness script lines (`tools/harness/run.py`), so command files written for `listen` move over unchanged. |
 | `restart` | `resolution`, `dll`, `why` (all optional) | Ends the game, restores the install, and starts again. This is the way to change the resolution or the proxy build. |
 | `status`, `stop` | | The session's state; or end the session and restore the install. |
+| `cancel` | the request id (req.py writes `<root>/cancel/<id>`, nothing is queued) | The running `script` request stops before its next line and answers as failed. |
 
 A capture runs at the session's resolution. A different one needs `restart resolution=WxH`.
 
@@ -58,7 +59,7 @@ Other workers send it requests and never take the lock themselves.
 | Start | Needs 6 GB available, and waits until it is. Then it runs the harness's checks: the ENB backup and the game folder against `SHA256SUMS`, and both settings inis against their backups. It hashes and copies Plugins.txt. It deploys the proxy, its ini (plus `[Modules]`, `[HotReload]`, `[EngineRT] GpuTiming=0`), the module, the address tables and the shader copy. It sets the resolution for the session, starts SkyrimSE.exe directly (SteamAppId 489830) and loads `rawharness`. |
 | Each request | It claims the oldest request with an exclusive create, then moves it to `running/`. It runs that request and nothing else, writes the answer, and checks the game's health. |
 | Every 2 s | It writes `state.json`: up, uptime, resolution, scene, modules, module reloads, hot reload counters, the proxy heartbeat, available memory, restarts, counts, and the running and last request. |
-| Game gone | It answers the request in flight as failed, restores the install, and starts again. Each restart is recorded in `state.json` with its reason. After 6 restarts the service stops instead of looping. |
+| Game gone | It answers the request in flight as failed, restores the install, and starts again. Each restart is recorded in `state.json` with its reason. Asked restarts are not limited. After more than 6 unasked restarts (crash, memory, a failed start) in 30 minutes the service stops instead of looping. |
 | Below 3 GB available | It ends the game, restores the install, and starts again at 6 GB. |
 | `stop`, `E:/raw-live/STOP`, Ctrl-C | It quits the game, restores the install, writes `report.json` in its session folder, and exits 0 only when every check passed. |
 | After a killed service | `service.py ... --restore-only` restores the install. Requests left in `running/` are answered as failed at the next start. |
@@ -121,8 +122,12 @@ through `restart dll=<build>` (about 65 s).
 - **Edits outlive a restart.** `ini_set` and `reload_ini` write the deployed ini, and a restart now starts from
   that ini (less `[HotReload]` and `[Modules]`, which it adds again). In the first session a restart had put
   `GpuTiming=1` back.
-- **A coc to the cell the player stands in** shows no loading screen, so the runner typed it a second time and
-  the keys went into the world. `move` and `console coc` skip a repeat of the last move (`again=true` forces it).
+- **A coc to the cell the player stands in** shows no loading screen, so the harness typed it a second time and
+  the keys went into the world (the inventory opened, three times on 2026-11-19). In the live session every coc
+  (`move`, `console`, and `script` lines) skips a repeat of the last move or of the save's cell (`--save-cell`,
+  default riverwood; `move ... again=true` forces one). A coc that brings no loading screen and no lighting
+  change is taken as already there and is not typed again. The log says so. The cost: a coc whose keys were
+  lost in a hitch is no longer retried, so check the log line when a cell matters.
 
 ## The proof
 

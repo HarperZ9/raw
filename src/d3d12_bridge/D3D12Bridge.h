@@ -33,6 +33,7 @@
 #include <dxgi1_6.h>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "SceneLighting.h"
@@ -137,7 +138,26 @@ struct RtDraw
     UINT ibOffset = 0, indexCount = 0, startIndex = 0;
     INT baseVertex = 0;
     float world[12] = {};   // model to camera-relative world, rows (the game's vertex buffer 2)
+    // Alpha-tested draws (a discard in the pixel shader, alpha to coverage, soft-lit foliage): the
+    // texture coordinate element in the position's vertex buffer and the texture whose alpha cuts
+    // the surface (pixel shader t0). The rays test that alpha (RtScene, RtShadow.hlsl).
+    uint8_t alphaKind = 0;               // RtAlpha*
+    UINT uvOffset = 0;
+    DXGI_FORMAT uvFormat = DXGI_FORMAT_UNKNOWN;
+    ID3D11ShaderResourceView* alphaSrv = nullptr;   // a reference, released with the draw
+    ID3D11Buffer* uvVb = nullptr;        // the coordinates' own vertex buffer when not the position's (a reference)
+    UINT uvStride = 0, uvVbOffset = 0;
 };
+enum : uint8_t { RtAlphaNone = 0, RtAlphaDiscard = 1, RtAlphaCoverage = 2, RtAlphaFoliage = 3, RtAlphaBlend = 4 };
+
+inline void ReleaseRtDraw(RtDraw& d)
+{
+    if (d.vb) d.vb->Release();
+    if (d.ib) d.ib->Release();
+    if (d.alphaSrv) d.alphaSrv->Release();
+    if (d.uvVb) d.uvVb->Release();
+    d.vb = nullptr; d.ib = nullptr; d.alphaSrv = nullptr; d.uvVb = nullptr;
+}
 
 struct RtTuning
 {
@@ -146,6 +166,15 @@ struct RtTuning
     float    sourceRadius = 6.0f;    // point lights' size for the penumbra, game units
     float    sunCone = 0.0093f;      // the sun's angular radius in radians, widened a little
     uint32_t maxNewPerFrame = 400;   // BLAS builds a frame
+    bool     alpha = true;           // alpha-tested draws join the scene with their alpha tested by the rays
+    float    alphaRef = 0.5f;        // the cut: alpha below it lets the ray through
+    float    termDist = 48.0f;       // game units: near hits ignored where the surface turns from the sun
+    bool     sky = true;             // sky visibility (RtSky): one ray a pixel into the upper hemisphere
+    float    skyLength = 6000.0f;    // game units: a sky ray that travels this far sees sky
+    bool     reflect = true;         // one reflection ray on glossy pixels (needs the sky pass's colour input)
+    float    reflectLength = 8000.0f;
+    bool     debug = false;          // RtDebug: the reflection output shows the primary ray's view of the scene
+    bool     omm = true;             // opacity micromaps for alpha-tested meshes (Agility SDK, DXR 1.2)
 };
 
 struct RtFrameStats
@@ -153,9 +182,11 @@ struct RtFrameStats
     uint32_t draws = 0, skipped = 0, resets = 0, instances = 0, meshes = 0, newMeshes = 0;
     uint64_t newTriangles = 0, triangles = 0, blasBytes = 0;
     double   buildMs = 0, traceMs = 0;
+    uint32_t alphaInstances = 0, alphaMeshes = 0, masks = 0, noMask = 0, ommArrays = 0;
+    uint64_t uvBytes = 0;
 };
 
-enum class Shared : UINT { ColorIn, Depth, Normal, ColorOut, Motion, Albedo, Specular, ShadowMask, ShadowAtlas, Emissive, RtVisibility, RtLights, Count };
+enum class Shared : UINT { ColorIn, Depth, Normal, ColorOut, Motion, Albedo, Specular, ShadowMask, ShadowAtlas, Emissive, RtVisibility, RtLights, RtBounce, RtReflect, Count };
 constexpr UINT kSharedCount = static_cast<UINT>(Shared::Count);
 
 // What the bridge hands a pass: its device, its queue, its fence and the
@@ -301,6 +332,7 @@ public:
     void SetRtDraws(std::vector<RtDraw>&& draws);
     void TuneRt(const RtTuning& t);
     bool RtStats(RtFrameStats* out);
+    bool ReloadRt(const std::vector<uint8_t>& shadow, const std::vector<uint8_t>& sky, std::string& err);   // hot reload
     bool TuneEngine(const EngineTuning& t);
     IBridgePass* ActivePass();   // the pass behind the seam, for its own knobs (LightingPassTune)
     bool ReadEngineVisibility(std::vector<float>* out);

@@ -27,7 +27,7 @@ namespace
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
 
-struct Compiled { raw::bridge::CompileResult vs, fs, fog; Clock::time_point seen; };
+struct Compiled { raw::bridge::CompileResult vs, fs, fog, rt, sky; bool hasRt = false; Clock::time_point seen; };
 
 struct State
 {
@@ -78,6 +78,12 @@ void Start(State& s)
         c.vs = raw::bridge::CompileHlsl(dir + L"\\Lighting.hlsl", L"vs", L"vs_6_0", dxc);
         c.fs = raw::bridge::CompileHlsl(dir + L"\\Lighting.hlsl", L"fs", L"ps_6_0", dxc);
         c.fog = raw::bridge::CompileHlsl(dir + L"\\LightFog.hlsl", L"fs", L"ps_6_0", dxc);
+        std::error_code ec;
+        c.hasRt = fs::exists(dir + L"\\RtShadow.hlsl", ec) && fs::exists(dir + L"\\RtSkyFilter.hlsl", ec);
+        if (c.hasRt) {
+            c.rt = raw::bridge::CompileHlsl(dir + L"\\RtShadow.hlsl", L"main", L"cs_6_6", dxc);
+            c.sky = raw::bridge::CompileHlsl(dir + L"\\RtSkyFilter.hlsl", L"main", L"cs_6_6", dxc);
+        }
         return c;
     });
 }
@@ -86,8 +92,9 @@ void Finish(State& s)
 {
     Compiled c = s.job.get();
     std::string err;
-    for (const raw::bridge::CompileResult* r : {&c.vs, &c.fs, &c.fog})
-        if (!r->ok) {
+    for (const raw::bridge::CompileResult* r : {&c.vs, &c.fs, &c.fog, &c.rt, &c.sky})
+        if ((r == &c.rt || r == &c.sky) && !c.hasRt) continue;
+        else if (!r->ok) {
             const std::string e = r->errors.empty() ? std::string("compile failed\n") : r->errors;
             if (err.find(e) == std::string::npos) err += e;   // the vertex and pixel entries share a file
         }
@@ -96,6 +103,12 @@ void Finish(State& s)
         raw::bridge::D3D12Bridge* b = hook::Bridge();
         ok = b && b->Ready() && raw::bridge::LightingPassReload(b->ActivePass(), c.vs.dxil, c.fs.dxil, c.fog.dxil, err);
         if (!ok && err.empty()) err = "the bridge is not running the lighting pass";
+        // The ray-tracing shaders reload with them when the scene runs (RtShadows on raw::tx).
+        std::string rtErr;
+        if (ok && c.hasRt && !b->ReloadRt(c.rt.dxil, c.sky.dxil, rtErr) && rtErr.find("no ray-tracing") == std::string::npos) {
+            ok = false;
+            err = rtErr;
+        }
     }
     s.lastMs = std::chrono::duration<double, std::milli>(Clock::now() - c.seen).count();
     if (ok) {

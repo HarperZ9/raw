@@ -1,0 +1,32 @@
+# Ray-traced shadows with alpha, facets and sky visibility (docs/RAYTRACING.md): each view the game,
+# ours without and with rays, then the views of the sun visibility (View=2) and sky visibility
+# (View=4) the bounce (View=5) and reflections (View=6), and A/B by hot reload: alpha-tested meshes out (RtAlpha=0), sky off (RtSky=0).
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+keyframe still steps=game,improved_no_rt,improved,improved_rt hold=60
+reload ini RtAlpha=0
+keyframe noalpha steps=improved hold=60
+reload ini RtAlpha=1 RtSky=0
+keyframe nosky steps=improved hold=60
+reload ini RtSky=1 View=2
+keyframe sunvis steps=improved hold=40
+reload ini View=4
+keyframe skyvis steps=improved hold=40
+reload ini View=5
+keyframe bouncevis steps=improved hold=40
+reload ini View=6
+keyframe reflvis steps=improved hold=40
+reload ini View=0
+scene bannered_mare
+console coc whiterunbanneredmare
+wait 8
+keyframe still steps=game,improved_no_rt,improved hold=60
+scene riverwood_night
+console set gamehour to 23
+console coc riverwood
+wait 8
+keyframe still steps=game,improved_no_rt,improved hold=60
+quit

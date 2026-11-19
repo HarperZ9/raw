@@ -30,10 +30,35 @@ static HRESULT PickAdapter(IDXGIFactory4* f, const CreateParams& p, IDXGIAdapter
     return DXGI_ERROR_NOT_FOUND;
 }
 
+// A device from the Agility SDK's D3D12Core.dll in `path` (absolute), with its own debug layer when asked.
+static HRESULT AgilityDevice(const CreateParams& p, IDXGIAdapter1* adapter, ComPtr<ID3D12Device>& out)
+{
+    ComPtr<ID3D12SDKConfiguration1> cfg;
+    HRESULT hr = TxD3D12GetInterface(CLSID_D3D12SDKConfiguration, IID_PPV_ARGS(&cfg));
+    if (FAILED(hr)) { Log("Agility SDK: no ID3D12SDKConfiguration1 (0x%08X)", unsigned(hr)); return hr; }
+    ComPtr<ID3D12DeviceFactory> factory;
+    if (FAILED(hr = cfg->CreateDeviceFactory(p.agilityVersion, p.agilityPath, IID_PPV_ARGS(&factory)))) {
+        Log("Agility SDK %u at %s: CreateDeviceFactory 0x%08X", p.agilityVersion, p.agilityPath, unsigned(hr));
+        return hr;
+    }
+    if (p.debugLayer) {
+        ComPtr<ID3D12Debug> dbg;
+        if (SUCCEEDED(factory->GetConfigurationInterface(CLSID_D3D12Debug, IID_PPV_ARGS(&dbg)))) dbg->EnableDebugLayer();
+        else Log("Agility SDK: debug layer not available");
+    }
+    if (FAILED(hr = factory->CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&out)))) {
+        Log("Agility SDK: CreateDevice 0x%08X", unsigned(hr));
+        return hr;
+    }
+    Log("Agility SDK %u: the device runs on %s\\D3D12Core.dll", p.agilityVersion, p.agilityPath);
+    return S_OK;
+}
+
 HRESULT Device::Init(const CreateParams& p)
 {
     faults = p.faults;
-    if (p.debugLayer) {
+    const bool agility = p.agilityPath && p.agilityPath[0] && p.agilityVersion;
+    if (p.debugLayer && !agility) {
         ComPtr<ID3D12Debug> dbg;
         if (SUCCEEDED(TxD3D12GetDebugInterface(IID_PPV_ARGS(&dbg)))) dbg->EnableDebugLayer();
         else Log("D3D12 debug layer not available");
@@ -41,7 +66,14 @@ HRESULT Device::Init(const CreateParams& p)
     HRESULT hr = TxCreateDXGIFactory2(0, IID_PPV_ARGS(&factory));
     if (FAILED(hr)) return hr;
     if (FAILED(hr = PickAdapter(factory.Get(), p, &adapter))) return hr;
-    if (FAILED(hr = TxD3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&d3d)))) return hr;
+    // The Agility SDK when configured; the system runtime when it is not, or when it fails.
+    if (!agility || FAILED(AgilityDevice(p, adapter.Get(), d3d))) {
+        if (agility && p.debugLayer) {
+            ComPtr<ID3D12Debug> dbg;
+            if (SUCCEEDED(TxD3D12GetDebugInterface(IID_PPV_ARGS(&dbg)))) dbg->EnableDebugLayer();
+        }
+        if (FAILED(hr = TxD3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&d3d)))) return hr;
+    }
     if (p.debugLayer && SUCCEEDED(d3d.As(&info))) info->SetMessageCountLimit(4096);
 
     D3D12_COMMAND_QUEUE_DESC qd{};

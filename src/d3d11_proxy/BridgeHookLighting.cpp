@@ -49,9 +49,18 @@ void LightingApplyTuning()
     if (Bridge()) {
         raw::bridge::RtTuning rt;
         rt.enabled = t.mode == 2 && t.rtShadows && TxMode_Get() == 1;
+        rt.alpha = t.rtAlpha;
+        rt.alphaRef = t.rtAlphaRef;
+        rt.termDist = t.rtTermDist;
+        rt.sky = t.rtSky;
+        rt.skyLength = t.rtSkyLength;
+        rt.reflect = t.rtReflect;
+        rt.debug = t.rtDebug;
+        rt.omm = t.rtOmm;
         Bridge()->TuneRt(rt);
     }
     g_sceneGeometryActive = Cfg().enabled && t.rtShadows && TxMode_Get() == 1;
+    SceneGeometry_SetAlpha(t.rtAlpha);
     GameComposite_Set({t.mode == 2 && t.ao, t.mode == 2 && t.volumetricFog && t.fogReplacesGame});
 }
 
@@ -67,7 +76,17 @@ void LoadLightingConfig(const std::string& ini)
     t.mode = i("Mode", 1);
     t.softShadows = i("SoftShadows", 1) != 0; t.ggxSpecular = i("GgxSpecular", 1) != 0;
     t.volumetricFog = i("VolumetricFog", 1) != 0; t.contactShadows = i("ContactShadows", 1) != 0;
-    t.rtShadows = i("RtShadows", 0) != 0;   // opt-in: card and facet artifacts (docs/RAYTRACING.md)
+    t.rtShadows = i("RtShadows", 1) != 0;   // on raw::tx only (docs/RAYTRACING.md)
+    t.rtAlpha = i("RtAlpha", 1) != 0;
+    t.rtAlphaRef = f("RtAlphaRef", t.rtAlphaRef);
+    t.rtTermDist = f("RtTermDist", t.rtTermDist);
+    t.rtSky = i("RtSky", 1) != 0;
+    t.rtSkyStrength = f("RtSkyStrength", t.rtSkyStrength);
+    t.rtSkyLength = f("RtSkyLength", t.rtSkyLength);
+    t.rtBounce = f("RtBounce", t.rtBounce);
+    t.rtReflect = i("RtReflect", 1) != 0;
+    t.rtDebug = i("RtDebug", 0) != 0;
+    t.rtOmm = i("RtOmm", 1) != 0;
     t.ao = i("Ao", 1) != 0; t.fogReplacesGame = i("FogReplacesGame", 0) != 0; t.cascades = i("Cascades", 0) != 0; t.view = i("View", 0);
     // Cascades=0: the sun's shadow is the game's own filtered mask (match dE76 2.23 against 2.53 with
     // our cascade lookup, which also drew hard twig streaks on the ground).

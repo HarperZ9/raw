@@ -1,0 +1,15 @@
+# Diagnosis at night (docs/RAYTRACING.md): Riverwood at 23:00, the primary-ray view (RtDebug=1,
+# View=7), the sun visibility (View=2), and the trace cost with alpha-tested meshes out.
+start load rawharness
+console tai
+scene riverwood_night
+console set gamehour to 23
+wait 12
+keyframe still steps=game,improved hold=40
+reload ini RtDebug=1 View=7
+keyframe primary steps=improved hold=40
+reload ini RtDebug=0 View=2
+keyframe sunvis steps=improved hold=40
+reload ini View=0 RtAlpha=0
+keyframe noalpha steps=improved hold=60
+quit

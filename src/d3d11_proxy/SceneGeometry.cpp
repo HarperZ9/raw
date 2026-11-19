@@ -1,10 +1,13 @@
-// SceneGeometry: the frame's rigid opaque lit draws for the ray-tracing scene (RtScene.h). At each
-// indexed draw that SceneLights counted as a lit draw of the opaque set, the bound vertex and index
-// buffers, the position element of the input layout and the draw's world matrix are recorded.
-// Left out: soft-lit foliage, alpha-tested draws (their pixel shader discards; a BLAS of the full quads would shadow
-// like solid cards), skinned draws (their vertex buffer 2 is not the 15-vector world block, so
-// SceneLights never counts them) and non-indexed draws. The game's own shadow mask still carries
-// those shadows; the lighting pass takes the darker of the two. Original work, MIT.
+// SceneGeometry: the frame's rigid lit draws for the ray-tracing scene (RtScene.h). At each indexed
+// draw that SceneLights counted as a lit draw of the opaque set, the bound vertex and index buffers,
+// the position element of the input layout and the draw's world matrix are recorded.
+// Alpha-tested draws (the pixel shader discards, the blend state turns alpha into coverage, or the
+// shader is soft-lit foliage) also carry their texture coordinate element and the texture at t0, so
+// the rays test the same alpha the raster does; without either they are left out as before (a BLAS of
+// the full quads would shadow like solid cards). Skinned draws (their vertex buffer 2 is not the
+// 15-vector world block, so SceneLights never counts them) and non-indexed draws are left out. The
+// game's own shadow mask still carries those shadows; the lighting pass takes the darker of the two.
+// Every reason a draw is left out is counted and logged. Original work, MIT.
 #include "SceneGeometry.h"
 #include "SceneLights.h"
 #include "ProxyLog.h"
@@ -13,18 +16,21 @@
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
-#include <unordered_set>
 
 namespace SB::Proxy
 {
 namespace
 {
-struct Pos { UINT slot = 0, offset = 0; DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN; };
+struct Elem { UINT slot = 0, offset = 0; DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN; bool set = false; };
+struct Layout { Elem pos, uv; };
 std::mutex g_m;
-std::unordered_map<ID3D11InputLayout*, Pos> g_layouts;
-std::unordered_set<ID3D11PixelShader*> g_discard;
+std::unordered_map<ID3D11InputLayout*, Layout> g_layouts;
+std::unordered_map<ID3D11PixelShader*, uint8_t> g_alphaPs;   // RtAlphaDiscard or RtAlphaFoliage
 std::vector<raw::bridge::RtDraw> g_frame;
-uint64_t g_alphaTested = 0, g_noLayout = 0;
+// Why draws were left out, and how many alpha-tested ones joined, since the start.
+struct Counts { uint64_t alphaNoTexture = 0, alphaNoUv = 0, alphaOff = 0, noLayout = 0, badFormat = 0, noBuffers = 0,
+                         alphaJoined[5] = {}, opaque = 0; } g_n;
+bool g_alphaOn = true;
 
 // True when the shader bytecode holds a discard instruction (SM4/5 opcode 13).
 bool HasDiscard(const void* bc, size_t n)
@@ -55,25 +61,94 @@ bool HasDiscard(const void* bc, size_t n)
 }
 } // namespace
 
+void SceneGeometry_SetAlpha(bool on) { g_alphaOn = on; }
+
+// Byte size of a vertex element format, for D3D11_APPEND_ALIGNED_ELEMENT offsets.
+static UINT FormatBytes(DXGI_FORMAT f)
+{
+    switch (f) {
+    case DXGI_FORMAT_R32G32B32A32_FLOAT: case DXGI_FORMAT_R32G32B32A32_UINT: case DXGI_FORMAT_R32G32B32A32_SINT: return 16;
+    case DXGI_FORMAT_R32G32B32_FLOAT: case DXGI_FORMAT_R32G32B32_UINT: case DXGI_FORMAT_R32G32B32_SINT: return 12;
+    case DXGI_FORMAT_R16G16B16A16_FLOAT: case DXGI_FORMAT_R16G16B16A16_UNORM: case DXGI_FORMAT_R16G16B16A16_SNORM:
+    case DXGI_FORMAT_R16G16B16A16_UINT: case DXGI_FORMAT_R16G16B16A16_SINT: case DXGI_FORMAT_R32G32_FLOAT:
+    case DXGI_FORMAT_R32G32_UINT: case DXGI_FORMAT_R32G32_SINT: return 8;
+    case DXGI_FORMAT_R16G16_FLOAT: case DXGI_FORMAT_R16G16_UNORM: case DXGI_FORMAT_R16G16_SNORM: case DXGI_FORMAT_R8G8B8A8_UNORM:
+    case DXGI_FORMAT_R8G8B8A8_SNORM: case DXGI_FORMAT_R8G8B8A8_UINT: case DXGI_FORMAT_B8G8R8A8_UNORM: case DXGI_FORMAT_R32_FLOAT:
+    case DXGI_FORMAT_R32_UINT: case DXGI_FORMAT_R10G10B10A2_UNORM: case DXGI_FORMAT_R11G11B10_FLOAT: return 4;
+    default: return 0;
+    }
+}
+
 void SceneGeometry_OnInputLayout(ID3D11InputLayout* layout, const D3D11_INPUT_ELEMENT_DESC* e, UINT n)
 {
     if (!layout || !e) return;
+    Layout L;
+    UINT next[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
     for (UINT i = 0; i < n; ++i) {
-        if (_stricmp(e[i].SemanticName, "POSITION") != 0 || e[i].SemanticIndex != 0) continue;
-        std::lock_guard<std::mutex> g(g_m);
-        g_layouts[layout] = {e[i].InputSlot, e[i].AlignedByteOffset == D3D11_APPEND_ALIGNED_ELEMENT ? 0u : e[i].AlignedByteOffset, e[i].Format};
-        return;
+        const UINT slot = e[i].InputSlot < D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT ? e[i].InputSlot : 0;
+        const UINT off = e[i].AlignedByteOffset == D3D11_APPEND_ALIGNED_ELEMENT ? next[slot] : e[i].AlignedByteOffset;
+        next[slot] = off + FormatBytes(e[i].Format);
+        if (e[i].SemanticIndex != 0) continue;
+        if (_stricmp(e[i].SemanticName, "POSITION") == 0) L.pos = {e[i].InputSlot, off, e[i].Format, true};
+        else if (_stricmp(e[i].SemanticName, "TEXCOORD") == 0) L.uv = {e[i].InputSlot, off, e[i].Format, true};
     }
+    if (!L.pos.set) return;
+    std::lock_guard<std::mutex> g(g_m);
+    g_layouts[layout] = L;
 }
 
 void SceneGeometry_OnPixelShader(ID3D11PixelShader* ps, const void* bc, size_t n)
 {
     // Soft-lit foliage (grass clumps, bushes) is left out too: blades and twigs as solid triangles
     // cast slab shadows; the game's mask carries their dappled shadow.
-    if (!ps || (!HasDiscard(bc, n) && raw::dxbc::Inspect(bc, n).materialClass != raw::dxbc::material::SoftLit)) return;
+    if (!ps) return;
+    const uint8_t kind = HasDiscard(bc, n) ? raw::bridge::RtAlphaDiscard
+                         : raw::dxbc::Inspect(bc, n).materialClass == raw::dxbc::material::SoftLit ? raw::bridge::RtAlphaFoliage
+                                                                                                   : raw::bridge::RtAlphaNone;
+    if (!kind) return;
     std::lock_guard<std::mutex> g(g_m);
-    g_discard.insert(ps);
+    g_alphaPs[ps] = kind;
 }
+
+namespace
+{
+// Alpha to coverage on a single-sample target cuts at alpha 0.5 like a test; a blended lit draw in the
+// opaque set cuts by its alpha too (the primary-ray view showed the sapling and the clover as solid
+// opaque cards with neither a discard nor coverage). Returns RtAlphaCoverage, RtAlphaBlend or none.
+uint8_t BlendAlpha(ID3D11DeviceContext* real)
+{
+    ID3D11BlendState* bs = nullptr;
+    FLOAT f[4];
+    UINT m = 0;
+    real->OMGetBlendState(&bs, f, &m);
+    if (!bs) return raw::bridge::RtAlphaNone;
+    D3D11_BLEND_DESC d{};
+    bs->GetDesc(&d);
+    bs->Release();
+    if (d.AlphaToCoverageEnable) return raw::bridge::RtAlphaCoverage;
+    const D3D11_RENDER_TARGET_BLEND_DESC& t = d.RenderTarget[0];
+    const bool usesAlpha = t.SrcBlend == D3D11_BLEND_SRC_ALPHA || t.DestBlend == D3D11_BLEND_INV_SRC_ALPHA;
+    return t.BlendEnable && usesAlpha ? raw::bridge::RtAlphaBlend : raw::bridge::RtAlphaNone;
+}
+
+bool UvFormatOk(DXGI_FORMAT f)
+{
+    return f == DXGI_FORMAT_R16G16_FLOAT || f == DXGI_FORMAT_R32G32_FLOAT || f == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+           f == DXGI_FORMAT_R32G32B32A32_FLOAT || f == DXGI_FORMAT_R32G32B32_FLOAT;
+}
+
+// The texture at t0 when it is a plain 2D texture view, with a reference.
+ID3D11ShaderResourceView* AlphaTexture(ID3D11DeviceContext* real)
+{
+    ID3D11ShaderResourceView* v = nullptr;
+    real->PSGetShaderResources(0, 1, &v);
+    if (!v) return nullptr;
+    D3D11_SHADER_RESOURCE_VIEW_DESC d{};
+    v->GetDesc(&d);
+    if (d.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D) { v->Release(); return nullptr; }
+    return v;
+}
+} // namespace
 
 void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT startIndex, INT baseVertex)
 {
@@ -81,27 +156,47 @@ void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT start
     if (!w || indexCount < 3) return;
     ID3D11PixelShader* ps = nullptr;
     real->PSGetShader(&ps, nullptr, nullptr);
-    bool alpha;
-    { std::lock_guard<std::mutex> g(g_m); alpha = ps && g_discard.count(ps); }
+    uint8_t alpha = raw::bridge::RtAlphaNone;
+    {
+        std::lock_guard<std::mutex> g(g_m);
+        auto it = ps ? g_alphaPs.find(ps) : g_alphaPs.end();
+        if (it != g_alphaPs.end()) alpha = it->second;
+    }
     if (ps) ps->Release();
-    if (alpha) { ++g_alphaTested; return; }
+    if (!alpha) alpha = BlendAlpha(real);
+    if (alpha && !g_alphaOn) { ++g_n.alphaOff; return; }
     ID3D11InputLayout* il = nullptr;
     real->IAGetInputLayout(&il);
-    Pos pos;
+    Layout L;
     bool found;
-    { std::lock_guard<std::mutex> g(g_m); auto it = g_layouts.find(il); found = it != g_layouts.end(); if (found) pos = it->second; }
+    { std::lock_guard<std::mutex> g(g_m); auto it = g_layouts.find(il); found = it != g_layouts.end(); if (found) L = it->second; }
     if (il) il->Release();
-    const bool fmtOk = pos.format == DXGI_FORMAT_R32G32B32_FLOAT || pos.format == DXGI_FORMAT_R32G32B32A32_FLOAT ||
-                       pos.format == DXGI_FORMAT_R16G16B16A16_FLOAT;
-    if (!found || !fmtOk) { ++g_noLayout; return; }
+    if (!found) { ++g_n.noLayout; return; }
+    const DXGI_FORMAT pf = L.pos.format;
+    if (pf != DXGI_FORMAT_R32G32B32_FLOAT && pf != DXGI_FORMAT_R32G32B32A32_FLOAT && pf != DXGI_FORMAT_R16G16B16A16_FLOAT) { ++g_n.badFormat; return; }
     raw::bridge::RtDraw d;
+    if (alpha) {
+        // The rays read the coordinates from the position's own vertex buffer.
+        // Coordinates in their own stream belong to the tree shaders, whose positions the vertex shader
+        // still moves (the primary-ray view showed their leaves scattered and huge): left out for now.
+        if (!L.uv.set || L.uv.slot != L.pos.slot || !UvFormatOk(L.uv.format)) {
+            if (g_n.alphaNoUv++ < 64 && (g_n.alphaNoUv & 7) == 1)
+                Log("[RT] alpha-tested draw left out: coordinates %s, slot %u (position slot %u), format %d", L.uv.set ? "found" : "absent",
+                    L.uv.slot, L.pos.slot, int(L.uv.format));
+            return;
+        }
+        d.alphaSrv = AlphaTexture(real);
+        if (!d.alphaSrv) { ++g_n.alphaNoTexture; return; }
+        d.alphaKind = alpha; d.uvOffset = L.uv.offset; d.uvFormat = L.uv.format;
+    }
     UINT stride = 0, offset = 0;
-    real->IAGetVertexBuffers(pos.slot, 1, &d.vb, &stride, &offset);
+    real->IAGetVertexBuffers(L.pos.slot, 1, &d.vb, &stride, &offset);
     real->IAGetIndexBuffer(&d.ib, &d.ibFormat, &d.ibOffset);
-    if (!d.vb || !d.ib) { if (d.vb) d.vb->Release(); if (d.ib) d.ib->Release(); return; }
-    d.stride = stride; d.vbOffset = offset; d.posOffset = pos.offset; d.posFormat = pos.format;
+    if (!d.vb || !d.ib) { raw::bridge::ReleaseRtDraw(d); ++g_n.noBuffers; return; }
+    d.stride = stride; d.vbOffset = offset; d.posOffset = L.pos.offset; d.posFormat = pf;
     d.indexCount = indexCount; d.startIndex = startIndex; d.baseVertex = baseVertex;
     std::memcpy(d.world, w, sizeof d.world);
+    if (alpha) ++g_n.alphaJoined[alpha]; else ++g_n.opaque;
     g_frame.push_back(d);   // the Get calls added the references the bridge releases
 }
 
@@ -109,8 +204,13 @@ std::vector<raw::bridge::RtDraw> SceneGeometry_Take()
 {
     static uint64_t frames = 0;
     if (++frames % 600 == 1)
-        Log("[RT] frame %llu: %zu rigid opaque draws captured; left out so far: %llu alpha-tested, %llu without a usable position element",
-            (unsigned long long)frames, g_frame.size(), (unsigned long long)g_alphaTested, (unsigned long long)g_noLayout);
+        Log("[RT] frame %llu: %zu draws captured; so far %llu opaque, alpha-tested joined %llu discard / %llu coverage / %llu foliage / %llu blend; "
+            "left out: %llu alpha without coordinates, %llu alpha without a 2D texture, %llu alpha (RtAlpha=0), %llu no layout, "
+            "%llu position format, %llu no buffers",
+            (unsigned long long)frames, g_frame.size(), (unsigned long long)g_n.opaque, (unsigned long long)g_n.alphaJoined[1],
+            (unsigned long long)g_n.alphaJoined[2], (unsigned long long)g_n.alphaJoined[3], (unsigned long long)g_n.alphaJoined[4], (unsigned long long)g_n.alphaNoUv,
+            (unsigned long long)g_n.alphaNoTexture, (unsigned long long)g_n.alphaOff, (unsigned long long)g_n.noLayout,
+            (unsigned long long)g_n.badFormat, (unsigned long long)g_n.noBuffers);
     std::vector<raw::bridge::RtDraw> out;
     out.swap(g_frame);
     return out;
@@ -118,7 +218,7 @@ std::vector<raw::bridge::RtDraw> SceneGeometry_Take()
 
 void SceneGeometry_Drop()
 {
-    for (auto& d : g_frame) { if (d.vb) d.vb->Release(); if (d.ib) d.ib->Release(); }
+    for (auto& d : g_frame) raw::bridge::ReleaseRtDraw(d);
     g_frame.clear();
 }
 

@@ -3,7 +3,8 @@
 When the game runs on raw::tx (`[Translate] Enabled=1 Wrap=1`, docs/TX_IN_GAME.md), its vertex and
 index buffers are D3D12 buffers on the same device as RAW's passes. RAW builds a ray-tracing scene
 from them each frame. It copies nothing and decodes nothing: the BLAS reads the game's buffers in
-place. `[Lighting] RtShadows=1` turns it on in improved mode. It is opt-in for now: see Open.
+place. Ray-traced shadows are on by default in improved mode on raw::tx (`[Lighting] RtShadows=0` turns
+them off). The same scene gives sky visibility and one bounce of indirect light (below).
 
 ```
 D3D11 (the game, on raw::tx)   each indexed lit draw of the opaque set: vertex and index buffer,
@@ -20,10 +21,55 @@ D3D12, one queue               BLAS for each new (buffer, range), straight from 
 
 | File | Role |
 |---|---|
-| `src/d3d11_proxy/SceneGeometry.cpp` | captures the draws; leaves out alpha-tested shaders (a discard in the bytecode), soft-lit foliage (class 5) and non-indexed draws |
+| `src/d3d11_proxy/SceneGeometry.cpp` | captures the draws; alpha-tested ones (a discard, alpha to coverage, soft-lit foliage) with their texture coordinate element and t0 texture; counts every reason a draw stays out |
+| `src/d3d11_proxy/GBufferVariants.cpp` | gives each patched G-buffer shader its original's alpha classification (the variant stays bound for later draws) |
 | `src/d3d12_bridge/RtScene.cpp` | the mesh cache, BLAS and TLAS builds, the trace dispatch, timestamps |
-| `src/d3d12_bridge/shaders/RtShadow.hlsl` | the rays; light choice by colour luminance x the game's window x n.l |
-| `src/d3d12_bridge/shaders/Lighting.hlsl` | `FLAG_RT`: sun shadow = min(the game's mask, RT); the three traced lights take min(their mask channel, RT) and skip the screen-space march |
+| `src/d3d12_bridge/RtAlpha.cpp`, `shaders/RtAlphaUv.hlsl` | per alpha-tested mesh: its texture coordinates in a pool, an R8 alpha mask per game texture, made once |
+| `src/d3d12_bridge/RtSky.cpp`, `shaders/RtSkyFilter.hlsl` | sky visibility and the bounce: temporal and spatial filter, outputs |
+| `src/d3d12_bridge/shaders/RtShadow.hlsl` | the rays: sun, three lights, one sky ray; alpha test at candidate hits; facet correction |
+| `src/d3d12_bridge/shaders/Lighting.hlsl` | `FLAG_RT`: sun shadow = min(the game's mask, RT) outdoors; the three traced lights take min(their mask channel, RT); `FLAG_SKY`, `FLAG_BOUNCE` on the exterior ambient; views 2 (sun), 4 (sky), 5 (bounce) |
+
+## Alpha-tested geometry
+
+Leaves, branch cards, grass clumps and clover are quads whose texture's alpha cuts the shape. As
+solid triangles they cast card and slab shadows. Each alpha-tested draw is non-opaque in the scene.
+When its mesh is first seen, a compute pass expands its texture coordinates, three per triangle, into
+a pool, and another samples the alpha of the draw's t0 texture into an R8 mask of at most 512 x 512
+(one per game texture, from the mip whose size matches). At a candidate hit the ray query finds the
+mesh's record from the instance ID, interpolates the coordinates with the hit's barycentrics, reads
+the mask (bilinear, wrapping) and commits the hit at alpha 0.5 or more (`RtAlphaRef`). After that
+first frame the rays read nothing of the game's.
+
+Found on the way: the G-buffer patch binds a patched copy of a lit shader and the game, which binds a
+shader only when it changes, draws its next meshes with that copy still bound. The capture looked the
+copy up, found nothing, and took the sapling (its shader does discard) for opaque. The copy now gets
+the original's classification.
+
+## Facets
+
+A low-polygon rock shaded with a smooth normal map faces the sun where its triangles have already
+turned away, and the next triangle shadows it in flat dark patches. The ray origin now moves along
+the geometric normal reconstructed from the depth buffer, and where that normal turns from the sun
+(n.l under 0.35) the sun ray starts up to `RtTermDist` (48 units) further out. Occluders nearer than
+that are still in the game's mask, which the lighting pass takes the minimum with.
+
+## Interiors
+
+Interiors have no cascades; their directional light is the cell's fill, which the game leaves
+unshadowed. The rays cut it into shafts from the windows and darkened the room. The sun ray now runs
+outdoors only.
+
+## Sky visibility and one bounce
+
+One extra ray a pixel, cosine-weighted around the surface normal, on a checkerboard that alternates
+every frame. A ray below the horizon counts as seeing: the game's ambient carries the ground term
+itself. A ray that travels `RtSkyLength` (6000 units) sees sky. A ray that hits geometry finds a
+surface the game has already lit this frame: where that point is on screen and not hidden, its colour
+in the game's frame is the light it sends back, otherwise a quarter of the cell's ambient stands in.
+`RtSkyFilter.hlsl` accumulates both over up to 32 frames along the game's motion vectors, each history
+tap accepted only at the pixel's own view depth, with a depth-aware 3 x 3 mean (5 x 5 while the
+history is short). Outdoors the lighting pass scales the ambient by the visibility (`RtSkyStrength`)
+and adds the bounce (`RtBounce`).
 
 ## Why the minimum with the game's mask
 
@@ -77,3 +123,35 @@ opt-in:
   the mask or the screen-space march.
 - Sky visibility, RT GI with a radiance cache, RT reflections and ReSTIR use this scene next. They
   need the game's materials in the rays (bindless texture access from the hit).
+
+## Agility SDK and opacity micromaps (2026-11-19)
+
+On the Agility SDK 1.620.1 runtime (docs/TX_IN_GAME.md), the RTX 4090 reports shader model 6.9 and
+DXR tier 1.2, with opacity micromaps and shader execution reordering (and reordering that reorders). On the
+system runtime it reports 6.8 and 1.2.
+
+**Opacity micromaps** (`RtOmm`, `RtOmmBake.hlsl`, `[Lighting] RtOmm=1`). Each new alpha-tested mesh gets
+a level-4, 4-state micromap array: 256 micro-triangles per triangle, each classified from its alpha mask
+at its corners and centre (opaque, transparent, or unknown, which the ray query resolves as before), and
+built in the same frame as the BLAS that links to it. The order in which a micromap lists its
+micro-triangles is a space-filling curve that the DXR specification only draws; `tests/omm_check
+--derive` reads it from the GPU into `OmmTable.h`, and the plain `omm_check` places a random pattern
+with that table and confirms every ray in both the 2-state and 4-state packings, levels 1 to 5
+(1,364 micro-triangles each way). A closed-form curve written from memory matched only at levels 1 and 2.
+
+| Riverwood 13:00, 3840 x 2160, one run each | trace (sun, 3 lights, sky, bounce, reflections) |
+|---|---|
+| system runtime (rt2-p1) | 2.26 ms |
+| Agility runtime, no micromaps (rt2-ag-1) | 1.84 ms |
+| Agility runtime, micromaps (rt2-omm-1, 80 arrays) | 1.64 ms |
+
+The sun-visibility view is the same with and without micromaps (leaf patterns match; the remaining pixel
+differences follow the camera and the ray jitter). Single runs: the spread between runs is not measured.
+
+**Cell changes.** After a loading screen the mesh cache is dropped (more than 0.5 s without a world
+frame). Before this the night view, reached after the inn, traced in 7.95 ms and read mean dE76 12.6
+(stale shapes from the previous cell); after it, 1.70 ms and 5.75.
+
+Not done: shader execution reordering needs the traces moved from inline ray queries in compute to a
+ray-generation pipeline (or shader model 6.9 `MaybeReorderThread` where it applies to compute); shader
+model 6.9 long and cooperative vectors are not used yet.

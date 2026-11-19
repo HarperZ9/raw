@@ -15,6 +15,15 @@ project(
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# The DirectX 12 Agility SDK's headers (its build/native folder), for DXR 1.2 opacity micromaps, shader
+# execution reordering and shader model 6.9. Empty: the Windows SDK's headers. The runtime itself is
+# loaded at run time from [Translate] AgilityPath (docs/TX_IN_GAME.md); no SDK binary is built in.
+set(RAW_AGILITY_DIR "" CACHE PATH "DirectX 12 Agility SDK build/native folder")
+if(RAW_AGILITY_DIR)
+    include_directories(BEFORE SYSTEM ${RAW_AGILITY_DIR}/include)
+    add_compile_definitions(RAW_HAS_OMM=1)
+endif()
+
 # RAW_BUILD_PLUGIN=OFF builds only the d3d11 proxy, the D3D12 bridge and its
 # test, which need nothing beyond the Windows SDK.
 option(RAW_BUILD_PLUGIN "Build the SKSE plugin (needs CommonLibSSE via vcpkg)" ON)
@@ -464,13 +473,57 @@ if(RAW_ENGINE_DIR)
     add_custom_command(
         OUTPUT ${RAW_ENGINE_GEN}/rt_shadow.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
-        COMMAND ${RAW_DXC} -T cs_6_5 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow.h -Vn kDxil_rt_shadow ${RAW_RTSHADOW_HLSL}
+        COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow.h -Vn kDxil_rt_shadow ${RAW_RTSHADOW_HLSL}
         DEPENDS ${RAW_RTSHADOW_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
         COMMENT "dxc: ray-traced shadows -> DXIL header"
         VERBATIM)
-    target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtScene.cpp ${RAW_ENGINE_GEN}/rt_shadow.h)
+    set(RAW_RTALPHA_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtAlphaUv.hlsl)
+    add_custom_command(
+        OUTPUT ${RAW_ENGINE_GEN}/rt_alpha_uv.h ${RAW_ENGINE_GEN}/rt_alpha_mask.h
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_alpha_uv.h -Vn kDxil_rt_alpha_uv ${RAW_RTALPHA_HLSL}
+        COMMAND ${RAW_DXC} -T cs_6_6 -E mask ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_alpha_mask.h -Vn kDxil_rt_alpha_mask ${RAW_RTALPHA_HLSL}
+        DEPENDS ${RAW_RTALPHA_HLSL}
+        COMMENT "dxc: ray-tracing alpha coordinates and masks -> DXIL headers"
+        VERBATIM)
+    set(RAW_RTSKY_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtSkyFilter.hlsl)
+    add_custom_command(
+        OUTPUT ${RAW_ENGINE_GEN}/rt_sky_filter.h
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_sky_filter.h -Vn kDxil_rt_sky_filter ${RAW_RTSKY_HLSL}
+        DEPENDS ${RAW_RTSKY_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
+        COMMENT "dxc: sky visibility filter -> DXIL header"
+        VERBATIM)
+    target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtScene.cpp src/d3d12_bridge/RtAlpha.cpp src/d3d12_bridge/RtSky.cpp
+                   ${RAW_ENGINE_GEN}/rt_shadow.h ${RAW_ENGINE_GEN}/rt_alpha_uv.h ${RAW_ENGINE_GEN}/rt_alpha_mask.h
+                   ${RAW_ENGINE_GEN}/rt_sky_filter.h)
+    if(RAW_AGILITY_DIR)
+        set(RAW_RTOMM_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtOmmBake.hlsl)
+        add_custom_command(
+            OUTPUT ${RAW_ENGINE_GEN}/rt_omm_bake.h
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+            COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_omm_bake.h -Vn kDxil_rt_omm_bake ${RAW_RTOMM_HLSL}
+            DEPENDS ${RAW_RTOMM_HLSL}
+            COMMENT "dxc: opacity micromap bake -> DXIL header"
+            VERBATIM)
+        target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtOmm.cpp ${RAW_ENGINE_GEN}/rt_omm_bake.h)
+    endif()
 endif()
 target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/ShaderCompiler.cpp)
+# The opacity micromap index check (tests/omm_check): needs the Agility SDK's headers and, to run, its runtime.
+if(RAW_AGILITY_DIR AND RAW_ENGINE_DIR)
+    add_custom_command(
+        OUTPUT ${RAW_ENGINE_GEN}/omm_check_cs.h
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/omm_check_cs.h -Vn kDxil_omm_check ${CMAKE_CURRENT_SOURCE_DIR}/tests/omm_check/omm_check.hlsl
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/omm_check/omm_check.hlsl
+        COMMENT "dxc: opacity micromap check -> DXIL header"
+        VERBATIM)
+    add_executable(omm_check tests/omm_check/main.cpp ${RAW_ENGINE_GEN}/omm_check_cs.h)
+    target_include_directories(omm_check PRIVATE ${RAW_ENGINE_GEN})
+    target_link_libraries(omm_check PRIVATE d3d12 dxgi dxguid)
+    set_target_properties(omm_check PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)
+endif()
 target_link_libraries(d3d11_proxy PRIVATE raw_dx12_translate)
 # A map file and a PDB beside d3d11.dll, so a fault's module offset in the log names a function.
 if(MSVC)

@@ -37,6 +37,10 @@ bool MakeDevice(const RunCfg& cfg, ComPtr<ID3D11Device>& dev, ComPtr<ID3D11Devic
         p.warp = !cfg.hardware;
         p.debugLayer = cfg.debug;
         p.faults = cfg.faults;
+        // RAW_TX_AGILITY_PATH and RAW_TX_AGILITY_VERSION: run the layer on the Agility SDK's runtime.
+        static const char* agility = std::getenv("RAW_TX_AGILITY_PATH");
+        static const char* agilityVersion = std::getenv("RAW_TX_AGILITY_VERSION");
+        if (agility && agilityVersion) { p.agilityPath = agility; p.agilityVersion = uint32_t(atoi(agilityVersion)); }
         hr = raw::tx::CreateDevice(p, &dev, &ctx);
     } else {
         const D3D_FEATURE_LEVEL want = D3D_FEATURE_LEVEL_11_0;

@@ -1,0 +1,17 @@
+# Diagnosis of the ray-tracing scene (docs/RAYTRACING.md): the primary ray's view with the alpha test
+# (RtDebug=1, View=7: coordinates and mask on alpha-tested meshes, magenta on opaque ones), then the
+# trace cost with reflections off and with shorter sky rays.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+reload ini RtDebug=1 View=7
+keyframe primary steps=improved hold=40
+reload ini RtDebug=0 View=2
+keyframe sunvis steps=improved hold=40
+reload ini View=0 RtReflect=0
+keyframe norefl steps=improved hold=60
+reload ini RtSkyLength=2000
+keyframe sky2000 steps=improved hold=60
+quit

@@ -39,9 +39,9 @@ struct LightUniform
 static_assert(sizeof(LightUniform) == 30 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16, "layout of cbuffer P");
 static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
-constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024;
+constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192;
 constexpr RasterBinding U = RasterBinding::Uniform, T = RasterBinding::Texture;
-constexpr RasterBinding kLightLayout[12] = {U, T, T, T, T, T, T, T, T, T, T, T};
+constexpr RasterBinding kLightLayout[14] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T};
 constexpr RasterBinding kFogLayout[4] = {U, T, T, T};
 
 class LightingPass final : public IBridgePass
@@ -74,6 +74,8 @@ public:
         m_soft = import(Shared::Emissive, TextureFormat::RGBA16Float, S);
         m_rtVis = import(Shared::RtVisibility, TextureFormat::RGBA8Unorm, S);
         m_rtIdx = import(Shared::RtLights, TextureFormat::RGBA8Unorm, S);
+        m_rtBounce = import(Shared::RtBounce, TextureFormat::RGBA16Float, S);
+        m_rtReflect = import(Shared::RtReflect, TextureFormat::RGBA16Float, S);
         if (!m_game.valid() || !m_depth.valid() || !m_normal.valid() || !m_albedo.valid() || !m_spec.valid() || !m_mask.valid() ||
             !m_atlas.valid() || !m_out.valid()) return Fail("importTexture");
         const TextureUsage RT = TextureUsage::RenderTarget | TextureUsage::Sampled;
@@ -127,9 +129,11 @@ public:
             for (uint32_t k = 1; k <= 3; ++k) c->timestamp(k);
         }
         const TextureHandle aoVis = ao ? m_ao.history() : m_game;   // unused without the flag
-        const RasterBind light[12] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_normal, {}}, {{}, m_albedo, {}}, {{}, m_spec, {}},
+        const RasterBind light[14] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_normal, {}}, {{}, m_albedo, {}}, {{}, m_spec, {}},
                                      {{}, m_mask, {}}, {{}, m_atlas, {}}, {{}, aoVis, {}}, {{}, m_game, {}}, {{}, m_soft.valid() ? m_soft : m_game, {}},
-                                     {{}, m_rtVis.valid() ? m_rtVis : m_game, {}}, {{}, m_rtIdx.valid() ? m_rtIdx : m_game, {}}};
+                                     {{}, m_rtVis.valid() ? m_rtVis : m_game, {}}, {{}, m_rtIdx.valid() ? m_rtIdx : m_game, {}},
+                                     {{}, m_rtBounce.valid() ? m_rtBounce : m_game, {}},
+                                     {{}, m_rtReflect.valid() ? m_rtReflect : m_game, {}}};
         Draw(*c, m_lit, m_lightPipe, light);
         c->timestamp(4);
         const RasterBind fog[4] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}};
@@ -214,7 +218,8 @@ private:
                   (t.contactShadows ? kContact : 0u) | (t.ao ? kAo : 0u);
         if (t.cascades) f |= kCascades;
         if (t.fogReplacesGame) f |= kFogReplaces;
-        if (frame.rt && t.rtShadows && m_rtVis.valid() && m_rtIdx.valid()) f |= kRt;
+        if (frame.rt && t.rtShadows && m_rtVis.valid() && m_rtIdx.valid()) f |= kRt | (t.rtSky ? kSky : 0u) | (t.rtSky && t.rtBounce > 0.0f && m_rtBounce.valid() ? kBounce : 0u) |
+                     (t.rtSky && t.rtReflect && m_rtReflect.valid() ? kReflect : 0u);
         if (frame.hasShadows && s.hasCascades) f |= kShadows;
         u.flags[0] = f; u.flags[1] = s.lightCount; u.flags[2] = s.cascades; u.flags[3] = uint32_t(t.view);
         std::memcpy(u.clipToWorld, s.clipToWorld, 64);
@@ -230,6 +235,8 @@ private:
         u.cascadeInfo[3] = float(m_host.shadowSide);
         const float nearZ = frame.camera.nearZ > 0 ? frame.camera.nearZ : 15.0f;
         u.cluster[0] = nearZ; u.cluster[1] = t.clusterFar; u.cluster[2] = float(kSlices) / std::log(t.clusterFar / nearZ);
+        u.cluster[3] = t.rtSkyStrength;
+        u.proj[3] = t.rtBounce;
         u.tune[0] = t.fogDensity; u.tune[1] = t.fogAnisotropy; u.tune[2] = t.softRange; u.tune[3] = t.contactLength;
         u.tune2[0] = t.aoStrength; u.tune2[1] = t.fogLightScale; u.tune2[2] = t.fogSunScale; u.tune2[3] = t.fogMaxDistance;
         for (uint32_t i = 0; i < s.lightCount; ++i) {
@@ -267,6 +274,7 @@ private:
     std::unique_ptr<Device> m_dev;
     std::string m_err;
     ao_rt::Pass m_ao;
+    TextureHandle m_rtBounce, m_rtReflect;
     TextureHandle m_rtVis, m_rtIdx, m_soft, m_game, m_depth, m_normal, m_albedo, m_spec, m_mask, m_atlas, m_out, m_motion, m_lit, m_aoOut;
     BufferHandle m_uniform;
     RasterPipelineHandle m_lightPipe, m_fogPipe;

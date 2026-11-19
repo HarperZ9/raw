@@ -10,7 +10,7 @@ namespace raw::tx {
 class SwapChain final : public IDXGISwapChain {
 public:
     SwapChain(Device* d) : dev_(d) { dev_->AddRef(); }
-    ~SwapChain() { ReleaseBuffers(); dev_->Release(); }
+    ~SwapChain() { ReleaseBuffers(); if (waitable_) CloseHandle(waitable_); dev_->Release(); }
     HRESULT Init(const DXGI_SWAP_CHAIN_DESC& desc);
 
     STDMETHODIMP QueryInterface(REFIID r, void** o) override
@@ -62,6 +62,9 @@ private:
     ComPtr<IDXGISwapChain3> sc_;
     std::vector<std::shared_ptr<TrackedRes>> back_;
     ID3D11Texture2D* front_ = nullptr;   // what the application draws into
+    HANDLE waitable_ = nullptr;          // frame latency: Present waits here, as D3D11's Present blocks
+    UINT latency_ = 0;                   // the value applied to the chain
+    void ApplyLatency();
 };
 
 HRESULT SwapChain::Init(const DXGI_SWAP_CHAIN_DESC& desc)
@@ -76,7 +79,7 @@ HRESULT SwapChain::Init(const DXGI_SWAP_CHAIN_DESC& desc)
     d.Scaling = DXGI_SCALING_STRETCH;
     d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     d.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
-    d.Flags = desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+    d.Flags = (desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) | DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
     ComPtr<IDXGISwapChain1> sc1;
     HRESULT hr = dev_->factory->CreateSwapChainForHwnd(dev_->queue.Get(), desc.OutputWindow, &d, nullptr, nullptr, &sc1);
     if (FAILED(hr)) return hr;
@@ -85,7 +88,17 @@ HRESULT SwapChain::Init(const DXGI_SWAP_CHAIN_DESC& desc)
     sc_->GetDesc1(&d);
     desc_.BufferDesc.Width = d.Width;
     desc_.BufferDesc.Height = d.Height;
+    waitable_ = sc_->GetFrameLatencyWaitableObject();
+    ApplyLatency();
     return AcquireBuffers();
+}
+
+// The device's maximum frame latency (IDXGIDevice1::SetMaximumFrameLatency, 3 unless the application
+// sets it) on the chain. A waitable chain defaults to 1, so it is always set.
+void SwapChain::ApplyLatency()
+{
+    const UINT n = dev_->dxgi.latency ? dev_->dxgi.latency : 3;
+    if (n != latency_ && SUCCEEDED(sc_->SetMaximumFrameLatency(n))) latency_ = n;
 }
 
 HRESULT SwapChain::AcquireBuffers()
@@ -143,6 +156,10 @@ STDMETHODIMP SwapChain::Present(UINT sync, UINT flags)
     ctx->FlushInternal();
     HRESULT hr = sc_->Present(sync, flags);
     dev_->Reclaim();
+    // At most `latency` frames queued: the CPU waits for the oldest to leave the queue, as the system
+    // runtime does inside Present.
+    ApplyLatency();
+    if (waitable_ && !(flags & DXGI_PRESENT_TEST)) WaitForSingleObjectEx(waitable_, 1000, TRUE);
     return hr;
 }
 
@@ -151,7 +168,8 @@ STDMETHODIMP SwapChain::ResizeBuffers(UINT count, UINT w, UINT h, DXGI_FORMAT f,
     TX_TRACE("SwapChain::ResizeBuffers");
     ReleaseBuffers();
     if (f != DXGI_FORMAT_UNKNOWN) desc_.BufferDesc.Format = f;
-    HRESULT hr = sc_->ResizeBuffers(count ? (count < 2 ? 2 : count) : 0, w, h, StripSrgb(f), flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING);
+    HRESULT hr = sc_->ResizeBuffers(count ? (count < 2 ? 2 : count) : 0, w, h, StripSrgb(f),
+                                    (flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) | DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT);
     if (FAILED(hr)) return hr;
     DXGI_SWAP_CHAIN_DESC1 d{};
     sc_->GetDesc1(&d);

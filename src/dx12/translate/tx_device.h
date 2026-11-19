@@ -261,6 +261,7 @@ inline Device* Dev(ID3D11Device* d) { return static_cast<Device*>(d); }
 // keeps its import table unchanged (tx_imports.cpp).
 HRESULT TxD3D12CreateDevice(IUnknown* adapter, D3D_FEATURE_LEVEL fl, REFIID riid, void** out);
 HRESULT TxD3D12GetDebugInterface(REFIID riid, void** out);
+HRESULT TxD3D12GetInterface(REFCLSID clsid, REFIID riid, void** out);
 HRESULT TxD3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* d, ID3DBlob** blob, ID3DBlob** err);
 HRESULT TxCreateDXGIFactory2(UINT flags, REFIID riid, void** out);
 

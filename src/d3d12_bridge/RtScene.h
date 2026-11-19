@@ -9,6 +9,11 @@
 // the three strongest point lights of each pixel with inline ray queries. Output: two RGBA8
 // textures the lighting pass reads (visibility; which lights). Original work, MIT.
 #include "D3D12Bridge.h"
+#include "RtAlpha.h"
+#include "RtSky.h"
+#ifdef RAW_HAS_OMM
+#include "RtOmm.h"
+#endif
 #include <wrl/client.h>
 #include <string>
 #include <unordered_map>
@@ -29,12 +34,18 @@ public:
     void SetDraws(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>& toHand,
                   ID3D12Resource* (*native)(ID3D11Resource*));
     // Records the builds and the trace; uniform: the lighting pass's cbuffer P for this frame.
-    bool Record(const void* uniform, size_t bytes, ID3D12Resource* depth, ID3D12Resource* normal, ID3D12Resource* spec);
+    bool Record(const void* uniform, size_t bytes, ID3D12Resource* depth, ID3D12Resource* normal, ID3D12Resource* spec,
+                ID3D12Resource* motion, ID3D12Resource* colour);
+    ID3D12Resource* Reflection() const { return m_refl.Get(); }   // RGBA16F: radiance, confidence
+    ID3D12Resource* Bounce() const { return m_skyReady ? m_sky.Bounce() : nullptr; }
     bool Submit(ID3D12CommandQueue* q);
     bool Active() const { return m_tune.enabled && m_ready; }
     ID3D12Resource* Visibility() const { return m_vis.Get(); }
     ID3D12Resource* Lights() const { return m_lights.Get(); }
-    RtFrameStats Stats();   // the newest retired frame's GPU times and this frame's counts
+    RtFrameStats Stats();
+    // Hot reload (docs/HOT_RELOAD.md): new pipelines for RtShadow.hlsl and RtSkyFilter.hlsl, swapped once
+    // the GPU is done with the frames in flight. The old ones stay when either is refused.
+    bool Reload(const std::vector<uint8_t>& shadow, const std::vector<uint8_t>& sky, std::string& err);   // the newest retired frame's GPU times and this frame's counts
 
 private:
     struct Mesh
@@ -43,13 +54,15 @@ private:
         ID3D11Buffer* ib = nullptr;
         D3D12_RAYTRACING_GEOMETRY_TRIANGLES_DESC tri{};
         uint64_t blas = 0, bytes = 0, seen = 0;
+        uint32_t alphaRecord = 0;   // RtAlpha record + 1; 0: opaque
+        uint64_t omm = 0;           // its opacity micromap array, when it has one
         bool built = false, failed = false;
     };
     struct Key { uintptr_t vb, ib; uint64_t a, b; bool operator==(const Key& o) const { return vb == o.vb && ib == o.ib && a == o.a && b == o.b; } };
     struct KeyHash { size_t operator()(const Key& k) const { return size_t(k.vb * 0x9E3779B97F4A7C15ull ^ k.ib * 0xC2B2AE3D27D4EB4Full ^ k.a * 31 ^ k.b); } };
 
     bool Buffer(ComPtr<ID3D12Resource>& r, uint64_t bytes, D3D12_HEAP_TYPE heap, D3D12_RESOURCE_STATES s, bool uav, const wchar_t* name);
-    bool Texture(ComPtr<ID3D12Resource>& r, const wchar_t* name);
+    bool Texture(ComPtr<ID3D12Resource>& r, const wchar_t* name, DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM);
     bool Pipeline(std::string& err);
     void Evict();
 
@@ -59,7 +72,7 @@ private:
     UINT m_w = 0, m_h = 0;
     uint64_t m_frame = 0, m_freq = 0;
     ComPtr<ID3D12Device5> m_dev;
-    ComPtr<ID3D12Resource> m_blasHeap, m_scratch, m_tlas, m_tlasScratch, m_inst[3], m_cb[3], m_vis, m_lights, m_tsRead;
+    ComPtr<ID3D12Resource> m_blasHeap, m_scratch, m_tlas, m_tlasScratch, m_inst[3], m_cb[3], m_vis, m_lights, m_refl, m_tsRead;
     ComPtr<ID3D12QueryHeap> m_ts;
     ComPtr<ID3D12CommandAllocator> m_alloc[3];
     ComPtr<ID3D12GraphicsCommandList4> m_list;
@@ -74,7 +87,16 @@ private:
     std::vector<uint32_t> m_build;    // meshes whose BLAS this frame builds
     std::vector<RtDraw> m_draws;
     uint64_t m_blasUsed = 0;
+    uint64_t m_lastDraws = 0;   // GetTickCount64 at the last frame with draws
     RtFrameStats m_stats;
+    RtAlpha m_alpha;
+    RtSky m_sky;
+    bool m_skyReady = false;
+    bool m_ommOn = false;
+    UINT m_psoFlags = 0;
+#ifdef RAW_HAS_OMM
+    RtOmm m_omm;
+#endif
 };
 
 } // namespace raw::bridge

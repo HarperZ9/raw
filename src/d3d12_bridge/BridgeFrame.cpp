@@ -103,14 +103,20 @@ void D3D12Bridge::SetCamera(const CameraConstants& camera) { m->camera = camera;
 
 void D3D12Bridge::SetRtDraws(std::vector<RtDraw>&& draws)
 {
-    for (RtDraw& d : m->pendingDraws) { if (d.vb) d.vb->Release(); if (d.ib) d.ib->Release(); }
+    for (RtDraw& d : m->pendingDraws) ReleaseRtDraw(d);
     m->pendingDraws = std::move(draws);
     if (!m->rt) {
-        for (RtDraw& d : m->pendingDraws) { if (d.vb) d.vb->Release(); if (d.ib) d.ib->Release(); }
+        for (RtDraw& d : m->pendingDraws) ReleaseRtDraw(d);
         m->pendingDraws.clear();
     }
 }
 void D3D12Bridge::TuneRt(const RtTuning& t) { m->rtTune = t; if (m->rt) m->rt->Tune(t); }
+bool D3D12Bridge::ReloadRt(const std::vector<uint8_t>& shadow, const std::vector<uint8_t>& sky, std::string& err)
+{
+    if (!m->rt) { err = "no ray-tracing scene (RtShadows=0, or not on raw::tx)"; return false; }
+    return m->rt->Reload(shadow, sky, err);
+}
+
 bool D3D12Bridge::RtStats(RtFrameStats* out)
 {
     if (!m->rt || !out) return false;
@@ -191,7 +197,8 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
             size_t ub = 0;
             if (LightingPassUniform(m->pass.get(), &u, &ub))
                 rtOk = m->rt->Record(u, ub, m->depthIn.res12.Get(), m->normalIn.res12.Get(),
-                                     m->shared[static_cast<UINT>(Shared::Specular)].res12.Get());
+                                     m->shared[static_cast<UINT>(Shared::Specular)].res12.Get(),
+                                     fc.hasMotion ? m->motionIn.res12.Get() : nullptr, m->colorIn.res12.Get());
         }
         if (!m->HandToHost(hand) || (rtOk && !m->rt->Submit(m->queue.Get())) || !m->pass->Submit(0, v2)) {
             m->log("[D3D12Bridge] attached hand-over failed; bridge off");

@@ -41,8 +41,7 @@ STDMETHODIMP P::SetGPUThreadPriority(INT p)
     return S_OK;
 }
 STDMETHODIMP P::GetGPUThreadPriority(INT* p) { if (!p) return E_INVALIDARG; *p = priority; return S_OK; }
-// Kept and answered back. The layer's flip-model chain paces itself with its own fence; the
-// value is not applied to it yet.
+// Kept and answered back; the layer's swap chains apply it at their next Present (tx_swapchain.cpp).
 STDMETHODIMP P::SetMaximumFrameLatency(UINT n)
 {
     TX_TRACE("DxgiDevice::SetMaximumFrameLatency");

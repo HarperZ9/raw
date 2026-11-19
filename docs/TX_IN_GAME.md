@@ -134,3 +134,54 @@ ray-tracing scene's draws above 0 (Riverwood 1,947 to 1,955) and left ENB at 232
 - **Still on the render thread:** `RtScene::PlaceInstances` and `SetDraws` (about 300 samples, the RT worker's
   code), the internal references taken by `IASet*` and `SetSRV` (atomic, so they also pay the drain), and
   `SceneGeometry_OnDraw`'s per-draw mutex, maps and Get calls. Multithreaded recording is not started.
+  (All four are addressed in the next section.)
+
+## CPU cost, second pass (2026-11-19)
+
+Same setup and test as above. Numbers: `evidence/tx-cpu-skyrim-2026-11-19b.json`. Each build was run once or twice
+on the same day as the base, and every run kept the ray-tracing scene's draws above 0 (Riverwood 1,950 to 1,977)
+and left ENB at 232 of 232 hashes. Measures within one run differ by up to 0.7 ms (a repeat of one build read
+9.37 and 8.70 ms), so a change under about 0.4 ms is not shown by one run.
+
+| Build | Riverwood frame | Batch submission | Render-thread samples in d3d11.dll |
+|---|---|---|---|
+| base (raw#30's final build), today | 8.97 to 9.21 ms | 5.78 to 6.06 ms | 2,061 of 4,626 |
+| + lock-free scene geometry reads, plain binding references | 8.97 to 9.08 ms | 5.70 to 5.77 ms | 1,657 of 4,731 |
+| + plain RT draw references, instances staged in `SetDraws` | 8.66 to 8.82 ms (repeat 8.68 to 8.69) | 5.48 to 5.58 ms | 1,496 of 4,345 |
+| + immediate tracker without `shared_ptr` copies | 8.67 to 8.68 ms (repeat 8.70 to 9.37) | 5.48 to 5.90 ms | 1,599 of 4,716 |
+| + rescan only new shader-resource slots, table reuse | 8.93 to 9.45 ms | 5.67 to 5.98 ms | 1,602 to 1,662 |
+
+- **Plain references.** On raw::tx the proxy reads a draw's bindings through `raw::tx::Peek*`, and the immediate
+  context counts its bindings, and the RT capture's references, in a plain field on each object (`tx_holds.h`).
+  One atomic reference per object stays while the game holds it. `binding_lifetime` in the suite checks that a
+  view bound after its last release stays alive and dies once unbound. The first draft failed that check.
+- **RtScene.** `PlaceInstances` and `SetDraws` (430 samples in the base run) left the render thread's top list.
+  The instances are written in `SetDraws` while each mesh is in the CPU caches, then copied whole, in draw order.
+- **Last row.** It is not shown faster: its two runs read 8.93 to 9.45 ms, inside the spread of the repeats above.
+  Tables reused: 209 of 353 per frame (59%).
+
+### Translation on worker threads (`[Translate] Workers`, off by default)
+
+The immediate context can record the game's bindings and draws into segments and translate them on worker
+threads into their own D3D12 lists, submitted in call order (`src/dx12/translate/tx_stream.h`). It passes the
+suite at 39 of 39 with segments of 1 to 256 draws, and it is slower in Skyrim:
+
+| Workers=3 build | Riverwood frame | What the log showed |
+|---|---|---|
+| first | 14.19 to 14.34 ms | 56 segments a frame. Runs end at `CopyResource` (28 a frame), `UpdateSubresource` (10), clears. |
+| + lazy segments (short runs replayed on the game's thread) | 9.47 to 9.86 ms | 11 segments to the workers, 38 short runs replayed |
+| + run-length prediction, streamed copies, segment reuse | 9.14 to 9.40 ms | 10.5 segments, 2,312 draws recorded a frame |
+| the same build with Workers=0 | 8.80 to 8.84 ms | |
+
+The recording on the game's thread (`SBuf`, `push_back`, holds) costs about what the translation it moves
+away cost, and the per-draw translation plus the driver's calls are only about 1 ms of the frame now. It stays
+off. The game's own code (about 1,450 samples of 4,700) is the largest part of the render thread left.
+
+### Image check
+
+`tools/harness/tests/txdet.txt` takes two keyframes of a still Riverwood. AI is off, the clock is stopped
+(timescale 0, sgtm 0.001) and the game's TAA is switched off in memory. `[Lighting] Deterministic=1` pins the
+bridge's noise seeds. The two frames of one run still differ by mean dE76 1.5 to 2.1. That includes the game's
+own frame before RAW's passes (2.1 with the seeds pinned), so the game itself still moves. The live `bUseTAA`
+change is probably not applied (edges of static geometry differ). The pixel diff between builds is not yet a
+bit-exact gate. On static surfaces (rock, path, roof), two builds differ about as much as two runs of one build.

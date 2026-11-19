@@ -100,23 +100,25 @@ size_t InstallOpcodeLoopTiming(const Image& img, uint32_t vmVtable, uint32_t loo
     Sleep(20);
     QueryPerformanceCounter(&q1);
     g_tscPerMs = uint64_t(double(__rdtsc() - t0) / (double(q1.QuadPart - q0.QuadPart) * 1000.0 / double(f.QuadPart)));
-    const auto* vt = reinterpret_cast<const uint64_t*>(img.base + vmVtable);
+    // Every direct call to the loop in the code section: a byte scan for E8 with a matching displacement, each
+    // candidate confirmed by decoding its function from the start and landing on the site as an instruction.
+    // (The callers sit under CodeTasklet, which may run on job threads; the hook keeps only atomic counters.)
+    (void)vmVtable;
     ZydisDecoder dec;
     ZydisDecoderInit(&dec, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
     std::vector<uint64_t> callSites;
-    for (int slot : {4, 5}) {
-        const uint64_t fn = vt[slot] - uint64_t(img.base);
-        const long fi = img.FuncIndex(fn);
+    for (uint64_t p = img.textBegin; p + 5 <= img.textEnd; ++p) {
+        if (img.base[p] != 0xE8) continue;
+        int32_t rel;
+        std::memcpy(&rel, img.base + p + 1, 4);
+        if (int64_t(p) + 5 + rel != int64_t(loopRva)) continue;
+        const long fi = img.FuncIndex(p);
         if (fi < 0) continue;
         const uint64_t end = img.funcs[size_t(fi)].second;
         ZydisDecodedInstruction in;
-        ZydisDecodedOperand op[ZYDIS_MAX_OPERAND_COUNT];
-        for (uint64_t p = fn; p < end && ZYAN_SUCCESS(ZydisDecoderDecodeFull(&dec, img.base + p, size_t(end - p), &in, op)); p += in.length) {
-            if (in.mnemonic != ZYDIS_MNEMONIC_CALL || in.length != 5 || img.base[p] != 0xE8) continue;
-            ZyanU64 t = 0;
-            ZydisCalcAbsoluteAddress(&in, &op[0], p, &t);
-            if (t == loopRva) callSites.push_back(p);
-        }
+        uint64_t q = img.funcs[size_t(fi)].first;
+        while (q < p && ZYAN_SUCCESS(ZydisDecoderDecodeInstruction(&dec, nullptr, img.base + q, size_t(end - q), &in))) q += in.length;
+        if (q == p) callSites.push_back(p);
     }
     if (callSites.empty()) return 0;
     g_loop = reinterpret_cast<LoopFn>(const_cast<uint8_t*>(img.base) + loopRva);

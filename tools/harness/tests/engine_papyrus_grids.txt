@@ -6,6 +6,8 @@ start load rawharness
 console tai
 scene riverwood
 console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
 console coc riverwood
 wait 8
 console fw 81a

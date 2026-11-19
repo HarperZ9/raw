@@ -489,3 +489,44 @@ main camera's, to find draws on the main depth target that belong to another pas
 
 **The shared shadow ray's cost.** The trace now skips the ray when `RtRest=0` (`GI_REST`). In the inn, off and on
 twice in one run: 1.75 and 1.82 ms off, 1.87 and 1.87 ms on, so about 0.09 ms for the ray.
+
+## Refraction, ReSTIR reuse, and the actors' views (2026-11-19, later)
+
+Runs rt6-next-2 to rt6-next-5, 2160p. ENB 232 of 232 after each, settings restored by hash.
+
+**Refraction through the bed's colour** (`[Lighting] WaterRefract`, 0.65; `WaterAbsorb`, now 0.010). When the
+game binds its water composite, the HDR colour (the bed as RAW lit it) is copied (`CapturePreWater`). The water
+pass reads it at the bed point bent by the wave normal in proportion to the depth (a bent look-up that lands above
+the water keeps the straight one), dims it per channel (red 2.2 times green, blue 0.7 times) along the path under
+the water, and fills in the water's scatter (its tint under the sky's ambient). The result replaces 0.65 of the
+game's water body; Fresnel then mixes in the reflection. At 1.0 the surface read as glass, losing the game's wave
+sparkle; at 0.4 and 0.008 the depth tint was faint. `WaterView=6` shows the body alone.
+
+**The water list's cost.** `WaterBed=0` and `1`, twice each in one run (rt6-next-2): 0.608 and 0.612 ms off,
+0.628 and 0.631 ms on, so the bed's depth costs about 0.02 ms. The water list reads 0.6 ms in that view in this run;
+#33's 0.38 ms was another session and another view, so the difference is between runs, not the bed.
+
+**ReSTIR reuse** (`[Lighting] RtRestReuse`, on). Every lit pixel now keeps a reservoir (the light + 1, W, M, view
+depth) in RtSky's two RGBA32F textures, which swap each frame (root parameter 15: u9, u10 and the motion vectors at
+t7). After the exact pick, the reservoir at the motion-vector position and two neighbours 4 to 16 pixels from it are
+resampled into it: target the unshadowed light, history capped at 20, a neighbour only at the same view depth. On
+the sky ray's turn the kept light gets the shadow ray, and p(y) V(y) W over the exact unshadowed sum gives the
+share that arrives, sent to the filter in fifteenths. Inn, two runs each way in one session (rt6-next-4): the trace
+read 1.91 and 1.93 ms without reuse and 1.74 and 1.75 ms with it; the cause of the drop is not found. The mean
+absolute Laplacian of view 14 (pixel-to-pixel noise) fell from 0.997 to 0.948, and its mean from 166.8 to 161.8.
+
+**The actors' views.** Each actor draw's view-projection (vertex cb12 rows 8 to 11) is compared with the frame's
+main view (`RtActorView`): every actor draw matched, with a largest difference of 0, so the sheet's draws are not
+from another pass. The floating draws' states showed nothing apart: their pixel shaders are RAW's patched variants
+(unregistered, so their hash reads 0), and like the rest of the opaque pass they write colour with the depth write
+off (the pass tests against the prepass depth). Skinned draws that bind no pixel shader at all (2,283 in the run) now
+stay out; the floating count did not change. The skin check now also tests three points along each edge, so a
+triangle that runs off the screen into the sky is caught. In the third-person primary-ray view (rt6-next-5) the
+player's outline is clean; the tall magenta column above the player is the tree behind them, which carries no
+material record. The floating count stays near 2,060 of 32,784 skinned triangles, and the cause is still not found.
+
+**Hair.** The albedo tap now follows a material tint (a cb1 value) multiplied into another register before lighting,
+with the destination's channels mapped (ps `6a2383091a33f594`, `18d10e9ba7f68469`). The first version read the
+register after the game had reused it and turned an NPC's skin black (rt6-next-4); it now taps right after the tint
+when the register is overwritten before lighting (rt6-next-5: skin correct). The NPC's red hair still reads blonde,
+so the hair's tint comes some other way; not found.

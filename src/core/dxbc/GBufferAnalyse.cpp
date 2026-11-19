@@ -87,17 +87,27 @@ void FindAlbedo(const std::vector<Instruction>& code, const std::vector<int>& de
     bool inPlace = false;
     uint32_t reg2 = reg, sw[3] = {uint32_t(r), uint32_t(g), uint32_t(b)};
     uint32_t comps2 = comps;
+    size_t switchedAt = kNone;
     for (size_t i = s + 1; lit && i < code.size(); ++i) {
         const bool lighting = ReadsBuffer(code[i], 2) || SamplesSlot(code[i], 14);
         // A tint from the material (cb1) multiplied into another register before lighting (the hair's and the
         // tinted skin's colour: ps 6a2383091a33f594 and 18d10e9ba7f68469 in the Riverwood capture) is the albedo.
         if (depth[i] == 0 && !lighting && code[i].opcode == op::Mul && code[i].ops.size() == 3 && code[i].ops[0].type == type::Temp &&
-            code[i].ops[0].index[0] != reg2 && (code[i].ops[0].Mask() & 7u) == 7u && ReadsBuffer(code[i], 1)) {
+            code[i].ops[0].index[0] != reg2 && ReadsBuffer(code[i], 1)) {
+            const uint32_t mask = code[i].ops[0].Mask();
             for (int k = 1; k <= 2; ++k) {
                 const auto& o = code[i].ops[k];
-                if (o.type == type::Temp && o.index[0] == reg2 && o.Swizzle(0) == sw[0] && o.Swizzle(1) == sw[1] && o.Swizzle(2) == sw[2]) {
+                if (o.type != type::Temp || o.index[0] != reg2) continue;
+                // Where each albedo channel lands in the destination (ps 18d10e9ba7f68469 writes r1.xyz to r2.yzw).
+                uint32_t to[3] = {4, 4, 4};
+                for (uint32_t c = 0; c < 3; ++c)
+                    for (uint32_t d = 0; d < 4; ++d)
+                        if ((mask >> d & 1) && o.Swizzle(d) == sw[c] && to[c] == 4) to[c] = d;
+                if (to[0] < 4 && to[1] < 4 && to[2] < 4) {
                     reg2 = code[i].ops[0].index[0];
-                    sw[0] = 0; sw[1] = 1; sw[2] = 2; comps2 = 7u;
+                    sw[0] = to[0]; sw[1] = to[1]; sw[2] = to[2];
+                    comps2 = 1u << to[0] | 1u << to[1] | 1u << to[2];
+                    switchedAt = i;
                     break;
                 }
             }
@@ -108,11 +118,16 @@ void FindAlbedo(const std::vector<Instruction>& code, const std::vector<int>& de
             if (o == op::If || o == op::Loop || o == op::Switch) opener = i;
         } else if (lighting && opener != kNone) { tap = opener; inPlace = true; break; }
         const Instruction& in = code[i];
-        if (!in.ops.empty() && in.ops[0].type == type::Temp && in.ops[0].index[0] == reg2 && (in.ops[0].Mask() & comps2) && i != s) {
+        if (!in.ops.empty() && in.ops[0].type == type::Temp && in.ops[0].index[0] == reg2 && (in.ops[0].Mask() & comps2) && i != switchedAt) {
             bool readsSelf = false;
             for (size_t k = 1; k < in.ops.size(); ++k)
                 readsSelf |= in.ops[k].type == type::Temp && in.ops[k].index[0] == reg2;
-            if (!readsSelf && !(reg2 != reg && in.opcode == op::Mul && ReadsBuffer(in, 1))) break;   // the register now holds something else
+            if (!readsSelf) {   // the register now holds something else
+                // After a switch to the tinted copy, an overwrite before lighting means the copy is gone: tap where it
+                // still held the tint, right after the switch, rather than read the new value at lighting.
+                if (switchedAt != kNone) { tap = switchedAt + 1; inPlace = false; }
+                break;
+            }
         }
     }
     a->albedoBefore = tap;

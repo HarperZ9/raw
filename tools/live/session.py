@@ -107,7 +107,7 @@ class LiveSession(Runner):
         G.console(f"load {self.cfg.save}")
         self.wait_load()
         self.started_at = time.time()
-        self.last_move = ""   # the save's own cell is not known by name
+        self.last_move = f"coc {self.cfg.save_cell}".lower() if getattr(self.cfg, "save_cell", "") else ""
         self.up = True
         self.log(f"session up: save {self.cfg.save} loaded")
 
@@ -150,6 +150,23 @@ class LiveSession(Runner):
         self.log(f"restored: ENB {after['game_after']}, settings {after['settings_restored']}, Plugins.txt {plugins_ok}, "
                  f"left in the game folder: {leftovers or 'nothing'}")
         return after
+
+    def change_cell(self, line: str) -> None:
+        """The harness's coc, with two changes for a session that stays up. A coc to the cell the session last moved
+        to (or the save's cell, --save-cell) is skipped. A coc that brings no loading screen and no lighting change
+        is not typed again: in a live session that means the player was already there, and the second copy's keys
+        went into the world (the inventory opened, rt-102124-ywa3 and two earlier). The answer says which."""
+        if line.lower() == getattr(self, "last_move", "") and not getattr(self, "force_move", False):
+            self.log(f"console: {line} skipped, the session is already there")
+            return
+        before = G.status(self.inst.game)
+        G.console(line)
+        self.log(f"console: {line}")
+        self.wait_load()
+        after = G.status(self.inst.game)
+        if after.get("loads", 0) <= before.get("loads", 0) and after.get("cell") == before.get("cell"):
+            self.log(f"console: {line}: no loading screen and no lighting change; taken as already there, not typed again")
+        self.last_move = line.lower()
 
     def check_cancel(self) -> None:
         """<root>/cancel/<request id>, written by `req.py cancel <id>`, ends the running request between steps."""

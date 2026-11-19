@@ -41,7 +41,7 @@ RtScene::~RtScene()
         CloseHandle(e);
     }
     for (Mesh& m : m_meshes) { if (m.vb) m.vb->Release(); if (m.ib) m.ib->Release(); }
-    for (RtDraw& d : m_draws) { if (d.vb) d.vb->Release(); if (d.ib) d.ib->Release(); }
+    for (RtDraw& d : m_draws) ReleaseRtDraw(d);
 }
 
 bool RtScene::Buffer(ComPtr<ID3D12Resource>& r, uint64_t bytes, D3D12_HEAP_TYPE heap, D3D12_RESOURCE_STATES s, bool uav, const wchar_t* name)
@@ -73,14 +73,19 @@ bool RtScene::Texture(ComPtr<ID3D12Resource>& r, const wchar_t* name)
 bool RtScene::Pipeline(std::string& err)
 {
     D3D12_DESCRIPTOR_RANGE srv{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 0, 0};
-    D3D12_DESCRIPTOR_RANGE uav{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0, 0, 0};   // its own table, set at descriptor 3
-    D3D12_ROOT_PARAMETER p[5]{};
+    D3D12_DESCRIPTOR_RANGE uav{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 3, 0, 0, 0};   // its own table, set at descriptor 3: vis, lights, alpha coordinates
+    D3D12_DESCRIPTOR_RANGE masks{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, UINT(-1), 0, 1, 0};   // u0 space1 onward, at descriptor 6
+    D3D12_DESCRIPTOR_RANGE skyRaw{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 3, 0, 0};          // u3, RtSky's
+    D3D12_ROOT_PARAMETER p[8]{};
     p[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; p[0].Descriptor = {0, 0};
-    p[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; p[1].Constants = {1, 0, 4};
+    p[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; p[1].Constants = {1, 0, 8};
     p[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; p[2].Descriptor = {3, 0};
     p[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[3].DescriptorTable = {1, &srv};
     p[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[4].DescriptorTable = {1, &uav};
-    D3D12_ROOT_SIGNATURE_DESC rs{5, p, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    p[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; p[5].Descriptor = {4, 0};
+    p[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[6].DescriptorTable = {1, &masks};
+    p[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[7].DescriptorTable = {1, &skyRaw};
+    D3D12_ROOT_SIGNATURE_DESC rs{8, p, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ComPtr<ID3DBlob> blob, errs;
     if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errs))) {
         err = errs ? static_cast<const char*>(errs->GetBufferPointer()) : "root signature";
@@ -114,12 +119,18 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
              SUCCEEDED(m_dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_alloc[k])));
     if (!ok) { err = "resources"; return false; }
     D3D12_QUERY_HEAP_DESC qd{D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 9, 0};
-    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 5, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+    // 0..2 the G-buffer, 3 and 4 the outputs, then RtAlpha's: its coordinates (5), masks (6...), staging.
+    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 5 + RtAlpha::Descriptors() + RtSky::Descriptors(),
+                                  D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
     if (FAILED(m_dev->CreateQueryHeap(&qd, IID_PPV_ARGS(&m_ts))) || FAILED(m_dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&m_heap))) ||
         FAILED(m_dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_alloc[0].Get(), nullptr, IID_PPV_ARGS(&m_list))) ||
         FAILED(m_dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence)))) { err = "objects"; return false; }
     m_list->Close();
     if (!Pipeline(err)) return false;
+    if (!m_alpha.Create(m_dev.Get(), m_heap.Get(), 5, err)) return false;
+    std::string skyErr;
+    m_skyReady = m_sky.Create(m_dev.Get(), m_heap.Get(), 5 + RtAlpha::Descriptors(), width, height, skyErr);
+    if (!m_skyReady && m_log) m_log("[RT] sky visibility off: %s", skyErr.c_str());
     m_ready = true;
     if (m_log) m_log("[RT] scene ready on the layer's device: %ux%u, BLAS heap %llu MB, %u instances at most", width, height,
                      (unsigned long long)(kBlasHeap >> 20), kMaxInstances);
@@ -139,12 +150,13 @@ void RtScene::Evict()
     for (Mesh& m : m_meshes) { if (m.vb) m.vb->Release(); if (m.ib) m.ib->Release(); }
     m_meshes.clear(); m_meshOf.clear(); m_build.clear();
     m_blasUsed = 0;
+    m_alpha.Reset();
     ++m_stats.resets;
 }
 
 void RtScene::SetDraws(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>& toHand, ID3D12Resource* (*native)(ID3D11Resource*))
 {
-    for (RtDraw& d : m_draws) { if (d.vb) d.vb->Release(); if (d.ib) d.ib->Release(); }
+    for (RtDraw& d : m_draws) ReleaseRtDraw(d);
     m_draws = std::move(draws);
     m_build.clear();
     ++m_frame;
@@ -159,7 +171,8 @@ void RtScene::SetDraws(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>
                     uint64_t(d.startIndex) << 32 | uint32_t(d.baseVertex) ^ uint64_t(d.indexCount) << 12};
         auto it = m_meshOf.find(k);
         if (it != m_meshOf.end()) { m_meshes[it->second].seen = m_frame; continue; }
-        if (m_build.size() >= m_tune.maxNewPerFrame) { ++m_stats.skipped; continue; }
+        // Over this frame's budget: the mesh is tried again next frame.
+        if (m_build.size() >= m_tune.maxNewPerFrame || (d.alphaKind && m_tune.alpha && !m_alpha.Room())) { ++m_stats.skipped; continue; }
         D3D11_BUFFER_DESC vd{}, id{};
         d.vb->GetDesc(&vd); d.ib->GetDesc(&id);
         ID3D12Resource* v12 = native(d.vb);
@@ -182,8 +195,12 @@ void RtScene::SetDraws(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>
             t.IndexFormat = d.ibFormat;
             t.IndexBuffer = i12->GetGPUVirtualAddress() + iStart;
             t.IndexCount = d.indexCount / 3 * 3;
-            toHand.push_back(d.vb);
-            toHand.push_back(d.ib);
+            if (d.alphaKind) {
+                // Alpha-tested: its coordinates and mask join RtAlpha, or the mesh stays out (a solid card).
+                if (m_tune.alpha) m.alphaRecord = m_alpha.AddMesh(d, v12, i12, vStart, iStart, t.IndexCount / 3, toHand, native);
+                if (!m.alphaRecord) { m.failed = true; ++m_stats.skipped; m.vb->Release(); m.ib->Release(); m.vb = m.ib = nullptr; }
+            }
+            if (!m.failed) { toHand.push_back(d.vb); toHand.push_back(d.ib); }
         }
         m_meshOf.emplace(k, uint32_t(m_meshes.size()));
         if (!m.failed) m_build.push_back(uint32_t(m_meshes.size()));
@@ -191,7 +208,8 @@ void RtScene::SetDraws(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>
     }
 }
 
-bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, ID3D12Resource* normal, ID3D12Resource* spec)
+bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, ID3D12Resource* normal, ID3D12Resource* spec,
+                     ID3D12Resource* motion)
 {
     m_recorded = false;
     if (!Active() || !uniform || bytes > kCb) return false;
@@ -225,6 +243,11 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
     ID3D12GraphicsCommandList4* cl = m_list.Get();
     cl->EndQuery(m_ts.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot * 3);
 
+    // Alpha-tested meshes first seen this frame: their coordinates and masks.
+    ID3D12DescriptorHeap* heaps[1] = {m_heap.Get()};
+    cl->SetDescriptorHeaps(1, heaps);
+    const bool prepared = m_alpha.Record(cl, slot);
+
     // BLAS builds for the new meshes, each from the game's own buffers.
     uint64_t scratchAt = 0;
     uint32_t built = 0;
@@ -233,7 +256,7 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
         Mesh& m = m_meshes[idx];
         D3D12_RAYTRACING_GEOMETRY_DESC g{};
         g.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
-        g.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+        g.Flags = m.alphaRecord ? D3D12_RAYTRACING_GEOMETRY_FLAG_NONE : D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
         g.Triangles = m.tri;
         D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS in{};
         in.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
@@ -253,13 +276,13 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
         ++built; tris += m.tri.IndexCount / 3;
     }
     D3D12_RESOURCE_BARRIER u = Uav();
-    if (built) cl->ResourceBarrier(1, &u);
+    if (built || prepared) cl->ResourceBarrier(1, &u);
 
     // TLAS: every draw whose mesh has a BLAS, placed by its world matrix.
     auto* inst = static_cast<D3D12_RAYTRACING_INSTANCE_DESC*>(nullptr);
     const D3D12_RANGE none{0, 0};
     m_inst[slot]->Map(0, &none, reinterpret_cast<void**>(&inst));
-    uint32_t n = 0;
+    uint32_t n = 0, alphaN = 0;
     uint64_t sceneTris = 0;
     for (const RtDraw& d : m_draws) {
         if (n >= kMaxInstances) break;
@@ -268,10 +291,13 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
         auto it = m_meshOf.find(k);
         if (it == m_meshOf.end() || !m_meshes[it->second].built) continue;
         const Mesh& m = m_meshes[it->second];
+        if (m.alphaRecord && !m_tune.alpha) continue;   // RtAlpha=0 live: the alpha-tested meshes leave the scene
         D3D12_RAYTRACING_INSTANCE_DESC& x = inst[n++];
         std::memcpy(x.Transform, d.world, sizeof x.Transform);
-        x.InstanceID = 0; x.InstanceMask = 0xFF; x.InstanceContributionToHitGroupIndex = 0;
-        x.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE | D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE;
+        x.InstanceID = m.alphaRecord; x.InstanceMask = 0xFF; x.InstanceContributionToHitGroupIndex = 0;
+        x.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE |
+                  (m.alphaRecord ? D3D12_RAYTRACING_INSTANCE_FLAG_NONE : D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE);
+        alphaN += m.alphaRecord != 0;
         x.AccelerationStructure = m_blasHeap->GetGPUVirtualAddress() + m.blas;
         sceneTris += m.tri.IndexCount / 3;
     }
@@ -303,7 +329,7 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
         sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         m_dev->CreateShaderResourceView(srvs[k], &sd, {h.ptr + k * inc});
     }
-    ID3D12Resource* outs[2] = {m_vis.Get(), m_lights.Get()};
+    ID3D12Resource* outs[2] = {m_vis.Get(), m_lights.Get()};   // descriptor 5 (the alpha coordinates) is RtAlpha's
     for (int k = 0; k < 2; ++k) {
         D3D12_UNORDERED_ACCESS_VIEW_DESC ud{};
         ud.Format = DXGI_FORMAT_R8G8B8A8_UNORM; ud.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
@@ -312,18 +338,23 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
     D3D12_RESOURCE_BARRIER in2[2] = {Transition(outs[0], D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
                                      Transition(outs[1], D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)};
     cl->ResourceBarrier(2, in2);
-    ID3D12DescriptorHeap* heaps[1] = {m_heap.Get()};
-    cl->SetDescriptorHeaps(1, heaps);
     cl->SetComputeRootSignature(m_root.Get());
     cl->SetPipelineState(m_pso.Get());
     cl->SetComputeRootConstantBufferView(0, m_cb[slot]->GetGPUVirtualAddress());
-    const float rc[4] = {m_tune.sunLength, m_tune.sourceRadius, m_tune.sunCone, float(m_frame & 0xFFFF)};
-    cl->SetComputeRoot32BitConstants(1, 4, rc, 0);
+    const bool sky = m_skyReady && m_tune.sky;
+    const float rc[8] = {m_tune.sunLength, m_tune.sourceRadius, m_tune.sunCone, float(m_frame & 0xFFFF), m_tune.alphaRef, m_tune.termDist,
+                         sky ? m_tune.skyLength : 0.0f, 0.0f};
+    cl->SetComputeRoot32BitConstants(1, 8, rc, 0);
     cl->SetComputeRootShaderResourceView(2, m_tlas->GetGPUVirtualAddress());
     D3D12_GPU_DESCRIPTOR_HANDLE g = m_heap->GetGPUDescriptorHandleForHeapStart();
     cl->SetComputeRootDescriptorTable(3, g);
     cl->SetComputeRootDescriptorTable(4, {g.ptr + 3 * inc});
+    cl->SetComputeRootShaderResourceView(5, m_alpha.RecordsAddress());
+    cl->SetComputeRootDescriptorTable(6, {g.ptr + 6 * inc});
+    cl->SetComputeRootDescriptorTable(7, {g.ptr + UINT64(m_skyReady ? m_sky.RawDescriptor() : 3) * inc});   // off: never written
     cl->Dispatch((m_w + 7) / 8, (m_h + 7) / 8, 1);
+    if (sky) m_sky.Record(cl, m_cb[slot]->GetGPUVirtualAddress(), motion, m_frame, 1.0f);
+    else m_sky.Reset();
     D3D12_RESOURCE_BARRIER out2[2] = {Transition(outs[0], D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
                                       Transition(outs[1], D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON)};
     cl->ResourceBarrier(2, out2);
@@ -332,6 +363,8 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
     if (FAILED(cl->Close())) return false;
     m_stats.instances = n; m_stats.meshes = uint32_t(m_meshes.size()); m_stats.newMeshes = built;
     m_stats.newTriangles = tris; m_stats.triangles = sceneTris; m_stats.blasBytes = m_blasUsed;
+    m_stats.alphaInstances = alphaN; m_stats.alphaMeshes = m_alpha.Meshes(); m_stats.masks = m_alpha.Masks();
+    m_stats.noMask = m_alpha.NoMask(); m_stats.uvBytes = m_alpha.PoolBytes();
     m_recorded = true;
     return true;
 }

@@ -468,7 +468,26 @@ if(RAW_ENGINE_DIR)
         DEPENDS ${RAW_RTSHADOW_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
         COMMENT "dxc: ray-traced shadows -> DXIL header"
         VERBATIM)
-    target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtScene.cpp ${RAW_ENGINE_GEN}/rt_shadow.h)
+    set(RAW_RTALPHA_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtAlphaUv.hlsl)
+    add_custom_command(
+        OUTPUT ${RAW_ENGINE_GEN}/rt_alpha_uv.h ${RAW_ENGINE_GEN}/rt_alpha_mask.h
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T cs_6_5 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_alpha_uv.h -Vn kDxil_rt_alpha_uv ${RAW_RTALPHA_HLSL}
+        COMMAND ${RAW_DXC} -T cs_6_5 -E mask ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_alpha_mask.h -Vn kDxil_rt_alpha_mask ${RAW_RTALPHA_HLSL}
+        DEPENDS ${RAW_RTALPHA_HLSL}
+        COMMENT "dxc: ray-tracing alpha coordinates and masks -> DXIL headers"
+        VERBATIM)
+    set(RAW_RTSKY_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtSkyFilter.hlsl)
+    add_custom_command(
+        OUTPUT ${RAW_ENGINE_GEN}/rt_sky_filter.h
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T cs_6_5 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_sky_filter.h -Vn kDxil_rt_sky_filter ${RAW_RTSKY_HLSL}
+        DEPENDS ${RAW_RTSKY_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
+        COMMENT "dxc: sky visibility filter -> DXIL header"
+        VERBATIM)
+    target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtScene.cpp src/d3d12_bridge/RtAlpha.cpp src/d3d12_bridge/RtSky.cpp
+                   ${RAW_ENGINE_GEN}/rt_shadow.h ${RAW_ENGINE_GEN}/rt_alpha_uv.h ${RAW_ENGINE_GEN}/rt_alpha_mask.h
+                   ${RAW_ENGINE_GEN}/rt_sky_filter.h)
 endif()
 target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/ShaderCompiler.cpp)
 target_link_libraries(d3d11_proxy PRIVATE raw_dx12_translate)

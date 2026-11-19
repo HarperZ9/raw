@@ -137,7 +137,23 @@ struct RtDraw
     UINT ibOffset = 0, indexCount = 0, startIndex = 0;
     INT baseVertex = 0;
     float world[12] = {};   // model to camera-relative world, rows (the game's vertex buffer 2)
+    // Alpha-tested draws (a discard in the pixel shader, alpha to coverage, soft-lit foliage): the
+    // texture coordinate element in the position's vertex buffer and the texture whose alpha cuts
+    // the surface (pixel shader t0). The rays test that alpha (RtScene, RtShadow.hlsl).
+    uint8_t alphaKind = 0;               // RtAlpha*
+    UINT uvOffset = 0;
+    DXGI_FORMAT uvFormat = DXGI_FORMAT_UNKNOWN;
+    ID3D11ShaderResourceView* alphaSrv = nullptr;   // a reference, released with the draw
 };
+enum : uint8_t { RtAlphaNone = 0, RtAlphaDiscard = 1, RtAlphaCoverage = 2, RtAlphaFoliage = 3 };
+
+inline void ReleaseRtDraw(RtDraw& d)
+{
+    if (d.vb) d.vb->Release();
+    if (d.ib) d.ib->Release();
+    if (d.alphaSrv) d.alphaSrv->Release();
+    d.vb = nullptr; d.ib = nullptr; d.alphaSrv = nullptr;
+}
 
 struct RtTuning
 {
@@ -146,6 +162,11 @@ struct RtTuning
     float    sourceRadius = 6.0f;    // point lights' size for the penumbra, game units
     float    sunCone = 0.0093f;      // the sun's angular radius in radians, widened a little
     uint32_t maxNewPerFrame = 400;   // BLAS builds a frame
+    bool     alpha = true;           // alpha-tested draws join the scene with their alpha tested by the rays
+    float    alphaRef = 0.5f;        // the cut: alpha below it lets the ray through
+    float    termDist = 48.0f;       // game units: near hits ignored where the surface turns from the sun
+    bool     sky = true;             // sky visibility (RtSky): one ray a pixel into the upper hemisphere
+    float    skyLength = 6000.0f;    // game units: a sky ray that travels this far sees sky
 };
 
 struct RtFrameStats
@@ -153,6 +174,8 @@ struct RtFrameStats
     uint32_t draws = 0, skipped = 0, resets = 0, instances = 0, meshes = 0, newMeshes = 0;
     uint64_t newTriangles = 0, triangles = 0, blasBytes = 0;
     double   buildMs = 0, traceMs = 0;
+    uint32_t alphaInstances = 0, alphaMeshes = 0, masks = 0, noMask = 0;
+    uint64_t uvBytes = 0;
 };
 
 enum class Shared : UINT { ColorIn, Depth, Normal, ColorOut, Motion, Albedo, Specular, ShadowMask, ShadowAtlas, Emissive, RtVisibility, RtLights, Count };

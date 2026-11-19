@@ -39,7 +39,13 @@ struct LightingTuning
     float contactLength = 40.0f;    // game units
     float aoStrength = 0.7f;        // the game's own AO still multiplies the frame after this pass
     float clusterFar = 40000.0f;    // the last depth slice ends here
-    bool  rtShadows = false;        // improved: ray-traced sun and point-light shadows on the game's geometry (attached to raw::tx)
+    bool  rtShadows = true;         // improved: ray-traced sun and point-light shadows on the game's geometry (attached to raw::tx)
+    bool  rtAlpha = true;           // alpha-tested draws join the ray-tracing scene, their alpha tested by the rays
+    float rtAlphaRef = 0.5f;        // the alpha cut the rays apply
+    float rtTermDist = 48.0f;       // game units: near hits ignored where the surface turns from the sun (facets)
+    bool  rtSky = true;             // exteriors: the ambient scaled by the ray-traced sky visibility
+    float rtSkyStrength = 1.0f;     // 0 none, 1 the full visibility
+    float rtSkyLength = 6000.0f;    // game units
 };
 
 // Lights into clusters: out[cluster] holds one bit per light index.

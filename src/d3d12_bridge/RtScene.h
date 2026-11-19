@@ -9,6 +9,8 @@
 // the three strongest point lights of each pixel with inline ray queries. Output: two RGBA8
 // textures the lighting pass reads (visibility; which lights). Original work, MIT.
 #include "D3D12Bridge.h"
+#include "RtAlpha.h"
+#include "RtSky.h"
 #include <wrl/client.h>
 #include <string>
 #include <unordered_map>
@@ -29,7 +31,8 @@ public:
     void SetDraws(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>& toHand,
                   ID3D12Resource* (*native)(ID3D11Resource*));
     // Records the builds and the trace; uniform: the lighting pass's cbuffer P for this frame.
-    bool Record(const void* uniform, size_t bytes, ID3D12Resource* depth, ID3D12Resource* normal, ID3D12Resource* spec);
+    bool Record(const void* uniform, size_t bytes, ID3D12Resource* depth, ID3D12Resource* normal, ID3D12Resource* spec,
+                ID3D12Resource* motion);
     bool Submit(ID3D12CommandQueue* q);
     bool Active() const { return m_tune.enabled && m_ready; }
     ID3D12Resource* Visibility() const { return m_vis.Get(); }
@@ -43,6 +46,7 @@ private:
         ID3D11Buffer* ib = nullptr;
         D3D12_RAYTRACING_GEOMETRY_TRIANGLES_DESC tri{};
         uint64_t blas = 0, bytes = 0, seen = 0;
+        uint32_t alphaRecord = 0;   // RtAlpha record + 1; 0: opaque
         bool built = false, failed = false;
     };
     struct Key { uintptr_t vb, ib; uint64_t a, b; bool operator==(const Key& o) const { return vb == o.vb && ib == o.ib && a == o.a && b == o.b; } };
@@ -75,6 +79,9 @@ private:
     std::vector<RtDraw> m_draws;
     uint64_t m_blasUsed = 0;
     RtFrameStats m_stats;
+    RtAlpha m_alpha;
+    RtSky m_sky;
+    bool m_skyReady = false;
 };
 
 } // namespace raw::bridge

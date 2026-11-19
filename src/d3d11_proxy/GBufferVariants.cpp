@@ -2,6 +2,7 @@
 // Original work, MIT.
 #include "GBufferState.h"
 #include "ProxyLog.h"
+#include "SceneGeometry.h"
 
 namespace SB::Proxy
 {
@@ -28,6 +29,9 @@ ID3D11PixelShader* VariantFor(State& s, ID3D11PixelShader* game, bool firstPerso
                 if (s.createFailed++ < 8) Log("[GBuffer] the device refused a patched shader (0x%08X, %zu bytes)", hr, out.size());
             } else {
                 ++s.patched;
+                // The variant stays bound for the game's next draws with the same shader, so the
+                // ray-tracing capture sees it: it gets the original's alpha classification.
+                SceneGeometry_OnPixelShader(e.variant[k], e.code.data(), e.code.size());
             }
         } else if (s.refused++ < 8) {
             Log("[GBuffer] shader left alone: %s", info.refused ? info.refused : "?");

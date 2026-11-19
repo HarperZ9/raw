@@ -130,7 +130,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // and went black (riverwood_day bush 0.267 -> 0.232 in luminance).
         if (!match && (flags.x & FLAG_CONTACT) != 0u && base != 5u && sunShadow > 0.0f && dot(s.n, sunDir.xyz) > 0.0f)
             sunShadow *= screenShadow(p + lift, sunDir.xyz, tune.w, 0.02f, jit, 12u);
-        if (rt) { sunShadow = min(sunShadow, rv.x); }   // the game's mask keeps what the scene lacks (skinned actors, foliage)
+        // The game's mask keeps what the scene lacks (skinned actors). Interiors (no cascades): the
+        // directional light is the cell's fill, unshadowed as the game lights it; rays would cut it
+        // into window shafts and darken the room.
+        if (rt && sunColour.w > 0.5f) { sunShadow = min(sunShadow, rv.x); }
         addLight(s, sunDir.xyz, sunColour.rgb * sunShadow, sunColour.rgb, diff, spec);
     }
 
@@ -165,10 +168,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                         dot(ambient[2].xyz, s.n) + ambient[2].w);
     // Foliage gets a third of the AO: screen-space AO over-occludes thin geometry.
     if ((flags.x & FLAG_AO) != 0u) { amb *= lerp(1.0f, AoHist.Load(ip).x, tune2.x * (base == 5u ? 0.35f : 1.0f)); }
+    // Exteriors: the sky the pixel sees (RtSky.cpp), in the light-index output's alpha. Interiors keep
+    // the game's ambient: their cell ambient is set for an enclosed room.
+    const float skyVis = rt && (flags.x & FLAG_SKY) != 0u && sunColour.w > 0.5f ? RtIdx.Load(ip).w : 1.0f;
+    amb *= lerp(1.0f, skyVis, cluster.w);
 
     if (flags.w == 1u) { return float4(s.n * 0.5f + 0.5f, game.a); }
     if (flags.w == 2u) { return float4(sunShadow.xxx, game.a); }
     if (flags.w == 3u) { return float4(amb, game.a); }
+    if (flags.w == 4u) { return float4(skyVis.xxx, game.a); }
 
     float3 lit = knee3(albedo * (diff + amb));
     // The game's lobe exists only in shaders with a shininess exponent (gloss > 0).

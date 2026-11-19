@@ -21,7 +21,7 @@ cbuffer P : register(b0) {
     float4 cascade[6];      // cascade k: rows 3k .. 3k+2
     float4 cascadeInfo;     // bias 0, bias 1, split depth, atlas side
     uint4  flags;           // x: FLAG_*; y: lights; z: cascades; w: view mode
-    float4 cluster;         // near, far, SLICES / log(far / near), pad
+    float4 cluster;         // near, far, SLICES / log(far / near), sky visibility strength
     float4 tune;            // fog density, fog anisotropy, soft-shadow range, contact length
     float4 tune2;           // AO strength, fog light scale, fog sun scale, fog max distance
     float4 lightPosR[MAX_LIGHTS];   // xyz, radius
@@ -31,7 +31,7 @@ cbuffer P : register(b0) {
 
 static const uint FLAG_MATCH = 1u, FLAG_SOFT = 2u, FLAG_GGX = 4u, FLAG_FOG = 8u, FLAG_CONTACT = 16u, FLAG_AO = 32u,
                   FLAG_CASCADES = 64u, FLAG_SURFACE = 128u, FLAG_SHADOWS = 256u,
-                  FLAG_FOG_REPLACES = 512u, FLAG_RT = 1024u;   // our fog takes the game's distance fog's place (off: the game's runs after ours)
+                  FLAG_FOG_REPLACES = 512u, FLAG_RT = 1024u, FLAG_SKY = 2048u;   // our fog takes the game's distance fog's place (off: the game's runs after ours)
 static const float PI = 3.14159265358979f;
 
 float4 vs(uint i : SV_VertexID) : SV_Position {

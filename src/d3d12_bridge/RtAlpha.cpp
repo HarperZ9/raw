@@ -32,7 +32,7 @@ bool RtAlpha::Create(ID3D12Device5* dev, ID3D12DescriptorHeap* heap, uint32_t ba
         return true;
     };
     if (!buffer(m_pool, kPool, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, true, L"rt alpha coordinates") ||
-        !buffer(m_records, kMaxRecords * 8ull, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, false, L"rt alpha records")) {
+        !buffer(m_records, kMaxRecords * 16ull, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, false, L"rt alpha records")) {
         err = "alpha resources"; return false;
     }
     const D3D12_RANGE none{0, 0};
@@ -120,6 +120,7 @@ uint32_t RtAlpha::MaskFor(ID3D11ShaderResourceView* v, std::vector<ID3D11Resourc
     j.srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     j.srv.Texture2D.MostDetailedMip = mip; j.srv.Texture2D.MipLevels = vd.Texture2D.MipLevels;
     m_maskJobs.push_back(j);
+    m.w = w; m.h = h;
     m.src = r;   // the reference GetResource added: the game texture lives while its mask does
     m_masks.push_back(std::move(m));
     m_maskOf.emplace(r, index);
@@ -136,18 +137,26 @@ uint32_t RtAlpha::AddMesh(const RtDraw& d, ID3D12Resource* v12, ID3D12Resource* 
     }
     const uint32_t mask = MaskFor(d.alphaSrv, toHand, native);
     if (mask == ~0u) { ++m_noMask; return 0; }
+    // The coordinates come from the position's vertex buffer, or from their own stream.
+    ID3D11Buffer* uvb = d.uvVb ? d.uvVb : d.vb;
+    ID3D12Resource* uv12 = d.uvVb ? native(d.uvVb) : v12;
     D3D11_BUFFER_DESC vd{}, id{};
-    d.vb->GetDesc(&vd); d.ib->GetDesc(&id);
+    uvb->GetDesc(&vd); d.ib->GetDesc(&id);
+    if (!uv12 || vd.Usage == D3D11_USAGE_DYNAMIC) { ++m_noMask; return 0; }
+    const uint64_t uvStart = d.uvVb ? uint64_t(d.uvVbOffset) + int64_t(d.baseVertex) * d.uvStride : vStart;
+    if (d.uvVb) toHand.push_back(d.uvVb);
     UvJob j{};
-    j.v12 = v12; j.i12 = i12; j.vbBytes = vd.ByteWidth; j.ibBytes = id.ByteWidth;
+    j.v12 = uv12; j.i12 = i12; j.vbBytes = vd.ByteWidth; j.ibBytes = id.ByteWidth;
     const bool half = d.uvFormat == DXGI_FORMAT_R16G16_FLOAT || d.uvFormat == DXGI_FORMAT_R16G16B16A16_FLOAT;
-    j.c[0] = uint32_t(vStart); j.c[1] = d.stride; j.c[2] = d.uvOffset; j.c[3] = half ? 0u : 1u;
+    j.c[0] = uint32_t(uvStart); j.c[1] = d.uvVb ? d.uvStride : d.stride; j.c[2] = d.uvOffset; j.c[3] = half ? 0u : 1u;
     j.c[4] = uint32_t(iStart); j.c[5] = d.ibFormat == DXGI_FORMAT_R32_UINT ? 1u : 0u; j.c[6] = triangles;
     j.c[7] = uint32_t(m_poolUsed / 8);   // the first coordinate, in 8-byte units
     m_uv.push_back(j);
     const uint32_t rec = m_recordCount++;
-    m_rec[rec * 2] = j.c[7];
-    m_rec[rec * 2 + 1] = mask;
+    m_rec[rec * 4] = j.c[7];
+    m_rec[rec * 4 + 1] = mask;
+    m_rec[rec * 4 + 2] = m_masks[mask].w;
+    m_rec[rec * 4 + 3] = m_masks[mask].h;
     m_poolUsed += bytes;
     return rec + 1;
 }

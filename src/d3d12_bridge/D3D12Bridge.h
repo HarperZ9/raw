@@ -145,15 +145,18 @@ struct RtDraw
     UINT uvOffset = 0;
     DXGI_FORMAT uvFormat = DXGI_FORMAT_UNKNOWN;
     ID3D11ShaderResourceView* alphaSrv = nullptr;   // a reference, released with the draw
+    ID3D11Buffer* uvVb = nullptr;        // the coordinates' own vertex buffer when not the position's (a reference)
+    UINT uvStride = 0, uvVbOffset = 0;
 };
-enum : uint8_t { RtAlphaNone = 0, RtAlphaDiscard = 1, RtAlphaCoverage = 2, RtAlphaFoliage = 3 };
+enum : uint8_t { RtAlphaNone = 0, RtAlphaDiscard = 1, RtAlphaCoverage = 2, RtAlphaFoliage = 3, RtAlphaBlend = 4 };
 
 inline void ReleaseRtDraw(RtDraw& d)
 {
     if (d.vb) d.vb->Release();
     if (d.ib) d.ib->Release();
     if (d.alphaSrv) d.alphaSrv->Release();
-    d.vb = nullptr; d.ib = nullptr; d.alphaSrv = nullptr;
+    if (d.uvVb) d.uvVb->Release();
+    d.vb = nullptr; d.ib = nullptr; d.alphaSrv = nullptr; d.uvVb = nullptr;
 }
 
 struct RtTuning
@@ -170,6 +173,7 @@ struct RtTuning
     float    skyLength = 6000.0f;    // game units: a sky ray that travels this far sees sky
     bool     reflect = true;         // one reflection ray on glossy pixels (needs the sky pass's colour input)
     float    reflectLength = 8000.0f;
+    bool     debug = false;          // RtDebug: the reflection output shows the primary ray's view of the scene
 };
 
 struct RtFrameStats

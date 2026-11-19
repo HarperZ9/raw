@@ -55,6 +55,7 @@ void LightingApplyTuning()
         rt.sky = t.rtSky;
         rt.skyLength = t.rtSkyLength;
         rt.reflect = t.rtReflect;
+        rt.debug = t.rtDebug;
         Bridge()->TuneRt(rt);
     }
     g_sceneGeometryActive = Cfg().enabled && t.rtShadows && TxMode_Get() == 1;
@@ -83,6 +84,7 @@ void LoadLightingConfig(const std::string& ini)
     t.rtSkyLength = f("RtSkyLength", t.rtSkyLength);
     t.rtBounce = f("RtBounce", t.rtBounce);
     t.rtReflect = i("RtReflect", 1) != 0;
+    t.rtDebug = i("RtDebug", 0) != 0;
     t.ao = i("Ao", 1) != 0; t.fogReplacesGame = i("FogReplacesGame", 0) != 0; t.cascades = i("Cascades", 0) != 0; t.view = i("View", 0);
     // Cascades=0: the sun's shadow is the game's own filtered mask (match dE76 2.23 against 2.53 with
     // our cascade lookup, which also drew hard twig streaks on the ground).

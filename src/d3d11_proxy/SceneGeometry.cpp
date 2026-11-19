@@ -29,7 +29,7 @@ std::unordered_map<ID3D11PixelShader*, uint8_t> g_alphaPs;   // RtAlphaDiscard o
 std::vector<raw::bridge::RtDraw> g_frame;
 // Why draws were left out, and how many alpha-tested ones joined, since the start.
 struct Counts { uint64_t alphaNoTexture = 0, alphaNoUv = 0, alphaOff = 0, noLayout = 0, badFormat = 0, noBuffers = 0,
-                         alphaJoined[4] = {}, opaque = 0; } g_n;
+                         alphaJoined[5] = {}, opaque = 0; } g_n;
 bool g_alphaOn = true;
 
 // True when the shader bytecode holds a discard instruction (SM4/5 opcode 13).
@@ -112,19 +112,23 @@ void SceneGeometry_OnPixelShader(ID3D11PixelShader* ps, const void* bc, size_t n
 
 namespace
 {
-// Alpha to coverage on a single-sample target cuts at alpha 0.5 like a test: the game's discard-free
-// foliage (the sapling's branch cards) may be cut this way.
-bool AlphaToCoverage(ID3D11DeviceContext* real)
+// Alpha to coverage on a single-sample target cuts at alpha 0.5 like a test; a blended lit draw in the
+// opaque set cuts by its alpha too (the primary-ray view showed the sapling and the clover as solid
+// opaque cards with neither a discard nor coverage). Returns RtAlphaCoverage, RtAlphaBlend or none.
+uint8_t BlendAlpha(ID3D11DeviceContext* real)
 {
     ID3D11BlendState* bs = nullptr;
     FLOAT f[4];
     UINT m = 0;
     real->OMGetBlendState(&bs, f, &m);
-    if (!bs) return false;
+    if (!bs) return raw::bridge::RtAlphaNone;
     D3D11_BLEND_DESC d{};
     bs->GetDesc(&d);
     bs->Release();
-    return d.AlphaToCoverageEnable != FALSE;
+    if (d.AlphaToCoverageEnable) return raw::bridge::RtAlphaCoverage;
+    const D3D11_RENDER_TARGET_BLEND_DESC& t = d.RenderTarget[0];
+    const bool usesAlpha = t.SrcBlend == D3D11_BLEND_SRC_ALPHA || t.DestBlend == D3D11_BLEND_INV_SRC_ALPHA;
+    return t.BlendEnable && usesAlpha ? raw::bridge::RtAlphaBlend : raw::bridge::RtAlphaNone;
 }
 
 bool UvFormatOk(DXGI_FORMAT f)
@@ -159,7 +163,7 @@ void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT start
         if (it != g_alphaPs.end()) alpha = it->second;
     }
     if (ps) ps->Release();
-    if (!alpha && AlphaToCoverage(real)) alpha = raw::bridge::RtAlphaCoverage;
+    if (!alpha) alpha = BlendAlpha(real);
     if (alpha && !g_alphaOn) { ++g_n.alphaOff; return; }
     ID3D11InputLayout* il = nullptr;
     real->IAGetInputLayout(&il);
@@ -173,6 +177,8 @@ void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT start
     raw::bridge::RtDraw d;
     if (alpha) {
         // The rays read the coordinates from the position's own vertex buffer.
+        // Coordinates in their own stream belong to the tree shaders, whose positions the vertex shader
+        // still moves (the primary-ray view showed their leaves scattered and huge): left out for now.
         if (!L.uv.set || L.uv.slot != L.pos.slot || !UvFormatOk(L.uv.format)) {
             if (g_n.alphaNoUv++ < 64 && (g_n.alphaNoUv & 7) == 1)
                 Log("[RT] alpha-tested draw left out: coordinates %s, slot %u (position slot %u), format %d", L.uv.set ? "found" : "absent",
@@ -198,11 +204,11 @@ std::vector<raw::bridge::RtDraw> SceneGeometry_Take()
 {
     static uint64_t frames = 0;
     if (++frames % 600 == 1)
-        Log("[RT] frame %llu: %zu draws captured; so far %llu opaque, alpha-tested joined %llu discard / %llu coverage / %llu foliage; "
+        Log("[RT] frame %llu: %zu draws captured; so far %llu opaque, alpha-tested joined %llu discard / %llu coverage / %llu foliage / %llu blend; "
             "left out: %llu alpha without coordinates, %llu alpha without a 2D texture, %llu alpha (RtAlpha=0), %llu no layout, "
             "%llu position format, %llu no buffers",
             (unsigned long long)frames, g_frame.size(), (unsigned long long)g_n.opaque, (unsigned long long)g_n.alphaJoined[1],
-            (unsigned long long)g_n.alphaJoined[2], (unsigned long long)g_n.alphaJoined[3], (unsigned long long)g_n.alphaNoUv,
+            (unsigned long long)g_n.alphaJoined[2], (unsigned long long)g_n.alphaJoined[3], (unsigned long long)g_n.alphaJoined[4], (unsigned long long)g_n.alphaNoUv,
             (unsigned long long)g_n.alphaNoTexture, (unsigned long long)g_n.alphaOff, (unsigned long long)g_n.noLayout,
             (unsigned long long)g_n.badFormat, (unsigned long long)g_n.noBuffers);
     std::vector<raw::bridge::RtDraw> out;

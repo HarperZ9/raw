@@ -369,7 +369,7 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
     const bool sky = m_skyReady && m_tune.sky && colour;
     if (sky) m_sky.SetColour(colour);
     const float rc[8] = {m_tune.sunLength, m_tune.sourceRadius, m_tune.sunCone, float(m_frame & 0xFFFF), m_tune.alphaRef, m_tune.termDist,
-                         sky ? m_tune.skyLength : 0.0f, sky && m_tune.reflect ? m_tune.reflectLength : 0.0f};
+                         sky ? m_tune.skyLength : 0.0f, m_tune.debug ? -1.0f : sky && m_tune.reflect ? m_tune.reflectLength : 0.0f};
     cl->SetComputeRoot32BitConstants(1, 8, rc, 0);
     cl->SetComputeRootShaderResourceView(2, m_tlas->GetGPUVirtualAddress());
     D3D12_GPU_DESCRIPTOR_HANDLE g = m_heap->GetGPUDescriptorHandleForHeapStart();

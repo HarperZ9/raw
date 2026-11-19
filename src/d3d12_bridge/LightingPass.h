@@ -47,6 +47,7 @@ struct LightingTuning
     float rtSkyStrength = 1.0f;     // 0 none, 1 the full visibility
     float rtSkyLength = 6000.0f;    // game units
     float rtBounce = 1.0f;          // exteriors: one bounce of indirect light from the sky rays (0 off)
+    bool  rtDebug = false;          // the primary ray's view of the scene in the reflection output (Lighting view 7)
     bool  rtReflect = true;         // glossy surfaces: one ray-traced reflection ray, the hit's colour in the game's frame
 };
 

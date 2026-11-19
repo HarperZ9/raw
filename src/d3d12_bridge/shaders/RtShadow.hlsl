@@ -23,7 +23,7 @@ Texture2D<float>  Depth  : register(t0);
 Texture2D<float4> Normal : register(t1);
 Texture2D<float4> Spec   : register(t2);
 RaytracingAccelerationStructure Scene : register(t3);
-StructuredBuffer<uint2> Records : register(t4);   // alpha meshes: (first coordinate, mask)
+StructuredBuffer<uint4> Records : register(t4);   // alpha meshes: (first coordinate, mask, mask width, height)
 RWTexture2D<float4> Vis    : register(u0);
 RWTexture2D<float4> Lights : register(u1);
 RWByteAddressBuffer Coords : register(u2);        // float2 per triangle corner
@@ -39,6 +39,10 @@ uint clusterOf(float2 px, float z) {
     const float sl = log(max(z, cluster.x) / cluster.x) * cluster.z;
     return (min(uint(max(sl, 0.0f)), SLICES - 1u) * TILES_Y + ty) * TILES_X + tx;
 }
+
+// One pixel in each 2 x 2 block traces a sky ray each frame, the block's four in turn; the filter's
+// spatial mean and history fill the rest.
+bool skyTurn(uint2 p) { return ((p.x & 1u) | ((p.y & 1u) << 1)) == (uint(frameIndex) & 3u); }
 
 float hash(float2 p, float k) { return frac(sin(dot(p + k, float2(12.9898f, 78.233f))) * 43758.5453f); }
 
@@ -59,15 +63,12 @@ float3 jitterDir(float3 d, float spread, float2 r) {
 }
 
 // The alpha of a candidate hit on an alpha-tested mesh.
-float candidateAlpha(RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q) {
-    const uint id = q.CandidateInstanceID();
+float hitAlpha(uint id, uint prim, float2 b) {
     if (id == 0u) { return 1.0f; }
-    const uint2 rec = Records[id - 1u];
-    const uint a = (rec.x + q.CandidatePrimitiveIndex() * 3u) * 8u;
-    const float2 b = q.CandidateTriangleBarycentrics();
+    const uint4 rec = Records[id - 1u];
+    const uint a = (rec.x + prim * 3u) * 8u;
     const float2 uv = asfloat(Coords.Load2(a)) * (1.0f - b.x - b.y) + asfloat(Coords.Load2(a + 8u)) * b.x + asfloat(Coords.Load2(a + 16u)) * b.y;
-    uint w, h;
-    Masks[NonUniformResourceIndex(rec.y)].GetDimensions(w, h);
+    const uint w = rec.z, h = rec.w;
     // Bilinear, wrapping: nearest texels drew blocky leaf shadows.
     const float2 f = frac(uv) * float2(w, h) - 0.5f;
     const int2 b0 = int2(floor(f));
@@ -79,6 +80,8 @@ float candidateAlpha(RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLA
     return lerp(lerp(v00, v10, fa.x), lerp(v01, v11, fa.x), fa.y);
 }
 
+#define candidateAlpha(q) hitAlpha((q).CandidateInstanceID(), (q).CandidatePrimitiveIndex(), (q).CandidateTriangleBarycentrics())
+
 // The distance to the first hit, or -1 when the ray leaves (alpha-tested like visible()).
 float hitDistance(float3 o, float3 d, float tMax) {
     RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q;
@@ -89,13 +92,12 @@ float hitDistance(float3 o, float3 d, float tMax) {
         if (q.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
             const uint id = q.CandidateInstanceID();
             if (id == 0u) { q.CommitNonOpaqueTriangleHit(); continue; }
-            const uint2 rec = Records[id - 1u];
+            const uint4 rec = Records[id - 1u];
             const uint a = (rec.x + q.CandidatePrimitiveIndex() * 3u) * 8u;
             const float2 b = q.CandidateTriangleBarycentrics();
             const float2 uv = asfloat(Coords.Load2(a)) * (1.0f - b.x - b.y) + asfloat(Coords.Load2(a + 8u)) * b.x + asfloat(Coords.Load2(a + 16u)) * b.y;
-            uint w, h;
-            Masks[NonUniformResourceIndex(rec.y)].GetDimensions(w, h);
-            if (Masks[NonUniformResourceIndex(rec.y)][uint2(frac(uv) * float2(w, h)) % uint2(w, h)] >= alphaRef) { q.CommitNonOpaqueTriangleHit(); }
+            // Nearest texel: the sky and reflection rays are averaged over frames anyway.
+            if (Masks[NonUniformResourceIndex(rec.y)][uint2(frac(uv) * float2(rec.zw)) % rec.zw] >= alphaRef) { q.CommitNonOpaqueTriangleHit(); }
         }
     }
     return q.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? q.CommittedRayT() : -1.0f;
@@ -169,7 +171,7 @@ void main(uint3 id : SV_DispatchThreadID) {
             vis.x = visible(o, jitterDir(sunDir.xyz, sunCone, r), termDist * turn * turn, sunLength);
         }
         // Sky rays on a checkerboard that alternates each frame; RtSkyFilter's spatial mean fills the rest.
-        if (skyLength > 0.0f && ((id.x + id.y + uint(frameIndex)) & 1u) == 0u) {
+        if (skyLength > 0.0f && skyTurn(id.xy)) {
             // Game space has z up. Below the horizon a ray stands for the ground term: seen.
             const float2 rs = float2(hash(px, frameIndex * 0.754877f + 3.0f), hash(px.yx, frameIndex * 0.569840f + 11.0f));
             const float3 sd = cosineDir(n, rs);
@@ -210,9 +212,10 @@ void main(uint3 id : SV_DispatchThreadID) {
     // Reflection: glossy lit surfaces (the game's lobe, not foliage), one ray around the mirror
     // direction spread by the roughness.
     float4 refl = 0.0f;
+    bool reflTraced = false;
     if (reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u) {
         const float4 sp = Spec.Load(ip);
-        if (sp.y > 0.002f && sp.x > 0.02f) {
+        if (sp.y > 0.25f && sp.x > 0.05f && ((id.x + id.y + uint(frameIndex)) & 1u) == 0u) {
             const float2 px = float2(id.xy);
             const float3 p = worldAt(px, d);
             const float3 n = worldNormal(Normal.Load(ip));
@@ -221,6 +224,7 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
             const float3 rd = jitterDir(reflect(-v, n), alpha * 0.5f, rr);
             const float3 ng = geometricNormal(px, p, n);
+            reflTraced = true;
             if (dot(rd, ng) > 0.0f) {
                 const float3 o = p + ng * (0.5f + 0.003f * viewZOf(d));
                 const float t = hitDistance(o, rd, reflectLength);
@@ -229,8 +233,39 @@ void main(uint3 id : SV_DispatchThreadID) {
             }
         }
     }
-    Refl[id.xy] = refl;
+    if (reflectLength < 0.0f && d < 1.0f) {
+        // RtDebug: the primary ray from the camera through the pixel, alpha-tested. Out: the committed
+        // hit's texture coordinates and mask value on an alpha-tested mesh, magenta on an opaque one,
+        // black when the scene has nothing there. Leaves must show as leaves, not as cards.
+        RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q;
+        RayDesc r;
+        r.Origin = 0.0f; r.Direction = normalize(worldAt(float2(id.xy), d)); r.TMin = 1.0f; r.TMax = 100000.0f;
+        q.TraceRayInline(Scene, 0, 0xFF, r);
+        float3 dbg = 0.0f;
+        [loop] while (q.Proceed()) {
+            if (q.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
+                const float a = candidateAlpha(q);
+                if (a >= alphaRef) { q.CommitNonOpaqueTriangleHit(); }
+            }
+        }
+        if (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+            const uint cid = q.CommittedInstanceID();
+            if (cid == 0u) { dbg = float3(1.0f, 0.0f, 1.0f); }
+            else {
+                const uint4 rec = Records[cid - 1u];
+                const uint a = (rec.x + q.CommittedPrimitiveIndex() * 3u) * 8u;
+                const float2 b = q.CommittedTriangleBarycentrics();
+                const float2 uv = asfloat(Coords.Load2(a)) * (1.0f - b.x - b.y) + asfloat(Coords.Load2(a + 8u)) * b.x + asfloat(Coords.Load2(a + 16u)) * b.y;
+                dbg = float3(frac(uv), float(rec.y & 7u) / 7.0f);
+            }
+        }
+        refl = float4(dbg, 1.0f);
+    }
+    // Glossy pixels not traced this frame keep last frame's reflection; every other pixel clears.
+    const float4 sp0 = d < 1.0f ? Spec.Load(ip) : 0.0f;
+    const bool glossy = reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u && sp0.y > 0.25f && sp0.x > 0.05f;
+    if (reflTraced || !glossy || reflectLength < 0.0f) { Refl[id.xy] = refl; }
     Vis[id.xy] = vis;
     Lights[id.xy] = float4(idx.xyz, sky);
-    if (skyLength > 0.0f && ((id.x + id.y + uint(frameIndex)) & 1u) == 0u) { SkyRaw[id.xy] = float4(bounce, sky); }
+    if (skyLength > 0.0f && skyTurn(id.xy)) { SkyRaw[id.xy] = float4(bounce, sky); }
 }

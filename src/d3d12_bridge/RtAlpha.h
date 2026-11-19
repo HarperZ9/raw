@@ -43,7 +43,7 @@ public:
     uint64_t PoolBytes() const { return m_poolUsed; }
 
 private:
-    struct Mask { ID3D11Resource* src = nullptr; Microsoft::WRL::ComPtr<ID3D12Resource> tex; };
+    struct Mask { ID3D11Resource* src = nullptr; Microsoft::WRL::ComPtr<ID3D12Resource> tex; uint32_t w = 0, h = 0; };
     struct UvJob { ID3D12Resource* v12; ID3D12Resource* i12; uint64_t vbBytes, ibBytes; uint32_t c[8]; };
     struct MaskJob { ID3D12Resource* src12; D3D12_SHADER_RESOURCE_VIEW_DESC srv; uint32_t mask, w, h; };
 
@@ -55,7 +55,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Resource> m_pool, m_records;
     Microsoft::WRL::ComPtr<ID3D12RootSignature> m_root;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> m_uvPso, m_maskPso;
-    uint32_t* m_rec = nullptr;   // mapped: (first coordinate, mask) per record
+    uint32_t* m_rec = nullptr;   // mapped: (first coordinate, mask, mask width, mask height) per record
     uint32_t m_recordCount = 0, m_noMask = 0;
     uint64_t m_poolUsed = 0;
     std::vector<Mask> m_masks;

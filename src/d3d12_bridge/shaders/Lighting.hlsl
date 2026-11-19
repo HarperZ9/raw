@@ -135,7 +135,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // The game's mask keeps what the scene lacks (skinned actors). Interiors (no cascades): the
         // directional light is the cell's fill, unshadowed as the game lights it; rays would cut it
         // into window shafts and darken the room.
-        if (rt && sunColour.w > 0.5f) { sunShadow = min(sunShadow, rv.x); }
+        if (rt && sunColour.w > 0.5f) { sunShadow = min(sunShadow, base == 5u ? lerp(1.0f, rv.x, 0.6f) : rv.x); }
         addLight(s, sunDir.xyz, sunColour.rgb * sunShadow, sunColour.rgb, diff, spec);
     }
 
@@ -183,6 +183,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (flags.w == 3u) { return float4(amb, game.a); }
     if (flags.w == 4u) { return float4(skyVis.xxx, game.a); }
     if (flags.w == 5u) { return float4(bounce, game.a); }
+    if (flags.w == 7u) { return float4(RtRefl.Load(ip).rgb, game.a); }   // RtDebug=1: the primary-ray view
 
     float3 lit = knee3(albedo * (diff + amb));
     // The game's lobe exists only in shaders with a shininess exponent (gloss > 0).

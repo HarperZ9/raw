@@ -57,7 +57,10 @@ struct LightingTuning
     float wetness = 0.0f;           // improved: rain on surfaces, 0 dry to 1 soaked (Weather.hlsli)
     float snow = 0.0f;              // improved: snow lying on upward surfaces the sky reaches, 0 none to 1 deep (Weather.hlsli)
     float puddles = 0.0f;           // improved: water standing on flat ground, 0 none to 1 most
+    float rain = 0.0f;              // rain falling now, 0 to 1: drops ring the puddles (Weather.hlsli)
     bool  rtSkin = true;            // skinned actors join the scene with a BLAS a frame
+    bool  rtSkinCull = true;        // RtSkinCull, RtSkinRatio, RtSkinMin: stretched skinned triangles left out (RtSkinCheck.hlsl)
+    float rtSkinRatio = 4.0f, rtSkinMin = 24.0f;
     int   rtSkinBones = 10;         // the vertex constant buffer slot that holds the current bone palette
     bool  rtIncremental = true;     // RtIncremental: the scene's per-draw lookups once a frame, instances staged
     bool  rtCamSteps = false;       // RtCamSteps: the camera's place from the summed steps (RtScene::SetCamera)

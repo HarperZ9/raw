@@ -121,6 +121,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Rain (Weather.hlsli), exteriors in improved mode: darker, glossier, puddles flat and mirror-like.
     Wet wet;
     wet.wet = 0.0f; wet.puddle = 0.0f; wet.snow = 0.0f;
+    float2 rings = 0.0f;   // rain on the puddles: the water's slope, which also bends the reflection
     if (!match && sunColour.w > 0.5f && base != 5u) {
         const float sv = (flags.x & FLAG_RT) != 0u && (flags.x & FLAG_SKY) != 0u ? RtIdx.Load(ip).w : 1.0f;
         // The geometric normal from the depth buffer's neighbours (shorter step on each axis).
@@ -133,19 +134,25 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         ng = length(ng) > 1.0e-6f ? normalize(ng) : s.n;
         if (dot(ng, s.n) < 0.0f) { ng = -ng; }
         wet = wetAt(p, s.n, ng, sv);
-        albedo *= lerp(1.0f, 0.6f, wet.wet) * lerp(1.0f, 0.35f, wet.puddle);   // standing water hides most of the ground's own light
+        albedo *= lerp(1.0f, 0.6f, wet.wet) * lerp(1.0f, 0.18f, wet.puddle);   // standing water hides most of the ground's own light
         s.alpha = lerp(lerp(s.alpha, 0.12f, wet.wet), 0.03f, wet.puddle);
         s.shin = max(s.shin, 2.0f / max(s.alpha * s.alpha, 1.0e-4f) - 2.0f);
         s.n = normalize(lerp(s.n, float3(0.0f, 0.0f, 1.0f), wet.puddle));
+        if (wet.puddle > 0.0f && weather.w > 0.0f && z < 2500.0f) {
+            rings = rainRings((p + camPosW.xyz).xy, camPosW.w) * (0.35f * weather.w * wet.puddle * saturate(2.0f - z / 1250.0f));
+            s.n = normalize(s.n + float3(-rings, 0.0f));
+        }
         s.f0 = lerp(s.f0, 0.02f, max(wet.wet, wet.puddle));
         s.mask = max(s.mask, max(wet.wet * 0.6f, wet.puddle));
         lobe = lobe || max(wet.wet, wet.puddle) > 0.2f;
         if (wet.snow > 0.0f) {
             // Snow lies over everything below it: bright, rough, its own smooth shape over the ground's bumps.
-            albedo = lerp(albedo, float3(0.78f, 0.80f, 0.84f), wet.snow);
+            // The game lights in its own (gamma) space, where its ground textures sit near 0.3; full sun on
+            // 0.8 met the knee and read flat white. About 0.68 keeps the shading of the drifts.
+            albedo = lerp(albedo, float3(0.64f, 0.67f, 0.72f), wet.snow);
             s.alpha = lerp(s.alpha, 0.55f, wet.snow);
             s.shin = lerp(s.shin, 2.0f / (0.55f * 0.55f) - 2.0f, wet.snow);
-            s.n = normalize(lerp(s.n, ng, wet.snow * 0.7f));
+            s.n = normalize(lerp(s.n, ng, wet.snow * 0.4f));   // the ground's bumps show through as mounds
             s.f0 = lerp(s.f0, 0.02f, wet.snow);
             s.mask = lerp(s.mask, 0.15f, wet.snow);
             wet.puddle *= 1.0f - wet.snow;
@@ -173,6 +180,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // into window shafts and darken the room.
         if (rt && sunColour.w > 0.5f) { sunShadow = min(sunShadow, base == 5u ? lerp(1.0f, rv.x, 0.6f) : rv.x); }
         addLight(s, sunDir.xyz, sunColour.rgb * sunShadow, sunColour.rgb, diff, spec);
+        if (wet.snow > 0.0f && sunShadow > 0.0f)
+            spec += sunColour.rgb * (sunShadow * wet.snow * 3.0f * snowGlint(p + camPosW.xyz, s.n, s.v, sunDir.xyz, max(1.2f, z * 0.0025f)));
     }
 
     const uint4 bits = clusters[clusterOf(px, z)];
@@ -232,7 +241,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Ray-traced reflection on glossy surfaces, weighted by Schlick Fresnel at the view angle and the
     // game's specular mask; where the ray found nothing the game had on screen, nothing is added.
     if (rt && (flags.x & FLAG_REFLECT) != 0u && lobe) {
-        const float4 rf = RtRefl.Load(ip);
+        const float4 rf = RtRefl.Load(int3(clamp(int2(px + rings * 40.0f), int2(0, 0), int2(dims.xy) - 1), 0));
         const float nv = saturate(dot(s.n, s.v));
         const float fr = s.f0 + (1.0f - s.f0) * pow(1.0f - nv, 5.0f);
         lit += rf.rgb * rf.a * fr * max(saturate(s.mask * resScale.w), max(wet.puddle, 0.5f * wet.wet)) * (1.0f - s.alpha);

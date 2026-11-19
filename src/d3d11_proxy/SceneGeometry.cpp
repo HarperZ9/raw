@@ -136,6 +136,7 @@ void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT start
     const DXGI_FORMAT pf = L.pos.format;
     if (pf != DXGI_FORMAT_R32G32B32_FLOAT && pf != DXGI_FORMAT_R32G32B32A32_FLOAT && pf != DXGI_FORMAT_R16G16B16A16_FLOAT) { ++g_n.badFormat; return; }
     raw::bridge::RtDraw d;
+    d.drop = geom::DropFor(real);   // before any reference is taken
     if (alpha) {
         // The rays read the coordinates from the position's own vertex buffer.
         // Coordinates in their own stream belong to the tree shaders, whose positions the vertex shader

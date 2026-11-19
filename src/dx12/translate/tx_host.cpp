@@ -56,6 +56,17 @@ ID3D11ShaderResourceView* PeekShaderResource(ID3D11DeviceContext* c, UINT stage,
     return v;
 }
 
+template <class T>
+static void Hold(T* o, int delta)
+{
+    Context* c = o ? o->dev->imm : nullptr;
+    if (!c) return;
+    if (delta > 0) c->Holds().Add(o); else c->Holds().Drop(o);
+}
+
+void HoldBuffer(ID3D11Buffer* b, int delta) { Hold(static_cast<TBuffer*>(b), delta); }
+void HoldView(ID3D11ShaderResourceView* v, int delta) { Hold(static_cast<TSRV*>(v), delta); }
+
 ID3D12Resource* NativeResource(ID3D11Resource* r)
 {
     ResCore* c = r ? CoreOf(r) : nullptr;

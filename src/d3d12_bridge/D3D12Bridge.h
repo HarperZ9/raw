@@ -153,11 +153,15 @@ struct RtDraw
     ID3D11Buffer* blendVb = nullptr;     // the stream with the blend indices and weights (a reference)
     UINT blendStride = 0, blendVbOffset = 0, idxOffset = 0, wOffset = 0;
     float* bones = nullptr;              // 960 floats, owned (delete[] in ReleaseRtDraw)
+    // How the references are given back; nullptr: Release. The RAW proxy on raw::tx takes them as the
+    // layer's plain host references (raw::tx::HoldBuffer, HoldView): no locked instruction per draw.
+    void (*drop)(RtDraw&) = nullptr;
 };
 enum : uint8_t { RtAlphaNone = 0, RtAlphaDiscard = 1, RtAlphaCoverage = 2, RtAlphaFoliage = 3, RtAlphaBlend = 4 };
 
 inline void ReleaseRtDraw(RtDraw& d)
 {
+    if (d.drop) d.drop(d);   // gives back vb, ib, alphaSrv, uvVb and blendVb, and clears them
     if (d.vb) d.vb->Release();
     if (d.ib) d.ib->Release();
     if (d.alphaSrv) d.alphaSrv->Release();

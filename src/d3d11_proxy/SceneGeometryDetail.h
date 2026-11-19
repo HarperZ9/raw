@@ -26,6 +26,8 @@ uint8_t BlendAlpha(ID3D11DeviceContext* real);         // RtAlphaCoverage, RtAlp
 ID3D11ShaderResourceView* AlphaTexture(ID3D11DeviceContext* real);   // t0 of the pixel shader, a 2D texture view
 ID3D11Buffer* VertexBuffer(ID3D11DeviceContext* real, UINT slot, UINT* stride, UINT* offset);
 ID3D11Buffer* IndexBuffer(ID3D11DeviceContext* real, DXGI_FORMAT* format, UINT* offset);
+// What a draw captured on this context gives its references back with (RtDraw::drop).
+void (*DropFor(ID3D11DeviceContext* real))(raw::bridge::RtDraw&);
 std::vector<raw::bridge::RtDraw>& Frame();             // the frame's draws so far
 } // namespace geom
 

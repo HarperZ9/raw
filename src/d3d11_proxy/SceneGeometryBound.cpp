@@ -164,7 +164,7 @@ ID3D11ShaderResourceView* AlphaTexture(ID3D11DeviceContext* real)
         D3D11_SRV_DIMENSION dim = D3D11_SRV_DIMENSION_UNKNOWN;
         ID3D11ShaderResourceView* v = raw::tx::PeekShaderResource(real, 4, 0, &dim);
         if (!v || dim != D3D11_SRV_DIMENSION_TEXTURE2D) return nullptr;
-        v->AddRef();
+        raw::tx::HoldView(v, +1);
         return v;
     }
     ID3D11ShaderResourceView* v = nullptr;
@@ -179,7 +179,7 @@ ID3D11ShaderResourceView* AlphaTexture(ID3D11DeviceContext* real)
 ID3D11Buffer* VertexBuffer(ID3D11DeviceContext* real, UINT slot, UINT* stride, UINT* offset)
 {
     ID3D11Buffer* b = nullptr;
-    if (Layer(real)) { b = raw::tx::PeekVertexBuffer(real, slot, stride, offset); if (b) b->AddRef(); }
+    if (Layer(real)) { b = raw::tx::PeekVertexBuffer(real, slot, stride, offset); if (b) raw::tx::HoldBuffer(b, +1); }
     else real->IAGetVertexBuffers(slot, 1, &b, stride, offset);
     return b;
 }
@@ -187,9 +187,27 @@ ID3D11Buffer* VertexBuffer(ID3D11DeviceContext* real, UINT slot, UINT* stride, U
 ID3D11Buffer* IndexBuffer(ID3D11DeviceContext* real, DXGI_FORMAT* format, UINT* offset)
 {
     ID3D11Buffer* b = nullptr;
-    if (Layer(real)) { b = raw::tx::PeekIndexBuffer(real, format, offset); if (b) b->AddRef(); }
+    if (Layer(real)) { b = raw::tx::PeekIndexBuffer(real, format, offset); if (b) raw::tx::HoldBuffer(b, +1); }
     else real->IAGetIndexBuffer(&b, format, offset);
     return b;
 }
+
+namespace
+{
+// The references of a draw captured on raw::tx: the layer's plain host references, given back on the
+// render thread like they were taken (RtScene and the proxy release draws there).
+void DropPlain(raw::bridge::RtDraw& d)
+{
+    if (d.vb) raw::tx::HoldBuffer(d.vb, -1);
+    if (d.ib) raw::tx::HoldBuffer(d.ib, -1);
+    if (d.uvVb) raw::tx::HoldBuffer(d.uvVb, -1);
+    if (d.blendVb) raw::tx::HoldBuffer(d.blendVb, -1);
+    if (d.alphaSrv) raw::tx::HoldView(d.alphaSrv, -1);
+    d.vb = d.ib = d.uvVb = d.blendVb = nullptr;
+    d.alphaSrv = nullptr;
+}
+} // namespace
+
+void (*DropFor(ID3D11DeviceContext* real))(raw::bridge::RtDraw&) { return Layer(real) ? &DropPlain : nullptr; }
 
 } // namespace SB::Proxy::geom

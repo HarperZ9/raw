@@ -87,6 +87,13 @@ ID3D11Buffer* PeekIndexBuffer(ID3D11DeviceContext* context, DXGI_FORMAT* format,
 ID3D11ShaderResourceView* PeekShaderResource(ID3D11DeviceContext* context, UINT stage, UINT slot,
                                              D3D11_SRV_DIMENSION* dimension);
 
+// References without a locked instruction, for a host that takes and drops them on the immediate
+// context's thread (the RAW proxy's per-draw capture for the ray-tracing scene): +1 or -1 on the immediate
+// context's plain binding count (tx_holds.h). While above 0 the object stays alive, as with AddRef; a
+// Release by the application meanwhile is fine. Only on objects of this layer.
+void HoldBuffer(ID3D11Buffer* buffer, int delta);
+void HoldView(ID3D11ShaderResourceView* view, int delta);
+
 // The D3D12 device and direct queue, for a renderer that adopts them
 // (superframe native/raw/rhi/host.hpp, HostDevice). No reference is added.
 void GetNative(ID3D11Device* device, void** d3d12Device, void** d3d12Queue);

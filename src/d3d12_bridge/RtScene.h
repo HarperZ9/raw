@@ -76,7 +76,10 @@ private:
     void ReadTimings();
     uint32_t BuildBlases(ID3D12GraphicsCommandList4* cl, uint64_t& tris);
     uint32_t PlaceInstances(uint32_t slot, uint32_t& alphaN, uint64_t& sceneTris);
+    uint32_t PlaceStaged(D3D12_RAYTRACING_INSTANCE_DESC* inst, uint32_t slot, uint32_t& alphaN, uint64_t& sceneTris);
+    bool Instance(uint32_t mi, const RtDraw& d, D3D12_RAYTRACING_INSTANCE_DESC& x, uint32_t& tris) const;
     uint32_t PlaceInto(D3D12_RAYTRACING_INSTANCE_DESC* inst, uint32_t slot, uint32_t& alphaN, uint64_t& sceneTris);
+    void StageDraws();   // RtIncremental: each draw's instance written once its mesh is known (RtSceneRecord.cpp)
     void SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>& toHand, ID3D12Resource* (*native)(ID3D11Resource*));
     void BindViews(ID3D12Resource* depth, ID3D12Resource* normal, ID3D12Resource* spec);
     void RecordTrace(ID3D12GraphicsCommandList4* cl, uint32_t slot, bool sky, bool cache);
@@ -108,7 +111,13 @@ private:
     std::vector<uint32_t> m_drawMesh;   // per draw of this frame: its mesh (SetDraws found it), ~0 none
     std::vector<Key> m_lastKeys;        // last frame's draw keys by position: most frames draw the same list in the same order
     std::vector<uint32_t> m_lastMesh;
-    std::vector<D3D12_RAYTRACING_INSTANCE_DESC> m_stage;   // the TLAS input, written whole into the upload heap
+    std::vector<Key> m_keys;            // this frame's draw keys (kept to swap with m_lastKeys)
+    // RtIncremental: per draw of this frame, its instance (staged in SetDraws, where its mesh is already in
+    // the cache), whether it is ready (1), waits for this frame's BLAS builds (2) or stays out (0), and its
+    // triangle count.
+    std::vector<D3D12_RAYTRACING_INSTANCE_DESC> m_stage;
+    std::vector<uint8_t> m_stageState;
+    std::vector<uint32_t> m_stageTris;
     double m_cpuSetUs = 0, m_cpuPlaceUs = 0;                // render-thread time, summed over m_cpuFrames
     double m_cpuReleaseUs = 0, m_cpuSkinUs = 0;            // parts of m_cpuSetUs: last frame's references, RtSkin's draws
     uint32_t m_cpuFrames = 0;

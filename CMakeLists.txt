@@ -519,7 +519,7 @@ if(RAW_ENGINE_DIR)
         COMMENT "dxc: skinned positions for the ray-tracing scene -> DXIL header"
         VERBATIM)
     target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtSkin.cpp ${RAW_ENGINE_GEN}/rt_skin.h)
-    target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtScene.cpp src/d3d12_bridge/RtSceneRecord.cpp src/d3d12_bridge/RtAlpha.cpp
+    target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtScene.cpp src/d3d12_bridge/RtSceneRecord.cpp src/d3d12_bridge/RtSceneStage.cpp src/d3d12_bridge/RtAlpha.cpp
                    src/d3d12_bridge/RtAlphaTex.cpp src/d3d12_bridge/RtSky.cpp src/d3d12_bridge/RtCache.cpp
                    ${RAW_ENGINE_GEN}/rt_shadow.h ${RAW_ENGINE_GEN}/rt_alpha_uv.h ${RAW_ENGINE_GEN}/rt_alpha_mask.h
                    ${RAW_ENGINE_GEN}/rt_alpha_albedo.h ${RAW_ENGINE_GEN}/rt_sky_filter.h ${RAW_ENGINE_GEN}/rt_cache_resolve.h)

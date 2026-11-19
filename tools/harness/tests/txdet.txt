@@ -1,0 +1,24 @@
+# A still frame for a pixel diff between builds of the full renderer (raw::tx Wrap=1, the bridge, Mode=2,
+# RtShadows=1): Riverwood at 13:00 with AI off, the weather forced, the game clock stopped (timescale 0)
+# and the global time multiplier at 0.001, so wind, water and the sky move by about a millionth of a
+# second a frame. Two keyframes a few seconds apart give the noise floor within one run; the same
+# keyframe against another build's is the test.
+start load rawharness
+console tai
+console tcai
+scene riverwood
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+console coc riverwood
+wait 8
+console fw 81a
+wait 6
+console set timescale to 0
+console sgtm 0.001
+wait 4
+keyframe still_a steps=game,improved hold=40
+wait 3
+keyframe still_b steps=game,improved hold=40
+console sgtm 1
+quit

@@ -29,6 +29,17 @@ public:
         slot = v;
     }
 
+    // A host's reference on the immediate context's thread (raw::tx::HoldBuffer, HoldView): counted with
+    // the bindings, so it keeps the object alive the same way. Only on the immediate context.
+    template <class T>
+    void Add(T* v)
+    {
+        if (v->imm.n++ == 0 && !v->imm.pinned) PinNew(v);
+    }
+    template <class T>
+    void Drop(T* v) { --v->imm.n; }
+    bool Plain() const { return plain_; }
+
     // Gives back the pins of objects that are unbound and released by the application, visiting at
     // most `budget` pins from where the last call stopped. An object can die here.
     void Drain(size_t budget)

@@ -92,6 +92,7 @@ bool SceneSkin_OnDraw(ID3D11DeviceContext* real, const Layout* bound, UINT index
         const bool half = L.pos.format == DXGI_FORMAT_R16G16B16A16_FLOAT;
         if ((g_skinFilter == 1 && half) || (g_skinFilter == 2 && !half) || (g_skinFilter == 3 && actor) || (g_skinFilter == 4 && !actor)) return true;
         raw::bridge::RtDraw d;
+        d.drop = geom::DropFor(real);
         UINT stride = 0, offset = 0, bs = 0, bo = 0;
         d.vb = geom::VertexBuffer(real, L.pos.slot, &stride, &offset);
         d.blendVb = geom::VertexBuffer(real, L.blendIdx.slot, &bs, &bo);

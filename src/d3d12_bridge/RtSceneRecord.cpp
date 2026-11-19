@@ -102,9 +102,7 @@ uint32_t RtScene::PlaceInstances(uint32_t slot, uint32_t& alphaN, uint64_t& scen
     m_inst[slot]->Map(0, &none, reinterpret_cast<void**>(&inst));
     uint32_t n = 0;
     if (m_tune.incremental) {
-        m_stage.resize(kMaxInstances);
-        n = PlaceInto(m_stage.data(), slot, alphaN, sceneTris);
-        std::memcpy(inst, m_stage.data(), size_t(n) * sizeof(D3D12_RAYTRACING_INSTANCE_DESC));
+        n = PlaceStaged(inst, slot, alphaN, sceneTris);
     } else {
         n = PlaceInto(inst, slot, alphaN, sceneTris);
     }

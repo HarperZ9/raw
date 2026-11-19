@@ -21,6 +21,7 @@
 #include "Translate.h"
 #include "Overlay.h"
 #include "WeatherDrive.h"
+#include "Tonemap.h"
 
 #include <algorithm>
 #include <cmath>
@@ -55,7 +56,7 @@ void DriveWeather()
     WeatherSurfaces w;
     if (!s_weatherDriven || !WeatherDrive_Step(dt, w) || !Bridge()) return;
     LightingTuning t = Cfg().light;
-    t.wetness = w.wetness; t.puddles = w.puddles; t.snow = w.snow; t.rain = w.rain;
+    t.wetness = w.wetness; t.puddles = w.puddles; t.snow = w.snow; t.rain = w.rain; t.weatherCloud = w.cloud;
     raw::bridge::LightingPassTune(Bridge()->ActivePass(), t);
     static uint32_t logged = 0;
     if (logged++ % 240 == 0) Log("[Weather] surfaces: wetness %.3f, puddles %.3f, snow %.3f", w.wetness, w.puddles, w.snow);
@@ -142,6 +143,18 @@ void LoadLightingConfig(const std::string& ini)
     WeatherDrive_SetTimes(wt);
     t.puddles = f("Puddles", t.puddles);
     t.rain = f("Rain", t.rain);
+    t.clouds = i("Clouds", 1) != 0; t.cloudCover = f("CloudCover", t.cloudCover);
+    t.cloudBase = f("CloudBase", t.cloudBase); t.cloudThickness = f("CloudThickness", t.cloudThickness);
+    t.cloudShadow = f("CloudShadow", t.cloudShadow); t.cloudDensity = f("CloudDensity", t.cloudDensity);
+    t.cloudWindX = f("CloudWindX", t.cloudWindX); t.cloudWindY = f("CloudWindY", t.cloudWindY);
+    t.cloudHistory = f("CloudHistory", t.cloudHistory);
+    {   // RAW's tone map and exposure (Tonemap.h); keys in [Lighting] so a live edit reaches them
+        TonemapSettings tm;
+        tm.enabled = i("Tonemap", 0) != 0; tm.mode = i("Exposure", tm.mode); tm.bias = f("ExposureBias", tm.bias);
+        tm.minLum = f("ExposureMinLum", tm.minLum); tm.maxLum = f("ExposureMaxLum", tm.maxLum); tm.key = f("ExposureKey", tm.key);
+        tm.curve = i("ToneCurve", tm.curve); tm.white = f("ToneWhite", tm.white); tm.view = i("ToneView", 0);
+        Tonemap_Set(tm);
+    }
     t.rtSkinBones = i("RtSkinBones", 10);
     t.rtActors = i("RtActors", 1) != 0;
     t.rtIncremental = i("RtIncremental", 1) != 0;

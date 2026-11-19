@@ -38,6 +38,7 @@ bool WeatherDrive_Step(double dt, WeatherSurfaces& out)
     else g_s.snow -= t / (rain > 0.05f ? 0.1f * k.meltSeconds : k.meltSeconds);
     g_s.wetness = Clamp01(g_s.wetness); g_s.puddles = Clamp01(g_s.puddles); g_s.snow = Clamp01(g_s.snow);
     g_s.rain = Clamp01(rain);
+    g_s.cloud = cloud;
     out = g_s;
     return true;
 }

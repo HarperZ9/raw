@@ -67,12 +67,14 @@ bool RtSkin::Create(ID3D12Device5* dev, ID3D12DescriptorHeap* heap, uint32_t bas
     D3D12_DESCRIPTOR_RANGE ibR{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, 0};
     D3D12_DESCRIPTOR_RANGE vbR{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 1, 0, 0};
     D3D12_DESCRIPTOR_RANGE uR{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 3, 0, 0, 0};
-    D3D12_ROOT_PARAMETER q[4]{};
-    q[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; q[0].Constants = {0, 0, 20};
+    D3D12_DESCRIPTOR_RANGE dR{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3, 0, 0};
+    D3D12_ROOT_PARAMETER q[5]{};
+    q[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; q[0].Constants = {0, 0, 40};
+    q[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; q[4].DescriptorTable = {1, &dR};
     q[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; q[1].DescriptorTable = {1, &ibR};
     q[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; q[2].DescriptorTable = {1, &vbR};
     q[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; q[3].DescriptorTable = {1, &uR};
-    D3D12_ROOT_SIGNATURE_DESC qs{4, q, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    D3D12_ROOT_SIGNATURE_DESC qs{5, q, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
     blob.Reset(); errs.Reset();
     if (FAILED(D3D12SerializeRootSignature(&qs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errs)) ||
         FAILED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&m_checkRoot)))) {
@@ -133,27 +135,39 @@ void RtSkin::ReadStats(uint32_t slot)
     const D3D12_RANGE r{0, size_t(meta.size()) * kStatWords * 4};
     if (FAILED(m_statsRead[slot]->Map(0, &r, &p)) || !p) return;
     const uint32_t* s = static_cast<const uint32_t*>(p);
-    uint64_t stretched = 0, range = 0, tris = 0;
-    for (size_t k = 0; k < meta.size(); ++k) { tris += s[k * kStatWords]; range += s[k * kStatWords + 1]; stretched += s[k * kStatWords + 2]; }
-    m_stretched = stretched;
+    uint64_t stretched = 0, range = 0, tris = 0, floating = 0;
+    for (size_t k = 0; k < meta.size(); ++k) {
+        tris += s[k * kStatWords]; range += s[k * kStatWords + 1]; stretched += s[k * kStatWords + 2]; floating += s[k * kStatWords + 38];
+    }
+    m_stretched = stretched; m_floating = floating;
     if (m_log && m_logEvery && ++m_checkFrames >= m_logEvery) {
         m_checkFrames = 0;
         m_log("[RT] skin check: %zu draws, %llu triangles, %llu stretched (edge over %.1fx its bind length and %.0f units; RtSkinCull=%d), "
-              "%llu with an index past the vertex count", meta.size(), (unsigned long long)tris, (unsigned long long)stretched, m_ratio,
-              m_minUnits, int(m_filter), (unsigned long long)range);
+              "%llu with an index past the vertex count; %llu floating in front of the game's depth", meta.size(), (unsigned long long)tris,
+              (unsigned long long)stretched, m_ratio, m_minUnits, int(m_filter), (unsigned long long)range, (unsigned long long)floating);
         auto half = [](uint32_t b) {
             const uint32_t e = (b >> 10) & 31, f = b & 1023;
             const float v = e == 0 ? f / 1024.0f / 16384.0f : (1.0f + f / 1024.0f) * float(1u << e) / 32768.0f;
             return (b >> 15) & 1 ? -v : v;
         };
-        int shown = 0;
-        for (size_t k = 0; k < meta.size() && shown < 6; ++k) {
+        // The draws with the most stretched triangles first.
+        std::vector<uint32_t> order;
+        auto bad = [&](uint32_t k) { return s[k * kStatWords + 2] + s[k * kStatWords + 38]; };
+        for (uint32_t k = 0; k < meta.size(); ++k) if (bad(k) || s[k * kStatWords + 1]) order.push_back(k);
+        std::sort(order.begin(), order.end(), [&](uint32_t x, uint32_t y) { return bad(x) > bad(y); });
+        for (size_t o = 0; o < order.size() && o < 6; ++o) {
+            const size_t k = order[o];
             const uint32_t* w = s + k * kStatWords;
-            if (!w[2] && !w[1]) continue;
-            ++shown;
             const Meta& m = meta[k];
-            m_log("[RT]   draw %zu: %s, %s positions, stride %u, %u vertices, %u triangles: %u stretched, %u past the count; first at triangle %u",
-                  k, m.actor ? "actor" : "tree", m.posFmt ? "float" : "half", m.stride, m.count, w[0], w[2], w[1], w[4]);
+            m_log("[RT]   draw %zu: %s, %s positions, stride %u, %u vertices, %u triangles: %u stretched, %u floating, %u past the count; first "
+                  "stretched at triangle %u", k, m.actor ? "actor" : "tree", m.posFmt ? "float" : "half", m.stride, m.count, w[0], w[2], w[38], w[1], w[4]);
+            if (w[39]) {
+                float sp[3], ahead;
+                std::memcpy(sp, w + 41, 12); std::memcpy(&ahead, w + 47, 4);
+                m_log("[RT]     floating vertex %u: skinned %.1f %.1f %.1f, %.0f units in front of the game's surface, bones %u %u %u %u, weights %.3f %.3f "
+                      "%.3f %.3f", w[40], sp[0], sp[1], sp[2], ahead, w[44] & 255, (w[44] >> 8) & 255, (w[44] >> 16) & 255, w[44] >> 24,
+                      half(w[45] & 0xFFFF), half(w[45] >> 16), half(w[46] & 0xFFFF), half(w[46] >> 16));
+            }
             for (int v = 0; v < 3 && w[3]; ++v) {
                 const uint32_t* x = w + 5 + v * 11;
                 float bp[3], sp[3];
@@ -168,7 +182,7 @@ void RtSkin::ReadStats(uint32_t slot)
     m_statsRead[slot]->Unmap(0, &none);
 }
 
-bool RtSkin::Record(ID3D12GraphicsCommandList4* cl, uint32_t slot)
+bool RtSkin::Record(ID3D12GraphicsCommandList4* cl, uint32_t slot, ID3D12Resource* depth, const void* uniform, size_t bytes)
 {
     m_built = 0;
     ReadStats(slot);
@@ -225,18 +239,40 @@ bool RtSkin::Record(ID3D12GraphicsCommandList4* cl, uint32_t slot)
     // Each draw's triangles into the index pool, stretched ones made degenerate (RtSkinCheck.hlsl).
     cl->SetComputeRootSignature(m_checkRoot.Get());
     cl->SetPipelineState(m_checkPso.Get());
+    // The game's depth for the floating check, and the camera from the lighting uniform (dims at float 0,
+    // proj at 4, worldToClip at 24; LightUniform in LightingPass.cpp).
+    const uint32_t depthAt = m_base + 3 * kMaxDraws * kPerDraw + slot;
+    float cam[22] = {};
+    const bool haveCam = depth && uniform && bytes >= 40 * 4;
+    if (haveCam) {
+        const float* uf = static_cast<const float*>(uniform);
+        cam[0] = uf[4]; cam[1] = uf[5];
+        std::memcpy(cam + 2, uf + 24, 64);
+        cam[18] = uf[0]; cam[19] = uf[1];
+        D3D12_SHADER_RESOURCE_VIEW_DESC sd{};
+        sd.Format = DXGI_FORMAT_R32_FLOAT; sd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D; sd.Texture2D.MipLevels = 1;
+        sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        m_dev->CreateShaderResourceView(depth, &sd, {cpu0.ptr + SIZE_T(depthAt) * m_inc});
+    } else {
+        D3D12_SHADER_RESOURCE_VIEW_DESC sd{};
+        sd.Format = DXGI_FORMAT_R32_FLOAT; sd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D; sd.Texture2D.MipLevels = 1;
+        sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        m_dev->CreateShaderResourceView(nullptr, &sd, {cpu0.ptr + SIZE_T(depthAt) * m_inc});   // a null view: the check is off
+    }
+    cl->SetComputeRootDescriptorTable(4, {gpu0.ptr + UINT64(depthAt) * m_inc});
     at = first;
     for (uint32_t k = 0; k < m_jobs.size(); ++k, at += kPerDraw) {
         const Job& j = m_jobs[k];
-        uint32_t c[20];
+        uint32_t c[40] = {};
         std::memcpy(c, j.c, 10 * 4);
         c[10] = uint32_t(j.iStart); c[11] = j.ibFormat == DXGI_FORMAT_R16_UINT ? 0u : 1u; c[12] = j.indexCount / 3; c[13] = j.idxFirst;
         c[14] = k; c[15] = m_filter ? 1u : 0u;
-        std::memcpy(c + 16, &m_ratio, 4); std::memcpy(c + 17, &m_minUnits, 4); c[18] = c[19] = 0;
+        std::memcpy(c + 16, &m_ratio, 4); std::memcpy(c + 17, &m_minUnits, 4);
+        std::memcpy(c + 18, cam, sizeof cam);   // projA, projB, worldToClip, screen (0: no floating check)
         cl->SetComputeRootDescriptorTable(1, {gpu0.ptr + UINT64(at + 5) * m_inc});
         cl->SetComputeRootDescriptorTable(2, {gpu0.ptr + UINT64(at) * m_inc});
         cl->SetComputeRootDescriptorTable(3, {gpu0.ptr + UINT64(at + 2) * m_inc});
-        cl->SetComputeRoot32BitConstants(0, 20, c, 0);
+        cl->SetComputeRoot32BitConstants(0, 40, c, 0);
         cl->Dispatch((j.indexCount / 3 + 63) / 64, 1, 1);
     }
     D3D12_RESOURCE_BARRIER u2[2]{};

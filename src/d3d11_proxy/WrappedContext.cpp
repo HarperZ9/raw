@@ -9,6 +9,7 @@
 #include "GBufferComplete.h"
 #include "SceneLights.h"
 #include "GameComposite.h"
+#include "Tonemap.h"
 #include "CBDirtyTracker.h"
 #include "OcclusionCuller.h"
 #include "ProxyAPI.h"
@@ -311,8 +312,10 @@ void STDMETHODCALLTYPE WrappedContext::Draw(UINT VertexCount, UINT StartVertexLo
     if (g_sceneGeometryActive) SceneGeometry_Census(m_real, 3);
     if (g_gbufferActive) GBuffer_BeforeDraw(m_real);
     if (g_sceneLightsActive) GameComposite_BeforeDraw(m_real, VertexCount);
+    if (VertexCount <= 6) Tonemap_BeforeDraw(m_real);   // a full-screen quad at most
     m_real->Draw(VertexCount, StartVertexLocation);
     if (g_sceneLightsActive) GameComposite_AfterDraw(m_real);
+    Tonemap_AfterDraw(m_real);
 }
 
 void STDMETHODCALLTYPE WrappedContext::DrawIndexed(UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation)
@@ -331,8 +334,10 @@ void STDMETHODCALLTYPE WrappedContext::DrawIndexed(UINT IndexCount, UINT StartIn
     if (g_sceneGeometryActive) SceneGeometry_OnDraw(m_real, IndexCount, StartIndexLocation, BaseVertexLocation);
     if (g_gbufferActive) GBuffer_BeforeDraw(m_real);
     if (g_sceneLightsActive) GameComposite_BeforeDraw(m_real, IndexCount);
+    if (IndexCount <= 6) Tonemap_BeforeDraw(m_real);   // a full-screen quad at most
     m_real->DrawIndexed(IndexCount, StartIndexLocation, BaseVertexLocation);
     if (g_sceneLightsActive) GameComposite_AfterDraw(m_real);
+    Tonemap_AfterDraw(m_real);
 }
 
 void STDMETHODCALLTYPE WrappedContext::DrawInstanced(UINT VertexCountPerInstance, UINT InstanceCount, UINT StartVertexLocation, UINT StartInstanceLocation)

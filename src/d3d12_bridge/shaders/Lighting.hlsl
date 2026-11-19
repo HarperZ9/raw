@@ -12,6 +12,7 @@
 // Original work, MIT.
 #include "LightingCommon.hlsli"
 #include "Weather.hlsli"
+#include "CloudCommon.hlsli"
 
 Texture2D<float>  Depth   : register(t0);
 Texture2D<float4> Normal  : register(t1);
@@ -24,6 +25,8 @@ Texture2D<float4> SoftMap : register(t8);
 Texture2D<float4> RtVis   : register(t9);    // RtShadow.hlsl: sun and three lights' ray-traced visibility
 Texture2D<float4> RtBounce : register(t11);  // RtSky.cpp: one bounce of indirect light (exteriors)
 Texture2D<float4> RtRefl   : register(t12);  // RtShadow.hlsl: reflected radiance, confidence
+Texture2D<float4> Clouds  : register(t13);  // Clouds.hlsl: the clouds' light, what is left of the sky (quarter size)
+SamplerState      Lin     : register(s0);
 Texture2D<float4> RtIdx   : register(t10);   // which lights, index + 1 over 255   // RAW's emissive target: for soft-lit draws the game's soft-lighting colour
 
 uint clusterOf(float2 px, float z) {
@@ -91,7 +94,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const int3 ip = int3(at.xy, 0);
     const float4 game = GameLit.Load(ip);
     const float d = Depth.Load(ip);
-    if (d >= 1.0f || (flags.x & FLAG_SURFACE) == 0u) { return game; }
+    if ((flags.x & FLAG_SURFACE) == 0u) { return game; }
+    if (d >= 1.0f) {
+        // The sky: the clouds over the game's own sky. View 10 marks the sky pixels this pass owns.
+        if (flags.w == 10u) { return float4(1.0f, 0.0f, 1.0f, game.a); }
+        if ((flags.x & FLAG_CLOUDS) == 0u) { return game; }
+        const float4 c = Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f);
+        return float4(game.rgb * c.a + c.rgb, game.a);
+    }
     // View 9, a test control: the pass reaches only the top-left quarter, as a half-size viewport
     // would. The coverage check in the capture must fail on it.
     if (flags.w == 9u && (at.x >= dims.x * 0.5f || at.y >= dims.y * 0.5f)) { return game; }
@@ -179,6 +189,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // directional light is the cell's fill, unshadowed as the game lights it; rays would cut it
         // into window shafts and darken the room.
         if (rt && sunColour.w > 0.5f) { sunShadow = min(sunShadow, base == 5u ? lerp(1.0f, rv.x, 0.6f) : rv.x); }
+        if (!match && sunColour.w > 0.5f && (flags.x & FLAG_CLOUDS) != 0u) { sunShadow *= cloudShadow(p + camPosW.xyz); }   // SKY-02
         addLight(s, sunDir.xyz, sunColour.rgb * sunShadow, sunColour.rgb, diff, spec);
         if (wet.snow > 0.0f && sunShadow > 0.0f)
             spec += sunColour.rgb * (sunShadow * wet.snow * 3.0f * snowGlint(p + camPosW.xyz, s.n, s.v, sunDir.xyz, max(1.2f, z * 0.0025f)));
@@ -227,6 +238,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
 
     if (flags.w == 1u) { return float4(s.n * 0.5f + 0.5f, game.a); }
     if (flags.w == 2u) { return float4(sunShadow.xxx, game.a); }
+    if (flags.w == 11u) { return float4(cloudShadow(p + camPosW.xyz).xxx, game.a); }   // the clouds' shadow alone
     if (flags.w == 3u) { return float4(amb, game.a); }
     if (flags.w == 4u) { return float4(skyVis.xxx, game.a); }
     if (flags.w == 5u) { return float4(bounce, game.a); }

@@ -19,16 +19,17 @@ namespace raw::bridge
 class RtSkin
 {
 public:
-    static constexpr uint32_t kMaxDraws = 512, kMaxVertices = 65536, kStatWords = 40, kPerDraw = 6;
+    static constexpr uint32_t kMaxDraws = 512, kMaxVertices = 65536, kStatWords = 48, kPerDraw = 6;
     static constexpr uint64_t kPool = 32ull << 20, kBlas = 96ull << 20, kScratch = 32ull << 20, kBones = kMaxDraws * 3840ull;
     static constexpr uint64_t kIdx = 16ull << 20, kStats = kMaxDraws * kStatWords * 4ull;
     // per slot, per draw: two streams, the pool, the index pool, the stats and the game's index buffer
-    static constexpr uint32_t Descriptors() { return 3 * kMaxDraws * kPerDraw; }
+    static constexpr uint32_t Descriptors() { return 3 * kMaxDraws * kPerDraw + 3; }   // + the depth view per slot
     bool Create(ID3D12Device5* dev, ID3D12DescriptorHeap* heap, uint32_t base, std::string& err);
     // This frame's skinned draws (taken from the frame's draws; the buffers are handed to the queue).
     void SetDraws(std::vector<RtDraw>& draws, std::vector<ID3D11Resource*>& toHand, ID3D12Resource* (*native)(ID3D11Resource*));
     // The skinning and the builds, before the frame's other BLAS builds (a UAV barrier follows them).
-    bool Record(ID3D12GraphicsCommandList4* cl, uint32_t slot);
+    // depth: the game's depth (R32), uniform: the lighting pass's (its dims, proj and worldToClip), for the floating check.
+    bool Record(ID3D12GraphicsCommandList4* cl, uint32_t slot, ID3D12Resource* depth, const void* uniform, size_t bytes);
     // The frame's BLASes as instances (identity, opaque, instance ID 0); returns how many were written.
     uint32_t Place(D3D12_RAYTRACING_INSTANCE_DESC* out, uint32_t room, uint32_t slot, uint64_t& tris) const;
     void SetCamera(const float pos[3]) { for (int k = 0; k < 3; ++k) m_cam[k] = pos[k]; }
@@ -38,6 +39,7 @@ public:
         m_filter = filter; m_ratio = ratio; m_minUnits = minUnits; m_logEvery = logEvery; m_log = log;
     }
     uint64_t Stretched() const { return m_stretched; }
+    uint64_t Floating() const { return m_floating; }
     uint32_t Draws() const { return uint32_t(m_jobs.size()); }
     uint32_t Built() const { return m_built; }
     uint64_t Vertices() const { return m_vertices; }
@@ -55,7 +57,7 @@ private:
     bool m_filter = true;
     float m_ratio = 4.0f, m_minUnits = 24.0f;
     uint32_t m_logEvery = 0, m_checkFrames = 0;
-    uint64_t m_stretched = 0;
+    uint64_t m_stretched = 0, m_floating = 0;
     void (*m_log)(const char*, ...) = nullptr;
     std::vector<Meta> m_meta[3];
     Microsoft::WRL::ComPtr<ID3D12Resource> m_idx[3], m_stats[3], m_statsRead[3], m_zero;

@@ -400,18 +400,21 @@ add_custom_command(
     VERBATIM)
 target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/BridgeLighting.cpp src/d3d12_bridge/LightClusters.cpp
     ${RAW_BRIDGE_GEN}/ShadowAtlas_CS.h)
-target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/SceneLights.cpp src/d3d11_proxy/GameComposite.cpp)
+target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/SceneLights.cpp src/d3d11_proxy/GameComposite.cpp src/d3d11_proxy/Tonemap.cpp)
 if(RAW_ENGINE_DIR)
     set(RAW_LIGHT_HLSL ${RAW_SHARE_HLSL}/Lighting.hlsl)
     set(RAW_LIGHTFOG_HLSL ${RAW_SHARE_HLSL}/LightFog.hlsl)
-    set(RAW_LIGHT_HEADERS ${RAW_ENGINE_GEN}/light_vs.h ${RAW_ENGINE_GEN}/light_fs.h ${RAW_ENGINE_GEN}/light_fog_fs.h)
+    set(RAW_CLOUDS_HLSL ${RAW_SHARE_HLSL}/Clouds.hlsl)
+    set(RAW_LIGHT_HEADERS ${RAW_ENGINE_GEN}/light_vs.h ${RAW_ENGINE_GEN}/light_fs.h ${RAW_ENGINE_GEN}/light_fog_fs.h ${RAW_ENGINE_GEN}/clouds_fs.h)
     add_custom_command(
         OUTPUT ${RAW_LIGHT_HEADERS}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
         COMMAND ${RAW_DXC} -T vs_6_0 -E vs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/light_vs.h -Vn kDxil_light_vs ${RAW_LIGHT_HLSL}
         COMMAND ${RAW_DXC} -T ps_6_0 -E fs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/light_fs.h -Vn kDxil_light_fs ${RAW_LIGHT_HLSL}
         COMMAND ${RAW_DXC} -T ps_6_0 -E fs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/light_fog_fs.h -Vn kDxil_light_fog_fs ${RAW_LIGHTFOG_HLSL}
-        DEPENDS ${RAW_LIGHT_HLSL} ${RAW_LIGHTFOG_HLSL} ${RAW_SHARE_HLSL}/LightingCommon.hlsli ${RAW_SHARE_HLSL}/Weather.hlsli
+        COMMAND ${RAW_DXC} -T ps_6_0 -E fs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/clouds_fs.h -Vn kDxil_clouds_fs ${RAW_CLOUDS_HLSL}
+        DEPENDS ${RAW_LIGHT_HLSL} ${RAW_LIGHTFOG_HLSL} ${RAW_CLOUDS_HLSL} ${RAW_SHARE_HLSL}/LightingCommon.hlsli ${RAW_SHARE_HLSL}/Weather.hlsli
+                ${RAW_SHARE_HLSL}/CloudCommon.hlsli
         COMMENT "dxc: lighting pass shaders -> DXIL headers"
         VERBATIM)
     target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/LightingPass.cpp ${RAW_LIGHT_HEADERS})

@@ -89,3 +89,15 @@ fence path, so they do not run, and the bridge's D3D11 stall timer no longer mea
 - A frame-time comparison with vsync handled the same way on both sides.
 - `SetMaximumFrameLatency` is not applied to the flip chain.
 - The debug layer on for one run, to count errors.
+
+## The Agility SDK (2026-11-19)
+
+`[Translate] AgilityPath` (the folder holding the DirectX 12 Agility SDK's `D3D12Core.dll`) and
+`AgilityVersion` (its SDK version, 620 for 1.620.1) put the layer's device on the Agility runtime.
+SkyrimSE.exe exports neither `D3D12SDKVersion` nor `D3D12SDKPath`, so the device comes from
+`ID3D12SDKConfiguration1::CreateDeviceFactory`; the debug layer, when asked, comes from the same factory.
+If the factory fails, the system runtime is used and the log says why. Build with
+`-DRAW_AGILITY_DIR=<the SDK's build/native folder>` for its headers (DXR 1.2, shader model 6.9).
+The translate suite runs on it with `RAW_TX_AGILITY_PATH` and `RAW_TX_AGILITY_VERSION` set:
+38 of 38 on WARP and on the RTX 4090, with the D3D12 debug layer on and 0 debug errors.
+No SDK binary is in the repository; the SDK's terms for redistributing `D3D12Core.dll` apply to any release that ships it.

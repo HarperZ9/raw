@@ -112,12 +112,21 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
     // The device's highest shader model and DXR tier, as the driver reports them (the system runtime
     // without the Agility SDK answers up to what it knows; the loop asks from the newest down).
     D3D12_FEATURE_DATA_SHADER_MODEL sm{};
-    for (int v = 0x69; v >= 0x60; --v) {
+    for (int v = 0x6a; v >= 0x60; --v) {
         sm.HighestShaderModel = static_cast<D3D_SHADER_MODEL>(v);
         if (SUCCEEDED(m_dev->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof sm))) break;
     }
     D3D12_FEATURE_DATA_D3D12_OPTIONS7 o7{};
     m_dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &o7, sizeof o7);
+#ifdef D3D12_RAYTRACING_OPACITY_MICROMAP_ARRAY_BYTE_ALIGNMENT
+    // Agility headers: DXR 1.2 brings opacity micromaps and shader execution reordering.
+    D3D12_FEATURE_DATA_D3D12_OPTIONS22 o22{};
+    const bool has22 = SUCCEEDED(m_dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS22, &o22, sizeof o22));
+    if (m_log)
+        m_log("[RT] DXR 1.2 features: opacity micromaps %s, shader execution reordering %s (reorders: %s)",
+              o5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_2 ? "yes" : "no", o5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_2 ? "yes" : "no",
+              has22 ? (o22.ShaderExecutionReorderingActuallyReorders ? "yes" : "no") : "unknown");
+#endif
     if (m_log)
         m_log("[RT] device: shader model %d.%d, DXR tier %d.%d, mesh shader tier %d, sampler feedback tier %d", int(sm.HighestShaderModel) >> 4,
               int(sm.HighestShaderModel) & 15, int(o5.RaytracingTier) / 10, int(o5.RaytracingTier) % 10, int(o7.MeshShaderTier), int(o7.SamplerFeedbackTier));

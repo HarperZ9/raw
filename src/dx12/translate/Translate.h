@@ -24,6 +24,11 @@ struct CreateParams {
     bool debugLayer = false;      // D3D12 debug layer; errors are counted
     const LUID* adapter = nullptr;   // a specific adapter (ignored with warp)
     uint32_t faults = FaultNone;
+    // The DirectX 12 Agility SDK: the folder holding its D3D12Core.dll and its SDK version. The host
+    // exe exports neither D3D12SDKVersion nor D3D12SDKPath, so the device comes from
+    // ID3D12SDKConfiguration1::CreateDeviceFactory. Empty: the system runtime.
+    const char* agilityPath = nullptr;
+    uint32_t agilityVersion = 0;
 };
 
 struct Stats {

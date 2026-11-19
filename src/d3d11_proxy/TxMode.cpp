@@ -17,7 +17,7 @@ using PFN_CreateDevSc = HRESULT(WINAPI*)(IDXGIAdapter*, D3D_DRIVER_TYPE, HMODULE
                                          const DXGI_SWAP_CHAIN_DESC*, IDXGISwapChain**, ID3D11Device**, D3D_FEATURE_LEVEL*,
                                          ID3D11DeviceContext**);
 
-struct TxConfig { int mode = -1; bool debugLayer = false, wrap = false; };
+struct TxConfig { int mode = -1; bool debugLayer = false, wrap = false; char agilityPath[MAX_PATH] = {}; UINT agilityVersion = 0; };
 TxConfig& C() { static TxConfig c; return c; }
 
 void Load()
@@ -32,6 +32,9 @@ void Load()
     C().mode = on ? (native ? 2 : 1) : 0;
     C().debugLayer = GetPrivateProfileIntA("Translate", "DebugLayer", 0, ini.c_str()) != 0;
     C().wrap = GetPrivateProfileIntA("Translate", "Wrap", 0, ini.c_str()) != 0;
+    // [Translate] AgilityPath (the folder of the Agility SDK's D3D12Core.dll) and AgilityVersion (its SDK version).
+    GetPrivateProfileStringA("Translate", "AgilityPath", "", C().agilityPath, MAX_PATH, ini.c_str());
+    C().agilityVersion = GetPrivateProfileIntA("Translate", "AgilityVersion", 0, ini.c_str());
     if (C().mode) Log("[Tx] translate mode %s%s", C().mode == 1 ? "on: the game runs on raw::tx (D3D12)" : "native: system D3D11 behind the harness wrapper",
                       C().debugLayer ? ", D3D12 debug layer on" : "");
 }
@@ -97,6 +100,8 @@ HRESULT MakeTx(IDXGIAdapter* adapter, ID3D11Device** dev, ID3D11DeviceContext** 
     (void)handler;
     raw::tx::CreateParams p;
     p.debugLayer = C().debugLayer;
+    p.agilityPath = C().agilityPath;
+    p.agilityVersion = C().agilityVersion;
     DXGI_ADAPTER_DESC ad{};
     if (adapter && SUCCEEDED(adapter->GetDesc(&ad))) p.adapter = &ad.AdapterLuid;
     ID3D11Device* d = nullptr;

@@ -26,6 +26,13 @@ HRESULT TxD3D12GetDebugInterface(REFIID riid, void** out)
     return fn ? fn(riid, out) : E_NOINTERFACE;
 }
 
+HRESULT TxD3D12GetInterface(REFCLSID clsid, REFIID riid, void** out)
+{
+    using Fn = HRESULT(WINAPI*)(REFCLSID, REFIID, void**);
+    static Fn fn = reinterpret_cast<Fn>(Entry(L"d3d12.dll", "D3D12GetInterface"));
+    return fn ? fn(clsid, riid, out) : E_NOINTERFACE;
+}
+
 HRESULT TxD3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC* d, ID3DBlob** blob, ID3DBlob** err)
 {
     using Fn = HRESULT(WINAPI*)(const D3D12_ROOT_SIGNATURE_DESC*, D3D_ROOT_SIGNATURE_VERSION, ID3DBlob**, ID3DBlob**);

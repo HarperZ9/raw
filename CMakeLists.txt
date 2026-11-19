@@ -15,6 +15,14 @@ project(
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# The DirectX 12 Agility SDK's headers (its build/native folder), for DXR 1.2 opacity micromaps, shader
+# execution reordering and shader model 6.9. Empty: the Windows SDK's headers. The runtime itself is
+# loaded at run time from [Translate] AgilityPath (docs/TX_IN_GAME.md); no SDK binary is built in.
+set(RAW_AGILITY_DIR "" CACHE PATH "DirectX 12 Agility SDK build/native folder")
+if(RAW_AGILITY_DIR)
+    include_directories(BEFORE SYSTEM ${RAW_AGILITY_DIR}/include)
+endif()
+
 # RAW_BUILD_PLUGIN=OFF builds only the d3d11 proxy, the D3D12 bridge and its
 # test, which need nothing beyond the Windows SDK.
 option(RAW_BUILD_PLUGIN "Build the SKSE plugin (needs CommonLibSSE via vcpkg)" ON)

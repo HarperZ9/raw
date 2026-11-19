@@ -3,6 +3,7 @@
 #include "HotReload.h"
 #include "BridgeHookState.h"
 #include "ProxyLog.h"
+#include "CBDirtyTracker.h"
 #include <cstdlib>
 #include <cstring>
 
@@ -28,6 +29,7 @@ void LoadConfig()
     GetPrivateProfileStringA("D3D12Bridge", "CaptureDir", "", text, MAX_PATH, ini.c_str());
     c.captureDir = text;
     c.enabled = i("Enabled", 0) != 0;
+    CBDirtyTracker::SetShadowsRequired(c.enabled);   // the lit-draw decode and RtSkin read the shadows
     c.fallbackAtPresent = i("FallbackAtPresent", 1) != 0;
     c.debugLayer = i("DebugLayer", 0) != 0;
     c.timingLogEvery = i("TimingLogEvery", 600);

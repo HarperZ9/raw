@@ -41,6 +41,11 @@ public:
     // if a new buffer is allocated at the same pointer).
     void OnFrameEnd();
 
+    // The lighting decode and the ray-tracing scene read the constant buffers' shadows (world matrices, bone
+    // palettes): with the bridge on, the tracker runs whatever [Proxy] CBDirtyTracker says.
+    static void SetShadowsRequired(bool on) { s_required = on; }
+    static bool ShadowsRequired() { return s_required; }
+
     // Called from WrappedContext::ClearState
     void OnClearState();
 
@@ -59,6 +64,7 @@ private:
 
     // Don't track CBs larger than this (diminishing returns, most engine CBs are < 1 KB)
     static constexpr uint32_t kMaxTrackedSize = 4096;
+    static inline bool s_required = false;
 
     struct CBEntry {
         uint32_t             byteWidth = 0;

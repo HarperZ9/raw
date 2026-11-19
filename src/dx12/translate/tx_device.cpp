@@ -57,6 +57,7 @@ static HRESULT AgilityDevice(const CreateParams& p, IDXGIAdapter1* adapter, ComP
 HRESULT Device::Init(const CreateParams& p)
 {
     faults = p.faults;
+    renameRing = p.renameRing;
     const bool agility = p.agilityPath && p.agilityPath[0] && p.agilityVersion;
     if (p.debugLayer && !agility) {
         ComPtr<ID3D12Debug> dbg;
@@ -81,7 +82,8 @@ HRESULT Device::Init(const CreateParams& p)
     if (FAILED(hr = d3d->CreateCommandQueue(&qd, IID_PPV_ARGS(&queue)))) return hr;
     if (FAILED(hr = d3d->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)))) return hr;
 
-    slab.Init(d3d.Get());
+    slab.Init(d3d.Get(), p.ringWriteBack);
+    Log("buffer renames: %s", !renameRing ? "slab chunks" : p.ringWriteBack ? "ring, write-back pages" : "ring, upload pages");
     initChunks_.Init(&slab);
     cpuSrv.Init(d3d.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     cpuRtv.Init(d3d.Get(), D3D12_DESCRIPTOR_HEAP_TYPE_RTV);

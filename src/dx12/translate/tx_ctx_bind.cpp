@@ -72,7 +72,7 @@ void Context::SetSRV(int stage, UINT start, UINT n, ID3D11ShaderResourceView* co
         if (s.srv[start + i] == nv) continue;
         IntAssign(s.srv[start + i], nv);
         if (nv && start + i + 1 > s.srvHi) s.srvHi = start + i + 1;
-        dirty_ |= (D_SRV0 << stage) | D_SCAN;
+        dirty_ |= (D_SRV0 << stage) | (stage < S_CS ? D_SCAN_SRV0 << stage : 0u);
     }
 }
 
@@ -108,28 +108,33 @@ STDMETHODIMP_(void) Context::IASetInputLayout(ID3D11InputLayout* l)
 STDMETHODIMP_(void) Context::IASetVertexBuffers(UINT start, UINT n, ID3D11Buffer* const* b, const UINT* strides, const UINT* offsets)
 {
     TX_TRACE("Context::IASetVertexBuffers");
+    bool changed = false;
     for (UINT i = 0; i < n && start + i < 32; ++i) {
         BufSlot& s = s_.vb[start + i];
         TBuffer* nb = b ? static_cast<TBuffer*>(b[i]) : nullptr;
+        const UINT stride = strides ? strides[i] : 0, offset = offsets ? offsets[i] : 0;
+        if (s.buf == nb && s.stride == stride && s.offset == offset) continue;   // a rename sets D_VB itself
         IntAssign(s.buf, nb);
         s.chunk = nb ? Pin(nb) : nullptr;
-        s.stride = strides ? strides[i] : 0;
-        s.offset = offsets ? offsets[i] : 0;
+        s.stride = stride;
+        s.offset = offset;
         if (nb && start + i + 1 > s_.vbHi) s_.vbHi = start + i + 1;
+        changed = true;
     }
-    dirty_ |= D_VB | D_SCAN;
+    if (changed) dirty_ |= D_VB | D_SCAN_IA;
 }
 
 STDMETHODIMP_(void) Context::IASetIndexBuffer(ID3D11Buffer* b, DXGI_FORMAT f, UINT offset)
 {
     TX_TRACE("Context::IASetIndexBuffer");
     TBuffer* nb = static_cast<TBuffer*>(b);
+    if (s_.ib.buf == nb && s_.ib.offset == offset && s_.ibFmt == f) return;   // a rename sets D_IB itself
     IntAssign(s_.ib.buf, nb);
     s_.ib.chunk = nb ? Pin(nb) : nullptr;
     s_.ib.offset = offset;
     if (s_.ibFmt != f) dirty_ |= D_PSO;
     s_.ibFmt = f;
-    dirty_ |= D_IB | D_SCAN;
+    dirty_ |= D_IB | D_SCAN_IA;
 }
 
 STDMETHODIMP_(void) Context::IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY t)

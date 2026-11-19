@@ -29,6 +29,12 @@ struct CreateParams {
     // ID3D12SDKConfiguration1::CreateDeviceFactory. Empty: the system runtime.
     const char* agilityPath = nullptr;
     uint32_t agilityVersion = 0;
+    // Buffer renames on the immediate context bump through a ring of 4 MB upload pages (on by default);
+    // off: one slab chunk per rename, as before.
+    bool renameRing = true;
+    // The ring's pages in CPU-cached (write-back) system memory instead of write-combined upload memory:
+    // writes into them need no write-combining drain. An experiment; off by default.
+    bool ringWriteBack = false;
 };
 
 struct Stats {
@@ -64,6 +70,13 @@ void TraceDump(void (*out)(const char* line));
 // lists the host then submits to GetNative's queue see them in that state and must leave them in it.
 ID3D12Resource* NativeResource(ID3D11Resource* resource);
 HRESULT PrepareForHost(ID3D11DeviceContext* context, ID3D11Resource* const* resources, UINT count, D3D12_RESOURCE_STATES state);
+
+// Per-draw reads for a host that hooks every draw (the RAW proxy): IsLayerContext tells a context of
+// this layer from any other; PeekConstantBuffers then gives the constant buffers bound to a stage
+// (0 VS, 1 HS, 2 DS, 3 GS, 4 PS, 5 CS) without adding references, so no Get and Release pair runs
+// per draw. The pointers are valid while they stay bound.
+bool IsLayerContext(ID3D11DeviceContext* context);
+void PeekConstantBuffers(ID3D11DeviceContext* context, UINT stage, UINT start, UINT count, ID3D11Buffer** out);
 
 // The D3D12 device and direct queue, for a renderer that adopts them
 // (superframe native/raw/rhi/host.hpp, HostDevice). No reference is added.

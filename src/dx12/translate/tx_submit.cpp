@@ -131,9 +131,14 @@ uint64_t Device::Submit(Recording** recs, int n, bool consume)
         Recording* r = all[i];
         bool take = consume || r == &init_;
         Retire ret;
-        if (take) { ret = std::move(r->retire); r->retire = Retire{}; }
+        if (take) {
+            ret = std::move(r->retire);
+            r->retire = Retire{};
+            if (!chunkVecs_.empty()) { r->retire.chunks = std::move(chunkVecs_.back()); chunkVecs_.pop_back(); }
+        }
         ret.serial = serial;
-        r->tracker.Keep(ret.keep);
+        if (ret.keep.empty() && !keepVecs_.empty()) { ret.keep = std::move(keepVecs_.back()); keepVecs_.pop_back(); }
+        r->tracker.Keep(ret.keep, take);   // a consumed list is reset below: its references move
         retireQ_.push_back(std::move(ret));
         nBarriers += r->tracker.barrierCount;
         r->tracker.barrierCount = 0;
@@ -167,6 +172,8 @@ void Device::ReclaimLocked(bool force)
         Retire& r = retireQ_.front();
         if (!r.chunks.empty()) slab.Free(r.chunks.data(), r.chunks.size());
         for (uint32_t p : r.descPages) freePages_.push_back(p);
+        if (r.chunks.capacity() >= 1024 && chunkVecs_.size() < 8) { r.chunks.clear(); chunkVecs_.push_back(std::move(r.chunks)); }
+        if (r.keep.capacity() >= 256 && keepVecs_.size() < 8) { r.keep.clear(); keepVecs_.push_back(std::move(r.keep)); }
         retireQ_.pop_front();
     }
 }
@@ -208,7 +215,7 @@ uint32_t Device::AllocDescPage()
 
 D3D12_GPU_DESCRIPTOR_HANDLE Device::SamplerTable(const uint32_t* ids, uint32_t n)
 {
-    uint64_t key = Fnv(ids, n * sizeof(uint32_t), 1469598103934665603ull ^ n);
+    uint64_t key = HashBytes(ids, n * sizeof(uint32_t), 0x9E3779B97F4A7C15ull ^ n);
     std::lock_guard<std::mutex> g(cacheM_);
     auto it = sampTables_.find(key);
     if (it != sampTables_.end()) return it->second;

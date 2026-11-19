@@ -88,6 +88,8 @@ bool Context::ResolvePipeline()
     k.dsFmt = s_.dsv ? uint16_t(s_.dsv->format) : 0;
     k.samples = uint8_t(first ? first->samples : 1);
     k.quality = uint8_t(first ? first->quality : 0);
+    if (cur_.pso && k == lastKey_) return true;   // shaders rebound to the same pipeline: no lookup
+    lastKey_ = k;
     auto it = psoCache_.find(k);
     if (it == psoCache_.end()) {
         StageBind sb[5]{};
@@ -104,29 +106,34 @@ bool Context::ResolvePipeline()
 void Context::ScanGraphics(const RootSig* root)
 {
     Tracker& t = rec_.tracker;
-    for (uint32_t i = 0; i < s_.rtCount; ++i)
-        if (TRTV* v = s_.rtv[i]) t.RequireRange(v->core->tr, v->range, v->core->mips, v->core->slices, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    if (TDSV* v = s_.dsv) {
-        SubRange r = v->range;
-        r.all = false;
-        r.planeMask = 1;
-        t.RequireRange(v->core->tr, r, v->core->mips, v->core->slices,
-            (v->desc.Flags & D3D11_DSV_READ_ONLY_DEPTH) ? D3D12_RESOURCE_STATE_DEPTH_READ : D3D12_RESOURCE_STATE_DEPTH_WRITE);
-        if (v->core->planes > 1) {
-            r.planeMask = 2;
+    const uint32_t d = dirty_;
+    if (d & D_SCAN_OM) {
+        for (uint32_t i = 0; i < s_.rtCount; ++i)
+            if (TRTV* v = s_.rtv[i]) t.RequireRange(v->core->tr, v->range, v->core->mips, v->core->slices, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        if (TDSV* v = s_.dsv) {
+            SubRange r = v->range;
+            r.all = false;
+            r.planeMask = 1;
             t.RequireRange(v->core->tr, r, v->core->mips, v->core->slices,
-                (v->desc.Flags & D3D11_DSV_READ_ONLY_STENCIL) ? D3D12_RESOURCE_STATE_DEPTH_READ : D3D12_RESOURCE_STATE_DEPTH_WRITE);
+                (v->desc.Flags & D3D11_DSV_READ_ONLY_DEPTH) ? D3D12_RESOURCE_STATE_DEPTH_READ : D3D12_RESOURCE_STATE_DEPTH_WRITE);
+            if (v->core->planes > 1) {
+                r.planeMask = 2;
+                t.RequireRange(v->core->tr, r, v->core->mips, v->core->slices,
+                    (v->desc.Flags & D3D11_DSV_READ_ONLY_STENCIL) ? D3D12_RESOURCE_STATE_DEPTH_READ : D3D12_RESOURCE_STATE_DEPTH_WRITE);
+            }
         }
+        for (uint32_t i = 0; i < root->sb[S_PS].uavCount && i < 8; ++i)
+            if (TUAV* v = s_.uav[i]) t.RequireRange(v->core->tr, v->range, v->core->mips, v->core->slices, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
-    for (uint32_t i = 0; i < root->sb[S_PS].uavCount && i < 8; ++i)
-        if (TUAV* v = s_.uav[i]) t.RequireRange(v->core->tr, v->range, v->core->mips, v->core->slices, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     for (int st = 0; st < 5; ++st) {
+        if (!(d & (D_SCAN_SRV0 << st))) continue;
         uint32_t n = root->sb[st].srvCount < s_.st[st].srvHi ? root->sb[st].srvCount : s_.st[st].srvHi;
         for (uint32_t i = 0; i < n; ++i) {
             TSRV* v = s_.st[st].srv[i];
             if (v && v->core->tr) t.RequireRange(v->core->tr, v->range, v->core->mips, v->core->slices, kShaderRead);
         }
     }
+    if (!(d & D_SCAN_IA)) return;
     for (uint32_t i = 0; i < s_.vbHi; ++i)
         if (s_.vb[i].buf && s_.vb[i].buf->core.store == Store::Committed)
             t.Require(s_.vb[i].buf->core.tr, 0, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
@@ -154,7 +161,7 @@ void Context::ApplyTables(const RootSig* root, int first, int last, bool compute
         if (p.samp >= 0 && (dirty_ & (D_SAMP0 << st))) {
             uint32_t ids[16];
             for (UINT i = 0; i < b.sampCount; ++i) ids[i] = s.samp[i] ? s.samp[i]->id : 0;
-            uint64_t key = Fnv(ids, b.sampCount * sizeof(uint32_t));
+            uint64_t key = HashBytes(ids, b.sampCount * sizeof(uint32_t));
             if (key != sampKey_[st]) {
                 D3D12_GPU_DESCRIPTOR_HANDLE h = dev_->SamplerTable(ids, b.sampCount);
                 if (compute) cl->SetComputeRootDescriptorTable(p.samp, h);
@@ -173,8 +180,8 @@ void Context::ApplyTables(const RootSig* root, int first, int last, bool compute
             if (compute) cl->SetComputeRootDescriptorTable(p.uav, GpuHandle(base));
             else cl->SetGraphicsRootDescriptorTable(p.uav, GpuHandle(base));
         }
-        for (int slot = 0; slot < 14; ++slot) {
-            if (p.cb[slot] < 0) continue;
+        for (uint32_t bits = p.cbBits; bits; bits &= bits - 1) {
+            const int slot = std::countr_zero(bits);
             const BufSlot& c = s.cb[slot];
             D3D12_GPU_VIRTUAL_ADDRESS va = c.chunk ? c.chunk->va : dev_->zeroCb.va;
             bool known = cbVa_[st][slot] != ~0ull;
@@ -242,10 +249,11 @@ bool Context::PrepareDraw(bool indexed)
         root_ = cur_.root;
         memset(cbVa_, 0xFF, sizeof(cbVa_[0]) * 5);
         for (int i = 0; i < 5; ++i) sampKey_[i] = ~0ull;
-        dirty_ |= kGraphicsTableBits;
+        // Another root signature can read more shader-resource or UAV slots than the last scan covered.
+        dirty_ |= kGraphicsTableBits | D_SCAN_OM | (D_SCAN_SRV0 * 0x1F);
     }
     if (pso_ != cur_.pso) { cl->SetPipelineState(cur_.pso); pso_ = cur_.pso; }
-    if (dirty_ & D_SCAN) ScanGraphics(root_);
+    if (dirty_ & D_SCAN) ScanGraphics(root_);   // any of the scan parts
     rec_.tracker.Flush(cl);
     if (dirty_ & D_RT) {
         D3D12_CPU_DESCRIPTOR_HANDLE h[8];

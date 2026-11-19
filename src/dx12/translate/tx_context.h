@@ -13,9 +13,16 @@ enum StageIndex { S_VS, S_HS, S_DS, S_GS, S_PS, S_CS, S_COUNT };
 
 enum Dirty : uint32_t {
     D_PSO = 1, D_RT = 2, D_VP = 4, D_SC = 8, D_BF = 0x10, D_SREF = 0x20, D_TOPO = 0x40,
-    D_VB = 0x80, D_IB = 0x100, D_SCAN = 0x200, D_UAV = 0x400, D_CSUAV = 0x800,
+    D_VB = 0x80, D_IB = 0x100, D_UAV = 0x400, D_CSUAV = 0x800,
     D_SRV0 = 0x1000,     // << stage
     D_SAMP0 = 0x40000,   // << stage
+    // State scans at the next draw (ScanGraphics): which bindings may need a transition. A vertex or index
+    // buffer, or one stage's shader resources, rescans only that part; anything that can move a resource out
+    // of a state the list already holds (copies, clears, targets, compute, a new list) sets D_SCAN, all parts.
+    D_SCAN_IA = 0x200,
+    D_SCAN_OM = 0x1000000,
+    D_SCAN_SRV0 = 0x2000000,   // << graphics stage (VS..PS)
+    D_SCAN = D_SCAN_IA | D_SCAN_OM | (D_SCAN_SRV0 * 0x1F),
     D_ALL = 0xFFFFFFFFu,
 };
 
@@ -181,6 +188,11 @@ public:
     STDMETHODIMP_(UINT) GetContextFlags() override { return 0; }
 
     // ---- internals ----
+    void PeekCB(UINT stage, UINT start, UINT n, ID3D11Buffer** out) const
+    {
+        for (UINT i = 0; i < n; ++i)
+            out[i] = (stage < S_COUNT && start + i < 14) ? s_.st[stage].cb[start + i].buf : nullptr;
+    }
     uint64_t FlushInternal();                 // submits the open list; returns its serial
     void Sync();                              // flush and wait for the GPU
     void Shutdown();
@@ -235,6 +247,7 @@ private:
     RootSig* croot_ = nullptr;      // compute root signature set on the list
     ID3D12PipelineState* pso_ = nullptr;
     PsoEntry cur_{};                // pipeline the D3D11 state resolves to
+    PsoKey lastKey_{};              // the key cur_ was resolved from
     D3D12_GPU_VIRTUAL_ADDRESS cbVa_[S_COUNT][14];
     const TBuffer* cbBuf_[S_COUNT][14];
     uint64_t sampKey_[S_COUNT];

@@ -3,10 +3,14 @@
 
 namespace raw::tx {
 
+extern const void* g_contextVtable;   // tx_host.cpp
+
 Context::Context(Device* dev, bool deferred) : dev_(dev), deferred_(deferred)
 {
-    chunks_.Init(&dev->slab);
+    g_contextVtable = *reinterpret_cast<void* const*>(this);
+    chunks_.Init(&dev->slab, !deferred && dev->renameRing);   // the immediate context renames through the ring
     rec_.tracker.faults = dev->faults;
+    if (!deferred_) rec_.tracker.EnableSlots();   // the immediate context's list: hash-free state lookups
     dev_->OpenRecording(rec_);
     BeginList();
     if (deferred_) dev_->AddRef();
@@ -83,7 +87,7 @@ const Chunk* Context::Pin(TBuffer* b)
 
 void Context::RenameBuffer(TBuffer* b)
 {
-    Chunk nc = chunks_.Alloc(b->core.bytes);
+    Chunk nc = chunks_.AllocRename(b->core.bytes);
     if (deferred_) {
         auto ins = renames_.try_emplace(b);
         Rename& e = ins.first->second;

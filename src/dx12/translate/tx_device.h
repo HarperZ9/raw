@@ -26,6 +26,7 @@ struct RootSig {
     struct Params {
         int8_t cb[14];
         int8_t srv = -1, samp = -1, uav = -1;
+        uint16_t cbBits = 0;   // the slots with a cb parameter, so a draw visits only those
     } st[5];
 };
 
@@ -38,7 +39,7 @@ struct PsoKey {
     bool operator==(const PsoKey& o) const { return memcmp(this, &o, sizeof(*this)) == 0; }
 };
 struct PsoKeyHash {
-    size_t operator()(const PsoKey& k) const { return static_cast<size_t>(Fnv(&k, sizeof(k))); }
+    size_t operator()(const PsoKey& k) const { return static_cast<size_t>(HashBytes(&k, sizeof(k))); }
 };
 
 struct LayoutData {
@@ -141,6 +142,7 @@ public:
     ComPtr<ID3D12InfoQueue> info;
     HANDLE fenceEvent = nullptr;
     uint32_t faults = 0;
+    bool renameRing = true;
     Context* imm = nullptr;
 
     // ---- counters ----
@@ -221,6 +223,10 @@ private:
     void RecycleAllocator(ComPtr<ID3D12CommandAllocator> a, uint64_t serial);
     std::atomic<uint64_t> lastSubmitted_{0};
     std::deque<Retire> retireQ_;
+    // Emptied retire vectors, capacity kept (under submitM_): a list's retire set grows to about ten
+    // thousand chunks a frame, and growing a fresh vector each time took new pages from the system.
+    std::vector<std::vector<Chunk>> chunkVecs_;
+    std::vector<std::vector<std::shared_ptr<TrackedRes>>> keepVecs_;
     struct PooledAlloc { ComPtr<ID3D12CommandAllocator> a; uint64_t serial; };
     std::vector<PooledAlloc> allocPool_;
     std::vector<ComPtr<ID3D12GraphicsCommandList>> fixLists_;

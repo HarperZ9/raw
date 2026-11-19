@@ -14,6 +14,23 @@ static void MipSize(const ResCore& c, uint32_t mip, uint32_t& w, uint32_t& h, ui
     d = (c.depth >> mip) ? (c.depth >> mip) : 1;
 }
 
+// Map and Unmap counts by storage, logged every 600 presents (MapStatsLog): which path the game's per-draw
+// uploads take on the translation layer.
+namespace {
+uint64_t g_map[4] = {}, g_unmap[3] = {}, g_unmapBytes = 0;   // map: renamed, staging, committed buffer, texture
+}
+void MapStatsLog(uint64_t frames)
+{
+    if (!frames) return;
+    const double f = double(frames);
+    Log("map stats per frame: renamed %.0f, staging %.0f, committed buffer %.0f, texture %.0f; unmap copies buffer %.0f, "
+        "texture %.0f (%.0f KB), no-op %.0f", g_map[0] / f, g_map[1] / f, g_map[2] / f, g_map[3] / f, g_unmap[0] / f,
+        g_unmap[1] / f, g_unmapBytes / f / 1024.0, g_unmap[2] / f);
+    for (auto& x : g_map) x = 0;
+    for (auto& x : g_unmap) x = 0;
+    g_unmapBytes = 0;
+}
+
 STDMETHODIMP Context::Map(ID3D11Resource* res, UINT sub, D3D11_MAP type, UINT flags, D3D11_MAPPED_SUBRESOURCE* out)
 {
     TX_TRACE("Context::Map");
@@ -21,6 +38,7 @@ STDMETHODIMP Context::Map(ID3D11Resource* res, UINT sub, D3D11_MAP type, UINT fl
     if (!c || !out) return E_INVALIDARG;
     *out = D3D11_MAPPED_SUBRESOURCE{};
     if (c->store == Store::Renamed) {
+        ++g_map[0];
         TBuffer* b = static_cast<TBuffer*>(res);
         if (type == D3D11_MAP_WRITE_DISCARD) RenameBuffer(b);
         else if (type != D3D11_MAP_WRITE_NO_OVERWRITE) return E_INVALIDARG;
@@ -29,6 +47,7 @@ STDMETHODIMP Context::Map(ID3D11Resource* res, UINT sub, D3D11_MAP type, UINT fl
         return S_OK;
     }
     if (c->store == Store::Staging) {
+        ++g_map[1];
         if (deferred_) return E_INVALIDARG;
         uint64_t serial = FlushInternal();
         if (dev_->Completed() < serial) {
@@ -53,6 +72,7 @@ STDMETHODIMP Context::Map(ID3D11Resource* res, UINT sub, D3D11_MAP type, UINT fl
     if (type == D3D11_MAP_WRITE_NO_OVERWRITE) CountUnsupported(dev_, "Map NO_OVERWRITE on a dynamic resource with a view (contents restart)");
     if (c->mapChunk.res) return E_INVALIDARG;
     c->mapSub = sub;
+    ++g_map[c->IsBuffer() ? 2 : 3];
     if (c->IsBuffer()) {
         c->mapChunk = chunks_.Alloc(c->bytes);
         out->pData = c->mapChunk.cpu;
@@ -77,8 +97,10 @@ STDMETHODIMP_(void) Context::Unmap(ID3D11Resource* res, UINT sub)
 {
     TX_TRACE("Context::Unmap");
     ResCore* c = CoreOf(res);
-    if (!c || c->store != Store::Committed || !c->mapChunk.res) return;
+    if (!c || c->store != Store::Committed || !c->mapChunk.res) { ++g_unmap[2]; return; }
     Chunk ch = c->mapChunk;
+    ++g_unmap[c->IsBuffer() ? 0 : 1];
+    g_unmapBytes += ch.size;
     c->mapChunk = Chunk{};
     Tracker& t = rec_.tracker;
     if (c->IsBuffer()) {

@@ -6,16 +6,17 @@
 //  constant buffer lives in write-combined memory and cannot be read back, so the proxy keeps a CPU copy:
 //  the game writes into a cached staging block, and Unmap copies it to the GPU.
 //
-//  Two modes:
-//    dedupe  ([Proxy] CBDirtyTracker=1): every dynamic constant buffer is intercepted, and an upload whose
-//            bytes did not change is skipped. Measured in Riverwood, its compares and copies cost more CPU
-//            than the skipped driver maps save, so it is off by default.
-//    shadows (the default): only the buffers a reader has asked for are intercepted. Unmap copies the
-//            staging block to the GPU once and swaps it with the shadow: no compare and no second copy.
-//            A buffer is asked for by its first GetShadowData/GetShadowSize; its shadow exists from its
-//            next Map on. A buffer no reader has asked for in kWantFrames frames goes back to the plain
-//            driver path. [Proxy] CBShadowAll=1 shadows every dynamic constant buffer (the old behaviour
-//            with the dedupe off), for A/B runs.
+//  Modes:
+//    off     (bridge off, [Proxy] CBDirtyTracker=0): nothing is intercepted. On native D3D11 the dedupe's
+//            compares cost more CPU than the skipped driver maps save (raw#25).
+//    dedupe  (bridge on, or CBDirtyTracker=1): every dynamic constant buffer is intercepted, and an upload whose
+//            bytes did not change is skipped. On raw::tx a Map is costly and 44 % of Riverwood's 16,600 uploads
+//            a frame repeat, so the dedupe pays: batch submission 8.7 ms against 9.3 ms in demand mode.
+//    demand  (bridge on and [Proxy] CBShadowDemand=1): only the buffers a reader has asked for are intercepted,
+//            and every write is uploaded. A buffer is asked for by its first GetShadowData/GetShadowSize; its
+//            shadow exists from its next Map on, and lapses after kWantFrames frames without a request.
+//  Unmap copies the staging block to the GPU once and swaps it with the shadow (no second copy); a flat
+//  pointer table replaces the unordered_map.
 //  A buffer not mapped in a frame loses its shadow at the end of the next frame, and its description is read
 //  again, so a new buffer created at a freed one's address is never served stale bytes.
 //=============================================================================
@@ -88,6 +89,7 @@ private:
     CBEntry* Classify(ID3D11Resource* p);   // find or insert, (re)reading the description when stale
     void     Grow();
     bool     Wanted(const CBEntry& e) const;
+    static bool Dedupe();
 
     std::vector<CBEntry> m_table;            // open addressing, linear probe, size a power of two
     uint32_t             m_used = 0;

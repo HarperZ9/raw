@@ -1,6 +1,6 @@
 #include "CBDirtyTracker.h"
 #include "BindingLedger.h"   // CB-ptr -> slot/stage lookup for cb_meta attribution (1.2-p3)
-#include "ProxyAPI.h"        // PG_DiagCBScan, PG_CBDirtyTracker, PG_CBShadowAll
+#include "ProxyAPI.h"        // PG_DiagCBScan, PG_CBDirtyTracker, PG_CBShadowDemand
 #include <cstring>
 #include <fstream>
 #include <filesystem>
@@ -142,11 +142,15 @@ CBDirtyTracker::CBEntry* CBDirtyTracker::Classify(ID3D11Resource* p)
     return e;
 }
 
+bool CBDirtyTracker::Dedupe()
+{
+    return PG_CBDirtyTracker() || (s_required && !PG_CBShadowDemand());
+}
+
 bool CBDirtyTracker::Wanted(const CBEntry& e) const
 {
-    if (PG_CBDirtyTracker()) return true;
-    if (!s_required) return false;
-    return PG_CBShadowAll() || (e.wantFrame && e.wantFrame + kWantFrames >= m_frame);
+    if (Dedupe()) return true;
+    return s_required && e.wantFrame && e.wantFrame + kWantFrames >= m_frame;
 }
 
 bool CBDirtyTracker::InterceptMap(ID3D11DeviceContext*, ID3D11Resource* pResource,
@@ -178,7 +182,7 @@ bool CBDirtyTracker::InterceptUnmap(ID3D11DeviceContext* realCtx, ID3D11Resource
     e->intercepted = false;
 
     // Dedupe mode: unchanged bytes skip the upload; the GPU already holds them.
-    if (PG_CBDirtyTracker() && e->valid && std::memcmp(e->staging.get(), e->shadow.get(), e->byteWidth) == 0) {
+    if (Dedupe() && e->valid && std::memcmp(e->staging.get(), e->shadow.get(), e->byteWidth) == 0) {
         ++m_skippedUpdates;
         e->mapFrame = m_frame;
         return true;

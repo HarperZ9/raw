@@ -4,6 +4,7 @@
 //   CallGraph=1        decode the game's code once in a background thread (rt_callgraph.cpp)
 //   VTrace=1           trace the vtables listed in engine_rt_vtrace.tsv (rt_vtrace.cpp)
 //   GpuTiming=1       GPU timestamps per pass, reported by every measure (rt_passes.cpp)
+//   Weather=1         Sky and TESWeather read each present, fed to the proxy's PG_SetWeatherState (rt_weather.cpp)
 //   OutDir=raw_engine_out
 // Inputs beside the game: engine_rt_refs.tsv (rva, kind setting|global, name) and
 // engine_rt_vtrace.tsv (class, vtable rva, slot count), both generated from the engine map.
@@ -23,6 +24,8 @@
 #include "rt_papyrus.h"
 #include "rt_passes.h"
 #include "rt_vtrace.h"
+#include "rt_livestate.h"
+#include "rt_weather.h"
 
 namespace {
 
@@ -133,6 +136,14 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
             Log("opcode loop %s timed at %zu call sites: %s", l, n, sites.c_str());
         }
     }
+    // weather for the ray-tracing worker (rt_weather.h); Weather=0 turns the per-frame read off
+    if (IniInt("Weather", 1)) {
+        raw::rt::WeatherInit(g_img);
+        Log("weather: Sky read each present, PG_SetWeatherState %s",
+            GetProcAddress(GetModuleHandleA("d3d11.dll"), "PG_SetWeatherState") ? "exported by the proxy" : "not exported (values recorded only)");
+    }
+    // the scene's lights and the shader manager's state each present (rt_livestate.h), exported as RAW_EngineLights
+    if (IniInt("LiveState", 1)) raw::rt::LiveStateInit(g_img, g_out);
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (IniInt("CallGraph", 0)) {
         std::thread([] {

@@ -213,6 +213,14 @@ private:
     // manager's generation does not move (the game rebinds the same shader thousands of times a frame).
     struct BindCache { void* ptr = nullptr; uint64_t gen = 0; void* repl = nullptr; uint64_t hash = 0; };
     BindCache m_vsCache, m_psCache;
+    // Replacement and hash per shader, direct-mapped by pointer: the game switches among a few hundred
+    // shaders a frame, and each miss took the shader manager's mutex twice. The generation (bumped on
+    // every shader create and replacement change) keeps an entry from outliving its shader.
+    static constexpr size_t kBindSlots = 512;
+    BindCache m_vsTab[kBindSlots], m_psTab[kBindSlots];
+    static size_t BindSlot(const void* p) { return (reinterpret_cast<uintptr_t>(p) >> 4) * 0x9E3779B97F4A7C15ull >> 55; }
+    const BindCache& VsBind(ID3D11VertexShader* vs, uint64_t gen);
+    const BindCache& PsBind(ID3D11PixelShader* ps, uint64_t gen);
 
     // ── State cache for redundancy filtering ────────────────────────────
     // Tracks last-set state objects to skip redundant D3D11 API calls.

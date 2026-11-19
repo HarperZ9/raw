@@ -58,6 +58,14 @@ public:
     // Shadow data access (for OcclusionCuller to read VS CB transforms)
     const uint8_t* GetShadowData(ID3D11Resource* pResource) const;
     uint32_t       GetShadowSize(ID3D11Resource* pResource) const;
+    // Both at once through the entry cache, for the per-draw readers. Null (size 0) when not tracked.
+    const uint8_t* Shadow(ID3D11Resource* pResource, uint32_t* size)
+    {
+        const CBEntry* e = pResource ? Cached(pResource) : nullptr;
+        if (!e || !e->byteWidth || e->shadow.empty()) { *size = 0; return nullptr; }
+        *size = e->byteWidth;
+        return e->shadow.data();
+    }
 
 private:
     CBDirtyTracker() = default;
@@ -76,8 +84,23 @@ private:
 
     // Lazily register a CB on first Map encounter
     CBEntry* GetOrCreateEntry(ID3D11Resource* pResource);
-
     std::unordered_map<ID3D11Resource*, CBEntry> m_entries;
+    struct CacheSlot { ID3D11Resource* key = nullptr; CBEntry* entry = nullptr; };
+    static constexpr size_t kCacheSlots = 4096;   // power of two
+    // The entry for a resource through a direct-mapped cache in front of the map: two hash lookups a Map and
+    // Unmap pair became one load. Map nodes never move, so the pointers hold until an erase clears the cache.
+    CacheSlot m_cache[kCacheSlots];
+    static size_t Slot(const void* p) { return (reinterpret_cast<uintptr_t>(p) >> 4) * 0x9E3779B97F4A7C15ull >> 52; }
+    CBEntry* Cached(ID3D11Resource* r)
+    {
+        CacheSlot& s = m_cache[Slot(r)];
+        if (s.key == r) return s.entry;
+        auto it = m_entries.find(r);
+        if (it == m_entries.end()) return nullptr;
+        s.key = r;
+        s.entry = &it->second;
+        return s.entry;
+    }
 
     // Per-frame counters
     uint32_t m_mapCalls         = 0;

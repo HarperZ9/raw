@@ -1,0 +1,20 @@
+# Draw submission pass by pass, Riverwood and the inn, vsync off: the CPU time of each call to
+# BSShaderAccumulator slot 0x2A in frame order and of BSBatchRenderer's pass dispatch, beside GPU time per
+# pass, then the render thread's hottest game functions from the sampler.
+start load rawharness
+console tai
+scene riverwood
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+console coc riverwood
+wait 8
+console fw 81a
+wait 6
+engine vtime 0x1AB6190 0x2A accum_2A; vtime 0x1AB6190 0x25 accum_25; vtime 0x1AC0FB0 0x2 batch_dispatch
+engine measure riverwood 600
+engine sample 10 0x1000 0x174E938; wait 1500
+console coc whiterunbanneredmare
+wait 8
+engine measure inn 600
+quit

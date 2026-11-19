@@ -122,3 +122,32 @@ Inputs come from the map: `python -I tools/enginemap/rt_inputs.py --map docs/eng
 - So GPU-driven batching (one ExecuteIndirect per pass instead of about 6,000 dispatches) attacks the largest cost. A faster culler would not.
 - The shadow distance barely moves any of these numbers (3000 and 20000).
 - The hooks cost 0.07 ms a frame (inn: 1.81 ms without them, 1.89 ms with them).
+
+### The proxy's own CPU cost, and submission pass by pass (engine control 5)
+
+The sampler's module breakdown of the render thread found RAW's proxy taking 38 % of its samples. Each step below was measured in game (Riverwood, 1080p, vsync off, 600 frames):
+
+| Step | Frame | Batch submission (`BSShaderAccumulator` 0x2A) | Proxy share of the render thread |
+|---|---|---|---|
+| Diagnostics on (as before) | 9.43 ms | 6.19 ms | 38 % |
+| Diagnostics opt-in (`[Diagnostics]` BindingLedger, CBScan, PipelineAsserts) | 5.70 ms | 3.28 ms | 20 % |
+| Constant-buffer dirty tracker off (`[Proxy] CBDirtyTracker`) | 4.96 to 5.51 ms | 2.63 to 2.95 ms | 11 % |
+| Latest run (same settings) | 4.98 ms | 2.58 ms | 11 % |
+
+- **Inn:** the frame went from 3.72 ms to 2.24 ms (diagnostics), then from 2.12 ms to 1.76 ms (tracker). The bind cache on shader binds showed no change outside noise.
+- **Render thread now:** the game 48 %, the system D3D11 runtime 17 %, the proxy 11 %, ntdll 8 % and the NVIDIA driver 7 %.
+
+**Submission pass by pass** (`cpu_order_ms`, the k-th call of slot 0x2A in each frame, Riverwood):
+- Three of the 11 calls carry 90 % of the time:
+  - call 8: 1.22 ms
+  - call 5: 0.56 ms
+  - call 6: 0.52 ms
+- The draw counts match: about 2,460 geometry draws, about 2,030 depth-prepass draws and about 2,020 shadow-atlas draws a frame.
+- On the GPU: geometry 3.16 ms, depth prepass 0.56 ms, shadow atlas 0.25 ms.
+- The inn has 9 calls and 0.53 ms in total. Indoors, depth entry 4 (8 slices) is bound with 1,500 draws and takes 0.48 ms of GPU time.
+
+**The render thread's hottest game functions:**
+- `sub_14F3DC0`, `sub_E28000`, `sub_150C2D0` and `sub_14DD1BA`
+- `BSLightingShaderProperty::Unk_2B`
+- `BSLightingShader::SetupMaterial`
+- These are the targets for the batching work: the per-draw material setup and the pass loop around it.

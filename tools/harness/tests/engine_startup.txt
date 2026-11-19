@@ -1,0 +1,13 @@
+# The same view as engine_control.txt, with the startup patches from [EngineSet] in force.
+start load rawharness
+console tai
+scene riverwood
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+console coc riverwood
+wait 8
+console fw 81a
+wait 6
+engine measure startup 300; capture startup
+quit

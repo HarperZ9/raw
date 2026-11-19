@@ -576,6 +576,33 @@ static bool LoadRealD3D11()
     return true;
 }
 
+// Engine modules: [Modules] Load=a.dll;b.dll in d3d11_proxy.ini, loaded from the game folder after
+// lazy init (outside DllMain). Each may export RAW_ModuleStart(ProxyInterface*).
+static void LoadEngineModules()
+{
+    char exe[MAX_PATH];
+    GetModuleFileNameA(nullptr, exe, MAX_PATH);
+    std::string dir(exe);
+    dir = dir.substr(0, dir.rfind('\\') + 1);
+    char list[1024] = {};
+    GetPrivateProfileStringA("Modules", "Load", "", list, sizeof(list), (dir + "d3d11_proxy.ini").c_str());
+    std::string all(list);
+    size_t p = 0;
+    while (p < all.size()) {
+        size_t q = all.find(';', p);
+        if (q == std::string::npos) q = all.size();
+        std::string name = all.substr(p, q - p);
+        p = q + 1;
+        if (name.empty()) continue;
+        HMODULE m = LoadLibraryA((dir + name).c_str());
+        if (!m) { SB::Proxy::Log("Module %s: LoadLibrary failed (%lu)", name.c_str(), GetLastError()); continue; }
+        using StartFn = void (*)(SB::Proxy::ProxyInterface*);
+        auto start = reinterpret_cast<StartFn>(GetProcAddress(m, "RAW_ModuleStart"));
+        SB::Proxy::Log("Module %s loaded%s", name.c_str(), start ? ", starting" : " (no RAW_ModuleStart)");
+        if (start) start(&s_proxyInterface);
+    }
+}
+
 // Lazy initialization — called on first D3D11CreateDevice* call (NOT from DllMain)
 static bool s_lazyInitDone = false;
 
@@ -675,6 +702,7 @@ static void LazyInit()
     s_proxyInterface.RegisterResourceName = RegisterResourceNameCB;
 
     SB::Proxy::Log("Playground proxy lazy-init complete");
+    LoadEngineModules();
 }
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)

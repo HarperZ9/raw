@@ -22,7 +22,8 @@ from pathlib import Path
 DOCS = Path(os.path.expanduser("~")) / "Documents" / "My Games" / "Skyrim Special Edition"
 SETTINGS = ("SkyrimCustom.ini", "SkyrimPrefs.ini")
 PROXY_FILES = ("d3d11_proxy.ini", "d3d11_proxy.log", "raw_harness_go.txt", "raw_harness_done.txt", "raw_harness_status.txt",
-               "rawbat.txt")
+               "rawbat.txt",
+               "raw_engine_go.txt", "raw_engine_done.txt")
 
 
 def sha(p: Path) -> str:

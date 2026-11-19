@@ -1,0 +1,260 @@
+setting	function	function_name	read_site	compare_site	mnemonic	distance	value
+uGridsToLoad:General	0x1999E0	sub_1999E0	0x199F99	0x199FAD	cmp	4	
+uGridsToLoad:General	0x1999E0	sub_1999E0	0x199F99	0x199FAF	cmovb	5	
+uGridsToLoad:General	0x1999E0	sub_1999E0	0x199F99	0x199FC6	cmovo	11	
+uGridsToLoad:General	0x1999E0	sub_1999E0	0x199F99	0x199FCA	cmp	12	immediate
+uGridsToLoad:General	0x1999E0	sub_1999E0	0x19A231	0x19A240	cmp	2	
+uGridsToLoad:General	0x1999E0	sub_1999E0	0x19A231	0x19A242	cmovb	3	
+uGridsToLoad:General	0x1999E0	sub_1999E0	0x19A231	0x19A277	cmp	11	immediate
+uGridsToLoad:General	0x19B0B0	sub_19B0B0	0x19B392	0x19B3BE	cmp	8	
+uGridsToLoad:General	0x19B0B0	sub_19B0B0	0x19B392	0x19B3C5	cmp	11	
+uGridsToLoad:General	0x19B0B0	sub_19B0B0	0x19B392	0x19B3CA	cmp	13	
+uGridsToLoad:General	0x19B0B0	sub_19B0B0	0x19B4B1	0x19B4E2	cmp	12	
+uGridsToLoad:General	0x19B0B0	sub_19B0B0	0x19B6AD	0x19B6E7	ucomiss	15	constant 0x3272ED8
+uGridsToLoad:General	0x19B0B0	sub_19B0B0	0x19BBE0	0x19BBE9	cmp	1	
+uGridsToLoad:General	0x19B0B0	sub_19B0B0	0x19BBE0	0x19BBF5	cmp	4	
+uGridsToLoad:General	0x19BF30	sub_19BF30	0x19BF87	0x19BF8E	cmp	0	
+uGridsToLoad:General	0x19BF30	sub_19BF30	0x19BF87	0x19BF9D	cmp	3	immediate
+uGridsToLoad:General	0x19CCF0	sub_19CCF0	0x19CD5A	0x19CD82	cmp	8	
+uGridsToLoad:General	0x19CCF0	sub_19CCF0	0x19CD5A	0x19CD8A	cmp	11	
+uGridsToLoad:General	0x19CCF0	sub_19CCF0	0x19CD5A	0x19CD8F	cmp	13	
+uGridsToLoad:General	0x19D4E0	sub_19D4E0	0x19D760	0x19D780	cmp	8	
+uGridsToLoad:General	0x19D4E0	sub_19D4E0	0x19D760	0x19D785	cmp	10	
+uGridsToLoad:General	0x19D915	sub_19D915	0x19D9A3	0x19D9AB	cmp	1	
+uGridsToLoad:General	0x19D915	sub_19D915	0x19D9A3	0x19D9B1	cmp	4	
+uGridsToLoad:General	0x19DC90	sub_19DC90	0x19DE1C	0x19DE24	cmp	1	
+uGridsToLoad:General	0x19DC90	sub_19DC90	0x19DE1C	0x19DE2A	cmp	4	
+uGridsToLoad:General	0x19DC90	sub_19DC90	0x19E1C9	0x19E1D1	cmp	1	
+uGridsToLoad:General	0x19DC90	sub_19DC90	0x19E1C9	0x19E1D7	cmp	4	
+uGridsToLoad:General	0x19DC90	sub_19DC90	0x19E243	0x19E24B	cmp	1	
+uGridsToLoad:General	0x19DC90	sub_19DC90	0x19E243	0x19E251	cmp	4	
+uGridsToLoad:General	0x19E5F0	sub_19E5F0	0x19E605	0x19E62A	cmp	9	
+uGridsToLoad:General	0x19E5F0	sub_19E5F0	0x19E605	0x19E62E	cmp	11	
+uGridsToLoad:General	0x19E690	sub_19E690	0x19E6C4	0x19E6E9	cmp	7	
+uGridsToLoad:General	0x19E690	sub_19E690	0x19E6C4	0x19E6ED	cmp	9	
+uGridsToLoad:General	0x19F1C7	sub_19F1C7	0x19F1E3	0x19F205	cmp	8	
+uGridsToLoad:General	0x19F1C7	sub_19F1C7	0x19F1E3	0x19F20D	cmp	12	
+uGridsToLoad:General	0x19F2E0	sub_19F2E0	0x19F310	0x19F330	cmp	8	
+uGridsToLoad:General	0x19F2E0	sub_19F2E0	0x19F310	0x19F335	cmp	10	
+uGridsToLoad:General	0x19F400	sub_19F400	0x19F430	0x19F450	cmp	8	
+uGridsToLoad:General	0x19F400	sub_19F400	0x19F430	0x19F455	cmp	10	
+uGridsToLoad:General	0x19F954	sub_19F954	0x19FEE2	0x19FEFC	cmp	4	
+uGridsToLoad:General	0x19F954	sub_19F954	0x19FEE2	0x19FF19	cmp	10	
+uGridsToLoad:General	0x1A0C7D	sub_1A0C7D	0x1A0CB3	0x1A0CBB	cmp	1	
+uGridsToLoad:General	0x1A0C7D	sub_1A0C7D	0x1A0CB3	0x1A0CC1	cmp	4	
+uGridsToLoad:General	0x1A1010	sub_1A1010	0x1A101C	0x1A1050	cmp	11	
+uGridsToLoad:General	0x1A15C1	sub_1A15C1	0x1A165A	0x1A1662	cmp	1	
+uGridsToLoad:General	0x1A15C1	sub_1A15C1	0x1A165A	0x1A166C	cmp	4	
+uGridsToLoad:General	0x1A172F	sub_1A172F	0x1A1765	0x1A176D	cmp	1	
+uGridsToLoad:General	0x1A172F	sub_1A172F	0x1A1765	0x1A1773	cmp	4	
+uGridsToLoad:General	0x1A182F	sub_1A182F	0x1A1834	0x1A1852	cmp	7	
+uGridsToLoad:General	0x1A2AA0	sub_1A2AA0	0x1A2AF2	0x1A2B06	cmp	4	
+uGridsToLoad:General	0x1A2AA0	sub_1A2AA0	0x1A2AF2	0x1A2B08	cmovb	5	
+uGridsToLoad:General	0x1A2AA0	sub_1A2AA0	0x1A2AF2	0x1A2B26	cmovo	12	
+uGridsToLoad:General	0x1A2AA0	sub_1A2AA0	0x1A2AF2	0x1A2B2A	cmp	13	immediate
+uGridsToLoad:General	0x1A2C01	sub_1A2C01	0x1A2C33	0x1A2C3B	cmp	1	
+uGridsToLoad:General	0x1A2C01	sub_1A2C01	0x1A2C33	0x1A2C41	cmp	4	
+uGridsToLoad:General	0x1A2CCF	sub_1A2CCF	0x1A2D01	0x1A2D09	cmp	1	
+uGridsToLoad:General	0x1A2CCF	sub_1A2CCF	0x1A2D01	0x1A2D0F	cmp	4	
+uGridsToLoad:General	0x1A2DAA	sub_1A2DAA	0x1A2DE4	0x1A2DEC	cmp	1	
+uGridsToLoad:General	0x1A2DAA	sub_1A2DAA	0x1A2DE4	0x1A2DF2	cmp	4	
+uGridsToLoad:General	0x1A2E5A	sub_1A2E5A	0x1A2E91	0x1A2E99	cmp	1	
+uGridsToLoad:General	0x1A2E5A	sub_1A2E5A	0x1A2E91	0x1A2E9F	cmp	4	
+uGridsToLoad:General	0x1A2F62	sub_1A2F62	0x1A2FA3	0x1A2FAB	cmp	1	
+uGridsToLoad:General	0x1A2F62	sub_1A2F62	0x1A2FA3	0x1A2FB1	cmp	4	
+uGridsToLoad:General	0x1A43C0	sub_1A43C0	0x1A49B6	0x1A49BC	cmp	0	
+uGridsToLoad:General	0x1A43C0	sub_1A43C0	0x1A49B6	0x1A49D0	cmp	4	
+uGridsToLoad:General	0x1A4DC9	sub_1A4DC9	0x1A4E1A	0x1A4E22	cmp	1	
+uGridsToLoad:General	0x1A4DC9	sub_1A4DC9	0x1A4E1A	0x1A4E28	cmp	4	
+uGridsToLoad:General	0x1A4E80	sub_1A4E80	0x1A4EAB	0x1A4EB3	cmp	1	
+uGridsToLoad:General	0x1A4E80	sub_1A4E80	0x1A4EAB	0x1A4EB9	cmp	4	
+uGridsToLoad:General	0x1A5490	sub_1A5490	0x1A55EC	0x1A55F5	cmp	1	
+uGridsToLoad:General	0x1A5490	sub_1A5490	0x1A55EC	0x1A5603	cmp	5	
+uGridsToLoad:General	0x1A5671	sub_1A5671	0x1A56E8	0x1A56F0	cmp	1	
+uGridsToLoad:General	0x1A5671	sub_1A5671	0x1A56E8	0x1A56F6	cmp	4	
+uGridsToLoad:General	0x1A5C40	sub_1A5C40	0x1A5DA5	0x1A5DAD	cmp	1	
+uGridsToLoad:General	0x1A5C40	sub_1A5C40	0x1A5DA5	0x1A5DB8	cmp	4	
+uGridsToLoad:General	0x1A5DF0	sub_1A5DF0	0x1A5E9E	0x1A5EB3	cmp	3	
+uGridsToLoad:General	0x1A5DF0	sub_1A5DF0	0x1A6034	0x1A603F	cmp	1	
+uGridsToLoad:General	0x1A61D0	sub_1A61D0	0x1A6218	0x1A622C	cmp	4	immediate
+uGridsToLoad:General	0x1A61D0	sub_1A61D0	0x1A6218	0x1A6237	cmovz	6	
+uGridsToLoad:General	0x1A61D0	sub_1A61D0	0x1A6218	0x1A6243	cmp	10	
+uGridsToLoad:General	0x1A61D0	sub_1A61D0	0x1A6218	0x1A6249	cmp	13	
+uGridsToLoad:General	0x1A64C0	sub_1A64C0	0x1A64E4	0x1A64FE	cmp	5	immediate
+uGridsToLoad:General	0x1A64C0	sub_1A64C0	0x1A64E4	0x1A6509	cmovz	7	
+uGridsToLoad:General	0x1A64C0	sub_1A64C0	0x1A64E4	0x1A6515	cmp	11	
+uGridsToLoad:General	0x1A64C0	sub_1A64C0	0x1A64E4	0x1A651B	cmp	14	
+uGridsToLoad:General	0x1AEBB5	sub_1AEBB5	0x1AECD9	0x1AECE1	cmp	0	
+fDecalLOD0:Display	0x1F9830	sub_1F9830	0x1F98E3	0x1F98EC	cmp	1	immediate
+uGridsToLoad:General	0x2010C0	sub_2010C0	0x201333	0x201344	comiss	3	
+uGridsToLoad:General	0x2010C0	sub_2010C0	0x201333	0x201356	minss	9	constant 0x1FD63E8
+uGridsToLoad:General	0x20F030	sub_20F030	0x20F195	0x20F1A2	cmp	2	
+uGridsToLoad:General	0x20F030	sub_20F030	0x20F195	0x20F1A4	cmovb	3	
+uGridsToLoad:General	0x20F030	sub_20F030	0x20F195	0x20F1B5	cmp	9	
+uCityLODBudgetAdjustment:BudgetCaps	0x2101D4	sub_2101D4	0x2101DD	0x2101E3	cmovz	0	constant 0x1FD6D38
+uCityLODBudgetAdjustment:BudgetCaps	0x21024A	sub_21024A	0x210292	0x210298	cmovz	0	constant 0x1FD6D38
+uGridsToLoad:General	0x211E50	sub_211E50	0x211E97	0x211EB8	cmp	7	
+fSkyCellRefFadeDistance	0x21F200	sub_21F200	0x21F226	0x21F238	comiss	2	constant 0x1AD280C
+fLODBoundRadiusMult:LOD	0x21F200	sub_21F200	0x21F287	0x21F29A	comiss	2	constant 0x17743E8
+fLODBoundRadiusMult:LOD	0x21F200	sub_21F200	0x21F287	0x21F2A3	comiss	4	
+uGridsToLoad:General	0x2216C0	sub_2216C0	0x2216EB	0x2216F1	cmp	0	immediate
+uGridsToLoad:General	0x2216C0	sub_2216C0	0x22170C	0x221729	cmovo	6	
+uGridsToLoad:General	0x2216C0	sub_2216C0	0x22170C	0x22172D	cmp	7	immediate
+fLargeRefMinSize	0x28B6C5	sub_28B6C5	0x28B718	0x28B72D	cmovnbe	3	
+uGridsToLoad:General	0x28B7C0	sub_28B7C0	0x28B7E1	0x28B7E7	cmp	0	constant 0x1FD8638
+uGridsToLoad:General	0x28B940	sub_28B940	0x28B94E	0x28B954	cmp	0	constant 0x1FD8638
+uGridsToLoad:General	0x28B9D0	sub_28B9D0	0x28B9FE	0x28BA04	cmp	0	constant 0x1FD8638
+uGridsToLoad:General	0x28BD90	sub_28BD90	0x28BDEB	0x28BDF1	cmp	0	constant 0x1FD8638
+uGridsToLoad:General	0x28C0B0	sub_28C0B0	0x28C0FA	0x28C100	cmp	0	constant 0x1FD8638
+uLargeRefLODGridSize:General	0x28C520	sub_28C520	0x28C53C	0x28C542	cmp	0	constant 0x1FD6EB0
+uLargeRefLODGridSize:General	0x28C520	sub_28C520	0x28C53C	0x28C579	cmp	15	
+uGridsToLoad:General	0x28C520	sub_28C520	0x28C542	0x28C579	cmp	14	
+uLargeRefLODGridSize:General	0x28C6A0	sub_28C6A0	0x28C6A8	0x28C6B1	cmp	1	constant 0x1FD6EB0
+uLargeRefLODGridSize:General	0x28CA20	sub_28CA20	0x28CA9D	0x28CAA3	cmp	0	constant 0x1FD6EB0
+uLargeRefLODGridSize:General	0x28CB60	sub_28CB60	0x28CCA2	0x28CCAA	cmp	1	
+uLargeRefLODGridSize:General	0x28CB60	sub_28CB60	0x28CCA2	0x28CCAF	cmp	3	
+uLargeRefLODGridSize:General	0x28CDE0	sub_28CDE0	0x28CE60	0x28CE68	cmp	1	
+uLargeRefLODGridSize:General	0x28CDE0	sub_28CDE0	0x28CE60	0x28CE71	cmp	3	
+uGridsToLoad:General	0x28EAD0	sub_28EAD0	0x28EB9F	0x28EBA5	cmp	0	constant 0x1FD8638
+fLightLODStartFade:Display	0x2B3260	sub_2B3260	0x2B33D7	0x2B33E4	ucomiss	1	
+iEnableShadowCastingFlag:Display	0x375980	sub_375980	0x375984	0x3759A5	cmp	9	immediate
+fStaggerBlockingMult	0x417EB0	sub_417EB0	0x41801F	0x41806D	maxss	14	constant 0x20048F0
+fLodDistance:LOD	0x43258C	sub_43258C	0x4326F5	0x432713	comiss	4	
+fLodDistance:LOD	0x43258C	sub_43258C	0x4326F5	0x43271D	cmp	8	immediate
+fLodDistance:LOD	0x43258C	sub_43258C	0x4326F5	0x43272E	comiss	12	
+fTalkingDistance:LOD	0x43258C	sub_43258C	0x432701	0x432713	comiss	2	
+fTalkingDistance:LOD	0x43258C	sub_43258C	0x432701	0x43271D	cmp	6	immediate
+fTalkingDistance:LOD	0x43258C	sub_43258C	0x432701	0x43272E	comiss	10	
+fTalkingDistance:LOD	0x43258C	sub_43258C	0x432701	0x432738	cmp	14	immediate
+fLodDistance:LOD	0x43258C	sub_43258C	0x432908	0x432915	comiss	1	
+fAIAimBlockedToleranceDegrees	0x47C650	sub_47C650	0x47CF04	0x47CF11	comiss	1	
+fAIAimBlockedToleranceDegrees	0x487CB0	sub_487CB0	0x4887BE	0x4887CB	comiss	1	
+fAIAimBlockedHalfCircleRadius	0x48A470	sub_48A470	0x48B27F	0x48B2C0	cmp	13	
+fAIAimBlockedToleranceDegrees	0x48A470	sub_48A470	0x48B452	0x48B462	comiss	1	
+fAIAimBlockedToleranceDegrees	0x48A470	sub_48A470	0x48B452	0x48B467	comiss	3	
+fAIAimBlockedToleranceDegrees	0x48A470	sub_48A470	0x48B452	0x48B46D	comiss	5	
+uGridsToLoad:General	0x5195D0	sub_5195D0	0x51965D	0x51966A	cmp	2	immediate
+fActorFadeOutLimit:Camera	0x54F720	sub_54F720	0x54F9D4	0x54F9F0	cmp	3	
+fLODLandDropAmount:LOD	0x643060	sub_643060	0x643782	0x643792	cmp	1	immediate
+fMaxFocusShadowMapDistance:Display	0x6452C0	sub_6452C0	0x6456CB	0x6456F9	cmp	6	immediate
+bBlockMessageBoxes:MESSAGES	0x64CCF0	sub_64CCF0	0x64CD17	0x64CD2B	cmp	4	immediate
+fNoLODFarDistanceMax:Display	0x652D87	sub_652D87	0x652DBE	0x652DFA	cmp	12	immediate
+fRumbleBlockTime	0x6B7BC0	sub_6B7BC0	0x6B876A	0x6B8788	cmp	4	constant 0x31874F4
+fRumbleBlockTime	0x6B7BC0	sub_6B7BC0	0x6B876A	0x6B8794	cmp	6	immediate
+fRumbleBlockTime	0x6B7BC0	sub_6B7BC0	0x6B876A	0x6B87A7	cmp	9	immediate
+fRumbleBlockStrength	0x6B7BC0	sub_6B7BC0	0x6B8772	0x6B8788	cmp	3	constant 0x31874F4
+fRumbleBlockStrength	0x6B7BC0	sub_6B7BC0	0x6B8772	0x6B8794	cmp	5	immediate
+fRumbleBlockStrength	0x6B7BC0	sub_6B7BC0	0x6B8772	0x6B87A7	cmp	8	immediate
+fSummonedCreatureFadeOutSeconds	0x6EB630	sub_6EB630	0x6EB6EB	0x6EB71A	cmp	7	immediate
+fSummonedCreatureFadeOutSeconds	0x6EB630	sub_6EB630	0x6EB6EB	0x6EB728	comiss	10	
+fSummonedCreatureFadeOutSeconds	0x6EB630	sub_6EB630	0x6EB6EB	0x6EB742	comiss	15	
+iLoadingMenuShadowLightFlags:Display 	0x974100	sub_974100	0x97450F	0x974519	cmp	1	immediate
+fLODFadeOutMultActors:LOD	0x992840	sub_992840	0x992BBB	0x992BDF	maxss	4	
+fLODFadeOutMultActors:LOD	0x992840	sub_992840	0x992BBB	0x992BE3	minss	5	
+fActorLODMin:LOD	0x992840	sub_992840	0x992BC3	0x992BDF	maxss	3	
+fActorLODMin:LOD	0x992840	sub_992840	0x992BC3	0x992BE3	minss	4	
+fActorLODMax:LOD	0x992840	sub_992840	0x992BCB	0x992BDF	maxss	2	
+fActorLODMax:LOD	0x992840	sub_992840	0x992BCB	0x992BE3	minss	3	
+fActorLODMin:LOD	0x992840	sub_992840	0x992BD3	0x992BDF	maxss	1	
+fActorLODMin:LOD	0x992840	sub_992840	0x992BD3	0x992BE3	minss	2	
+fActorLODMin:LOD	0x992840	sub_992840	0x992C44	0x992C60	maxss	3	
+fActorLODMin:LOD	0x992840	sub_992840	0x992C44	0x992C64	minss	4	
+fActorLODMax:LOD	0x992840	sub_992840	0x992C4C	0x992C60	maxss	2	
+fActorLODMax:LOD	0x992840	sub_992840	0x992C4C	0x992C64	minss	3	
+fActorLODMin:LOD	0x992840	sub_992840	0x992C54	0x992C60	maxss	1	
+fActorLODMin:LOD	0x992840	sub_992840	0x992C54	0x992C64	minss	2	
+fLODFadeOutMultItems:LOD	0x992840	sub_992840	0x992D2D	0x992D51	maxss	4	
+fLODFadeOutMultItems:LOD	0x992840	sub_992840	0x992D2D	0x992D55	minss	5	
+fItemLODMin:LOD	0x992840	sub_992840	0x992D35	0x992D51	maxss	3	
+fItemLODMin:LOD	0x992840	sub_992840	0x992D35	0x992D55	minss	4	
+fItemLODMax:LOD	0x992840	sub_992840	0x992D3D	0x992D51	maxss	2	
+fItemLODMax:LOD	0x992840	sub_992840	0x992D3D	0x992D55	minss	3	
+fItemLODMin:LOD	0x992840	sub_992840	0x992D45	0x992D51	maxss	1	
+fItemLODMin:LOD	0x992840	sub_992840	0x992D45	0x992D55	minss	2	
+fItemLODMin:LOD	0x992840	sub_992840	0x992DB6	0x992DD2	maxss	3	
+fItemLODMin:LOD	0x992840	sub_992840	0x992DB6	0x992DD6	minss	4	
+fItemLODMax:LOD	0x992840	sub_992840	0x992DBE	0x992DD2	maxss	2	
+fItemLODMax:LOD	0x992840	sub_992840	0x992DBE	0x992DD6	minss	3	
+fItemLODMin:LOD	0x992840	sub_992840	0x992DC6	0x992DD2	maxss	1	
+fItemLODMin:LOD	0x992840	sub_992840	0x992DC6	0x992DD6	minss	2	
+fLODFadeOutMultObjects:LOD	0x992840	sub_992840	0x992E9F	0x992EC3	maxss	4	
+fLODFadeOutMultObjects:LOD	0x992840	sub_992840	0x992E9F	0x992EC7	minss	5	
+fObjectLODMin:LOD	0x992840	sub_992840	0x992EA7	0x992EC3	maxss	3	
+fObjectLODMin:LOD	0x992840	sub_992840	0x992EA7	0x992EC7	minss	4	
+fObjectLODMax:LOD	0x992840	sub_992840	0x992EAF	0x992EC3	maxss	2	
+fObjectLODMax:LOD	0x992840	sub_992840	0x992EAF	0x992EC7	minss	3	
+fObjectLODMin:LOD	0x992840	sub_992840	0x992EB7	0x992EC3	maxss	1	
+fObjectLODMin:LOD	0x992840	sub_992840	0x992EB7	0x992EC7	minss	2	
+fObjectLODMin:LOD	0x992840	sub_992840	0x992F28	0x992F44	maxss	3	
+fObjectLODMin:LOD	0x992840	sub_992840	0x992F28	0x992F48	minss	4	
+fObjectLODMax:LOD	0x992840	sub_992840	0x992F30	0x992F44	maxss	2	
+fObjectLODMax:LOD	0x992840	sub_992840	0x992F30	0x992F48	minss	3	
+fObjectLODMin:LOD	0x992840	sub_992840	0x992F38	0x992F44	maxss	1	
+fObjectLODMin:LOD	0x992840	sub_992840	0x992F38	0x992F48	minss	2	
+bEnableLogging:Papyrus	0x9A43D0	SkyrimScript::Logger::PostErrorImpl	0x9A43EA	0x9A4403	cmp	4	immediate
+bEnableLogging:Papyrus	0x9A44A0	sub_9A44A0	0x9A44B2	0x9A44C7	cmp	4	immediate
+bEnableProfiling:Papyrus	0x9BDE90	sub_9BDE90	0x9BE973	0x9BE979	cmovnz	0	
+bEnableTrace:Papyrus	0xA077D0	sub_A077D0	0xA077DD	0xA077F3	cmp	4	immediate
+bEnableTrace:Papyrus	0xA07870	sub_A07870	0xA0787D	0xA07896	cmp	5	immediate
+bEnableTrace:Papyrus	0xA078F0	sub_A078F0	0xA07911	0xA07921	cmp	2	immediate
+uTraceStatusOfQuest:Papyrus	0xA46C60	sub_A46C60	0xA46CCA	0xA46CD2	cmp	1	immediate
+uTraceStatusOfQuest:Papyrus	0xA46C60	sub_A46C60	0xA46CCA	0xA46CEB	cmovnz	5	
+uTraceStatusOfQuest:Papyrus	0xA46D70	sub_A46D70	0xA46DF4	0xA46DFC	cmp	1	immediate
+uTraceStatusOfQuest:Papyrus	0xA46D70	sub_A46D70	0xA46DF4	0xA46E15	cmovnz	5	
+uTraceStatusOfQuest:Papyrus	0xA46EA0	sub_A46EA0	0xA46F1E	0xA46F26	cmp	1	immediate
+uTraceStatusOfQuest:Papyrus	0xA46EA0	sub_A46EA0	0xA46F1E	0xA46F3F	cmovnz	5	
+uTraceStatusOfQuest:Papyrus	0xA46FD0	sub_A46FD0	0xA470B4	0xA470CA	cmp	3	immediate
+uTraceStatusOfQuest:Papyrus	0xA46FD0	sub_A46FD0	0xA470B4	0xA470D2	cmovnz	4	
+fBoneLODDistanceScale:Animation	0xBAF880	sub_BAF880	0xBAF8FF	0xBAF939	cmp	10	
+fBoneLODDistanceScale:Animation	0xBAF880	sub_BAF880	0xBAF8FF	0xBAF957	comiss	14	
+fNoLODFarDistanceMax:Display	0xE2EFE0	sub_E2EFE0	0xE2F286	0xE2F2DE	cmp	14	
+fNoLODFarDistanceMin:Display	0xE2EFE0	sub_E2EFE0	0xE2F28E	0xE2F2DE	cmp	13	
+fNoLODFarDistancePct:Display	0xE2EFE0	sub_E2EFE0	0xE2F296	0xE2F2DE	cmp	12	
+fNoLODFarDistanceMin:Display	0xE2EFE0	sub_E2EFE0	0xE2F29E	0xE2F2DE	cmp	11	
+bDisableHighTreeShadow:Display	0x147D3C0	BSTreeNode::OnVisible	0x147D3D2	0x147D3EB	comiss	3	constant 0x2032FA0
+iNumSplits:Display	0x149FBB0	sub_149FBB0	0x149FEA0	0x149FEA6	cmp	0	immediate
+iEnableShadowCastingFlag:Display	0x14AF030	BSLightingShaderProperty::Unk_2B	0x14AF294	0x14AF29A	cmp	0	immediate
+iEnableShadowCastingFlag:Display	0x14AF030	BSLightingShaderProperty::Unk_2B	0x14AF294	0x14AF2A3	cmp	2	immediate
+iEnableShadowCastingFlag:Display	0x14AF030	BSLightingShaderProperty::Unk_2B	0x14AF294	0x14AF2AC	cmp	4	immediate
+iEnableShadowCastingFlag:Display	0x14AF030	BSLightingShaderProperty::Unk_2B	0x14AF294	0x14AF2B6	cmp	6	immediate
+bLodZPrepass:Display	0x14AF030	BSLightingShaderProperty::Unk_2B	0x14AF381	0x14AF399	cmp	4	immediate
+bLodZPrepass:Display	0x14AF030	BSLightingShaderProperty::Unk_2B	0x14AF381	0x14AF3B8	cmp	10	immediate
+iShadowMaskQuarter:Display	0x14B6230	BSGrassShader::SetupTechnique	0x14B63D5	0x14B63E3	cmp	2	constant 0x202AC70
+iShadowMaskQuarter:Display	0x14B6230	BSGrassShader::SetupTechnique	0x14B63D5	0x14B641A	cmp	15	constant 0x202ACB8
+iShadowMaskQuarter:Display	0x14CF210	sub_14CF210	0x14CF24E	0x14CF272	cmp	8	constant 0x2033B20
+iShadowMaskQuarter:Display	0x14CF210	sub_14CF210	0x14CF24E	0x14CF28F	cmovnz	13	
+fShadowSparkleIntensity:Display	0x14D5A50	sub_14D5A50	0x14D6AB5	0x14D6B00	cmp	13	constant 0x338C99D
+iShadowMaskQuarter:Display	0x14DC1BA	sub_14DC1BA	0x14DC217	0x14DC224	cmp	2	constant 0x202ACA4
+ffocusShadowMapDoubleEveryXUnit:Display	0x14F0480	sub_14F0480	0x14F07C9	0x14F07FF	maxss	11	
+iShadowMapResolution:Display	0x14F0480	sub_14F0480	0x14F0821	0x14F082F	cmp	1	
+iShadowMapResolution:Display	0x14F0480	sub_14F0480	0x14F0821	0x14F0831	cmovb	2	
+iShadowMapResolution:Display	0x14F0480	sub_14F0480	0x14F0821	0x14F0856	comiss	9	
+fMaxFocusShadowMapDistance:Display	0x14FA203	sub_14FA203	0x14FA76C	0x14FA776	cmp	1	constant 0x332A498
+fMaxFocusShadowMapDistance:Display	0x14FA203	sub_14FA203	0x14FA76C	0x14FA7AD	comiss	12	
+iEnableShadowCastingFlag:Display	0x1511D60	BSShadowDirectionalLight::Unk_0A	0x1511D79	0x1511D87	cmp	3	
+bDisableShadowJumps:Display	0x1512230	BSShadowDirectionalLight::Unk_10	0x15124D3	0x15124F1	comiss	3	
+bDisableShadowJumps:Display	0x1512230	BSShadowDirectionalLight::Unk_10	0x15124D3	0x15124FC	cmp	7	immediate
+bDisableShadowJumps:Display	0x1512230	BSShadowDirectionalLight::Unk_10	0x15124D3	0x1512509	maxss	10	
+fShadowDistance:Display	0x1512230	BSShadowDirectionalLight::Unk_10	0x151309C	0x15130AC	maxss	1	constant 0x1AD29E4
+fShadowDistance:Display	0x1512230	BSShadowDirectionalLight::Unk_10	0x151309C	0x15130CA	minss	7	
+fShadowDistance:Display	0x1512230	BSShadowDirectionalLight::Unk_10	0x151309C	0x15130DF	cmp	11	
+bDirShadowMapFullViewPort:Display	0x1512230	BSShadowDirectionalLight::Unk_10	0x151408A	0x15140A6	cmp	5	immediate
+bDirShadowMapFullViewPort:Display	0x1512230	BSShadowDirectionalLight::Unk_10	0x151408A	0x15140B5	ucomiss	9	
+bDisableShadowJumps:Display	0x15148C0	sub_15148C0	0x151493F	0x1514989	comiss	12	
+fSunShadowUpdateTime:Display	0x15148C0	sub_15148C0	0x1514A72	0x1514A82	maxss	1	constant 0x1AD27F8
+fSunShadowUpdateTime:Display	0x15148C0	sub_15148C0	0x1514A72	0x1514A92	minss	4	
+uGridsToLoad:General	0x203510	sub_203510	0x203528	0x203536	comiss	2	
+uGridsToLoad:General	0x203510	sub_203510	0x203528	0x20354B	minss	9	constant 0x1FD63E8
+iFadeNodeMinNearDistance:LOD	0x147A9B0	sub_147A9B0	0x147A9B0	0x147A9BB	comiss	1	
+iFadeNodeMinNearDistance:LOD	0x147A9B0	sub_147A9B0	0x147A9B0	0x147A9CF	maxss	6	
+uGridsToLoad:General	0x28C360	sub_28C360	0x28C360	0x28C366	cmp	0	constant 0x1FD8638
+uGridsToLoad:General	0x307390	sub_307390	0x3073F3	0x307406	cmp	6	
+fStaggerBlockAttackShieldMult	0x4181E0	sub_4181E0	0x4181E0	0x41821B	maxss	8	
+fStaggerBlockMult	0x4181E0	sub_4181E0	0x4181F0	0x41821B	maxss	6	
+fStaggerBlockAttackShieldBase	0x4181E0	sub_4181E0	0x418203	0x41821B	maxss	2	
+fStaggerBlockBase	0x4181E0	sub_4181E0	0x418213	0x41821B	maxss	0	
+fMeshLODLevel1FadeTreeDistance:Display	0x147AEB0	sub_147AEB0	0x147AEB0	0x147AF21	comiss	15	
+fMeshLODLevel1FadeDist:Display	0x147AEB0	sub_147AEB0	0x147AEB8	0x147AF21	comiss	14	
+fMeshLODLevel2FadeDist:Display	0x147AEB0	sub_147AEB0	0x147AEC0	0x147AF21	comiss	13	
+fMeshLODLevel2FadeTreeDistance:Display	0x147AEB0	sub_147AEB0	0x147AED8	0x147AF21	comiss	9	
+fMeshLODFadeTime:Display	0x147AEB0	sub_147AEB0	0x147AF19	0x147AF21	comiss	0	

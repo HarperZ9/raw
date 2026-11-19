@@ -116,17 +116,18 @@ void OnSelf(Message* m) {
 
 }  // namespace
 
-extern "C" __declspec(dllexport) PluginVersionData SKSEPlugin_Version = [] {
-    PluginVersionData v{};
-    v.dataVersion = 1;
-    v.pluginVersion = PackVersion(1, 0, 0);
-    strcpy_s(v.pluginName, "RAWSKSEProbe");
-    strcpy_s(v.author, "RAW");
-    v.independenceEx = 1;   // no game structures
-    v.compatibleVersions[0] = PackVersion(1, 6, 1170);
-    v.compatibleVersions[1] = PackVersion(1, 7, 104);
-    return v;
-}();
+// Constant-initialized, as SKSE plugins export it: the data is in the file before any code of the plugin runs.
+extern "C" __declspec(dllexport) constinit PluginVersionData SKSEPlugin_Version{
+    1,                       // data version
+    PackVersion(1, 0, 0),
+    "RAWSKSEProbe",
+    "RAW",
+    "",
+    1,                       // uses no game structures
+    0,                       // finds no addresses
+    {PackVersion(1, 6, 1170), PackVersion(1, 7, 104)},
+    0,
+};
 
 extern "C" __declspec(dllexport) bool SKSEPlugin_Load(const SKSEInterface* skse) {
     g_skse = skse;

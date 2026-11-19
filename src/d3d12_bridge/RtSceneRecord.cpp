@@ -106,6 +106,7 @@ uint32_t RtScene::PlaceInstances(uint32_t slot, uint32_t& alphaN, uint64_t& scen
         x.AccelerationStructure = m_blasHeap->GetGPUVirtualAddress() + m.blas;
         sceneTris += m.tri.IndexCount / 3;
     }
+    if (m_skinReady && m_tune.skin && n < kMaxInstances) n += m_skin.Place(inst + n, kMaxInstances - n, slot, sceneTris);
     m_inst[slot]->Unmap(0, nullptr);
     return n;
 }
@@ -153,6 +154,7 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
 #ifdef RAW_HAS_OMM
     if (m_ommOn) prepared = m_omm.Record(cl, m_tune.alphaRef) || prepared;   // after the masks, before the BLASes
 #endif
+    if (m_skinReady) prepared = m_skin.Record(cl, slot) || prepared;   // skinned actors: positions and their BLASes
     uint64_t tris = 0;
     const uint32_t built = BuildBlases(cl, tris);
     D3D12_RESOURCE_BARRIER u = Uav();
@@ -205,6 +207,7 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
     m_stats.noMask = m_alpha.NoMask(); m_stats.uvBytes = m_alpha.PoolBytes();
     m_stats.matMeshes = m_alpha.Meshes(); m_stats.albedos = m_alpha.Albedos(); m_stats.noAlbedo = m_alpha.NoAlbedo();
     m_stats.albedoBytes = m_alpha.AlbedoBytes();
+    m_stats.skinDraws = m_skin.Draws(); m_stats.skinBuilt = m_skin.Built(); m_stats.skinVertices = m_skin.Vertices();
 #ifdef RAW_HAS_OMM
     m_stats.ommArrays = m_omm.Arrays();
 #endif

@@ -1,0 +1,25 @@
+# Skinned actors in the ray-tracing scene (docs/RAYTRACING.md, "Skinned actors"): the player in third
+# person at Riverwood by day. The primary-ray view (RtDebug=1, View=7; recordless meshes magenta) must
+# show the body where the frame has it; the sun visibility (View=2) must carry its ray-traced shadow.
+# A/B: RtSkin=0, and the bone palette from slot 9 instead of 10.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 10
+walk f 0.15
+wait 4
+keyframe still steps=game,improved hold=120
+reload ini RtDebug=1 View=7
+keyframe primary steps=improved hold=60
+reload ini RtSkinBones=9
+keyframe primary_b9 steps=improved hold=60
+reload ini RtSkinBones=10 RtDebug=0 View=2
+keyframe sunvis steps=improved hold=60
+reload ini RtSkin=0
+keyframe sunvis_noskin steps=improved hold=60
+reload ini RtDebug=1 View=7
+keyframe primary_noskin steps=improved hold=60
+reload ini RtSkin=1 RtDebug=0 View=0
+keyframe skin steps=improved hold=90
+quit

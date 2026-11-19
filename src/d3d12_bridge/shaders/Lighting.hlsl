@@ -11,6 +11,7 @@
 // the engine's real-time AO on the ambient term. The fog runs after (LightFog.hlsl).
 // Original work, MIT.
 #include "LightingCommon.hlsli"
+#include "Weather.hlsli"
 
 Texture2D<float>  Depth   : register(t0);
 Texture2D<float4> Normal  : register(t1);
@@ -101,14 +102,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
 
     const bool match = (flags.x & FLAG_MATCH) != 0u;
     const float2 px = floor(at.xy);
-    const float3 p = worldAt(px, d), albedo = Albedo.Load(ip).rgb;
+    const float3 p = worldAt(px, d);
+    float3 albedo = Albedo.Load(ip).rgb;
     const float z = viewZOf(d), jit = ign(px);
     Surface s;
     s.n = worldNormal(Normal.Load(ip));
     s.v = normalize(-p);
     s.shin = exp2(sp.y * 13.0f);
     s.mask = sp.x;
-    const bool lobe = sp.y > 0.002f && base != 4u && base != 6u;   // the game's own shader had a lobe here
+    bool lobe = sp.y > 0.002f && base != 4u && base != 6u;   // the game's own shader had a lobe here
     s.f0 = lobe ? lerp(0.02f, 0.08f, saturate(sp.x * resScale.w)) : 0.04f;
     s.alpha = clamp(sqrt(2.0f / (s.shin + 2.0f)), 0.03f, 1.0f);   // Blinn-Phong exponent to GGX width
     // Soft-lit (foliage): the game multiplies its wrap term by the soft-lighting map, which the
@@ -116,6 +118,29 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // fitted on one frame (0.15, tools/lighting/fitsoft.py) stood in; it lost the warm back light.
     s.soft = base == 5u ? SoftMap.Load(ip).rgb : 0.0f.xxx;
     if (base == 5u && !any(s.soft > 0.0f)) { s.soft = 0.15f.xxx; }   // a soft-lit shader the patch found no map in
+    // Rain (Weather.hlsli), exteriors in improved mode: darker, glossier, puddles flat and mirror-like.
+    Wet wet;
+    wet.wet = 0.0f; wet.puddle = 0.0f;
+    if (!match && sunColour.w > 0.5f && base != 5u) {
+        const float sv = (flags.x & FLAG_RT) != 0u && (flags.x & FLAG_SKY) != 0u ? RtIdx.Load(ip).w : 1.0f;
+        // The geometric normal from the depth buffer's neighbours (shorter step on each axis).
+        const float2 lim = dims.xy - 1.0f;
+        const float2 pr = float2(min(px.x + 1.0f, lim.x), px.y), pl = float2(max(px.x - 1.0f, 0.0f), px.y);
+        const float2 pd = float2(px.x, min(px.y + 1.0f, lim.y)), pu = float2(px.x, max(px.y - 1.0f, 0.0f));
+        const float3 er = worldAt(pr, Depth.Load(int3(pr, 0))) - p, el = p - worldAt(pl, Depth.Load(int3(pl, 0)));
+        const float3 ed = worldAt(pd, Depth.Load(int3(pd, 0))) - p, eu = p - worldAt(pu, Depth.Load(int3(pu, 0)));
+        float3 ng = cross(dot(ed, ed) < dot(eu, eu) ? ed : eu, dot(er, er) < dot(el, el) ? er : el);
+        ng = length(ng) > 1.0e-6f ? normalize(ng) : s.n;
+        if (dot(ng, s.n) < 0.0f) { ng = -ng; }
+        wet = wetAt(p, s.n, ng, sv);
+        albedo *= lerp(1.0f, 0.6f, wet.wet) * lerp(1.0f, 0.7f, wet.puddle);
+        s.alpha = lerp(lerp(s.alpha, 0.12f, wet.wet), 0.03f, wet.puddle);
+        s.shin = max(s.shin, 2.0f / max(s.alpha * s.alpha, 1.0e-4f) - 2.0f);
+        s.n = normalize(lerp(s.n, float3(0.0f, 0.0f, 1.0f), wet.puddle));
+        s.f0 = lerp(s.f0, 0.02f, max(wet.wet, wet.puddle));
+        s.mask = max(s.mask, max(wet.wet * 0.6f, wet.puddle));
+        lobe = lobe || max(wet.wet, wet.puddle) > 0.2f;
+    }
     const float3 lift = s.n * (0.3f + 0.002f * z);                 // ray origins off the surface
     const float4 m4 = Mask.Load(ip);
 
@@ -198,7 +223,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float4 rf = RtRefl.Load(ip);
         const float nv = saturate(dot(s.n, s.v));
         const float fr = s.f0 + (1.0f - s.f0) * pow(1.0f - nv, 5.0f);
-        lit += rf.rgb * rf.a * fr * saturate(s.mask * resScale.w) * (1.0f - s.alpha);
+        lit += rf.rgb * rf.a * fr * max(saturate(s.mask * resScale.w), max(wet.puddle, 0.5f * wet.wet)) * (1.0f - s.alpha);
         if (flags.w == 6u) { return float4(rf.rgb * rf.a, game.a); }
     }
     return float4(knee3(lit), game.a);

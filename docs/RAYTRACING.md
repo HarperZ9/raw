@@ -195,3 +195,35 @@ right), `RtDebug=2` the light the cache gives each pixel (cells show as 16-unit 
 Not done: the visible change in a daylit exterior is small (most bounce rays land on screen, where the
 game's frame is already the right answer); point lights at off-screen hits are unshadowed; meshes over
 the 40,000-record limit are shaded grey.
+
+## Skinned meshes and trees (2026-11-18)
+
+`RtSkin` builds a BLAS each frame for every skinned draw of the opaque set: `RtSkin.hlsl` blends the
+bind-pose positions by up to four bones of the draw's palette (vertex constant buffer 10, 240 float4,
+row = blend index unorm x 765) and takes off the camera's place (the bones are in world space; the
+first run, which took them as camera-relative, found nothing on screen). Riverwood: 60 draws, 26,277
+vertices, 0.21 ms of builds; the trace does not change measurably within a run. What it brought in
+first is the trees: their trunks and branches are skinned (wind bones), which is why the old capture
+saw "coordinates in a second stream with vertex-shader motion". They now show in the primary-ray view
+(magenta: no material record) and shadow through the rays. Alpha-tested skinned draws (leaves) stay out.
+
+Not done: people and creatures. In Riverwood 68,412 skinned draws joined over the run and 789,071 were
+drawn outside the opaque set (shadow maps and, from the third-person test, the actors themselves: the
+player's body is missing from the primary-ray view). They need a capture by the main depth target and
+one frame of latency. `RtSkinBones=9` gave the same picture as 10 (the trees barely move between frames).
+
+## Rain on surfaces (2026-11-18)
+
+`Weather.hlsli`, shared by the lighting pass and the trace: `[Lighting] Wetness` and `Puddles` (0 to 1,
+off by default until the game's weather drives them). Wet surfaces darken (albedo x 0.6 at full) and
+turn glossy (GGX width 0.12); only where the ray-traced sky visibility says rain reaches. Puddles pool
+on ground whose geometric normal (from depth, not the normal map) is flat, where a world-fixed noise
+field rises above the puddle level; they are flat mirrors that take a ray-traced reflection. The first
+version gated puddles by the shading normal and found none on the cobbled path. Images:
+`ingame-rain-2026-11-18-riverwood-{dry,soaked,puddles}-2160.png`.
+
+## Timing between runs
+
+Identical settings traced in 1.7 to 2.5 ms in some sessions and 5.6 to 7.9 ms in others (rt3-skin-1,
+rt3-wet-2), and the cause is not found. It is not the code under test: within each run the dry and
+off-switch baselines move with it. Compare the deltas within one run.

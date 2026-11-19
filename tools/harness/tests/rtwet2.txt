@@ -1,0 +1,15 @@
+# Rain, second pass: puddles pool by the geometric normal. Riverwood by day: dry, soaked, light rain
+# with puddles, and the reflection view.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+keyframe dry steps=game,improved hold=120
+reload ini Wetness=1 Puddles=1
+keyframe soaked steps=improved hold=120
+reload ini Wetness=0.3 Puddles=1
+keyframe puddles steps=improved hold=90
+reload ini View=6
+keyframe puddles_refl steps=improved hold=60
+quit

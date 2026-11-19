@@ -18,6 +18,7 @@
 // Original work, MIT.
 #define ATLAS_SLOT t9
 #include "LightingCommon.hlsli"
+#include "Weather.hlsli"
 
 Texture2D<float>  Depth  : register(t0);
 Texture2D<float4> Normal : register(t1);
@@ -214,14 +215,23 @@ void main(uint3 id : SV_DispatchThreadID) {
     // direction spread by the roughness.
     float4 refl = 0.0f;
     bool reflTraced = false;
+    // Wet pixels (Weather.hlsli) reflect too: rain makes the ground glossy and puddles mirrors.
+    Wet rain;
+    rain.wet = 0.0f; rain.puddle = 0.0f;
+    if (d < 1.0f && base >= 1u && base <= 4u && sunColour.w > 0.5f) {
+        const float3 wp = worldAt(float2(id.xy), d), wn = worldNormal(Normal.Load(ip));
+        rain = wetAt(wp, wn, geometricNormal(float2(id.xy), wp, wn), 1.0f);
+    }
+    const bool wetGloss = max(rain.wet, rain.puddle) > 0.2f;
     if (reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u) {
         const float4 sp = Spec.Load(ip);
-        if (sp.y > 0.25f && sp.x > 0.05f && ((id.x + id.y + uint(frameIndex)) & 1u) == 0u) {
+        if (((sp.y > 0.25f && sp.x > 0.05f) || wetGloss) && ((id.x + id.y + uint(frameIndex)) & 1u) == 0u) {
             const float2 px = float2(id.xy);
             const float3 p = worldAt(px, d);
-            const float3 n = worldNormal(Normal.Load(ip));
+            const float3 n = normalize(lerp(worldNormal(Normal.Load(ip)), float3(0.0f, 0.0f, 1.0f), rain.puddle));
             const float3 v = normalize(-p);
-            const float shin = exp2(sp.y * 13.0f), alpha = clamp(sqrt(2.0f / (shin + 2.0f)), 0.03f, 1.0f);
+            const float shin = exp2(sp.y * 13.0f);
+            const float alpha = lerp(lerp(clamp(sqrt(2.0f / (shin + 2.0f)), 0.03f, 1.0f), 0.12f, rain.wet), 0.03f, rain.puddle);
             const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
             const float3 rd = jitterDir(reflect(-v, n), alpha * 0.5f, rr);
             const float3 ng = geometricNormal(px, p, n);
@@ -298,7 +308,7 @@ void main(uint3 id : SV_DispatchThreadID) {
 #endif
     // Glossy pixels not traced this frame keep last frame's reflection; every other pixel clears.
     const float4 sp0 = d < 1.0f ? Spec.Load(ip) : 0.0f;
-    const bool glossy = reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u && sp0.y > 0.25f && sp0.x > 0.05f;
+    const bool glossy = reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u && ((sp0.y > 0.25f && sp0.x > 0.05f) || wetGloss);
     if (reflTraced || !glossy || reflectLength < 0.0f) { Refl[id.xy] = refl; }
     Vis[id.xy] = vis;
     Lights[id.xy] = float4(idx.xyz, sky);

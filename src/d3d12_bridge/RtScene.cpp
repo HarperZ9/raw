@@ -145,7 +145,8 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
     constexpr UINT kOmmDescriptors = 0;
 #endif
     const UINT cacheAt = 5 + RtAlpha::Descriptors() + RtSky::Descriptors() + 1 + kOmmDescriptors;
-    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, cacheAt + RtCache::Descriptors(),
+    const UINT skinAt = cacheAt + RtCache::Descriptors();
+    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, skinAt + RtSkin::Descriptors(),
                                   D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
     if (FAILED(m_dev->CreateQueryHeap(&qd, IID_PPV_ARGS(&m_ts))) || FAILED(m_dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&m_heap))) ||
         FAILED(m_dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_alloc[0].Get(), nullptr, IID_PPV_ARGS(&m_list))) ||
@@ -160,6 +161,9 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
     m_cacheReady = m_cache.Create(m_dev.Get(), m_heap.Get(), cacheAt, cacheErr);
     if (m_log) m_log(m_cacheReady ? "[RT] radiance cache ready: %u slots" : "[RT] radiance cache off: %s",
                      m_cacheReady ? RtCache::kSlots : 0u, cacheErr.c_str());
+    std::string skinErr;
+    m_skinReady = m_skin.Create(m_dev.Get(), m_heap.Get(), skinAt, skinErr);
+    if (!m_skinReady && m_log) m_log("[RT] skinned actors off: %s", skinErr.c_str());
 #ifdef RAW_HAS_OMM
     // Opacity micromaps: DXR 1.2, and a trace pipeline that lets its ray queries use them (the shader is
     // below shader model 6.9, so the pipeline flag does it). Either missing: the candidate loop alone.
@@ -230,7 +234,11 @@ void RtScene::SetDraws(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>
     m_lastDraws = now;
     if (m_blasUsed > kBlasHeap - (64ull << 20) || m_meshes.size() > 40000 || (gap && !m_meshes.empty()) || m_evictPending) Evict();
     m_evictPending = false;
+    m_skin.SetCamera(m_tune.cameraPos);
+    if (m_skinReady && m_tune.skin) m_skin.SetDraws(m_draws, toHand, native);
+    else { std::vector<RtDraw> none; m_skin.SetDraws(none, toHand, native); }
     for (RtDraw& d : m_draws) {
+        if (d.skinned) continue;   // RtSkin's, rebuilt every frame
         const Key k{uintptr_t(d.vb), uintptr_t(d.ib), uint64_t(d.vbOffset) << 32 | d.ibOffset,
                     uint64_t(d.startIndex) << 32 | uint32_t(d.baseVertex) ^ uint64_t(d.indexCount) << 12};
         auto it = m_meshOf.find(k);

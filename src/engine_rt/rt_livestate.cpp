@@ -36,7 +36,8 @@ bool ReadLight(const uint8_t* bsl, uint32_t flags, EngineLight* L) {
     if (!bsl) return false;
     const uint8_t* ni = At<const uint8_t*>(bsl, 0x48);
     if (!ni) return false;
-    std::memcpy(L->pos, bsl + 0x50, 12);
+    // the NiLight's world translation (NiAVObject world transform +0x7C, translation +0x24); BSLight +0x50 read zero
+    std::memcpy(L->pos, ni + 0xA0, 12);
     const float fade = At<float>(ni, 0x134);
     float diffuse[3];
     std::memcpy(diffuse, ni + 0x11C, 12);

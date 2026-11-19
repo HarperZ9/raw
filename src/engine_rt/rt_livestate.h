@@ -7,8 +7,8 @@
 //     current technique +0xBC, ambient specular +0xFC, character light +0x10C, camera in water +0x128, water
 //     intersect +0x144.
 //   ShadowSceneNode: activeLights +0x130 and shadowCasterLights +0x230 (BSTArray: data +0, size +0x10), sunLight
-//     +0x200, shadowDirLight +0x210. Each BSLight: pointLight +0x44, NiLight* +0x48, world position +0x50; the
-//     NiLight's diffuse +0x11C, radius +0x128, fade +0x134.
+//     +0x200, shadowDirLight +0x210. Each BSLight: pointLight +0x44, NiLight* +0x48; the NiLight's world position
+//     +0xA0, diffuse +0x11C, radius +0x128, fade +0x134.
 //   BSGraphics::State (0x328CC20): frame buffer viewport +0x2C, insideFrame +0x50.
 // The light list is exported for the ray-tracing worker (RAW_EngineLights); `live <every>` writes the state to
 // raw_engine_out/live_state.jsonl every <every> presents (0 stops), and `lights` writes the current list once.

@@ -1,38 +1,28 @@
 # Live grid size. Startup grids 7 ([EngineSet] uGridsToLoad=7, cell buffer 64) sizes the cell array for 7 x 7.
-# Interiors keep the exterior grid loaded, so `grids <n>` waits for the game to empty the array (a worldspace
-# change: Raven Rock on Solstheim) and lands then. Riverwood vistas from 12,000 units up at 7, 5 and 7 again,
+# Interiors keep the exterior grid loaded, so `grids <n>` waits for the game to empty the array (a save
+# load) and lands then. The same vista from the save, 12,000 units up, at 7, 5 and 7 again,
 # with the loaded cells reported after each load. Then the live light list by day, at night and in the inn.
 start load rawharness
-console tai
 scene grids
-console set gamehour to 13
-console coc riverwood
-wait 8
-console fw 81a
 wait 4
 engine grids
 bat tcl|player.setpos z 12000|player.setangle x 15
 wait 15
 engine grids; measure vista_g7 600; capture vista_g7
 engine grids 5
-console coc RavenRock
+console load rawharness
 wait 8
-engine grids
-console coc riverwood
-wait 8
-bat player.setpos z 12000|player.setangle x 15
+bat tcl|player.setpos z 12000|player.setangle x 15
 wait 15
 engine grids; measure vista_g5 600; capture vista_g5
 engine grids 7
-console coc RavenRock
+console load rawharness
 wait 8
-engine grids
-console coc riverwood
-wait 8
-bat player.setpos z 12000|player.setangle x 15
+bat tcl|player.setpos z 12000|player.setangle x 15
 wait 15
 engine grids; measure vista_g7b 600; capture vista_g7b
 engine lights; live 120; weather
+console tai
 console set gamehour to 22
 wait 8
 engine lights

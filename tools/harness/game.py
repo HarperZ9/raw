@@ -231,7 +231,7 @@ def mouse_click() -> None:
 # the world as key presses (the inventory and the map opened, the next coc never ran). Seen in
 # eight harness runs, found from screenshots of the missed cell changes.
 CLOSES_CONSOLE = ("tfc 1", "qqq")
-CLOSES_CONSOLE_FIRST_WORD = ("coc", "qqq")
+CLOSES_CONSOLE_FIRST_WORD = ("coc", "cow", "load", "qqq")   # cow and load are cell loads too
 
 
 def console(line: str) -> None:

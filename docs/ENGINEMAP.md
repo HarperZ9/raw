@@ -151,3 +151,81 @@ The sampler's module breakdown of the render thread found RAW's proxy taking 38 
 - `BSLightingShaderProperty::Unk_2B`
 - `BSLightingShader::SetupMaterial`
 - These are the targets for the batching work: the per-draw material setup and the pass loop around it.
+
+### The full renderer's CPU cost, draw statistics, grids, weather and lights (engine control 6)
+
+All numbers: Riverwood at 13:00 and the Bannered Mare, 1080p, vsync off (`[Timing] PresentInterval=0`), 600 frames a
+measure, with the full renderer on: raw::tx with `Wrap=1`, the bridge, `[Lighting] Mode=2` and `RtShadows=1`. Every
+run's keyframe reported the ray-tracing scene's draws (Riverwood 1,955 to 1,957).
+
+**CPU frame with the full renderer** (`engine_fullcpu.txt`). The 4.98 ms of engine control 5 had the lighting decode
+and the ray tracing skipped (the constant-buffer shadows were off), so it does not describe the full renderer.
+
+| Constant-buffer shadows | Riverwood frame | Batch submission (`BSShaderAccumulator` 0x2A) | Uploads skipped a frame |
+|---|---|---|---|
+| master (raw#27): dedupe of every dynamic buffer | 11.73 to 12.87 ms (4 measures) | 8.26 to 9.22 ms | 7,300 of 16,600 |
+| only the buffers the bridge reads, no dedupe | 12.42 to 13.51 ms (4) | 8.93 to 9.78 ms | none, 8,400 shadowed |
+| every buffer, no dedupe | 12.12 to 12.72 ms (2) | 8.60 to 9.18 ms | none |
+| dedupe with a staging/shadow swap | 13.14 to 13.60 ms (2) | 9.46 to 9.70 ms | 3,200 to 3,400 |
+
+- On raw::tx a skipped upload saves a costly Map, so master's dedupe is the fastest of the four and stays.
+- The swap lost half the skips because the game writes its constant buffers in part: the staging block has to keep
+  the last write.
+- Batch submission costs 8.3 to 9.2 ms here, against 2.6 ms on native D3D11 without the bridge.
+- Every inn measure under raw::tx read 8.33 ms, the display's 120 Hz. raw::tx now skips its latency-object wait at
+  sync 0 (`tx_swapchain.cpp`). With it, one vista measure read 7.44 ms, but the next run's three vistas read 8.32 to
+  8.33 ms again. The cap is not removed, and frames faster than 8.33 ms under raw::tx still cannot be measured.
+
+**Where the render thread goes** (`engine_fullsample.txt`, sampler, Riverwood, 4,776 samples on the render thread):
+d3d11.dll (the proxy with raw::tx) 54 %, SkyrimSE.exe 21 %, the NVIDIA driver 13 %, ntdll 6 %. In the proxy:
+
+| Function | Samples |
+|---|---|
+| `raw::tx::Context::Unmap`, `Map`, and the memcpy | 455 |
+| `raw::tx::Tracker::Find`, `Require`, `RequireRange` | about 230 |
+| `raw::bridge::RtScene::PlaceInstances`, `SetDraws` | about 300 |
+| `raw::tx::Context::ApplyTables`, `ScanGraphics`, `IASet*` | about 170 |
+
+raw::tx counts its Maps every 600 presents (proxy log, `[tx] map stats`): Riverwood sends it 14,100 to 14,700 Maps a
+frame, all on renamed buffers (constant and dynamic buffers). None takes the committed-copy path.
+
+**Draw statistics per pass** (`engine drawstats`, `engine_drawstats.txt`; hooks on `SetupTechnique`, `SetupMaterial`
+and `SetupGeometry` of every BSShader class):
+
+| Pass (call of 0x2A) | Draws | Meshes | Same key as the previous draw | Material setups | CPU in the three calls |
+|---|---|---|---|---|---|
+| 5, shadow (Utility) | 1,741 | 478 | 162 | 1,288, none repeated | 0.45 ms |
+| 6, shadow (Utility) | 1,837 | 689 | 56 | 1,412, none repeated | 0.46 ms |
+| 8, geometry (Lighting) | 2,029 | 771 | 146 | 1,300, 6 repeated | 1.26 ms |
+| inn, geometry (Lighting) | 936 | 354 | 59 | 727, 19 repeated | 0.67 ms |
+
+- The engine already skips a repeated material.
+- Only 7 to 9 % of draws could be instanced in the order the game submits them.
+- Sorting by mesh would bring each pass down to its mesh count, 2.5 to 3.6 times fewer.
+- The three Setup calls take about 2.2 ms of the 9 ms submission. The rest is the draw path: the proxy's per-draw
+  hooks and raw::tx's translation.
+
+**Weather** (`rt_weather.cpp`, `engine weather`). Each present reads Sky's current and last weather, the transition and
+the precipitation. It blends rain, snow, cloud and fog and calls the proxy's `PG_SetWeatherState` when the proxy exports
+it. After `fw 10a241` (storm rain) it read rain 1.0, cloud 1.0, fog 0.86 (fog far 25,000) and precipitation density 2.0.
+The clear weather 0x81A read fog 0.48 (fog far 80,000). `fw` switched with no outgoing weather, so the blend across a
+transition is not yet tested.
+
+**Live state and lights** (`rt_livestate.cpp`). It covers the ShadowSceneNode sun, active lights and shadow casters,
+`BSShaderManager::State` (timers, interior, grid centre, technique, ambient specular, character light, water) and
+`BSGraphics::State` (viewport, inside frame). `RAW_EngineLights` hands the light list to the ray-tracing worker,
+`live <n>` streams the state to `live_state.jsonl`, and `lights` writes the list once. In game (`engine_lights.txt`), the Bannered
+Mare at 22:00 had 16 active lights plus the sun, with warm fire colours of 1.46, 1.34, 0.87 and radii of 140 to 280
+units, and 10 shadow casters. Riverwood at night had 1 active light (radius 439, near 20,555, -45,354, inside the
+grid centred on 18,432, -47,104). Positions come from the NiLight's world transform (+0xA0); BSLight+0x50 read zero
+on 1.6.1170. The `BSGraphics::State` viewport read zeros at those offsets, so it is not yet a valid field.
+
+**Grids. Not working yet.** In the Bannered Mare the array still held all 49 cells of the exterior grid, so a change
+"while the grid is empty in an interior" never finds it empty. `grids <n>` now waits for `GridCellArray::DetachAll` or
+`KillAll` (vtable 0x178B160 slots 1 and 2) and writes the length right after either one. In game, neither slot ran:
+- A save reload in the same cell kept all 49 cells (`applied_by_hook` 0).
+- The two worldspace changes I tried did not load: `coc RavenRock` and `cow DLC2SolstheimWorld 0 0` are not valid
+  IDs in this install.
+
+Still to do: a worldspace change with a valid cell ID, and an inline detour on the two functions in case the game calls
+them directly rather than through the vtable.

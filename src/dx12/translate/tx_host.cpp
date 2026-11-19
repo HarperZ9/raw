@@ -20,6 +20,42 @@ void PeekConstantBuffers(ID3D11DeviceContext* c, UINT stage, UINT start, UINT n,
     static_cast<Context*>(c)->PeekCB(stage, start, n, out);
 }
 
+ID3D11InputLayout* PeekInputLayout(ID3D11DeviceContext* c) { return Ctx(c)->Bound().layout; }
+
+ID3D11PixelShader* PeekPixelShader(ID3D11DeviceContext* c)
+{
+    return static_cast<TShader<ID3D11PixelShader>*>(Ctx(c)->Bound().st[S_PS].sh.obj);
+}
+
+const D3D11_BLEND_DESC* PeekBlendDesc(ID3D11DeviceContext* c)
+{
+    const TBlend* b = Ctx(c)->Bound().blend;
+    return b ? &b->desc : nullptr;
+}
+
+ID3D11Buffer* PeekVertexBuffer(ID3D11DeviceContext* c, UINT slot, UINT* stride, UINT* offset)
+{
+    const BufSlot* s = slot < 32 ? &Ctx(c)->Bound().vb[slot] : nullptr;
+    if (stride) *stride = s ? s->stride : 0;
+    if (offset) *offset = s ? s->offset : 0;
+    return s ? s->buf : nullptr;
+}
+
+ID3D11Buffer* PeekIndexBuffer(ID3D11DeviceContext* c, DXGI_FORMAT* format, UINT* offset)
+{
+    const State& s = Ctx(c)->Bound();
+    if (format) *format = s.ibFmt;
+    if (offset) *offset = s.ib.offset;
+    return s.ib.buf;
+}
+
+ID3D11ShaderResourceView* PeekShaderResource(ID3D11DeviceContext* c, UINT stage, UINT slot, D3D11_SRV_DIMENSION* dim)
+{
+    TSRV* v = stage < S_COUNT && slot < 128 ? Ctx(c)->Bound().st[stage].srv[slot] : nullptr;
+    if (dim) *dim = v ? v->desc.ViewDimension : D3D11_SRV_DIMENSION_UNKNOWN;
+    return v;
+}
+
 ID3D12Resource* NativeResource(ID3D11Resource* r)
 {
     ResCore* c = r ? CoreOf(r) : nullptr;

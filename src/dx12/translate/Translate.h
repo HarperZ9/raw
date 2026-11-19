@@ -77,6 +77,15 @@ HRESULT PrepareForHost(ID3D11DeviceContext* context, ID3D11Resource* const* reso
 // per draw. The pointers are valid while they stay bound.
 bool IsLayerContext(ID3D11DeviceContext* context);
 void PeekConstantBuffers(ID3D11DeviceContext* context, UINT stage, UINT start, UINT count, ID3D11Buffer** out);
+// The rest of a draw's bindings, read the same way (no reference added; valid while bound). Each
+// returns nullptr when nothing is bound there. PeekBlendDesc gives the bound blend state's description.
+ID3D11InputLayout* PeekInputLayout(ID3D11DeviceContext* context);
+ID3D11PixelShader* PeekPixelShader(ID3D11DeviceContext* context);
+const D3D11_BLEND_DESC* PeekBlendDesc(ID3D11DeviceContext* context);
+ID3D11Buffer* PeekVertexBuffer(ID3D11DeviceContext* context, UINT slot, UINT* stride, UINT* offset);
+ID3D11Buffer* PeekIndexBuffer(ID3D11DeviceContext* context, DXGI_FORMAT* format, UINT* offset);
+ID3D11ShaderResourceView* PeekShaderResource(ID3D11DeviceContext* context, UINT stage, UINT slot,
+                                             D3D11_SRV_DIMENSION* dimension);
 
 // The D3D12 device and direct queue, for a renderer that adopts them
 // (superframe native/raw/rhi/host.hpp, HostDevice). No reference is added.

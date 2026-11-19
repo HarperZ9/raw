@@ -193,6 +193,7 @@ public:
         for (UINT i = 0; i < n; ++i)
             out[i] = (stage < S_COUNT && start + i < 14) ? s_.st[stage].cb[start + i].buf : nullptr;
     }
+    const State& Bound() const { return s_; }   // the shadow state, for the host's per-draw reads
     uint64_t FlushInternal();                 // submits the open list; returns its serial
     void Sync();                              // flush and wait for the GPU
     void Shutdown();

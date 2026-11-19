@@ -1,0 +1,402 @@
+rva	kind	name	confidence	source	addrlib_id	check	refs	notes
+0x0177DE0	vfunc	ExtraOcclusionPlaneRefData::Dtor	named	rtti+commonlib	12264	pdata_start	vtables(1): ExtraOcclusionPlaneRefData[00]	
+0x017F880	vfunc	ExtraOcclusionShape::GetType	named	rtti+commonlib	12609	no_pdata_entry	vtables(1): ExtraOcclusionShape[01]	
+0x0180D40	vfunc	ExtraOcclusionPlaneRefData::IsNotEqual	named	rtti+commonlib	12673	no_pdata_entry	vtables(1): ExtraOcclusionPlaneRefData[02]	
+0x0180D90	vfunc	ExtraOcclusionPlaneRefData::GetType	named	rtti+commonlib	12674	no_pdata_entry	vtables(1): ExtraOcclusionPlaneRefData[01]	
+0x0189F70	vfunc	ExtraOcclusionShape::Dtor	named	rtti+commonlib	12898	pdata_start	vtables(1): ExtraOcclusionShape[00]	
+0x020E2A0	vfunc	BSPortal::Dtor	named	rtti+commonlib	15555	pdata_start	vtables(1): BSPortal[00]	declared in NiObject
+0x020E380	vfunc	BSPortal::GetRTTI	named	rtti+commonlib	15560	no_pdata_entry	vtables(1): BSPortal[02]	declared in NiObject
+0x025DDC0	vfunc	BSLensFlareSpriteRenderData::Dtor	named	rtti+commonlib	17063	pdata_start	vtables(1): BSLensFlareSpriteRenderData[00]	declared in NiRefObject
+0x028FB30	vfunc	.?AV?$ConcreteFormFactory@VBGSLightingTemplate@@$0GM@@@::CreateImpl	named	rtti+commonlib	18276	pdata_start	vtables(2): .?AV?$ConcreteFormFactory@VBGSLightingTemplate@@$0GM@@@[01], .?AV?$ConcreteObjectFormFactory@VBGSLightingTemplate@@$0GM@$0FH@$06@@[01]	declared in IFormFactory
+0x028FC20	vfunc	.?AV?$ConcreteFormFactory@VBGSLightingTemplate@@$0GM@@@::GetFormName	named	rtti+commonlib	18277	no_pdata_entry	vtables(2): .?AV?$ConcreteFormFactory@VBGSLightingTemplate@@$0GM@@@[02], .?AV?$ConcreteObjectFormFactory@VBGSLightingTemplate@@$0GM@$0FH@$06@@[02]	declared in IFormFactory
+0x028FC30	vfunc	.?AV?$ConcreteFormFactory@VBGSLightingTemplate@@$0GM@@@::GetFormType	named	rtti+commonlib	18278	no_pdata_entry	vtables(2): .?AV?$ConcreteFormFactory@VBGSLightingTemplate@@$0GM@@@[03], .?AV?$ConcreteObjectFormFactory@VBGSLightingTemplate@@$0GM@$0FH@$06@@[03]	declared in IFormFactory
+0x028FC40	vfunc	.?AV?$ConcreteFormFactory@VBGSLightingTemplate@@$0GM@@@::Dtor	named	rtti+commonlib	18279	pdata_start	vtables(1): .?AV?$ConcreteFormFactory@VBGSLightingTemplate@@$0GM@@@[00]	declared in IFormFactory
+0x028FCA0	vfunc	.?AV?$ConcreteObjectFormFactory@VBGSLightingTemplate@@$0GM@$0FH@$06@@::GetObjectName	named	rtti+commonlib	18280	no_pdata_entry	vtables(1): .?AV?$ConcreteObjectFormFactory@VBGSLightingTemplate@@$0GM@$0FH@$06@@[04]	declared in IFormFactory
+0x028FCB0	vfunc	.?AV?$ConcreteObjectFormFactory@VBGSLightingTemplate@@$0GM@$0FH@$06@@::GetObjectType	named	rtti+commonlib	18281	no_pdata_entry	vtables(1): .?AV?$ConcreteObjectFormFactory@VBGSLightingTemplate@@$0GM@$0FH@$06@@[05]	declared in IFormFactory
+0x028FCC0	vfunc	.?AV?$ConcreteObjectFormFactory@VBGSLightingTemplate@@$0GM@$0FH@$06@@::GetObjectCategory	named	rtti+commonlib	18282	no_pdata_entry	vtables(1): .?AV?$ConcreteObjectFormFactory@VBGSLightingTemplate@@$0GM@$0FH@$06@@[06]	declared in IFormFactory
+0x028FCD0	vfunc	.?AV?$ConcreteObjectFormFactory@VBGSLightingTemplate@@$0GM@$0FH@$06@@::Dtor	named	rtti+commonlib	18283	pdata_start	vtables(1): .?AV?$ConcreteObjectFormFactory@VBGSLightingTemplate@@$0GM@$0FH@$06@@[00]	declared in IFormFactory
+0x028FE00	vfunc	BGSLightingTemplate::InitializeData	named	rtti+commonlib	18286	pdata_start	vtables(1): BGSLightingTemplate[04]	
+0x02901C0	vfunc	BGSLightingTemplate::Load	named	rtti+commonlib	18307	pdata_start	vtables(1): BGSLightingTemplate[06]	
+0x0290390	vfunc	BGSLightingTemplate::InitItemImpl	named	rtti+commonlib	18308	no_pdata_entry	vtables(1): BGSLightingTemplate[13]	
+0x0290420	vfunc	BGSLightingTemplate::Dtor	named	rtti+commonlib	18310	pdata_start	vtables(1): BGSLightingTemplate[00]	
+0x04AD560	vfunc	BSLightingShaderMaterial::Dtor	named	rtti+commonlib	30125	pdata_start	vtables(1): BSLightingShaderMaterial[00]	
+0x04AD630	vfunc	BSLightingShaderMaterialBase::GetType	named	rtti+commonlib	30129	no_pdata_entry	vtables(14): BSLightingShaderMaterial[07], BSLightingShaderMaterialBase[07], BSLightingShaderMaterialEnvmap[07], BSLightingShaderMaterialEye[07], BSLightingShaderMaterialFacegen[07], BSLightingShaderMaterialFacegenTint[07], +8 more	
+0x0D28500	vfunc	NiLight::LoadBinary	named	rtti+commonlib	70560	pdata_start	vtables(1): NiLight[18]	
+0x0D28590	vfunc	NiLight::LinkObject	named	rtti+commonlib	70561	no_pdata_entry	vtables(1): NiLight[19]	declared in NiAVObject
+0x0D285A0	vfunc	NiLight::RegisterStreamables	named	rtti+commonlib	70562	no_pdata_entry	vtables(1): NiLight[1A]	declared in NiAVObject
+0x0D285B0	vfunc	NiLight::SaveBinary	named	rtti+commonlib	70563	pdata_start	vtables(1): NiLight[1B]	
+0x0D28640	vfunc	NiLight::IsEqual	named	rtti+commonlib	70564	pdata_start	vtables(1): NiLight[1C]	
+0x0D28800	vfunc	NiLight::Dtor	named	rtti+commonlib	70567	pdata_start	vtables(1): NiLight[00]	
+0x0D28840	vfunc	NiLight::GetRTTI	named	rtti+commonlib	70568	no_pdata_entry	vtables(1): NiLight[02]	
+0x0D39640	vfunc	NiPointLight::CreateClone	named	rtti+commonlib	70959	pdata_start	vtables(1): NiPointLight[17]	
+0x0D397A0	vfunc	NiPointLight::LoadBinary	named	rtti+commonlib	70961	pdata_start	vtables(1): NiPointLight[18]	
+0x0D39870	vfunc	NiPointLight::LinkObject	named	rtti+commonlib	70962	no_pdata_entry	vtables(1): NiPointLight[19]	declared in NiAVObject
+0x0D39880	vfunc	NiPointLight::RegisterStreamables	named	rtti+commonlib	70963	no_pdata_entry	vtables(1): NiPointLight[1A]	declared in NiAVObject
+0x0D39890	vfunc	NiPointLight::SaveBinary	named	rtti+commonlib	70964	pdata_start	vtables(1): NiPointLight[1B]	
+0x0D39960	vfunc	NiPointLight::IsEqual	named	rtti+commonlib	70965	pdata_start	vtables(1): NiPointLight[1C]	
+0x0D39AD0	vfunc	NiPointLight::vfunc_30	inferred	rtti	70968	no_pdata_entry	vtables(1): NiPointLight[30]	
+0x0D39BA0	vfunc	NiPointLight::Dtor	named	rtti+commonlib	70970	pdata_start	vtables(1): NiPointLight[00]	
+0x0D39BE0	vfunc	NiPointLight::GetRTTI	named	rtti+commonlib	70971	no_pdata_entry	vtables(1): NiPointLight[02]	
+0x0D3F830	vfunc	NiDirectionalLight::vfunc_17	inferred	rtti	71065	pdata_start	vtables(1): NiDirectionalLight[17]	
+0x0D3F9A0	vfunc	NiDirectionalLight::LoadBinary	named	rtti+commonlib	71067	no_pdata_entry	vtables(1): NiDirectionalLight[18]	declared in NiLight
+0x0D3F9B0	vfunc	NiDirectionalLight::LinkObject	named	rtti+commonlib	71068	no_pdata_entry	vtables(1): NiDirectionalLight[19]	declared in NiAVObject
+0x0D3F9C0	vfunc	NiDirectionalLight::RegisterStreamables	named	rtti+commonlib	71069	no_pdata_entry	vtables(1): NiDirectionalLight[1A]	declared in NiAVObject
+0x0D3F9D0	vfunc	NiDirectionalLight::SaveBinary	named	rtti+commonlib	71070	no_pdata_entry	vtables(1): NiDirectionalLight[1B]	declared in NiLight
+0x0D3F9E0	vfunc	NiDirectionalLight::IsEqual	named	rtti+commonlib	71071	no_pdata_entry	vtables(1): NiDirectionalLight[1C]	declared in NiLight
+0x0D3FB10	vfunc	NiDirectionalLight::vfunc_30	inferred	rtti	71074	pdata_start	vtables(1): NiDirectionalLight[30]	
+0x0D3FC20	vfunc	NiDirectionalLight::Dtor	named	rtti+commonlib	71076	pdata_start	vtables(1): NiDirectionalLight[00]	declared in NiLight
+0x0D3FC60	vfunc	NiDirectionalLight::GetRTTI	named	rtti+commonlib	71077	no_pdata_entry	vtables(1): NiDirectionalLight[02]	declared in NiLight
+0x0D4A970	vfunc	NiAmbientLight::vfunc_17	inferred	rtti	71328	pdata_start	vtables(1): NiAmbientLight[17]	
+0x0D4AA50	vfunc	NiAmbientLight::LoadBinary	named	rtti+commonlib	71330	no_pdata_entry	vtables(1): NiAmbientLight[18]	declared in NiLight
+0x0D4AA60	vfunc	NiAmbientLight::LinkObject	named	rtti+commonlib	71331	no_pdata_entry	vtables(1): NiAmbientLight[19]	declared in NiAVObject
+0x0D4AA70	vfunc	NiAmbientLight::RegisterStreamables	named	rtti+commonlib	71332	no_pdata_entry	vtables(1): NiAmbientLight[1A]	declared in NiAVObject
+0x0D4AA80	vfunc	NiAmbientLight::SaveBinary	named	rtti+commonlib	71333	no_pdata_entry	vtables(1): NiAmbientLight[1B]	declared in NiLight
+0x0D4AA90	vfunc	NiAmbientLight::IsEqual	named	rtti+commonlib	71334	no_pdata_entry	vtables(1): NiAmbientLight[1C]	declared in NiLight
+0x0D4AC40	vfunc	NiAmbientLight::Dtor	named	rtti+commonlib	71338	pdata_start	vtables(1): NiAmbientLight[00]	declared in NiLight
+0x0D4AC80	vfunc	NiAmbientLight::GetRTTI	named	rtti+commonlib	71339	no_pdata_entry	vtables(1): NiAmbientLight[02]	declared in NiLight
+0x0D51420	vfunc	NiSpotLight::CreateClone	named	rtti+commonlib	71541	pdata_start	vtables(1): NiSpotLight[17]	declared in NiPointLight
+0x0D515D0	vfunc	NiSpotLight::LoadBinary	named	rtti+commonlib	71543	pdata_start	vtables(1): NiSpotLight[18]	declared in NiPointLight
+0x0D516A0	vfunc	NiSpotLight::LinkObject	named	rtti+commonlib	71544	no_pdata_entry	vtables(1): NiSpotLight[19]	declared in NiAVObject
+0x0D516B0	vfunc	NiSpotLight::RegisterStreamables	named	rtti+commonlib	71545	no_pdata_entry	vtables(1): NiSpotLight[1A]	declared in NiAVObject
+0x0D516C0	vfunc	NiSpotLight::SaveBinary	named	rtti+commonlib	71546	pdata_start	vtables(1): NiSpotLight[1B]	declared in NiPointLight
+0x0D51790	vfunc	NiSpotLight::IsEqual	named	rtti+commonlib	71547	pdata_start	vtables(1): NiSpotLight[1C]	declared in NiPointLight
+0x0D51920	vfunc	NiSpotLight::vfunc_30	inferred	rtti	71550	pdata_start	vtables(1): NiSpotLight[30]	
+0x0D51A30	vfunc	NiSpotLight::Dtor	named	rtti+commonlib	71552	pdata_start	vtables(1): NiSpotLight[00]	declared in NiPointLight
+0x0D51A70	vfunc	NiSpotLight::GetRTTI	named	rtti+commonlib	71553	no_pdata_entry	vtables(1): NiSpotLight[02]	declared in NiPointLight
+0x0DB94D0	vfunc	NiLightColorController::vfunc_17	inferred	rtti	73671	pdata_start	vtables(1): NiLightColorController[17]	
+0x0DB95E0	vfunc	NiLightColorController::LoadBinary	named	rtti+commonlib	73673	pdata_start	vtables(1): NiLightColorController[18]	declared in NiInterpController
+0x0DB9640	vfunc	NiLightColorController::LinkObject	named	rtti+commonlib	73674	no_pdata_entry	vtables(1): NiLightColorController[19]	declared in NiInterpController
+0x0DB9650	vfunc	NiLightColorController::RegisterStreamables	named	rtti+commonlib	73675	pdata_start	vtables(1): NiLightColorController[1A]	declared in NiInterpController
+0x0DB9670	vfunc	NiLightColorController::SaveBinary	named	rtti+commonlib	73676	pdata_start	vtables(1): NiLightColorController[1B]	declared in NiInterpController
+0x0DB96D0	vfunc	NiLightColorController::IsEqual	named	rtti+commonlib	73677	pdata_start	vtables(1): NiLightColorController[1C]	declared in NiInterpController
+0x0DB9860	vfunc	NiLightColorController::Update	named	rtti+commonlib	73681	pdata_start	vtables(1): NiLightColorController[27]	declared in NiTimeController
+0x0DB9A80	vfunc	NiLightColorController::GetCtlrID	named	rtti+commonlib	73682	no_pdata_entry	vtables(1): NiLightColorController[36]	declared in NiInterpController
+0x0DB9AA0	vfunc	NiLightColorController::vfunc_3C	inferred	rtti	73683	pdata_start	vtables(1): NiLightColorController[3C]	
+0x0DB9AF0	vfunc	NiLightColorController::vfunc_3D	inferred	rtti	73684	pdata_start	vtables(1): NiLightColorController[3D]	
+0x0DB9C20	vfunc	NiLightColorController::Dtor	named	rtti+commonlib	73686	pdata_start	vtables(1): NiLightColorController[00]	declared in NiInterpController
+0x0DB9C90	vfunc	NiLightColorController::GetRTTI	named	rtti+commonlib	73687	no_pdata_entry	vtables(1): NiLightColorController[02]	declared in NiInterpController
+0x0DB9CA0	vfunc	NiLightDimmerController::vfunc_17	inferred	rtti	73688	pdata_start	vtables(1): NiLightDimmerController[17]	
+0x0DB9D80	vfunc	NiLightDimmerController::LoadBinary	named	rtti+commonlib	73690	no_pdata_entry	vtables(1): NiLightDimmerController[18]	declared in NiInterpController
+0x0DB9D90	vfunc	NiLightDimmerController::LinkObject	named	rtti+commonlib	73691	no_pdata_entry	vtables(1): NiLightDimmerController[19]	declared in NiInterpController
+0x0DB9DA0	vfunc	NiLightDimmerController::RegisterStreamables	named	rtti+commonlib	73692	pdata_start	vtables(1): NiLightDimmerController[1A]	declared in NiInterpController
+0x0DB9DC0	vfunc	NiLightDimmerController::SaveBinary	named	rtti+commonlib	73693	no_pdata_entry	vtables(1): NiLightDimmerController[1B]	declared in NiInterpController
+0x0DB9DD0	vfunc	NiLightDimmerController::IsEqual	named	rtti+commonlib	73694	pdata_start	vtables(1): NiLightDimmerController[1C]	declared in NiInterpController
+0x0DB9F20	vfunc	NiLightDimmerController::Update	named	rtti+commonlib	73698	pdata_start	vtables(1): NiLightDimmerController[27]	declared in NiTimeController
+0x0DBA040	vfunc	NiLightDimmerController::vfunc_3C	inferred	rtti	73699	pdata_start	vtables(1): NiLightDimmerController[3C]	
+0x0DBA090	vfunc	NiLightDimmerController::vfunc_3D	inferred	rtti	73700	no_pdata_entry	vtables(1): NiLightDimmerController[3D]	
+0x0DBA160	vfunc	NiLightDimmerController::Dtor	named	rtti+commonlib	73702	pdata_start	vtables(1): NiLightDimmerController[00]	declared in NiInterpController
+0x0DBA1D0	vfunc	NiLightDimmerController::GetRTTI	named	rtti+commonlib	73703	no_pdata_entry	vtables(1): NiLightDimmerController[02]	declared in NiInterpController
+0x0E15D10	vfunc	BSPortalGraph::Dtor	named	rtti+commonlib	76152	pdata_start	vtables(1): BSPortalGraph[00]	
+0x0E15D50	vfunc	BSPortalGraphEntry::Dtor	named	rtti+commonlib	76153	pdata_start	vtables(1): BSPortalGraphEntry[00]	declared in NiRefObject
+0x0E16160	vfunc	BSOcclusionShape::vfunc_17	inferred	rtti	76159	no_pdata_entry	vtables(1): BSOcclusionShape[17]	
+0x0E17170	vfunc	BSOcclusionShape::Dtor	named	rtti+commonlib	76166	pdata_start	vtables(1): BSOcclusionShape[00]	declared in NiObject
+0x0E171B0	vfunc	BSOcclusionShape::GetRTTI	named	rtti+commonlib	76167	no_pdata_entry	vtables(1): BSOcclusionShape[02]	declared in NiObject
+0x0E20580	vfunc	BSOcclusionBox::vfunc_17	inferred	rtti	76402	pdata_start	vtables(1): BSOcclusionBox[17]	
+0x0E22AE0	vfunc	BSOcclusionBox::vfunc_25	inferred	rtti	76414	no_pdata_entry	vtables(1): BSOcclusionBox[25]	
+0x0E22AF0	vfunc	BSOcclusionBox::vfunc_26	inferred	rtti	76415	no_pdata_entry	vtables(1): BSOcclusionBox[26]	
+0x0E22C90	vfunc	BSOcclusionBox::Dtor	named	rtti+commonlib	76420	pdata_start	vtables(1): BSOcclusionBox[00]	declared in NiObject
+0x0E22D00	vfunc	BSOcclusionBox::GetRTTI	named	rtti+commonlib	76421	no_pdata_entry	vtables(1): BSOcclusionBox[02]	declared in NiObject
+0x0E22D10	vfunc	BSOcclusionPlane::vfunc_17	inferred	rtti	76422	pdata_start	vtables(1): BSOcclusionPlane[17]	
+0x0E244D0	vfunc	BSOcclusionPlane::vfunc_25	inferred	rtti	76440	no_pdata_entry	vtables(2): BSOcclusionPlane[25], BSPortal[25]	
+0x0E244E0	vfunc	BSOcclusionPlane::vfunc_26	inferred	rtti	76441	no_pdata_entry	vtables(2): BSOcclusionPlane[26], BSPortal[26]	
+0x0E244F0	vfunc	BSOcclusionPlane::Dtor	named	rtti+commonlib	76442	pdata_start	vtables(1): BSOcclusionPlane[00]	declared in NiObject
+0x0E24530	vfunc	BSOcclusionPlane::GetRTTI	named	rtti+commonlib	76443	no_pdata_entry	vtables(1): BSOcclusionPlane[02]	declared in NiObject
+0x0E24540	vfunc	BSPortalSharedNode::CreateClone	named	rtti+commonlib	76444	pdata_start	vtables(1): BSPortalSharedNode[17]	declared in NiNode
+0x0E24740	vfunc	BSPortalSharedNode::OnVisible	named	rtti+commonlib	76448	pdata_start	vtables(1): BSPortalSharedNode[34]	declared in NiNode
+0x0E24820	vfunc	BSPortal::vfunc_17	inferred	rtti	76449	pdata_start	vtables(1): BSPortal[17]	
+0x0E24970	vfunc	BSPortalSharedNode::Dtor	named	rtti+commonlib	76456	pdata_start	vtables(1): BSPortalSharedNode[00]	declared in NiNode
+0x0E24A20	vfunc	BSPortalSharedNode::GetRTTI	named	rtti+commonlib	76457	no_pdata_entry	vtables(1): BSPortalSharedNode[02]	declared in NiNode
+0x14A03B0	vfunc	ShadowSceneNode::OnVisible	named	rtti+commonlib	106322	pdata_start	vtables(1): ShadowSceneNode[34]	
+0x14A8140	vfunc	ShadowSceneNode::Dtor	named	rtti+commonlib	106409	pdata_start	vtables(1): ShadowSceneNode[00]	
+0x14A82C0	vfunc	ShadowSceneNode::GetRTTI	named	rtti+commonlib	106415	no_pdata_entry	vtables(1): ShadowSceneNode[02]	
+0x14AC400	vfunc	BSLightingShaderProperty::CreateClone	named	rtti+commonlib	106490	pdata_start	vtables(1): BSLightingShaderProperty[17]	
+0x14AC6B0	vfunc	BSLightingShaderProperty::LoadBinary	named	rtti+commonlib	106493	pdata_start	vtables(1): BSLightingShaderProperty[18]	
+0x14AC7C0	vfunc	BSLightingShaderProperty::LinkObject	named	rtti+commonlib	106494	pdata_start	vtables(1): BSLightingShaderProperty[19]	
+0x14AC9D0	vfunc	BSLightingShaderProperty::RegisterStreamables	named	rtti+commonlib	106495	pdata_start	vtables(1): BSLightingShaderProperty[1A]	
+0x14ACA20	vfunc	BSLightingShaderProperty::SaveBinary	named	rtti+commonlib	106496	pdata_start	vtables(1): BSLightingShaderProperty[1B]	
+0x14ACBB0	vfunc	BSLightingShaderProperty::IsEqual	named	rtti+commonlib	106497	no_pdata_entry	vtables(1): BSLightingShaderProperty[1C]	
+0x14ACBC0	vfunc	BSLightingShaderProperty::PostLinkObject	named	rtti+commonlib	106498	pdata_start	vtables(1): BSLightingShaderProperty[1E]	
+0x14ACF80	vfunc	BSLightingShaderProperty::QShader	named	rtti+commonlib	106501	no_pdata_entry	vtables(1): BSLightingShaderProperty[35]	
+0x14AD010	vfunc	BSLightingShaderProperty::SetupGeometry	named	rtti+commonlib	106503	pdata_start	vtables(1): BSLightingShaderProperty[27]	
+0x14AD1B0	vfunc	BSLightingShaderProperty::FinishSetupGeometry	named	rtti+commonlib	106504	pdata_start	vtables(2): BSGrassShaderProperty[28], BSLightingShaderProperty[28]	
+0x14AD590	vfunc	BSLightingShaderProperty::CanMerge	named	rtti+commonlib	106508	pdata_start	vtables(2): BSGrassShaderProperty[30], BSLightingShaderProperty[30]	
+0x14ADF00	vfunc	BSLightingShaderProperty::DetermineUtilityShaderDecl	named	rtti+commonlib	106515	no_pdata_entry	vtables(2): BSGrassShaderProperty[3D], BSLightingShaderProperty[3D]	
+0x14ADFB0	vfunc	BSLightingShaderProperty::GetRenderPasses	named	rtti+commonlib	106516	pdata_start	vtables(1): BSLightingShaderProperty[2A]	
+0x14AF030	vfunc	BSLightingShaderProperty::Unk_2B	inferred	rtti+commonlib	106517	pdata_start	vtables(1): BSLightingShaderProperty[2B]	
+0x14AFB00	vfunc	BSLightingShaderProperty::Unk_2C	inferred	rtti+commonlib	106518	pdata_start	vtables(2): BSGrassShaderProperty[2C], BSLightingShaderProperty[2C]	
+0x14AFD50	vfunc	BSLightingShaderProperty::Unk_2D	inferred	rtti+commonlib	106519	pdata_start	vtables(2): BSGrassShaderProperty[2D], BSLightingShaderProperty[2D]	
+0x14AFF30	vfunc	BSLightingShaderProperty::Unk_2F	inferred	rtti+commonlib	106520	pdata_start	vtables(1): BSLightingShaderProperty[2F]	
+0x14B0250	vfunc	BSLightingShaderProperty::Unk_3B	inferred	rtti+commonlib	106523	pdata_start	vtables(2): BSGrassShaderProperty[3B], BSLightingShaderProperty[3B]	
+0x14B08D0	vfunc	BSLightingShaderProperty::AcceptsEffectData	named	rtti+commonlib	106524	no_pdata_entry	vtables(2): BSGrassShaderProperty[39], BSLightingShaderProperty[39]	
+0x14B08F0	vfunc	BSLightingShaderProperty::ForEachTexture	named	rtti+commonlib	106525	pdata_start	vtables(2): BSGrassShaderProperty[33], BSLightingShaderProperty[33]	
+0x14B0990	vfunc	BSLightingShaderProperty::DoClearRenderPasses	named	rtti+commonlib	106526	pdata_start	vtables(2): BSGrassShaderProperty[34], BSLightingShaderProperty[34]	
+0x14B11A0	vfunc	BSLightingShaderProperty::Dtor	named	rtti+commonlib	106534	pdata_start	vtables(1): BSLightingShaderProperty[00]	
+0x14B1370	vfunc	BSLightingShaderProperty::GetBaseTexture	named	rtti+commonlib	106536	no_pdata_entry	vtables(2): BSGrassShaderProperty[37], BSLightingShaderProperty[37]	
+0x14B1380	vfunc	BSLightingShaderProperty::GetMaterialType	named	rtti+commonlib	106537	no_pdata_entry	vtables(2): BSGrassShaderProperty[3E], BSLightingShaderProperty[3E]	
+0x14B1390	vfunc	BSLightingShaderProperty::GetRTTI	named	rtti+commonlib	106538	no_pdata_entry	vtables(1): BSLightingShaderProperty[02]	
+0x14B13A0	vfunc	BSLightingShaderProperty::QMaterialAlpha	named	rtti+commonlib	106539	no_pdata_entry	vtables(2): BSGrassShaderProperty[32], BSLightingShaderProperty[32]	
+0x14B13B0	vfunc	BSLightingShaderProperty::SetMaterialAlpha	named	rtti+commonlib	106540	no_pdata_entry	vtables(2): BSGrassShaderProperty[31], BSLightingShaderProperty[31]	
+0x14B71F0	function	BSLightingShaderMaterial::Ctor	named	commonlib+addrlib	106711	pdata_start		include/RE/B/BSLightingShaderMaterial.h:24
+0x14B73E0	vfunc	BSLightingShaderMaterialBase::CopyMembers	named	rtti+commonlib	106713	pdata_start	vtables(2): BSLightingShaderMaterial[02], BSLightingShaderMaterialBase[02]	
+0x14B7570	vfunc	BSLightingShaderMaterialBase::DoIsCopy	named	rtti+commonlib	106714	pdata_start	vtables(14): BSLightingShaderMaterial[03], BSLightingShaderMaterialBase[03], BSLightingShaderMaterialEnvmap[03], BSLightingShaderMaterialEye[03], BSLightingShaderMaterialFacegen[03], BSLightingShaderMaterialFacegenTint[03], +8 more	
+0x14B7630	vfunc	BSLightingShaderMaterialBase::ComputeCRC32	named	rtti+commonlib	106715	pdata_start	vtables(4): BSLightingShaderMaterial[04], BSLightingShaderMaterialBase[04], BSLightingShaderMaterialLODLandscape[04], BSLightingShaderMaterialLandscape[04]	
+0x14B7910	vfunc	BSLightingShaderMaterialBase::GetDefault	named	rtti+commonlib	106716	no_pdata_entry	vtables(14): BSLightingShaderMaterial[05], BSLightingShaderMaterialBase[05], BSLightingShaderMaterialEnvmap[05], BSLightingShaderMaterialEye[05], BSLightingShaderMaterialFacegen[05], BSLightingShaderMaterialFacegenTint[05], +8 more	
+0x14B7920	vfunc	BSLightingShaderMaterialBase::OnLoadTextureSet	named	rtti+commonlib	106717	pdata_start	vtables(7): BSLightingShaderMaterial[08], BSLightingShaderMaterialBase[08], BSLightingShaderMaterialFacegenTint[08], BSLightingShaderMaterialHairTint[08], BSLightingShaderMaterialLODLandscape[08], BSLightingShaderMaterialLandscape[08], +1 more	
+0x14B7A50	vfunc	BSLightingShaderMaterialBase::ClearTextures	named	rtti+commonlib	106718	pdata_start	vtables(5): BSLightingShaderMaterial[09], BSLightingShaderMaterialBase[09], BSLightingShaderMaterialFacegenTint[09], BSLightingShaderMaterialHairTint[09], BSLightingShaderMaterialSnow[09]	
+0x14B7B00	vfunc	BSLightingShaderMaterialBase::ReceiveValuesFromRootMaterial	named	rtti+commonlib	106719	no_pdata_entry	vtables(5): BSLightingShaderMaterial[0A], BSLightingShaderMaterialBase[0A], BSLightingShaderMaterialFacegenTint[0A], BSLightingShaderMaterialHairTint[0A], BSLightingShaderMaterialSnow[0A]	
+0x14B7BD0	vfunc	BSLightingShaderMaterialBase::GetTextures	named	rtti+commonlib	106720	no_pdata_entry	vtables(5): BSLightingShaderMaterial[0B], BSLightingShaderMaterialBase[0B], BSLightingShaderMaterialFacegenTint[0B], BSLightingShaderMaterialHairTint[0B], BSLightingShaderMaterialSnow[0B]	
+0x14B7C30	vfunc	BSLightingShaderMaterialBase::SaveBinary	named	rtti+commonlib	106721	pdata_start	vtables(7): BSLightingShaderMaterial[0C], BSLightingShaderMaterialBase[0C], BSLightingShaderMaterialFacegen[0C], BSLightingShaderMaterialGlowmap[0C], BSLightingShaderMaterialLODLandscape[0C], BSLightingShaderMaterialLandscape[0C], +1 more	
+0x14B7DD0	vfunc	BSLightingShaderMaterialBase::LoadBinary	named	rtti+commonlib	106722	pdata_start	vtables(7): BSLightingShaderMaterial[0D], BSLightingShaderMaterialBase[0D], BSLightingShaderMaterialFacegen[0D], BSLightingShaderMaterialGlowmap[0D], BSLightingShaderMaterialLODLandscape[0D], BSLightingShaderMaterialLandscape[0D], +1 more	
+0x14B7F70	function	BSLightingShaderMaterialBase::CreateMaterial	named	commonlib+addrlib	106723	pdata_start		include/RE/Offsets.h:95
+0x14B84C0	vfunc	BSLightingShaderMaterial::Create	named	rtti+commonlib	106724	pdata_start	vtables(1): BSLightingShaderMaterial[01]	
+0x14B8540	vfunc	BSLightingShaderMaterial::GetFeature	named	rtti+commonlib	106725	no_pdata_entry	vtables(1): BSLightingShaderMaterial[06]	
+0x14B8660	function	BSLightingShaderMaterialEnvmap::Ctor	named	commonlib+addrlib	106728	pdata_start		include/RE/B/BSLightingShaderMaterialEnvmap.h:41
+0x14B8780	vfunc	BSLightingShaderMaterialEnvmap::Create	named	rtti+commonlib	106730	pdata_start	vtables(1): BSLightingShaderMaterialEnvmap[01]	
+0x14B8820	vfunc	BSLightingShaderMaterialEnvmap::CopyMembers	named	rtti+commonlib	106731	pdata_start	vtables(1): BSLightingShaderMaterialEnvmap[02]	
+0x14B88E0	vfunc	BSLightingShaderMaterialEnvmap::ComputeCRC32	named	rtti+commonlib	106732	pdata_start	vtables(1): BSLightingShaderMaterialEnvmap[04]	
+0x14B8990	vfunc	BSLightingShaderMaterialEnvmap::OnLoadTextureSet	named	rtti+commonlib	106733	pdata_start	vtables(1): BSLightingShaderMaterialEnvmap[08]	
+0x14B8A90	vfunc	BSLightingShaderMaterialEnvmap::ClearTextures	named	rtti+commonlib	106734	pdata_start	vtables(1): BSLightingShaderMaterialEnvmap[09]	
+0x14B8B10	vfunc	BSLightingShaderMaterialEnvmap::ReceiveValuesFromRootMaterial	named	rtti+commonlib	106735	pdata_start	vtables(1): BSLightingShaderMaterialEnvmap[0A]	
+0x14B8B80	vfunc	BSLightingShaderMaterialEnvmap::GetTextures	named	rtti+commonlib	106736	no_pdata_entry	vtables(1): BSLightingShaderMaterialEnvmap[0B]	
+0x14B8C10	vfunc	BSLightingShaderMaterialEnvmap::GetFeature	named	rtti+commonlib	106737	no_pdata_entry	vtables(1): BSLightingShaderMaterialEnvmap[06]	
+0x14B8C20	vfunc	BSLightingShaderMaterialEnvmap::SaveBinary	named	rtti+commonlib	106738	pdata_start	vtables(1): BSLightingShaderMaterialEnvmap[0C]	
+0x14B8C80	vfunc	BSLightingShaderMaterialEnvmap::LoadBinary	named	rtti+commonlib	106739	pdata_start	vtables(1): BSLightingShaderMaterialEnvmap[0D]	
+0x14B8CE0	function	BSLightingShaderMaterialEye::Ctor	named	commonlib+addrlib	106740	pdata_start		include/RE/B/BSLightingShaderMaterialEye.h:43
+0x14B8E60	vfunc	BSLightingShaderMaterialEye::Create	named	rtti+commonlib	106742	pdata_start	vtables(1): BSLightingShaderMaterialEye[01]	
+0x14B8ED0	vfunc	BSLightingShaderMaterialEye::CopyMembers	named	rtti+commonlib	106743	pdata_start	vtables(1): BSLightingShaderMaterialEye[02]	
+0x14B8FD0	vfunc	BSLightingShaderMaterialEye::ComputeCRC32	named	rtti+commonlib	106744	pdata_start	vtables(1): BSLightingShaderMaterialEye[04]	
+0x14B90A0	vfunc	BSLightingShaderMaterialEye::OnLoadTextureSet	named	rtti+commonlib	106745	pdata_start	vtables(1): BSLightingShaderMaterialEye[08]	
+0x14B91A0	vfunc	BSLightingShaderMaterialEye::ClearTextures	named	rtti+commonlib	106746	pdata_start	vtables(1): BSLightingShaderMaterialEye[09]	
+0x14B9220	vfunc	BSLightingShaderMaterialEye::ReceiveValuesFromRootMaterial	named	rtti+commonlib	106747	pdata_start	vtables(1): BSLightingShaderMaterialEye[0A]	
+0x14B92B0	vfunc	BSLightingShaderMaterialEye::GetTextures	named	rtti+commonlib	106748	no_pdata_entry	vtables(1): BSLightingShaderMaterialEye[0B]	
+0x14B9340	vfunc	BSLightingShaderMaterialEye::GetFeature	named	rtti+commonlib	106749	no_pdata_entry	vtables(1): BSLightingShaderMaterialEye[06]	
+0x14B9350	vfunc	BSLightingShaderMaterialEye::SaveBinary	named	rtti+commonlib	106750	pdata_start	vtables(1): BSLightingShaderMaterialEye[0C]	
+0x14B93D0	vfunc	BSLightingShaderMaterialEye::LoadBinary	named	rtti+commonlib	106751	pdata_start	vtables(1): BSLightingShaderMaterialEye[0D]	
+0x14B9450	function	BSLightingShaderMaterialGlowmap::Ctor	named	commonlib+addrlib	106752	pdata_start		include/RE/B/BSLightingShaderMaterialGlowmap.h:36
+0x14B9520	vfunc	BSLightingShaderMaterialGlowmap::Create	named	rtti+commonlib	106754	pdata_start	vtables(1): BSLightingShaderMaterialGlowmap[01]	
+0x14B95B0	vfunc	BSLightingShaderMaterialGlowmap::CopyMembers	named	rtti+commonlib	106755	pdata_start	vtables(1): BSLightingShaderMaterialGlowmap[02]	
+0x14B9620	vfunc	BSLightingShaderMaterialGlowmap::ComputeCRC32	named	rtti+commonlib	106756	pdata_start	vtables(1): BSLightingShaderMaterialGlowmap[04]	
+0x14B96A0	vfunc	BSLightingShaderMaterialGlowmap::OnLoadTextureSet	named	rtti+commonlib	106757	pdata_start	vtables(1): BSLightingShaderMaterialGlowmap[08]	
+0x14B9790	vfunc	BSLightingShaderMaterialGlowmap::ReceiveValuesFromRootMaterial	named	rtti+commonlib	106758	pdata_start	vtables(1): BSLightingShaderMaterialGlowmap[0A]	
+0x14B9800	vfunc	BSLightingShaderMaterialGlowmap::ClearTextures	named	rtti+commonlib	106759	pdata_start	vtables(1): BSLightingShaderMaterialGlowmap[09]	
+0x14B9850	vfunc	BSLightingShaderMaterialGlowmap::GetTextures	named	rtti+commonlib	106760	no_pdata_entry	vtables(1): BSLightingShaderMaterialGlowmap[0B]	
+0x14B98C0	vfunc	BSLightingShaderMaterialGlowmap::GetFeature	named	rtti+commonlib	106761	no_pdata_entry	vtables(1): BSLightingShaderMaterialGlowmap[06]	
+0x14B98D0	function	BSLightingShaderMaterialParallax::Ctor	named	commonlib+addrlib	106762	pdata_start		include/RE/B/BSLightingShaderMaterialParallax.h:36
+0x14B99A0	vfunc	BSLightingShaderMaterialParallax::Create	named	rtti+commonlib	106764	pdata_start	vtables(1): BSLightingShaderMaterialParallax[01]	
+0x14B9A30	vfunc	BSLightingShaderMaterialParallax::CopyMembers	named	rtti+commonlib	106765	pdata_start	vtables(1): BSLightingShaderMaterialParallax[02]	
+0x14B9AA0	vfunc	BSLightingShaderMaterialParallax::ComputeCRC32	named	rtti+commonlib	106766	pdata_start	vtables(1): BSLightingShaderMaterialParallax[04]	
+0x14B9B20	vfunc	BSLightingShaderMaterialParallax::OnLoadTextureSet	named	rtti+commonlib	106767	pdata_start	vtables(1): BSLightingShaderMaterialParallax[08]	
+0x14B9C10	vfunc	BSLightingShaderMaterialParallax::ClearTextures	named	rtti+commonlib	106768	pdata_start	vtables(1): BSLightingShaderMaterialParallax[09]	
+0x14B9C60	vfunc	BSLightingShaderMaterialParallax::ReceiveValuesFromRootMaterial	named	rtti+commonlib	106769	pdata_start	vtables(1): BSLightingShaderMaterialParallax[0A]	
+0x14B9CD0	vfunc	BSLightingShaderMaterialParallax::GetTextures	named	rtti+commonlib	106770	no_pdata_entry	vtables(1): BSLightingShaderMaterialParallax[0B]	
+0x14B9D40	vfunc	BSLightingShaderMaterialParallax::GetFeature	named	rtti+commonlib	106771	no_pdata_entry	vtables(1): BSLightingShaderMaterialParallax[06]	
+0x14B9D50	function	BSLightingShaderMaterialParallaxOcc::Ctor	named	commonlib+addrlib	106772	pdata_start		include/RE/B/BSLightingShaderMaterialParallaxOcc.h:40
+0x14B9E20	vfunc	BSLightingShaderMaterialParallaxOcc::Create	named	rtti+commonlib	106774	pdata_start	vtables(1): BSLightingShaderMaterialParallaxOcc[01]	
+0x14B9EB0	vfunc	BSLightingShaderMaterialParallaxOcc::CopyMembers	named	rtti+commonlib	106775	pdata_start	vtables(1): BSLightingShaderMaterialParallaxOcc[02]	
+0x14B9F30	vfunc	BSLightingShaderMaterialParallaxOcc::ComputeCRC32	named	rtti+commonlib	106776	pdata_start	vtables(1): BSLightingShaderMaterialParallaxOcc[04]	
+0x14B9FD0	vfunc	BSLightingShaderMaterialParallaxOcc::OnLoadTextureSet	named	rtti+commonlib	106777	pdata_start	vtables(1): BSLightingShaderMaterialParallaxOcc[08]	
+0x14BA0C0	vfunc	BSLightingShaderMaterialParallaxOcc::ClearTextures	named	rtti+commonlib	106778	pdata_start	vtables(1): BSLightingShaderMaterialParallaxOcc[09]	
+0x14BA110	vfunc	BSLightingShaderMaterialParallaxOcc::ReceiveValuesFromRootMaterial	named	rtti+commonlib	106779	pdata_start	vtables(1): BSLightingShaderMaterialParallaxOcc[0A]	
+0x14BA180	vfunc	BSLightingShaderMaterialParallaxOcc::GetTextures	named	rtti+commonlib	106780	no_pdata_entry	vtables(1): BSLightingShaderMaterialParallaxOcc[0B]	
+0x14BA1F0	vfunc	BSLightingShaderMaterialParallaxOcc::GetFeature	named	rtti+commonlib	106781	no_pdata_entry	vtables(1): BSLightingShaderMaterialParallaxOcc[06]	
+0x14BA200	vfunc	BSLightingShaderMaterialParallaxOcc::SaveBinary	named	rtti+commonlib	106782	pdata_start	vtables(1): BSLightingShaderMaterialParallaxOcc[0C]	
+0x14BA2A0	vfunc	BSLightingShaderMaterialParallaxOcc::LoadBinary	named	rtti+commonlib	106783	pdata_start	vtables(1): BSLightingShaderMaterialParallaxOcc[0D]	
+0x14BA340	function	BSLightingShaderMaterialFacegen::Ctor	named	commonlib+addrlib	106784	pdata_start		include/RE/B/BSLightingShaderMaterialFacegen.h:38
+0x14BA4A0	vfunc	BSLightingShaderMaterialFacegen::Create	named	rtti+commonlib	106786	pdata_start	vtables(1): BSLightingShaderMaterialFacegen[01]	
+0x14BA530	vfunc	BSLightingShaderMaterialFacegen::CopyMembers	named	rtti+commonlib	106787	pdata_start	vtables(1): BSLightingShaderMaterialFacegen[02]	
+0x14BA620	vfunc	BSLightingShaderMaterialFacegen::ComputeCRC32	named	rtti+commonlib	106788	pdata_start	vtables(1): BSLightingShaderMaterialFacegen[04]	
+0x14BA6E0	vfunc	BSLightingShaderMaterialFacegen::OnLoadTextureSet	named	rtti+commonlib	106789	pdata_start	vtables(1): BSLightingShaderMaterialFacegen[08]	
+0x14BA800	vfunc	BSLightingShaderMaterialFacegen::ClearTextures	named	rtti+commonlib	106790	pdata_start	vtables(1): BSLightingShaderMaterialFacegen[09]	
+0x14BA8B0	vfunc	BSLightingShaderMaterialFacegen::ReceiveValuesFromRootMaterial	named	rtti+commonlib	106791	pdata_start	vtables(1): BSLightingShaderMaterialFacegen[0A]	
+0x14BA960	vfunc	BSLightingShaderMaterialFacegen::GetTextures	named	rtti+commonlib	106792	no_pdata_entry	vtables(1): BSLightingShaderMaterialFacegen[0B]	
+0x14BAA00	vfunc	BSLightingShaderMaterialFacegen::GetFeature	named	rtti+commonlib	106793	no_pdata_entry	vtables(1): BSLightingShaderMaterialFacegen[06]	
+0x14BAA10	function	BSLightingShaderMaterialFacegenTint::Ctor	named	commonlib+addrlib	106794	pdata_start		include/RE/B/BSLightingShaderMaterialFacegenTint.h:33
+0x14BAA70	vfunc	BSLightingShaderMaterialFacegenTint::Create	named	rtti+commonlib	106796	pdata_start	vtables(1): BSLightingShaderMaterialFacegenTint[01]	
+0x14BAB00	vfunc	BSLightingShaderMaterialFacegenTint::CopyMembers	named	rtti+commonlib	106797	pdata_start	vtables(1): BSLightingShaderMaterialFacegenTint[02]	
+0x14BAB50	vfunc	BSLightingShaderMaterialFacegenTint::ComputeCRC32	named	rtti+commonlib	106798	pdata_start	vtables(1): BSLightingShaderMaterialFacegenTint[04]	
+0x14BABA0	vfunc	BSLightingShaderMaterialFacegenTint::GetFeature	named	rtti+commonlib	106799	no_pdata_entry	vtables(1): BSLightingShaderMaterialFacegenTint[06]	
+0x14BABB0	vfunc	BSLightingShaderMaterialFacegenTint::SaveBinary	named	rtti+commonlib	106800	pdata_start	vtables(1): BSLightingShaderMaterialFacegenTint[0C]	
+0x14BABF0	vfunc	BSLightingShaderMaterialFacegenTint::LoadBinary	named	rtti+commonlib	106801	pdata_start	vtables(1): BSLightingShaderMaterialFacegenTint[0D]	
+0x14BAC30	function	BSLightingShaderMaterialHairTint::Ctor	named	commonlib+addrlib	106802	pdata_start		include/RE/B/BSLightingShaderMaterialHairTint.h:33
+0x14BAC80	vfunc	BSLightingShaderMaterialHairTint::Create	named	rtti+commonlib	106803	pdata_start	vtables(1): BSLightingShaderMaterialHairTint[01]	
+0x14BAD20	vfunc	BSLightingShaderMaterialHairTint::CopyMembers	named	rtti+commonlib	106804	pdata_start	vtables(1): BSLightingShaderMaterialHairTint[02]	
+0x14BAD70	vfunc	BSLightingShaderMaterialHairTint::ComputeCRC32	named	rtti+commonlib	106805	pdata_start	vtables(1): BSLightingShaderMaterialHairTint[04]	
+0x14BADC0	vfunc	BSLightingShaderMaterialHairTint::GetFeature	named	rtti+commonlib	106806	no_pdata_entry	vtables(1): BSLightingShaderMaterialHairTint[06]	
+0x14BADD0	vfunc	BSLightingShaderMaterialHairTint::SaveBinary	named	rtti+commonlib	106807	pdata_start	vtables(1): BSLightingShaderMaterialHairTint[0C]	
+0x14BAE10	vfunc	BSLightingShaderMaterialHairTint::LoadBinary	named	rtti+commonlib	106808	pdata_start	vtables(1): BSLightingShaderMaterialHairTint[0D]	
+0x14BAE50	function	BSLightingShaderMaterialLandscape::Ctor	named	commonlib+addrlib	106809	pdata_start		include/RE/B/BSLightingShaderMaterialLandscape.h:47
+0x14BB140	vfunc	BSLightingShaderMaterialLandscape::Create	named	rtti+commonlib	106811	pdata_start	vtables(1): BSLightingShaderMaterialLandscape[01]	
+0x14BB1B0	vfunc	BSLightingShaderMaterialLandscape::CopyMembers	named	rtti+commonlib	106812	pdata_start	vtables(1): BSLightingShaderMaterialLandscape[02]	
+0x14BB3C0	vfunc	BSLightingShaderMaterialLandscape::ClearTextures	named	rtti+commonlib	106813	pdata_start	vtables(1): BSLightingShaderMaterialLandscape[09]	
+0x14BB4A0	vfunc	BSLightingShaderMaterialLandscape::ReceiveValuesFromRootMaterial	named	rtti+commonlib	106814	pdata_start	vtables(1): BSLightingShaderMaterialLandscape[0A]	
+0x14BB590	vfunc	BSLightingShaderMaterialLandscape::GetTextures	named	rtti+commonlib	106815	no_pdata_entry	vtables(1): BSLightingShaderMaterialLandscape[0B]	
+0x14BB660	vfunc	BSLightingShaderMaterialLandscape::GetFeature	named	rtti+commonlib	106816	no_pdata_entry	vtables(1): BSLightingShaderMaterialLandscape[06]	
+0x14BB670	function	BSLightingShaderMaterialLODLandscape::Ctor	named	commonlib+addrlib	106817	pdata_start		include/RE/B/BSLightingShaderMaterialLODLandscape.h:38
+0x14BB7E0	vfunc	BSLightingShaderMaterialLODLandscape::Create	named	rtti+commonlib	106819	pdata_start	vtables(1): BSLightingShaderMaterialLODLandscape[01]	
+0x14BB880	vfunc	BSLightingShaderMaterialLODLandscape::CopyMembers	named	rtti+commonlib	106820	pdata_start	vtables(1): BSLightingShaderMaterialLODLandscape[02]	
+0x14BB990	vfunc	BSLightingShaderMaterialLODLandscape::ClearTextures	named	rtti+commonlib	106821	pdata_start	vtables(1): BSLightingShaderMaterialLODLandscape[09]	
+0x14BBA40	vfunc	BSLightingShaderMaterialLODLandscape::ReceiveValuesFromRootMaterial	named	rtti+commonlib	106822	pdata_start	vtables(1): BSLightingShaderMaterialLODLandscape[0A]	
+0x14BBAF0	vfunc	BSLightingShaderMaterialLODLandscape::GetTextures	named	rtti+commonlib	106823	no_pdata_entry	vtables(1): BSLightingShaderMaterialLODLandscape[0B]	
+0x14BBB90	vfunc	BSLightingShaderMaterialLODLandscape::GetFeature	named	rtti+commonlib	106824	no_pdata_entry	vtables(1): BSLightingShaderMaterialLODLandscape[06]	
+0x14BBBA0	function	BSLightingShaderMaterialSnow::Ctor	named	commonlib+addrlib	106825	pdata_start		include/RE/B/BSLightingShaderMaterialSnow.h:32
+0x14BBBE0	vfunc	BSLightingShaderMaterialSnow::Create	named	rtti+commonlib	106826	pdata_start	vtables(1): BSLightingShaderMaterialSnow[01]	
+0x14BBC70	vfunc	BSLightingShaderMaterialSnow::CopyMembers	named	rtti+commonlib	106827	pdata_start	vtables(1): BSLightingShaderMaterialSnow[02]	
+0x14BBCB0	vfunc	BSLightingShaderMaterialSnow::ComputeCRC32	named	rtti+commonlib	106828	pdata_start	vtables(1): BSLightingShaderMaterialSnow[04]	
+0x14BBCF0	vfunc	BSLightingShaderMaterialSnow::GetFeature	named	rtti+commonlib	106829	no_pdata_entry	vtables(1): BSLightingShaderMaterialSnow[06]	
+0x14BBD00	vfunc	BSLightingShaderMaterialSnow::SaveBinary	named	rtti+commonlib	106830	pdata_start	vtables(1): BSLightingShaderMaterialSnow[0C]	
+0x14BBD40	vfunc	BSLightingShaderMaterialSnow::LoadBinary	named	rtti+commonlib	106831	pdata_start	vtables(1): BSLightingShaderMaterialSnow[0D]	
+0x14BBD80	function	BSLightingShaderMaterialMultiLayerParallax::Ctor	named	commonlib+addrlib	106832	pdata_start		include/RE/B/BSLightingShaderMaterialMultiLayerParallax.h:46
+0x14BBF10	vfunc	BSLightingShaderMaterialMultiLayerParallax::Create	named	rtti+commonlib	106834	pdata_start	vtables(1): BSLightingShaderMaterialMultiLayerParallax[01]	
+0x14BBF80	vfunc	BSLightingShaderMaterialMultiLayerParallax::CopyMembers	named	rtti+commonlib	106835	pdata_start	vtables(1): BSLightingShaderMaterialMultiLayerParallax[02]	
+0x14BC0A0	vfunc	BSLightingShaderMaterialMultiLayerParallax::ComputeCRC32	named	rtti+commonlib	106836	pdata_start	vtables(1): BSLightingShaderMaterialMultiLayerParallax[04]	
+0x14BC180	vfunc	BSLightingShaderMaterialMultiLayerParallax::OnLoadTextureSet	named	rtti+commonlib	106837	pdata_start	vtables(1): BSLightingShaderMaterialMultiLayerParallax[08]	
+0x14BC2A0	vfunc	BSLightingShaderMaterialMultiLayerParallax::ClearTextures	named	rtti+commonlib	106838	pdata_start	vtables(1): BSLightingShaderMaterialMultiLayerParallax[09]	
+0x14BC350	vfunc	BSLightingShaderMaterialMultiLayerParallax::ReceiveValuesFromRootMaterial	named	rtti+commonlib	106839	pdata_start	vtables(1): BSLightingShaderMaterialMultiLayerParallax[0A]	
+0x14BC400	vfunc	BSLightingShaderMaterialMultiLayerParallax::GetTextures	named	rtti+commonlib	106840	no_pdata_entry	vtables(1): BSLightingShaderMaterialMultiLayerParallax[0B]	
+0x14BC4A0	vfunc	BSLightingShaderMaterialMultiLayerParallax::GetFeature	named	rtti+commonlib	106841	no_pdata_entry	vtables(1): BSLightingShaderMaterialMultiLayerParallax[06]	
+0x14BC4B0	vfunc	BSLightingShaderMaterialMultiLayerParallax::SaveBinary	named	rtti+commonlib	106842	pdata_start	vtables(1): BSLightingShaderMaterialMultiLayerParallax[0C]	
+0x14BC5E0	vfunc	BSLightingShaderMaterialMultiLayerParallax::LoadBinary	named	rtti+commonlib	106843	pdata_start	vtables(1): BSLightingShaderMaterialMultiLayerParallax[0D]	
+0x14BC840	vfunc	BSLightingShaderMaterialBase::Dtor	named	rtti+commonlib	106849	pdata_start	vtables(1): BSLightingShaderMaterialBase[00]	
+0x14BC880	vfunc	BSLightingShaderMaterialEnvmap::Dtor	named	rtti+commonlib	106850	pdata_start	vtables(1): BSLightingShaderMaterialEnvmap[00]	
+0x14BC970	vfunc	BSLightingShaderMaterialEye::Dtor	named	rtti+commonlib	106851	pdata_start	vtables(1): BSLightingShaderMaterialEye[00]	
+0x14BCA60	vfunc	BSLightingShaderMaterialFacegen::Dtor	named	rtti+commonlib	106852	pdata_start	vtables(1): BSLightingShaderMaterialFacegen[00]	
+0x14BCAA0	vfunc	BSLightingShaderMaterialFacegenTint::Dtor	named	rtti+commonlib	106853	pdata_start	vtables(1): BSLightingShaderMaterialFacegenTint[00]	
+0x14BCAE0	vfunc	BSLightingShaderMaterialGlowmap::Dtor	named	rtti+commonlib	106854	pdata_start	vtables(1): BSLightingShaderMaterialGlowmap[00]	
+0x14BCB90	vfunc	BSLightingShaderMaterialHairTint::Dtor	named	rtti+commonlib	106855	pdata_start	vtables(1): BSLightingShaderMaterialHairTint[00]	
+0x14BCBD0	vfunc	BSLightingShaderMaterialLODLandscape::Dtor	named	rtti+commonlib	106856	pdata_start	vtables(1): BSLightingShaderMaterialLODLandscape[00]	
+0x14BCC10	vfunc	BSLightingShaderMaterialLandscape::Dtor	named	rtti+commonlib	106857	pdata_start	vtables(1): BSLightingShaderMaterialLandscape[00]	
+0x14BCC50	vfunc	BSLightingShaderMaterialMultiLayerParallax::Dtor	named	rtti+commonlib	106858	pdata_start	vtables(1): BSLightingShaderMaterialMultiLayerParallax[00]	
+0x14BCC90	vfunc	BSLightingShaderMaterialParallax::Dtor	named	rtti+commonlib	106859	pdata_start	vtables(1): BSLightingShaderMaterialParallax[00]	
+0x14BCD40	vfunc	BSLightingShaderMaterialParallaxOcc::Dtor	named	rtti+commonlib	106860	pdata_start	vtables(1): BSLightingShaderMaterialParallaxOcc[00]	
+0x14BCDF0	vfunc	BSLightingShaderMaterialSnow::Dtor	named	rtti+commonlib	106861	pdata_start	vtables(1): BSLightingShaderMaterialSnow[00]	
+0x14BCE30	vfunc	BSLightingShaderMaterialBase::GetFeature	named	rtti+commonlib	106862	no_pdata_entry	vtables(1): BSLightingShaderMaterialBase[06]	
+0x14C2180	vfunc	BSLensFlareSpriteRenderData::vfunc_02	inferred	rtti	106984	pdata_start	vtables(1): BSLensFlareSpriteRenderData[02]	
+0x14DB0C0	vfunc	BSLightingShader::RestoreTechnique	named	rtti+commonlib	107294	no_pdata_entry	vtables(1): BSLightingShader[03]	declared in BSShader
+0x14DB810	vfunc	BSLightingShader::SetupTechnique	named	rtti+commonlib	107297	pdata_start	vtables(1): BSLightingShader[02]	declared in BSShader
+0x14DC310	vfunc	BSLightingShader::SetupMaterial	named	rtti+commonlib	107298	pdata_start	vtables(1): BSLightingShader[04]	declared in BSShader
+0x14DD030	vfunc	BSLightingShader::RestoreMaterial	named	rtti+commonlib	107299	no_pdata_entry	vtables(1): BSLightingShader[05]	declared in BSShader
+0x14DD040	vfunc	BSLightingShader::SetupGeometry	named	rtti+commonlib	107300	pdata_start	vtables(1): BSLightingShader[06]	declared in BSShader
+0x14DE3D0	vfunc	BSLightingShader::RestoreGeometry	named	rtti+commonlib	107301	no_pdata_entry	vtables(1): BSLightingShader[07]	declared in BSShader
+0x14E09E0	vfunc	BSLightingShader::Dtor	named	rtti+commonlib	107356	pdata_start	vtables(1): BSLightingShader[00]	declared in BSShader
+0x14F02D0	vfunc	BSShadowLight::Unk_0B	inferred	rtti+commonlib	107599	pdata_start	vtables(4): BSShadowDirectionalLight[0B], BSShadowFrustumLight[0B], BSShadowLight[0B], BSShadowParabolicLight[0B]	
+0x14F0410	vfunc	BSShadowLight::Unk_0C	inferred	rtti+commonlib	107600	no_pdata_entry	vtables(2): BSShadowFrustumLight[0C], BSShadowLight[0C]	
+0x14F1310	vfunc	BSShadowLight::Dtor	named	rtti+commonlib	107611	pdata_start	vtables(1): BSShadowLight[00]	
+0x14F13E0	vfunc	BSShadowLight::Unk_04	inferred	rtti+commonlib	107612	no_pdata_entry	vtables(2): BSShadowLight[04], BSShadowParabolicLight[04]	
+0x14F1610	vfunc	BSShadowLight::Unk_06	inferred	rtti+commonlib	107616	no_pdata_entry	vtables(3): BSShadowFrustumLight[06], BSShadowLight[06], BSShadowParabolicLight[06]	
+0x14F1620	vfunc	BSShadowLight::Unk_08	inferred	rtti+commonlib	107617	no_pdata_entry	vtables(3): BSShadowDirectionalLight[08], BSShadowFrustumLight[08], BSShadowLight[08]	
+0x14F1630	vfunc	BSShadowLight::Unk_05	inferred	rtti+commonlib	107618	no_pdata_entry	vtables(3): BSShadowDirectionalLight[05], BSShadowLight[05], BSShadowParabolicLight[05]	
+0x14F1640	vfunc	BSShadowLight::Unk_07	inferred	rtti+commonlib	107619	no_pdata_entry	vtables(3): BSShadowDirectionalLight[07], BSShadowFrustumLight[07], BSShadowLight[07]	
+0x14F1650	vfunc	BSShadowLight::Unk_03	inferred	rtti+commonlib	107620	no_pdata_entry	vtables(4): BSShadowDirectionalLight[03], BSShadowFrustumLight[03], BSShadowLight[03], BSShadowParabolicLight[03]	declared in BSLight
+0x14F1660	vfunc	BSShadowLight::Unk_0E	inferred	rtti+commonlib	107621	no_pdata_entry	vtables(2): BSShadowFrustumLight[0E], BSShadowLight[0E]	
+0x14F1670	vfunc	BSShadowLight::Unk_0D	inferred	rtti+commonlib	107622	no_pdata_entry	vtables(2): BSShadowFrustumLight[0D], BSShadowLight[0D]	
+0x14F17A0	vfunc	BSShadowLight::Unk_0F	inferred	rtti+commonlib	107624	no_pdata_entry	vtables(3): BSShadowFrustumLight[0F], BSShadowLight[0F], BSShadowParabolicLight[0F]	
+0x1509C60	vfunc	BSLight::Unk_02	inferred	rtti+commonlib	108289	pdata_start	vtables(4): BSLight[02], BSShadowDirectionalLight[02], BSShadowLight[02], BSShadowParabolicLight[02]	
+0x150B9F0	vfunc	BSLight::Dtor	named	rtti+commonlib	108312	pdata_start	vtables(1): BSLight[00]	
+0x150BA30	vfunc	BSLight::Unk_03	inferred	rtti+commonlib	108313	no_pdata_entry	vtables(1): BSLight[03]	
+0x150DAB0	vfunc	BSLightingShaderPropertyFloatController::vfunc_17	inferred	rtti	108355	pdata_start	vtables(1): BSLightingShaderPropertyFloatController[17]	
+0x150DBC0	vfunc	BSLightingShaderPropertyFloatController::LoadBinary	named	rtti+commonlib	108357	pdata_start	vtables(1): BSLightingShaderPropertyFloatController[18]	declared in NiInterpController
+0x150DC20	vfunc	BSLightingShaderPropertyFloatController::LinkObject	named	rtti+commonlib	108358	pdata_start	vtables(1): BSLightingShaderPropertyFloatController[19]	declared in NiInterpController
+0x150DC80	vfunc	BSLightingShaderPropertyFloatController::RegisterStreamables	named	rtti+commonlib	108359	no_pdata_entry	vtables(1): BSLightingShaderPropertyFloatController[1A]	declared in NiInterpController
+0x150DC90	vfunc	BSLightingShaderPropertyFloatController::SaveBinary	named	rtti+commonlib	108360	pdata_start	vtables(1): BSLightingShaderPropertyFloatController[1B]	declared in NiInterpController
+0x150DCF0	vfunc	BSLightingShaderPropertyFloatController::IsEqual	named	rtti+commonlib	108361	no_pdata_entry	vtables(1): BSLightingShaderPropertyFloatController[1C]	declared in NiInterpController
+0x150DDE0	vfunc	BSLightingShaderPropertyFloatController::Update	named	rtti+commonlib	108364	pdata_start	vtables(1): BSLightingShaderPropertyFloatController[27]	declared in NiTimeController
+0x150E090	vfunc	BSLightingShaderPropertyFloatController::vfunc_3C	inferred	rtti	108366	pdata_start	vtables(1): BSLightingShaderPropertyFloatController[3C]	
+0x150E0E0	vfunc	BSLightingShaderPropertyFloatController::vfunc_3D	inferred	rtti	108367	no_pdata_entry	vtables(1): BSLightingShaderPropertyFloatController[3D]	
+0x150E1C0	vfunc	BSLightingShaderPropertyFloatController::Dtor	named	rtti+commonlib	108369	pdata_start	vtables(1): BSLightingShaderPropertyFloatController[00]	declared in NiInterpController
+0x150E230	vfunc	BSLightingShaderPropertyFloatController::GetCtlrID	named	rtti+commonlib	108370	no_pdata_entry	vtables(1): BSLightingShaderPropertyFloatController[36]	declared in NiInterpController
+0x150E240	vfunc	BSLightingShaderPropertyFloatController::GetRTTI	named	rtti+commonlib	108371	no_pdata_entry	vtables(1): BSLightingShaderPropertyFloatController[02]	declared in NiInterpController
+0x150E250	vfunc	BSLightingShaderPropertyUShortController::vfunc_17	inferred	rtti	108372	pdata_start	vtables(1): BSLightingShaderPropertyUShortController[17]	
+0x150E360	vfunc	BSLightingShaderPropertyUShortController::LoadBinary	named	rtti+commonlib	108374	pdata_start	vtables(1): BSLightingShaderPropertyUShortController[18]	declared in NiInterpController
+0x150E3C0	vfunc	BSLightingShaderPropertyUShortController::LinkObject	named	rtti+commonlib	108375	pdata_start	vtables(1): BSLightingShaderPropertyUShortController[19]	declared in NiInterpController
+0x150E420	vfunc	BSLightingShaderPropertyUShortController::RegisterStreamables	named	rtti+commonlib	108376	no_pdata_entry	vtables(1): BSLightingShaderPropertyUShortController[1A]	declared in NiInterpController
+0x150E430	vfunc	BSLightingShaderPropertyUShortController::SaveBinary	named	rtti+commonlib	108377	pdata_start	vtables(1): BSLightingShaderPropertyUShortController[1B]	declared in NiInterpController
+0x150E490	vfunc	BSLightingShaderPropertyUShortController::IsEqual	named	rtti+commonlib	108378	no_pdata_entry	vtables(1): BSLightingShaderPropertyUShortController[1C]	declared in NiInterpController
+0x150E580	vfunc	BSLightingShaderPropertyUShortController::Update	named	rtti+commonlib	108381	no_pdata_entry	vtables(1): BSLightingShaderPropertyUShortController[27]	declared in NiTimeController
+0x150E5B0	vfunc	BSLightingShaderPropertyUShortController::vfunc_3C	inferred	rtti	108383	pdata_start	vtables(1): BSLightingShaderPropertyUShortController[3C]	
+0x150E600	vfunc	BSLightingShaderPropertyUShortController::vfunc_3D	inferred	rtti	108384	no_pdata_entry	vtables(1): BSLightingShaderPropertyUShortController[3D]	
+0x150E6E0	vfunc	BSLightingShaderPropertyUShortController::Dtor	named	rtti+commonlib	108386	pdata_start	vtables(1): BSLightingShaderPropertyUShortController[00]	declared in NiInterpController
+0x150E750	vfunc	BSLightingShaderPropertyUShortController::GetCtlrID	named	rtti+commonlib	108387	no_pdata_entry	vtables(1): BSLightingShaderPropertyUShortController[36]	declared in NiInterpController
+0x150E760	vfunc	BSLightingShaderPropertyUShortController::GetRTTI	named	rtti+commonlib	108388	no_pdata_entry	vtables(1): BSLightingShaderPropertyUShortController[02]	declared in NiInterpController
+0x150E770	vfunc	BSLightingShaderPropertyColorController::vfunc_17	inferred	rtti	108389	pdata_start	vtables(1): BSLightingShaderPropertyColorController[17]	
+0x150E880	vfunc	BSLightingShaderPropertyColorController::LoadBinary	named	rtti+commonlib	108391	pdata_start	vtables(1): BSLightingShaderPropertyColorController[18]	declared in NiInterpController
+0x150E8E0	vfunc	BSLightingShaderPropertyColorController::LinkObject	named	rtti+commonlib	108392	no_pdata_entry	vtables(1): BSLightingShaderPropertyColorController[19]	declared in NiInterpController
+0x150E8F0	vfunc	BSLightingShaderPropertyColorController::RegisterStreamables	named	rtti+commonlib	108393	no_pdata_entry	vtables(1): BSLightingShaderPropertyColorController[1A]	declared in NiInterpController
+0x150E900	vfunc	BSLightingShaderPropertyColorController::SaveBinary	named	rtti+commonlib	108394	pdata_start	vtables(1): BSLightingShaderPropertyColorController[1B]	declared in NiInterpController
+0x150E960	vfunc	BSLightingShaderPropertyColorController::IsEqual	named	rtti+commonlib	108395	no_pdata_entry	vtables(1): BSLightingShaderPropertyColorController[1C]	declared in NiInterpController
+0x150EA50	vfunc	BSLightingShaderPropertyColorController::Update	named	rtti+commonlib	108398	pdata_start	vtables(1): BSLightingShaderPropertyColorController[27]	declared in NiTimeController
+0x150EBA0	vfunc	BSLightingShaderPropertyColorController::vfunc_3C	inferred	rtti	108400	pdata_start	vtables(1): BSLightingShaderPropertyColorController[3C]	
+0x150EBF0	vfunc	BSLightingShaderPropertyColorController::vfunc_3D	inferred	rtti	108401	no_pdata_entry	vtables(1): BSLightingShaderPropertyColorController[3D]	
+0x150ECD0	vfunc	BSLightingShaderPropertyColorController::Dtor	named	rtti+commonlib	108403	pdata_start	vtables(1): BSLightingShaderPropertyColorController[00]	declared in NiInterpController
+0x150ED40	vfunc	BSLightingShaderPropertyColorController::GetCtlrID	named	rtti+commonlib	108404	no_pdata_entry	vtables(1): BSLightingShaderPropertyColorController[36]	declared in NiInterpController
+0x150ED50	vfunc	BSLightingShaderPropertyColorController::GetRTTI	named	rtti+commonlib	108405	no_pdata_entry	vtables(1): BSLightingShaderPropertyColorController[02]	declared in NiInterpController
+0x1511C00	vfunc	BSShadowDirectionalLight::Unk_0F	inferred	rtti+commonlib	108487	pdata_start	vtables(1): BSShadowDirectionalLight[0F]	declared in BSShadowLight
+0x1511C80	vfunc	BSShadowDirectionalLight::Unk_09	inferred	rtti+commonlib	108488	pdata_start	vtables(1): BSShadowDirectionalLight[09]	declared in BSShadowLight
+0x1511D60	vfunc	BSShadowDirectionalLight::Unk_0A	inferred	rtti+commonlib	108489	pdata_start	vtables(1): BSShadowDirectionalLight[0A]	declared in BSShadowLight
+0x1511EC0	vfunc	BSShadowDirectionalLight::Unk_0D	inferred	rtti+commonlib	108490	no_pdata_entry	vtables(1): BSShadowDirectionalLight[0D]	declared in BSShadowLight
+0x1511ED0	vfunc	BSShadowDirectionalLight::Unk_0C	inferred	rtti+commonlib	108491	no_pdata_entry	vtables(1): BSShadowDirectionalLight[0C]	declared in BSShadowLight
+0x1512230	vfunc	BSShadowDirectionalLight::Unk_10	inferred	rtti+commonlib	108496	pdata_start	vtables(1): BSShadowDirectionalLight[10]	declared in BSShadowLight
+0x1515020	vfunc	BSShadowDirectionalLight::Dtor	named	rtti+commonlib	108501	pdata_start	vtables(1): BSShadowDirectionalLight[00]	declared in BSShadowLight
+0x15151A0	vfunc	BSShadowDirectionalLight::Unk_04	inferred	rtti+commonlib	108502	no_pdata_entry	vtables(1): BSShadowDirectionalLight[04]	declared in BSShadowLight
+0x15151B0	vfunc	BSShadowDirectionalLight::Unk_06	inferred	rtti+commonlib	108503	no_pdata_entry	vtables(1): BSShadowDirectionalLight[06]	declared in BSShadowLight
+0x15151C0	vfunc	BSShadowDirectionalLight::Unk_0E	inferred	rtti+commonlib	108504	no_pdata_entry	vtables(1): BSShadowDirectionalLight[0E]	declared in BSShadowLight
+0x151AA60	vfunc	BSShadowFrustumLight::Unk_09	inferred	rtti+commonlib	108615	pdata_start	vtables(1): BSShadowFrustumLight[09]	declared in BSShadowLight
+0x151AAC0	vfunc	BSShadowFrustumLight::Unk_0A	inferred	rtti+commonlib	108616	pdata_start	vtables(1): BSShadowFrustumLight[0A]	declared in BSShadowLight
+0x151AB70	vfunc	BSShadowFrustumLight::Unk_02	inferred	rtti+commonlib	108617	pdata_start	vtables(1): BSShadowFrustumLight[02]	declared in BSLight
+0x151AC50	vfunc	BSShadowFrustumLight::Unk_10	inferred	rtti+commonlib	108618	pdata_start	vtables(1): BSShadowFrustumLight[10]	declared in BSShadowLight
+0x151AF80	vfunc	BSShadowFrustumLight::Dtor	named	rtti+commonlib	108619	pdata_start	vtables(1): BSShadowFrustumLight[00]	declared in BSShadowLight
+0x151B000	vfunc	BSShadowFrustumLight::Unk_04	inferred	rtti+commonlib	108620	no_pdata_entry	vtables(1): BSShadowFrustumLight[04]	declared in BSShadowLight
+0x151B010	vfunc	BSShadowFrustumLight::Unk_05	inferred	rtti+commonlib	108621	no_pdata_entry	vtables(1): BSShadowFrustumLight[05]	declared in BSShadowLight
+0x151B620	vfunc	BSShadowParabolicLight::Unk_10	inferred	rtti+commonlib	108625	pdata_start	vtables(1): BSShadowParabolicLight[10]	declared in BSShadowLight
+0x151B960	vfunc	BSShadowParabolicLight::Unk_09	inferred	rtti+commonlib	108626	pdata_start	vtables(1): BSShadowParabolicLight[09]	declared in BSShadowLight
+0x151BD10	vfunc	BSShadowParabolicLight::Unk_0A	inferred	rtti+commonlib	108627	pdata_start	vtables(1): BSShadowParabolicLight[0A]	declared in BSShadowLight
+0x151BDE0	vfunc	BSShadowParabolicLight::Unk_0C	inferred	rtti+commonlib	108628	no_pdata_entry	vtables(1): BSShadowParabolicLight[0C]	declared in BSShadowLight
+0x151BE50	vfunc	BSShadowParabolicLight::Dtor	named	rtti+commonlib	108631	pdata_start	vtables(1): BSShadowParabolicLight[00]	declared in BSShadowLight
+0x151BEB0	vfunc	BSShadowParabolicLight::Unk_08	inferred	rtti+commonlib	108632	no_pdata_entry	vtables(1): BSShadowParabolicLight[08]	declared in BSShadowLight
+0x151BEC0	vfunc	BSShadowParabolicLight::Unk_07	inferred	rtti+commonlib	108633	no_pdata_entry	vtables(1): BSShadowParabolicLight[07]	declared in BSShadowLight
+0x151BED0	vfunc	BSShadowParabolicLight::Unk_0E	inferred	rtti+commonlib	108634	no_pdata_entry	vtables(1): BSShadowParabolicLight[0E]	declared in BSShadowLight
+0x151BEE0	vfunc	BSShadowParabolicLight::Unk_0D	inferred	rtti+commonlib	108635	no_pdata_entry	vtables(1): BSShadowParabolicLight[0D]	declared in BSShadowLight
+0x1771170	vtable	ExtraOcclusionPlaneRefData::vftable	named	rtti	186821	col@0x1ada908	3 slots	BSExtraData
+0x1774200	vtable	ExtraOcclusionShape::vftable	named	rtti	187021	col@0x1adde60	3 slots	BSExtraData
+0x17870E0	vtable	BSPortal::vftable	named	rtti	188245	col@0x1ae32b8	39 slots	BSOcclusionPlane > BSOcclusionShape > NiObject > NiRefObject
+0x17942F8	vtable	BSLensFlareSpriteRenderData::vftable	named	rtti	189097	col@0x1ae7660	3 slots	NiRefObject
+0x17A2C90	vtable	.?AV?$ConcreteFormFactory@VBGSLightingTemplate@@$0GM@@@::vftable	named	rtti	189893	col@0x1aed998	7 slots	IFormFactory
+0x17A2CD0	vtable	.?AV?$ConcreteObjectFormFactory@VBGSLightingTemplate@@$0GM@$0FH@$06@@::vftable	named	rtti	189895	col@0x1aed8b8	7 slots	.?AV?$ConcreteFormFactory@VBGSLightingTemplate@@$0GM@@@ > IFormFactory
+0x17A2E68	vtable	BGSLightingTemplate::vftable	named	rtti	189899	col@0x1aed9c0	59 slots	TESForm > BaseFormComponent
+0x185DC08	vtable	BSLightingShaderMaterial::vftable	named	rtti	204134	col@0x1b11ab8	14 slots	BSLightingShaderMaterialBase > BSShaderMaterial
+0x19AC8F0	vtable	NiLight::vftable	named	rtti	237177	col@0x1bb82a8	53 slots	NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19AF268	vtable	NiPointLight::vftable	named	rtti	237259	col@0x1bb8b58	53 slots	NiLight > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19AFBA8	vtable	NiDirectionalLight::vftable	named	rtti	237324	col@0x1bb8e88	53 slots	NiLight > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19B1640	vtable	NiAmbientLight::vftable	named	rtti	237413	col@0x1bb9420	53 slots	NiLight > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19B32E8	vtable	NiSpotLight::vftable	named	rtti	237444	col@0x1bb9ca0	53 slots	NiPointLight > NiLight > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19BE6C8	vtable	NiLightColorController::vftable	named	rtti	237752	col@0x1bbced0	62 slots	NiPoint3InterpController > NiSingleInterpController > NiInterpController > NiTimeController > NiObject > NiRefObject
+0x19BE998	vtable	NiLightDimmerController::vftable	named	rtti	237756	col@0x1bbcff0	62 slots	NiFloatInterpController > NiSingleInterpController > NiInterpController > NiTimeController > NiObject > NiRefObject
+0x19D0658	vtable	BSPortalGraphEntry::vftable	named	rtti	238263	col@0x1bc2298	2 slots	NiRefObject
+0x19D0670	vtable	BSPortalGraph::vftable	named	rtti	238265	col@0x1bc2218	2 slots	NiRefObject
+0x19D06A0	vtable	BSOcclusionShape::vftable	named	rtti	238268	col@0x1bc2318	39 slots	NiObject > NiRefObject
+0x19D27C8	vtable	BSOcclusionBox::vftable	named	rtti	238380	col@0x1bc2cd8	39 slots	BSOcclusionShape > NiObject > NiRefObject
+0x19D2998	vtable	BSOcclusionPlane::vftable	named	rtti	238383	col@0x1bc2d68	39 slots	BSOcclusionShape > NiObject > NiRefObject
+0x19D2BC8	vtable	BSPortalSharedNode::vftable	named	rtti	238387	col@0x1bc2d90	62 slots	NiNode > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x1AB4C70	vtable	ShadowSceneNode::vftable	named	rtti	254646	col@0x1bf2c70	62 slots	NiNode > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x1AB5938	vtable	BSLightingShaderProperty::vftable	named	rtti	254668	col@0x1bf2d10	63 slots	BSShaderProperty > NiShadeProperty > NiProperty > NiObjectNET > NiObject > NiRefObject
+0x1AB6EB8	vtable	BSLightingShaderMaterialBase::vftable	named	rtti	254737	col@0x1bf30f0	14 slots	BSShaderMaterial
+0x1AB6F30	vtable	BSLightingShaderMaterialEnvmap::vftable	named	rtti	254739	col@0x1bf3118	14 slots	BSLightingShaderMaterialBase > BSShaderMaterial
+0x1AB6FA8	vtable	BSLightingShaderMaterialEye::vftable	named	rtti	254741	col@0x1bf31a8	14 slots	BSLightingShaderMaterialBase > BSShaderMaterial
+0x1AB7020	vtable	BSLightingShaderMaterialGlowmap::vftable	named	rtti	254743	col@0x1bf3238	14 slots	BSLightingShaderMaterialBase > BSShaderMaterial
+0x1AB7098	vtable	BSLightingShaderMaterialParallax::vftable	named	rtti	254745	col@0x1bf32c8	14 slots	BSLightingShaderMaterialBase > BSShaderMaterial
+0x1AB7110	vtable	BSLightingShaderMaterialParallaxOcc::vftable	named	rtti	254747	col@0x1bf3358	14 slots	BSLightingShaderMaterialBase > BSShaderMaterial
+0x1AB7188	vtable	BSLightingShaderMaterialFacegen::vftable	named	rtti	254749	col@0x1bf33e8	14 slots	BSLightingShaderMaterialBase > BSShaderMaterial
+0x1AB7200	vtable	BSLightingShaderMaterialFacegenTint::vftable	named	rtti	254751	col@0x1bf3478	14 slots	BSLightingShaderMaterialBase > BSShaderMaterial
+0x1AB7278	vtable	BSLightingShaderMaterialHairTint::vftable	named	rtti	254753	col@0x1bf3508	14 slots	BSLightingShaderMaterialBase > BSShaderMaterial
+0x1AB72F0	vtable	BSLightingShaderMaterialLandscape::vftable	named	rtti	254755	col@0x1bf3598	14 slots	BSLightingShaderMaterialBase > BSShaderMaterial
+0x1AB7368	vtable	BSLightingShaderMaterialLODLandscape::vftable	named	rtti	254757	col@0x1bf3628	14 slots	BSLightingShaderMaterialBase > BSShaderMaterial
+0x1AB73E0	vtable	BSLightingShaderMaterialSnow::vftable	named	rtti	254759	col@0x1bf36b8	14 slots	BSLightingShaderMaterialBase > BSShaderMaterial
+0x1AB7458	vtable	BSLightingShaderMaterialMultiLayerParallax::vftable	named	rtti	254761	col@0x1bf3748	14 slots	BSLightingShaderMaterialBase > BSShaderMaterial
+0x1ABE4C0	vtable	BSLightingShader::vftable	named	rtti	255053	col@0x1bf4108	10 slots	BSShader > NiRefObject
+0x1AC0BD0	vtable	BSShadowLight::vftable	named	rtti	255256	col@0x1bf5090	17 slots	BSLight > NiRefObject
+0x1AC3868	vtable	BSLight::vftable	named	rtti	255404	col@0x1bf5f40	4 slots	NiRefObject
+0x1AC3BE8	vtable	BSLightingShaderPropertyFloatController::vftable	named	rtti	255429	col@0x1bf6118	62 slots	NiFloatInterpController > NiSingleInterpController > NiInterpController > NiTimeController > NiObject > NiRefObject
+0x1AC3ED0	vtable	BSLightingShaderPropertyUShortController::vftable	named	rtti	255441	col@0x1bf61c0	62 slots	NiFloatInterpController > NiSingleInterpController > NiInterpController > NiTimeController > NiObject > NiRefObject
+0x1AC4168	vtable	BSLightingShaderPropertyColorController::vftable	named	rtti	255443	col@0x1bf6268	62 slots	NiPoint3InterpController > NiSingleInterpController > NiInterpController > NiTimeController > NiObject > NiRefObject
+0x1AC5430	vtable	BSShadowDirectionalLight::vftable	named	rtti	255466	col@0x1bf6628	17 slots	BSShadowLight > BSLight > NiRefObject
+0x1AC5E18	vtable	BSShadowFrustumLight::vftable	named	rtti	255531	col@0x1bf6ab8	17 slots	BSShadowLight > BSLight > NiRefObject
+0x1AC5F28	vtable	BSShadowParabolicLight::vftable	named	rtti	255534	col@0x1bf6b48	17 slots	BSShadowLight > BSLight > NiRefObject

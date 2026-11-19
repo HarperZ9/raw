@@ -1,0 +1,139 @@
+rva	kind	name	confidence	source	addrlib_id	check	refs	notes
+0x01C2640	function	Sky::GetSingleton	named	commonlib+addrlib	13878	pdata_start		src/RE/S/Sky.cpp:10
+0x01E2F90	vfunc	TESImageSpaceModifiableForm::InitializeDataComponent	named	rtti+commonlib	14733	no_pdata_entry	vtables(1): TESImageSpaceModifiableForm[01]	
+0x01E2FA0	vfunc	TESImageSpaceModifiableForm::ClearDataComponent	named	rtti+commonlib	14734	no_pdata_entry	vtables(1): TESImageSpaceModifiableForm[02]	
+0x01E3060	vfunc	TESImageSpaceModifiableForm::CopyComponent	named	rtti+commonlib	14736	pdata_start	vtables(1): TESImageSpaceModifiableForm[03]	
+0x01E30A0	vfunc	TESImageSpaceModifiableForm::Dtor	named	rtti+commonlib	14737	pdata_start	vtables(1): TESImageSpaceModifiableForm[00]	
+0x025D2A0	vfunc	BGSLensFlare::Load	named	rtti+commonlib	17048	pdata_start	vtables(1): BGSLensFlare[06]	
+0x025D5B0	vfunc	BGSLensFlare::InitItemImpl	named	rtti+commonlib	17049	pdata_start	vtables(1): BGSLensFlare[13]	
+0x025D620	vfunc	BGSLensFlare::ClearData	named	rtti+commonlib	17050	pdata_start	vtables(1): BGSLensFlare[05]	
+0x025D780	vfunc	BGSLensFlare::Dtor	named	rtti+commonlib	17053	pdata_start	vtables(1): BGSLensFlare[00]	
+0x025DB40	vfunc	BGSLensFlareSprite::vfunc_02	inferred	rtti	17057	pdata_start	vtables(1): BGSLensFlareSprite[02]	
+0x025DD40	vfunc	BGSLensFlareSprite::Dtor	named	rtti+commonlib	17062	pdata_start	vtables(1): BGSLensFlareSprite[00]	declared in NiRefObject
+0x025E040	vfunc	BGSVolumetricLighting::Load	named	rtti+commonlib	17074	pdata_start	vtables(1): BGSVolumetricLighting[06]	
+0x025E400	vfunc	BGSVolumetricLighting::InitItemImpl	named	rtti+commonlib	17075	pdata_start	vtables(1): BGSVolumetricLighting[13]	
+0x025E470	vfunc	BGSVolumetricLighting::ClearData	named	rtti+commonlib	17076	no_pdata_entry	vtables(1): BGSVolumetricLighting[05]	
+0x025E4C0	vfunc	BGSVolumetricLighting::Dtor	named	rtti+commonlib	17078	pdata_start	vtables(1): BGSVolumetricLighting[00]	
+0x029DDD0	vfunc	ImageSpaceModifierInstanceForm::Unk_25	inferred	rtti+commonlib	18566	no_pdata_entry	vtables(1): ImageSpaceModifierInstanceForm[25]	
+0x029DDF0	vfunc	ImageSpaceModifierInstanceForm::Apply	named	rtti+commonlib	18567	no_pdata_entry	vtables(1): ImageSpaceModifierInstanceForm[26]	
+0x029E0C0	function	ImageSpaceModifierInstanceForm::Trigger	named	commonlib+addrlib	18570	pdata_start		include/RE/I/ImageSpaceModifierInstanceForm.h:25
+0x029E340	function	TESImageSpaceModifier::DOF::TriggerIfNotActive	named	commonlib+addrlib	18572	pdata_start		include/RE/T/TESImageSpaceModifier.h:198
+0x029E550	function	ImageSpaceModifierInstanceForm::Stop	named	commonlib+addrlib	18573	pdata_start		include/RE/I/ImageSpaceModifierInstanceForm.h:32
+0x029EB80	function	ImageSpaceModifierInstanceForm::StopCrossFade	named	commonlib+addrlib	18577	pdata_start		include/RE/I/ImageSpaceModifierInstanceForm.h:39
+0x029ECC0	vfunc	ImageSpaceModifierInstanceForm::PrintInfo	named	rtti+commonlib	18578	pdata_start	vtables(1): ImageSpaceModifierInstanceForm[28]	
+0x029EE40	vfunc	ImageSpaceModifierInstanceTemp::Unk_25	inferred	rtti+commonlib	18580	no_pdata_entry	vtables(3): ImageSpaceModifierInstanceDOF[25], ImageSpaceModifierInstanceRB[25], ImageSpaceModifierInstanceTemp[25]	
+0x029EE80	vfunc	ImageSpaceModifierInstanceTemp::PrintInfo	named	rtti+commonlib	18581	no_pdata_entry	vtables(1): ImageSpaceModifierInstanceTemp[28]	
+0x029EFA0	vfunc	ImageSpaceModifierInstanceDOF::Apply	named	rtti+commonlib	18583	pdata_start	vtables(1): ImageSpaceModifierInstanceDOF[26]	
+0x029F3D0	vfunc	ImageSpaceModifierInstanceDOF::PrintInfo	named	rtti+commonlib	18586	pdata_start	vtables(1): ImageSpaceModifierInstanceDOF[28]	
+0x029F520	vfunc	ImageSpaceModifierInstanceRB::Apply	named	rtti+commonlib	18588	pdata_start	vtables(1): ImageSpaceModifierInstanceRB[26]	declared in ImageSpaceModifierInstance
+0x029F9E0	vfunc	ImageSpaceModifierInstanceRB::PrintInfo	named	rtti+commonlib	18591	pdata_start	vtables(1): ImageSpaceModifierInstanceRB[28]	declared in ImageSpaceModifierInstanceTemp
+0x029FCA0	vfunc	ImageSpaceModifierInstance::Dtor	named	rtti+commonlib	18597	pdata_start	vtables(1): ImageSpaceModifierInstance[00]	
+0x029FCE0	vfunc	ImageSpaceModifierInstanceDOF::Dtor	named	rtti+commonlib	18598	pdata_start	vtables(1): ImageSpaceModifierInstanceDOF[00]	
+0x029FD20	vfunc	ImageSpaceModifierInstanceForm::Dtor	named	rtti+commonlib	18599	pdata_start	vtables(1): ImageSpaceModifierInstanceForm[00]	
+0x029FDF0	vfunc	ImageSpaceModifierInstanceRB::Dtor	named	rtti+commonlib	18600	pdata_start	vtables(1): ImageSpaceModifierInstanceRB[00]	declared in ImageSpaceModifierInstanceTemp
+0x029FE30	vfunc	ImageSpaceModifierInstanceTemp::Dtor	named	rtti+commonlib	18601	pdata_start	vtables(1): ImageSpaceModifierInstanceTemp[00]	
+0x029FE80	vfunc	ImageSpaceModifierInstance::Unk_25	inferred	rtti+commonlib	18603	no_pdata_entry	vtables(1): ImageSpaceModifierInstance[25]	
+0x029FE90	vfunc	ImageSpaceModifierInstance::IsForm	named	rtti+commonlib	18604	no_pdata_entry	vtables(4): ImageSpaceModifierInstance[27], ImageSpaceModifierInstanceDOF[27], ImageSpaceModifierInstanceRB[27], ImageSpaceModifierInstanceTemp[27]	
+0x029FEA0	vfunc	ImageSpaceModifierInstanceForm::IsForm	named	rtti+commonlib	18605	no_pdata_entry	vtables(1): ImageSpaceModifierInstanceForm[27]	
+0x02A0170	vfunc	TESClimate::Load	named	rtti+commonlib	18616	pdata_start	vtables(1): TESClimate[06]	
+0x02A0390	vfunc	TESClimate::InitializeData	named	rtti+commonlib	18617	no_pdata_entry	vtables(1): TESClimate[04]	
+0x02A05F0	vfunc	TESClimate::Dtor	named	rtti+commonlib	18620	pdata_start	vtables(1): TESClimate[00]	
+0x02A0A30	vfunc	TESImageSpace::Load	named	rtti+commonlib	18632	pdata_start	vtables(1): TESImageSpace[06]	
+0x02A0DD0	vfunc	TESImageSpace::InitializeData	named	rtti+commonlib	18633	no_pdata_entry	vtables(1): TESImageSpace[04]	
+0x02A0F60	vfunc	TESImageSpace::Dtor	named	rtti+commonlib	18637	pdata_start	vtables(1): TESImageSpace[00]	
+0x02A2340	vfunc	TESImageSpaceModifier::Load	named	rtti+commonlib	18667	pdata_start	vtables(1): TESImageSpaceModifier[06]	
+0x02A28A0	vfunc	TESImageSpaceModifier::InitializeData	named	rtti+commonlib	18668	pdata_start	vtables(1): TESImageSpaceModifier[04]	
+0x02A28F0	vfunc	TESImageSpaceModifier::ClearData	named	rtti+commonlib	18669	pdata_start	vtables(1): TESImageSpaceModifier[05]	
+0x02A3570	vfunc	TESImageSpaceModifier::Dtor	named	rtti+commonlib	18690	pdata_start	vtables(1): TESImageSpaceModifier[00]	
+0x02A35B0	vfunc	TESImageSpaceModifier::GetFormEditorID	named	rtti+commonlib	18691	no_pdata_entry	vtables(1): TESImageSpaceModifier[32]	
+0x02A35F0	vfunc	TESImageSpaceModifier::SetFormEditorID	named	rtti+commonlib	18694	pdata_start	vtables(1): TESImageSpaceModifier[33]	
+0x0301C50	vfunc	TESWeather::Load	named	rtti+commonlib	20396	pdata_start	vtables(1): TESWeather[06]	
+0x0302780	vfunc	TESWeather::InitItemImpl	named	rtti+commonlib	20397	pdata_start	vtables(1): TESWeather[13]	
+0x0302BF0	vfunc	TESWeather::InitializeData	named	rtti+commonlib	20398	pdata_start	vtables(1): TESWeather[04]	
+0x0302DE0	vfunc	TESWeather::ClearData	named	rtti+commonlib	20399	pdata_start	vtables(1): TESWeather[05]	
+0x03036F0	vfunc	TESWeather::Dtor	named	rtti+commonlib	20419	pdata_start	vtables(1): TESWeather[00]	
+0x04043D0	vfunc	Atmosphere::Unk_04	inferred	rtti+commonlib	26142	pdata_start	vtables(1): Atmosphere[04]	
+0x04045E0	vfunc	Atmosphere::Update	named	rtti+commonlib	26143	pdata_start	vtables(1): Atmosphere[03]	
+0x04048E0	vfunc	Atmosphere::Dtor	named	rtti+commonlib	26145	pdata_start	vtables(1): Atmosphere[00]	
+0x0404C60	vfunc	Clouds::Init	named	rtti+commonlib	26148	pdata_start	vtables(1): Clouds[02]	
+0x0404EB0	vfunc	Clouds::Update	named	rtti+commonlib	26149	pdata_start	vtables(1): Clouds[03]	
+0x0405F00	vfunc	Clouds::Dtor	named	rtti+commonlib	26157	pdata_start	vtables(1): Clouds[00]	
+0x04065C0	vfunc	Moon::Init	named	rtti+commonlib	26168	pdata_start	vtables(1): Moon[02]	
+0x0406D80	vfunc	Moon::Update	named	rtti+commonlib	26169	pdata_start	vtables(1): Moon[03]	
+0x0407680	vfunc	Moon::Dtor	named	rtti+commonlib	26174	pdata_start	vtables(1): Moon[00]	
+0x0408F50	vfunc	Precipitation::Dtor	named	rtti+commonlib	26191	pdata_start	vtables(1): Precipitation[00]	
+0x040E0C0	function	Sky::SetWeather	named	commonlib+addrlib	26241	no_pdata_entry		src/RE/S/Sky.cpp:29
+0x040E140	function	Sky::ResetWeather	named	commonlib+addrlib	26242	pdata_start		src/RE/S/Sky.cpp:51
+0x040E1C0	function	Sky::ForceWeather	named	commonlib+addrlib	26243	pdata_start		src/RE/S/Sky.cpp:36
+0x04124C0	vfunc	SkyStaticFindFunctor::vfunc_00	inferred	rtti	26309	no_pdata_entry	vtables(1): SkyStaticFindFunctor[00]	
+0x04124E0	vfunc	Sky::Dtor	named	rtti+commonlib	26310	pdata_start	vtables(1): Sky[00]	
+0x0412520	vfunc	SkyEffectController::Dtor	named	rtti+commonlib	26311	pdata_start	vtables(1): SkyEffectController[00]	
+0x0412E80	vfunc	SkyObject::GetRoot	named	rtti+commonlib	26335	no_pdata_entry	vtables(6): Atmosphere[01], Clouds[01], Moon[01], SkyObject[01], Stars[01], Sun[01]	
+0x0412E90	vfunc	SkyObject::Init	named	rtti+commonlib	26336	pdata_start	vtables(2): Atmosphere[02], SkyObject[02]	
+0x0412F70	vfunc	SkyObject::Update	named	rtti+commonlib	26337	no_pdata_entry	vtables(1): SkyObject[03]	
+0x0412FA0	vfunc	SkyObject::Dtor	named	rtti+commonlib	26338	pdata_start	vtables(1): SkyObject[00]	
+0x0413120	vfunc	Stars::Init	named	rtti+commonlib	26341	no_pdata_entry	vtables(1): Stars[02]	
+0x0413130	vfunc	Stars::Update	named	rtti+commonlib	26342	pdata_start	vtables(1): Stars[03]	
+0x0413790	vfunc	Stars::Dtor	named	rtti+commonlib	26345	pdata_start	vtables(1): Stars[00]	
+0x0413F10	vfunc	Sun::Init	named	rtti+commonlib	26351	pdata_start	vtables(1): Sun[02]	
+0x0414A10	vfunc	Sun::Update	named	rtti+commonlib	26352	pdata_start	vtables(1): Sun[03]	
+0x0415920	vfunc	Sun::Dtor	named	rtti+commonlib	26361	pdata_start	vtables(1): Sun[00]	
+0x05CE600	vfunc	SkyEffectController::GetTargetReference	named	rtti+commonlib	34873	no_pdata_entry	vtables(1): SkyEffectController[0B]	
+0x05CE610	vfunc	SkyEffectController::GetHitEffectArt	named	rtti+commonlib	34874	no_pdata_entry	vtables(1): SkyEffectController[0C]	
+0x05CE620	vfunc	SkyEffectController::GetHitEffectShader	named	rtti+commonlib	34875	no_pdata_entry	vtables(1): SkyEffectController[0D]	
+0x05CE630	vfunc	SkyEffectController::GetManagerHandlesSaveLoad	named	rtti+commonlib	34876	no_pdata_entry	vtables(1): SkyEffectController[0E]	
+0x05CE640	vfunc	SkyEffectController::EffectAttachesToCamera	named	rtti+commonlib	34877	no_pdata_entry	vtables(1): SkyEffectController[1A]	
+0x05CE650	vfunc	SkyEffectController::EffectRotatesWithCamera	named	rtti+commonlib	34878	no_pdata_entry	vtables(1): SkyEffectController[1B]	
+0x05CE660	vfunc	SkyEffectController::RemoveHitEffect	named	rtti+commonlib	34879	no_pdata_entry	vtables(1): SkyEffectController[0A]	
+0x05CE670	vfunc	SkyEffectController::GetAttachRoot	named	rtti+commonlib	34880	no_pdata_entry	vtables(1): SkyEffectController[0F]	
+0x0633660	function	Calendar::GetTimeDateString	named	commonlib+addrlib	36311	pdata_start		src/RE/C/Calendar.cpp:75
+0x0A4DF30	vfunc	SkyrimSpeechRecognition::vfunc_01	inferred	rtti	56843	no_pdata_entry	vtables(1): SkyrimSpeechRecognition[01]	
+0x0A4F300	vfunc	SkyrimSpeechRecognition::vfunc_00	inferred	rtti	56874	pdata_start	vtables(1): SkyrimSpeechRecognition[00]	
+0x14E5C10	vfunc	BSSkyShader::RestoreTechnique	named	rtti+commonlib	107400	no_pdata_entry	vtables(1): BSSkyShader[03]	declared in BSShader
+0x14E5D00	vfunc	BSSkyShader::SetupTechnique	named	rtti+commonlib	107402	pdata_start	vtables(1): BSSkyShader[02]	declared in BSShader
+0x14E6030	vfunc	BSSkyShader::SetupGeometry	named	rtti+commonlib	107403	pdata_start	vtables(1): BSSkyShader[06]	declared in BSShader
+0x14E6780	vfunc	BSSkyShader::RestoreGeometry	named	rtti+commonlib	107404	no_pdata_entry	vtables(1): BSSkyShader[07]	declared in BSShader
+0x14E6970	vfunc	BSSkyShader::Dtor	named	rtti+commonlib	107425	pdata_start	vtables(1): BSSkyShader[00]	declared in BSShader
+0x14E69D0	vfunc	BSSkyShaderProperty::CreateClone	named	rtti+commonlib	107426	pdata_start	vtables(1): BSSkyShaderProperty[17]	declared in BSShaderProperty
+0x14E6B70	vfunc	BSSkyShaderProperty::LoadBinary	named	rtti+commonlib	107428	pdata_start	vtables(1): BSSkyShaderProperty[18]	declared in BSShaderProperty
+0x14E6C40	vfunc	BSSkyShaderProperty::LinkObject	named	rtti+commonlib	107429	no_pdata_entry	vtables(1): BSSkyShaderProperty[19]	declared in BSShaderProperty
+0x14E6C50	vfunc	BSSkyShaderProperty::RegisterStreamables	named	rtti+commonlib	107430	no_pdata_entry	vtables(1): BSSkyShaderProperty[1A]	declared in BSShaderProperty
+0x14E6C60	vfunc	BSSkyShaderProperty::SaveBinary	named	rtti+commonlib	107431	pdata_start	vtables(1): BSSkyShaderProperty[1B]	declared in BSShaderProperty
+0x14E6CD0	vfunc	BSSkyShaderProperty::IsEqual	named	rtti+commonlib	107432	no_pdata_entry	vtables(1): BSSkyShaderProperty[1C]	declared in BSShaderProperty
+0x14E6D80	vfunc	BSSkyShaderProperty::PostLinkObject	named	rtti+commonlib	107434	pdata_start	vtables(1): BSSkyShaderProperty[1E]	declared in BSShaderProperty
+0x14E6FC0	vfunc	BSSkyShaderProperty::QShader	named	rtti+commonlib	107437	no_pdata_entry	vtables(1): BSSkyShaderProperty[35]	declared in BSShaderProperty
+0x14E6FD0	vfunc	BSSkyShaderProperty::GetRenderPasses	named	rtti+commonlib	107438	pdata_start	vtables(1): BSSkyShaderProperty[2A]	declared in BSShaderProperty
+0x14E71D0	vfunc	BSSkyShaderProperty::ForEachTexture	named	rtti+commonlib	107439	pdata_start	vtables(1): BSSkyShaderProperty[33]	declared in BSShaderProperty
+0x14E72C0	vfunc	BSSkyShaderProperty::Dtor	named	rtti+commonlib	107441	pdata_start	vtables(1): BSSkyShaderProperty[00]	declared in BSShaderProperty
+0x14E73B0	vfunc	BSSkyShaderProperty::GetBaseTexture	named	rtti+commonlib	107442	no_pdata_entry	vtables(1): BSSkyShaderProperty[37]	declared in BSShaderProperty
+0x14E73C0	vfunc	BSSkyShaderProperty::GetRTTI	named	rtti+commonlib	107443	no_pdata_entry	vtables(1): BSSkyShaderProperty[02]	declared in BSShaderProperty
+0x1780F70	vtable	TESImageSpaceModifiableForm::vftable	named	rtti	187926	col@0x1ae1860	4 slots	BaseFormComponent
+0x1794000	vtable	BGSLensFlare::vftable	named	rtti	189095	col@0x1ae7558	59 slots	TESForm > BaseFormComponent
+0x1794318	vtable	BGSLensFlareSprite::vftable	named	rtti	189101	col@0x1ae76e0	3 slots	BSLensFlareSpriteRenderData > NiRefObject
+0x1794538	vtable	BGSVolumetricLighting::vftable	named	rtti	189109	col@0x1ae7870	59 slots	TESForm > BaseFormComponent
+0x17A5238	vtable	ImageSpaceModifierInstance::vftable	named	rtti	189972	col@0x1aee5b8	41 slots	NiObject > NiRefObject
+0x17A5388	vtable	ImageSpaceModifierInstanceForm::vftable	named	rtti	189974	col@0x1aee4c8	41 slots	ImageSpaceModifierInstance > NiObject > NiRefObject
+0x17A54D8	vtable	ImageSpaceModifierInstanceTemp::vftable	named	rtti	189976	col@0x1aee5e0	41 slots	ImageSpaceModifierInstance > NiObject > NiRefObject
+0x17A5628	vtable	ImageSpaceModifierInstanceDOF::vftable	named	rtti	189978	col@0x1aee670	41 slots	ImageSpaceModifierInstanceTemp > ImageSpaceModifierInstance > NiObject > NiRefObject
+0x17A5778	vtable	ImageSpaceModifierInstanceRB::vftable	named	rtti	189980	col@0x1aee708	41 slots	ImageSpaceModifierInstanceTemp > ImageSpaceModifierInstance > NiObject > NiRefObject
+0x17A5BE0	vtable	TESClimate::vftable	named	rtti	189997	col@0x1aee8a8	59 slots	TESForm > BaseFormComponent
+0x17A6018	vtable	TESImageSpace::vftable	named	rtti	190009	col@0x1aeea38	59 slots	TESForm > BaseFormComponent
+0x17A6798	vtable	TESImageSpaceModifier::vftable	named	rtti	190025	col@0x1aeec50	59 slots	TESForm > BaseFormComponent
+0x17B1BE8	vtable	TESWeather::vftable	named	rtti	190405	col@0x1af1f70	59 slots	TESForm > BaseFormComponent
+0x17E22C4	global	Calendar::GetHoursPerDay	named	commonlib+addrlib	195681	in_.rdata		src/RE/C/Calendar.cpp:91
+0x17EE578	vtable	Atmosphere::vftable	named	rtti	196426	col@0x1aff2c0	5 slots	SkyObject
+0x17EE770	vtable	Clouds::vftable	named	rtti	196432	col@0x1aff390	4 slots	SkyObject
+0x17EE880	vtable	Moon::vftable	named	rtti	196437	col@0x1aff410	4 slots	SkyObject
+0x17EEC88	vtable	Precipitation::vftable	named	rtti	196462	col@0x1aff5c0	1 slots	
+0x17EFD08	vtable	TESWeather::SkyStaticFunctor::vftable	named	rtti	196494	col@0x1aff6b0	1 slots	
+0x17EFD18	vtable	SkyEffectController::vftable	named	rtti	196496	col@0x1aff728	35 slots	ReferenceEffectController
+0x17EFE38	vtable	Sky::vftable	named	rtti	196498	col@0x1aff638	1 slots	
+0x17EFE58	vtable	SkyStaticFindFunctor::vftable	named	rtti	196502	col@0x1aff7a8	1 slots	TESWeather::SkyStaticFunctor
+0x17EFF40	vtable	SkyObject::vftable	named	rtti	196515	col@0x1aff8a8	4 slots	
+0x17F0180	vtable	Stars::vftable	named	rtti	196521	col@0x1aff8d0	4 slots	SkyObject
+0x17F0728	vtable	Sun::vftable	named	rtti	196537	col@0x1aff9f0	4 slots	SkyObject
+0x1933A88	vtable	SkyrimSpeechRecognition::vftable	named	rtti	218872	col@0x1b990d0	2 slots	.?AV?$BSTEventSink@UDeviceConnected@SpeechRecognitionEvents@@@@
+0x1ABF118	vtable	BSSkyShader::vftable	named	rtti	255149	col@0x1bf4558	10 slots	BSShader > NiRefObject
+0x1ABF368	vtable	BSSkyShaderProperty::vftable	named	rtti	255165	col@0x1bf4640	63 slots	BSShaderProperty > NiShadeProperty > NiProperty > NiObjectNET > NiObject > NiRefObject
+0x20F8960	global	Calendar::Singleton	named	commonlib+addrlib	400447	in_.data		include/RE/Offsets.h:167
+0x31390C8	global	Precipitation::OcclusionMapData::GetDirection	named	commonlib+addrlib	401648	in_.data		include/RE/P/Precipitation.h:36

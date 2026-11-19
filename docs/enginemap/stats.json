@@ -1,0 +1,123 @@
+{
+ "subsystems": {
+  "lighting_shadows": {
+   "entries": 401,
+   "named": 331,
+   "inferred": 70,
+   "unknown": 0,
+   "functions": 356
+  },
+  "lod": {
+   "entries": 270,
+   "named": 222,
+   "inferred": 48,
+   "unknown": 0,
+   "functions": 245
+  },
+  "papyrus": {
+   "entries": 1834,
+   "named": 1743,
+   "inferred": 72,
+   "unknown": 19,
+   "functions": 1417
+  },
+  "renderer": {
+   "entries": 186,
+   "named": 172,
+   "inferred": 14,
+   "unknown": 0,
+   "functions": 155
+  },
+  "scenegraph": {
+   "entries": 689,
+   "named": 546,
+   "inferred": 103,
+   "unknown": 40,
+   "functions": 633
+  },
+  "shaders": {
+   "entries": 682,
+   "named": 457,
+   "inferred": 213,
+   "unknown": 12,
+   "functions": 526
+  },
+  "sky_weather": {
+   "entries": 138,
+   "named": 130,
+   "inferred": 8,
+   "unknown": 0,
+   "functions": 108
+  },
+  "streaming": {
+   "entries": 419,
+   "named": 266,
+   "inferred": 153,
+   "unknown": 0,
+   "functions": 347
+  },
+  "water": {
+   "entries": 131,
+   "named": 108,
+   "inferred": 23,
+   "unknown": 0,
+   "functions": 101
+  }
+ },
+ "exe_sha256": "c434208894f07f604b852f29b8edc3a58c4de63de783373733e72b2b73f33be9",
+ "addrlib_version": [
+  1,
+  6,
+  1170,
+  0
+ ],
+ "addrlib_ids": 428461,
+ "addrlib_alt_ids": 428309,
+ "pdata_functions": 120080,
+ "code": {
+  "text_entropy": 8.0,
+  "entry_section": ".bind",
+  "has_bind": true,
+  "code_encrypted_on_disk": true
+ },
+ "rtti_vtables": 8544,
+ "rtti_primary_vtables": 7300,
+ "commonlib_ids": 17942,
+ "commonlib_checks": {
+  "fn_pdata_start": 536,
+  "alt_db_differs": 718,
+  "fn_no_pdata_entry": 53,
+  "id_missing_from_db": 7
+ },
+ "commonlib_virtual_classes": 1202,
+ "vtable_crosscheck": {
+  "vtable_hit": 8017,
+  "vtable_miss": 0,
+  "rtti_hit": 7319,
+  "rtti_miss": 2,
+  "unresolved": 1467,
+  "miss_examples": [
+   [
+    "RTTI_BSTSingletonSDMBase_BSTSDMTraits_BSTObjectDictionary_BSTSmartPointer_BSResponse_BSFixedStringCI_Actor_BSFixedStringCI_DoNothingUnhandledPolicy__BSTSmartPointerIntrusiveRefCount__BSFixedStringCI_ResponseDefinitionMissPolicy_PreloadResponsesInitializationPolicy__BSTSingletonSDMOpStaticBuffer_BSTObjectDictionary_BSTSmartPointer_BSResponse_BSFixedStringCI_Actor_BSFixedStringCI_DoNothingUnhandledPolicy__BSTSmartPointerIntrusiveRefCount__BSFixedStringCI_ResponseDefinitionMissPolicy_PreloadResponsesInitializationPolicy____",
+    "0x207ba30"
+   ],
+   [
+    "RTTI_BSTSDMTraits_BSTObjectDictionary_BSTSmartPointer_BSResponse_BSFixedStringCI_Actor_BSFixedStringCI_DoNothingUnhandledPolicy__BSTSmartPointerIntrusiveRefCount__BSFixedStringCI_ResponseDefinitionMissPolicy_PreloadResponsesInitializationPolicy__BSTSingletonSDMOpStaticBuffer_BSTObjectDictionary_BSTSmartPointer_BSResponse_BSFixedStringCI_Actor_BSFixedStringCI_DoNothingUnhandledPolicy__BSTSmartPointerIntrusiveRefCount__BSFixedStringCI_ResponseDefinitionMissPolicy_PreloadResponsesInitializationPolicy___",
+    "0x207bc80"
+   ]
+  ]
+ },
+ "settings": 5344,
+ "settings_by_file": {
+  "GMST": 3516,
+  "Skyrim.ini": 1694,
+  "SkyrimPrefs.ini": 134
+ },
+ "live_state_rows": 594,
+ "live_state_gaps": 452,
+ "live_state_streamable_gaps": 129,
+ "lighting_fragments": 31,
+ "control_rows": 264,
+ "control_unresolved": 0,
+ "seconds": 8.7
+}

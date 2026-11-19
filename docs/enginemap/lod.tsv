@@ -1,0 +1,271 @@
+rva	kind	name	confidence	source	addrlib_id	check	refs	notes
+0x01E6F50	vfunc	TESModelLODList::InitializeDataComponent	named	rtti+commonlib	14812	no_pdata_entry	vtables(1): TESModelLODList[01]	declared in BaseFormComponent
+0x01E6F60	vfunc	TESModelLODList::ClearDataComponent	named	rtti+commonlib	14813	no_pdata_entry	vtables(1): TESModelLODList[02]	declared in BaseFormComponent
+0x01E7220	vfunc	TESModelLODList::CopyComponent	named	rtti+commonlib	14816	pdata_start	vtables(1): TESModelLODList[03]	declared in BaseFormComponent
+0x01E7440	vfunc	TESModelLODList::Dtor	named	rtti+commonlib	14818	pdata_start	vtables(1): TESModelLODList[00]	declared in BaseFormComponent
+0x020E1E0	vfunc	BSMultiBoundAABB::Dtor	named	rtti+commonlib	15552	pdata_start	vtables(1): BSMultiBoundAABB[00]	
+0x020E220	vfunc	BSMultiBoundOBB::Dtor	named	rtti+commonlib	15553	pdata_start	vtables(1): BSMultiBoundOBB[00]	
+0x020E260	vfunc	BSMultiBoundSphere::Dtor	named	rtti+commonlib	15554	pdata_start	vtables(1): BSMultiBoundSphere[00]	declared in BSMultiBoundShape
+0x020E350	vfunc	BSMultiBoundAABB::GetRTTI	named	rtti+commonlib	15557	no_pdata_entry	vtables(1): BSMultiBoundAABB[02]	
+0x020E360	vfunc	BSMultiBoundOBB::GetRTTI	named	rtti+commonlib	15558	no_pdata_entry	vtables(1): BSMultiBoundOBB[02]	
+0x020E370	vfunc	BSMultiBoundSphere::GetRTTI	named	rtti+commonlib	15559	no_pdata_entry	vtables(1): BSMultiBoundSphere[02]	declared in BSMultiBoundShape
+0x020E3A0	vfunc	BSMultiBoundAABB::GetLength	named	rtti+commonlib	15562	no_pdata_entry	vtables(2): BSMultiBoundAABB[26], BSMultiBoundOBB[26]	
+0x020E3D0	vfunc	BSMultiBoundSphere::GetLength	named	rtti+commonlib	15563	no_pdata_entry	vtables(1): BSMultiBoundSphere[26]	declared in BSMultiBoundShape
+0x024B0A0	vfunc	TESRegionDataLandscape::LoadIcon	named	rtti+commonlib	16486	pdata_start	vtables(1): TESRegionDataLandscape[08]	
+0x024B0F0	vfunc	TESRegionDataLandscape::GetType	named	rtti+commonlib	16487	no_pdata_entry	vtables(1): TESRegionDataLandscape[03]	
+0x024B100	vfunc	TESRegionDataLandscape::GetIconFileName	named	rtti+commonlib	16488	no_pdata_entry	vtables(1): TESRegionDataLandscape[09]	
+0x024B140	vfunc	TESRegionDataLandscape::SetIconFileName	named	rtti+commonlib	16489	pdata_start	vtables(1): TESRegionDataLandscape[0A]	
+0x024B210	vfunc	TESRegionDataLandscape::ConstructSelf	named	rtti+commonlib	16490	pdata_start	vtables(1): TESRegionDataLandscape[04]	
+0x024B340	vfunc	TESRegionDataLandscape::Unk_05	inferred	rtti+commonlib	16491	pdata_start	vtables(1): TESRegionDataLandscape[05]	
+0x024B380	vfunc	TESRegionDataLandscape::CopyFrom	named	rtti+commonlib	16492	pdata_start	vtables(1): TESRegionDataLandscape[06]	
+0x024B550	vfunc	TESRegionDataLandscape::IsLoaded	named	rtti+commonlib	16493	pdata_start	vtables(1): TESRegionDataLandscape[07]	
+0x024B580	vfunc	TESRegionDataLandscape::Dtor	named	rtti+commonlib	16494	pdata_start	vtables(1): TESRegionDataLandscape[00]	
+0x0439D90	vfunc	BSFadeNodeCuller::Dtor	named	rtti+commonlib	27123	pdata_start	vtables(1): BSFadeNodeCuller[15]	declared in NiCullingProcess
+0x043A020	vfunc	BSFadeNodeCuller::GetRTTI	named	rtti+commonlib	27131	no_pdata_entry	vtables(1): BSFadeNodeCuller[00]	declared in NiCullingProcess
+0x04B0250	vfunc	BSTerrainEffect::vfunc_36	inferred	rtti	30178	pdata_start	vtables(1): BSTerrainEffect[36]	
+0x04B0380	vfunc	BSTerrainEffect::Update	named	rtti+commonlib	30179	pdata_start	vtables(1): BSTerrainEffect[28]	
+0x04B0420	vfunc	BSTerrainEffect::SaveGame	named	rtti+commonlib	30180	pdata_start	vtables(1): BSTerrainEffect[2D]	
+0x04B05C0	vfunc	BSTerrainEffect::LoadGame	named	rtti+commonlib	30181	pdata_start	vtables(1): BSTerrainEffect[2E]	
+0x04B07A0	vfunc	BSTerrainEffect::GetManagerHandlesSaveLoad	named	rtti+commonlib	30182	no_pdata_entry	vtables(1): BSTerrainEffect[2A]	
+0x04B11E0	vfunc	BSTerrainEffect::Dtor	named	rtti+commonlib	30198	pdata_start	vtables(1): BSTerrainEffect[00]	
+0x04B15A0	vfunc	BSTerrainEffect::GetType	named	rtti+commonlib	30205	no_pdata_entry	vtables(1): BSTerrainEffect[2C]	
+0x064F300	vfunc	BSTreeManager::IQueryCullingCamera::Dtor	named	rtti+commonlib	36737	pdata_start	vtables(1): BSTreeManager::IQueryCullingCamera[00]	declared in IQueryCullingCamera
+0x0D565E0	vfunc	BSLODTriShape::vfunc_17	inferred	rtti	71700	pdata_start	vtables(1): BSLODTriShape[17]	
+0x0D56750	vfunc	BSLODTriShape::LoadBinary	named	rtti+commonlib	71702	pdata_start	vtables(1): BSLODTriShape[18]	declared in NiAVObject
+0x0D567B0	vfunc	BSLODTriShape::LinkObject	named	rtti+commonlib	71703	no_pdata_entry	vtables(1): BSLODTriShape[19]	declared in NiAVObject
+0x0D567C0	vfunc	BSLODTriShape::RegisterStreamables	named	rtti+commonlib	71704	no_pdata_entry	vtables(1): BSLODTriShape[1A]	declared in NiAVObject
+0x0D567D0	vfunc	BSLODTriShape::SaveBinary	named	rtti+commonlib	71705	pdata_start	vtables(1): BSLODTriShape[1B]	declared in NiAVObject
+0x0D56830	vfunc	BSLODTriShape::IsEqual	named	rtti+commonlib	71706	no_pdata_entry	vtables(1): BSLODTriShape[1C]	declared in NiAVObject
+0x0D56A20	vfunc	BSLODTriShape::vfunc_36	inferred	rtti	71711	no_pdata_entry	vtables(1): BSLODTriShape[36]	
+0x0D56CE0	vfunc	BSLODTriShape::Dtor	named	rtti+commonlib	71717	pdata_start	vtables(1): BSLODTriShape[00]	declared in NiAVObject
+0x0D56D20	vfunc	BSLODTriShape::GetRTTI	named	rtti+commonlib	71718	no_pdata_entry	vtables(1): BSLODTriShape[02]	declared in NiAVObject
+0x0E08170	vfunc	BSMultiBound::CreateClone	named	rtti+commonlib	75862	pdata_start	vtables(1): BSMultiBound[17]	
+0x0E082D0	vfunc	BSMultiBound::LoadBinary	named	rtti+commonlib	75864	pdata_start	vtables(1): BSMultiBound[18]	
+0x0E08300	vfunc	BSMultiBound::LinkObject	named	rtti+commonlib	75865	pdata_start	vtables(1): BSMultiBound[19]	
+0x0E08360	vfunc	BSMultiBound::RegisterStreamables	named	rtti+commonlib	75866	pdata_start	vtables(1): BSMultiBound[1A]	
+0x0E083B0	vfunc	BSMultiBound::SaveBinary	named	rtti+commonlib	75867	pdata_start	vtables(1): BSMultiBound[1B]	
+0x0E083F0	vfunc	BSMultiBound::IsEqual	named	rtti+commonlib	75868	pdata_start	vtables(1): BSMultiBound[1C]	
+0x0E085B0	vfunc	BSMultiBound::QWithinPoint	named	rtti+commonlib	75872	no_pdata_entry	vtables(1): BSMultiBound[25]	
+0x0E085D0	vfunc	BSMultiBound::Unk_26	inferred	rtti+commonlib	75873	no_pdata_entry	vtables(1): BSMultiBound[26]	
+0x0E08670	vfunc	BSMultiBound::Dtor	named	rtti+commonlib	75876	pdata_start	vtables(1): BSMultiBound[00]	
+0x0E08720	vfunc	BSMultiBound::GetRTTI	named	rtti+commonlib	75877	no_pdata_entry	vtables(1): BSMultiBound[02]	
+0x0E08730	vfunc	BSMultiBoundRoom::CreateClone	named	rtti+commonlib	75878	no_pdata_entry	vtables(1): BSMultiBoundRoom[17]	declared in BSMultiBoundNode
+0x0E08740	vfunc	BSMultiBoundRoom::LoadBinary	named	rtti+commonlib	75879	no_pdata_entry	vtables(1): BSMultiBoundRoom[18]	declared in BSMultiBoundNode
+0x0E08750	vfunc	BSMultiBoundRoom::LinkObject	named	rtti+commonlib	75880	no_pdata_entry	vtables(1): BSMultiBoundRoom[19]	declared in BSMultiBoundNode
+0x0E08760	vfunc	BSMultiBoundRoom::RegisterStreamables	named	rtti+commonlib	75881	no_pdata_entry	vtables(1): BSMultiBoundRoom[1A]	declared in BSMultiBoundNode
+0x0E08770	vfunc	BSMultiBoundRoom::SaveBinary	named	rtti+commonlib	75882	no_pdata_entry	vtables(1): BSMultiBoundRoom[1B]	declared in BSMultiBoundNode
+0x0E08780	vfunc	BSMultiBoundRoom::IsEqual	named	rtti+commonlib	75883	no_pdata_entry	vtables(1): BSMultiBoundRoom[1C]	declared in BSMultiBoundNode
+0x0E089F0	vfunc	BSMultiBoundRoom::OnVisible	named	rtti+commonlib	75886	pdata_start	vtables(1): BSMultiBoundRoom[34]	declared in BSMultiBoundNode
+0x0E08B20	vfunc	BSMultiBoundRoom::vfunc_3E	inferred	rtti	75887	no_pdata_entry	vtables(1): BSMultiBoundRoom[3E]	
+0x0E08CE0	vfunc	BSMultiBoundRoom::vfunc_3F	inferred	rtti	75890	pdata_start	vtables(1): BSMultiBoundRoom[3F]	
+0x0E08D50	vfunc	BSMultiBoundRoom::vfunc_41	inferred	rtti	75891	pdata_start	vtables(1): BSMultiBoundRoom[41]	
+0x0E08DE0	vfunc	BSMultiBoundRoom::vfunc_40	inferred	rtti	75892	pdata_start	vtables(1): BSMultiBoundRoom[40]	
+0x0E08E70	vfunc	BSMultiBoundRoom::UpdateWorldBound	named	rtti+commonlib	75893	pdata_start	vtables(1): BSMultiBoundRoom[2F]	declared in BSMultiBoundNode
+0x0E09030	vfunc	BSMultiBoundRoom::UpdateDownwardPass	named	rtti+commonlib	75894	no_pdata_entry	vtables(1): BSMultiBoundRoom[2C]	declared in BSMultiBoundNode
+0x0E09120	vfunc	BSMultiBoundRoom::Dtor	named	rtti+commonlib	75898	pdata_start	vtables(1): BSMultiBoundRoom[00]	declared in BSMultiBoundNode
+0x0E092F0	vfunc	BSMultiBoundRoom::GetRTTI	named	rtti+commonlib	75899	no_pdata_entry	vtables(1): BSMultiBoundRoom[02]	declared in BSMultiBoundNode
+0x0E09380	vfunc	BSMultiBoundAABB::CreateClone	named	rtti+commonlib	75901	pdata_start	vtables(1): BSMultiBoundAABB[17]	
+0x0E09490	vfunc	BSMultiBoundAABB::LoadBinary	named	rtti+commonlib	75903	pdata_start	vtables(1): BSMultiBoundAABB[18]	
+0x0E094D0	vfunc	BSMultiBoundAABB::LinkObject	named	rtti+commonlib	75904	no_pdata_entry	vtables(1): BSMultiBoundAABB[19]	
+0x0E094E0	vfunc	BSMultiBoundAABB::RegisterStreamables	named	rtti+commonlib	75905	pdata_start	vtables(1): BSMultiBoundAABB[1A]	
+0x0E09500	vfunc	BSMultiBoundAABB::SaveBinary	named	rtti+commonlib	75906	pdata_start	vtables(1): BSMultiBoundAABB[1B]	
+0x0E09540	vfunc	BSMultiBoundAABB::IsEqual	named	rtti+commonlib	75907	pdata_start	vtables(1): BSMultiBoundAABB[1C]	
+0x0E096C0	vfunc	BSMultiBoundAABB::GetType	named	rtti+commonlib	75910	no_pdata_entry	vtables(1): BSMultiBoundAABB[25]	
+0x0E096D0	vfunc	BSMultiBoundAABB::SetCenter	named	rtti+commonlib	75911	no_pdata_entry	vtables(2): BSMultiBoundAABB[2D], BSMultiBoundOBB[2D]	
+0x0E097C0	vfunc	BSMultiBoundAABB::Unk_28	inferred	rtti+commonlib	75913	pdata_start	vtables(1): BSMultiBoundAABB[28]	
+0x0E098E0	vfunc	BSMultiBoundAABB::Unk_27	inferred	rtti+commonlib	75914	pdata_start	vtables(1): BSMultiBoundAABB[27]	
+0x0E09B10	vfunc	BSMultiBoundAABB::Unk_29	inferred	rtti+commonlib	75915	pdata_start	vtables(1): BSMultiBoundAABB[29]	
+0x0E09CA0	vfunc	BSMultiBoundAABB::Unk_2A	inferred	rtti+commonlib	75916	pdata_start	vtables(1): BSMultiBoundAABB[2A]	
+0x0E09D50	vfunc	BSMultiBoundAABB::Unk_2B	inferred	rtti+commonlib	75917	no_pdata_entry	vtables(2): BSMultiBoundAABB[2B], BSMultiBoundOBB[2B]	
+0x0E09DA0	vfunc	BSMultiBoundAABB::GetWithinPoint	named	rtti+commonlib	75918	no_pdata_entry	vtables(1): BSMultiBoundAABB[2C]	
+0x0E09E00	vfunc	BSMultiBoundAABB::Unk_2E	inferred	rtti+commonlib	75919	pdata_start	vtables(1): BSMultiBoundAABB[2E]	
+0x0E0A120	vfunc	BSMultiBoundOBB::CreateClone	named	rtti+commonlib	75921	pdata_start	vtables(1): BSMultiBoundOBB[17]	
+0x0E0A230	vfunc	BSMultiBoundOBB::LoadBinary	named	rtti+commonlib	75923	pdata_start	vtables(1): BSMultiBoundOBB[18]	
+0x0E0A270	vfunc	BSMultiBoundOBB::LinkObject	named	rtti+commonlib	75924	no_pdata_entry	vtables(1): BSMultiBoundOBB[19]	
+0x0E0A280	vfunc	BSMultiBoundOBB::RegisterStreamables	named	rtti+commonlib	75925	pdata_start	vtables(1): BSMultiBoundOBB[1A]	
+0x0E0A2A0	vfunc	BSMultiBoundOBB::SaveBinary	named	rtti+commonlib	75926	pdata_start	vtables(1): BSMultiBoundOBB[1B]	
+0x0E0A2E0	vfunc	BSMultiBoundOBB::IsEqual	named	rtti+commonlib	75927	pdata_start	vtables(1): BSMultiBoundOBB[1C]	
+0x0E0A430	vfunc	BSMultiBoundOBB::GetType	named	rtti+commonlib	75930	no_pdata_entry	vtables(1): BSMultiBoundOBB[25]	
+0x0E0A720	vfunc	BSMultiBoundOBB::Unk_28	inferred	rtti+commonlib	75932	pdata_start	vtables(1): BSMultiBoundOBB[28]	
+0x0E0A990	vfunc	BSMultiBoundOBB::Unk_27	inferred	rtti+commonlib	75933	pdata_start	vtables(1): BSMultiBoundOBB[27]	
+0x0E0AE60	vfunc	BSMultiBoundOBB::Unk_29	inferred	rtti+commonlib	75934	pdata_start	vtables(1): BSMultiBoundOBB[29]	
+0x0E0AFA0	vfunc	BSMultiBoundOBB::Unk_2A	inferred	rtti+commonlib	75935	pdata_start	vtables(1): BSMultiBoundOBB[2A]	
+0x0E0B080	vfunc	BSMultiBoundOBB::GetWithinPoint	named	rtti+commonlib	75936	pdata_start	vtables(1): BSMultiBoundOBB[2C]	
+0x0E0B2B0	vfunc	BSMultiBoundOBB::Unk_2E	inferred	rtti+commonlib	75937	pdata_start	vtables(1): BSMultiBoundOBB[2E]	
+0x0E1FA50	vfunc	BSMultiBoundShape::LoadBinary	named	rtti+commonlib	76369	no_pdata_entry	vtables(1): BSMultiBoundShape[18]	
+0x0E1FA60	vfunc	BSMultiBoundShape::LinkObject	named	rtti+commonlib	76370	no_pdata_entry	vtables(1): BSMultiBoundShape[19]	
+0x0E1FA70	vfunc	BSMultiBoundShape::RegisterStreamables	named	rtti+commonlib	76371	pdata_start	vtables(1): BSMultiBoundShape[1A]	
+0x0E1FA90	vfunc	BSMultiBoundShape::SaveBinary	named	rtti+commonlib	76372	no_pdata_entry	vtables(1): BSMultiBoundShape[1B]	
+0x0E1FAA0	vfunc	BSMultiBoundShape::IsEqual	named	rtti+commonlib	76373	no_pdata_entry	vtables(1): BSMultiBoundShape[1C]	
+0x0E1FAB0	vfunc	BSMultiBoundShape::CreateClone	named	rtti+commonlib	76374	no_pdata_entry	vtables(1): BSMultiBoundShape[17]	
+0x0E1FB20	vfunc	BSMultiBoundShape::GetWithinPoint	named	rtti+commonlib	76377	no_pdata_entry	vtables(2): BSMultiBoundCapsule[2C], BSMultiBoundShape[2C]	
+0x0E1FB30	vfunc	BSMultiBoundShape::SetCenter	named	rtti+commonlib	76378	no_pdata_entry	vtables(2): BSMultiBoundCapsule[2D], BSMultiBoundShape[2D]	
+0x0E1FB40	vfunc	BSMultiBoundShape::Unk_2E	inferred	rtti+commonlib	76379	no_pdata_entry	vtables(2): BSMultiBoundCapsule[2E], BSMultiBoundShape[2E]	
+0x0E1FC80	vfunc	BSMultiBoundShape::Dtor	named	rtti+commonlib	76381	pdata_start	vtables(1): BSMultiBoundShape[00]	
+0x0E1FCC0	vfunc	BSMultiBoundShape::GetRTTI	named	rtti+commonlib	76382	no_pdata_entry	vtables(1): BSMultiBoundShape[02]	
+0x0E1FCD0	vfunc	BSMultiBoundSphere::CreateClone	named	rtti+commonlib	76383	pdata_start	vtables(1): BSMultiBoundSphere[17]	declared in BSMultiBoundShape
+0x0E1FDD0	vfunc	BSMultiBoundSphere::LoadBinary	named	rtti+commonlib	76385	pdata_start	vtables(1): BSMultiBoundSphere[18]	declared in BSMultiBoundShape
+0x0E1FE40	vfunc	BSMultiBoundSphere::LinkObject	named	rtti+commonlib	76386	no_pdata_entry	vtables(1): BSMultiBoundSphere[19]	declared in BSMultiBoundShape
+0x0E1FE50	vfunc	BSMultiBoundSphere::RegisterStreamables	named	rtti+commonlib	76387	pdata_start	vtables(1): BSMultiBoundSphere[1A]	declared in BSMultiBoundShape
+0x0E1FE70	vfunc	BSMultiBoundSphere::SaveBinary	named	rtti+commonlib	76388	pdata_start	vtables(1): BSMultiBoundSphere[1B]	declared in BSMultiBoundShape
+0x0E1FEE0	vfunc	BSMultiBoundSphere::IsEqual	named	rtti+commonlib	76389	pdata_start	vtables(1): BSMultiBoundSphere[1C]	declared in BSMultiBoundShape
+0x0E20000	vfunc	BSMultiBoundSphere::GetType	named	rtti+commonlib	76392	no_pdata_entry	vtables(1): BSMultiBoundSphere[25]	declared in BSMultiBoundShape
+0x0E20010	vfunc	BSMultiBoundSphere::SetCenter	named	rtti+commonlib	76393	no_pdata_entry	vtables(1): BSMultiBoundSphere[2D]	declared in BSMultiBoundShape
+0x0E20030	vfunc	BSMultiBoundSphere::Unk_28	inferred	rtti+commonlib	76394	no_pdata_entry	vtables(1): BSMultiBoundSphere[28]	declared in BSMultiBoundShape
+0x0E200B0	vfunc	BSMultiBoundSphere::Unk_27	inferred	rtti+commonlib	76395	pdata_start	vtables(1): BSMultiBoundSphere[27]	declared in BSMultiBoundShape
+0x0E20250	vfunc	BSMultiBoundSphere::Unk_29	inferred	rtti+commonlib	76396	pdata_start	vtables(1): BSMultiBoundSphere[29]	declared in BSMultiBoundShape
+0x0E202F0	vfunc	BSMultiBoundSphere::Unk_2A	inferred	rtti+commonlib	76397	pdata_start	vtables(1): BSMultiBoundSphere[2A]	declared in BSMultiBoundShape
+0x0E20390	vfunc	BSMultiBoundSphere::Unk_2B	inferred	rtti+commonlib	76398	no_pdata_entry	vtables(1): BSMultiBoundSphere[2B]	declared in BSMultiBoundShape
+0x0E203C0	vfunc	BSMultiBoundSphere::GetWithinPoint	named	rtti+commonlib	76399	no_pdata_entry	vtables(1): BSMultiBoundSphere[2C]	declared in BSMultiBoundShape
+0x0E20410	vfunc	BSMultiBoundSphere::Unk_2E	inferred	rtti+commonlib	76400	pdata_start	vtables(1): BSMultiBoundSphere[2E]	declared in BSMultiBoundShape
+0x0E25C90	vfunc	NiBSBoneLODController::vfunc_17	inferred	rtti	76490	pdata_start	vtables(1): NiBSBoneLODController[17]	
+0x0E25D70	vfunc	NiBSBoneLODController::LoadBinary	named	rtti+commonlib	76492	pdata_start	vtables(1): NiBSBoneLODController[18]	declared in NiTimeController
+0x0E26050	vfunc	NiBSBoneLODController::LinkObject	named	rtti+commonlib	76493	pdata_start	vtables(1): NiBSBoneLODController[19]	declared in NiTimeController
+0x0E260F0	vfunc	NiBSBoneLODController::RegisterStreamables	named	rtti+commonlib	76494	pdata_start	vtables(1): NiBSBoneLODController[1A]	declared in NiTimeController
+0x0E26110	vfunc	NiBSBoneLODController::SaveBinary	named	rtti+commonlib	76495	pdata_start	vtables(1): NiBSBoneLODController[1B]	declared in NiTimeController
+0x0E26280	vfunc	NiBSBoneLODController::IsEqual	named	rtti+commonlib	76496	pdata_start	vtables(1): NiBSBoneLODController[1C]	declared in NiTimeController
+0x0E270D0	vfunc	NiBSBoneLODController::ProcessClone	named	rtti+commonlib	76512	pdata_start	vtables(1): NiBSBoneLODController[1D]	declared in NiTimeController
+0x0E274F0	vfunc	NiBSBoneLODController::vfunc_1E	inferred	rtti	76513	pdata_start	vtables(1): NiBSBoneLODController[1E]	
+0x0E279E0	vfunc	NiBSBoneLODController::Dtor	named	rtti+commonlib	76529	pdata_start	vtables(1): NiBSBoneLODController[00]	declared in NiObject
+0x0E27B00	vfunc	NiBSBoneLODController::vfunc_2F	inferred	rtti	76531	no_pdata_entry	vtables(1): NiBSBoneLODController[2F]	
+0x0E27B70	vfunc	NiBSBoneLODController::GetRTTI	named	rtti+commonlib	76536	no_pdata_entry	vtables(1): NiBSBoneLODController[02]	declared in NiTimeController
+0x0E27FC0	vfunc	NiBSBoneLODController::TargetIsRequiredType	named	rtti+commonlib	76549	pdata_start	vtables(1): NiBSBoneLODController[2E]	declared in NiTimeController
+0x0E27FF0	vfunc	NiBSBoneLODController::Update	named	rtti+commonlib	76550	no_pdata_entry	vtables(1): NiBSBoneLODController[27]	declared in NiTimeController
+0x0E2D1E0	vfunc	BSMultiBoundNode::CreateClone	named	rtti+commonlib	76678	pdata_start	vtables(1): BSMultiBoundNode[17]	
+0x0E2D380	vfunc	BSMultiBoundNode::LoadBinary	named	rtti+commonlib	76680	pdata_start	vtables(1): BSMultiBoundNode[18]	
+0x0E2D3F0	vfunc	BSMultiBoundNode::LinkObject	named	rtti+commonlib	76681	pdata_start	vtables(1): BSMultiBoundNode[19]	
+0x0E2D460	vfunc	BSMultiBoundNode::RegisterStreamables	named	rtti+commonlib	76682	pdata_start	vtables(1): BSMultiBoundNode[1A]	
+0x0E2D4B0	vfunc	BSMultiBoundNode::SaveBinary	named	rtti+commonlib	76683	pdata_start	vtables(1): BSMultiBoundNode[1B]	
+0x0E2D520	vfunc	BSMultiBoundNode::IsEqual	named	rtti+commonlib	76684	pdata_start	vtables(1): BSMultiBoundNode[1C]	
+0x0E2D700	vfunc	BSMultiBoundNode::AsMultiBoundNode	named	rtti+commonlib	76689	no_pdata_entry	vtables(2): BSMultiBoundNode[06], BSMultiBoundRoom[06]	
+0x0E2D710	vfunc	BSMultiBoundNode::OnVisible	named	rtti+commonlib	76690	pdata_start	vtables(1): BSMultiBoundNode[34]	
+0x0E2D8B0	vfunc	BSMultiBoundNode::UpdateWorldBound	named	rtti+commonlib	76692	pdata_start	vtables(1): BSMultiBoundNode[2F]	
+0x0E2D9E0	vfunc	BSMultiBoundNode::UpdateDownwardPass	named	rtti+commonlib	76693	pdata_start	vtables(1): BSMultiBoundNode[2C]	
+0x0E2DCB0	vfunc	BSMultiBoundNode::UpdateUpwardPass	named	rtti+commonlib	76694	pdata_start	vtables(2): BSMultiBoundNode[3D], BSMultiBoundRoom[3D]	
+0x0E2DCE0	vfunc	BSMultiBoundNode::vfunc_3E	inferred	rtti	76695	no_pdata_entry	vtables(1): BSMultiBoundNode[3E]	
+0x0E2DD60	vfunc	BSMultiBoundNode::vfunc_3F	inferred	rtti	76697	no_pdata_entry	vtables(1): BSMultiBoundNode[3F]	
+0x0E2DD80	vfunc	BSMultiBoundNode::vfunc_41	inferred	rtti	76698	no_pdata_entry	vtables(1): BSMultiBoundNode[41]	
+0x0E2DDA0	vfunc	BSMultiBoundNode::vfunc_40	inferred	rtti	76699	no_pdata_entry	vtables(1): BSMultiBoundNode[40]	
+0x0E2DF50	vfunc	BSMultiBoundNode::Dtor	named	rtti+commonlib	76705	pdata_start	vtables(1): BSMultiBoundNode[00]	
+0x0E2E000	vfunc	BSMultiBoundNode::GetRTTI	named	rtti+commonlib	76706	no_pdata_entry	vtables(1): BSMultiBoundNode[02]	
+0x0E314F0	vfunc	BSDistantObjectLargeRefExtraData::CreateClone	named	rtti+commonlib	76798	no_pdata_entry	vtables(1): BSDistantObjectLargeRefExtraData[17]	declared in NiBooleanExtraData
+0x0E31510	vfunc	BSDistantObjectLargeRefExtraData::LoadBinary	named	rtti+commonlib	76799	no_pdata_entry	vtables(1): BSDistantObjectLargeRefExtraData[18]	declared in NiBooleanExtraData
+0x0E31520	vfunc	BSDistantObjectLargeRefExtraData::LinkObject	named	rtti+commonlib	76800	no_pdata_entry	vtables(1): BSDistantObjectLargeRefExtraData[19]	declared in NiBooleanExtraData
+0x0E31530	vfunc	BSDistantObjectLargeRefExtraData::RegisterStreamables	named	rtti+commonlib	76801	no_pdata_entry	vtables(1): BSDistantObjectLargeRefExtraData[1A]	declared in NiBooleanExtraData
+0x0E31540	vfunc	BSDistantObjectLargeRefExtraData::SaveBinary	named	rtti+commonlib	76802	no_pdata_entry	vtables(1): BSDistantObjectLargeRefExtraData[1B]	declared in NiBooleanExtraData
+0x0E31550	vfunc	BSDistantObjectLargeRefExtraData::IsEqual	named	rtti+commonlib	76803	no_pdata_entry	vtables(1): BSDistantObjectLargeRefExtraData[1C]	declared in NiBooleanExtraData
+0x0E317F0	vfunc	BSDistantObjectLargeRefExtraData::Dtor	named	rtti+commonlib	76811	pdata_start	vtables(1): BSDistantObjectLargeRefExtraData[00]	declared in NiBooleanExtraData
+0x0E31830	vfunc	BSDistantObjectLargeRefExtraData::GetRTTI	named	rtti+commonlib	76812	no_pdata_entry	vtables(1): BSDistantObjectLargeRefExtraData[02]	declared in NiBooleanExtraData
+0x0E39BE0	vfunc	BSBoneLODExtraData::vfunc_17	inferred	rtti	76993	no_pdata_entry	vtables(1): BSBoneLODExtraData[17]	
+0x0E39D70	vfunc	BSBoneLODExtraData::LoadBinary	named	rtti+commonlib	76995	pdata_start	vtables(1): BSBoneLODExtraData[18]	declared in NiExtraData
+0x0E39F00	vfunc	BSBoneLODExtraData::LinkObject	named	rtti+commonlib	76996	no_pdata_entry	vtables(1): BSBoneLODExtraData[19]	declared in NiExtraData
+0x0E39F10	vfunc	BSBoneLODExtraData::RegisterStreamables	named	rtti+commonlib	76997	no_pdata_entry	vtables(1): BSBoneLODExtraData[1A]	declared in NiExtraData
+0x0E39F20	vfunc	BSBoneLODExtraData::SaveBinary	named	rtti+commonlib	76998	pdata_start	vtables(1): BSBoneLODExtraData[1B]	declared in NiExtraData
+0x0E39FF0	vfunc	BSBoneLODExtraData::IsEqual	named	rtti+commonlib	76999	no_pdata_entry	vtables(1): BSBoneLODExtraData[1C]	declared in NiExtraData
+0x0E3A730	vfunc	BSBoneLODExtraData::Dtor	named	rtti+commonlib	77012	pdata_start	vtables(1): BSBoneLODExtraData[00]	declared in NiExtraData
+0x0E3A810	vfunc	BSBoneLODExtraData::GetRTTI	named	rtti+commonlib	77015	no_pdata_entry	vtables(1): BSBoneLODExtraData[02]	declared in NiExtraData
+0x0E3CC40	vfunc	BSMultiBoundCapsule::CreateClone	named	rtti+commonlib	77086	pdata_start	vtables(1): BSMultiBoundCapsule[17]	declared in BSMultiBoundShape
+0x0E3CD60	vfunc	BSMultiBoundCapsule::LoadBinary	named	rtti+commonlib	77088	pdata_start	vtables(1): BSMultiBoundCapsule[18]	declared in BSMultiBoundShape
+0x0E3CDD0	vfunc	BSMultiBoundCapsule::LinkObject	named	rtti+commonlib	77089	no_pdata_entry	vtables(1): BSMultiBoundCapsule[19]	declared in BSMultiBoundShape
+0x0E3CDE0	vfunc	BSMultiBoundCapsule::RegisterStreamables	named	rtti+commonlib	77090	pdata_start	vtables(1): BSMultiBoundCapsule[1A]	declared in BSMultiBoundShape
+0x0E3CE00	vfunc	BSMultiBoundCapsule::SaveBinary	named	rtti+commonlib	77091	pdata_start	vtables(1): BSMultiBoundCapsule[1B]	declared in BSMultiBoundShape
+0x0E3CE70	vfunc	BSMultiBoundCapsule::IsEqual	named	rtti+commonlib	77092	pdata_start	vtables(1): BSMultiBoundCapsule[1C]	declared in BSMultiBoundShape
+0x0E3CFB0	vfunc	BSMultiBoundCapsule::GetType	named	rtti+commonlib	77095	no_pdata_entry	vtables(1): BSMultiBoundCapsule[25]	declared in BSMultiBoundShape
+0x0E3CFC0	vfunc	BSMultiBoundCapsule::Unk_28	inferred	rtti+commonlib	77096	no_pdata_entry	vtables(1): BSMultiBoundCapsule[28]	declared in BSMultiBoundShape
+0x0E3CFD0	vfunc	BSMultiBoundCapsule::Unk_27	inferred	rtti+commonlib	77097	pdata_start	vtables(1): BSMultiBoundCapsule[27]	declared in BSMultiBoundShape
+0x0E3CFF0	vfunc	BSMultiBoundCapsule::Unk_29	inferred	rtti+commonlib	77098	no_pdata_entry	vtables(1): BSMultiBoundCapsule[29]	declared in BSMultiBoundShape
+0x0E3D000	vfunc	BSMultiBoundCapsule::Unk_2A	inferred	rtti+commonlib	77099	no_pdata_entry	vtables(1): BSMultiBoundCapsule[2A]	declared in BSMultiBoundShape
+0x0E3D010	vfunc	BSMultiBoundCapsule::Unk_2B	inferred	rtti+commonlib	77100	no_pdata_entry	vtables(1): BSMultiBoundCapsule[2B]	declared in BSMultiBoundShape
+0x0E3D0A0	vfunc	BSMultiBoundCapsule::Dtor	named	rtti+commonlib	77102	pdata_start	vtables(1): BSMultiBoundCapsule[00]	declared in BSMultiBoundShape
+0x0E3D0E0	vfunc	BSMultiBoundCapsule::GetRTTI	named	rtti+commonlib	77103	no_pdata_entry	vtables(1): BSMultiBoundCapsule[02]	declared in BSMultiBoundShape
+0x0E3D0F0	vfunc	BSMultiBoundCapsule::GetLength	named	rtti+commonlib	77104	no_pdata_entry	vtables(1): BSMultiBoundCapsule[26]	declared in BSMultiBoundShape
+0x14797D0	vfunc	BSFadeNode::CreateClone	named	rtti+commonlib	105473	pdata_start	vtables(1): BSFadeNode[17]	
+0x1479920	vfunc	BSFadeNode::LoadBinary	named	rtti+commonlib	105475	no_pdata_entry	vtables(1): BSFadeNode[18]	
+0x1479930	vfunc	BSFadeNode::LinkObject	named	rtti+commonlib	105476	no_pdata_entry	vtables(1): BSFadeNode[19]	
+0x1479940	vfunc	BSFadeNode::RegisterStreamables	named	rtti+commonlib	105477	pdata_start	vtables(1): BSFadeNode[1A]	
+0x1479960	vfunc	BSFadeNode::SaveBinary	named	rtti+commonlib	105478	no_pdata_entry	vtables(1): BSFadeNode[1B]	
+0x1479970	vfunc	BSFadeNode::IsEqual	named	rtti+commonlib	105479	no_pdata_entry	vtables(1): BSFadeNode[1C]	
+0x1479F50	vfunc	BSFadeNode::OnVisible	named	rtti+commonlib	105485	pdata_start	vtables(1): BSFadeNode[34]	
+0x147A840	vfunc	BSFadeNode::UpdateSelectedDownwardPass	named	rtti+commonlib	105489	pdata_start	vtables(3): BSFadeNode[2D], BSLeafAnimNode[2D], BSTreeNode[2D]	
+0x147B230	vfunc	BSFadeNode::Dtor	named	rtti+commonlib	105507	pdata_start	vtables(1): BSFadeNode[00]	
+0x147B270	vfunc	BSFadeNode::GetRTTI	named	rtti+commonlib	105508	no_pdata_entry	vtables(1): BSFadeNode[02]	
+0x147B280	vfunc	BSFadeNode::AsFadeNode	named	rtti+commonlib	105509	no_pdata_entry	vtables(3): BSFadeNode[05], BSLeafAnimNode[05], BSTreeNode[05]	
+0x147B290	vfunc	BSFadeNode::vfunc_3F	inferred	rtti	105510	no_pdata_entry	vtables(1): BSFadeNode[3F]	
+0x147B2A0	vfunc	BSFadeNode::vfunc_3E	inferred	rtti	105511	no_pdata_entry	vtables(2): BSFadeNode[3E], BSLeafAnimNode[3E]	
+0x147CB40	vfunc	BSTreeNode::CreateClone	named	rtti+commonlib	105593	pdata_start	vtables(1): BSTreeNode[17]	declared in BSFadeNode
+0x147CCA0	vfunc	BSTreeNode::LoadBinary	named	rtti+commonlib	105595	pdata_start	vtables(1): BSTreeNode[18]	declared in BSFadeNode
+0x147CE20	vfunc	BSTreeNode::LinkObject	named	rtti+commonlib	105596	pdata_start	vtables(1): BSTreeNode[19]	declared in BSFadeNode
+0x147CEC0	vfunc	BSTreeNode::RegisterStreamables	named	rtti+commonlib	105597	pdata_start	vtables(1): BSTreeNode[1A]	declared in BSFadeNode
+0x147CF70	vfunc	BSTreeNode::SaveBinary	named	rtti+commonlib	105598	pdata_start	vtables(1): BSTreeNode[1B]	declared in BSFadeNode
+0x147D070	vfunc	BSTreeNode::IsEqual	named	rtti+commonlib	105599	no_pdata_entry	vtables(1): BSTreeNode[1C]	declared in BSFadeNode
+0x147D3C0	vfunc	BSTreeNode::OnVisible	named	rtti+commonlib	105604	pdata_start	vtables(1): BSTreeNode[34]	declared in BSFadeNode
+0x147D660	vfunc	BSTreeNode::ProcessClone	named	rtti+commonlib	105607	pdata_start	vtables(1): BSTreeNode[1D]	declared in NiNode
+0x147DD10	vfunc	BSTreeNode::Dtor	named	rtti+commonlib	105614	pdata_start	vtables(1): BSTreeNode[00]	declared in BSFadeNode
+0x147DE60	vfunc	BSTreeNode::GetRTTI	named	rtti+commonlib	105616	no_pdata_entry	vtables(1): BSTreeNode[02]	declared in BSFadeNode
+0x147DE70	vfunc	BSTreeNode::vfunc_3E	inferred	rtti	105617	no_pdata_entry	vtables(1): BSTreeNode[3E]	
+0x14E9A40	vfunc	BSFadeNodeCuller::Process2	named	rtti+commonlib	107506	no_pdata_entry	vtables(1): BSFadeNodeCuller[17]	declared in NiCullingProcess
+0x14E9A50	vfunc	BSFadeNodeCuller::Process1	named	rtti+commonlib	107507	pdata_start	vtables(1): BSFadeNodeCuller[16]	declared in NiCullingProcess
+0x14EC330	vfunc	BSDistantTreeShaderProperty::CreateClone	named	rtti+commonlib	107534	pdata_start	vtables(1): BSDistantTreeShaderProperty[17]	declared in BSShaderProperty
+0x14EC720	vfunc	BSDistantTreeShaderProperty::QShader	named	rtti+commonlib	107538	no_pdata_entry	vtables(1): BSDistantTreeShaderProperty[35]	declared in BSShaderProperty
+0x14EC730	vfunc	BSDistantTreeShaderProperty::SetupGeometry	named	rtti+commonlib	107539	no_pdata_entry	vtables(1): BSDistantTreeShaderProperty[27]	declared in BSShaderProperty
+0x14EC740	vfunc	BSDistantTreeShaderProperty::GetRenderPasses	named	rtti+commonlib	107540	pdata_start	vtables(1): BSDistantTreeShaderProperty[2A]	declared in BSShaderProperty
+0x14EC840	vfunc	BSDistantTreeShaderProperty::Unk_2B	inferred	rtti+commonlib	107541	no_pdata_entry	vtables(1): BSDistantTreeShaderProperty[2B]	declared in BSShaderProperty
+0x14EC850	vfunc	BSDistantTreeShaderProperty::Unk_2F	inferred	rtti+commonlib	107542	pdata_start	vtables(1): BSDistantTreeShaderProperty[2F]	declared in BSShaderProperty
+0x14EC8A0	vfunc	BSDistantTreeShaderProperty::ForEachTexture	named	rtti+commonlib	107543	pdata_start	vtables(1): BSDistantTreeShaderProperty[33]	declared in BSShaderProperty
+0x14EC8F0	vfunc	BSDistantTreeShaderProperty::Dtor	named	rtti+commonlib	107544	pdata_start	vtables(1): BSDistantTreeShaderProperty[00]	declared in BSShaderProperty
+0x14EC930	vfunc	BSDistantTreeShaderProperty::GetBaseTexture	named	rtti+commonlib	107545	no_pdata_entry	vtables(1): BSDistantTreeShaderProperty[37]	declared in BSShaderProperty
+0x14EC940	vfunc	BSDistantTreeShaderProperty::GetRTTI	named	rtti+commonlib	107546	no_pdata_entry	vtables(1): BSDistantTreeShaderProperty[02]	declared in BSShaderProperty
+0x14ECA10	vfunc	BSDistantTreeShader::RestoreTechnique	named	rtti+commonlib	107549	no_pdata_entry	vtables(1): BSDistantTreeShader[03]	declared in BSShader
+0x14ECA50	vfunc	BSDistantTreeShader::SetupTechnique	named	rtti+commonlib	107551	pdata_start	vtables(1): BSDistantTreeShader[02]	declared in BSShader
+0x14ECEF0	vfunc	BSDistantTreeShader::SetupGeometry	named	rtti+commonlib	107552	pdata_start	vtables(1): BSDistantTreeShader[06]	declared in BSShader
+0x14ED090	vfunc	BSDistantTreeShader::RestoreGeometry	named	rtti+commonlib	107553	no_pdata_entry	vtables(1): BSDistantTreeShader[07]	declared in BSShader
+0x14ED130	vfunc	BSDistantTreeShader::Dtor	named	rtti+commonlib	107559	pdata_start	vtables(1): BSDistantTreeShader[00]	declared in BSShader
+0x1510EE0	vfunc	BSPSysLODModifier::vfunc_17	inferred	rtti	108471	pdata_start	vtables(1): BSPSysLODModifier[17]	
+0x1511020	vfunc	BSPSysLODModifier::LoadBinary	named	rtti+commonlib	108473	pdata_start	vtables(1): BSPSysLODModifier[18]	declared in NiPSysModifier
+0x1511150	vfunc	BSPSysLODModifier::LinkObject	named	rtti+commonlib	108474	no_pdata_entry	vtables(1): BSPSysLODModifier[19]	declared in NiPSysModifier
+0x1511160	vfunc	BSPSysLODModifier::RegisterStreamables	named	rtti+commonlib	108475	no_pdata_entry	vtables(1): BSPSysLODModifier[1A]	declared in NiPSysModifier
+0x1511170	vfunc	BSPSysLODModifier::SaveBinary	named	rtti+commonlib	108476	pdata_start	vtables(1): BSPSysLODModifier[1B]	declared in NiPSysModifier
+0x1511260	vfunc	BSPSysLODModifier::IsEqual	named	rtti+commonlib	108477	pdata_start	vtables(1): BSPSysLODModifier[1C]	declared in NiPSysModifier
+0x1511440	vfunc	BSPSysLODModifier::Update	named	rtti+commonlib	108480	no_pdata_entry	vtables(1): BSPSysLODModifier[25]	declared in NiPSysModifier
+0x1511600	vfunc	BSPSysLODModifier::Dtor	named	rtti+commonlib	108483	pdata_start	vtables(1): BSPSysLODModifier[00]	declared in NiPSysModifier
+0x1511640	vfunc	BSPSysLODModifier::GetRTTI	named	rtti+commonlib	108484	no_pdata_entry	vtables(1): BSPSysLODModifier[02]	declared in NiPSysModifier
+0x151D500	vfunc	BSMeshLODTriShape::CreateClone	named	rtti+commonlib	108733	pdata_start	vtables(1): BSMeshLODTriShape[17]	declared in BSTriShape
+0x151D670	vfunc	BSMeshLODTriShape::LoadBinary	named	rtti+commonlib	108735	pdata_start	vtables(1): BSMeshLODTriShape[18]	declared in BSTriShape
+0x151D6D0	vfunc	BSMeshLODTriShape::LinkObject	named	rtti+commonlib	108736	no_pdata_entry	vtables(1): BSMeshLODTriShape[19]	declared in BSTriShape
+0x151D6E0	vfunc	BSMeshLODTriShape::RegisterStreamables	named	rtti+commonlib	108737	no_pdata_entry	vtables(1): BSMeshLODTriShape[1A]	declared in BSTriShape
+0x151D6F0	vfunc	BSMeshLODTriShape::SaveBinary	named	rtti+commonlib	108738	pdata_start	vtables(1): BSMeshLODTriShape[1B]	declared in BSTriShape
+0x151D750	vfunc	BSMeshLODTriShape::IsEqual	named	rtti+commonlib	108739	no_pdata_entry	vtables(1): BSMeshLODTriShape[1C]	declared in BSTriShape
+0x151D8F0	vfunc	BSMeshLODTriShape::vfunc_37	inferred	rtti	108743	no_pdata_entry	vtables(1): BSMeshLODTriShape[37]	
+0x151DA70	vfunc	BSMeshLODTriShape::OnVisible	named	rtti+commonlib	108746	pdata_start	vtables(1): BSMeshLODTriShape[34]	declared in BSGeometry
+0x151DC70	vfunc	BSMeshLODTriShape::Dtor	named	rtti+commonlib	108748	pdata_start	vtables(1): BSMeshLODTriShape[00]	declared in BSTriShape
+0x151DCB0	vfunc	BSMeshLODTriShape::GetRTTI	named	rtti+commonlib	108749	no_pdata_entry	vtables(1): BSMeshLODTriShape[02]	declared in BSTriShape
+0x151DCC0	vfunc	BSLODMultiIndexTriShape::CreateClone	named	rtti+commonlib	108750	pdata_start	vtables(1): BSLODMultiIndexTriShape[17]	declared in BSMultiIndexTriShape
+0x151DF50	vfunc	BSLODMultiIndexTriShape::vfunc_37	inferred	rtti	108754	no_pdata_entry	vtables(1): BSLODMultiIndexTriShape[37]	
+0x151E040	vfunc	BSLODMultiIndexTriShape::OnVisible	named	rtti+commonlib	108756	pdata_start	vtables(1): BSLODMultiIndexTriShape[34]	declared in BSGeometry
+0x151E270	vfunc	BSLODMultiIndexTriShape::Dtor	named	rtti+commonlib	108759	pdata_start	vtables(1): BSLODMultiIndexTriShape[00]	declared in BSMultiIndexTriShape
+0x151E2B0	vfunc	BSLODMultiIndexTriShape::GetRTTI	named	rtti+commonlib	108760	no_pdata_entry	vtables(1): BSLODMultiIndexTriShape[02]	declared in BSMultiIndexTriShape
+0x1781C70	vtable	TESModelLODList::vftable	named	rtti	187949	col@0x1ae1a00	4 slots	BaseFormComponent
+0x1786C60	vtable	BSMultiBoundAABB::vftable	named	rtti	188239	col@0x1ae35c0	47 slots	BSMultiBoundShape > NiObject > NiRefObject
+0x1786DE0	vtable	BSMultiBoundOBB::vftable	named	rtti	188241	col@0x1ae36b0	47 slots	BSMultiBoundAABB > BSMultiBoundShape > NiObject > NiRefObject
+0x1786F60	vtable	BSMultiBoundSphere::vftable	named	rtti	188243	col@0x1ae3748	47 slots	BSMultiBoundShape > NiObject > NiRefObject
+0x17902E0	vtable	TESRegionDataLandscape::vftable	named	rtti	188908	col@0x1ae5348	11 slots	TESRegionData
+0x18474A0	vtable	BSFadeNodeCuller::vftable	named	rtti	200417	col@0x1b011f8	25 slots	NiCullingProcess
+0x185E878	vtable	BSTerrainEffect::vftable	named	rtti	204155	col@0x1b11e20	55 slots	BSTempEffect > NiObject > NiRefObject
+0x1896530	vtable	BSTreeManager::IQueryCullingCamera::vftable	named	rtti	207113	col@0x1b292c0	2 slots	
+0x19B45A0	vtable	BSLODTriShape::vftable	named	rtti	237465	col@0x1bba2c0	60 slots	NiTriShape > NiTriBasedGeom > NiGeometry > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19CE4E0	vtable	BSMultiBound::vftable	named	rtti	238167	col@0x1bc14c0	39 slots	NiObject > NiRefObject
+0x19CE6D8	vtable	BSMultiBoundRoom::vftable	named	rtti	238170	col@0x1bc1548	66 slots	BSMultiBoundNode > BSNiNode > NiNode > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19D2430	vtable	BSMultiBoundShape::vftable	named	rtti	238376	col@0x1bc2cb0	47 slots	NiObject > NiRefObject
+0x19D3600	vtable	NiBSBoneLODController::vftable	named	rtti	238402	col@0x1bc2f50	48 slots	NiTimeController > NiObject > NiRefObject
+0x19D48D0	vtable	BSMultiBoundNode::vftable	named	rtti	238470	col@0x1bc34b0	66 slots	BSNiNode > NiNode > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19D5DE8	vtable	BSDistantObjectLargeRefExtraData::vftable	named	rtti	238503	col@0x1bc3778	39 slots	NiBooleanExtraData > NiExtraData > NiObject > NiRefObject
+0x19D7038	vtable	BSBoneLODExtraData::vftable	named	rtti	238545	col@0x1bc3c08	39 slots	NiExtraData > NiObject > NiRefObject
+0x19D7958	vtable	BSMultiBoundCapsule::vftable	named	rtti	238557	col@0x1bc3e58	47 slots	BSMultiBoundShape > NiObject > NiRefObject
+0x1AA60F0	vtable	BSFadeNode::vftable	named	rtti	252901	col@0x1be9d50	64 slots	NiNode > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x1AA6CF8	vtable	BSTreeNode::vftable	named	rtti	252919	col@0x1be9f38	64 slots	BSLeafAnimNode > BSFadeNode > NiNode > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x1ABFCE8	vtable	BSDistantTreeShaderProperty::vftable	named	rtti	255220	col@0x1bf4c60	63 slots	BSShaderProperty > NiShadeProperty > NiProperty > NiObjectNET > NiObject > NiRefObject
+0x1ABFF38	vtable	BSDistantTreeShader::vftable	named	rtti	255223	col@0x1bf4d08	10 slots	BSShader > NiRefObject
+0x1AC4DE8	vtable	BSPSysLODModifier::vftable	named	rtti	255453	col@0x1bf6598	42 slots	NiPSysModifier > NiObject > NiRefObject
+0x1AC6B30	vtable	BSMeshLODTriShape::vftable	named	rtti	255672	col@0x1bf6cb0	56 slots	BSTriShape > BSGeometry > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x1AC6D60	vtable	BSLODMultiIndexTriShape::vftable	named	rtti	255675	col@0x1bf6d58	56 slots	BSMultiIndexTriShape > BSTriShape > BSGeometry > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x20F6A18	global	BSTreeManager::IQueryCullingCamera::GetSingleton	named	commonlib+addrlib	400330	in_.data		include/RE/B/BSTreeManager.h:32

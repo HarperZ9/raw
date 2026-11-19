@@ -1,0 +1,683 @@
+rva	kind	name	confidence	source	addrlib_id	check	refs	notes
+0x01F1810	vfunc	BGSMultiTechniqueAttach::vfunc_01	inferred	rtti	15046	pdata_start	vtables(1): BGSMultiTechniqueAttach[01]	
+0x01F1890	vfunc	BGSMultiTechniqueAttach::vfunc_02	inferred	rtti	15047	pdata_start	vtables(1): BGSMultiTechniqueAttach[02]	
+0x01F2490	vfunc	BGSAttachTechniquesUtil::AttachTechniquesFunctor::vfunc_01	inferred	rtti	15072	no_pdata_entry	vtables(1): BGSAttachTechniquesUtil::AttachTechniquesFunctor[01]	
+0x01F24B0	vfunc	BGSAttachTechniquesUtil::DetachTechniquesFunctor::vfunc_01	inferred	rtti	15073	no_pdata_entry	vtables(1): BGSAttachTechniquesUtil::DetachTechniquesFunctor[01]	
+0x01F2500	vfunc	BGSMultiTechniqueAttach::ActionPolicy::vfunc_00	inferred	rtti	15075	pdata_start	vtables(1): BGSMultiTechniqueAttach::ActionPolicy[00]	
+0x01F2590	vfunc	BGSMultiTechniqueAttach::AttachPolicy::vfunc_00	inferred	rtti	15078	pdata_start	vtables(1): BGSMultiTechniqueAttach::AttachPolicy[00]	
+0x01F25F0	vfunc	BGSAttachTechniquesUtil::AttachTechniquesFunctor::vfunc_00	inferred	rtti	15080	pdata_start	vtables(1): BGSAttachTechniquesUtil::AttachTechniquesFunctor[00]	
+0x01F2660	vfunc	BGSMultiTechniqueAttach::vfunc_00	inferred	rtti	15082	pdata_start	vtables(1): BGSMultiTechniqueAttach[00]	
+0x01F2760	vfunc	BSAttachTechniques::BSAttachTechnique::vfunc_00	inferred	rtti	15085	pdata_start	vtables(1): BSAttachTechniques::BSAttachTechnique[00]	
+0x01F2840	vfunc	BGSMultiTechniqueAttach::DetachPolicy::vfunc_00	inferred	rtti	15089	pdata_start	vtables(1): BGSMultiTechniqueAttach::DetachPolicy[00]	
+0x01F28A0	vfunc	BGSAttachTechniquesUtil::DetachTechniquesFunctor::vfunc_00	inferred	rtti	15091	pdata_start	vtables(1): BGSAttachTechniquesUtil::DetachTechniquesFunctor[00]	
+0x01F2900	vfunc	BGSAttachTechniquesUtil::ProcessTechniquesFunctor::vfunc_00	inferred	rtti	15093	pdata_start	vtables(1): BGSAttachTechniquesUtil::ProcessTechniquesFunctor[00]	
+0x01F2C60	vfunc	BGSMultiTechniqueAttach::AttachPolicy::vfunc_01	inferred	rtti	15100	pdata_start	vtables(1): BGSMultiTechniqueAttach::AttachPolicy[01]	
+0x01F2FA0	vfunc	BGSMultiTechniqueAttach::DetachPolicy::vfunc_01	inferred	rtti	15105	pdata_start	vtables(1): BGSMultiTechniqueAttach::DetachPolicy[01]	
+0x0210A60	vfunc	BSShaderProperty::ForEachVisitor::Dtor	named	rtti+commonlib	15613	pdata_start	vtables(1): BSShaderProperty::ForEachVisitor[00]	declared in ForEachVisitor
+0x0267BD0	vfunc	BSParticleShaderGeometry::Dtor	named	rtti+commonlib	17346	pdata_start	vtables(1): BSParticleShaderGeometry[00]	declared in BSTriShape
+0x029B320	vfunc	BSParticleShaderCubeEmitter::Dtor	named	rtti+commonlib	18507	pdata_start	vtables(1): BSParticleShaderCubeEmitter[00]	
+0x029B360	vfunc	BSParticleShaderEmitter::Dtor	named	rtti+commonlib	18508	pdata_start	vtables(1): BSParticleShaderEmitter[00]	
+0x029B3A0	vfunc	BSParticleShaderRainEmitter::Dtor	named	rtti+commonlib	18509	pdata_start	vtables(1): BSParticleShaderRainEmitter[00]	declared in BSParticleShaderCubeEmitter
+0x029B3E0	vfunc	BSParticleShaderSnowEmitter::Dtor	named	rtti+commonlib	18510	pdata_start	vtables(1): BSParticleShaderSnowEmitter[00]	declared in BSParticleShaderCubeEmitter
+0x03278C0	vfunc	BSShaderTextureSet::Dtor	named	rtti+commonlib	21373	pdata_start	vtables(1): BSShaderTextureSet[00]	
+0x0327930	vfunc	BSTextureSet::Dtor	named	rtti+commonlib	21374	pdata_start	vtables(1): BSTextureSet[00]	
+0x0327970	vfunc	BSShaderTextureSet::GetRTTI	named	rtti+commonlib	21375	no_pdata_entry	vtables(1): BSShaderTextureSet[02]	
+0x0327980	vfunc	BSTextureSet::GetRTTI	named	rtti+commonlib	21376	no_pdata_entry	vtables(1): BSTextureSet[02]	
+0x05B3F00	vfunc	BSAttachTechniques::AttachTechniqueInput::Dtor	named	rtti+commonlib	34195	pdata_start	vtables(1): BSAttachTechniques::AttachTechniqueInput[00]	declared in AttachTechniqueInput
+0x05B3F80	vfunc	RefAttachTechniqueInput::Dtor	named	rtti+commonlib	34197	pdata_start	vtables(1): RefAttachTechniqueInput[00]	
+0x05B4000	vfunc	RefAttachTechniqueInput::Clear	named	rtti+commonlib	34199	pdata_start	vtables(1): RefAttachTechniqueInput[01]	
+0x05D3340	vfunc	BSParticleShaderCollisionEmitter::Dtor	named	rtti+commonlib	34951	pdata_start	vtables(1): BSParticleShaderCollisionEmitter[00]	declared in BSParticleShaderObjectEmitter
+0x05D3400	vfunc	BSParticleShaderGeometryEmitter::Dtor	named	rtti+commonlib	34952	pdata_start	vtables(1): BSParticleShaderGeometryEmitter[00]	declared in BSParticleShaderObjectEmitter
+0x05D3480	vfunc	BSParticleShaderObjectEmitter::Dtor	named	rtti+commonlib	34953	pdata_start	vtables(1): BSParticleShaderObjectEmitter[00]	
+0x05D34F0	vfunc	BSParticleShaderRayEmitter::Dtor	named	rtti+commonlib	34954	pdata_start	vtables(1): BSParticleShaderRayEmitter[00]	declared in BSParticleShaderObjectEmitter
+0x0E0D900	vfunc	BSXFlags::CreateClone	named	rtti+commonlib	75972	no_pdata_entry	vtables(1): BSXFlags[17]	
+0x0E0D920	vfunc	BSXFlags::LoadBinary	named	rtti+commonlib	75973	no_pdata_entry	vtables(1): BSXFlags[18]	
+0x0E0D930	vfunc	BSXFlags::LinkObject	named	rtti+commonlib	75974	no_pdata_entry	vtables(1): BSXFlags[19]	
+0x0E0D940	vfunc	BSXFlags::RegisterStreamables	named	rtti+commonlib	75975	pdata_start	vtables(1): BSXFlags[1A]	
+0x0E0D960	vfunc	BSXFlags::SaveBinary	named	rtti+commonlib	75976	no_pdata_entry	vtables(1): BSXFlags[1B]	
+0x0E0D970	vfunc	BSXFlags::IsEqual	named	rtti+commonlib	75977	no_pdata_entry	vtables(1): BSXFlags[1C]	
+0x0E0DC20	vfunc	BSXFlags::Dtor	named	rtti+commonlib	75986	pdata_start	vtables(1): BSXFlags[00]	
+0x0E0DC60	vfunc	BSXFlags::GetRTTI	named	rtti+commonlib	75987	no_pdata_entry	vtables(1): BSXFlags[02]	
+0x0E1AD30	vfunc	BSAttachTechniques::AttachTechniqueInput::Clear	named	rtti+commonlib	76264	pdata_start	vtables(1): BSAttachTechniques::AttachTechniqueInput[01]	declared in AttachTechniqueInput
+0x0E1ADC0	vfunc	BSAttachTechniques::BSAttachTechnique::vfunc_02	inferred	rtti	76266	no_pdata_entry	vtables(1): BSAttachTechniques::BSAttachTechnique[02]	
+0x0E1ADD0	vfunc	BSAttachTechniques::BSAttachTechnique::vfunc_03	inferred	rtti	76267	no_pdata_entry	vtables(4): BGSHavokGeometryAttach[03], BGSMultiTechniqueAttach[03], BGSNamedNodeAttach[03], BSAttachTechniques::BSAttachTechnique[03]	
+0x147B2B0	vfunc	BSShaderProperty::CreateClone	named	rtti+commonlib	105512	no_pdata_entry	vtables(2): BSParticleShaderProperty[17], BSShaderProperty[17]	
+0x147B380	vfunc	BSShaderProperty::LoadBinary	named	rtti+commonlib	105514	pdata_start	vtables(4): BSBloodSplatterShaderProperty[18], BSDistantTreeShaderProperty[18], BSParticleShaderProperty[18], BSShaderProperty[18]	
+0x147B420	vfunc	BSShaderProperty::LinkObject	named	rtti+commonlib	105515	no_pdata_entry	vtables(4): BSBloodSplatterShaderProperty[19], BSDistantTreeShaderProperty[19], BSParticleShaderProperty[19], BSShaderProperty[19]	
+0x147B430	vfunc	BSShaderProperty::RegisterStreamables	named	rtti+commonlib	105516	no_pdata_entry	vtables(4): BSBloodSplatterShaderProperty[1A], BSDistantTreeShaderProperty[1A], BSParticleShaderProperty[1A], BSShaderProperty[1A]	
+0x147B440	vfunc	BSShaderProperty::SaveBinary	named	rtti+commonlib	105517	pdata_start	vtables(4): BSBloodSplatterShaderProperty[1B], BSDistantTreeShaderProperty[1B], BSParticleShaderProperty[1B], BSShaderProperty[1B]	
+0x147B4C0	vfunc	BSShaderProperty::IsEqual	named	rtti+commonlib	105518	no_pdata_entry	vtables(4): BSBloodSplatterShaderProperty[1C], BSDistantTreeShaderProperty[1C], BSParticleShaderProperty[1C], BSShaderProperty[1C]	
+0x147B570	vfunc	BSShaderProperty::PostLinkObject	named	rtti+commonlib	105520	no_pdata_entry	vtables(4): BSBloodSplatterShaderProperty[1E], BSDistantTreeShaderProperty[1E], BSParticleShaderProperty[1E], BSShaderProperty[1E]	
+0x147B790	vfunc	BSShaderProperty::SetupGeometry	named	rtti+commonlib	105523	no_pdata_entry	vtables(4): BSBloodSplatterShaderProperty[27], BSShaderProperty[27], BSSkyShaderProperty[27], BSWaterShaderProperty[27]	
+0x147B7A0	vfunc	BSShaderProperty::Unk_29	inferred	rtti+commonlib	105524	no_pdata_entry	vtables(9): BSBloodSplatterShaderProperty[29], BSDistantTreeShaderProperty[29], BSEffectShaderProperty[29], BSGrassShaderProperty[29], BSLightingShaderProperty[29], BSParticleShaderProperty[29], +3 more	
+0x147BAE0	vfunc	BSShaderProperty::Unk_2B	inferred	rtti+commonlib	105534	no_pdata_entry	vtables(5): BSBloodSplatterShaderProperty[2B], BSParticleShaderProperty[2B], BSShaderProperty[2B], BSSkyShaderProperty[2B], BSWaterShaderProperty[2B]	
+0x147BAF0	vfunc	BSShaderProperty::Unk_2C	inferred	rtti+commonlib	105535	no_pdata_entry	vtables(6): BSBloodSplatterShaderProperty[2C], BSDistantTreeShaderProperty[2C], BSEffectShaderProperty[2C], BSParticleShaderProperty[2C], BSShaderProperty[2C], BSSkyShaderProperty[2C]	
+0x147BB00	vfunc	BSShaderProperty::Unk_2D	inferred	rtti+commonlib	105536	no_pdata_entry	vtables(7): BSBloodSplatterShaderProperty[2D], BSDistantTreeShaderProperty[2D], BSEffectShaderProperty[2D], BSParticleShaderProperty[2D], BSShaderProperty[2D], BSSkyShaderProperty[2D], +1 more	
+0x147BEB0	vfunc	BSShaderProperty::CanMerge	named	rtti+commonlib	105539	no_pdata_entry	vtables(7): BSBloodSplatterShaderProperty[30], BSDistantTreeShaderProperty[30], BSEffectShaderProperty[30], BSParticleShaderProperty[30], BSShaderProperty[30], BSSkyShaderProperty[30], +1 more	
+0x147BEE0	function	BSShaderProperty::SetFlags	named	commonlib+addrlib	105540	no_pdata_entry		src/RE/B/BSShaderProperty.cpp:21
+0x147BFA0	vfunc	BSShaderProperty::DoClearRenderPasses	named	rtti+commonlib	105543	pdata_start	vtables(6): BSBloodSplatterShaderProperty[34], BSDistantTreeShaderProperty[34], BSEffectShaderProperty[34], BSParticleShaderProperty[34], BSShaderProperty[34], BSSkyShaderProperty[34]	
+0x147BFF0	function	BSShaderProperty::SetMaterial	named	commonlib+addrlib	105544	pdata_start		src/RE/B/BSShaderProperty.cpp:14
+0x147C370	vfunc	BSShaderProperty::Unk_3B	inferred	rtti+commonlib	105551	no_pdata_entry	vtables(6): BSBloodSplatterShaderProperty[3B], BSDistantTreeShaderProperty[3B], BSParticleShaderProperty[3B], BSShaderProperty[3B], BSSkyShaderProperty[3B], BSWaterShaderProperty[3B]	
+0x147C570	vfunc	BSShaderProperty::Dtor	named	rtti+commonlib	105560	pdata_start	vtables(1): BSShaderProperty[00]	
+0x147C5B0	vfunc	BSShaderProperty::AcceptsEffectData	named	rtti+commonlib	105561	no_pdata_entry	vtables(7): BSBloodSplatterShaderProperty[39], BSDistantTreeShaderProperty[39], BSEffectShaderProperty[39], BSParticleShaderProperty[39], BSShaderProperty[39], BSSkyShaderProperty[39], +1 more	
+0x147C5C0	vfunc	BSShaderProperty::Unk_36	inferred	rtti+commonlib	105562	no_pdata_entry	vtables(9): BSBloodSplatterShaderProperty[36], BSDistantTreeShaderProperty[36], BSEffectShaderProperty[36], BSGrassShaderProperty[36], BSLightingShaderProperty[36], BSParticleShaderProperty[36], +3 more	
+0x147C5D0	vfunc	BSShaderProperty::DetermineUtilityShaderDecl	named	rtti+commonlib	105563	no_pdata_entry	vtables(7): BSBloodSplatterShaderProperty[3D], BSDistantTreeShaderProperty[3D], BSEffectShaderProperty[3D], BSParticleShaderProperty[3D], BSShaderProperty[3D], BSSkyShaderProperty[3D], +1 more	
+0x147C5E0	vfunc	BSShaderProperty::ForEachTexture	named	rtti+commonlib	105564	no_pdata_entry	vtables(2): BSParticleShaderProperty[33], BSShaderProperty[33]	
+0x147C5F0	vfunc	BSShaderProperty::GetBaseTexture	named	rtti+commonlib	105565	no_pdata_entry	vtables(2): BSShaderProperty[37], BSWaterShaderProperty[37]	
+0x147C600	vfunc	BSShaderProperty::GetMaterialType	named	rtti+commonlib	105566	no_pdata_entry	vtables(5): BSBloodSplatterShaderProperty[3E], BSDistantTreeShaderProperty[3E], BSParticleShaderProperty[3E], BSShaderProperty[3E], BSSkyShaderProperty[3E]	
+0x147C610	vfunc	BSShaderProperty::Unk_2E	inferred	rtti+commonlib	105567	no_pdata_entry	vtables(9): BSBloodSplatterShaderProperty[2E], BSDistantTreeShaderProperty[2E], BSEffectShaderProperty[2E], BSGrassShaderProperty[2E], BSLightingShaderProperty[2E], BSParticleShaderProperty[2E], +3 more	
+0x147C620	vfunc	BSShaderProperty::GetRTTI	named	rtti+commonlib	105568	no_pdata_entry	vtables(1): BSShaderProperty[02]	
+0x147C630	vfunc	BSShaderProperty::Unk_2F	inferred	rtti+commonlib	105569	no_pdata_entry	vtables(6): BSBloodSplatterShaderProperty[2F], BSEffectShaderProperty[2F], BSParticleShaderProperty[2F], BSShaderProperty[2F], BSSkyShaderProperty[2F], BSWaterShaderProperty[2F]	
+0x147C640	vfunc	BSShaderProperty::Unk_38	inferred	rtti+commonlib	105570	no_pdata_entry	vtables(9): BSBloodSplatterShaderProperty[38], BSDistantTreeShaderProperty[38], BSEffectShaderProperty[38], BSGrassShaderProperty[38], BSLightingShaderProperty[38], BSParticleShaderProperty[38], +3 more	
+0x147C650	vfunc	BSShaderProperty::Unk_3C	inferred	rtti+commonlib	105571	no_pdata_entry	vtables(8): BSBloodSplatterShaderProperty[3C], BSDistantTreeShaderProperty[3C], BSGrassShaderProperty[3C], BSLightingShaderProperty[3C], BSParticleShaderProperty[3C], BSShaderProperty[3C], +2 more	
+0x147C660	vfunc	BSShaderProperty::Unk_3A	inferred	rtti+commonlib	105572	no_pdata_entry	vtables(9): BSBloodSplatterShaderProperty[3A], BSDistantTreeShaderProperty[3A], BSEffectShaderProperty[3A], BSGrassShaderProperty[3A], BSLightingShaderProperty[3A], BSParticleShaderProperty[3A], +3 more	
+0x147C670	vfunc	BSShaderProperty::QMaterialAlpha	named	rtti+commonlib	105573	no_pdata_entry	vtables(6): BSBloodSplatterShaderProperty[32], BSDistantTreeShaderProperty[32], BSParticleShaderProperty[32], BSShaderProperty[32], BSSkyShaderProperty[32], BSWaterShaderProperty[32]	
+0x147C680	vfunc	BSShaderProperty::QShader	named	rtti+commonlib	105574	no_pdata_entry	vtables(1): BSShaderProperty[35]	
+0x147C750	vfunc	BSShaderProperty::SetMaterialAlpha	named	rtti+commonlib	105576	no_pdata_entry	vtables(6): BSBloodSplatterShaderProperty[31], BSDistantTreeShaderProperty[31], BSParticleShaderProperty[31], BSShaderProperty[31], BSSkyShaderProperty[31], BSWaterShaderProperty[31]	
+0x149BE20	vfunc	BSImagespaceShaderAlphaBlend::Dtor	named	rtti+commonlib	106050	pdata_start	vtables(1): BSImagespaceShaderAlphaBlend[00]	declared in BSImagespaceShader
+0x149BE60	vfunc	BSImagespaceShaderApplyReflections::Dtor	named	rtti+commonlib	106051	pdata_start	vtables(1): BSImagespaceShaderApplyReflections[00]	declared in BSImagespaceShader
+0x149BEA0	vfunc	BSImagespaceShaderBlur11::Dtor	named	rtti+commonlib	106052	pdata_start	vtables(1): BSImagespaceShaderBlur11[00]	declared in BSImagespaceShader
+0x149BEE0	vfunc	BSImagespaceShaderBlur13::Dtor	named	rtti+commonlib	106053	pdata_start	vtables(1): BSImagespaceShaderBlur13[00]	declared in BSImagespaceShader
+0x149BF20	vfunc	BSImagespaceShaderBlur15::Dtor	named	rtti+commonlib	106054	pdata_start	vtables(1): BSImagespaceShaderBlur15[00]	declared in BSImagespaceShader
+0x149BF60	vfunc	BSImagespaceShaderBlur3::Dtor	named	rtti+commonlib	106055	pdata_start	vtables(1): BSImagespaceShaderBlur3[00]	
+0x149BFA0	vfunc	BSImagespaceShaderBlur5::Dtor	named	rtti+commonlib	106056	pdata_start	vtables(1): BSImagespaceShaderBlur5[00]	declared in BSImagespaceShader
+0x149BFE0	vfunc	BSImagespaceShaderBlur7::Dtor	named	rtti+commonlib	106057	pdata_start	vtables(1): BSImagespaceShaderBlur7[00]	declared in BSImagespaceShader
+0x149C020	vfunc	BSImagespaceShaderBlur9::Dtor	named	rtti+commonlib	106058	pdata_start	vtables(1): BSImagespaceShaderBlur9[00]	declared in BSImagespaceShader
+0x149C060	vfunc	BSImagespaceShaderBrightPassBlur11::Dtor	named	rtti+commonlib	106059	pdata_start	vtables(1): BSImagespaceShaderBrightPassBlur11[00]	declared in BSImagespaceShader
+0x149C0A0	vfunc	BSImagespaceShaderBrightPassBlur13::Dtor	named	rtti+commonlib	106060	pdata_start	vtables(1): BSImagespaceShaderBrightPassBlur13[00]	declared in BSImagespaceShader
+0x149C0E0	vfunc	BSImagespaceShaderBrightPassBlur15::Dtor	named	rtti+commonlib	106061	pdata_start	vtables(1): BSImagespaceShaderBrightPassBlur15[00]	declared in BSImagespaceShader
+0x149C120	vfunc	BSImagespaceShaderBrightPassBlur3::Dtor	named	rtti+commonlib	106062	pdata_start	vtables(1): BSImagespaceShaderBrightPassBlur3[00]	declared in BSImagespaceShader
+0x149C160	vfunc	BSImagespaceShaderBrightPassBlur5::Dtor	named	rtti+commonlib	106063	pdata_start	vtables(1): BSImagespaceShaderBrightPassBlur5[00]	declared in BSImagespaceShader
+0x149C1A0	vfunc	BSImagespaceShaderBrightPassBlur7::Dtor	named	rtti+commonlib	106064	pdata_start	vtables(1): BSImagespaceShaderBrightPassBlur7[00]	declared in BSImagespaceShader
+0x149C1E0	vfunc	BSImagespaceShaderBrightPassBlur9::Dtor	named	rtti+commonlib	106065	pdata_start	vtables(1): BSImagespaceShaderBrightPassBlur9[00]	declared in BSImagespaceShader
+0x149C220	vfunc	BSImagespaceShaderCopy::Dtor	named	rtti+commonlib	106066	pdata_start	vtables(1): BSImagespaceShaderCopy[00]	declared in BSImagespaceShader
+0x149C260	vfunc	BSImagespaceShaderCopyCustomViewport::Dtor	named	rtti+commonlib	106067	pdata_start	vtables(1): BSImagespaceShaderCopyCustomViewport[00]	declared in BSImagespaceShader
+0x149C2A0	vfunc	BSImagespaceShaderCopyDynamicFetchDisabled::Dtor	named	rtti+commonlib	106068	pdata_start	vtables(1): BSImagespaceShaderCopyDynamicFetchDisabled[00]	declared in BSImagespaceShader
+0x149C2E0	vfunc	BSImagespaceShaderCopyScaleBias::Dtor	named	rtti+commonlib	106069	pdata_start	vtables(1): BSImagespaceShaderCopyScaleBias[00]	declared in BSImagespaceShader
+0x149C320	vfunc	BSImagespaceShaderDepthOfField::Dtor	named	rtti+commonlib	106070	pdata_start	vtables(1): BSImagespaceShaderDepthOfField[00]	declared in BSImagespaceShader
+0x149C360	vfunc	BSImagespaceShaderDepthOfFieldFogged::Dtor	named	rtti+commonlib	106071	pdata_start	vtables(1): BSImagespaceShaderDepthOfFieldFogged[00]	declared in BSImagespaceShader
+0x149C3A0	vfunc	BSImagespaceShaderDepthOfFieldMaskedFogged::Dtor	named	rtti+commonlib	106072	pdata_start	vtables(1): BSImagespaceShaderDepthOfFieldMaskedFogged[00]	declared in BSImagespaceShader
+0x149C3E0	vfunc	BSImagespaceShaderDistantBlur::Dtor	named	rtti+commonlib	106073	pdata_start	vtables(1): BSImagespaceShaderDistantBlur[00]	declared in BSImagespaceShader
+0x149C420	vfunc	BSImagespaceShaderDistantBlurFogged::Dtor	named	rtti+commonlib	106074	pdata_start	vtables(1): BSImagespaceShaderDistantBlurFogged[00]	declared in BSImagespaceShader
+0x149C460	vfunc	BSImagespaceShaderDistantBlurMaskedFogged::Dtor	named	rtti+commonlib	106075	pdata_start	vtables(1): BSImagespaceShaderDistantBlurMaskedFogged[00]	declared in BSImagespaceShader
+0x149C4A0	vfunc	BSImagespaceShaderDoubleVision::Dtor	named	rtti+commonlib	106076	pdata_start	vtables(1): BSImagespaceShaderDoubleVision[00]	declared in BSImagespaceShader
+0x149C4E0	vfunc	BSImagespaceShaderFXAA::Dtor	named	rtti+commonlib	106077	pdata_start	vtables(1): BSImagespaceShaderFXAA[00]	declared in BSImagespaceShader
+0x149C530	vfunc	BSImagespaceShaderGreyScale::Dtor	named	rtti+commonlib	106078	pdata_start	vtables(1): BSImagespaceShaderGreyScale[00]	declared in BSImagespaceShader
+0x149C570	vfunc	BSImagespaceShaderHDRDownSample16::Dtor	named	rtti+commonlib	106079	pdata_start	vtables(1): BSImagespaceShaderHDRDownSample16[00]	declared in BSImagespaceShader
+0x149C5B0	vfunc	BSImagespaceShaderHDRDownSample16LightAdapt::Dtor	named	rtti+commonlib	106080	pdata_start	vtables(1): BSImagespaceShaderHDRDownSample16LightAdapt[00]	declared in BSImagespaceShader
+0x149C5F0	vfunc	BSImagespaceShaderHDRDownSample16Lum::Dtor	named	rtti+commonlib	106081	pdata_start	vtables(1): BSImagespaceShaderHDRDownSample16Lum[00]	declared in BSImagespaceShader
+0x149C630	vfunc	BSImagespaceShaderHDRDownSample16LumClamp::Dtor	named	rtti+commonlib	106082	pdata_start	vtables(1): BSImagespaceShaderHDRDownSample16LumClamp[00]	declared in BSImagespaceShader
+0x149C670	vfunc	BSImagespaceShaderHDRDownSample4::Dtor	named	rtti+commonlib	106083	pdata_start	vtables(1): BSImagespaceShaderHDRDownSample4[00]	declared in BSImagespaceShader
+0x149C6B0	vfunc	BSImagespaceShaderHDRDownSample4LightAdapt::Dtor	named	rtti+commonlib	106084	pdata_start	vtables(1): BSImagespaceShaderHDRDownSample4LightAdapt[00]	declared in BSImagespaceShader
+0x149C6F0	vfunc	BSImagespaceShaderHDRDownSample4LumClamp::Dtor	named	rtti+commonlib	106085	pdata_start	vtables(1): BSImagespaceShaderHDRDownSample4LumClamp[00]	declared in BSImagespaceShader
+0x149C730	vfunc	BSImagespaceShaderHDRDownSample4RGB2Lum::Dtor	named	rtti+commonlib	106086	pdata_start	vtables(1): BSImagespaceShaderHDRDownSample4RGB2Lum[00]	declared in BSImagespaceShader
+0x149C770	vfunc	BSImagespaceShaderHDRTonemapBlendCinematic::Dtor	named	rtti+commonlib	106087	pdata_start	vtables(1): BSImagespaceShaderHDRTonemapBlendCinematic[00]	declared in BSImagespaceShader
+0x149C7B0	vfunc	BSImagespaceShaderHDRTonemapBlendCinematicFade::Dtor	named	rtti+commonlib	106088	pdata_start	vtables(1): BSImagespaceShaderHDRTonemapBlendCinematicFade[00]	declared in BSImagespaceShader
+0x149C7F0	vfunc	BSImagespaceShaderISApplyVolumetricLighting::Dtor	named	rtti+commonlib	106089	pdata_start	vtables(1): BSImagespaceShaderISApplyVolumetricLighting[00]	declared in BSImagespaceShader
+0x149C830	vfunc	BSImagespaceShaderISBasicCopy::Dtor	named	rtti+commonlib	106090	pdata_start	vtables(1): BSImagespaceShaderISBasicCopy[00]	declared in BSImagespaceShader
+0x149C870	vfunc	BSImagespaceShaderISBlur::Dtor	named	rtti+commonlib	106091	pdata_start	vtables(1): BSImagespaceShaderISBlur[00]	declared in BSImagespaceShader
+0x149C8B0	vfunc	BSImagespaceShaderISCompositeLensFlare::Dtor	named	rtti+commonlib	106092	pdata_start	vtables(1): BSImagespaceShaderISCompositeLensFlare[00]	declared in BSImagespaceShader
+0x149C8F0	vfunc	BSImagespaceShaderISCompositeLensFlareVolumetricLighting::Dtor	named	rtti+commonlib	106093	pdata_start	vtables(1): BSImagespaceShaderISCompositeLensFlareVolumetricLighting[00]	declared in BSImagespaceShader
+0x149C930	vfunc	BSImagespaceShaderISCompositeVolumetricLighting::Dtor	named	rtti+commonlib	106094	pdata_start	vtables(1): BSImagespaceShaderISCompositeVolumetricLighting[00]	declared in BSImagespaceShader
+0x149C970	vfunc	BSImagespaceShaderISCopySubRegionCS::Dtor	named	rtti+commonlib	106095	pdata_start	vtables(1): BSImagespaceShaderISCopySubRegionCS[00]	declared in BSImagespaceShader
+0x149C9B0	vfunc	BSImagespaceShaderISDebugSnow::Dtor	named	rtti+commonlib	106096	pdata_start	vtables(1): BSImagespaceShaderISDebugSnow[00]	declared in BSImagespaceShader
+0x149C9F0	vfunc	BSImagespaceShaderISDepthOfFieldBlurHCS::Dtor	named	rtti+commonlib	106097	pdata_start	vtables(1): BSImagespaceShaderISDepthOfFieldBlurHCS[00]	declared in BSImagespaceShader
+0x149CA30	vfunc	BSImagespaceShaderISDepthOfFieldBlurVCS::Dtor	named	rtti+commonlib	106098	pdata_start	vtables(1): BSImagespaceShaderISDepthOfFieldBlurVCS[00]	declared in BSImagespaceShader
+0x149CA70	vfunc	BSImagespaceShaderISDisplayDepth::Dtor	named	rtti+commonlib	106099	pdata_start	vtables(1): BSImagespaceShaderISDisplayDepth[00]	declared in BSImagespaceShader
+0x149CAB0	vfunc	BSImagespaceShaderISDownsample::Dtor	named	rtti+commonlib	106100	pdata_start	vtables(1): BSImagespaceShaderISDownsample[00]	declared in BSImagespaceShader
+0x149CAF0	vfunc	BSImagespaceShaderISDownsampleCS::Dtor	named	rtti+commonlib	106101	pdata_start	vtables(1): BSImagespaceShaderISDownsampleCS[00]	declared in BSImagespaceShader
+0x149CB30	vfunc	BSImagespaceShaderISDownsampleIgnoreBrightest::Dtor	named	rtti+commonlib	106102	pdata_start	vtables(1): BSImagespaceShaderISDownsampleIgnoreBrightest[00]	declared in BSImagespaceShader
+0x149CB70	vfunc	BSImagespaceShaderISDownsampleIgnoreBrightestCS::Dtor	named	rtti+commonlib	106103	pdata_start	vtables(1): BSImagespaceShaderISDownsampleIgnoreBrightestCS[00]	declared in BSImagespaceShader
+0x149CBB0	vfunc	BSImagespaceShaderISExp::Dtor	named	rtti+commonlib	106104	pdata_start	vtables(1): BSImagespaceShaderISExp[00]	declared in BSImagespaceShader
+0x149CBF0	vfunc	BSImagespaceShaderISIBLensFlares::Dtor	named	rtti+commonlib	106105	pdata_start	vtables(1): BSImagespaceShaderISIBLensFlares[00]	declared in BSImagespaceShader
+0x149CC30	vfunc	BSImagespaceShaderISLightingComposite::Dtor	named	rtti+commonlib	106106	pdata_start	vtables(1): BSImagespaceShaderISLightingComposite[00]	declared in BSImagespaceShader
+0x149CC70	vfunc	BSImagespaceShaderISLightingCompositeMenu::Dtor	named	rtti+commonlib	106107	pdata_start	vtables(1): BSImagespaceShaderISLightingCompositeMenu[00]	declared in BSImagespaceShader
+0x149CCB0	vfunc	BSImagespaceShaderISLightingCompositeNoDirectionalLight::Dtor	named	rtti+commonlib	106108	pdata_start	vtables(1): BSImagespaceShaderISLightingCompositeNoDirectionalLight[00]	declared in BSImagespaceShader
+0x149CCF0	vfunc	BSImagespaceShaderISMinify::Dtor	named	rtti+commonlib	106109	pdata_start	vtables(1): BSImagespaceShaderISMinify[00]	declared in BSImagespaceShader
+0x149CD30	vfunc	BSImagespaceShaderISMinifyContrast::Dtor	named	rtti+commonlib	106110	pdata_start	vtables(1): BSImagespaceShaderISMinifyContrast[00]	declared in BSImagespaceShader
+0x149CD70	vfunc	BSImagespaceShaderISParallaxMaskBlurHCS::Dtor	named	rtti+commonlib	106111	pdata_start	vtables(1): BSImagespaceShaderISParallaxMaskBlurHCS[00]	declared in BSImagespaceShader
+0x149CDB0	vfunc	BSImagespaceShaderISParallaxMaskBlurVCS::Dtor	named	rtti+commonlib	106112	pdata_start	vtables(1): BSImagespaceShaderISParallaxMaskBlurVCS[00]	declared in BSImagespaceShader
+0x149CDF0	vfunc	BSImagespaceShaderISPerlinNoise2DCS::Dtor	named	rtti+commonlib	106113	pdata_start	vtables(1): BSImagespaceShaderISPerlinNoise2DCS[00]	declared in BSImagespaceShader
+0x149CE30	vfunc	BSImagespaceShaderISPerlinNoiseCS::Dtor	named	rtti+commonlib	106114	pdata_start	vtables(1): BSImagespaceShaderISPerlinNoiseCS[00]	declared in BSImagespaceShader
+0x149CE70	vfunc	BSImagespaceShaderISSAOBlurH::Dtor	named	rtti+commonlib	106115	pdata_start	vtables(1): BSImagespaceShaderISSAOBlurH[00]	declared in BSImagespaceShader
+0x149CEB0	vfunc	BSImagespaceShaderISSAOBlurHCS::Dtor	named	rtti+commonlib	106116	pdata_start	vtables(1): BSImagespaceShaderISSAOBlurHCS[00]	declared in BSImagespaceShader
+0x149CEF0	vfunc	BSImagespaceShaderISSAOBlurV::Dtor	named	rtti+commonlib	106117	pdata_start	vtables(1): BSImagespaceShaderISSAOBlurV[00]	declared in BSImagespaceShader
+0x149CF30	vfunc	BSImagespaceShaderISSAOBlurVCS::Dtor	named	rtti+commonlib	106118	pdata_start	vtables(1): BSImagespaceShaderISSAOBlurVCS[00]	declared in BSImagespaceShader
+0x149CF70	vfunc	BSImagespaceShaderISSAOCameraZ::Dtor	named	rtti+commonlib	106119	pdata_start	vtables(1): BSImagespaceShaderISSAOCameraZ[00]	declared in BSImagespaceShader
+0x149CFB0	vfunc	BSImagespaceShaderISSAOCameraZAndMipsCS::Dtor	named	rtti+commonlib	106120	pdata_start	vtables(1): BSImagespaceShaderISSAOCameraZAndMipsCS[00]	declared in BSImagespaceShader
+0x149CFF0	vfunc	BSImagespaceShaderISSAOCompositeFog::Dtor	named	rtti+commonlib	106121	pdata_start	vtables(1): BSImagespaceShaderISSAOCompositeFog[00]	declared in BSImagespaceShader
+0x149D030	vfunc	BSImagespaceShaderISSAOCompositeSAO::Dtor	named	rtti+commonlib	106122	pdata_start	vtables(1): BSImagespaceShaderISSAOCompositeSAO[00]	declared in BSImagespaceShader
+0x149D070	vfunc	BSImagespaceShaderISSAOCompositeSAOFog::Dtor	named	rtti+commonlib	106123	pdata_start	vtables(1): BSImagespaceShaderISSAOCompositeSAOFog[00]	declared in BSImagespaceShader
+0x149D0B0	vfunc	BSImagespaceShaderISSAORawAO::Dtor	named	rtti+commonlib	106124	pdata_start	vtables(1): BSImagespaceShaderISSAORawAO[00]	declared in BSImagespaceShader
+0x149D0F0	vfunc	BSImagespaceShaderISSAORawAOCS::Dtor	named	rtti+commonlib	106125	pdata_start	vtables(1): BSImagespaceShaderISSAORawAOCS[00]	declared in BSImagespaceShader
+0x149D130	vfunc	BSImagespaceShaderISSAORawAONoTemporal::Dtor	named	rtti+commonlib	106126	pdata_start	vtables(1): BSImagespaceShaderISSAORawAONoTemporal[00]	declared in BSImagespaceShader
+0x149D170	vfunc	BSImagespaceShaderISSILComposite::Dtor	named	rtti+commonlib	106127	pdata_start	vtables(1): BSImagespaceShaderISSILComposite[00]	declared in BSImagespaceShader
+0x149D1B0	vfunc	BSImagespaceShaderISSILRawInd::Dtor	named	rtti+commonlib	106128	pdata_start	vtables(1): BSImagespaceShaderISSILRawInd[00]	declared in BSImagespaceShader
+0x149D1F0	vfunc	BSImagespaceShaderISSimpleColor::Dtor	named	rtti+commonlib	106129	pdata_start	vtables(1): BSImagespaceShaderISSimpleColor[00]	declared in BSImagespaceShader
+0x149D230	vfunc	BSImagespaceShaderISSnowSSS::Dtor	named	rtti+commonlib	106130	pdata_start	vtables(1): BSImagespaceShaderISSnowSSS[00]	declared in BSImagespaceShader
+0x149D270	vfunc	BSImagespaceShaderISTemporalAA::Dtor	named	rtti+commonlib	106131	pdata_start	vtables(1): BSImagespaceShaderISTemporalAA[00]	declared in BSImagespaceShader
+0x149D2B0	vfunc	BSImagespaceShaderISTemporalAA_UI::Dtor	named	rtti+commonlib	106132	pdata_start	vtables(1): BSImagespaceShaderISTemporalAA_UI[00]	declared in BSImagespaceShader
+0x149D2F0	vfunc	BSImagespaceShaderISTemporalAA_Water::Dtor	named	rtti+commonlib	106133	pdata_start	vtables(1): BSImagespaceShaderISTemporalAA_Water[00]	declared in BSImagespaceShader
+0x149D330	vfunc	BSImagespaceShaderISUnderwaterMask::Dtor	named	rtti+commonlib	106134	pdata_start	vtables(1): BSImagespaceShaderISUnderwaterMask[00]	declared in BSImagespaceShader
+0x149D370	vfunc	BSImagespaceShaderISUpsampleDynamicResolution::Dtor	named	rtti+commonlib	106135	pdata_start	vtables(1): BSImagespaceShaderISUpsampleDynamicResolution[00]	declared in BSImagespaceShader
+0x149D3B0	vfunc	BSImagespaceShaderISVolumetricLightingBlurHCS::Dtor	named	rtti+commonlib	106136	pdata_start	vtables(1): BSImagespaceShaderISVolumetricLightingBlurHCS[00]	declared in BSImagespaceShader
+0x149D3F0	vfunc	BSImagespaceShaderISVolumetricLightingBlurVCS::Dtor	named	rtti+commonlib	106137	pdata_start	vtables(1): BSImagespaceShaderISVolumetricLightingBlurVCS[00]	declared in BSImagespaceShader
+0x149D430	vfunc	BSImagespaceShaderISWaterBlend::Dtor	named	rtti+commonlib	106138	pdata_start	vtables(1): BSImagespaceShaderISWaterBlend[00]	declared in BSImagespaceShader
+0x149D470	vfunc	BSImagespaceShaderLocalMap::Dtor	named	rtti+commonlib	106139	pdata_start	vtables(1): BSImagespaceShaderLocalMap[00]	declared in BSImagespaceShader
+0x149D4B0	vfunc	BSImagespaceShaderMap::Dtor	named	rtti+commonlib	106140	pdata_start	vtables(1): BSImagespaceShaderMap[00]	declared in BSImagespaceShader
+0x149D4F0	vfunc	BSImagespaceShaderNoiseNormalmap::Dtor	named	rtti+commonlib	106141	pdata_start	vtables(1): BSImagespaceShaderNoiseNormalmap[00]	declared in BSImagespaceShader
+0x149D530	vfunc	BSImagespaceShaderNoiseScrollAndBlend::Dtor	named	rtti+commonlib	106142	pdata_start	vtables(1): BSImagespaceShaderNoiseScrollAndBlend[00]	declared in BSImagespaceShader
+0x149D570	vfunc	BSImagespaceShaderNonHDRBlur11::Dtor	named	rtti+commonlib	106143	pdata_start	vtables(1): BSImagespaceShaderNonHDRBlur11[00]	declared in BSImagespaceShader
+0x149D5B0	vfunc	BSImagespaceShaderNonHDRBlur13::Dtor	named	rtti+commonlib	106144	pdata_start	vtables(1): BSImagespaceShaderNonHDRBlur13[00]	declared in BSImagespaceShader
+0x149D5F0	vfunc	BSImagespaceShaderNonHDRBlur15::Dtor	named	rtti+commonlib	106145	pdata_start	vtables(1): BSImagespaceShaderNonHDRBlur15[00]	declared in BSImagespaceShader
+0x149D630	vfunc	BSImagespaceShaderNonHDRBlur3::Dtor	named	rtti+commonlib	106146	pdata_start	vtables(1): BSImagespaceShaderNonHDRBlur3[00]	declared in BSImagespaceShader
+0x149D670	vfunc	BSImagespaceShaderNonHDRBlur5::Dtor	named	rtti+commonlib	106147	pdata_start	vtables(1): BSImagespaceShaderNonHDRBlur5[00]	declared in BSImagespaceShader
+0x149D6B0	vfunc	BSImagespaceShaderNonHDRBlur7::Dtor	named	rtti+commonlib	106148	pdata_start	vtables(1): BSImagespaceShaderNonHDRBlur7[00]	declared in BSImagespaceShader
+0x149D6F0	vfunc	BSImagespaceShaderNonHDRBlur9::Dtor	named	rtti+commonlib	106149	pdata_start	vtables(1): BSImagespaceShaderNonHDRBlur9[00]	declared in BSImagespaceShader
+0x149D730	vfunc	BSImagespaceShaderRadialBlur::Dtor	named	rtti+commonlib	106150	pdata_start	vtables(1): BSImagespaceShaderRadialBlur[00]	declared in BSImagespaceShader
+0x149D770	vfunc	BSImagespaceShaderRadialBlurHigh::Dtor	named	rtti+commonlib	106151	pdata_start	vtables(1): BSImagespaceShaderRadialBlurHigh[00]	declared in BSImagespaceShader
+0x149D7B0	vfunc	BSImagespaceShaderRadialBlurMedium::Dtor	named	rtti+commonlib	106152	pdata_start	vtables(1): BSImagespaceShaderRadialBlurMedium[00]	declared in BSImagespaceShader
+0x149D7F0	vfunc	BSImagespaceShaderReflectionBlurHCS::Dtor	named	rtti+commonlib	106153	pdata_start	vtables(1): BSImagespaceShaderReflectionBlurHCS[00]	declared in BSImagespaceShader
+0x149D830	vfunc	BSImagespaceShaderReflectionBlurVCS::Dtor	named	rtti+commonlib	106154	pdata_start	vtables(1): BSImagespaceShaderReflectionBlurVCS[00]	declared in BSImagespaceShader
+0x149D870	vfunc	BSImagespaceShaderReflectionsDebugSpecMask::Dtor	named	rtti+commonlib	106155	pdata_start	vtables(1): BSImagespaceShaderReflectionsDebugSpecMask[00]	declared in BSImagespaceShader
+0x149D8B0	vfunc	BSImagespaceShaderReflectionsRayTracing::Dtor	named	rtti+commonlib	106156	pdata_start	vtables(1): BSImagespaceShaderReflectionsRayTracing[00]	declared in BSImagespaceShader
+0x149D930	vfunc	BSImagespaceShaderTextureMask::Dtor	named	rtti+commonlib	106158	pdata_start	vtables(1): BSImagespaceShaderTextureMask[00]	declared in BSImagespaceShader
+0x149D970	vfunc	BSImagespaceShaderVolumetricLighting::Dtor	named	rtti+commonlib	106159	pdata_start	vtables(1): BSImagespaceShaderVolumetricLighting[00]	declared in BSImagespaceShader
+0x149DC30	vfunc	BSImagespaceShaderWorldMap::Dtor	named	rtti+commonlib	106170	pdata_start	vtables(1): BSImagespaceShaderWorldMap[00]	declared in BSImagespaceShader
+0x149DC70	vfunc	BSImagespaceShaderWorldMapNoSkyBlur::Dtor	named	rtti+commonlib	106171	pdata_start	vtables(1): BSImagespaceShaderWorldMapNoSkyBlur[00]	declared in BSImagespaceShader
+0x149DD30	vfunc	BSImagespaceShaderAlphaBlend::Unk_0D	inferred	rtti+commonlib	106174	no_pdata_entry	vtables(1): BSImagespaceShaderAlphaBlend[0D]	declared in BSImagespaceShader
+0x149DD40	vfunc	BSImagespaceShaderApplyReflections::Unk_0D	inferred	rtti+commonlib	106175	no_pdata_entry	vtables(1): BSImagespaceShaderApplyReflections[0D]	declared in BSImagespaceShader
+0x149DD50	vfunc	BSImagespaceShaderBlur11::Unk_0D	inferred	rtti+commonlib	106176	no_pdata_entry	vtables(1): BSImagespaceShaderBlur11[0D]	declared in BSImagespaceShader
+0x149DD90	vfunc	BSImagespaceShaderBlur13::Unk_0D	inferred	rtti+commonlib	106177	no_pdata_entry	vtables(1): BSImagespaceShaderBlur13[0D]	declared in BSImagespaceShader
+0x149DDD0	vfunc	BSImagespaceShaderBlur15::Unk_0D	inferred	rtti+commonlib	106178	no_pdata_entry	vtables(1): BSImagespaceShaderBlur15[0D]	declared in BSImagespaceShader
+0x149DE10	vfunc	BSImagespaceShaderBlur3::Unk_0D	inferred	rtti+commonlib	106179	no_pdata_entry	vtables(1): BSImagespaceShaderBlur3[0D]	
+0x149DE50	vfunc	BSImagespaceShaderBlur5::Unk_0D	inferred	rtti+commonlib	106180	no_pdata_entry	vtables(1): BSImagespaceShaderBlur5[0D]	declared in BSImagespaceShader
+0x149DE90	vfunc	BSImagespaceShaderBlur7::Unk_0D	inferred	rtti+commonlib	106181	no_pdata_entry	vtables(1): BSImagespaceShaderBlur7[0D]	declared in BSImagespaceShader
+0x149DED0	vfunc	BSImagespaceShaderBlur9::Unk_0D	inferred	rtti+commonlib	106182	no_pdata_entry	vtables(1): BSImagespaceShaderBlur9[0D]	declared in BSImagespaceShader
+0x149DF10	vfunc	BSImagespaceShaderBrightPassBlur11::Unk_0D	inferred	rtti+commonlib	106183	no_pdata_entry	vtables(1): BSImagespaceShaderBrightPassBlur11[0D]	declared in BSImagespaceShader
+0x149DF60	vfunc	BSImagespaceShaderBrightPassBlur13::Unk_0D	inferred	rtti+commonlib	106184	no_pdata_entry	vtables(1): BSImagespaceShaderBrightPassBlur13[0D]	declared in BSImagespaceShader
+0x149DFB0	vfunc	BSImagespaceShaderBrightPassBlur15::Unk_0D	inferred	rtti+commonlib	106185	no_pdata_entry	vtables(1): BSImagespaceShaderBrightPassBlur15[0D]	declared in BSImagespaceShader
+0x149E000	vfunc	BSImagespaceShaderBrightPassBlur3::Unk_0D	inferred	rtti+commonlib	106186	no_pdata_entry	vtables(1): BSImagespaceShaderBrightPassBlur3[0D]	declared in BSImagespaceShader
+0x149E050	vfunc	BSImagespaceShaderBrightPassBlur5::Unk_0D	inferred	rtti+commonlib	106187	no_pdata_entry	vtables(1): BSImagespaceShaderBrightPassBlur5[0D]	declared in BSImagespaceShader
+0x149E0A0	vfunc	BSImagespaceShaderBrightPassBlur7::Unk_0D	inferred	rtti+commonlib	106188	no_pdata_entry	vtables(1): BSImagespaceShaderBrightPassBlur7[0D]	declared in BSImagespaceShader
+0x149E0F0	vfunc	BSImagespaceShaderBrightPassBlur9::Unk_0D	inferred	rtti+commonlib	106189	no_pdata_entry	vtables(1): BSImagespaceShaderBrightPassBlur9[0D]	declared in BSImagespaceShader
+0x149E140	vfunc	BSImagespaceShaderCopy::Unk_0D	inferred	rtti+commonlib	106190	no_pdata_entry	vtables(1): BSImagespaceShaderCopy[0D]	declared in BSImagespaceShader
+0x149E150	vfunc	BSImagespaceShaderCopyCustomViewport::Unk_0D	inferred	rtti+commonlib	106191	no_pdata_entry	vtables(1): BSImagespaceShaderCopyCustomViewport[0D]	declared in BSImagespaceShader
+0x149E160	vfunc	BSImagespaceShaderCopyDynamicFetchDisabled::Unk_0D	inferred	rtti+commonlib	106192	no_pdata_entry	vtables(1): BSImagespaceShaderCopyDynamicFetchDisabled[0D]	declared in BSImagespaceShader
+0x149E190	vfunc	BSImagespaceShaderCopyScaleBias::Unk_0D	inferred	rtti+commonlib	106193	no_pdata_entry	vtables(1): BSImagespaceShaderCopyScaleBias[0D]	declared in BSImagespaceShader
+0x149E1C0	vfunc	BSImagespaceShaderDepthOfField::Unk_0D	inferred	rtti+commonlib	106194	no_pdata_entry	vtables(1): BSImagespaceShaderDepthOfField[0D]	declared in BSImagespaceShader
+0x149E1D0	vfunc	BSImagespaceShaderDepthOfFieldFogged::Unk_0D	inferred	rtti+commonlib	106195	no_pdata_entry	vtables(1): BSImagespaceShaderDepthOfFieldFogged[0D]	declared in BSImagespaceShader
+0x149E200	vfunc	BSImagespaceShaderDepthOfFieldMaskedFogged::Unk_0D	inferred	rtti+commonlib	106196	no_pdata_entry	vtables(1): BSImagespaceShaderDepthOfFieldMaskedFogged[0D]	declared in BSImagespaceShader
+0x149E240	vfunc	BSImagespaceShaderDistantBlur::Unk_0D	inferred	rtti+commonlib	106197	no_pdata_entry	vtables(1): BSImagespaceShaderDistantBlur[0D]	declared in BSImagespaceShader
+0x149E270	vfunc	BSImagespaceShaderDistantBlurFogged::Unk_0D	inferred	rtti+commonlib	106198	no_pdata_entry	vtables(1): BSImagespaceShaderDistantBlurFogged[0D]	declared in BSImagespaceShader
+0x149E2B0	vfunc	BSImagespaceShaderDistantBlurMaskedFogged::Unk_0D	inferred	rtti+commonlib	106199	no_pdata_entry	vtables(1): BSImagespaceShaderDistantBlurMaskedFogged[0D]	declared in BSImagespaceShader
+0x149E300	vfunc	BSImagespaceShaderDoubleVision::Unk_0D	inferred	rtti+commonlib	106200	no_pdata_entry	vtables(1): BSImagespaceShaderDoubleVision[0D]	declared in BSImagespaceShader
+0x149E310	vfunc	BSImagespaceShaderFXAA::Unk_0D	inferred	rtti+commonlib	106201	no_pdata_entry	vtables(1): BSImagespaceShaderFXAA[0D]	declared in BSImagespaceShader
+0x149E320	vfunc	BSImagespaceShaderGreyScale::Unk_0D	inferred	rtti+commonlib	106202	no_pdata_entry	vtables(1): BSImagespaceShaderGreyScale[0D]	declared in BSImagespaceShader
+0x149E350	vfunc	BSImagespaceShaderHDRDownSample16::Unk_0D	inferred	rtti+commonlib	106203	no_pdata_entry	vtables(1): BSImagespaceShaderHDRDownSample16[0D]	declared in BSImagespaceShader
+0x149E380	vfunc	BSImagespaceShaderHDRDownSample16LightAdapt::Unk_0D	inferred	rtti+commonlib	106204	no_pdata_entry	vtables(1): BSImagespaceShaderHDRDownSample16LightAdapt[0D]	declared in BSImagespaceShader
+0x149E3D0	vfunc	BSImagespaceShaderHDRDownSample16Lum::Unk_0D	inferred	rtti+commonlib	106205	no_pdata_entry	vtables(1): BSImagespaceShaderHDRDownSample16Lum[0D]	declared in BSImagespaceShader
+0x149E410	vfunc	BSImagespaceShaderHDRDownSample16LumClamp::Unk_0D	inferred	rtti+commonlib	106206	no_pdata_entry	vtables(1): BSImagespaceShaderHDRDownSample16LumClamp[0D]	declared in BSImagespaceShader
+0x149E460	vfunc	BSImagespaceShaderHDRDownSample4::Unk_0D	inferred	rtti+commonlib	106207	no_pdata_entry	vtables(1): BSImagespaceShaderHDRDownSample4[0D]	declared in BSImagespaceShader
+0x149E490	vfunc	BSImagespaceShaderHDRDownSample4LightAdapt::Unk_0D	inferred	rtti+commonlib	106208	no_pdata_entry	vtables(1): BSImagespaceShaderHDRDownSample4LightAdapt[0D]	declared in BSImagespaceShader
+0x149E4D0	vfunc	BSImagespaceShaderHDRDownSample4LumClamp::Unk_0D	inferred	rtti+commonlib	106209	no_pdata_entry	vtables(1): BSImagespaceShaderHDRDownSample4LumClamp[0D]	declared in BSImagespaceShader
+0x149E510	vfunc	BSImagespaceShaderHDRDownSample4RGB2Lum::Unk_0D	inferred	rtti+commonlib	106210	no_pdata_entry	vtables(1): BSImagespaceShaderHDRDownSample4RGB2Lum[0D]	declared in BSImagespaceShader
+0x149E560	vfunc	BSImagespaceShaderHDRTonemapBlendCinematic::Unk_0D	inferred	rtti+commonlib	106211	no_pdata_entry	vtables(1): BSImagespaceShaderHDRTonemapBlendCinematic[0D]	declared in BSImagespaceShader
+0x149E590	vfunc	BSImagespaceShaderHDRTonemapBlendCinematicFade::Unk_0D	inferred	rtti+commonlib	106212	no_pdata_entry	vtables(1): BSImagespaceShaderHDRTonemapBlendCinematicFade[0D]	declared in BSImagespaceShader
+0x149E5D0	vfunc	BSImagespaceShaderISApplyVolumetricLighting::Unk_0D	inferred	rtti+commonlib	106213	no_pdata_entry	vtables(1): BSImagespaceShaderISApplyVolumetricLighting[0D]	declared in BSImagespaceShader
+0x149E5E0	vfunc	BSImagespaceShaderISBasicCopy::Unk_0D	inferred	rtti+commonlib	106214	no_pdata_entry	vtables(1): BSImagespaceShaderISBasicCopy[0D]	declared in BSImagespaceShader
+0x149E5F0	vfunc	BSImagespaceShaderISBlur::Unk_0D	inferred	rtti+commonlib	106215	no_pdata_entry	vtables(1): BSImagespaceShaderISBlur[0D]	declared in BSImagespaceShader
+0x149E600	vfunc	BSImagespaceShaderISCompositeLensFlare::Unk_0D	inferred	rtti+commonlib	106216	no_pdata_entry	vtables(1): BSImagespaceShaderISCompositeLensFlare[0D]	declared in BSImagespaceShader
+0x149E630	vfunc	BSImagespaceShaderISCompositeLensFlareVolumetricLighting::Unk_0D	inferred	rtti+commonlib	106217	no_pdata_entry	vtables(1): BSImagespaceShaderISCompositeLensFlareVolumetricLighting[0D]	declared in BSImagespaceShader
+0x149E670	vfunc	BSImagespaceShaderISCompositeVolumetricLighting::Unk_0D	inferred	rtti+commonlib	106218	no_pdata_entry	vtables(1): BSImagespaceShaderISCompositeVolumetricLighting[0D]	declared in BSImagespaceShader
+0x149E6A0	vfunc	BSImagespaceShaderISCopySubRegionCS::Unk_0D	inferred	rtti+commonlib	106219	no_pdata_entry	vtables(1): BSImagespaceShaderISCopySubRegionCS[0D]	declared in BSImagespaceShader
+0x149E6B0	vfunc	BSImagespaceShaderISDebugSnow::Unk_0D	inferred	rtti+commonlib	106220	no_pdata_entry	vtables(1): BSImagespaceShaderISDebugSnow[0D]	declared in BSImagespaceShader
+0x149E6C0	vfunc	BSImagespaceShaderISDepthOfFieldBlurHCS::Unk_0D	inferred	rtti+commonlib	106221	no_pdata_entry	vtables(1): BSImagespaceShaderISDepthOfFieldBlurHCS[0D]	declared in BSImagespaceShader
+0x149E750	vfunc	BSImagespaceShaderISDepthOfFieldBlurVCS::Unk_0D	inferred	rtti+commonlib	106222	no_pdata_entry	vtables(1): BSImagespaceShaderISDepthOfFieldBlurVCS[0D]	declared in BSImagespaceShader
+0x149E7E0	vfunc	BSImagespaceShaderISDisplayDepth::Unk_0D	inferred	rtti+commonlib	106223	no_pdata_entry	vtables(1): BSImagespaceShaderISDisplayDepth[0D]	declared in BSImagespaceShader
+0x149E810	vfunc	BSImagespaceShaderISDownsample::Unk_0D	inferred	rtti+commonlib	106224	no_pdata_entry	vtables(1): BSImagespaceShaderISDownsample[0D]	declared in BSImagespaceShader
+0x149E850	vfunc	BSImagespaceShaderISDownsampleCS::Unk_0D	inferred	rtti+commonlib	106225	no_pdata_entry	vtables(1): BSImagespaceShaderISDownsampleCS[0D]	declared in BSImagespaceShader
+0x149E890	vfunc	BSImagespaceShaderISDownsampleIgnoreBrightest::Unk_0D	inferred	rtti+commonlib	106226	no_pdata_entry	vtables(1): BSImagespaceShaderISDownsampleIgnoreBrightest[0D]	declared in BSImagespaceShader
+0x149E8C0	vfunc	BSImagespaceShaderISDownsampleIgnoreBrightestCS::Unk_0D	inferred	rtti+commonlib	106227	no_pdata_entry	vtables(1): BSImagespaceShaderISDownsampleIgnoreBrightestCS[0D]	declared in BSImagespaceShader
+0x149E8F0	vfunc	BSImagespaceShaderISExp::Unk_0D	inferred	rtti+commonlib	106228	no_pdata_entry	vtables(1): BSImagespaceShaderISExp[0D]	declared in BSImagespaceShader
+0x149E900	vfunc	BSImagespaceShaderISIBLensFlares::Unk_0D	inferred	rtti+commonlib	106229	no_pdata_entry	vtables(1): BSImagespaceShaderISIBLensFlares[0D]	declared in BSImagespaceShader
+0x149E910	vfunc	BSImagespaceShaderISLightingComposite::Unk_0D	inferred	rtti+commonlib	106230	no_pdata_entry	vtables(1): BSImagespaceShaderISLightingComposite[0D]	declared in BSImagespaceShader
+0x149E940	vfunc	BSImagespaceShaderISLightingCompositeMenu::Unk_0D	inferred	rtti+commonlib	106231	no_pdata_entry	vtables(1): BSImagespaceShaderISLightingCompositeMenu[0D]	declared in BSImagespaceShader
+0x149E980	vfunc	BSImagespaceShaderISLightingCompositeNoDirectionalLight::Unk_0D	inferred	rtti+commonlib	106232	no_pdata_entry	vtables(1): BSImagespaceShaderISLightingCompositeNoDirectionalLight[0D]	declared in BSImagespaceShader
+0x149E990	vfunc	BSImagespaceShaderISMinify::Unk_0D	inferred	rtti+commonlib	106233	no_pdata_entry	vtables(1): BSImagespaceShaderISMinify[0D]	declared in BSImagespaceShader
+0x149E9A0	vfunc	BSImagespaceShaderISMinifyContrast::Unk_0D	inferred	rtti+commonlib	106234	no_pdata_entry	vtables(1): BSImagespaceShaderISMinifyContrast[0D]	declared in BSImagespaceShader
+0x149E9D0	vfunc	BSImagespaceShaderISParallaxMaskBlurHCS::Unk_0D	inferred	rtti+commonlib	106235	no_pdata_entry	vtables(1): BSImagespaceShaderISParallaxMaskBlurHCS[0D]	declared in BSImagespaceShader
+0x149EA70	vfunc	BSImagespaceShaderISParallaxMaskBlurVCS::Unk_0D	inferred	rtti+commonlib	106236	no_pdata_entry	vtables(1): BSImagespaceShaderISParallaxMaskBlurVCS[0D]	declared in BSImagespaceShader
+0x149EAF0	vfunc	BSImagespaceShaderISPerlinNoise2DCS::Unk_0D	inferred	rtti+commonlib	106237	no_pdata_entry	vtables(1): BSImagespaceShaderISPerlinNoise2DCS[0D]	declared in BSImagespaceShader
+0x149EB20	vfunc	BSImagespaceShaderISPerlinNoiseCS::Unk_0D	inferred	rtti+commonlib	106238	no_pdata_entry	vtables(1): BSImagespaceShaderISPerlinNoiseCS[0D]	declared in BSImagespaceShader
+0x149EB30	vfunc	BSImagespaceShaderISSAOBlurH::Unk_0D	inferred	rtti+commonlib	106239	no_pdata_entry	vtables(1): BSImagespaceShaderISSAOBlurH[0D]	declared in BSImagespaceShader
+0x149EB60	vfunc	BSImagespaceShaderISSAOBlurHCS::Unk_0D	inferred	rtti+commonlib	106240	no_pdata_entry	vtables(1): BSImagespaceShaderISSAOBlurHCS[0D]	declared in BSImagespaceShader
+0x149EB90	vfunc	BSImagespaceShaderISSAOBlurV::Unk_0D	inferred	rtti+commonlib	106241	no_pdata_entry	vtables(1): BSImagespaceShaderISSAOBlurV[0D]	declared in BSImagespaceShader
+0x149EBC0	vfunc	BSImagespaceShaderISSAOBlurVCS::Unk_0D	inferred	rtti+commonlib	106242	no_pdata_entry	vtables(1): BSImagespaceShaderISSAOBlurVCS[0D]	declared in BSImagespaceShader
+0x149EC00	vfunc	BSImagespaceShaderISSAOCameraZ::Unk_0D	inferred	rtti+commonlib	106243	no_pdata_entry	vtables(1): BSImagespaceShaderISSAOCameraZ[0D]	declared in BSImagespaceShader
+0x149EC10	vfunc	BSImagespaceShaderISSAOCameraZAndMipsCS::Unk_0D	inferred	rtti+commonlib	106244	no_pdata_entry	vtables(1): BSImagespaceShaderISSAOCameraZAndMipsCS[0D]	declared in BSImagespaceShader
+0x149EC20	vfunc	BSImagespaceShaderISSAOCompositeFog::Unk_0D	inferred	rtti+commonlib	106245	no_pdata_entry	vtables(1): BSImagespaceShaderISSAOCompositeFog[0D]	declared in BSImagespaceShader
+0x149EC50	vfunc	BSImagespaceShaderISSAOCompositeSAO::Unk_0D	inferred	rtti+commonlib	106246	no_pdata_entry	vtables(1): BSImagespaceShaderISSAOCompositeSAO[0D]	declared in BSImagespaceShader
+0x149EC80	vfunc	BSImagespaceShaderISSAOCompositeSAOFog::Unk_0D	inferred	rtti+commonlib	106247	no_pdata_entry	vtables(1): BSImagespaceShaderISSAOCompositeSAOFog[0D]	declared in BSImagespaceShader
+0x149ECC0	vfunc	BSImagespaceShaderISSAORawAO::Unk_0D	inferred	rtti+commonlib	106248	no_pdata_entry	vtables(1): BSImagespaceShaderISSAORawAO[0D]	declared in BSImagespaceShader
+0x149ECF0	vfunc	BSImagespaceShaderISSAORawAOCS::Unk_0D	inferred	rtti+commonlib	106249	no_pdata_entry	vtables(1): BSImagespaceShaderISSAORawAOCS[0D]	declared in BSImagespaceShader
+0x149ED00	vfunc	BSImagespaceShaderISSAORawAONoTemporal::Unk_0D	inferred	rtti+commonlib	106250	no_pdata_entry	vtables(1): BSImagespaceShaderISSAORawAONoTemporal[0D]	declared in BSImagespaceShader
+0x149ED40	vfunc	BSImagespaceShaderISSILComposite::Unk_0D	inferred	rtti+commonlib	106251	no_pdata_entry	vtables(1): BSImagespaceShaderISSILComposite[0D]	declared in BSImagespaceShader
+0x149ED50	vfunc	BSImagespaceShaderISSILRawInd::Unk_0D	inferred	rtti+commonlib	106252	no_pdata_entry	vtables(1): BSImagespaceShaderISSILRawInd[0D]	declared in BSImagespaceShader
+0x149ED60	vfunc	BSImagespaceShaderISSimpleColor::Unk_0D	inferred	rtti+commonlib	106253	no_pdata_entry	vtables(1): BSImagespaceShaderISSimpleColor[0D]	declared in BSImagespaceShader
+0x149ED70	vfunc	BSImagespaceShaderISSnowSSS::Unk_0D	inferred	rtti+commonlib	106254	no_pdata_entry	vtables(1): BSImagespaceShaderISSnowSSS[0D]	declared in BSImagespaceShader
+0x149ED80	vfunc	BSImagespaceShaderISTemporalAA::Unk_0D	inferred	rtti+commonlib	106255	no_pdata_entry	vtables(1): BSImagespaceShaderISTemporalAA[0D]	declared in BSImagespaceShader
+0x149ED90	vfunc	BSImagespaceShaderISTemporalAA_UI::Unk_0D	inferred	rtti+commonlib	106256	no_pdata_entry	vtables(1): BSImagespaceShaderISTemporalAA_UI[0D]	declared in BSImagespaceShader
+0x149EDC0	vfunc	BSImagespaceShaderISTemporalAA_Water::Unk_0D	inferred	rtti+commonlib	106257	no_pdata_entry	vtables(1): BSImagespaceShaderISTemporalAA_Water[0D]	declared in BSImagespaceShader
+0x149EDF0	vfunc	BSImagespaceShaderISUnderwaterMask::Unk_0D	inferred	rtti+commonlib	106258	no_pdata_entry	vtables(1): BSImagespaceShaderISUnderwaterMask[0D]	declared in BSImagespaceShader
+0x149EE20	vfunc	BSImagespaceShaderISUpsampleDynamicResolution::Unk_0D	inferred	rtti+commonlib	106259	no_pdata_entry	vtables(1): BSImagespaceShaderISUpsampleDynamicResolution[0D]	declared in BSImagespaceShader
+0x149EE30	vfunc	BSImagespaceShaderISVolumetricLightingBlurHCS::Unk_0D	inferred	rtti+commonlib	106260	no_pdata_entry	vtables(1): BSImagespaceShaderISVolumetricLightingBlurHCS[0D]	declared in BSImagespaceShader
+0x149EEE0	vfunc	BSImagespaceShaderISVolumetricLightingBlurVCS::Unk_0D	inferred	rtti+commonlib	106261	no_pdata_entry	vtables(1): BSImagespaceShaderISVolumetricLightingBlurVCS[0D]	declared in BSImagespaceShader
+0x149EF90	vfunc	BSImagespaceShaderISWaterBlend::Unk_0D	inferred	rtti+commonlib	106262	no_pdata_entry	vtables(1): BSImagespaceShaderISWaterBlend[0D]	declared in BSImagespaceShader
+0x149EFA0	vfunc	BSImagespaceShaderLocalMap::Unk_0D	inferred	rtti+commonlib	106263	no_pdata_entry	vtables(1): BSImagespaceShaderLocalMap[0D]	declared in BSImagespaceShader
+0x149EFB0	vfunc	BSImagespaceShaderMap::Unk_0D	inferred	rtti+commonlib	106264	no_pdata_entry	vtables(1): BSImagespaceShaderMap[0D]	declared in BSImagespaceShader
+0x149EFC0	vfunc	BSImagespaceShaderNoiseNormalmap::Unk_0D	inferred	rtti+commonlib	106265	no_pdata_entry	vtables(1): BSImagespaceShaderNoiseNormalmap[0D]	declared in BSImagespaceShader
+0x149EFF0	vfunc	BSImagespaceShaderNoiseScrollAndBlend::Unk_0D	inferred	rtti+commonlib	106266	no_pdata_entry	vtables(1): BSImagespaceShaderNoiseScrollAndBlend[0D]	declared in BSImagespaceShader
+0x149F020	vfunc	BSImagespaceShaderNonHDRBlur11::Unk_0D	inferred	rtti+commonlib	106267	no_pdata_entry	vtables(1): BSImagespaceShaderNonHDRBlur11[0D]	declared in BSImagespaceShader
+0x149F050	vfunc	BSImagespaceShaderNonHDRBlur13::Unk_0D	inferred	rtti+commonlib	106268	no_pdata_entry	vtables(1): BSImagespaceShaderNonHDRBlur13[0D]	declared in BSImagespaceShader
+0x149F080	vfunc	BSImagespaceShaderNonHDRBlur15::Unk_0D	inferred	rtti+commonlib	106269	no_pdata_entry	vtables(1): BSImagespaceShaderNonHDRBlur15[0D]	declared in BSImagespaceShader
+0x149F0B0	vfunc	BSImagespaceShaderNonHDRBlur3::Unk_0D	inferred	rtti+commonlib	106270	no_pdata_entry	vtables(1): BSImagespaceShaderNonHDRBlur3[0D]	declared in BSImagespaceShader
+0x149F0E0	vfunc	BSImagespaceShaderNonHDRBlur5::Unk_0D	inferred	rtti+commonlib	106271	no_pdata_entry	vtables(1): BSImagespaceShaderNonHDRBlur5[0D]	declared in BSImagespaceShader
+0x149F110	vfunc	BSImagespaceShaderNonHDRBlur7::Unk_0D	inferred	rtti+commonlib	106272	no_pdata_entry	vtables(1): BSImagespaceShaderNonHDRBlur7[0D]	declared in BSImagespaceShader
+0x149F140	vfunc	BSImagespaceShaderNonHDRBlur9::Unk_0D	inferred	rtti+commonlib	106273	no_pdata_entry	vtables(1): BSImagespaceShaderNonHDRBlur9[0D]	declared in BSImagespaceShader
+0x149F170	vfunc	BSImagespaceShaderRadialBlur::Unk_0D	inferred	rtti+commonlib	106274	no_pdata_entry	vtables(1): BSImagespaceShaderRadialBlur[0D]	declared in BSImagespaceShader
+0x149F1A0	vfunc	BSImagespaceShaderRadialBlurHigh::Unk_0D	inferred	rtti+commonlib	106275	no_pdata_entry	vtables(1): BSImagespaceShaderRadialBlurHigh[0D]	declared in BSImagespaceShader
+0x149F1D0	vfunc	BSImagespaceShaderRadialBlurMedium::Unk_0D	inferred	rtti+commonlib	106276	no_pdata_entry	vtables(1): BSImagespaceShaderRadialBlurMedium[0D]	declared in BSImagespaceShader
+0x149F200	vfunc	BSImagespaceShaderReflectionBlurHCS::Unk_0D	inferred	rtti+commonlib	106277	no_pdata_entry	vtables(1): BSImagespaceShaderReflectionBlurHCS[0D]	declared in BSImagespaceShader
+0x149F280	vfunc	BSImagespaceShaderReflectionBlurVCS::Unk_0D	inferred	rtti+commonlib	106278	no_pdata_entry	vtables(1): BSImagespaceShaderReflectionBlurVCS[0D]	declared in BSImagespaceShader
+0x149F300	vfunc	BSImagespaceShaderReflectionsDebugSpecMask::Unk_0D	inferred	rtti+commonlib	106279	no_pdata_entry	vtables(1): BSImagespaceShaderReflectionsDebugSpecMask[0D]	declared in BSImagespaceShader
+0x149F330	vfunc	BSImagespaceShaderReflectionsRayTracing::Unk_0D	inferred	rtti+commonlib	106280	no_pdata_entry	vtables(1): BSImagespaceShaderReflectionsRayTracing[0D]	declared in BSImagespaceShader
+0x149F350	vfunc	BSImagespaceShaderTextureMask::Unk_0D	inferred	rtti+commonlib	106282	no_pdata_entry	vtables(1): BSImagespaceShaderTextureMask[0D]	declared in BSImagespaceShader
+0x149F380	vfunc	BSImagespaceShaderVolumetricLighting::Unk_0D	inferred	rtti+commonlib	106283	no_pdata_entry	vtables(1): BSImagespaceShaderVolumetricLighting[0D]	declared in BSImagespaceShader
+0x149F570	vfunc	BSImagespaceShaderWorldMap::Unk_0D	inferred	rtti+commonlib	106294	no_pdata_entry	vtables(1): BSImagespaceShaderWorldMap[0D]	declared in BSImagespaceShader
+0x149F5A0	vfunc	BSImagespaceShaderWorldMapNoSkyBlur::Unk_0D	inferred	rtti+commonlib	106295	no_pdata_entry	vtables(1): BSImagespaceShaderWorldMapNoSkyBlur[0D]	declared in BSImagespaceShader
+0x149F5F0	vfunc	shared_stub_149f5f0	unknown	rtti+commonlib	106297	no_pdata_entry	vtables(121): BSImagespaceShader[0B], BSImagespaceShaderApplyReflections[0B], BSImagespaceShaderBlur11[0B], BSImagespaceShaderBlur13[0B], BSImagespaceShaderBlur15[0B], BSImagespaceShaderBlur3[0B], +115 more	
+0x149F600	vfunc	BSImagespaceShaderAlphaBlend::Unk_0B	inferred	rtti+commonlib	106298	no_pdata_entry	vtables(1): BSImagespaceShaderAlphaBlend[0B]	declared in BSImagespaceShader
+0x149F610	vfunc	BSImagespaceShaderMap::Unk_0B	inferred	rtti+commonlib	106299	no_pdata_entry	vtables(1): BSImagespaceShaderMap[0B]	declared in BSImagespaceShader
+0x149F630	vfunc	BSImagespaceShaderNoiseNormalmap::Unk_0B	inferred	rtti+commonlib	106300	no_pdata_entry	vtables(1): BSImagespaceShaderNoiseNormalmap[0B]	declared in BSImagespaceShader
+0x149F650	vfunc	BSImagespaceShaderNoiseScrollAndBlend::Unk_0B	inferred	rtti+commonlib	106301	no_pdata_entry	vtables(1): BSImagespaceShaderNoiseScrollAndBlend[0B]	declared in BSImagespaceShader
+0x149F670	vfunc	shared_stub_149f670	unknown	rtti+commonlib	106302	no_pdata_entry	vtables(120): BSImagespaceShader[0A], BSImagespaceShaderApplyReflections[0A], BSImagespaceShaderBlur11[0A], BSImagespaceShaderBlur13[0A], BSImagespaceShaderBlur15[0A], BSImagespaceShaderBlur3[0A], +114 more	
+0x149F680	vfunc	BSImagespaceShaderAlphaBlend::Unk_0A	inferred	rtti+commonlib	106303	no_pdata_entry	vtables(1): BSImagespaceShaderAlphaBlend[0A]	declared in BSImagespaceShader
+0x149F690	vfunc	BSImagespaceShaderCopyScaleBias::Unk_0A	inferred	rtti+commonlib	106304	no_pdata_entry	vtables(1): BSImagespaceShaderCopyScaleBias[0A]	declared in BSImagespaceShader
+0x149F6B0	vfunc	BSImagespaceShaderMap::Unk_0A	inferred	rtti+commonlib	106305	no_pdata_entry	vtables(1): BSImagespaceShaderMap[0A]	declared in BSImagespaceShader
+0x149F6D0	vfunc	BSImagespaceShaderNoiseNormalmap::Unk_0A	inferred	rtti+commonlib	106306	no_pdata_entry	vtables(1): BSImagespaceShaderNoiseNormalmap[0A]	declared in BSImagespaceShader
+0x149F6F0	vfunc	BSImagespaceShaderNoiseScrollAndBlend::Unk_0A	inferred	rtti+commonlib	106307	no_pdata_entry	vtables(1): BSImagespaceShaderNoiseScrollAndBlend[0A]	declared in BSImagespaceShader
+0x149F920	vfunc	BSImagespaceShaderCopyCustomViewport::UpdateParams	named	rtti+commonlib	106310	pdata_start	vtables(1): BSImagespaceShaderCopyCustomViewport[07]	declared in BSImagespaceShader
+0x149FB60	vfunc	BSImagespaceShaderCopyCustomViewport::IsActive	named	rtti+commonlib	106318	pdata_start	vtables(1): BSImagespaceShaderCopyCustomViewport[06]	declared in BSImagespaceShader
+0x14B13C0	vfunc	BSGrassShaderProperty::CreateClone	named	rtti+commonlib	106541	pdata_start	vtables(1): BSGrassShaderProperty[17]	declared in BSLightingShaderProperty
+0x14B14E0	vfunc	BSGrassShaderProperty::LoadBinary	named	rtti+commonlib	106543	no_pdata_entry	vtables(1): BSGrassShaderProperty[18]	declared in BSLightingShaderProperty
+0x14B14F0	vfunc	BSGrassShaderProperty::LinkObject	named	rtti+commonlib	106544	no_pdata_entry	vtables(1): BSGrassShaderProperty[19]	declared in BSLightingShaderProperty
+0x14B1500	vfunc	BSGrassShaderProperty::RegisterStreamables	named	rtti+commonlib	106545	no_pdata_entry	vtables(1): BSGrassShaderProperty[1A]	declared in BSLightingShaderProperty
+0x14B1510	vfunc	BSGrassShaderProperty::SaveBinary	named	rtti+commonlib	106546	no_pdata_entry	vtables(1): BSGrassShaderProperty[1B]	declared in BSLightingShaderProperty
+0x14B1520	vfunc	BSGrassShaderProperty::IsEqual	named	rtti+commonlib	106547	no_pdata_entry	vtables(1): BSGrassShaderProperty[1C]	declared in BSLightingShaderProperty
+0x14B15D0	vfunc	BSGrassShaderProperty::PostLinkObject	named	rtti+commonlib	106549	no_pdata_entry	vtables(1): BSGrassShaderProperty[1E]	declared in BSLightingShaderProperty
+0x14B17F0	vfunc	BSGrassShaderProperty::QShader	named	rtti+commonlib	106552	no_pdata_entry	vtables(1): BSGrassShaderProperty[35]	declared in BSLightingShaderProperty
+0x14B1800	vfunc	BSGrassShaderProperty::GetRenderPasses	named	rtti+commonlib	106553	pdata_start	vtables(1): BSGrassShaderProperty[2A]	declared in BSLightingShaderProperty
+0x14B19E0	vfunc	BSGrassShaderProperty::Unk_2B	inferred	rtti+commonlib	106554	no_pdata_entry	vtables(1): BSGrassShaderProperty[2B]	declared in BSLightingShaderProperty
+0x14B19F0	vfunc	BSGrassShaderProperty::Unk_2F	inferred	rtti+commonlib	106555	pdata_start	vtables(1): BSGrassShaderProperty[2F]	declared in BSLightingShaderProperty
+0x14B1BB0	vfunc	BSGrassShaderProperty::Dtor	named	rtti+commonlib	106559	pdata_start	vtables(1): BSGrassShaderProperty[00]	declared in BSLightingShaderProperty
+0x14B1CB0	vfunc	BSGrassShaderProperty::GetRTTI	named	rtti+commonlib	106560	no_pdata_entry	vtables(1): BSGrassShaderProperty[02]	declared in BSLightingShaderProperty
+0x14B1CC0	vfunc	BSGrassShaderProperty::vfunc_3F	inferred	rtti	106561	no_pdata_entry	vtables(1): BSGrassShaderProperty[3F]	
+0x14B1CD0	vfunc	BSGrassShaderProperty::vfunc_40	inferred	rtti	106562	no_pdata_entry	vtables(1): BSGrassShaderProperty[40]	
+0x14B1CE0	vfunc	BSGrassShaderProperty::SetupGeometry	named	rtti+commonlib	106563	no_pdata_entry	vtables(1): BSGrassShaderProperty[27]	declared in BSLightingShaderProperty
+0x14B2130	vfunc	BSShaderAccumulator::vfunc_25	inferred	rtti	106566	no_pdata_entry	vtables(1): BSShaderAccumulator[25]	
+0x14B2240	vfunc	BSShaderAccumulator::vfunc_26	inferred	rtti	106568	pdata_start	vtables(1): BSShaderAccumulator[26]	
+0x14B2CE0	vfunc	BSShaderAccumulator::vfunc_2A	inferred	rtti	106581	pdata_start	vtables(1): BSShaderAccumulator[2A]	
+0x14B2D50	vfunc	BSShaderAccumulator::vfunc_2B	inferred	rtti	106582	pdata_start	vtables(1): BSShaderAccumulator[2B]	
+0x14B47B0	vfunc	BSShaderAccumulator::vfunc_2C	inferred	rtti	106595	no_pdata_entry	vtables(1): BSShaderAccumulator[2C]	
+0x14B4BA0	vfunc	BSShaderAccumulator::vfunc_28	inferred	rtti	106602	no_pdata_entry	vtables(1): BSShaderAccumulator[28]	
+0x14B4BC0	vfunc	BSShaderAccumulator::vfunc_29	inferred	rtti	106603	no_pdata_entry	vtables(1): BSShaderAccumulator[29]	
+0x14B5C00	vfunc	BSShaderAccumulator::Dtor	named	rtti+commonlib	106626	pdata_start	vtables(1): BSShaderAccumulator[00]	declared in NiObject
+0x14B5C70	vfunc	BSShaderAccumulator::GetRTTI	named	rtti+commonlib	106629	no_pdata_entry	vtables(1): BSShaderAccumulator[02]	declared in NiObject
+0x14B61F0	vfunc	BSGrassShader::RestoreTechnique	named	rtti+commonlib	106680	no_pdata_entry	vtables(1): BSGrassShader[03]	declared in BSShader
+0x14B6230	vfunc	BSGrassShader::SetupTechnique	named	rtti+commonlib	106682	pdata_start	vtables(1): BSGrassShader[02]	declared in BSShader
+0x14B6520	vfunc	BSGrassShader::SetupMaterial	named	rtti+commonlib	106683	no_pdata_entry	vtables(1): BSGrassShader[04]	declared in BSShader
+0x14B6570	vfunc	BSGrassShader::RestoreMaterial	named	rtti+commonlib	106684	no_pdata_entry	vtables(1): BSGrassShader[05]	declared in BSShader
+0x14B6580	vfunc	BSGrassShader::SetupGeometry	named	rtti+commonlib	106685	pdata_start	vtables(1): BSGrassShader[06]	declared in BSShader
+0x14B6C80	vfunc	BSGrassShader::RestoreGeometry	named	rtti+commonlib	106686	no_pdata_entry	vtables(1): BSGrassShader[07]	declared in BSShader
+0x14B7190	vfunc	BSGrassShader::Dtor	named	rtti+commonlib	106710	pdata_start	vtables(1): BSGrassShader[00]	declared in BSShader
+0x14BCE40	vfunc	BSEffectShaderProperty::CreateClone	named	rtti+commonlib	106863	pdata_start	vtables(1): BSEffectShaderProperty[17]	
+0x14BD030	vfunc	BSEffectShaderProperty::LoadBinary	named	rtti+commonlib	106865	pdata_start	vtables(1): BSEffectShaderProperty[18]	
+0x14BD1D0	vfunc	BSEffectShaderProperty::LinkObject	named	rtti+commonlib	106866	pdata_start	vtables(1): BSEffectShaderProperty[19]	
+0x14BD360	vfunc	BSEffectShaderProperty::RegisterStreamables	named	rtti+commonlib	106867	no_pdata_entry	vtables(1): BSEffectShaderProperty[1A]	declared in BSShaderProperty
+0x14BD370	vfunc	BSEffectShaderProperty::SaveBinary	named	rtti+commonlib	106868	pdata_start	vtables(1): BSEffectShaderProperty[1B]	
+0x14BD4D0	vfunc	BSEffectShaderProperty::IsEqual	named	rtti+commonlib	106869	no_pdata_entry	vtables(1): BSEffectShaderProperty[1C]	declared in BSShaderProperty
+0x14BD580	vfunc	BSEffectShaderProperty::PostLinkObject	named	rtti+commonlib	106871	pdata_start	vtables(1): BSEffectShaderProperty[1E]	
+0x14BD710	vfunc	BSEffectShaderProperty::QShader	named	rtti+commonlib	106874	no_pdata_entry	vtables(1): BSEffectShaderProperty[35]	
+0x14BD720	vfunc	BSEffectShaderProperty::SetupGeometry	named	rtti+commonlib	106875	pdata_start	vtables(1): BSEffectShaderProperty[27]	
+0x14BD890	vfunc	BSEffectShaderProperty::GetRenderPasses	named	rtti+commonlib	106876	pdata_start	vtables(1): BSEffectShaderProperty[2A]	
+0x14BDC80	vfunc	BSEffectShaderProperty::Unk_2B	inferred	rtti+commonlib	106877	pdata_start	vtables(1): BSEffectShaderProperty[2B]	
+0x14BDDF0	vfunc	BSEffectShaderProperty::ForEachTexture	named	rtti+commonlib	106878	pdata_start	vtables(1): BSEffectShaderProperty[33]	
+0x14BE3B0	vfunc	BSEffectShaderProperty::Unk_3B	inferred	rtti+commonlib	106883	pdata_start	vtables(1): BSEffectShaderProperty[3B]	
+0x14BE8B0	vfunc	BSEffectShaderProperty::Dtor	named	rtti+commonlib	106892	pdata_start	vtables(1): BSEffectShaderProperty[00]	
+0x14BE980	vfunc	BSEffectShaderProperty::GetBaseTexture	named	rtti+commonlib	106893	no_pdata_entry	vtables(1): BSEffectShaderProperty[37]	
+0x14BE990	vfunc	BSEffectShaderProperty::GetMaterialType	named	rtti+commonlib	106894	no_pdata_entry	vtables(1): BSEffectShaderProperty[3E]	
+0x14BE9A0	vfunc	BSEffectShaderProperty::GetRTTI	named	rtti+commonlib	106895	no_pdata_entry	vtables(1): BSEffectShaderProperty[02]	
+0x14BE9B0	vfunc	BSEffectShaderProperty::Unk_3C	inferred	rtti+commonlib	106896	no_pdata_entry	vtables(1): BSEffectShaderProperty[3C]	
+0x14BE9C0	vfunc	BSEffectShaderProperty::QMaterialAlpha	named	rtti+commonlib	106897	no_pdata_entry	vtables(1): BSEffectShaderProperty[32]	
+0x14BE9D0	vfunc	BSEffectShaderProperty::SetMaterialAlpha	named	rtti+commonlib	106898	no_pdata_entry	vtables(1): BSEffectShaderProperty[31]	
+0x14C1160	vfunc	BSBloodSplatterShaderProperty::CreateClone	named	rtti+commonlib	106959	pdata_start	vtables(1): BSBloodSplatterShaderProperty[17]	
+0x14C1480	vfunc	BSBloodSplatterShaderProperty::QShader	named	rtti+commonlib	106963	no_pdata_entry	vtables(1): BSBloodSplatterShaderProperty[35]	
+0x14C1490	vfunc	BSBloodSplatterShaderProperty::GetRenderPasses	named	rtti+commonlib	106964	pdata_start	vtables(1): BSBloodSplatterShaderProperty[2A]	
+0x14C1530	vfunc	BSBloodSplatterShaderProperty::ForEachTexture	named	rtti+commonlib	106965	pdata_start	vtables(1): BSBloodSplatterShaderProperty[33]	
+0x14C1690	vfunc	BSBloodSplatterShaderProperty::Dtor	named	rtti+commonlib	106968	pdata_start	vtables(1): BSBloodSplatterShaderProperty[00]	
+0x14C1750	vfunc	BSBloodSplatterShaderProperty::GetBaseTexture	named	rtti+commonlib	106969	no_pdata_entry	vtables(1): BSBloodSplatterShaderProperty[37]	
+0x14C1760	vfunc	BSBloodSplatterShaderProperty::GetRTTI	named	rtti+commonlib	106970	no_pdata_entry	vtables(1): BSBloodSplatterShaderProperty[02]	
+0x14C1810	vfunc	BSBloodSplatterShader::RestoreTechnique	named	rtti+commonlib	106973	no_pdata_entry	vtables(1): BSBloodSplatterShader[03]	declared in BSShader
+0x14C18B0	vfunc	BSBloodSplatterShader::SetupTechnique	named	rtti+commonlib	106975	pdata_start	vtables(1): BSBloodSplatterShader[02]	declared in BSShader
+0x14C1A60	vfunc	BSBloodSplatterShader::SetupGeometry	named	rtti+commonlib	106976	pdata_start	vtables(1): BSBloodSplatterShader[06]	declared in BSShader
+0x14C1D90	vfunc	BSBloodSplatterShader::RestoreGeometry	named	rtti+commonlib	106977	no_pdata_entry	vtables(1): BSBloodSplatterShader[07]	declared in BSShader
+0x14C2120	vfunc	BSBloodSplatterShader::Dtor	named	rtti+commonlib	106983	pdata_start	vtables(1): BSBloodSplatterShader[00]	declared in BSShader
+0x14C4380	vfunc	BSImagespaceShaderLensFlare::Dtor	named	rtti+commonlib	107007	pdata_start	vtables(1): BSImagespaceShaderLensFlare[00]	declared in BSImagespaceShader
+0x14C43F0	vfunc	BSImagespaceShaderLensFlareVisibility::Dtor	named	rtti+commonlib	107008	pdata_start	vtables(1): BSImagespaceShaderLensFlareVisibility[00]	declared in BSImagespaceShader
+0x14C4440	vfunc	BSImagespaceShaderLensFlareVisibility::Unk_0D	inferred	rtti+commonlib	107009	no_pdata_entry	vtables(1): BSImagespaceShaderLensFlareVisibility[0D]	declared in BSImagespaceShader
+0x14C6870	vfunc	BSParticleShaderProperty::QShader	named	rtti+commonlib	107042	no_pdata_entry	vtables(1): BSParticleShaderProperty[35]	
+0x14C6880	vfunc	BSParticleShaderProperty::SetupGeometry	named	rtti+commonlib	107043	no_pdata_entry	vtables(1): BSParticleShaderProperty[27]	
+0x14C6890	vfunc	BSParticleShaderProperty::GetRenderPasses	named	rtti+commonlib	107044	pdata_start	vtables(1): BSParticleShaderProperty[2A]	
+0x14C7640	vfunc	BSParticleShaderProperty::Dtor	named	rtti+commonlib	107054	pdata_start	vtables(1): BSParticleShaderProperty[00]	
+0x14C77B0	vfunc	BSParticleShaderProperty::GetBaseTexture	named	rtti+commonlib	107056	no_pdata_entry	vtables(1): BSParticleShaderProperty[37]	
+0x14C77C0	vfunc	BSParticleShaderProperty::GetRTTI	named	rtti+commonlib	107057	no_pdata_entry	vtables(1): BSParticleShaderProperty[02]	
+0x14C77D0	vfunc	BSParticleShaderGeometry::UpdateDownwardPass	named	rtti+commonlib	107058	pdata_start	vtables(1): BSParticleShaderGeometry[2C]	declared in BSGeometry
+0x14C91F0	vfunc	BSParticleShaderEmitter::GetBoundsObject	named	rtti+commonlib	107084	no_pdata_entry	vtables(4): BSParticleShaderCubeEmitter[02], BSParticleShaderEmitter[02], BSParticleShaderRainEmitter[02], BSParticleShaderSnowEmitter[02]	
+0x14C9200	vfunc	BSParticleShaderObjectEmitter::GetBoundsObject	named	rtti+commonlib	107085	no_pdata_entry	vtables(4): BSParticleShaderCollisionEmitter[02], BSParticleShaderGeometryEmitter[02], BSParticleShaderObjectEmitter[02], BSParticleShaderRayEmitter[02]	
+0x14C9210	vfunc	BSParticleShaderGeometryEmitter::vfunc_04	inferred	rtti	107086	pdata_start	vtables(1): BSParticleShaderGeometryEmitter[04]	
+0x14C9530	vfunc	BSParticleShaderGeometryEmitter::GetObjectCount	named	rtti+commonlib	107087	no_pdata_entry	vtables(1): BSParticleShaderGeometryEmitter[05]	declared in BSParticleShaderObjectEmitter
+0x14C9540	vfunc	BSParticleShaderGeometryEmitter::GetObjectAt	named	rtti+commonlib	107088	no_pdata_entry	vtables(1): BSParticleShaderGeometryEmitter[06]	declared in BSParticleShaderObjectEmitter
+0x14C9560	vfunc	BSParticleShaderGeometryEmitter::CollectObjects	named	rtti+commonlib	107089	pdata_start	vtables(1): BSParticleShaderGeometryEmitter[03]	declared in BSParticleShaderObjectEmitter
+0x14C9A30	vfunc	BSParticleShaderCollisionEmitter::vfunc_04	inferred	rtti	107090	pdata_start	vtables(1): BSParticleShaderCollisionEmitter[04]	
+0x14C9B40	vfunc	BSParticleShaderCollisionEmitter::GetObjectCount	named	rtti+commonlib	107091	no_pdata_entry	vtables(1): BSParticleShaderCollisionEmitter[05]	declared in BSParticleShaderObjectEmitter
+0x14C9B50	vfunc	BSParticleShaderCollisionEmitter::GetObjectAt	named	rtti+commonlib	107092	no_pdata_entry	vtables(1): BSParticleShaderCollisionEmitter[06]	declared in BSParticleShaderObjectEmitter
+0x14C9B70	vfunc	BSParticleShaderCollisionEmitter::CollectObjects	named	rtti+commonlib	107093	pdata_start	vtables(1): BSParticleShaderCollisionEmitter[03]	declared in BSParticleShaderObjectEmitter
+0x14C9E30	vfunc	BSParticleShaderRayEmitter::vfunc_04	inferred	rtti	107094	no_pdata_entry	vtables(1): BSParticleShaderRayEmitter[04]	
+0x14C9E40	vfunc	BSParticleShaderRayEmitter::GetObjectCount	named	rtti+commonlib	107095	no_pdata_entry	vtables(1): BSParticleShaderRayEmitter[05]	declared in BSParticleShaderObjectEmitter
+0x14C9E60	vfunc	BSParticleShaderRayEmitter::GetObjectAt	named	rtti+commonlib	107096	no_pdata_entry	vtables(1): BSParticleShaderRayEmitter[06]	declared in BSParticleShaderObjectEmitter
+0x14C9E70	vfunc	BSParticleShaderRayEmitter::CollectObjects	named	rtti+commonlib	107097	pdata_start	vtables(1): BSParticleShaderRayEmitter[03]	declared in BSParticleShaderObjectEmitter
+0x14CA0C0	vfunc	BSParticleShaderCubeEmitter::Generate	named	rtti+commonlib	107098	no_pdata_entry	vtables(3): BSParticleShaderCubeEmitter[03], BSParticleShaderRainEmitter[03], BSParticleShaderSnowEmitter[03]	
+0x14CECF0	vfunc	BSTextureSet::LoadBinary	named	rtti+commonlib	107158	no_pdata_entry	vtables(1): BSTextureSet[18]	
+0x14CED00	vfunc	BSTextureSet::LinkObject	named	rtti+commonlib	107159	no_pdata_entry	vtables(1): BSTextureSet[19]	
+0x14CED10	vfunc	BSTextureSet::RegisterStreamables	named	rtti+commonlib	107160	no_pdata_entry	vtables(1): BSTextureSet[1A]	
+0x14CED20	vfunc	BSTextureSet::SaveBinary	named	rtti+commonlib	107161	no_pdata_entry	vtables(1): BSTextureSet[1B]	
+0x14CED30	vfunc	BSTextureSet::IsEqual	named	rtti+commonlib	107162	no_pdata_entry	vtables(1): BSTextureSet[1C]	
+0x14CED40	vfunc	BSShaderTextureSet::LoadBinary	named	rtti+commonlib	107163	pdata_start	vtables(1): BSShaderTextureSet[18]	
+0x14CEDC0	vfunc	BSShaderTextureSet::LinkObject	named	rtti+commonlib	107164	no_pdata_entry	vtables(1): BSShaderTextureSet[19]	
+0x14CEDD0	vfunc	BSShaderTextureSet::RegisterStreamables	named	rtti+commonlib	107165	no_pdata_entry	vtables(1): BSShaderTextureSet[1A]	
+0x14CEDE0	vfunc	BSShaderTextureSet::SaveBinary	named	rtti+commonlib	107166	pdata_start	vtables(1): BSShaderTextureSet[1B]	
+0x14CEE60	vfunc	BSShaderTextureSet::IsEqual	named	rtti+commonlib	107167	no_pdata_entry	vtables(1): BSShaderTextureSet[1C]	
+0x14CEF50	vfunc	BSShaderTextureSet::GetTexturePath	named	rtti+commonlib	107169	no_pdata_entry	vtables(1): BSShaderTextureSet[25]	
+0x14CEF60	vfunc	BSShaderTextureSet::SetTexture	named	rtti+commonlib	107170	pdata_start	vtables(1): BSShaderTextureSet[26]	
+0x14CF050	vfunc	BSShaderTextureSet::SetTexturePath	named	rtti+commonlib	107171	pdata_start	vtables(1): BSShaderTextureSet[27]	
+0x14E9C80	vfunc	BSEffectShaderMaterial::Create	named	rtti+commonlib	107510	pdata_start	vtables(1): BSEffectShaderMaterial[01]	
+0x14E9CF0	vfunc	BSEffectShaderMaterial::CopyMembers	named	rtti+commonlib	107511	pdata_start	vtables(1): BSEffectShaderMaterial[02]	
+0x14E9DE0	vfunc	BSEffectShaderMaterial::DoIsCopy	named	rtti+commonlib	107512	pdata_start	vtables(1): BSEffectShaderMaterial[03]	
+0x14E9ED0	vfunc	BSEffectShaderMaterial::ComputeCRC32	named	rtti+commonlib	107513	pdata_start	vtables(1): BSEffectShaderMaterial[04]	
+0x14E9F80	vfunc	BSEffectShaderMaterial::GetDefault	named	rtti+commonlib	107514	no_pdata_entry	vtables(1): BSEffectShaderMaterial[05]	
+0x14EA0B0	vfunc	BSEffectShaderMaterial::Dtor	named	rtti+commonlib	107517	pdata_start	vtables(1): BSEffectShaderMaterial[00]	
+0x14EA0F0	vfunc	BSEffectShaderMaterial::GetType	named	rtti+commonlib	107518	no_pdata_entry	vtables(1): BSEffectShaderMaterial[07]	
+0x14EA100	vfunc	BSShaderMaterial::GetFeature	named	rtti+commonlib	107519	no_pdata_entry	vtables(3): BSEffectShaderMaterial[06], BSShaderMaterial[06], BSWaterShaderMaterial[06]	
+0x14EA1B0	vfunc	BSEffectShader::RestoreTechnique	named	rtti+commonlib	107522	pdata_start	vtables(1): BSEffectShader[03]	declared in BSShader
+0x14EA2C0	vfunc	BSEffectShader::SetupTechnique	named	rtti+commonlib	107524	pdata_start	vtables(1): BSEffectShader[02]	declared in BSShader
+0x14EA6C0	vfunc	BSEffectShader::SetupMaterial	named	rtti+commonlib	107525	pdata_start	vtables(1): BSEffectShader[04]	declared in BSShader
+0x14EAB00	vfunc	BSEffectShader::RestoreMaterial	named	rtti+commonlib	107526	no_pdata_entry	vtables(1): BSEffectShader[05]	declared in BSShader
+0x14EAB10	vfunc	BSEffectShader::SetupGeometry	named	rtti+commonlib	107527	pdata_start	vtables(1): BSEffectShader[06]	declared in BSShader
+0x14EB9D0	vfunc	BSEffectShader::RestoreGeometry	named	rtti+commonlib	107528	pdata_start	vtables(1): BSEffectShader[07]	declared in BSShader
+0x14EC2D0	vfunc	BSEffectShader::Dtor	named	rtti+commonlib	107533	pdata_start	vtables(1): BSEffectShader[00]	declared in BSShader
+0x14F83E0	vfunc	shared_stub_14f83e0	unknown	rtti+commonlib	107727	pdata_start	vtables(125): BSImagespaceShader[02], BSImagespaceShaderAlphaBlend[02], BSImagespaceShaderApplyReflections[02], BSImagespaceShaderBlur11[02], BSImagespaceShaderBlur13[02], BSImagespaceShaderBlur15[02], +119 more	
+0x14F8480	vfunc	shared_stub_14f8480	unknown	rtti+commonlib	107728	no_pdata_entry	vtables(125): BSImagespaceShader[03], BSImagespaceShaderAlphaBlend[03], BSImagespaceShaderApplyReflections[03], BSImagespaceShaderBlur11[03], BSImagespaceShaderBlur13[03], BSImagespaceShaderBlur15[03], +119 more	
+0x14F8500	vfunc	shared_stub_14f8500	unknown	rtti+commonlib	107729	pdata_start	vtables(123): BSImagespaceShader[06], BSImagespaceShaderAlphaBlend[06], BSImagespaceShaderApplyReflections[06], BSImagespaceShaderBlur11[06], BSImagespaceShaderBlur13[06], BSImagespaceShaderBlur15[06], +117 more	
+0x14F8810	vfunc	shared_stub_14f8810	unknown	rtti+commonlib	107730	pdata_start	vtables(123): BSImagespaceShader[07], BSImagespaceShaderAlphaBlend[07], BSImagespaceShaderApplyReflections[07], BSImagespaceShaderBlur11[07], BSImagespaceShaderBlur13[07], BSImagespaceShaderBlur15[07], +117 more	
+0x14F8870	vfunc	shared_stub_14f8870	unknown	rtti+commonlib	107731	pdata_start	vtables(125): BSImagespaceShader[09], BSImagespaceShaderAlphaBlend[09], BSImagespaceShaderApplyReflections[09], BSImagespaceShaderBlur11[09], BSImagespaceShaderBlur13[09], BSImagespaceShaderBlur15[09], +119 more	
+0x14F8BE0	vfunc	shared_stub_14f8be0	unknown	rtti+commonlib	107734	pdata_start	vtables(125): BSImagespaceShader[0C], BSImagespaceShaderAlphaBlend[0C], BSImagespaceShaderApplyReflections[0C], BSImagespaceShaderBlur11[0C], BSImagespaceShaderBlur13[0C], BSImagespaceShaderBlur15[0C], +119 more	
+0x14F8C50	vfunc	BSImagespaceShader::Unk_0D	inferred	rtti+commonlib	107735	no_pdata_entry	vtables(2): BSImagespaceShader[0D], BSImagespaceShaderLensFlare[0D]	
+0x14F8C70	vfunc	shared_stub_14f8c70	unknown	rtti+commonlib	107736	pdata_start	vtables(125): BSImagespaceShader[0E], BSImagespaceShaderAlphaBlend[0E], BSImagespaceShaderApplyReflections[0E], BSImagespaceShaderBlur11[0E], BSImagespaceShaderBlur13[0E], BSImagespaceShaderBlur15[0E], +119 more	
+0x14F8D80	vfunc	BSImagespaceShader::Dtor	named	rtti+commonlib	107740	pdata_start	vtables(1): BSImagespaceShader[00]	
+0x14F9F50	vfunc	BSUtilityShader::RestoreTechnique	named	rtti+commonlib	107757	pdata_start	vtables(1): BSUtilityShader[03]	declared in BSShader
+0x14FA160	vfunc	BSUtilityShader::SetupTechnique	named	rtti+commonlib	107759	pdata_start	vtables(1): BSUtilityShader[02]	declared in BSShader
+0x14FAA60	vfunc	BSUtilityShader::SetupMaterial	named	rtti+commonlib	107760	pdata_start	vtables(1): BSUtilityShader[04]	declared in BSShader
+0x14FAE30	vfunc	BSUtilityShader::RestoreMaterial	named	rtti+commonlib	107761	no_pdata_entry	vtables(1): BSUtilityShader[05]	declared in BSShader
+0x14FAE40	vfunc	BSUtilityShader::SetupGeometry	named	rtti+commonlib	107762	pdata_start	vtables(1): BSUtilityShader[06]	declared in BSShader
+0x14FC3F0	vfunc	BSUtilityShader::RestoreGeometry	named	rtti+commonlib	107768	no_pdata_entry	vtables(1): BSUtilityShader[07]	declared in BSShader
+0x14FC860	vfunc	BSUtilityShader::Dtor	named	rtti+commonlib	107772	pdata_start	vtables(1): BSUtilityShader[00]	declared in BSShader
+0x15087B0	vfunc	BSShaderMaterial::Create	named	rtti+commonlib	108267	pdata_start	vtables(1): BSShaderMaterial[01]	
+0x1508890	vfunc	BSShaderMaterial::CopyMembers	named	rtti+commonlib	108268	no_pdata_entry	vtables(1): BSShaderMaterial[02]	
+0x15088C0	vfunc	BSShaderMaterial::DoIsCopy	named	rtti+commonlib	108269	pdata_start	vtables(1): BSShaderMaterial[03]	
+0x1508950	vfunc	BSShaderMaterial::ComputeCRC32	named	rtti+commonlib	108270	pdata_start	vtables(1): BSShaderMaterial[04]	
+0x15089B0	vfunc	BSShaderMaterial::GetDefault	named	rtti+commonlib	108271	no_pdata_entry	vtables(1): BSShaderMaterial[05]	
+0x1508A80	vfunc	BSShaderMaterial::Dtor	named	rtti+commonlib	108274	pdata_start	vtables(1): BSShaderMaterial[00]	
+0x1508AB0	vfunc	BSShaderMaterial::GetType	named	rtti+commonlib	108275	no_pdata_entry	vtables(1): BSShaderMaterial[07]	
+0x150BAC0	vfunc	shared_stub_150bac0	unknown	rtti+commonlib	108315	no_pdata_entry	vtables(130): BSBloodSplatterShader[04], BSDistantTreeShader[04], BSImagespaceShader[04], BSImagespaceShaderAlphaBlend[04], BSImagespaceShaderApplyReflections[04], BSImagespaceShaderBlur11[04], +124 more	
+0x150BAD0	vfunc	shared_stub_150bad0	unknown	rtti+commonlib	108316	no_pdata_entry	vtables(130): BSBloodSplatterShader[05], BSDistantTreeShader[05], BSImagespaceShader[05], BSImagespaceShaderAlphaBlend[05], BSImagespaceShaderApplyReflections[05], BSImagespaceShaderBlur11[05], +124 more	
+0x150BC70	vfunc	shared_stub_150bc70	unknown	rtti+commonlib	108320	no_pdata_entry	vtables(135): BSBloodSplatterShader[08], BSDistantTreeShader[08], BSEffectShader[08], BSGrassShader[08], BSImagespaceShader[08], BSImagespaceShaderAlphaBlend[08], +129 more	
+0x150BFF0	vfunc	BSShader::ReloadShaders	named	rtti+commonlib	108324	no_pdata_entry	vtables(10): BSBloodSplatterShader[09], BSDistantTreeShader[09], BSEffectShader[09], BSGrassShader[09], BSLightingShader[09], BSParticleShader[09], +4 more	
+0x150C8A0	vfunc	BSShader::Dtor	named	rtti+commonlib	108338	pdata_start	vtables(1): BSShader[00]	
+0x150CA60	vfunc	BSParticleShader::RestoreTechnique	named	rtti+commonlib	108344	pdata_start	vtables(1): BSParticleShader[03]	declared in BSShader
+0x150CB20	vfunc	BSParticleShader::SetupTechnique	named	rtti+commonlib	108346	pdata_start	vtables(1): BSParticleShader[02]	declared in BSShader
+0x150CCC0	vfunc	BSParticleShader::SetupGeometry	named	rtti+commonlib	108347	pdata_start	vtables(1): BSParticleShader[06]	declared in BSShader
+0x150D760	vfunc	BSParticleShader::RestoreGeometry	named	rtti+commonlib	108348	no_pdata_entry	vtables(1): BSParticleShader[07]	declared in BSShader
+0x150DA30	vfunc	BSParticleShader::Dtor	named	rtti+commonlib	108354	pdata_start	vtables(1): BSParticleShader[00]	declared in BSShader
+0x150ED60	vfunc	BSEffectShaderPropertyFloatController::vfunc_17	inferred	rtti	108406	pdata_start	vtables(1): BSEffectShaderPropertyFloatController[17]	
+0x150EE70	vfunc	BSEffectShaderPropertyFloatController::LoadBinary	named	rtti+commonlib	108408	pdata_start	vtables(1): BSEffectShaderPropertyFloatController[18]	declared in NiInterpController
+0x150EED0	vfunc	BSEffectShaderPropertyFloatController::LinkObject	named	rtti+commonlib	108409	pdata_start	vtables(1): BSEffectShaderPropertyFloatController[19]	declared in NiInterpController
+0x150EF30	vfunc	BSEffectShaderPropertyFloatController::RegisterStreamables	named	rtti+commonlib	108410	no_pdata_entry	vtables(1): BSEffectShaderPropertyFloatController[1A]	declared in NiInterpController
+0x150EF40	vfunc	BSEffectShaderPropertyFloatController::SaveBinary	named	rtti+commonlib	108411	pdata_start	vtables(1): BSEffectShaderPropertyFloatController[1B]	declared in NiInterpController
+0x150EFA0	vfunc	BSEffectShaderPropertyFloatController::IsEqual	named	rtti+commonlib	108412	no_pdata_entry	vtables(1): BSEffectShaderPropertyFloatController[1C]	declared in NiInterpController
+0x150F090	vfunc	BSEffectShaderPropertyFloatController::Update	named	rtti+commonlib	108415	pdata_start	vtables(1): BSEffectShaderPropertyFloatController[27]	declared in NiTimeController
+0x150F260	vfunc	BSEffectShaderPropertyFloatController::vfunc_3C	inferred	rtti	108417	pdata_start	vtables(1): BSEffectShaderPropertyFloatController[3C]	
+0x150F2B0	vfunc	BSEffectShaderPropertyFloatController::vfunc_3D	inferred	rtti	108418	no_pdata_entry	vtables(1): BSEffectShaderPropertyFloatController[3D]	
+0x150F390	vfunc	BSEffectShaderPropertyFloatController::Dtor	named	rtti+commonlib	108420	pdata_start	vtables(1): BSEffectShaderPropertyFloatController[00]	declared in NiInterpController
+0x150F400	vfunc	BSEffectShaderPropertyFloatController::GetCtlrID	named	rtti+commonlib	108421	no_pdata_entry	vtables(1): BSEffectShaderPropertyFloatController[36]	declared in NiInterpController
+0x150F410	vfunc	BSEffectShaderPropertyFloatController::GetRTTI	named	rtti+commonlib	108422	no_pdata_entry	vtables(1): BSEffectShaderPropertyFloatController[02]	declared in NiInterpController
+0x150F420	vfunc	BSEffectShaderPropertyColorController::vfunc_17	inferred	rtti	108423	pdata_start	vtables(1): BSEffectShaderPropertyColorController[17]	
+0x150F530	vfunc	BSEffectShaderPropertyColorController::LoadBinary	named	rtti+commonlib	108425	pdata_start	vtables(1): BSEffectShaderPropertyColorController[18]	declared in NiInterpController
+0x150F590	vfunc	BSEffectShaderPropertyColorController::LinkObject	named	rtti+commonlib	108426	no_pdata_entry	vtables(1): BSEffectShaderPropertyColorController[19]	declared in NiInterpController
+0x150F5A0	vfunc	BSEffectShaderPropertyColorController::RegisterStreamables	named	rtti+commonlib	108427	no_pdata_entry	vtables(1): BSEffectShaderPropertyColorController[1A]	declared in NiInterpController
+0x150F5B0	vfunc	BSEffectShaderPropertyColorController::SaveBinary	named	rtti+commonlib	108428	pdata_start	vtables(1): BSEffectShaderPropertyColorController[1B]	declared in NiInterpController
+0x150F610	vfunc	BSEffectShaderPropertyColorController::IsEqual	named	rtti+commonlib	108429	no_pdata_entry	vtables(1): BSEffectShaderPropertyColorController[1C]	declared in NiInterpController
+0x150F700	vfunc	BSEffectShaderPropertyColorController::Update	named	rtti+commonlib	108432	pdata_start	vtables(1): BSEffectShaderPropertyColorController[27]	declared in NiTimeController
+0x150F870	vfunc	BSEffectShaderPropertyColorController::vfunc_3C	inferred	rtti	108434	pdata_start	vtables(1): BSEffectShaderPropertyColorController[3C]	
+0x150F8C0	vfunc	BSEffectShaderPropertyColorController::vfunc_3D	inferred	rtti	108435	no_pdata_entry	vtables(1): BSEffectShaderPropertyColorController[3D]	
+0x150F9A0	vfunc	BSEffectShaderPropertyColorController::Dtor	named	rtti+commonlib	108437	pdata_start	vtables(1): BSEffectShaderPropertyColorController[00]	declared in NiInterpController
+0x150FA10	vfunc	BSEffectShaderPropertyColorController::GetCtlrID	named	rtti+commonlib	108438	no_pdata_entry	vtables(1): BSEffectShaderPropertyColorController[36]	declared in NiInterpController
+0x150FA20	vfunc	BSEffectShaderPropertyColorController::GetRTTI	named	rtti+commonlib	108439	no_pdata_entry	vtables(1): BSEffectShaderPropertyColorController[02]	declared in NiInterpController
+0x1515200	vfunc	BSShaderResourceManager::vfunc_02	inferred	rtti	108506	no_pdata_entry	vtables(1): BSShaderResourceManager[02]	
+0x1515220	vfunc	BSShaderResourceManager::vfunc_01	inferred	rtti	108507	pdata_start	vtables(1): BSShaderResourceManager[01]	
+0x1515290	vfunc	BSShaderResourceManager::vfunc_03	inferred	rtti	108508	no_pdata_entry	vtables(1): BSShaderResourceManager[03]	
+0x15152B0	vfunc	BSShaderResourceManager::vfunc_04	inferred	rtti	108509	no_pdata_entry	vtables(1): BSShaderResourceManager[04]	
+0x15152D0	vfunc	BSShaderResourceManager::vfunc_05	inferred	rtti	108510	no_pdata_entry	vtables(1): BSShaderResourceManager[05]	
+0x15152F0	vfunc	BSShaderResourceManager::vfunc_07	inferred	rtti	108511	no_pdata_entry	vtables(1): BSShaderResourceManager[07]	
+0x1515310	vfunc	BSShaderResourceManager::vfunc_06	inferred	rtti	108512	no_pdata_entry	vtables(1): BSShaderResourceManager[06]	
+0x1515330	vfunc	BSShaderResourceManager::vfunc_09	inferred	rtti	108513	no_pdata_entry	vtables(1): BSShaderResourceManager[09]	
+0x1515350	vfunc	BSShaderResourceManager::vfunc_08	inferred	rtti	108514	pdata_start	vtables(1): BSShaderResourceManager[08]	
+0x15153E0	vfunc	BSShaderResourceManager::vfunc_0A	inferred	rtti	108515	no_pdata_entry	vtables(1): BSShaderResourceManager[0A]	
+0x1515400	vfunc	BSShaderResourceManager::vfunc_0B	inferred	rtti	108516	no_pdata_entry	vtables(1): BSShaderResourceManager[0B]	
+0x1515420	vfunc	BSShaderResourceManager::vfunc_0C	inferred	rtti	108517	no_pdata_entry	vtables(1): BSShaderResourceManager[0C]	
+0x1515440	vfunc	BSShaderResourceManager::vfunc_0D	inferred	rtti	108518	pdata_start	vtables(1): BSShaderResourceManager[0D]	
+0x1515520	vfunc	BSShaderResourceManager::vfunc_0E	inferred	rtti	108519	pdata_start	vtables(1): BSShaderResourceManager[0E]	
+0x1515600	vfunc	BSShaderResourceManager::vfunc_0F	inferred	rtti	108520	pdata_start	vtables(1): BSShaderResourceManager[0F]	
+0x1515640	vfunc	BSShaderResourceManager::vfunc_10	inferred	rtti	108521	no_pdata_entry	vtables(1): BSShaderResourceManager[10]	
+0x1515650	vfunc	BSShaderResourceManager::vfunc_11	inferred	rtti	108522	no_pdata_entry	vtables(1): BSShaderResourceManager[11]	
+0x1515660	vfunc	BSShaderResourceManager::vfunc_12	inferred	rtti	108523	no_pdata_entry	vtables(1): BSShaderResourceManager[12]	
+0x1515670	vfunc	BSShaderResourceManager::vfunc_13	inferred	rtti	108524	pdata_start	vtables(1): BSShaderResourceManager[13]	
+0x15156E0	vfunc	BSShaderResourceManager::vfunc_15	inferred	rtti	108525	no_pdata_entry	vtables(1): BSShaderResourceManager[15]	
+0x1515700	vfunc	BSShaderResourceManager::vfunc_14	inferred	rtti	108526	pdata_start	vtables(1): BSShaderResourceManager[14]	
+0x1515790	vfunc	BSShaderResourceManager::vfunc_16	inferred	rtti	108527	no_pdata_entry	vtables(1): BSShaderResourceManager[16]	
+0x15157B0	vfunc	BSShaderResourceManager::vfunc_17	inferred	rtti	108528	no_pdata_entry	vtables(1): BSShaderResourceManager[17]	
+0x15157D0	vfunc	BSShaderResourceManager::vfunc_18	inferred	rtti	108529	no_pdata_entry	vtables(1): BSShaderResourceManager[18]	
+0x15157F0	vfunc	BSShaderResourceManager::vfunc_19	inferred	rtti	108530	no_pdata_entry	vtables(1): BSShaderResourceManager[19]	
+0x1515810	vfunc	BSShaderResourceManager::vfunc_1A	inferred	rtti	108531	pdata_start	vtables(1): BSShaderResourceManager[1A]	
+0x1515880	vfunc	BSShaderResourceManager::vfunc_1B	inferred	rtti	108532	no_pdata_entry	vtables(1): BSShaderResourceManager[1B]	
+0x15158A0	vfunc	BSShaderResourceManager::vfunc_1C	inferred	rtti	108533	no_pdata_entry	vtables(1): BSShaderResourceManager[1C]	
+0x15158C0	vfunc	BSShaderResourceManager::vfunc_1D	inferred	rtti	108534	no_pdata_entry	vtables(1): BSShaderResourceManager[1D]	
+0x15158F0	vfunc	BSShaderResourceManager::vfunc_1E	inferred	rtti	108535	pdata_start	vtables(1): BSShaderResourceManager[1E]	
+0x1515930	vfunc	BSShaderResourceManager::vfunc_1F	inferred	rtti	108536	no_pdata_entry	vtables(1): BSShaderResourceManager[1F]	
+0x1515950	vfunc	BSShaderResourceManager::vfunc_20	inferred	rtti	108537	pdata_start	vtables(1): BSShaderResourceManager[20]	
+0x1515A00	vfunc	BSShaderResourceManager::vfunc_21	inferred	rtti	108538	no_pdata_entry	vtables(1): BSShaderResourceManager[21]	
+0x1515A20	vfunc	BSShaderResourceManager::vfunc_22	inferred	rtti	108539	no_pdata_entry	vtables(1): BSShaderResourceManager[22]	
+0x1515A40	vfunc	BSShaderResourceManager::vfunc_23	inferred	rtti	108540	no_pdata_entry	vtables(1): BSShaderResourceManager[23]	
+0x1515A50	vfunc	BSShaderResourceManager::vfunc_24	inferred	rtti	108541	no_pdata_entry	vtables(1): BSShaderResourceManager[24]	
+0x1515A60	vfunc	BSShaderResourceManager::vfunc_25	inferred	rtti	108542	no_pdata_entry	vtables(1): BSShaderResourceManager[25]	
+0x1515B30	vfunc	BSShaderResourceManager::vfunc_26	inferred	rtti	108543	no_pdata_entry	vtables(1): BSShaderResourceManager[26]	
+0x1515B50	vfunc	BSShaderResourceManager::vfunc_27	inferred	rtti	108544	no_pdata_entry	vtables(1): BSShaderResourceManager[27]	
+0x1515B60	vfunc	BSShaderResourceManager::vfunc_00	inferred	rtti	108545	pdata_start	vtables(1): BSShaderResourceManager[00]	
+0x151CD80	vfunc	BSComputeShader::vfunc_02	inferred	rtti	108723	pdata_start	vtables(1): BSComputeShader[02]	
+0x151D210	vfunc	BSComputeShader::Dtor	named	rtti+commonlib	108730	pdata_start	vtables(1): BSComputeShader[00]	declared in NiRefObject
+0x1783490	vtable	BSAttachTechniques::BSAttachTechnique::vftable	named	rtti	188018	col@0x1ae2258	4 slots	
+0x17834B8	vtable	BGSAttachTechniquesUtil::ProcessTechniquesFunctor::vftable	named	rtti	188020	col@0x1ae22d0	2 slots	
+0x17834D0	vtable	BGSAttachTechniquesUtil::AttachTechniquesFunctor::vftable	named	rtti	188022	col@0x1ae2348	2 slots	BGSAttachTechniquesUtil::ProcessTechniquesFunctor
+0x17834E8	vtable	BGSAttachTechniquesUtil::DetachTechniquesFunctor::vftable	named	rtti	188024	col@0x1ae23c8	2 slots	BGSAttachTechniquesUtil::ProcessTechniquesFunctor
+0x17836A0	vtable	BGSMultiTechniqueAttach::ActionPolicy::vftable	named	rtti	188058	col@0x1ae2ab0	2 slots	
+0x17836B8	vtable	BGSMultiTechniqueAttach::AttachPolicy::vftable	named	rtti	188060	col@0x1ae2b28	2 slots	BGSMultiTechniqueAttach::ActionPolicy
+0x17836D0	vtable	BGSMultiTechniqueAttach::DetachPolicy::vftable	named	rtti	188063	col@0x1ae2ba8	2 slots	BGSMultiTechniqueAttach::ActionPolicy
+0x17836E8	vtable	BGSMultiTechniqueAttach::vftable	named	rtti	188065	col@0x1ae2a30	4 slots	BSAttachTechniques::BSAttachTechnique
+0x1788D60	vtable	BSShaderProperty::ForEachVisitor::vftable	named	rtti	188316	col@0x1ae37d8	2 slots	
+0x17978D8	vtable	BSParticleShaderGeometry::vftable	named	rtti	189276	col@0x1ae9238	56 slots	BSDynamicTriShape > BSTriShape > BSGeometry > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x17A4A28	vtable	BSParticleShaderEmitter::vftable	named	rtti	189950	col@0x1aee218	4 slots	NiRefObject
+0x17A4A50	vtable	BSParticleShaderCubeEmitter::vftable	named	rtti	189952	col@0x1aee298	4 slots	BSParticleShaderEmitter > NiRefObject
+0x17A4A78	vtable	BSParticleShaderRainEmitter::vftable	named	rtti	189954	col@0x1aee3b0	4 slots	BSParticleShaderCubeEmitter > BSParticleShaderEmitter > NiRefObject
+0x17A4AA0	vtable	BSParticleShaderSnowEmitter::vftable	named	rtti	189956	col@0x1aee320	4 slots	BSParticleShaderCubeEmitter > BSParticleShaderEmitter > NiRefObject
+0x17BC9C0	vtable	BSTextureSet::vftable	named	rtti	191165	col@0x1af5fb0	40 slots	NiObject > NiRefObject
+0x17BCB08	vtable	BSShaderTextureSet::vftable	named	rtti	191206	col@0x1af5fd8	40 slots	BSTextureSet > NiObject > NiRefObject
+0x187B880	vtable	BSAttachTechniques::AttachTechniqueInput::vftable	named	rtti	205824	col@0x1b203c8	2 slots	
+0x187B898	vtable	RefAttachTechniqueInput::vftable	named	rtti	205826	col@0x1b20440	2 slots	BSAttachTechniques::AttachTechniqueInput
+0x1880B00	vtable	BSParticleShaderObjectEmitter::vftable	named	rtti	206041	col@0x1b22988	7 slots	BSParticleShaderEmitter > NiRefObject
+0x1880B40	vtable	BSParticleShaderGeometryEmitter::vftable	named	rtti	206049	col@0x1b22b30	7 slots	BSParticleShaderObjectEmitter > BSParticleShaderEmitter > NiRefObject
+0x1880BA0	vtable	BSParticleShaderCollisionEmitter::vftable	named	rtti	206055	col@0x1b22aa0	7 slots	BSParticleShaderObjectEmitter > BSParticleShaderEmitter > NiRefObject
+0x1880BE0	vtable	BSParticleShaderRayEmitter::vftable	named	rtti	206057	col@0x1b22a10	7 slots	BSParticleShaderObjectEmitter > BSParticleShaderEmitter > NiRefObject
+0x19CF218	vtable	BSXFlags::vftable	named	rtti	238227	col@0x1bc1808	39 slots	NiIntegerExtraData > NiExtraData > NiObject > NiRefObject
+0x1AA6418	vtable	BSShaderProperty::vftable	named	rtti	252907	col@0x1be9df0	63 slots	NiShadeProperty > NiProperty > NiObjectNET > NiObject > NiRefObject
+0x1AA9A28	vtable	BSImagespaceShaderAlphaBlend::vftable	named	rtti	253084	col@0x1bea138	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AA9D48	vtable	BSImagespaceShaderBlur3::vftable	named	rtti	253125	col@0x1bea450	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AA9ED0	vtable	BSImagespaceShaderBlur5::vftable	named	rtti	253142	col@0x1bea570	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAA010	vtable	BSImagespaceShaderBlur7::vftable	named	rtti	253154	col@0x1bea690	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAA150	vtable	BSImagespaceShaderBlur9::vftable	named	rtti	253166	col@0x1bea7b0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAA298	vtable	BSImagespaceShaderBlur11::vftable	named	rtti	253179	col@0x1bea8d0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAA3F0	vtable	BSImagespaceShaderBlur13::vftable	named	rtti	253192	col@0x1bea9f0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAA540	vtable	BSImagespaceShaderBlur15::vftable	named	rtti	253204	col@0x1beab10	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAA698	vtable	BSImagespaceShaderNonHDRBlur3::vftable	named	rtti	253217	col@0x1beac30	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAA7C8	vtable	BSImagespaceShaderNonHDRBlur5::vftable	named	rtti	253227	col@0x1bead50	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAA8F8	vtable	BSImagespaceShaderNonHDRBlur7::vftable	named	rtti	253237	col@0x1beae70	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAAA28	vtable	BSImagespaceShaderNonHDRBlur9::vftable	named	rtti	253247	col@0x1beaf90	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAAB58	vtable	BSImagespaceShaderNonHDRBlur11::vftable	named	rtti	253257	col@0x1beb0b0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAAC88	vtable	BSImagespaceShaderNonHDRBlur13::vftable	named	rtti	253267	col@0x1beb1d0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAADB8	vtable	BSImagespaceShaderNonHDRBlur15::vftable	named	rtti	253277	col@0x1beb2f0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAAEE8	vtable	BSImagespaceShaderBrightPassBlur3::vftable	named	rtti	253287	col@0x1beb410	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAB050	vtable	BSImagespaceShaderBrightPassBlur5::vftable	named	rtti	253300	col@0x1beb530	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAB190	vtable	BSImagespaceShaderBrightPassBlur7::vftable	named	rtti	253310	col@0x1beb650	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAB2D0	vtable	BSImagespaceShaderBrightPassBlur9::vftable	named	rtti	253320	col@0x1beb770	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAB410	vtable	BSImagespaceShaderBrightPassBlur11::vftable	named	rtti	253330	col@0x1beb890	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAB550	vtable	BSImagespaceShaderBrightPassBlur13::vftable	named	rtti	253340	col@0x1beb9b0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAB690	vtable	BSImagespaceShaderBrightPassBlur15::vftable	named	rtti	253350	col@0x1bebad0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAB7D0	vtable	BSImagespaceShaderCopy::vftable	named	rtti	253360	col@0x1bebbf0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAB8F0	vtable	BSImagespaceShaderCopyDynamicFetchDisabled::vftable	named	rtti	253370	col@0x1bebd10	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AABA50	vtable	BSImagespaceShaderCopyScaleBias::vftable	named	rtti	253381	col@0x1bebe30	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AABBA0	vtable	BSImagespaceShaderTextureMask::vftable	named	rtti	253393	col@0x1bebf50	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AABCF0	vtable	BSImagespaceShaderGreyScale::vftable	named	rtti	253405	col@0x1bec070	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AABE40	vtable	BSImagespaceShaderCopyCustomViewport::vftable	named	rtti	253417	col@0x1bec190	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AABF80	vtable	BSImagespaceShaderDepthOfField::vftable	named	rtti	253427	col@0x1bec2b0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAC0F0	vtable	BSImagespaceShaderDepthOfFieldFogged::vftable	named	rtti	253443	col@0x1bec3d0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAC248	vtable	BSImagespaceShaderDepthOfFieldMaskedFogged::vftable	named	rtti	253456	col@0x1bec4f0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAC3B0	vtable	BSImagespaceShaderDistantBlur::vftable	named	rtti	253469	col@0x1bec610	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAC4E8	vtable	BSImagespaceShaderDistantBlurFogged::vftable	named	rtti	253480	col@0x1bec730	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAC628	vtable	BSImagespaceShaderDistantBlurMaskedFogged::vftable	named	rtti	253490	col@0x1bec850	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAC778	vtable	BSImagespaceShaderDoubleVision::vftable	named	rtti	253500	col@0x1bec970	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAC8D8	vtable	BSImagespaceShaderFXAA::vftable	named	rtti	253514	col@0x1beca90	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AACA40	vtable	BSImagespaceShaderHDRDownSample4::vftable	named	rtti	253529	col@0x1becbb0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AACB98	vtable	BSImagespaceShaderHDRDownSample16Lum::vftable	named	rtti	253541	col@0x1beccd0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AACCF0	vtable	BSImagespaceShaderHDRDownSample4RGB2Lum::vftable	named	rtti	253553	col@0x1becdf0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AACE38	vtable	BSImagespaceShaderHDRDownSample16::vftable	named	rtti	253564	col@0x1becf10	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AACF78	vtable	BSImagespaceShaderHDRDownSample4LumClamp::vftable	named	rtti	253574	col@0x1bed030	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAD0E0	vtable	BSImagespaceShaderHDRDownSample16LumClamp::vftable	named	rtti	253586	col@0x1bed150	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAD230	vtable	BSImagespaceShaderHDRDownSample4LightAdapt::vftable	named	rtti	253596	col@0x1bed270	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAD3A8	vtable	BSImagespaceShaderHDRDownSample16LightAdapt::vftable	named	rtti	253609	col@0x1bed390	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAD4F8	vtable	BSImagespaceShaderHDRTonemapBlendCinematic::vftable	named	rtti	253619	col@0x1bed4b0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAD670	vtable	BSImagespaceShaderHDRTonemapBlendCinematicFade::vftable	named	rtti	253634	col@0x1bed5d0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAD7D0	vtable	BSImagespaceShaderLocalMap::vftable	named	rtti	253646	col@0x1bed6f0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAD910	vtable	BSImagespaceShaderMap::vftable	named	rtti	253657	col@0x1bed810	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AADA40	vtable	BSImagespaceShaderWorldMap::vftable	named	rtti	253668	col@0x1bed930	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AADBA0	vtable	BSImagespaceShaderWorldMapNoSkyBlur::vftable	named	rtti	253681	col@0x1beda50	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AADCE8	vtable	BSImagespaceShaderNoiseScrollAndBlend::vftable	named	rtti	253692	col@0x1bedb70	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AADEB8	vtable	BSImagespaceShaderNoiseNormalmap::vftable	named	rtti	253711	col@0x1bedc90	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAE008	vtable	BSImagespaceShaderRadialBlur::vftable	named	rtti	253722	col@0x1beddb0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAE158	vtable	BSImagespaceShaderRadialBlurMedium::vftable	named	rtti	253735	col@0x1beded0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAE298	vtable	BSImagespaceShaderRadialBlurHigh::vftable	named	rtti	253745	col@0x1bedff0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAF1D0	vtable	BSImagespaceShaderVolumetricLighting::vftable	named	rtti	253878	col@0x1beec50	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAF610	vtable	BSImagespaceShaderApplyReflections::vftable	named	rtti	253923	col@0x1beee90	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAF7A8	vtable	BSImagespaceShaderISApplyVolumetricLighting::vftable	named	rtti	253938	col@0x1beefb0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAF958	vtable	BSImagespaceShaderISBasicCopy::vftable	named	rtti	253953	col@0x1bef0d0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAFA88	vtable	BSImagespaceShaderISBlur::vftable	named	rtti	253964	col@0x1bef1f0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAFBF8	vtable	BSImagespaceShaderISVolumetricLightingBlurHCS::vftable	named	rtti	253978	col@0x1bef310	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAFE18	vtable	BSImagespaceShaderISVolumetricLightingBlurVCS::vftable	named	rtti	254000	col@0x1bef430	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAFF80	vtable	BSImagespaceShaderReflectionBlurHCS::vftable	named	rtti	254012	col@0x1bef550	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB00C0	vtable	BSImagespaceShaderReflectionBlurVCS::vftable	named	rtti	254022	col@0x1bef670	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB0200	vtable	BSImagespaceShaderISParallaxMaskBlurHCS::vftable	named	rtti	254032	col@0x1bef790	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB0360	vtable	BSImagespaceShaderISParallaxMaskBlurVCS::vftable	named	rtti	254045	col@0x1bef8b0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB04A0	vtable	BSImagespaceShaderISDepthOfFieldBlurHCS::vftable	named	rtti	254055	col@0x1bef9d0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB05F0	vtable	BSImagespaceShaderISDepthOfFieldBlurVCS::vftable	named	rtti	254067	col@0x1befaf0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB0738	vtable	BSImagespaceShaderISCompositeVolumetricLighting::vftable	named	rtti	254078	col@0x1befc10	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB0900	vtable	BSImagespaceShaderISCompositeLensFlare::vftable	named	rtti	254093	col@0x1befd30	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB0A50	vtable	BSImagespaceShaderISCompositeLensFlareVolumetricLighting::vftable	named	rtti	254104	col@0x1befe50	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB0B90	vtable	BSImagespaceShaderISCopySubRegionCS::vftable	named	rtti	254113	col@0x1beff70	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB0D10	vtable	BSImagespaceShaderISDebugSnow::vftable	named	rtti	254128	col@0x1bf0090	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB0E58	vtable	BSImagespaceShaderISDownsample::vftable	named	rtti	254140	col@0x1bf01b0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB1008	vtable	BSImagespaceShaderISDownsampleIgnoreBrightest::vftable	named	rtti	254157	col@0x1bf02d0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB1168	vtable	BSImagespaceShaderISDownsampleCS::vftable	named	rtti	254168	col@0x1bf03f0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB12E8	vtable	BSImagespaceShaderISDownsampleIgnoreBrightestCS::vftable	named	rtti	254181	col@0x1bf0510	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB1438	vtable	BSImagespaceShaderISExp::vftable	named	rtti	254191	col@0x1bf0630	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB1568	vtable	BSImagespaceShaderISIBLensFlares::vftable	named	rtti	254202	col@0x1bf0750	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB17E0	vtable	BSImagespaceShaderISLightingComposite::vftable	named	rtti	254230	col@0x1bf0870	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB19B8	vtable	BSImagespaceShaderISLightingCompositeNoDirectionalLight::vftable	named	rtti	254249	col@0x1bf0990	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB1B18	vtable	BSImagespaceShaderISLightingCompositeMenu::vftable	named	rtti	254259	col@0x1bf0ab0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB1C68	vtable	BSImagespaceShaderISPerlinNoiseCS::vftable	named	rtti	254270	col@0x1bf0bd0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB1DC8	vtable	BSImagespaceShaderISPerlinNoise2DCS::vftable	named	rtti	254282	col@0x1bf0cf0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB1F18	vtable	BSImagespaceShaderReflectionsRayTracing::vftable	named	rtti	254293	col@0x1bf0e10	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB20C0	vtable	BSImagespaceShaderReflectionsDebugSpecMask::vftable	named	rtti	254309	col@0x1bf0f30	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB2220	vtable	BSImagespaceShaderISSAOBlurH::vftable	named	rtti	254320	col@0x1bf1050	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB2378	vtable	BSImagespaceShaderISSAOBlurV::vftable	named	rtti	254333	col@0x1bf1170	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB24B0	vtable	BSImagespaceShaderISSAOBlurHCS::vftable	named	rtti	254344	col@0x1bf1290	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB2600	vtable	BSImagespaceShaderISSAOBlurVCS::vftable	named	rtti	254357	col@0x1bf13b0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB2738	vtable	BSImagespaceShaderISSAOCameraZ::vftable	named	rtti	254368	col@0x1bf14d0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB2878	vtable	BSImagespaceShaderISSAOCameraZAndMipsCS::vftable	named	rtti	254379	col@0x1bf15f0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB29E8	vtable	BSImagespaceShaderISSAOCompositeSAO::vftable	named	rtti	254392	col@0x1bf1710	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB2C18	vtable	BSImagespaceShaderISSAOCompositeFog::vftable	named	rtti	254415	col@0x1bf1830	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB2D68	vtable	BSImagespaceShaderISSAOCompositeSAOFog::vftable	named	rtti	254426	col@0x1bf1950	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB2EA8	vtable	BSImagespaceShaderISMinify::vftable	named	rtti	254436	col@0x1bf1a70	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB3038	vtable	BSImagespaceShaderISMinifyContrast::vftable	named	rtti	254450	col@0x1bf1b90	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB3190	vtable	BSImagespaceShaderISSAORawAO::vftable	named	rtti	254461	col@0x1bf1cb0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB3338	vtable	BSImagespaceShaderISSAORawAONoTemporal::vftable	named	rtti	254479	col@0x1bf1dd0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB3478	vtable	BSImagespaceShaderISSAORawAOCS::vftable	named	rtti	254489	col@0x1bf1ef0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB35C0	vtable	BSImagespaceShaderISSILComposite::vftable	named	rtti	254500	col@0x1bf2010	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB3708	vtable	BSImagespaceShaderISSILRawInd::vftable	named	rtti	254511	col@0x1bf2130	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB3878	vtable	BSImagespaceShaderISSimpleColor::vftable	named	rtti	254525	col@0x1bf2250	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB39C0	vtable	BSImagespaceShaderISDisplayDepth::vftable	named	rtti	254536	col@0x1bf2370	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB3B08	vtable	BSImagespaceShaderISSnowSSS::vftable	named	rtti	254547	col@0x1bf2490	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB3C68	vtable	BSImagespaceShaderISTemporalAA::vftable	named	rtti	254560	col@0x1bf25b0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB3EC0	vtable	BSImagespaceShaderISTemporalAA_UI::vftable	named	rtti	254582	col@0x1bf26d0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB4000	vtable	BSImagespaceShaderISTemporalAA_Water::vftable	named	rtti	254593	col@0x1bf27f0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB4150	vtable	BSImagespaceShaderISUpsampleDynamicResolution::vftable	named	rtti	254604	col@0x1bf2910	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB42B8	vtable	BSImagespaceShaderISWaterBlend::vftable	named	rtti	254615	col@0x1bf2a30	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB4418	vtable	BSImagespaceShaderISUnderwaterMask::vftable	named	rtti	254627	col@0x1bf2b50	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB5CE0	vtable	BSGrassShaderProperty::vftable	named	rtti	254672	col@0x1bf2db8	65 slots	BSLightingShaderProperty > BSShaderProperty > NiShadeProperty > NiProperty > NiObjectNET > NiObject > NiRefObject
+0x1AB6190	vtable	BSShaderAccumulator::vftable	named	rtti	254680	col@0x1bf2e70	45 slots	NiAlphaAccumulator > NiBackToFrontAccumulator > NiAccumulator > NiObject > NiRefObject
+0x1AB66C0	vtable	BSGrassShader::vftable	named	rtti	254719	col@0x1bf3008	10 slots	BSShader > NiRefObject
+0x1AB76D8	vtable	BSEffectShaderProperty::vftable	named	rtti	254763	col@0x1bf37d8	63 slots	BSShaderProperty > NiShadeProperty > NiProperty > NiObjectNET > NiObject > NiRefObject
+0x1AB80B8	vtable	BSBloodSplatterShaderProperty::vftable	named	rtti	254783	col@0x1bf3c10	63 slots	BSShaderProperty > NiShadeProperty > NiProperty > NiObjectNET > NiObject > NiRefObject
+0x1AB82B8	vtable	BSBloodSplatterShader::vftable	named	rtti	254785	col@0x1bf3cb8	10 slots	BSShader > NiRefObject
+0x1AB8690	vtable	BSImagespaceShaderLensFlare::vftable	named	rtti	254799	col@0x1bf3da0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB8790	vtable	BSImagespaceShaderLensFlareVisibility::vftable	named	rtti	254807	col@0x1bf3ec0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB9D70	vtable	BSParticleShaderProperty::vftable	named	rtti	254891	col@0x1bf3fe0	63 slots	BSShaderProperty > NiShadeProperty > NiProperty > NiObjectNET > NiObject > NiRefObject
+0x1ABFA18	vtable	BSEffectShaderMaterial::vftable	named	rtti	255190	col@0x1bf4af0	8 slots	BSShaderMaterial
+0x1ABFB50	vtable	BSEffectShader::vftable	named	rtti	255194	col@0x1bf4b78	10 slots	BSShader > NiRefObject
+0x1AC16B0	vtable	BSImagespaceShader::vftable	named	rtti	255281	col@0x1bf5230	15 slots	BSShader > NiRefObject
+0x1AC1BF8	vtable	BSUtilityShader::vftable	named	rtti	255302	col@0x1bf53d0	10 slots	BSShader > NiRefObject
+0x1AC35F0	vtable	BSShaderMaterial::vftable	named	rtti	255400	col@0x1bf5f18	8 slots	
+0x1AC39A0	vtable	BSReloadShaderI::vftable	named	rtti	255412	col@0x1bf6008	1 slots	
+0x1AC39B0	vtable	BSShader::vftable	named	rtti	255414	col@0x1bf5f68	10 slots	NiRefObject
+0x1AC3A80	vtable	BSParticleShader::vftable	named	rtti	255421	col@0x1bf6030	10 slots	BSShader > NiRefObject
+0x1AC4428	vtable	BSEffectShaderPropertyFloatController::vftable	named	rtti	255445	col@0x1bf6310	62 slots	NiFloatInterpController > NiSingleInterpController > NiInterpController > NiTimeController > NiObject > NiRefObject
+0x1AC46C0	vtable	BSEffectShaderPropertyColorController::vftable	named	rtti	255447	col@0x1bf63b8	62 slots	NiPoint3InterpController > NiSingleInterpController > NiInterpController > NiTimeController > NiObject > NiRefObject
+0x1AC5610	vtable	BSShaderResourceManager::vftable	named	rtti	255472	col@0x1bf66b8	40 slots	IRendererResourceManager
+0x1AC6A28	vtable	BSComputeShader::vftable	named	rtti	255666	col@0x1bf6bd8	3 slots	NiRefObject

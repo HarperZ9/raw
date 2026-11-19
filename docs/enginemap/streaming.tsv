@@ -1,0 +1,420 @@
+rva	kind	name	confidence	source	addrlib_id	check	refs	notes
+0x014D260	vfunc	BSModelDB::QueuedHandles::vfunc_00	inferred	rtti	11384	pdata_start	vtables(1): BSModelDB::QueuedHandles[00]	
+0x018DC80	vfunc	QueuedReference::vfunc_15	inferred	rtti	13014	pdata_start	vtables(5): QueuedActor[15], QueuedCharacter[15], QueuedPlayer[15], QueuedReference[15], QueuedTree[15]	
+0x018DD90	vfunc	QueuedReference::vfunc_16	inferred	rtti	13015	pdata_start	vtables(5): QueuedActor[16], QueuedCharacter[16], QueuedPlayer[16], QueuedReference[16], QueuedTree[16]	
+0x018E070	vfunc	QueuedReference::vfunc_05	inferred	rtti	13016	no_pdata_entry	vtables(5): QueuedActor[05], QueuedCharacter[05], QueuedPlayer[05], QueuedReference[05], QueuedTree[05]	
+0x018E080	vfunc	QueuedReference::vfunc_17	inferred	rtti	13017	no_pdata_entry	vtables(3): QueuedActor[17], QueuedReference[17], QueuedTree[17]	
+0x018E090	vfunc	QueuedReference::vfunc_04	inferred	rtti	13018	pdata_start	vtables(5): QueuedActor[04], QueuedCharacter[04], QueuedPlayer[04], QueuedReference[04], QueuedTree[04]	
+0x018E180	vfunc	QueuedReference::vfunc_18	inferred	rtti	13019	pdata_start	vtables(2): QueuedActor[18], QueuedReference[18]	
+0x018E2C0	vfunc	QueuedReference::vfunc_0E	inferred	rtti	13020	pdata_start	vtables(2): QueuedReference[0E], QueuedTree[0E]	
+0x018E3F0	vfunc	QueuedReference::vfunc_13	inferred	rtti	13021	pdata_start	vtables(1): QueuedReference[13]	
+0x018E5A0	vfunc	QueuedReference::vfunc_0C	inferred	rtti	13022	pdata_start	vtables(5): QueuedActor[0C], QueuedCharacter[0C], QueuedPlayer[0C], QueuedReference[0C], QueuedTree[0C]	
+0x018EB80	vfunc	QueuedReference::vfunc_14	inferred	rtti	13025	no_pdata_entry	vtables(4): QueuedActor[14], QueuedCharacter[14], QueuedPlayer[14], QueuedReference[14]	
+0x018EB90	vfunc	QueuedReference::vfunc_0D	inferred	rtti	13026	pdata_start	vtables(5): QueuedActor[0D], QueuedCharacter[0D], QueuedPlayer[0D], QueuedReference[0D], QueuedTree[0D]	
+0x018F420	vfunc	QueuedReference::vfunc_19	inferred	rtti	13035	no_pdata_entry	vtables(2): QueuedReference[19], QueuedTree[19]	
+0x018F810	vfunc	BackgroundProcessThread::Unk_01	inferred	rtti+commonlib	13049	pdata_start	vtables(1): BackgroundProcessThread[01]	declared in BSThread
+0x0192900	vfunc	QueuedHead::vfunc_01	inferred	rtti	13092	pdata_start	vtables(1): QueuedHead[01]	
+0x01929C0	vfunc	QueuedHead::vfunc_04	inferred	rtti	13093	pdata_start	vtables(1): QueuedHead[04]	
+0x0192B60	vfunc	QueuedHead::vfunc_09	inferred	rtti	13095	pdata_start	vtables(1): QueuedHead[09]	
+0x0192C60	vfunc	QueuedHead::vfunc_0A	inferred	rtti	13096	no_pdata_entry	vtables(1): QueuedHead[0A]	
+0x0192CE0	vfunc	QueuedTree::vfunc_13	inferred	rtti	13098	pdata_start	vtables(1): QueuedTree[13]	
+0x0192E20	vfunc	QueuedTree::vfunc_18	inferred	rtti	13099	pdata_start	vtables(1): QueuedTree[18]	
+0x0192E90	vfunc	QueuedTree::vfunc_14	inferred	rtti	13100	pdata_start	vtables(1): QueuedTree[14]	
+0x0196860	vfunc	BSStream::Dtor	named	rtti+commonlib	13197	pdata_start	vtables(1): BSStream[00]	
+0x01968E0	vfunc	BackgroundProcessThread::Dtor	named	rtti+commonlib	13199	pdata_start	vtables(1): BackgroundProcessThread[00]	declared in BSThread
+0x0196970	vfunc	IOTask::vfunc_00	inferred	rtti	13200	pdata_start	vtables(1): IOTask[00]	
+0x0196AB0	vfunc	QueuedHead::vfunc_00	inferred	rtti	13205	pdata_start	vtables(1): QueuedHead[00]	
+0x0196D00	vfunc	QueuedReference::vfunc_00	inferred	rtti	13209	pdata_start	vtables(1): QueuedReference[00]	
+0x0196DB0	vfunc	QueuedTree::vfunc_00	inferred	rtti	13211	pdata_start	vtables(1): QueuedTree[00]	
+0x019C990	function	TES::PurgeBufferedCells	named	commonlib+addrlib	13299	pdata_start		src/RE/T/TES.cpp:142
+0x019E850	function	TES::GetCell	named	commonlib+addrlib	13322	pdata_start		src/RE/T/TES.cpp:100
+0x019FFC0	function	TES::GetLandHeight	named	commonlib+addrlib	13344	pdata_start		src/RE/T/TES.cpp:114
+0x01A0450	function	TES::GetLandTexture	named	commonlib+addrlib	13348	pdata_start		src/RE/T/TES.cpp:121
+0x01A05C0	function	TES::GetLandMaterialType	named	commonlib+addrlib	13349	pdata_start		src/RE/T/TES.cpp:107
+0x01A0D20	function	TES::GetWaterHeight	named	commonlib+addrlib	13358	pdata_start		src/RE/T/TES.cpp:128
+0x01A1B90	function	TES::Pick	named	commonlib+addrlib	13371	pdata_start		src/RE/T/TES.cpp:135
+0x01A6960	vfunc	TES::SystemEventAdapter::ProcessEvent	named	rtti+commonlib	13444	no_pdata_entry	vtables(1): TES::SystemEventAdapter[01]	declared in SystemEventAdapter
+0x01AF060	vfunc	TES::SystemEventAdapter::Dtor	named	rtti+commonlib	13626	pdata_start	vtables(1): TES::SystemEventAdapter[00]	declared in SystemEventAdapter
+0x01AF0D0	vfunc	TES::Dtor	named	rtti+commonlib	13627	pdata_start	vtables(1): TES[00]	
+0x01B14C0	function	TESDataHandler::AddFormToDataHandler	named	commonlib+addrlib	13693	pdata_start		src/RE/T/TESDataHandler.cpp:17
+0x01B6C10	function	TESDataHandler::CreateReferenceAtLocation	named	commonlib+addrlib	13723	pdata_start		src/RE/T/TESDataHandler.cpp:183
+0x01BCBC0	function	TESDataHandler::LoadScripts	named	commonlib+addrlib	13766	pdata_start		include/RE/Offsets.h:503
+0x01C1AA0	vfunc	BGSLoadFormBuffer::vfunc_00	inferred	rtti	13854	pdata_start	vtables(1): BGSLoadFormBuffer[00]	
+0x01CC170	vfunc	BSModelDB::BSModelProcessor::vfunc_00	inferred	rtti	14089	pdata_start	vtables(1): BSModelDB::BSModelProcessor[00]	
+0x0205AB0	vfunc	BSResource::Location::Dtor	named	rtti+commonlib	15409	pdata_start	vtables(1): BSResource::Location[00]	declared in Location
+0x0205B10	vfunc	BSResource::LooseFileLocation::Dtor	named	rtti+commonlib	15410	pdata_start	vtables(1): BSResource::LooseFileLocation[00]	declared in LooseFileLocation
+0x0206440	vfunc	BSResource::Location::DoCreateAsyncStream	named	rtti+commonlib	15421	no_pdata_entry	vtables(2): BSResource::?A0x10d192fa::DevNull[04], BSResource::Location[04]	declared in Location
+0x0206450	vfunc	BSResource::Location::DoDelete	named	rtti+commonlib	15422	no_pdata_entry	vtables(2): BSResource::?A0x10d192fa::DevNull[08], BSResource::Location[08]	declared in Location
+0x0206460	vfunc	BSResource::Location::DoGetInfo2	named	rtti+commonlib	15423	no_pdata_entry	vtables(2): BSResource::?A0x10d192fa::DevNull[07], BSResource::Location[07]	declared in Location
+0x0206470	vfunc	BSResource::Location::DoGetInfo1	named	rtti+commonlib	15424	no_pdata_entry	vtables(2): BSResource::?A0x10d192fa::DevNull[06], BSResource::Location[06]	declared in Location
+0x0206480	vfunc	BSResource::Location::DoGetMinimumAsyncPacketSize	named	rtti+commonlib	15425	no_pdata_entry	vtables(5): BSResource::?A0x10d192fa::DevNull[0B], BSResource::?A0x10d192fa::GlobalLocations[0B], BSResource::?A0x10d192fa::GlobalPaths[0B], BSResource::?A0x10d192fa::LocationTree[0B], BSResource::Location[0B]	declared in Location
+0x0206490	vfunc	BSResource::Location::DoGetName	named	rtti+commonlib	15426	no_pdata_entry	vtables(6): BSResource::?A0x10d192fa::DevNull[09], BSResource::?A0x10d192fa::GlobalLocations[09], BSResource::?A0x10d192fa::GlobalPaths[09], BSResource::?A0x10d192fa::LocationTree[09], BSResource::CacheDrive[09], BSResource::Location[09]	declared in Location
+0x02064A0	vfunc	BSResource::Location::DoMount	named	rtti+commonlib	15427	no_pdata_entry	vtables(5): BSResource::?A0x10d192fa::GlobalPaths[01], BSResource::?A0x10d192fa::LocationTree[01], BSResource::CacheDrive[01], BSResource::Location[01], BSResource::LooseFileLocation[01]	declared in Location
+0x02064B0	vfunc	BSResource::Location::DoQBufferHint	named	rtti+commonlib	15428	no_pdata_entry	vtables(7): BSResource::?A0x10d192fa::DevNull[0A], BSResource::?A0x10d192fa::GlobalLocations[0A], BSResource::?A0x10d192fa::GlobalPaths[0A], BSResource::?A0x10d192fa::LocationTree[0A], BSResource::CacheDrive[0A], BSResource::Location[0A], +1 more	declared in Location
+0x02064C0	vfunc	BSResource::Location::DoUnmount	named	rtti+commonlib	15429	no_pdata_entry	vtables(5): BSResource::?A0x10d192fa::GlobalPaths[02], BSResource::?A0x10d192fa::LocationTree[02], BSResource::CacheDrive[02], BSResource::Location[02], BSResource::LooseFileLocation[02]	declared in Location
+0x0221380	vfunc	GridArray::DetachAll	named	rtti+commonlib	15939	pdata_start	vtables(2): GridArray[01], GridCellArray[01]	
+0x02213F0	vfunc	GridArray::KillAll	named	rtti+commonlib	15940	no_pdata_entry	vtables(1): GridArray[02]	
+0x0221400	vfunc	GridArray::SetCenter	named	rtti+commonlib	15941	pdata_start	vtables(1): GridArray[03]	
+0x0221450	vfunc	GridArray::Shift	named	rtti+commonlib	15942	pdata_start	vtables(2): GridArray[04], GridCellArray[04]	
+0x0221690	vfunc	GridArray::Dtor	named	rtti+commonlib	15943	pdata_start	vtables(1): GridArray[00]	
+0x0221990	vfunc	GridCellArray::KillAll	named	rtti+commonlib	15953	pdata_start	vtables(1): GridCellArray[02]	
+0x02219C0	vfunc	GridCellArray::SetCenter	named	rtti+commonlib	15954	pdata_start	vtables(1): GridCellArray[03]	
+0x0221A40	vfunc	GridCellArray::Detach	named	rtti+commonlib	15955	pdata_start	vtables(1): GridCellArray[05]	
+0x0221AB0	vfunc	GridCellArray::ClearItem	named	rtti+commonlib	15956	no_pdata_entry	vtables(1): GridCellArray[06]	
+0x0221AF0	vfunc	GridCellArray::MoveItem	named	rtti+commonlib	15957	no_pdata_entry	vtables(1): GridCellArray[07]	
+0x0221B50	vfunc	GridCellArray::SwapItem	named	rtti+commonlib	15958	pdata_start	vtables(1): GridCellArray[08]	
+0x0222270	vfunc	GridCellArray::Dtor	named	rtti+commonlib	15972	pdata_start	vtables(1): GridCellArray[00]	
+0x029BA80	vfunc	CellLoaderTask::vfunc_01	inferred	rtti	18527	pdata_start	vtables(1): CellLoaderTask[01]	
+0x029BC00	vfunc	CellLoaderTask::vfunc_02	inferred	rtti	18528	pdata_start	vtables(1): CellLoaderTask[02]	
+0x029BCA0	vfunc	CellLoaderTask::vfunc_06	inferred	rtti	18529	pdata_start	vtables(1): CellLoaderTask[06]	
+0x029BD20	vfunc	CellLoaderTask::vfunc_03	inferred	rtti	18530	pdata_start	vtables(1): CellLoaderTask[03]	
+0x029BD90	vfunc	CellLoaderTask::vfunc_04	inferred	rtti	18531	pdata_start	vtables(1): CellLoaderTask[04]	
+0x029D4A0	vfunc	CellLoaderTask::vfunc_00	inferred	rtti	18557	pdata_start	vtables(1): CellLoaderTask[00]	
+0x02B2590	vfunc	TESObjectCELL::ClearData	named	rtti+commonlib	18878	pdata_start	vtables(1): TESObjectCELL[05]	
+0x02B2630	vfunc	TESObjectCELL::CreateDuplicateForm	named	rtti+commonlib	18879	no_pdata_entry	vtables(1): TESObjectCELL[09]	
+0x02B2640	vfunc	TESObjectCELL::Load	named	rtti+commonlib	18880	pdata_start	vtables(1): TESObjectCELL[06]	
+0x02B3200	vfunc	TESObjectCELL::InitItemImpl	named	rtti+commonlib	18881	pdata_start	vtables(1): TESObjectCELL[13]	
+0x02B3700	vfunc	TESObjectCELL::BelongsInGroup	named	rtti+commonlib	18883	pdata_start	vtables(1): TESObjectCELL[30]	
+0x02B3840	vfunc	TESObjectCELL::CreateGroupData	named	rtti+commonlib	18884	pdata_start	vtables(1): TESObjectCELL[31]	
+0x02B53F0	vfunc	TESObjectCELL::GetFormEditorID	named	rtti+commonlib	18901	pdata_start	vtables(1): TESObjectCELL[32]	
+0x02B5450	vfunc	TESObjectCELL::SetFormEditorID	named	rtti+commonlib	18902	pdata_start	vtables(1): TESObjectCELL[33]	
+0x02B5510	function	TESObjectCELL::GetLocation	named	commonlib+addrlib	18905	pdata_start		src/RE/T/TESObjectCELL.cpp:67
+0x02B5E00	vfunc	TESObjectCELL::GetFormDetailedString	named	rtti+commonlib	18912	pdata_start	vtables(1): TESObjectCELL[16]	
+0x02B8D30	function	TESObjectCELL::GetbhkWorld	named	commonlib+addrlib	18995	no_pdata_entry		src/RE/T/TESObjectCELL.cpp:44
+0x02B8FE0	function	TESObjectCELL::GetRegionList	named	commonlib+addrlib	18999	pdata_start		src/RE/T/TESObjectCELL.cpp:119
+0x02B91D0	function	TESObjectCELL::GetWaterHeight	named	commonlib+addrlib	19002	pdata_start		src/RE/T/TESObjectCELL.cpp:126
+0x02BEE90	vfunc	TESObjectCELL::IsParentForm	named	rtti+commonlib	19095	no_pdata_entry	vtables(1): TESObjectCELL[34]	
+0x02BEEA0	vfunc	TESObjectCELL::IsFormTypeChild	named	rtti+commonlib	19096	no_pdata_entry	vtables(1): TESObjectCELL[36]	
+0x02BEF40	vfunc	TESObjectCELL::SetAltered	named	rtti+commonlib	19101	pdata_start	vtables(1): TESObjectCELL[24]	
+0x02BF440	vfunc	TESObjectCELL::FindInFileFast	named	rtti+commonlib	19110	pdata_start	vtables(1): TESObjectCELL[0C]	
+0x02C2230	vfunc	TESObjectCELL::SaveGame	named	rtti+commonlib	19133	pdata_start	vtables(1): TESObjectCELL[0E]	
+0x02C2300	vfunc	TESObjectCELL::LoadGame	named	rtti+commonlib	19134	pdata_start	vtables(1): TESObjectCELL[0F]	
+0x02C2550	vfunc	TESObjectCELL::Revert	named	rtti+commonlib	19135	pdata_start	vtables(1): TESObjectCELL[12]	
+0x02CD4D0	vfunc	TESObjectCELL::IDecalRefFunctor::vfunc_00	inferred	rtti	19302	pdata_start	vtables(1): TESObjectCELL::IDecalRefFunctor[00]	
+0x02CD500	vfunc	TESObjectCELL::Dtor	named	rtti+commonlib	19303	pdata_start	vtables(1): TESObjectCELL[00]	
+0x0304E80	vfunc	TESWorldSpace::InitializeData	named	rtti+commonlib	20448	pdata_start	vtables(1): TESWorldSpace[04]	
+0x0304FD0	vfunc	TESWorldSpace::ClearData	named	rtti+commonlib	20449	pdata_start	vtables(1): TESWorldSpace[05]	
+0x03050B0	vfunc	TESWorldSpace::GetFormEditorID	named	rtti+commonlib	20450	no_pdata_entry	vtables(1): TESWorldSpace[32]	
+0x03050D0	vfunc	TESWorldSpace::SetFormEditorID	named	rtti+commonlib	20451	pdata_start	vtables(1): TESWorldSpace[33]	
+0x0305140	vfunc	TESWorldSpace::CreateDuplicateForm	named	rtti+commonlib	20452	pdata_start	vtables(1): TESWorldSpace[09]	
+0x0305380	vfunc	TESWorldSpace::Load	named	rtti+commonlib	20453	pdata_start	vtables(1): TESWorldSpace[06]	
+0x0305E80	vfunc	TESWorldSpace::LoadPartial	named	rtti+commonlib	20454	pdata_start	vtables(1): TESWorldSpace[07]	
+0x0306050	vfunc	TESWorldSpace::InitItemImpl	named	rtti+commonlib	20455	pdata_start	vtables(1): TESWorldSpace[13]	
+0x03069C0	vfunc	TESWorldSpace::FindInFileFast	named	rtti+commonlib	20459	pdata_start	vtables(1): TESWorldSpace[0C]	
+0x030B070	function	TESWorldSpace::GetSkyCell	named	commonlib+addrlib	20543	pdata_start		src/RE/T/TESWorldSpace.cpp:13
+0x030C860	vfunc	TESWorldSpace::IsParentForm	named	rtti+commonlib	20555	no_pdata_entry	vtables(1): TESWorldSpace[34]	
+0x030C870	vfunc	TESWorldSpace::IsFormTypeChild	named	rtti+commonlib	20556	no_pdata_entry	vtables(1): TESWorldSpace[36]	
+0x030E2D0	vfunc	TESWorldSpace::Dtor	named	rtti+commonlib	20592	pdata_start	vtables(1): TESWorldSpace[00]	
+0x04201C0	vfunc	BSResourceFaceGenBinaryFile::vfunc_01	inferred	rtti	26625	pdata_start	vtables(1): BSResourceFaceGenBinaryFile[01]	
+0x0420270	vfunc	BSResourceFaceGenBinaryFile::vfunc_08	inferred	rtti	26626	pdata_start	vtables(1): BSResourceFaceGenBinaryFile[08]	
+0x04202F0	vfunc	BSResourceFaceGenBinaryFile::vfunc_06	inferred	rtti	26627	pdata_start	vtables(1): BSResourceFaceGenBinaryFile[06]	
+0x0420360	vfunc	BSResourceFaceGenBinaryFile::vfunc_09	inferred	rtti	26628	pdata_start	vtables(1): BSResourceFaceGenBinaryFile[09]	
+0x0420390	vfunc	BSResourceFaceGenBinaryFile::vfunc_0A	inferred	rtti	26629	pdata_start	vtables(1): BSResourceFaceGenBinaryFile[0A]	
+0x04203C0	vfunc	BSResourceFaceGenBinaryFile::vfunc_0B	inferred	rtti	26630	no_pdata_entry	vtables(1): BSResourceFaceGenBinaryFile[0B]	
+0x0420560	vfunc	BSResourceFaceGenBinaryFile::vfunc_00	inferred	rtti	26636	pdata_start	vtables(1): BSResourceFaceGenBinaryFile[00]	
+0x0421190	vfunc	BSFaceGenDB::TRI::QueuedHandles::vfunc_12	inferred	rtti	26655	no_pdata_entry	vtables(1): BSFaceGenDB::TRI::QueuedHandles[12]	
+0x042D6B0	vfunc	BSFaceGenDB::TRI::QueuedHandles::vfunc_00	inferred	rtti	26860	pdata_start	vtables(1): BSFaceGenDB::TRI::QueuedHandles[00]	
+0x05FC860	vfunc	BSThread::Unk_02	inferred	rtti+commonlib	35422	no_pdata_entry	vtables(10): ?A0x2499f75d::VMInitThread[02], ?A0x76b53a9f::LogWriteThread[02], BSAudioManagerThread[02], BSResource::CacheDrive::Impl[02], BSStepThread[02], BSSystemMonitor::MemOpsThread[02], +4 more	
+0x0604400	function	BGSSaveLoadGame::GetChange	named	commonlib+addrlib	35577	no_pdata_entry		include/RE/B/BGSSaveLoadGame.h:78
+0x060FD40	function	BGSSaveLoadManager::Save	named	commonlib+addrlib	35727	pdata_start		include/RE/Offsets.h:53
+0x0610480	function	BGSSaveLoadManager::Load	named	commonlib+addrlib	35728	pdata_start		include/RE/Offsets.h:55
+0x0612300	function	BGSSaveLoadManager::LoadMostRecentSaveGame	named	commonlib+addrlib	35766	pdata_start		src/RE/B/BGSSaveLoadManager.cpp:29
+0x06138A0	vfunc	BGSSaveLoadManager::ProcessEvent	named	rtti+commonlib	35773	pdata_start	vtables(1): BGSSaveLoadManager[01]	
+0x0617550	vfunc	BGSSaveLoadManager::Thread::Unk_01	inferred	rtti+commonlib	35790	pdata_start	vtables(1): BGSSaveLoadManager::Thread[01]	declared in Thread
+0x061B290	vfunc	BGSSaveLoadManager::Dtor	named	rtti+commonlib	35842	pdata_start	vtables(1): BGSSaveLoadManager[00]	
+0x061B790	vfunc	BGSSaveLoadManager::Thread::Dtor	named	rtti+commonlib	35847	pdata_start	vtables(1): BGSSaveLoadManager::Thread[00]	declared in Thread
+0x061D920	vfunc	BGSSaveLoadManager::Thread::Unk_02	inferred	rtti+commonlib	35885	no_pdata_entry	vtables(1): BGSSaveLoadManager::Thread[02]	declared in Thread
+0x0624090	vfunc	BGSSaveLoadStatsMap::vfunc_00	inferred	rtti	35967	pdata_start	vtables(1): BGSSaveLoadStatsMap[00]	
+0x0624A90	vfunc	BGSLoadFormBuffer::GetVersion	named	rtti+commonlib	35990	no_pdata_entry	vtables(1): BGSLoadFormBuffer[01]	
+0x062A350	vfunc	BSResource::CacheDrive::Op::vfunc_00	inferred	rtti	36131	pdata_start	vtables(1): BSResource::CacheDrive::Op[00]	
+0x062A9C0	vfunc	BSResource::CacheDrive::Op::vfunc_04	inferred	rtti	36140	no_pdata_entry	vtables(2): BSResource::CacheArchiveOp[04], BSResource::CacheDrive::Op[04]	
+0x062A9D0	vfunc	BSResource::CacheDrive::Op::vfunc_05	inferred	rtti	36141	no_pdata_entry	vtables(2): AppResourceCaching::?A0x93347d5e::CacheESMOp[05], BSResource::CacheDrive::Op[05]	
+0x062A9E0	vfunc	BSResource::CacheDrive::Op::vfunc_02	inferred	rtti	36142	no_pdata_entry	vtables(2): AppResourceCaching::?A0x93347d5e::CacheESMOp[02], BSResource::CacheDrive::Op[02]	
+0x062A9F0	vfunc	BSResource::CacheDrive::Op::vfunc_03	inferred	rtti	36143	no_pdata_entry	vtables(2): AppResourceCaching::?A0x93347d5e::CacheESMOp[03], BSResource::CacheDrive::Op[03]	
+0x062AA10	vfunc	BSResource::CacheDrive::Op::vfunc_01	inferred	rtti	36145	no_pdata_entry	vtables(1): BSResource::CacheDrive::Op[01]	
+0x096CAD0	vfunc	StreamingInstallMenu::vfunc_00	inferred	rtti	52625	pdata_start	vtables(1): StreamingInstallMenu[00]	
+0x09D8680	vfunc	BSResource::ArchiveFoundStreamCB::vfunc_00	inferred	rtti	54361	pdata_start	vtables(1): BSResource::ArchiveFoundStreamCB[00]	
+0x0CCA110	vfunc	BSThread::Dtor	named	rtti+commonlib	68269	pdata_start	vtables(1): BSThread[00]	
+0x0CD0D70	vfunc	BSThread::Unk_01	inferred	rtti+commonlib	68444	no_pdata_entry	vtables(1): BSThread[01]	
+0x0CD0EB0	function	BSThreadEvent::InitSDM	named	commonlib+addrlib	68449	pdata_start		include/RE/B/BSThreadEvent.h:10
+0x0CD1200	vfunc	BSThreadEvent::?A0x23b8e6c7::Source::vfunc_00	inferred	rtti	68459	pdata_start	vtables(1): BSThreadEvent::?A0x23b8e6c7::Source[00]	
+0x0CF6010	vfunc	BSFile::seek	named	rtti+commonlib	69339	no_pdata_entry	vtables(2): Archive[02], BSFile[02]	
+0x0CF6130	vfunc	BSJobs::JobThread::Unk_02	inferred	rtti+commonlib	69343	no_pdata_entry	vtables(1): BSJobs::JobThread[02]	declared in BSThread
+0x0CF6150	vfunc	BSJobs::JobThread::Unk_01	inferred	rtti+commonlib	69344	pdata_start	vtables(1): BSJobs::JobThread[01]	declared in BSThread
+0x0CF61F0	vfunc	BSJobs::JobThread::Dtor	named	rtti+commonlib	69345	pdata_start	vtables(1): BSJobs::JobThread[00]	declared in BSThread
+0x0CF9F10	vfunc	BSFile::Unk_0A	inferred	rtti+commonlib	69416	pdata_start	vtables(2): Archive[0A], BSFile[0A]	
+0x0CF9FA0	vfunc	BSFile::seek	named	rtti+commonlib	69417	pdata_start	vtables(2): Archive[06], BSFile[06]	
+0x0CFA040	vfunc	BSFile::Unk_11	inferred	rtti+commonlib	69418	pdata_start	vtables(2): Archive[11], BSFile[11]	
+0x0CFA150	vfunc	BSFile::Dtor	named	rtti+commonlib	69421	pdata_start	vtables(1): BSFile[00]	
+0x0CFA320	vfunc	BSFile::Unk_08	inferred	rtti+commonlib	69425	pdata_start	vtables(2): Archive[08], BSFile[08]	
+0x0CFA440	vfunc	BSFile::Unk_09	inferred	rtti+commonlib	69426	pdata_start	vtables(6): ?A0x85c1c0db::Win32FileType[09], Archive[09], ArchiveFile[09], BSFile[09], BSSaveDataSystemUtilityFile[09], CompressedArchiveFile[09]	
+0x0CFA490	vfunc	BSFile::Unk_0C	inferred	rtti+commonlib	69427	pdata_start	vtables(4): ?A0x85c1c0db::Win32FileType[0C], Archive[0C], BSFile[0C], BSSaveDataSystemUtilityFile[0C]	
+0x0CFA7A0	vfunc	BSFile::Unk_0B	inferred	rtti+commonlib	69428	pdata_start	vtables(4): ?A0x85c1c0db::Win32FileType[0B], Archive[0B], BSFile[0B], BSSaveDataSystemUtilityFile[0B]	
+0x0CFABD0	vfunc	BSFile::Unk_0D	inferred	rtti+commonlib	69429	pdata_start	vtables(6): ?A0x85c1c0db::Win32FileType[0D], Archive[0D], ArchiveFile[0D], BSFile[0D], BSSaveDataSystemUtilityFile[0D], CompressedArchiveFile[0D]	
+0x0CFAC60	vfunc	BSFile::Unk_0F	inferred	rtti+commonlib	69430	pdata_start	vtables(6): ?A0x85c1c0db::Win32FileType[0F], Archive[0F], ArchiveFile[0F], BSFile[0F], BSSaveDataSystemUtilityFile[0F], CompressedArchiveFile[0F]	
+0x0CFACE0	vfunc	BSFile::Unk_0E	inferred	rtti+commonlib	69431	pdata_start	vtables(6): ?A0x85c1c0db::Win32FileType[0E], Archive[0E], ArchiveFile[0E], BSFile[0E], BSSaveDataSystemUtilityFile[0E], CompressedArchiveFile[0E]	
+0x0CFAD60	vfunc	BSFile::Unk_10	inferred	rtti+commonlib	69432	pdata_start	vtables(4): ?A0x85c1c0db::Win32FileType[10], Archive[10], BSFile[10], BSSaveDataSystemUtilityFile[10]	
+0x0CFAD90	vfunc	BSFile::size	named	rtti+commonlib	69433	pdata_start	vtables(5): ?A0x85c1c0db::Win32FileType[07], Archive[07], ArchiveFile[07], BSFile[07], BSSaveDataSystemUtilityFile[07]	
+0x0CFADC0	vfunc	BSFile::Unk_12	inferred	rtti+commonlib	69434	pdata_start	vtables(2): Archive[12], BSFile[12]	
+0x0CFADE0	vfunc	BSFile::set_endian_swap	named	rtti+commonlib	69435	no_pdata_entry	vtables(4): ?A0x85c1c0db::Win32FileType[05], Archive[05], BSFile[05], BSSaveDataSystemUtilityFile[05]	
+0x0D02220	vfunc	BSResource::ArchiveStream::DoClone	named	rtti+commonlib	69653	pdata_start	vtables(1): BSResource::ArchiveStream[05]	declared in Stream
+0x0D022A0	vfunc	BSResource::ArchiveStream::DoOpen	named	rtti+commonlib	69654	pdata_start	vtables(1): BSResource::ArchiveStream[01]	declared in StreamBase
+0x0D02330	vfunc	BSResource::ArchiveStream::DoRead	named	rtti+commonlib	69655	pdata_start	vtables(1): BSResource::ArchiveStream[06]	declared in Stream
+0x0D023F0	vfunc	BSResource::ArchiveStream::DoSeek	named	rtti+commonlib	69656	pdata_start	vtables(1): BSResource::ArchiveStream[08]	declared in Stream
+0x0D02490	vfunc	BSResource::ArchiveStream::DoClose	named	rtti+commonlib	69657	no_pdata_entry	vtables(1): BSResource::ArchiveStream[02]	declared in StreamBase
+0x0D024B0	vfunc	BSResource::ArchiveStream::DoGetName	named	rtti+commonlib	69658	pdata_start	vtables(2): BSResource::ArchiveStream[0A], BSResource::CompressedArchiveStream[0A]	declared in Stream
+0x0D024E0	vfunc	BSResource::ArchiveStream::DoCreateAsync	named	rtti+commonlib	69659	pdata_start	vtables(1): BSResource::ArchiveStream[0B]	declared in Stream
+0x0D02630	vfunc	BSResource::ArchiveStream::DoGetKey	named	rtti+commonlib	69660	pdata_start	vtables(2): BSResource::ArchiveStream[03], BSResource::CompressedArchiveStream[03]	declared in StreamBase
+0x0D02780	vfunc	BSResource::CompressedArchiveStream::vfunc_0C	inferred	rtti	69663	no_pdata_entry	vtables(1): BSResource::CompressedArchiveStream[0C]	
+0x0D02E80	vfunc	BSResource::CompressedArchiveStream::DoClone	named	rtti+commonlib	69668	pdata_start	vtables(1): BSResource::CompressedArchiveStream[05]	declared in Stream
+0x0D02F80	vfunc	BSResource::CompressedArchiveStream::DoOpen	named	rtti+commonlib	69669	pdata_start	vtables(1): BSResource::CompressedArchiveStream[01]	declared in StreamBase
+0x0D03130	vfunc	BSResource::CompressedArchiveStream::DoRead	named	rtti+commonlib	69670	no_pdata_entry	vtables(1): BSResource::CompressedArchiveStream[06]	declared in Stream
+0x0D03160	vfunc	BSResource::CompressedArchiveStream::DoSeek	named	rtti+commonlib	69671	pdata_start	vtables(1): BSResource::CompressedArchiveStream[08]	declared in Stream
+0x0D031E0	vfunc	BSResource::CompressedArchiveStream::DoClose	named	rtti+commonlib	69672	pdata_start	vtables(1): BSResource::CompressedArchiveStream[02]	declared in StreamBase
+0x0D03320	vfunc	BSResource::CompressedArchiveStream::DoCreateAsync	named	rtti+commonlib	69673	no_pdata_entry	vtables(1): BSResource::CompressedArchiveStream[0B]	declared in Stream
+0x0D05B10	vfunc	BSResource::ArchiveManager::vfunc_00	inferred	rtti	69739	pdata_start	vtables(1): BSResource::ArchiveManager[00]	
+0x0D05C90	vfunc	BSResource::ArchiveStream::Dtor	named	rtti+commonlib	69741	pdata_start	vtables(1): BSResource::ArchiveStream[00]	declared in Stream
+0x0D05D00	vfunc	BSResource::?A0x0d0612ef::AsyncArchiveStream::Dtor	named	rtti+commonlib	69742	pdata_start	vtables(1): BSResource::?A0x0d0612ef::AsyncArchiveStream[00]	declared in AsyncStream
+0x0D05D80	vfunc	BSResource::AsyncStream::Dtor	named	rtti+commonlib	69743	pdata_start	vtables(1): BSResource::AsyncStream[00]	declared in AsyncStream
+0x0D05DB0	vfunc	BSResource::CacheArchiveOp::vfunc_00	inferred	rtti	69744	pdata_start	vtables(1): BSResource::CacheArchiveOp[00]	
+0x0D05E00	vfunc	BSResource::CompressedArchiveStream::Dtor	named	rtti+commonlib	69745	pdata_start	vtables(1): BSResource::CompressedArchiveStream[00]	declared in Stream
+0x0D05E70	vfunc	BSResource::Stream::Dtor	named	rtti+commonlib	69746	pdata_start	vtables(1): BSResource::Stream[00]	declared in Stream
+0x0D05EA0	vfunc	BSResource::StreamBase::Dtor	named	rtti+commonlib	69747	pdata_start	vtables(1): BSResource::StreamBase[00]	declared in StreamBase
+0x0D06E70	vfunc	BSResource::?A0x0d0612ef::AsyncArchiveStream::Unk_05	inferred	rtti+commonlib	69757	pdata_start	vtables(1): BSResource::?A0x0d0612ef::AsyncArchiveStream[05]	declared in AsyncStream
+0x0D06F90	vfunc	BSResource::?A0x0d0612ef::AsyncArchiveStream::DoClose	named	rtti+commonlib	69758	no_pdata_entry	vtables(1): BSResource::?A0x0d0612ef::AsyncArchiveStream[02]	declared in StreamBase
+0x0D06FC0	vfunc	BSResource::Stream::DoCreateAsync	named	rtti+commonlib	69759	no_pdata_entry	vtables(2): BSResource::?A0x10d192fa::DevNull::NullStream[0B], BSResource::Stream[0B]	declared in Stream
+0x0D06FD0	vfunc	BSResource::StreamBase::DoGetInfo	named	rtti+commonlib	69760	no_pdata_entry	vtables(7): BSResource::?A0x0d0612ef::AsyncArchiveStream[04], BSResource::?A0x10d192fa::DevNull::NullStream[04], BSResource::ArchiveStream[04], BSResource::AsyncStream[04], BSResource::CompressedArchiveStream[04], BSResource::Stream[04], +1 more	declared in StreamBase
+0x0D06FE0	vfunc	BSResource::Stream::DoGetName	named	rtti+commonlib	69761	pdata_start	vtables(2): BSResource::?A0x10d192fa::DevNull::NullStream[0A], BSResource::Stream[0A]	declared in Stream
+0x0D07020	vfunc	BSResource::StreamBase::DoGetKey	named	rtti+commonlib	69762	no_pdata_entry	vtables(6): BSResource::?A0x0d0612ef::AsyncArchiveStream[03], BSResource::?A0x10d192fa::DevNull::NullStream[03], BSResource::?A0xa6e68169::LooseFileAsyncChild[03], BSResource::AsyncStream[03], BSResource::Stream[03], BSResource::StreamBase[03]	declared in StreamBase
+0x0D07030	vfunc	BSResource::?A0x0d0612ef::AsyncArchiveStream::DoOpen	named	rtti+commonlib	69763	no_pdata_entry	vtables(1): BSResource::?A0x0d0612ef::AsyncArchiveStream[01]	declared in StreamBase
+0x0D07060	vfunc	BSResource::Stream::DoSetEndOfStream	named	rtti+commonlib	69764	no_pdata_entry	vtables(4): BSResource::?A0x10d192fa::DevNull::NullStream[09], BSResource::ArchiveStream[09], BSResource::CompressedArchiveStream[09], BSResource::Stream[09]	declared in Stream
+0x0D07070	vfunc	BSResource::?A0x0d0612ef::AsyncArchiveStream::Unk_07	inferred	rtti+commonlib	69765	pdata_start	vtables(1): BSResource::?A0x0d0612ef::AsyncArchiveStream[07]	declared in AsyncStream
+0x0D070C0	vfunc	BSResource::?A0x0d0612ef::AsyncArchiveStream::Unk_06	inferred	rtti+commonlib	69766	no_pdata_entry	vtables(1): BSResource::?A0x0d0612ef::AsyncArchiveStream[06]	declared in AsyncStream
+0x0D070F0	vfunc	BSResource::?A0x0d0612ef::AsyncArchiveStream::Unk_08	inferred	rtti+commonlib	69767	no_pdata_entry	vtables(1): BSResource::?A0x0d0612ef::AsyncArchiveStream[08]	declared in AsyncStream
+0x0D07100	vfunc	BSResource::?A0x0d0612ef::AsyncArchiveStream::Unk_09	inferred	rtti+commonlib	69768	no_pdata_entry	vtables(1): BSResource::?A0x0d0612ef::AsyncArchiveStream[09]	declared in AsyncStream
+0x0D07110	vfunc	BSResource::?A0x0d0612ef::AsyncArchiveStream::Unk_0A	inferred	rtti+commonlib	69769	pdata_start	vtables(1): BSResource::?A0x0d0612ef::AsyncArchiveStream[0A]	declared in AsyncStream
+0x0D07150	vfunc	BSResource::ArchiveStream::DoWrite	named	rtti+commonlib	69770	no_pdata_entry	vtables(2): BSResource::ArchiveStream[07], BSResource::CompressedArchiveStream[07]	declared in Stream
+0x0D07920	vfunc	BSResource::CacheArchiveOp::vfunc_05	inferred	rtti	69778	no_pdata_entry	vtables(1): BSResource::CacheArchiveOp[05]	
+0x0D07930	vfunc	BSResource::CacheArchiveOp::vfunc_02	inferred	rtti	69779	no_pdata_entry	vtables(1): BSResource::CacheArchiveOp[02]	
+0x0D07940	vfunc	BSResource::CacheArchiveOp::vfunc_03	inferred	rtti	69780	no_pdata_entry	vtables(1): BSResource::CacheArchiveOp[03]	
+0x0D07950	vfunc	BSResource::CacheArchiveOp::vfunc_01	inferred	rtti	69781	pdata_start	vtables(1): BSResource::CacheArchiveOp[01]	
+0x0D07C40	vfunc	BSResource::ArchiveStream::vfunc_0C	inferred	rtti	69783	no_pdata_entry	vtables(1): BSResource::ArchiveStream[0C]	
+0x0D093F0	vfunc	BSResource::IEntryDB::vfunc_00	inferred	rtti	69819	pdata_start	vtables(1): BSResource::IEntryDB[00]	
+0x0D09450	vfunc	BSResource::IEntryDB::PostFlushNotify::vfunc_00	inferred	rtti	69820	pdata_start	vtables(1): BSResource::IEntryDB::PostFlushNotify[00]	
+0x0D0C020	vfunc	BSResource::?A0x10d192fa::ArchiveRegistrationTaskData::vfunc_00	inferred	rtti	69893	pdata_start	vtables(1): BSResource::?A0x10d192fa::ArchiveRegistrationTaskData[00]	
+0x0D0C060	vfunc	BSResource::?A0x10d192fa::DevNull::Dtor	named	rtti+commonlib	69894	pdata_start	vtables(1): BSResource::?A0x10d192fa::DevNull[00]	declared in DevNull
+0x0D0C140	vfunc	BSResource::?A0x10d192fa::EventSources::vfunc_00	inferred	rtti	69895	pdata_start	vtables(1): BSResource::?A0x10d192fa::EventSources[00]	
+0x0D0C1B0	vfunc	BSResource::?A0x10d192fa::GlobalLocations::Dtor	named	rtti+commonlib	69896	pdata_start	vtables(1): BSResource::?A0x10d192fa::GlobalLocations[00]	declared in GlobalLocations
+0x0D0C2A0	vfunc	BSResource::?A0x10d192fa::GlobalPaths::Dtor	named	rtti+commonlib	69897	pdata_start	vtables(1): BSResource::?A0x10d192fa::GlobalPaths[00]	declared in GlobalPaths
+0x0D0C320	vfunc	BSResource::?A0x10d192fa::LocationTree::Dtor	named	rtti+commonlib	69898	pdata_start	vtables(1): BSResource::?A0x10d192fa::LocationTree[00]	declared in LocationTree
+0x0D0C380	vfunc	BSResource::?A0x10d192fa::DevNull::NullStream::Dtor	named	rtti+commonlib	69899	pdata_start	vtables(1): BSResource::?A0x10d192fa::DevNull::NullStream[00]	declared in NullStream
+0x0D0C780	vfunc	BSResource::?A0x10d192fa::DevNull::NullStream::DoClone	named	rtti+commonlib	69908	pdata_start	vtables(1): BSResource::?A0x10d192fa::DevNull::NullStream[05]	declared in NullStream
+0x0D0C820	vfunc	BSResource::?A0x10d192fa::DevNull::NullStream::DoClose	named	rtti+commonlib	69909	no_pdata_entry	vtables(1): BSResource::?A0x10d192fa::DevNull::NullStream[02]	declared in NullStream
+0x0D0C830	vfunc	BSResource::?A0x10d192fa::GlobalLocations::DoCreateAsyncStream	named	rtti+commonlib	69910	pdata_start	vtables(1): BSResource::?A0x10d192fa::GlobalLocations[04]	declared in GlobalLocations
+0x0D0C910	vfunc	BSResource::?A0x10d192fa::GlobalPaths::DoCreateAsyncStream	named	rtti+commonlib	69911	pdata_start	vtables(1): BSResource::?A0x10d192fa::GlobalPaths[04]	declared in GlobalPaths
+0x0D0C9F0	vfunc	BSResource::?A0x10d192fa::LocationTree::DoCreateAsyncStream	named	rtti+commonlib	69912	pdata_start	vtables(1): BSResource::?A0x10d192fa::LocationTree[04]	declared in LocationTree
+0x0D0CA90	vfunc	BSResource::?A0x10d192fa::DevNull::DoCreateStream	named	rtti+commonlib	69913	pdata_start	vtables(1): BSResource::?A0x10d192fa::DevNull[03]	declared in DevNull
+0x0D0CB30	vfunc	BSResource::?A0x10d192fa::GlobalLocations::DoCreateStream	named	rtti+commonlib	69914	pdata_start	vtables(1): BSResource::?A0x10d192fa::GlobalLocations[03]	declared in GlobalLocations
+0x0D0CC10	vfunc	BSResource::?A0x10d192fa::GlobalPaths::DoCreateStream	named	rtti+commonlib	69915	pdata_start	vtables(1): BSResource::?A0x10d192fa::GlobalPaths[03]	declared in GlobalPaths
+0x0D0CCF0	vfunc	BSResource::?A0x10d192fa::LocationTree::DoCreateStream	named	rtti+commonlib	69916	pdata_start	vtables(1): BSResource::?A0x10d192fa::LocationTree[03]	declared in LocationTree
+0x0D0CD90	vfunc	BSResource::?A0x10d192fa::GlobalLocations::DoDelete	named	rtti+commonlib	69917	pdata_start	vtables(1): BSResource::?A0x10d192fa::GlobalLocations[08]	declared in GlobalLocations
+0x0D0CE50	vfunc	BSResource::?A0x10d192fa::GlobalPaths::DoDelete	named	rtti+commonlib	69918	pdata_start	vtables(1): BSResource::?A0x10d192fa::GlobalPaths[08]	declared in GlobalPaths
+0x0D0CEE0	vfunc	BSResource::?A0x10d192fa::LocationTree::DoDelete	named	rtti+commonlib	69919	pdata_start	vtables(1): BSResource::?A0x10d192fa::LocationTree[08]	declared in LocationTree
+0x0D0CF30	vfunc	BSResource::?A0x10d192fa::GlobalLocations::DoGetInfo2	named	rtti+commonlib	69920	pdata_start	vtables(1): BSResource::?A0x10d192fa::GlobalLocations[07]	declared in GlobalLocations
+0x0D0CFE0	vfunc	BSResource::?A0x10d192fa::GlobalLocations::DoGetInfo1	named	rtti+commonlib	69921	pdata_start	vtables(1): BSResource::?A0x10d192fa::GlobalLocations[06]	declared in GlobalLocations
+0x0D0D090	vfunc	BSResource::?A0x10d192fa::GlobalPaths::DoGetInfo2	named	rtti+commonlib	69922	pdata_start	vtables(1): BSResource::?A0x10d192fa::GlobalPaths[07]	declared in GlobalPaths
+0x0D0D140	vfunc	BSResource::?A0x10d192fa::GlobalPaths::DoGetInfo1	named	rtti+commonlib	69923	pdata_start	vtables(1): BSResource::?A0x10d192fa::GlobalPaths[06]	declared in GlobalPaths
+0x0D0D200	vfunc	BSResource::?A0x10d192fa::LocationTree::DoGetInfo2	named	rtti+commonlib	69924	pdata_start	vtables(1): BSResource::?A0x10d192fa::LocationTree[07]	declared in LocationTree
+0x0D0D260	vfunc	BSResource::?A0x10d192fa::LocationTree::DoGetInfo1	named	rtti+commonlib	69925	pdata_start	vtables(1): BSResource::?A0x10d192fa::LocationTree[06]	declared in LocationTree
+0x0D0D2D0	vfunc	BSResource::?A0x10d192fa::DevNull::DoMount	named	rtti+commonlib	69926	no_pdata_entry	vtables(1): BSResource::?A0x10d192fa::DevNull[01]	declared in DevNull
+0x0D0D2E0	vfunc	BSResource::?A0x10d192fa::GlobalLocations::DoMount	named	rtti+commonlib	69927	pdata_start	vtables(1): BSResource::?A0x10d192fa::GlobalLocations[01]	declared in GlobalLocations
+0x0D0D3C0	vfunc	BSResource::?A0x10d192fa::DevNull::NullStream::DoOpen	named	rtti+commonlib	69928	no_pdata_entry	vtables(1): BSResource::?A0x10d192fa::DevNull::NullStream[01]	declared in NullStream
+0x0D0D3D0	vfunc	BSResource::?A0x10d192fa::DevNull::NullStream::DoRead	named	rtti+commonlib	69929	no_pdata_entry	vtables(1): BSResource::?A0x10d192fa::DevNull::NullStream[06]	declared in NullStream
+0x0D0D3E0	vfunc	BSResource::?A0x10d192fa::DevNull::NullStream::DoSeek	named	rtti+commonlib	69930	no_pdata_entry	vtables(1): BSResource::?A0x10d192fa::DevNull::NullStream[08]	declared in NullStream
+0x0D0D3F0	vfunc	BSResource::?A0x10d192fa::DevNull::DoTraversePrefix	named	rtti+commonlib	69931	no_pdata_entry	vtables(1): BSResource::?A0x10d192fa::DevNull[05]	declared in DevNull
+0x0D0D400	vfunc	BSResource::?A0x10d192fa::GlobalLocations::DoTraversePrefix	named	rtti+commonlib	69932	pdata_start	vtables(1): BSResource::?A0x10d192fa::GlobalLocations[05]	declared in GlobalLocations
+0x0D0D4B0	vfunc	BSResource::?A0x10d192fa::GlobalPaths::DoTraversePrefix	named	rtti+commonlib	69933	pdata_start	vtables(1): BSResource::?A0x10d192fa::GlobalPaths[05]	declared in GlobalPaths
+0x0D0D560	vfunc	BSResource::?A0x10d192fa::LocationTree::DoTraversePrefix	named	rtti+commonlib	69934	pdata_start	vtables(1): BSResource::?A0x10d192fa::LocationTree[05]	declared in LocationTree
+0x0D0D5C0	vfunc	BSResource::?A0x10d192fa::DevNull::DoUnmount	named	rtti+commonlib	69935	no_pdata_entry	vtables(1): BSResource::?A0x10d192fa::DevNull[02]	declared in DevNull
+0x0D0D5D0	vfunc	BSResource::?A0x10d192fa::GlobalLocations::DoUnmount	named	rtti+commonlib	69936	pdata_start	vtables(1): BSResource::?A0x10d192fa::GlobalLocations[02]	declared in GlobalLocations
+0x0D0D660	vfunc	BSResource::?A0x10d192fa::DevNull::NullStream::DoWrite	named	rtti+commonlib	69937	no_pdata_entry	vtables(1): BSResource::?A0x10d192fa::DevNull::NullStream[07]	declared in NullStream
+0x0D0E340	vfunc	BSResource::?A0x10d192fa::ArchiveRegistrationTaskData::vfunc_02	inferred	rtti	69948	pdata_start	vtables(1): BSResource::?A0x10d192fa::ArchiveRegistrationTaskData[02]	
+0x0D0F780	function	BSResource::ID::GenerateFromPath	named	commonlib+addrlib	69979	pdata_start		include/RE/I/ID.h:15
+0x0D100F0	vfunc	BSResource::LooseFileLocation::DoCreateStream	named	rtti+commonlib	69987	pdata_start	vtables(1): BSResource::LooseFileLocation[03]	declared in LooseFileLocation
+0x0D101F0	vfunc	BSResource::LooseFileLocation::DoCreateAsyncStream	named	rtti+commonlib	69988	pdata_start	vtables(1): BSResource::LooseFileLocation[04]	declared in LooseFileLocation
+0x0D10300	vfunc	BSResource::LooseFileLocation::DoTraversePrefix	named	rtti+commonlib	69989	pdata_start	vtables(1): BSResource::LooseFileLocation[05]	declared in LooseFileLocation
+0x0D103E0	vfunc	BSResource::LooseFileLocation::DoGetInfo2	named	rtti+commonlib	69990	pdata_start	vtables(1): BSResource::LooseFileLocation[07]	declared in LooseFileLocation
+0x0D10520	vfunc	BSResource::LooseFileLocation::DoGetInfo1	named	rtti+commonlib	69991	pdata_start	vtables(1): BSResource::LooseFileLocation[06]	declared in LooseFileLocation
+0x0D10670	vfunc	BSResource::LooseFileLocation::DoDelete	named	rtti+commonlib	69992	pdata_start	vtables(1): BSResource::LooseFileLocation[08]	declared in LooseFileLocation
+0x0D10740	vfunc	BSResource::LooseFileLocation::DoGetName	named	rtti+commonlib	69993	no_pdata_entry	vtables(1): BSResource::LooseFileLocation[09]	declared in LooseFileLocation
+0x0D10750	vfunc	BSResource::LooseFileLocation::DoGetMinimumAsyncPacketSize	named	rtti+commonlib	69994	no_pdata_entry	vtables(1): BSResource::LooseFileLocation[0B]	declared in LooseFileLocation
+0x0D10770	vfunc	BSResource::?A0xa6e68169::LooseFileAsyncChild::DoOpen	named	rtti+commonlib	69995	no_pdata_entry	vtables(1): BSResource::?A0xa6e68169::LooseFileAsyncChild[01]	declared in StreamBase
+0x0D107A0	vfunc	BSResource::?A0xa6e68169::LooseFileAsyncChild::DoClose	named	rtti+commonlib	69996	no_pdata_entry	vtables(1): BSResource::?A0xa6e68169::LooseFileAsyncChild[02]	declared in StreamBase
+0x0D107D0	vfunc	BSResource::?A0xa6e68169::LooseFileAsyncChild::Unk_05	inferred	rtti+commonlib	69997	pdata_start	vtables(1): BSResource::?A0xa6e68169::LooseFileAsyncChild[05]	declared in AsyncStream
+0x0D10910	vfunc	BSResource::?A0xa6e68169::LooseFileAsyncChild::Unk_06	inferred	rtti+commonlib	69998	pdata_start	vtables(1): BSResource::?A0xa6e68169::LooseFileAsyncChild[06]	declared in AsyncStream
+0x0D10980	vfunc	BSResource::?A0xa6e68169::LooseFileAsyncChild::Unk_07	inferred	rtti+commonlib	69999	pdata_start	vtables(1): BSResource::?A0xa6e68169::LooseFileAsyncChild[07]	declared in AsyncStream
+0x0D109B0	vfunc	BSResource::?A0xa6e68169::LooseFileAsyncChild::Unk_08	inferred	rtti+commonlib	70000	pdata_start	vtables(1): BSResource::?A0xa6e68169::LooseFileAsyncChild[08]	declared in AsyncStream
+0x0D10A20	vfunc	BSResource::?A0xa6e68169::LooseFileAsyncChild::Unk_09	inferred	rtti+commonlib	70001	pdata_start	vtables(1): BSResource::?A0xa6e68169::LooseFileAsyncChild[09]	declared in AsyncStream
+0x0D10A80	vfunc	BSResource::?A0xa6e68169::LooseFileAsyncChild::Unk_0A	inferred	rtti+commonlib	70002	no_pdata_entry	vtables(1): BSResource::?A0xa6e68169::LooseFileAsyncChild[0A]	declared in AsyncStream
+0x0D10A90	vfunc	BSResource::?A0xa6e68169::LooseFileAsyncChild::DoGetInfo	named	rtti+commonlib	70003	no_pdata_entry	vtables(1): BSResource::?A0xa6e68169::LooseFileAsyncChild[04]	declared in StreamBase
+0x0D10CD0	vfunc	BSResource::?A0xa6e68169::LooseFileSBTraits::AsyncFunctor::vfunc_01	inferred	rtti	70011	no_pdata_entry	vtables(1): BSResource::?A0xa6e68169::LooseFileSBTraits::AsyncFunctor[01]	
+0x0D10CE0	vfunc	BSResource::?A0xa6e68169::LooseFileAsyncBase::FunctorType::vfunc_01	inferred	rtti	70012	no_pdata_entry	vtables(1): BSResource::?A0xa6e68169::LooseFileAsyncBase::FunctorType[01]	
+0x0D10CF0	vfunc	BSResource::?A0xa6e68169::LooseFileSBTraits::AsyncFunctor::vfunc_00	inferred	rtti	70013	pdata_start	vtables(1): BSResource::?A0xa6e68169::LooseFileSBTraits::AsyncFunctor[00]	
+0x0D10D30	vfunc	BSResource::?A0xa6e68169::LooseFileAsyncBase::FunctorType::vfunc_00	inferred	rtti	70014	pdata_start	vtables(1): BSResource::?A0xa6e68169::LooseFileAsyncBase::FunctorType[00]	
+0x0D10D70	vfunc	BSResource::?A0xa6e68169::LooseFileAsyncChild::Dtor	named	rtti+commonlib	70015	pdata_start	vtables(1): BSResource::?A0xa6e68169::LooseFileAsyncChild[00]	declared in AsyncStream
+0x0D10E10	vfunc	BSResource::?A0xa6e68169::LooseFileAsyncStream::vfunc_00	inferred	rtti	70016	pdata_start	vtables(1): BSResource::?A0xa6e68169::LooseFileAsyncStream[00]	
+0x0D10E80	vfunc	BSResource::?A0xa6e68169::LooseFileStream::Dtor	named	rtti+commonlib	70018	pdata_start	vtables(1): BSResource::?A0xa6e68169::LooseFileStream[00]	declared in LooseFileStream
+0x0D10F00	vfunc	BSResource::?A0xa6e68169::LooseFileStreamBase::vfunc_00	inferred	rtti	70020	pdata_start	vtables(1): BSResource::?A0xa6e68169::LooseFileStreamBase[00]	
+0x0D133E0	vfunc	BSResource::?A0x59c0f4bc::DefaultLocationData::vfunc_00	inferred	rtti	70070	pdata_start	vtables(1): BSResource::?A0x59c0f4bc::DefaultLocationData[00]	
+0x0D149E0	vfunc	BSResource::CacheDrive::Task::vfunc_01	inferred	rtti	70094	pdata_start	vtables(1): BSResource::CacheDrive::Task[01]	
+0x0D14A80	vfunc	BSResource::CacheDrive::Task::vfunc_02	inferred	rtti	70099	no_pdata_entry	vtables(1): BSResource::CacheDrive::Task[02]	
+0x0D14A90	vfunc	BSResource::CacheDrive::Task::vfunc_03	inferred	rtti	70100	no_pdata_entry	vtables(1): BSResource::CacheDrive::Task[03]	
+0x0D14AA0	vfunc	BSResource::CacheDrive::Task::vfunc_04	inferred	rtti	70101	no_pdata_entry	vtables(1): BSResource::CacheDrive::Task[04]	
+0x0D14AB0	vfunc	BSResource::CacheDrive::Task::vfunc_05	inferred	rtti	70102	no_pdata_entry	vtables(1): BSResource::CacheDrive::Task[05]	
+0x0D14AC0	vfunc	BSResource::CacheDrive::Task::vfunc_06	inferred	rtti	70103	no_pdata_entry	vtables(1): BSResource::CacheDrive::Task[06]	
+0x0D14AD0	vfunc	BSResource::CacheDrive::Task::vfunc_07	inferred	rtti	70104	no_pdata_entry	vtables(1): BSResource::CacheDrive::Task[07]	
+0x0D15220	vfunc	BSResource::CacheDrive::DoCreateStream	named	rtti+commonlib	70109	pdata_start	vtables(1): BSResource::CacheDrive[03]	declared in Location
+0x0D152B0	vfunc	BSResource::CacheDrive::DoCreateAsyncStream	named	rtti+commonlib	70110	pdata_start	vtables(1): BSResource::CacheDrive[04]	declared in Location
+0x0D15340	vfunc	BSResource::CacheDrive::DoTraversePrefix	named	rtti+commonlib	70111	pdata_start	vtables(1): BSResource::CacheDrive[05]	declared in Location
+0x0D153B0	vfunc	BSResource::CacheDrive::DoGetInfo2	named	rtti+commonlib	70112	pdata_start	vtables(1): BSResource::CacheDrive[07]	declared in Location
+0x0D15420	vfunc	BSResource::CacheDrive::DoGetInfo1	named	rtti+commonlib	70113	pdata_start	vtables(1): BSResource::CacheDrive[06]	declared in Location
+0x0D154A0	vfunc	BSResource::CacheDrive::DoDelete	named	rtti+commonlib	70114	pdata_start	vtables(1): BSResource::CacheDrive[08]	declared in Location
+0x0D15500	vfunc	BSResource::CacheDrive::DoGetMinimumAsyncPacketSize	named	rtti+commonlib	70115	no_pdata_entry	vtables(1): BSResource::CacheDrive[0B]	declared in Location
+0x0D160D0	vfunc	BSResource::CacheDrive::Dtor	named	rtti+commonlib	70135	pdata_start	vtables(1): BSResource::CacheDrive[00]	declared in Location
+0x0D16160	vfunc	BSResource::CacheDrive::Impl::Dtor	named	rtti+commonlib	70136	pdata_start	vtables(1): BSResource::CacheDrive::Impl[00]	declared in BSThread
+0x0D16200	vfunc	BSResource::CacheDrive::Task::vfunc_00	inferred	rtti	70137	pdata_start	vtables(1): BSResource::CacheDrive::Task[00]	
+0x0D16910	vfunc	BSResource::CacheDrive::Impl::Unk_01	inferred	rtti+commonlib	70145	pdata_start	vtables(1): BSResource::CacheDrive::Impl[01]	declared in BSThread
+0x0D3C790	function	BSResourceNiBinaryStream::Ctor	named	commonlib+addrlib	71014	pdata_start		include/RE/Offsets.h:108
+0x0D3CA70	function	BSResourceNiBinaryStream::Dtor	named	commonlib+addrlib	71016	pdata_start		include/RE/Offsets.h:109
+0x0D3CBB0	vfunc	BSResourceNiBinaryStream::good	named	rtti+commonlib	71017	no_pdata_entry	vtables(2): BSResourceNiBinaryStream[01], BSResourceStreamParser[01]	
+0x0D3CBC0	function	BSResourceNiBinaryStream::Seek	named	commonlib+addrlib	71018	no_pdata_entry	vtables(2): BSResourceNiBinaryStream[02], BSResourceStreamParser[02]	include/RE/Offsets.h:110
+0x0D3CC00	vfunc	BSResourceNiBinaryStream::tell	named	rtti+commonlib	71019	no_pdata_entry	vtables(2): BSResourceNiBinaryStream[03], BSResourceStreamParser[03]	
+0x0D3CC10	vfunc	BSResourceNiBinaryStream::get_info	named	rtti+commonlib	71020	pdata_start	vtables(2): BSResourceNiBinaryStream[04], BSResourceStreamParser[04]	
+0x0D3CC90	function	BSResourceNiBinaryStream::SetEndianSwap	named	commonlib+addrlib	71021	no_pdata_entry	vtables(2): BSResourceNiBinaryStream[05], BSResourceStreamParser[05]	include/RE/Offsets.h:111
+0x0D3D190	vfunc	BSResourceNiBinaryStream::Dtor	named	rtti+commonlib	71031	pdata_start	vtables(1): BSResourceNiBinaryStream[00]	
+0x0DFD870	vfunc	BSTaskManager::vfunc_11	inferred	rtti	75633	pdata_start	vtables(1): BSTaskManager[11]	
+0x0DFD9D0	vfunc	BSTaskManager::vfunc_12	inferred	rtti	75635	no_pdata_entry	vtables(2): BSTaskManager[12], IOManager[12]	
+0x0DFD9E0	vfunc	BSTaskManager::vfunc_13	inferred	rtti	75636	pdata_start	vtables(2): BSTaskManager[13], IOManager[13]	
+0x0DFDD80	vfunc	BSTaskManager::vfunc_14	inferred	rtti	75640	pdata_start	vtables(1): BSTaskManager[14]	
+0x0DFE5C0	vfunc	BSTaskManager::vfunc_15	inferred	rtti	75648	no_pdata_entry	vtables(1): BSTaskManager[15]	
+0x0DFE5D0	vfunc	BSTaskManager::vfunc_16	inferred	rtti	75649	no_pdata_entry	vtables(1): BSTaskManager[16]	
+0x0DFE5E0	vfunc	BSTaskManager::vfunc_17	inferred	rtti	75650	no_pdata_entry	vtables(2): BSTaskManager[17], IOManager[17]	
+0x0DFE5F0	vfunc	BSTaskManagerThread::Unk_01	inferred	rtti+commonlib	75651	pdata_start	vtables(1): BSTaskManagerThread[01]	declared in BSThread
+0x0DFF240	vfunc	BSTaskManager::vfunc_00	inferred	rtti	75665	pdata_start	vtables(1): BSTaskManager[00]	
+0x0DFF370	vfunc	BSTaskManagerThread::Dtor	named	rtti+commonlib	75666	pdata_start	vtables(1): BSTaskManagerThread[00]	declared in BSThread
+0x0E01280	vfunc	IOTask::vfunc_05	inferred	rtti	75699	no_pdata_entry	vtables(36): .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$00@@[05], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$01@@[05], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$0CK@@@[05], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSTextureDB@@@BSResource@@$01@@[05], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BShkbHkxDB@@@BSResource@@$01@@[05], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@TRI@BSFaceGenDB@@@BSResource@@$01@@[05], +30 more	
+0x0E01290	vfunc	IOTask::vfunc_06	inferred	rtti	75700	no_pdata_entry	vtables(31): .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$00@@[06], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$01@@[06], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$0CK@@@[06], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSTextureDB@@@BSResource@@$01@@[06], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BShkbHkxDB@@@BSResource@@$01@@[06], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@TRI@BSFaceGenDB@@@BSResource@@$01@@[06], +25 more	
+0x0E012A0	vfunc	IOTask::vfunc_07	inferred	rtti	75701	no_pdata_entry	vtables(31): .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$00@@[07], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$01@@[07], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$0CK@@@[07], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSTextureDB@@@BSResource@@$01@@[07], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BShkbHkxDB@@@BSResource@@$01@@[07], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@TRI@BSFaceGenDB@@@BSResource@@$01@@[07], +25 more	
+0x0E01300	vfunc	IOTask::vfunc_08	inferred	rtti	75702	no_pdata_entry	vtables(12): AttachDistant3DTask[08], BGSParticleObjectCloneTask[08], BSScaleformMovieLoadTask[08], BSVMLoadTask[08], CellLoaderTask[08], CheckWithinMultiBoundTask[08], +6 more	
+0x0E01750	vfunc	IOManager::vfunc_11	inferred	rtti	75706	pdata_start	vtables(1): IOManager[11]	
+0x0E01C60	vfunc	IOManager::vfunc_14	inferred	rtti	75710	pdata_start	vtables(1): IOManager[14]	
+0x0E01C90	vfunc	IOManager::vfunc_08	inferred	rtti	75711	no_pdata_entry	vtables(1): IOManager[08]	
+0x0E01DC0	vfunc	IOManager::vfunc_15	inferred	rtti	75716	pdata_start	vtables(1): IOManager[15]	
+0x0E01E40	vfunc	IOManager::vfunc_16	inferred	rtti	75717	pdata_start	vtables(1): IOManager[16]	
+0x0E01E70	vfunc	IOManager::vfunc_18	inferred	rtti	75718	pdata_start	vtables(1): IOManager[18]	
+0x0E02000	vfunc	IOManager::vfunc_00	inferred	rtti	75724	pdata_start	vtables(1): IOManager[00]	
+0x0E020B0	vfunc	BSResource::IEntryDB::NotifyLoadDone::vfunc_00	inferred	rtti	75725	pdata_start	vtables(1): BSResource::IEntryDB::NotifyLoadDone[00]	
+0x0E02810	vfunc	QueuedFile::vfunc_01	inferred	rtti	75740	no_pdata_entry	vtables(3): BSQueuedResourceCollectionBase[01], QueuedFile[01], QueuedNamedFile[01]	
+0x0E02820	vfunc	QueuedFile::vfunc_02	inferred	rtti	75741	no_pdata_entry	vtables(34): .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$00@@[02], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$01@@[02], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$0CK@@@[02], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSTextureDB@@@BSResource@@$01@@[02], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BShkbHkxDB@@@BSResource@@$01@@[02], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@TRI@BSFaceGenDB@@@BSResource@@$01@@[02], +28 more	
+0x0E02830	vfunc	QueuedFile::vfunc_08	inferred	rtti	75742	pdata_start	vtables(35): .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$00@@[08], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$01@@[08], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$0CK@@@[08], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSTextureDB@@@BSResource@@$01@@[08], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BShkbHkxDB@@@BSResource@@$01@@[08], .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@TRI@BSFaceGenDB@@@BSResource@@$01@@[08], +29 more	
+0x0E028C0	vfunc	QueuedFile::vfunc_03	inferred	rtti	75743	pdata_start	vtables(5): ?A0x69aaf5a1::AudioLoadTask[03], AddCellGrassTask[03], QueuedFile[03], QueuedHead[03], QueuedNamedFile[03]	
+0x0E02B70	vfunc	QueuedFile::vfunc_09	inferred	rtti	75747	no_pdata_entry	vtables(6): ?A0x69aaf5a1::AudioLoadTask[09], AddCellGrassTask[09], AudioLoadForPlaybackTask[09], AudioLoadToCacheTask[09], QueuedFile[09], QueuedNamedFile[09]	
+0x0E02B80	vfunc	QueuedFile::vfunc_0A	inferred	rtti	75748	no_pdata_entry	vtables(6): ?A0x69aaf5a1::AudioLoadTask[0A], AddCellGrassTask[0A], AudioLoadForPlaybackTask[0A], AudioLoadToCacheTask[0A], QueuedFile[0A], QueuedNamedFile[0A]	
+0x0E02B90	vfunc	QueuedFile::vfunc_0B	inferred	rtti	75749	no_pdata_entry	vtables(7): ?A0x69aaf5a1::AudioLoadTask[0B], AddCellGrassTask[0B], AudioLoadForPlaybackTask[0B], AudioLoadToCacheTask[0B], QueuedFile[0B], QueuedHead[0B], +1 more	
+0x0E02CE0	vfunc	QueuedFile::vfunc_00	inferred	rtti	75755	pdata_start	vtables(1): QueuedFile[00]	
+0x0E03740	vfunc	BSModelDB::BSModelProcessor::vfunc_01	inferred	rtti	75777	no_pdata_entry	vtables(1): BSModelDB::BSModelProcessor[01]	
+0x0E03EE0	function	BSModelDB::Demand	named	commonlib+addrlib	75782	pdata_start		src/RE/B/BSModelDB.cpp:10
+0x0E04980	vfunc	BSModelDB::QueuedHandles::vfunc_07	inferred	rtti	75790	no_pdata_entry	vtables(4): ?A0x1f49faf1::QueuedMagicItem[07], AnimationSystemUtils::TESModelAndAnimationHandles[07], BSModelDB::QueuedHandles[07], TESModelDB::TESQueuedHandles[07]	
+0x0E049E0	vfunc	BSModelDB::QueuedHandles::vfunc_12	inferred	rtti	75791	no_pdata_entry	vtables(11): ?A0x1f49faf1::QueuedMagicItem[12], AnimationSystemUtils::TESModelAndAnimationHandles[12], BSModelDB::QueuedHandles[12], QueuedActor[12], QueuedAnimationObject[12], QueuedCharacter[12], +5 more	
+0x0E0C160	vfunc	BSStream::Load3	named	rtti+commonlib	75950	pdata_start	vtables(1): BSStream[03]	
+0x0E0C220	vfunc	BSStream::Save3	named	rtti+commonlib	75951	pdata_start	vtables(1): BSStream[06]	
+0x0E0C2A0	vfunc	BSStream::RegisterSaveObject	named	rtti+commonlib	75952	pdata_start	vtables(1): BSStream[09]	
+0x0E0C5B0	vfunc	BSStream::Load2	named	rtti+commonlib	75953	no_pdata_entry	vtables(1): BSStream[02]	
+0x0E0C5C0	vfunc	BSStream::Save2	named	rtti+commonlib	75954	no_pdata_entry	vtables(1): BSStream[05]	
+0x0E0C5D0	vfunc	BSStream::Load1	named	rtti+commonlib	75955	no_pdata_entry	vtables(1): BSStream[01]	
+0x0E0C5E0	vfunc	BSStream::Save1	named	rtti+commonlib	75956	no_pdata_entry	vtables(1): BSStream[04]	
+0x0E0CBB0	vfunc	BSStream::LoadStream	named	rtti+commonlib	75960	pdata_start	vtables(1): BSStream[0F]	
+0x0E0CE60	vfunc	BSStream::SaveStream	named	rtti+commonlib	75961	pdata_start	vtables(1): BSStream[10]	
+0x0FB2550	vfunc	BSResourceStreamParser::Dtor	named	rtti+commonlib	82361	pdata_start	vtables(1): BSResourceStreamParser[00]	declared in BSResourceNiBinaryStream
+0x0FB26B0	vfunc	BSStreamParserData::vfunc_00	inferred	rtti	82365	pdata_start	vtables(1): BSStreamParserData[00]	
+0x15316A0	vfunc	BSStreamSystemUtility::vfunc_00	inferred	rtti	416433	pdata_start	vtables(1): BSStreamSystemUtility[00]	
+0x15316F0	vfunc	BSStreamSystemUtility::vfunc_08	inferred	rtti	109393	pdata_start	vtables(1): BSStreamSystemUtility[08]	
+0x1531720	vfunc	BSStreamSystemUtility::vfunc_01	inferred	rtti	416435	no_pdata_entry	vtables(1): BSStreamSystemUtility[01]	
+0x1531730	vfunc	BSStreamSystemUtility::vfunc_05	inferred	rtti	416436	no_pdata_entry	vtables(1): BSStreamSystemUtility[05]	
+0x1531740	vfunc	BSStreamSystemUtility::vfunc_06	inferred	rtti	416437	no_pdata_entry	vtables(1): BSStreamSystemUtility[06]	
+0x1531750	vfunc	BSStreamSystemUtility::vfunc_07	inferred	rtti	416438	no_pdata_entry	vtables(1): BSStreamSystemUtility[07]	
+0x1531760	vfunc	BSStreamSystemUtility::vfunc_04	inferred	rtti	416439	no_pdata_entry	vtables(1): BSStreamSystemUtility[04]	
+0x1531770	vfunc	BSStreamSystemUtility::vfunc_02	inferred	rtti	416440	no_pdata_entry	vtables(1): BSStreamSystemUtility[02]	
+0x1531780	vfunc	BSStreamSystemUtility::vfunc_03	inferred	rtti	416441	no_pdata_entry	vtables(1): BSStreamSystemUtility[03]	
+0x1769A60	vtable	BSModelDB::QueuedHandles::vftable	named	rtti	186434	col@0x1ad79b8	19 slots	.?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$01@@ > BSQueuedResourceCollectionBase > QueuedFile > IOTask > BSTask
+0x1775B18	vtable	BSStream::vftable	named	rtti	187090	col@0x1ade3e8	24 slots	NiStream
+0x1775C28	vtable	IOTask::vftable	named	rtti	187096	col@0x1ade5a8	9 slots	BSTask
+0x1775FE8	vtable	QueuedReference::vftable	named	rtti	187124	col@0x1adee68	26 slots	QueuedModel > TESModelDB::TESQueuedHandles > BSModelDB::QueuedHandles > .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$01@@ > BSQueuedResourceCollectionBase > QueuedFil
+0x1776210	vtable	BackgroundProcessThread::vftable	named	rtti	187134	col@0x1adf030	3 slots	BSTaskThread > BSThread
+0x1776260	vtable	QueuedHead::vftable	named	rtti	187138	col@0x1adeae8	12 slots	QueuedFile > IOTask > BSTask
+0x1776358	vtable	QueuedTree::vftable	named	rtti	187146	col@0x1adf190	26 slots	QueuedReference > QueuedModel > TESModelDB::TESQueuedHandles > BSModelDB::QueuedHandles > .?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSModelDB@@@BSResource@@$01@@ > BSQueuedResourceCollecti
+0x177AA48	vtable	TES::SystemEventAdapter::vftable	named	rtti	187381	col@0x1adfb28	2 slots	BSTEventSink<BSSystemEvent>
+0x177AA60	vtable	TES::vftable	named	rtti	187383	col@0x1adf8f8	1 slots	ICellAttachDetachEventSource
+0x177CF38	vtable	BGSLoadFormBuffer::vftable	named	rtti	187480	col@0x1adff18	2 slots	BGSLoadGameBuffer
+0x177E150	vtable	BSModelDB::BSModelProcessor::vftable	named	rtti	187648	col@0x1ae0508	2 slots	
+0x1786138	vtable	BSResource::Location::vftable	named	rtti	188184	col@0x1ae2f70	12 slots	
+0x1786260	vtable	BSResource::LooseFileLocation::vftable	named	rtti	188191	col@0x1ae3068	12 slots	BSResource::Location
+0x178B008	vtable	GridArray::vftable	named	rtti	188589	col@0x1ae3fa0	9 slots	
+0x178B160	vtable	GridCellArray::vftable	named	rtti	188592	col@0x1ae4018	9 slots	GridArray
+0x17A4E90	vtable	CellLoaderTask::vftable	named	rtti	189967	col@0x1aee440	9 slots	IOTask > BSTask
+0x17AAA78	vtable	TESObjectCELL::IDecalRefFunctor::vftable	named	rtti	190141	col@0x1aef950	2 slots	
+0x17AAA90	vtable	TESObjectCELL::vftable	named	rtti	190143	col@0x1aef620	59 slots	TESForm > BaseFormComponent
+0x17B2A68	vtable	TESWorldSpace::vftable	named	rtti	190424	col@0x1af2100	59 slots	TESForm > BaseFormComponent
+0x1843F90	vtable	BSResourceFaceGenBinaryFile::vftable	named	rtti	200224	col@0x1afff88	12 slots	FutBinaryFileC
+0x18457F0	vtable	BSFaceGenDB::TRI::QueuedHandles::vftable	named	rtti	200279	col@0x1b00ba8	19 slots	.?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@TRI@BSFaceGenDB@@@BSResource@@$01@@ > BSQueuedResourceCollectionBase > QueuedFile > IOTask > BSTask
+0x188D0F0	vtable	BGSSaveLoadManager::Thread::vftable	named	rtti	206620	col@0x1b268b0	3 slots	BSThread
+0x188D110	vtable	BGSSaveLoadManager::vftable	named	rtti	206622	col@0x1b26420	2 slots	BSTEventSink<BSSaveDataEvent>
+0x188DDD8	vtable	BGSSaveLoadStatsMap::vftable	named	rtti	206679	col@0x1b26d80	7 slots	.?AV?$NiTMap@W4ENUM_FORM_ID@@PEAV?$BSSimpleList@PEAUSavedFormData@@@@@@ > .?AV?$NiTMapBase@V?$DFALL@V?$NiTMapItem@W4ENUM_FORM_ID@@PEAV?$BSSimpleList@PEAUSavedFormData@@@@@@@@W4ENUM_FORM_ID@@PEAV?$BSSi
+0x188EC30	vtable	BSResource::CacheDrive::Op::vftable	named	rtti	206782	col@0x1b271a8	6 slots	
+0x1901C48	vtable	StreamingInstallMenu::vftable	named	rtti	216103	col@0x1b81aa0	1 slots	
+0x1911D80	vtable	BSResource::ArchiveFoundStreamCB::vftable	named	rtti	216915	col@0x1b87050	2 slots	
+0x19A2BE8	vtable	BSThread::vftable	named	rtti	236644	col@0x1bb37b8	3 slots	
+0x19A34C8	vtable	BSThreadEvent::?A0x23b8e6c7::Source::vftable	named	rtti	236679	col@0x1bb3e28	1 slots	
+0x19A7280	vtable	BSJobs::JobThread::vftable	named	rtti	236914	col@0x1bb5438	3 slots	BSThread
+0x19A76B8	vtable	BSFile::vftable	named	rtti	236923	col@0x1bb54b8	19 slots	NiFile > NiBinaryStream
+0x19A87F0	vtable	BSResource::StreamBase::vftable	named	rtti	236968	col@0x1bb58c8	5 slots	
+0x19A8820	vtable	BSResource::AsyncStream::vftable	named	rtti	236970	col@0x1bb59c0	11 slots	BSResource::StreamBase
+0x19A8880	vtable	BSResource::Stream::vftable	named	rtti	236972	col@0x1bb5940	12 slots	BSResource::StreamBase
+0x19A88E8	vtable	BSResource::ArchiveStream::vftable	named	rtti	236985	col@0x1bb5a40	13 slots	BSResource::Stream > BSResource::StreamBase
+0x19A8958	vtable	BSResource::CompressedArchiveStream::vftable	named	rtti	236987	col@0x1bb5b50	13 slots	BSResource::ArchiveStream > BSResource::Stream > BSResource::StreamBase
+0x19A89C8	vtable	BSResource::ArchiveManager::vftable	named	rtti	236989	col@0x1bb5be0	1 slots	
+0x19A89D8	vtable	BSResource::?A0x0d0612ef::AsyncArchiveStream::vftable	named	rtti	236991	col@0x1bb5cd8	11 slots	BSResource::AsyncStream > BSResource::StreamBase
+0x19A8A78	vtable	BSResource::CacheArchiveOp::vftable	named	rtti	236993	col@0x1bb5ac8	6 slots	BSResource::CacheDrive::Op
+0x19A8CF0	vtable	BSResource::IEntryDB::PostFlushNotify::vftable	named	rtti	236998	col@0x1bb5d88	3 slots	
+0x19A8D10	vtable	BSResource::IEntryDB::vftable	named	rtti	237000	col@0x1bb5d60	6 slots	
+0x19A9838	vtable	BSResource::LocationTraverser::vftable	named	rtti	237005	col@0x1bb5db0	1 slots	
+0x19A9848	vtable	BSResource::?A0x10d192fa::GlobalLocations::vftable	named	rtti	237007	col@0x1bb5e28	12 slots	BSResource::Location
+0x19A98B0	vtable	BSResource::?A0x10d192fa::LocationTree::vftable	named	rtti	237009	col@0x1bb60f8	12 slots	BSResource::Location
+0x19A9918	vtable	BSResource::?A0x10d192fa::GlobalPaths::vftable	named	rtti	237015	col@0x1bb6178	12 slots	BSResource::Location
+0x19A9980	vtable	BSResource::?A0x10d192fa::DevNull::NullStream::vftable	named	rtti	237017	col@0x1bb6718	12 slots	BSResource::Stream > BSResource::StreamBase
+0x19A99E8	vtable	BSResource::?A0x10d192fa::DevNull::vftable	named	rtti	237019	col@0x1bb6448	12 slots	BSResource::Location
+0x19A9A50	vtable	BSResource::?A0x10d192fa::EventSources::vftable	named	rtti	237021	col@0x1bb67a0	1 slots	
+0x19A9A60	vtable	BSResource::?A0x10d192fa::ArchiveRegistrationTaskData::vftable	named	rtti	237023	col@0x1bb6a68	4 slots	BSWin32TaskletData > BSTaskletData
+0x19A9EC0	vtable	BSResource::?A0xa6e68169::LooseFileSBTraits::AsyncFunctor::vftable	named	rtti	237038	col@0x1bb6ba0	2 slots	BSSystemFileAsyncFunctor
+0x19A9ED8	vtable	BSResource::?A0xa6e68169::LooseFileStreamBase::vftable	named	rtti	237040	col@0x1bb6c20	1 slots	
+0x19A9EE8	vtable	BSResource::?A0xa6e68169::LooseFileAsyncBase::FunctorType::vftable	named	rtti	237042	col@0x1bb6c98	2 slots	BSSystemFileAsyncFunctor
+0x19A9F00	vtable	BSResource::?A0xa6e68169::LooseFileAsyncChild::vftable	named	rtti	237044	col@0x1bb6ec8	11 slots	BSResource::AsyncStream > BSResource::StreamBase
+0x19A9F60	vtable	BSResource::?A0xa6e68169::LooseFileAsyncStream::vftable	named	rtti	237046	col@0x1bb6d18	1 slots	BSResource::?A0xa6e68169::LooseFileStreamBase
+0x19AA010	vtable	BSResource::?A0xa6e68169::LooseFileStream::vftable	named	rtti	237050	col@0x1bb6f80	1 slots	BSResource::?A0xa6e68169::LooseFileStreamBase
+0x19AA1A0	vtable	BSResource::?A0x59c0f4bc::DefaultLocationData::vftable	named	rtti	237054	col@0x1bb7060	1 slots	
+0x19AA480	vtable	BSResource::CacheDrive::Task::vftable	named	rtti	237058	col@0x1bb7430	8 slots	
+0x19AA4C8	vtable	BSResource::CacheDrive::vftable	named	rtti	237060	col@0x1bb7328	12 slots	BSResource::Location
+0x19AA560	vtable	BSResource::CacheDrive::Impl::vftable	named	rtti	237064	col@0x1bb73a8	3 slots	BSThread
+0x19AF8E0	vtable	BSResourceNiBinaryStream::vftable	named	rtti	237307	col@0x1bb8d10	6 slots	NiBinaryStream
+0x19CD6F8	vtable	BSTaskManager::vftable	named	rtti	238119	col@0x1bc0a68	24 slots	.?AV?$SynchronizedMap@_JV?$NiPointer@VBSTask@@@@@@ > InterfacedClass
+0x19CD7C0	vtable	BSTaskManagerThread::vftable	named	rtti	238121	col@0x1bc0bc8	3 slots	BSTaskThread > BSThread
+0x19CDBE8	vtable	IOManager::vftable	named	rtti	238133	col@0x1bc0d18	25 slots	BSTaskManager > .?AV?$SynchronizedMap@_JV?$NiPointer@VBSTask@@@@@@ > InterfacedClass
+0x19CDCB8	vtable	BSResource::IEntryDB::NotifyLoadDone::vftable	named	rtti	238135	col@0x1bc0db0	2 slots	
+0x19CDDB0	vtable	QueuedFile::vftable	named	rtti	238140	col@0x1bc0ea8	12 slots	IOTask > BSTask
+0x19FFAA0	vtable	BSStreamParserData::vftable	named	rtti	242025	col@0x1bcf1d8	4 slots	
+0x19FFAC8	vtable	BSResourceStreamParser::vftable	named	rtti	242027	col@0x1bcf250	6 slots	BSResourceNiBinaryStream > NiBinaryStream
+0x1AC9338	vtable	BSStreamSystemUtility::vftable	named	rtti	255947	col@0x1bf78b8	9 slots	
+0x20F6320	global	TESDataHandler::Singleton	named	commonlib+addrlib	400269	in_.data		include/RE/Offsets.h:504
+0x317ABA8	global	BGSSaveLoadGame::GetSingleton	named	commonlib+addrlib	403330	in_.data		include/RE/B/BGSSaveLoadGame.h:71
+0x317ABF0	global	BGSSaveLoadManager::Singleton	named	commonlib+addrlib	403340	in_.data		include/RE/Offsets.h:54
+0x31872C8	global	TES::Singleton	named	commonlib+addrlib	403450	in_.data		include/RE/Offsets.h:493

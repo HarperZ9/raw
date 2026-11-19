@@ -29,7 +29,7 @@ void Log(const char* fmt, ...) {
     SYSTEMTIME t;
     GetLocalTime(&t);
     std::lock_guard g(H().lock);
-    FILE* f = std::fopen((H().outDir + "\skse_host.log").c_str(), "a");
+    FILE* f = std::fopen((H().outDir + "\\skse_host.log").c_str(), "a");
     if (!f) return;
     std::fprintf(f, "%02u:%02u:%02u.%03u [%lu] %s\n", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds,
                  GetCurrentThreadId(), buf);
@@ -131,7 +131,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     char p[MAX_PATH];
     GetModuleFileNameA(nullptr, p, MAX_PATH);
     std::string dir(p);
-    dir = dir.substr(0, dir.rfind('\') + 1);
+    dir = dir.substr(0, dir.rfind('\\') + 1);
     const std::string ini = dir + "d3d11_proxy.ini";
     char out[MAX_PATH] = {}, ver[32] = {};
     GetPrivateProfileStringA("SKSE", "OutDir", "raw_skse_out", out, sizeof out, ini.c_str());
@@ -160,7 +160,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     g_intf.GetReleaseIndex = GetReleaseIndexImpl;
     g_intf.GetPluginInfo = GetPluginInfoImpl;
 
-    AddrLibLoad(dir + "Data\SKSE\Plugins\\");
+    AddrLibLoad(dir + "Data\\SKSE\\Plugins\\");
     EngineInit();
     if (pi && pi->RegisterPrePresent) pi->RegisterPrePresent(OnPresent);
     else Log("no proxy interface: tasks and timed messages will not run");

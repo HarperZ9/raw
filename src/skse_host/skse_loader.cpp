@@ -66,7 +66,7 @@ std::string Narrow(const std::wstring& w) {
 
 void LoadPlugins() {
     Host& h = H();
-    const std::wstring dir = std::wstring(h.gameDir.begin(), h.gameDir.end()) + L"Data\SKSE\Plugins\\";
+    const std::wstring dir = std::wstring(h.gameDir.begin(), h.gameDir.end()) + L"Data\\SKSE\\Plugins\\";
     const auto allow = Allowed();
     const bool legacy = Ini("AllowLegacy", "0") == "1";
     WIN32_FIND_DATAW fd;
@@ -142,10 +142,10 @@ void LoadPlugins() {
 void WriteStatus() {
     Host& h = H();
     std::lock_guard g(h.lock);
-    std::ofstream o(h.outDir + "\skse_host.json");
+    std::ofstream o(h.outDir + "\\skse_host.json");
     auto esc = [](const std::string& s) {
         std::string r;
-        for (char c : s) { if (c == '"' || c == '\') r += '\'; r += c; }
+        for (char c : s) { if (c == '"' || c == '\\') r += '\\'; r += c; }
         return r;
     };
     o << "{\"runtime\":\"" << std::hex << h.runtimeVersion << std::dec << "\",\"address_library_ids\":"

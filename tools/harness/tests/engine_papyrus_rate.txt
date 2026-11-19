@@ -1,0 +1,17 @@
+# Papyrus throughput: updates completed per second (docs/ENGINEMAP.md, engine control 8). Run with --plugin <folder from
+# tools/papyrus/make_load_plugin.py>; each quest writes its count of completed updates to its own global, and every
+# measure reports the updates inside it (papyrus_updates), the arithmetic and native-call quests apart.
+# The game's own budget first, then RAW's budget control: fixed 4 and 8 ms, then adaptive (the VM gets 75 % of what the
+# frame has left before 8.33 and 16.67 ms), then the game's budget again.
+start load rawharness
+console tai
+scene papyrus
+wait 15
+engine papyrus count; papyrus; wait 120; measure rate_vanilla 1200
+engine papyrus fixed 4.0; wait 120; measure rate_fixed4 1200
+engine papyrus fixed 8.0; wait 120; measure rate_fixed8 1200
+engine papyrus adaptive 16.667 0.5 8.0; wait 120; measure rate_adapt60 1200
+engine papyrus adaptive 8.333 0.5 8.0; wait 120; measure rate_adapt120 1200
+engine papyrus off; wait 120; measure rate_vanilla_back 1200
+engine papyrus count
+quit

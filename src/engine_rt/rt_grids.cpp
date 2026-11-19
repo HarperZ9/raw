@@ -70,11 +70,29 @@ std::string Apply(const Grid& g, uint32_t want) {
     return extra;
 }
 
+// Growth past the array the game made: the game's own resize, TES::SetupGrid (fn:TES::SetupGrid; 0x1A1340 on
+// 1.7.104). It writes uGridsToLoad, allocates a new GridCellArray through the game's heap (its constructor sizes the
+// cells from the setting, odd and at least 5), centres it where the old one was, moves every cell both hold, and
+// destroys the old array through its vtable. Called only while the array is empty, so no cell moves and no job
+// thread walks a loaded grid while the setting and the array disagree.
+using SetupGridFn = void (*)(void* tes, uint32_t length);
+uint32_t g_grown = 0;
+std::string Grow(uint32_t want) {
+    const uint32_t fn = Addr("fn:TES::SetupGrid"), single = Addr("TES::Singleton");
+    if (!fn || !single) return "no fn:TES::SetupGrid in this version's table";
+    uint64_t tes = 0;
+    if (!ReadU64(g_img->base + single, &tes) || !tes) return "no TES";
+    reinterpret_cast<SetupGridFn>(const_cast<uint8_t*>(g_img->base) + fn)(reinterpret_cast<void*>(tes), want);
+    ++g_grown;
+    return "grown by TES::SetupGrid";
+}
+
 void AfterEmptying(void* arr) {
     if (!g_pending) return;
     Grid g;
     if (!Read(*g_img, &g) || g.arr != arr || !Empty(g)) return;
-    Apply(g, g_pending);
+    if (g_pending > g_capacity) Grow(g_pending);
+    else Apply(g, g_pending);
     g_pending = 0;
     ++g_applied;
 }
@@ -102,8 +120,8 @@ std::string Line(const char* what, const Grid& g, const char* extra) {
     std::snprintf(b, sizeof b,
                   "{\"cmd\":\"grids\",\"result\":\"%s\",\"world_x\":%d,\"world_y\":%d,\"length\":%u,\"capacity\":%u,"
                   "\"loaded_cells\":%u,\"detach_all_calls\":%u,\"kill_all_calls\":%u,\"builds\":%u,\"last_build_length\":%u,"
-                  "\"hooks\":\"%s\"%s}",
-                  what, g.x, g.y, g.length, g_capacity, g.loaded, g_detachCalls, g_killCalls, g_builds, g_lastBuildLength,
+                  "\"grown\":%u,\"hooks\":\"%s\"%s}",
+                  what, g.x, g.y, g.length, g_capacity, g.loaded, g_detachCalls, g_killCalls, g_builds, g_lastBuildLength, g_grown,
                   g_hookResult.c_str(), extra);
     return b;
 }
@@ -123,7 +141,10 @@ std::string GridsCommand(const Image& img, const std::vector<RefTarget>& refs, c
     const uint32_t want = uint32_t(std::strtoul(arg.c_str(), nullptr, 10));
     // The array keeps the cell slots it was made with: a length past them would index outside it. Grid sizes
     // are odd so the player's cell stays in the middle.
-    if (want < 3 || want % 2 == 0 || want > g_capacity) return Line("refused: odd, 3 or more, up to the capacity", g, extra);
+    // Past the capacity the array is rebuilt by the game's own resize (Grow), which needs uExterior Cell Buffer to
+    // hold the larger grid (set at startup, [EngineSet]); 31 is the reader's bound.
+    if (want < 3 || want % 2 == 0 || want > 31) return Line("refused: odd, 3 to 31", g, extra);
+    if (want > g_capacity && !Addr("fn:TES::SetupGrid")) return Line("refused: past the capacity and no fn:TES::SetupGrid", g, extra);
     if (!Empty(g)) {
         // Interiors keep the exterior grid loaded; the length waits for the game to empty the array
         // (DetachAll: a worldspace change). uGridsToLoad changes with the length, never before it: written early,
@@ -132,7 +153,7 @@ std::string GridsCommand(const Image& img, const std::vector<RefTarget>& refs, c
         std::snprintf(extra, sizeof extra, ",\"pending\":%u,\"applied_by_hook\":%u", g_pending, g_applied);
         return Line("pending: applied when the game empties the grid", g, extra);
     }
-    const std::string e = Apply(g, want);
+    const std::string e = want > g_capacity ? ",\"grow\":\"" + Grow(want) + "\"" : Apply(g, want);
     Read(img, &g);
     return Line("set", g, e.c_str());
 }

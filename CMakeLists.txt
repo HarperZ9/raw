@@ -641,7 +641,10 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_view.cpp
         src/engine_rt/rt_emitters.cpp
         src/engine_rt/rt_cascades.cpp
-        src/engine_rt/rt_version.cpp)
+        src/engine_rt/rt_version.cpp
+        src/engine_rt/rt_disasm.cpp
+        src/engine_rt/rt_pcount.cpp
+        src/engine_rt/rt_pquota.cpp)
     set_target_properties(raw_engine PROPERTIES
         CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

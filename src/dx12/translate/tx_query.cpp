@@ -9,7 +9,9 @@ HRESULT Device::InitQueries()
 {
     static const struct { D3D12_QUERY_HEAP_TYPE type; uint32_t count, stride; } k[QH_Count] = {
         {D3D12_QUERY_HEAP_TYPE_OCCLUSION, 16384, 8},
-        {D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 4096, 8},
+        // RAW's pass timing alone holds 5 x 1024 timestamps (engine_rt/rt_passes.cpp); 4096 ran out under it and the
+        // D3D12 bridge, created after it, failed at its queries (engine control 7). 16384 is 128 KB of readback.
+        {D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 16384, 8},
         {D3D12_QUERY_HEAP_TYPE_PIPELINE_STATISTICS, 512, sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS)},
     };
     for (int i = 0; i < QH_Count; ++i) {
@@ -45,7 +47,11 @@ static int HeapOf(D3D11_QUERY q)
 uint32_t Device::AllocQuerySlot(QueryHeapKind k)
 {
     std::lock_guard<std::mutex> g(queryM);
-    if (qh[k].free.empty()) return ~0u;
+    if (qh[k].free.empty()) {
+        static const char* kNames[QH_Count] = {"occlusion", "timestamp", "pipeline statistics"};
+        if (!qh[k].exhaustedLogged) { qh[k].exhaustedLogged = true; Log("query heap full: %s; CreateQuery returns E_OUTOFMEMORY", kNames[k]); }
+        return ~0u;
+    }
     uint32_t s = qh[k].free.back();
     qh[k].free.pop_back();
     return s;

@@ -5,6 +5,7 @@
 #       match                    matched against the reference version's call graph (tools/enginemap/port_version.py)
 #       same                     a structure offset carried over; checked in game per version
 #       given <value> <conf> <why>  a value for the new runtime taken from a cited source
+#       infn <function entry> <hex offset>  an instruction inside a function already in the table (checked by its bytes)
 # ref: the value on the reference runtime (1.6.1170), where every entry was measured in game.
 name	kind	rule	ref
 vtable:BSScript::Internal::VirtualMachine	vtable	rtti BSScript::Internal::VirtualMachine	0x1AA0B48
@@ -43,3 +44,4 @@ off:SkyrimVM::impl	offset	given 0x210 medium CommonLibSSE-NG layout notes (1.7.x
 fn:BGSSaveLoadManager::Save_Impl	function	given 0x6227F0 al Address Library v13 id 35727	0x60FD40
 fn:BGSSaveLoadManager::Load_Impl	function	given 0x622F30 al Address Library v13 id 35728	0x610480
 off:UI::menuMap	offset	given 0x128 medium CommonLibSSE-NG 1.7.x layout shows no change, not yet checked in game	0x128
+site:Papyrus.OpcodeQuota	site	infn fn:BSScript::Internal::CodeTasklet::OpcodeLoop AB4	0x1463104

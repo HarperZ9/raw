@@ -38,26 +38,41 @@ def group(label: str, records: bytes) -> bytes:
     return b"GRUP" + struct.pack("<I4sIHHHH", 24 + len(records), label.encode("ascii"), 0, 0, 0, 0, 0) + records
 
 
-def vmad_quest(scripts: list[str]) -> bytes:
-    """Scripts attached to a quest, no properties, an empty fragment block and no aliases."""
+def vmad_quest(scripts: list[str], objects: dict[str, int] | None = None) -> bytes:
+    """Scripts attached to a quest, an empty fragment block and no aliases. objects: property name to the form id of
+    a record in this plugin, set on every script (object format 2: unused 16 bits, alias -1, form id)."""
+    objects = objects or {}
     out = struct.pack("<hhH", 5, 2, len(scripts))
     for s in scripts:
-        out += wstr(s) + struct.pack("<BH", 0, 0)   # status 0 (local), no properties
+        out += wstr(s) + struct.pack("<BH", 0, len(objects))   # status 0 (local)
+        for name, form_id in objects.items():
+            out += wstr(name) + struct.pack("<BB", 1, 1) + struct.pack("<HhI", 0, -1, form_id)   # object, edited
     # quest fragment block: version byte, fragment count, fragment file name (none), alias count
     out += struct.pack("<bH", 2, 0) + wstr("") + struct.pack("<H", 0)
     return out
 
 
-def quest(form_id: int, editor_id: str, scripts: list[str]) -> bytes:
+def quest(form_id: int, editor_id: str, scripts: list[str], objects: dict[str, int] | None = None) -> bytes:
     dnam = struct.pack("<HBBfI", QUEST_START_GAME_ENABLED, 50, 0, 0.0, 0)   # flags, priority, unused, delay, type
-    fields = field("EDID", zstr(editor_id)) + field("VMAD", vmad_quest(scripts)) + field("DNAM", dnam)
+    fields = field("EDID", zstr(editor_id)) + field("VMAD", vmad_quest(scripts, objects)) + field("DNAM", dnam)
     fields += field("NEXT", b"") + field("ANAM", struct.pack("<I", 0))
     return record("QUST", form_id, fields)
 
 
-def plugin(author: str, quests: list[tuple[str, list[str]]], light: bool = True, first_id: int = 0x800) -> bytes:
-    """quests: (editor id, script names) in form-id order from first_id."""
-    recs = b"".join(quest(first_id + i, eid, s) for i, (eid, s) in enumerate(quests))
-    hedr = struct.pack("<fiI", HEDR_VERSION, len(quests) + 1, first_id + len(quests))   # records and groups
+def global_float(form_id: int, editor_id: str, value: float = 0.0) -> bytes:
+    return record("GLOB", form_id, field("EDID", zstr(editor_id)) + field("FNAM", b"f") + field("FLTV", struct.pack("<f", value)))
+
+
+def plugin(author: str, quests: list[tuple[str, list[str]]], light: bool = True, first_id: int = 0x800,
+           counters: bool = False) -> bytes:
+    """quests: (editor id, script names) in form-id order from first_id. counters: one float global per quest,
+    RAWLoadCountNN, after the quests' ids, set as the quest scripts' Counter property."""
+    n = len(quests)
+    globs = b"".join(global_float(first_id + n + i, f"RAWLoadCount{i:02d}") for i in range(n)) if counters else b""
+    recs = b"".join(quest(first_id + i, eid, s, {"Counter": first_id + n + i} if counters else None)
+                    for i, (eid, s) in enumerate(quests))
+    records = n * (2 if counters else 1) + (2 if counters else 1)          # records and groups
+    hedr = struct.pack("<fiI", HEDR_VERSION, records, first_id + n * (2 if counters else 1))
     header = field("HEDR", hedr) + field("CNAM", zstr(author))
-    return record("TES4", 0, header, FLAG_ESL if light else 0) + group("QUST", recs)
+    body = (group("GLOB", globs) if counters else b"") + group("QUST", recs)
+    return record("TES4", 0, header, FLAG_ESL if light else 0) + body

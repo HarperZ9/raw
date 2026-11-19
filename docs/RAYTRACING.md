@@ -576,5 +576,24 @@ depth buffer in steps that grow by a third, and counts only other class-7 pixels
 ridge sees less sky, and the ridge's colour in the game's frame is the bounce, which `distantLit` adds. Views 2, 4 and 5
 show the sun, sky and bounce on class 7. Not yet run in game.
 
+**Why Riverwood read 0.389 and then 0.511 against the reference.** Offline, from rt5-ref-1 and rt6-tm-1: the two
+references agree (FLIP 0.119 between them) and the two game frames match (mean 88.1 against 88.0), but RAW's irradiance
+(View 13) differs between the runs by 0.376, about 20 of 255 darker in rt6-tm-1 on the open ground and the roofs.
+rt5-ref-1 took the irradiance before the reference accumulated, rt6-tm-1 after it. While `RtDebug=6` runs, the trace
+kernel returns before its cache and sky writes, so for 1,000 frames the radiance cache takes no samples. After 600
+frames without one (`RtCache::kMaxAge`) every cell is freed. Forty frames later the off-screen bounce had not come
+back. The 0.511 / 0.522 and 0.355 / 0.247 tone-map figures were all taken after a reference, so they measure a
+starved cache. The cause is inferred from the code, not yet measured: tests/rt7tone.txt takes the irradiance before the
+reference, right after it, and 300 frames after it.
+
+FLIP between irradiance and reference through one tone map judges RAW's lighting as that tone map shows it. A tone
+map that flattens the image also lowers the figure, so `tools/lighting/tonecheck.py` reports three guards beside it on
+the frames: the mean, the share of clipped pixels and detail (mean absolute Laplacian of luma). On rt6-tm-1's Riverwood
+frame through RAW's tone map: mean 81.8, 0.92 % clipped, detail 20.15.
+
+**POM.** No parallax shader that samples its height map before its colour turns up in any capture on disk (156 distinct
+pixel shaders across the Riverwood, inn and rt7 captures). The class-6 shaders of the Riverwood capture read t3 as a
+projected (snow) material, not a height. The loop patch needs a capture of a view with vanilla parallax meshes first.
+
 **Not run:** the tone-map order test (tests/rt7tone.txt) and the distant-LOD vista (tests/rt7far.txt). Steam updated the
 game to 1.7.104 during the session, and SKSE 2.2.6 refuses to start it.

@@ -121,6 +121,11 @@ void water(uint3 id : SV_DispatchThreadID) {
             if (view == 1u) { col = refl; }
             else if (view == 2u) { col = caus * 4.0f; }
             else if (view == 3u) { col = float3(F, nv, 1.0f); }
+            else if (view == 4u) {   // what the bed gives, in hues the tone map cannot turn: red no bed behind the water, green a bed
+                const float dv = dBed < 1.0f ? p.z - worldAt(px, dBed).z : -1.0f;
+                col = dv < 1.0f ? float3(1.0f, 0.0f, 0.0f) : float3(0.0f, saturate(dv / 200.0f), 1.0f - saturate(dv / 200.0f));
+            }
+            else if (view == 5u) { col = F > 0.25f ? float3(1.0f, 0.0f, 0.0f) : F > 0.06f ? float3(0.0f, 1.0f, 0.0f) : float3(0.0f, 0.0f, 1.0f); }
         }
     }
     WaterOut[id.xy] = float4(col, game.a);

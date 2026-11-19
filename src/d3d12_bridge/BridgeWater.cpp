@@ -1,4 +1,4 @@
-// The water hand-over (RtWater.cpp, docs/RAYTRACING.md "Water"): attached to raw::tx only. The game has
+// The water hand-over (both water textures take UAVs: the skin scattering writes back into water-in after the water) (RtWater.cpp, docs/RAYTRACING.md "Water"): attached to raw::tx only. The game has
 // just composited its water into the HDR colour. The colour is copied in, the layer's work is handed to the
 // queue with RAW's layer target and both water textures in COMMON, RtScene's water list follows on the same
 // queue, and the copy back lands in the layer's next list. Original work, MIT.
@@ -13,7 +13,7 @@ bool D3D12Bridge::ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, 
 {
     if (!m->ready || !m->attached || !m->cfg.lightingPass || !m->rt || !m->rt->Active() || !sceneHdr || !layer || m->waterFailed) return false;
     if (!m->waterIn.tex11) {
-        if (!m->CreateAttached(m->waterIn, DXGI_FORMAT_R16G16B16A16_FLOAT, false, "water-in", 0, 0) ||
+        if (!m->CreateAttached(m->waterIn, DXGI_FORMAT_R16G16B16A16_FLOAT, true, "water-in", 0, 0) ||
             !m->CreateAttached(m->waterOut, DXGI_FORMAT_R16G16B16A16_FLOAT, true, "water-out", 0, 0)) {
             m->waterFailed = true;
             m->log("[RT] water off: no targets");
@@ -40,6 +40,12 @@ bool D3D12Bridge::ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, 
     }
     c->CopyResource(sceneHdr, inB ? m->waterIn.tex11.Get() : m->waterOut.tex11.Get());
     return true;
+}
+
+bool D3D12Bridge::ReloadWater(const std::vector<uint8_t>& water, const std::vector<uint8_t>& sss, std::string& err)
+{
+    if (!m->rt) { err = "no ray-tracing scene (RtShadows=0, or not on raw::tx)"; return false; }
+    return m->rt->ReloadWater(water, sss, err);
 }
 
 } // namespace raw::bridge

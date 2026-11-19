@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <string>
 #include <unordered_map>
 
 namespace SB::Proxy
@@ -58,6 +59,45 @@ void SceneGeometry_SetSkin(bool on, int boneSlot) { g_skinOn = on; g_boneSlot = 
 // Diagnosis for skinned actors (their per-frame BLAS, docs/RAYTRACING.md): a draw the lit-draw decode
 // did not count whose input layout carries blend indices. Logs its layout and the sizes of the vertex
 // constant buffers bound, a few times, so the bone palette's slot and layout can be read off the log.
+// Diagnosis of the actor sheet ([RT] SkinCbCheck=1): the bone palette as the GPU holds it, copied back and read
+// on the CPU (a stall), against the tracker's shadow copy that RtSkin uses. Every 240th actor draw.
+static void CheckPaletteAgainstGpu(ID3D11DeviceContext* real, ID3D11Buffer* cb, const uint8_t* shadow, UINT indexCount)
+{
+    static int on = -1;
+    static uint32_t n = 0, checks = 0;
+    if (on < 0) {
+        char path[MAX_PATH]{};
+        GetModuleFileNameA(nullptr, path, MAX_PATH);
+        std::string ini(path);
+        ini = ini.substr(0, ini.rfind(char(92)) + 1) + "d3d11_proxy.ini";
+        on = GetPrivateProfileIntA("RT", "SkinCbCheck", 0, ini.c_str());
+    }
+    if (on <= 0 || (n++ % 240) != 0 || checks >= 40) return;
+    ID3D11Device* dev = nullptr;
+    real->GetDevice(&dev);
+    D3D11_BUFFER_DESC d{};
+    cb->GetDesc(&d);
+    D3D11_BUFFER_DESC sd{};
+    sd.ByteWidth = d.ByteWidth; sd.Usage = D3D11_USAGE_STAGING; sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ID3D11Buffer* st = nullptr;
+    if (dev && SUCCEEDED(dev->CreateBuffer(&sd, nullptr, &st)) && st) {
+        real->CopyResource(st, cb);
+        D3D11_MAPPED_SUBRESOURCE m{};
+        if (SUCCEEDED(real->Map(st, 0, D3D11_MAP_READ, 0, &m))) {
+            const uint8_t* g = static_cast<const uint8_t*>(m.pData);
+            uint32_t rows = 0, first[6] = {}, nf = 0;
+            for (uint32_t r = 0; r < 240; ++r)
+                if (std::memcmp(g + r * 16, shadow + r * 16, 16) != 0) { ++rows; if (nf < 6) first[nf++] = r; }
+            ++checks;
+            Log("[RT] palette check %u (%u indices, usage %d, cpu %u): %u of 240 rows differ between the GPU and the shadow; first rows %u %u %u %u %u %u",
+                checks, indexCount, int(d.Usage), d.CPUAccessFlags, rows, first[0], first[1], first[2], first[3], first[4], first[5]);
+            real->Unmap(st, 0);
+        }
+        st->Release();
+    }
+    if (dev) dev->Release();
+}
+
 bool SceneSkin_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT startIndex, INT baseVertex)
 {
     static uint32_t seen = 0, logged = 0;
@@ -95,6 +135,7 @@ bool SceneSkin_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT startInde
         ID3D11Buffer* bb[1] = {};
         real->VSGetConstantBuffers(UINT(g_boneSlot), 1, bb);
         const uint8_t* bones = bb[0] && CBDirtyTracker::Get().GetShadowSize(bb[0]) >= 3840 ? CBDirtyTracker::Get().GetShadowData(bb[0]) : nullptr;
+        if (bones && actor) CheckPaletteAgainstGpu(real, bb[0], bones, indexCount);
         if (bb[0]) bb[0]->Release();
         if (!bones) { ++g_skinNoBones; return true; }
         const bool half = L.pos.format == DXGI_FORMAT_R16G16B16A16_FLOAT;
@@ -118,9 +159,14 @@ bool SceneSkin_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT startInde
             real->VSGetShader(&vs, nullptr, nullptr);
             const uint64_t h = vs ? ShaderManager::Get().GetVSHash(vs) : 0;
             if (vs) vs->Release();
-            if (vsSeen.size() < 48 && vsSeen[h]++ == 0)
-                Log("[RT] actor skinned draw: vs %016llx, %u indices from %u base %d, position format %d stride %u, blend stride %u (indices at %u, weights at %u)",
-                    (unsigned long long)h, indexCount, startIndex, baseVertex, int(L.pos.format), stride, bs, L.blendIdx.offset, L.blendW.offset);
+            if (vsSeen.size() < 48 && vsSeen[h]++ == 0) {
+                D3D11_BUFFER_DESC vd{};
+                d.vb->GetDesc(&vd);
+                Log("[RT] actor skinned draw: vs %016llx, %u indices from %u base %d, position format %d stride %u, blend stride %u (indices at %u, "
+                    "weights at %u); vertex buffer %u bytes (%u vertices), usage %d, cpu access %u, offset %u",
+                    (unsigned long long)h, indexCount, startIndex, baseVertex, int(L.pos.format), stride, bs, L.blendIdx.offset, L.blendW.offset,
+                    vd.ByteWidth, stride ? vd.ByteWidth / stride : 0, int(vd.Usage), vd.CPUAccessFlags, offset);
+            }
         }
         if (!opaque) { ++g_actorJoined; if (g_afterCapture) ++g_actorLate; }
         if (actor) ++g_actorWorld;

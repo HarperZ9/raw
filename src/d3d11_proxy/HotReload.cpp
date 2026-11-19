@@ -27,7 +27,7 @@ namespace
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
 
-struct Compiled { raw::bridge::CompileResult vs, fs, fog, rt, sky; bool hasRt = false; Clock::time_point seen; };
+struct Compiled { raw::bridge::CompileResult vs, fs, fog, rt, sky, water, sss; bool hasRt = false, hasWater = false; Clock::time_point seen; };
 
 struct State
 {
@@ -84,6 +84,11 @@ void Start(State& s)
             c.rt = raw::bridge::CompileHlsl(dir + L"\\RtShadow.hlsl", L"main", L"cs_6_6", dxc);
             c.sky = raw::bridge::CompileHlsl(dir + L"\\RtSkyFilter.hlsl", L"main", L"cs_6_6", dxc);
         }
+        c.hasWater = c.hasRt && fs::exists(dir + L"\\RtWater.hlsl", ec) && fs::exists(dir + L"\\Sss.hlsl", ec);
+        if (c.hasWater) {
+            c.water = raw::bridge::CompileHlsl(dir + L"\\RtWater.hlsl", L"water", L"cs_6_6", dxc);
+            c.sss = raw::bridge::CompileHlsl(dir + L"\\Sss.hlsl", L"main", L"cs_6_6", dxc);
+        }
         return c;
     });
 }
@@ -92,8 +97,9 @@ void Finish(State& s)
 {
     Compiled c = s.job.get();
     std::string err;
-    for (const raw::bridge::CompileResult* r : {&c.vs, &c.fs, &c.fog, &c.rt, &c.sky})
+    for (const raw::bridge::CompileResult* r : {&c.vs, &c.fs, &c.fog, &c.rt, &c.sky, &c.water, &c.sss})
         if ((r == &c.rt || r == &c.sky) && !c.hasRt) continue;
+        else if ((r == &c.water || r == &c.sss) && !c.hasWater) continue;
         else if (!r->ok) {
             const std::string e = r->errors.empty() ? std::string("compile failed\n") : r->errors;
             if (err.find(e) == std::string::npos) err += e;   // the vertex and pixel entries share a file
@@ -106,6 +112,10 @@ void Finish(State& s)
         // The ray-tracing shaders reload with them when the scene runs (RtShadows on raw::tx).
         std::string rtErr;
         if (ok && c.hasRt && !b->ReloadRt(c.rt.dxil, c.sky.dxil, rtErr) && rtErr.find("no ray-tracing") == std::string::npos) {
+            ok = false;
+            err = rtErr;
+        }
+        if (ok && c.hasWater && !b->ReloadWater(c.water.dxil, c.sss.dxil, rtErr) && rtErr.find("no ray-tracing") == std::string::npos) {
             ok = false;
             err = rtErr;
         }

@@ -85,8 +85,8 @@ struct LightingTuning
     float waterGlint = 1.0f;        // WaterGlint: the sun on the waves
     float waterCausticCell = 70.0f; // WaterCausticCell: game units across a cell of the caustic net
     int   waterView = 0;            // WaterView: 1 the reflection, 2 the caustics, 3 Fresnel
-    float sss = 1.0f;               // Sss: screen-space scattering on skin (Sss.hlsl), 0 off to 1
-    float sssWidth = 1.0f;          // SssWidth: the red's scattering width, game units (green 0.42, blue 0.22 of it)
+    float sss = 0.75f;              // Sss: screen-space scattering on skin (Sss.hlsl), 0 off to 1
+    float sssWidth = 0.5f;          // SssWidth: the red's scattering width, game units (green 0.42, blue 0.22 of it); 1.0 washed out the pores
 };
 
 // Lights into clusters: out[cluster] holds one bit per light index.

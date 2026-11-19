@@ -367,6 +367,7 @@ public:
     // after the game composites its water (water true), then the skin's scattering (Sss.hlsl) when
     // sssStrength > 0. layer: RAW's layer target. False when nothing ran.
     bool ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, bool water, float sssWidth, float sssStrength);
+    bool ReloadWater(const std::vector<uint8_t>& water, const std::vector<uint8_t>& sss, std::string& err);   // hot reload: RtWater.hlsl, Sss.hlsl
     bool ReloadRt(const std::vector<uint8_t>& shadow, const std::vector<uint8_t>& sky, std::string& err);   // hot reload
     bool TuneEngine(const EngineTuning& t);
     IBridgePass* ActivePass();   // the pass behind the seam, for its own knobs (LightingPassTune)

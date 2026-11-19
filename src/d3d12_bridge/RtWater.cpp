@@ -31,7 +31,7 @@ void RtScene::CreateWater()
     ok = ok && SUCCEEDED(m_dev->CreateQueryHeap(&qd, IID_PPV_ARGS(&m_wTs))) &&
          SUCCEEDED(m_dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_wAlloc[0].Get(), nullptr, IID_PPV_ARGS(&m_wList))) &&
          SUCCEEDED(m_dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_wFence)));
-    if (ok) m_wList->Close();
+    if (ok) { m_wList->Close(); m_wList->SetName(L"rt water"); }
     D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
     pd.pRootSignature = m_root.Get();
     pd.CS = {kDxil_rt_water, sizeof kDxil_rt_water};
@@ -58,12 +58,43 @@ void RtScene::CreateWater()
     if (m_log) m_log(sssOk ? "[RT] skin scattering pass ready" : "[RT] skin scattering off: its pipeline was refused");
 }
 
+// A removed device: what DRED recorded (with [Translate] Dred=1): the page fault's address and the
+// allocations near it, and each command list's breadcrumbs up to the last operation that completed.
+void LogDeviceRemoved(ID3D12Device* dev, LogFn log)
+{
+    static bool done = false;
+    if (done || !log) return;
+    done = true;
+    log("[RT] device removed: reason 0x%08X", unsigned(dev->GetDeviceRemovedReason()));
+    ComPtr<ID3D12DeviceRemovedExtendedData> dred;
+    if (FAILED(dev->QueryInterface(IID_PPV_ARGS(&dred)))) { log("[RT] DRED: not available"); return; }
+    D3D12_DRED_PAGE_FAULT_OUTPUT pf{};
+    if (SUCCEEDED(dred->GetPageFaultAllocationOutput(&pf))) {
+        log("[RT] DRED page fault at 0x%llx", (unsigned long long)pf.PageFaultVA);
+        for (auto* a = pf.pHeadExistingAllocationNode; a; a = a->pNext) log("[RT] DRED   existing allocation: %ls (type %d)", a->ObjectNameW ? a->ObjectNameW : L"?", int(a->AllocationType));
+        for (auto* a = pf.pHeadRecentFreedAllocationNode; a; a = a->pNext) log("[RT] DRED   recently freed: %ls (type %d)", a->ObjectNameW ? a->ObjectNameW : L"?", int(a->AllocationType));
+    }
+    D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT bc{};
+    if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput(&bc))) {
+        int lists = 0;
+        for (auto* n = bc.pHeadAutoBreadcrumbNode; n && lists < 24; n = n->pNext, ++lists) {
+            const UINT done2 = n->pLastBreadcrumbValue ? *n->pLastBreadcrumbValue : 0;
+            if (done2 >= n->BreadcrumbCount) continue;   // finished lists say nothing
+            log("[RT] DRED list %ls on %ls: %u of %u operations done", n->pCommandListDebugNameW ? n->pCommandListDebugNameW : L"?",
+                n->pCommandQueueDebugNameW ? n->pCommandQueueDebugNameW : L"?", done2, n->BreadcrumbCount);
+            for (UINT k = done2 > 3 ? done2 - 3 : 0; k < n->BreadcrumbCount && k < done2 + 4; ++k)
+                log("[RT] DRED   op %u: %d%s", k, int(n->pCommandHistory[k]), k == done2 ? "  <- the first not done" : "");
+        }
+    }
+}
+
 bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* depth, ID3D12Resource* layer, ID3D12Resource* albedo,
                           ID3D12Resource* spec, ID3D12Resource* colourIn, ID3D12Resource* colourOut, bool water, float sssWidth,
                           float sssStrength, bool* resultInColourIn)
 {
     m_wRecorded = false;
     *resultInColourIn = false;
+    if (FAILED(m_dev->GetDeviceRemovedReason())) { LogDeviceRemoved(m_dev.Get(), m_log); return false; }
     const bool sss = m_sssPso && sssStrength > 0.0f && spec;
     water = water && m_tlasFrame == m_frame;
     if (!Active() || !m_waterPso || !uniform || bytes > kCb || (!water && !sss) || !depth || !layer || !albedo || !colourIn || !colourOut)
@@ -121,8 +152,11 @@ bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* dep
     cl->EndQuery(m_wTs.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot * 2);
     ID3D12DescriptorHeap* heaps[1] = {m_heap.Get()};
     cl->SetDescriptorHeaps(1, heaps);
-    D3D12_RESOURCE_BARRIER in = Transition(colourOut, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    cl->ResourceBarrier(1, &in);
+    // Explicit states for both colour textures: the scattering turns colourIn into its output after the water read
+    // it, and a barrier from COMMON on a texture the list had already promoted to a read state is invalid.
+    D3D12_RESOURCE_BARRIER in[2] = {Transition(colourOut, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+                                    Transition(colourIn, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)};
+    cl->ResourceBarrier(2, in);
     const D3D12_GPU_DESCRIPTOR_HANDLE g = m_heap->GetGPUDescriptorHandleForHeapStart();
     auto gpu = [&](UINT k) { return D3D12_GPU_DESCRIPTOR_HANDLE{g.ptr + UINT64(k) * inc}; };
     if (water) {
@@ -169,7 +203,7 @@ bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* dep
         int nb = 0;
         if (water) {
             b[nb++] = Transition(colourOut, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            b[nb++] = Transition(colourIn, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            b[nb++] = Transition(colourIn, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         }
         if (nb) cl->ResourceBarrier(nb, b);
         cl->SetComputeRootSignature(m_sssRoot.Get());
@@ -188,13 +222,38 @@ bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* dep
         *resultInColourIn = water;
     }
     if (!(sss && water)) {
-        D3D12_RESOURCE_BARRIER out = Transition(colourOut, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
-        cl->ResourceBarrier(1, &out);
+        D3D12_RESOURCE_BARRIER out[2] = {Transition(colourOut, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
+                                         Transition(colourIn, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON)};
+        cl->ResourceBarrier(2, out);
     }
     cl->EndQuery(m_wTs.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot * 2 + 1);
     cl->ResolveQueryData(m_wTs.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot * 2, 2, m_wTsRead.Get(), slot * 16);
     if (FAILED(cl->Close())) return false;
     m_wRecorded = true;
+    return true;
+}
+
+bool RtScene::ReloadWater(const std::vector<uint8_t>& water, const std::vector<uint8_t>& sss, std::string& err)
+{
+    if (!m_waterPso || !m_sssPso) { err = "the water pass is not running"; return false; }
+    D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
+    pd.pRootSignature = m_root.Get();
+    pd.CS = {water.data(), water.size()};
+    pd.Flags = D3D12_PIPELINE_STATE_FLAGS(m_psoFlags);
+    ComPtr<ID3D12PipelineState> w, s;
+    if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&w)))) { err = "the device refused the reloaded RtWater.hlsl"; return false; }
+    D3D12_COMPUTE_PIPELINE_STATE_DESC sd{};
+    sd.pRootSignature = m_sssRoot.Get();
+    sd.CS = {sss.data(), sss.size()};
+    if (FAILED(m_dev->CreateComputePipelineState(&sd, IID_PPV_ARGS(&s)))) { err = "the device refused the reloaded Sss.hlsl"; return false; }
+    if (m_wFence->GetCompletedValue() < m_wFenceValue) {   // the lists in flight still use the old pipelines
+        HANDLE e = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        m_wFence->SetEventOnCompletion(m_wFenceValue, e);
+        WaitForSingleObject(e, 2000);
+        CloseHandle(e);
+    }
+    m_waterPso = w;
+    m_sssPso = s;
     return true;
 }
 

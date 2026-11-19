@@ -25,6 +25,9 @@ namespace raw::bridge
 {
 using Microsoft::WRL::ComPtr;
 
+// A removed device's DRED record into the log, once (RtWater.cpp; [Translate] Dred=1 turns DRED on).
+void LogDeviceRemoved(ID3D12Device* dev, LogFn log);
+
 class RtScene
 {
 public:
@@ -61,6 +64,7 @@ public:
                      ID3D12Resource* spec, ID3D12Resource* colourIn, ID3D12Resource* colourOut, bool water, float sssWidth,
                      float sssStrength, bool* resultInColourIn);
     bool SubmitWater(ID3D12CommandQueue* q);
+    bool ReloadWater(const std::vector<uint8_t>& water, const std::vector<uint8_t>& sss, std::string& err);   // hot reload
     static constexpr UINT kWaterDescriptors = 33;   // 7 + 4 a frame in flight
 
 private:

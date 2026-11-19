@@ -1,0 +1,20 @@
+# Isolation: which new part removed the device in rt6-wat-2. Everything new starts off (ini), then each joins live.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+mouse -1500 -150
+walk w 2.5
+wait 3
+keyframe base steps=game,improved hold=40
+reload ini RtRest=1
+keyframe rest steps=improved hold=40
+reload ini Sss=1
+keyframe sss steps=improved hold=40
+reload ini Water=1
+keyframe water steps=improved hold=40
+reload ini WaterView=3
+keyframe water_fresnel steps=improved hold=30
+reload ini WaterView=0
+quit

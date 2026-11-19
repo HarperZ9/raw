@@ -73,3 +73,11 @@ Inputs come from the map: `python -I tools/enginemap/rt_inputs.py --map docs/eng
 - **Batching:** the pass dispatch is `BSBatchRenderer` slot 02, about 6,700 calls per frame.
 - **LOD:** terrain LOD distances are read once, at worldspace setup (`sub_511DB0`).
 - **Grids:** `uGridsToLoad` is clamped at `sub_19BF30`.
+
+### Engine control results (1.6.1170)
+
+- **Shadow atlas at startup:** `ShadowAtlas=8192` makes the game create its cascade atlas at 8192 x 8192 (it was 4096). The module writes `iShadowMapResolution` and the renderer's size global, which `sub_14F00D0` fills at startup.
+- **Live atlas rebuild (`atlas 2 <size>`):** runs and the game stays stable. Self-shadowing is wrong at any size other than the startup size. Open.
+- **Shadow distance:** live; the decoded cascade extents follow it and return to baseline when it is set back.
+- **LOD and grids:** set at startup, the same aerial view draws full tree models where the default draws LOD.
+- **Papyrus:** the budget passed to `VirtualMachine::Update` follows `fUpdateBudgetMS` live.

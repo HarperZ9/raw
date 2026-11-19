@@ -26,6 +26,7 @@ std::deque<double> g_frameMs;          // recent present-to-present intervals
 std::deque<std::string> g_cmds;        // pending go-file commands
 int g_wait = 0;
 bool g_busy = false;
+uint64_t g_presents = 0;
 void (*g_invalidate)() = nullptr;
 
 // Papyrus timing (written on the game's VM thread, read at present)
@@ -56,8 +57,11 @@ const RefTarget* Find(const std::string& name) {
 }
 
 void Result(const std::string& json) {
+    // every line carries the present it was written at, to line results up with the proxy's own log
+    std::string line = json;
+    if (!line.empty() && line.back() == '}') line.insert(line.size() - 1, ",\"present\":" + std::to_string(g_presents));
     FILE* f = std::fopen((g_out + "\\control_results.jsonl").c_str(), "a");
-    if (f) { std::fprintf(f, "%s\n", json.c_str()); std::fclose(f); }
+    if (f) { std::fprintf(f, "%s\n", line.c_str()); std::fclose(f); }
 }
 
 std::string Stats(const char* name, size_t frames) {
@@ -115,8 +119,12 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             Result(Stats(a.c_str(), size_t(std::atoi(b.c_str()))));
         } else if (op == "atlas") {
             // atlas <entry> <size>: rebuild a shadow depth target at a new size, live
-            const std::string line = ResizeShadowAtlasLive(ctx, *g_img, *g_refs, std::atoi(a.c_str()),
-                                                           uint32_t(std::strtoul(b.c_str(), nullptr, 10)));
+            const uint32_t size = uint32_t(std::strtoul(b.c_str(), nullptr, 10));
+            std::string line = ResizeShadowAtlasLive(ctx, *g_img, *g_refs, std::atoi(a.c_str()), size);
+            // the renderer's own size global (see ResizeShadowAtlas) follows the texture
+            auto* global = reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(g_img->base) + 0x33DCFC0);
+            line += "; size global " + std::to_string(*global) + " -> " + std::to_string(size);
+            *global = size;
             if (g_invalidate) g_invalidate();
             Result("{\"cmd\":\"atlas\",\"result\":\"" + line + "\"}");
         } else if (op == "probe") {
@@ -196,6 +204,7 @@ void ControlOnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
         if (g_frameMs.size() > 4096) g_frameMs.pop_front();
     }
     g_last = now;
+    ++g_presents;
     AtlasOnPresent();
     if (!g_busy) {
         static unsigned tick = 0;

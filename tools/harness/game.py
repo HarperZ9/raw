@@ -229,10 +229,8 @@ def mouse_click() -> None:
 # entering the free camera ('tfc 1'); leaving it ('tfc') does not. A close key typed after them
 # was processed after the load and opened the console again, so every later command went into
 # the world as key presses (the inventory and the map opened, the next coc never ran). Seen in
-# eight harness runs, found from screenshots of the missed cell changes. 'tcl' closes it too: in the
-# engine_vista run the close key after it reopened the console, the next open closed it, and
-# 'player.setpos' went into the world (P opened the magic menu).
-CLOSES_CONSOLE = ("tfc 1", "qqq", "tcl")
+# eight harness runs, found from screenshots of the missed cell changes.
+CLOSES_CONSOLE = ("tfc 1", "qqq")
 CLOSES_CONSOLE_FIRST_WORD = ("coc", "qqq")
 
 

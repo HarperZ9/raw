@@ -181,7 +181,9 @@ list, views and timestamps. `EnginePass` puts the engine's RHI (superframe `nati
 same seam: `adoptDevice`, `importTexture`, `endRecording`, `submit` with the bridge's fence,
 `retire`. D3D12 timestamps now come from the pass; for the engine pass that is the RHI.
 
-Build with the engine: `-DRAW_ENGINE_DIR=<superframe>/native`. It needs superframe main with
+Build with the engine: `-DRAW_ENGINE_DIR=<superframe>/native`. The proxy cannot link without it
+(the bridge, the hook layer and hot reload call the engine's passes directly), so configuring
+without it stops with that message. It needs superframe main with
 host frames and with post passes that index across dispatch rows (a 3840 x 2160 frame has more
 pixels than one dispatch row covers). With the engine linked the proxy delay-loads d3d12.dll
 and dxgi.dll; its load-time imports are KERNEL32 and USER32.

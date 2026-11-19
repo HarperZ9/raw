@@ -217,7 +217,7 @@ void RtScene::RecordTrace(ID3D12GraphicsCommandList4* cl, uint32_t slot, bool sk
     const UINT inc = m_dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     const UINT reflAt = 5 + RtAlpha::Descriptors() + RtSky::Descriptors();
     cl->SetComputeRootSignature(m_root.Get());
-    cl->SetPipelineState(m_pso.Get());
+    cl->SetPipelineState(m_tune.debug && m_psoDebug ? m_psoDebug.Get() : m_pso.Get());
     cl->SetComputeRootConstantBufferView(0, m_cb[slot]->GetGPUVirtualAddress());
     const float rc[8] = {m_tune.sunLength, m_tune.sourceRadius, m_tune.sunCone, float(m_frame & 0xFFFF), m_tune.alphaRef, m_tune.termDist,
                          sky ? m_tune.skyLength : 0.0f, m_tune.debug ? -1.0f : sky && m_tune.reflect ? m_tune.reflectLength : 0.0f};

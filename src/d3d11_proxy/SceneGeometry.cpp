@@ -11,6 +11,7 @@
 #include "SceneGeometry.h"
 #include "SceneLights.h"
 #include "ProxyLog.h"
+#include "CBDirtyTracker.h"
 #include "../core/dxbc/GBufferPatch.h"
 
 #include <cstring>
@@ -22,7 +23,7 @@ namespace SB::Proxy
 namespace
 {
 struct Elem { UINT slot = 0, offset = 0; DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN; bool set = false; };
-struct Layout { Elem pos, uv; };
+struct Layout { Elem pos, uv, blendIdx, blendW; };
 std::mutex g_m;
 std::unordered_map<ID3D11InputLayout*, Layout> g_layouts;
 std::unordered_map<ID3D11PixelShader*, uint8_t> g_alphaPs;   // RtAlphaDiscard or RtAlphaFoliage
@@ -93,6 +94,8 @@ void SceneGeometry_OnInputLayout(ID3D11InputLayout* layout, const D3D11_INPUT_EL
         if (e[i].SemanticIndex != 0) continue;
         if (_stricmp(e[i].SemanticName, "POSITION") == 0) L.pos = {e[i].InputSlot, off, e[i].Format, true};
         else if (_stricmp(e[i].SemanticName, "TEXCOORD") == 0) L.uv = {e[i].InputSlot, off, e[i].Format, true};
+        else if (_stricmp(e[i].SemanticName, "BLENDINDICES") == 0) L.blendIdx = {e[i].InputSlot, off, e[i].Format, true};
+        else if (_stricmp(e[i].SemanticName, "BLENDWEIGHT") == 0) L.blendW = {e[i].InputSlot, off, e[i].Format, true};
     }
     if (!L.pos.set) return;
     std::lock_guard<std::mutex> g(g_m);
@@ -152,9 +155,40 @@ ID3D11ShaderResourceView* AlphaTexture(ID3D11DeviceContext* real)
 }
 } // namespace
 
+// Diagnosis for skinned actors (their per-frame BLAS, docs/RAYTRACING.md): a draw the lit-draw decode
+// did not count whose input layout carries blend indices. Logs its layout and the sizes of the vertex
+// constant buffers bound, a few times, so the bone palette's slot and layout can be read off the log.
+static void SkinnedProbe(ID3D11DeviceContext* real, UINT indexCount)
+{
+    static uint32_t seen = 0, logged = 0;
+    if (logged >= 12) return;
+    ID3D11InputLayout* il = nullptr;
+    real->IAGetInputLayout(&il);
+    Layout L;
+    bool found;
+    { std::lock_guard<std::mutex> g(g_m); auto it = g_layouts.find(il); found = it != g_layouts.end(); if (found) L = it->second; }
+    if (il) il->Release();
+    if (!found || !L.blendIdx.set || (++seen % 97) != 1) return;
+    ID3D11Buffer* cb[14] = {};
+    real->VSGetConstantBuffers(0, 14, cb);
+    char sizes[256]{};
+    int at = 0;
+    for (int k = 0; k < 14; ++k) {
+        const uint32_t n = cb[k] ? CBDirtyTracker::Get().GetShadowSize(cb[k]) : 0;
+        at += snprintf(sizes + at, sizeof sizes - at, " b%d=%u", k, n);
+        if (cb[k]) cb[k]->Release();
+    }
+    ++logged;
+    Log("[RT] skinned draw: %u indices; position slot %u offset %u format %d; blend indices slot %u offset %u format %d; weights offset %u format %d; "
+        "coordinates offset %u format %d; vertex constant floats:%s",
+        indexCount, L.pos.slot, L.pos.offset, int(L.pos.format), L.blendIdx.slot, L.blendIdx.offset, int(L.blendIdx.format), L.blendW.offset,
+        int(L.blendW.format), L.uv.offset, int(L.uv.format), sizes);
+}
+
 void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT startIndex, INT baseVertex)
 {
     const float* w = SceneLights_DrawWorld();
+    if (!w) SkinnedProbe(real, indexCount);
     if (!w || indexCount < 3) return;
     ID3D11PixelShader* ps = nullptr;
     real->PSGetShader(&ps, nullptr, nullptr);

@@ -1,0 +1,37 @@
+# Off-screen hits, second pass (docs/RAYTRACING.md): A/B with a noise floor (two captures with the
+# same settings), the bounce with and without materials and the cache, the mirror views (RtDebug=4:
+# only what is off screen; 5: everything), and the interior bounce in the Bannered Mare.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+keyframe a steps=game,improved hold=120
+keyframe b steps=improved hold=60
+reload ini View=5
+keyframe bounce steps=improved hold=60
+reload ini RtDebug=4 View=7
+keyframe mirror_off steps=improved hold=60
+reload ini RtDebug=5
+keyframe mirror_all steps=improved hold=60
+reload ini RtDebug=0 View=5 RtMaterials=0 RtCache=0
+keyframe bounce_old steps=improved hold=120
+reload ini View=0
+keyframe old steps=improved hold=60
+reload ini RtMaterials=1 RtCache=1
+mouse 1800 0
+keyframe turned steps=game,improved hold=150
+reload ini RtDebug=4 View=7
+keyframe turned_mirror_off steps=improved hold=60
+reload ini RtDebug=0 View=0
+scene bannered_mare
+console coc whiterunbanneredmare
+wait 8
+keyframe a steps=game,improved hold=120
+reload ini RtBounceInterior=0
+keyframe nobounce steps=improved hold=60
+reload ini RtBounceInterior=0.5 View=5
+keyframe bounce steps=improved hold=60
+reload ini RtDebug=4 View=7
+keyframe mirror_off steps=improved hold=60
+quit

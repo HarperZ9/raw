@@ -2,6 +2,7 @@
 #include "RtScene.h"
 #include "RtSceneDetail.h"
 #include "rt_shadow.h"   // kDxil_rt_shadow (dxc, cs_6_6)
+#include "rt_shadow_debug.h"   // kDxil_rt_shadow_debug: the same with the debug views (RtDebug)
 
 #include <algorithm>
 #include <cmath>
@@ -89,6 +90,8 @@ bool RtScene::Pipeline(std::string& err)
     pd.pRootSignature = m_root.Get();
     pd.CS = {kDxil_rt_shadow, sizeof kDxil_rt_shadow};
     if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&m_pso)))) { err = "CreateComputePipelineState (rt_shadow)"; return false; }
+    pd.CS = {kDxil_rt_shadow_debug, sizeof kDxil_rt_shadow_debug};
+    if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&m_psoDebug)))) { err = "CreateComputePipelineState (rt_shadow debug)"; return false; }
     return true;
 }
 
@@ -174,6 +177,8 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
             if (m_log) m_log("[RT] opacity micromaps off: the runtime refused the pipeline flag (the system runtime, not the Agility SDK?)");
         } else {
             m_pso = pso;
+            pd.CS = {kDxil_rt_shadow_debug, sizeof kDxil_rt_shadow_debug};
+            if (SUCCEEDED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) m_psoDebug = pso;
             m_psoFlags = flags;
             m_ommOn = true;
             if (m_log) m_log("[RT] opacity micromaps on: level %u, 4-state, baked from the alpha masks", RtOmm::kLevel);
@@ -223,7 +228,8 @@ void RtScene::SetDraws(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>
     const uint64_t now = GetTickCount64();
     const bool gap = m_lastDraws && now - m_lastDraws > 500;
     m_lastDraws = now;
-    if (m_blasUsed > kBlasHeap - (64ull << 20) || m_meshes.size() > 40000 || (gap && !m_meshes.empty())) Evict();
+    if (m_blasUsed > kBlasHeap - (64ull << 20) || m_meshes.size() > 40000 || (gap && !m_meshes.empty()) || m_evictPending) Evict();
+    m_evictPending = false;
     for (RtDraw& d : m_draws) {
         const Key k{uintptr_t(d.vb), uintptr_t(d.ib), uint64_t(d.vbOffset) << 32 | d.ibOffset,
                     uint64_t(d.startIndex) << 32 | uint32_t(d.baseVertex) ^ uint64_t(d.indexCount) << 12};
@@ -297,7 +303,13 @@ void RtScene::SetCamera(const float step[3], uint32_t voters, const float posAdj
 {
     // A step longer than 2000 units in one frame is a teleport or a cell change: the cache restarts
     // (the place itself stays continuous; nothing keys on its absolute value).
-    if (voters) {
+    // The per-frame constants' float4 40 is the camera's world position (Riverwood logged 17225,
+    // -47204, -8); where it is set it is used as it is, otherwise the steps are summed.
+    if (posAdjust[0] != 0.0f || posAdjust[1] != 0.0f || posAdjust[2] != 0.0f) {
+        const double dx = posAdjust[0] - m_camPos[0], dy = posAdjust[1] - m_camPos[1], dz = posAdjust[2] - m_camPos[2];
+        if (dx * dx + dy * dy + dz * dz > 2000.0 * 2000.0) m_cache.Reset();
+        for (int k = 0; k < 3; ++k) m_camPos[k] = posAdjust[k];
+    } else if (voters) {
         const double len = std::sqrt(double(step[0]) * step[0] + double(step[1]) * step[1] + double(step[2]) * step[2]);
         if (len > 2000.0) m_cache.Reset();
         else for (int k = 0; k < 3; ++k) m_camPos[k] += step[k];

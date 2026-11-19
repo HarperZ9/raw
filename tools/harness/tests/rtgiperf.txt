@@ -1,0 +1,26 @@
+# Off-screen hits, cost (docs/RAYTRACING.md): Riverwood by day and the Bannered Mare, everything on,
+# then the cache off, then materials off (the trace as before this work), then on again.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+keyframe on steps=improved hold=150
+reload ini RtCache=0
+keyframe nocache steps=improved hold=90
+reload ini RtMaterials=0
+keyframe nomat steps=improved hold=120
+reload ini RtMaterials=1 RtCache=1
+keyframe on2 steps=improved hold=150
+reload ini RtDebug=4 View=7
+keyframe mirror_off steps=improved hold=60
+reload ini RtDebug=5
+keyframe mirror_all steps=improved hold=60
+reload ini RtDebug=0 View=0
+scene bannered_mare
+console coc whiterunbanneredmare
+wait 8
+keyframe on steps=game,improved hold=120
+reload ini RtMaterials=0
+keyframe nomat steps=improved hold=120
+quit

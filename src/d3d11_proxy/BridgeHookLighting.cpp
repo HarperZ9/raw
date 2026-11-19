@@ -90,6 +90,7 @@ void LoadLightingConfig(const std::string& ini)
     t.rtSkyStrength = f("RtSkyStrength", t.rtSkyStrength);
     t.rtSkyLength = f("RtSkyLength", t.rtSkyLength);
     t.rtBounce = f("RtBounce", t.rtBounce);
+    t.rtBounceInterior = f("RtBounceInterior", t.rtBounceInterior);
     t.rtReflect = i("RtReflect", 1) != 0;
     t.rtDebug = i("RtDebug", 0);
     t.rtOmm = i("RtOmm", 1) != 0;

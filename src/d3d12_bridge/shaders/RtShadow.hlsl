@@ -238,6 +238,9 @@ void main(uint3 id : SV_DispatchThreadID) {
             }
         }
     }
+#ifdef RT_DEBUG
+    // The debug views live in their own build (-DRT_DEBUG=1, RtScene's debug pipeline): their code in the
+    // main kernel raised its register count and the trace's cost with it.
     if (reflectLength < 0.0f && d < 1.0f) {
         // RtDebug: the primary ray from the camera through the pixel, alpha-tested. Out: the committed
         // hit's texture coordinates and mask value on an alpha-tested mesh, magenta on an opaque one,
@@ -253,7 +256,21 @@ void main(uint3 id : SV_DispatchThreadID) {
                 if (a >= alphaRef) { q.CommitNonOpaqueTriangleHit(); }
             }
         }
-        if (debugView == 3u && q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+        if (debugView >= 4u) {
+            // A mirror for every pixel: 4 shows only what lies off screen (on-screen hits black), 5 all of it,
+            // the off-screen part shaded from the hit's material and the cache. Dark blue: the ray left.
+            const float3 pw = worldAt(float2(id.xy), d);
+            const float3 nw = worldNormal(Normal.Load(ip));
+            const float3 md = reflect(normalize(pw), nw);
+            const float3 mo = pw + nw * (0.5f + 0.003f * viewZOf(d));
+            Hit mh;
+            float3 mc, mn;
+            dbg = float3(0.0f, 0.0f, 0.15f);
+            if (traceHit(mo, md, 20000.0f, mh)) {
+                dbg = onScreen(mo + md * mh.t, mc) ? (debugView == 5u ? mc : 0.0f.xxx)
+                                                    : radianceAt(mh, mo, md, float2(hash(float2(id.xy), giFrame * 0.37f), hash(float2(id.yx), giFrame * 0.71f)), true, mn);
+            }
+        } else if (debugView == 3u && q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
             // The colour copies: the primary ray's hit coloured from its mesh's copy, unlit.
             Hit h;
             h.t = q.CommittedRayT(); h.id = q.CommittedInstanceID(); h.prim = q.CommittedPrimitiveIndex();
@@ -278,6 +295,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
         refl = float4(dbg, 1.0f);
     }
+#endif
     // Glossy pixels not traced this frame keep last frame's reflection; every other pixel clears.
     const float4 sp0 = d < 1.0f ? Spec.Load(ip) : 0.0f;
     const bool glossy = reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u && sp0.y > 0.25f && sp0.x > 0.05f;

@@ -29,7 +29,8 @@ class RtScene
 public:
     ~RtScene();
     bool Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std::string& err);
-    void Tune(const RtTuning& t) { m_tune = t; m_alpha.SetAlbedoSide(t.matSide); }
+    // Materials switched live: every mesh is dropped and rebuilt with (or without) its material.
+    void Tune(const RtTuning& t) { m_evictPending = m_evictPending || t.materials != m_tune.materials; m_tune = t; m_alpha.SetAlbedoSide(t.matSide); }
     // The camera's step since the frame before (SceneLighting::cameraStep), summed into the place the
     // radiance cache's cells are keyed by; voters 0 (no lit draw) keeps the place.
     void SetCamera(const float step[3], uint32_t voters, const float posAdjust[4]);
@@ -90,7 +91,7 @@ private:
     ComPtr<ID3D12CommandAllocator> m_alloc[3];
     ComPtr<ID3D12GraphicsCommandList4> m_list;
     ComPtr<ID3D12RootSignature> m_root;
-    ComPtr<ID3D12PipelineState> m_pso;
+    ComPtr<ID3D12PipelineState> m_pso, m_psoDebug;
     ComPtr<ID3D12DescriptorHeap> m_heap;
     ComPtr<ID3D12Fence> m_fence;
     uint64_t m_fenceValue = 0, m_slotValue[3] = {};
@@ -107,6 +108,7 @@ private:
     bool m_skyReady = false;
     RtCache m_cache;
     bool m_cacheReady = false;
+    bool m_evictPending = false;
     bool m_ommOn = false;
     UINT m_psoFlags = 0;
 #ifdef RAW_HAS_OMM

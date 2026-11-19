@@ -155,3 +155,43 @@ frame). Before this the night view, reached after the inn, traced in 7.95 ms and
 Not done: shader execution reordering needs the traces moved from inline ray queries in compute to a
 ray-generation pipeline (or shader model 6.9 `MaybeReorderThread` where it applies to compute); shader
 model 6.9 long and cooperative vectors are not used yet.
+
+## Materials and the radiance cache (2026-11-18)
+
+A sky ray or a reflection ray that lands off screen used to get a flat guess (a quarter of the cell's
+ambient, or nothing for reflections). Now every mesh keeps its material for the rays (`RtAlpha`,
+`RtAlphaTex.cpp`, `RtAlphaUv.hlsl`): its texture coordinates, one face normal per triangle, and an RGBA8
+copy of its colour texture (t0 of the lit shaders) at up to `RtMatSide` (128) texels a side. An
+off-screen hit is shaded as the game shades a surface (`RtHit.hlsli`): its colour times the sun with a
+shadow ray, every point light in reach, and the directional ambient, scaled by the sky share and lifted
+by the bounce that a world-space radiance cache (`RtCache`, `RtCache.hlsl`) keeps for the hit's cell.
+
+The cache is a hash table of 2^20 cells: cubes of the world `RtCacheCell` (16) units across near the
+camera and doubling with distance, one set per facing axis, keyed by absolute position (the per-frame
+constants' float4 40 is the camera's world position: 17225, -47204, -8 at Riverwood). Each visible
+pixel's sky ray adds a sample to its own cell, and each off-screen hit traces one more ray for the hit's
+cell, so cells behind the camera fill and light that bounced more than once reaches the pixels. A cell
+keeps the running mean of up to 32 frames and is freed after 600 frames without a sample. Interiors now
+take the bounce too, at `RtBounceInterior` (0.5) on top of the cell's fill.
+
+| Riverwood 13:00, 3840 x 2160, run rt3-gi-3 | trace | cache resolve |
+|---|---|---|
+| materials off (as before) | 2.07 ms | |
+| materials on, cache off | 2.22 ms | |
+| materials and cache on | 2.47 ms | 0.04 ms (139,000 live cells) |
+| the Bannered Mare, materials off / on | 1.46 / 1.74 ms | 0.02 ms |
+
+Riverwood holds 795 material meshes, 156 colour copies (8.4 MB) and 11.5 MB of coordinates. The
+same configuration traced in 1.50 ms in an earlier run (rt3-gi-1) and the previous work's figure was
+1.64 ms; the spread between runs is not measured, so the deltas within one run are the figures to read.
+Found on the way: the debug views in the main kernel raised the trace from 2.5 to 7.9 ms (register
+pressure); they now build into a second pipeline used only while `RtDebug` is set.
+
+Debug views (`View=7`): `RtDebug=3` the colour copies on the primary ray (an unlit scene: the copies are
+right), `RtDebug=2` the light the cache gives each pixel (cells show as 16-unit blocks near the camera),
+`RtDebug=4` a mirror for every pixel showing only off-screen hits, `RtDebug=5` the whole mirror. Switching
+`RtMaterials` live drops and rebuilds every mesh.
+
+Not done: the visible change in a daylit exterior is small (most bounce rays land on screen, where the
+game's frame is already the right answer); point lights at off-screen hits are unshadowed; meshes over
+the 40,000-record limit are shaded grey.

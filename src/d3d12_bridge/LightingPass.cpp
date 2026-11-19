@@ -39,7 +39,7 @@ struct LightUniform
 static_assert(sizeof(LightUniform) == 30 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16, "layout of cbuffer P");
 static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
-constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192;
+constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384;
 constexpr RasterBinding U = RasterBinding::Uniform, T = RasterBinding::Texture;
 constexpr RasterBinding kLightLayout[14] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T};
 constexpr RasterBinding kFogLayout[4] = {U, T, T, T};
@@ -221,6 +221,9 @@ private:
         if (frame.rt && t.rtShadows && m_rtVis.valid() && m_rtIdx.valid()) f |= kRt | (t.rtSky ? kSky : 0u) | (t.rtSky && t.rtBounce > 0.0f && m_rtBounce.valid() ? kBounce : 0u) |
                      (t.rtSky && t.rtReflect && m_rtReflect.valid() ? kReflect : 0u);
         if (frame.hasShadows && s.hasCascades) f |= kShadows;
+        // Interiors (no cascades): the bounce at its own strength, on top of the cell's fill.
+        const bool interior = (f & kShadows) == 0u;
+        if (interior && (f & kBounce) && t.rtBounceInterior > 0.0f) f |= kBounceIn;
         u.flags[0] = f; u.flags[1] = s.lightCount; u.flags[2] = s.cascades; u.flags[3] = uint32_t(t.view);
         std::memcpy(u.clipToWorld, s.clipToWorld, 64);
         std::memcpy(u.worldToClip, s.worldToClip, 64);
@@ -236,7 +239,7 @@ private:
         const float nearZ = frame.camera.nearZ > 0 ? frame.camera.nearZ : 15.0f;
         u.cluster[0] = nearZ; u.cluster[1] = t.clusterFar; u.cluster[2] = float(kSlices) / std::log(t.clusterFar / nearZ);
         u.cluster[3] = t.rtSkyStrength;
-        u.proj[3] = t.rtBounce;
+        u.proj[3] = interior ? t.rtBounceInterior : t.rtBounce;
         u.tune[0] = t.fogDensity; u.tune[1] = t.fogAnisotropy; u.tune[2] = t.softRange; u.tune[3] = t.contactLength;
         u.tune2[0] = t.aoStrength; u.tune2[1] = t.fogLightScale; u.tune2[2] = t.fogSunScale; u.tune2[3] = t.fogMaxDistance;
         for (uint32_t i = 0; i < s.lightCount; ++i) {

@@ -40,6 +40,7 @@ STDMETHODIMP Device::CreateDomainShader(const void* c, SIZE_T n, ID3D11ClassLink
 STDMETHODIMP Device::CreateComputeShader(const void* c, SIZE_T n, ID3D11ClassLinkage*, ID3D11ComputeShader** o) { return MakeShader(c, n, o); }
 STDMETHODIMP Device::CreateGeometryShaderWithStreamOutput(const void*, SIZE_T, const D3D11_SO_DECLARATION_ENTRY*, UINT, const UINT*, UINT, UINT, ID3D11ClassLinkage*, ID3D11GeometryShader**)
 {
+    TX_TRACE("Device::CreateGeometryShaderWithStreamOutput");
     CountUnsupported(this, "CreateGeometryShaderWithStreamOutput");
     return E_NOTIMPL;
 }
@@ -117,6 +118,7 @@ void Device::InitDefaults()
 
 STDMETHODIMP Device::CreateBlendState(const D3D11_BLEND_DESC* d, ID3D11BlendState** out)
 {
+    TX_TRACE("Device::CreateBlendState");
     if (!d) return E_INVALIDARG;
     if (!out) return S_FALSE;
     auto* s = new TBlend(this);
@@ -128,6 +130,7 @@ STDMETHODIMP Device::CreateBlendState(const D3D11_BLEND_DESC* d, ID3D11BlendStat
 
 STDMETHODIMP Device::CreateDepthStencilState(const D3D11_DEPTH_STENCIL_DESC* d, ID3D11DepthStencilState** out)
 {
+    TX_TRACE("Device::CreateDepthStencilState");
     if (!d) return E_INVALIDARG;
     if (!out) return S_FALSE;
     auto* s = new TDepthStencil(this);
@@ -139,6 +142,7 @@ STDMETHODIMP Device::CreateDepthStencilState(const D3D11_DEPTH_STENCIL_DESC* d, 
 
 STDMETHODIMP Device::CreateRasterizerState(const D3D11_RASTERIZER_DESC* d, ID3D11RasterizerState** out)
 {
+    TX_TRACE("Device::CreateRasterizerState");
     if (!d) return E_INVALIDARG;
     if (!out) return S_FALSE;
     auto* s = new TRaster(this);
@@ -176,6 +180,7 @@ uint32_t Device::InternSampler(const D3D11_SAMPLER_DESC& d)
 
 STDMETHODIMP Device::CreateSamplerState(const D3D11_SAMPLER_DESC* d, ID3D11SamplerState** out)
 {
+    TX_TRACE("Device::CreateSamplerState");
     if (!d) return E_INVALIDARG;
     if (!out) return S_FALSE;
     auto* s = new TSampler(this);
@@ -187,6 +192,7 @@ STDMETHODIMP Device::CreateSamplerState(const D3D11_SAMPLER_DESC* d, ID3D11Sampl
 
 STDMETHODIMP Device::CreateInputLayout(const D3D11_INPUT_ELEMENT_DESC* e, UINT n, const void*, SIZE_T, ID3D11InputLayout** out)
 {
+    TX_TRACE("Device::CreateInputLayout");
     if (n && !e) return E_INVALIDARG;
     if (!out) return S_FALSE;
     uint64_t h = 1469598103934665603ull ^ n;

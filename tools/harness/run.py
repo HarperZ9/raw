@@ -206,7 +206,7 @@ class Runner(Actions):
         w, h = self.a.resolution.split("x")
         ok = False
         try:
-            self.inst.deploy(Path(self.a.dll), PROXY_INI)
+            self.inst.deploy(Path(self.a.dll), Path(self.a.ini).read_text(encoding="utf-8") if self.a.ini else PROXY_INI)
             self.inst.set_option("SkyrimPrefs.ini", "Display", "iSize W", w)
             self.inst.set_option("SkyrimPrefs.ini", "Display", "iSize H", h)
             self.inst.set_option("SkyrimPrefs.ini", "Interface", "bShowTutorials", "0")
@@ -281,6 +281,7 @@ def main() -> int:
     p.add_argument("--out", required=True)
     p.add_argument("--resolution", default="3840x2160")
     p.add_argument("--prompt-tries", default="1")
+    p.add_argument("--ini", default="", help="a d3d11_proxy.ini to deploy instead of the lighting one (the translate tests)")
     return Runner(p.parse_args()).run()
 
 

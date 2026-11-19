@@ -82,6 +82,7 @@ static D3D11_SHADER_RESOURCE_VIEW_DESC DefaultSrv(const ResCore& c)
 
 STDMETHODIMP Device::CreateShaderResourceView(ID3D11Resource* res, const D3D11_SHADER_RESOURCE_VIEW_DESC* in, ID3D11ShaderResourceView** out)
 {
+    TX_TRACE("Device::CreateShaderResourceView");
     ResCore* c = CoreOf(res);
     if (!c) return E_INVALIDARG;
     if (!out) return S_FALSE;
@@ -157,6 +158,7 @@ STDMETHODIMP Device::CreateShaderResourceView(ID3D11Resource* res, const D3D11_S
 
 STDMETHODIMP Device::CreateRenderTargetView(ID3D11Resource* res, const D3D11_RENDER_TARGET_VIEW_DESC* in, ID3D11RenderTargetView** out)
 {
+    TX_TRACE("Device::CreateRenderTargetView");
     ResCore* c = CoreOf(res);
     if (!c || c->IsBuffer()) return E_INVALIDARG;
     if (!out) return S_FALSE;
@@ -201,6 +203,7 @@ STDMETHODIMP Device::CreateRenderTargetView(ID3D11Resource* res, const D3D11_REN
 
 STDMETHODIMP Device::CreateDepthStencilView(ID3D11Resource* res, const D3D11_DEPTH_STENCIL_VIEW_DESC* in, ID3D11DepthStencilView** out)
 {
+    TX_TRACE("Device::CreateDepthStencilView");
     ResCore* c = CoreOf(res);
     if (!c || c->IsBuffer()) return E_INVALIDARG;
     if (!out) return S_FALSE;
@@ -241,6 +244,7 @@ STDMETHODIMP Device::CreateDepthStencilView(ID3D11Resource* res, const D3D11_DEP
 
 STDMETHODIMP Device::CreateUnorderedAccessView(ID3D11Resource* res, const D3D11_UNORDERED_ACCESS_VIEW_DESC* in, ID3D11UnorderedAccessView** out)
 {
+    TX_TRACE("Device::CreateUnorderedAccessView");
     ResCore* c = CoreOf(res);
     if (!c) return E_INVALIDARG;
     if (!out) return S_FALSE;

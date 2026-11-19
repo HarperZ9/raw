@@ -16,6 +16,7 @@ static void MipSize(const ResCore& c, uint32_t mip, uint32_t& w, uint32_t& h, ui
 
 STDMETHODIMP Context::Map(ID3D11Resource* res, UINT sub, D3D11_MAP type, UINT flags, D3D11_MAPPED_SUBRESOURCE* out)
 {
+    TX_TRACE("Context::Map");
     ResCore* c = CoreOf(res);
     if (!c || !out) return E_INVALIDARG;
     *out = D3D11_MAPPED_SUBRESOURCE{};
@@ -74,6 +75,7 @@ STDMETHODIMP Context::Map(ID3D11Resource* res, UINT sub, D3D11_MAP type, UINT fl
 
 STDMETHODIMP_(void) Context::Unmap(ID3D11Resource* res, UINT sub)
 {
+    TX_TRACE("Context::Unmap");
     ResCore* c = CoreOf(res);
     if (!c || c->store != Store::Committed || !c->mapChunk.res) return;
     Chunk ch = c->mapChunk;
@@ -127,6 +129,7 @@ void Context::WriteTexture(ResCore& c, UINT sub, const D3D11_BOX* box, const voi
 
 STDMETHODIMP_(void) Context::UpdateSubresource(ID3D11Resource* res, UINT sub, const D3D11_BOX* box, const void* data, UINT rowPitch, UINT depthPitch)
 {
+    TX_TRACE("Context::UpdateSubresource");
     ResCore* c = CoreOf(res);
     if (!c || !data) return;
     if (!c->IsBuffer()) { WriteTexture(*c, sub, box, data, rowPitch, depthPitch); return; }

@@ -21,6 +21,7 @@ public:
             AddRef();
             return S_OK;
         }
+        LogIid("swap chain", r);
         *o = nullptr;
         return E_NOINTERFACE;
     }
@@ -118,6 +119,7 @@ void SwapChain::ReleaseBuffers()
 
 STDMETHODIMP SwapChain::Present(UINT sync, UINT flags)
 {
+    TX_TRACE("SwapChain::Present");
     Context* ctx = dev_->imm;
     ResCore* src = CoreOf(front_);
     const std::shared_ptr<TrackedRes>& dst = back_[sc_->GetCurrentBackBufferIndex()];
@@ -146,6 +148,7 @@ STDMETHODIMP SwapChain::Present(UINT sync, UINT flags)
 
 STDMETHODIMP SwapChain::ResizeBuffers(UINT count, UINT w, UINT h, DXGI_FORMAT f, UINT flags)
 {
+    TX_TRACE("SwapChain::ResizeBuffers");
     ReleaseBuffers();
     if (f != DXGI_FORMAT_UNKNOWN) desc_.BufferDesc.Format = f;
     HRESULT hr = sc_->ResizeBuffers(count ? (count < 2 ? 2 : count) : 0, w, h, StripSrgb(f), flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING);

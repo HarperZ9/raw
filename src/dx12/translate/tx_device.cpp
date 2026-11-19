@@ -103,6 +103,13 @@ STDMETHODIMP Device::QueryInterface(REFIID r, void** o)
         AddRef();
         return S_OK;
     }
+    if (r == __uuidof(IDXGIObject) || r == __uuidof(IDXGIDevice) || r == __uuidof(IDXGIDevice1) || r == __uuidof(IDXGIDevice2)) {
+        dxgi.dev = this;
+        *o = static_cast<IDXGIDevice2*>(&dxgi);
+        AddRef();
+        return S_OK;
+    }
+    LogIid("device", r);
     *o = nullptr;
     return E_NOINTERFACE;
 }
@@ -116,6 +123,7 @@ STDMETHODIMP_(ULONG) Device::Release()
 
 STDMETHODIMP_(void) Device::GetImmediateContext(ID3D11DeviceContext** o)
 {
+    TX_TRACE("Device::GetImmediateContext");
     *o = imm;
     imm->AddRef();
 }
@@ -140,6 +148,7 @@ void Device::DrainInfoQueue()
 
 STDMETHODIMP Device::CheckFormatSupport(DXGI_FORMAT f, UINT* out)
 {
+    TX_TRACE("Device::CheckFormatSupport");
     if (!out) return E_INVALIDARG;
     D3D12_FEATURE_DATA_FORMAT_SUPPORT fs{f};
     HRESULT hr = d3d->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &fs, sizeof(fs));
@@ -149,6 +158,7 @@ STDMETHODIMP Device::CheckFormatSupport(DXGI_FORMAT f, UINT* out)
 
 STDMETHODIMP Device::CheckMultisampleQualityLevels(DXGI_FORMAT f, UINT samples, UINT* out)
 {
+    TX_TRACE("Device::CheckMultisampleQualityLevels");
     if (!out) return E_INVALIDARG;
     D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS q{};
     q.Format = f; q.SampleCount = samples;
@@ -159,6 +169,7 @@ STDMETHODIMP Device::CheckMultisampleQualityLevels(DXGI_FORMAT f, UINT samples, 
 
 STDMETHODIMP Device::CheckFeatureSupport(D3D11_FEATURE feature, void* data, UINT size)
 {
+    TX_TRACE("Device::CheckFeatureSupport");
     if (!data) return E_INVALIDARG;
     if (feature == D3D11_FEATURE_THREADING && size == sizeof(D3D11_FEATURE_DATA_THREADING)) {
         auto* t = static_cast<D3D11_FEATURE_DATA_THREADING*>(data);
@@ -184,26 +195,31 @@ STDMETHODIMP Device::CheckFeatureSupport(D3D11_FEATURE feature, void* data, UINT
 
 STDMETHODIMP_(void) Device::CheckCounterInfo(D3D11_COUNTER_INFO* i)
 {
+    TX_TRACE("Device::CheckCounterInfo");
     if (i) *i = D3D11_COUNTER_INFO{};
 }
 STDMETHODIMP Device::CheckCounter(const D3D11_COUNTER_DESC*, D3D11_COUNTER_TYPE*, UINT*, LPSTR, UINT*, LPSTR, UINT*, LPSTR, UINT*)
 {
+    TX_TRACE("Device::CheckCounter");
     return DXGI_ERROR_UNSUPPORTED;
 }
 STDMETHODIMP Device::CreateCounter(const D3D11_COUNTER_DESC*, ID3D11Counter**) { return DXGI_ERROR_UNSUPPORTED; }
 STDMETHODIMP Device::CreateClassLinkage(ID3D11ClassLinkage**)
 {
+    TX_TRACE("Device::CreateClassLinkage");
     CountUnsupported(this, "CreateClassLinkage");
     return E_NOTIMPL;
 }
 STDMETHODIMP Device::OpenSharedResource(HANDLE, REFIID, void**)
 {
+    TX_TRACE("Device::OpenSharedResource");
     CountUnsupported(this, "OpenSharedResource");
     return E_NOTIMPL;
 }
 
 STDMETHODIMP Device::CreateDeferredContext(UINT, ID3D11DeviceContext** out)
 {
+    TX_TRACE("Device::CreateDeferredContext");
     if (!out) return S_FALSE;
     *out = new Context(this, true);
     return S_OK;

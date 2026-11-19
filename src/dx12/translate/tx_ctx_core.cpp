@@ -43,6 +43,7 @@ STDMETHODIMP Context::QueryInterface(REFIID r, void** o)
         AddRef();
         return S_OK;
     }
+    LogIid("context", r);
     *o = nullptr;
     return E_NOINTERFACE;
 }

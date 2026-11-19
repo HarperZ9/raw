@@ -45,6 +45,13 @@ HRESULT CreateSwapChain(ID3D11Device* device, const DXGI_SWAP_CHAIN_DESC* desc,
 // Reads the debug layer's stored messages into the counters, then returns them.
 Stats GetStats(ID3D11Device* device);
 
+// Where the layer's log lines go (by default the debugger and stderr). A host such as the
+// RAW proxy routes them into its own log.
+void SetLogSink(void (*sink)(const char* line));
+
+// The last 48 calls into the layer, oldest first, as one line (for a fault report).
+void TraceDump(void (*out)(const char* line));
+
 // The D3D12 device and direct queue, for a renderer that adopts them
 // (superframe native/raw/rhi/host.hpp, HostDevice). No reference is added.
 void GetNative(ID3D11Device* device, void** d3d12Device, void** d3d12Queue);

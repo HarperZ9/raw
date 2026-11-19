@@ -429,6 +429,7 @@ add_library(raw_dx12_translate STATIC
     ${RAW_TX_DIR}/tx_track.cpp
     ${RAW_TX_DIR}/tx_imports.cpp
     ${RAW_TX_DIR}/tx_device.cpp
+    ${RAW_TX_DIR}/tx_dxgi_device.cpp
     ${RAW_TX_DIR}/tx_submit.cpp
     ${RAW_TX_DIR}/tx_resource.cpp
     ${RAW_TX_DIR}/tx_views.cpp
@@ -451,6 +452,15 @@ add_library(raw_dx12_translate STATIC
 target_include_directories(raw_dx12_translate PUBLIC ${RAW_TX_DIR} PRIVATE ${RAW_TX_GEN})
 target_compile_definitions(raw_dx12_translate PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(raw_dx12_translate PUBLIC dxguid)
+# The translate mode (docs/TX_IN_GAME.md): the game on raw::tx instead of the system runtime.
+target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/TxMode.cpp src/d3d11_proxy/TxHarness.cpp)
+target_link_libraries(d3d11_proxy PRIVATE raw_dx12_translate)
+# A map file and a PDB beside d3d11.dll, so a fault's module offset in the log names a function.
+if(MSVC)
+    target_compile_options(d3d11_proxy PRIVATE /Zi)
+    target_compile_options(raw_dx12_translate PRIVATE /Zi)
+    target_link_options(d3d11_proxy PRIVATE /DEBUG /OPT:REF /OPT:ICF /MAP)
+endif()
 if(MSVC)
     target_compile_options(raw_dx12_translate PRIVATE /W4)
 endif()

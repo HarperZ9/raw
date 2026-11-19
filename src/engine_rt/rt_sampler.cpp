@@ -208,6 +208,13 @@ void Run(const Image* img, double seconds, uint32_t lo, uint32_t hi, void (*resu
             if (sm.tid == busiest && sm.rip >= md.lo && sm.rip < md.hi) ++proxyOffsets[uint32_t((sm.rip - md.lo) & ~0xFull)];
     }
     out += Top(proxyOffsets, 40, "proxy_offsets");
+    // the busiest thread's hottest game functions
+    std::unordered_map<uint32_t, uint64_t> busiestGame;
+    for (const auto& sm : samples) {
+        const uint64_t rva = sm.rip - uint64_t(img->base);
+        if (sm.tid == busiest && img->InText(rva)) ++busiestGame[img->FuncStart(rva)];
+    }
+    out += Top(busiestGame, 30, "busiest_game_functions");
     char rt[48];
     std::snprintf(rt, sizeof rt, ",\"render_thread\":%lu}", g_renderThread.load());
     result(out + rt);

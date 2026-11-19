@@ -19,14 +19,21 @@ CBDirtyTracker& CBDirtyTracker::Get()
 CBDirtyTracker::CBEntry* CBDirtyTracker::GetOrCreateEntry(ID3D11Resource* pResource)
 {
     auto it = m_entries.find(pResource);
-    if (it != m_entries.end())
-        return &it->second;
+    if (it != m_entries.end()) {
+        it->second.mappedThisFrame = true;
+        return it->second.byteWidth ? &it->second : nullptr;  // byteWidth 0: known not to be tracked
+    }
 
     // Query resource type — only track buffers
     D3D11_RESOURCE_DIMENSION dim;
     pResource->GetType(&dim);
-    if (dim != D3D11_RESOURCE_DIMENSION_BUFFER)
+    auto untracked = [&]() -> CBEntry* {
+        auto& e = m_entries[pResource];
+        e.byteWidth = 0; e.mappedThisFrame = true; e.intercepted = false;
         return nullptr;
+    };
+    if (dim != D3D11_RESOURCE_DIMENSION_BUFFER)
+        return untracked();
 
     auto* buf = static_cast<ID3D11Buffer*>(pResource);
     D3D11_BUFFER_DESC desc;
@@ -34,11 +41,11 @@ CBDirtyTracker::CBEntry* CBDirtyTracker::GetOrCreateEntry(ID3D11Resource* pResou
 
     // Only track dynamic constant buffers within size limit
     if (!(desc.BindFlags & D3D11_BIND_CONSTANT_BUFFER))
-        return nullptr;
+        return untracked();
     if (desc.Usage != D3D11_USAGE_DYNAMIC)
-        return nullptr;
+        return untracked();
     if (desc.ByteWidth == 0 || desc.ByteWidth > kMaxTrackedSize)
-        return nullptr;
+        return untracked();
 
     auto& entry = m_entries[pResource];
     entry.byteWidth = desc.ByteWidth;
@@ -53,8 +60,8 @@ bool CBDirtyTracker::InterceptMap(ID3D11DeviceContext* realCtx, ID3D11Resource* 
                                    UINT Subresource, D3D11_MAP MapType, UINT MapFlags,
                                    D3D11_MAPPED_SUBRESOURCE* pMappedResource)
 {
-    // Only intercept WRITE_DISCARD on subresource 0
-    if (MapType != D3D11_MAP_WRITE_DISCARD || Subresource != 0)
+    // Only intercept WRITE_DISCARD on subresource 0; [Proxy] CBDirtyTracker=0 turns the tracker off
+    if (!PG_CBDirtyTracker() || MapType != D3D11_MAP_WRITE_DISCARD || Subresource != 0)
         return false;
 
     auto* entry = GetOrCreateEntry(pResource);

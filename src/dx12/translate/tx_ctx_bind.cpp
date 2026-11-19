@@ -78,6 +78,8 @@ void Context::SetSRV(int stage, UINT start, UINT n, ID3D11ShaderResourceView* co
         holds_.Assign(s.srv[start + i], nv);
         if (nv && start + i + 1 > s.srvHi) s.srvHi = start + i + 1;
         dirty_ |= (D_SRV0 << stage) | (stage < S_CS ? D_SCAN_SRV0 << stage : 0u);
+        if (start + i < 64) s.srvScan |= 1ull << (start + i);
+        else dirty_ |= D_SCAN_ALLSRV;
     }
 }
 

@@ -18,7 +18,9 @@ enum Dirty : uint32_t {
     D_SCAN_IA = 0x200,
     D_SCAN_OM = 0x1000000,
     D_SCAN_SRV0 = 0x2000000,   // << graphics stage (VS..PS)
-    D_SCAN = D_SCAN_IA | D_SCAN_OM | (D_SCAN_SRV0 * 0x1F),
+    // Every shader resource of every graphics stage, not only the slots that changed (StageState::srvScan).
+    D_SCAN_ALLSRV = 0x40000000,
+    D_SCAN = D_SCAN_IA | D_SCAN_OM | (D_SCAN_SRV0 * 0x1F) | D_SCAN_ALLSRV,
     D_ALL = 0xFFFFFFFFu,
 };
 
@@ -39,6 +41,7 @@ struct StageState {
     TSRV* srv[128] = {};
     TSampler* samp[16] = {};
     uint32_t srvHi = 0;
+    uint64_t srvScan = 0;   // slots 0..63 bound anew since the last scan; a later slot sets D_SCAN_ALLSRV
 };
 struct State {
     StageState st[S_COUNT];

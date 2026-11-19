@@ -85,9 +85,21 @@ void Context::ScanGraphics(const RootSig* root)
     }
     for (int st = 0; st < 5; ++st) {
         if (!(d & (D_SCAN_SRV0 << st))) continue;
-        uint32_t n = root->sb[st].srvCount < s_.st[st].srvHi ? root->sb[st].srvCount : s_.st[st].srvHi;
-        for (uint32_t i = 0; i < n; ++i) {
-            TSRV* v = s_.st[st].srv[i];
+        StageState& ss = s_.st[st];
+        uint32_t n = root->sb[st].srvCount < ss.srvHi ? root->sb[st].srvCount : ss.srvHi;
+        // Only the slots bound anew, unless something may have moved a bound resource out of the read state.
+        uint64_t slots = (d & D_SCAN_ALLSRV) || n > 64 ? ~0ull : ss.srvScan;
+        if (n < 64) slots &= (1ull << n) - 1;
+        ss.srvScan = 0;
+        if (slots == ~0ull) {
+            for (uint32_t i = 0; i < n; ++i) {
+                TSRV* v = ss.srv[i];
+                if (v && v->core->tr) t.RequireRange(v->core->tr, v->range, v->core->mips, v->core->slices, kShaderRead);
+            }
+            continue;
+        }
+        for (; slots; slots &= slots - 1) {
+            TSRV* v = ss.srv[std::countr_zero(slots)];
             if (v && v->core->tr) t.RequireRange(v->core->tr, v->range, v->core->mips, v->core->slices, kShaderRead);
         }
     }
@@ -208,7 +220,7 @@ bool Context::PrepareDraw(bool indexed)
         memset(cbVa_, 0xFF, sizeof(cbVa_[0]) * 5);
         for (int i = 0; i < 5; ++i) sampKey_[i] = ~0ull;
         // Another root signature can read more shader-resource or UAV slots than the last scan covered.
-        dirty_ |= kGraphicsTableBits | D_SCAN_OM | (D_SCAN_SRV0 * 0x1F);
+        dirty_ |= kGraphicsTableBits | D_SCAN_OM | (D_SCAN_SRV0 * 0x1F) | D_SCAN_ALLSRV;
     }
     if (pso_ != cur_.pso) { cl->SetPipelineState(cur_.pso); pso_ = cur_.pso; }
     if (dirty_ & D_SCAN) ScanGraphics(root_);   // any of the scan parts

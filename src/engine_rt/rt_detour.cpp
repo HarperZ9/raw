@@ -1,5 +1,6 @@
 // Inline detours (RAW engine runtime). Original work, MIT. See rt_detour.h.
 #include "rt_detour.h"
+#include "rt_patch.h"
 
 #include <windows.h>
 
@@ -49,16 +50,13 @@ std::string InstallDetour(const Image& img, uint32_t rva, void* hook, void** ori
     WriteAbsJump(tramp + len, fn + len);
     FlushInstructionCache(GetCurrentProcess(), tramp, 64);
     *original = tramp;
-    DWORD old;
-    if (!VirtualProtect(fn, len, PAGE_EXECUTE_READWRITE, &old)) return "refused: VirtualProtect failed";
     uint8_t patch[32];
     std::memset(patch, 0xCC, sizeof patch);
     WriteAbsJump(patch, hook);
     // the entry is overwritten whole; a thread inside the first 14 bytes at this instant is the residual risk,
-    // the same one every inline hook carries
-    std::memcpy(fn, patch, len);
-    VirtualProtect(fn, len, old, &old);
-    FlushInstructionCache(GetCurrentProcess(), fn, len);
+    // the same one every inline hook carries. The ledger keeps the moved bytes for a module stop (rt_patch.h);
+    // the trampoline is never freed, since a thread may still be inside it.
+    if (!PatchWrite(fn, patch, len)) return "refused: VirtualProtect failed";
     std::snprintf(b, sizeof b, "ok: 0x%X, %zu bytes moved", rva, len);
     return b;
 }

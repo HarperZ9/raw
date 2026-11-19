@@ -1,5 +1,6 @@
 // Papyrus: the VM's update timed, its budget fixed or adaptive (RAW engine runtime). Original work, MIT.
 #include "rt_papyrus.h"
+#include "rt_patch.h"
 
 #include <windows.h>
 
@@ -127,11 +128,7 @@ size_t InstallOpcodeLoopTiming(const Image& img, uint32_t vmVtable, uint32_t loo
     for (uint64_t site : callSites) {
         auto* rel = const_cast<uint8_t*>(img.base) + site + 1;
         const int32_t v = int32_t(int64_t(stub) - int64_t(img.base + site + 5));
-        DWORD old;
-        if (!VirtualProtect(rel, 4, PAGE_EXECUTE_READWRITE, &old)) continue;
-        std::memcpy(rel, &v, 4);
-        VirtualProtect(rel, 4, old, &old);
-        FlushInstructionCache(GetCurrentProcess(), rel, 4);
+        if (!PatchWrite(rel, &v, 4)) continue;
         if (sites) { char b[24]; std::snprintf(b, sizeof b, "%s0x%llX", sites->empty() ? "" : ",", (unsigned long long)site); *sites += b; }
     }
     return callSites.size();
@@ -140,14 +137,9 @@ size_t InstallOpcodeLoopTiming(const Image& img, uint32_t vmVtable, uint32_t loo
 bool InstallPapyrusTiming(const Image& img, uint32_t vmVtable, float budgetOverrideMs) {
     g_budgetOverride = budgetOverrideMs;
     auto* vt = reinterpret_cast<uint64_t*>(const_cast<uint8_t*>(img.base) + vmVtable);
-    DWORD old;
-    if (!VirtualProtect(vt + 4, 16, PAGE_READWRITE, &old)) return false;
     g_origUpdate = reinterpret_cast<VmFn>(vt[4]);
     g_origTasklets = reinterpret_cast<VmFn>(vt[5]);
-    InterlockedExchange64(reinterpret_cast<volatile LONG64*>(vt + 4), LONG64(&HookUpdate));
-    InterlockedExchange64(reinterpret_cast<volatile LONG64*>(vt + 5), LONG64(&HookTasklets));
-    VirtualProtect(vt + 4, 16, old, &old);
-    return true;
+    return PatchPointer(vt + 4, reinterpret_cast<void*>(&HookUpdate)) && PatchPointer(vt + 5, reinterpret_cast<void*>(&HookTasklets));
 }
 
 

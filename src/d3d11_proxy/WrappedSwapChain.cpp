@@ -6,6 +6,7 @@
 //  and may be nullptr on older systems.
 //=============================================================================
 
+#include "ModuleHost.h"
 #include "WrappedSwapChain.h"
 #include "WrappedContext.h"
 #include "RenderPhaseDetector.h"
@@ -546,6 +547,7 @@ HRESULT STDMETHODCALLTYPE WrappedSwapChain::Present(UINT SyncInterval, UINT Flag
         dev->Release();
     }
 
+    modules::OnPresent();   // a live module reload swaps callbacks here, never while they run (ModuleHost.h)
     for (auto& cb : g_prePresentCallbacks)
     {
         if (cb) cb(ctx, m_real);
@@ -740,6 +742,7 @@ HRESULT STDMETHODCALLTYPE WrappedSwapChain::Present1(UINT SyncInterval, UINT Pre
         dev->Release();
     }
 
+    modules::OnPresent();   // a live module reload swaps callbacks here, never while they run (ModuleHost.h)
     for (auto& cb : g_prePresentCallbacks)
     {
         if (cb) cb(ctx, m_real);

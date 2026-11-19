@@ -10,6 +10,7 @@
 // Each present samples the counters; every 300 presents the totals, the frames with calls and up
 // to 8 distinct callers per slot go to vt_trace.tsv. Addresses and counts only.
 #include "rt_vtrace.h"
+#include "rt_patch.h"
 
 #include <windows.h>
 
@@ -89,10 +90,7 @@ size_t InstallVTrace(const Image& img, const std::vector<VTraceClass>& classes, 
         Slot& s = g_slots[j];
         auto* entry = reinterpret_cast<uint64_t*>(const_cast<uint8_t*>(img.base) + s.vtable + 8 * s.index);
         const size_t thunkIndex = size_t(s.data - data);
-        if (VirtualProtect(entry, 8, PAGE_READWRITE, &old)) {
-            InterlockedExchange64(reinterpret_cast<volatile LONG64*>(entry), LONG64(code + 32 * thunkIndex));
-            VirtualProtect(entry, 8, old, &old);
-        }
+        PatchPointer(entry, code + 32 * thunkIndex);   // rt_patch.h: a module stop puts the slot back
     }
     return g_slots.size();
 }

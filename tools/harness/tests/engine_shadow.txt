@@ -1,0 +1,19 @@
+# Shadows under engine control: the atlas resized before the renderer creates it ([EngineRT] ShadowAtlas and
+# [EngineSet] iShadowMapResolution), vsync off in memory ([EngineSet] iPresentInterval) so frame time shows
+# cost, then the shadow distance set live at three values from the same view.
+start load rawharness
+console tai
+scene riverwood
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+console coc riverwood
+wait 8
+console fw 81a
+wait 6
+engine measure atlas_default_distance 600; capture atlas_default_distance
+engine set fShadowDistance:Display 500; wait 60; capture shadow_500; measure shadow_500 600
+engine set fShadowDistance:Display 3000; wait 60; capture shadow_3000; measure shadow_3000 600
+engine set fShadowDistance:Display 20000; wait 60; capture shadow_20000; measure shadow_20000 600
+engine set fShadowDistance:Display 10000; wait 60; capture shadow_10000; measure shadow_10000 600
+quit

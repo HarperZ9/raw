@@ -206,7 +206,7 @@ void RtScene::Evict()
         CloseHandle(e);
     }
     for (Mesh& m : m_meshes) { if (m.vb) m.vb->Release(); if (m.ib) m.ib->Release(); }
-    m_meshes.clear(); m_meshOf.clear(); m_build.clear();
+    m_meshes.clear(); m_meshOf.clear(); m_build.clear(); m_lastKeys.clear(); m_lastMesh.clear();
     m_blasUsed = 0;
     m_alpha.Reset();
     m_cache.Reset();   // a new cell: the old cells' light means nothing here
@@ -261,11 +261,17 @@ void RtScene::SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resou
     if (m_skinReady && m_tune.skin) m_skin.SetDraws(m_draws, toHand, native);
     else { std::vector<RtDraw> none; m_skin.SetDraws(none, toHand, native); }
     m_cpuSkinUs += NowUs() - s0;
+    std::vector<Key> keys(m_draws.size(), Key{});
     for (size_t di = 0; di < m_draws.size(); ++di) {
         RtDraw& d = m_draws[di];
         if (d.skinned) continue;   // RtSkin's, rebuilt every frame
         const Key k{uintptr_t(d.vb), uintptr_t(d.ib), uint64_t(d.vbOffset) << 32 | d.ibOffset,
                     uint64_t(d.startIndex) << 32 | uint32_t(d.baseVertex) ^ uint64_t(d.indexCount) << 12};
+        keys[di] = k;
+        if (m_tune.incremental && di < m_lastKeys.size() && m_lastKeys[di] == k && m_lastMesh[di] < m_meshes.size()) {
+            // The same draw at the same place in the list as last frame: its mesh without a lookup.
+            m_meshes[m_lastMesh[di]].seen = m_frame; m_drawMesh[di] = m_lastMesh[di]; continue;
+        }
         auto it = m_meshOf.find(k);
         if (it != m_meshOf.end()) { m_meshes[it->second].seen = m_frame; m_drawMesh[di] = it->second; continue; }
         // Over this frame's budget: the mesh is tried again next frame.
@@ -318,6 +324,8 @@ void RtScene::SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resou
         if (!m.failed) m_build.push_back(uint32_t(m_meshes.size()));
         m_meshes.push_back(m);
     }
+    m_lastKeys.swap(keys);
+    m_lastMesh = m_drawMesh;
 }
 
 bool RtScene::Submit(ID3D12CommandQueue* q)
@@ -339,7 +347,14 @@ void RtScene::SetCamera(const float step[3], uint32_t voters, const float posAdj
     // (the place itself stays continuous; nothing keys on its absolute value).
     // The per-frame constants' float4 40 is the camera's world position (Riverwood logged 17225,
     // -47204, -8); where it is set it is used as it is, otherwise the steps are summed.
-    if (posAdjust[0] != 0.0f || posAdjust[1] != 0.0f || posAdjust[2] != 0.0f) {
+    // Both kept: float4 40 and the summed steps of the rigid draws' world blocks (RtCamSteps=1 uses the
+    // steps; in third person float4 40 may follow the player rather than the camera).
+    const bool hasAdjust = posAdjust[0] != 0.0f || posAdjust[1] != 0.0f || posAdjust[2] != 0.0f;
+    if (!m_stepInit && hasAdjust) { for (int k = 0; k < 3; ++k) m_stepPos[k] = posAdjust[k]; m_stepInit = true; }
+    else if (voters) for (int k = 0; k < 3; ++k) m_stepPos[k] += step[k];
+    if (m_tune.camSteps && m_stepInit) {
+        for (int k = 0; k < 3; ++k) m_camPos[k] = m_stepPos[k];
+    } else if (hasAdjust) {
         const double dx = posAdjust[0] - m_camPos[0], dy = posAdjust[1] - m_camPos[1], dz = posAdjust[2] - m_camPos[2];
         if (dx * dx + dy * dy + dz * dz > 2000.0 * 2000.0) m_cache.Reset();
         for (int k = 0; k < 3; ++k) m_camPos[k] = posAdjust[k];
@@ -349,9 +364,10 @@ void RtScene::SetCamera(const float step[3], uint32_t voters, const float posAdj
         else for (int k = 0; k < 3; ++k) m_camPos[k] += step[k];
     }
     for (int k = 0; k < 3; ++k) m_tune.cameraPos[k] = float(m_camPos[k]);
-    if (m_log && (m_camLog++ % 600) == 0)
-        m_log("[RT] camera: summed place %.1f %.1f %.1f (step %.2f %.2f %.2f from %u draws); per-frame constants float4 40: %.1f %.1f %.1f %.3f",
-              m_camPos[0], m_camPos[1], m_camPos[2], step[0], step[1], step[2], voters, posAdjust[0], posAdjust[1], posAdjust[2], posAdjust[3]);
+    if (m_log && (m_camLog++ % 300) == 0)
+        m_log("[RT] camera: used %.1f %.1f %.1f; summed steps %.1f %.1f %.1f (step %.2f %.2f %.2f from %u draws); per-frame constants float4 40: %.1f %.1f %.1f %.3f",
+              m_camPos[0], m_camPos[1], m_camPos[2], m_stepPos[0], m_stepPos[1], m_stepPos[2], step[0], step[1], step[2], voters,
+              posAdjust[0], posAdjust[1], posAdjust[2], posAdjust[3]);
 }
 
 bool RtScene::Reload(const std::vector<uint8_t>& shadow, const std::vector<uint8_t>& sky, std::string& err)

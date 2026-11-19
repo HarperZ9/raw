@@ -89,6 +89,8 @@ private:
     ComPtr<ID3D12Device5> m_dev;
     ComPtr<ID3D12Resource> m_blasHeap, m_scratch, m_tlas, m_tlasScratch, m_inst[3], m_cb[3], m_vis, m_lights, m_refl, m_tsRead;
     double m_camPos[3] = {};    // the camera in the cache's world frame
+    double m_stepPos[3] = {};   // the same from the summed steps alone
+    bool m_stepInit = false;
     uint64_t m_camLog = 0;
     ComPtr<ID3D12QueryHeap> m_ts;
     ComPtr<ID3D12CommandAllocator> m_alloc[3];
@@ -104,6 +106,8 @@ private:
     std::vector<uint32_t> m_build;    // meshes whose BLAS this frame builds
     std::vector<RtDraw> m_draws;
     std::vector<uint32_t> m_drawMesh;   // per draw of this frame: its mesh (SetDraws found it), ~0 none
+    std::vector<Key> m_lastKeys;        // last frame's draw keys by position: most frames draw the same list in the same order
+    std::vector<uint32_t> m_lastMesh;
     std::vector<D3D12_RAYTRACING_INSTANCE_DESC> m_stage;   // the TLAS input, written whole into the upload heap
     double m_cpuSetUs = 0, m_cpuPlaceUs = 0;                // render-thread time, summed over m_cpuFrames
     double m_cpuReleaseUs = 0, m_cpuSkinUs = 0;            // parts of m_cpuSetUs: last frame's references, RtSkin's draws

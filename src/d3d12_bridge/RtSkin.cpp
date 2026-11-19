@@ -39,7 +39,7 @@ bool RtSkin::Create(ID3D12Device5* dev, ID3D12DescriptorHeap* heap, uint32_t bas
     D3D12_DESCRIPTOR_RANGE srv{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 0, 0};
     D3D12_DESCRIPTOR_RANGE uav{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 0};
     D3D12_ROOT_PARAMETER p[4]{};
-    p[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; p[0].Constants = {0, 0, 28};
+    p[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; p[0].Constants = {0, 0, 16};
     p[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[1].DescriptorTable = {1, &srv};
     p[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; p[2].Descriptor = {2, 0};
     p[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[3].DescriptorTable = {1, &uav};
@@ -80,10 +80,9 @@ void RtSkin::SetDraws(std::vector<RtDraw>& draws, std::vector<ID3D11Resource*>& 
         j.vb = v12; j.bv = b12; j.ib = i12; j.vbBytes = vd.ByteWidth; j.bvBytes = bd.ByteWidth; j.iStart = iStart;
         j.ibFormat = d.ibFormat; j.indexCount = d.indexCount / 3 * 3;
         const uint32_t posFmt = d.posFormat == DXGI_FORMAT_R16G16B16A16_FLOAT ? 0u : 1u;
-        uint32_t c[28] = {uint32_t(vStart), d.stride, d.posOffset, posFmt, uint32_t(bStart), d.blendStride, d.idxOffset, d.wOffset,
-                          count, outFirst, uint32_t(m_jobs.size() * 240), d.skinWorld ? 1u : 0u};
+        uint32_t c[16] = {uint32_t(vStart), d.stride, d.posOffset, posFmt, uint32_t(bStart), d.blendStride, d.idxOffset, d.wOffset,
+                          count, outFirst, uint32_t(m_jobs.size() * 240), 0};
         std::memcpy(c + 12, m_cam, 12);
-        if (d.skinWorld) std::memcpy(c + 16, d.world, 48);   // rows of the world block: where the bind pose stands
         std::memcpy(j.c, c, sizeof c);
         m_boneData.insert(m_boneData.end(), d.bones, d.bones + 960);
         m_jobs.push_back(j);
@@ -124,7 +123,7 @@ bool RtSkin::Record(ID3D12GraphicsCommandList4* cl, uint32_t slot)
         raw(m_pool[slot].Get(), kPool, at + 2, true);
         cl->SetComputeRootDescriptorTable(1, {gpu0.ptr + UINT64(at) * m_inc});
         cl->SetComputeRootDescriptorTable(3, {gpu0.ptr + UINT64(at + 2) * m_inc});
-        cl->SetComputeRoot32BitConstants(0, 28, j.c, 0);
+        cl->SetComputeRoot32BitConstants(0, 16, j.c, 0);
         cl->Dispatch((j.c[8] + 63) / 64, 1, 1);
         at += 3;
     }

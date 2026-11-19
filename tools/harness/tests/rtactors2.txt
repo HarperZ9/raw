@@ -1,0 +1,17 @@
+# Actors, short (docs/RAYTRACING.md, "Actors"): the player in third person at Riverwood by day, the
+# primary-ray view (magenta: the body), the sun visibility, and the frame.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 10
+walk f 0.15
+wait 4
+keyframe third steps=game,improved hold=90
+reload ini RtDebug=1 View=7
+keyframe third_primary steps=improved hold=60
+reload ini RtDebug=0 View=2
+keyframe third_sunvis steps=improved hold=60
+reload ini View=0
+keyframe third_on steps=improved hold=90
+quit

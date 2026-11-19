@@ -60,6 +60,8 @@ struct LightingTuning
     bool  rtSkin = true;            // skinned actors join the scene with a BLAS a frame
     int   rtSkinBones = 10;         // the vertex constant buffer slot that holds the current bone palette
     bool  rtIncremental = true;     // RtIncremental: the scene's per-draw lookups once a frame, instances staged
+    bool  rtCamSteps = false;       // RtCamSteps: the camera's place from the summed steps (RtScene::SetCamera)
+    int   rtSkinFilter = 0;         // RtSkinFilter: diagnosis, which skinned draws join (SceneSkin.cpp)
     bool  rtActors = true;          // skinned draws on the main depth target outside the opaque set (people, the player) join
     bool  rtReflect = true;         // glossy surfaces: one ray-traced reflection ray, the hit's colour in the game's frame
 };

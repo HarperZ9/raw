@@ -1,0 +1,23 @@
+# Which skinned draws make the sheet beside the player (diagnosis, RtSkinFilter): the primary-ray view in
+# third person with all skinned draws, float positions only, half positions only, and actors only.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 10
+walk f 0.15
+wait 4
+keyframe third steps=game,improved hold=60
+reload ini RtDebug=1 View=7
+keyframe all steps=improved hold=60
+reload ini RtSkinFilter=1
+keyframe float steps=improved hold=60
+reload ini RtSkinFilter=2
+keyframe half steps=improved hold=60
+reload ini RtSkinFilter=4
+keyframe actors steps=improved hold=60
+reload ini RtSkinFilter=3
+keyframe trees steps=improved hold=60
+reload ini RtSkinFilter=0 RtDebug=0 View=0
+wait 12
+quit

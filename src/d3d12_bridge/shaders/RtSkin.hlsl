@@ -2,7 +2,7 @@
 // the position from its stream, blended by up to four bones of the draw's palette (three float4 rows
 // each, the row offset being the blend index's unorm value times 765, as the game's own skinned vertex
 // shaders index it), written as float3 into this frame's position pool. Original work, MIT.
-cbuffer C : register(b0) { uint vStart, stride, posOffset, posFmt, bStart, bStride, idxOffset, wOffset, count, outFirst, boneFirst, hasWorld; float3 camPos; float pad2; float4 world0, world1, world2; };
+cbuffer C : register(b0) { uint vStart, stride, posOffset, posFmt, bStart, bStride, idxOffset, wOffset, count, outFirst, boneFirst, pad; float3 camPos; float pad2; };
 ByteAddressBuffer Vb : register(t0);
 ByteAddressBuffer Bv : register(t1);
 StructuredBuffer<float4> Bones : register(t2);
@@ -42,14 +42,6 @@ void main(uint3 id : SV_DispatchThreadID) {
     }
     // A NaN position makes its triangles inactive in the BLAS (DXR), so a vertex that cannot be placed
     // takes its triangles out instead of stretching them across the scene.
-    // An actor's draw also has its world block: a skinned vertex that lands far from where the world block
-    // puts its bind pose was blended with bones that are not its own (the first actor run drew a sheet from
-    // the body to the ground). 160 units is past any limb's reach from its rest place.
-    if (hasWorld != 0u) {
-        const float3 rest = float3(dot(world0, p), dot(world1, p), dot(world2, p));   // camera-relative
-        const float3 d = (s - camPos) - rest;
-        bad = bad || dot(d, d) > 160.0f * 160.0f;
-    }
     const float3 o = bad ? asfloat(0x7FC00000u).xxx : s - camPos;
     Out.Store3((outFirst + v) * 12u, asuint(o));   // the bones are in world space; the scene is camera-relative
 }

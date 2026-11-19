@@ -26,6 +26,7 @@ int g_boneSlot = 10;
 uint64_t g_skinJoined = 0, g_skinNoBones = 0, g_skinNotOpaque = 0, g_skinFormat = 0, g_skinAlpha = 0;
 // Actors (people, creatures, the player in third person) draw skinned outside the opaque set's targets.
 // Those on the main depth target join; drawn after the frame's capture, they wait for the next frame.
+int g_skinFilter = 0;   // diagnosis (RtSkinFilter): 1 float positions only, 2 half positions only, 3 trees only, 4 actors only
 bool g_actors = true, g_mainDepth = false, g_afterCapture = false, g_took = false;
 UINT g_tgtRtvs = 0, g_tgtWidth = 0;
 DXGI_FORMAT g_tgtFormat = DXGI_FORMAT_UNKNOWN;
@@ -36,6 +37,7 @@ uint64_t g_census[4][2][2] = {};   // opaque-set draws by call (indexed, indexed
 } // namespace
 
 void SceneGeometry_SetActors(bool on) { g_actors = on; }
+void SceneGeometry_SetSkinFilter(int f) { g_skinFilter = f; }
 void SceneGeometry_Census(ID3D11DeviceContext* real, int call)
 {
     if (!SceneLights_Opaque() || call < 0 || call > 3) return;
@@ -94,6 +96,8 @@ bool SceneSkin_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT startInde
         const uint8_t* bones = bb[0] && CBDirtyTracker::Get().GetShadowSize(bb[0]) >= 3840 ? CBDirtyTracker::Get().GetShadowData(bb[0]) : nullptr;
         if (bb[0]) bb[0]->Release();
         if (!bones) { ++g_skinNoBones; return true; }
+        const bool half = L.pos.format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+        if ((g_skinFilter == 1 && half) || (g_skinFilter == 2 && !half) || (g_skinFilter == 3 && actor) || (g_skinFilter == 4 && !actor)) return true;
         raw::bridge::RtDraw d;
         UINT stride = 0, offset = 0, bs = 0, bo = 0;
         real->IAGetVertexBuffers(L.pos.slot, 1, &d.vb, &stride, &offset);
@@ -101,7 +105,6 @@ bool SceneSkin_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT startInde
         real->IAGetIndexBuffer(&d.ib, &d.ibFormat, &d.ibOffset);
         if (!d.vb || !d.ib || !d.blendVb) { raw::bridge::ReleaseRtDraw(d); return true; }
         d.skinned = true;
-        if (actor) { std::memcpy(d.world, SceneLights_DrawWorld(), sizeof d.world); d.skinWorld = true; }
         d.stride = stride; d.vbOffset = offset; d.posOffset = L.pos.offset; d.posFormat = L.pos.format;
         d.blendStride = bs; d.blendVbOffset = bo; d.idxOffset = L.blendIdx.offset; d.wOffset = L.blendW.offset;
         d.indexCount = indexCount; d.startIndex = startIndex; d.baseVertex = baseVertex;

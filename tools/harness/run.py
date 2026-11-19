@@ -163,8 +163,15 @@ class Runner(Actions):
         p = self.inst.game / "raw_hot_reload.txt"
         if not p.exists():
             return {}
+        text = None
+        for _ in range(20):   # the proxy rewrites the file in place; a read can meet it open (2026-11-19)
+            try:
+                text = p.read_text(errors="replace")
+                break
+            except PermissionError:
+                time.sleep(0.05)
         out = {}
-        for line in p.read_text(errors="replace").splitlines():
+        for line in (text or "").splitlines():
             k, _, v = line.partition("=")
             out[k] = v
         return out

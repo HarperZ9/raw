@@ -37,7 +37,7 @@ public:
 private:
     struct Job {
         ID3D12Resource* vb; ID3D12Resource* bv; ID3D12Resource* ib;
-        uint64_t vbBytes, bvBytes, iStart; uint32_t c[16];
+        uint64_t vbBytes, bvBytes, iStart; uint32_t c[28];
         DXGI_FORMAT ibFormat; uint32_t indexCount;
         uint64_t blas = 0; bool built = false;
     };

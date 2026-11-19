@@ -9,6 +9,15 @@ namespace raw::bridge
 {
 using namespace rtdetail;
 
+static double NowUsRecord()
+{
+    static LARGE_INTEGER f{};
+    if (!f.QuadPart) QueryPerformanceFrequency(&f);
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    return double(t.QuadPart) * 1e6 / double(f.QuadPart);
+}
+
 void RtScene::WaitSlot(uint32_t slot)
 {
     if (m_fence->GetCompletedValue() >= m_slotValue[slot]) return;   // the slot's last use must be done
@@ -84,18 +93,49 @@ uint32_t RtScene::BuildBlases(ID3D12GraphicsCommandList4* cl, uint64_t& tris)
 uint32_t RtScene::PlaceInstances(uint32_t slot, uint32_t& alphaN, uint64_t& sceneTris)
 {
     // TLAS input: every draw whose mesh has a BLAS, placed by its world matrix. The instance ID is the
-    // mesh's material record + 1 (0: none); only alpha-tested meshes are non-opaque.
+    // mesh's material record + 1 (0: none); only alpha-tested meshes are non-opaque. Staged in memory the
+    // CPU caches and copied whole: the upload heap is write-combined, and field-by-field writes into it
+    // were a sixth of the render thread's RT cost with the per-draw lookups (engine profile, 2026-11-19).
+    const double t0 = NowUsRecord();
     auto* inst = static_cast<D3D12_RAYTRACING_INSTANCE_DESC*>(nullptr);
     const D3D12_RANGE none{0, 0};
     m_inst[slot]->Map(0, &none, reinterpret_cast<void**>(&inst));
     uint32_t n = 0;
-    for (const RtDraw& d : m_draws) {
+    if (m_tune.incremental) {
+        m_stage.resize(kMaxInstances);
+        n = PlaceInto(m_stage.data(), slot, alphaN, sceneTris);
+        std::memcpy(inst, m_stage.data(), size_t(n) * sizeof(D3D12_RAYTRACING_INSTANCE_DESC));
+    } else {
+        n = PlaceInto(inst, slot, alphaN, sceneTris);
+    }
+    m_inst[slot]->Unmap(0, nullptr);
+    m_cpuPlaceUs += NowUsRecord() - t0;
+    if (++m_cpuFrames == 600) {
+        if (m_log) m_log("[RT] render thread over 600 frames: draws %.1f us (last frame's references %.1f, skinned %.1f), "
+                         "instances %.1f us a frame (RtIncremental=%d)", m_cpuSetUs / 600.0, m_cpuReleaseUs / 600.0, m_cpuSkinUs / 600.0,
+                         m_cpuPlaceUs / 600.0, int(m_tune.incremental));
+        m_cpuSetUs = m_cpuPlaceUs = m_cpuReleaseUs = m_cpuSkinUs = 0; m_cpuFrames = 0;
+    }
+    return n;
+}
+
+uint32_t RtScene::PlaceInto(D3D12_RAYTRACING_INSTANCE_DESC* inst, uint32_t slot, uint32_t& alphaN, uint64_t& sceneTris)
+{
+    uint32_t n = 0;
+    const D3D12_GPU_VIRTUAL_ADDRESS heap = m_blasHeap->GetGPUVirtualAddress();
+    for (size_t di = 0; di < m_draws.size(); ++di) {
+        const RtDraw& d = m_draws[di];
         if (n >= kMaxInstances) break;
-        const Key k{uintptr_t(d.vb), uintptr_t(d.ib), uint64_t(d.vbOffset) << 32 | d.ibOffset,
-                    uint64_t(d.startIndex) << 32 | uint32_t(d.baseVertex) ^ uint64_t(d.indexCount) << 12};
-        auto it = m_meshOf.find(k);
-        if (it == m_meshOf.end() || !m_meshes[it->second].built) continue;
-        const Mesh& m = m_meshes[it->second];
+        uint32_t mi = ~0u;
+        if (m_tune.incremental) mi = di < m_drawMesh.size() ? m_drawMesh[di] : ~0u;
+        else {
+            const Key k{uintptr_t(d.vb), uintptr_t(d.ib), uint64_t(d.vbOffset) << 32 | d.ibOffset,
+                        uint64_t(d.startIndex) << 32 | uint32_t(d.baseVertex) ^ uint64_t(d.indexCount) << 12};
+            auto it = m_meshOf.find(k);
+            if (it != m_meshOf.end()) mi = it->second;
+        }
+        if (mi == ~0u || mi >= m_meshes.size() || !m_meshes[mi].built) continue;
+        const Mesh& m = m_meshes[mi];
         if (m.alpha && !m_tune.alpha) continue;   // RtAlpha=0 live: the alpha-tested meshes leave the scene
         D3D12_RAYTRACING_INSTANCE_DESC& x = inst[n++];
         std::memcpy(x.Transform, d.world, sizeof x.Transform);
@@ -103,11 +143,10 @@ uint32_t RtScene::PlaceInstances(uint32_t slot, uint32_t& alphaN, uint64_t& scen
         x.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE |
                   (m.alpha ? D3D12_RAYTRACING_INSTANCE_FLAG_NONE : D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE);
         alphaN += m.alpha;
-        x.AccelerationStructure = m_blasHeap->GetGPUVirtualAddress() + m.blas;
+        x.AccelerationStructure = heap + m.blas;
         sceneTris += m.tri.IndexCount / 3;
     }
     if (m_skinReady && m_tune.skin && n < kMaxInstances) n += m_skin.Place(inst + n, kMaxInstances - n, slot, sceneTris);
-    m_inst[slot]->Unmap(0, nullptr);
     return n;
 }
 

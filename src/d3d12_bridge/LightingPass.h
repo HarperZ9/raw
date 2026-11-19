@@ -59,6 +59,7 @@ struct LightingTuning
     float puddles = 0.0f;           // improved: water standing on flat ground, 0 none to 1 most
     bool  rtSkin = true;            // skinned actors join the scene with a BLAS a frame
     int   rtSkinBones = 10;         // the vertex constant buffer slot that holds the current bone palette
+    bool  rtIncremental = true;     // RtIncremental: the scene's per-draw lookups once a frame, instances staged
     bool  rtActors = true;          // skinned draws on the main depth target outside the opaque set (people, the player) join
     bool  rtReflect = true;         // glossy surfaces: one ray-traced reflection ray, the hit's colour in the game's frame
 };

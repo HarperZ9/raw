@@ -133,7 +133,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         ng = length(ng) > 1.0e-6f ? normalize(ng) : s.n;
         if (dot(ng, s.n) < 0.0f) { ng = -ng; }
         wet = wetAt(p, s.n, ng, sv);
-        albedo *= lerp(1.0f, 0.6f, wet.wet) * lerp(1.0f, 0.5f, wet.puddle);   // standing water hides most of the ground's own light
+        albedo *= lerp(1.0f, 0.6f, wet.wet) * lerp(1.0f, 0.35f, wet.puddle);   // standing water hides most of the ground's own light
         s.alpha = lerp(lerp(s.alpha, 0.12f, wet.wet), 0.03f, wet.puddle);
         s.shin = max(s.shin, 2.0f / max(s.alpha * s.alpha, 1.0e-4f) - 2.0f);
         s.n = normalize(lerp(s.n, float3(0.0f, 0.0f, 1.0f), wet.puddle));

@@ -216,10 +216,32 @@ void RtScene::Evict()
     ++m_stats.resets;
 }
 
+namespace
+{
+double NowUs()
+{
+    static LARGE_INTEGER f{};
+    if (!f.QuadPart) QueryPerformanceFrequency(&f);
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    return double(t.QuadPart) * 1e6 / double(f.QuadPart);
+}
+} // namespace
+
 void RtScene::SetDraws(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>& toHand, ID3D12Resource* (*native)(ID3D11Resource*))
 {
+    const double t0 = NowUs();
+    SetDrawsInner(std::move(draws), toHand, native);
+    m_cpuSetUs += NowUs() - t0;
+}
+
+void RtScene::SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>& toHand, ID3D12Resource* (*native)(ID3D11Resource*))
+{
+    const double r0 = NowUs();
     for (RtDraw& d : m_draws) ReleaseRtDraw(d);
+    m_cpuReleaseUs += NowUs() - r0;
     m_draws = std::move(draws);
+    m_drawMesh.assign(m_draws.size(), ~0u);
     m_build.clear();
     ++m_frame;
     m_stats.draws = uint32_t(m_draws.size());
@@ -235,14 +257,17 @@ void RtScene::SetDraws(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>
     if (m_blasUsed > kBlasHeap - (64ull << 20) || m_meshes.size() > 40000 || (gap && !m_meshes.empty()) || m_evictPending) Evict();
     m_evictPending = false;
     m_skin.SetCamera(m_tune.cameraPos);
+    const double s0 = NowUs();
     if (m_skinReady && m_tune.skin) m_skin.SetDraws(m_draws, toHand, native);
     else { std::vector<RtDraw> none; m_skin.SetDraws(none, toHand, native); }
-    for (RtDraw& d : m_draws) {
+    m_cpuSkinUs += NowUs() - s0;
+    for (size_t di = 0; di < m_draws.size(); ++di) {
+        RtDraw& d = m_draws[di];
         if (d.skinned) continue;   // RtSkin's, rebuilt every frame
         const Key k{uintptr_t(d.vb), uintptr_t(d.ib), uint64_t(d.vbOffset) << 32 | d.ibOffset,
                     uint64_t(d.startIndex) << 32 | uint32_t(d.baseVertex) ^ uint64_t(d.indexCount) << 12};
         auto it = m_meshOf.find(k);
-        if (it != m_meshOf.end()) { m_meshes[it->second].seen = m_frame; continue; }
+        if (it != m_meshOf.end()) { m_meshes[it->second].seen = m_frame; m_drawMesh[di] = it->second; continue; }
         // Over this frame's budget: the mesh is tried again next frame.
         const bool wantMat = d.alphaKind ? m_tune.alpha : m_tune.materials && d.alphaSrv;
         if (m_build.size() >= m_tune.maxNewPerFrame || (wantMat && !m_alpha.Room())) { ++m_stats.skipped; continue; }
@@ -288,6 +313,7 @@ void RtScene::SetDraws(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>
             }
             if (!m.failed) { toHand.push_back(d.vb); toHand.push_back(d.ib); }
         }
+        m_drawMesh[di] = uint32_t(m_meshes.size());
         m_meshOf.emplace(k, uint32_t(m_meshes.size()));
         if (!m.failed) m_build.push_back(uint32_t(m_meshes.size()));
         m_meshes.push_back(m);

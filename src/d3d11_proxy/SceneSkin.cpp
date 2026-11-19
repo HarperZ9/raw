@@ -101,6 +101,7 @@ bool SceneSkin_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT startInde
         real->IAGetIndexBuffer(&d.ib, &d.ibFormat, &d.ibOffset);
         if (!d.vb || !d.ib || !d.blendVb) { raw::bridge::ReleaseRtDraw(d); return true; }
         d.skinned = true;
+        if (actor) { std::memcpy(d.world, SceneLights_DrawWorld(), sizeof d.world); d.skinWorld = true; }
         d.stride = stride; d.vbOffset = offset; d.posOffset = L.pos.offset; d.posFormat = L.pos.format;
         d.blendStride = bs; d.blendVbOffset = bo; d.idxOffset = L.blendIdx.offset; d.wOffset = L.blendW.offset;
         d.indexCount = indexCount; d.startIndex = startIndex; d.baseVertex = baseVertex;

@@ -26,6 +26,7 @@ inline bool g_sceneLightsActive = false;   // set by the bridge hook when Pass=l
 void SceneLights_BeforeDraw(ID3D11DeviceContext* real);
 // Lit draws count only while the game's opaque set is bound: the frame's main camera.
 void SceneLights_SetOpaque(bool open);
+void SceneLights_SetEngineLights(bool on);   // [Lighting] EngineLights: raw_engine.dll's light list joins the decoded one
 bool SceneLights_Opaque();   // the opaque set is bound now
 // The main camera from the per-frame constants (vertex slot 12) as bound now: call at the end
 // of the opaque pass.

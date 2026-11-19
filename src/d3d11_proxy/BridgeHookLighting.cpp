@@ -21,6 +21,7 @@
 #include "Translate.h"
 #include "Overlay.h"
 #include "WeatherDrive.h"
+#include "Tonemap.h"
 
 #include <algorithm>
 #include <cmath>
@@ -55,7 +56,7 @@ void DriveWeather()
     WeatherSurfaces w;
     if (!s_weatherDriven || !WeatherDrive_Step(dt, w) || !Bridge()) return;
     LightingTuning t = Cfg().light;
-    t.wetness = w.wetness; t.puddles = w.puddles; t.snow = w.snow;
+    t.wetness = w.wetness; t.puddles = w.puddles; t.snow = w.snow; t.rain = w.rain; t.weatherCloud = w.cloud;
     raw::bridge::LightingPassTune(Bridge()->ActivePass(), t);
     static uint32_t logged = 0;
     if (logged++ % 240 == 0) Log("[Weather] surfaces: wetness %.3f, puddles %.3f, snow %.3f", w.wetness, w.puddles, w.snow);
@@ -84,6 +85,7 @@ void LightingApplyTuning()
         rt.cache = t.rtCache;
         rt.cacheCell = t.rtCacheCell;
         rt.skin = t.rtSkin;
+        rt.skinCull = t.rtSkinCull; rt.skinRatio = t.rtSkinRatio; rt.skinMin = t.rtSkinMin;
         rt.incremental = t.rtIncremental;
         rt.camSteps = t.rtCamSteps;
         Bridge()->TuneRt(rt);
@@ -126,11 +128,13 @@ void LoadLightingConfig(const std::string& ini)
     t.rtCache = i("RtCache", 1) != 0;
     t.rtCacheCell = f("RtCacheCell", t.rtCacheCell);
     t.rtSkin = i("RtSkin", 1) != 0;
+    t.rtSkinCull = i("RtSkinCull", 1) != 0; t.rtSkinRatio = f("RtSkinRatio", t.rtSkinRatio); t.rtSkinMin = f("RtSkinMin", t.rtSkinMin);
     t.wetness = f("Wetness", t.wetness);
     t.snow = f("Snow", t.snow);
     // The game's weather drives Wetness, Puddles and Snow once the engine module reports it
     // (WeatherDrive.h); WeatherRain and WeatherSnow stand in for that report in tests.
     s_weatherDriven = i("WeatherDrive", 1) != 0;
+    SceneLights_SetEngineLights(i("EngineLights", 1) != 0);   // raw_engine.dll's light list (SceneLights.cpp)
     WeatherDrive_SetTest(f("WeatherRain", -1.0f), f("WeatherSnow", -1.0f));
     WeatherTimes wt;
     wt.soakSeconds = f("WeatherSoakSeconds", wt.soakSeconds); wt.drySeconds = f("WeatherDrySeconds", wt.drySeconds);
@@ -138,6 +142,19 @@ void LoadLightingConfig(const std::string& ini)
     wt.meltSeconds = f("WeatherMeltSeconds", wt.meltSeconds); wt.drainSeconds = f("WeatherDrainSeconds", wt.drainSeconds);
     WeatherDrive_SetTimes(wt);
     t.puddles = f("Puddles", t.puddles);
+    t.rain = f("Rain", t.rain);
+    t.clouds = i("Clouds", 1) != 0; t.cloudCover = f("CloudCover", t.cloudCover);
+    t.cloudBase = f("CloudBase", t.cloudBase); t.cloudThickness = f("CloudThickness", t.cloudThickness);
+    t.cloudShadow = f("CloudShadow", t.cloudShadow); t.cloudDensity = f("CloudDensity", t.cloudDensity);
+    t.cloudWindX = f("CloudWindX", t.cloudWindX); t.cloudWindY = f("CloudWindY", t.cloudWindY);
+    t.cloudHistory = f("CloudHistory", t.cloudHistory);
+    {   // RAW's tone map and exposure (Tonemap.h); keys in [Lighting] so a live edit reaches them
+        TonemapSettings tm;
+        tm.enabled = i("Tonemap", 0) != 0; tm.mode = i("Exposure", tm.mode); tm.bias = f("ExposureBias", tm.bias);
+        tm.minLum = f("ExposureMinLum", tm.minLum); tm.maxLum = f("ExposureMaxLum", tm.maxLum); tm.key = f("ExposureKey", tm.key);
+        tm.curve = i("ToneCurve", tm.curve); tm.white = f("ToneWhite", tm.white); tm.view = i("ToneView", 0);
+        Tonemap_Set(tm);
+    }
     t.rtSkinBones = i("RtSkinBones", 10);
     t.rtActors = i("RtActors", 1) != 0;
     t.rtIncremental = i("RtIncremental", 1) != 0;

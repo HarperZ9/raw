@@ -1,0 +1,21 @@
+# Skin (material class 10, Lighting.hlsl): the Bannered Mare with its people, and Riverwood by day in
+# third person. View 12 colours the material classes (skin red); then the game and the improved frame.
+start load rawharness
+console tai
+scene inn
+console coc whiterunbanneredmare
+wait 10
+keyframe inn steps=game,improved hold=60
+reload ini View=12
+keyframe inn_classes steps=improved hold=20
+reload ini View=0
+console coc riverwood
+wait 10
+scene riverwood_day
+console set gamehour to 13
+wait 6
+keyframe day steps=game,improved hold=60
+reload ini View=12
+keyframe day_classes steps=improved hold=20
+reload ini View=0
+quit

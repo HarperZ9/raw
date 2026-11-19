@@ -150,6 +150,7 @@ struct RtDraw
     // Skinned draws (RtSkin.h): positions are skinned on the GPU each frame from the blend stream and
     // the draw's bone palette (vertex constant buffer, 240 rows of float4 = 80 bones of 3 rows).
     bool skinned = false;
+    bool actor = false;                  // skinned with a world block (people, creatures), not a tree's wind bones
     ID3D11Buffer* blendVb = nullptr;     // the stream with the blend indices and weights (a reference)
     UINT blendStride = 0, blendVbOffset = 0, idxOffset = 0, wOffset = 0;
     float* bones = nullptr;              // 960 floats, owned (delete[] in ReleaseRtDraw)
@@ -184,6 +185,9 @@ struct RtTuning
     bool     debug = false;          // RtDebug: the reflection output shows the primary ray's view of the scene
     bool     omm = true;             // opacity micromaps for alpha-tested meshes (Agility SDK, DXR 1.2)
     bool     skin = true;            // skinned actors: a BLAS each frame from their skinned positions (RtSkin)
+    bool     skinCull = true;        // RtSkinCull: skinned triangles stretched past skinRatio x their bind length made degenerate
+    float    skinRatio = 4.0f;       // RtSkinRatio
+    float    skinMin = 24.0f;        // RtSkinMin: game units; shorter edges are never counted as stretched
     bool     camSteps = false;       // RtCamSteps: the camera's place from the summed steps, not float4 40
     bool     incremental = true;     // RtIncremental: each draw's mesh found once a frame, instances staged (0: the lookups as before)
     // Off-screen hits (docs/RAYTRACING.md, "Materials and the radiance cache"): every mesh keeps its

@@ -1,0 +1,24 @@
+# The sheet beside the player, decisive cases: the primary-ray view with the check's defaults, with the
+# check made aggressive (any edge over 1.2x its bind length and 2 units), with skinned draws off, and the
+# defaults again with the sun visibility. Each held long enough for the check's log (every 120 frames).
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 10
+walk f 0.15
+wait 4
+keyframe third steps=game,improved hold=60
+reload ini RtDebug=1 View=7
+wait 4
+keyframe defaults steps=improved hold=200
+reload ini RtSkinRatio=1.2 RtSkinMin=2
+wait 4
+keyframe aggressive steps=improved hold=200
+reload ini RtSkin=0
+wait 4
+keyframe noskin steps=improved hold=120
+reload ini RtSkin=1 RtSkinRatio=4 RtSkinMin=24 RtDebug=0 View=2
+wait 4
+keyframe sunvis steps=improved hold=120
+quit

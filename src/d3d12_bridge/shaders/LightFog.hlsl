@@ -9,6 +9,7 @@
 // atmosphere. With FLAG_FOG off the pass copies the lit frame. Original work, MIT.
 #define ATLAS_SLOT t2
 #include "LightingCommon.hlsli"
+#include "CloudCommon.hlsli"
 
 Texture2D<float4> Lit   : register(t0);
 Texture2D<float>  Depth : register(t1);
@@ -48,11 +49,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float jit = ign(px);
         const float ph = phaseHG(dot(w, sunDir.xyz), tune.y);
         const float dt = tEnd / 12.0f;
-        float sum = 0.0f;
+        float sum = 0.0f, cs = 1.0f;
         [loop] for (uint i = 0u; i < 12u; i++) {
             const float t = (float(i) + jit) * dt;
             const float4 c = screenOf(w * t);
-            sum += cascadeShadow(w * t, c.z, false) * exp(-sigma * t);
+            // Shafts between the clouds (SKY-04): the clouds' shadow at each step as well as the cascades'.
+            // A new sample every third step (the clouds' shadow changes slowly along the ray).
+            if ((flags.x & FLAG_CLOUDS) != 0u && i % 3u == 0u) { cs = cloudShadowN(w * (t + 1.5f * dt) + camPosW.xyz, 1u); }
+            sum += cascadeShadow(w * t, c.z, false) * cs * exp(-sigma * t);
         }
         scatter += sunColour.rgb * (sigma * ph * dt * sum * tune2.z);
     }

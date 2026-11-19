@@ -1,0 +1,24 @@
+# A path-traced reference for the lead views (RtShadow.hlsl, RtDebug=6): the light each pixel receives,
+# accumulated over the held frames with the camera still, beside the same quantity from the improved
+# lighting (View 13) and from the game's own model (match, View 13). Riverwood by day, then the inn.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+keyframe frame steps=game,improved hold=40
+reload ini View=13
+keyframe irr steps=match,improved hold=40
+reload ini RtDebug=6 View=7
+keyframe ref steps=improved hold=1000
+reload ini RtDebug=0 View=0
+console coc whiterunbanneredmare
+wait 10
+scene inn
+keyframe frame steps=game,improved hold=40
+reload ini View=13
+keyframe irr steps=match,improved hold=40
+reload ini RtDebug=6 View=7
+keyframe ref steps=improved hold=1000
+reload ini RtDebug=0 View=0
+quit

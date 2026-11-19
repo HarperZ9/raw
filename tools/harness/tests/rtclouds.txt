@@ -1,0 +1,18 @@
+# Clouds (Clouds.hlsl, CloudCommon.hlsli): Riverwood by day. View 10 marks the sky pixels the pass owns
+# (magenta where the pass's output survives to the frame); view 11 the clouds' shadow alone; then the
+# default cover, heavy cover, and clouds off for the A/B.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 11
+wait 12
+keyframe clouds steps=game,improved hold=90
+reload ini View=10
+keyframe skyowned steps=improved hold=20
+reload ini View=11
+keyframe cloudshadow steps=improved hold=30
+reload ini View=0 CloudCover=0.75
+keyframe heavy steps=improved hold=90
+reload ini Clouds=0
+keyframe noclouds steps=improved hold=60
+quit

@@ -24,8 +24,11 @@ cbuffer P : register(b0) {
     float4 cluster;         // near, far, SLICES / log(far / near), sky visibility strength
     float4 tune;            // fog density, fog anisotropy, soft-shadow range, contact length
     float4 tune2;           // AO strength, fog light scale, fog sun scale, fog max distance
-    float4 weather;         // wetness, puddles, snow (Weather.hlsli), 0
-    float4 camPosW;         // the camera's world position (absolute: world-fixed patterns)
+    float4 weather;         // wetness, puddles, snow (Weather.hlsli), rain falling now
+    float4 camPosW;         // the camera's world position (absolute: world-fixed patterns); w: seconds
+    float4 clouds;          // cover 0 to 1, floor height, thickness (absolute world units), shadow strength (CloudCommon.hlsli)
+    float4 cloudWind;       // wind x, y (units a second), density scale, history weight
+    float4 prevWorldToClip[4];   // last frame's worldToClip (the clouds' history)
     float4 lightPosR[MAX_LIGHTS];   // xyz, radius
     float4 lightColS[MAX_LIGHTS];   // rgb, shadow-mask channel (-1 none)
     uint4  clusters[TILES_X * TILES_Y * SLICES];   // a bit per light
@@ -33,7 +36,7 @@ cbuffer P : register(b0) {
 
 static const uint FLAG_MATCH = 1u, FLAG_SOFT = 2u, FLAG_GGX = 4u, FLAG_FOG = 8u, FLAG_CONTACT = 16u, FLAG_AO = 32u,
                   FLAG_CASCADES = 64u, FLAG_SURFACE = 128u, FLAG_SHADOWS = 256u,
-                  FLAG_FOG_REPLACES = 512u, FLAG_RT = 1024u, FLAG_SKY = 2048u, FLAG_BOUNCE = 4096u, FLAG_REFLECT = 8192u, FLAG_BOUNCE_IN = 16384u;   // our fog takes the game's distance fog's place (off: the game's runs after ours)
+                  FLAG_FOG_REPLACES = 512u, FLAG_RT = 1024u, FLAG_SKY = 2048u, FLAG_BOUNCE = 4096u, FLAG_REFLECT = 8192u, FLAG_BOUNCE_IN = 16384u, FLAG_CLOUDS = 32768u;   // our fog takes the game's distance fog's place (off: the game's runs after ours)
 static const float PI = 3.14159265358979f;
 
 float4 vs(uint i : SV_VertexID) : SV_Position {

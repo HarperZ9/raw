@@ -166,7 +166,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 bounce = 0.0f;
     const float d = Depth.Load(ip);
     const uint base = uint(Spec.Load(ip).z * 255.0f + 0.5f) & 127u;
-    if (d < 1.0f && base != 0u && base < 7u) {
+    if (d < 1.0f && base != 0u && (base < 7u || base == 10u)) {   // 10: skin
         const float2 px = float2(id.xy);
         const float3 p = worldAt(px, d);
         const float3 n = worldNormal(Normal.Load(ip));
@@ -265,6 +265,59 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
     }
 #ifdef RT_DEBUG
+    if (reflectLength < 0.0f && d < 1.0f && debugView == 6u) {
+        // RtDebug=6: a path-traced reference of the light each pixel receives (the irradiance the lighting
+        // pass multiplies the albedo by, in the game's units: a light of colour c facing the surface gives c).
+        // Sun and one point light by next-event estimation with shadow rays, then up to three diffuse bounces
+        // whose hits take their colour from the meshes' colour copies; a ray that leaves the scene sees the
+        // sky as the game's directional ambient in its direction. No radiance cache, no screen lookups. The
+        // mean over frames accumulates in the reflection output (alpha 1000 + samples); the camera must hold.
+        const float2 px = float2(id.xy);
+        const float3 pw = worldAt(px, d);
+        float3 n = worldNormal(Normal.Load(ip));
+        float3 ng = geometricNormal(px, pw, n);
+        float3 o = pw + ng * (0.5f + 0.003f * viewZOf(d));
+        float3 E = 0.0f, thr = 1.0f;
+        [loop] for (uint b = 0u; b < 4u; b++) {
+            const float2 r0 = float2(hash(px, giFrame * 0.37f + b * 3.1f), hash(px.yx, giFrame * 0.71f + b * 5.7f));
+            const float2 r1 = float2(hash(px + 17.0f, giFrame * 0.53f + b * 1.3f), hash(px.yx + 29.0f, giFrame * 0.29f + b * 2.9f));
+            float3 dl = 0.0f;   // direct light at this vertex of the path
+            if (sunDir.w > 0.5f) {
+                const float nl = dot(n, sunDir.xyz);
+                if (nl > 0.0f) {
+                    const float vis = sunColour.w > 0.5f ? visible(o, jitterDir(sunDir.xyz, sunCone, r0), 0.0f, sunLength) : 1.0f;
+                    dl += sunColour.rgb * nl * vis;
+                }
+            }
+            if (flags.y > 0u) {
+                const uint li = min(uint(r1.x * float(flags.y)), flags.y - 1u);
+                const float3 toL = lightPosR[li].xyz - o;
+                const float dist = length(toL);
+                const float x = saturate(dist / lightPosR[li].w);
+                const float nl = dot(n, toL / max(dist, 1.0e-4f));
+                if (x < 1.0f && nl > 0.0f)
+                    dl += lightColS[li].rgb * ((1.0f - x * x) * nl * float(flags.y) * visible(o, toL / max(dist, 1.0e-4f), 0.0f, max(dist - 2.0f, 0.0f)));
+            }
+            E += thr * dl;
+            if (b == 3u) { break; }
+            const float3 rd = cosineDir(n, r1.yx);
+            if (dot(rd, ng) <= 0.0f) { break; }
+            Hit h;
+            if (!traceHit(o, rd, 60000.0f, h)) { E += thr * max(ambientAt(rd), 0.0f.xxx); break; }
+            const float3 hp = o + rd * h.t;
+            n = hitNormal(h, rd);
+            ng = n;
+            thr *= hitAlbedo(h);
+            o = hp + n * (0.5f + 0.002f * length(hp));
+        }
+        const float4 old = Refl[id.xy];
+        const float cnt = old.a > 1000.5f ? old.a - 1000.0f : 0.0f;
+        const float3 mean = (old.rgb * cnt + E) / (cnt + 1.0f);
+        Refl[id.xy] = float4(mean, 1000.0f + min(cnt + 1.0f, 1040.0f));
+        Vis[id.xy] = vis;
+        Lights[id.xy] = float4(idx.xyz, sky);
+        return;
+    }
     // The debug views live in their own build (-DRT_DEBUG=1, RtScene's debug pipeline): their code in the
     // main kernel raised its register count and the trace's cost with it.
     if (reflectLength < 0.0f && d < 1.0f) {

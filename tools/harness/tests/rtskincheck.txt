@@ -1,0 +1,19 @@
+# Stretched skinned triangles (RtSkinCheck.hlsl): the player in third person at Riverwood by day, the
+# primary-ray view with the check counting only (RtSkinCull=0), then culling, then the sun visibility.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 10
+walk f 0.15
+wait 4
+keyframe third steps=game,improved hold=60
+reload ini RtDebug=1 View=7 RtSkinCull=0
+keyframe nocull steps=improved hold=60
+reload ini RtSkinCull=1
+keyframe cull steps=improved hold=60
+reload ini RtDebug=0 View=2
+keyframe sunvis steps=improved hold=60
+reload ini View=0
+keyframe on steps=game,improved hold=60
+quit

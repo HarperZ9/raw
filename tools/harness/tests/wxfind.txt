@@ -1,0 +1,43 @@
+# Which weather IDs snow: fw each candidate and read the engine's report (formId, flags: 4 rain, 8 snow).
+start load rawharness
+console tai
+scene riverwood_day
+wait 8
+keyframe start steps=game hold=20
+console fw c8221
+wait 3
+engine weather
+console fw c8222
+wait 3
+engine weather
+console fw 10e1f2
+wait 3
+engine weather
+console fw 10e1f3
+wait 3
+engine weather
+console fw 10e1f4
+wait 3
+engine weather
+console fw 10a7a8
+wait 3
+engine weather
+console fw 10e3d4
+wait 3
+engine weather
+console fw 10e3d5
+wait 3
+engine weather
+console fw 1037f3
+wait 3
+engine weather
+console fw 10a23c
+wait 3
+engine weather
+console fw 12f89c
+wait 3
+engine weather
+console fw 10199f
+wait 3
+engine weather
+quit

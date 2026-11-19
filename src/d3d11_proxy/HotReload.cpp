@@ -1,7 +1,7 @@
 // HotReload: shader and parameter changes reach the running game with no restart
 // (docs/HOT_RELOAD.md). Keys of [HotReload] in d3d11_proxy.ini:
 //   Enabled=1        watch the shader folder and this ini
-//   ShaderDir=...    the folder with Lighting.hlsl, LightFog.hlsl and LightingCommon.hlsli
+//   ShaderDir=...    the folder with Lighting.hlsl, LightFog.hlsl and LightingCommon.hlsli (and Tonemap.hlsl, Tonemap.cpp)
 //   Dxc=...          dxcompiler.dll (default: beside the game, then the Windows SDK)
 // Every 15 presents the newest write time in ShaderDir is read. A change starts a compile on a
 // worker thread with the build's own flags; at a later present the new pipelines are swapped in.
@@ -12,6 +12,7 @@
 #include "HotReload.h"
 #include "Overlay.h"
 #include "ProxyLog.h"
+#include "Tonemap.h"
 #include "../d3d12_bridge/LightingPass.h"
 #include "../d3d12_bridge/ShaderCompiler.h"
 
@@ -151,6 +152,7 @@ void HotReload_LoadConfig(const std::string& ini)
     if (s.enabled) {
         s.shaderTime = s.dir.empty() ? fs::file_time_type{} : Newest(s.dir);
         s.iniTime = fs::last_write_time(ini, ec);
+        if (!s.dir.empty()) Tonemap_SetSource(s.dir + L"\\Tonemap.hlsl");   // RAW's tone map reloads from the same folder
         Log("[HotReload] watching %ls and the ini", s.dir.empty() ? L"(no shader folder)" : s.dir.c_str());
         Status();
     }

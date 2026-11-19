@@ -290,6 +290,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (flags.w == 8u) { return float4(wet.wet, wet.puddle, wet.snow, game.a); }   // weather: wet red, puddles green, snow blue
 
     float3 lit = knee3(albedo * (diff + amb));
+    if (flags.w == 16u) { return float4(albedo, game.a); }   // view 16: the G-buffer base colour the pass lights
+    if (flags.w == 17u) { return float4(saturate(game.rgb / max(knee3(lit), 1.0e-3f) * 0.25f), game.a); }   // view 17: the game's frame over RAW's diffuse (0.25 = equal)
     // The game's lobe exists only in shaders with a shininess exponent (gloss > 0).
     // Landscape shaders carry no lobe (their slot 1 is a colour layer); the exponent found in parallax
     // shaders belongs to another term (a lobe there doubles the error, tools/lighting/fitsoft.py).

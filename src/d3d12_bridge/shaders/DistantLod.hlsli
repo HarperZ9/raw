@@ -28,7 +28,11 @@ float3 distantLit(int3 ip, float2 at, float d) {
     const float3 right = normalize(worldAt(float2(min(px.x + 1.0f, lim.x), px.y), d) - p + 1.0e-4f);
     const float3 toCam = normalize(eyeAt() - p);
     const float3 canopy = normalize(right * (0.85f * u) + float3(0.0f, 0.0f, 0.3f + 0.4f * v) + toCam * sqrt(max(1.0f - u * u, 0.15f)));
-    const float3 n = normalize(lerp(worldNormal(Normal.Load(ip)), canopy, 0.7f));
+    // Only on a card: something narrow across the screen (a pixel with LOD on both sides within 24 pixels). Terrain LOD
+    // fills its region, l and r both reach 24 and the canopy normal turned the mountains toward the camera: their faces
+    // read flat beside the game's (far mountains' luma spread 11.3 against 12.7, rt7-far-7).
+    const float cw = 0.7f * saturate((46.0f - float(l + r)) / 12.0f);
+    const float3 n = normalize(lerp(worldNormal(Normal.Load(ip)), canopy, cw));
     const bool rt = (flags.x & FLAG_RT) != 0u;
     float sh = (flags.x & FLAG_SHADOWS) == 0u ? 1.0f : (flags.x & FLAG_CASCADES) != 0u ? cascadeShadow(p, d, true) : Mask.Load(ip).x;
     if (rt && sunColour.w > 0.5f) { sh = min(sh, RtVis.Load(ip).x); }

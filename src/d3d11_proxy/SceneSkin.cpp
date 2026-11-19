@@ -25,13 +25,15 @@ using geom::BlendAlpha;
 namespace
 {
 bool g_skinOn = true;
+bool g_skinAlphaOn = true;   // RtSkinAlpha: alpha-tested skinned draws join, cut by their texture's alpha
+uint64_t g_skinAlphaJoined = 0, g_skinAlphaNoUv = 0;
 int g_boneSlot = 10;
 uint64_t g_skinJoined = 0, g_skinNoBones = 0, g_skinNotOpaque = 0, g_skinFormat = 0, g_skinAlpha = 0;
 // Actors (people, creatures, the player in third person) draw skinned outside the opaque set's targets.
 // Those on the main depth target join; drawn after the frame's capture, they wait for the next frame.
 int g_skinFilter = 0;   // diagnosis (RtSkinFilter): 1 float positions only, 2 half positions only, 3 trees only, 4 actors only
 bool g_actors = true, g_mainDepth = false, g_afterCapture = false, g_took = false;
-uint64_t g_skinNoPs = 0;   // skinned draws with no pixel shader, left out
+uint64_t g_skinNoPs = 0, g_skinAlphaFollowed = 0;   // skinned draws with no pixel shader, left out
 UINT g_tgtRtvs = 0, g_tgtWidth = 0;
 DXGI_FORMAT g_tgtFormat = DXGI_FORMAT_UNKNOWN;
 uint64_t g_actorJoined = 0, g_actorLate = 0, g_actorWorld = 0;
@@ -41,6 +43,7 @@ uint64_t g_census[4][2][2] = {};   // opaque-set draws by call (indexed, indexed
 } // namespace
 
 void SceneGeometry_SetActors(bool on) { g_actors = on; }
+void SceneGeometry_SetSkinAlpha(bool on) { g_skinAlphaOn = on; }
 
 // The actor sheet (docs/RAYTRACING.md): RtSkin skins the actors' draws exactly as their own vertex shaders do, yet
 // some corners land far from anything the main view shows. A draw whose view-projection (vertex cb12 rows 8 to 11)
@@ -202,7 +205,7 @@ static void ReadStreamsAtDraw(ID3D11DeviceContext* real, raw::bridge::RtDraw& d)
     }
 }
 
-bool SceneSkin_OnDraw(ID3D11DeviceContext* real, const Layout* bound, UINT indexCount, UINT startIndex, INT baseVertex)
+bool SceneSkin_OnDraw(ID3D11DeviceContext* real, const Layout* bound, UINT indexCount, UINT startIndex, INT baseVertex, bool alphaFollows)
 {
     static uint32_t seen = 0, logged = 0;
     if (!bound || !bound->blendIdx.set) return false;
@@ -225,8 +228,18 @@ bool SceneSkin_OnDraw(ID3D11DeviceContext* real, const Layout* bound, UINT index
         // Alpha-tested skinned draws (tree leaves) would be solid cards: left out until the rays test them.
         alpha = geom::IsDiscardPs(geom::BoundPs(real));
         alpha = alpha || BlendAlpha(real) != raw::bridge::RtAlphaNone;
+        // Hair, fur and capes: their prepass tests the alpha, and the colour draw that follows (depth EQUAL, a shader
+        // with no discard) would otherwise join as solid cards. Those cards were the floating skinned triangles that
+        // stood outside the game's silhouette and shadowed the actors (docs/RAYTRACING.md).
+        if (!alpha && alphaFollows) { alpha = true; ++g_skinAlphaFollowed; }
     }
-    if (g_skinOn) { if (!open) ++g_skinNotOpaque; else if (!formatOk) ++g_skinFormat; else if (alpha) ++g_skinAlpha; }
+    // Alpha-tested skinned draws (hair, fur, capes, the trees' leaves) join cut by the alpha of their colour texture
+    // (t0), with the coordinates from the position's stream or their own: the rays test it as the game's prepass does.
+    const bool uvOk = L.uv.set && (L.uv.format == DXGI_FORMAT_R16G16_FLOAT || L.uv.format == DXGI_FORMAT_R32G32_FLOAT ||
+                                   L.uv.format == DXGI_FORMAT_R16G16B16A16_FLOAT || L.uv.format == DXGI_FORMAT_R32G32B32A32_FLOAT);
+    const bool alphaJoins = alpha && g_skinAlphaOn && uvOk;
+    if (alpha && g_skinAlphaOn && !uvOk) ++g_skinAlphaNoUv;
+    if (g_skinOn) { if (!open) ++g_skinNotOpaque; else if (!formatOk) ++g_skinFormat; else if (alpha && !alphaJoins) ++g_skinAlpha; }
     // The actor sheet's cause (rt6-next-3): the floating draws bind no pixel shader and write no depth, a pass that
     // draws the actors' skinned meshes for something other than the picture (occlusion queries, by the look of it),
     // with the same view and palette. They make no surface, so they stay out of the scene.
@@ -235,7 +248,7 @@ bool SceneSkin_OnDraw(ID3D11DeviceContext* real, const Layout* bound, UINT index
         ++g_skinNoPs;
         return true;
     }
-    if (g_skinOn && open && indexCount >= 3 && formatOk && !alpha) {
+    if (g_skinOn && open && indexCount >= 3 && formatOk && (!alpha || alphaJoins)) {
         // A skinned draw of the opaque set: its streams, index range and bone palette (RtSkin.h).
         ID3D11Buffer* bb[1] = {};
         real->VSGetConstantBuffers(UINT(g_boneSlot), 1, bb);
@@ -254,6 +267,18 @@ bool SceneSkin_OnDraw(ID3D11DeviceContext* real, const Layout* bound, UINT index
         d.ib = geom::IndexBuffer(real, &d.ibFormat, &d.ibOffset);
         if (!d.vb || !d.ib || !d.blendVb) { raw::bridge::ReleaseRtDraw(d); return true; }
         d.skinned = true; d.actor = actor;
+        if (alpha) {
+            d.alphaSrv = geom::AlphaTexture(real);
+            if (!d.alphaSrv) { raw::bridge::ReleaseRtDraw(d); ++g_skinAlphaNoUv; return true; }
+            d.alphaKind = raw::bridge::RtAlphaDiscard; d.uvOffset = L.uv.offset; d.uvFormat = L.uv.format;
+            if (L.uv.slot != L.pos.slot) {
+                UINT us = 0, uo = 0;
+                d.uvVb = geom::VertexBuffer(real, L.uv.slot, &us, &uo);
+                if (!d.uvVb) { raw::bridge::ReleaseRtDraw(d); ++g_skinAlphaNoUv; return true; }
+                d.uvStride = us; d.uvVbOffset = uo;
+            }
+            ++g_skinAlphaJoined;
+        }
         d.stride = stride; d.vbOffset = offset; d.posOffset = L.pos.offset; d.posFormat = L.pos.format;
         d.blendStride = bs; d.blendVbOffset = bo; d.idxOffset = L.blendIdx.offset; d.wOffset = L.blendW.offset;
         d.indexCount = indexCount; d.startIndex = startIndex; d.baseVertex = baseVertex;
@@ -328,8 +353,9 @@ bool SceneSkin_OnDraw(ID3D11DeviceContext* real, const Layout* bound, UINT index
 void SceneSkin_Log()
 {
     Log("[RT] skinned draws so far: %llu joined, %llu without a bone palette at vertex slot %d; left out: %llu outside the opaque set, "
-            "%llu layout formats, %llu alpha-tested, %llu with no pixel shader", (unsigned long long)g_skinJoined, (unsigned long long)g_skinNoBones, g_boneSlot,
-            (unsigned long long)g_skinNotOpaque, (unsigned long long)g_skinFormat, (unsigned long long)g_skinAlpha, (unsigned long long)g_skinNoPs);
+            "%llu layout formats, %llu alpha-tested (%llu of them by their prepass), %llu with no pixel shader; alpha-tested joined %llu, without "
+            "coordinates or texture %llu", (unsigned long long)g_skinJoined, (unsigned long long)g_skinNoBones, g_boneSlot,
+            (unsigned long long)g_skinNotOpaque, (unsigned long long)g_skinFormat, (unsigned long long)g_skinAlpha, (unsigned long long)g_skinAlphaFollowed, (unsigned long long)g_skinNoPs, (unsigned long long)g_skinAlphaJoined, (unsigned long long)g_skinAlphaNoUv);
     {
         Log("[RT] actors (skinned, outside the opaque set, on the main depth target): %llu joined, %llu of them after the capture "
             "(next frame); %llu with a world block (the opaque set's actors); RtActors=%d", (unsigned long long)g_actorJoined,

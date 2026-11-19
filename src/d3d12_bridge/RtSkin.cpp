@@ -93,6 +93,7 @@ void RtSkin::SetDraws(std::vector<RtDraw>& draws, std::vector<ID3D11Resource*>& 
     uint32_t outFirst = 0, idxFirst = 0;
     for (const RtDraw& d : draws) {
         if (!d.skinned || !d.bones || m_jobs.size() >= kMaxDraws) continue;
+        if (d.alphaKind && (d.skinRecord == 0 || d.skinRecord == ~0u)) continue;   // alpha-tested without its record: out this frame
         D3D11_BUFFER_DESC vd{}, bd{}, id{};
         d.vb->GetDesc(&vd); d.blendVb->GetDesc(&bd); d.ib->GetDesc(&id);
         ID3D12Resource* v12 = native(d.vb);
@@ -110,6 +111,7 @@ void RtSkin::SetDraws(std::vector<RtDraw>& draws, std::vector<ID3D11Resource*>& 
         j.vb = v12; j.bv = b12; j.ib = i12; j.vbBytes = vd.ByteWidth; j.bvBytes = bd.ByteWidth; j.iStart = iStart;
         j.ibFormat = d.ibFormat; j.indexCount = d.indexCount / 3 * 3; j.idxFirst = idxFirst; j.ibBytes = id.ByteWidth;
         j.actor = d.actor;
+        j.record = d.alphaKind ? d.skinRecord : 0u;
         const uint32_t posFmt = d.posFormat == DXGI_FORMAT_R16G16B16A16_FLOAT ? 0u : 1u;
         j.posFmt = posFmt;
         uint32_t c[16] = {uint32_t(vStart), d.stride, d.posOffset, posFmt, uint32_t(bStart), d.blendStride, d.idxOffset, d.wOffset,
@@ -326,7 +328,7 @@ bool RtSkin::Record(ID3D12GraphicsCommandList4* cl, uint32_t slot, ID3D12Resourc
     for (Job& j : m_jobs) {
         D3D12_RAYTRACING_GEOMETRY_DESC g{};
         g.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
-        g.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+        g.Flags = j.record ? D3D12_RAYTRACING_GEOMETRY_FLAG_NONE : D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
         g.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
         g.Triangles.VertexBuffer = {m_pool[slot]->GetGPUVirtualAddress() + uint64_t(j.c[9]) * 12, 12};
         g.Triangles.VertexCount = j.c[8];
@@ -363,7 +365,8 @@ uint32_t RtSkin::Place(D3D12_RAYTRACING_INSTANCE_DESC* out, uint32_t room, uint3
         std::memset(&x, 0, sizeof x);
         x.Transform[0][0] = x.Transform[1][1] = x.Transform[2][2] = 1.0f;
         x.InstanceMask = 0xFF;
-        x.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE | D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE;
+        x.InstanceID = j.record;   // alpha-tested: the rays read its coordinates and mask by this (RtShadow.hlsl, hitAlpha)
+        x.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE | (j.record ? 0u : D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE);
         x.AccelerationStructure = m_blas[slot]->GetGPUVirtualAddress() + j.blas;
         tris += j.indexCount / 3;
     }

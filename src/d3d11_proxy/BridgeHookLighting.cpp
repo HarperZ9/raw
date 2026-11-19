@@ -100,6 +100,8 @@ void LightingApplyTuning()
     SceneGeometry_SetActors(t.rtActors);
     SceneGeometry_SetActorView(t.rtActorView);
     SceneGeometry_SetSkinFilter(t.rtSkinFilter);
+    SceneGeometry_SetAlphaFollow(t.rtAlphaFollow);
+    SceneGeometry_SetSkinAlpha(t.rtSkinAlpha);
     GameComposite_Set({t.mode == 2 && t.ao, t.mode == 2 && t.volumetricFog && t.fogReplacesGame});
 }
 
@@ -161,6 +163,8 @@ void LoadLightingConfig(const std::string& ini)
         tm.enabled = i("Tonemap", 0) != 0; tm.mode = i("Exposure", tm.mode); tm.bias = f("ExposureBias", tm.bias);
         tm.minLum = f("ExposureMinLum", tm.minLum); tm.maxLum = f("ExposureMaxLum", tm.maxLum); tm.key = f("ExposureKey", tm.key);
         tm.curve = i("ToneCurve", tm.curve); tm.white = f("ToneWhite", tm.white); tm.view = i("ToneView", 0);
+        tm.adapt = f("ExposureAdapt", tm.adapt); tm.ref = f("ExposureRef", tm.ref);
+        for (int k = 0; k < 6; ++k) { const std::string n = "ToneX" + std::to_string(k); tm.x[k] = f(n.c_str(), tm.x[k]); }
         Tonemap_Set(tm);
     }
     t.water = i("Water", 1) != 0; t.waterReflect = f("WaterReflect", t.waterReflect); t.waterCaustics = f("WaterCaustics", t.waterCaustics);
@@ -173,6 +177,8 @@ void LoadLightingConfig(const std::string& ini)
     t.rtActorView = i("RtActorView", 1) != 0;
     t.rtIncremental = i("RtIncremental", 1) != 0;
     t.rtSkinFilter = i("RtSkinFilter", 0);
+    t.rtAlphaFollow = i("RtAlphaFollow", 1) != 0;
+    t.rtSkinAlpha = i("RtSkinAlpha", 1) != 0;
     t.rtCamSteps = i("RtCamSteps", 0) != 0;
     raw::bridge::g_deterministic = i("Deterministic", 0) != 0;   // test switch: pinned noise seeds (D3D12Bridge.h)
     if (raw::bridge::g_deterministic) Log("[Lighting] Deterministic=1: the bridge's noise seeds are pinned (a test setting)");

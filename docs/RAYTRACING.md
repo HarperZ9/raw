@@ -682,3 +682,75 @@ open and the next commands reach the world (a magic menu opened). The test now s
 - The compass location icon shows through raw::tx in the Riverwood game frames of rt7-tone-4 and rt7-far-4 (the house mark); not
   compared against native D3D11.
 - POM still needs a capture of a view with vanilla parallax meshes.
+
+## Tuned live in one session: the tone map, characters, the all-times matrix (2026-11-19, rt8)
+
+Every run here was a request to the shared live session on SkyrimSE 1.7.104 at 3840 x 2160. Each one was an
+ini or shader edit followed by a capture in the running game, with no relaunch between edits. About 40 requests
+went in, over seven tone panels and one full matrix.
+
+**The acceptance matrix** (`tests/rt8matrix.txt`, `tools/lighting/matrix.py`). It covers three exteriors (the
+Riverwood street, the forest beside it and the vista from 12,000 units) at dawn, midday, dusk and night, under clear
+(81a), cloudy (10a7a7, flags 2 in the engine's read), rain (10a241) and snow (c8221). It adds three interiors: the
+Bannered Mare, BleakFallsBarrow01 and Breezehome by day and by night. The clock is stopped. Each cell is judged over
+the whole frame: mean, the share clipped (any channel at 250 or more), the share crushed (the brightest channel at 4
+or less) and detail (luma standard deviation). A candidate passes a cell when its mean is within 20 % of the game's,
+its clipped and crushed shares are each no more than the game's plus 0.5 points, and its detail is at least 0.95 of
+the game's. The contact sheet is `ingame-rt8-2026-11-19-matrix-game-rawlight-rawtonemap.png`.
+
+| Run (rt-104146-bltk, 50 cells) | passes |
+|---|---|
+| RAW's lighting through the game's tone map | most cells. Fails come from crushed shadows (dawn, dusk and night, clear) and the vista in rain |
+| RAW's lighting through RAW's tone map (defaults below) | 31 of 50 |
+
+Where RAW's tone map fails: clear and rain nights (RAW reads 25 against 35 in Riverwood), the forest at dusk (18
+against 31), the vista at midday (44 % clipped against 7 %), and the detail of flat cloudy vistas. `Tonemap` stays
+0 by default, because the rule was every cell.
+
+**The tone map, tuned live.** The fitted ACES curve's slope at black is about 0.2. It crushed 42 % of a Riverwood
+dawn frame (game: 2 %). Curve 3 is now the default curve: the game's own curve on luminance, with the white point
+raised to `ToneX1` (3.5), contrast above the key (`ToneX3` 1.55, easing back to 1 by four times the key), and a power
+that rises from `ToneX4` (0.6) at black to `ToneX3` at the key. The exposure is metered from the game's adapted
+average, which the game's luminance chain moves over time towards the frame's average. That average reads 0.39 at a
+clear midday, 0.28 at dawn, 0.22 at night and 0.094 in the inn. The game's own exposure (target over average) was 1
+in all of them. So the game does not compensate a dark scene, and RAW's exposure follows only a share of the change
+of average: 0.15 above the reference of 0.3, and about none below it. Full compensation lifted the inn from 19 to
+47 of 255. Panel 7 (Riverwood dawn, midday, dusk and night, and the inn) passed 4 of 5 at these values, all but the
+night. Its detail and its crushed share trade against each other there.
+
+A later panel added an interior factor (`ToneX5`, applied in cells with no sun cascades), a share of 0.3 above the
+reference and 0.35 below it. That passed the clear night and the dawn but lost the inn's and the crypt's detail and
+still clipped the vista (16 to 19 %). Those values were not run over the full matrix. The code defaults are the panel
+7 values, with no interior factor.
+
+**Characters.** The player in third person in the inn, measured over a crop of the back, in one keyframe:
+
+| step | vest | arm |
+|---|---|---|
+| game | 34.2 | 83.5 |
+| match | 22.3 | |
+| improved, GGX only | 22.4 | 75.1 |
+| improved | 26.8 | 69.9 |
+
+The deficit is already there in match mode, so ray tracing is not the cause. View 17 (the game's lit buffer over
+RAW's diffuse) puts the missing light on view-dependent sheen: the armour's ridges, the leather and the hair, not
+the diffuse. That reads as the game's environment-map term on actor materials, which the G-buffer does not carry.
+This is inferred and not yet confirmed from the shader. A GGX change that kept the game's lobe energy (F = 8 m /
+(s + 8)) raised the arm from 70 to 76 and the vest from 27 to 28. It also brought back the white streaks on the
+inn's beams and planks that rt7-glint removed (`ingame-rt8-2026-11-19-inn-beams-game-oldspec-energyspec-1to1.png`),
+so it was reverted. The full matrix above ran with it in place. Match mode's skin lobe also draws a large white
+highlight on the arm that the game's frame does not have. The alpha-tested skinned draws (hair, fur and capes, cut
+by their alpha) are in this branch. With them, Aela and Saadia in the inn read like the game's frames, and the
+3x-dark back from rt7 did not come back in the views captured. A placed Aela could not be framed the same way twice.
+
+**A black patch on the forest floor** (`ingame-rt8-2026-11-19-forest-black-patch-...png`). With ray tracing on, a
+stepped region of ground beside Riverwood loses the sun, the sky and the bounce (views 2, 4 and 3 are black there).
+It reads black and is most of the forest cells' crushed share. It stays with `RtActors=0`, `RtSkin=0`,
+`RtSkinAlpha=0` and `RtActorView=0`. Taking distant-LOD draws out of the scene did not change it, so that change was
+reverted. The primary-ray view shows that patch's ground as a separate surface from the ground next to it.
+Unconfirmed: the most likely cause is a second ground mesh lying just above the drawn ground, which shadows every ray
+that starts beneath it.
+
+**Infrastructure in this branch.** The tone map reloads live from `Tonemap.hlsl` (docs/HOT_RELOAD.md). The harness
+has `listen` (docs/HARNESS.md) and retries the status-file read. The tx timestamp heap holds 16384 (from raw#41), so
+the bridge and `GpuTiming=1` run together: improved rt_draws 1919, the pass 2.70 ms.

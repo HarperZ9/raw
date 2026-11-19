@@ -412,6 +412,19 @@ add_custom_command(
 target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/BridgeLighting.cpp src/d3d12_bridge/LightClusters.cpp
     ${RAW_BRIDGE_GEN}/ShadowAtlas_CS.h)
 target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/SceneLights.cpp src/d3d11_proxy/GameComposite.cpp src/d3d11_proxy/Tonemap.cpp)
+# RAW's tone map shader: its text embedded as a string (d3dcompiler compiles it in the game); a change reconfigures.
+set(RAW_TONEMAP_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Tonemap.hlsl)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${RAW_TONEMAP_HLSL})
+file(READ ${RAW_TONEMAP_HLSL} RAW_TONEMAP_TEXT)
+file(WRITE ${RAW_BRIDGE_GEN}/TonemapSrc.h "#pragma once
+// Generated from src/d3d12_bridge/shaders/Tonemap.hlsl by CMakeLists.txt.
+namespace SB::Proxy
+{
+inline constexpr const char* kTonemapHlsl = R\"HLSL(
+${RAW_TONEMAP_TEXT})HLSL\";
+}
+")
+target_include_directories(d3d11_proxy PRIVATE ${RAW_BRIDGE_GEN})
 if(RAW_ENGINE_DIR)
     set(RAW_LIGHT_HLSL ${RAW_SHARE_HLSL}/Lighting.hlsl)
     set(RAW_LIGHTFOG_HLSL ${RAW_SHARE_HLSL}/LightFog.hlsl)

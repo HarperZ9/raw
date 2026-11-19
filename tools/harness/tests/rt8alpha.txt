@@ -1,0 +1,45 @@
+# Alpha by the prepass (RtAlphaFollow): the actors' hair, fur and the trees' needle cards are alpha-tested in the depth
+# prepass and drawn in colour with depth EQUAL and no discard. Aela (base 1A696) in the inn, game against improved with
+# the follow off and on, the primary-ray view both ways; then Riverwood in third person, the same.
+start load rawharness
+console tai
+scene inn
+console coc whiterunbanneredmare
+wait 10
+keyframe c steps=game,improved hold=60
+reload ini View=12
+keyframe c_class steps=improved hold=30
+reload ini View=0
+console player.placeatme 1A696
+walk s 1.0
+wait 3
+reload ini RtAlphaFollow=0
+keyframe c_red_f0 steps=game,improved hold=60
+reload ini RtDebug=1 View=7
+keyframe c_red_f0_primary steps=improved hold=40
+reload ini RtDebug=0 View=0 RtAlphaFollow=1
+keyframe c_red_f1 steps=improved hold=60
+reload ini RtDebug=1 View=7
+keyframe c_red_f1_primary steps=improved hold=40
+reload ini RtDebug=0 View=0 RtShadows=0
+keyframe c_red_nort steps=improved hold=40
+reload ini RtShadows=1
+scene river
+console coc riverwood
+wait 10
+console set gamehour to 13
+wait 6
+walk f 0.15
+mouse -1500 -150
+walk w 2.5
+wait 3
+reload ini RtAlphaFollow=0
+keyframe a_f0 steps=game,improved hold=60
+reload ini RtDebug=1 View=7
+keyframe a_f0_primary steps=improved hold=40
+reload ini RtDebug=0 View=0 RtAlphaFollow=1
+keyframe a_f1 steps=improved hold=60
+reload ini RtDebug=1 View=7
+keyframe a_f1_primary steps=improved hold=40
+reload ini RtDebug=0 View=0
+quit

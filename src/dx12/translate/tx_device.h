@@ -54,6 +54,7 @@ struct QueryHeap {
     uint8_t* mapped = nullptr;
     uint32_t stride = 8;
     std::vector<uint32_t> free;
+    bool exhaustedLogged = false;
 };
 
 class Device final : public ID3D11Device {

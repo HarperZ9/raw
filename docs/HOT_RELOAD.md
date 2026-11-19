@@ -57,3 +57,13 @@ filter) reload with the lighting shaders when the folder holds them and the ray-
 (`RtShadows=1` on raw::tx). They compile as `cs_6_6`; the new pipelines replace the old ones once the
 GPU has finished the frames in flight. A refused or broken shader leaves every old pipeline in place
 and shows the error in the overlay, as for the lighting shaders.
+
+## The tone map (2026-11-19)
+
+RAW's tone map shader is `src/d3d12_bridge/shaders/Tonemap.hlsl`. The build embeds it (`TonemapSrc.h`, generated at
+configure time), and with `[HotReload]` on, the copy in `ShaderDir` replaces it. A new write time recompiles at the
+next tone map draw (it is checked every 30 draws, about twice a second) with d3dcompiler_47 as `ps_5_0`. A failed
+compile keeps the shader in use and shows the error in the overlay. The game binds the replacement at its next
+`PSSetShader`, and a draw that still holds the previous build gets the current one bound. Its constants are 16
+floats: the modes, the curve, `ExposureAdapt` and `ExposureRef`, and `ToneX0` to `ToneX5`, which have no fixed
+meaning and are there for live tuning. Every key is in `[Lighting]`, so `reload ini` reaches them.

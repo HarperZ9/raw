@@ -1,0 +1,504 @@
+# The all-times lighting and tone-map acceptance matrix (tools/lighting/matrix.py reads it): three exteriors at
+# dawn, midday, dusk and night under clear, cloudy, rain and snow, then three interiors. Each cell: the game,
+# RAW's lighting through the game's tone map (m), and RAW's lighting through RAW's tone map (m_raw). The clock
+# is stopped (timescale 0) so every step of a cell sees the same hour. Cloudy is 10a7a7 (flags 2 in the engine read).
+start load rawharness
+console tai
+console set timescale to 0
+console coc riverwood
+wait 8
+# riverwood
+console set gamehour to 6
+console fw 81a
+wait 6
+console player.setangle x 5
+console player.setangle z 40
+scene riverwood_dawn_clear
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 6
+console fw 10a7a7
+wait 6
+console player.setangle x 5
+console player.setangle z 40
+scene riverwood_dawn_cloudy
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 6
+console fw 10a241
+wait 6
+console player.setangle x 5
+console player.setangle z 40
+scene riverwood_dawn_rain
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 6
+console fw c8221
+wait 6
+console player.setangle x 5
+console player.setangle z 40
+scene riverwood_dawn_snow
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 13
+console fw 81a
+wait 6
+console player.setangle x 5
+console player.setangle z 40
+scene riverwood_midday_clear
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 13
+console fw 10a7a7
+wait 6
+console player.setangle x 5
+console player.setangle z 40
+scene riverwood_midday_cloudy
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 13
+console fw 10a241
+wait 6
+console player.setangle x 5
+console player.setangle z 40
+scene riverwood_midday_rain
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 13
+console fw c8221
+wait 6
+console player.setangle x 5
+console player.setangle z 40
+scene riverwood_midday_snow
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 19
+console fw 81a
+wait 6
+console player.setangle x 5
+console player.setangle z 40
+scene riverwood_dusk_clear
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 19
+console fw 10a7a7
+wait 6
+console player.setangle x 5
+console player.setangle z 40
+scene riverwood_dusk_cloudy
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 19
+console fw 10a241
+wait 6
+console player.setangle x 5
+console player.setangle z 40
+scene riverwood_dusk_rain
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 19
+console fw c8221
+wait 6
+console player.setangle x 5
+console player.setangle z 40
+scene riverwood_dusk_snow
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 23
+console fw 81a
+wait 6
+console player.setangle x 5
+console player.setangle z 40
+scene riverwood_night_clear
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 23
+console fw 10a7a7
+wait 6
+console player.setangle x 5
+console player.setangle z 40
+scene riverwood_night_cloudy
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 23
+console fw 10a241
+wait 6
+console player.setangle x 5
+console player.setangle z 40
+scene riverwood_night_rain
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 23
+console fw c8221
+wait 6
+console player.setangle x 5
+console player.setangle z 40
+scene riverwood_night_snow
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+# forest
+console set gamehour to 6
+console fw 81a
+wait 6
+console player.setangle x 5
+console player.setangle z 220
+scene forest_dawn_clear
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 6
+console fw 10a7a7
+wait 6
+console player.setangle x 5
+console player.setangle z 220
+scene forest_dawn_cloudy
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 6
+console fw 10a241
+wait 6
+console player.setangle x 5
+console player.setangle z 220
+scene forest_dawn_rain
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 6
+console fw c8221
+wait 6
+console player.setangle x 5
+console player.setangle z 220
+scene forest_dawn_snow
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 13
+console fw 81a
+wait 6
+console player.setangle x 5
+console player.setangle z 220
+scene forest_midday_clear
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 13
+console fw 10a7a7
+wait 6
+console player.setangle x 5
+console player.setangle z 220
+scene forest_midday_cloudy
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 13
+console fw 10a241
+wait 6
+console player.setangle x 5
+console player.setangle z 220
+scene forest_midday_rain
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 13
+console fw c8221
+wait 6
+console player.setangle x 5
+console player.setangle z 220
+scene forest_midday_snow
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 19
+console fw 81a
+wait 6
+console player.setangle x 5
+console player.setangle z 220
+scene forest_dusk_clear
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 19
+console fw 10a7a7
+wait 6
+console player.setangle x 5
+console player.setangle z 220
+scene forest_dusk_cloudy
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 19
+console fw 10a241
+wait 6
+console player.setangle x 5
+console player.setangle z 220
+scene forest_dusk_rain
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 19
+console fw c8221
+wait 6
+console player.setangle x 5
+console player.setangle z 220
+scene forest_dusk_snow
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 23
+console fw 81a
+wait 6
+console player.setangle x 5
+console player.setangle z 220
+scene forest_night_clear
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 23
+console fw 10a7a7
+wait 6
+console player.setangle x 5
+console player.setangle z 220
+scene forest_night_cloudy
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 23
+console fw 10a241
+wait 6
+console player.setangle x 5
+console player.setangle z 220
+scene forest_night_rain
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 23
+console fw c8221
+wait 6
+console player.setangle x 5
+console player.setangle z 220
+scene forest_night_snow
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+# vista
+console tcl
+console player.setpos z 12000
+console player.setangle x 15
+console player.setangle z 40
+console set gamehour to 6
+console fw 81a
+wait 6
+scene vista_dawn_clear
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 6
+console fw 10a7a7
+wait 6
+scene vista_dawn_cloudy
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 6
+console fw 10a241
+wait 6
+scene vista_dawn_rain
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 6
+console fw c8221
+wait 6
+scene vista_dawn_snow
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 13
+console fw 81a
+wait 6
+scene vista_midday_clear
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 13
+console fw 10a7a7
+wait 6
+scene vista_midday_cloudy
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 13
+console fw 10a241
+wait 6
+scene vista_midday_rain
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 13
+console fw c8221
+wait 6
+scene vista_midday_snow
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 19
+console fw 81a
+wait 6
+scene vista_dusk_clear
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 19
+console fw 10a7a7
+wait 6
+scene vista_dusk_cloudy
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 19
+console fw 10a241
+wait 6
+scene vista_dusk_rain
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 19
+console fw c8221
+wait 6
+scene vista_dusk_snow
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 23
+console fw 81a
+wait 6
+scene vista_night_clear
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 23
+console fw 10a7a7
+wait 6
+scene vista_night_cloudy
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 23
+console fw 10a241
+wait 6
+scene vista_night_rain
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 23
+console fw c8221
+wait 6
+scene vista_night_snow
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console tcl
+console coc riverwood
+# inn
+console coc whiterunbanneredmare
+wait 10
+console set gamehour to 20
+wait 6
+scene inn_evening_any
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+# crypt
+console coc BleakFallsBarrow01
+wait 10
+console set gamehour to 13
+wait 6
+scene crypt_any_any
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+# house
+console coc WhiterunBreezehome
+wait 10
+console set gamehour to 13
+wait 6
+scene house_midday_any
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+console set gamehour to 23
+wait 6
+scene house_night_any
+keyframe m steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe m_raw steps=improved hold=40
+reload ini Tonemap=0
+quit

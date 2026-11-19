@@ -54,6 +54,7 @@ private:
         std::vector<uint8_t> diagVb, diagBv;   // SkinVbCheck: the streams as the game's draw saw them
         std::vector<float> diagBones;
         uint64_t psHash = 0; uint32_t blendInfo = 0;
+        uint32_t record = 0;   // alpha-tested: RtAlpha's record + 1, the instance ID (0: opaque)
     };
     struct Meta { uint32_t indexCount, count, stride, posFmt; bool actor; std::vector<uint8_t> diagVb, diagBv; std::vector<float> diagBones;
                   uint32_t posOffset = 0, bStride = 0, idxOffset = 0, wOffset = 0; uint64_t psHash = 0; uint32_t blendInfo = 0; };

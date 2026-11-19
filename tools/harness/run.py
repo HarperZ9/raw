@@ -64,7 +64,7 @@ Hold=40
 def empty_rt_scene(rows: list[dict]) -> list[str]:
     """Keyframes whose improved step ran the ray trace (rt_draws reported) with no draw in the scene."""
     return [f"{r.get('scene')}/{r.get('keyframe')}" for r in rows
-            if str(r.get("step", "")).startswith("improved") and "rt_draws" in r and r.get("rt_draws", 0) == 0]
+            if str(r.get("step", "")) in ("improved", "improved_rt") and "rt_draws" in r and r.get("rt_draws", 0) == 0]
 
 
 class Runner(Actions):
@@ -164,7 +164,15 @@ class Runner(Actions):
         if not p.exists():
             return {}
         out = {}
-        for line in p.read_text(errors="replace").splitlines():
+        for _ in range(20):   # the proxy rewrites it every few frames; a read can meet the writer's open handle
+            try:
+                text = p.read_text(errors="replace")
+                break
+            except PermissionError:
+                time.sleep(0.05)
+        else:
+            return {}
+        for line in text.splitlines():
             k, _, v = line.partition("=")
             out[k] = v
         return out
@@ -191,6 +199,14 @@ class Runner(Actions):
             t0 = time.time()
             (self.inst.game / "d3d11_proxy.ini").write_text("\n".join(out) + "\n", encoding="utf-8")
             key = "params"
+        elif plain[0] == "sync":
+            # reload sync <file ...>: the files as they are now in the --shaders folder go to the game's copy
+            if not self.a.shaders:
+                raise RuntimeError("reload sync needs --shaders")
+            t0 = time.time()
+            for name in plain[1:]:
+                shutil.copy2(Path(self.a.shaders) / name, self.inst.game / G.SHADER_COPY / name)
+            key = "reloads"
         else:
             f = self.inst.game / G.SHADER_COPY / plain[1]
             src = f.read_text(encoding="utf-8")
@@ -257,11 +273,61 @@ class Runner(Actions):
         elif op == "reload":
             # shader edits hold '=' and spaces: the quoted words go through whole
             self.reload(args if args and args[0] == "shader" else plain, opts)
+        elif op == "listen":
+            return self.listen(Path(plain[0]))
         elif op == "quit":
             return False
         else:
             raise ValueError(f"unknown command {op}")
         return True
+
+    def listen(self, inbox: Path) -> bool:
+        """One long session (docs/HARNESS.md, "Live session"): command files dropped in `inbox` run in name order,
+        one at a time, while the game stays up. Each file's lines are script commands; a command that fails is
+        recorded in <name>.err and the session goes on. A file ends its run with <name>.done (the log lines it
+        made). A line `end` stops listening and the script goes on (usually to `quit`); so does the game exiting.
+        `listening.txt` in the inbox carries a heartbeat: the time, the scene and the files done."""
+        inbox.mkdir(parents=True, exist_ok=True)
+        done_n = 0
+        self.log(f"listening on {inbox}")
+        while G.running():
+            (inbox / "listening.txt").write_text(f"time={time.time():.0f}\nscene={self.scene}\nfiles_done={done_n}\n")
+            todo = sorted(f for f in inbox.glob("*.txt") if f.name != "listening.txt"
+                          and not f.with_suffix(".done").exists() and not f.with_suffix(".err").exists())
+            if not todo:
+                time.sleep(0.5)
+                continue
+            f = todo[0]
+            first = len(self.report["steps"])
+            errors = []
+            stop = False
+            for line in f.read_text(encoding="utf-8").splitlines():
+                line = line.split("#", 1)[0].strip()
+                if not line:
+                    continue
+                if line == "end":
+                    stop = True
+                    break
+                try:
+                    if not self.command(shlex.split(line, posix=False)):
+                        stop = True
+                        break
+                except Exception as e:   # one bad command does not end the session
+                    errors.append(f"{line}: {type(e).__name__}: {e}")
+                    self.log(f"listen: {f.name}: {line}: {e}")
+                    if not G.running():
+                        break
+            body = "\n".join(self.report["steps"][first:]) + "\n"
+            if errors:
+                f.with_suffix(".err").write_text(body + "\n".join(errors) + "\n", encoding="utf-8")
+            else:
+                f.with_suffix(".done").write_text(body, encoding="utf-8")
+            done_n += 1
+            (self.out / "report.json").write_text(json.dumps(self.report, indent=1))   # the session so far
+            if stop:
+                return True
+        self.log("listen: the game is not running")
+        return False
 
     def run(self) -> int:
         script = (HERE / "tests" / f"{self.a.test}.txt").read_text(encoding="utf-8").splitlines()
@@ -301,7 +367,7 @@ class Runner(Actions):
                 subprocess.Popen([str(self.inst.game / "SkyrimSE.exe")], cwd=self.inst.game, env=env)
             self.log(f"launched at {w}x{h}")
             for line in script:
-                line = line.split("#", 1)[0].strip()
+                line = line.split("#", 1)[0].strip().replace("{out}", str(self.out))
                 if line and not self.command(shlex.split(line, posix=False)):
                     break
             self.quit()

@@ -1,0 +1,24 @@
+# RAW's tone map indoors: the game's adapted average, its target and RAW's exposure (ToneView=2) in Riverwood at 13:00
+# and in the inn, beside the frames through the game's tone map and RAW's, so the interior exposure can be set from the
+# game's own intent.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+keyframe frame steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe frame_raw steps=improved hold=40
+reload ini ToneView=2
+keyframe tv2 steps=improved hold=20
+reload ini ToneView=0 Tonemap=0
+console coc whiterunbanneredmare
+wait 10
+scene inn
+keyframe frame steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe frame_raw steps=improved hold=40
+reload ini ToneView=2
+keyframe tv2 steps=improved hold=20
+reload ini ToneView=0 Tonemap=0
+quit

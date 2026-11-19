@@ -62,6 +62,7 @@ namespace SB::Proxy
 inline std::vector<OnDrawCallback>       g_drawCallbacks;
 inline std::vector<OnRTChangeCallback>   g_rtChangeCallbacks;
 inline std::vector<OnShaderBindCallback> g_shaderBindCallbacks;
+inline std::vector<OnViewportCallback>   g_viewportCallbacks;
 
 // Defined in WrappedSwapChain.cpp — depth capture
 extern void PreClearDepthCopy(ID3D11DeviceContext* ctx, ID3D11DepthStencilView* dsv);
@@ -780,6 +781,15 @@ void STDMETHODCALLTYPE WrappedContext::RSSetViewports(UINT NumViewports, const D
         bool zero = (g_vpW <= 0.0f || g_vpH <= 0.0f);
         if (zero && !g_vpWasZero) EmitPipelineState("VIEWPORT_SIZE_ZERO", "viewport width or height is zero");
         g_vpWasZero = zero;
+    }
+    if (!g_viewportCallbacks.empty() && pViewports && NumViewports > 0 &&
+        NumViewports <= D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE) {
+        D3D11_VIEWPORT edited[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+        std::memcpy(edited, pViewports, sizeof(D3D11_VIEWPORT) * NumViewports);
+        for (auto& cb : g_viewportCallbacks)
+            if (cb) cb(NumViewports, edited);
+        m_real->RSSetViewports(NumViewports, edited);
+        return;
     }
     m_real->RSSetViewports(NumViewports, pViewports);
 }

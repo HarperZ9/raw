@@ -15,6 +15,15 @@ namespace raw::rt {
 std::string ResizeShadowAtlasLive(ID3D11DeviceContext* ctx, const Image& img, const std::vector<RefTarget>& refs,
                                   int entry, uint32_t size);
 void AtlasOnPresent();
+
+// One depth-stencil entry as the renderer holds it now: the texture, its width and every depth view
+// (writable and read-only). False when the table or the entry cannot be read.
+struct DepthEntryViews {
+    ID3D11Texture2D* texture = nullptr;
+    uint32_t width = 0, height = 0, slices = 0;
+    ID3D11DepthStencilView* views[16] = {};
+};
+bool ReadDepthEntry(const Image& img, const std::vector<RefTarget>& refs, int entry, DepthEntryViews* out);
 // The render-target table's depth entries and the textures behind them, as one JSON line.
 std::string DumpDepthTargets(const Image& img, const std::vector<RefTarget>& refs);
 

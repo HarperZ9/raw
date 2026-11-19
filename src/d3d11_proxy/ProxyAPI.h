@@ -26,6 +26,9 @@ using OnRTChangeCallback   = void(*)(uint32_t numRTVs, ID3D11RenderTargetView* c
                                      ID3D11DepthStencilView* dsv);
 using OnShaderBindCallback = void(*)(ID3D11PixelShader* ps, ID3D11VertexShader* vs);
 using OnResizeCallback     = void(*)(uint32_t width, uint32_t height, DXGI_FORMAT format);
+// Viewports on their way to the device (version 2). A callback may edit them in place; the device
+// receives the edited copy. The engine module uses it to keep the shadow passes inside a resized atlas.
+using OnViewportCallback   = void(*)(uint32_t numViewports, D3D11_VIEWPORT* viewports);
 
 // Phase change callback — fires synchronously during game rendering when
 // RenderPhaseDetector transitions between render phases.  The SKSE plugin
@@ -139,6 +142,9 @@ struct ProxyInterface
     // Binding-ledger enrichment (eyes): RAW names its resources + brackets passes
     void (*SetPassMarker)(const char* name);
     void (*RegisterResourceName)(void* res, const char* name);
+
+    // ── Version 2 ───────────────────────────────────────────────────
+    void (*RegisterOnViewport)(OnViewportCallback cb);
 };
 
 } // namespace SB::Proxy

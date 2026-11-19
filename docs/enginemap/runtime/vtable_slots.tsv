@@ -1,0 +1,398 @@
+class	slot	target	target_name	calls_total	frames_with_calls	peak_calls_per_frame	caller_return_sites	callees
+BSBatchRenderer	00	0x14F58C0	BSBatchRenderer::Dtor	19	7	0.02	0x14B2097 in sub_14B1FD0	sub_210750, sub_CC6B10, sub_CC6D40, sub_CC6DA0, sub_14F26F0, sub_14F57F0, sub_153AB8C
+BSBatchRenderer	01	0x14F2940	BSBatchRenderer::Unk_01	0	0	0.0		sub_14F4790
+BSBatchRenderer	02	0x14F2A20	BSBatchRenderer::Unk_02	87513242	21198	6735.75	0x14F18F0 in sub_14F17F0;0x14B25F7 in sub_14B242C;0x14B2B70 in sub_14B2A60	sub_14F4790
+BSBatchRenderer	03	0x14F3280	BSBatchRenderer::Unk_03	0	0	0.0		
+BSCullingProcess	00	0xE29880	BSCullingProcess::GetRTTI	0	0	0.0		
+BSCullingProcess	01	0x409110	NiCullingProcess::GetAsNiNode	0	0	0.0		
+BSCullingProcess	02	0x409150	NiCullingProcess::GetAsNiSwitchNode	0	0	0.0		
+BSCullingProcess	03	0x4090A0	NiCullingProcess::GetAsBSFadeNode	0	0	0.0		
+BSCullingProcess	04	0x4090D0	NiCullingProcess::GetAsBSMultiBoundNode	0	0	0.0		
+BSCullingProcess	05	0x4090B0	NiCullingProcess::GetAsBSGeometry	0	0	0.0		
+BSCullingProcess	06	0x409170	NiCullingProcess::GetAsNiTriStrips	0	0	0.0		
+BSCullingProcess	07	0x409160	NiCullingProcess::GetAsBSTriShape	0	0	0.0		
+BSCullingProcess	08	0x409130	NiCullingProcess::GetAsBSSegmentedTriShape	0	0	0.0		
+BSCullingProcess	09	0x409140	NiCullingProcess::GetAsBSSubIndexTriShape	0	0	0.0		
+BSCullingProcess	0A	0x409090	NiCullingProcess::GetAsBSDynamicTriShape	0	0	0.0		
+BSCullingProcess	0B	0x4090E0	NiCullingProcess::GetAsNiGeometry	0	0	0.0		
+BSCullingProcess	0C	0x4090F0	NiCullingProcess::GetAsNiTriBasedGeom	0	0	0.0		
+BSCullingProcess	0D	0x409100	NiCullingProcess::GetAsNiTriShape	0	0	0.0		
+BSCullingProcess	0E	0x409120	NiCullingProcess::GetAsNiParticles	0	0	0.0		
+BSCullingProcess	0F	0x4090C0	NiCullingProcess::GetAsBSLines	0	0	0.0		
+BSCullingProcess	10	0x409070	NiCullingProcess::GetAsBhkNiCollisionObject	0	0	0.0		
+BSCullingProcess	11	0x409050	NiCullingProcess::GetAsBhkBlendCollisionObject	0	0	0.0		
+BSCullingProcess	12	0x409040	NiCullingProcess::GetAsBhkAttachmentCollisionObject	0	0	0.0		
+BSCullingProcess	13	0x409080	NiCullingProcess::GetAsBhkRigidBody	0	0	0.0		
+BSCullingProcess	14	0x409060	NiCullingProcess::GetAsBhkLimitedHingeConstraint	0	0	0.0		
+BSCullingProcess	15	0xE29730	BSCullingProcess::Dtor	0	0	0.0		sub_E28200, sub_153AB8C
+BSCullingProcess	16	0xE28390	BSCullingProcess::Process1	100155661	21290	9472.0	0xD1E32B;0xE28841	
+BSCullingProcess	17	0xE28690	BSCullingProcess::Process2	260679	21290	23.0	0x14BF3ED in sub_14BF320	
+BSCullingProcess	18	0xE288E0	BSCullingProcess::AppendVirtual	36794237	21287	3516.33	0xD37F88 in BSGeometry::OnVisible	sub_E29770, sub_E29890
+BSCullingProcess	19	0xE28870	BSCullingProcess::AppendNonAccum	36447611	21287	3483.33	0xD37F88 in BSGeometry::OnVisible	sub_CC6890
+BSCullingProcess	1A	0xE29350	BSCullingProcess::TestBaseVisibility1	0	0	0.0		
+BSCullingProcess	1B	0xE29330	BSCullingProcess::TestBaseVisibility2	0	0	0.0		
+BSCullingProcess	1C	0xE29260	BSCullingProcess::TestBaseVisibility3	0	0	0.0		
+BSDistantTreeShader	00	0x14ED130	BSDistantTreeShader::Dtor	0	0	0.0		sub_150BBE0, sub_150C200, sub_153AB8C
+BSDistantTreeShader	01	0xD27520	shared_stub_d27520	0	0	0.0		
+BSDistantTreeShader	02	0x14ECA50	BSDistantTreeShader::SetupTechnique	42020	10505	4.0	0x14F3E4D in sub_14F3DC0	sub_150C2D0, sub_1521550, sub_1521560
+BSDistantTreeShader	03	0x14ECA10	BSDistantTreeShader::RestoreTechnique	42020	10505	4.0	0x14F3CBD in sub_14F39C0	
+BSDistantTreeShader	04	0x150BAC0	shared_stub_150bac0	42020	10505	4.0	0x14F3E8E in sub_14F3DC0	
+BSDistantTreeShader	05	0x150BAD0	shared_stub_150bad0	0	0	0.0		
+BSDistantTreeShader	06	0x14ECEF0	BSDistantTreeShader::SetupGeometry	3986866	10505	381.33	0x14F40D4	sub_14AAF10, sub_153D3C2, sub_153D3E6
+BSDistantTreeShader	07	0x14ED090	BSDistantTreeShader::RestoreGeometry	3986866	10505	381.33	0x14F40EB in sub_14F3DC0	
+BSDistantTreeShader	08	0x150BC70	shared_stub_150bc70	0	0	0.0		
+BSDistantTreeShader	09	0x150BFF0	BSShader::ReloadShaders	0	0	0.0		
+BSFadeNode	00	0x147B230	BSFadeNode::Dtor	90	17	0.09	0x19897B;0x94EDA3 in sub_94EB10;0xE1573D in sub_E15490;0x524683 in sub_524350;0xBAD3FD in sub_BAD2C0	sub_D1CFD0, sub_153AB8C
+BSFadeNode	01	0xD27520	shared_stub_d27520	90	17	0.09	0x19897B;0x94EDA3 in sub_94EB10;0xE1573D in sub_E15490;0x524683 in sub_524350;0xBAD3FD in sub_BAD2C0	
+BSFadeNode	02	0x147B270	BSFadeNode::GetRTTI	4425	694	9.32	0xD2195E in NiStream::LoadStream;0xD30976 in sub_D3094D;0x2EED2C in sub_2EECE0;0x192F14 in QueuedTree::vfunc_14;0x2DF8C4 in sub_2DF8BC;0xD333C4 in sub_D333AA;0x725637 in sub_72562A;0x2C5FC3 in sub_2C5D80	
+BSFadeNode	03	0x1AF760	NiNode::AsNode	460483	21290	267.12	0x150A980 in sub_150A954;0xD309C8 in sub_D3094D;0x150A704 in sub_150A610;0xE551F3 in sub_E551EA;0x2F6A3C in sub_2F69F0;0x147C2A6 in sub_147C29E;0x3FEA77 in sub_3FEA1A;0x2FD63E in sub_2FD636	
+BSFadeNode	04	0x1AF7A0	shared_stub_1af7a0	47531	9577	32.84	0x14A326A in sub_14A3221;0x14A2EA0 in sub_14A2E5F	
+BSFadeNode	05	0x147B280	BSFadeNode::AsFadeNode	5562641	19562	4120.18	0xE53CAE in sub_E53C8A;0xDD4590 in NiParticleSystem::Do_UpdateSystem;0x2D1FAF in sub_2D1280;0x2E4265 in sub_2E3970;0x2D135A in sub_2D1280;0x147B0B9 in sub_147B0A0;0x2E3F32 in sub_2E3970;0x2D1F27 in sub_2D1280	
+BSFadeNode	06	0x1AF720	shared_stub_1af720	19678	9837	2.01	0x150A9A3 in sub_150A954	
+BSFadeNode	07	0x1AF700	shared_stub_1af700	48954	19504	70.48	0x14AC1EF in sub_14AC1C0;0x147C6B2 in sub_147C690;0x147C214 in sub_147C1E0;0x1480FE5 in sub_1480FDD;0x2FD604 in sub_2FD5F0;0x14ABA80 in sub_14ABA60;0x14A3311 in sub_14A32E3;0x14A190F in sub_14A1540	
+BSFadeNode	08	0x1AF7C0	shared_stub_1af7c0	0	0	0.0		
+BSFadeNode	09	0x1AF7B0	shared_stub_1af7b0	26	4	0.04	0x526934 in sub_52692C;0x526A8A in sub_526A7D	
+BSFadeNode	0A	0x1AF780	shared_stub_1af780	0	0	0.0		
+BSFadeNode	0B	0x1AF790	shared_stub_1af790	0	0	0.0		
+BSFadeNode	0C	0x1AF6E0	shared_stub_1af6e0	0	0	0.0		
+BSFadeNode	0D	0x1AF730	shared_stub_1af730	0	0	0.0		
+BSFadeNode	0E	0x1AF740	shared_stub_1af740	0	0	0.0		
+BSFadeNode	0F	0x1AF750	shared_stub_1af750	0	0	0.0		
+BSFadeNode	10	0x1AF770	shared_stub_1af770	756	39	1.78	0xE5511F in sub_E55100	
+BSFadeNode	11	0x1AF710	shared_stub_1af710	0	0	0.0		
+BSFadeNode	12	0x1AF6C0	shared_stub_1af6c0	0	0	0.0		
+BSFadeNode	13	0x1AF6A0	shared_stub_1af6a0	0	0	0.0		
+BSFadeNode	14	0x1AF690	shared_stub_1af690	0	0	0.0		
+BSFadeNode	15	0x1AF6D0	shared_stub_1af6d0	0	0	0.0		
+BSFadeNode	16	0x1AF6B0	shared_stub_1af6b0	0	0	0.0		
+BSFadeNode	17	0x14797D0	BSFadeNode::CreateClone	5293	38	15.5	0xD17F19 in NiAVObject::Clone;0xD17F7E in sub_D17F60	sub_CC40C0, sub_CC4680, sub_D1CAA0, NiNode::Ctor, sub_1479EA0, sub_147BF70
+BSFadeNode	18	0x1479920	BSFadeNode::LoadBinary	756	38	1.78	0xD21955 in NiStream::LoadStream	NiNode::LoadBinary
+BSFadeNode	19	0x1479930	BSFadeNode::LinkObject	756	38	1.78	0xD21AE7 in NiStream::LoadStream	NiNode::LinkObject
+BSFadeNode	1A	0x1479940	BSFadeNode::RegisterStreamables	0	0	0.0		NiNode::RegisterStreamables
+BSFadeNode	1B	0x1479960	BSFadeNode::SaveBinary	0	0	0.0		NiNode::SaveBinary
+BSFadeNode	1C	0x1479970	BSFadeNode::IsEqual	0	0	0.0		
+BSFadeNode	1D	0xD1E560	NiNode::ProcessClone	5293	39	15.5	0xD17F2E in NiAVObject::Clone;0xD17F91 in sub_D17F60	sub_CC8460, NiAVObject::ProcessClone
+BSFadeNode	1E	0xD26E00	shared_stub_d26e00	756	39	1.78	0xD21B48 in NiStream::LoadStream	sub_CC9140, sub_CC9390, shared_stub_d18190, sub_D26CD0
+BSFadeNode	1F	0xD181A0	shared_stub_d181a0	0	0	0.0		
+BSFadeNode	20	0xD181B0	shared_stub_d181b0	0	0	0.0		
+BSFadeNode	21	0xD181C0	shared_stub_d181c0	0	0	0.0		
+BSFadeNode	22	0xD181D0	shared_stub_d181d0	0	0	0.0		
+BSFadeNode	23	0xD181E0	shared_stub_d181e0	0	0	0.0		
+BSFadeNode	24	0xD181F0	shared_stub_d181f0	0	0	0.0		
+BSFadeNode	25	0xD1DA20	NiNode::UpdateControllers	0	0	0.0		
+BSFadeNode	26	0xD1D910	NiNode::PerformOp	0	0	0.0		
+BSFadeNode	27	0xD1E610	NiNode::AttachProperty	0	0	0.0		
+BSFadeNode	28	0xD1C060	shared_stub_d1c060	0	0	0.0		
+BSFadeNode	29	0xD1C070	shared_stub_d1c070	0	0	0.0		
+BSFadeNode	2A	0xD1D9A0	NiNode::GetObjectByName	14624	9605	7.29	0x94F24D in sub_94EFB0;0x26EE33 in sub_26EC50;0xE18693 in sub_E18620;0xD1D9EC in sub_D1D9BA	NiAVObject::vfunc_2A
+BSFadeNode	2B	0xD1E430	NiNode::SetSelectiveUpdateFlags	0	0	0.0		sub_D1C7E0
+BSFadeNode	2C	0xD1DAD0	NiNode::UpdateDownwardPass	226817	21285	48.91	0xD1DB92 in NiNode::UpdateDownwardPass;0xD1BF85 in NiAVObject::Update;0x2E8F22 in sub_2E8BF0;0x219E16 in sub_219AD0;0xD1DC22 in NiNode::UpdateDownwardPass;0x2F6BB8 in sub_2F69F0	sub_D3A250
+BSFadeNode	2D	0x147A840	BSFadeNode::UpdateSelectedDownwardPass	968353	9575	615.0	0x2B42C0 in sub_2B41A0	sub_210B20, NiNode::UpdateSelectedDownwardPass
+BSFadeNode	2E	0xD1E040	NiNode::UpdateRigidDownwardPass	0	0	0.0		
+BSFadeNode	2F	0xD1DF20	NiNode::UpdateWorldBound	289472	9591	205.0	0x3BE289 in sub_3BDD00;0xD1DEF3 in NiNode::vfunc_3D	
+BSFadeNode	30	0xD27540	shared_stub_d27540	1197076	21285	663.91	0xD1DB2C in NiNode::UpdateDownwardPass;0xE88047 in sub_E87FFB;0xD1E19E in NiNode::UpdateTransformAndBounds	sub_D27722
+BSFadeNode	31	0xD1E170	NiNode::UpdateTransformAndBounds	967918	9570	615.0	0x2B4A87 in sub_2B4960;0x6597F5 in sub_659790;0x2B4B7B in sub_2B4960	sub_D3A250
+BSFadeNode	32	0xD1C4D0	shared_stub_d1c4d0	0	0	0.0		
+BSFadeNode	33	0xD1C510	shared_stub_d1c510	0	0	0.0		
+BSFadeNode	34	0x1479F50	BSFadeNode::OnVisible	26248958	21287	1966.0	0xD3FFE3 in sub_D3FF3A;0xE28631 in sub_E28595	NiNode::OnVisible, sub_147A160, sub_147B110
+BSFadeNode	35	0xD1D100	NiNode::vfunc_35	139	34	0.31	0x51A72B in sub_51A390;0x26EF09 in sub_26EC50;0x2E7B49 in sub_2E7620;0x217F77 in sub_217890;0x3BCCC5 in sub_3BCC0C;0x217A6F in sub_217890	sub_2CFC30, sub_D1C530, sub_D1EE40
+BSFadeNode	36	0xD1D270	NiNode::vfunc_36	0	0	0.0		sub_D1C530, sub_D1EB40
+BSFadeNode	37	0xD1D360	NiNode::vfunc_37	16	13	0.03	0xD1D334 in NiNode::vfunc_38	sub_D1ED60
+BSFadeNode	38	0xD1D310	NiNode::vfunc_38	16	13	0.03	0xD2FEA4 in sub_D2F990;0xD1C555 in sub_D1C530;0x21271A in sub_2126A0	
+BSFadeNode	39	0xD1D520	NiNode::vfunc_39	38	17	0.06	0xD1D4F4 in NiNode::vfunc_3A;0xD1D3A6 in NiNode::vfunc_37	sub_D1ED60
+BSFadeNode	3A	0xD1D4D0	NiNode::vfunc_3A	22	4	0.06	0x21DFC0 in sub_21DF10;0x2E2E72	
+BSFadeNode	3B	0xD1D750	NiNode::vfunc_3B	13892	69	40.32	0xD1D724 in NiNode::vfunc_3C	sub_2CFC30, sub_D1C530, sub_D1EE40
+BSFadeNode	3C	0xD1D700	NiNode::vfunc_3C	13892	69	40.32	0xD1CC03 in sub_D1CBE1;0xD1CB21 in sub_D1CAE1	
+BSFadeNode	3D	0xD1DEE0	NiNode::vfunc_3D	289406	9573	205.0	0x6598B6;0x26F90C;0x2D0340	
+BSFadeNode	3E	0x147B2A0	BSFadeNode::vfunc_3E	0	0	0.0		
+BSFadeNode	3F	0x147B290	BSFadeNode::vfunc_3F	0	0	0.0		
+BSLightingShader	00	0x14E09E0	BSLightingShader::Dtor	0	0	0.0		sub_28E340, sub_14DE7E0, sub_14F6670, sub_150BBE0, sub_153AB8C
+BSLightingShader	01	0xD27520	shared_stub_d27520	0	0	0.0		
+BSLightingShader	02	0x14DB810	BSLightingShader::SetupTechnique	1774887	21198	129.67	0x14F3E4D in sub_14F3DC0	sub_150C2D0, sub_151C730, sub_151C760
+BSLightingShader	03	0x14DB0C0	BSLightingShader::RestoreTechnique	1774887	21198	129.67	0x14F3CBD in sub_14F39C0;0x14F3E2D in sub_14F3DC0	
+BSLightingShader	04	0x14DC310	BSLightingShader::SetupMaterial	15768528	21198	1349.67	0x14F3E8E in sub_14F3DC0	sub_14E0460, sub_14E06B0, sub_14E0710, sub_14E8B30
+BSLightingShader	05	0x14DD030	BSLightingShader::RestoreMaterial	0	0	0.0		
+BSLightingShader	06	0x14DD040	BSLightingShader::SetupGeometry	22847427	21198	1987.67	0x14F40D4;0x14F3EE7	
+BSLightingShader	07	0x14DE3D0	BSLightingShader::RestoreGeometry	22847427	21198	1987.67	0x14F40EB in sub_14F3DC0;0x14F3FAE in sub_14F3DC0	
+BSLightingShader	08	0x150BC70	shared_stub_150bc70	0	0	0.0		
+BSLightingShader	09	0x150BFF0	BSShader::ReloadShaders	0	0	0.0		
+BSScript::Internal::CodeTasklet	00	0x146A470	BSScript::Internal::CodeTasklet::Dtor	784	675	0.33	0x14323DF in BSScript::Stack::Dtor	sub_153AB8C
+BSScript::Internal::CodeTasklet	01	0x1463430	BSScript::Internal::CodeTasklet::GetFunctionCallInfo	6662	1743	2.9	0x144E46A in sub_144E370	sub_1798E0, sub_9BDD60, sub_9D9EE0, sub_CEC680, sub_CEC740, sub_1424770, sub_1425AF0, sub_1425DF0
+BSScript::Internal::VirtualMachine	00	0x145CAA0	BSScript::Internal::VirtualMachine::Dtor	0	0	0.0		sub_1443EA0, sub_153AB8C
+BSScript::Internal::VirtualMachine	01	0x1461490	BSScript::Internal::VirtualMachine::SetLinkedCallback	1	1	0.0	0x9BEB50 in sub_9BDE90	sub_1AF7D0
+BSScript::Internal::VirtualMachine	02	0x1444B00	BSScript::Internal::VirtualMachine::TraceStack	0	0	0.0		sub_1AF7D0, sub_142DD80, sub_142EB00, BSScript::Stack::Dtor, sub_145DF50, sub_153AB8C
+BSScript::Internal::VirtualMachine	03	0x1444AA0	BSScript::Internal::VirtualMachine::FormatAndPostMessage	208	16	0.68	0x9A65D5 in sub_9A6090;0x9A90CE in sub_9A8A00	sub_142DD80, sub_142F110
+BSScript::Internal::VirtualMachine	04	0x1444210	BSScript::Internal::VirtualMachine::Update	19455	19454	1.0	0x9C09E7 in sub_9BFB00	sub_1AF7D0, sub_CC67F0, sub_CC8460, sub_1425DF0, sub_142DD80, sub_144F2B0, sub_144F620, sub_144F8A0
+BSScript::Internal::VirtualMachine	05	0x1444880	BSScript::Internal::VirtualMachine::UpdateTasklets	9881	9880	1.0	0x9C9E20 in sub_9C9DB0;0x6463E7	sub_CC67E0, sub_CC6860, sub_CC6890, sub_CC6B10, sub_CC7060, sub_1462650
+BSScript::Internal::VirtualMachine	06	0x1444A10	BSScript::Internal::VirtualMachine::SetOverstressed	19453	19453	1.0	0x9C922C in sub_9C921D	
+BSScript::Internal::VirtualMachine	07	0x1444A20	BSScript::Internal::VirtualMachine::IsCompletelyFrozen	3	1	0.01	0x9C36DC in sub_9C3690	sub_1AF7D0
+BSScript::Internal::VirtualMachine	08	0x1444C20	BSScript::Internal::VirtualMachine::RegisterObjectType	82	1	0.27		sub_1798E0, sub_1AF7D0, sub_CC83E0, sub_CC8460, sub_CEC5D0, sub_CEC740, sub_CEC820, sub_14594F0
+BSScript::Internal::VirtualMachine	09	0x1444F70	BSScript::Internal::VirtualMachine::GetScriptObjectType1	461326	393	1341.72	0x9B78D1 in sub_9B7830;0x1448E82 in sub_1448DF0;0x1449E82 in sub_1449E00;0x9A5DEA in SkyrimScript::ObjectBindPolicy::Unk_0B;0x143FCBC in sub_143F9B0;0x1425128 in sub_1424FF0;0x14316DA in sub_14314F0;0x1463730 in BSScript::Internal::CodeTasklet::GetFunctionCallInfo	sub_1AF7D0, sub_1450430
+BSScript::Internal::VirtualMachine	0A	0x1444E30	BSScript::Internal::VirtualMachine::GetScriptObjectType2	1465	524	1.74	0x9D0CC7 in sub_9D0C60;0x9D2247 in sub_9D21E0;0xA109D7 in sub_A10970;0xA10C84 in sub_A10C20;0x9D27A7 in sub_9D2740;0xA46876 in sub_A46840;0xA03AA7 in sub_A03A40;0xA3A807 in sub_A3A7A0	sub_1798E0, sub_1AF7D0, sub_CC83E0, sub_CEC680, sub_CEC740, sub_CEC820, sub_1425DF0, sub_1450430
+BSScript::Internal::VirtualMachine	0B	0x14451D0	BSScript::Internal::VirtualMachine::GetScriptObjectTypeNoLoad1	0	0	0.0		sub_1AF7D0, sub_1425DF0, sub_145E0C0, sub_153AB8C
+BSScript::Internal::VirtualMachine	0C	0x1445040	BSScript::Internal::VirtualMachine::GetScriptObjectTypeNoLoad2	0	0	0.0		sub_1798E0, sub_1AF7D0, sub_CC83E0, sub_CEC680, sub_CEC740, sub_CEC820, sub_1425DF0, sub_145E0C0
+BSScript::Internal::VirtualMachine	0D	0x14452F0	BSScript::Internal::VirtualMachine::GetTypeIDForScriptObject	591155	93	1342.88	0x1448EC8 in sub_1448DF0;0x1449064 in sub_1448FA0	sub_1AF7D0, sub_145E020
+BSScript::Internal::VirtualMachine	0E	0x14453C0	BSScript::Internal::VirtualMachine::GetScriptObjectsWithATypeID	0	0	0.0		sub_1AF7D0, sub_CC6E80, sub_CC6F10, sub_CEC740, sub_CEC820, sub_145D9C0, sub_145DBF0
+BSScript::Internal::VirtualMachine	0F	0x14455A0	BSScript::Internal::VirtualMachine::GetParentNativeType	0	0	0.0		sub_1AF7D0, sub_CC8460, sub_1425DF0, sub_1450430, sub_153AB8C
+BSScript::Internal::VirtualMachine	10	0x1445840	BSScript::Internal::VirtualMachine::TypeIsValid	0	0	0.0		sub_1425DF0, sub_153AB8C
+BSScript::Internal::VirtualMachine	11	0x14458D0	BSScript::Internal::VirtualMachine::ReloadType	0	0	0.0		sub_1798E0, sub_1AF7D0, sub_CEC5D0, sub_CEC740, sub_CEC820, sub_1425DF0, sub_145E0C0, sub_153AB8C
+BSScript::Internal::VirtualMachine	12	0x144F1B0	BSScript::Internal::VirtualMachine::TasksToJobs	19148	9575	2.0	0x6D35DF in sub_6D34B0;0x6D2D41 in sub_6D2CD0	sub_1AF7D0, sub_CF66B0
+BSScript::Internal::VirtualMachine	13	0x1445A70	BSScript::Internal::VirtualMachine::CalculateFullReloadList	0	0	0.0		sub_1AF7D0, sub_CC9D70, sub_CC9DE0, sub_142D640, sub_1457F10, sub_145B670, sub_145EC50
+BSScript::Internal::VirtualMachine	14	0x1445D10	BSScript::Internal::VirtualMachine::CreateObject1	0	0	0.0		
+BSScript::Internal::VirtualMachine	15	0x1445CB0	BSScript::Internal::VirtualMachine::CreateObject2	43531	22	145.06	0x9A97AE in sub_9A94F0;0xA10D4E in sub_A10C20;0x9D2314 in sub_9D21E0;0x1446D5A in BSScript::Internal::VirtualMachine::CastObject;0x9D1854 in sub_9D1720;0xA3A8D4 in sub_A3A7A0	sub_1451170
+BSScript::Internal::VirtualMachine	16	0x1445EF0	BSScript::Internal::VirtualMachine::CreateArray1	1004	10	3.35	0x9A8E0C in sub_9A8A00	sub_1AF7D0, sub_1451660
+BSScript::Internal::VirtualMachine	17	0x1445DD0	BSScript::Internal::VirtualMachine::CreateArray2	0	0	0.0		sub_1AF7D0, sub_1425DF0, sub_1451660, sub_153AB8C
+BSScript::Internal::VirtualMachine	18	0x1445FE0	BSScript::Internal::VirtualMachine::BindNativeMethod	1462	1	4.87		sub_1798E0, sub_1AF7D0, sub_CC40C0, sub_CC4680, sub_CEC680, sub_1425DF0, sub_1428C50, sub_1459830
+BSScript::Internal::VirtualMachine	19	0x1446280	BSScript::Internal::VirtualMachine::SetCallableFromTasklets1	446	1	1.49	0x1446268 in BSScript::Internal::VirtualMachine::SetCallableFromTasklets2	sub_1798E0, sub_18A900, sub_1AF7D0, sub_CC8460, sub_CEC5D0, sub_CEC680, sub_CEC740, sub_CEC760
+BSScript::Internal::VirtualMachine	1A	0x1446250	BSScript::Internal::VirtualMachine::SetCallableFromTasklets2	446	1	1.49		
+BSScript::Internal::VirtualMachine	1B	0x14465F0	BSScript::Internal::VirtualMachine::ForEachBoundObject	309683	9663	773.74	0x9A61B7 in sub_9A6090;0x32BB08 in sub_32BA40;0x9A9731 in sub_9A94F0	sub_1AF7D0, sub_37CF20, sub_145E270
+BSScript::Internal::VirtualMachine	1C	0x1446700	BSScript::Internal::VirtualMachine::FindBoundObject	49278	9582	5.58	0x144767C in BSScript::Internal::VirtualMachine::GetVariableValue2;0x9D22F8 in sub_9D21E0;0xA10A88 in sub_A10970;0x9D2042 in sub_9D1F30;0x9D1838 in sub_9D1720;0x9D1028 in sub_9D0F10;0xA03B58 in sub_A03A40	sub_1AF7D0, sub_1451A80
+BSScript::Internal::VirtualMachine	1D	0x14467B0	BSScript::Internal::VirtualMachine::MoveBoundObjects	0	0	0.0		sub_1AF7D0, sub_37CF20, sub_CC4510, sub_CC4680, sub_1423A00, sub_1423B50, sub_145A210, sub_1460F10
+BSScript::Internal::VirtualMachine	1E	0x1446A70	BSScript::Internal::VirtualMachine::ResetAllBoundObjects	72	6	0.15	0x9C6B09 in sub_9C6A20	sub_1AF7D0, sub_37CF20, sub_14233B0, sub_1456600, sub_145E270
+BSScript::Internal::VirtualMachine	1F	0x1446BF0	BSScript::Internal::VirtualMachine::CastObject	21758	501	70.13	0x144A2F2 in sub_1449FB0;0x146907A in sub_1468E60	sub_37E490, BSScript::ObjectBindPolicy::BindObject, sub_1422240, sub_1422EA0, sub_1425DF0, sub_153AB8C
+BSScript::Internal::VirtualMachine	20	0x1446DD0	BSScript::Internal::VirtualMachine::SetPropertyValue	0	0	0.0		sub_1798E0, sub_18A900, sub_CC4510, sub_CC4680, sub_CEC5D0, sub_CEC680, sub_CEC740, sub_CEC820
+BSScript::Internal::VirtualMachine	21	0x14472F0	BSScript::Internal::VirtualMachine::GetPropertyValue	0	0	0.0		sub_1798E0, sub_18A900, sub_CEC5D0, sub_CEC680, sub_CEC740, sub_CEC820, sub_1425DF0, sub_142ACC0
+BSScript::Internal::VirtualMachine	22	0x1447720	BSScript::Internal::VirtualMachine::GetVariableValue1	47844	9578	5.11	0x14476A3 in BSScript::Internal::VirtualMachine::GetVariableValue2	sub_9D9EE0, sub_1425AF0, sub_1425DF0, sub_1426B80, sub_153AB8C
+BSScript::Internal::VirtualMachine	23	0x1447620	BSScript::Internal::VirtualMachine::GetVariableValue2	47844	9578	5.11	0x339CE6 in sub_339C40	sub_9D9EE0, sub_CC4510, sub_CC4680, sub_1422190, sub_1422F50, sub_1425AF0
+BSScript::Internal::VirtualMachine	24	0x14477F0	BSScript::Internal::VirtualMachine::SendEvent	9573	655	18.32	0x9C59CF in sub_9C5910;0x9C8923 in sub_9C8850;0x9C8783 in sub_9C86B0;0x9C05BF in sub_9BFB00;0x9CB7D0 in SkyrimVM::EventRelayFunctor::vfunc_01;0x9C6064 in sub_9C5F90;0x9C60B9 in sub_9C5F90;0x9C3AF2 in sub_9C3A20	sub_1AF7D0, sub_37CF20, sub_CC4510, sub_CC4680, sub_CC67E0, sub_CC6B10, sub_CC6E80, sub_CC6F10
+BSScript::Internal::VirtualMachine	25	0x1447B40	BSScript::Internal::VirtualMachine::SendEventAll	0	0	0.0		sub_1AF7D0
+BSScript::Internal::VirtualMachine	26	0x1447C90	BSScript::Internal::VirtualMachine::DispatchStaticCall	0	0	0.0		sub_18A900, sub_9D9EE0, sub_CC40C0, sub_CC4680, sub_CC67E0, sub_CC6B10, sub_CC7060, sub_14259F0
+BSScript::Internal::VirtualMachine	27	0x14480D0	BSScript::Internal::VirtualMachine::DispatchMethodCall1	4289	656	6.84	0x1447AA6 in BSScript::Internal::VirtualMachine::SendEvent;0x1448053 in BSScript::Internal::VirtualMachine::DispatchMethodCall2	sub_11BD00, sub_18A900, sub_9D9EE0, sub_CC67E0, sub_CC6B10, sub_CC7060, sub_14259F0, sub_1425AF0
+BSScript::Internal::VirtualMachine	28	0x1447FE0	BSScript::Internal::VirtualMachine::DispatchMethodCall2	178	13	0.54	0x9C660D in sub_9C6430;0x9C6D89 in sub_9C6B70;0x14486D4 in BSScript::Internal::VirtualMachine::DispatchUnboundMethodCall;0x9C71EA in sub_9C6FE0	sub_CC4510, sub_CC4680, sub_1422190, sub_1422F50
+BSScript::Internal::VirtualMachine	29	0x1448450	BSScript::Internal::VirtualMachine::DispatchUnboundMethodCall	1	1	0.0	0x9C8047 in sub_9C7E80	sub_1AF7D0, sub_37CF20, sub_37E490, sub_CC4510, sub_CC4680, sub_1422190, sub_1422240, sub_1422EA0
+BSScript::Internal::VirtualMachine	2A	0x1448760	BSScript::Internal::VirtualMachine::IsWaitingOnLatent	0	0	0.0		sub_1AF7D0, BSScript::Stack::Dtor, sub_145DF50, sub_153AB8C
+BSScript::Internal::VirtualMachine	2B	0x1448830	BSScript::Internal::VirtualMachine::ReturnFromLatent	203	106	0.21	0x9D037E in sub_9D0180;0x9BFF3A in sub_9BFB00;0x9B3EBE in sub_9B3DE0;0xA2CA4F in sub_A2C8C0;0xA4714B in sub_A46FD0	sub_18A900, sub_1AF7D0, sub_9D9EE0, sub_CC4510, sub_CC4680, sub_1422190, sub_1422EA0, sub_1422F50
+BSScript::Internal::VirtualMachine	2C	0x1448BC0	BSScript::Internal::VirtualMachine::GetErrorLogger	62	1	0.21	0x1431930 in sub_14314F0	
+BSScript::Internal::VirtualMachine	2D	0x1448BE0	BSScript::Internal::VirtualMachine::GetObjectHandlePolicy1	719971	9697	1204.55	0xA31B6B in sub_A31AC0;0x9A52FF in SkyrimScript::ObjectBindPolicy::Unk_03;0x9A60CE in sub_9A6090;0x141CE68 in sub_141CD90;0x1E1062 in sub_1E0F80;0x141E0F9 in sub_141E0B0;0x9A56BC in SkyrimScript::ObjectBindPolicy::Unk_07;0x1BBD60 in sub_1BBAA0	
+BSScript::Internal::VirtualMachine	2E	0x1448BD0	BSScript::Internal::VirtualMachine::GetObjectHandlePolicy2	0	0	0.0		
+BSScript::Internal::VirtualMachine	2F	0x1448C00	BSScript::Internal::VirtualMachine::GetObjectBindPolicy1	63538	74	145.81	0x1BBD80 in sub_1BBAA0;0x1E100B in sub_1E0F80;0x9A97BF in sub_9A94F0;0xA10DED in sub_A10C20;0x9D23B6 in sub_9D21E0;0x9D18F6 in sub_9D1720;0xA3A15D in sub_A39F90;0xA3A976 in sub_A3A7A0	
+BSScript::Internal::VirtualMachine	30	0x1448BF0	BSScript::Internal::VirtualMachine::GetObjectBindPolicy2	0	0	0.0		
+BSScript::Internal::VirtualMachine	31	0x1448C10	BSScript::Internal::VirtualMachine::GetSavePatcherInterface	31	1	0.1	0x1432167 in sub_14314F0	
+BSScript::Internal::VirtualMachine	32	0x1448C20	BSScript::Internal::VirtualMachine::RegisterForLogEvent	0	0	0.0		sub_145F090
+BSScript::Internal::VirtualMachine	33	0x1448C90	BSScript::Internal::VirtualMachine::UnregisterForLogEvent	0	0	0.0		sub_1461A00
+BSScript::Internal::VirtualMachine	34	0x1448D00	BSScript::Internal::VirtualMachine::RegisterForStatsEvent	1	1	0.0	0x9BEB7B in sub_9BDE90	sub_145F200
+BSScript::Internal::VirtualMachine	35	0x1448D60	BSScript::Internal::VirtualMachine::UnregisterForStatsEvent	0	0	0.0		sub_1461B80
+BSShaderAccumulator	00	0x14B5C00	BSShaderAccumulator::Dtor	19	7	0.02	0x14F144E in sub_14F13F0;0x14BFA2D;0x415674 in sub_4155E0	sub_14B1FD0, sub_153AB8C
+BSShaderAccumulator	01	0xD27520	shared_stub_d27520	19	7	0.02	0x14F144E in sub_14F13F0;0x14BFA2D;0x415674 in sub_4155E0	
+BSShaderAccumulator	02	0x14B5C70	BSShaderAccumulator::GetRTTI	0	0	0.0		
+BSShaderAccumulator	03	0x206670	shared_stub_206670	0	0	0.0		
+BSShaderAccumulator	04	0x1AF7A0	shared_stub_1af7a0	0	0	0.0		
+BSShaderAccumulator	05	0x1AF6F0	shared_stub_1af6f0	0	0	0.0		
+BSShaderAccumulator	06	0x1AF720	shared_stub_1af720	0	0	0.0		
+BSShaderAccumulator	07	0x1AF700	shared_stub_1af700	0	0	0.0		
+BSShaderAccumulator	08	0x1AF7C0	shared_stub_1af7c0	0	0	0.0		
+BSShaderAccumulator	09	0x1AF7B0	shared_stub_1af7b0	0	0	0.0		
+BSShaderAccumulator	0A	0x1AF780	shared_stub_1af780	0	0	0.0		
+BSShaderAccumulator	0B	0x1AF790	shared_stub_1af790	0	0	0.0		
+BSShaderAccumulator	0C	0x1AF6E0	shared_stub_1af6e0	0	0	0.0		
+BSShaderAccumulator	0D	0x1AF730	shared_stub_1af730	0	0	0.0		
+BSShaderAccumulator	0E	0x1AF740	shared_stub_1af740	0	0	0.0		
+BSShaderAccumulator	0F	0x1AF750	shared_stub_1af750	0	0	0.0		
+BSShaderAccumulator	10	0x1AF770	shared_stub_1af770	0	0	0.0		
+BSShaderAccumulator	11	0x1AF710	shared_stub_1af710	0	0	0.0		
+BSShaderAccumulator	12	0x1AF6C0	shared_stub_1af6c0	0	0	0.0		
+BSShaderAccumulator	13	0x1AF6A0	shared_stub_1af6a0	0	0	0.0		
+BSShaderAccumulator	14	0x1AF690	shared_stub_1af690	0	0	0.0		
+BSShaderAccumulator	15	0x1AF6D0	shared_stub_1af6d0	0	0	0.0		
+BSShaderAccumulator	16	0x1AF6B0	shared_stub_1af6b0	0	0	0.0		
+BSShaderAccumulator	17	0xD4A580	sub_D4A580	0	0	0.0		sub_CC40C0, sub_CC4680, sub_D59A50, sub_D59B90
+BSShaderAccumulator	18	0xD4A6B0	sub_D4A6B0	0	0	0.0		
+BSShaderAccumulator	19	0xD4A6C0	sub_D4A6C0	0	0	0.0		
+BSShaderAccumulator	1A	0xD4A6D0	sub_D4A6D0	0	0	0.0		
+BSShaderAccumulator	1B	0xD4A6E0	sub_D4A6E0	0	0	0.0		
+BSShaderAccumulator	1C	0xD4A6F0	sub_D4A6F0	0	0	0.0		sub_D59AA0
+BSShaderAccumulator	1D	0xD18040	NiObject::ProcessClone	0	0	0.0		sub_D18410
+BSShaderAccumulator	1E	0xD18190	shared_stub_d18190	0	0	0.0		
+BSShaderAccumulator	1F	0xD181A0	shared_stub_d181a0	0	0	0.0		
+BSShaderAccumulator	20	0xD181B0	shared_stub_d181b0	0	0	0.0		
+BSShaderAccumulator	21	0xD181C0	shared_stub_d181c0	0	0	0.0		
+BSShaderAccumulator	22	0xD181D0	shared_stub_d181d0	0	0	0.0		
+BSShaderAccumulator	23	0xD181E0	shared_stub_d181e0	0	0	0.0		
+BSShaderAccumulator	24	0xD181F0	shared_stub_d181f0	0	0	0.0		
+BSShaderAccumulator	25	0x14B2130	BSShaderAccumulator::vfunc_25	232444	21290	14.0	0x14A9154 in sub_14A90F0	
+BSShaderAccumulator	26	0x14B2240	BSShaderAccumulator::vfunc_26	0	0	0.0		
+BSShaderAccumulator	27	0xD4A830	sub_D4A830	0	0	0.0		
+BSShaderAccumulator	28	0x14B4BA0	BSShaderAccumulator::vfunc_28	745233	19453	67.0	0xE28C7B in sub_E28AF0	
+BSShaderAccumulator	29	0x14B4BC0	BSShaderAccumulator::vfunc_29	745233	19453	67.0	0xE28CBD in sub_E28AF0	
+BSShaderAccumulator	2A	0x14B2CE0	BSShaderAccumulator::vfunc_2A	211434	21290	12.0	0x14A9162 in sub_14A90F0	sub_1480220, sub_14B2D90
+BSShaderAccumulator	2B	0x14B2D50	BSShaderAccumulator::vfunc_2B	191657	21290	11.0	0x972BEE;0x14CB7D6;0x14CB9BC	sub_D5A200, sub_14B3390
+BSShaderAccumulator	2C	0x14B47B0	BSShaderAccumulator::vfunc_2C	0	0	0.0		
+BSShadowDirectionalLight	00	0x1515020	BSShadowDirectionalLight::Dtor	0	0	0.0		sub_CC6B10, sub_CC6D40, sub_CC6DA0, sub_14F0010, sub_153AB8C
+BSShadowDirectionalLight	01	0xD27520	shared_stub_d27520	0	0	0.0		
+BSShadowDirectionalLight	02	0x1509C60	BSLight::Unk_02	3	2	0.01	0x149FF05 in sub_149FBB0;0x14A3694 in sub_14A3500	
+BSShadowDirectionalLight	03	0x14F1650	BSShadowLight::Unk_03	0	0	0.0		
+BSShadowDirectionalLight	04	0x15151A0	BSShadowDirectionalLight::Unk_04	0	0	0.0		
+BSShadowDirectionalLight	05	0x14F1630	BSShadowLight::Unk_05	10505	10505	1.0	0x14FBE17 in sub_14FBD4F	
+BSShadowDirectionalLight	06	0x15151B0	BSShadowDirectionalLight::Unk_06	31529	10505	3.03	0x14CD746 in sub_14CD6A0	
+BSShadowDirectionalLight	07	0x14F1640	BSShadowLight::Unk_07	94545	10505	9.0	0x14FBE24 in sub_14FBD4F	
+BSShadowDirectionalLight	08	0x14F1620	BSShadowLight::Unk_08	0	0	0.0		
+BSShadowDirectionalLight	09	0x1511C80	BSShadowDirectionalLight::Unk_09	10505	10505	1.0	0x14CC5E8 in sub_14CC599	
+BSShadowDirectionalLight	0A	0x1511D60	BSShadowDirectionalLight::Unk_0A	10505	10505	1.0	0x14CC1A2 in sub_14CBFF0	sub_14F0CF0
+BSShadowDirectionalLight	0B	0x14F02D0	BSShadowLight::Unk_0B	0	0	0.0		
+BSShadowDirectionalLight	0C	0x1511ED0	BSShadowDirectionalLight::Unk_0C	19453	19453	1.0	0x14CDA33 in sub_14CD6A0;0x14CBCCF in sub_14CBB90	
+BSShadowDirectionalLight	0D	0x1511EC0	BSShadowDirectionalLight::Unk_0D	0	0	0.0		
+BSShadowDirectionalLight	0E	0x15151C0	BSShadowDirectionalLight::Unk_0E	0	0	0.0		
+BSShadowDirectionalLight	0F	0x1511C00	BSShadowDirectionalLight::Unk_0F	0	0	0.0		
+BSShadowDirectionalLight	10	0x1512230	BSShadowDirectionalLight::Unk_10	10505	10505	1.0	0x14CBC3B in sub_14CBB90	sub_2B08D0, sub_CC3660, sub_CC40C0, sub_CC4680, sub_CC54D0, sub_CC5AD0, NiAVObject::Update, sub_D2AFA0
+BSShadowFrustumLight	00	0x151AF80	BSShadowFrustumLight::Dtor	0	0	0.0		sub_14F0010, sub_153AB8C
+BSShadowFrustumLight	01	0xD27520	shared_stub_d27520	0	0	0.0		
+BSShadowFrustumLight	02	0x151AB70	BSShadowFrustumLight::Unk_02	0	0	0.0		NiAVObject::Update, sub_D2B0E0, BSLight::Unk_02
+BSShadowFrustumLight	03	0x14F1650	BSShadowLight::Unk_03	0	0	0.0		
+BSShadowFrustumLight	04	0x151B000	BSShadowFrustumLight::Unk_04	0	0	0.0		
+BSShadowFrustumLight	05	0x151B010	BSShadowFrustumLight::Unk_05	0	0	0.0		
+BSShadowFrustumLight	06	0x14F1610	BSShadowLight::Unk_06	0	0	0.0		
+BSShadowFrustumLight	07	0x14F1640	BSShadowLight::Unk_07	0	0	0.0		
+BSShadowFrustumLight	08	0x14F1620	BSShadowLight::Unk_08	0	0	0.0		
+BSShadowFrustumLight	09	0x151AA60	BSShadowFrustumLight::Unk_09	0	0	0.0		sub_14F0920
+BSShadowFrustumLight	0A	0x151AAC0	BSShadowFrustumLight::Unk_0A	0	0	0.0		sub_14F0CF0
+BSShadowFrustumLight	0B	0x14F02D0	BSShadowLight::Unk_0B	0	0	0.0		
+BSShadowFrustumLight	0C	0x14F0410	BSShadowLight::Unk_0C	0	0	0.0		
+BSShadowFrustumLight	0D	0x14F1670	BSShadowLight::Unk_0D	0	0	0.0		
+BSShadowFrustumLight	0E	0x14F1660	BSShadowLight::Unk_0E	0	0	0.0		
+BSShadowFrustumLight	0F	0x14F17A0	BSShadowLight::Unk_0F	0	0	0.0		
+BSShadowFrustumLight	10	0x151AC50	BSShadowFrustumLight::Unk_10	0	0	0.0		sub_CC40C0, sub_CC4680, NiAVObject::Update, sub_D2B0E0, sub_14B1CF0, sub_150ABA0
+BSShadowLight	00	0x14F1310	BSShadowLight::Dtor	0	0	0.0		sub_21D0A0, sub_CC6B10, sub_CC6DA0, sub_14F01D0, sub_14F13F0, sub_1508C80, sub_153AB8C, sub_153B5AC
+BSShadowLight	01	0xD27520	shared_stub_d27520	0	0	0.0		
+BSShadowLight	02	0x1509C60	BSLight::Unk_02	0	0	0.0		
+BSShadowLight	03	0x14F1650	BSShadowLight::Unk_03	0	0	0.0		
+BSShadowLight	04	0x14F13E0	BSShadowLight::Unk_04	0	0	0.0		
+BSShadowLight	05	0x14F1630	BSShadowLight::Unk_05	0	0	0.0		
+BSShadowLight	06	0x14F1610	BSShadowLight::Unk_06	0	0	0.0		
+BSShadowLight	07	0x14F1640	BSShadowLight::Unk_07	0	0	0.0		
+BSShadowLight	08	0x14F1620	BSShadowLight::Unk_08	0	0	0.0		
+BSShadowLight	09	0x153CF18	sub_153CF18	0	0	0.0		
+BSShadowLight	0A	0x153CF18	sub_153CF18	0	0	0.0		
+BSShadowLight	0B	0x14F02D0	BSShadowLight::Unk_0B	0	0	0.0		
+BSShadowLight	0C	0x14F0410	BSShadowLight::Unk_0C	0	0	0.0		
+BSShadowLight	0D	0x14F1670	BSShadowLight::Unk_0D	0	0	0.0		
+BSShadowLight	0E	0x14F1660	BSShadowLight::Unk_0E	0	0	0.0		
+BSShadowLight	0F	0x14F17A0	BSShadowLight::Unk_0F	0	0	0.0		
+BSShadowLight	10	0x153CF18	sub_153CF18	0	0	0.0		
+BSShadowParabolicLight	00	0x151BE50	BSShadowParabolicLight::Dtor	9	7	0.01	0x14A1A33 in sub_14A1540;0x14A19ED in sub_14A1540	sub_14F0010, sub_153AB8C
+BSShadowParabolicLight	01	0xD27520	shared_stub_d27520	9	7	0.01	0x14A1A33 in sub_14A1540;0x14A19ED in sub_14A1540	
+BSShadowParabolicLight	02	0x1509C60	BSLight::Unk_02	12	7	0.02	0x14A0B15 in sub_14A0940	
+BSShadowParabolicLight	03	0x14F1650	BSShadowLight::Unk_03	21601	10787	2.02	0x14A2549 in sub_14A2530;0x14A1399 in sub_14A1370	
+BSShadowParabolicLight	04	0x14F13E0	BSShadowLight::Unk_04	35792	8948	4.0	0x14CC797 in sub_14CC695	
+BSShadowParabolicLight	05	0x14F1630	BSShadowLight::Unk_05	36440	9272	4.0	0x14FBE17 in sub_14FBD4F	
+BSShadowParabolicLight	06	0x14F1610	BSShadowLight::Unk_06	18192	8948	2.03	0x14CD746 in sub_14CD6A0	
+BSShadowParabolicLight	07	0x151BEC0	BSShadowParabolicLight::Unk_07	97152	10785	10.0	0x14F1099 in sub_14F0CF0;0x14FBE24 in sub_14FBD4F	
+BSShadowParabolicLight	08	0x151BEB0	BSShadowParabolicLight::Unk_08	1924155	9272	215.0	0x973020 in sub_972F70;0x14CD8B3 in sub_14CD6A0	
+BSShadowParabolicLight	09	0x151B960	BSShadowParabolicLight::Unk_09	19733	10785	2.0	0x973524 in sub_973281;0x14CC9D1 in sub_14CC695	sub_14B47D0, sub_14BF2B0, sub_14BF320, sub_1519E10
+BSShadowParabolicLight	0A	0x151BD10	BSShadowParabolicLight::Unk_0A	19733	10785	2.0	0x9735E4 in sub_9735D2;0x14CC1A2 in sub_14CBFF0	
+BSShadowParabolicLight	0B	0x14F02D0	BSShadowLight::Unk_0B	0	0	0.0		
+BSShadowParabolicLight	0C	0x151BDE0	BSShadowParabolicLight::Unk_0C	17896	8948	2.0	0x14CDA33 in sub_14CD6A0	
+BSShadowParabolicLight	0D	0x151BEE0	BSShadowParabolicLight::Unk_0D	0	0	0.0		
+BSShadowParabolicLight	0E	0x151BED0	BSShadowParabolicLight::Unk_0E	0	0	0.0		
+BSShadowParabolicLight	0F	0x14F17A0	BSShadowLight::Unk_0F	0	0	0.0		
+BSShadowParabolicLight	10	0x151B620	BSShadowParabolicLight::Unk_10	19733	10785	2.0	0x973320 in sub_973281;0x14CC72F in sub_14CC695	NiAVObject::Update, sub_D3FC70, sub_D3FC90, sub_D3FDA0, sub_E1FAF0, BSMultiBoundSphere::Unk_29
+BSTaskManager	00	0xDFF240	BSTaskManager::vfunc_00	0	0	0.0		sub_CC4510, sub_CC4680, sub_CCA000, sub_DFEC60, sub_DFED50, sub_153AB8C
+BSTaskManager	01	0xDFF4A0	sub_DFF4A0	0	0	0.0		sub_CC40C0, sub_CC4680
+BSTaskManager	02	0xDFFA90	sub_DFFA90	0	0	0.0		sub_1949B0, sub_DFF5E0, sub_DFFBD0
+BSTaskManager	03	0xE00B60	sub_E00B60	0	0	0.0		sub_1949B0, sub_DFFBD0, sub_E00CD0
+BSTaskManager	04	0xE00C10	sub_E00C10	0	0	0.0		sub_1949B0, sub_DFFBD0, sub_E00CD0
+BSTaskManager	05	0xE007D0	sub_E007D0	0	0	0.0		sub_1949B0, sub_DFFBD0, sub_E00880
+BSTaskManager	06	0xE00330	sub_E00330	0	0	0.0		sub_1949B0, sub_DFFBD0, sub_E00490
+BSTaskManager	07	0xE003F0	sub_E003F0	0	0	0.0		
+BSTaskManager	08	0xDFFBB0	sub_DFFBB0	0	0	0.0		
+BSTaskManager	09	0xDFF5D0	sub_DFF5D0	0	0	0.0		
+BSTaskManager	0A	0xDFF5A0	sub_DFF5A0	0	0	0.0		
+BSTaskManager	0B	0xDFF5B0	sub_DFF5B0	0	0	0.0		
+BSTaskManager	0C	0xE00080	sub_E00080	0	0	0.0		
+BSTaskManager	0D	0xE00070	sub_E00070	0	0	0.0		
+BSTaskManager	0E	0xE00060	sub_E00060	0	0	0.0		
+BSTaskManager	0F	0xDFF5C0	sub_DFF5C0	0	0	0.0		
+BSTaskManager	10	0xDFFBC0	sub_DFFBC0	0	0	0.0		
+BSTaskManager	11	0xDFD870	BSTaskManager::vfunc_11	0	0	0.0		
+BSTaskManager	12	0xDFD9D0	BSTaskManager::vfunc_12	0	0	0.0		
+BSTaskManager	13	0xDFD9E0	BSTaskManager::vfunc_13	0	0	0.0		sub_DFD960
+BSTaskManager	14	0xDFDD80	BSTaskManager::vfunc_14	0	0	0.0		sub_DFFC60, sub_E00090
+BSTaskManager	15	0xDFE5C0	BSTaskManager::vfunc_15	0	0	0.0		
+BSTaskManager	16	0xDFE5D0	BSTaskManager::vfunc_16	0	0	0.0		
+BSTaskManager	17	0xDFE5E0	BSTaskManager::vfunc_17	0	0	0.0		
+IOManager	00	0xE02000	IOManager::vfunc_00	0	0	0.0		sub_CC6B10, sub_CC6D40, sub_CC6DA0, sub_DFD6C0, sub_153AB8C
+IOManager	01	0xDFF4A0	sub_DFF4A0	9	7	0.01	0xDFFC15 in sub_DFFBF0	sub_CC40C0, sub_CC4680
+IOManager	02	0xDFFA90	sub_DFFA90	0	0	0.0		sub_1949B0, sub_DFF5E0, sub_DFFBD0
+IOManager	03	0xE00B60	sub_E00B60	0	0	0.0		sub_1949B0, sub_DFFBD0, sub_E00CD0
+IOManager	04	0xE00C10	sub_E00C10	28924	254	51.59	0xDFD8E9 in BSTaskManager::vfunc_11	sub_1949B0, sub_DFFBD0, sub_E00CD0
+IOManager	05	0xE007D0	sub_E007D0	28924	204	51.59	0xDFD98F in sub_DFD960	sub_1949B0, sub_DFFBD0, sub_E00880
+IOManager	06	0xE00330	sub_E00330	0	0	0.0		sub_1949B0, sub_DFFBD0, sub_E00490
+IOManager	07	0xE003F0	sub_E003F0	0	0	0.0		
+IOManager	08	0xE01C90	IOManager::vfunc_08	115696	274	206.37	0xDFD97F in sub_DFD960;0xE00811 in sub_E007D0;0xE00C62 in sub_E00C10	
+IOManager	09	0xDFF5D0	sub_DFF5D0	28908	95	51.59	0xE00AE5 in sub_E00A00	
+IOManager	0A	0xDFF5A0	sub_DFF5A0	28924	254	51.59	0xE01170 in sub_E00CD0	
+IOManager	0B	0xDFF5B0	sub_DFF5B0	17626	183	51.51	0xDFFF9A in sub_DFFC60;0xDFFD9D in sub_DFFC60	
+IOManager	0C	0xE00080	sub_E00080	27993839	268	86363.64	0xDFF6ED in sub_DFF5E0	
+IOManager	0D	0xE00070	sub_E00070	44181	204	95.66	0xDFFE8E;0xE008AD	
+IOManager	0E	0xE00060	sub_E00060	28924	254	51.59	0xE01227 in sub_E00CD0	
+IOManager	0F	0xDFF5C0	sub_DFF5C0	28924	204	51.59	0xE009BC in sub_E00880;0xE009A2 in sub_E00880	
+IOManager	10	0xDFFBC0	sub_DFFBC0	152	61	0.37	0xE019B9 in sub_E018C4;0xE0187E in sub_E01800	
+IOManager	11	0xE01750	IOManager::vfunc_11	28924	254	51.59	0x1E114E in sub_1E0F80;0xCB6C07 in sub_CB6AC0;0xE026AE in sub_E02680;0xCB3EDA in sub_CB3B10;0x199986 in sub_199830;0xDFE031 in sub_DFDFEA;0xE02754 in sub_E026D0;0x1FEBD5 in sub_1FEB20	BSTaskManager::vfunc_11
+IOManager	12	0xDFD9D0	BSTaskManager::vfunc_12	15728	170	51.49	0xDFE790 in BSTaskManagerThread::Unk_01	
+IOManager	13	0xDFD9E0	BSTaskManager::vfunc_13	15728	172	51.49	0xDFE7A0 in BSTaskManagerThread::Unk_01	sub_DFD960
+IOManager	14	0xE01C60	IOManager::vfunc_14	1	1	0.0	0x19225B in sub_191E50	BSTaskManager::vfunc_14, sub_E02230
+IOManager	15	0xE01DC0	IOManager::vfunc_15	21312	205	68.94	0xDFE72F in BSTaskManagerThread::Unk_01	sub_D08F50
+IOManager	16	0xE01E40	IOManager::vfunc_16	4	4	0.0	0xDFE6ED in BSTaskManagerThread::Unk_01	sub_D091C0
+IOManager	17	0xDFE5E0	BSTaskManager::vfunc_17	4	4	0.0	0xDFE70C in BSTaskManagerThread::Unk_01	
+IOManager	18	0xE01E70	IOManager::vfunc_18	0	0	0.0		sub_D091C0
+ShadowSceneNode	00	0x14A8140	ShadowSceneNode::Dtor	0	0	0.0		sub_14A0130, sub_153AB8C
+ShadowSceneNode	01	0xD27520	shared_stub_d27520	0	0	0.0		
+ShadowSceneNode	02	0x14A82C0	ShadowSceneNode::GetRTTI	36121	9950	4.0	0x150A8B6 in sub_150A840	
+ShadowSceneNode	03	0x1AF760	NiNode::AsNode	9949	9949	1.0	0x14AB6FF in sub_14AB6F1	
+ShadowSceneNode	04	0x1AF7A0	shared_stub_1af7a0	0	0	0.0		
+ShadowSceneNode	05	0x1AF6F0	shared_stub_1af6f0	20274	19480	2.9	0xE2DC5B in sub_E2DC55;0x14AD05B in BSLightingShaderProperty::SetupGeometry	
+ShadowSceneNode	06	0x1AF720	shared_stub_1af720	0	0	0.0		
+ShadowSceneNode	07	0x1AF700	shared_stub_1af700	9949	9949	1.0	0x14AC1EF in sub_14AC1C0	
+ShadowSceneNode	08	0x1AF7C0	shared_stub_1af7c0	0	0	0.0		
+ShadowSceneNode	09	0x1AF7B0	shared_stub_1af7b0	0	0	0.0		
+ShadowSceneNode	0A	0x1AF780	shared_stub_1af780	0	0	0.0		
+ShadowSceneNode	0B	0x1AF790	shared_stub_1af790	0	0	0.0		
+ShadowSceneNode	0C	0x1AF6E0	shared_stub_1af6e0	0	0	0.0		
+ShadowSceneNode	0D	0x1AF730	shared_stub_1af730	0	0	0.0		
+ShadowSceneNode	0E	0x1AF740	shared_stub_1af740	0	0	0.0		
+ShadowSceneNode	0F	0x1AF750	shared_stub_1af750	0	0	0.0		
+ShadowSceneNode	10	0x1AF770	shared_stub_1af770	0	0	0.0		
+ShadowSceneNode	11	0x1AF710	shared_stub_1af710	0	0	0.0		
+ShadowSceneNode	12	0x1AF6C0	shared_stub_1af6c0	0	0	0.0		
+ShadowSceneNode	13	0x1AF6A0	shared_stub_1af6a0	0	0	0.0		
+ShadowSceneNode	14	0x1AF690	shared_stub_1af690	0	0	0.0		
+ShadowSceneNode	15	0x1AF6D0	shared_stub_1af6d0	0	0	0.0		
+ShadowSceneNode	16	0x1AF6B0	shared_stub_1af6b0	0	0	0.0		
+ShadowSceneNode	17	0xD1C930	NiNode::CreateClone	0	0	0.0		sub_2CFC30, sub_CC40C0, sub_CC4680, sub_D1BB10, sub_D1C6F0
+ShadowSceneNode	18	0xD1CB60	NiNode::LoadBinary	0	0	0.0		NiAVObject::LoadBinary, sub_D207A0
+ShadowSceneNode	19	0xD1CBA0	NiNode::LinkObject	0	0	0.0		
+ShadowSceneNode	1A	0xD1CC50	NiNode::RegisterStreamables	0	0	0.0		NiAVObject::RegisterStreamables
+ShadowSceneNode	1B	0xD1CCE0	NiNode::SaveBinary	0	0	0.0		NiAVObject::SaveBinary
+ShadowSceneNode	1C	0xD1CDB0	NiNode::IsEqual	0	0	0.0		NiAVObject::IsEqual
+ShadowSceneNode	1D	0xD1E560	NiNode::ProcessClone	0	0	0.0		sub_CC8460, NiAVObject::ProcessClone
+ShadowSceneNode	1E	0xD26E00	shared_stub_d26e00	0	0	0.0		sub_CC9140, sub_CC9390, shared_stub_d18190, sub_D26CD0
+ShadowSceneNode	1F	0xD181A0	shared_stub_d181a0	0	0	0.0		
+ShadowSceneNode	20	0xD181B0	shared_stub_d181b0	0	0	0.0		
+ShadowSceneNode	21	0xD181C0	shared_stub_d181c0	0	0	0.0		
+ShadowSceneNode	22	0xD181D0	shared_stub_d181d0	0	0	0.0		
+ShadowSceneNode	23	0xD181E0	shared_stub_d181e0	0	0	0.0		
+ShadowSceneNode	24	0xD181F0	shared_stub_d181f0	0	0	0.0		
+ShadowSceneNode	25	0xD1DA20	NiNode::UpdateControllers	0	0	0.0		
+ShadowSceneNode	26	0xD1D910	NiNode::PerformOp	0	0	0.0		
+ShadowSceneNode	27	0xD1E610	NiNode::AttachProperty	0	0	0.0		
+ShadowSceneNode	28	0xD1C060	shared_stub_d1c060	0	0	0.0		
+ShadowSceneNode	29	0xD1C070	shared_stub_d1c070	0	0	0.0		
+ShadowSceneNode	2A	0xD1D9A0	NiNode::GetObjectByName	0	0	0.0		NiAVObject::vfunc_2A
+ShadowSceneNode	2B	0xD1E430	NiNode::SetSelectiveUpdateFlags	0	0	0.0		sub_D1C7E0
+ShadowSceneNode	2C	0xD1DAD0	NiNode::UpdateDownwardPass	2	2	0.01	0xD1DC22 in NiNode::UpdateDownwardPass	sub_D3A250
+ShadowSceneNode	2D	0xD1DC80	NiNode::UpdateSelectedDownwardPass	0	0	0.0		sub_D3A250
+ShadowSceneNode	2E	0xD1E040	NiNode::UpdateRigidDownwardPass	0	0	0.0		
+ShadowSceneNode	2F	0xD1DF20	NiNode::UpdateWorldBound	395817	21290	215.15	0xD1DEF3 in NiNode::vfunc_3D	
+ShadowSceneNode	30	0xD27540	shared_stub_d27540	2	2	0.01	0xD1DB2C in NiNode::UpdateDownwardPass	sub_D27722
+ShadowSceneNode	31	0xD1E170	NiNode::UpdateTransformAndBounds	0	0	0.0		sub_D3A250
+ShadowSceneNode	32	0xD1C4D0	shared_stub_d1c4d0	0	0	0.0		
+ShadowSceneNode	33	0xD1C510	shared_stub_d1c510	0	0	0.0		
+ShadowSceneNode	34	0x14A03B0	ShadowSceneNode::OnVisible	0	0	0.0		sub_CC3660, sub_CC4680, sub_CC54D0, sub_CC5AD0, sub_D1C570, NiNode::OnVisible, sub_E14400, sub_E15220
+ShadowSceneNode	35	0xD1D100	NiNode::vfunc_35	34	6	0.05	0x974DA4 in sub_974C00	sub_2CFC30, sub_D1C530, sub_D1EE40
+ShadowSceneNode	36	0xD1D270	NiNode::vfunc_36	0	0	0.0		sub_D1C530, sub_D1EB40
+ShadowSceneNode	37	0xD1D360	NiNode::vfunc_37	27	8	0.03	0xD1D334 in NiNode::vfunc_38	sub_D1ED60
+ShadowSceneNode	38	0xD1D310	NiNode::vfunc_38	27	8	0.03	0x974BBE in sub_974B70;0x3094D1 in sub_309430;0x19D9E1	
+ShadowSceneNode	39	0xD1D520	NiNode::vfunc_39	27	8	0.03	0xD1D3A6 in NiNode::vfunc_37	sub_D1ED60
+ShadowSceneNode	3A	0xD1D4D0	NiNode::vfunc_3A	0	0	0.0		
+ShadowSceneNode	3B	0xD1D750	NiNode::vfunc_3B	10	2	0.02	0xD1D724 in NiNode::vfunc_3C	sub_2CFC30, sub_D1C530, sub_D1EE40
+ShadowSceneNode	3C	0xD1D700	NiNode::vfunc_3C	10	2	0.02	0x201301 in sub_2010C0;0x3093D5 in sub_309050	
+ShadowSceneNode	3D	0xD1DEE0	NiNode::vfunc_3D	395817	21290	215.15	0x97268F;0xE2DCBE;0x6454A2;0x2BC279	

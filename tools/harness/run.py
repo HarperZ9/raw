@@ -245,6 +245,8 @@ class Runner(Actions):
                 G.hold(k, secs)
         elif op == "minimise":
             self.minimise(float(plain[0]))
+        elif op == "engine":
+            self.engine(" ".join(args))
         elif op == "reload":
             # shader edits hold '=' and spaces: the quoted words go through whole
             self.reload(args if args and args[0] == "shader" else plain, opts)
@@ -269,7 +271,8 @@ class Runner(Actions):
                 shutil.rmtree(dst, ignore_errors=True)
                 shutil.copytree(self.a.shaders, dst)
                 ini += f"\n[HotReload]\nEnabled=1\nShaderDir={dst}\n"
-            self.inst.deploy(Path(self.a.dll), ini)
+            self.inst.deploy(Path(self.a.dll), ini + self.extra_ini())
+            self.deploy_extras()
             self.inst.set_option("SkyrimPrefs.ini", "Display", "iSize W", w)
             self.inst.set_option("SkyrimPrefs.ini", "Display", "iSize H", h)
             self.inst.set_option("SkyrimPrefs.ini", "Interface", "bShowTutorials", "0")
@@ -293,6 +296,7 @@ class Runner(Actions):
                         break
                     time.sleep(1)
                 time.sleep(2)
+            self.collect_extras()
             self.report["install_after"] = self.inst.after(self.out)
             self.report["gpu_after"] = G.gpu()
             results = self.out / "harness_results.jsonl"
@@ -303,6 +307,50 @@ class Runner(Actions):
             self.log(f"report: {self.out / 'report.json'}; ENB {self.report['install_after']['game_after']}, "
                      f"settings restored {self.report['install_after']['settings_restored']}")
         return 0 if ok else 1
+
+    def engine(self, text: str, timeout: float = 180) -> None:
+        """Commands for raw_engine.dll, ';'-separated (set, wait, measure, capture); waits for its answer."""
+        game = self.inst.game
+        done = game / "raw_engine_done.txt"
+        done.unlink(missing_ok=True)
+        lines = [c.strip() for c in text.split(";") if c.strip()]
+        (game / "raw_engine_go.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        start = time.time()
+        while not done.exists():
+            if time.time() - start > timeout:
+                raise RuntimeError(f"engine module did not answer in {timeout:.0f} s: {text}")
+            time.sleep(0.25)
+        done.unlink(missing_ok=True)
+        self.log(f"engine: {text} ({time.time() - start:.1f} s)")
+
+    def extra_ini(self) -> str:
+        """[Modules] for the engine modules, then any ini text the caller adds (--ini-extra)."""
+        text = ""
+        if self.a.module:
+            text += "[Modules]\nLoad=" + ";".join(Path(m).name for m in self.a.module) + "\n"
+        if self.a.ini_extra:
+            text += Path(self.a.ini_extra).read_text(encoding="utf-8")
+        return text
+
+    def deploy_extras(self) -> None:
+        """Engine modules and their input files go beside the game for this run only."""
+        self.extras = [Path(m) for m in self.a.module] + [Path(f) for f in self.a.module_file]
+        for src in self.extras:
+            dst = self.inst.game / src.name
+            if dst.exists():
+                raise SystemExit(f"{dst.name} already exists in the game folder; refusing to overwrite it")
+            shutil.copy2(src, dst)
+        self.report["extras"] = [p.name for p in self.extras]
+
+    def collect_extras(self) -> None:
+        """The module's output folder comes to --out; every file this run added leaves the game folder."""
+        if self.a.collect:
+            src = self.inst.game / self.a.collect
+            if src.is_dir():
+                shutil.copytree(src, self.out / self.a.collect, dirs_exist_ok=True)
+                shutil.rmtree(src)
+        for p in getattr(self, "extras", []):
+            (self.inst.game / p.name).unlink(missing_ok=True)
 
     def quit(self) -> None:
         """qqq, typed twice if needed, then WM_CLOSE; taskkill in the finally block is the last resort.
@@ -344,6 +392,10 @@ def main() -> int:
     p.add_argument("--out", required=True)
     p.add_argument("--resolution", default="3840x2160")
     p.add_argument("--prompt-tries", default="1")
+    p.add_argument("--module", action="append", default=[], help="engine module DLL, loaded by the proxy")
+    p.add_argument("--module-file", action="append", default=[], help="input file copied beside the game")
+    p.add_argument("--ini-extra", help="text appended to the proxy ini")
+    p.add_argument("--collect", help="folder in the game directory to bring back and remove")
     p.add_argument("--shaders", default="", help="a shader folder to copy beside the game for hot reload (src/d3d12_bridge/shaders)")
     p.add_argument("--ini", default="", help="a d3d11_proxy.ini to deploy instead of the lighting one (the translate tests)")
     return Runner(p.parse_args()).run()

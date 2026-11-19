@@ -45,3 +45,31 @@ Confidence per row: **named** (CommonLib names it), **inferred** (exact class an
 ## Debt
 
 Written in Python for now; the BuildLang port is owed.
+
+## Runtime pass (`raw_engine.dll`)
+
+The proxy loads `raw_engine.dll` from `[Modules] Load=raw_engine.dll` in `d3d11_proxy.ini`. The module reads the game's code as it sits in memory. It writes addresses and counts only, never instruction bytes.
+
+| `[EngineRT]` key | effect |
+|---|---|
+| `CallGraph=1` | decodes every function once on a background thread: `cg_edges.tsv`, `cg_vcalls.tsv`, `cg_refs.tsv`, `cg_clamps.tsv`, `cg_jumptables.tsv` |
+| `VTrace=1` | counts calls through each slot of the classes in `engine_rt_vtrace.tsv`, with callers: `vt_trace.tsv` |
+| `PapyrusTiming=1` | times `VirtualMachine::Update` and `UpdateTasklets`; `PapyrusBudgetMs` replaces the budget they receive |
+| `ShadowAtlas=<size>` | resizes the shadow-map entries of the render-target table before the renderer creates them |
+
+`[EngineSet]` holds `setting=value` pairs that are applied once, before the renderer creates its targets. Live commands go in `raw_engine_go.txt` (`set`, `wait`, `measure`, `capture`); the harness `engine` command writes them.
+
+Inputs come from the map: `python -I tools/enginemap/rt_inputs.py --map docs/enginemap --out <folder>`. Join the output with names: `python -I tools/enginemap/cg_analyze.py --map docs/enginemap --rt <raw_engine_out> --out docs/enginemap/runtime --public`.
+
+### Results on 1.6.1170
+
+- **Call graph:** 120,080 functions plus 7,234 leaf functions, 5.44M instructions in 861 ms. It found:
+  - 345,405 direct edges
+  - 74,407 vtable calls
+  - 64,879 references to named settings and globals
+  - 787 jump tables
+- **Papyrus opcode loop:** most likely `sub_1462650`, a 36-entry jump table, called from `VirtualMachine::UpdateTasklets`.
+- **Shadows:** the cascade split setup is `BSShadowDirectionalLight` slot 0x10. It runs once per outdoor frame and reads `fShadowDistance`, `fFirstSliceDistance` and `fSplitOverlap`.
+- **Batching:** the pass dispatch is `BSBatchRenderer` slot 02, about 6,700 calls per frame.
+- **LOD:** terrain LOD distances are read once, at worldspace setup (`sub_511DB0`).
+- **Grids:** `uGridsToLoad` is clamped at `sub_19BF30`.

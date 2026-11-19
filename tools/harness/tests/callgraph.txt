@@ -1,0 +1,15 @@
+# Engine runtime: the call graph from the game's code in memory, and vtable traces in the world.
+# raw_engine.dll decodes the code at startup; the vtable counters run while these cells draw.
+start load rawharness
+console tai
+scene riverwood
+console coc riverwood
+wait 8
+wait load
+wait 40
+scene bannered_mare
+console coc whiterunbanneredmare
+wait 8
+wait load
+wait 30
+quit

@@ -22,7 +22,7 @@ from pathlib import Path
 DOCS = Path(os.path.expanduser("~")) / "Documents" / "My Games" / "Skyrim Special Edition"
 SETTINGS = ("SkyrimCustom.ini", "SkyrimPrefs.ini")
 PROXY_FILES = ("d3d11_proxy.ini", "d3d11_proxy.log", "raw_harness_go.txt", "raw_harness_done.txt", "raw_harness_status.txt",
-               "rawbat.txt", "raw_hot_reload.txt")
+               "rawbat.txt", "raw_hot_reload.txt", "raw_engine_go.txt", "raw_engine_done.txt")
 SHADER_COPY = "raw_shaders"   # hot-reload shader folder beside the game, made by a run and removed after it
 
 
@@ -229,8 +229,10 @@ def mouse_click() -> None:
 # entering the free camera ('tfc 1'); leaving it ('tfc') does not. A close key typed after them
 # was processed after the load and opened the console again, so every later command went into
 # the world as key presses (the inventory and the map opened, the next coc never ran). Seen in
-# eight harness runs, found from screenshots of the missed cell changes.
-CLOSES_CONSOLE = ("tfc 1", "qqq")
+# eight harness runs, found from screenshots of the missed cell changes. 'tcl' closes it too: in the
+# engine_vista run the close key after it reopened the console, the next open closed it, and
+# 'player.setpos' went into the world (P opened the magic menu).
+CLOSES_CONSOLE = ("tfc 1", "qqq", "tcl")
 CLOSES_CONSOLE_FIRST_WORD = ("coc", "qqq")
 
 

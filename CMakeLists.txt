@@ -496,3 +496,29 @@ target_compile_definitions(d3d11_translate_suite PRIVATE _CRT_SECURE_NO_WARNINGS
 # Own folder: next to the proxy the exe would load RAW's d3d11.dll.
 set_target_properties(d3d11_translate_suite PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
+
+# ============================================================================
+# raw_engine.dll: the engine runtime the proxy loads from [Modules] Load.
+# Call graph from the game's code in memory, vtable tracing, engine control.
+# Needs Zydis (MIT): vcpkg install zydis:x64-windows-static, or RAW_ZYDIS_ROOT.
+# ============================================================================
+set(RAW_ZYDIS_ROOT "C:/vcpkg/installed/x64-windows-static" CACHE PATH "prefix holding include/Zydis and lib/Zydis.lib")
+find_library(RAW_ZYDIS_LIB Zydis HINTS "${RAW_ZYDIS_ROOT}/lib" NO_DEFAULT_PATH)
+find_library(RAW_ZYCORE_LIB Zycore HINTS "${RAW_ZYDIS_ROOT}/lib" NO_DEFAULT_PATH)
+if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
+    add_library(raw_engine SHARED
+        src/engine_rt/module_main.cpp
+        src/engine_rt/rt_callgraph.cpp
+        src/engine_rt/rt_vtrace.cpp
+        src/engine_rt/rt_control.cpp
+        src/engine_rt/rt_capture.cpp
+        src/engine_rt/rt_atlas.cpp)
+    set_target_properties(raw_engine PROPERTIES
+        CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_include_directories(raw_engine PRIVATE src/engine_rt src/d3d11_proxy "${RAW_ZYDIS_ROOT}/include")
+    target_compile_definitions(raw_engine PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD)
+    target_link_libraries(raw_engine PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB})
+else()
+    message(STATUS "raw_engine: Zydis not found under ${RAW_ZYDIS_ROOT}; module not built")
+endif()

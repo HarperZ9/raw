@@ -33,14 +33,14 @@ struct LightUniform
     float dims[4], proj[4], clipToWorld[16], worldToClip[16], viewToWorld[12];
     float resScale[4], sunDir[4], sunColour[4], ambient[12], cascade[24], cascadeInfo[4];
     uint32_t flags[4];
-    float cluster[4], tune[4], tune2[4], weather[4], camPos[4], clouds[4], cloudWind[4], prevWorldToClip[16];
+    float cluster[4], tune[4], tune2[4], weather[4], camPos[4], clouds[4], cloudWind[4], waterA[4], waterB[4], prevWorldToClip[16];
     float lightPosR[kMaxSceneLights][4], lightColS[kMaxSceneLights][4];
     uint32_t clusters[kClusterCount][4];
 };
-static_assert(sizeof(LightUniform) == 38 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16, "layout of cbuffer P");
+static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16, "layout of cbuffer P");
 static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
-constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768;
+constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536;
 constexpr RasterBinding U = RasterBinding::Uniform, T = RasterBinding::Texture, Sm = RasterBinding::Sampler;
 constexpr RasterBinding kLightLayout[16] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T, T, Sm};
 constexpr RasterBinding kCloudLayout[3] = {U, T, Sm};
@@ -236,7 +236,7 @@ private:
         if (t.cascades) f |= kCascades;
         if (t.fogReplacesGame) f |= kFogReplaces;
         if (frame.rt && t.rtShadows && m_rtVis.valid() && m_rtIdx.valid()) f |= kRt | (t.rtSky ? kSky : 0u) | (t.rtSky && t.rtBounce > 0.0f && m_rtBounce.valid() ? kBounce : 0u) |
-                     (t.rtSky && t.rtReflect && m_rtReflect.valid() ? kReflect : 0u);
+                     (t.rtSky && t.rtReflect && m_rtReflect.valid() ? kReflect : 0u) | (t.rtSky && t.rtRest && m_rtBounce.valid() ? kRest : 0u);
         if (frame.hasShadows && s.hasCascades) f |= kShadows;
         // Interiors (no cascades): the bounce at its own strength, on top of the cell's fill.
         const bool interior = (f & kShadows) == 0u;
@@ -270,6 +270,8 @@ private:
         // clouds' shadow fades as the weather's cloud cover rises, or rain darkened the frame twice (2026-11-19).
         u.clouds[3] = t.cloudShadow * (1.0f - 0.85f * t.weatherCloud);
         u.cloudWind[0] = t.cloudWindX; u.cloudWind[1] = t.cloudWindY; u.cloudWind[2] = t.cloudDensity; u.cloudWind[3] = t.cloudHistory;
+        u.waterA[0] = t.waterReflect; u.waterA[1] = t.waterCaustics; u.waterA[2] = t.waterAbsorb; u.waterA[3] = t.waterGlint;
+        u.waterB[0] = float(t.waterView); u.waterB[1] = t.waterCausticCell; u.waterB[2] = 0.0f; u.waterB[3] = 0.0f;
         std::memcpy(u.prevWorldToClip, m_prevWorldToClip, 64);
         std::memcpy(m_prevWorldToClip, s.worldToClip, 64);
         u.camPos[3] = float(double(GetTickCount64() % 3600000ull) / 1000.0);   // seconds, for the rain's rings and the snow's glints

@@ -65,6 +65,7 @@ struct FrameState
     ID3D11Resource* motionTex = nullptr;
     ID3D11Resource* sceneTex = nullptr;   // the HDR scene colour of the opaque set
     bool normalBound = false, captured = false, ran = false, inBackbuffer = false;
+    bool waterSeen = false, compositeOpen = false, waterRan = false;   // RtWater: the game's water span, then its composite
     uint32_t drawsAtBind = 0;
 };
 FrameState s_f;
@@ -230,6 +231,12 @@ void BridgeHook_OnTargets(ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetV
         for (ID3D11Resource* r : rt) still |= r == s_f.normalTex;
         if (!still) CaptureOpaque(real);
     }
+    if (s_f.compositeOpen && draws > s_f.drawsAtBind && !s_f.waterRan && Cfg().lighting) {
+        // The game has composited its water into the HDR colour: RAW's water goes on top (RtWater.hlsl).
+        s_f.waterRan = true;
+        LightingAtWater(real, s_f.sceneTex, true);
+    }
+    s_f.compositeOpen = false;
 
     // The span that starts.
     if (!s_f.backbuffer)
@@ -248,6 +255,21 @@ void BridgeHook_OnTargets(ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetV
             s_f.sceneTex = rt[0];
             if (Cfg().lighting) GameComposite_SetScene(rt[0]);
             s_f.depthTex = ResourceOf(dsv);
+        }
+    }
+    if (s_f.captured && s_f.sceneTex && rt[0] && s_f.backbuffer && Cfg().lighting) {
+        D3D11_TEXTURE2D_DESC bb{};
+        static_cast<ID3D11Texture2D*>(s_f.backbuffer)->GetDesc(&bb);
+        // The water span: one full-size RGBA16F target that is not the scene colour, on the scene depth
+        // (docs/FRAME_BUFFERS.md); then one draw composites it into the scene colour and the water mask.
+        if (n == 1 && rt[0] != s_f.sceneTex && dsv && ResourceOf(dsv) == s_f.depthTex && FullSize(rt[0], DXGI_FORMAT_R16G16B16A16_FLOAT, bb))
+            s_f.waterSeen = true;
+        else if (s_f.waterSeen && !s_f.waterRan && n >= 2 && rt[0] == s_f.sceneTex && rt[1] && FullSize(rt[1], DXGI_FORMAT_R10G10B10A2_UNORM, bb))
+            s_f.compositeOpen = true;
+        else if (!s_f.waterSeen && !s_f.waterRan && n == 3 && rt[0] == s_f.sceneTex && dsv) {
+            // No water this frame: the skin's scattering runs where the water would have, before the blended draws.
+            s_f.waterRan = true;
+            LightingAtWater(real, s_f.sceneTex, false);
         }
     }
     s_f.normalBound = false;
@@ -307,6 +329,11 @@ void BridgeHook_OnPresent()
     }
     if (Cfg().lighting) { LightingOnPresent(s_f.captured); SceneLights_OnPresent(); }
     else if (s_f.ran && s_f.captured) CaptureStep(s_bridgeFrames);
+    if (Cfg().lighting) {   // how often the game drew water, and whether its composite was found
+        static uint32_t frames = 0, water = 0, composite = 0;
+        ++frames; water += s_f.waterSeen; composite += s_f.waterRan;
+        if (frames % 600 == 0) { Log("[RT] water spans in %u of 600 frames, composites found in %u", water, composite); water = composite = 0; }
+    }
     s_f = {};
     ++s_frame;
 }

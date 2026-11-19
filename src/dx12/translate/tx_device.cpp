@@ -46,6 +46,19 @@ static HRESULT AgilityDevice(const CreateParams& p, IDXGIAdapter1* adapter, ComP
         if (SUCCEEDED(factory->GetConfigurationInterface(CLSID_D3D12Debug, IID_PPV_ARGS(&dbg)))) dbg->EnableDebugLayer();
         else Log("Agility SDK: debug layer not available");
     }
+    {   // [Translate] Dred=1 in the proxy's ini: breadcrumbs and page-fault data for a removed device (diagnosis)
+        char path[MAX_PATH]{};
+        GetModuleFileNameA(nullptr, path, MAX_PATH);
+        std::string ini(path);
+        ini = ini.substr(0, ini.rfind(char(92)) + 1) + "d3d11_proxy.ini";
+        ComPtr<ID3D12DeviceRemovedExtendedDataSettings> dred;
+        if (GetPrivateProfileIntA("Translate", "Dred", 0, ini.c_str()) &&
+            SUCCEEDED(factory->GetConfigurationInterface(CLSID_D3D12DeviceRemovedExtendedData, IID_PPV_ARGS(&dred)))) {
+            dred->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+            dred->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+            Log("Agility SDK: DRED breadcrumbs and page faults on");
+        }
+    }
     if (FAILED(hr = factory->CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&out)))) {
         Log("Agility SDK: CreateDevice 0x%08X", unsigned(hr));
         return hr;

@@ -223,6 +223,8 @@ struct RtFrameStats
     uint64_t skinVertices = 0;
     uint64_t albedoBytes = 0;
     double   cacheMs = 0;
+    double   waterMs = 0;         // RtWater: the newest retired frame's GPU time
+    uint32_t waterRuns = 0;       // frames the water pass ran, since the scene was made
 };
 
 enum class Shared : UINT { ColorIn, Depth, Normal, ColorOut, Motion, Albedo, Specular, ShadowMask, ShadowAtlas, Emissive, RtVisibility, RtLights, RtBounce, RtReflect, Count };
@@ -371,6 +373,11 @@ public:
     void SetRtDraws(std::vector<RtDraw>&& draws);
     void TuneRt(const RtTuning& t);
     bool RtStats(RtFrameStats* out);
+    // Attached to raw::tx, lighting pass, RT active: RAW's water (RtWater.hlsl) on the HDR colour right
+    // after the game composites its water (water true), then the skin's scattering (Sss.hlsl) when
+    // sssStrength > 0. layer: RAW's layer target. False when nothing ran.
+    bool ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, bool water, float sssWidth, float sssStrength);
+    bool ReloadWater(const std::vector<uint8_t>& water, const std::vector<uint8_t>& sss, std::string& err);   // hot reload: RtWater.hlsl, Sss.hlsl
     bool ReloadRt(const std::vector<uint8_t>& shadow, const std::vector<uint8_t>& sky, std::string& err);   // hot reload
     bool TuneEngine(const EngineTuning& t);
     IBridgePass* ActivePass();   // the pass behind the seam, for its own knobs (LightingPassTune)

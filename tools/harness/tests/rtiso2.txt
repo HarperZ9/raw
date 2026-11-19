@@ -1,0 +1,18 @@
+# The device removal with water pixels (rt6-iso-1), under DRED ([Translate] Dred=1); the actors' palette check
+# ([RT] SkinCbCheck=1) runs in third person first.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+walk f 0.15
+wait 4
+keyframe third steps=game,improved hold=60
+walk f 0.15
+mouse -1500 -150
+walk w 2.5
+wait 3
+keyframe base steps=game,improved hold=30
+reload ini Water=1
+keyframe water steps=improved hold=40
+quit

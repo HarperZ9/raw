@@ -1,0 +1,51 @@
+# The tone maps against the path-traced reference (RtDebug=6): the light each pixel receives (View 13) and the
+# reference (View 7), both through the game's tone map and then through RAW's (Tonemap=1), with the camera held so
+# the reference keeps accumulating. FLIP (tools/lighting/flip.py) between each pair decides the default.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+reload ini RtDebug=6 View=7 Tonemap=0
+keyframe ref_game steps=improved hold=1000
+reload ini Tonemap=1
+keyframe ref_raw steps=improved hold=40
+reload ini RtDebug=0 View=13
+keyframe irr_raw steps=improved hold=40
+reload ini Tonemap=0
+keyframe irr_game steps=improved hold=40
+reload ini View=0
+keyframe frame_game steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe frame_raw steps=improved hold=40
+reload ini Tonemap=0
+walk f 0.15
+wait 4
+keyframe third steps=game,improved hold=40
+reload ini Sss=0
+keyframe third_nosss steps=improved hold=30
+reload ini Sss=0.75
+walk f 0.15
+console coc whiterunbanneredmare
+wait 10
+scene inn
+reload ini RtDebug=6 View=7 Tonemap=0
+keyframe ref_game steps=improved hold=1000
+reload ini Tonemap=1
+keyframe ref_raw steps=improved hold=40
+reload ini RtDebug=0 View=13
+keyframe irr_raw steps=improved hold=40
+reload ini Tonemap=0
+keyframe irr_game steps=improved hold=40
+reload ini View=0
+keyframe frame_game steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe frame_raw steps=improved hold=40
+reload ini Tonemap=0 RtRest=0
+keyframe norest steps=improved hold=40
+reload ini RtRest=1
+keyframe rest steps=improved hold=40
+reload ini View=14
+keyframe restvis steps=improved hold=40
+reload ini View=0
+quit

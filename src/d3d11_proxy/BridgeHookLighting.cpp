@@ -121,6 +121,7 @@ void LoadLightingConfig(const std::string& ini)
     t.rtBounce = f("RtBounce", t.rtBounce);
     t.rtBounceInterior = f("RtBounceInterior", t.rtBounceInterior);
     t.rtReflect = i("RtReflect", 1) != 0;
+    t.rtRest = i("RtRest", 1) != 0;
     t.rtDebug = i("RtDebug", 0);
     t.rtOmm = i("RtOmm", 1) != 0;
     t.rtMaterials = i("RtMaterials", 1) != 0;
@@ -155,6 +156,10 @@ void LoadLightingConfig(const std::string& ini)
         tm.curve = i("ToneCurve", tm.curve); tm.white = f("ToneWhite", tm.white); tm.view = i("ToneView", 0);
         Tonemap_Set(tm);
     }
+    t.water = i("Water", 1) != 0; t.waterReflect = f("WaterReflect", t.waterReflect); t.waterCaustics = f("WaterCaustics", t.waterCaustics);
+    t.waterAbsorb = f("WaterAbsorb", t.waterAbsorb); t.waterGlint = f("WaterGlint", t.waterGlint);
+    t.waterCausticCell = f("WaterCausticCell", t.waterCausticCell); t.waterView = i("WaterView", 0);
+    t.sss = f("Sss", t.sss); t.sssWidth = f("SssWidth", t.sssWidth);
     t.rtSkinBones = i("RtSkinBones", 10);
     t.rtActors = i("RtActors", 1) != 0;
     t.rtIncremental = i("RtIncremental", 1) != 0;
@@ -245,6 +250,23 @@ bool LightingAtOpaque(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr)
     b->SetRtDraws(SceneGeometry_Take());
     raw::bridge::PassConstants k = Cfg().k;
     return b->Execute(sceneHdr, sceneHdr, k);
+}
+
+bool LightingAtWater(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr, bool water)
+{
+    raw::bridge::D3D12Bridge* b = Bridge();
+    const LightingTuning& t = Cfg().light;
+    water = water && t.water;
+    if (!b || !b->Ready() || !sceneHdr || t.mode != 2 || !t.rtShadows || (!water && t.sss <= 0.0f)) return false;
+    ID3D11Texture2D* layer = GBuffer_Textures().layer;
+    if (!layer) return false;
+    // The composite's targets are still bound; the game binds its next ones right after this.
+    real->OMSetRenderTargets(0, nullptr, nullptr);
+    const bool ran = b->ExecuteWater(sceneHdr, layer, water, t.sssWidth, t.sss);
+    static uint32_t runs = 0, misses = 0;
+    (ran ? runs : misses)++;
+    if ((runs + misses) % 600 == 1) Log("[RT] after water (water %d, skin scattering %.2f): ran %u frames, did not run %u", water ? 1 : 0, t.sss, runs, misses);
+    return ran;
 }
 
 void LightingOnPresent(bool worldFrame)

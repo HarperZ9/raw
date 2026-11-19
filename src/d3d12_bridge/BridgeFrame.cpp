@@ -111,6 +111,12 @@ void D3D12Bridge::SetRtDraws(std::vector<RtDraw>&& draws)
     }
 }
 void D3D12Bridge::TuneRt(const RtTuning& t) { m->rtTune = t; if (m->rt) m->rt->Tune(t); }
+bool D3D12Bridge::ReloadRt(const std::vector<uint8_t>& shadow, const std::vector<uint8_t>& sky, std::string& err)
+{
+    if (!m->rt) { err = "no ray-tracing scene (RtShadows=0, or not on raw::tx)"; return false; }
+    return m->rt->Reload(shadow, sky, err);
+}
+
 bool D3D12Bridge::RtStats(RtFrameStats* out)
 {
     if (!m->rt || !out) return false;

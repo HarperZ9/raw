@@ -33,6 +33,7 @@
 #include <dxgi1_6.h>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "SceneLighting.h"
@@ -326,6 +327,7 @@ public:
     void SetRtDraws(std::vector<RtDraw>&& draws);
     void TuneRt(const RtTuning& t);
     bool RtStats(RtFrameStats* out);
+    bool ReloadRt(const std::vector<uint8_t>& shadow, const std::vector<uint8_t>& sky, std::string& err);   // hot reload
     bool TuneEngine(const EngineTuning& t);
     IBridgePass* ActivePass();   // the pass behind the seam, for its own knobs (LightingPassTune)
     bool ReadEngineVisibility(std::vector<float>* out);

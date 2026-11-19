@@ -39,6 +39,7 @@ public:
     void Record(ID3D12GraphicsCommandList4* cl, D3D12_GPU_VIRTUAL_ADDRESS uniform, ID3D12Resource* motion, uint64_t frame,
                 float strength);
     void Reset() { m_reset = true; }
+    bool Reload(const void* dxil, size_t bytes, std::string& err);   // hot reload: the GPU is idle
 
 private:
     Microsoft::WRL::ComPtr<ID3D12Device5> m_dev;

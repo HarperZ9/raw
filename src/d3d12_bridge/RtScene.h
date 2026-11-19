@@ -39,7 +39,10 @@ public:
     bool Active() const { return m_tune.enabled && m_ready; }
     ID3D12Resource* Visibility() const { return m_vis.Get(); }
     ID3D12Resource* Lights() const { return m_lights.Get(); }
-    RtFrameStats Stats();   // the newest retired frame's GPU times and this frame's counts
+    RtFrameStats Stats();
+    // Hot reload (docs/HOT_RELOAD.md): new pipelines for RtShadow.hlsl and RtSkyFilter.hlsl, swapped once
+    // the GPU is done with the frames in flight. The old ones stay when either is refused.
+    bool Reload(const std::vector<uint8_t>& shadow, const std::vector<uint8_t>& sky, std::string& err);   // the newest retired frame's GPU times and this frame's counts
 
 private:
     struct Mesh

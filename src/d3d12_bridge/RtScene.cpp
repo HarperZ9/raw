@@ -398,4 +398,23 @@ bool RtScene::Submit(ID3D12CommandQueue* q)
 
 RtFrameStats RtScene::Stats() { return m_stats; }
 
+bool RtScene::Reload(const std::vector<uint8_t>& shadow, const std::vector<uint8_t>& sky, std::string& err)
+{
+    if (!m_ready) { err = "the ray-tracing scene is not running"; return false; }
+    D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
+    pd.pRootSignature = m_root.Get();
+    pd.CS = {shadow.data(), shadow.size()};
+    ComPtr<ID3D12PipelineState> pso;
+    if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) { err = "the device refused the reloaded RtShadow.hlsl"; return false; }
+    if (m_fence->GetCompletedValue() < m_fenceValue) {
+        HANDLE e = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        m_fence->SetEventOnCompletion(m_fenceValue, e);
+        WaitForSingleObject(e, 2000);
+        CloseHandle(e);
+    }
+    if (m_skyReady && !sky.empty() && !m_sky.Reload(sky.data(), sky.size(), err)) return false;
+    m_pso = pso;
+    return true;
+}
+
 } // namespace raw::bridge

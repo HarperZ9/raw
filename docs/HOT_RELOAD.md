@@ -49,3 +49,11 @@ Edit to frame against a relaunch: a relaunch of the same test to the same cell t
 - **Coverage:** shader reload covers the lighting and fog pipelines. The real-time AO pass's shaders
   are superframe's `ao_rt.hlsl`, and its pass has no reload entry yet.
 - **Overlay controls:** parameters change from the ini only. No overlay widgets yet.
+
+## Ray-tracing shaders (2026-11-19)
+
+`RtShadow.hlsl` (the sun, light, sky and reflection rays) and `RtSkyFilter.hlsl` (the sky and bounce
+filter) reload with the lighting shaders when the folder holds them and the ray-tracing scene runs
+(`RtShadows=1` on raw::tx). They compile as `cs_6_5`; the new pipelines replace the old ones once the
+GPU has finished the frames in flight. A refused or broken shader leaves every old pipeline in place
+and shows the error in the overlay, as for the lighting shaders.

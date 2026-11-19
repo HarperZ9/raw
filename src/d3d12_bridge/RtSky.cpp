@@ -79,6 +79,17 @@ bool RtSky::Create(ID3D12Device5* dev, ID3D12DescriptorHeap* heap, uint32_t base
     return true;
 }
 
+bool RtSky::Reload(const void* dxil, size_t bytes, std::string& err)
+{
+    D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
+    pd.pRootSignature = m_root.Get();
+    pd.CS = {dxil, bytes};
+    ComPtr<ID3D12PipelineState> pso;
+    if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) { err = "the device refused the reloaded RtSkyFilter.hlsl"; return false; }
+    m_pso = pso;
+    return true;
+}
+
 void RtSky::SetColour(ID3D12Resource* colour)
 {
     // The same resource every frame: rewriting the descriptor with the same view is harmless to the

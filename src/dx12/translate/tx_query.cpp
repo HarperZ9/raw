@@ -75,6 +75,7 @@ STDMETHODIMP_(UINT) TQuery::GetDataSize()
 
 STDMETHODIMP Device::CreateQuery(const D3D11_QUERY_DESC* d, ID3D11Query** out)
 {
+    TX_TRACE("Device::CreateQuery");
     if (!d) return E_INVALIDARG;
     if (d->Query >= D3D11_QUERY_SO_STATISTICS) {
         CountUnsupported(this, "stream-output statistics queries");
@@ -95,6 +96,7 @@ STDMETHODIMP Device::CreateQuery(const D3D11_QUERY_DESC* d, ID3D11Query** out)
 
 STDMETHODIMP Device::CreatePredicate(const D3D11_QUERY_DESC* d, ID3D11Predicate** out)
 {
+    TX_TRACE("Device::CreatePredicate");
     if (!d || d->Query != D3D11_QUERY_OCCLUSION_PREDICATE) return E_INVALIDARG;
     ID3D11Query* q = nullptr;
     HRESULT hr = CreateQuery(d, out ? &q : nullptr);

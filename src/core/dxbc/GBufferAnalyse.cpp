@@ -107,6 +107,20 @@ void FindAlbedo(const std::vector<Instruction>& code, const std::vector<int>& de
     a->info.albedoInPlace = inPlace;
 }
 
+// The soft-lighting map of a soft-lit shader (foliage): the colour sampled from slot 12, which the
+// game's lit shader multiplies its wrap term by. RAW writes it to the emissive target (soft-lit
+// shaders carry no glow), so the deferred lighting has the real per-pixel back light.
+void FindSoftLight(const std::vector<Instruction>& code, const std::vector<int>& depth, Analysis* a)
+{
+    const size_t n = FirstSample(code, depth, a->body, 12);
+    if (n == kNone) return;
+    const int r = ChannelAt(code[n], 0), g = ChannelAt(code[n], 1), b = ChannelAt(code[n], 2);
+    if (r < 0 || g < 0 || b < 0) return;
+    a->softAfter = n; a->softReg = code[n].ops[0].index[0];
+    a->softSwz = Swz(uint32_t(r), uint32_t(g), uint32_t(b), uint32_t(b));
+    a->info.softLight = true;
+}
+
 void FindSpecular(const std::vector<Instruction>& code, const std::vector<int>& depth, Analysis* a)
 {
     // The specular mask: alpha of the normal map in slot 1.
@@ -269,6 +283,7 @@ bool Analyse(const Container& c, const Program& p, Analysis* a)
         // A landscape samples colour layers from slots 0 to 5; slot 1 is not a normal map there.
         if (a->info.materialClass != material::Landscape) FindSpecular(code, depth, a);
         else { const size_t keep = a->specAfter; FindSpecular(code, depth, a); a->specAfter = keep; a->info.specularMask = false; }
+        if (a->info.materialClass == material::SoftLit) FindSoftLight(code, depth, a);
         a->info.normal = true;
     } else if (a->waterBefore != kNone && a->anyCbAt != kNone) {
         a->info.kind = ShaderKind::Water;

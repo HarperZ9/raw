@@ -38,6 +38,7 @@ STDMETHODIMP_(void) Context::IAGetInputLayout(ID3D11InputLayout** o) { if (o) *o
 
 STDMETHODIMP_(void) Context::IAGetVertexBuffers(UINT start, UINT n, ID3D11Buffer** b, UINT* strides, UINT* offsets)
 {
+    TX_TRACE("Context::IAGetVertexBuffers");
     for (UINT i = 0; i < n; ++i) {
         const BufSlot* s = start + i < 32 ? &s_.vb[start + i] : nullptr;
         if (b) b[i] = s ? Ref(s->buf) : nullptr;
@@ -48,6 +49,7 @@ STDMETHODIMP_(void) Context::IAGetVertexBuffers(UINT start, UINT n, ID3D11Buffer
 
 STDMETHODIMP_(void) Context::IAGetIndexBuffer(ID3D11Buffer** b, DXGI_FORMAT* f, UINT* offset)
 {
+    TX_TRACE("Context::IAGetIndexBuffer");
     if (b) *b = Ref(s_.ib.buf);
     if (f) *f = s_.ibFmt;
     if (offset) *offset = s_.ib.offset;
@@ -57,6 +59,7 @@ STDMETHODIMP_(void) Context::IAGetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY* t)
 
 STDMETHODIMP_(void) Context::OMGetRenderTargets(UINT n, ID3D11RenderTargetView** rtv, ID3D11DepthStencilView** dsv)
 {
+    TX_TRACE("Context::OMGetRenderTargets");
     if (rtv) for (UINT i = 0; i < n; ++i) rtv[i] = i < 8 ? Ref(s_.rtv[i]) : nullptr;
     if (dsv) *dsv = Ref(s_.dsv);
 }
@@ -64,12 +67,14 @@ STDMETHODIMP_(void) Context::OMGetRenderTargets(UINT n, ID3D11RenderTargetView**
 STDMETHODIMP_(void) Context::OMGetRenderTargetsAndUnorderedAccessViews(UINT n, ID3D11RenderTargetView** rtv,
     ID3D11DepthStencilView** dsv, UINT uavStart, UINT nUav, ID3D11UnorderedAccessView** uav)
 {
+    TX_TRACE("Context::OMGetRenderTargetsAndUnorderedAccessViews");
     OMGetRenderTargets(n, rtv, dsv);
     if (uav) for (UINT i = 0; i < nUav; ++i) uav[i] = uavStart + i < 8 ? Ref(s_.uav[uavStart + i]) : nullptr;
 }
 
 STDMETHODIMP_(void) Context::OMGetBlendState(ID3D11BlendState** b, FLOAT f[4], UINT* mask)
 {
+    TX_TRACE("Context::OMGetBlendState");
     if (b) *b = Ref(s_.blend);
     if (f) memcpy(f, s_.factor, sizeof(s_.factor));
     if (mask) *mask = s_.sampleMask;
@@ -77,12 +82,14 @@ STDMETHODIMP_(void) Context::OMGetBlendState(ID3D11BlendState** b, FLOAT f[4], U
 
 STDMETHODIMP_(void) Context::OMGetDepthStencilState(ID3D11DepthStencilState** d, UINT* ref)
 {
+    TX_TRACE("Context::OMGetDepthStencilState");
     if (d) *d = Ref(s_.ds);
     if (ref) *ref = s_.stencilRef;
 }
 
 STDMETHODIMP_(void) Context::SOGetTargets(UINT n, ID3D11Buffer** b)
 {
+    TX_TRACE("Context::SOGetTargets");
     if (b) for (UINT i = 0; i < n; ++i) b[i] = nullptr;
 }
 
@@ -90,6 +97,7 @@ STDMETHODIMP_(void) Context::RSGetState(ID3D11RasterizerState** r) { if (r) *r =
 
 STDMETHODIMP_(void) Context::RSGetViewports(UINT* n, D3D11_VIEWPORT* v)
 {
+    TX_TRACE("Context::RSGetViewports");
     if (!n) return;
     if (v) {
         UINT c = *n < s_.vpCount ? *n : s_.vpCount;
@@ -101,6 +109,7 @@ STDMETHODIMP_(void) Context::RSGetViewports(UINT* n, D3D11_VIEWPORT* v)
 
 STDMETHODIMP_(void) Context::RSGetScissorRects(UINT* n, D3D11_RECT* r)
 {
+    TX_TRACE("Context::RSGetScissorRects");
     if (!n) return;
     if (r) {
         UINT c = *n < s_.scCount ? *n : s_.scCount;
@@ -112,11 +121,13 @@ STDMETHODIMP_(void) Context::RSGetScissorRects(UINT* n, D3D11_RECT* r)
 
 STDMETHODIMP_(void) Context::CSGetUnorderedAccessViews(UINT start, UINT n, ID3D11UnorderedAccessView** u)
 {
+    TX_TRACE("Context::CSGetUnorderedAccessViews");
     if (u) for (UINT i = 0; i < n; ++i) u[i] = start + i < 8 ? Ref(s_.csUav[start + i]) : nullptr;
 }
 
 STDMETHODIMP_(void) Context::GetPredication(ID3D11Predicate** p, BOOL* v)
 {
+    TX_TRACE("Context::GetPredication");
     if (p) *p = nullptr;
     if (v) *v = FALSE;
 }

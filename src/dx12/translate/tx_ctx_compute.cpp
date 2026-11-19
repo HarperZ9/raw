@@ -63,6 +63,7 @@ bool Context::PrepareDispatch()
 
 STDMETHODIMP_(void) Context::Dispatch(UINT x, UINT y, UINT z)
 {
+    TX_TRACE("Context::Dispatch");
     if (PrepareDispatch()) Cl()->Dispatch(x, y, z);
 }
 

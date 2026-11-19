@@ -1,0 +1,7 @@
+# The whole proxy on top of raw::tx (Translate Wrap=1): the G-buffer patches and the lighting hooks
+# run on the layer's device. Riverwood, one capture set of the game's own lighting.
+start load rawharness
+console tai
+scene riverwood
+keyframe start steps=game hold=60
+quit

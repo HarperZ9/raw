@@ -2,6 +2,7 @@
 //  WrappedDevice.cpp — ID3D11Device wrapper implementation
 //=============================================================================
 
+#include "SceneGeometry.h"
 #include "WrappedDevice.h"
 #include "WrappedContext.h"
 #include "ShaderManager.h"
@@ -368,6 +369,7 @@ HRESULT STDMETHODCALLTYPE WrappedDevice::CreatePixelShader(
     if (SUCCEEDED(hr) && ppPixelShader && *ppPixelShader) {
         ShaderManager::Get().OnPixelShaderCreated(pShaderBytecode, BytecodeLength, *ppPixelShader);
         GBuffer_OnPixelShaderCreated(*ppPixelShader, pShaderBytecode, BytecodeLength);
+        SceneGeometry_OnPixelShader(*ppPixelShader, pShaderBytecode, BytecodeLength);
         MaterialPipeline::Get().OnPixelShaderCreated(
             m_real, pShaderBytecode, BytecodeLength, *ppPixelShader);
     }
@@ -437,7 +439,9 @@ HRESULT STDMETHODCALLTYPE WrappedDevice::CreateInputLayout(
     SIZE_T BytecodeLength,
     ID3D11InputLayout** ppInputLayout)
 {
-    return m_real->CreateInputLayout(pInputElementDescs, NumElements, pShaderBytecodeWithInputSignature, BytecodeLength, ppInputLayout);
+    const HRESULT hr = m_real->CreateInputLayout(pInputElementDescs, NumElements, pShaderBytecodeWithInputSignature, BytecodeLength, ppInputLayout);
+    if (SUCCEEDED(hr) && ppInputLayout && *ppInputLayout) SceneGeometry_OnInputLayout(*ppInputLayout, pInputElementDescs, NumElements);
+    return hr;
 }
 
 HRESULT STDMETHODCALLTYPE WrappedDevice::CreateGeometryShader(

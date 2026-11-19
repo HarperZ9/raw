@@ -21,7 +21,7 @@ bool D3D12Bridge::Impl::FenceFromD3D11()
     ComPtr<ID3D11Fence> f11;
     ComPtr<ID3D12Fence> f12;
     HANDLE h = nullptr;
-    HRESULT hr = dev11->CreateFence(0, D3D11_FENCE_FLAG_SHARED, IID_PPV_ARGS(&f11));
+    HRESULT hr = dev5->CreateFence(0, D3D11_FENCE_FLAG_SHARED, IID_PPV_ARGS(&f11));
     if (SUCCEEDED(hr)) hr = f11->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &h);
     if (SUCCEEDED(hr)) { hr = dev12->OpenSharedHandle(h, IID_PPV_ARGS(&f12)); CloseHandle(h); }
     log("[D3D12Bridge] fence created on D3D11 and opened on D3D12: 0x%08X", (unsigned)hr);
@@ -35,7 +35,7 @@ bool D3D12Bridge::Impl::FenceFromD3D11()
 bool D3D12Bridge::Impl::SelfTest()
 {
     // Who answers the D3D11 fence calls: a hooked vtable shows up here.
-    void** vtbl = *reinterpret_cast<void***>(ctx11.Get());
+    void** vtbl = *reinterpret_cast<void***>(ctx4.Get());
     LogModuleOf(log, "ID3D11DeviceContext4::Signal", vtbl[157]);
     LogModuleOf(log, "ID3D11DeviceContext4::Wait", vtbl[158]);
     if (SelfTestOnce()) return true;
@@ -52,7 +52,7 @@ bool D3D12Bridge::Impl::SelfTestOnce()
     // D3D11 signals before the D3D12 queue holds a pending Signal(b): in the
     // game process D3D11 rejected Signal(a) with E_INVALIDARG while a higher
     // value was already pending from D3D12.
-    HRESULT hs = ctx11->Signal(fence11.Get(), a);
+    HRESULT hs = ctx4->Signal(fence11.Get(), a);
     ctx11->Flush();
     queue->Wait(fence12.Get(), a);
     queue->Signal(fence12.Get(), b);

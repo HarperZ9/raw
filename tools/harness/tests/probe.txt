@@ -1,0 +1,14 @@
+# The hand-over probe (docs/LIGHTING.md, the indoor cost): the inn and Riverwood, game, matched and
+# improved, each step timed with the D3D11 and D3D12 timestamps placed on one clock.
+start load rawharness
+console tai
+scene bannered_mare
+console coc whiterunbanneredmare
+wait 8
+keyframe still steps=game,match,improved hold=60
+scene riverwood_day
+console set gamehour to 13
+console coc riverwood
+wait 8
+keyframe still steps=game,match,improved hold=60
+quit

@@ -38,6 +38,7 @@ struct State
     bool opaque = false;                 // the game's opaque set is bound (the main camera's draws)
 };
 State& S() { static State s; return s; }
+const float* g_drawWorld = nullptr;
 
 const float* Shadow(ID3D11Buffer* b, uint32_t want)
 {
@@ -213,6 +214,7 @@ void SceneLights_BeforeDraw(ID3D11DeviceContext* real)
     // The bound buffers come from the context itself: the game binds some through paths the
     // wrapped Set calls do not see, as the frame ledger found.
     State& s = S();
+    g_drawWorld = nullptr;
     ID3D11Buffer* ps[3] = {};
     real->PSGetConstantBuffers(0, 3, ps);
     struct Release { ID3D11Buffer** b; int n; ~Release() { for (int k = 0; k < n; ++k) if (b[k]) b[k]->Release(); } } r1{ps, 3};
@@ -239,6 +241,7 @@ void SceneLights_BeforeDraw(ID3D11DeviceContext* real)
             }
         }
         LitDraw(s, g, w, Shadow(ps[0], 16), Shadow(ps[1], 80));
+        g_drawWorld = w;
         s.merged = false;
     } else if (size == kMaskPs2) {
         if (const float* ps0 = Shadow(ps[0], 48)) MaskDraw(s, real, g, ps0);
@@ -265,6 +268,7 @@ const raw::bridge::SceneLighting& SceneLights_Frame()
 }
 
 ID3D11Texture2D* SceneLights_ShadowMask() { return S().mask; }
+const float* SceneLights_DrawWorld() { return g_drawWorld; }
 ID3D11Texture2D* SceneLights_Cascades() { return S().cascades; }
 
 void SceneLights_OnPresent()

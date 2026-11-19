@@ -1,0 +1,22 @@
+# Hot reload in the running game (docs/HOT_RELOAD.md), in the Bannered Mare with ours improved:
+# a shader edit, a broken edit (the last good pipelines stay, the overlay shows the error), the
+# fix, and a parameter edit in the ini. Needs --shaders src/d3d12_bridge/shaders.
+start load rawharness
+console tai
+scene bannered_mare
+console coc whiterunbanneredmare
+wait 8
+keyframe before steps=improved hold=40
+reload shader Lighting.hlsl "return float4(knee3(lit), game.a);" "return float4(knee3(lit) * float3(1.0f, 0.62f, 0.42f), game.a);"
+wait 1
+keyframe warm steps=improved hold=40
+reload shader Lighting.hlsl "float3(1.0f, 0.62f, 0.42f)" "float3(1.0f, 0.62f, 0.42f) * undefinedName"
+wait 1
+keyframe broken steps=improved hold=40
+reload shader Lighting.hlsl " * undefinedName" ""
+wait 1
+keyframe fixed steps=improved hold=40
+reload ini View=2
+wait 1
+keyframe sunview steps=improved hold=40
+quit

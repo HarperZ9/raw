@@ -1,0 +1,11 @@
+# Diagnosis: the ray-traced sun visibility itself, shown through the lighting pass's view 2.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+reload ini Mode=2 View=2
+wait 5
+reload shader Lighting.hlsl "if (flags.w == 2u) { return float4(sunShadow.xxx, game.a); }" "if (flags.w == 2u) { return float4(rv.x, rv.y, float(rIdx.x) / 8.0f, game.a); }"
+wait 1
+keyframe rtvis steps=improved_rt hold=40
+quit

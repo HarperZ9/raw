@@ -15,6 +15,11 @@
 #include "ProxyLog.h"
 #include "SceneLights.h"
 #include "GameComposite.h"
+#include "HotReload.h"
+#include "SceneGeometry.h"
+#include "TxMode.h"
+#include "Translate.h"
+#include "Overlay.h"
 
 #include <algorithm>
 #include <cmath>
@@ -33,6 +38,7 @@ namespace
 {
 int s_failures = 0;
 UINT s_shadowSide = 4096;
+bool s_handoverFlush = true;
 
 } // namespace
 
@@ -40,7 +46,13 @@ void LightingApplyTuning()
 {
     const LightingTuning& t = Cfg().light;
     if (Bridge()) raw::bridge::LightingPassTune(Bridge()->ActivePass(), t);
-    GameComposite_Set({t.mode == 2 && t.ao, t.mode == 2 && t.volumetricFog});
+    if (Bridge()) {
+        raw::bridge::RtTuning rt;
+        rt.enabled = t.mode == 2 && t.rtShadows && TxMode_Get() == 1;
+        Bridge()->TuneRt(rt);
+    }
+    g_sceneGeometryActive = Cfg().enabled && t.rtShadows && TxMode_Get() == 1;
+    GameComposite_Set({t.mode == 2 && t.ao, t.mode == 2 && t.volumetricFog && t.fogReplacesGame});
 }
 
 void LoadLightingConfig(const std::string& ini)
@@ -55,7 +67,10 @@ void LoadLightingConfig(const std::string& ini)
     t.mode = i("Mode", 1);
     t.softShadows = i("SoftShadows", 1) != 0; t.ggxSpecular = i("GgxSpecular", 1) != 0;
     t.volumetricFog = i("VolumetricFog", 1) != 0; t.contactShadows = i("ContactShadows", 1) != 0;
-    t.ao = i("Ao", 1) != 0; t.cascades = i("Cascades", 1) != 0; t.view = i("View", 0);
+    t.rtShadows = i("RtShadows", 0) != 0;   // opt-in: card and facet artifacts (docs/RAYTRACING.md)
+    t.ao = i("Ao", 1) != 0; t.fogReplacesGame = i("FogReplacesGame", 0) != 0; t.cascades = i("Cascades", 0) != 0; t.view = i("View", 0);
+    // Cascades=0: the sun's shadow is the game's own filtered mask (match dE76 2.23 against 2.53 with
+    // our cascade lookup, which also drew hard twig streaks on the ground).
     t.fogDensity = f("FogDensity", t.fogDensity); t.fogAnisotropy = f("FogAnisotropy", t.fogAnisotropy);
     t.fogLightScale = f("FogLightScale", t.fogLightScale); t.fogSunScale = f("FogSunScale", t.fogSunScale);
     t.fogMaxDistance = f("FogMaxDistance", t.fogMaxDistance); t.softRange = f("SoftRange", t.softRange);
@@ -63,6 +78,7 @@ void LoadLightingConfig(const std::string& ini)
     Cfg().lightCaptureAfter = i("CaptureAfter", 0);
     Cfg().lightHold = i("Hold", 45);
     s_shadowSide = static_cast<UINT>(i("ShadowMapSize", 4096));
+    s_handoverFlush = i("HandoverFlush", 1) != 0;   // docs/LIGHTING.md: the indoor cost
     Cfg().lightDump = i("Dump", 0) != 0;
     Cfg().harness = i("Harness", 0) != 0;
     char text[MAX_PATH]{};
@@ -103,6 +119,17 @@ bool LightingEnsure()
     c.passRetireMs = static_cast<DWORD>(Cfg().retireTimeoutMs);
     c.lightingPass = true;
     c.shadowMapSize = s_shadowSide;
+    c.handoverFlush = s_handoverFlush;
+    if (TxMode_Get() == 1) {
+        // The game runs on raw::tx: the passes run on the layer's own device and queue.
+        void* d12 = nullptr;
+        void* q12 = nullptr;
+        raw::tx::GetNative(pi->device, &d12, &q12);
+        c.layer.device = static_cast<ID3D12Device*>(d12);
+        c.layer.queue = static_cast<ID3D12CommandQueue*>(q12);
+        c.layer.native = &raw::tx::NativeResource;
+        c.layer.prepare = &raw::tx::PrepareForHost;
+    }
     if (!b->Initialize(pi->device, pi->context, c, &Log)) { ++s_failures; return false; }
     LightingApplyTuning();
     return true;
@@ -115,12 +142,13 @@ bool LightingAtOpaque(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr)
     SceneLights_SetCamera(real);
     const GBufferTextures g = GBuffer_Textures();
     ID3D11Texture2D* mask = SceneLights_ShadowMask();
-    b->CaptureSurface(g.albedo, g.specular, mask ? mask : g.albedo);
+    b->CaptureSurface(g.albedo, g.specular, mask ? mask : g.albedo, g.emissive);
     if (ID3D11Texture2D* cascades = SceneLights_Cascades()) b->CaptureShadows(cascades);
     raw::bridge::SceneLighting l = SceneLights_Frame();
     if (!mask)
         for (uint32_t k = 0; k < l.lightCount; ++k) l.lights[k].shadowChannel = -1;
     b->SetLighting(l);
+    b->SetRtDraws(SceneGeometry_Take());
     raw::bridge::PassConstants k = Cfg().k;
     return b->Execute(sceneHdr, sceneHdr, k);
 }
@@ -132,6 +160,9 @@ void LightingOnPresent(bool worldFrame)
         LightingApplyTuning();
         Log("[Lighting] F10: mode %d", Cfg().light.mode);
     }
+    HotReload_OnPresent();
+    Overlay_Draw();
+    SceneGeometry_Drop();   // draws of a frame that never reached the bridge (it was off, or not yet made)
     LightingScheduleOnPresent(worldFrame);
 }
 

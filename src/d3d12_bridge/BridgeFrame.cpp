@@ -1,6 +1,7 @@
 // D3D12Bridge per-frame work: depth capture, the fence round trip, and GPU
 // timestamps on both queues. Original work, MIT.
 #include "BridgeImpl.h"
+#include "LightingPass.h"
 
 namespace raw::bridge
 {
@@ -100,6 +101,23 @@ bool D3D12Bridge::CaptureMotion(ID3D11Texture2D* motionTex)
 
 void D3D12Bridge::SetCamera(const CameraConstants& camera) { m->camera = camera; }
 
+void D3D12Bridge::SetRtDraws(std::vector<RtDraw>&& draws)
+{
+    for (RtDraw& d : m->pendingDraws) { if (d.vb) d.vb->Release(); if (d.ib) d.ib->Release(); }
+    m->pendingDraws = std::move(draws);
+    if (!m->rt) {
+        for (RtDraw& d : m->pendingDraws) { if (d.vb) d.vb->Release(); if (d.ib) d.ib->Release(); }
+        m->pendingDraws.clear();
+    }
+}
+void D3D12Bridge::TuneRt(const RtTuning& t) { m->rtTune = t; if (m->rt) m->rt->Tune(t); }
+bool D3D12Bridge::RtStats(RtFrameStats* out)
+{
+    if (!m->rt || !out) return false;
+    *out = m->rt->Stats();
+    return true;
+}
+
 // Stores the pass's newest retired timings under the frame they belong to.
 void D3D12Bridge::Impl::HarvestPassTimings()
 {
@@ -134,6 +152,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     fc.camera = m->camera;
     fc.hasNormal = s.hasNormal;
     fc.hasMotion = s.hasMotion;
+    fc.rt = m->attached && m->rt && m->rt->Active() && m->cfg.lightingPass;
     if (m->cfg.lightingPass) {
         fc.lighting = &m->lighting;
         fc.hasSurface = s.hasSurface;
@@ -161,7 +180,38 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     c->End(s.ts[4].Get());
     c->CopyResource(m->colorIn.tex11.Get(), colorSrc);
     c->End(s.ts[5].Get());
-    HRESULT hs = c->Signal(m->fence11.Get(), v1);
+    if (m->attached) {
+        // One queue: the layer submits what D3D11 recorded so far with every shared texture in
+        // COMMON, the pass follows on the same queue, and the copy-out lands in the layer's next list.
+        std::vector<ID3D11Resource*> hand;
+        bool rtOk = false;
+        if (fc.rt) {
+            m->rt->SetDraws(std::move(m->pendingDraws), hand, m->cfg.layer.native);
+            const void* u = nullptr;
+            size_t ub = 0;
+            if (LightingPassUniform(m->pass.get(), &u, &ub))
+                rtOk = m->rt->Record(u, ub, m->depthIn.res12.Get(), m->normalIn.res12.Get(),
+                                     m->shared[static_cast<UINT>(Shared::Specular)].res12.Get());
+        }
+        if (!m->HandToHost(hand) || (rtOk && !m->rt->Submit(m->queue.Get())) || !m->pass->Submit(0, v2)) {
+            m->log("[D3D12Bridge] attached hand-over failed; bridge off");
+            c->End(s.disjoint.Get());
+            s.open = false;
+            m->ready = false;
+            return false;
+        }
+        m->lastWaited = 0;
+        m->lastD12 = v2;
+        c->End(s.ts[6].Get());
+        c->CopyResource(colorDst, m->colorOut.tex11.Get());
+        c->End(s.ts[7].Get());
+        c->End(s.disjoint.Get());
+        s.open = false;
+        s.executed = true;
+        ++m->frames;
+        return true;
+    }
+    HRESULT hs = m->ctx4->Signal(m->fence11.Get(), v1);
     c->Flush();
     LARGE_INTEGER qf, q0, q1;
     QueryPerformanceFrequency(&qf);
@@ -174,6 +224,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         m->ready = false;
         return false;
     }
+    m->ProbeHead(frame, waitValue);
     if (!m->pass->Submit(waitValue, v2)) {
         // Nothing will signal v2 now, so D3D11 must not wait for it.
         m->log("[D3D12Bridge] pass '%s' failed to submit; bridge off", m->pass->Name());
@@ -182,6 +233,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         m->ready = false;
         return false;
     }
+    m->ProbeTail(frame);
     QueryPerformanceCounter(&q1);
     // Already executed on the GPU when the D3D12 list was only now submitted: the queue idles on the CPU.
     m->caughtUp += c->GetData(s.ts[5].Get(), nullptr, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK;
@@ -194,11 +246,12 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     }
     m->lastWaited = waitValue;
     m->lastD12 = v2;
-    HRESULT hw = c->Wait(m->fence11.Get(), v2);
+    HRESULT hw = m->ctx4->Wait(m->fence11.Get(), v2);
     if (FAILED(hw)) m->log("[D3D12Bridge] D3D11 Wait failed 0x%08X", (unsigned)hw);
     c->End(s.ts[6].Get());
     c->CopyResource(colorDst, m->colorOut.tex11.Get());
     c->End(s.ts[7].Get());
+    if (m->cfg.handoverFlush) c->Flush();
     c->End(s.disjoint.Get());
     s.open = false;
     s.executed = true;
@@ -252,6 +305,7 @@ bool D3D12Bridge::ReadTimings(uint64_t frame, bool block, BridgeTimings* out)
     r.passMs = ds.pass.totalMs;
     r.syncMs = r.stallMs > r.passMs ? r.stallMs - r.passMs : 0.0;
     r.bridgeCostMs = r.depthCopyMs + r.normalCopyMs + r.copyInMs + r.copyOutMs + r.syncMs;
+    m->ProbeRead(frame, dj.Frequency, t[5], t[6], &r);
     *out = r;
     return true;
 }

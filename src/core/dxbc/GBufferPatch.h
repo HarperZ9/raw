@@ -60,6 +60,7 @@ struct PatchInfo
     bool        specularMask = false;   // the normal map's alpha is sampled
     bool        gloss = false;          // a shininess exponent was found
     bool        emissive = false;       // an emissive term was found
+    bool        softLight = false;      // soft-lit: the slot 12 sample goes to the emissive target in place of emission
     bool        vertexColour = false;   // the albedo carries the vertex colour the lit result is multiplied by
     bool        normal = false;         // the layer carries a normal
     bool        depth = false;          // the layer carries SV_Position.z

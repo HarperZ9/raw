@@ -1,0 +1,15 @@
+# The game on raw::tx (docs/TX_IN_GAME.md): the main menu, the rawharness save in Riverwood, a turn,
+# then the Bannered Mare. The same script runs on native D3D11 (Translate Native=1) for the image
+# comparison; both captures come from the same swap-chain wrapper.
+start load rawharness
+console tai
+scene riverwood
+keyframe start hold=60
+mouse 900 0
+wait 2
+keyframe turned hold=60
+scene bannered_mare
+console coc whiterunbanneredmare
+wait 8
+keyframe still hold=60
+quit

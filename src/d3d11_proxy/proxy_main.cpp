@@ -37,6 +37,7 @@
 #include "MaterialPipeline.h"
 #include "WrappedDevice.h"
 #include "WrappedContext.h"
+#include "TxMode.h"
 #include "WrappedSwapChain.h"
 #include "RenderPhaseDetector.h"
 #include "OcclusionCuller.h"
@@ -305,6 +306,9 @@ extern "C" HRESULT WINAPI SB_D3D11CreateDevice(
 {
     LazyInit();
     SB::Proxy::Log("D3D11CreateDevice called (DriverType=%d, Flags=0x%X)", DriverType, Flags);
+    if (SB::Proxy::TxMode_Get() && s_realCreateDevice)
+        return SB::Proxy::TxMode_CreateDevice(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion,
+                                              ppDevice, pFeatureLevel, ppImmediateContext, reinterpret_cast<void*>(s_realCreateDevice));
 
     if (!s_realCreateDevice)
     {
@@ -372,6 +376,14 @@ extern "C" HRESULT WINAPI SB_D3D11CreateDeviceAndSwapChain(
 {
     LazyInit();
     SB::Proxy::Log("D3D11CreateDeviceAndSwapChain called");
+    // Translate mode with Wrap=1: the whole proxy (G-buffer patching, the lighting hooks) runs on
+    // top of raw::tx; the layer's create function stands in for the system runtime's.
+    if (SB::Proxy::TxMode_Get() == 1 && SB::Proxy::TxMode_Wrap())
+        s_realCreateDeviceAndSwapChain = reinterpret_cast<PFN_D3D11CreateDeviceAndSwapChain>(SB::Proxy::TxMode_CreateFn());
+    else if (SB::Proxy::TxMode_Get() && s_realCreateDeviceAndSwapChain)
+        return SB::Proxy::TxMode_CreateDeviceAndSwapChain(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion,
+                                                          pSwapChainDesc, ppSwapChain, ppDevice, pFeatureLevel, ppImmediateContext,
+                                                          reinterpret_cast<void*>(s_realCreateDeviceAndSwapChain));
 
     if (!s_realCreateDeviceAndSwapChain)
     {

@@ -40,6 +40,30 @@ HRESULT TxCreateDXGIFactory2(UINT flags, REFIID riid, void** out)
     return fn ? fn(flags, riid, out) : E_NOINTERFACE;
 }
 
+static void (*g_sink)(const char*) = nullptr;
+const char* volatile g_trace[64] = {};
+std::atomic<uint32_t> g_traceAt{0};
+
+void TraceDump(void (*out)(const char* line))
+{
+    const uint32_t end = g_traceAt.load();
+    char line[2048];
+    int k = 0;
+    for (uint32_t i = end > 48 ? end - 48 : 0; i < end; ++i) {
+        const char* n = g_trace[i & 63u];
+        k += sprintf_s(line + k, sizeof line - k, "%s%s", k ? " > " : "", n ? n : "?");
+        if (k > 1800) break;
+    }
+    out(line);
+}
+void SetLogSink(void (*sink)(const char*)) { g_sink = sink; }
+
+void LogIid(const char* where, REFIID r)
+{
+    Log("%s: QueryInterface for an interface the layer does not implement: {%08lX-%04hX-%04hX-%02X%02X-%02X%02X%02X%02X%02X%02X}", where,
+        r.Data1, r.Data2, r.Data3, r.Data4[0], r.Data4[1], r.Data4[2], r.Data4[3], r.Data4[4], r.Data4[5], r.Data4[6], r.Data4[7]);
+}
+
 void Log(const char* fmt, ...)
 {
     char buf[1024];
@@ -47,6 +71,7 @@ void Log(const char* fmt, ...)
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf) - 2, fmt, ap);
     va_end(ap);
+    if (g_sink) { g_sink(buf); return; }
     strcat_s(buf, "\n");
     OutputDebugStringA(buf);
     fputs("[tx] ", stderr);

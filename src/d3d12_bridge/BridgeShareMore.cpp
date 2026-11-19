@@ -36,7 +36,7 @@ bool D3D12Bridge::Impl::ComputeCopyAndRead(ID3D11ComputeShader* cs, ID3D11Shader
     c->CSSetShader(oldCS.Get(), nullptr, 0);
     // D3D11 signals after its copy; the D3D12 read waits for that value.
     const uint64_t v = nextValue++;
-    if (FAILED(c->Signal(fence11.Get(), v))) return false;
+    if (FAILED(ctx4->Signal(fence11.Get(), v))) return false;
     c->Flush();
     return ReadTexture12(e->tex.res12.Get(), v, out, rowBytes);
 }

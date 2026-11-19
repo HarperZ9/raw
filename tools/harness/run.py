@@ -18,6 +18,8 @@ the reason; no step is dropped. Commands of a test script, one a line:
     mouse <dx> <dy>      turn the camera
     walk <key> <seconds> [keyframe ...]                 hold a key; with a keyframe, capture while moving
     minimise <seconds>   minimise the window and report whether the game kept drawing
+    reload ini <key=value ...>          edit [Lighting] in the deployed ini; wait for the proxy to apply it
+    reload shader <file> <old> <new>    edit the shader copy (with --shaders); wait for the new pipelines
     quit
 
 Original work, MIT.
@@ -27,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -37,7 +40,7 @@ import game as G
 from actions import Actions
 
 HERE = Path(__file__).resolve().parent
-ALL_STEPS = ("game,match,match_game_mask,control_half_viewport,improved_base,improved_soft,improved_ggx,improved_fog,"
+ALL_STEPS = ("game,match,match_cascades,control_half_viewport,improved_base,improved_soft,improved_ggx,improved_fog,"
              "improved_contact,improved_ao,improved,game_after")
 
 PROXY_INI = """[General]
@@ -149,6 +152,57 @@ class Runner(Actions):
         self.log(f"keyframe {self.scene}/{name}: {answer} after {time.time() - start:.0f} s")
         self.report["keyframes"].append({"scene": self.scene, "keyframe": name, "answer": answer})
 
+    def hot(self) -> dict:
+        p = self.inst.game / "raw_hot_reload.txt"
+        if not p.exists():
+            return {}
+        out = {}
+        for line in p.read_text(errors="replace").splitlines():
+            k, _, v = line.partition("=")
+            out[k] = v
+        return out
+
+    def reload(self, plain: list[str], opts: dict) -> None:
+        """A live edit, timed from the write to the proxy's answer in raw_hot_reload.txt (it polls
+        every 15 presents and compiles on a worker thread)."""
+        before = self.hot()
+        if plain[0] == "ini":
+            text = (self.inst.game / "d3d11_proxy.ini").read_text(encoding="utf-8")
+            lines, inside, seen = text.splitlines(), False, set()
+            out = []
+            for line in lines:
+                if line.strip().startswith("["):
+                    if inside:
+                        out += [f"{k}={v}" for k, v in opts.items() if k not in seen]
+                    inside = line.strip().lower() == "[lighting]"
+                elif inside and line.split("=")[0].strip() in opts:
+                    k = line.split("=")[0].strip()
+                    line, _ = f"{k}={opts[k]}", seen.add(k)
+                out.append(line)
+            if inside:
+                out += [f"{k}={v}" for k, v in opts.items() if k not in seen]
+            t0 = time.time()
+            (self.inst.game / "d3d11_proxy.ini").write_text("\n".join(out) + "\n", encoding="utf-8")
+            key = "params"
+        else:
+            f = self.inst.game / G.SHADER_COPY / plain[1]
+            src = f.read_text(encoding="utf-8")
+            old, new = plain[2].strip('"'), plain[3].strip('"')
+            if old not in src:
+                raise RuntimeError(f"reload: '{old}' is not in {plain[1]}")
+            t0 = time.time()
+            f.write_text(src.replace(old, new, 1), encoding="utf-8")
+            key = "reloads"
+        while time.time() - t0 < 60:
+            now = self.hot()
+            if now.get(key) != before.get(key) or (key == "reloads" and now.get("failures") != before.get("failures")):
+                ms = (time.time() - t0) * 1000
+                self.log(f"reload {plain[0]}: applied {ms:.0f} ms after the edit; proxy: {now}")
+                self.report.setdefault("reloads", []).append({"what": " ".join(plain), "edit_to_applied_ms": round(ms), "proxy": now})
+                return
+            time.sleep(0.05)
+        raise RuntimeError(f"reload {plain[0]}: no answer from the proxy in 60 s")
+
     def command(self, words: list[str]) -> bool:
         op, args = words[0], words[1:]
         opts = dict(w.split("=", 1) for w in args if "=" in w)
@@ -191,6 +245,9 @@ class Runner(Actions):
                 G.hold(k, secs)
         elif op == "minimise":
             self.minimise(float(plain[0]))
+        elif op == "reload":
+            # shader edits hold '=' and spaces: the quoted words go through whole
+            self.reload(args if args and args[0] == "shader" else plain, opts)
         elif op == "quit":
             return False
         else:
@@ -206,7 +263,13 @@ class Runner(Actions):
         w, h = self.a.resolution.split("x")
         ok = False
         try:
-            self.inst.deploy(Path(self.a.dll), PROXY_INI)
+            ini = Path(self.a.ini).read_text(encoding="utf-8") if self.a.ini else PROXY_INI
+            if self.a.shaders:
+                dst = self.inst.game / G.SHADER_COPY
+                shutil.rmtree(dst, ignore_errors=True)
+                shutil.copytree(self.a.shaders, dst)
+                ini += f"\n[HotReload]\nEnabled=1\nShaderDir={dst}\n"
+            self.inst.deploy(Path(self.a.dll), ini)
             self.inst.set_option("SkyrimPrefs.ini", "Display", "iSize W", w)
             self.inst.set_option("SkyrimPrefs.ini", "Display", "iSize H", h)
             self.inst.set_option("SkyrimPrefs.ini", "Interface", "bShowTutorials", "0")
@@ -281,6 +344,8 @@ def main() -> int:
     p.add_argument("--out", required=True)
     p.add_argument("--resolution", default="3840x2160")
     p.add_argument("--prompt-tries", default="1")
+    p.add_argument("--shaders", default="", help="a shader folder to copy beside the game for hot reload (src/d3d12_bridge/shaders)")
+    p.add_argument("--ini", default="", help="a d3d11_proxy.ini to deploy instead of the lighting one (the translate tests)")
     return Runner(p.parse_args()).run()
 
 

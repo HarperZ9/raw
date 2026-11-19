@@ -1,4 +1,6 @@
 #pragma once
+#include <string>
+#include <vector>
 // LightingPass: the Playground engine lights the game frame itself (docs/LIGHTING.md).
 // The bridge runs it at the end of the game's opaque pass on the HDR scene colour; its result
 // replaces what the game's lit shader wrote there, so the game's water, effects, fog, bloom,
@@ -24,17 +26,20 @@ struct LightingTuning
     bool  volumetricFog = true;     // improved: fog lit by the sun (shadowed) and every point light
     bool  contactShadows = true;    // improved: a short march along the sun direction
     bool  ao = true;                // improved: the engine's real-time AO on the ambient term
-    bool  cascades = true;          // the sun's shadow from the decoded cascades; off: the game's mask
+    bool  cascades = false;         // the sun's shadow from the decoded cascades; off: the game's mask
     int   view = 0;                 // 1 world normal, 2 sun shadow, 3 ambient
     float fogDensity = 0.00006f;    // extinction per game unit
     float fogAnisotropy = 0.35f;    // Henyey-Greenstein g
     float fogLightScale = 1.0f;     // point-light in-scatter gain
-    float fogSunScale = 1.0f;       // sun in-scatter gain
+    float fogSunScale = 0.35f;      // sun in-scatter gain (1.0 washed near ground warm on top of the game's haze)
+    bool  fogReplacesGame = false;  // our fog replaces the game's distance fog; off: the game's art-directed
+                                    // haze stays and ours adds lit shafts and lamp glow only
     float fogMaxDistance = 6000.0f; // game units
     float softRange = 400.0f;       // soft-shadow march length cap, game units
     float contactLength = 40.0f;    // game units
     float aoStrength = 0.7f;        // the game's own AO still multiplies the frame after this pass
     float clusterFar = 40000.0f;    // the last depth slice ends here
+    bool  rtShadows = false;        // improved: ray-traced sun and point-light shadows on the game's geometry (attached to raw::tx)
 };
 
 // Lights into clusters: out[cluster] holds one bit per light index.
@@ -42,5 +47,8 @@ void BuildClusters(const SceneLighting& s, float nearZ, float farZ, uint32_t (*o
 
 std::unique_ptr<IBridgePass> MakeLightingPass();
 bool LightingPassTune(IBridgePass* pass, const LightingTuning& t);
+bool LightingPassUniform(IBridgePass* pass, const void** data, size_t* bytes);   // cbuffer P as filled for this frame
+bool LightingPassReload(IBridgePass* pass, const std::vector<uint8_t>& vs, const std::vector<uint8_t>& fs,
+                        const std::vector<uint8_t>& fogFs, std::string& err);
 
 } // namespace raw::bridge

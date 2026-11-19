@@ -101,11 +101,12 @@ uint64_t Device::Submit(Recording** recs, int n, bool consume)
 {
     std::lock_guard<std::mutex> g(submitM_);
     std::lock_guard<std::mutex> gi(initM_);
-    Recording* all[9];
-    int count = 0;
+    std::vector<Recording*>& all = submitRecs_;
+    all.clear();
     bool uploads = initCmds_ != 0;
-    if (uploads) { init_.cl->Close(); all[count++] = &init_; }
-    for (int i = 0; i < n && count < 9; ++i) all[count++] = recs[i];
+    if (uploads) { init_.cl->Close(); all.push_back(&init_); }
+    for (int i = 0; i < n; ++i) all.push_back(recs[i]);
+    const int count = int(all.size());
 
     execLists_.clear();
     size_t fix = 0;

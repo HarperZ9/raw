@@ -173,6 +173,7 @@ STDMETHODIMP SwapChain::Present(UINT sync, UINT flags)
     t.Flush(cl);
     ++ctx->Rec().cmdCount;
     ctx->MarkDirty(D_SCAN);
+    ctx->FrameRuns();
     const uint64_t serial = ctx->FlushInternal();
     // Sync 0 is a tearing present when the chain allows it; the flag is invalid with any other interval.
     if (sync == 0 && tearing_ && !(flags & DXGI_PRESENT_TEST)) flags |= DXGI_PRESENT_ALLOW_TEARING;
@@ -180,7 +181,7 @@ STDMETHODIMP SwapChain::Present(UINT sync, UINT flags)
     if (flags & DXGI_PRESENT_TEST) return hr;
     const uint64_t frame = presents_++;
     frameSerial_[frame % 8] = serial;
-    if (presents_ % 600 == 0) MapStatsLog(600);
+    if (presents_ % 600 == 0) { MapStatsLog(600); ctx->StreamStatsLog(600); ctx->TableStatsLog(600); }
     dev_->Reclaim();
     // At most `latency` frames queued: the CPU waits for the oldest to leave the queue, as the system
     // runtime does inside Present.

@@ -154,11 +154,15 @@ struct RtDraw
     ID3D11Buffer* blendVb = nullptr;     // the stream with the blend indices and weights (a reference)
     UINT blendStride = 0, blendVbOffset = 0, idxOffset = 0, wOffset = 0;
     float* bones = nullptr;              // 960 floats, owned (delete[] in ReleaseRtDraw)
+    // How the references are given back; nullptr: Release. The RAW proxy on raw::tx takes them as the
+    // layer's plain host references (raw::tx::HoldBuffer, HoldView): no locked instruction per draw.
+    void (*drop)(RtDraw&) = nullptr;
 };
 enum : uint8_t { RtAlphaNone = 0, RtAlphaDiscard = 1, RtAlphaCoverage = 2, RtAlphaFoliage = 3, RtAlphaBlend = 4 };
 
 inline void ReleaseRtDraw(RtDraw& d)
 {
+    if (d.drop) d.drop(d);   // gives back vb, ib, alphaSrv, uvVb and blendVb, and clears them
     if (d.vb) d.vb->Release();
     if (d.ib) d.ib->Release();
     if (d.alphaSrv) d.alphaSrv->Release();
@@ -167,6 +171,12 @@ inline void ReleaseRtDraw(RtDraw& d)
     delete[] d.bones;
     d.vb = nullptr; d.ib = nullptr; d.alphaSrv = nullptr; d.uvVb = nullptr; d.blendVb = nullptr; d.bones = nullptr;
 }
+
+// [Lighting] Deterministic=1, a test switch: every per-frame noise seed of the bridge's passes (the
+// lighting's dither, the ray tracing's sample and sky-turn seeds, the GI's frame) is pinned to 0, so the
+// same scene gives the same frame and a pixel diff between builds is a test (tools/harness/tests/txdet.txt).
+// The history buffers still alternate and the cache still ages; with fixed inputs they settle.
+inline bool g_deterministic = false;
 
 struct RtTuning
 {
@@ -213,6 +223,8 @@ struct RtFrameStats
     uint64_t skinVertices = 0;
     uint64_t albedoBytes = 0;
     double   cacheMs = 0;
+    double   waterMs = 0;         // RtWater: the newest retired frame's GPU time
+    uint32_t waterRuns = 0;       // frames the water pass ran, since the scene was made
 };
 
 enum class Shared : UINT { ColorIn, Depth, Normal, ColorOut, Motion, Albedo, Specular, ShadowMask, ShadowAtlas, Emissive, RtVisibility, RtLights, RtBounce, RtReflect, Count };
@@ -361,6 +373,11 @@ public:
     void SetRtDraws(std::vector<RtDraw>&& draws);
     void TuneRt(const RtTuning& t);
     bool RtStats(RtFrameStats* out);
+    // Attached to raw::tx, lighting pass, RT active: RAW's water (RtWater.hlsl) on the HDR colour right
+    // after the game composites its water (water true), then the skin's scattering (Sss.hlsl) when
+    // sssStrength > 0. layer: RAW's layer target. False when nothing ran.
+    bool ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, bool water, float sssWidth, float sssStrength);
+    bool ReloadWater(const std::vector<uint8_t>& water, const std::vector<uint8_t>& sss, std::string& err);   // hot reload: RtWater.hlsl, Sss.hlsl
     bool ReloadRt(const std::vector<uint8_t>& shadow, const std::vector<uint8_t>& sky, std::string& err);   // hot reload
     bool TuneEngine(const EngineTuning& t);
     IBridgePass* ActivePass();   // the pass behind the seam, for its own knobs (LightingPassTune)

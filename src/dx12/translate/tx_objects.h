@@ -2,6 +2,7 @@
 #pragma once
 #include "tx_alloc.h"
 #include "tx_track.h"
+#include "tx_holds.h"
 
 namespace raw::tx {
 
@@ -30,6 +31,8 @@ struct ResCore {
     UINT mapSub = 0;
     ID3D11Resource* self = nullptr;
     void (*intRef)(ID3D11Resource*, int) = nullptr;
+    ImmHold* imm = nullptr;                                  // the object's plain count (tx_holds.h)
+    void (*hold)(BindHolds&, ID3D11Resource*) = nullptr;     // a plain hold of the typed object
 
     ID3D12Resource* Res() const { return tr ? tr->res.Get() : nullptr; }
     uint32_t Sub(uint32_t mip, uint32_t slice, uint32_t plane = 0) const
@@ -54,6 +57,8 @@ struct TRes final : Child<I> {
             auto* t = static_cast<TRes*>(r);
             if (delta > 0) t->IntAddRef(); else t->IntRelease();
         };
+        core.imm = &this->imm;
+        core.hold = [](BindHolds& h, ID3D11Resource* r) { h.Add(static_cast<TRes*>(static_cast<I*>(r))); };
     }
     ~TRes() override { DestroyCore(this->dev, core); }
     bool QIExtra(REFIID r, void** o) override
@@ -82,6 +87,7 @@ struct TView final : Child<I> {
     SubRange range;
     DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
     D desc{};
+    uint64_t uid = 0;   // never reused (a descriptor slot or an address may be): the table cache's key
     explicit TView(Device* d) : Child<I>(d) {}
     ~TView() override;
     bool QIExtra(REFIID r, void** o) override

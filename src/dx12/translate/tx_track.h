@@ -61,8 +61,13 @@ public:
     void Keep(std::vector<std::shared_ptr<TrackedRes>>& out, bool move = false);
 
 private:
+    // The immediate context's tracker (the slot cache) holds a plain pointer: every submission comes from
+    // the immediate context's thread and carries its open list, and a destroyed resource is retired until the
+    // next submission completes (DestroyCore), so the resource outlives the list's Resolve. Copying the
+    // shared_ptr instead cost two locked instructions per resource per list. Other trackers own a reference.
     struct Local {
-        std::shared_ptr<TrackedRes> r;
+        TrackedRes* r = nullptr;
+        std::shared_ptr<TrackedRes> own;
         uint32_t uni = kUnknownState;    // the state every subresource is in now, or kMixedState
         uint32_t inl[8];                 // first[subs], then cur[subs], for up to 4 subresources
         std::unique_ptr<uint32_t[]> heap;

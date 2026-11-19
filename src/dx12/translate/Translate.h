@@ -35,6 +35,12 @@ struct CreateParams {
     // The ring's pages in CPU-cached (write-back) system memory instead of write-combined upload memory:
     // writes into them need no write-combining drain. An experiment; off by default.
     bool ringWriteBack = false;
+    // Worker threads that translate the immediate context's draws into D3D12 command lists in parallel
+    // (tx_stream.h); 0: every call is translated on the application's thread, as before.
+    uint32_t workers = 0;
+    uint32_t segmentDraws = 256;   // draws a worker's segment takes
+    uint32_t segmentMin = 64;      // a shorter run between other calls stays on the application's thread
+    bool predictRuns = true;       // a run short in the last frame goes straight to the list (off: every run is recorded)
 };
 
 struct Stats {
@@ -77,6 +83,22 @@ HRESULT PrepareForHost(ID3D11DeviceContext* context, ID3D11Resource* const* reso
 // per draw. The pointers are valid while they stay bound.
 bool IsLayerContext(ID3D11DeviceContext* context);
 void PeekConstantBuffers(ID3D11DeviceContext* context, UINT stage, UINT start, UINT count, ID3D11Buffer** out);
+// The rest of a draw's bindings, read the same way (no reference added; valid while bound). Each
+// returns nullptr when nothing is bound there. PeekBlendDesc gives the bound blend state's description.
+ID3D11InputLayout* PeekInputLayout(ID3D11DeviceContext* context);
+ID3D11PixelShader* PeekPixelShader(ID3D11DeviceContext* context);
+const D3D11_BLEND_DESC* PeekBlendDesc(ID3D11DeviceContext* context);
+ID3D11Buffer* PeekVertexBuffer(ID3D11DeviceContext* context, UINT slot, UINT* stride, UINT* offset);
+ID3D11Buffer* PeekIndexBuffer(ID3D11DeviceContext* context, DXGI_FORMAT* format, UINT* offset);
+ID3D11ShaderResourceView* PeekShaderResource(ID3D11DeviceContext* context, UINT stage, UINT slot,
+                                             D3D11_SRV_DIMENSION* dimension);
+
+// References without a locked instruction, for a host that takes and drops them on the immediate
+// context's thread (the RAW proxy's per-draw capture for the ray-tracing scene): +1 or -1 on the immediate
+// context's plain binding count (tx_holds.h). While above 0 the object stays alive, as with AddRef; a
+// Release by the application meanwhile is fine. Only on objects of this layer.
+void HoldBuffer(ID3D11Buffer* buffer, int delta);
+void HoldView(ID3D11ShaderResourceView* view, int delta);
 
 // The D3D12 device and direct queue, for a renderer that adopts them
 // (superframe native/raw/rhi/host.hpp, HostDevice). No reference is added.

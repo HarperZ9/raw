@@ -47,6 +47,7 @@ void RunScenes(const Opts& o, Tally& t);        // each scene on both back ends
 void RunControls(const Opts& o, Tally& t);      // defects that must be caught
 void RunReflection(Tally& t);                   // bytecode readers against D3DReflect
 void RunGetters(const Opts& o, Tally& t);       // set-then-get on both back ends
+void RunLifetime(const Opts& o, Tally& t);      // bound objects live while bound, die once unbound
 void RunSwapChain(const Opts& o, Tally& t);     // D3D12 swap chain, Present, resize
 void RunReplay(const Opts& o, Tally& t);        // record on D3D11, replay on both
 void RunBench(const Opts& o, Tally& t);         // many_draws timings

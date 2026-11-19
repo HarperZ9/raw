@@ -16,18 +16,14 @@
 
 #include <algorithm>
 #include <cstring>
-#include <mutex>
-#include <unordered_map>
 
 namespace SB::Proxy
 {
+using geom::AlphaTexture;
 using geom::BlendAlpha;
 using geom::Layout;
 namespace
 {
-std::mutex g_m;
-std::unordered_map<ID3D11InputLayout*, Layout> g_layouts;
-std::unordered_map<ID3D11PixelShader*, uint8_t> g_alphaPs;   // RtAlphaDiscard or RtAlphaFoliage
 std::vector<raw::bridge::RtDraw> g_frame;
 // Why draws were left out, and how many alpha-tested ones joined, since the start.
 struct Counts { uint64_t alphaNoTexture = 0, alphaNoUv = 0, alphaOff = 0, noLayout = 0, badFormat = 0, noBuffers = 0,
@@ -98,9 +94,7 @@ void SceneGeometry_OnInputLayout(ID3D11InputLayout* layout, const D3D11_INPUT_EL
         else if (_stricmp(e[i].SemanticName, "BLENDINDICES") == 0) L.blendIdx = {e[i].InputSlot, off, e[i].Format, true};
         else if (_stricmp(e[i].SemanticName, "BLENDWEIGHT") == 0) L.blendW = {e[i].InputSlot, off, e[i].Format, true};
     }
-    if (!L.pos.set) return;
-    std::lock_guard<std::mutex> g(g_m);
-    g_layouts[layout] = L;
+    geom::RecordLayout(layout, L.pos.set ? &L : nullptr);
 }
 
 void SceneGeometry_OnPixelShader(ID3D11PixelShader* ps, const void* bc, size_t n)
@@ -111,9 +105,7 @@ void SceneGeometry_OnPixelShader(ID3D11PixelShader* ps, const void* bc, size_t n
     const uint8_t kind = HasDiscard(bc, n) ? raw::bridge::RtAlphaDiscard
                          : raw::dxbc::Inspect(bc, n).materialClass == raw::dxbc::material::SoftLit ? raw::bridge::RtAlphaFoliage
                                                                                                    : raw::bridge::RtAlphaNone;
-    if (!kind) return;
-    std::lock_guard<std::mutex> g(g_m);
-    g_alphaPs[ps] = kind;
+    geom::RecordPixelShader(ps, kind);   // none too: a reused address drops the old shader's kind
 }
 
 namespace
@@ -123,50 +115,28 @@ bool UvFormatOk(DXGI_FORMAT f)
     return f == DXGI_FORMAT_R16G16_FLOAT || f == DXGI_FORMAT_R32G32_FLOAT || f == DXGI_FORMAT_R16G16B16A16_FLOAT ||
            f == DXGI_FORMAT_R32G32B32A32_FLOAT || f == DXGI_FORMAT_R32G32B32_FLOAT;
 }
-
-// The texture at t0 when it is a plain 2D texture view, with a reference.
-ID3D11ShaderResourceView* AlphaTexture(ID3D11DeviceContext* real)
-{
-    ID3D11ShaderResourceView* v = nullptr;
-    real->PSGetShaderResources(0, 1, &v);
-    if (!v) return nullptr;
-    D3D11_SHADER_RESOURCE_VIEW_DESC d{};
-    v->GetDesc(&d);
-    if (d.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D) { v->Release(); return nullptr; }
-    return v;
-}
 } // namespace
 
 void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT startIndex, INT baseVertex)
 {
-    SceneGeometry_Census(real, 0);
+    // One layout lookup per draw, shared by the census, the skinned path and the rigid path.
+    const Layout* bound = geom::LayoutOf(geom::BoundLayout(real));
+    SceneGeometry_CensusWith(bound, 0);
     // A skinned layout goes the skinned way whether or not the lit-draw decode found a world block: the
     // actors' draws carry one (434,193 of 538,843 skinned opaque-set draws in Riverwood), and as rigid
     // meshes their bind-pose positions under that matrix put nothing where the body is.
-    if (SceneSkin_OnDraw(real, indexCount, startIndex, baseVertex)) return;
+    if (SceneSkin_OnDraw(real, bound, indexCount, startIndex, baseVertex)) return;
     const float* w = SceneLights_DrawWorld();
     if (!w || indexCount < 3) return;
-    ID3D11PixelShader* ps = nullptr;
-    real->PSGetShader(&ps, nullptr, nullptr);
-    uint8_t alpha = raw::bridge::RtAlphaNone;
-    {
-        std::lock_guard<std::mutex> g(g_m);
-        auto it = ps ? g_alphaPs.find(ps) : g_alphaPs.end();
-        if (it != g_alphaPs.end()) alpha = it->second;
-    }
-    if (ps) ps->Release();
+    uint8_t alpha = geom::AlphaKindOf(geom::BoundPs(real));
     if (!alpha) alpha = BlendAlpha(real);
     if (alpha && !g_alphaOn) { ++g_n.alphaOff; return; }
-    ID3D11InputLayout* il = nullptr;
-    real->IAGetInputLayout(&il);
-    Layout L;
-    bool found;
-    { std::lock_guard<std::mutex> g(g_m); auto it = g_layouts.find(il); found = it != g_layouts.end(); if (found) L = it->second; }
-    if (il) il->Release();
-    if (!found) { ++g_n.noLayout; return; }
+    if (!bound) { ++g_n.noLayout; return; }
+    const Layout& L = *bound;
     const DXGI_FORMAT pf = L.pos.format;
     if (pf != DXGI_FORMAT_R32G32B32_FLOAT && pf != DXGI_FORMAT_R32G32B32A32_FLOAT && pf != DXGI_FORMAT_R16G16B16A16_FLOAT) { ++g_n.badFormat; return; }
     raw::bridge::RtDraw d;
+    d.drop = geom::DropFor(real);   // before any reference is taken
     if (alpha) {
         // The rays read the coordinates from the position's own vertex buffer.
         // Coordinates in their own stream belong to the tree shaders, whose positions the vertex shader
@@ -187,8 +157,8 @@ void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT start
         if (d.alphaSrv) { d.uvOffset = L.uv.offset; d.uvFormat = L.uv.format; ++g_n.opaqueMat; }
     }
     UINT stride = 0, offset = 0;
-    real->IAGetVertexBuffers(L.pos.slot, 1, &d.vb, &stride, &offset);
-    real->IAGetIndexBuffer(&d.ib, &d.ibFormat, &d.ibOffset);
+    d.vb = geom::VertexBuffer(real, L.pos.slot, &stride, &offset);
+    d.ib = geom::IndexBuffer(real, &d.ibFormat, &d.ibOffset);
     if (!d.vb || !d.ib) { raw::bridge::ReleaseRtDraw(d); ++g_n.noBuffers; return; }
     d.stride = stride; d.vbOffset = offset; d.posOffset = L.pos.offset; d.posFormat = pf;
     d.indexCount = indexCount; d.startIndex = startIndex; d.baseVertex = baseVertex;
@@ -224,43 +194,7 @@ void SceneGeometry_Drop()
 
 namespace geom
 {
-bool FindLayout(ID3D11InputLayout* il, Layout& out)
-{
-    std::lock_guard<std::mutex> g(g_m);
-    auto it = g_layouts.find(il);
-    if (it == g_layouts.end()) return false;
-    out = it->second;
-    return true;
-}
-
-bool IsDiscardPs(ID3D11PixelShader* ps)
-{
-    std::lock_guard<std::mutex> g(g_m);
-    auto it = ps ? g_alphaPs.find(ps) : g_alphaPs.end();
-    return it != g_alphaPs.end() && it->second == raw::bridge::RtAlphaDiscard;
-}
-
 std::vector<raw::bridge::RtDraw>& Frame() { return g_frame; }
-
-// Alpha to coverage on a single-sample target cuts at alpha 0.5 like a test; a blended lit draw in the
-// opaque set cuts by its alpha too (the primary-ray view showed the sapling and the clover as solid
-// opaque cards with neither a discard nor coverage). Returns RtAlphaCoverage, RtAlphaBlend or none.
-uint8_t BlendAlpha(ID3D11DeviceContext* real)
-{
-    ID3D11BlendState* bs = nullptr;
-    FLOAT f[4];
-    UINT m = 0;
-    real->OMGetBlendState(&bs, f, &m);
-    if (!bs) return raw::bridge::RtAlphaNone;
-    D3D11_BLEND_DESC d{};
-    bs->GetDesc(&d);
-    bs->Release();
-    if (d.AlphaToCoverageEnable) return raw::bridge::RtAlphaCoverage;
-    const D3D11_RENDER_TARGET_BLEND_DESC& t = d.RenderTarget[0];
-    const bool usesAlpha = t.SrcBlend == D3D11_BLEND_SRC_ALPHA || t.DestBlend == D3D11_BLEND_INV_SRC_ALPHA;
-    return t.BlendEnable && usesAlpha ? raw::bridge::RtAlphaBlend : raw::bridge::RtAlphaNone;
-}
-
 } // namespace geom
 
 } // namespace SB::Proxy

@@ -323,7 +323,7 @@ screen-space scattering blur yet.
 - no radiance cache and no screen lookups.
 
 Samples accumulate over 1,000 held frames. View 13 gives the same quantity from the lighting pass.
-`tools/lighting/flip.py` is FLIP written from the 2020 paper; it is not checked against NVIDIA's code. Run at
+`tools/lighting/flip.py` is FLIP written from the 2020 paper, checked against NVIDIA's reference since (below, "FLIP checked"). Run at
 quarter size (16.75 pixels a degree):
 
 | FLIP against the reference (lower is closer) | RAW improved | Game's model (match) |
@@ -335,6 +335,128 @@ The inn reference ghosts a person who walked during accumulation. The reference 
 shadow, and it lacks emissive surfaces and sky radiance beyond the ambient, so it is a reference for this
 light model, not ground truth.
 
-**Not done:** water reflection, refraction and caustics, because water is drawn after this pass. Also not
-done: POM, the screen-space scattering blur, async compute, ReSTIR, and ENB or Community Shaders comparisons
-(no such setup exists). SER and SM 6.9 are skipped, waiting on approval.
+**Not done here:** water reflection and caustics, the screen-space scattering blur and the untraced lights'
+shadows (all in the next section), POM, async compute, and ENB or Community Shaders comparisons (no such setup
+exists). SER and SM 6.9 are skipped, waiting on approval.
+
+## Water, every light, skin scattering, and FLIP checked (2026-11-19)
+
+All at 3840 x 2160 on the RTX 4090 with the game on raw::tx. Every session left ENB at 232 of 232 hashes and
+restored the settings files by hash. Images: `ingame-rt6-2026-11-19-*` in the mission-control folder.
+
+**Where the water pass runs.** The game draws its water into a colour target of its own (one RGBA16F target on
+the scene depth, about 8 spans a frame in Riverwood), then one draw composites it into the HDR colour and the
+water mask (`docs/FRAME_BUFFERS.md`). `BridgeHook.cpp` watches for that composite. When the target list changes
+after it, `LightingAtWater` hands the frame to `D3D12Bridge::ExecuteWater` (`BridgeWater.cpp`): the HDR colour is
+copied in, RAW's layer target and both water textures go to the queue in COMMON, `RtScene::RecordWater`
+(`RtWater.cpp`) runs its own list on the same queue after the frame's trace, and the result is copied back. The
+list uses the frame's TLAS, root signature and descriptor heap (33 descriptors of its own at the end), with its
+own allocators, constants, fence and timestamps. In a frame without water the same point (the first blended
+span) runs the skin scattering alone.
+
+**What it does per water pixel** (`RtWater.hlsl`; `[Lighting] Water`, `WaterReflect`, `WaterGlint`,
+`WaterCaustics`, `WaterAbsorb`, `WaterCausticCell`). The layer target gives the surface's depth and its view
+normal after the game's wave maps. The water shaders write no alpha, so a water pixel is one with a depth in front
+of the bed, a normal, and a normal that faces up. The first version tested the alpha and found no water.
+- Reflection: one ray around the mirror direction, kept above the water's plane. On screen the hit takes its
+  colour from the frame; off screen, from its own material and the radiance cache (`RtHit.hlsli`); a miss sees the
+  sky. It is mixed over the game's water by Schlick Fresnel with F0 0.02.
+- Glint: GGX at a width of 0.04 on the wave normal, with a shadow ray to the sun.
+- Caustics: a moving net of cell walls at two scales, projected along the refracted sun ray to where it crossed the
+  surface, with a shadow ray from the bed, dimmed by the water above the bed and between the bed and the eye. Red,
+  green and blue sample the net 0.9 units apart.
+- Rain rings from `Weather.hlsli` tilt the normal while rain falls.
+
+Views: `WaterView=1` the reflection, `2` the caustics, `3` Fresnel, `4` the bed under the water (red: none),
+`5` Fresnel in three bands. `RtWater.hlsl` and `Sss.hlsl` now hot reload with the other ray-tracing shaders.
+
+| rt6-iso-4, Riverwood river, 13:00 | water list, GPU |
+|---|---|
+| Skin scattering only (no water in the frame) | 0.13 ms |
+| Water | 0.38 ms |
+| Water, then skin scattering | 0.50 ms |
+
+The two D3D11 copies of the HDR colour, in and out, are not in these times.
+
+In the river view the bank and the rock now mirror in the water, darker under the rock, where the game's water
+shows its own sky. The caustics do not show yet: `WaterView=4` reads red on every water pixel (rt6-wat-4), so the
+depth RAW copies at the end of the opaque pass already holds the water's surface, not the bed. The game must write
+its water's depth before that point (the depth prepass is the likely place). The caustics, and any absorption by
+the water's depth, need the bed's depth captured before the water's depth is written.
+
+Two device removals were found and fixed on the way:
+- The scattering wrote into the water's input texture, which had no UAV. With the water alone it never did. DRED
+  (`[Translate] Dred=1`, logged once by `LogDeviceRemoved`) reported DXGI_ERROR_INVALID_CALL with no page fault,
+  which pointed at an API misuse rather than a bad address.
+- A barrier from COMMON on a texture the list had already promoted to a read state. Both colour textures now take
+  explicit states.
+
+**Every light shadowed** (`[Lighting] RtRest`, on by default). The trace already gave the sun and each pixel's three
+strongest cluster lights their own shadow ray. The other lights of the cluster now share one more ray. On the sky
+ray's turn, one pixel in four each frame, one of them is picked in proportion to the light it would give, by
+weighted reservoir sampling over the whole list, so the pick is exact rather than resampled. Its visibility rides
+in the sky ray's raw output (sky + 2 x visibility + 4), is filtered with the sky rays over pixels and up to 32
+frames, and reaches the lighting pass in the bounce texture's alpha (`FLAG_REST`, view 14). The lighting pass
+multiplies each untraced light by it. This is the ratio estimator of Heitz et al. 2018: one shadowed-over-unshadowed
+ratio for the set. It is ReSTIR's first stage, exact here because a cluster holds at most 128 lights; the temporal
+and spatial reuse of reservoirs is not built. Emissive surfaces still light other surfaces only through the one
+bounce, which reads them from the frame where a sky ray hits them on screen. The extra ray is traced whether
+`RtRest` is on or off (the key only changes what the lighting pass reads), so its cost is not isolated yet: the
+inn's trace read 1.79 ms with the key off and 1.77 ms with it on in one run (rt6-tm-1). In the inn most of the
+untraced lights' light arrives (view 14 reads near white), with darker patches behind the posts and the hearth.
+
+**Skin.** The hands' and bodies' shader without the tint maps (ps `6a2383091a33f594` in the Riverwood capture:
+t0, t1, t2, t11, t12, t14, sampling t2 and t12 as the body shader does) now classes as skin, so the player's arms
+take class 10 (view 12). `Sss.hlsl` blurs class-10 pixels after the water: 16 taps on a golden-angle spiral,
+sized in world units at the pixel's depth, a Gaussian width per channel (red 1, green 0.42, blue 0.22 of
+`SssWidth`), each tap only on skin at the same depth. At `SssWidth=1` the arm's pores washed out; the default is
+0.5 at strength 0.75. With the arms in the class, the skin wrap of 0.55 / 0.22 / 0.12 read orange against the
+game's brown; it is now 0.30 / 0.12 / 0.06. Skin keeps the game's sun mask instead of the ray-traced sun, because
+the actors' own triangles still cast blocky shadows onto their skin in the rays (the dark blocks on the arm in
+rt6-wat-3). Skin also takes the game's soft-lighting map at t12, which the body and hands shaders read; without it
+the lit arm read darker than the game's.
+
+Found on the way, not caused by this work: an NPC's red hair reads blonde in improved mode, in rt5-ref-1 as well
+as now. The hair shader's tint is likely applied after the point where the patch taps the albedo.
+
+**The actor sheet, narrowed.** Three more causes are ruled out:
+- the palette: at 39 actor draws the bone constant buffer copied back from the GPU equals the tracker's shadow copy
+  in all 240 rows (`[RT] SkinCbCheck=1`);
+- the slot: all 178 skinned vertex shaders of the session (dumped with `[RT] DumpSkinVs=1`, kept out of the repo)
+  read the current palette from cb10;
+- the maths: the player's skinned vertex shader blends four rows of three float4 at row = index x 765.01, with the
+  camera taken off each row's translation, which is what `RtSkin.hlsl` does.
+
+The floating corners include vertices with one bone at weight 1 that land thousands of units away, on static
+(USAGE_DEFAULT) vertex buffers. The vertex stream as RtSkin reads it is the next suspect: compare the positions
+RtSkin reads with the game buffer's bytes at the draw. One actor shader (vs `e183083681d618cc`, stride 16) draws
+from a 4 MB dynamic ring buffer at a moving offset, so its vertices may be renamed by the time the trace reads
+them.
+
+**FLIP checked against NVIDIA's.** NVlabs/flip at commit d3ab02a4425e (2026-10-13, BSD-3-Clause) is stored with
+SOURCE.txt and SHA256SUMS as data; none of its code runs. On its reference.png and test.png at 67 pixels a degree,
+`tools/lighting/flip.py` gives a mean of 0.159731 against the 0.159693 its test expects, and 99.98 % of pixels
+sit within one 8-bit step of its stored C++ error map (largest gap 0.012). Its filters clamp at the image border.
+This tool used reflect padding, which put 13,000 border pixels off, and now clamps too. The earlier reference
+scores are unchanged to three places: Riverwood 0.389 against the game's model 0.505, the inn 0.317 against 0.497.
+
+**The tone map default.** Through each tone map, FLIP between the improved lighting (view 13) and the path-traced
+reference (`RtDebug=6`, 1,000 frames) at quarter size (rt6-tm-1):
+
+| | the game's tone map | RAW's tone map |
+|---|---|---|
+| Riverwood 13:00 | 0.511 | 0.522 |
+| The Bannered Mare | 0.355 | 0.247 |
+
+The result is mixed: RAW's tone map is much closer in the inn and slightly further in Riverwood, so `Tonemap`
+stays off by default. The Riverwood figure under the game's tone map was 0.389 in rt5-ref-1; this run's view
+or accumulation differs and the cause is not found.
+
+**Not done:**
+- POM. The vanilla parallax shaders (t3 height, about 10 variants in the Riverwood capture) offset their
+  coordinates once; a marched POM needs a loop patched into their DXBC before every sample. Terrain has no height
+  maps.
+- Async compute. Every RAW pass reads what the pass before it wrote in the same frame (depth, G-buffer, trace,
+  lighting), and the game's next draws read RAW's output, so moving AO, clouds or fog to a compute queue overlaps
+  nothing without a frame of latency or a split of the engine pass's queue. Not measured.
+- Water refraction: the game's water still refracts the frame RAW lit, through its own shader.

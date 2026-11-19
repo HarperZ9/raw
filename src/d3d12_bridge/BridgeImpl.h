@@ -98,6 +98,8 @@ struct D3D12Bridge::Impl
     SharedTex& normalIn = shared[static_cast<UINT>(Shared::Normal)];
     SharedTex& colorOut = shared[static_cast<UINT>(Shared::ColorOut)];
     SharedTex& motionIn = shared[static_cast<UINT>(Shared::Motion)];
+    SharedTex waterIn, waterOut;   // attached only, made on first use: the frame with the game's water, and with RAW's (RtWater)
+    bool waterFailed = false;
     ID3D11Texture2D* pendingMotion = nullptr;   // set by CaptureMotion, copied by CaptureNormal
     // Lighting pass (BridgeLighting.cpp).
     SceneLighting lighting;

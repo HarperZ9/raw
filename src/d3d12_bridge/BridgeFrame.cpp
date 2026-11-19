@@ -2,6 +2,7 @@
 // timestamps on both queues. Original work, MIT.
 #include "BridgeImpl.h"
 #include "LightingPass.h"
+#include "RtScene.h"
 
 namespace raw::bridge
 {
@@ -174,6 +175,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         // D3D11 queue stays blocked for good.
         m->log("[D3D12Bridge] pass '%s' failed to record; releasing fence value %llu and turning the bridge off",
                m->pass->Name(), (unsigned long long)m->lastD12);
+        if (m->dev12 && FAILED(m->dev12->GetDeviceRemovedReason())) LogDeviceRemoved(m->dev12.Get(), m->log);
         if (m->fence12 && m->fence12->GetCompletedValue() < m->lastD12) m->fence12->Signal(m->lastD12);
         m->ready = false;
         return false;

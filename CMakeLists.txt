@@ -162,6 +162,11 @@ add_library(d3d11_proxy SHARED
     src/d3d11_proxy/proxy_main.cpp
     src/d3d11_proxy/WrappedDevice.cpp
     src/d3d11_proxy/WrappedContext.cpp
+    src/d3d11_proxy/WrappedContextDraw.cpp
+    src/d3d11_proxy/WrappedContextOM.cpp
+    src/d3d11_proxy/WrappedContextBind.cpp
+    src/d3d11_proxy/WrappedContextData.cpp
+    src/d3d11_proxy/WrappedContextGet.cpp
     src/d3d11_proxy/WrappedSwapChain.cpp
     src/d3d11_proxy/ShaderManager.cpp
     src/d3d11_proxy/RenderPhaseDetector.cpp
@@ -451,6 +456,10 @@ add_library(raw_dx12_translate STATIC
     ${RAW_TX_DIR}/tx_state.cpp
     ${RAW_TX_DIR}/tx_pipeline.cpp
     ${RAW_TX_DIR}/tx_swapchain.cpp
+    ${RAW_TX_DIR}/tx_stream.cpp
+    ${RAW_TX_DIR}/tx_ctx_bind_om.cpp
+    ${RAW_TX_DIR}/tx_ctx_desc.cpp
+    ${RAW_TX_DIR}/tx_stream_play.cpp
     ${RAW_TX_DIR}/tx_ctx_core.cpp
     ${RAW_TX_DIR}/tx_ctx_bind.cpp
     ${RAW_TX_DIR}/tx_ctx_compute.cpp
@@ -471,7 +480,7 @@ target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/TxMode.cpp src/d3d11_proxy/Tx
 # Hot reload (docs/HOT_RELOAD.md): shaders and parameters while the game runs.
 target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/HotReload.cpp src/d3d11_proxy/Overlay.cpp)
 # Ray tracing on the game's geometry (docs/RAYTRACING.md), on raw::tx's device.
-target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/SceneGeometry.cpp src/d3d11_proxy/SceneSkin.cpp)
+target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/SceneGeometry.cpp src/d3d11_proxy/SceneGeometryBound.cpp src/d3d11_proxy/SceneSkin.cpp)
 if(RAW_ENGINE_DIR)
     set(RAW_RTSHADOW_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtShadow.hlsl)
     add_custom_command(
@@ -482,6 +491,21 @@ if(RAW_ENGINE_DIR)
         DEPENDS ${RAW_RTSHADOW_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
                 ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Weather.hlsli
         COMMENT "dxc: ray-traced shadows -> DXIL header"
+        VERBATIM)
+    add_custom_command(
+        OUTPUT ${RAW_ENGINE_GEN}/rt_water.h
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T cs_6_6 -E water ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_water.h -Vn kDxil_rt_water ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtWater.hlsl
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtWater.hlsl ${RAW_RTSHADOW_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Weather.hlsli
+        COMMENT "dxc: ray-traced water -> DXIL header"
+        VERBATIM)
+    add_custom_command(
+        OUTPUT ${RAW_ENGINE_GEN}/rt_sss.h
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_sss.h -Vn kDxil_rt_sss ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Sss.hlsl
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Sss.hlsl ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
+        COMMENT "dxc: skin scattering -> DXIL header"
         VERBATIM)
     set(RAW_RTALPHA_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtAlphaUv.hlsl)
     add_custom_command(
@@ -524,8 +548,9 @@ if(RAW_ENGINE_DIR)
         COMMENT "dxc: skinned triangles checked into the index pool -> DXIL header"
         VERBATIM)
     target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtSkin.cpp ${RAW_ENGINE_GEN}/rt_skin.h ${RAW_ENGINE_GEN}/rt_skin_check.h)
-    target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtScene.cpp src/d3d12_bridge/RtSceneRecord.cpp src/d3d12_bridge/RtAlpha.cpp
+    target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtScene.cpp src/d3d12_bridge/RtSceneRecord.cpp src/d3d12_bridge/RtSceneStage.cpp src/d3d12_bridge/RtAlpha.cpp
                    src/d3d12_bridge/RtAlphaTex.cpp src/d3d12_bridge/RtSky.cpp src/d3d12_bridge/RtCache.cpp
+                   src/d3d12_bridge/RtWater.cpp src/d3d12_bridge/BridgeWater.cpp ${RAW_ENGINE_GEN}/rt_water.h ${RAW_ENGINE_GEN}/rt_sss.h
                    ${RAW_ENGINE_GEN}/rt_shadow.h ${RAW_ENGINE_GEN}/rt_alpha_uv.h ${RAW_ENGINE_GEN}/rt_alpha_mask.h
                    ${RAW_ENGINE_GEN}/rt_alpha_albedo.h ${RAW_ENGINE_GEN}/rt_sky_filter.h ${RAW_ENGINE_GEN}/rt_cache_resolve.h)
     if(RAW_AGILITY_DIR)

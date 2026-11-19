@@ -147,8 +147,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Soft-lit (foliage): the game multiplies its wrap term by the soft-lighting map, which the
     // patched shader writes to RAW's emissive target. Before that channel existed a grey constant
     // fitted on one frame (0.15, tools/lighting/fitsoft.py) stood in; it lost the warm back light.
-    s.soft = base == 5u ? SoftMap.Load(ip).rgb : 0.0f.xxx;
-    s.wrap = skin && !match ? float3(0.55f, 0.22f, 0.12f) : 0.0f.xxx;
+    // Skin too: the body and hands shaders read the same soft-lighting map at t12 (the patch writes it to the emissive
+    // target), and without it the arms read darker than the game's (rt6-tm-1).
+    s.soft = base == 5u || skin ? SoftMap.Load(ip).rgb : 0.0f.xxx;
+    // Softer since the hands and bodies joined the class (rt6-wat-3): at 0.55 / 0.22 / 0.12 the arms read orange
+    // against the game's brown.
+    s.wrap = skin && !match ? float3(0.30f, 0.12f, 0.06f) : 0.0f.xxx;
     if (skin && !match) { s.f0 = 0.028f; s.alpha = max(s.alpha, 0.38f); }   // skin's own specular: f0 of 0.028, a soft sheen
     if (base == 5u && !any(s.soft > 0.0f)) { s.soft = 0.15f.xxx; }   // a soft-lit shader the patch found no map in
     // Rain (Weather.hlsli), exteriors in improved mode: darker, glossier, puddles flat and mirror-like.
@@ -202,6 +206,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const bool rt = !match && (flags.x & FLAG_RT) != 0u;
     const float4 rv = rt ? RtVis.Load(ip) : 1.0f.xxxx;
     const uint3 rIdx = rt ? uint3(RtIdx.Load(ip).xyz * 255.0f + 0.5f) : uint3(0u, 0u, 0u);
+    // Every light past the three traced ones: the share of their light that reaches the pixel, from one ray a
+    // pixel to a light picked by its share, filtered with the sky rays (RtShadow.hlsl, RtSkyFilter.hlsl).
+    const float restVis = rt && (flags.x & FLAG_REST) != 0u ? RtBounce.Load(ip).a : 1.0f;
     float3 diff = 0.0f, spec = 0.0f;
     float sunShadow = 1.0f;
     if (sunDir.w > 0.5f) {
@@ -215,10 +222,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // The game's mask keeps what the scene lacks (skinned actors). Interiors (no cascades): the
         // directional light is the cell's fill, unshadowed as the game lights it; rays would cut it
         // into window shafts and darken the room.
-        if (rt && sunColour.w > 0.5f) { sunShadow = min(sunShadow, base == 5u ? lerp(1.0f, rv.x, 0.6f) : rv.x); }
+        // Not on skin: the skinned actors' own triangles still cast blocky self-shadows in the rays (the open actor
+        // sheet), so skin keeps the game's mask, which shadows actors correctly.
+        if (rt && sunColour.w > 0.5f && !skin) { sunShadow = min(sunShadow, base == 5u ? lerp(1.0f, rv.x, 0.6f) : rv.x); }
         if (!match && sunColour.w > 0.5f && (flags.x & FLAG_CLOUDS) != 0u) { sunShadow *= cloudShadow(p + camPosW.xyz); }   // SKY-02
         // Skin: the shadow's edge turns red where light scattered under the surface reaches past it.
-        const float3 sunSh = skin && !match ? pow(saturate(sunShadow).xxx, float3(0.55f, 0.9f, 1.1f)) : sunShadow.xxx;
+        const float3 sunSh = skin && !match ? pow(saturate(sunShadow).xxx, float3(0.75f, 0.95f, 1.05f)) : sunShadow.xxx;
         addLight(s, sunDir.xyz, sunColour.rgb * sunSh, sunColour.rgb, diff, spec);
         if (wet.snow > 0.0f && sunShadow > 0.0f)
             spec += sunColour.rgb * (sunShadow * wet.snow * 3.0f * snowGlint(p + camPosW.xyz, s.n, s.v, sunDir.xyz, max(1.2f, z * 0.0025f)));
@@ -242,7 +251,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (ch >= 0 && ch <= 3) { sh = m4[ch]; }   // interiors without sun shadows use channel 0 too
             float3 c = lightColS[li].rgb * att;
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;
-            if (slot != 0u) { sh = min(sh, rv[slot]); }
+            if (slot != 0u) { sh = min(sh, rv[slot]); } else { sh = min(sh, restVis); }
             if (!match && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
                 sh *= screenShadow(p + lift, l, min(dist, tune.z), 4.0f / max(dist, 1.0f), jit, 10u);
                 --softLeft;
@@ -270,6 +279,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (flags.w == 11u) { return float4(cloudShadow(p + camPosW.xyz).xxx, game.a); }   // the clouds' shadow alone
     if (flags.w == 3u) { return float4(amb, game.a); }
     if (flags.w == 4u) { return float4(skyVis.xxx, game.a); }
+    if (flags.w == 14u) { return float4(restVis.xxx, game.a); }   // the untraced lights' ray-traced share
     if (flags.w == 5u) { return float4(bounce, game.a); }
     if (flags.w == 13u) { return float4(diff + amb, game.a); }   // the light the surface receives (compare RtDebug=6)
     if (flags.w == 7u) { return float4(RtRefl.Load(ip).rgb, game.a); }   // RtDebug=1: the primary-ray view

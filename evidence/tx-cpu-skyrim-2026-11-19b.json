@@ -1,0 +1,740 @@
+{
+ "date": "2026-11-19",
+ "game": "Skyrim SE 1.6.1170",
+ "gpu": "RTX 4090",
+ "cpu": "Intel Core i7-13700KF",
+ "resolution": "1920x1080",
+ "config": "[Translate] Enabled=1 Wrap=1 (Agility 1.620.1), bridge on, [Lighting] Mode=2 RtShadows=1, [Timing] PresentInterval=0",
+ "test": "tools/harness/tests/txperf.txt",
+ "frames_per_measure": 600,
+ "runs": {
+  "base": {
+   "capture": "tp2-base",
+   "build": "raw#30 final build (snap 5-all)",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 9.213,
+     "median_ms": 9.062,
+     "p99_ms": 11.0,
+     "batch_submission_ms": 6.0594,
+     "draws": 7114.4
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 8.966,
+     "median_ms": 8.731,
+     "p99_ms": 11.0,
+     "batch_submission_ms": 5.7778,
+     "draws": 7122.8
+    },
+    {
+     "name": "inn",
+     "mean_ms": 3.928,
+     "median_ms": 3.824,
+     "p99_ms": 4.83,
+     "batch_submission_ms": 2.6025,
+     "draws": 3456.1
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 4.156,
+     "median_ms": 3.971,
+     "p99_ms": 5.9,
+     "batch_submission_ms": 2.7254,
+     "draws": 3456.3
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4626,
+    "d3d11.dll": 2061,
+    "SkyrimSE.exe": 1304,
+    "nvwgf2umx.dll": 661,
+    "ntdll.dll": 227
+   },
+   "rt_draws": [
+    1951,
+    1950,
+    926,
+    926
+   ],
+   "enb_after": "All 232 files match SHA256SUMS."
+  },
+  "holds": {
+   "capture": "tp2-2holds",
+   "build": "+ lock-free scene geometry reads, plain binding references (327105c)",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 9.078,
+     "median_ms": 8.874,
+     "p99_ms": 10.63,
+     "batch_submission_ms": 5.7691,
+     "draws": 7105.3
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 8.971,
+     "median_ms": 8.735,
+     "p99_ms": 10.43,
+     "batch_submission_ms": 5.6962,
+     "draws": 7109.0
+    },
+    {
+     "name": "inn",
+     "mean_ms": 3.479,
+     "median_ms": 3.355,
+     "p99_ms": 4.86,
+     "batch_submission_ms": 2.1375,
+     "draws": 3009.6
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 4.043,
+     "median_ms": 4.033,
+     "p99_ms": 4.96,
+     "batch_submission_ms": 2.4601,
+     "draws": 3009.8
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4731,
+    "d3d11.dll": 1657,
+    "SkyrimSE.exe": 1486,
+    "nvwgf2umx.dll": 795,
+    "ntdll.dll": 226
+   },
+   "rt_draws": [
+    1974,
+    1973,
+    719,
+    719
+   ],
+   "enb_after": "All 232 files match SHA256SUMS."
+  },
+  "rt": {
+   "capture": "tp2-5rt",
+   "build": "+ plain RT draw references, instances staged in SetDraws (4f05cd3)",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 8.661,
+     "median_ms": 8.606,
+     "p99_ms": 9.98,
+     "batch_submission_ms": 5.4805,
+     "draws": 7133.2
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 8.817,
+     "median_ms": 8.627,
+     "p99_ms": 11.18,
+     "batch_submission_ms": 5.5812,
+     "draws": 7136.7
+    },
+    {
+     "name": "inn",
+     "mean_ms": 2.538,
+     "median_ms": 2.453,
+     "p99_ms": 3.6,
+     "batch_submission_ms": 1.317,
+     "draws": 2043.0
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 2.568,
+     "median_ms": 2.505,
+     "p99_ms": 3.45,
+     "batch_submission_ms": 1.3225,
+     "draws": 2042.8
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4345,
+    "d3d11.dll": 1496,
+    "SkyrimSE.exe": 1393,
+    "nvwgf2umx.dll": 734,
+    "ntdll.dll": 229
+   },
+   "rt_draws": [
+    1975,
+    1975,
+    236,
+    236
+   ],
+   "enb_after": "All 232 files match SHA256SUMS."
+  },
+  "rt_repeat": {
+   "capture": "tp2-5rt-b",
+   "build": "same build, repeat",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 8.68,
+     "median_ms": 8.584,
+     "p99_ms": 9.95,
+     "batch_submission_ms": 5.4962,
+     "draws": 7126.9
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 8.691,
+     "median_ms": 8.614,
+     "p99_ms": 10.78,
+     "batch_submission_ms": 5.5003,
+     "draws": 7133.5
+    },
+    {
+     "name": "inn",
+     "mean_ms": 2.599,
+     "median_ms": 2.494,
+     "p99_ms": 3.41,
+     "batch_submission_ms": 1.3625,
+     "draws": 2462.4
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 2.504,
+     "median_ms": 2.442,
+     "p99_ms": 3.13,
+     "batch_submission_ms": 1.3231,
+     "draws": 2462.2
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4724,
+    "d3d11.dll": 1693,
+    "SkyrimSE.exe": 1440,
+    "nvwgf2umx.dll": 829,
+    "ntdll.dll": 213
+   },
+   "rt_draws": [
+    1974,
+    1974,
+    240,
+    240
+   ],
+   "enb_after": "All 232 files match SHA256SUMS."
+  },
+  "track": {
+   "capture": "tp2-6track",
+   "build": "+ immediate tracker without shared_ptr copies (bd42987); outlier, machine load suspected",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 10.657,
+     "median_ms": 10.6,
+     "p99_ms": 13.13,
+     "batch_submission_ms": 6.6611,
+     "draws": 7129.8
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 10.77,
+     "median_ms": 10.544,
+     "p99_ms": 15.47,
+     "batch_submission_ms": 6.7321,
+     "draws": 7140.2
+    },
+    {
+     "name": "inn",
+     "mean_ms": 4.074,
+     "median_ms": 4.075,
+     "p99_ms": 5.54,
+     "batch_submission_ms": 2.4164,
+     "draws": 3010.3
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 3.858,
+     "median_ms": 3.768,
+     "p99_ms": 5.12,
+     "batch_submission_ms": 2.3027,
+     "draws": 3010.1
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4179,
+    "d3d11.dll": 1449,
+    "SkyrimSE.exe": 1306,
+    "nvwgf2umx.dll": 719,
+    "ntdll.dll": 214
+   },
+   "rt_draws": [
+    1968,
+    1968,
+    719,
+    719
+   ],
+   "enb_after": "All 232 files match SHA256SUMS."
+  },
+  "track_repeat": {
+   "capture": "tp2-6track-b",
+   "build": "same build, repeat",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 8.679,
+     "median_ms": 8.604,
+     "p99_ms": 9.97,
+     "batch_submission_ms": 5.4839,
+     "draws": 7115.1
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 8.674,
+     "median_ms": 8.572,
+     "p99_ms": 9.92,
+     "batch_submission_ms": 5.4822,
+     "draws": 7124.0
+    },
+    {
+     "name": "inn",
+     "mean_ms": 3.386,
+     "median_ms": 3.281,
+     "p99_ms": 4.99,
+     "batch_submission_ms": 2.0802,
+     "draws": 3032.1
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 3.49,
+     "median_ms": 3.412,
+     "p99_ms": 4.36,
+     "batch_submission_ms": 2.1363,
+     "draws": 3032.0
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4716,
+    "d3d11.dll": 1599,
+    "SkyrimSE.exe": 1469,
+    "nvwgf2umx.dll": 858,
+    "ntdll.dll": 212
+   },
+   "rt_draws": [
+    1974,
+    1974,
+    728,
+    728
+   ],
+   "enb_after": "All 232 files match SHA256SUMS."
+  },
+  "track_repeat2": {
+   "capture": "tp2-6track-c",
+   "build": "same build, third run",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 9.369,
+     "median_ms": 9.364,
+     "p99_ms": 10.65,
+     "batch_submission_ms": 5.9024,
+     "draws": 7108.3
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 8.699,
+     "median_ms": 8.616,
+     "p99_ms": 9.68,
+     "batch_submission_ms": 5.4831,
+     "draws": 7114.0
+    },
+    {
+     "name": "inn",
+     "mean_ms": 3.641,
+     "median_ms": 3.604,
+     "p99_ms": 4.49,
+     "batch_submission_ms": 2.2404,
+     "draws": 3075.0
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 3.782,
+     "median_ms": 3.695,
+     "p99_ms": 4.61,
+     "batch_submission_ms": 2.3309,
+     "draws": 3075.0
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4733,
+    "d3d11.dll": 1617,
+    "SkyrimSE.exe": 1496,
+    "nvwgf2umx.dll": 866,
+    "ntdll.dll": 242
+   },
+   "rt_draws": [
+    1975,
+    1971,
+    736,
+    736
+   ],
+   "enb_after": "All 232 files match SHA256SUMS."
+  },
+  "scan": {
+   "capture": "tp2-11scan",
+   "build": "+ rescan only new SRV slots (cb00514)",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 9.132,
+     "median_ms": 9.045,
+     "p99_ms": 10.48,
+     "batch_submission_ms": 5.7944,
+     "draws": 7109.5
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 8.929,
+     "median_ms": 9.023,
+     "p99_ms": 10.49,
+     "batch_submission_ms": 5.6703,
+     "draws": 7118.4
+    },
+    {
+     "name": "inn",
+     "mean_ms": 3.591,
+     "median_ms": 3.497,
+     "p99_ms": 4.6,
+     "batch_submission_ms": 2.2034,
+     "draws": 3014.1
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 3.646,
+     "median_ms": 3.584,
+     "p99_ms": 4.39,
+     "batch_submission_ms": 2.24,
+     "draws": 3014.0
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4647,
+    "d3d11.dll": 1602,
+    "SkyrimSE.exe": 1460,
+    "nvwgf2umx.dll": 805,
+    "ntdll.dll": 224
+   },
+   "rt_draws": [
+    1974,
+    1970,
+    723,
+    723
+   ],
+   "enb_after": "All 232 files match SHA256SUMS."
+  },
+  "scan_repeat": {
+   "capture": "tp2-11scan-b",
+   "build": "same build, repeat",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 10.367,
+     "median_ms": 10.273,
+     "p99_ms": 12.91,
+     "batch_submission_ms": 6.5619,
+     "draws": 7107.1
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 8.92,
+     "median_ms": 8.748,
+     "p99_ms": 11.17,
+     "batch_submission_ms": 5.656,
+     "draws": 7111.6
+    },
+    {
+     "name": "inn",
+     "mean_ms": 3.045,
+     "median_ms": 2.989,
+     "p99_ms": 4.67,
+     "batch_submission_ms": 1.5457,
+     "draws": 2060.3
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 3.215,
+     "median_ms": 3.179,
+     "p99_ms": 4.56,
+     "batch_submission_ms": 1.6304,
+     "draws": 2060.2
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4706,
+    "d3d11.dll": 1626,
+    "SkyrimSE.exe": 1426,
+    "nvwgf2umx.dll": 808,
+    "ntdll.dll": 260
+   },
+   "rt_draws": [
+    1970,
+    1970,
+    236,
+    236
+   ],
+   "enb_after": "All 232 files match SHA256SUMS."
+  },
+  "tables": {
+   "capture": "tp2-12tables",
+   "build": "+ SRV table reuse (193b5d8)",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 9.445,
+     "median_ms": 9.407,
+     "p99_ms": 10.51,
+     "batch_submission_ms": 5.9843,
+     "draws": 7108.3
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 9.331,
+     "median_ms": 9.264,
+     "p99_ms": 11.2,
+     "batch_submission_ms": 5.9123,
+     "draws": 7116.9
+    },
+    {
+     "name": "inn",
+     "mean_ms": 2.608,
+     "median_ms": 2.535,
+     "p99_ms": 3.28,
+     "batch_submission_ms": 1.3523,
+     "draws": 2049.8
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 2.453,
+     "median_ms": 2.391,
+     "p99_ms": 3.41,
+     "batch_submission_ms": 1.2749,
+     "draws": 2049.7
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4691,
+    "d3d11.dll": 1662,
+    "SkyrimSE.exe": 1442,
+    "nvwgf2umx.dll": 842,
+    "ntdll.dll": 234
+   },
+   "rt_draws": [
+    1975,
+    1971,
+    238,
+    238
+   ],
+   "enb_after": "All 232 files match SHA256SUMS."
+  },
+  "workers3_first": {
+   "capture": "tp2-7w3",
+   "build": "Workers=3, first version (e952f3e)",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 14.337,
+     "median_ms": 14.14,
+     "p99_ms": 16.39,
+     "batch_submission_ms": 6.0296,
+     "draws": 7109.9
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 14.315,
+     "median_ms": 14.179,
+     "p99_ms": 16.21,
+     "batch_submission_ms": 6.0252,
+     "draws": 7123.2
+    },
+    {
+     "name": "inn",
+     "mean_ms": 5.067,
+     "median_ms": 5.065,
+     "p99_ms": 6.0,
+     "batch_submission_ms": 2.4914,
+     "draws": 3033.1
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 4.994,
+     "median_ms": 4.918,
+     "p99_ms": 5.94,
+     "batch_submission_ms": 2.4576,
+     "draws": 3033.1
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4610,
+    "nvwgf2umx.dll": 1476,
+    "d3d11.dll": 1196,
+    "SkyrimSE.exe": 955,
+    "ntdll.dll": 573
+   },
+   "rt_draws": [
+    1977,
+    1977,
+    728,
+    728
+   ],
+   "enb_after": "All 232 files match SHA256SUMS."
+  },
+  "workers3_lazy": {
+   "capture": "tp2-9w3",
+   "build": "Workers=3, lazy segments (8047f15)",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 9.86,
+     "median_ms": 9.729,
+     "p99_ms": 11.18,
+     "batch_submission_ms": 5.862,
+     "draws": 7118.7
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 9.473,
+     "median_ms": 9.37,
+     "p99_ms": 10.69,
+     "batch_submission_ms": 5.6323,
+     "draws": 7124.8
+    },
+    {
+     "name": "inn",
+     "mean_ms": 2.913,
+     "median_ms": 2.851,
+     "p99_ms": 3.79,
+     "batch_submission_ms": 1.4971,
+     "draws": 2189.1
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 2.815,
+     "median_ms": 2.755,
+     "p99_ms": 3.4,
+     "batch_submission_ms": 1.4508,
+     "draws": 2189.0
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4707,
+    "d3d11.dll": 1688,
+    "SkyrimSE.exe": 1367,
+    "nvwgf2umx.dll": 663,
+    "ntdll.dll": 445
+   },
+   "rt_draws": [
+    1970,
+    1970,
+    314,
+    314
+   ],
+   "enb_after": "All 232 files match SHA256SUMS."
+  },
+  "workers3_predict": {
+   "capture": "tp2-10w3",
+   "build": "Workers=3, prediction and streamed copies (e9b7a24)",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 9.404,
+     "median_ms": 9.238,
+     "p99_ms": 11.85,
+     "batch_submission_ms": 6.0092,
+     "draws": 7112.9
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 9.142,
+     "median_ms": 9.083,
+     "p99_ms": 10.63,
+     "batch_submission_ms": 5.8281,
+     "draws": 7121.8
+    },
+    {
+     "name": "inn",
+     "mean_ms": 3.427,
+     "median_ms": 3.362,
+     "p99_ms": 4.24,
+     "batch_submission_ms": 2.031,
+     "draws": 2521.1
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 3.249,
+     "median_ms": 3.189,
+     "p99_ms": 3.88,
+     "batch_submission_ms": 1.9501,
+     "draws": 2521.0
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4583,
+    "d3d11.dll": 1628,
+    "SkyrimSE.exe": 1402,
+    "nvwgf2umx.dll": 685,
+    "ntdll.dll": 329
+   },
+   "rt_draws": [
+    1973,
+    1970,
+    469,
+    469
+   ],
+   "enb_after": "All 232 files match SHA256SUMS."
+  },
+  "workers0_predict": {
+   "capture": "tp2-10w0",
+   "build": "same build, Workers=0",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 8.8,
+     "median_ms": 8.802,
+     "p99_ms": 10.27,
+     "batch_submission_ms": 5.5971,
+     "draws": 7106.8
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 8.844,
+     "median_ms": 8.75,
+     "p99_ms": 10.55,
+     "batch_submission_ms": 5.6172,
+     "draws": 7109.3
+    },
+    {
+     "name": "inn",
+     "mean_ms": 3.798,
+     "median_ms": 3.692,
+     "p99_ms": 4.79,
+     "batch_submission_ms": 2.4556,
+     "draws": 3452.1
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 3.908,
+     "median_ms": 3.842,
+     "p99_ms": 4.96,
+     "batch_submission_ms": 2.5245,
+     "draws": 3452.1
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4731,
+    "d3d11.dll": 1576,
+    "SkyrimSE.exe": 1527,
+    "nvwgf2umx.dll": 835,
+    "ntdll.dll": 236
+   },
+   "rt_draws": [
+    1975,
+    1974,
+    935,
+    935
+   ],
+   "enb_after": "All 232 files match SHA256SUMS."
+  }
+ }
+}

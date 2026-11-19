@@ -25,6 +25,9 @@ namespace raw::bridge
 {
 using Microsoft::WRL::ComPtr;
 
+// A removed device's DRED record into the log, once (RtWater.cpp; [Translate] Dred=1 turns DRED on).
+void LogDeviceRemoved(ID3D12Device* dev, LogFn log);
+
 class RtScene
 {
 public:
@@ -52,6 +55,17 @@ public:
     // Hot reload (docs/HOT_RELOAD.md): new pipelines for RtShadow.hlsl and RtSkyFilter.hlsl, swapped once
     // the GPU is done with the frames in flight. The old ones stay when either is refused.
     bool Reload(const std::vector<uint8_t>& shadow, const std::vector<uint8_t>& sky, std::string& err);   // the newest retired frame's GPU times and this frame's counts
+    // Water (RtWater.cpp, RtWater.hlsl): after the game composites its water, on this frame's scene. depth: the
+    // opaque depth; layer: RAW's layer target (the water's depth and normal); colourIn: the frame with the game's
+    // water; colourOut gets RAW's water on top. Its own list, run after the frame's trace on the same queue.
+    // Then the screen-space scattering on skin (Sss.hlsl), when sssStrength > 0. water false: the scattering only.
+    // The result is in colourOut, or back in colourIn when both ran (*inB false: colourOut holds it).
+    bool RecordWater(const void* uniform, size_t bytes, ID3D12Resource* depth, ID3D12Resource* layer, ID3D12Resource* albedo,
+                     ID3D12Resource* spec, ID3D12Resource* colourIn, ID3D12Resource* colourOut, bool water, float sssWidth,
+                     float sssStrength, bool* resultInColourIn);
+    bool SubmitWater(ID3D12CommandQueue* q);
+    bool ReloadWater(const std::vector<uint8_t>& water, const std::vector<uint8_t>& sss, std::string& err);   // hot reload
+    static constexpr UINT kWaterDescriptors = 33;   // 7 + 4 a frame in flight
 
 private:
     struct Mesh
@@ -76,7 +90,10 @@ private:
     void ReadTimings();
     uint32_t BuildBlases(ID3D12GraphicsCommandList4* cl, uint64_t& tris);
     uint32_t PlaceInstances(uint32_t slot, uint32_t& alphaN, uint64_t& sceneTris);
+    uint32_t PlaceStaged(D3D12_RAYTRACING_INSTANCE_DESC* inst, uint32_t slot, uint32_t& alphaN, uint64_t& sceneTris);
+    bool Instance(uint32_t mi, const RtDraw& d, D3D12_RAYTRACING_INSTANCE_DESC& x, uint32_t& tris) const;
     uint32_t PlaceInto(D3D12_RAYTRACING_INSTANCE_DESC* inst, uint32_t slot, uint32_t& alphaN, uint64_t& sceneTris);
+    void StageDraws();   // RtIncremental: each draw's instance written once its mesh is known (RtSceneRecord.cpp)
     void SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>& toHand, ID3D12Resource* (*native)(ID3D11Resource*));
     void BindViews(ID3D12Resource* depth, ID3D12Resource* normal, ID3D12Resource* spec);
     void RecordTrace(ID3D12GraphicsCommandList4* cl, uint32_t slot, bool sky, bool cache);
@@ -108,7 +125,13 @@ private:
     std::vector<uint32_t> m_drawMesh;   // per draw of this frame: its mesh (SetDraws found it), ~0 none
     std::vector<Key> m_lastKeys;        // last frame's draw keys by position: most frames draw the same list in the same order
     std::vector<uint32_t> m_lastMesh;
-    std::vector<D3D12_RAYTRACING_INSTANCE_DESC> m_stage;   // the TLAS input, written whole into the upload heap
+    std::vector<Key> m_keys;            // this frame's draw keys (kept to swap with m_lastKeys)
+    // RtIncremental: per draw of this frame, its instance (staged in SetDraws, where its mesh is already in
+    // the cache), whether it is ready (1), waits for this frame's BLAS builds (2) or stays out (0), and its
+    // triangle count.
+    std::vector<D3D12_RAYTRACING_INSTANCE_DESC> m_stage;
+    std::vector<uint8_t> m_stageState;
+    std::vector<uint32_t> m_stageTris;
     double m_cpuSetUs = 0, m_cpuPlaceUs = 0;                // render-thread time, summed over m_cpuFrames
     double m_cpuReleaseUs = 0, m_cpuSkinUs = 0;            // parts of m_cpuSetUs: last frame's references, RtSkin's draws
     uint32_t m_cpuFrames = 0;
@@ -125,6 +148,19 @@ private:
     bool m_skinReady = false;
     bool m_ommOn = false;
     UINT m_psoFlags = 0;
+    // Water (RtWater.cpp).
+    void CreateWater();
+    UINT m_waterAt = 0;
+    uint64_t m_tlasFrame = ~0ull;   // m_frame when the TLAS was last recorded
+    ComPtr<ID3D12PipelineState> m_waterPso, m_sssPso;
+    ComPtr<ID3D12RootSignature> m_sssRoot;
+    ComPtr<ID3D12CommandAllocator> m_wAlloc[3];
+    ComPtr<ID3D12GraphicsCommandList4> m_wList;
+    ComPtr<ID3D12Resource> m_wCb[3], m_wTsRead;
+    ComPtr<ID3D12QueryHeap> m_wTs;
+    ComPtr<ID3D12Fence> m_wFence;
+    uint64_t m_wFenceValue = 0, m_wSlotValue[3] = {};
+    bool m_wRecorded = false;
 #ifdef RAW_HAS_OMM
     RtOmm m_omm;
 #endif

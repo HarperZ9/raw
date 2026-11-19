@@ -6,67 +6,13 @@
 // own thread, and FinishCommandList hands the closed D3D12 list over as it is.
 #pragma once
 #include "tx_device.h"
+#include "tx_holds.h"
+#include "tx_stream.h"
+
+#include "tx_state.h"
+#include "tx_tables.h"
 
 namespace raw::tx {
-
-enum StageIndex { S_VS, S_HS, S_DS, S_GS, S_PS, S_CS, S_COUNT };
-
-enum Dirty : uint32_t {
-    D_PSO = 1, D_RT = 2, D_VP = 4, D_SC = 8, D_BF = 0x10, D_SREF = 0x20, D_TOPO = 0x40,
-    D_VB = 0x80, D_IB = 0x100, D_UAV = 0x400, D_CSUAV = 0x800,
-    D_SRV0 = 0x1000,     // << stage
-    D_SAMP0 = 0x40000,   // << stage
-    // State scans at the next draw (ScanGraphics): which bindings may need a transition. A vertex or index
-    // buffer, or one stage's shader resources, rescans only that part; anything that can move a resource out
-    // of a state the list already holds (copies, clears, targets, compute, a new list) sets D_SCAN, all parts.
-    D_SCAN_IA = 0x200,
-    D_SCAN_OM = 0x1000000,
-    D_SCAN_SRV0 = 0x2000000,   // << graphics stage (VS..PS)
-    D_SCAN = D_SCAN_IA | D_SCAN_OM | (D_SCAN_SRV0 * 0x1F),
-    D_ALL = 0xFFFFFFFFu,
-};
-
-struct ShaderSlot {
-    ShaderData* sd = nullptr;
-    void* obj = nullptr;
-    void (*ref)(void*, int) = nullptr;
-};
-struct BufSlot {
-    TBuffer* buf = nullptr;
-    const Chunk* chunk = nullptr;   // where the buffer's current memory is described
-    UINT stride = 0, offset = 0;
-};
-struct StageState {
-    ShaderSlot sh;
-    BufSlot cb[14];
-    TSRV* srv[128] = {};
-    TSampler* samp[16] = {};
-    uint32_t srvHi = 0;
-};
-struct State {
-    StageState st[S_COUNT];
-    TInputLayout* layout = nullptr;
-    BufSlot vb[32];
-    uint32_t vbHi = 0;
-    BufSlot ib;
-    DXGI_FORMAT ibFmt = DXGI_FORMAT_UNKNOWN;
-    D3D11_PRIMITIVE_TOPOLOGY topo = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
-    TRTV* rtv[8] = {};
-    uint32_t rtCount = 0;
-    TDSV* dsv = nullptr;
-    TUAV* uav[8] = {};
-    TUAV* csUav[8] = {};
-    TBlend* blend = nullptr;
-    float factor[4] = {1, 1, 1, 1};
-    UINT sampleMask = 0xFFFFFFFFu;
-    TDepthStencil* ds = nullptr;
-    UINT stencilRef = 0;
-    TRaster* rs = nullptr;
-    D3D11_VIEWPORT vp[16] = {};
-    UINT vpCount = 0;
-    D3D11_RECT sc[16] = {};
-    UINT scCount = 0;
-};
 
 // A buffer a deferred context touched: its own copy of the buffer's memory.
 struct Rename {
@@ -97,7 +43,8 @@ struct PsoEntry { ID3D12PipelineState* pso; RootSig* root; };
 
 class Context final : public ID3D11DeviceContext {
 public:
-    Context(Device* dev, bool deferred);
+    // replay: a worker's context for segments of the immediate context (tx_stream.h); holds no references.
+    Context(Device* dev, bool deferred, bool replay = false);
     ~Context();
 
     // IUnknown, ID3D11DeviceChild
@@ -193,11 +140,29 @@ public:
         for (UINT i = 0; i < n; ++i)
             out[i] = (stage < S_COUNT && start + i < 14) ? s_.st[stage].cb[start + i].buf : nullptr;
     }
+    const State& Bound() const { return s_; }
+    BindHolds& Holds() { return holds_; }
+
+    // ---- parallel translation (tx_stream.cpp, tx_stream_play.cpp) ----
+    void EnableStream(StreamPool* p, uint32_t segmentDraws, uint32_t minDraws, bool predict)
+    {
+        pool_ = p;
+        predict_ = predict;
+        segDraws_ = segmentDraws ? segmentDraws : 256;
+        minDraws_ = minDraws > segDraws_ ? segDraws_ : minDraws;
+    }
+    void EndStream(const char* why = "flush");  // the segments stop; the immediate context's list carries on
+    void BeginReplay(const Segment& s);
+    void ReplayChunk(TBuffer* b, uint64_t va);
+    void SetReplayVa(TBuffer* b, uint64_t va) { if (b && va) override_[b].va = va; }
+    void EndReplay(Segment& s);
+    void StreamStatsLog(uint64_t frames);
+    void TableStatsLog(uint64_t frames);       // shader-resource table reuse per frame, then reset     // segments, streamed draws and waits per frame, then reset   // the shadow state, for the host's per-draw reads
     uint64_t FlushInternal();                 // submits the open list; returns its serial
     void Sync();                              // flush and wait for the GPU
     void Shutdown();
-    ID3D12GraphicsCommandList* Cl() { return rec_.cl.Get(); }
-    Recording& Rec() { return rec_; }
+    ID3D12GraphicsCommandList* Cl() { if (seg_ || stale_) EndStream("Cl"); return rec_.cl.Get(); }
+    Recording& Rec() { if (seg_ || stale_) EndStream("Rec"); return rec_; }   // a host recording: the segments end first
     ChunkCache& Chunks() { return chunks_; }
     void MarkDirty(uint32_t d) { dirty_ |= d; }
     uint32_t AllocDescs(uint32_t n);          // index into the shader-visible heap
@@ -234,10 +199,76 @@ private:
     void StagingCpuCopy(ResCore& dst, UINT dsub, UINT x, UINT y, UINT z, ResCore& src, UINT ssub, const D3D11_BOX* box);
     void ClearUav(ID3D11UnorderedAccessView* v, const UINT* ui, const FLOAT* fl);
 
+    // ---- parallel translation ----
+    template <class T> void SHold(Segment& s, T* o)
+    {
+        if (!o) return;
+        holds_.Add(o);
+        s.held.push_back(&o->imm);
+    }
+    template <class T> void SObj(T* o) { seg_->words.push_back(reinterpret_cast<uint64_t>(o)); SHold(*seg_, o); }
+    void SHead(StreamOp op, uint32_t stage = 0, uint32_t start = 0, uint32_t n = 0)
+    {
+        seg_->words.push_back(uint64_t(op) | uint64_t(stage) << 8 | uint64_t(start) << 16 | uint64_t(n) << 32);
+    }
+    void SBuf(TBuffer* b);                     // a buffer and its GPU address when renamed
+    void SRes(ResCore* c)                      // a resource, held
+    {
+        seg_->words.push_back(reinterpret_cast<uint64_t>(c->self));
+        c->hold(holds_, c->self);
+        seg_->held.push_back(c->imm);
+    }
+    // A copy between two committed resources needs nothing from the application's thread: it is recorded
+    // while draws are, and does not end the run. True: recorded (or there is no run to keep).
+    bool StreamCopy(ResCore* d, ResCore* s, bool& recorded);
+    bool StreamDraw();                         // true: this draw goes into a segment
+    void SegDrawn()
+    {
+        ++seg_->draws;
+        if (seg_->lazy && seg_->draws >= minDraws_) Commit();
+        if (seg_->draws >= segDraws_) CutSegment();
+    }
+    // A call that is not a binding or a draw ends the run of draws: the run's length is noted for the next
+    // frame's prediction (a run whose place in the frame was short last frame goes straight to the list).
+    void RunBreak(const char* why)
+    {
+        if (!pool_) return;
+        if (runDraws_) { if (runIndex_ < 4096) { if (runIndex_ >= lastRuns_.size()) lastRuns_.resize(runIndex_ + 1, 0); lastRuns_[runIndex_] = runDraws_; } ++runIndex_; }
+        runDraws_ = 0;
+        runMode_ = 0;
+        if (seg_ || stale_) EndStream(why);
+    }
+    void BeginSegment();
+    void Commit();                             // a lazy segment splits the list and goes to the workers
+    void InlineReplay(Segment* s);             // a short run replayed on this context, into its own list
+    void CutSegment();
+    uint64_t SubmitPending();
+    void DropSegment(Segment* s);
+
+    StreamPool* pool_ = nullptr;               // the immediate context with workers
+    uint32_t segDraws_ = 256, minDraws_ = 64;
+    uint32_t openQueries_ = 0;                 // begun and not ended: no segments meanwhile
+    std::vector<uint32_t> lastRuns_;           // draws in each run of the last frames, by its place in the frame
+    uint32_t runIndex_ = 0, runDraws_ = 0;
+    uint8_t runMode_ = 0;
+    bool predict_ = true;                      // this run: 0 not decided, 1 recorded, 2 straight to the list
+    std::vector<Segment*> freeSegs_;           // reused: no allocation per segment
+  public:
+    void FrameRuns() { RunBreak("Present"); runIndex_ = 0; }   // the swap chain, at every Present
+  private:
+    Segment* seg_ = nullptr;                   // being recorded
+    bool stale_ = false;                       // the open list's D3D12 state is not the shadow's (segments ran)
+    struct Pending { std::unique_ptr<Recording> rec; Segment* seg = nullptr; };
+    std::vector<Pending> pending_;             // closed, in call order, not yet submitted
+    StreamStats sstats_;
+    bool replay_ = false;
+    std::unordered_map<const TBuffer*, Chunk> override_;   // replay: renamed buffers' GPU addresses
+
     Device* dev_;
     bool deferred_;
     std::atomic<ULONG> rc_{1};
     PrivateStore priv_;
+    BindHolds holds_;               // the bindings' internal references (tx_holds.h)
     Recording rec_;
     ChunkCache chunks_;
     uint32_t descBase_ = ~0u, descUsed_ = 0;
@@ -251,6 +282,8 @@ private:
     D3D12_GPU_VIRTUAL_ADDRESS cbVa_[S_COUNT][14];
     const TBuffer* cbBuf_[S_COUNT][14];
     uint64_t sampKey_[S_COUNT];
+    TableCache tables_;                   // shader-resource tables copied in this list (tx_tables.h)
+    D3D12_GPU_DESCRIPTOR_HANDLE srvTable_[S_COUNT] = {};   // the table last set per stage in this list
     D3D12_CPU_DESCRIPTOR_HANDLE nullSrv_[12] = {}, nullUav_[12] = {};
     D3D12_CPU_DESCRIPTOR_HANDLE NullSrvFor(const ShaderData* sd, uint32_t slot);
     D3D12_CPU_DESCRIPTOR_HANDLE NullUavFor(const ShaderData* sd, uint32_t slot);

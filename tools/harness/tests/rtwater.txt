@@ -1,0 +1,43 @@
+# RAW's water (RtWater.hlsl): ray-traced reflection, sun glint and caustics on the game's water, after the
+# game composites it. Riverwood by day, walked to the river; the game, RAW with its water off and on, then the
+# reflection, caustics and Fresnel views. Then the untraced lights' visibility at night (View 14) and the skin
+# classes and scattering in third person (View 12, Sss).
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+mouse -1500 -150
+walk w 2.5
+wait 3
+keyframe river steps=game,improved hold=40
+reload ini Water=0
+keyframe river_nowater steps=improved hold=30
+reload ini Water=1 WaterView=1
+keyframe river_refl steps=improved hold=30
+reload ini WaterView=2
+keyframe river_caustics steps=improved hold=30
+reload ini WaterView=3
+keyframe river_fresnel steps=improved hold=30
+reload ini WaterView=0
+scene riverwood_night
+console set gamehour to 23
+wait 6
+keyframe night steps=game,improved hold=60
+reload ini RtRest=0
+keyframe night_norest steps=improved hold=40
+reload ini RtRest=1 View=14
+keyframe night_restvis steps=improved hold=40
+reload ini View=0
+scene third
+console set gamehour to 13
+wait 4
+walk f 0.15
+wait 4
+keyframe third steps=game,improved hold=40
+reload ini View=12
+keyframe third_classes steps=improved hold=20
+reload ini View=0 Sss=0
+keyframe third_nosss steps=improved hold=30
+reload ini Sss=1
+quit

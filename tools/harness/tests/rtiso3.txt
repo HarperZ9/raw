@@ -1,0 +1,24 @@
+# Water alone, then water with the skin's scattering in the same list (rt6-iso-2 removed the device there), under DRED.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+mouse -1500 -150
+walk w 2.5
+wait 3
+keyframe base steps=game,improved hold=30
+reload ini Water=1 Sss=0
+keyframe water steps=improved hold=40
+reload ini Sss=1
+keyframe water_sss steps=improved hold=40
+reload ini Water=0
+keyframe nowater steps=improved hold=30
+reload ini Water=1 WaterView=1
+keyframe refl steps=improved hold=30
+reload ini WaterView=2
+keyframe caustics steps=improved hold=30
+reload ini WaterView=3
+keyframe fresnel steps=improved hold=30
+reload ini WaterView=0
+quit

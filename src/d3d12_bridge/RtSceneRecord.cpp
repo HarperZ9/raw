@@ -191,7 +191,7 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
 #ifdef RAW_HAS_OMM
     if (m_ommOn) prepared = m_omm.Record(cl, m_tune.alphaRef) || prepared;   // after the masks, before the BLASes
 #endif
-    if (m_skinReady) prepared = m_skin.Record(cl, slot) || prepared;   // skinned actors: positions and their BLASes
+    if (m_skinReady) prepared = m_skin.Record(cl, slot, depth, uniform, bytes) || prepared;   // skinned actors: positions and their BLASes
     uint64_t tris = 0;
     const uint32_t built = BuildBlases(cl, tris);
     D3D12_RESOURCE_BARRIER u = Uav();

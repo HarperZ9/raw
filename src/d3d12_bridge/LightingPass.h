@@ -57,7 +57,19 @@ struct LightingTuning
     float wetness = 0.0f;           // improved: rain on surfaces, 0 dry to 1 soaked (Weather.hlsli)
     float snow = 0.0f;              // improved: snow lying on upward surfaces the sky reaches, 0 none to 1 deep (Weather.hlsli)
     float puddles = 0.0f;           // improved: water standing on flat ground, 0 none to 1 most
+    float rain = 0.0f;              // rain falling now, 0 to 1: drops ring the puddles (Weather.hlsli)
+    // Clouds (Clouds.hlsl, CloudCommon.hlsli): the sky's volumetric layer, its shadow on the ground, shafts in the fog.
+    bool  clouds = true;            // Clouds
+    float cloudCover = 0.35f;       // CloudCover: the cover under a clear sky; the weather's cloud report raises it
+    float weatherCloud = 0.0f;      // the game's cloud cover now (WeatherDrive), 0 to 1
+    float cloudBase = 36000.0f, cloudThickness = 14000.0f;   // CloudBase, CloudThickness: absolute world height, game units
+    float cloudShadow = 0.75f;      // CloudShadow: how much of the sun the thickest cloud takes
+    float cloudDensity = 1.0f;      // CloudDensity
+    float cloudWindX = 180.0f, cloudWindY = 60.0f;   // CloudWindX, CloudWindY: units a second
+    float cloudHistory = 0.85f;     // CloudHistory: last frame's share
     bool  rtSkin = true;            // skinned actors join the scene with a BLAS a frame
+    bool  rtSkinCull = true;        // RtSkinCull, RtSkinRatio, RtSkinMin: stretched skinned triangles left out (RtSkinCheck.hlsl)
+    float rtSkinRatio = 4.0f, rtSkinMin = 24.0f;
     int   rtSkinBones = 10;         // the vertex constant buffer slot that holds the current bone palette
     bool  rtIncremental = true;     // RtIncremental: the scene's per-draw lookups once a frame, instances staged
     bool  rtCamSteps = false;       // RtCamSteps: the camera's place from the summed steps (RtScene::SetCamera)

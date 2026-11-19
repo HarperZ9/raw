@@ -9,7 +9,7 @@
 
 namespace SB::Proxy
 {
-struct WeatherSurfaces { float wetness = 0, puddles = 0, snow = 0; };
+struct WeatherSurfaces { float wetness = 0, puddles = 0, snow = 0, rain = 0, cloud = 0; };   // rain and cloud: now
 struct WeatherTimes
 {
     float soakSeconds = 60.0f;      // dry to soaked in full rain

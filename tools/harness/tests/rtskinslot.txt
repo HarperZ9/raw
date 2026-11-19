@@ -1,0 +1,20 @@
+# Which vertex constant buffer holds the bones the actors are drawn with: the skin check's floating count
+# (skinned corners in front of the game's depth) with the palette read from slots 10, 9 and 8.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 10
+walk f 0.15
+wait 4
+keyframe third steps=game,improved hold=60
+reload ini RtDebug=1 View=7 RtSkinCull=0
+wait 4
+keyframe slot10 steps=improved hold=200
+reload ini RtSkinBones=9
+wait 4
+keyframe slot9 steps=improved hold=200
+reload ini RtSkinBones=8
+wait 4
+keyframe slot8 steps=improved hold=200
+quit

@@ -1,0 +1,23 @@
+# RAW's tone map (Tonemap.h): Riverwood by day, then at night. The replica control (Exposure=0 ToneCurve=0,
+# the game's exposure and curve through RAW's shader) must match the game's own frame; then the camera
+# exposure with the filmic curve, and the exposure view.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+keyframe base steps=game hold=60
+reload ini Tonemap=1 Exposure=0 ToneCurve=0
+keyframe replica steps=game hold=60
+reload ini Exposure=1 ToneCurve=1
+keyframe physical steps=game,improved hold=60
+reload ini ToneView=2
+keyframe lumview steps=game hold=30
+reload ini ToneView=0 Tonemap=0
+console set gamehour to 23
+wait 10
+scene riverwood_night
+keyframe base steps=game hold=60
+reload ini Tonemap=1
+keyframe physical steps=game,improved hold=60
+quit

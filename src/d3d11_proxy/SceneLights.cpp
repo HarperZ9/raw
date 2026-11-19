@@ -191,6 +191,59 @@ bool Phantom(const State& s, const Accum& a)
     return false;
 }
 
+// The engine module's light list (RAW_EngineLights, raw_engine.dll's rt_livestate.h): every active light of the
+// scene, the ones no visible lit draw carried included (off screen, behind the camera, past a draw's light
+// limit). A light the draws already gave is matched by place and kept as decoded; the rest join with no shadow
+// channel, and the rays shadow them. [Lighting] EngineLights=0 keeps the decoded list only.
+struct EngineLight { float pos[3]; float radius; float color[3]; float fade; uint32_t flags; uint32_t pad; };
+using EngineLightsFn = uint32_t (*)(EngineLight*, uint32_t, uint64_t*);
+bool g_engineLights = true;
+struct EngineStats { uint64_t frames = 0, seen = 0, matched = 0, added = 0; double dist = 0, ratio = 0; uint32_t ratios = 0; } g_es;
+
+void AddEngineLights(SceneLighting& f)
+{
+    static EngineLightsFn fn = nullptr;
+    static int tries = 0;
+    if (!g_engineLights || !f.hasCamera) return;
+    if (!fn && tries < 600 && (++tries % 60) == 1)
+        if (HMODULE m = GetModuleHandleA("raw_engine.dll")) fn = reinterpret_cast<EngineLightsFn>(GetProcAddress(m, "RAW_EngineLights"));
+    if (!fn) return;
+    EngineLight e[raw::bridge::kMaxSceneLights];
+    uint64_t at = 0;
+    const uint32_t n = std::min(fn(e, raw::bridge::kMaxSceneLights, &at), raw::bridge::kMaxSceneLights);
+    ++g_es.frames;
+    const uint32_t decoded = f.lightCount;
+    for (uint32_t k = 0; k < n; ++k) {
+        if ((e[k].flags & 4) || !(e[k].flags & 1) || e[k].radius <= 0) continue;   // the sun comes from the draws
+        if (e[k].color[0] <= 0 && e[k].color[1] <= 0 && e[k].color[2] <= 0) continue;
+        ++g_es.seen;
+        float rel[3];
+        for (int c = 0; c < 3; ++c) rel[c] = e[k].pos[c] - f.posAdjust[c];   // world to the game's camera-relative space
+        int best = -1;
+        float bestD = 48.0f * 48.0f;
+        for (uint32_t j = 0; j < decoded; ++j) {
+            const float dx = f.lights[j].position[0] - rel[0], dy = f.lights[j].position[1] - rel[1], dz = f.lights[j].position[2] - rel[2];
+            const float d = dx * dx + dy * dy + dz * dz;
+            if (d < bestD) { bestD = d; best = int(j); }
+        }
+        if (best >= 0) {
+            ++g_es.matched;
+            g_es.dist += std::sqrt(bestD);
+            const float a = f.lights[best].colour[0] + f.lights[best].colour[1] + f.lights[best].colour[2];
+            const float b = e[k].color[0] + e[k].color[1] + e[k].color[2];
+            if (b > 0) { g_es.ratio += a / b; ++g_es.ratios; }
+            continue;
+        }
+        if (f.lightCount >= raw::bridge::kMaxSceneLights) { ++f.droppedLights; continue; }
+        SceneLight& l = f.lights[f.lightCount++];
+        for (int c = 0; c < 3; ++c) { l.position[c] = rel[c]; l.colour[c] = e[k].color[c]; }
+        l.radius = e[k].radius;
+        l.shadowChannel = -1;
+        l.draws = 0;   // from the engine's list: no lit draw carried it
+        ++g_es.added;
+    }
+}
+
 void Merge(State& s)
 {
     SceneLighting& f = s.frame;
@@ -205,6 +258,7 @@ void Merge(State& s)
         l.shadowChannel = a.shadowChannel;
         l.draws = a.n;
     }
+    AddEngineLights(f);
     f.hasSun = s.sunDraws > 0;
     if (f.hasSun) {
         double len = 0;
@@ -269,6 +323,7 @@ void SceneLights_BeforeDraw(ID3D11DeviceContext* real)
 }
 
 void SceneLights_SetOpaque(bool open) { S().opaque = open; }
+void SceneLights_SetEngineLights(bool on) { g_engineLights = on; }
 bool SceneLights_Opaque() { return S().opaque; }
 
 void SceneLights_SetCamera(ID3D11DeviceContext* real)
@@ -326,6 +381,13 @@ void SceneLights_OnPresent()
             (unsigned long long)frame, f.litDraws, f.lightCount, f.lightSightings, f.droppedLights, f.phantomLights, f.hasSun, f.sunDirection[0],
             f.sunDirection[1], f.sunDirection[2], f.sunColour[0], f.sunColour[1], f.sunColour[2], f.ambient[0][3], f.ambient[1][3],
             f.ambient[2][3], f.hasCascades ? f.cascades : 0, f.splitDepth, f.knee, f.specularScale);
+    }
+    if (frame % every == 1 && g_es.frames) {
+        Log("[SceneLights] engine lights over %llu frames: %.1f point lights a frame, %.1f matched to a decoded light (mean %.1f units "
+            "apart, decoded/engine colour %.3f), %.1f added", (unsigned long long)g_es.frames, double(g_es.seen) / g_es.frames,
+            double(g_es.matched) / g_es.frames, g_es.matched ? g_es.dist / g_es.matched : 0.0, g_es.ratios ? g_es.ratio / g_es.ratios : 0.0,
+            double(g_es.added) / g_es.frames);
+        g_es = EngineStats{};
     }
     if (s.mask) s.mask->Release();
     if (s.cascades) s.cascades->Release();

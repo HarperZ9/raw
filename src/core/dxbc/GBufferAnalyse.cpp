@@ -245,6 +245,10 @@ uint8_t LightingClass(const Analysis& a)
     for (int s = 0; s < 6; ++s) sixLayers &= a.texDim[s] == 3;
     if (sixLayers) return material::Landscape;
     for (int s = 0; s < 32; ++s) if (a.texDim[s] == 6) return material::EnvironmentMapped;
+    // Skin: the face's and the body's lit shaders read two more 2D maps at t3 and t4 (in a Riverwood capture,
+    // ps c49dc9fe5ca9dd4c draws the heads, ps 563259c5efe0cd0c the bodies). Before the soft-lit test: the body
+    // shader's back light reads t12 too. Parallax reads t3 alone.
+    if (a.texDim[3] == 3 && a.texDim[4] == 3) return material::Skin;
     if (a.texDim[6]) return material::GlowMapped;
     if (a.texDim[12]) return material::SoftLit;
     if (a.texDim[3] || a.texDim[8]) return material::Parallax;

@@ -16,6 +16,7 @@
 #include "GBufferComplete.h"
 #include "SceneLights.h"
 #include "GameComposite.h"
+#include "Tonemap.h"
 #include "CBDirtyTracker.h"
 #include "OcclusionCuller.h"
 #include "ProxyAPI.h"

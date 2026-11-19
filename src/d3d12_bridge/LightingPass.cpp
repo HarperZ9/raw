@@ -13,6 +13,7 @@
 #include "ao_rt_trace.h"
 #include "ao_rt_vs.h"
 #include "light_fog_fs.h"
+#include "clouds_fs.h"
 #include "light_fs.h"
 #include "light_vs.h"
 
@@ -32,16 +33,17 @@ struct LightUniform
     float dims[4], proj[4], clipToWorld[16], worldToClip[16], viewToWorld[12];
     float resScale[4], sunDir[4], sunColour[4], ambient[12], cascade[24], cascadeInfo[4];
     uint32_t flags[4];
-    float cluster[4], tune[4], tune2[4], weather[4], camPos[4];
+    float cluster[4], tune[4], tune2[4], weather[4], camPos[4], clouds[4], cloudWind[4], prevWorldToClip[16];
     float lightPosR[kMaxSceneLights][4], lightColS[kMaxSceneLights][4];
     uint32_t clusters[kClusterCount][4];
 };
-static_assert(sizeof(LightUniform) == 32 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16, "layout of cbuffer P");
+static_assert(sizeof(LightUniform) == 38 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16, "layout of cbuffer P");
 static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
-constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384;
-constexpr RasterBinding U = RasterBinding::Uniform, T = RasterBinding::Texture;
-constexpr RasterBinding kLightLayout[14] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T};
+constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768;
+constexpr RasterBinding U = RasterBinding::Uniform, T = RasterBinding::Texture, Sm = RasterBinding::Sampler;
+constexpr RasterBinding kLightLayout[16] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T, T, Sm};
+constexpr RasterBinding kCloudLayout[3] = {U, T, Sm};
 constexpr RasterBinding kFogLayout[4] = {U, T, T, T};
 
 class LightingPass final : public IBridgePass
@@ -83,6 +85,11 @@ public:
         m_aoOut = m_dev->createTexture({host.width, host.height, TextureFormat::RGBA16Float, RT, "lighting ao frame"}, m_err);
         m_uniform = m_dev->createBuffer({sizeof(LightUniform), BufferUsage::Uniform, "lighting params"}, m_err);
         if (!m_lit.valid() || !m_aoOut.valid() || !m_uniform.valid()) return Fail("createTexture");
+        // The clouds at a quarter of the width and height, two textures in turn (one is last frame's).
+        const uint32_t cw = (host.width + 3) / 4, ch = (host.height + 3) / 4;
+        for (int k = 0; k < 2; ++k) m_cloud[k] = m_dev->createTexture({cw, ch, TextureFormat::RGBA16Float, RT, "clouds"}, m_err);
+        m_lin = m_dev->createSampler({Filter::Linear, AddressMode::ClampToEdge, "clouds linear"}, m_err);
+        if (!m_cloud[0].valid() || !m_cloud[1].valid() || !m_lin.valid()) return Fail("cloud textures");
         const auto dxil = [](const void* p, size_t n) { return ShaderCode{ShaderFormat::Dxil, p, n}; };
         RasterPipelineDesc d;
         d.vertex = dxil(kDxil_light_vs, sizeof kDxil_light_vs);
@@ -93,6 +100,9 @@ public:
         d.label = "lighting fog"; d.fragment = dxil(kDxil_light_fog_fs, sizeof kDxil_light_fog_fs); d.layout = kFogLayout;
         m_fogPipe = m_dev->createRasterPipeline(d, m_err);
         if (!m_fogPipe.valid()) return Fail("fog pipeline");
+        d.label = "clouds"; d.fragment = dxil(kDxil_clouds_fs, sizeof kDxil_clouds_fs); d.layout = kCloudLayout;
+        m_cloudPipe = m_dev->createRasterPipeline(d, m_err);
+        if (!m_cloudPipe.valid()) return Fail("cloud pipeline");
         const ao_rt::Shaders sh{dxil(kDxil_ao_rt_vs, sizeof kDxil_ao_rt_vs), dxil(kDxil_ao_rt_prefilter, sizeof kDxil_ao_rt_prefilter),
                                 dxil(kDxil_ao_rt_level, sizeof kDxil_ao_rt_level), dxil(kDxil_ao_rt_trace, sizeof kDxil_ao_rt_trace),
                                 dxil(kDxil_ao_rt_resolve, sizeof kDxil_ao_rt_resolve)};
@@ -129,11 +139,18 @@ public:
             for (uint32_t k = 1; k <= 3; ++k) c->timestamp(k);
         }
         const TextureHandle aoVis = ao ? m_ao.history() : m_game;   // unused without the flag
-        const RasterBind light[14] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_normal, {}}, {{}, m_albedo, {}}, {{}, m_spec, {}},
+        const bool clouds = ok && (m_u.flags[0] & kClouds);
+        const TextureHandle cloudNow = m_cloud[m_frame & 1], cloudLast = m_cloud[(m_frame + 1) & 1];
+        if (clouds) {
+            const RasterBind cb[3] = {{m_uniform, {}, {}}, {{}, cloudLast, {}}, {{}, {}, m_lin}};
+            Draw(*c, cloudNow, m_cloudPipe, cb);
+        }
+        const RasterBind light[16] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_normal, {}}, {{}, m_albedo, {}}, {{}, m_spec, {}},
                                      {{}, m_mask, {}}, {{}, m_atlas, {}}, {{}, aoVis, {}}, {{}, m_game, {}}, {{}, m_soft.valid() ? m_soft : m_game, {}},
                                      {{}, m_rtVis.valid() ? m_rtVis : m_game, {}}, {{}, m_rtIdx.valid() ? m_rtIdx : m_game, {}},
                                      {{}, m_rtBounce.valid() ? m_rtBounce : m_game, {}},
-                                     {{}, m_rtReflect.valid() ? m_rtReflect : m_game, {}}};
+                                     {{}, m_rtReflect.valid() ? m_rtReflect : m_game, {}},
+                                     {{}, cloudNow, {}}, {{}, {}, m_lin}};
         Draw(*c, m_lit, m_lightPipe, light);
         c->timestamp(4);
         const RasterBind fog[4] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}};
@@ -242,9 +259,20 @@ private:
         u.proj[3] = interior ? t.rtBounceInterior : t.rtBounce;
         u.tune[0] = t.fogDensity; u.tune[1] = t.fogAnisotropy; u.tune[2] = t.softRange; u.tune[3] = t.contactLength;
         u.tune2[0] = t.aoStrength; u.tune2[1] = t.fogLightScale; u.tune2[2] = t.fogSunScale; u.tune2[3] = t.fogMaxDistance;
-        u.weather[0] = t.mode == 2 ? t.wetness : 0.0f; u.weather[1] = t.mode == 2 ? t.puddles : 0.0f; u.weather[2] = t.mode == 2 ? t.snow : 0.0f; u.weather[3] = 0.0f;
+        u.weather[0] = t.mode == 2 ? t.wetness : 0.0f; u.weather[1] = t.mode == 2 ? t.puddles : 0.0f; u.weather[2] = t.mode == 2 ? t.snow : 0.0f; u.weather[3] = t.mode == 2 ? t.rain : 0.0f;
         for (int k = 0; k < 3; ++k) u.camPos[k] = s.posAdjust[k];
-        u.camPos[3] = 0.0f;
+        // Clouds: the weather's cover over the clear-sky cover; the history needs last frame's matrix.
+        if (t.clouds && t.mode == 2 && !interior) f |= kClouds;
+        u.flags[0] = f;
+        u.clouds[0] = std::fmin(1.0f, std::fmax(t.cloudCover, t.cloudCover + (0.92f - t.cloudCover) * t.weatherCloud));
+        u.clouds[1] = t.cloudBase; u.clouds[2] = t.cloudThickness;
+        // An overcast weather's sun is already the light that came through its clouds (the game dims it): the
+        // clouds' shadow fades as the weather's cloud cover rises, or rain darkened the frame twice (2026-11-19).
+        u.clouds[3] = t.cloudShadow * (1.0f - 0.85f * t.weatherCloud);
+        u.cloudWind[0] = t.cloudWindX; u.cloudWind[1] = t.cloudWindY; u.cloudWind[2] = t.cloudDensity; u.cloudWind[3] = t.cloudHistory;
+        std::memcpy(u.prevWorldToClip, m_prevWorldToClip, 64);
+        std::memcpy(m_prevWorldToClip, s.worldToClip, 64);
+        u.camPos[3] = float(double(GetTickCount64() % 3600000ull) / 1000.0);   // seconds, for the rain's rings and the snow's glints
         for (uint32_t i = 0; i < s.lightCount; ++i) {
             const SceneLight& l = s.lights[i];
             for (int k = 0; k < 3; ++k) { u.lightPosR[i][k] = l.position[k]; u.lightColS[i][k] = l.colour[k]; }
@@ -283,7 +311,10 @@ private:
     TextureHandle m_rtBounce, m_rtReflect;
     TextureHandle m_rtVis, m_rtIdx, m_soft, m_game, m_depth, m_normal, m_albedo, m_spec, m_mask, m_atlas, m_out, m_motion, m_lit, m_aoOut;
     BufferHandle m_uniform;
-    RasterPipelineHandle m_lightPipe, m_fogPipe;
+    RasterPipelineHandle m_lightPipe, m_fogPipe, m_cloudPipe;
+    TextureHandle m_cloud[2];
+    SamplerHandle m_lin;
+    float m_prevWorldToClip[16] = {};
     LightUniform m_u{};
     LightingTuning m_tune;
     uint64_t m_frame = 0, m_submissions = 0, m_pendingSubmission = 0;

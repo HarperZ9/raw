@@ -251,6 +251,7 @@ bool RtScene::Record(const void* uniform, size_t bytes, ID3D12Resource* depth, I
     m_stats.ommArrays = m_omm.Arrays();
 #endif
     m_recorded = true;
+    m_tlasFrame = m_frame;
     return true;
 }
 

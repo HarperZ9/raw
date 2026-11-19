@@ -52,6 +52,16 @@ public:
     // Hot reload (docs/HOT_RELOAD.md): new pipelines for RtShadow.hlsl and RtSkyFilter.hlsl, swapped once
     // the GPU is done with the frames in flight. The old ones stay when either is refused.
     bool Reload(const std::vector<uint8_t>& shadow, const std::vector<uint8_t>& sky, std::string& err);   // the newest retired frame's GPU times and this frame's counts
+    // Water (RtWater.cpp, RtWater.hlsl): after the game composites its water, on this frame's scene. depth: the
+    // opaque depth; layer: RAW's layer target (the water's depth and normal); colourIn: the frame with the game's
+    // water; colourOut gets RAW's water on top. Its own list, run after the frame's trace on the same queue.
+    // Then the screen-space scattering on skin (Sss.hlsl), when sssStrength > 0. water false: the scattering only.
+    // The result is in colourOut, or back in colourIn when both ran (*inB false: colourOut holds it).
+    bool RecordWater(const void* uniform, size_t bytes, ID3D12Resource* depth, ID3D12Resource* layer, ID3D12Resource* albedo,
+                     ID3D12Resource* spec, ID3D12Resource* colourIn, ID3D12Resource* colourOut, bool water, float sssWidth,
+                     float sssStrength, bool* resultInColourIn);
+    bool SubmitWater(ID3D12CommandQueue* q);
+    static constexpr UINT kWaterDescriptors = 33;   // 7 + 4 a frame in flight
 
 private:
     struct Mesh
@@ -125,6 +135,19 @@ private:
     bool m_skinReady = false;
     bool m_ommOn = false;
     UINT m_psoFlags = 0;
+    // Water (RtWater.cpp).
+    void CreateWater();
+    UINT m_waterAt = 0;
+    uint64_t m_tlasFrame = ~0ull;   // m_frame when the TLAS was last recorded
+    ComPtr<ID3D12PipelineState> m_waterPso, m_sssPso;
+    ComPtr<ID3D12RootSignature> m_sssRoot;
+    ComPtr<ID3D12CommandAllocator> m_wAlloc[3];
+    ComPtr<ID3D12GraphicsCommandList4> m_wList;
+    ComPtr<ID3D12Resource> m_wCb[3], m_wTsRead;
+    ComPtr<ID3D12QueryHeap> m_wTs;
+    ComPtr<ID3D12Fence> m_wFence;
+    uint64_t m_wFenceValue = 0, m_wSlotValue[3] = {};
+    bool m_wRecorded = false;
 #ifdef RAW_HAS_OMM
     RtOmm m_omm;
 #endif

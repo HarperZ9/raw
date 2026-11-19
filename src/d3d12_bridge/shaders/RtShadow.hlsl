@@ -157,6 +157,7 @@ void cacheFromHit(float3 hp, float3 n, float2 r) {
     cacheAdd(hp, n, bounce, sky);
 }
 
+#ifndef RT_NO_MAIN   // RtWater.hlsl includes the bindings and helpers above, not this kernel
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID) {
     if (id.x >= uint(dims.x) || id.y >= uint(dims.y)) { return; }
@@ -164,6 +165,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     float4 vis = 1.0f, idx = 0.0f;
     float sky = 1.0f;
     float3 bounce = 0.0f;
+    float restCode = 0.0f;   // 4 + 2 x visibility when an untraced light was sampled (RtSkyFilter decodes it)
     const float d = Depth.Load(ip);
     const uint base = uint(Spec.Load(ip).z * 255.0f + 0.5f) & 127u;
     if (d < 1.0f && base != 0u && (base < 7u || base == 10u)) {   // 10: skin
@@ -225,6 +227,35 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float len = length(toC);
             vis[k + 1u] = visible(o, toC / max(len, 1.0e-4f), 0.0f, max(len - sourceRadius - 1.0f, 0.0f));
             idx[k] = float(best[k] + 1u) / 255.0f;
+        }
+        // Every other light of the cluster: one of them, picked in proportion to the light it would give
+        // (weighted reservoir sampling over the whole list, so the pick is exact), gets one shadow ray on the
+        // sky ray's turn. Its visibility, filtered over pixels and frames, is the share of all those lights'
+        // light that arrives (the ratio estimator of Heitz et al. 2018).
+        if (skyLength > 0.0f && skyTurn(id.xy)) {
+            float total = 0.0f;
+            uint pick = ~0u;
+            [loop] for (uint w2 = 0u; w2 < 4u; w2++) {
+                uint b2 = bits[w2];
+                [loop] while (b2 != 0u) {
+                    const uint li = w2 * 32u + firstbitlow(b2);
+                    b2 &= b2 - 1u;
+                    if (li >= flags.y || li == best[0] || li == best[1] || li == best[2]) { continue; }
+                    const float3 toL = lightPosR[li].xyz - p;
+                    const float dist = length(toL);
+                    const float x = saturate(dist / lightPosR[li].w);
+                    const float sc = dot(lightColS[li].rgb, float3(0.2126f, 0.7152f, 0.0722f)) * (1.0f - x * x) * saturate(dot(n, toL / max(dist, 1.0e-4f)));
+                    if (sc <= 0.0f) { continue; }
+                    total += sc;
+                    if (hash(px + float(li) * 0.37f, frameIndex * 0.917f + 13.0f) * total < sc) { pick = li; }
+                }
+            }
+            if (pick != ~0u) {
+                const float3 c = lightPosR[pick].xyz + (float3(r.y, r.x, frac(r.x * 1.7f + 0.3f)) * 2.0f - 1.0f) * sourceRadius;
+                const float3 toC = c - o;
+                const float len = length(toC);
+                restCode = 4.0f + 2.0f * visible(o, toC / max(len, 1.0e-4f), 0.0f, max(len - sourceRadius - 1.0f, 0.0f));
+            }
         }
     }
     // Reflection: glossy lit surfaces (the game's lobe, not foliage), one ray around the mirror
@@ -381,5 +412,6 @@ void main(uint3 id : SV_DispatchThreadID) {
     if (reflTraced || !glossy || reflectLength < 0.0f) { Refl[id.xy] = refl; }
     Vis[id.xy] = vis;
     Lights[id.xy] = float4(idx.xyz, sky);
-    if (skyLength > 0.0f && skyTurn(id.xy)) { SkyRaw[id.xy] = float4(bounce, sky); }
+    if (skyLength > 0.0f && skyTurn(id.xy)) { SkyRaw[id.xy] = float4(bounce, sky + restCode); }
 }
+#endif

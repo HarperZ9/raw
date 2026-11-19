@@ -190,6 +190,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const bool rt = !match && (flags.x & FLAG_RT) != 0u;
     const float4 rv = rt ? RtVis.Load(ip) : 1.0f.xxxx;
     const uint3 rIdx = rt ? uint3(RtIdx.Load(ip).xyz * 255.0f + 0.5f) : uint3(0u, 0u, 0u);
+    // Every light past the three traced ones: the share of their light that reaches the pixel, from one ray a
+    // pixel to a light picked by its share, filtered with the sky rays (RtShadow.hlsl, RtSkyFilter.hlsl).
+    const float restVis = rt && (flags.x & FLAG_REST) != 0u ? RtBounce.Load(ip).a : 1.0f;
     float3 diff = 0.0f, spec = 0.0f;
     float sunShadow = 1.0f;
     if (sunDir.w > 0.5f) {
@@ -230,7 +233,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (ch >= 0 && ch <= 3) { sh = m4[ch]; }   // interiors without sun shadows use channel 0 too
             float3 c = lightColS[li].rgb * att;
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;
-            if (slot != 0u) { sh = min(sh, rv[slot]); }
+            if (slot != 0u) { sh = min(sh, rv[slot]); } else { sh = min(sh, restVis); }
             if (!match && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
                 sh *= screenShadow(p + lift, l, min(dist, tune.z), 4.0f / max(dist, 1.0f), jit, 10u);
                 --softLeft;
@@ -258,6 +261,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (flags.w == 11u) { return float4(cloudShadow(p + camPosW.xyz).xxx, game.a); }   // the clouds' shadow alone
     if (flags.w == 3u) { return float4(amb, game.a); }
     if (flags.w == 4u) { return float4(skyVis.xxx, game.a); }
+    if (flags.w == 14u) { return float4(restVis.xxx, game.a); }   // the untraced lights' ray-traced share
     if (flags.w == 5u) { return float4(bounce, game.a); }
     if (flags.w == 13u) { return float4(diff + amb, game.a); }   // the light the surface receives (compare RtDebug=6)
     if (flags.w == 7u) { return float4(RtRefl.Load(ip).rgb, game.a); }   // RtDebug=1: the primary-ray view

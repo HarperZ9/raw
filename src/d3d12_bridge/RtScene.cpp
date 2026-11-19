@@ -146,7 +146,8 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
 #endif
     const UINT cacheAt = 5 + RtAlpha::Descriptors() + RtSky::Descriptors() + 1 + kOmmDescriptors;
     const UINT skinAt = cacheAt + RtCache::Descriptors();
-    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, skinAt + RtSkin::Descriptors(),
+    m_waterAt = skinAt + RtSkin::Descriptors();
+    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, m_waterAt + kWaterDescriptors,
                                   D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
     if (FAILED(m_dev->CreateQueryHeap(&qd, IID_PPV_ARGS(&m_ts))) || FAILED(m_dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&m_heap))) ||
         FAILED(m_dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_alloc[0].Get(), nullptr, IID_PPV_ARGS(&m_list))) ||
@@ -189,6 +190,7 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
         }
     }
 #endif
+    CreateWater();
     m_ready = true;
     if (m_log) m_log("[RT] scene ready on the layer's device: %ux%u, BLAS heap %llu MB, %u instances at most", width, height,
                      (unsigned long long)(kBlasHeap >> 20), kMaxInstances);

@@ -9,6 +9,7 @@
 #include "SceneGeometryDetail.h"
 #include "SceneLights.h"
 #include "ProxyLog.h"
+#include "ShaderManager.h"
 #include "CBDirtyTracker.h"
 
 #include <algorithm>
@@ -111,6 +112,16 @@ bool SceneSkin_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT startInde
         d.bones = new float[960];
         std::memcpy(d.bones, bones, 3840);
         ++g_skinJoined;
+        if (actor) {   // which vertex shaders skin the actors, with their streams (RtSkin diagnosis; [RT] DumpSkinVs)
+            static std::unordered_map<uint64_t, uint32_t> vsSeen;
+            ID3D11VertexShader* vs = nullptr;
+            real->VSGetShader(&vs, nullptr, nullptr);
+            const uint64_t h = vs ? ShaderManager::Get().GetVSHash(vs) : 0;
+            if (vs) vs->Release();
+            if (vsSeen.size() < 48 && vsSeen[h]++ == 0)
+                Log("[RT] actor skinned draw: vs %016llx, %u indices from %u base %d, position format %d stride %u, blend stride %u (indices at %u, weights at %u)",
+                    (unsigned long long)h, indexCount, startIndex, baseVertex, int(L.pos.format), stride, bs, L.blendIdx.offset, L.blendW.offset);
+        }
         if (!opaque) { ++g_actorJoined; if (g_afterCapture) ++g_actorLate; }
         if (actor) ++g_actorWorld;
         geom::Frame().push_back(d);   // after the capture: carried to the next frame by SceneSkin_Drop

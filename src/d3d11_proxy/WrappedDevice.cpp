@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <system_error>
 #include <cstdint>
+#include <cstring>
 
 // --- Tier 3.6: create-side resource (VRAM) logging helpers (gated, default OFF) ---
 static uint32_t RAW_BppForFormat(DXGI_FORMAT f)
@@ -342,6 +343,35 @@ HRESULT STDMETHODCALLTYPE WrappedDevice::CreateDepthStencilView(
 
 // ── HOOKED: CreateVertexShader ──────────────────────────────────────────────
 
+// Diagnosis of the skinned actors (docs/RAYTRACING.md, the sheet beside the player): with [RT] DumpSkinVs=1
+// every vertex shader whose input signature has BLENDINDICES is written to Data/SKSE/Plugins/RAW/live/skinvs,
+// which the harness brings back with the run and removes from the game folder.
+static void DumpSkinnedVs(const void* code, SIZE_T len)
+{
+    static int on = -1;
+    if (on < 0) {
+        char path[MAX_PATH]{};
+        GetModuleFileNameA(nullptr, path, MAX_PATH);
+        std::string ini(path);
+        ini = ini.substr(0, ini.rfind(char(92)) + 1) + "d3d11_proxy.ini";
+        on = GetPrivateProfileIntA("RT", "DumpSkinVs", 0, ini.c_str());
+    }
+    if (on <= 0 || !code || len < 64) return;
+    const char* b = static_cast<const char*>(code);
+    static const char kKey[] = "BLENDINDICES";
+    bool found = false;
+    for (SIZE_T i = 0; i + sizeof kKey - 1 < len && !found; ++i) found = std::memcmp(b + i, kKey, sizeof kKey - 1) == 0;
+    if (!found) return;
+    uint64_t h = 1469598103934665603ull;
+    for (SIZE_T i = 0; i < len; ++i) h = (h ^ uint8_t(b[i])) * 1099511628211ull;
+    std::error_code ec;
+    std::filesystem::create_directories("Data/SKSE/Plugins/RAW/live/skinvs", ec);
+    char name[96];
+    sprintf_s(name, "Data/SKSE/Plugins/RAW/live/skinvs/vs_%016llx.dxbc", static_cast<unsigned long long>(h));
+    std::ofstream out(name, std::ios::binary);
+    out.write(b, std::streamsize(len));
+}
+
 HRESULT STDMETHODCALLTYPE WrappedDevice::CreateVertexShader(
     const void* pShaderBytecode,
     SIZE_T BytecodeLength,
@@ -349,6 +379,7 @@ HRESULT STDMETHODCALLTYPE WrappedDevice::CreateVertexShader(
     ID3D11VertexShader** ppVertexShader)
 {
     Log("CreateVertexShader  bytecodeLen=%zu", BytecodeLength);
+    DumpSkinnedVs(pShaderBytecode, BytecodeLength);
     HRESULT hr = m_real->CreateVertexShader(pShaderBytecode, BytecodeLength, pClassLinkage, ppVertexShader);
     if (SUCCEEDED(hr) && ppVertexShader && *ppVertexShader) {
         ShaderManager::Get().OnVertexShaderCreated(pShaderBytecode, BytecodeLength, *ppVertexShader);

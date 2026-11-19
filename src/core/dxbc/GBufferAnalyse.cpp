@@ -249,6 +249,9 @@ uint8_t LightingClass(const Analysis& a)
     // ps c49dc9fe5ca9dd4c draws the heads, ps 563259c5efe0cd0c the bodies). Before the soft-lit test: the body
     // shader's back light reads t12 too. Parallax reads t3 alone.
     if (a.texDim[3] == 3 && a.texDim[4] == 3) return material::Skin;
+    // The hands' and bodies' shader without the tint maps (ps 6a2383091a33f594 in the same capture) samples t2
+    // into one channel and t12 exactly as the body shader does, with t11, and has no t3: skin too.
+    if (a.texDim[2] == 3 && a.texDim[11] == 3 && a.texDim[12] == 3 && !a.texDim[3]) return material::Skin;
     if (a.texDim[6]) return material::GlowMapped;
     if (a.texDim[12]) return material::SoftLit;
     if (a.texDim[3] || a.texDim[8]) return material::Parallax;

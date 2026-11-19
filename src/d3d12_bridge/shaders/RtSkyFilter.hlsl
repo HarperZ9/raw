@@ -17,9 +17,18 @@ RWTexture2D<float4>      BOut    : register(u5);
 RWTexture2D<float4>      Bounce  : register(u6);   // the lighting pass's input
 cbuffer F : register(b1) { uint hasMotion, reset, maxFrames, fPad; };
 
-float4 meanAround(int2 p, float z, int r) {
+// Raw alpha: sky (0 or 1) + 2 x the untraced light's visibility + 4 where one was sampled (RtShadow.hlsl).
+float4 decodeRaw(float4 v, out float rest, out float has) {
+    has = v.a >= 3.5f ? 1.0f : 0.0f;
+    const float a = v.a - 4.0f * has;
+    rest = a >= 1.5f ? 1.0f : 0.0f;
+    return float4(v.rgb, a - 2.0f * rest);
+}
+
+float4 meanAround(int2 p, float z, int r, out float rest) {
     float4 s = 0.0f;
-    float w = 0.0f;
+    float w = 0.0f, rs = 0.0f, rw = 0.0f, rv, rh;
+    rest = 1.0f;
     for (int y = -r; y <= r; y++) {
         for (int x = -r; x <= r; x++) {
             const int2 q = clamp(p + int2(x, y), int2(0, 0), int2(dims.xy) - 1);
@@ -27,10 +36,12 @@ float4 meanAround(int2 p, float z, int r) {
             if (dq >= 1.0f) { continue; }
             const float rel = (viewZOf(dq) - z) / z;
             const float k = exp2(-rel * rel * 4000.0f);
-            s += k * Raw[q]; w += k;
+            s += k * decodeRaw(Raw[q], rv, rh); w += k;
+            rs += k * rh * rv; rw += k * rh;
         }
     }
-    return w > 1.0e-4f ? s / w : Raw[p];
+    if (rw > 1.0e-4f) { rest = rs / rw; }
+    return w > 1.0e-4f ? s / w : decodeRaw(Raw[p], rv, rh);
 }
 
 [numthreads(8, 8, 1)]
@@ -42,12 +53,12 @@ void main(uint3 id : SV_DispatchThreadID) {
     if (d >= 1.0f) {
         HistOut[p] = float4(1.0f, -1.0f, 0.0f, 0.0f);
         BOut[p] = 0.0f;
-        Bounce[p] = 0.0f;
+        Bounce[p] = float4(0.0f, 0.0f, 0.0f, 1.0f);
         Lights[p] = float4(L.xyz, 1.0f);
         return;
     }
     const float z = viewZOf(d);
-    float n = 0.0f, past = 0.0f;
+    float n = 0.0f, past = 0.0f, pastR = 1.0f;
     float3 pastB = 0.0f;
     bool have = false;
     if (reset == 0u) {
@@ -55,7 +66,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float2 prev = float2(p) + mv * dims.xy;
         const int2 pb = int2(floor(prev));
         const float2 pa = prev - float2(pb);
-        float hs = 0.0f, hn = 0.0f, hw = 0.0f;
+        float hs = 0.0f, hn = 0.0f, hw = 0.0f, hr = 0.0f;
         float3 hb = 0.0f;
         [unroll] for (int k = 0; k < 4; k++) {
             const int2 t = pb + int2(k & 1, k >> 1);
@@ -63,16 +74,18 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float4 h = HistIn[t];
             if (h.y <= 0.0f || abs(h.y - min(z, 65000.0f)) > 0.04f * z) { continue; }
             const float w = ((k & 1) ? pa.x : 1.0f - pa.x) * ((k >> 1) ? pa.y : 1.0f - pa.y);
-            hs += w * h.x; hn += w * h.z; hw += w; hb += w * BIn[t].rgb;
+            hs += w * h.x; hn += w * h.z; hw += w; hb += w * BIn[t].rgb; hr += w * h.w;
         }
-        if (hw > 0.05f) { past = hs / hw; n = hn / hw; pastB = hb / hw; have = true; }
+        if (hw > 0.05f) { past = hs / hw; n = hn / hw; pastB = hb / hw; pastR = hr / hw; have = true; }
     }
-    const float4 cur = meanAround(p, z, n < 6.0f ? 2 : 1);
+    float curR;
+    const float4 cur = meanAround(p, z, n < 6.0f ? 2 : 1, curR);
     n = have ? min(n + 1.0f, float(maxFrames)) : 1.0f;
     const float vis = have ? lerp(past, cur.a, 1.0f / n) : cur.a;
     const float3 b = have ? lerp(pastB, cur.rgb, 1.0f / n) : cur.rgb;
-    HistOut[p] = float4(vis, min(z, 65000.0f), n, 0.0f);
+    const float rest = have ? lerp(pastR, curR, 1.0f / n) : curR;
+    HistOut[p] = float4(vis, min(z, 65000.0f), n, rest);
     BOut[p] = float4(b, 0.0f);
-    Bounce[p] = float4(b, 1.0f);
+    Bounce[p] = float4(b, rest);   // alpha: the untraced lights' visibility (Lighting.hlsl, FLAG_REST)
     Lights[p] = float4(L.xyz, vis);
 }

@@ -75,7 +75,18 @@ struct LightingTuning
     bool  rtCamSteps = false;       // RtCamSteps: the camera's place from the summed steps (RtScene::SetCamera)
     int   rtSkinFilter = 0;         // RtSkinFilter: diagnosis, which skinned draws join (SceneSkin.cpp)
     bool  rtActors = true;          // skinned draws on the main depth target outside the opaque set (people, the player) join
+    bool  rtRest = true;            // RtRest: every light past the three traced ones shadowed by one ray to a light picked by its share (RtShadow.hlsl)
     bool  rtReflect = true;         // glossy surfaces: one ray-traced reflection ray, the hit's colour in the game's frame
+    // Water (RtWater.hlsl), after the game composites its water: improved mode with RT on raw::tx.
+    bool  water = true;             // Water
+    float waterReflect = 1.0f;      // WaterReflect: the ray-traced reflection's share of the Fresnel weight
+    float waterCaustics = 1.0f;     // WaterCaustics
+    float waterAbsorb = 0.004f;     // WaterAbsorb: extinction a game unit (about 250 units, 3.5 m, to a third)
+    float waterGlint = 1.0f;        // WaterGlint: the sun on the waves
+    float waterCausticCell = 70.0f; // WaterCausticCell: game units across a cell of the caustic net
+    int   waterView = 0;            // WaterView: 1 the reflection, 2 the caustics, 3 Fresnel
+    float sss = 1.0f;               // Sss: screen-space scattering on skin (Sss.hlsl), 0 off to 1
+    float sssWidth = 1.0f;          // SssWidth: the red's scattering width, game units (green 0.42, blue 0.22 of it)
 };
 
 // Lights into clusters: out[cluster] holds one bit per light index.

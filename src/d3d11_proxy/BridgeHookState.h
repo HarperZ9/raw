@@ -51,6 +51,10 @@ bool LightingEnsure();
 // End of the opaque pass, after depth, normals and motion crossed: share the surface, the
 // cascades and the lights, light the frame into the HDR scene colour. True when the pass ran.
 bool LightingAtOpaque(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr);
+// Right after the game composites its water into the HDR colour: RAW's water on top (RtWater.hlsl),
+// improved mode with RT on raw::tx. True when it ran.
+// water false: no water this frame, the skin's scattering alone (at the first blended span).
+bool LightingAtWater(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr, bool water);
 // Once a frame at Present: the hotkey, the capture set and its statistics.
 void LightingOnPresent(bool worldFrame);
 // LightingSchedule.cpp: the steps of a capture set and the frames that run them.

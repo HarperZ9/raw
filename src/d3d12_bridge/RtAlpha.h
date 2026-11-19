@@ -56,6 +56,7 @@ public:
     uint32_t NoMask() const { return m_noMask; }
     uint32_t NoAlbedo() const { return m_noAlbedo; }
     uint64_t PoolBytes() const { return m_poolUsed; }
+    ID3D12Resource* Pool() const { return m_pool.Get(); }   // the coordinates (RtWater binds its own view of it)
     // A record's first coordinate, mask index, mask width and height (record = AddMesh's result - 1).
     void Info(uint32_t record, uint32_t out[4]) const { for (int k = 0; k < 4; ++k) out[k] = m_rec[record * 4 + k]; }
 

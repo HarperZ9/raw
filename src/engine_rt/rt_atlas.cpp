@@ -7,6 +7,8 @@
 // The pointers swap in place; the old objects are released 4 presents later, after any in-flight use.
 #include "rt_atlas.h"
 
+#include <windows.h>
+
 #include <cstdio>
 #include <vector>
 
@@ -30,6 +32,41 @@ std::vector<Retired> g_retired;
 
 }  // namespace
 
+// A pointer read from game memory is treated as untrusted: it must answer QueryInterface for
+// ID3D11Texture2D, under structured exception handling, before anything else is called on it.
+static bool SafeTexDescRaw(void* p, D3D11_TEXTURE2D_DESC* out) {
+    __try {
+        auto* unk = static_cast<IUnknown*>(p);
+        ID3D11Texture2D* t = nullptr;
+        if (FAILED(unk->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&t))) || !t) return false;
+        t->GetDesc(out);
+        t->Release();
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+static bool Readable(const void* p, size_t n) {
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!p || !VirtualQuery(p, &mbi, sizeof mbi) || mbi.State != MEM_COMMIT) return false;
+    if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) return false;
+    return reinterpret_cast<const uint8_t*>(p) + n <= reinterpret_cast<const uint8_t*>(mbi.BaseAddress) + mbi.RegionSize;
+}
+
+// The depth-stencil table's start inside RendererData: entry 2 is the sun's cascade atlas, a square
+// R16_TYPELESS texture with two slices. Returns 0 when no entry has that shape.
+static size_t FindDepthTable(uint8_t* data) {
+    for (size_t off = 0x1800; Readable(data, 0x2800) && off < 0x2800; off += 8) {
+        void* p = *reinterpret_cast<void**>(data + off);
+        if (!Readable(p, 16) || !Readable(*reinterpret_cast<void**>(p), 64)) continue;
+        D3D11_TEXTURE2D_DESC td = {};
+        if (SafeTexDescRaw(p, &td) && td.Format == DXGI_FORMAT_R16_TYPELESS && td.ArraySize == 2 && td.Width == td.Height &&
+            td.Width >= 1024)
+            return off - 2 * 0x98;
+    }
+    return 0;
+}
+
 std::string ResizeShadowAtlasLive(ID3D11DeviceContext* ctx, const Image& img, const std::vector<RefTarget>& refs,
                                   int entry, uint32_t size) {
     const RefTarget* r = nullptr;
@@ -38,10 +75,13 @@ std::string ResizeShadowAtlasLive(ID3D11DeviceContext* ctx, const Image& img, co
     if (!r) return "atlas: Renderer::GetRendererData not in the refs";
     uint8_t* data = *reinterpret_cast<uint8_t**>(const_cast<uint8_t*>(img.base) + r->rva);
     if (!data) return "atlas: no renderer data yet";
-    auto* ds = reinterpret_cast<DepthStencilData*>(data + 0x1FA8 + 0x98 * entry);
-    if (!ds->texture) return "atlas: entry has no texture";
-    D3D11_TEXTURE2D_DESC td;
-    ds->texture->GetDesc(&td);
+    // CommonLib places the depth table at +0x1FA8; on 1.6.1170 it sits 0x60 later (found by the dump:
+    // the 4096 x 2 cascade atlas at +0x2138 = entry 2). Find it by shape rather than trust either number.
+    const size_t table = FindDepthTable(data);
+    if (!table) return "atlas: depth table not found (no square R16 two-slice target)";
+    auto* ds = reinterpret_cast<DepthStencilData*>(data + table + 0x98 * entry);
+    D3D11_TEXTURE2D_DESC td = {};
+    if (!Readable(ds, sizeof *ds) || !ds->texture || !SafeTexDescRaw(ds->texture, &td)) return "atlas: entry has no texture";
     char line[256];
     const uint32_t oldW = td.Width, oldH = td.Height;
     if (oldW == size) return "atlas: already that size";
@@ -104,7 +144,7 @@ std::string DumpDepthTargets(const Image& img, const std::vector<RefTarget>& ref
     if (const RefTarget* m = find("BSGraphics::RenderTargetManager::GetSingleton")) {
         uint8_t* mgr = *reinterpret_cast<uint8_t**>(const_cast<uint8_t*>(img.base) + m->rva);
         out += ",\"table\":[";
-        for (int i = 0; mgr && i < 12; ++i) {
+        for (int i = 0; Readable(mgr, 0xD38) && i < 12; ++i) {
             const auto* e = reinterpret_cast<const uint32_t*>(mgr + 0xC78 + 0x10 * i);
             std::snprintf(buf, sizeof buf, "%s[%u,%u,%u]", i ? "," : "", e[0], e[1], e[2]);
             out += buf;
@@ -113,13 +153,18 @@ std::string DumpDepthTargets(const Image& img, const std::vector<RefTarget>& ref
     }
     if (const RefTarget* r = find("Renderer::GetRendererData")) {
         uint8_t* data = *reinterpret_cast<uint8_t**>(const_cast<uint8_t*>(img.base) + r->rva);
+        // every texture held directly in RendererData, with its offset: shows where the depth table sits
         out += ",\"textures\":[";
-        for (int i = 0; data && i < 12; ++i) {
-            auto* ds = reinterpret_cast<DepthStencilData*>(data + 0x1FA8 + 0x98 * i);
+        bool first = true;
+        for (size_t off = 0; Readable(data, 0x2800) && off < 0x2800; off += 8) {
+            void* p = *reinterpret_cast<void**>(data + off);
+            if (!Readable(p, 16) || !Readable(*reinterpret_cast<void**>(p), 64)) continue;
             D3D11_TEXTURE2D_DESC td = {};
-            if (ds->texture) ds->texture->GetDesc(&td);
-            std::snprintf(buf, sizeof buf, "%s[%u,%u,%u,%u]", i ? "," : "", td.Width, td.Height, td.ArraySize, unsigned(td.Format));
+            if (!SafeTexDescRaw(p, &td)) continue;
+            std::snprintf(buf, sizeof buf, "%s[\"0x%zX\",%u,%u,%u,%u]", first ? "" : ",", off, td.Width, td.Height, td.ArraySize,
+                          unsigned(td.Format));
             out += buf;
+            first = false;
         }
         out += "]";
     }

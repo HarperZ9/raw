@@ -205,22 +205,26 @@ void ControlOnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
 }
 
 std::string ResizeShadowAtlas(const Image& img, const std::vector<RefTarget>& refs, uint32_t size) {
-    const RefTarget* r = nullptr;
-    for (const auto& x : refs)
-        if (x.name == "BSGraphics::RenderTargetManager::GetSingleton") { r = &x; break; }
-    if (!r) return "shadow atlas: RenderTargetManager not in the refs";
-    uint8_t* mgr = *reinterpret_cast<uint8_t**>(const_cast<uint8_t*>(img.base) + r->rva);
-    if (!mgr) return "shadow atlas: RenderTargetManager not created yet";
-    char out[256];
-    int n = std::snprintf(out, sizeof out, "shadow atlas:");
-    for (int idx : {2, 4}) {
-        auto* e = reinterpret_cast<uint32_t*>(mgr + 0xC78 + 0x10 * idx);  // width, height, arraySize
-        const uint32_t w = e[0], h = e[1], a = e[2];
-        const bool plausible = w == h && w >= 512 && w <= 16384 && a >= 1 && a <= 16;
-        if (plausible) { e[0] = size; e[1] = size; }
-        n += std::snprintf(out + n, sizeof out - size_t(n), " [%d] %ux%u x%u -> %s", idx, w, h, a,
-                           plausible ? std::to_string(size).c_str() : "left (not a shadow map shape)");
+    // sub_14F00D0 copies iShadowMapResolution into a global at startup, before this module loads, and the
+    // renderer sizes the shadow atlas from that global when it creates its targets (after this module
+    // starts). Write both, the global only when it still holds the setting's value.
+    constexpr uint32_t kShadowSizeGlobal = 0x33DCFC0;  // found by probe, SkyrimSE 1.6.1170
+    auto* setting = [&]() -> uint32_t* {
+        for (const auto& x : refs)
+            if (x.name == "iShadowMapResolution:Display") return reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(img.base) + x.rva + 8);
+        return nullptr;
+    }();
+    auto* global = reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(img.base) + kShadowSizeGlobal);
+    char out[192];
+    if (!setting) return "shadow atlas: iShadowMapResolution not in the refs";
+    const uint32_t s0 = *setting, g0 = *global;
+    if (g0 != s0) {
+        std::snprintf(out, sizeof out, "shadow atlas: global 0x%X holds %u, setting %u; left alone", kShadowSizeGlobal, g0, s0);
+        return out;
     }
+    *setting = size;
+    *global = size;
+    std::snprintf(out, sizeof out, "shadow atlas: setting and global 0x%X %u -> %u", kShadowSizeGlobal, s0, size);
     return out;
 }
 

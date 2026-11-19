@@ -54,8 +54,8 @@ inline int Survey(Bench& b, const char* dir, const char* outPath)
         }
         char line[256];
         snprintf(line, sizeof line, "%s{\"shader\":\"%s\",\"kind\":\"%s\",\"class\":%d,\"patched\":%d,\"created\":%d,\"albedo\":%d,"
-                 "\"in_place\":%d,\"mask\":%d,\"gloss\":%d,\"emissive\":%d,\"vertex_colour\":%d}", perShader.empty() ? "" : ",\n", name.substr(3, 16).c_str(),
-                 KindName(info.kind), info.materialClass, ok, created, info.albedo, info.albedoInPlace, info.specularMask, info.gloss, info.emissive, info.vertexColour);
+                 "\"in_place\":%d,\"mask\":%d,\"gloss\":%d,\"emissive\":%d,\"vertex_colour\":%d,\"hair_tint\":%d}", perShader.empty() ? "" : ",\n", name.substr(3, 16).c_str(),
+                 KindName(info.kind), info.materialClass, ok, created, info.albedo, info.albedoInPlace, info.specularMask, info.gloss, info.emissive, info.vertexColour, info.hairTint);
         perShader += line;
     }
     printf("%d pixel shaders, %d container hashes equal the computed hash\n", total, hashOk);

@@ -76,4 +76,52 @@ Out main(In i) {
     return o;
 })";
 
+// A skin surface: the tint blends back into the base colour (b * b + 2 b t (1 - b)) before lighting, so the base
+// register at lighting holds the tinted colour.
+inline const char* kSkinTint = R"(
+cbuffer Material : register(b1) { float4 mat[9]; }
+cbuffer Lights : register(b2) { float4 geo[30]; }
+struct Out { float4 c : SV_Target0; float4 m : SV_Target1; float4 n : SV_Target2; };
+Out main(In i) {
+    float4 base = tColour.Sample(s0, i.uv);
+    float4 nm = tNormal.Sample(s1, i.uv);
+    float3 bt = base.rgb * mat[1].rgb;
+    bt = bt + bt;
+    bt = bt - bt * base.rgb;
+    base.rgb = base.rgb * base.rgb + bt;
+    float3 n = normalize(nm.xyz * 2 - 1);
+    float count = min(geo[29].x, 7);
+    float3 light = saturate(dot(n, geo[0].xyz)) * geo[1].rgb * count + mat[8].yzw * mat[8].x;
+    Out o;
+    o.c.rgb = base.rgb * light;
+    o.c.a = base.a * geo[3].z;
+    o.m = float4(0.25, 0.5, 0, 1);
+    float z = max(sqrt(8 - 8 * n.z), 0.001);
+    o.n = float4(n.xy / z + 0.5, 0, nm.a);
+    return o;
+})";
+
+// A hair surface: the tint, lerp(1, tint, a vertex value), is built after lighting begins and multiplies the lit
+// colour at the end. The base register at lighting holds the untinted texture.
+inline const char* kHairTint = R"(
+cbuffer Material : register(b1) { float4 mat[9]; }
+cbuffer Lights : register(b2) { float4 geo[30]; }
+struct Out { float4 c : SV_Target0; float4 m : SV_Target1; float4 n : SV_Target2; };
+Out main(In i) {
+    float4 base = tColour.Sample(s0, i.uv);
+    float4 nm = tNormal.Sample(s1, i.uv);
+    float3 n = normalize(nm.xyz * 2 - 1);
+    float count = min(geo[29].x, 7);
+    float3 light = saturate(dot(n, geo[0].xyz)) * geo[1].rgb * count + mat[8].yzw * mat[8].x;
+    float3 lit = base.rgb * light;
+    float3 tint = lerp(float3(1, 1, 1), mat[1].rgb, i.world.z);
+    Out o;
+    o.c.rgb = lit * tint;
+    o.c.a = base.a * geo[3].z;
+    o.m = float4(0.25, 0.5, 0, 1);
+    float z = max(sqrt(8 - 8 * n.z), 0.001);
+    o.n = float4(n.xy / z + 0.5, 0, nm.a);
+    return o;
+})";
+
 } // namespace bench

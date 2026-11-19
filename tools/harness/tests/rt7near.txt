@@ -1,0 +1,15 @@
+# The floating skinned corners: each actor colour draw against the nearest of the prepass palettes kept for its
+# streams ([RT] SkinPrepassCheck=1). Riverwood at 13:00 from the save's own cell, first person then third.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+keyframe a steps=game,improved hold=60
+walk f 0.15
+wait 4
+keyframe b steps=game,improved hold=60
+reload ini RtDebug=1 View=7
+keyframe b_primary steps=improved hold=40
+reload ini RtDebug=0 View=0
+quit

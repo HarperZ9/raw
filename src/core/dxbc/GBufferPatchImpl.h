@@ -30,6 +30,7 @@ struct Analysis
     std::vector<uint32_t> emitA, emitB;
     std::vector<uint32_t> vcolOperand;   // the vertex colour input, as the shader reads it
     size_t    waterBefore = kNone;  std::vector<uint32_t> waterOperand;
+    size_t    tintBefore = kNone;   uint32_t tintReg = 0;   // the hair's tint, lerp(1, cb1 tint, vertex colour): albedo *= it here
     size_t    softAfter = kNone;    uint32_t softReg = 0, softSwz = 0;   // the soft-lighting map (slot 12) of soft-lit shaders
 };
 

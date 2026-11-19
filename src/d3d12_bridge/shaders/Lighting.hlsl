@@ -124,6 +124,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (base == 7u && (cls & 128u) == 0u) {
         if (flags.w == 14u) { return float4(worldNormal(Normal.Load(ip)) * 0.5f + 0.5f, game.a); }
         if (flags.w == 15u) { return float4(Albedo.Load(ip).rgb, game.a); }
+        // Views 2, 4 and 5 on distant LOD: the sun, sky and bounce of the march through the depth (RtShadow.hlsl, RtFar).
+        if (flags.w == 2u) { return float4(RtVis.Load(ip).xxx, game.a); }
+        if (flags.w == 4u) { return float4(RtIdx.Load(ip).www, game.a); }
+        if (flags.w == 5u) { return float4(RtBounce.Load(ip).rgb * proj.w, game.a); }
         if ((flags.x & FLAG_MATCH) != 0u || (flags.x & FLAG_LOD) == 0u || sunDir.w < 0.5f) { return game; }
         return float4(distantLit(ip, at.xy, d), game.a);
     }
@@ -138,7 +142,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float z = viewZOf(d), jit = ign(px);
     Surface s;
     s.n = worldNormal(Normal.Load(ip));
-    s.v = normalize(-p);
+    s.v = normalize(eyeAt() - p);
     s.shin = exp2(sp.y * 13.0f);
     s.mask = sp.x;
     bool lobe = sp.y > 0.002f && base != 4u && base != 6u;   // the game's own shader had a lobe here
@@ -289,7 +293,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // The game's lobe exists only in shaders with a shininess exponent (gloss > 0).
     // Landscape shaders carry no lobe (their slot 1 is a colour layer); the exponent found in parallax
     // shaders belongs to another term (a lobe there doubles the error, tools/lighting/fitsoft.py).
-    lit += (flags.x & FLAG_GGX) != 0u ? spec : spec * (lobe ? s.mask * resScale.w : 0.0f);
+    // GGX follows the game's specular map where the game had a lobe, as the game's own term does (mask x scale x lobe):
+    // a sharp lobe at f0 0.02 on a surface the map leaves dark (the inn's beams, rt7-glint-1) read as white streaks the
+    // game never draws, and a weight full from a mask of 0.25 still left them on the planks (rt7-glint-5).
+    const float specMap = lobe && !(skin && !match) ? saturate(s.mask * resScale.w) : 1.0f;
+    lit += (flags.x & FLAG_GGX) != 0u ? spec * specMap : spec * (lobe ? s.mask * resScale.w : 0.0f);
     // Ray-traced reflection on glossy surfaces, weighted by Schlick Fresnel at the view angle and the
     // game's specular mask; where the ray found nothing the game had on screen, nothing is added.
     if (rt && (flags.x & FLAG_REFLECT) != 0u && lobe) {

@@ -1,0 +1,48 @@
+# Why Riverwood's irradiance against the path-traced reference read 0.389 in rt5-ref-1 and 0.511 in rt6-tm-1: the
+# irradiance (View 13) is taken before the reference accumulates, right after it, and 300 frames after it, through
+# both tone maps, and with the untraced lights' shared ray off. Then the inn the same way.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+keyframe frame steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe frame_raw steps=improved hold=40
+reload ini Tonemap=0 View=13
+keyframe irr_pre steps=improved hold=40
+reload ini Tonemap=1
+keyframe irr_pre_raw steps=improved hold=40
+reload ini Tonemap=0 View=4
+keyframe sky_pre steps=improved hold=40
+reload ini RtDebug=6 View=7
+keyframe ref steps=improved hold=1000
+reload ini Tonemap=1
+keyframe ref_raw steps=improved hold=40
+reload ini Tonemap=0 RtDebug=0 View=13
+keyframe irr_post steps=improved hold=40
+keyframe irr_post300 steps=improved hold=300
+reload ini View=4
+keyframe sky_post steps=improved hold=40
+reload ini RtRest=0 View=13
+keyframe irr_norest steps=improved hold=120
+reload ini RtRest=1 View=0
+console coc whiterunbanneredmare
+wait 10
+scene inn
+keyframe frame steps=game,improved hold=40
+reload ini Tonemap=1
+keyframe frame_raw steps=improved hold=40
+reload ini Tonemap=0 View=13
+keyframe irr_pre steps=improved hold=40
+reload ini Tonemap=1
+keyframe irr_pre_raw steps=improved hold=40
+reload ini Tonemap=0 RtDebug=6 View=7
+keyframe ref steps=improved hold=1000
+reload ini Tonemap=1
+keyframe ref_raw steps=improved hold=40
+reload ini Tonemap=0 RtDebug=0 View=13
+keyframe irr_post steps=improved hold=40
+keyframe irr_post300 steps=improved hold=300
+reload ini View=0
+quit

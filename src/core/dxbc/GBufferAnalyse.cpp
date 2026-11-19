@@ -4,6 +4,7 @@
 // (docs/FRAME_BUFFERS.md, "Shader patches"). Original work, MIT.
 #include "GBufferPatchImpl.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace raw::dxbc
@@ -85,30 +86,29 @@ void FindAlbedo(const std::vector<Instruction>& code, const std::vector<int>& de
     const uint32_t comps = 1u << r | 1u << g | 1u << b;
     size_t tap = s + 1, opener = kNone;
     bool inPlace = false;
-    uint32_t reg2 = reg, sw[3] = {uint32_t(r), uint32_t(g), uint32_t(b)};
-    uint32_t comps2 = comps;
-    size_t switchedAt = kNone;
+    uint32_t outReg = reg, sw[3] = {uint32_t(r), uint32_t(g), uint32_t(b)};
+    // A tint from the material (cb1) multiplied into another register before lighting. Only a fallback: the
+    // skin shaders (ps 6a2383091a33f594 and 18d10e9ba7f68469 in the Riverwood capture) blend that product back
+    // into the base register (b * b + 2 b t (1 - b)), so the base register at lighting already holds the tinted
+    // colour, and the product alone reads about half as bright. When the base register is overwritten before
+    // lighting, the tinted copy is the albedo, read right after the multiply.
+    size_t tintAt = kNone;
+    uint32_t tintReg = 0, tintSw[3] = {};
     for (size_t i = s + 1; lit && i < code.size(); ++i) {
         const bool lighting = ReadsBuffer(code[i], 2) || SamplesSlot(code[i], 14);
-        // A tint from the material (cb1) multiplied into another register before lighting (the hair's and the
-        // tinted skin's colour: ps 6a2383091a33f594 and 18d10e9ba7f68469 in the Riverwood capture) is the albedo.
-        if (depth[i] == 0 && !lighting && code[i].opcode == op::Mul && code[i].ops.size() == 3 && code[i].ops[0].type == type::Temp &&
-            code[i].ops[0].index[0] != reg2 && ReadsBuffer(code[i], 1)) {
+        if (tintAt == kNone && depth[i] == 0 && !lighting && code[i].opcode == op::Mul && code[i].ops.size() == 3 &&
+            code[i].ops[0].type == type::Temp && code[i].ops[0].index[0] != reg && ReadsBuffer(code[i], 1)) {
             const uint32_t mask = code[i].ops[0].Mask();
-            for (int k = 1; k <= 2; ++k) {
+            for (int k = 1; k <= 2 && tintAt == kNone; ++k) {
                 const auto& o = code[i].ops[k];
-                if (o.type != type::Temp || o.index[0] != reg2) continue;
-                // Where each albedo channel lands in the destination (ps 18d10e9ba7f68469 writes r1.xyz to r2.yzw).
-                uint32_t to[3] = {4, 4, 4};
+                if (o.type != type::Temp || o.index[0] != reg) continue;
+                uint32_t to[3] = {4, 4, 4};   // where each albedo channel lands (ps 18d10e9ba7f68469 writes r1.xyz to r2.yzw)
                 for (uint32_t c = 0; c < 3; ++c)
                     for (uint32_t d = 0; d < 4; ++d)
                         if ((mask >> d & 1) && o.Swizzle(d) == sw[c] && to[c] == 4) to[c] = d;
                 if (to[0] < 4 && to[1] < 4 && to[2] < 4) {
-                    reg2 = code[i].ops[0].index[0];
-                    sw[0] = to[0]; sw[1] = to[1]; sw[2] = to[2];
-                    comps2 = 1u << to[0] | 1u << to[1] | 1u << to[2];
-                    switchedAt = i;
-                    break;
+                    tintAt = i; tintReg = code[i].ops[0].index[0];
+                    tintSw[0] = to[0]; tintSw[1] = to[1]; tintSw[2] = to[2];
                 }
             }
         }
@@ -118,23 +118,65 @@ void FindAlbedo(const std::vector<Instruction>& code, const std::vector<int>& de
             if (o == op::If || o == op::Loop || o == op::Switch) opener = i;
         } else if (lighting && opener != kNone) { tap = opener; inPlace = true; break; }
         const Instruction& in = code[i];
-        if (!in.ops.empty() && in.ops[0].type == type::Temp && in.ops[0].index[0] == reg2 && (in.ops[0].Mask() & comps2) && i != switchedAt) {
+        if (!in.ops.empty() && in.ops[0].type == type::Temp && in.ops[0].index[0] == reg && (in.ops[0].Mask() & comps)) {
             bool readsSelf = false;
             for (size_t k = 1; k < in.ops.size(); ++k)
-                readsSelf |= in.ops[k].type == type::Temp && in.ops[k].index[0] == reg2;
+                readsSelf |= in.ops[k].type == type::Temp && in.ops[k].index[0] == reg;
             if (!readsSelf) {   // the register now holds something else
-                // After a switch to the tinted copy, an overwrite before lighting means the copy is gone: tap where it
-                // still held the tint, right after the switch, rather than read the new value at lighting.
-                if (switchedAt != kNone) { tap = switchedAt + 1; inPlace = false; }
+                if (tintAt != kNone) {
+                    tap = tintAt + 1; outReg = tintReg;
+                    sw[0] = tintSw[0]; sw[1] = tintSw[1]; sw[2] = tintSw[2];
+                }
                 break;
             }
         }
     }
     a->albedoBefore = tap;
-    a->albedoReg = reg2;
+    a->albedoReg = outReg;
     a->albedoSwz = Swz(sw[0], sw[1], sw[2], sw[2]);
     a->info.albedo = true;
     a->info.albedoInPlace = inPlace;
+}
+
+// The hair's tint (ps a27b51950814d269 and bcbe8960ef3af1ff in the Riverwood capture): the shader builds
+// t = lerp(1, tint, vertex colour) as add rT.xyz, cb1[k].xyz, -1 then mad rT.xyz, vN.c, rT.xyz, 1, after lighting has
+// begun, and multiplies the lit base colour by it at the end. The base register the tap reads at lighting holds
+// the grey hair texture alone, which read blonde. The tap multiplies the albedo by rT once rT is built.
+float ImmAt(const Instruction& in, const Operand& o, uint32_t c)
+{
+    const uint32_t n = o.components == 2 ? 4u : 1u;
+    float v = 0.0f;
+    std::memcpy(&v, &in.tok[o.at + 1 + (c < n ? c : 0)], 4);
+    return v;
+}
+bool ImmXyz(const Instruction& in, const Operand& o, float v)
+{
+    if (o.type != type::Immediate32 || o.length < 2) return false;
+    for (uint32_t c = 0; c < 3; ++c) if (ImmAt(in, o, c) != v) return false;
+    return true;
+}
+void FindHairTint(const std::vector<Instruction>& code, const std::vector<int>& depth, Analysis* a)
+{
+    if (a->albedoBefore == kNone) return;
+    for (size_t i = a->body; i + 1 < code.size(); ++i) {
+        const Instruction& add = code[i];
+        const Instruction& mad = code[i + 1];
+        if (add.opcode != op::Add || add.ops.size() != 3 || depth[i] != 0 || add.ops[0].type != type::Temp || (add.ops[0].Mask() & 7) != 7) continue;
+        if (add.ops[1].type != type::ConstantBuffer || add.ops[1].index[0] != 1 || add.ops[1].relative[1] || !ImmXyz(add, add.ops[2], -1.0f)) continue;
+        const uint32_t t = add.ops[0].index[0];
+        if (mad.opcode != op::Mad || mad.ops.size() != 4 || depth[i + 1] != 0 || mad.ops[0].type != type::Temp || mad.ops[0].index[0] != t ||
+            (mad.ops[0].Mask() & 7) != 7 || mad.ops[1].type != type::Input || mad.ops[2].type != type::Temp || mad.ops[2].index[0] != t ||
+            !ImmXyz(mad, mad.ops[3], 1.0f)) continue;
+        // Read where the albedo is already copied, with rT unchanged since it was built.
+        size_t at = std::max(i + 2, a->albedoBefore);
+        bool kept = true;
+        for (size_t k = i + 2; k < at && kept; ++k)
+            kept = code[k].ops.empty() || code[k].ops[0].type != type::Temp || code[k].ops[0].index[0] != t || !(code[k].ops[0].Mask() & 7);
+        if (!kept || depth[at] != 0) return;
+        a->tintBefore = at; a->tintReg = t;
+        a->info.hairTint = true;
+        return;
+    }
 }
 
 // The soft-lighting map of a soft-lit shader (foliage): the colour sampled from slot 12, which the
@@ -317,6 +359,7 @@ bool Analyse(const Container& c, const Program& p, Analysis* a)
         a->info.materialClass = LightingClass(*a);
         FindAlbedo(code, depth, true, a);
         FindVertexColour(code, depth, a);
+        FindHairTint(code, depth, a);
         // A landscape samples colour layers from slots 0 to 5; slot 1 is not a normal map there.
         if (a->info.materialClass != material::Landscape) FindSpecular(code, depth, a);
         else { const size_t keep = a->specAfter; FindSpecular(code, depth, a); a->specAfter = keep; a->info.specularMask = false; }

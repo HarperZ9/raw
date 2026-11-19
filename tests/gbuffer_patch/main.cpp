@@ -105,6 +105,34 @@ void LitCase(Bench& b)
     for (int i = 4; i < 8; ++i) Show(i == 4 ? "albedo" : i == 5 ? "specular" : i == 6 ? "emissive" : "layer", p[i]);
 }
 
+// The two tints of the actors' shaders (Riverwood capture: skin ps 6a2383091a33f594, hair ps bcbe8960ef3af1ff).
+void TintCases(Bench& b)
+{
+    float mat[36] = {};
+    mat[4] = 0.8f; mat[5] = 0.3f; mat[6] = 0.1f;   // element 1: the tint
+    b.SetConstants(1, mat, 9);
+    const float base[3] = {0.2f, 0.4f, 0.6f}, tint[3] = {0.8f, 0.3f, 0.1f};
+    for (int k = 0; k < 2; ++k) {
+        const bool hair = k == 1;
+        printf("%s tint\n", hair ? "hair" : "skin");
+        const std::vector<uint8_t> code = Bench::Compile((std::string(kCommon) + (hair ? kHairTint : kSkinTint)).c_str(), "ps_5_0");
+        PatchInfo info;
+        const std::vector<uint8_t> patched = Patched(code, &info);
+        if (g_dump) printf("%s\n%s\n", Bench::Disassemble(code).c_str(), Bench::Disassemble(patched).c_str());
+        Check(info.kind == ShaderKind::Lighting && info.albedo && info.hairTint == hair, hair ? "the hair's tint is found" : "no hair tint on skin");
+        Pixel o[kTargets], p[kTargets];
+        if (patched.empty() || !b.Draw(code, o) || !b.Draw(patched, p)) { Check(false, "draws"); continue; }
+        Check(memcmp(o, p, 3 * sizeof(Pixel)) == 0, "outputs 0 to 2 are bit-identical to the original's");
+        float e[3];
+        for (int c = 0; c < 3; ++c) e[c] = hair ? base[c] * tint[c] : base[c] * base[c] + 2 * base[c] * tint[c] * (1 - base[c]);
+        Check(Near(p[4], e[0], e[1], e[2], 0.75f, 1e-4f), hair ? "albedo: texture times the tint" : "albedo: the tint blended into the texture");
+        Check(!Near(p[4], base[0], base[1], base[2], 0.75f, 1e-3f), "control: the untinted texture is not accepted");
+        if (!hair) Check(!Near(p[4], base[0] * tint[0], base[1] * tint[1], base[2] * tint[2], 0.75f, 1e-3f), "control: the bare product is not accepted");
+        Show("albedo", p[4]);
+    }
+    SetScene(b);
+}
+
 void WaterCase(Bench& b)
 {
     printf("water surface\n");
@@ -183,6 +211,7 @@ int main(int argc, char** argv)
     if (dir) return Survey(b, dir, outPath);
     SetScene(b);
     LitCase(b);
+    TintCases(b);
     WaterCase(b);
     EffectCase(b);
     printf("%s (%d failed)\n", g_failed ? "FAILED" : "all checks passed", g_failed);

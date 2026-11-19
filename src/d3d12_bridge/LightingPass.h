@@ -69,7 +69,7 @@ struct LightingTuning
     float cloudWindX = 180.0f, cloudWindY = 60.0f;   // CloudWindX, CloudWindY: units a second
     float cloudHistory = 0.85f;     // CloudHistory: last frame's share
     bool  rtSkin = true;            // skinned actors join the scene with a BLAS a frame
-    bool  rtSkinCull = true;        // RtSkinCull, RtSkinRatio, RtSkinMin: stretched skinned triangles left out (RtSkinCheck.hlsl)
+    int   rtSkinCull = 1;           // RtSkinCull (0 none, 1 stretched and floating, 2 stretched only), RtSkinRatio, RtSkinMin: stretched skinned triangles left out (RtSkinCheck.hlsl)
     float rtSkinRatio = 4.0f, rtSkinMin = 24.0f;
     int   rtSkinBones = 10;         // the vertex constant buffer slot that holds the current bone palette
     bool  rtIncremental = true;     // RtIncremental: the scene's per-draw lookups once a frame, instances staged
@@ -77,6 +77,7 @@ struct LightingTuning
     int   rtSkinFilter = 0;         // RtSkinFilter: diagnosis, which skinned draws join (SceneSkin.cpp)
     bool  rtActorView = true;       // RtActorView: actor draws whose view-projection is not the main view's stay out (SceneSkin.cpp)
     bool  rtActors = true;          // skinned draws on the main depth target outside the opaque set (people, the player) join
+    bool  rtFar = true;             // RtFar: distant LOD (class 7) gets sun shadows, sky and a bounce by a march through the depth (RtShadow.hlsl)
     bool  rtRestReuse = true;       // RtRestReuse: ReSTIR's temporal and spatial reuse for the shared ray (RtShadow.hlsl)
     bool  rtRest = true;            // RtRest: every light past the three traced ones shadowed by one ray to a light picked by its share (RtShadow.hlsl)
     bool  rtReflect = true;         // glossy surfaces: one ray-traced reflection ray, the hit's colour in the game's frame

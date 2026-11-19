@@ -530,3 +530,155 @@ with the destination's channels mapped (ps `6a2383091a33f594`, `18d10e9ba7f68469
 register after the game had reused it and turned an NPC's skin black (rt6-next-4); it now taps right after the tint
 when the register is overwritten before lighting (rt6-next-5: skin correct). The NPC's red hair still reads blonde,
 so the hair's tint comes some other way; not found.
+
+## Hair, the skin tint, the actors' depth test and the eye (2026-11-19, later)
+
+Runs rt7-hair-2 (2160p) and the Riverwood capture E:/raw-capture/rt7-hair/000 (1080p, kept out of the repo). ENB 232 of
+232 after each session, settings restored by hash.
+
+**Hair.** Five hair shaders in the capture (ps `a27b51950814d269`, `bcbe8960ef3af1ff`, `02af80891653b90e`,
+`75f69061522952c5`, `d1b9e4d1f461f33f`) build the tint as lerp(1, cb1[1], vertex colour y), with `add rT.xyz, cb1[1],
+-1` then `mad rT.xyz, v12.y, rT, 1`, after lighting has begun, and multiply the lit colour by it at the end. The albedo
+tap at lighting read the grey texture alone, which is why red hair read blonde. `FindHairTint` (GBufferAnalyse.cpp)
+finds the pair, and the patch multiplies the albedo by rT once it is built (`hairTint` in the survey). In rt7-hair-2 the
+inn NPC's dark hair reads dark in improved mode, as in the game (`ingame-rt7-2026-11-19-hair-saadia-game-vs-improved-3x`).
+The red-haired NPC of rt6-next-5 was not in view in this run, so that case still needs a look.
+
+**The skin tint, corrected.** The #34 tint follow was wrong for the two skin shaders (ps `6a2383091a33f594`,
+`18d10e9ba7f68469`). They compute b * b + 2 b t (1 - b) and write it back into the base register, so the base register at
+lighting already holds the tinted colour; the follow read the 2 b t (1 - b) part alone. It is now a fallback, used only
+when the base register is overwritten before lighting. `gbuffer_patch_check` has a skin case and a hair case, each with
+controls; with the #34 code both fail (skin albedo 0.256 / 0.144 / 0.048 against 0.296 / 0.304 / 0.408 expected).
+
+**The actors' colour draws test EQUAL.** In the capture every actor colour draw has depth write off and depth function 3
+(EQUAL) against a prepass of draws with no pixel shader (2,726 in the frame). A colour-draw triangle the prepass did not
+put there is never seen in the game. `[RT] SkinPrepassCheck=1` (SceneSkinPrepass.cpp) keeps each prepass draw by its
+streams and compares the colour draw with it: index range, palette row by row, vertex shader. In rt7-hair-2 it matched
+none, because it kept only draws with a world block and the prepass draws carry none; it now keeps every one, not yet run.
+
+**The floating corners' depth.** The check now logs the pixel and the game's depth at the first floating corner
+(`RtSkinCull=2` drops stretched triangles only). In third person at Riverwood the corners sit at the player's depth (about
+150 units) on pixels where the game shows the background (450 to 1,100 units), at least two pixels outside the game's
+silhouette. Primary-ray views with `RtSkinCull` 0, 1 and 2 look alike.
+
+**The eye.** The third-person primary-ray view draws the player about 15 % larger than the game, magnified about the screen
+centre (left edge 1,097 against 1,210, top 685 against about 720), while the sky mask agrees with the game's at 97 % of
+pixels. The view traced from the origin of the camera-relative space, which is float4 40 of the per-frame constants and
+follows the player in third person. A ray from a point about 20 units nearer the player crosses more of the player.
+`eyeAt()` (LightingCommon.hlsli) now takes the eye from the projection, clipToWorld x (0, 0, 1, 0), for the primary ray,
+the lighting's and the water's view vectors, the reflection rays and the distant LOD. `[SceneLights]` logs the view-to-world
+translation beside float4 40 to check it. Not yet run in game.
+
+**Distant LOD marched through the depth** (`[Lighting] RtFar`, on). Class 7 (terrain, tree and object LOD past the loaded
+cells) is not in the ray-tracing scene. `farOccluded` (RtShadow.hlsl) marches its sun ray and its sky rays through the
+depth buffer in steps that grow by a third, and counts only other class-7 pixels as occluders, nearer than the point by
+0.4 % to a quarter of its distance plus 2,000 units. A ridge then shadows the valley past the cascades, a slope under a
+ridge sees less sky, and the ridge's colour in the game's frame is the bounce, which `distantLit` adds. Views 2, 4 and 5
+show the sun, sky and bounce on class 7. Not yet run in game.
+
+**Why Riverwood read 0.389 and then 0.511 against the reference.** Offline, from rt5-ref-1 and rt6-tm-1: the two
+references agree (FLIP 0.119 between them) and the two game frames match (mean 88.1 against 88.0), but RAW's irradiance
+(View 13) differs between the runs by 0.376, about 20 of 255 darker in rt6-tm-1 on the open ground and the roofs.
+rt5-ref-1 took the irradiance before the reference accumulated, rt6-tm-1 after it. While `RtDebug=6` runs, the trace
+kernel returns before its cache and sky writes, so for 1,000 frames the radiance cache takes no samples. After 600
+frames without one (`RtCache::kMaxAge`) every cell is freed. Forty frames later the off-screen bounce had not come
+back. The 0.511 / 0.522 and 0.355 / 0.247 tone-map figures were all taken after a reference, so they measure a
+starved cache. The cause is inferred from the code, not yet measured: tests/rt7tone.txt takes the irradiance before the
+reference, right after it, and 300 frames after it.
+
+FLIP between irradiance and reference through one tone map judges RAW's lighting as that tone map shows it. A tone
+map that flattens the image also lowers the figure, so `tools/lighting/tonecheck.py` reports three guards beside it on
+the frames: the mean, the share of clipped pixels and detail (mean absolute Laplacian of luma). On rt6-tm-1's Riverwood
+frame through RAW's tone map: mean 81.8, 0.92 % clipped, detail 20.15.
+
+**POM.** No parallax shader that samples its height map before its colour turns up in any capture on disk (156 distinct
+pixel shaders across the Riverwood, inn and rt7 captures). The class-6 shaders of the Riverwood capture read t3 as a
+projected (snow) material, not a height. The loop patch needs a capture of a view with vanilla parallax meshes first.
+
+**Not run:** the tone-map order test (tests/rt7tone.txt) and the distant-LOD vista (tests/rt7far.txt). Steam updated the
+game to 1.7.104 during the session, and SKSE 2.2.6 refuses to start it.
+
+## On 1.7.104: hair, the eye, the tone map, the skinned corners, specular and distant water (2026-11-19, later)
+
+Runs rt7-hair-3, rt7-tone-4, rt7-prepass-1 and -2, rt7-glint-1 to -6 and rt7-far-4 to -7, all on SkyrimSE 1.7.104 at
+2160p with the master version layer merged. ENB 232 of 232 after every session, settings restored by hash. The RT code
+reads no game address, so these runs need no change for the version.
+
+**Hair, red.** Aela the Huntress (base 1A696) placed in the inn: her red hair reads red in improved mode as in the game,
+a little darker (hair mean 28.8 / 18.0 / 10.4 against the game's 34.3 / 19.7 / 12.0,
+`ingame-rt7-2026-11-19-hair-red-aela-game-vs-improved-1to1`). Her bare back reads much darker than the game's (6.5 / 2.7 /
+0.6 against 22.8 / 15.8 / 11.0), and a hard-edged dark polygon lies on her hair: a shadow from a skinned triangle that
+the game never shows. Both are open.
+
+**The eye.** The third-person primary-ray view now draws the player at the game's size: the helmet's horns span within
+about 5 pixels of the game's at 2160p, where #34's view was about 15 % larger
+(`ingame-rt7-2026-11-19-third-eye-primary-outline-on-game-1to1`, the primary view's outline on the game's frame). A cap
+about 55 pixels above the helmet and a few fragments by the arms remain: geometry the game does not show.
+`[SceneLights]`' view-to-world log reads zero, so that log reads the wrong constants; the shader's `eyeAt()` does not use it.
+
+**The tone map default stays off.** tests/rt7tone.txt took RAW's irradiance before the reference, 40 frames after it
+and 300 frames after it. FLIP against the reference under the game's tone map:
+
+| | before | after | 300 frames after |
+|---|---|---|---|
+| Riverwood 13:00 | 0.370 | 0.367 | 0.371 |
+| The Bannered Mare | 0.372 | 0.373 | 0.373 |
+
+So the reference does not starve the cache in this run: the inference in the section above is refuted, and the cause
+of 0.389 against 0.511 is still unknown. Through each tone map, before the reference:
+
+| | the game's tone map | RAW's tone map | frame mean, game / improved / RAW tone map | clipped, improved / RAW tone map |
+|---|---|---|---|---|
+| Riverwood 13:00 | 0.370 | 0.339 | 98.6 / 93.2 / 87.7 | 5.74 % / 0.18 % |
+| The Bannered Mare | 0.372 | 0.422 | 18.9 / 21.0 / 8.1 | 0.19 % / 0 % |
+
+RAW's tone map is closer outdoors and clips far less, but it takes the inn to a mean of 8.1, less than half the game's,
+and FLIP there is worse. `Tonemap` stays 0 until its exposure holds interiors (`ingame-rt7-2026-11-19-inn-tonemap-*`,
+`-riverwood-tonemap-*`).
+
+**The skinned corners against the prepass: a null.** With the index buffer in the key (it was missing, and #38's
+"prepass inside the colour" cases came from that), every one of 103,695 matched colour draws has the same index range
+as its prepass. The palettes compared bone by bone differ in both rotation and translation for most bones, because one
+mesh's streams are shared by several actors, so the comparison meets other actors' palettes; it cannot tell which
+palette the game's prepass used. A trim of each colour draw to its prepass's ranges was built and removed: it changes
+nothing when the ranges are equal. The key's reference counting is fixed on raw::tx too (it released the layer's held
+buffers through COM). Riverwood, rt7-prepass-1: about 3,200 of 72,900 skinned triangles float in front of the game's
+depth with many people in view; third person alone, about 82 of 35,786. In rt7-near-1 (Riverwood from the save's own
+cell, no cell change) no skinned draw without a pixel shader appeared at all, so no prepass was there to compare, and
+6,222 of 83,513 skinned triangles still floated. The prepass draws turned up only after a `coc` from the inn in these
+runs. So the EQUAL-against-the-prepass account does not cover every floating corner. The check now also compares each
+colour draw with the nearest of up to eight prepass palettes kept for its streams (`[RT] prepass nearest`), not yet run
+where prepass draws occur. The cause is still not found.
+
+**Specular follows the game's map.** In the inn, white streaks lay along the beams in improved mode (0.274 % of pixels
+over 200 in every channel, the game 0.003 %; `ingame-rt7-2026-11-19-inn-beam-glints-game-vs-improved-1to1`). Turning
+terms off one at a time (rt7-glint-1): only `GgxSpecular=0` removed them (0.003 %); the reflection ray, the untraced
+lights' shared ray and its reuse did not. GGX took the game's specular mask only through f0 (0.02 at a mask of 0) and
+kept a sharp lobe from the shininess exponent, so a surface the map leaves dark still drew a bright highlight.
+GGX is now weighted by the mask times the game's specular scale where the game had a lobe, as the game's own term is
+(`specMap`, Lighting.hlsl); skin keeps its own sheen. A first weight, full from a mask of 0.25, still left streaks on
+the planks overhead (rt7-glint-5, one of five headings: 0.041 % against 0.003 % with GGX off). With the linear weight
+(rt7-glint-6), the five headings read 0.005 / 0.049 / 0.049 / 0.010 / 0.004 % with GGX on, 0.005 / 0.049 / 0.049 /
+0.012 / 0.003 % off and 0.005 / 0.049 / 0.049 / 0.011 / 0.003 % in the game. A faint sheen stays on the planks
+(`ingame-rt7-2026-11-19-inn-h4-planks-specmap-game-vs-improved-1to1`).
+
+**Distant water.** From 12,000 units up at 16:00 (tests/rt7far.txt), the valley's river read navy in improved mode where
+the game shows it bright with the sky: the water pass replaced 0.65 of the game's body with the bed seen through the
+water, and over a long path the bed is gone and only the dark scatter is left. The bed's share now fades to the game's
+water between 4,096 and 8,192 units (one to two cells); the river then reads as the game's
+(`ingame-rt7-2026-11-19-vista-river-*`). Near water is unchanged.
+
+**RtFar.** Its sun and sky views show the march working on the distant LOD (shaded far slopes, less sky under ridges).
+In the final frame the effect is small under the haze: RtFar on against off differs by 1.2 of 255 on the far mountains
+(`ingame-rt7-2026-11-19-vista-far-mountains-*`). The far mountains read slightly flatter than the game's (luma std 11.3
+against 12.7); not investigated.
+
+**The vista test** first failed twice: a `coc` into a cell still in memory shows no loading screen, so the console stays
+open and the next commands reach the world (a magic menu opened). The test now starts from the save's own cell.
+
+**Seen, not fixed:**
+- A small fir by the Riverwood road reads near black in improved mode where the game lights it through its needles
+  (`ingame-rt7-2026-11-19-riverwood-fir-shadow-game-vs-improved-1to1`).
+- The compass location icon shows through raw::tx in the Riverwood game frames of rt7-tone-4 and rt7-far-4 (the house mark); not
+  compared against native D3D11.
+- POM still needs a capture of a view with vanilla parallax meshes.

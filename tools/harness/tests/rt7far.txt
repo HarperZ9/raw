@@ -1,0 +1,30 @@
+# Distant LOD marched through the depth buffer (RtFar): the vista over Riverwood from 12,000 units up, game against
+# improved with RtFar off and on, and the sun, sky and bounce views on the distant LOD; then the view at ground level
+# along the valley. No coc first: the save is in Riverwood, and a coc into a cell still in memory shows no loading
+# screen, so the console stays open and the next commands go to the world (rt7-far-4, rt7-far-5).
+start load rawharness
+console tai
+scene vista
+console set gamehour to 16
+wait 8
+console tcl
+console player.setpos z 12000
+console player.setangle x 15
+wait 15
+keyframe a steps=game,improved hold=60
+reload ini RtFar=0
+keyframe a_off steps=improved hold=60
+reload ini RtFar=1 View=2
+keyframe a_sun steps=improved hold=30
+reload ini View=4
+keyframe a_sky steps=improved hold=60
+reload ini View=5
+keyframe a_bounce steps=improved hold=30
+reload ini View=0
+console player.setangle z 180
+wait 8
+keyframe b steps=game,improved hold=60
+reload ini RtFar=0
+keyframe b_off steps=improved hold=60
+reload ini RtFar=1
+quit

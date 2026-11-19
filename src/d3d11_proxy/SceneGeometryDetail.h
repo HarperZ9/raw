@@ -35,6 +35,10 @@ void SceneGeometry_CensusWith(const geom::Layout* L, int call);   // the census 
 // true: a skinned layout. L is the bound layout's record (nullptr: none).
 bool SceneSkin_OnDraw(ID3D11DeviceContext* real, const geom::Layout* L, UINT indexCount, UINT startIndex, INT baseVertex);
 void SceneSkin_Log();
+// [RT] SkinPrepassCheck (SceneSkinPrepass.cpp): the actors' prepass draws kept, their colour draws compared with them.
+bool SceneSkin_PrepassCheckOn();
+void SceneSkin_KeepPrepass(ID3D11DeviceContext* real, const geom::Layout& L, int boneSlot, UINT indexCount, UINT startIndex, INT baseVertex);
+void SceneSkin_ComparePrepass(ID3D11DeviceContext* real, const geom::Layout& L, UINT indexCount, UINT startIndex, INT baseVertex, const uint8_t* bones);
 void SceneSkin_Took(std::vector<raw::bridge::RtDraw>& out);   // the carry from the frame before joins
 void SceneSkin_Drop(std::vector<raw::bridge::RtDraw>& frame); // skinned draws after the capture are kept
 bool SceneSkin_ReadView(ID3D11DeviceContext* real, float out[16]);   // vertex cb12 rows 8 to 11, the draw's view-projection

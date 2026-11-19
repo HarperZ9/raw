@@ -230,13 +230,18 @@ bool SceneSkin_OnDraw(ID3D11DeviceContext* real, const Layout* bound, UINT index
     // The actor sheet's cause (rt6-next-3): the floating draws bind no pixel shader and write no depth, a pass that
     // draws the actors' skinned meshes for something other than the picture (occlusion queries, by the look of it),
     // with the same view and palette. They make no surface, so they stay out of the scene.
-    if (g_skinOn && open && indexCount >= 3 && formatOk && !alpha && !geom::BoundPs(real)) { ++g_skinNoPs; return true; }
+    if (g_skinOn && open && indexCount >= 3 && formatOk && !alpha && !geom::BoundPs(real)) {
+        if (SceneSkin_PrepassCheckOn()) SceneSkin_KeepPrepass(real, L, g_boneSlot, indexCount, startIndex, baseVertex);
+        ++g_skinNoPs;
+        return true;
+    }
     if (g_skinOn && open && indexCount >= 3 && formatOk && !alpha) {
         // A skinned draw of the opaque set: its streams, index range and bone palette (RtSkin.h).
         ID3D11Buffer* bb[1] = {};
         real->VSGetConstantBuffers(UINT(g_boneSlot), 1, bb);
         const uint8_t* bones = bb[0] && CBDirtyTracker::Get().GetShadowSize(bb[0]) >= 3840 ? CBDirtyTracker::Get().GetShadowData(bb[0]) : nullptr;
         if (bones && actor) CheckPaletteAgainstGpu(real, bb[0], bones, indexCount);
+        if (bones && actor && SceneSkin_PrepassCheckOn()) SceneSkin_ComparePrepass(real, L, indexCount, startIndex, baseVertex, bones);
         if (bb[0]) bb[0]->Release();
         if (!bones) { ++g_skinNoBones; return true; }
         const bool half = L.pos.format == DXGI_FORMAT_R16G16B16A16_FLOAT;

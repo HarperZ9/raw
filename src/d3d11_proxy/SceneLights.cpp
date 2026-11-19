@@ -381,6 +381,11 @@ void SceneLights_OnPresent()
             (unsigned long long)frame, f.litDraws, f.lightCount, f.lightSightings, f.droppedLights, f.phantomLights, f.hasSun, f.sunDirection[0],
             f.sunDirection[1], f.sunDirection[2], f.sunColour[0], f.sunColour[1], f.sunColour[2], f.ambient[0][3], f.ambient[1][3],
             f.ambient[2][3], f.hasCascades ? f.cascades : 0, f.splitDepth, f.knee, f.specularScale);
+        // The eye in the game's camera-relative space (view-to-world translation, both storage orders): the ray-traced views
+        // assume it sits at the origin, float4 40 of the per-frame constants (docs/RAYTRACING.md, the actors' views).
+        Log("[SceneLights] frame %llu: eye from view-to-world: column %.2f %.2f %.2f, row %.2f %.2f %.2f; float4 40 %.1f %.1f %.1f",
+            (unsigned long long)frame, f.viewToWorld[0][3], f.viewToWorld[1][3], f.viewToWorld[2][3], f.viewToWorld[3][0], f.viewToWorld[3][1],
+            f.viewToWorld[3][2], f.posAdjust[0], f.posAdjust[1], f.posAdjust[2]);
     }
     if (frame % every == 1 && g_es.frames) {
         Log("[SceneLights] engine lights over %llu frames: %.1f point lights a frame, %.1f matched to a decoded light (mean %.1f units "

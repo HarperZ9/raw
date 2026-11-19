@@ -202,12 +202,13 @@ struct RtTuning
     float    skyLength = 6000.0f;    // game units: a sky ray that travels this far sees sky
     bool     reflect = true;         // one reflection ray on glossy pixels (needs the sky pass's colour input)
     bool     rest = true;            // RtRest: one shared shadow ray for the lights past the three traced ones
+    bool     farLod = true;            // RtFar: the distant LOD, which the scene does not hold, marched through the depth buffer
     bool     restReuse = true;       // RtRestReuse: that ray's light resampled against last frame's reservoirs (ReSTIR reuse)
     float    reflectLength = 8000.0f;
     bool     debug = false;          // RtDebug: the reflection output shows the primary ray's view of the scene
     bool     omm = true;             // opacity micromaps for alpha-tested meshes (Agility SDK, DXR 1.2)
     bool     skin = true;            // skinned actors: a BLAS each frame from their skinned positions (RtSkin)
-    bool     skinCull = true;        // RtSkinCull: skinned triangles stretched past skinRatio x their bind length made degenerate
+    int      skinCull = 1;           // RtSkinCull (0 none, 1 stretched and floating, 2 stretched only): skinned triangles stretched past skinRatio x their bind length made degenerate
     float    skinRatio = 4.0f;       // RtSkinRatio
     float    skinMin = 24.0f;        // RtSkinMin: game units; shorter edges are never counted as stretched
     bool     camSteps = false;       // RtCamSteps: the camera's place from the summed steps, not float4 40

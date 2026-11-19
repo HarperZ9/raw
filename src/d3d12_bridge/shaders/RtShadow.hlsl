@@ -134,6 +134,33 @@ float3 geometricNormal(float2 px, float3 p, float3 fallback) {
 
 #include "RtHit.hlsli"
 
+// Distant LOD (class 7): terrain, trees and buildings past the loaded cells, which the ray-tracing scene does not
+// hold. Their rays march through the depth buffer instead, in steps that grow by a third each, and only other
+// distant LOD counts as an occluder: everything nearer is in the scene, and in screen space it would only stand in
+// front. A hit is a pixel that sits nearer than the ray's point by more than 0.4 % and less than a quarter of its
+// distance plus 2,000 units (a ridge, not something far in front of it). So a ridge shadows the valley beyond the
+// cascades, a slope under a ridge sees less sky, and the light the ridge sends back is its colour in the game's frame.
+bool farOccluded(float3 o, float3 dir, float tMax, uint steps, out float3 colour) {
+    colour = 0.0f;
+    float t = 0.0f, step = 0.01f * max(length(o), 100.0f);
+    [loop] for (uint k = 0u; k < steps; k++) {
+        t += step;
+        step *= 1.33f;
+        if (t > tMax) { break; }
+        const float4 s = screenOf(o + dir * t);
+        if (s.w <= 1.0f || any(s.xy < 0.0f) || s.x >= dims.x || s.y >= dims.y) { break; }
+        const int3 sp = int3(s.xy, 0);
+        const float dq = Depth.Load(sp);
+        if (dq >= 1.0f || (uint(Spec.Load(sp).z * 255.0f + 0.5f) & 127u) != 7u) { continue; }
+        const float zs = viewZOf(dq);
+        if (zs < s.w * 0.996f && s.w - zs < 0.25f * s.w + 2000.0f) {
+            colour = min(GameColour.Load(sp).rgb, 16.0f.xxx);
+            return true;
+        }
+    }
+    return false;
+}
+
 // What a reflection ray that leaves the scene sees: the game's own sky where it is on screen (the
 // direction projected, clamped into the frame and walked up towards the top row to the first sky pixel),
 // else the directional ambient for that direction. Puddles read by the sky they mirror.
@@ -297,6 +324,19 @@ void main(uint3 id : SV_DispatchThreadID) {
     }
     // Reflection: glossy lit surfaces (the game's lobe, not foliage), one ray around the mirror
     // direction spread by the roughness.
+    if (d < 1.0f && base == 7u && (giFlags & GI_FAR) != 0u) {
+        const float2 px = float2(id.xy);
+        const float3 p = worldAt(px, d);
+        const float3 n = worldNormal(Normal.Load(ip));
+        const float3 o = p + n * (4.0f + 0.002f * viewZOf(d));
+        float3 c;
+        if (sunDir.w > 0.5f && sunColour.w > 0.5f) { vis.x = farOccluded(o, sunDir.xyz, 150000.0f, 26u, c) ? 0.0f : 1.0f; }
+        if (skyLength > 0.0f && skyTurn(id.xy)) {
+            const float2 rs = float2(hash(px, frameIndex * 0.754877f + 3.0f), hash(px.yx, frameIndex * 0.569840f + 11.0f));
+            const float3 sd = cosineDir(n, rs);
+            if (sd.z > 0.0f && farOccluded(o, sd, 60000.0f, 20u, c)) { sky = 0.0f; bounce = c; }
+        }
+    }
     float4 refl = 0.0f;
     bool reflTraced = false;
     // Wet pixels (Weather.hlsli) reflect too: rain makes the ground glossy and puddles mirrors.
@@ -313,7 +353,7 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float2 px = float2(id.xy);
             const float3 p = worldAt(px, d);
             const float3 n = normalize(lerp(worldNormal(Normal.Load(ip)), float3(0.0f, 0.0f, 1.0f), rain.puddle));
-            const float3 v = normalize(-p);
+            const float3 v = normalize(eyeAt() - p);
             const float shin = exp2(sp.y * 13.0f);
             const float alpha = lerp(lerp(clamp(sqrt(2.0f / (shin + 2.0f)), 0.03f, 1.0f), 0.12f, rain.wet), 0.03f, rain.puddle);
             const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
@@ -394,7 +434,8 @@ void main(uint3 id : SV_DispatchThreadID) {
         // black when the scene has nothing there. Leaves must show as leaves, not as cards.
         RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q;
         RayDesc r;
-        r.Origin = 0.0f; r.Direction = normalize(worldAt(float2(id.xy), d)); r.TMin = 1.0f; r.TMax = 100000.0f;
+        const float3 eye = eyeAt();
+        r.Origin = eye; r.Direction = normalize(worldAt(float2(id.xy), d) - eye); r.TMin = 1.0f; r.TMax = 100000.0f;
         q.TraceRayInline(Scene, 0, 0xFF, r);
         float3 dbg = 0.0f;
         [loop] while (q.Proceed()) {

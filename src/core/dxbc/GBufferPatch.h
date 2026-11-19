@@ -47,7 +47,7 @@ enum class ShaderKind : uint8_t
 namespace material
 {
 constexpr uint8_t None = 0, Lit = 1, EnvironmentMapped = 2, GlowMapped = 3, Landscape = 4, SoftLit = 5,
-                  Parallax = 6, DistantLod = 7, Effect = 8, Water = 9;
+                  Parallax = 6, DistantLod = 7, Effect = 8, Water = 9, Skin = 10;   // Skin: face and body (detail and tint maps at t3, t4)
 constexpr uint8_t FirstPersonFlag = 128;   // added for draws of the first-person model
 }
 

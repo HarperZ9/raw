@@ -257,7 +257,7 @@ void RtScene::SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resou
     if (m_blasUsed > kBlasHeap - (64ull << 20) || m_meshes.size() > 40000 || (gap && !m_meshes.empty()) || m_evictPending) Evict();
     m_evictPending = false;
     m_skin.SetCamera(m_tune.cameraPos);
-    m_skin.SetCheck(m_tune.skinCull, m_tune.skinRatio, m_tune.skinMin, 600, m_log);
+    m_skin.SetCheck(m_tune.skinCull, m_tune.skinRatio, m_tune.skinMin, 120, m_log);
     const double s0 = NowUs();
     if (m_skinReady && m_tune.skin) m_skin.SetDraws(m_draws, toHand, native);
     else { std::vector<RtDraw> none; m_skin.SetDraws(none, toHand, native); }

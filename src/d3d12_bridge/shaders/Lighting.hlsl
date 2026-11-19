@@ -63,7 +63,7 @@ float screenShadow(float3 p, float3 dir, float len, float cone, float jitter, ui
 float knee(float x) { return min(x, (1.0f - resScale.z) * x + 1.0f); }
 float3 knee3(float3 x) { return float3(knee(x.r), knee(x.g), knee(x.b)); }
 
-struct Surface { float3 n, v; float shin, mask, f0, alpha; float3 soft; };
+struct Surface { float3 n, v; float shin, mask, f0, alpha; float3 soft; float3 wrap; };
 
 float smooth01(float x) { return x * x * (3.0f - 2.0f * x); }
 
@@ -73,11 +73,14 @@ float smooth01(float x) { return x * x * (3.0f - 2.0f * x); }
 // fitted constant (s.soft) stands in (docs/LIGHTING.md).
 void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, inout float3 spec) {
     const float x = dot(s.n, l), nl = saturate(x);
+    // Skin: light that enters the skin comes out past the terminator, red farthest (a per-channel wrap,
+    // normalised so the lit side keeps its energy).
+    const float3 nlD = any(s.wrap > 0.0f) ? saturate((x + s.wrap) / (1.0f + s.wrap)) / (1.0f + s.wrap) * (1.0f + s.wrap * 0.5f) : nl.xxx;
     if (any(s.soft > 0.0f)) { diff += s.soft * saturate(smooth01(saturate((x + 1.0f) * 0.5f)) - smooth01(nl)) * cFull; }
     const float3 h = normalize(s.v + l);
     const float nh = saturate(dot(s.n, h));
     if ((flags.x & FLAG_GGX) == 0u) {
-        diff += nl * c;
+        diff += nlD * c;
         spec += pow(nh, s.shin) * c;   // the game's lobe: no cosine, no normalisation
         return;
     }
@@ -86,7 +89,7 @@ void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, in
     const float D = a2 / (PI * dd * dd);
     const float V = 0.5f / (nl * sqrt(nv * nv * (1.0f - a2) + a2) + nv * sqrt(nl * nl * (1.0f - a2) + a2) + 1.0e-6f);
     const float F = s.f0 + (1.0f - s.f0) * pow(1.0f - saturate(dot(s.v, h)), 5.0f);
-    diff += nl * c * (1.0f - F);
+    diff += nlD * c * (1.0f - F);
     spec += PI * D * V * F * nl * c;   // the game's light colour is irradiance over pi
 }
 
@@ -108,7 +111,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float4 sp = Spec.Load(ip);
     const uint cls = uint(sp.z * 255.0f + 0.5f), base = cls & 127u;
     // Effects, water, first person and distant LOD (lit per vertex by the game): the game's own.
-    if (base == 0u || base >= 7u || (cls & 128u) != 0u) { return game; }
+    if (flags.w == 12u) {   // view 12: the material class (skin red, foliage green, landscape brown, parallax blue, the rest grey)
+        const float3 cc = base == 10u ? float3(1, 0.1, 0.1) : base == 5u ? float3(0.1, 0.8, 0.1) : base == 4u ? float3(0.5, 0.35, 0.1) :
+                          base == 6u ? float3(0.1, 0.3, 1) : base == 0u ? 0.0f.xxx : 0.5f.xxx;
+        return float4(cc * (0.35f + 0.65f * dot(GameLit.Load(ip).rgb, 0.333f)), game.a);
+    }
+    const bool skin = base == 10u;
+    if (base == 0u || (base >= 7u && !skin) || (cls & 128u) != 0u) { return game; }
 
     const bool match = (flags.x & FLAG_MATCH) != 0u;
     const float2 px = floor(at.xy);
@@ -127,6 +136,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // patched shader writes to RAW's emissive target. Before that channel existed a grey constant
     // fitted on one frame (0.15, tools/lighting/fitsoft.py) stood in; it lost the warm back light.
     s.soft = base == 5u ? SoftMap.Load(ip).rgb : 0.0f.xxx;
+    s.wrap = skin && !match ? float3(0.55f, 0.22f, 0.12f) : 0.0f.xxx;
+    if (skin && !match) { s.f0 = 0.028f; s.alpha = max(s.alpha, 0.38f); }   // skin's own specular: f0 of 0.028, a soft sheen
     if (base == 5u && !any(s.soft > 0.0f)) { s.soft = 0.15f.xxx; }   // a soft-lit shader the patch found no map in
     // Rain (Weather.hlsli), exteriors in improved mode: darker, glossier, puddles flat and mirror-like.
     Wet wet;
@@ -190,7 +201,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // into window shafts and darken the room.
         if (rt && sunColour.w > 0.5f) { sunShadow = min(sunShadow, base == 5u ? lerp(1.0f, rv.x, 0.6f) : rv.x); }
         if (!match && sunColour.w > 0.5f && (flags.x & FLAG_CLOUDS) != 0u) { sunShadow *= cloudShadow(p + camPosW.xyz); }   // SKY-02
-        addLight(s, sunDir.xyz, sunColour.rgb * sunShadow, sunColour.rgb, diff, spec);
+        // Skin: the shadow's edge turns red where light scattered under the surface reaches past it.
+        const float3 sunSh = skin && !match ? pow(saturate(sunShadow).xxx, float3(0.55f, 0.9f, 1.1f)) : sunShadow.xxx;
+        addLight(s, sunDir.xyz, sunColour.rgb * sunSh, sunColour.rgb, diff, spec);
         if (wet.snow > 0.0f && sunShadow > 0.0f)
             spec += sunColour.rgb * (sunShadow * wet.snow * 3.0f * snowGlint(p + camPosW.xyz, s.n, s.v, sunDir.xyz, max(1.2f, z * 0.0025f)));
     }
@@ -242,6 +255,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (flags.w == 3u) { return float4(amb, game.a); }
     if (flags.w == 4u) { return float4(skyVis.xxx, game.a); }
     if (flags.w == 5u) { return float4(bounce, game.a); }
+    if (flags.w == 13u) { return float4(diff + amb, game.a); }   // the light the surface receives (compare RtDebug=6)
     if (flags.w == 7u) { return float4(RtRefl.Load(ip).rgb, game.a); }   // RtDebug=1: the primary-ray view
     if (flags.w == 8u) { return float4(wet.wet, wet.puddle, wet.snow, game.a); }   // weather: wet red, puddles green, snow blue
 

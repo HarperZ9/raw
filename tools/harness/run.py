@@ -40,7 +40,7 @@ import game as G
 from actions import Actions
 
 HERE = Path(__file__).resolve().parent
-ALL_STEPS = ("game,match,match_game_mask,control_half_viewport,improved_base,improved_soft,improved_ggx,improved_fog,"
+ALL_STEPS = ("game,match,match_cascades,control_half_viewport,improved_base,improved_soft,improved_ggx,improved_fog,"
              "improved_contact,improved_ao,improved,game_after")
 
 PROXY_INI = """[General]
@@ -246,7 +246,8 @@ class Runner(Actions):
         elif op == "minimise":
             self.minimise(float(plain[0]))
         elif op == "reload":
-            self.reload(plain, opts)
+            # shader edits hold '=' and spaces: the quoted words go through whole
+            self.reload(args if args and args[0] == "shader" else plain, opts)
         elif op == "quit":
             return False
         else:

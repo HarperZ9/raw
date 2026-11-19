@@ -184,6 +184,38 @@ Where ours looks worse than the game, from the pictures:
 - Improved: the frame is darker overall, because the game's own AO and fog still run after ours;
   the fog adds haze on the game's haze in the distance.
 
+## Improved mode, corrected (2026-11-18, later)
+
+Looked at full size against the game, the improved frame had four faults. Each was measured on a
+region of the same view (Riverwood 13:00, 2160p), then fixed, then checked again:
+
+| Fault | Cause | Fix | Region before | After |
+|---|---|---|---|---|
+| near ground washed warm and yellow (path luminance 0.519 to 0.630, saturation 0.089 to 0.144) | our fog's sun in-scatter, on every pixel, with the game's haze removed | the game's distance fog stays (`FogReplacesGame=0`), ours only adds light (no extra extinction), sun in-scatter gain 1.0 to 0.35 | path 0.630 | 0.486 (game 0.491) |
+| distance lost its haze (far luminance 0.426 to 0.390) | the game's fog was switched off for ours, which ends at 6,000 units | same fix | far 0.390 | 0.492 (game 0.500) |
+| foliage crushed black, hard streaks under bushes | contact and soft shadows treated twigs a few pixels thick as walls, on the twigs and on the ground under them; AO over-occluded thin geometry | screen-space shadows ignore foliage occluders (class 5 at the hit), skip foliage receivers; foliage gets a third of the AO | bush 0.232 | 0.204, streaks gone |
+| hard twig shadows on the ground | our 3 x 3 cascade lookup is sharper than the game's filtered mask | the game's own sun mask is the default (`Cascades=0`; match dE76 2.23 against 2.53) | | |
+
+**Interior sun shadow.** With the game's mask as the sun's shadow, interiors broke. They have no
+cascades, and channel 0 of their mask belongs to a shadowed point light. The directional light is
+now unshadowed indoors, as the game lights it. A/B in one session by hot reload, same inn view:
+match dE76 0.326 (fixed) against 1.053 (mask channel 0), and 0.326 with the cascade path.
+
+**Soft-lighting channel (G-buffer).** Foliage shaders (class 5) multiply their wrap term by a
+soft-lighting map in slot 12. The patch now taps that sample and writes it to RAW's emissive
+target, which is now RGBA16F; soft-lit shaders carry no glow. The lighting pass reads it in place
+of the fitted grey 0.15. A/B in one session by hot reload, same view: Riverwood match dE76 2.541
+(constant) against 2.426 (channel). The inn has no soft-lit pixels and does not move (7.593 against
+7.616). The warm back light on dry bushes is back.
+
+Pictures: `ingame-look-2026-11-18-riverwood-{game,improved}-2160.png`, and the improved frame
+before these fixes, `ingame-look-2026-11-18-riverwood-improved-before-fixes-2160.png`.
+
+Still open: one inn view (by the hearth) reads 5 to 7.7 dE76 matched in every build, while the door
+view reads 0.2 to 0.3. The cause there predates these changes and is not found yet. Improved
+indoors is darker than the game: soft shadows block light the game's per-object light lists never
+apply.
+
 ## Cost
 
 GPU timestamps on the D3D12 queue, mean over the frames of each step, RTX 4090, the game at

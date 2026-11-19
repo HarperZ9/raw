@@ -25,7 +25,8 @@ bool D3D12Bridge::Impl::CreateLightingShared()
     if (!CreateShared(shared[static_cast<UINT>(Shared::Albedo)], DXGI_FORMAT_R8G8B8A8_UNORM, kColour, "albedo-in")
         || !CreateShared(shared[static_cast<UINT>(Shared::Specular)], DXGI_FORMAT_R8G8B8A8_UNORM, kColour, "specular-in")
         || !CreateShared(shared[static_cast<UINT>(Shared::ShadowMask)], DXGI_FORMAT_R8G8B8A8_UNORM, kColour, "shadow-mask-in")
-        || !CreateShared(atlas, DXGI_FORMAT_R32_FLOAT, kStorage, "shadow-atlas", side * 2, side))
+        || !CreateShared(atlas, DXGI_FORMAT_R32_FLOAT, kStorage, "shadow-atlas", side * 2, side)
+        || !CreateShared(shared[static_cast<UINT>(Shared::Emissive)], DXGI_FORMAT_R16G16B16A16_FLOAT, kColour, "emissive-in"))
         return false;
     HRESULT hr = dev11->CreateComputeShader(g_ShadowAtlasCS, sizeof(g_ShadowAtlasCS), nullptr, &shadowCS);
     if (FAILED(hr)) { log("[D3D12Bridge] shadow atlas shader 0x%08X", (unsigned)hr); return false; }
@@ -39,7 +40,7 @@ bool D3D12Bridge::Impl::CreateLightingShared()
     return true;
 }
 
-bool D3D12Bridge::CaptureSurface(ID3D11Texture2D* albedo, ID3D11Texture2D* specular, ID3D11Texture2D* shadowMask)
+bool D3D12Bridge::CaptureSurface(ID3D11Texture2D* albedo, ID3D11Texture2D* specular, ID3D11Texture2D* shadowMask, ID3D11Texture2D* emissive)
 {
     if (!m->ready || !m->cfg.lightingPass || !albedo || !specular || !shadowMask) return false;   // a missing mask: pass any RGBA8 target
     const UINT w = m->cfg.width, h = m->cfg.height;
@@ -52,6 +53,8 @@ bool D3D12Bridge::CaptureSurface(ID3D11Texture2D* albedo, ID3D11Texture2D* specu
     c->CopyResource(m->shared[static_cast<UINT>(Shared::Albedo)].tex11.Get(), albedo);
     c->CopyResource(m->shared[static_cast<UINT>(Shared::Specular)].tex11.Get(), specular);
     c->CopyResource(m->shared[static_cast<UINT>(Shared::ShadowMask)].tex11.Get(), shadowMask);
+    if (emissive && SameSize(emissive, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT))
+        c->CopyResource(m->shared[static_cast<UINT>(Shared::Emissive)].tex11.Get(), emissive);
     D11Slot& s = m->SlotFor(m->frames);
     m->OpenD11Slot(s, m->frames);
     s.hasSurface = true;

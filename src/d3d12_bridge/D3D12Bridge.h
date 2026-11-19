@@ -125,7 +125,7 @@ struct BridgeTimings
 // The textures both devices share. Each is render-target capable with
 // simultaneous access and sits in D3D12_RESOURCE_STATE_COMMON whenever no
 // D3D12 submission is running.
-enum class Shared : UINT { ColorIn, Depth, Normal, ColorOut, Motion, Albedo, Specular, ShadowMask, ShadowAtlas, Count };
+enum class Shared : UINT { ColorIn, Depth, Normal, ColorOut, Motion, Albedo, Specular, ShadowMask, ShadowAtlas, Emissive, Count };
 constexpr UINT kSharedCount = static_cast<UINT>(Shared::Count);
 
 // What the bridge hands a pass: its device, its queue, its fence and the
@@ -256,7 +256,8 @@ public:
 
     // Lighting pass only (BridgeLighting.cpp). RAW's albedo and specular targets and the game's
     // shadow mask, all full size RGBA8, into their shared textures.
-    bool CaptureSurface(ID3D11Texture2D* albedo, ID3D11Texture2D* specular, ID3D11Texture2D* shadowMask);
+    // emissive: RAW's emissive target (soft-lit draws: the soft-lighting colour); may be null.
+    bool CaptureSurface(ID3D11Texture2D* albedo, ID3D11Texture2D* specular, ID3D11Texture2D* shadowMask, ID3D11Texture2D* emissive = nullptr);
     // The game's sun cascades (a 2D array of 16-bit depth, one layer a cascade) into the shared
     // R32F atlas, cascade k at x offset k * shadowMapSize. A small compute copy on the D3D11 queue.
     bool CaptureShadows(ID3D11Texture2D* cascades);

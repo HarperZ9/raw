@@ -70,7 +70,9 @@ void MaterialOutputs(const Analysis& a, const Regs& r, const PatchOptions& opt, 
     }
     e->push_back(Make(op::Mov, {Out(kSpecularTarget, Z), All(cls)}));
     e->push_back(Make(op::Mov, {Out(kSpecularTarget, W), alpha}));
-    if (a.info.emissive && a.info.albedo) {
+    if (a.info.softLight) {
+        e->push_back(Make(op::Mov, {Out(kEmissiveTarget, XYZ), Rd(r.water)}));   // the soft-lighting colour (taps)
+    } else if (a.info.emissive && a.info.albedo) {
         e->push_back(Make(op::Mul, {Tmp(r.scratch, XYZ), a.emitA, a.emitB}));
         e->push_back(Make(op::Mul, {Tmp(r.scratch, XYZ), Rd(r.scratch), Rd(r.albedo)}));
         e->push_back(Make(op::Mov, {Out(kEmissiveTarget, XYZ), Rd(r.scratch)}));
@@ -135,6 +137,8 @@ std::multimap<size_t, Instruction> Taps(const Analysis& a, const Regs& r)
         t.emplace(a.specAfter + 1, Make(op::Mov, {Tmp(r.albedo, W), Rd(a.specReg, Swz(a.specComp, a.specComp, a.specComp, a.specComp))}));
     if (a.info.gloss)
         t.emplace(a.glossBefore, Make(op::Mov, {Tmp(r.spec, a.glossMask), a.glossOperand}));
+    if (a.info.softLight)   // a lit shader has no water normal, so its register holds the soft-lighting colour
+        t.emplace(a.softAfter + 1, Make(op::Mov, {Tmp(r.water, XYZ), Rd(a.softReg, a.softSwz)}));
     if (a.waterBefore != kNone)
         t.emplace(a.waterBefore, Make(op::Mov, {Tmp(r.water, XYZ), a.waterOperand}));
     return t;

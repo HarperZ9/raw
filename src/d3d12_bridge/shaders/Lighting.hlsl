@@ -19,6 +19,7 @@ Texture2D<float4> Spec    : register(t3);
 Texture2D<float4> Mask    : register(t4);
 Texture2D<float4> AoHist  : register(t6);
 Texture2D<float4> GameLit : register(t7);
+Texture2D<float4> SoftMap : register(t8);   // RAW's emissive target: for soft-lit draws the game's soft-lighting colour
 
 uint clusterOf(float2 px, float z) {
     const uint tx = min(uint(px.x * dims.z * TILES_X), TILES_X - 1u);
@@ -39,7 +40,13 @@ float screenShadow(float3 p, float3 dir, float len, float cone, float jitter, ui
         const float zs = viewZOf(Depth.Load(int3(s.xy, 0)));
         const float dz = s.w - zs;   // > 0: the ray point lies behind the surface seen there
         const float bias = 0.004f * s.w + 0.5f;
-        if (dz > bias && dz < max(12.0f, 0.04f * s.w)) { return 0.0f; }
+        if (dz > bias && dz < max(12.0f, 0.04f * s.w)) {
+            // Foliage does not occlude here: twigs and leaves are a few pixels thick in the depth
+            // buffer, read as solid walls and drew hard streaks on the ground and rocks under them.
+            // The game's own shadow mask already carries their shadow.
+            const uint hitClass = uint(Spec.Load(int3(s.xy, 0)).z * 255.0f + 0.5f) & 127u;
+            if (hitClass != 5u) { return 0.0f; }
+        }
         if (dz < 0.0f) { vis = min(vis, saturate(-dz / max(t * cone, 1.0e-3f))); }
     }
     return vis;
@@ -48,7 +55,7 @@ float screenShadow(float3 p, float3 dir, float len, float cone, float jitter, ui
 float knee(float x) { return min(x, (1.0f - resScale.z) * x + 1.0f); }
 float3 knee3(float3 x) { return float3(knee(x.r), knee(x.g), knee(x.b)); }
 
-struct Surface { float3 n, v; float shin, mask, f0, alpha, soft; };
+struct Surface { float3 n, v; float shin, mask, f0, alpha; float3 soft; };
 
 float smooth01(float x) { return x * x * (3.0f - 2.0f * x); }
 
@@ -58,7 +65,7 @@ float smooth01(float x) { return x * x * (3.0f - 2.0f * x); }
 // fitted constant (s.soft) stands in (docs/LIGHTING.md).
 void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, inout float3 spec) {
     const float x = dot(s.n, l), nl = saturate(x);
-    if (s.soft > 0.0f) { diff += s.soft * saturate(smooth01(saturate((x + 1.0f) * 0.5f)) - smooth01(nl)) * cFull; }
+    if (any(s.soft > 0.0f)) { diff += s.soft * saturate(smooth01(saturate((x + 1.0f) * 0.5f)) - smooth01(nl)) * cFull; }
     const float3 h = normalize(s.v + l);
     const float nh = saturate(dot(s.n, h));
     if ((flags.x & FLAG_GGX) == 0u) {
@@ -100,15 +107,23 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const bool lobe = sp.y > 0.002f && base != 4u && base != 6u;   // the game's own shader had a lobe here
     s.f0 = lobe ? lerp(0.02f, 0.08f, saturate(sp.x * resScale.w)) : 0.04f;
     s.alpha = clamp(sqrt(2.0f / (s.shin + 2.0f)), 0.03f, 1.0f);   // Blinn-Phong exponent to GGX width
-    s.soft = base == 5u ? 0.15f : 0.0f;        // soft-lit: fitted on Riverwood (tools/lighting/fitsoft.py)
+    // Soft-lit (foliage): the game multiplies its wrap term by the soft-lighting map, which the
+    // patched shader writes to RAW's emissive target. Before that channel existed a grey constant
+    // fitted on one frame (0.15, tools/lighting/fitsoft.py) stood in; it lost the warm back light.
+    s.soft = base == 5u ? SoftMap.Load(ip).rgb : 0.0f.xxx;
+    if (base == 5u && !any(s.soft > 0.0f)) { s.soft = 0.15f.xxx; }   // a soft-lit shader the patch found no map in
     const float3 lift = s.n * (0.3f + 0.002f * z);                 // ray origins off the surface
     const float4 m4 = Mask.Load(ip);
 
     float3 diff = 0.0f, spec = 0.0f;
     float sunShadow = 1.0f;
     if (sunDir.w > 0.5f) {
-        sunShadow = (flags.x & FLAG_CASCADES) != 0u ? cascadeShadow(p, d, true) : m4.x;
-        if (!match && (flags.x & FLAG_CONTACT) != 0u && sunShadow > 0.0f && dot(s.n, sunDir.xyz) > 0.0f)
+        // Interiors have no cascades; channel 0 of their mask belongs to a shadowed point light, so the
+        // directional light there is unshadowed, as the game lights it.
+        sunShadow = (flags.x & FLAG_SHADOWS) == 0u ? 1.0f : (flags.x & FLAG_CASCADES) != 0u ? cascadeShadow(p, d, true) : m4.x;
+        // Not on soft-lit foliage: thin leaves and twigs read as self-occluding in the depth buffer
+        // and went black (riverwood_day bush 0.267 -> 0.232 in luminance).
+        if (!match && (flags.x & FLAG_CONTACT) != 0u && base != 5u && sunShadow > 0.0f && dot(s.n, sunDir.xyz) > 0.0f)
             sunShadow *= screenShadow(p + lift, sunDir.xyz, tune.w, 0.02f, jit, 12u);
         addLight(s, sunDir.xyz, sunColour.rgb * sunShadow, sunColour.rgb, diff, spec);
     }
@@ -130,7 +145,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const int ch = int(lightColS[li].w);
             if (ch >= 0 && ch <= 3) { sh = m4[ch]; }   // interiors without sun shadows use channel 0 too
             float3 c = lightColS[li].rgb * att;
-            if (!match && (flags.x & FLAG_SOFT) != 0u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
+            if (!match && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
                 sh *= screenShadow(p + lift, l, min(dist, tune.z), 4.0f / max(dist, 1.0f), jit, 10u);
                 --softLeft;
             }
@@ -140,7 +155,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
 
     float3 amb = float3(dot(ambient[0].xyz, s.n) + ambient[0].w, dot(ambient[1].xyz, s.n) + ambient[1].w,
                         dot(ambient[2].xyz, s.n) + ambient[2].w);
-    if ((flags.x & FLAG_AO) != 0u) { amb *= lerp(1.0f, AoHist.Load(ip).x, tune2.x); }
+    // Foliage gets a third of the AO: screen-space AO over-occludes thin geometry.
+    if ((flags.x & FLAG_AO) != 0u) { amb *= lerp(1.0f, AoHist.Load(ip).x, tune2.x * (base == 5u ? 0.35f : 1.0f)); }
 
     if (flags.w == 1u) { return float4(s.n * 0.5f + 0.5f, game.a); }
     if (flags.w == 2u) { return float4(sunShadow.xxx, game.a); }

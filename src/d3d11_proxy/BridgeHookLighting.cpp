@@ -45,7 +45,7 @@ void LightingApplyTuning()
 {
     const LightingTuning& t = Cfg().light;
     if (Bridge()) raw::bridge::LightingPassTune(Bridge()->ActivePass(), t);
-    GameComposite_Set({t.mode == 2 && t.ao, t.mode == 2 && t.volumetricFog});
+    GameComposite_Set({t.mode == 2 && t.ao, t.mode == 2 && t.volumetricFog && t.fogReplacesGame});
 }
 
 void LoadLightingConfig(const std::string& ini)
@@ -60,7 +60,9 @@ void LoadLightingConfig(const std::string& ini)
     t.mode = i("Mode", 1);
     t.softShadows = i("SoftShadows", 1) != 0; t.ggxSpecular = i("GgxSpecular", 1) != 0;
     t.volumetricFog = i("VolumetricFog", 1) != 0; t.contactShadows = i("ContactShadows", 1) != 0;
-    t.ao = i("Ao", 1) != 0; t.cascades = i("Cascades", 1) != 0; t.view = i("View", 0);
+    t.ao = i("Ao", 1) != 0; t.fogReplacesGame = i("FogReplacesGame", 0) != 0; t.cascades = i("Cascades", 0) != 0; t.view = i("View", 0);
+    // Cascades=0: the sun's shadow is the game's own filtered mask (match dE76 2.23 against 2.53 with
+    // our cascade lookup, which also drew hard twig streaks on the ground).
     t.fogDensity = f("FogDensity", t.fogDensity); t.fogAnisotropy = f("FogAnisotropy", t.fogAnisotropy);
     t.fogLightScale = f("FogLightScale", t.fogLightScale); t.fogSunScale = f("FogSunScale", t.fogSunScale);
     t.fogMaxDistance = f("FogMaxDistance", t.fogMaxDistance); t.softRange = f("SoftRange", t.softRange);
@@ -132,7 +134,7 @@ bool LightingAtOpaque(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr)
     SceneLights_SetCamera(real);
     const GBufferTextures g = GBuffer_Textures();
     ID3D11Texture2D* mask = SceneLights_ShadowMask();
-    b->CaptureSurface(g.albedo, g.specular, mask ? mask : g.albedo);
+    b->CaptureSurface(g.albedo, g.specular, mask ? mask : g.albedo, g.emissive);
     if (ID3D11Texture2D* cascades = SceneLights_Cascades()) b->CaptureShadows(cascades);
     raw::bridge::SceneLighting l = SceneLights_Frame();
     if (!mask)

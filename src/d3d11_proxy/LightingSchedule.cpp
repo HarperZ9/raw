@@ -124,7 +124,7 @@ void LightingMakeSteps()
     s_all = {
         {"game", with(0, [](LightingTuning&) {})},
         {"match", with(1, [](LightingTuning&) {})},
-        {"match_game_mask", with(1, [](LightingTuning& t) { t.cascades = false; })},   // control: the game's own sun mask
+        {"match_cascades", with(1, [](LightingTuning& t) { t.cascades = true; })},   // control: our cascade lookup instead of the game's mask
         {"control_half_viewport", with(1, [](LightingTuning& t) { t.view = 9; })},     // control: the coverage check must fail
         {"improved_base", with(2, none)},
         {"improved_soft", with(2, [&](LightingTuning& t) { none(t); t.softShadows = true; })},

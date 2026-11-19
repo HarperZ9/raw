@@ -26,12 +26,14 @@ struct LightingTuning
     bool  volumetricFog = true;     // improved: fog lit by the sun (shadowed) and every point light
     bool  contactShadows = true;    // improved: a short march along the sun direction
     bool  ao = true;                // improved: the engine's real-time AO on the ambient term
-    bool  cascades = true;          // the sun's shadow from the decoded cascades; off: the game's mask
+    bool  cascades = false;         // the sun's shadow from the decoded cascades; off: the game's mask
     int   view = 0;                 // 1 world normal, 2 sun shadow, 3 ambient
     float fogDensity = 0.00006f;    // extinction per game unit
     float fogAnisotropy = 0.35f;    // Henyey-Greenstein g
     float fogLightScale = 1.0f;     // point-light in-scatter gain
-    float fogSunScale = 1.0f;       // sun in-scatter gain
+    float fogSunScale = 0.35f;      // sun in-scatter gain (1.0 washed near ground warm on top of the game's haze)
+    bool  fogReplacesGame = false;  // our fog replaces the game's distance fog; off: the game's art-directed
+                                    // haze stays and ours adds lit shafts and lamp glow only
     float fogMaxDistance = 6000.0f; // game units
     float softRange = 400.0f;       // soft-shadow march length cap, game units
     float contactLength = 40.0f;    // game units

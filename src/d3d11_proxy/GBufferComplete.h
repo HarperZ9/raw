@@ -44,7 +44,7 @@ struct GBufferTextures
 {
     ID3D11Texture2D* albedo = nullptr;     // R8G8B8A8_UNORM
     ID3D11Texture2D* specular = nullptr;   // R8G8B8A8_UNORM
-    ID3D11Texture2D* emissive = nullptr;   // R11G11B10_FLOAT
+    ID3D11Texture2D* emissive = nullptr;   // R16G16B16A16_FLOAT: emission, or for soft-lit draws the soft-lighting colour
     ID3D11Texture2D* layer = nullptr;      // R32G32B32A32_FLOAT
 };
 GBufferTextures GBuffer_Textures();

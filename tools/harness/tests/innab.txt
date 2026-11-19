@@ -1,0 +1,16 @@
+# Interior sun shadow, A/B in one session by hot reload: the Bannered Mare, ours matched, with the
+# directional light unshadowed indoors (new) and shadowed by mask channel 0 (old), then the old
+# cascade path (Cascades=1 by the ini).
+start load rawharness
+console tai
+scene bannered_mare
+console coc whiterunbanneredmare
+wait 8
+keyframe new steps=game,match hold=40
+reload shader Lighting.hlsl "(flags.x & FLAG_SHADOWS) == 0u ? 1.0f : (flags.x" "(flags.x"
+wait 1
+keyframe old steps=game,match hold=40
+reload ini Cascades=1
+wait 1
+keyframe cascades steps=game,match hold=40
+quit

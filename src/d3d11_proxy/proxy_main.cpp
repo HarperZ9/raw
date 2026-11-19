@@ -95,6 +95,7 @@ struct ProxyConfig
     bool bindingLedger  = false;    // [Diagnostics] BindingLedger: a binding snapshot on every draw
     bool cbScan         = false;    // [Diagnostics] CBScan: NaN/Inf scan of every committed constant buffer
     bool pipelineAsserts = false;   // [Diagnostics] PipelineAsserts: live/pipeline_state.jsonl
+    bool cbDirtyTracker = false;    // [Proxy] CBDirtyTracker: skip constant-buffer uploads whose bytes did not change (costs more than it saves: off)
     bool resourceLog    = false;    // 3.6: log resource creates -> live/resources.jsonl (default OFF)
 };
 
@@ -120,6 +121,7 @@ static void LoadConfig()
     // Per-call diagnostics, off unless asked for: together they were 39 % of the render thread in Riverwood
     // (the binding ledger's snapshot on every draw and the NaN scan of every committed constant buffer).
     s_config.bindingLedger = GetPrivateProfileIntA("Diagnostics", "BindingLedger", 0, iniPath.c_str()) != 0;
+    s_config.cbDirtyTracker = GetPrivateProfileIntA("Proxy", "CBDirtyTracker", 0, iniPath.c_str()) != 0;
     s_config.cbScan = GetPrivateProfileIntA("Diagnostics", "CBScan", 0, iniPath.c_str()) != 0;
     s_config.pipelineAsserts = GetPrivateProfileIntA("Diagnostics", "PipelineAsserts", 0, iniPath.c_str()) != 0;
     SB::Proxy::Log("Diagnostics: BindingLedger=%d CBScan=%d PipelineAsserts=%d", s_config.bindingLedger, s_config.cbScan,
@@ -277,6 +279,7 @@ bool PG_IsSafeMode() { return s_config.safeMode; }
 bool PG_IsResourceLog() { return s_config.resourceLog; }
 bool PG_DiagBindingLedger() { return s_config.bindingLedger; }
 bool PG_DiagCBScan() { return s_config.cbScan; }
+bool PG_CBDirtyTracker() { return s_config.cbDirtyTracker; }
 bool PG_DiagPipelineAsserts() { return s_config.pipelineAsserts; }
 
 // Forward declaration — defined below DllMain

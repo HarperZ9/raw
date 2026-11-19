@@ -10,6 +10,7 @@
 #include <windows.h>
 #include <intrin.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -28,7 +29,14 @@ struct Slot {
     Fn orig = nullptr;
     std::string label;
     std::atomic<uint64_t> ticks{0}, calls{0};
+    // Calls in frame order on the render thread: the k-th outermost call of each frame, summed over frames.
+    // The game issues its passes in the same order every frame, so index k is one pass.
+    static constexpr int kOrder = 32;
+    uint64_t orderTicks[kOrder] = {};
+    uint32_t orderFrames[kOrder] = {};
+    int callIndex = 0;
 };
+DWORD g_renderTid = 0;
 Slot g_slots[kSlots];
 int g_used = 0;
 thread_local int t_depth[kSlots];
@@ -46,7 +54,13 @@ uint64_t Hook(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64
     }
     const uint64_t t0 = __rdtsc();
     const uint64_t r = s.orig(a, b, c, d, e, f);
-    s.ticks += __rdtsc() - t0;
+    const uint64_t dt = __rdtsc() - t0;
+    s.ticks += dt;
+    if (GetCurrentThreadId() == g_renderTid && s.callIndex < Slot::kOrder) {
+        s.orderTicks[s.callIndex] += dt;
+        ++s.orderFrames[s.callIndex];
+        ++s.callIndex;
+    }
     --t_depth[N];
     return r;
 }
@@ -134,10 +148,18 @@ std::string VTimeLea(const Image& img, uint32_t site, const std::string& label) 
     return b;
 }
 
-void VTimeOnPresent() { ++g_frames; }
+void VTimeOnPresent() {
+    ++g_frames;
+    g_renderTid = GetCurrentThreadId();
+    for (int i = 0; i < g_used; ++i) g_slots[i].callIndex = 0;
+}
 
 void VTimeReset() {
-    for (int i = 0; i < g_used; ++i) { g_slots[i].ticks = 0; g_slots[i].calls = 0; }
+    for (int i = 0; i < g_used; ++i) {
+        g_slots[i].ticks = 0; g_slots[i].calls = 0;
+        std::fill(std::begin(g_slots[i].orderTicks), std::end(g_slots[i].orderTicks), 0ull);
+        std::fill(std::begin(g_slots[i].orderFrames), std::end(g_slots[i].orderFrames), 0u);
+    }
     g_frames = 0;
 }
 
@@ -153,8 +175,27 @@ std::string VTimeStats() {
         std::snprintf(b, sizeof b, "%s\"%s\":%.1f", i ? "," : "", g_slots[i].label.c_str(), double(g_slots[i].calls.exchange(0)) / fr);
         calls += b;
     }
+    // per-call order for slots with few calls a frame (passes): mean ms of the k-th call
+    std::string order = ",\"cpu_order_ms\":{";
+    bool firstSlot = true;
+    for (int i = 0; i < g_used; ++i) {
+        Slot& s = g_slots[i];
+        if (s.orderFrames[0] == 0 || s.orderFrames[Slot::kOrder - 1] > 0) continue;  // none, or too many calls to order
+        order += std::string(firstSlot ? "" : ",") + "\"" + s.label + "\":[";
+        firstSlot = false;
+        for (int k = 0; k < Slot::kOrder && s.orderFrames[k]; ++k) {
+            std::snprintf(b, sizeof b, "%s%.4f", k ? "," : "", double(s.orderTicks[k]) / double(g_tscPerMs) / double(s.orderFrames[k]));
+            order += b;
+            s.orderTicks[k] = 0; s.orderFrames[k] = 0;
+        }
+        order += "]";
+    }
+    for (int i = 0; i < g_used; ++i) {
+        std::fill(std::begin(g_slots[i].orderTicks), std::end(g_slots[i].orderTicks), 0ull);
+        std::fill(std::begin(g_slots[i].orderFrames), std::end(g_slots[i].orderFrames), 0u);
+    }
     g_frames = 0;
-    return ms + "}" + calls + "}";
+    return ms + "}" + calls + "}" + order + "}";
 }
 
 }  // namespace raw::rt

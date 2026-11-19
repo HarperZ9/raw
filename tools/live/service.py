@@ -67,8 +67,27 @@ class Service:
         self.s.start()
         self.s.log(f"{why}: up in {time.time() - t:.0f} s")
 
-    def restart(self, why: str) -> None:
+    def carry_ini(self) -> None:
+        """ini_set and reload_ini edits outlive a restart: the deployed ini, less the sections start() adds again,
+        becomes the next start's ini (2026-11-19: GpuTiming=0 was set, and the restart deployed GpuTiming=1)."""
+        p = self.s.inst.game / "d3d11_proxy.ini"
+        if not p.exists():
+            return
+        keep, skip = [], False
+        for line in p.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("["):
+                skip = line.strip().lower() in ("[hotreload]", "[modules]")
+            if not skip:
+                keep.append(line)
+        n = len(self.restarts)
+        dst = self.dir / f"carried-{n}.ini"
+        dst.write_text("\n".join(keep) + "\n", encoding="utf-8")
+        self.s.a.ini = str(dst)
+
+    def restart(self, why: str, carry: bool = True) -> None:
         self.restarts.append({"time": time.strftime("%H:%M:%S"), "why": why})
+        if carry:
+            self.carry_ini()
         self.s.teardown(why)
         if len(self.restarts) > MAX_RESTARTS:
             raise RuntimeError(f"{len(self.restarts)} restarts; the service stops rather than loop")
@@ -104,8 +123,12 @@ class Service:
                     self.s.a.resolution = args["resolution"]
                 if args.get("dll"):
                     self.s.a.dll = args["dll"]
-                self.restart(args.get("why", f"asked by {req.get('requester')}"))
-                data = {"up": self.s.up, "resolution": self.s.a.resolution}
+                if args.get("shaders"):   # the shader copy must match the proxy build's pipelines
+                    self.s.a.shaders = args["shaders"]
+                if args.get("ini"):   # a new ini replaces the carried edits
+                    self.s.a.ini = args["ini"]
+                self.restart(args.get("why", f"asked by {req.get('requester')}"), carry=not args.get("ini"))
+                data = {"up": self.s.up, "resolution": self.s.a.resolution, "dll": self.s.a.dll, "shaders": self.s.a.shaders, "ini": self.s.a.ini}
             elif kind in kinds.HANDLERS:
                 if not self.s.up:
                     raise RuntimeError("the game is not up")

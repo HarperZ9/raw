@@ -60,15 +60,51 @@ def plan(module: str) -> list[tuple[str, dict, bool]]:
     ]
 
 
+def plan_shared(module: str, shaders: Path) -> list[tuple[str, dict, bool]]:
+    """For a session other workers are using: shader edits that change no pixel (a comment, or the file written back
+    as it is, so the compile and the pipeline swap are real), a broken edit and its fix, three module reloads, and no
+    cell moves."""
+    rt = shaders / "RtShadow.hlsl"
+    return [
+        ("status", {}, True),
+        ("reload_shader", {"file": "Lighting.hlsl", "old": "return float4(", "new": "return float4(" + "/* live */ "}, True),
+        ("capture", {"kind": "frame", "name": "after_lighting_reload"}, True),
+        ("reload_shader", {"file": "Lighting.hlsl", "old": "/* live */ ", "new": "/* live */ undefinedName + "}, False),
+        ("reload_shader", {"file": "Lighting.hlsl", "old": "/* live */ undefinedName + ", "new": ""}, True),
+        ("reload_shader", {"file": "RtShadow.hlsl", "source": str(rt)}, True),
+        ("measure", {"frames": 300, "name": "shared_start"}, True),
+        ("reload_module", {"source": module}, True),
+        ("measure", {"frames": 300, "name": "after_module_reload_1"}, True),
+        ("engine", {"commands": "view; weather"}, True),
+        ("set_time", {"hour": 7}, True),
+        ("capture", {"kind": "frame", "name": "hour7"}, True),
+        ("set_weather", {"id": "81a"}, True),
+        ("ini_set", {"section": "EngineRT", "key": "Weather", "value": "1"}, True),
+        ("reload_module", {"source": module}, True),
+        ("measure", {"frames": 300, "name": "after_module_reload_2"}, True),
+        ("capture", {"kind": "keyframe", "name": "shared", "steps": "game,improved", "hold": 30}, True),
+        ("capture", {"kind": "gbuffer", "history": 0}, True),
+        ("reload_ini", {"keys": {"View": 0}}, True),
+        ("set_time", {"hour": 13}, True),
+        ("capture", {"kind": "frame", "name": "hour13"}, True),
+        ("reload_module", {"source": module}, True),
+        ("measure", {"frames": 300, "name": "after_module_reload_3"}, True),
+        ("status", {}, True),
+    ]
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--root", default="E:/raw-live")
     p.add_argument("--module", default="E:/wt/raw-live-build/raw_engine.dll")
     p.add_argument("--out", default="")
+    p.add_argument("--plan", default="full", choices=["full", "shared"])
+    p.add_argument("--game", default="H:/SteamLibrary/steamapps/common/Skyrim Special Edition")
     a = p.parse_args()
     q = LiveQueue(Path(a.root))
     rows, results = [], []
-    for kind, args, want in plan(a.module):
+    steps = plan(a.module) if a.plan == "full" else plan_shared(a.module, Path(a.game) / "raw_shaders")
+    for kind, args, want in steps:
         t0 = time.time()
         rid = q.submit(kind, "prove", args)
         r = q.wait(rid, 900) or {"id": rid, "ok": None, "error": "no answer in 900 s"}

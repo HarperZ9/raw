@@ -26,7 +26,7 @@ import game as G          # noqa: E402  the harness's install, input and heartbe
 from run import Runner, PROXY_INI   # noqa: E402
 
 START_MB, ABORT_MB = 6144, 3072
-LIVE_INI_EXTRA = "[EngineRT]\nGpuTiming=1\nCallGraph=0\n"
+LIVE_INI_EXTRA = "[EngineRT]\nGpuTiming=0\nCallGraph=0\n"
 
 
 def avail_mb() -> int:
@@ -107,6 +107,7 @@ class LiveSession(Runner):
         G.console(f"load {self.cfg.save}")
         self.wait_load()
         self.started_at = time.time()
+        self.last_move = ""   # the save's own cell is not known by name
         self.up = True
         self.log(f"session up: save {self.cfg.save} loaded")
 

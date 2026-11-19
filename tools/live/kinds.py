@@ -132,6 +132,7 @@ def console(s: LiveSession, a: dict, out: Path) -> dict:
     line = a["command"].strip()
     if line.split()[0].lower() in ("coc", "cow", "load"):
         s.change_cell(line)
+        s.last_move = line.lower()
     else:
         G.console(line)
         s.log(f"console: {line}")
@@ -169,7 +170,12 @@ def set_weather(s: LiveSession, a: dict, out: Path) -> dict:
 def move(s: LiveSession, a: dict, out: Path) -> dict:
     """{cell: editor id} (coc) or {worldspace, x, y} (cow, cell grid coordinates)."""
     line = f"coc {a['cell']}" if "cell" in a else f"cow {a['worldspace']} {int(a['x'])} {int(a['y'])}"
+    # A coc to the cell the player stands in shows no loading screen and no lighting change, so change_cell
+    # types it again and the keys land in the world (ray tracing worker, 2026-11-19). The same target is a no-op.
+    if line.lower() == getattr(s, "last_move", "") and not a.get("again"):
+        return {"typed": None, "already_there": line, "view": _view(s)}
     s.change_cell(line)
+    s.last_move = line.lower()
     return {"typed": line, "view": _view(s)}
 
 

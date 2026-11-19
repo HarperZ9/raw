@@ -58,6 +58,16 @@ struct PassConstants
 };
 static_assert(sizeof(PassConstants) == 64, "PassConstants must be 16 floats");
 
+// raw::tx's host access (Translate.h), when the game runs on the layer: the bridge then uses the
+// layer's own D3D12 device and queue, its textures are the layer's, and no fence crosses.
+struct HostLayer
+{
+    ID3D12Device*       device = nullptr;
+    ID3D12CommandQueue* queue  = nullptr;
+    ID3D12Resource* (*native)(ID3D11Resource*) = nullptr;
+    HRESULT (*prepare)(ID3D11DeviceContext*, ID3D11Resource* const*, UINT, D3D12_RESOURCE_STATES) = nullptr;
+};
+
 struct BridgeConfig
 {
     UINT        width          = 0;
@@ -66,6 +76,7 @@ struct BridgeConfig
     bool        debugLayer     = false;
     DWORD       cpuWaitTimeout = 2000;  // ms; a longer wait marks the bridge unhealthy
     bool        probeStages    = false; // log ProbeFenceSupport between setup stages
+    HostLayer   layer;                  // set: attached to raw::tx
     bool        handoverFlush  = false; // Flush the D3D11 context right after the copy-out (docs/LIGHTING.md, indoor cost)
     // The game's normal target format, or UNKNOWN to share no normals.
     DXGI_FORMAT normalFormat   = DXGI_FORMAT_UNKNOWN;

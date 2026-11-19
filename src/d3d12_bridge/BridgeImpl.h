@@ -45,8 +45,17 @@ struct D3D12Bridge::Impl
     bool         ready = false;
 
     // D3D11 (borrowed from the game, AddRef'd)
-    ComPtr<ID3D11Device5>        dev11;
-    ComPtr<ID3D11DeviceContext4> ctx11;
+    ComPtr<ID3D11Device>         dev11;
+    ComPtr<ID3D11DeviceContext>  ctx11;
+    ComPtr<ID3D11Device5>        dev5;    // side-by-side only: shared resources and the fence
+    ComPtr<ID3D11DeviceContext4> ctx4;
+    // Attached to raw::tx (BridgeConfig::layer): one device and one queue, no fence crossing.
+    bool attached = false;
+    ComPtr<ID3D12Fence> ownFence;          // the pass's own retirement fence when attached
+    uint64_t ownValue = 0;
+    bool CreateAttached(SharedTex& t, DXGI_FORMAT fmt, bool uav, const char* name, UINT w, UINT h);
+    bool HandToHost();
+    bool AttachLayer();                     // every shared texture to COMMON, the layer's work submitted
     ComPtr<ID3D11Fence>          fence11;
     ComPtr<ID3D11ComputeShader>  depthCS;     // DepthCopy.hlsl
     ComPtr<ID3D11ComputeShader>  stencilCS, volumeCS;   // StencilCopy.hlsl, VolumeCopy.hlsl; made on first use

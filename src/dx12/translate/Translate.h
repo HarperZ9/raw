@@ -6,6 +6,7 @@
 #pragma once
 #include <d3d11.h>
 #include <dxgi.h>
+#include <d3d12.h>
 #include <cstdint>
 
 namespace raw::tx {
@@ -51,6 +52,13 @@ void SetLogSink(void (*sink)(const char* line));
 
 // The last 48 calls into the layer, oldest first, as one line (for a fault report).
 void TraceDump(void (*out)(const char* line));
+
+// A renderer on the layer's own device (host access, tx_host.cpp). NativeResource gives the
+// D3D12 resource behind a buffer or texture of the layer (no reference added). PrepareForHost puts
+// the listed resources in `state` at the end of the work recorded so far and submits that work;
+// lists the host then submits to GetNative's queue see them in that state and must leave them in it.
+ID3D12Resource* NativeResource(ID3D11Resource* resource);
+HRESULT PrepareForHost(ID3D11DeviceContext* context, ID3D11Resource* const* resources, UINT count, D3D12_RESOURCE_STATES state);
 
 // The D3D12 device and direct queue, for a renderer that adopts them
 // (superframe native/raw/rhi/host.hpp, HostDevice). No reference is added.

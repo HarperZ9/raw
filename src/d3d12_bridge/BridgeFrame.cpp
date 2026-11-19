@@ -161,7 +161,28 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     c->End(s.ts[4].Get());
     c->CopyResource(m->colorIn.tex11.Get(), colorSrc);
     c->End(s.ts[5].Get());
-    HRESULT hs = c->Signal(m->fence11.Get(), v1);
+    if (m->attached) {
+        // One queue: the layer submits what D3D11 recorded so far with every shared texture in
+        // COMMON, the pass follows on the same queue, and the copy-out lands in the layer's next list.
+        if (!m->HandToHost() || !m->pass->Submit(0, v2)) {
+            m->log("[D3D12Bridge] attached hand-over failed; bridge off");
+            c->End(s.disjoint.Get());
+            s.open = false;
+            m->ready = false;
+            return false;
+        }
+        m->lastWaited = 0;
+        m->lastD12 = v2;
+        c->End(s.ts[6].Get());
+        c->CopyResource(colorDst, m->colorOut.tex11.Get());
+        c->End(s.ts[7].Get());
+        c->End(s.disjoint.Get());
+        s.open = false;
+        s.executed = true;
+        ++m->frames;
+        return true;
+    }
+    HRESULT hs = m->ctx4->Signal(m->fence11.Get(), v1);
     c->Flush();
     LARGE_INTEGER qf, q0, q1;
     QueryPerformanceFrequency(&qf);
@@ -196,7 +217,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     }
     m->lastWaited = waitValue;
     m->lastD12 = v2;
-    HRESULT hw = c->Wait(m->fence11.Get(), v2);
+    HRESULT hw = m->ctx4->Wait(m->fence11.Get(), v2);
     if (FAILED(hw)) m->log("[D3D12Bridge] D3D11 Wait failed 0x%08X", (unsigned)hw);
     c->End(s.ts[6].Get());
     c->CopyResource(colorDst, m->colorOut.tex11.Get());

@@ -16,6 +16,8 @@
 #include "SceneLights.h"
 #include "GameComposite.h"
 #include "HotReload.h"
+#include "TxMode.h"
+#include "Translate.h"
 #include "Overlay.h"
 
 #include <algorithm>
@@ -108,6 +110,16 @@ bool LightingEnsure()
     c.lightingPass = true;
     c.shadowMapSize = s_shadowSide;
     c.handoverFlush = s_handoverFlush;
+    if (TxMode_Get() == 1) {
+        // The game runs on raw::tx: the passes run on the layer's own device and queue.
+        void* d12 = nullptr;
+        void* q12 = nullptr;
+        raw::tx::GetNative(pi->device, &d12, &q12);
+        c.layer.device = static_cast<ID3D12Device*>(d12);
+        c.layer.queue = static_cast<ID3D12CommandQueue*>(q12);
+        c.layer.native = &raw::tx::NativeResource;
+        c.layer.prepare = &raw::tx::PrepareForHost;
+    }
     if (!b->Initialize(pi->device, pi->context, c, &Log)) { ++s_failures; return false; }
     LightingApplyTuning();
     return true;

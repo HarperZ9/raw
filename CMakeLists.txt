@@ -430,6 +430,7 @@ add_library(raw_dx12_translate STATIC
     ${RAW_TX_DIR}/tx_imports.cpp
     ${RAW_TX_DIR}/tx_device.cpp
     ${RAW_TX_DIR}/tx_dxgi_device.cpp
+    ${RAW_TX_DIR}/tx_host.cpp
     ${RAW_TX_DIR}/tx_submit.cpp
     ${RAW_TX_DIR}/tx_resource.cpp
     ${RAW_TX_DIR}/tx_views.cpp

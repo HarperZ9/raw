@@ -1,0 +1,11 @@
+# RAW's lighting on raw::tx's own device (Translate Wrap=1, the bridge attached): Riverwood by day and
+# the Bannered Mare, the game's lighting, ours matched and ours improved.
+start load rawharness
+console tai
+scene riverwood_day
+keyframe still steps=game,match,improved hold=60
+scene bannered_mare
+console coc whiterunbanneredmare
+wait 8
+keyframe still steps=game,match,improved hold=60
+quit

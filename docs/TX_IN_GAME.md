@@ -59,6 +59,29 @@ counts of the sky regions match (17,489 native, 17,627 through the layer), so th
 quantise either frame. The banding visible on the mountains in some stills is cloud shadow in the
 scene.
 
+## The whole proxy and RAW's lighting on the layer (Wrap=1)
+
+`[Translate] Wrap=1` runs the normal proxy on top of the layer: the wrapped device, context and
+swap chain forward to raw::tx where they used to forward to the system runtime. Run txwrap-1
+(Riverwood, 1080p): the G-buffer patches built on the layer (92 patched shaders, 0 refused) and
+the frame matched native D3D11 as closely as the plain layer did (mean dE76 3.15 against 3.34).
+
+The bridge then attaches to the layer (`BridgeConfig::layer`, `src/dx12/translate/tx_host.cpp`).
+Its textures are the layer's own. The lighting pass runs on the layer's D3D12 device and queue.
+`raw::tx::PrepareForHost` submits the layer's recorded work with those textures in COMMON, the
+pass follows on the same queue, and the copy-out goes into the layer's next list. No second
+device, no shared texture and no fence crossing. Run txlight-1, 1080p:
+
+| | Riverwood day | Bannered Mare |
+|---|---|---|
+| lighting pass, matched | 0.12 ms | 0.18 ms |
+| lighting pass, improved (AO, soft shadows, GGX, fog, contact) | 0.57 ms | 0.89 ms |
+| matched against the game's own frame, final image | mean dE76 4.80 | mean dE76 0.93 |
+
+Pictures: `ingame-tx-2026-11-18-attached-{riverwood,inn}-{game,improved}-1080.png` in the plan
+folder. Two gaps in attached mode: the match statistics read their buffers through the shared-
+fence path, so they do not run, and the bridge's D3D11 stall timer no longer measures a hand-over.
+
 ## Open
 
 - The compass location icon (UI, most likely a blend state or a texture format in the Scaleform path).

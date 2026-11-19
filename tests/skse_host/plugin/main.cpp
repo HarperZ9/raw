@@ -38,7 +38,7 @@ bool BindPapyrus(RE::BSScript::IVirtualMachine* vm) {
 }
 
 void OnSave(SKSE::SerializationInterface* s) {
-    g_savedValue = 0x5A000000u | (GetTickCount() & 0xFFFFFF);
+    g_savedValue = 0x5A000000u | (static_cast<std::uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count()) & 0xFFFFFF);
     const bool ok = s->WriteRecord(kRecord, 1, g_savedValue);
     Line(ok ? "PASS" : "FAIL", fmt::format("cosave: wrote counter {:08X}", g_savedValue));
     Line("INFO", fmt::format("cosave: last-written {:08X}", g_savedValue));

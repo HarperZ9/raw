@@ -132,6 +132,7 @@ STDMETHODIMP_(FLOAT) Context::GetResourceMinLOD(ID3D11Resource*) { return 0.0f; 
 uint64_t Context::FlushInternal()
 {
     if (deferred_) return 0;
+    holds_.Drain(1024);   // pins of objects the game released and nothing binds give their reference back
     if (rec_.cmdCount == 0 && !dev_->UploadPending()) return dev_->LastSubmitted();
     rec_.cl->Close();
     Recording* r = &rec_;

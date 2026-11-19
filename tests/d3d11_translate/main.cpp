@@ -156,6 +156,7 @@ int main(int argc, char** argv)
             RunControls(o, t);
             RunReflection(t);
             RunGetters(o, t);
+            RunLifetime(o, t);
             RunSwapChain(o, t);
             RunReplay(o, t);
         }

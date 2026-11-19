@@ -9,16 +9,11 @@ void Context::SetShader(int stage, T* s)
 {
     ShaderSlot& slot = s_.st[stage].sh;
     if (slot.obj == s) return;
-    if (slot.obj) slot.ref(slot.obj, -1);
-    slot = ShaderSlot{};
-    if (s) {
-        s->IntAddRef();
-        slot.obj = s;
-        slot.sd = s->sd;
-        slot.ref = [](void* p, int delta) {
-            if (delta > 0) static_cast<T*>(p)->IntAddRef(); else static_cast<T*>(p)->IntRelease();
-        };
-    }
+    T* cur = static_cast<T*>(slot.obj);   // a stage binds one shader type
+    holds_.Assign(cur, s);
+    slot.obj = cur;
+    slot.sd = s ? s->sd : nullptr;
+    slot.drop = s ? [](BindHolds& h, void* p) { T* t = static_cast<T*>(p); h.Assign<T>(t, nullptr); } : nullptr;
     dirty_ |= D_PSO;
 }
 
@@ -27,7 +22,7 @@ void Context::SetCB(int stage, UINT start, UINT n, ID3D11Buffer* const* b)
     for (UINT i = 0; i < n && start + i < 14; ++i) {
         BufSlot& s = s_.st[stage].cb[start + i];
         TBuffer* nb = b ? static_cast<TBuffer*>(b[i]) : nullptr;
-        IntAssign(s.buf, nb);
+        holds_.Assign(s.buf, nb);
         s.chunk = nb ? Pin(nb) : nullptr;
     }
 }
@@ -57,7 +52,7 @@ void Context::UnbindSrvsOf(const ResCore* core, const SubRange& range)
         StageState& s = s_.st[st];
         for (uint32_t i = 0; i < s.srvHi; ++i) {
             if (!s.srv[i] || s.srv[i]->core != core || !Overlap(range, s.srv[i]->range)) continue;
-            IntAssign<TSRV>(s.srv[i], nullptr);
+            holds_.Assign<TSRV>(s.srv[i], nullptr);
             dirty_ |= D_SRV0 << st;
         }
     }
@@ -70,7 +65,7 @@ void Context::SetSRV(int stage, UINT start, UINT n, ID3D11ShaderResourceView* co
         TSRV* nv = v ? static_cast<TSRV*>(v[i]) : nullptr;
         if (nv && stage != S_CS && TargetConflict(nv)) nv = nullptr;
         if (s.srv[start + i] == nv) continue;
-        IntAssign(s.srv[start + i], nv);
+        holds_.Assign(s.srv[start + i], nv);
         if (nv && start + i + 1 > s.srvHi) s.srvHi = start + i + 1;
         dirty_ |= (D_SRV0 << stage) | (stage < S_CS ? D_SCAN_SRV0 << stage : 0u);
     }
@@ -81,7 +76,7 @@ void Context::SetSamp(int stage, UINT start, UINT n, ID3D11SamplerState* const* 
     for (UINT i = 0; i < n && start + i < 16; ++i) {
         TSampler* ns = p ? static_cast<TSampler*>(p[i]) : nullptr;
         if (s_.st[stage].samp[start + i] == ns) continue;
-        IntAssign(s_.st[stage].samp[start + i], ns);
+        holds_.Assign(s_.st[stage].samp[start + i], ns);
         dirty_ |= D_SAMP0 << stage;
     }
 }
@@ -101,7 +96,7 @@ TX_STAGE_SET(CS, ID3D11ComputeShader, S_CS)
 STDMETHODIMP_(void) Context::IASetInputLayout(ID3D11InputLayout* l)
 {
     TX_TRACE("Context::IASetInputLayout");
-    IntAssign(s_.layout, static_cast<TInputLayout*>(l));
+    holds_.Assign(s_.layout, static_cast<TInputLayout*>(l));
     dirty_ |= D_PSO;
 }
 
@@ -114,7 +109,7 @@ STDMETHODIMP_(void) Context::IASetVertexBuffers(UINT start, UINT n, ID3D11Buffer
         TBuffer* nb = b ? static_cast<TBuffer*>(b[i]) : nullptr;
         const UINT stride = strides ? strides[i] : 0, offset = offsets ? offsets[i] : 0;
         if (s.buf == nb && s.stride == stride && s.offset == offset) continue;   // a rename sets D_VB itself
-        IntAssign(s.buf, nb);
+        holds_.Assign(s.buf, nb);
         s.chunk = nb ? Pin(nb) : nullptr;
         s.stride = stride;
         s.offset = offset;
@@ -129,7 +124,7 @@ STDMETHODIMP_(void) Context::IASetIndexBuffer(ID3D11Buffer* b, DXGI_FORMAT f, UI
     TX_TRACE("Context::IASetIndexBuffer");
     TBuffer* nb = static_cast<TBuffer*>(b);
     if (s_.ib.buf == nb && s_.ib.offset == offset && s_.ibFmt == f) return;   // a rename sets D_IB itself
-    IntAssign(s_.ib.buf, nb);
+    holds_.Assign(s_.ib.buf, nb);
     s_.ib.chunk = nb ? Pin(nb) : nullptr;
     s_.ib.offset = offset;
     if (s_.ibFmt != f) dirty_ |= D_PSO;
@@ -151,11 +146,11 @@ void Context::SetTargets(UINT n, ID3D11RenderTargetView* const* rtv, ID3D11Depth
     uint32_t hi = 0;
     for (UINT i = 0; i < 8; ++i) {
         TRTV* v = (i < n && rtv) ? static_cast<TRTV*>(rtv[i]) : nullptr;
-        IntAssign(s_.rtv[i], v);
+        holds_.Assign(s_.rtv[i], v);
         if (v) hi = i + 1;
     }
     s_.rtCount = hi;
-    IntAssign(s_.dsv, static_cast<TDSV*>(dsv));
+    holds_.Assign(s_.dsv, static_cast<TDSV*>(dsv));
     dirty_ |= D_RT | D_PSO | D_SCAN | D_SC;
     for (uint32_t i = 0; i < hi; ++i)
         if (s_.rtv[i]) UnbindSrvsOf(s_.rtv[i]->core, s_.rtv[i]->range);
@@ -167,7 +162,7 @@ STDMETHODIMP_(void) Context::OMSetRenderTargets(UINT n, ID3D11RenderTargetView* 
 {
     TX_TRACE("Context::OMSetRenderTargets");
     SetTargets(n, rtv, dsv, false);
-    for (auto& u : s_.uav) IntAssign<TUAV>(u, nullptr);
+    for (auto& u : s_.uav) holds_.Assign<TUAV>(u, nullptr);
     dirty_ |= D_UAV;
 }
 
@@ -177,16 +172,16 @@ STDMETHODIMP_(void) Context::OMSetRenderTargetsAndUnorderedAccessViews(UINT nRtv
     TX_TRACE("Context::OMSetRenderTargetsAndUnorderedAccessViews");
     if (nRtv != D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL) SetTargets(nRtv, rtv, dsv, false);
     if (nUav == D3D11_KEEP_UNORDERED_ACCESS_VIEWS) return;
-    for (auto& u : s_.uav) IntAssign<TUAV>(u, nullptr);
+    for (auto& u : s_.uav) holds_.Assign<TUAV>(u, nullptr);
     for (UINT i = 0; i < nUav && uavStart + i < 8; ++i)
-        IntAssign(s_.uav[uavStart + i], uav ? static_cast<TUAV*>(uav[i]) : nullptr);
+        holds_.Assign(s_.uav[uavStart + i], uav ? static_cast<TUAV*>(uav[i]) : nullptr);
     dirty_ |= D_UAV | D_SCAN;
 }
 
 STDMETHODIMP_(void) Context::OMSetBlendState(ID3D11BlendState* b, const FLOAT f[4], UINT mask)
 {
     TX_TRACE("Context::OMSetBlendState");
-    IntAssign(s_.blend, static_cast<TBlend*>(b));
+    holds_.Assign(s_.blend, static_cast<TBlend*>(b));
     for (int i = 0; i < 4; ++i) s_.factor[i] = f ? f[i] : 1.0f;
     s_.sampleMask = mask;
     dirty_ |= D_PSO | D_BF;
@@ -195,7 +190,7 @@ STDMETHODIMP_(void) Context::OMSetBlendState(ID3D11BlendState* b, const FLOAT f[
 STDMETHODIMP_(void) Context::OMSetDepthStencilState(ID3D11DepthStencilState* d, UINT ref)
 {
     TX_TRACE("Context::OMSetDepthStencilState");
-    IntAssign(s_.ds, static_cast<TDepthStencil*>(d));
+    holds_.Assign(s_.ds, static_cast<TDepthStencil*>(d));
     s_.stencilRef = ref;
     dirty_ |= D_PSO | D_SREF;
 }
@@ -203,7 +198,7 @@ STDMETHODIMP_(void) Context::OMSetDepthStencilState(ID3D11DepthStencilState* d, 
 STDMETHODIMP_(void) Context::RSSetState(ID3D11RasterizerState* r)
 {
     TX_TRACE("Context::RSSetState");
-    IntAssign(s_.rs, static_cast<TRaster*>(r));
+    holds_.Assign(s_.rs, static_cast<TRaster*>(r));
     dirty_ |= D_PSO | D_SC;
 }
 
@@ -227,7 +222,7 @@ STDMETHODIMP_(void) Context::CSSetUnorderedAccessViews(UINT start, UINT n, ID3D1
 {
     TX_TRACE("Context::CSSetUnorderedAccessViews");
     for (UINT i = 0; i < n && start + i < 8; ++i)
-        IntAssign(s_.csUav[start + i], u ? static_cast<TUAV*>(u[i]) : nullptr);
+        holds_.Assign(s_.csUav[start + i], u ? static_cast<TUAV*>(u[i]) : nullptr);
     dirty_ |= D_CSUAV;
 }
 

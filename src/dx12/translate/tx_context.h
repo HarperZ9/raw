@@ -6,6 +6,7 @@
 // own thread, and FinishCommandList hands the closed D3D12 list over as it is.
 #pragma once
 #include "tx_device.h"
+#include "tx_holds.h"
 
 namespace raw::tx {
 
@@ -29,7 +30,7 @@ enum Dirty : uint32_t {
 struct ShaderSlot {
     ShaderData* sd = nullptr;
     void* obj = nullptr;
-    void (*ref)(void*, int) = nullptr;
+    void (*drop)(BindHolds&, void*) = nullptr;   // gives the binding's reference back
 };
 struct BufSlot {
     TBuffer* buf = nullptr;
@@ -239,6 +240,7 @@ private:
     bool deferred_;
     std::atomic<ULONG> rc_{1};
     PrivateStore priv_;
+    BindHolds holds_;               // the bindings' internal references (tx_holds.h)
     Recording rec_;
     ChunkCache chunks_;
     uint32_t descBase_ = ~0u, descUsed_ = 0;

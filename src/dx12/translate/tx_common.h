@@ -71,6 +71,13 @@ private:
     std::vector<Item> items_;
 };
 
+// The immediate context's bindings of one child (BindHolds, tx_holds.h): a plain count, touched only
+// on the immediate context's thread, and whether that context holds its one internal reference.
+struct ImmHold {
+    uint32_t n = 0;
+    bool pinned = false;
+};
+
 // Base of every device child. Two counts, as in D3D11: `rc` is the
 // application's, `irc` is held by contexts and views. The object dies when
 // both are zero; it holds a device reference only while the application does.
@@ -78,6 +85,7 @@ template <class I>
 struct Child : I {
     std::atomic<ULONG> rc{1};
     std::atomic<ULONG> irc{0};
+    ImmHold imm;
     Device* dev;
     PrivateStore priv;
 

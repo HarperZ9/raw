@@ -1,0 +1,24 @@
+# CPU frame with the full renderer (raw::tx, the bridge, RAW's lighting in improved mode, RT): Riverwood by day
+# and the inn, vsync off. Batch submission is timed per call; the keyframes after each measure check that the
+# ray-tracing scene still captured draws (the harness fails the run on rt_draws 0).
+start load rawharness
+console tai
+scene riverwood
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+console coc riverwood
+wait 8
+console fw 81a
+wait 6
+engine vtime 0x1AB6190 0x2A accum_2A
+engine measure riverwood 600
+engine measure riverwood_2 600
+keyframe rw steps=game,improved hold=40
+scene inn
+console coc whiterunbanneredmare
+wait 8
+engine measure inn 600
+engine measure inn_2 600
+keyframe inn steps=game,improved hold=40
+quit

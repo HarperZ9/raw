@@ -1,0 +1,14 @@
+# The live light list (rt_livestate.h) in Riverwood at night and in the Bannered Mare, beside the proxy's own
+# decoded lights in the lighting keyframe.
+start load rawharness
+console tai
+scene lights
+console set gamehour to 22
+console coc whiterunbanneredmare
+wait 8
+engine lights; live 120
+keyframe inn steps=game,improved hold=40
+console coc riverwood
+wait 8
+engine lights; wait 400; live 0
+quit

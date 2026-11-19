@@ -1,0 +1,23 @@
+# What draw batching can win: per submission pass, the draws, technique and material changes, repeated meshes
+# and instanceable runs, with the CPU time of SetupTechnique, SetupMaterial and SetupGeometry (rt_drawstats.h).
+# Full renderer; the keyframes check that the ray-tracing scene still captures draws.
+start load rawharness
+console tai
+scene riverwood
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+console coc riverwood
+wait 8
+console fw 81a
+wait 6
+engine measure riverwood_plain 600
+engine drawstats
+engine measure riverwood 600
+keyframe rw steps=game,improved hold=40
+scene inn
+console coc whiterunbanneredmare
+wait 8
+engine measure inn 600
+keyframe inn steps=game,improved hold=40
+quit

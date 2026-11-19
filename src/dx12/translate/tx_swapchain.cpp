@@ -130,6 +130,8 @@ void SwapChain::ReleaseBuffers()
     dev_->Reclaim();
 }
 
+void MapStatsLog(uint64_t frames);   // tx_ctx_data.cpp
+
 STDMETHODIMP SwapChain::Present(UINT sync, UINT flags)
 {
     TX_TRACE("SwapChain::Present");
@@ -155,11 +157,15 @@ STDMETHODIMP SwapChain::Present(UINT sync, UINT flags)
     ctx->MarkDirty(D_SCAN);
     ctx->FlushInternal();
     HRESULT hr = sc_->Present(sync, flags);
+    static uint64_t presents = 0;
+    if (++presents % 600 == 0) MapStatsLog(600);
     dev_->Reclaim();
     // At most `latency` frames queued: the CPU waits for the oldest to leave the queue, as the system
     // runtime does inside Present.
     ApplyLatency();
-    if (waitable_ && !(flags & DXGI_PRESENT_TEST)) WaitForSingleObjectEx(waitable_, 1000, TRUE);
+    // With sync 0 (vsync off, [Timing] PresentInterval=0) the frame-latency object still only signals at the
+    // display's refresh, which held every frame-time measurement at 8.33 ms on a 120 Hz display; skip it then.
+    if (waitable_ && sync != 0 && !(flags & DXGI_PRESENT_TEST)) WaitForSingleObjectEx(waitable_, 1000, TRUE);
     return hr;
 }
 

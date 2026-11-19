@@ -1,0 +1,22 @@
+# Where the render thread's time goes with the full renderer (raw::tx, bridge, improved lighting, RT): the
+# sampler's module and function breakdown in Riverwood and the inn, beside batch submission time.
+start load rawharness
+console tai
+scene riverwood
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+console coc riverwood
+wait 8
+console fw 81a
+wait 6
+engine vtime 0x1AB6190 0x2A accum_2A
+engine measure riverwood 600
+engine sample 10 0x1000 0x174E938; wait 1500
+keyframe rw steps=game,improved hold=40
+scene inn
+console coc whiterunbanneredmare
+wait 8
+engine measure inn 600
+engine sample 10 0x1000 0x174E938; wait 1500
+quit

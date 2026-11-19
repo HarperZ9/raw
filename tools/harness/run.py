@@ -226,7 +226,7 @@ class Runner(Actions):
             self.scene = plain[0]
         elif op == "bat":
             self.bat(" ".join(args).split("|"))
-        elif op == "console" and args and args[0].lower() == "coc":
+        elif op == "console" and args and args[0].lower() in ("coc", "cow", "load"):   # cow: centre on a worldspace; load: a save
             self.change_cell(" ".join(args))
         elif op == "console":
             G.console(" ".join(args))

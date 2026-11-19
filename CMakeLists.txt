@@ -584,6 +584,11 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_callgraph.cpp
         src/engine_rt/rt_vtrace.cpp
         src/engine_rt/rt_control.cpp
+        src/engine_rt/rt_settings.cpp
+        src/engine_rt/rt_drawstats.cpp
+        src/engine_rt/rt_grids.cpp
+        src/engine_rt/rt_weather.cpp
+        src/engine_rt/rt_livestate.cpp
         src/engine_rt/rt_capture.cpp
         src/engine_rt/rt_atlas.cpp
         src/engine_rt/rt_passes.cpp

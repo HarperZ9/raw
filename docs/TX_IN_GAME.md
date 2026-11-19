@@ -124,6 +124,8 @@ ray-tracing scene's draws above 0 (Riverwood 1,947 to 1,955) and left ENB at 232
   instruction waits for the write-combining buffers to drain, so each `Unmap` paid for the bytes the proxy had
   just copied into upload memory. The same stall then moved to the ring's atomic page counter in
   `RenameBuffer` (170 samples) until that count stopped being atomic (12 samples).
+- **The ring itself is not shown to help.** On the final build, `RenameRing=0` (slab chunks) read 8.99 to 9.20 ms, inside the
+  ring's 9.00 to 9.69 ms. The ring stays on by default because it never measured slower; one run each.
 - **CPU-cached ring pages lose** (`RingWriteBack=1`): 10.97 to 11.88 ms against 10.16 to 10.37 ms on upload
   pages. One run each.
 - **Pixels.** The scene is live: master against the uncapped build reads mean dE76 3.0, and the final build

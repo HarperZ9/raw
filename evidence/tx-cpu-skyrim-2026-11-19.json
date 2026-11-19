@@ -252,6 +252,49 @@
     723,
     723
    ]
+  },
+  "5noring": {
+   "build": "final build, RenameRing=0 (slab chunks)",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 8.991,
+     "median_ms": 8.883,
+     "p99_ms": 10.26,
+     "batch_submission_ms": 5.8404,
+     "draws": 7123.9
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 9.201,
+     "median_ms": 9.12,
+     "p99_ms": 10.27,
+     "batch_submission_ms": 6.0566,
+     "draws": 7133.5
+    },
+    {
+     "name": "inn",
+     "mean_ms": 1.939,
+     "median_ms": 1.886,
+     "p99_ms": 2.59,
+     "batch_submission_ms": 0.9178,
+     "draws": 479.0
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 1.909,
+     "median_ms": 1.894,
+     "p99_ms": 2.38,
+     "batch_submission_ms": 0.9248,
+     "draws": 479.0
+    }
+   ],
+   "rt_draws": [
+    1955,
+    1955,
+    192,
+    192
+   ]
   }
  }
 }

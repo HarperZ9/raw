@@ -191,8 +191,13 @@ void RtScene::SetDraws(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>
     m_stats.skipped = 0;
     if (!Active()) return;
     // A full heap, or a cache grown far past the scene (buffers the game rewrites at new offsets every
-    // frame add new keys each time): start again.
-    if (m_blasUsed > kBlasHeap - (64ull << 20) || m_meshes.size() > 40000) Evict();
+    // frame add new keys each time): start again. Also after a gap of more than half a second without a
+    // world frame (a loading screen or a menu): the game may have refilled its buffers with the next
+    // cell's meshes, and a BLAS keyed by buffer and range would keep the old shapes.
+    const uint64_t now = GetTickCount64();
+    const bool gap = m_lastDraws && now - m_lastDraws > 500;
+    m_lastDraws = now;
+    if (m_blasUsed > kBlasHeap - (64ull << 20) || m_meshes.size() > 40000 || (gap && !m_meshes.empty())) Evict();
     for (RtDraw& d : m_draws) {
         const Key k{uintptr_t(d.vb), uintptr_t(d.ib), uint64_t(d.vbOffset) << 32 | d.ibOffset,
                     uint64_t(d.startIndex) << 32 | uint32_t(d.baseVertex) ^ uint64_t(d.indexCount) << 12};

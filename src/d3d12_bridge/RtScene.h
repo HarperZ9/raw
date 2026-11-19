@@ -83,6 +83,7 @@ private:
     std::vector<uint32_t> m_build;    // meshes whose BLAS this frame builds
     std::vector<RtDraw> m_draws;
     uint64_t m_blasUsed = 0;
+    uint64_t m_lastDraws = 0;   // GetTickCount64 at the last frame with draws
     RtFrameStats m_stats;
     RtAlpha m_alpha;
     RtSky m_sky;

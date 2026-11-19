@@ -498,6 +498,20 @@ if(RAW_ENGINE_DIR)
                    ${RAW_ENGINE_GEN}/rt_sky_filter.h)
 endif()
 target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/ShaderCompiler.cpp)
+# The opacity micromap index check (tests/omm_check): needs the Agility SDK's headers and, to run, its runtime.
+if(RAW_AGILITY_DIR AND RAW_ENGINE_DIR)
+    add_custom_command(
+        OUTPUT ${RAW_ENGINE_GEN}/omm_check_cs.h
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/omm_check_cs.h -Vn kDxil_omm_check ${CMAKE_CURRENT_SOURCE_DIR}/tests/omm_check/omm_check.hlsl
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/omm_check/omm_check.hlsl
+        COMMENT "dxc: opacity micromap check -> DXIL header"
+        VERBATIM)
+    add_executable(omm_check tests/omm_check/main.cpp ${RAW_ENGINE_GEN}/omm_check_cs.h)
+    target_include_directories(omm_check PRIVATE ${RAW_ENGINE_GEN})
+    target_link_libraries(omm_check PRIVATE d3d12 dxgi dxguid)
+    set_target_properties(omm_check PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)
+endif()
 target_link_libraries(d3d11_proxy PRIVATE raw_dx12_translate)
 # A map file and a PDB beside d3d11.dll, so a fault's module offset in the log names a function.
 if(MSVC)

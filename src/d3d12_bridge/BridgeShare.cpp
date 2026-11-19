@@ -50,7 +50,7 @@ D3D12Bridge::Impl::Extra* D3D12Bridge::Impl::ExtraFor(UINT w, UINT h, DXGI_FORMA
     HRESULT hr = dev12->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_SHARED, &rd, D3D12_RESOURCE_STATE_COMMON,
                                                 nullptr, IID_PPV_ARGS(&e.tex.res12));
     if (SUCCEEDED(hr)) hr = dev12->CreateSharedHandle(e.tex.res12.Get(), nullptr, GENERIC_ALL, nullptr, &handle);
-    if (SUCCEEDED(hr)) hr = dev11->OpenSharedResource1(handle, IID_PPV_ARGS(&e.tex.tex11));
+    if (SUCCEEDED(hr)) hr = dev5->OpenSharedResource1(handle, IID_PPV_ARGS(&e.tex.tex11));
     if (handle) CloseHandle(handle);
     if (SUCCEEDED(hr) && uav) {
         D3D11_UNORDERED_ACCESS_VIEW_DESC ud{};
@@ -70,6 +70,7 @@ D3D12Bridge::Impl::Extra* D3D12Bridge::Impl::ExtraFor(UINT w, UINT h, DXGI_FORMA
 bool D3D12Bridge::ShareAndRead(ID3D11Texture2D* src, UINT slice, std::vector<uint8_t>* out, UINT* rowBytes,
                                DXGI_FORMAT* sharedFormat)
 {
+    if (m->attached) return false;   // side-by-side only (the shared fence)
     if (!m->ready || !src || !out) return false;
     D3D11_TEXTURE2D_DESC d{};
     src->GetDesc(&d);
@@ -113,7 +114,7 @@ bool D3D12Bridge::ShareAndRead(ID3D11Texture2D* src, UINT slice, std::vector<uin
     }
     // D3D11 signals after its copy; the D3D12 read waits for that value.
     const uint64_t v = m->nextValue++;
-    if (FAILED(c->Signal(m->fence11.Get(), v))) return false;
+    if (FAILED(m->ctx4->Signal(m->fence11.Get(), v))) return false;
     c->Flush();
     return m->ReadTexture12(e->tex.res12.Get(), v, out, rowBytes);
 }

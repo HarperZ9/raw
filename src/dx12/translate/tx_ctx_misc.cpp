@@ -5,6 +5,7 @@ namespace raw::tx {
 
 STDMETHODIMP_(void) Context::ClearRenderTargetView(ID3D11RenderTargetView* view, const FLOAT color[4])
 {
+    TX_TRACE("Context::ClearRenderTargetView");
     TRTV* v = static_cast<TRTV*>(view);
     if (!v) return;
     if (rec_.tracker.RequireRange(v->core->tr, v->range, v->core->mips, v->core->slices, D3D12_RESOURCE_STATE_RENDER_TARGET))
@@ -16,6 +17,7 @@ STDMETHODIMP_(void) Context::ClearRenderTargetView(ID3D11RenderTargetView* view,
 
 STDMETHODIMP_(void) Context::ClearDepthStencilView(ID3D11DepthStencilView* view, UINT flags, FLOAT depth, UINT8 stencil)
 {
+    TX_TRACE("Context::ClearDepthStencilView");
     TDSV* v = static_cast<TDSV*>(view);
     if (!v) return;
     ResCore& c = *v->core;
@@ -63,6 +65,7 @@ static bool HeapQuery(const TQuery* q, QueryHeapKind* heap, D3D12_QUERY_TYPE* ty
 
 STDMETHODIMP_(void) Context::Begin(ID3D11Asynchronous* a)
 {
+    TX_TRACE("Context::Begin");
     TQuery* q = static_cast<TQuery*>(a);
     QueryHeapKind heap; D3D12_QUERY_TYPE type;
     if (!q || !HeapQuery(q, &heap, &type) || type == D3D12_QUERY_TYPE_TIMESTAMP) return;
@@ -72,6 +75,7 @@ STDMETHODIMP_(void) Context::Begin(ID3D11Asynchronous* a)
 
 STDMETHODIMP_(void) Context::End(ID3D11Asynchronous* a)
 {
+    TX_TRACE("Context::End");
     TQuery* q = static_cast<TQuery*>(a);
     if (!q) return;
     QueryHeapKind heap; D3D12_QUERY_TYPE type;
@@ -89,6 +93,7 @@ STDMETHODIMP_(void) Context::End(ID3D11Asynchronous* a)
 
 STDMETHODIMP Context::GetData(ID3D11Asynchronous* a, void* data, UINT size, UINT flags)
 {
+    TX_TRACE("Context::GetData");
     TQuery* q = static_cast<TQuery*>(a);
     if (!q) return E_INVALIDARG;
     if (deferred_) return DXGI_ERROR_INVALID_CALL;
@@ -117,6 +122,7 @@ STDMETHODIMP Context::GetData(ID3D11Asynchronous* a, void* data, UINT size, UINT
 
 STDMETHODIMP_(void) Context::SetResourceMinLOD(ID3D11Resource*, FLOAT lod)
 {
+    TX_TRACE("Context::SetResourceMinLOD");
     if (lod != 0.0f) CountUnsupported(dev_, "SetResourceMinLOD");
 }
 STDMETHODIMP_(FLOAT) Context::GetResourceMinLOD(ID3D11Resource*) { return 0.0f; }
@@ -160,6 +166,7 @@ TCommandList::~TCommandList()
 // thread. Finishing closes it and hands it over; nothing is re-recorded.
 STDMETHODIMP Context::FinishCommandList(BOOL restore, ID3D11CommandList** out)
 {
+    TX_TRACE("Context::FinishCommandList");
     if (!deferred_) return DXGI_ERROR_INVALID_CALL;
     rec_.cl->Close();
     auto* l = new TCommandList(dev_);
@@ -183,6 +190,7 @@ STDMETHODIMP Context::FinishCommandList(BOOL restore, ID3D11CommandList** out)
 
 STDMETHODIMP_(void) Context::ExecuteCommandList(ID3D11CommandList* list, BOOL restore)
 {
+    TX_TRACE("Context::ExecuteCommandList");
     if (deferred_ || !list) return;
     TCommandList* l = static_cast<TCommandList*>(list);
     if (rec_.cmdCount) FlushInternal();   // what the immediate context recorded runs first

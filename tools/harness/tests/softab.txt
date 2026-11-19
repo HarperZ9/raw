@@ -1,0 +1,20 @@
+# The soft-lighting channel against the old constant, in one session by hot reload (same view, same
+# frame): the Bannered Mare and Riverwood, ours matched, with the channel and with 0.15.
+start load rawharness
+console tai
+scene bannered_mare
+console coc whiterunbanneredmare
+wait 8
+keyframe channel steps=game,match hold=40
+reload shader Lighting.hlsl "s.soft = base == 5u ? SoftMap.Load(ip).rgb : 0.0f.xxx;" "s.soft = base == 5u ? 0.15f.xxx : 0.0f.xxx;"
+wait 1
+keyframe constant steps=game,match hold=40
+scene riverwood_day
+console set gamehour to 13
+console coc riverwood
+wait 8
+keyframe constant steps=game,match hold=40
+reload shader Lighting.hlsl "s.soft = base == 5u ? 0.15f.xxx : 0.0f.xxx;" "s.soft = base == 5u ? SoftMap.Load(ip).rgb : 0.0f.xxx;"
+wait 1
+keyframe channel steps=game,match hold=40
+quit

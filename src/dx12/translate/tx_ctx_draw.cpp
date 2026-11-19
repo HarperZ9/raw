@@ -263,18 +263,22 @@ bool Context::PrepareDraw(bool indexed)
 
 STDMETHODIMP_(void) Context::Draw(UINT n, UINT start)
 {
+    TX_TRACE("Context::Draw");
     if (PrepareDraw(false)) Cl()->DrawInstanced(n, 1, start, 0);
 }
 STDMETHODIMP_(void) Context::DrawIndexed(UINT n, UINT start, INT base)
 {
+    TX_TRACE("Context::DrawIndexed");
     if (PrepareDraw(true)) Cl()->DrawIndexedInstanced(n, 1, start, base, 0);
 }
 STDMETHODIMP_(void) Context::DrawInstanced(UINT n, UINT inst, UINT start, UINT startInst)
 {
+    TX_TRACE("Context::DrawInstanced");
     if (PrepareDraw(false)) Cl()->DrawInstanced(n, inst, start, startInst);
 }
 STDMETHODIMP_(void) Context::DrawIndexedInstanced(UINT n, UINT inst, UINT start, INT base, UINT startInst)
 {
+    TX_TRACE("Context::DrawIndexedInstanced");
     if (PrepareDraw(true)) Cl()->DrawIndexedInstanced(n, inst, start, base, startInst);
 }
 STDMETHODIMP_(void) Context::DrawAuto() { CountUnsupported(dev_, "DrawAuto (stream output)"); }

@@ -106,6 +106,32 @@ public:
     STDMETHODIMP SetExceptionMode(UINT) override { return S_OK; }
     STDMETHODIMP_(UINT) GetExceptionMode() override { return 0; }
 
+    // ---- IDXGIDevice2 (tx_dxgi_device.cpp): a part of the same object, as the system runtime's device is ----
+    class DxgiPart final : public IDXGIDevice2 {
+    public:
+        Device* dev = nullptr;
+        UINT latency = 3;
+        INT priority = 0;
+        STDMETHODIMP QueryInterface(REFIID r, void** o) override;
+        STDMETHODIMP_(ULONG) AddRef() override;
+        STDMETHODIMP_(ULONG) Release() override;
+        STDMETHODIMP SetPrivateData(REFGUID g, UINT s, const void* d) override;
+        STDMETHODIMP SetPrivateDataInterface(REFGUID g, const IUnknown* p) override;
+        STDMETHODIMP GetPrivateData(REFGUID g, UINT* s, void* d) override;
+        STDMETHODIMP GetParent(REFIID r, void** o) override;
+        STDMETHODIMP GetAdapter(IDXGIAdapter** a) override;
+        STDMETHODIMP CreateSurface(const DXGI_SURFACE_DESC*, UINT, DXGI_USAGE, const DXGI_SHARED_RESOURCE*, IDXGISurface**) override;
+        STDMETHODIMP QueryResourceResidency(IUnknown* const*, DXGI_RESIDENCY*, UINT) override;
+        STDMETHODIMP SetGPUThreadPriority(INT p) override;
+        STDMETHODIMP GetGPUThreadPriority(INT* p) override;
+        STDMETHODIMP SetMaximumFrameLatency(UINT n) override;
+        STDMETHODIMP GetMaximumFrameLatency(UINT* n) override;
+        STDMETHODIMP OfferResources(UINT, IDXGIResource* const*, DXGI_OFFER_RESOURCE_PRIORITY) override;
+        STDMETHODIMP ReclaimResources(UINT, IDXGIResource* const*, BOOL*) override;
+        STDMETHODIMP EnqueueSetEvent(HANDLE e) override;
+    };
+    DxgiPart dxgi;
+
     // ---- D3D12 objects ----
     ComPtr<ID3D12Device> d3d;
     ComPtr<ID3D12CommandQueue> queue;

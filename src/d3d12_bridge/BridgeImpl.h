@@ -2,6 +2,7 @@
 // Private state of D3D12Bridge, shared by D3D12Bridge.cpp (setup) and
 // BridgeFrame.cpp (per-frame work).
 #include "D3D12Bridge.h"
+#include "RtScene.h"
 #include <wrl/client.h>
 
 namespace raw::bridge
@@ -45,8 +46,21 @@ struct D3D12Bridge::Impl
     bool         ready = false;
 
     // D3D11 (borrowed from the game, AddRef'd)
-    ComPtr<ID3D11Device5>        dev11;
-    ComPtr<ID3D11DeviceContext4> ctx11;
+    ComPtr<ID3D11Device>         dev11;
+    ComPtr<ID3D11DeviceContext>  ctx11;
+    ComPtr<ID3D11Device5>        dev5;    // side-by-side only: shared resources and the fence
+    ComPtr<ID3D11DeviceContext4> ctx4;
+    // Attached to raw::tx (BridgeConfig::layer): one device and one queue, no fence crossing.
+    bool attached = false;
+    ComPtr<ID3D12Fence> ownFence;          // the pass's own retirement fence when attached
+    uint64_t ownValue = 0;
+    bool CreateAttached(SharedTex& t, DXGI_FORMAT fmt, bool uav, const char* name, UINT w, UINT h);
+    bool HandToHost(const std::vector<ID3D11Resource*>& extra);
+    std::unique_ptr<RtScene> rt;           // attached only
+    std::vector<RtDraw> pendingDraws;
+    RtTuning rtTune;
+    bool CreateRt();
+    bool AttachLayer();                     // every shared texture to COMMON, the layer's work submitted
     ComPtr<ID3D11Fence>          fence11;
     ComPtr<ID3D11ComputeShader>  depthCS;     // DepthCopy.hlsl
     ComPtr<ID3D11ComputeShader>  stencilCS, volumeCS;   // StencilCopy.hlsl, VolumeCopy.hlsl; made on first use
@@ -106,6 +120,17 @@ struct D3D12Bridge::Impl
     uint32_t caughtUp = 0, handOvers = 0;
     double   flushToSubmitUs = 0;
 
+    // The hand-over probe (Probe.cpp): one timestamp list before the pass on the D3D12 queue and
+    // one after, a slot per frame of the ring.
+    ComPtr<ID3D12QueryHeap> probeHeap;
+    ComPtr<ID3D12Resource> probeRead;
+    ComPtr<ID3D12CommandAllocator> probeAlloc;
+    ComPtr<ID3D12GraphicsCommandList> probeHead[kRing], probeTail[kRing];
+    uint64_t probeFreq = 0, probeFrame[kRing] = {~0ull, ~0ull, ~0ull, ~0ull};
+    bool CreateProbe();
+    void ProbeHead(uint64_t frame, uint64_t waitValue);
+    void ProbeTail(uint64_t frame);
+    bool ProbeRead(uint64_t frame, uint64_t d11Freq, uint64_t t5, uint64_t t6, BridgeTimings* r);
     bool CreateDevice12(ID3D11Device* dev);
     bool CreateShared(SharedTex& t, DXGI_FORMAT fmt, D3D12_RESOURCE_FLAGS flags,
                       const char* name, UINT w = 0, UINT h = 0);

@@ -30,6 +30,7 @@ struct Analysis
     std::vector<uint32_t> emitA, emitB;
     std::vector<uint32_t> vcolOperand;   // the vertex colour input, as the shader reads it
     size_t    waterBefore = kNone;  std::vector<uint32_t> waterOperand;
+    size_t    softAfter = kNone;    uint32_t softReg = 0, softSwz = 0;   // the soft-lighting map (slot 12) of soft-lit shaders
 };
 
 // Fills the declarations, the kind, the material class and the taps. False

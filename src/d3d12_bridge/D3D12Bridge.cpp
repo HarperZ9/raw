@@ -62,7 +62,7 @@ bool D3D12Bridge::Impl::CreateDevice12(ID3D11Device* dev)
         log("[D3D12Bridge] shared fence creation failed");
         return false;
     }
-    hr = dev11->OpenSharedFence(h, IID_PPV_ARGS(&fence11));
+    hr = dev5->OpenSharedFence(h, IID_PPV_ARGS(&fence11));
     CloseHandle(h);
     if (FAILED(hr)) { log("[D3D12Bridge] OpenSharedFence failed 0x%08X", (unsigned)hr); return false; }
     cpuEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -73,6 +73,7 @@ bool D3D12Bridge::Impl::CreateShared(SharedTex& t, DXGI_FORMAT fmt,
                                      D3D12_RESOURCE_FLAGS flags, const char* name, UINT texW, UINT texH)
 {
     sharedFormat[&t - shared] = fmt;
+    if (attached) return CreateAttached(t, fmt, (flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) != 0, name, texW, texH);
     D3D12_HEAP_PROPERTIES hp{};
     hp.Type = D3D12_HEAP_TYPE_DEFAULT;
     D3D12_RESOURCE_DESC rd{};
@@ -91,9 +92,60 @@ bool D3D12Bridge::Impl::CreateShared(SharedTex& t, DXGI_FORMAT fmt,
     HANDLE h = nullptr;
     hr = dev12->CreateSharedHandle(t.res12.Get(), nullptr, GENERIC_ALL, nullptr, &h);
     if (FAILED(hr)) { log("[D3D12Bridge] %s: CreateSharedHandle 0x%08X", name, (unsigned)hr); return false; }
-    hr = dev11->OpenSharedResource1(h, IID_PPV_ARGS(&t.tex11));
+    hr = dev5->OpenSharedResource1(h, IID_PPV_ARGS(&t.tex11));
     CloseHandle(h);
     if (FAILED(hr)) { log("[D3D12Bridge] %s: OpenSharedResource1 0x%08X", name, (unsigned)hr); return false; }
+    return true;
+}
+
+// Attached to raw::tx: the layer's device and queue, and a fence of our own for the pass to retire
+// its frames by. Nothing is shared across devices.
+bool D3D12Bridge::Impl::AttachLayer()
+{
+    dev12 = cfg.layer.device;
+    queue = cfg.layer.queue;
+    if (FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence12)))) return false;
+    cpuEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    log("[D3D12Bridge] attached to raw::tx: the layer's D3D12 device and queue, no fence crossing");
+    return cpuEvent != nullptr;
+}
+
+// A texture of the layer, made through its D3D11 face; the pass reads its D3D12 resource.
+bool D3D12Bridge::Impl::CreateAttached(SharedTex& t, DXGI_FORMAT fmt, bool uav, const char* name, UINT w, UINT h)
+{
+    D3D11_TEXTURE2D_DESC d{};
+    d.Width = w ? w : cfg.width; d.Height = h ? h : cfg.height; d.MipLevels = 1; d.ArraySize = 1; d.Format = fmt;
+    d.SampleDesc.Count = 1; d.Usage = D3D11_USAGE_DEFAULT;
+    d.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET | (uav ? D3D11_BIND_UNORDERED_ACCESS : 0);
+    HRESULT hr = dev11->CreateTexture2D(&d, nullptr, &t.tex11);
+    if (FAILED(hr)) { log("[D3D12Bridge] %s: layer CreateTexture2D 0x%08X", name, (unsigned)hr); return false; }
+    t.res12 = cfg.layer.native(t.tex11.Get());
+    if (!t.res12) { log("[D3D12Bridge] %s: no D3D12 resource behind the layer's texture", name); return false; }
+    return true;
+}
+
+bool D3D12Bridge::Impl::HandToHost(const std::vector<ID3D11Resource*>& extra)
+{
+    std::vector<ID3D11Resource*> list(extra);
+    for (auto& t : shared) if (t.tex11) list.push_back(t.tex11.Get());
+    return SUCCEEDED(cfg.layer.prepare(ctx11.Get(), list.data(), UINT(list.size()), D3D12_RESOURCE_STATE_COMMON));
+}
+
+// The ray-tracing scene on the layer's device; its two outputs join the pass's inputs.
+bool D3D12Bridge::Impl::CreateRt()
+{
+    rt = std::make_unique<RtScene>();
+    std::string err;
+    if (!rt->Create(dev12.Get(), cfg.width, cfg.height, log, err)) {
+        log("[RT] off: %s", err.c_str());
+        rt.reset();
+        return true;   // the lighting pass runs without it
+    }
+    rt->Tune(rtTune);
+    shared[static_cast<UINT>(Shared::RtVisibility)].res12 = rt->Visibility();
+    shared[static_cast<UINT>(Shared::RtLights)].res12 = rt->Lights();
+    sharedFormat[static_cast<UINT>(Shared::RtVisibility)] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sharedFormat[static_cast<UINT>(Shared::RtLights)] = DXGI_FORMAT_R8G8B8A8_UNORM;
     return true;
 }
 
@@ -169,16 +221,21 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
     dev->GetImmediateContext(&own);
     if (own.Get() != ctx)
         m->log("[D3D12Bridge] the context passed in belongs to another device; using the device's own");
-    HRESULT hrDev = dev->QueryInterface(IID_PPV_ARGS(&m->dev11));
-    HRESULT hrCtx = own->QueryInterface(IID_PPV_ARGS(&m->ctx11));
-    if (FAILED(hrDev) || FAILED(hrCtx)) {
-        m->log("[D3D12Bridge] needs ID3D11Device5 (0x%08X) and ID3D11DeviceContext4 (0x%08X)",
-               (unsigned)hrDev, (unsigned)hrCtx);
-        return false;
+    m->dev11 = dev;
+    m->ctx11 = own;
+    m->attached = cfg.layer.device && cfg.layer.queue && cfg.layer.native && cfg.layer.prepare;
+    if (!m->attached) {
+        HRESULT hrDev = dev->QueryInterface(IID_PPV_ARGS(&m->dev5));
+        HRESULT hrCtx = own->QueryInterface(IID_PPV_ARGS(&m->ctx4));
+        if (FAILED(hrDev) || FAILED(hrCtx)) {
+            m->log("[D3D12Bridge] needs ID3D11Device5 (0x%08X) and ID3D11DeviceContext4 (0x%08X)",
+                   (unsigned)hrDev, (unsigned)hrCtx);
+            return false;
+        }
     }
     const bool probe = cfg.probeStages;
     auto stage = [&](const char* where) { if (probe) ProbeFenceSupport(dev, ctx, m->log, where); return true; };
-    bool ok = stage("bridge: before D3D12 device") && m->CreateDevice12(dev) && stage("bridge: after D3D12 device")
+    bool ok = stage("bridge: before D3D12 device") && (m->attached ? m->AttachLayer() : m->CreateDevice12(dev)) && stage("bridge: after D3D12 device")
         && m->CreateShared(m->colorIn, cfg.colorFormat, kSharedColour, "colour-in")
         && m->CreateShared(m->depthIn, kSharedDepthFormat, kSharedDepth, "depth-in")
         && m->CreateShared(m->colorOut, cfg.colorFormat, kSharedColour, "colour-out")
@@ -188,10 +245,11 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
             || m->CreateShared(m->motionIn, cfg.motionFormat, kSharedColour, "motion-in"))
         && (!cfg.lightingPass || m->CreateLightingShared())
         && stage("bridge: after shared textures")
-        && m->CreateDepthCopy() && m->CreateQueries() && stage("bridge: after views and queries")
+        && m->CreateDepthCopy() && m->CreateQueries() && m->CreateProbe() && stage("bridge: after views and queries")
+        && (!m->attached || !cfg.lightingPass || m->CreateRt())
         && m->CreatePass();
     if (!ok) { m->log("[D3D12Bridge] initialisation failed; bridge stays off"); Shutdown(); return false; }
-    if (!m->SelfTest()) {
+    if (!m->attached && !m->SelfTest()) {
         m->log("[D3D12Bridge] fence self-test failed; bridge stays off");
         Shutdown();
         return false;
@@ -210,6 +268,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->pass.reset();   // before the device and the textures it borrows
+    m->rt.reset();
     LogFn log = m->log;
     if (m->cpuEvent) CloseHandle(m->cpuEvent);
     m = std::make_unique<Impl>();

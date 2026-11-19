@@ -25,7 +25,7 @@ uint64_t s_world = 0;
 size_t s_step = 0;
 uint32_t s_held = 0;
 raw::bridge::BridgeTimings s_sum{};
-uint32_t s_timed = 0;
+uint32_t s_timed = 0, s_probed = 0;
 
 struct Step { const char* name; LightingTuning t; };
 std::vector<Step> s_steps, s_all;
@@ -90,10 +90,13 @@ void HarnessResult(const Step& st, const std::string& stats)
     if (fopen_s(&f, (s_req.dir + "\\harness_results.jsonl").c_str(), "a") != 0 || !f) return;
     const double inv = s_timed ? 1.0 / s_timed : 0.0;
     fprintf(f, "{\"scene\":\"%s\",\"keyframe\":\"%s\",\"step\":\"%s\",\"mode\":%d,\"width\":%u,\"height\":%u,"
-               "\"timed_frames\":%u,\"pass_ms\":%.4f,\"ao_ms\":%.4f,\"lighting_ms\":%.4f,\"fog_ms\":%.4f,\"bridge_ms\":%.4f%s%s}\n",
+               "\"timed_frames\":%u,\"pass_ms\":%.4f,\"ao_ms\":%.4f,\"lighting_ms\":%.4f,\"fog_ms\":%.4f,\"bridge_ms\":%.4f,"
+               "\"stall_ms\":%.4f,\"sync_ms\":%.4f,\"probed_frames\":%u,\"wake_in_ms\":%.4f,\"d12_span_ms\":%.4f,\"wake_out_ms\":%.4f%s%s}\n",
             s_req.scene.c_str(), s_req.keyframe.c_str(), st.name, st.t.mode, Bridge() ? Bridge()->Config().width : 0,
             Bridge() ? Bridge()->Config().height : 0, s_timed, s_sum.passMs * inv, s_sum.pass.stageMs[0] * inv,
-            s_sum.pass.stageMs[1] * inv, s_sum.pass.stageMs[2] * inv, s_sum.bridgeCostMs * inv, stats.empty() ? "" : ",", stats.c_str());
+            s_sum.pass.stageMs[1] * inv, s_sum.pass.stageMs[2] * inv, s_sum.bridgeCostMs * inv, s_sum.stallMs * inv, s_sum.syncMs * inv,
+            s_probed, s_probed ? s_sum.wakeInMs / s_probed : 0.0, s_probed ? s_sum.d12SpanMs / s_probed : 0.0,
+            s_probed ? s_sum.wakeOutMs / s_probed : 0.0, stats.empty() ? "" : ",", stats.c_str());
     fclose(f);
 }
 
@@ -106,6 +109,8 @@ void TimingSample()
     const uint64_t n = b->FramesExecuted();
     if (n < 3 || !b->ReadTimings(n - 3, false, &t)) return;
     s_sum.passMs += t.passMs; s_sum.bridgeCostMs += t.bridgeCostMs;
+    s_sum.stallMs += t.stallMs; s_sum.syncMs += t.syncMs;
+    if (t.probeOk) { s_sum.wakeInMs += t.wakeInMs; s_sum.d12SpanMs += t.d12SpanMs; s_sum.wakeOutMs += t.wakeOutMs; ++s_probed; }
     for (int k = 0; k < 3; ++k) s_sum.pass.stageMs[k] += t.pass.stageMs[k];
     ++s_timed;
 }
@@ -115,11 +120,11 @@ void LightingMakeSteps()
 {
     const LightingTuning base = Cfg().light;
     auto with = [&](int mode, auto edit) { LightingTuning t = base; t.mode = mode; edit(t); return t; };
-    auto none = [](LightingTuning& t) { t.softShadows = t.ggxSpecular = t.volumetricFog = t.contactShadows = t.ao = false; };
+    auto none = [](LightingTuning& t) { t.softShadows = t.ggxSpecular = t.volumetricFog = t.contactShadows = t.ao = t.rtShadows = false; };
     s_all = {
         {"game", with(0, [](LightingTuning&) {})},
         {"match", with(1, [](LightingTuning&) {})},
-        {"match_game_mask", with(1, [](LightingTuning& t) { t.cascades = false; })},   // control: the game's own sun mask
+        {"match_cascades", with(1, [](LightingTuning& t) { t.cascades = true; })},   // control: our cascade lookup instead of the game's mask
         {"control_half_viewport", with(1, [](LightingTuning& t) { t.view = 9; })},     // control: the coverage check must fail
         {"improved_base", with(2, none)},
         {"improved_soft", with(2, [&](LightingTuning& t) { none(t); t.softShadows = true; })},
@@ -127,6 +132,8 @@ void LightingMakeSteps()
         {"improved_fog", with(2, [&](LightingTuning& t) { none(t); t.volumetricFog = true; })},
         {"improved_contact", with(2, [&](LightingTuning& t) { none(t); t.contactShadows = true; })},
         {"improved_ao", with(2, [&](LightingTuning& t) { none(t); t.ao = true; })},
+        {"improved_rt", with(2, [&](LightingTuning& t) { none(t); t.rtShadows = true; })},
+        {"improved_no_rt", with(2, [&](LightingTuning& t) { t.rtShadows = false; })},
         {"improved", with(2, [](LightingTuning&) {})},
         {"game_after", with(0, [](LightingTuning&) {})},
     };
@@ -169,7 +176,7 @@ void LightingScheduleOnPresent(bool worldFrame)
     if (s_held == 0) {
         Cfg().light = s_steps[s_step].t;
         Tune();
-        s_sum = {}; s_timed = 0;
+        s_sum = {}; s_timed = 0; s_probed = 0;
     }
     if (b && b->Ready() && Cfg().light.mode > 0) TimingSample();
     if (++s_held < static_cast<uint32_t>(Cfg().lightHold)) return;
@@ -178,6 +185,15 @@ void LightingScheduleOnPresent(bool worldFrame)
     CaptureBackbuffer(Cfg().lightCaptureDir + "\\" + Cfg().lightScene + "_" + st.name + ".bmp");
     std::string stats;
     if (b && b->Ready()) LightingStats(st.name, st.t.mode, &stats);
+    if (b && b->Ready()) {
+        raw::bridge::RtFrameStats r;
+        if (b->RtStats(&r)) {
+            char x[400];
+            snprintf(x, sizeof x, "%s\"rt_draws\":%u,\"rt_instances\":%u,\"rt_meshes\":%u,\"rt_skipped\":%u,\"rt_triangles\":%llu,\"rt_blas_mb\":%.1f,\"rt_build_ms\":%.4f,\"rt_trace_ms\":%.4f",
+                     stats.empty() ? "" : ",", r.draws, r.instances, r.meshes, r.skipped, (unsigned long long)r.triangles, double(r.blasBytes) / 1048576.0, r.buildMs, r.traceMs);
+            stats += x;
+        }
+    }
     if (Cfg().harness) HarnessResult(st, stats);
     if (b && b->Ready() && Cfg().lightDump && std::strcmp(st.name, "match") == 0) LightingDump();
     if (s_timed)

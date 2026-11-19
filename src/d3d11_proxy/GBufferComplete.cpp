@@ -63,8 +63,8 @@ bool EnsureTargets(State& s, ID3D11DeviceContext* real, UINT w, UINT h)
     Destroy(s.albedo); Destroy(s.specular); Destroy(s.emissive); Destroy(s.layer);
     s.width = w; s.height = h;
     const bool ok = Create(s, s.albedo, DXGI_FORMAT_R8G8B8A8_UNORM) && Create(s, s.specular, DXGI_FORMAT_R8G8B8A8_UNORM) &&
-                    Create(s, s.emissive, DXGI_FORMAT_R11G11B10_FLOAT) && Create(s, s.layer, DXGI_FORMAT_R32G32B32A32_FLOAT);
-    Log("[GBuffer] targets %ux%u: %s (albedo and specular RGBA8, emissive R11G11B10F, layer RGBA32F, %.0f MB)", w, h,
+                    Create(s, s.emissive, DXGI_FORMAT_R16G16B16A16_FLOAT) && Create(s, s.layer, DXGI_FORMAT_R32G32B32A32_FLOAT);
+    Log("[GBuffer] targets %ux%u: %s (albedo and specular RGBA8, emissive (or soft light) RGBA16F, layer RGBA32F, %.0f MB)", w, h,
         ok ? "created" : "FAILED", double(w) * h * (4 + 4 + 4 + 16) / (1024.0 * 1024.0));
     return ok;
 }

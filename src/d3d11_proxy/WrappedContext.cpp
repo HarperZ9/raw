@@ -1,3 +1,4 @@
+#include "SceneGeometry.h"
 #include "WrappedContext.h"
 #include "ShaderManager.h"
 #include "RenderPhaseDetector.h"
@@ -311,6 +312,7 @@ void STDMETHODCALLTYPE WrappedContext::DrawIndexed(UINT IndexCount, UINT StartIn
     for (auto& cb : g_drawCallbacks)
         if (cb) cb(IndexCount, 1);
     if (g_sceneLightsActive) SceneLights_BeforeDraw(m_real);
+    if (g_sceneGeometryActive) SceneGeometry_OnDraw(m_real, IndexCount, StartIndexLocation, BaseVertexLocation);
     if (g_gbufferActive) GBuffer_BeforeDraw(m_real);
     if (g_sceneLightsActive) GameComposite_BeforeDraw(m_real, IndexCount);
     m_real->DrawIndexed(IndexCount, StartIndexLocation, BaseVertexLocation);

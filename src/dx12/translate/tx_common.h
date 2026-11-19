@@ -17,6 +17,11 @@ class Device;
 class Context;
 
 void Log(const char* fmt, ...);
+void LogIid(const char* where, REFIID r);
+// The last calls into the layer, for a fault report (TraceDump in Translate.h).
+extern const char* volatile g_trace[64];
+extern std::atomic<uint32_t> g_traceAt;
+#define TX_TRACE(name) (g_trace[g_traceAt.fetch_add(1, std::memory_order_relaxed) & 63u] = (name))   // an interface request the layer cannot answer
 void DevAddRef(Device* d);
 void DevRelease(Device* d);
 ID3D11Device* DevAsD3D11(Device* d);

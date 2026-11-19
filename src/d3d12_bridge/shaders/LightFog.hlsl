@@ -62,5 +62,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (wi > 0.0f) { scatter += lightColS[li].rgb * (sigma * wi * tune2.y / (4.0f * PI)); }
         }
     }
-    return float4(lit.rgb * exp(-sigma * tEnd) + scatter, lit.a);
+    // With the game's distance fog still to come, extinction is the game's to apply; ours only adds light.
+    const float T = (flags.x & FLAG_FOG_REPLACES) != 0u ? exp(-sigma * tEnd) : 1.0f;
+    return float4(lit.rgb * T + scatter, lit.a);
 }

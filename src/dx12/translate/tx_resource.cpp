@@ -84,6 +84,7 @@ static D3D12_RESOURCE_FLAGS FlagsFor(UINT bind)
 
 STDMETHODIMP Device::CreateBuffer(const D3D11_BUFFER_DESC* d, const D3D11_SUBRESOURCE_DATA* init, ID3D11Buffer** out)
 {
+    TX_TRACE("Device::CreateBuffer");
     if (!d || d->ByteWidth == 0) return E_INVALIDARG;
     if (!out) return S_FALSE;
     auto* b = new TBuffer(this);
@@ -213,6 +214,7 @@ static void FillCore(T* t, const D& d)
 
 STDMETHODIMP Device::CreateTexture1D(const D3D11_TEXTURE1D_DESC* d, const D3D11_SUBRESOURCE_DATA* init, ID3D11Texture1D** out)
 {
+    TX_TRACE("Device::CreateTexture1D");
     if (!d) return E_INVALIDARG;
     if (!out) return S_FALSE;
     auto* t = new TTex1D(this);
@@ -227,6 +229,7 @@ STDMETHODIMP Device::CreateTexture1D(const D3D11_TEXTURE1D_DESC* d, const D3D11_
 
 STDMETHODIMP Device::CreateTexture2D(const D3D11_TEXTURE2D_DESC* d, const D3D11_SUBRESOURCE_DATA* init, ID3D11Texture2D** out)
 {
+    TX_TRACE("Device::CreateTexture2D");
     if (!d) return E_INVALIDARG;
     if (!out) return S_FALSE;
     auto* t = new TTex2D(this);
@@ -241,6 +244,7 @@ STDMETHODIMP Device::CreateTexture2D(const D3D11_TEXTURE2D_DESC* d, const D3D11_
 
 STDMETHODIMP Device::CreateTexture3D(const D3D11_TEXTURE3D_DESC* d, const D3D11_SUBRESOURCE_DATA* init, ID3D11Texture3D** out)
 {
+    TX_TRACE("Device::CreateTexture3D");
     if (!d) return E_INVALIDARG;
     if (!out) return S_FALSE;
     auto* t = new TTex3D(this);

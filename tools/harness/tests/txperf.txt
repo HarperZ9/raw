@@ -1,0 +1,25 @@
+# raw::tx CPU cost with the full renderer (raw::tx Wrap=1, the bridge, Mode=2, RtShadows=1), vsync off: Riverwood
+# at 13:00 and the inn. Two measures each, batch submission timed per call, a sampler pass on the render thread,
+# and keyframes that check the ray-tracing scene's draws and give the images for a pixel diff between builds.
+start load rawharness
+console tai
+scene riverwood
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+console coc riverwood
+wait 8
+console fw 81a
+wait 6
+engine vtime 0x1AB6190 0x2A accum_2A
+engine measure riverwood 600
+engine measure riverwood_2 600
+engine sample 10 0x1000 0x174E938; wait 1500
+keyframe rw steps=game,improved hold=40
+scene inn
+console coc whiterunbanneredmare
+wait 8
+engine measure inn 600
+engine measure inn_2 600
+keyframe inn steps=game,improved hold=40
+quit

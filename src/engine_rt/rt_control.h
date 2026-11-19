@@ -32,7 +32,4 @@ void ControlOnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc);
 // the targets are created. Returns a line for the log.
 std::string ResizeShadowAtlas(const Image& img, const std::vector<RefTarget>& refs, uint32_t size);
 
-// Papyrus: VirtualMachine::Update and UpdateTasklets (slots 4 and 5) timed, budget optionally replaced.
-bool InstallPapyrusTiming(const Image& img, uint32_t vmVtable, float budgetOverrideMs);
-
 }  // namespace raw::rt

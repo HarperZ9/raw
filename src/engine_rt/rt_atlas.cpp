@@ -67,6 +67,30 @@ static size_t FindDepthTable(uint8_t* data) {
     return 0;
 }
 
+static uint8_t* RendererData(const Image& img, const std::vector<RefTarget>& refs) {
+    for (const auto& x : refs)
+        if (x.name == "Renderer::GetRendererData")
+            return *reinterpret_cast<uint8_t**>(const_cast<uint8_t*>(img.base) + x.rva);
+    return nullptr;
+}
+
+bool ReadDepthEntry(const Image& img, const std::vector<RefTarget>& refs, int entry, DepthEntryViews* out) {
+    static size_t table = 0;  // found once by shape; the table does not move while the game runs
+    uint8_t* data = RendererData(img, refs);
+    if (!data) return false;
+    if (!table) table = FindDepthTable(data);
+    if (!table) return false;
+    auto* ds = reinterpret_cast<DepthStencilData*>(data + table + 0x98 * entry);
+    if (!Readable(ds, sizeof *ds)) return false;
+    *out = {};
+    D3D11_TEXTURE2D_DESC td = {};
+    if (!ds->texture || !SafeTexDescRaw(ds->texture, &td)) return false;
+    out->texture = ds->texture;
+    out->width = td.Width; out->height = td.Height; out->slices = td.ArraySize;
+    for (int i = 0; i < 8; ++i) { out->views[i] = ds->views[i]; out->views[8 + i] = ds->readOnlyViews[i]; }
+    return true;
+}
+
 std::string ResizeShadowAtlasLive(ID3D11DeviceContext* ctx, const Image& img, const std::vector<RefTarget>& refs,
                                   int entry, uint32_t size) {
     const RefTarget* r = nullptr;

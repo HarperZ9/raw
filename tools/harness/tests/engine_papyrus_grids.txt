@@ -1,0 +1,25 @@
+# Papyrus and grids under engine control. The opcode loop is timed at its call sites ([EngineRT]
+# OpcodeLoopTiming=1); the budget runs at the game's own value, fixed at 4 ms, then adaptive (a share of the
+# time the frame has left before 16.7 ms). With vsync off ([Timing] PresentInterval=0) every shadow control is
+# measured: distance and the live atlas at three sizes. Then the grid code is probed and the TES grid array read.
+start load rawharness
+console tai
+scene riverwood
+console set gamehour to 13
+console coc riverwood
+wait 8
+console fw 81a
+wait 6
+engine measure pap_game 600
+engine papyrus fixed 4; measure pap_fixed4 600
+engine papyrus adaptive 16.667 0.5 8; wait 60; measure pap_adaptive 600
+engine papyrus off; measure pap_off 600
+engine set fShadowDistance:Display 3000; wait 60; measure shadow_3000 600
+engine set fShadowDistance:Display 20000; wait 60; measure shadow_20000 600
+engine set fShadowDistance:Display 10000; wait 60; measure shadow_10000 600
+engine atlas 2 2048; wait 120; measure atlas_2048 600
+engine atlas 2 8192; wait 120; capture atlas_8192; measure atlas_8192 600
+engine atlas 2 4096; wait 120; measure atlas_4096 600
+engine probe 19BF30; probe 1999E0; probe 221400
+engine peek TES::Singleton 0 256; peek TES::Singleton 0x78 0 64; peek uGridsToLoad:General 16
+quit

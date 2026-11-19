@@ -1,0 +1,23 @@
+# The live atlas rebuild, diagnosed and fitted. The game starts at its own atlas size; the module records the
+# viewports the game sets while the atlas is bound, rebuilds the atlas live at 8192 and 2048, and captures
+# each size with the viewport fit off and on. Every measure carries GPU time per pass (vsync off in memory).
+start load rawharness
+console tai
+scene riverwood
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+console coc riverwood
+wait 8
+console fw 81a
+wait 6
+engine viewports; measure base 600; capture base; dump
+engine set fShadowDistance:Display 20000; wait 60; measure shadow_20000 600
+engine set fShadowDistance:Display 3000; wait 60; measure shadow_3000 600
+engine set fShadowDistance:Display 10000; wait 60
+engine atlas 2 8192; set iShadowMapResolution:Display 8192; wait 120; viewports; capture live8192_nofit; measure live8192_nofit 600
+engine fit auto; wait 60; viewports; capture live8192_fit; measure live8192_fit 600
+engine atlas 2 2048; set iShadowMapResolution:Display 2048; wait 120; viewports; capture live2048_fit; measure live2048_fit 600
+engine fit 0; wait 60; viewports; capture live2048_nofit
+engine atlas 2 4096; set iShadowMapResolution:Display 4096; wait 120; viewports; capture back4096
+quit

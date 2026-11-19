@@ -53,6 +53,7 @@ namespace SB::Proxy {
     std::vector<OnDrawCallback>       g_drawCallbacks;
     std::vector<OnRTChangeCallback>   g_rtChangeCallbacks;
     std::vector<OnShaderBindCallback> g_shaderBindCallbacks;
+    std::vector<OnViewportCallback>   g_viewportCallbacks;
     uint32_t g_frameCount = 0;
 
     void LogInit(const char*) {}

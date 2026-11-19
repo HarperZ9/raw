@@ -3,6 +3,7 @@
 // d3d11_proxy.ini, [EngineRT]:
 //   CallGraph=1        decode the game's code once in a background thread (rt_callgraph.cpp)
 //   VTrace=1           trace the vtables listed in engine_rt_vtrace.tsv (rt_vtrace.cpp)
+//   GpuTiming=1       GPU timestamps per pass, reported by every measure (rt_passes.cpp)
 //   OutDir=raw_engine_out
 // Inputs beside the game: engine_rt_refs.tsv (rva, kind setting|global, name) and
 // engine_rt_vtrace.tsv (class, vtable rva, slot count), both generated from the engine map.
@@ -19,6 +20,8 @@
 #include "ProxyAPI.h"
 #include "rt_callgraph.h"
 #include "rt_control.h"
+#include "rt_papyrus.h"
+#include "rt_passes.h"
 #include "rt_vtrace.h"
 
 namespace {
@@ -105,6 +108,10 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     if (const int atlas = IniInt("ShadowAtlas", 0); atlas > 0)
         Log("%s", raw::rt::ResizeShadowAtlas(g_img, g_refs, uint32_t(atlas)).c_str());
     raw::rt::ControlInit(g_img, &g_refs, g_dir, g_out, proxy ? proxy->InvalidateStateCache : nullptr);
+    // GPU time per pass and the shadow atlas's viewports (rt_passes.cpp); GpuTiming=0 keeps the draw counts only
+    raw::rt::PassesInit(g_img, &g_refs, proxy, IniInt("GpuTiming", 1) != 0);
+    Log("passes: proxy API version %u, viewport hook %s", proxy ? proxy->version : 0u,
+        proxy && proxy->version >= 2 ? "on" : "off (proxy too old)");
     if (IniInt("VTrace", 0)) {
         const size_t n = raw::rt::InstallVTrace(g_img, LoadVTrace(), g_out + "\\vt_trace.tsv");
         Log("vtrace: %zu slots traced", n);
@@ -116,6 +123,14 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
         GetPrivateProfileStringA("EngineRT", "VmVtable", "0x1AA0B48", v, sizeof v, ini.c_str());
         const bool ok = raw::rt::InstallPapyrusTiming(g_img, Hex(v), std::strtof(b, nullptr));
         Log("papyrus timing on VirtualMachine vtable %s: %s, budget override %s ms", v, ok ? "on" : "failed", b);
+        // the opcode loop (engine map: the 36-entry jump table under UpdateTasklets)
+        char l[64];
+        GetPrivateProfileStringA("EngineRT", "OpcodeLoop", "0x1462650", l, sizeof l, ini.c_str());
+        if (IniInt("OpcodeLoopTiming", 0)) {
+            std::string sites;
+            const size_t n = raw::rt::InstallOpcodeLoopTiming(g_img, Hex(v), Hex(l), &sites);
+            Log("opcode loop %s timed at %zu call sites: %s", l, n, sites.c_str());
+        }
     }
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (IniInt("CallGraph", 0)) {

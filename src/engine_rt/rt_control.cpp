@@ -1,8 +1,9 @@
-// Engine control: settings, the go-file protocol, frame time and Papyrus timing. Original work, MIT.
+// Engine control: settings, the go-file protocol and frame time. Original work, MIT.
 #include "rt_control.h"
 
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -14,6 +15,8 @@
 
 #include "rt_atlas.h"
 #include "rt_capture.h"
+#include "rt_papyrus.h"
+#include "rt_passes.h"
 
 namespace raw::rt {
 namespace {
@@ -29,27 +32,6 @@ bool g_busy = false;
 uint64_t g_presents = 0;
 void (*g_invalidate)() = nullptr;
 
-// Papyrus timing (written on the game's VM thread, read at present)
-using VmFn = void (*)(void*, float);
-VmFn g_origUpdate = nullptr, g_origTasklets = nullptr;
-std::atomic<int64_t> g_vmTicks{0};
-std::atomic<int64_t> g_vmCalls{0};
-float g_budgetOverride = -1.0f;
-std::atomic<float> g_lastBudget{0.0f};
-
-void Timed(VmFn orig, void* self, float budget) {
-    g_lastBudget.store(budget);
-    if (g_budgetOverride > 0.0f) budget = g_budgetOverride;
-    LARGE_INTEGER a, b;
-    QueryPerformanceCounter(&a);
-    orig(self, budget);
-    QueryPerformanceCounter(&b);
-    g_vmTicks += b.QuadPart - a.QuadPart;
-    ++g_vmCalls;
-}
-void HookUpdate(void* self, float budget) { Timed(g_origUpdate, self, budget); }
-void HookTasklets(void* self, float budget) { Timed(g_origTasklets, self, budget); }
-
 const RefTarget* Find(const std::string& name) {
     for (const auto& r : *g_refs)
         if (r.name == name) return &r;
@@ -64,21 +46,56 @@ void Result(const std::string& json) {
     if (f) { std::fprintf(f, "%s\n", line.c_str()); std::fclose(f); }
 }
 
+uint32_t g_startupAtlas = 0;  // the atlas width before the first live rebuild: what the game's viewports assume
+
 std::string Stats(const char* name, size_t frames) {
     std::vector<double> v(g_frameMs.end() - std::min(frames, g_frameMs.size()), g_frameMs.end());
     double sum = 0, mx = 0;
     for (double x : v) { sum += x; mx = std::max(mx, x); }
     std::sort(v.begin(), v.end());
     const double med = v.empty() ? 0 : v[v.size() / 2], p99 = v.empty() ? 0 : v[size_t(v.size() * 0.99)];
-    const double vmMs = double(g_vmTicks.exchange(0)) * 1000.0 / double(g_freq.QuadPart);
-    const int64_t vmCalls = g_vmCalls.exchange(0);
     char buf[512];
     std::snprintf(buf, sizeof buf,
                   "{\"cmd\":\"measure\",\"name\":\"%s\",\"frames\":%zu,\"mean_ms\":%.3f,\"median_ms\":%.3f,\"p99_ms\":%.3f,"
-                  "\"max_ms\":%.3f,\"vm_ms_total\":%.3f,\"vm_calls\":%lld,\"vm_budget_in\":%.3f}",
-                  name, v.size(), v.empty() ? 0 : sum / double(v.size()), med, p99, mx, vmMs, (long long)vmCalls,
-                  double(g_lastBudget.load()));
-    return buf;
+                  "\"max_ms\":%.3f}",
+                  name, v.size(), v.empty() ? 0 : sum / double(v.size()), med, p99, mx);
+    std::string out = buf;
+    out.insert(out.size() - 1, PapyrusStats());
+    out.insert(out.size() - 1, PassesStats());
+    return out;
+}
+
+// peek <global name or 0xRVA> <off>... <bytes>: from the global's address, each offset dereferences the pointer
+// held there and adds itself; the last number is how many bytes to show as 64-bit words. Game data only, read
+// under structured exception handling.
+static bool ReadU64(const void* p, uint64_t* v) {
+    __try { *v = *static_cast<const volatile uint64_t*>(p); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+std::string Peek(const std::string& name, const std::string& rest) {
+    uint64_t addr = 0;
+    if (name.rfind("0x", 0) == 0) addr = uint64_t(g_img->base) + std::strtoull(name.c_str(), nullptr, 16);
+    else if (const RefTarget* r = Find(name)) addr = uint64_t(g_img->base) + r->rva;
+    else return "{\"cmd\":\"peek\",\"error\":\"no such global\"}";
+    std::vector<uint64_t> nums;
+    std::istringstream in(rest);
+    for (std::string t; in >> t;) nums.push_back(std::strtoull(t.c_str(), nullptr, 0));
+    if (nums.empty()) return "{\"cmd\":\"peek\",\"error\":\"no byte count\"}";
+    const size_t bytes = std::min<uint64_t>(nums.back(), 512);
+    nums.pop_back();
+    for (uint64_t off : nums) {
+        uint64_t v = 0;
+        if (!ReadU64(reinterpret_cast<void*>(addr), &v)) return "{\"cmd\":\"peek\",\"error\":\"unreadable on the way\"}";
+        addr = v + off;
+    }
+    std::string out = "{\"cmd\":\"peek\",\"name\":\"" + name + "\",\"path\":\"" + rest + "\",\"words\":[";
+    char b[32];
+    for (size_t i = 0; i < bytes; i += 8) {
+        uint64_t v = 0;
+        if (!ReadU64(reinterpret_cast<void*>(addr + i), &v)) { out += i ? ",null" : "null"; continue; }
+        std::snprintf(b, sizeof b, "%s\"0x%llX\"", i ? "," : "", (unsigned long long)v);
+        out += b;
+    }
+    return out + "]}";
 }
 
 void PollGoFile() {
@@ -111,7 +128,8 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             g_wait = std::atoi(a.c_str());
             return;
         } else if (op == "measure") {
-            g_vmTicks = 0; g_vmCalls = 0;
+            PapyrusReset();
+            PassesReset();
             g_cmds.push_front("report " + a + " " + b);
             g_wait = std::atoi(b.c_str());
             return;
@@ -120,15 +138,33 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
         } else if (op == "atlas") {
             // atlas <entry> <size>: rebuild a shadow depth target at a new size, live
             const uint32_t size = uint32_t(std::strtoul(b.c_str(), nullptr, 10));
+            if (!g_startupAtlas) {
+                DepthEntryViews e;
+                if (ReadDepthEntry(*g_img, *g_refs, std::atoi(a.c_str()), &e)) g_startupAtlas = e.width;
+            }
             std::string line = ResizeShadowAtlasLive(ctx, *g_img, *g_refs, std::atoi(a.c_str()), size);
             // the renderer's own size global (see ResizeShadowAtlas) follows the texture
             auto* global = reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(g_img->base) + 0x33DCFC0);
             line += "; size global " + std::to_string(*global) + " -> " + std::to_string(size);
             *global = size;
+            // The game's shadow passes keep the viewports of the startup size (measured: 4096 x 4096 after a
+            // rebuild to 8192 or 2048). The fit scales them to the new atlas; "fit 0" turns it off.
+            if (line.find("->") != std::string::npos) PassesSetFit(g_startupAtlas);
             if (g_invalidate) g_invalidate();
             Result("{\"cmd\":\"atlas\",\"result\":\"" + line + "\"}");
+        } else if (op == "fit") {
+            // fit <authored size | auto | 0>: scale the shadow passes' viewports to the atlas while it is bound
+            const uint32_t n = a == "auto" ? g_startupAtlas : uint32_t(std::strtoul(a.c_str(), nullptr, 10));
+            PassesSetFit(n);
+            Result("{\"cmd\":\"fit\",\"authored\":" + std::to_string(n) + "}");
+        } else if (op == "papyrus") {
+            Result(PapyrusCommand(a, b));
+        } else if (op == "viewports") {
+            Result(PassesViewports());
         } else if (op == "probe") {
             Result(ProbeFunction(*g_img, uint32_t(std::strtoul(a.c_str(), nullptr, 16))));
+        } else if (op == "peek") {
+            Result(Peek(a, b));
         } else if (op == "dump") {
             Result(DumpDepthTargets(*g_img, *g_refs));
         } else if (op == "capture") {
@@ -202,10 +238,12 @@ void ControlOnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     if (g_last.QuadPart) {
         g_frameMs.push_back(double(now.QuadPart - g_last.QuadPart) * 1000.0 / double(g_freq.QuadPart));
         if (g_frameMs.size() > 4096) g_frameMs.pop_front();
+        PapyrusOnPresent(g_frameMs.back());
     }
     g_last = now;
     ++g_presents;
     AtlasOnPresent();
+    PassesOnPresent(ctx);
     if (!g_busy) {
         static unsigned tick = 0;
         if (++tick % 15 == 0) PollGoFile();
@@ -235,19 +273,6 @@ std::string ResizeShadowAtlas(const Image& img, const std::vector<RefTarget>& re
     *global = size;
     std::snprintf(out, sizeof out, "shadow atlas: setting and global 0x%X %u -> %u", kShadowSizeGlobal, s0, size);
     return out;
-}
-
-bool InstallPapyrusTiming(const Image& img, uint32_t vmVtable, float budgetOverrideMs) {
-    g_budgetOverride = budgetOverrideMs;
-    auto* vt = reinterpret_cast<uint64_t*>(const_cast<uint8_t*>(img.base) + vmVtable);
-    DWORD old;
-    if (!VirtualProtect(vt + 4, 16, PAGE_READWRITE, &old)) return false;
-    g_origUpdate = reinterpret_cast<VmFn>(vt[4]);
-    g_origTasklets = reinterpret_cast<VmFn>(vt[5]);
-    InterlockedExchange64(reinterpret_cast<volatile LONG64*>(vt + 4), LONG64(&HookUpdate));
-    InterlockedExchange64(reinterpret_cast<volatile LONG64*>(vt + 5), LONG64(&HookTasklets));
-    VirtualProtect(vt + 4, 16, old, &old);
-    return true;
 }
 
 }  // namespace raw::rt

@@ -192,6 +192,7 @@ namespace SB::Proxy
     extern std::vector<OnDrawCallback>       g_drawCallbacks;         // WrappedContext.cpp
     extern std::vector<OnRTChangeCallback>   g_rtChangeCallbacks;     // WrappedContext.cpp
     extern std::vector<OnShaderBindCallback> g_shaderBindCallbacks;   // WrappedContext.cpp
+    extern std::vector<OnViewportCallback>   g_viewportCallbacks;     // WrappedContext.cpp
     extern uint32_t g_frameCount;
 }
 
@@ -216,6 +217,12 @@ static void RegisterOnShaderBindCB(SB::Proxy::OnShaderBindCallback cb)
 {
     if (cb) SB::Proxy::g_shaderBindCallbacks.push_back(cb);
     SB::Proxy::Log("RegisterOnShaderBind callback registered");
+}
+
+static void RegisterOnViewportCB(SB::Proxy::OnViewportCallback cb)
+{
+    if (cb) SB::Proxy::g_viewportCallbacks.push_back(cb);
+    SB::Proxy::Log("RegisterOnViewport callback registered");
 }
 
 static void RegisterOnResizeCB(SB::Proxy::OnResizeCallback cb)
@@ -671,7 +678,7 @@ static void LazyInit()
     }
 
     // Initialize proxy interface
-    s_proxyInterface.version     = 1;
+    s_proxyInterface.version     = 2;
     s_proxyInterface.hdrEnabled  = s_config.hdrEnabled;
     s_proxyInterface.hdrMaxNits  = s_config.hdrMaxNits;
     s_proxyInterface.hdrPaperWhite = s_config.hdrPaperWhite;
@@ -712,6 +719,7 @@ static void LazyInit()
     s_proxyInterface.RegisterOnPhaseChange = RegisterOnPhaseChangeCB;
     s_proxyInterface.SetPassMarker = SetPassMarkerCB;
     s_proxyInterface.RegisterResourceName = RegisterResourceNameCB;
+    s_proxyInterface.RegisterOnViewport = RegisterOnViewportCB;
 
     SB::Proxy::Log("Playground proxy lazy-init complete");
     LoadEngineModules();

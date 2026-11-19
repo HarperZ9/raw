@@ -19,7 +19,9 @@
 #include "BridgeHook.h"
 #include "GBufferComplete.h"
 #include "FrameLedger.h"
+#include <string>
 #include <vector>
+#include <windows.h>
 
 namespace SB::Proxy
 {
@@ -508,9 +510,27 @@ HRESULT STDMETHODCALLTYPE WrappedSwapChain::GetDevice(REFIID riid, void** ppDevi
 
 // ── IDXGISwapChain ──────────────────────────────────────────────────────────
 
+// [Timing] PresentInterval in d3d11_proxy.ini (default -1, the game's own): a run-time override of the sync
+// interval, so frame-time measurements can run with vsync off without touching the game's settings files.
+// Every 600 frames the log records the interval the game asked for and the one sent.
+static UINT EffectiveSyncInterval(UINT asked)
+{
+    static int forced = [] {
+        char path[MAX_PATH];
+        GetModuleFileNameA(nullptr, path, MAX_PATH);
+        std::string ini(path);
+        ini = ini.substr(0, ini.rfind(static_cast<char>(92)) + 1) + "d3d11_proxy.ini";
+        return int(GetPrivateProfileIntA("Timing", "PresentInterval", -1, ini.c_str()));
+    }();
+    const UINT sent = forced >= 0 ? UINT(forced) : asked;
+    if (g_frameCount % 600 == 0) Log("Present frame %u: sync asked %u, sent %u", g_frameCount, asked, sent);
+    return sent;
+}
+
 HRESULT STDMETHODCALLTYPE WrappedSwapChain::Present(UINT SyncInterval, UINT Flags)
 {
     ++g_frameCount;
+    SyncInterval = EffectiveSyncInterval(SyncInterval);
 
     // Log first few frames to confirm hook is active
     if (g_frameCount <= 5)
@@ -705,6 +725,7 @@ HRESULT STDMETHODCALLTYPE WrappedSwapChain::Present1(UINT SyncInterval, UINT Pre
     if (!m_real1) return E_NOINTERFACE;
 
     ++g_frameCount;
+    SyncInterval = EffectiveSyncInterval(SyncInterval);
 
     if (g_frameCount <= 5)
         Log("WrappedSwapChain::Present1 frame %u (sync=%u flags=0x%X)", g_frameCount, SyncInterval, PresentFlags);

@@ -3,6 +3,7 @@
 #include "TonemapPs.h"
 #include "Overlay.h"
 #include "ProxyLog.h"
+#include "SceneLights.h"
 #include "ShaderManager.h"
 
 #include <d3dcompiler.h>
@@ -147,8 +148,13 @@ void Tonemap_BeforeDraw(ID3D11DeviceContext* real)
     D3D11_MAPPED_SUBRESOURCE mp{};
     if (FAILED(real->Map(s.cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mp))) return;
     const TonemapSettings& t = s.set;
+    // The last value is the exposure factor for this frame's kind of cell: ToneX5 in an interior (a cell with no sun
+    // cascades, from the decoded lighting), 1 outside. The game lights its interiors dark on purpose: the Bannered
+    // Mare meters 0.094 against a clear night's 0.22 and still reads darker in the game's frame.
+    const bool interior = !SceneLights_Frame().hasCascades;
+    const float inside = interior && t.x[5] > 0.0f ? t.x[5] : 1.0f;
     const float v[16] = {float(t.mode), t.bias, t.minLum, t.maxLum, float(t.curve), t.key, t.white, float(t.view),
-                         t.adapt, t.ref, t.x[0], t.x[1], t.x[2], t.x[3], t.x[4], t.x[5]};
+                         t.adapt, t.ref, t.x[0], t.x[1], t.x[2], t.x[3], t.x[4], inside};
     std::memcpy(mp.pData, v, sizeof v);
     real->Unmap(s.cb, 0);
     real->PSGetConstantBuffers(5, 1, &s.saved);

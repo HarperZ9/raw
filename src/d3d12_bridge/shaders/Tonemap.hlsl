@@ -54,7 +54,8 @@ float4 main(In i) : SV_Target {
     const float metered = clamp(avg, RA.z, RA.w);
     const float share = metered < RC.y && RC.z > 0.0f ? RC.z : RC.x;
     const float camera = RB.y / RC.y * pow(max(metered / RC.y, 1.0e-4f), -share);
-    const float exposure = (RA.x < 0.5f ? lum.y / avg : camera) * exp2(RA.y);
+    // RX.w: the interior factor the proxy sets per frame (ToneX5 in a cell with no sun cascades, else 1).
+    const float exposure = (RA.x < 0.5f ? lum.y / avg : camera * (RX.w > 0.0f ? RX.w : 1.0f)) * exp2(RA.y);
     float3 mapped;
     float pivot = lum.x;
     if (RB.x < 0.5f) {
@@ -71,7 +72,10 @@ float4 main(In i) : SV_Target {
         const float cu = RX.y > 0.0f ? RX.y : 1.0f, cl = RX.z > 0.0f ? RX.z : cu;
         // Below the key the power runs from ToneX4 at black to ToneX3 at the key, so the deep shadows lift while the
         // middle tones keep the contrast (a night frame lost a tenth of its detail with ToneX4 alone below the key).
-        const float lc = RB.y * pow(l / RB.y, l > RB.y ? cu : lerp(cl, cu, saturate(l / RB.y)));
+        // Above the key the power eases back to 1 by four times the key, so bright snow and sky roll into the
+        // shoulder instead of clipping (the vista at midday clipped 44 % of its pixels at a constant 1.55).
+        const float cHi = lerp(cu, 1.0f, saturate(log2(max(l / RB.y, 1.0f)) * 0.5f));
+        const float lc = RB.y * pow(l / RB.y, l > RB.y ? cHi : lerp(cl, cu, saturate(l / RB.y)));
         mapped = hdr * exposure * RB.z * (saturate(lc * (1.0f + lc / w2) / (1.0f + lc)) / l);
         if (RA.x > 0.5f) { pivot = RB.y * (1.0f + RB.y / w2) / (1.0f + RB.y); }
     } else {

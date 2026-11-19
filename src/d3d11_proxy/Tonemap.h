@@ -30,9 +30,9 @@ struct TonemapSettings
     float ref = 0.3f;        // the reference average
     // ToneX0: the share below the reference (0.001: about none; the game itself does not compensate, and full
     // compensation lifted the inn from 19 to 47 of 255). ToneX1: the white point (3.5). ToneX2: curve 2's hue keep.
-    // ToneX3: contrast above the key (1.55). ToneX4: the power at black, rising to ToneX3 at the key (0.6).
+    // ToneX3: contrast above the key (1.55). ToneX4: the power at black, rising to ToneX3 at the key (0.6). ToneX5: the exposure factor in
+    // interiors (cells with no sun cascades; 0 or 1: none).
     float x[6] = {0.001f, 3.5f, 0.0f, 1.55f, 0.6f, 0.0f};
-};         // ToneX0..5: free values for Tonemap.hlsl (live tuning)
 };
 
 void Tonemap_Set(const TonemapSettings& t);

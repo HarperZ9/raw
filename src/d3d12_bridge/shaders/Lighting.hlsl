@@ -63,7 +63,7 @@ float screenShadow(float3 p, float3 dir, float len, float cone, float jitter, ui
 float knee(float x) { return min(x, (1.0f - resScale.z) * x + 1.0f); }
 float3 knee3(float3 x) { return float3(knee(x.r), knee(x.g), knee(x.b)); }
 
-struct Surface { float3 n, v; float shin, mask, f0, fs, alpha; float3 soft; float3 wrap; };   // f0: the diffuse's Fresnel; fs: the lobe's
+struct Surface { float3 n, v; float shin, mask, f0, alpha; float3 soft; float3 wrap; };
 
 float smooth01(float x) { return x * x * (3.0f - 2.0f * x); }
 
@@ -88,13 +88,9 @@ void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, in
     const float dd = nh * nh * (a2 - 1.0f) + 1.0f;
     const float D = a2 / (PI * dd * dd);
     const float V = 0.5f / (nl * sqrt(nv * nv * (1.0f - a2) + a2) + nv * sqrt(nl * nl * (1.0f - a2) + a2) + 1.0e-6f);
-    const float fc = pow(1.0f - saturate(dot(s.v, h)), 5.0f);
-    const float F = s.f0 + (1.0f - s.f0) * fc;
-    // The lobe's reflectance: Schlick from fs, its grazing rise limited where fs is small (a surface the specular
-    // map leaves dark gets no white rim).
-    const float Fs = s.fs + (saturate(50.0f * s.fs) - s.fs) * fc;
+    const float F = s.f0 + (1.0f - s.f0) * pow(1.0f - saturate(dot(s.v, h)), 5.0f);
     diff += nlD * c * (1.0f - F);
-    spec += PI * D * V * Fs * nl * c;   // the game's light colour is irradiance over pi
+    spec += PI * D * V * F * nl * c;   // the game's light colour is irradiance over pi
 }
 
 #include "DistantLod.hlsli"   // distantLit: distant LOD lit in improved mode (FOL-04)
@@ -152,11 +148,6 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     bool lobe = sp.y > 0.002f && base != 4u && base != 6u;   // the game's own shader had a lobe here
     s.f0 = lobe ? lerp(0.02f, 0.08f, saturate(sp.x * resScale.w)) : 0.04f;
     s.alpha = clamp(sqrt(2.0f / (s.shin + 2.0f)), 0.03f, 1.0f);   // Blinn-Phong exponent to GGX width
-    // The lobe's energy kept: the game adds mask x pow(n.h, s) x light. A normalised Blinn-Phong lobe of the same
-    // exponent under the same light is pi x (s + 8) / (8 pi) x pow x F, so the same light leaves at F = 8 m / (s + 8).
-    // The old lerp(0.02, 0.08, m) took most of a low-gloss lobe away, and leather, cloth and armour (the actors'
-    // clothes most of all) read darker than the game's (rt8, the player's back in the inn: 26.8 against 34.2).
-    s.fs = lobe ? saturate(8.0f * saturate(sp.x * resScale.w) / (s.shin + 8.0f)) : 0.04f;
     // Soft-lit (foliage): the game multiplies its wrap term by the soft-lighting map, which the
     // patched shader writes to RAW's emissive target. Before that channel existed a grey constant
     // fitted on one frame (0.15, tools/lighting/fitsoft.py) stood in; it lost the warm back light.
@@ -166,7 +157,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Softer since the hands and bodies joined the class (rt6-wat-3): at 0.55 / 0.22 / 0.12 the arms read orange
     // against the game's brown.
     s.wrap = skin && !match ? float3(0.30f, 0.12f, 0.06f) : 0.0f.xxx;
-    if (skin && !match) { s.f0 = 0.028f; s.fs = 0.028f; s.alpha = max(s.alpha, 0.38f); }   // skin's own specular: f0 of 0.028, a soft sheen
+    if (skin && !match) { s.f0 = 0.028f; s.alpha = max(s.alpha, 0.38f); }   // skin's own specular: f0 of 0.028, a soft sheen
     if (base == 5u && !any(s.soft > 0.0f)) { s.soft = 0.15f.xxx; }   // a soft-lit shader the patch found no map in
     // Rain (Weather.hlsli), exteriors in improved mode: darker, glossier, puddles flat and mirror-like.
     Wet wet;
@@ -196,7 +187,6 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             s.n = normalize(s.n + float3(-rings, 0.0f));
         }
         s.f0 = lerp(s.f0, 0.02f, max(wet.wet, wet.puddle));
-        s.fs = lerp(s.fs, 0.02f, max(wet.wet, wet.puddle));
         s.mask = max(s.mask, max(wet.wet * 0.6f, wet.puddle));
         lobe = lobe || max(wet.wet, wet.puddle) > 0.2f;
         if (wet.snow > 0.0f) {
@@ -209,7 +199,6 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             s.shin = lerp(s.shin, 2.0f / (0.55f * 0.55f) - 2.0f, wet.snow);
             s.n = normalize(lerp(s.n, ng, wet.snow * 0.4f));   // the ground's bumps show through as mounds
             s.f0 = lerp(s.f0, 0.02f, wet.snow);
-            s.fs = lerp(s.fs, 0.02f, wet.snow);
             s.mask = lerp(s.mask, 0.15f, wet.snow);
             wet.puddle *= 1.0f - wet.snow;
             wet.wet *= 1.0f - wet.snow;
@@ -309,7 +298,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // GGX follows the game's specular map where the game had a lobe, as the game's own term does (mask x scale x lobe):
     // a sharp lobe at f0 0.02 on a surface the map leaves dark (the inn's beams, rt7-glint-1) read as white streaks the
     // game never draws, and a weight full from a mask of 0.25 still left them on the planks (rt7-glint-5).
-    const float specMap = 1.0f;   // GGX: the specular map is in fs (8 m / (s + 8))
+    const float specMap = lobe && !(skin && !match) ? saturate(s.mask * resScale.w) : 1.0f;
     lit += (flags.x & FLAG_GGX) != 0u ? spec * specMap : spec * (lobe ? s.mask * resScale.w : 0.0f);
     // Ray-traced reflection on glossy surfaces, weighted by Schlick Fresnel at the view angle and the
     // game's specular mask; where the ray found nothing the game had on screen, nothing is added.

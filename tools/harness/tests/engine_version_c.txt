@@ -1,0 +1,21 @@
+# Live grids through a worldspace change on the installed runtime (docs/VERSIONS.md): the Whiterun worldspace by cow,
+# which empties the Tamriel grid (GridArray::DetachAll), 7 -> 5 -> 7. Papyrus timing on (the VM vtable hook).
+start load rawharness
+console tai
+scene version_c
+console coc riverwood
+wait 8
+engine grids; papyrus; grids 5
+console cow WhiterunWorld 0 0
+wait 8
+engine grids; view
+console coc riverwood
+wait 8
+engine grids; view; grids 7
+console cow WhiterunWorld 0 0
+wait 8
+engine grids; view
+console coc riverwood
+wait 8
+engine grids; view; measure version_grids 600
+quit

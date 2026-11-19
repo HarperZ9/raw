@@ -171,6 +171,12 @@ inline void ReleaseRtDraw(RtDraw& d)
     d.vb = nullptr; d.ib = nullptr; d.alphaSrv = nullptr; d.uvVb = nullptr; d.blendVb = nullptr; d.bones = nullptr;
 }
 
+// [Lighting] Deterministic=1, a test switch: every per-frame noise seed of the bridge's passes (the
+// lighting's dither, the ray tracing's sample and sky-turn seeds, the GI's frame) is pinned to 0, so the
+// same scene gives the same frame and a pixel diff between builds is a test (tools/harness/tests/txdet.txt).
+// The history buffers still alternate and the cache still ages; with fixed inputs they settle.
+inline bool g_deterministic = false;
+
 struct RtTuning
 {
     bool     enabled = false;        // attached to raw::tx only

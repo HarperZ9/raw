@@ -18,10 +18,9 @@ CBDirtyTracker& CBDirtyTracker::Get()
 
 CBDirtyTracker::CBEntry* CBDirtyTracker::GetOrCreateEntry(ID3D11Resource* pResource)
 {
-    auto it = m_entries.find(pResource);
-    if (it != m_entries.end()) {
-        it->second.mappedThisFrame = true;
-        return it->second.byteWidth ? &it->second : nullptr;  // byteWidth 0: known not to be tracked
+    if (CBEntry* e = Cached(pResource)) {
+        e->mappedThisFrame = true;
+        return e->byteWidth ? e : nullptr;  // byteWidth 0: known not to be tracked
     }
 
     // Query resource type — only track buffers
@@ -134,11 +133,11 @@ bool CBDirtyTracker::InterceptUnmap(ID3D11DeviceContext* realCtx, ID3D11Resource
     if (Subresource != 0)
         return false;
 
-    auto it = m_entries.find(pResource);
-    if (it == m_entries.end() || !it->second.intercepted)
+    CBEntry* e = Cached(pResource);
+    if (!e || !e->intercepted)
         return false;
 
-    auto& entry = it->second;
+    auto& entry = *e;
     entry.intercepted = false;
 
     // Compare what the engine just wrote (staging) vs last committed data (shadow).
@@ -168,14 +167,19 @@ void CBDirtyTracker::OnFrameEnd()
     // Evict entries that weren't mapped this frame.
     // Handles the case where a buffer is destroyed and a new buffer is created
     // at the same pointer — the stale shadow would be incorrect.
+    bool erased = false;
     for (auto it = m_entries.begin(); it != m_entries.end(); ) {
         if (!it->second.mappedThisFrame) {
             it = m_entries.erase(it);
+            erased = true;
         } else {
             it->second.mappedThisFrame = false;
             ++it;
         }
     }
+
+    if (erased)
+        for (auto& s : m_cache) s = CacheSlot{};
 
     // Reset per-frame counters
     m_mapCalls         = 0;

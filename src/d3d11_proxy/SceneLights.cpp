@@ -2,6 +2,7 @@
 #include "SceneLights.h"
 #include "CBDirtyTracker.h"
 #include "ProxyLog.h"
+#include "../dx12/translate/Translate.h"
 
 #include <algorithm>
 #include <cmath>
@@ -42,12 +43,25 @@ struct State
 State& S() { static State s; return s; }
 const float* g_drawWorld = nullptr;
 
-const float* Shadow(ID3D11Buffer* b, uint32_t want)
+const float* Shadow(ID3D11Buffer* b, uint32_t want, uint32_t* sizeOut = nullptr)
 {
-    if (!b) return nullptr;
-    auto& t = CBDirtyTracker::Get();
-    if (t.GetShadowSize(b) < want) return nullptr;
-    return reinterpret_cast<const float*>(t.GetShadowData(b));
+    uint32_t size = 0;
+    const uint8_t* d = b ? CBDirtyTracker::Get().Shadow(b, &size) : nullptr;
+    if (sizeOut) *sizeOut = size;
+    return d && size >= want ? reinterpret_cast<const float*>(d) : nullptr;
+}
+
+// The constant buffers bound to a stage (0 VS, 4 PS), borrowed: on raw::tx they are read without a
+// reference (no Get and Release per draw); on the system runtime the references are dropped at once,
+// which is safe while the buffers stay bound for the draw.
+void BoundCBs(ID3D11DeviceContext* real, UINT stage, UINT start, UINT n, ID3D11Buffer** out)
+{
+    static ID3D11DeviceContext* known = nullptr;
+    static bool layer = false;
+    if (real != known) { known = real; layer = raw::tx::IsLayerContext(real); }
+    if (layer) { raw::tx::PeekConstantBuffers(real, stage, start, n, out); return; }
+    if (stage == 4) real->PSGetConstantBuffers(start, n, out); else real->VSGetConstantBuffers(start, n, out);
+    for (UINT k = 0; k < n; ++k) if (out[k]) out[k]->Release();
 }
 
 // out = rot * v (+ move), rot and move from three rows of a world matrix.
@@ -219,17 +233,16 @@ void SceneLights_BeforeDraw(ID3D11DeviceContext* real)
     State& s = S();
     g_drawWorld = nullptr;
     ID3D11Buffer* ps[3] = {};
-    real->PSGetConstantBuffers(0, 3, ps);
-    struct Release { ID3D11Buffer** b; int n; ~Release() { for (int k = 0; k < n; ++k) if (b[k]) b[k]->Release(); } } r1{ps, 3};
-    const float* g = Shadow(ps[2], 0);
+    BoundCBs(real, 4, 0, 3, ps);
+    uint32_t size = 0;
+    const float* g = Shadow(ps[2], 0, &size);
     if (!g) return;
-    const uint32_t size = CBDirtyTracker::Get().GetShadowSize(ps[2]);
     if (size == kLitPs2 && s.opaque) {   // reflection-cube faces draw lit too, from their own camera
         ID3D11Buffer* vs[1] = {};
-        real->VSGetConstantBuffers(2, 1, vs);
-        Release r2{vs, 1};
-        const float* w = Shadow(vs[0], kLitVs2);
-        if (!w || CBDirtyTracker::Get().GetShadowSize(vs[0]) != kLitVs2) return;
+        BoundCBs(real, 0, 2, 1, vs);
+        uint32_t vsSize = 0;
+        const float* w = Shadow(vs[0], kLitVs2, &vsSize);
+        if (!w || vsSize != kLitVs2) return;
         if (!s.mask) {
             // The lit shader reads the shadow mask at t14 (sun in x, shadowed point lights in y, z, w).
             // Interiors have no cascade draw to find it from, so it is taken here.

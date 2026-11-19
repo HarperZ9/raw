@@ -8,6 +8,18 @@
 
 namespace raw::tx {
 
+const void* g_contextVtable = nullptr;   // set by the first Context (tx_ctx_core.cpp)
+
+bool IsLayerContext(ID3D11DeviceContext* c)
+{
+    return c && g_contextVtable && *reinterpret_cast<void* const*>(c) == g_contextVtable;
+}
+
+void PeekConstantBuffers(ID3D11DeviceContext* c, UINT stage, UINT start, UINT n, ID3D11Buffer** out)
+{
+    static_cast<Context*>(c)->PeekCB(stage, start, n, out);
+}
+
 ID3D12Resource* NativeResource(ID3D11Resource* r)
 {
     ResCore* c = r ? CoreOf(r) : nullptr;

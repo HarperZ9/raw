@@ -17,7 +17,12 @@ using PFN_CreateDevSc = HRESULT(WINAPI*)(IDXGIAdapter*, D3D_DRIVER_TYPE, HMODULE
                                          const DXGI_SWAP_CHAIN_DESC*, IDXGISwapChain**, ID3D11Device**, D3D_FEATURE_LEVEL*,
                                          ID3D11DeviceContext**);
 
-struct TxConfig { int mode = -1; bool debugLayer = false, wrap = false; char agilityPath[MAX_PATH] = {}; UINT agilityVersion = 0; };
+struct TxConfig {
+    int mode = -1;
+    bool debugLayer = false, wrap = false, renameRing = true, ringWriteBack = false;
+    char agilityPath[MAX_PATH] = {};
+    UINT agilityVersion = 0;
+};
 TxConfig& C() { static TxConfig c; return c; }
 
 void Load()
@@ -35,6 +40,9 @@ void Load()
     // [Translate] AgilityPath (the folder of the Agility SDK's D3D12Core.dll) and AgilityVersion (its SDK version).
     GetPrivateProfileStringA("Translate", "AgilityPath", "", C().agilityPath, MAX_PATH, ini.c_str());
     C().agilityVersion = GetPrivateProfileIntA("Translate", "AgilityVersion", 0, ini.c_str());
+    // [Translate] RenameRing (default 1) and RingWriteBack (default 0): how buffer renames get their memory.
+    C().renameRing = GetPrivateProfileIntA("Translate", "RenameRing", 1, ini.c_str()) != 0;
+    C().ringWriteBack = GetPrivateProfileIntA("Translate", "RingWriteBack", 0, ini.c_str()) != 0;
     if (C().mode) Log("[Tx] translate mode %s%s", C().mode == 1 ? "on: the game runs on raw::tx (D3D12)" : "native: system D3D11 behind the harness wrapper",
                       C().debugLayer ? ", D3D12 debug layer on" : "");
 }
@@ -102,6 +110,8 @@ HRESULT MakeTx(IDXGIAdapter* adapter, ID3D11Device** dev, ID3D11DeviceContext** 
     p.debugLayer = C().debugLayer;
     p.agilityPath = C().agilityPath;
     p.agilityVersion = C().agilityVersion;
+    p.renameRing = C().renameRing;
+    p.ringWriteBack = C().ringWriteBack;
     DXGI_ADAPTER_DESC ad{};
     if (adapter && SUCCEEDED(adapter->GetDesc(&ad))) p.adapter = &ad.AdapterLuid;
     ID3D11Device* d = nullptr;

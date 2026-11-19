@@ -47,6 +47,7 @@ RootSig* Device::GetRootSig(const StageBind sb[5], bool compute)
             params[np].Descriptor = {UINT(slot), 0};
             params[np].ShaderVisibility = compute ? D3D12_SHADER_VISIBILITY_ALL : vis[st];
             rs->st[st].cb[slot] = int8_t(np++);
+            rs->st[st].cbBits |= uint16_t(1u << slot);
             cost += 2;
         }
     }

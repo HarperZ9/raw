@@ -87,7 +87,6 @@ fence path, so they do not run, and the bridge's D3D11 stall timer no longer mea
 - The compass location icon (UI, most likely a blend state or a texture format in the Scaleform path).
 - Captures at 3840 x 2160, the inn, and night.
 - A frame-time comparison with vsync handled the same way on both sides.
-- `SetMaximumFrameLatency` is not applied to the flip chain.
 - The debug layer on for one run, to count errors.
 
 ## The Agility SDK (2026-11-19)
@@ -101,3 +100,37 @@ If the factory fails, the system runtime is used and the log says why. Build wit
 The translate suite runs on it with `RAW_TX_AGILITY_PATH` and `RAW_TX_AGILITY_VERSION` set:
 38 of 38 on WARP and on the RTX 4090, with the D3D12 debug layer on and 0 debug errors.
 No SDK binary is in the repository; the SDK's terms for redistributing `D3D12Core.dll` apply to any release that ships it.
+
+## CPU cost of the layer and the proxy (2026-11-19)
+
+Riverwood at 13:00, 1920 x 1080, RTX 4090, the full renderer (raw::tx `Wrap=1` on the Agility SDK, the bridge,
+`[Lighting] Mode=2`, `RtShadows=1`), `[Timing] PresentInterval=0`, 600 frames a measure, two measures a run
+(`tools/harness/tests/txperf.txt`). Numbers: `evidence/tx-cpu-skyrim-2026-11-19.json`. Every run kept the
+ray-tracing scene's draws above 0 (Riverwood 1,947 to 1,955) and left ENB at 232 of 232 hashes.
+
+| Build | Riverwood frame | Batch submission (`BSShaderAccumulator` 0x2A) | Render-thread samples in d3d11.dll |
+|---|---|---|---|
+| master (raw#29) | 11.99 to 12.62 ms | 8.49 to 9.10 ms | 2,573 of 4,770 |
+| uncapped present only | 12.80 to 13.07 ms | 9.10 to 9.31 ms | 2,428 of 4,731 |
+| + tracker, scans, hash, trace, rename ring | 10.16 to 10.37 ms | 6.85 to 7.07 ms | 2,086 of 4,618 |
+| + atomic-free ring, recycled retire sets, proxy lookups | 9.00 to 9.69 ms | 5.87 to 6.39 ms | 1,961 of 4,628 |
+
+- **The 8.33 ms cap is gone.** A sync-0 present now tears on our chain when the system allows it (the log line
+  `swap chain 1920x1080, 3 buffers, tearing on`), the chain keeps three buffers, and the CPU waits on the queue's
+  fence for the frame `latency` presents back. The inn, pinned at 8.33 ms before, now reads 2.9 to 5.3 ms. The
+  inn's camera is not the same from run to run (draws per frame 475 to 3,846), so inn numbers do not compare
+  across builds.
+- **The largest single cause was a lock prefix.** `TX_TRACE` used an atomic add on every call. A locked
+  instruction waits for the write-combining buffers to drain, so each `Unmap` paid for the bytes the proxy had
+  just copied into upload memory. The same stall then moved to the ring's atomic page counter in
+  `RenameBuffer` (170 samples) until that count stopped being atomic (12 samples).
+- **The ring itself is not shown to help.** On the final build, `RenameRing=0` (slab chunks) read 8.99 to 9.20 ms, inside the
+  ring's 9.00 to 9.69 ms. The ring stays on by default because it never measured slower; one run each.
+- **CPU-cached ring pages lose** (`RingWriteBack=1`): 10.97 to 11.88 ms against 10.16 to 10.37 ms on upload
+  pages. One run each.
+- **Pixels.** The scene is live: master against the uncapped build reads mean dE76 3.0, and the final build
+  against master shows the same scene with differences on wind-moved foliage, the walking NPC and cloud shadow.
+  No deterministic image check covers this path yet.
+- **Still on the render thread:** `RtScene::PlaceInstances` and `SetDraws` (about 300 samples, the RT worker's
+  code), the internal references taken by `IASet*` and `SetSRV` (atomic, so they also pay the drain), and
+  `SceneGeometry_OnDraw`'s per-draw mutex, maps and Get calls. Multithreaded recording is not started.

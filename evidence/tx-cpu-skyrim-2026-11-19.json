@@ -1,0 +1,300 @@
+{
+ "date": "2026-11-19",
+ "game": "Skyrim SE 1.6.1170",
+ "gpu": "RTX 4090",
+ "cpu": "Intel Core i7-13700KF",
+ "resolution": "1920x1080",
+ "config": "[Translate] Enabled=1 Wrap=1 (Agility 1.620.1), bridge on, [Lighting] Mode=2 RtShadows=1, [Timing] PresentInterval=0",
+ "test": "tools/harness/tests/txperf.txt",
+ "frames_per_measure": 600,
+ "runs": {
+  "base": {
+   "build": "master 43401a7",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 12.623,
+     "median_ms": 12.422,
+     "p99_ms": 14.7,
+     "batch_submission_ms": 9.0994,
+     "draws": 7105.2
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 11.99,
+     "median_ms": 11.902,
+     "p99_ms": 13.84,
+     "batch_submission_ms": 8.4935,
+     "draws": 7117.8
+    },
+    {
+     "name": "inn",
+     "mean_ms": 8.331,
+     "median_ms": 8.329,
+     "p99_ms": 8.78,
+     "batch_submission_ms": 6.7514,
+     "draws": 3044.5
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 8.334,
+     "median_ms": 8.33,
+     "p99_ms": 8.88,
+     "batch_submission_ms": 6.7357,
+     "draws": 3043.7
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4770,
+    "d3d11.dll": 2573,
+    "SkyrimSE.exe": 1014,
+    "nvwgf2umx.dll": 573
+   },
+   "rt_draws": [
+    1954,
+    1954,
+    730,
+    730
+   ]
+  },
+  "1cap": {
+   "build": "tearing, 3 buffers, fence-bounded latency",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 12.802,
+     "median_ms": 12.712,
+     "p99_ms": 15.07,
+     "batch_submission_ms": 9.0971,
+     "draws": 7105.7
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 13.071,
+     "median_ms": 12.885,
+     "p99_ms": 17.32,
+     "batch_submission_ms": 9.3069,
+     "draws": 7117.4
+    },
+    {
+     "name": "inn",
+     "mean_ms": 3.265,
+     "median_ms": 3.204,
+     "p99_ms": 4.21,
+     "batch_submission_ms": 1.9463,
+     "draws": 2045.7
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 2.926,
+     "median_ms": 2.867,
+     "p99_ms": 3.62,
+     "batch_submission_ms": 1.7803,
+     "draws": 2045.2
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4731,
+    "d3d11.dll": 2428,
+    "SkyrimSE.exe": 1086,
+    "nvwgf2umx.dll": 557
+   },
+   "rt_draws": [
+    1955,
+    1955,
+    236,
+    236
+   ]
+  },
+  "3ring": {
+   "build": "+ flat tracker, split scans, hash, unlocked trace, rename ring (atomic page count)",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 10.159,
+     "median_ms": 10.086,
+     "p99_ms": 11.74,
+     "batch_submission_ms": 6.8461,
+     "draws": 7105.5
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 10.365,
+     "median_ms": 10.287,
+     "p99_ms": 11.88,
+     "batch_submission_ms": 7.0667,
+     "draws": 7113.1
+    },
+    {
+     "name": "inn",
+     "mean_ms": 4.962,
+     "median_ms": 4.843,
+     "p99_ms": 6.38,
+     "batch_submission_ms": 3.5371,
+     "draws": 3845.9
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 5.292,
+     "median_ms": 5.268,
+     "p99_ms": 6.62,
+     "batch_submission_ms": 3.7855,
+     "draws": 3846.1
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4618,
+    "d3d11.dll": 2086,
+    "SkyrimSE.exe": 1270,
+    "nvwgf2umx.dll": 654
+   },
+   "rt_draws": [
+    1947,
+    1947,
+    1126,
+    1126
+   ]
+  },
+  "3wb": {
+   "build": "same, RingWriteBack=1",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 11.875,
+     "median_ms": 11.786,
+     "p99_ms": 13.81,
+     "batch_submission_ms": 8.036,
+     "draws": 7103.3
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 10.965,
+     "median_ms": 10.929,
+     "p99_ms": 12.61,
+     "batch_submission_ms": 7.2711,
+     "draws": 7113.6
+    },
+    {
+     "name": "inn",
+     "mean_ms": 1.913,
+     "median_ms": 1.884,
+     "p99_ms": 2.49,
+     "batch_submission_ms": 0.9203,
+     "draws": 475.0
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 1.918,
+     "median_ms": 1.883,
+     "p99_ms": 2.52,
+     "batch_submission_ms": 0.9173,
+     "draws": 475.0
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4615,
+    "d3d11.dll": 2146,
+    "SkyrimSE.exe": 1240,
+    "nvwgf2umx.dll": 657
+   },
+   "rt_draws": [
+    1947,
+    1948,
+    190,
+    190
+   ]
+  },
+  "5all": {
+   "build": "+ ring without atomics, recycled retire vectors, proxy O(1) lookups, IA skip, cbBits",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 9.688,
+     "median_ms": 9.719,
+     "p99_ms": 11.16,
+     "batch_submission_ms": 6.3934,
+     "draws": 7131.9
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 8.998,
+     "median_ms": 8.774,
+     "p99_ms": 11.36,
+     "batch_submission_ms": 5.8662,
+     "draws": 7138.3
+    },
+    {
+     "name": "inn",
+     "mean_ms": 3.972,
+     "median_ms": 3.879,
+     "p99_ms": 5.42,
+     "batch_submission_ms": 2.5783,
+     "draws": 3034.0
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 3.739,
+     "median_ms": 3.627,
+     "p99_ms": 5.15,
+     "batch_submission_ms": 2.4579,
+     "draws": 3034.1
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4628,
+    "d3d11.dll": 1961,
+    "SkyrimSE.exe": 1356,
+    "nvwgf2umx.dll": 699
+   },
+   "rt_draws": [
+    1950,
+    1950,
+    723,
+    723
+   ]
+  },
+  "5noring": {
+   "build": "final build, RenameRing=0 (slab chunks)",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 8.991,
+     "median_ms": 8.883,
+     "p99_ms": 10.26,
+     "batch_submission_ms": 5.8404,
+     "draws": 7123.9
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 9.201,
+     "median_ms": 9.12,
+     "p99_ms": 10.27,
+     "batch_submission_ms": 6.0566,
+     "draws": 7133.5
+    },
+    {
+     "name": "inn",
+     "mean_ms": 1.939,
+     "median_ms": 1.886,
+     "p99_ms": 2.59,
+     "batch_submission_ms": 0.9178,
+     "draws": 479.0
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 1.909,
+     "median_ms": 1.894,
+     "p99_ms": 2.38,
+     "batch_submission_ms": 0.9248,
+     "draws": 479.0
+    }
+   ],
+   "rt_draws": [
+    1955,
+    1955,
+    192,
+    192
+   ]
+  }
+ }
+}

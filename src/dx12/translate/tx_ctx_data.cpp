@@ -95,9 +95,9 @@ STDMETHODIMP Context::Map(ID3D11Resource* res, UINT sub, D3D11_MAP type, UINT fl
 
 STDMETHODIMP_(void) Context::Unmap(ID3D11Resource* res, UINT sub)
 {
-    TX_TRACE("Context::Unmap");
     ResCore* c = CoreOf(res);
-    if (!c || c->store != Store::Committed || !c->mapChunk.res) { ++g_unmap[2]; return; }
+    if (!c || c->store != Store::Committed || !c->mapChunk.res) { ++g_unmap[2]; return; }   // renamed: nothing to do
+    TX_TRACE("Context::Unmap");
     Chunk ch = c->mapChunk;
     ++g_unmap[c->IsBuffer() ? 0 : 1];
     g_unmapBytes += ch.size;

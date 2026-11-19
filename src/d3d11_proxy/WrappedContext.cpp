@@ -204,6 +204,26 @@ HRESULT STDMETHODCALLTYPE WrappedContext::SetPrivateDataInterface(REFGUID guid, 
 //  Shader binding (HOOKED)
 // ============================================================================
 
+const WrappedContext::BindCache& WrappedContext::VsBind(ID3D11VertexShader* vs, uint64_t gen)
+{
+    BindCache& e = m_vsTab[BindSlot(vs)];
+    if (e.ptr != vs || e.gen != gen) {
+        auto& sm = ShaderManager::Get();
+        e = {vs, gen, sm.GetReplacementVS(vs), sm.GetVSHash(vs)};
+    }
+    return e;
+}
+
+const WrappedContext::BindCache& WrappedContext::PsBind(ID3D11PixelShader* ps, uint64_t gen)
+{
+    BindCache& e = m_psTab[BindSlot(ps)];
+    if (e.ptr != ps || e.gen != gen) {
+        auto& sm = ShaderManager::Get();
+        e = {ps, gen, sm.GetReplacementPS(ps), sm.GetPSHash(ps)};
+    }
+    return e;
+}
+
 void STDMETHODCALLTYPE WrappedContext::VSSetShader(ID3D11VertexShader* pVS, ID3D11ClassInstance* const* ppCI, UINT NumCI)
 {
     if (PG_IsSafeMode()) { m_real->VSSetShader(pVS, ppCI, NumCI); return; }
@@ -212,13 +232,13 @@ void STDMETHODCALLTYPE WrappedContext::VSSetShader(ID3D11VertexShader* pVS, ID3D
     auto& sm = ShaderManager::Get();
     const uint64_t gen = sm.Generation();
     if (m_vsCache.ptr != pVS || m_vsCache.gen != gen)
-        m_vsCache = {pVS, gen, sm.GetReplacementVS(pVS), sm.GetVSHash(pVS)};
+        m_vsCache = VsBind(pVS, gen);
     auto* replacement = static_cast<ID3D11VertexShader*>(m_vsCache.repl);
     m_real->VSSetShader(replacement ? replacement : pVS, ppCI, NumCI);
 
     uint64_t vsHash = m_vsCache.hash;
     if (m_psCache.ptr != m_currentPS || m_psCache.gen != gen)
-        m_psCache = {m_currentPS, gen, sm.GetReplacementPS(m_currentPS), sm.GetPSHash(m_currentPS)};
+        m_psCache = PsBind(m_currentPS, gen);
     uint64_t psHash = m_psCache.hash;
     RenderPhaseDetector::Get().OnShaderBind(psHash, vsHash);
     if (g_frameLedgerArmed) FrameLedgerHooks::OnShaders(psHash, vsHash, m_currentPS);
@@ -239,7 +259,7 @@ void STDMETHODCALLTYPE WrappedContext::PSSetShader(ID3D11PixelShader* pPS, ID3D1
     auto& sm = ShaderManager::Get();
     const uint64_t gen = sm.Generation();
     if (m_psCache.ptr != pPS || m_psCache.gen != gen)
-        m_psCache = {pPS, gen, sm.GetReplacementPS(pPS), sm.GetPSHash(pPS)};
+        m_psCache = PsBind(pPS, gen);
     auto* replacement = static_cast<ID3D11PixelShader*>(m_psCache.repl);
     m_real->PSSetShader(replacement ? replacement : pPS, ppCI, NumCI);
     if (g_gbufferActive) GBuffer_OnPixelShader(pPS);
@@ -247,14 +267,16 @@ void STDMETHODCALLTYPE WrappedContext::PSSetShader(ID3D11PixelShader* pPS, ID3D1
     // Fire shader bind callbacks + phase detector
     uint64_t psHash = m_psCache.hash;
     if (m_vsCache.ptr != m_currentVS || m_vsCache.gen != gen)
-        m_vsCache = {m_currentVS, gen, sm.GetReplacementVS(m_currentVS), sm.GetVSHash(m_currentVS)};
+        m_vsCache = VsBind(m_currentVS, gen);
     uint64_t vsHash = m_vsCache.hash;
     RenderPhaseDetector::Get().OnShaderBind(psHash, vsHash);
     if (g_frameLedgerArmed) FrameLedgerHooks::OnShaders(psHash, vsHash, pPS);
     {   // Coherence membrane (Tier 3.2): which compiled variant is actually BOUND.
         static std::unordered_set<uint64_t> g_seenUse;
+        static uint64_t g_seenRecent[1024] = {};   // pairs already in the set: no hash-set probe on a rebind
         uint64_t key = psHash ^ (vsHash * 1099511628211ULL);
-        if (psHash && g_seenUse.insert(key).second) {
+        uint64_t& recent = g_seenRecent[(key ^ (key >> 29)) & 1023];
+        if (psHash && recent != key && (recent = key, g_seenUse.insert(key).second)) {
             try {
                 std::error_code ec;
                 std::filesystem::create_directories("Data/SKSE/Plugins/RAW/live", ec);

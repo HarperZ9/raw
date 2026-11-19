@@ -446,13 +446,18 @@ def main() -> int:
     p.add_argument("--ini-extra", help="text appended to the proxy ini")
     p.add_argument("--collect", help="folder in the game directory to bring back and remove")
     p.add_argument("--shaders", default="", help="a shader folder to copy beside the game for hot reload (src/d3d12_bridge/shaders)")
-    p.add_argument("--versions", default="", help="the address-table folder (data/versions), deployed as raw_versions")
+    p.add_argument("--versions", default=str(HERE.parent.parent / "data" / "versions"),
+                   help="the address-table folder deployed as raw_versions (default: this checkout's data/versions; "
+                        "'none' leaves it out, and the module then hooks nothing)")
     p.add_argument("--launcher", default="direct", choices=["direct", "skse"], help="start SkyrimSE.exe (default) or skse64_loader")
     p.add_argument("--plugin", default="", help="a test plugin folder (tools/harness/plugin.py), deployed for this run only")
     p.add_argument("--skse-file", action="append", default=[],
                    help="a file placed in Data/SKSE/Plugins for this run only (docs/SKSE_HOSTING.md)")
     p.add_argument("--ini", default="", help="a d3d11_proxy.ini to deploy instead of the lighting one (the translate tests)")
-    return Runner(p.parse_args()).run()
+    a = p.parse_args()
+    if a.versions.lower() == "none":
+        a.versions = ""
+    return Runner(a).run()
 
 
 if __name__ == "__main__":

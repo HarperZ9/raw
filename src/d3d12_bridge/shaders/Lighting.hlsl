@@ -293,7 +293,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // The game's lobe exists only in shaders with a shininess exponent (gloss > 0).
     // Landscape shaders carry no lobe (their slot 1 is a colour layer); the exponent found in parallax
     // shaders belongs to another term (a lobe there doubles the error, tools/lighting/fitsoft.py).
-    lit += (flags.x & FLAG_GGX) != 0u ? spec : spec * (lobe ? s.mask * resScale.w : 0.0f);
+    // GGX follows the game's specular map where the game had a lobe, as the game's own term does (mask x scale x lobe):
+    // a sharp lobe at f0 0.02 on a surface the map leaves dark (the inn's beams, rt7-glint-1) read as white streaks the
+    // game never draws, and a weight full from a mask of 0.25 still left them on the planks (rt7-glint-5).
+    const float specMap = lobe && !(skin && !match) ? saturate(s.mask * resScale.w) : 1.0f;
+    lit += (flags.x & FLAG_GGX) != 0u ? spec * specMap : spec * (lobe ? s.mask * resScale.w : 0.0f);
     // Ray-traced reflection on glossy surfaces, weighted by Schlick Fresnel at the view angle and the
     // game's specular mask; where the ray found nothing the game had on screen, nothing is added.
     if (rt && (flags.x & FLAG_REFLECT) != 0u && lobe) {

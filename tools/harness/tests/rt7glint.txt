@@ -1,0 +1,26 @@
+# The white streaks on the inn's beams in improved mode (rt7-tone-4): the same view with each glossy term off in turn,
+# the reflection ray, GGX specular, the untraced lights' shared ray and its reuse.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 8
+console coc whiterunbanneredmare
+wait 10
+console player.setangle x 0
+console player.setangle z 180
+wait 3
+scene inn
+keyframe g steps=game,improved hold=40
+reload ini RtReflect=0
+keyframe g_noreflect steps=improved hold=40
+reload ini RtReflect=1 GgxSpecular=0
+keyframe g_noggx steps=improved hold=40
+reload ini GgxSpecular=1 RtRest=0
+keyframe g_norest steps=improved hold=40
+reload ini RtRest=1 RtRestReuse=0
+keyframe g_noreuse steps=improved hold=40
+reload ini RtRestReuse=1 View=14
+keyframe g_v14 steps=improved hold=40
+reload ini View=0
+quit

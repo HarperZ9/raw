@@ -134,7 +134,10 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float path = length(worldAt(float2(q), Depth.Load(int3(q, 0))) - p);
                 const float3 T = exp(-waterA.z * float3(2.2f, 1.0f, 0.7f) * path);
                 const float3 scatter = float3(0.05f, 0.10f, 0.11f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.0f.xxx) * 2.0f;
-                body = lerp(game.rgb, (bed + caus) * T + scatter * (1.0f - T), saturate(waterB.z));
+                // Past a cell the game's own water takes over again: from high up the distant river read navy with no sky in
+                // it (rt7-far-6), where the bed is a few pixels and its depth says little.
+                const float nearW = 1.0f - smoothstep(4096.0f, 8192.0f, length(p));
+                body = lerp(game.rgb, (bed + caus) * T + scatter * (1.0f - T), saturate(waterB.z) * nearW);
             }
             const uint view = uint(waterB.x + 0.5f);
             col = refr ? lerp(body, refl, saturate(F * waterA.x)) + glint : lerp(game.rgb, refl, saturate(F * waterA.x)) + caus * (1.0f - F) + glint;

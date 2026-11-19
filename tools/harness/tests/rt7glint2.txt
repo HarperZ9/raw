@@ -1,0 +1,46 @@
+# The inn's beams after the specular map weight (Lighting.hlsl specMap): GGX on against off at five headings, the
+# white-streak share of each frame beside the game's (rt7-glint-1 read 0.274 % on against 0.003 % off before the weight).
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 8
+console coc whiterunbanneredmare
+wait 10
+console player.setangle x 0
+console player.setangle z 180
+wait 3
+scene inn
+mouse 0 500
+wait 2
+keyframe h0 steps=game,improved hold=40
+reload ini GgxSpecular=0
+keyframe h0_noggx steps=improved hold=30
+reload ini GgxSpecular=1
+mouse 1400 0
+wait 2
+keyframe h1 steps=game,improved hold=40
+reload ini GgxSpecular=0
+keyframe h1_noggx steps=improved hold=30
+reload ini GgxSpecular=1
+mouse 1400 0
+wait 2
+keyframe h2 steps=game,improved hold=40
+reload ini GgxSpecular=0
+keyframe h2_noggx steps=improved hold=30
+reload ini GgxSpecular=1
+mouse 1400 0
+wait 2
+keyframe h3 steps=game,improved hold=40
+reload ini GgxSpecular=0
+keyframe h3_noggx steps=improved hold=30
+reload ini GgxSpecular=1
+mouse 1400 0
+wait 2
+keyframe h4 steps=game,improved hold=40
+reload ini GgxSpecular=0
+keyframe h4_noggx steps=improved hold=30
+reload ini GgxSpecular=1
+mouse 1400 0
+wait 2
+quit

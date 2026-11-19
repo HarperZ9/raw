@@ -1,4 +1,5 @@
-# The hair's tint and the skin's in-place albedo (the inn's NPC, game against improved), then the floating skinned
+# The hair's tint and the skin's in-place albedo (the inn's NPC, then a red-haired one placed in front, game against
+# improved), then the floating skinned
 # triangles in third person at Riverwood: the primary-ray view with the skin check dropping both kinds (RtSkinCull=1),
 # neither (0) and stretched ones only (2), beside the game's frame. The log carries the depth at the first floating corner.
 start load rawharness
@@ -10,6 +11,10 @@ keyframe c steps=game,improved hold=60
 reload ini View=12
 keyframe c_class steps=improved hold=30
 reload ini View=0
+console player.placeatme 1A696
+walk s 1.0
+wait 3
+keyframe c_red steps=game,improved hold=60
 scene river
 console coc riverwood
 wait 10

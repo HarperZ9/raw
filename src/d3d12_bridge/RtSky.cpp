@@ -1,6 +1,6 @@
 // RtSky: see the header. Original work, MIT.
 #include "RtSky.h"
-#include "rt_sky_filter.h"   // kDxil_rt_sky_filter (dxc, cs_6_5)
+#include "rt_sky_filter.h"   // kDxil_rt_sky_filter (dxc, cs_6_6)
 
 namespace raw::bridge
 {

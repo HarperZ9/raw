@@ -54,6 +54,6 @@ Edit to frame against a relaunch: a relaunch of the same test to the same cell t
 
 `RtShadow.hlsl` (the sun, light, sky and reflection rays) and `RtSkyFilter.hlsl` (the sky and bounce
 filter) reload with the lighting shaders when the folder holds them and the ray-tracing scene runs
-(`RtShadows=1` on raw::tx). They compile as `cs_6_5`; the new pipelines replace the old ones once the
+(`RtShadows=1` on raw::tx). They compile as `cs_6_6`; the new pipelines replace the old ones once the
 GPU has finished the frames in flight. A refused or broken shader leaves every old pipeline in place
 and shows the error in the overlay, as for the lighting shaders.

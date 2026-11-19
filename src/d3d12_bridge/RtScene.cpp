@@ -1,6 +1,6 @@
 // RtScene: see the header. Original work, MIT.
 #include "RtScene.h"
-#include "rt_shadow.h"   // kDxil_rt_shadow (dxc, cs_6_5)
+#include "rt_shadow.h"   // kDxil_rt_shadow (dxc, cs_6_6)
 
 #include <algorithm>
 #include <cstring>
@@ -109,7 +109,20 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
     if (!dev || FAILED(dev->QueryInterface(IID_PPV_ARGS(&m_dev)))) { err = "no ID3D12Device5"; return false; }
     D3D12_FEATURE_DATA_D3D12_OPTIONS5 o5{};
     m_dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &o5, sizeof o5);
+    // The device's highest shader model and DXR tier, as the driver reports them (the system runtime
+    // without the Agility SDK answers up to what it knows; the loop asks from the newest down).
+    D3D12_FEATURE_DATA_SHADER_MODEL sm{};
+    for (int v = 0x69; v >= 0x60; --v) {
+        sm.HighestShaderModel = static_cast<D3D_SHADER_MODEL>(v);
+        if (SUCCEEDED(m_dev->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof sm))) break;
+    }
+    D3D12_FEATURE_DATA_D3D12_OPTIONS7 o7{};
+    m_dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &o7, sizeof o7);
+    if (m_log)
+        m_log("[RT] device: shader model %d.%d, DXR tier %d.%d, mesh shader tier %d, sampler feedback tier %d", int(sm.HighestShaderModel) >> 4,
+              int(sm.HighestShaderModel) & 15, int(o5.RaytracingTier) / 10, int(o5.RaytracingTier) % 10, int(o7.MeshShaderTier), int(o7.SamplerFeedbackTier));
     if (o5.RaytracingTier < D3D12_RAYTRACING_TIER_1_1) { err = "DXR tier 1.1 (inline ray queries) not supported"; return false; }
+    if (sm.HighestShaderModel < D3D_SHADER_MODEL_6_6) { err = "shader model 6.6 not supported"; return false; }
     const auto AS = D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, UA = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     bool ok = Buffer(m_blasHeap, kBlasHeap, D3D12_HEAP_TYPE_DEFAULT, AS, true, L"rt blas heap") &&
               Buffer(m_scratch, kScratch, D3D12_HEAP_TYPE_DEFAULT, UA, true, L"rt scratch") &&

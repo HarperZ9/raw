@@ -1,6 +1,6 @@
 // RtAlpha: see the header. Original work, MIT.
 #include "RtAlpha.h"
-#include "rt_alpha_uv.h"     // kDxil_rt_alpha_uv (dxc, cs_6_5)
+#include "rt_alpha_uv.h"     // kDxil_rt_alpha_uv (dxc, cs_6_6)
 #include "rt_alpha_mask.h"   // kDxil_rt_alpha_mask
 
 #include <algorithm>

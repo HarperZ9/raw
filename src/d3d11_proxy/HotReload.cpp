@@ -81,8 +81,8 @@ void Start(State& s)
         std::error_code ec;
         c.hasRt = fs::exists(dir + L"\\RtShadow.hlsl", ec) && fs::exists(dir + L"\\RtSkyFilter.hlsl", ec);
         if (c.hasRt) {
-            c.rt = raw::bridge::CompileHlsl(dir + L"\\RtShadow.hlsl", L"main", L"cs_6_5", dxc);
-            c.sky = raw::bridge::CompileHlsl(dir + L"\\RtSkyFilter.hlsl", L"main", L"cs_6_5", dxc);
+            c.rt = raw::bridge::CompileHlsl(dir + L"\\RtShadow.hlsl", L"main", L"cs_6_6", dxc);
+            c.sky = raw::bridge::CompileHlsl(dir + L"\\RtSkyFilter.hlsl", L"main", L"cs_6_6", dxc);
         }
         return c;
     });

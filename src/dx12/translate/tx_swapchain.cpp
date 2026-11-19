@@ -64,7 +64,11 @@ private:
     ID3D11Texture2D* front_ = nullptr;   // what the application draws into
     HANDLE waitable_ = nullptr;          // frame latency: Present waits here, as D3D11's Present blocks
     UINT latency_ = 0;                   // the value applied to the chain
+    bool tearing_ = false;               // the chain allows tearing presents (sync 0 runs uncapped)
+    uint64_t presents_ = 0;
+    uint64_t frameSerial_[8] = {};       // the submission that ended each of the last 8 frames
     void ApplyLatency();
+    UINT ChainFlags() const;
 };
 
 HRESULT SwapChain::Init(const DXGI_SWAP_CHAIN_DESC& desc)
@@ -75,11 +79,18 @@ HRESULT SwapChain::Init(const DXGI_SWAP_CHAIN_DESC& desc)
     d.Format = StripSrgb(desc.BufferDesc.Format);   // flip-model buffers cannot be sRGB; the stable texture is
     d.SampleDesc.Count = 1;
     d.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    d.BufferCount = desc.BufferCount < 2 ? 2 : desc.BufferCount;
+    // Three buffers at least: with two, a sync-0 present waits for the queued buffer to leave the screen,
+    // which holds the frame rate to the display's refresh even with tearing unavailable.
+    d.BufferCount = desc.BufferCount < 3 ? 3 : desc.BufferCount;
     d.Scaling = DXGI_SCALING_STRETCH;
     d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     d.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
-    d.Flags = (desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) | DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+    ComPtr<IDXGIFactory5> f5;
+    BOOL tear = FALSE;
+    if (SUCCEEDED(dev_->factory.As(&f5)) &&
+        SUCCEEDED(f5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &tear, sizeof(tear))))
+        tearing_ = tear != FALSE;
+    d.Flags = ChainFlags();
     ComPtr<IDXGISwapChain1> sc1;
     HRESULT hr = dev_->factory->CreateSwapChainForHwnd(dev_->queue.Get(), desc.OutputWindow, &d, nullptr, nullptr, &sc1);
     if (FAILED(hr)) return hr;
@@ -90,7 +101,14 @@ HRESULT SwapChain::Init(const DXGI_SWAP_CHAIN_DESC& desc)
     desc_.BufferDesc.Height = d.Height;
     waitable_ = sc_->GetFrameLatencyWaitableObject();
     ApplyLatency();
+    Log("swap chain %ux%u, %u buffers, tearing %s", d.Width, d.Height, d.BufferCount, tearing_ ? "on" : "unavailable");
     return AcquireBuffers();
+}
+
+// Tearing only on this chain: the display mode and the system's settings stay as they are.
+UINT SwapChain::ChainFlags() const
+{
+    return (tearing_ ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0u) | DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
 }
 
 // The device's maximum frame latency (IDXGIDevice1::SetMaximumFrameLatency, 3 unless the application
@@ -155,17 +173,27 @@ STDMETHODIMP SwapChain::Present(UINT sync, UINT flags)
     t.Flush(cl);
     ++ctx->Rec().cmdCount;
     ctx->MarkDirty(D_SCAN);
-    ctx->FlushInternal();
+    const uint64_t serial = ctx->FlushInternal();
+    // Sync 0 is a tearing present when the chain allows it; the flag is invalid with any other interval.
+    if (sync == 0 && tearing_ && !(flags & DXGI_PRESENT_TEST)) flags |= DXGI_PRESENT_ALLOW_TEARING;
     HRESULT hr = sc_->Present(sync, flags);
-    static uint64_t presents = 0;
-    if (++presents % 600 == 0) MapStatsLog(600);
+    if (flags & DXGI_PRESENT_TEST) return hr;
+    const uint64_t frame = presents_++;
+    frameSerial_[frame % 8] = serial;
+    if (presents_ % 600 == 0) MapStatsLog(600);
     dev_->Reclaim();
     // At most `latency` frames queued: the CPU waits for the oldest to leave the queue, as the system
     // runtime does inside Present.
     ApplyLatency();
-    // With sync 0 (vsync off, [Timing] PresentInterval=0) the frame-latency object still only signals at the
-    // display's refresh, which held every frame-time measurement at 8.33 ms on a 120 Hz display; skip it then.
-    if (waitable_ && sync != 0 && !(flags & DXGI_PRESENT_TEST)) WaitForSingleObjectEx(waitable_, 1000, TRUE);
+    if (sync != 0) {
+        if (waitable_) WaitForSingleObjectEx(waitable_, 1000, TRUE);
+    } else {
+        // With sync 0 the frame-latency object still signals only at the display's refresh (it held every
+        // frame-time measurement at 8.33 ms on a 120 Hz display). The bound comes from the queue's own fence
+        // instead: the CPU waits for the frame `latency` presents back to finish on the GPU, never for a vblank.
+        const uint64_t n = latency_ ? (latency_ < 8 ? latency_ : 7) : 3;
+        if (frame >= n) dev_->WaitFor(frameSerial_[(frame - n) % 8]);
+    }
     return hr;
 }
 
@@ -174,8 +202,9 @@ STDMETHODIMP SwapChain::ResizeBuffers(UINT count, UINT w, UINT h, DXGI_FORMAT f,
     TX_TRACE("SwapChain::ResizeBuffers");
     ReleaseBuffers();
     if (f != DXGI_FORMAT_UNKNOWN) desc_.BufferDesc.Format = f;
-    HRESULT hr = sc_->ResizeBuffers(count ? (count < 2 ? 2 : count) : 0, w, h, StripSrgb(f),
-                                    (flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) | DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT);
+    // The chain's flags stay those it was made with (tearing cannot be switched by a resize).
+    (void)flags;
+    HRESULT hr = sc_->ResizeBuffers(count ? (count < 3 ? 3 : count) : 0, w, h, StripSrgb(f), ChainFlags());
     if (FAILED(hr)) return hr;
     DXGI_SWAP_CHAIN_DESC1 d{};
     sc_->GetDesc1(&d);

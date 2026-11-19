@@ -110,6 +110,7 @@ class Service:
         out.mkdir(parents=True, exist_ok=True)
         started = now_ms()
         self.current = {"id": rid, "kind": kind, "requester": req.get("requester")}
+        self.s.current_id, self.s.cancel_dir = rid, Path(self.cfg.root) / "cancel"
         self.write_state()
         self.s.log(f"request {rid} ({req.get('requester')}): {kind} {json.dumps(args)[:200]}")
         result = {"id": rid, "kind": kind, "requester": req.get("requester"), "args": args, "ok": True, "error": None}

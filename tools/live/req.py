@@ -58,6 +58,12 @@ def main() -> int:
     if a.kind == "queue":
         print(json.dumps(q.pending(), indent=1))
         return 0
+    if a.kind == "cancel":   # a file, not a queued request: the running request checks it between its steps
+        (Path(a.root) / "cancel").mkdir(parents=True, exist_ok=True)
+        for rid in a.pairs:
+            (Path(a.root) / "cancel" / rid.split("=")[-1]).write_text(a.who, encoding="utf-8")
+        print(json.dumps({"cancel": a.pairs}))
+        return 0
     if a.kind == "state":   # the service's own file, no request
         print((Path(a.root) / "state.json").read_text(encoding="utf-8"))
         return 0

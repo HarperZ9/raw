@@ -1,0 +1,27 @@
+# The second half of engine_version (docs/VERSIONS.md): live grids through a worldspace change, the inn at night, and
+# GPU time per pass is left to engine control 8. Starts at Whiterun so the first worldspace change is the grid change.
+start load rawharness
+console tai
+scene version_b
+console coc whiterunbanneredmare
+wait 8
+console coc riverwood
+wait 8
+engine grids; grids 5
+console coc whiterundragonsreach
+wait 8
+engine grids; view
+console coc riverwood
+wait 8
+engine grids; view; grids 7
+console coc whiterundragonsreach
+wait 8
+console coc riverwood
+wait 8
+engine grids; view; measure version_back 300
+console set gamehour to 22
+console coc whiterunbanneredmare
+wait 8
+keyframe inn steps=game,improved hold=40
+engine lights; view; live 300; measure version_inn 300
+quit

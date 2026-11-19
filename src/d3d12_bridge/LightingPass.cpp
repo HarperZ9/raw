@@ -265,7 +265,10 @@ private:
         if (t.clouds && t.mode == 2 && !interior) f |= kClouds;
         u.flags[0] = f;
         u.clouds[0] = std::fmin(1.0f, std::fmax(t.cloudCover, t.cloudCover + (0.92f - t.cloudCover) * t.weatherCloud));
-        u.clouds[1] = t.cloudBase; u.clouds[2] = t.cloudThickness; u.clouds[3] = t.cloudShadow;
+        u.clouds[1] = t.cloudBase; u.clouds[2] = t.cloudThickness;
+        // An overcast weather's sun is already the light that came through its clouds (the game dims it): the
+        // clouds' shadow fades as the weather's cloud cover rises, or rain darkened the frame twice (2026-11-19).
+        u.clouds[3] = t.cloudShadow * (1.0f - 0.85f * t.weatherCloud);
         u.cloudWind[0] = t.cloudWindX; u.cloudWind[1] = t.cloudWindY; u.cloudWind[2] = t.cloudDensity; u.cloudWind[3] = t.cloudHistory;
         std::memcpy(u.prevWorldToClip, m_prevWorldToClip, 64);
         std::memcpy(m_prevWorldToClip, s.worldToClip, 64);

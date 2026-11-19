@@ -227,3 +227,111 @@ version gated puddles by the shading normal and found none on the cobbled path. 
 Identical settings traced in 1.7 to 2.5 ms in some sessions and 5.6 to 7.9 ms in others (rt3-skin-1,
 rt3-wet-2), and the cause is not found. It is not the code under test: within each run the dry and
 off-switch baselines move with it. Compare the deltas within one run.
+
+## Weather, clouds, tone map, skin and a reference (2026-11-19)
+
+All at 3840 x 2160 on the RTX 4090 with the game on raw::tx; every session left ENB at 232 of 232 hashes and
+restored the settings files by hash. Images: `ingame-rt5-2026-11-19-*` in the mission-control folder.
+
+**The sheet beside the player.** `RtSkinCheck.hlsl` runs after the skinning. It copies each skinned draw's
+indices into RAW's own 32-bit pool and makes a triangle degenerate when either check fails:
+- stretched: an edge longer than `RtSkinRatio` (4) times its bind length and `RtSkinMin` (24) units;
+- floating: a corner that lands on screen in front of the nearest surface the game drew within 5 x 5 pixels,
+  by more than 8 units plus 2 % of its distance.
+
+The check logs its counts every 120 frames, worst draws first, with one bad corner in full. In third person
+at Riverwood (rt5-sc-6) about 2,200 of 89,000 skinned triangles are stretched and 5,700 floating. The sheet
+is gone from the primary-ray view, and the body keeps its outline (`actors-sheet-before-after-game`).
+
+The cause is not found. The bad corners sit 200 to 500 units in front of the game's surface on the player's
+body draw (1,896 vertices, float positions, stride 40). Their weights sum to 1 and their indices are in range;
+corners on bones 34 and 39 go wrong while bones 2, 3 and 18 place right. Three causes are ruled out:
+- the bone slot: palettes from slots 9 and 10 give the same counts, and slot 8 gives three times as many;
+- an index past the vertex count: none found;
+- the ratio test: at 1.2 times the bind length it flags 43 % of all triangles, so skinned edges grow past
+  their bind lengths in normal poses and that test cannot be tightened.
+
+Off-screen bad corners are not caught, so a shadow cast by one stays.
+
+**Weather end to end** (rt5-wx-3, test `rtweather2`). The engine module reads `Sky` each present and
+reports to the proxy, and `WeatherDrive` drives the surfaces. `fw 10a241` is a rain weather (flags 4) and
+`fw c8221` a snow weather (flags 8); both were read back in game, with the candidates in `wxfind`.
+
+The surfaces followed the game's weather:
+
+| Stage | Wetness | Puddles | Snow |
+|---|---|---|---|
+| Dry | 0 | 0 | 0 |
+| Rain | 0.96 | 0.48 | 0 |
+| Rain, later | 1 | 0.88 | 0 |
+| Snow | 0.90 (slowly drying) | | 1 |
+
+The soak, puddle and snow times were short for the test. The game's cloud report sets the cloud cover.
+Image: `weather-e2e-dry-rain-snow-game-vs-raw`.
+
+**Engine lights.** `RAW_EngineLights` joins the decoded light list (`SceneLights.cpp`, `[Lighting]
+EngineLights`). In Riverwood its one point light matched the decoded light at 0.0 units, with a colour ratio
+of 0.999. Lights that no visible draw carries join unshadowed, and the rays shadow them. The many-light path
+is the one that existed: clusters, plus three ray-traced lights a pixel. No ReSTIR is built yet.
+
+**Rain and snow.** `Weather.hlsli` adds rain rings on puddles while rain falls: a world-fixed grid of drops
+that tilts the water's normal and bends the reflection lookup. Puddles hide more of the ground (albedo times
+0.18). Snow albedo sits near 0.56 with glints that follow the camera. At 0.8, then 0.68, snow clipped to white
+in the game's tone map. In full sun it still reads near white without RAW's tone map.
+
+**Clouds** (`Clouds.hlsl`, `CloudCommon.hlsli`, `[Lighting] Clouds`, `CloudCover` and related keys). One
+layer of world height 36,000 to 50,000 units is marched at quarter size: 40 steps, 4 sun steps, three
+multiple-scattering octaves and a two-lobe phase, with temporal history found by the ray's direction. It
+composites on the sky pixels, which this pass owns (view 10). The same density field gives three more things:
+- the clouds' shadow on the ground (SKY-02, view 11);
+- one sample every third step of the fog's sun march, so shafts form between clouds (SKY-04);
+- a fading shadow as the weather's cloud cover rises, because an overcast weather's sun is already dimmed
+  by the game.
+
+| rt5-cl-3, Riverwood 11:00 | Lighting stage | Fog stage |
+|---|---|---|
+| Clouds off | 0.58 ms | 0.50 ms |
+| Default cover (0.35) | 0.98 ms | 0.70 ms |
+| Cover 0.75 | 1.05 ms | 0.70 ms |
+
+**Tone map and exposure** (`Tonemap.h`, `TonemapPs.h`, `[Lighting] Tonemap=1`, off by default). The game's
+tone map shader (ps `99d22a3d198a3b69`, found in a frame capture) is replaced by hash with RAW's, which keeps
+the same bindings. The replica control, the game's exposure and curve through RAW's shader, matches the game
+frame's channel means to 0.03 of 255; per-pixel differences follow wind and anti-aliasing.
+
+In camera mode the metered average maps to a key of 0.4, with a floor of 0.3. In Riverwood at 13:00 the
+game's adapted average and its target both read 0.46. A filmic curve (the fitted ACES curve, Narkowicz 2015)
+follows, then the game's imagespace grade, applied as the game applies it. Riverwood mean pixel values:
+
+| View | Game | RAW (improved lighting and tone map) |
+|---|---|---|
+| Day | 98.6 | 87.6 |
+| Night | 39.5 | 30.0 |
+
+**Skin.** Lit shaders that read 2D maps at t3 and t4 are material class 10. The face shader is one of them
+(ps `c49dc9fe5ca9dd4c`); hands and body still class as soft-lit. Skin gets a red-weighted wrap past the
+terminator, a reddened shadow edge and skin's own specular (view 12 colours the classes). There is no
+screen-space scattering blur yet.
+
+**A path-traced reference** (`RtDebug=6`, view 7). It renders the light each pixel receives:
+- the sun and one point light, by next-event estimation with shadow rays;
+- three diffuse bounces on the meshes' colour copies;
+- the game's directional ambient as the sky;
+- no radiance cache and no screen lookups.
+
+Samples accumulate over 1,000 held frames. View 13 gives the same quantity from the lighting pass.
+`tools/lighting/flip.py` is FLIP written from the 2020 paper; it is not checked against NVIDIA's code. Run at
+quarter size (16.75 pixels a degree):
+
+| FLIP against the reference (lower is closer) | RAW improved | Game's model (match) |
+|---|---|---|
+| Riverwood 13:00 | 0.389 | 0.506 |
+| Bannered Mare | 0.317 | 0.497 |
+
+The inn reference ghosts a person who walked during accumulation. The reference is darker than RAW in deep
+shadow, and it lacks emissive surfaces and sky radiance beyond the ambient, so it is a reference for this
+light model, not ground truth.
+
+**Not done:** water reflection, refraction and caustics, because water is drawn after this pass. Also not
+done: POM, the screen-space scattering blur, async compute, ReSTIR, and ENB or Community Shaders comparisons
+(no such setup exists). SER and SM 6.9 are skipped, waiting on approval.

@@ -72,7 +72,9 @@ bool ReadDraw(uint64_t pass, Raw* r, char* path, size_t pathMax) {
         r->geo = geo;
         std::memcpy(r->pos, geo + 0xE4, 12);
         std::memcpy(&r->radius, geo + 0xF0, 4);
-        if (!(r->radius > 0.5f && r->radius < 4096.0f)) return no(6);
+        // over 400 units the glow is a mist or spray plane, not a source (ec7-4: radii of 480 to 1,540 were mist
+        // over water and a whole-room effect in the inn)
+        if (!(r->radius > 0.5f && r->radius < 400.0f)) return no(6);
         const float a = std::clamp(base[3], 0.0f, 1.0f);
         for (int i = 0; i < 3; ++i) r->color[i] = std::clamp(base[i], 0.0f, 16.0f) * scale * a;
         if (r->color[0] + r->color[1] + r->color[2] < 0.02f) return no(5);
@@ -92,7 +94,9 @@ void Note(uint64_t pass) {
     char buf[96] = {};
     if (!ReadDraw(pass, &r, buf, sizeof buf)) return;
     const std::string path = Lower(buf, sizeof buf);
-    r.flags = kLightEmitter | (Contains(path, kFire) ? kLightFire : 0u) | (Contains(path, kMagic) ? kLightMagic : 0u);
+    // fire wins over magic: ember and spark textures belong to fires
+    const bool fire = Contains(path, kFire);
+    r.flags = kLightEmitter | (fire ? kLightFire : 0u) | (!fire && Contains(path, kMagic) ? kLightMagic : 0u);
     // a texture named for neither: warm colours read as fire
     if (!(r.flags & (kLightFire | kLightMagic)) && r.color[0] > 1.3f * r.color[2] && r.color[0] >= r.color[1]) r.flags |= kLightFire;
     ++g_glowing;

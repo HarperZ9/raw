@@ -102,6 +102,8 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     // Startup settings land before the renderer creates its targets (this runs inside the game's
     // first D3D11CreateDevice), so iShadowMapResolution and iNumSplits size the shadow atlas.
     Log("startup settings: %zu applied", raw::rt::ApplyStartupSettings(g_img, g_refs, ini, g_out + "\\engine_rt.log"));
+    if (const int atlas = IniInt("ShadowAtlas", 0); atlas > 0)
+        Log("%s", raw::rt::ResizeShadowAtlas(g_img, g_refs, uint32_t(atlas)).c_str());
     raw::rt::ControlInit(g_img, &g_refs, g_dir, g_out);
     if (IniInt("VTrace", 0)) {
         const size_t n = raw::rt::InstallVTrace(g_img, LoadVTrace(), g_out + "\\vt_trace.tsv");

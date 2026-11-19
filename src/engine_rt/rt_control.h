@@ -25,6 +25,11 @@ size_t ApplyStartupSettings(const Image& img, const std::vector<RefTarget>& refs
 void ControlInit(const Image& img, const std::vector<RefTarget>* refs, const std::string& gameDir, const std::string& outDir);
 void ControlOnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc);
 
+// Shadow atlas: the renderer's depth-stencil target table (BSGraphics::RenderTargetManager, member
+// depthStencilTargetData at +0xC78, 0x10 per entry; entries 2 and 4 hold the shadow maps) resized before
+// the targets are created. Returns a line for the log.
+std::string ResizeShadowAtlas(const Image& img, const std::vector<RefTarget>& refs, uint32_t size);
+
 // Papyrus: VirtualMachine::Update and UpdateTasklets (slots 4 and 5) timed, budget optionally replaced.
 bool InstallPapyrusTiming(const Image& img, uint32_t vmVtable, float budgetOverrideMs);
 

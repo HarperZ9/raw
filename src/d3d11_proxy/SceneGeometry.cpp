@@ -29,8 +29,9 @@ std::unordered_map<ID3D11PixelShader*, uint8_t> g_alphaPs;   // RtAlphaDiscard o
 std::vector<raw::bridge::RtDraw> g_frame;
 // Why draws were left out, and how many alpha-tested ones joined, since the start.
 struct Counts { uint64_t alphaNoTexture = 0, alphaNoUv = 0, alphaOff = 0, noLayout = 0, badFormat = 0, noBuffers = 0,
-                         alphaJoined[5] = {}, opaque = 0; } g_n;
+                         alphaJoined[5] = {}, opaque = 0, opaqueMat = 0; } g_n;
 bool g_alphaOn = true;
+bool g_matOn = true;
 
 // True when the shader bytecode holds a discard instruction (SM4/5 opcode 13).
 bool HasDiscard(const void* bc, size_t n)
@@ -62,6 +63,7 @@ bool HasDiscard(const void* bc, size_t n)
 } // namespace
 
 void SceneGeometry_SetAlpha(bool on) { g_alphaOn = on; }
+void SceneGeometry_SetMaterials(bool on) { g_matOn = on; }
 
 // Byte size of a vertex element format, for D3D11_APPEND_ALIGNED_ELEMENT offsets.
 static UINT FormatBytes(DXGI_FORMAT f)
@@ -188,6 +190,11 @@ void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT start
         d.alphaSrv = AlphaTexture(real);
         if (!d.alphaSrv) { ++g_n.alphaNoTexture; return; }
         d.alphaKind = alpha; d.uvOffset = L.uv.offset; d.uvFormat = L.uv.format;
+    } else if (g_matOn && L.uv.set && L.uv.slot == L.pos.slot && UvFormatOk(L.uv.format)) {
+        // An opaque draw: its colour texture (t0 of the lit shaders) and coordinates, so an off-screen
+        // ray hit is shaded from the game's own material. Without them it still joins, uncoloured.
+        d.alphaSrv = AlphaTexture(real);
+        if (d.alphaSrv) { d.uvOffset = L.uv.offset; d.uvFormat = L.uv.format; ++g_n.opaqueMat; }
     }
     UINT stride = 0, offset = 0;
     real->IAGetVertexBuffers(L.pos.slot, 1, &d.vb, &stride, &offset);
@@ -204,10 +211,10 @@ std::vector<raw::bridge::RtDraw> SceneGeometry_Take()
 {
     static uint64_t frames = 0;
     if (++frames % 600 == 1)
-        Log("[RT] frame %llu: %zu draws captured; so far %llu opaque, alpha-tested joined %llu discard / %llu coverage / %llu foliage / %llu blend; "
+        Log("[RT] frame %llu: %zu draws captured; so far %llu opaque (%llu with a colour texture), alpha-tested joined %llu discard / %llu coverage / %llu foliage / %llu blend; "
             "left out: %llu alpha without coordinates, %llu alpha without a 2D texture, %llu alpha (RtAlpha=0), %llu no layout, "
             "%llu position format, %llu no buffers",
-            (unsigned long long)frames, g_frame.size(), (unsigned long long)g_n.opaque, (unsigned long long)g_n.alphaJoined[1],
+            (unsigned long long)frames, g_frame.size(), (unsigned long long)g_n.opaque, (unsigned long long)g_n.opaqueMat, (unsigned long long)g_n.alphaJoined[1],
             (unsigned long long)g_n.alphaJoined[2], (unsigned long long)g_n.alphaJoined[3], (unsigned long long)g_n.alphaJoined[4], (unsigned long long)g_n.alphaNoUv,
             (unsigned long long)g_n.alphaNoTexture, (unsigned long long)g_n.alphaOff, (unsigned long long)g_n.noLayout,
             (unsigned long long)g_n.badFormat, (unsigned long long)g_n.noBuffers);

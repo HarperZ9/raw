@@ -82,29 +82,7 @@ float hitAlpha(uint id, uint prim, float2 b) {
 
 #define candidateAlpha(q) hitAlpha((q).CandidateInstanceID(), (q).CandidatePrimitiveIndex(), (q).CandidateTriangleBarycentrics())
 
-// The distance to the first hit, or -1 when the ray leaves (alpha-tested like visible()).
-float hitDistance(float3 o, float3 d, float tMax) {
-    RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q;
-    RayDesc r;
-    r.Origin = o; r.Direction = d; r.TMin = 0.0f; r.TMax = tMax;
-    q.TraceRayInline(Scene, 0, 0xFF, r);
-    [loop] while (q.Proceed()) {
-        if (q.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
-            const uint id = q.CandidateInstanceID();
-            if (id == 0u) { q.CommitNonOpaqueTriangleHit(); continue; }
-            const uint4 rec = Records[id - 1u];
-            const uint a = (rec.x + q.CandidatePrimitiveIndex() * 3u) * 8u;
-            const float2 b = q.CandidateTriangleBarycentrics();
-            const float2 uv = asfloat(Coords.Load2(a)) * (1.0f - b.x - b.y) + asfloat(Coords.Load2(a + 8u)) * b.x + asfloat(Coords.Load2(a + 16u)) * b.y;
-            // Nearest texel: the sky and reflection rays are averaged over frames anyway.
-            if (Masks[NonUniformResourceIndex(rec.y)][uint2(frac(uv) * float2(rec.zw)) % rec.zw] >= alphaRef) { q.CommitNonOpaqueTriangleHit(); }
-        }
-    }
-    return q.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? q.CommittedRayT() : -1.0f;
-}
-
-// The light a point sends back toward the ray: its colour in the game's frame where it is on screen
-// and not hidden; otherwise a dim share of the cell's ambient.
+// Where a point is on screen and not hidden: its colour in the game's frame.
 bool onScreen(float3 hp, out float3 c) {
     const float4 s = screenOf(hp);
     c = 0.0f;
@@ -113,12 +91,6 @@ bool onScreen(float3 hp, out float3 c) {
         if (abs(zs - s.w) < 0.03f * s.w + 4.0f) { c = min(GameColour.Load(int3(s.xy, 0)).rgb, 16.0f.xxx); return true; }
     }
     return false;
-}
-
-float3 hitRadiance(float3 hp) {
-    float3 c;
-    if (onScreen(hp, c)) { return c; }
-    return 0.25f * float3(ambient[0].w, ambient[1].w, ambient[2].w);
 }
 
 float visible(float3 o, float3 d, float tMin, float tMax) {
@@ -146,6 +118,26 @@ float3 geometricNormal(float2 px, float3 p, float3 fallback) {
     if (len < 1.0e-6f) { return fallback; }
     n /= len;
     return dot(n, fallback) < 0.0f ? -n : n;   // the side the shading normal is on
+}
+
+#include "RtHit.hlsli"
+
+// One more ray from an off-screen hit, for the cache cell there: so cells the camera never sees fill,
+// and light that has bounced more than once reaches the pixels through them (RtCache.h).
+void cacheFromHit(float3 hp, float3 n, float2 r) {
+    const float3 d = cosineDir(n, r);
+    float3 bounce = 0.0f;
+    float sky = 1.0f;
+    if (d.z > 0.0f) {
+        const float3 o = hp + n * (0.5f + 0.002f * length(hp));
+        Hit h;
+        if (traceHit(o, d, skyLength, h)) {
+            float3 n2;
+            sky = 0.0f;
+            bounce = radianceAt(h, o, d, r.yx, false, n2);
+        }
+    }
+    cacheAdd(hp, n, bounce, sky);
 }
 
 [numthreads(8, 8, 1)]
@@ -176,9 +168,18 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float2 rs = float2(hash(px, frameIndex * 0.754877f + 3.0f), hash(px.yx, frameIndex * 0.569840f + 11.0f));
             const float3 sd = cosineDir(n, rs);
             if (sd.z > 0.0f) {
-                const float t = hitDistance(o, sd, skyLength);
-                if (t >= 0.0f) { sky = 0.0f; bounce = hitRadiance(o + sd * t); }
+                Hit h;
+                if (traceHit(o, sd, skyLength, h)) {
+                    // On screen: the game's frame. Off screen: the hit's own material, lit with the cache
+                    // (and the hit's cell takes one more ray of its own).
+                    float3 hn;
+                    sky = 0.0f;
+                    bounce = radianceAt(h, o, sd, rs.yx, true, hn);
+                    float3 c;
+                    if ((giFlags & GI_CACHE) != 0u && !onScreen(o + sd * h.t, c)) { cacheFromHit(o + sd * h.t, hn, frac(rs * 1.618f + 0.31f)); }
+                }
             }
+            if ((giFlags & GI_CACHE) != 0u) { cacheAdd(p, n, bounce, sky); }
         }
         // The three lights that would light this pixel most (colour luminance x window x n.l).
         uint best[3] = {~0u, ~0u, ~0u};
@@ -227,9 +228,13 @@ void main(uint3 id : SV_DispatchThreadID) {
             reflTraced = true;
             if (dot(rd, ng) > 0.0f) {
                 const float3 o = p + ng * (0.5f + 0.003f * viewZOf(d));
-                const float t = hitDistance(o, rd, reflectLength);
-                float3 c;
-                if (t >= 0.0f && onScreen(o + rd * t, c)) { refl = float4(c, 1.0f); }
+                Hit h;
+                float3 c, hn;
+                // On screen: the game's frame. Off screen (materials on): the hit's own shading.
+                if (traceHit(o, rd, reflectLength, h)) {
+                    if (onScreen(o + rd * h.t, c)) { refl = float4(c, 1.0f); }
+                    else if ((giFlags & GI_MATERIALS) != 0u) { refl = float4(radianceAt(h, o, rd, rr, true, hn), 1.0f); }
+                }
             }
         }
     }
@@ -248,7 +253,19 @@ void main(uint3 id : SV_DispatchThreadID) {
                 if (a >= alphaRef) { q.CommitNonOpaqueTriangleHit(); }
             }
         }
-        if (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+        if (debugView == 3u && q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+            // The colour copies: the primary ray's hit coloured from its mesh's copy, unlit.
+            Hit h;
+            h.t = q.CommittedRayT(); h.id = q.CommittedInstanceID(); h.prim = q.CommittedPrimitiveIndex();
+            h.bary = q.CommittedTriangleBarycentrics(); h.o2w = q.CommittedObjectToWorld3x4();
+            dbg = hitAlbedo(h);
+        } else if (debugView == 2u) {
+            // The cache: the ambient light its cell gives this pixel's own surface (dark red: no cell).
+            const float3 pw = worldAt(float2(id.xy), d);
+            const float3 nw = worldNormal(Normal.Load(ip));
+            float4 c;
+            dbg = cacheRead(pw, nw, 0.0f.xxx, c) ? ambientAt(nw) * (sunColour.w > 0.5f ? c.a : 1.0f) + c.rgb : float3(0.25f, 0.0f, 0.0f);
+        } else if (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
             const uint cid = q.CommittedInstanceID();
             if (cid == 0u) { dbg = float3(1.0f, 0.0f, 1.0f); }
             else {

@@ -48,7 +48,11 @@ struct LightingTuning
     float rtSkyLength = 6000.0f;    // game units
     float rtBounce = 1.0f;          // exteriors: one bounce of indirect light from the sky rays (0 off)
     bool  rtOmm = true;             // opacity micromaps for the alpha-tested meshes, where the runtime has them
-    bool  rtDebug = false;          // the primary ray's view of the scene in the reflection output (Lighting view 7)
+    int   rtDebug = 0;              // the reflection output shows (Lighting view 7): 1 the primary ray, 2 the radiance cache, 3 the colour copies
+    bool  rtMaterials = true;       // every mesh keeps its colour, coordinates and normals: off-screen hits are shaded
+    int   rtMatSide = 128;          // the largest side of a colour copy
+    bool  rtCache = true;           // the world-space radiance cache for off-screen hits and further bounces
+    float rtCacheCell = 16.0f;      // game units, the finest cell
     bool  rtReflect = true;         // glossy surfaces: one ray-traced reflection ray, the hit's colour in the game's frame
 };
 

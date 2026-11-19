@@ -11,6 +11,7 @@
 #include "D3D12Bridge.h"
 #include "RtAlpha.h"
 #include "RtSky.h"
+#include "RtCache.h"
 #ifdef RAW_HAS_OMM
 #include "RtOmm.h"
 #endif
@@ -28,7 +29,10 @@ class RtScene
 public:
     ~RtScene();
     bool Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std::string& err);
-    void Tune(const RtTuning& t) { m_tune = t; }
+    void Tune(const RtTuning& t) { m_tune = t; m_alpha.SetAlbedoSide(t.matSide); }
+    // The camera's step since the frame before (SceneLighting::cameraStep), summed into the place the
+    // radiance cache's cells are keyed by; voters 0 (no lit draw) keeps the place.
+    void SetCamera(const float step[3], uint32_t voters, const float posAdjust[4]);
     // The frame's draws (the buffers carry a reference, released here or when evicted). Returns the
     // game buffers a new BLAS reads this frame; the bridge hands them to the queue in COMMON.
     void SetDraws(std::vector<RtDraw>&& draws, std::vector<ID3D11Resource*>& toHand,
@@ -54,7 +58,8 @@ private:
         ID3D11Buffer* ib = nullptr;
         D3D12_RAYTRACING_GEOMETRY_TRIANGLES_DESC tri{};
         uint64_t blas = 0, bytes = 0, seen = 0;
-        uint32_t alphaRecord = 0;   // RtAlpha record + 1; 0: opaque
+        uint32_t alphaRecord = 0;   // RtAlpha record + 1 (the instance ID); 0: none
+        bool alpha = false;         // alpha-tested (non-opaque in the scene)
         uint64_t omm = 0;           // its opacity micromap array, when it has one
         bool built = false, failed = false;
     };
@@ -65,6 +70,12 @@ private:
     bool Texture(ComPtr<ID3D12Resource>& r, const wchar_t* name, DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM);
     bool Pipeline(std::string& err);
     void Evict();
+    void WaitSlot(uint32_t slot);
+    void ReadTimings();
+    uint32_t BuildBlases(ID3D12GraphicsCommandList4* cl, uint64_t& tris);
+    uint32_t PlaceInstances(uint32_t slot, uint32_t& alphaN, uint64_t& sceneTris);
+    void BindViews(ID3D12Resource* depth, ID3D12Resource* normal, ID3D12Resource* spec);
+    void RecordTrace(ID3D12GraphicsCommandList4* cl, uint32_t slot, bool sky, bool cache);
 
     RtTuning m_tune;
     LogFn m_log = nullptr;
@@ -73,6 +84,8 @@ private:
     uint64_t m_frame = 0, m_freq = 0;
     ComPtr<ID3D12Device5> m_dev;
     ComPtr<ID3D12Resource> m_blasHeap, m_scratch, m_tlas, m_tlasScratch, m_inst[3], m_cb[3], m_vis, m_lights, m_refl, m_tsRead;
+    double m_camPos[3] = {};    // the camera in the cache's world frame
+    uint64_t m_camLog = 0;
     ComPtr<ID3D12QueryHeap> m_ts;
     ComPtr<ID3D12CommandAllocator> m_alloc[3];
     ComPtr<ID3D12GraphicsCommandList4> m_list;
@@ -92,6 +105,8 @@ private:
     RtAlpha m_alpha;
     RtSky m_sky;
     bool m_skyReady = false;
+    RtCache m_cache;
+    bool m_cacheReady = false;
     bool m_ommOn = false;
     UINT m_psoFlags = 0;
 #ifdef RAW_HAS_OMM

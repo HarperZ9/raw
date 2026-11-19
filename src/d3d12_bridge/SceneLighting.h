@@ -60,6 +60,14 @@ struct SceneLighting
     float worldToView[4][4] = {};
     float viewToWorld[4][4] = {};
     float resolutionScale[2] = {1, 1};
+    // The camera's move since the frame before, in world units: the median over the frame's rigid
+    // lit draws of (previous world translation - current world translation); the game keeps both in
+    // vertex buffer 2 (rows 3 to 5 are the previous world matrix). World space is camera-relative,
+    // so summing this gives a frame that stays put (the radiance cache's). cameraSteps: the draws
+    // that voted. posAdjust: float4 40 of the per-frame constants, logged to compare.
+    float cameraStep[3] = {};
+    uint32_t cameraSteps = 0;
+    float posAdjust[4] = {};
 
     uint32_t lightCount = 0;
     SceneLight lights[kMaxSceneLights];

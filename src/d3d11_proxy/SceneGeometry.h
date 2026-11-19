@@ -10,6 +10,7 @@ namespace SB::Proxy
 inline bool g_sceneGeometryActive = false;   // set with [Lighting] RtShadows=1 on raw::tx
 
 void SceneGeometry_SetAlpha(bool on);   // [Lighting] RtAlpha: alpha-tested draws join with their alpha
+void SceneGeometry_SetMaterials(bool on);   // [Lighting] RtMaterials: opaque draws carry their coordinates and colour texture too
 void SceneGeometry_OnInputLayout(ID3D11InputLayout* layout, const D3D11_INPUT_ELEMENT_DESC* e, UINT n);
 void SceneGeometry_OnPixelShader(ID3D11PixelShader* ps, const void* bytecode, size_t n);
 void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT startIndex, INT baseVertex);

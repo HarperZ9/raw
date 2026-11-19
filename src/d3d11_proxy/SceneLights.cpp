@@ -33,6 +33,7 @@ struct State
     double sunDir[3] = {}, sunCol[3] = {}, amb[3][4] = {}, knee = 0;
     uint32_t sunDraws = 0, ambDraws = 0, kneeDraws = 0;
     std::vector<float> specScales;
+    std::vector<float> steps[3];         // per lit draw: previous minus current world translation
     ID3D11Texture2D* mask = nullptr;     // held for the frame
     ID3D11Texture2D* cascades = nullptr; // held for the frame
     bool merged = false;
@@ -160,6 +161,7 @@ void Camera(SceneLighting& f, const float* m)
     std::memcpy(f.worldToClip, m + 2 * 16, 64);
     f.resolutionScale[0] = m[44 * 4] > 0 ? m[44 * 4] : 1.0f;
     f.resolutionScale[1] = m[44 * 4 + 1] > 0 ? m[44 * 4 + 1] : 1.0f;
+    std::memcpy(f.posAdjust, m + 40 * 4, 16);
     f.hasCamera = true;
 }
 
@@ -242,6 +244,10 @@ void SceneLights_BeforeDraw(ID3D11DeviceContext* real)
             }
         }
         LitDraw(s, g, w, Shadow(ps[0], 16), Shadow(ps[1], 80));
+        // Rows 3 to 5: the previous frame's world matrix. A static draw's translation moves by the
+        // camera's step (world space is camera-relative); the median over the frame keeps out what moved.
+        if (s.steps[0].size() < 4096)
+            for (int k = 0; k < 3; ++k) s.steps[k].push_back(w[12 + k * 4 + 3] - w[k * 4 + 3]);
         g_drawWorld = w;
         s.merged = false;
     } else if (size == kMaskPs2) {
@@ -258,6 +264,13 @@ void SceneLights_SetCamera(ID3D11DeviceContext* real)
     if (!fr[0]) return;
     if (const float* m = Shadow(fr[0], kFrameCb)) Camera(S().frame, m);
     fr[0]->Release();
+    State& s = S();
+    s.frame.cameraSteps = uint32_t(s.steps[0].size());
+    for (int k = 0; k < 3 && !s.steps[k].empty(); ++k) {
+        std::vector<float>& v = s.steps[k];
+        std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
+        s.frame.cameraStep[k] = v[v.size() / 2];
+    }
     S().merged = false;
 }
 
@@ -306,6 +319,7 @@ void SceneLights_OnPresent()
     s.frame = SceneLighting{};
     s.lights.clear();
     s.specScales.clear();
+    for (auto& v : s.steps) v.clear();
     std::memset(s.sunDir, 0, sizeof s.sunDir); std::memset(s.sunCol, 0, sizeof s.sunCol); std::memset(s.amb, 0, sizeof s.amb);
     s.knee = 0;
     s.sunDraws = s.ambDraws = s.kneeDraws = 0;

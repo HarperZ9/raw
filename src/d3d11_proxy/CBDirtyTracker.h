@@ -1,30 +1,19 @@
 #pragma once
 //=============================================================================
-//  CBDirtyTracker: CPU copies ("shadows") of the game's dynamic constant buffers
+//  CBDirtyTracker — Constant buffer dirty tracking
 //
-//  The bridge reads constant buffers on the CPU (camera, world matrices, bone palettes, lights). A dynamic
-//  constant buffer lives in write-combined memory and cannot be read back, so the proxy keeps a CPU copy:
-//  the game writes into a cached staging block, and Unmap copies it to the GPU.
+//  Intercepts Map(WRITE_DISCARD)/Unmap on dynamic constant buffers.
+//  Maintains a shadow copy per CB; if the new data matches the shadow,
+//  the real Map/Unmap is skipped entirely (GPU already has correct data).
 //
-//  Modes:
-//    off     (bridge off, [Proxy] CBDirtyTracker=0): nothing is intercepted. On native D3D11 the dedupe's
-//            compares cost more CPU than the skipped driver maps save (raw#25).
-//    dedupe  (bridge on, or CBDirtyTracker=1): every dynamic constant buffer is intercepted, and an upload whose
-//            bytes did not change is skipped. On raw::tx a Map is costly and 44 % of Riverwood's 16,600 uploads
-//            a frame repeat, so the dedupe pays: batch submission 8.7 ms against 9.3 ms in demand mode.
-//    demand  (bridge on and [Proxy] CBShadowDemand=1): only the buffers a reader has asked for are intercepted,
-//            and every write is uploaded. A buffer is asked for by its first GetShadowData/GetShadowSize; its
-//            shadow exists from its next Map on, and lapses after kWantFrames frames without a request.
-//  Unmap copies the staging block to the GPU once and swaps it with the shadow (no second copy); a flat
-//  pointer table replaces the unordered_map.
-//  A buffer not mapped in a frame loses its shadow at the end of the next frame, and its description is read
-//  again, so a new buffer created at a freed one's address is never served stale bytes.
+//  Expected savings: 60-80% of CB uploads (PerMaterial CB changes ~19%
+//  of the time per draw call — RE verified via BSLightingShader disasm).
 //=============================================================================
 
 #include <d3d11.h>
-#include <cstdint>
-#include <memory>
+#include <unordered_map>
 #include <vector>
+#include <cstdint>
 
 namespace SB::Proxy
 {
@@ -34,20 +23,26 @@ class CBDirtyTracker
 public:
     static CBDirtyTracker& Get();
 
-    // Called from WrappedContext::Map. Returns true if this Map was intercepted (caller must NOT call the
-    // real Map); pMappedResource then points at a staging block.
+    // Called from WrappedContext::Map.
+    // Returns true if this Map was intercepted (caller must NOT call real Map).
+    // pMappedResource is filled with a staging buffer pointer.
     bool InterceptMap(ID3D11DeviceContext* realCtx, ID3D11Resource* pResource,
                       UINT Subresource, D3D11_MAP MapType, UINT MapFlags,
                       D3D11_MAPPED_SUBRESOURCE* pMappedResource);
 
-    // Called from WrappedContext::Unmap. Returns true if handled (caller must NOT call the real Unmap).
-    bool InterceptUnmap(ID3D11DeviceContext* realCtx, ID3D11Resource* pResource, UINT Subresource);
+    // Called from WrappedContext::Unmap.
+    // Returns true if handled (caller must NOT call real Unmap).
+    bool InterceptUnmap(ID3D11DeviceContext* realCtx, ID3D11Resource* pResource,
+                        UINT Subresource);
 
-    // Called once per frame from WrappedSwapChain::Present: counters reset, the frame stamp advances.
+    // Called once per frame from WrappedSwapChain::Present.
+    // Resets per-frame counters and evicts stale entries (buffers not mapped
+    // this frame may have been destroyed; eviction prevents stale-shadow bugs
+    // if a new buffer is allocated at the same pointer).
     void OnFrameEnd();
 
-    // The lighting decode and the ray-tracing scene read the shadows (world matrices, bone palettes): with the
-    // bridge on, the buffers they ask for are shadowed whatever [Proxy] CBDirtyTracker says (raw#27).
+    // The lighting decode and the ray-tracing scene read the constant buffers' shadows (world matrices, bone
+    // palettes): with the bridge on, the tracker runs whatever [Proxy] CBDirtyTracker says.
     static void SetShadowsRequired(bool on) { s_required = on; }
     static bool ShadowsRequired() { return s_required; }
 
@@ -58,47 +53,36 @@ public:
     uint32_t GetMapCalls()         const { return m_mapCalls; }
     uint32_t GetSkippedUpdates()   const { return m_skippedUpdates; }
     uint32_t GetCommittedUpdates() const { return m_committedUpdates; }
-    uint32_t GetTrackedBuffers()   const { return m_shadowed; }
+    uint32_t GetTrackedBuffers()   const { return static_cast<uint32_t>(m_entries.size()); }
 
-    // The CPU copy of a dynamic constant buffer as last written, or null. Asking registers the buffer: a
-    // buffer asked for and not yet shadowed returns null now and its bytes from its next Map on.
-    const uint8_t* GetShadowData(ID3D11Resource* pResource);
-    // The buffer's size in bytes when it is a dynamic constant buffer up to kMaxTrackedSize, else 0. Also
-    // registers the buffer.
-    uint32_t       GetShadowSize(ID3D11Resource* pResource);
+    // Shadow data access (for OcclusionCuller to read VS CB transforms)
+    const uint8_t* GetShadowData(ID3D11Resource* pResource) const;
+    uint32_t       GetShadowSize(ID3D11Resource* pResource) const;
 
 private:
     CBDirtyTracker() = default;
 
+    // Don't track CBs larger than this (diminishing returns, most engine CBs are < 1 KB)
     static constexpr uint32_t kMaxTrackedSize = 4096;
-    static constexpr uint64_t kWantFrames = 300;
     static inline bool s_required = false;
 
     struct CBEntry {
-        ID3D11Resource*            key = nullptr;
-        uint32_t                   byteWidth = 0;      // 0: not a dynamic constant buffer we track
-        uint64_t                   seenFrame = 0;      // last frame it was mapped or classified
-        uint64_t                   mapFrame = 0;       // last committed upload
-        uint64_t                   wantFrame = 0;      // last reader request (0: never)
-        bool                       intercepted = false;
-        bool                       valid = false;      // shadow holds the last committed bytes
-        std::unique_ptr<uint8_t[]> shadow, staging;
+        uint32_t             byteWidth = 0;
+        std::vector<uint8_t> shadow;          // Last committed data
+        std::vector<uint8_t> staging;         // Current write buffer
+        bool                 intercepted = false;  // True between Map and Unmap
+        bool                 mappedThisFrame = false;
     };
 
-    CBEntry* Find(ID3D11Resource* p);
-    CBEntry* Classify(ID3D11Resource* p);   // find or insert, (re)reading the description when stale
-    void     Grow();
-    bool     Wanted(const CBEntry& e) const;
-    static bool Dedupe();
+    // Lazily register a CB on first Map encounter
+    CBEntry* GetOrCreateEntry(ID3D11Resource* pResource);
 
-    std::vector<CBEntry> m_table;            // open addressing, linear probe, size a power of two
-    uint32_t             m_used = 0;
-    uint64_t             m_frame = 2;
+    std::unordered_map<ID3D11Resource*, CBEntry> m_entries;
 
+    // Per-frame counters
     uint32_t m_mapCalls         = 0;
     uint32_t m_skippedUpdates   = 0;
     uint32_t m_committedUpdates = 0;
-    uint32_t m_shadowed         = 0;
 };
 
 } // namespace SB::Proxy

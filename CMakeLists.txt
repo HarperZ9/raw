@@ -160,6 +160,7 @@ enable_language(ASM_MASM)
 
 add_library(d3d11_proxy SHARED
     src/d3d11_proxy/proxy_main.cpp
+    src/d3d11_proxy/ModuleHost.cpp
     src/d3d11_proxy/WrappedDevice.cpp
     src/d3d11_proxy/WrappedContext.cpp
     src/d3d11_proxy/WrappedContextDraw.cpp
@@ -641,7 +642,8 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_view.cpp
         src/engine_rt/rt_emitters.cpp
         src/engine_rt/rt_cascades.cpp
-        src/engine_rt/rt_version.cpp)
+        src/engine_rt/rt_version.cpp
+        src/engine_rt/rt_patch.cpp)
     set_target_properties(raw_engine PROPERTIES
         CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

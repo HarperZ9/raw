@@ -31,6 +31,7 @@
 #include "rt_view.h"
 #include "rt_weather.h"
 #include "rt_version.h"
+#include "rt_patch.h"
 
 namespace {
 
@@ -97,11 +98,17 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     g_refs = raw::rt::VersionRefs();
     Log("refs: %zu settings and globals from the table", g_refs.size());
     const std::string ini = g_dir + "d3d11_proxy.ini";
+    // A live reload (ModuleHost.h in the proxy) starts this copy in a running game: generation above 0.
+    const uint32_t generation = proxy && proxy->version >= 3 ? proxy->moduleGeneration : 0;
+    Log("start: generation %u%s", generation, generation ? " (live reload: startup-only settings left as they are)" : "");
     // Startup settings land before the renderer creates its targets (this runs inside the game's
-    // first D3D11CreateDevice), so iShadowMapResolution and iNumSplits size the shadow atlas.
-    Log("startup settings: %zu applied", raw::rt::ApplyStartupSettings(g_img, g_refs, ini, g_out + "\\engine_rt.log"));
-    if (const int atlas = IniInt("ShadowAtlas", 0); atlas > 0)
-        Log("%s", raw::rt::ResizeShadowAtlas(g_img, g_refs, uint32_t(atlas)).c_str());
+    // first D3D11CreateDevice), so iShadowMapResolution and iNumSplits size the shadow atlas. In a reload the
+    // targets exist already, so they are not touched again.
+    if (!generation) {
+        Log("startup settings: %zu applied", raw::rt::ApplyStartupSettings(g_img, g_refs, ini, g_out + "\\engine_rt.log"));
+        if (const int atlas = IniInt("ShadowAtlas", 0); atlas > 0)
+            Log("%s", raw::rt::ResizeShadowAtlas(g_img, g_refs, uint32_t(atlas)).c_str());
+    }
     raw::rt::ControlInit(g_img, &g_refs, g_dir, g_out, proxy ? proxy->InvalidateStateCache : nullptr);
     // GPU time per pass and the shadow atlas's viewports (rt_passes.cpp); GpuTiming=0 keeps the draw counts only
     raw::rt::ControlSetProxy(proxy);
@@ -143,6 +150,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
     if (IniInt("CallGraph", 0)) {
+        raw::rt::ThreadBegin();   // a module stop refuses while the call graph runs (rt_patch.h)
         std::thread([] {
             SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
             const auto& refs = g_refs;
@@ -153,8 +161,24 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
                 st.jumpTables, st.ms);
             std::FILE* done = std::fopen((g_out + "\\cg_done.txt").c_str(), "w");
             if (done) { std::fputs("done\n", done); std::fclose(done); }
+            raw::rt::ThreadEnd();
         }).detach();
     }
+}
+
+// Before a live reload (ModuleHost.h in the proxy): every patch this copy made in the game's code and vtables is
+// put back, newest first. The proxy then drops this copy's callbacks and frees it later. Refused (0) while a
+// background thread of the module runs; nothing is changed then.
+extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
+    if (const int t = raw::rt::ThreadsRunning(); t > 0) {
+        std::snprintf(why, n, "%d background thread(s) running (sample or call graph); ask again when they finish", t);
+        return 0;
+    }
+    std::string failures;
+    const size_t had = raw::rt::PatchCount(), restored = raw::rt::PatchRestoreAll(&failures);
+    std::snprintf(why, n, "%zu of %zu patches restored%s%s", restored, had, failures.empty() ? "" : "; ", failures.c_str());
+    Log("stop: %s", why);
+    return 1;
 }
 
 BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID) {

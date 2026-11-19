@@ -41,6 +41,9 @@
 #include "WrappedSwapChain.h"
 #include "RenderPhaseDetector.h"
 #include "OcclusionCuller.h"
+#include "ModuleHost.h"
+
+#include <algorithm>
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Real d3d11.dll function pointers
@@ -612,30 +615,27 @@ static bool LoadRealD3D11()
 }
 
 // Engine modules: [Modules] Load=a.dll;b.dll in d3d11_proxy.ini, loaded from the game folder after
-// lazy init (outside DllMain). Each may export RAW_ModuleStart(ProxyInterface*).
-static void LoadEngineModules()
+// lazy init (outside DllMain), and reloaded live through raw_module_go.txt (ModuleHost.h).
+static void LoadEngineModules() { SB::Proxy::modules::LoadAll(&s_proxyInterface); }
+
+// A module being reloaded leaves no callback behind: every one whose code lies in its image goes.
+template <class V>
+static size_t DropIn(V& v, const void* lo, const void* hi)
 {
-    char exe[MAX_PATH];
-    GetModuleFileNameA(nullptr, exe, MAX_PATH);
-    std::string dir(exe);
-    dir = dir.substr(0, dir.rfind('\\') + 1);
-    char list[1024] = {};
-    GetPrivateProfileStringA("Modules", "Load", "", list, sizeof(list), (dir + "d3d11_proxy.ini").c_str());
-    std::string all(list);
-    size_t p = 0;
-    while (p < all.size()) {
-        size_t q = all.find(';', p);
-        if (q == std::string::npos) q = all.size();
-        std::string name = all.substr(p, q - p);
-        p = q + 1;
-        if (name.empty()) continue;
-        HMODULE m = LoadLibraryA((dir + name).c_str());
-        if (!m) { SB::Proxy::Log("Module %s: LoadLibrary failed (%lu)", name.c_str(), GetLastError()); continue; }
-        using StartFn = void (*)(SB::Proxy::ProxyInterface*);
-        auto start = reinterpret_cast<StartFn>(GetProcAddress(m, "RAW_ModuleStart"));
-        SB::Proxy::Log("Module %s loaded%s", name.c_str(), start ? ", starting" : " (no RAW_ModuleStart)");
-        if (start) start(&s_proxyInterface);
-    }
+    const size_t n = v.size();
+    v.erase(std::remove_if(v.begin(), v.end(), [&](auto cb) {
+        const auto* a = reinterpret_cast<const uint8_t*>(cb);
+        return a >= static_cast<const uint8_t*>(lo) && a < static_cast<const uint8_t*>(hi);
+    }), v.end());
+    return n - v.size();
+}
+
+size_t PG_DropCallbacksIn(const void* lo, const void* hi)
+{
+    using namespace SB::Proxy;
+    return DropIn(g_prePresentCallbacks, lo, hi) + DropIn(g_resizeCallbacks, lo, hi) + DropIn(g_drawCallbacks, lo, hi) +
+           DropIn(g_rtChangeCallbacks, lo, hi) + DropIn(g_shaderBindCallbacks, lo, hi) + DropIn(g_viewportCallbacks, lo, hi) +
+           DropIn(s_phaseChangeCallbacks, lo, hi);
 }
 
 // Lazy initialization — called on first D3D11CreateDevice* call (NOT from DllMain)
@@ -694,7 +694,7 @@ static void LazyInit()
     }
 
     // Initialize proxy interface
-    s_proxyInterface.version     = 2;
+    s_proxyInterface.version     = 3;   // 3: moduleGeneration, live module reload
     s_proxyInterface.hdrEnabled  = s_config.hdrEnabled;
     s_proxyInterface.hdrMaxNits  = s_config.hdrMaxNits;
     s_proxyInterface.hdrPaperWhite = s_config.hdrPaperWhite;

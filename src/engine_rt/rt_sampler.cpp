@@ -6,6 +6,7 @@
 // addresses (a word that points into the code section just past a call instruction). The scan is a
 // heuristic: it finds callers that left their return address on the stack, and can include stale words.
 #include "rt_sampler.h"
+#include "rt_patch.h"
 
 #include <windows.h>
 #include <tlhelp32.h>
@@ -227,7 +228,8 @@ void SamplerNoteRenderThread() { g_renderThread = GetCurrentThreadId(); }
 
 bool StartSampler(const Image& img, double seconds, uint32_t lo, uint32_t hi, void (*result)(const std::string&)) {
     if (g_running.exchange(true)) return false;
-    std::thread([&img, seconds, lo, hi, result] { Run(&img, seconds, lo, hi, result); }).detach();
+    ThreadBegin();   // a module stop refuses while the sampler runs (rt_patch.h)
+    std::thread([&img, seconds, lo, hi, result] { Run(&img, seconds, lo, hi, result); ThreadEnd(); }).detach();
     return true;
 }
 

@@ -101,7 +101,38 @@ sender `SKSE`.
 
 ## Results
 
-Filled in from the test sessions below.
+One session on 1.7.104.0 (2026-11-19, `SkyrimSE.exe` started directly, no SKSE in the process): main menu, load the
+harness save, `save rawskse1`, `load rawskse1`, quit. The version layer's table named the exe; every address and
+both offsets came from it, and both hooks installed (Save_Impl moved 14 bytes, Load_Impl 15).
+
+| Plugin | Built with | Result |
+|---|---|---|
+| RAWSKSEProbe 1.0 (RAW, MIT) | no library | loaded; 17 PASS lines, no FAIL: every interface, PostLoad, PostPostLoad, InputLoaded, DataLoaded, PreLoadGame, PostLoadGame (both loads), SaveGame, plugin-to-plugin message, task ran and disposed, trampoline in reach, VM pointer with its vtable in the game image, co-save counter 506B1E1A written and read back |
+| RAWSKSETest 1.0 (RAW's source) | CommonLibSSE-NG v16.2.0, GPL-3.0-or-later, built outside this repository | loaded; 18 PASS lines, no FAIL: `SKSE::Init` got all interfaces, the natives bound, the quest script called `Add(2, 3)` and `Report` received 5, the task ran, the trampoline is in reach, co-save counter 5AB46BA4 written and read back |
+| RAWSKSETest 1.0 (RAW's source) | CommonLibSSE-NG 3.7.0, MIT | refused: relies on the Address Library, built before format 5 |
+| po3_Tweaks 1.1.5.1 (GPL-3.0) | CommonLibSSE-NG, for 1.6.1170 | refused: built before format 5 |
+| po3_ConsolePlusPlus 1.5.0 (GPL-3.0) | CommonLibSSE-NG, for 1.6.1170 | refused: built before format 5 |
+| po3_DualCastingFix 1.0 (GPL-3.0) | exports only `SKSEPlugin_Query` | refused: legacy plugin (`AllowLegacy=0`) |
+
+Every plugin's calls into the host are counted in `skse_host.json`. The two loaded plugins between them called every
+implemented function except `AllocateFromLocalPool`, `AddUITask`, `ResolveFormId`, `ResolveHandle`,
+`SetFormDeleteCallback` and `GetPluginInfo`, so those are implemented but not yet exercised.
+
+What the session showed beyond PASS and FAIL:
+
+- `Load_Impl` returns within 15 ms: the game queues the load and finishes it later. PostLoadGame and the co-save's
+  load callbacks therefore run before the save's world has finished loading. Plugins that read the co-save were
+  unaffected; a plugin that touches world objects in PostLoadGame would see the old world.
+- The quest's `OnInit` ran twice, which is the game's own behaviour for quests that start with the game; both calls
+  reached the natives.
+- Plugins load on the main thread; InputLoaded, DataLoaded, tasks and the Papyrus registrations ran on the
+  presenting thread; saves and loads arrived on the main thread.
+- The harness put the install back: 232 of 232 ENB hashes, both settings files and `Plugins.txt` restored by hash,
+  every placed file removed, the test save and co-save moved to the results, the one SKSE log the run created removed.
+
+No released third-party plugin built for format 5 was at hand, so no third-party plugin was run loaded. Not tested
+on 1.6.1170: Steam updated the game to 1.7.104 before a 1.6.1170 session ran; the 1.6.1170 table is the reference
+the rest of RAW measured in game.
 
 ## Test
 

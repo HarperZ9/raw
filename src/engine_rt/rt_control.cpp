@@ -12,6 +12,7 @@
 #include <sstream>
 #include <string>
 
+#include "rt_atlas.h"
 #include "rt_capture.h"
 
 namespace raw::rt {
@@ -25,6 +26,7 @@ std::deque<double> g_frameMs;          // recent present-to-present intervals
 std::deque<std::string> g_cmds;        // pending go-file commands
 int g_wait = 0;
 bool g_busy = false;
+void (*g_invalidate)() = nullptr;
 
 // Papyrus timing (written on the game's VM thread, read at present)
 using VmFn = void (*)(void*, float);
@@ -111,6 +113,12 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             return;
         } else if (op == "report") {
             Result(Stats(a.c_str(), size_t(std::atoi(b.c_str()))));
+        } else if (op == "atlas") {
+            // atlas <entry> <size>: rebuild a shadow depth target at a new size, live
+            const std::string line = ResizeShadowAtlasLive(ctx, *g_img, *g_refs, std::atoi(a.c_str()),
+                                                           uint32_t(std::strtoul(b.c_str(), nullptr, 10)));
+            if (g_invalidate) g_invalidate();
+            Result("{\"cmd\":\"atlas\",\"result\":\"" + line + "\"}");
         } else if (op == "capture") {
             const bool ok = CaptureBackbuffer(ctx, sc, g_out + "\\" + a + ".bmp");
             Result("{\"cmd\":\"capture\",\"name\":\"" + a + "\",\"ok\":" + (ok ? "true" : "false") + "}");
@@ -170,8 +178,9 @@ size_t ApplyStartupSettings(const Image& img, const std::vector<RefTarget>& refs
     return applied;
 }
 
-void ControlInit(const Image& img, const std::vector<RefTarget>* refs, const std::string& gameDir, const std::string& outDir) {
-    g_img = &img; g_refs = refs; g_game = gameDir; g_out = outDir;
+void ControlInit(const Image& img, const std::vector<RefTarget>* refs, const std::string& gameDir, const std::string& outDir,
+                 void (*invalidateStateCache)()) {
+    g_img = &img; g_refs = refs; g_game = gameDir; g_out = outDir; g_invalidate = invalidateStateCache;
     QueryPerformanceFrequency(&g_freq);
 }
 
@@ -183,6 +192,7 @@ void ControlOnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
         if (g_frameMs.size() > 4096) g_frameMs.pop_front();
     }
     g_last = now;
+    AtlasOnPresent();
     if (!g_busy) {
         static unsigned tick = 0;
         if (++tick % 15 == 0) PollGoFile();

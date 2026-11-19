@@ -1,0 +1,21 @@
+# A vista over Riverwood for LOD and grid proofs: the player floats (tcl) 12,000 units up and looks along
+# the valley. Run once with the defaults and once with [EngineSet] LOD and grid values; compare the captures.
+start load rawharness
+console tai
+scene vista
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+console coc riverwood
+wait 8
+console fw 81a
+wait 4
+console tcl
+console player.setpos z 12000
+console player.setangle x 15
+wait 15
+engine measure vista 600; capture vista
+console player.setangle z 180
+wait 10
+engine measure vista_back 600; capture vista_back
+quit

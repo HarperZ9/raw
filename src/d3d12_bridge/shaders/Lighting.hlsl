@@ -120,7 +120,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (base == 5u && !any(s.soft > 0.0f)) { s.soft = 0.15f.xxx; }   // a soft-lit shader the patch found no map in
     // Rain (Weather.hlsli), exteriors in improved mode: darker, glossier, puddles flat and mirror-like.
     Wet wet;
-    wet.wet = 0.0f; wet.puddle = 0.0f;
+    wet.wet = 0.0f; wet.puddle = 0.0f; wet.snow = 0.0f;
     if (!match && sunColour.w > 0.5f && base != 5u) {
         const float sv = (flags.x & FLAG_RT) != 0u && (flags.x & FLAG_SKY) != 0u ? RtIdx.Load(ip).w : 1.0f;
         // The geometric normal from the depth buffer's neighbours (shorter step on each axis).
@@ -133,13 +133,24 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         ng = length(ng) > 1.0e-6f ? normalize(ng) : s.n;
         if (dot(ng, s.n) < 0.0f) { ng = -ng; }
         wet = wetAt(p, s.n, ng, sv);
-        albedo *= lerp(1.0f, 0.6f, wet.wet) * lerp(1.0f, 0.7f, wet.puddle);
+        albedo *= lerp(1.0f, 0.6f, wet.wet) * lerp(1.0f, 0.35f, wet.puddle);   // standing water hides most of the ground's own light
         s.alpha = lerp(lerp(s.alpha, 0.12f, wet.wet), 0.03f, wet.puddle);
         s.shin = max(s.shin, 2.0f / max(s.alpha * s.alpha, 1.0e-4f) - 2.0f);
         s.n = normalize(lerp(s.n, float3(0.0f, 0.0f, 1.0f), wet.puddle));
         s.f0 = lerp(s.f0, 0.02f, max(wet.wet, wet.puddle));
         s.mask = max(s.mask, max(wet.wet * 0.6f, wet.puddle));
         lobe = lobe || max(wet.wet, wet.puddle) > 0.2f;
+        if (wet.snow > 0.0f) {
+            // Snow lies over everything below it: bright, rough, its own smooth shape over the ground's bumps.
+            albedo = lerp(albedo, float3(0.78f, 0.80f, 0.84f), wet.snow);
+            s.alpha = lerp(s.alpha, 0.55f, wet.snow);
+            s.shin = lerp(s.shin, 2.0f / (0.55f * 0.55f) - 2.0f, wet.snow);
+            s.n = normalize(lerp(s.n, ng, wet.snow * 0.7f));
+            s.f0 = lerp(s.f0, 0.02f, wet.snow);
+            s.mask = lerp(s.mask, 0.15f, wet.snow);
+            wet.puddle *= 1.0f - wet.snow;
+            wet.wet *= 1.0f - wet.snow;
+        }
     }
     const float3 lift = s.n * (0.3f + 0.002f * z);                 // ray origins off the surface
     const float4 m4 = Mask.Load(ip);
@@ -211,6 +222,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (flags.w == 4u) { return float4(skyVis.xxx, game.a); }
     if (flags.w == 5u) { return float4(bounce, game.a); }
     if (flags.w == 7u) { return float4(RtRefl.Load(ip).rgb, game.a); }   // RtDebug=1: the primary-ray view
+    if (flags.w == 8u) { return float4(wet.wet, wet.puddle, wet.snow, game.a); }   // weather: wet red, puddles green, snow blue
 
     float3 lit = knee3(albedo * (diff + amb));
     // The game's lobe exists only in shaders with a shininess exponent (gloss > 0).

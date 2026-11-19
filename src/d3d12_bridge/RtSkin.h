@@ -19,7 +19,7 @@ namespace raw::bridge
 class RtSkin
 {
 public:
-    static constexpr uint32_t kMaxDraws = 192, kMaxVertices = 65536;
+    static constexpr uint32_t kMaxDraws = 512, kMaxVertices = 65536;
     static constexpr uint64_t kPool = 32ull << 20, kBlas = 96ull << 20, kScratch = 32ull << 20, kBones = kMaxDraws * 3840ull;
     static constexpr uint32_t Descriptors() { return 3 * kMaxDraws * 3; }   // per slot, per draw: two streams and the pool
     bool Create(ID3D12Device5* dev, ID3D12DescriptorHeap* heap, uint32_t base, std::string& err);

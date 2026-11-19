@@ -4,26 +4,27 @@
 // Alpha-tested draws (the pixel shader discards, the blend state turns alpha into coverage, or the
 // shader is soft-lit foliage) also carry their texture coordinate element and the texture at t0, so
 // the rays test the same alpha the raster does; without either they are left out as before (a BLAS of
-// the full quads would shadow like solid cards). Skinned draws (their vertex buffer 2 is not the
-// 15-vector world block, so SceneLights never counts them) and non-indexed draws are left out. The
-// game's own shadow mask still carries those shadows; the lighting pass takes the darker of the two.
+// the full quads would shadow like solid cards). Draws with a skinned layout go to SceneSkin.cpp;
+// non-indexed draws are left out.
 // Every reason a draw is left out is counted and logged. Original work, MIT.
 #include "SceneGeometry.h"
+#include "SceneGeometryDetail.h"
 #include "SceneLights.h"
 #include "ProxyLog.h"
 #include "CBDirtyTracker.h"
 #include "../core/dxbc/GBufferPatch.h"
 
+#include <algorithm>
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
 
 namespace SB::Proxy
 {
+using geom::BlendAlpha;
+using geom::Layout;
 namespace
 {
-struct Elem { UINT slot = 0, offset = 0; DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN; bool set = false; };
-struct Layout { Elem pos, uv, blendIdx, blendW; };
 std::mutex g_m;
 std::unordered_map<ID3D11InputLayout*, Layout> g_layouts;
 std::unordered_map<ID3D11PixelShader*, uint8_t> g_alphaPs;   // RtAlphaDiscard or RtAlphaFoliage
@@ -33,9 +34,6 @@ struct Counts { uint64_t alphaNoTexture = 0, alphaNoUv = 0, alphaOff = 0, noLayo
                          alphaJoined[5] = {}, opaque = 0, opaqueMat = 0; } g_n;
 bool g_alphaOn = true;
 bool g_matOn = true;
-bool g_skinOn = true;
-int g_boneSlot = 10;
-uint64_t g_skinJoined = 0, g_skinNoBones = 0, g_skinNotOpaque = 0, g_skinFormat = 0, g_skinAlpha = 0;
 
 // True when the shader bytecode holds a discard instruction (SM4/5 opcode 13).
 bool HasDiscard(const void* bc, size_t n)
@@ -68,7 +66,6 @@ bool HasDiscard(const void* bc, size_t n)
 
 void SceneGeometry_SetAlpha(bool on) { g_alphaOn = on; }
 void SceneGeometry_SetMaterials(bool on) { g_matOn = on; }
-void SceneGeometry_SetSkin(bool on, int boneSlot) { g_skinOn = on; g_boneSlot = boneSlot; }
 
 // Byte size of a vertex element format, for D3D11_APPEND_ALIGNED_ELEMENT offsets.
 static UINT FormatBytes(DXGI_FORMAT f)
@@ -121,25 +118,6 @@ void SceneGeometry_OnPixelShader(ID3D11PixelShader* ps, const void* bc, size_t n
 
 namespace
 {
-// Alpha to coverage on a single-sample target cuts at alpha 0.5 like a test; a blended lit draw in the
-// opaque set cuts by its alpha too (the primary-ray view showed the sapling and the clover as solid
-// opaque cards with neither a discard nor coverage). Returns RtAlphaCoverage, RtAlphaBlend or none.
-uint8_t BlendAlpha(ID3D11DeviceContext* real)
-{
-    ID3D11BlendState* bs = nullptr;
-    FLOAT f[4];
-    UINT m = 0;
-    real->OMGetBlendState(&bs, f, &m);
-    if (!bs) return raw::bridge::RtAlphaNone;
-    D3D11_BLEND_DESC d{};
-    bs->GetDesc(&d);
-    bs->Release();
-    if (d.AlphaToCoverageEnable) return raw::bridge::RtAlphaCoverage;
-    const D3D11_RENDER_TARGET_BLEND_DESC& t = d.RenderTarget[0];
-    const bool usesAlpha = t.SrcBlend == D3D11_BLEND_SRC_ALPHA || t.DestBlend == D3D11_BLEND_INV_SRC_ALPHA;
-    return t.BlendEnable && usesAlpha ? raw::bridge::RtAlphaBlend : raw::bridge::RtAlphaNone;
-}
-
 bool UvFormatOk(DXGI_FORMAT f)
 {
     return f == DXGI_FORMAT_R16G16_FLOAT || f == DXGI_FORMAT_R32G32_FLOAT || f == DXGI_FORMAT_R16G16B16A16_FLOAT ||
@@ -159,75 +137,14 @@ ID3D11ShaderResourceView* AlphaTexture(ID3D11DeviceContext* real)
 }
 } // namespace
 
-// Diagnosis for skinned actors (their per-frame BLAS, docs/RAYTRACING.md): a draw the lit-draw decode
-// did not count whose input layout carries blend indices. Logs its layout and the sizes of the vertex
-// constant buffers bound, a few times, so the bone palette's slot and layout can be read off the log.
-static void SkinnedProbe(ID3D11DeviceContext* real, UINT indexCount, UINT startIndex, INT baseVertex)
-{
-    static uint32_t seen = 0, logged = 0;
-    ID3D11InputLayout* il = nullptr;
-    real->IAGetInputLayout(&il);
-    Layout L;
-    bool found;
-    { std::lock_guard<std::mutex> g(g_m); auto it = g_layouts.find(il); found = it != g_layouts.end(); if (found) L = it->second; }
-    if (il) il->Release();
-    if (!found || !L.blendIdx.set) return;
-    const bool formatOk = L.blendW.set && L.blendIdx.format == DXGI_FORMAT_R8G8B8A8_UNORM && L.blendW.format == DXGI_FORMAT_R16G16B16A16_FLOAT &&
-                          L.blendW.slot == L.blendIdx.slot &&
-                          (L.pos.format == DXGI_FORMAT_R32G32B32A32_FLOAT || L.pos.format == DXGI_FORMAT_R32G32B32_FLOAT || L.pos.format == DXGI_FORMAT_R16G16B16A16_FLOAT);
-    bool alpha = false;
-    if (g_skinOn && formatOk && SceneLights_Opaque()) {
-        // Alpha-tested skinned draws (tree leaves) would be solid cards: left out until the rays test them.
-        ID3D11PixelShader* ps = nullptr;
-        real->PSGetShader(&ps, nullptr, nullptr);
-        { std::lock_guard<std::mutex> g(g_m); alpha = ps && g_alphaPs.count(ps) && g_alphaPs[ps] == raw::bridge::RtAlphaDiscard; }
-        if (ps) ps->Release();
-        alpha = alpha || BlendAlpha(real) != raw::bridge::RtAlphaNone;
-    }
-    if (g_skinOn) { if (!SceneLights_Opaque()) ++g_skinNotOpaque; else if (!formatOk) ++g_skinFormat; else if (alpha) ++g_skinAlpha; }
-    if (g_skinOn && SceneLights_Opaque() && indexCount >= 3 && formatOk && !alpha) {
-        // A skinned draw of the opaque set: its streams, index range and bone palette (RtSkin.h).
-        ID3D11Buffer* bb[1] = {};
-        real->VSGetConstantBuffers(UINT(g_boneSlot), 1, bb);
-        const uint8_t* bones = bb[0] && CBDirtyTracker::Get().GetShadowSize(bb[0]) >= 3840 ? CBDirtyTracker::Get().GetShadowData(bb[0]) : nullptr;
-        if (bb[0]) bb[0]->Release();
-        if (!bones) { ++g_skinNoBones; return; }
-        raw::bridge::RtDraw d;
-        UINT stride = 0, offset = 0, bs = 0, bo = 0;
-        real->IAGetVertexBuffers(L.pos.slot, 1, &d.vb, &stride, &offset);
-        real->IAGetVertexBuffers(L.blendIdx.slot, 1, &d.blendVb, &bs, &bo);
-        real->IAGetIndexBuffer(&d.ib, &d.ibFormat, &d.ibOffset);
-        if (!d.vb || !d.ib || !d.blendVb) { raw::bridge::ReleaseRtDraw(d); return; }
-        d.skinned = true;
-        d.stride = stride; d.vbOffset = offset; d.posOffset = L.pos.offset; d.posFormat = L.pos.format;
-        d.blendStride = bs; d.blendVbOffset = bo; d.idxOffset = L.blendIdx.offset; d.wOffset = L.blendW.offset;
-        d.indexCount = indexCount; d.startIndex = startIndex; d.baseVertex = baseVertex;
-        d.bones = new float[960];
-        std::memcpy(d.bones, bones, 3840);
-        ++g_skinJoined;
-        g_frame.push_back(d);
-    }
-    if (logged >= 12 || (++seen % 97) != 1) return;
-    ID3D11Buffer* cb[14] = {};
-    real->VSGetConstantBuffers(0, 14, cb);
-    char sizes[256]{};
-    int at = 0;
-    for (int k = 0; k < 14; ++k) {
-        const uint32_t n = cb[k] ? CBDirtyTracker::Get().GetShadowSize(cb[k]) : 0;
-        at += snprintf(sizes + at, sizeof sizes - at, " b%d=%u", k, n);
-        if (cb[k]) cb[k]->Release();
-    }
-    ++logged;
-    Log("[RT] skinned draw: %u indices; position slot %u offset %u format %d; blend indices slot %u offset %u format %d; weights offset %u format %d; "
-        "coordinates offset %u format %d; vertex constant floats:%s",
-        indexCount, L.pos.slot, L.pos.offset, int(L.pos.format), L.blendIdx.slot, L.blendIdx.offset, int(L.blendIdx.format), L.blendW.offset,
-        int(L.blendW.format), L.uv.offset, int(L.uv.format), sizes);
-}
-
 void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT startIndex, INT baseVertex)
 {
+    SceneGeometry_Census(real, 0);
+    // A skinned layout goes the skinned way whether or not the lit-draw decode found a world block: the
+    // actors' draws carry one (434,193 of 538,843 skinned opaque-set draws in Riverwood), and as rigid
+    // meshes their bind-pose positions under that matrix put nothing where the body is.
+    if (SceneSkin_OnDraw(real, indexCount, startIndex, baseVertex)) return;
     const float* w = SceneLights_DrawWorld();
-    if (!w) SkinnedProbe(real, indexCount, startIndex, baseVertex);
     if (!w || indexCount < 3) return;
     ID3D11PixelShader* ps = nullptr;
     real->PSGetShader(&ps, nullptr, nullptr);
@@ -291,19 +208,59 @@ std::vector<raw::bridge::RtDraw> SceneGeometry_Take()
             (unsigned long long)g_n.alphaJoined[2], (unsigned long long)g_n.alphaJoined[3], (unsigned long long)g_n.alphaJoined[4], (unsigned long long)g_n.alphaNoUv,
             (unsigned long long)g_n.alphaNoTexture, (unsigned long long)g_n.alphaOff, (unsigned long long)g_n.noLayout,
             (unsigned long long)g_n.badFormat, (unsigned long long)g_n.noBuffers);
-    if (frames % 600 == 1)
-        Log("[RT] skinned draws so far: %llu joined, %llu without a bone palette at vertex slot %d; left out: %llu outside the opaque set, "
-            "%llu layout formats, %llu alpha-tested", (unsigned long long)g_skinJoined, (unsigned long long)g_skinNoBones, g_boneSlot,
-            (unsigned long long)g_skinNotOpaque, (unsigned long long)g_skinFormat, (unsigned long long)g_skinAlpha);
+    if (frames % 600 == 1) SceneSkin_Log();
     std::vector<raw::bridge::RtDraw> out;
     out.swap(g_frame);
+    SceneSkin_Took(out);   // the last frame's actors drawn after its capture
     return out;
 }
 
 void SceneGeometry_Drop()
 {
-    for (auto& d : g_frame) raw::bridge::ReleaseRtDraw(d);
+    SceneSkin_Drop(g_frame);   // skinned draws after this frame's capture wait for the next frame
     g_frame.clear();
 }
+
+
+namespace geom
+{
+bool FindLayout(ID3D11InputLayout* il, Layout& out)
+{
+    std::lock_guard<std::mutex> g(g_m);
+    auto it = g_layouts.find(il);
+    if (it == g_layouts.end()) return false;
+    out = it->second;
+    return true;
+}
+
+bool IsDiscardPs(ID3D11PixelShader* ps)
+{
+    std::lock_guard<std::mutex> g(g_m);
+    auto it = ps ? g_alphaPs.find(ps) : g_alphaPs.end();
+    return it != g_alphaPs.end() && it->second == raw::bridge::RtAlphaDiscard;
+}
+
+std::vector<raw::bridge::RtDraw>& Frame() { return g_frame; }
+
+// Alpha to coverage on a single-sample target cuts at alpha 0.5 like a test; a blended lit draw in the
+// opaque set cuts by its alpha too (the primary-ray view showed the sapling and the clover as solid
+// opaque cards with neither a discard nor coverage). Returns RtAlphaCoverage, RtAlphaBlend or none.
+uint8_t BlendAlpha(ID3D11DeviceContext* real)
+{
+    ID3D11BlendState* bs = nullptr;
+    FLOAT f[4];
+    UINT m = 0;
+    real->OMGetBlendState(&bs, f, &m);
+    if (!bs) return raw::bridge::RtAlphaNone;
+    D3D11_BLEND_DESC d{};
+    bs->GetDesc(&d);
+    bs->Release();
+    if (d.AlphaToCoverageEnable) return raw::bridge::RtAlphaCoverage;
+    const D3D11_RENDER_TARGET_BLEND_DESC& t = d.RenderTarget[0];
+    const bool usesAlpha = t.SrcBlend == D3D11_BLEND_SRC_ALPHA || t.DestBlend == D3D11_BLEND_INV_SRC_ALPHA;
+    return t.BlendEnable && usesAlpha ? raw::bridge::RtAlphaBlend : raw::bridge::RtAlphaNone;
+}
+
+} // namespace geom
 
 } // namespace SB::Proxy

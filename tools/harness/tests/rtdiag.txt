@@ -1,0 +1,27 @@
+# Trace-time variance, by switch (docs/RAYTRACING.md, "Timing between runs"): Riverwood by day, everything on,
+# then each part of the trace off in turn, then on again. Then the third person census and puddles.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+keyframe on steps=game,improved hold=150
+reload ini RtCache=0
+keyframe nocache steps=improved hold=120
+reload ini RtCache=1 RtMaterials=0
+keyframe nomat steps=improved hold=120
+reload ini RtMaterials=1 RtReflect=0
+keyframe norefl steps=improved hold=120
+reload ini RtReflect=1 RtSky=0
+keyframe nosky steps=improved hold=120
+reload ini RtSky=1
+keyframe on2 steps=improved hold=150
+reload ini Wetness=0.8 Puddles=0.8
+keyframe puddles steps=improved hold=120
+reload ini View=6
+keyframe puddles_refl steps=improved hold=60
+reload ini View=0 Wetness=0 Puddles=0
+walk f 0.15
+wait 4
+keyframe third steps=game,improved hold=90
+quit

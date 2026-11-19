@@ -1,0 +1,33 @@
+# Render-thread cost of the scene's per-draw work (RtIncremental A/B; the proxy logs the mean every 600
+# frames), actors in third person with unplaceable vertices dropped, and the weather masks for puddles.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+keyframe on steps=game,improved hold=150
+wait 15
+reload ini RtIncremental=0
+wait 15
+keyframe old_lookups steps=improved hold=120
+wait 10
+reload ini RtIncremental=1
+wait 15
+keyframe incremental steps=improved hold=120
+reload ini Wetness=0.8 Puddles=0.8 View=8
+keyframe puddle_masks steps=improved hold=30
+reload ini View=0
+keyframe puddles steps=improved hold=90
+reload ini Wetness=0 Puddles=0
+walk f 0.15
+wait 4
+keyframe third steps=game,improved hold=120
+reload ini RtDebug=1 View=7
+keyframe third_primary steps=improved hold=60
+reload ini RtActors=0
+keyframe third_primary_noact steps=improved hold=60
+reload ini RtActors=1 RtDebug=0 View=2
+keyframe third_sunvis steps=improved hold=60
+reload ini View=0
+keyframe third_on steps=improved hold=120
+quit

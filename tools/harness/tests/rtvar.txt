@@ -1,0 +1,13 @@
+# Trace time between sessions (docs/RAYTRACING.md, "Timing between runs"): Riverwood by day, everything on,
+# run with a GPU clock log beside it (nvidia-smi every 250 ms) so a slow session shows its clocks.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+keyframe on steps=game,improved hold=150
+reload ini RtDebug=1 View=7
+keyframe primary steps=improved hold=90
+reload ini RtDebug=0 View=0
+keyframe on2 steps=improved hold=150
+quit

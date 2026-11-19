@@ -1,0 +1,21 @@
+# The camera's place for skinned draws in third person (RtCamSteps A/B): the primary-ray view with float4
+# 40 and with the summed steps; the log prints both places every 300 frames.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 10
+keyframe first steps=improved hold=60
+walk f 0.15
+wait 6
+keyframe third steps=game,improved hold=60
+reload ini RtDebug=1 View=7
+keyframe adjust steps=improved hold=60
+reload ini RtCamSteps=1
+wait 4
+keyframe steps steps=improved hold=60
+reload ini RtDebug=0 View=2
+keyframe steps_sunvis steps=improved hold=60
+reload ini View=0
+keyframe steps_on steps=improved hold=60
+quit

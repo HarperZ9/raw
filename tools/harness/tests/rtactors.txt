@@ -1,0 +1,24 @@
+# Actors in the ray-tracing scene (docs/RAYTRACING.md, "Actors"): Riverwood by day, first person, then
+# the player in third person. The primary-ray view (RtDebug=1, View=7; recordless meshes magenta) must
+# show the body; the sun visibility (View=2) must carry its ray-traced shadow. A/B: RtActors=0.
+# Run twice in a row with the GPU clock log for the session-to-session trace time.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+keyframe on steps=game,improved hold=150
+walk f 0.15
+wait 4
+keyframe third steps=game,improved hold=120
+reload ini RtDebug=1 View=7
+keyframe third_primary steps=improved hold=60
+reload ini RtActors=0
+keyframe third_primary_noact steps=improved hold=60
+reload ini RtActors=1 RtDebug=0 View=2
+keyframe third_sunvis steps=improved hold=60
+reload ini RtActors=0
+keyframe third_sunvis_noact steps=improved hold=60
+reload ini RtActors=1 View=0
+keyframe third_on steps=improved hold=120
+quit

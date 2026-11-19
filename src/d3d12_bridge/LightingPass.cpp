@@ -242,7 +242,7 @@ private:
         u.proj[3] = interior ? t.rtBounceInterior : t.rtBounce;
         u.tune[0] = t.fogDensity; u.tune[1] = t.fogAnisotropy; u.tune[2] = t.softRange; u.tune[3] = t.contactLength;
         u.tune2[0] = t.aoStrength; u.tune2[1] = t.fogLightScale; u.tune2[2] = t.fogSunScale; u.tune2[3] = t.fogMaxDistance;
-        u.weather[0] = t.mode == 2 ? t.wetness : 0.0f; u.weather[1] = t.mode == 2 ? t.puddles : 0.0f; u.weather[2] = u.weather[3] = 0.0f;
+        u.weather[0] = t.mode == 2 ? t.wetness : 0.0f; u.weather[1] = t.mode == 2 ? t.puddles : 0.0f; u.weather[2] = t.mode == 2 ? t.snow : 0.0f; u.weather[3] = 0.0f;
         for (int k = 0; k < 3; ++k) u.camPos[k] = s.posAdjust[k];
         u.camPos[3] = 0.0f;
         for (uint32_t i = 0; i < s.lightCount; ++i) {

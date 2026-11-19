@@ -1,0 +1,26 @@
+# The weather drives the surfaces (WeatherDrive.h): Riverwood by day. WeatherRain stands in for the
+# engine module's report, with short soak, puddle, dry and snow times so one session shows each stage.
+# View=8: the weather masks (wet red, puddles green, snow blue).
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+keyframe dry steps=game,improved hold=120
+reload ini WeatherRain=1 WeatherSoakSeconds=8 WeatherPuddleSeconds=16
+wait 24
+keyframe raining steps=improved hold=90
+reload ini View=8
+keyframe raining_masks steps=improved hold=30
+reload ini View=6
+keyframe raining_refl steps=improved hold=30
+reload ini View=0 WeatherRain=0 WeatherDrySeconds=10 WeatherDrainSeconds=10
+wait 15
+keyframe drying steps=improved hold=60
+reload ini WeatherSnow=1 WeatherSnowSeconds=12
+wait 20
+keyframe snowed steps=game,improved hold=90
+reload ini View=8
+keyframe snowed_masks steps=improved hold=30
+reload ini View=0 WeatherSnow=-1 WeatherRain=-1
+quit

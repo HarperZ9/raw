@@ -19,6 +19,18 @@ static const float3 W = float3(0.2125f, 0.7154f, 0.0721f);
 
 float3 filmic(float3 x) { return saturate((x * (2.51f * x + 0.03f)) / (x * (2.43f * x + 0.59f) + 0.14f)); }
 
+// Curve 2: an extended Reinhard per channel, x (1 + x / W^2) / (1 + x), white at W (ToneX1, default 4). Its slope at
+// black is 1, as the game's own curve's is, so shadows keep their level; the fitted ACES curve's slope there is about
+// 0.2, and it crushed a third of a Riverwood dawn frame to black (rt8 matrix: 47 % of pixels at 4 or less against the
+// game's 6 %). ToneX2 lifts the shoulder's saturation back towards the input's hue (0 none, 1 full).
+float3 reinhardW(float3 x) {
+    const float w = RC.w > 0.0f ? RC.w : 4.0f;
+    const float3 m = x * (1.0f + x / (w * w)) / (1.0f + x);
+    const float lx = dot(x, W), lm = dot(m, W);
+    const float3 hue = x * (lm / max(lx, 1.0e-5f));   // the luminance's curve, the input's chroma
+    return saturate(lerp(m, hue, saturate(RX.x)));
+}
+
 float gameCurve(float l) {   // the game's own: a Hejl-style curve or a Reinhard with a white point
     if (P[2].z > 0.5f) {
         const float x = max(l - 0.004f, 0.0f);
@@ -36,17 +48,36 @@ float4 main(In i) : SV_Target {
     // Mode 1: a camera's exposure brings the metered average to the key. Adapt (RC.x) is the share of a change of
     // average the exposure follows: 1 is a camera's full compensation, below 1 a dark room stays darker than a bright
     // street, as the eye's partial adaptation leaves it. The reference average (RC.y) is where both agree.
+    // The eye follows less of a change into the dark than into the light: below the reference the share is
+    // ToneX0 (RC.z; 0 takes Adapt's). The metered average is the game's adapted one (Lum.x), which the game's own
+    // luminance chain moves over time towards the frame's, so the exposure adapts as the eye does, at the game's rate.
     const float metered = clamp(avg, RA.z, RA.w);
-    const float camera = RB.y / (pow(RC.y, 1.0f - RC.x) * pow(metered, RC.x));
+    const float share = metered < RC.y && RC.z > 0.0f ? RC.z : RC.x;
+    const float camera = RB.y / RC.y * pow(max(metered / RC.y, 1.0e-4f), -share);
     const float exposure = (RA.x < 0.5f ? lum.y / avg : camera) * exp2(RA.y);
     float3 mapped;
     float pivot = lum.x;
     if (RB.x < 0.5f) {
         const float l = max(dot(hdr, W), 1.0e-5f);
         mapped = hdr * (gameCurve(l * exposure) / l);
+    } else if (RB.x > 2.5f) {
+        // Curve 3: the game's own curve on luminance, l (1 + l / W^2) / (1 + l), with the white point raised to at
+        // least ToneX1 (the game's clips about 5 % of a clear midday frame), then a contrast about the key (below). The hue stays the input's, as in the game.
+        const float l = max(dot(hdr, W), 1.0e-5f) * exposure * RB.z;
+        const float w2 = max(1.0f / max(P[2].y, 1.0e-4f), RC.w * RC.w);
+        // Contrast in two halves about the key: above it the luminance is raised to ToneX3 (more contrast in the
+        // light), below it to ToneX4 (below 1 lifts the shadows). One power for both crushed the darks: at 1.25 a
+        // quarter of the inn went to 4 of 255 or less while midday only then reached the game's detail (rt8 panel 3).
+        const float cu = RX.y > 0.0f ? RX.y : 1.0f, cl = RX.z > 0.0f ? RX.z : cu;
+        // Below the key the power runs from ToneX4 at black to ToneX3 at the key, so the deep shadows lift while the
+        // middle tones keep the contrast (a night frame lost a tenth of its detail with ToneX4 alone below the key).
+        const float lc = RB.y * pow(l / RB.y, l > RB.y ? cu : lerp(cl, cu, saturate(l / RB.y)));
+        mapped = hdr * exposure * RB.z * (saturate(lc * (1.0f + lc / w2) / (1.0f + lc)) / l);
+        if (RA.x > 0.5f) { pivot = RB.y * (1.0f + RB.y / w2) / (1.0f + RB.y); }
     } else {
-        mapped = filmic(hdr * exposure * RB.z);
-        if (RA.x > 0.5f) { pivot = dot(filmic((RB.y * exp2(RA.y) * RB.z).xxx), W); }   // the grade turns about mid grey
+        const bool rh = RB.x > 1.5f;
+        mapped = rh ? reinhardW(hdr * exposure * RB.z) : filmic(hdr * exposure * RB.z);
+        if (RA.x > 0.5f) { pivot = dot(rh ? reinhardW((RB.y * exp2(RA.y) * RB.z).xxx) : filmic((RB.y * exp2(RA.y) * RB.z).xxx), W); }   // the grade turns about mid grey
     }
     mapped += bloom * saturate(P[2].x - dot(mapped, W));
     if (RB.w > 1.5f) { return float4(lum.x * 0.25f, lum.y * 0.25f, exposure * 0.25f, 1.0f); }   // view 2: adapted average, the game's target, exposure (over 4, no gamma)

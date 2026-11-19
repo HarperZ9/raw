@@ -78,6 +78,16 @@ Input goes through `SendInput`, which needs the game window in the foreground. E
 that it is; a key never goes to another window, and a step that cannot type stops the run with
 the reason instead of being skipped.
 
+## Live session (`listen`)
+
+`listen <folder>` keeps one game up and runs the command files dropped in the folder, one at a time in name order.
+Each file holds script lines. A file's run ends with `<name>.done` (the log lines it made), or with `<name>.err`
+when a command failed. A failure ends only that file, and the session goes on. A line `end` stops listening, and
+`listening.txt` carries a heartbeat. `tests/rt8live.txt` is the whole test: load the save, stop the AI, listen on
+`{out}/inbox` (`{out}` is the run's folder). `reload sync <file ...>` copies files from the `--shaders` folder into
+the game's shader copy and waits for the reload. The shared live session service (`tools/live`, docs/LIVE_SESSION.md)
+took over the long-lived game on 2026-11-19. Its `script` kind runs these files unchanged.
+
 ## The proxy's side
 
 With `[Lighting] Harness=1` the proxy writes `raw_harness_status.txt` beside the game every 30

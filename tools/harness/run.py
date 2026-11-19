@@ -164,7 +164,15 @@ class Runner(Actions):
         if not p.exists():
             return {}
         out = {}
-        for line in p.read_text(errors="replace").splitlines():
+        for _ in range(20):   # the proxy rewrites it every few frames; a read can meet the writer's open handle
+            try:
+                text = p.read_text(errors="replace")
+                break
+            except PermissionError:
+                time.sleep(0.05)
+        else:
+            return {}
+        for line in text.splitlines():
             k, _, v = line.partition("=")
             out[k] = v
         return out

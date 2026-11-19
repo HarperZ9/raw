@@ -102,9 +102,7 @@ uint32_t RtScene::PlaceInstances(uint32_t slot, uint32_t& alphaN, uint64_t& scen
     m_inst[slot]->Map(0, &none, reinterpret_cast<void**>(&inst));
     uint32_t n = 0;
     if (m_tune.incremental) {
-        m_stage.resize(kMaxInstances);
-        n = PlaceInto(m_stage.data(), slot, alphaN, sceneTris);
-        std::memcpy(inst, m_stage.data(), size_t(n) * sizeof(D3D12_RAYTRACING_INSTANCE_DESC));
+        n = PlaceStaged(inst, slot, alphaN, sceneTris);
     } else {
         n = PlaceInto(inst, slot, alphaN, sceneTris);
     }
@@ -261,7 +259,7 @@ void RtScene::RecordTrace(ID3D12GraphicsCommandList4* cl, uint32_t slot, bool sk
     cl->SetComputeRootSignature(m_root.Get());
     cl->SetPipelineState(m_tune.debug && m_psoDebug ? m_psoDebug.Get() : m_pso.Get());
     cl->SetComputeRootConstantBufferView(0, m_cb[slot]->GetGPUVirtualAddress());
-    const float rc[8] = {m_tune.sunLength, m_tune.sourceRadius, m_tune.sunCone, float(m_frame & 0xFFFF), m_tune.alphaRef, m_tune.termDist,
+    const float rc[8] = {m_tune.sunLength, m_tune.sourceRadius, m_tune.sunCone, g_deterministic ? 0.0f : float(m_frame & 0xFFFF), m_tune.alphaRef, m_tune.termDist,
                          sky ? m_tune.skyLength : 0.0f, m_tune.debug ? -1.0f : sky && m_tune.reflect ? m_tune.reflectLength : 0.0f};
     cl->SetComputeRoot32BitConstants(1, 8, rc, 0);
     cl->SetComputeRootShaderResourceView(2, m_tlas->GetGPUVirtualAddress());
@@ -283,7 +281,7 @@ void RtScene::RecordTrace(ID3D12GraphicsCommandList4* cl, uint32_t slot, bool sk
     uint32_t gc[8];
     std::memcpy(gc, m_tune.cameraPos, 12);
     std::memcpy(gc + 3, &m_tune.cacheCell, 4);
-    gc[4] = RtCache::kSlots; gc[5] = giFlags; gc[6] = uint32_t(m_tune.debugView); gc[7] = uint32_t(m_frame);
+    gc[4] = RtCache::kSlots; gc[5] = giFlags; gc[6] = uint32_t(m_tune.debugView); gc[7] = g_deterministic ? 0u : uint32_t(m_frame);
     cl->SetComputeRoot32BitConstants(14, 8, gc, 0);
     cl->Dispatch((m_w + 7) / 8, (m_h + 7) / 8, 1);
 }

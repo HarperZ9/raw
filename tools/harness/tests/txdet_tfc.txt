@@ -1,0 +1,22 @@
+# txdet.txt with the free camera frozen (tfc 1): every animation stops, not only the clock. An experiment:
+# whether tfc closes the console varies (tests/lighting.txt), so nothing but the keyframes and quit follows it.
+start load rawharness
+console tai
+console tcai
+scene riverwood
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+console coc riverwood
+wait 8
+console fw 81a
+wait 6
+engine set bUseTAA:Display 0
+console set timescale to 0
+console tfc 1
+wait 4
+keyframe still_a steps=game,improved hold=40
+wait 3
+keyframe still_b steps=game,improved hold=40
+
+quit

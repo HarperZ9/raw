@@ -242,6 +242,7 @@ void RtScene::SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resou
     m_cpuReleaseUs += NowUs() - r0;
     m_draws = std::move(draws);
     m_drawMesh.assign(m_draws.size(), ~0u);
+    m_stageState.clear();   // staged again below, or nothing placed this frame
     m_build.clear();
     ++m_frame;
     m_stats.draws = uint32_t(m_draws.size());
@@ -262,7 +263,8 @@ void RtScene::SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resou
     if (m_skinReady && m_tune.skin) m_skin.SetDraws(m_draws, toHand, native);
     else { std::vector<RtDraw> none; m_skin.SetDraws(none, toHand, native); }
     m_cpuSkinUs += NowUs() - s0;
-    std::vector<Key> keys(m_draws.size(), Key{});
+    std::vector<Key>& keys = m_keys;   // reused: no allocation per frame
+    keys.assign(m_draws.size(), Key{});
     for (size_t di = 0; di < m_draws.size(); ++di) {
         RtDraw& d = m_draws[di];
         if (d.skinned) continue;   // RtSkin's, rebuilt every frame
@@ -327,6 +329,7 @@ void RtScene::SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resou
     }
     m_lastKeys.swap(keys);
     m_lastMesh = m_drawMesh;
+    if (m_tune.incremental) StageDraws();
 }
 
 bool RtScene::Submit(ID3D12CommandQueue* q)

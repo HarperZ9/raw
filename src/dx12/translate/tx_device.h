@@ -144,6 +144,7 @@ public:
     uint32_t faults = 0;
     bool renameRing = true;
     Context* imm = nullptr;
+    StreamPool* pool = nullptr;   // translation workers (tx_stream.h), when CreateParams::workers
 
     // ---- counters ----
     std::atomic<uint64_t> nDebugErrors{0}, nPso{0}, nRootSig{0}, nSubmit{0}, nBarriers{0}, nDraws{0}, nUnsupported{0};
@@ -218,6 +219,7 @@ private:
     std::mutex submitM_;
     std::mutex poolM_;
     std::vector<ID3D12CommandList*> execLists_;
+    std::vector<Recording*> submitRecs_;
     std::vector<ComPtr<ID3D12CommandAllocator>> fixAllocs_;
     void ReclaimLocked(bool force);
     void RecycleAllocator(ComPtr<ID3D12CommandAllocator> a, uint64_t serial);

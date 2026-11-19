@@ -102,13 +102,20 @@ HRESULT Device::Init(const CreateParams& p)
 
     OpenRecording(init_);
     imm = new Context(this, false);
+    if (p.workers) {
+        pool = new StreamPool(this, p.workers > 16 ? 16 : p.workers);
+        imm->EnableStream(pool, p.segmentDraws, p.segmentMin, p.predictRuns);
+        Log("translation workers: %u", pool->Workers());
+    }
     return S_OK;
 }
 
 Device::~Device()
 {
     if (imm) {
-        imm->Shutdown();
+        imm->Shutdown();   // submits what the workers closed
+        delete pool;
+        pool = nullptr;
         delete imm;
     }
     if (queue && fence) {

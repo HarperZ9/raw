@@ -94,6 +94,9 @@ STDMETHODIMP_(void) Context::CopyResource(ID3D11Resource* dstRes, ID3D11Resource
     TX_TRACE("Context::CopyResource");
     ResCore* d = CoreOf(dstRes);
     ResCore* s = CoreOf(srcRes);
+    bool recorded = false;
+    if (!StreamCopy(d, s, recorded)) RunBreak(__func__);
+    if (recorded) { SHead(SO_Copy); SRes(d); SRes(s); return; }
     if (!d || !s || d == s || d->dim != s->dim) return;
     if (d->IsBuffer()) { CopyBuffer(*d, 0, *s, 0, d->bytes < s->bytes ? d->bytes : s->bytes); return; }
     if (d->store == Store::Committed && s->store == Store::Committed) {
@@ -115,6 +118,17 @@ STDMETHODIMP_(void) Context::CopySubresourceRegion(ID3D11Resource* dstRes, UINT 
     TX_TRACE("Context::CopySubresourceRegion");
     ResCore* d = CoreOf(dstRes);
     ResCore* s = CoreOf(srcRes);
+    bool recorded = false;
+    if (!StreamCopy(d, s, recorded)) RunBreak(__func__);
+    if (recorded) {
+        SHead(SO_CopyRegion, 0, 0, box ? 1 : 0);
+        SRes(d); SRes(s);
+        seg_->words.push_back(uint64_t(dsub) | uint64_t(ssub) << 32);
+        seg_->words.push_back(uint64_t(x) | uint64_t(y) << 32);
+        seg_->words.push_back(z);
+        if (box) { uint64_t b[3]; memcpy(b, box, sizeof(D3D11_BOX)); for (uint64_t v : b) seg_->words.push_back(v); }
+        return;
+    }
     if (!d || !s || d->dim != s->dim) return;
     if (!d->IsBuffer()) { CopyTexture(*d, dsub, x, y, z, *s, ssub, box); return; }
     if (box && box->right <= box->left) return;
@@ -131,6 +145,7 @@ STDMETHODIMP_(void) Context::CopyStructureCount(ID3D11Buffer*, UINT, ID3D11Unord
 
 STDMETHODIMP_(void) Context::ResolveSubresource(ID3D11Resource* dstRes, UINT dsub, ID3D11Resource* srcRes, UINT ssub, DXGI_FORMAT fmt)
 {
+    RunBreak(__func__);
     TX_TRACE("Context::ResolveSubresource");
     ResCore* d = CoreOf(dstRes);
     ResCore* s = CoreOf(srcRes);
@@ -145,6 +160,7 @@ STDMETHODIMP_(void) Context::ResolveSubresource(ID3D11Resource* dstRes, UINT dsu
 
 STDMETHODIMP_(void) Context::GenerateMips(ID3D11ShaderResourceView* view)
 {
+    RunBreak(__func__);
     TX_TRACE("Context::GenerateMips");
     TSRV* v = static_cast<TSRV*>(view);
     if (!v) return;

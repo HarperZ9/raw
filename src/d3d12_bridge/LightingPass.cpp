@@ -226,7 +226,7 @@ private:
         LightUniform& u = m_u;
         const LightingTuning& t = m_tune;
         u.dims[0] = float(m_host.width); u.dims[1] = float(m_host.height); u.dims[2] = 1.0f / u.dims[0]; u.dims[3] = 1.0f / u.dims[1];
-        u.proj[0] = frame.camera.proj[10]; u.proj[1] = -frame.camera.proj[11]; u.proj[2] = float(m_frame & 0xFFFF);
+        u.proj[0] = frame.camera.proj[10]; u.proj[1] = -frame.camera.proj[11]; u.proj[2] = g_deterministic ? 0.0f : float(m_frame & 0xFFFF);
         uint32_t f = ok ? kSurface : 0u;
         if (!ok) { u.flags[0] = 0; return; }
         const SceneLighting& s = *frame.lighting;

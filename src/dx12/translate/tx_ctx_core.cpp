@@ -5,7 +5,8 @@ namespace raw::tx {
 
 extern const void* g_contextVtable;   // tx_host.cpp
 
-Context::Context(Device* dev, bool deferred) : dev_(dev), deferred_(deferred)
+Context::Context(Device* dev, bool deferred, bool replay)
+    : replay_(replay), dev_(dev), deferred_(deferred), holds_(replay ? BindHolds::kNone : deferred ? BindHolds::kAtomic : BindHolds::kPlain)
 {
     g_contextVtable = *reinterpret_cast<void* const*>(this);
     chunks_.Init(&dev->slab, !deferred && dev->renameRing);   // the immediate context renames through the ring
@@ -13,12 +14,17 @@ Context::Context(Device* dev, bool deferred) : dev_(dev), deferred_(deferred)
     if (!deferred_) rec_.tracker.EnableSlots();   // the immediate context's list: hash-free state lookups
     dev_->OpenRecording(rec_);
     BeginList();
-    if (deferred_) dev_->AddRef();
+    if (deferred_ && !replay_) dev_->AddRef();
 }
 
 Context::~Context()
 {
+    RunBreak(__func__);
+    if (!pending_.empty()) SubmitPending();
+    for (Segment* sg : freeSegs_) delete sg;
+    freeSegs_.clear();
     ResetState();
+    holds_.ReleaseAll();
     if (rec_.cl) rec_.cl->Close();
     Retire r = std::move(rec_.retire);
     if (descBase_ != ~0u) r.descPages.push_back(descBase_);
@@ -37,6 +43,7 @@ void Context::Shutdown()
 {
     ResetState();
     FlushInternal();
+    holds_.ReleaseAll();
 }
 
 STDMETHODIMP Context::QueryInterface(REFIID r, void** o)
@@ -75,10 +82,13 @@ void Context::BeginList()
     memset(cbVa_, 0xFF, sizeof(cbVa_));
     memset(cbBuf_, 0, sizeof(cbBuf_));
     for (auto& k : sampKey_) k = ~0ull;
+    tables_.Reset();
+    for (auto& h : srvTable_) h.ptr = 0;
 }
 
 const Chunk* Context::Pin(TBuffer* b)
 {
+    if (replay_ && b->core.store == Store::Renamed) return &override_[b];   // the address the segment recorded
     if (!deferred_ || b->core.store != Store::Renamed) return &b->core.chunk;
     auto ins = renames_.try_emplace(b);
     if (ins.second) { ins.first->second.chunk = b->core.chunk; b->IntAddRef(); }
@@ -114,25 +124,29 @@ void Context::Repin()
 void Context::ResetState()
 {
     for (auto& st : s_.st) {
-        if (st.sh.obj) st.sh.ref(st.sh.obj, -1);
-        for (auto& c : st.cb) IntAssign<TBuffer>(c.buf, nullptr);
-        for (uint32_t i = 0; i < st.srvHi; ++i) IntAssign<TSRV>(st.srv[i], nullptr);
-        for (auto& s : st.samp) IntAssign<TSampler>(s, nullptr);
+        if (st.sh.obj) st.sh.drop(holds_, st.sh.obj);
+        for (auto& c : st.cb) holds_.Assign<TBuffer>(c.buf, nullptr);
+        for (uint32_t i = 0; i < st.srvHi; ++i) holds_.Assign<TSRV>(st.srv[i], nullptr);
+        for (auto& s : st.samp) holds_.Assign<TSampler>(s, nullptr);
     }
-    IntAssign<TInputLayout>(s_.layout, nullptr);
-    for (auto& v : s_.vb) IntAssign<TBuffer>(v.buf, nullptr);
-    IntAssign<TBuffer>(s_.ib.buf, nullptr);
-    for (auto& r : s_.rtv) IntAssign<TRTV>(r, nullptr);
-    IntAssign<TDSV>(s_.dsv, nullptr);
-    for (auto& u : s_.uav) IntAssign<TUAV>(u, nullptr);
-    for (auto& u : s_.csUav) IntAssign<TUAV>(u, nullptr);
-    IntAssign<TBlend>(s_.blend, nullptr);
-    IntAssign<TDepthStencil>(s_.ds, nullptr);
-    IntAssign<TRaster>(s_.rs, nullptr);
+    holds_.Assign<TInputLayout>(s_.layout, nullptr);
+    for (auto& v : s_.vb) holds_.Assign<TBuffer>(v.buf, nullptr);
+    holds_.Assign<TBuffer>(s_.ib.buf, nullptr);
+    for (auto& r : s_.rtv) holds_.Assign<TRTV>(r, nullptr);
+    holds_.Assign<TDSV>(s_.dsv, nullptr);
+    for (auto& u : s_.uav) holds_.Assign<TUAV>(u, nullptr);
+    for (auto& u : s_.csUav) holds_.Assign<TUAV>(u, nullptr);
+    holds_.Assign<TBlend>(s_.blend, nullptr);
+    holds_.Assign<TDepthStencil>(s_.ds, nullptr);
+    holds_.Assign<TRaster>(s_.rs, nullptr);
     s_ = State{};
     dirty_ = D_ALL;
 }
 
-STDMETHODIMP_(void) Context::ClearState() { ResetState(); }
+STDMETHODIMP_(void) Context::ClearState()
+{
+    RunBreak(__func__);
+    ResetState();
+}
 
 }  // namespace raw::tx

@@ -122,8 +122,12 @@ through `restart dll=<build>` (about 65 s).
 - **Edits outlive a restart.** `ini_set` and `reload_ini` write the deployed ini, and a restart now starts from
   that ini (less `[HotReload]` and `[Modules]`, which it adds again). In the first session a restart had put
   `GpuTiming=1` back.
-- **A coc to the cell the player stands in** shows no loading screen, so the runner typed it a second time and
-  the keys went into the world. `move` and `console coc` skip a repeat of the last move (`again=true` forces it).
+- **A coc to the cell the player stands in** shows no loading screen, so the harness typed it a second time and
+  the keys went into the world (the inventory opened, three times on 2026-11-19). In the live session every coc
+  (`move`, `console`, and `script` lines) skips a repeat of the last move or of the save's cell (`--save-cell`,
+  default riverwood; `move ... again=true` forces one). A coc that brings no loading screen and no lighting
+  change is taken as already there and is not typed again. The log says so. The cost: a coc whose keys were
+  lost in a hitch is no longer retried, so check the log line when a cell matters.
 
 ## The proof
 

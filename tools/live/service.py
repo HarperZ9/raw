@@ -199,6 +199,7 @@ def main() -> int:
     p.add_argument("--versions", default=str(HERE.parent.parent / "data" / "versions"))
     p.add_argument("--resolution", default="3840x2160")
     p.add_argument("--save", default="rawharness")
+    p.add_argument("--save-cell", default="riverwood", help="the cell the save starts in, so a coc to it is skipped")
     p.add_argument("--restore-only", action="store_true", help="restore the install after a killed service, then exit")
     cfg = p.parse_args()
     svc = Service(cfg)

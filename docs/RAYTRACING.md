@@ -379,8 +379,10 @@ Views: `WaterView=1` the reflection, `2` the caustics, `3` Fresnel, `4` the bed 
 The two D3D11 copies of the HDR colour, in and out, are not in these times.
 
 In the river view the bank and the rock now mirror in the water, darker under the rock, where the game's water
-shows its own sky. The caustics view came out black in rt6-iso-4. `WaterView=4` shows whether the opaque depth
-under the water holds the bed or the water surface; it has not been read in game yet.
+shows its own sky. The caustics do not show yet: `WaterView=4` reads red on every water pixel (rt6-wat-4), so the
+depth RAW copies at the end of the opaque pass already holds the water's surface, not the bed. The game must write
+its water's depth before that point (the depth prepass is the likely place). The caustics, and any absorption by
+the water's depth, need the bed's depth captured before the water's depth is written.
 
 Two device removals were found and fixed on the way:
 - The scattering wrote into the water's input texture, which had no UAV. With the water alone it never did. DRED
@@ -398,8 +400,10 @@ frames, and reaches the lighting pass in the bounce texture's alpha (`FLAG_REST`
 multiplies each untraced light by it. This is the ratio estimator of Heitz et al. 2018: one shadowed-over-unshadowed
 ratio for the set. It is ReSTIR's first stage, exact here because a cluster holds at most 128 lights; the temporal
 and spatial reuse of reservoirs is not built. Emissive surfaces still light other surfaces only through the one
-bounce, which reads them from the frame where a sky ray hits them on screen. Cost in a Riverwood day view with few
-lights: within 0.01 ms of the trace without it.
+bounce, which reads them from the frame where a sky ray hits them on screen. The extra ray is traced whether
+`RtRest` is on or off (the key only changes what the lighting pass reads), so its cost is not isolated yet: the
+inn's trace read 1.79 ms with the key off and 1.77 ms with it on in one run (rt6-tm-1). In the inn most of the
+untraced lights' light arrives (view 14 reads near white), with darker patches behind the posts and the hearth.
 
 **Skin.** The hands' and bodies' shader without the tint maps (ps `6a2383091a33f594` in the Riverwood capture:
 t0, t1, t2, t11, t12, t14, sampling t2 and t12 as the body shader does) now classes as skin, so the player's arms
@@ -408,7 +412,12 @@ sized in world units at the pixel's depth, a Gaussian width per channel (red 1, 
 `SssWidth`), each tap only on skin at the same depth. At `SssWidth=1` the arm's pores washed out; the default is
 0.5 at strength 0.75. With the arms in the class, the skin wrap of 0.55 / 0.22 / 0.12 read orange against the
 game's brown; it is now 0.30 / 0.12 / 0.06. Skin keeps the game's sun mask instead of the ray-traced sun, because
-the actors' own triangles still cast blocky shadows onto their skin in the rays.
+the actors' own triangles still cast blocky shadows onto their skin in the rays (the dark blocks on the arm in
+rt6-wat-3). Skin also takes the game's soft-lighting map at t12, which the body and hands shaders read; without it
+the lit arm read darker than the game's.
+
+Found on the way, not caused by this work: an NPC's red hair reads blonde in improved mode, in rt5-ref-1 as well
+as now. The hair shader's tint is likely applied after the point where the patch taps the albedo.
 
 **The actor sheet, narrowed.** Three more causes are ruled out:
 - the palette: at 39 actor draws the bone constant buffer copied back from the GPU equals the tracker's shadow copy
@@ -430,6 +439,18 @@ SOURCE.txt and SHA256SUMS as data; none of its code runs. On its reference.png a
 sit within one 8-bit step of its stored C++ error map (largest gap 0.012). Its filters clamp at the image border.
 This tool used reflect padding, which put 13,000 border pixels off, and now clamps too. The earlier reference
 scores are unchanged to three places: Riverwood 0.389 against the game's model 0.505, the inn 0.317 against 0.497.
+
+**The tone map default.** Through each tone map, FLIP between the improved lighting (view 13) and the path-traced
+reference (`RtDebug=6`, 1,000 frames) at quarter size (rt6-tm-1):
+
+| | the game's tone map | RAW's tone map |
+|---|---|---|
+| Riverwood 13:00 | 0.511 | 0.522 |
+| The Bannered Mare | 0.355 | 0.247 |
+
+The result is mixed: RAW's tone map is much closer in the inn and slightly further in Riverwood, so `Tonemap`
+stays off by default. The Riverwood figure under the game's tone map was 0.389 in rt5-ref-1; this run's view
+or accumulation differs and the cause is not found.
 
 **Not done:**
 - POM. The vanilla parallax shaders (t3 height, about 10 variants in the Riverwood capture) offset their

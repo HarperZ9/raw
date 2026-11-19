@@ -8,8 +8,9 @@
 //   LiveState=1       lights, the view and the shader manager's state each present (rt_livestate.cpp, rt_view.cpp)
 //   Emitters=1        glowing effect and particle draws join the light list (rt_emitters.cpp)
 //   OutDir=raw_engine_out
-// Inputs beside the game: engine_rt_refs.tsv (rva, kind setting|global, name) and
-// engine_rt_vtrace.tsv (class, vtable rva, slot count), both generated from the engine map.
+// Inputs beside the game: raw_versions\skyrimse-<version>.tsv, the address table for each supported runtime
+// (rt_version.h; data/versions in the repository), and engine_rt_vtrace.tsv (class, vtable rva, slot count) for VTrace.
+// The running exe picks its table by file version, PE time stamp and image size; with no match nothing is hooked.
 #include <windows.h>
 
 #include <algorithm>
@@ -29,6 +30,7 @@
 #include "rt_livestate.h"
 #include "rt_view.h"
 #include "rt_weather.h"
+#include "rt_version.h"
 
 namespace {
 
@@ -60,23 +62,6 @@ void Log(const char* fmt, ...) {
 
 uint32_t Hex(const std::string& s) { return uint32_t(std::stoul(s, nullptr, 16)); }
 
-std::vector<raw::rt::RefTarget> LoadRefs() {
-    std::vector<raw::rt::RefTarget> out;
-    std::ifstream in(g_dir + "engine_rt_refs.tsv");
-    std::string line;
-    while (std::getline(in, line)) {
-        std::istringstream ss(line);
-        std::string rva, kind, name;
-        if (!std::getline(ss, rva, '\t') || !std::getline(ss, kind, '\t') || !std::getline(ss, name)) continue;
-        if (rva.rfind("0x", 0) != 0) continue;
-        raw::rt::RefTarget r;
-        r.rva = Hex(rva); r.setting = kind == "setting"; r.span = r.setting ? 24 : 8; r.name = name;
-        out.push_back(r);
-    }
-    std::sort(out.begin(), out.end(), [](auto& a, auto& b) { return a.rva < b.rva; });
-    return out;
-}
-
 std::vector<raw::rt::VTraceClass> LoadVTrace() {
     std::vector<raw::rt::VTraceClass> out;
     std::ifstream in(g_dir + "engine_rt_vtrace.tsv");
@@ -106,7 +91,11 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     CreateDirectoryA(g_out.c_str(), nullptr);
     if (!g_img.Load()) { Log("image: no code section or no .pdata"); return; }
     Log("image: text 0x%X-0x%X, %zu pdata functions", g_img.textBegin, g_img.textEnd, g_img.funcs.size());
-    g_refs = LoadRefs();
+    std::string why;
+    if (!raw::rt::LoadVersionTable(g_img, g_dir, &why)) { Log("version: %s", why.c_str()); return; }
+    Log("version: %s", why.c_str());
+    g_refs = raw::rt::VersionRefs();
+    Log("refs: %zu settings and globals from the table", g_refs.size());
     const std::string ini = g_dir + "d3d11_proxy.ini";
     // Startup settings land before the renderer creates its targets (this runs inside the game's
     // first D3D11CreateDevice), so iShadowMapResolution and iNumSplits size the shadow atlas.
@@ -127,15 +116,18 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
         char b[64];
         GetPrivateProfileStringA("EngineRT", "PapyrusBudgetMs", "-1", b, sizeof b, ini.c_str());
         char v[64];
-        GetPrivateProfileStringA("EngineRT", "VmVtable", "0x1AA0B48", v, sizeof v, ini.c_str());
-        const bool ok = raw::rt::InstallPapyrusTiming(g_img, Hex(v), std::strtof(b, nullptr));
+        char dv[24], dl[24];
+        std::snprintf(dv, sizeof dv, "0x%X", raw::rt::Addr("vtable:BSScript::Internal::VirtualMachine"));
+        std::snprintf(dl, sizeof dl, "0x%X", raw::rt::Addr("fn:BSScript::Internal::CodeTasklet::OpcodeLoop"));
+        GetPrivateProfileStringA("EngineRT", "VmVtable", dv, v, sizeof v, ini.c_str());
+        const bool ok = Hex(v) && raw::rt::InstallPapyrusTiming(g_img, Hex(v), std::strtof(b, nullptr));
         Log("papyrus timing on VirtualMachine vtable %s: %s, budget override %s ms", v, ok ? "on" : "failed", b);
         // the opcode loop (engine map: the 36-entry jump table under UpdateTasklets)
         char l[64];
-        GetPrivateProfileStringA("EngineRT", "OpcodeLoop", "0x1462650", l, sizeof l, ini.c_str());
+        GetPrivateProfileStringA("EngineRT", "OpcodeLoop", dl, l, sizeof l, ini.c_str());
         if (IniInt("OpcodeLoopTiming", 0)) {
             std::string sites;
-            const size_t n = raw::rt::InstallOpcodeLoopTiming(g_img, Hex(v), Hex(l), &sites);
+            const size_t n = Hex(l) ? raw::rt::InstallOpcodeLoopTiming(g_img, Hex(v), Hex(l), &sites) : 0;
             Log("opcode loop %s timed at %zu call sites: %s", l, n, sites.c_str());
         }
     }
@@ -149,6 +141,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     // with the view (camera, cell, time, screen; RAW_EngineView) and the glowing emitters (rt_emitters.h)
     if (IniInt("LiveState", 1)) { raw::rt::LiveStateInit(g_img, g_out, IniInt("EmitterLights", 0) != 0); raw::rt::ViewInit(g_img); }
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
+    if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
     if (IniInt("CallGraph", 0)) {
         std::thread([] {
             SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);

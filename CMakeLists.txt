@@ -258,8 +258,7 @@ target_include_directories(raw_d3d12_bridge
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge
     PRIVATE ${RAW_BRIDGE_GEN})
 target_compile_definitions(raw_d3d12_bridge PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
-# Without the engine, d3d12.dll and dxgi.dll are loaded at runtime and only the
-# d3d11 import is needed. With it (RAW_ENGINE_DIR below) the proxy delay-loads both.
+# The proxy links the engine (RAW_ENGINE_DIR below) and delay-loads d3d12.dll and dxgi.dll.
 
 target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/BridgeHook.cpp src/d3d11_proxy/BridgeHookConfig.cpp
     src/d3d11_proxy/BridgeHookCapture.cpp src/d3d11_proxy/BridgeHookLighting.cpp
@@ -269,11 +268,17 @@ target_link_libraries(d3d11_proxy PRIVATE raw_d3d12_bridge)
 
 # ----------------------------------------------------------------------------
 # The Playground engine behind the bridge's pass seam (docs/D3D12_BRIDGE.md).
-# RAW_ENGINE_DIR is the native/ folder of a superframe checkout. With it set,
-# the bridge links the engine's D3D12 RHI and its checked GTAO pass, and the
+# RAW_ENGINE_DIR is the native/ folder of a superframe checkout, and the proxy
+# needs it: the bridge, the hook layer and hot reload call the engine's lighting,
+# ray-tracing and water passes directly, so a build without it cannot link
+# d3d11.dll. With it the bridge links the engine's D3D12 RHI and passes, and the
 # proxy delay-loads d3d12.dll and dxgi.dll, which the RHI imports.
 # ----------------------------------------------------------------------------
-set(RAW_ENGINE_DIR "" CACHE PATH "superframe native/ folder; links the engine's RHI into the bridge")
+set(RAW_ENGINE_DIR "" CACHE PATH "superframe native/ folder (required): the engine the bridge and proxy link")
+if(NOT RAW_ENGINE_DIR)
+    message(FATAL_ERROR "RAW_ENGINE_DIR is not set. d3d11.dll links the Playground engine: pass "
+                        "-DRAW_ENGINE_DIR=<superframe checkout>/native (docs/D3D12_BRIDGE.md, Build).")
+endif()
 if(RAW_ENGINE_DIR)
     if(NOT EXISTS "${RAW_ENGINE_DIR}/raw/rhi/host.hpp")
         message(FATAL_ERROR "RAW_ENGINE_DIR has no raw/rhi/host.hpp; it needs superframe native/ with host frames (ADR 0020)")
@@ -635,13 +640,39 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_detour.cpp
         src/engine_rt/rt_view.cpp
         src/engine_rt/rt_emitters.cpp
-        src/engine_rt/rt_cascades.cpp)
+        src/engine_rt/rt_cascades.cpp
+        src/engine_rt/rt_version.cpp)
     set_target_properties(raw_engine PROPERTIES
         CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_include_directories(raw_engine PRIVATE src/engine_rt src/d3d11_proxy "${RAW_ZYDIS_ROOT}/include")
     target_compile_definitions(raw_engine PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD)
-    target_link_libraries(raw_engine PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB})
+    target_link_libraries(raw_engine PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB} version)
+
+    # raw_skse.dll: the SKSE plugin host (docs/SKSE_HOSTING.md). Loads Data/SKSE/Plugins with no SKSE installed.
+    add_library(raw_skse SHARED
+        src/skse_host/skse_host.cpp
+        src/skse_host/skse_loader.cpp
+        src/skse_host/skse_messaging.cpp
+        src/skse_host/skse_task.cpp
+        src/skse_host/skse_serialization.cpp
+        src/skse_host/skse_papyrus.cpp
+        src/skse_host/skse_engine.cpp
+        src/skse_host/skse_addrlib.cpp
+        src/engine_rt/rt_detour.cpp)
+    set_target_properties(raw_skse PROPERTIES
+        CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_include_directories(raw_skse PRIVATE src/skse_host src/common src/engine_rt src/d3d11_proxy "${RAW_ZYDIS_ROOT}/include")
+    target_compile_definitions(raw_skse PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD)
+    target_link_libraries(raw_skse PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB} version shell32 ole32)
+
+    # RAWSKSEProbe.dll: a test plugin for the host with no library under it (tests/skse_host/probe).
+    add_library(raw_skse_probe SHARED tests/skse_host/probe/probe.cpp)
+    set_target_properties(raw_skse_probe PROPERTIES OUTPUT_NAME RAWSKSEProbe CXX_STANDARD 20
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_include_directories(raw_skse_probe PRIVATE src/skse_host)
+    target_compile_definitions(raw_skse_probe PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 else()
     message(STATUS "raw_engine: Zydis not found under ${RAW_ZYDIS_ROOT}; module not built")
 endif()

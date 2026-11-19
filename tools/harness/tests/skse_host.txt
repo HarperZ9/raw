@@ -1,0 +1,12 @@
+# SKSE plugins hosted by raw_skse.dll with no SKSE in the process (docs/SKSE_HOSTING.md). Run with --launch direct,
+# --module raw_skse.dll, --plugin <tools/skse_host/make_test_plugin.py output> and --skse-file for each plugin.
+# Loading the harness save sends PreLoadGame and PostLoadGame and starts the test quest; save and load by name
+# round-trip the co-save.
+start load rawharness
+scene skse
+wait 20
+console save rawskse1
+wait 10
+console load rawskse1
+wait 15
+quit

@@ -1,5 +1,6 @@
 // Weather state for the ray-tracing worker's dynamic weather (RAW engine runtime). Original work, MIT. See rt_weather.h.
 #include "rt_weather.h"
+#include "rt_version.h"
 
 #include <windows.h>
 
@@ -86,7 +87,8 @@ void Blend(State* s) {
 
 void WeatherInit(const Image& img) {
     g_img = &img;
-    g_getSky = reinterpret_cast<GetSkyFn>(const_cast<uint8_t*>(img.base) + 0x01C2640);
+    const uint32_t getSky = Addr("fn:Sky::GetSingleton");
+    g_getSky = getSky ? reinterpret_cast<GetSkyFn>(const_cast<uint8_t*>(img.base) + getSky) : nullptr;
     if (HMODULE proxy = GetModuleHandleA("d3d11.dll"))
         g_set = reinterpret_cast<SetWeatherFn>(GetProcAddress(proxy, "PG_SetWeatherState"));
 }

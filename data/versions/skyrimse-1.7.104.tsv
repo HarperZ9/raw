@@ -5349,61 +5349,61 @@ bDisableShadowJumps:Display	setting	0x20D94F8	high	settings scan
 fShadowDirectionalBiasScale:Display	setting	0x20D9510	high	settings scan
 bSimpleLighting:Display	setting	0x20D9660	high	settings scan
 bCompileOnRender:Display	setting	0x20D9678	high	settings scan
-::GlobalStateCounter	global	0x219E528	al	Address Library fallback
-::TlsIndex	global	0x369A278	al	Address Library fallback
-ActorEquipManager::Singleton	global	0x31A42F8	al	Address Library fallback
-ActorValueList::GetSingleton	global	0x219DEC8	al	Address Library fallback
-AnimationFileManagerSingleton::LoadedAnimation::GetSingleton	global	0x325BB90	al	Address Library fallback
-AnimationObjects::GetSingleton	global	0x219E5C8	al	Address Library fallback
+::GlobalStateCounter	global	0x219E528	high	structure match: 16 of 25 users agree
+::TlsIndex	global	0x369A278	high	structure match: 3088 of 11807 users agree
+ActorEquipManager::Singleton	global	0x31A42F8	high	structure match: 49 of 118 users agree
+ActorValueList::GetSingleton	global	0x219DEC8	high	structure match: 11 of 58 users agree
+AnimationFileManagerSingleton::LoadedAnimation::GetSingleton	global	0x325BB90	high	structure match: 9 of 17 users agree
+AnimationObjects::GetSingleton	global	0x219E5C8	high	structure match: 3 of 15 users agree
 BGSAddToPlayerInventoryEvent::GetIndex	global	0x20B3A7C	al	Address Library fallback
-BGSCreatedObjectManager::GetSingleton	global	0x219E588	al	Address Library fallback
-BGSDecalManager::GetSingleton	global	0x21A3DF8	al	Address Library fallback
+BGSCreatedObjectManager::GetSingleton	global	0x219E588	high	structure match: 32 of 52 users agree
+BGSDecalManager::GetSingleton	global	0x21A3DF8	high	structure match: 14 of 35 users agree
 BGSFootstepManager::Singleton	global	0x32309C8	al	Address Library fallback
-BGSGrassManager::GetSingleton	global	0x21A05F8	al	Address Library fallback
-BGSImpactManager::ImpactSoundData::GetSingleton	global	0x31DFD70	al	Address Library fallback
-BGSSaveLoadGame::GetSingleton	global	0x3223E18	al	Address Library fallback
-BGSSaveLoadManager::Singleton	global	0x3223E60	al	Address Library fallback
+BGSGrassManager::GetSingleton	global	0x21A05F8	high	structure match: 6 of 20 users agree
+BGSImpactManager::ImpactSoundData::GetSingleton	global	0x31DFD70	high	structure match: 9 of 21 users agree
+BGSSaveLoadGame::GetSingleton	global	0x3223E18	high	structure match: 153 of 261 users agree
+BGSSaveLoadManager::Singleton	global	0x3223E60	high	structure match: 89 of 202 users agree
 BGSStoryEventManager::GetSingleton	global	0x36DC90	al	Address Library fallback
-BGSStoryTeller::Singleton	global	0x21A36E8	al	Address Library fallback
+BGSStoryTeller::Singleton	global	0x21A36E8	high	structure match: 24 of 53 users agree
 BSAudioManager::GetSingleton	global	0xCCA610	al	Address Library fallback
-BSDirectInputManager::GetSingleton	global	0x32309D0	al	Address Library fallback
-BSFaceGenManager::GetSingleton	global	0x219E5E0	al	Address Library fallback
-BSGraphics::RenderTargetManager::GetSingleton	global	0x3335600	al	Address Library fallback
-BSGraphics::State::GetSingleton	global	0x33363A0	al	Address Library fallback
+BSDirectInputManager::GetSingleton	global	0x32309D0	high	structure match: 4 of 12 users agree
+BSFaceGenManager::GetSingleton	global	0x219E5E0	high	structure match: 23 of 48 users agree
+BSGraphics::RenderTargetManager::GetSingleton	global	0x3335600	high	structure match: 43 of 407 users agree
+BSGraphics::State::GetSingleton	global	0x33363A0	high	structure match: 9 of 61 users agree
 BSInputDevice	global	0x20CE570	al	Address Library fallback
-BSInputDevice	global	0x20779F0	al	Address Library fallback
+BSInputDevice	global	0x20779F0	high	structure match: 4 of 12 users agree
 BSInputDevice	global	0x20CE598	al	Address Library fallback
-BSInputDeviceManager::ProcessGamepadEnabledChange	global	0x20CCD50	al	Address Library fallback
-BSInputDeviceManager::Singleton	global	0x3204B30	al	Address Library fallback
+BSInputDeviceManager::ProcessGamepadEnabledChange	global	0x20CCD50	high	structure match: 4 of 9 users agree
+BSInputDeviceManager::Singleton	global	0x3204B30	high	structure match: 28 of 118 users agree
 BSInputEventQueue::GetSingleton	global	0x325A7D8	al	Address Library fallback
-BSMusicManager::GetSingleton	global	0x31A57A0	al	Address Library fallback
-BSPointerHandleManager::Entry::GetHandleEntries	global	0x21A4280	al	Address Library fallback
+BSMusicManager::GetSingleton	global	0x31A57A0	high	structure match: 4 of 34 users agree
+BSPointerHandleManager::Entry::GetHandleEntries	global	0x21A4280	high	structure match: 69 of 113 users agree
 BSScaleformManager::CollectDisplayInfo	global	0x20D2F70	al	Address Library fallback
 BSScaleformManager::CollectDisplayInfo	global	0x20D2F88	al	Address Library fallback
 BSScaleformManager::CollectDisplayInfo	global	0x20D2FA0	al	Address Library fallback
 BSScaleformManager::CollectDisplayInfo	global	0x20D2FB8	al	Address Library fallback
-BSScaleformManager::GetSingleton	global	0x369B060	al	Address Library fallback
-BSShaderManager::State::GetSingleton	global	0x20D68B0	al	Address Library fallback
-BSTimer::GetSingleton	global	0x32755F0	al	Address Library fallback
+BSScaleformManager::GetSingleton	global	0x369B060	high	structure match: 23 of 105 users agree
+BSShaderManager::State::GetSingleton	global	0x20D68B0	high	structure match: 75 of 238 users agree
+BSTimer::GetSingleton	global	0x32755F0	high	structure match: 8 of 27 users agree
 BSTimer::QGlobalTimeMultiplier	global	0x20CCAC8	al	Address Library fallback
 BSTimer::QGlobalTimeMultiplierTarget	global	0x20CCACC	al	Address Library fallback
-BSTreeManager::IQueryCullingCamera::GetSingleton	global	0x219E5D8	al	Address Library fallback
+BSTreeManager::IQueryCullingCamera::GetSingleton	global	0x219E5D8	high	structure match: 9 of 26 users agree
 BSWin32SaveDataSystemUtility::GetSingleton	global	0x159A8D0	al	Address Library fallback
-BarterMenu::GetTargetRefHandle	global	0x3230774	al	Address Library fallback
-BookMenu::GetTargetForm	global	0x3255C40	al	Address Library fallback
-BookMenu::GetTargetReference	global	0x3255C68	al	Address Library fallback
+BarterMenu::GetTargetRefHandle	global	0x3230774	high	structure match: 81 of 111 users agree
+BookMenu::GetTargetForm	global	0x3255C40	high	structure match: 3 of 3 users agree
+BookMenu::GetTargetReference	global	0x3255C68	high	structure match: 10 of 11 users agree
 BucketTable::GetSingleton	global	0xEB2AF0	al	Address Library fallback
-Calendar::GetHoursPerDay	global	0x185C194	al	Address Library fallback
-Calendar::Singleton	global	0x21A05D0	al	Address Library fallback
-CombatManager::GetSingleton	global	0x3254A78	al	Address Library fallback
-ConsoleLog::Singleton	global	0x31DFB70	al	Address Library fallback
-ContainerMenu::GetContainerMode	global	0x32560B8	al	Address Library fallback
-ContainerMenu::GetTargetRefHandle	global	0x3256180	al	Address Library fallback
-ControlMap::Singleton	global	0x31A5690	al	Address Library fallback
-CrosshairPickData::GetSingleton	global	0x31E0B70	al	Address Library fallback
-FOCollisionListener::ObjectDamageImpactData::GetSingleton	global	0x21A05B8	al	Address Library fallback
+Calendar::GetHoursPerDay	global	0x185C194	high	structure match: 29 of 41 users agree
+Calendar::Singleton	global	0x21A05D0	high	structure match: 147 of 224 users agree
+CombatManager::GetSingleton	global	0x3254A78	high	structure match: 58 of 87 users agree
+ConsoleLog::Singleton	global	0x31DFB70	high	structure match: 8 of 955 users agree
+ContainerMenu::GetContainerMode	global	0x32560B8	high	structure match: 13 of 22 users agree
+ContainerMenu::GetTargetRefHandle	global	0x3256180	high	structure match: 12 of 20 users agree
+ControlMap::Singleton	global	0x31A5690	high	structure match: 52 of 170 users agree
+CrosshairPickData::GetSingleton	global	0x31E0B70	high	structure match: 14 of 20 users agree
+FOCollisionListener::ObjectDamageImpactData::GetSingleton	global	0x21A05B8	medium	structure match: 2 of 10 users agree
 FORM_ENUM_STRING::GetFormEnumString	global	0x2078210	al	Address Library fallback
-FindMaxMagnitudeVisitor::Accept	global	0x18F5530	al	Address Library fallback
+FindMaxMagnitudeVisitor::Accept	global	0x18F5530	medium	structure match: 2 of 2 users agree
 GASActionBufferData::Vtbl	global	0x1A28C98	al	Address Library fallback
 GASDoAction::Vtbl	global	0x1A29268	al	Address Library fallback
 GASDoInitAction::Vtbl	global	0x1A292A8	al	Address Library fallback
@@ -5413,71 +5413,71 @@ GFxPlaceObject3::Vtbl	global	0x1A2ABC0	al	Address Library fallback
 GFxRemoveObject2::Vtbl	global	0x1A3CD58	al	Address Library fallback
 GFxRemoveObject::Vtbl	global	0x1A3CD18	al	Address Library fallback
 GFxSetBackgroundColor::Vtbl	global	0x1A3CD98	al	Address Library fallback
-GMemory::GlobalHeap	global	0x3275AE0	al	Address Library fallback
-GameSettingCollection::Singleton	global	0x31A5370	al	Address Library fallback
-GetDurationOfApplicationRunTime	global	0x3275610	al	Address Library fallback
-GetSecondsSinceLastFrame	global	0x3275608	al	Address Library fallback
-GiftMenu::GetTargetRefHandle	global	0x3256688	al	Address Library fallback
-HandlerDictionary::GetSingleton	global	0x3252080	al	Address Library fallback
-IFormFactory::GetFormFactories	global	0x21A3810	al	Address Library fallback
-IFormFactory::GetFormFactories	global	0x21A3800	al	Address Library fallback
-INIPrefSettingCollection::Singleton	global	0x3275710	al	Address Library fallback
-INISettingCollection::Singleton	global	0x3327860	al	Address Library fallback
-ImageSpaceManager::GetSingleton	global	0x33D40A0	al	Address Library fallback
-InterfaceStrings::Singleton	global	0x21A05C8	al	Address Library fallback
-Inventory3DManager::GetSingleton	global	0x32309F8	al	Address Library fallback
-LockpickingMenu::GetTargetReference	global	0x3257FF0	al	Address Library fallback
-MagicFavorites::Singleton	global	0x3223E50	al	Address Library fallback
+GMemory::GlobalHeap	global	0x3275AE0	high	structure match: 440 of 3503 users agree
+GameSettingCollection::Singleton	global	0x31A5370	medium	structure match: 2 of 2 users agree
+GetDurationOfApplicationRunTime	global	0x3275610	high	structure match: 59 of 107 users agree
+GetSecondsSinceLastFrame	global	0x3275608	high	structure match: 106 of 200 users agree
+GiftMenu::GetTargetRefHandle	global	0x3256688	high	structure match: 13 of 18 users agree
+HandlerDictionary::GetSingleton	global	0x3252080	medium	structure match: 1 of 7 users agree
+IFormFactory::GetFormFactories	global	0x21A3810	medium	structure match: 2 of 8 users agree
+IFormFactory::GetFormFactories	global	0x21A3800	high	structure match: 4 of 13 users agree
+INIPrefSettingCollection::Singleton	global	0x3275710	high	structure match: 3 of 3 users agree
+INISettingCollection::Singleton	global	0x3327860	high	structure match: 3 of 13 users agree
+ImageSpaceManager::GetSingleton	global	0x33D40A0	high	structure match: 53 of 246 users agree
+InterfaceStrings::Singleton	global	0x21A05C8	high	structure match: 227 of 493 users agree
+Inventory3DManager::GetSingleton	global	0x32309F8	high	structure match: 38 of 76 users agree
+LockpickingMenu::GetTargetReference	global	0x3257FF0	high	structure match: 8 of 20 users agree
+MagicFavorites::Singleton	global	0x3223E50	high	structure match: 9 of 25 users agree
 Main::QFrameAnimTime	global	0x3230524	al	Address Library fallback
-Main::Singleton	global	0x3230530	al	Address Library fallback
-Main::WorldRootNode	global	0x3230740	al	Address Library fallback
-MenuControls::Singleton	global	0x31DFD78	al	Address Library fallback
-MenuCursor::GetSingleton	global	0x3210E38	al	Address Library fallback
-MenuTopicManager::Dialogue::GetSingleton	global	0x31DF408	al	Address Library fallback
+Main::Singleton	global	0x3230530	high	structure match: 37 of 97 users agree
+Main::WorldRootNode	global	0x3230740	high	structure match: 29 of 102 users agree
+MenuControls::Singleton	global	0x31DFD78	high	structure match: 34 of 83 users agree
+MenuCursor::GetSingleton	global	0x3210E38	high	structure match: 23 of 52 users agree
+MenuTopicManager::Dialogue::GetSingleton	global	0x31DF408	high	structure match: 73 of 129 users agree
 MessageDataFactoryManager::GetSingleton	global	0x98EB30	al	Address Library fallback
-MistMenu::RUNTIME_DATA::GetSingleton	global	0x3258430	al	Address Library fallback
-NiMemManager::Singleton	global	0x3281328	al	Address Library fallback
-NiPoint3::Zero	global	0x331C458	al	Address Library fallback
-NiRefObject::TotalObjectCount	global	0x331C620	al	Address Library fallback
-PlayerCamera::Singleton	global	0x31A5478	al	Address Library fallback
+MistMenu::RUNTIME_DATA::GetSingleton	global	0x3258430	high	structure match: 12 of 32 users agree
+NiMemManager::Singleton	global	0x3281328	high	structure match: 4 of 22 users agree
+NiPoint3::Zero	global	0x331C458	high	structure match: 569 of 1193 users agree
+NiRefObject::TotalObjectCount	global	0x331C620	high	structure match: 316 of 403 users agree
+PlayerCamera::Singleton	global	0x31A5478	high	structure match: 141 of 211 users agree
 PlayerCharacter::IsGodMode	global	0x3244C86	al	Address Library fallback
-PlayerCharacter::Singleton	global	0x3230778	al	Address Library fallback
-PlayerControls::Singleton	global	0x31A5698	al	Address Library fallback
+PlayerCharacter::Singleton	global	0x3230778	high	structure match: 1517 of 2792 users agree
+PlayerControls::Singleton	global	0x31A5698	high	structure match: 48 of 114 users agree
 Precipitation::OcclusionMapData::GetDirection	global	0x31E0D68	al	Address Library fallback
-ProcessLists::GetSingleton	global	0x219E570	al	Address Library fallback
-Projectile::Manager::GetSingleton	global	0x21A36D0	al	Address Library fallback
+ProcessLists::GetSingleton	global	0x219E570	high	structure match: 225 of 431 users agree
+Projectile::Manager::GetSingleton	global	0x21A36D0	high	structure match: 11 of 22 users agree
 Renderer::GetCurrentRenderWindow	global	0x3330198	al	Address Library fallback
 Renderer::GetDevice	global	0x3330190	al	Address Library fallback
 Renderer::GetRendererData	global	0x3330188	al	Address Library fallback
-Renderer::GetScreenSize	global	0x33363C4	al	Address Library fallback
-Renderer::GetSingleton	global	0x3331F40	al	Address Library fallback
-ResponseDictionary::GetSingleton	global	0x3243330	al	Address Library fallback
-ReticuleController::GetSingleton	global	0x20B4880	al	Address Library fallback
+Renderer::GetScreenSize	global	0x33363C4	high	structure match: 18 of 46 users agree
+Renderer::GetSingleton	global	0x3331F40	high	structure match: 73 of 490 users agree
+ResponseDictionary::GetSingleton	global	0x3243330	medium	structure match: 1 of 8 users agree
+ReticuleController::GetSingleton	global	0x20B4880	high	structure match: 8 of 13 users agree
 SCRIPT_FUNCTION::FirstConsoleCommand	global	0x208D130	al	Address Library fallback
-SCRIPT_FUNCTION::FirstScriptCommand	global	0x207EA90	al	Address Library fallback
+SCRIPT_FUNCTION::FirstScriptCommand	global	0x207EA90	high	structure match: 6 of 11 users agree
 ScreenSplatter::GetSingleton	global	0x31A5000	al	Address Library fallback
-SkyrimVM::Singleton	global	0x21A36E0	al	Address Library fallback
-SubtitleManager::GetSingleton	global	0x21A05B0	al	Address Library fallback
-TES::Singleton	global	0x32303B8	al	Address Library fallback
-TESDataHandler::Singleton	global	0x219DED8	al	Address Library fallback
-TESForm::RecordFlags::GetAllForms	global	0x21A3808	al	Address Library fallback
-TESForm::RecordFlags::GetAllForms	global	0x21A3C98	al	Address Library fallback
-TESForm::RecordFlags::GetAllFormsByEditorID	global	0x21A3C60	al	Address Library fallback
-TESForm::RecordFlags::GetAllFormsByEditorID	global	0x21A3CA0	al	Address Library fallback
-TESWaterSystem::GetSingleton	global	0x21A05E8	al	Address Library fallback
-TaskQueueInterface::GetSingleton	global	0x3242650	al	Address Library fallback
-UI3DSceneManager::GetSingleton	global	0x3230A00	al	Address Library fallback
-UI::Singleton	global	0x219E5C0	al	Address Library fallback
-UIBlurManager::Singleton	global	0x3230018	al	Address Library fallback
-UIMessageQueue::Singleton	global	0x21A05C0	al	Address Library fallback
-UIRenderManager::UILightData::GetSingleton	global	0x3230018	al	Address Library fallback
-UserEvents::Singleton	global	0x32048D0	al	Address Library fallback
-VATS::GetSingleton	global	0x31A5720	al	Address Library fallback
-bhkCollisionFilter::GetSingleton	global	0x21A3E00	al	Address Library fallback
-bhkWorld::GetWorldScale	global	0x17FDE5C	al	Address Library fallback
-bhkWorld::GetWorldScaleInverse	global	0x17F423C	al	Address Library fallback
-hkContainerHeapAllocator::Allocator::GetSingleton	global	0x20BCE08	al	Address Library fallback
-padCE	global	0x20CCD70	al	Address Library fallback
+SkyrimVM::Singleton	global	0x21A36E0	high	structure match: 12 of 221 users agree
+SubtitleManager::GetSingleton	global	0x21A05B0	high	structure match: 12 of 31 users agree
+TES::Singleton	global	0x32303B8	high	structure match: 216 of 681 users agree
+TESDataHandler::Singleton	global	0x219DED8	high	structure match: 255 of 552 users agree
+TESForm::RecordFlags::GetAllForms	global	0x21A3808	high	structure match: 19 of 32 users agree
+TESForm::RecordFlags::GetAllForms	global	0x21A3C98	high	structure match: 5 of 7 users agree
+TESForm::RecordFlags::GetAllFormsByEditorID	global	0x21A3C60	high	structure match: 20 of 27 users agree
+TESForm::RecordFlags::GetAllFormsByEditorID	global	0x21A3CA0	high	structure match: 9 of 11 users agree
+TESWaterSystem::GetSingleton	global	0x21A05E8	high	structure match: 30 of 77 users agree
+TaskQueueInterface::GetSingleton	global	0x3242650	high	structure match: 130 of 214 users agree
+UI3DSceneManager::GetSingleton	global	0x3230A00	high	structure match: 50 of 74 users agree
+UI::Singleton	global	0x219E5C0	high	structure match: 80 of 312 users agree
+UIBlurManager::Singleton	global	0x3230018	high	structure match: 17 of 58 users agree
+UIMessageQueue::Singleton	global	0x21A05C0	high	structure match: 142 of 279 users agree
+UIRenderManager::UILightData::GetSingleton	global	0x3230018	high	structure match: 17 of 58 users agree
+UserEvents::Singleton	global	0x32048D0	high	structure match: 41 of 214 users agree
+VATS::GetSingleton	global	0x31A5720	high	structure match: 101 of 154 users agree
+bhkCollisionFilter::GetSingleton	global	0x21A3E00	high	structure match: 42 of 74 users agree
+bhkWorld::GetWorldScale	global	0x17FDE5C	high	structure match: 93 of 182 users agree
+bhkWorld::GetWorldScaleInverse	global	0x17F423C	high	structure match: 55 of 112 users agree
+hkContainerHeapAllocator::Allocator::GetSingleton	global	0x20BCE08	high	structure match: 2007 of 6233 users agree
+padCE	global	0x20CCD70	medium	structure match: 1 of 1 users agree
 vtable:BSScript::Internal::VirtualMachine	vtable	0x1B299E8	high	rtti
 vtable:BSLightingShader	vtable	0x1B47420	high	rtti
 vtable:BSUtilityShader	vtable	0x1B4AB58	high	rtti
@@ -5497,14 +5497,14 @@ fn:GridArray::DetachAll	function	0x226C60	high	rtti slot 1
 fn:GridCellArray::KillAll	function	0x227280	high	rtti slot 2
 fn:GridCellArray::Dtor	function	0x227B60	high	rtti slot 0
 fn:BSShadowDirectionalLight::SetupCascades	function	0x157F080	high	rtti slot 10
-fn:GridCellArray::Build	function	0x226FA0	al	Address Library fallback
+fn:GridCellArray::Build	function	0x226FA0	medium	structure match
 fn:TES::SetupGrid	function	0x1A1340	al	Address Library fallback
 fn:ShadowMaps::Render	function	0x1537FD0	al	Address Library fallback
 fn:ShadowMaps::SizeAtStartup	function	0x155C650	al	Address Library fallback
-fn:BSScript::Internal::CodeTasklet::OpcodeLoop	function	0x14CE660	al	Address Library fallback
-fn:BSScript::Internal::VirtualMachine::UpdateTasklets	function	0x14B0890	al	Address Library fallback
-fn:Sky::GetSingleton	function	0x1C7D00	al	Address Library fallback
-site:PapyrusJobLea	site	0x14BB246	al	Address Library fallback
+fn:BSScript::Internal::CodeTasklet::OpcodeLoop	function	0x14CE660	high	structure match
+fn:BSScript::Internal::VirtualMachine::UpdateTasklets	function	0x14B0890	high	structure match
+fn:Sky::GetSingleton	function	0x1C7D00	high	structure match
+site:PapyrusJobLea	site	0x14BB246	low	offset in the paired function
 global:ShadowMapSize	global	0x34869C0	al	Address Library fallback
 range:PapyrusCode.begin	range	0x148C050	al	Address Library fallback
 range:PapyrusCode.end	range	0x14DC070	al	Address Library fallback

@@ -95,7 +95,11 @@ def load_ref(img, cg, vts):
 
 def load_new(img, feats, vts):
     s = Side(img, vts)
-    for b, (size, _n, calls, refs, vcalls) in pickle.load(open(feats, "rb")).items():
+    data = pickle.load(open(feats, "rb"))
+    funcs = data["functions"] if isinstance(data, dict) and data.get("format") == "packed-1" else data
+    import structure_features  # noqa: E402  (the packed records' reader)
+    for b, rec in funcs.items():
+        size, _n, calls, refs, vcalls = structure_features.unpack(rec) if isinstance(rec[2], bytes) else rec
         s.size[b] = size
         s.calls[b] = [(b + o, t, k) for o, t, k in calls]
         s.refs[b] = [(b + o, t, a) for o, t, a in refs]

@@ -164,9 +164,13 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             }
             std::string line = ResizeShadowAtlasLive(ctx, *g_img, *g_refs, std::atoi(a.c_str()), size);
             // the renderer's own size global (see ResizeShadowAtlas) follows the texture
-            auto* global = reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(g_img->base) + Addr("global:ShadowMapSize"));
-            line += "; size global " + std::to_string(*global) + " -> " + std::to_string(size);
-            *global = size;
+            if (const uint32_t g = Addr("global:ShadowMapSize")) {
+                auto* global = reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(g_img->base) + g);
+                line += "; size global " + std::to_string(*global) + " -> " + std::to_string(size);
+                *global = size;
+            } else {
+                line += "; no size global in this version's table";
+            }
             // The game's shadow passes keep the viewports of the startup size (measured: 4096 x 4096 after a
             // rebuild to 8192 or 2048). The fit scales them to the new atlas; "fit 0" turns it off.
             if (line.find("->") != std::string::npos) PassesSetFit(g_startupAtlas);

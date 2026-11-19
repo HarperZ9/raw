@@ -163,6 +163,9 @@ bool PG_DiagPipelineAsserts();
 // [Proxy] CBDirtyTracker (default off): constant-buffer uploads with unchanged bytes are skipped. Measured in
 // Riverwood its copies and lookups cost more CPU than the skipped driver maps save.
 bool PG_CBDirtyTracker();
+// [Proxy] CBShadowAll (default off): CPU copies of every dynamic constant buffer instead of only the ones a reader
+// asked for (A/B against the demand-driven default).
+bool PG_CBShadowAll();
 
 // Exported C functions (both old SB_ and new PG_ names for transition)
 extern "C" __declspec(dllexport) SB::Proxy::ProxyInterface* SB_GetProxyInterface();

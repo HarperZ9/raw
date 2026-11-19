@@ -1,11 +1,12 @@
 #include "CBDirtyTracker.h"
 #include "BindingLedger.h"   // CB-ptr -> slot/stage lookup for cb_meta attribution (1.2-p3)
-#include "ProxyAPI.h"     // PG_DiagCBScan
+#include "ProxyAPI.h"        // PG_DiagCBScan, PG_CBDirtyTracker, PG_CBShadowAll
 #include <cstring>
 #include <fstream>
 #include <filesystem>
 #include <system_error>
 #include <cstdint>
+#include <utility>
 
 namespace SB::Proxy
 {
@@ -14,70 +15,6 @@ CBDirtyTracker& CBDirtyTracker::Get()
 {
     static CBDirtyTracker instance;
     return instance;
-}
-
-CBDirtyTracker::CBEntry* CBDirtyTracker::GetOrCreateEntry(ID3D11Resource* pResource)
-{
-    auto it = m_entries.find(pResource);
-    if (it != m_entries.end()) {
-        it->second.mappedThisFrame = true;
-        return it->second.byteWidth ? &it->second : nullptr;  // byteWidth 0: known not to be tracked
-    }
-
-    // Query resource type — only track buffers
-    D3D11_RESOURCE_DIMENSION dim;
-    pResource->GetType(&dim);
-    auto untracked = [&]() -> CBEntry* {
-        auto& e = m_entries[pResource];
-        e.byteWidth = 0; e.mappedThisFrame = true; e.intercepted = false;
-        return nullptr;
-    };
-    if (dim != D3D11_RESOURCE_DIMENSION_BUFFER)
-        return untracked();
-
-    auto* buf = static_cast<ID3D11Buffer*>(pResource);
-    D3D11_BUFFER_DESC desc;
-    buf->GetDesc(&desc);
-
-    // Only track dynamic constant buffers within size limit
-    if (!(desc.BindFlags & D3D11_BIND_CONSTANT_BUFFER))
-        return untracked();
-    if (desc.Usage != D3D11_USAGE_DYNAMIC)
-        return untracked();
-    if (desc.ByteWidth == 0 || desc.ByteWidth > kMaxTrackedSize)
-        return untracked();
-
-    auto& entry = m_entries[pResource];
-    entry.byteWidth = desc.ByteWidth;
-    entry.shadow.resize(desc.ByteWidth, 0);
-    entry.staging.resize(desc.ByteWidth, 0);
-    entry.intercepted = false;
-    entry.mappedThisFrame = false;
-    return &entry;
-}
-
-bool CBDirtyTracker::InterceptMap(ID3D11DeviceContext* realCtx, ID3D11Resource* pResource,
-                                   UINT Subresource, D3D11_MAP MapType, UINT MapFlags,
-                                   D3D11_MAPPED_SUBRESOURCE* pMappedResource)
-{
-    // Only intercept WRITE_DISCARD on subresource 0; [Proxy] CBDirtyTracker=0 turns the tracker off
-    if (!PG_CBDirtyTracker() || MapType != D3D11_MAP_WRITE_DISCARD || Subresource != 0)
-        return false;
-
-    auto* entry = GetOrCreateEntry(pResource);
-    if (!entry)
-        return false;
-
-    ++m_mapCalls;
-    entry->mappedThisFrame = true;
-
-    // Return our staging buffer instead of calling real Map.
-    // The engine writes into staging; we compare on Unmap.
-    pMappedResource->pData      = entry->staging.data();
-    pMappedResource->RowPitch   = entry->byteWidth;
-    pMappedResource->DepthPitch = 0;
-    entry->intercepted = true;
-    return true;
 }
 
 // Coherence membrane (Tier 1.2): CB content oracle. The shadow already lives on the
@@ -127,56 +64,145 @@ static void ScanCB(const uint8_t* data, uint32_t size, const void* ptr)
     } catch (...) {}
 }
 
-bool CBDirtyTracker::InterceptUnmap(ID3D11DeviceContext* realCtx, ID3D11Resource* pResource,
-                                     UINT Subresource)
+
+namespace {
+inline size_t Slot(const void* p, size_t mask)
 {
-    if (Subresource != 0)
+    return size_t((reinterpret_cast<uintptr_t>(p) >> 4) * 0x9E3779B97F4A7C15ull >> 20) & mask;
+}
+}  // namespace
+
+CBDirtyTracker::CBEntry* CBDirtyTracker::Find(ID3D11Resource* p)
+{
+    if (m_table.empty()) return nullptr;
+    const size_t mask = m_table.size() - 1;
+    for (size_t i = Slot(p, mask);; i = (i + 1) & mask) {
+        CBEntry& e = m_table[i];
+        if (e.key == p) return &e;
+        if (!e.key) return nullptr;
+    }
+}
+
+void CBDirtyTracker::Grow()
+{
+    // Rehash at twice the size, dropping entries not seen for 600 frames (resources since freed).
+    std::vector<CBEntry> old;
+    old.swap(m_table);
+    size_t n = old.empty() ? 1024 : old.size();
+    size_t live = 0;
+    for (auto& e : old) live += e.key && e.seenFrame + 600 >= m_frame;
+    while (live * 2 >= n) n *= 2;
+    m_table.resize(n);
+    m_used = 0;
+    const size_t mask = n - 1;
+    for (auto& e : old) {
+        if (!e.key || e.seenFrame + 600 < m_frame) continue;
+        size_t i = Slot(e.key, mask);
+        while (m_table[i].key) i = (i + 1) & mask;
+        m_table[i] = std::move(e);
+        ++m_used;
+    }
+}
+
+CBDirtyTracker::CBEntry* CBDirtyTracker::Classify(ID3D11Resource* p)
+{
+    CBEntry* e = Find(p);
+    if (e && e->seenFrame + 1 >= m_frame) {
+        e->seenFrame = m_frame;
+        return e;
+    }
+    if (!e) {
+        if ((m_used + 1) * 2 > m_table.size()) Grow();
+        const size_t mask = m_table.size() - 1;
+        size_t i = Slot(p, mask);
+        while (m_table[i].key) i = (i + 1) & mask;
+        e = &m_table[i];
+        e->key = p;
+        ++m_used;
+    }
+    // New, or not seen for a whole frame: the object at this address may be a different one now.
+    e->seenFrame = m_frame;
+    e->valid = false;
+    e->intercepted = false;
+    uint32_t width = 0;
+    D3D11_RESOURCE_DIMENSION dim;
+    p->GetType(&dim);
+    if (dim == D3D11_RESOURCE_DIMENSION_BUFFER) {
+        D3D11_BUFFER_DESC desc;
+        static_cast<ID3D11Buffer*>(p)->GetDesc(&desc);
+        if ((desc.BindFlags & D3D11_BIND_CONSTANT_BUFFER) && desc.Usage == D3D11_USAGE_DYNAMIC &&
+            desc.ByteWidth > 0 && desc.ByteWidth <= kMaxTrackedSize)
+            width = desc.ByteWidth;
+    }
+    if (width != e->byteWidth || (width && !e->shadow)) {
+        e->byteWidth = width;
+        e->shadow.reset(width ? new uint8_t[width]() : nullptr);
+        e->staging.reset(width ? new uint8_t[width]() : nullptr);
+    }
+    return e;
+}
+
+bool CBDirtyTracker::Wanted(const CBEntry& e) const
+{
+    return PG_CBDirtyTracker() || PG_CBShadowAll() || (e.wantFrame && e.wantFrame + kWantFrames >= m_frame);
+}
+
+bool CBDirtyTracker::InterceptMap(ID3D11DeviceContext*, ID3D11Resource* pResource,
+                                  UINT Subresource, D3D11_MAP MapType, UINT,
+                                  D3D11_MAPPED_SUBRESOURCE* pMappedResource)
+{
+    if (MapType != D3D11_MAP_WRITE_DISCARD || Subresource != 0)
         return false;
-
-    auto it = m_entries.find(pResource);
-    if (it == m_entries.end() || !it->second.intercepted)
+    CBEntry* e = Classify(pResource);
+    if (!e->byteWidth) return false;
+    if (!Wanted(*e)) {
+        e->valid = false;   // the GPU copy changes without us: the shadow no longer matches it
         return false;
+    }
+    ++m_mapCalls;
+    // The game writes into cached memory; Unmap copies it to the GPU.
+    pMappedResource->pData      = e->staging.get();
+    pMappedResource->RowPitch   = e->byteWidth;
+    pMappedResource->DepthPitch = 0;
+    e->intercepted = true;
+    return true;
+}
 
-    auto& entry = it->second;
-    entry.intercepted = false;
+bool CBDirtyTracker::InterceptUnmap(ID3D11DeviceContext* realCtx, ID3D11Resource* pResource, UINT Subresource)
+{
+    if (Subresource != 0) return false;
+    CBEntry* e = Find(pResource);
+    if (!e || !e->intercepted) return false;
+    e->intercepted = false;
 
-    // Compare what the engine just wrote (staging) vs last committed data (shadow).
-    if (std::memcmp(entry.staging.data(), entry.shadow.data(), entry.byteWidth) == 0) {
-        // Data unchanged — skip the real Map/Unmap entirely.
-        // The GPU buffer still holds the correct data from the last real commit.
+    // Dedupe mode: unchanged bytes skip the upload; the GPU already holds them.
+    if (PG_CBDirtyTracker() && e->valid && std::memcmp(e->staging.get(), e->shadow.get(), e->byteWidth) == 0) {
         ++m_skippedUpdates;
+        e->mapFrame = m_frame;
         return true;
     }
-
-    // Data changed — commit to GPU via real Map(WRITE_DISCARD) + memcpy + Unmap
     D3D11_MAPPED_SUBRESOURCE mapped;
-    HRESULT hr = realCtx->Map(pResource, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-    if (SUCCEEDED(hr)) {
-        std::memcpy(mapped.pData, entry.staging.data(), entry.byteWidth);
-        realCtx->Unmap(pResource, 0);
-        // Update shadow to match what we just committed
-        std::memcpy(entry.shadow.data(), entry.staging.data(), entry.byteWidth);
-        if (PG_DiagCBScan()) ScanCB(entry.staging.data(), entry.byteWidth, pResource);
+    if (FAILED(realCtx->Map(pResource, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        e->valid = false;
+        return true;
     }
+    std::memcpy(mapped.pData, e->staging.get(), e->byteWidth);
+    realCtx->Unmap(pResource, 0);
+    // The staging block becomes the shadow; the old shadow takes the next write.
+    std::swap(e->staging, e->shadow);
+    e->valid = true;
+    e->mapFrame = m_frame;
+    if (PG_DiagCBScan()) ScanCB(e->shadow.get(), e->byteWidth, pResource);
     ++m_committedUpdates;
     return true;
 }
 
 void CBDirtyTracker::OnFrameEnd()
 {
-    // Evict entries that weren't mapped this frame.
-    // Handles the case where a buffer is destroyed and a new buffer is created
-    // at the same pointer — the stale shadow would be incorrect.
-    for (auto it = m_entries.begin(); it != m_entries.end(); ) {
-        if (!it->second.mappedThisFrame) {
-            it = m_entries.erase(it);
-        } else {
-            it->second.mappedThisFrame = false;
-            ++it;
-        }
-    }
-
-    // Reset per-frame counters
+    uint32_t shadowed = 0;
+    for (const auto& e : m_table) shadowed += e.key && e.valid && e.mapFrame == m_frame;
+    m_shadowed = shadowed;
+    ++m_frame;
     m_mapCalls         = 0;
     m_skippedUpdates   = 0;
     m_committedUpdates = 0;
@@ -186,23 +212,24 @@ void CBDirtyTracker::OnFrameEnd()
 void CBDirtyTracker::OnClearState()
 {
     // ClearState doesn't destroy buffers, but any in-flight intercepts are invalid
-    for (auto& [_, entry] : m_entries)
-        entry.intercepted = false;
+    for (auto& e : m_table) e.intercepted = false;
 }
 
-const uint8_t* CBDirtyTracker::GetShadowData(ID3D11Resource* pResource) const
+const uint8_t* CBDirtyTracker::GetShadowData(ID3D11Resource* pResource)
 {
-    auto it = m_entries.find(pResource);
-    if (it == m_entries.end()) return nullptr;
-    if (it->second.shadow.empty()) return nullptr;
-    return it->second.shadow.data();
+    if (!pResource) return nullptr;
+    CBEntry* e = Classify(pResource);
+    if (!e->byteWidth) return nullptr;
+    e->wantFrame = m_frame;
+    return e->valid && e->mapFrame + 1 >= m_frame ? e->shadow.get() : nullptr;
 }
 
-uint32_t CBDirtyTracker::GetShadowSize(ID3D11Resource* pResource) const
+uint32_t CBDirtyTracker::GetShadowSize(ID3D11Resource* pResource)
 {
-    auto it = m_entries.find(pResource);
-    if (it == m_entries.end()) return 0;
-    return it->second.byteWidth;
+    if (!pResource) return 0;
+    CBEntry* e = Classify(pResource);
+    if (e->byteWidth) e->wantFrame = m_frame;
+    return e->byteWidth;
 }
 
 } // namespace SB::Proxy

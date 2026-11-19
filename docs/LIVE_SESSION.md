@@ -34,6 +34,7 @@ succeeded, 1 when it failed (the reason is in `error`), and 3 when no answer cam
 | `script` | `lines` (a list) | Harness script lines (`tools/harness/run.py`), so command files written for `listen` move over unchanged. |
 | `restart` | `resolution`, `dll`, `why` (all optional) | Ends the game, restores the install, and starts again. This is the way to change the resolution or the proxy build. |
 | `status`, `stop` | | The session's state; or end the session and restore the install. |
+| `cancel` | the request id (req.py writes `<root>/cancel/<id>`, nothing is queued) | The running `script` request stops before its next line and answers as failed. |
 
 A capture runs at the session's resolution. A different one needs `restart resolution=WxH`.
 

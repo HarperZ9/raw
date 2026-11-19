@@ -244,6 +244,7 @@ def script(s: LiveSession, a: dict, out: Path) -> dict:
     s.out = out
     first = len(s.report["steps"])
     for line in a["lines"]:
+        s.check_cancel()   # req.py cancel <id> stops a script between two lines
         line = line.split("#", 1)[0].strip()
         if line and line not in ("quit", "end"):
             s.command(shlex.split(line, posix=False))

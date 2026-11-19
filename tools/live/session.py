@@ -151,5 +151,12 @@ class LiveSession(Runner):
                  f"left in the game folder: {leftovers or 'nothing'}")
         return after
 
+    def check_cancel(self) -> None:
+        """<root>/cancel/<request id>, written by `req.py cancel <id>`, ends the running request between steps."""
+        rid = getattr(self, "current_id", None)
+        if rid and (self.cancel_dir / rid).exists():
+            (self.cancel_dir / rid).unlink(missing_ok=True)
+            raise RuntimeError(f"cancelled by request ({rid})")
+
     def uptime(self) -> float:
         return time.time() - self.started_at if self.up else 0.0

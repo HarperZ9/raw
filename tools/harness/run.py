@@ -351,6 +351,14 @@ class Runner(Actions):
                 shutil.rmtree(src)
         for p in getattr(self, "extras", []):
             (self.inst.game / p.name).unlink(missing_ok=True)
+        # The proxy's diagnostic logs (Data/SKSE/Plugins/RAW/live) come to --out and leave the game folder.
+        live = self.inst.game / "Data" / "SKSE" / "Plugins" / "RAW" / "live"
+        if live.is_dir():
+            shutil.copytree(live, self.out / "proxy_live", dirs_exist_ok=True)
+            shutil.rmtree(live)
+            for d in (live.parent, live.parent.parent):
+                if d.is_dir() and not any(d.iterdir()) and d.name in ("RAW",):
+                    d.rmdir()
 
     def quit(self) -> None:
         """qqq, typed twice if needed, then WM_CLOSE; taskkill in the finally block is the last resort.

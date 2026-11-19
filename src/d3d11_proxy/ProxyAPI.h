@@ -156,6 +156,11 @@ bool PG_IsSafeMode();
 // 3.6: resource-create logging gate -- d3d11_proxy.ini [Diagnostics] ResourceLog=1 (default off)
 bool PG_IsResourceLog();
 
+// Per-call diagnostics, each off unless d3d11_proxy.ini [Diagnostics] turns it on.
+bool PG_DiagBindingLedger();
+bool PG_DiagCBScan();
+bool PG_DiagPipelineAsserts();
+
 // Exported C functions (both old SB_ and new PG_ names for transition)
 extern "C" __declspec(dllexport) SB::Proxy::ProxyInterface* SB_GetProxyInterface();
 extern "C" __declspec(dllexport) SB::Proxy::ProxyInterface* PG_GetProxyInterface();

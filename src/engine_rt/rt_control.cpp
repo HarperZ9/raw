@@ -42,6 +42,32 @@ const RefTarget* Find(const std::string& name) {
     return nullptr;
 }
 
+// the proxy's per-frame counters (previous frame's, read at each present), averaged per measure
+SB::Proxy::ProxyInterface* g_proxy = nullptr;
+double g_pc[9] = {}; uint64_t g_pcFrames = 0;
+const char* kPcNames[9] = {"draws", "shader_changes", "rt_switches", "cb_maps", "cb_skipped", "srv_calls", "blend_calls",
+                           "ds_calls", "rs_calls"};
+void ProxyCountersOnPresent() {
+    if (!g_proxy) return;
+    const auto& o = g_proxy->optStats;
+    const uint32_t v[9] = {g_proxy->drawCallsThisFrame, g_proxy->shaderChangesThisFrame, g_proxy->rtSwitchesThisFrame,
+                           o.cbMapsIntercepted, o.cbUpdatesSkipped, o.srvCallsTotal, o.blendCallsTotal, o.dsCallsTotal, o.rsCallsTotal};
+    for (int i = 0; i < 9; ++i) g_pc[i] += v[i];
+    ++g_pcFrames;
+}
+std::string ProxyCounters() {
+    if (!g_proxy || !g_pcFrames) return "";
+    std::string out = ",\"proxy_per_frame\":{";
+    char b[64];
+    for (int i = 0; i < 9; ++i) {
+        std::snprintf(b, sizeof b, "%s\"%s\":%.1f", i ? "," : "", kPcNames[i], g_pc[i] / double(g_pcFrames));
+        out += b;
+        g_pc[i] = 0;
+    }
+    g_pcFrames = 0;
+    return out + "}";
+}
+
 std::mutex g_resultMutex;  // the sampler writes from its own thread
 void Result(const std::string& json) {
     std::lock_guard<std::mutex> lock(g_resultMutex);
@@ -69,6 +95,7 @@ std::string Stats(const char* name, size_t frames) {
     out.insert(out.size() - 1, PapyrusStats());
     out.insert(out.size() - 1, PassesStats());
     out.insert(out.size() - 1, VTimeStats());
+    out.insert(out.size() - 1, ProxyCounters());
     return out;
 }
 
@@ -105,6 +132,7 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             PapyrusReset();
             PassesReset();
             VTimeReset();
+            ProxyCounters();
             g_cmds.push_front("report " + a + " " + b);
             g_wait = std::atoi(b.c_str());
             return;
@@ -239,12 +267,15 @@ void ControlOnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     AtlasOnPresent();
     PassesOnPresent(ctx);
     VTimeOnPresent();
+    ProxyCountersOnPresent();
     if (!g_busy) {
         static unsigned tick = 0;
         if (++tick % 15 == 0) PollGoFile();
     }
     if (g_busy) Step(ctx, sc);
 }
+
+void ControlSetProxy(SB::Proxy::ProxyInterface* proxy) { g_proxy = proxy; }
 
 std::string ResizeShadowAtlas(const Image& img, const std::vector<RefTarget>& refs, uint32_t size) {
     // sub_14F00D0 copies iShadowMapResolution into a global at startup, before this module loads, and the

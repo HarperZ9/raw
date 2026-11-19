@@ -109,6 +109,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
         Log("%s", raw::rt::ResizeShadowAtlas(g_img, g_refs, uint32_t(atlas)).c_str());
     raw::rt::ControlInit(g_img, &g_refs, g_dir, g_out, proxy ? proxy->InvalidateStateCache : nullptr);
     // GPU time per pass and the shadow atlas's viewports (rt_passes.cpp); GpuTiming=0 keeps the draw counts only
+    raw::rt::ControlSetProxy(proxy);
     raw::rt::PassesInit(g_img, &g_refs, proxy, IniInt("GpuTiming", 1) != 0);
     Log("passes: proxy API version %u, viewport hook %s", proxy ? proxy->version : 0u,
         proxy && proxy->version >= 2 ? "on" : "off (proxy too old)");

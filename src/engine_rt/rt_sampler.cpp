@@ -9,6 +9,7 @@
 
 #include <windows.h>
 #include <tlhelp32.h>
+#include <psapi.h>
 #include <timeapi.h>
 
 #include <algorithm>
@@ -21,6 +22,7 @@
 #include <vector>
 
 #pragma comment(lib, "winmm.lib")
+#pragma comment(lib, "psapi.lib")
 
 namespace raw::rt {
 namespace {
@@ -44,6 +46,29 @@ bool IsReturnAddress(const Image& img, uint64_t rva) {
 
 bool CopyStack(void* dst, const void* src, size_t n) {
     __try { std::memcpy(dst, src, n); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+// module ranges, for "where does this thread's time go": the game, our proxy, the driver, the system
+struct Module { uint64_t lo, hi; std::string name; };
+std::vector<Module> Modules() {
+    std::vector<Module> out;
+    HMODULE mods[1024];
+    DWORD need = 0;
+    if (!EnumProcessModules(GetCurrentProcess(), mods, sizeof mods, &need)) return out;
+    for (DWORD i = 0; i < std::min<DWORD>(need / sizeof(HMODULE), 1024); ++i) {
+        MODULEINFO mi{};
+        char name[MAX_PATH] = "";
+        if (!GetModuleInformation(GetCurrentProcess(), mods[i], &mi, sizeof mi)) continue;
+        GetModuleFileNameA(mods[i], name, MAX_PATH);
+        // the proxy and the system runtime share the name d3d11.dll: keep the folder to tell them apart
+        std::string full(name);
+        const size_t slash = full.rfind(char(92));
+        const size_t slash2 = slash == std::string::npos ? std::string::npos : full.rfind(char(92), slash - 1);
+        std::string label = slash2 == std::string::npos ? full : full.substr(slash2 + 1);
+        for (auto& ch : label) if (ch == char(92)) ch = '/';
+        out.push_back({uint64_t(mi.lpBaseOfDll), uint64_t(mi.lpBaseOfDll) + mi.SizeOfImage, label});
+    }
+    return out;
 }
 
 struct Sample { DWORD tid; uint64_t rip; uint32_t stackLen; };
@@ -137,6 +162,24 @@ void Run(const Image* img, double seconds, uint32_t lo, uint32_t hi, void (*resu
             if (!outsideFound && (cf < lo || cf >= hi)) { ++firstOutside[cf]; outsideFound = true; }
         }
     }
+    // the busiest thread outside the job system's wait: samples per module
+    std::unordered_map<DWORD, uint64_t> perThread;
+    for (const auto& sm : samples) {
+        const uint64_t rva = sm.rip - uint64_t(img->base);
+        if (img->InText(rva)) ++perThread[sm.tid];
+    }
+    DWORD busiest = 0; uint64_t most = 0;
+    for (auto& [tid, n] : perThread) if (n > most) { most = n; busiest = tid; }
+    const auto mods = Modules();
+    std::map<std::string, uint64_t> byModule;
+    uint64_t busiestAll = 0;
+    for (const auto& sm : samples) {
+        if (sm.tid != busiest) continue;
+        ++busiestAll;
+        std::string m = "other";
+        for (const auto& md : mods) if (sm.rip >= md.lo && sm.rip < md.hi) { m = md.name; break; }
+        ++byModule[m];
+    }
     char head[256];
     std::snprintf(head, sizeof head,
                   "{\"cmd\":\"sample\",\"seconds\":%.1f,\"threads\":%zu,\"ticks\":%llu,\"samples\":%zu,\"in_game\":%llu,"
@@ -149,6 +192,22 @@ void Run(const Image* img, double seconds, uint32_t lo, uint32_t hi, void (*resu
     out += Top(callers, 40, "range_callers");
     out += Top(firstOutside, 20, "range_entry_from");
     out += Top(rangeThreads, 16, "range_threads");
+    out += ",\"busiest_thread\":" + std::to_string(busiest) + ",\"busiest_samples\":" + std::to_string(busiestAll) + ",\"busiest_by_module\":{";
+    {
+        std::vector<std::pair<std::string, uint64_t>> v(byModule.begin(), byModule.end());
+        std::sort(v.begin(), v.end(), [](auto& a, auto& b) { return a.second > b.second; });
+        for (size_t i = 0; i < std::min<size_t>(v.size(), 12); ++i)
+            out += (i ? ",\"" : "\"") + v[i].first + "\":" + std::to_string(v[i].second);
+    }
+    out += "}";
+    // where inside the proxy (the d3d11.dll in the game folder): the busiest thread's top offsets
+    std::unordered_map<uint32_t, uint64_t> proxyOffsets;
+    for (const auto& md : mods) {
+        if (md.name.find("Skyrim") == std::string::npos || md.name.find("d3d11.dll") == std::string::npos) continue;
+        for (const auto& sm : samples)
+            if (sm.tid == busiest && sm.rip >= md.lo && sm.rip < md.hi) ++proxyOffsets[uint32_t((sm.rip - md.lo) & ~0xFull)];
+    }
+    out += Top(proxyOffsets, 40, "proxy_offsets");
     char rt[48];
     std::snprintf(rt, sizeof rt, ",\"render_thread\":%lu}", g_renderThread.load());
     result(out + rt);

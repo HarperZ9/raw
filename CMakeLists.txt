@@ -258,8 +258,7 @@ target_include_directories(raw_d3d12_bridge
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge
     PRIVATE ${RAW_BRIDGE_GEN})
 target_compile_definitions(raw_d3d12_bridge PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
-# Without the engine, d3d12.dll and dxgi.dll are loaded at runtime and only the
-# d3d11 import is needed. With it (RAW_ENGINE_DIR below) the proxy delay-loads both.
+# The proxy links the engine (RAW_ENGINE_DIR below) and delay-loads d3d12.dll and dxgi.dll.
 
 target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/BridgeHook.cpp src/d3d11_proxy/BridgeHookConfig.cpp
     src/d3d11_proxy/BridgeHookCapture.cpp src/d3d11_proxy/BridgeHookLighting.cpp
@@ -269,11 +268,17 @@ target_link_libraries(d3d11_proxy PRIVATE raw_d3d12_bridge)
 
 # ----------------------------------------------------------------------------
 # The Playground engine behind the bridge's pass seam (docs/D3D12_BRIDGE.md).
-# RAW_ENGINE_DIR is the native/ folder of a superframe checkout. With it set,
-# the bridge links the engine's D3D12 RHI and its checked GTAO pass, and the
+# RAW_ENGINE_DIR is the native/ folder of a superframe checkout, and the proxy
+# needs it: the bridge, the hook layer and hot reload call the engine's lighting,
+# ray-tracing and water passes directly, so a build without it cannot link
+# d3d11.dll. With it the bridge links the engine's D3D12 RHI and passes, and the
 # proxy delay-loads d3d12.dll and dxgi.dll, which the RHI imports.
 # ----------------------------------------------------------------------------
-set(RAW_ENGINE_DIR "" CACHE PATH "superframe native/ folder; links the engine's RHI into the bridge")
+set(RAW_ENGINE_DIR "" CACHE PATH "superframe native/ folder (required): the engine the bridge and proxy link")
+if(NOT RAW_ENGINE_DIR)
+    message(FATAL_ERROR "RAW_ENGINE_DIR is not set. d3d11.dll links the Playground engine: pass "
+                        "-DRAW_ENGINE_DIR=<superframe checkout>/native (docs/D3D12_BRIDGE.md, Build).")
+endif()
 if(RAW_ENGINE_DIR)
     if(NOT EXISTS "${RAW_ENGINE_DIR}/raw/rhi/host.hpp")
         message(FATAL_ERROR "RAW_ENGINE_DIR has no raw/rhi/host.hpp; it needs superframe native/ with host frames (ADR 0020)")

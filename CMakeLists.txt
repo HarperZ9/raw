@@ -162,6 +162,11 @@ add_library(d3d11_proxy SHARED
     src/d3d11_proxy/proxy_main.cpp
     src/d3d11_proxy/WrappedDevice.cpp
     src/d3d11_proxy/WrappedContext.cpp
+    src/d3d11_proxy/WrappedContextDraw.cpp
+    src/d3d11_proxy/WrappedContextOM.cpp
+    src/d3d11_proxy/WrappedContextBind.cpp
+    src/d3d11_proxy/WrappedContextData.cpp
+    src/d3d11_proxy/WrappedContextGet.cpp
     src/d3d11_proxy/WrappedSwapChain.cpp
     src/d3d11_proxy/ShaderManager.cpp
     src/d3d11_proxy/RenderPhaseDetector.cpp

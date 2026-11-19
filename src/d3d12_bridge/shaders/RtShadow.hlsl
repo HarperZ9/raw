@@ -123,6 +123,22 @@ float3 geometricNormal(float2 px, float3 p, float3 fallback) {
 
 #include "RtHit.hlsli"
 
+// What a reflection ray that leaves the scene sees: the game's own sky where it is on screen (the
+// direction projected, clamped into the frame and walked up towards the top row to the first sky pixel),
+// else the directional ambient for that direction. Puddles read by the sky they mirror.
+float3 skyAt(float3 rd) {
+    const float4 s = screenOf(rd * 1.0e6f);
+    if (s.w > 0.0f) {
+        float2 xy = clamp(s.xy, 0.0f.xx, dims.xy - 1.0f);
+        [unroll] for (int k = 0; k < 5; ++k) {
+            if (Depth.Load(int3(xy, 0)) >= 1.0f) { return min(GameColour.Load(int3(xy, 0)).rgb, 16.0f.xxx); }
+            xy.y = floor(xy.y * 0.5f);
+        }
+    }
+    return max(ambientAt(rd), 0.0f.xxx) * 1.5f;
+}
+
+
 // One more ray from an off-screen hit, for the cache cell there: so cells the camera never sees fill,
 // and light that has bounced more than once reaches the pixels through them (RtCache.h).
 void cacheFromHit(float3 hp, float3 n, float2 r) {
@@ -180,7 +196,7 @@ void main(uint3 id : SV_DispatchThreadID) {
                     if ((giFlags & GI_CACHE) != 0u && !onScreen(o + sd * h.t, c)) { cacheFromHit(o + sd * h.t, hn, frac(rs * 1.618f + 0.31f)); }
                 }
             }
-            if ((giFlags & GI_CACHE) != 0u) { cacheAdd(p, n, bounce, sky); }
+            if ((giFlags & GI_CACHE) != 0u) { cacheAddWave(p, n, bounce, sky); }
         }
         // The three lights that would light this pixel most (colour luminance x window x n.l).
         uint best[3] = {~0u, ~0u, ~0u};
@@ -217,12 +233,12 @@ void main(uint3 id : SV_DispatchThreadID) {
     bool reflTraced = false;
     // Wet pixels (Weather.hlsli) reflect too: rain makes the ground glossy and puddles mirrors.
     Wet rain;
-    rain.wet = 0.0f; rain.puddle = 0.0f;
+    rain.wet = 0.0f; rain.puddle = 0.0f; rain.snow = 0.0f;
     if (d < 1.0f && base >= 1u && base <= 4u && sunColour.w > 0.5f) {
         const float3 wp = worldAt(float2(id.xy), d), wn = worldNormal(Normal.Load(ip));
         rain = wetAt(wp, wn, geometricNormal(float2(id.xy), wp, wn), 1.0f);
     }
-    const bool wetGloss = max(rain.wet, rain.puddle) > 0.2f;
+    const bool wetGloss = max(rain.wet, rain.puddle) * (1.0f - rain.snow) > 0.2f;   // snow covers the water
     if (reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u) {
         const float4 sp = Spec.Load(ip);
         if (((sp.y > 0.25f && sp.x > 0.05f) || wetGloss) && ((id.x + id.y + uint(frameIndex)) & 1u) == 0u) {
@@ -244,7 +260,7 @@ void main(uint3 id : SV_DispatchThreadID) {
                 if (traceHit(o, rd, reflectLength, h)) {
                     if (onScreen(o + rd * h.t, c)) { refl = float4(c, 1.0f); }
                     else if ((giFlags & GI_MATERIALS) != 0u) { refl = float4(radianceAt(h, o, rd, rr, true, hn), 1.0f); }
-                }
+                } else if (wetGloss) { refl = float4(skyAt(rd), 1.0f); }   // wet ground and puddles mirror the sky
             }
         }
     }

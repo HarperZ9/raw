@@ -16,6 +16,9 @@ RWByteAddressBuffer CacheValue : register(CACHE_VALUE);   // 32 bytes a slot: fl
 
 static const uint CACHE_PROBES = 8u;
 static const float CACHE_FIXED = 1024.0f;
+// A freed slot: lookups probe past it (a 0 there would cut the run of every cell placed after it, and
+// those cells were found again as new ones), inserts take it back when their run has no free slot.
+static const uint CACHE_TOMB = 0xFFFFFFFFu;
 
 uint pcg(uint v) {
     const uint s = v * 747796405u + 2891336453u;

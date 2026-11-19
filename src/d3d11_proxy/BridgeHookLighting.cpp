@@ -3,7 +3,7 @@
 //   Mode=1              0 the game's lighting, 1 ours matched to the game, 2 ours improved; F10 cycles
 //   SoftShadows=1 GgxSpecular=1 VolumetricFog=1 ContactShadows=1 Ao=1   the improvements (Mode=2)
 //   Cascades=1          the sun's shadow from the decoded cascades (0: the game's shadow mask)
-//   View=0              1 world normals, 2 sun shadow, 3 ambient, 9 test control: the top-left quarter only
+//   View=0              1 world normals, 2 sun shadow, 3 ambient, 8 weather (wet, puddles, snow), 9 test control: the top-left quarter only
 //   FogDensity FogAnisotropy FogLightScale FogSunScale FogMaxDistance SoftRange ContactLength AoStrength
 //   ShadowMapSize=4096  one cascade's side (the game's iShadowMapResolution)
 //   CaptureAfter=0      world frames before the capture set: each step holds Hold frames, then its
@@ -20,6 +20,7 @@
 #include "TxMode.h"
 #include "Translate.h"
 #include "Overlay.h"
+#include "WeatherDrive.h"
 
 #include <algorithm>
 #include <cmath>
@@ -39,6 +40,26 @@ namespace
 int s_failures = 0;
 UINT s_shadowSide = 4096;
 bool s_handoverFlush = true;
+bool s_weatherDriven = true;
+
+// The surfaces the weather has built up, into the pass's tuning each frame (WeatherDrive.h; a copy of
+// the tuning, so an ini reload in between is not lost).
+void DriveWeather()
+{
+    static LARGE_INTEGER last{}, freq{};
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
+    const double dt = last.QuadPart ? double(now.QuadPart - last.QuadPart) / double(freq.QuadPart) : 0.0;
+    last = now;
+    WeatherSurfaces w;
+    if (!s_weatherDriven || !WeatherDrive_Step(dt, w) || !Bridge()) return;
+    LightingTuning t = Cfg().light;
+    t.wetness = w.wetness; t.puddles = w.puddles; t.snow = w.snow;
+    raw::bridge::LightingPassTune(Bridge()->ActivePass(), t);
+    static uint32_t logged = 0;
+    if (logged++ % 240 == 0) Log("[Weather] surfaces: wetness %.3f, puddles %.3f, snow %.3f", w.wetness, w.puddles, w.snow);
+}
 
 } // namespace
 
@@ -69,6 +90,7 @@ void LightingApplyTuning()
     SceneGeometry_SetAlpha(t.rtAlpha);
     SceneGeometry_SetMaterials(t.rtMaterials);
     SceneGeometry_SetSkin(t.rtSkin, t.rtSkinBones);
+    SceneGeometry_SetActors(t.rtActors);
     GameComposite_Set({t.mode == 2 && t.ao, t.mode == 2 && t.volumetricFog && t.fogReplacesGame});
 }
 
@@ -102,8 +124,19 @@ void LoadLightingConfig(const std::string& ini)
     t.rtCacheCell = f("RtCacheCell", t.rtCacheCell);
     t.rtSkin = i("RtSkin", 1) != 0;
     t.wetness = f("Wetness", t.wetness);
+    t.snow = f("Snow", t.snow);
+    // The game's weather drives Wetness, Puddles and Snow once the engine module reports it
+    // (WeatherDrive.h); WeatherRain and WeatherSnow stand in for that report in tests.
+    s_weatherDriven = i("WeatherDrive", 1) != 0;
+    WeatherDrive_SetTest(f("WeatherRain", -1.0f), f("WeatherSnow", -1.0f));
+    WeatherTimes wt;
+    wt.soakSeconds = f("WeatherSoakSeconds", wt.soakSeconds); wt.drySeconds = f("WeatherDrySeconds", wt.drySeconds);
+    wt.puddleSeconds = f("WeatherPuddleSeconds", wt.puddleSeconds); wt.snowSeconds = f("WeatherSnowSeconds", wt.snowSeconds);
+    wt.meltSeconds = f("WeatherMeltSeconds", wt.meltSeconds); wt.drainSeconds = f("WeatherDrainSeconds", wt.drainSeconds);
+    WeatherDrive_SetTimes(wt);
     t.puddles = f("Puddles", t.puddles);
     t.rtSkinBones = i("RtSkinBones", 10);
+    t.rtActors = i("RtActors", 1) != 0;
     t.ao = i("Ao", 1) != 0; t.fogReplacesGame = i("FogReplacesGame", 0) != 0; t.cascades = i("Cascades", 0) != 0; t.view = i("View", 0);
     // Cascades=0: the sun's shadow is the game's own filtered mask (match dE76 2.23 against 2.53 with
     // our cascade lookup, which also drew hard twig streaks on the ground).
@@ -197,6 +230,7 @@ void LightingOnPresent(bool worldFrame)
         Log("[Lighting] F10: mode %d", Cfg().light.mode);
     }
     HotReload_OnPresent();
+    DriveWeather();
     Overlay_Draw();
     SceneGeometry_Drop();   // draws of a frame that never reached the bridge (it was off, or not yet made)
     LightingScheduleOnPresent(worldFrame);

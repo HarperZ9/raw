@@ -24,7 +24,7 @@ cbuffer P : register(b0) {
     float4 cluster;         // near, far, SLICES / log(far / near), sky visibility strength
     float4 tune;            // fog density, fog anisotropy, soft-shadow range, contact length
     float4 tune2;           // AO strength, fog light scale, fog sun scale, fog max distance
-    float4 weather;         // wetness, puddles (Weather.hlsli), 0, 0
+    float4 weather;         // wetness, puddles, snow (Weather.hlsli), 0
     float4 camPosW;         // the camera's world position (absolute: world-fixed patterns)
     float4 lightPosR[MAX_LIGHTS];   // xyz, radius
     float4 lightColS[MAX_LIGHTS];   // rgb, shadow-mask channel (-1 none)

@@ -1,4 +1,4 @@
-// Weather.hlsli: rain on the game's surfaces (SKY-11), shared by the lighting pass and the ray trace so
+// Weather.hlsli: rain on the game's surfaces (SKY-11) and snow (SKY-09), shared by the lighting pass and the ray trace so
 // both agree on which pixels are wet. Rain wets what the sky can reach: upward faces fully, walls a
 // little, and only where the pixel sees the sky (the ray-traced sky visibility, where the caller has
 // it). Water gathers in puddles on flat ground, where a value-noise field over the absolute world
@@ -25,13 +25,20 @@ float puddleField(float2 w) {
     return valueNoise(q) * 0.55f + valueNoise(q * 2.13f + 7.1f) * 0.3f + valueNoise(q * 4.37f + 3.3f) * 0.15f;
 }
 
-struct Wet { float wet, puddle; };
+struct Wet { float wet, puddle, snow; };
 
 // ng: the geometric normal (from depth): water pools by the ground's shape, not its normal map's bumps.
 Wet wetAt(float3 p, float3 n, float3 ng, float skyVis) {
     Wet w;
-    w.wet = 0.0f; w.puddle = 0.0f;
-    if (weather.x <= 0.0f && weather.y <= 0.0f) { return w; }
+    w.wet = 0.0f; w.puddle = 0.0f; w.snow = 0.0f;
+    if (weather.x <= 0.0f && weather.y <= 0.0f && weather.z <= 0.0f) { return w; }
+    if (weather.z > 0.0f) {
+        // Snow (SKY-09) settles where the geometric surface faces up and the sky reaches; it thins in
+        // drifts by a world-fixed field and thickens with the amount. It covers before it soaks.
+        const float face = saturate((ng.z - 0.35f) / 0.45f) * saturate((n.z - 0.2f) / 0.5f);
+        const float drift = puddleField((p + camPosW.xyz).xy * 0.7f + 31.0f);
+        w.snow = saturate((face * (0.55f + 0.45f * drift) - (1.0f - weather.z)) * 3.0f) * skyVis;
+    }
     const float up = saturate((n.z - 0.15f) / 0.6f);
     w.wet = saturate(weather.x * lerp(0.35f, 1.0f, up) * skyVis);
     if (weather.y > 0.0f) {

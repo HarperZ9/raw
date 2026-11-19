@@ -38,6 +38,7 @@
 #include "ProxyLog.h"
 #include "RenderPhaseDetector.h"
 #include "SceneLights.h"
+#include "SceneGeometry.h"
 #include "GameComposite.h"
 #include <cstdlib>
 #include <cstring>
@@ -252,7 +253,21 @@ void BridgeHook_OnTargets(ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetV
     s_f.normalBound = false;
     if (s_f.normalTex)
         for (ID3D11Resource* r : rt) s_f.normalBound |= r == s_f.normalTex;
-    if (Cfg().lighting) SceneLights_SetOpaque(s_f.normalBound);
+    if (Cfg().lighting) {
+        SceneLights_SetOpaque(s_f.normalBound);
+        DXGI_FORMAT f0 = DXGI_FORMAT_UNKNOWN;
+        UINT w0 = 0;
+        D3D11_RESOURCE_DIMENSION dim{};
+        if (rt[0]) rt[0]->GetType(&dim);
+        if (dim == D3D11_RESOURCE_DIMENSION_TEXTURE2D) {
+            D3D11_TEXTURE2D_DESC d{};
+            static_cast<ID3D11Texture2D*>(rt[0])->GetDesc(&d);
+            f0 = d.Format; w0 = d.Width;
+        }
+        UINT count = 0;
+        for (UINT k = 0; k < n && k < 4; ++k) count += rt[k] != nullptr;
+        SceneGeometry_OnTargets(dsv && s_f.depthTex && ResourceOf(dsv) == s_f.depthTex, count, f0, w0, s_f.captured);
+    }
     s_f.inBackbuffer = rt[0] && rt[0] == s_f.backbuffer;
     s_f.drawsAtBind = draws;
 }

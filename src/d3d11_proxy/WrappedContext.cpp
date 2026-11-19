@@ -308,6 +308,7 @@ void STDMETHODCALLTYPE WrappedContext::Draw(UINT VertexCount, UINT StartVertexLo
     for (auto& cb : g_drawCallbacks)
         if (cb) cb(VertexCount, 1);
     if (g_sceneLightsActive) SceneLights_BeforeDraw(m_real);
+    if (g_sceneGeometryActive) SceneGeometry_Census(m_real, 3);
     if (g_gbufferActive) GBuffer_BeforeDraw(m_real);
     if (g_sceneLightsActive) GameComposite_BeforeDraw(m_real, VertexCount);
     m_real->Draw(VertexCount, StartVertexLocation);
@@ -345,6 +346,7 @@ void STDMETHODCALLTYPE WrappedContext::DrawInstanced(UINT VertexCountPerInstance
     for (auto& cb : g_drawCallbacks)
         if (cb) cb(VertexCountPerInstance, InstanceCount);
     if (g_sceneLightsActive) SceneLights_BeforeDraw(m_real);
+    if (g_sceneGeometryActive) SceneGeometry_Census(m_real, 2);
     if (g_gbufferActive) GBuffer_BeforeDraw(m_real);
     m_real->DrawInstanced(VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation);
 }
@@ -360,6 +362,7 @@ void STDMETHODCALLTYPE WrappedContext::DrawIndexedInstanced(UINT IndexCountPerIn
     for (auto& cb : g_drawCallbacks)
         if (cb) cb(IndexCountPerInstance, InstanceCount);
     if (g_sceneLightsActive) SceneLights_BeforeDraw(m_real);
+    if (g_sceneGeometryActive) SceneGeometry_Census(m_real, 1);
     if (g_gbufferActive) GBuffer_BeforeDraw(m_real);
     m_real->DrawIndexedInstanced(IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, StartInstanceLocation);
 }

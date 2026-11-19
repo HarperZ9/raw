@@ -258,7 +258,8 @@ target_compile_definitions(raw_d3d12_bridge PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
 
 target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/BridgeHook.cpp src/d3d11_proxy/BridgeHookConfig.cpp
     src/d3d11_proxy/BridgeHookCapture.cpp src/d3d11_proxy/BridgeHookLighting.cpp
-    src/d3d11_proxy/BridgeHookLightingStats.cpp src/d3d11_proxy/LightingSchedule.cpp)
+    src/d3d11_proxy/BridgeHookLightingStats.cpp src/d3d11_proxy/LightingSchedule.cpp
+    src/d3d11_proxy/WeatherDrive.cpp)
 target_link_libraries(d3d11_proxy PRIVATE raw_d3d12_bridge)
 
 # ----------------------------------------------------------------------------
@@ -467,7 +468,7 @@ target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/TxMode.cpp src/d3d11_proxy/Tx
 # Hot reload (docs/HOT_RELOAD.md): shaders and parameters while the game runs.
 target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/HotReload.cpp src/d3d11_proxy/Overlay.cpp)
 # Ray tracing on the game's geometry (docs/RAYTRACING.md), on raw::tx's device.
-target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/SceneGeometry.cpp)
+target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/SceneGeometry.cpp src/d3d11_proxy/SceneSkin.cpp)
 if(RAW_ENGINE_DIR)
     set(RAW_RTSHADOW_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtShadow.hlsl)
     add_custom_command(

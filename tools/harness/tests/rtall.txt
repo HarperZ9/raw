@@ -1,0 +1,35 @@
+# One session over this round's work (docs/RAYTRACING.md): Riverwood by day. The trace with each part
+# off (variance diagnosis), actors in third person (primary-ray view and sun visibility, RtActors A/B),
+# rain with puddles (and the reflection view), and snow.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+keyframe on steps=game,improved hold=150
+reload ini RtCache=0
+keyframe nocache steps=improved hold=120
+reload ini RtCache=1 RtSky=0
+keyframe nosky steps=improved hold=120
+reload ini RtSky=1
+reload ini Wetness=0.8 Puddles=0.8
+keyframe puddles steps=improved hold=120
+reload ini View=6
+keyframe puddles_refl steps=improved hold=60
+reload ini View=0 Wetness=0 Puddles=0 Snow=0.8
+keyframe snow steps=improved hold=120
+reload ini Snow=0
+walk f 0.15
+wait 4
+keyframe third steps=game,improved hold=120
+reload ini RtDebug=1 View=7
+keyframe third_primary steps=improved hold=60
+reload ini RtActors=0
+keyframe third_primary_noact steps=improved hold=60
+reload ini RtActors=1 RtDebug=0 View=2
+keyframe third_sunvis steps=improved hold=60
+reload ini RtActors=0
+keyframe third_sunvis_noact steps=improved hold=60
+reload ini RtActors=1 View=0
+keyframe third_on steps=improved hold=120
+quit

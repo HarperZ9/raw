@@ -105,7 +105,7 @@ void cellOf(float3 p, float3 n, float3 jitter, out uint slot, out uint check) {
     const uint tag = lvl * 8u + faceOf(n);
     const uint h = pcg(uint(c.x) + pcg(uint(c.y) + pcg(uint(c.z) + pcg(tag))));
     slot = h % cacheSlots;
-    check = max(pcg(uint(c.x) * 73856093u ^ uint(c.y) * 19349663u ^ uint(c.z) * 83492791u ^ tag * 2654435761u), 1u);
+    check = clamp(pcg(uint(c.x) * 73856093u ^ uint(c.y) * 19349663u ^ uint(c.z) * 83492791u ^ tag * 2654435761u), 1u, CACHE_TOMB - 1u);
 }
 
 // The cell's resolved value (bounce rgb, sky share); false when the cell has none yet.
@@ -126,23 +126,54 @@ bool cacheRead(float3 p, float3 n, float3 jitter, out float4 v) {
     return false;
 }
 
+// Samples into a cell's slot (found or claimed along its probe run): bounce rgb and sky in fixed point.
+void cacheInsert(uint s, uint check, uint3 c, uint skyFixed, uint count) {
+    uint tomb = ~0u;
+    bool placed = false;
+    [loop] for (uint i = 0u; i < CACHE_PROBES; i++) {
+        uint prev;
+        CacheKeys.InterlockedCompareExchange(s * 4u, 0u, check, prev);
+        if (prev == 0u || prev == check) { placed = true; break; }
+        if (prev == CACHE_TOMB && tomb == ~0u) { tomb = s; }
+        s = s + 1u == cacheSlots ? 0u : s + 1u;
+    }
+    if (!placed && tomb != ~0u) {
+        uint prev;
+        CacheKeys.InterlockedCompareExchange(tomb * 4u, CACHE_TOMB, check, prev);
+        placed = prev == CACHE_TOMB || prev == check;
+        s = tomb;
+    }
+    if (!placed) { return; }
+    const uint a = s * 32u;
+    uint o;
+    CacheAccum.InterlockedAdd(a, c.r, o); CacheAccum.InterlockedAdd(a + 4u, c.g, o); CacheAccum.InterlockedAdd(a + 8u, c.b, o);
+    CacheAccum.InterlockedAdd(a + 12u, skyFixed, o);
+    CacheAccum.InterlockedAdd(a + 16u, count, o);
+}
+
 // One sample for the cell: the bounce light a ray brought back and whether it saw the sky.
 void cacheAdd(float3 p, float3 n, float3 bounce, float sky) {
     uint s, check;
     cellOf(p, n, 0.0f.xxx, s, check);
-    [loop] for (uint i = 0u; i < CACHE_PROBES; i++) {
-        uint prev;
-        CacheKeys.InterlockedCompareExchange(s * 4u, 0u, check, prev);
-        if (prev == 0u || prev == check) {
-            const uint3 c = uint3(min(max(bounce, 0.0f), 4.0f) * CACHE_FIXED);
-            const uint a = s * 32u;
-            uint o;
-            CacheAccum.InterlockedAdd(a, c.r, o); CacheAccum.InterlockedAdd(a + 4u, c.g, o); CacheAccum.InterlockedAdd(a + 8u, c.b, o);
-            CacheAccum.InterlockedAdd(a + 12u, uint(saturate(sky) * CACHE_FIXED), o);
-            CacheAccum.InterlockedAdd(a + 16u, 1u, o);
-            return;
+    cacheInsert(s, check, uint3(min(max(bounce, 0.0f), 4.0f) * CACHE_FIXED), uint(saturate(sky) * CACHE_FIXED), 1u);
+}
+
+// The same from every pixel of a wave at once: lanes in one cell (most of an 8 x 8 group near the camera)
+// sum their samples and one of them writes, so a cell takes one set of atomics a wave instead of one a
+// pixel. Before this, every sky-ray pixel hit the same few addresses five times a frame.
+void cacheAddWave(float3 p, float3 n, float3 bounce, float sky) {
+    uint s, check;
+    cellOf(p, n, 0.0f.xxx, s, check);
+    const uint3 c = uint3(min(max(bounce, 0.0f), 4.0f) * CACHE_FIXED);
+    const uint k = uint(saturate(sky) * CACHE_FIXED);
+    [loop] for (;;) {
+        if (WaveReadLaneFirst(check) == check) {
+            const uint3 cs = WaveActiveSum(c);
+            const uint ks = WaveActiveSum(k);
+            const uint count = WaveActiveCountBits(true);
+            if (WaveIsFirstLane()) { cacheInsert(s, check, cs, ks, count); }
+            break;
         }
-        s = s + 1u == cacheSlots ? 0u : s + 1u;
     }
 }
 

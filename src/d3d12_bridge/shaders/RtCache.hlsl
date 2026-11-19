@@ -23,7 +23,8 @@ void resolve(uint3 id : SV_DispatchThreadID) {
         CacheValue.Store4(a, uint4(0u, 0u, 0u, 0u)); CacheValue.Store4(a + 16u, uint4(0u, 0u, 0u, 0u));
         return;
     }
-    if (CacheKeys.Load(s * 4u) == 0u) { return; }
+    const uint key = CacheKeys.Load(s * 4u);
+    if (key == 0u || key == CACHE_TOMB) { return; }
     const uint4 sum = CacheAccum.Load4(a);
     const uint count = CacheAccum.Load(a + 16u);
     uint2 meta = CacheValue.Load2(a + 16u);   // frames of history, last frame with a sample
@@ -38,7 +39,7 @@ void resolve(uint3 id : SV_DispatchThreadID) {
         CacheAccum.Store4(a, uint4(0u, 0u, 0u, 0u));
         CacheAccum.Store(a + 16u, 0u);
     } else if (frame - meta.y > maxAge) {
-        CacheKeys.Store(s * 4u, 0u);
+        CacheKeys.Store(s * 4u, CACHE_TOMB);   // freed; the probe runs through it stay whole
         CacheValue.Store4(a + 16u, uint4(0u, 0u, 0u, 0u));
         return;
     }

@@ -19,7 +19,7 @@ Context::Context(Device* dev, bool deferred, bool replay)
 
 Context::~Context()
 {
-    if (stale_) EndStream();
+    if (seg_ || stale_) EndStream(__func__);
     if (!pending_.empty()) SubmitPending();
     ResetState();
     holds_.ReleaseAll();
@@ -141,7 +141,7 @@ void Context::ResetState()
 
 STDMETHODIMP_(void) Context::ClearState()
 {
-    if (stale_) EndStream();
+    if (seg_ || stale_) EndStream(__func__);
     ResetState();
 }
 

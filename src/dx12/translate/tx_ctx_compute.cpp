@@ -9,7 +9,7 @@ static constexpr uint32_t kShaderRead =
 // kind 0: draw, 1: indexed draw, 2: dispatch. The D3D11 argument layouts are the D3D12 ones.
 void Context::Indirect(ID3D11Buffer* args, UINT offset, int kind)
 {
-    if (stale_) EndStream();
+    if (seg_ || stale_) EndStream(__func__);
     TBuffer* b = static_cast<TBuffer*>(args);
     if (!b) return;
     if (kind == 2 ? !PrepareDispatch() : !PrepareDraw(kind == 1)) return;
@@ -64,7 +64,7 @@ bool Context::PrepareDispatch()
 
 STDMETHODIMP_(void) Context::Dispatch(UINT x, UINT y, UINT z)
 {
-    if (stale_) EndStream();
+    if (seg_ || stale_) EndStream(__func__);
     TX_TRACE("Context::Dispatch");
     if (PrepareDispatch()) Cl()->Dispatch(x, y, z);
 }

@@ -230,38 +230,38 @@ bool Context::PrepareDraw(bool indexed)
 STDMETHODIMP_(void) Context::Draw(UINT n, UINT start)
 {
     TX_TRACE("Context::Draw");
-    if (pool_ && StreamDraw()) { SHead(SO_Draw, 0, 0, n); seg_->words.push_back(start); return SegDrawn(); }
-    if (stale_) EndStream();
+    if (pool_ && !replay_ && StreamDraw()) { SHead(SO_Draw, 0, 0, n); seg_->words.push_back(start); return SegDrawn(); }
+    if (seg_ || stale_) EndStream(__func__);
     if (PrepareDraw(false)) Cl()->DrawInstanced(n, 1, start, 0);
 }
 STDMETHODIMP_(void) Context::DrawIndexed(UINT n, UINT start, INT base)
 {
     TX_TRACE("Context::DrawIndexed");
-    if (pool_ && StreamDraw()) { SHead(SO_DrawIndexed, 0, 0, n); seg_->words.push_back(uint64_t(start) | uint64_t(uint32_t(base)) << 32); return SegDrawn(); }
-    if (stale_) EndStream();
+    if (pool_ && !replay_ && StreamDraw()) { SHead(SO_DrawIndexed, 0, 0, n); seg_->words.push_back(uint64_t(start) | uint64_t(uint32_t(base)) << 32); return SegDrawn(); }
+    if (seg_ || stale_) EndStream(__func__);
     if (PrepareDraw(true)) Cl()->DrawIndexedInstanced(n, 1, start, base, 0);
 }
 STDMETHODIMP_(void) Context::DrawInstanced(UINT n, UINT inst, UINT start, UINT startInst)
 {
     TX_TRACE("Context::DrawInstanced");
-    if (pool_ && StreamDraw()) {
+    if (pool_ && !replay_ && StreamDraw()) {
         SHead(SO_DrawInstanced, 0, 0, n);
         seg_->words.push_back(uint64_t(inst) | uint64_t(start) << 32); seg_->words.push_back(startInst);
         return SegDrawn();
     }
-    if (stale_) EndStream();
+    if (seg_ || stale_) EndStream(__func__);
     if (PrepareDraw(false)) Cl()->DrawInstanced(n, inst, start, startInst);
 }
 STDMETHODIMP_(void) Context::DrawIndexedInstanced(UINT n, UINT inst, UINT start, INT base, UINT startInst)
 {
     TX_TRACE("Context::DrawIndexedInstanced");
-    if (pool_ && StreamDraw()) {
+    if (pool_ && !replay_ && StreamDraw()) {
         SHead(SO_DrawIndexedInstanced, 0, 0, n);
         seg_->words.push_back(uint64_t(inst) | uint64_t(start) << 32);
         seg_->words.push_back(uint64_t(uint32_t(base)) | uint64_t(startInst) << 32);
         return SegDrawn();
     }
-    if (stale_) EndStream();
+    if (seg_ || stale_) EndStream(__func__);
     if (PrepareDraw(true)) Cl()->DrawIndexedInstanced(n, inst, start, base, startInst);
 }
 STDMETHODIMP_(void) Context::DrawAuto() { CountUnsupported(dev_, "DrawAuto (stream output)"); }

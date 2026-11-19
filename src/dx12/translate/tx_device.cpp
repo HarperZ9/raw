@@ -104,7 +104,7 @@ HRESULT Device::Init(const CreateParams& p)
     imm = new Context(this, false);
     if (p.workers) {
         pool = new StreamPool(this, p.workers > 16 ? 16 : p.workers);
-        imm->EnableStream(pool, p.segmentDraws);
+        imm->EnableStream(pool, p.segmentDraws, p.segmentMin);
         Log("translation workers: %u", pool->Workers());
     }
     return S_OK;

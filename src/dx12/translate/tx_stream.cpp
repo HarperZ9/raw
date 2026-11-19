@@ -13,20 +13,14 @@ void Context::SBuf(TBuffer* b)
 
 // The whole binding state, copied when a segment opens, with a hold on every object in it and the GPU
 // address of every renamed buffer bound.
+// A segment opened on a list whose D3D12 state is current starts lazy: the list is not split until the
+// segment reaches minDraws_ draws (Commit). A run that ends before that is replayed on this context, into
+// the same list (InlineReplay), so short runs between other calls cost no extra lists.
 void Context::BeginSegment()
 {
-    if (rec_.cmdCount) {   // what the immediate context recorded so far runs before the segment
-        rec_.cl->Close();
-        Pending p;
-        p.rec = std::make_unique<Recording>(std::move(rec_));
-        pending_.push_back(std::move(p));
-        rec_ = Recording{};
-        rec_.tracker.faults = dev_->faults;
-        rec_.tracker.EnableSlots();
-        dev_->OpenRecording(rec_);
-        BeginList();
-    }
     auto* s = new Segment;
+    s->lazy = !stale_;
+    s->startDirty = dirty_;
     s->words.reserve(16384);
     s->start = std::make_unique<State>(s_);
     s->held.reserve(4096);
@@ -52,12 +46,51 @@ void Context::BeginSegment()
     SHold(*s, s_.ds);
     SHold(*s, s_.rs);
     seg_ = s;
+}
+
+void Context::Commit()
+{
+    if (rec_.cmdCount) {   // what the immediate context recorded so far runs before the segment
+        rec_.cl->Close();
+        Pending p;
+        p.rec = std::make_unique<Recording>(std::move(rec_));
+        pending_.push_back(std::move(p));
+        rec_ = Recording{};
+        rec_.tracker.faults = dev_->faults;
+        rec_.tracker.EnableSlots();
+        dev_->OpenRecording(rec_);
+        BeginList();
+    }
+    seg_->lazy = false;
     stale_ = true;
+}
+
+void Context::InlineReplay(Segment* s)
+{
+    holds_.Suspend(true);   // the end state's objects are counted already; the segment holds the rest
+    s_ = *s->start;
+    dirty_ = s->startDirty;
+    replay_ = true;
+    override_.clear();
+    for (const auto& [b, va] : s->va) override_[static_cast<TBuffer*>(b)].va = va;
+    auto fix = [this](BufSlot& c) { c.chunk = c.buf ? Pin(c.buf) : nullptr; };
+    for (StageState& st : s_.st) for (BufSlot& c : st.cb) fix(c);
+    for (BufSlot& v : s_.vb) fix(v);
+    fix(s_.ib);
+    ReplayWords(this, *s);
+    replay_ = false;
+    for (StageState& st : s_.st) for (BufSlot& c : st.cb) fix(c);   // the live chunks again
+    for (BufSlot& v : s_.vb) fix(v);
+    fix(s_.ib);
+    override_.clear();
+    holds_.Suspend(false);
+    ++sstats_.inlined;
+    DropSegment(s);
 }
 
 bool Context::StreamDraw()
 {
-    if (openQueries_) return false;
+    if (openQueries_) { ++sstats_.queryDraws; return false; }
     if (!seg_) BeginSegment();
     ++sstats_.draws;
     return true;
@@ -77,12 +110,15 @@ void Context::CutSegment()
     pool_->Push(s);
 }
 
-void Context::EndStream()
+void Context::EndStream(const char* why)
 {
+    ++sstats_.ends;
+    for (int k = 0; k < 8; ++k)
+        if (sstats_.why[k] == why || !sstats_.why[k]) { sstats_.why[k] = why; ++sstats_.whyN[k]; break; }
+    if (seg_ && seg_->lazy) { Segment* s = seg_; seg_ = nullptr; InlineReplay(s); return; }
     CutSegment();
     if (!stale_) return;
     stale_ = false;
-    ++sstats_.ends;
     // The open list has run no draw since its BeginList: everything is set again on the next one.
     dirty_ = D_ALL;
     root_ = croot_ = nullptr;
@@ -129,8 +165,14 @@ void Context::StreamStatsLog(uint64_t frames)
 {
     if (!pool_ || !frames) return;
     const double n = double(frames);
-    Log("workers %u: per frame %.1f segments, %.0f draws in segments, %.1f runs ended, %.3f ms waiting for the workers",
-        pool_->Workers(), sstats_.segments / n, sstats_.draws / n, sstats_.ends / n, sstats_.waitUs / n / 1000.0);
+    Log("workers %u: per frame %.1f segments to the workers, %.1f short runs replayed here, %.0f draws recorded, %.1f runs ended, "
+        "%.3f ms waiting for the workers", pool_->Workers(), sstats_.segments / n, sstats_.inlined / n, sstats_.draws / n,
+        sstats_.ends / n, sstats_.waitUs / n / 1000.0);
+    char why[512] = {};
+    int at = 0;
+    for (int k = 0; k < 8 && sstats_.why[k]; ++k)
+        at += snprintf(why + at, sizeof why - at, " %s %.1f", sstats_.why[k], sstats_.whyN[k] / n);
+    Log("  runs ended by (per frame):%s; draws kept on the immediate list by an open query %.0f", why, sstats_.queryDraws / n);
     sstats_ = StreamStats{};
 }
 

@@ -43,11 +43,15 @@ struct Segment {
     std::vector<ImmHold*> held;                   // given back after submission
     std::unique_ptr<Recording> out;               // the worker's closed list
     uint32_t draws = 0;
+    uint32_t startDirty = 0;   // the context's dirty flags when it opened (an inline replay starts from them)
+    bool lazy = false;         // the immediate list is not split yet (Context::Commit)
     std::atomic<bool> done{false};
 };
 
 struct StreamStats {
-    uint64_t segments = 0, draws = 0, ends = 0;
+    uint64_t segments = 0, draws = 0, ends = 0, queryDraws = 0, inlined = 0;
+    const char* why[8] = {};   // what ended the runs, the first eight kinds
+    uint64_t whyN[8] = {};
     double waitUs = 0;   // the application's thread waiting for the workers at submission
 };
 
@@ -72,5 +76,6 @@ private:
 };
 
 void ReplaySegment(Context* replay, Segment& s);   // tx_stream_play.cpp
+void ReplayWords(Context* c, const Segment& s);   // the records alone, on any context
 
 }  // namespace raw::tx

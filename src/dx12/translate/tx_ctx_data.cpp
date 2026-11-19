@@ -48,7 +48,7 @@ STDMETHODIMP Context::Map(ID3D11Resource* res, UINT sub, D3D11_MAP type, UINT fl
         out->RowPitch = out->DepthPitch = UINT(c->bytes);
         return S_OK;
     }
-    if (stale_) EndStream();
+    if (seg_ || stale_) EndStream(__func__);
     if (c->store == Store::Staging) {
         ++g_map[1];
         if (deferred_) return E_INVALIDARG;
@@ -101,7 +101,7 @@ STDMETHODIMP_(void) Context::Unmap(ID3D11Resource* res, UINT sub)
     ResCore* c = CoreOf(res);
     if (!c || c->store != Store::Committed || !c->mapChunk.res) { ++g_unmap[2]; return; }   // renamed: nothing to do
     TX_TRACE("Context::Unmap");
-    if (stale_) EndStream();
+    if (seg_ || stale_) EndStream(__func__);
     Chunk ch = c->mapChunk;
     ++g_unmap[c->IsBuffer() ? 0 : 1];
     g_unmapBytes += ch.size;
@@ -130,7 +130,7 @@ STDMETHODIMP_(void) Context::Unmap(ID3D11Resource* res, UINT sub)
 
 void Context::WriteTexture(ResCore& c, UINT sub, const D3D11_BOX* box, const void* data, UINT rowPitch, UINT depthPitch)
 {
-    if (stale_) EndStream();
+    if (seg_ || stale_) EndStream(__func__);
     uint32_t w, h, d;
     MipSize(c, sub % c.mips, w, h, d);
     UINT x = 0, y = 0, z = 0;
@@ -156,7 +156,7 @@ void Context::WriteTexture(ResCore& c, UINT sub, const D3D11_BOX* box, const voi
 
 STDMETHODIMP_(void) Context::UpdateSubresource(ID3D11Resource* res, UINT sub, const D3D11_BOX* box, const void* data, UINT rowPitch, UINT depthPitch)
 {
-    if (stale_) EndStream();
+    if (seg_ || stale_) EndStream(__func__);
     TX_TRACE("Context::UpdateSubresource");
     ResCore* c = CoreOf(res);
     if (!c || !data) return;

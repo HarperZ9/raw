@@ -41,6 +41,7 @@ public:
     template <class T>
     void Drop(T* v) { --v->imm.n; }
     bool Plain() const { return plain_; }
+    void Suspend(bool on) { none_ = on; }   // the immediate context replaying a segment on itself
 
     // Gives back the pins of objects that are unbound and released by the application, visiting at
     // most `budget` pins from where the last call stopped. An object can die here.

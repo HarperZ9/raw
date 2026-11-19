@@ -91,7 +91,7 @@ void Context::CopyTexture(ResCore& dst, UINT dsub, UINT x, UINT y, UINT z, ResCo
 
 STDMETHODIMP_(void) Context::CopyResource(ID3D11Resource* dstRes, ID3D11Resource* srcRes)
 {
-    if (stale_) EndStream();
+    if (seg_ || stale_) EndStream(__func__);
     TX_TRACE("Context::CopyResource");
     ResCore* d = CoreOf(dstRes);
     ResCore* s = CoreOf(srcRes);
@@ -113,7 +113,7 @@ STDMETHODIMP_(void) Context::CopyResource(ID3D11Resource* dstRes, ID3D11Resource
 STDMETHODIMP_(void) Context::CopySubresourceRegion(ID3D11Resource* dstRes, UINT dsub, UINT x, UINT y, UINT z,
                                                    ID3D11Resource* srcRes, UINT ssub, const D3D11_BOX* box)
 {
-    if (stale_) EndStream();
+    if (seg_ || stale_) EndStream(__func__);
     TX_TRACE("Context::CopySubresourceRegion");
     ResCore* d = CoreOf(dstRes);
     ResCore* s = CoreOf(srcRes);
@@ -133,7 +133,7 @@ STDMETHODIMP_(void) Context::CopyStructureCount(ID3D11Buffer*, UINT, ID3D11Unord
 
 STDMETHODIMP_(void) Context::ResolveSubresource(ID3D11Resource* dstRes, UINT dsub, ID3D11Resource* srcRes, UINT ssub, DXGI_FORMAT fmt)
 {
-    if (stale_) EndStream();
+    if (seg_ || stale_) EndStream(__func__);
     TX_TRACE("Context::ResolveSubresource");
     ResCore* d = CoreOf(dstRes);
     ResCore* s = CoreOf(srcRes);
@@ -148,7 +148,7 @@ STDMETHODIMP_(void) Context::ResolveSubresource(ID3D11Resource* dstRes, UINT dsu
 
 STDMETHODIMP_(void) Context::GenerateMips(ID3D11ShaderResourceView* view)
 {
-    if (stale_) EndStream();
+    if (seg_ || stale_) EndStream(__func__);
     TX_TRACE("Context::GenerateMips");
     TSRV* v = static_cast<TSRV*>(view);
     if (!v) return;

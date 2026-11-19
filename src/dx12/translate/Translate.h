@@ -39,6 +39,7 @@ struct CreateParams {
     // (tx_stream.h); 0: every call is translated on the application's thread, as before.
     uint32_t workers = 0;
     uint32_t segmentDraws = 256;   // draws a worker's segment takes
+    uint32_t segmentMin = 64;      // a shorter run between other calls stays on the application's thread
 };
 
 struct Stats {

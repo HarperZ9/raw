@@ -53,6 +53,12 @@ template <class T> T* P(uint64_t w) { return reinterpret_cast<T*>(w); }
 void ReplaySegment(Context* c, Segment& s)
 {
     c->BeginReplay(s);
+    ReplayWords(c, s);
+    c->EndReplay(s);
+}
+
+void ReplayWords(Context* c, const Segment& s)
+{
     const uint64_t* w = s.words.data();
     const uint64_t* end = w + s.words.size();
     void* objs[128];
@@ -194,7 +200,6 @@ void ReplaySegment(Context* c, Segment& s)
             break;
         }
     }
-    c->EndReplay(s);
 }
 
 }  // namespace raw::tx

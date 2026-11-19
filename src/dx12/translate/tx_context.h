@@ -143,8 +143,13 @@ public:
     BindHolds& Holds() { return holds_; }
 
     // ---- parallel translation (tx_stream.cpp, tx_stream_play.cpp) ----
-    void EnableStream(StreamPool* p, uint32_t segmentDraws) { pool_ = p; segDraws_ = segmentDraws ? segmentDraws : 256; }
-    void EndStream();                          // the segments stop; the immediate context's list carries on
+    void EnableStream(StreamPool* p, uint32_t segmentDraws, uint32_t minDraws)
+    {
+        pool_ = p;
+        segDraws_ = segmentDraws ? segmentDraws : 256;
+        minDraws_ = minDraws > segDraws_ ? segDraws_ : minDraws;
+    }
+    void EndStream(const char* why = "flush");  // the segments stop; the immediate context's list carries on
     void BeginReplay(const Segment& s);
     void ReplayChunk(TBuffer* b, uint64_t va);
     void SetReplayVa(TBuffer* b, uint64_t va) { if (b && va) override_[b].va = va; }
@@ -153,8 +158,8 @@ public:
     uint64_t FlushInternal();                 // submits the open list; returns its serial
     void Sync();                              // flush and wait for the GPU
     void Shutdown();
-    ID3D12GraphicsCommandList* Cl() { if (stale_) EndStream(); return rec_.cl.Get(); }
-    Recording& Rec() { if (stale_) EndStream(); return rec_; }   // a host recording: the segments end first
+    ID3D12GraphicsCommandList* Cl() { if (seg_ || stale_) EndStream("Cl"); return rec_.cl.Get(); }
+    Recording& Rec() { if (seg_ || stale_) EndStream("Rec"); return rec_; }   // a host recording: the segments end first
     ChunkCache& Chunks() { return chunks_; }
     void MarkDirty(uint32_t d) { dirty_ |= d; }
     uint32_t AllocDescs(uint32_t n);          // index into the shader-visible heap
@@ -205,14 +210,21 @@ private:
     }
     void SBuf(TBuffer* b);                     // a buffer and its GPU address when renamed
     bool StreamDraw();                         // true: this draw goes into a segment
-    void SegDrawn() { if (++seg_->draws >= segDraws_) CutSegment(); }
+    void SegDrawn()
+    {
+        ++seg_->draws;
+        if (seg_->lazy && seg_->draws >= minDraws_) Commit();
+        if (seg_->draws >= segDraws_) CutSegment();
+    }
     void BeginSegment();
+    void Commit();                             // a lazy segment splits the list and goes to the workers
+    void InlineReplay(Segment* s);             // a short run replayed on this context, into its own list
     void CutSegment();
     uint64_t SubmitPending();
     void DropSegment(Segment* s);
 
     StreamPool* pool_ = nullptr;               // the immediate context with workers
-    uint32_t segDraws_ = 256;
+    uint32_t segDraws_ = 256, minDraws_ = 64;
     uint32_t openQueries_ = 0;                 // begun and not ended: no segments meanwhile
     Segment* seg_ = nullptr;                   // being recorded
     bool stale_ = false;                       // the open list's D3D12 state is not the shadow's (segments ran)

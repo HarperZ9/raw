@@ -45,6 +45,11 @@ public:
     // Called once per frame from WrappedSwapChain::Present: counters reset, the frame stamp advances.
     void OnFrameEnd();
 
+    // The lighting decode and the ray-tracing scene read the shadows (world matrices, bone palettes): with the
+    // bridge on, the buffers they ask for are shadowed whatever [Proxy] CBDirtyTracker says (raw#27).
+    static void SetShadowsRequired(bool on) { s_required = on; }
+    static bool ShadowsRequired() { return s_required; }
+
     // Called from WrappedContext::ClearState
     void OnClearState();
 
@@ -66,6 +71,7 @@ private:
 
     static constexpr uint32_t kMaxTrackedSize = 4096;
     static constexpr uint64_t kWantFrames = 300;
+    static inline bool s_required = false;
 
     struct CBEntry {
         ID3D11Resource*            key = nullptr;

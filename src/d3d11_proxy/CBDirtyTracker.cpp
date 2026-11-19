@@ -144,14 +144,16 @@ CBDirtyTracker::CBEntry* CBDirtyTracker::Classify(ID3D11Resource* p)
 
 bool CBDirtyTracker::Wanted(const CBEntry& e) const
 {
-    return PG_CBDirtyTracker() || PG_CBShadowAll() || (e.wantFrame && e.wantFrame + kWantFrames >= m_frame);
+    if (PG_CBDirtyTracker()) return true;
+    if (!s_required) return false;
+    return PG_CBShadowAll() || (e.wantFrame && e.wantFrame + kWantFrames >= m_frame);
 }
 
 bool CBDirtyTracker::InterceptMap(ID3D11DeviceContext*, ID3D11Resource* pResource,
                                   UINT Subresource, D3D11_MAP MapType, UINT,
                                   D3D11_MAPPED_SUBRESOURCE* pMappedResource)
 {
-    if (MapType != D3D11_MAP_WRITE_DISCARD || Subresource != 0)
+    if (MapType != D3D11_MAP_WRITE_DISCARD || Subresource != 0 || !(s_required || PG_CBDirtyTracker()))
         return false;
     CBEntry* e = Classify(pResource);
     if (!e->byteWidth) return false;

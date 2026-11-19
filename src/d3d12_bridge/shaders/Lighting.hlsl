@@ -168,9 +168,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         lobe = lobe || max(wet.wet, wet.puddle) > 0.2f;
         if (wet.snow > 0.0f) {
             // Snow lies over everything below it: bright, rough, its own smooth shape over the ground's bumps.
-            // The game lights in its own (gamma) space, where its ground textures sit near 0.3; full sun on
-            // 0.8 met the knee and read flat white. About 0.68 keeps the shading of the drifts.
-            albedo = lerp(albedo, float3(0.64f, 0.67f, 0.72f), wet.snow);
+            // The game lights in its own (gamma) space, where its ground textures sit near 0.3. Full sun on 0.8
+            // met the knee and read flat white; 0.68 still clipped in the game's tone map (Riverwood 13:00,
+            // 2026-11-19). About 0.56 keeps the drifts' shading; RAW's filmic tone map rolls the rest off.
+            albedo = lerp(albedo, float3(0.53f, 0.56f, 0.60f), wet.snow);
             s.alpha = lerp(s.alpha, 0.55f, wet.snow);
             s.shin = lerp(s.shin, 2.0f / (0.55f * 0.55f) - 2.0f, wet.snow);
             s.n = normalize(lerp(s.n, ng, wet.snow * 0.4f));   // the ground's bumps show through as mounds

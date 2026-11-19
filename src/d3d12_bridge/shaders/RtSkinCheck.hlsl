@@ -8,7 +8,7 @@
 // stats buffer the CPU reads three frames later.
 // The game's own depth buffer is the second check: a skinned corner that lands on screen in front of the
 // surface the game drew there (by more than a margin) is a corner the game did not draw there. A triangle
-// with two such corners is counted as floating and, with the filter, made degenerate too; its first
+// with any such corner is counted as floating and, with the filter, made degenerate too; its first
 // floating corner is kept in full. Original work, MIT.
 cbuffer C : register(b0) {
     uint vStart, stride, posOffset, posFmt, bStart, bStride, idxOffset, wOffset;
@@ -34,7 +34,12 @@ float inFront(float3 s) {
     const float2 ndc = c.xy / c.w;
     if (any(abs(ndc) > 0.995f)) { return 0.0f; }
     const int2 px = int2((ndc.x * 0.5f + 0.5f) * screen.x, (0.5f - ndc.y * 0.5f) * screen.y);
-    const float d = Depth.Load(int3(px, 0));
+    // The nearest surface in the 5 x 5 pixels around: a corner on the actor's own silhouette lands beside
+    // the background, and must not count as in front of it.
+    float d = 1.0f;
+    [unroll] for (int y = -2; y <= 2; y++) {
+        [unroll] for (int x = -2; x <= 2; x++) { d = min(d, Depth.Load(int3(clamp(px + int2(x, y), int2(0, 0), int2(screen) - 1), 0))); }
+    }
     const float zScene = projB / max(projA - d, 1.0e-7f);
     return zScene - c.w - (8.0f + 0.02f * c.w);
 }
@@ -98,7 +103,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     bool floating = false;
     if (!range && screen.x > 0.0f) {
         const float f0 = inFront(skinned(i[0])), f1 = inFront(skinned(i[1])), f2 = inFront(skinned(i[2]));
-        floating = uint(f0 > 0.0f) + uint(f1 > 0.0f) + uint(f2 > 0.0f) >= 2u;
+        floating = f0 > 0.0f || f1 > 0.0f || f2 > 0.0f;
         if (floating) {
             uint first;
             Stats.InterlockedCompareExchange(base + 39u * 4u, 0u, 1u, first);

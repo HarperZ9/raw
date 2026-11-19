@@ -20,7 +20,7 @@ float cNoise(float3 x) {
 }
 
 bool cloudsOn() { return clouds.x > 0.0f && clouds.z > 0.0f; }
-static const float kCloudSigma = 0.0008f;   // extinction per unit of density and game unit: 1,250 units of full density is one optical depth
+static const float kCloudSigma = 0.0015f;   // extinction per unit of density and game unit: about 670 units of full density is one optical depth
 
 // Density at an absolute world point; detail adds the finer erosion (the sky's march, not the shadows).
 float cloudDensity(float3 pa, bool detail) {
@@ -31,11 +31,13 @@ float cloudDensity(float3 pa, bool detail) {
     float shape = cNoise(q) * 0.55f + cNoise(q * 2.03f + 11.3f) * 0.3f + cNoise(q * 4.11f + 5.7f) * 0.15f;
     // Rounded floor, softer top; heavy cover rises higher.
     const float profile = saturate(h * 6.0f) * saturate((1.0f - h) * lerp(2.5f, 1.4f, clouds.x));
-    float dens = saturate((shape * profile - (1.0f - clouds.x)) / max(clouds.x, 0.05f));
+    // A sharper edge than a plain cut: the cloud's body fills within a short span of the cover threshold.
+    float dens = saturate((shape * profile - (1.0f - clouds.x)) / max(clouds.x * 0.45f, 0.03f));
     if (detail && dens > 0.0f) {
-        const float3 r = (pa + wind * 1.6f) / 4200.0f;
-        const float ero = cNoise(r) * 0.6f + cNoise(r * 2.7f + 3.1f) * 0.4f;
-        dens = saturate(dens - ero * 0.35f * (1.0f - dens));
+        // Billowed erosion (1 - |2n - 1|) carves the soft body into heaped, rounded edges.
+        const float3 r = (pa + wind * 1.6f) / 2600.0f;
+        const float n1 = 1.0f - abs(cNoise(r) * 2.0f - 1.0f), n2 = 1.0f - abs(cNoise(r * 2.7f + 3.1f) * 2.0f - 1.0f);
+        dens = saturate(dens - (n1 * 0.65f + n2 * 0.35f) * 0.6f * (1.0f - dens * 0.7f));
     }
     return dens * cloudWind.z;
 }

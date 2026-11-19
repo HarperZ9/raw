@@ -49,10 +49,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             float od = 0.0f;
             [unroll] for (uint k = 1u; k <= 4u; k++) { od += cloudDensity(pa + sunDir.xyz * (float(k) * 600.0f), false) * 600.0f; }
             // Light scattered many times inside the cloud: three octaves, each weaker and less attenuated.
-            const float beer = exp(-od * sigma) + 0.5f * exp(-od * sigma * 0.25f) + 0.25f * exp(-od * sigma * 0.0625f);
+            const float beer = (exp(-od * sigma) + 0.5f * exp(-od * sigma * 0.25f) + 0.25f * exp(-od * sigma * 0.0625f)) / 1.75f;
             const float powder = 1.0f - exp(-od * sigma * 2.0f - dens * 0.5f);
             const float h = saturate((pa.z - clouds.y) / clouds.z);
-            const float3 lum = sunC * (beer * lerp(1.0f, powder, 0.5f) * phase * 4.0f * PI * 0.5f) + skyC * lerp(0.35f, 1.0f, h);
+            // Scaled into the game's sky: a fully lit cloud edge comes out near the sun's colour, the shaded base
+            // near a third of the sky's light (the first version, unscaled, clipped to flat white).
+            const float3 lum = sunC * (beer * lerp(1.0f, powder, 0.6f) * phase * 4.0f * PI * 0.45f) + skyC * lerp(0.2f, 0.6f, h);
             const float ext = dens * sigma;
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length

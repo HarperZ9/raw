@@ -14,8 +14,11 @@ struct TonemapSettings
     bool enabled = false;
     int mode = 1;            // exposure: 0 the game's, 1 metered to a key
     float bias = 0.0f;       // stops
-    float minLum = 0.05f, maxLum = 4.0f;   // the metered average is held in this range (dark scenes stay dark)
-    float key = 0.18f;       // mid grey
+    float minLum = 0.3f, maxLum = 4.0f;    // the metered average is held in this range: a night meters near 0.1 and,
+                                           // brought to the key, read as dusk (0.05 lifted Riverwood at 23:00 from 39 to 82 of 255)
+    float key = 0.4f;        // the metered average maps here. The scene's units are the game's, not photometric: in Riverwood
+                             // at 13:00 the game's adapted average and its target both read 0.46 (its own exposure is then 1);
+                             // 0.18 left the frame far darker than the game's (42 of 255 against 98), 1.0 far brighter (164)
     int curve = 1;           // 0 the game's curve, 1 filmic
     float white = 0.6f;      // the filmic curve's input scale
     int view = 0;

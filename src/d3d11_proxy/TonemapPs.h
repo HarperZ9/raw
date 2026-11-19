@@ -54,7 +54,8 @@ float4 main(In i) : SV_Target {
         if (RA.x > 0.5f) { pivot = dot(filmic((RB.y * exp2(RA.y) * RB.z).xxx), W); }   // the grade turns about mid grey
     }
     mapped += bloom * saturate(P[2].x - dot(mapped, W));
-    if (RB.w > 0.5f) { return float4(exposure.xxx * 0.25f, 1.0f); }   // view: the exposure (4 = white)
+    if (RB.w > 1.5f) { return float4(lum.x * 0.25f, lum.y * 0.25f, exposure * 0.25f, 1.0f); }   // view 2: adapted average, the game's target, exposure (over 4, no gamma)
+    if (RB.w > 0.5f) { return float4(exposure.xxx * 0.25f, 1.0f); }   // view 1: the exposure (4 = white, no gamma)
     // The game's grade, lane for lane as the game computes it (alpha included; its anti-aliasing reads it).
     const float g = dot(mapped, W);
     float4 c = float4(mapped, 1.0f);

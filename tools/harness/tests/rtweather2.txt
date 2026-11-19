@@ -1,5 +1,5 @@
 # The game's weather drives the surfaces end to end (rt_weather.cpp -> PG_SetWeatherState -> WeatherDrive.h):
-# Riverwood by day, forced to a rain weather and then a snow weather with fw. The engine module reports the
+# Riverwood by day, forced to a rain weather (10a241) and then a snow weather (c8221, flags 8 read back in game) with fw. The engine module reports the
 # weather it reads (formId and flags) at each stage; the engine light list joins the decoded one (SceneLights).
 # Short soak, puddle and snow times so one session shows each stage. View=8: wet red, puddles green, snow blue.
 start load rawharness
@@ -19,7 +19,7 @@ keyframe raining steps=game,improved hold=60
 reload ini View=8
 keyframe raining_masks steps=improved hold=20
 reload ini View=0
-console fw c8220
+console fw c8221
 wait 10
 engine weather
 keyframe to_snow steps=improved hold=30

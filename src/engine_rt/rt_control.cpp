@@ -16,6 +16,9 @@
 
 #include "rt_atlas.h"
 #include "rt_capture.h"
+#include "rt_cascades.h"
+#include "rt_emitters.h"
+#include "rt_view.h"
 #include "rt_drawstats.h"
 #include "rt_grids.h"
 #include "rt_livestate.h"
@@ -39,6 +42,7 @@ int g_wait = 0;
 bool g_busy = false;
 uint64_t g_presents = 0;
 void (*g_invalidate)() = nullptr;
+bool g_emittersAtStart = false;
 
 const RefTarget* Find(const std::string& name) {
     for (const auto& r : *g_refs)
@@ -185,6 +189,18 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
         } else if (op == "live" || op == "lights") {
             // live <every>: the state stream to live_state.jsonl; lights: the current light list (rt_livestate.h)
             Result(LiveStateCommand(op, a));
+        } else if (op == "cascades") {
+            // cascades [set|auto|preset ...]: RAW's cascade policy (rt_cascades.h)
+            Result(CascadesCommand(a, b));
+        } else if (op == "emitters") {
+            // emitters: hook the effect and particle shaders (first use) and report the glowing draws (rt_emitters.h)
+            if (a == "export") LiveStateExportEmitters(b == "1");   // emitters export <0|1>
+            const std::string r = EmittersInstall(*g_img);
+            std::string j = EmittersJson();
+            j.insert(j.size() - 1, ",\"install\":\"" + r + "\"");
+            Result(j);
+        } else if (op == "view") {
+            Result("{\"cmd\":\"view\"," + ViewJson() + "}");
         } else if (op == "weather") {
             Result(WeatherCommand());
         } else if (op == "grids") {
@@ -221,6 +237,9 @@ void ControlInit(const Image& img, const std::vector<RefTarget>* refs, const std
                  void (*invalidateStateCache)()) {
     g_img = &img; g_refs = refs; g_game = gameDir; g_out = outDir; g_invalidate = invalidateStateCache;
     QueryPerformanceFrequency(&g_freq);
+    const std::string ini = gameDir + "d3d11_proxy.ini";
+    CascadesInit(img, refs, ini);
+    g_emittersAtStart = GetPrivateProfileIntA("EngineRT", "Emitters", 1, ini.c_str()) != 0;
 }
 
 void ControlOnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
@@ -234,6 +253,13 @@ void ControlOnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     g_last = now;
     ++g_presents;
     if (g_presents == 1) SamplerNoteRenderThread();
+    if (g_presents == 1 && g_emittersAtStart) EmittersInstall(*g_img);   // the hooks need the render thread's id
+    {
+        std::string line;
+        const uint32_t atlas = CascadesOnPresent(&line);
+        if (!line.empty()) Result(line);
+        if (atlas) { g_cmds.push_back("atlas 2 " + std::to_string(atlas)); g_busy = true; }
+    }
     AtlasOnPresent();
     PassesOnPresent(ctx);
     VTimeOnPresent();

@@ -419,7 +419,7 @@ if(RAW_ENGINE_DIR)
         COMMAND ${RAW_DXC} -T ps_6_0 -E fs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/light_fog_fs.h -Vn kDxil_light_fog_fs ${RAW_LIGHTFOG_HLSL}
         COMMAND ${RAW_DXC} -T ps_6_0 -E fs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/clouds_fs.h -Vn kDxil_clouds_fs ${RAW_CLOUDS_HLSL}
         DEPENDS ${RAW_LIGHT_HLSL} ${RAW_LIGHTFOG_HLSL} ${RAW_CLOUDS_HLSL} ${RAW_SHARE_HLSL}/LightingCommon.hlsli ${RAW_SHARE_HLSL}/Weather.hlsli
-                ${RAW_SHARE_HLSL}/CloudCommon.hlsli
+                ${RAW_SHARE_HLSL}/CloudCommon.hlsli ${RAW_SHARE_HLSL}/DistantLod.hlsli
         COMMENT "dxc: lighting pass shaders -> DXIL headers"
         VERBATIM)
     target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/LightingPass.cpp ${RAW_LIGHT_HEADERS})
@@ -631,7 +631,11 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_papyrus.cpp
         src/engine_rt/rt_sampler.cpp
         src/engine_rt/rt_vtime.cpp
-        src/engine_rt/rt_peek.cpp)
+        src/engine_rt/rt_peek.cpp
+        src/engine_rt/rt_detour.cpp
+        src/engine_rt/rt_view.cpp
+        src/engine_rt/rt_emitters.cpp
+        src/engine_rt/rt_cascades.cpp)
     set_target_properties(raw_engine PROPERTIES
         CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

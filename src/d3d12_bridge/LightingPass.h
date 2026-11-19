@@ -59,6 +59,7 @@ struct LightingTuning
     float puddles = 0.0f;           // improved: water standing on flat ground, 0 none to 1 most
     float rain = 0.0f;              // rain falling now, 0 to 1: drops ring the puddles (Weather.hlsli)
     // Clouds (Clouds.hlsl, CloudCommon.hlsli): the sky's volumetric layer, its shadow on the ground, shafts in the fog.
+    bool  distantLod = true;        // DistantLod: improved mode lights distant LOD (trees, terrain) itself (FOL-04)
     bool  clouds = true;            // Clouds
     float cloudCover = 0.35f;       // CloudCover: the cover under a clear sky; the weather's cloud report raises it
     float weatherCloud = 0.0f;      // the game's cloud cover now (WeatherDrive), 0 to 1

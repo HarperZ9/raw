@@ -1,0 +1,43 @@
+# Engine control 7, with the full renderer up: distant LOD lit by RAW (FOL-04) in Riverwood and from the vista,
+# the cascades RAW drives seen in RAW's improved frame, fire and torch flags and emitters in the Bannered Mare at
+# night, emitter lights off and on, and the worldspace in the view.
+start load rawharness
+console tai
+scene ec7b
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+console coc riverwood
+wait 8
+console fw 81a
+wait 4
+engine view; cascades
+keyframe riverwood steps=game,improved,improved_no_lod,view_classes,view_lod_normal,view_lod_albedo hold=40
+engine cascades set 0 600
+keyframe casc_first600 steps=game,improved hold=40
+engine cascades set 0 4000
+keyframe casc_first4000 steps=game,improved hold=40
+engine measure riverwood 600
+bat tcl|player.setpos z 12000|player.setangle x 15
+wait 15
+keyframe vista steps=game,improved,improved_no_lod,view_classes,view_lod_normal,view_lod_albedo hold=40
+engine measure vista 600
+bat player.setangle z 180
+wait 10
+keyframe vista_back steps=game,improved,improved_no_lod,view_classes hold=40
+console tcl
+console set gamehour to 22
+console coc whiterunbanneredmare
+wait 8
+engine emitters; lights; view
+keyframe inn steps=game,improved hold=40
+engine emitters export 1; wait 30; lights
+keyframe inn_emitters steps=improved hold=40
+engine emitters export 0
+console coc riverwood
+wait 8
+engine emitters; lights; view
+keyframe night steps=improved hold=40
+engine emitters export 1; wait 30
+keyframe night_emitters steps=improved hold=40
+quit

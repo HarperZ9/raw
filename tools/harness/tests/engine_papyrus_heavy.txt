@@ -1,0 +1,16 @@
+# Papyrus under load. Run with --plugin <folder from tools/papyrus/make_load_plugin.py> for the load, and without it
+# for the baseline. The quests start when the save loads with the plugin active; each OnUpdate runs its loop and
+# registers the next one. Measured: the VM's update (PapyrusTiming), the opcode loop's call site
+# (OpcodeLoopTiming), the script job handed to the job system (ltime on the lea at 0x144F236), the sampler over
+# the Papyrus code range, and the frame, at the default budget and at 4 and 8 ms.
+start load rawharness
+console tai
+scene papyrus
+wait 15
+engine papyrus; ltime 0x144F236 papyrus_job; wait 120; measure pap_default 600
+engine sample 6
+wait 10
+engine set fUpdateBudgetMS:Papyrus 4.0; wait 120; measure pap_budget4 600
+engine set fUpdateBudgetMS:Papyrus 8.0; wait 120; measure pap_budget8 600
+engine set fUpdateBudgetMS:Papyrus 1.2; wait 120; measure pap_back 600
+quit

@@ -60,10 +60,13 @@ The proxy loads `raw_engine.dll` from `[Modules] Load=raw_engine.dll` in `d3d11_
 | live `sample <s> [lo hi]` | in-process sampling profiler: every thread about once a millisecond; hottest functions overall and in a range, the callers found on their stacks, and the threads |
 | live `vtime <0xvtable> <0xslot> <label>`, `ltime <0xsite> <label>` | CPU time of a vtable slot, or of the function a RIP-relative lea hands on (a job), outermost calls per thread; every `measure` reports `cpu_ms` and `cpu_calls` per frame |
 | `OpcodeLoopTiming=1` | times the Papyrus opcode loop (`OpcodeLoop`, default `0x1462650`) at every direct call to it |
+| `LiveState=1` (default) | lights, the view (`RAW_EngineView`: camera, cell, worldspace, game hour, screen) and the shader manager's state each present |
+| `Emitters=1` (default), `EmitterLights=0` | glowing effect and particle draws are collected; with `EmitterLights=1` (or live `emitters export 1`) they join `RAW_EngineLights` |
+| `[Cascades] Auto`, `Exterior`, `Interior`, `Vista`, `VistaZ` | per-scene cascade presets, each `dist,first,overlap,atlas` (live `cascades`) |
 
 The proxy reads `[Timing] PresentInterval` (default -1, the game's own). The game keeps vsync on even with `iVSyncPresentInterval=0` set in memory, so frame-time runs set `PresentInterval=0` in the run's ini.
 
-`[EngineSet]` holds `setting=value` pairs that are applied once, before the renderer creates its targets. Live commands go in `raw_engine_go.txt` (`set`, `wait`, `measure`, `capture`, `atlas`, `fit`, `viewports`, `papyrus`, `probe`, `peek`, `dump`); the harness `engine` command writes them.
+`[EngineSet]` holds `setting=value` pairs that are applied once, before the renderer creates its targets. Live commands go in `raw_engine_go.txt` (`set`, `wait`, `measure`, `capture`, `atlas`, `fit`, `viewports`, `papyrus`, `probe`, `peek`, `dump`, `cascades`, `emitters`, `view`, `grids`); the harness `engine` command writes them.
 
 Inputs come from the map: `python -I tools/enginemap/rt_inputs.py --map docs/enginemap --out <folder>`. Join the output with names: `python -I tools/enginemap/cg_analyze.py --map docs/enginemap --rt <raw_engine_out> --out docs/enginemap/runtime --public`.
 
@@ -229,3 +232,110 @@ on 1.6.1170. The `BSGraphics::State` viewport read zeros at those offsets, so it
 
 Still to do: a worldspace change with a valid cell ID, and an inline detour on the two functions in case the game calls
 them directly rather than through the vtable.
+
+### Grids live, the view, cascades, fire and emitter lights, distant LOD, Papyrus under load (engine control 7)
+
+Riverwood at 13:00 and 22:00, the vista 12,000 units up, the Bannered Mare at 22:00, 1080p, the full renderer
+(raw::tx with `Wrap=1`, the bridge, `[Lighting] Mode=2`, `RtShadows=1`). Every keyframe reported ray-traced draws above
+zero: Riverwood 2,352, the vista 869 and 1,118, the inn 235. ENB checked 232 of 232 after every session.
+
+**Live grids. Working, both ways.** `grids <n>` waits for the game to empty the grid array and writes the length right
+after. The game empties it with `GridArray::DetachAll` (0x221380) when the player changes worldspace. The vtable hooks
+of engine control 6 never saw it, because the game calls it directly. An inline detour (`rt_detour.cpp`, Zydis, the
+prologue moved whole) catches it. `GridCellArray::KillAll` (0x221990) is refused, since its prologue holds a relative
+operand; it was not needed. Riverwood (Tamriel) with 7 at startup:
+
+| Step | DetachAll calls | Length | Loaded cells |
+|---|---|---|---|
+| start | 0 | 7 | 49 |
+| `grids 5`, `coc whiterun` (its own worldspace) | 4 | 5 | 25 |
+| `coc riverwood` | 8 | 5 | 25 |
+| `grids 7`, `coc whiterun`, `coc riverwood` | 16 | 7 | 49 |
+
+- The vista measured 9.14 ms at grids 5 and 6.05 ms at grids 7. The two views are not the same frame, so the gap is not
+  a grid cost.
+- The builder `0x2216C0` never ran on these worldspace changes: the game keeps the array and refills it. A length above
+  the startup size is still out of reach.
+- One fault, found and fixed. The first version wrote `uGridsToLoad` when the request arrived. A job thread then indexed
+  the 5-wide array as 7 wide and faulted at `SkyrimSE.exe+0x1A2E7E`. The setting now changes with the length and never
+  before it.
+
+**The view** (`rt_view.cpp`, `RAW_EngineView`, `view`):
+- The `BSGraphics::State` viewport is two uint32 values. Engine control 6 read them as floats and saw zeros; they read
+  1920 and 1080 now, beside the screen size at +0x24.
+- The camera comes from the PlayerCamera root's world transform, with the FOV (80).
+- The cell and the worldspace come from the player's parent cell: Tamriel reads 0x3C. The worldspace sits at +0x128 on
+  1.6.1170; CommonLib's +0x120 held zero in a dump of the cell.
+- The game hour comes from Sky. The `ok` bits say which parts were read.
+
+**Cascades driven by RAW** (`rt_cascades.cpp`). `cascades set`, `preset` and `auto` work: the exterior preset applied on
+the scene change. Measured:
+- `fShadowDistance` moves the decoded cascade half-widths, as in engine control 2.
+- `fFirstSliceDistance` set live (4000, 600, 4000) did not, and neither did `fSplitOverlap`. The half-widths drifted
+  with the sun, from about 2,926 to 3,038. The split cannot be reached through these settings at run time. Driving it
+  means replacing the cascade setup (`BSShadowDirectionalLight` slot 0x10) itself.
+- Frame time across the settings: 9.0 to 9.9 ms in two sessions, inside run-to-run noise.
+- GPU time per pass cannot be read with the full renderer. `GpuTiming=1` stops the bridge at its query creation under
+  raw::tx, and the bridge now names the failing step. Runs with the bridge keep `GpuTiming=0`.
+
+**Fire, torch and magic lights** (`rt_livestate.cpp`, `rt_emitters.cpp`). Every placed light's node is named `ptlight`,
+so names alone told nothing apart. The flags come from the owning reference (the node's userData). A light form that
+flickers, pulses or can be carried is fire (8). A light under an actor that is not a light form is magic (16).
+- The inn at 22:00: 16 active lights, and the fires carry flag 8.
+- Glowing draws come from the effect and particle shaders' SetupGeometry. Only additive blending counts, and draws
+  within 48 units merge. Riverwood at night gave 14 emitters, the warm one beside the forge's light.
+- Emitter lights carry flag 32 and stay out of the export unless `emitters export 1`. With them on, the light pass took
+  0.17 ms in the inn against 0.16 ms. 1.7 % of the inn's pixels and 8.8 % of Riverwood's changed by more than 6 of 255.
+- Their radius and intensity are estimates from the glow's size and colour. The first run took in mist planes over
+  water (radius 480 and more); glows over 400 units are now left out. With that filter Riverwood at night
+  gives 7 emitters and the inn none: its one glow was a 1,540-unit effect.
+- A full repeat of the session ran clean: grids 7 to 5 to 7, no fault, 232 of 232.
+
+**Distant LOD lit by RAW (FOL-04)** (`DistantLod.hlsli`). The tree LOD is class 7: 8 % of the vista's pixels and 2 % of
+Riverwood's. Distant terrain is lit like the other lit classes. In improved mode class 7 now gets:
+- the sun, with the shadows that reach that far (the game's mask, ray-traced sun visibility, cloud shadow)
+- the directional ambient times sky visibility
+
+Its G-buffer normal points one way across the whole card (view 14), so the card stayed flat. A canopy normal stands
+in: the pixel's place across the card's silhouette bends the normal from the camera toward screen right and up.
+Luminance of the class-7 pixels, game / improved / control without it:
+
+| View | Mean | Standard deviation |
+|---|---|---|
+| Vista | 167.8 / 169.3 / 167.4 | 37.1 / 36.3 / 36.4 |
+| Vista, turned | 133.9 / 137.6 / 134.1 | 23.5 / 24.2 / 22.6 |
+| Riverwood | 153.3 / 153.0 / 156.0 | 49.0 / 50.9 / 46.2 |
+
+- The mean stays within 4 of the game's, so the LOD does not pop.
+- The shading spread rises 7 to 10 % where fog leaves the trees visible. In the fogged vista it does not.
+- It costs 0.03 ms in the light pass (0.265 to 0.295 ms).
+- After the merge with master (#33), the turned vista read 139.6 against the game's 134.0, with a spread of 22.5 against
+  22.7 without it. The spread gain did not repeat there, and the LOD came out 5.6 brighter. Tuning is open.
+- The effect is small. The side-by-side crop is `ingame-ec7-2026-11-19-tree-lod-nolod-vs-raw-crop.png` in the plan
+  folder.
+
+**Papyrus under load** (`tools/papyrus/`, `tests/engine_papyrus_heavy.txt`). A light plugin written by our own tool runs
+the load: 32 quests. Half run an integer loop and half call a native each iteration; each OnUpdate ends by registering
+the next. `pex.py` reads and writes compiled scripts, and it rewrote all 62 compiled scripts in the install byte for
+byte. The plugin goes in for one run, and Plugins.txt comes back by hash. Riverwood, 600 frames a measure:
+
+| Run | Frame | Script jobs a frame | CPU in the job a frame | Papyrus samples (6 s) |
+|---|---|---|---|---|
+| no plugin | 8.59 ms | 0.9 | 0.007 ms | 4 |
+| 32 quests, 0 iterations | 8.55 ms | 12.3 | 0.037 ms | 12 |
+| 32 quests, 500 iterations | 10.67 ms | 42.9 | 0.208 ms | 31 |
+| 32 quests, 5,000 iterations | 8.74 ms | 49.1 | 0.238 ms | 71 |
+
+- The script code runs on the job threads. The render thread held no Papyrus sample in any run.
+- The VM throttles what it runs: ten times the loop work raised its CPU by 14 %.
+- The budget (1.2, 4 and 8 ms) changed nothing.
+- The 10.67 ms frame did not come back at ten times the work, so it is not a script cost.
+- Under this load Papyrus costs no frame time, so native dispatch for the opcodes is not built.
+- Not measured: how many updates complete each second, where a faster VM would show. That needs a completion counter
+  in the plugin, read back by the module.
+
+Still to do:
+- Drive the cascade split by replacing the setup at slot 0x10.
+- Grow the grid past its startup size, through the builder.
+- Count script completions.
+- Check the emitter lights against the RT worker's ReSTIR.

@@ -1,0 +1,61 @@
+# Engine control 7 in one session (docs/ENGINEMAP.md, engine control 7). Startup grids 7 ([EngineSet]).
+# 1. The view (camera, cell, time, screen) and the raw BSGraphics::State words beside it.
+# 2. Distant LOD lit by RAW (FOL-04): Riverwood and the vista 12,000 units up, with the class, normal and base
+#    colour views and the control that leaves distant LOD to the game.
+# 3. Cascades driven by RAW: the default, three settings and the per-scene presets, each measured (GPU per pass).
+# 4. Live grids through a worldspace change: 7 to 5 by Whiterun (its own worldspace) and back, then 5 to 7.
+# 5. Fire, torch and magic lights: named and flagged lights, and the glowing emitters, in the Bannered Mare at
+#    night, with the emitter lights off and on.
+start load rawharness
+console tai
+scene ec7
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+console coc riverwood
+wait 8
+console fw 81a
+wait 4
+engine view; peek 0x328CC20 0 64; peek 0x31874F8 0x60 0 320; cascades; grids; live 300
+keyframe riverwood steps=game,improved,improved_no_lod,view_classes,view_lod_normal,view_lod_albedo hold=40
+engine measure casc_default 600; capture casc_default
+engine cascades set 0 600; wait 30; measure casc_first600 600; capture casc_first600; cascades
+engine cascades set 16000 1500; wait 30; measure casc_16k 600; capture casc_16k; cascades
+engine cascades set 5000 900; wait 30; measure casc_5k 600; capture casc_5k; cascades
+engine cascades preset exterior 12000,1200,0.1,0; cascades preset vista 40000,4000,0.05,0; cascades preset interior 4000,800,0.1,0; cascades auto 1; wait 60; cascades; measure casc_auto_ground 600
+bat tcl|player.setpos z 12000|player.setangle x 15
+wait 15
+engine view; cascades; measure casc_auto_vista 600
+keyframe vista steps=game,improved,improved_no_lod,view_classes,view_lod_normal,view_lod_albedo hold=40
+engine cascades auto 0; cascades set 10000 0
+engine grids 5
+console coc whiterun
+wait 8
+engine grids; view
+console coc riverwood
+wait 8
+engine grids; view
+bat tcl|player.setpos z 12000|player.setangle x 15
+wait 15
+engine grids; measure vista_g5 600; capture vista_g5
+engine grids 7
+console coc whiterun
+wait 8
+console coc riverwood
+wait 8
+bat tcl|player.setpos z 12000|player.setangle x 15
+wait 15
+engine grids; measure vista_g7 600; capture vista_g7
+console tcl
+console set gamehour to 22
+console coc whiterunbanneredmare
+wait 8
+engine emitters; lights; view; cascades
+keyframe inn steps=game,improved hold=40
+engine emitters export 1; wait 30; lights
+keyframe inn_emitters steps=improved hold=40
+engine emitters export 0; measure inn 600
+console coc riverwood
+wait 8
+engine emitters; lights; view
+quit

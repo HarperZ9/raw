@@ -40,7 +40,7 @@ struct LightUniform
 static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16, "layout of cbuffer P");
 static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
-constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536;
+constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536, kDistantLod = 131072;
 constexpr RasterBinding U = RasterBinding::Uniform, T = RasterBinding::Texture, Sm = RasterBinding::Sampler;
 constexpr RasterBinding kLightLayout[16] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T, T, Sm};
 constexpr RasterBinding kCloudLayout[3] = {U, T, Sm};
@@ -263,6 +263,7 @@ private:
         for (int k = 0; k < 3; ++k) u.camPos[k] = s.posAdjust[k];
         // Clouds: the weather's cover over the clear-sky cover; the history needs last frame's matrix.
         if (t.clouds && t.mode == 2 && !interior) f |= kClouds;
+        if (t.distantLod && t.mode == 2) f |= kDistantLod;
         u.flags[0] = f;
         u.clouds[0] = std::fmin(1.0f, std::fmax(t.cloudCover, t.cloudCover + (0.92f - t.cloudCover) * t.weatherCloud));
         u.clouds[1] = t.cloudBase; u.clouds[2] = t.cloudThickness;

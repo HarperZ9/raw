@@ -38,7 +38,8 @@ int SafeLoad(LoadFn fn, const SKSEInterface* i) {
 
 std::string CheckVersionData(const PluginVersionData& v, uint32_t runtime, uint32_t skse) {
     if (v.dataVersion != 1) return "SKSEPlugin_Version data version " + std::to_string(v.dataVersion);
-    const bool addrLib = v.flags2 & 1, sig = v.flags2 & 2, post629 = v.flags2 & 4, noStructs = v.flags1 & 1;
+    const bool addrLib = v.independence & 1, sig = v.independence & 2, post629 = v.independence & 4;
+    const bool noStructs = v.independenceEx & 1, addrLibV5 = v.independenceEx & 2;
     bool listed = false;
     for (uint32_t c : v.compatibleVersions) {
         if (!c) break;
@@ -47,6 +48,10 @@ std::string CheckVersionData(const PluginVersionData& v, uint32_t runtime, uint3
     if (!listed && !addrLib && !sig) return "not built for this runtime and not version independent";
     if (!listed && runtime >= PackVersion(1, 6, 629) && !post629 && !noStructs)
         return "built against game structures from before 1.6.629";
+    // 1.7.99 and later ship Address Library format 5. A plugin that finds its addresses there and does not name this
+    // build reads that file itself, and one built before format 5 stops the game with a message box when it tries.
+    if (!listed && addrLib && !addrLibV5 && runtime >= PackVersion(1, 7, 99))
+        return "relies on the Address Library but was built before its format 5 (1.7.99 and later)";
     if (v.xseMinimum > skse) {
         char b[96];
         std::snprintf(b, sizeof b, "needs SKSE %08X, host reports %08X ([SKSE] ReportVersion)", v.xseMinimum, skse);

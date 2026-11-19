@@ -25,9 +25,13 @@ bool g_inputSent = false, g_dataSent = false;
 using GameFn = uint64_t (*)(void*, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t);
 GameFn g_save = nullptr, g_load = nullptr;
 
-uintptr_t Addr(int i) { return g_base + g_addr[i].rva; }
+uint32_t g_rva[kAddrCount] = {};    // resolved for the running build; 0: unknown, feature off
+uint32_t g_offv[kOffCount] = {};
+
+uintptr_t Addr(int i) { return g_rva[i] ? g_base + g_rva[i] : 0; }
 
 uintptr_t ReadPtr(uintptr_t at) {
+    if (!at) return 0;
     __try { return *reinterpret_cast<uintptr_t*>(at); } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
 }
 
@@ -52,8 +56,8 @@ int CompareName(uintptr_t key, const char* want) {
 // key (BSFixedString), menu (GPtr<IMenu>), create function, next; an entry is empty when next is null.
 bool MenuMade(const char* name) {
     const uintptr_t ui = ReadPtr(Addr(kAddrUI));
-    if (!ui) return false;
-    const uintptr_t map = ui + 0x128;
+    if (!ui || !g_offv[kOffUiMenuMap]) return false;
+    const uintptr_t map = ui + g_offv[kOffUiMenuMap];
     const uint32_t cap = uint32_t(ReadPtr(map + 0x08) >> 32);
     const uintptr_t entries = ReadPtr(map + 0x28);
     if (!entries || cap == 0 || cap > 4096) return false;
@@ -113,29 +117,51 @@ std::string SaveDirectory() {
 
 void* VirtualMachine() {
     const uintptr_t vm = ReadPtr(Addr(kAddrSkyrimVM));
-    return vm ? reinterpret_cast<void*>(ReadPtr(vm + 0x200)) : nullptr;   // SkyrimVM::impl
+    if (!vm || !g_offv[kOffVmImpl]) return nullptr;
+    const uintptr_t impl = ReadPtr(vm + g_offv[kOffVmImpl]);
+    // An IVirtualMachine starts with its vtable, which lives in the game's image; anything else means the offset
+    // is wrong for this build, and no plugin gets the pointer.
+    const uintptr_t vtbl = ReadPtr(impl);
+    static bool warned = false;
+    if (impl && (vtbl < g_base || vtbl >= g_base + g_img.sizeOfImage)) {
+        if (!warned) Event("VM check failed: impl %p has no vtable in the game image; Papyrus registrations held", (void*)impl);
+        warned = true;
+        return nullptr;
+    }
+    return reinterpret_cast<void*>(impl);
 }
 
+// Every address and offset comes from the table for the running build; an address the table lacks comes from
+// an installed Address Library database for that same build. Whatever stays unknown turns its feature off.
 bool EngineInit() {
     if (!g_img.Load()) { Log("game image: no code section found"); return false; }
     g_base = reinterpret_cast<uintptr_t>(g_img.base);
-    for (auto& a : g_addr) {
-        const uint64_t off = AddrLibOffset(a.id);
-        if (!off) continue;
-        if (off == a.rva) Log("address %s: 0x%X, matches the Address Library", a.name, a.rva);
-        else {
-            Log("address %s: built-in 0x%X, Address Library 0x%llX; using the database", a.name, a.rva, off);
-            a.rva = uint32_t(off);
-        }
+    const int b = BuildIndex(H().runtimeVersion);
+    Event("game build %08X: %s", H().runtimeVersion, b == kBuildUnknown ? "not in the host's table" : "in the host's table");
+    for (int i = 0; i < kAddrCount; ++i) {
+        const auto& a = g_addr[i];
+        const uint32_t builtIn = b == kBuildUnknown ? 0 : a.rva[b];
+        const uint64_t db = AddrLibOffset(a.id);
+        if (builtIn && db && db != builtIn)
+            Log("address %s: built-in 0x%X, Address Library 0x%llX; using the database", a.name, builtIn, db);
+        g_rva[i] = db ? uint32_t(db) : builtIn;
+        Log("address %s: %s", a.name, g_rva[i] ? (db ? "from the Address Library" : "built in") : "unknown, its feature is off");
     }
-    const std::string s = raw::rt::InstallDetour(g_img, g_addr[kAddrSaveImpl].rva, reinterpret_cast<void*>(SaveHook),
-                                                 reinterpret_cast<void**>(&g_save));
-    const std::string l = raw::rt::InstallDetour(g_img, g_addr[kAddrLoadImpl].rva, reinterpret_cast<void*>(LoadHook),
-                                                 reinterpret_cast<void**>(&g_load));
-    Event("save hook: %s", s.c_str());
-    Event("load hook: %s", l.c_str());
-    if (s.rfind("ok", 0) != 0) g_save = nullptr;
-    if (l.rfind("ok", 0) != 0) g_load = nullptr;
+    for (int i = 0; i < kOffCount; ++i) {
+        g_offv[i] = b == kBuildUnknown ? 0 : g_off[i].off[b];
+        Log("offset %s: %s", g_off[i].name, g_offv[i] ? "known" : "unknown, its feature is off");
+    }
+    if (!g_offv[kOffUiMenuMap] || !g_rva[kAddrUI] || !g_rva[kAddrDataHandler]) Event("DataLoaded will not be sent on this build");
+    if (!g_offv[kOffVmImpl] || !g_rva[kAddrSkyrimVM]) Event("Papyrus registrations will stay queued on this build");
+    if (!g_rva[kAddrInputManager]) Event("InputLoaded will not be sent on this build");
+    auto hook = [](int i, void* fn, void** orig, const char* what) {
+        if (!g_rva[i]) { Event("%s hook: off (address unknown on this build)", what); return; }
+        const std::string r = raw::rt::InstallDetour(g_img, g_rva[i], fn, orig);
+        Event("%s hook: %s", what, r.c_str());
+        if (r.rfind("ok", 0) != 0) *orig = nullptr;
+    };
+    hook(kAddrSaveImpl, reinterpret_cast<void*>(SaveHook), reinterpret_cast<void**>(&g_save), "save");
+    hook(kAddrLoadImpl, reinterpret_cast<void*>(LoadHook), reinterpret_cast<void**>(&g_load), "load");
     return true;
 }
 

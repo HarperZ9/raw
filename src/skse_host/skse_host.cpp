@@ -149,7 +149,6 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
         WriteStatus();
         return;
     }
-    if (H().runtimeVersion != PackVersion(1, 6, 1170)) Log("warning: built and tested for 1.6.1170 only");
 
     g_intf.skseVersion = ParseVersion(ver);
     g_intf.runtimeVersion = H().runtimeVersion;

@@ -1,4 +1,4 @@
-"""Reads an Address Library database (versionlib-<version>.bin, format 2) and prints the offsets for given IDs.
+"""Reads an Address Library database (versionlib-<version>.bin, formats 2 and 5) and prints the offsets for given IDs.
 Original work, MIT. The record encoding follows CommonLibSSE-NG's IDDatabase reader (MIT, Ryan McKenzie and
 contributors), which documents the format; no Address Library file is copied or shipped. RAW uses this tool once
 per game build to write the built-in table in src/skse_host/skse_addresses.h, and the host reads the database
@@ -22,8 +22,16 @@ def read(path: str) -> tuple[tuple[int, ...], dict[int, int]]:
         pos += struct.calcsize("<" + fmt)
         return v if len(v) > 1 else v[0]
 
-    if take("i") != 2:
-        raise ValueError("not an Address Library format 2 file")
+    fmt = take("i")
+    if fmt == 5:   # 1.7.x: 96-byte header, then one uint32 offset per id (0: missing)
+        version = take("4I")
+        pos += 64
+        take("i"), take("i")
+        count = take("i")
+        offs = struct.unpack_from(f"<{count}I", data, pos)
+        return version, {i: o for i, o in enumerate(offs) if o}
+    if fmt != 2:
+        raise ValueError(f"Address Library format {fmt}, not 2 or 5")
     version = take("4i")
     name_len = take("i")
     pos += name_len

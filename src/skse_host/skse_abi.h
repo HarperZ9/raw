@@ -35,19 +35,15 @@ struct PluginVersionData {
     char pluginName[256];
     char author[256];
     char supportEmail[252];
-    uint8_t flags1;              // bit 0: uses no game structures
-    uint8_t pad1;
-    uint16_t pad2;
-    uint8_t flags2;              // bit 0: Address Library, bit 1: signature scanning, bit 2: structures after 1.6.629
-    uint8_t pad3;
-    uint16_t pad4;
+    uint32_t independenceEx;     // bit 0: uses no game structures, bit 1: reads Address Library format 5 (1.7.x)
+    uint32_t independence;       // bit 0: Address Library, bit 1: signature scanning, bit 2: structures after 1.6.629
     uint32_t compatibleVersions[16];  // packed runtime versions, zero-terminated
     uint32_t xseMinimum;
 };
 static_assert(offsetof(PluginVersionData, pluginName) == 0x008);
 static_assert(offsetof(PluginVersionData, supportEmail) == 0x208);
-static_assert(offsetof(PluginVersionData, flags1) == 0x304);
-static_assert(offsetof(PluginVersionData, flags2) == 0x308);
+static_assert(offsetof(PluginVersionData, independenceEx) == 0x304);
+static_assert(offsetof(PluginVersionData, independence) == 0x308);
 static_assert(offsetof(PluginVersionData, compatibleVersions) == 0x30C);
 static_assert(offsetof(PluginVersionData, xseMinimum) == 0x34C);
 static_assert(sizeof(PluginVersionData) == 0x350);

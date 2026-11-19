@@ -1,0 +1,15 @@
+# Where the game's CPU time goes, sampled in process: every thread about once a millisecond. The first range is
+# the Papyrus code (0x1420000-0x1470000), to find the thread and the path that run script code; the last run
+# covers the whole image for the hottest functions overall. AI stays on so scripts and packages run.
+start load rawharness
+scene inn
+console coc whiterunbanneredmare
+wait 10
+engine sample 20; wait 2700
+scene riverwood
+console coc riverwood
+wait 10
+engine sample 20; wait 2700
+engine sample 15 0x1000 0x174E938; wait 2000
+engine probe 144F1B0; probe 1444880
+quit

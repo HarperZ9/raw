@@ -209,6 +209,10 @@ private:
     // Current state tracking
     ID3D11PixelShader*  m_currentPS = nullptr;
     ID3D11VertexShader* m_currentVS = nullptr;
+    // Bind-time cache: the replacement and hash of the last bound shader per stage, valid while the shader
+    // manager's generation does not move (the game rebinds the same shader thousands of times a frame).
+    struct BindCache { void* ptr = nullptr; uint64_t gen = 0; void* repl = nullptr; uint64_t hash = 0; };
+    BindCache m_vsCache, m_psCache;
 
     // ── State cache for redundancy filtering ────────────────────────────
     // Tracks last-set state objects to skip redundant D3D11 API calls.

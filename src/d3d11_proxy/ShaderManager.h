@@ -16,6 +16,7 @@
 #include <d3d11.h>
 #include <cstdint>
 #include <unordered_map>
+#include <atomic>
 #include <mutex>
 #include <vector>
 
@@ -77,6 +78,10 @@ public:
     // Get all tracked shader entries (for debug GUI enumeration).
     std::vector<ShaderEntry> GetTrackedShaders() const;
 
+    // Bumped whenever a shader is created or a replacement changes: a bind-time cache keyed on the
+    // shader pointer stays valid while this number does not move.
+    uint64_t Generation() const { return m_generation.load(std::memory_order_relaxed); }
+
     // Stats
     uint32_t GetTrackedVSCount() const;
     uint32_t GetTrackedPSCount() const;
@@ -97,6 +102,7 @@ private:
     ShaderManager() = default;
 
     mutable std::mutex m_mutex;
+    std::atomic<uint64_t> m_generation{1};  // bumped on every create and replacement change
 
     // Hash → shader pointer (forward lookup: what shader has this hash?)
     std::unordered_map<uint64_t, ID3D11VertexShader*> m_hashToVS;

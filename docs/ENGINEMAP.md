@@ -57,6 +57,8 @@ The proxy loads `raw_engine.dll` from `[Modules] Load=raw_engine.dll` in `d3d11_
 | `PapyrusTiming=1` | times `VirtualMachine::Update` and `UpdateTasklets`; `PapyrusBudgetMs` replaces the budget they receive |
 | `ShadowAtlas=<size>` | resizes the shadow-map entries of the render-target table before the renderer creates them |
 | `GpuTiming=1` (default) | GPU timestamps on every pass change; each `measure` reports GPU ms and draws per pass |
+| live `sample <s> [lo hi]` | in-process sampling profiler: every thread about once a millisecond; hottest functions overall and in a range, the callers found on their stacks, and the threads |
+| live `vtime <0xvtable> <0xslot> <label>`, `ltime <0xsite> <label>` | CPU time of a vtable slot, or of the function a RIP-relative lea hands on (a job), outermost calls per thread; every `measure` reports `cpu_ms` and `cpu_calls` per frame |
 | `OpcodeLoopTiming=1` | times the Papyrus opcode loop (`OpcodeLoop`, default `0x1462650`) at every direct call to it |
 
 The proxy reads `[Timing] PresentInterval` (default -1, the game's own). The game keeps vsync on even with `iVSyncPresentInterval=0` set in memory, so frame-time runs set `PresentInterval=0` in the run's ini.
@@ -95,3 +97,28 @@ Inputs come from the map: `python -I tools/enginemap/rt_inputs.py --map docs/eng
 - **Grids (peek):**
   - `TES+0x78` is the GridCellArray: worldX 4, worldY -12, length 5 at +0x10, the cell pointer array at +0x18.
   - `sub_19BF30` reads `uGridsToLoad`, writes back its clamped value, and calls `GridArray::SetCenter`. It also sets up a function-local static under a thread-safe init guard. A live rebuild has to go through it or replace it. Not done yet.
+
+### Where the CPU time goes (engine control 4)
+
+**Sampler.** 109 threads at about 1 kHz, the inn and Riverwood with AI on.
+- Of about 3,300 samples a run that landed in game code, 6 were in Papyrus code (0x1420000 to 0x1470000), and none on the render thread.
+- The hottest functions overall are `sub_769190`, `sub_14F3DC0`, `sub_E320DD`, `sub_150C2D0` and `BSCullingProcess::Process1`, plus the job threads' wait loop (`sub_CF77D5`, `sub_CF7AF0`).
+
+**Papyrus's path.** `VirtualMachine::TasksToJobs` (slot 0x12) hands `sub_14565F0` to the job system (`sub_CF66B0`, through the lea at `0x144F236`). That job runs the script code. Timed through the lea, in Riverwood, 600 frames:
+- 0.2 jobs per frame
+- 0.001 to 0.005 ms of CPU a frame
+- In vanilla, Papyrus is close to idle. A budget has nothing to govern here, and native dispatch would save time only in script-heavy saves, which are not measured yet.
+
+**CPU per frame.** Riverwood, vsync off, frame 9.6 to 10.0 ms. Thread time of the outermost calls:
+
+| Function | CPU ms a frame | Calls a frame |
+|---|---|---|
+| `BSShaderAccumulator` slot 0x2A (submits the batches) | 6.1 to 6.3 | 11 |
+| `BSCullingProcess::Process1` (scene culling, recursive) | 0.37 to 0.38 | 7,700 |
+| `BSCullingProcess::Process2` (cull entry) | 0.08 | 22 |
+| `BSBatchRenderer` slot 02 (pass dispatch, outermost) | 0.11 | 6,000 |
+
+- Draw submission takes about two thirds of the frame on the render thread. Culling takes under half a millisecond.
+- So GPU-driven batching (one ExecuteIndirect per pass instead of about 6,000 dispatches) attacks the largest cost. A faster culler would not.
+- The shadow distance barely moves any of these numbers (3000 and 20000).
+- The hooks cost 0.07 ms a frame (inn: 1.81 ms without them, 1.89 ms with them).

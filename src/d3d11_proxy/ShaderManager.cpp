@@ -35,6 +35,7 @@ void ShaderManager::OnVertexShaderCreated(
     uint64_t hash = HashBytecode(bytecode, length);
 
     std::lock_guard lock(m_mutex);
+    ++m_generation;
     m_hashToVS[hash]    = shader;
     m_vsToHash[shader]  = hash;
     m_vsLength[shader]  = length;
@@ -51,6 +52,7 @@ void ShaderManager::OnPixelShaderCreated(
     uint64_t hash = HashBytecode(bytecode, length);
 
     std::lock_guard lock(m_mutex);
+    ++m_generation;
     m_hashToPS[hash]    = shader;
     m_psToHash[shader]  = hash;
     m_psLength[shader]  = length;
@@ -101,6 +103,7 @@ ID3D11PixelShader* ShaderManager::GetReplacementPS(ID3D11PixelShader* original) 
 void ShaderManager::RegisterVSReplacement(uint64_t hash, ID3D11VertexShader* replacement)
 {
     std::lock_guard lock(m_mutex);
+    ++m_generation;
     m_vsReplacements[hash] = replacement;
     Log("ShaderManager: VS replacement registered  hash=%016llX  ptr=%p",
         hash, replacement);
@@ -109,6 +112,7 @@ void ShaderManager::RegisterVSReplacement(uint64_t hash, ID3D11VertexShader* rep
 void ShaderManager::RegisterPSReplacement(uint64_t hash, ID3D11PixelShader* replacement)
 {
     std::lock_guard lock(m_mutex);
+    ++m_generation;
     m_psReplacements[hash] = replacement;
     Log("ShaderManager: PS replacement registered  hash=%016llX  ptr=%p",
         hash, replacement);
@@ -117,12 +121,14 @@ void ShaderManager::RegisterPSReplacement(uint64_t hash, ID3D11PixelShader* repl
 void ShaderManager::RemoveVSReplacement(uint64_t hash)
 {
     std::lock_guard lock(m_mutex);
+    ++m_generation;
     m_vsReplacements.erase(hash);
 }
 
 void ShaderManager::RemovePSReplacement(uint64_t hash)
 {
     std::lock_guard lock(m_mutex);
+    ++m_generation;
     m_psReplacements.erase(hash);
 }
 

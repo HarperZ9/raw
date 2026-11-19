@@ -92,7 +92,9 @@ WrappedContext::~WrappedContext()
 
 void WrappedContext::ResetFrameStats()
 {
-    static bool s_blInit = [](){ BindingLedger::Get().Initialize(nullptr); BindingLedger::Get().SetEnabled(true); return true; }();
+    static bool s_blInit = [](){
+        if (PG_DiagBindingLedger()) { BindingLedger::Get().Initialize(nullptr); BindingLedger::Get().SetEnabled(true); }
+        return true; }();
     BindingLedger::Get().BeginFrame();
     m_drawCalls     = 0;
     m_rtSwitches    = 0;
@@ -207,11 +209,17 @@ void STDMETHODCALLTYPE WrappedContext::VSSetShader(ID3D11VertexShader* pVS, ID3D
     if (PG_IsSafeMode()) { m_real->VSSetShader(pVS, ppCI, NumCI); return; }
 
     m_currentVS = pVS;
-    auto* replacement = ShaderManager::Get().GetReplacementVS(pVS);
+    auto& sm = ShaderManager::Get();
+    const uint64_t gen = sm.Generation();
+    if (m_vsCache.ptr != pVS || m_vsCache.gen != gen)
+        m_vsCache = {pVS, gen, sm.GetReplacementVS(pVS), sm.GetVSHash(pVS)};
+    auto* replacement = static_cast<ID3D11VertexShader*>(m_vsCache.repl);
     m_real->VSSetShader(replacement ? replacement : pVS, ppCI, NumCI);
 
-    uint64_t vsHash = ShaderManager::Get().GetVSHash(pVS);
-    uint64_t psHash = ShaderManager::Get().GetPSHash(m_currentPS);
+    uint64_t vsHash = m_vsCache.hash;
+    if (m_psCache.ptr != m_currentPS || m_psCache.gen != gen)
+        m_psCache = {m_currentPS, gen, sm.GetReplacementPS(m_currentPS), sm.GetPSHash(m_currentPS)};
+    uint64_t psHash = m_psCache.hash;
     RenderPhaseDetector::Get().OnShaderBind(psHash, vsHash);
     if (g_frameLedgerArmed) FrameLedgerHooks::OnShaders(psHash, vsHash, m_currentPS);
     for (auto& cb : g_shaderBindCallbacks)
@@ -228,13 +236,19 @@ void STDMETHODCALLTYPE WrappedContext::PSSetShader(ID3D11PixelShader* pPS, ID3D1
         ++m_shaderChanges;
     }
     // Check for shader replacement
-    auto* replacement = ShaderManager::Get().GetReplacementPS(pPS);
+    auto& sm = ShaderManager::Get();
+    const uint64_t gen = sm.Generation();
+    if (m_psCache.ptr != pPS || m_psCache.gen != gen)
+        m_psCache = {pPS, gen, sm.GetReplacementPS(pPS), sm.GetPSHash(pPS)};
+    auto* replacement = static_cast<ID3D11PixelShader*>(m_psCache.repl);
     m_real->PSSetShader(replacement ? replacement : pPS, ppCI, NumCI);
     if (g_gbufferActive) GBuffer_OnPixelShader(pPS);
 
     // Fire shader bind callbacks + phase detector
-    uint64_t psHash = ShaderManager::Get().GetPSHash(pPS);
-    uint64_t vsHash = ShaderManager::Get().GetVSHash(m_currentVS);
+    uint64_t psHash = m_psCache.hash;
+    if (m_vsCache.ptr != m_currentVS || m_vsCache.gen != gen)
+        m_vsCache = {m_currentVS, gen, sm.GetReplacementVS(m_currentVS), sm.GetVSHash(m_currentVS)};
+    uint64_t vsHash = m_vsCache.hash;
     RenderPhaseDetector::Get().OnShaderBind(psHash, vsHash);
     if (g_frameLedgerArmed) FrameLedgerHooks::OnShaders(psHash, vsHash, pPS);
     {   // Coherence membrane (Tier 3.2): which compiled variant is actually BOUND.
@@ -757,6 +771,7 @@ static int   g_scissorEmits = 0;
 
 static void EmitPipelineState(const char* kind, const char* detail)
 {
+    if (!PG_DiagPipelineAsserts()) return;
     try {
         std::error_code ec;
         std::filesystem::create_directories("Data/SKSE/Plugins/RAW/live", ec);

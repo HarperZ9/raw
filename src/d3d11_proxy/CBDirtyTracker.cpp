@@ -1,5 +1,6 @@
 #include "CBDirtyTracker.h"
 #include "BindingLedger.h"   // CB-ptr -> slot/stage lookup for cb_meta attribution (1.2-p3)
+#include "ProxyAPI.h"     // PG_DiagCBScan
 #include <cstring>
 #include <fstream>
 #include <filesystem>
@@ -148,7 +149,7 @@ bool CBDirtyTracker::InterceptUnmap(ID3D11DeviceContext* realCtx, ID3D11Resource
         realCtx->Unmap(pResource, 0);
         // Update shadow to match what we just committed
         std::memcpy(entry.shadow.data(), entry.staging.data(), entry.byteWidth);
-        ScanCB(entry.staging.data(), entry.byteWidth, pResource);
+        if (PG_DiagCBScan()) ScanCB(entry.staging.data(), entry.byteWidth, pResource);
     }
     ++m_committedUpdates;
     return true;

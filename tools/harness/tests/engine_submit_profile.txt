@@ -1,0 +1,20 @@
+# Where the render thread's time goes in Riverwood with vsync off: the sampler's module breakdown of the
+# busiest thread (the game, RAW's proxy, the driver, the system) beside the CPU time of batch submission.
+start load rawharness
+console tai
+scene riverwood
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+console coc riverwood
+wait 8
+console fw 81a
+wait 6
+engine vtime 0x1AB6190 0x2A accum_2A
+engine measure riverwood 600
+engine measure riverwood_2 600
+engine sample 10 0x1000 0x174E938; wait 1500
+console coc whiterunbanneredmare
+wait 8
+engine measure inn 600
+quit

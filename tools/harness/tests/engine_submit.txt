@@ -1,0 +1,17 @@
+# Draw submission: the CPU cost of BSShaderAccumulator slot 0x2A and the proxy's call counts per frame, in the
+# inn and Riverwood with vsync off. Run once with the harness's proxy ini and once with the G-buffer off, to see
+# how much of the submission cost is the proxy's own work.
+start load rawharness
+console tai
+scene inn
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+engine vtime 0x1AB6190 0x2A accum_2A; vtime 0x1AC0FB0 0x2 batch_dispatch; vtime 0x19D3B80 0x17 cull_process2
+engine measure inn 600
+console coc riverwood
+wait 8
+console fw 81a
+wait 6
+engine measure riverwood 600
+quit

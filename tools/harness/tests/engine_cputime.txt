@@ -1,0 +1,19 @@
+# CPU time of the engine's culling, batching and Papyrus jobs, measured live with vsync off. A baseline measure
+# first, then the hooks go in and the same view is measured again (the difference is the hooks' own cost).
+start load rawharness
+scene riverwood
+console set gamehour to 13
+console coc whiterunbanneredmare
+wait 8
+engine measure inn_base 600
+engine vtime 0x19D3B80 0x17 cull_process2; vtime 0x19D3B80 0x16 cull_process1; vtime 0x1AC0FB0 0x2 batch_dispatch; vtime 0x1AB6190 0x25 accum_25; vtime 0x1AB6190 0x2A accum_2A; vtime 0x1AA0B48 0x12 tasks_to_jobs; ltime 0x144F236 papyrus_job
+engine measure inn_timed 600
+console coc riverwood
+wait 8
+console fw 81a
+wait 6
+engine measure riverwood_timed 600
+engine set fShadowDistance:Display 3000; wait 60; measure rw_shadow_3000 600
+engine set fShadowDistance:Display 20000; wait 60; measure rw_shadow_20000 600
+engine set fShadowDistance:Display 10000; wait 60
+quit

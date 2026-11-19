@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "ProxyAPI.h"
 #include "rt_callgraph.h"
 #include "rt_image.h"
 
@@ -26,6 +27,8 @@ size_t ApplyStartupSettings(const Image& img, const std::vector<RefTarget>& refs
 void ControlInit(const Image& img, const std::vector<RefTarget>* refs, const std::string& gameDir, const std::string& outDir,
                  void (*invalidateStateCache)());
 void ControlOnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc);
+// The proxy's per-frame counters (draws, state calls, constant-buffer maps) join every measure.
+void ControlSetProxy(SB::Proxy::ProxyInterface* proxy);
 
 // Shadow atlas: the renderer's depth-stencil target table (BSGraphics::RenderTargetManager, member
 // depthStencilTargetData at +0xC78, 0x10 per entry; entries 2 and 4 hold the shadow maps) resized before

@@ -1,4 +1,5 @@
 // SceneLights: see the header. Original work, MIT.
+#include "ModuleHost.h"
 #include "SceneLights.h"
 #include "CBDirtyTracker.h"
 #include "ProxyLog.h"
@@ -204,9 +205,12 @@ void AddEngineLights(SceneLighting& f)
 {
     static EngineLightsFn fn = nullptr;
     static int tries = 0;
+    static uint32_t generation = 0;
     if (!g_engineLights || !f.hasCamera) return;
+    // a live reload replaces the module (ModuleHost.h): the old export is gone, so it is looked up again
+    if (generation != SB::Proxy::modules::Generation()) { generation = SB::Proxy::modules::Generation(); fn = nullptr; tries = 0; }
     if (!fn && tries < 600 && (++tries % 60) == 1)
-        if (HMODULE m = GetModuleHandleA("raw_engine.dll")) fn = reinterpret_cast<EngineLightsFn>(GetProcAddress(m, "RAW_EngineLights"));
+        if (HMODULE m = SB::Proxy::modules::Find("raw_engine.dll")) fn = reinterpret_cast<EngineLightsFn>(GetProcAddress(m, "RAW_EngineLights"));
     if (!fn) return;
     EngineLight e[raw::bridge::kMaxSceneLights];
     uint64_t at = 0;

@@ -6,6 +6,7 @@
 // call on each thread only, so recursive functions (scene-graph culling) are not counted twice; every call
 // is counted. Times are read with the time-stamp counter, calibrated against the performance counter.
 #include "rt_vtime.h"
+#include "rt_patch.h"
 
 #include <windows.h>
 #include <intrin.h>
@@ -107,10 +108,7 @@ std::string VTimeSlot(const Image& img, uint32_t vtable, uint32_t slot, const st
     Slot& s = g_slots[g_used];
     s.orig = reinterpret_cast<Fn>(*entry);
     s.label = label;
-    DWORD old;
-    if (!VirtualProtect(entry, 8, PAGE_READWRITE, &old)) return "vtime: VirtualProtect failed";
-    InterlockedExchange64(reinterpret_cast<volatile LONG64*>(entry), LONG64(kHooks[size_t(g_used)]));
-    VirtualProtect(entry, 8, old, &old);
+    if (!PatchPointer(entry, reinterpret_cast<void*>(kHooks[size_t(g_used)]))) return "vtime: VirtualProtect failed";
     ++g_used;
     char b[160];
     std::snprintf(b, sizeof b, "vtime: %s = vtable 0x%X slot 0x%X -> 0x%llX", label.c_str(), vtable, slot, (unsigned long long)fn);
@@ -137,11 +135,7 @@ std::string VTimeLea(const Image& img, uint32_t site, const std::string& label) 
     if (!stub) return "vtime: no stub near the image";
     auto* disp = const_cast<uint8_t*>(img.base) + site + in.raw.disp.offset;
     const int32_t v = int32_t(int64_t(stub) - int64_t(img.base + site + in.length));
-    DWORD old;
-    if (!VirtualProtect(disp, 4, PAGE_EXECUTE_READWRITE, &old)) return "vtime: VirtualProtect failed";
-    std::memcpy(disp, &v, 4);
-    VirtualProtect(disp, 4, old, &old);
-    FlushInstructionCache(GetCurrentProcess(), disp, 4);
+    if (!PatchWrite(disp, &v, 4)) return "vtime: VirtualProtect failed";
     ++g_used;
     char b[160];
     std::snprintf(b, sizeof b, "vtime: %s = lea at 0x%X -> 0x%llX", label.c_str(), site, (unsigned long long)target);

@@ -1,5 +1,6 @@
 // Draw statistics per submission pass (RAW engine runtime). Original work, MIT. See rt_drawstats.h.
 #include "rt_drawstats.h"
+#include "rt_patch.h"
 #include "rt_version.h"
 
 #include <windows.h>
@@ -132,11 +133,7 @@ bool Swap(const Image& img, uint32_t vtable, uint32_t slot, void* hook, Fn* orig
     auto* entry = reinterpret_cast<uint64_t*>(const_cast<uint8_t*>(img.base) + vtable) + slot;
     if (!img.InText(uint32_t(*entry - uint64_t(img.base)))) return false;
     *orig = reinterpret_cast<Fn>(*entry);
-    DWORD old;
-    if (!VirtualProtect(entry, 8, PAGE_READWRITE, &old)) return false;
-    InterlockedExchange64(reinterpret_cast<volatile LONG64*>(entry), LONG64(hook));
-    VirtualProtect(entry, 8, old, &old);
-    return true;
+    return PatchPointer(entry, hook);   // rt_patch.h: a module stop puts the slot back
 }
 
 void Calibrate() {

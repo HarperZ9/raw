@@ -1,6 +1,7 @@
 // Fire, torch and magic light: light names and glowing emitters (RAW engine runtime). Original work, MIT.
 // See rt_emitters.h.
 #include "rt_emitters.h"
+#include "rt_patch.h"
 #include "rt_version.h"
 
 #include <windows.h>
@@ -118,11 +119,7 @@ bool Swap(const Image& img, uint32_t vtable, void* hook, Fn* orig) {
     auto* entry = reinterpret_cast<uint64_t*>(const_cast<uint8_t*>(img.base) + vtable) + kSetupGeometry;
     if (!img.InText(uint32_t(*entry - uint64_t(img.base)))) return false;
     *orig = reinterpret_cast<Fn>(*entry);
-    DWORD old;
-    if (!VirtualProtect(entry, 8, PAGE_READWRITE, &old)) return false;
-    InterlockedExchange64(reinterpret_cast<volatile LONG64*>(entry), LONG64(hook));
-    VirtualProtect(entry, 8, old, &old);
-    return true;
+    return PatchPointer(entry, hook);   // rt_patch.h: a module stop puts the slot back
 }
 
 // one geometry counts once a frame (it can draw in several passes); nearby draws merge into one light

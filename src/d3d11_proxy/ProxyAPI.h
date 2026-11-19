@@ -145,6 +145,12 @@ struct ProxyInterface
 
     // ── Version 2 ───────────────────────────────────────────────────
     void (*RegisterOnViewport)(OnViewportCallback cb);
+
+    // ── Version 3 ───────────────────────────────────────────────────
+    // 0 for the copy loaded at startup; raised by each live reload (ModuleHost.h). A module started with a
+    // generation above 0 is joining a running game: startup-only steps (settings that size the renderer's
+    // targets before they exist) are skipped.
+    uint32_t moduleGeneration;
 };
 
 } // namespace SB::Proxy

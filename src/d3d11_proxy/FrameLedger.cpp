@@ -5,7 +5,9 @@
 #include "CBDirtyTracker.h"
 #include "ProxyAPI.h"
 #include "ProxyLog.h"
+#include <cstdlib>
 #include <direct.h>
+#include <string>
 
 namespace SB::Proxy
 {
@@ -208,13 +210,53 @@ void Finish(ID3D11DeviceContext* ctx)
     ++s.captured;
 }
 
+// A live capture (the live session's "capture gbuffer", docs/LIVE_SESSION.md): raw_ledger_go.txt beside the game
+// with dir=<absolute folder> and history=<0|1|2> arms the next frame, whatever [FrameLedger] Enabled says. The
+// answer is raw_ledger_done.txt naming the capture folder.
+bool s_live = false;
+uint32_t s_livePolls = 0;
+std::string GameFile(const char* name)
+{
+    char path[MAX_PATH]{};
+    GetModuleFileNameA(nullptr, path, MAX_PATH);
+    std::string p(path);
+    return p.substr(0, p.rfind('\\') + 1) + name;
+}
+bool PollLive()
+{
+    if (++s_livePolls % 30 != 0) return false;
+    const std::string go = GameFile("raw_ledger_go.txt");
+    FILE* f = nullptr;
+    if (fopen_s(&f, go.c_str(), "r") != 0 || !f) return false;
+    State& s = S();
+    char line[MAX_PATH + 16];
+    while (fgets(line, sizeof line, f)) {
+        std::string l(line);
+        while (!l.empty() && (l.back() == '\n' || l.back() == '\r')) l.pop_back();
+        if (l.rfind("dir=", 0) == 0) s.outRoot = l.substr(4);
+        else if (l.rfind("history=", 0) == 0) s.history = std::atoi(l.c_str() + 8);
+    }
+    fclose(f);
+    DeleteFileA(go.c_str());
+    return !s.outRoot.empty();
+}
 } // namespace
 
 void FrameLedgerHooks::OnPresent(ID3D11DeviceContext* ctx, uint32_t drawsThisFrame)
 {
     State& s = S();
     if (!s.loaded) LoadConfig();
-    if (g_frameLedgerArmed) Finish(ctx);
+    if (g_frameLedgerArmed) {
+        const std::string dir = s.dir;
+        Finish(ctx);
+        if (s_live) {
+            s_live = false;
+            FILE* d = nullptr;
+            if (fopen_s(&d, GameFile("raw_ledger_done.txt").c_str(), "w") == 0 && d) { fprintf(d, "%s\n", dir.c_str()); fclose(d); }
+        }
+        return;
+    }
+    if (ctx && PollLive()) { s_live = true; Arm(ctx); return; }
     if (!s.enabled || s.captured >= s.captures || !ctx) return;
     s.gameplay = drawsThisFrame > static_cast<uint32_t>(s.minDraws) ? s.gameplay + 1 : 0;
     if (s.gameplay == s.after + s.captured * s.every) Arm(ctx);

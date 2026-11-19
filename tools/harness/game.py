@@ -248,11 +248,17 @@ def console(line: str) -> None:
 
 
 def status(game: Path) -> dict:
-    try:
-        t = (game / "raw_harness_status.txt").read_text()
-        return {k: int(v) for k, v in (kv.split("=") for kv in t.split())}
-    except (OSError, ValueError):
-        return {}
+    """The proxy's heartbeat. It rewrites the file every 30 presents, so a read that meets it open or half
+    written is tried again (20 times, 50 ms apart); an empty answer would read as no presents and no loads."""
+    for _ in range(20):
+        try:
+            t = (game / "raw_harness_status.txt").read_text()
+            return {k: int(v) for k, v in (kv.split("=") for kv in t.split())}
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError):
+            time.sleep(0.05)
+    return {}
 
 
 def gpu() -> dict:

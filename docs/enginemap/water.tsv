@@ -1,0 +1,132 @@
+rva	kind	name	confidence	source	addrlib_id	check	refs	notes
+0x01787E0	vfunc	ExtraWaterCurrentZoneData::Dtor	named	rtti+commonlib	12304	pdata_start	vtables(1): ExtraWaterCurrentZoneData[00]	
+0x0178830	vfunc	ExtraWaterData::Dtor	named	rtti+commonlib	12305	pdata_start	vtables(1): ExtraWaterData[00]	
+0x0178870	vfunc	ExtraWaterLightRefs::Dtor	named	rtti+commonlib	12306	pdata_start	vtables(1): ExtraWaterLightRefs[00]	
+0x017EB00	vfunc	ExtraWaterLightRefs::IsNotEqual	named	rtti+commonlib	12570	no_pdata_entry	vtables(1): ExtraWaterLightRefs[02]	
+0x017EBC0	vfunc	ExtraWaterLightRefs::GetType	named	rtti+commonlib	12571	no_pdata_entry	vtables(1): ExtraWaterLightRefs[01]	
+0x0186DF0	vfunc	ExtraWaterData::IsNotEqual	named	rtti+commonlib	12828	pdata_start	vtables(1): ExtraWaterData[02]	
+0x0186E90	vfunc	ExtraWaterData::GetType	named	rtti+commonlib	12829	no_pdata_entry	vtables(1): ExtraWaterData[01]	
+0x0186EA0	vfunc	ExtraWaterCurrentZoneData::IsNotEqual	named	rtti+commonlib	12830	no_pdata_entry	vtables(1): ExtraWaterCurrentZoneData[02]	
+0x0186EF0	vfunc	ExtraWaterCurrentZoneData::GetType	named	rtti+commonlib	12831	no_pdata_entry	vtables(1): ExtraWaterCurrentZoneData[01]	
+0x02F2860	vfunc	BGSWaterCollisionManager::BGSWaterUpdateI::vfunc_00	inferred	rtti	19930	pdata_start	vtables(1): BGSWaterCollisionManager::BGSWaterUpdateI[00]	
+0x02F2E40	vfunc	BGSWaterCollisionManager::bhkPlaceableWater::Dtor	named	rtti+commonlib	19946	pdata_start	vtables(1): BGSWaterCollisionManager::bhkPlaceableWater[00]	declared in hkpShape
+0x02F30A0	vfunc	BGSWaterCollisionManager::bhkWaterfall::Dtor	named	rtti+commonlib	19954	pdata_start	vtables(1): BGSWaterCollisionManager::bhkWaterfall[00]	declared in hkpShape
+0x02F3A30	vfunc	BGSWaterCollisionManager::BGSWaterUpdateI::vfunc_06	inferred	rtti	19996	no_pdata_entry	vtables(1): BGSWaterCollisionManager::BGSWaterUpdateI[06]	
+0x02F53F0	vfunc	BGSWaterCollisionManager::BGSWaterUpdateI::vfunc_03	inferred	rtti	20055	no_pdata_entry	vtables(1): BGSWaterCollisionManager::BGSWaterUpdateI[03]	
+0x02FFEE0	vfunc	TESWaterForm::InitializeData	named	rtti+commonlib	20343	pdata_start	vtables(1): TESWaterForm[04]	
+0x02FFFA0	vfunc	TESWaterForm::Load	named	rtti+commonlib	20344	pdata_start	vtables(1): TESWaterForm[06]	
+0x03005D0	vfunc	TESWaterForm::InitItemImpl	named	rtti+commonlib	20345	pdata_start	vtables(1): TESWaterForm[13]	
+0x0300940	vfunc	TESWaterForm::GetDangerous	named	rtti+commonlib	20346	no_pdata_entry	vtables(1): TESWaterForm[1B]	
+0x0301190	vfunc	TESWaterForm::Activate	named	rtti+commonlib	20374	pdata_start	vtables(1): TESWaterForm[37]	
+0x03012A0	vfunc	TESWaterForm::Dtor	named	rtti+commonlib	20381	pdata_start	vtables(1): TESWaterForm[00]	
+0x051D550	vfunc	BGSWaterCollisionManager::BGSWaterUpdateI::vfunc_04	inferred	rtti	32092	pdata_start	vtables(1): BGSWaterCollisionManager::BGSWaterUpdateI[04]	
+0x051DA10	vfunc	BGSWaterCollisionManager::BGSWaterUpdateI::vfunc_05	inferred	rtti	32094	pdata_start	vtables(1): BGSWaterCollisionManager::BGSWaterUpdateI[05]	
+0x051E100	vfunc	BGSWaterCollisionManager::bhkPlaceableWater::vfunc_0B	inferred	rtti	32097	no_pdata_entry	vtables(1): BGSWaterCollisionManager::bhkPlaceableWater[0B]	
+0x051E110	vfunc	BGSWaterCollisionManager::bhkPlaceableWater::vfunc_0C	inferred	rtti	32098	no_pdata_entry	vtables(1): BGSWaterCollisionManager::bhkPlaceableWater[0C]	
+0x051E120	vfunc	BGSWaterCollisionManager::bhkPlaceableWater::vfunc_0D	inferred	rtti	32099	pdata_start	vtables(1): BGSWaterCollisionManager::bhkPlaceableWater[0D]	
+0x051E4F0	vfunc	BGSWaterCollisionManager::bhkWaterfall::vfunc_0B	inferred	rtti	32105	no_pdata_entry	vtables(1): BGSWaterCollisionManager::bhkWaterfall[0B]	
+0x051E510	vfunc	BGSWaterCollisionManager::bhkWaterfall::vfunc_0C	inferred	rtti	32106	no_pdata_entry	vtables(1): BGSWaterCollisionManager::bhkWaterfall[0C]	
+0x051E810	vfunc	BGSWaterCollisionManager::bhkAutoWater::Unk_2E	inferred	rtti+commonlib	32110	pdata_start	vtables(1): BGSWaterCollisionManager::bhkAutoWater[2E]	declared in bhkSerializable
+0x051F680	vfunc	BGSWaterCollisionManager::bshkAutoWater::AddOverlappingCollidable	named	rtti+commonlib	32124	pdata_start	vtables(1): BGSWaterCollisionManager::bshkAutoWater[08]	declared in hkpPhantom
+0x051F6C0	vfunc	BGSWaterCollisionManager::bshkAutoWater::RemoveOverlappingCollidable	named	rtti+commonlib	32125	pdata_start	vtables(1): BGSWaterCollisionManager::bshkAutoWater[0A]	declared in hkpPhantom
+0x051FD50	vfunc	BGSWaterCollisionManager::bhkAutoWater::Dtor	named	rtti+commonlib	32140	pdata_start	vtables(1): BGSWaterCollisionManager::bhkAutoWater[00]	declared in bhkPhantom
+0x051FD90	vfunc	BGSWaterCollisionManager::bshkAutoWater::Dtor	named	rtti+commonlib	32141	pdata_start	vtables(1): BGSWaterCollisionManager::bshkAutoWater[00]	declared in hkpPhantom
+0x051FFB0	vfunc	BGSWaterCollisionManager::bhkAutoWater::GetRTTI	named	rtti+commonlib	32146	no_pdata_entry	vtables(1): BGSWaterCollisionManager::bhkAutoWater[02]	declared in bhkPhantom
+0x05256E0	function	TESWaterSystem::AddRipple	named	commonlib+addrlib	32217	pdata_start		include/RE/T/TESWaterSystem.h:38
+0x05271F0	vfunc	TESWaterDisplacement::Dtor	named	rtti+commonlib	32253	pdata_start	vtables(1): TESWaterDisplacement[00]	
+0x05272C0	vfunc	TESWaterNormals::Dtor	named	rtti+commonlib	32254	pdata_start	vtables(1): TESWaterNormals[00]	
+0x0527380	vfunc	TESWaterObject::Dtor	named	rtti+commonlib	32255	pdata_start	vtables(1): TESWaterObject[00]	
+0x0527480	vfunc	TESWaterReflections::Dtor	named	rtti+commonlib	32256	pdata_start	vtables(1): TESWaterReflections[00]	
+0x149D8F0	vfunc	BSImagespaceShaderRefraction::Dtor	named	rtti+commonlib	106157	pdata_start	vtables(1): BSImagespaceShaderRefraction[00]	declared in BSImagespaceShader
+0x149D9B0	vfunc	BSImagespaceShaderWaterBlendHeightmaps::Dtor	named	rtti+commonlib	106160	pdata_start	vtables(1): BSImagespaceShaderWaterBlendHeightmaps[00]	declared in BSImagespaceShader
+0x149D9F0	vfunc	BSImagespaceShaderWaterDisplacementClearSimulation::Dtor	named	rtti+commonlib	106161	pdata_start	vtables(1): BSImagespaceShaderWaterDisplacementClearSimulation[00]	declared in BSImagespaceShader
+0x149DA30	vfunc	BSImagespaceShaderWaterDisplacementNormals::Dtor	named	rtti+commonlib	106162	pdata_start	vtables(1): BSImagespaceShaderWaterDisplacementNormals[00]	declared in BSImagespaceShader
+0x149DA70	vfunc	BSImagespaceShaderWaterDisplacementRainRipple::Dtor	named	rtti+commonlib	106163	pdata_start	vtables(1): BSImagespaceShaderWaterDisplacementRainRipple[00]	declared in BSImagespaceShader
+0x149DAB0	vfunc	BSImagespaceShaderWaterDisplacementTexOffset::Dtor	named	rtti+commonlib	106164	pdata_start	vtables(1): BSImagespaceShaderWaterDisplacementTexOffset[00]	declared in BSImagespaceShader
+0x149DAF0	vfunc	BSImagespaceShaderWaterDisplacementWadingRipple::Dtor	named	rtti+commonlib	106165	pdata_start	vtables(1): BSImagespaceShaderWaterDisplacementWadingRipple[00]	declared in BSImagespaceShader
+0x149DB30	vfunc	BSImagespaceShaderWaterFlow::Dtor	named	rtti+commonlib	106166	pdata_start	vtables(1): BSImagespaceShaderWaterFlow[00]	declared in BSImagespaceShader
+0x149DB70	vfunc	BSImagespaceShaderWaterRainHeightmap::Dtor	named	rtti+commonlib	106167	pdata_start	vtables(1): BSImagespaceShaderWaterRainHeightmap[00]	declared in BSImagespaceShader
+0x149DBB0	vfunc	BSImagespaceShaderWaterSmoothHeightmap::Dtor	named	rtti+commonlib	106168	pdata_start	vtables(1): BSImagespaceShaderWaterSmoothHeightmap[00]	declared in BSImagespaceShader
+0x149DBF0	vfunc	BSImagespaceShaderWaterWadingHeightmap::Dtor	named	rtti+commonlib	106169	pdata_start	vtables(1): BSImagespaceShaderWaterWadingHeightmap[00]	declared in BSImagespaceShader
+0x149F340	vfunc	BSImagespaceShaderRefraction::Unk_0D	inferred	rtti+commonlib	106281	no_pdata_entry	vtables(1): BSImagespaceShaderRefraction[0D]	declared in BSImagespaceShader
+0x149F390	vfunc	BSImagespaceShaderWaterBlendHeightmaps::Unk_0D	inferred	rtti+commonlib	106284	no_pdata_entry	vtables(1): BSImagespaceShaderWaterBlendHeightmaps[0D]	declared in BSImagespaceShader
+0x149F3C0	vfunc	BSImagespaceShaderWaterDisplacementClearSimulation::Unk_0D	inferred	rtti+commonlib	106285	no_pdata_entry	vtables(1): BSImagespaceShaderWaterDisplacementClearSimulation[0D]	declared in BSImagespaceShader
+0x149F3F0	vfunc	BSImagespaceShaderWaterDisplacementNormals::Unk_0D	inferred	rtti+commonlib	106286	no_pdata_entry	vtables(1): BSImagespaceShaderWaterDisplacementNormals[0D]	declared in BSImagespaceShader
+0x149F420	vfunc	BSImagespaceShaderWaterDisplacementRainRipple::Unk_0D	inferred	rtti+commonlib	106287	no_pdata_entry	vtables(1): BSImagespaceShaderWaterDisplacementRainRipple[0D]	declared in BSImagespaceShader
+0x149F450	vfunc	BSImagespaceShaderWaterDisplacementTexOffset::Unk_0D	inferred	rtti+commonlib	106288	no_pdata_entry	vtables(1): BSImagespaceShaderWaterDisplacementTexOffset[0D]	declared in BSImagespaceShader
+0x149F480	vfunc	BSImagespaceShaderWaterDisplacementWadingRipple::Unk_0D	inferred	rtti+commonlib	106289	no_pdata_entry	vtables(1): BSImagespaceShaderWaterDisplacementWadingRipple[0D]	declared in BSImagespaceShader
+0x149F4B0	vfunc	BSImagespaceShaderWaterFlow::Unk_0D	inferred	rtti+commonlib	106290	no_pdata_entry	vtables(1): BSImagespaceShaderWaterFlow[0D]	declared in BSImagespaceShader
+0x149F4E0	vfunc	BSImagespaceShaderWaterRainHeightmap::Unk_0D	inferred	rtti+commonlib	106291	no_pdata_entry	vtables(1): BSImagespaceShaderWaterRainHeightmap[0D]	declared in BSImagespaceShader
+0x149F510	vfunc	BSImagespaceShaderWaterSmoothHeightmap::Unk_0D	inferred	rtti+commonlib	106292	no_pdata_entry	vtables(1): BSImagespaceShaderWaterSmoothHeightmap[0D]	declared in BSImagespaceShader
+0x149F540	vfunc	BSImagespaceShaderWaterWadingHeightmap::Unk_0D	inferred	rtti+commonlib	106293	no_pdata_entry	vtables(1): BSImagespaceShaderWaterWadingHeightmap[0D]	declared in BSImagespaceShader
+0x14BFC90	vfunc	BSWaterShaderProperty::CreateClone	named	rtti+commonlib	106933	pdata_start	vtables(1): BSWaterShaderProperty[17]	
+0x14BFE60	vfunc	BSWaterShaderProperty::LoadBinary	named	rtti+commonlib	106935	pdata_start	vtables(1): BSWaterShaderProperty[18]	
+0x14BFF50	vfunc	BSWaterShaderProperty::LinkObject	named	rtti+commonlib	106936	pdata_start	vtables(1): BSWaterShaderProperty[19]	
+0x14BFFE0	vfunc	BSWaterShaderProperty::RegisterStreamables	named	rtti+commonlib	106937	no_pdata_entry	vtables(1): BSWaterShaderProperty[1A]	
+0x14BFFF0	vfunc	BSWaterShaderProperty::SaveBinary	named	rtti+commonlib	106938	pdata_start	vtables(1): BSWaterShaderProperty[1B]	
+0x14C0050	vfunc	BSWaterShaderProperty::IsEqual	named	rtti+commonlib	106939	no_pdata_entry	vtables(1): BSWaterShaderProperty[1C]	
+0x14C0100	vfunc	BSWaterShaderProperty::PostLinkObject	named	rtti+commonlib	106941	no_pdata_entry	vtables(1): BSWaterShaderProperty[1E]	
+0x14C02D0	vfunc	BSWaterShaderProperty::QShader	named	rtti+commonlib	106944	no_pdata_entry	vtables(1): BSWaterShaderProperty[35]	
+0x14C02E0	vfunc	BSWaterShaderProperty::GetRenderPasses	named	rtti+commonlib	106945	pdata_start	vtables(1): BSWaterShaderProperty[2A]	
+0x14C08E0	vfunc	BSWaterShaderProperty::Unk_2C	inferred	rtti+commonlib	106946	pdata_start	vtables(1): BSWaterShaderProperty[2C]	
+0x14C0A30	vfunc	BSWaterShaderProperty::ForEachTexture	named	rtti+commonlib	106948	pdata_start	vtables(1): BSWaterShaderProperty[33]	
+0x14C0D70	vfunc	BSWaterShaderProperty::DoClearRenderPasses	named	rtti+commonlib	106952	pdata_start	vtables(1): BSWaterShaderProperty[34]	
+0x14C1030	vfunc	BSWaterShaderProperty::Dtor	named	rtti+commonlib	106956	pdata_start	vtables(1): BSWaterShaderProperty[00]	
+0x14C1140	vfunc	BSWaterShaderProperty::GetMaterialType	named	rtti+commonlib	106957	no_pdata_entry	vtables(1): BSWaterShaderProperty[3E]	
+0x14C1150	vfunc	BSWaterShaderProperty::GetRTTI	named	rtti+commonlib	106958	no_pdata_entry	vtables(1): BSWaterShaderProperty[02]	
+0x14E0BE0	vfunc	BSWaterShader::RestoreTechnique	named	rtti+commonlib	107360	no_pdata_entry	vtables(1): BSWaterShader[03]	declared in BSShader
+0x14E0DF0	vfunc	BSWaterShader::SetupTechnique	named	rtti+commonlib	107362	pdata_start	vtables(1): BSWaterShader[02]	declared in BSShader
+0x14E11C0	vfunc	BSWaterShader::SetupMaterial	named	rtti+commonlib	107363	pdata_start	vtables(1): BSWaterShader[04]	declared in BSShader
+0x14E1880	vfunc	BSWaterShader::RestoreMaterial	named	rtti+commonlib	107364	no_pdata_entry	vtables(1): BSWaterShader[05]	declared in BSShader
+0x14E1890	vfunc	BSWaterShader::SetupGeometry	named	rtti+commonlib	107365	pdata_start	vtables(1): BSWaterShader[06]	declared in BSShader
+0x14E2F40	vfunc	BSWaterShader::RestoreGeometry	named	rtti+commonlib	107366	no_pdata_entry	vtables(1): BSWaterShader[07]	declared in BSShader
+0x14E3490	vfunc	BSWaterShader::Dtor	named	rtti+commonlib	107374	pdata_start	vtables(1): BSWaterShader[00]	declared in BSShader
+0x14EE0E0	vfunc	BSWaterShaderMaterial::CopyMembers	named	rtti+commonlib	107569	pdata_start	vtables(1): BSWaterShaderMaterial[02]	
+0x14EE390	vfunc	BSWaterShaderMaterial::DoIsCopy	named	rtti+commonlib	107570	pdata_start	vtables(1): BSWaterShaderMaterial[03]	
+0x14EE6A0	vfunc	BSWaterShaderMaterial::ComputeCRC32	named	rtti+commonlib	107571	pdata_start	vtables(1): BSWaterShaderMaterial[04]	
+0x14EE830	vfunc	BSWaterShaderMaterial::Create	named	rtti+commonlib	107572	pdata_start	vtables(1): BSWaterShaderMaterial[01]	
+0x14EE8A0	vfunc	BSWaterShaderMaterial::GetDefault	named	rtti+commonlib	107573	no_pdata_entry	vtables(1): BSWaterShaderMaterial[05]	
+0x14EE970	vfunc	BSWaterShaderMaterial::Dtor	named	rtti+commonlib	107577	pdata_start	vtables(1): BSWaterShaderMaterial[00]	
+0x14EE9B0	vfunc	BSWaterShaderMaterial::GetType	named	rtti+commonlib	107578	no_pdata_entry	vtables(1): BSWaterShaderMaterial[07]	
+0x14EEB70	vfunc	ImageSpaceEffectWaterDisplacement::Setup	named	rtti+commonlib	107581	pdata_start	vtables(1): ImageSpaceEffectWaterDisplacement[02]	declared in ImageSpaceEffect
+0x14EF370	vfunc	ImageSpaceEffectWaterDisplacement::Render	named	rtti+commonlib	107582	pdata_start	vtables(1): ImageSpaceEffectWaterDisplacement[01]	declared in ImageSpaceEffect
+0x14EFB10	vfunc	ImageSpaceEffectWaterDisplacement::Dtor	named	rtti+commonlib	107583	pdata_start	vtables(1): ImageSpaceEffectWaterDisplacement[00]	declared in ImageSpaceEffect
+0x14EFC00	vfunc	ImageSpaceEffectWaterDisplacement::IsActive	named	rtti+commonlib	107584	no_pdata_entry	vtables(1): ImageSpaceEffectWaterDisplacement[06]	declared in ImageSpaceEffect
+0x14EFC10	vfunc	ImageSpaceEffectWaterDisplacement::ShutDown	named	rtti+commonlib	107585	no_pdata_entry	vtables(1): ImageSpaceEffectWaterDisplacement[03]	declared in ImageSpaceEffect
+0x14F9020	vfunc	ImageSpaceEffectRefraction::Setup	named	rtti+commonlib	107743	pdata_start	vtables(1): ImageSpaceEffectRefraction[02]	declared in ImageSpaceEffect
+0x14F9390	vfunc	ImageSpaceEffectRefraction::Render	named	rtti+commonlib	107744	pdata_start	vtables(1): ImageSpaceEffectRefraction[01]	declared in ImageSpaceEffect
+0x14F9490	vfunc	ImageSpaceEffectRefraction::UpdateParams	named	rtti+commonlib	107745	pdata_start	vtables(1): ImageSpaceEffectRefraction[07]	declared in ImageSpaceEffect
+0x14F94E0	vfunc	ImageSpaceEffectRefraction::Dtor	named	rtti+commonlib	107746	pdata_start	vtables(1): ImageSpaceEffectRefraction[00]	declared in ImageSpaceEffect
+0x14F95A0	vfunc	ImageSpaceEffectRefraction::IsActive	named	rtti+commonlib	107747	no_pdata_entry	vtables(1): ImageSpaceEffectRefraction[06]	declared in ImageSpaceEffect
+0x1519740	vfunc	BSImagespaceShaderWaterFlow::IsActive	named	rtti+commonlib	108596	pdata_start	vtables(1): BSImagespaceShaderWaterFlow[06]	declared in BSImagespaceShader
+0x15198F0	vfunc	BSImagespaceShaderWaterFlow::UpdateParams	named	rtti+commonlib	108597	pdata_start	vtables(1): BSImagespaceShaderWaterFlow[07]	declared in BSImagespaceShader
+0x1770CB0	vtable	ExtraWaterLightRefs::vftable	named	rtti	186745	col@0x1adbee8	3 slots	BSExtraData
+0x17714F0	vtable	ExtraWaterData::vftable	named	rtti	186877	col@0x1adcc68	3 slots	BSExtraData
+0x1771510	vtable	ExtraWaterCurrentZoneData::vftable	named	rtti	186879	col@0x1adb088	3 slots	BSExtraData
+0x17ADFC0	vtable	BGSWaterCollisionManager::BGSWaterUpdateI::vftable	named	rtti	190247	col@0x1af0790	7 slots	
+0x17AE000	vtable	BGSWaterCollisionManager::bhkPlaceableWater::vftable	named	rtti	190249	col@0x1af0408	14 slots	hkpPhantomCallbackShape > hkpShape > hkReferencedObject > hkBaseObject
+0x17AE0B8	vtable	BGSWaterCollisionManager::bhkWaterfall::vftable	named	rtti	190253	col@0x1af05b0	13 slots	hkpPhantomCallbackShape > hkpShape > hkReferencedObject > hkBaseObject
+0x17B1628	vtable	TESWaterForm::vftable	named	rtti	190389	col@0x1af1d48	59 slots	TESForm > BaseFormComponent
+0x186A438	vtable	BGSWaterCollisionManager::bhkAutoWater::vftable	named	rtti	204832	col@0x1b1a580	51 slots	bhkAabbPhantom > bhkPhantom > bhkWorldObject > bhkSerializable > bhkRefObject > NiObject > NiRefObject
+0x186A608	vtable	BGSWaterCollisionManager::bshkAutoWater::vftable	named	rtti	204837	col@0x1b1a768	15 slots	hkpAabbPhantom > hkpPhantom > hkpWorldObject > hkReferencedObject > hkBaseObject
+0x186BDB0	vtable	TESWaterObject::vftable	named	rtti	204888	col@0x1b1a958	2 slots	NiRefObject
+0x186BDC8	vtable	TESWaterReflections::vftable	named	rtti	204890	col@0x1b1a9d8	2 slots	NiRefObject
+0x186BDE0	vtable	TESWaterDisplacement::vftable	named	rtti	204892	col@0x1b1aa58	2 slots	NiRefObject
+0x186BDF8	vtable	TESWaterNormals::vftable	named	rtti	204894	col@0x1b1aad8	2 slots	NiRefObject
+0x1AAE3D8	vtable	BSImagespaceShaderRefraction::vftable	named	rtti	253756	col@0x1bee110	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAE508	vtable	BSImagespaceShaderWaterDisplacementClearSimulation::vftable	named	rtti	253766	col@0x1bee230	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAE688	vtable	BSImagespaceShaderWaterDisplacementTexOffset::vftable	named	rtti	253778	col@0x1bee350	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAE830	vtable	BSImagespaceShaderWaterDisplacementWadingRipple::vftable	named	rtti	253795	col@0x1bee470	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAE9C0	vtable	BSImagespaceShaderWaterDisplacementRainRipple::vftable	named	rtti	253808	col@0x1bee590	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAEB18	vtable	BSImagespaceShaderWaterWadingHeightmap::vftable	named	rtti	253819	col@0x1bee6b0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAEC78	vtable	BSImagespaceShaderWaterRainHeightmap::vftable	named	rtti	253831	col@0x1bee7d0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAEDB8	vtable	BSImagespaceShaderWaterBlendHeightmaps::vftable	named	rtti	253842	col@0x1bee8f0	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAEF28	vtable	BSImagespaceShaderWaterSmoothHeightmap::vftable	named	rtti	253855	col@0x1beea10	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAF078	vtable	BSImagespaceShaderWaterDisplacementNormals::vftable	named	rtti	253866	col@0x1beeb30	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AAF470	vtable	BSImagespaceShaderWaterFlow::vftable	named	rtti	253905	col@0x1beed70	15 slots	BSImagespaceShader > BSShader > NiRefObject
+0x1AB7DF8	vtable	BSWaterShaderProperty::vftable	named	rtti	254779	col@0x1bf3b68	63 slots	BSShaderProperty > NiShadeProperty > NiProperty > NiObjectNET > NiObject > NiRefObject
+0x1ABE840	vtable	BSWaterShader::vftable	named	rtti	255097	col@0x1bf41f0	10 slots	BSShader > NiRefObject
+0x1AC02F8	vtable	BSWaterShaderMaterial::vftable	named	rtti	255235	col@0x1bf4e90	8 slots	BSShaderMaterial
+0x1AC04A8	vtable	ImageSpaceEffectWaterDisplacement::vftable	named	rtti	255237	col@0x1bf4f18	10 slots	ImageSpaceEffect
+0x1AC1850	vtable	ImageSpaceEffectRefraction::vftable	named	rtti	255292	col@0x1bf52d0	10 slots	ImageSpaceEffect
+0x20F8978	global	TESWaterSystem::GetSingleton	named	commonlib+addrlib	400450	in_.data		include/RE/T/TESWaterSystem.h:31

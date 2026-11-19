@@ -1,0 +1,135 @@
+rva	kind	name	confidence	source	addrlib_id	check	refs	notes	subsystem
+0x20F6968	global	::GlobalStateCounter	named	commonlib+addrlib	400305	in_.data		include/RE/Offsets.h:585	
+0x35F0878	global	::TlsIndex	named	commonlib+addrlib	415542	in_.data		include/RE/Offsets.h:584	
+0x30FC678	global	ActorEquipManager::Singleton	named	commonlib+addrlib	400636	in_.data		include/RE/Offsets.h:26	
+0x20F6310	global	ActorValueList::GetSingleton	named	commonlib+addrlib	400267	in_.data		include/RE/A/ActorValueList.h:13	
+0x31B2820	global	AnimationFileManagerSingleton::LoadedAnimation::GetSingleton	named	commonlib+addrlib	407512	in_.data		include/RE/A/AnimationFileManagerSingleton.h:55	
+0x20F6A08	global	AnimationObjects::GetSingleton	named	commonlib+addrlib	400328	in_.data		include/RE/A/AnimationObjects.h:35	
+0x201069C	global	BGSAddToPlayerInventoryEvent::GetIndex	named	commonlib+addrlib	380074	in_.data		include/RE/B/BGSAddToPlayerInventoryEvent.h:26	
+0x20F69C8	global	BGSCreatedObjectManager::GetSingleton	named	commonlib+addrlib	400320	in_.data		src/RE/B/BGSCreatedObjectManager.cpp:7	
+0x20FC178	global	BGSDecalManager::GetSingleton	named	commonlib+addrlib	400561	in_.data		include/RE/B/BGSDecalManager.h:19	
+0x01C2E70	function	BGSDefaultObjectManager::RecordFlags::GetSingleton	named	commonlib+addrlib	13894	pdata_start		include/RE/B/BGSDefaultObjectManager.h:1012	
+0x3187748	global	BGSFootstepManager::Singleton	named	commonlib+addrlib	403553	in_.data		include/RE/Offsets.h:43	
+0x20F8988	global	BGSGrassManager::GetSingleton	named	commonlib+addrlib	400452	in_.data		include/RE/B/BGSGrassManager.h:17	
+0x31380E0	global	BGSImpactManager::ImpactSoundData::GetSingleton	named	commonlib+addrlib	401262	in_.data		include/RE/B/BGSImpactManager.h:52	
+0x317ABA8	global	BGSSaveLoadGame::GetSingleton	named	commonlib+addrlib	403330	in_.data		include/RE/B/BGSSaveLoadGame.h:71	streaming
+0x317ABF0	global	BGSSaveLoadManager::Singleton	named	commonlib+addrlib	403340	in_.data		include/RE/Offsets.h:54	streaming
+0x0367620	global	BGSStoryEventManager::GetSingleton	named	commonlib+addrlib	22790	in_.text		include/RE/Offsets.h:66	
+0x20FBA78	global	BGSStoryTeller::Singleton	named	commonlib+addrlib	400476	in_.data		include/RE/Offsets.h:73	
+0x0CB0490	global	BSAudioManager::GetSingleton	named	commonlib+addrlib	67652	in_.text		include/RE/Offsets.h:84	
+0x3187750	global	BSDirectInputManager::GetSingleton	named	commonlib+addrlib	403554	in_.data		src/RE/B/BSDirectInputManager.cpp:7	
+0x20F6A20	global	BSFaceGenManager::GetSingleton	named	commonlib+addrlib	400331	in_.data		include/RE/B/BSFaceGenManager.h:40	
+0x328BE80	global	BSGraphics::RenderTargetManager::GetSingleton	named	commonlib+addrlib	411451	in_.data		include/RE/R/RenderTargetManager.h:15	renderer
+0x328CC20	global	BSGraphics::State::GetSingleton	named	commonlib+addrlib	411479	in_.data		include/RE/S/State.h:15	renderer
+0x2029820	global	BSInputDevice	named	commonlib+addrlib	388487	in_.data		src/RE/B/BSKeyboardDevice.cpp:9	
+0x1FD49F0	global	BSInputDevice	named	commonlib+addrlib	358892	in_.data		src/RE/B/BSKeyboardDevice.cpp:10	
+0x2029838	global	BSInputDevice	named	commonlib+addrlib	388490	in_.data		src/RE/B/BSMouseDevice.cpp:10	
+0x2029770	global	BSInputDeviceManager::ProcessGamepadEnabledChange	named	commonlib+addrlib	388465	in_.data		src/RE/B/BSInputDeviceManager.cpp:102	
+0x315CEA0	global	BSInputDeviceManager::Singleton	named	commonlib+addrlib	402776	in_.data		include/RE/Offsets.h:90	
+0x31B1468	global	BSInputEventQueue::GetSingleton	named	commonlib+addrlib	407374	in_.data		src/RE/B/BSInputEventQueue.cpp:7	
+0x30FDB20	global	BSMusicManager::GetSingleton	named	commonlib+addrlib	400896	in_.data		include/RE/B/BSMusicManager.h:26	
+0x20FC600	global	BSPointerHandleManager::Entry::GetHandleEntries	named	commonlib+addrlib	400622	in_.data		include/RE/B/BSPointerHandleManager.h:30	
+0x202DEB0	global	BSScaleformManager::CollectDisplayInfo	named	commonlib+addrlib	389569	in_.data		src/RE/B/BSScaleformManager.cpp:198	
+0x202DEC8	global	BSScaleformManager::CollectDisplayInfo	named	commonlib+addrlib	389572	in_.data		src/RE/B/BSScaleformManager.cpp:199	
+0x202DEE0	global	BSScaleformManager::CollectDisplayInfo	named	commonlib+addrlib	389575	in_.data		src/RE/B/BSScaleformManager.cpp:203	
+0x202DEF8	global	BSScaleformManager::CollectDisplayInfo	named	commonlib+addrlib	389578	in_.data		src/RE/B/BSScaleformManager.cpp:204	
+0x35F11C8	global	BSScaleformManager::GetSingleton	named	commonlib+addrlib	402775	in_.data		src/RE/B/BSScaleformManager.cpp:14	
+0x2033060	global	BSShaderManager::State::GetSingleton	named	commonlib+addrlib	390951	in_.data		include/RE/B/BSShaderManager.h:32	renderer
+0x31CC270	global	BSTimer::GetSingleton	named	commonlib+addrlib	410196	in_.data		include/RE/B/BSTimer.h:10	
+0x20294F8	global	BSTimer::QGlobalTimeMultiplier	named	commonlib+addrlib	388442	in_.data		include/RE/B/BSTimer.h:16	
+0x20294FC	global	BSTimer::QGlobalTimeMultiplierTarget	named	commonlib+addrlib	388443	in_.data		include/RE/B/BSTimer.h:22	
+0x20F6A18	global	BSTreeManager::IQueryCullingCamera::GetSingleton	named	commonlib+addrlib	400330	in_.data		include/RE/B/BSTreeManager.h:32	lod
+0x152E130	global	BSWin32SaveDataSystemUtility::GetSingleton	named	commonlib+addrlib	109278	in_.text		include/RE/Offsets.h:162	
+0x31874F4	global	BarterMenu::GetTargetRefHandle	named	commonlib+addrlib	403520	in_.data		src/RE/B/BarterMenu.cpp:7	
+0x31AC960	global	BookMenu::GetTargetForm	named	commonlib+addrlib	405835	in_.data		src/RE/B/BookMenu.cpp:10	
+0x31AC988	global	BookMenu::GetTargetReference	named	commonlib+addrlib	405840	in_.data		src/RE/B/BookMenu.cpp:16	
+0x0CEE130	global	BucketTable::GetSingleton	named	commonlib+addrlib	69200	in_.text		include/RE/Offsets.h:157	
+0x17E22C4	global	Calendar::GetHoursPerDay	named	commonlib+addrlib	195681	in_.rdata		src/RE/C/Calendar.cpp:91	sky_weather
+0x20F8960	global	Calendar::Singleton	named	commonlib+addrlib	400447	in_.data		include/RE/Offsets.h:167	sky_weather
+0x31AB798	global	CombatManager::GetSingleton	named	commonlib+addrlib	405246	in_.data		include/RE/C/CombatManager.h:28	
+0x3137EE0	global	ConsoleLog::Singleton	named	commonlib+addrlib	401203	in_.data		include/RE/Offsets.h:178	papyrus
+0x31ACDB8	global	ContainerMenu::GetContainerMode	named	commonlib+addrlib	405937	in_.data		src/RE/C/ContainerMenu.cpp:7	
+0x31ACE80	global	ContainerMenu::GetTargetRefHandle	named	commonlib+addrlib	405962	in_.data		src/RE/C/ContainerMenu.cpp:13	
+0x30FDA10	global	ControlMap::Singleton	named	commonlib+addrlib	400863	in_.data		include/RE/Offsets.h:184	
+0x3138ED0	global	CrosshairPickData::GetSingleton	named	commonlib+addrlib	401585	in_.data		include/RE/C/CrosshairPickData.h:17	
+0x20F8948	global	FOCollisionListener::ObjectDamageImpactData::GetSingleton	named	commonlib+addrlib	400444	in_.data		include/RE/F/FOCollisionListener.h:39	
+0x1FD5210	global	FORM_ENUM_STRING::GetFormEnumString	named	commonlib+addrlib	359120	in_.data		include/RE/F/FORM_ENUM_STRING.h:12	
+0x187AC90	global	FindMaxMagnitudeVisitor::Accept	named	commonlib+addrlib	205805	in_.rdata		src/RE/F/FindMaxMagnitudeVisitor.cpp:8	
+0x014EF60	function	FixedStrings::GetSingleton	named	commonlib+addrlib	11437	pdata_start		include/RE/F/FixedStrings.h:13	
+0x1A05920	global	GASActionBufferData::Vtbl	named	commonlib+addrlib	242366	in_.rdata		include/RE/Offsets.h:219	
+0x1A05EF0	global	GASDoAction::Vtbl	named	commonlib+addrlib	242413	in_.rdata		include/RE/Offsets.h:224	
+0x1A05F30	global	GASDoInitAction::Vtbl	named	commonlib+addrlib	242414	in_.rdata		include/RE/Offsets.h:229	
+0x1A34F68	global	GFxInitImportActions::Vtbl	named	commonlib+addrlib	244866	in_.rdata		include/RE/Offsets.h:234	
+0x1A077E8	global	GFxPlaceObject2::Vtbl	named	commonlib+addrlib	242592	in_.rdata		include/RE/Offsets.h:251	
+0x1A07840	global	GFxPlaceObject3::Vtbl	named	commonlib+addrlib	242593	in_.rdata		include/RE/Offsets.h:256	
+0x1A34EE8	global	GFxRemoveObject2::Vtbl	named	commonlib+addrlib	244864	in_.rdata		include/RE/Offsets.h:266	
+0x1A34EA8	global	GFxRemoveObject::Vtbl	named	commonlib+addrlib	244863	in_.rdata		include/RE/Offsets.h:261	
+0x1A34F28	global	GFxSetBackgroundColor::Vtbl	named	commonlib+addrlib	244865	in_.rdata		include/RE/Offsets.h:271	
+0x3292490	global	GMemory::GlobalHeap	named	commonlib+addrlib	412058	in_.data		include/RE/Offsets.h:307	
+0x30FD6F0	global	GameSettingCollection::Singleton	named	commonlib+addrlib	400782	in_.data		include/RE/Offsets.h:213	
+0x31CC290	global	GetDurationOfApplicationRunTime	named	commonlib+addrlib	410201	in_.data		src/RE/M/Misc.cpp:65	
+0x31CC288	global	GetSecondsSinceLastFrame	named	commonlib+addrlib	410199	in_.data		src/RE/M/Misc.cpp:84	
+0x31AD380	global	GiftMenu::GetTargetRefHandle	named	commonlib+addrlib	406111	in_.data		src/RE/G/GiftMenu.cpp:7	
+0x31A8DA0	global	HandlerDictionary::GetSingleton	named	commonlib+addrlib	404607	in_.data		src/RE/I/IHandlerFunctor.cpp:7	
+0x20FBB90	global	IFormFactory::GetFormFactories	named	commonlib+addrlib	400508	in_.data		src/RE/I/IFormFactory.cpp:12	
+0x20FBB80	global	IFormFactory::GetFormFactories	named	commonlib+addrlib	400503	in_.data		src/RE/I/IFormFactory.cpp:13	
+0x31CC390	global	INIPrefSettingCollection::Singleton	named	commonlib+addrlib	410219	in_.data		include/RE/Offsets.h:318	
+0x327E0E0	global	INISettingCollection::Singleton	named	commonlib+addrlib	411155	in_.data		include/RE/Offsets.h:323	
+0x332A6A0	global	ImageSpaceManager::GetSingleton	named	commonlib+addrlib	414660	in_.data		include/RE/I/ImageSpaceManager.h:182	renderer
+0x20F8958	global	InterfaceStrings::Singleton	named	commonlib+addrlib	400446	in_.data		include/RE/Offsets.h:328	
+0x3187778	global	Inventory3DManager::GetSingleton	named	commonlib+addrlib	403559	in_.data		src/RE/I/Inventory3DManager.cpp:7	
+0x31AECD8	global	LockpickingMenu::GetTargetReference	named	commonlib+addrlib	406271	in_.data		src/RE/L/LockpickingMenu.cpp:9	
+0x317ABE0	global	MagicFavorites::Singleton	named	commonlib+addrlib	403337	in_.data		include/RE/Offsets.h:367	
+0x31872B4	global	Main::QFrameAnimTime	named	commonlib+addrlib	403447	in_.data		src/RE/M/Main.cpp:16	
+0x31872C0	global	Main::Singleton	named	commonlib+addrlib	403449	in_.data		include/RE/Offsets.h:383	
+0x31874C0	global	Main::WorldRootNode	named	commonlib+addrlib	403513	in_.data		src/RE/M/Main.cpp:29	
+0x011BBA0	function	MemoryManager::ThreadScrapHeap::GetSingleton	named	commonlib+addrlib	11141	pdata_start		include/RE/M/MemoryManager.h:32	
+0x31380E8	global	MenuControls::Singleton	named	commonlib+addrlib	401263	in_.data		include/RE/Offsets.h:388	
+0x3169190	global	MenuCursor::GetSingleton	named	commonlib+addrlib	403551	in_.data		src/RE/M/MenuCursor.cpp:8	
+0x3137778	global	MenuTopicManager::Dialogue::GetSingleton	named	commonlib+addrlib	401099	in_.data		include/RE/M/MenuTopicManager.h:63	
+0x0977710	global	MessageDataFactoryManager::GetSingleton	named	commonlib+addrlib	52875	in_.text		include/RE/Offsets.h:393	
+0x31AF0F0	global	MistMenu::RUNTIME_DATA::GetSingleton	named	commonlib+addrlib	406370	in_.data		include/RE/M/MistMenu.h:133	
+0x31D7B68	global	NiMemManager::Singleton	named	commonlib+addrlib	410319	in_.data		include/RE/Offsets.h:409	
+0x3272C98	global	NiPoint3::Zero	named	commonlib+addrlib	410468	in_.data		include/RE/Offsets.h:419	
+0x3272EA0	global	NiRefObject::TotalObjectCount	named	commonlib+addrlib	410493	in_.data		include/RE/Offsets.h:424	scenegraph
+0x30FD7F8	global	PlayerCamera::Singleton	named	commonlib+addrlib	400802	in_.data		include/RE/Offsets.h:434	
+0x319B9D6	global	PlayerCharacter::IsGodMode	named	commonlib+addrlib	404238	in_.data		src/RE/P/PlayerCharacter.cpp:24	
+0x31874F8	global	PlayerCharacter::Singleton	named	commonlib+addrlib	403521	in_.data		include/RE/Offsets.h:451	
+0x30FDA18	global	PlayerControls::Singleton	named	commonlib+addrlib	400864	in_.data		include/RE/Offsets.h:458	
+0x31390C8	global	Precipitation::OcclusionMapData::GetDirection	named	commonlib+addrlib	401648	in_.data		include/RE/P/Precipitation.h:36	sky_weather
+0x20F69B0	global	ProcessLists::GetSingleton	named	commonlib+addrlib	400315	in_.data		src/RE/P/ProcessLists.cpp:13	
+0x20FBA60	global	Projectile::Manager::GetSingleton	named	commonlib+addrlib	400473	in_.data		src/RE/P/Projectile.cpp:175	
+0x3286A18	global	Renderer::GetCurrentRenderWindow	named	commonlib+addrlib	411349	in_.data		src/RE/R/Renderer.cpp:154	renderer
+0x3286A10	global	Renderer::GetDevice	named	commonlib+addrlib	411348	in_.data		src/RE/R/Renderer.cpp:148	renderer
+0x3286A08	global	Renderer::GetRendererData	named	commonlib+addrlib	411347	in_.data		src/RE/R/Renderer.cpp:135	renderer
+0x328CC44	global	Renderer::GetScreenSize	named	commonlib+addrlib	411483	in_.data		src/RE/R/Renderer.cpp:142	renderer
+0x32887C0	global	Renderer::GetSingleton	named	commonlib+addrlib	411393	in_.data		src/RE/R/Renderer.cpp:9	renderer
+0x319A080	global	ResponseDictionary::GetSingleton	named	commonlib+addrlib	403902	in_.data		src/RE/B/BSResponse.cpp:7	
+0x2011498	global	ReticuleController::GetSingleton	named	commonlib+addrlib	380335	in_.data		include/RE/R/ReticuleController.h:13	
+0x1FEA0B0	global	SCRIPT_FUNCTION::FirstConsoleCommand	named	commonlib+addrlib	365650	in_.data		include/RE/Offsets.h:480	papyrus
+0x1FDBA10	global	SCRIPT_FUNCTION::FirstScriptCommand	named	commonlib+addrlib	361120	in_.data		include/RE/Offsets.h:481	papyrus
+0x30FD380	global	ScreenSplatter::GetSingleton	named	commonlib+addrlib	400672	in_.data		include/RE/S/ScreenSplatter.h:18	
+0x01D5230	function	ScriptEventSourceHolder::GetSingleton	named	commonlib+addrlib	14298	pdata_start		src/RE/S/ScriptEventSourceHolder.cpp:12	papyrus
+0x01C2640	function	Sky::GetSingleton	named	commonlib+addrlib	13878	pdata_start		src/RE/S/Sky.cpp:10	sky_weather
+0x20FBA70	global	SkyrimVM::Singleton	named	commonlib+addrlib	400475	in_.data		include/RE/Offsets.h:488	papyrus
+0x20F8940	global	SubtitleManager::GetSingleton	named	commonlib+addrlib	400443	in_.data		include/RE/S/SubtitleManager.h:26	
+0x31872C8	global	TES::Singleton	named	commonlib+addrlib	403450	in_.data		include/RE/Offsets.h:493	streaming
+0x20F6320	global	TESDataHandler::Singleton	named	commonlib+addrlib	400269	in_.data		include/RE/Offsets.h:504	streaming
+0x20FBB88	global	TESForm::RecordFlags::GetAllForms	named	commonlib+addrlib	400507	in_.data		include/RE/T/TESForm.h:195	
+0x20FC018	global	TESForm::RecordFlags::GetAllForms	named	commonlib+addrlib	400517	in_.data		include/RE/T/TESForm.h:196	
+0x20FBFE0	global	TESForm::RecordFlags::GetAllFormsByEditorID	named	commonlib+addrlib	400509	in_.data		include/RE/T/TESForm.h:205	
+0x20FC020	global	TESForm::RecordFlags::GetAllFormsByEditorID	named	commonlib+addrlib	400518	in_.data		include/RE/T/TESForm.h:206	
+0x20F8978	global	TESWaterSystem::GetSingleton	named	commonlib+addrlib	400450	in_.data		include/RE/T/TESWaterSystem.h:31	water
+0x31993A0	global	TaskQueueInterface::GetSingleton	named	commonlib+addrlib	403759	in_.data		src/RE/T/TaskQueueInterface.cpp:7	
+0x3187780	global	UI3DSceneManager::GetSingleton	named	commonlib+addrlib	403560	in_.data		src/RE/U/UI3DSceneManager.cpp:7	
+0x20F6A00	global	UI::Singleton	named	commonlib+addrlib	400327	in_.data		include/RE/Offsets.h:557	
+0x3186D98	global	UIBlurManager::Singleton	named	commonlib+addrlib	403350	in_.data		include/RE/Offsets.h:564	
+0x20F8950	global	UIMessageQueue::Singleton	named	commonlib+addrlib	400445	in_.data		include/RE/Offsets.h:572	
+0x3186D98	global	UIRenderManager::UILightData::GetSingleton	named	commonlib+addrlib	403350	in_.data		include/RE/U/UIRenderManager.h:35	
+0x315CC30	global	UserEvents::Singleton	named	commonlib+addrlib	402638	in_.data		include/RE/Offsets.h:577	
+0x30FDAA0	global	VATS::GetSingleton	named	commonlib+addrlib	400883	in_.data		include/RE/V/VATS.h:50	
+0x20FC180	global	bhkCollisionFilter::GetSingleton	named	commonlib+addrlib	400562	in_.data		include/RE/B/bhkCollisionFilter.h:16	
+0x17849DC	global	bhkWorld::GetWorldScale	named	commonlib+addrlib	188105	in_.rdata		include/RE/B/bhkWorld.h:44	
+0x177ADFC	global	bhkWorld::GetWorldScaleInverse	named	commonlib+addrlib	187407	in_.rdata		include/RE/B/bhkWorld.h:50	
+0x2019838	global	hkContainerHeapAllocator::Allocator::GetSingleton	named	commonlib+addrlib	383828	in_.data		include/RE/H/hkContainerAllocators.h:27	
+0x2029788	global	padCE	named	commonlib+addrlib	388468	in_.data		src/RE/B/BSGamepadDevice.cpp:13	

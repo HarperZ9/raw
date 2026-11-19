@@ -1,0 +1,187 @@
+rva	kind	name	confidence	source	addrlib_id	check	refs	notes
+0x021ED80	function	NiCamera::BoundInFrustum	named	commonlib+addrlib	15899	pdata_start		src/RE/N/NiCamera.cpp:8
+0x0267D30	vfunc	BSDynamicTriShape::GetRTTI	named	rtti+commonlib	17349	no_pdata_entry	vtables(2): BSDynamicTriShape[02], BSParticleShaderGeometry[02]	
+0x0267D50	vfunc	BSDynamicTriShape::AsDynamicTriShape	named	rtti+commonlib	17351	no_pdata_entry	vtables(2): BSDynamicTriShape[0C], BSParticleShaderGeometry[0C]	
+0x0409040	vfunc	NiCullingProcess::GetAsBhkAttachmentCollisionObject	named	rtti+commonlib	26193	no_pdata_entry	vtables(5): BSCullingProcess[12], BSFadeNodeCuller[12], BSGeometryListCullingProcess[12], BSParabolicCullingProcess[12], NiCullingProcess[12]	
+0x0409050	vfunc	NiCullingProcess::GetAsBhkBlendCollisionObject	named	rtti+commonlib	26194	no_pdata_entry	vtables(5): BSCullingProcess[11], BSFadeNodeCuller[11], BSGeometryListCullingProcess[11], BSParabolicCullingProcess[11], NiCullingProcess[11]	
+0x0409060	vfunc	NiCullingProcess::GetAsBhkLimitedHingeConstraint	named	rtti+commonlib	26195	no_pdata_entry	vtables(5): BSCullingProcess[14], BSFadeNodeCuller[14], BSGeometryListCullingProcess[14], BSParabolicCullingProcess[14], NiCullingProcess[14]	
+0x0409070	vfunc	NiCullingProcess::GetAsBhkNiCollisionObject	named	rtti+commonlib	26196	no_pdata_entry	vtables(5): BSCullingProcess[10], BSFadeNodeCuller[10], BSGeometryListCullingProcess[10], BSParabolicCullingProcess[10], NiCullingProcess[10]	
+0x0409080	vfunc	NiCullingProcess::GetAsBhkRigidBody	named	rtti+commonlib	26197	no_pdata_entry	vtables(5): BSCullingProcess[13], BSFadeNodeCuller[13], BSGeometryListCullingProcess[13], BSParabolicCullingProcess[13], NiCullingProcess[13]	
+0x0409090	vfunc	NiCullingProcess::GetAsBSDynamicTriShape	named	rtti+commonlib	26198	no_pdata_entry	vtables(5): BSCullingProcess[0A], BSFadeNodeCuller[0A], BSGeometryListCullingProcess[0A], BSParabolicCullingProcess[0A], NiCullingProcess[0A]	
+0x04090A0	vfunc	NiCullingProcess::GetAsBSFadeNode	named	rtti+commonlib	26199	no_pdata_entry	vtables(5): BSCullingProcess[03], BSFadeNodeCuller[03], BSGeometryListCullingProcess[03], BSParabolicCullingProcess[03], NiCullingProcess[03]	
+0x04090B0	vfunc	NiCullingProcess::GetAsBSGeometry	named	rtti+commonlib	26200	no_pdata_entry	vtables(5): BSCullingProcess[05], BSFadeNodeCuller[05], BSGeometryListCullingProcess[05], BSParabolicCullingProcess[05], NiCullingProcess[05]	
+0x04090C0	vfunc	NiCullingProcess::GetAsBSLines	named	rtti+commonlib	26201	no_pdata_entry	vtables(5): BSCullingProcess[0F], BSFadeNodeCuller[0F], BSGeometryListCullingProcess[0F], BSParabolicCullingProcess[0F], NiCullingProcess[0F]	
+0x04090D0	vfunc	NiCullingProcess::GetAsBSMultiBoundNode	named	rtti+commonlib	26202	no_pdata_entry	vtables(5): BSCullingProcess[04], BSFadeNodeCuller[04], BSGeometryListCullingProcess[04], BSParabolicCullingProcess[04], NiCullingProcess[04]	
+0x04090E0	vfunc	NiCullingProcess::GetAsNiGeometry	named	rtti+commonlib	26203	no_pdata_entry	vtables(5): BSCullingProcess[0B], BSFadeNodeCuller[0B], BSGeometryListCullingProcess[0B], BSParabolicCullingProcess[0B], NiCullingProcess[0B]	
+0x04090F0	vfunc	NiCullingProcess::GetAsNiTriBasedGeom	named	rtti+commonlib	26204	no_pdata_entry	vtables(5): BSCullingProcess[0C], BSFadeNodeCuller[0C], BSGeometryListCullingProcess[0C], BSParabolicCullingProcess[0C], NiCullingProcess[0C]	
+0x0409100	vfunc	NiCullingProcess::GetAsNiTriShape	named	rtti+commonlib	26205	no_pdata_entry	vtables(5): BSCullingProcess[0D], BSFadeNodeCuller[0D], BSGeometryListCullingProcess[0D], BSParabolicCullingProcess[0D], NiCullingProcess[0D]	
+0x0409110	vfunc	NiCullingProcess::GetAsNiNode	named	rtti+commonlib	26206	no_pdata_entry	vtables(5): BSCullingProcess[01], BSFadeNodeCuller[01], BSGeometryListCullingProcess[01], BSParabolicCullingProcess[01], NiCullingProcess[01]	
+0x0409120	vfunc	NiCullingProcess::GetAsNiParticles	named	rtti+commonlib	26207	no_pdata_entry	vtables(5): BSCullingProcess[0E], BSFadeNodeCuller[0E], BSGeometryListCullingProcess[0E], BSParabolicCullingProcess[0E], NiCullingProcess[0E]	
+0x0409130	vfunc	NiCullingProcess::GetAsBSSegmentedTriShape	named	rtti+commonlib	26208	no_pdata_entry	vtables(5): BSCullingProcess[08], BSFadeNodeCuller[08], BSGeometryListCullingProcess[08], BSParabolicCullingProcess[08], NiCullingProcess[08]	
+0x0409140	vfunc	NiCullingProcess::GetAsBSSubIndexTriShape	named	rtti+commonlib	26209	no_pdata_entry	vtables(5): BSCullingProcess[09], BSFadeNodeCuller[09], BSGeometryListCullingProcess[09], BSParabolicCullingProcess[09], NiCullingProcess[09]	
+0x0409150	vfunc	NiCullingProcess::GetAsNiSwitchNode	named	rtti+commonlib	26210	no_pdata_entry	vtables(5): BSCullingProcess[02], BSFadeNodeCuller[02], BSGeometryListCullingProcess[02], BSParabolicCullingProcess[02], NiCullingProcess[02]	
+0x0409160	vfunc	NiCullingProcess::GetAsBSTriShape	named	rtti+commonlib	26211	no_pdata_entry	vtables(5): BSCullingProcess[07], BSFadeNodeCuller[07], BSGeometryListCullingProcess[07], BSParabolicCullingProcess[07], NiCullingProcess[07]	
+0x0409170	vfunc	NiCullingProcess::GetAsNiTriStrips	named	rtti+commonlib	26212	no_pdata_entry	vtables(5): BSCullingProcess[06], BSFadeNodeCuller[06], BSGeometryListCullingProcess[06], BSParabolicCullingProcess[06], NiCullingProcess[06]	
+0x043A000	vfunc	NiCullingProcess::AppendVirtual	named	rtti+commonlib	27130	pdata_start	vtables(2): BSFadeNodeCuller[18], NiCullingProcess[18]	
+0x0D2A4D0	vfunc	NiCamera::CreateClone	named	rtti+commonlib	70616	pdata_start	vtables(2): BSCubeMapCamera[17], NiCamera[17]	
+0x0D2A730	vfunc	NiCamera::LoadBinary	named	rtti+commonlib	70618	pdata_start	vtables(2): BSCubeMapCamera[18], NiCamera[18]	
+0x0D2A9F0	vfunc	NiCamera::LinkObject	named	rtti+commonlib	70619	pdata_start	vtables(2): BSCubeMapCamera[19], NiCamera[19]	
+0x0D2AAE0	vfunc	NiCamera::RegisterStreamables	named	rtti+commonlib	70620	no_pdata_entry	vtables(2): BSCubeMapCamera[1A], NiCamera[1A]	
+0x0D2AAF0	vfunc	NiCamera::SaveBinary	named	rtti+commonlib	70621	pdata_start	vtables(2): BSCubeMapCamera[1B], NiCamera[1B]	
+0x0D2ADF0	vfunc	NiCamera::IsEqual	named	rtti+commonlib	70622	pdata_start	vtables(2): BSCubeMapCamera[1C], NiCamera[1C]	
+0x0D2C780	function	NiCamera::WorldPtToScreenPt3	named	commonlib+addrlib	70640	pdata_start		include/RE/Offsets.h:404
+0x0D2CD70	vfunc	NiCamera::UpdateWorldData	named	rtti+commonlib	70642	pdata_start	vtables(2): BSCubeMapCamera[30], NiCamera[30]	
+0x0D2CF50	vfunc	NiCamera::UpdateWorldBound	named	rtti+commonlib	70644	no_pdata_entry	vtables(2): BSCubeMapCamera[2F], NiCamera[2F]	
+0x0D2D010	vfunc	NiCamera::Dtor	named	rtti+commonlib	70646	pdata_start	vtables(1): NiCamera[00]	
+0x0D2D050	vfunc	NiCamera::GetRTTI	named	rtti+commonlib	70647	no_pdata_entry	vtables(1): NiCamera[02]	
+0x0D385B0	vfunc	BSDynamicTriShape::CreateClone	named	rtti+commonlib	70939	pdata_start	vtables(2): BSDynamicTriShape[17], BSParticleShaderGeometry[17]	
+0x0D38880	vfunc	BSDynamicTriShape::LoadBinary	named	rtti+commonlib	70941	pdata_start	vtables(2): BSDynamicTriShape[18], BSParticleShaderGeometry[18]	
+0x0D38950	vfunc	BSDynamicTriShape::LinkObject	named	rtti+commonlib	70942	no_pdata_entry	vtables(2): BSDynamicTriShape[19], BSParticleShaderGeometry[19]	
+0x0D38960	vfunc	BSDynamicTriShape::RegisterStreamables	named	rtti+commonlib	70943	no_pdata_entry	vtables(2): BSDynamicTriShape[1A], BSParticleShaderGeometry[1A]	
+0x0D38970	vfunc	BSDynamicTriShape::SaveBinary	named	rtti+commonlib	70944	pdata_start	vtables(2): BSDynamicTriShape[1B], BSParticleShaderGeometry[1B]	
+0x0D38A10	vfunc	BSDynamicTriShape::IsEqual	named	rtti+commonlib	70945	no_pdata_entry	vtables(2): BSDynamicTriShape[1C], BSParticleShaderGeometry[1C]	
+0x0D38BA0	function	BSDynamicTriShape::DYNAMIC_TRISHAPE_RUNTIME_DATA::ctor	named	commonlib+addrlib	70948	pdata_start		include/RE/B/BSDynamicTriShape.h:47
+0x0D395B0	vfunc	BSDynamicTriShape::Dtor	named	rtti+commonlib	70958	pdata_start	vtables(1): BSDynamicTriShape[00]	declared in BSTriShape
+0x0D3FD90	vfunc	NiCullingProcess::Process2	named	rtti+commonlib	71080	no_pdata_entry	vtables(1): NiCullingProcess[17]	
+0x0D40030	vfunc	NiCullingProcess::Process1	named	rtti+commonlib	71084	pdata_start	vtables(1): NiCullingProcess[16]	
+0x0D401D0	vfunc	NiCullingProcess::Dtor	named	rtti+commonlib	71085	pdata_start	vtables(1): NiCullingProcess[15]	
+0x0D40200	vfunc	NiCullingProcess::GetRTTI	named	rtti+commonlib	71086	no_pdata_entry	vtables(1): NiCullingProcess[00]	
+0x0E11790	vfunc	BSTextureDB::QueuedHandles::vfunc_07	inferred	rtti	76040	no_pdata_entry	vtables(1): BSTextureDB::QueuedHandles[07]	
+0x0E117E0	vfunc	BSTextureDB::QueuedHandles::vfunc_12	inferred	rtti	76041	no_pdata_entry	vtables(1): BSTextureDB::QueuedHandles[12]	
+0x0E12410	vfunc	BSTextureDB::?A0x015cde67::NiTextureDBForwarded::vfunc_00	inferred	rtti	76063	pdata_start	vtables(1): BSTextureDB::?A0x015cde67::NiTextureDBForwarded[00]	
+0x0E12440	vfunc	BSTextureDB::QueuedHandles::vfunc_00	inferred	rtti	76064	pdata_start	vtables(1): BSTextureDB::QueuedHandles[00]	
+0x0E12930	vfunc	BSTextureDB::?A0x015cde67::NiTextureDBForwarded::vfunc_03	inferred	rtti	76071	pdata_start	vtables(1): BSTextureDB::?A0x015cde67::NiTextureDBForwarded[03]	
+0x0E13070	vfunc	BSTextureDB::?A0x015cde67::NiTextureDBForwarded::vfunc_02	inferred	rtti	76082	pdata_start	vtables(1): BSTextureDB::?A0x015cde67::NiTextureDBForwarded[02]	
+0x0E13640	vfunc	BSTextureDB::?A0x015cde67::NiTextureDBForwarded::vfunc_01	inferred	rtti	76091	no_pdata_entry	vtables(1): BSTextureDB::?A0x015cde67::NiTextureDBForwarded[01]	
+0x0E28390	vfunc	BSCullingProcess::Process1	named	rtti+commonlib	76553	pdata_start	vtables(2): BSCullingProcess[16], BSGeometryListCullingProcess[16]	
+0x0E28690	vfunc	BSCullingProcess::Process2	named	rtti+commonlib	76554	pdata_start	vtables(2): BSCullingProcess[17], BSGeometryListCullingProcess[17]	
+0x0E28870	vfunc	BSCullingProcess::AppendNonAccum	named	rtti+commonlib	76555	pdata_start	vtables(1): BSCullingProcess[19]	
+0x0E288E0	vfunc	BSCullingProcess::AppendVirtual	named	rtti+commonlib	76556	pdata_start	vtables(3): BSCullingProcess[18], BSGeometryListCullingProcess[18], BSParabolicCullingProcess[18]	
+0x0E29260	vfunc	BSCullingProcess::TestBaseVisibility3	named	rtti+commonlib	76564	pdata_start	vtables(2): BSCullingProcess[1C], BSGeometryListCullingProcess[1C]	
+0x0E29330	vfunc	BSCullingProcess::TestBaseVisibility2	named	rtti+commonlib	76565	no_pdata_entry	vtables(2): BSCullingProcess[1B], BSGeometryListCullingProcess[1B]	
+0x0E29350	vfunc	BSCullingProcess::TestBaseVisibility1	named	rtti+commonlib	76566	no_pdata_entry	vtables(2): BSCullingProcess[1A], BSGeometryListCullingProcess[1A]	
+0x0E29730	vfunc	BSCullingProcess::Dtor	named	rtti+commonlib	76576	pdata_start	vtables(1): BSCullingProcess[15]	
+0x0E29880	vfunc	BSCullingProcess::GetRTTI	named	rtti+commonlib	76579	no_pdata_entry	vtables(1): BSCullingProcess[00]	
+0x0E423E0	function	Renderer::Init	named	commonlib+addrlib	77226	pdata_start		src/RE/R/Renderer.cpp:30
+0x0E42E10	function	Renderer::Shutdown	named	commonlib+addrlib	77228	pdata_start		src/RE/R/Renderer.cpp:128
+0x0E43380	function	Renderer::SetWindowPosition	named	commonlib+addrlib	77233	no_pdata_entry		src/RE/R/Renderer.cpp:93
+0x0E43410	function	Renderer::RequestWindowResize	named	commonlib+addrlib	77235	no_pdata_entry		src/RE/R/Renderer.cpp:86
+0x0E43440	function	Renderer::SetWindowActiveState	named	commonlib+addrlib	77236	pdata_start		src/RE/R/Renderer.cpp:100
+0x0E434A0	function	Renderer::KillWindow	named	commonlib+addrlib	77237	pdata_start		src/RE/R/Renderer.cpp:58
+0x0E43BC0	function	Renderer::WindowSizeChanged	named	commonlib+addrlib	77238	pdata_start		src/RE/R/Renderer.cpp:107
+0x0E44050	function	Renderer::ResizeWindow	named	commonlib+addrlib	77239	pdata_start		src/RE/R/Renderer.cpp:79
+0x0E441C0	function	Renderer::UpdateViewPort	named	commonlib+addrlib	77240	pdata_start		src/RE/R/Renderer.cpp:121
+0x0E44360	function	Renderer::CreateSwapChain	named	commonlib+addrlib	77242	pdata_start		src/RE/R/Renderer.cpp:44
+0x0E44550	function	Renderer::Lock	named	commonlib+addrlib	77243	no_pdata_entry		src/RE/R/Renderer.cpp:65
+0x0E44570	function	Renderer::Unlock	named	commonlib+addrlib	77244	no_pdata_entry		src/RE/R/Renderer.cpp:72
+0x0E44590	function	Renderer::Begin	named	commonlib+addrlib	77245	pdata_start		src/RE/R/Renderer.cpp:37
+0x0E44770	function	Renderer::End	named	commonlib+addrlib	77246	pdata_start		src/RE/R/Renderer.cpp:51
+0x0E48190	function	Renderer::CreateRenderTexture	named	commonlib+addrlib	77299	pdata_start		src/RE/R/Renderer.cpp:16
+0x0E48ED0	function	Renderer::SaveRenderTargetToFile	named	commonlib+addrlib	77316	pdata_start		src/RE/R/Renderer.cpp:23
+0x1480030	function	BSShaderManager::State::GetTexture	named	commonlib+addrlib	105640	pdata_start		include/RE/B/BSShaderManager.h:81
+0x149DD20	vfunc	ImageSpaceEffect::BorrowTextures	named	rtti+commonlib	106173	no_pdata_entry	vtables(11): ImageSpaceEffect[04], ImageSpaceEffectBlur[04], ImageSpaceEffectHDR[04], ImageSpaceEffectMap[04], ImageSpaceEffectNoise[04], ImageSpaceEffectOption[04], +5 more	
+0x149F5E0	vfunc	ImageSpaceEffect::IsActive	named	rtti+commonlib	106296	no_pdata_entry	vtables(4): ImageSpaceEffect[06], ImageSpaceEffectBlur[06], ImageSpaceEffectOption[06], ImageSpaceEffectWorldMap[06]	
+0x149F970	vfunc	ImageSpaceEffect::RestoreRenderStates	named	rtti+commonlib	106311	no_pdata_entry	vtables(14): ImageSpaceEffect[09], ImageSpaceEffectBlur[09], ImageSpaceEffectDepthOfField[09], ImageSpaceEffectFullScreenBlur[09], ImageSpaceEffectGetHit[09], ImageSpaceEffectHDR[09], +8 more	
+0x149F980	vfunc	ImageSpaceEffect::ReturnTextures	named	rtti+commonlib	106312	no_pdata_entry	vtables(10): ImageSpaceEffect[05], ImageSpaceEffectBlur[05], ImageSpaceEffectHDR[05], ImageSpaceEffectMap[05], ImageSpaceEffectNoise[05], ImageSpaceEffectOption[05], +4 more	
+0x149FA40	vfunc	ImageSpaceEffect::SetRenderStates	named	rtti+commonlib	106315	no_pdata_entry	vtables(14): ImageSpaceEffect[08], ImageSpaceEffectBlur[08], ImageSpaceEffectDepthOfField[08], ImageSpaceEffectFullScreenBlur[08], ImageSpaceEffectGetHit[08], ImageSpaceEffectHDR[08], +8 more	
+0x149FB50	vfunc	ImageSpaceEffect::Setup	named	rtti+commonlib	106317	no_pdata_entry	vtables(2): ImageSpaceEffect[02], ImageSpaceEffectOption[02]	
+0x149FBA0	vfunc	ImageSpaceEffect::UpdateParams	named	rtti+commonlib	106319	no_pdata_entry	vtables(3): ImageSpaceEffect[07], ImageSpaceEffectOption[07], ImageSpaceEffectWaterDisplacement[07]	
+0x14BF140	vfunc	ImageSpaceEffectParam::Dtor	named	rtti+commonlib	106917	pdata_start	vtables(1): ImageSpaceEffectParam[00]	
+0x14BF170	vfunc	ImageSpaceShaderParam::Dtor	named	rtti+commonlib	106918	pdata_start	vtables(1): ImageSpaceShaderParam[00]	
+0x14D0640	vfunc	ImageSpaceEffectHDR::Setup	named	rtti+commonlib	107182	pdata_start	vtables(1): ImageSpaceEffectHDR[02]	declared in ImageSpaceEffect
+0x14D0CB0	vfunc	ImageSpaceEffectHDR::Render	named	rtti+commonlib	107183	pdata_start	vtables(1): ImageSpaceEffectHDR[01]	declared in ImageSpaceEffect
+0x14D13F0	vfunc	ImageSpaceEffectHDR::UpdateParams	named	rtti+commonlib	107185	pdata_start	vtables(1): ImageSpaceEffectHDR[07]	declared in ImageSpaceEffect
+0x14D17C0	vfunc	ImageSpaceEffectHDR::Dtor	named	rtti+commonlib	107186	pdata_start	vtables(1): ImageSpaceEffectHDR[00]	declared in ImageSpaceEffect
+0x14D1880	vfunc	ImageSpaceEffectHDR::IsActive	named	rtti+commonlib	107187	no_pdata_entry	vtables(1): ImageSpaceEffectHDR[06]	declared in ImageSpaceEffect
+0x14D1890	vfunc	ImageSpaceEffectHDR::ShutDown	named	rtti+commonlib	107188	pdata_start	vtables(1): ImageSpaceEffectHDR[03]	declared in ImageSpaceEffect
+0x14E3680	vfunc	ImageSpaceEffectVolumetricLighting::Setup	named	rtti+commonlib	107377	pdata_start	vtables(1): ImageSpaceEffectVolumetricLighting[02]	declared in ImageSpaceEffect
+0x14E3AC0	vfunc	ImageSpaceEffectVolumetricLighting::IsActive	named	rtti+commonlib	107378	no_pdata_entry	vtables(1): ImageSpaceEffectVolumetricLighting[06]	declared in ImageSpaceEffect
+0x14E3AD0	vfunc	ImageSpaceEffectVolumetricLighting::UpdateParams	named	rtti+commonlib	107379	pdata_start	vtables(1): ImageSpaceEffectVolumetricLighting[07]	declared in ImageSpaceEffect
+0x14E3EE0	vfunc	ImageSpaceEffectVolumetricLighting::Dtor	named	rtti+commonlib	107381	pdata_start	vtables(1): ImageSpaceEffectVolumetricLighting[00]	declared in ImageSpaceEffect
+0x14E3F70	vfunc	ImageSpaceEffect::ShutDown	named	rtti+commonlib	107382	no_pdata_entry	vtables(11): ImageSpaceEffect[03], ImageSpaceEffectBlur[03], ImageSpaceEffectDepthOfField[03], ImageSpaceEffectFullScreenBlur[03], ImageSpaceEffectGetHit[03], ImageSpaceEffectMap[03], +5 more	
+0x14E4470	vfunc	ImageSpaceEffectDepthOfField::Render	named	rtti+commonlib	107385	pdata_start	vtables(1): ImageSpaceEffectDepthOfField[01]	
+0x14E47B0	vfunc	ImageSpaceEffectDepthOfField::Setup	named	rtti+commonlib	107386	pdata_start	vtables(1): ImageSpaceEffectDepthOfField[02]	
+0x14E4D00	vfunc	ImageSpaceEffectDepthOfField::IsActive	named	rtti+commonlib	107387	no_pdata_entry	vtables(1): ImageSpaceEffectDepthOfField[06]	
+0x14E4D80	vfunc	ImageSpaceEffectDepthOfField::UpdateParams	named	rtti+commonlib	107388	pdata_start	vtables(1): ImageSpaceEffectDepthOfField[07]	
+0x14E52A0	vfunc	ImageSpaceEffectDepthOfField::BorrowTextures	named	rtti+commonlib	107389	pdata_start	vtables(1): ImageSpaceEffectDepthOfField[04]	
+0x14E5520	vfunc	ImageSpaceEffectDepthOfField::ReturnTextures	named	rtti+commonlib	107390	pdata_start	vtables(1): ImageSpaceEffectDepthOfField[05]	
+0x14E5990	vfunc	ImageSpaceEffectDepthOfField::Dtor	named	rtti+commonlib	107396	pdata_start	vtables(1): ImageSpaceEffectDepthOfField[00]	
+0x14E5B00	vfunc	ImageSpaceEffectOption::Dtor	named	rtti+commonlib	107397	pdata_start	vtables(1): ImageSpaceEffectOption[00]	
+0x14E7610	vfunc	ImageSpaceEffect::Render	named	rtti+commonlib	107446	pdata_start	vtables(7): ImageSpaceEffect[01], ImageSpaceEffectBlur[01], ImageSpaceEffectGetHit[01], ImageSpaceEffectMap[01], ImageSpaceEffectRadialBlur[01], ImageSpaceEffectVolumetricLighting[01], +1 more	
+0x14E81C0	vfunc	ImageSpaceEffectOption::Render	named	rtti+commonlib	107457	pdata_start	vtables(1): ImageSpaceEffectOption[01]	
+0x14E87A0	vfunc	ImageSpaceEffect::Dtor	named	rtti+commonlib	107473	pdata_start	vtables(1): ImageSpaceEffect[00]	
+0x14ED4E0	vfunc	BSCubeMapCamera::vfunc_35	inferred	rtti	107562	no_pdata_entry	vtables(1): BSCubeMapCamera[35]	
+0x14EDD40	vfunc	BSCubeMapCamera::Dtor	named	rtti+commonlib	107565	pdata_start	vtables(1): BSCubeMapCamera[00]	declared in NiCamera
+0x14EDE10	vfunc	BSCubeMapCamera::GetRTTI	named	rtti+commonlib	107566	no_pdata_entry	vtables(1): BSCubeMapCamera[02]	declared in NiCamera
+0x14F2940	vfunc	BSBatchRenderer::Unk_01	inferred	rtti+commonlib	107635	pdata_start	vtables(1): BSBatchRenderer[01]	
+0x14F2A20	vfunc	BSBatchRenderer::Unk_02	inferred	rtti+commonlib	107636	pdata_start	vtables(1): BSBatchRenderer[02]	
+0x14F3280	vfunc	BSBatchRenderer::Unk_03	inferred	rtti+commonlib	107638	pdata_start	vtables(1): BSBatchRenderer[03]	
+0x14F58C0	vfunc	BSBatchRenderer::Dtor	named	rtti+commonlib	107681	pdata_start	vtables(1): BSBatchRenderer[00]	
+0x14F9740	vfunc	ImageSpaceEffectRadialBlur::Setup	named	rtti+commonlib	107750	pdata_start	vtables(1): ImageSpaceEffectRadialBlur[02]	declared in ImageSpaceEffect
+0x14F99D0	vfunc	ImageSpaceEffectRadialBlur::IsActive	named	rtti+commonlib	107751	no_pdata_entry	vtables(1): ImageSpaceEffectRadialBlur[06]	declared in ImageSpaceEffect
+0x14F9A00	vfunc	ImageSpaceEffectRadialBlur::UpdateParams	named	rtti+commonlib	107752	pdata_start	vtables(1): ImageSpaceEffectRadialBlur[07]	declared in ImageSpaceEffect
+0x14F9E20	vfunc	ImageSpaceEffectRadialBlur::Dtor	named	rtti+commonlib	107754	pdata_start	vtables(1): ImageSpaceEffectRadialBlur[00]	declared in ImageSpaceEffect
+0x14FDB70	vfunc	ImageSpaceEffectWorldMap::Setup	named	rtti+commonlib	107801	pdata_start	vtables(1): ImageSpaceEffectWorldMap[02]	declared in ImageSpaceEffect
+0x14FDF40	vfunc	ImageSpaceEffectWorldMap::UpdateParams	named	rtti+commonlib	107802	pdata_start	vtables(1): ImageSpaceEffectWorldMap[07]	declared in ImageSpaceEffect
+0x14FE080	vfunc	ImageSpaceEffectWorldMap::ReturnTextures	named	rtti+commonlib	107803	no_pdata_entry	vtables(1): ImageSpaceEffectWorldMap[05]	declared in ImageSpaceEffect
+0x14FE090	vfunc	ImageSpaceEffectWorldMap::Dtor	named	rtti+commonlib	107804	pdata_start	vtables(1): ImageSpaceEffectWorldMap[00]	declared in ImageSpaceEffect
+0x1515DA0	vfunc	ImageSpaceEffectGetHit::Setup	named	rtti+commonlib	108549	pdata_start	vtables(1): ImageSpaceEffectGetHit[02]	declared in ImageSpaceEffect
+0x1516150	vfunc	ImageSpaceEffectGetHit::BorrowTextures	named	rtti+commonlib	108550	pdata_start	vtables(1): ImageSpaceEffectGetHit[04]	declared in ImageSpaceEffect
+0x15162A0	vfunc	ImageSpaceEffectGetHit::ReturnTextures	named	rtti+commonlib	108551	no_pdata_entry	vtables(1): ImageSpaceEffectGetHit[05]	declared in ImageSpaceEffect
+0x1516330	vfunc	ImageSpaceEffectGetHit::IsActive	named	rtti+commonlib	108552	no_pdata_entry	vtables(1): ImageSpaceEffectGetHit[06]	declared in ImageSpaceEffect
+0x1516350	vfunc	ImageSpaceEffectGetHit::UpdateParams	named	rtti+commonlib	108553	pdata_start	vtables(1): ImageSpaceEffectGetHit[07]	declared in ImageSpaceEffect
+0x1516420	vfunc	ImageSpaceEffectGetHit::Dtor	named	rtti+commonlib	108554	pdata_start	vtables(1): ImageSpaceEffectGetHit[00]	declared in ImageSpaceEffect
+0x1516580	vfunc	ImageSpaceEffectBlur::Setup	named	rtti+commonlib	108557	pdata_start	vtables(1): ImageSpaceEffectBlur[02]	declared in ImageSpaceEffect
+0x1516850	vfunc	ImageSpaceEffectBlur::UpdateParams	named	rtti+commonlib	108558	pdata_start	vtables(1): ImageSpaceEffectBlur[07]	declared in ImageSpaceEffect
+0x1517100	vfunc	ImageSpaceEffectFullScreenBlur::IsActive	named	rtti+commonlib	108561	no_pdata_entry	vtables(1): ImageSpaceEffectFullScreenBlur[06]	declared in ImageSpaceEffect
+0x1517120	vfunc	ImageSpaceEffectFullScreenBlur::Setup	named	rtti+commonlib	108562	pdata_start	vtables(1): ImageSpaceEffectFullScreenBlur[02]	declared in ImageSpaceEffect
+0x15176A0	vfunc	ImageSpaceEffectFullScreenBlur::Render	named	rtti+commonlib	108563	pdata_start	vtables(1): ImageSpaceEffectFullScreenBlur[01]	declared in ImageSpaceEffect
+0x1517890	vfunc	ImageSpaceEffectFullScreenBlur::UpdateParams	named	rtti+commonlib	108564	pdata_start	vtables(1): ImageSpaceEffectFullScreenBlur[07]	declared in ImageSpaceEffect
+0x1517A30	vfunc	ImageSpaceEffectFullScreenBlur::BorrowTextures	named	rtti+commonlib	108565	pdata_start	vtables(1): ImageSpaceEffectFullScreenBlur[04]	declared in ImageSpaceEffect
+0x1517B20	vfunc	ImageSpaceEffectFullScreenBlur::ReturnTextures	named	rtti+commonlib	108566	no_pdata_entry	vtables(1): ImageSpaceEffectFullScreenBlur[05]	declared in ImageSpaceEffect
+0x1517B80	vfunc	ImageSpaceEffectBlur::Dtor	named	rtti+commonlib	108567	pdata_start	vtables(1): ImageSpaceEffectBlur[00]	declared in ImageSpaceEffect
+0x1517C60	vfunc	ImageSpaceEffectFullScreenBlur::Dtor	named	rtti+commonlib	108568	pdata_start	vtables(1): ImageSpaceEffectFullScreenBlur[00]	declared in ImageSpaceEffect
+0x1517D50	vfunc	ImageSpaceEffectBlur::vfunc_0B	inferred	rtti	108569	no_pdata_entry	vtables(1): ImageSpaceEffectBlur[0B]	
+0x1517D60	vfunc	ImageSpaceEffectBlur::vfunc_0C	inferred	rtti	108570	no_pdata_entry	vtables(1): ImageSpaceEffectBlur[0C]	
+0x1517D70	vfunc	ImageSpaceEffectBlur::vfunc_0A	inferred	rtti	108571	no_pdata_entry	vtables(1): ImageSpaceEffectBlur[0A]	
+0x1517E20	vfunc	ImageSpaceEffectMap::Setup	named	rtti+commonlib	108574	pdata_start	vtables(1): ImageSpaceEffectMap[02]	declared in ImageSpaceEffect
+0x1518170	vfunc	ImageSpaceEffectMap::UpdateParams	named	rtti+commonlib	108575	pdata_start	vtables(1): ImageSpaceEffectMap[07]	declared in ImageSpaceEffect
+0x15181E0	vfunc	ImageSpaceEffectMap::Dtor	named	rtti+commonlib	108576	pdata_start	vtables(1): ImageSpaceEffectMap[00]	declared in ImageSpaceEffect
+0x1518270	vfunc	ImageSpaceEffectMap::IsActive	named	rtti+commonlib	108577	no_pdata_entry	vtables(1): ImageSpaceEffectMap[06]	declared in ImageSpaceEffect
+0x15184D0	vfunc	ImageSpaceEffectNoise::Setup	named	rtti+commonlib	108580	pdata_start	vtables(1): ImageSpaceEffectNoise[02]	declared in ImageSpaceEffect
+0x15187D0	vfunc	ImageSpaceEffectNoise::Render	named	rtti+commonlib	108581	pdata_start	vtables(1): ImageSpaceEffectNoise[01]	declared in ImageSpaceEffect
+0x1518BF0	vfunc	ImageSpaceEffectNoise::UpdateParams	named	rtti+commonlib	108586	pdata_start	vtables(1): ImageSpaceEffectNoise[07]	declared in ImageSpaceEffect
+0x1519610	vfunc	ImageSpaceEffectNoise::Dtor	named	rtti+commonlib	108593	pdata_start	vtables(1): ImageSpaceEffectNoise[00]	declared in ImageSpaceEffect
+0x1519720	vfunc	ImageSpaceEffectNoise::IsActive	named	rtti+commonlib	108594	no_pdata_entry	vtables(1): ImageSpaceEffectNoise[06]	declared in ImageSpaceEffect
+0x1519730	vfunc	ImageSpaceEffectNoise::ShutDown	named	rtti+commonlib	108595	no_pdata_entry	vtables(1): ImageSpaceEffectNoise[03]	declared in ImageSpaceEffect
+0x19AD1C8	vtable	NiCamera::vftable	named	rtti	237191	col@0x1bb8568	53 slots	NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19AF018	vtable	BSDynamicTriShape::vftable	named	rtti	237256	col@0x1bb8b30	56 slots	BSTriShape > BSGeometry > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19AFD70	vtable	NiCullingProcess::vftable	named	rtti	237327	col@0x1bb8f28	25 slots	
+0x19CFD40	vtable	BSTextureDB::QueuedHandles::vftable	named	rtti	238246	col@0x1bc1ed0	19 slots	.?AV?$BSQueuedResourceCollection@V?$EntryDB@UDBTraits@BSTextureDB@@@BSResource@@$01@@ > BSQueuedResourceCollectionBase > QueuedFile > IOTask > BSTask
+0x19CFE00	vtable	BSTextureDB::?A0x015cde67::NiTextureDBForwarded::vftable	named	rtti	238250	col@0x1bc2068	4 slots	ITextureDB
+0x19D3B80	vtable	BSCullingProcess::vftable	named	rtti	238422	col@0x1bc32c8	29 slots	NiCullingProcess
+0x1AB7AB8	vtable	ImageSpaceEffectParam::vftable	named	rtti	254766	col@0x1bf3880	1 slots	
+0x1AB7B08	vtable	ImageSpaceShaderParam::vftable	named	rtti	254776	col@0x1bf38f8	1 slots	ImageSpaceEffectParam
+0x1ABB468	vtable	ImageSpaceEffectHDR::vftable	named	rtti	254935	col@0x1bf4088	10 slots	ImageSpaceEffect
+0x1ABEA10	vtable	ImageSpaceEffectVolumetricLighting::vftable	named	rtti	255117	col@0x1bf42d8	10 slots	ImageSpaceEffect
+0x1ABF060	vtable	ImageSpaceEffectOption::vftable	named	rtti	255135	col@0x1bf4358	10 slots	ImageSpaceEffect
+0x1ABF0B8	vtable	ImageSpaceEffectDepthOfField::vftable	named	rtti	255146	col@0x1bf44d0	10 slots	ImageSpaceEffectOption > ImageSpaceEffect
+0x1ABF8E0	vtable	ImageSpaceEffect::vftable	named	rtti	255187	col@0x1bf46e8	10 slots	
+0x1AC00A0	vtable	BSCubeMapCamera::vftable	named	rtti	255233	col@0x1bf4df0	54 slots	NiCamera > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x1AC0FB0	vtable	BSBatchRenderer::vftable	named	rtti	255264	col@0x1bf5118	4 slots	
+0x1AC19D8	vtable	ImageSpaceEffectRadialBlur::vftable	named	rtti	255296	col@0x1bf5350	10 slots	ImageSpaceEffect
+0x1AC1EC0	vtable	ImageSpaceEffectWorldMap::vftable	named	rtti	255333	col@0x1bf54b8	10 slots	ImageSpaceEffect
+0x1AC5880	vtable	ImageSpaceEffectGetHit::vftable	named	rtti	255514	col@0x1bf67b0	10 slots	ImageSpaceEffect
+0x1AC59D0	vtable	ImageSpaceEffectBlur::vftable	named	rtti	255518	col@0x1bf6830	13 slots	ImageSpaceEffect
+0x1AC5A40	vtable	ImageSpaceEffectFullScreenBlur::vftable	named	rtti	255520	col@0x1bf68b0	10 slots	ImageSpaceEffect
+0x1AC5AC0	vtable	ImageSpaceEffectMap::vftable	named	rtti	255522	col@0x1bf6930	10 slots	ImageSpaceEffect
+0x1AC5B40	vtable	ImageSpaceEffectNoise::vftable	named	rtti	255524	col@0x1bf69b0	10 slots	ImageSpaceEffect
+0x2033060	global	BSShaderManager::State::GetSingleton	named	commonlib+addrlib	390951	in_.data		include/RE/B/BSShaderManager.h:32
+0x3286A08	global	Renderer::GetRendererData	named	commonlib+addrlib	411347	in_.data		src/RE/R/Renderer.cpp:135
+0x3286A10	global	Renderer::GetDevice	named	commonlib+addrlib	411348	in_.data		src/RE/R/Renderer.cpp:148
+0x3286A18	global	Renderer::GetCurrentRenderWindow	named	commonlib+addrlib	411349	in_.data		src/RE/R/Renderer.cpp:154
+0x32887C0	global	Renderer::GetSingleton	named	commonlib+addrlib	411393	in_.data		src/RE/R/Renderer.cpp:9
+0x328BE80	global	BSGraphics::RenderTargetManager::GetSingleton	named	commonlib+addrlib	411451	in_.data		include/RE/R/RenderTargetManager.h:15
+0x328CC20	global	BSGraphics::State::GetSingleton	named	commonlib+addrlib	411479	in_.data		include/RE/S/State.h:15
+0x328CC44	global	Renderer::GetScreenSize	named	commonlib+addrlib	411483	in_.data		src/RE/R/Renderer.cpp:142
+0x332A6A0	global	ImageSpaceManager::GetSingleton	named	commonlib+addrlib	414660	in_.data		include/RE/I/ImageSpaceManager.h:182

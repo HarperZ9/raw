@@ -1,0 +1,595 @@
+class	field	offset	type	stream	singleton	skyrimbridge	why
+Main	quitGame	0x010	bool		0x31872C0	GAP	frame loop, pause, focus
+Main	resetGame	0x011	bool		0x31872C0	GAP	
+Main	fullReset	0x012	bool		0x31872C0	GAP	
+Main	gameActive	0x013	bool		0x31872C0	GAP	
+Main	onIdle	0x014	bool		0x31872C0	GAP	
+Main	reloadContent	0x015	bool		0x31872C0	GAP	
+Main	freezeTime	0x016	bool	yes	0x31872C0	yes (name match)	
+Main	freezeNextFrame	0x017	bool	yes	0x31872C0	GAP	
+Main	wnd	0x018	REX::W32::HWND		0x31872C0	GAP	
+Main	instance	0x020	REX::W32::HINSTANCE		0x31872C0	GAP	
+Main	threadID	0x028	std::uint32_t		0x31872C0	GAP	
+Main	packedTaskHeap	0x038	ScrapHeap		0x31872C0	GAP	
+Main	taskQueue	0x0C8	BSPackedTaskQueue	yes	0x31872C0	GAP	
+Main	secondaryPackedTaskHeap	0x108	ScrapHeap		0x31872C0	GAP	
+Main	secondaryTaskQueue	0x198	BSPackedTaskQueue	yes	0x31872C0	GAP	
+Main	saveDataBackgroundImages[3]	0x1E0	BSSaveDataSystemUtilityImage		0x31872C0	GAP	
+Main	saveDataIconImages[3]	0x228	BSSaveDataSystemUtilityImage		0x31872C0	GAP	
+Calendar	gameYear	0x008	TESGlobal*		0x20F8960	domain: CelestialData.TimeData	
+Calendar	gameMonth	0x010	TESGlobal*		0x20F8960	domain: CelestialData.TimeData	
+Calendar	gameDay	0x018	TESGlobal*	yes	0x20F8960	domain: CelestialData.TimeData	
+Calendar	gameHour	0x020	TESGlobal*	yes	0x20F8960	yes (name match)	
+Calendar	gameDaysPassed	0x028	TESGlobal*	yes	0x20F8960	domain: CelestialData.TimeData	
+Calendar	timeScale	0x030	TESGlobal*	yes	0x20F8960	yes (name match)	
+Calendar	midnightsPassed	0x038	std::uint32_t		0x20F8960	domain: CelestialData.TimeData	
+Calendar	rawDaysPassed	0x03C	float	yes	0x20F8960	domain: CelestialData.TimeData	
+Sky	root	0x008	NiPointer<BSMultiBoundNode>		0x01C2640	yes (name match)	weather, sun, moons, sky colours
+Sky	moonsRoot	0x010	NiPointer<NiNode>	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	auroraRoot	0x018	NiPointer<NiNode>	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	auroraDBHandle	0x020	void*	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	extLightingOverride	0x028	BGSLightingTemplate*	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	currentRoom	0x030	ObjectRefHandle	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	previousRoom	0x034	ObjectRefHandle		0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	lightingTransition	0x038	float	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	lightingTransitionTimer	0x03C	float	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	currentClimate	0x040	TESClimate*	yes	0x01C2640	yes (name match)	
+Sky	currentWeather	0x048	TESWeather*	yes	0x01C2640	yes (name match)	
+Sky	lastWeather	0x050	TESWeather*	yes	0x01C2640	yes (name match)	
+Sky	defaultWeather	0x058	TESWeather*	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	overrideWeather	0x060	TESWeather*	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	region	0x068	TESRegion*		0x01C2640	yes (name match)	
+Sky	atmosphere	0x070	Atmosphere*		0x01C2640	yes (name match)	
+Sky	stars	0x078	Stars*		0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	sun	0x080	Sun*	yes	0x01C2640	yes (name match)	
+Sky	clouds	0x088	Clouds*	yes	0x01C2640	yes (name match)	
+Sky	masser	0x090	Moon*		0x01C2640	yes (name match)	
+Sky	secunda	0x098	Moon*		0x01C2640	yes (name match)	
+Sky	precip	0x0A0	Precipitation*	yes	0x01C2640	yes (name match)	
+Sky	skyColor[17]	0x0A8	NiColor	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	windSpeed	0x18C	float	yes	0x01C2640	yes (name match)	
+Sky	windAngle	0x190	float	yes	0x01C2640	yes (name match)	
+Sky	fogNear	0x194	float	yes	0x01C2640	yes (name match)	
+Sky	fogFar	0x198	float	yes	0x01C2640	yes (name match)	
+Sky	fogPower	0x1A8	float	yes	0x01C2640	yes (name match)	
+Sky	fogClamp	0x1AC	float	yes	0x01C2640	yes (name match)	
+Sky	currentGameHour	0x1B0	float	yes	0x01C2640	yes (name match)	
+Sky	lastWeatherUpdate	0x1B4	float	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	currentWeatherPct	0x1B8	float	yes	0x01C2640	yes (name match)	
+Sky	mode	0x1BC	stl::enumeration<Mode, std::uint32_t>		0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	skySoundList	0x1C0	BSSimpleList<SkySound*>*		0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	flash	0x1C8	float		0x01C2640	yes (name match)	
+Sky	flashTime	0x1D0	std::time_t	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	lastMoonPhaseUpdate	0x1D8	std::uint32_t	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	flags	0x1DC	stl::enumeration<Flags, std::uint32_t>	yes	0x01C2640	yes (name match)	
+Sky	currentWeatherImageSpaceMod	0x1E0	ImageSpaceModifierInstanceForm*	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	currentWeatherImageSpaceMod2	0x1E8	ImageSpaceModifierInstanceForm*	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	lastWeatherImageSpaceMod	0x1F0	ImageSpaceModifierInstanceForm*	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	lastWeatherImageSpaceMod2	0x1F8	ImageSpaceModifierInstanceForm*	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	ambientSpecularTint	0x248	NiColor	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	ambientSpecularFresnel	0x254	float	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	auroraInStart	0x258	float	yes	0x01C2640	yes (name match)	
+Sky	auroraIn	0x25C	float	yes	0x01C2640	yes (name match)	
+Sky	auroraOutStart	0x260	float	yes	0x01C2640	yes (name match)	
+Sky	auroraOut	0x264	float	yes	0x01C2640	yes (name match)	
+Sky	currentReferenceEffect	0x268	NiPointer<ReferenceEffect>	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	lastReferenceEffect	0x270	NiPointer<ReferenceEffect>	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	effectController	0x278	SkyEffectController		0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	storedCloudTextures	0x280	BSTArray<NiPointer<NiTexture>>	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	storedWorldMapCloudTextures	0x298	BSTArray<NiPointer<NiTexture>>	yes	0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sky	skyStaticRefData	0x2B0	BSTArray<SkyStaticRefData>		0x01C2640	domain: Atmosphere, Fog, Weather, Celestial	
+Sun	sunBaseNode	0x010	NiPointer<NiBillboardNode>	yes		yes (name match)	sun disc and light
+Sun	sunGlareNode	0x018	NiPointer<NiBillboardNode>	yes		GAP	
+Sun	sunBase	0x020	NiPointer<BSTriShape>	yes		GAP	
+Sun	sunQuery	0x028	NiPointer<BSTriShape>	yes		GAP	
+Sun	sunGlare	0x030	NiPointer<BSTriShape>	yes		yes (name match)	
+Sun	light	0x038	NiPointer<NiDirectionalLight>	yes		yes (name match)	
+Sun	cloudLight	0x040	NiPointer<NiDirectionalLight>	yes		GAP	
+Sun	glareScale	0x048	float			GAP	
+Sun	doOcclusionTests	0x04C	bool			GAP	
+Sun	sunAccumulator	0x050	NiPointer<BSShaderAccumulator>	yes		GAP	
+Moon	moonNode	0x010	NiPointer<NiNode>	yes		yes (name match)	Masser and Secunda
+Moon	shadowNode	0x018	NiPointer<NiNode>	yes		GAP	
+Moon	moonMesh	0x020	NiPointer<BSTriShape>	yes		yes (name match)	
+Moon	shadowMesh	0x028	NiPointer<BSTriShape>	yes		GAP	
+Moon	stateTextures[Phase::kTotal]	0x030	BSString	yes		GAP	
+Moon	angleFadeStart	0x0B0	float	yes		GAP	
+Moon	angleFadeEnd	0x0B4	float	yes		GAP	
+Moon	angleShadowEarlyFade	0x0B8	float	yes		GAP	
+Moon	speed	0x0BC	float	yes		GAP	
+Moon	zOffset	0x0C0	float			GAP	
+Moon	size	0x0C4	std::uint32_t			yes (name match)	
+Moon	updateMoonTexture	0x0C8	stl::enumeration<UpdateStatus, std::uint32_t>	yes		GAP	
+Clouds	clouds[kTotalLayers]	0x010	NiPointer<BSGeometry>	yes		yes (name match)	cloud layers
+Clouds	transTexture[kTotalLayers]	0x210	NiPointer<NiTexture>			GAP	
+Clouds	colors[kTotalLayers]	0x310	NiColor	yes		yes (name match)	
+Clouds	alphas[kTotalLayers]	0x490	float	yes		yes (name match)	
+Clouds	numLayers	0x510	std::uint16_t			yes (name match)	
+Clouds	forceUpdate	0x512	bool			GAP	
+Precipitation	occlusionData	0x010	OcclusionMapData			domain: WeatherData.PrecipLive	rain and snow
+Precipitation	currentPrecip	0x070	NiPointer<BSGeometry>	yes		domain: WeatherData.PrecipLive	
+Precipitation	lastPrecip	0x078	NiPointer<BSGeometry>	yes		domain: WeatherData.PrecipLive	
+Precipitation	lastCubeSize	0x080	float	yes		domain: WeatherData.PrecipLive	
+Precipitation	currentParticleDensity	0x084	float	yes		yes (name match)	
+Precipitation	lastParticleDensity	0x088	float	yes		yes (name match)	
+TESWeather	cloudTextures[kTotalLayers]	0x020	TESTexture1024	yes		GAP	weather record (current, last)
+TESWeather	cloudLayerSpeedY[kTotalLayers]	0x220	std::int8_t	yes		yes (name match)	RNAM
+TESWeather	cloudLayerSpeedX[kTotalLayers]	0x240	std::int8_t	yes		yes (name match)	QNAM
+TESWeather	cloudLayerDisabledBits	0x660	std::uint32_t	yes		yes (name match)	NAM1 - bitfield
+TESWeather	data	0x664	Data			yes (name match)	DATA
+TESWeather	fogData	0x678	FogData	yes		yes (name match)	FNAM
+TESWeather	sounds	0x7A8	WeatherSoundList			yes (name match)	
+TESWeather	skyStatics	0x7B8	BSTArray<TESObjectSTAT*>			GAP	
+TESWeather	numCloudLayers	0x7D0	std::uint32_t	yes		yes (name match)	LNAM
+TESWeather	imageSpaces[ColorTime::kTotal]	0x7D8	TESImageSpace*	yes		yes (name match)	IMSP
+TESWeather	directionalAmbientLightingColors[ColorTime::kTotal]	0x7F8	BGSDirectionalAmbientLightingColors	yes		yes (name match)	
+TESWeather	aurora	0x878	TESModel	yes		GAP	
+TESWeather	sunGlareLensFlare	0x8A0	BGSLensFlare*	yes		yes (name match)	
+TESWeather	volumetricLighting[ColorTime::kTotal]	0x8A8	BGSVolumetricLighting*	yes		yes (name match)	HNAM
+TESWeather	precipitationData	0x8C8	BGSShaderParticleGeometryData*	yes		yes (name match)	MNAM
+TESWeather	referenceEffect	0x8D0	BGSReferenceEffect*			yes (name match)	NNAM
+TESClimate	nightSky	0x020	TESModel			GAP	climate record
+TESClimate	weatherList	0x048	BSSimpleList<WeatherType*>	yes		GAP	WLST
+TESClimate	skyObjects[SkyObjects::kTotal]	0x058	TESTexture			yes (name match)	FNAM - GNAM
+TESClimate	timing	0x078	Timing			yes (name match)	TNAM
+PlayerCamera	cameraTarget	0x03C	ActorHandle	yes	0x30FD7F8	domain: CameraData	
+PlayerCamera	tempReturnStates	0x040	BSTSmallArray<TESCameraState*, CameraStates::kTotal>	yes	0x30FD7F8	domain: CameraData	
+PlayerCamera	cameraStates[CameraStates::kTotal]	0x0B8	BSTSmartPointer<TESCameraState>	yes	0x30FD7F8	yes (name match)	
+PlayerCamera	unk120	0x120	Unk120*		0x30FD7F8	domain: CameraData	?
+PlayerCamera	rigidBody	0x128	NiPointer<bhkRigidBody>		0x30FD7F8	domain: CameraData	?
+PlayerCamera	objectFadeHandle	0x130	RefHandle		0x30FD7F8	domain: CameraData	?
+PlayerCamera	lock	0x134	mutable BSSpinLock		0x30FD7F8	domain: CameraData	
+PlayerCamera	worldFOV	0x13C	float	yes	0x30FD7F8	yes (name match)	
+PlayerCamera	firstPersonFOV	0x140	float	yes	0x30FD7F8	yes (name match)	
+PlayerCamera	pos	0x144	NiPoint3	yes	0x30FD7F8	yes (name match)	?
+PlayerCamera	idleTimer	0x150	float	yes	0x30FD7F8	domain: CameraData	?
+PlayerCamera	yaw	0x154	float		0x30FD7F8	domain: CameraData	? - in radians
+PlayerCamera	unk158	0x158	std::uint32_t		0x30FD7F8	domain: CameraData	?
+PlayerCamera	unk15C	0x15C	std::uint32_t		0x30FD7F8	domain: CameraData	?
+PlayerCamera	allowAutoVanityMode	0x160	bool		0x30FD7F8	domain: CameraData	
+PlayerCamera	bowZoomedIn	0x161	bool		0x30FD7F8	domain: CameraData	
+PlayerCamera	isWeapSheathed	0x162	bool		0x30FD7F8	domain: CameraData	?
+PlayerCamera	isProcessed	0x163	bool		0x30FD7F8	domain: CameraData	?
+TESCamera	rotationInput	0x008	BSTPoint2<float>	yes		GAP	camera node and state
+TESCamera	translationInput	0x010	BSTPoint3<float>			GAP	
+TESCamera	zoomInput	0x01C	float			GAP	
+TESCamera	cameraRoot	0x020	NiPointer<NiNode>	yes		GAP	
+TESCamera	currentState	0x028	BSTSmartPointer<TESCameraState>	yes		yes (name match)	
+TESCamera	enabled	0x030	bool			yes (name match)	
+NiCamera	(no member offsets in CommonLib)						view frustum, world-to-camera
+PlayerCharacter	grabDistance	0x000	float		0x31874F8	GAP	player
+PlayerCharacter	unk004	0x004	float		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk008	0x008	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk010	0x010	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	sleepSeconds	0x014	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	largeBiped	0x018	BSTSmartPointer<BipedAnim>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	firstPerson3D	0x020	NiPointer<NiNode>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	eyeHeight	0x028	float		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	greetTimer	0x02C	float	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	encumberedTimer	0x030	float	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	powerAttackTimer	0x034	float	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	hoursToSleep	0x038	std::int32_t	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	amountStolenSold	0x03C	std::int32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	valueStolen	0x040	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	lastRiddenMount	0x044	ActorHandle	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	lightTarget	0x048	ActorHandle	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	sortActorDistanceTimer	0x04C	float	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	sitHeadingDelta	0x050	float		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	playerMapMarker	0x054	ObjectRefHandle		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	playerMarkerPath	0x058	TeleportPath*		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	skillTrainingsThisLevel	0x060	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk064	0x064	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	defaultClass	0x068	TESClass*		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk070	0x070	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	crimeCounts[PackageNS::CRIME_TYPES::kTotal]	0x078	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk094	0x094	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	pendingPoison	0x098	AlchemyItem*		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	lastPlayingTimeUpdate	0x0A0	std::int64_t	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	totalPlayingTime	0x0A8	std::int64_t	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	characterSeed	0x0B0	std::int32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk0B4	0x0B4	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	lastKnownGoodLocation	0x0B8	TESForm*	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk0C0	0x0C0	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk0C4	0x0C4	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	firstPersonLight	0x0C8	NiPointer<BSLight>	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	thirdPersonLight	0x0D0	NiPointer<BSLight>	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	dropAngleMod	0x0D8	float	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	lastDropAngleMod	0x0DC	float	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	skills	0x0E0	PlayerSkills*		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	autoAimActor	0x0E8	ActorHandle		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk0EC	0x0EC	RefHandle		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk118	0x0F0	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	targeted3D	0x0F8	NiPointer<NiAVObject>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	combatGroup	0x100	CombatGroup*		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	actorsToDisplayOnTheHUDArray	0x108	BSTArray<ActorHandle>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	advanceObject	0x120	TESForm*		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	lastOneHandItems[2]	0x128	TESBoundObject*	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	teammateCount	0x138	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	combatTimer	0x13C	float	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	yieldTimer	0x140	float	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	chaseTimer	0x144	float	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	drawSheatheSafetyTimer	0x148	float	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk14C	0x14C	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	commandWaitMarker	0x440	ObjectRefHandle		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	pad444	0x444	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	factionOwnerFriendsMap	0x448	BSTHashMap<const TESFaction*, FriendshipFactionsStruct>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	lastKnownGoodPosition	0x478	NiPoint3	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	bulletAutoAim	0x484	NiPoint3		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	cachedVelocity	0x490	NiPoint3		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	pad49C	0x49C	float		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unusedNote	0x4A0	BGSNote*		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unusedNote2	0x4A8	BGSNote*		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	addedPerks	0x4B0	BSTArray<PerkRankData*>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	perks	0x4C8	BSTArray<BGSPerk*>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	standingStonePerks	0x4E0	BSTArray<BGSPerk*>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	currentMapMarkers	0x4F8	BSTArray<ObjectRefHandle>	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	velocityArray	0x510	BSTArray<BSTTuple<NiPoint3, AITimeStamp>>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	runesCast	0x528	BSTArray<ProjectileHandle>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	imageSpaceModifierAnims1	0x540	BSTArray<void*>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	imageSpaceModifierAnims2	0x558	BSTArray<void*>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	questLog	0x570	BSSimpleList<TESQuestStageItem*>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	objectives	0x580	BSTArray<BGSInstancedQuestObjective>		0x31874F8	yes (name match)	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	questTargets	0x598	BSTHashMap<TESQuest*, BSTArray<TESQuestTarget*>*>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	currentSayOnceInfosMap	0x5C8	BSTHashMap<UnkKey, UnkValue>	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	droppedRefList	0x5F8	BSSimpleList<ObjectRefHandle>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	randomDoorSpaceMap	0x608	NiTMap<std::uint32_t, std::uint8_t>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	cachedWorldSpace	0x628	TESWorldSpace*	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	exteriorPosition	0x630	NiPoint3	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	pad63C	0x63C	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	queuedTargetLoc	0x640	PLAYER_TARGET_LOC	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unusedSound	0x688	BSSoundHandle		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	magicFailureSound	0x694	BSSoundHandle		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	shoutFailureSound	0x6A0	BSSoundHandle		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	pad6AC	0x6AC	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	closestConversation	0x6B0	DialoguePackage*		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk6B8	0x6B8	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk6BC	0x6BC	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	aiConversationRunning	0x6C0	DialoguePackage*		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	numberofStealWarnings	0x6C8	std::int32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	stealWarningTimer	0x6CC	float	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	numberofPickpocketWarnings	0x6D0	std::int32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	pickPocketWarningTimer	0x6D4	float	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	warnToLeaveTimeStamp	0x6D8	AITimeStamp	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	pad6DC	0x6DC	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	ironsightsDOFInstance	0x6E0	ImageSpaceModifierInstanceDOF*		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	vatsDOFInstance	0x6E8	ImageSpaceModifierInstanceDOF*		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	dynamicDOFInstance	0x6F0	ImageSpaceModifierInstanceDOF*		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	dynamicDOFFocusTime	0x6F8	float	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	dynamicDOFFocused	0x6FC	bool		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk6FD	0x6FD	std::uint8_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk6FE	0x6FE	std::uint16_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	dynamicDOFLastAngle	0x700	NiPoint3	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	dynamicDOFLastPosition	0x70C	NiPoint3	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	currentPrisonFaction	0x718	TESFaction*	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	jailSentence	0x720	std::int32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	pad724	0x724	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	queuedWeaponAttachs[WEAPON_TYPE::kTotal]	0x730	QueuedWeapon	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	vampireFeedDetection	0x7D0	std::int32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	mapMarkerIterator	0x7D4	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	forceActivateRef	0x7D8	RefHandle		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	playerActionObjects[15]	0x7DC	PlayerActionObject		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	mostRecentAction	0x890	PLAYER_ACTION		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	actorDoingPlayerCommand	0x894	ActorHandle		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	grabSpring	0x898	BSTSmallArray<hkRefPtr<bhkMouseSpringAction>, 4>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	grabbedObject	0x8C8	ObjectRefHandle		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	grabObjectWeight	0x8CC	float		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkA20[0xA0]	0xA20	std::uint8_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkAC0	0xAC0	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkAC4	0xAC4	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	currentLocation	0xAC8	BGSLocation*	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	cachedVelocityTimeStamp	0xAD0	AITimeStamp	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	telekinesisDistance	0xAD4	float		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	commandTimer	0xAD8	float	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	sunGazeTimer	0xADC	float	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	sunGazeImageModifierSpace	0xAE0	TESImageSpaceModifier*	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	advanceSkill	0xAE8	ActorValue		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	advanceAction	0xAEC	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	animationObjectAction	0xAF0	stl::enumeration<DEFAULT_OBJECT, std::int32_t>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	grabType	0xAF4	stl::enumeration<GrabbingType, std::uint32_t>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkB04	0xB04	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	resistArrestCrime	0xB08	Crime*		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	tintMasks	0xB10	BSTArray<TintMask*>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	overlayTintMasks	0xB28	BSTArray<TintMask*>*		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkB48	0xB48	std::int32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	padB4C	0xB4C	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkB50	0xB50	BSTArray<std::uint64_t>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkB68	0xB68	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkB70	0xB70	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkB78	0xB78	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkB80	0xB80	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkB88	0xB88	std::int32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	padB8C	0xB8C	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkB90	0xB90	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkB98	0xB98	TESBoundObject*		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkBA0	0xBA0	BSTSmallArray<void*, 4>		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	preTransformationData	0xBD0	PreTransformationData*	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	playerFlags	0xBD8	PlayerFlags	yes	0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk3D8	0x3D8	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk3E0	0x3E0	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk3E8	0x3E8	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk680	0x680	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk688	0x688	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk690	0x690	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk698	0x698	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk6A0	0x6A0	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk6A8[0x65]	0x6A8	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkA30[0x11]	0xA30	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	perkArray	0xAB8	void*		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk6C0[0x14]	0xAC0	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	perks	0xB68	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	standingStonePerks	0xB70	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkB78	0xB78	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkB80	0xB80	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkMessageArrayPtr	0xB88	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkB90	0xB90	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkB98	0xB98	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkBA0	0xBA0	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkBA8	0xBA8	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkBB0[0x25]	0xBB0	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkCE8[0x34]	0xCE8	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	padE90	0xE88	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	actorDoingPlayerCommand	0xE8C	ActorHandle		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkE90	0xE90	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unkE98[0x27]	0xE98	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk1120[0x1A]	0x1120	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk11F0	0x11F0	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk1200	0x1200	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk1208	0x1208	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk1210	0x1210	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk1218	0x1218	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk1220	0x1220	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk1240[0x12]	0x1240	std::uint64_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	pad12D0	0x12D0	std::uint8_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	pad12D2	0x12D2	std::uint16_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+PlayerCharacter	unk12D4	0x12D4	std::uint32_t		0x31874F8	GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+TES	gridCells	0x078	GridCellArray*	yes	0x31872C8	GAP	
+TES	objRoot	0x080	NiNode*		0x31872C8	GAP	
+TES	lodLandRoot	0x088	NiNode*		0x31872C8	GAP	
+TES	objLODWaterRoot	0x090	NiNode*	yes	0x31872C8	GAP	
+TES	tempNodeManager	0x098	BSTempNodeManager*		0x31872C8	GAP	
+TES	interiorCell	0x0C0	TESObjectCELL*	yes	0x31872C8	GAP	
+TES	interiorBuffer	0x0C8	TESObjectCELL**	yes	0x31872C8	GAP	
+TES	exteriorBuffer	0x0D0	TESObjectCELL**		0x31872C8	GAP	
+TES	sky	0x100	Sky*		0x31872C8	yes (name match)	
+TES	activeImageSpaceModifiers	0x108	BSSimpleList<NiPointer<ImageSpaceModifierInstance>>		0x31872C8	GAP	
+TES	landBorderMode	0x12C	std::uint32_t		0x31872C8	GAP	
+TES	borderColorAGBR	0x130	std::uint32_t	yes	0x31872C8	GAP	
+TES	showLANDborders	0x129	bool		0x31872C8	GAP	
+TES	unk140	0x140	std::uint64_t		0x31872C8	GAP	actual offset change is somewhere near showLandBorder
+TES	worldSpace	0x140	TESWorldSpace*	yes	0x31872C8	yes (name match)	
+TES	deadCount	0x148	BSSimpleList<BSTTuple<TESNPC*, std::uint16_t>*>		0x31872C8	GAP	
+TES	unk158	0x158	void*		0x31872C8	GAP	smart ptr
+TES	unk160	0x160	void*		0x31872C8	GAP	smart ptr
+TES	unk168	0x168	void*		0x31872C8	GAP	smart ptr
+TES	unk170	0x170	void*		0x31872C8	GAP	smart ptr
+TESObjectCELL	grassCreateLock	0x030	mutable BSSpinLock			GAP	current cell
+TESObjectCELL	grassTaskLock	0x038	mutable BSSpinLock			GAP	
+TESObjectCELL	cellFlags	0x040	stl::enumeration<Flag, std::uint16_t>	yes		GAP	
+TESObjectCELL	cellGameFlags	0x042	std::uint16_t	yes		GAP	
+TESObjectCELL	cellState	0x044	stl::enumeration<CellState, std::uint8_t>	yes		GAP	
+TESObjectCELL	autoWaterLoaded	0x045	bool	yes		GAP	
+TESObjectCELL	cellDetached	0x046	bool	yes		GAP	
+TESObjectCELL	extraList	0x048	ExtraDataList			GAP	
+BSShaderManager::State	shadowSceneNode[4]	0x000	ShadowSceneNode*	yes	0x2033060	GAP	renderer timers, scene roots, ambient
+BSShaderManager::State	timerValues[BSShaderTimerMode::kTotal]	0x020	float	yes	0x2033060	GAP	
+BSShaderManager::State	loadedRange	0x034	NiColorA	yes	0x2033060	GAP	
+BSShaderManager::State	interior	0x044	bool	yes	0x2033060	yes (name match)	
+BSShaderManager::State	liteBrite	0x045	bool		0x2033060	GAP	
+BSShaderManager::State	characterLightEnabled	0x046	bool	yes	0x2033060	GAP	
+BSShaderManager::State	landLOFadeSeconds	0x098	float		0x2033060	GAP	
+BSShaderManager::State	invFrameBufferRange	0x09C	float	yes	0x2033060	GAP	
+BSShaderManager::State	leafAnimDampenDistStartSPU	0x0A0	float		0x2033060	GAP	
+BSShaderManager::State	leafAnimDampenDistEndSPU	0x0A4	float		0x2033060	GAP	
+BSShaderManager::State	oldGridArrayCenter	0x0A8	NiPoint2	yes	0x2033060	GAP	
+BSShaderManager::State	gridArrayCenter	0x0B0	NiPoint2	yes	0x2033060	GAP	
+BSShaderManager::State	gridArrayLerpStart	0x0B8	float	yes	0x2033060	GAP	
+BSShaderManager::State	currentShaderTechnique	0x0BC	std::uint32_t	yes	0x2033060	GAP	
+BSShaderManager::State	sceneGraph	0x0C0	std::uint8_t		0x2033060	GAP	
+BSShaderManager::State	debugMode	0x0C4	std::uint32_t		0x2033060	GAP	
+BSShaderManager::State	directionalAmbientTransform	0x0C8	NiTransform	yes	0x2033060	GAP	
+BSShaderManager::State	ambientSpecular	0x0FC	NiColorA	yes	0x2033060	GAP	
+BSShaderManager::State	characterLightParams[4]	0x10C	float	yes	0x2033060	GAP	{ Primary, Secondary, Luminance, Max Luminance }
+BSShaderManager::State	ambientSpecularEnabled	0x11C	bool	yes	0x2033060	GAP	
+BSShaderManager::State	textureTransformCurrentBuffer	0x120	std::uint32_t	yes	0x2033060	GAP	
+BSShaderManager::State	textureTransformFlipMode	0x124	std::uint32_t	yes	0x2033060	GAP	
+BSShaderManager::State	cameraInWaterState	0x128	std::uint32_t	yes	0x2033060	GAP	
+BSShaderManager::State	cachedPlayerBound	0x12C	NiBound		0x2033060	GAP	
+BSShaderManager::State	waterIntersect	0x144	float	yes	0x2033060	GAP	
+State	screenWidth	0x024	std::uint32_t		0x328CC20	yes (name match)	
+State	screenHeight	0x028	std::uint32_t		0x328CC20	yes (name match)	
+State	frameBufferViewport[2]	0x02C	std::uint32_t	yes	0x328CC20	GAP	
+State	insideFrame	0x050	bool	yes	0x328CC20	GAP	
+State	letterbox	0x051	bool		0x328CC20	GAP	
+State	unk058	0x058	NiPointer<NiTexture>		0x328CC20	GAP	black?
+State	defaultTextureWhite	0x060	NiPointer<NiTexture>		0x328CC20	GAP	
+State	defaultTextureGrey	0x068	NiPointer<NiTexture>		0x328CC20	GAP	
+State	defaultHeightMap	0x070	NiPointer<NiTexture>		0x328CC20	GAP	
+State	defaultReflectionCubeMap	0x078	NiPointer<NiTexture>		0x328CC20	GAP	
+State	defaultFaceDetailMap	0x080	NiPointer<NiTexture>		0x328CC20	GAP	
+State	defaultTexEffectMap	0x088	NiPointer<NiTexture>		0x328CC20	GAP	
+State	defaultTextureNormalMap	0x090	NiPointer<NiTexture>		0x328CC20	GAP	
+RendererData	adapter	0x000	std::uint32_t			GAP	device, swap chain, render targets
+RendererData	desiredRefreshRate	0x004	REX::W32::DXGI_RATIONAL			GAP	
+RendererData	actualRefreshRate	0x00C	REX::W32::DXGI_RATIONAL			GAP	
+RendererData	scaleMode	0x014	REX::W32::DXGI_MODE_SCALING			GAP	
+RendererData	scanlineOrdering	0x018	REX::W32::DXGI_MODE_SCANLINE_ORDER			GAP	
+RendererData	isNotWindowed	0x01C	std::uint32_t	yes		GAP	
+RendererData	fullScreen	0x020	bool			GAP	
+RendererData	borderlessDisplay	0x021	bool			GAP	
+RendererData	readOnlyDepth	0x022	bool			GAP	
+RendererData	instantiated	0x023	bool			GAP	
+RendererData	requestedWindowSizeChange	0x024	bool	yes		GAP	
+RendererData	newWidth	0x028	std::uint32_t			GAP	
+RendererData	newHeight	0x02C	std::uint32_t			GAP	
+RendererData	presentInterval	0x030	std::uint32_t			GAP	
+RendererData	forwarder	0x038	REX::W32::ID3D11Device*			yes (name match)	
+RendererData	context	0x040	REX::W32::ID3D11DeviceContext*			yes (name match)	
+RendererData	renderWindows[32]	0x048	RendererWindow	yes		yes (name match)	
+RendererData	renderTargets[RENDER_TARGET::kTOTAL]	0xA48	RenderTargetData			GAP	
+RendererData	depthStencils[RENDER_TARGET_DEPTHSTENCIL::kTOTAL]	0x1FA8	DepthStencilData			GAP	
+RendererData	cubemapRenderTargets[RENDER_TARGET_CUBEMAP::kTOTAL]	0x26C8	CubemapRenderTargetData			GAP	
+RendererData	texture3DRenderTargets[RENDER_TARGET_3D::kTOTAL]	0x2708	Texture3DTargetData			GAP	
+RendererData	clearColor[4]	0x2768	float	yes		GAP	
+RendererData	clearStencil	0x2778	std::uint8_t			GAP	
+RendererData	lock	0x2780	REX::W32::CRITICAL_SECTION			GAP	
+RendererData	className	0x27A8	const char*			GAP	
+RendererData	hInstance	0x27B0	REX::W32::HINSTANCE			GAP	
+ShadowSceneNode	unk128	0x128	std::uint64_t			GAP	light lists, shadow casters
+ShadowSceneNode	activeLights	0x130	BSTArray<NiPointer<BSLight>>	yes		GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk148	0x148	BSTArray<NiPointer<BSLight>>			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk160	0x160	BSTArray<NiPointer<BSLight>>			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk178	0x178	BSTArray<void*>			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk190	0x190	BSTArray<NiPointer<BSLight>>			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk1A8	0x1A8	BSSpinLock			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	geometries	0x1B0	BSTArray<NiPointer<NiAVObject>>			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	particleNodes	0x1C8	BSTArray<NiPointer<NiAVObject>>			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	actorRootNodes	0x1E0	BSTArray<NiPointer<NiAVObject>>			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk1F8	0x1F8	BSSpinLock			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	sunLight	0x200	BSLight*	yes		GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	cloudLight	0x208	BSLight*	yes		GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	shadowDirLight	0x210	BSShadowDirectionalLight*	yes		GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk218	0x218	std::uint8_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk219	0x219	std::uint8_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk21A	0x21A	std::uint8_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk21B	0x21B	std::uint8_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	pad21C	0x21C	std::uint32_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	fogProperty	0x220	NiPointer<BSFogProperty>	yes		GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	portalGraph	0x228	BSPortalGraph*			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	shadowCasterLights	0x230	BSTArray<BSShadowLight*>	yes		GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk248	0x248	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk250	0x250	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk258	0x258	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk260	0x260	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk268	0x268	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk270	0x270	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk278	0x278	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk280	0x280	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk288	0x288	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk290	0x290	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk298	0x298	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk2A0	0x2A0	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk2A8	0x2A8	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk2B0	0x2B0	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk2B8	0x2B8	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk2C0	0x2C0	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk2C8	0x2C8	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk2D0	0x2D0	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk2D8	0x2D8	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk2E0	0x2E0	std::uint64_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk2E8	0x2E8	NiPoint3			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	cameraPos	0x2F4	NiPoint3	yes		yes (name match)	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk300	0x300	std::uint8_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	pad301	0x301	std::uint8_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	pad302	0x302	std::uint16_t			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ShadowSceneNode	unk304	0x304	float			GAP	runtime data macro; offset as written in CommonLib (some blocks are relative to their struct)
+ImageSpaceManager	effects	0x020	NiTPrimitiveArray<ImageSpaceEffect*>		0x332A6A0	yes (name match)	
+ImageSpaceManager	initEffects	0x038	bool		0x332A6A0	GAP	
+ImageSpaceManager	refractionTint	0x098	NiColorA		0x332A6A0	GAP	
+ImageSpaceManager	currentBaseData	0x0A8	ImageSpaceBaseData*	yes	0x332A6A0	GAP	
+ImageSpaceManager	overrideBaseData	0x0B0	ImageSpaceBaseData*		0x332A6A0	GAP	
+ImageSpaceManager	underwaterBaseData	0x0B8	ImageSpaceBaseData*	yes	0x332A6A0	GAP	
+ImageSpaceManager	consoleBaseData	0x0C0	ImageSpaceBaseData*		0x332A6A0	GAP	
+ImageSpaceManager	data	0x0C8	ImageSpaceData		0x332A6A0	yes (name match)	
+ImageSpaceManager	usesLDR	0x210	bool		0x332A6A0	GAP	
+UI	menuStack	0x110	BSTArray<GPtr<IMenu>>	yes	0x20F6A00	GAP	menus open, pause
+UI	menuMap	0x128	BSTHashMap<BSFixedString, UIMenuEntry>		0x20F6A00	GAP	
+UI	processMessagesLock	0x158	mutable BSSpinLock		0x20F6A00	GAP	
+UI	uiTimer	0x180	BSTimer	yes	0x20F6A00	GAP	
+UI	menuSystemVisible	0x1C0	bool		0x20F6A00	GAP	
+UI	closingAllMenus	0x1C1	bool		0x20F6A00	GAP	
+ProcessLists	runDetection	0x001	bool		0x20F69B0	GAP	high, middle, low actor lists
+ProcessLists	showDetectionStats	0x002	bool		0x20F69B0	GAP	
+ProcessLists	statdetect	0x004	ActorHandle		0x20F69B0	GAP	
+ProcessLists	processHigh	0x008	bool		0x20F69B0	GAP	
+ProcessLists	processLow	0x009	bool		0x20F69B0	GAP	
+ProcessLists	processMHigh	0x00A	bool		0x20F69B0	GAP	
+ProcessLists	processMLow	0x00B	bool		0x20F69B0	GAP	
+ProcessLists	runEditorSchedules	0x00C	bool		0x20F69B0	GAP	
+ProcessLists	showDialogueSubtitles	0x00D	bool		0x20F69B0	GAP	
+ProcessLists	numberHighActors	0x010	std::int32_t		0x20F69B0	GAP	
+ProcessLists	removeExcessDeadTimer	0x01C	float	yes	0x20F69B0	GAP	
+ProcessLists	movementSyncSema	0x020	BSSemaphore		0x20F69B0	GAP	
+ProcessLists	highActorHandles	0x030	BSTArray<ActorHandle>		0x20F69B0	yes (name match)	
+ProcessLists	lowActorHandles	0x048	BSTArray<ActorHandle>		0x20F69B0	GAP	
+ProcessLists	middleHighActorHandles	0x060	BSTArray<ActorHandle>		0x20F69B0	GAP	
+ProcessLists	middleLowActorHandles	0x078	BSTArray<ActorHandle>		0x20F69B0	GAP	
+ProcessLists	allProcesses[4]	0x090	BSTArray<ActorHandle>*		0x20F69B0	GAP	
+ProcessLists	globalCrimes[PackageNS::CRIME_TYPES::kTotal]	0x0B0	BSSimpleList<Crime*>*		0x20F69B0	GAP	
+ProcessLists	globalTempEffects	0x0E8	BSTArray<NiPointer<BSTempEffect>>		0x20F69B0	GAP	
+ProcessLists	globalEffectsLock	0x100	mutable BSSpinLock		0x20F69B0	GAP	
+ProcessLists	magicEffects	0x108	BSTArray<NiPointer<BSTempEffect>>		0x20F69B0	GAP	
+ProcessLists	magicEffectsLock	0x120	mutable BSSpinLock		0x20F69B0	GAP	
+ProcessLists	interfaceEffects	0x128	BSTArray<NiPointer<BSTempEffect>>		0x20F69B0	GAP	
+ProcessLists	interfaceEffectsLock	0x140	mutable BSSpinLock		0x20F69B0	GAP	
+ProcessLists	tempShouldMoves	0x158	BSTArray<ObjectRefHandle>		0x20F69B0	GAP	
+ProcessLists	aliveActorList	0x170	BSSimpleList<ActorHandle>		0x20F69B0	GAP	
+ProcessLists	initPackageLocationsQueue	0x180	BSTArray<ActorHandle>	yes	0x20F69B0	GAP	
+ProcessLists	packageLocationsQueueLock	0x198	mutable BSSpinLock	yes	0x20F69B0	GAP	
+ProcessLists	initAnimPositionQueue	0x1A0	BSTArray<ActorHandle>	yes	0x20F69B0	GAP	
+ProcessLists	syncPositionQueue	0x1B8	BSTArray<BSTSmartPointer<SyncQueueObj>>	yes	0x20F69B0	GAP	
+ProcessLists	playerActionCommentTimer	0x1D0	float	yes	0x20F69B0	GAP	
+ProcessLists	playerKnockObjectCommentTimer	0x1D4	float	yes	0x20F69B0	GAP	
+ProcessLists	currentLowActor	0x1D8	std::uint32_t	yes	0x20F69B0	GAP	
+ProcessLists	currentMiddleHighActor	0x1DC	std::uint32_t	yes	0x20F69B0	GAP	
+ProcessLists	currentMiddleLowActor	0x1E0	std::uint32_t	yes	0x20F69B0	GAP	
+ProcessLists	runSchedules	0x1E4	bool		0x20F69B0	GAP	
+ProcessLists	runMovement	0x1E5	bool		0x20F69B0	GAP	
+ProcessLists	runAnimations	0x1E6	bool		0x20F69B0	GAP	
+ProcessLists	updateActorsInPlayerCell	0x1E7	bool	yes	0x20F69B0	GAP	
+VirtualMachine	errorLogger	0x080	ErrorLogger*		0x20FBA70	GAP	Papyrus VM state (stacks, queues); reached through SkyrimVM
+VirtualMachine	memoryPagePolicy	0x088	IMemoryPagePolicy*		0x20FBA70	GAP	
+VirtualMachine	handlePolicy	0x090	IObjectHandlePolicy*		0x20FBA70	GAP	
+VirtualMachine	objectBindPolicy	0x098	ObjectBindPolicy*		0x20FBA70	GAP	
+VirtualMachine	freezeQuery	0x0A0	IFreezeQuery*		0x20FBA70	GAP	
+VirtualMachine	stackCallbackSaveInterface	0x0A8	IStackCallbackSaveInterface*	yes	0x20FBA70	GAP	
+VirtualMachine	profilePolicy	0x0B0	IProfilePolicy*		0x20FBA70	GAP	
+VirtualMachine	savePatcherInterface	0x0B8	ISavePatcherInterface*		0x20FBA70	GAP	
+VirtualMachine	typeInfoLock	0x0C0	mutable BSSpinLock		0x20FBA70	GAP	
+VirtualMachine	linker	0x0C8	LinkerProcessor		0x20FBA70	GAP	
+VirtualMachine	objectTypeMap	0x158	BSTHashMap<BSFixedString, BSTSmartPointer<ObjectTypeInfo>>		0x20FBA70	GAP	
+VirtualMachine	typeIDToObjectType	0x188	BSTHashMap<VMTypeID, BSFixedString>		0x20FBA70	GAP	
+VirtualMachine	objectTypeToTypeID	0x1B8	BSTHashMap<BSFixedString, VMTypeID>		0x20FBA70	GAP	
+VirtualMachine	typesToUnload	0x1E8	BSTArray<BSTSmartPointer<ObjectTypeInfo>>		0x20FBA70	GAP	
+VirtualMachine	funcQueueLock	0x200	mutable BSSpinLock	yes	0x20FBA70	GAP	
+VirtualMachine	funcMsgPool	0x208	BSTStaticFreeList<FunctionMessage, 1024>		0x20FBA70	GAP	
+VirtualMachine	funcMsgQueue	0x8220	BSTCommonLLMessageQueue<FunctionMessage>	yes	0x20FBA70	GAP	
+VirtualMachine	overflowFuncMsgs	0x8248	BSTArray<FunctionMessage>		0x20FBA70	GAP	
+VirtualMachine	vmTasks	0x8260	BSTArray<CodeTasklet*>		0x20FBA70	GAP	
+VirtualMachine	uiWaitingFunctionMessages	0x8278	std::uint32_t		0x20FBA70	yes (name match)	
+VirtualMachine	overstressed	0x827C	bool		0x20FBA70	yes (name match)	
+VirtualMachine	initialized	0x827D	bool		0x20FBA70	yes (name match)	
+VirtualMachine	suspendQueue1	0x8280	BSTCommonStaticMessageQueue<SuspendedStack, 128>	yes	0x20FBA70	GAP	
+VirtualMachine	suspendQueue2	0x8AA0	BSTCommonStaticMessageQueue<SuspendedStack, 128>	yes	0x20FBA70	GAP	
+VirtualMachine	overflowSuspendArray1	0x92C0	BSTArray<SuspendedStack>		0x20FBA70	GAP	
+VirtualMachine	overflowSuspendArray2	0x92D8	BSTArray<SuspendedStack>		0x20FBA70	GAP	
+VirtualMachine	suspendQueueLock	0x92F0	mutable BSSpinLock	yes	0x20FBA70	GAP	
+VirtualMachine	stacksToResume	0x92F8	BSTCommonStaticMessageQueue<SuspendedStack, 128>*	yes	0x20FBA70	GAP	ref to suspendQueue2
+VirtualMachine	stacksToResumeOverflow	0x9300	BSTArray<SuspendedStack>*	yes	0x20FBA70	GAP	ref to overflowSuspendArray2
+VirtualMachine	stacksToSuspend	0x9308	BSTCommonStaticMessageQueue<SuspendedStack, 128>*	yes	0x20FBA70	GAP	ref to suspendQueue1
+VirtualMachine	stacksToSuspendOverflow	0x9310	BSTArray<SuspendedStack>*	yes	0x20FBA70	GAP	ref to overflowSuspendArray1
+VirtualMachine	runningStacksLock	0x9318	mutable BSSpinLock	yes	0x20FBA70	yes (name match)	
+VirtualMachine	allRunningStacks	0x9320	BSTHashMap<VMStackID, BSTSmartPointer<Stack>>	yes	0x20FBA70	yes (name match)	
+VirtualMachine	waitingLatentReturns	0x9350	BSTHashMap<VMStackID, BSTSmartPointer<Stack>>		0x20FBA70	yes (name match)	
+VirtualMachine	nextStackID	0x9380	VMStackID	yes	0x20FBA70	GAP	
+VirtualMachine	frozenStacksLock	0x9384	mutable BSSpinLock	yes	0x20FBA70	GAP	
+VirtualMachine	frozenStacks	0x9390	BSScript::Stack*	yes	0x20FBA70	GAP	
+VirtualMachine	frozenStacksCount	0x9398	std::uint32_t	yes	0x20FBA70	yes (name match)	
+VirtualMachine	freezeState	0x939C	stl::enumeration<FreezeState, std::uint32_t>	yes	0x20FBA70	yes (name match)	
+VirtualMachine	attachedScriptsLock	0x93A0	mutable BSSpinLock		0x20FBA70	yes (name match)	
+VirtualMachine	attachedScripts	0x93A8	BSTHashMap<VMHandle, BSTSmallSharedArray<AttachedScript>>		0x20FBA70	yes (name match)	
+VirtualMachine	objectsAwaitingCleanup	0x93E0	BSTArray<BSTSmartPointer<Object>>		0x20FBA70	yes (name match)	
+VirtualMachine	arraysLock	0x93F8	mutable BSSpinLock		0x20FBA70	yes (name match)	
+VirtualMachine	nextArrayToClean	0x9400	std::uint32_t		0x20FBA70	GAP	
+VirtualMachine	arrays	0x9408	BSTArray<BSTSmartPointer<Array>>		0x20FBA70	yes (name match)	
+VirtualMachine	objectResetLock	0x9420	mutable BSSpinLock		0x20FBA70	GAP	
+VirtualMachine	objectsAwaitingReset	0x9428	BSTArray<BSTSmartPointer<Object>>		0x20FBA70	yes (name match)	
+VirtualMachine	objectLock	0x9440	mutable BSSpinLock		0x20FBA70	GAP	Used for objectTable/arrayTable
+VirtualMachine	objectTable	0x9448	BSTHashMap<VMHandle, BSTSmartPointer<Object>>		0x20FBA70	GAP	Used when loading a save
+VirtualMachine	arrayTable	0x9478	BSTHashMap<VMHandle, BSTSmartPointer<Array>>		0x20FBA70	GAP	Used when loading a save
+VirtualMachine	queuedUnbindLock	0x94A8	mutable BSSpinLock	yes	0x20FBA70	GAP	
+VirtualMachine	queuedUnbinds	0x94B0	BSTArray<QueuedUnbindRefs>	yes	0x20FBA70	GAP	
+VirtualMachine	saveGameVersion	0x94C8	std::byte		0x20FBA70	GAP	Set when loading a save
+VirtualMachine	writableStringTable	0x94D8	WritableStringTable		0x20FBA70	GAP	Created/Used only while saving
+VirtualMachine	readableStringTable	0x94F0	ReadableStringTable		0x20FBA70	GAP	Created/Used only while loading a save
+VirtualMachine	writeableTypeTable	0x9508	BSTHashMap<BSFixedString, BSTSmartPointer<ObjectTypeInfo>>*		0x20FBA70	GAP	Created/Used only while saving
+VirtualMachine	readableTypeTable	0x9510	BSTHashMap<BSFixedString, BSTSmartPointer<ObjectTypeInfo>>*		0x20FBA70	GAP	Created/Used only while loading a save

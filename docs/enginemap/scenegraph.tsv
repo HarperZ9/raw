@@ -1,0 +1,690 @@
+rva	kind	name	confidence	source	addrlib_id	check	refs	notes
+0x01993B0	vfunc	NiStream::SaveLinkID	named	rtti+commonlib	13271	pdata_start	vtables(3): ?A0xc1e93e6b::DeepCopyStream[0C], BSStream[0C], NiStream[0C]	
+0x01AF690	vfunc	shared_stub_1af690	unknown	rtti	13643	no_pdata_entry	vtables(395): ?A0x2a387464::bhkTiltPreventAction[14], ?A0x2a387464::bhkWheelAction[14], BGSAddonNodeSoundHandleExtra[14], BGSDecalNode[14], BGSWaterCollisionManager::bhkAutoWater[14], BSAnimGroupSequence[14], +389 more	
+0x01AF6A0	vfunc	shared_stub_1af6a0	unknown	rtti	13644	no_pdata_entry	vtables(393): ?A0x2a387464::bhkTiltPreventAction[13], ?A0x2a387464::bhkWheelAction[13], BGSAddonNodeSoundHandleExtra[13], BGSDecalNode[13], BGSWaterCollisionManager::bhkAutoWater[13], BSAnimGroupSequence[13], +387 more	
+0x01AF6B0	vfunc	shared_stub_1af6b0	unknown	rtti	13645	no_pdata_entry	vtables(395): ?A0x2a387464::bhkTiltPreventAction[16], ?A0x2a387464::bhkWheelAction[16], BGSAddonNodeSoundHandleExtra[16], BGSDecalNode[16], BGSWaterCollisionManager::bhkAutoWater[16], BSAnimGroupSequence[16], +389 more	
+0x01AF6C0	vfunc	shared_stub_1af6c0	unknown	rtti	13646	no_pdata_entry	vtables(388): ?A0x2a387464::bhkTiltPreventAction[12], ?A0x2a387464::bhkWheelAction[12], BGSAddonNodeSoundHandleExtra[12], BGSDecalNode[12], BGSWaterCollisionManager::bhkAutoWater[12], BSAnimGroupSequence[12], +382 more	
+0x01AF6D0	vfunc	shared_stub_1af6d0	unknown	rtti	13647	no_pdata_entry	vtables(394): ?A0x2a387464::bhkTiltPreventAction[15], ?A0x2a387464::bhkWheelAction[15], BGSAddonNodeSoundHandleExtra[15], BGSDecalNode[15], BGSWaterCollisionManager::bhkAutoWater[15], BSAnimGroupSequence[15], +388 more	
+0x01AF6E0	vfunc	shared_stub_1af6e0	unknown	rtti	13648	no_pdata_entry	vtables(394): ?A0x2a387464::bhkTiltPreventAction[0C], ?A0x2a387464::bhkWheelAction[0C], BGSAddonNodeSoundHandleExtra[0C], BGSDecalNode[0C], BGSWaterCollisionManager::bhkAutoWater[0C], BSAnimGroupSequence[0C], +388 more	
+0x01AF6F0	vfunc	shared_stub_1af6f0	unknown	rtti	13649	no_pdata_entry	vtables(393): ?A0x2a387464::bhkTiltPreventAction[05], ?A0x2a387464::bhkWheelAction[05], BGSAddonNodeSoundHandleExtra[05], BGSDecalNode[05], BGSWaterCollisionManager::bhkAutoWater[05], BSAnimGroupSequence[05], +387 more	
+0x01AF700	vfunc	shared_stub_1af700	unknown	rtti	13650	no_pdata_entry	vtables(377): ?A0x2a387464::bhkTiltPreventAction[07], ?A0x2a387464::bhkWheelAction[07], BGSAddonNodeSoundHandleExtra[07], BGSDecalNode[07], BGSWaterCollisionManager::bhkAutoWater[07], BSAnimGroupSequence[07], +371 more	
+0x01AF710	vfunc	shared_stub_1af710	unknown	rtti	13651	no_pdata_entry	vtables(394): ?A0x2a387464::bhkTiltPreventAction[11], ?A0x2a387464::bhkWheelAction[11], BGSAddonNodeSoundHandleExtra[11], BGSDecalNode[11], BGSWaterCollisionManager::bhkAutoWater[11], BSAnimGroupSequence[11], +388 more	
+0x01AF720	vfunc	shared_stub_1af720	unknown	rtti	13652	no_pdata_entry	vtables(394): ?A0x2a387464::bhkTiltPreventAction[06], ?A0x2a387464::bhkWheelAction[06], BGSAddonNodeSoundHandleExtra[06], BGSDecalNode[06], BGSWaterCollisionManager::bhkAutoWater[06], BSAnimGroupSequence[06], +388 more	
+0x01AF730	vfunc	shared_stub_1af730	unknown	rtti	13653	no_pdata_entry	vtables(390): ?A0x2a387464::bhkTiltPreventAction[0D], ?A0x2a387464::bhkWheelAction[0D], BGSAddonNodeSoundHandleExtra[0D], BGSDecalNode[0D], BGSWaterCollisionManager::bhkAutoWater[0D], BSAnimGroupSequence[0D], +384 more	
+0x01AF740	vfunc	shared_stub_1af740	unknown	rtti	13654	no_pdata_entry	vtables(391): ?A0x2a387464::bhkTiltPreventAction[0E], ?A0x2a387464::bhkWheelAction[0E], BGSAddonNodeSoundHandleExtra[0E], BGSDecalNode[0E], BGSWaterCollisionManager::bhkAutoWater[0E], BSAnimGroupSequence[0E], +385 more	
+0x01AF750	vfunc	shared_stub_1af750	unknown	rtti	13655	no_pdata_entry	vtables(393): ?A0x2a387464::bhkTiltPreventAction[0F], ?A0x2a387464::bhkWheelAction[0F], BGSAddonNodeSoundHandleExtra[0F], BGSDecalNode[0F], BGSWaterCollisionManager::bhkAutoWater[0F], BSAnimGroupSequence[0F], +387 more	
+0x01AF760	vfunc	NiNode::AsNode	named	rtti+commonlib	13656	no_pdata_entry	vtables(28): BGSDecalNode[03], BSBlastNode[03], BSClearZNode[03], BSDamageStage[03], BSDebrisNode[03], BSFaceGenNiNode[03], +22 more	
+0x01AF770	vfunc	shared_stub_1af770	unknown	rtti	13657	no_pdata_entry	vtables(391): ?A0x2a387464::bhkTiltPreventAction[10], ?A0x2a387464::bhkWheelAction[10], BGSAddonNodeSoundHandleExtra[10], BGSDecalNode[10], BGSWaterCollisionManager::bhkAutoWater[10], BSAnimGroupSequence[10], +385 more	
+0x01AF780	vfunc	shared_stub_1af780	unknown	rtti	13658	no_pdata_entry	vtables(395): ?A0x2a387464::bhkTiltPreventAction[0A], ?A0x2a387464::bhkWheelAction[0A], BGSAddonNodeSoundHandleExtra[0A], BGSDecalNode[0A], BGSWaterCollisionManager::bhkAutoWater[0A], BSAnimGroupSequence[0A], +389 more	
+0x01AF790	vfunc	shared_stub_1af790	unknown	rtti	13659	no_pdata_entry	vtables(394): ?A0x2a387464::bhkTiltPreventAction[0B], ?A0x2a387464::bhkWheelAction[0B], BGSAddonNodeSoundHandleExtra[0B], BGSDecalNode[0B], BGSWaterCollisionManager::bhkAutoWater[0B], BSAnimGroupSequence[0B], +388 more	
+0x01AF7A0	vfunc	shared_stub_1af7a0	unknown	rtti	13660	no_pdata_entry	vtables(395): ?A0x2a387464::bhkTiltPreventAction[04], ?A0x2a387464::bhkWheelAction[04], BGSAddonNodeSoundHandleExtra[04], BGSDecalNode[04], BGSWaterCollisionManager::bhkAutoWater[04], BSAnimGroupSequence[04], +389 more	
+0x01AF7B0	vfunc	shared_stub_1af7b0	unknown	rtti	13661	no_pdata_entry	vtables(385): ?A0x2a387464::bhkTiltPreventAction[09], ?A0x2a387464::bhkWheelAction[09], BGSAddonNodeSoundHandleExtra[09], BGSDecalNode[09], BGSWaterCollisionManager::bhkAutoWater[09], BSAnimGroupSequence[09], +379 more	
+0x01AF7C0	vfunc	shared_stub_1af7c0	unknown	rtti	13662	no_pdata_entry	vtables(395): ?A0x2a387464::bhkTiltPreventAction[08], ?A0x2a387464::bhkWheelAction[08], BGSAddonNodeSoundHandleExtra[08], BGSDecalNode[08], BGSWaterCollisionManager::bhkAutoWater[08], BSAnimGroupSequence[08], +389 more	
+0x0205B80	vfunc	NiAlphaProperty::Dtor	named	rtti+commonlib	15411	pdata_start	vtables(1): NiAlphaProperty[00]	
+0x0205BC0	vfunc	NiProperty::Dtor	named	rtti+commonlib	15412	pdata_start	vtables(1): NiProperty[00]	
+0x0206650	vfunc	NiAlphaProperty::GetRTTI	named	rtti+commonlib	15431	no_pdata_entry	vtables(1): NiAlphaProperty[02]	
+0x0206660	vfunc	NiProperty::GetRTTI	named	rtti+commonlib	15432	no_pdata_entry	vtables(1): NiProperty[02]	
+0x0206670	vfunc	shared_stub_206670	unknown	rtti	15433	no_pdata_entry	vtables(368): ?A0x2a387464::bhkTiltPreventAction[03], ?A0x2a387464::bhkWheelAction[03], BGSAddonNodeSoundHandleExtra[03], BGSWaterCollisionManager::bhkAutoWater[03], BSAnimGroupSequence[03], BSAnimInteractionMarker[03], +362 more	
+0x0207660	vfunc	NiAlphaProperty::GetType	named	rtti+commonlib	15448	no_pdata_entry	vtables(1): NiAlphaProperty[25]	
+0x020E310	vfunc	NiRefObject::Dtor	named	rtti+commonlib	15556	pdata_start	vtables(1): NiRefObject[00]	
+0x0218F90	function	NiAVObject::RemoveDecals	named	commonlib+addrlib	15723	pdata_start		src/RE/N/NiAVObject.cpp:150
+0x0267CF0	vfunc	BSGeometry::AttachProperty	named	rtti+commonlib	17348	no_pdata_entry	vtables(19): BSDynamicLines[27], BSDynamicTriShape[27], BSGeometry[27], BSInstanceTriShape[27], BSLODMultiIndexTriShape[27], BSLines[27], +13 more	
+0x0267D40	vfunc	BSGeometry::vfunc_37	inferred	rtti	17350	no_pdata_entry	vtables(16): BSDynamicLines[37], BSDynamicTriShape[37], BSGeometry[37], BSInstanceTriShape[37], BSLines[37], BSMultiIndexTriShape[37], +10 more	
+0x0267D60	vfunc	BSGeometry::AsGeometry	named	rtti+commonlib	17352	no_pdata_entry	vtables(19): BSDynamicLines[07], BSDynamicTriShape[07], BSGeometry[07], BSInstanceTriShape[07], BSLODMultiIndexTriShape[07], BSLines[07], +13 more	
+0x0267D70	vfunc	BSGeometry::vfunc_35	inferred	rtti	17353	no_pdata_entry	vtables(17): BSDynamicLines[35], BSDynamicTriShape[35], BSGeometry[35], BSInstanceTriShape[35], BSLines[35], BSMeshLODTriShape[35], +11 more	
+0x0267D80	vfunc	BSGeometry::vfunc_36	inferred	rtti	17354	no_pdata_entry	vtables(18): BSDynamicLines[36], BSDynamicTriShape[36], BSGeometry[36], BSInstanceTriShape[36], BSLODMultiIndexTriShape[36], BSLines[36], +12 more	
+0x0267D90	vfunc	BSTriShape::AsTriShape	named	rtti+commonlib	17355	no_pdata_entry	vtables(11): BSDynamicTriShape[09], BSInstanceTriShape[09], BSLODMultiIndexTriShape[09], BSMeshLODTriShape[09], BSMultiIndexTriShape[09], BSMultiStreamInstanceTriShape[09], +5 more	
+0x029FE70	vfunc	NiObject::GetRTTI	named	rtti+commonlib	18602	no_pdata_entry	vtables(7): ImageSpaceModifierInstance[02], ImageSpaceModifierInstanceDOF[02], ImageSpaceModifierInstanceForm[02], ImageSpaceModifierInstanceRB[02], ImageSpaceModifierInstanceTemp[02], NiObject[02], +1 more	
+0x02F3890	vfunc	NiCollisionObject::Unk_29	inferred	rtti+commonlib	19979	no_pdata_entry	vtables(9): NiCollisionObject[29], WeaponObject[29], bhkAttachmentCollisionObject[29], bhkBlendCollisionObject[29], bhkCartTether[29], bhkCollisionObject[29], +3 more	
+0x02F3C60	vfunc	bhkNiCollisionObject::Unk_2A	inferred	rtti+commonlib	20018	no_pdata_entry	vtables(3): bhkNiCollisionObject[2A], bhkPCollisionObject[2A], bhkSPCollisionObject[2A]	
+0x02F3CC0	vfunc	NiCollisionObject::Unk_28	inferred	rtti+commonlib	20022	no_pdata_entry	vtables(9): NiCollisionObject[28], WeaponObject[28], bhkAttachmentCollisionObject[28], bhkBlendCollisionObject[28], bhkCartTether[28], bhkCollisionObject[28], +3 more	
+0x02F3CE0	vfunc	bhkNiCollisionObject::AsBhkNiCollisionObject	named	rtti+commonlib	20024	no_pdata_entry	vtables(8): WeaponObject[12], bhkAttachmentCollisionObject[12], bhkBlendCollisionObject[12], bhkCartTether[12], bhkCollisionObject[12], bhkNiCollisionObject[12], +2 more	
+0x02F53E0	vfunc	bhkNiCollisionObject::Unk_30	inferred	rtti+commonlib	20054	no_pdata_entry	vtables(6): bhkBlendCollisionObject[30], bhkCartTether[30], bhkCollisionObject[30], bhkNiCollisionObject[30], bhkPCollisionObject[30], bhkSPCollisionObject[30]	
+0x02FF740	vfunc	shared_stub_2ff740	unknown	rtti	20327	no_pdata_entry	vtables(64): BSDoorHavokController[2D], BSEffectShaderPropertyColorController[2D], BSEffectShaderPropertyFloatController[2D], BSFrustumFOVController[2D], BSLagBoneController[2D], BSLightingShaderPropertyColorController[2D], +58 more	
+0x02FF750	vfunc	shared_stub_2ff750	unknown	rtti	20328	no_pdata_entry	vtables(60): BSDoorHavokController[29], BSEffectShaderPropertyColorController[29], BSEffectShaderPropertyFloatController[29], BSFrustumFOVController[29], BSLagBoneController[29], BSLightingShaderPropertyColorController[29], +54 more	
+0x02FF760	vfunc	shared_stub_2ff760	unknown	rtti	20329	no_pdata_entry	vtables(64): BSDoorHavokController[2A], BSEffectShaderPropertyColorController[2A], BSEffectShaderPropertyFloatController[2A], BSFrustumFOVController[2A], BSLagBoneController[2A], BSLightingShaderPropertyColorController[2A], +58 more	
+0x03FE6E0	function	NiAVObject::GetCollisionObject	named	commonlib+addrlib	26022	pdata_start		src/RE/N/NiAVObject.cpp:57
+0x0408F10	vfunc	BSGeometryListCullingProcess::Dtor	named	rtti+commonlib	26190	pdata_start	vtables(1): BSGeometryListCullingProcess[15]	declared in BSCullingProcess
+0x0409030	vfunc	BSGeometryListCullingProcess::GetRTTI	named	rtti+commonlib	26192	no_pdata_entry	vtables(1): BSGeometryListCullingProcess[00]	declared in BSCullingProcess
+0x04158E0	vfunc	NiBillboardNode::Dtor	named	rtti+commonlib	26360	pdata_start	vtables(1): NiBillboardNode[00]	declared in NiNode
+0x0415960	vfunc	NiBillboardNode::GetRTTI	named	rtti+commonlib	26362	no_pdata_entry	vtables(1): NiBillboardNode[02]	declared in NiNode
+0x0431E50	vfunc	BSFaceGenNiNode::CreateClone	named	rtti+commonlib	26980	pdata_start	vtables(1): BSFaceGenNiNode[17]	
+0x0432230	vfunc	BSFaceGenNiNode::UpdateDownwardPass	named	rtti+commonlib	26985	pdata_start	vtables(1): BSFaceGenNiNode[2C]	
+0x0432280	vfunc	BSFaceGenNiNode::vfunc_3E	inferred	rtti	26986	pdata_start	vtables(1): BSFaceGenNiNode[3E]	
+0x0433780	vfunc	BSFaceGenNiNode::Dtor	named	rtti+commonlib	27003	pdata_start	vtables(1): BSFaceGenNiNode[00]	
+0x0433850	vfunc	BSFaceGenNiNode::GetRTTI	named	rtti+commonlib	27005	no_pdata_entry	vtables(1): BSFaceGenNiNode[02]	
+0x0652D30	vfunc	SceneGraph::GetNearDistance	named	rtti+commonlib	36844	no_pdata_entry	vtables(1): SceneGraph[3F]	
+0x0652D50	vfunc	SceneGraph::GetFarDistance	named	rtti+commonlib	36845	pdata_start	vtables(1): SceneGraph[3E]	
+0x0652E50	vfunc	SceneGraph::Dtor	named	rtti+commonlib	36846	pdata_start	vtables(1): SceneGraph[00]	
+0x0652E90	vfunc	SceneGraph::GetRTTI	named	rtti+commonlib	36847	no_pdata_entry	vtables(1): SceneGraph[02]	
+0x0D17D80	vfunc	shared_stub_d17d80	unknown	rtti	70180	no_pdata_entry	vtables(112): ?A0x2a387464::bhkTiltPreventAction[17], ?A0x2a387464::bhkWheelAction[17], BGSAddonNodeSoundHandleExtra[17], BSBodyMorphOffsetsExtraData[17], BSFaceGenAnimationData[17], BSFaceGenBaseMorphExtraData[17], +106 more	
+0x0D17DD0	vfunc	NiObject::vfunc_18	inferred	rtti	70182	no_pdata_entry	vtables(26): BSOcclusionBox[18], BSOcclusionPlane[18], BSOcclusionShape[18], BSPortal[18], BSTempEffect[18], BSTempEffectDebris[18], +20 more	
+0x0D17DE0	vfunc	NiObject::vfunc_19	inferred	rtti	70183	no_pdata_entry	vtables(26): BSOcclusionBox[19], BSOcclusionPlane[19], BSOcclusionShape[19], BSPortal[19], BSTempEffect[19], BSTempEffectDebris[19], +20 more	
+0x0D17DF0	vfunc	NiObject::RegisterStreamables	named	rtti+commonlib	70184	no_pdata_entry	vtables(26): BSOcclusionBox[1A], BSOcclusionPlane[1A], BSOcclusionShape[1A], BSPortal[1A], BSTempEffect[1A], BSTempEffectDebris[1A], +20 more	
+0x0D17E10	vfunc	NiObject::vfunc_1B	inferred	rtti	70185	no_pdata_entry	vtables(26): BSOcclusionBox[1B], BSOcclusionPlane[1B], BSOcclusionShape[1B], BSPortal[1B], BSTempEffect[1B], BSTempEffectDebris[1B], +20 more	
+0x0D17E20	vfunc	shared_stub_d17e20	unknown	rtti+commonlib	70186	pdata_start	vtables(44): BGSWaterCollisionManager::bhkAutoWater[1C], BSOcclusionBox[1C], BSOcclusionPlane[1C], BSOcclusionShape[1C], BSPortal[1C], BSTempEffect[1C], +38 more	
+0x0D17E90	function	NiAVObject::Clone	named	commonlib+addrlib	70187	pdata_start		src/RE/N/NiAVObject.cpp:27
+0x0D18040	function	NiObject::ProcessClone	named	commonlib+addrlib	70190	pdata_start	vtables(211): ?A0x2a387464::bhkTiltPreventAction[1D], ?A0x2a387464::bhkWheelAction[1D], BGSAddonNodeSoundHandleExtra[1D], BGSWaterCollisionManager::bhkAutoWater[1D], BSAnimInteractionMarker[1D], BSAnimNote[1D], +205 more	src/RE/N/NiObject.cpp:27
+0x0D18080	function	NiObject::CreateDeepCopy	named	commonlib+addrlib	70191	pdata_start		src/RE/N/NiObject.cpp:34
+0x0D18190	vfunc	shared_stub_d18190	unknown	rtti	70192	no_pdata_entry	vtables(290): ?A0x2a387464::bhkTiltPreventAction[1E], ?A0x2a387464::bhkWheelAction[1E], BGSAddonNodeSoundHandleExtra[1E], BGSWaterCollisionManager::bhkAutoWater[1E], BSAnimInteractionMarker[1E], BSAnimNote[1E], +284 more	
+0x0D181A0	vfunc	shared_stub_d181a0	unknown	rtti	70193	no_pdata_entry	vtables(408): ?A0x2a387464::bhkTiltPreventAction[1F], ?A0x2a387464::bhkWheelAction[1F], BGSAddonNodeSoundHandleExtra[1F], BGSDecalNode[1F], BGSWaterCollisionManager::bhkAutoWater[1F], BSAnimGroupSequence[1F], +402 more	
+0x0D181B0	vfunc	shared_stub_d181b0	unknown	rtti	70194	no_pdata_entry	vtables(408): ?A0x2a387464::bhkTiltPreventAction[20], ?A0x2a387464::bhkWheelAction[20], BGSAddonNodeSoundHandleExtra[20], BGSDecalNode[20], BGSWaterCollisionManager::bhkAutoWater[20], BSAnimGroupSequence[20], +402 more	
+0x0D181C0	vfunc	shared_stub_d181c0	unknown	rtti	70195	no_pdata_entry	vtables(407): ?A0x2a387464::bhkTiltPreventAction[21], ?A0x2a387464::bhkWheelAction[21], BGSAddonNodeSoundHandleExtra[21], BGSDecalNode[21], BGSWaterCollisionManager::bhkAutoWater[21], BSAnimGroupSequence[21], +401 more	
+0x0D181D0	vfunc	shared_stub_d181d0	unknown	rtti	70196	no_pdata_entry	vtables(408): ?A0x2a387464::bhkTiltPreventAction[22], ?A0x2a387464::bhkWheelAction[22], BGSAddonNodeSoundHandleExtra[22], BGSDecalNode[22], BGSWaterCollisionManager::bhkAutoWater[22], BSAnimGroupSequence[22], +402 more	
+0x0D181E0	vfunc	shared_stub_d181e0	unknown	rtti	70197	no_pdata_entry	vtables(408): ?A0x2a387464::bhkTiltPreventAction[23], ?A0x2a387464::bhkWheelAction[23], BGSAddonNodeSoundHandleExtra[23], BGSDecalNode[23], BGSWaterCollisionManager::bhkAutoWater[23], BSAnimGroupSequence[23], +402 more	
+0x0D181F0	vfunc	shared_stub_d181f0	unknown	rtti	70198	no_pdata_entry	vtables(407): ?A0x2a387464::bhkTiltPreventAction[24], ?A0x2a387464::bhkWheelAction[24], BGSAddonNodeSoundHandleExtra[24], BGSDecalNode[24], BGSWaterCollisionManager::bhkAutoWater[24], BSAnimGroupSequence[24], +401 more	
+0x0D186C0	vfunc	NiObject::Dtor	named	rtti+commonlib	70207	pdata_start	vtables(1): NiObject[00]	
+0x0D1BBE0	vfunc	NiAVObject::LoadBinary	named	rtti+commonlib	70245	pdata_start	vtables(1): NiAVObject[18]	
+0x0D1BCC0	vfunc	NiAVObject::LinkObject	named	rtti+commonlib	70246	pdata_start	vtables(1): NiAVObject[19]	
+0x0D1BD40	vfunc	NiAVObject::RegisterStreamables	named	rtti+commonlib	70247	pdata_start	vtables(1): NiAVObject[1A]	
+0x0D1BD90	vfunc	NiAVObject::SaveBinary	named	rtti+commonlib	70248	pdata_start	vtables(1): NiAVObject[1B]	
+0x0D1BE50	vfunc	NiAVObject::IsEqual	named	rtti+commonlib	70249	pdata_start	vtables(1): NiAVObject[1C]	
+0x0D1BF70	function	NiAVObject::Update	named	commonlib+addrlib	70251	pdata_start		include/RE/Offsets.h:399
+0x0D1BFF0	vfunc	NiAVObject::UpdateControllers	named	rtti+commonlib	70253	pdata_start	vtables(33): BSCubeMapCamera[25], BSDynamicLines[25], BSDynamicTriShape[25], BSGeometry[25], BSInstanceTriShape[25], BSLODMultiIndexTriShape[25], +27 more	
+0x0D1C040	vfunc	NiAVObject::vfunc_26	inferred	rtti	70254	no_pdata_entry	vtables(33): BSCubeMapCamera[26], BSDynamicLines[26], BSDynamicTriShape[26], BSGeometry[26], BSInstanceTriShape[26], BSLODMultiIndexTriShape[26], +27 more	
+0x0D1C060	vfunc	shared_stub_d1c060	unknown	rtti	70255	no_pdata_entry	vtables(61): BGSDecalNode[28], BSBlastNode[28], BSClearZNode[28], BSCubeMapCamera[28], BSDamageStage[28], BSDebrisNode[28], +55 more	
+0x0D1C070	vfunc	shared_stub_d1c070	unknown	rtti	70256	no_pdata_entry	vtables(61): BGSDecalNode[29], BSBlastNode[29], BSClearZNode[29], BSCubeMapCamera[29], BSDamageStage[29], BSDebrisNode[29], +55 more	
+0x0D1C080	vfunc	NiAVObject::vfunc_2A	inferred	rtti	70257	no_pdata_entry	vtables(33): BSCubeMapCamera[2A], BSDynamicLines[2A], BSDynamicTriShape[2A], BSGeometry[2A], BSInstanceTriShape[2A], BSLODMultiIndexTriShape[2A], +27 more	
+0x0D1C0A0	vfunc	NiAVObject::vfunc_2B	inferred	rtti	70258	pdata_start	vtables(8): BSCubeMapCamera[2B], NiAVObject[2B], NiAmbientLight[2B], NiCamera[2B], NiDirectionalLight[2B], NiLight[2B], +2 more	
+0x0D1C170	vfunc	NiAVObject::vfunc_2C	inferred	rtti	70259	pdata_start	vtables(8): BSCubeMapCamera[2C], NiAVObject[2C], NiAmbientLight[2C], NiCamera[2C], NiDirectionalLight[2C], NiLight[2C], +2 more	
+0x0D1C1F0	vfunc	NiAVObject::vfunc_2D	inferred	rtti	70260	pdata_start	vtables(8): BSCubeMapCamera[2D], NiAVObject[2D], NiAmbientLight[2D], NiCamera[2D], NiDirectionalLight[2D], NiLight[2D], +2 more	
+0x0D1C2D0	vfunc	NiAVObject::vfunc_2E	inferred	rtti	70261	pdata_start	vtables(8): BSCubeMapCamera[2E], NiAVObject[2E], NiAmbientLight[2E], NiCamera[2E], NiDirectionalLight[2E], NiLight[2E], +2 more	
+0x0D1C490	vfunc	NiAVObject::vfunc_31	inferred	rtti	70263	pdata_start	vtables(33): BSCubeMapCamera[31], BSDynamicLines[31], BSDynamicTriShape[31], BSGeometry[31], BSInstanceTriShape[31], BSLODMultiIndexTriShape[31], +27 more	
+0x0D1C4D0	vfunc	shared_stub_d1c4d0	unknown	rtti	70264	pdata_start	vtables(61): BGSDecalNode[32], BSBlastNode[32], BSClearZNode[32], BSCubeMapCamera[32], BSDamageStage[32], BSDebrisNode[32], +55 more	
+0x0D1C510	vfunc	shared_stub_d1c510	unknown	rtti	70265	no_pdata_entry	vtables(61): BGSDecalNode[33], BSBlastNode[33], BSClearZNode[33], BSCubeMapCamera[33], BSDamageStage[33], BSDebrisNode[33], +55 more	
+0x0D1C5A0	vfunc	NiAVObject::vfunc_34	inferred	rtti	70268	no_pdata_entry	vtables(13): BSCubeMapCamera[34], BSLODTriShape[34], NiAVObject[34], NiAmbientLight[34], NiCamera[34], NiDirectionalLight[34], +7 more	
+0x0D1C5B0	vfunc	NiAVObject::ProcessClone	named	rtti+commonlib	70269	pdata_start	vtables(8): BSCubeMapCamera[1D], NiAVObject[1D], NiAmbientLight[1D], NiCamera[1D], NiDirectionalLight[1D], NiLight[1D], +2 more	
+0x0D1C850	vfunc	NiAVObject::Dtor	named	rtti+commonlib	70275	pdata_start	vtables(1): NiAVObject[00]	
+0x0D1C900	vfunc	NiAVObject::vfunc_27	inferred	rtti	70276	no_pdata_entry	vtables(8): BSCubeMapCamera[27], NiAVObject[27], NiAmbientLight[27], NiCamera[27], NiDirectionalLight[27], NiLight[27], +2 more	
+0x0D1C910	vfunc	NiAVObject::GetRTTI	named	rtti+commonlib	70277	no_pdata_entry	vtables(1): NiAVObject[02]	
+0x0D1C920	vfunc	NiAVObject::vfunc_2F	inferred	rtti	70278	no_pdata_entry	vtables(6): NiAVObject[2F], NiAmbientLight[2F], NiDirectionalLight[2F], NiLight[2F], NiPointLight[2F], NiSpotLight[2F]	
+0x0D1C930	vfunc	NiNode::CreateClone	named	rtti+commonlib	70279	pdata_start	vtables(6): BSSceneGraph[17], BSTempNode[17], BSTempNodeManager[17], NiNode[17], SceneGraph[17], ShadowSceneNode[17]	
+0x0D1CB60	vfunc	NiNode::LoadBinary	named	rtti+commonlib	70281	pdata_start	vtables(13): BGSDecalNode[18], BSClearZNode[18], BSFaceGenNiNode[18], BSFlattenedBoneTree[18], BSNiNode[18], BSParticleSystemManager[18], +7 more	
+0x0D1CBA0	vfunc	NiNode::LinkObject	named	rtti+commonlib	70282	pdata_start	vtables(13): BGSDecalNode[19], BSClearZNode[19], BSFaceGenNiNode[19], BSFlattenedBoneTree[19], BSNiNode[19], BSParticleSystemManager[19], +7 more	
+0x0D1CC50	vfunc	NiNode::RegisterStreamables	named	rtti+commonlib	70283	pdata_start	vtables(13): BGSDecalNode[1A], BSClearZNode[1A], BSFaceGenNiNode[1A], BSFlattenedBoneTree[1A], BSNiNode[1A], BSParticleSystemManager[1A], +7 more	
+0x0D1CCE0	vfunc	NiNode::SaveBinary	named	rtti+commonlib	70284	pdata_start	vtables(13): BGSDecalNode[1B], BSClearZNode[1B], BSFaceGenNiNode[1B], BSFlattenedBoneTree[1B], BSNiNode[1B], BSParticleSystemManager[1B], +7 more	
+0x0D1CDB0	vfunc	NiNode::IsEqual	named	rtti+commonlib	70285	pdata_start	vtables(13): BGSDecalNode[1C], BSClearZNode[1C], BSFaceGenNiNode[1C], BSFlattenedBoneTree[1C], BSNiNode[1C], BSParticleSystemManager[1C], +7 more	
+0x0D1CF40	function	NiNode::Ctor	named	commonlib+addrlib	70287	pdata_start		include/RE/Offsets.h:414
+0x0D1D100	vfunc	NiNode::vfunc_35	inferred	rtti	70289	pdata_start	vtables(25): BSBlastNode[35], BSClearZNode[35], BSDamageStage[35], BSDebrisNode[35], BSFaceGenNiNode[35], BSFadeNode[35], +19 more	
+0x0D1D270	vfunc	NiNode::vfunc_36	inferred	rtti	70290	pdata_start	vtables(28): BGSDecalNode[36], BSBlastNode[36], BSClearZNode[36], BSDamageStage[36], BSDebrisNode[36], BSFaceGenNiNode[36], +22 more	
+0x0D1D310	vfunc	NiNode::vfunc_38	inferred	rtti	70291	pdata_start	vtables(26): BGSDecalNode[38], BSBlastNode[38], BSClearZNode[38], BSDamageStage[38], BSDebrisNode[38], BSFaceGenNiNode[38], +20 more	
+0x0D1D360	vfunc	NiNode::vfunc_37	inferred	rtti	70292	pdata_start	vtables(26): BGSDecalNode[37], BSBlastNode[37], BSClearZNode[37], BSDamageStage[37], BSDebrisNode[37], BSFaceGenNiNode[37], +20 more	
+0x0D1D4D0	vfunc	NiNode::vfunc_3A	inferred	rtti	70293	pdata_start	vtables(26): BGSDecalNode[3A], BSBlastNode[3A], BSClearZNode[3A], BSDamageStage[3A], BSDebrisNode[3A], BSFaceGenNiNode[3A], +20 more	
+0x0D1D520	vfunc	NiNode::vfunc_39	inferred	rtti	70294	pdata_start	vtables(26): BGSDecalNode[39], BSBlastNode[39], BSClearZNode[39], BSDamageStage[39], BSDebrisNode[39], BSFaceGenNiNode[39], +20 more	
+0x0D1D700	vfunc	NiNode::vfunc_3C	inferred	rtti	70296	pdata_start	vtables(26): BGSDecalNode[3C], BSBlastNode[3C], BSClearZNode[3C], BSDamageStage[3C], BSDebrisNode[3C], BSFaceGenNiNode[3C], +20 more	
+0x0D1D750	vfunc	NiNode::vfunc_3B	inferred	rtti	70297	pdata_start	vtables(26): BGSDecalNode[3B], BSBlastNode[3B], BSClearZNode[3B], BSDamageStage[3B], BSDebrisNode[3B], BSFaceGenNiNode[3B], +20 more	
+0x0D1D910	vfunc	NiNode::PerformOp	named	rtti+commonlib	70298	pdata_start	vtables(28): BGSDecalNode[26], BSBlastNode[26], BSClearZNode[26], BSDamageStage[26], BSDebrisNode[26], BSFaceGenNiNode[26], +22 more	
+0x0D1D9A0	vfunc	NiNode::GetObjectByName	named	rtti+commonlib	70299	pdata_start	vtables(27): BGSDecalNode[2A], BSBlastNode[2A], BSClearZNode[2A], BSDamageStage[2A], BSDebrisNode[2A], BSFaceGenNiNode[2A], +21 more	
+0x0D1DA20	vfunc	NiNode::UpdateControllers	named	rtti+commonlib	70300	pdata_start	vtables(27): BGSDecalNode[25], BSBlastNode[25], BSClearZNode[25], BSDamageStage[25], BSDebrisNode[25], BSFaceGenNiNode[25], +21 more	
+0x0D1DAD0	vfunc	NiNode::UpdateDownwardPass	named	rtti+commonlib	70301	pdata_start	vtables(19): BGSDecalNode[2C], BSBlastNode[2C], BSClearZNode[2C], BSDebrisNode[2C], BSFadeNode[2C], BSLeafAnimNode[2C], +13 more	
+0x0D1DC80	vfunc	NiNode::UpdateSelectedDownwardPass	named	rtti+commonlib	70302	pdata_start	vtables(19): BGSDecalNode[2D], BSBlastNode[2D], BSClearZNode[2D], BSDebrisNode[2D], BSFaceGenNiNode[2D], BSMultiBoundNode[2D], +13 more	
+0x0D1DEE0	vfunc	NiNode::vfunc_3D	inferred	rtti	70303	pdata_start	vtables(26): BGSDecalNode[3D], BSBlastNode[3D], BSClearZNode[3D], BSDamageStage[3D], BSDebrisNode[3D], BSFaceGenNiNode[3D], +20 more	
+0x0D1DF20	vfunc	NiNode::UpdateWorldBound	named	rtti+commonlib	70304	pdata_start	vtables(24): BGSDecalNode[2F], BSBlastNode[2F], BSClearZNode[2F], BSDamageStage[2F], BSDebrisNode[2F], BSFaceGenNiNode[2F], +18 more	
+0x0D1E040	vfunc	NiNode::UpdateRigidDownwardPass	named	rtti+commonlib	70305	pdata_start	vtables(23): BGSDecalNode[2E], BSBlastNode[2E], BSClearZNode[2E], BSDebrisNode[2E], BSFaceGenNiNode[2E], BSFadeNode[2E], +17 more	
+0x0D1E170	vfunc	NiNode::UpdateTransformAndBounds	named	rtti+commonlib	70306	pdata_start	vtables(28): BGSDecalNode[31], BSBlastNode[31], BSClearZNode[31], BSDamageStage[31], BSDebrisNode[31], BSFaceGenNiNode[31], +22 more	
+0x0D1E2C0	vfunc	NiNode::OnVisible	named	rtti+commonlib	70307	pdata_start	vtables(15): BSBlastNode[34], BSDamageStage[34], BSDebrisNode[34], BSFaceGenNiNode[34], BSFlattenedBoneTree[34], BSMasterParticleSystem[34], +9 more	
+0x0D1E430	vfunc	NiNode::SetSelectiveUpdateFlags	named	rtti+commonlib	70309	pdata_start	vtables(28): BGSDecalNode[2B], BSBlastNode[2B], BSClearZNode[2B], BSDamageStage[2B], BSDebrisNode[2B], BSFaceGenNiNode[2B], +22 more	
+0x0D1E560	vfunc	NiNode::ProcessClone	named	rtti+commonlib	70310	pdata_start	vtables(26): BSBlastNode[1D], BSClearZNode[1D], BSDamageStage[1D], BSDebrisNode[1D], BSFaceGenNiNode[1D], BSFadeNode[1D], +20 more	
+0x0D1E610	vfunc	NiNode::AttachProperty	named	rtti+commonlib	70311	pdata_start	vtables(28): BGSDecalNode[27], BSBlastNode[27], BSClearZNode[27], BSDamageStage[27], BSDebrisNode[27], BSFaceGenNiNode[27], +22 more	
+0x0D1E930	vfunc	NiNode::Dtor	named	rtti+commonlib	70317	pdata_start	vtables(1): NiNode[00]	
+0x0D1EB30	vfunc	NiNode::GetRTTI	named	rtti+commonlib	70319	no_pdata_entry	vtables(1): NiNode[02]	
+0x0D1F630	vfunc	NiStream::Load3	named	rtti+commonlib	70329	pdata_start	vtables(2): ?A0xc1e93e6b::DeepCopyStream[03], NiStream[03]	
+0x0D1F740	vfunc	NiStream::Save3	named	rtti+commonlib	70330	pdata_start	vtables(2): ?A0xc1e93e6b::DeepCopyStream[06], NiStream[06]	
+0x0D1F830	vfunc	NiStream::Load2	named	rtti+commonlib	70331	pdata_start	vtables(2): ?A0xc1e93e6b::DeepCopyStream[02], NiStream[02]	
+0x0D1F880	vfunc	NiStream::Save2	named	rtti+commonlib	70332	pdata_start	vtables(2): ?A0xc1e93e6b::DeepCopyStream[05], NiStream[05]	
+0x0D1F900	vfunc	NiStream::Load1	named	rtti+commonlib	70333	pdata_start	vtables(2): ?A0xc1e93e6b::DeepCopyStream[01], NiStream[01]	
+0x0D1F950	vfunc	NiStream::Save1	named	rtti+commonlib	70334	pdata_start	vtables(2): ?A0xc1e93e6b::DeepCopyStream[04], NiStream[04]	
+0x0D1FD10	vfunc	NiStream::Unk_07	inferred	rtti+commonlib	70346	no_pdata_entry	vtables(3): ?A0xc1e93e6b::DeepCopyStream[07], BSStream[07], NiStream[07]	
+0x0D1FD20	vfunc	NiStream::BackgroundLoadProcedure::vfunc_01	inferred	rtti	70347	pdata_start	vtables(1): NiStream::BackgroundLoadProcedure[01]	
+0x0D20280	vfunc	NiStream::RegisterFixedString	named	rtti+commonlib	70355	pdata_start	vtables(3): ?A0xc1e93e6b::DeepCopyStream[08], BSStream[08], NiStream[08]	
+0x0D203A0	vfunc	NiStream::RegisterSaveObject	named	rtti+commonlib	70356	pdata_start	vtables(2): ?A0xc1e93e6b::DeepCopyStream[09], NiStream[09]	
+0x0D20580	vfunc	NiStream::ChangeObject	named	rtti+commonlib	70357	pdata_start	vtables(3): ?A0xc1e93e6b::DeepCopyStream[0A], BSStream[0A], NiStream[0A]	
+0x0D20660	vfunc	NiStream::GetLinkIDFromObject	named	rtti+commonlib	70358	pdata_start	vtables(3): ?A0xc1e93e6b::DeepCopyStream[0B], BSStream[0B], NiStream[0B]	
+0x0D210B0	vfunc	NiStream::LoadHeader	named	rtti+commonlib	70379	pdata_start	vtables(2): BSStream[0D], NiStream[0D]	
+0x0D214D0	vfunc	NiStream::SaveHeader	named	rtti+commonlib	70380	pdata_start	vtables(2): BSStream[0E], NiStream[0E]	
+0x0D21790	vfunc	NiStream::LoadStream	named	rtti+commonlib	70381	pdata_start	vtables(2): ?A0xc1e93e6b::DeepCopyStream[0F], NiStream[0F]	
+0x0D21C70	vfunc	NiStream::SaveStream	named	rtti+commonlib	70382	pdata_start	vtables(2): ?A0xc1e93e6b::DeepCopyStream[10], NiStream[10]	
+0x0D21FC0	vfunc	NiStream::RegisterObjects	named	rtti+commonlib	70383	pdata_start	vtables(3): ?A0xc1e93e6b::DeepCopyStream[11], BSStream[11], NiStream[11]	
+0x0D22020	vfunc	NiStream::LoadTopLevelObjects	named	rtti+commonlib	70384	pdata_start	vtables(3): ?A0xc1e93e6b::DeepCopyStream[12], BSStream[12], NiStream[12]	
+0x0D221C0	vfunc	NiStream::SaveTopLevelObjects	named	rtti+commonlib	70385	pdata_start	vtables(3): ?A0xc1e93e6b::DeepCopyStream[13], BSStream[13], NiStream[13]	
+0x0D22240	vfunc	NiStream::LoadObject	named	rtti+commonlib	70386	pdata_start	vtables(3): ?A0xc1e93e6b::DeepCopyStream[14], BSStream[14], NiStream[14]	
+0x0D22440	vfunc	NiStream::PreSaveObjectSizeTable	named	rtti+commonlib	70387	pdata_start	vtables(3): ?A0xc1e93e6b::DeepCopyStream[15], BSStream[15], NiStream[15]	
+0x0D224C0	vfunc	NiStream::SaveObjectSizeTable	named	rtti+commonlib	70388	pdata_start	vtables(3): ?A0xc1e93e6b::DeepCopyStream[16], BSStream[16], NiStream[16]	
+0x0D22560	vfunc	NiStream::LoadObjectSizeTable	named	rtti+commonlib	70389	pdata_start	vtables(3): ?A0xc1e93e6b::DeepCopyStream[17], BSStream[17], NiStream[17]	
+0x0D24B10	vfunc	NiStream::BackgroundLoadProcedure::vfunc_00	inferred	rtti	70460	pdata_start	vtables(1): NiStream::BackgroundLoadProcedure[00]	
+0x0D24B50	vfunc	NiStream::Dtor	named	rtti+commonlib	70461	pdata_start	vtables(1): NiStream[00]	
+0x0D25CC0	vfunc	NiObjectNET::LoadBinary	named	rtti+commonlib	70501	pdata_start	vtables(1): NiObjectNET[18]	
+0x0D25D10	vfunc	NiObjectNET::LinkObject	named	rtti+commonlib	70502	pdata_start	vtables(1): NiObjectNET[19]	
+0x0D25DB0	vfunc	NiObjectNET::RegisterStreamables	named	rtti+commonlib	70503	pdata_start	vtables(1): NiObjectNET[1A]	
+0x0D25E80	vfunc	NiObjectNET::SaveBinary	named	rtti+commonlib	70504	pdata_start	vtables(1): NiObjectNET[1B]	
+0x0D25FA0	vfunc	NiObjectNET::IsEqual	named	rtti+commonlib	70505	pdata_start	vtables(1): NiObjectNET[1C]	
+0x0D26E00	vfunc	shared_stub_d26e00	unknown	rtti+commonlib	70522	pdata_start	vtables(42): BGSDecalNode[1E], BSBlastNode[1E], BSClearZNode[1E], BSCubeMapCamera[1E], BSDamageStage[1E], BSDebrisNode[1E], +36 more	
+0x0D26EC0	vfunc	NiObjectNET::ProcessClone	named	rtti+commonlib	70523	pdata_start	vtables(16): BSBloodSplatterShaderProperty[1D], BSDistantTreeShaderProperty[1D], BSEffectShaderProperty[1D], BSFogProperty[1D], BSGrassShaderProperty[1D], BSLightingShaderProperty[1D], +10 more	
+0x0D271A0	vfunc	NiObjectNET::Dtor	named	rtti+commonlib	70532	pdata_start	vtables(1): NiObjectNET[00]	
+0x0D272D0	vfunc	NiObjectNET::GetRTTI	named	rtti+commonlib	70534	no_pdata_entry	vtables(1): NiObjectNET[02]	
+0x0D27520	vfunc	shared_stub_d27520	unknown	rtti+commonlib	70538	no_pdata_entry	vtables(754): .?AV?$CombatPathT@V?$CombatPathRequestGeneric@VCombatPathingGoalPolicyExitWater@@VCombatPathingSearchPolicyStandard@@@@VCombatPathDestinationNone@@@@[01], .?AV?$CombatPathT@V?$CombatPathRequestGeneric@VCombatPathingGoalPolicyFindAttackLocation@@VCombatPathingSearchPolicyStandard@@@@VCombatPathDestinationNone@@@@[01], .?AV?$CombatPathT@V?$CombatPathRequestGeneric@VCombatPathingGoalPolicyFindCover@@VCombatPathingSearchPolicyStandard@@@@VCombatPathDestinationNone@@@@[01], .?AV?$CombatPathT@V?$CombatPathRequestGeneric@VCombatPathingGoalPolicyFindHideCover@@VCombatPathingSearchPolicyStandard@@@@VCombatPathDestinationNone@@@@[01], .?AV?$CombatPathT@V?$CombatPathRequestGeneric@VCombatPathingGoalPolicyFindTargetLocation@@VCombatPathingSearchPolicyStandard@@@@VCombatPathDestinationRef@@@@[01], .?AV?$CombatPathT@V?$CombatPathRequestGeneric@VCombatPathingGoalPolicyFlank@@VCombatPathingSearchPolicyFlank@@@@VCombatPathDestinationRef@@@@[01], +748 more	
+0x0D27540	vfunc	shared_stub_d27540	unknown	rtti	70539	pdata_start	vtables(49): BGSDecalNode[30], BSBlastNode[30], BSClearZNode[30], BSDamageStage[30], BSDebrisNode[30], BSDynamicLines[30], +43 more	
+0x0D28850	vfunc	NiSwitchNode::CreateClone	named	rtti+commonlib	70569	pdata_start	vtables(1): NiSwitchNode[17]	declared in NiNode
+0x0D289C0	vfunc	NiSwitchNode::LoadBinary	named	rtti+commonlib	70571	pdata_start	vtables(1): NiSwitchNode[18]	declared in NiNode
+0x0D28A70	vfunc	NiSwitchNode::LinkObject	named	rtti+commonlib	70572	no_pdata_entry	vtables(1): NiSwitchNode[19]	declared in NiNode
+0x0D28A80	vfunc	NiSwitchNode::RegisterStreamables	named	rtti+commonlib	70573	no_pdata_entry	vtables(1): NiSwitchNode[1A]	declared in NiNode
+0x0D28A90	vfunc	NiSwitchNode::SaveBinary	named	rtti+commonlib	70574	pdata_start	vtables(1): NiSwitchNode[1B]	declared in NiNode
+0x0D28B30	vfunc	NiSwitchNode::IsEqual	named	rtti+commonlib	70575	pdata_start	vtables(1): NiSwitchNode[1C]	declared in NiNode
+0x0D28CE0	vfunc	NiSwitchNode::vfunc_35	inferred	rtti	70578	pdata_start	vtables(1): NiSwitchNode[35]	
+0x0D28D80	vfunc	NiSwitchNode::vfunc_38	inferred	rtti	70579	pdata_start	vtables(1): NiSwitchNode[38]	
+0x0D28DD0	vfunc	NiSwitchNode::vfunc_37	inferred	rtti	70580	pdata_start	vtables(1): NiSwitchNode[37]	
+0x0D28F10	vfunc	NiSwitchNode::vfunc_3A	inferred	rtti	70581	pdata_start	vtables(1): NiSwitchNode[3A]	
+0x0D28F60	vfunc	NiSwitchNode::vfunc_39	inferred	rtti	70582	pdata_start	vtables(1): NiSwitchNode[39]	
+0x0D29090	vfunc	NiSwitchNode::vfunc_3C	inferred	rtti	70583	pdata_start	vtables(1): NiSwitchNode[3C]	
+0x0D290E0	vfunc	NiSwitchNode::vfunc_3B	inferred	rtti	70584	pdata_start	vtables(1): NiSwitchNode[3B]	
+0x0D29190	vfunc	NiSwitchNode::UpdateControllers	named	rtti+commonlib	70585	pdata_start	vtables(1): NiSwitchNode[25]	declared in NiNode
+0x0D29240	vfunc	NiSwitchNode::UpdateDownwardPass	named	rtti+commonlib	70586	pdata_start	vtables(1): NiSwitchNode[2C]	declared in NiNode
+0x0D293A0	vfunc	NiSwitchNode::UpdateSelectedDownwardPass	named	rtti+commonlib	70587	pdata_start	vtables(1): NiSwitchNode[2D]	declared in NiNode
+0x0D29520	vfunc	NiSwitchNode::UpdateRigidDownwardPass	named	rtti+commonlib	70588	pdata_start	vtables(1): NiSwitchNode[2E]	declared in NiNode
+0x0D29680	vfunc	NiSwitchNode::UpdateWorldBound	named	rtti+commonlib	70589	no_pdata_entry	vtables(1): NiSwitchNode[2F]	declared in NiNode
+0x0D29700	vfunc	NiSwitchNode::OnVisible	named	rtti+commonlib	70590	pdata_start	vtables(1): NiSwitchNode[34]	declared in NiNode
+0x0D29910	vfunc	NiSwitchNode::Dtor	named	rtti+commonlib	70595	pdata_start	vtables(1): NiSwitchNode[00]	declared in NiNode
+0x0D29970	vfunc	NiSwitchNode::GetRTTI	named	rtti+commonlib	70596	no_pdata_entry	vtables(1): NiSwitchNode[02]	declared in NiNode
+0x0D29980	vfunc	NiSwitchNode::vfunc_04	inferred	rtti	70597	no_pdata_entry	vtables(1): NiSwitchNode[04]	
+0x0D2D060	vfunc	BSTriShape::CreateClone	named	rtti+commonlib	70648	pdata_start	vtables(3): BSInstanceTriShape[17], BSSkinnedDecalTriShape[17], BSTriShape[17]	
+0x0D2D230	vfunc	BSTriShape::LoadBinary	named	rtti+commonlib	70650	pdata_start	vtables(6): BSInstanceTriShape[18], BSLODMultiIndexTriShape[18], BSMultiIndexTriShape[18], BSMultiStreamInstanceTriShape[18], BSSkinnedDecalTriShape[18], BSTriShape[18]	
+0x0D2D430	vfunc	BSTriShape::LinkObject	named	rtti+commonlib	70651	no_pdata_entry	vtables(6): BSInstanceTriShape[19], BSLODMultiIndexTriShape[19], BSMultiIndexTriShape[19], BSMultiStreamInstanceTriShape[19], BSSkinnedDecalTriShape[19], BSTriShape[19]	
+0x0D2D440	vfunc	BSTriShape::RegisterStreamables	named	rtti+commonlib	70652	no_pdata_entry	vtables(6): BSInstanceTriShape[1A], BSLODMultiIndexTriShape[1A], BSMultiIndexTriShape[1A], BSMultiStreamInstanceTriShape[1A], BSSkinnedDecalTriShape[1A], BSTriShape[1A]	
+0x0D2D450	vfunc	BSTriShape::SaveBinary	named	rtti+commonlib	70653	pdata_start	vtables(6): BSInstanceTriShape[1B], BSLODMultiIndexTriShape[1B], BSMultiIndexTriShape[1B], BSMultiStreamInstanceTriShape[1B], BSSkinnedDecalTriShape[1B], BSTriShape[1B]	
+0x0D2D720	vfunc	BSTriShape::IsEqual	named	rtti+commonlib	70654	no_pdata_entry	vtables(6): BSInstanceTriShape[1C], BSLODMultiIndexTriShape[1C], BSMultiIndexTriShape[1C], BSMultiStreamInstanceTriShape[1C], BSSkinnedDecalTriShape[1C], BSTriShape[1C]	
+0x0D2DBA0	vfunc	BSTriShape::Dtor	named	rtti+commonlib	70666	pdata_start	vtables(1): BSTriShape[00]	
+0x0D2DC20	vfunc	BSTriShape::GetRTTI	named	rtti+commonlib	70667	no_pdata_entry	vtables(2): BSSkinnedDecalTriShape[02], BSTriShape[02]	
+0x0D2DC60	vfunc	NiProperty::LoadBinary	named	rtti+commonlib	70671	no_pdata_entry	vtables(1): NiProperty[18]	
+0x0D2DC70	vfunc	NiProperty::LinkObject	named	rtti+commonlib	70672	no_pdata_entry	vtables(1): NiProperty[19]	
+0x0D2DC80	vfunc	NiProperty::RegisterStreamables	named	rtti+commonlib	70673	no_pdata_entry	vtables(1): NiProperty[1A]	
+0x0D2DC90	vfunc	NiProperty::SaveBinary	named	rtti+commonlib	70674	no_pdata_entry	vtables(1): NiProperty[1B]	
+0x0D2DCA0	vfunc	NiProperty::IsEqual	named	rtti+commonlib	70675	no_pdata_entry	vtables(1): NiProperty[1C]	
+0x0D2DCB0	vfunc	NiProperty::Update	named	rtti+commonlib	70676	pdata_start	vtables(14): BSBloodSplatterShaderProperty[26], BSDistantTreeShaderProperty[26], BSEffectShaderProperty[26], BSFogProperty[26], BSGrassShaderProperty[26], BSLightingShaderProperty[26], +8 more	
+0x0D2DD00	vfunc	NiAlphaProperty::CreateClone	named	rtti+commonlib	70677	pdata_start	vtables(1): NiAlphaProperty[17]	
+0x0D2DE30	vfunc	NiAlphaProperty::LoadBinary	named	rtti+commonlib	70679	pdata_start	vtables(1): NiAlphaProperty[18]	
+0x0D2DEC0	vfunc	NiAlphaProperty::LinkObject	named	rtti+commonlib	70680	no_pdata_entry	vtables(1): NiAlphaProperty[19]	
+0x0D2DED0	vfunc	NiAlphaProperty::RegisterStreamables	named	rtti+commonlib	70681	no_pdata_entry	vtables(1): NiAlphaProperty[1A]	
+0x0D2DEE0	vfunc	NiAlphaProperty::SaveBinary	named	rtti+commonlib	70682	pdata_start	vtables(1): NiAlphaProperty[1B]	
+0x0D2DF70	vfunc	NiAlphaProperty::IsEqual	named	rtti+commonlib	70683	pdata_start	vtables(1): NiAlphaProperty[1C]	
+0x0D32520	vfunc	NiSkinInstance::Dtor	named	rtti+commonlib	70785	pdata_start	vtables(1): NiSkinInstance[00]	
+0x0D32570	vfunc	NiSkinInstance::GetRTTI	named	rtti+commonlib	70787	no_pdata_entry	vtables(1): NiSkinInstance[02]	
+0x0D32580	vfunc	NiStringExtraData::CreateClone	named	rtti+commonlib	70788	pdata_start	vtables(1): NiStringExtraData[17]	
+0x0D326B0	vfunc	NiStringExtraData::LoadBinary	named	rtti+commonlib	70790	pdata_start	vtables(1): NiStringExtraData[18]	
+0x0D326F0	vfunc	NiStringExtraData::LinkObject	named	rtti+commonlib	70791	no_pdata_entry	vtables(1): NiStringExtraData[19]	
+0x0D32700	vfunc	NiStringExtraData::RegisterStreamables	named	rtti+commonlib	70792	pdata_start	vtables(1): NiStringExtraData[1A]	
+0x0D32750	vfunc	NiStringExtraData::SaveBinary	named	rtti+commonlib	70793	pdata_start	vtables(1): NiStringExtraData[1B]	
+0x0D32790	vfunc	NiStringExtraData::IsEqual	named	rtti+commonlib	70794	no_pdata_entry	vtables(1): NiStringExtraData[1C]	
+0x0D329A0	vfunc	NiStringExtraData::Dtor	named	rtti+commonlib	70799	pdata_start	vtables(1): NiStringExtraData[00]	
+0x0D329F0	vfunc	NiStringExtraData::GetRTTI	named	rtti+commonlib	70800	no_pdata_entry	vtables(1): NiStringExtraData[02]	
+0x0D333E0	function	NiTimeController::LoadBinary	named	commonlib+addrlib	70810	pdata_start	vtables(5): BSDoorHavokController[18], BSPlayerDistanceCheckController[18], BSSimpleScaleController[18], NiTimeController[18], TESObjectREFRSync::REFRSyncController[18]	src/RE/N/NiTimeController.cpp:14
+0x0D33530	function	NiTimeController::LinkObject	named	commonlib+addrlib	70811	pdata_start	vtables(5): BSDoorHavokController[19], BSPlayerDistanceCheckController[19], BSSimpleScaleController[19], NiTimeController[19], TESObjectREFRSync::REFRSyncController[19]	src/RE/N/NiTimeController.cpp:21
+0x0D335A0	function	NiTimeController::RegisterStreamables	named	commonlib+addrlib	70812	pdata_start	vtables(5): BSDoorHavokController[1A], BSPlayerDistanceCheckController[1A], BSSimpleScaleController[1A], NiTimeController[1A], TESObjectREFRSync::REFRSyncController[1A]	src/RE/N/NiTimeController.cpp:28
+0x0D335F0	function	NiTimeController::SaveBinary	named	commonlib+addrlib	70813	pdata_start	vtables(5): BSDoorHavokController[1B], BSPlayerDistanceCheckController[1B], BSSimpleScaleController[1B], NiTimeController[1B], TESObjectREFRSync::REFRSyncController[1B]	src/RE/N/NiTimeController.cpp:35
+0x0D33750	function	NiTimeController::IsEqual	named	commonlib+addrlib	70814	pdata_start	vtables(5): BSDoorHavokController[1C], BSPlayerDistanceCheckController[1C], BSSimpleScaleController[1C], NiTimeController[1C], TESObjectREFRSync::REFRSyncController[1C]	src/RE/N/NiTimeController.cpp:42
+0x0D337E0	function	NiTimeController::ctor	named	commonlib+addrlib	70815	pdata_start		src/RE/N/NiTimeController.cpp:91
+0x0D33870	function	NiTimeController::dtor	named	commonlib+addrlib	70816	pdata_start		src/RE/N/NiTimeController.cpp:98
+0x0D338D0	function	NiTimeController::Start	named	commonlib+addrlib	70817	no_pdata_entry	vtables(63): BSDoorHavokController[25], BSEffectShaderPropertyColorController[25], BSEffectShaderPropertyFloatController[25], BSFrustumFOVController[25], BSLagBoneController[25], BSLightingShaderPropertyColorController[25], +57 more	src/RE/N/NiTimeController.cpp:56
+0x0D338F0	function	NiTimeController::Stop	named	commonlib+addrlib	70818	no_pdata_entry	vtables(61): BSDoorHavokController[26], BSEffectShaderPropertyColorController[26], BSEffectShaderPropertyFloatController[26], BSFrustumFOVController[26], BSLagBoneController[26], BSLightingShaderPropertyColorController[26], +55 more	src/RE/N/NiTimeController.cpp:63
+0x0D33920	function	NiTimeController::SetTarget	named	commonlib+addrlib	70819	pdata_start	vtables(32): BSDoorHavokController[28], BSEffectShaderPropertyColorController[28], BSEffectShaderPropertyFloatController[28], BSFrustumFOVController[28], BSLightingShaderPropertyColorController[28], BSLightingShaderPropertyFloatController[28], +26 more	src/RE/N/NiTimeController.cpp:70
+0x0D33A90	function	NiTimeController::StartAnimations	named	commonlib+addrlib	70821	pdata_start		src/RE/N/NiTimeController.cpp:84
+0x0D33C80	function	NiTimeController::ComputeScaledTime	named	commonlib+addrlib	70824	pdata_start	vtables(64): BSDoorHavokController[2B], BSEffectShaderPropertyColorController[2B], BSEffectShaderPropertyFloatController[2B], BSFrustumFOVController[2B], BSLagBoneController[2B], BSLightingShaderPropertyColorController[2B], +58 more	src/RE/N/NiTimeController.cpp:77
+0x0D33EA0	vfunc	shared_stub_d33ea0	unknown	rtti	70825	no_pdata_entry	vtables(64): BSDoorHavokController[2C], BSEffectShaderPropertyColorController[2C], BSEffectShaderPropertyFloatController[2C], BSFrustumFOVController[2C], BSLagBoneController[2C], BSLightingShaderPropertyColorController[2C], +58 more	
+0x0D33EB0	function	NiTimeController::ProcessClone	named	commonlib+addrlib	70826	pdata_start	vtables(12): BSDoorHavokController[1D], BSLagBoneController[1D], BSMultiTargetTreadTransfController[1D], BSPlayerDistanceCheckController[1D], BSSimpleScaleController[1D], NiInterpController[1D], +6 more	src/RE/N/NiTimeController.cpp:49
+0x0D33EF0	vfunc	NiTimeController::Dtor	named	rtti+commonlib	70827	pdata_start	vtables(1): NiTimeController[00]	declared in NiObject
+0x0D33F70	vfunc	NiTimeController::GetRTTI	named	rtti+commonlib	70828	no_pdata_entry	vtables(1): NiTimeController[02]	
+0x0D34E30	vfunc	NiExtraData::LoadBinary	named	rtti+commonlib	70854	pdata_start	vtables(7): BGSAddonNodeSoundHandleExtra[18], BSFaceGenAnimationData[18], BSFaceGenBaseMorphExtraData[18], BSFaceGenModelExtraData[18], BSSplatterExtraData[18], NiExtraData[18], +1 more	
+0x0D34E70	vfunc	NiExtraData::LinkObject	named	rtti+commonlib	70855	no_pdata_entry	vtables(7): BGSAddonNodeSoundHandleExtra[19], BSFaceGenAnimationData[19], BSFaceGenBaseMorphExtraData[19], BSFaceGenModelExtraData[19], BSSplatterExtraData[19], NiExtraData[19], +1 more	
+0x0D34E80	vfunc	NiExtraData::RegisterStreamables	named	rtti+commonlib	70856	pdata_start	vtables(7): BGSAddonNodeSoundHandleExtra[1A], BSFaceGenAnimationData[1A], BSFaceGenBaseMorphExtraData[1A], BSFaceGenModelExtraData[1A], BSSplatterExtraData[1A], NiExtraData[1A], +1 more	
+0x0D34ED0	vfunc	NiExtraData::SaveBinary	named	rtti+commonlib	70857	pdata_start	vtables(7): BGSAddonNodeSoundHandleExtra[1B], BSFaceGenAnimationData[1B], BSFaceGenBaseMorphExtraData[1B], BSFaceGenModelExtraData[1B], BSSplatterExtraData[1B], NiExtraData[1B], +1 more	
+0x0D34F10	vfunc	NiExtraData::IsEqual	named	rtti+commonlib	70858	pdata_start	vtables(9): BGSAddonNodeSoundHandleExtra[1C], BSFaceGenAnimationData[1C], BSFaceGenBaseMorphExtraData[1C], BSFaceGenModelExtraData[1C], BSSplatterExtraData[1C], NiExtraData[1C], +3 more	
+0x0D35110	vfunc	NiExtraData::IsStreamable	named	rtti+commonlib	70865	no_pdata_entry	vtables(35): BGSAddonNodeSoundHandleExtra[25], BSAnimInteractionMarker[25], BSBehaviorGraphExtraData[25], BSBodyMorphOffsetsExtraData[25], BSBoneLODExtraData[25], BSBoneMap[25], +29 more	
+0x0D35120	vfunc	NiExtraData::IsCloneable	named	rtti+commonlib	70866	no_pdata_entry	vtables(34): BGSAddonNodeSoundHandleExtra[26], BSAnimInteractionMarker[26], BSBehaviorGraphExtraData[26], BSBoneLODExtraData[26], BSBoneMap[26], BSBound[26], +28 more	
+0x0D35200	vfunc	NiExtraData::Dtor	named	rtti+commonlib	70868	pdata_start	vtables(1): NiExtraData[00]	
+0x0D35260	vfunc	NiExtraData::GetRTTI	named	rtti+commonlib	70869	no_pdata_entry	vtables(1): NiExtraData[02]	
+0x0D35270	vfunc	NiGeometryData::LoadBinary	named	rtti+commonlib	70870	pdata_start	vtables(1): NiGeometryData[18]	
+0x0D356C0	vfunc	NiGeometryData::LinkObject	named	rtti+commonlib	70871	pdata_start	vtables(1): NiGeometryData[19]	
+0x0D35720	vfunc	NiGeometryData::RegisterStreamables	named	rtti+commonlib	70872	pdata_start	vtables(1): NiGeometryData[1A]	
+0x0D35780	vfunc	NiGeometryData::SaveBinary	named	rtti+commonlib	70873	pdata_start	vtables(1): NiGeometryData[1B]	
+0x0D35AD0	vfunc	NiGeometryData::IsEqual	named	rtti+commonlib	70874	pdata_start	vtables(1): NiGeometryData[1C]	
+0x0D37410	vfunc	NiGeometryData::Dtor	named	rtti+commonlib	70906	pdata_start	vtables(1): NiGeometryData[00]	
+0x0D375A0	vfunc	NiGeometryData::GetActiveVertexCount	named	rtti+commonlib	70907	no_pdata_entry	vtables(4): NiGeometryData[26], NiTriBasedGeomData[26], NiTriShapeData[26], NiTriStripsData[26]	
+0x0D375B0	vfunc	NiGeometryData::GetRTTI	named	rtti+commonlib	70908	no_pdata_entry	vtables(1): NiGeometryData[02]	
+0x0D375C0	vfunc	NiGeometryData::AsTriShapeData	named	rtti+commonlib	70909	no_pdata_entry	vtables(3): NiGeometryData[28], NiTriBasedGeomData[28], NiTriStripsData[28]	
+0x0D375D0	vfunc	NiGeometryData::AsTriStripsData	named	rtti+commonlib	70910	no_pdata_entry	vtables(3): NiGeometryData[27], NiTriBasedGeomData[27], NiTriShapeData[27]	
+0x0D375E0	vfunc	NiGeometryData::SetActiveVertexCount	named	rtti+commonlib	70911	no_pdata_entry	vtables(4): NiGeometryData[25], NiTriBasedGeomData[25], NiTriShapeData[25], NiTriStripsData[25]	
+0x0D37700	vfunc	BSGeometry::LoadBinary	named	rtti+commonlib	70913	pdata_start	vtables(2): BSGeometry[18], BSLines[18]	
+0x0D37840	vfunc	BSGeometry::LinkObject	named	rtti+commonlib	70914	pdata_start	vtables(2): BSGeometry[19], BSLines[19]	
+0x0D37930	vfunc	BSGeometry::RegisterStreamables	named	rtti+commonlib	70915	pdata_start	vtables(2): BSGeometry[1A], BSLines[1A]	
+0x0D379B0	vfunc	BSGeometry::SaveBinary	named	rtti+commonlib	70916	pdata_start	vtables(2): BSGeometry[1B], BSLines[1B]	
+0x0D37A50	vfunc	BSGeometry::IsEqual	named	rtti+commonlib	70917	no_pdata_entry	vtables(2): BSGeometry[1C], BSLines[1C]	
+0x0D37C30	vfunc	BSGeometry::SetSelectiveUpdateFlags	named	rtti+commonlib	70920	pdata_start	vtables(15): BSDynamicLines[2B], BSDynamicTriShape[2B], BSGeometry[2B], BSInstanceTriShape[2B], BSLODMultiIndexTriShape[2B], BSLines[2B], +9 more	
+0x0D37C90	vfunc	BSGeometry::UpdateDownwardPass	named	rtti+commonlib	70921	pdata_start	vtables(14): BSDynamicLines[2C], BSDynamicTriShape[2C], BSGeometry[2C], BSInstanceTriShape[2C], BSLODMultiIndexTriShape[2C], BSLines[2C], +8 more	
+0x0D37CD0	vfunc	BSGeometry::UpdateSelectedDownwardPass	named	rtti+commonlib	70922	pdata_start	vtables(15): BSDynamicLines[2D], BSDynamicTriShape[2D], BSGeometry[2D], BSInstanceTriShape[2D], BSLODMultiIndexTriShape[2D], BSLines[2D], +9 more	
+0x0D37D10	vfunc	BSGeometry::UpdateRigidDownwardPass	named	rtti+commonlib	70923	pdata_start	vtables(15): BSDynamicLines[2E], BSDynamicTriShape[2E], BSGeometry[2E], BSInstanceTriShape[2E], BSLODMultiIndexTriShape[2E], BSLines[2E], +9 more	
+0x0D37DC0	vfunc	BSGeometry::UpdateWorldBound	named	rtti+commonlib	70925	pdata_start	vtables(18): BSDynamicLines[2F], BSDynamicTriShape[2F], BSGeometry[2F], BSInstanceTriShape[2F], BSLODMultiIndexTriShape[2F], BSLines[2F], +12 more	
+0x0D37F30	vfunc	BSGeometry::OnVisible	named	rtti+commonlib	70926	pdata_start	vtables(11): BSDynamicLines[34], BSDynamicTriShape[34], BSGeometry[34], BSInstanceTriShape[34], BSLines[34], BSMultiIndexTriShape[34], +5 more	
+0x0D37FA0	vfunc	BSGeometry::ProcessClone	named	rtti+commonlib	70927	pdata_start	vtables(16): BSDynamicLines[1D], BSDynamicTriShape[1D], BSGeometry[1D], BSInstanceTriShape[1D], BSLODMultiIndexTriShape[1D], BSLines[1D], +10 more	
+0x0D38120	vfunc	BSGeometry::PostLinkObject	named	rtti+commonlib	70928	pdata_start	vtables(19): BSDynamicLines[1E], BSDynamicTriShape[1E], BSGeometry[1E], BSInstanceTriShape[1E], BSLODMultiIndexTriShape[1E], BSLines[1E], +13 more	
+0x0D383F0	vfunc	BSGeometry::Dtor	named	rtti+commonlib	70936	pdata_start	vtables(1): BSGeometry[00]	
+0x0D384C0	vfunc	BSGeometry::GetRTTI	named	rtti+commonlib	70937	no_pdata_entry	vtables(1): BSGeometry[02]	
+0x0D3BF80	vfunc	NiAVObjectPalette::Dtor	named	rtti+commonlib	71000	pdata_start	vtables(1): NiAVObjectPalette[00]	declared in NiObject
+0x0D3C0B0	vfunc	NiAVObjectPalette::GetRTTI	named	rtti+commonlib	71003	no_pdata_entry	vtables(1): NiAVObjectPalette[02]	declared in NiObject
+0x0D3C730	vfunc	NiAVObjectPalette::vfunc_27	inferred	rtti	71011	no_pdata_entry	vtables(1): NiAVObjectPalette[27]	
+0x0D3E160	vfunc	NiBillboardNode::CreateClone	named	rtti+commonlib	71051	pdata_start	vtables(1): NiBillboardNode[17]	declared in NiNode
+0x0D3E290	vfunc	NiBillboardNode::LoadBinary	named	rtti+commonlib	71053	pdata_start	vtables(1): NiBillboardNode[18]	declared in NiNode
+0x0D3E2F0	vfunc	NiBillboardNode::LinkObject	named	rtti+commonlib	71054	no_pdata_entry	vtables(1): NiBillboardNode[19]	declared in NiNode
+0x0D3E300	vfunc	NiBillboardNode::RegisterStreamables	named	rtti+commonlib	71055	no_pdata_entry	vtables(1): NiBillboardNode[1A]	declared in NiNode
+0x0D3E310	vfunc	NiBillboardNode::SaveBinary	named	rtti+commonlib	71056	pdata_start	vtables(1): NiBillboardNode[1B]	declared in NiNode
+0x0D3E370	vfunc	NiBillboardNode::IsEqual	named	rtti+commonlib	71057	pdata_start	vtables(1): NiBillboardNode[1C]	declared in NiNode
+0x0D3E480	vfunc	NiBillboardNode::UpdateWorldBound	named	rtti+commonlib	71059	no_pdata_entry	vtables(1): NiBillboardNode[2F]	declared in NiNode
+0x0D3E510	vfunc	NiBillboardNode::vfunc_30	inferred	rtti	71060	pdata_start	vtables(1): NiBillboardNode[30]	
+0x0D3F720	vfunc	NiBillboardNode::OnVisible	named	rtti+commonlib	71063	pdata_start	vtables(1): NiBillboardNode[34]	declared in NiNode
+0x0D40210	vfunc	NiParticles::CreateClone	named	rtti+commonlib	71087	pdata_start	vtables(1): NiParticles[17]	
+0x0D40440	vfunc	NiParticles::LoadBinary	named	rtti+commonlib	71089	pdata_start	vtables(1): NiParticles[18]	
+0x0D40610	vfunc	NiParticles::LinkObject	named	rtti+commonlib	71090	pdata_start	vtables(1): NiParticles[19]	
+0x0D40770	vfunc	NiParticles::RegisterStreamables	named	rtti+commonlib	71091	pdata_start	vtables(1): NiParticles[1A]	
+0x0D407B0	vfunc	NiParticles::SaveBinary	named	rtti+commonlib	71092	pdata_start	vtables(1): NiParticles[1B]	
+0x0D408C0	vfunc	NiParticles::IsEqual	named	rtti+commonlib	71093	no_pdata_entry	vtables(1): NiParticles[1C]	
+0x0D40AF0	vfunc	NiParticles::AsParticlesGeom	named	rtti+commonlib	71097	no_pdata_entry	vtables(5): BSStripParticleSystem[10], NiMeshParticleSystem[10], NiParticleMeshes[10], NiParticleSystem[10], NiParticles[10]	
+0x0D40DE0	vfunc	NiParticles::Dtor	named	rtti+commonlib	71105	pdata_start	vtables(1): NiParticles[00]	
+0x0D40E80	vfunc	NiParticles::GetRTTI	named	rtti+commonlib	71106	no_pdata_entry	vtables(1): NiParticles[02]	
+0x0D42120	vfunc	NiSkinPartition::LoadBinary	named	rtti+commonlib	71126	pdata_start	vtables(1): NiSkinPartition[18]	
+0x0D42570	vfunc	NiSkinPartition::LinkObject	named	rtti+commonlib	71127	no_pdata_entry	vtables(1): NiSkinPartition[19]	
+0x0D42580	vfunc	NiSkinPartition::RegisterStreamables	named	rtti+commonlib	71128	no_pdata_entry	vtables(1): NiSkinPartition[1A]	
+0x0D42590	vfunc	NiSkinPartition::SaveBinary	named	rtti+commonlib	71129	pdata_start	vtables(1): NiSkinPartition[1B]	
+0x0D42750	vfunc	NiSkinPartition::IsEqual	named	rtti+commonlib	71130	pdata_start	vtables(1): NiSkinPartition[1C]	
+0x0D43A10	vfunc	NiSkinPartition::Unk_25	inferred	rtti+commonlib	71151	pdata_start	vtables(1): NiSkinPartition[25]	
+0x0D44640	vfunc	NiSkinPartition::Dtor	named	rtti+commonlib	71187	pdata_start	vtables(1): NiSkinPartition[00]	
+0x0D446E0	vfunc	NiSkinPartition::GetRTTI	named	rtti+commonlib	71188	no_pdata_entry	vtables(1): NiSkinPartition[02]	
+0x0D449E0	vfunc	NiSkinInstance::CreateClone	named	rtti+commonlib	71200	pdata_start	vtables(1): NiSkinInstance[17]	
+0x0D44BF0	vfunc	NiSkinInstance::LoadBinary	named	rtti+commonlib	71202	pdata_start	vtables(1): NiSkinInstance[18]	
+0x0D44C30	vfunc	NiSkinInstance::LinkObject	named	rtti+commonlib	71203	pdata_start	vtables(1): NiSkinInstance[19]	
+0x0D44D70	vfunc	NiSkinInstance::RegisterStreamables	named	rtti+commonlib	71204	pdata_start	vtables(1): NiSkinInstance[1A]	
+0x0D44E20	vfunc	NiSkinInstance::SaveBinary	named	rtti+commonlib	71205	pdata_start	vtables(1): NiSkinInstance[1B]	
+0x0D44EE0	vfunc	NiSkinInstance::IsEqual	named	rtti+commonlib	71206	pdata_start	vtables(1): NiSkinInstance[1C]	
+0x0D451F0	vfunc	NiSkinInstance::Unk_25	inferred	rtti+commonlib	71211	no_pdata_entry	vtables(1): NiSkinInstance[25]	
+0x0D456C0	vfunc	NiSkinInstance::PostLinkObject	named	rtti+commonlib	71216	no_pdata_entry	vtables(2): BSDismemberSkinInstance[1E], NiSkinInstance[1E]	
+0x0D45BD0	function	NiSkinInstance::Ctor	named	commonlib+addrlib	71227	pdata_start		include/RE/Offsets.h:429
+0x0D45E40	vfunc	NiAVObjectPalette::vfunc_18	inferred	rtti	71233	no_pdata_entry	vtables(1): NiAVObjectPalette[18]	
+0x0D45E50	vfunc	NiAVObjectPalette::vfunc_19	inferred	rtti	71234	no_pdata_entry	vtables(1): NiAVObjectPalette[19]	
+0x0D45E60	vfunc	NiAVObjectPalette::RegisterStreamables	named	rtti+commonlib	71235	pdata_start	vtables(1): NiAVObjectPalette[1A]	declared in NiObject
+0x0D45E80	vfunc	NiAVObjectPalette::vfunc_1B	inferred	rtti	71236	no_pdata_entry	vtables(1): NiAVObjectPalette[1B]	
+0x0D45E90	vfunc	NiAVObjectPalette::IsEqual	named	rtti+commonlib	71237	pdata_start	vtables(1): NiAVObjectPalette[1C]	declared in NiObject
+0x0D45F70	vfunc	NiGeometry::LoadBinary	named	rtti+commonlib	71239	pdata_start	vtables(1): NiGeometry[18]	declared in NiAVObject
+0x0D460F0	vfunc	NiGeometry::LinkObject	named	rtti+commonlib	71240	pdata_start	vtables(1): NiGeometry[19]	declared in NiAVObject
+0x0D461F0	vfunc	NiGeometry::RegisterStreamables	named	rtti+commonlib	71241	pdata_start	vtables(1): NiGeometry[1A]	declared in NiAVObject
+0x0D46290	vfunc	NiGeometry::SaveBinary	named	rtti+commonlib	71242	pdata_start	vtables(1): NiGeometry[1B]	declared in NiAVObject
+0x0D463A0	vfunc	NiGeometry::IsEqual	named	rtti+commonlib	71243	pdata_start	vtables(1): NiGeometry[1C]	declared in NiAVObject
+0x0D464F0	vfunc	NiGeometry::vfunc_2C	inferred	rtti	71245	pdata_start	vtables(6): BSLODTriShape[2C], BSSegmentedTriShape[2C], NiGeometry[2C], NiTriBasedGeom[2C], NiTriShape[2C], NiTriStrips[2C]	
+0x0D46530	vfunc	NiGeometry::vfunc_2D	inferred	rtti	71246	pdata_start	vtables(6): BSLODTriShape[2D], BSSegmentedTriShape[2D], NiGeometry[2D], NiTriBasedGeom[2D], NiTriShape[2D], NiTriStrips[2D]	
+0x0D46570	vfunc	NiGeometry::vfunc_2E	inferred	rtti	71247	pdata_start	vtables(6): BSLODTriShape[2E], BSSegmentedTriShape[2E], NiGeometry[2E], NiTriBasedGeom[2E], NiTriShape[2E], NiTriStrips[2E]	
+0x0D46620	vfunc	NiGeometry::vfunc_36	inferred	rtti	71249	no_pdata_entry	vtables(1): NiGeometry[36]	
+0x0D46630	vfunc	NiGeometry::vfunc_37	inferred	rtti	71250	pdata_start	vtables(1): NiGeometry[37]	
+0x0D466C0	vfunc	NiGeometry::vfunc_38	inferred	rtti	71251	pdata_start	vtables(6): BSLODTriShape[38], BSSegmentedTriShape[38], NiGeometry[38], NiTriBasedGeom[38], NiTriShape[38], NiTriStrips[38]	
+0x0D46CC0	vfunc	NiGeometry::vfunc_39	inferred	rtti	71252	no_pdata_entry	vtables(6): BSLODTriShape[39], BSSegmentedTriShape[39], NiGeometry[39], NiTriBasedGeom[39], NiTriShape[39], NiTriStrips[39]	
+0x0D46CE0	vfunc	NiGeometry::vfunc_3A	inferred	rtti	71253	pdata_start	vtables(6): BSLODTriShape[3A], BSSegmentedTriShape[3A], NiGeometry[3A], NiTriBasedGeom[3A], NiTriShape[3A], NiTriStrips[3A]	
+0x0D46D40	vfunc	NiGeometry::ProcessClone	named	rtti+commonlib	71254	pdata_start	vtables(6): BSLODTriShape[1D], BSSegmentedTriShape[1D], NiGeometry[1D], NiTriBasedGeom[1D], NiTriShape[1D], NiTriStrips[1D]	declared in NiAVObject
+0x0D46EB0	vfunc	NiGeometry::PostLinkObject	named	rtti+commonlib	71255	pdata_start	vtables(6): BSLODTriShape[1E], BSSegmentedTriShape[1E], NiGeometry[1E], NiTriBasedGeom[1E], NiTriShape[1E], NiTriStrips[1E]	declared in NiObjectNET
+0x0D46F10	vfunc	NiGeometry::vfunc_2B	inferred	rtti	71256	pdata_start	vtables(6): BSLODTriShape[2B], BSSegmentedTriShape[2B], NiGeometry[2B], NiTriBasedGeom[2B], NiTriShape[2B], NiTriStrips[2B]	
+0x0D47A70	vfunc	NiGeometry::vfunc_2F	inferred	rtti	71262	pdata_start	vtables(6): BSLODTriShape[2F], BSSegmentedTriShape[2F], NiGeometry[2F], NiTriBasedGeom[2F], NiTriShape[2F], NiTriStrips[2F]	
+0x0D47F20	vfunc	NiGeometry::Dtor	named	rtti+commonlib	71266	pdata_start	vtables(1): NiGeometry[00]	declared in NiAVObject
+0x0D48000	vfunc	NiGeometry::vfunc_27	inferred	rtti	71267	no_pdata_entry	vtables(6): BSLODTriShape[27], BSSegmentedTriShape[27], NiGeometry[27], NiTriBasedGeom[27], NiTriShape[27], NiTriStrips[27]	
+0x0D48040	vfunc	NiGeometry::GetRTTI	named	rtti+commonlib	71268	no_pdata_entry	vtables(1): NiGeometry[02]	declared in NiAVObject
+0x0D48050	vfunc	NiGeometry::vfunc_35	inferred	rtti	71269	no_pdata_entry	vtables(6): BSLODTriShape[35], BSSegmentedTriShape[35], NiGeometry[35], NiTriBasedGeom[35], NiTriShape[35], NiTriStrips[35]	
+0x0D48060	vfunc	NiGeometry::vfunc_0D	inferred	rtti	71270	no_pdata_entry	vtables(6): BSLODTriShape[0D], BSSegmentedTriShape[0D], NiGeometry[0D], NiTriBasedGeom[0D], NiTriShape[0D], NiTriStrips[0D]	
+0x0D48B80	vfunc	NiSkinData::LoadBinary	named	rtti+commonlib	71278	pdata_start	vtables(1): NiSkinData[18]	
+0x0D48FC0	vfunc	NiSkinData::LinkObject	named	rtti+commonlib	71279	no_pdata_entry	vtables(1): NiSkinData[19]	
+0x0D48FD0	vfunc	NiSkinData::RegisterStreamables	named	rtti+commonlib	71280	pdata_start	vtables(1): NiSkinData[1A]	
+0x0D48FF0	vfunc	NiSkinData::SaveBinary	named	rtti+commonlib	71281	pdata_start	vtables(1): NiSkinData[1B]	
+0x0D491E0	vfunc	NiSkinData::IsEqual	named	rtti+commonlib	71282	pdata_start	vtables(1): NiSkinData[1C]	
+0x0D4A020	vfunc	NiSkinData::Dtor	named	rtti+commonlib	71293	pdata_start	vtables(1): NiSkinData[00]	
+0x0D4A160	vfunc	NiSkinData::GetRTTI	named	rtti+commonlib	71294	no_pdata_entry	vtables(1): NiSkinData[02]	
+0x0D4D450	vfunc	NiIntegerExtraData::CreateClone	named	rtti+commonlib	71432	pdata_start	vtables(1): NiIntegerExtraData[17]	
+0x0D4D560	vfunc	NiIntegerExtraData::LoadBinary	named	rtti+commonlib	71434	pdata_start	vtables(1): NiIntegerExtraData[18]	
+0x0D4D5C0	vfunc	NiIntegerExtraData::LinkObject	named	rtti+commonlib	71435	no_pdata_entry	vtables(1): NiIntegerExtraData[19]	
+0x0D4D5D0	vfunc	NiIntegerExtraData::RegisterStreamables	named	rtti+commonlib	71436	no_pdata_entry	vtables(1): NiIntegerExtraData[1A]	
+0x0D4D5E0	vfunc	NiIntegerExtraData::SaveBinary	named	rtti+commonlib	71437	pdata_start	vtables(1): NiIntegerExtraData[1B]	
+0x0D4D640	vfunc	NiIntegerExtraData::IsEqual	named	rtti+commonlib	71438	no_pdata_entry	vtables(1): NiIntegerExtraData[1C]	
+0x0D4D7E0	vfunc	NiIntegerExtraData::Dtor	named	rtti+commonlib	71441	pdata_start	vtables(1): NiIntegerExtraData[00]	
+0x0D4D820	vfunc	NiIntegerExtraData::GetRTTI	named	rtti+commonlib	71442	no_pdata_entry	vtables(1): NiIntegerExtraData[02]	
+0x0D4EC10	vfunc	NiParticlesData::LoadBinary	named	rtti+commonlib	71480	pdata_start	vtables(1): NiParticlesData[18]	
+0x0D4F460	vfunc	NiParticlesData::LinkObject	named	rtti+commonlib	71481	no_pdata_entry	vtables(1): NiParticlesData[19]	
+0x0D4F470	vfunc	NiParticlesData::RegisterStreamables	named	rtti+commonlib	71482	no_pdata_entry	vtables(1): NiParticlesData[1A]	
+0x0D4F480	vfunc	NiParticlesData::SaveBinary	named	rtti+commonlib	71483	pdata_start	vtables(1): NiParticlesData[1B]	
+0x0D4F960	vfunc	NiParticlesData::IsEqual	named	rtti+commonlib	71484	no_pdata_entry	vtables(1): NiParticlesData[1C]	
+0x0D50260	vfunc	NiParticlesData::vfunc_27	inferred	rtti	71498	pdata_start	vtables(1): NiParticlesData[27]	
+0x0D504C0	vfunc	NiParticlesData::Dtor	named	rtti+commonlib	71502	pdata_start	vtables(1): NiParticlesData[00]	
+0x0D505E0	vfunc	NiParticlesData::RemoveParticle	named	rtti+commonlib	71503	no_pdata_entry	vtables(5): BSStripPSysData[28], NiMeshPSysData[28], NiPSysData[28], NiParticleMeshesData[28], NiParticlesData[28]	
+0x0D505F0	vfunc	NiParticlesData::GetActiveVertexCount	named	rtti+commonlib	71504	no_pdata_entry	vtables(5): BSStripPSysData[26], NiMeshPSysData[26], NiPSysData[26], NiParticleMeshesData[26], NiParticlesData[26]	
+0x0D50600	vfunc	NiParticlesData::GetRTTI	named	rtti+commonlib	71505	no_pdata_entry	vtables(1): NiParticlesData[02]	
+0x0D50610	vfunc	NiParticlesData::SetActiveVertexCount	named	rtti+commonlib	71506	no_pdata_entry	vtables(3): BSStripPSysData[25], NiPSysData[25], NiParticlesData[25]	
+0x0D506A0	vfunc	NiParticleMeshesData::LoadBinary	named	rtti+commonlib	71508	pdata_start	vtables(1): NiParticleMeshesData[18]	declared in NiParticlesData
+0x0D506D0	vfunc	NiParticleMeshesData::LinkObject	named	rtti+commonlib	71509	pdata_start	vtables(1): NiParticleMeshesData[19]	declared in NiParticlesData
+0x0D50740	vfunc	NiParticleMeshesData::RegisterStreamables	named	rtti+commonlib	71510	pdata_start	vtables(1): NiParticleMeshesData[1A]	declared in NiParticlesData
+0x0D50790	vfunc	NiParticleMeshesData::SaveBinary	named	rtti+commonlib	71511	pdata_start	vtables(1): NiParticleMeshesData[1B]	declared in NiParticlesData
+0x0D507D0	vfunc	NiParticleMeshesData::IsEqual	named	rtti+commonlib	71512	pdata_start	vtables(1): NiParticleMeshesData[1C]	declared in NiParticlesData
+0x0D50AD0	vfunc	NiParticleMeshesData::SetActiveVertexCount	named	rtti+commonlib	71517	pdata_start	vtables(1): NiParticleMeshesData[25]	declared in NiParticlesData
+0x0D50B30	vfunc	NiParticleMeshesData::vfunc_27	inferred	rtti	71518	pdata_start	vtables(1): NiParticleMeshesData[27]	
+0x0D50E40	vfunc	NiParticleMeshesData::Dtor	named	rtti+commonlib	71520	pdata_start	vtables(1): NiParticleMeshesData[00]	declared in NiParticlesData
+0x0D50EF0	vfunc	NiParticleMeshesData::GetRTTI	named	rtti+commonlib	71521	no_pdata_entry	vtables(1): NiParticleMeshesData[02]	declared in NiParticlesData
+0x0D50F00	vfunc	NiParticleMeshes::CreateClone	named	rtti+commonlib	71522	pdata_start	vtables(1): NiParticleMeshes[17]	declared in NiParticles
+0x0D50FF0	vfunc	NiParticleMeshes::LoadBinary	named	rtti+commonlib	71524	no_pdata_entry	vtables(1): NiParticleMeshes[18]	declared in NiParticles
+0x0D51000	vfunc	NiParticleMeshes::LinkObject	named	rtti+commonlib	71525	no_pdata_entry	vtables(1): NiParticleMeshes[19]	declared in NiParticles
+0x0D51010	vfunc	NiParticleMeshes::RegisterStreamables	named	rtti+commonlib	71526	no_pdata_entry	vtables(1): NiParticleMeshes[1A]	declared in NiParticles
+0x0D51020	vfunc	NiParticleMeshes::SaveBinary	named	rtti+commonlib	71527	no_pdata_entry	vtables(1): NiParticleMeshes[1B]	declared in NiParticles
+0x0D51030	vfunc	NiParticleMeshes::IsEqual	named	rtti+commonlib	71528	no_pdata_entry	vtables(1): NiParticleMeshes[1C]	declared in NiParticles
+0x0D51140	vfunc	NiParticleMeshes::UpdateDownwardPass	named	rtti+commonlib	71531	no_pdata_entry	vtables(1): NiParticleMeshes[2C]	declared in BSGeometry
+0x0D51160	vfunc	NiParticleMeshes::UpdateSelectedDownwardPass	named	rtti+commonlib	71532	no_pdata_entry	vtables(1): NiParticleMeshes[2D]	declared in BSGeometry
+0x0D51180	vfunc	NiParticleMeshes::UpdateRigidDownwardPass	named	rtti+commonlib	71533	no_pdata_entry	vtables(1): NiParticleMeshes[2E]	declared in BSGeometry
+0x0D511A0	vfunc	NiParticleMeshes::vfunc_30	inferred	rtti	71534	pdata_start	vtables(1): NiParticleMeshes[30]	
+0x0D51240	vfunc	NiParticleMeshes::OnVisible	named	rtti+commonlib	71535	no_pdata_entry	vtables(1): NiParticleMeshes[34]	declared in BSGeometry
+0x0D51260	vfunc	NiParticleMeshes::SetSelectiveUpdateFlags	named	rtti+commonlib	71536	pdata_start	vtables(1): NiParticleMeshes[2B]	declared in BSGeometry
+0x0D513D0	vfunc	NiParticleMeshes::Dtor	named	rtti+commonlib	71539	pdata_start	vtables(1): NiParticleMeshes[00]	declared in NiParticles
+0x0D51410	vfunc	NiParticleMeshes::GetRTTI	named	rtti+commonlib	71540	no_pdata_entry	vtables(1): NiParticleMeshes[02]	declared in NiParticles
+0x0D52470	vfunc	NiTriShapeData::LoadBinary	named	rtti+commonlib	71567	pdata_start	vtables(1): NiTriShapeData[18]	declared in NiGeometryData
+0x0D525E0	vfunc	NiTriShapeData::LinkObject	named	rtti+commonlib	71568	no_pdata_entry	vtables(1): NiTriShapeData[19]	declared in NiGeometryData
+0x0D525F0	vfunc	NiTriShapeData::RegisterStreamables	named	rtti+commonlib	71569	no_pdata_entry	vtables(1): NiTriShapeData[1A]	declared in NiGeometryData
+0x0D52600	vfunc	NiTriShapeData::SaveBinary	named	rtti+commonlib	71570	pdata_start	vtables(1): NiTriShapeData[1B]	declared in NiGeometryData
+0x0D52710	vfunc	NiTriShapeData::IsEqual	named	rtti+commonlib	71571	pdata_start	vtables(1): NiTriShapeData[1C]	declared in NiGeometryData
+0x0D52CA0	vfunc	NiTriShapeData::vfunc_2C	inferred	rtti	71584	no_pdata_entry	vtables(1): NiTriShapeData[2C]	
+0x0D52D40	vfunc	NiTriShapeData::vfunc_2D	inferred	rtti	71587	no_pdata_entry	vtables(1): NiTriShapeData[2D]	
+0x0D52E30	vfunc	NiTriShapeData::Dtor	named	rtti+commonlib	71589	pdata_start	vtables(1): NiTriShapeData[00]	declared in NiGeometryData
+0x0D52E90	vfunc	NiTriBasedGeomData::vfunc_2B	inferred	rtti	71590	no_pdata_entry	vtables(3): NiTriBasedGeomData[2B], NiTriShapeData[2B], NiTriStripsData[2B]	
+0x0D52EA0	vfunc	NiTriShapeData::GetRTTI	named	rtti+commonlib	71591	no_pdata_entry	vtables(1): NiTriShapeData[02]	declared in NiGeometryData
+0x0D52EB0	vfunc	NiTriShapeData::AsTriShapeData	named	rtti+commonlib	71592	no_pdata_entry	vtables(1): NiTriShapeData[28]	declared in NiGeometryData
+0x0D52EC0	vfunc	NiTriBasedGeomData::vfunc_2A	inferred	rtti	71593	no_pdata_entry	vtables(3): NiTriBasedGeomData[2A], NiTriShapeData[2A], NiTriStripsData[2A]	
+0x0D52ED0	vfunc	NiTriShape::vfunc_17	inferred	rtti	71594	pdata_start	vtables(1): NiTriShape[17]	
+0x0D52FB0	vfunc	NiTriShape::LoadBinary	named	rtti+commonlib	71596	no_pdata_entry	vtables(1): NiTriShape[18]	declared in NiAVObject
+0x0D52FC0	vfunc	NiTriShape::LinkObject	named	rtti+commonlib	71597	no_pdata_entry	vtables(1): NiTriShape[19]	declared in NiAVObject
+0x0D52FD0	vfunc	NiTriShape::RegisterStreamables	named	rtti+commonlib	71598	no_pdata_entry	vtables(1): NiTriShape[1A]	declared in NiAVObject
+0x0D52FE0	vfunc	NiTriShape::SaveBinary	named	rtti+commonlib	71599	no_pdata_entry	vtables(1): NiTriShape[1B]	declared in NiAVObject
+0x0D52FF0	vfunc	NiTriShape::IsEqual	named	rtti+commonlib	71600	no_pdata_entry	vtables(1): NiTriShape[1C]	declared in NiAVObject
+0x0D53800	vfunc	NiTriShape::vfunc_3B	inferred	rtti	71612	no_pdata_entry	vtables(3): BSLODTriShape[3B], BSSegmentedTriShape[3B], NiTriShape[3B]	
+0x0D538F0	vfunc	NiTriShape::Dtor	named	rtti+commonlib	71615	pdata_start	vtables(1): NiTriShape[00]	declared in NiAVObject
+0x0D53930	vfunc	NiTriShape::GetRTTI	named	rtti+commonlib	71616	no_pdata_entry	vtables(1): NiTriShape[02]	declared in NiAVObject
+0x0D53940	vfunc	NiTriBasedGeom::vfunc_0E	inferred	rtti	71617	no_pdata_entry	vtables(5): BSLODTriShape[0E], BSSegmentedTriShape[0E], NiTriBasedGeom[0E], NiTriShape[0E], NiTriStrips[0E]	
+0x0D53950	vfunc	NiTriShape::vfunc_0F	inferred	rtti	71618	no_pdata_entry	vtables(3): BSLODTriShape[0F], BSSegmentedTriShape[0F], NiTriShape[0F]	
+0x0D5A270	vfunc	NiTriBasedGeomData::LoadBinary	named	rtti+commonlib	71830	pdata_start	vtables(1): NiTriBasedGeomData[18]	declared in NiGeometryData
+0x0D5A2D0	vfunc	NiTriBasedGeomData::LinkObject	named	rtti+commonlib	71831	no_pdata_entry	vtables(1): NiTriBasedGeomData[19]	declared in NiGeometryData
+0x0D5A2E0	vfunc	NiTriBasedGeomData::RegisterStreamables	named	rtti+commonlib	71832	no_pdata_entry	vtables(1): NiTriBasedGeomData[1A]	declared in NiGeometryData
+0x0D5A2F0	vfunc	NiTriBasedGeomData::SaveBinary	named	rtti+commonlib	71833	pdata_start	vtables(1): NiTriBasedGeomData[1B]	declared in NiGeometryData
+0x0D5A350	vfunc	NiTriBasedGeomData::IsEqual	named	rtti+commonlib	71834	pdata_start	vtables(1): NiTriBasedGeomData[1C]	declared in NiGeometryData
+0x0D5A3C0	vfunc	NiTriBasedGeomData::vfunc_2C	inferred	rtti	71836	no_pdata_entry	vtables(1): NiTriBasedGeomData[2C]	
+0x0D5A3D0	vfunc	NiTriBasedGeomData::vfunc_2D	inferred	rtti	71837	no_pdata_entry	vtables(1): NiTriBasedGeomData[2D]	
+0x0D5A470	vfunc	NiTriBasedGeomData::Dtor	named	rtti+commonlib	71840	pdata_start	vtables(1): NiTriBasedGeomData[00]	declared in NiGeometryData
+0x0D5A4B0	vfunc	NiTriBasedGeomData::GetRTTI	named	rtti+commonlib	71841	no_pdata_entry	vtables(1): NiTriBasedGeomData[02]	declared in NiGeometryData
+0x0D5A4C0	vfunc	NiTriShapeData::Unk_29	inferred	rtti+commonlib	71842	pdata_start	vtables(1): NiTriShapeData[29]	declared in NiGeometryData
+0x0D5A790	vfunc	NiTriBasedGeom::LoadBinary	named	rtti+commonlib	71844	no_pdata_entry	vtables(1): NiTriBasedGeom[18]	declared in NiAVObject
+0x0D5A7A0	vfunc	NiTriBasedGeom::LinkObject	named	rtti+commonlib	71845	no_pdata_entry	vtables(1): NiTriBasedGeom[19]	declared in NiAVObject
+0x0D5A7B0	vfunc	NiTriBasedGeom::RegisterStreamables	named	rtti+commonlib	71846	no_pdata_entry	vtables(1): NiTriBasedGeom[1A]	declared in NiAVObject
+0x0D5A7C0	vfunc	NiTriBasedGeom::SaveBinary	named	rtti+commonlib	71847	no_pdata_entry	vtables(1): NiTriBasedGeom[1B]	declared in NiAVObject
+0x0D5A7D0	vfunc	NiTriBasedGeom::IsEqual	named	rtti+commonlib	71848	no_pdata_entry	vtables(1): NiTriBasedGeom[1C]	declared in NiAVObject
+0x0D5A800	vfunc	NiTriBasedGeom::vfunc_37	inferred	rtti	71850	no_pdata_entry	vtables(5): BSLODTriShape[37], BSSegmentedTriShape[37], NiTriBasedGeom[37], NiTriShape[37], NiTriStrips[37]	
+0x0D5A810	vfunc	NiTriBasedGeom::vfunc_36	inferred	rtti	71851	pdata_start	vtables(4): BSSegmentedTriShape[36], NiTriBasedGeom[36], NiTriShape[36], NiTriStrips[36]	
+0x0D5A8A0	vfunc	NiTriBasedGeom::Dtor	named	rtti+commonlib	71854	pdata_start	vtables(1): NiTriBasedGeom[00]	declared in NiAVObject
+0x0D5A8E0	vfunc	NiTriBasedGeom::GetRTTI	named	rtti+commonlib	71855	no_pdata_entry	vtables(1): NiTriBasedGeom[02]	declared in NiAVObject
+0x0D60F30	vfunc	NiBoundingVolume::vfunc_00	inferred	rtti	71988	no_pdata_entry	vtables(1): NiBoundingVolume[00]	
+0x0D60F40	vfunc	NiBoundingVolume::vfunc_01	inferred	rtti	71989	pdata_start	vtables(1): NiBoundingVolume[01]	
+0x0D736A0	vfunc	NiBoundingVolume::vfunc_02	inferred	rtti	72128	pdata_start	vtables(1): NiBoundingVolume[02]	
+0x0D73860	vfunc	NiBoundingVolume::vfunc_03	inferred	rtti	72131	no_pdata_entry	vtables(1): NiBoundingVolume[03]	
+0x0D73880	vfunc	NiBoundingVolume::vfunc_04	inferred	rtti	72133	no_pdata_entry	vtables(5): NiBoundingVolume[04], NiBoxBV[04], NiCapsuleBV[04], NiHalfSpaceBV[04], NiSphereBV[04]	
+0x0D8A260	vfunc	NiControllerManager::CreateClone	named	rtti+commonlib	72341	pdata_start	vtables(1): NiControllerManager[17]	
+0x0D8A4C0	vfunc	NiControllerManager::LoadBinary	named	rtti+commonlib	72343	pdata_start	vtables(1): NiControllerManager[18]	
+0x0D8A580	vfunc	NiControllerManager::LinkObject	named	rtti+commonlib	72344	pdata_start	vtables(1): NiControllerManager[19]	
+0x0D8A5F0	vfunc	NiControllerManager::RegisterStreamables	named	rtti+commonlib	72345	pdata_start	vtables(1): NiControllerManager[1A]	
+0x0D8A7E0	vfunc	NiControllerManager::SaveBinary	named	rtti+commonlib	72346	pdata_start	vtables(1): NiControllerManager[1B]	
+0x0D8A8C0	vfunc	NiControllerManager::IsEqual	named	rtti+commonlib	72347	pdata_start	vtables(1): NiControllerManager[1C]	
+0x0D8AF70	vfunc	NiControllerManager::Update	named	rtti+commonlib	72351	pdata_start	vtables(1): NiControllerManager[27]	
+0x0D8D540	vfunc	NiControllerManager::ProcessClone	named	rtti+commonlib	72388	pdata_start	vtables(1): NiControllerManager[1D]	
+0x0D8D950	vfunc	NiControllerManager::PostLinkObject	named	rtti+commonlib	72389	pdata_start	vtables(1): NiControllerManager[1E]	
+0x0D8DCD0	vfunc	NiControllerManager::TargetIsRequiredType	named	rtti+commonlib	72394	pdata_start	vtables(1): NiControllerManager[2E]	
+0x0D8E4E0	vfunc	NiControllerManager::Dtor	named	rtti+commonlib	72408	pdata_start	vtables(1): NiControllerManager[00]	
+0x0D8EAD0	vfunc	NiControllerManager::GetRTTI	named	rtti+commonlib	72413	no_pdata_entry	vtables(1): NiControllerManager[02]	
+0x0D8EAE0	vfunc	NiControllerManager::AsNiControllerManager	named	rtti+commonlib	72414	no_pdata_entry	vtables(1): NiControllerManager[24]	
+0x0D8F080	vfunc	NiControllerManager::SetTarget	named	rtti+commonlib	72420	no_pdata_entry	vtables(1): NiControllerManager[28]	
+0x0D8F090	vfunc	NiControllerManager::Start	named	rtti+commonlib	72421	no_pdata_entry	vtables(1): NiControllerManager[25]	
+0x0D8F0A0	vfunc	NiControllerManager::Start	named	rtti+commonlib	72422	no_pdata_entry	vtables(1): NiControllerManager[2F]	
+0x0D8F0B0	vfunc	NiControllerManager::Stop	named	rtti+commonlib	72423	no_pdata_entry	vtables(1): NiControllerManager[26]	
+0x0D9E330	vfunc	NiTransformInterpolator::vfunc_17	inferred	rtti	72773	pdata_start	vtables(1): NiTransformInterpolator[17]	
+0x0D9E570	vfunc	NiTransformInterpolator::LoadBinary	named	rtti+commonlib	72775	pdata_start	vtables(1): NiTransformInterpolator[18]	declared in NiKeyBasedInterpolator
+0x0D9E620	vfunc	NiTransformInterpolator::LinkObject	named	rtti+commonlib	72776	no_pdata_entry	vtables(1): NiTransformInterpolator[19]	declared in NiKeyBasedInterpolator
+0x0D9E630	vfunc	NiTransformInterpolator::RegisterStreamables	named	rtti+commonlib	72777	pdata_start	vtables(1): NiTransformInterpolator[1A]	declared in NiKeyBasedInterpolator
+0x0D9E680	vfunc	NiTransformInterpolator::SaveBinary	named	rtti+commonlib	72778	pdata_start	vtables(1): NiTransformInterpolator[1B]	declared in NiKeyBasedInterpolator
+0x0D9E6C0	vfunc	NiTransformInterpolator::IsEqual	named	rtti+commonlib	72779	pdata_start	vtables(1): NiTransformInterpolator[1C]	declared in NiKeyBasedInterpolator
+0x0D9E9A0	vfunc	NiTransformInterpolator::Update1	named	rtti+commonlib	72783	pdata_start	vtables(1): NiTransformInterpolator[25]	declared in NiInterpolator
+0x0D9EBD0	vfunc	NiTransformInterpolator::IsTransformValueSupported	named	rtti+commonlib	72784	no_pdata_entry	vtables(2): BSRotAccumTransfInterpolator[30], NiTransformInterpolator[30]	declared in NiInterpolator
+0x0D9EBE0	vfunc	NiTransformInterpolator::GetKeyChannelCount	named	rtti+commonlib	72785	no_pdata_entry	vtables(2): BSRotAccumTransfInterpolator[39], NiTransformInterpolator[39]	declared in NiKeyBasedInterpolator
+0x0D9EBF0	vfunc	NiTransformInterpolator::GetKeyCount	named	rtti+commonlib	72786	no_pdata_entry	vtables(2): BSRotAccumTransfInterpolator[3A], NiTransformInterpolator[3A]	declared in NiKeyBasedInterpolator
+0x0D9EC40	vfunc	NiTransformInterpolator::GetKeyContent	named	rtti+commonlib	72787	no_pdata_entry	vtables(2): BSRotAccumTransfInterpolator[3B], NiTransformInterpolator[3B]	declared in NiKeyBasedInterpolator
+0x0D9EC90	vfunc	NiTransformInterpolator::GetKeyType	named	rtti+commonlib	72788	no_pdata_entry	vtables(2): BSRotAccumTransfInterpolator[3C], NiTransformInterpolator[3C]	declared in NiKeyBasedInterpolator
+0x0D9ECC0	vfunc	NiTransformInterpolator::GetKeyArray	named	rtti+commonlib	72789	no_pdata_entry	vtables(2): BSRotAccumTransfInterpolator[3D], NiTransformInterpolator[3D]	declared in NiKeyBasedInterpolator
+0x0D9ED10	vfunc	NiTransformInterpolator::GetKeyStride	named	rtti+commonlib	72790	no_pdata_entry	vtables(2): BSRotAccumTransfInterpolator[3E], NiTransformInterpolator[3E]	declared in NiKeyBasedInterpolator
+0x0D9ED60	vfunc	NiTransformInterpolator::GetChannelPosed	named	rtti+commonlib	72791	pdata_start	vtables(2): BSRotAccumTransfInterpolator[3F], NiTransformInterpolator[3F]	declared in NiKeyBasedInterpolator
+0x0D9EE00	vfunc	NiTransformInterpolator::Collapse	named	rtti+commonlib	72792	pdata_start	vtables(2): BSRotAccumTransfInterpolator[31], NiTransformInterpolator[31]	declared in NiInterpolator
+0x0D9F1F0	vfunc	NiTransformInterpolator::GetActiveTimeRange	named	rtti+commonlib	72793	pdata_start	vtables(2): BSRotAccumTransfInterpolator[32], NiTransformInterpolator[32]	declared in NiKeyBasedInterpolator
+0x0D9F3A0	vfunc	NiTransformInterpolator::GuaranteeTimeRange	named	rtti+commonlib	72794	no_pdata_entry	vtables(2): BSRotAccumTransfInterpolator[33], NiTransformInterpolator[33]	declared in NiInterpolator
+0x0D9F3C0	vfunc	NiTransformInterpolator::GetSequenceInterpolator	named	rtti+commonlib	72795	pdata_start	vtables(2): BSRotAccumTransfInterpolator[34], NiTransformInterpolator[34]	declared in NiInterpolator
+0x0D9F5D0	vfunc	NiTransformInterpolator::Dtor	named	rtti+commonlib	72798	pdata_start	vtables(1): NiTransformInterpolator[00]	declared in NiKeyBasedInterpolator
+0x0D9F640	vfunc	NiTransformInterpolator::GetRTTI	named	rtti+commonlib	72799	no_pdata_entry	vtables(1): NiTransformInterpolator[02]	declared in NiKeyBasedInterpolator
+0x0D9F650	vfunc	NiTransformInterpolator::Update5	named	rtti+commonlib	72800	no_pdata_entry	vtables(1): NiTransformInterpolator[29]	declared in NiInterpolator
+0x0D9F660	vfunc	NiTransformInterpolator::Update2	named	rtti+commonlib	72801	no_pdata_entry	vtables(1): NiTransformInterpolator[26]	declared in NiInterpolator
+0x0D9F670	vfunc	NiTransformInterpolator::Update3	named	rtti+commonlib	72802	no_pdata_entry	vtables(1): NiTransformInterpolator[27]	declared in NiInterpolator
+0x0D9F680	vfunc	NiTransformInterpolator::Update4	named	rtti+commonlib	72803	no_pdata_entry	vtables(1): NiTransformInterpolator[28]	declared in NiInterpolator
+0x0D9F690	vfunc	NiTransformInterpolator::Update6	named	rtti+commonlib	72804	no_pdata_entry	vtables(1): NiTransformInterpolator[2A]	declared in NiInterpolator
+0x0DA4610	vfunc	NiTransformController::vfunc_17	inferred	rtti	72925	pdata_start	vtables(1): NiTransformController[17]	
+0x0DA46F0	vfunc	NiTransformController::LoadBinary	named	rtti+commonlib	72927	no_pdata_entry	vtables(1): NiTransformController[18]	declared in NiInterpController
+0x0DA4700	vfunc	NiTransformController::LinkObject	named	rtti+commonlib	72928	no_pdata_entry	vtables(1): NiTransformController[19]	declared in NiInterpController
+0x0DA4710	vfunc	NiTransformController::RegisterStreamables	named	rtti+commonlib	72929	no_pdata_entry	vtables(1): NiTransformController[1A]	declared in NiInterpController
+0x0DA4720	vfunc	NiTransformController::SaveBinary	named	rtti+commonlib	72930	no_pdata_entry	vtables(1): NiTransformController[1B]	declared in NiInterpController
+0x0DA4730	vfunc	NiTransformController::IsEqual	named	rtti+commonlib	72931	pdata_start	vtables(1): NiTransformController[1C]	declared in NiInterpController
+0x0DA4830	vfunc	NiTransformController::Update	named	rtti+commonlib	72934	pdata_start	vtables(1): NiTransformController[27]	declared in NiTimeController
+0x0DA4B00	vfunc	NiTransformController::vfunc_29	inferred	rtti	72935	no_pdata_entry	vtables(1): NiTransformController[29]	
+0x0DA4B10	vfunc	NiTransformController::CreatePoseInterpolator	named	rtti+commonlib	72936	pdata_start	vtables(1): NiTransformController[37]	declared in NiInterpController
+0x0DA4C10	vfunc	NiTransformController::SynchronizePoseInterpolator	named	rtti+commonlib	72937	pdata_start	vtables(1): NiTransformController[38]	declared in NiInterpController
+0x0DA4D60	vfunc	NiTransformController::CreateBlendInterpolator	named	rtti+commonlib	72938	pdata_start	vtables(1): NiTransformController[39]	declared in NiInterpController
+0x0DA5010	vfunc	NiTransformController::vfunc_3C	inferred	rtti	72939	pdata_start	vtables(1): NiTransformController[3C]	
+0x0DA5060	vfunc	NiTransformController::InterpolatorIsCorrectType	named	rtti+commonlib	72940	no_pdata_entry	vtables(1): NiTransformController[3B]	declared in NiInterpController
+0x0DA5240	vfunc	NiTransformController::Dtor	named	rtti+commonlib	72944	pdata_start	vtables(1): NiTransformController[00]	declared in NiInterpController
+0x0DA52C0	vfunc	NiTransformController::GetRTTI	named	rtti+commonlib	72946	no_pdata_entry	vtables(1): NiTransformController[02]	declared in NiInterpController
+0x0DAB5A0	vfunc	NiTransformData::vfunc_18	inferred	rtti	73126	pdata_start	vtables(1): NiTransformData[18]	
+0x0DAB7F0	vfunc	NiTransformData::vfunc_19	inferred	rtti	73127	no_pdata_entry	vtables(1): NiTransformData[19]	
+0x0DAB800	vfunc	NiTransformData::RegisterStreamables	named	rtti+commonlib	73128	no_pdata_entry	vtables(1): NiTransformData[1A]	declared in NiObject
+0x0DAB810	vfunc	NiTransformData::vfunc_1B	inferred	rtti	73129	pdata_start	vtables(1): NiTransformData[1B]	
+0x0DAB9F0	vfunc	NiTransformData::IsEqual	named	rtti+commonlib	73130	pdata_start	vtables(1): NiTransformData[1C]	declared in NiObject
+0x0DAC420	vfunc	NiTransformData::Dtor	named	rtti+commonlib	73145	pdata_start	vtables(1): NiTransformData[00]	declared in NiObject
+0x0DAC4F0	vfunc	NiTransformData::GetRTTI	named	rtti+commonlib	73146	no_pdata_entry	vtables(1): NiTransformData[02]	declared in NiObject
+0x0DD1C80	vfunc	NiExtraDataController::LoadBinary	named	rtti+commonlib	74394	pdata_start	vtables(1): NiExtraDataController[18]	declared in NiInterpController
+0x0DD1CC0	vfunc	NiExtraDataController::LinkObject	named	rtti+commonlib	74395	no_pdata_entry	vtables(1): NiExtraDataController[19]	declared in NiInterpController
+0x0DD1CD0	vfunc	NiExtraDataController::RegisterStreamables	named	rtti+commonlib	74396	pdata_start	vtables(1): NiExtraDataController[1A]	declared in NiInterpController
+0x0DD1D20	vfunc	NiExtraDataController::SaveBinary	named	rtti+commonlib	74397	pdata_start	vtables(1): NiExtraDataController[1B]	declared in NiInterpController
+0x0DD1D60	vfunc	NiExtraDataController::IsEqual	named	rtti+commonlib	74398	pdata_start	vtables(1): NiExtraDataController[1C]	declared in NiInterpController
+0x0DD1E50	vfunc	NiExtraDataController::SetTarget	named	rtti+commonlib	74400	pdata_start	vtables(5): NiColorExtraDataController[28], NiExtraDataController[28], NiFloatExtraDataController[28], NiFloatsExtraDataController[28], NiFloatsExtraDataPoint3Controller[28]	declared in NiTimeController
+0x0DD1EF0	vfunc	NiExtraDataController::ProcessClone	named	rtti+commonlib	74401	pdata_start	vtables(5): NiColorExtraDataController[1D], NiExtraDataController[1D], NiFloatExtraDataController[1D], NiFloatsExtraDataController[1D], NiFloatsExtraDataPoint3Controller[1D]	declared in NiTimeController
+0x0DD2010	vfunc	NiExtraDataController::vfunc_1E	inferred	rtti	74402	pdata_start	vtables(5): NiColorExtraDataController[1E], NiExtraDataController[1E], NiFloatExtraDataController[1E], NiFloatsExtraDataController[1E], NiFloatsExtraDataPoint3Controller[1E]	
+0x0DD2080	vfunc	NiExtraDataController::GetCtlrID	named	rtti+commonlib	74403	no_pdata_entry	vtables(3): NiColorExtraDataController[36], NiExtraDataController[36], NiFloatExtraDataController[36]	declared in NiInterpController
+0x0DD2130	vfunc	NiExtraDataController::vfunc_3C	inferred	rtti	74406	pdata_start	vtables(5): NiColorExtraDataController[3C], NiExtraDataController[3C], NiFloatExtraDataController[3C], NiFloatsExtraDataController[3C], NiFloatsExtraDataPoint3Controller[3C]	
+0x0DD2230	vfunc	NiExtraDataController::Dtor	named	rtti+commonlib	74408	pdata_start	vtables(1): NiExtraDataController[00]	declared in NiInterpController
+0x0DD22D0	vfunc	NiExtraDataController::GetRTTI	named	rtti+commonlib	74409	no_pdata_entry	vtables(1): NiExtraDataController[02]	declared in NiInterpController
+0x0DD3AA0	vfunc	NiParticleSystem::CreateClone	named	rtti+commonlib	74489	pdata_start	vtables(1): NiParticleSystem[17]	
+0x0DD3DC0	vfunc	NiParticleSystem::LoadBinary	named	rtti+commonlib	74491	pdata_start	vtables(1): NiParticleSystem[18]	
+0x0DD3E50	vfunc	NiParticleSystem::LinkObject	named	rtti+commonlib	74492	pdata_start	vtables(1): NiParticleSystem[19]	
+0x0DD40D0	vfunc	NiParticleSystem::RegisterStreamables	named	rtti+commonlib	74493	pdata_start	vtables(1): NiParticleSystem[1A]	
+0x0DD4130	vfunc	NiParticleSystem::SaveBinary	named	rtti+commonlib	74494	pdata_start	vtables(1): NiParticleSystem[1B]	
+0x0DD4200	vfunc	NiParticleSystem::IsEqual	named	rtti+commonlib	74495	pdata_start	vtables(1): NiParticleSystem[1C]	
+0x0DD4370	vfunc	NiParticleSystem::UpdateSystem	named	rtti+commonlib	74497	no_pdata_entry	vtables(3): BSStripParticleSystem[38], NiMeshParticleSystem[38], NiParticleSystem[38]	
+0x0DD4380	vfunc	NiParticleSystem::Do_UpdateSystem	named	rtti+commonlib	74498	pdata_start	vtables(3): BSStripParticleSystem[39], NiMeshParticleSystem[39], NiParticleSystem[39]	
+0x0DD4600	function	NiParticleSystem::AddModifier	named	commonlib+addrlib	74499	pdata_start		include/RE/N/NiParticleSystem.h:41
+0x0DD48A0	vfunc	NiParticleSystem::UpdateDownwardPass	named	rtti+commonlib	74501	pdata_start	vtables(2): BSStripParticleSystem[2C], NiParticleSystem[2C]	declared in BSGeometry
+0x0DD4910	vfunc	NiParticleSystem::UpdateSelectedDownwardPass	named	rtti+commonlib	74502	pdata_start	vtables(2): BSStripParticleSystem[2D], NiParticleSystem[2D]	declared in BSGeometry
+0x0DD4990	vfunc	NiParticleSystem::UpdateRigidDownwardPass	named	rtti+commonlib	74503	pdata_start	vtables(2): BSStripParticleSystem[2E], NiParticleSystem[2E]	declared in BSGeometry
+0x0DD4A10	vfunc	NiParticleSystem::SetSelectiveUpdateFlags	named	rtti+commonlib	74504	no_pdata_entry	vtables(2): BSStripParticleSystem[2B], NiParticleSystem[2B]	declared in BSGeometry
+0x0DD4A60	vfunc	NiParticleSystem::ProcessClone	named	rtti+commonlib	74505	pdata_start	vtables(3): BSStripParticleSystem[1D], NiMeshParticleSystem[1D], NiParticleSystem[1D]	
+0x0DD4C90	vfunc	NiParticleSystem::vfunc_30	inferred	rtti	74508	no_pdata_entry	vtables(2): BSStripParticleSystem[30], NiParticleSystem[30]	
+0x0DD4FB0	vfunc	NiParticleSystem::Dtor	named	rtti+commonlib	74514	pdata_start	vtables(1): NiParticleSystem[00]	
+0x0DD50D0	vfunc	NiParticleSystem::GetRTTI	named	rtti+commonlib	74516	no_pdata_entry	vtables(1): NiParticleSystem[02]	
+0x0E0DC70	vfunc	BSValueNode::CreateClone	named	rtti+commonlib	75988	pdata_start	vtables(1): BSValueNode[17]	
+0x0E0DE00	vfunc	BSValueNode::LoadBinary	named	rtti+commonlib	75990	pdata_start	vtables(1): BSValueNode[18]	
+0x0E0DEA0	vfunc	BSValueNode::LinkObject	named	rtti+commonlib	75991	no_pdata_entry	vtables(1): BSValueNode[19]	
+0x0E0DEB0	vfunc	BSValueNode::RegisterStreamables	named	rtti+commonlib	75992	pdata_start	vtables(1): BSValueNode[1A]	
+0x0E0DED0	vfunc	BSValueNode::SaveBinary	named	rtti+commonlib	75993	pdata_start	vtables(1): BSValueNode[1B]	
+0x0E0DF70	vfunc	BSValueNode::IsEqual	named	rtti+commonlib	75994	pdata_start	vtables(1): BSValueNode[1C]	
+0x0E0E150	vfunc	BSValueNode::vfunc_3E	inferred	rtti	75998	pdata_start	vtables(1): BSValueNode[3E]	
+0x0E0E240	vfunc	BSValueNode::UpdateWorldData	named	rtti+commonlib	76000	pdata_start	vtables(1): BSValueNode[30]	
+0x0E0E320	vfunc	BSValueNode::Dtor	named	rtti+commonlib	76002	pdata_start	vtables(1): BSValueNode[00]	
+0x0E0E390	vfunc	BSValueNode::GetRTTI	named	rtti+commonlib	76003	no_pdata_entry	vtables(1): BSValueNode[02]	
+0x0E1ED80	vfunc	BSInstanceTriShape::Dtor	named	rtti+commonlib	76343	pdata_start	vtables(1): BSInstanceTriShape[00]	
+0x0E1EF60	vfunc	BSInstanceTriShape::GetRTTI	named	rtti+commonlib	76347	no_pdata_entry	vtables(1): BSInstanceTriShape[02]	
+0x0E2C080	vfunc	BSBound::CreateClone	named	rtti+commonlib	76656	no_pdata_entry	vtables(1): BSBound[17]	
+0x0E2C0E0	vfunc	BSBound::LoadBinary	named	rtti+commonlib	76658	pdata_start	vtables(1): BSBound[18]	
+0x0E2C120	vfunc	BSBound::LinkObject	named	rtti+commonlib	76659	no_pdata_entry	vtables(1): BSBound[19]	
+0x0E2C130	vfunc	BSBound::RegisterStreamables	named	rtti+commonlib	76660	pdata_start	vtables(1): BSBound[1A]	
+0x0E2C150	vfunc	BSBound::SaveBinary	named	rtti+commonlib	76661	pdata_start	vtables(1): BSBound[1B]	
+0x0E2C190	vfunc	BSBound::IsEqual	named	rtti+commonlib	76662	pdata_start	vtables(1): BSBound[1C]	
+0x0E2C460	vfunc	BSBound::Dtor	named	rtti+commonlib	76666	pdata_start	vtables(1): BSBound[00]	
+0x0E2C4A0	vfunc	BSBound::GetRTTI	named	rtti+commonlib	76667	no_pdata_entry	vtables(1): BSBound[02]	
+0x0E2F4A0	vfunc	BSSceneGraph::GetFarDistance	named	rtti+commonlib	76749	no_pdata_entry	vtables(1): BSSceneGraph[3E]	
+0x0E2F4E0	vfunc	BSSceneGraph::GetNearDistance	named	rtti+commonlib	76750	no_pdata_entry	vtables(1): BSSceneGraph[3F]	
+0x0E2F4F0	vfunc	BSSceneGraph::SetViewDistanceBasedOnFrameRate	named	rtti+commonlib	76751	pdata_start	vtables(2): BSSceneGraph[40], SceneGraph[40]	
+0x0E2F690	vfunc	BSSceneGraph::Dtor	named	rtti+commonlib	76752	pdata_start	vtables(1): BSSceneGraph[00]	
+0x0E2F770	vfunc	BSSceneGraph::GetRTTI	named	rtti+commonlib	76753	no_pdata_entry	vtables(1): BSSceneGraph[02]	
+0x0E30520	vfunc	BSGeometryListCullingProcess::AppendNonAccum	named	rtti+commonlib	76772	pdata_start	vtables(1): BSGeometryListCullingProcess[19]	declared in BSCullingProcess
+0x0E30640	vfunc	BSSubIndexTriShape::CreateClone	named	rtti+commonlib	76775	pdata_start	vtables(1): BSSubIndexTriShape[17]	declared in BSTriShape
+0x0E309D0	vfunc	BSSubIndexTriShape::LoadBinary	named	rtti+commonlib	76777	pdata_start	vtables(2): BSSubIndexLandTriShape[18], BSSubIndexTriShape[18]	declared in BSTriShape
+0x0E30C40	vfunc	BSSubIndexTriShape::LinkObject	named	rtti+commonlib	76778	no_pdata_entry	vtables(2): BSSubIndexLandTriShape[19], BSSubIndexTriShape[19]	declared in BSTriShape
+0x0E30C50	vfunc	BSSubIndexTriShape::RegisterStreamables	named	rtti+commonlib	76779	no_pdata_entry	vtables(2): BSSubIndexLandTriShape[1A], BSSubIndexTriShape[1A]	declared in BSTriShape
+0x0E30C60	vfunc	BSSubIndexTriShape::SaveBinary	named	rtti+commonlib	76780	pdata_start	vtables(2): BSSubIndexLandTriShape[1B], BSSubIndexTriShape[1B]	declared in BSTriShape
+0x0E30DA0	vfunc	BSSubIndexTriShape::IsEqual	named	rtti+commonlib	76781	no_pdata_entry	vtables(2): BSSubIndexLandTriShape[1C], BSSubIndexTriShape[1C]	declared in BSTriShape
+0x0E312C0	vfunc	BSSubIndexTriShape::OnVisible	named	rtti+commonlib	76792	pdata_start	vtables(2): BSSubIndexLandTriShape[34], BSSubIndexTriShape[34]	declared in BSGeometry
+0x0E31440	vfunc	BSSubIndexTriShape::Dtor	named	rtti+commonlib	76795	pdata_start	vtables(1): BSSubIndexTriShape[00]	declared in BSTriShape
+0x0E314D0	vfunc	BSSubIndexTriShape::GetRTTI	named	rtti+commonlib	76796	no_pdata_entry	vtables(1): BSSubIndexTriShape[02]	declared in BSTriShape
+0x0E314E0	vfunc	BSSubIndexTriShape::vfunc_0B	inferred	rtti	76797	no_pdata_entry	vtables(2): BSSubIndexLandTriShape[0B], BSSubIndexTriShape[0B]	
+0x0E359C0	vfunc	BSMasterParticleSystem::CreateClone	named	rtti+commonlib	76875	pdata_start	vtables(1): BSMasterParticleSystem[17]	declared in NiNode
+0x0E35AD0	vfunc	BSMasterParticleSystem::LoadBinary	named	rtti+commonlib	76877	pdata_start	vtables(1): BSMasterParticleSystem[18]	
+0x0E35B40	vfunc	BSMasterParticleSystem::LinkObject	named	rtti+commonlib	76878	pdata_start	vtables(1): BSMasterParticleSystem[19]	
+0x0E35C00	vfunc	BSMasterParticleSystem::RegisterStreamables	named	rtti+commonlib	76879	pdata_start	vtables(1): BSMasterParticleSystem[1A]	
+0x0E35C80	vfunc	BSMasterParticleSystem::SaveBinary	named	rtti+commonlib	76880	pdata_start	vtables(1): BSMasterParticleSystem[1B]	
+0x0E35D50	vfunc	BSMasterParticleSystem::IsEqual	named	rtti+commonlib	76881	no_pdata_entry	vtables(1): BSMasterParticleSystem[1C]	
+0x0E35F40	vfunc	BSMasterParticleSystem::UpdateDownwardPass	named	rtti+commonlib	76885	pdata_start	vtables(1): BSMasterParticleSystem[2C]	
+0x0E36010	vfunc	BSMasterParticleSystem::UpdateSelectedDownwardPass	named	rtti+commonlib	76886	pdata_start	vtables(1): BSMasterParticleSystem[2D]	
+0x0E360A0	vfunc	BSMasterParticleSystem::UpdateRigidDownwardPass	named	rtti+commonlib	76887	pdata_start	vtables(1): BSMasterParticleSystem[2E]	
+0x0E36130	vfunc	BSMasterParticleSystem::PostLinkObject	named	rtti+commonlib	76888	no_pdata_entry	vtables(1): BSMasterParticleSystem[1E]	
+0x0E36C70	vfunc	BSMasterParticleSystem::Dtor	named	rtti+commonlib	76903	pdata_start	vtables(1): BSMasterParticleSystem[00]	
+0x0E36D60	vfunc	BSMasterParticleSystem::GetRTTI	named	rtti+commonlib	76905	no_pdata_entry	vtables(1): BSMasterParticleSystem[02]	
+0x0E39610	vfunc	BSInvMarker::vfunc_17	inferred	rtti	76978	no_pdata_entry	vtables(1): BSInvMarker[17]	
+0x0E39670	vfunc	BSInvMarker::LoadBinary	named	rtti+commonlib	76980	pdata_start	vtables(1): BSInvMarker[18]	declared in NiExtraData
+0x0E397A0	vfunc	BSInvMarker::LinkObject	named	rtti+commonlib	76981	no_pdata_entry	vtables(1): BSInvMarker[19]	declared in NiExtraData
+0x0E397B0	vfunc	BSInvMarker::RegisterStreamables	named	rtti+commonlib	76982	no_pdata_entry	vtables(1): BSInvMarker[1A]	declared in NiExtraData
+0x0E397C0	vfunc	BSInvMarker::SaveBinary	named	rtti+commonlib	76983	pdata_start	vtables(1): BSInvMarker[1B]	declared in NiExtraData
+0x0E398B0	vfunc	BSInvMarker::IsEqual	named	rtti+commonlib	76984	no_pdata_entry	vtables(1): BSInvMarker[1C]	declared in NiExtraData
+0x0E39AB0	vfunc	BSInvMarker::Dtor	named	rtti+commonlib	76989	pdata_start	vtables(1): BSInvMarker[00]	declared in NiExtraData
+0x0E39AF0	vfunc	BSInvMarker::GetRTTI	named	rtti+commonlib	76990	no_pdata_entry	vtables(1): BSInvMarker[02]	declared in NiExtraData
+0x0E3F800	vfunc	BSNiNode::CreateClone	named	rtti+commonlib	77179	pdata_start	vtables(1): BSNiNode[17]	
+0x0E3FCD0	vfunc	BSNiNode::Dtor	named	rtti+commonlib	77185	pdata_start	vtables(1): BSNiNode[00]	
+0x0E3FD10	vfunc	BSNiNode::GetRTTI	named	rtti+commonlib	77186	no_pdata_entry	vtables(1): BSNiNode[02]	
+0x0E87270	function	NiAVObject::SetMotionType	named	commonlib+addrlib	77866	pdata_start		include/RE/Offsets.h:398
+0x0E8D6F0	function	NiAVObject::SetCollisionLayer	named	commonlib+addrlib	77998	pdata_start		src/RE/N/NiAVObject.cpp:162
+0x0E8D710	function	NiAVObject::SetCollisionLayerAndGroup	named	commonlib+addrlib	77999	pdata_start		src/RE/N/NiAVObject.cpp:169
+0x0E947D0	function	NiAVObject::UpdateRigidConstraints	named	commonlib+addrlib	78103	pdata_start		src/RE/N/NiAVObject.cpp:321
+0x0EA5030	vfunc	bhkNiCollisionObject::LoadBinary	named	rtti+commonlib	78367	pdata_start	vtables(1): bhkNiCollisionObject[18]	
+0x0EA50A0	vfunc	bhkNiCollisionObject::LinkObject	named	rtti+commonlib	78368	pdata_start	vtables(1): bhkNiCollisionObject[19]	
+0x0EA5100	vfunc	bhkNiCollisionObject::RegisterStreamables	named	rtti+commonlib	78369	pdata_start	vtables(1): bhkNiCollisionObject[1A]	
+0x0EA5140	vfunc	bhkNiCollisionObject::SaveBinary	named	rtti+commonlib	78370	pdata_start	vtables(1): bhkNiCollisionObject[1B]	
+0x0EA51B0	vfunc	bhkNiCollisionObject::IsEqual	named	rtti+commonlib	78371	pdata_start	vtables(5): bhkCartTether[1C], bhkCollisionObject[1C], bhkNiCollisionObject[1C], bhkPCollisionObject[1C], bhkSPCollisionObject[1C]	
+0x0EA5410	vfunc	bhkNiCollisionObject::Unk_26	inferred	rtti+commonlib	78378	pdata_start	vtables(3): bhkNiCollisionObject[26], bhkPCollisionObject[26], bhkSPCollisionObject[26]	
+0x0EA5530	vfunc	bhkNiCollisionObject::Unk_27	inferred	rtti+commonlib	78379	no_pdata_entry	vtables(8): WeaponObject[27], bhkAttachmentCollisionObject[27], bhkBlendCollisionObject[27], bhkCartTether[27], bhkCollisionObject[27], bhkNiCollisionObject[27], +2 more	
+0x0EA5540	vfunc	bhkNiCollisionObject::Unk_25	inferred	rtti+commonlib	78380	no_pdata_entry	vtables(8): WeaponObject[25], bhkAttachmentCollisionObject[25], bhkBlendCollisionObject[25], bhkCartTether[25], bhkCollisionObject[25], bhkNiCollisionObject[25], +2 more	
+0x0EA5550	vfunc	bhkNiCollisionObject::Unk_2F	inferred	rtti+commonlib	78381	no_pdata_entry	vtables(1): bhkNiCollisionObject[2F]	
+0x0EA5E50	vfunc	bhkNiCollisionObject::Dtor	named	rtti+commonlib	78394	pdata_start	vtables(1): bhkNiCollisionObject[00]	
+0x0EA5F40	vfunc	bhkNiCollisionObject::GetRTTI	named	rtti+commonlib	78395	no_pdata_entry	vtables(1): bhkNiCollisionObject[02]	
+0x147C760	vfunc	BSLeafAnimNode::CreateClone	named	rtti+commonlib	105577	pdata_start	vtables(1): BSLeafAnimNode[17]	declared in BSFadeNode
+0x147C810	vfunc	BSLeafAnimNode::LoadBinary	named	rtti+commonlib	105579	no_pdata_entry	vtables(1): BSLeafAnimNode[18]	declared in BSFadeNode
+0x147C820	vfunc	BSLeafAnimNode::LinkObject	named	rtti+commonlib	105580	no_pdata_entry	vtables(1): BSLeafAnimNode[19]	declared in BSFadeNode
+0x147C830	vfunc	BSLeafAnimNode::RegisterStreamables	named	rtti+commonlib	105581	pdata_start	vtables(1): BSLeafAnimNode[1A]	declared in BSFadeNode
+0x147C850	vfunc	BSLeafAnimNode::SaveBinary	named	rtti+commonlib	105582	no_pdata_entry	vtables(1): BSLeafAnimNode[1B]	declared in BSFadeNode
+0x147C860	vfunc	BSLeafAnimNode::IsEqual	named	rtti+commonlib	105583	no_pdata_entry	vtables(1): BSLeafAnimNode[1C]	declared in BSFadeNode
+0x147C9C0	vfunc	BSLeafAnimNode::OnVisible	named	rtti+commonlib	105588	pdata_start	vtables(1): BSLeafAnimNode[34]	declared in BSFadeNode
+0x147CAE0	vfunc	BSLeafAnimNode::Dtor	named	rtti+commonlib	105590	pdata_start	vtables(1): BSLeafAnimNode[00]	declared in BSFadeNode
+0x147CB20	vfunc	BSLeafAnimNode::GetRTTI	named	rtti+commonlib	105591	no_pdata_entry	vtables(1): BSLeafAnimNode[02]	declared in BSFadeNode
+0x147CB30	vfunc	BSLeafAnimNode::vfunc_3F	inferred	rtti	105592	no_pdata_entry	vtables(2): BSLeafAnimNode[3F], BSTreeNode[3F]	
+0x14FE7A0	vfunc	NiCollisionObject::LoadBinary	named	rtti+commonlib	107828	pdata_start	vtables(1): NiCollisionObject[18]	
+0x14FE7D0	vfunc	NiCollisionObject::LinkObject	named	rtti+commonlib	107829	pdata_start	vtables(1): NiCollisionObject[19]	
+0x14FE810	vfunc	NiCollisionObject::RegisterStreamables	named	rtti+commonlib	107830	pdata_start	vtables(1): NiCollisionObject[1A]	
+0x14FE860	vfunc	NiCollisionObject::SaveBinary	named	rtti+commonlib	107831	pdata_start	vtables(1): NiCollisionObject[1B]	
+0x14FE8A0	vfunc	NiCollisionObject::IsEqual	named	rtti+commonlib	107832	pdata_start	vtables(1): NiCollisionObject[1C]	
+0x14FE9B0	vfunc	NiCollisionObject::Unk_25	inferred	rtti+commonlib	107835	pdata_start	vtables(1): NiCollisionObject[25]	
+0x14FEA50	vfunc	NiCollisionObject::GetRTTI	named	rtti+commonlib	107837	no_pdata_entry	vtables(1): NiCollisionObject[02]	
+0x15033A0	vfunc	BSOrderedNode::CreateClone	named	rtti+commonlib	108112	pdata_start	vtables(1): BSOrderedNode[17]	
+0x1503520	vfunc	BSOrderedNode::LoadBinary	named	rtti+commonlib	108114	pdata_start	vtables(1): BSOrderedNode[18]	
+0x15035D0	vfunc	BSOrderedNode::LinkObject	named	rtti+commonlib	108115	no_pdata_entry	vtables(1): BSOrderedNode[19]	
+0x15035E0	vfunc	BSOrderedNode::RegisterStreamables	named	rtti+commonlib	108116	pdata_start	vtables(1): BSOrderedNode[1A]	
+0x1503600	vfunc	BSOrderedNode::SaveBinary	named	rtti+commonlib	108117	pdata_start	vtables(1): BSOrderedNode[1B]	
+0x1503670	vfunc	BSOrderedNode::IsEqual	named	rtti+commonlib	108118	pdata_start	vtables(1): BSOrderedNode[1C]	
+0x1503970	vfunc	BSOrderedNode::OnVisible	named	rtti+commonlib	108123	no_pdata_entry	vtables(1): BSOrderedNode[34]	
+0x1503990	vfunc	BSOrderedNode::UpdateDownwardPass	named	rtti+commonlib	108124	pdata_start	vtables(1): BSOrderedNode[2C]	
+0x15039C0	vfunc	BSOrderedNode::UpdateSelectedDownwardPass	named	rtti+commonlib	108125	pdata_start	vtables(1): BSOrderedNode[2D]	
+0x1503C10	vfunc	BSOrderedNode::Dtor	named	rtti+commonlib	108129	pdata_start	vtables(1): BSOrderedNode[00]	
+0x1503C50	vfunc	BSOrderedNode::GetRTTI	named	rtti+commonlib	108130	no_pdata_entry	vtables(1): BSOrderedNode[02]	
+0x1503C60	vfunc	BSLines::vfunc_17	inferred	rtti	108131	pdata_start	vtables(1): BSLines[17]	
+0x1503F20	vfunc	BSLines::Dtor	named	rtti+commonlib	108136	pdata_start	vtables(1): BSLines[00]	declared in BSGeometry
+0x1503FA0	vfunc	BSLines::GetRTTI	named	rtti+commonlib	108137	no_pdata_entry	vtables(1): BSLines[02]	declared in BSGeometry
+0x1503FB0	vfunc	BSLines::vfunc_11	inferred	rtti	108138	no_pdata_entry	vtables(2): BSDynamicLines[11], BSLines[11]	
+0x1507FD0	vfunc	BSMultiIndexTriShape::CreateClone	named	rtti+commonlib	108250	pdata_start	vtables(1): BSMultiIndexTriShape[17]	
+0x15085E0	vfunc	BSMultiIndexTriShape::AsMultiIndexTriShape	named	rtti+commonlib	108258	no_pdata_entry	vtables(2): BSLODMultiIndexTriShape[35], BSMultiIndexTriShape[35]	
+0x1508690	vfunc	BSMultiIndexTriShape::Dtor	named	rtti+commonlib	108263	pdata_start	vtables(1): BSMultiIndexTriShape[00]	
+0x1508730	vfunc	BSMultiIndexTriShape::GetRTTI	named	rtti+commonlib	108264	no_pdata_entry	vtables(1): BSMultiIndexTriShape[02]	
+0x1785EB8	vtable	NiProperty::vftable	named	rtti	188142	col@0x1ae2e48	39 slots	NiObjectNET > NiObject > NiRefObject
+0x1785FF8	vtable	NiAlphaProperty::vftable	named	rtti	188182	col@0x1ae2ed8	39 slots	NiProperty > NiObjectNET > NiObject > NiRefObject
+0x1786B38	vtable	NiRefObject::vftable	named	rtti	188227	col@0x1ae31b8	2 slots	
+0x17EEB98	vtable	BSGeometryListCullingProcess::vftable	named	rtti	196460	col@0x1aff490	29 slots	BSCullingProcess > NiCullingProcess
+0x17F0750	vtable	NiBillboardNode::vftable	named	rtti	196539	col@0x1aff950	62 slots	NiNode > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x18466C0	vtable	BSFaceGenNiNode::vftable	named	rtti	200333	col@0x1b01158	63 slots	NiNode > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x1896E28	vtable	SceneGraph::vftable	named	rtti	207194	col@0x1b2a0f0	65 slots	BSSceneGraph > NiNode > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19AA958	vtable	NiObject::vftable	named	rtti	237084	col@0x1bb74b0	37 slots	NiRefObject
+0x19AAC08	vtable	NiAVObject::vftable	named	rtti	237091	col@0x1bb7558	53 slots	NiObjectNET > NiObject > NiRefObject
+0x19AB150	vtable	NiNode::vftable	named	rtti	237098	col@0x1bb7580	62 slots	NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19ABCA0	vtable	NiStream::BackgroundLoadProcedure::vftable	named	rtti	237108	col@0x1bb76c8	2 slots	NiThreadProcedure
+0x19ABD98	vtable	NiStream::vftable	named	rtti	237126	col@0x1bb76a0	24 slots	
+0x19AC5A8	vtable	NiObjectNET::vftable	named	rtti	237164	col@0x1bb8090	37 slots	NiObject > NiRefObject
+0x19ACCD8	vtable	NiSwitchNode::vftable	named	rtti	237185	col@0x1bb8340	62 slots	NiNode > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19AD4A0	vtable	BSTriShape::vftable	named	rtti	237195	col@0x1bb8600	56 slots	BSGeometry > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19AE1F0	vtable	NiSkinInstance::vftable	named	rtti	237229	col@0x1bb8888	38 slots	NiObject > NiRefObject
+0x19AE518	vtable	NiStringExtraData::vftable	named	rtti	237234	col@0x1bb89a0	39 slots	NiExtraData > NiObject > NiRefObject
+0x19AE6C0	vtable	NiTimeController::vftable	named	rtti	237237	col@0x1bb8a30	47 slots	NiObject > NiRefObject
+0x19AE8D8	vtable	NiExtraData::vftable	named	rtti	237244	col@0x1bb8a58	39 slots	NiObject > NiRefObject
+0x19AEAF0	vtable	NiGeometryData::vftable	named	rtti	237248	col@0x1bb8a80	42 slots	NiObject > NiRefObject
+0x19AED48	vtable	BSGeometry::vftable	named	rtti	237252	col@0x1bb8b08	56 slots	NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19AF5C8	vtable	NiAVObjectPalette::vftable	named	rtti	237264	col@0x1bb8bf8	40 slots	NiObject > NiRefObject
+0x19AFF90	vtable	NiParticles::vftable	named	rtti	237331	col@0x1bb8f50	56 slots	BSGeometry > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19B0718	vtable	NiSkinPartition::vftable	named	rtti	237386	col@0x1bb8ff0	38 slots	NiObject > NiRefObject
+0x19B0C38	vtable	NiGeometry::vftable	named	rtti	237394	col@0x1bb9108	59 slots	NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19B1000	vtable	NiSkinData::vftable	named	rtti	237403	col@0x1bb91a0	37 slots	NiObject > NiRefObject
+0x19B2618	vtable	NiIntegerExtraData::vftable	named	rtti	237429	col@0x1bb98c8	39 slots	NiExtraData > NiObject > NiRefObject
+0x19B2CC8	vtable	NiParticlesData::vftable	named	rtti	237438	col@0x1bb9ae0	41 slots	NiObject > NiRefObject
+0x19B2EE0	vtable	NiParticleMeshesData::vftable	named	rtti	237440	col@0x1bb9b68	41 slots	NiParticlesData > NiObject > NiRefObject
+0x19B30A8	vtable	NiParticleMeshes::vftable	named	rtti	237442	col@0x1bb9bf8	56 slots	NiParticles > BSGeometry > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19B3740	vtable	NiTriShapeData::vftable	named	rtti	237449	col@0x1bb9dd8	46 slots	NiTriBasedGeomData > NiGeometryData > NiObject > NiRefObject
+0x19B3A70	vtable	NiTriShape::vftable	named	rtti	237451	col@0x1bb9ed8	60 slots	NiTriBasedGeom > NiGeometry > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19B5090	vtable	NiTriBasedGeomData::vftable	named	rtti	237479	col@0x1bba500	46 slots	NiGeometryData > NiObject > NiRefObject
+0x19B5218	vtable	NiTriBasedGeom::vftable	named	rtti	237482	col@0x1bba528	59 slots	NiGeometry > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19B5A20	vtable	NiBoundingVolume::vftable	named	rtti	237500	col@0x1bba8a8	11 slots	
+0x19B6980	vtable	NiControllerManager::vftable	named	rtti	237541	col@0x1bbb108	48 slots	NiTimeController > NiObject > NiRefObject
+0x19B8AB0	vtable	NiTransformInterpolator::vftable	named	rtti	237600	col@0x1bbb818	64 slots	NiKeyBasedInterpolator > NiInterpolator > NiObject > NiRefObject
+0x19B9FB0	vtable	NiTransformController::vftable	named	rtti	237670	col@0x1bbbc20	61 slots	NiSingleInterpController > NiInterpController > NiTimeController > NiObject > NiRefObject
+0x19BACF8	vtable	NiTransformData::vftable	named	rtti	237690	col@0x1bbbf38	37 slots	NiObject > NiRefObject
+0x19C2AA0	vtable	NiExtraDataController::vftable	named	rtti	237870	col@0x1bbdf08	61 slots	NiSingleInterpController > NiInterpController > NiTimeController > NiObject > NiRefObject
+0x19C3898	vtable	NiParticleSystem::vftable	named	rtti	237888	col@0x1bbdfd0	58 slots	NiParticles > BSGeometry > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19CF420	vtable	BSValueNode::vftable	named	rtti	238229	col@0x1bc18a0	63 slots	BSNiNode > NiNode > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19D1E08	vtable	BSInstanceTriShape::vftable	named	rtti	238300	col@0x1bc28a8	62 slots	BSTriShape > BSGeometry > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19D4550	vtable	BSBound::vftable	named	rtti	238442	col@0x1bc3420	39 slots	NiExtraData > NiObject > NiRefObject
+0x19D5468	vtable	BSSceneGraph::vftable	named	rtti	238492	col@0x1bc35f8	65 slots	NiNode > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19D5B78	vtable	BSSubIndexTriShape::vftable	named	rtti	238500	col@0x1bc36d0	56 slots	BSTriShape > BSGeometry > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19D6488	vtable	BSMasterParticleSystem::vftable	named	rtti	238521	col@0x1bc3938	62 slots	NiNode > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19D6D18	vtable	BSInvMarker::vftable	named	rtti	238542	col@0x1bc3b78	39 slots	NiExtraData > NiObject > NiRefObject
+0x19D85A8	vtable	BSNiNode::vftable	named	rtti	238571	col@0x1bc41b8	62 slots	NiNode > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x19E4BE8	vtable	bhkNiCollisionObject::vftable	named	rtti	239091	col@0x1bc5130	49 slots	NiCollisionObject > NiObject > NiRefObject
+0x1AA6710	vtable	BSLeafAnimNode::vftable	named	rtti	252911	col@0x1be9e90	64 slots	BSFadeNode > NiNode > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x1AC2020	vtable	NiCollisionObject::vftable	named	rtti	255341	col@0x1bf55e0	42 slots	NiObject > NiRefObject
+0x1AC2530	vtable	BSOrderedNode::vftable	named	rtti	255357	col@0x1bf5608	62 slots	BSNiNode > NiNode > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x1AC27A8	vtable	BSLines::vftable	named	rtti	255361	col@0x1bf56b0	56 slots	BSGeometry > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x1AC33D8	vtable	BSMultiIndexTriShape::vftable	named	rtti	255398	col@0x1bf5e70	56 slots	BSTriShape > BSGeometry > NiAVObject > NiObjectNET > NiObject > NiRefObject
+0x3272EA0	global	NiRefObject::TotalObjectCount	named	commonlib+addrlib	410493	in_.data		include/RE/Offsets.h:424

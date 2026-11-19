@@ -1,5 +1,6 @@
 // Engine control: settings, the go-file protocol and frame time. Original work, MIT.
 #include "rt_control.h"
+#include "rt_version.h"
 
 #include <windows.h>
 
@@ -86,6 +87,12 @@ void Result(const std::string& json) {
     if (f) { std::fprintf(f, "%s\n", line.c_str()); std::fclose(f); }
 }
 
+// a command's address: 0x<rva> as given, or a version-table name (fn:..., vtable:..., a global), so the tests
+// carry names and run on every supported version
+uint32_t AddrArg(const std::string& s) {
+    return s.rfind("0x", 0) == 0 ? uint32_t(std::strtoul(s.c_str(), nullptr, 16)) : Addr(s.c_str());
+}
+
 uint32_t g_startupAtlas = 0;  // the atlas width before the first live rebuild: what the game's viewports assume
 
 std::string Stats(const char* name, size_t frames) {
@@ -157,7 +164,7 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             }
             std::string line = ResizeShadowAtlasLive(ctx, *g_img, *g_refs, std::atoi(a.c_str()), size);
             // the renderer's own size global (see ResizeShadowAtlas) follows the texture
-            auto* global = reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(g_img->base) + 0x33DCFC0);
+            auto* global = reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(g_img->base) + Addr("global:ShadowMapSize"));
             line += "; size global " + std::to_string(*global) + " -> " + std::to_string(size);
             *global = size;
             // The game's shadow passes keep the viewports of the startup size (measured: 4096 x 4096 after a
@@ -175,13 +182,13 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
         } else if (op == "viewports") {
             Result(PassesViewports());
         } else if (op == "probe") {
-            Result(ProbeFunction(*g_img, uint32_t(std::strtoul(a.c_str(), nullptr, 16))));
+            Result(ProbeFunction(*g_img, AddrArg(a)));
         } else if (op == "vtime") {
             // vtime <0xvtable> <0xslot> <label>: CPU time of a vtable slot from now on
             std::istringstream rest(b);
             std::string slot, label;
             rest >> slot >> label;
-            Result("{\"cmd\":\"vtime\",\"result\":\"" + VTimeSlot(*g_img, uint32_t(std::strtoul(a.c_str(), nullptr, 16)),
+            Result("{\"cmd\":\"vtime\",\"result\":\"" + VTimeSlot(*g_img, AddrArg(a),
                                                                       uint32_t(std::strtoul(slot.c_str(), nullptr, 16)), label) + "\"}");
         } else if (op == "drawstats") {
             // drawstats: per-pass draw, material and mesh statistics from now on (rt_drawstats.h)
@@ -208,11 +215,14 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             Result(GridsCommand(*g_img, *g_refs, a));
         } else if (op == "ltime") {
             // ltime <0xsite> <label>: CPU time of the function a RIP-relative lea at site hands on
-            Result("{\"cmd\":\"ltime\",\"result\":\"" + VTimeLea(*g_img, uint32_t(std::strtoul(a.c_str(), nullptr, 16)), b) + "\"}");
+            Result("{\"cmd\":\"ltime\",\"result\":\"" + VTimeLea(*g_img, AddrArg(a), b) + "\"}");
         } else if (op == "sample") {
             // sample <seconds> [lo hi]: the profiler runs in the background and writes its own result line
             std::istringstream rest(b);
-            std::string lo = "0x1420000", hi = "0x1470000";
+            char rb[2][16];
+            std::snprintf(rb[0], 16, "0x%X", Addr("range:PapyrusCode.begin"));
+            std::snprintf(rb[1], 16, "0x%X", Addr("range:PapyrusCode.end"));
+            std::string lo = rb[0], hi = rb[1];
             rest >> lo >> hi;
             const bool ok = StartSampler(*g_img, std::atof(a.c_str()), uint32_t(std::strtoul(lo.c_str(), nullptr, 16)),
                                          uint32_t(std::strtoul(hi.c_str(), nullptr, 16)), &Result);

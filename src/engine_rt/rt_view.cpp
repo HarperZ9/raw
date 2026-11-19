@@ -1,5 +1,6 @@
 // The view: camera, cell, time and the screen (RAW engine runtime). Original work, MIT. See rt_view.h.
 #include "rt_view.h"
+#include "rt_version.h"
 
 #include <windows.h>
 
@@ -11,10 +12,11 @@
 namespace raw::rt {
 namespace {
 
-constexpr uint32_t kGraphicsState = 0x328CC20, kPlayerCamera = 0x30FD7F8, kPlayer = 0x31874F8;
-constexpr uint32_t kGetSky = 0x01C2640, kCalendar = 0x20F8960;
+
 
 const uint8_t* g_base = nullptr;
+// from the version table at ViewInit; a part whose address is 0 reads as not available
+uint32_t kGraphicsState = 0, kPlayerCamera = 0, kPlayer = 0, kGetSky = 0, kCalendar = 0, kWorldSpace = 0;
 uint64_t g_frame = 0;
 EngineView g_view{};
 std::mutex g_m;
@@ -23,6 +25,7 @@ template <class T> T At(const uint8_t* p, uint32_t off) { T v; std::memcpy(&v, p
 
 bool ReadScreen(EngineView* v) {
     __try {
+        if (!kGraphicsState) return false;
         const uint8_t* gs = g_base + kGraphicsState;
         v->screen[0] = At<uint32_t>(gs, 0x24);
         v->screen[1] = At<uint32_t>(gs, 0x28);
@@ -34,6 +37,7 @@ bool ReadScreen(EngineView* v) {
 
 bool ReadCamera(EngineView* v) {
     __try {
+        if (!kPlayerCamera) return false;
         const uint8_t* cam = At<const uint8_t*>(g_base, kPlayerCamera);
         if (!cam) return false;
         const uint8_t* root = At<const uint8_t*>(cam, 0x20);
@@ -50,6 +54,7 @@ bool ReadCamera(EngineView* v) {
 
 bool ReadCell(EngineView* v) {
     __try {
+        if (!kPlayer) return false;
         const uint8_t* pc = At<const uint8_t*>(g_base, kPlayer);
         if (!pc) return false;
         std::memcpy(v->playerPos, pc + 0x54, 12);
@@ -57,10 +62,11 @@ bool ReadCell(EngineView* v) {
         if (!cell) return false;
         v->cellFormId = At<uint32_t>(cell, 0x14);
         v->interior = At<uint16_t>(cell, 0x40) & 1u;
-        // the worldspace: +0x128 on 1.6.1170 (a cell dump in game, ec7-2; CommonLib's +0x120 held zero), checked by
-        // its form type (TESWorldSpace, 71)
+        // the worldspace: off:TESObjectCELL::worldSpace (+0x128 on 1.6.1170, a cell dump in game, ec7-2; CommonLib's
+        // +0x120 held zero), checked by its form type (TESWorldSpace, 71)
         v->worldspaceFormId = 0;
-        for (uint32_t off : {0x128u, 0x120u}) {
+        for (uint32_t off : {kWorldSpace, 0x128u, 0x120u}) {
+            if (!off) continue;
             const uint8_t* ws = v->interior ? nullptr : At<const uint8_t*>(cell, off);
             if (ws && ws[0x1A] == 71) { v->worldspaceFormId = At<uint32_t>(ws, 0x14); break; }
         }
@@ -71,6 +77,7 @@ bool ReadCell(EngineView* v) {
 bool ReadTime(EngineView* v) {
     __try {
         using GetSky = const uint8_t* (*)();
+        if (!kGetSky || !kCalendar) return false;
         const uint8_t* sky = reinterpret_cast<GetSky>(g_base + kGetSky)();
         if (!sky) return false;
         v->gameHour = At<float>(sky, 0x1B0);
@@ -82,7 +89,12 @@ bool ReadTime(EngineView* v) {
 
 }  // namespace
 
-void ViewInit(const Image& img) { g_base = img.base; }
+void ViewInit(const Image& img) {
+    g_base = img.base;
+    kGraphicsState = Addr("BSGraphics::State::GetSingleton"); kPlayerCamera = Addr("PlayerCamera::Singleton");
+    kPlayer = Addr("PlayerCharacter::Singleton"); kGetSky = Addr("fn:Sky::GetSingleton"); kCalendar = Addr("Calendar::Singleton");
+    kWorldSpace = Off("off:TESObjectCELL::worldSpace");
+}
 
 void ViewOnPresent() {
     if (!g_base) return;

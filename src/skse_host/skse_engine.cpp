@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include "rt_detour.h"
+#include "raw_versions.h"
 #include "rt_image.h"
 #include "skse_addresses.h"
 #include "skse_host.h"
@@ -131,25 +132,32 @@ void* VirtualMachine() {
     return reinterpret_cast<void*>(impl);
 }
 
-// Every address and offset comes from the table for the running build; an address the table lacks comes from
-// an installed Address Library database for that same build. Whatever stays unknown turns its feature off.
+// Every address and offset comes from the version layer's table for the running exe (raw_versions/ beside the
+// game); an address the table lacks comes from an installed Address Library database for the same build. Without a
+// table that names this exe, nothing is hooked. Whatever stays unknown turns its feature off.
 bool EngineInit() {
     if (!g_img.Load()) { Log("game image: no code section found"); return false; }
     g_base = reinterpret_cast<uintptr_t>(g_img.base);
-    const int b = BuildIndex(H().runtimeVersion);
-    Event("game build %08X: %s", H().runtimeVersion, b == kBuildUnknown ? "not in the host's table" : "in the host's table");
+    raw::versions::Table table;
+    std::string why;
+    const bool found = raw::versions::FindTable(H().gameDir + "raw_versions", raw::versions::ReadRunningExe(), &table, &why);
+    Event("version layer: %s", why.c_str());
+    if (!found) {
+        Event("no game hooks and no timed messages on this exe; plugins still load");
+        return false;
+    }
     for (int i = 0; i < kAddrCount; ++i) {
         const auto& a = g_addr[i];
-        const uint32_t builtIn = b == kBuildUnknown ? 0 : a.rva[b];
+        const uint32_t fromTable = table.Get(a.name);
         const uint64_t db = AddrLibOffset(a.id);
-        if (builtIn && db && db != builtIn)
-            Log("address %s: built-in 0x%X, Address Library 0x%llX; using the database", a.name, builtIn, db);
-        g_rva[i] = db ? uint32_t(db) : builtIn;
-        Log("address %s: %s", a.name, g_rva[i] ? (db ? "from the Address Library" : "built in") : "unknown, its feature is off");
+        if (fromTable && db && db != fromTable)
+            Log("address %s: table 0x%X, Address Library 0x%llX; the table is used", a.name, fromTable, db);
+        g_rva[i] = fromTable ? fromTable : uint32_t(db);
+        Log("address %s: %s", a.name, fromTable ? "from the table" : db ? "from the Address Library" : "unknown, its feature is off");
     }
     for (int i = 0; i < kOffCount; ++i) {
-        g_offv[i] = b == kBuildUnknown ? 0 : g_off[i].off[b];
-        Log("offset %s: %s", g_off[i].name, g_offv[i] ? "known" : "unknown, its feature is off");
+        g_offv[i] = table.Get(g_off[i].name);
+        Log("offset %s: %s", g_off[i].name, g_offv[i] ? "from the table" : "unknown, its feature is off");
     }
     if (!g_offv[kOffUiMenuMap] || !g_rva[kAddrUI] || !g_rva[kAddrDataHandler]) Event("DataLoaded will not be sent on this build");
     if (!g_offv[kOffVmImpl] || !g_rva[kAddrSkyrimVM]) Event("Papyrus registrations will stay queued on this build");

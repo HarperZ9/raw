@@ -6,6 +6,7 @@
 #include <string>
 
 #include "rt_control.h"
+#include "rt_version.h"
 
 namespace raw::rt {
 
@@ -60,7 +61,8 @@ std::string ResizeShadowAtlas(const Image& img, const std::vector<RefTarget>& re
     // sub_14F00D0 copies iShadowMapResolution into a global at startup, before this module loads, and the
     // renderer sizes the shadow atlas from that global when it creates its targets (after this module
     // starts). Write both, the global only when it still holds the setting's value.
-    constexpr uint32_t kShadowSizeGlobal = 0x33DCFC0;  // found by probe, SkyrimSE 1.6.1170
+    const uint32_t kShadowSizeGlobal = Addr("global:ShadowMapSize");  // the renderer's copy of iShadowMapResolution
+    if (!kShadowSizeGlobal) return "shadow atlas: no global:ShadowMapSize for this version; left alone";
     auto* setting = [&]() -> uint32_t* {
         for (const auto& x : refs)
             if (x.name == "iShadowMapResolution:Display") return reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(img.base) + x.rva + 8);

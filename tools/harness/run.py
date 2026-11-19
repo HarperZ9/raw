@@ -27,8 +27,8 @@ Original work, MIT.
 from __future__ import annotations
 
 import argparse
-import os
 import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -292,13 +292,14 @@ class Runner(Actions):
             self.inst.set_option("SkyrimPrefs.ini", "Display", "iSize H", h)
             self.inst.set_option("SkyrimPrefs.ini", "Interface", "bShowTutorials", "0")
             self.inst.set_option("SkyrimCustom.ini", "General", "bAlwaysActive", "1")
-            # direct: SkyrimSE.exe itself, with no SKSE in the process (RAW's raw_skse.dll hosts the plugins)
-            exe = "SkyrimSE.exe" if self.a.launch == "direct" else "skse64_loader.exe"
-            # Started bare, SkyrimSE.exe hands itself back to Steam, which opens the launcher instead (2026-11-19);
-            # the app id in the environment lets it run in place.
-            env = {**os.environ, "SteamAppId": "489830", "SteamGameId": "489830"} if self.a.launch == "direct" else None
-            subprocess.Popen([str(self.inst.game / exe)], cwd=self.inst.game, env=env)
-            self.log(f"launched {exe} at {w}x{h}")
+            # RAW needs no script extender. The game starts directly with Steam's app id in the environment, which every
+            # runtime accepts; skse64_loader 2.2.6 refuses 1.7.104 (--launcher skse keeps the old way).
+            if self.a.launcher == "skse":
+                subprocess.Popen([str(self.inst.game / "skse64_loader.exe")], cwd=self.inst.game)
+            else:
+                env = dict(os.environ, SteamAppId="489830", SteamGameId="489830")
+                subprocess.Popen([str(self.inst.game / "SkyrimSE.exe")], cwd=self.inst.game, env=env)
+            self.log(f"launched at {w}x{h}")
             for line in script:
                 line = line.split("#", 1)[0].strip()
                 if line and not self.command(shlex.split(line, posix=False)):
@@ -372,6 +373,13 @@ class Runner(Actions):
                 raise SystemExit(f"{dst.name} already exists in the game folder; refusing to overwrite it")
             shutil.copy2(src, dst)
         self.report["extras"] = [p.name for p in self.extras]
+        if self.a.versions:
+            # the address tables (data/versions): the module picks the one naming the running exe
+            dst = self.inst.game / "raw_versions"
+            if dst.exists():
+                raise SystemExit("raw_versions already exists in the game folder; refusing to overwrite it")
+            shutil.copytree(self.a.versions, dst)
+            self.report["versions"] = sorted(p.name for p in dst.glob("*.tsv"))
 
     def collect_extras(self) -> None:
         """The module's output folder comes to --out; every file this run added leaves the game folder."""
@@ -382,6 +390,8 @@ class Runner(Actions):
                 shutil.rmtree(src)
         for p in getattr(self, "extras", []):
             (self.inst.game / p.name).unlink(missing_ok=True)
+        if self.a.versions:
+            shutil.rmtree(self.inst.game / "raw_versions", ignore_errors=True)
         # The proxy's diagnostic logs (Data/SKSE/Plugins/RAW/live) come to --out and leave the game folder.
         live = self.inst.game / "Data" / "SKSE" / "Plugins" / "RAW" / "live"
         if live.is_dir():
@@ -436,9 +446,9 @@ def main() -> int:
     p.add_argument("--ini-extra", help="text appended to the proxy ini")
     p.add_argument("--collect", help="folder in the game directory to bring back and remove")
     p.add_argument("--shaders", default="", help="a shader folder to copy beside the game for hot reload (src/d3d12_bridge/shaders)")
+    p.add_argument("--versions", default="", help="the address-table folder (data/versions), deployed as raw_versions")
+    p.add_argument("--launcher", default="direct", choices=["direct", "skse"], help="start SkyrimSE.exe (default) or skse64_loader")
     p.add_argument("--plugin", default="", help="a test plugin folder (tools/harness/plugin.py), deployed for this run only")
-    p.add_argument("--launch", choices=("skse", "direct"), default="skse",
-                   help="skse: through skse64_loader.exe; direct: SkyrimSE.exe with no SKSE")
     p.add_argument("--skse-file", action="append", default=[],
                    help="a file placed in Data/SKSE/Plugins for this run only (docs/SKSE_HOSTING.md)")
     p.add_argument("--ini", default="", help="a d3d11_proxy.ini to deploy instead of the lighting one (the translate tests)")

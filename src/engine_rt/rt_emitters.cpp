@@ -1,6 +1,7 @@
 // Fire, torch and magic light: light names and glowing emitters (RAW engine runtime). Original work, MIT.
 // See rt_emitters.h.
 #include "rt_emitters.h"
+#include "rt_version.h"
 
 #include <windows.h>
 
@@ -15,7 +16,7 @@ namespace raw::rt {
 namespace {
 
 using Fn = uint64_t (*)(uint64_t, uint64_t, uint64_t, uint64_t);
-constexpr uint32_t kEffectVtable = 0x1ABFB50, kParticleVtable = 0x1AC3A80, kSetupGeometry = 6;
+constexpr uint32_t kSetupGeometry = 6;
 constexpr size_t kMaxRaw = 1024, kMaxOut = 128;
 constexpr float kMerge = 48.0f;
 
@@ -113,6 +114,7 @@ uint64_t ParticleHook(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
 }
 
 bool Swap(const Image& img, uint32_t vtable, void* hook, Fn* orig) {
+    if (!vtable) return false;   // not in this version's table
     auto* entry = reinterpret_cast<uint64_t*>(const_cast<uint8_t*>(img.base) + vtable) + kSetupGeometry;
     if (!img.InText(uint32_t(*entry - uint64_t(img.base)))) return false;
     *orig = reinterpret_cast<Fn>(*entry);
@@ -161,8 +163,8 @@ std::string EmittersInstall(const Image& img) {
     if (g_installed) return "emitters: already installed";
     g_renderTid = GetCurrentThreadId();
     g_raw.reserve(kMaxRaw);
-    const bool a = Swap(img, kEffectVtable, reinterpret_cast<void*>(&EffectHook), &g_origEffect);
-    const bool b = Swap(img, kParticleVtable, reinterpret_cast<void*>(&ParticleHook), &g_origParticle);
+    const bool a = Swap(img, Addr("vtable:BSEffectShader"), reinterpret_cast<void*>(&EffectHook), &g_origEffect);
+    const bool b = Swap(img, Addr("vtable:BSParticleShader"), reinterpret_cast<void*>(&ParticleHook), &g_origParticle);
     g_installed = a || b;
     return std::string("emitters: effect ") + (a ? "hooked" : "failed") + ", particle " + (b ? "hooked" : "failed");
 }

@@ -1,0 +1,45 @@
+# What RAW needs from each runtime, and how each value is found. Original work, MIT.
+# rule: rtti <class>             the class's primary vtable, from the exe's RTTI
+#       slot <class> <index>     a function in that vtable (index in hex)
+#       setting                  the Setting object of that name, from the exe's .data
+#       match                    matched against the reference version's call graph (tools/enginemap/port_version.py)
+#       same                     a structure offset carried over; checked in game per version
+#       given <value> <conf> <why>  a value for the new runtime taken from a cited source
+# ref: the value on the reference runtime (1.6.1170), where every entry was measured in game.
+name	kind	rule	ref
+vtable:BSScript::Internal::VirtualMachine	vtable	rtti BSScript::Internal::VirtualMachine	0x1AA0B48
+vtable:BSLightingShader	vtable	rtti BSLightingShader	0x1ABE4C0
+vtable:BSUtilityShader	vtable	rtti BSUtilityShader	0x1AC1BF8
+vtable:BSGrassShader	vtable	rtti BSGrassShader	0x1AB66C0
+vtable:BSEffectShader	vtable	rtti BSEffectShader	0x1ABFB50
+vtable:BSWaterShader	vtable	rtti BSWaterShader	0x1ABE840
+vtable:BSSkyShader	vtable	rtti BSSkyShader	0x1ABF118
+vtable:BSDistantTreeShader	vtable	rtti BSDistantTreeShader	0x1ABFF38
+vtable:BSParticleShader	vtable	rtti BSParticleShader	0x1AC3A80
+vtable:BSBloodSplatterShader	vtable	rtti BSBloodSplatterShader	0x1AB82B8
+vtable:BSShaderAccumulator	vtable	rtti BSShaderAccumulator	0x1AB6190
+vtable:BSCullingProcess	vtable	rtti BSCullingProcess	0x19D3B80
+vtable:BSBatchRenderer	vtable	rtti BSBatchRenderer	0x1AC0FB0
+vtable:BSShadowDirectionalLight	vtable	rtti BSShadowDirectionalLight	0x1AC5430
+vtable:GridCellArray	vtable	rtti GridCellArray	0x178B160
+fn:GridArray::DetachAll	function	slot GridCellArray 1	0x221380
+fn:GridCellArray::KillAll	function	slot GridCellArray 2	0x221990
+fn:GridCellArray::Dtor	function	slot GridCellArray 0	0x222270
+fn:BSShadowDirectionalLight::SetupCascades	function	slot BSShadowDirectionalLight 10	0x1512230
+fn:GridCellArray::Build	function	match	0x2216C0
+fn:TES::SetupGrid	function	match	0x19BF30
+fn:ShadowMaps::Render	function	match	0x14CBB90
+fn:ShadowMaps::SizeAtStartup	function	match	0x14F00D0
+fn:BSScript::Internal::CodeTasklet::OpcodeLoop	function	match	0x1462650
+fn:BSScript::Internal::VirtualMachine::UpdateTasklets	function	match	0x1444880
+fn:Sky::GetSingleton	function	match	0x1C2640
+site:PapyrusJobLea	site	match	0x144F236
+global:ShadowMapSize	global	match	0x33DCFC0
+range:PapyrusCode.begin	range	match	0x1420000
+range:PapyrusCode.end	range	match	0x1470000
+off:TES::gridCells	offset	same	0x78
+off:TESObjectCELL::worldSpace	offset	same	0x128
+off:SkyrimVM::impl	offset	given 0x210 medium CommonLibSSE-NG layout notes (1.7.x), not yet checked in game	0x200
+fn:BGSSaveLoadManager::Save_Impl	function	given 0x6227F0 al Address Library v13 id 35727	0x60FD40
+fn:BGSSaveLoadManager::Load_Impl	function	given 0x622F30 al Address Library v13 id 35728	0x610480
+off:UI::menuMap	offset	given 0x128 medium CommonLibSSE-NG 1.7.x layout shows no change, not yet checked in game	0x128

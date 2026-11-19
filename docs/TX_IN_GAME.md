@@ -149,7 +149,7 @@ and left ENB at 232 of 232 hashes. Measures within one run differ by up to 0.7 m
 | + lock-free scene geometry reads, plain binding references | 8.97 to 9.08 ms | 5.70 to 5.77 ms | 1,657 of 4,731 |
 | + plain RT draw references, instances staged in `SetDraws` | 8.66 to 8.82 ms (repeat 8.68 to 8.69) | 5.48 to 5.58 ms | 1,496 of 4,345 |
 | + immediate tracker without `shared_ptr` copies | 8.67 to 8.68 ms (repeat 8.70 to 9.37) | 5.48 to 5.90 ms | 1,599 of 4,716 |
-| + rescan only new shader-resource slots, table reuse | 8.93 to 9.45 ms | 5.67 to 5.98 ms | 1,602 to 1,662 |
+| + rescan only new shader-resource slots, table reuse | 8.92 to 10.37 ms (three runs) | 5.66 to 6.56 ms | 1,602 to 1,662 |
 
 - **Plain references.** On raw::tx the proxy reads a draw's bindings through `raw::tx::Peek*`, and the immediate
   context counts its bindings, and the RT capture's references, in a plain field on each object (`tx_holds.h`).
@@ -157,7 +157,7 @@ and left ENB at 232 of 232 hashes. Measures within one run differ by up to 0.7 m
   view bound after its last release stays alive and dies once unbound. The first draft failed that check.
 - **RtScene.** `PlaceInstances` and `SetDraws` (430 samples in the base run) left the render thread's top list.
   The instances are written in `SetDraws` while each mesh is in the CPU caches, then copied whole, in draw order.
-- **Last row.** It is not shown faster: its two runs read 8.93 to 9.45 ms, inside the spread of the repeats above.
+- **Last row.** It is not shown faster: its three runs read 8.92 to 10.37 ms, inside the spread of the repeats above.
   Tables reused: 209 of 353 per frame (59%).
 
 ### Translation on worker threads (`[Translate] Workers`, off by default)

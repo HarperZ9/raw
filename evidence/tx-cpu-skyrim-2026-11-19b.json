@@ -424,6 +424,58 @@
    ],
    "enb_after": "All 232 files match SHA256SUMS."
   },
+  "scan_repeat": {
+   "capture": "tp2-11scan-b",
+   "build": "same build, repeat",
+   "measures": [
+    {
+     "name": "riverwood",
+     "mean_ms": 10.367,
+     "median_ms": 10.273,
+     "p99_ms": 12.91,
+     "batch_submission_ms": 6.5619,
+     "draws": 7107.1
+    },
+    {
+     "name": "riverwood_2",
+     "mean_ms": 8.92,
+     "median_ms": 8.748,
+     "p99_ms": 11.17,
+     "batch_submission_ms": 5.656,
+     "draws": 7111.6
+    },
+    {
+     "name": "inn",
+     "mean_ms": 3.045,
+     "median_ms": 2.989,
+     "p99_ms": 4.67,
+     "batch_submission_ms": 1.5457,
+     "draws": 2060.3
+    },
+    {
+     "name": "inn_2",
+     "mean_ms": 3.215,
+     "median_ms": 3.179,
+     "p99_ms": 4.56,
+     "batch_submission_ms": 1.6304,
+     "draws": 2060.2
+    }
+   ],
+   "sampler": {
+    "render_thread_samples": 4706,
+    "d3d11.dll": 1626,
+    "SkyrimSE.exe": 1426,
+    "nvwgf2umx.dll": 808,
+    "ntdll.dll": 260
+   },
+   "rt_draws": [
+    1970,
+    1970,
+    236,
+    236
+   ],
+   "enb_after": "All 232 files match SHA256SUMS."
+  },
   "tables": {
    "capture": "tp2-12tables",
    "build": "+ SRV table reuse (193b5d8)",

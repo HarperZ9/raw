@@ -643,7 +643,12 @@ mesh's streams are shared by several actors, so the comparison meets other actor
 palette the game's prepass used. A trim of each colour draw to its prepass's ranges was built and removed: it changes
 nothing when the ranges are equal. The key's reference counting is fixed on raw::tx too (it released the layer's held
 buffers through COM). Riverwood, rt7-prepass-1: about 3,200 of 72,900 skinned triangles float in front of the game's
-depth with many people in view; third person alone, about 82 of 35,786. The cause is still not found.
+depth with many people in view; third person alone, about 82 of 35,786. In rt7-near-1 (Riverwood from the save's own
+cell, no cell change) no skinned draw without a pixel shader appeared at all, so no prepass was there to compare, and
+6,222 of 83,513 skinned triangles still floated. The prepass draws turned up only after a `coc` from the inn in these
+runs. So the EQUAL-against-the-prepass account does not cover every floating corner. The check now also compares each
+colour draw with the nearest of up to eight prepass palettes kept for its streams (`[RT] prepass nearest`), not yet run
+where prepass draws occur. The cause is still not found.
 
 **Specular follows the game's map.** In the inn, white streaks lay along the beams in improved mode (0.274 % of pixels
 over 200 in every channel, the game 0.003 %; `ingame-rt7-2026-11-19-inn-beam-glints-game-vs-improved-1to1`). Turning

@@ -27,6 +27,12 @@ namespace
 struct Prepass { UINT start = 0, count = 0; uint64_t vs = 0; float bones[960]; };
 int g_prepassCheck = -1;
 std::unordered_map<uint64_t, Prepass> g_prepass;
+// Up to eight palettes per set of streams: one mesh's streams are shared by several actors, so the colour draw is
+// compared with the nearest of them (by the bones' rotation).
+struct PrepassSet { uint32_t next = 0, n = 0; float bones[8][960]; };
+std::unordered_map<uint64_t, PrepassSet> g_sets;
+uint64_t g_bestDraws = 0, g_bestExact = 0, g_bestBonesUsed = 0, g_bestBonesRot = 0, g_bestBonesMoved = 0;
+uint32_t g_bestDetail = 0;
 uint64_t g_ppColour = 0, g_ppMatched = 0, g_ppSameRange = 0, g_ppColourInside = 0, g_ppPrepassInside = 0, g_ppOther = 0;
 uint64_t g_ppPaletteEqual = 0, g_ppRowsDiffer = 0, g_ppVsEqual = 0;
 uint32_t g_ppDetail = 0, g_ppBoneDetail = 0;
@@ -54,6 +60,42 @@ uint64_t BoundVsHash(ID3D11DeviceContext* real)
     if (vs) vs->Release();
     return h;
 }
+// The nearest kept prepass palette to this colour draw's, bone by bone: rotation, and translation against the common
+// offset. A best match with no bone apart says the prepass skinned this mesh as the colour draw does.
+void BestPrepass(uint64_t key, const float* b)
+{
+    auto it = g_sets.find(key);
+    if (it == g_sets.end()) return;
+    const PrepassSet& ps = it->second;
+    float bestScore = 1e30f; uint32_t bestUsed = 0, bestRot = 0, bestMoved = 0; float bestMove = 0.0f;
+    for (uint32_t c = 0; c < ps.n; ++c) {
+        const float* pb = ps.bones[c];
+        uint32_t used = 0, rot = 0, moved = 0; float score = 0.0f, off[3] = {}, worstMove = 0.0f;
+        for (uint32_t k = 0; k < 80; ++k) {
+            const float* x = b + k * 12; const float* y = pb + k * 12;
+            float mag = 0.0f, r = 0.0f;
+            for (int i = 0; i < 12; ++i) mag = std::max(mag, std::fabs(x[i]) + std::fabs(y[i]));
+            if (mag == 0.0f) continue;
+            for (int row = 0; row < 3; ++row) for (int col = 0; col < 3; ++col) r = std::max(r, std::fabs(x[row * 4 + col] - y[row * 4 + col]));
+            const float t[3] = {x[3] - y[3], x[7] - y[7], x[11] - y[11]};
+            if (!used++) std::memcpy(off, t, sizeof off);
+            const float mv = std::max({std::fabs(t[0] - off[0]), std::fabs(t[1] - off[1]), std::fabs(t[2] - off[2])});
+            score += r; if (r > 1e-3f) ++rot; if (mv > 1.0f) { ++moved; worstMove = std::max(worstMove, mv); }
+        }
+        if (score < bestScore) { bestScore = score; bestUsed = used; bestRot = rot; bestMoved = moved; bestMove = worstMove; }
+    }
+    ++g_bestDraws; g_bestBonesUsed += bestUsed; g_bestBonesRot += bestRot; g_bestBonesMoved += bestMoved;
+    if (!bestRot && !bestMoved) ++g_bestExact;
+    else if (g_bestDetail < 24) {
+        ++g_bestDetail;
+        Log("[RT] prepass nearest: %u of %u kept palettes; %u bones used, %u rotated, %u moved (largest %.1f)", ps.n, ps.n, bestUsed, bestRot,
+            bestMoved, bestMove);
+    }
+    if ((g_bestDraws % 3000) == 0)
+        Log("[RT] prepass nearest so far: %llu colour draws, %llu with a prepass palette that matches every bone; bones used %llu, rotated %llu, "
+            "moved %llu", (unsigned long long)g_bestDraws, (unsigned long long)g_bestExact, (unsigned long long)g_bestBonesUsed,
+            (unsigned long long)g_bestBonesRot, (unsigned long long)g_bestBonesMoved);
+}
 } // namespace
 
 bool SceneSkin_PrepassCheckOn()
@@ -75,6 +117,10 @@ void SceneSkin_KeepPrepass(ID3D11DeviceContext* real, const Layout& L, int boneS
     const uint8_t* bones = bb[0] && CBDirtyTracker::Get().GetShadowSize(bb[0]) >= 3840 ? CBDirtyTracker::Get().GetShadowData(bb[0]) : nullptr;
     if (bb[0]) bb[0]->Release();
     if (!bones) return;
+    if (g_sets.size() > 1024) g_sets.clear();
+    PrepassSet& ps = g_sets[key];
+    std::memcpy(ps.bones[ps.next], bones, 3840);
+    ps.next = (ps.next + 1) & 7; ps.n = std::min(ps.n + 1, 8u);
     if (g_prepass.size() > 4096) g_prepass.clear();
     Prepass& p = g_prepass[key];
     p.start = startIndex; p.count = indexCount; p.vs = BoundVsHash(real);
@@ -83,6 +129,7 @@ void SceneSkin_KeepPrepass(ID3D11DeviceContext* real, const Layout& L, int boneS
 void SceneSkin_ComparePrepass(ID3D11DeviceContext* real, const Layout& L, UINT indexCount, UINT startIndex, INT baseVertex, const uint8_t* bones)
 {
     ++g_ppColour;
+    BestPrepass(StreamKey(real, L, baseVertex), reinterpret_cast<const float*>(bones));
     auto it = g_prepass.find(StreamKey(real, L, baseVertex));
     if (it != g_prepass.end()) {
         const Prepass& p = it->second;

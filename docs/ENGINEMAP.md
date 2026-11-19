@@ -87,9 +87,11 @@ Inputs come from the map: `python -I tools/enginemap/rt_inputs.py --map docs/eng
 - **Papyrus:** the budget passed to `VirtualMachine::Update` follows `fUpdateBudgetMS` live.
 - **GPU time per pass** (Riverwood 1080p, vsync off, 600 frames each, RTX 4090): frame 9.4 to 9.6 ms. Depth prepass 1.8 ms and geometry 4.7 ms. The shadow atlas pass takes about 2,050 draws and 0.96 ms at 2048, 0.97 ms at 4096 and 1.07 ms at 8192 (fitted). It is bound by draws more than by fill. Shadow distance moves the atlas pass between 0.90 and 1.05 ms (3000, 10000, 20000), and frame time stays within its noise. Depth entry 4 (4096 x 4096 x 8 slices) is never bound outdoors.
 - **Papyrus:**
-  - The opcode loop has one direct call site, `0x14449BA`, and is timed there.
-  - In this scene (Riverwood, AI off) it ran zero times in 600 frames: the VM took 0.015 ms a frame. A script-heavy scene is still owed.
-  - The adaptive budget (`papyrus adaptive 16.667 0.5 8`) gave the VM 5.4 ms with no frame-time cost: 9.44 ms against 9.38 ms with the budget off. The VM had no work, so this does not yet show what the budget does under load.
+  - `sub_1462650` has one direct call site, `0x14449BA`, and is timed there.
+  - It ran zero times in 4,200 measured frames across three scenes: Riverwood with AI off, the Bannered Mare and Riverwood with AI on.
+  - Over the same frames, `VirtualMachine::Update` and `UpdateTasklets` together took 0.015 to 0.021 ms a frame.
+  - Read: script code does not run inside those two functions or through that call site. The likely route is the job threads that `TasksToJobs` feeds. So `sub_1462650` is not yet shown to be the opcode loop, and the loop is not located.
+  - The adaptive budget (`papyrus adaptive 16.667 0.5 8`) sets 4.8 to 8 ms and costs no frame time. Riverwood with AI off: 9.44 ms against 9.38 ms with it off. The inn: 3.70 against 3.79 ms. With the scripts off the VM's thread, this budget does not govern them, so it has no effect either way yet.
 - **Grids (peek):**
   - `TES+0x78` is the GridCellArray: worldX 4, worldY -12, length 5 at +0x10, the cell pointer array at +0x18.
   - `sub_19BF30` reads `uGridsToLoad`, writes back its clamped value, and calls `GridArray::SetCenter`. It also sets up a function-local static under a thread-safe init guard. A live rebuild has to go through it or replace it. Not done yet.

@@ -1,0 +1,17 @@
+# Papyrus under load: AI on, in the Bannered Mare and in Riverwood. The opcode loop is timed at its call site;
+# each scene is measured with the game's budget, then adaptive, then fixed at 8 ms.
+start load rawharness
+scene inn
+console coc whiterunbanneredmare
+wait 10
+engine measure inn_game 900
+engine papyrus adaptive 16.667 0.5 8; wait 60; measure inn_adaptive 900
+engine papyrus fixed 8; measure inn_fixed8 900
+engine papyrus off
+scene riverwood
+console coc riverwood
+wait 10
+engine measure rw_game 900
+engine papyrus adaptive 16.667 0.5 8; wait 60; measure rw_adaptive 900
+engine papyrus off
+quit

@@ -1,0 +1,116 @@
+// The view: camera, cell, time and the screen (RAW engine runtime). Original work, MIT. See rt_view.h.
+#include "rt_view.h"
+
+#include <windows.h>
+
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <mutex>
+
+namespace raw::rt {
+namespace {
+
+constexpr uint32_t kGraphicsState = 0x328CC20, kPlayerCamera = 0x30FD7F8, kPlayer = 0x31874F8;
+constexpr uint32_t kGetSky = 0x01C2640, kCalendar = 0x20F8960;
+
+const uint8_t* g_base = nullptr;
+uint64_t g_frame = 0;
+EngineView g_view{};
+std::mutex g_m;
+
+template <class T> T At(const uint8_t* p, uint32_t off) { T v; std::memcpy(&v, p + off, sizeof v); return v; }
+
+bool ReadScreen(EngineView* v) {
+    __try {
+        const uint8_t* gs = g_base + kGraphicsState;
+        v->screen[0] = At<uint32_t>(gs, 0x24);
+        v->screen[1] = At<uint32_t>(gs, 0x28);
+        v->viewport[0] = At<uint32_t>(gs, 0x2C);
+        v->viewport[1] = At<uint32_t>(gs, 0x30);
+        return v->screen[0] > 0 && v->screen[0] < 16384 && v->screen[1] > 0 && v->screen[1] < 16384;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+bool ReadCamera(EngineView* v) {
+    __try {
+        const uint8_t* cam = At<const uint8_t*>(g_base, kPlayerCamera);
+        if (!cam) return false;
+        const uint8_t* root = At<const uint8_t*>(cam, 0x20);
+        if (!root) return false;
+        std::memcpy(v->camRot, root + 0x7C, 36);
+        std::memcpy(v->camPos, root + 0xA0, 12);
+        v->fov = At<float>(cam, 0x13C);
+        v->fovFirstPerson = At<float>(cam, 0x140);
+        // a rotation's rows are unit length: anything else is a wrong offset, not a camera
+        const float r0 = v->camRot[0] * v->camRot[0] + v->camRot[1] * v->camRot[1] + v->camRot[2] * v->camRot[2];
+        return std::fabs(r0 - 1.0f) < 0.02f && v->fov > 1.0f && v->fov < 179.0f;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+bool ReadCell(EngineView* v) {
+    __try {
+        const uint8_t* pc = At<const uint8_t*>(g_base, kPlayer);
+        if (!pc) return false;
+        std::memcpy(v->playerPos, pc + 0x54, 12);
+        const uint8_t* cell = At<const uint8_t*>(pc, 0x60);
+        if (!cell) return false;
+        v->cellFormId = At<uint32_t>(cell, 0x14);
+        v->interior = At<uint16_t>(cell, 0x40) & 1u;
+        // the worldspace: +0x128 on 1.6.1170 (a cell dump in game, ec7-2; CommonLib's +0x120 held zero), checked by
+        // its form type (TESWorldSpace, 71)
+        v->worldspaceFormId = 0;
+        for (uint32_t off : {0x128u, 0x120u}) {
+            const uint8_t* ws = v->interior ? nullptr : At<const uint8_t*>(cell, off);
+            if (ws && ws[0x1A] == 71) { v->worldspaceFormId = At<uint32_t>(ws, 0x14); break; }
+        }
+        return v->cellFormId != 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+bool ReadTime(EngineView* v) {
+    __try {
+        using GetSky = const uint8_t* (*)();
+        const uint8_t* sky = reinterpret_cast<GetSky>(g_base + kGetSky)();
+        if (!sky) return false;
+        v->gameHour = At<float>(sky, 0x1B0);
+        const uint8_t* days = At<const uint8_t*>(g_base + kCalendar, 0x28);
+        v->daysPassed = days ? At<float>(days, 0x34) : 0.0f;
+        return v->gameHour >= 0.0f && v->gameHour <= 24.0f;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+}  // namespace
+
+void ViewInit(const Image& img) { g_base = img.base; }
+
+void ViewOnPresent() {
+    if (!g_base) return;
+    EngineView v{};
+    v.ok = (ReadScreen(&v) ? 1u : 0u) | (ReadCamera(&v) ? 2u : 0u) | (ReadCell(&v) ? 4u : 0u) | (ReadTime(&v) ? 8u : 0u);
+    std::lock_guard<std::mutex> g(g_m);
+    g_view = v;
+    ++g_frame;
+}
+
+std::string ViewJson() {
+    EngineView v;
+    { std::lock_guard<std::mutex> g(g_m); v = g_view; }
+    char b[768];
+    std::snprintf(b, sizeof b,
+                  "\"view_ok\":%u,\"screen\":[%u,%u],\"fb_viewport\":[%u,%u],\"cam_pos\":[%.1f,%.1f,%.1f],"
+                  "\"cam_fwd\":[%.3f,%.3f,%.3f],\"fov\":%.2f,\"fov_1st\":%.2f,\"player_pos\":[%.1f,%.1f,%.1f],"
+                  "\"cell\":\"0x%08X\",\"worldspace\":\"0x%08X\",\"cell_interior\":%u,\"game_hour\":%.3f,\"days_passed\":%.3f",
+                  v.ok, v.screen[0], v.screen[1], v.viewport[0], v.viewport[1], v.camPos[0], v.camPos[1], v.camPos[2],
+                  v.camRot[1], v.camRot[4], v.camRot[7], v.fov, v.fovFirstPerson, v.playerPos[0], v.playerPos[1],
+                  v.playerPos[2], v.cellFormId, v.worldspaceFormId, v.interior, v.gameHour, v.daysPassed);
+    return b;
+}
+
+}  // namespace raw::rt
+
+extern "C" __declspec(dllexport) uint64_t RAW_EngineView(raw::rt::EngineView* out) {
+    std::lock_guard<std::mutex> g(raw::rt::g_m);
+    if (out) *out = raw::rt::g_view;
+    return raw::rt::g_frame;
+}

@@ -7,6 +7,7 @@
 #include <cstdio>
 
 #include "rt_control.h"
+#include "rt_detour.h"
 #include "rt_peek.h"
 
 namespace raw::rt {
@@ -15,13 +16,20 @@ namespace {
 constexpr uint32_t kTesSingleton = 0x31872C8;   // TES* (engine map, singletons.tsv)
 constexpr uint32_t kGridOffset = 0x78;           // TES::gridCells, a GridCellArray*
 uint32_t g_capacity = 0;                         // the largest length seen: what the cell array holds
-constexpr uint32_t kGridVtable = 0x178B160;      // GridCellArray::vftable; slot 1 DetachAll, slot 2 KillAll
+// Inline detours (they catch vtable and direct calls alike): GridArray::DetachAll 0x221380 (GridCellArray slot 1),
+// GridCellArray::KillAll 0x221990 (slot 2), and 0x2216C0, the routine every grid builder calls with the new array
+// (sub_19BF30 after reading and clamping uGridsToLoad, sub_1999E0, sub_1A2A00; engine map call graph).
+constexpr uint32_t kDetachAll = 0x221380, kKillAll = 0x221990, kBuild = 0x2216C0;
 const Image* g_img = nullptr;
 const std::vector<RefTarget>* g_refs = nullptr;
 uint32_t g_pending = 0;                          // a length waiting for the grid to empty
 uint32_t g_applied = 0;                          // lengths applied from the hooks
+uint32_t g_detachCalls = 0, g_killCalls = 0, g_builds = 0, g_lastBuildLength = 0;
 using Fn = void (*)(void*);
+using BuildFn = uint64_t (*)(uint64_t, uint64_t, uint64_t, uint64_t);
 Fn g_detachAll = nullptr, g_killAll = nullptr;
+BuildFn g_build = nullptr;
+std::string g_hookResult;
 
 struct Grid { uint8_t* arr = nullptr; int32_t x = 0, y = 0; uint32_t length = 0; uint64_t cells = 0; uint32_t loaded = 0; };
 
@@ -68,26 +76,33 @@ void AfterEmptying(void* arr) {
     g_pending = 0;
     ++g_applied;
 }
-void DetachAllHook(void* self) { g_detachAll(self); AfterEmptying(self); }
-void KillAllHook(void* self) { g_killAll(self); AfterEmptying(self); }
+void DetachAllHook(void* self) { ++g_detachCalls; g_detachAll(self); AfterEmptying(self); }
+void KillAllHook(void* self) { ++g_killCalls; g_killAll(self); AfterEmptying(self); }
+// The builder's arguments are not named by any source; the array it fills is read back after it returns.
+uint64_t BuildHook(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    const uint64_t r = g_build(a, b, c, d);
+    ++g_builds;
+    uint64_t len = 0;
+    if (ReadU64(reinterpret_cast<void*>(a + 0x10), &len) && uint32_t(len) && uint32_t(len) < 32) g_lastBuildLength = uint32_t(len);
+    return r;
+}
 
-bool Swap(const Image& img, uint32_t slot, void* hook, Fn* orig) {
-    auto* entry = reinterpret_cast<uint64_t*>(const_cast<uint8_t*>(img.base) + kGridVtable) + slot;
-    if (!img.InText(uint32_t(*entry - uint64_t(img.base)))) return false;
-    *orig = reinterpret_cast<Fn>(*entry);
-    DWORD old;
-    if (!VirtualProtect(entry, 8, PAGE_READWRITE, &old)) return false;
-    InterlockedExchange64(reinterpret_cast<volatile LONG64*>(entry), LONG64(hook));
-    VirtualProtect(entry, 8, old, &old);
-    return true;
+std::string Hooks(const Image& img) {
+    std::string out;
+    out += "DetachAll " + InstallDetour(img, kDetachAll, reinterpret_cast<void*>(&DetachAllHook), reinterpret_cast<void**>(&g_detachAll));
+    out += "; KillAll " + InstallDetour(img, kKillAll, reinterpret_cast<void*>(&KillAllHook), reinterpret_cast<void**>(&g_killAll));
+    out += "; build " + InstallDetour(img, kBuild, reinterpret_cast<void*>(&BuildHook), reinterpret_cast<void**>(&g_build));
+    return out;
 }
 
 std::string Line(const char* what, const Grid& g, const char* extra) {
-    char b[320];
+    char b[1024];
     std::snprintf(b, sizeof b,
                   "{\"cmd\":\"grids\",\"result\":\"%s\",\"world_x\":%d,\"world_y\":%d,\"length\":%u,\"capacity\":%u,"
-                  "\"loaded_cells\":%u%s}",
-                  what, g.x, g.y, g.length, g_capacity, g.loaded, extra);
+                  "\"loaded_cells\":%u,\"detach_all_calls\":%u,\"kill_all_calls\":%u,\"builds\":%u,\"last_build_length\":%u,"
+                  "\"hooks\":\"%s\"%s}",
+                  what, g.x, g.y, g.length, g_capacity, g.loaded, g_detachCalls, g_killCalls, g_builds, g_lastBuildLength,
+                  g_hookResult.c_str(), extra);
     return b;
 }
 
@@ -96,9 +111,7 @@ std::string Line(const char* what, const Grid& g, const char* extra) {
 std::string GridsCommand(const Image& img, const std::vector<RefTarget>& refs, const std::string& arg) {
     if (!g_img) {
         g_img = &img; g_refs = &refs;
-        const bool a = Swap(img, 1, reinterpret_cast<void*>(&DetachAllHook), &g_detachAll);
-        const bool b = Swap(img, 2, reinterpret_cast<void*>(&KillAllHook), &g_killAll);
-        if (!a || !b) return "{\"cmd\":\"grids\",\"error\":\"GridCellArray DetachAll/KillAll hooks failed\"}";
+        g_hookResult = Hooks(img);
     }
     Grid g;
     if (!Read(img, &g)) return "{\"cmd\":\"grids\",\"error\":\"TES grid array not readable (no world loaded?)\"}";
@@ -111,7 +124,8 @@ std::string GridsCommand(const Image& img, const std::vector<RefTarget>& refs, c
     if (want < 3 || want % 2 == 0 || want > g_capacity) return Line("refused: odd, 3 or more, up to the capacity", g, extra);
     if (!Empty(g)) {
         // Interiors keep the exterior grid loaded; the length waits for the game to empty the array
-        // (DetachAll or KillAll: a worldspace change or a load).
+        // (DetachAll: a worldspace change). uGridsToLoad changes with the length, never before it: written early,
+        // a job thread indexed the 5-wide array as 7 wide and faulted at SkyrimSE.exe+0x1A2E7E (ec7-1, 2026-11-19).
         g_pending = want;
         std::snprintf(extra, sizeof extra, ",\"pending\":%u,\"applied_by_hook\":%u", g_pending, g_applied);
         return Line("pending: applied when the game empties the grid", g, extra);

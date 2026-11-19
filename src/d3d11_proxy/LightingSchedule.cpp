@@ -135,6 +135,10 @@ void LightingMakeSteps()
         {"improved_rt", with(2, [&](LightingTuning& t) { none(t); t.rtShadows = true; })},
         {"improved_no_rt", with(2, [&](LightingTuning& t) { t.rtShadows = false; })},
         {"improved", with(2, [](LightingTuning&) {})},
+        {"improved_no_lod", with(2, [](LightingTuning& t) { t.distantLod = false; })},   // control: distant LOD keeps the game's light
+        {"view_classes", with(2, [](LightingTuning& t) { t.view = 12; })},
+        {"view_lod_normal", with(2, [](LightingTuning& t) { t.view = 14; })},            // distant LOD: its G-buffer normal
+        {"view_lod_albedo", with(2, [](LightingTuning& t) { t.view = 15; })},            // distant LOD: its G-buffer base colour
         {"game_after", with(0, [](LightingTuning&) {})},
     };
     s_steps = s_all;

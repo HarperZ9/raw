@@ -24,11 +24,13 @@ struct EngineLight {
     float radius;
     float color[3];   // diffuse times fade
     float fade;
-    uint32_t flags;   // 1 point light, 2 shadow caster, 4 the sun
+    uint32_t flags;   // 1 point light, 2 shadow caster, 4 the sun, 8 fire or torch, 16 magic, 32 an emitter (rt_emitters.h)
     uint32_t pad;
 };
 
-void LiveStateInit(const Image& img, const std::string& outDir);
+void LiveStateInit(const Image& img, const std::string& outDir, bool exportEmitters);
+// glowing emitters (rt_emitters.h) in the exported light list, flagged kLightEmitter
+void LiveStateExportEmitters(bool on);
 void LiveStateOnPresent();
 std::string LiveStateCommand(const std::string& op, const std::string& arg);
 

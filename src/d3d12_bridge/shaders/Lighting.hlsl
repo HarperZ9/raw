@@ -93,6 +93,8 @@ void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, in
     spec += PI * D * V * F * nl * c;   // the game's light colour is irradiance over pi
 }
 
+#include "DistantLod.hlsli"   // distantLit: distant LOD lit in improved mode (FOL-04)
+
 float4 fs(float4 at : SV_Position) : SV_Target0 {
     const int3 ip = int3(at.xy, 0);
     const float4 game = GameLit.Load(ip);
@@ -113,9 +115,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Effects, water, first person and distant LOD (lit per vertex by the game): the game's own.
     if (flags.w == 12u) {   // view 12: the material class (skin red, foliage green, landscape brown, parallax blue, the rest grey)
         const float3 cc = base == 10u ? float3(1, 0.1, 0.1) : base == 5u ? float3(0.1, 0.8, 0.1) : base == 4u ? float3(0.5, 0.35, 0.1) :
-                          base == 6u ? float3(0.1, 0.3, 1) : base == 0u ? 0.0f.xxx : 0.5f.xxx;
+                          base == 6u ? float3(0.1, 0.3, 1) : base == 7u ? float3(0.1, 0.9, 0.9) : base == 0u ? 0.0f.xxx : 0.5f.xxx;
         return float4(cc * (0.35f + 0.65f * dot(GameLit.Load(ip).rgb, 0.333f)), game.a);
     }
+    // Distant LOD (class 7: lit per vertex by the game, so it read flat beside the trees and ground RAW lights).
+    // FOL-04: in improved mode it gets the same sun, shadows, ambient and sky the near surfaces get. Views 14 and 15
+    // show its G-buffer normal and base colour, the rest of the frame dimmed.
+    if (base == 7u && (cls & 128u) == 0u) {
+        if (flags.w == 14u) { return float4(worldNormal(Normal.Load(ip)) * 0.5f + 0.5f, game.a); }
+        if (flags.w == 15u) { return float4(Albedo.Load(ip).rgb, game.a); }
+        if ((flags.x & FLAG_MATCH) != 0u || (flags.x & FLAG_LOD) == 0u || sunDir.w < 0.5f) { return game; }
+        return float4(distantLit(ip, at.xy, d), game.a);
+    }
+    if (flags.w == 14u || flags.w == 15u) { return float4(game.rgb * 0.2f, game.a); }
     const bool skin = base == 10u;
     if (base == 0u || (base >= 7u && !skin) || (cls & 128u) != 0u) { return game; }
 

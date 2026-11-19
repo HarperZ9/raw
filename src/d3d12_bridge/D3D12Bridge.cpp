@@ -241,6 +241,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
     }
     const bool probe = cfg.probeStages;
     auto stage = [&](const char* where) { if (probe) ProbeFenceSupport(dev, ctx, m->log, where); return true; };
+    const char* failed = "the device or the shared textures";   // named in the failure line
+    auto step = [&](bool r, const char* what) { if (!r) failed = what; return r; };
     bool ok = stage("bridge: before D3D12 device") && (m->attached ? m->AttachLayer() : m->CreateDevice12(dev)) && stage("bridge: after D3D12 device")
         && m->CreateShared(m->colorIn, cfg.colorFormat, kSharedColour, "colour-in")
         && m->CreateShared(m->depthIn, kSharedDepthFormat, kSharedDepth, "depth-in")
@@ -251,10 +253,11 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
             || m->CreateShared(m->motionIn, cfg.motionFormat, kSharedColour, "motion-in"))
         && (!cfg.lightingPass || m->CreateLightingShared())
         && stage("bridge: after shared textures")
-        && m->CreateDepthCopy() && m->CreateQueries() && m->CreateProbe() && stage("bridge: after views and queries")
-        && (!m->attached || !cfg.lightingPass || m->CreateRt())
-        && m->CreatePass();
-    if (!ok) { m->log("[D3D12Bridge] initialisation failed; bridge stays off"); Shutdown(); return false; }
+        && step(m->CreateDepthCopy(), "depth copy") && step(m->CreateQueries(), "queries") && step(m->CreateProbe(), "probe")
+        && stage("bridge: after views and queries")
+        && step(!m->attached || !cfg.lightingPass || m->CreateRt(), "ray tracing")
+        && step(m->CreatePass(), "engine pass");
+    if (!ok) { m->log("[D3D12Bridge] initialisation failed at %s; bridge stays off", failed); Shutdown(); return false; }
     if (!m->attached && !m->SelfTest()) {
         m->log("[D3D12Bridge] fence self-test failed; bridge stays off");
         Shutdown();

@@ -5,6 +5,8 @@
 //   VTrace=1           trace the vtables listed in engine_rt_vtrace.tsv (rt_vtrace.cpp)
 //   GpuTiming=1       GPU timestamps per pass, reported by every measure (rt_passes.cpp)
 //   Weather=1         Sky and TESWeather read each present, fed to the proxy's PG_SetWeatherState (rt_weather.cpp)
+//   LiveState=1       lights, the view and the shader manager's state each present (rt_livestate.cpp, rt_view.cpp)
+//   Emitters=1        glowing effect and particle draws join the light list (rt_emitters.cpp)
 //   OutDir=raw_engine_out
 // Inputs beside the game: engine_rt_refs.tsv (rva, kind setting|global, name) and
 // engine_rt_vtrace.tsv (class, vtable rva, slot count), both generated from the engine map.
@@ -25,6 +27,7 @@
 #include "rt_passes.h"
 #include "rt_vtrace.h"
 #include "rt_livestate.h"
+#include "rt_view.h"
 #include "rt_weather.h"
 
 namespace {
@@ -143,7 +146,8 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
             GetProcAddress(GetModuleHandleA("d3d11.dll"), "PG_SetWeatherState") ? "exported by the proxy" : "not exported (values recorded only)");
     }
     // the scene's lights and the shader manager's state each present (rt_livestate.h), exported as RAW_EngineLights
-    if (IniInt("LiveState", 1)) raw::rt::LiveStateInit(g_img, g_out);
+    // with the view (camera, cell, time, screen; RAW_EngineView) and the glowing emitters (rt_emitters.h)
+    if (IniInt("LiveState", 1)) { raw::rt::LiveStateInit(g_img, g_out, IniInt("EmitterLights", 0) != 0); raw::rt::ViewInit(g_img); }
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (IniInt("CallGraph", 0)) {
         std::thread([] {

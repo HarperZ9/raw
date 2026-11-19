@@ -101,6 +101,8 @@ void LoadLightingConfig(const std::string& ini)
     t.rtCache = i("RtCache", 1) != 0;
     t.rtCacheCell = f("RtCacheCell", t.rtCacheCell);
     t.rtSkin = i("RtSkin", 1) != 0;
+    t.wetness = f("Wetness", t.wetness);
+    t.puddles = f("Puddles", t.puddles);
     t.rtSkinBones = i("RtSkinBones", 10);
     t.ao = i("Ao", 1) != 0; t.fogReplacesGame = i("FogReplacesGame", 0) != 0; t.cascades = i("Cascades", 0) != 0; t.view = i("View", 0);
     // Cascades=0: the sun's shadow is the game's own filtered mask (match dE76 2.23 against 2.53 with

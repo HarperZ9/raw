@@ -1,0 +1,23 @@
+# Rain on surfaces (Weather.hlsli) and the skinned-actor check: Riverwood by day, dry, then wet with
+# puddles (Wetness=0.8, Puddles=0.7), the reflection view on the wet ground, then the player in third
+# person with the primary-ray view (RtDebug=1, View=7) to find the body's BLAS.
+start load rawharness
+console tai
+scene riverwood_day
+console set gamehour to 13
+wait 12
+keyframe dry steps=game,improved hold=120
+reload ini Wetness=0.8 Puddles=0.7
+keyframe wet steps=improved hold=120
+reload ini View=6
+keyframe wet_refl steps=improved hold=60
+reload ini View=0 Wetness=1 Puddles=1
+keyframe soaked steps=improved hold=90
+reload ini Wetness=0 Puddles=0
+walk f 0.15
+wait 4
+keyframe third steps=game,improved hold=90
+reload ini RtDebug=1 View=7
+keyframe third_primary steps=improved hold=60
+reload ini RtDebug=0 View=0
+quit

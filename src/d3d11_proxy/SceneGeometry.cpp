@@ -35,7 +35,7 @@ bool g_alphaOn = true;
 bool g_matOn = true;
 bool g_skinOn = true;
 int g_boneSlot = 10;
-uint64_t g_skinJoined = 0, g_skinNoBones = 0;
+uint64_t g_skinJoined = 0, g_skinNoBones = 0, g_skinNotOpaque = 0, g_skinFormat = 0, g_skinAlpha = 0;
 
 // True when the shader bytecode holds a discard instruction (SM4/5 opcode 13).
 bool HasDiscard(const void* bc, size_t n)
@@ -172,9 +172,20 @@ static void SkinnedProbe(ID3D11DeviceContext* real, UINT indexCount, UINT startI
     { std::lock_guard<std::mutex> g(g_m); auto it = g_layouts.find(il); found = it != g_layouts.end(); if (found) L = it->second; }
     if (il) il->Release();
     if (!found || !L.blendIdx.set) return;
-    if (g_skinOn && SceneLights_Opaque() && indexCount >= 3 && L.blendW.set && L.blendIdx.format == DXGI_FORMAT_R8G8B8A8_UNORM &&
-        L.blendW.format == DXGI_FORMAT_R16G16B16A16_FLOAT && L.blendW.slot == L.blendIdx.slot &&
-        (L.pos.format == DXGI_FORMAT_R32G32B32A32_FLOAT || L.pos.format == DXGI_FORMAT_R32G32B32_FLOAT || L.pos.format == DXGI_FORMAT_R16G16B16A16_FLOAT)) {
+    const bool formatOk = L.blendW.set && L.blendIdx.format == DXGI_FORMAT_R8G8B8A8_UNORM && L.blendW.format == DXGI_FORMAT_R16G16B16A16_FLOAT &&
+                          L.blendW.slot == L.blendIdx.slot &&
+                          (L.pos.format == DXGI_FORMAT_R32G32B32A32_FLOAT || L.pos.format == DXGI_FORMAT_R32G32B32_FLOAT || L.pos.format == DXGI_FORMAT_R16G16B16A16_FLOAT);
+    bool alpha = false;
+    if (g_skinOn && formatOk && SceneLights_Opaque()) {
+        // Alpha-tested skinned draws (tree leaves) would be solid cards: left out until the rays test them.
+        ID3D11PixelShader* ps = nullptr;
+        real->PSGetShader(&ps, nullptr, nullptr);
+        { std::lock_guard<std::mutex> g(g_m); alpha = ps && g_alphaPs.count(ps) && g_alphaPs[ps] == raw::bridge::RtAlphaDiscard; }
+        if (ps) ps->Release();
+        alpha = alpha || BlendAlpha(real) != raw::bridge::RtAlphaNone;
+    }
+    if (g_skinOn) { if (!SceneLights_Opaque()) ++g_skinNotOpaque; else if (!formatOk) ++g_skinFormat; else if (alpha) ++g_skinAlpha; }
+    if (g_skinOn && SceneLights_Opaque() && indexCount >= 3 && formatOk && !alpha) {
         // A skinned draw of the opaque set: its streams, index range and bone palette (RtSkin.h).
         ID3D11Buffer* bb[1] = {};
         real->VSGetConstantBuffers(UINT(g_boneSlot), 1, bb);
@@ -281,8 +292,9 @@ std::vector<raw::bridge::RtDraw> SceneGeometry_Take()
             (unsigned long long)g_n.alphaNoTexture, (unsigned long long)g_n.alphaOff, (unsigned long long)g_n.noLayout,
             (unsigned long long)g_n.badFormat, (unsigned long long)g_n.noBuffers);
     if (frames % 600 == 1)
-        Log("[RT] skinned draws so far: %llu joined, %llu without a bone palette at vertex slot %d", (unsigned long long)g_skinJoined,
-            (unsigned long long)g_skinNoBones, g_boneSlot);
+        Log("[RT] skinned draws so far: %llu joined, %llu without a bone palette at vertex slot %d; left out: %llu outside the opaque set, "
+            "%llu layout formats, %llu alpha-tested", (unsigned long long)g_skinJoined, (unsigned long long)g_skinNoBones, g_boneSlot,
+            (unsigned long long)g_skinNotOpaque, (unsigned long long)g_skinFormat, (unsigned long long)g_skinAlpha);
     std::vector<raw::bridge::RtDraw> out;
     out.swap(g_frame);
     return out;

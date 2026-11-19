@@ -32,11 +32,11 @@ struct LightUniform
     float dims[4], proj[4], clipToWorld[16], worldToClip[16], viewToWorld[12];
     float resScale[4], sunDir[4], sunColour[4], ambient[12], cascade[24], cascadeInfo[4];
     uint32_t flags[4];
-    float cluster[4], tune[4], tune2[4];
+    float cluster[4], tune[4], tune2[4], weather[4], camPos[4];
     float lightPosR[kMaxSceneLights][4], lightColS[kMaxSceneLights][4];
     uint32_t clusters[kClusterCount][4];
 };
-static_assert(sizeof(LightUniform) == 30 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16, "layout of cbuffer P");
+static_assert(sizeof(LightUniform) == 32 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16, "layout of cbuffer P");
 static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
 constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384;
@@ -242,6 +242,9 @@ private:
         u.proj[3] = interior ? t.rtBounceInterior : t.rtBounce;
         u.tune[0] = t.fogDensity; u.tune[1] = t.fogAnisotropy; u.tune[2] = t.softRange; u.tune[3] = t.contactLength;
         u.tune2[0] = t.aoStrength; u.tune2[1] = t.fogLightScale; u.tune2[2] = t.fogSunScale; u.tune2[3] = t.fogMaxDistance;
+        u.weather[0] = t.mode == 2 ? t.wetness : 0.0f; u.weather[1] = t.mode == 2 ? t.puddles : 0.0f; u.weather[2] = u.weather[3] = 0.0f;
+        for (int k = 0; k < 3; ++k) u.camPos[k] = s.posAdjust[k];
+        u.camPos[3] = 0.0f;
         for (uint32_t i = 0; i < s.lightCount; ++i) {
             const SceneLight& l = s.lights[i];
             for (int k = 0; k < 3; ++k) { u.lightPosR[i][k] = l.position[k]; u.lightColS[i][k] = l.colour[k]; }

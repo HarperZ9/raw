@@ -188,7 +188,7 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
             || m->CreateShared(m->motionIn, cfg.motionFormat, kSharedColour, "motion-in"))
         && (!cfg.lightingPass || m->CreateLightingShared())
         && stage("bridge: after shared textures")
-        && m->CreateDepthCopy() && m->CreateQueries() && stage("bridge: after views and queries")
+        && m->CreateDepthCopy() && m->CreateQueries() && m->CreateProbe() && stage("bridge: after views and queries")
         && m->CreatePass();
     if (!ok) { m->log("[D3D12Bridge] initialisation failed; bridge stays off"); Shutdown(); return false; }
     if (!m->SelfTest()) {

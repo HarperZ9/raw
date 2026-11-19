@@ -1,4 +1,6 @@
 #pragma once
+#include <string>
+#include <vector>
 // LightingPass: the Playground engine lights the game frame itself (docs/LIGHTING.md).
 // The bridge runs it at the end of the game's opaque pass on the HDR scene colour; its result
 // replaces what the game's lit shader wrote there, so the game's water, effects, fog, bloom,
@@ -42,5 +44,7 @@ void BuildClusters(const SceneLighting& s, float nearZ, float farZ, uint32_t (*o
 
 std::unique_ptr<IBridgePass> MakeLightingPass();
 bool LightingPassTune(IBridgePass* pass, const LightingTuning& t);
+bool LightingPassReload(IBridgePass* pass, const std::vector<uint8_t>& vs, const std::vector<uint8_t>& fs,
+                        const std::vector<uint8_t>& fogFs, std::string& err);
 
 } // namespace raw::bridge

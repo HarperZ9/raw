@@ -22,7 +22,8 @@ from pathlib import Path
 DOCS = Path(os.path.expanduser("~")) / "Documents" / "My Games" / "Skyrim Special Edition"
 SETTINGS = ("SkyrimCustom.ini", "SkyrimPrefs.ini")
 PROXY_FILES = ("d3d11_proxy.ini", "d3d11_proxy.log", "raw_harness_go.txt", "raw_harness_done.txt", "raw_harness_status.txt",
-               "rawbat.txt")
+               "rawbat.txt", "raw_hot_reload.txt")
+SHADER_COPY = "raw_shaders"   # hot-reload shader folder beside the game, made by a run and removed after it
 
 
 def sha(p: Path) -> str:
@@ -103,6 +104,7 @@ class Install:
                 shutil.copy2(self.game / name, out / name)
         for name in PROXY_FILES:
             (self.game / name).unlink(missing_ok=True)
+        shutil.rmtree(self.game / SHADER_COPY, ignore_errors=True)
         for name in SETTINGS:
             shutil.copy2(self.settings / name, DOCS / name)
         r = subprocess.run(["cmd", "/c", str(self.enb / "restore-enb.cmd")], capture_output=True, text=True)

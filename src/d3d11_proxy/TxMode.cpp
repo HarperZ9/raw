@@ -17,7 +17,7 @@ using PFN_CreateDevSc = HRESULT(WINAPI*)(IDXGIAdapter*, D3D_DRIVER_TYPE, HMODULE
                                          const DXGI_SWAP_CHAIN_DESC*, IDXGISwapChain**, ID3D11Device**, D3D_FEATURE_LEVEL*,
                                          ID3D11DeviceContext**);
 
-struct TxConfig { int mode = -1; bool debugLayer = false; };
+struct TxConfig { int mode = -1; bool debugLayer = false, wrap = false; };
 TxConfig& C() { static TxConfig c; return c; }
 
 void Load()
@@ -31,6 +31,7 @@ void Load()
     const bool native = GetPrivateProfileIntA("Translate", "Native", 0, ini.c_str()) != 0;
     C().mode = on ? (native ? 2 : 1) : 0;
     C().debugLayer = GetPrivateProfileIntA("Translate", "DebugLayer", 0, ini.c_str()) != 0;
+    C().wrap = GetPrivateProfileIntA("Translate", "Wrap", 0, ini.c_str()) != 0;
     if (C().mode) Log("[Tx] translate mode %s%s", C().mode == 1 ? "on: the game runs on raw::tx (D3D12)" : "native: system D3D11 behind the harness wrapper",
                       C().debugLayer ? ", D3D12 debug layer on" : "");
 }
@@ -108,7 +109,28 @@ HRESULT MakeTx(IDXGIAdapter* adapter, ID3D11Device** dev, ID3D11DeviceContext** 
     if (ctx) *ctx = c; else c->Release();
     return hr;
 }
+
+HRESULT WINAPI TxCreateFn(IDXGIAdapter* adapter, D3D_DRIVER_TYPE, HMODULE, UINT, const D3D_FEATURE_LEVEL*, UINT, UINT,
+                          const DXGI_SWAP_CHAIN_DESC* scDesc, IDXGISwapChain** sc, ID3D11Device** dev, D3D_FEATURE_LEVEL* level,
+                          ID3D11DeviceContext** ctx)
+{
+    ID3D11Device* d = nullptr;
+    ID3D11DeviceContext* c = nullptr;
+    HRESULT hr = MakeTx(adapter, &d, &c, level);
+    if (FAILED(hr)) return hr;
+    if (scDesc && sc) {
+        hr = raw::tx::CreateSwapChain(d, scDesc, sc);
+        Log("[Tx] raw::tx::CreateSwapChain (wrapped proxy): 0x%08X", (unsigned)hr);
+        if (FAILED(hr)) { c->Release(); d->Release(); return hr; }
+    }
+    if (dev) *dev = d; else d->Release();
+    if (ctx) *ctx = c; else c->Release();
+    return hr;
+}
 } // namespace
+
+bool TxMode_Wrap() { Load(); return C().wrap; }
+void* TxMode_CreateFn() { return reinterpret_cast<void*>(&TxCreateFn); }
 
 int TxMode_Get()
 {

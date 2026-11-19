@@ -164,6 +164,27 @@ public:
 
     void Tune(const LightingTuning& t) { m_tune = t; }
 
+    // Hot reload: new DXIL for the lighting and fog pipelines. Both are made before either is
+    // swapped in, so a failure keeps the frame on the old pair. The old pipelines stay alive
+    // (a frame in flight may still use them); a reload makes two small objects.
+    bool Reload(const std::vector<uint8_t>& vs, const std::vector<uint8_t>& fs, const std::vector<uint8_t>& fogFs, std::string& err)
+    {
+        if (!m_dev) { err = "no device"; return false; }
+        const auto dxil = [](const std::vector<uint8_t>& b) { return ShaderCode{ShaderFormat::Dxil, b.data(), b.size()}; };
+        RasterPipelineDesc d;
+        d.vertex = dxil(vs);
+        d.targets[0] = TextureFormat::RGBA16Float;
+        d.label = "lighting (reloaded)"; d.fragment = dxil(fs); d.layout = kLightLayout;
+        RasterPipelineHandle light = m_dev->createRasterPipeline(d, err);
+        if (!light.valid()) return false;
+        d.label = "lighting fog (reloaded)"; d.fragment = dxil(fogFs); d.layout = kFogLayout;
+        RasterPipelineHandle fog = m_dev->createRasterPipeline(d, err);
+        if (!fog.valid()) return false;
+        m_lightPipe = light;
+        m_fogPipe = fog;
+        return true;
+    }
+
 private:
     static void Draw(CommandList& c, TextureHandle target, RasterPipelineHandle pipe, std::span<const RasterBind> binds)
     {
@@ -252,6 +273,14 @@ private:
 } // namespace
 
 std::unique_ptr<IBridgePass> MakeLightingPass() { return std::make_unique<LightingPass>(); }
+
+bool LightingPassReload(IBridgePass* pass, const std::vector<uint8_t>& vs, const std::vector<uint8_t>& fs, const std::vector<uint8_t>& fogFs,
+                        std::string& err)
+{
+    auto* p = dynamic_cast<LightingPass*>(pass);
+    if (!p) { err = "the active pass is not the lighting pass"; return false; }
+    return p->Reload(vs, fs, fogFs, err);
+}
 
 bool LightingPassTune(IBridgePass* pass, const LightingTuning& t)
 {

@@ -71,6 +71,7 @@ void Log(const char* fmt, ...)
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf) - 2, fmt, ap);
     va_end(ap);
+    if (g_sink) { g_sink(buf); return; }
     strcat_s(buf, "\n");
     OutputDebugStringA(buf);
     fputs("[tx] ", stderr);

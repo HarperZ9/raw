@@ -1,5 +1,6 @@
 // BridgeHook configuration: [D3D12Bridge] in d3d11_proxy.ini. The keys are listed at the
 // top of BridgeHook.cpp. Original work, MIT.
+#include "HotReload.h"
 #include "BridgeHookState.h"
 #include "ProxyLog.h"
 #include <cstdlib>
@@ -59,6 +60,7 @@ void LoadConfig()
     c.tune.motionScale[1] = f("AoMotionScaleY", 1.0f);
     g_bridgeHookActive = c.enabled;
     if (c.lighting) LoadLightingConfig(ini);
+    if (c.lighting) HotReload_LoadConfig(ini);
     Log("[D3D12Bridge] config: enabled=%d pass=%s mode=%.0f radius=%g slices=%u steps=%u strength=%g",
         c.enabled, c.lighting ? "lighting" : !c.enginePass ? "haze" : c.realtimeAo ? "engine, real-time AO" : "engine", k.mode, c.tune.radius, c.tune.slices, c.tune.steps,
         c.tune.strength);

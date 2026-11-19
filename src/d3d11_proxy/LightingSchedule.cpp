@@ -25,7 +25,7 @@ uint64_t s_world = 0;
 size_t s_step = 0;
 uint32_t s_held = 0;
 raw::bridge::BridgeTimings s_sum{};
-uint32_t s_timed = 0;
+uint32_t s_timed = 0, s_probed = 0;
 
 struct Step { const char* name; LightingTuning t; };
 std::vector<Step> s_steps, s_all;
@@ -90,10 +90,13 @@ void HarnessResult(const Step& st, const std::string& stats)
     if (fopen_s(&f, (s_req.dir + "\\harness_results.jsonl").c_str(), "a") != 0 || !f) return;
     const double inv = s_timed ? 1.0 / s_timed : 0.0;
     fprintf(f, "{\"scene\":\"%s\",\"keyframe\":\"%s\",\"step\":\"%s\",\"mode\":%d,\"width\":%u,\"height\":%u,"
-               "\"timed_frames\":%u,\"pass_ms\":%.4f,\"ao_ms\":%.4f,\"lighting_ms\":%.4f,\"fog_ms\":%.4f,\"bridge_ms\":%.4f%s%s}\n",
+               "\"timed_frames\":%u,\"pass_ms\":%.4f,\"ao_ms\":%.4f,\"lighting_ms\":%.4f,\"fog_ms\":%.4f,\"bridge_ms\":%.4f,"
+               "\"stall_ms\":%.4f,\"sync_ms\":%.4f,\"probed_frames\":%u,\"wake_in_ms\":%.4f,\"d12_span_ms\":%.4f,\"wake_out_ms\":%.4f%s%s}\n",
             s_req.scene.c_str(), s_req.keyframe.c_str(), st.name, st.t.mode, Bridge() ? Bridge()->Config().width : 0,
             Bridge() ? Bridge()->Config().height : 0, s_timed, s_sum.passMs * inv, s_sum.pass.stageMs[0] * inv,
-            s_sum.pass.stageMs[1] * inv, s_sum.pass.stageMs[2] * inv, s_sum.bridgeCostMs * inv, stats.empty() ? "" : ",", stats.c_str());
+            s_sum.pass.stageMs[1] * inv, s_sum.pass.stageMs[2] * inv, s_sum.bridgeCostMs * inv, s_sum.stallMs * inv, s_sum.syncMs * inv,
+            s_probed, s_probed ? s_sum.wakeInMs / s_probed : 0.0, s_probed ? s_sum.d12SpanMs / s_probed : 0.0,
+            s_probed ? s_sum.wakeOutMs / s_probed : 0.0, stats.empty() ? "" : ",", stats.c_str());
     fclose(f);
 }
 
@@ -106,6 +109,8 @@ void TimingSample()
     const uint64_t n = b->FramesExecuted();
     if (n < 3 || !b->ReadTimings(n - 3, false, &t)) return;
     s_sum.passMs += t.passMs; s_sum.bridgeCostMs += t.bridgeCostMs;
+    s_sum.stallMs += t.stallMs; s_sum.syncMs += t.syncMs;
+    if (t.probeOk) { s_sum.wakeInMs += t.wakeInMs; s_sum.d12SpanMs += t.d12SpanMs; s_sum.wakeOutMs += t.wakeOutMs; ++s_probed; }
     for (int k = 0; k < 3; ++k) s_sum.pass.stageMs[k] += t.pass.stageMs[k];
     ++s_timed;
 }
@@ -169,7 +174,7 @@ void LightingScheduleOnPresent(bool worldFrame)
     if (s_held == 0) {
         Cfg().light = s_steps[s_step].t;
         Tune();
-        s_sum = {}; s_timed = 0;
+        s_sum = {}; s_timed = 0; s_probed = 0;
     }
     if (b && b->Ready() && Cfg().light.mode > 0) TimingSample();
     if (++s_held < static_cast<uint32_t>(Cfg().lightHold)) return;

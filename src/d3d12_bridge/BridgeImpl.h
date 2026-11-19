@@ -106,6 +106,17 @@ struct D3D12Bridge::Impl
     uint32_t caughtUp = 0, handOvers = 0;
     double   flushToSubmitUs = 0;
 
+    // The hand-over probe (Probe.cpp): one timestamp list before the pass on the D3D12 queue and
+    // one after, a slot per frame of the ring.
+    ComPtr<ID3D12QueryHeap> probeHeap;
+    ComPtr<ID3D12Resource> probeRead;
+    ComPtr<ID3D12CommandAllocator> probeAlloc;
+    ComPtr<ID3D12GraphicsCommandList> probeHead[kRing], probeTail[kRing];
+    uint64_t probeFreq = 0, probeFrame[kRing] = {~0ull, ~0ull, ~0ull, ~0ull};
+    bool CreateProbe();
+    void ProbeHead(uint64_t frame, uint64_t waitValue);
+    void ProbeTail(uint64_t frame);
+    bool ProbeRead(uint64_t frame, uint64_t d11Freq, uint64_t t5, uint64_t t6, BridgeTimings* r);
     bool CreateDevice12(ID3D11Device* dev);
     bool CreateShared(SharedTex& t, DXGI_FORMAT fmt, D3D12_RESOURCE_FLAGS flags,
                       const char* name, UINT w = 0, UINT h = 0);

@@ -66,6 +66,7 @@ struct BridgeConfig
     bool        debugLayer     = false;
     DWORD       cpuWaitTimeout = 2000;  // ms; a longer wait marks the bridge unhealthy
     bool        probeStages    = false; // log ProbeFenceSupport between setup stages
+    bool        handoverFlush  = false; // Flush the D3D11 context right after the copy-out (docs/LIGHTING.md, indoor cost)
     // The game's normal target format, or UNKNOWN to share no normals.
     DXGI_FORMAT normalFormat   = DXGI_FORMAT_UNKNOWN;
     bool        enginePass     = false; // run the Playground engine's pass instead of the depth haze
@@ -102,6 +103,12 @@ struct BridgeTimings
     PassTimings pass;           // the pass's stages
     double   syncMs       = 0;  // stallMs - passMs: what the fence round trip costs
     double   bridgeCostMs = 0;  // depthCopy + normalCopy + copyIn + copyOut + sync
+    // The hand-over on one clock (Probe.cpp): D3D11 and D3D12 timestamps of the same GPU, checked
+    // by their order (the D3D11 signal, the D3D12 queue's first command, its last, the D3D11 wake).
+    bool     probeOk      = false;  // the four times came in that order
+    double   wakeInMs     = 0;  // D3D11 copy-in done -> the D3D12 queue starts (fence wake)
+    double   d12SpanMs    = 0;  // the D3D12 queue: first command -> after the pass and its signal
+    double   wakeOutMs    = 0;  // D3D12 done -> the D3D11 queue runs again (fence wake)
 };
 
 // The textures both devices share. Each is render-target capable with

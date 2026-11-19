@@ -174,6 +174,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         m->ready = false;
         return false;
     }
+    m->ProbeHead(frame, waitValue);
     if (!m->pass->Submit(waitValue, v2)) {
         // Nothing will signal v2 now, so D3D11 must not wait for it.
         m->log("[D3D12Bridge] pass '%s' failed to submit; bridge off", m->pass->Name());
@@ -182,6 +183,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         m->ready = false;
         return false;
     }
+    m->ProbeTail(frame);
     QueryPerformanceCounter(&q1);
     // Already executed on the GPU when the D3D12 list was only now submitted: the queue idles on the CPU.
     m->caughtUp += c->GetData(s.ts[5].Get(), nullptr, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK;
@@ -199,6 +201,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     c->End(s.ts[6].Get());
     c->CopyResource(colorDst, m->colorOut.tex11.Get());
     c->End(s.ts[7].Get());
+    if (m->cfg.handoverFlush) c->Flush();
     c->End(s.disjoint.Get());
     s.open = false;
     s.executed = true;
@@ -252,6 +255,7 @@ bool D3D12Bridge::ReadTimings(uint64_t frame, bool block, BridgeTimings* out)
     r.passMs = ds.pass.totalMs;
     r.syncMs = r.stallMs > r.passMs ? r.stallMs - r.passMs : 0.0;
     r.bridgeCostMs = r.depthCopyMs + r.normalCopyMs + r.copyInMs + r.copyOutMs + r.syncMs;
+    m->ProbeRead(frame, dj.Frequency, t[5], t[6], &r);
     *out = r;
     return true;
 }

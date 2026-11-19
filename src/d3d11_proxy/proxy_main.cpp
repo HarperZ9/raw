@@ -376,7 +376,11 @@ extern "C" HRESULT WINAPI SB_D3D11CreateDeviceAndSwapChain(
 {
     LazyInit();
     SB::Proxy::Log("D3D11CreateDeviceAndSwapChain called");
-    if (SB::Proxy::TxMode_Get() && s_realCreateDeviceAndSwapChain)
+    // Translate mode with Wrap=1: the whole proxy (G-buffer patching, the lighting hooks) runs on
+    // top of raw::tx; the layer's create function stands in for the system runtime's.
+    if (SB::Proxy::TxMode_Get() == 1 && SB::Proxy::TxMode_Wrap())
+        s_realCreateDeviceAndSwapChain = reinterpret_cast<PFN_D3D11CreateDeviceAndSwapChain>(SB::Proxy::TxMode_CreateFn());
+    else if (SB::Proxy::TxMode_Get() && s_realCreateDeviceAndSwapChain)
         return SB::Proxy::TxMode_CreateDeviceAndSwapChain(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion,
                                                           pSwapChainDesc, ppSwapChain, ppDevice, pFeatureLevel, ppImmediateContext,
                                                           reinterpret_cast<void*>(s_realCreateDeviceAndSwapChain));

@@ -376,7 +376,7 @@ add_custom_command(
     DEPENDS ${RAW_SHARE_HLSL}/StencilCopy.hlsl ${RAW_SHARE_HLSL}/VolumeCopy.hlsl
     COMMENT "fxc: stencil and volume copies -> bytecode headers"
     VERBATIM)
-target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/BridgeShareMore.cpp
+target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/BridgeShareMore.cpp src/d3d12_bridge/Probe.cpp
     ${RAW_BRIDGE_GEN}/StencilCopy_CS.h ${RAW_BRIDGE_GEN}/VolumeCopy_CS.h)
 
 # The engine's deferred lighting of the game frame (docs/LIGHTING.md): the proxy decodes the
@@ -454,6 +454,9 @@ target_compile_definitions(raw_dx12_translate PUBLIC NOMINMAX WIN32_LEAN_AND_MEA
 target_link_libraries(raw_dx12_translate PUBLIC dxguid)
 # The translate mode (docs/TX_IN_GAME.md): the game on raw::tx instead of the system runtime.
 target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/TxMode.cpp src/d3d11_proxy/TxHarness.cpp)
+# Hot reload (docs/HOT_RELOAD.md): shaders and parameters while the game runs.
+target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/HotReload.cpp src/d3d11_proxy/Overlay.cpp)
+target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/ShaderCompiler.cpp)
 target_link_libraries(d3d11_proxy PRIVATE raw_dx12_translate)
 # A map file and a PDB beside d3d11.dll, so a fault's module offset in the log names a function.
 if(MSVC)

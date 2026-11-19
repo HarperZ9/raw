@@ -199,16 +199,29 @@ GPU timestamps on the D3D12 queue, mean over the frames of each step, RTX 4090, 
 At 1080p: matched 0.07 ms, improved 0.43 ms in Riverwood. The bridge's cost is mostly the fence
 round trip on the D3D11 queue; indoors it reached 2.7 ms in some steps.
 
-**The indoor fence cost, what was tested.** In the inn the D3D11 queue sits idle 2.8 to 6.3 ms at
-the hand-over while our pass takes 0.4 to 2.2 ms: 2.4 to 4.1 ms of "fence sync", against 0.33 to
-0.56 ms outdoors. First hypothesis: the GPU reaches the hand-over before the CPU has submitted the
-D3D12 list, so it waits on the CPU. The bridge now logs, every 300 frames, whether the copy-in had
-already executed on the GPU at the moment of submit, and the CPU time from the D3D11 flush to the
-submit. Result: 0 or 1 of 300 frames indoors and out, and 50 to 66 microseconds. Rejected. The
-extra time is on the GPU side, between the D3D11 signal and the end of the D3D12 list. Not found
-yet; the next measurement places the D3D12 list's start on a common clock with the D3D11
-timestamps (`ID3D12CommandQueue::GetClockCalibration` against QPC samples taken beside D3D11
-timestamp queries).
+**The indoor fence cost: found and fixed (2026-11-18, later).** The bridge now places the hand-over on
+one clock (`src/d3d12_bridge/Probe.cpp`). The D3D12 queue gets one timestamp list before the pass and
+one after its signal, read beside the D3D11 timestamps. The two clocks agree: in 37 to 60 of every 60
+frames the four times came in order (D3D11 copy-in end, D3D12 start, D3D12 end, D3D11 wake), and a
+frame out of order is not counted. Splitting the stall this way, at 2160p:
+
+| Step | wake in (D3D11 signal to D3D12 start) | D3D12 span | wake out (D3D12 done to D3D11 running) | sync |
+|---|---|---|---|---|
+| inn, improved, before | 0.17 ms | 1.32 ms | **2.28 ms** | 2.48 ms |
+| inn, improved, `HandoverFlush=1` | 0.15 ms | 1.86 ms | 0.18 ms | 0.37 ms |
+| inn, matched, before | 0.18 ms | 0.30 ms | 0.59 ms | 0.81 ms |
+| inn, matched, `HandoverFlush=1` | 0.16 ms | 0.31 ms | 0.15 ms | 0.35 ms |
+| Riverwood day, improved, before | 0.17 ms | 1.62 ms | 0.17 ms | 0.37 ms |
+| Riverwood day, improved, `HandoverFlush=1` | 0.17 ms | 1.69 ms | 0.18 ms | 0.38 ms |
+
+The D3D12 span matches the pass's own timestamps, so no hidden D3D12 work is involved. The extra
+time indoors sat after D3D12 had finished: the D3D11 queue did not run again for 2.3 ms. The commands
+behind D3D11's fence wait (the copy-out and the rest of the frame) stayed in the runtime's command
+buffer until something flushed it. Outdoors the game's later draws fill the buffer soon. The inn
+draws little after the composite, so the buffer waited. A `Flush()` right after the copy-out
+submits them at once. It is now the default (`[Lighting] HandoverFlush=1`). Indoors the bridge cost
+falls by 2.1 ms (improved) and 0.46 ms (matched). Outdoors it is unchanged. Runs: probe-noflush and
+probe-flush, 60 timed frames a step.
 
 ## Limits
 

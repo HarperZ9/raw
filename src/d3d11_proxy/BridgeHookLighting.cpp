@@ -15,6 +15,8 @@
 #include "ProxyLog.h"
 #include "SceneLights.h"
 #include "GameComposite.h"
+#include "HotReload.h"
+#include "Overlay.h"
 
 #include <algorithm>
 #include <cmath>
@@ -33,6 +35,7 @@ namespace
 {
 int s_failures = 0;
 UINT s_shadowSide = 4096;
+bool s_handoverFlush = true;
 
 } // namespace
 
@@ -63,6 +66,7 @@ void LoadLightingConfig(const std::string& ini)
     Cfg().lightCaptureAfter = i("CaptureAfter", 0);
     Cfg().lightHold = i("Hold", 45);
     s_shadowSide = static_cast<UINT>(i("ShadowMapSize", 4096));
+    s_handoverFlush = i("HandoverFlush", 1) != 0;   // docs/LIGHTING.md: the indoor cost
     Cfg().lightDump = i("Dump", 0) != 0;
     Cfg().harness = i("Harness", 0) != 0;
     char text[MAX_PATH]{};
@@ -103,6 +107,7 @@ bool LightingEnsure()
     c.passRetireMs = static_cast<DWORD>(Cfg().retireTimeoutMs);
     c.lightingPass = true;
     c.shadowMapSize = s_shadowSide;
+    c.handoverFlush = s_handoverFlush;
     if (!b->Initialize(pi->device, pi->context, c, &Log)) { ++s_failures; return false; }
     LightingApplyTuning();
     return true;
@@ -132,6 +137,8 @@ void LightingOnPresent(bool worldFrame)
         LightingApplyTuning();
         Log("[Lighting] F10: mode %d", Cfg().light.mode);
     }
+    HotReload_OnPresent();
+    Overlay_Draw();
     LightingScheduleOnPresent(worldFrame);
 }
 

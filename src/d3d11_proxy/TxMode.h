@@ -21,6 +21,8 @@ HRESULT TxMode_CreateDeviceAndSwapChain(IDXGIAdapter* adapter, D3D_DRIVER_TYPE t
 HRESULT TxMode_CreateDevice(IDXGIAdapter* adapter, D3D_DRIVER_TYPE type, HMODULE sw, UINT flags,
                             const D3D_FEATURE_LEVEL* levels, UINT nLevels, UINT sdk, ID3D11Device** dev,
                             D3D_FEATURE_LEVEL* level, ID3D11DeviceContext** ctx, void* realCreate);
+bool TxMode_Wrap();     // [Translate] Wrap=1: the normal proxy on top of the layer
+void* TxMode_CreateFn(); // a D3D11CreateDeviceAndSwapChain that makes the layer's objects
 // A swap chain the game made itself through a DXGI factory on a translated device.
 IDXGISwapChain* TxMode_WrapSwapChain(IDXGISwapChain* inner, ID3D11Device* dev);
 }

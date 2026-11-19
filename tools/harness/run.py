@@ -283,12 +283,18 @@ class Runner(Actions):
                 from plugin import TestPlugin
                 self.plugin = TestPlugin(self.inst.game, Path(self.a.plugin), self.out)
                 self.report["plugin"] = self.plugin.deploy()
+            if self.a.skse_file:
+                from skse import SksePlugins
+                self.skse = SksePlugins(self.inst.game, [Path(f) for f in self.a.skse_file], self.out)
+                self.report["skse"] = self.skse.deploy()
             self.inst.set_option("SkyrimPrefs.ini", "Display", "iSize W", w)
             self.inst.set_option("SkyrimPrefs.ini", "Display", "iSize H", h)
             self.inst.set_option("SkyrimPrefs.ini", "Interface", "bShowTutorials", "0")
             self.inst.set_option("SkyrimCustom.ini", "General", "bAlwaysActive", "1")
-            subprocess.Popen([str(self.inst.game / "skse64_loader.exe")], cwd=self.inst.game)
-            self.log(f"launched at {w}x{h}")
+            # direct: SkyrimSE.exe itself, with no SKSE in the process (RAW's raw_skse.dll hosts the plugins)
+            exe = "SkyrimSE.exe" if self.a.launch == "direct" else "skse64_loader.exe"
+            subprocess.Popen([str(self.inst.game / exe)], cwd=self.inst.game)
+            self.log(f"launched {exe} at {w}x{h}")
             for line in script:
                 line = line.split("#", 1)[0].strip()
                 if line and not self.command(shlex.split(line, posix=False)):
@@ -309,6 +315,8 @@ class Runner(Actions):
             self.collect_extras()
             if getattr(self, "plugin", None):
                 self.report["plugin_after"] = self.plugin.restore()
+            if getattr(self, "skse", None):
+                self.report["skse_after"] = self.skse.restore()
             self.report["install_after"] = self.inst.after(self.out)
             self.report["gpu_after"] = G.gpu()
             results = self.out / "harness_results.jsonl"
@@ -425,6 +433,10 @@ def main() -> int:
     p.add_argument("--collect", help="folder in the game directory to bring back and remove")
     p.add_argument("--shaders", default="", help="a shader folder to copy beside the game for hot reload (src/d3d12_bridge/shaders)")
     p.add_argument("--plugin", default="", help="a test plugin folder (tools/harness/plugin.py), deployed for this run only")
+    p.add_argument("--launch", choices=("skse", "direct"), default="skse",
+                   help="skse: through skse64_loader.exe; direct: SkyrimSE.exe with no SKSE")
+    p.add_argument("--skse-file", action="append", default=[],
+                   help="a file placed in Data/SKSE/Plugins for this run only (docs/SKSE_HOSTING.md)")
     p.add_argument("--ini", default="", help="a d3d11_proxy.ini to deploy instead of the lighting one (the translate tests)")
     return Runner(p.parse_args()).run()
 

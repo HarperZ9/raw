@@ -517,11 +517,20 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Interiors too (FLAG_BOUNCE_IN, at RtBounceInterior): lamp-lit walls send their light on.
     const bool bounceHere = sunColour.w > 0.5f || (flags.x & FLAG_BOUNCE_IN) != 0u;
     const float3 bounce = rt && (flags.x & FLAG_BOUNCE) != 0u && bounceHere ? RtBounce.Load(ip).rgb * proj.w * (match ? 1.0f : 1.45f) : 0.0f.xxx;
-    // Elder-inspired Nordic chromatic separation (!match): cool slate-blue shadow ambient vs warm direct sun & bounce.
-    // Helios-style interior weather reflection: outdoor rain/overcast subtly cools interior ambient bounce.
+    // Unified sky-coupled hemisphere ambient (!match exteriors): locks world shadow & sky ambient directly
+    // to our live skyPalette() zenith/horizon colors so terrain, roofs, and shadows always match the sky dome.
     if (!match && isExterior) {
-        const float inShadow = 1.0f - saturate(sunShadow);
-        amb *= lerp(float3(1.0f, 1.0f, 1.0f), float3(0.84f, 0.94f, 1.10f), inShadow * 0.65f);
+        const float sunLumA = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+        const float dayAmbW = saturate((sunDir.z - 0.01f) * 4.0f) * saturate((sunLumA - 0.20f) * 2.5f);
+        if (dayAmbW > 0.02f) {
+            float3 sZ, sM, sH;
+            skyPalette(sZ, sM, sH);
+            const float3 skyHemi = lerp(sH * 0.62f, lerp(sM, sZ, 0.45f), saturate(s.n.z * 0.5f + 0.5f));
+            const float ambL = max(dot(amb, float3(0.2126f, 0.7152f, 0.0722f)), 0.02f);
+            const float hemiL = max(dot(skyHemi, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
+            const float inShadow = 1.0f - saturate(sunShadow);
+            amb = lerp(amb, skyHemi * (ambL / hemiL), dayAmbW * lerp(0.28f, 0.52f, inShadow));
+        }
     } else if (!match && !isExterior) {
         const float outCool = saturate(clouds.x * 0.6f + weather.w * 0.5f);
         amb *= lerp(float3(1.02f, 1.00f, 0.98f), float3(0.90f, 0.96f, 1.06f), outCool * 0.35f);

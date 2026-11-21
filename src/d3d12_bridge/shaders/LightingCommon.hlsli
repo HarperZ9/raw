@@ -91,6 +91,20 @@ float ign(float2 px) {
     return frac(52.9829189f * frac(dot(p, float2(0.06711056f, 0.00583715f))));
 }
 
+// Shared live atmospheric palette: locks sky dome, world hemisphere ambient, distant mountain fog, and clouds
+// to one coherent physical color system across midday, dawn/dusk, overcast, and night.
+void skyPalette(out float3 zenith, out float3 mid, out float3 horiz) {
+    const float cover = saturate(clouds.x);
+    const float lowSun = saturate(1.0f - sunDir.z * 2.6f);
+    const float3 clearZ = lerp(float3(0.06f, 0.24f, 0.68f), float3(0.08f, 0.14f, 0.38f), lowSun);
+    const float3 clearM = lerp(float3(0.22f, 0.48f, 0.84f), float3(0.38f, 0.36f, 0.52f), lowSun);
+    const float3 clearH = lerp(float3(0.62f, 0.76f, 0.88f), float3(0.92f, 0.54f, 0.28f), lowSun);
+    const float stormW = saturate(cover * 0.85f - 0.25f + weather.w * 0.35f);
+    zenith = lerp(clearZ, float3(0.22f, 0.28f, 0.36f), stormW);
+    mid    = lerp(clearM, float3(0.30f, 0.36f, 0.44f), stormW);
+    horiz  = lerp(clearH, float3(0.38f, 0.44f, 0.52f), stormW);
+}
+
 #ifndef ATLAS_SLOT
 #define ATLAS_SLOT t5
 #endif

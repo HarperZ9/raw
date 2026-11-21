@@ -74,21 +74,23 @@ void water(uint3 id : SV_DispatchThreadID) {
         const float2 px = float2(id.xy);
         const float3 p = worldAt(px, L.x);
         if (p.z < 0.0f) {   // the surface is below the camera: seen from above
-            float3 n = nL;
+            // Replace Skyrim's frantic fast-scrolling vanilla water normal map (nL) with our own calm, slow-drifting
+            // 4-octave world-space Gerstner & capillary wave field (keeping only 12% of nL for river-flow curvature).
             const float3 v = normalize(eyeAt() - p);
             const float3 wpW = camPosW.xyz + p;
-            // Multi-octave wind-driven world-space Gerstner micro-waves (zero cell-boundary or waterflow seams).
+            float3 n = normalize(lerp(float3(0.0f, 0.0f, 1.0f), nL, 0.12f));
             const float wDist = length(p);
-            if (wDist < 5500.0f) {
-                const float wFade = saturate(1.0f - wDist / 5500.0f);
+            if (wDist < 6500.0f) {
+                const float wFade = saturate(1.0f - wDist / 6500.0f);
                 const float2 wDir = normalize(cloudWind.xy + float2(1.0f, 0.35f));
                 const float2 wPerp = float2(-wDir.y, wDir.x);
                 const float wt = camPosW.w;
-                const float g1 = sin(dot(wpW.xy, wDir) * 0.038f + wt * 0.65f);
-                const float g2 = sin(dot(wpW.xy, normalize(wDir + wPerp * 0.65f)) * 0.078f + wt * 0.95f);
-                const float g3 = cos(dot(wpW.xy, normalize(wDir - wPerp * 0.85f)) * 0.140f - wt * 1.25f);
-                const float windScale = (0.006f + saturate(length(cloudWind.xy) / 420.0f) * 0.012f) * wFade;
-                n = normalize(n + float3((wDir * (g1 * 0.55f + g2 * 0.30f) + wPerp * (g3 * 0.25f)) * windScale, 0.0f));
+                const float g1 = sin(dot(wpW.xy, wDir) * 0.022f + wt * 0.48f);
+                const float g2 = sin(dot(wpW.xy, normalize(wDir + wPerp * 0.65f)) * 0.048f + wt * 0.72f);
+                const float g3 = cos(dot(wpW.xy, normalize(wDir - wPerp * 0.85f)) * 0.092f - wt * 0.94f);
+                const float g4 = sin(dot(wpW.xy, wPerp) * 0.145f + wt * 1.15f);
+                const float windScale = (0.014f + saturate(length(cloudWind.xy) / 420.0f) * 0.020f) * wFade;
+                n = normalize(n + float3((wDir * (g1 * 0.45f + g2 * 0.28f) + wPerp * (g3 * 0.18f + g4 * 0.09f)) * windScale, 0.0f));
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
                 if (wDist < 1600.0f) {
                     float2 wakeG = 0.0f.xx;
@@ -99,15 +101,15 @@ void water(uint3 id : SV_DispatchThreadID) {
                         const float r2 = dot(fd.xy, fd.xy);
                         if (r2 < 22500.0f && abs(fd.z) < 180.0f) {
                             const float rr = sqrt(r2);
-                            const float ring = sin(rr * 0.24f - wt * 1.65f) * exp(-rr / 65.0f) * ft.w;
-                            wakeG += (fd.xy / max(rr, 1.0f)) * ring * 0.032f;
+                            const float ring = sin(rr * 0.20f - wt * 1.35f) * exp(-rr / 70.0f) * ft.w;
+                            wakeG += (fd.xy / max(rr, 1.0f)) * ring * 0.028f;
                         }
                     }
                     n = normalize(n + float3(wakeG, 0.0f));
                 }
             }
             if (weather.w > 0.0f) {   // rain falling: drops ring the water
-                const float2 g = rainRings(wpW.xy, camPosW.w) * (0.35f * weather.w);
+                const float2 g = rainRings(wpW.xy, camPosW.w) * (0.28f * weather.w);
                 n = normalize(n + float3(-g, 0.0f));
             }
             const float nvRaw = dot(n, v);
@@ -117,8 +119,8 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
             const float3 o = p + float3(0.0f, 0.0f, 2.5f + 0.003f * length(p));
 
-            // Calm reflection normal tilt (0.22) keeps lake and river surface reflections silky and matched to natural flow speed.
-            const float3 nRefl = normalize(lerp(float3(0.0f, 0.0f, 1.0f), n, 0.22f));
+            // Calm reflection normal derived from our slow procedural Gerstner field (eliminates frantic vanilla specular flecks).
+            const float3 nRefl = normalize(lerp(float3(0.0f, 0.0f, 1.0f), n, 0.55f));
             float3 rd = reflect(-v, nRefl);
             if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }
             float3 refl;

@@ -181,18 +181,19 @@ float3 skyAt(float3 rd) {
 }
 
 
-// One more ray from an off-screen hit, for the cache cell there: so cells the camera never sees fill,
-// and light that has bounced more than once reaches the pixels through them (RtCache.h).
-void cacheFromHit(float3 hp, float3 n, float2 r) {
+// Second-bounce hardware RayQuery from a hit (exterior or interior): populates the persistent world radiance cache
+// so sunlight and interior torchlight propagate cleanly across 2+ bounces into deep corners and under roofs.
+void cacheFromHit(float3 hp, float3 n, float2 r, bool isInterior) {
     const float3 d = cosineDir(n, r);
     float3 bounce = 0.0f;
     float sky = 1.0f;
-    if (d.z > 0.0f) {
-        const float3 o = hp + n * (0.5f + 0.002f * length(hp));
+    if (isInterior || d.z > 0.0f) {
+        const float3 o = hp + n * (0.65f + 0.0025f * length(hp));
+        const float bLen = isInterior ? min(skyLength, 240.0f) : skyLength;
         Hit h;
-        if (traceHit(o, d, skyLength, h)) {
+        if (traceHit(o, d, bLen, h)) {
             float3 n2;
-            sky = 0.0f;
+            sky = isInterior ? saturate(h.t / max(bLen, 1.0f)) : 0.0f;
             bounce = radianceAt(h, o, d, r.yx, false, n2);
         }
     }
@@ -250,7 +251,7 @@ void main(uint3 id : SV_DispatchThreadID) {
                         bSample = radianceAt(h, o, sd, rs.yx, true, hn);
                         float3 c;
                         if (si == 0u && (giFlags & GI_CACHE) != 0u && !onScreen(o + sd * h.t, c)) {
-                            cacheFromHit(o + sd * h.t, hn, frac(rs * 1.618f + 0.31f));
+                            cacheFromHit(o + sd * h.t, hn, frac(rs * 1.618f + 0.31f), isInterior);
                         }
                     }
                 }

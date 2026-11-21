@@ -384,7 +384,9 @@ uint8_t LightingClass(const Analysis& a)
     bool sixLayers = a.cb[1] >= 13;
     for (int s = 0; s < 6; ++s) sixLayers &= a.texDim[s] == 3;
     if (sixLayers) return material::Landscape;
+    if (a.texDim[3] == 6) return material::Eye;   // Eye shader binds corneal cubemap at t3 (MaterialPipeline.cpp)
     for (int s = 0; s < 32; ++s) if (a.texDim[s] == 6) return material::EnvironmentMapped;
+    if (a.texDim[7] == 3 && !a.texDim[3] && !a.texDim[4] && !a.texDim[12]) return material::Hair;   // t7 specular shift -> Hair
     // Skin: the face's and the body's lit shaders read two more 2D maps at t3 and t4 (in a Riverwood capture,
     // ps c49dc9fe5ca9dd4c draws the heads, ps 563259c5efe0cd0c the bodies). Before the soft-lit test: the body
     // shader's back light reads t12 too. Parallax reads t3 alone.

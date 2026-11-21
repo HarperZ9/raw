@@ -95,8 +95,42 @@ float ign(float2 px) {
 #endif
 Texture2D<float> Atlas : register(ATLAS_SLOT);
 
+// Analytic Perez/Preetham sky model ported from superframe/native/src/renderer/sky.cpp.
+float perezEval(float A, float B, float C, float D, float E, float cosTheta, float gamma) {
+    const float ct = max(cosTheta, 0.02f), cg = cos(gamma);
+    return (1.0f + A * exp(B / ct)) * (1.0f + C * exp(D * gamma) + E * cg * cg);
+}
+
+float3 preethamSky(float3 dir, float3 sun, float turbidity) {
+    const float3 d = normalize(dir);
+    const float3 s = normalize(sun);
+    const float T = clamp(turbidity, 2.0f, 8.0f);
+    const float cosT = max(d.z, 0.02f);
+    const float ts = acos(clamp(s.z, 0.02f, 1.0f));
+    const float g = acos(clamp(dot(d, s), -1.0f, 1.0f));
+    const float rY = perezEval(0.1787f * T - 1.4630f, -0.3554f * T + 0.4275f, -0.0227f * T + 5.3251f, 0.1206f * T - 2.5771f, -0.0670f * T + 0.3703f, cosT, g)
+                   / max(perezEval(0.1787f * T - 1.4630f, -0.3554f * T + 0.4275f, -0.0227f * T + 5.3251f, 0.1206f * T - 2.5771f, -0.0670f * T + 0.3703f, 1.0f, ts), 1.0e-3f);
+    const float rx = perezEval(-0.0193f * T - 0.2592f, -0.0665f * T + 0.0008f, -0.0004f * T + 0.2125f, -0.0641f * T - 0.8989f, -0.0033f * T + 0.0452f, cosT, g)
+                   / max(perezEval(-0.0193f * T - 0.2592f, -0.0665f * T + 0.0008f, -0.0004f * T + 0.2125f, -0.0641f * T - 0.8989f, -0.0033f * T + 0.0452f, 1.0f, ts), 1.0e-3f);
+    const float ry = perezEval(-0.0167f * T - 0.2608f, -0.0950f * T + 0.0092f, -0.0079f * T + 0.2102f, -0.0441f * T - 1.6537f, -0.0109f * T + 0.0529f, cosT, g)
+                   / max(perezEval(-0.0167f * T - 0.2608f, -0.0950f * T + 0.0092f, -0.0079f * T + 0.2102f, -0.0441f * T - 1.6537f, -0.0109f * T + 0.0529f, 1.0f, ts), 1.0e-3f);
+    const float t2 = T * T, ts2 = ts * ts, ts3 = ts2 * ts;
+    const float xz = (0.00166f * ts3 - 0.00375f * ts2 + 0.00209f * ts) * t2
+                   + (-0.02903f * ts3 + 0.06377f * ts2 - 0.03202f * ts + 0.00394f) * T
+                   + (0.11693f * ts3 - 0.21196f * ts2 + 0.06052f * ts + 0.25886f);
+    const float yz = (0.00275f * ts3 - 0.00610f * ts2 + 0.00317f * ts) * t2
+                   + (-0.04214f * ts3 + 0.08970f * ts2 - 0.04153f * ts + 0.00516f) * T
+                   + (0.15346f * ts3 - 0.26756f * ts2 + 0.06670f * ts + 0.26688f);
+    const float x = clamp(xz * rx, 0.15f, 0.65f), y = clamp(yz * ry, 0.15f, 0.65f);
+    const float Y = clamp(rY * 0.48f, 0.02f, 2.5f);
+    const float X = (x / y) * Y, Z = ((1.0f - x - y) / y) * Y;
+    return max(float3(3.2406f * X - 1.5372f * Y - 0.4986f * Z,
+                      -0.9689f * X + 1.8758f * Y + 0.0415f * Z,
+                       0.0557f * X - 0.2040f * Y + 1.0570f * Z), 0.0f.xxx);
+}
+
 // Dynamic physically based environment cubemap (shared by Lighting, RtShadow, and RtWater).
-// Replaces flat static cubemaps and black RT-reflection misses with live zenith/horizon/sun/ground IBL.
+// Combines Preetham/Perez sky physics with live ambient SH, solar disk, and ground bounce.
 float3 evalDynamicEnvCube(float3 rd, float roughness) {
     const float3 d = normalize(rd);
     const float3 ambDir = max(float3(dot(ambient[0].xyz, d) + ambient[0].w,
@@ -104,17 +138,14 @@ float3 evalDynamicEnvCube(float3 rd, float roughness) {
                                      dot(ambient[2].xyz, d) + ambient[2].w), 0.02f.xxx);
     const bool ext = sunColour.w > 0.5f;
     if (!ext) {
-        // Interior dynamic cubemap: directional cell ambient + soft overhead fill.
         return ambDir * lerp(0.55f, 1.15f, saturate(d.z * 0.5f + 0.5f));
     }
-    const float elev = saturate(d.z);
-    const float dayW = saturate(sunDir.z * 3.0f);
-    const float3 zenith = ambDir * lerp(float3(0.70f, 0.80f, 1.12f), float3(0.62f, 0.82f, 1.28f), dayW);
-    const float3 horizon = lerp(ambDir * 1.15f, sunColour.rgb * 0.55f + ambDir * 0.65f, saturate(1.0f - dayW * 0.5f));
-    const float3 skyCol = lerp(horizon, zenith, pow(elev, 0.55f));
+    const float dayW = saturate(sunDir.z * 3.5f);
+    const float turb = lerp(2.6f, 5.2f, saturate(clouds.x));
+    const float3 physSky = preethamSky(d.z >= 0.0f ? d : float3(d.xy, 0.02f), sunDir.xyz, turb);
+    const float3 skyCol = lerp(ambDir * 1.1f, physSky * max(dot(ambDir, float3(0.3f, 0.5f, 0.2f)) * 1.8f, 0.25f), dayW * 0.65f);
     const float3 groundCol = ambDir * float3(0.42f, 0.40f, 0.36f);
-    float3 env = d.z >= 0.0f ? skyCol : lerp(horizon * 0.65f, groundCol, saturate(-d.z * 2.5f));
-    // Roughness-filtered solar specular disk + aureole (attenuated by cloud cover).
+    float3 env = d.z >= 0.0f ? skyCol : lerp(skyCol * 0.55f, groundCol, saturate(-d.z * 2.5f));
     const float cosS = saturate(dot(d, sunDir.xyz));
     const float expS = lerp(180.0f, 8.0f, saturate(roughness));
     const float sunLobe = pow(cosS, expS) * lerp(2.2f, 0.18f, saturate(roughness));

@@ -39,9 +39,9 @@ float4 meanAround(int2 p, float z, int r, out float rest, out float4 stdDev) {
             const float rel = (viewZOf(dq) - z) / z;
             const float k = exp2(-rel * rel * 4000.0f);
             float4 tap = decodeRaw(Raw[q], rv, rh);
-            // Clamp RT bounce fireflies before spatial/temporal blending so speckles never leak into shadows.
+            // Preserve rich sunlit grass/snow/hearth indirect bounce energy while rejecting extreme fireflies (>2.6).
             const float tapMax = max(tap.r, max(tap.g, tap.b));
-            if (tapMax > 1.35f) { tap.rgb *= 1.35f / tapMax; }
+            if (tapMax > 2.60f) { tap.rgb *= 2.60f / tapMax; }
             s += k * tap; s2 += k * (tap * tap); w += k;
             rs += k * rh * rv; rw += k * rh;
         }

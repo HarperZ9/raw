@@ -97,7 +97,14 @@ float3 fxaaAndCas(float2 suv) {
 
 float4 main(In i) : SV_Target {
     const float2 suv = min(max(i.uv * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
-    const float3 hdr = fxaaAndCas(suv);
+    float3 hdr = fxaaAndCas(suv);
+    // Logarithmic highlight roll-off on extreme HDR peaks (>1.35): tames Skyrim's post-opaque sun-glare billboard
+    // into a crisp natural solar disk while leaving all scene midtones (<1.35) untouched.
+    const float hdrPeak = max(hdr.r, max(hdr.g, hdr.b));
+    if (hdrPeak > 1.35f) {
+        const float comp = 1.35f + log2(1.0f + (hdrPeak - 1.35f) * 0.55f) * 0.42f;
+        hdr *= comp / hdrPeak;
+    }
     const float3 bloom = P[0].x > 0.5f ? Bloom.Sample(S0, suv).rgb : Bloom.Sample(S0, i.uv).rgb;
     const float2 lum = Lum.Sample(S2, i.uv).xy;
     const float avg = max(lum.x, 1.0e-5f);
@@ -144,11 +151,11 @@ float4 main(In i) : SV_Target {
         mapped = rh ? reinhardW(hdr * exposure * RB.z) : filmic(hdr * exposure * RB.z);
         if (RA.x > 0.5f) { pivot = dot(rh ? reinhardW((RB.y * exp2(RA.y) * RB.z).xxx) : filmic((RB.y * exp2(RA.y) * RB.z).xxx), W); }   // the grade turns about mid grey
     }
-    // Cinema highlight-only bloom + subtle warm optical halation: kills Skyrim's muddy midtone vaseline bloom.
+    // Cinema highlight-only bloom + subtle warm optical halation: kills Skyrim's muddy midtone and sun-glare wash.
     const float bloomLum = dot(bloom, W);
-    const float kneeB = saturate((bloomLum - 0.38f) / 0.45f);
-    const float3 cleanBloom = bloom * (kneeB * kneeB * 0.24f);
-    const float3 halation = float3(1.0f, 0.42f, 0.18f) * saturate((bloomLum - 0.85f) * 0.35f) * 0.14f;
+    const float kneeB = saturate((bloomLum - 0.55f) / 0.55f);
+    const float3 cleanBloom = bloom * (kneeB * kneeB * 0.14f);
+    const float3 halation = float3(1.0f, 0.42f, 0.18f) * saturate((bloomLum - 1.05f) * 0.30f) * 0.10f;
     mapped = saturate(mapped + cleanBloom + halation);
     if (RB.w > 1.5f) { return float4(lum.x * 0.25f, lum.y * 0.25f, exposure * 0.25f, 1.0f); }   // view 2: adapted average, the game's target, exposure (over 4, no gamma)
     if (RB.w > 0.5f) { return float4(exposure.xxx * 0.25f, 1.0f); }   // view 1: the exposure (4 = white, no gamma)

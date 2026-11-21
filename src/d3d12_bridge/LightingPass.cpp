@@ -16,6 +16,7 @@
 #include "clouds_fs.h"
 #include "light_fs.h"
 #include "light_vs.h"
+#include "volumetric_fs.h"
 
 #include <cmath>
 #include <cstring>
@@ -45,7 +46,8 @@ constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo
 constexpr RasterBinding U = RasterBinding::Uniform, T = RasterBinding::Texture, Sm = RasterBinding::Sampler;
 constexpr RasterBinding kLightLayout[16] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T, T, Sm};
 constexpr RasterBinding kCloudLayout[3] = {U, T, Sm};
-constexpr RasterBinding kFogLayout[4] = {U, T, T, T};
+constexpr RasterBinding kVolLayout[5] = {U, T, T, T, Sm};
+constexpr RasterBinding kFogLayout[6] = {U, T, T, T, T, Sm};
 
 class LightingPass final : public IBridgePass
 {
@@ -90,8 +92,10 @@ public:
         // Full native 1:1 resolution volumetric clouds (16x pixel density vs original 1/4-res, zero upscaling blur against pines/peaks).
         const uint32_t cw = host.width, ch = host.height;
         for (int k = 0; k < 2; ++k) m_cloud[k] = m_dev->createTexture({cw, ch, TextureFormat::RGBA16Float, RT, "clouds"}, m_err);
+        const uint32_t vw = (host.width + 1) / 2, vh = (host.height + 1) / 2;
+        for (int k = 0; k < 2; ++k) m_volFog[k] = m_dev->createTexture({vw, vh, TextureFormat::RGBA16Float, RT, "volumetric fog"}, m_err);
         m_lin = m_dev->createSampler({Filter::Linear, AddressMode::ClampToEdge, "clouds linear"}, m_err);
-        if (!m_cloud[0].valid() || !m_cloud[1].valid() || !m_lin.valid()) return Fail("cloud textures");
+        if (!m_cloud[0].valid() || !m_cloud[1].valid() || !m_volFog[0].valid() || !m_volFog[1].valid() || !m_lin.valid()) return Fail("cloud/volFog textures");
         const auto dxil = [](const void* p, size_t n) { return ShaderCode{ShaderFormat::Dxil, p, n}; };
         RasterPipelineDesc d;
         d.vertex = dxil(kDxil_light_vs, sizeof kDxil_light_vs);
@@ -105,6 +109,9 @@ public:
         d.label = "clouds"; d.fragment = dxil(kDxil_clouds_fs, sizeof kDxil_clouds_fs); d.layout = kCloudLayout;
         m_cloudPipe = m_dev->createRasterPipeline(d, m_err);
         if (!m_cloudPipe.valid()) return Fail("cloud pipeline");
+        d.label = "volumetric fog"; d.fragment = dxil(kDxil_volumetric_fs, sizeof kDxil_volumetric_fs); d.layout = kVolLayout;
+        m_volPipe = m_dev->createRasterPipeline(d, m_err);
+        if (!m_volPipe.valid()) return Fail("volumetric pipeline");
         const ao_rt::Shaders sh{dxil(kDxil_ao_rt_vs, sizeof kDxil_ao_rt_vs), dxil(kDxil_ao_rt_prefilter, sizeof kDxil_ao_rt_prefilter),
                                 dxil(kDxil_ao_rt_level, sizeof kDxil_ao_rt_level), dxil(kDxil_ao_rt_trace, sizeof kDxil_ao_rt_trace),
                                 dxil(kDxil_ao_rt_resolve, sizeof kDxil_ao_rt_resolve)};
@@ -155,7 +162,12 @@ public:
                                      {{}, cloudNow, {}}, {{}, {}, m_lin}};
         Draw(*c, m_lit, m_lightPipe, light);
         c->timestamp(4);
-        const RasterBind fog[4] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}};
+        const TextureHandle volNow = m_volFog[m_frame & 1], volLast = m_volFog[(m_frame + 1) & 1];
+        if (ok && (m_u.flags[0] & kFog)) {
+            const RasterBind vb[5] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volLast, {}}, {{}, {}, m_lin}};
+            Draw(*c, volNow, m_volPipe, vb);
+        }
+        const RasterBind fog[6] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volNow, {}}, {{}, {}, m_lin}};
         Draw(*c, m_out, m_fogPipe, fog);
         c->timestamp(5);
         if (!m_dev->endRecording(m_err)) return Fail("endRecording");
@@ -341,8 +353,8 @@ private:
     TextureHandle m_rtBounce, m_rtReflect;
     TextureHandle m_rtVis, m_rtIdx, m_soft, m_game, m_depth, m_normal, m_albedo, m_spec, m_mask, m_atlas, m_out, m_motion, m_lit, m_aoOut;
     BufferHandle m_uniform;
-    RasterPipelineHandle m_lightPipe, m_fogPipe, m_cloudPipe;
-    TextureHandle m_cloud[2];
+    RasterPipelineHandle m_lightPipe, m_fogPipe, m_cloudPipe, m_volPipe;
+    TextureHandle m_cloud[2], m_volFog[2];
     SamplerHandle m_lin;
     float m_prevWorldToClip[16] = {};
     float m_footTrail[32][4] = {};

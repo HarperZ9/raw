@@ -5,6 +5,7 @@
 #include "BridgeImpl.h"
 #include "LightingPass.h"
 #include "RtScene.h"
+#include "StreamlineHost.h"
 
 namespace raw::bridge
 {
@@ -83,6 +84,16 @@ bool D3D12Bridge::ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, 
         m->log("[RT] water hand-over failed; water off");
         m->waterFailed = true;
         return false;
+    }
+    // Optional NVIDIA Streamline DLAA Transformer (Preset K) directly on the native DX12 HDR16F buffer (DlssDlaa=1).
+    if (m->motionIn.res12 && GetPrivateProfileIntA("Lighting", "DlssDlaa", 1, "d3d11_proxy.ini") != 0) {
+        ID3D12Resource* src12 = inB ? m->waterIn.res12.Get() : m->waterOut.res12.Get();
+        ID3D12Resource* dst12 = inB ? m->waterOut.res12.Get() : m->waterIn.res12.Get();
+        if (StreamlineHost::Get().EvaluateDLAA(m->queue.Get(), src12, dst12, m->depthIn.res12.Get(),
+                                               m->motionIn.res12.Get(), m->cfg.width, m->cfg.height,
+                                               static_cast<uint32_t>(m->frames), m->log)) {
+            inB = !inB;
+        }
     }
     c->CopyResource(sceneHdr, inB ? m->waterIn.tex11.Get() : m->waterOut.tex11.Get());
     return true;

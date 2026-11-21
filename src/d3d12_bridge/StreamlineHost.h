@@ -32,6 +32,13 @@ public:
     // Per-frame NVIDIA Reflex Low-Latency sleep/pacing (no-op if Reflex is unsupported).
     void ReflexBeginFrame(uint32_t frameIdx);
 
+    // Live per-frame NVIDIA DLAA Transformer (sl::DLSSMode::eDLAA, ePresetK) on RAW's native DX12 HDR buffer.
+    // All 4 input/output resources enter and exit in D3D12_RESOURCE_STATE_COMMON.
+    // Returns true if DLAA evaluated into colorOut (caller should read colorOut instead of colorIn).
+    bool EvaluateDLAA(ID3D12CommandQueue* queue, ID3D12Resource* colorIn, ID3D12Resource* colorOut,
+                      ID3D12Resource* depth, ID3D12Resource* mvec, uint32_t width, uint32_t height,
+                      uint32_t frameIdx, LogFn log);
+
 private:
     StreamlineHost() = default;
     StreamlineCaps m_caps{};

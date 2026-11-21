@@ -34,37 +34,43 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float dt = (t1 - t0) / float(steps);
         const float j = rand(lo, proj.z);
         const float cosT = dot(dir, sunDir.xyz);
-        const float phase = min(lerp(hg(cosT, -0.25f), hg(cosT, 0.58f), 0.50f), 0.34f);
+        // Dual-lobe Henyey-Greenstein: crisp forward silver lining (g=0.74) + soft warm back-scatter (g=-0.28).
+        const float phase = min(lerp(hg(cosT, -0.28f), hg(cosT, 0.74f), 0.52f), 0.44f);
         const float3 sunC = sunColour.rgb * (sunDir.w > 0.5f ? 1.0f : 0.0f);
         const float3 skyC = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.0f);
         const float sigma = kCloudSigma;
         float T = 1.0f;
         float3 S = 0.0f;
+        // Exponential sun-march offsets capture both crisp local cauliflower self-shadowing and deep storm underbellies.
+        static const float kSunD[6] = { 180.0f, 440.0f, 920.0f, 1750.0f, 3200.0f, 5600.0f };
+        static const float kSunW[6] = { 180.0f, 260.0f, 480.0f,  830.0f, 1450.0f, 2400.0f };
         [loop] for (uint i = 0u; i < steps && T > 0.01f; i++) {
             const float t = t0 + (float(i) + j) * dt;
             const float3 pa = o + dir * t;
             const float dens = cloudDensity(pa, true);
             if (dens <= 0.0f) { continue; }
-            // Toward the sun: 6 steps over 3,000 units for rich volumetric cloud self-shadowing.
             float od = 0.0f;
-            [unroll] for (uint k = 1u; k <= 6u; k++) { od += cloudDensity(pa + sunDir.xyz * (float(k) * 500.0f), false) * 500.0f; }
-            // Light scattered many times inside the cloud: three octaves, each weaker and less attenuated.
-            const float beer = (exp(-od * sigma) + 0.5f * exp(-od * sigma * 0.25f) + 0.25f * exp(-od * sigma * 0.0625f)) / 1.75f;
-            const float powder = 1.0f - exp(-od * sigma * 2.0f - dens * 0.5f);
+            [unroll] for (uint k = 0u; k < 6u; k++) { od += cloudDensity(pa + sunDir.xyz * kSunD[k], false) * kSunW[k]; }
+            // Multi-octave scattering (Hillaire 2020) + deep Beer-Powder crease contrast.
+            const float beer = (exp(-od * sigma) + 0.52f * exp(-od * sigma * 0.25f) + 0.26f * exp(-od * sigma * 0.0625f)) / 1.78f;
+            const float powder = 1.0f - exp(-od * sigma * 2.2f - dens * 0.65f);
             const float h = saturate((pa.z - clouds.y) / clouds.z);
-            // Dynamic sun-elevation cloud lighting: warm golden underside glow at dawn/dusk, crisp sky-blue base at noon.
+            // Ambient occlusion inside cloud undersides gives dramatic blue-slate storm depth vs crisp lit ridges.
+            const float cloudAo = lerp(0.26f, 0.85f, h) * exp(-dens * 0.35f);
             const float lowSun = saturate(1.0f - sunDir.z * 3.2f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
-            const float3 baseTint = lerp(skyC * lerp(0.28f, 0.68f, h), sunC * float3(1.0f, 0.62f, 0.36f) * lerp(0.42f, 0.18f, h) + skyC * 0.35f, lowSun * 0.55f);
-            const float3 lum = min(sunC * (beer * lerp(1.0f, powder, 0.55f) * phase * 4.0f * PI * 0.38f) + baseTint, 1.35f.xxx);
+            const float3 baseTint = lerp(skyC * cloudAo, sunC * float3(1.0f, 0.58f, 0.34f) * lerp(0.45f, 0.20f, h) + skyC * (cloudAo * 0.55f), lowSun * 0.60f);
+            const float3 lum = min(sunC * (beer * lerp(1.0f, powder, 0.58f) * phase * 4.0f * PI * 0.42f) + baseTint, 1.38f.xxx);
             const float ext = dens * sigma;
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;
         }
-        // Soft filmic shoulder on cloud in-scatter so sunset/midday clouds keep sculpted detail instead of clipping.
-        const float3 softS = S / (1.0f + S * 0.55f);
-        const float fade = exp(-max(t0, 0.0f) / 160000.0f);
-        res = float4(softS * fade, lerp(1.0f, T, fade));
+        // Soft filmic shoulder + seamless atmospheric horizon aerial perspective blend (no hard cloud cutoff near mountains).
+        const float3 softS = S / (1.0f + S * 0.52f);
+        const float fade = exp(-max(t0, 0.0f) / 185000.0f);
+        const float3 horizonHaze = skyC * 0.58f + sunC * pow(saturate(cosT), 6.0f) * 0.10f;
+        const float3 aerialS = lerp(horizonHaze * (1.0f - T), softS, fade);
+        res = float4(aerialS, lerp(1.0f, T, saturate(fade * 1.15f)));
     }
     // Last frame's value along the same direction.
     const float4 c = float4(far, 1.0f);

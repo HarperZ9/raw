@@ -370,8 +370,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     }
     const float3 nSmooth = s.n;
     const bool isActorFeat = (base >= 10u && base <= 12u);   // skin, hair, eye
-    // Organic world-space anti-tiling & natural slope curvature on terrain (class 4) and cliffs/rocks (class 1).
-    if (!match && (base == 4u || base == 1u) && z < 16000.0f) {
+    const bool isActorCloth = (!isActorFeat && base != 2u && base != 5u && SoftMap.Load(ip).r < 0.0f);   // skinned actor clothing
+    // Organic world-space anti-tiling & natural slope curvature on terrain (class 4) and cliffs/rocks (class 1, excluding actor cloth).
+    if (!match && !isActorCloth && (base == 4u || base == 1u) && z < 16000.0f) {
         const float3 wp = p + camPosW.xyz;
         const float macroN = cNoise(wp * 0.0022f) * 0.62f + cNoise(wp * 0.0068f + 13.7f) * 0.38f;
         const float microN = cNoise(wp * 0.024f + 5.3f);
@@ -399,8 +400,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
         s.alpha = clamp(s.alpha + (macroN - 0.5f) * 0.14f * tileFade, 0.08f, 0.96f);
     }
-    // Zero-mod procedural PBR micro-normal & roughness synthesis on vanilla stone/wood (excluded on skin/hair/eye/foliage).
-    if (!match && !isActorFeat && base != 5u && z < 2800.0f) {
+    // Zero-mod procedural PBR micro-normal & roughness synthesis on vanilla stone/wood (excluded on actor skin/hair/eye/cloth & foliage).
+    if (!match && !isActorFeat && !isActorCloth && base != 5u && z < 2800.0f) {
         const float distFade = saturate(1.0f - z / 2800.0f) * (base == 2u ? 0.22f : 1.0f);
         const int2 dimMax = max(int2(dims.xy) - int2(1, 1), int2(0, 0));
         const int3 ipL = int3(clamp(int2(px) + int2(-1, 0), int2(0, 0), dimMax), 0);
@@ -480,8 +481,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Interiors have no cascades; channel 0 of their mask belongs to a shadowed point light, so the
         // directional light there is unshadowed, as the game lights it.
         sunShadow = (flags.x & FLAG_SHADOWS) == 0u ? 1.0f : (flags.x & FLAG_CASCADES) != 0u ? cascadeShadow(p, d, true) : m4.x;
-        // Not on soft-lit foliage or character skin/hair/eyes: thin leaves and curved actor meshes self-occlude in depth space.
-        if (!match && (flags.x & FLAG_CONTACT) != 0u && base != 5u && !isActorFeat && sunShadow > 0.0f && dot(s.n, sunDir.xyz) > 0.0f)
+        // Not on soft-lit foliage or character skin/hair/eyes/cloth: thin leaves and curved actor meshes self-occlude in depth space.
+        if (!match && (flags.x & FLAG_CONTACT) != 0u && base != 5u && !isActorFeat && !isActorCloth && sunShadow > 0.0f && dot(s.n, sunDir.xyz) > 0.0f)
             sunShadow *= screenShadow(p + lift, sunDir.xyz, tune.w, 0.02f, jit, 12u);
         // Skinned actors (skin/hair/eye) keep the game's filtered shadow mask so coarse skinned BLAS triangles never cast blocky self-shadow acne.
         if (rt && sunColour.w > 0.5f && !isActorFeat) { sunShadow = min(sunShadow, base == 5u ? lerp(1.0f, rv.x, 0.6f) : rv.x); }

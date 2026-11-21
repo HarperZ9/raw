@@ -86,7 +86,7 @@ public:
         m_uniform = m_dev->createBuffer({sizeof(LightUniform), BufferUsage::Uniform, "lighting params"}, m_err);
         if (!m_lit.valid() || !m_aoOut.valid() || !m_uniform.valid()) return Fail("createTexture");
         // The clouds at a quarter of the width and height, two textures in turn (one is last frame's).
-        const uint32_t cw = (host.width + 3) / 4, ch = (host.height + 3) / 4;
+        const uint32_t cw = (host.width + 1) / 2, ch = (host.height + 1) / 2;
         for (int k = 0; k < 2; ++k) m_cloud[k] = m_dev->createTexture({cw, ch, TextureFormat::RGBA16Float, RT, "clouds"}, m_err);
         m_lin = m_dev->createSampler({Filter::Linear, AddressMode::ClampToEdge, "clouds linear"}, m_err);
         if (!m_cloud[0].valid() || !m_cloud[1].valid() || !m_lin.valid()) return Fail("cloud textures");
@@ -267,7 +267,8 @@ private:
         if (t.envMap) f |= kEnvMap;   // both modes: the game's own environment-map term
         if (t.charLight) f |= kCharLight;   // both modes: the game's own character light
         u.flags[0] = f;
-        u.clouds[0] = std::fmin(1.0f, std::fmax(t.cloudCover, t.cloudCover + (0.92f - t.cloudCover) * t.weatherCloud));
+        const float baseCover = std::fmax(t.cloudCover, 0.30f);
+        u.clouds[0] = std::fmin(1.0f, std::fmax(baseCover, baseCover + (0.92f - baseCover) * t.weatherCloud));
         u.clouds[1] = t.cloudBase; u.clouds[2] = t.cloudThickness;
         // An overcast weather's sun is already the light that came through its clouds (the game dims it): the
         // clouds' shadow fades as the weather's cloud cover rises, or rain darkened the frame twice (2026-11-19).

@@ -22,7 +22,7 @@ float rand(float2 p, float s) { return frac(52.9829189f * frac(dot(p, float2(0.0
 
 float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float2 lo = floor(at.xy);
-    const float2 full = (lo + 0.5f) * 4.0f;   // the full-resolution pixel this one stands for
+    const float2 full = (lo + 0.5f) * 2.0f;   // 1/2-res volumetric clouds (4x sharper than 1/4-res)
     const float3 far = worldAt(full - 0.5f, 0.995f) - eyeAt();
     const float3 dir = normalize(far);
     float4 res = float4(0.0f, 0.0f, 0.0f, 1.0f);

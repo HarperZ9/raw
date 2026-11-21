@@ -109,36 +109,48 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float d = Depth.Load(ip);
     if ((flags.x & FLAG_SURFACE) == 0u) { return game; }
     if (d >= 1.0f) {
-        // The sky: physically-based spectral Rayleigh + Ozone + Cornette-Shanks Mie atmosphere (daytime only,
-        // preserving crisp night skies, stars, auroras, and moons) + 3D Worley-Perlin volumetric clouds.
+        // The sky: Elder Weathers physical color alignment (Kasten-Young air mass + 1/lambda^4 Rayleigh + Mie + cloud collapse)
+        // harmonizing sky zenith, horizon, sun/moon direct, ambient, and 3D Worley-Perlin clouds into one coherent palette.
         if (flags.w == 10u) { return float4(1.0f, 0.0f, 1.0f, game.a); }
         float3 baseSky = game.rgb;
         const float3 sDir = normalize(worldAt(floor(at.xy), 0.995f) - eyeAt());
         if ((flags.x & FLAG_MATCH) == 0u) {
             baseSky = baseSky / (1.0f + max(max(baseSky.r, max(baseSky.g, baseSky.b)) - 0.65f, 0.0f) * 0.65f);
             const float sunLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-            const float dayW = saturate((sunDir.z - 0.02f) * 4.5f) * saturate((sunLum - 0.22f) * 2.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+            const float dayW = saturate((sunDir.z - 0.01f) * 4.0f) * saturate((sunLum - 0.20f) * 2.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
             if (dayW > 0.02f && sDir.z > -0.04f) {
-                // Physical Rayleigh + Ozone + Mie spectral transmittance (Earth/Nirn optical airmass).
-                const float muV = max(sDir.z, 0.025f);
-                const float muS = max(sunDir.z, 0.025f);
-                const float airV = 1.0f / (muV + 0.15f * pow(max(muV * 90.0f + 3.885f, 0.1f), -1.253f));
-                const float airS = 1.0f / (muS + 0.15f * pow(max(muS * 90.0f + 3.885f, 0.1f), -1.253f));
-                const float3 betaR = float3(0.058f, 0.135f, 0.331f);
-                const float3 betaO = float3(0.012f, 0.036f, 0.002f);   // Chappuis ozone band -> crisp cobalt-violet twilight
-                const float betaM = lerp(0.022f, 0.055f, saturate(clouds.x));
-                const float3 extS = exp(-(betaR + betaO + betaM) * airS * 0.72f);
-                const float3 extV = exp(-(betaR + betaO + betaM) * airV * 0.45f);
-                const float cosTheta = dot(sDir, sunDir.xyz);
-                const float phR = 0.059683f * (1.0f + cosTheta * cosTheta);
-                const float gM = 0.76f;
-                const float phM = (3.0f / (8.0f * PI)) * ((1.0f - gM * gM) * (1.0f + cosTheta * cosTheta)) /
-                                  ((2.0f + gM * gM) * pow(max(1.0f + gM * gM - 2.0f * gM * cosTheta, 1.0e-3f), 1.5f));
-                const float3 specSky = (betaR * phR * 4.2f + betaM * min(phM, 3.2f) * 0.25f) * (1.0f - extV) * (0.35f + 0.65f * extS) * 1.45f;
-                const float skyLum = max(dot(baseSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.06f);
-                const float pLum = max(dot(specSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
-                const float specBlend = dayW * (1.0f - saturate(clouds.x * 0.70f)) * 0.44f;
-                baseSky = lerp(baseSky, specSky * (skyLum / pLum), specBlend);
+                // Elder Weathers _SlotModel: exact Kasten-Young air mass & Rayleigh (0.175, 0.410, 1.0) coupled to live weather.
+                const float cover = saturate(clouds.x);
+                const float turb = lerp(2.0f, 5.5f, cover) + weather.w * 1.5f;
+                const float elevDeg = max(degrees(asin(saturate(sunDir.z))), 0.8f);
+                const float mSun = 1.0f / (sin(radians(elevDeg)) + 0.50572f * pow(elevDeg + 6.07995f, -1.6364f));
+                const float m45 = 1.412f;
+                const float mie = 0.025f * (turb - 1.0f);
+                const float3 rayW = float3(0.175f, 0.410f, 1.0f);
+                const float3 transSun = exp(-(0.20f * rayW + mie) * mSun);
+                const float3 trans45  = exp(-(0.20f * rayW + mie) * m45);
+                const float3 skyBeam = lerp(trans45, transSun, 0.35f);
+                const float skyGain = 0.35f + 0.65f * saturate(sunDir.z);
+                float3 ewZenith = rayW * skyBeam * skyGain;
+                const float3 ewHorizRaw = lerp(ewZenith, transSun, 0.55f);
+                const float hGray = dot(ewHorizRaw, float3(0.2126f, 0.7152f, 0.0722f));
+                float3 ewHoriz = lerp(ewHorizRaw, hGray.xxx, 0.25f);
+                const float desat = saturate(cover * 0.65f + weather.w * 0.25f + weather.z * 0.35f);
+                ewZenith = lerp(ewZenith, ewHoriz * 0.90f, 0.70f * cover);
+                ewZenith = lerp(ewZenith, dot(ewZenith, float3(0.2126f, 0.7152f, 0.0722f)).xxx, desat);
+                ewHoriz  = lerp(ewHoriz,  dot(ewHoriz,  float3(0.2126f, 0.7152f, 0.0722f)).xxx, desat);
+                // Smooth horizon-to-zenith gradient + subtle Chappuis ozone twilight belt + Mie forward glow.
+                const float hT = pow(saturate(sDir.z), 0.58f);
+                float3 alignedSky = lerp(ewHoriz, ewZenith, hT);
+                const float cosTheta = saturate(dot(sDir, sunDir.xyz));
+                alignedSky += transSun * pow(cosTheta, 12.0f) * (0.14f * (1.0f - cover * 0.75f));
+                // Replace vanilla Skyrim's blotchy 2011 DXT1 sky/cloud-card dome cleanly by day with our
+                // infinite-resolution analytic Elder Weathers sky (4K/8K/16K crisp), keeping only the bright solar disk.
+                const float pLum = max(dot(alignedSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
+                const float targetSkyLum = lerp(0.30f, 0.56f, saturate(sunDir.z * 1.4f)) * lerp(1.0f, 0.72f, cover);
+                const float3 pureSky = alignedSky * (targetSkyLum / pLum);
+                const float3 sunDiscKeep = max(baseSky - 0.68f.xxx, 0.0f.xxx);
+                baseSky = lerp(baseSky, pureSky + sunDiscKeep, dayW * 0.96f);
             }
         }
         const float4 c = (flags.x & FLAG_CLOUDS) != 0u ? Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f) : float4(0.0f, 0.0f, 0.0f, 1.0f);
@@ -356,8 +368,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 sunSh = skin && !match ? pow(saturate(sunShadow).xxx, float3(0.72f, 0.92f, 1.04f)) : sunShadow.xxx;
         const float dirLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
         const float nightDir = (!match && sunColour.w > 0.5f) ? saturate((0.26f - dirLum) * 4.5f) : 0.0f;
-        // Crisp silver-blue lunar directional bounce & specular on moonlit surfaces at night.
-        const float3 dirCol = lerp(sunColour.rgb, max(sunColour.rgb, float3(0.14f, 0.20f, 0.34f)) * float3(0.84f, 0.95f, 1.22f), nightDir * 0.65f);
+        // Elder Weathers physical sun-color alignment by day (eliminates vanilla's muddy green/orange mismatches) + silver-blue moonlight by night.
+        float3 alignedDayCol = sunColour.rgb;
+        if (!match && sunColour.w > 0.5f && nightDir < 0.95f) {
+            const float elevDegD = max(degrees(asin(saturate(sunDir.z))), 1.2f);
+            const float mD = 1.0f / (sin(radians(elevDegD)) + 0.50572f * pow(elevDegD + 6.07995f, -1.6364f));
+            const float3 ewTrans = exp(-(0.20f * float3(0.175f, 0.410f, 1.0f) + 0.025f * lerp(1.0f, 4.5f, saturate(clouds.x))) * mD);
+            const float ewLum = max(dot(ewTrans, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
+            alignedDayCol = lerp(sunColour.rgb, ewTrans * (max(dirLum, 0.05f) / ewLum), 0.48f * (1.0f - nightDir));
+        }
+        const float3 dirCol = lerp(alignedDayCol, max(sunColour.rgb, float3(0.14f, 0.20f, 0.34f)) * float3(0.84f, 0.95f, 1.22f), nightDir * 0.65f);
         addLight(s, sunDir.xyz, dirCol * sunSh, dirCol, diff, spec);
         if (skin && !match) {
             const float wrapSun = saturate((dot(s.n, sunDir.xyz) + 0.32f) / 1.32f);

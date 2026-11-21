@@ -218,9 +218,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             wet.wet *= 1.0f - wet.snow;
         }
     }
-    // Zero-mod procedural PBR micro-normal & roughness synthesis on vanilla stone/wood/metal (discontinuity-aware).
+    const float3 nSmooth = s.n;
+    // Zero-mod procedural PBR micro-normal & roughness synthesis on vanilla stone/wood (attenuated on class-2 armor so reflections stay clean).
     if (!match && !skin && base != 5u && z < 2800.0f) {
-        const float distFade = saturate(1.0f - z / 2800.0f);
+        const float distFade = saturate(1.0f - z / 2800.0f) * (base == 2u ? 0.22f : 1.0f);
         const int2 dimMax = max(int2(dims.xy) - int2(1, 1), int2(0, 0));
         const int3 ipL = int3(clamp(int2(px) + int2(-1, 0), int2(0, 0), dimMax), 0);
         const int3 ipR = int3(clamp(int2(px) + int2( 1, 0), int2(0, 0), dimMax), 0);
@@ -344,7 +345,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float ea = base != 2u && base != 5u ? SoftMap.Load(ip).r : 0.0f;
     const float charLight = (flags.x & FLAG_CHAR) != 0u && ea < 0.0f ? max(-ea - 1.0f / 1024.0f, 0.0f) : 0.0f;
     if (flags.w == 19u) { return float4(charLight.xxx, game.a); }   // view 19: the character light
-    float3 lit = knee3((albedo + envRefl) * (diff + amb + charLight));
+    float3 lit = knee3((albedo + envRefl * (match ? 1.0f : 0.45f)) * (diff + amb + charLight));
     if (flags.w == 16u) { return float4(albedo, game.a); }   // view 16: the G-buffer base colour the pass lights
     if (flags.w == 17u) { return float4(saturate(game.rgb / max(knee3(lit), 1.0e-3f) * 0.25f), game.a); }   // view 17: the game's frame over RAW's diffuse (0.25 = equal)
     // The game's lobe exists only in shaders with a shininess exponent (gloss > 0).
@@ -358,10 +359,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Ray-traced reflection on glossy surfaces with live dynamic-cubemap IBL fallback on RT misses,
     // plus dynamic cubemap enhancement for class-2 metal/armor and clearcoat GGX on wet surfaces.
     if (!match) {
-        const float nv = saturate(dot(s.n, s.v));
+        const float nv = saturate(dot(nSmooth, s.v));
         const float fr = s.f0 + (1.0f - s.f0) * pow(1.0f - nv, 5.0f);
-        const float3 rDir = reflect(-s.v, s.n);
-        const float3 dynEnv = evalDynamicEnvCube(rDir, s.alpha);
+        const float3 rDir = reflect(-s.v, nSmooth);
+        const float3 dynEnv = evalDynamicEnvCube(rDir, max(s.alpha, base == 2u ? 0.28f : 0.0f));
         const float reflMask = max(saturate(s.mask * resScale.w), max(wet.puddle, 0.5f * wet.wet));
         if (rt && (flags.x & FLAG_REFLECT) != 0u && lobe) {
             const float4 rf = RtRefl.Load(int3(clamp(int2(px + rings * 40.0f), int2(0, 0), int2(dims.xy) - 1), 0));

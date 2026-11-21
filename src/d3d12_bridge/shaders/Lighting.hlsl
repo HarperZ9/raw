@@ -96,8 +96,12 @@ void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, in
     const float dd = nh * nh * (a2 - 1.0f) + 1.0f;
     const float D = a2 / (PI * dd * dd);
     const float V = 0.5f / (nl * sqrt(nv * nv * (1.0f - a2) + a2) + nv * sqrt(nl * nl * (1.0f - a2) + a2) + 1.0e-6f);
-    const float F = s.f0 + (1.0f - s.f0) * pow(1.0f - saturate(dot(s.v, h)), 5.0f);
-    diff += nlD * c * (1.0f - F);
+    const float lh = saturate(dot(l, h));
+    const float F = s.f0 + (1.0f - s.f0) * pow(1.0f - lh, 5.0f);
+    // Disney/Frostbite Burley retro-reflective rough diffuse (Lagarde 2014): replaces flat Lambert on rough stone, bark, dirt & wool.
+    const float fd90 = 0.5f + 2.0f * s.alpha * lh * lh;
+    const float burley = any(s.wrap > 0.0f) ? 1.0f : clamp((1.0f + (fd90 - 1.0f) * pow(1.0f - nl, 5.0f)) * (1.0f + (fd90 - 1.0f) * pow(1.0f - nv, 5.0f)), 0.72f, 1.28f);
+    diff += nlD * c * (1.0f - F) * burley;
     spec += PI * D * V * F * nl * c;   // the game's light colour is irradiance over pi
 }
 
@@ -504,6 +508,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (!match && base == 5u && sunColour.w > 0.5f) {
             const float backF = pow(saturate(dot(-s.v, sunDir.xyz)), 3.0f);
             diff += dirCol * float3(0.95f, 1.12f, 0.55f) * (backF * sunShadow * 0.42f);
+        }
+        // Marschner dual-lobe shifted hair specular (base == 11: primary colorless cuticle band + warm tinted secondary band).
+        if (!match && base == 11u && sunShadow > 0.05f) {
+            const float3 hHair = normalize(s.v + sunDir.xyz);
+            const float3 tHair = normalize(cross(s.n, float3(0.0f, 0.0f, 1.0f) + 1.0e-4f));
+            const float3 t1 = normalize(tHair + s.n * 0.10f);
+            const float3 t2 = normalize(tHair - s.n * 0.14f);
+            const float s1 = pow(sqrt(max(1.0f - pow(dot(t1, hHair), 2.0f), 0.0f)), 48.0f);
+            const float s2 = pow(sqrt(max(1.0f - pow(dot(t2, hHair), 2.0f), 0.0f)), 18.0f);
+            spec += dirCol * (s1 * 0.22f + albedo * s2 * 0.34f) * sunShadow;
         }
         if (skin && !match) {
             const float wrapSun = saturate((dot(s.n, sunDir.xyz) + 0.32f) / 1.32f);

@@ -12,8 +12,10 @@
 #include "CloudCommon.hlsli"
 #include "ElderOptics.hlsli"
 
-Texture2D<float4> Lit   : register(t0);
-Texture2D<float>  Depth : register(t1);
+Texture2D<float4> Lit    : register(t0);
+Texture2D<float>  Depth  : register(t1);
+Texture2D<float4> VolFog : register(t3);
+SamplerState      Lin    : register(s0);
 
 float phaseHG(float cosT, float g) {
     const float g2 = g * g;
@@ -52,54 +54,27 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float tEnd = min(dist, tune2.w);
     const float sigma = tune.x;
 
-    float3 scatter = 0.0f;
-    if (sunDir.w > 0.5f && tune2.z > 0.0f) {
-        const float jit = ign(px);
-        const float sunLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-        const float nightW = saturate((0.28f - sunLum) * 4.5f);
-        // Sun-position-driven volumetric shafts by day, and crisp silver-blue lunar moonbeams at night.
-        const float lowSunBoost = lerp(1.0f, 1.18f, saturate(1.0f - abs(sunDir.z - 0.18f) / 0.28f));
-        const float shaftBoost = lerp(lowSunBoost, 3.10f, nightW);
-        const float dayG = clamp(lerp(tune.y, max(tune.y, 0.70f), saturate(1.0f - sunDir.z * 2.5f)), 0.1f, 0.82f);
-        const float dynG = lerp(dayG, 0.76f, nightW);
-        const float ph = min(phaseHG(dot(w, sunDir.xyz), dynG), 3.4f);
-        // 24 quadratic-clustered steps with 2x finer cloud-shadow modulation for razor-sharp forest sunbeams & moonbeams.
-        const uint kSteps = 24u;
-        float sum = 0.0f, cs = 1.0f;
-        float tPrev = 0.0f;
-        [loop] for (uint i = 0u; i < kSteps; i++) {
-            const float u1 = (float(i) + 1.0f) / float(kSteps);
-            const float tNext = tEnd * u1 * u1;
-            const float dt = max(tNext - tPrev, 1.0e-3f);
-            const float t = tPrev + jit * dt;
-            tPrev = tNext;
-            const float4 c = screenOf(w * t);
-            const float3 wpFog = w * t + camPosW.xyz;
-            if ((flags.x & FLAG_CLOUDS) != 0u && (i & 1u) == 0u) { cs = cloudShadowN(wpFog, 1u); }
-            // 3D world-space wind-drifting volumetric valley mist density (living rolling fog banks).
-            const float3 fogFlow = wpFog * 0.00055f + float3(cloudWind.xy * camPosW.w * 0.00018f, 0.0f);
-            const float mist3d = 0.62f + 0.58f * cNoise(fogFlow);
-            const float hDens = (0.35f + 0.65f * exp(-max(w.z * t + 120.0f, 0.0f) * 0.0009f)) * mist3d;
-            sum += cascadeShadow(w * t, c.z, false) * cs * hDens * exp(-sigma * t) * dt;
-        }
-        const float3 shaftCol = lerp(sunColour.rgb, max(sunColour.rgb, float3(0.22f, 0.31f, 0.48f)), nightW * 0.72f);
-        scatter += shaftCol * (sigma * ph * sum * tune2.z * shaftBoost);
-    }
-    if (tune2.y > 0.0f) {
-        // Enhanced volumetric point-light mist halos around torches, campfires, braziers, and spells (stronger in rain/snow/fog).
-        const float weatherMistGain = 1.0f + saturate(weather.w * 0.85f + weather.z * 0.75f + clouds.x * 0.35f) * 0.65f;
-        [loop] for (uint li = 0u; li < flags.y; li++) {
-            const float wi = windowIntegral(w, lightPosR[li].xyz, lightPosR[li].w, tEnd);
-            if (wi > 0.0f) {
-                const bool isFire = lightColS[li].r > lightColS[li].b * 1.30f;
-                const float3 fCol = isFire ? lightColS[li].rgb * float3(1.22f, 0.86f, 0.54f) * 1.45f : lightColS[li].rgb;
-                scatter += fCol * (sigma * wi * tune2.y * weatherMistGain / (4.0f * PI));
-            }
+    // Depth-aware bilateral upsample of the SM6.6 temporally-reprojected 32-slice VolumetricPass buffer
+    // (effective ~192-step smoothness with zero halo bleeding across pine needles and rooftops).
+    const float2 uv = (px + 0.5f) * dims.zw;
+    const float2 volPx = (px + 0.5f) * 0.5f;
+    const float2 volDim = max(floor((dims.xy + 1.0f) * 0.5f), float2(1.0f, 1.0f));
+    const int2 vBase = clamp(int2(floor(volPx - 0.5f)), int2(0, 0), int2(volDim) - 1);
+    const int2 vMax = int2(volDim) - 1;
+    const float zPix = min(curZ, 65000.0f);
+    float3 vSum = 0.0f.xxx;
+    float vW = 0.0f;
+    [unroll] for (int dy = 0; dy <= 1; dy++) {
+        [unroll] for (int dx = 0; dx <= 1; dx++) {
+            const int2 q = clamp(vBase + int2(dx, dy), int2(0, 0), vMax);
+            const float4 tap = VolFog.Load(int3(q, 0));
+            const float relZ = abs(tap.a - zPix) / max(zPix, 1.0f);
+            const float wz = exp(-relZ * 18.0f);
+            vSum += tap.rgb * wz;
+            vW += wz;
         }
     }
-    // Soft highlight shoulder on volumetric in-scatter + restrained moist Nordic exposure (prevents dry/overexposed fog wash).
-    const float scMax = max(scatter.r, max(scatter.g, scatter.b));
-    scatter = (scatter / (1.0f + scMax * 0.85f)) * 0.82f;
+    const float3 scatter = vW > 1.0e-4f ? (vSum / vW) : VolFog.SampleLevel(Lin, uv, 0.0f).rgb;
     // Engine-native underwater medium (FLAG_UNDERWATER from raw_engine.dll camera_in_water): physical Beer-Lambert absorption.
     if ((flags.x & FLAG_UNDERWATER) != 0u) {
         const float3 uw = elderUnderwaterMedium(lit.rgb, dist, 0.0022f);

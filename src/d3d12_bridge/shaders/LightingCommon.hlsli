@@ -38,7 +38,7 @@ cbuffer P : register(b0) {
 
 static const uint FLAG_MATCH = 1u, FLAG_SOFT = 2u, FLAG_GGX = 4u, FLAG_FOG = 8u, FLAG_CONTACT = 16u, FLAG_AO = 32u,
                   FLAG_CASCADES = 64u, FLAG_SURFACE = 128u, FLAG_SHADOWS = 256u,
-                  FLAG_FOG_REPLACES = 512u, FLAG_RT = 1024u, FLAG_SKY = 2048u, FLAG_BOUNCE = 4096u, FLAG_REFLECT = 8192u, FLAG_BOUNCE_IN = 16384u, FLAG_CLOUDS = 32768u, FLAG_REST = 65536u, FLAG_LOD = 131072u;   // our fog takes the game's distance fog's place (off: the game's runs after ours)
+                  FLAG_FOG_REPLACES = 512u, FLAG_RT = 1024u, FLAG_SKY = 2048u, FLAG_BOUNCE = 4096u, FLAG_REFLECT = 8192u, FLAG_BOUNCE_IN = 16384u, FLAG_CLOUDS = 32768u, FLAG_REST = 65536u, FLAG_LOD = 131072u, FLAG_ENV = 262144u, FLAG_CHAR = 524288u;   // our fog takes the game's distance fog's place (off: the game's runs after ours)
 static const float PI = 3.14159265358979f;
 
 float4 vs(uint i : SV_VertexID) : SV_Position {
@@ -95,11 +95,7 @@ float ign(float2 px) {
 #endif
 Texture2D<float> Atlas : register(ATLAS_SLOT);
 
-// Sun visibility from the game's cascades: the cascade by the game's split depth, a 3 x 3 tap
-// percentage-closer filter (taps a texel apart) on the R32F atlas. 1 outside the maps.
-float cascadeShadow(float3 p, float d, bool filtered) {
-    if ((flags.x & FLAG_SHADOWS) == 0u || sunColour.w < 0.5f) { return 1.0f; }
-    const uint k = (flags.z > 1u && d > cascadeInfo.z) ? 1u : 0u;
+float cascadeSample(float3 p, uint k, bool filtered) {
     const float4 q = float4(p, 1.0f);
     const float3 sc = float3(dot(cascade[3 * k], q), dot(cascade[3 * k + 1], q), dot(cascade[3 * k + 2], q));
     if (any(sc.xy <= 0.0f) || any(sc.xy >= 1.0f)) { return 1.0f; }
@@ -115,4 +111,16 @@ float cascadeShadow(float3 p, float d, bool filtered) {
         }
     }
     return lit / 9.0f;
+}
+
+// Sun visibility from the game's cascades with smooth cascade-transition blending (eliminates hard split seams).
+float cascadeShadow(float3 p, float d, bool filtered) {
+    if ((flags.x & FLAG_SHADOWS) == 0u || sunColour.w < 0.5f) { return 1.0f; }
+    if (flags.z <= 1u) { return cascadeSample(p, 0u, filtered); }
+    const float split = cascadeInfo.z;
+    const float band = split * 0.90f;
+    if (d <= band) { return cascadeSample(p, 0u, filtered); }
+    if (d >= split) { return cascadeSample(p, 1u, filtered); }
+    const float w = smoothstep(band, split, d);
+    return lerp(cascadeSample(p, 0u, filtered), cascadeSample(p, 1u, filtered), w);
 }

@@ -37,14 +37,14 @@ struct LightingTuning
     float fogMaxDistance = 6000.0f; // game units
     float softRange = 400.0f;       // soft-shadow march length cap, game units
     float contactLength = 40.0f;    // game units
-    float aoStrength = 0.7f;        // the game's own AO still multiplies the frame after this pass
+    float aoStrength = 0.35f;       // AoStrength; 0.35 since rt9: with the ray-traced sky as well, 0.7 crushed creases at dawn and night
     float clusterFar = 40000.0f;    // the last depth slice ends here
     bool  rtShadows = true;         // improved: ray-traced sun and point-light shadows on the game's geometry (attached to raw::tx)
     bool  rtAlpha = true;           // alpha-tested draws join the ray-tracing scene, their alpha tested by the rays
     float rtAlphaRef = 0.5f;        // the alpha cut the rays apply
     float rtTermDist = 48.0f;       // game units: near hits ignored where the surface turns from the sun (facets)
     bool  rtSky = true;             // exteriors: the ambient scaled by the ray-traced sky visibility
-    float rtSkyStrength = 1.0f;     // 0 none, 1 the full visibility
+    float rtSkyStrength = 0.5f;     // RtSkyStrength: 0 none, 1 the full visibility; 0.5 since rt9 (the game's own AO still darkens after this pass)
     float rtSkyLength = 6000.0f;    // game units
     float rtBounce = 1.0f;          // exteriors: one bounce of indirect light from the sky rays (0 off)
     float rtBounceInterior = 0.5f;  // interiors: the same bounce on top of the cell's ambient (0 off; the game's fill already holds some)
@@ -60,6 +60,8 @@ struct LightingTuning
     float rain = 0.0f;              // rain falling now, 0 to 1: drops ring the puddles (Weather.hlsli)
     // Clouds (Clouds.hlsl, CloudCommon.hlsli): the sky's volumetric layer, its shadow on the ground, shafts in the fog.
     bool  distantLod = true;        // DistantLod: improved mode lights distant LOD (trees, terrain) itself (FOL-04)
+    bool  charLight = true;         // CharLight: the game's character fill light (actors), added to RAW's light
+    bool  envMap = true;            // EnvMap: environment-mapped surfaces add the game's cube-map term, lit by RAW's light
     bool  clouds = true;            // Clouds
     float cloudCover = 0.35f;       // CloudCover: the cover under a clear sky; the weather's cloud report raises it
     float weatherCloud = 0.0f;      // the game's cloud cover now (WeatherDrive), 0 to 1

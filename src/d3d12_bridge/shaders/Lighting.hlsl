@@ -101,11 +101,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float d = Depth.Load(ip);
     if ((flags.x & FLAG_SURFACE) == 0u) { return game; }
     if (d >= 1.0f) {
-        // The sky: the clouds over the game's own sky. View 10 marks the sky pixels this pass owns.
+        // The sky: physically grounded zenith-to-horizon Rayleigh depth + soft roll-off before compositing curved volumetric clouds.
         if (flags.w == 10u) { return float4(1.0f, 0.0f, 1.0f, game.a); }
-        if ((flags.x & FLAG_CLOUDS) == 0u) { return game; }
+        float3 baseSky = game.rgb;
+        if ((flags.x & FLAG_MATCH) == 0u) {
+            baseSky = baseSky / (1.0f + max(max(baseSky.r, max(baseSky.g, baseSky.b)) - 0.72f, 0.0f) * 0.55f);
+            const float3 sDir = normalize(worldAt(floor(at.xy), 1.0f));
+            const float elev = saturate(sDir.z);
+            const float dayW = saturate(sunDir.z * 3.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+            // Deepen zenith slightly toward physical Rayleigh blue on clear days while preserving sunset/night mood.
+            const float3 zenithTint = lerp(float3(0.88f, 0.93f, 1.08f), float3(0.76f, 0.88f, 1.16f), dayW);
+            baseSky *= lerp(float3(1.0f, 1.0f, 1.0f), zenithTint, pow(elev, 0.75f) * 0.55f);
+        }
+        if ((flags.x & FLAG_CLOUDS) == 0u) { return float4(baseSky, game.a); }
         const float4 c = Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f);
-        return float4(game.rgb * c.a + c.rgb, game.a);
+        return float4(baseSky * c.a + c.rgb, game.a);
     }
     // View 9, a test control: the pass reaches only the top-left quarter, as a half-size viewport
     // would. The coverage check in the capture must fail on it.
@@ -153,7 +163,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // fitted on one frame (0.15, tools/lighting/fitsoft.py) stood in; it lost the warm back light.
     // Skin too: the body and hands shaders read the same soft-lighting map at t12 (the patch writes it to the emissive
     // target), and without it the arms read darker than the game's (rt6-tm-1).
-    s.soft = base == 5u || skin ? SoftMap.Load(ip).rgb : 0.0f.xxx;
+    s.soft = base == 5u || skin ? max(SoftMap.Load(ip).rgb, 0.0f.xxx) : 0.0f.xxx;   // negative: the character light (below)
     // Softer since the hands and bodies joined the class (rt6-wat-3): at 0.55 / 0.22 / 0.12 the arms read orange
     // against the game's brown.
     s.wrap = skin && !match ? float3(0.30f, 0.12f, 0.06f) : 0.0f.xxx;
@@ -203,6 +213,29 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             wet.puddle *= 1.0f - wet.snow;
             wet.wet *= 1.0f - wet.snow;
         }
+    }
+    // Zero-mod procedural PBR micro-normal & roughness synthesis on vanilla stone/wood/metal (discontinuity-aware).
+    if (!match && !skin && base != 5u && z < 2800.0f) {
+        const float distFade = saturate(1.0f - z / 2800.0f);
+        const int2 dimMax = max(int2(dims.xy) - int2(1, 1), int2(0, 0));
+        const int3 ipL = int3(clamp(int2(px) + int2(-1, 0), int2(0, 0), dimMax), 0);
+        const int3 ipR = int3(clamp(int2(px) + int2( 1, 0), int2(0, 0), dimMax), 0);
+        const int3 ipU = int3(clamp(int2(px) + int2( 0,-1), int2(0, 0), dimMax), 0);
+        const int3 ipD = int3(clamp(int2(px) + int2( 0, 1), int2(0, 0), dimMax), 0);
+        const float3 lw = float3(0.2126f, 0.7152f, 0.0722f);
+        const float hc = dot(albedo, lw);
+        const float hL = abs(Depth.Load(ipL) - d) < 0.0008f ? dot(Albedo.Load(ipL).rgb, lw) : hc;
+        const float hR = abs(Depth.Load(ipR) - d) < 0.0008f ? dot(Albedo.Load(ipR).rgb, lw) : hc;
+        const float hU = abs(Depth.Load(ipU) - d) < 0.0008f ? dot(Albedo.Load(ipU).rgb, lw) : hc;
+        const float hD = abs(Depth.Load(ipD) - d) < 0.0008f ? dot(Albedo.Load(ipD).rgb, lw) : hc;
+        const float gx = clamp((hR - hL) * 2.2f, -0.45f, 0.45f) * distFade;
+        const float gy = clamp((hD - hU) * 2.2f, -0.45f, 0.45f) * distFade;
+        const float3 upRef = abs(s.n.z) < 0.92f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
+        const float3 tVec = normalize(cross(upRef, s.n));
+        const float3 bVec = cross(s.n, tVec);
+        s.n = normalize(s.n + (-gx * tVec - gy * bVec) * 0.42f);
+        const float microSlope = saturate(length(float2(gx, gy)) * 1.4f);
+        s.alpha = clamp(s.alpha + (microSlope - 0.15f) * 0.12f * distFade, 0.05f, 0.95f);
     }
     const float3 lift = s.n * (0.3f + 0.002f * z);                 // ray origins off the surface
     const float4 m4 = Mask.Load(ip);
@@ -267,15 +300,22 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     float3 amb = float3(dot(ambient[0].xyz, s.n) + ambient[0].w, dot(ambient[1].xyz, s.n) + ambient[1].w,
                         dot(ambient[2].xyz, s.n) + ambient[2].w);
     // Foliage gets a third of the AO: screen-space AO over-occludes thin geometry.
-    if ((flags.x & FLAG_AO) != 0u) { amb *= lerp(1.0f, AoHist.Load(ip).x, tune2.x * (base == 5u ? 0.35f : 1.0f)); }
-    // Exteriors: the sky the pixel sees (RtSky.cpp), in the light-index output's alpha. Interiors keep
-    // the game's ambient: their cell ambient is set for an enclosed room.
-    const float skyVis = rt && (flags.x & FLAG_SKY) != 0u && sunColour.w > 0.5f ? RtIdx.Load(ip).w : 1.0f;
-    amb *= lerp(1.0f, skyVis, cluster.w);
+    const float aoTerm = (flags.x & FLAG_AO) != 0u ? lerp(1.0f, AoHist.Load(ip).x, tune2.x * (base == 5u ? 0.35f : 1.0f)) : 1.0f;
+    // Exteriors: ray-traced sky visibility (RtSky.cpp). Interiors (!match): local SM6.5 RayQuery RTAO from RtShadow.hlsl.
+    const bool isExterior = sunColour.w > 0.5f;
+    const float skyVis = rt && (flags.x & FLAG_SKY) != 0u && (isExterior || !match) ? RtIdx.Load(ip).w : 1.0f;
+    // One occlusion, not two: the ray-traced sky/RTAO visibility already holds near occluders.
+    const float rtOcc = isExterior ? lerp(1.0f, skyVis, cluster.w) : lerp(0.42f, 1.0f, skyVis);
+    amb *= min(aoTerm, rtOcc);
     // Where the sky is blocked, the blocking surfaces send their own light: the bounce the sky rays found.
     // Interiors too (FLAG_BOUNCE_IN, at RtBounceInterior): lamp-lit walls send their light on.
     const bool bounceHere = sunColour.w > 0.5f || (flags.x & FLAG_BOUNCE_IN) != 0u;
-    const float3 bounce = rt && (flags.x & FLAG_BOUNCE) != 0u && bounceHere ? RtBounce.Load(ip).rgb * proj.w : 0.0f.xxx;
+    const float3 bounce = rt && (flags.x & FLAG_BOUNCE) != 0u && bounceHere ? RtBounce.Load(ip).rgb * proj.w * (match ? 1.0f : 1.45f) : 0.0f.xxx;
+    // Elder-inspired Nordic chromatic separation (!match): cool slate-blue shadow ambient vs warm direct sun & bounce.
+    if (!match && isExterior) {
+        const float inShadow = 1.0f - saturate(sunShadow);
+        amb *= lerp(float3(1.0f, 1.0f, 1.0f), float3(0.84f, 0.94f, 1.10f), inShadow * 0.65f);
+    }
     amb += bounce;
 
     if (flags.w == 1u) { return float4(s.n * 0.5f + 0.5f, game.a); }
@@ -289,7 +329,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (flags.w == 7u) { return float4(RtRefl.Load(ip).rgb, game.a); }   // RtDebug=1: the primary-ray view
     if (flags.w == 8u) { return float4(wet.wet, wet.puddle, wet.snow, game.a); }   // weather: wet red, puddles green, snow blue
 
-    float3 lit = knee3(albedo * (diff + amb));
+    // Environment-mapped (class 2: armour, leather, metal): the game adds its cube map's colour times the env mask
+    // times the light the surface receives, before the knee (ps 955d1a31636cbbe4). The patched shader writes that
+    // colour times mask to RAW's emissive target, and RAW lights it with its own received light, in both modes.
+    const float3 envRefl = base == 2u && (flags.x & FLAG_ENV) != 0u ? max(SoftMap.Load(ip).rgb, 0.0f.xxx) : 0.0f.xxx;
+    if (flags.w == 18u) { return float4(envRefl, game.a); }   // view 18: the environment map's reflection (class 2)
+    // The character light: a white fill the game's actor (and many object) shaders add to the light sum, from two fixed
+    // directions and a scale read from slot 11 (GBufferAnalyse.cpp, FindCharLight). Outside classes 2 and 5 the patch
+    // writes it to the emissive target as -(light) - 1/1024; emitted light is never negative.
+    const float ea = base != 2u && base != 5u ? SoftMap.Load(ip).r : 0.0f;
+    const float charLight = (flags.x & FLAG_CHAR) != 0u && ea < 0.0f ? max(-ea - 1.0f / 1024.0f, 0.0f) : 0.0f;
+    if (flags.w == 19u) { return float4(charLight.xxx, game.a); }   // view 19: the character light
+    float3 lit = knee3((albedo + envRefl) * (diff + amb + charLight));
     if (flags.w == 16u) { return float4(albedo, game.a); }   // view 16: the G-buffer base colour the pass lights
     if (flags.w == 17u) { return float4(saturate(game.rgb / max(knee3(lit), 1.0e-3f) * 0.25f), game.a); }   // view 17: the game's frame over RAW's diffuse (0.25 = equal)
     // The game's lobe exists only in shaders with a shininess exponent (gloss > 0).
@@ -309,5 +360,56 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         lit += rf.rgb * rf.a * fr * max(saturate(s.mask * resScale.w), max(wet.puddle, 0.5f * wet.wet)) * (1.0f - s.alpha);
         if (flags.w == 6u) { return float4(rf.rgb * rf.a, game.a); }
     }
-    return float4(knee3(lit), game.a);
+    if (!match) {
+        // Subsurface scattering: warm dermal wrap on skin (base 10) and backlit translucent transmission on foliage (base 5).
+        if (skin && isExterior) {
+            const float nlRaw = dot(s.n, sunDir.xyz);
+            const float wrap = saturate((nlRaw + 0.45f) / 1.45f) * saturate(1.0f - saturate(nlRaw));
+            lit += albedo * sunColour.rgb * float3(1.0f, 0.42f, 0.25f) * wrap * (0.25f + 0.75f * sunShadow) * 0.38f;
+        } else if (base == 5u && isExterior) {
+            const float back = pow(saturate(dot(-s.v, sunDir.xyz)), 3.0f);
+            lit += albedo * sunColour.rgb * float3(1.05f, 1.15f, 0.72f) * (0.18f + 0.82f * back) * (0.20f + 0.80f * sunShadow) * 0.42f;
+        }
+        // Grazing micro-Fresnel environmental wrap so vanilla surfaces gain physical material separation.
+        const float nvWrap = saturate(dot(s.n, s.v));
+        const float graze = pow(1.0f - nvWrap, 4.5f) * (skin ? 0.14f : base == 5u ? 0.08f : 0.18f);
+        lit += (amb + bounce * 0.5f) * graze * (0.35f + 0.65f * skyVis);
+        // Exteriors: height-stratified valley mist + Henyey-Greenstein sun-aligned Mie forward scattering.
+        if (isExterior && z > 160.0f) {
+            const float3 viewDir = normalize(p);
+            const float cosTheta = dot(viewDir, sunDir.xyz);
+            const float g = 0.72f;
+            const float hg = (1.0f - g * g) / (4.0f * 3.14159f * pow(max(1.0f + g * g - 2.0f * g * cosTheta, 0.04f), 1.5f));
+            const float heightDensity = exp(-max(p.z + 180.0f, 0.0f) * 0.00085f);
+            const float distFog = 1.0f - exp(-max(z - 160.0f, 0.0f) * (0.000030f + 0.000028f * heightDensity));
+            const float3 rayleighCol = float3(0.42f, 0.58f, 0.86f) * max(dot(amb, float3(0.3f, 0.5f, 0.2f)), 0.06f);
+            const float3 mieCol = sunColour.rgb * min(hg, 1.5f) * (0.20f + 0.80f * sunShadow) * (0.45f + 0.55f * skyVis) * 0.045f;
+            lit = lerp(lit, lit + rayleighCol * 0.24f + mieCol, saturate(distFog * 0.55f));
+        }
+    }
+    const float3 finalLitRaw = knee3(lit);
+    // Preserve warm emissive tavern windows, lanterns, and runes where the game's glow exceeds RAW's surface lighting.
+    const float gLuma = dot(game.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+    const float rLuma = dot(finalLitRaw, float3(0.2126f, 0.7152f, 0.0722f));
+    const float emissiveW = (!match && !skin && base != 5u && gLuma > rLuma * 1.65f && gLuma > 0.18f) ? saturate((gLuma - rLuma * 1.65f) * 2.5f) : 0.0f;
+    const float3 finalLit = lerp(finalLitRaw, max(finalLitRaw, game.rgb * 0.92f), emissiveW);
+    if (flags.w == 20u || flags.w == 21u) {
+        const float luma = dot(finalLit, float3(0.2126f, 0.7152f, 0.0722f));
+        // Crushed black (<0.015) -> cyan, blown highlight (>0.95) -> magenta, midtones -> calibrated thermal ramp
+        const float3 heat = luma < 0.015f ? float3(0.0f, 0.85f, 1.0f)
+            : luma > 0.95f ? float3(1.0f, 0.05f, 0.85f)
+            : lerp(float3(0.08f, 0.12f, 0.30f), float3(0.95f, 0.82f, 0.28f), saturate(pow(luma, 0.45f)));
+        if (flags.w == 21u) { return float4(heat, game.a); }
+        // View 20: 4-quadrant live diagnostic (TL final lit | TR normal+env | BL RT shadow/RTAO+bounce | BR luminance/clipping heatmap)
+        const float2 q = float2(px) / max(dims.xy, float2(1.0f, 1.0f));
+        if (abs(q.x - 0.5f) < 0.0012f || abs(q.y - 0.5f) < 0.0018f) { return float4(1.0f, 1.0f, 1.0f, game.a); }
+        if (q.y < 0.5f) {
+            return q.x < 0.5f ? float4(finalLit, game.a)
+                              : float4(saturate((s.n * 0.5f + 0.5f) * 0.75f + envRefl * 0.65f), game.a);
+        }
+        const float bounceL = saturate(dot(bounce, float3(0.33f, 0.33f, 0.34f)) * 4.0f);
+        return q.x < 0.5f ? float4(isExterior ? sunShadow : skyVis, skyVis, bounceL, game.a)
+                          : float4(heat, game.a);
+    }
+    return float4(finalLit, game.a);
 }

@@ -18,9 +18,10 @@ struct Regs
     uint32_t spec;        // the gloss exponent, in the component the shader's own multiply used
     uint32_t water;       // xyz world-space normal
     uint32_t scratch;
+    uint32_t charl;       // x: the character light
     explicit Regs(uint32_t base)
-        : shadow{base, base + 1, base + 2, base + 3}, albedo(base + 4), spec(base + 5), water(base + 6), scratch(base + 7) {}
-    static constexpr uint32_t kCount = 8;
+        : shadow{base, base + 1, base + 2, base + 3}, albedo(base + 4), spec(base + 5), water(base + 6), scratch(base + 7), charl(base + 8) {}
+    static constexpr uint32_t kCount = 9;
 };
 
 T Tmp(uint32_t reg, uint32_t mask) { return Dst(type::Temp, reg, mask); }
@@ -70,8 +71,15 @@ void MaterialOutputs(const Analysis& a, const Regs& r, const PatchOptions& opt, 
     }
     e->push_back(Make(op::Mov, {Out(kSpecularTarget, Z), All(cls)}));
     e->push_back(Make(op::Mov, {Out(kSpecularTarget, W), alpha}));
-    if (a.info.softLight) {
-        e->push_back(Make(op::Mov, {Out(kEmissiveTarget, XYZ), Rd(r.water)}));   // the soft-lighting colour (taps)
+    if (a.info.softLight || a.info.envMap) {
+        // the soft-lighting colour, or the environment map's reflection before the light multiplies it (taps)
+        e->push_back(Make(op::Mov, {Out(kEmissiveTarget, XYZ), Rd(r.water)}));
+    } else if (a.info.charLight) {
+        // The character light, as -(light) - 1/1024 in all three: no emitted light is negative, so the lighting pass
+        // tells it apart (the alpha channels are not written: the game's blend state masks them).
+        e->push_back(Make(op::Mad, {Out(kEmissiveTarget, XYZ), Rd(r.charl, kX), All(-1.0f), All(-1.0f / 1024.0f)}));
+    } else if (a.info.materialClass == material::EnvironmentMapped) {
+        e->push_back(Make(op::Mov, {Out(kEmissiveTarget, XYZ), All(0)}));   // Lighting.hlsl reads class 2's target as the reflection
     } else if (a.info.emissive && a.info.albedo) {
         e->push_back(Make(op::Mul, {Tmp(r.scratch, XYZ), a.emitA, a.emitB}));
         e->push_back(Make(op::Mul, {Tmp(r.scratch, XYZ), Rd(r.scratch), Rd(r.albedo)}));
@@ -141,6 +149,12 @@ std::multimap<size_t, Instruction> Taps(const Analysis& a, const Regs& r)
         t.emplace(a.glossBefore, Make(op::Mov, {Tmp(r.spec, a.glossMask), a.glossOperand}));
     if (a.info.softLight)   // a lit shader has no water normal, so its register holds the soft-lighting colour
         t.emplace(a.softAfter + 1, Make(op::Mov, {Tmp(r.water, XYZ), Rd(a.softReg, a.softSwz)}));
+    if (a.info.envMap)      // nor an environment-mapped one: the register holds the cube's colour times its mask
+        t.emplace(a.envAfter + 1, Make(op::Mov, {Tmp(r.water, XYZ), Rd(a.envReg, a.envSwz)}));
+    if (a.info.charLight) {
+        t.emplace(a.body, Make(op::Mov, {Tmp(r.charl, XYZW), All(0)}));
+        t.emplace(a.charBefore, Make(op::Mul, {Tmp(r.charl, X), a.charA, a.charB}));
+    }
     if (a.waterBefore != kNone)
         t.emplace(a.waterBefore, Make(op::Mov, {Tmp(r.water, XYZ), a.waterOperand}));
     return t;

@@ -80,7 +80,7 @@ bool RtScene::Pipeline(std::string& err)
     p[11].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[11].DescriptorTable = {1, &albedo};
     p[12].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[12].DescriptorTable = {1, &cache};
     p[13].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; p[13].Descriptor = {6, 0};
-    p[14].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; p[14].Constants = {2, 0, 8};
+    p[14].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; p[14].Constants = {2, 0, 12};
     p[15].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[15].DescriptorTable = {2, resv};
     D3D12_ROOT_SIGNATURE_DESC rs{16, p, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ComPtr<ID3DBlob> blob, errs;
@@ -247,6 +247,10 @@ void RtScene::SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resou
     m_cpuReleaseUs += NowUs() - r0;
     m_draws = std::move(draws);
     m_drawMesh.assign(m_draws.size(), ~0u);
+    // The loaded area from this frame's distant land (all its chunks carry the same); none: nothing is skipped.
+    for (float& v : m_lodRect) v = 0.0f;
+    for (const RtDraw& d : m_draws)
+        if (d.lodLand) { std::memcpy(m_lodRect, d.lodRect, sizeof m_lodRect); break; }
     m_stageState.clear();   // staged again below, or nothing placed this frame
     m_build.clear();
     ++m_frame;

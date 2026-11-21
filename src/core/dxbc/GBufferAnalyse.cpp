@@ -193,6 +193,74 @@ void FindSoftLight(const std::vector<Instruction>& code, const std::vector<int>&
     a->info.softLight = true;
 }
 
+// Environment-mapped shaders: the cube map's colour times the environment mask and scale. The game's shader
+// samples the cube along the reflected view and multiplies the colour by the mask (the env mask map or the normal
+// map's alpha, times buffer 1 and buffer 2 scales) in the next write to that register; the product then joins the
+// lit sum times the received light (ps 955d1a31636cbbe4, the player's armour in the Bannered Mare, 2026-11-19).
+// The tap copies that product; RAW multiplies it by its own received light (Lighting.hlsl, class 2).
+void FindEnvMap(const std::vector<Instruction>& code, const std::vector<int>& depth, Analysis* a)
+{
+    uint32_t slot = 32;
+    for (uint32_t s = 0; s < 32; ++s) if (a->texDim[s] == 6) { slot = s; break; }
+    if (slot == 32) return;
+    const size_t n = FirstSample(code, depth, a->body, slot);
+    if (n == kNone) return;
+    const int r = ChannelAt(code[n], 0), g = ChannelAt(code[n], 1), b = ChannelAt(code[n], 2);
+    if (r < 0 || g < 0 || b < 0) return;
+    const uint32_t reg = code[n].ops[0].index[0];
+    for (size_t i = n + 1; i < code.size(); ++i) {
+        const Instruction& in = code[i];
+        if (in.ops.empty() || in.ops[0].type != type::Temp || in.ops[0].index[0] != reg) continue;
+        // Where the multiply puts each channel: the destination component whose source swizzle reads the sample's
+        // component for it (the product may move them: mul r0.xyz, r0.xxxx, r0.yzwy after a sample into r0.yzw).
+        const int from[3] = {r, g, b};
+        int at[3] = {-1, -1, -1};
+        const uint32_t mask = in.ops[0].Mask();
+        for (int ch = 0; ch < 3; ++ch)
+            for (size_t k = 1; k < in.ops.size() && at[ch] < 0; ++k) {
+                const Operand& o = in.ops[k];
+                if (o.type != type::Temp || o.index[0] != reg) continue;
+                for (uint32_t c = 0; c < 4 && at[ch] < 0; ++c)
+                    if ((mask >> c & 1) && o.Swizzle(c) == uint32_t(from[ch])) at[ch] = int(c);
+            }
+        if ((in.opcode == op::Mul || in.opcode == op::Mad) && depth[i] == 0 && at[0] >= 0 && at[1] >= 0 && at[2] >= 0) {
+            a->envAfter = i; a->envReg = reg; a->envSwz = Swz(uint32_t(at[0]), uint32_t(at[1]), uint32_t(at[2]), uint32_t(at[2]));
+            a->info.envMap = true;
+        }
+        return;   // the register's next write: the mask's multiply, or something the tap does not follow
+    }
+}
+
+// The character light: the lit shaders of actors and many objects add a white fill light the frame's own lights do
+// not carry, two fixed directions dotted with the normal (scaled by buffer 1 element 14 x and y) times a factor read
+// from slot 11 (times 14 z, clamped to 14 w), into the light sum before the base colour multiplies it (ps
+// 9a4ea5fb8b14fb98, the player's armour in the Bannered Mare: mad r2.xyz, r2.xxxx, r2.yyyy, r5.xyzx). The tap copies
+// the product; RAW adds it to its own light (Lighting.hlsl).
+void FindCharLight(const std::vector<Instruction>& code, const std::vector<int>& depth, Analysis* a)
+{
+    const size_t n = FirstSample(code, depth, a->body, 11);
+    if (n == kNone) return;
+    const uint32_t m = code[n].ops[0].Mask();
+    if (m == 0 || (m & (m - 1))) return;   // one component
+    const uint32_t reg = code[n].ops[0].index[0], comp = m & 1 ? 0 : m & 2 ? 1 : m & 4 ? 2 : 3;
+    for (size_t i = n + 1; i < code.size() && i < n + 12; ++i) {
+        const Instruction& in = code[i];
+        if (in.opcode != op::Mad || in.ops.size() != 4 || depth[i] != 0 || in.ops[0].Mask() != 7) continue;
+        bool reads = false;
+        for (size_t k = 1; k <= 2; ++k) {
+            const Operand& o = in.ops[k];
+            if (o.type != type::Temp || o.index[0] != reg) continue;
+            bool all = true;
+            for (uint32_t c = 0; c < 4; ++c) all &= o.Swizzle(c) == comp;
+            reads |= all;
+        }
+        if (!reads) continue;
+        a->charBefore = i; a->charA = in.OperandTokens(1); a->charB = in.OperandTokens(2);
+        a->info.charLight = true;
+        return;
+    }
+}
+
 void FindSpecular(const std::vector<Instruction>& code, const std::vector<int>& depth, Analysis* a)
 {
     // The specular mask: alpha of the normal map in slot 1.
@@ -364,6 +432,8 @@ bool Analyse(const Container& c, const Program& p, Analysis* a)
         if (a->info.materialClass != material::Landscape) FindSpecular(code, depth, a);
         else { const size_t keep = a->specAfter; FindSpecular(code, depth, a); a->specAfter = keep; a->info.specularMask = false; }
         if (a->info.materialClass == material::SoftLit) FindSoftLight(code, depth, a);
+        if (a->info.materialClass == material::EnvironmentMapped) FindEnvMap(code, depth, a);
+        if (a->info.materialClass != material::Landscape) FindCharLight(code, depth, a);
         a->info.normal = true;
     } else if (a->waterBefore != kNone && a->anyCbAt != kNone) {
         a->info.kind = ShaderKind::Water;

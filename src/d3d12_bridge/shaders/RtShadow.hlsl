@@ -74,9 +74,12 @@ float lightShare(uint li, float3 p, float3 n) {
     return dot(lightColS[li].rgb, float3(0.2126f, 0.7152f, 0.0722f)) * (1.0f - x * x) * saturate(dot(n, toL / max(dist, 1.0e-4f)));
 }
 
-// The alpha of a candidate hit on an alpha-tested mesh.
+bool lodHidden(uint id, float3 hp);   // RtHit.hlsli: a distant-land hit inside the loaded area
+
+// The alpha of a candidate hit on an alpha-tested mesh (the instance ID's record bits); 1 on a mesh with no mask.
 float hitAlpha(uint id, uint prim, float2 b) {
-    if (id == 0u) { return 1.0f; }
+    id &= 0x7FFFFFu;
+    if (id == 0u || Records[id - 1u].z == 0u) { return 1.0f; }
     const uint4 rec = Records[id - 1u];
     const uint a = (rec.x + prim * 3u) * 8u;
     const float2 uv = asfloat(Coords.Load2(a)) * (1.0f - b.x - b.y) + asfloat(Coords.Load2(a + 8u)) * b.x + asfloat(Coords.Load2(a + 16u)) * b.y;
@@ -111,7 +114,8 @@ float visible(float3 o, float3 d, float tMin, float tMax) {
     r.Origin = o; r.Direction = d; r.TMin = tMin; r.TMax = max(tMax, tMin);
     q.TraceRayInline(Scene, 0, 0xFF, r);
     [loop] while (q.Proceed()) {
-        if (q.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE && candidateAlpha(q) >= alphaRef) { q.CommitNonOpaqueTriangleHit(); }
+        if (q.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE && !lodHidden(q.CandidateInstanceID(), o + d * q.CandidateTriangleRayT()) &&
+            candidateAlpha(q) >= alphaRef) { q.CommitNonOpaqueTriangleHit(); }
     }
     return q.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0.0f : 1.0f;
 }
@@ -212,25 +216,26 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float3 n = worldNormal(Normal.Load(ip));
         const float z = viewZOf(d);
         const float3 ng = geometricNormal(px, p, n);
-        const float3 o = p + ng * (0.5f + 0.003f * z);
+        const float3 o = p + ng * (0.65f + 0.0045f * z);
         const float2 r = float2(hash(px, frameIndex * 0.618f), hash(px.yx, frameIndex * 0.381f + 7.0f));
         if (sunDir.w > 0.5f && sunColour.w > 0.5f && dot(n, sunDir.xyz) > 0.0f) {
             // Near the terminator of the coarse surface: start past its own facets.
             const float turn = saturate(1.0f - dot(ng, sunDir.xyz) / 0.35f);
             vis.x = visible(o, jitterDir(sunDir.xyz, sunCone, r), termDist * turn * turn, sunLength);
         }
-        // Sky rays on a checkerboard that alternates each frame; RtSkyFilter's spatial mean fills the rest.
-        if (skyLength > 0.0f && skyTurn(id.xy)) {
-            // Game space has z up. Below the horizon a ray stands for the ground term: seen.
+        // Sky rays (exteriors) or local SM6.5 RayQuery interior RTAO + bounce (interiors, sunDir.w <= 0.5f)
+        // on an alternating checkerboard; RtSkyFilter's spatial mean fills the rest.
+        const bool isInterior = sunDir.w <= 0.5f;
+        const float aoLen = isInterior ? (skyLength > 0.0f ? min(skyLength, 220.0f) : 180.0f) : skyLength;
+        if (aoLen > 0.0f && skyTurn(id.xy)) {
             const float2 rs = float2(hash(px, frameIndex * 0.754877f + 3.0f), hash(px.yx, frameIndex * 0.569840f + 11.0f));
             const float3 sd = cosineDir(n, rs);
-            if (sd.z > 0.0f) {
+            if (isInterior || sd.z > 0.0f) {
                 Hit h;
-                if (traceHit(o, sd, skyLength, h)) {
-                    // On screen: the game's frame. Off screen: the hit's own material, lit with the cache
-                    // (and the hit's cell takes one more ray of its own).
+                if (traceHit(o, sd, aoLen, h)) {
+                    // On screen: the game's frame. Off screen: the hit's own material, lit with the cache.
                     float3 hn;
-                    sky = 0.0f;
+                    sky = isInterior ? saturate(h.t / aoLen) : 0.0f;
                     bounce = radianceAt(h, o, sd, rs.yx, true, hn);
                     float3 c;
                     if ((giFlags & GI_CACHE) != 0u && !onScreen(o + sd * h.t, c)) { cacheFromHit(o + sd * h.t, hn, frac(rs * 1.618f + 0.31f)); }
@@ -440,6 +445,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         float3 dbg = 0.0f;
         [loop] while (q.Proceed()) {
             if (q.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
+                if (lodHidden(q.CandidateInstanceID(), r.Origin + r.Direction * q.CandidateTriangleRayT())) { continue; }
                 const float a = candidateAlpha(q);
                 if (a >= alphaRef) { q.CommitNonOpaqueTriangleHit(); }
             }
@@ -461,7 +467,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         } else if (debugView == 3u && q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
             // The colour copies: the primary ray's hit coloured from its mesh's copy, unlit.
             Hit h;
-            h.t = q.CommittedRayT(); h.id = q.CommittedInstanceID(); h.prim = q.CommittedPrimitiveIndex();
+            h.t = q.CommittedRayT(); h.id = q.CommittedInstanceID() & 0x7FFFFFu; h.prim = q.CommittedPrimitiveIndex();
             h.bary = q.CommittedTriangleBarycentrics(); h.o2w = q.CommittedObjectToWorld3x4();
             dbg = hitAlbedo(h);
         } else if (debugView == 2u) {
@@ -471,8 +477,8 @@ void main(uint3 id : SV_DispatchThreadID) {
             float4 c;
             dbg = cacheRead(pw, nw, 0.0f.xxx, c) ? ambientAt(nw) * (sunColour.w > 0.5f ? c.a : 1.0f) + c.rgb : float3(0.25f, 0.0f, 0.0f);
         } else if (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-            const uint cid = q.CommittedInstanceID();
-            if (cid == 0u) { dbg = float3(1.0f, 0.0f, 1.0f); }
+            const uint cid = q.CommittedInstanceID() & 0x7FFFFFu;
+            if (cid == 0u || Records[cid - 1u].z == 0u) { dbg = float3(1.0f, 0.0f, 1.0f); }
             else {
                 const uint4 rec = Records[cid - 1u];
                 const uint a = (rec.x + q.CommittedPrimitiveIndex() * 3u) * 8u;

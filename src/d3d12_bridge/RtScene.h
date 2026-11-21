@@ -107,6 +107,7 @@ private:
     ComPtr<ID3D12Device5> m_dev;
     ComPtr<ID3D12Resource> m_blasHeap, m_scratch, m_tlas, m_tlasScratch, m_inst[3], m_cb[3], m_vis, m_lights, m_refl, m_tsRead;
     double m_camPos[3] = {};    // the camera in the cache's world frame
+    float m_lodRect[4] = {};    // this frame's loaded area (centre, half size, camera-relative): distant land skipped inside
     double m_stepPos[3] = {};   // the same from the summed steps alone
     bool m_stepInit = false;
     uint64_t m_camLog = 0;

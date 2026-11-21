@@ -38,7 +38,11 @@ float4 meanAround(int2 p, float z, int r, out float rest) {
             if (dq >= 1.0f) { continue; }
             const float rel = (viewZOf(dq) - z) / z;
             const float k = exp2(-rel * rel * 4000.0f);
-            s += k * decodeRaw(Raw[q], rv, rh); w += k;
+            float4 tap = decodeRaw(Raw[q], rv, rh);
+            // Clamp 1-spp RT bounce fireflies before spatial/temporal blending so white speckles never leak into shadows.
+            const float tapMax = max(tap.r, max(tap.g, tap.b));
+            if (tapMax > 1.8f) { tap.rgb *= 1.8f / tapMax; }
+            s += k * tap; w += k;
             rs += k * rh * rv; rw += k * rh;
         }
     }

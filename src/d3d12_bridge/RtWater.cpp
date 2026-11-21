@@ -186,11 +186,12 @@ bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* dep
     cl->SetComputeRootDescriptorTable(12, gpu(m_cache.Descriptor()));
     cl->SetComputeRootShaderResourceView(13, m_alpha.MaterialsAddress());
     const uint32_t giFlags = (m_tune.materials ? 1u : 0u) | (m_cacheReady && m_tune.cache ? 2u : 0u);
-    uint32_t gc[8];
+    uint32_t gc[12];
     std::memcpy(gc, m_tune.cameraPos, 12);
     std::memcpy(gc + 3, &m_tune.cacheCell, 4);
     gc[4] = RtCache::kSlots; gc[5] = giFlags; gc[6] = 0; gc[7] = uint32_t(m_frame);
-    cl->SetComputeRoot32BitConstants(14, 8, gc, 0);
+    std::memcpy(gc + 8, m_lodRect, 16);
+    cl->SetComputeRoot32BitConstants(14, 12, gc, 0);
     cl->SetComputeRootDescriptorTable(15, gpu(m_skyReady ? m_sky.ReservoirDescriptor(m_frame) : 3));   // not read by the water kernel
     cl->Dispatch((m_w + 7) / 8, (m_h + 7) / 8, 1);
     }

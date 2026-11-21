@@ -153,6 +153,8 @@ void LoadLightingConfig(const std::string& ini)
     t.puddles = f("Puddles", t.puddles);
     t.rain = f("Rain", t.rain);
     t.distantLod = i("DistantLod", 1) != 0;
+    t.envMap = i("EnvMap", 1) != 0;
+    t.charLight = i("CharLight", 1) != 0;
     t.clouds = i("Clouds", 1) != 0; t.cloudCover = f("CloudCover", t.cloudCover);
     t.cloudBase = f("CloudBase", t.cloudBase); t.cloudThickness = f("CloudThickness", t.cloudThickness);
     t.cloudShadow = f("CloudShadow", t.cloudShadow); t.cloudDensity = f("CloudDensity", t.cloudDensity);

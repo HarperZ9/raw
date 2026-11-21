@@ -76,7 +76,12 @@ float4 main(In i) : SV_Target {
         // shoulder instead of clipping (the vista at midday clipped 44 % of its pixels at a constant 1.55).
         const float cHi = lerp(cu, 1.0f, saturate(log2(max(l / RB.y, 1.0f)) * 0.5f));
         const float lc = RB.y * pow(l / RB.y, l > RB.y ? cHi : lerp(cl, cu, saturate(l / RB.y)));
-        mapped = hdr * exposure * RB.z * (saturate(lc * (1.0f + lc / w2) / (1.0f + lc)) / l);
+        const float lOut = saturate(lc * (1.0f + lc / w2) / (1.0f + lc));
+        float3 col = hdr * exposure * RB.z * (lOut / l);
+        // AgX-style highlight shoulder desaturation: prevents neon orange/blue clipping in bright skies and fire.
+        const float hiSat = saturate((lOut - 0.55f) / 0.45f);
+        col = lerp(col, lOut.xxx, hiSat * hiSat * 0.42f);
+        mapped = saturate(col);
         if (RA.x > 0.5f) { pivot = RB.y * (1.0f + RB.y / w2) / (1.0f + RB.y); }
     } else {
         const bool rh = RB.x > 1.5f;

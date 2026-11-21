@@ -60,9 +60,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;
         }
-        // Haze: clouds far away melt into the sky (the game's sky keeps its own colour there).
+        // Soft filmic shoulder on cloud in-scatter so sunset/midday clouds keep sculpted detail instead of clipping.
+        const float3 softS = S / (1.0f + S * 0.55f);
         const float fade = exp(-max(t0, 0.0f) / 160000.0f);
-        res = float4(S * fade, lerp(1.0f, T, fade));
+        res = float4(softS * fade, lerp(1.0f, T, fade));
     }
     // Last frame's value along the same direction.
     const float4 c = float4(far, 1.0f);

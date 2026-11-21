@@ -22,22 +22,32 @@ float cNoise(float3 x) {
 bool cloudsOn() { return clouds.x > 0.0f && clouds.z > 0.0f; }
 static const float kCloudSigma = 0.0015f;   // extinction per unit of density and game unit: about 670 units of full density is one optical depth
 
-// Density at an absolute world point; detail adds the finer erosion (the sky's march, not the shadows).
+// Density at an absolute world point with spherical horizon curvature, wind-sheared cumulus, and high cirrus wisps.
 float cloudDensity(float3 pa, bool detail) {
-    const float h = (pa.z - clouds.y) / clouds.z;   // 0 at the floor, 1 at the top
+    const float2 dxy = pa.xy - camPosW.xy;
+    const float curvedZ = pa.z + dot(dxy, dxy) * 1.35e-8f;
+    const float h = (curvedZ - clouds.y) / clouds.z;   // 0 at the floor, 1 at the top
     if (h <= 0.0f || h >= 1.0f) { return 0.0f; }
     const float3 wind = float3(cloudWind.xy * camPosW.w, 0.0f);
-    const float3 q = (pa + wind) / 11000.0f;   // cloud cells about a kilometre (70,000 units) apart at full cover
-    float shape = cNoise(q) * 0.55f + cNoise(q * 2.03f + 11.3f) * 0.3f + cNoise(q * 4.11f + 5.7f) * 0.15f;
-    // Rounded floor, softer top; heavy cover rises higher.
-    const float profile = saturate(h * 6.0f) * saturate((1.0f - h) * lerp(2.5f, 1.4f, clouds.x));
-    // A sharper edge than a plain cut: the cloud's body fills within a short span of the cover threshold.
-    float dens = saturate((shape * profile - (1.0f - clouds.x)) / max(clouds.x * 0.45f, 0.03f));
+    // Anisotropic wind shear leans upper cloud tops naturally along the wind vector.
+    const float3 sheared = pa + wind + float3(cloudWind.xy, 0.0f) * (h * 18.0f);
+    const float3 q = sheared / 10500.0f;
+    float shape = cNoise(q) * 0.52f + cNoise(q * 2.07f + 11.3f) * 0.30f + cNoise(q * 4.19f + 5.7f) * 0.18f;
+    // Cumulus vertical profile: flat condensation base, billowed anvil top.
+    const float profile = saturate(h * 7.5f) * saturate((1.0f - h) * lerp(2.8f, 1.45f, clouds.x));
+    float dens = saturate((shape * profile - (1.0f - clouds.x)) / max(clouds.x * 0.42f, 0.03f));
     if (detail && dens > 0.0f) {
-        // Billowed erosion (1 - |2n - 1|) carves the soft body into heaped, rounded edges.
-        const float3 r = (pa + wind * 1.6f) / 2600.0f;
-        const float n1 = 1.0f - abs(cNoise(r) * 2.0f - 1.0f), n2 = 1.0f - abs(cNoise(r * 2.7f + 3.1f) * 2.0f - 1.0f);
-        dens = saturate(dens - (n1 * 0.65f + n2 * 0.35f) * 0.6f * (1.0f - dens * 0.7f));
+        const float3 r = (sheared + wind * 0.6f) / 2200.0f;
+        const float n1 = 1.0f - abs(cNoise(r) * 2.0f - 1.0f);
+        const float n2 = 1.0f - abs(cNoise(r * 2.85f + 3.1f) * 2.0f - 1.0f);
+        dens = saturate(dens - (n1 * 0.62f + n2 * 0.38f) * 0.68f * (1.0f - dens * 0.65f));
+    }
+    // High-altitude streaked cirrus veil near the top of the layer.
+    if (detail && h > 0.72f && clouds.x > 0.08f) {
+        const float3 cq = float3(sheared.x * 0.000045f, sheared.y * 0.00014f, h * 3.0f);
+        const float cMask = saturate((cNoise(cq) + 0.5f * cNoise(cq * 2.3f + 4.1f) - 0.92f) * 2.4f);
+        const float cVert = saturate((h - 0.72f) * 6.0f) * saturate((1.0f - h) * 8.0f);
+        dens = max(dens, cMask * cVert * 0.28f * saturate(clouds.x * 1.4f));
     }
     return dens * cloudWind.z;
 }

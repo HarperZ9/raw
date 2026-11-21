@@ -754,3 +754,59 @@ that starts beneath it.
 **Infrastructure in this branch.** The tone map reloads live from `Tonemap.hlsl` (docs/HOT_RELOAD.md). The harness
 has `listen` (docs/HARNESS.md) and retries the status-file read. The tx timestamp heap holds 16384 (from raw#41), so
 the bridge and `GpuTiming=1` run together: improved rt_draws 1919, the pass 2.70 ms.
+
+## The forest patch, the character light, and the shadows at dawn and night (2026-11-19, rt9)
+
+All of it was found and checked in the shared live session (SkyrimSE 1.7.104, 3840 x 2160), with shader reloads in
+place and four proxy restarts for the C++ changes.
+
+**The black patch was the game's distant land.** A diagnostic build of `RtShadow.hlsl` traced the primary ray from
+the eye to each pixel's G-buffer point and coloured it by where the scene's first hit lay. Inside the patch the scene
+had a surface in front of the drawn ground (most within 30 units). That surface's instance had a uniform scale of 4
+and a translation on the 2,048-unit grid. The frame ledger named it: the game's LOD terrain chunks (ps
+0b118bc867b6ba19, scale 4 to 32, drawn in the main pass with depth writes). Their vertex shader's buffer 0 starts
+with the loaded area, `1042, -12, 10225, 10225` beside Riverwood: a centre and a half size of about 2.5 cells. Inside
+it the game keeps the chunks under the full-detail ground, so the raster never shows them. As written in their vertex
+buffers, the chunks stand above the ground in hollows, and every sun, sky and light ray from beneath them hit them.
+The rt8 test that took "distant LOD" out had removed class 7, the per-vertex lit LOD objects, not these chunks, which
+the G-buffer classes as lit landscape.
+
+The fix: `SceneGeometry.cpp` marks a draw as distant land when its world matrix has a uniform scale of 4 or more
+with no rotation, and its vertex buffer 0 holds a plausible rectangle. The instance carries bit 23 in its ID and is
+forced non-opaque (its BLAS geometry is built opaque, so the instance flag must force it). `lodHidden` in
+`RtHit.hlsli` skips its hits inside the rectangle. Outside the loaded area the chunks still occlude: mountains keep
+their shadows. A first build missed most chunks, because they follow an alpha-tested prepass and took the alpha path
+before the check; a second build left the geometry opaque and the candidate test never ran. Only the third removed
+the patch. Measured at the save's start, looking at heading 220 at 06:00 (one frame each, sRGB 0 to 255, full frame):
+
+| | mean | crushed | detail |
+|---|---|---|---|
+| game | 53.7 | 0.65 % | 30.4 |
+| RAW before (the patch) | 51.6 | 6.19 % | 33.1 |
+| RAW after | 53.2 | 1.14 % | 31.3 |
+
+Image: `ingame-rt9-2026-11-19-forest-patch-game-before-after-sun.png` (game, before, after, after's sun view).
+
+**The characters were missing the character light.** The armour the player wears in the Bannered Mare is drawn by ps
+9a4ea5fb8b14fb98, a lit shader with no cube map and no specular lobe, so the environment-map guess from rt8 was
+wrong for it. Its disassembly adds a white fill to the light sum that RAW did not have: two fixed directions dotted
+with the normal, times a factor read from t11 and clamped, all scaled by pixel buffer 1 element 14 (0.75, 0.3, 2,
+0.75 on that draw). The G-buffer patch now copies that product (`FindCharLight`, 25 of 25 shaders that carry it in
+the inn's ledger) and RAW adds it to its received light in both modes (docs/LIGHTING.md). The environment-map term
+is tapped too (`FindEnvMap`, 8 of 8 class-2 shaders): it shows on pottery and glass, and is small on the characters.
+No specular term changed, so the beams in the inn keep rt7's look.
+
+The player in third person at 20:00, luma means (sRGB 0 to 255) over fixed boxes, one keyframe per step. The steps of a
+keyframe are consecutive frames, so a candle's flicker and the idle animation move these by about 1:
+
+| step | vest | arm | helmet |
+|---|---|---|---|
+| game | 8.5 | 19.2 | 10.7 |
+| match, no character light | 4.9 | 16.2 | 9.1 |
+| match | 8.8 | 20.8 | 11.8 |
+| improved, no character light | 4.8 | 16.4 | 7.7 |
+| improved | 9.6 | 22.1 | 12.3 |
+
+Image: `ingame-rt9-2026-11-19-inn-character-game-nochar-match-improved-half.png` (half size). These boxes are not the
+ones rt8 used, so the two tables do not compare number for number; the ratio does (rt8 match over game on the vest:
+0.65; now 1.04).

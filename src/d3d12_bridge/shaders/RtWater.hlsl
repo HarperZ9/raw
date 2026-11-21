@@ -75,32 +75,33 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
             const float3 o = p + float3(0.0f, 0.0f, 1.0f + 0.002f * length(p));
 
-            // Deterministic mirror reflection (eliminates 1-spp per-frame water reflection noise/shimmer).
-            float3 rd = reflect(-v, n);
-            if (rd.z < 0.02f) { rd = normalize(float3(rd.xy, 0.02f)); }
+            // Attenuate steep horizontal wave tilt for reflection rays so moving water never stretches reflections into vertical bands.
+            const float3 nRefl = normalize(lerp(float3(0.0f, 0.0f, 1.0f), n, 0.35f));
+            float3 rd = reflect(-v, nRefl);
+            if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }
             float3 refl;
             Hit h;
             if (reflectLength > 0.0f && traceHit(o, rd, reflectLength, h)) {
                 float3 hn;
                 refl = radianceAt(h, o, rd, float2(0.5f, 0.5f), true, hn);
                 const float reflMax = max(refl.r, max(refl.g, refl.b));
-                if (reflMax > 2.5f) { refl *= 2.5f / reflMax; }
+                if (reflMax > 2.2f) { refl *= 2.2f / reflMax; }
             } else {
                 refl = waterSky(rd);
             }
 
-            // The sun's glint on the waves (deterministic shadow ray, firefly-clamped).
+            // The sun's glint on the waves (broader GGX lobe prevents texel-facet white scratches in motion).
             float3 glint = 0.0f;
             const float3 l = sunDir.xyz;
-            const float nl = dot(n, l);
+            const float nl = dot(nRefl, l);
             if (sunDir.w > 0.5f && nl > 0.0f && waterA.w > 0.0f) {
                 const float3 hv = normalize(v + l);
-                const float nh = saturate(dot(n, hv)), a2 = 0.0024f;
+                const float nh = saturate(dot(nRefl, hv)), a2 = 0.014f;
                 const float dd = nh * nh * (a2 - 1.0f) + 1.0f;
                 const float D = a2 / (PI * dd * dd);
                 const float Fh = 0.02f + 0.98f * pow(1.0f - saturate(dot(v, hv)), 5.0f);
                 const float vis = sunColour.w > 0.5f ? visible(o, l, 0.0f, sunLength) : 1.0f;
-                glint = min(sunColour.rgb * (D * Fh * nl / (4.0f * max(nv, 0.05f))) * vis, 6.0f.xxx) * waterA.w;
+                glint = min(sunColour.rgb * (D * Fh * nl / (4.0f * max(nv, 0.08f))) * vis, 2.5f.xxx) * waterA.w;
             }
 
             // Caustics on the bed, under the water, with the view through it.

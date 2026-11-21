@@ -402,6 +402,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             albedo = lerp(albedo, mossCol, mossPatch * mossFade * 0.38f);
             s.alpha = lerp(s.alpha, 0.86f, mossPatch * mossFade * 0.38f);
         }
+        // Triplanar world-space micro-porosity & pebble/slate relief on close terrain & stone ruins (zero texture mods).
+        if (z < 1800.0f && (base == 4u || base == 1u)) {
+            const float poreFade = saturate(1.0f - z / 1800.0f) * (base == 4u ? 0.85f : 0.55f);
+            const float p0 = cNoise(wp * 0.16f);
+            const float pxN = cNoise(wp * 0.16f + float3(0.35f, 0.0f, 0.0f)) - p0;
+            const float pyN = cNoise(wp * 0.16f + float3(0.0f, 0.35f, 0.0f)) - p0;
+            const float fineP = cNoise(wp * 0.44f + 5.7f);
+            s.n = normalize(s.n + float3(pxN, pyN, 0.0f) * (0.28f * poreFade));
+            s.alpha = clamp(s.alpha + (fineP - 0.5f) * 0.16f * poreFade, 0.06f, 0.96f);
+        }
         s.alpha = clamp(s.alpha + (macroN - 0.5f) * 0.14f * tileFade, 0.08f, 0.96f);
     }
     // Zero-mod procedural PBR micro-normal & roughness synthesis on vanilla stone/wood (excluded on actor skin/hair/eye/cloth & foliage).
@@ -491,7 +501,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             sunShadow *= screenShadow(p + lift, sunDir.xyz, tune.w, 0.02f, jit, 12u);
         // Skinned actors (skin/hair/eye) keep the game's filtered shadow mask so coarse skinned BLAS triangles never cast blocky self-shadow acne.
         if (rt && sunColour.w > 0.5f && !isActorFeat) { sunShadow = min(sunShadow, base == 5u ? lerp(1.0f, rv.x, 0.6f) : rv.x); }
-        if (!match && sunColour.w > 0.5f && (flags.x & FLAG_CLOUDS) != 0u) { sunShadow *= cloudShadow(p + camPosW.xyz); }   // SKY-02
+        if (!match && sunColour.w > 0.5f && (flags.x & FLAG_CLOUDS) != 0u) { sunShadow *= pow(saturate(cloudShadow(p + camPosW.xyz)), 1.25f); }   // SKY-02 rolling cloud-shadow contrast
         // Skin: warm dermal penumbra + gentle wrap so shadow transitions on faces and shoulders stay lifelike, never muddy grey.
         const float3 sunSh = skin && !match ? pow(saturate(sunShadow).xxx, float3(0.72f, 0.92f, 1.04f)) : sunShadow.xxx;
         const float dirLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));

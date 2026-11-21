@@ -179,7 +179,7 @@ std::string BuildMenuText()
     const auto tm = Tonemap_Get();
     static const char* kTabs[7] = {"1:RT & GI", "2:Sky/Cloud/Fog", "3:Weather/Season", "4:Water", "5:Skin/Shadow/AO", "6:Tonemap/Debug", "7:LUTs/Overlays"};
     char hdr[224];
-    std::snprintf(hdr, sizeof hdr, "=== RAW DX12 STUDIO | %.1f FPS (%.1f ms) | [End:Close | Tab:Page | Arrows:Tune | S:Save | L:Load]%s ===\n",
+    std::snprintf(hdr, sizeof hdr, "=== RAW DX12 STUDIO | %.1f FPS (%.1f ms) | [End:Close | PgUp/PgDn:Tab | Arrows:Tune | S:Save | L:Load]%s ===\n",
                   g_emaMs > 0.1f ? 1000.0f / g_emaMs : 0.0f, g_emaMs, g_savedFrames ? g_statusTag.c_str() : "");
     std::string out = hdr;
     for (int i = 0; i < 7; ++i) {
@@ -316,8 +316,8 @@ bool PollMenu(std::string& outText)
     if (KeyEdge((GetAsyncKeyState('S') & 0x8000) != 0, g_prevSave)) { SaveMenuToIni(); changed = true; }
     if (KeyEdge((GetAsyncKeyState('L') & 0x8000) != 0, g_prevLoad)) { LoadPresetSlot(g_presetSlot); changed = true; }
     const bool nextTab = KeyEdge((GetAsyncKeyState(VK_TAB) & 0x8000) != 0, g_prevTab) && !shift;
-    const bool prevTab = KeyEdge((GetAsyncKeyState(VK_PRIOR) & 0x8000) != 0, g_prevPgUp) || (shift && (GetAsyncKeyState(VK_TAB) & 0x8000) != 0 && !nextTab && g_prevTab);
-    const bool nextTab2 = KeyEdge((GetAsyncKeyState(VK_NEXT) & 0x8000) != 0, g_prevPgDn);
+    const bool prevTab = KeyEdge((GetAsyncKeyState(VK_PRIOR) & 0x8000) != 0 || (GetAsyncKeyState(VK_OEM_4) & 0x8000) != 0, g_prevPgUp);
+    const bool nextTab2 = KeyEdge((GetAsyncKeyState(VK_NEXT) & 0x8000) != 0 || (GetAsyncKeyState(VK_OEM_6) & 0x8000) != 0, g_prevPgDn);
     if (nextTab || nextTab2) {
         g_tab = (g_tab + 1) % 7;
         g_sel = std::min(g_sel, TabRowCount(g_tab) - 1);
@@ -508,6 +508,11 @@ void Overlay_Set(const std::string& text)
     if (text == g_text) return;
     g_text = text;
     g_dirty = true;
+}
+
+extern "C" __declspec(dllexport) int PG_IsMenuOpen()
+{
+    return g_menuOpen ? 1 : 0;
 }
 
 void Overlay_Draw()

@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -88,8 +89,18 @@ bool ReadLight(const uint8_t* bsl, uint32_t flags, EngineLight* L, std::string* 
     if (!bsl) return false;
     const uint8_t* ni = At<const uint8_t*>(bsl, 0x48);
     if (!ni) return false;
-    // the NiLight's world translation (NiAVObject world transform +0x7C, translation +0x24); BSLight +0x50 read zero
-    std::memcpy(L->pos, ni + 0xA0, 12);
+    if (flags & 4) {
+        // NiDirectionalLight: world.rotate (+0x7C) column 0 is light travel direction; negate for vector toward sun/moon.
+        const float dx = -At<float>(ni, 0x7C + 0);
+        const float dy = -At<float>(ni, 0x7C + 12);
+        const float dz = -At<float>(ni, 0x7C + 24);
+        const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (len > 1e-5f) { L->pos[0] = dx / len; L->pos[1] = dy / len; L->pos[2] = dz / len; }
+        else { L->pos[0] = L->pos[1] = L->pos[2] = 0.0f; }
+    } else {
+        // the NiLight's world translation (NiAVObject world transform +0x7C, translation +0x24); BSLight +0x50 read zero
+        std::memcpy(L->pos, ni + 0xA0, 12);
+    }
     const float fade = At<float>(ni, 0x134);
     float diffuse[3];
     std::memcpy(diffuse, ni + 0x11C, 12);

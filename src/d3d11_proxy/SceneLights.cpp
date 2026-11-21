@@ -224,8 +224,20 @@ void AddEngineLights(SceneLighting& f)
     const uint32_t n = std::min(fn(e, raw::bridge::kMaxSceneLights, &at), raw::bridge::kMaxSceneLights);
     ++g_es.frames;
     const uint32_t decoded = f.lightCount;
+    bool hasEngineSun = false;
+    float engineSunDir[3] = {};
     for (uint32_t k = 0; k < n; ++k) {
-        if ((e[k].flags & 4) || !(e[k].flags & 1) || e[k].radius <= 0) continue;   // the sun comes from the draws
+        if (e[k].flags & 4) {
+            const float sl = std::sqrt(e[k].pos[0] * e[k].pos[0] + e[k].pos[1] * e[k].pos[1] + e[k].pos[2] * e[k].pos[2]);
+            if (sl > 0.5f && sl < 1.5f) {
+                engineSunDir[0] = e[k].pos[0] / sl;
+                engineSunDir[1] = e[k].pos[1] / sl;
+                engineSunDir[2] = e[k].pos[2] / sl;
+                hasEngineSun = true;
+            }
+            continue;
+        }
+        if (!(e[k].flags & 1) || e[k].radius <= 0) continue;
         if (e[k].color[0] <= 0 && e[k].color[1] <= 0 && e[k].color[2] <= 0) continue;
         ++g_es.seen;
         float rel[3];
@@ -253,6 +265,10 @@ void AddEngineLights(SceneLighting& f)
         l.draws = 0;   // from the engine's list: no lit draw carried it
         ++g_es.added;
     }
+    if (hasEngineSun) {
+        f.hasSun = true;
+        for (int c = 0; c < 3; ++c) f.sunDirection[c] = engineSunDir[c];
+    }
 }
 
 void Merge(State& s)
@@ -270,10 +286,13 @@ void Merge(State& s)
         l.draws = a.n;
     }
     AddEngineLights(f);
-    f.hasSun = s.sunDraws > 0 || s.hasStableSun;
+    const bool engineLockedSun = f.hasSun;
+    f.hasSun = engineLockedSun || s.sunDraws > 0 || s.hasStableSun;
     if (s.sunDraws > 0) {
-        // Geometric consensus cluster (dot > 0.998): rejects rotated/camera-facing tree/billboard/actor outliers
-        // that otherwise pull the average sunDir around when looking up at trees & sky.
+        if (engineLockedSun) {
+            for (int k = 0; k < 3; ++k) f.sunColour[k] = float(s.sunCol[k] / s.sunDraws);
+        } else {
+        // Geometric consensus cluster (dot > 0.998): fallback when raw_engine.dll is absent.
         double nd[3] = {};
         uint32_t bestCount = 0;
         const size_t nSamp = s.sunSamples.size();
@@ -320,7 +339,8 @@ void Merge(State& s)
         if (s.hasStableSun) {
             for (int k = 0; k < 3; ++k) { f.sunDirection[k] = float(s.stableSunDir[k]); f.sunColour[k] = float(s.sunCol[k] / s.sunDraws); }
         }
-    } else if (s.hasStableSun) {
+        }
+    } else if (!engineLockedSun && s.hasStableSun) {
         for (int k = 0; k < 3; ++k) f.sunDirection[k] = float(s.stableSunDir[k]);
     }
     if (s.ambDraws)

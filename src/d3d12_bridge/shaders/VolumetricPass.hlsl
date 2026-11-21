@@ -34,9 +34,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 p = worldAt(fullPx - 0.5f, min(d, 0.999999f));
     const float dist = length(p);
     const float3 w = p / max(dist, 1.0e-4f);
-    const float tEnd = min(dist, tune2.w);
-    const float weatherDens = 1.0f + weather.w * 1.45f + weather.z * 1.85f + saturate(clouds.x - 0.25f) * 0.75f;
-    const float sigma = max(tune.x, 0.00018f) * weatherDens;
+    // Cap volumetric shaft integration to 12,000 units so open ocean/coast horizons never over-accumulate nuclear scatter.
+    const float tEnd = min(dist, min(tune2.w, 12000.0f));
+    const float weatherDens = 1.0f + weather.w * 1.15f + weather.z * 1.35f + saturate(clouds.x - 0.25f) * 0.55f;
+    const float sigma = max(tune.x, 0.00014f) * weatherDens;
     const float zCur = d < 1.0f ? viewZOf(d) : 65000.0f;
 
     // Unified atmospheric palette shared with Sky, Clouds, and Mountain Aerial Perspective.
@@ -81,9 +82,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Spectral alignment: CIE D65 high-latitude sun blended with the live atmospheric gradient & cloud tint.
         const float3 d65Sun = lerp(sunColour.rgb, float3(0.96f, 0.98f, 1.02f) * max(sunLum, 0.12f), highSun * 0.58f);
         const float3 shaftCol = lerp(lerp(d65Sun, skyGrad, 0.24f), max(sH, float3(0.18f, 0.26f, 0.42f)), nightW * 0.72f);
-        scatter += shaftCol * (sigma * ph * sumSun * tune2.z * shaftBoost * 1.45f);
-        // Isotropic sky multiple-scattering inside volumetric mist (bridges shadowed valleys seamlessly into the sky gradient).
-        scatter += skyGrad * (sigma * sumSky * 0.042f * (1.0f - nightW * 0.65f));
+        scatter += shaftCol * (sigma * ph * sumSun * tune2.z * shaftBoost * 0.95f);
+        // Gentle isotropic sky multi-scattering inside volumetric mist (strictly bounded to prevent whiteout).
+        scatter += skyGrad * (sigma * sumSky * 0.016f * (1.0f - nightW * 0.65f));
     }
     if (tune2.y > 0.0f) {
         const float weatherMistGain = 1.0f + saturate(weather.w * 0.85f + weather.z * 0.75f + clouds.x * 0.35f) * 0.65f;
@@ -96,9 +97,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             }
         }
     }
-    // Soft highlight shoulder + moist Nordic volumetric exposure.
+    // Physical energy-bounded highlight shoulder (prevents volumetric fog from pushing coastal skies/snow into nuclear bloom).
     const float scMax = max(scatter.r, max(scatter.g, scatter.b));
-    scatter = (scatter / (1.0f + scMax * 0.85f)) * 0.82f;
+    scatter = (scatter / (1.0f + scMax * 1.45f)) * 0.36f;
 
     // Temporal reprojection with depth-disocclusion rejection (stores viewZ in alpha for depth-aware upsampling).
     const float4 cp = float4(p, 1.0f);

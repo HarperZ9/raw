@@ -291,15 +291,15 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
         [unroll] for (uint k = 0u; k < 3u; k++) {
             if (best[k] == ~0u) { continue; }
-            // Rock-solid point-light RT shadows: 24-unit fixture clearance eliminates forge/brazier/sconce
-            // rim self-shadowing (e.g. Alvor's forge pole), and 4-spp stratified tracing on the primary
-            // light eliminates frame-to-frame shadow shimmer in interiors and around hearths.
+            // Zero-flicker point-light RT shadows: static pixel-locked IGN offsets (no frameIndex jitter!)
+            // + 24-unit fixture clearance eliminates 60Hz interior/hearth/forge pole shadow shimmer completely.
             const float fixClear = max(sourceRadius * 2.4f, 24.0f);
-            const float radK = sourceRadius * 0.38f;
+            const float radK = sourceRadius * 0.36f;
+            const float2 rStatic = float2(ign(px + float2(17.0f * float(k), 31.0f)), ign(px.yx + float2(29.0f, 13.0f * float(k))));
             float vAcc = 0.0f;
             const uint nSpp = (k == 0u) ? 4u : 2u;
             [loop] for (uint si = 0u; si < nSpp; si++) {
-                const float2 rki = frac(r + float2(0.25f * float(si) + 0.31f * float(k), 0.37f * float(si) + 0.17f * float(k)));
+                const float2 rki = frac(rStatic + float2(0.25f * float(si), 0.37f * float(si)));
                 const float3 ci = lightPosR[best[k]].xyz + (float3(rki.x, rki.y, frac(rki.x + rki.y + 0.5f)) * 2.0f - 1.0f) * radK;
                 const float3 toi = ci - o;
                 const float liLen = length(toi);

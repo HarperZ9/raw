@@ -179,28 +179,25 @@ float3 fxaaAndCas(float2 suv) {
 float4 main(In i) : SV_Target {
     const float2 suv = min(max(i.uv * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
     float3 hdr = fxaaAndCas(suv);
-    // Logarithmic highlight roll-off on extreme HDR peaks (>0.98): recovers textured whitewater detail on waterfalls
-    // and tames post-opaque glare while leaving all scene midtones (<0.98) untouched.
-    const float hdrPeak = max(hdr.r, max(hdr.g, hdr.b));
-    if (hdrPeak > 0.98f) {
-        const float comp = 0.98f + log2(1.0f + (hdrPeak - 0.98f) * 0.48f) * 0.30f;
-        hdr *= comp / hdrPeak;
+    // Smooth photographic HDR highlight compression (knee at 0.82): preserves crisp snow, glacier, whitewater,
+    // and coastal horizon detail instead of clipping to solid white under bright Nordic sun.
+    const float hdrLum = max(dot(hdr, W), 1.0e-5f);
+    if (hdrLum > 0.82f) {
+        const float compLum = 0.82f + (hdrLum - 0.82f) / (1.0f + (hdrLum - 0.82f) * 0.62f);
+        hdr *= compLum / hdrLum;
     }
     const float3 bloom = P[0].x > 0.5f ? Bloom.Sample(S0, suv).rgb : Bloom.Sample(S0, i.uv).rgb;
     const float2 lum = Lum.Sample(S2, i.uv).xy;
     const float avg = max(lum.x, 1.0e-5f);
-    // Mode 1: a camera's exposure brings the metered average to the key. Adapt (RC.x) is the share of a change of
-    // average the exposure follows: 1 is a camera's full compensation, below 1 a dark room stays darker than a bright
-    // street, as the eye's partial adaptation leaves it. The reference average (RC.y) is where both agree.
-    // The eye follows less of a change into the dark than into the light: below the reference the share is
-    // ToneX0 (RC.z; 0 takes Adapt's). The metered average is the game's adapted one (Lum.x), which the game's own
-    // luminance chain moves over time towards the frame's, so the exposure adapts as the eye does, at the game's rate.
+    // Human Eye Adaptation (Photopic / Scotopic Asymmetric Pupil Response):
+    // Bright sunlit snowfields & coastal horizons smoothly stop down exposure (down to 0.56x / -0.84 EV)
+    // so highlights never blow out; dark interiors gently open the pupil (up to 1.38x / +0.46 EV) while
+    // retaining cozy scotopic darkness rather than washing out shadows.
     const float metered = clamp(avg, RA.z, RA.w);
-    const float share = metered < RC.y && RC.z > 0.0f ? RC.z : RC.x;
-    // Soft photographic adaptation window: prevents jarring exposure pumping when panning between bright sky/snow and shadowed ground.
-    const float rawRatio = pow(max(metered / RC.y, 1.0e-4f), -share);
-    const float stableRatio = clamp(lerp(1.0f, rawRatio, 0.72f), 0.68f, 1.42f);
-    const float camera = (RB.y / RC.y) * stableRatio;
+    const float evDiff = log2(max(metered / max(RC.y, 0.05f), 1.0e-4f));
+    const float eyeShare = evDiff > 0.0f ? max(RC.x, 0.52f) : (RC.z > 0.0f ? max(RC.z, 0.24f) : 0.24f);
+    const float eyeComp = clamp(exp2(-evDiff * eyeShare), 0.56f, 1.38f);
+    const float camera = (RB.y / max(RC.y, 0.05f)) * eyeComp;
     // RX.w: the interior factor the proxy sets per frame (ToneX5 in a cell with no sun cascades, else 1).
     const float exposure = (RA.x < 0.5f ? lum.y / avg : camera * (RX.w > 0.0f ? RX.w : 1.0f)) * exp2(RA.y);
     float3 mapped;
@@ -285,7 +282,9 @@ float4 main(In i) : SV_Target {
         // Layer 4: Soft Optical Diffusion (dreamy wide-radius halation/bloom glow).
         ovAdd += bloom * 0.14f;
     }
-    mapped = saturate(mapped + ovAdd);
+    // Energy-conserving optical bloom/lens screen-blend: prevents bloom from pushing bright snow or coastal horizons into whiteout.
+    const float3 cappedAdd = ovAdd / (1.0f + max(ovAdd.r, max(ovAdd.g, ovAdd.b)) * 1.35f);
+    mapped = saturate(mapped + cappedAdd * (1.0f - mapped * 0.74f));
     if (RB.w > 1.5f && RB.w < 2.5f) { return float4(lum.x * 0.25f, lum.y * 0.25f, exposure * 0.25f, 1.0f); }   // view 2: adapted average, the game's target, exposure (over 4, no gamma)
     if (RB.w > 0.5f && RB.w < 1.5f) { return float4(exposure.xxx * 0.25f, 1.0f); }   // view 1: the exposure (4 = white, no gamma)
     // The game's grade, lane for lane as the game computes it (alpha included; its anti-aliasing reads it).

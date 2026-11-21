@@ -174,6 +174,11 @@ private:
     ComPtr<ID3D12Fence> m_wFence;
     uint64_t m_wFenceValue = 0, m_wSlotValue[3] = {};
     bool m_wRecorded = false;
+    // Dedicated DX12 Hardware Async Compute Queue (D3D12_COMMAND_LIST_TYPE_COMPUTE) for overlapping DXR/compute passes.
+    ComPtr<ID3D12CommandQueue> m_asyncQueue;
+    ComPtr<ID3D12Fence> m_syncFence;
+    uint64_t m_syncValue = 0;
+    bool m_asyncCompute = false;
 #ifdef RAW_HAS_OMM
     RtOmm m_omm;
 #endif

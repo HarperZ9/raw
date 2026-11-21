@@ -95,6 +95,34 @@ float ign(float2 px) {
 #endif
 Texture2D<float> Atlas : register(ATLAS_SLOT);
 
+// Dynamic physically based environment cubemap (shared by Lighting, RtShadow, and RtWater).
+// Replaces flat static cubemaps and black RT-reflection misses with live zenith/horizon/sun/ground IBL.
+float3 evalDynamicEnvCube(float3 rd, float roughness) {
+    const float3 d = normalize(rd);
+    const float3 ambDir = max(float3(dot(ambient[0].xyz, d) + ambient[0].w,
+                                     dot(ambient[1].xyz, d) + ambient[1].w,
+                                     dot(ambient[2].xyz, d) + ambient[2].w), 0.02f.xxx);
+    const bool ext = sunColour.w > 0.5f;
+    if (!ext) {
+        // Interior dynamic cubemap: directional cell ambient + soft overhead fill.
+        return ambDir * lerp(0.55f, 1.15f, saturate(d.z * 0.5f + 0.5f));
+    }
+    const float elev = saturate(d.z);
+    const float dayW = saturate(sunDir.z * 3.0f);
+    const float3 zenith = ambDir * lerp(float3(0.70f, 0.80f, 1.12f), float3(0.62f, 0.82f, 1.28f), dayW);
+    const float3 horizon = lerp(ambDir * 1.15f, sunColour.rgb * 0.55f + ambDir * 0.65f, saturate(1.0f - dayW * 0.5f));
+    const float3 skyCol = lerp(horizon, zenith, pow(elev, 0.55f));
+    const float3 groundCol = ambDir * float3(0.42f, 0.40f, 0.36f);
+    float3 env = d.z >= 0.0f ? skyCol : lerp(horizon * 0.65f, groundCol, saturate(-d.z * 2.5f));
+    // Roughness-filtered solar specular disk + aureole (attenuated by cloud cover).
+    const float cosS = saturate(dot(d, sunDir.xyz));
+    const float expS = lerp(180.0f, 8.0f, saturate(roughness));
+    const float sunLobe = pow(cosS, expS) * lerp(2.2f, 0.18f, saturate(roughness));
+    const float cloudAtten = 1.0f - saturate(clouds.x * 0.75f);
+    env += sunColour.rgb * sunLobe * cloudAtten * saturate(sunDir.z * 5.0f + 0.25f) * step(0.0f, d.z);
+    return min(env, 4.0f.xxx);
+}
+
 float cascadeSample(float3 p, uint k, bool filtered) {
     const float4 q = float4(p, 1.0f);
     const float3 sc = float3(dot(cascade[3 * k], q), dot(cascade[3 * k + 1], q), dot(cascade[3 * k + 2], q));

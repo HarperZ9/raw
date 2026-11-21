@@ -351,14 +351,33 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // game never draws, and a weight full from a mask of 0.25 still left them on the planks (rt7-glint-5).
     const float specMap = lobe && !(skin && !match) ? saturate(s.mask * resScale.w) : 1.0f;
     lit += (flags.x & FLAG_GGX) != 0u ? spec * specMap : spec * (lobe ? s.mask * resScale.w : 0.0f);
-    // Ray-traced reflection on glossy surfaces, weighted by Schlick Fresnel at the view angle and the
-    // game's specular mask; where the ray found nothing the game had on screen, nothing is added.
-    if (rt && (flags.x & FLAG_REFLECT) != 0u && lobe) {
-        const float4 rf = RtRefl.Load(int3(clamp(int2(px + rings * 40.0f), int2(0, 0), int2(dims.xy) - 1), 0));
+    // Ray-traced reflection on glossy surfaces with live dynamic-cubemap IBL fallback on RT misses,
+    // plus dynamic cubemap enhancement for class-2 metal/armor and clearcoat GGX on wet surfaces.
+    if (!match) {
         const float nv = saturate(dot(s.n, s.v));
         const float fr = s.f0 + (1.0f - s.f0) * pow(1.0f - nv, 5.0f);
-        lit += rf.rgb * rf.a * fr * max(saturate(s.mask * resScale.w), max(wet.puddle, 0.5f * wet.wet)) * (1.0f - s.alpha);
-        if (flags.w == 6u) { return float4(rf.rgb * rf.a, game.a); }
+        const float3 rDir = reflect(-s.v, s.n);
+        const float3 dynEnv = evalDynamicEnvCube(rDir, s.alpha);
+        const float reflMask = max(saturate(s.mask * resScale.w), max(wet.puddle, 0.5f * wet.wet));
+        if (rt && (flags.x & FLAG_REFLECT) != 0u && lobe) {
+            const float4 rf = RtRefl.Load(int3(clamp(int2(px + rings * 40.0f), int2(0, 0), int2(dims.xy) - 1), 0));
+            const float3 rtCol = min(rf.rgb, 3.0f.xxx);
+            const float3 envFinal = lerp(dynEnv * (0.35f + 0.65f * skyVis), rtCol, rf.a);
+            lit += envFinal * fr * reflMask * (1.0f - s.alpha) * 0.85f;
+            if (flags.w == 6u) { return float4(envFinal, game.a); }
+        } else if (base == 2u) {
+            // Class-2 metal/armor dynamic cubemap IBL (live sun/sky/ground response).
+            lit += dynEnv * fr * max(reflMask, 0.25f) * (1.0f - s.alpha * 0.65f) * (0.35f + 0.65f * skyVis) * 0.55f;
+        }
+        // Physical clearcoat GGX lobe on wet surfaces (water film over stone/wood/armor).
+        if (max(wet.wet, wet.puddle) > 0.08f && isExterior && sunShadow > 0.0f) {
+            const float3 ch = normalize(s.v + sunDir.xyz);
+            const float cnh = saturate(dot(s.n, ch)), ca2 = 0.0036f;
+            const float cdd = cnh * cnh * (ca2 - 1.0f) + 1.0f;
+            const float cD = ca2 / (PI * cdd * cdd);
+            const float cF = 0.04f + 0.96f * pow(1.0f - saturate(dot(s.v, ch)), 5.0f);
+            lit += min(sunColour.rgb * (cD * cF * saturate(dot(s.n, sunDir.xyz)) * sunShadow * 0.25f), 2.5f.xxx) * max(wet.wet * 0.6f, wet.puddle);
+        }
     }
     if (!match) {
         // Subsurface scattering: warm dermal wrap on skin (base 10) and backlit translucent transmission on foliage (base 5).

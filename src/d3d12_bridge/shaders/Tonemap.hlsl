@@ -98,5 +98,12 @@ float4 main(In i) : SV_Target {
     c = P[4].w * (g * P[4] - c) + c;
     c = P[3].z * (P[3].w * c - pivot) + pivot;
     c.rgb = pow(saturate(c.rgb), F[42].x);
+    // Elder-inspired filmic finish: subtle optical vignette + terminal triangular dithering (eliminates 8-bit sky/fog banding).
+    const float2 vc = i.uv - 0.5f;
+    c.rgb *= lerp(1.0f, saturate(1.0f - dot(vc, vc) * 0.22f), 0.35f);
+    const float2 dp = floor(i.pos.xy);
+    const float h1 = frac(sin(dot(dp, float2(12.9898f, 78.233f))) * 43758.5453f);
+    const float h2 = frac(sin(dot(dp + float2(17.0f, 53.0f), float2(12.9898f, 78.233f))) * 43758.5453f);
+    c.rgb = saturate(c.rgb + ((h1 - h2) / 255.0f).xxx);
     return c;
 }

@@ -498,8 +498,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float elevDegD = max(degrees(asin(saturate(sunDir.z))), 1.2f);
             const float mD = 1.0f / (sin(radians(elevDegD)) + 0.50572f * pow(elevDegD + 6.07995f, -1.6364f));
             const float3 ewTrans = exp(-(0.20f * float3(0.175f, 0.410f, 1.0f) + 0.025f * lerp(1.0f, 4.5f, saturate(clouds.x))) * mD);
-            const float ewLum = max(dot(ewTrans, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
-            alignedDayCol = lerp(sunColour.rgb, ewTrans * (max(dirLum, 0.05f) / ewLum), 0.48f * (1.0f - nightDir));
+            // High-latitude / alpine plateau CIE D65 midday calibration (Norway / Swiss Alps / Mongolian steppe):
+            // crisp cool-neutral daylight at high sun (sunDir.z > 0.30) transitioning naturally to warm amber only at dawn/dusk.
+            const float highSun = smoothstep(0.18f, 0.48f, sunDir.z);
+            const float3 d65Spec = lerp(ewTrans, float3(0.96f, 0.98f, 1.02f), highSun * 0.78f);
+            const float ewLum = max(dot(d65Spec, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
+            const float middayTrim = lerp(1.0f, 0.88f, highSun);
+            alignedDayCol = lerp(sunColour.rgb, d65Spec * (max(dirLum, 0.05f) / ewLum), 0.62f * (1.0f - nightDir)) * middayTrim;
         }
         // Crisp silver-blue lunar directional bounce & specular on moonlit surfaces at night.
         const float3 dirCol = lerp(alignedDayCol, max(sunColour.rgb, float3(0.14f, 0.20f, 0.34f)) * float3(0.84f, 0.95f, 1.22f), nightDir * 0.65f);

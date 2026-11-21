@@ -197,9 +197,9 @@ float4 main(In i) : SV_Target {
     if (RB.x > 2.5f && RX.x > 0.5f) {
         const float lumG = dot(c.rgb, W);
         if (RX.x < 1.5f) {
-            // 1: Nordic Film (cool slate shadows, crisp natural skin/midtones, warm sunlit highlights).
-            const float3 shTint = float3(0.94f, 0.98f, 1.06f);
-            const float3 hiTint = float3(1.04f, 1.01f, 0.95f);
+            // 1: Nordic Alpine Film (crisp cool-slate shadows, natural midtones, clean CIE D65 alpine highlights - no dry yellow cast).
+            const float3 shTint = float3(0.95f, 0.98f, 1.04f);
+            const float3 hiTint = float3(0.99f, 1.00f, 1.02f);
             c.rgb = saturate(c.rgb * lerp(shTint, hiTint, smoothstep(0.15f, 0.78f, lumG)));
         } else if (RX.x < 2.5f) {
             // 2: Kodak 2383 Print Film (deep teal-blue shadows, rich warm golden highlights, S-curve micro-contrast).

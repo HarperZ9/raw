@@ -47,18 +47,23 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     float3 scatter = 0.0f;
     if (sunDir.w > 0.5f && tune2.z > 0.0f) {
         const float jit = ign(px);
-        const float ph = phaseHG(dot(w, sunDir.xyz), tune.y);
-        const float dt = tEnd / 12.0f;
+        const float ph = min(phaseHG(dot(w, sunDir.xyz), tune.y), 3.2f);
+        // 16 quadratic-clustered steps with height-stratified valley density for crisp forest sunbeams.
+        const uint kSteps = 16u;
         float sum = 0.0f, cs = 1.0f;
-        [loop] for (uint i = 0u; i < 12u; i++) {
-            const float t = (float(i) + jit) * dt;
+        float tPrev = 0.0f;
+        [loop] for (uint i = 0u; i < kSteps; i++) {
+            const float u1 = (float(i) + 1.0f) / float(kSteps);
+            const float tNext = tEnd * u1 * u1;
+            const float dt = max(tNext - tPrev, 1.0e-3f);
+            const float t = tPrev + jit * dt;
+            tPrev = tNext;
             const float4 c = screenOf(w * t);
-            // Shafts between the clouds (SKY-04): the clouds' shadow at each step as well as the cascades'.
-            // A new sample every third step (the clouds' shadow changes slowly along the ray).
-            if ((flags.x & FLAG_CLOUDS) != 0u && i % 3u == 0u) { cs = cloudShadowN(w * (t + 1.5f * dt) + camPosW.xyz, 1u); }
-            sum += cascadeShadow(w * t, c.z, false) * cs * exp(-sigma * t);
+            if ((flags.x & FLAG_CLOUDS) != 0u && (i & 3u) == 0u) { cs = cloudShadowN(w * t + camPosW.xyz, 1u); }
+            const float hDens = 0.35f + 0.65f * exp(-max(w.z * t + 120.0f, 0.0f) * 0.0009f);
+            sum += cascadeShadow(w * t, c.z, false) * cs * hDens * exp(-sigma * t) * dt;
         }
-        scatter += sunColour.rgb * (sigma * ph * dt * sum * tune2.z);
+        scatter += sunColour.rgb * (sigma * ph * sum * tune2.z);
     }
     if (tune2.y > 0.0f) {
         [loop] for (uint li = 0u; li < flags.y; li++) {
@@ -66,6 +71,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (wi > 0.0f) { scatter += lightColS[li].rgb * (sigma * wi * tune2.y / (4.0f * PI)); }
         }
     }
+    // Soft highlight shoulder on volumetric in-scatter so bright sunbeams stay sculpted and never clip.
+    const float scMax = max(scatter.r, max(scatter.g, scatter.b));
+    scatter /= (1.0f + scMax * 0.65f);
     // With the game's distance fog still to come, extinction is the game's to apply; ours only adds light.
     const float T = (flags.x & FLAG_FOG_REPLACES) != 0u ? exp(-sigma * tEnd) : 1.0f;
     return float4(lit.rgb * T + scatter, lit.a);

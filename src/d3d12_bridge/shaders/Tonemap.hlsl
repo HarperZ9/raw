@@ -116,7 +116,10 @@ float4 main(In i) : SV_Target {
     // luminance chain moves over time towards the frame's, so the exposure adapts as the eye does, at the game's rate.
     const float metered = clamp(avg, RA.z, RA.w);
     const float share = metered < RC.y && RC.z > 0.0f ? RC.z : RC.x;
-    const float camera = RB.y / RC.y * pow(max(metered / RC.y, 1.0e-4f), -share);
+    // Soft photographic adaptation window: prevents jarring exposure pumping when panning between bright sky/snow and shadowed ground.
+    const float rawRatio = pow(max(metered / RC.y, 1.0e-4f), -share);
+    const float stableRatio = clamp(lerp(1.0f, rawRatio, 0.72f), 0.68f, 1.42f);
+    const float camera = (RB.y / RC.y) * stableRatio;
     // RX.w: the interior factor the proxy sets per frame (ToneX5 in a cell with no sun cascades, else 1).
     const float exposure = (RA.x < 0.5f ? lum.y / avg : camera * (RX.w > 0.0f ? RX.w : 1.0f)) * exp2(RA.y);
     float3 mapped;

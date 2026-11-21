@@ -39,9 +39,9 @@ float4 meanAround(int2 p, float z, int r, out float rest, out float4 stdDev) {
             const float rel = (viewZOf(dq) - z) / z;
             const float k = exp2(-rel * rel * 4000.0f);
             float4 tap = decodeRaw(Raw[q], rv, rh);
-            // Clamp 1-spp RT bounce fireflies before spatial/temporal blending so white speckles never leak into shadows.
+            // Clamp RT bounce fireflies before spatial/temporal blending so speckles never leak into shadows.
             const float tapMax = max(tap.r, max(tap.g, tap.b));
-            if (tapMax > 1.8f) { tap.rgb *= 1.8f / tapMax; }
+            if (tapMax > 1.35f) { tap.rgb *= 1.35f / tapMax; }
             s += k * tap; s2 += k * (tap * tap); w += k;
             rs += k * rh * rv; rw += k * rh;
         }
@@ -93,7 +93,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     }
     float curR;
     float4 curStd;
-    const float4 cur = meanAround(p, z, n < 6.0f ? 2 : 1, curR, curStd);
+    const float4 cur = meanAround(p, z, n < 10.0f ? 2 : 1, curR, curStd);
     // SVGF neighborhood variance clamping: eliminates RT GI & skylight ghosting when lights, clouds, or actors move.
     const float4 pad = max(curStd * 1.65f, float4(0.05f, 0.05f, 0.05f, 0.08f));
     if (have) {

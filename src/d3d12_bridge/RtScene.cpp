@@ -212,6 +212,7 @@ void RtScene::Evict()
     }
     for (Mesh& m : m_meshes) { if (m.vb) m.vb->Release(); if (m.ib) m.ib->Release(); }
     m_meshes.clear(); m_meshOf.clear(); m_skinRecOf.clear(); m_build.clear(); m_lastKeys.clear(); m_lastMesh.clear();
+    m_persistInst.clear();
     m_blasUsed = 0;
     m_alpha.Reset();
     m_cache.Reset();   // a new cell: the old cells' light means nothing here

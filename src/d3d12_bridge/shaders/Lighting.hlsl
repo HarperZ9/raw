@@ -109,25 +109,39 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float d = Depth.Load(ip);
     if ((flags.x & FLAG_SURFACE) == 0u) { return game; }
     if (d >= 1.0f) {
-        // The sky: physically grounded zenith-to-horizon Rayleigh depth + soft roll-off before compositing curved volumetric clouds.
+        // The sky: physically grounded Perez/Preetham atmosphere, dynamic sun-elevation horizon glow,
+        // limb-darkened solar corona attenuated by live cloud transmittance, and curved volumetric clouds.
         if (flags.w == 10u) { return float4(1.0f, 0.0f, 1.0f, game.a); }
         float3 baseSky = game.rgb;
+        const float3 sDir = normalize(worldAt(floor(at.xy), 1.0f));
         if ((flags.x & FLAG_MATCH) == 0u) {
             baseSky = baseSky / (1.0f + max(max(baseSky.r, max(baseSky.g, baseSky.b)) - 0.72f, 0.0f) * 0.55f);
-            const float3 sDir = normalize(worldAt(floor(at.xy), 1.0f));
             const float dayW = saturate(sunDir.z * 3.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+            const float sunsetW = saturate(1.0f - abs(sunDir.z - 0.14f) / 0.22f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
             if (dayW > 0.02f && sDir.z > -0.02f) {
                 const float turb = lerp(2.5f, 5.5f, saturate(clouds.x));
                 const float3 pSky = preethamSky(sDir, sunDir.xyz, turb);
                 const float skyLum = max(dot(baseSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.08f);
                 const float pLum = max(dot(pSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.08f);
-                // Blend physically derived Perez/Preetham sky chromaticity gently while preserving natural cloud/sky balance.
-                baseSky = lerp(baseSky, pSky * (skyLum / pLum), dayW * (1.0f - saturate(clouds.x * 0.75f)) * 0.22f);
+                baseSky = lerp(baseSky, pSky * (skyLum / pLum), dayW * (1.0f - saturate(clouds.x * 0.75f)) * 0.28f);
+            }
+            // Dynamic sun-elevation horizon scatter (warm amber/rose twilight band at dawn/dusk).
+            if (sunsetW > 0.01f && sDir.z > -0.05f) {
+                const float hBand = pow(1.0f - saturate(sDir.z), 3.8f);
+                const float sunAz = pow(saturate(dot(normalize(float3(sDir.xy, 0.0f)), normalize(float3(sunDir.xy, 0.001f)))), 2.5f);
+                const float3 warmBand = float3(0.85f, 0.42f, 0.20f) * (0.25f + 0.75f * sunAz) * hBand * sunsetW * (1.0f - saturate(clouds.x * 0.5f)) * 0.32f;
+                baseSky += warmBand;
             }
         }
-        if ((flags.x & FLAG_CLOUDS) == 0u) { return float4(baseSky, game.a); }
-        const float4 c = Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f);
-        return float4(baseSky * c.a + c.rgb, game.a);
+        const float4 c = (flags.x & FLAG_CLOUDS) != 0u ? Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f) : float4(0.0f, 0.0f, 0.0f, 1.0f);
+        float3 skyOut = baseSky * c.a + c.rgb;
+        if ((flags.x & FLAG_MATCH) == 0u && sunDir.w > 0.5f && sunDir.z > 0.0f) {
+            // Dynamic solar aureole attenuated by cloud transmittance c.a (silver-lined corona through thin clouds).
+            const float cosSun = saturate(dot(sDir, sunDir.xyz));
+            const float corona = pow(cosSun, 96.0f) * 0.42f + pow(cosSun, 14.0f) * 0.08f;
+            skyOut += sunColour.rgb * corona * (0.25f + 0.75f * c.a) * saturate(sunDir.z * 6.0f);
+        }
+        return float4(skyOut, game.a);
     }
     // View 9, a test control: the pass reaches only the top-left quarter, as a half-size viewport
     // would. The coverage check in the capture must fail on it.
@@ -326,7 +340,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // One occlusion, not two: the ray-traced sky/RTAO visibility already holds near occluders.
     const float rtOcc = isExterior ? lerp(1.0f, skyVis, cluster.w) : lerp(0.42f, 1.0f, skyVis);
     const float combinedOcc = min(aoTerm, rtOcc);
-    amb *= match ? combinedOcc.xxx : gtaoMultiBounce(combinedOcc, saturate(albedo));
+    // Directional hemisphere skylighting: upward-facing ledges catch sky light while overhangs stay grounded.
+    const float hemiSky = (!match && isExterior) ? lerp(0.72f, 1.12f, saturate(s.n.z * 0.5f + 0.5f)) : 1.0f;
+    amb *= match ? combinedOcc.xxx : gtaoMultiBounce(combinedOcc, saturate(albedo)) * hemiSky;
     // Where the sky is blocked, the blocking surfaces send their own light: the bounce the sky rays found.
     // Interiors too (FLAG_BOUNCE_IN, at RtBounceInterior): lamp-lit walls send their light on.
     const bool bounceHere = sunColour.w > 0.5f || (flags.x & FLAG_BOUNCE_IN) != 0u;

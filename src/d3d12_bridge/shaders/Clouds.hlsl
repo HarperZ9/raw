@@ -52,8 +52,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float beer = (exp(-od * sigma) + 0.5f * exp(-od * sigma * 0.25f) + 0.25f * exp(-od * sigma * 0.0625f)) / 1.75f;
             const float powder = 1.0f - exp(-od * sigma * 2.0f - dens * 0.5f);
             const float h = saturate((pa.z - clouds.y) / clouds.z);
-            // Delicate silver lining without blowing into white globs near the solar disk.
-            const float3 lum = min(sunC * (beer * lerp(1.0f, powder, 0.55f) * phase * 4.0f * PI * 0.36f) + skyC * lerp(0.28f, 0.68f, h), 1.35f.xxx);
+            // Dynamic sun-elevation cloud lighting: warm golden underside glow at dawn/dusk, crisp sky-blue base at noon.
+            const float lowSun = saturate(1.0f - sunDir.z * 3.2f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+            const float3 baseTint = lerp(skyC * lerp(0.28f, 0.68f, h), sunC * float3(1.0f, 0.62f, 0.36f) * lerp(0.42f, 0.18f, h) + skyC * 0.35f, lowSun * 0.55f);
+            const float3 lum = min(sunC * (beer * lerp(1.0f, powder, 0.55f) * phase * 4.0f * PI * 0.38f) + baseTint, 1.35f.xxx);
             const float ext = dens * sigma;
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length

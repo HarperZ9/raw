@@ -57,7 +57,8 @@ float cloudDensity(float3 pa, bool detail) {
         const float f2 = cNoise(r1 * 2.13f + 3.7f);
         const float f3 = cNoise(r1 * 4.61f + 9.2f);
         const float f4 = cNoise(r1 * 9.37f + 17.5f);
-        const float fineErode = b1 * 0.42f + f2 * 0.28f + f3 * 0.19f + f4 * 0.11f;
+        const float f5 = cNoise(r1 * 18.7f + 29.1f);
+        const float fineErode = b1 * 0.38f + f2 * 0.25f + f3 * 0.17f + f4 * 0.12f + f5 * 0.08f;
         const float erodeAmt = lerp(0.45f, 0.72f, h) * (1.0f - dens * 0.55f);
         dens = saturate((dens - fineErode * erodeAmt) / max(1.0f - fineErode * 0.42f, 0.28f));
     }

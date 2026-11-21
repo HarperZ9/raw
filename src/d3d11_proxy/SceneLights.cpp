@@ -228,6 +228,7 @@ void AddEngineLights(SceneLighting& f)
     float engineSunDir[3] = {};
     for (uint32_t k = 0; k < n; ++k) {
         if (e[k].flags & 4) {
+            f.inWater = e[k].pad != 0;
             const float sl = std::sqrt(e[k].pos[0] * e[k].pos[0] + e[k].pos[1] * e[k].pos[1] + e[k].pos[2] * e[k].pos[2]);
             if (sl > 0.5f && sl < 1.5f) {
                 engineSunDir[0] = e[k].pos[0] / sl;

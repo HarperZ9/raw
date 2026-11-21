@@ -100,6 +100,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Soft highlight shoulder on volumetric in-scatter + restrained moist Nordic exposure (prevents dry/overexposed fog wash).
     const float scMax = max(scatter.r, max(scatter.g, scatter.b));
     scatter = (scatter / (1.0f + scMax * 0.85f)) * 0.82f;
+    // Engine-native underwater medium (FLAG_UNDERWATER from raw_engine.dll camera_in_water): physical Beer-Lambert absorption.
+    if ((flags.x & FLAG_UNDERWATER) != 0u) {
+        const float3 uw = elderUnderwaterMedium(lit.rgb, dist, 0.0022f);
+        return float4(uw + scatter * float3(0.25f, 0.72f, 0.85f) * 1.4f, lit.a);
+    }
     // Unified sky- and weather-coupled exponential height fog & alpine mountain mist (replaces Skyrim's flat 2011 metric fog).
     if ((flags.x & FLAG_FOG_REPLACES) != 0u && sunColour.w > 0.5f) {
         const float weatherDens = 1.0f + weather.w * 2.2f + weather.z * 2.6f + saturate(clouds.x - 0.35f) * 1.1f;

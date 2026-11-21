@@ -372,7 +372,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     const bool wetGloss = max(rain.wet, rain.puddle) * (1.0f - rain.snow) > 0.2f;   // snow covers the water
     if (reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u) {
         const float4 sp = Spec.Load(ip);
-        if (((sp.y > 0.25f && sp.x > 0.05f) || wetGloss) && ((id.x + id.y + uint(frameIndex)) & 1u) == 0u) {
+        if ((sp.y > 0.25f && sp.x > 0.05f) || wetGloss) {
             const float2 px = float2(id.xy);
             const float3 p = worldAt(px, d);
             const float3 n = normalize(lerp(worldNormal(Normal.Load(ip)), float3(0.0f, 0.0f, 1.0f), rain.puddle));

@@ -34,20 +34,23 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float dt = (t1 - t0) / float(steps);
         const float j = rand(lo, proj.z);
         const float cosT = dot(dir, sunDir.xyz);
-        // Dual-lobe Henyey-Greenstein: crisp forward silver lining (g=0.74) + soft warm back-scatter (g=-0.28).
-        const float phase = min(lerp(hg(cosT, -0.28f), hg(cosT, 0.74f), 0.52f), 0.44f);
+        // Balanced dual-lobe Henyey-Greenstein: crisp silver lining without blowing into clipped white blobs.
+        const float phase = min(lerp(hg(cosT, -0.25f), hg(cosT, 0.65f), 0.48f), 0.24f);
         const float3 rawSunC = sunColour.rgb * (sunDir.w > 0.5f ? 1.0f : 0.0f);
         const float sLum = dot(rawSunC, float3(0.2126f, 0.7152f, 0.0722f));
         const float nightW = saturate((0.28f - sLum) * 4.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
         // Silver-blue lunar illumination on night clouds so clouds passing Masser & Secunda catch crisp moonlight rims.
         const float3 sunC = lerp(rawSunC, max(rawSunC, float3(0.24f, 0.34f, 0.54f)) * 1.65f, nightW * 0.78f);
-        const float3 skyC = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.0f);
+        const float3 rawSkyC = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.0f);
+        const float skyLum = max(dot(rawSkyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
+        // Clean atmospheric blue-silver cloud shadow ambient (eliminates muddy brown undersides).
+        const float3 skyC = lerp(rawSkyC, float3(0.62f, 0.76f, 0.96f) * skyLum, 0.72f);
         const float sigma = kCloudSigma;
         float T = 1.0f;
         float3 S = 0.0f;
-        // Exponential sun-march offsets capture both crisp local cauliflower self-shadowing and deep storm underbellies.
-        static const float kSunD[6] = { 180.0f, 440.0f, 920.0f, 1750.0f, 3200.0f, 5600.0f };
-        static const float kSunW[6] = { 180.0f, 260.0f, 480.0f,  830.0f, 1450.0f, 2400.0f };
+        // Fine-to-deep exponential sun-march offsets capture crisp photographic cumulus tufts and soft undersides.
+        static const float kSunD[6] = { 140.0f, 340.0f, 760.0f, 1500.0f, 2800.0f, 4800.0f };
+        static const float kSunW[6] = { 140.0f, 200.0f, 420.0f,  740.0f, 1300.0f, 2000.0f };
         [loop] for (uint i = 0u; i < steps && T > 0.01f; i++) {
             const float t = t0 + (float(i) + j) * dt;
             const float3 pa = o + dir * t;
@@ -55,16 +58,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (dens <= 0.0f) { continue; }
             float od = 0.0f;
             [unroll] for (uint k = 0u; k < 6u; k++) { od += cloudDensity(pa + sunDir.xyz * kSunD[k], false) * kSunW[k]; }
-            // Multi-octave scattering (Hillaire 2020) + deep Beer-Powder crease contrast.
-            const float beer = (exp(-od * sigma) + 0.52f * exp(-od * sigma * 0.25f) + 0.26f * exp(-od * sigma * 0.0625f)) / 1.78f;
-            const float powder = 1.0f - exp(-od * sigma * 2.2f - dens * 0.65f);
+            // Multi-octave scattering (Hillaire 2020) + balanced Beer-Powder relief.
+            const float beer = (exp(-od * sigma) + 0.48f * exp(-od * sigma * 0.25f) + 0.22f * exp(-od * sigma * 0.0625f)) / 1.70f;
+            const float powder = 1.0f - exp(-od * sigma * 1.8f - dens * 0.55f);
             const float h = saturate((pa.z - clouds.y) / clouds.z);
-            // Ambient occlusion inside cloud undersides gives dramatic blue-slate storm depth vs crisp lit ridges.
-            const float cloudAo = lerp(0.24f, 0.82f, h) * exp(-dens * 0.38f);
+            const float cloudAo = lerp(0.36f, 0.92f, h) * exp(-dens * 0.28f);
             const float lowSun = saturate(1.0f - sunDir.z * 3.0f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
-            // Keep cool zenith-blue cloud undersides even at sunset so clouds have dramatic gold-rim vs slate-belly contrast (no muddy peach wash).
-            const float3 coolBellies = skyC * float3(0.88f, 0.94f, 1.12f) * cloudAo;
-            const float3 baseTint = lerp(coolBellies, coolBellies * 0.72f + sunC * lerp(0.16f, 0.06f, h), lowSun * 0.45f);
+            const float3 baseTint = lerp(skyC * cloudAo, skyC * (cloudAo * 0.78f) + sunC * lerp(0.14f, 0.05f, h), lowSun * 0.40f);
             // Volumetric sheet-lightning inside heavy rainstorms (clouds.x > 0.78 && weather.w > 0.25).
             float3 stormFlash = 0.0f.xxx;
             if (clouds.x > 0.78f && weather.w > 0.25f) {
@@ -74,19 +74,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 if (pulse > 0.01f) {
                     const float2 cell = floor(pa.xy / 38000.0f);
                     const float cellHit = step(0.75f, cHash(float3(cell, tSlot)));
-                    stormFlash = float3(0.65f, 0.82f, 1.25f) * (pulse * cellHit * dens * 2.2f);
+                    stormFlash = float3(0.65f, 0.82f, 1.25f) * (pulse * cellHit * dens * 1.8f);
                 }
             }
-            const float3 lum = min(sunC * (beer * lerp(1.0f, powder, 0.58f) * phase * 4.0f * PI * 0.32f) + baseTint + stormFlash, 1.45f.xxx);
+            const float3 lum = min(sunC * (beer * lerp(1.0f, powder, 0.50f) * phase * 4.0f * PI * 0.22f) + baseTint + stormFlash, 0.84f.xxx);
             const float ext = dens * sigma;
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;
         }
-        // Soft filmic shoulder + seamless atmospheric horizon aerial perspective blend (no hard cloud cutoff near mountains).
-        const float3 softS = S / (1.0f + S * 0.52f);
+        // Soft filmic shoulder + seamless atmospheric horizon aerial perspective blend (never blows to white).
+        const float3 softS = S / (1.0f + S * 1.10f);
         const float fade = exp(-max(t0, 0.0f) / 185000.0f);
-        const float3 horizonHaze = skyC * 0.58f + sunC * pow(saturate(cosT), 6.0f) * 0.10f;
+        const float3 horizonHaze = skyC * 0.52f + sunC * pow(saturate(cosT), 8.0f) * 0.06f;
         const float3 aerialS = lerp(horizonHaze * (1.0f - T), softS, fade);
         res = float4(aerialS, lerp(1.0f, T, saturate(fade * 1.15f)));
     }

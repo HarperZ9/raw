@@ -829,8 +829,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float eyeFr = 0.04f + 0.96f * pow(1.0f - nvEye, 5.0f);
             lit += eyeEnv * eyeFr * 1.25f + eyeKeyCol * (glint1 + glint2);
         } else if (base == 5u && isExterior) {
-            const float back = pow(saturate(dot(-s.v, sunDir.xyz)), 3.0f);
-            lit += albedo * sunColour.rgb * float3(1.05f, 1.15f, 0.72f) * (0.18f + 0.82f * back) * (0.20f + 0.80f * sunShadow) * 0.42f;
+            // AAA Vegetation Lighting (pine needles, ferns, shrubs, birch leaves):
+            // 1) Dual-sided chlorophyll backlit subsurface translucency + soft wrap through thin leaf cards
+            const float back = pow(saturate(dot(-s.v, sunDir.xyz)), 3.2f);
+            const float wrapLeaf = saturate((-dot(s.n, sunDir.xyz) + 0.35f) / 1.35f);
+            const float cloudMask = 1.0f - saturate(clouds.x * 0.72f);
+            lit += albedo * sunColour.rgb * float3(1.12f, 1.24f, 0.58f) * (0.16f * wrapLeaf + 0.84f * back) * (0.22f + 0.78f * sunShadow) * (0.48f * cloudMask + 0.14f);
+            // 2) Waxy cuticle micro-specular sheen (catches crisp sky/sun rim separation, boosted during rain)
+            const float nvLeaf = saturate(dot(s.n, s.v));
+            const float leafFr = (0.035f + 0.965f * pow(1.0f - nvLeaf, 4.5f)) * (1.0f + wet.wet * 1.45f);
+            const float3 leafEnv = evalDynamicEnvCube(reflect(-s.v, s.n), lerp(0.36f, 0.14f, wet.wet));
+            lit += leafEnv * (leafFr * (0.25f + 0.75f * skyVis) * 0.42f);
         }
         // Grazing micro-Fresnel environmental wrap so vanilla surfaces gain physical material separation.
         const float nvWrap = saturate(dot(s.n, s.v));

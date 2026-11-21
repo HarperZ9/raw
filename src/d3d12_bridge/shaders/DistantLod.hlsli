@@ -77,11 +77,16 @@ float3 distantLit(int3 ip, float2 at, float d) {
     if (rt && (flags.x & FLAG_BOUNCE) != 0u && sunColour.w > 0.5f) { amb += RtBounce.Load(ip).rgb * proj.w; }
     float3 direct = sunColour.rgb * (nl * sh);
     if (nearGrass && sunColour.w > 0.5f) {
-        // Complex grass backlit subsurface transmission + soft tip sheen.
+        // Complex vegetation backlit chlorophyll subsurface transmission + waxy blade-tip sky sheen.
         const float backGrass = pow(saturate(dot(-toCam, sunDir.xyz)), 3.0f);
-        direct += sunColour.rgb * float3(1.05f, 1.08f, 0.65f) * backGrass * sh * 0.35f;
+        const float bladeFr = pow(1.0f - saturate(dot(n, toCam)), 3.5f);
+        direct += sunColour.rgb * float3(1.10f, 1.22f, 0.56f) * (backGrass * 0.42f + bladeFr * 0.12f) * sh;
         // Ground shadow darkening so tundra grass sits naturally inside terrain shadows instead of glowing neon yellow.
         direct *= lerp(0.72f, 1.0f, grassAo);
+    } else if (farTreeCard && sunColour.w > 0.5f) {
+        // Distant pine canopy translucency + cool sky-lit crown separation against snowy/rocky ridges.
+        const float backTree = pow(saturate(dot(-toCam, sunDir.xyz)), 3.5f);
+        direct += sunColour.rgb * float3(1.04f, 1.14f, 0.62f) * backTree * sh * 0.24f;
     }
     float3 outLod = knee3(knee3(albedo * (direct + max(amb, 0.0f))));
     // Physical Rayleigh distant blue mountain fog (height-stratified so alpine peaks rise out of cool cerulean valley mist).

@@ -32,7 +32,45 @@ int g_sel = 0;
 int g_hwTier = 4;      // 0=Low, 1=Medium, 2=High, 3=Ultra, 4=Overdrive
 int g_presetSlot = 1;  // User preset slot 1..5 (raw_presets/slot_N.ini)
 float g_menuSnow = -1.0f, g_menuRain = -1.0f;
-bool g_prevToggle = false, g_prevTab = false, g_prevSave = false, g_prevLoad = false, g_prevUp = false, g_prevDown = false, g_prevLeft = false, g_prevRight = false;
+bool g_prevToggle = false, g_prevTab = false, g_prevPgUp = false, g_prevPgDn = false, g_prevSave = false, g_prevLoad = false, g_prevUp = false, g_prevDown = false, g_prevLeft = false, g_prevRight = false;
+HWND g_hookHwnd = nullptr;
+WNDPROC g_origWndProc = nullptr;
+
+// Subclass Skyrim's game window so opening the RAW overlay freezes camera mouse movement and prevents
+// Tab / Arrows / S / L / PgUp / PgDn from leaking into Skyrim's own Inventory/Character/Wait menus.
+LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (g_menuOpen) {
+        switch (msg) {
+        case WM_INPUT:
+        case WM_MOUSEMOVE:
+        case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK:
+        case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_RBUTTONDBLCLK:
+        case WM_MBUTTONDOWN: case WM_MBUTTONUP:
+        case WM_MOUSEWHEEL:  case WM_MOUSEHWHEEL:
+            return 0;
+        case WM_KEYDOWN: case WM_KEYUP: case WM_SYSKEYDOWN: case WM_SYSKEYUP: case WM_CHAR:
+            if (wp == VK_TAB || wp == VK_UP || wp == VK_DOWN || wp == VK_LEFT || wp == VK_RIGHT ||
+                wp == VK_PRIOR || wp == VK_NEXT || wp == 'S' || wp == 's' || wp == 'L' || wp == 'l' ||
+                wp == VK_RETURN || wp == VK_END)
+                return 0;
+            break;
+        }
+    }
+    return g_origWndProc ? CallWindowProcW(g_origWndProc, hwnd, msg, wp, lp) : DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+void EnsureWndProcHook()
+{
+    if (g_hookHwnd) return;
+    HWND fg = GetForegroundWindow();
+    if (!fg) return;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(fg, &pid);
+    if (pid != GetCurrentProcessId()) return;
+    g_origWndProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(fg, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(OverlayWndProc)));
+    if (g_origWndProc) g_hookHwnd = fg;
+}
 LARGE_INTEGER g_qpcFreq{}, g_qpcLast{};
 float g_emaMs = 11.0f;
 uint32_t g_savedFrames = 0;
@@ -270,12 +308,20 @@ bool PollMenu(std::string& outText)
     const bool enter = (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0;
     const bool endKey = (GetAsyncKeyState(VK_END) & 0x8000) != 0;
     bool changed = false;
+    EnsureWndProcHook();
     if (KeyEdge(endKey || (shift && enter), g_prevToggle)) { g_menuOpen = !g_menuOpen; changed = true; }
     if (!g_menuOpen) return false;
     if (KeyEdge((GetAsyncKeyState('S') & 0x8000) != 0, g_prevSave)) { SaveMenuToIni(); changed = true; }
     if (KeyEdge((GetAsyncKeyState('L') & 0x8000) != 0, g_prevLoad)) { LoadPresetSlot(g_presetSlot); changed = true; }
-    if (KeyEdge((GetAsyncKeyState(VK_TAB) & 0x8000) != 0, g_prevTab)) {
-        g_tab = (g_tab + (shift ? 6 : 1)) % 7;
+    const bool nextTab = KeyEdge((GetAsyncKeyState(VK_TAB) & 0x8000) != 0, g_prevTab) && !shift;
+    const bool prevTab = KeyEdge((GetAsyncKeyState(VK_PRIOR) & 0x8000) != 0, g_prevPgUp) || (shift && (GetAsyncKeyState(VK_TAB) & 0x8000) != 0 && !nextTab && g_prevTab);
+    const bool nextTab2 = KeyEdge((GetAsyncKeyState(VK_NEXT) & 0x8000) != 0, g_prevPgDn);
+    if (nextTab || nextTab2) {
+        g_tab = (g_tab + 1) % 7;
+        g_sel = std::min(g_sel, TabRowCount(g_tab) - 1);
+        changed = true;
+    } else if (prevTab) {
+        g_tab = (g_tab + 6) % 7;
         g_sel = std::min(g_sel, TabRowCount(g_tab) - 1);
         changed = true;
     }

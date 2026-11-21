@@ -360,7 +360,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float ea = base != 2u && base != 5u ? SoftMap.Load(ip).r : 0.0f;
     const float charLight = (flags.x & FLAG_CHAR) != 0u && ea < 0.0f ? max(-ea - 1.0f / 1024.0f, 0.0f) : 0.0f;
     if (flags.w == 19u) { return float4(charLight.xxx, game.a); }   // view 19: the character light
-    float3 lit = knee3((albedo + envRefl * (match ? 1.0f : 0.45f)) * (diff + amb + charLight));
+    // Attenuate vanilla's flat white character fill light on skin in direct sunlight so shoulders/faces never blow out.
+    const float effCharLight = (!match && skin) ? charLight * lerp(0.85f, 0.12f, saturate(dot(diff, float3(0.33f, 0.33f, 0.34f)))) : charLight;
+    float3 lit = knee3((albedo + envRefl * (match ? 1.0f : 0.45f)) * (diff + amb + effCharLight));
+    if (!match && skin) {
+        // Gentle dermal highlight roll-off preserves natural skin tone under harsh direct midday sunlight.
+        lit = lit / (1.0f + max(max(lit.r, max(lit.g, lit.b)) - 0.78f, 0.0f) * 0.42f);
+    }
     if (flags.w == 16u) { return float4(albedo, game.a); }   // view 16: the G-buffer base colour the pass lights
     if (flags.w == 17u) { return float4(saturate(game.rgb / max(knee3(lit), 1.0e-3f) * 0.25f), game.a); }   // view 17: the game's frame over RAW's diffuse (0.25 = equal)
     // The game's lobe exists only in shaders with a shininess exponent (gloss > 0).

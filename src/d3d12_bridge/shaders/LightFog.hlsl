@@ -78,9 +78,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         scatter += shaftCol * (sigma * ph * sum * tune2.z * shaftBoost);
     }
     if (tune2.y > 0.0f) {
+        // Enhanced volumetric point-light mist halos around torches, campfires, braziers, and spells (stronger in rain/snow/fog).
+        const float weatherMistGain = 1.0f + saturate(weather.w * 0.85f + weather.z * 0.75f + clouds.x * 0.35f) * 0.65f;
         [loop] for (uint li = 0u; li < flags.y; li++) {
             const float wi = windowIntegral(w, lightPosR[li].xyz, lightPosR[li].w, tEnd);
-            if (wi > 0.0f) { scatter += lightColS[li].rgb * (sigma * wi * tune2.y / (4.0f * PI)); }
+            if (wi > 0.0f) { scatter += lightColS[li].rgb * (sigma * wi * tune2.y * weatherMistGain / (4.0f * PI)); }
         }
     }
     // Soft highlight shoulder on volumetric in-scatter so bright sunbeams stay sculpted and never clip.

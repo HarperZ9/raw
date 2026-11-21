@@ -436,25 +436,29 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
 
     const bool rt = !match && (flags.x & FLAG_RT) != 0u;
     float4 rv = rt ? RtVis.Load(ip) : 1.0f.xxxx;
-    // Depth-aware 3x3 bilateral filter on RT sun shadow (rv.x) and point-light RT soft shadows (rv.yzw):
-    // turns hard 2-spp sun edges and 1-spp point penumbrae into smooth natural soft shadows on roads, walls & hearths.
+    const uint3 rIdx = rt ? uint3(RtIdx.Load(ip).xyz * 255.0f + 0.5f) : uint3(0u, 0u, 0u);
+    // Light-ID-matched depth-aware 3x3 bilateral filter on RT sun shadow (rv.x) and point-light RT shadows (rv.yzw):
+    // prevents cross-light shadow blending when adjacent pixels rank point lights in different slot orders.
     if (rt) {
         float4 pvSum = rv * 2.0f;
-        float pvW = 2.0f;
+        float4 pvW = 2.0f.xxxx;
         const int2 dMaxS = int2(dims.xy) - 1;
         [unroll] for (int sy = -1; sy <= 1; sy++) {
             [unroll] for (int sx = -1; sx <= 1; sx++) {
                 if (sx == 0 && sy == 0) continue;
                 const int3 spS = int3(clamp(ip.xy + int2(sx, sy), int2(0, 0), dMaxS), 0);
                 if (abs(Depth.Load(spS) - d) < 0.0008f) {
-                    pvSum += RtVis.Load(spS);
-                    pvW += 1.0f;
+                    const float4 nRv = RtVis.Load(spS);
+                    const uint3 nIdx = uint3(RtIdx.Load(spS).xyz * 255.0f + 0.5f);
+                    pvSum.x += nRv.x; pvW.x += 1.0f;
+                    if (nIdx.x == rIdx.x) { pvSum.y += nRv.y; pvW.y += 1.0f; }
+                    if (nIdx.y == rIdx.y) { pvSum.z += nRv.z; pvW.z += 1.0f; }
+                    if (nIdx.z == rIdx.z) { pvSum.w += nRv.w; pvW.w += 1.0f; }
                 }
             }
         }
         rv = pvSum / pvW;
     }
-    const uint3 rIdx = rt ? uint3(RtIdx.Load(ip).xyz * 255.0f + 0.5f) : uint3(0u, 0u, 0u);
     // Every light past the three traced ones: the share of their light that reaches the pixel, from one ray a
     // pixel to a light picked by its share, filtered with the sky rays (RtShadow.hlsl, RtSkyFilter.hlsl).
     const float restVis = rt && (flags.x & FLAG_REST) != 0u ? RtBounce.Load(ip).a : 1.0f;
@@ -523,9 +527,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const int ch = int(lightColS[li].w);
             if (ch >= 0 && ch <= 3) { sh = m4[ch]; }   // interiors without sun shadows use channel 0 too
             float3 c = lightColS[li].rgb * att;
-            // Embers-class warm hearth/torch/candle spectral enrichment + gentle organic flame warmth.
+            // Embers-class warm hearth/torch/candle spectral enrichment + calm world-anchored organic breath (no candle strobing).
             if (!match && lightColS[li].r > lightColS[li].b * 1.30f) {
-                const float flk = 0.94f + 0.04f * sin(camPosW.w * 7.3f + float(li) * 2.17f) + 0.02f * cos(camPosW.w * 13.1f + float(li) * 4.31f);
+                const float lPhase = dot(lightPosR[li].xyz + camPosW.xyz, float3(0.031f, 0.047f, 0.023f));
+                const float flk = 0.975f + 0.025f * sin(camPosW.w * 2.4f + lPhase);
                 c *= float3(1.16f, 0.90f, 0.64f) * flk;
             }
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;

@@ -19,14 +19,14 @@ float cNoise(float3 x) {
                 u.z);
 }
 
-// Fast 2x2x2 inverted Worley cellular noise for RDR2/Horizon-style cauliflower cumulus billows.
+// Seamless 3x3x3 (-1..1) inverted Worley cellular noise: zero cell-boundary seams or straight cutoff lines.
 float cWorley(float3 p) {
     const float3 id = floor(p);
     const float3 f = frac(p);
-    float minD = 1.0f;
-    [unroll] for (int z = 0; z <= 1; z++) {
-        [unroll] for (int y = 0; y <= 1; y++) {
-            [unroll] for (int x = 0; x <= 1; x++) {
+    float minD = 4.0f;
+    [unroll] for (int z = -1; z <= 1; z++) {
+        [unroll] for (int y = -1; y <= 1; y++) {
+            [unroll] for (int x = -1; x <= 1; x++) {
                 const float3 cell = id + float3(x, y, z);
                 const float h0 = cHash(cell);
                 const float h1 = cHash(cell + float3(17.3f, 31.7f, 11.1f));

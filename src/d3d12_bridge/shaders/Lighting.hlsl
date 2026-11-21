@@ -128,15 +128,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float hUp = saturate(sDir.z);
                 float3 clearSky = hUp < 0.25f ? lerp(clearHoriz, clearMid, pow(hUp / 0.25f, 0.75f))
                                               : lerp(clearMid, clearZenith, pow((hUp - 0.25f) / 0.75f, 0.85f));
-                // Subtle physical Mie forward glow around the sun direction.
+                // Crisp, limb-darkened physical solar disc (0.55 deg angular diameter) + soft Mie aureole,
+                // occluded cleanly by passing volumetric clouds (c.a) and locked to stabilized sunDir.
                 const float cosTheta = saturate(dot(sDir, sunDir.xyz));
-                const float3 sunGlowCol = lerp(float3(1.0f, 0.96f, 0.88f), float3(1.0f, 0.62f, 0.30f), lowSun);
-                clearSky += sunGlowCol * (pow(cosTheta, 18.0f) * 0.22f + pow(cosTheta, 4.0f) * 0.05f) * (1.0f - cover * 0.80f);
+                const float sunDisc = smoothstep(0.99935f, 0.99972f, cosTheta);
+                const float sunCorona = pow(cosTheta, 160.0f) * 0.55f + pow(cosTheta, 18.0f) * 0.16f;
+                const float3 sunDiscCol = lerp(float3(1.0f, 0.97f, 0.90f), float3(1.0f, 0.68f, 0.34f), lowSun);
+                clearSky += sunDiscCol * (sunCorona * (1.0f - cover * 0.78f));
                 // Overcast / storm atmospheric slate transition.
                 const float3 stormSky = lerp(float3(0.38f, 0.44f, 0.52f), float3(0.22f, 0.28f, 0.36f), hUp);
                 const float3 pureSky = lerp(clearSky, stormSky, saturate(cover * 0.85f - 0.25f + weather.w * 0.35f));
-                const float3 sunDiscKeep = max(baseSky - 0.72f.xxx, 0.0f.xxx);
-                baseSky = lerp(baseSky, pureSky + sunDiscKeep, dayW * 0.96f);
+                const float3 solarCore = sunDiscCol * (sunDisc * 2.2f * (1.0f - cover * 0.65f));
+                baseSky = lerp(baseSky, pureSky + solarCore, dayW * 0.96f);
             }
         }
         const float4 c = (flags.x & FLAG_CLOUDS) != 0u ? Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f) : float4(0.0f, 0.0f, 0.0f, 1.0f);

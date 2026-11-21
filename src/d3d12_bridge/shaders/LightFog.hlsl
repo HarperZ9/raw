@@ -66,8 +66,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float t = tPrev + jit * dt;
             tPrev = tNext;
             const float4 c = screenOf(w * t);
-            if ((flags.x & FLAG_CLOUDS) != 0u && (i & 3u) == 0u) { cs = cloudShadowN(w * t + camPosW.xyz, 1u); }
-            const float hDens = 0.35f + 0.65f * exp(-max(w.z * t + 120.0f, 0.0f) * 0.0009f);
+            const float3 wpFog = w * t + camPosW.xyz;
+            if ((flags.x & FLAG_CLOUDS) != 0u && (i & 3u) == 0u) { cs = cloudShadowN(wpFog, 1u); }
+            // 3D world-space wind-drifting volumetric valley mist density (living rolling fog banks).
+            const float3 fogFlow = wpFog * 0.00055f + float3(cloudWind.xy * camPosW.w * 0.00018f, 0.0f);
+            const float mist3d = 0.62f + 0.58f * cNoise(fogFlow);
+            const float hDens = (0.35f + 0.65f * exp(-max(w.z * t + 120.0f, 0.0f) * 0.0009f)) * mist3d;
             sum += cascadeShadow(w * t, c.z, false) * cs * hDens * exp(-sigma * t) * dt;
         }
         const float3 shaftCol = lerp(sunColour.rgb, max(sunColour.rgb, float3(0.22f, 0.31f, 0.48f)), nightW * 0.72f);

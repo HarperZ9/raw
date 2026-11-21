@@ -413,6 +413,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
 
     const uint4 bits = clusters[clusterOf(px, z)];
     uint softLeft = 4u;
+    float fireMelt = 0.0f;
     [loop] for (uint w = 0u; w < 4u; w++) {
         uint b = bits[w];
         [loop] while (b != 0u) {
@@ -423,6 +424,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float dist = length(toL);
             const float att = 1.0f - saturate(dist / lightPosR[li].w) * saturate(dist / lightPosR[li].w);
             if (att <= 0.0f) { continue; }
+            // Native campfire/torch heat snow melt: warm firelights melt surrounding snow into glistening damp ground.
+            if (!match && wet.snow > 0.01f && lightColS[li].r > lightColS[li].b * 1.25f) {
+                fireMelt = max(fireMelt, saturate(att * 1.65f));
+            }
             const float3 l = toL / max(dist, 1.0e-4f);
             float sh = 1.0f;
             const int ch = int(lightColS[li].w);
@@ -436,6 +441,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             }
             addLight(s, l, c * sh, c, diff, spec);
         }
+    }
+    if (!match && fireMelt > 0.01f) {
+        // Darken & gloss melted snow around campfires, braziers, and torches.
+        albedo *= lerp(1.0f.xxx, float3(0.68f, 0.70f, 0.72f), fireMelt * wet.snow * 0.65f);
+        wet.wet = max(wet.wet, fireMelt * wet.snow * 0.75f);
+        wet.snow *= (1.0f - fireMelt * 0.85f);
     }
 
     float3 amb = float3(dot(ambient[0].xyz, s.n) + ambient[0].w, dot(ambient[1].xyz, s.n) + ambient[1].w,

@@ -166,14 +166,41 @@ float4 main(In i) : SV_Target {
     const float3 bR = Bloom.Sample(S0, suv + float2(bx, 0.0f)).rgb;
     const float3 anamorphic = max((bL + bR) * 0.5f - 1.15f.xxx, 0.0f.xxx) * float3(0.55f, 0.78f, 1.05f) * 0.06f;
     mapped = saturate(mapped + cleanBloom + halation + anamorphic);
-    if (RB.w > 1.5f) { return float4(lum.x * 0.25f, lum.y * 0.25f, exposure * 0.25f, 1.0f); }   // view 2: adapted average, the game's target, exposure (over 4, no gamma)
-    if (RB.w > 0.5f) { return float4(exposure.xxx * 0.25f, 1.0f); }   // view 1: the exposure (4 = white, no gamma)
+    if (RB.w > 1.5f && RB.w < 2.5f) { return float4(lum.x * 0.25f, lum.y * 0.25f, exposure * 0.25f, 1.0f); }   // view 2: adapted average, the game's target, exposure (over 4, no gamma)
+    if (RB.w > 0.5f && RB.w < 1.5f) { return float4(exposure.xxx * 0.25f, 1.0f); }   // view 1: the exposure (4 = white, no gamma)
     // The game's grade, lane for lane as the game computes it (alpha included; its anti-aliasing reads it).
     const float g = dot(mapped, W);
     float4 c = float4(mapped, 1.0f);
     c = P[3].x * (c - g) + g;
     c = P[4].w * (g * P[4] - c) + c;
     c = P[3].z * (P[3].w * c - pivot) + pivot;
+    // Modular 3D cinematic color-grade LUT profiles (ToneX2 = 0 Neutral, 1 Nordic Film, 2 Kodak 2383, 3 Cinema Contrast).
+    if (RB.x > 2.5f && RX.x > 0.5f) {
+        const float lumG = dot(c.rgb, W);
+        if (RX.x < 1.5f) {
+            // 1: Nordic Film (cool slate shadows, crisp natural skin/midtones, warm sunlit highlights).
+            const float3 shTint = float3(0.94f, 0.98f, 1.06f);
+            const float3 hiTint = float3(1.04f, 1.01f, 0.95f);
+            c.rgb = saturate(c.rgb * lerp(shTint, hiTint, smoothstep(0.15f, 0.78f, lumG)));
+        } else if (RX.x < 2.5f) {
+            // 2: Kodak 2383 Print Film (deep teal-blue shadows, rich warm golden highlights, S-curve micro-contrast).
+            const float3 kTint = lerp(float3(0.90f, 0.99f, 1.08f), float3(1.07f, 1.01f, 0.91f), smoothstep(0.12f, 0.80f, lumG));
+            c.rgb = saturate(c.rgb * kTint);
+        } else {
+            // 3: Cinema Contrast (restrained saturation, crisp micro-contrast).
+            c.rgb = saturate(lerp(lumG.xxx, c.rgb, 0.88f) * 1.03f - 0.015f);
+        }
+    }
+    // Optional PQ ST.2084 HDR10 transfer output (TonemapView >= 3, ported from superframe present_hdr.cpp).
+    if (RB.w >= 2.5f) {
+        const float3 lin2020 = saturate(float3(
+            0.6274f * c.r + 0.3293f * c.g + 0.0433f * c.b,
+            0.0691f * c.r + 0.9195f * c.g + 0.0114f * c.b,
+            0.0164f * c.r + 0.0880f * c.g + 0.8956f * c.b));
+        const float3 ym = pow(lin2020 * 0.04f, 0.1593017578f);
+        c.rgb = pow((0.8359375f + 18.8515625f * ym) / (1.0f + 18.6875f * ym), 78.84375f);
+        return c;
+    }
     c.rgb = pow(saturate(c.rgb), F[42].x);
     // Elder-inspired filmic finish: subtle optical vignette + terminal triangular dithering (eliminates 8-bit sky/fog banding).
     const float2 vc = i.uv - 0.5f;

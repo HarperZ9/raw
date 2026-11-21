@@ -116,6 +116,22 @@ pre{margin:0;background:#0a0d12;border:1px solid var(--line);border-radius:4px;p
         </label>
       </div>
       <div class="row">
+        <label>Color Grade LUT (ToneX2)
+          <select id="lut-mode" onchange="iniSet('ToneX2', this.value)">
+            <option value="0">0 - Natural Neutral</option>
+            <option value="1">1 - Nordic Film</option>
+            <option value="2">2 - Kodak 2383 Print</option>
+            <option value="3">3 - Cinema Contrast</option>
+          </select>
+        </label>
+        <label>Display Output (TonemapView)
+          <select id="hdr-mode" onchange="iniSet('TonemapView', this.value)">
+            <option value="0" selected>0 - SDR sRGB / Rec.709</option>
+            <option value="3">3 - HDR10 PQ ST.2084 / Rec.2020</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
         <input id="preset-name" type="text" placeholder="preset-name (e.g. nordic-dawn)" style="flex:1">
         <button onclick="savePreset()">Save Preset</button>
         <button onclick="loadPreset()">Load Preset</button>

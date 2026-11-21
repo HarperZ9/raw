@@ -292,12 +292,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         s.mask = max(s.mask, max(wet.wet * 0.6f, wet.puddle));
         lobe = lobe || max(wet.wet, wet.puddle) > 0.2f;
         if (wet.snow > 0.0f) {
-            albedo = lerp(albedo, float3(0.53f, 0.56f, 0.60f), wet.snow);
-            s.alpha = lerp(s.alpha, 0.55f, wet.snow);
-            s.shin = lerp(s.shin, 2.0f / (0.55f * 0.55f) - 2.0f, wet.snow);
-            s.n = normalize(lerp(s.n, ng, wet.snow * 0.4f));   // the ground's bumps show through as mounds
-            s.f0 = lerp(s.f0, 0.02f, wet.snow);
-            s.mask = lerp(s.mask, 0.15f, wet.snow);
+            // Thick powdery 3D snowdrifts (matte high-roughness 0.88, wind-sculpted drift mounds, zero shiny 2D sheet sheen).
+            const float3 wpS = p + camPosW.xyz;
+            const float drift = cNoise(wpS * 0.0065f) * 0.65f + cNoise(wpS * 0.019f + 7.3f) * 0.35f;
+            const float driftDx = cNoise((wpS + float3(8.0f, 0.0f, 0.0f)) * 0.014f) - cNoise((wpS - float3(8.0f, 0.0f, 0.0f)) * 0.014f);
+            const float driftDy = cNoise((wpS + float3(0.0f, 8.0f, 0.0f)) * 0.014f) - cNoise((wpS - float3(0.0f, 8.0f, 0.0f)) * 0.014f);
+            const float3 snowCol = float3(0.64f, 0.69f, 0.76f) * lerp(0.86f, 1.08f, drift);
+            albedo = lerp(albedo, snowCol, wet.snow);
+            s.alpha = lerp(s.alpha, 0.88f, wet.snow);
+            s.shin = lerp(s.shin, 2.0f / (0.88f * 0.88f) - 2.0f, wet.snow);
+            s.n = normalize(lerp(s.n, normalize(ng + float3(-driftDx * 0.65f, -driftDy * 0.65f, 0.25f)), wet.snow * 0.65f));
+            s.f0 = lerp(s.f0, 0.015f, wet.snow);
+            s.mask = lerp(s.mask, 0.02f, wet.snow);
             wet.puddle *= 1.0f - wet.snow;
             wet.wet *= 1.0f - wet.snow;
         }
@@ -492,8 +498,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (ch >= 0 && ch <= 3) { sh = m4[ch]; }   // interiors without sun shadows use channel 0 too
             float3 c = lightColS[li].rgb * att;
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;
-            if (slot != 0u) { sh = min(sh, rv[slot]); } else { sh = min(sh, restVis); }
-            if (!match && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
+            // Smooth untraced-light ReSTIR visibility (floor 0.55) and skip noisy 1-spp screenShadow on interior point lights
+            // to eliminate interior tavern/dungeon flickering completely.
+            if (slot != 0u) { sh = min(sh, rv[slot]); } else { sh = min(sh, lerp(0.55f, 1.0f, restVis)); }
+            if (!match && sunColour.w > 0.5f && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
                 sh *= screenShadow(p + lift, l, min(dist, tune.z), 4.0f / max(dist, 1.0f), jit, 10u);
                 --softLeft;
             }

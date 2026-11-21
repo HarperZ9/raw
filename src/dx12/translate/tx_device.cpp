@@ -112,6 +112,7 @@ HRESULT Device::Init(const CreateParams& p)
     memset(zeroCb.cpu, 0, zeroCb.size);
 
     InitDefaults();
+    InitPsoCache();
 
     OpenRecording(init_);
     imm = new Context(this, false);
@@ -142,6 +143,8 @@ Device::~Device()
     }
     initChunks_.ReturnAll();
     init_ = Recording{};
+    SavePsoCache();
+    psoLib_.Reset();
     psos_.clear(); csPsos_.clear(); mipPsos_.clear(); rootSigs_.clear();
     for (auto& h : qh) { h.readback.Reset(); h.heap.Reset(); }
     cpuSrv.Shutdown(); cpuRtv.Shutdown(); cpuDsv.Shutdown(); cpuSamp.Shutdown();

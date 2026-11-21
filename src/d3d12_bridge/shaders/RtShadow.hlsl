@@ -173,11 +173,11 @@ float3 skyAt(float3 rd) {
     if (s.w > 0.0f) {
         float2 xy = clamp(s.xy, 0.0f.xx, dims.xy - 1.0f);
         [unroll] for (int k = 0; k < 5; ++k) {
-            if (Depth.Load(int3(xy, 0)) >= 1.0f) { return min(GameColour.Load(int3(xy, 0)).rgb, 16.0f.xxx); }
+            if (Depth.Load(int3(xy, 0)) >= 1.0f) { return min(GameColour.Load(int3(xy, 0)).rgb, 4.0f.xxx); }
             xy.y = floor(xy.y * 0.5f);
         }
     }
-    return max(ambientAt(rd), 0.0f.xxx) * 1.5f;
+    return evalDynamicEnvCube(rd, 0.12f);
 }
 
 

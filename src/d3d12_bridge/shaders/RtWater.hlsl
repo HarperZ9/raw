@@ -127,11 +127,13 @@ void water(uint3 id : SV_DispatchThreadID) {
             if (refr) {
                 const float3 pb = worldAt(px, dBed);
                 const float depthV = max(p.z - pb.z, 0.0f);
-                const float4 s2 = screenOf(pb + float3(n.x, n.y, 0.0f) * (depthV * 0.6f));
-                int2 q = int2(clamp(s2.xy, 0.0f.xx, dims.xy - 1.0f));
-                // A bent look-up that lands on something above the water keeps the straight one.
+                const float refrShift = min(depthV, 48.0f) * 0.16f;
+                const float4 s2 = screenOf(pb + float3(n.x, n.y, 0.0f) * refrShift);
+                const bool inBounds = s2.w > 0.0f && all(s2.xy >= 2.0f.xx) && all(s2.xy <= dims.xy - 3.0f);
+                int2 q = inBounds ? int2(s2.xy) : int2(id.xy);
+                // A bent look-up that lands off-screen or on something above the water keeps the straight one (prevents vertical edge stretching).
                 const float4 Lq = Layer.Load(int3(q, 0));
-                if (s2.w <= 0.0f || Depth.Load(int3(q, 0)) <= Lq.x || Lq.z < 0.0f) { q = int2(id.xy); }
+                if (!inBounds || Depth.Load(int3(q, 0)) <= Lq.x || Lq.z < 0.0f) { q = int2(id.xy); }
                 const float3 bed = PreWater[q].rgb;
                 const float path = length(worldAt(float2(q), Depth.Load(int3(q, 0))) - p);
                 const float3 T = exp(-waterA.z * float3(2.2f, 1.0f, 0.7f) * path);

@@ -76,7 +76,13 @@ HRESULT SwapChain::Init(const DXGI_SWAP_CHAIN_DESC& desc)
     desc_ = desc;
     DXGI_SWAP_CHAIN_DESC1 d{};
     d.Width = desc.BufferDesc.Width; d.Height = desc.BufferDesc.Height;
-    d.Format = StripSrgb(desc.BufferDesc.Format);   // flip-model buffers cannot be sRGB; the stable texture is
+    const bool wantHdr = GetPrivateProfileIntA("Lighting", "HdrOutput", 0, "d3d11_proxy.ini") != 0;
+    if (wantHdr) {
+        desc_.BufferDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+        d.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+    } else {
+        d.Format = StripSrgb(desc.BufferDesc.Format);   // flip-model buffers cannot be sRGB; the stable texture is
+    }
     d.SampleDesc.Count = 1;
     d.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     // Three buffers at least: with two, a sync-0 present waits for the queued buffer to leave the screen,
@@ -96,12 +102,22 @@ HRESULT SwapChain::Init(const DXGI_SWAP_CHAIN_DESC& desc)
     if (FAILED(hr)) return hr;
     dev_->factory->MakeWindowAssociation(desc.OutputWindow, DXGI_MWA_NO_ALT_ENTER);
     if (FAILED(hr = sc1.As(&sc_))) return hr;
+    bool hdrActive = false;
+    if (wantHdr) {
+        UINT csSupport = 0;
+        if (SUCCEEDED(sc_->CheckColorSpaceSupport(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020, &csSupport)) &&
+            (csSupport & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT) &&
+            SUCCEEDED(sc_->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020))) {
+            hdrActive = true;
+        }
+    }
     sc_->GetDesc1(&d);
     desc_.BufferDesc.Width = d.Width;
     desc_.BufferDesc.Height = d.Height;
     waitable_ = sc_->GetFrameLatencyWaitableObject();
     ApplyLatency();
-    Log("swap chain %ux%u, %u buffers, tearing %s", d.Width, d.Height, d.BufferCount, tearing_ ? "on" : "unavailable");
+    Log("swap chain %ux%u, %u buffers, tearing %s, hdr10 %s", d.Width, d.Height, d.BufferCount,
+        tearing_ ? "on" : "unavailable", hdrActive ? "PQ Rec.2020 (10-bit)" : "off (SDR)");
     return AcquireBuffers();
 }
 

@@ -117,6 +117,31 @@ void WeatherInit(const Image& img) {
 }
 
 void WeatherOnPresent() {
+    // DirectInput8-proof camera freeze: zero Skyrim's native fMouseHeadingSensitivity:Controls while RAW menu is open.
+    if (g_img) {
+        using IsMenuOpenFn = int(*)();
+        static IsMenuOpenFn s_isMenu = nullptr;
+        static bool s_probed = false, s_locked = false;
+        static float s_savedSens = 0.0125f;
+        if (!s_probed) {
+            s_probed = true;
+            if (HMODULE proxy = GetModuleHandleA("d3d11.dll"))
+                s_isMenu = reinterpret_cast<IsMenuOpenFn>(GetProcAddress(proxy, "PG_IsMenuOpen"));
+        }
+        const uint32_t sensRva = Addr("fMouseHeadingSensitivity:Controls");
+        if (s_isMenu && sensRva) {
+            auto* pf = reinterpret_cast<float*>(const_cast<uint8_t*>(g_img->base) + sensRva + 8);
+            const bool open = s_isMenu() != 0;
+            if (open && !s_locked) {
+                s_savedSens = *pf;
+                *pf = 0.0f;
+                s_locked = true;
+            } else if (!open && s_locked) {
+                *pf = s_savedSens > 0.0001f ? s_savedSens : 0.0125f;
+                s_locked = false;
+            }
+        }
+    }
     if (!g_getSky) return;
     State s = g_state;
     s.ok = ReadSky(&s);

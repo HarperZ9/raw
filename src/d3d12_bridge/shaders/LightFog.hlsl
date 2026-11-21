@@ -10,6 +10,7 @@
 #define ATLAS_SLOT t2
 #include "LightingCommon.hlsli"
 #include "CloudCommon.hlsli"
+#include "ElderOptics.hlsli"
 
 Texture2D<float4> Lit   : register(t0);
 Texture2D<float>  Depth : register(t1);
@@ -33,11 +34,18 @@ float windowIntegral(float3 w, float3 c, float r, float tEnd) {
 
 float4 fs(float4 at : SV_Position) : SV_Target0 {
     const int3 ip = int3(at.xy, 0);
-    const float4 lit = Lit.Load(ip);
+    float4 lit = Lit.Load(ip);
     if ((flags.x & FLAG_FOG) == 0u || (flags.x & FLAG_MATCH) != 0u) { return lit; }
     const float d = Depth.Load(ip);
-    if (d >= 1.0f) { return lit; }   // the sky keeps the game's own atmosphere
     const float2 px = floor(at.xy);
+    const float focusD = Depth.Load(int3(int2(dims.xy * 0.5f), 0));
+    const float focusZ = focusD < 1.0f ? viewZOf(focusD) : 10000.0f;
+    const float curZ = d < 1.0f ? viewZOf(d) : 100000.0f;
+    // ElderDepthOfField: physical Golden-Angle HDR bokeh when focusing on close subjects (< 520 units, e.g., NPC dialogue).
+    if (focusZ < 520.0f) {
+        lit.rgb = elderBokehDoF(Lit, Depth, px, dims.xy, dims.zw, curZ, focusZ);
+    }
+    if (d >= 1.0f) { return lit; }   // the sky keeps the game's own atmosphere
     const float3 p = worldAt(px, min(d, 0.999999f));
     const float dist = length(p);
     const float3 w = p / max(dist, 1.0e-4f);

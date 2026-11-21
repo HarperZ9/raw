@@ -94,8 +94,8 @@ void main(uint3 id : SV_DispatchThreadID) {
     float curR;
     float4 curStd;
     const float4 cur = meanAround(p, z, n < 10.0f ? 2 : 1, curR, curStd);
-    // Tighter SVGF neighborhood variance clamping: responsive dynamic cloud shadows, torches, and moving actors with zero ghosting.
-    const float4 pad = max(curStd * 1.38f, float4(0.035f, 0.035f, 0.035f, 0.06f));
+    // Stable SVGF neighborhood variance clamping (2.2 sigma): eliminates interior tavern/dungeon GI & RTAO flicker while preventing ghosting.
+    const float4 pad = max(curStd * 2.20f, float4(0.08f, 0.08f, 0.08f, 0.12f));
     if (have) {
         past = clamp(past, saturate(cur.a - pad.a), saturate(cur.a + pad.a));
         pastB = clamp(pastB, max(cur.rgb - pad.rgb, 0.0f.xxx), cur.rgb + pad.rgb);

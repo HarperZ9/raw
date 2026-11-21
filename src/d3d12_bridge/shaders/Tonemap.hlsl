@@ -98,11 +98,11 @@ float3 fxaaAndCas(float2 suv) {
 float4 main(In i) : SV_Target {
     const float2 suv = min(max(i.uv * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
     float3 hdr = fxaaAndCas(suv);
-    // Logarithmic highlight roll-off on extreme HDR peaks (>1.35): tames Skyrim's post-opaque sun-glare billboard
-    // into a crisp natural solar disk while leaving all scene midtones (<1.35) untouched.
+    // Logarithmic highlight roll-off on extreme HDR peaks (>0.98): recovers textured whitewater detail on waterfalls
+    // and tames post-opaque glare while leaving all scene midtones (<0.98) untouched.
     const float hdrPeak = max(hdr.r, max(hdr.g, hdr.b));
-    if (hdrPeak > 1.35f) {
-        const float comp = 1.35f + log2(1.0f + (hdrPeak - 1.35f) * 0.55f) * 0.42f;
+    if (hdrPeak > 0.98f) {
+        const float comp = 0.98f + log2(1.0f + (hdrPeak - 0.98f) * 0.48f) * 0.30f;
         hdr *= comp / hdrPeak;
     }
     const float3 bloom = P[0].x > 0.5f ? Bloom.Sample(S0, suv).rgb : Bloom.Sample(S0, i.uv).rgb;

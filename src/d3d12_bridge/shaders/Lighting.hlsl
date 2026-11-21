@@ -634,9 +634,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (!match) {
         const float nv = saturate(dot(nSmooth, s.v));
         const float fr = s.f0 + (1.0f - s.f0) * pow(1.0f - nv, 5.0f);
+        // Frostbite (Lagarde 2014) specular occlusion: prevents fake sky/cubemap gloss inside deep occluded rock/timber crevices.
+        const float specOcc = saturate(pow(nv + combinedOcc, exp2(-16.0f * s.alpha - 1.0f)) - 1.0f + combinedOcc);
         const float3 rDir = reflect(-s.v, nSmooth);
         const float3 dynEnv = evalDynamicEnvCube(rDir, max(s.alpha, base == 2u ? 0.28f : 0.0f));
-        const float reflMask = max(saturate(s.mask * resScale.w), max(wet.puddle, 0.5f * wet.wet));
+        const float reflMask = max(saturate(s.mask * resScale.w), max(wet.puddle, 0.5f * wet.wet)) * specOcc;
         if (rt && (flags.x & FLAG_REFLECT) != 0u && lobe) {
             // Depth-aware 3x3 bilateral filter on full-res RtRefl: eliminates checkerboard/rectangular blocks on armor, metal & wet stone.
             const int2 baseRefl = clamp(int2(px + rings * 40.0f), int2(0, 0), int2(dims.xy) - 1);

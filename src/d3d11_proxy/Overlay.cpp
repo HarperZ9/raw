@@ -24,12 +24,41 @@ ID3D11Texture2D* g_tex = nullptr;
 UINT g_w = 0, g_h = 0;
 DXGI_FORMAT g_fmt = DXGI_FORMAT_UNKNOWN;
 
-// 6-tab, 60-control interactive in-game RAW DX12 Control Panel.
+// 6-tab, 63-control interactive in-game RAW DX12 Control Panel + live FPS readout & S-key INI save.
 bool g_menuOpen = false;
 int g_tab = 0;
 int g_sel = 0;
 float g_menuSnow = -1.0f, g_menuRain = -1.0f;
-bool g_prevToggle = false, g_prevTab = false, g_prevUp = false, g_prevDown = false, g_prevLeft = false, g_prevRight = false;
+bool g_prevToggle = false, g_prevTab = false, g_prevSave = false, g_prevUp = false, g_prevDown = false, g_prevLeft = false, g_prevRight = false;
+LARGE_INTEGER g_qpcFreq{}, g_qpcLast{};
+float g_emaMs = 11.0f;
+uint32_t g_savedFrames = 0;
+
+void SaveMenuToIni()
+{
+    char exe[MAX_PATH]{};
+    GetModuleFileNameA(nullptr, exe, MAX_PATH);
+    std::string ini(exe);
+    const size_t sl = ini.rfind('\\');
+    if (sl == std::string::npos) return;
+    ini = ini.substr(0, sl + 1) + "d3d11_proxy.ini";
+    const auto& l = hook::Cfg().light;
+    const auto tm = Tonemap_Get();
+    auto wF = [&](const char* k, float v) { char b[32]; std::snprintf(b, sizeof b, "%.4g", v); WritePrivateProfileStringA("Lighting", k, b, ini.c_str()); };
+    auto wI = [&](const char* k, int v) { char b[32]; std::snprintf(b, sizeof b, "%d", v); WritePrivateProfileStringA("Lighting", k, b, ini.c_str()); };
+    wI("Season", l.season); wI("View", l.view);
+    wI("RtShadows", l.rtShadows ? 1 : 0); wI("RtSky", l.rtSky ? 1 : 0); wI("RtReflect", l.rtReflect ? 1 : 0);
+    wI("RtOmm", l.rtOmm ? 1 : 0); wI("RtFar", l.rtFar ? 1 : 0); wI("RtSkin", l.rtSkin ? 1 : 0); wI("RtRest", l.rtRest ? 1 : 0);
+    wF("RtBounce", l.rtBounce); wF("RtBounceInterior", l.rtBounceInterior); wF("RtSkyStrength", l.rtSkyStrength); wF("RtSkyLength", l.rtSkyLength);
+    wI("Clouds", l.clouds ? 1 : 0); wF("CloudCover", l.cloudCover); wF("CloudDensity", l.cloudDensity); wF("CloudShadow", l.cloudShadow);
+    wI("VolumetricFog", l.volumetricFog ? 1 : 0); wI("FogReplacesGame", l.fogReplacesGame ? 1 : 0); wF("FogSunScale", l.fogSunScale);
+    wI("Water", l.water ? 1 : 0); wF("WaterReflect", l.waterReflect); wF("WaterCaustics", l.waterCaustics); wF("WaterRefract", l.waterRefract);
+    wF("Sss", l.sss); wF("AoStrength", l.aoStrength);
+    wI("Tonemap", tm.enabled ? 1 : 0); wF("ExposureBias", tm.bias); wF("ExposureKey", tm.key);
+    wF("ToneX1", tm.x[1]); wF("ToneX2", tm.x[2]); wF("ToneX3", tm.x[3]); wF("ToneX4", tm.x[4]); wF("ToneX5", tm.x[5]);
+    wI("ToneView", tm.view);
+    g_savedFrames = 180;
+}
 
 bool KeyEdge(bool now, bool& prev) { const bool f = now && !prev; prev = now; return f; }
 
@@ -48,7 +77,10 @@ std::string BuildMenuText()
     const auto& l = hook::Cfg().light;
     const auto tm = Tonemap_Get();
     static const char* kTabs[6] = {"1:RT & GI", "2:Sky/Cloud/Fog", "3:Weather/Season", "4:Water", "5:Skin/Shadow/AO", "6:Tonemap/Debug"};
-    std::string out = "=== RAW DX12 STUDIO [End/Shift+Enter:Close | Tab:Page | Up/Dn:Sel | L/R:Tune | Shift+L/R:Fine] ===\n";
+    char hdr[192];
+    std::snprintf(hdr, sizeof hdr, "=== RAW DX12 STUDIO | %.1f FPS (%.1f ms) | [End:Close | Tab:Page | Arrows:Tune | S:Save INI]%s ===\n",
+                  g_emaMs > 0.1f ? 1000.0f / g_emaMs : 0.0f, g_emaMs, g_savedFrames ? " [SAVED!]" : "");
+    std::string out = hdr;
     for (int i = 0; i < 6; ++i) {
         out += (i == g_tab ? "[" : " ");
         out += kTabs[i];
@@ -140,12 +172,21 @@ std::string BuildMenuText()
 
 bool PollMenu(std::string& outText)
 {
+    if (!g_qpcFreq.QuadPart) { QueryPerformanceFrequency(&g_qpcFreq); QueryPerformanceCounter(&g_qpcLast); }
+    else {
+        LARGE_INTEGER now{}; QueryPerformanceCounter(&now);
+        const float ms = float(double(now.QuadPart - g_qpcLast.QuadPart) * 1000.0 / double(g_qpcFreq.QuadPart));
+        g_qpcLast = now;
+        if (ms > 0.5f && ms < 250.0f) g_emaMs = g_emaMs * 0.90f + ms * 0.10f;
+    }
+    if (g_savedFrames > 0) --g_savedFrames;
     const bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
     const bool enter = (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0;
     const bool endKey = (GetAsyncKeyState(VK_END) & 0x8000) != 0;
     bool changed = false;
     if (KeyEdge(endKey || (shift && enter), g_prevToggle)) { g_menuOpen = !g_menuOpen; changed = true; }
     if (!g_menuOpen) return false;
+    if (KeyEdge((GetAsyncKeyState('S') & 0x8000) != 0, g_prevSave)) { SaveMenuToIni(); changed = true; }
     if (KeyEdge((GetAsyncKeyState(VK_TAB) & 0x8000) != 0, g_prevTab)) {
         g_tab = (g_tab + (shift ? 5 : 1)) % 6;
         g_sel = std::min(g_sel, TabRowCount(g_tab) - 1);

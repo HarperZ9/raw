@@ -71,22 +71,17 @@ float3 distantLit(int3 ip, float2 at, float d) {
     // Dynamic near-field grass lighting & distant tree-LOD crown self-shadowing (grounds bright snow pines against alpine ridges).
     const float grassAo = nearGrass && (flags.x & FLAG_AO) != 0u ? lerp(1.0f, AoHist.Load(ip).x, 0.75f) : 1.0f;
     const float occ = min(lerp(1.0f, skyVis, cluster.w), grassAo);
-    const float crownAo = farTreeCard ? lerp(0.68f, 1.04f, saturate(v * 0.5f + 0.5f)) : 1.0f;
+    const float crownAo = farTreeCard ? lerp(0.46f, 0.84f, saturate(v * 0.5f + 0.5f)) : 1.0f;
     amb *= nearGrass ? gtaoMultiBounce(occ, saturate(albedo)) * lerp(0.55f, 1.0f, saturate(v * 0.5f + 0.65f)) : (occ * crownAo).xxx;
     // What the ridges that block the sky send back (RtShadow.hlsl, farOccluded; [Lighting] RtFar), as the near bounce is.
-    if (rt && (flags.x & FLAG_BOUNCE) != 0u && sunColour.w > 0.5f) { amb += RtBounce.Load(ip).rgb * proj.w; }
-    float3 direct = sunColour.rgb * (nl * sh);
+    if (rt && (flags.x & FLAG_BOUNCE) != 0u && sunColour.w > 0.5f) { amb += RtBounce.Load(ip).rgb * proj.w * (farTreeCard ? 0.55f : 1.0f); }
+    float3 direct = sunColour.rgb * (nl * sh * (farTreeCard ? 0.78f : 1.0f));
     if (nearGrass && sunColour.w > 0.5f) {
-        // Complex vegetation backlit chlorophyll subsurface transmission + waxy blade-tip sky sheen.
-        const float backGrass = pow(saturate(dot(-toCam, sunDir.xyz)), 3.0f);
-        const float bladeFr = pow(1.0f - saturate(dot(n, toCam)), 3.5f);
-        direct += sunColour.rgb * float3(1.10f, 1.22f, 0.56f) * (backGrass * 0.42f + bladeFr * 0.12f) * sh;
+        // Complex vegetation backlit chlorophyll subsurface transmission (restrained so grass stays rich, never chalky).
+        const float backGrass = pow(saturate(dot(-toCam, sunDir.xyz)), 3.4f);
+        direct += sunColour.rgb * float3(1.06f, 1.16f, 0.54f) * (backGrass * 0.34f * (1.0f - saturate(clouds.x * 0.75f))) * sh;
         // Ground shadow darkening so tundra grass sits naturally inside terrain shadows instead of glowing neon yellow.
         direct *= lerp(0.72f, 1.0f, grassAo);
-    } else if (farTreeCard && sunColour.w > 0.5f) {
-        // Distant pine canopy translucency + cool sky-lit crown separation against snowy/rocky ridges.
-        const float backTree = pow(saturate(dot(-toCam, sunDir.xyz)), 3.5f);
-        direct += sunColour.rgb * float3(1.04f, 1.14f, 0.62f) * backTree * sh * 0.24f;
     }
     float3 outLod = knee3(knee3(albedo * (direct + max(amb, 0.0f))));
     // Physical Rayleigh distant blue mountain fog (height-stratified so alpine peaks rise out of cool cerulean valley mist).

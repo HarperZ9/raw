@@ -45,7 +45,19 @@ float causticNet(float2 w, float t, float scale) {
     return pow(saturate(1.0f - a * 3.2f), 7.0f) + 0.6f * pow(saturate(1.0f - b * 3.6f), 7.0f);
 }
 
-float3 waterSky(float3 rd) { return skyAt(rd); }
+float3 waterSky(float3 rd) {
+    const float3 base = skyAt(rd);
+    const float sunLumW = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+    const float dayW = saturate((sunDir.z - 0.01f) * 4.0f) * saturate((sunLumW - 0.20f) * 2.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+    if (dayW > 0.02f && rd.z > 0.0f) {
+        float3 sZ, sM, sH;
+        skyPalette(sZ, sM, sH);
+        const float hUp = saturate(rd.z);
+        const float3 pSky = hUp < 0.25f ? lerp(sH, sM, pow(hUp / 0.25f, 0.75f)) : lerp(sM, sZ, pow((hUp - 0.25f) / 0.75f, 0.85f));
+        return lerp(base, pSky, dayW * 0.65f);
+    }
+    return base;
+}
 
 [numthreads(8, 8, 1)]
 void water(uint3 id : SV_DispatchThreadID) {
@@ -64,8 +76,38 @@ void water(uint3 id : SV_DispatchThreadID) {
         if (p.z < 0.0f) {   // the surface is below the camera: seen from above
             float3 n = nL;
             const float3 v = normalize(eyeAt() - p);
+            const float3 wpW = camPosW.xyz + p;
+            // Multi-octave wind-driven world-space Gerstner micro-waves (zero cell-boundary or waterflow seams).
+            const float wDist = length(p);
+            if (wDist < 5500.0f) {
+                const float wFade = saturate(1.0f - wDist / 5500.0f);
+                const float2 wDir = normalize(cloudWind.xy + float2(1.0f, 0.35f));
+                const float2 wPerp = float2(-wDir.y, wDir.x);
+                const float wt = camPosW.w;
+                const float g1 = sin(dot(wpW.xy, wDir) * 0.045f + wt * 2.4f);
+                const float g2 = sin(dot(wpW.xy, normalize(wDir + wPerp * 0.65f)) * 0.095f + wt * 3.7f);
+                const float g3 = cos(dot(wpW.xy, normalize(wDir - wPerp * 0.85f)) * 0.175f - wt * 4.9f);
+                const float windScale = (0.018f + saturate(length(cloudWind.xy) / 420.0f) * 0.032f) * wFade;
+                n = normalize(n + float3((wDir * (g1 * 0.55f + g2 * 0.30f) + wPerp * (g3 * 0.25f)) * windScale, 0.0f));
+                // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
+                if (wDist < 1600.0f) {
+                    float2 wakeG = 0.0f.xx;
+                    [loop] for (uint wi = 0u; wi < 32u; wi++) {
+                        const float4 ft = footTrail[wi];
+                        if (ft.w <= 0.01f) { continue; }
+                        const float3 fd = wpW - ft.xyz;
+                        const float r2 = dot(fd.xy, fd.xy);
+                        if (r2 < 22500.0f && abs(fd.z) < 180.0f) {
+                            const float rr = sqrt(r2);
+                            const float ring = sin(rr * 0.28f - wt * 5.2f) * exp(-rr / 65.0f) * ft.w;
+                            wakeG += (fd.xy / max(rr, 1.0f)) * ring * 0.045f;
+                        }
+                    }
+                    n = normalize(n + float3(wakeG, 0.0f));
+                }
+            }
             if (weather.w > 0.0f) {   // rain falling: drops ring the water
-                const float2 g = rainRings((camPosW.xyz + p).xy, camPosW.w) * (0.35f * weather.w);
+                const float2 g = rainRings(wpW.xy, camPosW.w) * (0.35f * weather.w);
                 n = normalize(n + float3(-g, 0.0f));
             }
             const float nvRaw = dot(n, v);
@@ -146,10 +188,11 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float3 waveSSS = sunDir.w > 0.5f
                     ? float3(0.04f, 0.22f, 0.24f) * sunColour.rgb * pow(saturate(dot(-v, sunDir.xyz)), 4.0f) * saturate((1.0f - n.z) * 7.0f) * 0.45f
                     : 0.0f.xxx;
-                // Animated shore-contact foam where water depth approaches rocks and banks (depthV < 18 units).
-                const float shoreBand = (1.0f - smoothstep(0.0f, 18.0f, depthV)) * smoothstep(0.0f, 1.5f, depthV);
-                const float foamCell = saturate(1.0f - cellWalls((camPosW.xyz + p).xy / 28.0f, camPosW.w * 1.25f) * 2.4f);
-                const float foamMask = saturate(shoreBand * (0.45f + 0.55f * foamCell * foamCell)) * nearW;
+                // Animated shore-contact foam + turbulent rapids/waterfall whitewater crests.
+                const float shoreBand = (1.0f - smoothstep(0.0f, 20.0f, depthV)) * smoothstep(0.0f, 1.5f, depthV);
+                const float foamCell = saturate(1.0f - cellWalls(wpW.xy / 28.0f, camPosW.w * 1.35f) * 2.4f);
+                const float crestFoam = saturate((1.0f - n.z) * 11.0f - 0.12f) * foamCell;
+                const float foamMask = saturate(max(shoreBand * (0.45f + 0.55f * foamCell * foamCell), crestFoam * 0.72f)) * nearW;
                 const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) + (sunDir.w > 0.5f ? sunColour.rgb * 0.45f : 0.0f.xxx)) * 0.85f;
                 const float3 waterBody = (bed + caus) * T + scatter * (1.0f - T) + waveSSS;
                 body = lerp(game.rgb, lerp(waterBody, foamLit, foamMask * 0.65f), saturate(waterB.z) * nearW);

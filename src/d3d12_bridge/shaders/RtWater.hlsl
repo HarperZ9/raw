@@ -87,7 +87,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float g1 = sin(dot(wpW.xy, wDir) * 0.045f + wt * 2.4f);
                 const float g2 = sin(dot(wpW.xy, normalize(wDir + wPerp * 0.65f)) * 0.095f + wt * 3.7f);
                 const float g3 = cos(dot(wpW.xy, normalize(wDir - wPerp * 0.85f)) * 0.175f - wt * 4.9f);
-                const float windScale = (0.018f + saturate(length(cloudWind.xy) / 420.0f) * 0.032f) * wFade;
+                const float windScale = (0.009f + saturate(length(cloudWind.xy) / 420.0f) * 0.018f) * wFade;
                 n = normalize(n + float3((wDir * (g1 * 0.55f + g2 * 0.30f) + wPerp * (g3 * 0.25f)) * windScale, 0.0f));
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
                 if (wDist < 1600.0f) {
@@ -164,8 +164,10 @@ void water(uint3 id : SV_DispatchThreadID) {
                                           causticNet(cPos - float2(disp, 0.25f * disp), t, sc));
                 const float sunVis = sunColour.w > 0.5f ? visible(pb + float3(0.0f, 0.0f, 1.0f + 0.002f * length(pb)), l, 0.0f, sunLength) : 1.0f;
                 const float through = exp(-waterA.z * (depthV + length(pb - p)));    // down to the bed and back up to the eye
-                const float focus = saturate(depthV / 22.0f) * exp(-depthV / 420.0f);  // sharp in shallows, softens in deep pools
-                caus = BedAlbedo.Load(ip).rgb * sunColour.rgb * (l.z * sunVis * through * focus * waterA.y * 1.35f) * net;
+                const float focus = saturate(depthV / 22.0f) * exp(-depthV / 340.0f);  // sharp in shallows, softens in deep pools
+                // Attenuate caustics naturally under overcast clouds so diffuse overcast skies never cast harsh laser webs on riverbeds.
+                const float clearSun = 1.0f - saturate(clouds.x * 0.85f);
+                caus = BedAlbedo.Load(ip).rgb * sunColour.rgb * (l.z * sunVis * through * focus * waterA.y * 0.85f * clearSun) * net;
             }
 
             // Refraction through the bed's own colour, from the frame RAW lit before the game composited its water: the
@@ -187,8 +189,8 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float path = length(worldAt(float2(q), Depth.Load(int3(q, 0))) - p);
                 const float3 T = exp(-waterA.z * float3(2.2f, 1.0f, 0.7f) * path);
                 const float3 scatter = float3(0.05f, 0.10f, 0.11f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.0f.xxx) * 2.0f;
-                // Extended 3x water replacement range (14,000..26,000 units) eliminates close-range vanilla navy water LOD pop.
-                const float nearW = 1.0f - smoothstep(14000.0f, 26000.0f, length(p));
+                // Smoothly feather RT water body into distant water LOD before Skyrim's 4096-unit cell edge (eliminates hard horizontal lake seams).
+                const float nearW = 1.0f - smoothstep(2200.0f, 3950.0f, length(p));
                 // Subsurface turquoise wave-crest forward scatter when backlit by the sun.
                 const float3 waveSSS = sunDir.w > 0.5f
                     ? float3(0.04f, 0.22f, 0.24f) * sunColour.rgb * pow(saturate(dot(-v, sunDir.xyz)), 4.0f) * saturate((1.0f - n.z) * 7.0f) * 0.45f
@@ -203,7 +205,8 @@ void water(uint3 id : SV_DispatchThreadID) {
                 body = lerp(game.rgb, lerp(waterBody, foamLit, foamMask * 0.65f), saturate(waterB.z) * nearW);
             }
             const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;
-            const float effF = saturate(F * waterA.x * shoreFeather);
+            const float cellFeather = 1.0f - smoothstep(2400.0f, 3950.0f, length(p));
+            const float effF = saturate(F * waterA.x * shoreFeather * cellFeather);
             const uint view = uint(waterB.x + 0.5f);
             col = refr ? lerp(body, refl, effF) + glint * shoreFeather : lerp(game.rgb, refl, effF) + caus * (1.0f - effF) + glint * shoreFeather;
             if (view == 1u) { col = refl; }

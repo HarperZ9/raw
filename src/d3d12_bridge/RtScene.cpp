@@ -135,10 +135,28 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
               Buffer(m_tsRead, 3 * 4 * 8, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, false, L"rt timestamps") &&
               Texture(m_vis, L"rt visibility") && Texture(m_lights, L"rt light index") &&
               Texture(m_refl, L"rt reflection", DXGI_FORMAT_R16G16B16A16_FLOAT);
+    // Optional DX12 Hardware Async Compute Queue (enabled via RtAsyncCompute=1 once BLAS/TLAS builds are split
+    // ahead of GeometryMain; back-to-back cross-queue fencing adds ~1.1 ms WDDM overhead when not overlapped).
+    const bool wantAsync = GetPrivateProfileIntA("Lighting", "RtAsyncCompute", 0, "d3d11_proxy.ini") != 0;
+    if (wantAsync) {
+        D3D12_COMMAND_QUEUE_DESC cqd{};
+        cqd.Type = D3D12_COMMAND_LIST_TYPE_COMPUTE;
+        cqd.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+        if (SUCCEEDED(m_dev->CreateCommandQueue(&cqd, IID_PPV_ARGS(&m_asyncQueue))) &&
+            SUCCEEDED(m_dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_syncFence)))) {
+            m_asyncCompute = true;
+            m_asyncQueue->SetName(L"RAW Async Compute Queue");
+            m_asyncQueue->GetTimestampFrequency(&m_freq);
+            if (m_log) m_log("[RT] DX12 Async Compute Queue active (D3D12_COMMAND_LIST_TYPE_COMPUTE)");
+        } else {
+            m_asyncQueue.Reset(); m_syncFence.Reset(); m_asyncCompute = false;
+        }
+    }
+    const D3D12_COMMAND_LIST_TYPE cmdType = m_asyncCompute ? D3D12_COMMAND_LIST_TYPE_COMPUTE : D3D12_COMMAND_LIST_TYPE_DIRECT;
     for (int k = 0; ok && k < 3; ++k)
         ok = Buffer(m_inst[k], kMaxInstances * sizeof(D3D12_RAYTRACING_INSTANCE_DESC), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, false, L"rt instances") &&
              Buffer(m_cb[k], kCb, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, false, L"rt uniform") &&
-             SUCCEEDED(m_dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_alloc[k])));
+             SUCCEEDED(m_dev->CreateCommandAllocator(cmdType, IID_PPV_ARGS(&m_alloc[k])));
     if (!ok) { err = "resources"; return false; }
     D3D12_QUERY_HEAP_DESC qd{D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 12, 0};
     // 0..2 the G-buffer, 3 and 4 the outputs, then RtAlpha's: its coordinates (5), masks (6...), staging.
@@ -153,7 +171,7 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
     D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, m_waterAt + kWaterDescriptors,
                                   D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
     if (FAILED(m_dev->CreateQueryHeap(&qd, IID_PPV_ARGS(&m_ts))) || FAILED(m_dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&m_heap))) ||
-        FAILED(m_dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_alloc[0].Get(), nullptr, IID_PPV_ARGS(&m_list))) ||
+        FAILED(m_dev->CreateCommandList(0, cmdType, m_alloc[0].Get(), nullptr, IID_PPV_ARGS(&m_list))) ||
         FAILED(m_dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence)))) { err = "objects"; return false; }
     m_list->Close();
     if (!Pipeline(err)) return false;
@@ -380,8 +398,17 @@ bool RtScene::Submit(ID3D12CommandQueue* q)
 {
     if (!m_recorded) return false;
     ID3D12CommandList* l = m_list.Get();
-    q->ExecuteCommandLists(1, &l);
-    q->Signal(m_fence.Get(), ++m_fenceValue);
+    if (m_asyncCompute && m_asyncQueue) {
+        // GPU-side cross-queue handoff (zero CPU stall): wait for Direct queue GBuffer, run DXR on Async Compute, signal back.
+        q->Signal(m_syncFence.Get(), ++m_syncValue);
+        m_asyncQueue->Wait(m_syncFence.Get(), m_syncValue);
+        m_asyncQueue->ExecuteCommandLists(1, &l);
+        m_asyncQueue->Signal(m_fence.Get(), ++m_fenceValue);
+        q->Wait(m_fence.Get(), m_fenceValue);
+    } else {
+        q->ExecuteCommandLists(1, &l);
+        q->Signal(m_fence.Get(), ++m_fenceValue);
+    }
     m_slotValue[m_frame % 3] = m_fenceValue;
     m_recorded = false;
     return true;

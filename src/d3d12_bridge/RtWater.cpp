@@ -23,13 +23,14 @@ constexpr UINT kWaterSlot = 8;   // descriptors a frame in flight: depth, layer,
 void RtScene::CreateWater()
 {
     bool ok = true;
+    const D3D12_COMMAND_LIST_TYPE cmdType = m_asyncCompute ? D3D12_COMMAND_LIST_TYPE_COMPUTE : D3D12_COMMAND_LIST_TYPE_DIRECT;
     for (int k = 0; ok && k < 3; ++k)
         ok = Buffer(m_wCb[k], kCb, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, false, L"rt water uniform") &&
-             SUCCEEDED(m_dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_wAlloc[k])));
+             SUCCEEDED(m_dev->CreateCommandAllocator(cmdType, IID_PPV_ARGS(&m_wAlloc[k])));
     ok = ok && Buffer(m_wTsRead, 3 * 2 * 8, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, false, L"rt water timestamps");
     D3D12_QUERY_HEAP_DESC qd{D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 6, 0};
     ok = ok && SUCCEEDED(m_dev->CreateQueryHeap(&qd, IID_PPV_ARGS(&m_wTs))) &&
-         SUCCEEDED(m_dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_wAlloc[0].Get(), nullptr, IID_PPV_ARGS(&m_wList))) &&
+         SUCCEEDED(m_dev->CreateCommandList(0, cmdType, m_wAlloc[0].Get(), nullptr, IID_PPV_ARGS(&m_wList))) &&
          SUCCEEDED(m_dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_wFence)));
     if (ok) { m_wList->Close(); m_wList->SetName(L"rt water"); }
     D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
@@ -273,10 +274,18 @@ bool RtScene::ReloadWater(const std::vector<uint8_t>& water, const std::vector<u
 bool RtScene::SubmitWater(ID3D12CommandQueue* q)
 {
     if (!m_wRecorded) return false;
-    if (!m_freq) q->GetTimestampFrequency(&m_freq);
+    if (!m_freq) (m_asyncCompute && m_asyncQueue ? m_asyncQueue.Get() : q)->GetTimestampFrequency(&m_freq);
     ID3D12CommandList* l = m_wList.Get();
-    q->ExecuteCommandLists(1, &l);
-    q->Signal(m_wFence.Get(), ++m_wFenceValue);
+    if (m_asyncCompute && m_asyncQueue) {
+        q->Signal(m_syncFence.Get(), ++m_syncValue);
+        m_asyncQueue->Wait(m_syncFence.Get(), m_syncValue);
+        m_asyncQueue->ExecuteCommandLists(1, &l);
+        m_asyncQueue->Signal(m_wFence.Get(), ++m_wFenceValue);
+        q->Wait(m_wFence.Get(), m_wFenceValue);
+    } else {
+        q->ExecuteCommandLists(1, &l);
+        q->Signal(m_wFence.Get(), ++m_wFenceValue);
+    }
     m_wSlotValue[m_frame % 3] = m_wFenceValue;
     m_wRecorded = false;
     return true;

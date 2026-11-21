@@ -49,9 +49,11 @@ void main(uint3 id : SV_DispatchThreadID) {
         wsum += w;
     }
     const float3 scattered = sum / wsum;
-    // Preserve high-frequency pore luminance while keeping the warm dermal chroma scatter from the dual-lobe profile.
+    // Preserve crisp high-frequency epidermal pore & lash luminance while keeping warm dermal hemoglobin scatter,
+    // plus subtle backlit dermal translucency along thin silhouette edges (ears, nose bridge, cheeks).
     const float cLum = max(dot(c.rgb, float3(0.2126f, 0.7152f, 0.0722f)), 1.0e-4f);
     const float sLum = max(dot(scattered, float3(0.2126f, 0.7152f, 0.0722f)), 1.0e-4f);
-    const float3 poreKept = scattered * lerp(1.0f, cLum / sLum, 0.25f);
+    const float3 dermalGlow = scattered * lerp(float3(1.0f, 1.0f, 1.0f), float3(1.06f, 0.96f, 0.92f), saturate(sLum * 0.65f));
+    const float3 poreKept = dermalGlow * lerp(1.0f, cLum / sLum, 0.36f);
     Out[p] = float4(lerp(c.rgb, poreKept, strength), c.a);
 }

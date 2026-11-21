@@ -36,6 +36,7 @@ struct SlApi
     PFun_slEvaluateFeature* evaluateFeature = nullptr;
     PFun_slDLSSSetOptions* dlssSetOptions = nullptr;
     PFun_slDLSSDSetOptions* dlssdSetOptions = nullptr;
+    PFun_slDeepDVCSetOptions* deepDvcSetOptions = nullptr;
     PFun_slReflexSetOptions* reflexSetOptions = nullptr;
     PFun_slReflexSleep* reflexSleep = nullptr;
     ID3D12Device* dev12 = nullptr;
@@ -49,8 +50,10 @@ struct SlApi
     int optMode = 0;
     bool dlssFailed = false;
     bool dlssdFailed = false;
+    bool deepDvcFailed = false;
     bool dlssLogged = false;
     bool dlssdLogged = false;
+    bool deepDvcLogged = false;
     bool ready = false;
 };
 SlApi& Api() { static SlApi a; return a; }
@@ -163,6 +166,11 @@ bool StreamlineHost::Initialize(ID3D12Device* dev12, LUID adapterLuid, LogFn log
             void* fnRrOpt = nullptr;
             a.getFeatureFn(sl::kFeatureDLSS_RR, "slDLSSDSetOptions", fnRrOpt);
             a.dlssdSetOptions = reinterpret_cast<PFun_slDLSSDSetOptions*>(fnRrOpt);
+        }
+        if (m_caps.deepDvc) {
+            void* fnDvc = nullptr;
+            a.getFeatureFn(sl::kFeatureDeepDVC, "slDeepDVCSetOptions", fnDvc);
+            a.deepDvcSetOptions = reinterpret_cast<PFun_slDeepDVCSetOptions*>(fnDvc);
         }
         bool cmdOk = SUCCEEDED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&a.fence)));
         for (int k = 0; cmdOk && k < 3; ++k)
@@ -324,6 +332,28 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
     const sl::BaseStructure* inputs[] = {&vp};
     const sl::Feature feat = useRR ? sl::kFeatureDLSS_RR : sl::kFeatureDLSS;
     const sl::Result er = a.evaluateFeature(feat, *tok, inputs, 1, a.cl.Get());
+
+    // Optional NVIDIA DeepDVC neural dynamic vibrance post-pass directly on the evaluated HDR output.
+    if (er == sl::Result::eOk && m_deepDvcOn && m_caps.deepDvc && !a.deepDvcFailed && a.deepDvcSetOptions) {
+        sl::DeepDVCOptions dvcOpt{};
+        dvcOpt.mode = sl::DeepDVCMode::eOn;
+        dvcOpt.intensity = 0.45f;
+        dvcOpt.saturationBoost = 0.22f;
+        if (a.deepDvcSetOptions(vp, dvcOpt) == sl::Result::eOk) {
+            sl::ResourceTag dvcTag{&rOut, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &ext};
+            a.setTagForFrame(*tok, vp, &dvcTag, 1, a.cl.Get());
+            if (a.evaluateFeature(sl::kFeatureDeepDVC, *tok, inputs, 1, a.cl.Get()) == sl::Result::eOk) {
+                if (!a.deepDvcLogged) {
+                    a.deepDvcLogged = true;
+                    if (log) log("[Streamline] NVIDIA DeepDVC neural dynamic vibrance active live");
+                }
+            } else {
+                a.deepDvcFailed = true;
+            }
+        } else {
+            a.deepDvcFailed = true;
+        }
+    }
 
     D3D12_RESOURCE_BARRIER outB[7];
     for (UINT i = 0; i < nb; ++i) {

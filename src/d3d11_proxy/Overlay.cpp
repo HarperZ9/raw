@@ -165,7 +165,7 @@ bool KeyEdge(bool now, bool& prev) { const bool f = now && !prev; prev = now; re
 
 int TabRowCount(int tab)
 {
-    static const int kCounts[7] = {12, 13, 7, 8, 12, 11, 18};
+    static const int kCounts[7] = {12, 13, 7, 8, 12, 11, 20};
     return kCounts[std::clamp(tab, 0, 6)];
 }
 
@@ -288,7 +288,9 @@ std::string BuildMenuText()
         row(14, "OV10: Radial SpeedBlur", OnOff((tm.overlayMask & 512u) != 0u));
         row(15, "OV11: Chromatic Aberr", OnOff((tm.overlayMask & 1024u) != 0u));
         row(16, "OV12: Run Headbob/Sway", OnOff((tm.overlayMask & 2048u) != 0u));
-        row(17, "User Preset Slot", FmtI("Slot %d  [S=Save | L=Load]", g_presetSlot));
+        row(17, "NVIDIA Reflex Latency", OnOff(raw::bridge::StreamlineHost::Get().GetReflex()));
+        row(18, "NVIDIA DeepDVC Neural", OnOff(raw::bridge::StreamlineHost::Get().GetDeepDvc()));
+        row(19, "User Preset Slot", FmtI("Slot %d  [S=Save | L=Load]", g_presetSlot));
     }
     out += "Web Studio, Presets & Live HLSL Editor: http://127.0.0.1:8844";
     return out;
@@ -440,7 +442,9 @@ bool PollMenu(std::string& outText)
             case 14: tm.overlayMask ^= 512u; tmDirty = true; break;
             case 15: tm.overlayMask ^= 1024u; tmDirty = true; break;
             case 16: tm.overlayMask ^= 2048u; tmDirty = true; break;
-            case 17: g_presetSlot = ((g_presetSlot - 1 + 5 + dir) % 5) + 1; break;
+            case 17: raw::bridge::StreamlineHost::Get().SetReflex(!raw::bridge::StreamlineHost::Get().GetReflex()); break;
+            case 18: raw::bridge::StreamlineHost::Get().SetDeepDvc(!raw::bridge::StreamlineHost::Get().GetDeepDvc()); break;
+            case 19: g_presetSlot = ((g_presetSlot - 1 + 5 + dir) % 5) + 1; break;
             }
         }
         if (tmDirty) Tonemap_Set(tm);
@@ -461,7 +465,7 @@ bool Render(const std::string& text, UINT maxW, bool isMenu, std::vector<uint8_t
         at = end + 1;
     }
     const int lineH = 19;
-    w = std::min<UINT>(maxW, isMenu ? 940 : 1400);
+    w = std::min<UINT>(maxW, isMenu ? 1080 : 1400);
     h = UINT(lines.size() * lineH + 18);
     HDC dc = CreateCompatibleDC(nullptr);
     BITMAPINFO bi{};

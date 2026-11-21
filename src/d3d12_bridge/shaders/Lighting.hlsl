@@ -138,13 +138,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 // Overcast / storm atmospheric slate transition.
                 const float3 stormSky = lerp(float3(0.38f, 0.44f, 0.52f), float3(0.22f, 0.28f, 0.36f), hUp);
                 const float3 pureSky = lerp(clearSky, stormSky, saturate(cover * 0.85f - 0.25f + weather.w * 0.35f));
-                const float3 solarCore = sunDiscCol * (sunDisc * 1.55f * (1.0f - cover * 0.72f));
+                const float3 solarCore = sunDiscCol * (sunDisc * 1.15f * (1.0f - cover * 0.55f));
                 baseSky = lerp(baseSky, pureSky + solarCore, dayW * 0.96f);
             }
         }
         const float4 c = (flags.x & FLAG_CLOUDS) != 0u ? Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f) : float4(0.0f, 0.0f, 0.0f, 1.0f);
-        // Cubic transmittance attenuation on solar core so sun shining through clouds never blows out white.
-        float3 skyOut = baseSky * lerp(c.a, c.a * c.a, saturate(dot(baseSky, 0.333f.xxx) - 0.55f)) + c.rgb;
+        // Strictly monotonic Beer-Lambert cloud occlusion: solar disc smoothly dims behind thick clouds and shines brightly in clear gaps (never inverts dark).
+        float3 skyOut = baseSky * c.a + c.rgb;
         if ((flags.x & FLAG_MATCH) == 0u) {
             // Luminous atmospheric moon glow locked strictly to Skyrim's real Masser/Secunda sky pixels (zero camera drift),
             // plus infinite-resolution procedural scintillating starfield and animated volumetric Nordic auroras.

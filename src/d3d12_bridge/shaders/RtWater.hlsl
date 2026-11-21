@@ -70,7 +70,10 @@ void water(uint3 id : SV_DispatchThreadID) {
     // The water shaders write no alpha, so their layer pixels keep the cleared alpha: a water pixel is one with a
     // depth in front of the bed and a normal (blended draws without one carry b = -1) that faces up.
     const float3 nL = worldNormal(float4(L.y, L.z, 0.0f, 0.0f));
-    if (L.z >= 0.0f && L.x < 1.0f && L.x < dBed - 1.0e-5f && nL.z > 0.6f) {
+    const bool isWaterPx = (L.z >= 0.0f && L.x < 1.0f && L.x < dBed - 1.0e-5f && nL.z > 0.6f);
+    // SM6.9 Wave-coherent early exit: non-water waves exit immediately with zero RayQuery divergence.
+    if (!WaveActiveAnyTrue(isWaterPx)) { WaterOut[id.xy] = float4(col, game.a); return; }
+    if (isWaterPx) {
         const float2 px = float2(id.xy);
         const float3 p = worldAt(px, L.x);
         if (p.z < 0.0f) {   // the surface is below the camera: seen from above

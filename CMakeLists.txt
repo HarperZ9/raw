@@ -508,8 +508,8 @@ if(RAW_ENGINE_DIR)
     add_custom_command(
         OUTPUT ${RAW_ENGINE_GEN}/rt_shadow.h ${RAW_ENGINE_GEN}/rt_shadow_debug.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
-        COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow.h -Vn kDxil_rt_shadow ${RAW_RTSHADOW_HLSL}
-        COMMAND ${RAW_DXC} -T cs_6_6 -E main -DRT_DEBUG=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow_debug.h -Vn kDxil_rt_shadow_debug ${RAW_RTSHADOW_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow.h -Vn kDxil_rt_shadow ${RAW_RTSHADOW_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E main -DRT_DEBUG=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow_debug.h -Vn kDxil_rt_shadow_debug ${RAW_RTSHADOW_HLSL}
         DEPENDS ${RAW_RTSHADOW_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
                 ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Weather.hlsli
         COMMENT "dxc: ray-traced shadows -> DXIL header"
@@ -517,7 +517,7 @@ if(RAW_ENGINE_DIR)
     add_custom_command(
         OUTPUT ${RAW_ENGINE_GEN}/rt_water.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
-        COMMAND ${RAW_DXC} -T cs_6_6 -E water ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_water.h -Vn kDxil_rt_water ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtWater.hlsl
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E water ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_water.h -Vn kDxil_rt_water ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtWater.hlsl
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtWater.hlsl ${RAW_RTSHADOW_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
                 ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Weather.hlsli
         COMMENT "dxc: ray-traced water -> DXIL header"
@@ -525,7 +525,7 @@ if(RAW_ENGINE_DIR)
     add_custom_command(
         OUTPUT ${RAW_ENGINE_GEN}/rt_sss.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
-        COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_sss.h -Vn kDxil_rt_sss ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Sss.hlsl
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_sss.h -Vn kDxil_rt_sss ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Sss.hlsl
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Sss.hlsl ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
         COMMENT "dxc: skin scattering -> DXIL header"
         VERBATIM)
@@ -533,9 +533,9 @@ if(RAW_ENGINE_DIR)
     add_custom_command(
         OUTPUT ${RAW_ENGINE_GEN}/rt_alpha_uv.h ${RAW_ENGINE_GEN}/rt_alpha_mask.h ${RAW_ENGINE_GEN}/rt_alpha_albedo.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
-        COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_alpha_uv.h -Vn kDxil_rt_alpha_uv ${RAW_RTALPHA_HLSL}
-        COMMAND ${RAW_DXC} -T cs_6_6 -E mask ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_alpha_mask.h -Vn kDxil_rt_alpha_mask ${RAW_RTALPHA_HLSL}
-        COMMAND ${RAW_DXC} -T cs_6_6 -E mask -DALBEDO=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_alpha_albedo.h -Vn kDxil_rt_alpha_albedo ${RAW_RTALPHA_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_alpha_uv.h -Vn kDxil_rt_alpha_uv ${RAW_RTALPHA_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E mask ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_alpha_mask.h -Vn kDxil_rt_alpha_mask ${RAW_RTALPHA_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E mask -DALBEDO=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_alpha_albedo.h -Vn kDxil_rt_alpha_albedo ${RAW_RTALPHA_HLSL}
         DEPENDS ${RAW_RTALPHA_HLSL}
         COMMENT "dxc: ray-tracing alpha coordinates and masks -> DXIL headers"
         VERBATIM)
@@ -543,7 +543,7 @@ if(RAW_ENGINE_DIR)
     add_custom_command(
         OUTPUT ${RAW_ENGINE_GEN}/rt_sky_filter.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
-        COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_sky_filter.h -Vn kDxil_rt_sky_filter ${RAW_RTSKY_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_sky_filter.h -Vn kDxil_rt_sky_filter ${RAW_RTSKY_HLSL}
         DEPENDS ${RAW_RTSKY_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
         COMMENT "dxc: sky visibility filter -> DXIL header"
         VERBATIM)
@@ -551,21 +551,21 @@ if(RAW_ENGINE_DIR)
     add_custom_command(
         OUTPUT ${RAW_ENGINE_GEN}/rt_cache_resolve.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
-        COMMAND ${RAW_DXC} -T cs_6_6 -E resolve ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_cache_resolve.h -Vn kDxil_rt_cache_resolve ${RAW_RTCACHE_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E resolve ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_cache_resolve.h -Vn kDxil_rt_cache_resolve ${RAW_RTCACHE_HLSL}
         DEPENDS ${RAW_RTCACHE_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli
         COMMENT "dxc: radiance cache resolve -> DXIL header"
         VERBATIM)
     add_custom_command(
         OUTPUT ${RAW_ENGINE_GEN}/rt_skin.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
-        COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_skin.h -Vn kDxil_rt_skin ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtSkin.hlsl
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_skin.h -Vn kDxil_rt_skin ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtSkin.hlsl
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtSkin.hlsl
         COMMENT "dxc: skinned positions for the ray-tracing scene -> DXIL header"
         VERBATIM)
     add_custom_command(
         OUTPUT ${RAW_ENGINE_GEN}/rt_skin_check.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
-        COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_skin_check.h -Vn kDxil_rt_skin_check ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtSkinCheck.hlsl
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_skin_check.h -Vn kDxil_rt_skin_check ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtSkinCheck.hlsl
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtSkinCheck.hlsl
         COMMENT "dxc: skinned triangles checked into the index pool -> DXIL header"
         VERBATIM)
@@ -580,7 +580,7 @@ if(RAW_ENGINE_DIR)
         add_custom_command(
             OUTPUT ${RAW_ENGINE_GEN}/rt_omm_bake.h
             COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
-            COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_omm_bake.h -Vn kDxil_rt_omm_bake ${RAW_RTOMM_HLSL}
+            COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_omm_bake.h -Vn kDxil_rt_omm_bake ${RAW_RTOMM_HLSL}
             DEPENDS ${RAW_RTOMM_HLSL}
             COMMENT "dxc: opacity micromap bake -> DXIL header"
             VERBATIM)
@@ -593,7 +593,7 @@ if(RAW_AGILITY_DIR AND RAW_ENGINE_DIR)
     add_custom_command(
         OUTPUT ${RAW_ENGINE_GEN}/omm_check_cs.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
-        COMMAND ${RAW_DXC} -T cs_6_6 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/omm_check_cs.h -Vn kDxil_omm_check ${CMAKE_CURRENT_SOURCE_DIR}/tests/omm_check/omm_check.hlsl
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/omm_check_cs.h -Vn kDxil_omm_check ${CMAKE_CURRENT_SOURCE_DIR}/tests/omm_check/omm_check.hlsl
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/omm_check/omm_check.hlsl
         COMMENT "dxc: opacity micromap check -> DXIL header"
         VERBATIM)

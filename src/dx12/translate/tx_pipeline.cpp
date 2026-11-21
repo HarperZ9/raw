@@ -4,7 +4,98 @@
 #include "MipGen_VS.h"
 #include "MipGen_PS.h"
 
+#include <cstdio>
+#include <fstream>
+
 namespace raw::tx {
+
+namespace {
+struct PsoCacheHeader {
+    uint32_t magic;
+    uint32_t version;
+    LUID     luid;
+};
+constexpr uint32_t kPsoCacheMagic = 0x50534F52u; // 'RSOP'
+constexpr uint32_t kPsoCacheVersion = 1u;
+
+uint64_t HashGraphicsPso(const D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, const ShaderData* const sh[5], const PsoKey& k)
+{
+    uint64_t h = 1469598103934665603ull;
+    for (int i = 0; i < 5; ++i) {
+        if (sh[i] && !sh[i]->code.empty()) h = Fnv(sh[i]->code.data(), sh[i]->code.size(), h);
+        else { uint8_t z = 0; h = Fnv(&z, 1, h); }
+    }
+    h = Fnv(&d.BlendState, sizeof(d.BlendState), h);
+    h = Fnv(&d.SampleMask, sizeof(d.SampleMask), h);
+    h = Fnv(&d.RasterizerState, sizeof(d.RasterizerState), h);
+    h = Fnv(&d.DepthStencilState, sizeof(d.DepthStencilState), h);
+    h = Fnv(&d.IBStripCutValue, sizeof(d.IBStripCutValue), h);
+    h = Fnv(&d.PrimitiveTopologyType, sizeof(d.PrimitiveTopologyType), h);
+    h = Fnv(&d.NumRenderTargets, sizeof(d.NumRenderTargets), h);
+    h = Fnv(d.RTVFormats, sizeof(d.RTVFormats), h);
+    h = Fnv(&d.DSVFormat, sizeof(d.DSVFormat), h);
+    h = Fnv(&d.SampleDesc, sizeof(d.SampleDesc), h);
+    h = Fnv(&k.layout, sizeof(k.layout), h);
+    return h;
+}
+} // namespace
+
+void Device::InitPsoCache()
+{
+    ComPtr<ID3D12Device1> d1;
+    if (FAILED(d3d.As(&d1)) || !d1) return;
+    wchar_t exe[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    std::wstring path(exe);
+    const size_t sl = path.rfind(L'\\');
+    if (sl == std::wstring::npos) return;
+    psoCachePath_ = path.substr(0, sl + 1) + L"raw_pso_cache.bin";
+
+    const LUID curLuid = d3d->GetAdapterLuid();
+    std::ifstream in(psoCachePath_, std::ios::binary | std::ios::ate);
+    if (in.is_open()) {
+        const auto sz = in.tellg();
+        if (sz > static_cast<std::streamoff>(sizeof(PsoCacheHeader)) && sz < 128 * 1024 * 1024) {
+            in.seekg(0);
+            PsoCacheHeader hdr{};
+            in.read(reinterpret_cast<char*>(&hdr), sizeof(hdr));
+            if (hdr.magic == kPsoCacheMagic && hdr.version == kPsoCacheVersion &&
+                hdr.luid.LowPart == curLuid.LowPart && hdr.luid.HighPart == curLuid.HighPart) {
+                psoLibBlob_.resize(static_cast<size_t>(sz) - sizeof(PsoCacheHeader));
+                in.read(reinterpret_cast<char*>(psoLibBlob_.data()), static_cast<std::streamsize>(psoLibBlob_.size()));
+                if (SUCCEEDED(d1->CreatePipelineLibrary(psoLibBlob_.data(), psoLibBlob_.size(), IID_PPV_ARGS(&psoLib_)))) {
+                    Log("PSO disk cache loaded: %.1f KB (raw_pso_cache.bin)", double(psoLibBlob_.size()) / 1024.0);
+                    return;
+                }
+                psoLibBlob_.clear();
+            }
+        }
+    }
+    if (SUCCEEDED(d1->CreatePipelineLibrary(nullptr, 0, IID_PPV_ARGS(&psoLib_)))) {
+        Log("PSO disk cache initialized (fresh raw_pso_cache.bin)");
+    }
+}
+
+void Device::SavePsoCache()
+{
+    std::lock_guard<std::mutex> g(psoLibM_);
+    if (!psoLib_ || !psoLibDirty_ || psoCachePath_.empty()) return;
+    const SIZE_T sz = psoLib_->GetSerializedSize();
+    if (sz == 0 || sz > 128 * 1024 * 1024) return;
+    std::vector<uint8_t> buf(sizeof(PsoCacheHeader) + sz);
+    PsoCacheHeader hdr{kPsoCacheMagic, kPsoCacheVersion, d3d->GetAdapterLuid()};
+    std::memcpy(buf.data(), &hdr, sizeof(hdr));
+    if (FAILED(psoLib_->Serialize(buf.data() + sizeof(hdr), sz))) return;
+    const std::wstring tmpPath = psoCachePath_ + L".tmp";
+    std::ofstream out(tmpPath, std::ios::binary | std::ios::trunc);
+    if (!out.is_open()) return;
+    out.write(reinterpret_cast<const char*>(buf.data()), static_cast<std::streamsize>(buf.size()));
+    out.close();
+    if (MoveFileExW(tmpPath.c_str(), psoCachePath_.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        psoLibDirty_ = false;
+        Log("PSO disk cache saved: %.1f KB (%u hits, %u newly compiled)", double(sz) / 1024.0, psoLibHits_, psoLibMisses_);
+    }
+}
 
 RootSig* Device::GetRootSig(const StageBind sb[5], bool compute)
 {
@@ -143,7 +234,25 @@ ID3D12PipelineState* Device::GetPso(const PsoKey& key, ShaderData* const sh[5], 
     d.DSVFormat = static_cast<DXGI_FORMAT>(key.dsFmt);
     d.SampleDesc = {key.samples ? key.samples : 1u, key.quality};
     ComPtr<ID3D12PipelineState> pso;
-    HRESULT hr = d3d->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso));
+    HRESULT hr = E_FAIL;
+    wchar_t psoName[32]{};
+    const uint64_t psoHash = psoLib_ ? HashGraphicsPso(d, sh, key) : 0ull;
+    if (psoLib_) {
+        std::swprintf(psoName, 32, L"G_%016llX", static_cast<unsigned long long>(psoHash));
+        std::lock_guard<std::mutex> lg(psoLibM_);
+        hr = psoLib_->LoadGraphicsPipeline(psoName, &d, IID_PPV_ARGS(&pso));
+        if (SUCCEEDED(hr)) ++psoLibHits_;
+    }
+    if (FAILED(hr)) {
+        hr = d3d->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso));
+        if (SUCCEEDED(hr) && psoLib_) {
+            std::lock_guard<std::mutex> lg(psoLibM_);
+            if (SUCCEEDED(psoLib_->StorePipeline(psoName, pso.Get()))) {
+                psoLibDirty_ = true;
+                ++psoLibMisses_;
+            }
+        }
+    }
     if (FAILED(hr)) Log("pipeline state failed 0x%08X (vs %u ps %u layout %u)", hr, key.sh[0], key.sh[4], key.layout);
     ++nPso;
     std::unique_lock<std::shared_mutex> g(psoM_);
@@ -162,7 +271,25 @@ ID3D12PipelineState* Device::GetComputePso(ShaderData* cs, RootSig* rs)
     d.pRootSignature = rs->rs.Get();
     d.CS = {cs->code.data(), cs->code.size()};
     ComPtr<ID3D12PipelineState> pso;
-    HRESULT hr = d3d->CreateComputePipelineState(&d, IID_PPV_ARGS(&pso));
+    HRESULT hr = E_FAIL;
+    wchar_t csName[32]{};
+    if (psoLib_ && !cs->code.empty()) {
+        const uint64_t ch = Fnv(cs->code.data(), cs->code.size(), 0xC5C5C5C5C5C5C5C5ull);
+        std::swprintf(csName, 32, L"C_%016llX", static_cast<unsigned long long>(ch));
+        std::lock_guard<std::mutex> lg(psoLibM_);
+        hr = psoLib_->LoadComputePipeline(csName, &d, IID_PPV_ARGS(&pso));
+        if (SUCCEEDED(hr)) ++psoLibHits_;
+    }
+    if (FAILED(hr)) {
+        hr = d3d->CreateComputePipelineState(&d, IID_PPV_ARGS(&pso));
+        if (SUCCEEDED(hr) && psoLib_ && csName[0]) {
+            std::lock_guard<std::mutex> lg(psoLibM_);
+            if (SUCCEEDED(psoLib_->StorePipeline(csName, pso.Get()))) {
+                psoLibDirty_ = true;
+                ++psoLibMisses_;
+            }
+        }
+    }
     if (FAILED(hr)) Log("compute pipeline state failed 0x%08X (cs %u)", hr, cs->id);
     ++nPso;
     std::unique_lock<std::shared_mutex> g(psoM_);

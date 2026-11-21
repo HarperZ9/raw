@@ -261,6 +261,18 @@ private:
     std::unordered_map<PsoKey, ComPtr<ID3D12PipelineState>, PsoKeyHash> psos_;
     std::unordered_map<uint32_t, ComPtr<ID3D12PipelineState>> csPsos_, mipPsos_;
 
+    // Native DX12 persistent disk PSO cache (raw_pso_cache.bin beside SkyrimSE.exe).
+public:
+    void SavePsoCache();
+private:
+    void InitPsoCache();
+    std::mutex psoLibM_;
+    ComPtr<ID3D12PipelineLibrary1> psoLib_;
+    std::vector<uint8_t> psoLibBlob_;
+    std::wstring psoCachePath_;
+    bool psoLibDirty_ = false;
+    uint32_t psoLibHits_ = 0, psoLibMisses_ = 0;
+
     friend struct DeviceAccess;
 };
 

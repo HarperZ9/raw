@@ -156,13 +156,48 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float4 c = (flags.x & FLAG_CLOUDS) != 0u ? Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f) : float4(0.0f, 0.0f, 0.0f, 1.0f);
         float3 skyOut = baseSky * c.a + c.rgb;
         if ((flags.x & FLAG_MATCH) == 0u) {
-            // Luminous atmospheric moon glow locked strictly to Skyrim's real Masser/Secunda sky pixels (zero camera drift).
+            // Luminous atmospheric moon glow locked strictly to Skyrim's real Masser/Secunda sky pixels (zero camera drift),
+            // plus infinite-resolution procedural scintillating starfield and animated volumetric Nordic auroras.
             const float sunLumN = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             const float nightSkyW = saturate((0.26f - sunLumN) * 4.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
-            if (nightSkyW > 0.05f) {
+            if (nightSkyW > 0.05f && sDir.z > 0.0f) {
                 const float moonL = dot(baseSky, float3(0.2126f, 0.7152f, 0.0722f));
                 const float moonMask = smoothstep(0.14f, 0.45f, moonL);
                 skyOut += baseSky * float3(0.88f, 0.96f, 1.18f) * (moonMask * nightSkyW * (0.45f + 0.85f * c.a));
+                // Procedural 4K/8K/16K-crisp starfield with stellar color temperatures and subtle scintillation.
+                const float3 starCell = floor(sDir * 260.0f);
+                const float3 starF = frac(sDir * 260.0f) - 0.5f;
+                const float sh0 = cHash(starCell);
+                if (sh0 > 0.965f) {
+                    const float3 off = float3(cHash(starCell + 11.3f), cHash(starCell + 27.1f), cHash(starCell + 43.7f)) - 0.5f;
+                    const float dStar = length(starF - off * 0.55f);
+                    const float starCore = exp(-dStar * dStar * 42.0f) * smoothstep(0.965f, 0.998f, sh0);
+                    const float twk = 0.78f + 0.22f * sin(camPosW.w * (2.5f + sh0 * 5.0f) + sh0 * 62.8f);
+                    const float temp = cHash(starCell + 71.9f);
+                    const float3 starCol = lerp(float3(0.72f, 0.84f, 1.0f), float3(1.0f, 0.86f, 0.68f), temp);
+                    skyOut += starCol * (starCore * twk * nightSkyW * c.a * saturate(sDir.z * 4.5f) * 1.15f);
+                }
+                // Animated multi-curtain volumetric Nordic Aurora Borealis across clear northern skies.
+                const float auroraVis = nightSkyW * (1.0f - saturate(clouds.x * 1.15f)) * smoothstep(0.08f, 0.35f, sDir.z) * smoothstep(-0.25f, 0.45f, sDir.y);
+                if (auroraVis > 0.02f) {
+                    float3 aurSum = 0.0f.xxx;
+                    [unroll] for (int ai = 0; ai < 6; ai++) {
+                        const float ah = 0.22f + float(ai) * 0.13f;
+                        const float2 ap = sDir.xy / max(sDir.z, 0.12f) * (1.4f + ah * 0.6f);
+                        const float wave = sin(ap.x * 2.2f + camPosW.w * 0.08f + cNoise(float3(ap * 1.3f, camPosW.w * 0.04f)) * 3.2f);
+                        const float band = exp(-abs(ap.y - 0.65f - wave * 0.42f) * 4.8f);
+                        const float rays = 0.55f + 0.45f * cNoise(float3(ap.x * 7.5f, ap.y * 2.0f, camPosW.w * 0.12f + ah * 2.0f));
+                        const float3 aCol = lerp(float3(0.12f, 0.95f, 0.58f), float3(0.42f, 0.26f, 0.96f), saturate((ah - 0.22f) * 1.45f));
+                        aurSum += aCol * (band * rays * (1.0f - ah * 0.65f));
+                    }
+                    skyOut += aurSum * (auroraVis * c.a * 0.11f);
+                }
+            }
+            // Horizon Fix: seamless atmospheric mist/ocean continuation for sub-horizon sky rays (no empty void past map edge).
+            if (sDir.z < 0.015f) {
+                const float subW = saturate((0.015f - sDir.z) * 18.0f);
+                const float3 horizMist = lerp(skyOut, max(float3(ambient[0].w, ambient[1].w, ambient[2].w), 0.04f.xxx) * 0.85f, subW * 0.65f);
+                skyOut = horizMist;
             }
             const float skyPeak = max(skyOut.r, max(skyOut.g, skyOut.b));
             skyOut = skyOut / (1.0f + max(skyPeak - 0.56f, 0.0f) * 0.65f);
@@ -434,9 +469,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const bool bounceHere = sunColour.w > 0.5f || (flags.x & FLAG_BOUNCE_IN) != 0u;
     const float3 bounce = rt && (flags.x & FLAG_BOUNCE) != 0u && bounceHere ? RtBounce.Load(ip).rgb * proj.w * (match ? 1.0f : 1.45f) : 0.0f.xxx;
     // Elder-inspired Nordic chromatic separation (!match): cool slate-blue shadow ambient vs warm direct sun & bounce.
+    // Helios-style interior weather reflection: outdoor rain/overcast subtly cools interior ambient bounce.
     if (!match && isExterior) {
         const float inShadow = 1.0f - saturate(sunShadow);
         amb *= lerp(float3(1.0f, 1.0f, 1.0f), float3(0.84f, 0.94f, 1.10f), inShadow * 0.65f);
+    } else if (!match && !isExterior) {
+        const float outCool = saturate(clouds.x * 0.6f + weather.w * 0.5f);
+        amb *= lerp(float3(1.02f, 1.00f, 0.98f), float3(0.90f, 0.96f, 1.06f), outCool * 0.35f);
     }
     amb += bounce;
 

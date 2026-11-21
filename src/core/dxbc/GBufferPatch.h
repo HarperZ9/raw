@@ -75,6 +75,7 @@ struct PatchInfo
 struct PatchOptions
 {
     uint8_t classFlags = 0;             // or-ed into the material class (material::FirstPersonFlag)
+    bool    alphaDiscard = false;       // emit discard_z (alpha < 0.35) on foliage/LOD color passes for safe D32_FLOAT
 };
 
 // Reflection only: what kind of shader this is and what a patch would find.

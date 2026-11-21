@@ -124,9 +124,16 @@ void LayerOutput(const Analysis& a, const Regs& r, const T& alpha, Code* e)
 Code Epilogue(const Analysis& a, const Regs& r, const PatchOptions& opt)
 {
     Code e;
+    const T alpha = (a.outMask[0] & W) ? Rd(r.shadow[0], kW) : All(1);
+    if (opt.alphaDiscard && (a.outMask[0] & W) &&
+        ((a.info.kind == ShaderKind::Lighting && a.info.materialClass == material::SoftLit) ||
+         a.info.kind == ShaderKind::DistantLod)) {
+        // Re-inject exact alpha-test discard_z before outputs so foliage color passes work safely under D32_FLOAT.
+        e.push_back(Make(op::Ge, {Tmp(r.scratch, X), alpha, All(0.35f)}));
+        e.push_back(Make(op::Discard, {Rd(r.scratch, kX)}));
+    }
     for (uint32_t k = 0; k < 4; ++k)
         if (a.outMask[k]) e.push_back(Make(op::Mov, {Out(k, a.outMask[k]), Rd(r.shadow[k])}));
-    const T alpha = (a.outMask[0] & W) ? Rd(r.shadow[0], kW) : All(1);
     MaterialOutputs(a, r, opt, alpha, &e);
     LayerOutput(a, r, alpha, &e);
     return e;

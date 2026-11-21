@@ -309,6 +309,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         s.n = normalize(s.n + (-gx * tVec - gy * bVec) * 0.42f);
         const float microSlope = saturate(length(float2(gx, gy)) * 1.4f);
         s.alpha = clamp(s.alpha + (microSlope - 0.15f) * 0.12f * distFade, 0.05f, 0.95f);
+        // Native zero-mod Parallax Occlusion Mapping (POM) micro-relief self-shadowing on cobblestone, stone, timber & terrain.
+        if ((base == 1u || base == 4u || base == 6u) && z < 1600.0f && sunDir.w > 0.5f) {
+            const float pomFade = saturate(1.0f - z / 1600.0f) * (base == 4u ? 0.65f : 0.85f);
+            const float2 sunScreen = float2(dot(sunDir.xyz, tVec), dot(sunDir.xyz, bVec));
+            const float2 stepPx = normalize(sunScreen + float2(1.0e-4f, 0.0f)) * 1.35f;
+            float maxH = hc;
+            [unroll] for (int pi = 1; pi <= 4; pi++) {
+                const int3 spm = int3(clamp(int2(px + stepPx * float(pi)), int2(0, 0), dimMax), 0);
+                if (abs(Depth.Load(spm) - d) < 0.0008f) {
+                    maxH = max(maxH, dot(Albedo.Load(spm).rgb, lw) - 0.018f * float(pi));
+                }
+            }
+            const float pomOcc = saturate(1.0f - max(maxH - hc, 0.0f) * 2.8f * pomFade);
+            albedo *= lerp(0.76f, 1.0f, pomOcc);
+        }
     }
     // Tokuyoshi-Kaplanyan geometric specular anti-aliasing: filters sub-pixel normal variance to kill GGX sparkle in motion.
     if (!match) {

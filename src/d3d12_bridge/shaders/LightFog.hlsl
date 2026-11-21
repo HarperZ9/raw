@@ -95,20 +95,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Unified sky- and weather-coupled exponential height fog & alpine mountain mist (replaces Skyrim's flat 2011 metric fog).
     if ((flags.x & FLAG_FOG_REPLACES) != 0u && sunColour.w > 0.5f) {
         const float weatherDens = 1.0f + weather.w * 2.2f + weather.z * 2.6f + saturate(clouds.x - 0.35f) * 1.1f;
-        const float baseSigma = 0.0000145f * weatherDens;
-        // Exponential height falloff: valley floors hold denser mist while high mountain peaks stay crisp.
+        const float baseSigma = 0.0000135f * weatherDens;
+        // Smooth C2 elevation weight across w.z = 0 (eliminates the horizontal midpoint fog band at eye horizon).
         const float hStart = max(camPosW.z * 0.00025f, 0.0f);
-        const float hSlope = w.z * 0.00028f;
-        const float hFactor = abs(hSlope) > 1.0e-4f
-                                  ? (1.0f - exp(-min(dist, 220000.0f) * hSlope)) / (min(dist, 220000.0f) * hSlope)
-                                  : 1.0f;
+        const float elevW = lerp(1.12f, 0.44f, smoothstep(-0.15f, 0.30f, w.z));
         // 3D rolling alpine mist & high-altitude mountain-collar cloud band (replaces static billboard fog planes).
         const float3 midPt = camPosW.xyz + w * min(dist * 0.55f, 45000.0f);
         const float3 windShift = float3(cloudWind.xy * camPosW.w * 0.00006f, 0.0f);
         const float alpineNoise = cNoise(midPt * 0.00014f + windShift) * 0.65f + cNoise(midPt * 0.00042f - windShift * 1.6f + 7.1f) * 0.35f;
         const float peakCollar = exp(-pow((midPt.z - 5200.0f) / 3600.0f, 2.0f)) * smoothstep(8000.0f, 28000.0f, dist);
         const float alpineMist = (0.76f + 0.48f * alpineNoise) * (1.0f + peakCollar * (0.45f + 0.55f * alpineNoise));
-        const float od = baseSigma * min(dist, 240000.0f) * clamp(hFactor, 0.25f, 1.85f) * alpineMist * exp(-hStart * 0.15f);
+        const float od = baseSigma * min(dist, 240000.0f) * elevW * alpineMist * exp(-hStart * 0.15f);
         const float T = exp(-od);
         // Atmospheric in-scatter color locked 100% to live skyPalette() + Mie forward sun glow + night indigo.
         float3 sZ, sM, sH;
@@ -117,7 +114,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float nightF = saturate((0.26f - sunLumF) * 4.5f);
         const float lowSunF = saturate(1.0f - sunDir.z * 2.6f);
         const float cosSunF = saturate(dot(w, sunDir.xyz));
-        float3 atmoCol = lerp(sH * 0.78f, sM * 0.85f, saturate(w.z * 2.8f));
+        float3 atmoCol = lerp(sH * 0.78f, sM * 0.85f, smoothstep(-0.08f, 0.35f, w.z));
         const float3 mieCol = lerp(float3(1.0f, 0.94f, 0.84f), float3(1.0f, 0.60f, 0.30f), lowSunF);
         atmoCol += mieCol * (pow(cosSunF, 8.0f) * 0.22f * (1.0f - saturate(clouds.x * 0.75f)));
         // Snowstorm frosted whiteout vs night indigo-blue alpine haze.

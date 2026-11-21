@@ -178,6 +178,12 @@ static HRESULT BuildTexture(Device* dev, ResCore& c, D3D12_RESOURCE_DIMENSION di
         if (c.depth > m) m = c.depth;
         while (m) { ++c.mips; m >>= 1; }
     }
+    // Native DX12 32-bit float depth promotion: upgrade 24-bit D24S8/R24G8 depth buffers to D32_FLOAT_S8X24 / R32G8X24_TYPELESS
+    // for 256x+ better depth precision and zero distant mountain/decal z-fighting.
+    if (c.usage != D3D11_USAGE_STAGING) {
+        if (c.format == DXGI_FORMAT_R24G8_TYPELESS) c.format = DXGI_FORMAT_R32G8X24_TYPELESS;
+        else if (c.format == DXGI_FORMAT_D24_UNORM_S8_UINT) c.format = DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
+    }
     c.planes = dev->PlaneCount(c.format);
     D3D12_RESOURCE_DESC rd{};
     rd.Dimension = dim;
@@ -238,6 +244,7 @@ STDMETHODIMP Device::CreateTexture2D(const D3D11_TEXTURE2D_DESC* d, const D3D11_
     HRESULT hr = BuildTexture(this, t->core, D3D12_RESOURCE_DIMENSION_TEXTURE2D, d->SampleDesc.Quality, init);
     if (FAILED(hr)) { t->Release(); return hr; }
     t->desc.MipLevels = t->core.mips;
+    t->desc.Format = t->core.format;
     *out = t;
     return S_OK;
 }

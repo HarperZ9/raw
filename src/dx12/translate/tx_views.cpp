@@ -90,6 +90,13 @@ STDMETHODIMP Device::CreateShaderResourceView(ID3D11Resource* res, const D3D11_S
     if (!out) return S_FALSE;
     D3D11_SHADER_RESOURCE_VIEW_DESC d = in ? *in : DefaultSrv(*c);
     if (d.Format == DXGI_FORMAT_UNKNOWN && !c->IsBuffer()) d.Format = c->format;
+    // Translate promoted D32_FLOAT_S8X24 depth/stencil SRV formats seamlessly.
+    if (c->format == DXGI_FORMAT_R32G8X24_TYPELESS || c->format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT) {
+        if (d.Format == DXGI_FORMAT_R24_UNORM_X8_TYPELESS || d.Format == DXGI_FORMAT_R24G8_TYPELESS || d.Format == DXGI_FORMAT_R32G8X24_TYPELESS)
+            d.Format = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+        else if (d.Format == DXGI_FORMAT_X24_TYPELESS_G8_UINT)
+            d.Format = DXGI_FORMAT_X32_TYPELESS_G8X24_UINT;
+    }
     D3D12_SHADER_RESOURCE_VIEW_DESC s{};
     s.Format = d.Format;
     s.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -217,6 +224,10 @@ STDMETHODIMP Device::CreateDepthStencilView(ID3D11Resource* res, const D3D11_DEP
         else { d.ViewDimension = c->slices > 1 ? D3D11_DSV_DIMENSION_TEXTURE2DARRAY : D3D11_DSV_DIMENSION_TEXTURE2D; d.Texture2DArray.ArraySize = c->slices; }
     }
     if (d.Format == DXGI_FORMAT_UNKNOWN) d.Format = c->format;
+    if (c->format == DXGI_FORMAT_R32G8X24_TYPELESS || c->format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT) {
+        if (d.Format == DXGI_FORMAT_D24_UNORM_S8_UINT || d.Format == DXGI_FORMAT_R24G8_TYPELESS || d.Format == DXGI_FORMAT_R32G8X24_TYPELESS)
+            d.Format = DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
+    }
     D3D12_DEPTH_STENCIL_VIEW_DESC s{};
     s.Format = d.Format;
     s.Flags = static_cast<D3D12_DSV_FLAGS>(d.Flags);   // read-only depth 1, read-only stencil 2 in both APIs

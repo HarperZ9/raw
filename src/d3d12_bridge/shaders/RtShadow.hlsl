@@ -66,6 +66,14 @@ float3 jitterDir(float3 d, float spread, float2 r) {
     return normalize(d + (t * cos(a) + b * sin(a)) * s);
 }
 
+// Spatiotemporal R2 Golden-Ratio Low-Discrepancy Blue-Noise Sampling (DNS-04, Wolfe/Roberts/Jimenez):
+// Spatially blue-noise-decorrelated IGN + R2 temporal quasirandom sequence for cleaner 1-4 spp RayQuery sampling.
+float2 stbnR2(float2 px, float frameOff) {
+    const float2 r2Step = float2(0.7548776662f, 0.5698402910f);
+    const float2 ignBase = float2(ign(px), ign(px.yx + 19.37f));
+    return frac(ignBase + r2Step * fmod(frameOff, 64.0f));
+}
+
 // How much light li would give the point (luminance x window x n.l): the trace's light choice and ReSTIR's target.
 float lightShare(uint li, float3 p, float3 n) {
     const float3 toL = lightPosR[li].xyz - p;
@@ -225,7 +233,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         // Stronger normal offset on skinned meshes (base == 10) and general surfaces to eliminate RT terminator/self-shadow acne.
         const float oScale = (base == 10u) ? (1.80f + 0.008f * z) : (0.85f + 0.005f * z);
         const float3 o = p + ng * oScale;
-        const float2 r = float2(hash(px, frameIndex * 0.618f), hash(px.yx, frameIndex * 0.381f + 7.0f));
+        const float2 r = stbnR2(px, frameIndex);
         if (sunDir.w > 0.5f && sunColour.w > 0.5f && dot(n, sunDir.xyz) > 0.0f) {
             // Near the terminator of the coarse surface: start past its own facets.
             // Overdrive 3-spp stratified RayQuery soft sun penumbra shadows.
@@ -242,7 +250,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         const bool isInterior = sunDir.w <= 0.5f;
         const float aoLen = isInterior ? (skyLength > 0.0f ? min(skyLength, 220.0f) : 180.0f) : skyLength;
         if (aoLen > 0.0f) {
-            const float2 rs0 = float2(hash(px, frameIndex * 0.754877f + 3.0f), hash(px.yx, frameIndex * 0.569840f + 11.0f));
+            const float2 rs0 = stbnR2(px, frameIndex + 11.0f);
             float skySum = 0.0f;
             float3 bounceSum = 0.0f;
             [unroll] for (uint si = 0u; si < 4u; si++) {
@@ -374,7 +382,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         float3 c;
         if (sunDir.w > 0.5f && sunColour.w > 0.5f) { vis.x = farOccluded(o, sunDir.xyz, 150000.0f, 26u, c) ? 0.0f : 1.0f; }
         if (skyLength > 0.0f && skyTurn(id.xy)) {
-            const float2 rs = float2(hash(px, frameIndex * 0.754877f + 3.0f), hash(px.yx, frameIndex * 0.569840f + 11.0f));
+            const float2 rs = stbnR2(px, frameIndex + 23.0f);
             const float3 sd = cosineDir(n, rs);
             if (sd.z > 0.0f && farOccluded(o, sd, 60000.0f, 20u, c)) { sky = 0.0f; bounce = c; }
         }
@@ -398,7 +406,7 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float3 v = normalize(eyeAt() - p);
             const float shin = exp2(sp.y * 13.0f);
             const float alpha = lerp(lerp(clamp(sqrt(2.0f / (shin + 2.0f)), 0.03f, 1.0f), 0.12f, rain.wet), 0.03f, rain.puddle);
-            const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
+            const float2 rr = stbnR2(px, frameIndex + 37.0f);
             const float3 rd = jitterDir(reflect(-v, n), alpha * 0.5f, rr);
             const float3 ng = geometricNormal(px, p, n);
             reflTraced = true;

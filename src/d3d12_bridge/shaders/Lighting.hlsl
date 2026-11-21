@@ -101,8 +101,12 @@ void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, in
     // Disney/Frostbite Burley retro-reflective rough diffuse (Lagarde 2014): replaces flat Lambert on rough stone, bark, dirt & wool.
     const float fd90 = 0.5f + 2.0f * s.alpha * lh * lh;
     const float burley = any(s.wrap > 0.0f) ? 1.0f : clamp((1.0f + (fd90 - 1.0f) * pow(1.0f - nl, 5.0f)) * (1.0f + (fd90 - 1.0f) * pow(1.0f - nv, 5.0f)), 0.72f, 1.28f);
+    // Kulla-Conty / Turquin analytical multi-scattering GGX energy compensation (SIGGRAPH 2017/2019):
+    // Restores microfacet multiple-bounce energy lost by single-scattering GGX on rough stone, timber, leather, and brushed steel.
+    const float ess = saturate(1.0f - s.alpha * (0.42f * (1.0f - nv) + 0.14f));
+    const float kulla = 1.0f + s.f0 * ((1.0f - ess) / max(ess, 0.25f));
     diff += nlD * c * (1.0f - F) * burley;
-    spec += PI * D * V * F * nl * c;   // the game's light colour is irradiance over pi
+    spec += PI * D * V * F * kulla * nl * c;   // the game's light colour is irradiance over pi
 }
 
 #include "DistantLod.hlsli"   // distantLit: distant LOD lit in improved mode (FOL-04)

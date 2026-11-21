@@ -527,11 +527,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const int ch = int(lightColS[li].w);
             if (ch >= 0 && ch <= 3) { sh = m4[ch]; }   // interiors without sun shadows use channel 0 too
             float3 c = lightColS[li].rgb * att;
-            // Embers-class warm hearth/torch/candle spectral enrichment + calm world-anchored organic breath (no candle strobing).
+            // Embers-class warm hearth/torch/candle spectral enrichment + calm world-anchored organic breath.
+            // Moderated on skin so NPC faces near hearths stay naturally sculpted instead of harsh orange-red.
             if (!match && lightColS[li].r > lightColS[li].b * 1.30f) {
                 const float lPhase = dot(lightPosR[li].xyz + camPosW.xyz, float3(0.031f, 0.047f, 0.023f));
                 const float flk = 0.975f + 0.025f * sin(camPosW.w * 2.4f + lPhase);
-                c *= float3(1.16f, 0.90f, 0.64f) * flk;
+                const float3 fireBoost = skin ? float3(1.03f, 0.96f, 0.90f) : float3(1.16f, 0.90f, 0.64f);
+                c *= fireBoost * flk;
             }
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;
             // When hardware RT traced this light (slot 1..3), use rv[slot] directly (bypassing vanilla's flickering
@@ -632,8 +634,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Attenuate vanilla's compressed 128px DXT1 static cubemap (envRefl) in improved mode so full-res RT + dynamic IBL drive clean metal reflections.
     float3 lit = knee3((albedo + envRefl * (match ? 1.0f : 0.12f)) * (diff + amb + effCharLight));
     if (!match && skin) {
-        // Gentle dermal highlight roll-off preserves natural skin tone under harsh direct midday sunlight.
-        lit = lit / (1.0f + max(max(lit.r, max(lit.g, lit.b)) - 0.78f, 0.0f) * 0.42f);
+        // Per-channel dermal highlight roll-off preserves natural skin tone under direct midday sun and close hearth fire.
+        lit = lit / (1.0f + max(lit - 0.68f.xxx, 0.0f.xxx) * 0.52f);
     }
     if (flags.w == 16u) { return float4(albedo, game.a); }   // view 16: the G-buffer base colour the pass lights
     if (flags.w == 17u) { return float4(saturate(game.rgb / max(knee3(lit), 1.0e-3f) * 0.25f), game.a); }   // view 17: the game's frame over RAW's diffuse (0.25 = equal)

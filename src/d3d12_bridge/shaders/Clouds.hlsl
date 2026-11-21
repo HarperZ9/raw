@@ -65,9 +65,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float h = saturate((pa.z - clouds.y) / clouds.z);
             const float cloudAo = lerp(0.32f, 0.96f, pow(h, 0.80f)) * exp(-dens * 0.28f);
             const float lowSun = saturate(1.0f - sunDir.z * 3.0f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
-            // Crisp atmospheric blue-silver cloud undersides vs neutral-white direct sun bounce.
-            const float3 coolSilver = float3(0.66f, 0.78f, 0.96f) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.12f) * 1.35f;
-            const float3 baseTint = lerp(coolSilver * cloudAo, coolSilver * (cloudAo * 0.75f) + sunC * lerp(0.16f, 0.05f, h), lowSun * 0.42f);
+            // Neutralize warm beige drift on overcast cloud undersides while keeping cool silver-blue relief.
+            const float overcastW = saturate((clouds.x - 0.50f) * 2.2f);
+            const float3 coolSilver = lerp(float3(0.66f, 0.78f, 0.96f), float3(0.76f, 0.81f, 0.89f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.12f) * 1.35f;
+            const float3 neutralSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.98f, 0.99f, 1.02f), overcastW * 0.65f);
+            const float3 baseTint = lerp(coolSilver * cloudAo, coolSilver * (cloudAo * 0.75f) + neutralSun * lerp(0.14f, 0.05f, h), lowSun * 0.40f * (1.0f - overcastW * 0.5f));
             // Volumetric sheet-lightning inside heavy rainstorms (clouds.x > 0.78 && weather.w > 0.25).
             float3 stormFlash = 0.0f.xxx;
             if (clouds.x > 0.78f && weather.w > 0.25f) {

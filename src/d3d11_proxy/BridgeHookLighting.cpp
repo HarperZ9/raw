@@ -114,29 +114,43 @@ void LoadLightingConfig(const std::string& ini)
         GetPrivateProfileStringA("Lighting", k, "", buf, sizeof(buf), ini.c_str());
         return buf[0] ? std::strtof(buf, nullptr) : d;
     };
+    // Quality presets (0=Performance, 1=Balanced, 2=High, 3=Ultra, 4=Overdrive). Individual INI keys still override.
+    const int quality = i("Quality", -1);
+    int defRt = 1, defRtSky = 1, defRtRefl = 1, defRtFar = 1, defRtSkin = 1, defClouds = 1, defFog = 1;
+    if (quality == 0) {
+        defRt = 0; defRtSky = 0; defRtRefl = 0; defRtFar = 0; defRtSkin = 0; defClouds = 0; defFog = 0;
+    } else if (quality == 1) {
+        defRt = 1; defRtSky = 1; defRtRefl = 0; defRtFar = 0; defRtSkin = 0; t.rtSkyLength = 450.0f; t.rtBounce = 0.5f;
+    } else if (quality == 2) {
+        defRt = 1; defRtSky = 1; defRtRefl = 1; defRtFar = 0; defRtSkin = 1; t.rtSkyLength = 900.0f; t.rtBounce = 0.85f;
+    } else if (quality == 3) {
+        defRt = 1; defRtSky = 1; defRtRefl = 1; defRtFar = 1; defRtSkin = 1; t.rtSkyLength = 1400.0f; t.rtBounce = 1.0f; t.rtBounceInterior = 1.0f;
+    } else if (quality >= 4) {
+        defRt = 1; defRtSky = 1; defRtRefl = 1; defRtFar = 1; defRtSkin = 1; t.rtSkyLength = 2400.0f; t.rtBounce = 1.2f; t.rtBounceInterior = 1.15f; t.rtSkyStrength = 1.0f;
+    }
     t.mode = i("Mode", 1);
     t.softShadows = i("SoftShadows", 1) != 0; t.ggxSpecular = i("GgxSpecular", 1) != 0;
-    t.volumetricFog = i("VolumetricFog", 1) != 0; t.contactShadows = i("ContactShadows", 1) != 0;
-    t.rtShadows = i("RtShadows", 1) != 0;   // on raw::tx only (docs/RAYTRACING.md)
-    t.rtAlpha = i("RtAlpha", 1) != 0;
+    t.volumetricFog = i("VolumetricFog", defFog) != 0; t.contactShadows = i("ContactShadows", 1) != 0;
+    t.rtShadows = i("RtShadows", defRt) != 0;   // on raw::tx only (docs/RAYTRACING.md)
+    t.rtAlpha = i("RtAlpha", defRt) != 0;
     t.rtAlphaRef = f("RtAlphaRef", t.rtAlphaRef);
     t.rtTermDist = f("RtTermDist", t.rtTermDist);
-    t.rtSky = i("RtSky", 1) != 0;
+    t.rtSky = i("RtSky", defRtSky) != 0;
     t.rtSkyStrength = f("RtSkyStrength", t.rtSkyStrength);
     t.rtSkyLength = f("RtSkyLength", t.rtSkyLength);
     t.rtBounce = f("RtBounce", t.rtBounce);
     t.rtBounceInterior = f("RtBounceInterior", t.rtBounceInterior);
-    t.rtReflect = i("RtReflect", 1) != 0;
-    t.rtRest = i("RtRest", 1) != 0;
-    t.rtRestReuse = i("RtRestReuse", 1) != 0;
-    t.rtFar = i("RtFar", 1) != 0;
+    t.rtReflect = i("RtReflect", defRtRefl) != 0;
+    t.rtRest = i("RtRest", defRt) != 0;
+    t.rtRestReuse = i("RtRestReuse", defRt) != 0;
+    t.rtFar = i("RtFar", defRtFar) != 0;
     t.rtDebug = i("RtDebug", 0);
-    t.rtOmm = i("RtOmm", 1) != 0;
-    t.rtMaterials = i("RtMaterials", 1) != 0;
+    t.rtOmm = i("RtOmm", defRt) != 0;
+    t.rtMaterials = i("RtMaterials", defRt) != 0;
     t.rtMatSide = i("RtMatSide", t.rtMatSide);
-    t.rtCache = i("RtCache", 1) != 0;
+    t.rtCache = i("RtCache", defRt) != 0;
     t.rtCacheCell = f("RtCacheCell", t.rtCacheCell);
-    t.rtSkin = i("RtSkin", 1) != 0;
+    t.rtSkin = i("RtSkin", defRtSkin) != 0;
     t.rtSkinCull = i("RtSkinCull", 1); t.rtSkinRatio = f("RtSkinRatio", t.rtSkinRatio); t.rtSkinMin = f("RtSkinMin", t.rtSkinMin);
     t.wetness = f("Wetness", t.wetness);
     t.snow = f("Snow", t.snow);
@@ -155,7 +169,7 @@ void LoadLightingConfig(const std::string& ini)
     t.distantLod = i("DistantLod", 1) != 0;
     t.envMap = i("EnvMap", 1) != 0;
     t.charLight = i("CharLight", 1) != 0;
-    t.clouds = i("Clouds", 1) != 0; t.cloudCover = f("CloudCover", t.cloudCover);
+    t.clouds = i("Clouds", defClouds) != 0; t.cloudCover = f("CloudCover", t.cloudCover);
     t.cloudBase = f("CloudBase", t.cloudBase); t.cloudThickness = f("CloudThickness", t.cloudThickness);
     t.cloudShadow = f("CloudShadow", t.cloudShadow); t.cloudDensity = f("CloudDensity", t.cloudDensity);
     t.cloudWindX = f("CloudWindX", t.cloudWindX); t.cloudWindY = f("CloudWindY", t.cloudWindY);

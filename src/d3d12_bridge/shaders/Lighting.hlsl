@@ -661,8 +661,20 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             lit += envFinal * fr * reflMask * (1.0f - s.alpha) * 0.85f;
             if (flags.w == 6u) { return float4(envFinal, game.a); }
         } else if (base == 2u) {
-            // Class-2 metal/armor dynamic cubemap IBL (live sun/sky/ground response).
-            lit += dynEnv * fr * max(reflMask, 0.25f) * (1.0f - s.alpha * 0.65f) * (0.35f + 0.65f * skyVis) * 0.55f;
+            // Class-2 forged metal/armor dynamic cubemap IBL + Turquin multi-scattering metallic energy preservation.
+            const float multiBoost = 1.0f + s.f0 * (1.0f - nv) * 0.85f;
+            lit += dynEnv * fr * max(reflMask, 0.25f) * (1.0f - s.alpha * 0.65f) * (0.35f + 0.65f * skyVis) * 0.58f * multiBoost;
+        }
+        // Estevez-Kulla grazing velvet/fuzz rim sheen on rough organic materials (fur, wool, moss, thatch, pine bark).
+        if (!skin && base != 2u && s.alpha > 0.52f && sunDir.w > 0.5f && sunShadow > 0.05f) {
+            const float rimFuzz = pow(1.0f - nv, 4.0f) * saturate((s.alpha - 0.52f) * 2.5f) * specOcc;
+            lit += albedo * sunColour.rgb * (rimFuzz * sunShadow * 0.28f);
+        }
+        // Subtle emerald-cyan Aurora Borealis overhead sky bounce on clear-night snowfields & frost.
+        if (isExterior && wet.snow > 0.15f && sunDir.w > 0.5f) {
+            const float sLumAur = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+            const float aurBounce = saturate((0.26f - sLumAur) * 4.5f) * (1.0f - saturate(clouds.x * 1.15f)) * saturate(s.n.z);
+            lit += albedo * float3(0.06f, 0.24f, 0.19f) * (aurBounce * wet.snow * skyVis * 0.45f);
         }
         // Physical clearcoat GGX lobe on wet surfaces (water film over stone/wood/armor).
         if (max(wet.wet, wet.puddle) > 0.08f && isExterior && sunShadow > 0.0f) {

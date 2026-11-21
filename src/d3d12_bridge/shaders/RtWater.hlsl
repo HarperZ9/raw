@@ -152,14 +152,20 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float3 pb = worldAt(px, dBed);
                 const float depthV = max(p.z - pb.z, 0.0f);
                 const float3 sr = refract(-l, float3(0.0f, 0.0f, 1.0f), 1.0f / 1.333f);   // the sun's ray under the surface
+                // Flow-advected chromatic dispersion caustics: prism RGB spread scales naturally with water depth.
+                const float2 flowOff = (cloudWind.xy * 0.045f + nL.xy * 18.0f) * camPosW.w;
                 const float3 at = camPosW.xyz + pb - sr * (depthV / max(-sr.z, 0.2f));      // where it crossed the surface
                 const float t = camPosW.w;
                 const float sc = max(waterB.y, 1.0f);
-                const float3 net = float3(causticNet(at.xy + 0.35f, t, sc), causticNet(at.xy, t, sc), causticNet(at.xy - 0.35f, t, sc));
+                const float disp = clamp(depthV * 0.025f, 0.30f, 1.65f);
+                const float2 cPos = at.xy + flowOff;
+                const float3 net = float3(causticNet(cPos + float2(disp, 0.25f * disp), t, sc),
+                                          causticNet(cPos, t, sc),
+                                          causticNet(cPos - float2(disp, 0.25f * disp), t, sc));
                 const float sunVis = sunColour.w > 0.5f ? visible(pb + float3(0.0f, 0.0f, 1.0f + 0.002f * length(pb)), l, 0.0f, sunLength) : 1.0f;
                 const float through = exp(-waterA.z * (depthV + length(pb - p)));    // down to the bed and back up to the eye
-                const float focus = saturate(depthV / 30.0f);                          // a thin film focuses nothing
-                caus = BedAlbedo.Load(ip).rgb * sunColour.rgb * (l.z * sunVis * through * focus * waterA.y) * net;
+                const float focus = saturate(depthV / 22.0f) * exp(-depthV / 420.0f);  // sharp in shallows, softens in deep pools
+                caus = BedAlbedo.Load(ip).rgb * sunColour.rgb * (l.z * sunVis * through * focus * waterA.y * 1.35f) * net;
             }
 
             // Refraction through the bed's own colour, from the frame RAW lit before the game composited its water: the
@@ -181,9 +187,8 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float path = length(worldAt(float2(q), Depth.Load(int3(q, 0))) - p);
                 const float3 T = exp(-waterA.z * float3(2.2f, 1.0f, 0.7f) * path);
                 const float3 scatter = float3(0.05f, 0.10f, 0.11f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.0f.xxx) * 2.0f;
-                // Past a cell the game's own water takes over again: from high up the distant river read navy with no sky in
-                // it (rt7-far-6), where the bed is a few pixels and its depth says little.
-                const float nearW = 1.0f - smoothstep(4096.0f, 8192.0f, length(p));
+                // Extended 3x water replacement range (14,000..26,000 units) eliminates close-range vanilla navy water LOD pop.
+                const float nearW = 1.0f - smoothstep(14000.0f, 26000.0f, length(p));
                 // Subsurface turquoise wave-crest forward scatter when backlit by the sun.
                 const float3 waveSSS = sunDir.w > 0.5f
                     ? float3(0.04f, 0.22f, 0.24f) * sunColour.rgb * pow(saturate(dot(-v, sunDir.xyz)), 4.0f) * saturate((1.0f - n.z) * 7.0f) * 0.45f

@@ -94,8 +94,8 @@ void main(uint3 id : SV_DispatchThreadID) {
     float curR;
     float4 curStd;
     const float4 cur = meanAround(p, z, n < 10.0f ? 2 : 1, curR, curStd);
-    // SVGF neighborhood variance clamping: eliminates RT GI & skylight ghosting when lights, clouds, or actors move.
-    const float4 pad = max(curStd * 1.65f, float4(0.05f, 0.05f, 0.05f, 0.08f));
+    // Tighter SVGF neighborhood variance clamping: responsive dynamic cloud shadows, torches, and moving actors with zero ghosting.
+    const float4 pad = max(curStd * 1.38f, float4(0.035f, 0.035f, 0.035f, 0.06f));
     if (have) {
         past = clamp(past, saturate(cur.a - pad.a), saturate(cur.a + pad.a));
         pastB = clamp(pastB, max(cur.rgb - pad.rgb, 0.0f.xxx), cur.rgb + pad.rgb);

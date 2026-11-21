@@ -95,11 +95,7 @@ float ign(float2 px) {
 #endif
 Texture2D<float> Atlas : register(ATLAS_SLOT);
 
-// Sun visibility from the game's cascades: the cascade by the game's split depth, a 3 x 3 tap
-// percentage-closer filter (taps a texel apart) on the R32F atlas. 1 outside the maps.
-float cascadeShadow(float3 p, float d, bool filtered) {
-    if ((flags.x & FLAG_SHADOWS) == 0u || sunColour.w < 0.5f) { return 1.0f; }
-    const uint k = (flags.z > 1u && d > cascadeInfo.z) ? 1u : 0u;
+float cascadeSample(float3 p, uint k, bool filtered) {
     const float4 q = float4(p, 1.0f);
     const float3 sc = float3(dot(cascade[3 * k], q), dot(cascade[3 * k + 1], q), dot(cascade[3 * k + 2], q));
     if (any(sc.xy <= 0.0f) || any(sc.xy >= 1.0f)) { return 1.0f; }
@@ -115,4 +111,16 @@ float cascadeShadow(float3 p, float d, bool filtered) {
         }
     }
     return lit / 9.0f;
+}
+
+// Sun visibility from the game's cascades with smooth cascade-transition blending (eliminates hard split seams).
+float cascadeShadow(float3 p, float d, bool filtered) {
+    if ((flags.x & FLAG_SHADOWS) == 0u || sunColour.w < 0.5f) { return 1.0f; }
+    if (flags.z <= 1u) { return cascadeSample(p, 0u, filtered); }
+    const float split = cascadeInfo.z;
+    const float band = split * 0.90f;
+    if (d <= band) { return cascadeSample(p, 0u, filtered); }
+    if (d >= split) { return cascadeSample(p, 1u, filtered); }
+    const float w = smoothstep(band, split, d);
+    return lerp(cascadeSample(p, 0u, filtered), cascadeSample(p, 1u, filtered), w);
 }

@@ -216,25 +216,26 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float3 n = worldNormal(Normal.Load(ip));
         const float z = viewZOf(d);
         const float3 ng = geometricNormal(px, p, n);
-        const float3 o = p + ng * (0.5f + 0.003f * z);
+        const float3 o = p + ng * (0.65f + 0.0045f * z);
         const float2 r = float2(hash(px, frameIndex * 0.618f), hash(px.yx, frameIndex * 0.381f + 7.0f));
         if (sunDir.w > 0.5f && sunColour.w > 0.5f && dot(n, sunDir.xyz) > 0.0f) {
             // Near the terminator of the coarse surface: start past its own facets.
             const float turn = saturate(1.0f - dot(ng, sunDir.xyz) / 0.35f);
             vis.x = visible(o, jitterDir(sunDir.xyz, sunCone, r), termDist * turn * turn, sunLength);
         }
-        // Sky rays on a checkerboard that alternates each frame; RtSkyFilter's spatial mean fills the rest.
-        if (skyLength > 0.0f && skyTurn(id.xy)) {
-            // Game space has z up. Below the horizon a ray stands for the ground term: seen.
+        // Sky rays (exteriors) or local SM6.5 RayQuery interior RTAO + bounce (interiors, sunDir.w <= 0.5f)
+        // on an alternating checkerboard; RtSkyFilter's spatial mean fills the rest.
+        const bool isInterior = sunDir.w <= 0.5f;
+        const float aoLen = isInterior ? (skyLength > 0.0f ? min(skyLength, 220.0f) : 180.0f) : skyLength;
+        if (aoLen > 0.0f && skyTurn(id.xy)) {
             const float2 rs = float2(hash(px, frameIndex * 0.754877f + 3.0f), hash(px.yx, frameIndex * 0.569840f + 11.0f));
             const float3 sd = cosineDir(n, rs);
-            if (sd.z > 0.0f) {
+            if (isInterior || sd.z > 0.0f) {
                 Hit h;
-                if (traceHit(o, sd, skyLength, h)) {
-                    // On screen: the game's frame. Off screen: the hit's own material, lit with the cache
-                    // (and the hit's cell takes one more ray of its own).
+                if (traceHit(o, sd, aoLen, h)) {
+                    // On screen: the game's frame. Off screen: the hit's own material, lit with the cache.
                     float3 hn;
-                    sky = 0.0f;
+                    sky = isInterior ? saturate(h.t / aoLen) : 0.0f;
                     bounce = radianceAt(h, o, sd, rs.yx, true, hn);
                     float3 c;
                     if ((giFlags & GI_CACHE) != 0u && !onScreen(o + sd * h.t, c)) { cacheFromHit(o + sd * h.t, hn, frac(rs * 1.618f + 0.31f)); }

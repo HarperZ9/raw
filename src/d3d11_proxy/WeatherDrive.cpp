@@ -27,6 +27,13 @@ bool WeatherDrive_Step(double dt, WeatherSurfaces& out)
     const float rain = test ? std::max(g_testRain, 0.0f) : Clamp01(g_report.rain.load());
     const float snow = test ? std::max(g_testSnow, 0.0f) : Clamp01(g_report.snow.load());
     const float cloud = test ? (rain > 0.0f || snow > 0.0f ? 1.0f : 0.0f) : Clamp01(g_report.cloud.load());
+    // After a loading screen / cell teleport (dt > 2.0 s), snap surface wetness/snow to the new region's weather
+    // instead of carrying Winterhold snow into clear Riverwood.
+    if (dt > 2.0) {
+        g_s.wetness = rain;
+        g_s.puddles = rain > 0.3f ? (rain - 0.3f) / 0.7f * 0.5f : 0.0f;
+        g_s.snow = snow;
+    }
     const float t = float(std::min(dt, 0.25));   // a stall or a loading screen does not jump the weather
     const WeatherTimes& k = g_times;
     if (rain > 0.05f) g_s.wetness += t * rain / k.soakSeconds;

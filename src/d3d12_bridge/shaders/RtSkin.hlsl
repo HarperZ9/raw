@@ -31,17 +31,20 @@ void main(uint3 id : SV_DispatchThreadID) {
     const uint w0 = word(Bv, b + wOffset), w1 = word(Bv, b + wOffset + 4u);
     const float4 wt = float4(f16tof32(w0), f16tof32(w0 >> 16), f16tof32(w1), f16tof32(w1 >> 16));
     float3 s = 0.0f;
-    bool bad = dot(wt, 1.0f.xxxx) < 0.5f;
+    const float wSum = dot(wt, 1.0f.xxxx);
+    bool bad = (wSum < 0.5f) || (wSum > 1.15f) || any(wt < -0.01f);
     [unroll] for (uint k = 0u; k < 4u; k++) {
-        const uint row = min(uint(float((iw >> (8u * k)) & 0xFFu) / 255.0f * 765.01f), 237u);
+        const uint row = min(((iw >> (8u * k)) & 0xFFu) * 3u, 237u);
         const float4 r0 = Bones[boneFirst + row], r1 = Bones[boneFirst + row + 1u], r2 = Bones[boneFirst + row + 2u];
-        // A weighted bone the palette leaves empty would pull the vertex to the world's origin: the actors'
-        // first run drew long spikes from the body to the ground that way.
-        bad = bad || (wt[k] > 0.01f && dot(r0.xyz, r0.xyz) + dot(r1.xyz, r1.xyz) + dot(r2.xyz, r2.xyz) < 1.0e-6f);
+        // Cull zeroed, corrupt, or wildly scaled bone rows so they become DXR-inactive NaN triangles instead of shadow spikes.
+        const float bNorm = dot(r0.xyz, r0.xyz) + dot(r1.xyz, r1.xyz) + dot(r2.xyz, r2.xyz);
+        bad = bad || (wt[k] > 0.01f && (bNorm < 1.0e-4f || bNorm > 12.0f));
         s += wt[k] * float3(dot(r0, p), dot(r1, p), dot(r2, p));
     }
+    const float3 rel = s - camPos;
+    bad = bad || !all(isfinite(rel)) || dot(rel, rel) > (16000.0f * 16000.0f);
     // A NaN position makes its triangles inactive in the BLAS (DXR), so a vertex that cannot be placed
     // takes its triangles out instead of stretching them across the scene.
-    const float3 o = bad ? asfloat(0x7FC00000u).xxx : s - camPos;
+    const float3 o = bad ? asfloat(0x7FC00000u).xxx : rel;
     Out.Store3((outFirst + v) * 12u, asuint(o));   // the bones are in world space; the scene is camera-relative
 }

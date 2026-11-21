@@ -39,7 +39,9 @@ float gameCurve(float l) {   // the game's own: a Hejl-style curve or a Reinhard
     return l * (1.0f + l * P[2].y) / (1.0f + l);
 }
 
-float3 casSharpen(float2 suv) {
+// 9-tap FXAA 3.11 sub-pixel edge anti-aliasing followed by gentle local-clamped CAS micro-contrast.
+// Eliminates stair-stepped aliasing on thin grass blades, pine needles, and armor edges without vaseline blur.
+float3 fxaaAndCas(float2 suv) {
     float w, h;
     Scene.GetDimensions(w, h);
     const float2 px = 1.0f / max(float2(w, h), float2(1.0f, 1.0f));
@@ -48,18 +50,54 @@ float3 casSharpen(float2 suv) {
     const float3 s  = Scene.Sample(S1, suv + float2( 0.0f,  px.y)).rgb;
     const float3 e  = Scene.Sample(S1, suv + float2( px.x,  0.0f)).rgb;
     const float3 ww = Scene.Sample(S1, suv + float2(-px.x,  0.0f)).rgb;
-    const float3 mn = min(c, min(min(n, s), min(e, ww)));
-    const float3 mx = max(c, max(max(n, s), max(e, ww)));
-    // Adaptive weight: sharpens soft TAA detail without ringing on high-contrast edges.
+    const float3 nw = Scene.Sample(S1, suv + float2(-px.x, -px.y)).rgb;
+    const float3 ne = Scene.Sample(S1, suv + float2( px.x, -px.y)).rgb;
+    const float3 sw = Scene.Sample(S1, suv + float2(-px.x,  px.y)).rgb;
+    const float3 se = Scene.Sample(S1, suv + float2( px.x,  px.y)).rgb;
+
+    // Perceptual luma in Reinhard-compressed space so HDR highlights don't dominate edge detection.
+    const float lc  = dot(c  / (1.0f + c ), W);
+    const float ln  = dot(n  / (1.0f + n ), W);
+    const float ls  = dot(s  / (1.0f + s ), W);
+    const float le  = dot(e  / (1.0f + e ), W);
+    const float lw  = dot(ww / (1.0f + ww), W);
+    const float lnw = dot(nw / (1.0f + nw), W);
+    const float lne = dot(ne / (1.0f + ne), W);
+    const float lsw = dot(sw / (1.0f + sw), W);
+    const float lse = dot(se / (1.0f + se), W);
+
+    const float lMin = min(lc, min(min(ln, ls), min(le, lw)));
+    const float lMax = max(lc, max(max(ln, ls), max(le, lw)));
+    const float lRange = lMax - lMin;
+
+    float3 aa = c;
+    if (lRange >= max(0.035f, lMax * 0.12f)) {
+        const float edgeH = abs(lnw + lne - 2.0f * ln) + 2.0f * abs(lw + le - 2.0f * lc) + abs(lsw + lse - 2.0f * ls);
+        const float edgeV = abs(lnw + lsw - 2.0f * lw) + 2.0f * abs(ln + ls - 2.0f * lc) + abs(lne + lse - 2.0f * le);
+        const bool isHoriz = edgeH >= edgeV;
+        const float l1 = isHoriz ? ln : lw;
+        const float l2 = isHoriz ? ls : le;
+        const float g1 = abs(l1 - lc), g2 = abs(l2 - lc);
+        const float stepDir = (g1 >= g2 ? -1.0f : 1.0f) * (isHoriz ? px.y : px.x);
+        const float subAvg = (2.0f * (ln + ls + le + lw) + lnw + lne + lsw + lse) / 12.0f;
+        const float subAmt = smoothstep(0.0f, 1.0f, saturate(abs(subAvg - lc) / max(lRange, 1.0e-4f)));
+        const float blend = subAmt * subAmt * 0.65f;
+        const float2 aaUv = isHoriz ? float2(suv.x, suv.y + stepDir * blend) : float2(suv.x + stepDir * blend, suv.y);
+        aa = Scene.Sample(S1, aaUv).rgb;
+    }
+
+    // Gentle local-clamped CAS sharpening on the anti-aliased result.
+    const float3 mn = min(aa, min(min(n, s), min(e, ww)));
+    const float3 mx = max(aa, max(max(n, s), max(e, ww)));
     const float3 amp = saturate(min(mn, max(2.0f.xxx - mx, 0.0f.xxx)) / max(mx, 1.0e-4f.xxx));
-    const float3 wCAS = sqrt(amp) * (-0.165f);
-    const float3 outC = (c + (n + s + e + ww) * wCAS) / max(1.0f.xxx + 4.0f * wCAS, 0.25f.xxx);
-    return clamp(outC, mn * 0.85f, mx * 1.15f);
+    const float3 wCAS = sqrt(amp) * (-0.115f);
+    const float3 outC = (aa + (n + s + e + ww) * wCAS) / max(1.0f.xxx + 4.0f * wCAS, 0.30f.xxx);
+    return clamp(outC, mn * 0.90f, mx * 1.10f);
 }
 
 float4 main(In i) : SV_Target {
     const float2 suv = min(max(i.uv * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
-    const float3 hdr = casSharpen(suv);
+    const float3 hdr = fxaaAndCas(suv);
     const float3 bloom = P[0].x > 0.5f ? Bloom.Sample(S0, suv).rgb : Bloom.Sample(S0, i.uv).rgb;
     const float2 lum = Lum.Sample(S2, i.uv).xy;
     const float avg = max(lum.x, 1.0e-5f);

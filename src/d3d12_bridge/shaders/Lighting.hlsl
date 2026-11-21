@@ -135,11 +135,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
         const float4 c = (flags.x & FLAG_CLOUDS) != 0u ? Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f) : float4(0.0f, 0.0f, 0.0f, 1.0f);
         float3 skyOut = baseSky * c.a + c.rgb;
-        if ((flags.x & FLAG_MATCH) == 0u && sunDir.w > 0.5f && sunDir.z > 0.0f) {
-            // Dynamic solar aureole attenuated by cloud transmittance c.a (silver-lined corona through thin clouds).
-            const float cosSun = saturate(dot(sDir, sunDir.xyz));
-            const float corona = pow(cosSun, 96.0f) * 0.42f + pow(cosSun, 14.0f) * 0.08f;
-            skyOut += sunColour.rgb * corona * (0.25f + 0.75f * c.a) * saturate(sunDir.z * 6.0f);
+        if ((flags.x & FLAG_MATCH) == 0u) {
+            if (sunDir.w > 0.5f && sunDir.z > 0.0f) {
+                // Solar corona suppressed by cloud optical depth c.a^2 and overcast cloudCover so overcast skies never blow out white.
+                const float cosSun = saturate(dot(sDir, sunDir.xyz));
+                const float corona = pow(cosSun, 128.0f) * 0.28f + pow(cosSun, 18.0f) * 0.04f;
+                const float clearVis = c.a * c.a * (1.0f - saturate(clouds.x * 0.85f));
+                skyOut += sunColour.rgb * corona * clearVis * saturate(sunDir.z * 6.0f);
+            }
+            // Filmic sky luminance compression keeps full cloud structure visible under bright overcast and high-noon skies.
+            const float skyPeak = max(skyOut.r, max(skyOut.g, skyOut.b));
+            skyOut = skyOut / (1.0f + max(skyPeak - 0.55f, 0.0f) * 0.65f);
         }
         return float4(skyOut, game.a);
     }

@@ -39,9 +39,27 @@ float gameCurve(float l) {   // the game's own: a Hejl-style curve or a Reinhard
     return l * (1.0f + l * P[2].y) / (1.0f + l);
 }
 
+float3 casSharpen(float2 suv) {
+    float w, h;
+    Scene.GetDimensions(w, h);
+    const float2 px = 1.0f / max(float2(w, h), float2(1.0f, 1.0f));
+    const float3 c  = Scene.Sample(S1, suv).rgb;
+    const float3 n  = Scene.Sample(S1, suv + float2( 0.0f, -px.y)).rgb;
+    const float3 s  = Scene.Sample(S1, suv + float2( 0.0f,  px.y)).rgb;
+    const float3 e  = Scene.Sample(S1, suv + float2( px.x,  0.0f)).rgb;
+    const float3 ww = Scene.Sample(S1, suv + float2(-px.x,  0.0f)).rgb;
+    const float3 mn = min(c, min(min(n, s), min(e, ww)));
+    const float3 mx = max(c, max(max(n, s), max(e, ww)));
+    // Adaptive weight: sharpens soft TAA detail without ringing on high-contrast edges.
+    const float3 amp = saturate(min(mn, max(2.0f.xxx - mx, 0.0f.xxx)) / max(mx, 1.0e-4f.xxx));
+    const float3 wCAS = sqrt(amp) * (-0.165f);
+    const float3 outC = (c + (n + s + e + ww) * wCAS) / max(1.0f.xxx + 4.0f * wCAS, 0.25f.xxx);
+    return clamp(outC, mn * 0.85f, mx * 1.15f);
+}
+
 float4 main(In i) : SV_Target {
     const float2 suv = min(max(i.uv * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
-    const float3 hdr = Scene.Sample(S1, suv).rgb;
+    const float3 hdr = casSharpen(suv);
     const float3 bloom = P[0].x > 0.5f ? Bloom.Sample(S0, suv).rgb : Bloom.Sample(S0, i.uv).rgb;
     const float2 lum = Lum.Sample(S2, i.uv).xy;
     const float avg = max(lum.x, 1.0e-5f);
@@ -88,7 +106,12 @@ float4 main(In i) : SV_Target {
         mapped = rh ? reinhardW(hdr * exposure * RB.z) : filmic(hdr * exposure * RB.z);
         if (RA.x > 0.5f) { pivot = dot(rh ? reinhardW((RB.y * exp2(RA.y) * RB.z).xxx) : filmic((RB.y * exp2(RA.y) * RB.z).xxx), W); }   // the grade turns about mid grey
     }
-    mapped += bloom * saturate(P[2].x - dot(mapped, W));
+    // Cinema highlight-only bloom + subtle warm optical halation: kills Skyrim's muddy midtone vaseline bloom.
+    const float bloomLum = dot(bloom, W);
+    const float kneeB = saturate((bloomLum - 0.38f) / 0.45f);
+    const float3 cleanBloom = bloom * (kneeB * kneeB * 0.24f);
+    const float3 halation = float3(1.0f, 0.42f, 0.18f) * saturate((bloomLum - 0.85f) * 0.35f) * 0.14f;
+    mapped = saturate(mapped + cleanBloom + halation);
     if (RB.w > 1.5f) { return float4(lum.x * 0.25f, lum.y * 0.25f, exposure * 0.25f, 1.0f); }   // view 2: adapted average, the game's target, exposure (over 4, no gamma)
     if (RB.w > 0.5f) { return float4(exposure.xxx * 0.25f, 1.0f); }   // view 1: the exposure (4 = white, no gamma)
     // The game's grade, lane for lane as the game computes it (alpha included; its anti-aliasing reads it).

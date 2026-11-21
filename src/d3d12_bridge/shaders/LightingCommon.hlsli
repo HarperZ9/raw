@@ -124,9 +124,12 @@ float3 preethamSky(float3 dir, float3 sun, float turbidity) {
     const float x = clamp(xz * rx, 0.15f, 0.65f), y = clamp(yz * ry, 0.15f, 0.65f);
     const float Y = clamp(rY * 0.48f, 0.02f, 2.5f);
     const float X = (x / y) * Y, Z = ((1.0f - x - y) / y) * Y;
-    return max(float3(3.2406f * X - 1.5372f * Y - 0.4986f * Z,
-                      -0.9689f * X + 1.8758f * Y + 0.0415f * Z,
-                       0.0557f * X - 0.2040f * Y + 1.0570f * Z), 0.0f.xxx);
+    const float3 rgb = max(float3(3.2406f * X - 1.5372f * Y - 0.4986f * Z,
+                                  -0.9689f * X + 1.8758f * Y + 0.0415f * Z,
+                                   0.0557f * X - 0.2040f * Y + 1.0570f * Z), 0.0f.xxx);
+    // Keep sky chroma physically restrained (avoids neon-blue / purple cloud tint at low turbidity).
+    const float lum = dot(rgb, float3(0.2126f, 0.7152f, 0.0722f));
+    return lerp(lum.xxx, rgb, 0.52f);
 }
 
 // Dynamic physically based environment cubemap (shared by Lighting, RtShadow, and RtWater).

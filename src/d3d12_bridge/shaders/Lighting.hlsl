@@ -113,8 +113,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float3 pSky = preethamSky(sDir, sunDir.xyz, turb);
                 const float skyLum = max(dot(baseSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.08f);
                 const float pLum = max(dot(pSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.08f);
-                // Blend physically derived Perez/Preetham sky chromaticity while preserving weather exposure.
-                baseSky = lerp(baseSky, pSky * (skyLum / pLum), dayW * (1.0f - saturate(clouds.x * 0.65f)) * 0.48f);
+                // Blend physically derived Perez/Preetham sky chromaticity gently while preserving natural cloud/sky balance.
+                baseSky = lerp(baseSky, pSky * (skyLum / pLum), dayW * (1.0f - saturate(clouds.x * 0.75f)) * 0.22f);
             }
         }
         if ((flags.x & FLAG_CLOUDS) == 0u) { return float4(baseSky, game.a); }
@@ -384,18 +384,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
     }
     if (!match) {
-        // Subsurface scattering & character shading: dual-lobe skin, Kajiya-Kay hair sheen, wet corneal eyes, backlit foliage.
+        // Character shading: subtle oily-pore skin specular (addLight's s.wrap + Sss.hlsl handle dermal scatter without red over-saturation).
         if (skin) {
             if (isExterior) {
                 const float nlRaw = dot(s.n, sunDir.xyz);
-                const float wrap = saturate((nlRaw + 0.45f) / 1.45f) * saturate(1.0f - saturate(nlRaw));
-                lit += albedo * sunColour.rgb * float3(1.0f, 0.40f, 0.24f) * wrap * (0.25f + 0.75f * sunShadow) * 0.40f;
-                // Narrow oily-pore specular lobe on skin (dual-lobe dermal specular).
                 const float3 shv = normalize(s.v + sunDir.xyz);
-                const float snh = saturate(dot(s.n, shv)), sa2 = 0.048f;
+                const float snh = saturate(dot(s.n, shv)), sa2 = 0.055f;
                 const float sdd = snh * snh * (sa2 - 1.0f) + 1.0f;
                 const float sD = sa2 / (PI * sdd * sdd);
-                lit += min(sunColour.rgb * (sD * 0.028f * saturate(nlRaw) * sunShadow * 0.22f), 0.8f.xxx);
+                lit += min(sunColour.rgb * (sD * 0.022f * saturate(nlRaw) * sunShadow * 0.16f), 0.5f.xxx);
             }
         } else if (base == 11u) {
             // Class 11 (Hair): Kajiya-Kay shifted anisotropic hair sheen along vertical strand tangent.

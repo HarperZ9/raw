@@ -1,6 +1,7 @@
 // D3D12Bridge setup: device on the game's adapter, shared textures, shared
 // fence, descriptor heaps and timestamp queries. Original work, MIT.
 #include "BridgeImpl.h"
+#include "StreamlineHost.h"
 #include "DepthCopy_CS.h"   // g_DepthCopyCS (fxc, cs_5_0)
 
 namespace raw::bridge
@@ -257,6 +258,9 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         && stage("bridge: after views and queries")
         && step(!m->attached || !cfg.lightingPass || m->CreateRt(), "ray tracing")
         && step(m->CreatePass(), "engine pass");
+    if (ok && m->dev12) {
+        StreamlineHost::Get().Initialize(m->dev12.Get(), m->dev12->GetAdapterLuid(), m->log);
+    }
     if (!ok) { m->log("[D3D12Bridge] initialisation failed at %s; bridge stays off", failed); Shutdown(); return false; }
     if (!m->attached && !m->SelfTest()) {
         m->log("[D3D12Bridge] fence self-test failed; bridge stays off");

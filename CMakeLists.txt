@@ -245,6 +245,7 @@ add_custom_command(
 
 add_library(raw_d3d12_bridge STATIC
     src/d3d12_bridge/D3D12Bridge.cpp
+    src/d3d12_bridge/StreamlineHost.cpp
     src/d3d12_bridge/BridgeFrame.cpp
     src/d3d12_bridge/BridgeReadback.cpp
     src/d3d12_bridge/BridgeShare.cpp
@@ -266,6 +267,12 @@ target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/BridgeHook.cpp src/d3d11_prox
     src/d3d11_proxy/BridgeHookLightingStats.cpp src/d3d11_proxy/LightingSchedule.cpp
     src/d3d11_proxy/WeatherDrive.cpp)
 target_link_libraries(d3d11_proxy PRIVATE raw_d3d12_bridge)
+set(RAW_STREAMLINE_DIR "" CACHE PATH "Optional path to NVIDIA Streamline SDK (with include/sl.h)")
+if(RAW_STREAMLINE_DIR AND EXISTS "${RAW_STREAMLINE_DIR}/include/sl.h")
+    target_include_directories(raw_d3d12_bridge PRIVATE "${RAW_STREAMLINE_DIR}/include")
+    target_compile_definitions(raw_d3d12_bridge PRIVATE RAW_HAS_STREAMLINE=1)
+    message(STATUS "RAW: NVIDIA Streamline SDK enabled from ${RAW_STREAMLINE_DIR}")
+endif()
 
 # ----------------------------------------------------------------------------
 # The Playground engine behind the bridge's pass seam (docs/D3D12_BRIDGE.md).

@@ -258,6 +258,19 @@ void BridgeHook_OnTargets(ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetV
             s_f.depthTex = ResourceOf(dsv);
         }
     }
+    // Remember last valid G-buffer handles so sky-only frames (0 opaque draws when pitching straight up)
+    // still run CaptureOpaque/LightingAtOpaque instead of disabling RAW effects.
+    static ID3D11Resource* s_lastNormal = nullptr;
+    static ID3D11Resource* s_lastMotion = nullptr;
+    static ID3D11Resource* s_lastScene  = nullptr;
+    static ID3D11Resource* s_lastDepth  = nullptr;
+    if (s_f.normalTex && s_f.sceneTex && s_f.depthTex) {
+        s_lastNormal = s_f.normalTex; s_lastMotion = s_f.motionTex; s_lastScene = s_f.sceneTex; s_lastDepth = s_f.depthTex;
+    } else if (!s_f.captured && !s_f.normalBound && Cfg().lighting && s_lastScene && s_lastDepth && s_lastNormal &&
+               rt[0] && s_f.backbuffer && rt[0] == s_f.backbuffer && s_bridge && s_bridge->Ready()) {
+        s_f.sceneTex = s_lastScene; s_f.depthTex = s_lastDepth; s_f.normalTex = s_lastNormal; s_f.motionTex = s_lastMotion;
+        CaptureOpaque(real);
+    }
     if (s_f.captured && s_f.sceneTex && rt[0] && s_f.backbuffer && Cfg().lighting) {
         D3D11_TEXTURE2D_DESC bb{};
         static_cast<ID3D11Texture2D*>(s_f.backbuffer)->GetDesc(&bb);

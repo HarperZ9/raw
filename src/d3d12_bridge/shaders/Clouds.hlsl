@@ -25,6 +25,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float2 full = lo + 0.5f;   // full native 1:1 resolution volumetric clouds (zero upscaling blur)
     const float3 far = worldAt(full - 0.5f, 0.995f) - eyeAt();
     const float3 dir = normalize(far);
+    // SM6.9 Wave-coherent sub-horizon early exit: entire waves looking below the horizon skip cloud raymarching cleanly.
+    if (WaveActiveAllTrue(dir.z <= 0.015f)) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
     float4 res = float4(0.0f, 0.0f, 0.0f, 1.0f);
     float t0, t1;
     const float3 o = camPosW.xyz;

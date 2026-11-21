@@ -57,4 +57,41 @@ float3 elderBokehDoF(Texture2D<float4> litTex, Texture2D<float> depthTex, float2
     return lerp(centerCol, acc / max(wSum, 1.0e-4f.xxx), saturate(coc * 0.90f));
 }
 
+// Pre-Pass Physical Rain-on-Lens Droplets & Blizzard Frost Edge (runs on Linear HDR pre-tonemap):
+// Procedural gravity-sliding lens droplets during rain (weather.w) refract HDR light behind each bead
+// and catch sky specular glints; blizzard frost (weather.z) adds subtle crystalline ice refraction at screen corners.
+float3 elderWeatherLensPrepass(Texture2D<float4> litTex, float2 px, float2 dim, float2 invDim, float rainAmt, float snowAmt, float timeSec) {
+    const float3 base = litTex.Load(int3(px, 0)).rgb;
+    if (rainAmt < 0.12f && snowAmt < 0.25f) { return base; }
+    const float2 uv = px * invDim;
+    const float2 cVec = uv - 0.5f.xx;
+    const float edgeMask = smoothstep(0.28f, 0.72f, length(cVec));
+    float3 outCol = base;
+    if (rainAmt >= 0.12f && edgeMask > 0.01f) {
+        const float2 grid = float2(uv.x * 18.0f, uv.y * 10.5f + timeSec * 0.42f);
+        const float2 cell = floor(grid);
+        const float2 f = frac(grid) - 0.5f;
+        const float h1 = frac(sin(dot(cell, float2(127.1f, 311.7f))) * 43758.5453f);
+        const float h2 = frac(sin(dot(cell, float2(269.5f, 183.3f))) * 43758.5453f);
+        const float2 dropC = float2((h1 - 0.5f) * 0.55f, sin(timeSec * (0.8f + h2) + h1 * 6.28f) * 0.22f);
+        const float2 d = f - dropC;
+        const float r = 0.09f + h2 * 0.09f;
+        const float dist = length(d);
+        if (dist < r && h1 > 0.42f) {
+            const float dome = sqrt(max(1.0f - (dist / r) * (dist / r), 0.0f));
+            const float2 refractPx = clamp(px - (d / max(r, 1.0e-3f)) * (14.0f * dome * rainAmt * edgeMask), 0.0f.xx, dim - 1.0f);
+            const float3 refrCol = litTex.Load(int3(refractPx, 0)).rgb;
+            const float glint = pow(saturate(dot(normalize(float3(d / r, dome)), normalize(float3(0.35f, -0.45f, 0.82f)))), 28.0f);
+            outCol = lerp(outCol, refrCol + glint * 0.35f, saturate(dome * rainAmt * edgeMask * 0.85f));
+        }
+    }
+    if (snowAmt >= 0.25f && edgeMask > 0.15f) {
+        const float2 fUv = uv * 28.0f;
+        const float frostN = frac(sin(dot(floor(fUv), float2(41.3f, 289.1f))) * 43758.5453f);
+        const float frostW = smoothstep(0.35f, 0.85f, edgeMask) * saturate((snowAmt - 0.25f) * 1.35f) * (0.35f + 0.65f * frostN);
+        outCol = lerp(outCol, outCol * float3(0.92f, 0.98f, 1.06f) + float3(0.035f, 0.055f, 0.075f), frostW * 0.32f);
+    }
+    return outCol;
+}
+
 #endif

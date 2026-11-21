@@ -61,7 +61,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // Keep cool zenith-blue cloud undersides even at sunset so clouds have dramatic gold-rim vs slate-belly contrast (no muddy peach wash).
             const float3 coolBellies = skyC * float3(0.88f, 0.94f, 1.12f) * cloudAo;
             const float3 baseTint = lerp(coolBellies, coolBellies * 0.72f + sunC * lerp(0.16f, 0.06f, h), lowSun * 0.45f);
-            const float3 lum = min(sunC * (beer * lerp(1.0f, powder, 0.58f) * phase * 4.0f * PI * 0.32f) + baseTint, 1.18f.xxx);
+            // Volumetric sheet-lightning inside heavy rainstorms (clouds.x > 0.78 && weather.w > 0.25).
+            float3 stormFlash = 0.0f.xxx;
+            if (clouds.x > 0.78f && weather.w > 0.25f) {
+                const float tSlot = floor(camPosW.w * 0.55f);
+                const float tFrac = frac(camPosW.w * 0.55f);
+                const float pulse = exp(-tFrac * 18.0f) * step(0.88f, cHash(float3(tSlot, 3.7f, 11.3f)));
+                if (pulse > 0.01f) {
+                    const float2 cell = floor(pa.xy / 38000.0f);
+                    const float cellHit = step(0.75f, cHash(float3(cell, tSlot)));
+                    stormFlash = float3(0.65f, 0.82f, 1.25f) * (pulse * cellHit * dens * 2.2f);
+                }
+            }
+            const float3 lum = min(sunC * (beer * lerp(1.0f, powder, 0.58f) * phase * 4.0f * PI * 0.32f) + baseTint + stormFlash, 1.45f.xxx);
             const float ext = dens * sigma;
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length

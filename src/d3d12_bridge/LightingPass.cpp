@@ -41,7 +41,7 @@ struct LightUniform
 static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16, "layout of cbuffer P");
 static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
-constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536, kDistantLod = 131072, kEnvMap = 262144, kCharLight = 524288;
+constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536, kDistantLod = 131072, kEnvMap = 262144, kCharLight = 524288, kUnderwater = 1048576;
 constexpr RasterBinding U = RasterBinding::Uniform, T = RasterBinding::Texture, Sm = RasterBinding::Sampler;
 constexpr RasterBinding kLightLayout[16] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T, T, Sm};
 constexpr RasterBinding kCloudLayout[3] = {U, T, Sm};
@@ -267,6 +267,7 @@ private:
         if (t.distantLod && t.mode == 2) f |= kDistantLod;
         if (t.envMap) f |= kEnvMap;   // both modes: the game's own environment-map term
         if (t.charLight) f |= kCharLight;   // both modes: the game's own character light
+        if (s.inWater) f |= kUnderwater;    // engine-native camera_in_water flag from raw_engine.dll
         u.flags[0] = f;
         const float baseCover = std::fmax(t.cloudCover, 0.30f);
         u.clouds[0] = std::fmin(1.0f, std::fmax(baseCover, baseCover + (0.92f - baseCover) * t.weatherCloud));

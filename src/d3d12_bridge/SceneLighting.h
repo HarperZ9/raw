@@ -31,6 +31,7 @@ struct SceneLighting
     // The directional light: the sun by day, the moon's light by night. Unit direction
     // towards the light.
     bool  hasSun = false;
+    bool  inWater = false;
     float sunDirection[3] = {0, 0, 1};
     float sunColour[3] = {};
 

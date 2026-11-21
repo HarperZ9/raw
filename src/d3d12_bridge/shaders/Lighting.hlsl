@@ -481,8 +481,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Interiors have no cascades; channel 0 of their mask belongs to a shadowed point light, so the
         // directional light there is unshadowed, as the game lights it.
         sunShadow = (flags.x & FLAG_SHADOWS) == 0u ? 1.0f : (flags.x & FLAG_CASCADES) != 0u ? cascadeShadow(p, d, true) : m4.x;
-        // Not on soft-lit foliage or character skin/hair/eyes/cloth: thin leaves and curved actor meshes self-occlude in depth space.
-        if (!match && (flags.x & FLAG_CONTACT) != 0u && base != 5u && !isActorFeat && !isActorCloth && sunShadow > 0.0f && dot(s.n, sunDir.xyz) > 0.0f)
+        // When native hardware RT (RayQuery + Persistent World TLAS) is active, skip screen-space contact shadow hacks
+        // completely (keeps screenShadow only as fallback when RT is disabled).
+        if (!match && !rt && (flags.x & FLAG_CONTACT) != 0u && base != 5u && !isActorFeat && !isActorCloth && sunShadow > 0.0f && dot(s.n, sunDir.xyz) > 0.0f)
             sunShadow *= screenShadow(p + lift, sunDir.xyz, tune.w, 0.02f, jit, 12u);
         // Skinned actors (skin/hair/eye) keep the game's filtered shadow mask so coarse skinned BLAS triangles never cast blocky self-shadow acne.
         if (rt && sunColour.w > 0.5f && !isActorFeat) { sunShadow = min(sunShadow, base == 5u ? lerp(1.0f, rv.x, 0.6f) : rv.x); }
@@ -562,7 +563,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // When hardware RT traced this light (slot 1..3), use rv[slot] directly (bypassing vanilla's flickering
             // 4-channel shadow-mask swaps); untraced lights (4..128) blend smoothly with ReSTIR restVis.
             if (slot != 0u) { sh = rv[slot]; } else { sh = min(sh, lerp(0.45f, 1.0f, restVis)); }
-            if (!match && sunColour.w > 0.5f && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
+            if (!match && !rt && sunColour.w > 0.5f && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
                 sh *= screenShadow(p + lift, l, min(dist, tune.z), 4.0f / max(dist, 1.0f), jit, 10u);
                 --softLeft;
             }
@@ -578,8 +579,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
 
     float3 amb = float3(dot(ambient[0].xyz, s.n) + ambient[0].w, dot(ambient[1].xyz, s.n) + ambient[1].w,
                         dot(ambient[2].xyz, s.n) + ambient[2].w);
-    // Foliage and actor skin/hair/eyes receive moderated AO so thin geometry and faces never get dark SSAO smudges.
-    const float aoWeight = base == 5u ? 0.35f : (isActorFeat ? 0.48f : 1.0f);
+    // When hardware RayQuery RTAO/skyVis is active, let native 3D RT occlusion dominate and dial back screen-space AO
+    // to subtle micro-crease contact (eliminates screen-space AO halos around trees and actors).
+    const float ssaoMix = (rt && (flags.x & FLAG_SKY) != 0u) ? 0.38f : 1.0f;
+    const float aoWeight = (base == 5u ? 0.35f : (isActorFeat ? 0.48f : 1.0f)) * ssaoMix;
     const float aoTerm = (flags.x & FLAG_AO) != 0u ? lerp(1.0f, AoHist.Load(ip).x, tune2.x * aoWeight) : 1.0f;
     // Exteriors: ray-traced sky visibility (RtSky.cpp). Interiors (!match): local SM6.5 RayQuery RTAO from RtShadow.hlsl.
     const bool isExterior = sunColour.w > 0.5f;

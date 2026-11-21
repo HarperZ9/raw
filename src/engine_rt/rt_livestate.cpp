@@ -170,7 +170,7 @@ bool Read(Snapshot* s) {
         const uint8_t* ssn = At<const uint8_t*>(st, 0x00);
         if (ssn) {
             EngineLight sun{};
-            if (ReadLight(At<const uint8_t*>(ssn, 0x200), 4, &sun)) Push(s, sun, nullptr, "sun");
+            if (ReadLight(At<const uint8_t*>(ssn, 0x200), 4, &sun)) { sun.pad = s->inWater; Push(s, sun, nullptr, "sun"); }
             s->active = ReadArray(ssn + 0x130, 0, s);
             // shadow casters are also in the active list: mark them there, add any that are not
             const auto* data = At<const uint8_t* const*>(ssn + 0x230, 0x00);

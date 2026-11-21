@@ -31,6 +31,8 @@ public:
     // Live neural mode: 0 = Off, 1 = DLAA Transformer (Preset K), 2 = DLSS Ray Reconstruction (Preset F).
     int GetMode() const { return m_mode; }
     void SetMode(int m) { m_mode = (m < 0 ? 0 : (m > 2 ? 2 : m)); }
+    bool GetReflex() const { return m_reflexOn; }
+    void SetReflex(bool on) { m_reflexOn = on; }
 
     // Per-frame NVIDIA Reflex Low-Latency sleep/pacing (no-op if Reflex is unsupported).
     void ReflexBeginFrame(uint32_t frameIdx);
@@ -47,6 +49,7 @@ private:
     StreamlineHost() = default;
     StreamlineCaps m_caps{};
     int m_mode = 1;
+    bool m_reflexOn = true;
     bool m_tried = false;
 };
 

@@ -26,6 +26,7 @@ PRESET_DIR = pathlib.Path(r"E:\wt\raw-rt9\presets")
 EDITABLE_SHADERS = [
     "Lighting.hlsl",
     "Tonemap.hlsl",
+    "VolumetricPass.hlsl",
     "RtShadow.hlsl",
     "RtSkyFilter.hlsl",
     "RtWater.hlsl",
@@ -134,16 +135,35 @@ pre{margin:0;background:#0a0d12;border:1px solid var(--line);border-radius:4px;p
         </label>
       </div>
       <div class="row">
-        <label>Color Grade LUT (ToneX2)
-          <select id="lut-mode" onchange="iniSet('ToneX2', this.value)">
-            <option value="0">0 - Natural Neutral</option>
-            <option value="1">1 - Nordic Film</option>
-            <option value="2">2 - Kodak 2383 Print</option>
-            <option value="3">3 - Cinema Contrast</option>
+        <label>NVIDIA Streamline (DlssMode)
+          <select id="dlss-mode" onchange="iniSet('DlssMode', this.value)">
+            <option value="0">0 - Off (FXAA+CAS)</option>
+            <option value="1">1 - DLAA Transformer (Preset K)</option>
+            <option value="2" selected>2 - DLSS Ray Reconstruction (Preset F)</option>
           </select>
         </label>
-        <label>Display Output (TonemapView)
-          <select id="hdr-mode" onchange="iniSet('TonemapView', this.value)">
+        <label>Color Space / Curve (ToneCurve)
+          <select id="curve-mode" onchange="iniSet('ToneCurve', this.value)">
+            <option value="0">0 - Game</option>
+            <option value="1">1 - ACES Fitted</option>
+            <option value="2">2 - ReinhardW</option>
+            <option value="3">3 - RAW Hybrid Local</option>
+            <option value="4" selected>4 - AgX Wide-Gamut (Oklab)</option>
+            <option value="5">5 - Gran Turismo (Uchimura)</option>
+            <option value="6">6 - Lottes</option>
+            <option value="7">7 - Hable</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label>Elder 64³ 3D PNG LUT (0=Off, 1..46)
+          <input id="lut-idx" type="number" min="0" max="46" value="0" onchange="iniSet('LutIndex', this.value)" style="width:72px">
+        </label>
+        <label>Overlay Bitmask (0..255)
+          <input id="ov-mask" type="number" min="0" max="255" value="7" onchange="iniSet('OverlayMask', this.value)" style="width:72px">
+        </label>
+        <label>Display Output (ToneView)
+          <select id="hdr-mode" onchange="iniSet('ToneView', this.value)">
             <option value="0" selected>0 - SDR sRGB / Rec.709</option>
             <option value="3">3 - HDR10 PQ ST.2084 / Rec.2020</option>
           </select>

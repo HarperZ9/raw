@@ -1,6 +1,7 @@
 // D3D12Bridge per-frame work: depth capture, the fence round trip, and GPU
 // timestamps on both queues. Original work, MIT.
 #include "BridgeImpl.h"
+#include "StreamlineHost.h"
 #include "LightingPass.h"
 #include "RtScene.h"
 
@@ -219,6 +220,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         s.open = false;
         s.executed = true;
         ++m->frames;
+        StreamlineHost::Get().ReflexBeginFrame(static_cast<uint32_t>(m->frames));
         return true;
     }
     HRESULT hs = m->ctx4->Signal(m->fence11.Get(), v1);
@@ -266,6 +268,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     s.open = false;
     s.executed = true;
     ++m->frames;
+    StreamlineHost::Get().ReflexBeginFrame(static_cast<uint32_t>(m->frames));
     return true;
 }
 

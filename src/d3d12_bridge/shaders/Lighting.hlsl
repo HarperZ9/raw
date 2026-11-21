@@ -109,18 +109,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float d = Depth.Load(ip);
     if ((flags.x & FLAG_SURFACE) == 0u) { return game; }
     if (d >= 1.0f) {
-        // The sky: physically-based spectral Rayleigh + Ozone + Cornette-Shanks Mie atmosphere,
-        // crisp solar corona attenuated by cloud optical depth, and 3D Worley-Perlin volumetric clouds.
+        // The sky: physically-based spectral Rayleigh + Ozone + Cornette-Shanks Mie atmosphere (daytime only,
+        // preserving crisp night skies, stars, auroras, and moons) + 3D Worley-Perlin volumetric clouds.
         if (flags.w == 10u) { return float4(1.0f, 0.0f, 1.0f, game.a); }
         float3 baseSky = game.rgb;
-        const float3 sDir = normalize(worldAt(floor(at.xy), 1.0f));
+        const float3 sDir = normalize(worldAt(floor(at.xy), 0.995f) - eyeAt());
         if ((flags.x & FLAG_MATCH) == 0u) {
             baseSky = baseSky / (1.0f + max(max(baseSky.r, max(baseSky.g, baseSky.b)) - 0.65f, 0.0f) * 0.65f);
-            const float dayW = saturate((sunDir.z + 0.06f) * 3.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+            const float sunLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+            const float dayW = saturate((sunDir.z - 0.02f) * 4.5f) * saturate((sunLum - 0.22f) * 2.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
             if (dayW > 0.02f && sDir.z > -0.04f) {
                 // Physical Rayleigh + Ozone + Mie spectral transmittance (Earth/Nirn optical airmass).
                 const float muV = max(sDir.z, 0.025f);
-                const float muS = max(sunDir.z, 0.02f);
+                const float muS = max(sunDir.z, 0.025f);
                 const float airV = 1.0f / (muV + 0.15f * pow(max(muV * 90.0f + 3.885f, 0.1f), -1.253f));
                 const float airS = 1.0f / (muS + 0.15f * pow(max(muS * 90.0f + 3.885f, 0.1f), -1.253f));
                 const float3 betaR = float3(0.058f, 0.135f, 0.331f);
@@ -130,28 +131,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float3 extV = exp(-(betaR + betaO + betaM) * airV * 0.45f);
                 const float cosTheta = dot(sDir, sunDir.xyz);
                 const float phR = 0.059683f * (1.0f + cosTheta * cosTheta);
-                const float gM = 0.78f;
+                const float gM = 0.76f;
                 const float phM = (3.0f / (8.0f * PI)) * ((1.0f - gM * gM) * (1.0f + cosTheta * cosTheta)) /
                                   ((2.0f + gM * gM) * pow(max(1.0f + gM * gM - 2.0f * gM * cosTheta, 1.0e-3f), 1.5f));
-                const float3 specSky = (betaR * phR * 4.2f + betaM * min(phM, 4.5f) * 0.38f) * (1.0f - extV) * (0.35f + 0.65f * extS) * 1.45f;
+                const float3 specSky = (betaR * phR * 4.2f + betaM * min(phM, 3.2f) * 0.25f) * (1.0f - extV) * (0.35f + 0.65f * extS) * 1.45f;
                 const float skyLum = max(dot(baseSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.06f);
                 const float pLum = max(dot(specSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
-                const float specBlend = dayW * (1.0f - saturate(clouds.x * 0.70f)) * 0.48f;
+                const float specBlend = dayW * (1.0f - saturate(clouds.x * 0.70f)) * 0.44f;
                 baseSky = lerp(baseSky, specSky * (skyLum / pLum), specBlend);
             }
         }
         const float4 c = (flags.x & FLAG_CLOUDS) != 0u ? Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f) : float4(0.0f, 0.0f, 0.0f, 1.0f);
         float3 skyOut = baseSky * c.a + c.rgb;
         if ((flags.x & FLAG_MATCH) == 0u) {
-            if (sunDir.w > 0.5f && sunDir.z > 0.01f) {
-                // Tight physical Cornette-Shanks solar aureole gated by cloud transmittance c.a^2 (never a bloated orange blob).
-                const float cosSun = saturate(dot(sDir, sunDir.xyz));
-                const float corona = pow(cosSun, 512.0f) * 0.45f + pow(cosSun, 48.0f) * 0.05f;
-                const float clearVis = c.a * c.a * (1.0f - saturate(clouds.x * 0.85f));
-                skyOut += sunColour.rgb * corona * clearVis * saturate(sunDir.z * 5.0f);
-            }
             const float skyPeak = max(skyOut.r, max(skyOut.g, skyOut.b));
-            skyOut = skyOut / (1.0f + max(skyPeak - 0.52f, 0.0f) * 0.70f);
+            skyOut = skyOut / (1.0f + max(skyPeak - 0.56f, 0.0f) * 0.65f);
         }
         return float4(skyOut, game.a);
     }

@@ -33,6 +33,8 @@ struct State
     SceneLighting frame;
     std::vector<Accum> lights;
     double sunDir[3] = {}, sunCol[3] = {}, amb[3][4] = {}, knee = 0;
+    double stableSunDir[3] = {};
+    bool hasStableSun = false;
     uint32_t sunDraws = 0, ambDraws = 0, kneeDraws = 0;
     std::vector<float> specScales;
     std::vector<float> steps[3];         // per lit draw: previous minus current world translation
@@ -263,12 +265,28 @@ void Merge(State& s)
         l.draws = a.n;
     }
     AddEngineLights(f);
-    f.hasSun = s.sunDraws > 0;
-    if (f.hasSun) {
+    f.hasSun = s.sunDraws > 0 || s.hasStableSun;
+    if (s.sunDraws > 0) {
         double len = 0;
         for (int k = 0; k < 3; ++k) len += s.sunDir[k] * s.sunDir[k];
         len = std::sqrt(len);
-        for (int k = 0; k < 3; ++k) { f.sunDirection[k] = float(s.sunDir[k] / len); f.sunColour[k] = float(s.sunCol[k] / s.sunDraws); }
+        if (len > 1e-6) {
+            double nd[3] = {s.sunDir[0] / len, s.sunDir[1] / len, s.sunDir[2] / len};
+            // Keep directional sun/moon vector rock-solid when looking up at the sky (few lit draws in frustum).
+            if (!s.hasStableSun) {
+                for (int k = 0; k < 3; ++k) s.stableSunDir[k] = nd[k];
+                s.hasStableSun = true;
+            } else if (s.sunDraws >= 16) {
+                const double alpha = s.sunDraws >= 64 ? 0.18 : 0.05;
+                double sl = 0;
+                for (int k = 0; k < 3; ++k) { s.stableSunDir[k] += (nd[k] - s.stableSunDir[k]) * alpha; sl += s.stableSunDir[k] * s.stableSunDir[k]; }
+                sl = std::sqrt(sl);
+                if (sl > 1e-6) for (int k = 0; k < 3; ++k) s.stableSunDir[k] /= sl;
+            }
+            for (int k = 0; k < 3; ++k) { f.sunDirection[k] = float(s.stableSunDir[k]); f.sunColour[k] = float(s.sunCol[k] / s.sunDraws); }
+        }
+    } else if (s.hasStableSun) {
+        for (int k = 0; k < 3; ++k) f.sunDirection[k] = float(s.stableSunDir[k]);
     }
     if (s.ambDraws)
         for (int c = 0; c < 3; ++c)

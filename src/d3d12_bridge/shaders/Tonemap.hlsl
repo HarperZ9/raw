@@ -6,11 +6,13 @@
 // Compiled as ps_5_0 by d3dcompiler_47. Original work, MIT.
 cbuffer PerFrame : register(b12) { float4 F[45]; };
 cbuffer Image : register(b2) { float4 P[5]; };
-cbuffer Raw : register(b5) { float4 RA; float4 RB; float4 RC; float4 RX; };   // RA: mode, bias (stops), min lum, max lum;
-// RB: curve, key, white, view; RC: adapt, reference average, ToneX0, ToneX1; RX: ToneX2..5
+cbuffer Raw : register(b5) { float4 RA; float4 RB; float4 RC; float4 RX; float4 RO; };   // RA: mode, bias (stops), min lum, max lum;
+// RB: curve, key, white, view; RC: adapt, reference average, ToneX0, ToneX1; RX: ToneX2..5;
+// RO: x = user 3D LUT strength (0=off), y = stackable overlay bitmask (bits 0..7), z = 64-frame temporal dither cycle.
 Texture2D<float4> Bloom : register(t0);
 Texture2D<float4> Scene : register(t1);
 Texture2D<float4> Lum   : register(t2);
+Texture2D<float4> UserLut : register(t5);
 SamplerState S0 : register(s0);
 SamplerState S1 : register(s1);
 SamplerState S2 : register(s2);
@@ -18,6 +20,85 @@ struct In { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
 static const float3 W = float3(0.2125f, 0.7154f, 0.0721f);
 
 float3 filmic(float3 x) { return saturate((x * (2.51f * x + 0.03f)) / (x * (2.43f * x + 0.59f) + 0.14f)); }
+
+// Wide-gamut Troy Sobotka AgX display transform (from Elder ENB EotE_Tonemappers.fxh):
+// Zero ColorPow shadow crush, true hue preservation under extreme saturation, natural highlight desaturation.
+float3 tonemapAgX(float3 color) {
+    static const float3x3 kAgXIn = float3x3(
+        0.842479f, 0.0784336f, 0.0792237f,
+        0.0423304f, 0.878468f, 0.0791661f,
+        0.0423756f, 0.0784336f, 0.879142f);
+    static const float3x3 kAgXOut = float3x3(
+         1.19687f,  -0.0980208f, -0.0990297f,
+        -0.0528968f, 1.15190f,   -0.0989611f,
+        -0.0529716f, -0.0980434f, 1.15107f);
+    float3 x = mul(kAgXIn, max(color, 0.0f.xxx));
+    x = clamp(log2(max(x, 1.0e-10f)), -12.47393f, 4.026069f);
+    x = (x + 12.47393f) / (4.026069f + 12.47393f);
+    const float3 x2 = x * x, x4 = x2 * x2;
+    x = 15.5f * x4 * x2 - 40.14f * x4 * x + 31.96f * x4 - 6.868f * x2 * x + 0.4298f * x2 + 0.1191f * x - 0.00232f;
+    // AgX polynomial outputs sRGB-encoded values; decode back to linear so Tonemap.hlsl's single output OETF never double-gammas.
+    return pow(saturate(mul(kAgXOut, x)), 2.2f);
+}
+
+// Gran Turismo / Uchimura piecewise curve (SIGGRAPH 2017): linear midtones, smooth toe & shoulder.
+float3 tonemapGT(float3 x) {
+    static const float P = 1.0f, a = 1.0f, m = 0.22f, l = 0.4f, c = 1.25f, b = 0.0f;
+    const float l0 = ((P - m) * l) / a;
+    const float S0 = m + l0, S1 = m + a * l0;
+    const float C2 = (a * P) / max(P - S1, 1.0e-4f), CP = -C2 / P;
+    const float3 w0 = 1.0f - smoothstep(0.0f, m, x);
+    const float3 w2 = step(S0, x);
+    const float3 w1 = 1.0f - w0 - w2;
+    const float3 T = m * pow(max(x / m, 1.0e-6f), c) + b;
+    const float3 L = m + a * (x - m);
+    const float3 S = P - (P - S1) * exp(CP * (x - S0));
+    return saturate(T * w0 + L * w1 + S * w2);
+}
+
+// Timothy Lottes (GDC 2016) & John Hable (Uncharted 2) curves.
+float3 tonemapLottes(float3 x) {
+    const float3 cr = pow(max(x, 0.0f.xxx), 1.45f);
+    return saturate(cr / (cr * 1.18f + 0.24f));
+}
+float3 hableP(float3 x) { return ((x * (0.15f * x + 0.05f) + 0.004f) / (x * (0.15f * x + 0.50f) + 0.06f)) - 0.066667f; }
+float3 tonemapHable(float3 x) { return saturate(hableP(max(x, 0.0f.xxx) * 1.85f) / hableP(11.2f.xxx)); }
+
+// Perceptual Oklab color space (Bjorn Ottosson 2020 / Elder EotE_FilmScience.fxh) for detail-preserving grading.
+float3 linToOklab(float3 lin) {
+    const float l = pow(max(0.4122214708f * lin.r + 0.5363325363f * lin.g + 0.0514459929f * lin.b, 0.0f), 1.0f / 3.0f);
+    const float m = pow(max(0.2119034982f * lin.r + 0.6806995451f * lin.g + 0.1073969566f * lin.b, 0.0f), 1.0f / 3.0f);
+    const float s = pow(max(0.0883024619f * lin.r + 0.2817188376f * lin.g + 0.6299787005f * lin.b, 0.0f), 1.0f / 3.0f);
+    return float3(0.2104542553f * l + 0.7936177850f * m - 0.0040720468f * s,
+                  1.9779984951f * l - 2.4285922050f * m + 0.4505937099f * s,
+                  0.0259040371f * l + 0.7827717662f * m - 0.8086757660f * s);
+}
+float3 oklabToLin(float3 lab) {
+    float l = lab.x + 0.3963377774f * lab.y + 0.2158037573f * lab.z;
+    float m = lab.x - 0.1055613458f * lab.y - 0.0638541728f * lab.z;
+    float s = lab.x - 0.0894841775f * lab.y - 1.2914855480f * lab.z;
+    l = l * l * l; m = m * m * m; s = s * s * s;
+    return max(float3( 4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s,
+                      -1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s,
+                      -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s), 0.0f.xxx);
+}
+
+// Trilinear 3D horizontal strip LUT sampler (auto-detects 16^3, 32^3, or 64^3 Elder PNG LUTs).
+float3 sampleUserLut3D(float3 srgb) {
+    float lw, lh;
+    UserLut.GetDimensions(lw, lh);
+    const float n = max(lh, 16.0f);
+    const float3 cl = saturate(srgb);
+    const float bScaled = cl.b * (n - 1.0f);
+    const float b0 = floor(bScaled);
+    const float b1 = min(b0 + 1.0f, n - 1.0f);
+    const float bf = bScaled - b0;
+    const float uOff = (cl.r * (n - 1.0f) + 0.5f) / lw;
+    const float v = (cl.g * (n - 1.0f) + 0.5f) / n;
+    const float3 c0 = UserLut.SampleLevel(S1, float2(b0 / n + uOff, v), 0.0f).rgb;
+    const float3 c1 = UserLut.SampleLevel(S1, float2(b1 / n + uOff, v), 0.0f).rgb;
+    return lerp(c0, c1, bf);
+}
 
 // Curve 2: an extended Reinhard per channel, x (1 + x / W^2) / (1 + x), white at W (ToneX1, default 4). Its slope at
 // black is 1, as the game's own curve's is, so shadows keep their level; the fitted ACES curve's slope there is about
@@ -127,19 +208,25 @@ float4 main(In i) : SV_Target {
     if (RB.x < 0.5f) {
         const float l = max(dot(hdr, W), 1.0e-5f);
         mapped = hdr * (gameCurve(l * exposure) / l);
+    } else if (RB.x > 3.5f) {
+        // Wide-gamut modern curves (zero ColorPow shadow crush, true hue & micro-texture preservation):
+        // 4 = AgX (Troy Sobotka), 5 = Gran Turismo (Uchimura), 6 = Lottes, 7 = Hable (Uncharted 2).
+        const float3 xIn = hdr * exposure * RB.z;
+        if (RB.x < 4.5f)      mapped = tonemapAgX(xIn);
+        else if (RB.x < 5.5f) mapped = tonemapGT(xIn);
+        else if (RB.x < 6.5f) mapped = tonemapLottes(xIn);
+        else                  mapped = tonemapHable(xIn);
+        if (RA.x > 0.5f) {
+            const float3 pIn = (RB.y * exp2(RA.y) * RB.z).xxx;
+            const float3 pOut = RB.x < 4.5f ? tonemapAgX(pIn) : (RB.x < 5.5f ? tonemapGT(pIn) : (RB.x < 6.5f ? tonemapLottes(pIn) : tonemapHable(pIn)));
+            pivot = dot(pOut, W);
+        }
     } else if (RB.x > 2.5f) {
         // Curve 3: the game's own curve on luminance, l (1 + l / W^2) / (1 + l), with the white point raised to at
         // least ToneX1 (the game's clips about 5 % of a clear midday frame), then a contrast about the key (below). The hue stays the input's, as in the game.
         const float l = max(dot(hdr, W), 1.0e-5f) * exposure * RB.z;
         const float w2 = max(1.0f / max(P[2].y, 1.0e-4f), RC.w * RC.w);
-        // Contrast in two halves about the key: above it the luminance is raised to ToneX3 (more contrast in the
-        // light), below it to ToneX4 (below 1 lifts the shadows). One power for both crushed the darks: at 1.25 a
-        // quarter of the inn went to 4 of 255 or less while midday only then reached the game's detail (rt8 panel 3).
         const float cu = RX.y > 0.0f ? RX.y : 1.0f, cl = RX.z > 0.0f ? RX.z : cu;
-        // Below the key the power runs from ToneX4 at black to ToneX3 at the key, so the deep shadows lift while the
-        // middle tones keep the contrast (a night frame lost a tenth of its detail with ToneX4 alone below the key).
-        // Above the key the power eases back to 1 by four times the key, so bright snow and sky roll into the
-        // shoulder instead of clipping (the vista at midday clipped 44 % of its pixels at a constant 1.55).
         // SIGGRAPH TON-04 Bilateral Local Tone Mapping: uses low-frequency Bloom luma as a free base layer
         // to preserve local micro-contrast in dark interiors looking out sunlit doorways & shadowed forests beside bright peaks.
         const float baseLum = max(dot(bloom, W) * exposure * RB.z, 0.02f);
@@ -159,32 +246,46 @@ float4 main(In i) : SV_Target {
         mapped = rh ? reinhardW(hdr * exposure * RB.z) : filmic(hdr * exposure * RB.z);
         if (RA.x > 0.5f) { pivot = dot(rh ? reinhardW((RB.y * exp2(RA.y) * RB.z).xxx) : filmic((RB.y * exp2(RA.y) * RB.z).xxx), W); }   // the grade turns about mid grey
     }
-    // Cinema highlight-only bloom + subtle warm optical halation + restrained horizontal anamorphic specular hint.
+    // Non-destructive stackable optical overlays (RO.y bitmask, toggled independently in-game):
+    // bit0=FilmEmulsion, bit1=Halation+Anamorphic, bit2=ElderLensGhosts, bit3=SoftDiffusion,
+    // bit4=BleachBypass, bit5=OpticalVignette, bit6=35mmGrain, bit7=CinematicBorders.
+    const uint ovMask = uint(RO.y + 0.5f);
     const float bloomLum = dot(bloom, W);
     const float kneeB = saturate((bloomLum - 0.55f) / 0.55f);
     const float3 cleanBloom = bloom * (kneeB * kneeB * 0.14f);
-    const float3 halation = float3(1.0f, 0.42f, 0.18f) * saturate((bloomLum - 1.05f) * 0.30f) * 0.10f;
-    float bw, bh;
-    Bloom.GetDimensions(bw, bh);
-    const float bx = 2.5f / max(bw, 1.0f);
-    const float3 bL = Bloom.Sample(S0, suv - float2(bx, 0.0f)).rgb;
-    const float3 bR = Bloom.Sample(S0, suv + float2(bx, 0.0f)).rgb;
-    const float3 anamorphic = max((bL + bR) * 0.5f - 1.15f.xxx, 0.0f.xxx) * float3(0.55f, 0.78f, 1.05f) * 0.06f;
-    // ElderLens: 3-order chromatic optical lens ghosts + subtle radial aperture halo (strictly energy-capped).
-    const float2 cVec = suv - 0.5f.xx;
-    const float cDist = length(cVec);
-    float3 lensAcc = 0.0f.xxx;
-    [unroll] for (int gi = 1; gi <= 3; gi++) {
-        const float gScale = 0.45f + float(gi) * 0.28f;
-        const float2 gUv = saturate(0.5f.xx - cVec * gScale);
-        const float3 gCol = max(Bloom.Sample(S0, gUv).rgb - 0.85f.xxx, 0.0f.xxx);
-        const float3 gTint = gi == 1 ? float3(1.05f, 0.96f, 0.85f) : (gi == 2 ? float3(0.85f, 1.02f, 1.12f) : float3(0.96f, 0.88f, 1.08f));
-        lensAcc += gCol * gTint / float(gi + 1);
+    float3 ovAdd = cleanBloom;
+    if ((ovMask & 2u) != 0u) {
+        // Layer 2: Optical Halation & Anamorphic streak.
+        const float3 halation = float3(1.0f, 0.42f, 0.18f) * saturate((bloomLum - 1.05f) * 0.30f) * 0.10f;
+        float bw, bh;
+        Bloom.GetDimensions(bw, bh);
+        const float bx = 2.5f / max(bw, 1.0f);
+        const float3 bL = Bloom.Sample(S0, suv - float2(bx, 0.0f)).rgb;
+        const float3 bR = Bloom.Sample(S0, suv + float2(bx, 0.0f)).rgb;
+        const float3 anamorphic = max((bL + bR) * 0.5f - 1.15f.xxx, 0.0f.xxx) * float3(0.55f, 0.78f, 1.05f) * 0.06f;
+        ovAdd += halation + anamorphic;
     }
-    const float2 haloDir = cDist > 1.0e-4f ? cVec / cDist : float2(0.0f, 1.0f);
-    const float3 haloCol = max(Bloom.Sample(S0, saturate(0.5f.xx - haloDir * 0.22f)).rgb - 0.95f.xxx, 0.0f.xxx);
-    const float3 elderLens = min((lensAcc * 0.055f + haloCol * 0.035f * saturate(1.0f - cDist * 1.35f)), 0.14f.xxx);
-    mapped = saturate(mapped + cleanBloom + halation + anamorphic + elderLens);
+    if ((ovMask & 4u) != 0u) {
+        // Layer 3: ElderLens 3-order chromatic optical lens ghosts + radial aperture halo.
+        const float2 cVec = suv - 0.5f.xx;
+        const float cDist = length(cVec);
+        float3 lensAcc = 0.0f.xxx;
+        [unroll] for (int gi = 1; gi <= 3; gi++) {
+            const float gScale = 0.45f + float(gi) * 0.28f;
+            const float2 gUv = saturate(0.5f.xx - cVec * gScale);
+            const float3 gCol = max(Bloom.Sample(S0, gUv).rgb - 0.85f.xxx, 0.0f.xxx);
+            const float3 gTint = gi == 1 ? float3(1.05f, 0.96f, 0.85f) : (gi == 2 ? float3(0.85f, 1.02f, 1.12f) : float3(0.96f, 0.88f, 1.08f));
+            lensAcc += gCol * gTint / float(gi + 1);
+        }
+        const float2 haloDir = cDist > 1.0e-4f ? cVec / cDist : float2(0.0f, 1.0f);
+        const float3 haloCol = max(Bloom.Sample(S0, saturate(0.5f.xx - haloDir * 0.22f)).rgb - 0.95f.xxx, 0.0f.xxx);
+        ovAdd += min((lensAcc * 0.055f + haloCol * 0.035f * saturate(1.0f - cDist * 1.35f)), 0.14f.xxx);
+    }
+    if ((ovMask & 8u) != 0u) {
+        // Layer 4: Soft Optical Diffusion (dreamy wide-radius halation/bloom glow).
+        ovAdd += bloom * 0.14f;
+    }
+    mapped = saturate(mapped + ovAdd);
     if (RB.w > 1.5f && RB.w < 2.5f) { return float4(lum.x * 0.25f, lum.y * 0.25f, exposure * 0.25f, 1.0f); }   // view 2: adapted average, the game's target, exposure (over 4, no gamma)
     if (RB.w > 0.5f && RB.w < 1.5f) { return float4(exposure.xxx * 0.25f, 1.0f); }   // view 1: the exposure (4 = white, no gamma)
     // The game's grade, lane for lane as the game computes it (alpha included; its anti-aliasing reads it).
@@ -193,8 +294,8 @@ float4 main(In i) : SV_Target {
     c = P[3].x * (c - g) + g;
     c = P[4].w * (g * P[4] - c) + c;
     c = P[3].z * (P[3].w * c - pivot) + pivot;
-    // Modular 3D cinematic color-grade LUT profiles (ToneX2 = 0 Neutral, 1 Nordic Film, 2 Kodak 2383, 3 Cinema Contrast).
-    if (RB.x > 2.5f && RX.x > 0.5f) {
+    // Built-in procedural LUT profiles when no external 3D PNG LUT is active (ToneX2 = 0..3).
+    if (RB.x > 2.5f && RX.x > 0.5f && RO.x <= 0.001f) {
         const float lumG = dot(c.rgb, W);
         if (RX.x < 1.5f) {
             // 1: Nordic Alpine Film (crisp cool-slate shadows, natural midtones, clean CIE D65 alpine highlights - no dry yellow cast).
@@ -209,6 +310,44 @@ float4 main(In i) : SV_Target {
             // 3: Cinema Contrast (restrained saturation, crisp micro-contrast).
             c.rgb = saturate(lerp(lumG.xxx, c.rgb, 0.88f) * 1.03f - 0.015f);
         }
+    }
+    // Layer 1 (bit 0): Film Emulsion & Beer-Lambert Subtractive Density + Interimage Inhibition (in Oklab-safe linear space).
+    if ((ovMask & 1u) != 0u) {
+        float3 lab = linToOklab(saturate(c.rgb));
+        const float chroma = length(lab.yz);
+        lab.x *= (1.0f - saturate(chroma * 0.42f) * 0.22f);   // Beer-Lambert dye density: saturated hues hold richer depth
+        lab.yz *= 1.06f;                                      // gentle Kodak interimage chroma pop without channel clipping
+        c.rgb = saturate(oklabToLin(lab));
+    }
+    // Layer 5 (bit 4): Bleach Bypass (silver retention overlay without shadow crush).
+    if ((ovMask & 16u) != 0u) {
+        const float lB = dot(c.rgb, W);
+        const float3 silver = lB.xxx;
+        const float3 ov = lB < 0.5f ? (2.0f * c.rgb * silver) : (1.0f - 2.0f * (1.0f - c.rgb) * (1.0f - silver));
+        c.rgb = saturate(lerp(c.rgb, lerp(silver, ov, 0.65f), 0.38f));
+    }
+    // Real 3D PNG LUT from raw_luts\ (46 Elder LUTs + any user-dropped 16^3/32^3/64^3 strip PNG), applied in sRGB display space.
+    if (RO.x > 0.001f) {
+        const float3 srgbIn = pow(max(c.rgb, 0.0f.xxx), 1.0f / 2.2f);
+        const float3 lutOut = sampleUserLut3D(srgbIn);
+        const float3 linOut = pow(max(lutOut, 0.0f.xxx), 2.2f);
+        c.rgb = saturate(lerp(c.rgb, linOut, saturate(RO.x)));
+    }
+    // Layer 6 (bit 5): Optical cos^4 lens vignette.
+    if ((ovMask & 32u) != 0u) {
+        const float2 vd = (suv - 0.5f.xx) * float2(1.15f, 1.0f);
+        const float vig = saturate(1.0f - dot(vd, vd) * 0.62f);
+        c.rgb *= vig * vig;
+    }
+    // Layer 7 (bit 6): 35mm Temporal Film Grain (64-frame animated IGN, zero static pattern).
+    if ((ovMask & 64u) != 0u) {
+        const float2 gPos = i.pos.xy + (5.588238f * RO.z).xx;
+        const float ign = frac(52.9829189f * frac(dot(gPos, float2(0.06711056f, 0.00583715f))));
+        c.rgb = saturate(c.rgb + (ign - 0.5f) * 0.032f);
+    }
+    // Layer 8 (bit 7): Cinematic 2.35:1 anamorphic letterbox borders.
+    if ((ovMask & 128u) != 0u) {
+        if (i.uv.y < 0.115f || i.uv.y > 0.885f) { c.rgb = 0.0f.xxx; }
     }
     // Optional PQ ST.2084 HDR10 transfer output (TonemapView >= 3, ported from superframe present_hdr.cpp).
     if (RB.w >= 2.5f) {

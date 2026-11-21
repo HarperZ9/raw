@@ -35,22 +35,31 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float dist = length(p);
     const float3 w = p / max(dist, 1.0e-4f);
     const float tEnd = min(dist, tune2.w);
-    const float sigma = tune.x;
+    const float weatherDens = 1.0f + weather.w * 1.45f + weather.z * 1.85f + saturate(clouds.x - 0.25f) * 0.75f;
+    const float sigma = max(tune.x, 0.00018f) * weatherDens;
     const float zCur = d < 1.0f ? viewZOf(d) : 65000.0f;
+
+    // Unified atmospheric palette shared with Sky, Clouds, and Mountain Aerial Perspective.
+    float3 sZ, sM, sH;
+    skyPalette(sZ, sM, sH);
+    const float3 skyGrad = lerp(sH, lerp(sM, sZ, smoothstep(0.18f, 0.72f, w.z)), smoothstep(-0.08f, 0.26f, w.z));
+    const float highSun = smoothstep(0.18f, 0.48f, sunDir.z);
 
     float3 scatter = 0.0f.xxx;
     if (sunDir.w > 0.5f && tune2.z > 0.0f) {
         const float jit = ign(lo);
         const float sunLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
         const float nightW = saturate((0.28f - sunLum) * 4.5f);
-        const float lowSunBoost = lerp(1.0f, 1.18f, saturate(1.0f - abs(sunDir.z - 0.18f) / 0.28f));
+        const float lowSunBoost = lerp(1.0f, 1.32f, saturate(1.0f - abs(sunDir.z - 0.18f) / 0.28f));
         const float shaftBoost = lerp(lowSunBoost, 3.10f, nightW);
-        const float dayG = clamp(lerp(tune.y, max(tune.y, 0.70f), saturate(1.0f - sunDir.z * 2.5f)), 0.1f, 0.82f);
+        const float dayG = clamp(lerp(tune.y, max(tune.y, 0.72f), saturate(1.0f - sunDir.z * 2.5f)), 0.15f, 0.84f);
         const float dynG = lerp(dayG, 0.76f, nightW);
-        const float ph = min(phaseHG(dot(w, sunDir.xyz), dynG), 3.4f);
-        // 32 quadratic-clustered depth slices with per-slice 3D mist and cloud-shadow shafts.
+        const float cosT = dot(w, sunDir.xyz);
+        // Dual-lobe Henyey-Greenstein: strong forward Mie sunbeams + gentle back-scatter so fog scatters at all view angles.
+        const float ph = min(0.74f * phaseHG(cosT, dynG) + 0.26f * phaseHG(cosT, -0.22f), 3.6f);
+        // 32 quadratic-clustered depth slices with per-slice 3D mist, cloud shadows, and multi-scatter ambient sky lift.
         const uint kSteps = 32u;
-        float sum = 0.0f, cs = 1.0f;
+        float sumSun = 0.0f, sumSky = 0.0f, cs = 1.0f;
         float tPrev = 0.0f;
         [loop] for (uint i = 0u; i < kSteps; i++) {
             const float u1 = (float(i) + 1.0f) / float(kSteps);
@@ -61,13 +70,20 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float4 c = screenOf(w * t);
             const float3 wpFog = w * t + camPosW.xyz;
             if ((flags.x & FLAG_CLOUDS) != 0u && (i & 1u) == 0u) { cs = cloudShadowN(wpFog, 1u); }
-            const float3 fogFlow = wpFog * 0.00055f + float3(cloudWind.xy * camPosW.w * 0.00018f, 0.0f);
-            const float mist3d = 0.62f + 0.58f * cNoise(fogFlow);
-            const float hDens = (0.35f + 0.65f * exp(-max(w.z * t + 120.0f, 0.0f) * 0.0009f)) * mist3d;
-            sum += cascadeShadow(w * t, c.z, false) * cs * hDens * exp(-sigma * t) * dt;
+            const float3 fogFlow = wpFog * 0.00052f + float3(cloudWind.xy * camPosW.w * 0.00018f, 0.0f);
+            const float mist3d = 0.58f + 0.64f * cNoise(fogFlow);
+            const float hDens = (0.32f + 0.68f * exp(-max(w.z * t + 140.0f, 0.0f) * 0.00085f)) * mist3d;
+            const float tr = exp(-sigma * t * 0.85f);
+            const float vis = cascadeShadow(w * t, c.z, false) * cs;
+            sumSun += vis * hDens * tr * dt;
+            sumSky += (0.35f + 0.65f * cs) * hDens * tr * dt;
         }
-        const float3 shaftCol = lerp(sunColour.rgb, max(sunColour.rgb, float3(0.22f, 0.31f, 0.48f)), nightW * 0.72f);
-        scatter += shaftCol * (sigma * ph * sum * tune2.z * shaftBoost);
+        // Spectral alignment: CIE D65 high-latitude sun blended with the live atmospheric gradient & cloud tint.
+        const float3 d65Sun = lerp(sunColour.rgb, float3(0.96f, 0.98f, 1.02f) * max(sunLum, 0.12f), highSun * 0.58f);
+        const float3 shaftCol = lerp(lerp(d65Sun, skyGrad, 0.24f), max(sH, float3(0.18f, 0.26f, 0.42f)), nightW * 0.72f);
+        scatter += shaftCol * (sigma * ph * sumSun * tune2.z * shaftBoost * 1.45f);
+        // Isotropic sky multiple-scattering inside volumetric mist (bridges shadowed valleys seamlessly into the sky gradient).
+        scatter += skyGrad * (sigma * sumSky * 0.042f * (1.0f - nightW * 0.65f));
     }
     if (tune2.y > 0.0f) {
         const float weatherMistGain = 1.0f + saturate(weather.w * 0.85f + weather.z * 0.75f + clouds.x * 0.35f) * 0.65f;

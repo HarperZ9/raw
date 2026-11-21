@@ -94,22 +94,32 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float peakCollar = exp(-pow((midPt.z - 5200.0f) / 3600.0f, 2.0f)) * smoothstep(8000.0f, 28000.0f, dist);
         const float alpineMist = (0.76f + 0.48f * alpineNoise) * (1.0f + peakCollar * (0.45f + 0.55f * alpineNoise));
         const float od = baseSigma * min(dist, 240000.0f) * elevW * alpineMist * exp(-hStart * 0.15f);
-        const float T = exp(-od);
-        // Atmospheric in-scatter color locked 100% to live skyPalette() + Mie forward sun glow + night indigo.
+        // Wavelength-dependent Rayleigh + Mie transmittance: shorter blue wavelengths scatter more strongly over distance,
+        // giving distant Nordic/alpine mountain rock true aerial perspective while preserving crisp foreground texture.
+        const float3 T = exp(-od * float3(0.84f, 0.96f, 1.12f));
+        // Spectral 1:1 atmospheric gradient locked directly to live skyPalette(sZ, sM, sH) + cloud cover + Mie solar aureole:
+        // eliminates the color discontinuity between mountain haze, horizon sky, sun, and cloud undersides.
         float3 sZ, sM, sH;
         skyPalette(sZ, sM, sH);
         const float sunLumF = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
         const float nightF = saturate((0.26f - sunLumF) * 4.5f);
         const float lowSunF = saturate(1.0f - sunDir.z * 2.6f);
+        const float highSunF = smoothstep(0.18f, 0.48f, sunDir.z);
         const float cosSunF = saturate(dot(w, sunDir.xyz));
-        // Cool humid Nordic atmospheric moisture tint & restrained exposure (eliminates dry/beige overexposed fog).
-        float3 atmoCol = lerp(sH * 0.68f, sM * 0.76f, smoothstep(-0.08f, 0.35f, w.z)) * float3(0.91f, 0.97f, 1.06f);
-        const float3 mieCol = lerp(float3(0.94f, 0.94f, 0.92f), float3(1.0f, 0.62f, 0.34f), lowSunF);
-        atmoCol += mieCol * (pow(cosSunF, 10.0f) * 0.16f * (1.0f - saturate(clouds.x * 0.75f)));
-        // Snowstorm frosted whiteout vs night indigo-blue alpine haze.
-        atmoCol = lerp(atmoCol, float3(0.56f, 0.62f, 0.70f), weather.z * 0.65f);
-        atmoCol = lerp(atmoCol, float3(0.05f, 0.09f, 0.19f), nightF);
-        return float4(lit.rgb * T + atmoCol * (1.0f - T) + scatter, lit.a);
+        // Exact elevation-matched sky gradient (sH at horizon -> sM at mid-elevation -> sZ toward mountain peaks).
+        const float3 skyGrad = lerp(sH, lerp(sM, sZ, smoothstep(0.18f, 0.65f, w.z)), smoothstep(-0.08f, 0.28f, w.z));
+        // Blend softly with overcast cloud-layer ambient when cloud cover rises so fog never fights the cloud deck color.
+        const float cloudCov = saturate(clouds.x);
+        const float3 cloudDeckCol = lerp(skyGrad, dot(skyGrad, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.95f, 0.98f, 1.03f), 0.55f);
+        float3 atmoCol = lerp(skyGrad, cloudDeckCol, cloudCov * 0.55f);
+        // Dual-scale Mie solar scattering: broad golden/D65 aureole + tighter forward solar halo.
+        const float3 d65Mie = lerp(float3(1.0f, 0.66f, 0.36f), float3(0.96f, 0.98f, 1.02f), highSunF);
+        const float mieHalo = (pow(cosSunF, 5.0f) * 0.14f + pow(cosSunF, 28.0f) * 0.24f) * (1.0f - cloudCov * 0.72f) * (1.0f - nightF);
+        atmoCol += d65Mie * mieHalo;
+        // Snowstorm frosted whiteout vs night alpine indigo.
+        atmoCol = lerp(atmoCol, lerp(sH, float3(0.62f, 0.67f, 0.74f), 0.65f), weather.z * 0.65f);
+        atmoCol = lerp(atmoCol, max(sH * 0.55f, float3(0.05f, 0.09f, 0.18f)), nightF);
+        return float4(lit.rgb * T + atmoCol * (1.0f.xxx - T) + scatter, lit.a);
     }
     const float T = (flags.x & FLAG_FOG_REPLACES) != 0u ? exp(-sigma * tEnd) : 1.0f;
     return float4(lit.rgb * T + scatter, lit.a);

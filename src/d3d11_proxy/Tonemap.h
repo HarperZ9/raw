@@ -33,10 +33,19 @@ struct TonemapSettings
     // ToneX3: contrast above the key (1.55). ToneX4: the power at black, rising to ToneX3 at the key (0.6). ToneX5: the exposure factor in
     // interiors (cells with no sun cascades; 0 or 1: none).
     float x[6] = {0.001f, 3.5f, 0.0f, 1.55f, 0.6f, 0.0f};
+    // Real 3D PNG LUT (0 = None, 1..N = scanned from raw_luts/*.png) + non-destructive stackable overlay bitmask:
+    // bit0=FilmEmulsion, bit1=Halation+Anamorphic, bit2=ElderLensGhosts, bit3=SoftDiffusion,
+    // bit4=BleachBypass, bit5=OpticalVignette, bit6=35mmGrain, bit7=CinematicBorders.
+    int lutIndex = 0;
+    float lutStrength = 0.85f;
+    uint32_t overlayMask = 0x06u;
 };
 
 void Tonemap_Set(const TonemapSettings& t);
 TonemapSettings Tonemap_Get();
+uint32_t Tonemap_LutCount();
+std::string Tonemap_LutName(int idx);
+void Tonemap_RescanLuts();
 void Tonemap_OnDevice(ID3D11Device* dev);   // compiles RAW's shader once and registers it (when enabled)
 void Tonemap_SetSource(const std::wstring& file);   // [HotReload] ShaderDir\Tonemap.hlsl: watched, compiled live
 void Tonemap_BeforeDraw(ID3D11DeviceContext* real);

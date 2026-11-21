@@ -35,6 +35,7 @@ struct SlApi
     PFun_slSetTagForFrame* setTagForFrame = nullptr;
     PFun_slEvaluateFeature* evaluateFeature = nullptr;
     PFun_slDLSSSetOptions* dlssSetOptions = nullptr;
+    PFun_slDLSSDSetOptions* dlssdSetOptions = nullptr;
     PFun_slReflexSetOptions* reflexSetOptions = nullptr;
     PFun_slReflexSleep* reflexSleep = nullptr;
     ID3D12Device* dev12 = nullptr;
@@ -45,8 +46,11 @@ struct SlApi
     uint64_t fenceVal = 0;
     uint64_t slotVal[3] = {};
     uint32_t optW = 0, optH = 0;
+    int optMode = 0;
     bool dlssFailed = false;
+    bool dlssdFailed = false;
     bool dlssLogged = false;
+    bool dlssdLogged = false;
     bool ready = false;
 };
 SlApi& Api() { static SlApi a; return a; }
@@ -149,16 +153,23 @@ bool StreamlineHost::Initialize(ID3D12Device* dev12, LUID adapterLuid, LogFn log
     a.dev12 = dev12;
     a.ready = true;
 
-    if (m_caps.dlss) {
-        void* fnDlssOpt = nullptr;
-        a.getFeatureFn(sl::kFeatureDLSS, "slDLSSSetOptions", fnDlssOpt);
-        a.dlssSetOptions = reinterpret_cast<PFun_slDLSSSetOptions*>(fnDlssOpt);
+    if (m_caps.dlss || m_caps.dlssRR) {
+        if (m_caps.dlss) {
+            void* fnDlssOpt = nullptr;
+            a.getFeatureFn(sl::kFeatureDLSS, "slDLSSSetOptions", fnDlssOpt);
+            a.dlssSetOptions = reinterpret_cast<PFun_slDLSSSetOptions*>(fnDlssOpt);
+        }
+        if (m_caps.dlssRR) {
+            void* fnRrOpt = nullptr;
+            a.getFeatureFn(sl::kFeatureDLSS_RR, "slDLSSDSetOptions", fnRrOpt);
+            a.dlssdSetOptions = reinterpret_cast<PFun_slDLSSDSetOptions*>(fnRrOpt);
+        }
         bool cmdOk = SUCCEEDED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&a.fence)));
         for (int k = 0; cmdOk && k < 3; ++k)
             cmdOk = SUCCEEDED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&a.alloc[k])));
         if (cmdOk) cmdOk = SUCCEEDED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, a.alloc[0].Get(), nullptr, IID_PPV_ARGS(&a.cl)));
         if (cmdOk) { a.cl->Close(); a.fenceEv = CreateEventW(nullptr, FALSE, FALSE, nullptr); }
-        else { a.dlssFailed = true; }
+        else { a.dlssFailed = true; a.dlssdFailed = true; }
     }
 
     if (m_caps.reflex) {
@@ -200,33 +211,58 @@ void StreamlineHost::ReflexBeginFrame(uint32_t frameIdx)
 #endif
 }
 
-bool StreamlineHost::EvaluateDLAA(ID3D12CommandQueue* queue, ID3D12Resource* colorIn, ID3D12Resource* colorOut,
-                                  ID3D12Resource* depth, ID3D12Resource* mvec, uint32_t width, uint32_t height,
-                                  uint32_t frameIdx, LogFn log)
+bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn, ID3D12Resource* colorOut,
+                              ID3D12Resource* depth, ID3D12Resource* mvec,
+                              ID3D12Resource* albedo, ID3D12Resource* normal, ID3D12Resource* spec,
+                              uint32_t width, uint32_t height, uint32_t frameIdx, LogFn log)
 {
 #ifndef RAW_HAS_STREAMLINE
-    (void)queue; (void)colorIn; (void)colorOut; (void)depth; (void)mvec; (void)width; (void)height; (void)frameIdx; (void)log;
+    (void)queue; (void)colorIn; (void)colorOut; (void)depth; (void)mvec; (void)albedo; (void)normal; (void)spec;
+    (void)width; (void)height; (void)frameIdx; (void)log;
     return false;
 #else
     auto& a = Api();
-    if (!a.ready || !m_caps.dlss || a.dlssFailed || !a.dlssSetOptions || !a.cl || !queue || !colorIn || !colorOut || !depth || !mvec)
+    if (!a.ready || m_mode <= 0 || !a.cl || !queue || !colorIn || !colorOut || !depth || !mvec)
         return false;
+
+    const bool wantRR = (m_mode == 2 && m_caps.dlssRR && !a.dlssdFailed && a.dlssdSetOptions && albedo && normal && spec);
+    const bool useRR = wantRR;
+    if (!useRR && (!m_caps.dlss || a.dlssFailed || !a.dlssSetOptions)) return false;
+
     const sl::ViewportHandle vp(0);
-    if (a.optW != width || a.optH != height) {
-        sl::DLSSOptions opt{};
-        opt.mode = sl::DLSSMode::eDLAA;
-        opt.outputWidth = width;
-        opt.outputHeight = height;
-        opt.colorBuffersHDR = sl::Boolean::eTrue;
-        opt.dlaaPreset = sl::DLSSPreset::ePresetK;
-        opt.qualityPreset = sl::DLSSPreset::ePresetK;
-        const sl::Result r = a.dlssSetOptions(vp, opt);
-        if (r != sl::Result::eOk) {
-            a.dlssFailed = true;
-            if (log) log("[Streamline] slDLSSSetOptions(eDLAA, PresetK) failed: %d", static_cast<int>(r));
-            return false;
+    const int activeMode = useRR ? 2 : 1;
+    if (a.optW != width || a.optH != height || a.optMode != activeMode) {
+        if (useRR) {
+            sl::DLSSDOptions opt{};
+            opt.mode = sl::DLSSMode::eDLAA;
+            opt.outputWidth = width;
+            opt.outputHeight = height;
+            opt.colorBuffersHDR = sl::Boolean::eTrue;
+            opt.normalRoughnessMode = sl::DLSSDNormalRoughnessMode::eUnpacked;
+            opt.dlaaPreset = sl::DLSSDPreset::ePresetF;
+            opt.qualityPreset = sl::DLSSDPreset::ePresetF;
+            const sl::Result r = a.dlssdSetOptions(vp, opt);
+            if (r != sl::Result::eOk) {
+                a.dlssdFailed = true;
+                if (log) log("[Streamline] slDLSSDSetOptions(PresetF) failed: %d (falling back to DLAA)", static_cast<int>(r));
+                return false;
+            }
+        } else {
+            sl::DLSSOptions opt{};
+            opt.mode = sl::DLSSMode::eDLAA;
+            opt.outputWidth = width;
+            opt.outputHeight = height;
+            opt.colorBuffersHDR = sl::Boolean::eTrue;
+            opt.dlaaPreset = sl::DLSSPreset::ePresetK;
+            opt.qualityPreset = sl::DLSSPreset::ePresetK;
+            const sl::Result r = a.dlssSetOptions(vp, opt);
+            if (r != sl::Result::eOk) {
+                a.dlssFailed = true;
+                if (log) log("[Streamline] slDLSSSetOptions(eDLAA, PresetK) failed: %d", static_cast<int>(r));
+                return false;
+            }
         }
-        a.optW = width; a.optH = height;
+        a.optW = width; a.optH = height; a.optMode = activeMode;
     }
 
     sl::FrameToken* tok = nullptr;
@@ -252,42 +288,54 @@ bool StreamlineHost::EvaluateDLAA(ID3D12CommandQueue* queue, ID3D12Resource* col
     }
     if (FAILED(a.alloc[slot]->Reset()) || FAILED(a.cl->Reset(a.alloc[slot].Get(), nullptr))) return false;
 
-    D3D12_RESOURCE_BARRIER inB[4] = {
-        Barrier(colorIn,  D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
-        Barrier(colorOut, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
-        Barrier(depth,    D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
-        Barrier(mvec,     D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
-    };
-    a.cl->ResourceBarrier(4, inB);
+    D3D12_RESOURCE_BARRIER inB[7];
+    UINT nb = 0;
+    inB[nb++] = Barrier(colorIn,  D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    inB[nb++] = Barrier(colorOut, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    inB[nb++] = Barrier(depth,    D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    inB[nb++] = Barrier(mvec,     D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    if (useRR) {
+        inB[nb++] = Barrier(albedo, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        inB[nb++] = Barrier(normal, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        inB[nb++] = Barrier(spec,   D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    }
+    a.cl->ResourceBarrier(nb, inB);
 
     const sl::Extent ext{0, 0, width, height};
     sl::Resource rIn(sl::ResourceType::eTex2d, colorIn, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     sl::Resource rOut(sl::ResourceType::eTex2d, colorOut, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     sl::Resource rDepth(sl::ResourceType::eTex2d, depth, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     sl::Resource rMvec(sl::ResourceType::eTex2d, mvec, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    sl::ResourceTag tags[4] = {
+    sl::Resource rAlb(sl::ResourceType::eTex2d, albedo, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    sl::Resource rNrm(sl::ResourceType::eTex2d, normal, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    sl::Resource rSpec(sl::ResourceType::eTex2d, spec, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    sl::ResourceTag tags[8] = {
         {&rIn,    sl::kBufferTypeScalingInputColor,  sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
         {&rOut,   sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
         {&rDepth, sl::kBufferTypeDepth,              sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
-        {&rMvec,  sl::kBufferTypeMotionVectors,      sl::ResourceLifecycle::eValidUntilEvaluate, &ext}
+        {&rMvec,  sl::kBufferTypeMotionVectors,      sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
+        {&rAlb,   sl::kBufferTypeAlbedo,             sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
+        {&rSpec,  sl::kBufferTypeSpecularAlbedo,     sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
+        {&rNrm,   sl::kBufferTypeNormals,            sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
+        {&rSpec,  sl::kBufferTypeRoughness,          sl::ResourceLifecycle::eValidUntilEvaluate, &ext}
     };
-    a.setTagForFrame(*tok, vp, tags, 4, a.cl.Get());
+    a.setTagForFrame(*tok, vp, tags, useRR ? 8u : 4u, a.cl.Get());
 
     const sl::BaseStructure* inputs[] = {&vp};
-    const sl::Result er = a.evaluateFeature(sl::kFeatureDLSS, *tok, inputs, 1, a.cl.Get());
+    const sl::Feature feat = useRR ? sl::kFeatureDLSS_RR : sl::kFeatureDLSS;
+    const sl::Result er = a.evaluateFeature(feat, *tok, inputs, 1, a.cl.Get());
 
-    D3D12_RESOURCE_BARRIER outB[4] = {
-        Barrier(colorIn,  D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
-        Barrier(colorOut, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,          D3D12_RESOURCE_STATE_COMMON),
-        Barrier(depth,    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
-        Barrier(mvec,     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON)
-    };
-    a.cl->ResourceBarrier(4, outB);
+    D3D12_RESOURCE_BARRIER outB[7];
+    for (UINT i = 0; i < nb; ++i) {
+        outB[i] = inB[i];
+        std::swap(outB[i].Transition.StateBefore, outB[i].Transition.StateAfter);
+    }
+    a.cl->ResourceBarrier(nb, outB);
     a.cl->Close();
 
     if (er != sl::Result::eOk) {
-        a.dlssFailed = true;
-        if (log) log("[Streamline] slEvaluateFeature(DLAA) failed: %d (falling back to native FXAA+CAS)", static_cast<int>(er));
+        if (useRR) a.dlssdFailed = true; else a.dlssFailed = true;
+        if (log) log("[Streamline] slEvaluateFeature(%s) failed: %d", useRR ? "DLSS-RR" : "DLAA", static_cast<int>(er));
         return false;
     }
 
@@ -295,7 +343,10 @@ bool StreamlineHost::EvaluateDLAA(ID3D12CommandQueue* queue, ID3D12Resource* col
     queue->ExecuteCommandLists(1, lists);
     queue->Signal(a.fence.Get(), ++a.fenceVal);
     a.slotVal[slot] = a.fenceVal;
-    if (!a.dlssLogged) {
+    if (useRR && !a.dlssdLogged) {
+        a.dlssdLogged = true;
+        if (log) log("[Streamline] NVIDIA DLSS Ray Reconstruction (Preset F) active live at %ux%u HDR16F", width, height);
+    } else if (!useRR && !a.dlssLogged) {
         a.dlssLogged = true;
         if (log) log("[Streamline] NVIDIA DLAA Transformer (Preset K) active live at %ux%u HDR16F", width, height);
     }

@@ -28,20 +28,25 @@ public:
     bool Initialize(ID3D12Device* dev12, LUID adapterLuid, LogFn log);
     void Shutdown();
     StreamlineCaps Caps() const { return m_caps; }
+    // Live neural mode: 0 = Off, 1 = DLAA Transformer (Preset K), 2 = DLSS Ray Reconstruction (Preset F).
+    int GetMode() const { return m_mode; }
+    void SetMode(int m) { m_mode = (m < 0 ? 0 : (m > 2 ? 2 : m)); }
 
     // Per-frame NVIDIA Reflex Low-Latency sleep/pacing (no-op if Reflex is unsupported).
     void ReflexBeginFrame(uint32_t frameIdx);
 
-    // Live per-frame NVIDIA DLAA Transformer (sl::DLSSMode::eDLAA, ePresetK) on RAW's native DX12 HDR buffer.
-    // All 4 input/output resources enter and exit in D3D12_RESOURCE_STATE_COMMON.
-    // Returns true if DLAA evaluated into colorOut (caller should read colorOut instead of colorIn).
-    bool EvaluateDLAA(ID3D12CommandQueue* queue, ID3D12Resource* colorIn, ID3D12Resource* colorOut,
-                      ID3D12Resource* depth, ID3D12Resource* mvec, uint32_t width, uint32_t height,
-                      uint32_t frameIdx, LogFn log);
+    // Live per-frame NVIDIA DLAA Transformer (Preset K) or DLSS Ray Reconstruction (Preset F) on RAW's DX12 HDR buffer.
+    // All resources enter and exit in D3D12_RESOURCE_STATE_COMMON.
+    // Returns true if Streamline evaluated into colorOut (caller should read colorOut instead of colorIn).
+    bool Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn, ID3D12Resource* colorOut,
+                  ID3D12Resource* depth, ID3D12Resource* mvec,
+                  ID3D12Resource* albedo, ID3D12Resource* normal, ID3D12Resource* spec,
+                  uint32_t width, uint32_t height, uint32_t frameIdx, LogFn log);
 
 private:
     StreamlineHost() = default;
     StreamlineCaps m_caps{};
+    int m_mode = 1;
     bool m_tried = false;
 };
 

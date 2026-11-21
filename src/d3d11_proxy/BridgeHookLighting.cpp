@@ -20,6 +20,7 @@
 #include "TxMode.h"
 #include "Translate.h"
 #include "Overlay.h"
+#include "StreamlineHost.h"
 #include "WeatherDrive.h"
 #include "Tonemap.h"
 
@@ -186,6 +187,7 @@ void LoadLightingConfig(const std::string& ini)
         tm.lutStrength = f("LutStrength", tm.lutStrength);
         tm.overlayMask = static_cast<uint32_t>(i("OverlayMask", static_cast<int>(tm.overlayMask)));
         Tonemap_Set(tm);
+        raw::bridge::StreamlineHost::Get().SetMode(i("DlssMode", raw::bridge::StreamlineHost::Get().GetMode()));
     }
     t.water = i("Water", 1) != 0; t.waterReflect = f("WaterReflect", t.waterReflect); t.waterCaustics = f("WaterCaustics", t.waterCaustics);
     t.waterAbsorb = f("WaterAbsorb", t.waterAbsorb); t.waterGlint = f("WaterGlint", t.waterGlint);

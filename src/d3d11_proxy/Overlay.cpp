@@ -5,6 +5,7 @@
 #include "ProxyAPI.h"
 #include "ProxyLog.h"
 #include "Tonemap.h"
+#include "StreamlineHost.h"
 #include "WeatherDrive.h"
 
 #include <d3d11.h>
@@ -63,6 +64,7 @@ void SavePresetFile(const std::string& path, const char* tag)
     wI("Tonemap", tm.enabled ? 1 : 0); wI("ToneCurve", tm.curve); wF("ExposureBias", tm.bias); wF("ExposureKey", tm.key);
     wF("ToneX1", tm.x[1]); wF("ToneX2", tm.x[2]); wF("ToneX3", tm.x[3]); wF("ToneX4", tm.x[4]); wF("ToneX5", tm.x[5]);
     wI("ToneView", tm.view); wI("LutIndex", tm.lutIndex); wF("LutStrength", tm.lutStrength); wI("OverlayMask", static_cast<int>(tm.overlayMask));
+    wI("DlssMode", raw::bridge::StreamlineHost::Get().GetMode());
     g_statusTag = tag;
     g_savedFrames = 180;
 }
@@ -93,6 +95,7 @@ void LoadPresetSlot(int slot)
     tm.view = rI("ToneView", tm.view); tm.lutIndex = rI("LutIndex", tm.lutIndex); tm.lutStrength = rF("LutStrength", tm.lutStrength);
     tm.overlayMask = static_cast<uint32_t>(rI("OverlayMask", static_cast<int>(tm.overlayMask)));
     Tonemap_Set(tm);
+    raw::bridge::StreamlineHost::Get().SetMode(rI("DlssMode", raw::bridge::StreamlineHost::Get().GetMode()));
     g_statusTag = " [LOADED SLOT " + std::to_string(slot) + "]";
     g_savedFrames = 180;
 }
@@ -124,7 +127,7 @@ bool KeyEdge(bool now, bool& prev) { const bool f = now && !prev; prev = now; re
 
 int TabRowCount(int tab)
 {
-    static const int kCounts[7] = {12, 13, 7, 8, 12, 11, 13};
+    static const int kCounts[7] = {12, 13, 7, 8, 12, 11, 14};
     return kCounts[std::clamp(tab, 0, 6)];
 }
 
@@ -228,20 +231,22 @@ std::string BuildMenuText()
     } else {
         static const char* kTiers[5] = {"Low (Raster)", "Medium (RT Sun)", "High (RT GI)", "Ultra (Full RT)", "Overdrive (Max)"};
         static const char* kCurves[8] = {"0:Game", "1:ACES Fitted", "2:ReinhardW", "3:RAW Hybrid", "4:AgX WideGamut", "5:GranTurismo", "6:Lottes", "7:Hable"};
+        static const char* kDlss[3] = {"0:Off (FXAA+CAS)", "1:DLAA Transformer K", "2:DLSS RayRecon F"};
         const uint32_t lutTotal = Tonemap_LutCount();
         row(0, "Hardware Tier Preset", kTiers[std::clamp(g_hwTier, 0, 4)]);
-        row(1, "Color Space / Curve", kCurves[std::clamp(tm.curve, 0, 7)]);
-        row(2, "Elder 3D PNG LUT", FmtI("%d/", tm.lutIndex) + FmtI("%d ", int(lutTotal)) + Tonemap_LutName(tm.lutIndex));
-        row(3, "3D LUT Blend Strength", Fmt("%.0f%%", tm.lutStrength * 100.0f));
-        row(4, "OV1: Film Emulsion", OnOff((tm.overlayMask & 1u) != 0u));
-        row(5, "OV2: Halation+Anamorp", OnOff((tm.overlayMask & 2u) != 0u));
-        row(6, "OV3: Elder Lens Ghost", OnOff((tm.overlayMask & 4u) != 0u));
-        row(7, "OV4: Soft Diffusion", OnOff((tm.overlayMask & 8u) != 0u));
-        row(8, "OV5: Bleach Bypass", OnOff((tm.overlayMask & 16u) != 0u));
-        row(9, "OV6: Optical Vignette", OnOff((tm.overlayMask & 32u) != 0u));
-        row(10, "OV7: 35mm Film Grain", OnOff((tm.overlayMask & 64u) != 0u));
-        row(11, "OV8: Cinema Borders", OnOff((tm.overlayMask & 128u) != 0u));
-        row(12, "User Preset Slot", FmtI("Slot %d  [S=Save | L=Load]", g_presetSlot));
+        row(1, "NVIDIA Streamline", kDlss[std::clamp(raw::bridge::StreamlineHost::Get().GetMode(), 0, 2)]);
+        row(2, "Color Space / Curve", kCurves[std::clamp(tm.curve, 0, 7)]);
+        row(3, "Elder 3D PNG LUT", FmtI("%d/", tm.lutIndex) + FmtI("%d ", int(lutTotal)) + Tonemap_LutName(tm.lutIndex));
+        row(4, "3D LUT Blend Strength", Fmt("%.0f%%", tm.lutStrength * 100.0f));
+        row(5, "OV1: Film Emulsion", OnOff((tm.overlayMask & 1u) != 0u));
+        row(6, "OV2: Halation+Anamorp", OnOff((tm.overlayMask & 2u) != 0u));
+        row(7, "OV3: Elder Lens Ghost", OnOff((tm.overlayMask & 4u) != 0u));
+        row(8, "OV4: Soft Diffusion", OnOff((tm.overlayMask & 8u) != 0u));
+        row(9, "OV5: Bleach Bypass", OnOff((tm.overlayMask & 16u) != 0u));
+        row(10, "OV6: Optical Vignette", OnOff((tm.overlayMask & 32u) != 0u));
+        row(11, "OV7: 35mm Film Grain", OnOff((tm.overlayMask & 64u) != 0u));
+        row(12, "OV8: Cinema Borders", OnOff((tm.overlayMask & 128u) != 0u));
+        row(13, "User Preset Slot", FmtI("Slot %d  [S=Save | L=Load]", g_presetSlot));
     }
     out += "Web Studio, Presets & Live HLSL Editor: http://127.0.0.1:8844";
     return out;
@@ -369,18 +374,19 @@ bool PollMenu(std::string& outText)
             const int lutN = int(Tonemap_LutCount()) + 1;
             switch (g_sel) {
             case 0: g_hwTier = (g_hwTier + 5 + dir) % 5; ApplyHardwareTier(g_hwTier); break;
-            case 1: tm.curve = (tm.curve + 8 + dir) % 8; tmDirty = true; break;
-            case 2: tm.lutIndex = (tm.lutIndex + lutN + dir) % lutN; tmDirty = true; break;
-            case 3: tm.lutStrength = std::clamp(tm.lutStrength + step * 0.05f, 0.0f, 1.0f); tmDirty = true; break;
-            case 4: tm.overlayMask ^= 1u; tmDirty = true; break;
-            case 5: tm.overlayMask ^= 2u; tmDirty = true; break;
-            case 6: tm.overlayMask ^= 4u; tmDirty = true; break;
-            case 7: tm.overlayMask ^= 8u; tmDirty = true; break;
-            case 8: tm.overlayMask ^= 16u; tmDirty = true; break;
-            case 9: tm.overlayMask ^= 32u; tmDirty = true; break;
-            case 10: tm.overlayMask ^= 64u; tmDirty = true; break;
-            case 11: tm.overlayMask ^= 128u; tmDirty = true; break;
-            case 12: g_presetSlot = ((g_presetSlot - 1 + 5 + dir) % 5) + 1; break;
+            case 1: raw::bridge::StreamlineHost::Get().SetMode((raw::bridge::StreamlineHost::Get().GetMode() + 3 + dir) % 3); break;
+            case 2: tm.curve = (tm.curve + 8 + dir) % 8; tmDirty = true; break;
+            case 3: tm.lutIndex = (tm.lutIndex + lutN + dir) % lutN; tmDirty = true; break;
+            case 4: tm.lutStrength = std::clamp(tm.lutStrength + step * 0.05f, 0.0f, 1.0f); tmDirty = true; break;
+            case 5: tm.overlayMask ^= 1u; tmDirty = true; break;
+            case 6: tm.overlayMask ^= 2u; tmDirty = true; break;
+            case 7: tm.overlayMask ^= 4u; tmDirty = true; break;
+            case 8: tm.overlayMask ^= 8u; tmDirty = true; break;
+            case 9: tm.overlayMask ^= 16u; tmDirty = true; break;
+            case 10: tm.overlayMask ^= 32u; tmDirty = true; break;
+            case 11: tm.overlayMask ^= 64u; tmDirty = true; break;
+            case 12: tm.overlayMask ^= 128u; tmDirty = true; break;
+            case 13: g_presetSlot = ((g_presetSlot - 1 + 5 + dir) % 5) + 1; break;
             }
         }
         if (tmDirty) Tonemap_Set(tm);

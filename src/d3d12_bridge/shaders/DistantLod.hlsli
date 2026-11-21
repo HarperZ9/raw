@@ -13,7 +13,17 @@ bool lodAt(int2 q) {
 float3 distantLit(int3 ip, float2 at, float d) {
     const float2 px = floor(at);
     const float3 p = worldAt(px, d);
-    const float3 albedo = Albedo.Load(ip).rgb;
+    float3 albedo = Albedo.Load(ip).rgb;
+    const uint seasonL = uint(waterB.w + 0.5f);
+    if (seasonL == 3u) {
+        // Autumn: shift distant grass and tree foliage toward warm golden-amber/russet.
+        const float grn = saturate((albedo.g - max(albedo.r, albedo.b) * 0.85f) * 3.5f);
+        albedo = lerp(albedo, float3(albedo.g * 1.25f, albedo.g * 0.74f, albedo.b * 0.42f), grn * 0.72f);
+    } else if (seasonL == 4u) {
+        // Winter: dust distant slopes and grass with crisp snowpack matching foreground winter snow.
+        const float snowSlope = saturate((worldNormal(Normal.Load(ip)).z - 0.35f) * 2.2f);
+        albedo = lerp(albedo, float3(0.54f, 0.58f, 0.64f), snowSlope * 0.78f);
+    }
     // Tree LOD is a card whose G-buffer normal is one direction for the whole card (view 14, ec7-3), so a lit card
     // still reads flat. A canopy normal stands in: where the pixel sits across the card's silhouette on screen
     // (its distance to the card's edge left, right, up and down, up to 24 pixels) bends the normal from the camera
@@ -56,7 +66,16 @@ float3 distantLit(int3 ip, float2 at, float d) {
         // Ground shadow darkening so tundra grass sits naturally inside terrain shadows instead of glowing neon yellow.
         direct *= lerp(0.72f, 1.0f, grassAo);
     }
-    return knee3(knee3(albedo * (direct + max(amb, 0.0f))));
+    float3 outLod = knee3(knee3(albedo * (direct + max(amb, 0.0f))));
+    // Atmospheric aerial perspective on distant mountains (z > 10,000) so peaks blend seamlessly into the Nordic horizon.
+    if (zDist > 10000.0f && sunColour.w > 0.5f) {
+        const float aerial = saturate(1.0f - exp(-(zDist - 10000.0f) / 145000.0f)) * 0.42f;
+        const float lowSunL = saturate(1.0f - sunDir.z * 2.6f);
+        const float3 horizCol = lerp(float3(0.46f, 0.58f, 0.72f), float3(0.76f, 0.52f, 0.36f), lowSunL);
+        const float3 fogCol = lerp(horizCol, float3(0.36f, 0.42f, 0.48f), saturate(clouds.x * 0.85f));
+        outLod = lerp(outLod, fogCol, aerial);
+    }
+    return outLod;
 }
 
 #endif

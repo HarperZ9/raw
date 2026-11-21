@@ -36,6 +36,7 @@ struct TonemapSettings
 };
 
 void Tonemap_Set(const TonemapSettings& t);
+TonemapSettings Tonemap_Get();
 void Tonemap_OnDevice(ID3D11Device* dev);   // compiles RAW's shader once and registers it (when enabled)
 void Tonemap_SetSource(const std::wstring& file);   // [HotReload] ShaderDir\Tonemap.hlsl: watched, compiled live
 void Tonemap_BeforeDraw(ID3D11DeviceContext* real);

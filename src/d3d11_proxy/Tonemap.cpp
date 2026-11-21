@@ -97,6 +97,11 @@ void Tonemap_Set(const TonemapSettings& t)
     }
 }
 
+TonemapSettings Tonemap_Get()
+{
+    return S().set;
+}
+
 void Tonemap_SetSource(const std::wstring& file)
 {
     S().file = file;

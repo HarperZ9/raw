@@ -50,28 +50,30 @@ float cloudDensity(float3 pa, bool detail) {
     const float h = (curvedZ - clouds.y) / clouds.z;   // 0 at floor, 1 at top
     if (h <= 0.0f || h >= 1.0f) { return 0.0f; }
     const float3 wind = float3(cloudWind.xy * camPosW.w, 0.0f);
-    const float3 sheared = pa + wind + float3(cloudWind.xy, 0.0f) * (h * 38.0f);
-    // Macro weather coverage field (natural sweeping cloud banks).
-    const float3 q = float3(sheared.x / 34000.0f, sheared.y / 29000.0f, h * 1.25f);
-    const float warp = cNoise(q * 1.15f + 7.1f) * 0.38f;
-    const float baseFbm = cNoise(q + warp) * 0.48f + cNoise(q * 2.15f + 11.3f) * 0.30f + cNoise(q * 4.45f + 5.7f) * 0.22f;
-    const float macroWorley = cWorley(q * 2.2f + 2.7f);
-    const float shape = lerp(baseFbm, baseFbm * 0.62f + macroWorley * 0.50f, 0.50f);
+    const float3 sheared = pa + wind + float3(cloudWind.xy, 0.0f) * (h * 6.0f);
+    // Macro weather coverage field (distinct, well-spaced fair-weather cumulus banks).
+    const float3 q = float3(sheared.x / 26000.0f, sheared.y / 24000.0f, h * 1.15f);
+    const float warp = cNoise(q * 1.15f + 7.1f) * 0.35f;
+    const float baseFbm = cNoise(q + warp) * 0.50f + cNoise(q * 2.15f + 11.3f) * 0.30f + cNoise(q * 4.45f + 5.7f) * 0.20f;
+    const float macroWorley = cWorley(q * 2.1f + 2.7f);
+    const float shape = lerp(baseFbm, baseFbm * 0.58f + macroWorley * 0.52f, 0.55f);
     // Flat condensation base + sculpted cumulus towers.
     const float baseFlat = saturate(h / 0.12f);
     const float topRound = saturate((1.0f - h) / lerp(0.42f, 0.20f, saturate(clouds.x)));
-    const float cover = saturate(clouds.x * 1.10f);
-    float dens = saturate((shape * baseFlat * topRound - (0.78f - cover * 0.46f)) / max(0.28f + cover * 0.20f, 0.14f));
+    const float cover = saturate(clouds.x);
+    // Calibrated threshold so fair-weather cover (0.30..0.50) produces bold, distinct cumulus clouds with clear blue sky between them.
+    const float thresh = lerp(0.56f, 0.22f, cover);
+    float dens = saturate((shape * baseFlat * topRound - thresh) / max(0.32f, 0.14f));
     if (detail && dens > 0.0f) {
-        // Multi-scale high-frequency Worley + FBM erosion (3.8km -> 1.9km -> 950 -> 480 units) for razor-sharp feathery edges.
-        const float3 r1 = float3((sheared.x + wind.x * 0.4f) / 4200.0f, (sheared.y + wind.y * 0.4f) / 3800.0f, h * 6.5f);
+        // Multi-scale high-frequency Worley + FBM erosion for razor-sharp cauliflower cumulus edges.
+        const float3 r1 = float3((sheared.x + wind.x * 0.35f) / 3600.0f, (sheared.y + wind.y * 0.35f) / 3400.0f, h * 5.8f);
         const float w1 = 1.0f - cWorley(r1);
         const float f2 = cNoise(r1 * 2.13f + 3.7f);
         const float f3 = cNoise(r1 * 4.61f + 9.2f);
         const float f4 = cNoise(r1 * 9.37f + 17.5f);
         const float fineErode = w1 * 0.42f + f2 * 0.28f + f3 * 0.19f + f4 * 0.11f;
-        const float erodeAmt = lerp(0.55f, 0.82f, h) * (1.0f - dens * 0.45f);
-        dens = saturate((dens - fineErode * erodeAmt) / max(1.0f - fineErode * 0.48f, 0.25f));
+        const float erodeAmt = lerp(0.45f, 0.72f, h) * (1.0f - dens * 0.55f);
+        dens = saturate((dens - fineErode * erodeAmt) / max(1.0f - fineErode * 0.42f, 0.28f));
     }
     // Crisp high-altitude streaked cirrus wisps (upper 26% of the slab).
     if (detail && h > 0.74f && clouds.x > 0.05f) {

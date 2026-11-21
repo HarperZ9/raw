@@ -27,8 +27,8 @@ float4 decodeRaw(float4 v, out float rest, out float has) {
     return float4(v.rgb, t - 2.0f * q);
 }
 
-float4 meanAround(int2 p, float z, int r, out float rest) {
-    float4 s = 0.0f;
+float4 meanAround(int2 p, float z, int r, out float rest, out float4 stdDev) {
+    float4 s = 0.0f, s2 = 0.0f;
     float w = 0.0f, rs = 0.0f, rw = 0.0f, rv, rh;
     rest = 1.0f;
     for (int y = -r; y <= r; y++) {
@@ -42,12 +42,19 @@ float4 meanAround(int2 p, float z, int r, out float rest) {
             // Clamp 1-spp RT bounce fireflies before spatial/temporal blending so white speckles never leak into shadows.
             const float tapMax = max(tap.r, max(tap.g, tap.b));
             if (tapMax > 1.8f) { tap.rgb *= 1.8f / tapMax; }
-            s += k * tap; w += k;
+            s += k * tap; s2 += k * (tap * tap); w += k;
             rs += k * rh * rv; rw += k * rh;
         }
     }
     if (rw > 1.0e-4f) { rest = rs / rw; }
-    return w > 1.0e-4f ? s / w : decodeRaw(Raw[p], rv, rh);
+    if (w > 1.0e-4f) {
+        const float4 m1 = s / w;
+        const float4 m2 = s2 / w;
+        stdDev = sqrt(max(m2 - m1 * m1, 0.0f.xxxx));
+        return m1;
+    }
+    stdDev = 0.1f.xxxx;
+    return decodeRaw(Raw[p], rv, rh);
 }
 
 [numthreads(8, 8, 1)]
@@ -85,7 +92,14 @@ void main(uint3 id : SV_DispatchThreadID) {
         if (hw > 0.05f) { past = hs / hw; n = hn / hw; pastB = hb / hw; pastR = hr / hw; have = true; }
     }
     float curR;
-    const float4 cur = meanAround(p, z, n < 6.0f ? 2 : 1, curR);
+    float4 curStd;
+    const float4 cur = meanAround(p, z, n < 6.0f ? 2 : 1, curR, curStd);
+    // SVGF neighborhood variance clamping: eliminates RT GI & skylight ghosting when lights, clouds, or actors move.
+    const float4 pad = max(curStd * 1.65f, float4(0.05f, 0.05f, 0.05f, 0.08f));
+    if (have) {
+        past = clamp(past, saturate(cur.a - pad.a), saturate(cur.a + pad.a));
+        pastB = clamp(pastB, max(cur.rgb - pad.rgb, 0.0f.xxx), cur.rgb + pad.rgb);
+    }
     n = have ? min(n + 1.0f, float(maxFrames)) : 1.0f;
     const float vis = have ? lerp(past, cur.a, 1.0f / n) : cur.a;
     const float3 b = have ? lerp(pastB, cur.rgb, 1.0f / n) : cur.rgb;

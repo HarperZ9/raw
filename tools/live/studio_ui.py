@@ -247,6 +247,16 @@ class StudioHandler(BaseHTTPRequestHandler):
             self.wfile.write(raw)
         elif u.path == "/api/state":
             self._send_json(run_req(["state"], timeout=15))
+        elif u.path == "/api/presets":
+            items = []
+            if PRESET_DIR.is_dir():
+                for p in sorted(PRESET_DIR.rglob("*.json")):
+                    try:
+                        d = json.loads(p.read_text(encoding="utf-8"))
+                        items.append({"id": p.relative_to(PRESET_DIR).with_suffix("").as_posix(), "name": d.get("name", p.stem), "category": d.get("category", "custom"), "params": d.get("params", d)})
+                    except Exception:
+                        pass
+            self._send_json(items)
         elif u.path == "/api/shaders":
             self._send_json([s for s in EDITABLE_SHADERS if (SHADER_DIR / s).is_file()])
         elif u.path == "/api/shader":

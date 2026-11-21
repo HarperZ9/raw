@@ -1,0 +1,15 @@
+{
+  "name": "Nordic Light",
+  "category": "overlay",
+  "description": "Crisp Nordic cerulean clarity, cool slate shadows, restrained highlights.",
+  "params": {
+    "Tonemap": 1,
+    "ExposureKey": 0.41,
+    "ToneX1": 4.5,
+    "ToneX3": 1.35,
+    "ToneX4": 0.55,
+    "RtSkyStrength": 1.05,
+    "RtBounce": 1.15,
+    "CloudCover": 0.42
+  }
+}

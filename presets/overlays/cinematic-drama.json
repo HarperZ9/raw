@@ -1,0 +1,15 @@
+{
+  "name": "Cinematic Drama",
+  "category": "overlay",
+  "description": "High-contrast filmic curve, deeper shadows, pronounced volumetric bounce.",
+  "params": {
+    "Tonemap": 1,
+    "ExposureKey": 0.37,
+    "ToneX1": 4.2,
+    "ToneX3": 1.50,
+    "ToneX4": 0.46,
+    "RtSkyStrength": 1.10,
+    "RtBounce": 1.25,
+    "RtBounceInterior": 1.30
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "Snowstorm (10a23f)",
+  "category": "weather",
+  "weatherId": "10a23f",
+  "params": {
+    "CloudCover": 0.90,
+    "RtSkyStrength": 0.90,
+    "RtBounce": 1.05,
+    "ToneX1": 5.2,
+    "ToneX3": 1.28,
+    "ToneX4": 0.56
+  }
+}

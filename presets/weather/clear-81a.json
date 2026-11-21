@@ -1,0 +1,11 @@
+{
+  "name": "Clear Sky (81a)",
+  "category": "weather",
+  "weatherId": "81a",
+  "params": {
+    "CloudCover": 0.35,
+    "RtSkyStrength": 1.0,
+    "RtBounce": 1.2,
+    "ToneX1": 4.8
+  }
+}

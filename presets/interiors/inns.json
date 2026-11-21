@@ -1,0 +1,13 @@
+{
+  "name": "Inns & Taverns",
+  "category": "interior",
+  "description": "Warm hearth-lit interiors with crisp timber/ceramic speculars.",
+  "params": {
+    "Tonemap": 1,
+    "ExposureKey": 0.42,
+    "ToneX3": 1.32,
+    "ToneX4": 0.56,
+    "ToneX5": 0.82,
+    "RtBounceInterior": 1.40
+  }
+}

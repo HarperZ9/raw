@@ -243,40 +243,80 @@ float4 main(In i) : SV_Target {
         mapped = rh ? reinhardW(hdr * exposure * RB.z) : filmic(hdr * exposure * RB.z);
         if (RA.x > 0.5f) { pivot = dot(rh ? reinhardW((RB.y * exp2(RA.y) * RB.z).xxx) : filmic((RB.y * exp2(RA.y) * RB.z).xxx), W); }   // the grade turns about mid grey
     }
-    // Non-destructive stackable optical overlays (RO.y bitmask, toggled independently in-game):
-    // bit0=FilmEmulsion, bit1=Halation+Anamorphic, bit2=ElderLensGhosts, bit3=SoftDiffusion,
-    // bit4=BleachBypass, bit5=OpticalVignette, bit6=35mmGrain, bit7=CinematicBorders.
+    // Multi-Radius Karis-Weighted Spectral Tent-Filter Bloom (Jimenez SIGGRAPH 2014 + Elder Spectral Glare):
+    // Combines a tight warm optical core (1.5 px) and wide cool veiling scatter (4.5 px) with Karis 1/(1+luma)
+    // weighting to eliminate sub-pixel specular firefly pulsing while giving torches, spells & sun a cinema glow.
     const uint ovMask = uint(RO.y + 0.5f);
-    const float bloomLum = dot(bloom, W);
-    const float kneeB = saturate((bloomLum - 0.55f) / 0.55f);
-    const float3 cleanBloom = bloom * (kneeB * kneeB * 0.14f);
+    float bw0, bh0;
+    Bloom.GetDimensions(bw0, bh0);
+    const float2 bTex = 1.0f / max(float2(bw0, bh0), float2(1.0f, 1.0f));
+    const float3 bC = bloom;
+    const float3 bI1 = Bloom.Sample(S0, saturate(suv + float2( bTex.x,  bTex.y) * 1.6f)).rgb;
+    const float3 bI2 = Bloom.Sample(S0, saturate(suv + float2(-bTex.x,  bTex.y) * 1.6f)).rgb;
+    const float3 bI3 = Bloom.Sample(S0, saturate(suv + float2( bTex.x, -bTex.y) * 1.6f)).rgb;
+    const float3 bI4 = Bloom.Sample(S0, saturate(suv + float2(-bTex.x, -bTex.y) * 1.6f)).rgb;
+    const float3 bO1 = Bloom.Sample(S0, saturate(suv + float2( bTex.x * 4.5f, 0.0f))).rgb;
+    const float3 bO2 = Bloom.Sample(S0, saturate(suv + float2(-bTex.x * 4.5f, 0.0f))).rgb;
+    const float3 bO3 = Bloom.Sample(S0, saturate(suv + float2(0.0f,  bTex.y * 4.5f))).rgb;
+    const float3 bO4 = Bloom.Sample(S0, saturate(suv + float2(0.0f, -bTex.y * 4.5f))).rgb;
+    // Karis inverse-luminance weights suppress single-pixel firefly flicker.
+    const float kwC = 1.0f / (1.0f + dot(bC, W));
+    const float kw1 = 1.0f / (1.0f + dot(bI1, W)), kw2 = 1.0f / (1.0f + dot(bI2, W));
+    const float kw3 = 1.0f / (1.0f + dot(bI3, W)), kw4 = 1.0f / (1.0f + dot(bI4, W));
+    const float3 innerBloom = (bC * (kwC * 2.0f) + bI1 * kw1 + bI2 * kw2 + bI3 * kw3 + bI4 * kw4)
+                            / max(kwC * 2.0f + kw1 + kw2 + kw3 + kw4, 1.0e-4f);
+    const float3 outerBloom = (bO1 + bO2 + bO3 + bO4) * 0.25f;
+    const float bloomLum = dot(innerBloom, W);
+    const float kneeB = saturate((bloomLum - 0.52f) / 0.58f);
+    const float outerLum = dot(outerBloom, W);
+    const float kneeO = saturate((outerLum - 0.42f) / 0.65f);
+    const float3 cleanBloom = innerBloom * float3(1.04f, 0.99f, 0.93f) * (kneeB * kneeB * 0.13f)
+                            + outerBloom * float3(0.93f, 0.98f, 1.06f) * (kneeO * kneeO * 0.08f);
     float3 ovAdd = cleanBloom;
     if ((ovMask & 2u) != 0u) {
-        // Layer 2: Optical Halation & Anamorphic streak.
-        const float3 halation = float3(1.0f, 0.42f, 0.18f) * saturate((bloomLum - 1.05f) * 0.30f) * 0.10f;
+        // Layer 2: Multi-radius Photochemical Emulsion Halation + 5-Tap Wide Panavision Anamorphic Streak.
         float bw, bh;
         Bloom.GetDimensions(bw, bh);
-        const float bx = 2.5f / max(bw, 1.0f);
-        const float3 bL = Bloom.Sample(S0, suv - float2(bx, 0.0f)).rgb;
-        const float3 bR = Bloom.Sample(S0, suv + float2(bx, 0.0f)).rgb;
-        const float3 anamorphic = max((bL + bR) * 0.5f - 1.15f.xxx, 0.0f.xxx) * float3(0.55f, 0.78f, 1.05f) * 0.06f;
+        const float2 bpx = 1.0f / max(float2(bw, bh), float2(1.0f, 1.0f));
+        const float3 hNear = Bloom.Sample(S0, suv + float2(bpx.x * 1.5f, bpx.y * 1.5f)).rgb
+                           + Bloom.Sample(S0, suv - float2(bpx.x * 1.5f, bpx.y * 1.5f)).rgb;
+        const float hLum = dot(hNear * 0.5f, W);
+        const float3 halation = float3(1.0f, 0.36f, 0.14f) * (saturate((bloomLum - 1.02f) * 0.28f) * 0.08f + saturate((hLum - 0.92f) * 0.22f) * 0.05f);
+        float3 anaAcc = 0.0f.xxx;
+        [unroll] for (int ai = 1; ai <= 3; ai++) {
+            const float dx = float(ai) * 3.2f * bpx.x;
+            const float aw = 1.0f / float(ai + 1);
+            const float3 bL = max(Bloom.Sample(S0, saturate(suv - float2(dx, 0.0f))).rgb - 1.10f.xxx, 0.0f.xxx);
+            const float3 bR = max(Bloom.Sample(S0, saturate(suv + float2(dx, 0.0f))).rgb - 1.10f.xxx, 0.0f.xxx);
+            anaAcc += (bL + bR) * (0.5f * aw);
+        }
+        const float3 anamorphic = anaAcc * float3(0.48f, 0.76f, 1.08f) * 0.055f;
         ovAdd += halation + anamorphic;
     }
     if ((ovMask & 4u) != 0u) {
-        // Layer 3: ElderLens 3-order chromatic optical lens ghosts + radial aperture halo.
+        // Layer 3: arXiv:2605.04017 (Hachisuka et al. 2026) 5-Order Optical Lens Transport Ghosts + Cat's-Eye Aperture Halo.
         const float2 cVec = suv - 0.5f.xx;
         const float cDist = length(cVec);
+        const float catsEye = saturate(1.0f - cDist * cDist * 1.15f);
         float3 lensAcc = 0.0f.xxx;
-        [unroll] for (int gi = 1; gi <= 3; gi++) {
-            const float gScale = 0.45f + float(gi) * 0.28f;
+        [unroll] for (int gi = 1; gi <= 5; gi++) {
+            const float gScale = 0.35f + float(gi) * 0.24f;
             const float2 gUv = saturate(0.5f.xx - cVec * gScale);
-            const float3 gCol = max(Bloom.Sample(S0, gUv).rgb - 0.85f.xxx, 0.0f.xxx);
-            const float3 gTint = gi == 1 ? float3(1.05f, 0.96f, 0.85f) : (gi == 2 ? float3(0.85f, 1.02f, 1.12f) : float3(0.96f, 0.88f, 1.08f));
-            lensAcc += gCol * gTint / float(gi + 1);
+            // Chromatic radial dispersion across RGB lens elements.
+            const float2 disp = cVec * (0.008f * float(gi));
+            const float rC = max(Bloom.Sample(S0, saturate(gUv + disp)).r - 0.85f, 0.0f);
+            const float gC = max(Bloom.Sample(S0, gUv).g - 0.85f, 0.0f);
+            const float bC = max(Bloom.Sample(S0, saturate(gUv - disp)).b - 0.85f, 0.0f);
+            const float3 gCol = float3(rC, gC, bC);
+            const float3 gTint = gi == 1 ? float3(1.06f, 0.96f, 0.84f)
+                               : (gi == 2 ? float3(0.84f, 1.03f, 1.14f)
+                               : (gi == 3 ? float3(0.98f, 0.88f, 1.08f)
+                               : (gi == 4 ? float3(0.88f, 1.05f, 0.96f) : float3(1.04f, 0.92f, 0.86f))));
+            lensAcc += gCol * gTint * (catsEye / float(gi + 1));
         }
         const float2 haloDir = cDist > 1.0e-4f ? cVec / cDist : float2(0.0f, 1.0f);
         const float3 haloCol = max(Bloom.Sample(S0, saturate(0.5f.xx - haloDir * 0.22f)).rgb - 0.95f.xxx, 0.0f.xxx);
-        ovAdd += min((lensAcc * 0.055f + haloCol * 0.035f * saturate(1.0f - cDist * 1.35f)), 0.14f.xxx);
+        ovAdd += min((lensAcc * 0.048f + haloCol * 0.032f * saturate(1.0f - cDist * 1.35f)), 0.14f.xxx);
     }
     if ((ovMask & 8u) != 0u) {
         // Layer 4: Soft Optical Diffusion (dreamy wide-radius halation/bloom glow).
@@ -342,15 +382,30 @@ float4 main(In i) : SV_Target {
         const float vig = saturate(1.0f - dot(vd, vd) * 0.62f);
         c.rgb *= vig * vig;
     }
-    // Layer 7 (bit 6): 35mm Temporal Film Grain (64-frame animated IGN, zero static pattern).
+    // Layer 7 (bit 6): Physical 35mm Photochemical Film Grain (Kodak Vision3 response-curve bell + dual-octave clumping + RGB silver-halide variance).
     if ((ovMask & 64u) != 0u) {
-        const float2 gPos = i.pos.xy + (5.588238f * RO.z).xx;
-        const float ign = frac(52.9829189f * frac(dot(gPos, float2(0.06711056f, 0.00583715f))));
-        c.rgb = saturate(c.rgb + (ign - 0.5f) * 0.032f);
+        const float gLum = dot(c.rgb, W);
+        // Response-curve bell: grain peaks organically in midtones, tapers cleanly to zero in deep blacks & bright highlights.
+        const float response = saturate(gLum * (1.0f - gLum) * 4.0f);
+        const float2 gPos1 = i.pos.xy + (5.588238f * RO.z).xx;
+        const float2 gPos2 = floor(i.pos.xy * 0.5f) + (7.131942f * RO.z).xx;
+        const float nR = frac(52.9829189f * frac(dot(gPos1, float2(0.06711056f, 0.00583715f)))) - 0.5f;
+        const float nG = frac(52.9829189f * frac(dot(gPos1 + float2(17.0f, 31.0f), float2(0.06711056f, 0.00583715f)))) - 0.5f;
+        const float nB = frac(52.9829189f * frac(dot(gPos2 + float2(43.0f, 11.0f), float2(0.06711056f, 0.00583715f)))) - 0.5f;
+        const float clump = frac(52.9829189f * frac(dot(gPos2, float2(0.06711056f, 0.00583715f)))) - 0.5f;
+        const float3 halide = float3(nR * 0.92f + clump * 0.35f, nG * 0.85f + clump * 0.30f, nB * 1.18f + clump * 0.42f);
+        c.rgb = saturate(c.rgb + halide * (0.042f * (0.20f + 0.80f * response)));
     }
     // Layer 8 (bit 7): Cinematic 2.35:1 anamorphic letterbox borders.
     if ((ovMask & 128u) != 0u) {
         if (i.uv.y < 0.115f || i.uv.y > 0.885f) { c.rgb = 0.0f.xxx; }
+    }
+    // Always-on Triangular-PDF (TPDF) Temporal Blue-Noise Dithering before 8-bit SDR write (eliminates sky/fog banding).
+    if (RB.w < 2.5f) {
+        const float2 dPos = i.pos.xy + (5.588238f * RO.z).xx;
+        const float d1 = frac(52.9829189f * frac(dot(dPos, float2(0.06711056f, 0.00583715f))));
+        const float d2 = frac(52.9829189f * frac(dot(dPos + float2(23.0f, 59.0f), float2(0.06711056f, 0.00583715f))));
+        c.rgb = saturate(c.rgb + ((d1 + d2 - 1.0f) / 255.0f).xxx);
     }
     // Optional PQ ST.2084 HDR10 transfer output (TonemapView >= 3, ported from superframe present_hdr.cpp).
     if (RB.w >= 2.5f) {

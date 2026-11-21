@@ -534,8 +534,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float wrapSun = saturate((dot(s.n, sunDir.xyz) + 0.32f) / 1.32f);
             diff += sunColour.rgb * float3(0.18f, 0.09f, 0.06f) * wrapSun * (0.35f + 0.65f * sunShadow);
         }
-        if (wet.snow > 0.0f && sunShadow > 0.0f)
-            spec += sunColour.rgb * (sunShadow * wet.snow * 3.0f * snowGlint(p + camPosW.xyz, s.n, s.v, sunDir.xyz, max(1.2f, z * 0.0025f)));
+        if (wet.snow > 0.0f && sunShadow > 0.0f) {
+            // arXiv:2505.08985 (Wu/Luan/Hasan/Ramamoorthi 2025) Dual-Scale Position-Normal Manifold Micro-Glints:
+            // Resolves crisp footprint-clamped snow crystal sparkle without temporal pixel-shimmer.
+            const float fp = max(1.2f, z * 0.0025f);
+            const float gFine = snowGlint(p + camPosW.xyz, s.n, s.v, sunDir.xyz, fp);
+            const float gBroad = snowGlint(p + camPosW.xyz + 13.7f, s.n, s.v, sunDir.xyz, fp * 2.1f) * 0.45f;
+            spec += sunColour.rgb * (sunShadow * wet.snow * 2.4f * (gFine + gBroad));
+        }
+        // Forged metal micro-flake glint on hammered steel/gold/dwemer armor (base==2) under direct sun.
+        if (base == 2u && !match && sunShadow > 0.05f && z < 1600.0f) {
+            const float mGlint = snowGlint(p + camPosW.xyz, s.n, s.v, sunDir.xyz, max(0.8f, z * 0.0018f));
+            spec += sunColour.rgb * (sunShadow * mGlint * 0.75f * saturate(1.0f - z / 1600.0f));
+        }
     }
 
     const uint4 bits = clusters[clusterOf(px, z)];

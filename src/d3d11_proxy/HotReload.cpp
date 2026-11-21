@@ -76,19 +76,24 @@ void Start(State& s)
     s.job = std::async(std::launch::async, [dir, dxc, seen] {
         Compiled c;
         c.seen = seen;
-        c.vs = raw::bridge::CompileHlsl(dir + L"\\Lighting.hlsl", L"vs", L"vs_6_0", dxc);
-        c.fs = raw::bridge::CompileHlsl(dir + L"\\Lighting.hlsl", L"fs", L"ps_6_0", dxc);
-        c.fog = raw::bridge::CompileHlsl(dir + L"\\LightFog.hlsl", L"fs", L"ps_6_0", dxc);
+        auto comp = [&](const std::wstring& file, const wchar_t* entry, const wchar_t* sm69, const wchar_t* sm66) {
+            auto r = raw::bridge::CompileHlsl(file, entry, sm69, dxc);
+            if (!r.ok) r = raw::bridge::CompileHlsl(file, entry, sm66, dxc);
+            return r;
+        };
+        c.vs = comp(dir + L"\\Lighting.hlsl", L"vs", L"vs_6_9", L"vs_6_6");
+        c.fs = comp(dir + L"\\Lighting.hlsl", L"fs", L"ps_6_9", L"ps_6_6");
+        c.fog = comp(dir + L"\\LightFog.hlsl", L"fs", L"ps_6_9", L"ps_6_6");
         std::error_code ec;
         c.hasRt = fs::exists(dir + L"\\RtShadow.hlsl", ec) && fs::exists(dir + L"\\RtSkyFilter.hlsl", ec);
         if (c.hasRt) {
-            c.rt = raw::bridge::CompileHlsl(dir + L"\\RtShadow.hlsl", L"main", L"cs_6_6", dxc);
-            c.sky = raw::bridge::CompileHlsl(dir + L"\\RtSkyFilter.hlsl", L"main", L"cs_6_6", dxc);
+            c.rt = comp(dir + L"\\RtShadow.hlsl", L"main", L"cs_6_9", L"cs_6_6");
+            c.sky = comp(dir + L"\\RtSkyFilter.hlsl", L"main", L"cs_6_9", L"cs_6_6");
         }
         c.hasWater = c.hasRt && fs::exists(dir + L"\\RtWater.hlsl", ec) && fs::exists(dir + L"\\Sss.hlsl", ec);
         if (c.hasWater) {
-            c.water = raw::bridge::CompileHlsl(dir + L"\\RtWater.hlsl", L"water", L"cs_6_6", dxc);
-            c.sss = raw::bridge::CompileHlsl(dir + L"\\Sss.hlsl", L"main", L"cs_6_6", dxc);
+            c.water = comp(dir + L"\\RtWater.hlsl", L"water", L"cs_6_9", L"cs_6_6");
+            c.sss = comp(dir + L"\\Sss.hlsl", L"main", L"cs_6_9", L"cs_6_6");
         }
         return c;
     });

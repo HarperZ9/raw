@@ -75,10 +75,14 @@ uint32_t RtScene::PlaceStaged(D3D12_RAYTRACING_INSTANCE_DESC* inst, uint32_t slo
             pi.lastSeen = m_frame;
         }
     }
-    // Re-emit recently seen frustum-culled static instances (up to 360 frames TTL) in current camera-relative space.
+    // Re-emit recently seen frustum-culled static instances in current camera-relative space:
+    // opaque buildings/walls/rocks persist for 360 frames (fast HW BVH); alpha-tested foliage persists for 45 frames
+    // to prevent off-screen leaf cards from inflating software hitAlpha() trace cost.
     for (auto it = m_persistInst.begin(); it != m_persistInst.end(); ) {
         const PersistInst& pi = it->second;
-        if (m_frame > pi.lastSeen + 360) {
+        const bool isAlpha = (pi.desc.Flags & D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE) == 0;
+        const uint64_t ttl = isAlpha ? 45 : 360;
+        if (m_frame > pi.lastSeen + ttl) {
             it = m_persistInst.erase(it);
             continue;
         }

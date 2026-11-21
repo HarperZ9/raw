@@ -7,6 +7,8 @@
 #include "ShaderManager.h"
 
 #include <d3dcompiler.h>
+#include <wincodec.h>
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -21,9 +23,11 @@ namespace fs = std::filesystem;
 // The game's tone map pixel shader (ps_99d22a3d198a3b69 in the frame captures: the full-screen draw from
 // the HDR scene into the 8-bit target, after the luminance chain and before the temporal resolve).
 constexpr uint64_t kTonemapHash = 0x99d22a3d198a3b69ull;
-constexpr UINT kCbBytes = 64;   // 16 floats (Tonemap.hlsl, cbuffer Raw)
+constexpr UINT kCbBytes = 80;   // 20 floats (Tonemap.hlsl, cbuffer Raw: RA, RB, RC, RX, RO)
 
 using CompileFn = HRESULT(WINAPI*)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
+
+struct LutEntry { std::string name; std::wstring path; };
 
 struct State
 {
@@ -32,6 +36,12 @@ struct State
     std::vector<ID3D11PixelShader*> retired;   // earlier live shaders: kept alive, the game may still hold one bound
     ID3D11Buffer* cb = nullptr;
     ID3D11Buffer* saved = nullptr;
+    ID3D11ShaderResourceView* savedLutSrv = nullptr;
+    ID3D11Texture2D* lutTex = nullptr;
+    ID3D11ShaderResourceView* lutSrv = nullptr;
+    int loadedLutIdx = -1;
+    std::vector<LutEntry> luts;
+    bool lutsScanned = false;
     bool tried = false, swapped = false, logged = false;
     CompileFn compile = nullptr;
     std::wstring file;                 // the live source (empty: the built-in text only)
@@ -41,12 +51,82 @@ struct State
 };
 State& S() { static State s; return s; }
 
+void ScanLutsUnlocked(State& s)
+{
+    s.luts.clear();
+    s.lutsScanned = true;
+    wchar_t exe[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    fs::path dir = fs::path(exe).parent_path() / L"raw_luts";
+    std::error_code ec;
+    if (!fs::exists(dir, ec)) return;
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        if (!entry.is_regular_file(ec)) continue;
+        auto ext = entry.path().extension().wstring();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
+        if (ext != L".png") continue;
+        s.luts.push_back({entry.path().stem().string(), entry.path().wstring()});
+    }
+    std::sort(s.luts.begin(), s.luts.end(), [](const LutEntry& a, const LutEntry& b) { return a.name < b.name; });
+    Log("[Tonemap] scanned %zu 3D PNG LUTs from raw_luts\\", s.luts.size());
+}
+
+void EnsureLutLoaded(State& s, ID3D11Device* dev, int idx)
+{
+    if (!s.lutsScanned) ScanLutsUnlocked(s);
+    if (idx == s.loadedLutIdx) return;
+    if (s.lutSrv) { s.lutSrv->Release(); s.lutSrv = nullptr; }
+    if (s.lutTex) { s.lutTex->Release(); s.lutTex = nullptr; }
+    s.loadedLutIdx = idx;
+    if (idx <= 0 || idx > static_cast<int>(s.luts.size()) || !dev) return;
+
+    const std::wstring& path = s.luts[idx - 1].path;
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    IWICImagingFactory* fac = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&fac))) || !fac) return;
+    IWICBitmapDecoder* dec = nullptr;
+    IWICBitmapFrameDecode* frame = nullptr;
+    IWICFormatConverter* conv = nullptr;
+    bool ok = false;
+    if (SUCCEEDED(fac->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &dec)) &&
+        SUCCEEDED(dec->GetFrame(0, &frame)) &&
+        SUCCEEDED(fac->CreateFormatConverter(&conv)) &&
+        SUCCEEDED(conv->Initialize(frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {
+        UINT w = 0, h = 0;
+        conv->GetSize(&w, &h);
+        if (w >= 256 && h >= 16) {
+            std::vector<uint8_t> px(size_t(w) * h * 4);
+            if (SUCCEEDED(conv->CopyPixels(nullptr, w * 4, static_cast<UINT>(px.size()), px.data()))) {
+                D3D11_TEXTURE2D_DESC td{};
+                td.Width = w; td.Height = h; td.MipLevels = 1; td.ArraySize = 1;
+                td.Format = DXGI_FORMAT_R8G8B8A8_UNORM; td.SampleDesc.Count = 1;
+                td.Usage = D3D11_USAGE_IMMUTABLE; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+                D3D11_SUBRESOURCE_DATA init{px.data(), w * 4, 0};
+                if (SUCCEEDED(dev->CreateTexture2D(&td, &init, &s.lutTex)) &&
+                    SUCCEEDED(dev->CreateShaderResourceView(s.lutTex, nullptr, &s.lutSrv))) {
+                    ok = true;
+                    Log("[Tonemap] loaded 3D LUT #%d '%s' (%ux%u)", idx, s.luts[idx - 1].name.c_str(), w, h);
+                }
+            }
+        }
+    }
+    if (conv) conv->Release();
+    if (frame) frame->Release();
+    if (dec) dec->Release();
+    fac->Release();
+    if (!ok) Log("[Tonemap] failed to load LUT #%d '%s'", idx, s.luts[idx - 1].name.c_str());
+}
+
 // The live file's text, or the built-in shader's when there is no file.
 std::string Source(State& s, bool* fromFile)
 {
     *fromFile = false;
     std::error_code ec;
-    if (s.file.empty() || !fs::exists(s.file, ec)) return kTonemapHlsl;
+    if (s.file.empty() || !fs::exists(s.file, ec)) {
+        std::string built;
+        for (size_t k = 0; kTonemapHlslChunks[k]; ++k) built += kTonemapHlslChunks[k];
+        return built;
+    }
     std::ifstream in(s.file, std::ios::binary);
     std::stringstream ss;
     ss << in.rdbuf();
@@ -102,6 +182,28 @@ TonemapSettings Tonemap_Get()
     return S().set;
 }
 
+uint32_t Tonemap_LutCount()
+{
+    State& s = S();
+    if (!s.lutsScanned) ScanLutsUnlocked(s);
+    return static_cast<uint32_t>(s.luts.size());
+}
+
+std::string Tonemap_LutName(int idx)
+{
+    State& s = S();
+    if (!s.lutsScanned) ScanLutsUnlocked(s);
+    if (idx <= 0 || idx > static_cast<int>(s.luts.size())) return "None (Built-In)";
+    return s.luts[idx - 1].name;
+}
+
+void Tonemap_RescanLuts()
+{
+    State& s = S();
+    s.loadedLutIdx = -1;
+    ScanLutsUnlocked(s);
+}
+
 void Tonemap_SetSource(const std::wstring& file)
 {
     S().file = file;
@@ -150,6 +252,11 @@ void Tonemap_BeforeDraw(ID3D11DeviceContext* real)
         }
     }
     if (ps != s.ps) real->PSSetShader(s.ps, nullptr, 0);   // bound before a reload: the current one draws
+    if (s.set.lutIndex != s.loadedLutIdx) {
+        ID3D11Device* dev = nullptr;
+        real->GetDevice(&dev);
+        if (dev) { EnsureLutLoaded(s, dev, s.set.lutIndex); dev->Release(); }
+    }
     D3D11_MAPPED_SUBRESOURCE mp{};
     if (FAILED(real->Map(s.cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mp))) return;
     const TonemapSettings& t = s.set;
@@ -158,12 +265,16 @@ void Tonemap_BeforeDraw(ID3D11DeviceContext* real)
     // Mare meters 0.094 against a clear night's 0.22 and still reads darker in the game's frame.
     const bool interior = !SceneLights_Frame().hasCascades;
     const float inside = interior && t.x[5] > 0.0f ? t.x[5] : 1.0f;
-    const float v[16] = {float(t.mode), t.bias, t.minLum, t.maxLum, float(t.curve), t.key, t.white, float(t.view),
-                         t.adapt, t.ref, t.x[0], t.x[1], t.x[2], t.x[3], t.x[4], inside};
+    const float lutStr = (s.lutSrv && t.lutIndex > 0) ? t.lutStrength : 0.0f;
+    const float v[20] = {float(t.mode), t.bias, t.minLum, t.maxLum, float(t.curve), t.key, t.white, float(t.view),
+                         t.adapt, t.ref, t.x[0], t.x[1], t.x[2], t.x[3], t.x[4], inside,
+                         lutStr, float(t.overlayMask), float(s.draws & 63u), 0.0f};
     std::memcpy(mp.pData, v, sizeof v);
     real->Unmap(s.cb, 0);
     real->PSGetConstantBuffers(5, 1, &s.saved);
     real->PSSetConstantBuffers(5, 1, &s.cb);
+    real->PSGetShaderResources(5, 1, &s.savedLutSrv);
+    if (s.lutSrv) real->PSSetShaderResources(5, 1, &s.lutSrv);
     s.swapped = true;
     if (!s.logged) { s.logged = true; Log("[Tonemap] first tone map draw with RAW's shader"); }
 }
@@ -174,6 +285,8 @@ void Tonemap_AfterDraw(ID3D11DeviceContext* real)
     if (!s.swapped) return;
     real->PSSetConstantBuffers(5, 1, &s.saved);
     if (s.saved) { s.saved->Release(); s.saved = nullptr; }
+    real->PSSetShaderResources(5, 1, &s.savedLutSrv);
+    if (s.savedLutSrv) { s.savedLutSrv->Release(); s.savedLutSrv = nullptr; }
     s.swapped = false;
 }
 

@@ -182,6 +182,9 @@ void LoadLightingConfig(const std::string& ini)
         tm.curve = i("ToneCurve", tm.curve); tm.white = f("ToneWhite", tm.white); tm.view = i("ToneView", 0);
         tm.adapt = f("ExposureAdapt", tm.adapt); tm.ref = f("ExposureRef", tm.ref);
         for (int k = 0; k < 6; ++k) { const std::string n = "ToneX" + std::to_string(k); tm.x[k] = f(n.c_str(), tm.x[k]); }
+        tm.lutIndex = i("LutIndex", tm.lutIndex);
+        tm.lutStrength = f("LutStrength", tm.lutStrength);
+        tm.overlayMask = static_cast<uint32_t>(i("OverlayMask", static_cast<int>(tm.overlayMask)));
         Tonemap_Set(tm);
     }
     t.water = i("Water", 1) != 0; t.waterReflect = f("WaterReflect", t.waterReflect); t.waterCaustics = f("WaterCaustics", t.waterCaustics);

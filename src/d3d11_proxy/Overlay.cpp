@@ -24,28 +24,34 @@ ID3D11Texture2D* g_tex = nullptr;
 UINT g_w = 0, g_h = 0;
 DXGI_FORMAT g_fmt = DXGI_FORMAT_UNKNOWN;
 
-// 6-tab, 63-control interactive in-game RAW DX12 Control Panel + live FPS readout & S-key INI save.
+// 7-tab, 76-control interactive in-game RAW DX12 Control Panel + live FPS, 46 Elder 3D LUTs, 8 stackable overlays & User Preset Save/Load.
 bool g_menuOpen = false;
 int g_tab = 0;
 int g_sel = 0;
+int g_hwTier = 4;      // 0=Low, 1=Medium, 2=High, 3=Ultra, 4=Overdrive
+int g_presetSlot = 1;  // User preset slot 1..5 (raw_presets/slot_N.ini)
 float g_menuSnow = -1.0f, g_menuRain = -1.0f;
-bool g_prevToggle = false, g_prevTab = false, g_prevSave = false, g_prevUp = false, g_prevDown = false, g_prevLeft = false, g_prevRight = false;
+bool g_prevToggle = false, g_prevTab = false, g_prevSave = false, g_prevLoad = false, g_prevUp = false, g_prevDown = false, g_prevLeft = false, g_prevRight = false;
 LARGE_INTEGER g_qpcFreq{}, g_qpcLast{};
 float g_emaMs = 11.0f;
 uint32_t g_savedFrames = 0;
+std::string g_statusTag;
 
-void SaveMenuToIni()
+std::string ExeDir()
 {
     char exe[MAX_PATH]{};
     GetModuleFileNameA(nullptr, exe, MAX_PATH);
-    std::string ini(exe);
-    const size_t sl = ini.rfind('\\');
-    if (sl == std::string::npos) return;
-    ini = ini.substr(0, sl + 1) + "d3d11_proxy.ini";
+    std::string p(exe);
+    const size_t sl = p.rfind('\\');
+    return sl == std::string::npos ? std::string() : p.substr(0, sl + 1);
+}
+
+void SavePresetFile(const std::string& path, const char* tag)
+{
     const auto& l = hook::Cfg().light;
     const auto tm = Tonemap_Get();
-    auto wF = [&](const char* k, float v) { char b[32]; std::snprintf(b, sizeof b, "%.4g", v); WritePrivateProfileStringA("Lighting", k, b, ini.c_str()); };
-    auto wI = [&](const char* k, int v) { char b[32]; std::snprintf(b, sizeof b, "%d", v); WritePrivateProfileStringA("Lighting", k, b, ini.c_str()); };
+    auto wF = [&](const char* k, float v) { char b[32]; std::snprintf(b, sizeof b, "%.4g", v); WritePrivateProfileStringA("Lighting", k, b, path.c_str()); };
+    auto wI = [&](const char* k, int v) { char b[32]; std::snprintf(b, sizeof b, "%d", v); WritePrivateProfileStringA("Lighting", k, b, path.c_str()); };
     wI("Season", l.season); wI("View", l.view);
     wI("RtShadows", l.rtShadows ? 1 : 0); wI("RtSky", l.rtSky ? 1 : 0); wI("RtReflect", l.rtReflect ? 1 : 0);
     wI("RtOmm", l.rtOmm ? 1 : 0); wI("RtFar", l.rtFar ? 1 : 0); wI("RtSkin", l.rtSkin ? 1 : 0); wI("RtRest", l.rtRest ? 1 : 0);
@@ -54,18 +60,72 @@ void SaveMenuToIni()
     wI("VolumetricFog", l.volumetricFog ? 1 : 0); wI("FogReplacesGame", l.fogReplacesGame ? 1 : 0); wF("FogSunScale", l.fogSunScale);
     wI("Water", l.water ? 1 : 0); wF("WaterReflect", l.waterReflect); wF("WaterCaustics", l.waterCaustics); wF("WaterRefract", l.waterRefract);
     wF("Sss", l.sss); wF("AoStrength", l.aoStrength);
-    wI("Tonemap", tm.enabled ? 1 : 0); wF("ExposureBias", tm.bias); wF("ExposureKey", tm.key);
+    wI("Tonemap", tm.enabled ? 1 : 0); wI("ToneCurve", tm.curve); wF("ExposureBias", tm.bias); wF("ExposureKey", tm.key);
     wF("ToneX1", tm.x[1]); wF("ToneX2", tm.x[2]); wF("ToneX3", tm.x[3]); wF("ToneX4", tm.x[4]); wF("ToneX5", tm.x[5]);
-    wI("ToneView", tm.view);
+    wI("ToneView", tm.view); wI("LutIndex", tm.lutIndex); wF("LutStrength", tm.lutStrength); wI("OverlayMask", static_cast<int>(tm.overlayMask));
+    g_statusTag = tag;
     g_savedFrames = 180;
+}
+
+void LoadPresetSlot(int slot)
+{
+    const std::string path = ExeDir() + "raw_presets\\slot_" + std::to_string(slot) + ".ini";
+    if (GetFileAttributesA(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        g_statusTag = " [SLOT " + std::to_string(slot) + " EMPTY]";
+        g_savedFrames = 150;
+        return;
+    }
+    auto rI = [&](const char* k, int d) { return static_cast<int>(GetPrivateProfileIntA("Lighting", k, d, path.c_str())); };
+    auto rF = [&](const char* k, float d) { char b[64]{}; GetPrivateProfileStringA("Lighting", k, "", b, sizeof b, path.c_str()); return b[0] ? std::strtof(b, nullptr) : d; };
+    auto& l = hook::Cfg().light;
+    l.season = rI("Season", l.season); l.view = rI("View", l.view);
+    l.rtShadows = rI("RtShadows", l.rtShadows) != 0; l.rtSky = rI("RtSky", l.rtSky) != 0; l.rtReflect = rI("RtReflect", l.rtReflect) != 0;
+    l.rtOmm = rI("RtOmm", l.rtOmm) != 0; l.rtFar = rI("RtFar", l.rtFar) != 0; l.rtSkin = rI("RtSkin", l.rtSkin) != 0; l.rtRest = rI("RtRest", l.rtRest) != 0;
+    l.rtBounce = rF("RtBounce", l.rtBounce); l.rtBounceInterior = rF("RtBounceInterior", l.rtBounceInterior);
+    l.rtSkyStrength = rF("RtSkyStrength", l.rtSkyStrength); l.rtSkyLength = rF("RtSkyLength", l.rtSkyLength);
+    l.clouds = rI("Clouds", l.clouds) != 0; l.cloudCover = rF("CloudCover", l.cloudCover); l.cloudDensity = rF("CloudDensity", l.cloudDensity); l.cloudShadow = rF("CloudShadow", l.cloudShadow);
+    l.volumetricFog = rI("VolumetricFog", l.volumetricFog) != 0; l.fogReplacesGame = rI("FogReplacesGame", l.fogReplacesGame) != 0; l.fogSunScale = rF("FogSunScale", l.fogSunScale);
+    l.water = rI("Water", l.water) != 0; l.waterReflect = rF("WaterReflect", l.waterReflect); l.waterCaustics = rF("WaterCaustics", l.waterCaustics); l.waterRefract = rF("WaterRefract", l.waterRefract);
+    l.sss = rF("Sss", l.sss); l.aoStrength = rF("AoStrength", l.aoStrength);
+    auto tm = Tonemap_Get();
+    tm.enabled = rI("Tonemap", tm.enabled) != 0; tm.curve = rI("ToneCurve", tm.curve); tm.bias = rF("ExposureBias", tm.bias); tm.key = rF("ExposureKey", tm.key);
+    tm.x[1] = rF("ToneX1", tm.x[1]); tm.x[2] = rF("ToneX2", tm.x[2]); tm.x[3] = rF("ToneX3", tm.x[3]); tm.x[4] = rF("ToneX4", tm.x[4]); tm.x[5] = rF("ToneX5", tm.x[5]);
+    tm.view = rI("ToneView", tm.view); tm.lutIndex = rI("LutIndex", tm.lutIndex); tm.lutStrength = rF("LutStrength", tm.lutStrength);
+    tm.overlayMask = static_cast<uint32_t>(rI("OverlayMask", static_cast<int>(tm.overlayMask)));
+    Tonemap_Set(tm);
+    g_statusTag = " [LOADED SLOT " + std::to_string(slot) + "]";
+    g_savedFrames = 180;
+}
+
+void ApplyHardwareTier(int tier)
+{
+    auto& l = hook::Cfg().light;
+    if (tier == 0) { l.rtShadows = false; l.rtSky = false; l.rtReflect = false; l.clouds = false; l.volumetricFog = false; l.water = false; l.sss = 0.0f; }
+    else if (tier == 1) { l.rtShadows = true; l.rtSky = false; l.rtReflect = false; l.clouds = true; l.volumetricFog = true; l.water = true; l.sss = 0.5f; }
+    else if (tier == 2) { l.rtShadows = true; l.rtSky = true; l.rtReflect = false; l.clouds = true; l.volumetricFog = true; l.water = true; l.sss = 0.8f; }
+    else if (tier == 3) { l.rtShadows = true; l.rtSky = true; l.rtReflect = true; l.rtFar = false; l.clouds = true; l.volumetricFog = true; l.water = true; l.sss = 1.0f; }
+    else { l.rtShadows = true; l.rtSky = true; l.rtReflect = true; l.rtFar = true; l.rtSkin = true; l.rtOmm = true; l.clouds = true; l.volumetricFog = true; l.water = true; l.sss = 1.0f; }
+}
+
+void SaveMenuToIni()
+{
+    const std::string dir = ExeDir();
+    if (dir.empty()) return;
+    if (g_tab == 6) {
+        CreateDirectoryA((dir + "raw_presets").c_str(), nullptr);
+        SavePresetFile(dir + "raw_presets\\slot_" + std::to_string(g_presetSlot) + ".ini",
+                       (" [SAVED SLOT " + std::to_string(g_presetSlot) + "]").c_str());
+    } else {
+        SavePresetFile(dir + "d3d11_proxy.ini", " [SAVED INI]");
+    }
 }
 
 bool KeyEdge(bool now, bool& prev) { const bool f = now && !prev; prev = now; return f; }
 
 int TabRowCount(int tab)
 {
-    static const int kCounts[6] = {12, 13, 7, 8, 12, 11};
-    return kCounts[std::clamp(tab, 0, 5)];
+    static const int kCounts[7] = {12, 13, 7, 8, 12, 11, 13};
+    return kCounts[std::clamp(tab, 0, 6)];
 }
 
 std::string Fmt(const char* f, float v) { char b[64]; std::snprintf(b, sizeof b, f, v); return b; }
@@ -76,12 +136,12 @@ std::string BuildMenuText()
 {
     const auto& l = hook::Cfg().light;
     const auto tm = Tonemap_Get();
-    static const char* kTabs[6] = {"1:RT & GI", "2:Sky/Cloud/Fog", "3:Weather/Season", "4:Water", "5:Skin/Shadow/AO", "6:Tonemap/Debug"};
-    char hdr[192];
-    std::snprintf(hdr, sizeof hdr, "=== RAW DX12 STUDIO | %.1f FPS (%.1f ms) | [End:Close | Tab:Page | Arrows:Tune | S:Save INI]%s ===\n",
-                  g_emaMs > 0.1f ? 1000.0f / g_emaMs : 0.0f, g_emaMs, g_savedFrames ? " [SAVED!]" : "");
+    static const char* kTabs[7] = {"1:RT & GI", "2:Sky/Cloud/Fog", "3:Weather/Season", "4:Water", "5:Skin/Shadow/AO", "6:Tonemap/Debug", "7:LUTs/Overlays"};
+    char hdr[224];
+    std::snprintf(hdr, sizeof hdr, "=== RAW DX12 STUDIO | %.1f FPS (%.1f ms) | [End:Close | Tab:Page | Arrows:Tune | S:Save | L:Load]%s ===\n",
+                  g_emaMs > 0.1f ? 1000.0f / g_emaMs : 0.0f, g_emaMs, g_savedFrames ? g_statusTag.c_str() : "");
     std::string out = hdr;
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 7; ++i) {
         out += (i == g_tab ? "[" : " ");
         out += kTabs[i];
         out += (i == g_tab ? "] " : "  ");
@@ -151,11 +211,11 @@ std::string BuildMenuText()
         row(9, "RAW Shadow Cascades", OnOff(l.cascades));
         row(10, "Distant LOD Lighting", OnOff(l.distantLod));
         row(11, "EnvMap / CharLight", OnOff(l.envMap) + " / " + OnOff(l.charLight));
-    } else {
+    } else if (g_tab == 5) {
         static const char* kLuts[4] = {"Neutral", "Nordic Film", "Kodak 2383", "Cinema"};
         const int li = std::clamp(int(tm.x[2] + 0.5f), 0, 3);
         row(0, "RAW Tonemap + FXAA", OnOff(tm.enabled));
-        row(1, "Color Grade LUT", FmtI("%d (", li) + kLuts[li] + ")");
+        row(1, "Built-In Grade", FmtI("%d (", li) + kLuts[li] + ")");
         row(2, "Display Output", tm.view >= 3 ? "HDR10 PQ Rec.2020" : "SDR Rec.709");
         row(3, "Exposure Bias (EV)", Fmt("%+.2f", tm.bias));
         row(4, "Exposure Key", Fmt("%.2f", tm.key));
@@ -165,6 +225,23 @@ std::string BuildMenuText()
         row(8, "Shadow Lift (X4)", Fmt("%.2f", tm.x[4]));
         row(9, "Interior Factor (X5)", Fmt("%.2f", tm.x[5]));
         row(10, "Debug View (0..23)", FmtI("%d", l.view));
+    } else {
+        static const char* kTiers[5] = {"Low (Raster)", "Medium (RT Sun)", "High (RT GI)", "Ultra (Full RT)", "Overdrive (Max)"};
+        static const char* kCurves[8] = {"0:Game", "1:ACES Fitted", "2:ReinhardW", "3:RAW Hybrid", "4:AgX WideGamut", "5:GranTurismo", "6:Lottes", "7:Hable"};
+        const uint32_t lutTotal = Tonemap_LutCount();
+        row(0, "Hardware Tier Preset", kTiers[std::clamp(g_hwTier, 0, 4)]);
+        row(1, "Color Space / Curve", kCurves[std::clamp(tm.curve, 0, 7)]);
+        row(2, "Elder 3D PNG LUT", FmtI("%d/", tm.lutIndex) + FmtI("%d ", int(lutTotal)) + Tonemap_LutName(tm.lutIndex));
+        row(3, "3D LUT Blend Strength", Fmt("%.0f%%", tm.lutStrength * 100.0f));
+        row(4, "OV1: Film Emulsion", OnOff((tm.overlayMask & 1u) != 0u));
+        row(5, "OV2: Halation+Anamorp", OnOff((tm.overlayMask & 2u) != 0u));
+        row(6, "OV3: Elder Lens Ghost", OnOff((tm.overlayMask & 4u) != 0u));
+        row(7, "OV4: Soft Diffusion", OnOff((tm.overlayMask & 8u) != 0u));
+        row(8, "OV5: Bleach Bypass", OnOff((tm.overlayMask & 16u) != 0u));
+        row(9, "OV6: Optical Vignette", OnOff((tm.overlayMask & 32u) != 0u));
+        row(10, "OV7: 35mm Film Grain", OnOff((tm.overlayMask & 64u) != 0u));
+        row(11, "OV8: Cinema Borders", OnOff((tm.overlayMask & 128u) != 0u));
+        row(12, "User Preset Slot", FmtI("Slot %d  [S=Save | L=Load]", g_presetSlot));
     }
     out += "Web Studio, Presets & Live HLSL Editor: http://127.0.0.1:8844";
     return out;
@@ -187,8 +264,9 @@ bool PollMenu(std::string& outText)
     if (KeyEdge(endKey || (shift && enter), g_prevToggle)) { g_menuOpen = !g_menuOpen; changed = true; }
     if (!g_menuOpen) return false;
     if (KeyEdge((GetAsyncKeyState('S') & 0x8000) != 0, g_prevSave)) { SaveMenuToIni(); changed = true; }
+    if (KeyEdge((GetAsyncKeyState('L') & 0x8000) != 0, g_prevLoad)) { LoadPresetSlot(g_presetSlot); changed = true; }
     if (KeyEdge((GetAsyncKeyState(VK_TAB) & 0x8000) != 0, g_prevTab)) {
-        g_tab = (g_tab + (shift ? 5 : 1)) % 6;
+        g_tab = (g_tab + (shift ? 6 : 1)) % 7;
         g_sel = std::min(g_sel, TabRowCount(g_tab) - 1);
         changed = true;
     }
@@ -273,7 +351,7 @@ bool PollMenu(std::string& outText)
             case 10: l.distantLod = !l.distantLod; break;
             case 11: l.envMap = !l.envMap; break;
             }
-        } else {
+        } else if (g_tab == 5) {
             switch (g_sel) {
             case 0: tm.enabled = !tm.enabled; tmDirty = true; break;
             case 1: tm.x[2] = float((std::clamp(int(tm.x[2] + 0.5f), 0, 3) + 4 + dir) % 4); tmDirty = true; break;
@@ -286,6 +364,23 @@ bool PollMenu(std::string& outText)
             case 8: tm.x[4] = std::clamp(tm.x[4] + step * 0.05f, 0.25f, 1.00f); tmDirty = true; break;
             case 9: tm.x[5] = std::clamp(tm.x[5] + step * 0.05f, 0.0f, 1.50f); tmDirty = true; break;
             case 10: l.view = (l.view + 24 + dir) % 24; break;
+            }
+        } else {
+            const int lutN = int(Tonemap_LutCount()) + 1;
+            switch (g_sel) {
+            case 0: g_hwTier = (g_hwTier + 5 + dir) % 5; ApplyHardwareTier(g_hwTier); break;
+            case 1: tm.curve = (tm.curve + 8 + dir) % 8; tmDirty = true; break;
+            case 2: tm.lutIndex = (tm.lutIndex + lutN + dir) % lutN; tmDirty = true; break;
+            case 3: tm.lutStrength = std::clamp(tm.lutStrength + step * 0.05f, 0.0f, 1.0f); tmDirty = true; break;
+            case 4: tm.overlayMask ^= 1u; tmDirty = true; break;
+            case 5: tm.overlayMask ^= 2u; tmDirty = true; break;
+            case 6: tm.overlayMask ^= 4u; tmDirty = true; break;
+            case 7: tm.overlayMask ^= 8u; tmDirty = true; break;
+            case 8: tm.overlayMask ^= 16u; tmDirty = true; break;
+            case 9: tm.overlayMask ^= 32u; tmDirty = true; break;
+            case 10: tm.overlayMask ^= 64u; tmDirty = true; break;
+            case 11: tm.overlayMask ^= 128u; tmDirty = true; break;
+            case 12: g_presetSlot = ((g_presetSlot - 1 + 5 + dir) % 5) + 1; break;
             }
         }
         if (tmDirty) Tonemap_Set(tm);

@@ -196,7 +196,7 @@ target_compile_definitions(d3d11_proxy PRIVATE
     WIN32_LEAN_AND_MEAN
 )
 
-target_link_libraries(d3d11_proxy PRIVATE)
+target_link_libraries(d3d11_proxy PRIVATE windowscodecs ole32)
 
 # Binding ledger (eyes substrate #1) — added 2026-06-05
 target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/BindingLedger.cpp)
@@ -416,12 +416,21 @@ target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/SceneLights.cpp src/d3d11_pro
 set(RAW_TONEMAP_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Tonemap.hlsl)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${RAW_TONEMAP_HLSL})
 file(READ ${RAW_TONEMAP_HLSL} RAW_TONEMAP_TEXT)
+string(LENGTH "${RAW_TONEMAP_TEXT}" RAW_TONEMAP_LEN)
+set(RAW_TONEMAP_CHUNKS "")
+set(RAW_TONEMAP_POS 0)
+while(RAW_TONEMAP_POS LESS RAW_TONEMAP_LEN)
+    string(SUBSTRING "${RAW_TONEMAP_TEXT}" ${RAW_TONEMAP_POS} 8192 RAW_TM_PART)
+    string(APPEND RAW_TONEMAP_CHUNKS "    R\"HLSL(${RAW_TM_PART})HLSL\",\n")
+    math(EXPR RAW_TONEMAP_POS "${RAW_TONEMAP_POS} + 8192")
+endwhile()
 file(WRITE ${RAW_BRIDGE_GEN}/TonemapSrc.h "#pragma once
 // Generated from src/d3d12_bridge/shaders/Tonemap.hlsl by CMakeLists.txt.
 namespace SB::Proxy
 {
-inline constexpr const char* kTonemapHlsl = R\"HLSL(
-${RAW_TONEMAP_TEXT})HLSL\";
+inline constexpr const char* kTonemapHlslChunks[] = {
+${RAW_TONEMAP_CHUNKS}    nullptr
+};
 }
 ")
 target_include_directories(d3d11_proxy PRIVATE ${RAW_BRIDGE_GEN})

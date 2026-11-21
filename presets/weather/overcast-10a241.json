@@ -1,0 +1,12 @@
+{
+  "name": "Overcast & Mist (10a241)",
+  "category": "weather",
+  "weatherId": "10a241",
+  "params": {
+    "CloudCover": 0.85,
+    "RtSkyStrength": 0.85,
+    "RtBounce": 0.95,
+    "ToneX1": 4.2,
+    "ToneX3": 1.25
+  }
+}

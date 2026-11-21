@@ -1,0 +1,15 @@
+{
+  "name": "Golden Hour",
+  "category": "overlay",
+  "description": "Warm low-sun atmosphere, lifted bounce, deep shadow separation.",
+  "params": {
+    "Tonemap": 1,
+    "ExposureKey": 0.43,
+    "ToneX1": 5.0,
+    "ToneX3": 1.42,
+    "ToneX4": 0.52,
+    "RtSkyStrength": 0.95,
+    "RtBounce": 1.35,
+    "CloudCover": 0.48
+  }
+}

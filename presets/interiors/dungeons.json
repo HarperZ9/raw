@@ -1,0 +1,12 @@
+{
+  "name": "Dungeons & Ruins",
+  "category": "interior",
+  "description": "Balanced subterranean RTAO with warm torch bounce and zero crushed blacks.",
+  "params": {
+    "Tonemap": 1,
+    "ExposureKey": 0.39,
+    "ToneX4": 0.58,
+    "ToneX5": 0.78,
+    "RtBounceInterior": 1.35
+  }
+}

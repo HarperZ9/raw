@@ -201,7 +201,7 @@ void StreamlineHost::ReflexBeginFrame(uint32_t frameIdx)
 {
 #ifdef RAW_HAS_STREAMLINE
     auto& a = Api();
-    if (!a.ready || !m_caps.reflex || !a.reflexSleep || !a.getNewFrameToken) return;
+    if (!a.ready || !m_reflexOn || !m_caps.reflex || !a.reflexSleep || !a.getNewFrameToken) return;
     sl::FrameToken* tok = nullptr;
     if (a.getNewFrameToken(tok, &frameIdx) == sl::Result::eOk && tok) {
         a.reflexSleep(*tok);

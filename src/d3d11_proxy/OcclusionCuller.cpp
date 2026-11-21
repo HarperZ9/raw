@@ -10,6 +10,7 @@
 #include "OcclusionCuller.h"
 #include "CBDirtyTracker.h"
 #include "RenderPhaseDetector.h"
+#include "SceneLights.h"
 
 #include <cstring>
 #include <cmath>
@@ -79,8 +80,18 @@ void OcclusionCuller::OnPresent(ID3D11DeviceContext* ctx)
     m_screenW = depthDesc.Width;
     m_screenH = depthDesc.Height;
 
-    // ── Create staging textures on first use (or if size changed) ───────
-    if (!m_depthStaging[0] || m_depthW != depthDesc.Width || m_depthH != depthDesc.Height)
+    // ── Create staging textures matching the game's depth format (R24G8_TYPELESS or R32_TYPELESS/R32_FLOAT) ─
+    const bool supportedFmt = (depthDesc.Format == DXGI_FORMAT_R24G8_TYPELESS ||
+                               depthDesc.Format == DXGI_FORMAT_D24_UNORM_S8_UINT ||
+                               depthDesc.Format == DXGI_FORMAT_R32_TYPELESS ||
+                               depthDesc.Format == DXGI_FORMAT_R32_FLOAT ||
+                               depthDesc.Format == DXGI_FORMAT_D32_FLOAT);
+    if (!supportedFmt) {
+        depthTex->Release();
+        return;
+    }
+
+    if (!m_depthStaging[0] || m_depthW != depthDesc.Width || m_depthH != depthDesc.Height || m_stagingFmt != depthDesc.Format)
     {
         for (auto& stg : m_depthStaging) {
             if (stg) { stg->Release(); stg = nullptr; }
@@ -91,7 +102,7 @@ void OcclusionCuller::OnPresent(ID3D11DeviceContext* ctx)
         stagingDesc.Height     = depthDesc.Height;
         stagingDesc.MipLevels  = 1;
         stagingDesc.ArraySize  = 1;
-        stagingDesc.Format     = DXGI_FORMAT_R32_FLOAT;
+        stagingDesc.Format     = depthDesc.Format;
         stagingDesc.SampleDesc = {1, 0};
         stagingDesc.Usage      = D3D11_USAGE_STAGING;
         stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
@@ -106,57 +117,44 @@ void OcclusionCuller::OnPresent(ID3D11DeviceContext* ctx)
 
         m_depthW = depthDesc.Width;
         m_depthH = depthDesc.Height;
+        m_stagingFmt = depthDesc.Format;
         m_hizReady = false;
+        m_hizHasCam = false;
+        m_stageHasCam[0] = m_stageHasCam[1] = false;
     }
 
-    // ── Check if depth texture has SRV bind flag for direct copy ────────
-    // If the depth is typeless, we can't copy directly. Use a temporary
-    // R32_FLOAT texture for the copy instead.
-    bool needsFormatConversion = false;
-    DXGI_FORMAT copyFormat = depthDesc.Format;
-    if (depthDesc.Format == DXGI_FORMAT_R32_TYPELESS ||
-        depthDesc.Format == DXGI_FORMAT_R24G8_TYPELESS ||
-        depthDesc.Format == DXGI_FORMAT_R32G8X24_TYPELESS)
-    {
-        // For typeless depth, we need an intermediate copy with the correct format
-        // CopyResource requires matching formats. For simplicity, we'll create an
-        // SRV-capable copy and use CopySubresourceRegion with format reinterpret.
-        // However D3D11 CopyResource only works with identical formats.
-        // The staging texture is R32_FLOAT which won't match R24G8_TYPELESS.
-        // For now, skip if format doesn't match R32_TYPELESS/R32_FLOAT.
-        if (depthDesc.Format == DXGI_FORMAT_R32_TYPELESS) {
-            needsFormatConversion = false;  // R32_TYPELESS → R32_FLOAT works with CopyResource
-        } else {
-            // R24G8 formats can't be directly copied to R32_FLOAT staging
-            depthTex->Release();
-            return;
-        }
-    }
-
-    // ── Copy depth to staging[writeIdx] ─────────────────────────────────
+    // ── Copy depth to staging[writeIdx] and record its exact camera matrix ──
     int writeIdx = m_readbackIdx;
     int readIdx  = 1 - m_readbackIdx;
 
     ctx->CopyResource(m_depthStaging[writeIdx], depthTex);
     depthTex->Release();
+    {
+        const auto& sl = SceneLights_Frame();
+        m_stageHasCam[writeIdx] = sl.hasCamera;
+        if (sl.hasCamera) {
+            std::memcpy(m_stageW2C[writeIdx], sl.worldToClip, sizeof(m_stageW2C[writeIdx]));
+            std::memcpy(m_stageCam[writeIdx], sl.posAdjust, sizeof(m_stageCam[writeIdx]));
+        }
+    }
 
     // ── Read back staging[readIdx] from previous frame ──────────────────
-    if (m_depthStaging[readIdx] && m_hizReady)
+    if (m_depthStaging[readIdx] && m_hizReady && m_stageHasCam[readIdx])
     {
         D3D11_MAPPED_SUBRESOURCE mapped;
         hr = ctx->Map(m_depthStaging[readIdx], 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
         if (SUCCEEDED(hr))
         {
-            BuildCPUHiZ(static_cast<const float*>(mapped.pData),
-                        m_depthW, m_depthH,
-                        mapped.RowPitch / sizeof(float));
+            BuildCPUHiZ(static_cast<const uint8_t*>(mapped.pData),
+                        m_depthW, m_depthH, mapped.RowPitch, m_stagingFmt);
+            std::memcpy(m_hizW2C, m_stageW2C[readIdx], sizeof(m_hizW2C));
+            std::memcpy(m_hizCam, m_stageCam[readIdx], sizeof(m_hizCam));
+            m_hizHasCam = true;
             ctx->Unmap(m_depthStaging[readIdx], 0);
         }
-        // If Map fails with DO_NOT_WAIT, GPU isn't done yet — skip this frame
     }
     else if (!m_hizReady)
     {
-        // First frame: mark ready so next frame we can read
         m_hizReady = true;
     }
 
@@ -166,35 +164,43 @@ void OcclusionCuller::OnPresent(ID3D11DeviceContext* ctx)
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  BuildCPUHiZ — Construct a CPU-side hierarchical-Z pyramid
+//  BuildCPUHiZ — Construct a Standard-Z (0=near, 1=far) MAX Hi-Z pyramid
 // ═══════════════════════════════════════════════════════════════════════════
 
-void OcclusionCuller::BuildCPUHiZ(const float* depthData, uint32_t width, uint32_t height, uint32_t rowPitch)
+void OcclusionCuller::BuildCPUHiZ(const uint8_t* rawData, uint32_t width, uint32_t height, uint32_t rowPitchBytes, DXGI_FORMAT fmt)
 {
-    // Mip 0: subsample the full depth buffer by 4x in each dimension
-    // This gives us a ~480x270 base for 1920x1080, which is fast to process.
     constexpr uint32_t kSubsample = 4;
-    uint32_t mip0W = (width + kSubsample - 1) / kSubsample;
-    uint32_t mip0H = (height + kSubsample - 1) / kSubsample;
+    const uint32_t mip0W = (width + kSubsample - 1) / kSubsample;
+    const uint32_t mip0H = (height + kSubsample - 1) / kSubsample;
+    const bool isD24 = (fmt == DXGI_FORMAT_R24G8_TYPELESS || fmt == DXGI_FORMAT_D24_UNORM_S8_UINT);
 
     auto& mip0 = m_hizMipChain[0];
     mip0.width  = mip0W;
     mip0.height = mip0H;
     mip0.data.resize(mip0W * mip0H);
 
-    // Subsample: take MAX of each kSubsample x kSubsample block
-    // (reversed-Z: max = closest surface = conservative for occlusion)
+    // Standard-Z: 0=near, 1=far. Conservative Hi-Z stores MAX (farthest depth in tile).
+    constexpr float kInv24 = 1.0f / 16777215.0f;
     for (uint32_t y = 0; y < mip0H; y++) {
+        const uint32_t srcY0 = y * kSubsample;
+        const uint32_t srcY1 = std::min(srcY0 + kSubsample, height);
         for (uint32_t x = 0; x < mip0W; x++) {
             float maxZ = 0.0f;
-            uint32_t srcY0 = y * kSubsample;
-            uint32_t srcX0 = x * kSubsample;
-            uint32_t srcY1 = std::min(srcY0 + kSubsample, height);
-            uint32_t srcX1 = std::min(srcX0 + kSubsample, width);
+            const uint32_t srcX0 = x * kSubsample;
+            const uint32_t srcX1 = std::min(srcX0 + kSubsample, width);
             for (uint32_t sy = srcY0; sy < srcY1; sy++) {
-                for (uint32_t sx = srcX0; sx < srcX1; sx++) {
-                    float d = depthData[sy * rowPitch + sx];
-                    maxZ = std::max(maxZ, d);
+                const uint8_t* row = rawData + size_t(sy) * rowPitchBytes;
+                if (isD24) {
+                    const uint32_t* p32 = reinterpret_cast<const uint32_t*>(row);
+                    for (uint32_t sx = srcX0; sx < srcX1; sx++) {
+                        const float d = float(p32[sx] & 0x00FFFFFFu) * kInv24;
+                        if (d > maxZ) maxZ = d;
+                    }
+                } else {
+                    const float* pf = reinterpret_cast<const float*>(row);
+                    for (uint32_t sx = srcX0; sx < srcX1; sx++) {
+                        if (pf[sx] > maxZ) maxZ = pf[sx];
+                    }
                 }
             }
             mip0.data[y * mip0W + x] = maxZ;
@@ -301,17 +307,17 @@ bool OcclusionCuller::TestRect(float minX, float minY, float maxX, float maxY, f
     //   i.e., the object's closest point is FARTHER than every blocker
     //   i.e., nearDepth < min(Hi-Z values in rect)
 
-    float minHiZ = 1.0f;  // Start with closest possible
+    // Standard-Z (0=near, 1=far): Hi-Z stores MAX (farthest depth in tile).
+    // Object is conservatively guaranteed occluded if its nearest bounding-sphere depth
+    // is strictly farther than the farthest blocker across every covered texel.
+    float maxHiZ = 0.0f;
     for (int y = y0; y < y1; y++) {
         for (int x = x0; x < x1; x++) {
-            float hizVal = mip.data[y * mip.width + x];
-            minHiZ = std::min(minHiZ, hizVal);
+            const float hizVal = mip.data[y * mip.width + x];
+            if (hizVal > maxHiZ) maxHiZ = hizVal;
         }
     }
-
-    // Object is occluded if its nearest depth is farther than the farthest
-    // blocker in the covered region
-    return nearDepth < minHiZ;
+    return nearDepth > (maxHiZ + 0.0025f);
 }
 
 
@@ -340,112 +346,76 @@ void OcclusionCuller::OnClearState()
 //  ExtractWorldPosition — Read world translation from VS CB slot 2
 // ═══════════════════════════════════════════════════════════════════════════
 
-bool OcclusionCuller::ExtractWorldPosition(float outPos[3]) const
+float OcclusionCuller::EstimateBoundingRadius(uint32_t indexCount, float scale) const
 {
-    // BSLightingShader's cbPerGeometry is at VS slot 2.
-    // The first 3 rows of the world matrix contain the 4x3 transform.
-    // Row 3 (bytes 48-59) = translation (world position of the object).
-    //
-    // We read this from CBDirtyTracker's shadow copy to avoid any GPU sync.
-
-    ID3D11Buffer* vsCB2 = (2 < kMaxVSCBSlots) ? m_boundVSCBs[2] : nullptr;
-    if (!vsCB2) return false;
-
-    auto& tracker = CBDirtyTracker::Get();
-
-    // CBDirtyTracker stores shadow copies indexed by resource pointer.
-    // We need to access the shadow data. Add a public accessor.
-    // For now, use the staging buffer approach via GetShadowData.
-    const uint8_t* shadow = tracker.GetShadowData(vsCB2);
-    if (!shadow) return false;
-
-    uint32_t cbSize = tracker.GetShadowSize(vsCB2);
-    if (cbSize < 64) return false;  // Need at least 4x4 floats = 64 bytes
-
-    // World matrix is 4x3 row-major starting at offset 0 in cbPerGeometry.
-    // Translation is in row 3 (offset 48 = 12 floats * 4 bytes).
-    const float* floatData = reinterpret_cast<const float*>(shadow);
-
-    // Row 3 = translation (X, Y, Z)
-    outPos[0] = floatData[12];  // _41 = translation X
-    outPos[1] = floatData[13];  // _42 = translation Y
-    outPos[2] = floatData[14];  // _43 = translation Z
-
-    return true;
+    const uint32_t triCount = indexCount / 3;
+    float base = 60.0f;
+    if (triCount < 60)        base = 55.0f;
+    else if (triCount < 250)  base = 120.0f;
+    else if (triCount < 1000) base = 240.0f;
+    else if (triCount < 3500) base = 460.0f;
+    else                      return 0.0f;  // Never cull huge terrain/building super-meshes
+    return base * std::clamp(scale, 0.5f, 4.0f);
 }
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  EstimateBoundingRadius — Heuristic from index count
-// ═══════════════════════════════════════════════════════════════════════════
-
-float OcclusionCuller::EstimateBoundingRadius(uint32_t indexCount) const
-{
-    // Rough heuristic: more triangles usually means a bigger object.
-    // These thresholds are tuned for Skyrim's mesh complexity.
-    uint32_t triCount = indexCount / 3;
-
-    if (triCount < 50)    return 30.0f;     // Small props, stones
-    if (triCount < 200)   return 80.0f;     // Medium props, furniture
-    if (triCount < 1000)  return 200.0f;    // Characters, large objects
-    if (triCount < 5000)  return 500.0f;    // Buildings, terrain chunks
-    return 1000.0f;                          // Very large meshes — don't cull aggressively
-}
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  ShouldCull — Main culling decision
-// ═══════════════════════════════════════════════════════════════════════════
 
 bool OcclusionCuller::ShouldCull(uint32_t indexCount)
 {
-    if (!m_enabled || !m_hizReady || m_hizMips == 0) return false;
+    if (!m_enabled || !m_hizReady || !m_hizHasCam || m_hizMips == 0) return false;
+    if (RenderPhaseDetector::Get().GetCurrentPhase() != RenderPhase::GeometryMain) return false;
+    if (indexCount < 36 || indexCount > 10500) return false;
 
-    // Only cull during main geometry and alpha blend phases
-    auto phase = RenderPhaseDetector::Get().GetCurrentPhase();
-    if (phase != RenderPhase::GeometryMain && phase != RenderPhase::AlphaBlend)
-        return false;
+    const float* wm = SceneLights_DrawWorld();
+    if (!wm) return false;
+    const auto& sl = SceneLights_Frame();
+    if (!sl.hasCamera) return false;
 
-    // Don't try to cull very small draws (HUD elements, decals, etc.)
-    if (indexCount < 36) return false;  // Less than 12 triangles
+    const float sx = std::sqrt(wm[0]*wm[0] + wm[1]*wm[1] + wm[2]*wm[2]);
+    const float radius = EstimateBoundingRadius(indexCount, sx);
+    if (radius <= 0.0f) return false;
+
+    // Re-center object position from current camera-relative space into the Hi-Z frame's camera space.
+    const float px = wm[3]  + (sl.posAdjust[0] - m_hizCam[0]);
+    const float py = wm[7]  + (sl.posAdjust[1] - m_hizCam[1]);
+    const float pz = wm[11] + (sl.posAdjust[2] - m_hizCam[2]);
+    const float dist = std::sqrt(px*px + py*py + pz*pz);
+    // Conservative near guard: never cull nearby props, NPCs, weapons, or foreground foliage.
+    if (dist < radius * 2.4f + 160.0f) return false;
 
     m_drawsTested++;
 
-    // Extract object world position from VS CB
-    float worldPos[3];
-    if (!ExtractWorldPosition(worldPos)) return false;
+    // Project center and nearest point on bounding sphere using the exact Hi-Z frame's worldToClip matrix.
+    const float invD = 1.0f / dist;
+    const float nx = px - px * invD * radius;
+    const float ny = py - py * invD * radius;
+    const float nz = pz - pz * invD * radius;
 
-    // Get camera position (approximate: use 0,0,0 if not available)
-    // In practice, the SKSE plugin has full camera data. For the proxy,
-    // we estimate from the VS CB slot 0 (PerFrame) view matrix.
-    // For now, assume camera at origin — the relative depth test still works.
+    auto proj = [&](float x, float y, float z, float& ndcX, float& ndcY, float& ndcZ) -> bool {
+        const float cw = m_hizW2C[3][0]*x + m_hizW2C[3][1]*y + m_hizW2C[3][2]*z + m_hizW2C[3][3];
+        if (cw <= 1.0f) return false;
+        const float cx = m_hizW2C[0][0]*x + m_hizW2C[0][1]*y + m_hizW2C[0][2]*z + m_hizW2C[0][3];
+        const float cy = m_hizW2C[1][0]*x + m_hizW2C[1][1]*y + m_hizW2C[1][2]*z + m_hizW2C[1][3];
+        const float cz = m_hizW2C[2][0]*x + m_hizW2C[2][1]*y + m_hizW2C[2][2]*z + m_hizW2C[2][3];
+        const float iw = 1.0f / cw;
+        ndcX = cx * iw; ndcY = cy * iw; ndcZ = cz * iw;
+        return true;
+    };
 
-    // Estimate bounding radius
-    float radius = EstimateBoundingRadius(indexCount);
+    float cx, cy, cz, nxNdc, nyNdc, nearZ;
+    if (!proj(px, py, pz, cx, cy, cz) || !proj(nx, ny, nz, nxNdc, nyNdc, nearZ)) return false;
+    if (nearZ <= 0.0f || nearZ >= 1.0f) return false;
+    // Skip objects straddling the frustum edge (newly visible during camera turns).
+    if (cx < -0.95f || cx > 0.95f || cy < -0.95f || cy > 0.95f) return false;
 
-    // Project bounding sphere to screen-space rect.
-    // We need the view-projection matrix. Since we're in the proxy without
-    // full scene data, we use a simplified projection:
-    // The object is at world position, we compute rough screen-space bounds.
+    const float u = cx * 0.5f + 0.5f;
+    const float v = 0.5f - cy * 0.5f;
+    const float halfU = std::clamp((radius * invD) * 0.95f + 1.5f / float(std::max(m_hizW, 1u)), 0.005f, 0.35f);
+    const float halfV = std::clamp((radius * invD) * 1.45f + 1.5f / float(std::max(m_hizH, 1u)), 0.005f, 0.35f);
 
-    // Read view-projection from VS CB slot 12 (PerFrame) if available.
-    // BSLightingShader puts ViewProj at cbPerFrame slot 12.
-    // This is complex to extract reliably, so instead we use the depth buffer
-    // directly: check the Hi-Z at the object's approximate screen position.
-
-    // Simplified approach: we don't have the full VP matrix in the proxy,
-    // so we test a conservative screen-space rect.
-    // If the object's CB was mapped this frame, the world position is fresh.
-
-    // For a correct implementation we'd need the VP matrix. Since this
-    // data is available in the SKSE plugin (SceneMatrices), let's expose
-    // it through ProxyAPI. For now, return false (don't cull) until the
-    // VP matrix bridge is established.
-    //
-    // TODO: Add VP matrix to ProxyInterface, populated by SKSE plugin.
-    // Once available, project bounding sphere → screen rect → TestRect().
-
-    return false;  // Conservative: never cull until VP matrix is available
+    if (TestRect(u - halfU, v - halfV, u + halfU, v + halfV, nearZ)) {
+        m_drawsCulled++;
+        return true;
+    }
+    return false;
 }
 
 } // namespace SB::Proxy

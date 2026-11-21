@@ -70,21 +70,18 @@ public:
 private:
     OcclusionCuller() = default;
 
-    // Build CPU Hi-Z pyramid from mapped depth data
-    void BuildCPUHiZ(const float* depthData, uint32_t width, uint32_t height, uint32_t rowPitch);
+    // Build CPU Hi-Z pyramid from mapped depth data (supports R24G8_TYPELESS and R32_FLOAT)
+    void BuildCPUHiZ(const uint8_t* rawData, uint32_t width, uint32_t height, uint32_t rowPitchBytes, DXGI_FORMAT fmt);
 
-    // Test a screen-space bounding rect against the CPU Hi-Z
-    // minX/minY/maxX/maxY in [0,1] UV space, nearDepth in [0,1] reversed-Z
+    // Test a screen-space bounding rect against the Standard-Z (0=near, 1=far) CPU Hi-Z
+    // minX/minY/maxX/maxY in [0,1] UV space, nearDepth in [0,1]
     bool TestRect(float minX, float minY, float maxX, float maxY, float nearDepth) const;
 
-    // Extract world-space position from currently-bound VS CB
-    bool ExtractWorldPosition(float outPos[3]) const;
-
-    // Estimate bounding sphere radius from index count
-    float EstimateBoundingRadius(uint32_t indexCount) const;
+    // Estimate bounding sphere radius from index count and world-matrix scale
+    float EstimateBoundingRadius(uint32_t indexCount, float scale) const;
 
     bool m_initialized = false;
-    bool m_enabled     = false;  // Off by default — experimental
+    bool m_enabled     = true;   // Native Standard-Z temporal-reprojected Hi-Z occlusion culling
     bool m_hizReady    = false;  // True after first successful readback
 
     ID3D11Device*        m_device  = nullptr;
@@ -92,6 +89,13 @@ private:
 
     // ── Depth readback (double-buffered) ──────────────────────────────
     ID3D11Texture2D* m_depthStaging[2] = {};
+    DXGI_FORMAT      m_stagingFmt = DXGI_FORMAT_UNKNOWN;
+    float            m_stageW2C[2][4][4] = {};
+    float            m_stageCam[2][3] = {};
+    bool             m_stageHasCam[2] = {};
+    float            m_hizW2C[4][4] = {};
+    float            m_hizCam[3] = {};
+    bool             m_hizHasCam = false;
     int              m_readbackIdx = 0;  // Ping-pong: write to [readbackIdx], read from [1-readbackIdx]
     uint32_t         m_depthW = 0;
     uint32_t         m_depthH = 0;

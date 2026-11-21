@@ -565,9 +565,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 c *= fireBoost * flk;
             }
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;
-            // When hardware RT traced this light (slot 1..3), use rv[slot] directly (bypassing vanilla's flickering
-            // 4-channel shadow-mask swaps); untraced lights (4..128) blend smoothly with ReSTIR restVis.
-            if (slot != 0u) { sh = rv[slot]; } else { sh = min(sh, lerp(0.45f, 1.0f, restVis)); }
+            // When hardware RT is active, bypass vanilla's flickering 4-channel shadow-mask swaps completely:
+            // top-3 lights use their exact RT shadow vis (rv[slot]); secondary lights (4..128) use stable ReSTIR visibility.
+            if (rt) { sh = slot != 0u ? rv[slot] : lerp(0.68f, 1.0f, restVis); }
+            else if (slot != 0u) { sh = rv[slot]; }
             if (!match && !rt && sunColour.w > 0.5f && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
                 sh *= screenShadow(p + lift, l, min(dist, tune.z), 4.0f / max(dist, 1.0f), jit, 10u);
                 --softLeft;
@@ -595,7 +596,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float skyVis = isActorFeat ? lerp(0.55f, 1.0f, rawSkyVis) : rawSkyVis;
     // One occlusion, not two: the ray-traced sky/RTAO visibility already holds near occluders.
     const float rtOcc = isExterior ? lerp(1.0f, skyVis, cluster.w) : lerp(0.42f, 1.0f, skyVis);
-    const float combinedOcc = min(aoTerm, rtOcc);
+    float combinedOcc = min(aoTerm, rtOcc);
+    // Lifelike Vanilla NPCs: lift recessed eye-socket AO (base==12) so eyes never read as dim dark holes,
+    // and soften harsh brow/under-eye portrait shadows on skin (base==10).
+    if (!match) {
+        if (base == 12u) combinedOcc = lerp(combinedOcc, 1.0f, 0.80f);
+        else if (skin)   combinedOcc = lerp(combinedOcc, 1.0f, 0.36f);
+    }
     // SIGGRAPH GI-12 Visibility-Aware Bent-Normal Hemisphere Skylighting: bends indirect normal toward open sky
     // inside crevices/overhangs so shadowed stone, timber, and snow catch natural directional sky bounce.
     const float3 bentN = normalize(lerp(s.n, float3(0.0f, 0.0f, 1.0f), (1.0f - combinedOcc) * 0.32f * skyVis));
@@ -758,29 +765,52 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
     }
     if (!match) {
-        // Character shading: subtle oily-pore skin specular (addLight's s.wrap + Sss.hlsl handle dermal scatter without red over-saturation).
+        // Character Portrait & Eye-Candy Shading (Vanilla NPCs & PCs):
+        // 1) Skin (base==10): soft portrait dermal wrap-fill + silky peach-fuzz velvet rim sheen (no greasy shine).
         if (skin) {
+            const float nvSkin = saturate(dot(s.n, s.v));
+            const float fuzzRim = pow(1.0f - nvSkin, 3.2f) * 0.14f;
+            const float3 portFill = isExterior ? (sunColour.rgb * (0.28f + 0.72f * sunShadow) * 0.08f + amb * 0.12f)
+                                               : (max(amb, float3(0.08f, 0.07f, 0.06f)) * 0.24f);
+            lit += albedo * float3(1.06f, 0.90f, 0.84f) * (portFill + fuzzRim * (isExterior ? sunColour.rgb * 0.35f + amb : max(amb, 0.12f.xxx)));
             if (isExterior) {
                 const float nlRaw = dot(s.n, sunDir.xyz);
                 const float3 shv = normalize(s.v + sunDir.xyz);
-                const float snh = saturate(dot(s.n, shv)), sa2 = 0.055f;
+                const float snh = saturate(dot(s.n, shv)), sa2 = 0.065f;
                 const float sdd = snh * snh * (sa2 - 1.0f) + 1.0f;
                 const float sD = sa2 / (PI * sdd * sdd);
-                lit += min(sunColour.rgb * (sD * 0.022f * saturate(nlRaw) * sunShadow * 0.16f), 0.5f.xxx);
+                lit += min(sunColour.rgb * (sD * 0.020f * saturate(nlRaw) * sunShadow * 0.14f), 0.45f.xxx);
             }
         } else if (base == 11u) {
-            // Class 11 (Hair): Kajiya-Kay shifted anisotropic hair sheen along vertical strand tangent.
+            // 2) Hair (base==11): Dual-lobe Kajiya-Kay / Marschner anisotropic hair sheen (works in both exteriors & interiors).
             const float3 tHair = normalize(cross(s.n, float3(1.0f, 0.0f, 0.0f)) + float3(0.0f, 0.0f, 0.35f));
-            const float3 hDir = normalize(s.v + (isExterior ? sunDir.xyz : float3(0.0f, 0.0f, 1.0f)));
+            const float3 hDir = normalize(s.v + (isExterior ? sunDir.xyz : normalize(s.v + float3(0.20f, 0.15f, 0.65f))));
             const float tdoth = dot(tHair, hDir);
             const float sinTH = sqrt(max(1.0f - tdoth * tdoth, 0.0f));
-            const float kajiya = pow(sinTH, 48.0f) * 0.35f + pow(sinTH, 12.0f) * 0.12f;
-            lit += (albedo * 0.65f + 0.35f.xxx) * (isExterior ? sunColour.rgb * (0.3f + 0.7f * sunShadow) : amb) * kajiya;
+            const float kajiya1 = pow(sinTH, 52.0f) * 0.40f;
+            const float kajiya2 = pow(sinTH, 14.0f) * 0.18f;
+            const float3 hKey = isExterior ? (sunColour.rgb * (0.35f + 0.65f * sunShadow) + amb * 0.35f)
+                                           : max(amb * 1.45f, float3(0.14f, 0.13f, 0.12f));
+            lit += hKey * (float3(0.95f, 0.96f, 1.0f) * kajiya1 + (albedo * 0.80f + 0.20f.xxx) * kajiya2);
         } else if (base == 12u) {
-            // Class 12 (Eyes): wet corneal clearcoat + live dynamic cubemap catchlight.
+            // 3) Eyes (base==12): Luminous iris subsurface translucency + crisp dual wet corneal catchlights
+            // (live sky/sun reflection in exteriors + soft warm window/hearth catchlight in interiors so eyes never look dead).
+            const float nvEye = saturate(dot(s.n, s.v));
+            const float3 eyeKeyCol = isExterior ? max(sunColour.rgb * 0.55f + amb, float3(0.24f, 0.28f, 0.34f))
+                                                : max(amb * 1.85f, float3(0.26f, 0.22f, 0.18f));
+            // Soft iris & sclera subsurface lift so eye color stays vivid and readable even in shadow.
+            lit += albedo * eyeKeyCol * (0.48f + 0.32f * nvEye);
+            // Crisp GGX wet corneal specular catchlight (upper-right studio/sky key glint + subtle secondary glint).
+            const float3 keyDir1 = isExterior ? normalize(lerp(sunDir.xyz, normalize(s.v + float3(0.26f, 0.22f, 0.48f)), 0.45f))
+                                              : normalize(s.v + float3(0.28f, 0.20f, 0.46f));
+            const float3 keyDir2 = normalize(s.v + float3(-0.32f, -0.14f, 0.28f));
+            const float nh1 = saturate(dot(s.n, normalize(s.v + keyDir1)));
+            const float nh2 = saturate(dot(s.n, normalize(s.v + keyDir2)));
+            const float glint1 = pow(nh1, 180.0f) * 1.35f + pow(nh1, 32.0f) * 0.18f;
+            const float glint2 = pow(nh2, 120.0f) * 0.42f;
             const float3 eyeEnv = evalDynamicEnvCube(reflect(-s.v, s.n), 0.04f);
-            const float eyeFr = 0.035f + 0.965f * pow(1.0f - saturate(dot(s.n, s.v)), 5.0f);
-            lit += eyeEnv * eyeFr * 1.15f;
+            const float eyeFr = 0.04f + 0.96f * pow(1.0f - nvEye, 5.0f);
+            lit += eyeEnv * eyeFr * 1.25f + eyeKeyCol * (glint1 + glint2);
         } else if (base == 5u && isExterior) {
             const float back = pow(saturate(dot(-s.v, sunDir.xyz)), 3.0f);
             lit += albedo * sunColour.rgb * float3(1.05f, 1.15f, 0.72f) * (0.18f + 0.82f * back) * (0.20f + 0.80f * sunShadow) * 0.42f;

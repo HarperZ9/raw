@@ -150,12 +150,14 @@ void STDMETHODCALLTYPE WrappedContext::DrawIndexed(UINT IndexCount, UINT StartIn
 
     ++m_drawCalls;
     RenderPhaseDetector::Get().OnDraw(IndexCount, true);
-    if (OcclusionCuller::Get().ShouldCull(IndexCount))
-        return;
     for (auto& cb : g_drawCallbacks)
         if (cb) cb(IndexCount, 1);
     if (g_sceneLightsActive) SceneLights_BeforeDraw(m_real);
     if (g_sceneGeometryActive) SceneGeometry_OnDraw(m_real, IndexCount, StartIndexLocation, BaseVertexLocation);
+    // Temporal-reprojected Hi-Z occlusion culling runs AFTER SceneGeometry_OnDraw so occluded static objects
+    // still populate the Persistent World TLAS (zero RT shadow/reflection pop-in) while skipping rasterization.
+    if (OcclusionCuller::Get().ShouldCull(IndexCount))
+        return;
     if (g_gbufferActive) GBuffer_BeforeDraw(m_real);
     if (g_sceneLightsActive) GameComposite_BeforeDraw(m_real, IndexCount);
     if (IndexCount <= 6) Tonemap_BeforeDraw(m_real);   // a full-screen quad at most

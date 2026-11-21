@@ -291,18 +291,21 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
         [unroll] for (uint k = 0u; k < 3u; k++) {
             if (best[k] == ~0u) { continue; }
-            // 2-spp stratified point-light RT soft shadows + 14-unit fixture clearance so torch/sconce/lantern cages
-            // never self-occlude or flicker their own light from oblique viewing angles.
-            const float fixClear = max(sourceRadius * 1.8f, 14.0f);
-            const float2 rk0 = frac(r + float2(0.31f * float(k), 0.17f * float(k)));
-            const float2 rk1 = frac(rk0 + float2(0.5f, 0.5f));
-            const float3 c0 = lightPosR[best[k]].xyz + (float3(rk0.x, rk0.y, frac(rk0.x + rk0.y + 0.5f)) * 2.0f - 1.0f) * (sourceRadius * 0.75f);
-            const float3 c1 = lightPosR[best[k]].xyz + (float3(rk1.x, rk1.y, frac(rk1.x + rk1.y + 0.5f)) * 2.0f - 1.0f) * (sourceRadius * 0.75f);
-            const float3 to0 = c0 - o, to1 = c1 - o;
-            const float l0 = length(to0), l1 = length(to1);
-            const float v0 = l0 > fixClear ? visible(o, to0 / max(l0, 1.0e-4f), 0.0f, l0 - fixClear) : 1.0f;
-            const float v1 = l1 > fixClear ? visible(o, to1 / max(l1, 1.0e-4f), 0.0f, l1 - fixClear) : 1.0f;
-            vis[k + 1u] = 0.5f * (v0 + v1);
+            // Rock-solid point-light RT shadows: 24-unit fixture clearance eliminates forge/brazier/sconce
+            // rim self-shadowing (e.g. Alvor's forge pole), and 4-spp stratified tracing on the primary
+            // light eliminates frame-to-frame shadow shimmer in interiors and around hearths.
+            const float fixClear = max(sourceRadius * 2.4f, 24.0f);
+            const float radK = sourceRadius * 0.38f;
+            float vAcc = 0.0f;
+            const uint nSpp = (k == 0u) ? 4u : 2u;
+            [loop] for (uint si = 0u; si < nSpp; si++) {
+                const float2 rki = frac(r + float2(0.25f * float(si) + 0.31f * float(k), 0.37f * float(si) + 0.17f * float(k)));
+                const float3 ci = lightPosR[best[k]].xyz + (float3(rki.x, rki.y, frac(rki.x + rki.y + 0.5f)) * 2.0f - 1.0f) * radK;
+                const float3 toi = ci - o;
+                const float liLen = length(toi);
+                vAcc += liLen > fixClear ? visible(o, toi / max(liLen, 1.0e-4f), 0.0f, liLen - fixClear) : 1.0f;
+            }
+            vis[k + 1u] = vAcc / float(nSpp);
             idx[k] = float(best[k] + 1u) / 255.0f;
         }
         // Every other light of the cluster. Each frame, every pixel picks one of them in proportion to the light it

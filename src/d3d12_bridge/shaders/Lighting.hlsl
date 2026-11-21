@@ -248,6 +248,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     }
     const float3 nSmooth = s.n;
     const bool isActorFeat = (base >= 10u && base <= 12u);   // skin, hair, eye
+    // Organic world-space anti-tiling & natural slope curvature on terrain (class 4) and cliffs/rocks (class 1).
+    if (!match && (base == 4u || base == 1u) && z < 16000.0f) {
+        const float3 wp = p + camPosW.xyz;
+        const float macroN = cNoise(wp * 0.0022f) * 0.62f + cNoise(wp * 0.0068f + 13.7f) * 0.38f;
+        const float microN = cNoise(wp * 0.024f + 5.3f);
+        const float antiTile = lerp(0.89f, 1.11f, macroN) * lerp(0.95f, 1.05f, microN);
+        const float slope = saturate(s.n.z);
+        // Natural slope transitions: subtle warm-moss enrichment on flat ledges, crisp cool-slate rock on steep inclines.
+        const float3 slopeTint = lerp(float3(0.96f, 0.98f, 1.03f), float3(1.02f, 1.01f, 0.97f), smoothstep(0.55f, 0.88f, slope));
+        const float tileFade = saturate(1.0f - z / 16000.0f);
+        albedo *= lerp(1.0f.xxx, antiTile * slopeTint, tileFade * (base == 4u ? 0.85f : 0.45f));
+        s.alpha = clamp(s.alpha + (macroN - 0.5f) * 0.14f * tileFade, 0.08f, 0.96f);
+    }
     // Zero-mod procedural PBR micro-normal & roughness synthesis on vanilla stone/wood (excluded on skin/hair/eye/foliage).
     if (!match && !isActorFeat && base != 5u && z < 2800.0f) {
         const float distFade = saturate(1.0f - z / 2800.0f) * (base == 2u ? 0.22f : 1.0f);

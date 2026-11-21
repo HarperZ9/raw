@@ -110,6 +110,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
         if (const int atlas = IniInt("ShadowAtlas", 0); atlas > 0)
             Log("%s", raw::rt::ResizeShadowAtlas(g_img, g_refs, uint32_t(atlas)).c_str());
     }
+    if (IniInt("EngineTuning", 1)) Log("%s", raw::rt::ApplyEngineTuning(g_img, g_refs).c_str());
     if (IniInt("HavokFix", 1)) Log("%s", raw::rt::HavokFixInit(g_img, g_refs).c_str());
     raw::rt::ControlInit(g_img, &g_refs, g_dir, g_out, proxy ? proxy->InvalidateStateCache : nullptr);
     // GPU time per pass and the shadow atlas's viewports (rt_passes.cpp); GpuTiming=0 keeps the draw counts only

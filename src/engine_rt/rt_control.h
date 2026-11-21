@@ -40,4 +40,8 @@ std::string ResizeShadowAtlas(const Image& img, const std::vector<RefTarget>& re
 std::string HavokFixInit(const Image& img, const std::vector<RefTarget>& refs);
 void HavokFixOnPresent();
 
+// Native engine-level architectural upgrades (multithreaded bones/particles/facegen/trees/lip, Papyrus VM budget,
+// +47% near-plane Z precision, preemptive cell unload). Applied before [EngineSet] so user overrides win.
+std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& refs);
+
 }  // namespace raw::rt

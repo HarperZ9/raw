@@ -237,7 +237,7 @@ void AddEngineLights(SceneLighting& f)
             }
             continue;
         }
-        if (!(e[k].flags & 1) || e[k].radius <= 0) continue;
+        if (e[k].radius <= 0) continue;   // keep ShadowSceneNode lights active even when occluded by a pole/pillar (ignore camera-culled bit 1)
         if (e[k].color[0] <= 0 && e[k].color[1] <= 0 && e[k].color[2] <= 0) continue;
         ++g_es.seen;
         float rel[3];

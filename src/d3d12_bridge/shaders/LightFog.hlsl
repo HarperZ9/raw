@@ -97,9 +97,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             }
         }
     }
-    // Soft highlight shoulder on volumetric in-scatter so bright sunbeams stay sculpted and never clip.
+    // Soft highlight shoulder on volumetric in-scatter + restrained moist Nordic exposure (prevents dry/overexposed fog wash).
     const float scMax = max(scatter.r, max(scatter.g, scatter.b));
-    scatter /= (1.0f + scMax * 0.65f);
+    scatter = (scatter / (1.0f + scMax * 0.85f)) * 0.82f;
     // Unified sky- and weather-coupled exponential height fog & alpine mountain mist (replaces Skyrim's flat 2011 metric fog).
     if ((flags.x & FLAG_FOG_REPLACES) != 0u && sunColour.w > 0.5f) {
         const float weatherDens = 1.0f + weather.w * 2.2f + weather.z * 2.6f + saturate(clouds.x - 0.35f) * 1.1f;
@@ -122,9 +122,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float nightF = saturate((0.26f - sunLumF) * 4.5f);
         const float lowSunF = saturate(1.0f - sunDir.z * 2.6f);
         const float cosSunF = saturate(dot(w, sunDir.xyz));
-        float3 atmoCol = lerp(sH * 0.78f, sM * 0.85f, smoothstep(-0.08f, 0.35f, w.z));
-        const float3 mieCol = lerp(float3(1.0f, 0.94f, 0.84f), float3(1.0f, 0.60f, 0.30f), lowSunF);
-        atmoCol += mieCol * (pow(cosSunF, 8.0f) * 0.22f * (1.0f - saturate(clouds.x * 0.75f)));
+        // Cool humid Nordic atmospheric moisture tint & restrained exposure (eliminates dry/beige overexposed fog).
+        float3 atmoCol = lerp(sH * 0.68f, sM * 0.76f, smoothstep(-0.08f, 0.35f, w.z)) * float3(0.91f, 0.97f, 1.06f);
+        const float3 mieCol = lerp(float3(0.94f, 0.94f, 0.92f), float3(1.0f, 0.62f, 0.34f), lowSunF);
+        atmoCol += mieCol * (pow(cosSunF, 10.0f) * 0.16f * (1.0f - saturate(clouds.x * 0.75f)));
         // Snowstorm frosted whiteout vs night indigo-blue alpine haze.
         atmoCol = lerp(atmoCol, float3(0.56f, 0.62f, 0.70f), weather.z * 0.65f);
         atmoCol = lerp(atmoCol, float3(0.05f, 0.09f, 0.19f), nightF);

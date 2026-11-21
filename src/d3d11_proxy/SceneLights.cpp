@@ -33,8 +33,11 @@ struct State
     SceneLighting frame;
     std::vector<Accum> lights;
     double sunDir[3] = {}, sunCol[3] = {}, amb[3][4] = {}, knee = 0;
+    struct SunSample { double d[3]; };
+    std::vector<SunSample> sunSamples;
     double stableSunDir[3] = {};
     bool hasStableSun = false;
+    uint32_t sunJumpStreak = 0;
     uint32_t sunDraws = 0, ambDraws = 0, kneeDraws = 0;
     std::vector<float> specScales;
     std::vector<float> steps[3];         // per lit draw: previous minus current world translation
@@ -107,7 +110,9 @@ void LitDraw(State& s, const float* g, const float* w, const float* ps0, const f
         Apply(w, g, false, d);
         const double len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
         if (len > 0) {
+            const double nx = d[0] / len, ny = d[1] / len, nz = d[2] / len;
             for (int k = 0; k < 3; ++k) { s.sunDir[k] += d[k] / len; s.sunCol[k] += g[4 + k]; }
+            if (s.sunSamples.size() < 96) s.sunSamples.push_back({{nx, ny, nz}});
             ++s.sunDraws;
         }
     }
@@ -267,22 +272,52 @@ void Merge(State& s)
     AddEngineLights(f);
     f.hasSun = s.sunDraws > 0 || s.hasStableSun;
     if (s.sunDraws > 0) {
-        double len = 0;
-        for (int k = 0; k < 3; ++k) len += s.sunDir[k] * s.sunDir[k];
-        len = std::sqrt(len);
-        if (len > 1e-6) {
-            double nd[3] = {s.sunDir[0] / len, s.sunDir[1] / len, s.sunDir[2] / len};
-            // Keep directional sun/moon vector rock-solid when looking up at the sky (few lit draws in frustum).
+        // Geometric consensus cluster (dot > 0.998): rejects rotated/camera-facing tree/billboard/actor outliers
+        // that otherwise pull the average sunDir around when looking up at trees & sky.
+        double nd[3] = {};
+        uint32_t bestCount = 0;
+        const size_t nSamp = s.sunSamples.size();
+        for (size_t i = 0; i < nSamp; ++i) {
+            uint32_t cnt = 0;
+            double sum[3] = {};
+            const auto& a = s.sunSamples[i].d;
+            for (size_t j = 0; j < nSamp; ++j) {
+                const auto& b = s.sunSamples[j].d;
+                if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] > 0.998) {
+                    ++cnt;
+                    sum[0] += b[0]; sum[1] += b[1]; sum[2] += b[2];
+                }
+            }
+            if (cnt > bestCount) {
+                bestCount = cnt;
+                const double cl = std::sqrt(sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]);
+                if (cl > 1e-6) { nd[0] = sum[0] / cl; nd[1] = sum[1] / cl; nd[2] = sum[2] / cl; }
+            }
+        }
+        if (bestCount >= 6) {
             if (!s.hasStableSun) {
                 for (int k = 0; k < 3; ++k) s.stableSunDir[k] = nd[k];
                 s.hasStableSun = true;
-            } else if (s.sunDraws >= 16) {
-                const double alpha = s.sunDraws >= 64 ? 0.18 : 0.05;
-                double sl = 0;
-                for (int k = 0; k < 3; ++k) { s.stableSunDir[k] += (nd[k] - s.stableSunDir[k]) * alpha; sl += s.stableSunDir[k] * s.stableSunDir[k]; }
-                sl = std::sqrt(sl);
-                if (sl > 1e-6) for (int k = 0; k < 3; ++k) s.stableSunDir[k] /= sl;
+                s.sunJumpStreak = 0;
+            } else {
+                const double cosA = std::clamp(nd[0] * s.stableSunDir[0] + nd[1] * s.stableSunDir[1] + nd[2] * s.stableSunDir[2], -1.0, 1.0);
+                // Real Skyrim sun moves ~0.001 deg/frame. Clamp slew unless sustained 10-frame jump (set_time / wait / cell load).
+                if (cosA < 0.96) {
+                    if (++s.sunJumpStreak >= 10 && bestCount >= 16) {
+                        for (int k = 0; k < 3; ++k) s.stableSunDir[k] = nd[k];
+                        s.sunJumpStreak = 0;
+                    }
+                } else {
+                    s.sunJumpStreak = 0;
+                    const double alpha = bestCount >= 20 ? 0.015 : 0.004;
+                    double sl = 0;
+                    for (int k = 0; k < 3; ++k) { s.stableSunDir[k] += (nd[k] - s.stableSunDir[k]) * alpha; sl += s.stableSunDir[k] * s.stableSunDir[k]; }
+                    sl = std::sqrt(sl);
+                    if (sl > 1e-6) for (int k = 0; k < 3; ++k) s.stableSunDir[k] /= sl;
+                }
             }
+        }
+        if (s.hasStableSun) {
             for (int k = 0; k < 3; ++k) { f.sunDirection[k] = float(s.stableSunDir[k]); f.sunColour[k] = float(s.sunCol[k] / s.sunDraws); }
         }
     } else if (s.hasStableSun) {
@@ -421,6 +456,7 @@ void SceneLights_OnPresent()
     s.mask = s.cascades = nullptr;
     s.frame = SceneLighting{};
     s.lights.clear();
+    s.sunSamples.clear();
     s.specScales.clear();
     for (auto& v : s.steps) v.clear();
     std::memset(s.sunDir, 0, sizeof s.sunDir); std::memset(s.sunCol, 0, sizeof s.sunCol); std::memset(s.amb, 0, sizeof s.amb);

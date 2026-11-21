@@ -139,10 +139,22 @@ void water(uint3 id : SV_DispatchThreadID) {
                 // Past a cell the game's own water takes over again: from high up the distant river read navy with no sky in
                 // it (rt7-far-6), where the bed is a few pixels and its depth says little.
                 const float nearW = 1.0f - smoothstep(4096.0f, 8192.0f, length(p));
-                body = lerp(game.rgb, (bed + caus) * T + scatter * (1.0f - T), saturate(waterB.z) * nearW);
+                // Subsurface turquoise wave-crest forward scatter when backlit by the sun.
+                const float3 waveSSS = sunDir.w > 0.5f
+                    ? float3(0.04f, 0.22f, 0.24f) * sunColour.rgb * pow(saturate(dot(-v, sunDir.xyz)), 4.0f) * saturate((1.0f - n.z) * 7.0f) * 0.45f
+                    : 0.0f.xxx;
+                // Animated shore-contact foam where water depth approaches rocks and banks (depthV < 18 units).
+                const float shoreBand = (1.0f - smoothstep(0.0f, 18.0f, depthV)) * smoothstep(0.0f, 1.5f, depthV);
+                const float foamCell = saturate(1.0f - cellWalls((camPosW.xyz + p).xy / 28.0f, camPosW.w * 1.25f) * 2.4f);
+                const float foamMask = saturate(shoreBand * (0.45f + 0.55f * foamCell * foamCell)) * nearW;
+                const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) + (sunDir.w > 0.5f ? sunColour.rgb * 0.45f : 0.0f.xxx)) * 0.85f;
+                const float3 waterBody = (bed + caus) * T + scatter * (1.0f - T) + waveSSS;
+                body = lerp(game.rgb, lerp(waterBody, foamLit, foamMask * 0.65f), saturate(waterB.z) * nearW);
             }
+            const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;
+            const float effF = saturate(F * waterA.x * shoreFeather);
             const uint view = uint(waterB.x + 0.5f);
-            col = refr ? lerp(body, refl, saturate(F * waterA.x)) + glint : lerp(game.rgb, refl, saturate(F * waterA.x)) + caus * (1.0f - F) + glint;
+            col = refr ? lerp(body, refl, effF) + glint * shoreFeather : lerp(game.rgb, refl, effF) + caus * (1.0f - effF) + glint * shoreFeather;
             if (view == 1u) { col = refl; }
             else if (view == 2u) { col = caus * 4.0f; }
             else if (view == 3u) { col = float3(F, nv, 1.0f); }

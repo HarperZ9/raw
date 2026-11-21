@@ -34,7 +34,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float dt = (t1 - t0) / float(steps);
         const float j = rand(lo, proj.z);
         const float cosT = dot(dir, sunDir.xyz);
-        const float phase = lerp(hg(cosT, -0.25f), hg(cosT, 0.7f), 0.55f);
+        const float phase = min(lerp(hg(cosT, -0.25f), hg(cosT, 0.58f), 0.50f), 0.34f);
         const float3 sunC = sunColour.rgb * (sunDir.w > 0.5f ? 1.0f : 0.0f);
         const float3 skyC = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.0f);
         const float sigma = kCloudSigma;
@@ -52,9 +52,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float beer = (exp(-od * sigma) + 0.5f * exp(-od * sigma * 0.25f) + 0.25f * exp(-od * sigma * 0.0625f)) / 1.75f;
             const float powder = 1.0f - exp(-od * sigma * 2.0f - dens * 0.5f);
             const float h = saturate((pa.z - clouds.y) / clouds.z);
-            // Scaled into the game's sky: a fully lit cloud edge comes out near the sun's colour, the shaded base
-            // near a third of the sky's light (the first version, unscaled, clipped to flat white).
-            const float3 lum = sunC * (beer * lerp(1.0f, powder, 0.6f) * phase * 4.0f * PI * 0.45f) + skyC * lerp(0.2f, 0.6f, h);
+            // Delicate silver lining without blowing into white globs near the solar disk.
+            const float3 lum = min(sunC * (beer * lerp(1.0f, powder, 0.55f) * phase * 4.0f * PI * 0.36f) + skyC * lerp(0.28f, 0.68f, h), 1.35f.xxx);
             const float ext = dens * sigma;
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length

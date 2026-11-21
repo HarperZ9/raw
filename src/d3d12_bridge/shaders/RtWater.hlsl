@@ -115,7 +115,7 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float nv = saturate(dot(n, v));
             const float F = 0.02f + 0.98f * pow(1.0f - nv, 5.0f);
             const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
-            const float3 o = p + float3(0.0f, 0.0f, 1.0f + 0.002f * length(p));
+            const float3 o = p + float3(0.0f, 0.0f, 2.5f + 0.003f * length(p));
 
             // Attenuate steep horizontal wave tilt for reflection rays so moving water never stretches reflections into vertical bands.
             const float3 nRefl = normalize(lerp(float3(0.0f, 0.0f, 1.0f), n, 0.35f));
@@ -189,8 +189,8 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float path = length(worldAt(float2(q), Depth.Load(int3(q, 0))) - p);
                 const float3 T = exp(-waterA.z * float3(2.2f, 1.0f, 0.7f) * path);
                 const float3 scatter = float3(0.05f, 0.10f, 0.11f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.0f.xxx) * 2.0f;
-                // Smoothly feather RT water body into distant water LOD before Skyrim's 4096-unit cell edge (eliminates hard horizontal lake seams).
-                const float nearW = 1.0f - smoothstep(2200.0f, 3950.0f, length(p));
+                // Smoothly feather RT water body into distant water LOD well before Skyrim's 4096-unit cell edge.
+                const float nearW = 1.0f - smoothstep(1800.0f, 3400.0f, length(p));
                 // Subsurface turquoise wave-crest forward scatter when backlit by the sun.
                 const float3 waveSSS = sunDir.w > 0.5f
                     ? float3(0.04f, 0.22f, 0.24f) * sunColour.rgb * pow(saturate(dot(-v, sunDir.xyz)), 4.0f) * saturate((1.0f - n.z) * 7.0f) * 0.45f
@@ -205,7 +205,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                 body = lerp(game.rgb, lerp(waterBody, foamLit, foamMask * 0.65f), saturate(waterB.z) * nearW);
             }
             const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;
-            const float cellFeather = 1.0f - smoothstep(2400.0f, 3950.0f, length(p));
+            const float cellFeather = 1.0f - smoothstep(1800.0f, 3400.0f, length(p));
             const float effF = saturate(F * waterA.x * shoreFeather * cellFeather);
             const uint view = uint(waterB.x + 0.5f);
             col = refr ? lerp(body, refl, effF) + glint * shoreFeather : lerp(game.rgb, refl, effF) + caus * (1.0f - effF) + glint * shoreFeather;

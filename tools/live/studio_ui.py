@@ -120,6 +120,7 @@ pre{margin:0;background:#0a0d12;border:1px solid var(--line);border-radius:4px;p
         <button onclick="savePreset()">Save Preset</button>
         <button onclick="loadPreset()">Load Preset</button>
       </div>
+      <div id="preset-lib" class="row" style="margin-top:6px"></div>
     </div>
 
     <div class="card">
@@ -217,7 +218,24 @@ async function loadPreset() {
     const el = document.getElementById('s-' + k); if (el) { el.value = v; document.getElementById('v-' + k).textContent = v; currentParams[k] = v; }
   }
 }
-loadShadersList(); refreshState();
+async function loadPresetLibrary() {
+  const list = await (await fetch('/api/presets')).json();
+  const host = document.getElementById('preset-lib');
+  host.innerHTML = '';
+  for (const item of list) {
+    const b = document.createElement('button');
+    b.textContent = `${item.category}: ${item.name}`;
+    b.onclick = async () => {
+      await post('/api/ini', item.params);
+      for (const [k, v] of Object.entries(item.params)) {
+        const el = document.getElementById('s-' + k);
+        if (el) { el.value = v; document.getElementById('v-' + k).textContent = v; currentParams[k] = v; }
+      }
+    };
+    host.appendChild(b);
+  }
+}
+loadShadersList(); loadPresetLibrary(); refreshState();
 </script>
 </body>
 </html>"""

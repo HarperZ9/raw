@@ -46,5 +46,10 @@ void main(uint3 id : SV_DispatchThreadID) {
         sum += w * Colour.Load(int3(q, 0)).rgb;
         wsum += w;
     }
-    Out[p] = float4(lerp(c.rgb, sum / wsum, strength), c.a);
+    const float3 scattered = sum / wsum;
+    // Preserve high-frequency pore luminance while keeping the warm dermal chroma scatter from the dual-lobe profile.
+    const float cLum = max(dot(c.rgb, float3(0.2126f, 0.7152f, 0.0722f)), 1.0e-4f);
+    const float sLum = max(dot(scattered, float3(0.2126f, 0.7152f, 0.0722f)), 1.0e-4f);
+    const float3 poreKept = scattered * lerp(1.0f, cLum / sLum, 0.25f);
+    Out[p] = float4(lerp(c.rgb, poreKept, strength), c.a);
 }

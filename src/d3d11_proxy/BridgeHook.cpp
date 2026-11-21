@@ -167,8 +167,12 @@ void CaptureOpaque(ID3D11DeviceContext* real)
     real->OMSetRenderTargets(0, nullptr, nullptr);
     ID3D11Device* dev = nullptr;
     real->GetDevice(&dev);
+    D3D11_TEXTURE2D_DESC dd{};
+    static_cast<ID3D11Texture2D*>(s_f.depthTex)->GetDesc(&dd);
     D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
-    sd.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    sd.Format = (dd.Format == DXGI_FORMAT_R32G8X24_TYPELESS || dd.Format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT)
+                    ? DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS
+                    : DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
     sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
     sd.Texture2D.MipLevels = 1;
     ID3D11ShaderResourceView* srv = nullptr;

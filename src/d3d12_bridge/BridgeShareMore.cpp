@@ -46,13 +46,14 @@ bool D3D12Bridge::ShareStencilAndRead(ID3D11Texture2D* depthStencil, std::vector
     if (!m->ready || !depthStencil || !out) return false;
     D3D11_TEXTURE2D_DESC d{};
     depthStencil->GetDesc(&d);
-    if (d.Format != DXGI_FORMAT_R24G8_TYPELESS || d.SampleDesc.Count != 1 || d.ArraySize != 1) return false;
+    const bool is32 = d.Format == DXGI_FORMAT_R32G8X24_TYPELESS;
+    if ((d.Format != DXGI_FORMAT_R24G8_TYPELESS && !is32) || d.SampleDesc.Count != 1 || d.ArraySize != 1) return false;
     if (!m->stencilCS && FAILED(m->dev11->CreateComputeShader(g_StencilCopyCS, sizeof g_StencilCopyCS, nullptr, &m->stencilCS)))
         return false;
     Impl::Extra* e = m->ExtraFor(d.Width, d.Height, DXGI_FORMAT_R8_UINT, true);
     if (!e) return false;
     D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
-    sd.Format = DXGI_FORMAT_X24_TYPELESS_G8_UINT;
+    sd.Format = is32 ? DXGI_FORMAT_X32_TYPELESS_G8X24_UINT : DXGI_FORMAT_X24_TYPELESS_G8_UINT;
     sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
     sd.Texture2D.MipLevels = 1;
     ComPtr<ID3D11ShaderResourceView> srv;

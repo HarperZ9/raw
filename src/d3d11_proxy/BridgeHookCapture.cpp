@@ -118,6 +118,7 @@ static int ShareCheck(ID3D11Texture2D* tex, UINT slice, const void* rows, UINT r
     DXGI_FORMAT crossed = DXGI_FORMAT_UNKNOWN;
     if (!b->ShareAndRead(tex, slice, &got, &gotRow, &crossed)) return 3;
     const bool d24 = d.Format == DXGI_FORMAT_R24G8_TYPELESS || d.Format == DXGI_FORMAT_D24_UNORM_S8_UINT;
+    const bool d32 = d.Format == DXGI_FORMAT_R32G8X24_TYPELESS || d.Format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
     if (got.size() < size_t(gotRow) * height) return 3;
     for (UINT y = 0; y < height; ++y) {
         const uint8_t* a = static_cast<const uint8_t*>(rows) + size_t(y) * rowPitch;
@@ -127,6 +128,11 @@ static int ShareCheck(ID3D11Texture2D* tex, UINT slice, const void* rows, UINT r
             const float* f = reinterpret_cast<const float*>(g);
             for (UINT x = 0; x < d.Width; ++x)
                 if (std::fabs(double(f[x]) - double(u[x] & 0xFFFFFF) / 16777215.0) > 6.0e-8) return 2;
+        } else if (d32) {
+            const float* fa = reinterpret_cast<const float*>(a);
+            const float* fg = reinterpret_cast<const float*>(g);
+            for (UINT x = 0; x < d.Width; ++x)
+                if (std::fabs(double(fg[x]) - double(fa[x * 2])) > 1.0e-6) return 2;
         } else if (gotRow != rowBytes || memcmp(a, g, rowBytes) != 0) {
             return 2;
         }

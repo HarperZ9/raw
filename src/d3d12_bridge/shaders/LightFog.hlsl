@@ -43,9 +43,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float focusD = Depth.Load(int3(int2(dims.xy * 0.5f), 0));
     const float focusZ = focusD < 1.0f ? viewZOf(focusD) : 10000.0f;
     const float curZ = d < 1.0f ? viewZOf(d) : 100000.0f;
-    // ElderDepthOfField: physical Golden-Angle HDR bokeh when focusing on close subjects (< 520 units, e.g., NPC dialogue).
-    if (focusZ < 520.0f) {
+    // ElderDepthOfField: 32-tap heptagonal HDR bokeh when focusing on close subjects (< 540 units, e.g., NPC dialogue).
+    if (focusZ < 540.0f) {
         lit.rgb = elderBokehDoF(Lit, Depth, px, dims.xy, dims.zw, curZ, focusZ);
+    }
+    // Pre-Pass Weather Optics: procedural HDR rain-on-lens droplets & blizzard crystalline frost edges.
+    if (weather.w >= 0.12f || weather.z >= 0.25f) {
+        lit.rgb = elderWeatherLensPrepass(Lit, px, dims.xy, dims.zw, weather.w, weather.z, camPosW.w);
     }
     if (d >= 1.0f) { return lit; }   // the sky keeps the game's own atmosphere
     const float3 p = worldAt(px, min(d, 0.999999f));

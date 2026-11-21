@@ -608,7 +608,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float ambL = max(dot(amb, float3(0.2126f, 0.7152f, 0.0722f)), 0.02f);
             const float hemiL = max(dot(skyHemi, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
             const float inShadow = 1.0f - saturate(sunShadow);
-            amb = lerp(amb, skyHemi * (ambL / hemiL), dayAmbW * lerp(0.24f, 0.38f, inShadow));
+            // Weight blue sky-ambient tint by skyVis so open shadows catch cerulean sky while covered porches stay warm neutral.
+            amb = lerp(amb, skyHemi * (ambL / hemiL), dayAmbW * skyVis * lerp(0.20f, 0.34f, inShadow));
         }
     } else if (!match && !isExterior) {
         const float outCool = saturate(clouds.x * 0.6f + weather.w * 0.5f);

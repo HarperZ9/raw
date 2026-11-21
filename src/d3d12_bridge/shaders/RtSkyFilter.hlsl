@@ -63,7 +63,8 @@ void main(uint3 id : SV_DispatchThreadID) {
     const int2 p = int2(id.xy);
     const float d = Depth.Load(int3(p, 0));
     const float4 L = Lights[p];
-    if (d >= 1.0f) {
+    // SM6.9 Wave-coherent sky early-exit: pure-sky waves skip the entire 5x5 bilateral A-trous GI/RTAO filter.
+    if (WaveActiveAllTrue(d >= 1.0f) || d >= 1.0f) {
         HistOut[p] = float4(1.0f, -1.0f, 0.0f, 0.0f);
         BOut[p] = 0.0f;
         Bounce[p] = float4(0.0f, 0.0f, 0.0f, 1.0f);

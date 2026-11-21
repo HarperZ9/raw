@@ -538,7 +538,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     uint softLeft = 4u;
     float fireMelt = 0.0f;
     [loop] for (uint w = 0u; w < 4u; w++) {
-        uint b = bits[w];
+        // SM6.9 Wave-scalarized clustered light loop: WaveActiveBitOr keeps all lanes in lockstep so
+        // lightPosR[li] / lightColS[li] compile to uniform SGPR scalar broadcasts with zero warp divergence.
+        uint b = WaveActiveBitOr(bits[w]);
         [loop] while (b != 0u) {
             const uint li = w * 32u + firstbitlow(b);
             b &= b - 1u;

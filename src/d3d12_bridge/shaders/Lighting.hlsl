@@ -245,6 +245,24 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             wet.puddle *= 1.0f - wet.snow;
             wet.wet *= 1.0f - wet.snow;
         }
+        // Native live snow footprint depression + glacial subsurface ice tint around the player on snow surfaces.
+        const float natSnow = (base == 4u) ? saturate((min(albedo.r, min(albedo.g, albedo.b)) - 0.38f) * 4.5f) * saturate(s.n.z * 1.4f - 0.3f) : 0.0f;
+        const float snowAmt = max(wet.snow, natSnow);
+        if (snowAmt > 0.10f) {
+            const float2 footDelta = p.xy;
+            const float footR = length(footDelta);
+            if (footR < 85.0f && abs(p.z) < 110.0f) {
+                const float depress = exp(-footR * footR / 950.0f);
+                const float rim = exp(-pow(footR - 36.0f, 2.0f) / 260.0f);
+                const float2 rad = footDelta / max(footR, 1.0f);
+                // Depressed compacted ice center (cool glacial blue) + raised powdery rim normal tilt.
+                s.n = normalize(s.n + float3(rad * (depress * 0.24f - rim * 0.16f), 0.0f) * snowAmt);
+                albedo *= lerp(1.0f.xxx, float3(0.78f, 0.88f, 1.04f), depress * snowAmt * 0.55f);
+                s.alpha = lerp(s.alpha, 0.28f, depress * snowAmt * 0.6f);
+            }
+            // Glacial ice-crystal micro-glint even on natural snowfields (not only during active snowfall).
+            wet.snow = max(wet.snow, natSnow * 0.65f);
+        }
     }
     const float3 nSmooth = s.n;
     const bool isActorFeat = (base >= 10u && base <= 12u);   // skin, hair, eye

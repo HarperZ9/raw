@@ -42,7 +42,14 @@ float3 distantLit(int3 ip, float2 at, float d) {
     // fills its region, l and r both reach 24 and the canopy normal turned the mountains toward the camera: their faces
     // read flat beside the game's (far mountains' luma spread 11.3 against 12.7, rt7-far-7).
     const float cw = 0.7f * saturate((46.0f - float(l + r)) / 12.0f);
-    const float3 n = normalize(lerp(worldNormal(Normal.Load(ip)), canopy, cw));
+    // Reconstruct 3D conical bough relief on flat 2D distant tree LOD billboard cards using world-space noise.
+    float3 n = normalize(lerp(worldNormal(Normal.Load(ip)), canopy, cw));
+    if (cw > 0.05f) {
+        const float3 wpTree = p + camPosW.xyz;
+        const float bough = cNoise(wpTree * 0.018f + float3(0.0f, 0.0f, wpTree.z * 0.025f)) * 2.0f - 1.0f;
+        const float bough2 = cNoise(wpTree * 0.052f + 7.3f) * 2.0f - 1.0f;
+        n = normalize(n + (right * (bough * 0.28f) + float3(0.0f, 0.0f, bough2 * 0.24f)) * cw);
+    }
     const bool rt = (flags.x & FLAG_RT) != 0u;
     float sh = (flags.x & FLAG_SHADOWS) == 0u ? 1.0f : (flags.x & FLAG_CASCADES) != 0u ? cascadeShadow(p, d, true) : Mask.Load(ip).x;
     if (rt && sunColour.w > 0.5f) { sh = min(sh, RtVis.Load(ip).x); }

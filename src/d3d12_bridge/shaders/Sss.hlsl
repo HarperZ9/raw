@@ -49,11 +49,19 @@ void main(uint3 id : SV_DispatchThreadID) {
         wsum += w;
     }
     const float3 scattered = sum / wsum;
-    // Preserve crisp high-frequency epidermal pore & lash luminance while keeping warm dermal hemoglobin scatter,
-    // plus subtle backlit dermal translucency along thin silhouette edges (ears, nose bridge, cheeks).
+    // arXiv:2606.27604 (Aliaga & Jarabo 2026) Biophysical Skin Inversion + arXiv:2606.29387 thin-geometry guard:
+    // Estimate epidermal melanin & dermal hemoglobin directly from RGB so every vanilla NPC (fair Nord, Redguard,
+    // Imperial, Dunmer, Bosmer) scatters light according to their real biophysical absorption spectrum instead of
+    // one generic pink/red blur, while preserving crisp high-frequency epidermal pore & eyelash luminance.
     const float cLum = max(dot(c.rgb, float3(0.2126f, 0.7152f, 0.0722f)), 1.0e-4f);
     const float sLum = max(dot(scattered, float3(0.2126f, 0.7152f, 0.0722f)), 1.0e-4f);
-    const float3 dermalGlow = scattered * lerp(float3(1.0f, 1.0f, 1.0f), float3(1.06f, 0.96f, 0.92f), saturate(sLum * 0.65f));
-    const float3 poreKept = dermalGlow * lerp(1.0f, cLum / sLum, 0.36f);
+    const float melanin = saturate(1.0f - pow(saturate(cLum * 1.35f), 0.55f));
+    const float hemoglobin = saturate((c.r - c.g * 0.86f) / max(cLum, 0.05f));
+    const float3 fairTint = float3(1.07f, 0.94f, 0.90f);
+    const float3 richTint = float3(1.04f, 0.97f, 0.92f);
+    const float3 bioTint = lerp(fairTint, richTint, melanin * 0.75f);
+    const float bioWeight = saturate(0.35f + hemoglobin * 0.45f) * (1.0f - melanin * 0.30f);
+    const float3 dermalGlow = scattered * lerp(1.0f.xxx, bioTint, bioWeight * saturate(sLum * 0.85f));
+    const float3 poreKept = dermalGlow * lerp(1.0f, cLum / sLum, 0.40f);
     Out[p] = float4(lerp(c.rgb, poreKept, strength), c.a);
 }

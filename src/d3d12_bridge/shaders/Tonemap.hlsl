@@ -310,12 +310,16 @@ float4 main(In i) : SV_Target {
             c.rgb = saturate(lerp(lumG.xxx, c.rgb, 0.88f) * 1.03f - 0.015f);
         }
     }
-    // Layer 1 (bit 0): Film Emulsion & Beer-Lambert Subtractive Density + Interimage Inhibition (in Oklab-safe linear space).
+    // Layer 1 (bit 0): Film Emulsion & Beer-Lambert Subtractive Density + Skin-Protected Oklab Vibrance
+    // (enhances Nordic foliage greens, glacial blues, and sunset amber while protecting human/elf skin hues).
     if ((ovMask & 1u) != 0u) {
         float3 lab = linToOklab(saturate(c.rgb));
         const float chroma = length(lab.yz);
-        lab.x *= (1.0f - saturate(chroma * 0.42f) * 0.22f);   // Beer-Lambert dye density: saturated hues hold richer depth
-        lab.yz *= 1.06f;                                      // gentle Kodak interimage chroma pop without channel clipping
+        const float hue = atan2(lab.z, lab.y);
+        const float skinMask = smoothstep(0.20f, 0.55f, hue) * (1.0f - smoothstep(0.95f, 1.35f, hue)) * smoothstep(0.02f, 0.09f, chroma);
+        const float vibBoost = lerp(1.12f, 1.02f, skinMask) * lerp(1.0f, 0.96f, saturate(chroma * 3.2f));
+        lab.x *= (1.0f - saturate(chroma * 0.42f) * 0.20f);   // Beer-Lambert dye density: saturated hues hold richer depth
+        lab.yz *= vibBoost;                                   // skin-protected perceptual vibrance with zero channel clipping
         c.rgb = saturate(oklabToLin(lab));
     }
     // Layer 5 (bit 4): Bleach Bypass (silver retention overlay without shadow crush).

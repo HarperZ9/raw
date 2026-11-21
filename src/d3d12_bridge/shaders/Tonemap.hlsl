@@ -140,8 +140,13 @@ float4 main(In i) : SV_Target {
         // middle tones keep the contrast (a night frame lost a tenth of its detail with ToneX4 alone below the key).
         // Above the key the power eases back to 1 by four times the key, so bright snow and sky roll into the
         // shoulder instead of clipping (the vista at midday clipped 44 % of its pixels at a constant 1.55).
-        const float cHi = lerp(cu, 1.0f, saturate(log2(max(l / RB.y, 1.0f)) * 0.5f));
-        const float lc = RB.y * pow(l / RB.y, l > RB.y ? cHi : lerp(cl, cu, saturate(l / RB.y)));
+        // SIGGRAPH TON-04 Bilateral Local Tone Mapping: uses low-frequency Bloom luma as a free base layer
+        // to preserve local micro-contrast in dark interiors looking out sunlit doorways & shadowed forests beside bright peaks.
+        const float baseLum = max(dot(bloom, W) * exposure * RB.z, 0.02f);
+        const float detailRatio = clamp(log2(max(l, 1.0e-4f) / baseLum), -1.25f, 1.25f);
+        const float lLocal = l * exp2(detailRatio * 0.16f);
+        const float cHi = lerp(cu, 1.0f, saturate(log2(max(lLocal / RB.y, 1.0f)) * 0.5f));
+        const float lc = RB.y * pow(max(lLocal, 1.0e-5f) / RB.y, lLocal > RB.y ? cHi : lerp(cl, cu, saturate(lLocal / RB.y)));
         const float lOut = saturate(lc * (1.0f + lc / w2) / (1.0f + lc));
         float3 col = hdr * exposure * RB.z * (lOut / l);
         // AgX-style highlight shoulder desaturation: prevents neon orange/blue clipping in bright skies and fire.

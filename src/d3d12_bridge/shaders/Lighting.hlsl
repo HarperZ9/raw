@@ -550,8 +550,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // One occlusion, not two: the ray-traced sky/RTAO visibility already holds near occluders.
     const float rtOcc = isExterior ? lerp(1.0f, skyVis, cluster.w) : lerp(0.42f, 1.0f, skyVis);
     const float combinedOcc = min(aoTerm, rtOcc);
-    // Directional hemisphere skylighting: upward-facing ledges catch sky light while overhangs stay grounded.
-    const float hemiSky = (!match && isExterior) ? lerp(0.72f, 1.12f, saturate(s.n.z * 0.5f + 0.5f)) : 1.0f;
+    // SIGGRAPH GI-12 Visibility-Aware Bent-Normal Hemisphere Skylighting: bends indirect normal toward open sky
+    // inside crevices/overhangs so shadowed stone, timber, and snow catch natural directional sky bounce.
+    const float3 bentN = normalize(lerp(s.n, float3(0.0f, 0.0f, 1.0f), (1.0f - combinedOcc) * 0.32f * skyVis));
+    const float hemiSky = (!match && isExterior) ? lerp(0.72f, 1.12f, saturate(bentN.z * 0.5f + 0.5f)) : 1.0f;
     amb *= match ? combinedOcc.xxx : gtaoMultiBounce(combinedOcc, saturate(albedo)) * hemiSky;
     // Where the sky is blocked, the blocking surfaces send their own light: the bounce the sky rays found.
     // Interiors too (FLAG_BOUNCE_IN, at RtBounceInterior): lamp-lit walls send their light on.

@@ -71,7 +71,7 @@ float3 fxaaAndCas(float2 suv) {
     const float lRange = lMax - lMin;
 
     float3 aa = c;
-    if (lRange >= max(0.035f, lMax * 0.12f)) {
+    if (lRange >= max(0.028f, lMax * 0.10f)) {
         const float edgeH = abs(lnw + lne - 2.0f * ln) + 2.0f * abs(lw + le - 2.0f * lc) + abs(lsw + lse - 2.0f * ls);
         const float edgeV = abs(lnw + lsw - 2.0f * lw) + 2.0f * abs(ln + ls - 2.0f * lc) + abs(lne + lse - 2.0f * le);
         const bool isHoriz = edgeH >= edgeV;
@@ -81,7 +81,7 @@ float3 fxaaAndCas(float2 suv) {
         const float stepDir = (g1 >= g2 ? -1.0f : 1.0f) * (isHoriz ? px.y : px.x);
         const float subAvg = (2.0f * (ln + ls + le + lw) + lnw + lne + lsw + lse) / 12.0f;
         const float subAmt = smoothstep(0.0f, 1.0f, saturate(abs(subAvg - lc) / max(lRange, 1.0e-4f)));
-        const float blend = subAmt * subAmt * 0.65f;
+        const float blend = subAmt * subAmt * 0.72f;
         const float2 aaUv = isHoriz ? float2(suv.x, suv.y + stepDir * blend) : float2(suv.x + stepDir * blend, suv.y);
         aa = Scene.Sample(S1, aaUv).rgb;
     }

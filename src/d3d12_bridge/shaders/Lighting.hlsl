@@ -377,6 +377,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 slopeTint = lerp(float3(0.96f, 0.98f, 1.03f), float3(1.02f, 1.01f, 0.97f), smoothstep(0.55f, 0.88f, slope));
         const float tileFade = saturate(1.0f - z / 16000.0f);
         albedo *= lerp(1.0f.xxx, antiTile * slopeTint, tileFade * (base == 4u ? 0.85f : 0.45f));
+        // Novel world-space Nordic moss & damp-crevice weathering on outdoor rocks/ruins (zero texture mods).
+        if (base == 1u && sunColour.w > 0.5f && z < 4500.0f && wet.snow < 0.35f) {
+            const float mossPatch = smoothstep(0.56f, 0.82f, cNoise(wp * 0.0085f + float3(4.1f, 9.7f, 2.3f))) * smoothstep(0.52f, 0.86f, slope);
+            const float mossFade = saturate(1.0f - z / 4500.0f) * (1.0f - wet.snow * 2.5f);
+            const float3 mossCol = float3(0.14f, 0.24f, 0.10f) * lerp(0.85f, 1.15f, microN);
+            albedo = lerp(albedo, mossCol, mossPatch * mossFade * 0.38f);
+            s.alpha = lerp(s.alpha, 0.86f, mossPatch * mossFade * 0.38f);
+        }
         s.alpha = clamp(s.alpha + (macroN - 0.5f) * 0.14f * tileFade, 0.08f, 0.96f);
     }
     // Zero-mod procedural PBR micro-normal & roughness synthesis on vanilla stone/wood (excluded on skin/hair/eye/foliage).
@@ -679,14 +687,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float aurBounce = saturate((0.26f - sLumAur) * 4.5f) * (1.0f - saturate(clouds.x * 1.15f)) * saturate(s.n.z);
             lit += albedo * float3(0.06f, 0.24f, 0.19f) * (aurBounce * wet.snow * skyVis * 0.45f);
         }
-        // Physical clearcoat GGX lobe on wet surfaces (water film over stone/wood/armor).
+        // Physical clearcoat GGX + subtle Belcour-Barla thin-film spectral iridescence on wet water films & glacial ice.
         if (max(wet.wet, wet.puddle) > 0.08f && isExterior && sunShadow > 0.0f) {
             const float3 ch = normalize(s.v + sunDir.xyz);
             const float cnh = saturate(dot(s.n, ch)), ca2 = 0.0036f;
             const float cdd = cnh * cnh * (ca2 - 1.0f) + 1.0f;
             const float cD = ca2 / (PI * cdd * cdd);
-            const float cF = 0.04f + 0.96f * pow(1.0f - saturate(dot(s.v, ch)), 5.0f);
-            lit += min(sunColour.rgb * (cD * cF * saturate(dot(s.n, sunDir.xyz)) * sunShadow * 0.25f), 2.5f.xxx) * max(wet.wet * 0.6f, wet.puddle);
+            const float vh = saturate(dot(s.v, ch));
+            const float cF = 0.04f + 0.96f * pow(1.0f - vh, 5.0f);
+            const float3 thinFilm = 0.88f + 0.12f * cos(float3(0.0f, 2.094f, 4.188f) + vh * 9.5f);
+            lit += min(sunColour.rgb * thinFilm * (cD * cF * saturate(dot(s.n, sunDir.xyz)) * sunShadow * 0.26f), 2.5f.xxx) * max(wet.wet * 0.6f, wet.puddle);
         }
     }
     if (!match) {

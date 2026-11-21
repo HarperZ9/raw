@@ -170,7 +170,21 @@ float4 main(In i) : SV_Target {
     const float3 bL = Bloom.Sample(S0, suv - float2(bx, 0.0f)).rgb;
     const float3 bR = Bloom.Sample(S0, suv + float2(bx, 0.0f)).rgb;
     const float3 anamorphic = max((bL + bR) * 0.5f - 1.15f.xxx, 0.0f.xxx) * float3(0.55f, 0.78f, 1.05f) * 0.06f;
-    mapped = saturate(mapped + cleanBloom + halation + anamorphic);
+    // ElderLens: 3-order chromatic optical lens ghosts + subtle radial aperture halo (strictly energy-capped).
+    const float2 cVec = suv - 0.5f.xx;
+    const float cDist = length(cVec);
+    float3 lensAcc = 0.0f.xxx;
+    [unroll] for (int gi = 1; gi <= 3; gi++) {
+        const float gScale = 0.45f + float(gi) * 0.28f;
+        const float2 gUv = saturate(0.5f.xx - cVec * gScale);
+        const float3 gCol = max(Bloom.Sample(S0, gUv).rgb - 0.85f.xxx, 0.0f.xxx);
+        const float3 gTint = gi == 1 ? float3(1.05f, 0.96f, 0.85f) : (gi == 2 ? float3(0.85f, 1.02f, 1.12f) : float3(0.96f, 0.88f, 1.08f));
+        lensAcc += gCol * gTint / float(gi + 1);
+    }
+    const float2 haloDir = cDist > 1.0e-4f ? cVec / cDist : float2(0.0f, 1.0f);
+    const float3 haloCol = max(Bloom.Sample(S0, saturate(0.5f.xx - haloDir * 0.22f)).rgb - 0.95f.xxx, 0.0f.xxx);
+    const float3 elderLens = min((lensAcc * 0.055f + haloCol * 0.035f * saturate(1.0f - cDist * 1.35f)), 0.14f.xxx);
+    mapped = saturate(mapped + cleanBloom + halation + anamorphic + elderLens);
     if (RB.w > 1.5f && RB.w < 2.5f) { return float4(lum.x * 0.25f, lum.y * 0.25f, exposure * 0.25f, 1.0f); }   // view 2: adapted average, the game's target, exposure (over 4, no gamma)
     if (RB.w > 0.5f && RB.w < 1.5f) { return float4(exposure.xxx * 0.25f, 1.0f); }   // view 1: the exposure (4 = white, no gamma)
     // The game's grade, lane for lane as the game computes it (alpha included; its anti-aliasing reads it).

@@ -56,10 +56,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float powder = 1.0f - exp(-od * sigma * 2.2f - dens * 0.65f);
             const float h = saturate((pa.z - clouds.y) / clouds.z);
             // Ambient occlusion inside cloud undersides gives dramatic blue-slate storm depth vs crisp lit ridges.
-            const float cloudAo = lerp(0.26f, 0.85f, h) * exp(-dens * 0.35f);
-            const float lowSun = saturate(1.0f - sunDir.z * 3.2f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
-            const float3 baseTint = lerp(skyC * cloudAo, sunC * float3(1.0f, 0.58f, 0.34f) * lerp(0.45f, 0.20f, h) + skyC * (cloudAo * 0.55f), lowSun * 0.60f);
-            const float3 lum = min(sunC * (beer * lerp(1.0f, powder, 0.58f) * phase * 4.0f * PI * 0.42f) + baseTint, 1.38f.xxx);
+            const float cloudAo = lerp(0.24f, 0.82f, h) * exp(-dens * 0.38f);
+            const float lowSun = saturate(1.0f - sunDir.z * 3.0f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+            // Keep cool zenith-blue cloud undersides even at sunset so clouds have dramatic gold-rim vs slate-belly contrast (no muddy peach wash).
+            const float3 coolBellies = skyC * float3(0.88f, 0.94f, 1.12f) * cloudAo;
+            const float3 baseTint = lerp(coolBellies, coolBellies * 0.72f + sunC * lerp(0.16f, 0.06f, h), lowSun * 0.45f);
+            const float3 lum = min(sunC * (beer * lerp(1.0f, powder, 0.58f) * phase * 4.0f * PI * 0.32f) + baseTint, 1.18f.xxx);
             const float ext = dens * sigma;
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length

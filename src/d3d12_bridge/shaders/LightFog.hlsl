@@ -47,10 +47,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     float3 scatter = 0.0f;
     if (sunDir.w > 0.5f && tune2.z > 0.0f) {
         const float jit = ign(px);
-        // Sun-position-driven volumetric shafts: stronger forward anisotropy & golden-hour gain at low sun elevations.
-        const float lowSunBoost = lerp(1.0f, 1.65f, saturate(1.0f - abs(sunDir.z - 0.18f) / 0.28f));
-        const float dynG = clamp(lerp(tune.y, max(tune.y, 0.72f), saturate(1.0f - sunDir.z * 2.5f)), 0.1f, 0.85f);
-        const float ph = min(phaseHG(dot(w, sunDir.xyz), dynG), 3.4f);
+        // Sun-position-driven volumetric shafts: balanced dawn/dusk gain (1.18x) so sunset/sunrise valleys stay crisp instead of washed out.
+        const float lowSunBoost = lerp(1.0f, 1.18f, saturate(1.0f - abs(sunDir.z - 0.18f) / 0.28f));
+        const float dynG = clamp(lerp(tune.y, max(tune.y, 0.70f), saturate(1.0f - sunDir.z * 2.5f)), 0.1f, 0.82f);
+        const float ph = min(phaseHG(dot(w, sunDir.xyz), dynG), 3.0f);
         // 16 quadratic-clustered steps with height-stratified valley density for crisp forest sunbeams.
         const uint kSteps = 16u;
         float sum = 0.0f, cs = 1.0f;

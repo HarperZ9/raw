@@ -145,6 +145,11 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
     static const KV kTuning[] = {
         {"fNearDistance:Display", "22.0"},
         {"fShadowBiasScale:Display", "0.18"},
+        {"fSunUpdateThreshold:Display", "0.0025"},
+        {"fSunShadowUpdateTime:Display", "0.25"},
+        {"fSunBaseSize:Weather", "160.0"},
+        {"fSunGlareSize:Weather", "280.0"},
+        {"fSunGlareMultiplier:Weather", "0.35"},
         {"bMultiThreadBoneUpdate:Animation", "1"},
         {"bUseThreadedParticleSystem:General", "1"},
         {"bUseThreadedTempEffects:General", "1"},

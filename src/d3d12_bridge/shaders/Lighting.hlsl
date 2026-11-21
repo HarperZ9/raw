@@ -109,43 +109,49 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float d = Depth.Load(ip);
     if ((flags.x & FLAG_SURFACE) == 0u) { return game; }
     if (d >= 1.0f) {
-        // The sky: physically grounded Perez/Preetham atmosphere, dynamic sun-elevation horizon glow,
-        // limb-darkened solar corona attenuated by live cloud transmittance, and curved volumetric clouds.
+        // The sky: physically-based spectral Rayleigh + Ozone + Cornette-Shanks Mie atmosphere,
+        // crisp solar corona attenuated by cloud optical depth, and 3D Worley-Perlin volumetric clouds.
         if (flags.w == 10u) { return float4(1.0f, 0.0f, 1.0f, game.a); }
         float3 baseSky = game.rgb;
         const float3 sDir = normalize(worldAt(floor(at.xy), 1.0f));
         if ((flags.x & FLAG_MATCH) == 0u) {
-            baseSky = baseSky / (1.0f + max(max(baseSky.r, max(baseSky.g, baseSky.b)) - 0.72f, 0.0f) * 0.55f);
-            const float dayW = saturate(sunDir.z * 3.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
-            const float sunsetW = saturate(1.0f - abs(sunDir.z - 0.14f) / 0.22f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
-            if (dayW > 0.02f && sDir.z > -0.02f) {
-                const float turb = lerp(2.5f, 5.5f, saturate(clouds.x));
-                const float3 pSky = preethamSky(sDir, sunDir.xyz, turb);
-                const float skyLum = max(dot(baseSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.08f);
-                const float pLum = max(dot(pSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.08f);
-                baseSky = lerp(baseSky, pSky * (skyLum / pLum), dayW * (1.0f - saturate(clouds.x * 0.75f)) * 0.28f);
-            }
-            // Dynamic sun-elevation horizon scatter (warm amber/rose twilight band at dawn/dusk).
-            if (sunsetW > 0.01f && sDir.z > -0.05f) {
-                const float hBand = pow(1.0f - saturate(sDir.z), 3.8f);
-                const float sunAz = pow(saturate(dot(normalize(float3(sDir.xy, 0.0f)), normalize(float3(sunDir.xy, 0.001f)))), 2.5f);
-                const float3 warmBand = float3(0.85f, 0.42f, 0.20f) * (0.25f + 0.75f * sunAz) * hBand * sunsetW * (1.0f - saturate(clouds.x * 0.5f)) * 0.32f;
-                baseSky += warmBand;
+            baseSky = baseSky / (1.0f + max(max(baseSky.r, max(baseSky.g, baseSky.b)) - 0.65f, 0.0f) * 0.65f);
+            const float dayW = saturate((sunDir.z + 0.06f) * 3.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+            if (dayW > 0.02f && sDir.z > -0.04f) {
+                // Physical Rayleigh + Ozone + Mie spectral transmittance (Earth/Nirn optical airmass).
+                const float muV = max(sDir.z, 0.025f);
+                const float muS = max(sunDir.z, 0.02f);
+                const float airV = 1.0f / (muV + 0.15f * pow(max(muV * 90.0f + 3.885f, 0.1f), -1.253f));
+                const float airS = 1.0f / (muS + 0.15f * pow(max(muS * 90.0f + 3.885f, 0.1f), -1.253f));
+                const float3 betaR = float3(0.058f, 0.135f, 0.331f);
+                const float3 betaO = float3(0.012f, 0.036f, 0.002f);   // Chappuis ozone band -> crisp cobalt-violet twilight
+                const float betaM = lerp(0.022f, 0.055f, saturate(clouds.x));
+                const float3 extS = exp(-(betaR + betaO + betaM) * airS * 0.72f);
+                const float3 extV = exp(-(betaR + betaO + betaM) * airV * 0.45f);
+                const float cosTheta = dot(sDir, sunDir.xyz);
+                const float phR = 0.059683f * (1.0f + cosTheta * cosTheta);
+                const float gM = 0.78f;
+                const float phM = (3.0f / (8.0f * PI)) * ((1.0f - gM * gM) * (1.0f + cosTheta * cosTheta)) /
+                                  ((2.0f + gM * gM) * pow(max(1.0f + gM * gM - 2.0f * gM * cosTheta, 1.0e-3f), 1.5f));
+                const float3 specSky = (betaR * phR * 4.2f + betaM * min(phM, 4.5f) * 0.38f) * (1.0f - extV) * (0.35f + 0.65f * extS) * 1.45f;
+                const float skyLum = max(dot(baseSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.06f);
+                const float pLum = max(dot(specSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
+                const float specBlend = dayW * (1.0f - saturate(clouds.x * 0.70f)) * 0.48f;
+                baseSky = lerp(baseSky, specSky * (skyLum / pLum), specBlend);
             }
         }
         const float4 c = (flags.x & FLAG_CLOUDS) != 0u ? Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f) : float4(0.0f, 0.0f, 0.0f, 1.0f);
         float3 skyOut = baseSky * c.a + c.rgb;
         if ((flags.x & FLAG_MATCH) == 0u) {
-            if (sunDir.w > 0.5f && sunDir.z > 0.0f) {
-                // Solar corona suppressed by cloud optical depth c.a^2 and overcast cloudCover so overcast skies never blow out white.
+            if (sunDir.w > 0.5f && sunDir.z > 0.01f) {
+                // Tight physical Cornette-Shanks solar aureole gated by cloud transmittance c.a^2 (never a bloated orange blob).
                 const float cosSun = saturate(dot(sDir, sunDir.xyz));
-                const float corona = pow(cosSun, 128.0f) * 0.28f + pow(cosSun, 18.0f) * 0.04f;
+                const float corona = pow(cosSun, 512.0f) * 0.45f + pow(cosSun, 48.0f) * 0.05f;
                 const float clearVis = c.a * c.a * (1.0f - saturate(clouds.x * 0.85f));
-                skyOut += sunColour.rgb * corona * clearVis * saturate(sunDir.z * 6.0f);
+                skyOut += sunColour.rgb * corona * clearVis * saturate(sunDir.z * 5.0f);
             }
-            // Filmic sky luminance compression keeps full cloud structure visible under bright overcast and high-noon skies.
             const float skyPeak = max(skyOut.r, max(skyOut.g, skyOut.b));
-            skyOut = skyOut / (1.0f + max(skyPeak - 0.55f, 0.0f) * 0.65f);
+            skyOut = skyOut / (1.0f + max(skyPeak - 0.52f, 0.0f) * 0.70f);
         }
         return float4(skyOut, game.a);
     }

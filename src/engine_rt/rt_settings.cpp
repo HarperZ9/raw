@@ -157,6 +157,12 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"bUseMultiThreadedFaceGen:BackgroundLoad", "1"},
         {"bUseMultiThreadedTrees:BackgroundLoad", "1"},
         {"bBackgroundLoadLipFiles:BackgroundLoad", "1"},
+        {"bBackgroundCellLoads:BackgroundLoad", "1"},
+        {"bBackgroundLoadVMData:General", "1"},
+        {"bBackgroundInitializeGeometryDecals:Decals", "1"},
+        {"bBackgroundNavmeshUpdate:Pathfinding", "1"},
+        {"bBackgroundPathing:Pathfinding", "1"},
+        {"iPreloadSizeLimit:General", "268435456"},
         {"bPreemptivelyUnloadCells:General", "1"},
         {"bEnableBoundingVolumeOcclusion:General", "0"},
         {"bPreCullActors:General", "0"},
@@ -177,8 +183,17 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
     for (const auto& kv : kTuning) {
         if (SetSetting(img, refs, kv.k, kv.v)) ++applied;
     }
-    char out[128];
-    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu architectural fixes applied", applied, sizeof(kTuning) / sizeof(kTuning[0]));
+    // Scale Creation Engine worker thread pool to modern multi-core CPUs (clamped 4..16).
+    SYSTEM_INFO si{};
+    GetSystemInfo(&si);
+    const uint32_t hwThreads = si.dwNumberOfProcessors < 4 ? 4u : (si.dwNumberOfProcessors > 16 ? 16u : si.dwNumberOfProcessors);
+    char thBuf[16];
+    std::snprintf(thBuf, sizeof thBuf, "%u", hwThreads);
+    const bool thOk = SetSetting(img, refs, "iNumHWThreads:General", thBuf);
+    if (thOk) ++applied;
+    char out[160];
+    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu architectural fixes applied (iNumHWThreads=%u)",
+                  applied, sizeof(kTuning) / sizeof(kTuning[0]) + 1, hwThreads);
     return out;
 }
 

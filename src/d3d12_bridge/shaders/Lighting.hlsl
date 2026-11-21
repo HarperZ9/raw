@@ -348,6 +348,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float snowLeaf = saturate((s.n.z - 0.25f) * 2.0f);
             albedo = lerp(albedo * float3(0.86f, 0.92f, 1.04f), float3(0.56f, 0.60f, 0.66f), snowLeaf * 0.55f);
         }
+        // Reconstruct 3D leaf-cluster normal curvature + wind shimmer on flat 2011 alpha-tested foliage cards.
+        if (z < 3600.0f) {
+            const float3 wpF = p + camPosW.xyz;
+            const float wPhase = camPosW.w * 1.4f + dot(wpF.xy, float2(0.008f, 0.006f));
+            const float nxF = (cNoise(wpF * 0.045f + float3(sin(wPhase) * 0.35f, 0.0f, 0.0f)) - 0.5f) * 0.55f;
+            const float nyF = (cNoise(wpF * 0.045f + float3(11.3f, cos(wPhase) * 0.35f, 5.7f)) - 0.5f) * 0.55f;
+            const float fFade = saturate(1.0f - z / 3600.0f);
+            s.n = normalize(s.n + float3(nxF, nyF, 0.18f) * fFade);
+        }
     }
     const float3 nSmooth = s.n;
     const bool isActorFeat = (base >= 10u && base <= 12u);   // skin, hair, eye

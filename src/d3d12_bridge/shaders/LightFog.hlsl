@@ -98,9 +98,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float hFactor = abs(hSlope) > 1.0e-4f
                                   ? (1.0f - exp(-min(dist, 220000.0f) * hSlope)) / (min(dist, 220000.0f) * hSlope)
                                   : 1.0f;
-        // 3D rolling alpine mist modulation around mid-altitude mountain slopes.
+        // 3D rolling alpine mist & high-altitude mountain-collar cloud band (replaces static billboard fog planes).
         const float3 midPt = camPosW.xyz + w * min(dist * 0.55f, 45000.0f);
-        const float alpineMist = 0.78f + 0.44f * cNoise(midPt * 0.00014f + float3(cloudWind.xy * camPosW.w * 0.00006f, 0.0f));
+        const float3 windShift = float3(cloudWind.xy * camPosW.w * 0.00006f, 0.0f);
+        const float alpineNoise = cNoise(midPt * 0.00014f + windShift) * 0.65f + cNoise(midPt * 0.00042f - windShift * 1.6f + 7.1f) * 0.35f;
+        const float peakCollar = exp(-pow((midPt.z - 5200.0f) / 3600.0f, 2.0f)) * smoothstep(8000.0f, 28000.0f, dist);
+        const float alpineMist = (0.76f + 0.48f * alpineNoise) * (1.0f + peakCollar * (0.45f + 0.55f * alpineNoise));
         const float od = baseSigma * min(dist, 240000.0f) * clamp(hFactor, 0.25f, 1.85f) * alpineMist * exp(-hStart * 0.15f);
         const float T = exp(-od);
         // Atmospheric in-scatter color locked 100% to live skyPalette() + Mie forward sun glow + night indigo.

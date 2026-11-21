@@ -20,6 +20,8 @@ ID3D11PixelShader* VariantFor(State& s, ID3D11PixelShader* game, bool firstPerso
         e.tried[k] = true;
         raw::dxbc::PatchOptions opt;
         opt.classFlags = firstPerson ? raw::dxbc::material::FirstPersonFlag : 0;
+        static const bool kDepth32 = GetPrivateProfileIntA("Lighting", "TxDepth32", 0, "d3d11_proxy.ini") != 0;
+        opt.alphaDiscard = kDepth32;
         raw::dxbc::PatchInfo info;
         std::vector<uint8_t> out;
         if (raw::dxbc::PatchForGBuffer(e.code.data(), e.code.size(), opt, &out, &info)) {

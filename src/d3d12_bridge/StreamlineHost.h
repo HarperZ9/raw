@@ -33,6 +33,8 @@ public:
     void SetMode(int m) { m_mode = (m < 0 ? 0 : (m > 2 ? 2 : m)); }
     bool GetReflex() const { return m_reflexOn; }
     void SetReflex(bool on) { m_reflexOn = on; }
+    bool GetDeepDvc() const { return m_deepDvcOn; }
+    void SetDeepDvc(bool on) { m_deepDvcOn = on; }
 
     // Per-frame NVIDIA Reflex Low-Latency sleep/pacing (no-op if Reflex is unsupported).
     void ReflexBeginFrame(uint32_t frameIdx);
@@ -50,6 +52,7 @@ private:
     StreamlineCaps m_caps{};
     int m_mode = 1;
     bool m_reflexOn = true;
+    bool m_deepDvcOn = false;
     bool m_tried = false;
 };
 

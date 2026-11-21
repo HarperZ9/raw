@@ -259,6 +259,23 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         && step(!m->attached || !cfg.lightingPass || m->CreateRt(), "ray tracing")
         && step(m->CreatePass(), "engine pass");
     if (ok && m->dev12) {
+        // Log live DX12 / Agility SDK 1.620.1 hardware feature tiers (SM, DXR, Work Graphs, Enhanced Barriers, Mesh Shaders, Sampler Feedback).
+        D3D12_FEATURE_DATA_SHADER_MODEL sm{D3D_SHADER_MODEL_6_9};
+        if (FAILED(m->dev12->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof(sm)))) {
+            sm.HighestShaderModel = D3D_SHADER_MODEL_6_6;
+            m->dev12->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof(sm));
+        }
+        D3D12_FEATURE_DATA_D3D12_OPTIONS5 o5{};
+        D3D12_FEATURE_DATA_D3D12_OPTIONS7 o7{};
+        D3D12_FEATURE_DATA_D3D12_OPTIONS12 o12{};
+        D3D12_FEATURE_DATA_D3D12_OPTIONS21 o21{};
+        m->dev12->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &o5, sizeof(o5));
+        m->dev12->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &o7, sizeof(o7));
+        m->dev12->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS12, &o12, sizeof(o12));
+        m->dev12->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS21, &o21, sizeof(o21));
+        m->log("[D3D12Bridge] HW tiers: SM=0x%X, DXR=%d, Mesh=%d, SamplerFB=%d, EnhancedBarriers=%s, WorkGraphs=%d",
+               unsigned(sm.HighestShaderModel), int(o5.RaytracingTier), int(o7.MeshShaderTier),
+               int(o7.SamplerFeedbackTier), o12.EnhancedBarriersSupported ? "YES" : "no", int(o21.WorkGraphsTier));
         StreamlineHost::Get().Initialize(m->dev12.Get(), m->dev12->GetAdapterLuid(), m->log);
     }
     if (!ok) { m->log("[D3D12Bridge] initialisation failed at %s; bridge stays off", failed); Shutdown(); return false; }

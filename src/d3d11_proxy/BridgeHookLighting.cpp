@@ -188,6 +188,8 @@ void LoadLightingConfig(const std::string& ini)
         tm.overlayMask = static_cast<uint32_t>(i("OverlayMask", static_cast<int>(tm.overlayMask)));
         Tonemap_Set(tm);
         raw::bridge::StreamlineHost::Get().SetMode(i("DlssMode", raw::bridge::StreamlineHost::Get().GetMode()));
+        raw::bridge::StreamlineHost::Get().SetReflex(i("Reflex", 1) != 0);
+        raw::bridge::StreamlineHost::Get().SetDeepDvc(i("DeepDvc", 0) != 0);
     }
     t.water = i("Water", 1) != 0; t.waterReflect = f("WaterReflect", t.waterReflect); t.waterCaustics = f("WaterCaustics", t.waterCaustics);
     t.waterAbsorb = f("WaterAbsorb", t.waterAbsorb); t.waterGlint = f("WaterGlint", t.waterGlint);

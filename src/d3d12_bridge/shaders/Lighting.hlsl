@@ -503,7 +503,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (flags.w == 19u) { return float4(charLight.xxx, game.a); }   // view 19: the character light
     // Attenuate vanilla's flat white character fill light on skin in direct sunlight so shoulders/faces never blow out.
     const float effCharLight = (!match && skin) ? charLight * lerp(0.85f, 0.12f, saturate(dot(diff, float3(0.33f, 0.33f, 0.34f)))) : charLight;
-    float3 lit = knee3((albedo + envRefl * (match ? 1.0f : 0.45f)) * (diff + amb + effCharLight));
+    // Attenuate vanilla's compressed 128px DXT1 static cubemap (envRefl) in improved mode so full-res RT + dynamic IBL drive clean metal reflections.
+    float3 lit = knee3((albedo + envRefl * (match ? 1.0f : 0.12f)) * (diff + amb + effCharLight));
     if (!match && skin) {
         // Gentle dermal highlight roll-off preserves natural skin tone under harsh direct midday sunlight.
         lit = lit / (1.0f + max(max(lit.r, max(lit.g, lit.b)) - 0.78f, 0.0f) * 0.42f);
@@ -527,9 +528,24 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 dynEnv = evalDynamicEnvCube(rDir, max(s.alpha, base == 2u ? 0.28f : 0.0f));
         const float reflMask = max(saturate(s.mask * resScale.w), max(wet.puddle, 0.5f * wet.wet));
         if (rt && (flags.x & FLAG_REFLECT) != 0u && lobe) {
-            const float4 rf = RtRefl.Load(int3(clamp(int2(px + rings * 40.0f), int2(0, 0), int2(dims.xy) - 1), 0));
-            const float3 rtCol = min(rf.rgb, 3.0f.xxx);
-            const float3 envFinal = lerp(dynEnv * (0.35f + 0.65f * skyVis), rtCol, rf.a);
+            // Depth-aware 3x3 bilateral filter on full-res RtRefl: eliminates checkerboard/rectangular blocks on armor, metal & wet stone.
+            const int2 baseRefl = clamp(int2(px + rings * 40.0f), int2(0, 0), int2(dims.xy) - 1);
+            float4 rfSum = 0.0f.xxxx;
+            float rfW = 0.0f;
+            [unroll] for (int ry = -1; ry <= 1; ry++) {
+                [unroll] for (int rx = -1; rx <= 1; rx++) {
+                    const int3 rp = int3(clamp(baseRefl + int2(rx, ry), int2(0, 0), int2(dims.xy) - 1), 0);
+                    const float rdDepth = Depth.Load(rp);
+                    if (abs(rdDepth - d) < 0.0012f) {
+                        const float kw = (rx == 0 && ry == 0) ? 2.0f : 1.0f;
+                        const float4 tap = RtRefl.Load(rp);
+                        rfSum += float4(min(tap.rgb, 2.5f.xxx), tap.a) * kw;
+                        rfW += kw;
+                    }
+                }
+            }
+            const float4 rf = rfW > 0.0f ? (rfSum / rfW) : RtRefl.Load(int3(baseRefl, 0));
+            const float3 envFinal = lerp(dynEnv * (0.35f + 0.65f * skyVis), rf.rgb, rf.a);
             lit += envFinal * fr * reflMask * (1.0f - s.alpha) * 0.85f;
             if (flags.w == 6u) { return float4(envFinal, game.a); }
         } else if (base == 2u) {

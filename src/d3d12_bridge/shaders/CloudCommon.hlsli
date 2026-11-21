@@ -41,43 +41,45 @@ float cWorley(float3 p) {
 }
 
 bool cloudsOn() { return clouds.x > 0.0f && clouds.z > 0.0f; }
-static const float kCloudSigma = 0.00175f;   // sculpted optical depth for crisp billowing cumulus & dramatic storm decks
+static const float kCloudSigma = 0.0022f;   // crisp optical density for detailed cumulus edges
 
-// Density at an absolute world point: RDR2/GTA6-inspired multi-altitude Worley-Perlin cumulus + fibrous cirrus veil.
+// High-frequency 4-octave photographic Worley-Perlin cumulus + crisp wispy cirrus veil.
 float cloudDensity(float3 pa, bool detail) {
     const float2 dxy = pa.xy - camPosW.xy;
     const float curvedZ = pa.z + dot(dxy, dxy) * 1.15e-8f;
-    const float h = (curvedZ - clouds.y) / clouds.z;   // 0 at the floor, 1 at the top
+    const float h = (curvedZ - clouds.y) / clouds.z;   // 0 at floor, 1 at top
     if (h <= 0.0f || h >= 1.0f) { return 0.0f; }
     const float3 wind = float3(cloudWind.xy * camPosW.w, 0.0f);
-    // Anisotropic wind shear leans upper cumulus towers and cirrus streaks along the wind vector.
-    const float3 sheared = pa + wind + float3(cloudWind.xy, 0.0f) * (h * 52.0f);
-    // Macro weather map (kilometer-scale cumulus decks with organic domain warp).
-    const float3 q = float3(sheared.x / 52000.0f, sheared.y / 42000.0f, h * 1.35f);
-    const float warp = cNoise(q * 0.80f + 7.1f) * 0.42f;
-    const float perlinBase = cNoise(q + warp) * 0.52f + cNoise(q * 2.08f + 11.3f) * 0.30f + cNoise(q * 4.19f + 5.7f) * 0.18f;
-    const float worleyMacro = cWorley(q * 1.55f + 2.7f);
-    const float shape = lerp(perlinBase, perlinBase * 0.65f + worleyMacro * 0.48f, 0.55f);
-    // Flat condensation base (sharp rise h 0..0.14) + towering cumulus anvil top (scales with coverage).
-    const float baseFlat = saturate(h / 0.14f);
-    const float topRound = saturate((1.0f - h) / lerp(0.45f, 0.22f, saturate(clouds.x)));
-    const float profile = baseFlat * topRound;
-    const float cover = saturate(clouds.x * 1.18f);
-    float dens = saturate((shape * profile - (0.76f - cover * 0.48f)) / max(0.30f + cover * 0.22f, 0.15f));
+    const float3 sheared = pa + wind + float3(cloudWind.xy, 0.0f) * (h * 38.0f);
+    // Macro weather coverage field (natural sweeping cloud banks).
+    const float3 q = float3(sheared.x / 34000.0f, sheared.y / 29000.0f, h * 1.25f);
+    const float warp = cNoise(q * 1.15f + 7.1f) * 0.38f;
+    const float baseFbm = cNoise(q + warp) * 0.48f + cNoise(q * 2.15f + 11.3f) * 0.30f + cNoise(q * 4.45f + 5.7f) * 0.22f;
+    const float macroWorley = cWorley(q * 2.2f + 2.7f);
+    const float shape = lerp(baseFbm, baseFbm * 0.62f + macroWorley * 0.50f, 0.50f);
+    // Flat condensation base + sculpted cumulus towers.
+    const float baseFlat = saturate(h / 0.12f);
+    const float topRound = saturate((1.0f - h) / lerp(0.42f, 0.20f, saturate(clouds.x)));
+    const float cover = saturate(clouds.x * 1.10f);
+    float dens = saturate((shape * baseFlat * topRound - (0.78f - cover * 0.46f)) / max(0.28f + cover * 0.20f, 0.14f));
     if (detail && dens > 0.0f) {
-        // Cauliflower Worley billow erosion at edges while preserving dense convective cores.
-        const float3 r = float3((sheared.x + wind.x * 0.45f) / 10500.0f, (sheared.y + wind.y * 0.45f) / 8800.0f, h * 4.2f);
-        const float wErode = (1.0f - cWorley(r)) * 0.62f + (1.0f - abs(cNoise(r * 2.5f + 3.1f) * 2.0f - 1.0f)) * 0.38f;
-        const float heightErode = lerp(0.48f, 0.72f, h);
-        dens = saturate((dens - wErode * heightErode * (1.0f - dens * 0.50f)) / max(1.0f - wErode * 0.32f, 0.35f));
+        // Multi-scale high-frequency Worley + FBM erosion (3.8km -> 1.9km -> 950 -> 480 units) for razor-sharp feathery edges.
+        const float3 r1 = float3((sheared.x + wind.x * 0.4f) / 4200.0f, (sheared.y + wind.y * 0.4f) / 3800.0f, h * 6.5f);
+        const float w1 = 1.0f - cWorley(r1);
+        const float f2 = cNoise(r1 * 2.13f + 3.7f);
+        const float f3 = cNoise(r1 * 4.61f + 9.2f);
+        const float f4 = cNoise(r1 * 9.37f + 17.5f);
+        const float fineErode = w1 * 0.42f + f2 * 0.28f + f3 * 0.19f + f4 * 0.11f;
+        const float erodeAmt = lerp(0.55f, 0.82f, h) * (1.0f - dens * 0.45f);
+        dens = saturate((dens - fineErode * erodeAmt) / max(1.0f - fineErode * 0.48f, 0.25f));
     }
-    // High-altitude fibrous ice-crystal cirrus veil (upper 28% of the sky slab).
-    if (detail && h > 0.72f && clouds.x > 0.04f) {
-        const float3 cq = float3(sheared.x * 0.000016f, sheared.y * 0.000072f, h * 2.2f);
-        const float cCurl = cNoise(cq * 0.9f + 1.7f) * 0.55f;
-        const float cMask = saturate((cNoise(cq + cCurl) + 0.5f * cNoise(cq * 2.6f + 4.1f) - 0.86f) * 2.2f);
-        const float cVert = saturate((h - 0.72f) * 6.0f) * saturate((1.0f - h) * 8.0f);
-        dens = max(dens, cMask * cVert * 0.28f * saturate(clouds.x * 1.35f));
+    // Crisp high-altitude streaked cirrus wisps (upper 26% of the slab).
+    if (detail && h > 0.74f && clouds.x > 0.05f) {
+        const float3 cq = float3(sheared.x * 0.000045f, sheared.y * 0.00018f, h * 3.0f);
+        const float cCurl = cNoise(cq * 1.4f + 1.7f) * 0.65f;
+        const float cMask = saturate((cNoise(cq + cCurl) * 0.55f + cNoise(cq * 2.7f + 4.1f) * 0.30f + cNoise(cq * 5.8f + 8.3f) * 0.15f - 0.56f) * 3.2f);
+        const float cVert = saturate((h - 0.74f) * 7.0f) * saturate((1.0f - h) * 9.0f);
+        dens = max(dens, cMask * cVert * 0.26f * saturate(clouds.x * 1.25f));
     }
     return dens * cloudWind.z;
 }

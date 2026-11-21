@@ -216,13 +216,15 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float3 n = worldNormal(Normal.Load(ip));
         const float z = viewZOf(d);
         const float3 ng = geometricNormal(px, p, n);
-        const float3 o = p + ng * (0.65f + 0.0045f * z);
+        // Stronger normal offset on skinned meshes (base == 10) and general surfaces to eliminate RT terminator/self-shadow acne.
+        const float oScale = (base == 10u) ? (1.80f + 0.008f * z) : (0.85f + 0.005f * z);
+        const float3 o = p + ng * oScale;
         const float2 r = float2(hash(px, frameIndex * 0.618f), hash(px.yx, frameIndex * 0.381f + 7.0f));
         if (sunDir.w > 0.5f && sunColour.w > 0.5f && dot(n, sunDir.xyz) > 0.0f) {
             // Near the terminator of the coarse surface: start past its own facets.
             // Overdrive 2-spp stratified RayQuery soft sun penumbra shadows.
-            const float turn = saturate(1.0f - dot(ng, sunDir.xyz) / 0.35f);
-            const float tMinS = termDist * turn * turn;
+            const float turn = saturate(1.0f - dot(ng, sunDir.xyz) / 0.40f);
+            const float tMinS = max(termDist, 1.8f) * turn * turn;
             const float2 r2 = frac(r + float2(0.5f, 0.5f));
             const float v0 = visible(o, jitterDir(sunDir.xyz, sunCone, r), tMinS, sunLength);
             const float v1 = visible(o, jitterDir(sunDir.xyz, sunCone, r2), tMinS, sunLength);

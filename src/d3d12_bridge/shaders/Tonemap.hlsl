@@ -154,12 +154,18 @@ float4 main(In i) : SV_Target {
         mapped = rh ? reinhardW(hdr * exposure * RB.z) : filmic(hdr * exposure * RB.z);
         if (RA.x > 0.5f) { pivot = dot(rh ? reinhardW((RB.y * exp2(RA.y) * RB.z).xxx) : filmic((RB.y * exp2(RA.y) * RB.z).xxx), W); }   // the grade turns about mid grey
     }
-    // Cinema highlight-only bloom + subtle warm optical halation: kills Skyrim's muddy midtone and sun-glare wash.
+    // Cinema highlight-only bloom + subtle warm optical halation + restrained horizontal anamorphic specular hint.
     const float bloomLum = dot(bloom, W);
     const float kneeB = saturate((bloomLum - 0.55f) / 0.55f);
     const float3 cleanBloom = bloom * (kneeB * kneeB * 0.14f);
     const float3 halation = float3(1.0f, 0.42f, 0.18f) * saturate((bloomLum - 1.05f) * 0.30f) * 0.10f;
-    mapped = saturate(mapped + cleanBloom + halation);
+    float bw, bh;
+    Bloom.GetDimensions(bw, bh);
+    const float bx = 2.5f / max(bw, 1.0f);
+    const float3 bL = Bloom.Sample(S0, suv - float2(bx, 0.0f)).rgb;
+    const float3 bR = Bloom.Sample(S0, suv + float2(bx, 0.0f)).rgb;
+    const float3 anamorphic = max((bL + bR) * 0.5f - 1.15f.xxx, 0.0f.xxx) * float3(0.55f, 0.78f, 1.05f) * 0.06f;
+    mapped = saturate(mapped + cleanBloom + halation + anamorphic);
     if (RB.w > 1.5f) { return float4(lum.x * 0.25f, lum.y * 0.25f, exposure * 0.25f, 1.0f); }   // view 2: adapted average, the game's target, exposure (over 4, no gamma)
     if (RB.w > 0.5f) { return float4(exposure.xxx * 0.25f, 1.0f); }   // view 1: the exposure (4 = white, no gamma)
     // The game's grade, lane for lane as the game computes it (alpha included; its anti-aliasing reads it).

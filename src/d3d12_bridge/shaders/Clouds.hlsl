@@ -58,14 +58,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (dens <= 0.0f) { continue; }
             float od = 0.0f;
             [unroll] for (uint k = 0u; k < 6u; k++) { od += cloudDensity(pa + sunDir.xyz * kSunD[k], false) * kSunW[k]; }
-            // Multi-octave scattering (Hillaire 2020) + balanced Beer-Powder relief.
-            const float beer = (exp(-od * sigma) + 0.48f * exp(-od * sigma * 0.25f) + 0.22f * exp(-od * sigma * 0.0625f)) / 1.70f;
-            const float powder = 1.0f - exp(-od * sigma * 1.8f - dens * 0.55f);
+            // Balanced spectral Beer-Lambert scattering: crisp sunlit ivory-white cumulus tops, clean silver-blue undersides (no beige wash).
+            const float3 odRGB = od * sigma * float3(0.97f, 1.00f, 1.04f);
+            const float3 beer = (exp(-odRGB) + 0.52f * exp(-odRGB * 0.25f) + 0.26f * exp(-odRGB * 0.0625f)) / 1.78f;
+            const float powder = 1.0f - exp(-od * sigma * 1.9f - dens * 0.58f);
             const float h = saturate((pa.z - clouds.y) / clouds.z);
-            const float cloudAo = lerp(0.28f, 0.96f, pow(h, 0.85f)) * exp(-dens * 0.32f);
+            const float cloudAo = lerp(0.32f, 0.96f, pow(h, 0.80f)) * exp(-dens * 0.28f);
             const float lowSun = saturate(1.0f - sunDir.z * 3.0f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
-            // Rich 3D sculptural cloud relief: crisp sunlit ivory-gold tops vs cool atmospheric steel-blue undersides.
-            const float3 baseTint = lerp(skyC * float3(0.82f, 0.90f, 1.08f) * cloudAo, skyC * (cloudAo * 0.72f) + sunC * lerp(0.18f, 0.06f, h), lowSun * 0.45f);
+            // Crisp atmospheric blue-silver cloud undersides vs neutral-white direct sun bounce.
+            const float3 coolSilver = float3(0.66f, 0.78f, 0.96f) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.12f) * 1.35f;
+            const float3 baseTint = lerp(coolSilver * cloudAo, coolSilver * (cloudAo * 0.75f) + sunC * lerp(0.16f, 0.05f, h), lowSun * 0.42f);
             // Volumetric sheet-lightning inside heavy rainstorms (clouds.x > 0.78 && weather.w > 0.25).
             float3 stormFlash = 0.0f.xxx;
             if (clouds.x > 0.78f && weather.w > 0.25f) {
@@ -78,14 +80,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     stormFlash = float3(0.65f, 0.82f, 1.25f) * (pulse * cellHit * dens * 1.8f);
                 }
             }
-            const float3 lum = min(sunC * float3(1.04f, 1.01f, 0.96f) * (beer * lerp(1.0f, powder, 0.62f) * phase * 4.0f * PI * 0.42f) + baseTint + stormFlash, 1.04f.xxx);
+            // Gently restrain forward solar-cone spike so sun shining through thin clouds produces a delicate silver-gold rim, never white blowout.
+            const float sunCalm = lerp(1.0f, 0.68f, pow(saturate(cosT), 12.0f));
+            const float3 lum = min(sunC * (beer * lerp(1.0f, powder, 0.60f) * phase * sunCalm * 4.0f * PI * 0.36f) + baseTint + stormFlash, 0.86f.xxx);
             const float ext = dens * sigma;
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;
         }
-        // Soft filmic shoulder + seamless atmospheric horizon aerial perspective blend.
-        const float3 softS = S / (1.0f + S * 0.72f);
+        // Soft filmic shoulder + seamless atmospheric horizon aerial perspective blend (prevents overblown sun-through-cloud peaks).
+        const float3 softS = S / (1.0f + S * 0.92f);
         const float fade = exp(-max(t0, 0.0f) / 185000.0f);
         const float3 horizonHaze = skyC * 0.52f + sunC * pow(saturate(cosT), 8.0f) * 0.06f;
         const float3 aerialS = lerp(horizonHaze * (1.0f - T), softS, fade);

@@ -67,12 +67,18 @@ float3 distantLit(int3 ip, float2 at, float d) {
         direct *= lerp(0.72f, 1.0f, grassAo);
     }
     float3 outLod = knee3(knee3(albedo * (direct + max(amb, 0.0f))));
-    // Atmospheric aerial perspective on distant mountains (z > 10,000) so peaks blend seamlessly into the Nordic horizon.
-    if (zDist > 10000.0f && sunColour.w > 0.5f) {
-        const float aerial = saturate(1.0f - exp(-(zDist - 10000.0f) / 145000.0f)) * 0.42f;
+    // Physical Rayleigh distant blue mountain fog (height-stratified so alpine peaks rise out of cool cerulean valley mist).
+    if (zDist > 5500.0f && sunColour.w > 0.5f) {
+        const float hAbove = max(p.z, 0.0f);
+        const float heightDamp = 0.45f + 0.55f * exp(-hAbove / 14000.0f);
+        const float aerial = saturate(1.0f - exp(-(zDist - 5500.0f) / 95000.0f)) * 0.62f * heightDamp;
         const float lowSunL = saturate(1.0f - sunDir.z * 2.6f);
-        const float3 horizCol = lerp(float3(0.46f, 0.58f, 0.72f), float3(0.76f, 0.52f, 0.36f), lowSunL);
-        const float3 fogCol = lerp(horizCol, float3(0.36f, 0.42f, 0.48f), saturate(clouds.x * 0.85f));
+        const float sunLumL = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+        const float nightL = saturate((0.26f - sunLumL) * 4.5f);
+        const float3 dayBlue = lerp(float3(0.32f, 0.50f, 0.74f), float3(0.66f, 0.48f, 0.44f), lowSunL * 0.75f);
+        const float3 nightBlue = float3(0.06f, 0.11f, 0.22f);
+        const float3 stormFog = float3(0.32f, 0.40f, 0.50f);
+        const float3 fogCol = lerp(lerp(dayBlue, stormFog, saturate(clouds.x * 0.75f)), nightBlue, nightL);
         outLod = lerp(outLod, fogCol, aerial);
     }
     return outLod;

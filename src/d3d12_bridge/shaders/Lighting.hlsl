@@ -138,12 +138,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 // Overcast / storm atmospheric slate transition.
                 const float3 stormSky = lerp(float3(0.38f, 0.44f, 0.52f), float3(0.22f, 0.28f, 0.36f), hUp);
                 const float3 pureSky = lerp(clearSky, stormSky, saturate(cover * 0.85f - 0.25f + weather.w * 0.35f));
-                const float3 solarCore = sunDiscCol * (sunDisc * 2.2f * (1.0f - cover * 0.65f));
+                const float3 solarCore = sunDiscCol * (sunDisc * 1.55f * (1.0f - cover * 0.72f));
                 baseSky = lerp(baseSky, pureSky + solarCore, dayW * 0.96f);
             }
         }
         const float4 c = (flags.x & FLAG_CLOUDS) != 0u ? Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f) : float4(0.0f, 0.0f, 0.0f, 1.0f);
-        float3 skyOut = baseSky * c.a + c.rgb;
+        // Cubic transmittance attenuation on solar core so sun shining through clouds never blows out white.
+        float3 skyOut = baseSky * lerp(c.a, c.a * c.a, saturate(dot(baseSky, 0.333f.xxx) - 0.55f)) + c.rgb;
         if ((flags.x & FLAG_MATCH) == 0u) {
             // Luminous atmospheric moon glow locked strictly to Skyrim's real Masser/Secunda sky pixels (zero camera drift),
             // plus infinite-resolution procedural scintillating starfield and animated volumetric Nordic auroras.
@@ -225,6 +226,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float2 px = floor(at.xy);
     const float3 p = worldAt(px, d);
     float3 albedo = Albedo.Load(ip).rgb;
+    // Full-range PBR albedo expansion (!match, non-skin): rescues vanilla Skyrim's narrow washed-out 2011 texture range
+    // into crisp deep darks and rich natural reflectance while preserving exact hue.
+    if (!match && !skin && base != 12u) {
+        const float aLum = max(dot(albedo, float3(0.2126f, 0.7152f, 0.0722f)), 1.0e-4f);
+        const float expLum = saturate(pow(aLum, 1.12f) * 1.14f);
+        albedo = saturate(albedo * (expLum / aLum));
+    }
     const float z = viewZOf(d), jit = ign(px);
     Surface s;
     s.n = worldNormal(Normal.Load(ip));
@@ -530,6 +538,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (flags.w == 13u) { return float4(diff + amb, game.a); }   // the light the surface receives (compare RtDebug=6)
     if (flags.w == 7u) { return float4(RtRefl.Load(ip).rgb, game.a); }   // RtDebug=1: the primary-ray view
     if (flags.w == 8u) { return float4(wet.wet, wet.puddle, wet.snow, game.a); }   // weather: wet red, puddles green, snow blue
+    if (flags.w == 22u) {
+        // Mesh wireframe / geometric facet diagnostic: highlights crisp triangle & silhouette discontinuities in cyan-green.
+        const float3 dnxW = ddx(nSmooth), dnyW = ddy(nSmooth);
+        const float edgeN = smoothstep(0.18f, 0.65f, length(dnxW) + length(dnyW));
+        const float edgeZ = smoothstep(0.015f, 0.06f, (abs(ddx(z)) + abs(ddy(z))) / max(z, 1.0f));
+        const float wire = saturate(max(edgeN, edgeZ));
+        return float4(lerp(albedo * 0.14f, float3(0.15f, 0.95f, 0.85f), wire), game.a);
+    }
+    if (flags.w == 23u) {
+        // Volumetric cloud shadow & spectral scattering diagnostic on world surfaces.
+        const float csW = (flags.x & FLAG_CLOUDS) != 0u ? cloudShadow(p + camPosW.xyz) : 1.0f;
+        return float4(csW, saturate(dot(amb, 0.333f.xxx)), saturate(dot(diff, 0.333f.xxx)), game.a);
+    }
 
     // Environment-mapped (class 2: armour, leather, metal): the game adds its cube map's colour times the env mask
     // times the light the surface receives, before the knee (ps 955d1a31636cbbe4). The patched shader writes that

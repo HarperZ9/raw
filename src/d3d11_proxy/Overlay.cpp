@@ -52,7 +52,7 @@ std::string BuildMenuText()
     };
     std::string out = "=== RAW DX12 IN-GAME MENU [End / Shift+Enter: Close | Up/Down: Select | Left/Right: Tune] ===\n";
     std::snprintf(buf, sizeof buf, "%d (%s)", sIdx, kSeasons[sIdx]); out += row(0, "Season", buf);
-    std::snprintf(buf, sizeof buf, "%d", l.view); out += row(1, "Debug View (0..21)", buf);
+    std::snprintf(buf, sizeof buf, "%d", l.view); out += row(1, "Debug View (0..23)", buf);
     out += row(2, "RT Shadows", l.rtShadows ? "ON" : "OFF");
     out += row(3, "RT Sky / RTAO", l.rtSky ? "ON" : "OFF");
     out += row(4, "RT Reflections", l.rtReflect ? "ON" : "OFF");
@@ -103,7 +103,7 @@ bool PollMenu(std::string& outText)
         bool tmDirty = false;
         switch (g_menuSel) {
         case 0: l.season = (l.season + 5 + dir) % 5; break;
-        case 1: l.view = (l.view + 22 + dir) % 22; break;
+        case 1: l.view = (l.view + 24 + dir) % 24; break;
         case 2: l.rtShadows = !l.rtShadows; break;
         case 3: l.rtSky = !l.rtSky; break;
         case 4: l.rtReflect = !l.rtReflect; break;

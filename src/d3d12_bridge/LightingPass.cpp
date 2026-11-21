@@ -271,9 +271,8 @@ private:
         const float baseCover = std::fmax(t.cloudCover, 0.30f);
         u.clouds[0] = std::fmin(1.0f, std::fmax(baseCover, baseCover + (0.92f - baseCover) * t.weatherCloud));
         u.clouds[1] = t.cloudBase; u.clouds[2] = t.cloudThickness;
-        // An overcast weather's sun is already the light that came through its clouds (the game dims it): the
-        // clouds' shadow fades as the weather's cloud cover rises, or rain darkened the frame twice (2026-11-19).
-        u.clouds[3] = t.cloudShadow * (1.0f - 0.85f * t.weatherCloud);
+        // Keep rich, moving 3D volumetric cloud shadows drifting dynamically across terrain, meshes, and mountains.
+        u.clouds[3] = t.cloudShadow * (1.0f - 0.50f * t.weatherCloud);
         u.cloudWind[0] = t.cloudWindX; u.cloudWind[1] = t.cloudWindY; u.cloudWind[2] = t.cloudDensity; u.cloudWind[3] = t.cloudHistory;
         u.waterA[0] = t.waterReflect; u.waterA[1] = t.waterCaustics; u.waterA[2] = t.waterAbsorb; u.waterA[3] = t.waterGlint;
         u.waterB[0] = float(t.waterView); u.waterB[1] = t.waterCausticCell; u.waterB[2] = t.waterRefract; u.waterB[3] = float(t.season);

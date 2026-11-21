@@ -36,7 +36,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float cosT = dot(dir, sunDir.xyz);
         // Dual-lobe Henyey-Greenstein: crisp forward silver lining (g=0.74) + soft warm back-scatter (g=-0.28).
         const float phase = min(lerp(hg(cosT, -0.28f), hg(cosT, 0.74f), 0.52f), 0.44f);
-        const float3 sunC = sunColour.rgb * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+        const float3 rawSunC = sunColour.rgb * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+        const float sLum = dot(rawSunC, float3(0.2126f, 0.7152f, 0.0722f));
+        const float nightW = saturate((0.28f - sLum) * 4.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+        // Silver-blue lunar illumination on night clouds so clouds passing Masser & Secunda catch crisp moonlight rims.
+        const float3 sunC = lerp(rawSunC, max(rawSunC, float3(0.24f, 0.34f, 0.54f)) * 1.65f, nightW * 0.78f);
         const float3 skyC = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.0f);
         const float sigma = kCloudSigma;
         float T = 1.0f;

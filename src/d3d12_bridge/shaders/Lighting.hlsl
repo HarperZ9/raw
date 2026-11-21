@@ -71,6 +71,14 @@ float smooth01(float x) { return x * x * (3.0f - 2.0f * x); }
 // surfaces (foliage) add the game's wrap term, smoothstep((n.l + r) / (1 + r)) - smoothstep(n.l),
 // from the unshadowed colour; the game scales it by a texture the G-buffer does not carry, so a
 // fitted constant (s.soft) stands in (docs/LIGHTING.md).
+// Jimenez 2016 multi-bounce colored AO approximation: replaces muddy grey crevices with physical colored inter-reflection.
+float3 gtaoMultiBounce(float vis, float3 alb) {
+    const float3 a =  2.0404f * alb - 0.3324f;
+    const float3 b = -4.7951f * alb + 0.6417f;
+    const float3 c =  2.7552f * alb + 0.6903f;
+    return max(vis.xxx, ((vis * a + b) * vis + c) * vis);
+}
+
 void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, inout float3 spec) {
     const float x = dot(s.n, l), nl = saturate(x);
     // Skin: light that enters the skin comes out past the terminator, red farthest (a per-channel wrap,
@@ -242,6 +250,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float microSlope = saturate(length(float2(gx, gy)) * 1.4f);
         s.alpha = clamp(s.alpha + (microSlope - 0.15f) * 0.12f * distFade, 0.05f, 0.95f);
     }
+    // Tokuyoshi-Kaplanyan geometric specular anti-aliasing: filters sub-pixel normal variance to kill GGX sparkle in motion.
+    if (!match) {
+        const float3 dnx = ddx(s.n), dny = ddy(s.n);
+        const float specVar = min(0.45f * (dot(dnx, dnx) + dot(dny, dny)), 0.16f);
+        s.alpha = sqrt(saturate(s.alpha * s.alpha + specVar));
+    }
     const float3 lift = s.n * (0.3f + 0.002f * z);                 // ray origins off the surface
     const float4 m4 = Mask.Load(ip);
 
@@ -311,7 +325,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float skyVis = rt && (flags.x & FLAG_SKY) != 0u && (isExterior || !match) ? RtIdx.Load(ip).w : 1.0f;
     // One occlusion, not two: the ray-traced sky/RTAO visibility already holds near occluders.
     const float rtOcc = isExterior ? lerp(1.0f, skyVis, cluster.w) : lerp(0.42f, 1.0f, skyVis);
-    amb *= min(aoTerm, rtOcc);
+    const float combinedOcc = min(aoTerm, rtOcc);
+    amb *= match ? combinedOcc.xxx : gtaoMultiBounce(combinedOcc, saturate(albedo));
     // Where the sky is blocked, the blocking surfaces send their own light: the bounce the sky rays found.
     // Interiors too (FLAG_BOUNCE_IN, at RtBounceInterior): lamp-lit walls send their light on.
     const bool bounceHere = sunColour.w > 0.5f || (flags.x & FLAG_BOUNCE_IN) != 0u;

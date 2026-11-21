@@ -35,4 +35,9 @@ void ControlSetProxy(SB::Proxy::ProxyInterface* proxy);
 // the targets are created. Returns a line for the log.
 std::string ResizeShadowAtlas(const Image& img, const std::vector<RefTarget>& refs, uint32_t size);
 
+// Native high-FPS Havok physics & gameclock untying (replaces SSE Display Tweaks):
+// unlocks bLockFramerate:Display and dynamically tracks fMaxTime:HAVOK / fMaxTimeComplex:HAVOK to live frame time.
+std::string HavokFixInit(const Image& img, const std::vector<RefTarget>& refs);
+void HavokFixOnPresent();
+
 }  // namespace raw::rt

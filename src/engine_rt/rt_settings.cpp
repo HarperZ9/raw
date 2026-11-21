@@ -82,4 +82,62 @@ std::string ResizeShadowAtlas(const Image& img, const std::vector<RefTarget>& re
     return out;
 }
 
+namespace {
+struct HavokState {
+    bool enabled = false;
+    float* fMaxTime = nullptr;
+    float* fMaxTimeComplex = nullptr;
+    uint32_t* uMaxSteps = nullptr;
+    uint32_t* uMaxStepsComplex = nullptr;
+    uint8_t* bLockFps = nullptr;
+    LARGE_INTEGER freq{};
+    LARGE_INTEGER lastQpc{};
+    float emaDt = 1.0f / 60.0f;
+} g_havok;
+
+void* FindSettingPtr(const Image& img, const std::vector<RefTarget>& refs, const char* name) {
+    for (const auto& x : refs)
+        if (x.setting && x.name == name) return const_cast<uint8_t*>(img.base) + x.rva + 8;
+    return nullptr;
+}
+}  // namespace
+
+std::string HavokFixInit(const Image& img, const std::vector<RefTarget>& refs) {
+    g_havok = {};
+    g_havok.fMaxTime = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fMaxTime:HAVOK"));
+    g_havok.fMaxTimeComplex = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fMaxTimeComplex:HAVOK"));
+    g_havok.uMaxSteps = reinterpret_cast<uint32_t*>(FindSettingPtr(img, refs, "uMaxNumPhysicsStepsPerUpdate:HAVOK"));
+    g_havok.uMaxStepsComplex = reinterpret_cast<uint32_t*>(FindSettingPtr(img, refs, "uMaxNumPhysicsStepsPerUpdateComplex:HAVOK"));
+    g_havok.bLockFps = reinterpret_cast<uint8_t*>(FindSettingPtr(img, refs, "bLockFramerate:Display"));
+    if (!g_havok.fMaxTime) return "havok fix: fMaxTime:HAVOK not found in version table";
+    if (g_havok.bLockFps) *g_havok.bLockFps = 0;
+    if (g_havok.uMaxSteps && *g_havok.uMaxSteps < 4u) *g_havok.uMaxSteps = 4u;
+    if (g_havok.uMaxStepsComplex && *g_havok.uMaxStepsComplex < 4u) *g_havok.uMaxStepsComplex = 4u;
+    QueryPerformanceFrequency(&g_havok.freq);
+    QueryPerformanceCounter(&g_havok.lastQpc);
+    g_havok.emaDt = 1.0f / 60.0f;
+    g_havok.enabled = true;
+    char out[192];
+    std::snprintf(out, sizeof out, "havok fix: active (fMaxTime=%p complex=%p lockFps=%p steps=%p)",
+                  g_havok.fMaxTime, g_havok.fMaxTimeComplex, g_havok.bLockFps, g_havok.uMaxSteps);
+    return out;
+}
+
+void HavokFixOnPresent() {
+    if (!g_havok.enabled || !g_havok.fMaxTime || g_havok.freq.QuadPart <= 0) return;
+    LARGE_INTEGER now{};
+    QueryPerformanceCounter(&now);
+    const double rawDt = double(now.QuadPart - g_havok.lastQpc.QuadPart) / double(g_havok.freq.QuadPart);
+    g_havok.lastQpc = now;
+    if (rawDt <= 0.0005 || rawDt > 0.25) return;  // ignore loading screens / paused spikes
+    const float clampedDt = rawDt < 0.003333 ? 0.003333f : (rawDt > 0.041667 ? 0.041667f : float(rawDt));
+    g_havok.emaDt = g_havok.emaDt * 0.65f + clampedDt * 0.35f;
+    const float mt = g_havok.emaDt < 0.003333f ? 0.003333f : (g_havok.emaDt > 0.041667f ? 0.041667f : g_havok.emaDt);
+    *g_havok.fMaxTime = mt;
+    if (g_havok.fMaxTimeComplex) {
+        const float mtc = mt * 2.0f;
+        *g_havok.fMaxTimeComplex = mtc < 0.006667f ? 0.006667f : (mtc > 0.066667f ? 0.066667f : mtc);
+    }
+}
+
 }  // namespace raw::rt

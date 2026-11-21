@@ -211,6 +211,11 @@ void main(uint3 id : SV_DispatchThreadID) {
     float restCode = 0.0f;   // 4 + 2 x the untraced lights' share in fifteenths, when one was sampled (RtSkyFilter decodes it)
     const float d = Depth.Load(ip);
     const uint base = uint(Spec.Load(ip).z * 255.0f + 0.5f) & 127u;
+    // SM6.9 Wave-coherent sky early exit: pure sky waves skip all RayQuery and cluster setup cleanly.
+    if (WaveActiveAllTrue(d >= 1.0f || base == 0u)) {
+        Vis[id.xy] = 1.0f; Lights[id.xy] = 0.0f; SkyRaw[id.xy] = float4(0.0f, 0.0f, 0.0f, 1.0f); Refl[id.xy] = 0.0f;
+        return;
+    }
     if (d < 1.0f && base != 0u && (base < 7u || base == 10u)) {   // 10: skin
         const float2 px = float2(id.xy);
         const float3 p = worldAt(px, d);

@@ -377,6 +377,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 slopeTint = lerp(float3(0.96f, 0.98f, 1.03f), float3(1.02f, 1.01f, 0.97f), smoothstep(0.55f, 0.88f, slope));
         const float tileFade = saturate(1.0f - z / 16000.0f);
         albedo *= lerp(1.0f.xxx, antiTile * slopeTint, tileFade * (base == 4u ? 0.85f : 0.45f));
+        // Triplanar geological crag & fracture normal relief on steep blocky vanilla cliffs (base == 1 or 4, slope < 0.72).
+        if (slope < 0.72f && z < 8000.0f) {
+            const float cragFade = saturate((0.72f - slope) * 2.5f) * saturate(1.0f - z / 8000.0f);
+            const float cx = cNoise(wp * 0.016f + float3(3.1f, 0.0f, 7.3f)) - cNoise(wp * 0.016f - float3(3.1f, 0.0f, 7.3f));
+            const float cy = cNoise(wp * 0.016f + float3(0.0f, 3.1f, 11.7f)) - cNoise(wp * 0.016f - float3(0.0f, 3.1f, 11.7f));
+            const float cz = cNoise(float3(wp.xy * 0.012f, wp.z * 0.042f)) * 2.0f - 1.0f;
+            s.n = normalize(s.n + float3(cx * 0.32f, cy * 0.32f, cz * 0.16f) * cragFade);
+        }
         // Novel world-space Nordic moss & damp-crevice weathering on outdoor rocks/ruins (zero texture mods).
         if (base == 1u && sunColour.w > 0.5f && z < 4500.0f && wet.snow < 0.35f) {
             const float mossPatch = smoothstep(0.56f, 0.82f, cNoise(wp * 0.0085f + float3(4.1f, 9.7f, 2.3f))) * smoothstep(0.52f, 0.86f, slope);

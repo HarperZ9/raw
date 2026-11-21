@@ -27,10 +27,12 @@ void main(uint3 id : SV_DispatchThreadID) {
     // Pixels a world unit spans here.
     const float4 s1 = screenOf(wp + float3(0.0f, 0.0f, 1.0f));
     const float pxPerUnit = max(length(s1.xy - (float2(p) + 0.5f)), 1.0e-3f);
-    const float3 sigma = float3(1.0f, 0.42f, 0.22f) * width;      // world units: red scatters furthest
-    const float rMax = min(sigma.r * 2.5f * pxPerUnit, 48.0f);   // pixels
+    const float3 sigmaN = float3(0.32f, 0.24f, 0.18f) * width;    // narrow epidermal lobe (preserves pores)
+    const float3 sigmaW = float3(1.00f, 0.36f, 0.20f) * width;    // broad dermal hemoglobin lobe (red scatters furthest)
+    const float rMax = min(sigmaW.r * 2.5f * pxPerUnit, 48.0f);   // pixels
     if (rMax < 0.75f) { Out[p] = c; return; }
-    const float turn = frac(sin(dot(float2(p), float2(12.9898f, 78.233f)) + frameNo * 0.618f) * 43758.5453f) * 6.2831853f;
+    // Deterministic Interleaved Gradient Noise rotation (eliminates per-frame skin crawl shimmer).
+    const float turn = ign(float2(p)) * 6.2831853f;
     float3 sum = c.rgb, wsum = 1.0f.xxx;
     [unroll] for (uint i = 0u; i < 16u; i++) {
         const float r = sqrt((float(i) + 0.5f) / 16.0f) * rMax;
@@ -39,8 +41,8 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float dq = Depth.Load(int3(q, 0));
         if (dq >= 1.0f || !isSkin(q) || abs(viewZOf(dq) - z) > 0.01f * z + 2.0f) { continue; }
         const float ru = r / pxPerUnit;
-        // Each tap stands for an annulus of equal area, so the Gaussian weight alone shapes the profile.
-        const float3 w = exp(-0.5f * ru * ru / (sigma * sigma));
+        const float ru2 = -0.5f * ru * ru;
+        const float3 w = 0.45f * exp(ru2 / (sigmaN * sigmaN)) + 0.55f * exp(ru2 / (sigmaW * sigmaW));
         sum += w * Colour.Load(int3(q, 0)).rgb;
         wsum += w;
     }

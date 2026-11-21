@@ -107,11 +107,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if ((flags.x & FLAG_MATCH) == 0u) {
             baseSky = baseSky / (1.0f + max(max(baseSky.r, max(baseSky.g, baseSky.b)) - 0.72f, 0.0f) * 0.55f);
             const float3 sDir = normalize(worldAt(floor(at.xy), 1.0f));
-            const float elev = saturate(sDir.z);
             const float dayW = saturate(sunDir.z * 3.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
-            // Deepen zenith slightly toward physical Rayleigh blue on clear days while preserving sunset/night mood.
-            const float3 zenithTint = lerp(float3(0.88f, 0.93f, 1.08f), float3(0.76f, 0.88f, 1.16f), dayW);
-            baseSky *= lerp(float3(1.0f, 1.0f, 1.0f), zenithTint, pow(elev, 0.75f) * 0.55f);
+            if (dayW > 0.02f && sDir.z > -0.02f) {
+                const float turb = lerp(2.5f, 5.5f, saturate(clouds.x));
+                const float3 pSky = preethamSky(sDir, sunDir.xyz, turb);
+                const float skyLum = max(dot(baseSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.08f);
+                const float pLum = max(dot(pSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.08f);
+                // Blend physically derived Perez/Preetham sky chromaticity while preserving weather exposure.
+                baseSky = lerp(baseSky, pSky * (skyLum / pLum), dayW * (1.0f - saturate(clouds.x * 0.65f)) * 0.48f);
+            }
         }
         if ((flags.x & FLAG_CLOUDS) == 0u) { return float4(baseSky, game.a); }
         const float4 c = Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f);
@@ -380,11 +384,32 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
     }
     if (!match) {
-        // Subsurface scattering: warm dermal wrap on skin (base 10) and backlit translucent transmission on foliage (base 5).
-        if (skin && isExterior) {
-            const float nlRaw = dot(s.n, sunDir.xyz);
-            const float wrap = saturate((nlRaw + 0.45f) / 1.45f) * saturate(1.0f - saturate(nlRaw));
-            lit += albedo * sunColour.rgb * float3(1.0f, 0.42f, 0.25f) * wrap * (0.25f + 0.75f * sunShadow) * 0.38f;
+        // Subsurface scattering & character shading: dual-lobe skin, Kajiya-Kay hair sheen, wet corneal eyes, backlit foliage.
+        if (skin) {
+            if (isExterior) {
+                const float nlRaw = dot(s.n, sunDir.xyz);
+                const float wrap = saturate((nlRaw + 0.45f) / 1.45f) * saturate(1.0f - saturate(nlRaw));
+                lit += albedo * sunColour.rgb * float3(1.0f, 0.40f, 0.24f) * wrap * (0.25f + 0.75f * sunShadow) * 0.40f;
+                // Narrow oily-pore specular lobe on skin (dual-lobe dermal specular).
+                const float3 shv = normalize(s.v + sunDir.xyz);
+                const float snh = saturate(dot(s.n, shv)), sa2 = 0.048f;
+                const float sdd = snh * snh * (sa2 - 1.0f) + 1.0f;
+                const float sD = sa2 / (PI * sdd * sdd);
+                lit += min(sunColour.rgb * (sD * 0.028f * saturate(nlRaw) * sunShadow * 0.22f), 0.8f.xxx);
+            }
+        } else if (base == 11u) {
+            // Class 11 (Hair): Kajiya-Kay shifted anisotropic hair sheen along vertical strand tangent.
+            const float3 tHair = normalize(cross(s.n, float3(1.0f, 0.0f, 0.0f)) + float3(0.0f, 0.0f, 0.35f));
+            const float3 hDir = normalize(s.v + (isExterior ? sunDir.xyz : float3(0.0f, 0.0f, 1.0f)));
+            const float tdoth = dot(tHair, hDir);
+            const float sinTH = sqrt(max(1.0f - tdoth * tdoth, 0.0f));
+            const float kajiya = pow(sinTH, 48.0f) * 0.35f + pow(sinTH, 12.0f) * 0.12f;
+            lit += (albedo * 0.65f + 0.35f.xxx) * (isExterior ? sunColour.rgb * (0.3f + 0.7f * sunShadow) : amb) * kajiya;
+        } else if (base == 12u) {
+            // Class 12 (Eyes): wet corneal clearcoat + live dynamic cubemap catchlight.
+            const float3 eyeEnv = evalDynamicEnvCube(reflect(-s.v, s.n), 0.04f);
+            const float eyeFr = 0.035f + 0.965f * pow(1.0f - saturate(dot(s.n, s.v)), 5.0f);
+            lit += eyeEnv * eyeFr * 1.15f;
         } else if (base == 5u && isExterior) {
             const float back = pow(saturate(dot(-s.v, sunDir.xyz)), 3.0f);
             lit += albedo * sunColour.rgb * float3(1.05f, 1.15f, 0.72f) * (0.18f + 0.82f * back) * (0.20f + 0.80f * sunShadow) * 0.42f;

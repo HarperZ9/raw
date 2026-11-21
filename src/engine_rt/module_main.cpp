@@ -107,7 +107,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     // targets exist already, so they are not touched again.
     if (!generation) {
         Log("startup settings: %zu applied", raw::rt::ApplyStartupSettings(g_img, g_refs, ini, g_out + "\\engine_rt.log"));
-        if (const int atlas = IniInt("ShadowAtlas", 0); atlas > 0)
+        if (const int atlas = IniInt("ShadowAtlas", 4096); atlas > 0)
             Log("%s", raw::rt::ResizeShadowAtlas(g_img, g_refs, uint32_t(atlas)).c_str());
     }
     if (IniInt("EngineTuning", 1)) Log("%s", raw::rt::ApplyEngineTuning(g_img, g_refs).c_str());

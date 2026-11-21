@@ -82,7 +82,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float weatherMistGain = 1.0f + saturate(weather.w * 0.85f + weather.z * 0.75f + clouds.x * 0.35f) * 0.65f;
         [loop] for (uint li = 0u; li < flags.y; li++) {
             const float wi = windowIntegral(w, lightPosR[li].xyz, lightPosR[li].w, tEnd);
-            if (wi > 0.0f) { scatter += lightColS[li].rgb * (sigma * wi * tune2.y * weatherMistGain / (4.0f * PI)); }
+            if (wi > 0.0f) {
+                const bool isFire = lightColS[li].r > lightColS[li].b * 1.30f;
+                const float3 fCol = isFire ? lightColS[li].rgb * float3(1.22f, 0.86f, 0.54f) * 1.45f : lightColS[li].rgb;
+                scatter += fCol * (sigma * wi * tune2.y * weatherMistGain / (4.0f * PI));
+            }
         }
     }
     // Soft highlight shoulder on volumetric in-scatter so bright sunbeams stay sculpted and never clip.

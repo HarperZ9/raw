@@ -116,6 +116,24 @@ pre{margin:0;background:#0a0d12;border:1px solid var(--line);border-radius:4px;p
         </label>
       </div>
       <div class="row">
+        <label>Season (Dynamic Snow/Foliage)
+          <select id="season-mode" onchange="iniSet('Season', this.value)">
+            <option value="0" selected>0 - Auto (Weather Driven)</option>
+            <option value="1">1 - Spring (Emerald &amp; Dew)</option>
+            <option value="2">2 - Summer (Lush &amp; Dry)</option>
+            <option value="3">3 - Autumn (Golden Amber &amp; Crimson)</option>
+            <option value="4">4 - Winter (Deep Snowpack &amp; Footprints)</option>
+          </select>
+        </label>
+        <label>Force Snow / Rain Accumulation
+          <div class="row" style="margin:0">
+            <button onclick="iniSet('WeatherSnow', 1)">Snow 100%</button>
+            <button onclick="iniSet('WeatherRain', 1)">Rain 100%</button>
+            <button onclick="iniSet('WeatherSnow', -1); iniSet('WeatherRain', -1)">Auto</button>
+          </div>
+        </label>
+      </div>
+      <div class="row">
         <label>Color Grade LUT (ToneX2)
           <select id="lut-mode" onchange="iniSet('ToneX2', this.value)">
             <option value="0">0 - Natural Neutral</option>

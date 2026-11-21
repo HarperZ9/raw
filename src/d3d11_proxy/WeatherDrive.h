@@ -16,12 +16,12 @@ struct WeatherSurfaces {
 };
 struct WeatherTimes
 {
-    float soakSeconds = 60.0f;      // dry to soaked in full rain
-    float drySeconds = 240.0f;      // soaked to dry under a clear sky (twice as long overcast)
-    float puddleSeconds = 180.0f;   // puddles to full in full rain
-    float drainSeconds = 600.0f;    // full puddles to none
-    float snowSeconds = 300.0f;     // bare to deep in full snowfall
-    float meltSeconds = 1800.0f;    // deep to bare with nothing falling (rain melts it in a tenth of that)
+    float soakSeconds = 15.0f;      // dry to soaked in full rain
+    float drySeconds = 120.0f;      // soaked to dry under a clear sky (twice as long overcast)
+    float puddleSeconds = 28.0f;    // puddles to full in full rain
+    float drainSeconds = 240.0f;    // full puddles to none
+    float snowSeconds = 22.0f;      // bare to deep snowdrifts in full snowfall
+    float meltSeconds = 360.0f;     // deep to bare with nothing falling (rain melts it in a tenth of that)
 };
 void WeatherDrive_SetTest(float rain, float snow);   // the ini stand-in; negative: off
 void WeatherDrive_SetTimes(const WeatherTimes& t);

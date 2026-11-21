@@ -189,6 +189,7 @@ void LoadLightingConfig(const std::string& ini)
     t.waterCausticCell = f("WaterCausticCell", t.waterCausticCell); t.waterView = i("WaterView", 0);
     t.waterRefract = f("WaterRefract", t.waterRefract); t.waterBed = i("WaterBed", 1) != 0;
     t.sss = f("Sss", t.sss); t.sssWidth = f("SssWidth", t.sssWidth);
+    t.season = i("Season", t.season);
     t.rtSkinBones = i("RtSkinBones", 10);
     t.rtActors = i("RtActors", 1) != 0;
     t.rtActorView = i("RtActorView", 1) != 0;

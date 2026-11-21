@@ -19,31 +19,18 @@ float cNoise(float3 x) {
                 u.z);
 }
 
-// Seamless 3x3x3 (-1..1) inverted Worley cellular noise: zero cell-boundary seams or straight cutoff lines.
-float cWorley(float3 p) {
-    const float3 id = floor(p);
-    const float3 f = frac(p);
-    float minD = 4.0f;
-    [unroll] for (int z = -1; z <= 1; z++) {
-        [unroll] for (int y = -1; y <= 1; y++) {
-            [unroll] for (int x = -1; x <= 1; x++) {
-                const float3 cell = id + float3(x, y, z);
-                const float h0 = cHash(cell);
-                const float h1 = cHash(cell + float3(17.3f, 31.7f, 11.1f));
-                const float h2 = cHash(cell + float3(43.1f, 13.9f, 29.3f));
-                const float3 pt = float3(x, y, z) + float3(h0, h1, h2) * 0.85f;
-                const float3 d = pt - f;
-                minD = min(minD, dot(d, d));
-            }
-        }
-    }
-    return 1.0f - saturate(sqrt(minD));
+// Mathematically C2-continuous 3D domain-warped billow noise (zero cell boundaries or straight cutoff lines ever).
+float cBillow(float3 p) {
+    const float w = cNoise(p * 0.85f + float3(3.1f, 7.4f, 1.9f)) * 0.65f;
+    const float n0 = cNoise(p + w);
+    const float n1 = cNoise(p * 2.07f + float3(11.3f, 5.1f, 8.7f) - w * 0.5f);
+    return saturate(1.0f - abs((n0 * 0.65f + n1 * 0.35f) * 2.0f - 1.0f));
 }
 
 bool cloudsOn() { return clouds.x > 0.0f && clouds.z > 0.0f; }
 static const float kCloudSigma = 0.0022f;   // crisp optical density for detailed cumulus edges
 
-// High-frequency 4-octave photographic Worley-Perlin cumulus + crisp wispy cirrus veil.
+// Seam-free 5-octave photographic domain-warped cumulus + crisp wispy cirrus veil.
 float cloudDensity(float3 pa, bool detail) {
     const float2 dxy = pa.xy - camPosW.xy;
     const float curvedZ = pa.z + dot(dxy, dxy) * 1.15e-8f;
@@ -55,23 +42,22 @@ float cloudDensity(float3 pa, bool detail) {
     const float3 q = float3(sheared.x / 26000.0f, sheared.y / 24000.0f, h * 1.15f);
     const float warp = cNoise(q * 1.15f + 7.1f) * 0.35f;
     const float baseFbm = cNoise(q + warp) * 0.50f + cNoise(q * 2.15f + 11.3f) * 0.30f + cNoise(q * 4.45f + 5.7f) * 0.20f;
-    const float macroWorley = cWorley(q * 2.1f + 2.7f);
-    const float shape = lerp(baseFbm, baseFbm * 0.58f + macroWorley * 0.52f, 0.55f);
+    const float macroBillow = cBillow(q * 1.75f + 2.7f);
+    const float shape = lerp(baseFbm, baseFbm * 0.55f + macroBillow * 0.50f, 0.55f);
     // Flat condensation base + sculpted cumulus towers.
     const float baseFlat = saturate(h / 0.12f);
     const float topRound = saturate((1.0f - h) / lerp(0.42f, 0.20f, saturate(clouds.x)));
     const float cover = saturate(clouds.x);
-    // Calibrated threshold so fair-weather cover (0.30..0.50) produces bold, distinct cumulus clouds with clear blue sky between them.
-    const float thresh = lerp(0.56f, 0.22f, cover);
+    const float thresh = lerp(0.54f, 0.22f, cover);
     float dens = saturate((shape * baseFlat * topRound - thresh) / max(0.32f, 0.14f));
     if (detail && dens > 0.0f) {
-        // Multi-scale high-frequency Worley + FBM erosion for razor-sharp cauliflower cumulus edges.
+        // 5-octave C2-continuous billow + FBM erosion (zero cell edges anywhere in the sky).
         const float3 r1 = float3((sheared.x + wind.x * 0.35f) / 3600.0f, (sheared.y + wind.y * 0.35f) / 3400.0f, h * 5.8f);
-        const float w1 = 1.0f - cWorley(r1);
+        const float b1 = 1.0f - cBillow(r1);
         const float f2 = cNoise(r1 * 2.13f + 3.7f);
         const float f3 = cNoise(r1 * 4.61f + 9.2f);
         const float f4 = cNoise(r1 * 9.37f + 17.5f);
-        const float fineErode = w1 * 0.42f + f2 * 0.28f + f3 * 0.19f + f4 * 0.11f;
+        const float fineErode = b1 * 0.42f + f2 * 0.28f + f3 * 0.19f + f4 * 0.11f;
         const float erodeAmt = lerp(0.45f, 0.72f, h) * (1.0f - dens * 0.55f);
         dens = saturate((dens - fineErode * erodeAmt) / max(1.0f - fineErode * 0.42f, 0.28f));
     }

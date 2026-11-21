@@ -36,8 +36,9 @@ struct LightUniform
     float cluster[4], tune[4], tune2[4], weather[4], camPos[4], clouds[4], cloudWind[4], waterA[4], waterB[4], prevWorldToClip[16];
     float lightPosR[kMaxSceneLights][4], lightColS[kMaxSceneLights][4];
     uint32_t clusters[kClusterCount][4];
+    float footTrail[32][4];   // persistent world-space boot-print ring buffer (xyz world abs, w active strength)
 };
-static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16, "layout of cbuffer P");
+static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16, "layout of cbuffer P");
 static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
 constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536, kDistantLod = 131072, kEnvMap = 262144, kCharLight = 524288;
@@ -275,7 +276,29 @@ private:
         u.clouds[3] = t.cloudShadow * (1.0f - 0.85f * t.weatherCloud);
         u.cloudWind[0] = t.cloudWindX; u.cloudWind[1] = t.cloudWindY; u.cloudWind[2] = t.cloudDensity; u.cloudWind[3] = t.cloudHistory;
         u.waterA[0] = t.waterReflect; u.waterA[1] = t.waterCaustics; u.waterA[2] = t.waterAbsorb; u.waterA[3] = t.waterGlint;
-        u.waterB[0] = float(t.waterView); u.waterB[1] = t.waterCausticCell; u.waterB[2] = t.waterRefract; u.waterB[3] = 0.0f;
+        u.waterB[0] = float(t.waterView); u.waterB[1] = t.waterCausticCell; u.waterB[2] = t.waterRefract; u.waterB[3] = float(t.season);
+        // Update persistent 32-slot world-space footprint & terrain-deformation trail ring buffer.
+        if (m_hasLastFoot) {
+            const float dx = s.posAdjust[0] - m_lastFoot[0], dy = s.posAdjust[1] - m_lastFoot[1], dz = s.posAdjust[2] - m_lastFoot[2];
+            const float d2 = dx * dx + dy * dy;
+            if (d2 > 250000.0f || std::fabs(dz) > 600.0f) {
+                std::memset(m_footTrail, 0, sizeof m_footTrail);
+                m_lastFoot[0] = s.posAdjust[0]; m_lastFoot[1] = s.posAdjust[1]; m_lastFoot[2] = s.posAdjust[2];
+            } else if (d2 >= 1156.0f) {   // stride >= 34 units (~0.5 m)
+                const float invL = 1.0f / std::sqrt(d2);
+                const float side = (m_footIdx & 1u) ? 8.5f : -8.5f;
+                const uint32_t slot = m_footIdx++ & 31u;
+                m_footTrail[slot][0] = s.posAdjust[0] - dy * invL * side;
+                m_footTrail[slot][1] = s.posAdjust[1] + dx * invL * side;
+                m_footTrail[slot][2] = s.posAdjust[2];
+                m_footTrail[slot][3] = 1.0f;
+                m_lastFoot[0] = s.posAdjust[0]; m_lastFoot[1] = s.posAdjust[1]; m_lastFoot[2] = s.posAdjust[2];
+            }
+        } else {
+            m_lastFoot[0] = s.posAdjust[0]; m_lastFoot[1] = s.posAdjust[1]; m_lastFoot[2] = s.posAdjust[2];
+            m_hasLastFoot = true;
+        }
+        std::memcpy(u.footTrail, m_footTrail, sizeof m_footTrail);
         std::memcpy(u.prevWorldToClip, m_prevWorldToClip, 64);
         std::memcpy(m_prevWorldToClip, s.worldToClip, 64);
         u.camPos[3] = float(double(GetTickCount64() % 3600000ull) / 1000.0);   // seconds, for the rain's rings and the snow's glints
@@ -321,6 +344,10 @@ private:
     TextureHandle m_cloud[2];
     SamplerHandle m_lin;
     float m_prevWorldToClip[16] = {};
+    float m_footTrail[32][4] = {};
+    float m_lastFoot[3] = {};
+    uint32_t m_footIdx = 0;
+    bool m_hasLastFoot = false;
     LightUniform m_u{};
     LightingTuning m_tune;
     uint64_t m_frame = 0, m_submissions = 0, m_pendingSubmission = 0;

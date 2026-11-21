@@ -140,4 +140,30 @@ void HavokFixOnPresent() {
     }
 }
 
+std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& refs) {
+    struct KV { const char* k; const char* v; };
+    static const KV kTuning[] = {
+        {"fNearDistance:Display", "22.0"},
+        {"fShadowBiasScale:Display", "0.18"},
+        {"bMultiThreadBoneUpdate:Animation", "1"},
+        {"bUseThreadedParticleSystem:General", "1"},
+        {"bUseThreadedTempEffects:General", "1"},
+        {"bUseThreadedMorpher:General", "1"},
+        {"bUseMultiThreadedFaceGen:BackgroundLoad", "1"},
+        {"bUseMultiThreadedTrees:BackgroundLoad", "1"},
+        {"bBackgroundLoadLipFiles:BackgroundLoad", "1"},
+        {"bPreemptivelyUnloadCells:General", "1"},
+        {"fUpdateBudgetMS:Papyrus", "2.4"},
+        {"fExtraTaskletBudgetMS:Papyrus", "2.4"},
+        {"fPostLoadUpdateTimeMS:Papyrus", "1000.0"},
+    };
+    size_t applied = 0;
+    for (const auto& kv : kTuning) {
+        if (SetSetting(img, refs, kv.k, kv.v)) ++applied;
+    }
+    char out[128];
+    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu architectural fixes applied", applied, sizeof(kTuning) / sizeof(kTuning[0]));
+    return out;
+}
+
 }  // namespace raw::rt

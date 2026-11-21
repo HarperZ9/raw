@@ -428,10 +428,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
 
     const bool rt = !match && (flags.x & FLAG_RT) != 0u;
     float4 rv = rt ? RtVis.Load(ip) : 1.0f.xxxx;
-    // Depth-aware 3x3 bilateral filter on point-light RT soft shadows (rv.yzw): eliminates 1-spp penumbra stipple noise
-    // on interior walls, alchemy tables, torches, and hearths while preserving crisp shadow edges.
-    if (rt && flags.y > 0u) {
-        float3 pvSum = rv.yzw * 2.0f;
+    // Depth-aware 3x3 bilateral filter on RT sun shadow (rv.x) and point-light RT soft shadows (rv.yzw):
+    // turns hard 2-spp sun edges and 1-spp point penumbrae into smooth natural soft shadows on roads, walls & hearths.
+    if (rt) {
+        float4 pvSum = rv * 2.0f;
         float pvW = 2.0f;
         const int2 dMaxS = int2(dims.xy) - 1;
         [unroll] for (int sy = -1; sy <= 1; sy++) {
@@ -439,12 +439,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 if (sx == 0 && sy == 0) continue;
                 const int3 spS = int3(clamp(ip.xy + int2(sx, sy), int2(0, 0), dMaxS), 0);
                 if (abs(Depth.Load(spS) - d) < 0.0008f) {
-                    pvSum += RtVis.Load(spS).yzw;
+                    pvSum += RtVis.Load(spS);
                     pvW += 1.0f;
                 }
             }
         }
-        rv.yzw = pvSum / pvW;
+        rv = pvSum / pvW;
     }
     const uint3 rIdx = rt ? uint3(RtIdx.Load(ip).xyz * 255.0f + 0.5f) : uint3(0u, 0u, 0u);
     // Every light past the three traced ones: the share of their light that reaches the pixel, from one ray a
@@ -568,7 +568,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float ambL = max(dot(amb, float3(0.2126f, 0.7152f, 0.0722f)), 0.02f);
             const float hemiL = max(dot(skyHemi, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
             const float inShadow = 1.0f - saturate(sunShadow);
-            amb = lerp(amb, skyHemi * (ambL / hemiL), dayAmbW * lerp(0.28f, 0.52f, inShadow));
+            amb = lerp(amb, skyHemi * (ambL / hemiL), dayAmbW * lerp(0.24f, 0.38f, inShadow));
         }
     } else if (!match && !isExterior) {
         const float outCool = saturate(clouds.x * 0.6f + weather.w * 0.5f);

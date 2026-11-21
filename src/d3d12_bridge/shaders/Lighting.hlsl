@@ -261,6 +261,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         ng = length(ng) > 1.0e-6f ? normalize(ng) : s.n;
         if (dot(ng, s.n) < 0.0f) { ng = -ng; }
         wet = wetAt(p, s.n, ng, sv);
+        // Native Seasons (waterB.w: 0 Auto, 1 Spring, 2 Summer, 3 Autumn, 4 Winter).
+        const uint season = uint(waterB.w + 0.5f);
+        if (season == 4u) {
+            const float winMask = saturate((s.n.z - 0.42f) * 2.4f) * (0.45f + 0.55f * sv);
+            wet.snow = max(wet.snow, winMask * 0.90f);
+        } else if (season == 1u) {
+            wet.wet = max(wet.wet, 0.25f * saturate(s.n.z));
+        }
         // Water fills the pores and standing water hides the ground's own light. At 0.6 and 0.18 the rain frame's
         // lower half read 23 of 255 against the game's 50 (rt5-wx-5, Riverwood under 10a241): too dark for an overcast
         // scene lit mostly by its ambient.
@@ -276,10 +284,6 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         s.mask = max(s.mask, max(wet.wet * 0.6f, wet.puddle));
         lobe = lobe || max(wet.wet, wet.puddle) > 0.2f;
         if (wet.snow > 0.0f) {
-            // Snow lies over everything below it: bright, rough, its own smooth shape over the ground's bumps.
-            // The game lights in its own (gamma) space, where its ground textures sit near 0.3. Full sun on 0.8
-            // met the knee and read flat white; 0.68 still clipped in the game's tone map (Riverwood 13:00,
-            // 2026-11-19). About 0.56 keeps the drifts' shading; RAW's filmic tone map rolls the rest off.
             albedo = lerp(albedo, float3(0.53f, 0.56f, 0.60f), wet.snow);
             s.alpha = lerp(s.alpha, 0.55f, wet.snow);
             s.shin = lerp(s.shin, 2.0f / (0.55f * 0.55f) - 2.0f, wet.snow);
@@ -289,23 +293,52 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             wet.puddle *= 1.0f - wet.snow;
             wet.wet *= 1.0f - wet.snow;
         }
-        // Native live snow footprint depression + glacial subsurface ice tint around the player on snow surfaces.
-        const float natSnow = (base == 4u) ? saturate((min(albedo.r, min(albedo.g, albedo.b)) - 0.38f) * 4.5f) * saturate(s.n.z * 1.4f - 0.3f) : 0.0f;
+        // Persistent 32-step world-anchored snow & wet-mud footprint deformation trail (footTrail[0..31]).
+        const float natSnow = (base == 4u) ? saturate((min(albedo.r, min(albedo.g, albedo.b)) - 0.36f) * 4.5f) * saturate(s.n.z * 1.4f - 0.3f) : 0.0f;
         const float snowAmt = max(wet.snow, natSnow);
-        if (snowAmt > 0.10f) {
-            const float2 footDelta = p.xy;
-            const float footR = length(footDelta);
-            if (footR < 85.0f && abs(p.z) < 110.0f) {
-                const float depress = exp(-footR * footR / 950.0f);
-                const float rim = exp(-pow(footR - 36.0f, 2.0f) / 260.0f);
-                const float2 rad = footDelta / max(footR, 1.0f);
-                // Depressed compacted ice center (cool glacial blue) + raised powdery rim normal tilt.
-                s.n = normalize(s.n + float3(rad * (depress * 0.24f - rim * 0.16f), 0.0f) * snowAmt);
-                albedo *= lerp(1.0f.xxx, float3(0.78f, 0.88f, 1.04f), depress * snowAmt * 0.55f);
-                s.alpha = lerp(s.alpha, 0.28f, depress * snowAmt * 0.6f);
+        const float mudAmt = (base == 4u) ? max(wet.wet, wet.puddle) * (1.0f - snowAmt) : 0.0f;
+        if ((snowAmt > 0.08f || mudAmt > 0.15f) && z < 2200.0f && s.n.z > 0.45f) {
+            const float3 wpAbs = p + camPosW.xyz;
+            float maxDep = 0.0f, maxRim = 0.0f;
+            float2 bestRad = 0.0f.xx;
+            [loop] for (uint fi = 0u; fi < 32u; fi++) {
+                const float4 ft = footTrail[fi];
+                if (ft.w <= 0.01f) { continue; }
+                const float3 fd = wpAbs - ft.xyz;
+                const float r2 = dot(fd.xy, fd.xy);
+                if (r2 < 576.0f && abs(fd.z) < 160.0f) {
+                    const float rr = sqrt(r2);
+                    const float dep = exp(-r2 / 145.0f) * ft.w;
+                    const float rim = exp(-pow(rr - 15.0f, 2.0f) / 36.0f) * ft.w;
+                    if (dep > maxDep) { maxDep = dep; bestRad = fd.xy / max(rr, 0.5f); }
+                    maxRim = max(maxRim, rim);
+                }
             }
-            // Glacial ice-crystal micro-glint even on natural snowfields (not only during active snowfall).
+            if (maxDep > 0.02f || maxRim > 0.02f) {
+                const float deformStr = max(snowAmt, mudAmt * 0.85f);
+                s.n = normalize(s.n + float3(bestRad * (maxDep * 0.45f - maxRim * 0.25f), 0.0f) * deformStr);
+                if (snowAmt >= mudAmt) {
+                    albedo *= lerp(1.0f.xxx, float3(0.58f, 0.72f, 0.92f), maxDep * snowAmt * 0.78f);
+                    s.alpha = lerp(s.alpha, 0.24f, maxDep * snowAmt * 0.65f);
+                } else {
+                    albedo *= lerp(1.0f.xxx, float3(0.45f, 0.42f, 0.38f), maxDep * mudAmt * 0.75f);
+                    s.alpha = lerp(s.alpha, 0.08f, maxDep * mudAmt * 0.75f);
+                }
+            }
             wet.snow = max(wet.snow, natSnow * 0.65f);
+        }
+    }
+    // Seasonal foliage palette transformation (base == 5u: Spring emerald, Autumn golden-amber/crimson, Winter frost).
+    if (!match && base == 5u) {
+        const uint seasonF = uint(waterB.w + 0.5f);
+        if (seasonF == 1u) {
+            albedo *= float3(0.94f, 1.12f, 0.92f);
+        } else if (seasonF == 3u) {
+            const float greenness = saturate((albedo.g - max(albedo.r, albedo.b) * 0.85f) * 3.5f);
+            albedo = lerp(albedo, float3(albedo.g * 1.28f, albedo.g * 0.72f, albedo.b * 0.38f), greenness * 0.78f);
+        } else if (seasonF == 4u) {
+            const float snowLeaf = saturate((s.n.z - 0.25f) * 2.0f);
+            albedo = lerp(albedo * float3(0.86f, 0.92f, 1.04f), float3(0.56f, 0.60f, 0.66f), snowLeaf * 0.55f);
         }
     }
     const float3 nSmooth = s.n;

@@ -96,8 +96,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (pc.w > 0.0f && proj.z > 0.5f) {
         const float2 uv = float2(pc.x / pc.w * 0.5f + 0.5f, 0.5f - pc.y / pc.w * 0.5f) / resScale.xy;
         if (all(uv > 0.0f) && all(uv < 1.0f)) {
+            const float edgeFade = smoothstep(0.0f, 0.045f, min(min(uv.x, 1.0f - uv.x), min(uv.y, 1.0f - uv.y)));
             const float4 h = History.SampleLevel(Lin, uv, 0.0f);
-            res = lerp(res, h, cloudWind.w);
+            res = lerp(res, h, cloudWind.w * edgeFade);
         }
     }
     return res;

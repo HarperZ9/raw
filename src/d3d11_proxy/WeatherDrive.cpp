@@ -8,7 +8,11 @@ namespace SB::Proxy
 {
 namespace
 {
-struct Report { std::atomic<float> rain{0}, snow{0}, cloud{0}, fog{0}; std::atomic<bool> seen{false}; };
+struct Report {
+    std::atomic<float> rain{0}, snow{0}, cloud{0}, fog{0};
+    std::atomic<float> windX{0}, windY{0}, lightning{0}, gameHour{12.0f};
+    std::atomic<bool> seen{false}, extSeen{false};
+};
 Report g_report;
 float g_testRain = -1.0f, g_testSnow = -1.0f;
 WeatherTimes g_times;
@@ -46,6 +50,13 @@ bool WeatherDrive_Step(double dt, WeatherSurfaces& out)
     g_s.wetness = Clamp01(g_s.wetness); g_s.puddles = Clamp01(g_s.puddles); g_s.snow = Clamp01(g_s.snow);
     g_s.rain = Clamp01(rain);
     g_s.cloud = cloud;
+    if (g_report.extSeen.load()) {
+        g_s.windX = g_report.windX.load();
+        g_s.windY = g_report.windY.load();
+        g_s.lightning = Clamp01(g_report.lightning.load());
+        g_s.gameHour = g_report.gameHour.load();
+        g_s.hasExt = true;
+    }
     out = g_s;
     return true;
 }
@@ -56,4 +67,11 @@ extern "C" __declspec(dllexport) void PG_SetWeatherState(float rain, float snow,
     using SB::Proxy::g_report;
     g_report.rain = rain; g_report.snow = snow; g_report.cloud = cloud; g_report.fog = fog;
     g_report.seen = true;
+}
+
+extern "C" __declspec(dllexport) void PG_SetWeatherExt(float windX, float windY, float lightning, float gameHour)
+{
+    using SB::Proxy::g_report;
+    g_report.windX = windX; g_report.windY = windY; g_report.lightning = lightning; g_report.gameHour = gameHour;
+    g_report.extSeen = true;
 }

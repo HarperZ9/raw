@@ -22,7 +22,7 @@ float rand(float2 p, float s) { return frac(52.9829189f * frac(dot(p, float2(0.0
 
 float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float2 lo = floor(at.xy);
-    const float2 full = (lo + 0.5f) * 2.0f;   // 1/2-res volumetric clouds (4x sharper than 1/4-res)
+    const float2 full = lo + 0.5f;   // full native 1:1 resolution volumetric clouds (zero upscaling blur)
     const float3 far = worldAt(full - 0.5f, 0.995f) - eyeAt();
     const float3 dir = normalize(far);
     float4 res = float4(0.0f, 0.0f, 0.0f, 1.0f);
@@ -30,7 +30,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 o = camPosW.xyz;
     const float maxDist = 400000.0f;
     if (cloudsOn() && cloudSpan(o, dir, maxDist, t0, t1)) {
-        const uint steps = 64u;
+        const uint steps = 48u;
         const float dt = (t1 - t0) / float(steps);
         const float j = rand(lo, proj.z);
         const float cosT = dot(dir, sunDir.xyz);

@@ -18,7 +18,10 @@ DXGI_FORMAT CrossingFormat(DXGI_FORMAT f, bool* viaCompute)
     switch (f) {
         case DXGI_FORMAT_R24G8_TYPELESS:
         case DXGI_FORMAT_D24_UNORM_S8_UINT:
-        case DXGI_FORMAT_R24_UNORM_X8_TYPELESS: *viaCompute = true; return DXGI_FORMAT_R32_FLOAT;
+        case DXGI_FORMAT_R24_UNORM_X8_TYPELESS:
+        case DXGI_FORMAT_R32G8X24_TYPELESS:
+        case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
+        case DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS: *viaCompute = true; return DXGI_FORMAT_R32_FLOAT;
         case DXGI_FORMAT_R16_TYPELESS:
         case DXGI_FORMAT_D16_UNORM:             return DXGI_FORMAT_R16_UNORM;
         case DXGI_FORMAT_R32_TYPELESS:
@@ -85,7 +88,10 @@ bool D3D12Bridge::ShareAndRead(ID3D11Texture2D* src, UINT slice, std::vector<uin
     auto* c = m->ctx11.Get();
     if (viaCompute) {
         D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
-        sd.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+        sd.Format = (d.Format == DXGI_FORMAT_R32G8X24_TYPELESS || d.Format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT ||
+                     d.Format == DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS)
+                        ? DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS
+                        : DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
         sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
         sd.Texture2D.MipLevels = 1;
         ComPtr<ID3D11ShaderResourceView> srv;

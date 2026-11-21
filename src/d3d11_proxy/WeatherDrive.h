@@ -9,7 +9,11 @@
 
 namespace SB::Proxy
 {
-struct WeatherSurfaces { float wetness = 0, puddles = 0, snow = 0, rain = 0, cloud = 0; };   // rain and cloud: now
+struct WeatherSurfaces {
+    float wetness = 0, puddles = 0, snow = 0, rain = 0, cloud = 0;
+    float windX = 0, windY = 0, lightning = 0, gameHour = 12.0f;
+    bool hasExt = false;
+};
 struct WeatherTimes
 {
     float soakSeconds = 60.0f;      // dry to soaked in full rain
@@ -27,3 +31,4 @@ bool WeatherDrive_Step(double dt, WeatherSurfaces& out);
 
 // rain, snow: falling now, 0 to 1; cloud: cover 0 to 1; fog: 0 to 1. From the engine module, any thread.
 extern "C" __declspec(dllexport) void PG_SetWeatherState(float rain, float snow, float cloud, float fog);
+extern "C" __declspec(dllexport) void PG_SetWeatherExt(float windX, float windY, float lightning, float gameHour);

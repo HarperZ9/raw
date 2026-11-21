@@ -57,6 +57,7 @@ void DriveWeather()
     if (!s_weatherDriven || !WeatherDrive_Step(dt, w) || !Bridge()) return;
     LightingTuning t = Cfg().light;
     t.wetness = w.wetness; t.puddles = w.puddles; t.snow = w.snow; t.rain = w.rain; t.weatherCloud = w.cloud;
+    if (w.hasExt) { t.cloudWindX = w.windX; t.cloudWindY = w.windY; }
     raw::bridge::LightingPassTune(Bridge()->ActivePass(), t);
     static uint32_t logged = 0;
     if (logged++ % 240 == 0) Log("[Weather] surfaces: wetness %.3f, puddles %.3f, snow %.3f", w.wetness, w.puddles, w.snow);

@@ -101,10 +101,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float d = Depth.Load(ip);
     if ((flags.x & FLAG_SURFACE) == 0u) { return game; }
     if (d >= 1.0f) {
-        // The sky: soft highlight roll-off on vanilla overblown skies before compositing volumetric clouds.
+        // The sky: physically grounded zenith-to-horizon Rayleigh depth + soft roll-off before compositing curved volumetric clouds.
         if (flags.w == 10u) { return float4(1.0f, 0.0f, 1.0f, game.a); }
-        const float3 baseSky = (flags.x & FLAG_MATCH) != 0u ? game.rgb
-            : game.rgb / (1.0f + max(max(game.r, max(game.g, game.b)) - 0.78f, 0.0f) * 0.45f);
+        float3 baseSky = game.rgb;
+        if ((flags.x & FLAG_MATCH) == 0u) {
+            baseSky = baseSky / (1.0f + max(max(baseSky.r, max(baseSky.g, baseSky.b)) - 0.72f, 0.0f) * 0.55f);
+            const float3 sDir = normalize(worldAt(floor(at.xy), 1.0f));
+            const float elev = saturate(sDir.z);
+            const float dayW = saturate(sunDir.z * 3.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+            // Deepen zenith slightly toward physical Rayleigh blue on clear days while preserving sunset/night mood.
+            const float3 zenithTint = lerp(float3(0.88f, 0.93f, 1.08f), float3(0.76f, 0.88f, 1.16f), dayW);
+            baseSky *= lerp(float3(1.0f, 1.0f, 1.0f), zenithTint, pow(elev, 0.75f) * 0.55f);
+        }
         if ((flags.x & FLAG_CLOUDS) == 0u) { return float4(baseSky, game.a); }
         const float4 c = Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f);
         return float4(baseSky * c.a + c.rgb, game.a);

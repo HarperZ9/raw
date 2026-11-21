@@ -592,10 +592,25 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 bentN = normalize(lerp(s.n, float3(0.0f, 0.0f, 1.0f), (1.0f - combinedOcc) * 0.32f * skyVis));
     const float hemiSky = (!match && isExterior) ? lerp(0.72f, 1.12f, saturate(bentN.z * 0.5f + 0.5f)) : 1.0f;
     amb *= match ? combinedOcc.xxx : gtaoMultiBounce(combinedOcc, saturate(albedo)) * hemiSky;
-    // Where the sky is blocked, the blocking surfaces send their own light: the bounce the sky rays found.
-    // Interiors too (FLAG_BOUNCE_IN, at RtBounceInterior): lamp-lit walls send their light on.
+    // Multi-bounce hardware RayQuery GI: boosted indirect energy + color-bleed preservation + upward overhang bounce
+    // so sunlit grass, cobblestone, snow, water, and warm tavern hearths cast tangible colored indirect light.
     const bool bounceHere = sunColour.w > 0.5f || (flags.x & FLAG_BOUNCE_IN) != 0u;
-    const float3 bounce = rt && (flags.x & FLAG_BOUNCE) != 0u && bounceHere ? RtBounce.Load(ip).rgb * proj.w * (match ? 1.0f : 1.45f) : 0.0f.xxx;
+    float3 bounce = 0.0f.xxx;
+    if (rt && (flags.x & FLAG_BOUNCE) != 0u && bounceHere) {
+        const float3 rawB = RtBounce.Load(ip).rgb * proj.w;
+        if (match) {
+            bounce = rawB;
+        } else {
+            const float bGain = isExterior ? 2.15f : 2.35f;
+            const float overhangLift = 1.0f + saturate(-s.n.z) * 0.45f;
+            const float3 bScaled = rawB * (bGain * overhangLift);
+            const float bLum = dot(bScaled, float3(0.2126f, 0.7152f, 0.0722f));
+            // Preserve physical indirect chroma bleed (green grass, warm timber, golden firelight) without clipping.
+            bounce = max(lerp(bLum.xxx, bScaled, 1.24f), 0.0f.xxx);
+            const float bPeak = max(bounce.r, max(bounce.g, bounce.b));
+            if (bPeak > 1.25f) { bounce *= (1.25f / bPeak); }
+        }
+    }
     // Unified sky-coupled hemisphere ambient (!match exteriors): locks world shadow & sky ambient directly
     // to our live skyPalette() zenith/horizon colors so terrain, roofs, and shadows always match the sky dome.
     if (!match && isExterior) {

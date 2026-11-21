@@ -136,6 +136,15 @@ private:
     std::vector<D3D12_RAYTRACING_INSTANCE_DESC> m_stage;
     std::vector<uint8_t> m_stageState;
     std::vector<uint32_t> m_stageTris;
+    // Camera-independent persistent TLAS cache: retains static world instances in world-absolute coordinates
+    // when Skyrim's CPU frustum/occlusion culler drops them off-screen, so RT shadows, reflections, and GI stay stable.
+    struct PersistInst {
+        D3D12_RAYTRACING_INSTANCE_DESC desc{};
+        double absT[3] = {};
+        uint32_t tris = 0;
+        uint64_t lastSeen = 0;
+    };
+    std::unordered_map<uint64_t, PersistInst> m_persistInst;
     double m_cpuSetUs = 0, m_cpuPlaceUs = 0;                // render-thread time, summed over m_cpuFrames
     double m_cpuReleaseUs = 0, m_cpuSkinUs = 0;            // parts of m_cpuSetUs: last frame's references, RtSkin's draws
     uint32_t m_cpuFrames = 0;

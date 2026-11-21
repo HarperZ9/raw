@@ -44,6 +44,8 @@ void RtScene::StageDraws()
 }
 
 // The staged instances in draw order, as PlaceInto writes them, each copied whole into the upload heap.
+// Also retains recently-seen static world instances in world-absolute coordinates when Skyrim's frustum
+// culler drops them off-screen so RT shadows, reflections, and GI do not pop when turning the camera.
 uint32_t RtScene::PlaceStaged(D3D12_RAYTRACING_INSTANCE_DESC* inst, uint32_t slot, uint32_t& alphaN, uint64_t& sceneTris)
 {
     uint32_t n = 0;
@@ -51,11 +53,45 @@ uint32_t RtScene::PlaceStaged(D3D12_RAYTRACING_INSTANCE_DESC* inst, uint32_t slo
     for (size_t di = 0; di < count && n < kMaxInstances; ++di) {
         const uint8_t st = m_stageState[di];
         if (!st) continue;
-        if (st == 2 && !Instance(m_drawMesh[di], m_draws[di], m_stage[di], m_stageTris[di])) continue;
+        const uint32_t mi = m_drawMesh[di];
+        if (st == 2 && !Instance(mi, m_draws[di], m_stage[di], m_stageTris[di])) continue;
         const D3D12_RAYTRACING_INSTANCE_DESC& x = m_stage[di];
         std::memcpy(inst + n++, &x, sizeof x);
         alphaN += (x.Flags & D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE) == 0;
         sceneTris += m_stageTris[di];
+        // Cache static world-space instances (non-LOD-land) so off-screen buildings/trees stay in the TLAS.
+        if (!m_draws[di].lodLand && m_persistInst.size() < 24000) {
+            const double ax = double(x.Transform[0][3]) + m_camPos[0];
+            const double ay = double(x.Transform[1][3]) + m_camPos[1];
+            const double az = double(x.Transform[2][3]) + m_camPos[2];
+            uint64_t h = uint64_t(mi) * 0x9E3779B97F4A7C15ull;
+            h ^= uint64_t(int64_t(ax * 0.25)) * 0xBF58476D1CE4E5B9ull;
+            h ^= uint64_t(int64_t(ay * 0.25)) * 0x94D049BB133111EBull;
+            h ^= uint64_t(int64_t(az * 0.25)) * 0x2545F4914F6CDD1Dull;
+            PersistInst& pi = m_persistInst[h];
+            pi.desc = x;
+            pi.absT[0] = ax; pi.absT[1] = ay; pi.absT[2] = az;
+            pi.tris = m_stageTris[di];
+            pi.lastSeen = m_frame;
+        }
+    }
+    // Re-emit recently seen frustum-culled static instances (up to 360 frames TTL) in current camera-relative space.
+    for (auto it = m_persistInst.begin(); it != m_persistInst.end(); ) {
+        const PersistInst& pi = it->second;
+        if (m_frame > pi.lastSeen + 360) {
+            it = m_persistInst.erase(it);
+            continue;
+        }
+        if (pi.lastSeen < m_frame && n < kMaxInstances) {
+            D3D12_RAYTRACING_INSTANCE_DESC x = pi.desc;
+            x.Transform[0][3] = float(pi.absT[0] - m_camPos[0]);
+            x.Transform[1][3] = float(pi.absT[1] - m_camPos[1]);
+            x.Transform[2][3] = float(pi.absT[2] - m_camPos[2]);
+            std::memcpy(inst + n++, &x, sizeof x);
+            alphaN += (x.Flags & D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE) == 0;
+            sceneTris += pi.tris;
+        }
+        ++it;
     }
     if (m_skinReady && m_tune.skin && n < kMaxInstances) n += m_skin.Place(inst + n, kMaxInstances - n, slot, sceneTris);
     return n;

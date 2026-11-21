@@ -721,6 +721,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // Class-2 forged metal/armor dynamic cubemap IBL + Turquin multi-scattering metallic energy preservation.
             const float multiBoost = 1.0f + s.f0 * (1.0f - nv) * 0.85f;
             lit += dynEnv * fr * max(reflMask, 0.25f) * (1.0f - s.alpha * 0.65f) * (0.35f + 0.65f * skyVis) * 0.58f * multiBoost;
+        } else if (base == 12u) {
+            // Class-12 Eye corneal wet catchlight: sharp corneal Fresnel reflection of live sky/environment.
+            const float eyeFr = 0.025f + 0.975f * pow(1.0f - nv, 5.0f);
+            lit += evalDynamicEnvCube(rDir, 0.04f) * (eyeFr * 0.85f * (0.4f + 0.6f * skyVis));
         }
         // Estevez-Kulla grazing velvet/fuzz rim sheen on rough organic materials (fur, wool, moss, thatch, pine bark).
         if (!skin && base != 2u && s.alpha > 0.52f && sunDir.w > 0.5f && sunShadow > 0.05f) {

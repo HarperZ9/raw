@@ -62,13 +62,17 @@ float3 distantLit(int3 ip, float2 at, float d) {
     if (sunColour.w > 0.5f && (flags.x & FLAG_CLOUDS) != 0u) { sh *= cloudShadow(p + camPosW.xyz); }
     const float zDist = viewZOf(d);
     const bool nearGrass = (zDist < 4200.0f) && (l + r < 44);
-    const float nl = nearGrass ? saturate((dot(n, sunDir.xyz) + 0.15f) / 1.15f) : saturate((dot(n, sunDir.xyz) + 0.25f) / 1.25f);
+    const bool farTreeCard = (!nearGrass && cw > 0.05f);
+    const float nl = nearGrass ? saturate((dot(n, sunDir.xyz) + 0.15f) / 1.15f)
+                   : farTreeCard ? saturate((dot(n, sunDir.xyz) + 0.12f) / 1.12f)
+                   : saturate((dot(n, sunDir.xyz) + 0.25f) / 1.25f);
     float3 amb = float3(dot(ambient[0].xyz, n) + ambient[0].w, dot(ambient[1].xyz, n) + ambient[1].w, dot(ambient[2].xyz, n) + ambient[2].w);
     const float skyVis = rt && (flags.x & FLAG_SKY) != 0u && sunColour.w > 0.5f ? RtIdx.Load(ip).w : 1.0f;
-    // Dynamic near-field grass lighting: apply root-to-tip AO, colored multi-bounce crevices, and backlit translucency.
+    // Dynamic near-field grass lighting & distant tree-LOD crown self-shadowing (grounds bright snow pines against alpine ridges).
     const float grassAo = nearGrass && (flags.x & FLAG_AO) != 0u ? lerp(1.0f, AoHist.Load(ip).x, 0.75f) : 1.0f;
     const float occ = min(lerp(1.0f, skyVis, cluster.w), grassAo);
-    amb *= nearGrass ? gtaoMultiBounce(occ, saturate(albedo)) * lerp(0.55f, 1.0f, saturate(v * 0.5f + 0.65f)) : occ.xxx;
+    const float crownAo = farTreeCard ? lerp(0.68f, 1.04f, saturate(v * 0.5f + 0.5f)) : 1.0f;
+    amb *= nearGrass ? gtaoMultiBounce(occ, saturate(albedo)) * lerp(0.55f, 1.0f, saturate(v * 0.5f + 0.65f)) : (occ * crownAo).xxx;
     // What the ridges that block the sky send back (RtShadow.hlsl, farOccluded; [Lighting] RtFar), as the near bounce is.
     if (rt && (flags.x & FLAG_BOUNCE) != 0u && sunColour.w > 0.5f) { amb += RtBounce.Load(ip).rgb * proj.w; }
     float3 direct = sunColour.rgb * (nl * sh);

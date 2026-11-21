@@ -69,7 +69,7 @@ struct LightingTuning
     float cloudShadow = 0.75f;      // CloudShadow: how much of the sun the thickest cloud takes
     float cloudDensity = 1.0f;      // CloudDensity
     float cloudWindX = 180.0f, cloudWindY = 60.0f;   // CloudWindX, CloudWindY: units a second
-    float cloudHistory = 0.62f;     // CloudHistory: crisper cumulus edges with minimal temporal smear
+    float cloudHistory = 0.72f;     // CloudHistory: full-res temporal reprojection for crisp noise-free cumulus
     bool  rtSkin = true;            // skinned actors join the scene with a BLAS a frame
     int   rtSkinCull = 1;           // RtSkinCull (0 none, 1 stretched and floating, 2 stretched only), RtSkinRatio, RtSkinMin: stretched skinned triangles left out (RtSkinCheck.hlsl)
     float rtSkinRatio = 4.0f, rtSkinMin = 24.0f;

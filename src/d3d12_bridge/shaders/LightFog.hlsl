@@ -63,8 +63,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float dayG = clamp(lerp(tune.y, max(tune.y, 0.70f), saturate(1.0f - sunDir.z * 2.5f)), 0.1f, 0.82f);
         const float dynG = lerp(dayG, 0.76f, nightW);
         const float ph = min(phaseHG(dot(w, sunDir.xyz), dynG), 3.4f);
-        // 16 quadratic-clustered steps with height-stratified valley density for crisp forest sunbeams & moonbeams.
-        const uint kSteps = 16u;
+        // 24 quadratic-clustered steps with 2x finer cloud-shadow modulation for razor-sharp forest sunbeams & moonbeams.
+        const uint kSteps = 24u;
         float sum = 0.0f, cs = 1.0f;
         float tPrev = 0.0f;
         [loop] for (uint i = 0u; i < kSteps; i++) {
@@ -75,7 +75,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             tPrev = tNext;
             const float4 c = screenOf(w * t);
             const float3 wpFog = w * t + camPosW.xyz;
-            if ((flags.x & FLAG_CLOUDS) != 0u && (i & 3u) == 0u) { cs = cloudShadowN(wpFog, 1u); }
+            if ((flags.x & FLAG_CLOUDS) != 0u && (i & 1u) == 0u) { cs = cloudShadowN(wpFog, 1u); }
             // 3D world-space wind-drifting volumetric valley mist density (living rolling fog banks).
             const float3 fogFlow = wpFog * 0.00055f + float3(cloudWind.xy * camPosW.w * 0.00018f, 0.0f);
             const float mist3d = 0.62f + 0.58f * cNoise(fogFlow);

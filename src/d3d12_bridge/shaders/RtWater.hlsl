@@ -206,9 +206,12 @@ void water(uint3 id : SV_DispatchThreadID) {
             }
             const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;
             const float cellFeather = 1.0f - smoothstep(1800.0f, 3400.0f, length(p));
+            const float farSkyF = saturate(F * waterA.x * 0.42f * (1.0f - cellFeather));
             const float effF = saturate(F * waterA.x * shoreFeather * cellFeather);
             const uint view = uint(waterB.x + 0.5f);
-            col = refr ? lerp(body, refl, effF) + glint * shoreFeather : lerp(game.rgb, refl, effF) + caus * (1.0f - effF) + glint * shoreFeather;
+            const float3 farSkyRefl = waterSky(rd);
+            const float3 baseCol = refr ? lerp(body, refl, effF) : lerp(game.rgb, refl, effF) + caus * (1.0f - effF);
+            col = lerp(baseCol, farSkyRefl, farSkyF) + glint * shoreFeather;
             if (view == 1u) { col = refl; }
             else if (view == 2u) { col = caus * 4.0f; }
             else if (view == 3u) { col = float3(F, nv, 1.0f); }

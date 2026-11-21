@@ -116,10 +116,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 d65Mie = lerp(float3(1.0f, 0.66f, 0.36f), float3(0.96f, 0.98f, 1.02f), highSunF);
         const float mieHalo = (pow(cosSunF, 5.0f) * 0.14f + pow(cosSunF, 28.0f) * 0.24f) * (1.0f - cloudCov * 0.72f) * (1.0f - nightF);
         atmoCol += d65Mie * mieHalo;
-        // Snowstorm frosted whiteout vs night alpine indigo.
-        atmoCol = lerp(atmoCol, lerp(sH, float3(0.62f, 0.67f, 0.74f), 0.65f), weather.z * 0.65f);
+        // Snowstorm frosted whiteout vs night alpine indigo, with physical atmospheric highlight rolloff.
+        atmoCol = lerp(atmoCol, lerp(sH, float3(0.58f, 0.63f, 0.70f), 0.55f), weather.z * 0.55f);
         atmoCol = lerp(atmoCol, max(sH * 0.55f, float3(0.05f, 0.09f, 0.18f)), nightF);
-        return float4(lit.rgb * T + atmoCol * (1.0f.xxx - T) + scatter, lit.a);
+        const float atMax = max(atmoCol.r, max(atmoCol.g, atmoCol.b));
+        atmoCol = atmoCol / (1.0f + max(atMax - 0.65f, 0.0f) * 0.55f);
+        // Attenuate additive volumetric scatter by transmittance T so far-horizon fog never double-adds into blinding whiteout.
+        return float4(lit.rgb * T + atmoCol * (1.0f.xxx - T) + scatter * saturate(T + 0.20f), lit.a);
     }
     const float T = (flags.x & FLAG_FOG_REPLACES) != 0u ? exp(-sigma * tEnd) : 1.0f;
     return float4(lit.rgb * T + scatter, lit.a);

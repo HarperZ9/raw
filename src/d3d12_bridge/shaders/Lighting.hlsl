@@ -427,7 +427,25 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float4 m4 = Mask.Load(ip);
 
     const bool rt = !match && (flags.x & FLAG_RT) != 0u;
-    const float4 rv = rt ? RtVis.Load(ip) : 1.0f.xxxx;
+    float4 rv = rt ? RtVis.Load(ip) : 1.0f.xxxx;
+    // Depth-aware 3x3 bilateral filter on point-light RT soft shadows (rv.yzw): eliminates 1-spp penumbra stipple noise
+    // on interior walls, alchemy tables, torches, and hearths while preserving crisp shadow edges.
+    if (rt && flags.y > 0u) {
+        float3 pvSum = rv.yzw * 2.0f;
+        float pvW = 2.0f;
+        const int2 dMaxS = int2(dims.xy) - 1;
+        [unroll] for (int sy = -1; sy <= 1; sy++) {
+            [unroll] for (int sx = -1; sx <= 1; sx++) {
+                if (sx == 0 && sy == 0) continue;
+                const int3 spS = int3(clamp(ip.xy + int2(sx, sy), int2(0, 0), dMaxS), 0);
+                if (abs(Depth.Load(spS) - d) < 0.0008f) {
+                    pvSum += RtVis.Load(spS).yzw;
+                    pvW += 1.0f;
+                }
+            }
+        }
+        rv.yzw = pvSum / pvW;
+    }
     const uint3 rIdx = rt ? uint3(RtIdx.Load(ip).xyz * 255.0f + 0.5f) : uint3(0u, 0u, 0u);
     // Every light past the three traced ones: the share of their light that reaches the pixel, from one ray a
     // pixel to a light picked by its share, filtered with the sky rays (RtShadow.hlsl, RtSkyFilter.hlsl).
@@ -497,10 +515,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const int ch = int(lightColS[li].w);
             if (ch >= 0 && ch <= 3) { sh = m4[ch]; }   // interiors without sun shadows use channel 0 too
             float3 c = lightColS[li].rgb * att;
+            // Embers-class warm hearth/torch/candle spectral enrichment + gentle organic flame warmth.
+            if (!match && lightColS[li].r > lightColS[li].b * 1.30f) {
+                const float flk = 0.94f + 0.04f * sin(camPosW.w * 7.3f + float(li) * 2.17f) + 0.02f * cos(camPosW.w * 13.1f + float(li) * 4.31f);
+                c *= float3(1.16f, 0.90f, 0.64f) * flk;
+            }
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;
-            // Smooth untraced-light ReSTIR visibility (floor 0.55) and skip noisy 1-spp screenShadow on interior point lights
-            // to eliminate interior tavern/dungeon flickering completely.
-            if (slot != 0u) { sh = min(sh, rv[slot]); } else { sh = min(sh, lerp(0.55f, 1.0f, restVis)); }
+            // Top 3 lights per pixel get full crisp hardware RT soft shadows (rv[1..3]); lights 4..128 get smooth ReSTIR RT shadows.
+            if (slot != 0u) { sh = min(sh, rv[slot]); } else { sh = min(sh, lerp(0.35f, 1.0f, restVis)); }
             if (!match && sunColour.w > 0.5f && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
                 sh *= screenShadow(p + lift, l, min(dist, tune.z), 4.0f / max(dist, 1.0f), jit, 10u);
                 --softLeft;

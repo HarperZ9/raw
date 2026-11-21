@@ -177,7 +177,7 @@ void LoadLightingConfig(const std::string& ini)
     t.cloudHistory = f("CloudHistory", t.cloudHistory);
     {   // RAW's tone map and exposure (Tonemap.h); keys in [Lighting] so a live edit reaches them
         TonemapSettings tm;
-        tm.enabled = i("Tonemap", 0) != 0; tm.mode = i("Exposure", tm.mode); tm.bias = f("ExposureBias", tm.bias);
+        tm.enabled = i("Tonemap", 1) != 0; tm.mode = i("Exposure", tm.mode); tm.bias = f("ExposureBias", tm.bias);
         tm.minLum = f("ExposureMinLum", tm.minLum); tm.maxLum = f("ExposureMaxLum", tm.maxLum); tm.key = f("ExposureKey", tm.key);
         tm.curve = i("ToneCurve", tm.curve); tm.white = f("ToneWhite", tm.white); tm.view = i("ToneView", 0);
         tm.adapt = f("ExposureAdapt", tm.adapt); tm.ref = f("ExposureRef", tm.ref);

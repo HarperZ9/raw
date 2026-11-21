@@ -84,10 +84,10 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float2 wDir = normalize(cloudWind.xy + float2(1.0f, 0.35f));
                 const float2 wPerp = float2(-wDir.y, wDir.x);
                 const float wt = camPosW.w;
-                const float g1 = sin(dot(wpW.xy, wDir) * 0.045f + wt * 2.4f);
-                const float g2 = sin(dot(wpW.xy, normalize(wDir + wPerp * 0.65f)) * 0.095f + wt * 3.7f);
-                const float g3 = cos(dot(wpW.xy, normalize(wDir - wPerp * 0.85f)) * 0.175f - wt * 4.9f);
-                const float windScale = (0.009f + saturate(length(cloudWind.xy) / 420.0f) * 0.018f) * wFade;
+                const float g1 = sin(dot(wpW.xy, wDir) * 0.038f + wt * 0.65f);
+                const float g2 = sin(dot(wpW.xy, normalize(wDir + wPerp * 0.65f)) * 0.078f + wt * 0.95f);
+                const float g3 = cos(dot(wpW.xy, normalize(wDir - wPerp * 0.85f)) * 0.140f - wt * 1.25f);
+                const float windScale = (0.006f + saturate(length(cloudWind.xy) / 420.0f) * 0.012f) * wFade;
                 n = normalize(n + float3((wDir * (g1 * 0.55f + g2 * 0.30f) + wPerp * (g3 * 0.25f)) * windScale, 0.0f));
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
                 if (wDist < 1600.0f) {
@@ -99,8 +99,8 @@ void water(uint3 id : SV_DispatchThreadID) {
                         const float r2 = dot(fd.xy, fd.xy);
                         if (r2 < 22500.0f && abs(fd.z) < 180.0f) {
                             const float rr = sqrt(r2);
-                            const float ring = sin(rr * 0.28f - wt * 5.2f) * exp(-rr / 65.0f) * ft.w;
-                            wakeG += (fd.xy / max(rr, 1.0f)) * ring * 0.045f;
+                            const float ring = sin(rr * 0.24f - wt * 1.65f) * exp(-rr / 65.0f) * ft.w;
+                            wakeG += (fd.xy / max(rr, 1.0f)) * ring * 0.032f;
                         }
                     }
                     n = normalize(n + float3(wakeG, 0.0f));
@@ -117,8 +117,8 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
             const float3 o = p + float3(0.0f, 0.0f, 2.5f + 0.003f * length(p));
 
-            // Attenuate steep horizontal wave tilt for reflection rays so moving water never stretches reflections into vertical bands.
-            const float3 nRefl = normalize(lerp(float3(0.0f, 0.0f, 1.0f), n, 0.35f));
+            // Calm reflection normal tilt (0.22) keeps lake and river surface reflections silky and matched to natural flow speed.
+            const float3 nRefl = normalize(lerp(float3(0.0f, 0.0f, 1.0f), n, 0.22f));
             float3 rd = reflect(-v, nRefl);
             if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }
             float3 refl;
@@ -153,9 +153,9 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float depthV = max(p.z - pb.z, 0.0f);
                 const float3 sr = refract(-l, float3(0.0f, 0.0f, 1.0f), 1.0f / 1.333f);   // the sun's ray under the surface
                 // Flow-advected chromatic dispersion caustics: prism RGB spread scales naturally with water depth.
-                const float2 flowOff = (cloudWind.xy * 0.045f + nL.xy * 18.0f) * camPosW.w;
+                const float2 flowOff = (cloudWind.xy * 0.012f + nL.xy * 5.5f) * camPosW.w;
                 const float3 at = camPosW.xyz + pb - sr * (depthV / max(-sr.z, 0.2f));      // where it crossed the surface
-                const float t = camPosW.w;
+                const float t = camPosW.w * 0.42f;
                 const float sc = max(waterB.y, 1.0f);
                 const float disp = clamp(depthV * 0.025f, 0.30f, 1.65f);
                 const float2 cPos = at.xy + flowOff;
@@ -197,7 +197,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                     : 0.0f.xxx;
                 // Animated shore-contact foam + turbulent rapids/waterfall whitewater crests.
                 const float shoreBand = (1.0f - smoothstep(0.0f, 20.0f, depthV)) * smoothstep(0.0f, 1.5f, depthV);
-                const float foamCell = saturate(1.0f - cellWalls(wpW.xy / 28.0f, camPosW.w * 1.35f) * 2.4f);
+                const float foamCell = saturate(1.0f - cellWalls(wpW.xy / 28.0f, camPosW.w * 0.38f) * 2.4f);
                 const float crestFoam = saturate((1.0f - n.z) * 11.0f - 0.12f) * foamCell;
                 const float foamMask = saturate(max(shoreBand * (0.45f + 0.55f * foamCell * foamCell), crestFoam * 0.72f)) * nearW;
                 const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) + (sunDir.w > 0.5f ? sunColour.rgb * 0.45f : 0.0f.xxx)) * 0.85f;

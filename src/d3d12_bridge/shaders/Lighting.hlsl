@@ -833,10 +833,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
     }
     const float3 finalLitRaw = knee3(lit);
-    // Preserve warm emissive tavern windows, lanterns, and runes where the game's glow exceeds RAW's surface lighting.
+    // Preserve genuinely chromatic emissive tavern windows, lanterns, braziers, and magic runes
+    // while strictly excluding achromatic white/blue snowfields & glaciers (fixes glowing Dawnstar snow/ice patches).
     const float gLuma = dot(game.rgb, float3(0.2126f, 0.7152f, 0.0722f));
     const float rLuma = dot(finalLitRaw, float3(0.2126f, 0.7152f, 0.0722f));
-    const float emissiveW = (!match && !skin && base != 5u && gLuma > rLuma * 1.65f && gLuma > 0.18f) ? saturate((gLuma - rLuma * 1.65f) * 2.5f) : 0.0f;
+    const float gMax = max(game.r, max(game.g, game.b));
+    const float gMin = min(game.r, min(game.g, game.b));
+    const float gSat = (gMax - gMin) / max(gMax, 1.0e-4f);
+    const float zPix = viewZOf(d);
+    const float emissiveW = (!match && !skin && base != 5u && zPix < 5500.0f && gSat > 0.28f && gLuma > rLuma * 1.65f && gLuma > 0.18f)
+                          ? saturate((gLuma - rLuma * 1.65f) * 2.5f) * saturate((5500.0f - zPix) / 1500.0f) : 0.0f;
     const float3 finalLit = lerp(finalLitRaw, max(finalLitRaw, game.rgb * 0.92f), emissiveW);
     if (flags.w == 20u || flags.w == 21u) {
         const float luma = dot(finalLit, float3(0.2126f, 0.7152f, 0.0722f));

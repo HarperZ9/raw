@@ -83,17 +83,26 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float3 wpW = camPosW.xyz + p;
             float3 n = normalize(lerp(float3(0.0f, 0.0f, 1.0f), nL, 0.12f));
             const float wDist = length(p);
-            if (wDist < 6500.0f) {
-                const float wFade = saturate(1.0f - wDist / 6500.0f);
+            if (wDist < 26000.0f) {
+                const float nearWaveFade = saturate(1.0f - wDist / 6500.0f);
+                const float oceanFade = saturate(1.0f - wDist / 26000.0f);
                 const float2 wDir = normalize(cloudWind.xy + float2(1.0f, 0.35f));
                 const float2 wPerp = float2(-wDir.y, wDir.x);
                 const float wt = camPosW.w;
-                const float g1 = sin(dot(wpW.xy, wDir) * 0.022f + wt * 0.48f);
-                const float g2 = sin(dot(wpW.xy, normalize(wDir + wPerp * 0.65f)) * 0.048f + wt * 0.72f);
-                const float g3 = cos(dot(wpW.xy, normalize(wDir - wPerp * 0.85f)) * 0.092f - wt * 0.94f);
-                const float g4 = sin(dot(wpW.xy, wPerp) * 0.145f + wt * 1.15f);
-                const float windScale = (0.014f + saturate(length(cloudWind.xy) / 420.0f) * 0.020f) * wFade;
-                n = normalize(n + float3((wDir * (g1 * 0.45f + g2 * 0.28f) + wPerp * (g3 * 0.18f + g4 * 0.09f)) * windScale, 0.0f));
+                // Long-wavelength Nordic ocean & fjord swells (carry out to 26,000 units across the Sea of Ghosts).
+                const float o1 = sin(dot(wpW.xy, wDir) * 0.0052f + wt * 0.36f);
+                const float o2 = cos(dot(wpW.xy, normalize(wDir + wPerp * 0.45f)) * 0.0108f - wt * 0.48f);
+                const float oceanScale = (0.018f + saturate(length(cloudWind.xy) / 380.0f) * 0.022f) * oceanFade;
+                n = normalize(n + float3((wDir * (o1 * 0.62f) + wPerp * (o2 * 0.38f)) * oceanScale, 0.0f));
+                // Mid- and short-wavelength river ripples & capillary waves (near/mid-field).
+                if (nearWaveFade > 0.001f) {
+                    const float g1 = sin(dot(wpW.xy, wDir) * 0.022f + wt * 0.48f);
+                    const float g2 = sin(dot(wpW.xy, normalize(wDir + wPerp * 0.65f)) * 0.048f + wt * 0.72f);
+                    const float g3 = cos(dot(wpW.xy, normalize(wDir - wPerp * 0.85f)) * 0.092f - wt * 0.94f);
+                    const float g4 = sin(dot(wpW.xy, wPerp) * 0.145f + wt * 1.15f);
+                    const float windScale = (0.015f + saturate(length(cloudWind.xy) / 420.0f) * 0.022f) * nearWaveFade;
+                    n = normalize(n + float3((wDir * (g1 * 0.45f + g2 * 0.28f) + wPerp * (g3 * 0.18f + g4 * 0.09f)) * windScale, 0.0f));
+                }
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
                 if (wDist < 1600.0f) {
                     float2 wakeG = 0.0f.xx;
@@ -210,13 +219,23 @@ void water(uint3 id : SV_DispatchThreadID) {
                 body = lerp(game.rgb, lerp(waterBody, foamLit, foamMask * 0.65f), saturate(waterB.z) * nearW);
             }
             const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;
-            const float cellFeather = 1.0f - smoothstep(1800.0f, 3400.0f, length(p));
-            const float farSkyF = saturate(F * waterA.x * 0.42f * (1.0f - cellFeather));
+            const float cellFeather = 1.0f - smoothstep(2200.0f, 4400.0f, wDist);
             const float effF = saturate(F * waterA.x * shoreFeather * cellFeather);
             const uint view = uint(waterB.x + 0.5f);
             const float3 farSkyRefl = waterSky(rd);
-            const float3 baseCol = refr ? lerp(body, refl, effF) : lerp(game.rgb, refl, effF) + caus * (1.0f - effF);
-            col = lerp(baseCol, farSkyRefl, farSkyF) + glint * shoreFeather;
+            // Deep Nordic/Arctic ocean body for mid/far water (replaces matte grey-blue vanilla Sea of Ghosts water).
+            const float3 deepOceanBody = float3(0.020f, 0.056f, 0.084f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.06f.xxx) * 1.65f;
+            const float farF = saturate(F * max(waterA.x, 0.85f) * 0.88f);
+            const float3 farOcean = lerp(deepOceanBody, farSkyRefl, farF);
+            const float3 nearCol = refr ? lerp(body, refl, effF) : lerp(game.rgb, refl, effF) + caus * (1.0f - effF);
+            col = lerp(farOcean, nearCol, cellFeather) + glint * shoreFeather;
+            // Seamless far-ocean atmospheric horizon merge so the Sea of Ghosts blends smoothly into the sky dome.
+            if (wDist > 12000.0f) {
+                float3 sZ, sM, sH;
+                skyPalette(sZ, sM, sH);
+                const float seaFog = saturate((wDist - 12000.0f) / 110000.0f);
+                col = lerp(col, sH, seaFog * seaFog * 0.85f);
+            }
             if (view == 1u) { col = refl; }
             else if (view == 2u) { col = caus * 4.0f; }
             else if (view == 3u) { col = float3(F, nv, 1.0f); }

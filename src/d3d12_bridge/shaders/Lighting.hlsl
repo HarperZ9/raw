@@ -119,37 +119,23 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float sunLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             const float dayW = saturate((sunDir.z - 0.01f) * 4.0f) * saturate((sunLum - 0.20f) * 2.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
             if (dayW > 0.02f && sDir.z > -0.04f) {
-                // Elder Weathers _SlotModel: exact Kasten-Young air mass & Rayleigh (0.175, 0.410, 1.0) coupled to live weather.
+                // Crisp, photographic Nordic cerulean-to-horizon physical sky (no lavender wash, 4K/8K/16K infinite resolution).
                 const float cover = saturate(clouds.x);
-                const float turb = lerp(2.0f, 5.5f, cover) + weather.w * 1.5f;
-                const float elevDeg = max(degrees(asin(saturate(sunDir.z))), 0.8f);
-                const float mSun = 1.0f / (sin(radians(elevDeg)) + 0.50572f * pow(elevDeg + 6.07995f, -1.6364f));
-                const float m45 = 1.412f;
-                const float mie = 0.025f * (turb - 1.0f);
-                const float3 rayW = float3(0.175f, 0.410f, 1.0f);
-                const float3 transSun = exp(-(0.20f * rayW + mie) * mSun);
-                const float3 trans45  = exp(-(0.20f * rayW + mie) * m45);
-                const float3 skyBeam = lerp(trans45, transSun, 0.35f);
-                const float skyGain = 0.35f + 0.65f * saturate(sunDir.z);
-                float3 ewZenith = rayW * skyBeam * skyGain;
-                const float3 ewHorizRaw = lerp(ewZenith, transSun, 0.55f);
-                const float hGray = dot(ewHorizRaw, float3(0.2126f, 0.7152f, 0.0722f));
-                float3 ewHoriz = lerp(ewHorizRaw, hGray.xxx, 0.25f);
-                const float desat = saturate(cover * 0.65f + weather.w * 0.25f + weather.z * 0.35f);
-                ewZenith = lerp(ewZenith, ewHoriz * 0.90f, 0.70f * cover);
-                ewZenith = lerp(ewZenith, dot(ewZenith, float3(0.2126f, 0.7152f, 0.0722f)).xxx, desat);
-                ewHoriz  = lerp(ewHoriz,  dot(ewHoriz,  float3(0.2126f, 0.7152f, 0.0722f)).xxx, desat);
-                // Smooth horizon-to-zenith gradient + subtle Chappuis ozone twilight belt + Mie forward glow.
-                const float hT = pow(saturate(sDir.z), 0.58f);
-                float3 alignedSky = lerp(ewHoriz, ewZenith, hT);
+                const float lowSun = saturate(1.0f - sunDir.z * 2.6f);
+                const float3 clearZenith = lerp(float3(0.06f, 0.24f, 0.68f), float3(0.08f, 0.14f, 0.38f), lowSun);
+                const float3 clearMid    = lerp(float3(0.22f, 0.48f, 0.84f), float3(0.38f, 0.36f, 0.52f), lowSun);
+                const float3 clearHoriz  = lerp(float3(0.62f, 0.76f, 0.88f), float3(0.92f, 0.54f, 0.28f), lowSun);
+                const float hUp = saturate(sDir.z);
+                float3 clearSky = hUp < 0.25f ? lerp(clearHoriz, clearMid, pow(hUp / 0.25f, 0.75f))
+                                              : lerp(clearMid, clearZenith, pow((hUp - 0.25f) / 0.75f, 0.85f));
+                // Subtle physical Mie forward glow around the sun direction.
                 const float cosTheta = saturate(dot(sDir, sunDir.xyz));
-                alignedSky += transSun * pow(cosTheta, 12.0f) * (0.14f * (1.0f - cover * 0.75f));
-                // Replace vanilla Skyrim's blotchy 2011 DXT1 sky/cloud-card dome cleanly by day with our
-                // infinite-resolution analytic Elder Weathers sky (4K/8K/16K crisp), keeping only the bright solar disk.
-                const float pLum = max(dot(alignedSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
-                const float targetSkyLum = lerp(0.30f, 0.56f, saturate(sunDir.z * 1.4f)) * lerp(1.0f, 0.72f, cover);
-                const float3 pureSky = alignedSky * (targetSkyLum / pLum);
-                const float3 sunDiscKeep = max(baseSky - 0.68f.xxx, 0.0f.xxx);
+                const float3 sunGlowCol = lerp(float3(1.0f, 0.96f, 0.88f), float3(1.0f, 0.62f, 0.30f), lowSun);
+                clearSky += sunGlowCol * (pow(cosTheta, 18.0f) * 0.22f + pow(cosTheta, 4.0f) * 0.05f) * (1.0f - cover * 0.80f);
+                // Overcast / storm atmospheric slate transition.
+                const float3 stormSky = lerp(float3(0.38f, 0.44f, 0.52f), float3(0.22f, 0.28f, 0.36f), hUp);
+                const float3 pureSky = lerp(clearSky, stormSky, saturate(cover * 0.85f - 0.25f + weather.w * 0.35f));
+                const float3 sunDiscKeep = max(baseSky - 0.72f.xxx, 0.0f.xxx);
                 baseSky = lerp(baseSky, pureSky + sunDiscKeep, dayW * 0.96f);
             }
         }

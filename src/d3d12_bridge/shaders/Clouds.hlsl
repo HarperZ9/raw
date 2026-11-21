@@ -77,14 +77,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     stormFlash = float3(0.65f, 0.82f, 1.25f) * (pulse * cellHit * dens * 1.8f);
                 }
             }
-            const float3 lum = min(sunC * (beer * lerp(1.0f, powder, 0.50f) * phase * 4.0f * PI * 0.22f) + baseTint + stormFlash, 0.84f.xxx);
+            const float3 lum = min(sunC * (beer * lerp(1.0f, powder, 0.52f) * phase * 4.0f * PI * 0.34f) + baseTint + stormFlash, 0.96f.xxx);
             const float ext = dens * sigma;
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;
         }
-        // Soft filmic shoulder + seamless atmospheric horizon aerial perspective blend (never blows to white).
-        const float3 softS = S / (1.0f + S * 1.10f);
+        // Soft filmic shoulder + seamless atmospheric horizon aerial perspective blend.
+        const float3 softS = S / (1.0f + S * 0.72f);
         const float fade = exp(-max(t0, 0.0f) / 185000.0f);
         const float3 horizonHaze = skyC * 0.52f + sunC * pow(saturate(cosT), 8.0f) * 0.06f;
         const float3 aerialS = lerp(horizonHaze * (1.0f - T), softS, fade);

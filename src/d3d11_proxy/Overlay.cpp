@@ -127,7 +127,7 @@ bool KeyEdge(bool now, bool& prev) { const bool f = now && !prev; prev = now; re
 
 int TabRowCount(int tab)
 {
-    static const int kCounts[7] = {12, 13, 7, 8, 12, 11, 14};
+    static const int kCounts[7] = {12, 13, 7, 8, 12, 11, 18};
     return kCounts[std::clamp(tab, 0, 6)];
 }
 
@@ -246,7 +246,11 @@ std::string BuildMenuText()
         row(10, "OV6: Optical Vignette", OnOff((tm.overlayMask & 32u) != 0u));
         row(11, "OV7: 35mm Film Grain", OnOff((tm.overlayMask & 64u) != 0u));
         row(12, "OV8: Cinema Borders", OnOff((tm.overlayMask & 128u) != 0u));
-        row(13, "User Preset Slot", FmtI("Slot %d  [S=Save | L=Load]", g_presetSlot));
+        row(13, "OV9: Sharpen+Smooth", OnOff((tm.overlayMask & 256u) != 0u));
+        row(14, "OV10: Radial SpeedBlur", OnOff((tm.overlayMask & 512u) != 0u));
+        row(15, "OV11: Chromatic Aberr", OnOff((tm.overlayMask & 1024u) != 0u));
+        row(16, "OV12: Run Headbob/Sway", OnOff((tm.overlayMask & 2048u) != 0u));
+        row(17, "User Preset Slot", FmtI("Slot %d  [S=Save | L=Load]", g_presetSlot));
     }
     out += "Web Studio, Presets & Live HLSL Editor: http://127.0.0.1:8844";
     return out;
@@ -386,7 +390,11 @@ bool PollMenu(std::string& outText)
             case 10: tm.overlayMask ^= 32u; tmDirty = true; break;
             case 11: tm.overlayMask ^= 64u; tmDirty = true; break;
             case 12: tm.overlayMask ^= 128u; tmDirty = true; break;
-            case 13: g_presetSlot = ((g_presetSlot - 1 + 5 + dir) % 5) + 1; break;
+            case 13: tm.overlayMask ^= 256u; tmDirty = true; break;
+            case 14: tm.overlayMask ^= 512u; tmDirty = true; break;
+            case 15: tm.overlayMask ^= 1024u; tmDirty = true; break;
+            case 16: tm.overlayMask ^= 2048u; tmDirty = true; break;
+            case 17: g_presetSlot = ((g_presetSlot - 1 + 5 + dir) % 5) + 1; break;
             }
         }
         if (tmDirty) Tonemap_Set(tm);

@@ -167,18 +167,73 @@ float3 fxaaAndCas(float2 suv) {
         aa = Scene.Sample(S1, aaUv).rgb;
     }
 
-    // Gentle local-clamped CAS sharpening on the anti-aliased result.
-    const float3 mn = min(aa, min(min(n, s), min(e, ww)));
-    const float3 mx = max(aa, max(max(n, s), max(e, ww)));
-    const float3 amp = saturate(min(mn, max(2.0f.xxx - mx, 0.0f.xxx)) / max(mx, 1.0e-4f.xxx));
-    const float3 wCAS = sqrt(amp) * (-0.115f);
-    const float3 outC = (aa + (n + s + e + ww) * wCAS) / max(1.0f.xxx + 4.0f * wCAS, 0.30f.xxx);
-    return clamp(outC, mn * 0.90f, mx * 1.10f);
+    // Stage 1: Bilateral Edge-Preserving Micro-Smoothing (smooths flat skin/plaster/sky noise while locking edges).
+    // Stage 2: Anti-Ringing 9-Tap RCAS Adaptive Contrast Sharpening (OV9, bit 8 = 256).
+    const uint ovPost = uint(RO.y + 0.5f);
+    if ((ovPost & 256u) != 0u) {
+        // Edge-preserving bilateral micro-smoothing on low-gradient flats (skin, stone faces, calm water).
+        const float lA = dot(aa / (1.0f + aa), W);
+        float3 bSum = aa;
+        float bW = 1.0f;
+        const float wN = exp(-abs(ln - lA) * 32.0f) * 0.22f;
+        const float wS = exp(-abs(ls - lA) * 32.0f) * 0.22f;
+        const float wE = exp(-abs(le - lA) * 32.0f) * 0.22f;
+        const float wW = exp(-abs(lw - lA) * 32.0f) * 0.22f;
+        bSum += n * wN + s * wS + e * wE + ww * wW;
+        bW += wN + wS + wE + wW;
+        const float3 smoothed = bSum / bW;
+        // 9-tap local min/max anti-ringing RCAS micro-contrast sharpening (crisp stone/bark/armor with zero halos).
+        const float3 mn = min(min(smoothed, min(min(n, s), min(e, ww))), min(min(nw, ne), min(sw, se)));
+        const float3 mx = max(max(smoothed, max(max(n, s), max(e, ww))), max(max(nw, ne), max(sw, se)));
+        const float3 amp = saturate(min(mn, max(2.0f.xxx - mx, 0.0f.xxx)) / max(mx, 1.0e-4f.xxx));
+        const float3 wCAS = sqrt(amp) * (-0.165f);
+        const float3 sharp = (smoothed + (n + s + e + ww) * wCAS) / max(1.0f.xxx + 4.0f * wCAS, 0.28f.xxx);
+        return clamp(sharp, mn * 0.94f, mx * 1.06f);
+    }
+    return aa;
 }
 
 float4 main(In i) : SV_Target {
-    const float2 suv = min(max(i.uv * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
+    const uint ovInit = uint(RO.y + 0.5f);
+    float2 baseUv = i.uv;
+    // OV12 (bit 11 = 2048): Subtle velocity-driven running/walking headbob & camera stride sway (0 when standing still).
+    if ((ovInit & 2048u) != 0u) {
+        const float moveAmp = saturate((RO.w - 0.35f) / 6.5f);
+        if (moveAmp > 0.01f) {
+            const float phase = RO.z * 0.3927f; // smooth stride cadence
+            const float2 bob = float2(sin(phase) * 0.0011f, abs(cos(phase)) * 0.0022f - 0.0011f) * moveAmp;
+            // 0.8% overscan crop keeps edges 100% clean with zero black borders.
+            baseUv = saturate(baseUv * 0.992f + 0.004f + bob);
+        }
+    }
+    const float2 suv = min(max(baseUv * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
     float3 hdr = fxaaAndCas(suv);
+    // OV10 (bit 9 = 512): Optional Radial Peripheral Speed / Cinema Focus Blur (center reticle stays 100% sharp).
+    if ((ovInit & 512u) != 0u) {
+        const float2 rVec = baseUv - 0.5f.xx;
+        const float rDist = length(rVec);
+        const float speedBoost = 1.0f + saturate(RO.w / 7.5f) * 1.35f;
+        const float rStr = pow(saturate(rDist * 1.35f), 2.2f) * 0.010f * speedBoost;
+        if (rStr > 0.0004f) {
+            float3 rAcc = hdr;
+            [unroll] for (int ri = 1; ri <= 6; ri++) {
+                const float f = float(ri) / 6.0f;
+                rAcc += Scene.Sample(S1, min(max((baseUv - rVec * (rStr * f)) * F[43].xy, 0.0f), float2(F[44].z, F[43].y))).rgb;
+            }
+            hdr = rAcc / 7.0f;
+        }
+    }
+    // OV11 (bit 10 = 1024): Optional Apochromatic Lateral Chromatic Aberration (zero at center, subtle prism dispersion at edges).
+    if ((ovInit & 1024u) != 0u) {
+        const float2 caVec = baseUv - 0.5f.xx;
+        const float caMag = dot(caVec, caVec) * 0.0045f;
+        if (caMag > 0.0001f) {
+            const float2 uvR = min(max((baseUv + caVec * caMag) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
+            const float2 uvB = min(max((baseUv - caVec * caMag) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
+            hdr.r = lerp(hdr.r, Scene.Sample(S1, uvR).r, 0.72f);
+            hdr.b = lerp(hdr.b, Scene.Sample(S1, uvB).b, 0.72f);
+        }
+    }
     // Smooth photographic HDR highlight compression (knee at 0.68): preserves crisp snowdrifts, glaciers, whitewater,
     // and coastal horizon detail instead of clipping to flat white under bright Nordic sun.
     const float hdrLum = max(dot(hdr, W), 1.0e-5f);

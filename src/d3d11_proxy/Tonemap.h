@@ -35,10 +35,11 @@ struct TonemapSettings
     float x[6] = {0.001f, 3.5f, 0.0f, 1.55f, 0.6f, 0.0f};
     // Real 3D PNG LUT (0 = None, 1..N = scanned from raw_luts/*.png) + non-destructive stackable overlay bitmask:
     // bit0=FilmEmulsion, bit1=Halation+Anamorphic, bit2=ElderLensGhosts, bit3=SoftDiffusion,
-    // bit4=BleachBypass, bit5=OpticalVignette, bit6=35mmGrain, bit7=CinematicBorders.
+    // bit4=BleachBypass, bit5=OpticalVignette, bit6=35mmGrain, bit7=CinematicBorders,
+    // bit8=EdgeAwareSharpen+Smooth, bit9=RadialSpeedBlur, bit10=ChromaticAberration, bit11=RunHeadbobSway.
     int lutIndex = 0;
     float lutStrength = 0.85f;
-    uint32_t overlayMask = 0x06u;
+    uint32_t overlayMask = 0x106u;
 };
 
 void Tonemap_Set(const TonemapSettings& t);

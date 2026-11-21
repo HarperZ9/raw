@@ -144,6 +144,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float4 c = (flags.x & FLAG_CLOUDS) != 0u ? Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f) : float4(0.0f, 0.0f, 0.0f, 1.0f);
         float3 skyOut = baseSky * c.a + c.rgb;
         if ((flags.x & FLAG_MATCH) == 0u) {
+            // Luminous atmospheric moon glow locked strictly to Skyrim's real Masser/Secunda sky pixels (zero camera drift).
+            const float sunLumN = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+            const float nightSkyW = saturate((0.26f - sunLumN) * 4.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+            if (nightSkyW > 0.05f) {
+                const float moonL = dot(baseSky, float3(0.2126f, 0.7152f, 0.0722f));
+                const float moonMask = smoothstep(0.14f, 0.45f, moonL);
+                skyOut += baseSky * float3(0.88f, 0.96f, 1.18f) * (moonMask * nightSkyW * (0.45f + 0.85f * c.a));
+            }
             const float skyPeak = max(skyOut.r, max(skyOut.g, skyOut.b));
             skyOut = skyOut / (1.0f + max(skyPeak - 0.56f, 0.0f) * 0.65f);
         }
@@ -331,7 +339,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (!match && sunColour.w > 0.5f && (flags.x & FLAG_CLOUDS) != 0u) { sunShadow *= cloudShadow(p + camPosW.xyz); }   // SKY-02
         // Skin: warm dermal penumbra + gentle wrap so shadow transitions on faces and shoulders stay lifelike, never muddy grey.
         const float3 sunSh = skin && !match ? pow(saturate(sunShadow).xxx, float3(0.72f, 0.92f, 1.04f)) : sunShadow.xxx;
-        addLight(s, sunDir.xyz, sunColour.rgb * sunSh, sunColour.rgb, diff, spec);
+        const float dirLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+        const float nightDir = (!match && sunColour.w > 0.5f) ? saturate((0.26f - dirLum) * 4.5f) : 0.0f;
+        // Crisp silver-blue lunar directional bounce & specular on moonlit surfaces at night.
+        const float3 dirCol = lerp(sunColour.rgb, max(sunColour.rgb, float3(0.14f, 0.20f, 0.34f)) * float3(0.84f, 0.95f, 1.22f), nightDir * 0.65f);
+        addLight(s, sunDir.xyz, dirCol * sunSh, dirCol, diff, spec);
         if (skin && !match) {
             const float wrapSun = saturate((dot(s.n, sunDir.xyz) + 0.32f) / 1.32f);
             diff += sunColour.rgb * float3(0.18f, 0.09f, 0.06f) * wrapSun * (0.35f + 0.65f * sunShadow);

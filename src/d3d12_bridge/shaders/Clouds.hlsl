@@ -62,9 +62,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float beer = (exp(-od * sigma) + 0.48f * exp(-od * sigma * 0.25f) + 0.22f * exp(-od * sigma * 0.0625f)) / 1.70f;
             const float powder = 1.0f - exp(-od * sigma * 1.8f - dens * 0.55f);
             const float h = saturate((pa.z - clouds.y) / clouds.z);
-            const float cloudAo = lerp(0.36f, 0.92f, h) * exp(-dens * 0.28f);
+            const float cloudAo = lerp(0.28f, 0.96f, pow(h, 0.85f)) * exp(-dens * 0.32f);
             const float lowSun = saturate(1.0f - sunDir.z * 3.0f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
-            const float3 baseTint = lerp(skyC * cloudAo, skyC * (cloudAo * 0.78f) + sunC * lerp(0.14f, 0.05f, h), lowSun * 0.40f);
+            // Rich 3D sculptural cloud relief: crisp sunlit ivory-gold tops vs cool atmospheric steel-blue undersides.
+            const float3 baseTint = lerp(skyC * float3(0.82f, 0.90f, 1.08f) * cloudAo, skyC * (cloudAo * 0.72f) + sunC * lerp(0.18f, 0.06f, h), lowSun * 0.45f);
             // Volumetric sheet-lightning inside heavy rainstorms (clouds.x > 0.78 && weather.w > 0.25).
             float3 stormFlash = 0.0f.xxx;
             if (clouds.x > 0.78f && weather.w > 0.25f) {
@@ -77,7 +78,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     stormFlash = float3(0.65f, 0.82f, 1.25f) * (pulse * cellHit * dens * 1.8f);
                 }
             }
-            const float3 lum = min(sunC * (beer * lerp(1.0f, powder, 0.52f) * phase * 4.0f * PI * 0.34f) + baseTint + stormFlash, 0.96f.xxx);
+            const float3 lum = min(sunC * float3(1.04f, 1.01f, 0.96f) * (beer * lerp(1.0f, powder, 0.62f) * phase * 4.0f * PI * 0.42f) + baseTint + stormFlash, 1.04f.xxx);
             const float ext = dens * sigma;
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length

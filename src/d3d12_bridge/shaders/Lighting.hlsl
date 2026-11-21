@@ -434,8 +434,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float ewLum = max(dot(ewTrans, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
             alignedDayCol = lerp(sunColour.rgb, ewTrans * (max(dirLum, 0.05f) / ewLum), 0.48f * (1.0f - nightDir));
         }
+        // Crisp silver-blue lunar directional bounce & specular on moonlit surfaces at night.
         const float3 dirCol = lerp(alignedDayCol, max(sunColour.rgb, float3(0.14f, 0.20f, 0.34f)) * float3(0.84f, 0.95f, 1.22f), nightDir * 0.65f);
-        addLight(s, sunDir.xyz, dirCol * sunSh, dirCol, diff, spec);
+        // Chan 2018 micro-shadowing: uses fine-scale AO to shadow crevices/mortar/bark where coarse shadow maps cannot reach.
+        const float microSh = (!match && !isActorFeat && base != 5u) ? saturate(2.0f * AoHist.Load(ip).x + saturate(dot(s.n, sunDir.xyz)) - 0.85f) : 1.0f;
+        addLight(s, sunDir.xyz, dirCol * sunSh * lerp(0.55f, 1.0f, microSh), dirCol, diff, spec);
+        // Warm golden-emerald backlit foliage subsurface transmission (pine needles, ferns, leaves glow when backlit by sun).
+        if (!match && base == 5u && sunColour.w > 0.5f) {
+            const float backF = pow(saturate(dot(-s.v, sunDir.xyz)), 3.0f);
+            diff += dirCol * float3(0.95f, 1.12f, 0.55f) * (backF * sunShadow * 0.42f);
+        }
         if (skin && !match) {
             const float wrapSun = saturate((dot(s.n, sunDir.xyz) + 0.32f) / 1.32f);
             diff += sunColour.rgb * float3(0.18f, 0.09f, 0.06f) * wrapSun * (0.35f + 0.65f * sunShadow);

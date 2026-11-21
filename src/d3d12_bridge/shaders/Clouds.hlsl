@@ -90,12 +90,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;
         }
-        // Soft filmic shoulder + seamless atmospheric horizon aerial perspective blend (prevents overblown sun-through-cloud peaks).
+        // Soft filmic shoulder + seamless C2 horizon elevation fade (eliminates the curved cloud-shell cutoff ring over Dawnstar).
         const float3 softS = S / (1.0f + S * 0.92f);
         const float fade = exp(-max(t0, 0.0f) / 185000.0f);
-        const float3 horizonHaze = skyC * 0.52f + sunC * pow(saturate(cosT), 8.0f) * 0.06f;
-        const float3 aerialS = lerp(horizonHaze * (1.0f - T), softS, fade);
-        res = float4(aerialS, lerp(1.0f, T, saturate(fade * 1.15f)));
+        const float horFade = smoothstep(0.025f, 0.165f, dir.z);
+        const float effFade = saturate(fade * 1.15f) * horFade;
+        const float3 horizonHaze = skyC + sunC * pow(saturate(cosT), 8.0f) * 0.05f;
+        const float3 aerialS = lerp(horizonHaze * (1.0f - T), softS, fade) * horFade;
+        res = float4(aerialS, lerp(1.0f, T, effFade));
     }
     // Last frame's value along the same direction.
     const float4 c = float4(far, 1.0f);

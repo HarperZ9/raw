@@ -94,9 +94,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float peakCollar = exp(-pow((midPt.z - 5200.0f) / 3600.0f, 2.0f)) * smoothstep(8000.0f, 28000.0f, dist);
         const float alpineMist = (0.76f + 0.48f * alpineNoise) * (1.0f + peakCollar * (0.45f + 0.55f * alpineNoise));
         const float od = baseSigma * min(dist, 240000.0f) * elevW * alpineMist * exp(-hStart * 0.15f);
-        // Wavelength-dependent Rayleigh + Mie transmittance: shorter blue wavelengths scatter more strongly over distance,
-        // giving distant Nordic/alpine mountain rock true aerial perspective while preserving crisp foreground texture.
-        const float3 T = exp(-od * float3(0.84f, 0.96f, 1.12f));
+        // Wavelength-dependent Rayleigh + Mie transmittance + smooth far-horizon aerial melt (eliminates the sharp Sea of Ghosts LOD seam).
+        const float horizonMelt = smoothstep(85000.0f, 170000.0f, dist);
+        const float3 T = exp(-od * float3(0.84f, 0.96f, 1.12f)) * (1.0f - horizonMelt);
         // Spectral 1:1 atmospheric gradient locked directly to live skyPalette(sZ, sM, sH) + cloud cover + Mie solar aureole:
         // eliminates the color discontinuity between mountain haze, horizon sky, sun, and cloud undersides.
         float3 sZ, sM, sH;

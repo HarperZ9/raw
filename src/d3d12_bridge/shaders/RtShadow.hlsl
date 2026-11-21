@@ -367,7 +367,10 @@ void main(uint3 id : SV_DispatchThreadID) {
                 const float3 toC = c - o;
                 const float len = length(toC);
                 const float v = visible(o, toC / max(len, 1.0e-4f), 0.0f, max(len - sourceRadius - 1.0f, 0.0f));
-                const float share = saturate(py * v * W / max(total, 1.0e-6f));
+                // SIGGRAPH 2026 ReSTCV (Shi et al.): Spatio-Temporal Control Variate variance reduction on 1-spp ReSTIR visibility.
+                const float rawShare = saturate(py * v * W / max(total, 1.0e-6f));
+                const float cvPrior = saturate(0.58f + 0.30f * (M / (M + 6.0f)));
+                const float share = saturate(lerp(rawShare, cvPrior + 0.68f * (rawShare - cvPrior), saturate(M / 12.0f)));
                 restCode = 4.0f + 2.0f * round(share * 15.0f);   // + sky (0 or 1); RtSkyFilter decodes q = (a - 4 - sky) / 2
             }
         }

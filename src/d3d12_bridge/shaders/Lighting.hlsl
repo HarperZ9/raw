@@ -521,8 +521,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 c *= float3(1.16f, 0.90f, 0.64f) * flk;
             }
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;
-            // Top 3 lights per pixel get full crisp hardware RT soft shadows (rv[1..3]); lights 4..128 get smooth ReSTIR RT shadows.
-            if (slot != 0u) { sh = min(sh, rv[slot]); } else { sh = min(sh, lerp(0.35f, 1.0f, restVis)); }
+            // When hardware RT traced this light (slot 1..3), use rv[slot] directly (bypassing vanilla's flickering
+            // 4-channel shadow-mask swaps); untraced lights (4..128) blend smoothly with ReSTIR restVis.
+            if (slot != 0u) { sh = rv[slot]; } else { sh = min(sh, lerp(0.45f, 1.0f, restVis)); }
             if (!match && sunColour.w > 0.5f && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
                 sh *= screenShadow(p + lift, l, min(dist, tune.z), 4.0f / max(dist, 1.0f), jit, 10u);
                 --softLeft;

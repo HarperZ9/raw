@@ -19,7 +19,7 @@ namespace raw::dxbc
 
 namespace op
 {
-constexpr uint32_t Add = 0, And = 1, Break = 2, Breakc = 3, Call = 4, Callc = 5, Case = 6, Default = 10, Div = 14,
+constexpr uint32_t Add = 0, And = 1, Break = 2, Breakc = 3, Call = 4, Callc = 5, Case = 6, Default = 10, Discard = 13, Div = 14,
                    Dp3 = 16, Dp4 = 17, Else = 18, Endif = 21, Endloop = 22, Endswitch = 23, Exp = 25, Ge = 29, If = 31,
                    Label = 44, Log = 47, Loop = 48, Mad = 50, Max = 52, CustomData = 53, Mov = 54, Mul = 56,
                    Ret = 62, Retc = 63, Rsq = 68, Sample = 69, SampleL = 72, SampleD = 73, SampleB = 74, Sqrt = 75,

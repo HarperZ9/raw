@@ -32,6 +32,7 @@
 #include "gi_at2_fs.h"
 #include "gi_at4_fs.h"
 #include "cloud_noise_fs.h"
+#include "env_cube_fs.h"
 
 #include <cmath>
 #include <cstring>
@@ -133,7 +134,8 @@ public:
         m_atmoMs = m_dev->createTexture({32, 32, TextureFormat::RGBA16Float, RT, "atmo multiscat"}, m_err);
         m_atmoSkyView = m_dev->createTexture({192, 108, TextureFormat::RGBA16Float, RT, "atmo skyview"}, m_err);
         m_cloudNoise = m_dev->createTexture({512, 512, TextureFormat::RGBA16Float, RT, "cloud 64^3 perlin-worley"}, m_err);
-        if (!m_atmoTrans.valid() || !m_atmoMs.valid() || !m_atmoSkyView.valid() || !m_cloudNoise.valid()) return Fail("atmosphere/cloud LUT textures");
+        m_envCube = m_dev->createTexture({256, 256, TextureFormat::RGBA16Float, RT, "dynamic prefiltered env cube"}, m_err);
+        if (!m_atmoTrans.valid() || !m_atmoMs.valid() || !m_atmoSkyView.valid() || !m_cloudNoise.valid() || !m_envCube.valid()) return Fail("atmosphere/cloud/env LUT textures");
         for (int k = 0; k < 2; ++k) m_reflHist[k] = m_dev->createTexture({host.width, host.height, TextureFormat::RGBA16Float, RT, "rt refl history"}, m_err);
         if (!m_reflHist[0].valid() || !m_reflHist[1].valid()) return Fail("rt refl history textures");
         m_dofCoc = m_dev->createTexture({vw, vh, TextureFormat::RGBA16Float, RT, "dof coc"}, m_err);
@@ -176,7 +178,9 @@ public:
         m_atmoSkyPipe = m_dev->createRasterPipeline(d, m_err);
         d.label = "cloud noise 64^3"; d.fragment = dxil(kDxil_cloud_noise_fs, sizeof kDxil_cloud_noise_fs); d.layout = kAtmoTransLayout;
         m_cloudNoisePipe = m_dev->createRasterPipeline(d, m_err);
-        if (!m_atmoTransPipe.valid() || !m_atmoMsPipe.valid() || !m_atmoSkyPipe.valid() || !m_cloudNoisePipe.valid()) return Fail("atmosphere/cloud LUT pipelines");
+        d.label = "dynamic env cube"; d.fragment = dxil(kDxil_env_cube_fs, sizeof kDxil_env_cube_fs); d.layout = kAtmoSkyLayout;
+        m_envCubePipe = m_dev->createRasterPipeline(d, m_err);
+        if (!m_atmoTransPipe.valid() || !m_atmoMsPipe.valid() || !m_atmoSkyPipe.valid() || !m_cloudNoisePipe.valid() || !m_envCubePipe.valid()) return Fail("atmosphere/cloud/env LUT pipelines");
         d.label = "rt refl filter"; d.fragment = dxil(kDxil_rt_refl_filter_fs, sizeof kDxil_rt_refl_filter_fs); d.layout = kReflFilterLayout;
         m_reflFilterPipe = m_dev->createRasterPipeline(d, m_err);
         if (!m_reflFilterPipe.valid()) return Fail("rt refl filter pipeline");
@@ -240,6 +244,8 @@ public:
         if (ok && (m_u.flags[0] & kMatch) == 0u) {
             const RasterBind sb[4] = {{m_uniform, {}, {}}, {{}, m_atmoTrans, {}}, {{}, m_atmoMs, {}}, {{}, {}, m_lin}};
             Draw(*c, m_atmoSkyView, m_atmoSkyPipe, sb);
+            const RasterBind eb[4] = {{m_uniform, {}, {}}, {{}, m_atmoSkyView, {}}, {{}, m_cloudNoise, {}}, {{}, {}, m_lin}};
+            Draw(*c, m_envCube, m_envCubePipe, eb);
         }
         const TextureHandle aoVis = ao ? m_ao.history() : m_game;   // unused without the flag
         const bool clouds = ok && (m_u.flags[0] & kClouds);
@@ -269,7 +275,7 @@ public:
                                      {{}, m_rtVis.valid() ? m_rtVis : m_game, {}}, {{}, m_rtIdx.valid() ? m_rtIdx : m_game, {}},
                                      {{}, giFilter ? m_giAtrous[0] : (m_rtBounce.valid() ? m_rtBounce : m_game), {}},
                                      {{}, reflFilter ? reflNow : (m_rtReflect.valid() ? m_rtReflect : m_game), {}},
-                                     {{}, cloudNow, {}}, {{}, {}, m_lin}};
+                                     {{}, m_envCube, {}}, {{}, {}, m_lin}};
         Draw(*c, m_lit, m_lightPipe, light);
         c->timestamp(4);
         const TextureHandle volNow = m_volFog[m_frame & 1], volLast = m_volFog[(m_frame + 1) & 1];
@@ -499,8 +505,8 @@ private:
     BufferHandle m_uniform;
     RasterPipelineHandle m_lightPipe, m_fogPipe, m_cloudPipe, m_volPipe;
     RasterPipelineHandle m_bloomPrePipe, m_bloomDownPipe, m_bloomUpPipe, m_bloomCompPipe;
-    RasterPipelineHandle m_atmoTransPipe, m_atmoMsPipe, m_atmoSkyPipe, m_cloudNoisePipe, m_reflFilterPipe, m_dofCocPipe, m_dofGatherPipe, m_dofCompPipe, m_giAt1Pipe, m_giAt2Pipe, m_giAt4Pipe;
-    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoMs, m_atmoSkyView, m_cloudNoise, m_reflHist[2], m_dofCoc, m_dofBokeh, m_giAtrous[2];
+    RasterPipelineHandle m_atmoTransPipe, m_atmoMsPipe, m_atmoSkyPipe, m_cloudNoisePipe, m_envCubePipe, m_reflFilterPipe, m_dofCocPipe, m_dofGatherPipe, m_dofCompPipe, m_giAt1Pipe, m_giAt2Pipe, m_giAt4Pipe;
+    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoMs, m_atmoSkyView, m_cloudNoise, m_envCube, m_reflHist[2], m_dofCoc, m_dofBokeh, m_giAtrous[2];
     bool m_atmoTransBuilt = false;
     SamplerHandle m_lin;
     float m_prevWorldToClip[16] = {};

@@ -143,7 +143,7 @@ void HavokFixOnPresent() {
 std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& refs) {
     struct KV { const char* k; const char* v; };
     static const KV kTuning[] = {
-        {"fNearDistance:Display", "22.0"},
+        {"fNearDistance:Display", "15.0"},
         {"fShadowBiasScale:Display", "0.18"},
         // Eliminate 2011 stepped sun-shadow ticking: smooth per-frame sun & shadow progression (0.0s update interval).
         {"fSunUpdateThreshold:Display", "0.0001"},
@@ -159,15 +159,9 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"uMaxSkinnedTreesToRender:Trees", "256"},
         {"bEnableTreeAnimations:Trees", "1"},
         {"fUpdateBudget:Trees", "3.0"},
-        // High-precision water engine flags & streaming stutter elimination on cell transitions.
-        {"bUseWaterDisplacements:Water", "1"},
-        {"bUseWaterRefractions:Water", "1"},
-        {"bUseWaterDepth:Water", "1"},
-        {"bUseWaterReflections:Water", "1"},
-        {"bUseWaterReflectionBlur:Water", "0"},
-        {"bForceHighDetailReflections:Water", "1"},
-        {"iWaterReflectWidth:Water", "1024"},
-        {"iWaterReflectHeight:Water", "1024"},
+        // Keep vanilla Skyrim water reflection buffer dimensions intact (overriding iWaterReflectWidth/Height
+        // or forcing bForceHighDetailReflections=1 at runtime misaligns TESWaterSystem reflection planes!).
+        {"bForceHighDetailReflections:Water", "0"},
         {"bSelectivePurgeUnusedOnFastTravel:BackgroundLoad", "1"},
         {"iPostProcessMillisecondsLoadingQueuedPriority:BackgroundLoad", "5"},
         {"iPostProcessMilliseconds:BackgroundLoad", "5"},

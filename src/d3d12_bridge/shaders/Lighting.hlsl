@@ -740,12 +740,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const int ch = int(lightColS[li].w);
             if (ch >= 0 && ch <= 3) { sh = m4[ch]; }   // interiors without sun shadows use channel 0 too
             float3 c = lightColS[li].rgb * att;
-            // Embers-class warm hearth/torch/candle spectral enrichment + calm world-anchored organic breath.
-            // Moderated on skin so NPC faces near hearths stay naturally sculpted instead of harsh orange-red.
-            if (!match && lightColS[li].r > lightColS[li].b * 1.30f) {
+            // Rich 2200K-2600K blackbody firelight spectrum (hearths, torches, candles, braziers, forges)
+            // with warm golden specular dance on wood/stone/armor and restrained natural warmth on NPC skin.
+            if (!match && lightColS[li].r > lightColS[li].b * 1.25f) {
                 const float lPhase = dot(lightPosR[li].xyz + camPosW.xyz, float3(0.031f, 0.047f, 0.023f));
-                const float flk = 0.975f + 0.025f * sin(camPosW.w * 2.4f + lPhase);
-                const float3 fireBoost = skin ? float3(1.03f, 0.96f, 0.90f) : float3(1.16f, 0.90f, 0.64f);
+                const float flk = 0.955f + 0.045f * (sin(camPosW.w * 2.8f + lPhase) * 0.65f + sin(camPosW.w * 6.3f + lPhase * 2.1f) * 0.35f);
+                const float3 fireBoost = skin ? float3(1.06f, 0.95f, 0.86f) : float3(1.36f, 0.85f, 0.44f);
                 c *= fireBoost * flk;
             }
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;
@@ -798,9 +798,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float rawSkyVis = rt && (flags.x & FLAG_SKY) != 0u && (isExterior || !match) ? RtIdx.Load(ip).w : 1.0f;
     const float skyVis = isActorFeat ? lerp(0.55f, 1.0f, rawSkyVis) : rawSkyVis;
     // Physical directional skylighting falloff: roofs, covered walkways, arches & dense foliage cores drop to deep rich shade
-    // (0.14..1.0) while open sky-facing ground keeps full crisp skylighting.
-    const float skyVisShaped = !match ? pow(saturate(skyVis), base == 5u ? 1.38f : 1.48f) : skyVis;
-    const float rtOcc = isExterior ? lerp(1.0f, lerp(0.14f, 1.0f, skyVisShaped), max(cluster.w, 0.82f)) : lerp(0.28f, 1.0f, skyVisShaped);
+    // (0.10..1.0) while open sky-facing ground keeps full crisp skylighting for strong 3D shadow pop.
+    const float skyVisShaped = !match ? pow(saturate(skyVis), base == 5u ? 1.42f : 1.56f) : skyVis;
+    const float rtOcc = isExterior ? lerp(1.0f, lerp(0.10f, 1.0f, skyVisShaped), max(cluster.w, 0.85f)) : lerp(0.24f, 1.0f, skyVisShaped);
     float combinedOcc = min(aoTerm, rtOcc);
     // Lifelike Vanilla NPCs: lift recessed eye-socket AO (base==12) so eyes never read as dim dark holes,
     // and soften harsh brow/under-eye portrait shadows on skin (base==10).
@@ -852,8 +852,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             amb = lerp(amb, skyHemi * (ambL / hemiL), dayAmbW * skyVis * lerp(0.20f, 0.34f, inShadow));
         }
     } else if (!match && !isExterior) {
+        // Exterior Time-of-Day Interior Lighting Coupling (driven by live gameHour / sunElev in timeEnv.xy):
+        // interior ambient shifts naturally across golden dawn -> crisp daylight -> amber dusk -> cool nocturnal indigo.
+        const float sunE = timeEnv.y;
+        const float dayInt = smoothstep(-0.14f, 0.28f, sunE);
+        const float goldInt = smoothstep(-0.14f, 0.10f, sunE) * (1.0f - smoothstep(0.18f, 0.52f, sunE));
         const float outCool = saturate(clouds.x * 0.6f + weather.w * 0.5f);
-        amb *= lerp(float3(1.02f, 1.00f, 0.98f), float3(0.90f, 0.96f, 1.06f), outCool * 0.35f);
+        const float3 todIntTint = lerp(float3(0.76f, 0.86f, 1.14f),
+                                       lerp(float3(1.04f, 1.05f, 1.08f), float3(1.18f, 0.92f, 0.72f), goldInt), dayInt);
+        const float todIntGain = lerp(0.78f, 1.12f, dayInt);
+        amb *= lerp(todIntTint, float3(0.88f, 0.95f, 1.06f), outCool * 0.35f) * todIntGain;
     }
     amb += bounce;
 
@@ -908,6 +916,23 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (!match && wet.snow > 0.05f && sunDir.w > 0.5f) {
         const float snowWrap = saturate((dot(s.n, sunDir.xyz) + 0.35f) / 1.35f);
         lit += sunColour.rgb * float3(0.18f, 0.34f, 0.46f) * (snowWrap * wet.snow * (0.35f + 0.65f * sunShadow) * 0.22f);
+    }
+    // True Interior Window-Lighting & HDR Window Bloom Driver (coupled to exterior time-of-day timeEnv.xy):
+    // bright interior windows (GlowMapped base==3 or high-emissive vertical glass) radiate physical HDR sunlight by day
+    // and cool moonlight by night, directly feeding BloomPass.hlsl (glow/bloom) & LightFog.hlsl (volumetric window shafts).
+    if (!match && !isExterior && !skin && !isActorFeat && !isActorCloth) {
+        const float gLumW = dot(game.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+        const float isVertGlass = smoothstep(0.68f, 0.35f, abs(s.n.z));
+        const float winMask = (base == 3u ? smoothstep(0.22f, 0.65f, gLumW) : smoothstep(0.55f, 0.95f, gLumW)) * isVertGlass;
+        if (winMask > 0.02f) {
+            const float sunE = timeEnv.y;
+            const float dayW = smoothstep(-0.12f, 0.26f, sunE);
+            const float goldW = smoothstep(-0.12f, 0.12f, sunE) * (1.0f - smoothstep(0.18f, 0.52f, sunE));
+            const float3 winCol = lerp(float3(0.28f, 0.46f, 0.92f),
+                                       lerp(float3(1.02f, 1.06f, 1.15f), float3(1.35f, 0.82f, 0.36f), goldW), dayW);
+            const float winHdr = lerp(0.55f, 2.65f, dayW) * (1.0f - saturate(clouds.x * 0.38f));
+            lit = lerp(lit, max(lit, game.rgb * winCol * winHdr), winMask);
+        }
     }
     if (!match && skin) {
         // Per-channel dermal highlight roll-off preserves natural skin tone under direct midday sun and close hearth fire.

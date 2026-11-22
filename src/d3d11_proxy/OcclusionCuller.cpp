@@ -9,6 +9,7 @@
 
 #include "OcclusionCuller.h"
 #include "CBDirtyTracker.h"
+#include "ProxyLog.h"
 #include "RenderPhaseDetector.h"
 #include "SceneLights.h"
 
@@ -55,9 +56,22 @@ void OcclusionCuller::OnPresent(ID3D11DeviceContext* ctx)
 {
     if (!m_initialized || !m_enabled) return;
 
+    // Periodic live CPU/GPU draw & triangle savings telemetry (every 300 frames).
+    if (++m_frameCount % 300 == 0 && m_drawsTested > 0) {
+        Log("[OcclusionCuller] frame %llu: tested %u draws (%llu tris), culled %u draws (%llu tris: frustum=%u subpx=%u hiz=%u, %.1f%% tris saved)",
+            static_cast<unsigned long long>(m_frameCount), m_drawsTested, static_cast<unsigned long long>(m_trisTested),
+            m_drawsCulled, static_cast<unsigned long long>(m_trisCulled), m_frustumCulled, m_subPxCulled, m_hiZCulled,
+            m_trisTested ? (100.0 * double(m_trisCulled) / double(m_trisTested)) : 0.0);
+    }
+
     // Reset per-frame stats
-    m_drawsTested = 0;
-    m_drawsCulled = 0;
+    m_drawsTested   = 0;
+    m_drawsCulled   = 0;
+    m_frustumCulled = 0;
+    m_subPxCulled   = 0;
+    m_hiZCulled     = 0;
+    m_trisTested    = 0;
+    m_trisCulled    = 0;
 
     // ── Get the game's depth buffer ─────────────────────────────────────
     auto& rpd = RenderPhaseDetector::Get();
@@ -360,7 +374,7 @@ float OcclusionCuller::EstimateBoundingRadius(uint32_t indexCount, float scale) 
 
 bool OcclusionCuller::ShouldCull(uint32_t indexCount)
 {
-    if (!m_enabled || !m_hizReady || !m_hizHasCam || m_hizMips == 0) return false;
+    if (!m_enabled) return false;
     if (RenderPhaseDetector::Get().GetCurrentPhase() != RenderPhase::GeometryMain) return false;
     if (indexCount < 36 || indexCount > 10500) return false;
 
@@ -373,15 +387,47 @@ bool OcclusionCuller::ShouldCull(uint32_t indexCount)
     const float radius = EstimateBoundingRadius(indexCount, sx);
     if (radius <= 0.0f) return false;
 
+    const uint32_t tris = indexCount / 3;
+    m_drawsTested++;
+    m_trisTested += tris;
+
+    // ── Stage 1: Exact Current-Frame Conservative Frustum Sphere Culling ──
+    // Uses THIS frame's worldToClip (zero 1-frame turn lag!) to skip props wholly behind the camera or outside the frustum.
+    const float curX = wm[3], curY = wm[7], curZ = wm[11];
+    const float curDist = std::sqrt(curX*curX + curY*curY + curZ*curZ);
+    if (curDist > radius * 2.2f + 140.0f) {
+        const float cw0 = sl.worldToClip[3][0]*curX + sl.worldToClip[3][1]*curY + sl.worldToClip[3][2]*curZ + sl.worldToClip[3][3];
+        if (cw0 < -radius * 1.35f) {
+            m_drawsCulled++; m_frustumCulled++; m_trisCulled += tris;
+            return true;
+        }
+        if (cw0 > 1.0f) {
+            const float cx0 = (sl.worldToClip[0][0]*curX + sl.worldToClip[0][1]*curY + sl.worldToClip[0][2]*curZ + sl.worldToClip[0][3]) / cw0;
+            const float cy0 = (sl.worldToClip[1][0]*curX + sl.worldToClip[1][1]*curY + sl.worldToClip[1][2]*curZ + sl.worldToClip[1][3]) / cw0;
+            const float padNdc = std::clamp((radius * 1.45f) / cw0, 0.02f, 0.90f);
+            if (cx0 < -1.0f - padNdc || cx0 > 1.0f + padNdc || cy0 < -1.0f - padNdc || cy0 > 1.0f + padNdc) {
+                m_drawsCulled++; m_frustumCulled++; m_trisCulled += tris;
+                return true;
+            }
+            // ── Stage 2: Sub-Pixel Distant Micro-Prop Culling ──
+            // Skip tiny distant clutter props (<1.4 px screen diameter past 2,400u) before DX12 DrawIndexed setup.
+            if (curDist > 2400.0f && radius < 120.0f && (radius / cw0) < 0.00070f) {
+                m_drawsCulled++; m_subPxCulled++; m_trisCulled += tris;
+                return true;
+            }
+        }
+    }
+
+    // ── Stage 3: Standard-Z Temporal-Reprojected CPU Hi-Z Occlusion Culling ──
+    if (!m_hizReady || !m_hizHasCam || m_hizMips == 0) return false;
+
     // Re-center object position from current camera-relative space into the Hi-Z frame's camera space.
-    const float px = wm[3]  + (sl.posAdjust[0] - m_hizCam[0]);
-    const float py = wm[7]  + (sl.posAdjust[1] - m_hizCam[1]);
-    const float pz = wm[11] + (sl.posAdjust[2] - m_hizCam[2]);
+    const float px = curX + (sl.posAdjust[0] - m_hizCam[0]);
+    const float py = curY + (sl.posAdjust[1] - m_hizCam[1]);
+    const float pz = curZ + (sl.posAdjust[2] - m_hizCam[2]);
     const float dist = std::sqrt(px*px + py*py + pz*pz);
     // Conservative near guard: never cull nearby props, NPCs, weapons, or foreground foliage.
     if (dist < radius * 2.4f + 160.0f) return false;
-
-    m_drawsTested++;
 
     // Project center and nearest point on bounding sphere using the exact Hi-Z frame's worldToClip matrix.
     const float invD = 1.0f / dist;
@@ -412,7 +458,7 @@ bool OcclusionCuller::ShouldCull(uint32_t indexCount)
     const float halfV = std::clamp((radius * invD) * 1.45f + 1.5f / float(std::max(m_hizH, 1u)), 0.005f, 0.35f);
 
     if (TestRect(u - halfU, v - halfV, u + halfU, v + halfV, nearZ)) {
-        m_drawsCulled++;
+        m_drawsCulled++; m_hiZCulled++; m_trisCulled += tris;
         return true;
     }
     return false;

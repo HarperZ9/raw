@@ -56,6 +56,11 @@ float signedCoC(float curZ, float focusZ, float maxDist) {
 }
 
 float4 dof_coc(float4 at : SV_Position) : SV_Target0 {
+    // Live 3D World-Map & UI Depth Isolation: bypass DoF on the high-altitude aerial world map (camPosW.z > 18000u).
+    if (camPosW.z > 18000.0f) {
+        const float2 fullPx0 = (floor(at.xy) + 0.5f) * 2.0f;
+        return float4(SrcA.SampleLevel(Lin, fullPx0 * dims.zw, 0.0f).rgb, 0.0f);
+    }
     const float2 lo = floor(at.xy);
     const float2 fullPx = (lo + 0.5f) * 2.0f;
     const int2 dMax = int2(dims.xy) - 1;

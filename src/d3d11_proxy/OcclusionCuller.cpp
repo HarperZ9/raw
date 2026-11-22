@@ -57,9 +57,9 @@ void OcclusionCuller::OnPresent(ID3D11DeviceContext* ctx)
     if (!m_initialized || !m_enabled) return;
 
     // Periodic live CPU/GPU draw & triangle savings telemetry (every 300 frames).
-    if (++m_frameCount % 300 == 0 && m_drawsTested > 0) {
-        Log("[OcclusionCuller] frame %llu: tested %u draws (%llu tris), culled %u draws (%llu tris: frustum=%u subpx=%u hiz=%u, %.1f%% tris saved)",
-            static_cast<unsigned long long>(m_frameCount), m_drawsTested, static_cast<unsigned long long>(m_trisTested),
+    if (++m_frameCount % 300 == 0) {
+        Log("[OcclusionCuller] frame %llu: hiz=%d tested %u draws (%llu tris), culled %u draws (%llu tris: frustum=%u subpx=%u hiz=%u, %.1f%% tris saved)",
+            static_cast<unsigned long long>(m_frameCount), m_hizReady ? 1 : 0, m_drawsTested, static_cast<unsigned long long>(m_trisTested),
             m_drawsCulled, static_cast<unsigned long long>(m_trisCulled), m_frustumCulled, m_subPxCulled, m_hiZCulled,
             m_trisTested ? (100.0 * double(m_trisCulled) / double(m_trisTested)) : 0.0);
     }

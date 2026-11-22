@@ -146,11 +146,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             }
             const float powder = 1.0f - exp(-od * sigma * 1.6f - dens * 0.45f);
             const float h = saturate((pa.z - clouds.y) / clouds.z);
-            // Physical high-albedo water-droplet cloud undersides (never dark charcoal ink blots even directly overhead).
-            const float cloudAo = lerp(0.56f, 1.00f, pow(h, 0.55f)) * exp(-dens * 0.10f);
+            // Physical convective cloud undersides: luminous silver-blue in fair weather, dramatic deep slate-violet
+            // storm bellies contrasting against bright silver-white openings in heavy storms (GTA VI storm cloud study).
+            const float stormW = saturate(weather.w * 1.25f + max(clouds.x - 0.72f, 0.0f) * 2.2f);
+            const float cloudAo = lerp(lerp(0.56f, 0.34f, stormW), 1.00f, pow(h, lerp(0.55f, 0.72f, stormW))) * exp(-dens * lerp(0.10f, 0.18f, stormW));
             const float lowSun = saturate(1.0f - sunDir.z * 3.0f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
             const float overcastW = saturate((clouds.x - 0.50f) * 2.2f);
-            const float3 coolSilver = lerp(float3(0.72f, 0.82f, 0.98f), float3(0.80f, 0.85f, 0.93f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.24f) * 1.45f;
+            const float3 coolSilver = lerp(float3(0.72f, 0.82f, 0.98f), lerp(float3(0.76f, 0.81f, 0.90f), float3(0.56f, 0.54f, 0.68f), stormW), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.24f) * 1.45f;
             const float3 neutralSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.98f, 0.99f, 1.02f), overcastW * 0.65f);
             const float3 baseTint = lerp(coolSilver * cloudAo, coolSilver * (cloudAo * 0.75f) + neutralSun * lerp(0.14f, 0.05f, h), lowSun * 0.40f * (1.0f - overcastW * 0.5f));
             // Volumetric sheet-lightning inside heavy rainstorms (clouds.x > 0.78 && weather.w > 0.25).

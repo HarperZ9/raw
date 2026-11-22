@@ -16,7 +16,9 @@ static const float kMieH     = 1.2f;
 static const float3 kBetaRay = float3(5.802e-3f, 13.558e-3f, 33.100e-3f);
 static const float  kBetaMieS = 3.996e-3f;
 static const float  kBetaMieE = 4.440e-3f;
-static const float3 kBetaOzo = float3(0.650e-3f, 1.881e-3f, 0.085e-3f);
+// Enhanced Chappuis ozone absorption (1.55x) produces authentic GTA-VI-caliber twilight:
+// deep indigo-violet zenith -> rose-magenta mid-sky -> glowing coral-amber horizon at sunrise/sunset.
+static const float3 kBetaOzo = float3(1.010e-3f, 2.915e-3f, 0.132e-3f);
 
 float2 raySphere(float3 ro, float3 rd, float rad) {
     const float b = dot(ro, rd);

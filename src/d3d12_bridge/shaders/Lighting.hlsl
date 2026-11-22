@@ -813,9 +813,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float rawSkyVis = rt && (flags.x & FLAG_SKY) != 0u && (isExterior || !match) ? RtIdx.Load(ip).w : 1.0f;
     const float skyVis = isActorFeat ? lerp(0.55f, 1.0f, rawSkyVis) : rawSkyVis;
     // Physical directional skylighting falloff: roofs, covered walkways, arches & dense foliage cores drop to deep rich shade
-    // (0.10..1.0) while open sky-facing ground keeps full crisp skylighting for strong 3D shadow pop.
+    // (0.10..1.0 exteriors, 0.16..1.0 velvety interior shadow drama) while open surfaces keep crisp skylighting.
     const float skyVisShaped = !match ? pow(saturate(skyVis), base == 5u ? 1.42f : 1.56f) : skyVis;
-    const float rtOcc = isExterior ? lerp(1.0f, lerp(0.10f, 1.0f, skyVisShaped), max(cluster.w, 0.85f)) : lerp(0.24f, 1.0f, skyVisShaped);
+    const float rtOcc = isExterior ? lerp(1.0f, lerp(0.10f, 1.0f, skyVisShaped), max(cluster.w, 0.85f)) : lerp(0.16f, 1.0f, skyVisShaped);
     float combinedOcc = min(aoTerm, rtOcc);
     // Lifelike Vanilla NPCs: lift recessed eye-socket AO (base==12) so eyes never read as dim dark holes,
     // and soften harsh brow/under-eye portrait shadows on skin (base==10).
@@ -1009,11 +1009,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 dieEnv = sampleLiveEnvCube(rDir, dieRough) * (0.28f + 0.72f * skyVisShaped);
             lit += evalMultiScatterIBL(dieF0, dieRough, nv, dieEnv, specOcc) * lerp(0.55f, 1.0f, saturate(wet.wet + wet.puddle));
         }
-        // Dual-Lobe Clearcoat GGX water film (wet stone/wood/roads) & oiled lacquer (low-metallic class-2 armor/leather).
-        const float clearcoat = max(saturate(wet.wet * 0.75f + wet.puddle), (base == 2u ? (1.0f - metallic) * 0.35f : 0.0f));
+        // Dual-Lobe Clearcoat GGX water film (crisp mirror-like reflections on rain-soaked roads/puddles, GTA VI storm study)
+        // & oiled lacquer (low-metallic class-2 armor/leather).
+        const float clearcoat = max(saturate(wet.wet * 0.85f + wet.puddle * 1.15f), (base == 2u ? (1.0f - metallic) * 0.35f : 0.0f));
         if (clearcoat > 0.05f && !skin && base != 5u) {
-            const float3 ccEnv = sampleLiveEnvCube(rDir, 0.05f) * (0.30f + 0.70f * skyVisShaped);
-            lit += evalMultiScatterIBL(float3(0.02f, 0.02f, 0.02f), 0.05f, nv, ccEnv, specOcc) * (clearcoat * 0.65f);
+            const float ccRough = lerp(0.08f, 0.03f, saturate(wet.puddle));
+            const float3 ccEnv = sampleLiveEnvCube(rDir, ccRough) * (0.30f + 0.70f * skyVisShaped);
+            lit += evalMultiScatterIBL(float3(0.022f, 0.022f, 0.022f), ccRough, nv, ccEnv, specOcc) * (clearcoat * 0.95f);
         }
         // Estevez-Kulla grazing velvet/fuzz rim sheen on rough organic materials (fur, wool, moss, thatch, pine bark).
         if (!skin && base != 2u && s.alpha > 0.52f && sunDir.w > 0.5f && sunShadow > 0.05f) {

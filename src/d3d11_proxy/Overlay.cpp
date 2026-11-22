@@ -279,7 +279,7 @@ std::string BuildMenuText()
         row(7, "Highlight Contrast", Fmt("%.2f", tm.x[3]));
         row(8, "Shadow Lift (X4)", Fmt("%.2f", tm.x[4]));
         row(9, "Interior Factor (X5)", Fmt("%.2f", tm.x[5]));
-        row(10, "Debug View (0..23)", FmtI("%d", l.view));
+        row(10, "Debug View (0..27)", FmtI("%d", l.view));
     } else if (g_tab == 6) {
         static const char* kTiers[5] = {"Low (Raster)", "Medium (RT Sun)", "High (RT GI)", "Ultra (Full RT)", "Overdrive (Max)"};
         static const char* kCurves[8] = {"0:Game", "1:ACES Fitted", "2:ReinhardW", "3:RAW Hybrid", "4:AgX WideGamut", "5:GranTurismo", "6:Lottes", "7:Hable"};
@@ -452,7 +452,7 @@ bool PollMenu(std::string& outText)
             case 7: tm.x[3] = std::clamp(tm.x[3] + step * 0.05f, 0.80f, 2.00f); tmDirty = true; break;
             case 8: tm.x[4] = std::clamp(tm.x[4] + step * 0.05f, 0.25f, 1.00f); tmDirty = true; break;
             case 9: tm.x[5] = std::clamp(tm.x[5] + step * 0.05f, 0.0f, 1.50f); tmDirty = true; break;
-            case 10: l.view = (l.view + 24 + dir) % 24; break;
+            case 10: l.view = (l.view + 28 + dir) % 28; break;
             }
         } else if (g_tab == 6) {
             const int lutN = int(Tonemap_LutCount()) + 1;

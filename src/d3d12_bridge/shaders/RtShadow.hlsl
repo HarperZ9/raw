@@ -271,17 +271,20 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float v2 = visible(o, jitterDir(sunDir.xyz, sunCone, r2), tMinS, sunLength);
             vis.x = (v0 + v1 + v2) * (1.0f / 3.0f);
         }
-        // Low-VGPR 2-spp stratified SM6.9 RayQuery sky/RTAO + GI bounce (paired with spatiotemporal ReSTIR-style
-        // spatial-temporal reuse + true SVGF temporal moments in RtSkyFilter.hlsl -> 48+ effective spp at 2.5x lower GPU cost).
+        // arXiv:2602.08642 Adaptive Path-Tracing Ray Allocation (1..3 spp):
+        // High-curvature edges, corners, foliage silhouettes & interiors receive 3 stratified cosine GI rays;
+        // smooth open plains receive 1-2 rays (paired with 4-neighbor ReSTIR-style reuse + 25-tap SVGF A-Trous).
         const bool isInterior = sunDir.w <= 0.5f;
         const float aoLen = isInterior ? (skyLength > 0.0f ? min(skyLength, 220.0f) : 180.0f) : skyLength;
         if (aoLen > 0.0f) {
             const float2 rs0 = stbnR2(px, frameIndex + 11.0f);
+            const float edgeDetail = 1.0f - saturate(dot(n, ng));
+            const uint giSpp = (isInterior || edgeDetail > 0.12f || base == 5u) ? 3u : 2u;
             float skySum = 0.0f;
             float3 bounceSum = 0.0f;
             const bool doCache2 = ((giFlags & GI_CACHE) != 0u) && skyTurn(id.xy);
-            [unroll] for (uint si = 0u; si < 2u; si++) {
-                const float2 rs = frac(rs0 + float2(0.5f * float(si), 0.618034f * float(si)));
+            [loop] for (uint si = 0u; si < giSpp; si++) {
+                const float2 rs = frac(rs0 + float2(float(si) / float(giSpp), 0.618034f * float(si)));
                 const float3 sd = cosineDir(n, rs);
                 float sSample = 1.0f;
                 float3 bSample = 0.0f;
@@ -302,8 +305,9 @@ void main(uint3 id : SV_DispatchThreadID) {
                 skySum += sSample;
                 bounceSum += bSample;
             }
-            sky = 0.5f * skySum;
-            bounce = 0.5f * bounceSum;
+            const float invSpp = 1.0f / float(giSpp);
+            sky = invSpp * skySum;
+            bounce = invSpp * bounceSum;
             if ((giFlags & GI_CACHE) != 0u) { cacheAddWave(p, n, bounce, sky); }
         }
         // The three lights that would light this pixel most (colour luminance x window x n.l).

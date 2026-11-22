@@ -57,7 +57,7 @@ static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536, kDistantLod = 131072, kEnvMap = 262144, kCharLight = 524288, kUnderwater = 1048576;
 constexpr RasterBinding U = RasterBinding::Uniform, T = RasterBinding::Texture, Sm = RasterBinding::Sampler;
 constexpr RasterBinding kLightLayout[16] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T, T, Sm};
-constexpr RasterBinding kCloudLayout[3] = {U, T, Sm};
+constexpr RasterBinding kCloudLayout[4] = {U, T, T, Sm};
 constexpr RasterBinding kVolLayout[5] = {U, T, T, T, Sm};
 constexpr RasterBinding kFogLayout[7] = {U, T, T, T, T, T, Sm};
 constexpr RasterBinding kBloom1Layout[2] = {T, Sm};
@@ -227,7 +227,7 @@ public:
         const bool clouds = ok && (m_u.flags[0] & kClouds);
         const TextureHandle cloudNow = m_cloud[m_frame & 1], cloudLast = m_cloud[(m_frame + 1) & 1];
         if (clouds) {
-            const RasterBind cb[3] = {{m_uniform, {}, {}}, {{}, cloudLast, {}}, {{}, {}, m_lin}};
+            const RasterBind cb[4] = {{m_uniform, {}, {}}, {{}, cloudLast, {}}, {{}, m_atmoTrans, {}}, {{}, {}, m_lin}};
             Draw(*c, cloudNow, m_cloudPipe, cb);
         }
         const TextureHandle reflNow = m_reflHist[m_frame & 1], reflLast = m_reflHist[(m_frame + 1) & 1];

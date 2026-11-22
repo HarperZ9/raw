@@ -10,8 +10,18 @@
 #include "LightingCommon.hlsli"
 #include "CloudCommon.hlsli"
 
-Texture2D<float4> History : register(t0);
-SamplerState      Lin     : register(s0);
+Texture2D<float4> History  : register(t0);
+Texture2D<float4> TransLut : register(t1);
+SamplerState      Lin      : register(s0);
+
+float3 sampleCloudSunTrans(float mu) {
+    const float r = 6360.0f + 4.5f;   // 4.5 km Nordic cumulus deck altitude
+    const float H = sqrt(6460.0f * 6460.0f - 6360.0f * 6360.0f);
+    const float rho = sqrt(r * r - 6360.0f * 6360.0f);
+    const float d = max(0.0f, -r * mu + sqrt(max(r * r * (mu * mu - 1.0f) + 6460.0f * 6460.0f, 0.0f)));
+    const float2 uv = float2(saturate((d - (6460.0f - r)) / max(rho + H - (6460.0f - r), 1.0e-4f)), saturate(rho / H));
+    return TransLut.SampleLevel(Lin, uv, 0.0f).rgb;
+}
 
 float hg(float c, float g) {
     const float g2 = g * g;
@@ -41,8 +51,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 rawSunC = sunColour.rgb * (sunDir.w > 0.5f ? 1.0f : 0.0f);
         const float sLum = dot(rawSunC, float3(0.2126f, 0.7152f, 0.0722f));
         const float nightW = saturate((0.28f - sLum) * 4.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+        // Couple daytime cloud sunlight directly to Hillaire 2020 256x64 Transmittance LUT at cloud-deck altitude (4.5 km):
+        // crisp CIE D65 silver-white at noon, authentic fiery copper-crimson underlit cloud bellies at sunrise/sunset.
+        const float3 hTrans = sampleCloudSunTrans(clamp(sunDir.z, -0.15f, 1.0f));
+        const float htLum = max(dot(hTrans, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
+        const float3 physDaySun = lerp(rawSunC, hTrans * (max(sLum, 0.08f) / htLum), 0.58f * (1.0f - nightW));
         // Silver-blue lunar illumination on night clouds so clouds passing Masser & Secunda catch crisp moonlight rims.
-        const float3 sunC = lerp(rawSunC, max(rawSunC, float3(0.24f, 0.34f, 0.54f)) * 1.65f, nightW * 0.78f);
+        const float3 sunC = lerp(physDaySun, max(rawSunC, float3(0.24f, 0.34f, 0.54f)) * 1.65f, nightW * 0.78f);
         const float3 rawSkyC = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.0f);
         const float skyLum = max(dot(rawSkyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
         // Clean atmospheric blue-silver cloud shadow ambient (eliminates muddy brown undersides).

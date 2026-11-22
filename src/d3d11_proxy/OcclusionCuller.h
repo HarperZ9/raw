@@ -86,7 +86,7 @@ private:
     float EstimateBoundingRadius(uint32_t indexCount, float scale) const;
 
     bool m_initialized = false;
-    bool m_enabled     = true;   // Native Standard-Z temporal-reprojected Hi-Z occlusion culling
+    bool m_enabled     = false;  // Disabled: Skyrim terrain/road/riverbed meshes have off-center cell pivots that fail indexCount sphere bounds
     bool m_hizReady    = false;  // True after first successful readback
 
     ID3D11Device*        m_device  = nullptr;

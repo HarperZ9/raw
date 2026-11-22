@@ -17,6 +17,10 @@
 #include "light_fs.h"
 #include "light_vs.h"
 #include "volumetric_fs.h"
+#include "bloom_pre_fs.h"
+#include "bloom_down_fs.h"
+#include "bloom_up_fs.h"
+#include "bloom_comp_fs.h"
 
 #include <cmath>
 #include <cstring>
@@ -49,6 +53,8 @@ constexpr RasterBinding kLightLayout[16] = {U, T, T, T, T, T, T, T, T, T, T, T, 
 constexpr RasterBinding kCloudLayout[3] = {U, T, Sm};
 constexpr RasterBinding kVolLayout[5] = {U, T, T, T, Sm};
 constexpr RasterBinding kFogLayout[6] = {U, T, T, T, T, Sm};
+constexpr RasterBinding kBloom1Layout[2] = {T, Sm};
+constexpr RasterBinding kBloom2Layout[3] = {T, T, Sm};
 
 class LightingPass final : public IBridgePass
 {
@@ -95,6 +101,14 @@ public:
         for (int k = 0; k < 2; ++k) m_cloud[k] = m_dev->createTexture({cw, ch, TextureFormat::RGBA16Float, RT, "clouds"}, m_err);
         const uint32_t vw = (host.width + 1) / 2, vh = (host.height + 1) / 2;
         for (int k = 0; k < 2; ++k) m_volFog[k] = m_dev->createTexture({vw, vh, TextureFormat::RGBA16Float, RT, "volumetric fog"}, m_err);
+        // 6-level progressive RGBA16F HDR Bloom & Halation pyramid (Jimenez SIGGRAPH 2014).
+        uint32_t bw = host.width, bh = host.height;
+        for (int k = 0; k < 6; ++k) {
+            bw = (bw + 1) / 2; bh = (bh + 1) / 2;
+            m_bloomDown[k] = m_dev->createTexture({bw, bh, TextureFormat::RGBA16Float, RT, "bloom down"}, m_err);
+            if (k < 5) m_bloomUp[k] = m_dev->createTexture({bw, bh, TextureFormat::RGBA16Float, RT, "bloom up"}, m_err);
+            if (!m_bloomDown[k].valid() || (k < 5 && !m_bloomUp[k].valid())) return Fail("bloom pyramid textures");
+        }
         m_lin = m_dev->createSampler({Filter::Linear, AddressMode::ClampToEdge, "clouds linear"}, m_err);
         if (!m_cloud[0].valid() || !m_cloud[1].valid() || !m_volFog[0].valid() || !m_volFog[1].valid() || !m_lin.valid()) return Fail("cloud/volFog textures");
         const auto dxil = [](const void* p, size_t n) { return ShaderCode{ShaderFormat::Dxil, p, n}; };
@@ -113,6 +127,15 @@ public:
         d.label = "volumetric fog"; d.fragment = dxil(kDxil_volumetric_fs, sizeof kDxil_volumetric_fs); d.layout = kVolLayout;
         m_volPipe = m_dev->createRasterPipeline(d, m_err);
         if (!m_volPipe.valid()) return Fail("volumetric pipeline");
+        d.label = "bloom pre"; d.fragment = dxil(kDxil_bloom_pre_fs, sizeof kDxil_bloom_pre_fs); d.layout = kBloom1Layout;
+        m_bloomPrePipe = m_dev->createRasterPipeline(d, m_err);
+        d.label = "bloom down"; d.fragment = dxil(kDxil_bloom_down_fs, sizeof kDxil_bloom_down_fs); d.layout = kBloom1Layout;
+        m_bloomDownPipe = m_dev->createRasterPipeline(d, m_err);
+        d.label = "bloom up"; d.fragment = dxil(kDxil_bloom_up_fs, sizeof kDxil_bloom_up_fs); d.layout = kBloom2Layout;
+        m_bloomUpPipe = m_dev->createRasterPipeline(d, m_err);
+        d.label = "bloom comp"; d.fragment = dxil(kDxil_bloom_comp_fs, sizeof kDxil_bloom_comp_fs); d.layout = kBloom2Layout;
+        m_bloomCompPipe = m_dev->createRasterPipeline(d, m_err);
+        if (!m_bloomPrePipe.valid() || !m_bloomDownPipe.valid() || !m_bloomUpPipe.valid() || !m_bloomCompPipe.valid()) return Fail("bloom pipelines");
         const ao_rt::Shaders sh{dxil(kDxil_ao_rt_vs, sizeof kDxil_ao_rt_vs), dxil(kDxil_ao_rt_prefilter, sizeof kDxil_ao_rt_prefilter),
                                 dxil(kDxil_ao_rt_level, sizeof kDxil_ao_rt_level), dxil(kDxil_ao_rt_trace, sizeof kDxil_ao_rt_trace),
                                 dxil(kDxil_ao_rt_resolve, sizeof kDxil_ao_rt_resolve)};
@@ -169,7 +192,26 @@ public:
             Draw(*c, volNow, m_volPipe, vb);
         }
         const RasterBind fog[6] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volNow, {}}, {{}, {}, m_lin}};
-        Draw(*c, m_out, m_fogPipe, fog);
+        if (ok && (m_u.flags[0] & kMatch) == 0u) {
+            // Render fog into m_aoOut (free full-res RGBA16F scratch), run 6-level Jimenez Karis HDR Bloom Pyramid,
+            // and composite bloomed linear HDR straight into m_out (zero extra full-res VRAM allocation).
+            Draw(*c, m_aoOut, m_fogPipe, fog);
+            const RasterBind bp[2] = {{{}, m_aoOut, {}}, {{}, {}, m_lin}};
+            Draw(*c, m_bloomDown[0], m_bloomPrePipe, bp);
+            for (int k = 1; k < 6; ++k) {
+                const RasterBind bd[2] = {{{}, m_bloomDown[k - 1], {}}, {{}, {}, m_lin}};
+                Draw(*c, m_bloomDown[k], m_bloomDownPipe, bd);
+            }
+            for (int k = 4; k >= 0; --k) {
+                const TextureHandle coarser = (k == 4) ? m_bloomDown[5] : m_bloomUp[k + 1];
+                const RasterBind bu[3] = {{{}, coarser, {}}, {{}, m_bloomDown[k], {}}, {{}, {}, m_lin}};
+                Draw(*c, m_bloomUp[k], m_bloomUpPipe, bu);
+            }
+            const RasterBind bc[3] = {{{}, m_aoOut, {}}, {{}, m_bloomUp[0], {}}, {{}, {}, m_lin}};
+            Draw(*c, m_out, m_bloomCompPipe, bc);
+        } else {
+            Draw(*c, m_out, m_fogPipe, fog);
+        }
         c->timestamp(5);
         if (!m_dev->endRecording(m_err)) return Fail("endRecording");
         ++m_frame;
@@ -359,7 +401,8 @@ private:
     TextureHandle m_rtVis, m_rtIdx, m_soft, m_game, m_depth, m_normal, m_albedo, m_spec, m_mask, m_atlas, m_out, m_motion, m_lit, m_aoOut;
     BufferHandle m_uniform;
     RasterPipelineHandle m_lightPipe, m_fogPipe, m_cloudPipe, m_volPipe;
-    TextureHandle m_cloud[2], m_volFog[2];
+    RasterPipelineHandle m_bloomPrePipe, m_bloomDownPipe, m_bloomUpPipe, m_bloomCompPipe;
+    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5];
     SamplerHandle m_lin;
     float m_prevWorldToClip[16] = {};
     float m_footTrail[32][4] = {};

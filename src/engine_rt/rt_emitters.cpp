@@ -41,9 +41,12 @@ bool Contains(const std::string& s, const char* const* words) {
 }
 
 const char* const kFire[] = {"fire", "flame", "torch", "candle", "brazier", "lantern", "hearth", "ember", "sconce",
-                             "chandelier", "lamp", "burn", "lava", "forge", "window", "skylight", "stained", nullptr};
+                             "chandelier", "lamp", "burn", "lava", "forge", "campfire", "bonfire", "magma",
+                             "window", "skylight", "stained", nullptr};
 const char* const kMagic[] = {"magic", "spell", "mgef", "fxmagic", "shock", "frost", "ward", "soul", "aura", "spark",
-                              nullptr};
+                              "heal", "restoration", "destruction", "conjuration", "illusion", "alteration",
+                              "fireball", "firebolt", "lightning", "rune", "wisp", "glow", "dwemer", "nirn",
+                              "plasma", "crystal", "mushroom", nullptr};
 
 std::string Lower(const char* p, size_t max) {
     std::string s;
@@ -226,6 +229,24 @@ void EmittersOnPresent() {
     std::vector<Emitter> merged = Merge(g_raw);
     g_raw.clear();
     std::lock_guard<std::mutex> g(g_m);
+    // Temporal EMA flicker smoothing for particle/spell/flame emitters: prevents harsh 1-frame particle-count strobing
+    // while keeping moving torches, spells, and projectiles responsive (55% pos, 35% intensity per frame).
+    for (auto& cur : merged) {
+        const Emitter* bestPrev = nullptr;
+        float bestD2 = 56.0f * 56.0f;
+        for (const auto& prev : g_last) {
+            const float dx = cur.pos[0] - prev.pos[0], dy = cur.pos[1] - prev.pos[1], dz = cur.pos[2] - prev.pos[2];
+            const float d2 = dx * dx + dy * dy + dz * dz;
+            if (d2 < bestD2) { bestD2 = d2; bestPrev = &prev; }
+        }
+        if (bestPrev) {
+            for (int i = 0; i < 3; ++i) {
+                cur.pos[i] = bestPrev->pos[i] + (cur.pos[i] - bestPrev->pos[i]) * 0.55f;
+                cur.color[i] = bestPrev->color[i] + (cur.color[i] - bestPrev->color[i]) * 0.35f;
+            }
+            cur.radius = bestPrev->radius + (cur.radius - bestPrev->radius) * 0.40f;
+        }
+    }
     g_last = std::move(merged);
 }
 

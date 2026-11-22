@@ -384,7 +384,8 @@ void main(uint3 id : SV_DispatchThreadID) {
                     if (rq.x < 0.5f || abs(rq.w - z) > 0.05f * z) { continue; }
                     const uint yq = uint(rq.x + 0.5f) - 1u;
                     if (yq >= flags.y || yq == best[0] || yq == best[1] || yq == best[2]) { continue; }
-                    const float mq = min(rq.z, 20.0f);
+                    // Cap reservoir history at 8 samples so moving torches, spells & particle lights track instantaneously with zero ghosting.
+                    const float mq = min(rq.z, 8.0f);
                     const float wq = lightShare(yq, p, n) * rq.y * mq;
                     M += mq;
                     if (wq <= 0.0f) { continue; }
@@ -395,15 +396,19 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float py = pick != ~0u ? lightShare(pick, p, n) : 0.0f;
             const float W = py > 0.0f && M > 0.0f ? wsum / (M * py) : 0.0f;
             ResOut[id.xy] = float4(pick != ~0u ? float(pick + 1u) : 0.0f, W, M, z);
-            if (pick != ~0u && skyLength > 0.0f && skyTurn(id.xy)) {
-                const float3 c = lightPosR[pick].xyz + (float3(r.y, r.x, frac(r.x * 1.7f + 0.3f)) * 2.0f - 1.0f) * sourceRadius;
+            // Full-rate every-frame DXR 1.2 real-time shadow ray for ALL lights 4..128 (torches, spells, particle lights, braziers)
+            // with fixture clearance (eliminates 4-frame skyTurn lag & bracket self-shadowing flicker).
+            if (pick != ~0u && skyLength > 0.0f) {
+                const float fixClearR = max(sourceRadius * 1.8f, 14.0f);
+                const float2 rRest = float2(ign(px + float2(43.0f, 19.0f)), ign(px.yx + float2(11.0f, 37.0f)));
+                const float3 c = lightPosR[pick].xyz + (float3(rRest.x, rRest.y, frac(rRest.x + rRest.y + 0.5f)) * 2.0f - 1.0f) * (sourceRadius * 0.40f);
                 const float3 toC = c - o;
                 const float len = length(toC);
-                const float v = visible(o, toC / max(len, 1.0e-4f), 0.0f, max(len - sourceRadius - 1.0f, 0.0f));
-                // SIGGRAPH 2026 ReSTCV (Shi et al.): Spatio-Temporal Control Variate variance reduction on 1-spp ReSTIR visibility.
+                const float v = len > fixClearR ? visible(o, toC / max(len, 1.0e-4f), 0.0f, len - fixClearR) : 1.0f;
+                // SIGGRAPH 2026 ReSTCV (Shi et al.): Spatio-Temporal Control Variate variance reduction on ReSTIR visibility.
                 const float rawShare = saturate(py * v * W / max(total, 1.0e-6f));
                 const float cvPrior = saturate(0.58f + 0.30f * (M / (M + 6.0f)));
-                const float share = saturate(lerp(rawShare, cvPrior + 0.68f * (rawShare - cvPrior), saturate(M / 12.0f)));
+                const float share = saturate(lerp(rawShare, cvPrior + 0.72f * (rawShare - cvPrior), saturate(M / 8.0f)));
                 restCode = 4.0f + 2.0f * round(share * 15.0f);   // + sky (0 or 1); RtSkyFilter decodes q = (a - 4 - sky) / 2
             }
         }

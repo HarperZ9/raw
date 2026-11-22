@@ -74,6 +74,31 @@ float2 stbnR2(float2 px, float frameOff) {
     return frac(ignBase + r2Step * fmod(frameOff, 64.0f));
 }
 
+// Duff et al. 2017 (JCGT) branchless orthonormal basis + Heitz 2018 (JCGT) exact GGX VNDF importance sampling.
+// Replaces naive uniform cone jitter with physically exact visible-normal microfacet sampling (zero grazing leaks).
+float3 sampleGGXVNDF(float3 n, float3 v, float alpha, float2 u) {
+    const float s = n.z >= 0.0f ? 1.0f : -1.0f;
+    const float a = -1.0f / (s + n.z);
+    const float b = n.x * n.y * a;
+    const float3 t1 = float3(1.0f + s * n.x * n.x * a, s * b, -s * n.x);
+    const float3 t2 = float3(b, s + n.y * n.y * a, -n.y);
+    const float3 Ve = float3(dot(v, t1), dot(v, t2), max(dot(v, n), 1.0e-4f));
+    const float3 Vh = normalize(float3(alpha * Ve.x, alpha * Ve.y, Ve.z));
+    const float lensq = Vh.x * Vh.x + Vh.y * Vh.y;
+    const float3 T1 = lensq > 1.0e-7f ? float3(-Vh.y, Vh.x, 0.0f) * rsqrt(lensq) : float3(1.0f, 0.0f, 0.0f);
+    const float3 T2 = cross(Vh, T1);
+    const float r = sqrt(saturate(u.x));
+    const float phi = 6.2831853f * u.y;
+    float t1p = r * cos(phi);
+    float t2p = r * sin(phi);
+    const float sBias = 0.5f * (1.0f + Vh.z);
+    t2p = (1.0f - sBias) * sqrt(max(1.0f - t1p * t1p, 0.0f)) + sBias * t2p;
+    const float3 Nh = t1p * T1 + t2p * T2 + sqrt(max(0.0f, 1.0f - t1p * t1p - t2p * t2p)) * Vh;
+    const float3 Ne = normalize(float3(alpha * Nh.x, alpha * Nh.y, max(0.0f, Nh.z)));
+    const float3 H = normalize(t1 * Ne.x + t2 * Ne.y + n * Ne.z);
+    return reflect(-v, H);
+}
+
 // How much light li would give the point (luminance x window x n.l): the trace's light choice and ReSTIR's target.
 float lightShare(uint li, float3 p, float3 n) {
     const float3 toL = lightPosR[li].xyz - p;
@@ -410,7 +435,8 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float shin = exp2(sp.y * 13.0f);
             const float alpha = lerp(lerp(clamp(sqrt(2.0f / (shin + 2.0f)), 0.03f, 1.0f), 0.12f, rain.wet), 0.03f, rain.puddle);
             const float2 rr = stbnR2(px, frameIndex + 37.0f);
-            const float3 rd = jitterDir(reflect(-v, n), alpha * 0.5f, rr);
+            // Heitz 2018 GGX VNDF importance sampling (replaces uniform cone jitterDir for physically exact glossy lobes).
+            const float3 rd = sampleGGXVNDF(n, v, max(alpha, 0.02f), rr);
             const float3 ng = geometricNormal(px, p, n);
             reflTraced = true;
             if (dot(rd, ng) > 0.0f) {
@@ -421,7 +447,7 @@ void main(uint3 id : SV_DispatchThreadID) {
                 if (traceHit(o, rd, reflectLength, h)) {
                     if (onScreen(o + rd * h.t, c)) { refl = float4(c, 1.0f); }
                     else if ((giFlags & GI_MATERIALS) != 0u) { refl = float4(radianceAt(h, o, rd, rr, true, hn), 1.0f); }
-                } else if (wetGloss) { refl = float4(skyAt(rd), 1.0f); }   // wet ground and puddles mirror the sky
+                } else if (wetGloss || base == 2u) { refl = float4(skyAt(rd), 1.0f); }   // wet ground, puddles & forged metal mirror the sky
             }
         }
     }

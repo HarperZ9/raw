@@ -66,7 +66,17 @@ float2 evalTrochoidalWaves(float2 xy, float2 wDir, float wt, float wDist, float 
         const float dWave = cos(ph) + 0.35f * cos(2.0f * ph);
         grad += dir * (dWave * kAmp[wi] * fade);
     }
-    return grad * (0.095f + windAmp * 0.085f);
+    return grad * (0.21f + windAmp * 0.14f);
+}
+
+// Organic 3-octave domain-warped liquid froth (replaces hexagonal Voronoi chicken-wire shore foam).
+float organicFroth(float2 p, float t) {
+    const float w0 = sin(p.x * 0.11f + t * 0.65f) * cos(p.y * 0.13f - t * 0.52f);
+    const float w1 = cos(p.x * 0.23f - p.y * 0.19f + t * 0.88f + w0 * 1.4f);
+    const float w2 = sin(p.x * 0.51f + p.y * 0.47f - t * 1.35f + w1 * 1.8f);
+    const float w3 = cos(p.x * 1.07f - p.y * 0.93f + t * 1.95f + w2 * 1.5f);
+    const float f = saturate(0.45f + 0.28f * w1 + 0.18f * w2 + 0.14f * w3);
+    return smoothstep(0.42f, 0.88f, f);
 }
 
 float3 waterSky(float3 rd) {
@@ -307,16 +317,15 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float3 waveSSS = sunDir.w > 0.5f
                     ? float3(0.03f, 0.28f, 0.26f) * sunColour.rgb * (0.25f + 0.75f * pow(saturate(dot(-v, sunDir.xyz)), 3.5f)) * saturate((1.0f - n.z) * 5.5f) * 0.65f
                     : 0.0f.xxx;
-                // Hydrodynamic foam: crisp white-water spray ONLY on upstream rock bow-waves, trailing lee eddies, and steep rapids crests
-                // (calm banks stay crystal-clear with only a hairline of broken cellular froth).
-                const float shoreBand = (1.0f - smoothstep(0.0f, 6.5f, depthV)) * smoothstep(0.0f, 0.6f, depthV);
-                const float foamCell = saturate(1.0f - cellWalls(wpW.xy / 13.0f, camPosW.w * 0.55f) * 2.5f);
-                const float laceFoam = pow(foamCell, 2.3f);
-                const float lapWave = pow(saturate(sin(depthV * 0.55f - camPosW.w * 2.1f + foamCell * 2.6f) * 0.5f + 0.5f), 3.0f);
-                const float bowFoam = bowHit * laceFoam * (0.55f + 0.45f * lapWave) * 0.78f;
-                const float eddyFoam = eddyLee * laceFoam * 0.38f;
-                const float shoreLap = shoreBand * laceFoam * (0.35f + 0.65f * lapWave) * 0.24f;
-                const float crestFoam = saturate((1.0f - n.z) * 7.5f - 0.20f) * laceFoam * 0.55f;
+                // Organic domain-warped turbulent froth (zero hexagonal Voronoi chicken-wire on shallow shorelines):
+                // white-water spray forms naturally on upstream rock bow-waves, lee eddies, and steep rapids crests.
+                const float shoreBand = (1.0f - smoothstep(0.0f, 5.5f, depthV)) * smoothstep(0.0f, 0.5f, depthV);
+                const float froth = organicFroth(wpW.xy, camPosW.w);
+                const float lapWave = pow(saturate(sin(depthV * 0.55f - camPosW.w * 2.1f + froth * 2.4f) * 0.5f + 0.5f), 3.0f);
+                const float bowFoam = bowHit * froth * (0.50f + 0.50f * lapWave) * 0.72f;
+                const float eddyFoam = eddyLee * froth * 0.34f;
+                const float shoreLap = shoreBand * froth * (0.30f + 0.70f * lapWave) * 0.22f;
+                const float crestFoam = saturate((1.0f - n.z) * 6.5f - 0.18f) * froth * 0.52f;
                 const float foamMask = saturate(max(max(bowFoam, eddyFoam), max(shoreLap, crestFoam))) * nearW;
                 const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) * 0.85f + (sunDir.w > 0.5f ? sunColour.rgb * 0.32f : 0.0f.xxx));
                 const float3 waterBody = (bed + caus) * T + scatter * (1.0f - T) + waveSSS;

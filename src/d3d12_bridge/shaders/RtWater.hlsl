@@ -370,12 +370,36 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float shoreLap = shoreBand * froth * (0.30f + 0.70f * lapWave) * 0.22f;
                 const float crestFoam = saturate((1.0f - n.z) * 6.5f - 0.18f) * froth * 0.52f;
                 const float foamMask = saturate(max(max(bowFoam, eddyFoam), max(shoreLap, crestFoam))) * nearW;
+                // True Underwater Volumetric Sunbeam Shafts (6-step depth-marched Mie scattering integral through water column):
+                // gives sunlit Nordic rivers glowing emerald-turquoise underwater light cones beneath the surface.
+                float3 uwShaft = 0.0f.xxx;
+                if (sunDir.w > 0.5f && sunDir.z > 0.08f && depthV > 6.0f && wDist < 4200.0f) {
+                    const float clearW = 1.0f - saturate(clouds.x * 0.78f);
+                    const float cosUw = dot(-v, sunDir.xyz);
+                    const float phUw = 0.45f + 0.55f * pow(saturate(cosUw * 0.5f + 0.5f), 2.5f);
+                    const float dRay = min(path, 260.0f);
+                    const float stepUw = dRay * (1.0f / 6.0f);
+                    float uwAcc = 0.0f;
+                    [unroll] for (int ui = 0; ui < 6; ui++) {
+                        const float tu = (float(ui) + 0.5f) * stepUw;
+                        const float3 pu = p - v * tu;
+                        const float dCol = max(p.z - pu.z, 0.0f);
+                        uwAcc += exp(-waterA.z * 0.85f * (tu + dCol)) * stepUw;
+                    }
+                    uwShaft = sunColour.rgb * float3(0.06f, 0.34f, 0.38f) * (uwAcc * 0.0028f * phUw * clearW);
+                }
+                // Wind-driven elongated storm whitecap streaks across open water when wind rises.
+                const float windAmpW = saturate(length(cloudWind.xy) / 340.0f);
+                const float2 wDirW = normalize(cloudWind.xy + float2(1.0f, 0.35f));
+                const float2 streakCoord = float2(dot(wpW.xy, wDirW) * 0.015f, dot(wpW.xy, float2(-wDirW.y, wDirW.x)) * 0.095f);
+                const float windStreaks = smoothstep(0.68f, 0.90f, vNoise2D(streakCoord - float2(camPosW.w * 0.25f, 0.0f))) * windAmpW * 0.36f;
                 const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) * 0.85f + (sunDir.w > 0.5f ? sunColour.rgb * 0.32f : 0.0f.xxx));
-                const float3 waterBody = (bed + caus) * T + scatter * (1.0f - T) + waveSSS;
-                body = lerp(waterBody, foamLit, foamMask * 0.68f);
+                const float3 waterBody = (bed + caus) * T + scatter * (1.0f - T) + waveSSS + uwShaft;
+                body = lerp(waterBody, foamLit, saturate(foamMask + windStreaks) * 0.68f);
             }
             const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;
-            const float cellFeather = 1.0f - smoothstep(2200.0f, 4400.0f, wDist);
+            // Eliminate the 2,200u mid-river seam: keep full physical refraction & RT reflections out to 6,500-13,500u!
+            const float cellFeather = 1.0f - smoothstep(6500.0f, 13500.0f, wDist);
             const float effF = saturate(F * waterA.x * shoreFeather * cellFeather);
             const uint view = uint(waterB.x + 0.5f);
             const float3 farSkyRefl = waterSky(rd);

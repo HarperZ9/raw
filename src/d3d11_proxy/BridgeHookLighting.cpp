@@ -54,6 +54,17 @@ void DriveWeather()
     if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
     const double dt = last.QuadPart ? double(now.QuadPart - last.QuadPart) / double(freq.QuadPart) : 0.0;
     last = now;
+    static float lastPos[3] = {};
+    static bool hasLastPos = false;
+    const auto& sf = SceneLights_Frame();
+    if (sf.hasCamera) {
+        if (hasLastPos) {
+            const float dx = sf.posAdjust[0] - lastPos[0], dy = sf.posAdjust[1] - lastPos[1], dz = sf.posAdjust[2] - lastPos[2];
+            if (dx*dx + dy*dy + dz*dz > 2500.0f * 2500.0f) WeatherDrive_OnTeleport();
+        }
+        lastPos[0] = sf.posAdjust[0]; lastPos[1] = sf.posAdjust[1]; lastPos[2] = sf.posAdjust[2];
+        hasLastPos = true;
+    }
     WeatherSurfaces w;
     if (!s_weatherDriven || !WeatherDrive_Step(dt, w) || !Bridge()) return;
     LightingTuning t = Cfg().light;

@@ -25,6 +25,7 @@ struct WeatherTimes
 };
 void WeatherDrive_SetTest(float rain, float snow);   // the ini stand-in; negative: off
 void WeatherDrive_SetTimes(const WeatherTimes& t);
+void WeatherDrive_OnTeleport();
 // Advances the surfaces by dt seconds. False while no weather has been reported (the ini values stay).
 bool WeatherDrive_Step(double dt, WeatherSurfaces& out);
 } // namespace SB::Proxy

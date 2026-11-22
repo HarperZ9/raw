@@ -17,12 +17,14 @@ Report g_report;
 float g_testRain = -1.0f, g_testSnow = -1.0f;
 WeatherTimes g_times;
 WeatherSurfaces g_s;
+bool g_snapNext = false;
 
 float Clamp01(float v) { return std::min(std::max(v, 0.0f), 1.0f); }
 } // namespace
 
 void WeatherDrive_SetTest(float rain, float snow) { g_testRain = rain; g_testSnow = snow; }
 void WeatherDrive_SetTimes(const WeatherTimes& t) { g_times = t; }
+void WeatherDrive_OnTeleport() { g_snapNext = true; }
 
 bool WeatherDrive_Step(double dt, WeatherSurfaces& out)
 {
@@ -31,9 +33,10 @@ bool WeatherDrive_Step(double dt, WeatherSurfaces& out)
     const float rain = test ? std::max(g_testRain, 0.0f) : Clamp01(g_report.rain.load());
     const float snow = test ? std::max(g_testSnow, 0.0f) : Clamp01(g_report.snow.load());
     const float cloud = test ? (rain > 0.0f || snow > 0.0f ? 1.0f : 0.0f) : Clamp01(g_report.cloud.load());
-    // After a loading screen / cell teleport (dt > 2.0 s), snap surface wetness/snow to the new region's weather
-    // instead of carrying Winterhold snow into clear Riverwood.
-    if (dt > 2.0) {
+    // After a loading screen / fast-travel / cell teleport, immediately snap surface wetness/snow to the new
+    // region's live TESWeather instead of carrying Dawnstar snow into sunny Whiterun.
+    if (dt > 0.5 || g_snapNext) {
+        g_snapNext = false;
         g_s.wetness = rain;
         g_s.puddles = rain > 0.3f ? (rain - 0.3f) / 0.7f * 0.5f : 0.0f;
         g_s.snow = snow;

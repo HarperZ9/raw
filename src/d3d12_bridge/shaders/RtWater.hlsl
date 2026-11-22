@@ -114,21 +114,66 @@ void water(uint3 id : SV_DispatchThreadID) {
             // 4-octave world-space Gerstner & capillary wave field (keeping only 12% of nL for river-flow curvature).
             const float3 v = normalize(eyeAt() - p);
             const float3 wpW = camPosW.xyz + p;
-            float3 n = normalize(lerp(float3(0.0f, 0.0f, 1.0f), nL, 0.12f));
+            float3 n = normalize(lerp(float3(0.0f, 0.0f, 1.0f), nL, 0.14f));
             const float wDist = length(p);
+            // Compute local water depth & world-space obstacle gradient (rocks, bridge piers, riverbanks)
+            // for true potential-flow streamline deflection, upstream bow-wave pileup, and downstream eddy wakes.
+            float depthV0 = 120.0f;
+            float2 obsGrad = 0.0f.xx;
+            float bowHit = 0.0f, eddyLee = 0.0f;
+            if (dBed < 1.0f && wDist < 5500.0f) {
+                const float3 pb0 = worldAt(px, dBed);
+                depthV0 = max(p.z - pb0.z, 0.0f);
+                const int2 limW = int2(dims.xy) - 1;
+                const int2 pR = clamp(ip.xy + int2( 4,  0), int2(0, 0), limW);
+                const int2 pL = clamp(ip.xy + int2(-4,  0), int2(0, 0), limW);
+                const int2 pD = clamp(ip.xy + int2( 0,  4), int2(0, 0), limW);
+                const int2 pU = clamp(ip.xy + int2( 0, -4), int2(0, 0), limW);
+                const float dR = Depth.Load(int3(pR, 0)), dL = Depth.Load(int3(pL, 0));
+                const float dD = Depth.Load(int3(pD, 0)), dU = Depth.Load(int3(pU, 0));
+                const float hR = dR < 1.0f ? max(p.z - worldAt(float2(pR), dR).z, 0.0f) : depthV0;
+                const float hL = dL < 1.0f ? max(p.z - worldAt(float2(pL), dL).z, 0.0f) : depthV0;
+                const float hD = dD < 1.0f ? max(p.z - worldAt(float2(pD), dD).z, 0.0f) : depthV0;
+                const float hU = dU < 1.0f ? max(p.z - worldAt(float2(pU), dU).z, 0.0f) : depthV0;
+                const float3 dpX = worldAt(float2(pR), L.x) - worldAt(float2(pL), L.x);
+                const float3 dpY = worldAt(float2(pD), L.x) - worldAt(float2(pU), L.x);
+                const float2 gRaw = dpX.xy * ((hR - hL) / max(dot(dpX.xy, dpX.xy), 1.0f))
+                                  + dpY.xy * ((hD - hU) / max(dot(dpY.xy, dpY.xy), 1.0f));
+                const float gLen = length(gRaw);
+                if (gLen > 0.04f) { obsGrad = gRaw / gLen; }
+            }
             if (wDist < 26000.0f) {
                 const float2 wDir = normalize(cloudWind.xy + float2(1.0f, 0.35f));
                 const float wt = camPosW.w;
                 const float windAmp = saturate(length(cloudWind.xy) / 380.0f);
-                // Vlachos SIGGRAPH 2010 Dual-Phase Directional Flow-Map Advection:
-                // rivers visibly flow downstream along Skyrim's water flow vector (nL.xy) without texture stretching.
-                const float2 flowVec = nL.xy * 18.0f + wDir * (1.2f + windAmp * 1.8f);
-                const float ph0 = frac(wt * 0.22f);
-                const float ph1 = frac(wt * 0.22f + 0.5f);
+                // Shallow-water Bernoulli/Venturi acceleration: shallow channels flow faster with tighter ripples;
+                // deep pools calm into broad smooth swells (c = sqrt(g * h)).
+                const float shallowW = 1.0f - smoothstep(4.0f, 52.0f, depthV0);
+                const float nearObs = (1.0f - smoothstep(0.0f, 38.0f, depthV0)) * saturate(length(obsGrad) * 2.0f);
+                const float2 flowBase = nL.xy * (22.0f + shallowW * 16.0f) + wDir * (1.8f + windAmp * 2.2f);
+                const float flowSpd = max(length(flowBase), 0.1f);
+                const float2 flowDir = flowBase / flowSpd;
+                // Potential-flow streamline deflection: current parts & curves smoothly AROUND rocks and riverbanks!
+                const float intoObs = dot(flowDir, -obsGrad);
+                const float2 flowTang = flowBase - obsGrad * (dot(flowBase, obsGrad) * nearObs * 0.92f);
+                // Divergence-free 2D curl-noise eddies in calm backwaters & lee wakes behind boulders.
+                const float cEps = 18.0f;
+                const float cn0 = hash21(floor(wpW.xy * 0.015f));
+                const float2 curlPhase = float2(sin(wpW.y * 0.024f + wt * 0.55f + cn0), -cos(wpW.x * 0.024f - wt * 0.48f));
+                bowHit = saturate(intoObs) * nearObs;
+                eddyLee = saturate(-intoObs) * nearObs;
+                const float2 flowVec = flowTang + curlPhase * (1.4f + eddyLee * 6.5f);
+                // Vlachos SIGGRAPH 2010 Dual-Phase Directional Flow-Map Advection along deflected streamlines.
+                const float ph0 = frac(wt * (0.24f + shallowW * 0.14f));
+                const float ph1 = frac(wt * (0.24f + shallowW * 0.14f) + 0.5f);
                 const float flowBlend = abs(2.0f * ph0 - 1.0f);
-                const float2 g0 = evalTrochoidalWaves(wpW.xy - flowVec * (ph0 * 14.0f), wDir, wt, wDist, windAmp);
-                const float2 g1 = evalTrochoidalWaves(wpW.xy - flowVec * (ph1 * 14.0f) + float2(73.1f, 41.7f), wDir, wt, wDist, windAmp);
-                const float2 waveG = lerp(g0, g1, flowBlend);
+                const float2 g0 = evalTrochoidalWaves(wpW.xy - flowVec * (ph0 * 16.0f), flowDir, wt, wDist, windAmp + shallowW * 0.45f);
+                const float2 g1 = evalTrochoidalWaves(wpW.xy - flowVec * (ph1 * 16.0f) + float2(73.1f, 41.7f), flowDir, wt, wDist, windAmp + shallowW * 0.45f);
+                // Damp wave height smoothly at razor-thin 0..4u shore edge while raising upstream bow-wave crest & lee eddy ripples.
+                const float depthDamp = smoothstep(0.0f, 6.0f, depthV0) * lerp(1.0f, 0.72f, smoothstep(50.0f, 160.0f, depthV0));
+                const float2 bowNormal = obsGrad * (bowHit * (0.14f + 0.08f * sin(depthV0 * 0.45f - wt * 3.2f)));
+                const float2 eddyRipple = curlPhase * (eddyLee * 0.09f * sin(dot(wpW.xy, flowDir) * 0.18f - wt * 2.8f));
+                const float2 waveG = lerp(g0, g1, flowBlend) * depthDamp + bowNormal + eddyRipple;
                 n = normalize(n + float3(waveG, 0.0f));
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
                 if (wDist < 1600.0f) {
@@ -262,14 +307,17 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float3 waveSSS = sunDir.w > 0.5f
                     ? float3(0.03f, 0.28f, 0.26f) * sunColour.rgb * (0.25f + 0.75f * pow(saturate(dot(-v, sunDir.xyz)), 3.5f)) * saturate((1.0f - n.z) * 5.5f) * 0.65f
                     : 0.0f.xxx;
-                // Delicate, broken cellular shoreline froth (0..7.5u depth) + subtle rapids wave-crest foam (eliminates solid painted white rings around quiet river rocks).
-                const float shoreBand = (1.0f - smoothstep(0.0f, 7.5f, depthV)) * smoothstep(0.0f, 0.7f, depthV);
-                const float foamCell = saturate(1.0f - cellWalls(wpW.xy / 14.0f, camPosW.w * 0.48f) * 2.5f);
-                const float laceFoam = pow(foamCell, 2.4f);
-                const float lapWave = pow(saturate(sin(depthV * 0.55f - camPosW.w * 2.0f + foamCell * 2.6f) * 0.5f + 0.5f), 3.0f);
-                const float shoreLap = shoreBand * laceFoam * (0.45f + 0.55f * lapWave) * 0.34f;
-                const float crestFoam = saturate((1.0f - n.z) * 7.5f - 0.22f) * laceFoam * 0.52f;
-                const float foamMask = saturate(max(shoreLap, crestFoam)) * nearW;
+                // Hydrodynamic foam: crisp white-water spray ONLY on upstream rock bow-waves, trailing lee eddies, and steep rapids crests
+                // (calm banks stay crystal-clear with only a hairline of broken cellular froth).
+                const float shoreBand = (1.0f - smoothstep(0.0f, 6.5f, depthV)) * smoothstep(0.0f, 0.6f, depthV);
+                const float foamCell = saturate(1.0f - cellWalls(wpW.xy / 13.0f, camPosW.w * 0.55f) * 2.5f);
+                const float laceFoam = pow(foamCell, 2.3f);
+                const float lapWave = pow(saturate(sin(depthV * 0.55f - camPosW.w * 2.1f + foamCell * 2.6f) * 0.5f + 0.5f), 3.0f);
+                const float bowFoam = bowHit * laceFoam * (0.55f + 0.45f * lapWave) * 0.78f;
+                const float eddyFoam = eddyLee * laceFoam * 0.38f;
+                const float shoreLap = shoreBand * laceFoam * (0.35f + 0.65f * lapWave) * 0.24f;
+                const float crestFoam = saturate((1.0f - n.z) * 7.5f - 0.20f) * laceFoam * 0.55f;
+                const float foamMask = saturate(max(max(bowFoam, eddyFoam), max(shoreLap, crestFoam))) * nearW;
                 const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) * 0.85f + (sunDir.w > 0.5f ? sunColour.rgb * 0.32f : 0.0f.xxx));
                 const float3 waterBody = (bed + caus) * T + scatter * (1.0f - T) + waveSSS;
                 body = lerp(waterBody, foamLit, foamMask * 0.68f);

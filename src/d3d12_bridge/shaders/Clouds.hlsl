@@ -44,25 +44,26 @@ float cloudDensityVol(float3 pa, bool detail) {
     const float topGrad  = 1.0f - smoothstep(topCap * 0.56f, topCap, h);
     const float hGrad = saturate(baseGrad * topGrad);
 
-    // 1st lookup: 4-octave periodic 3D Perlin-Worley macro cumulus domes (zero seams, crisp sculpted banks).
-    const float3 q = float3(sheared.x / 26000.0f, sheared.y / 25000.0f, h * 0.75f);
+    // 1st lookup: 4-octave periodic 3D Perlin-Worley macro cumulus domes (distinct sculptural cloud islands across blue sky).
+    const float3 q = float3(sheared.x / 24000.0f, sheared.y / 23000.0f, h * 0.78f);
     const float4 low = sampleCloudVol(q);
     const float lowFbm = low.g * 0.625f + low.b * 0.25f + low.a * 0.125f;
-    const float baseShape = cRemap(low.r, -(1.0f - lowFbm) * 0.48f, 1.0f, 0.0f, 1.0f) * hGrad;
-    const float thresh = lerp(0.62f, lerp(0.46f, 0.28f, stormType), cover);
+    const float baseShape = cRemap(low.r, -(1.0f - lowFbm) * 0.50f, 1.0f, 0.0f, 1.0f) * hGrad;
+    const float thresh = lerp(0.68f, lerp(0.52f, 0.30f, stormType), cover);
     float dens = cRemap(baseShape, thresh, 1.0f, 0.0f, 1.0f);
     if (detail && dens > 0.001f) {
-        // 2nd + 3rd lookups: dual-scale high-frequency 3D Worley cauliflower turret & razor-sharp overhead wisp erosion
-        // (1,800u micro-tile resolves fine cloud tufts even when staring straight up at zenith).
-        const float3 r1 = float3((sheared.x + wind.x * 0.30f) / 5600.0f, (sheared.y + wind.y * 0.30f) / 5400.0f, h * 2.4f);
-        const float3 r2 = float3((sheared.x + wind.x * 0.55f) / 1800.0f, (sheared.y + wind.y * 0.55f) / 1750.0f, h * 5.2f);
+        // 2nd + 3rd lookups: dual-scale 3D Worley cauliflower turret erosion + infinite-resolution procedural micro-wisps
+        // on cloud edges so overhead zenith clouds stay razor-sharp with zero 64x64 texture blur.
+        const float3 r1 = float3((sheared.x + wind.x * 0.30f) / 4800.0f, (sheared.y + wind.y * 0.30f) / 4600.0f, h * 2.5f);
+        const float3 r2 = float3((sheared.x + wind.x * 0.55f) / 1400.0f, (sheared.y + wind.y * 0.55f) / 1350.0f, h * 5.8f);
         const float4 hi1 = sampleCloudVol(r1);
         const float4 hi2 = sampleCloudVol(r2);
         const float hiFbm1 = hi1.g * 0.50f + hi1.b * 0.32f + hi1.a * 0.18f;
-        const float hiFbm2 = hi2.g * 0.40f + hi2.b * 0.35f + hi2.a * 0.25f;
-        const float hiComb = hiFbm1 * 0.62f + hiFbm2 * 0.38f;
+        const float hiFbm2 = hi2.g * 0.38f + hi2.b * 0.36f + hi2.a * 0.26f;
+        const float microWisp = cNoise((sheared + wind * 0.75f) * 0.0022f) * 0.62f + cNoise((sheared + wind * 0.90f) * 0.0056f + 7.3f) * 0.38f;
+        const float hiComb = hiFbm1 * 0.45f + hiFbm2 * 0.35f + microWisp * 0.20f;
         const float hiMod = lerp(hiComb, 1.0f - hiComb, saturate(h * 1.85f));
-        const float erode = hiMod * lerp(0.36f, 0.58f, h) * (1.0f - dens * 0.40f);
+        const float erode = hiMod * lerp(0.42f, 0.64f, h) * (1.0f - dens * 0.35f);
         dens = cRemap(dens, erode, 1.0f, 0.0f, 1.0f);
     }
     return dens * cloudWind.z;

@@ -551,11 +551,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Chan 2018 micro-shadowing: uses fine-scale AO to shadow crevices/mortar/bark where coarse shadow maps cannot reach.
         const float microSh = (!match && !isActorFeat && base != 5u) ? saturate(2.0f * AoHist.Load(ip).x + saturate(dot(s.n, sunDir.xyz)) - 0.85f) : 1.0f;
         addLight(s, sunDir.xyz, dirCol * sunSh * lerp(0.50f, 1.0f, microSh), dirCol, diff, spec);
-        // Warm golden-emerald backlit foliage subsurface transmission + needle rim catchlight.
+        // Subtle, deep-emerald backlit foliage subsurface transmission (no blown-out pale yellow-green pine glow).
         if (!match && base == 5u && sunColour.w > 0.5f) {
-            const float backF = pow(saturate(dot(-s.v, sunDir.xyz)), 2.8f);
-            const float rimF  = pow(1.0f - saturate(dot(s.n, s.v)), 3.0f) * saturate(dot(s.n, sunDir.xyz) * 0.5f + 0.5f);
-            diff += dirCol * float3(0.98f, 1.16f, 0.52f) * ((backF * 0.52f + rimF * 0.22f) * sunShadow);
+            const float backF = pow(saturate(dot(-s.v, sunDir.xyz)), 3.6f);
+            diff += dirCol * float3(0.45f, 0.85f, 0.35f) * (backF * sunShadow * 0.14f);
         }
         // Marschner dual-lobe shifted hair specular (base == 11: primary colorless cuticle band + warm tinted secondary band).
         if (!match && base == 11u && sunShadow > 0.05f) {
@@ -817,14 +816,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // Class-12 Eye corneal wet catchlight: sharp corneal Fresnel reflection of live sky/environment.
             const float eyeFr = 0.025f + 0.975f * pow(1.0f - nv, 5.0f);
             lit += evalDynamicEnvCube(rDir, 0.04f) * (eyeFr * 0.85f * (0.4f + 0.6f * skyVis));
-        } else if (base == 4u || base == 6u || base == 1u || base == 5u) {
-            // Full-world physical dielectric Fresnel environment IBL (cobblestones, rocks, cliffs, timber, waxy pine needles):
-            // eliminates the chalky 2011 matte look by giving every dielectric grazing-angle sky & environment specular
-            // modulated by roughness, moisture, and Lagarde specular occlusion.
-            const float dieF0 = (base == 5u) ? 0.04f : lerp(0.032f, 0.045f, saturate(wet.wet + wet.puddle));
+        } else if (base == 4u || base == 6u || base == 1u) {
+            // Full-world physical dielectric Fresnel environment IBL on terrain, stone & timber (excluded on base==5 foliage
+            // so Nordic pines stay deep evergreen instead of washing out with grey-white sky sheen).
+            const float dieF0 = lerp(0.028f, 0.042f, saturate(wet.wet + wet.puddle));
             const float dieFr = dieF0 + (1.0f - dieF0) * pow(1.0f - nv, 5.0f);
-            const float dieRough = (base == 5u) ? 0.42f : clamp(s.alpha, 0.14f, 0.78f);
-            const float dieEnvStr = (base == 5u) ? 0.42f : lerp(0.48f, 0.92f, saturate(wet.wet + wet.puddle));
+            const float dieRough = clamp(s.alpha, 0.16f, 0.82f);
+            const float dieEnvStr = lerp(0.42f, 0.88f, saturate(wet.wet + wet.puddle));
             const float3 dieEnv = evalDynamicEnvCube(rDir, dieRough) * (0.28f + 0.72f * skyVisShaped);
             lit += dieEnv * (dieFr * specOcc * (1.0f - dieRough * 0.65f) * dieEnvStr);
         }

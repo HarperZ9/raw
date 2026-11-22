@@ -26,8 +26,8 @@ std::atomic<int64_t> g_vmCalls{0};
 float g_budgetOverride = -1.0f;
 std::atomic<float> g_lastBudget{0.0f};
 std::atomic<int64_t> g_vmFrameTicks{0};      // VM time since the last present
-// Adaptive budget: the VM gets a share of the time the frame has left before its target.
-struct Adaptive { bool on = false; float targetMs = 16.667f, minMs = 0.5f, maxMs = 8.0f, share = 0.75f; } g_adapt;
+// Adaptive budget: the VM gets a share of the time the frame has left before its target (ON by default for smooth 120Hz pacing).
+struct Adaptive { bool on = true; float targetMs = 11.0f, minMs = 0.8f, maxMs = 4.5f, share = 0.40f; } g_adapt;
 std::atomic<float> g_adaptBudget{-1.0f};
 double g_adaptSum = 0; uint64_t g_adaptN = 0;  // the budget given, averaged per measure
 double g_costEma = 0;                          // frame time without the VM, smoothed

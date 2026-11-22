@@ -637,10 +637,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (base == 12u) combinedOcc = lerp(combinedOcc, 1.0f, 0.80f);
         else if (skin)   combinedOcc = lerp(combinedOcc, 1.0f, 0.36f);
     }
-    // SIGGRAPH GI-12 Visibility-Aware Bent-Normal Hemisphere Skylighting: bends indirect normal toward open sky
-    // inside crevices/overhangs so shadowed stone, timber, and snow catch natural directional sky bounce.
+    // SIGGRAPH GI-12 Visibility-Aware Bent-Normal Hemisphere Skylighting (exteriors) &
+    // Directional Vault/Hearth Ambient Shaping (interiors: deepens recessed corners & highlights upper masonry/beams).
     const float3 bentN = normalize(lerp(s.n, float3(0.0f, 0.0f, 1.0f), (1.0f - combinedOcc) * 0.32f * skyVis));
-    const float hemiSky = (!match && isExterior) ? lerp(0.72f, 1.12f, saturate(bentN.z * 0.5f + 0.5f)) : 1.0f;
+    const float hemiSky = !match ? (isExterior ? lerp(0.72f, 1.12f, saturate(bentN.z * 0.5f + 0.5f))
+                                               : lerp(0.66f, 1.16f, saturate(bentN.z * 0.5f + 0.5f))) : 1.0f;
     amb *= match ? combinedOcc.xxx : gtaoMultiBounce(combinedOcc, saturate(albedo)) * hemiSky;
     // Multi-bounce hardware RayQuery GI: boosted indirect energy + color-bleed preservation + upward overhang bounce
     // so sunlit grass, cobblestone, snow, water, and warm tavern hearths cast tangible colored indirect light.

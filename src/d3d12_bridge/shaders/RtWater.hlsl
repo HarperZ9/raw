@@ -120,8 +120,15 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float2 wDir = normalize(cloudWind.xy + float2(1.0f, 0.35f));
                 const float wt = camPosW.w;
                 const float windAmp = saturate(length(cloudWind.xy) / 380.0f);
-                // 8-Wave Trochoidal Gerstner spectrum replaces regular sine waves with organic liquid crests & troughs.
-                const float2 waveG = evalTrochoidalWaves(wpW.xy, wDir, wt, wDist, windAmp);
+                // Vlachos SIGGRAPH 2010 Dual-Phase Directional Flow-Map Advection:
+                // rivers visibly flow downstream along Skyrim's water flow vector (nL.xy) without texture stretching.
+                const float2 flowVec = nL.xy * 18.0f + wDir * (1.2f + windAmp * 1.8f);
+                const float ph0 = frac(wt * 0.22f);
+                const float ph1 = frac(wt * 0.22f + 0.5f);
+                const float flowBlend = abs(2.0f * ph0 - 1.0f);
+                const float2 g0 = evalTrochoidalWaves(wpW.xy - flowVec * (ph0 * 14.0f), wDir, wt, wDist, windAmp);
+                const float2 g1 = evalTrochoidalWaves(wpW.xy - flowVec * (ph1 * 14.0f) + float2(73.1f, 41.7f), wDir, wt, wDist, windAmp);
+                const float2 waveG = lerp(g0, g1, flowBlend);
                 n = normalize(n + float3(waveG, 0.0f));
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
                 if (wDist < 1600.0f) {
@@ -168,12 +175,12 @@ void water(uint3 id : SV_DispatchThreadID) {
                     refl = radianceAt(h, o, rd, float2(0.5f, 0.5f), true, hn);
                 }
                 const float reflMax = max(refl.r, max(refl.g, refl.b));
-                if (reflMax > 2.4f) { refl *= 2.4f / reflMax; }
+                if (reflMax > 4.5f) { refl *= 4.5f / reflMax; }
             } else {
                 refl = waterSky(rd);
             }
 
-            // The sun's glint on the waves (broader GGX lobe prevents texel-facet white scratches in motion).
+            // The sun's glint on the waves (true HDR peak feeds 12-pass Jimenez HDR Bloom cleanly).
             float3 glint = 0.0f;
             const float3 l = sunDir.xyz;
             const float nl = dot(nRefl, l);
@@ -184,7 +191,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float D = a2 / (PI * dd * dd);
                 const float Fh = 0.02f + 0.98f * pow(1.0f - saturate(dot(v, hv)), 5.0f);
                 const float vis = sunColour.w > 0.5f ? visible(o, l, 0.0f, sunLength) : 1.0f;
-                glint = min(sunColour.rgb * (D * Fh * nl / (4.0f * max(nv, 0.08f))) * vis, 2.5f.xxx) * waterA.w;
+                glint = min(sunColour.rgb * (D * Fh * nl / (4.0f * max(nv, 0.08f))) * vis, 6.0f.xxx) * waterA.w;
             }
             // Point-light GGX specular reflections on water (bridge lanterns, harbor braziers, torches & spells shimmer across ripples).
             if (wDist < 5500.0f && flags.y > 0u) {
@@ -255,11 +262,13 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float3 waveSSS = sunDir.w > 0.5f
                     ? float3(0.03f, 0.28f, 0.26f) * sunColour.rgb * (0.25f + 0.75f * pow(saturate(dot(-v, sunDir.xyz)), 3.5f)) * saturate((1.0f - n.z) * 5.5f) * 0.65f
                     : 0.0f.xxx;
-                // Organic shore-contact foam collar (rocks, riverbanks, icebergs up to 28u depth) + turbulent rapids crests.
-                const float shoreBand = (1.0f - smoothstep(0.0f, 28.0f, depthV)) * smoothstep(0.0f, 1.2f, depthV);
-                const float foamCell = saturate(1.0f - cellWalls(wpW.xy / 26.0f, camPosW.w * 0.42f) * 2.2f);
+                // Organic shore-contact foam collar + animated shoreline lapping wave rings (0..32u depth) + turbulent rapids crests.
+                const float shoreBand = (1.0f - smoothstep(0.0f, 32.0f, depthV)) * smoothstep(0.0f, 1.0f, depthV);
+                const float foamCell = saturate(1.0f - cellWalls(wpW.xy / 24.0f, camPosW.w * 0.45f) * 2.2f);
+                const float lapWave = pow(saturate(sin(depthV * 0.34f - camPosW.w * 2.1f + foamCell * 2.6f) * 0.5f + 0.5f), 4.0f);
+                const float shoreLap = shoreBand * (0.45f + 0.55f * foamCell) * (0.55f + 0.65f * lapWave);
                 const float crestFoam = saturate((1.0f - n.z) * 6.5f - 0.14f) * foamCell;
-                const float foamMask = saturate(max(shoreBand * (0.50f + 0.50f * foamCell), crestFoam * 0.78f)) * nearW;
+                const float foamMask = saturate(max(shoreLap, crestFoam * 0.78f)) * nearW;
                 const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.06f.xxx) + (sunDir.w > 0.5f ? sunColour.rgb * 0.50f : 0.0f.xxx)) * 0.92f;
                 const float3 waterBody = (bed + caus) * T + scatter * (1.0f - T) + waveSSS;
                 body = lerp(waterBody, foamLit, foamMask * 0.78f);

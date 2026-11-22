@@ -127,9 +127,12 @@ void water(uint3 id : SV_DispatchThreadID) {
     const float dBed = Depth.Load(ip);
     float3 col = game.rgb;
     // The water shaders write no alpha, so their layer pixels keep the cleared alpha: a water pixel is one with a
-    // depth in front of the bed and a normal (blended draws without one carry b = -1) that faces up.
+    // depth strictly in front of the bed in linear view-Z (safe under 32-bit float depth TxDepth32=1 where fp16 L.x
+    // rounds by ~0.0005 vs fp32 dBed, completely eliminating the false horizontal water-plane bug at p.z < 0!).
     const float3 nL = worldNormal(float4(L.y, L.z, 0.0f, 0.0f));
-    const bool isWaterPx = (L.z >= 0.0f && L.x < 1.0f && L.x < dBed - 1.0e-5f && nL.z > 0.6f);
+    const float zSurfW = (L.x < 1.0f && L.x > 0.0f) ? viewZOf(L.x) : 1.0e9f;
+    const float zBedW  = (dBed < 1.0f && dBed > 0.0f) ? viewZOf(dBed) : 1.0e9f;
+    const bool isWaterPx = (L.z >= 0.0f && L.x < 1.0f && zSurfW < zBedW - max(zSurfW * 0.015f, 2.5f) && nL.z > 0.65f);
     // SM6.9 Wave-coherent early exit: non-water waves exit immediately with zero RayQuery divergence.
     if (!WaveActiveAnyTrue(isWaterPx)) { WaterOut[id.xy] = float4(col, game.a); return; }
     if (isWaterPx) {

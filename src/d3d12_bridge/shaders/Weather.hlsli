@@ -68,20 +68,37 @@ float snowGlint(float3 pa, float3 n, float3 v, float3 l, float grain) {
 Wet wetAt(float3 p, float3 n, float3 ng, float skyVis) {
     Wet w;
     w.wet = 0.0f; w.puddle = 0.0f; w.snow = 0.0f;
-    if (weather.x <= 0.0f && weather.y <= 0.0f && weather.z <= 0.0f) { return w; }
-    if (weather.z > 0.0f) {
-        // Snow (SKY-09) settles where the geometric surface faces up and the sky reaches; it thins in
-        // drifts by a world-fixed field and thickens with the amount. It covers before it soaks.
-        const float face = saturate((ng.z - 0.35f) / 0.45f) * saturate((n.z - 0.2f) / 0.5f);
-        const float drift = puddleField((p + camPosW.xyz).xy * 0.7f + 31.0f);
-        w.snow = saturate((face * (0.55f + 0.45f * drift) - (1.0f - weather.z)) * 3.0f) * skyVis;
+    const uint seasonW = uint(waterB.w + 0.5f);
+    const float winterSnow = (seasonW == 4u) ? 0.72f : 0.0f;
+    const float effSnow = max(weather.z, winterSnow);
+    const float effWet = max(weather.x, (seasonW == 1u) ? 0.14f : 0.0f);   // Spring morning dew
+    if (effWet <= 0.0f && weather.y <= 0.0f && effSnow <= 0.0f) { return w; }
+    const float3 wp = p + camPosW.xyz;
+    const float2 wDir = normalize(cloudWind.xy + float2(1.0f, 0.35f));
+    if (effSnow > 0.0f) {
+        // Localized wind-sculpted snow accumulation (SKY-09):
+        // Packs thicker on upward ledges & windward slopes, increases naturally with altitude,
+        // and stays clear under roofs/bridges/overhangs via hardware RT skyVis.
+        const float face = saturate((ng.z - 0.32f) / 0.45f) * saturate((n.z - 0.18f) / 0.52f);
+        const float windward = saturate(dot(n.xy, -wDir) * 0.5f + 0.5f);
+        const float drift = puddleField(wp.xy * 0.65f + 31.0f);
+        const float sastrugi = valueNoise(wp.xy * 0.045f + wDir * 2.5f);
+        const float altBoost = smoothstep(1800.0f, 9500.0f, wp.z) * 0.25f;
+        const float snowAmt = saturate(effSnow + altBoost);
+        const float driftShape = 0.48f + 0.34f * drift + 0.18f * sastrugi * (0.6f + 0.4f * windward);
+        w.snow = saturate((face * driftShape - (1.0f - snowAmt)) * 3.2f) * skyVis;
     }
-    const float up = saturate((n.z - 0.15f) / 0.6f);
-    w.wet = saturate(weather.x * lerp(0.35f, 1.0f, up) * skyVis);
+    // Wind-driven rain wetness: upward surfaces soak fastest; windward vertical walls catch rain streaks.
+    const float up = saturate((n.z - 0.12f) / 0.58f);
+    const float windWall = saturate(dot(n.xy, -wDir)) * weather.w * 0.45f;
+    w.wet = saturate(effWet * saturate(lerp(0.32f, 1.0f, up) + windWall) * skyVis);
     if (weather.y > 0.0f) {
-        const float flat = saturate((ng.z - 0.9f) / 0.07f);
-        const float f = puddleField((p + camPosW.xyz).xy);
-        w.puddle = saturate((f - (1.0f - 0.6f * weather.y)) * 8.0f) * flat * skyVis;
+        const float flat = saturate((ng.z - 0.88f) / 0.08f);
+        const float f = puddleField(wp.xy);
+        w.puddle = saturate((f - (1.0f - 0.62f * weather.y)) * 8.0f) * flat * skyVis;
+        // Damp capillary meniscus ring around every puddle edge.
+        const float dampRing = saturate((f - (1.0f - 0.72f * weather.y)) * 6.0f) * flat * skyVis;
+        w.wet = max(w.wet, dampRing * 0.85f);
     }
     return w;
 }

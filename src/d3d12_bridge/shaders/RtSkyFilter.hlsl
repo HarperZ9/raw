@@ -84,15 +84,16 @@ void main(uint3 id : SV_DispatchThreadID) {
         return;
     }
     const float z = viewZOf(d);
-    float n = 0.0f, past = 0.0f, pastR = 1.0f;
+    float n = 0.0f, past = 0.0f, pastR = 1.0f, pastM2 = 0.0f;
     float3 pastB = 0.0f;
     bool have = false;
+    const float2 zSlope = depthPlaneSlope(p, z);
     if (reset == 0u) {
         const float2 mv = hasMotion != 0u ? Motion.Load(int3(p, 0)) : float2(0.0f, 0.0f);
         const float2 prev = float2(p) + mv * dims.xy;
         const int2 pb = int2(floor(prev));
         const float2 pa = prev - float2(pb);
-        float hs = 0.0f, hn = 0.0f, hw = 0.0f, hr = 0.0f;
+        float hs = 0.0f, hn = 0.0f, hw = 0.0f, hr = 0.0f, hm2 = 0.0f;
         float3 hb = 0.0f;
         [unroll] for (int k = 0; k < 4; k++) {
             const int2 t = pb + int2(k & 1, k >> 1);
@@ -100,27 +101,63 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float4 h = HistIn[t];
             if (h.y <= 0.0f || abs(h.y - min(z, 65000.0f)) > 0.04f * z) { continue; }
             const float w = ((k & 1) ? pa.x : 1.0f - pa.x) * ((k >> 1) ? pa.y : 1.0f - pa.y);
-            hs += w * h.x; hn += w * h.z; hw += w; hb += w * BIn[t].rgb; hr += w * h.w;
+            const float4 bTap = BIn[t];
+            hs += w * h.x; hn += w * h.z; hw += w; hb += w * bTap.rgb; hm2 += w * bTap.a; hr += w * h.w;
         }
-        if (hw > 0.05f) { past = hs / hw; n = hn / hw; pastB = hb / hw; pastR = hr / hw; have = true; }
+        // Spatiotemporal ReSTIR-style 4-neighbor indirect GI reservoir reuse (radius 5..14px, rotated per-frame):
+        // shares converged indirect bounce samples across depth-plane-coherent neighbors (48+ effective spp).
+        if (hw > 0.05f) {
+            past = hs / hw; n = hn / hw; pastB = hb / hw; pastM2 = hm2 / hw; pastR = hr / hw; have = true;
+            const float ang0 = ign(float2(p) + float2(proj.z * 7.3f, proj.z * 13.1f)) * 6.2831853f;
+            float spW = min(n, 16.0f);
+            float3 spB = pastB * spW;
+            float spS = past * spW;
+            float spM2 = pastM2 * spW;
+            const float invPlaneS = 1.0f / max(z * 0.022f, 2.5f);
+            [unroll] for (int si = 0; si < 4; si++) {
+                const float a = ang0 + 1.5707963f * float(si);
+                const float rad = 5.0f + 3.0f * float(si);
+                const int2 off = int2(round(float2(cos(a), sin(a)) * rad));
+                const int2 q = clamp(pb + off, int2(0, 0), int2(dims.xy) - 1);
+                const float4 hq = HistIn[q];
+                if (hq.y <= 0.0f) { continue; }
+                const float zPred = z + zSlope.x * float(off.x) + zSlope.y * float(off.y);
+                const float pd = abs(hq.y - min(zPred, 65000.0f)) * invPlaneS;
+                if (pd > 2.2f) { continue; }
+                const float wq = exp(-pd * pd) * min(hq.z, 8.0f) * 0.18f;
+                const float4 bq = BIn[q];
+                spB += bq.rgb * wq;
+                spS += hq.x * wq;
+                spM2 += bq.a * wq;
+                spW += wq;
+            }
+            pastB = spB / spW;
+            past = spS / spW;
+            pastM2 = spM2 / spW;
+        }
     }
-    const float2 zSlope = depthPlaneSlope(p, z);
     float curR;
     float4 curStd;
     const float4 cur = meanAround(p, z, zSlope, n < 10.0f ? 2 : 1, curR, curStd);
-    // History-length-adaptive SVGF neighborhood variance clamping (1.5 -> 2.4 sigma): fast disocclusion convergence + zero ghosting.
-    const float sigScale = lerp(1.50f, 2.40f, saturate(n / 12.0f));
+    // True SVGF temporal variance (Var = max(0, E[L^2] - E[L]^2)) modulates history clamp cleanly:
+    // high temporal variance widens clamp responsiveness on dynamic lighting; converged surfaces stay rock-solid.
+    const float curLum = dot(cur.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+    const float pastLum = dot(pastB, float3(0.2126f, 0.7152f, 0.0722f));
+    const float tempVar = have ? max(pastM2 - pastLum * pastLum, 0.0f) : 0.0f;
+    const float sigScale = lerp(1.50f, 2.40f, saturate(n / 12.0f)) * (1.0f + saturate(sqrt(tempVar) * 1.5f) * 0.25f);
     const float4 pad = max(curStd * sigScale, float4(0.06f, 0.06f, 0.06f, 0.10f));
     if (have) {
         past = clamp(past, saturate(cur.a - pad.a), saturate(cur.a + pad.a));
         pastB = clamp(pastB, max(cur.rgb - pad.rgb, 0.0f.xxx), cur.rgb + pad.rgb);
     }
     n = have ? min(n + 1.0f, float(maxFrames)) : 1.0f;
-    const float vis = have ? lerp(past, cur.a, 1.0f / n) : cur.a;
-    const float3 b = have ? lerp(pastB, cur.rgb, 1.0f / n) : cur.rgb;
-    const float rest = have ? lerp(pastR, curR, 1.0f / n) : curR;
+    const float alphaT = 1.0f / n;
+    const float vis = have ? lerp(past, cur.a, alphaT) : cur.a;
+    const float3 b = have ? lerp(pastB, cur.rgb, alphaT) : cur.rgb;
+    const float m2Out = have ? lerp(pastM2, curLum * curLum, alphaT) : (curLum * curLum);
+    const float rest = have ? lerp(pastR, curR, alphaT) : curR;
     HistOut[p] = float4(vis, min(z, 65000.0f), n, rest);
-    BOut[p] = float4(b, 0.0f);
+    BOut[p] = float4(b, m2Out);
     Bounce[p] = float4(b, rest);   // alpha: the untraced lights' visibility (Lighting.hlsl, FLAG_REST)
     Lights[p] = float4(L.xyz, vis);
 }

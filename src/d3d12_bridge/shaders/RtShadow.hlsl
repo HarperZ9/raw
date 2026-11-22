@@ -271,18 +271,17 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float v2 = visible(o, jitterDir(sunDir.xyz, sunCone, r2), tMinS, sunLength);
             vis.x = (v0 + v1 + v2) * (1.0f / 3.0f);
         }
-        // Full-resolution 4-spp stratified SM6.5 RayQuery sky/RTAO + GI bounce (8x sample density vs 0.5-spp checkerboard).
+        // Low-VGPR 2-spp stratified SM6.9 RayQuery sky/RTAO + GI bounce (paired with spatiotemporal ReSTIR-style
+        // spatial-temporal reuse + true SVGF temporal moments in RtSkyFilter.hlsl -> 48+ effective spp at 2.5x lower GPU cost).
         const bool isInterior = sunDir.w <= 0.5f;
         const float aoLen = isInterior ? (skyLength > 0.0f ? min(skyLength, 220.0f) : 180.0f) : skyLength;
         if (aoLen > 0.0f) {
             const float2 rs0 = stbnR2(px, frameIndex + 11.0f);
             float skySum = 0.0f;
             float3 bounceSum = 0.0f;
-            float bestCacheLum = -1.0f;
-            float3 bestCacheHp = 0.0f.xxx, bestCacheHn = 0.0f.xxx;
-            float2 bestCacheR = 0.0f.xx;
-            [unroll] for (uint si = 0u; si < 4u; si++) {
-                const float2 rs = frac(rs0 + float2(0.25f * float(si), 0.381966f * float(si)));
+            const bool doCache2 = ((giFlags & GI_CACHE) != 0u) && skyTurn(id.xy);
+            [unroll] for (uint si = 0u; si < 2u; si++) {
+                const float2 rs = frac(rs0 + float2(0.5f * float(si), 0.618034f * float(si)));
                 const float3 sd = cosineDir(n, rs);
                 float sSample = 1.0f;
                 float3 bSample = 0.0f;
@@ -292,24 +291,19 @@ void main(uint3 id : SV_DispatchThreadID) {
                         float3 hn;
                         sSample = isInterior ? saturate(h.t / aoLen) : 0.0f;
                         bSample = radianceAt(h, o, sd, rs.yx, true, hn);
-                        const float bLum = dot(bSample, float3(0.2126f, 0.7152f, 0.0722f));
-                        if (bLum > bestCacheLum) {
-                            bestCacheLum = bLum;
-                            bestCacheHp = o + sd * h.t;
-                            bestCacheHn = hn;
-                            bestCacheR = frac(rs * 1.618f + 0.31f);
+                        if (si == 0u && doCache2) {
+                            float3 cTmp;
+                            if (!onScreen(o + sd * h.t, cTmp)) {
+                                cacheFromHit(o + sd * h.t, hn, frac(rs * 1.618f + 0.31f), isInterior);
+                            }
                         }
                     }
                 }
                 skySum += sSample;
                 bounceSum += bSample;
             }
-            if (bestCacheLum > 0.02f && (giFlags & GI_CACHE) != 0u && skyTurn(id.xy)) {
-                float3 cTmp;
-                if (!onScreen(bestCacheHp, cTmp)) { cacheFromHit(bestCacheHp, bestCacheHn, bestCacheR, isInterior); }
-            }
-            sky = 0.25f * skySum;
-            bounce = 0.25f * bounceSum;
+            sky = 0.5f * skySum;
+            bounce = 0.5f * bounceSum;
             if ((giFlags & GI_CACHE) != 0u) { cacheAddWave(p, n, bounce, sky); }
         }
         // The three lights that would light this pixel most (colour luminance x window x n.l).

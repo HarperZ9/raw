@@ -450,20 +450,23 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         s.n = normalize(s.n + (-gx * tVec - gy * bVec) * 0.42f);
         const float microSlope = saturate(length(float2(gx, gy)) * 1.4f);
         s.alpha = clamp(s.alpha + (microSlope - 0.15f) * 0.12f * distFade, 0.05f, 0.95f);
-        // Native zero-mod Parallax Occlusion Mapping (POM) micro-relief self-shadowing on cobblestone, stone, timber & terrain.
-        if ((base == 1u || base == 4u || base == 6u) && z < 1600.0f && sunDir.w > 0.5f) {
-            const float pomFade = saturate(1.0f - z / 1600.0f) * (base == 4u ? 0.65f : 0.85f);
+        // Native zero-mod 6-step Parallax Occlusion Mapping (POM) micro-relief self-shadowing + crevice cavity roughness
+        // on cobblestone roads, stone walls, timber & terrain.
+        if ((base == 1u || base == 4u || base == 6u) && z < 2000.0f && sunDir.w > 0.5f) {
+            const float pomFade = saturate(1.0f - z / 2000.0f) * (base == 4u ? 0.85f : 0.92f);
             const float2 sunScreen = float2(dot(sunDir.xyz, tVec), dot(sunDir.xyz, bVec));
-            const float2 stepPx = normalize(sunScreen + float2(1.0e-4f, 0.0f)) * 1.35f;
+            const float2 stepPx = normalize(sunScreen + float2(1.0e-4f, 0.0f)) * 1.45f;
             float maxH = hc;
-            [unroll] for (int pi = 1; pi <= 4; pi++) {
+            [unroll] for (int pi = 1; pi <= 6; pi++) {
                 const int3 spm = int3(clamp(int2(px + stepPx * float(pi)), int2(0, 0), dimMax), 0);
                 if (abs(Depth.Load(spm) - d) < 0.0008f) {
-                    maxH = max(maxH, dot(Albedo.Load(spm).rgb, lw) - 0.018f * float(pi));
+                    maxH = max(maxH, dot(Albedo.Load(spm).rgb, lw) - 0.015f * float(pi));
                 }
             }
-            const float pomOcc = saturate(1.0f - max(maxH - hc, 0.0f) * 2.8f * pomFade);
-            albedo *= lerp(0.76f, 1.0f, pomOcc);
+            const float pomOcc = saturate(1.0f - max(maxH - hc, 0.0f) * 3.6f * pomFade);
+            albedo *= lerp(0.62f, 1.0f, pomOcc);
+            // Crevices/mortar stay rougher while raised cobblestone crowns catch crisp grazing sky specular.
+            s.alpha = clamp(lerp(min(s.alpha + 0.18f, 0.96f), max(s.alpha - 0.08f, 0.12f), pomOcc), 0.08f, 0.96f);
         }
     }
     // Tokuyoshi-Kaplanyan geometric specular anti-aliasing: filters sub-pixel normal variance to kill GGX sparkle in motion.
@@ -542,15 +545,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float middayTrim = lerp(1.0f, 0.88f, highSun);
             alignedDayCol = lerp(sunColour.rgb, d65Spec * (max(dirLum, 0.05f) / ewLum), 0.62f * (1.0f - nightDir)) * middayTrim;
         }
-        // Crisp silver-blue lunar directional bounce & specular on moonlit surfaces at night.
-        const float3 dirCol = lerp(alignedDayCol, max(sunColour.rgb, float3(0.14f, 0.20f, 0.34f)) * float3(0.84f, 0.95f, 1.22f), nightDir * 0.65f);
+        // Physical sun-to-ambient HDR ratio calibration (!match exteriors): restores real 4:1-6:1 sunlit-vs-shadow
+        // dynamic range (replacing Skyrim 2011's flat 1.5:1 ratio) so AgX & HDR Bloom sculpt crisp sunlit highlights.
+        const float sunHdrGain = (!match && sunColour.w > 0.5f) ? lerp(1.85f, 1.18f, saturate(clouds.x * 1.15f)) * (1.0f - nightDir * 0.45f) : 1.0f;
+        const float3 dirCol = lerp(alignedDayCol, max(sunColour.rgb, float3(0.14f, 0.20f, 0.34f)) * float3(0.84f, 0.95f, 1.22f), nightDir * 0.65f) * sunHdrGain;
         // Chan 2018 micro-shadowing: uses fine-scale AO to shadow crevices/mortar/bark where coarse shadow maps cannot reach.
         const float microSh = (!match && !isActorFeat && base != 5u) ? saturate(2.0f * AoHist.Load(ip).x + saturate(dot(s.n, sunDir.xyz)) - 0.85f) : 1.0f;
-        addLight(s, sunDir.xyz, dirCol * sunSh * lerp(0.55f, 1.0f, microSh), dirCol, diff, spec);
-        // Warm golden-emerald backlit foliage subsurface transmission (pine needles, ferns, leaves glow when backlit by sun).
+        addLight(s, sunDir.xyz, dirCol * sunSh * lerp(0.50f, 1.0f, microSh), dirCol, diff, spec);
+        // Warm golden-emerald backlit foliage subsurface transmission + needle rim catchlight.
         if (!match && base == 5u && sunColour.w > 0.5f) {
-            const float backF = pow(saturate(dot(-s.v, sunDir.xyz)), 3.0f);
-            diff += dirCol * float3(0.95f, 1.12f, 0.55f) * (backF * sunShadow * 0.42f);
+            const float backF = pow(saturate(dot(-s.v, sunDir.xyz)), 2.8f);
+            const float rimF  = pow(1.0f - saturate(dot(s.n, s.v)), 3.0f) * saturate(dot(s.n, sunDir.xyz) * 0.5f + 0.5f);
+            diff += dirCol * float3(0.98f, 1.16f, 0.52f) * ((backF * 0.52f + rimF * 0.22f) * sunShadow);
         }
         // Marschner dual-lobe shifted hair specular (base == 11: primary colorless cuticle band + warm tinted secondary band).
         if (!match && base == 11u && sunShadow > 0.05f) {
@@ -676,7 +682,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                                                : lerp(0.52f, 1.20f, saturate(bentN.z * 0.5f + 0.5f))) : 1.0f;
     // Keep multi-bounce AO subtle so deep crevices stay genuinely grounded instead of lifting back to muddy grey.
     const float3 mbOcc = lerp(combinedOcc.xxx, gtaoMultiBounce(combinedOcc, saturate(albedo)), 0.45f);
-    amb *= match ? combinedOcc.xxx : mbOcc * hemiSky;
+    const float ambHdrScale = (!match && isExterior) ? lerp(0.76f, 0.92f, saturate(clouds.x)) : 1.0f;
+    amb *= match ? combinedOcc.xxx : mbOcc * hemiSky * ambHdrScale;
     // Multi-bounce hardware RayQuery GI: boosted indirect energy + color-bleed preservation + upward overhang bounce
     // so sunlit grass, cobblestone, snow, water, and warm tavern hearths cast tangible colored indirect light.
     const bool bounceHere = sunColour.w > 0.5f || (flags.x & FLAG_BOUNCE_IN) != 0u;

@@ -68,37 +68,26 @@ float3 distantLit(int3 ip, float2 at, float d) {
                    : saturate((dot(n, sunDir.xyz) + 0.25f) / 1.25f);
     float3 amb = float3(dot(ambient[0].xyz, n) + ambient[0].w, dot(ambient[1].xyz, n) + ambient[1].w, dot(ambient[2].xyz, n) + ambient[2].w);
     const float skyVis = rt && (flags.x & FLAG_SKY) != 0u && sunColour.w > 0.5f ? RtIdx.Load(ip).w : 1.0f;
+    // Physical sun-to-ambient HDR ratio matched to Lighting.hlsl so near terrain and distant mountains share one unified HDR scale.
+    const float cloudC = saturate(clouds.x);
+    const float sunBoostL = lerp(1.85f, 1.18f, saturate(cloudC * 1.15f));
+    const float ambScaleL = lerp(0.76f, 0.92f, cloudC);
     // Dynamic near-field grass lighting & distant tree-LOD crown self-shadowing (grounds bright snow pines against alpine ridges).
-    const float grassAo = nearGrass && (flags.x & FLAG_AO) != 0u ? lerp(1.0f, AoHist.Load(ip).x, 0.75f) : 1.0f;
-    const float occ = min(lerp(1.0f, skyVis, cluster.w), grassAo);
-    const float crownAo = farTreeCard ? lerp(0.46f, 0.84f, saturate(v * 0.5f + 0.5f)) : 1.0f;
-    amb *= nearGrass ? gtaoMultiBounce(occ, saturate(albedo)) * lerp(0.55f, 1.0f, saturate(v * 0.5f + 0.65f)) : (occ * crownAo).xxx;
+    const float grassAo = nearGrass && (flags.x & FLAG_AO) != 0u ? lerp(1.0f, AoHist.Load(ip).x, 0.80f) : 1.0f;
+    const float occ = min(lerp(1.0f, pow(saturate(skyVis), 1.38f), max(cluster.w, 0.80f)), grassAo);
+    const float crownAo = farTreeCard ? lerp(0.42f, 0.84f, saturate(v * 0.5f + 0.5f)) : 1.0f;
+    amb *= (nearGrass ? lerp(occ.xxx, gtaoMultiBounce(occ, saturate(albedo)), 0.45f) * lerp(0.52f, 1.0f, saturate(v * 0.5f + 0.65f)) : (occ * crownAo).xxx) * ambScaleL;
     // What the ridges that block the sky send back (RtShadow.hlsl, farOccluded; [Lighting] RtFar), as the near bounce is.
-    if (rt && (flags.x & FLAG_BOUNCE) != 0u && sunColour.w > 0.5f) { amb += RtBounce.Load(ip).rgb * proj.w * (farTreeCard ? 0.55f : 1.0f); }
-    float3 direct = sunColour.rgb * (nl * sh * (farTreeCard ? 0.78f : 1.0f));
+    if (rt && (flags.x & FLAG_BOUNCE) != 0u && sunColour.w > 0.5f) { amb += RtBounce.Load(ip).rgb * proj.w * (farTreeCard ? 0.65f : 1.25f); }
+    float3 direct = sunColour.rgb * (nl * sh * sunBoostL * (farTreeCard ? 0.82f : 1.0f));
     if (nearGrass && sunColour.w > 0.5f) {
-        // Complex vegetation backlit chlorophyll subsurface transmission (restrained so grass stays rich, never chalky).
-        const float backGrass = pow(saturate(dot(-toCam, sunDir.xyz)), 3.4f);
-        direct += sunColour.rgb * float3(1.06f, 1.16f, 0.54f) * (backGrass * 0.34f * (1.0f - saturate(clouds.x * 0.75f))) * sh;
-        // Ground shadow darkening so tundra grass sits naturally inside terrain shadows instead of glowing neon yellow.
-        direct *= lerp(0.72f, 1.0f, grassAo);
+        // Complex vegetation backlit chlorophyll subsurface transmission (luminous sunlit grass blades with deep root grounding).
+        const float backGrass = pow(saturate(dot(-toCam, sunDir.xyz)), 3.0f);
+        direct += sunColour.rgb * float3(1.08f, 1.18f, 0.52f) * (backGrass * 0.45f * (1.0f - saturate(cloudC * 0.75f))) * sh * sunBoostL;
+        direct *= lerp(0.65f, 1.0f, grassAo);
     }
-    float3 outLod = knee3(knee3(albedo * (direct + max(amb, 0.0f))));
-    // Physical Rayleigh distant blue mountain fog (height-stratified so alpine peaks rise out of cool cerulean valley mist).
-    if (zDist > 5500.0f && sunColour.w > 0.5f) {
-        const float hAbove = max(p.z, 0.0f);
-        const float heightDamp = 0.45f + 0.55f * exp(-hAbove / 14000.0f);
-        const float aerial = saturate(1.0f - exp(-(zDist - 5500.0f) / 95000.0f)) * 0.62f * heightDamp;
-        const float lowSunL = saturate(1.0f - sunDir.z * 2.6f);
-        const float sunLumL = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-        const float nightL = saturate((0.26f - sunLumL) * 4.5f);
-        const float3 dayBlue = lerp(float3(0.32f, 0.50f, 0.74f), float3(0.66f, 0.48f, 0.44f), lowSunL * 0.75f);
-        const float3 nightBlue = float3(0.06f, 0.11f, 0.22f);
-        const float3 stormFog = float3(0.32f, 0.40f, 0.50f);
-        const float3 fogCol = lerp(lerp(dayBlue, stormFog, saturate(clouds.x * 0.75f)), nightBlue, nightL);
-        outLod = lerp(outLod, fogCol, aerial);
-    }
-    return outLod;
+    // True linear HDR distant LOD output (removes 2011 double knee3() crush and duplicate fog; LightFog.hlsl applies unified Hillaire aerial perspective).
+    return albedo * (direct + max(amb, 0.0f));
 }
 
 #endif

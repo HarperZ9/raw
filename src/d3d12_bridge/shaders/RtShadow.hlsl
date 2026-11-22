@@ -278,6 +278,9 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float2 rs0 = stbnR2(px, frameIndex + 11.0f);
             float skySum = 0.0f;
             float3 bounceSum = 0.0f;
+            float bestCacheLum = -1.0f;
+            float3 bestCacheHp = 0.0f.xxx, bestCacheHn = 0.0f.xxx;
+            float2 bestCacheR = 0.0f.xx;
             [unroll] for (uint si = 0u; si < 4u; si++) {
                 const float2 rs = frac(rs0 + float2(0.25f * float(si), 0.381966f * float(si)));
                 const float3 sd = cosineDir(n, rs);
@@ -289,14 +292,21 @@ void main(uint3 id : SV_DispatchThreadID) {
                         float3 hn;
                         sSample = isInterior ? saturate(h.t / aoLen) : 0.0f;
                         bSample = radianceAt(h, o, sd, rs.yx, true, hn);
-                        float3 c;
-                        if (si == 0u && (giFlags & GI_CACHE) != 0u && !onScreen(o + sd * h.t, c)) {
-                            cacheFromHit(o + sd * h.t, hn, frac(rs * 1.618f + 0.31f), isInterior);
+                        const float bLum = dot(bSample, float3(0.2126f, 0.7152f, 0.0722f));
+                        if (bLum > bestCacheLum) {
+                            bestCacheLum = bLum;
+                            bestCacheHp = o + sd * h.t;
+                            bestCacheHn = hn;
+                            bestCacheR = frac(rs * 1.618f + 0.31f);
                         }
                     }
                 }
                 skySum += sSample;
                 bounceSum += bSample;
+            }
+            if (bestCacheLum > 0.02f && (giFlags & GI_CACHE) != 0u && skyTurn(id.xy)) {
+                float3 cTmp;
+                if (!onScreen(bestCacheHp, cTmp)) { cacheFromHit(bestCacheHp, bestCacheHn, bestCacheR, isInterior); }
             }
             sky = 0.25f * skySum;
             bounce = 0.25f * bounceSum;

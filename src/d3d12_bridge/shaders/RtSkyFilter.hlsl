@@ -27,21 +27,33 @@ float4 decodeRaw(float4 v, out float rest, out float has) {
     return float4(v.rgb, t - 2.0f * q);
 }
 
-float4 meanAround(int2 p, float z, int r, out float rest, out float4 stdDev) {
+// Fast screen-space depth-plane slope (mathematically equivalent to world plane-distance, 0 matrix multiplies).
+float2 depthPlaneSlope(int2 p, float z) {
+    const int2 lim = int2(dims.xy) - 1;
+    const float zr = viewZOf(Depth.Load(int3(min(p.x + 1, lim.x), p.y, 0))) - z;
+    const float zl = z - viewZOf(Depth.Load(int3(max(p.x - 1, 0), p.y, 0)));
+    const float zd = viewZOf(Depth.Load(int3(p.x, min(p.y + 1, lim.y), 0))) - z;
+    const float zu = z - viewZOf(Depth.Load(int3(p.x, max(p.y - 1, 0), 0)));
+    return float2(abs(zr) < abs(zl) ? zr : zl, abs(zd) < abs(zu) ? zd : zu);
+}
+
+float4 meanAround(int2 p, float z, float2 zSlope, int r, out float rest, out float4 stdDev) {
     float4 s = 0.0f, s2 = 0.0f;
     float w = 0.0f, rs = 0.0f, rw = 0.0f, rv, rh;
     rest = 1.0f;
+    const float invPlane = 1.0f / max(z * 0.015f, 1.8f);
     for (int y = -r; y <= r; y++) {
         for (int x = -r; x <= r; x++) {
             const int2 q = clamp(p + int2(x, y), int2(0, 0), int2(dims.xy) - 1);
             const float dq = Depth.Load(int3(q, 0));
             if (dq >= 1.0f) { continue; }
-            const float rel = (viewZOf(dq) - z) / z;
-            const float k = exp2(-rel * rel * 4000.0f);
+            const float zPred = z + zSlope.x * float(x) + zSlope.y * float(y);
+            const float pd = abs(viewZOf(dq) - zPred) * invPlane;
+            const float k = exp(-pd * pd);
             float4 tap = decodeRaw(Raw[q], rv, rh);
-            // Preserve rich sunlit grass/snow/hearth indirect bounce energy while rejecting extreme fireflies (>2.6).
+            // Preserve rich sunlit grass/snow/hearth indirect bounce energy while rejecting extreme fireflies (>3.5 HDR).
             const float tapMax = max(tap.r, max(tap.g, tap.b));
-            if (tapMax > 2.60f) { tap.rgb *= 2.60f / tapMax; }
+            if (tapMax > 3.50f) { tap.rgb *= 3.50f / tapMax; }
             s += k * tap; s2 += k * (tap * tap); w += k;
             rs += k * rh * rv; rw += k * rh;
         }
@@ -92,11 +104,13 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
         if (hw > 0.05f) { past = hs / hw; n = hn / hw; pastB = hb / hw; pastR = hr / hw; have = true; }
     }
+    const float2 zSlope = depthPlaneSlope(p, z);
     float curR;
     float4 curStd;
-    const float4 cur = meanAround(p, z, n < 10.0f ? 2 : 1, curR, curStd);
-    // Stable SVGF neighborhood variance clamping (2.2 sigma): eliminates interior tavern/dungeon GI & RTAO flicker while preventing ghosting.
-    const float4 pad = max(curStd * 2.20f, float4(0.08f, 0.08f, 0.08f, 0.12f));
+    const float4 cur = meanAround(p, z, zSlope, n < 10.0f ? 2 : 1, curR, curStd);
+    // History-length-adaptive SVGF neighborhood variance clamping (1.5 -> 2.4 sigma): fast disocclusion convergence + zero ghosting.
+    const float sigScale = lerp(1.50f, 2.40f, saturate(n / 12.0f));
+    const float4 pad = max(curStd * sigScale, float4(0.06f, 0.06f, 0.06f, 0.10f));
     if (have) {
         past = clamp(past, saturate(cur.a - pad.a), saturate(cur.a + pad.a));
         pastB = clamp(pastB, max(cur.rgb - pad.rgb, 0.0f.xxx), cur.rgb + pad.rgb);

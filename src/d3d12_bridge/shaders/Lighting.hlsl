@@ -609,7 +609,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     }
     // Every light past the three traced ones: the share of their light that reaches the pixel, from one ray a
     // pixel to a light picked by its share, filtered with the sky rays (RtShadow.hlsl, RtSkyFilter.hlsl).
-    const float restVis = rt && (flags.x & FLAG_REST) != 0u ? RtBounce.Load(ip).a : 1.0f;
+    const float rawRestA = RtBounce.Load(ip).a;
+    const float restVis = rt && (flags.x & FLAG_REST) != 0u ? (rawRestA > 1.5f ? saturate(floor(rawRestA * 0.5f) / 15.0f) : rawRestA) : 1.0f;
     float3 diff = 0.0f, spec = 0.0f;
     float sunShadow = 1.0f;
     if (sunDir.w > 0.5f) {

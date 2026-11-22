@@ -155,9 +155,15 @@ void main(uint3 id : SV_DispatchThreadID) {
     const float vis = have ? lerp(past, cur.a, alphaT) : cur.a;
     const float3 b = have ? lerp(pastB, cur.rgb, alphaT) : cur.rgb;
     const float m2Out = have ? lerp(pastM2, curLum * curLum, alphaT) : (curLum * curLum);
+    const float bLumOut = dot(b, float3(0.2126f, 0.7152f, 0.0722f));
+    const float varOut = max(m2Out - bLumOut * bLumOut, 0.0f);
+    // Boost initial variance on newly disoccluded pixels (n < 4) per Schied SVGF HPG 2017 so A-Trous widens cleanly.
+    const float sigmaOut = clamp(sqrt(varOut) + (n < 4.0f ? (4.0f - n) * 0.14f : 0.0f), 0.0f, 1.5f);
     const float rest = have ? lerp(pastR, curR, alphaT) : curR;
+    // Pack 16-level restVis + continuous temporal SVGF stdDev sigmaOut into RGBA16F Bounce.a (zero extra VRAM/textures).
+    const float packedRestVar = floor(saturate(rest) * 15.0f + 0.5f) * 2.0f + sigmaOut;
     HistOut[p] = float4(vis, min(z, 65000.0f), n, rest);
     BOut[p] = float4(b, m2Out);
-    Bounce[p] = float4(b, rest);   // alpha: the untraced lights' visibility (Lighting.hlsl, FLAG_REST)
+    Bounce[p] = float4(b, packedRestVar);
     Lights[p] = float4(L.xyz, vis);
 }

@@ -48,9 +48,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const int2 fullIp = clamp(int2(fullPx), int2(0, 0), int2(dims.xy) - 1);
     if ((flags.x & FLAG_FOG) == 0u || (flags.x & FLAG_MATCH) != 0u) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
     const float d = Depth.Load(int3(fullIp, 0));
+    const float3 eye = eyeAt();
     const float3 p = worldAt(fullPx - 0.5f, min(d, 0.999999f));
-    const float dist = length(p);
-    const float3 w = p / max(dist, 1.0e-4f);
+    const float3 toP = p - eye;
+    const float dist = length(toP);
+    const float3 w = toP / max(dist, 1.0e-4f);
     // Cap volumetric shaft integration to 12,000 units so open ocean/coast horizons never over-accumulate nuclear scatter.
     const float tEnd = min(dist, min(tune2.w, 12000.0f));
     const float weatherDens = 1.0f + weather.w * 1.15f + weather.z * 1.35f + saturate(clouds.x - 0.25f) * 0.55f;
@@ -85,14 +87,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float dt = max(tNext - tPrev, 1.0e-3f);
             const float t = tPrev + jit * dt;
             tPrev = tNext;
-            const float4 c = screenOf(w * t);
-            const float3 wpFog = w * t + camPosW.xyz;
+            const float3 ptT = eye + w * t;
+            const float4 c = screenOf(ptT);
+            const float3 wpFog = ptT + camPosW.xyz;
             if ((flags.x & FLAG_CLOUDS) != 0u && (i & 1u) == 0u) { cs = cloudShadowN(wpFog, 1u); }
             const float3 fogFlow = wpFog * 0.00052f + float3(cloudWind.xy * camPosW.w * 0.00018f, 0.0f);
             const float mist3d = 0.58f + 0.64f * cNoise(fogFlow);
-            const float hDens = (0.32f + 0.68f * exp(-max(w.z * t + 140.0f, 0.0f) * 0.00085f)) * mist3d;
+            const float hDens = (0.32f + 0.68f * exp(-max(ptT.z + 140.0f, 0.0f) * 0.00085f)) * mist3d;
             const float tr = exp(-sigma * t * 0.85f);
-            const float vis = cascadeShadow(w * t, c.z, false) * cs;
+            const float vis = cascadeShadow(ptT, c.z, false) * cs;
             sumSun += vis * hDens * tr * dt;
             sumSky += (0.35f + 0.65f * cs) * hDens * tr * dt;
         }
@@ -115,22 +118,23 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float nightV = isInt ? 0.0f : saturate((0.26f - sunLumV) * 4.5f);
         // GTA-VI-inspired shadowed long-range local-light volumetrics (top 12 lights x 10 depth-marched steps)
         // with crisp anisotropic Mie forward scattering (g=0.65) + rising 3D hearth smoke/dust motes + night city haze.
-        const float3 midWp = camPosW.xyz + w * min(tEnd * 0.45f, 1800.0f);
+        const float3 midWp = camPosW.xyz + eye + w * min(tEnd * 0.45f, 1800.0f);
         const float dustMote = isInt ? (0.72f + 0.56f * cNoise(midWp * 0.011f - float3(0.0f, 0.0f, camPosW.w * 0.16f))) : 1.0f;
         const float intGain = isInt ? (1.55f * dustMote) : (weatherMistGain * (1.0f + nightV * 1.25f));
         const float jitL = ign(lo + float2(13.0f, 29.0f));
         uint shadowedDone = 0u;
         [loop] for (uint li = 0u; li < flags.y; li++) {
             const float rL = lightPosR[li].w * (1.0f + nightV * 0.55f);
-            const float wi = windowIntegral(w, lightPosR[li].xyz, rL, tEnd);
+            const float3 lpRel = lightPosR[li].xyz - eye;
+            const float wi = windowIntegral(w, lpRel, rL, tEnd);
             if (wi > 0.0f) {
                 const bool isFire = lightColS[li].r > lightColS[li].b * 1.25f;
                 const float3 fCol = isFire ? lightColS[li].rgb * float3(1.28f, 0.84f, 0.48f) * 1.55f : lightColS[li].rgb;
                 float visScale = 1.0f;
                 if ((isInt || nightV > 0.25f) && shadowedDone < 12u) {
                     const float3 lp = lightPosR[li].xyz;
-                    const float b = dot(lp, w);
-                    const float h2 = dot(lp, lp) - b * b;
+                    const float b = dot(lpRel, w);
+                    const float h2 = dot(lpRel, lpRel) - b * b;
                     const float halfL = sqrt(max(rL * rL - h2, 0.0f));
                     const float tA = max(0.0f, b - halfL);
                     const float tB = min(tEnd, b + halfL);
@@ -140,7 +144,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                         const float dStep = (tB - tA) * 0.10f;
                         [unroll] for (int si = 0; si < 10; si++) {
                             const float ts = tA + (float(si) + jitL) * dStep;
-                            const float3 sp = w * ts;
+                            const float3 sp = eye + w * ts;
                             const float3 toLight = lp - sp;
                             const float3 midPt = sp + toLight * 0.5f;
                             const float4 sm = screenOf(midPt);

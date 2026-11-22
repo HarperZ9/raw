@@ -437,13 +437,28 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float cz = cNoise(float3(wp.xy * 0.012f, wp.z * 0.042f)) * 2.0f - 1.0f;
             s.n = normalize(s.n + float3(cx * 0.32f, cy * 0.32f, cz * 0.16f) * cragFade);
         }
-        // Novel world-space Nordic moss & damp-crevice weathering on outdoor rocks/ruins (zero texture mods).
-        if (base == 1u && sunColour.w > 0.5f && z < 4500.0f && wet.snow < 0.35f) {
-            const float mossPatch = smoothstep(0.56f, 0.82f, cNoise(wp * 0.0085f + float3(4.1f, 9.7f, 2.3f))) * smoothstep(0.52f, 0.86f, slope);
-            const float mossFade = saturate(1.0f - z / 4500.0f) * (1.0f - wet.snow * 2.5f);
-            const float3 mossCol = float3(0.14f, 0.24f, 0.10f) * lerp(0.85f, 1.15f, microN);
-            albedo = lerp(albedo, mossCol, mossPatch * mossFade * 0.38f);
-            s.alpha = lerp(s.alpha, 0.86f, mossPatch * mossFade * 0.38f);
+        // Physical microclimate-driven 3D procedural Nordic moss, alpine crustose lichen & damp water-edge patina
+        // (100% world-space wp = p + camPosW.xyz, zero static texture mods, zero camera dependency):
+        // moss grows on shaded/damp upward stone ledges; pale lichen colonizes dry exposed granite; damp rot darkens near-ground bases.
+        if (base == 1u && sunColour.w > 0.5f && z < 5000.0f && wet.snow < 0.35f) {
+            const float mossFade = saturate(1.0f - z / 5000.0f) * (1.0f - wet.snow * 2.5f);
+            const float shadeHumid = lerp(0.55f, 1.35f, saturate(wet.wet * 0.85f + (1.0f - saturate(s.n.y * 0.5f + 0.5f)) * 0.45f));
+            const float mMacro = cNoise(wp * 0.0075f + float3(4.1f, 9.7f, 2.3f));
+            const float mTuft  = cNoise(wp * 0.085f + float3(13.3f, 2.7f, 6.1f));
+            const float mossPatch = smoothstep(0.50f, 0.78f, mMacro * shadeHumid) * smoothstep(0.46f, 0.84f, slope);
+            const float3 mossCol = lerp(float3(0.08f, 0.16f, 0.05f), float3(0.18f, 0.29f, 0.10f), mTuft);
+            const float mossW = mossPatch * mossFade * 0.48f;
+            albedo = lerp(albedo, mossCol, mossW);
+            s.alpha = lerp(s.alpha, 0.90f, mossW);
+            // Tufted 3D moss micro-normal perturbation so moss reads as velvety raised growth, not flat green paint.
+            const float mDx = cNoise(wp * 0.14f + float3(0.4f, 0.0f, 0.0f)) - cNoise(wp * 0.14f - float3(0.4f, 0.0f, 0.0f));
+            const float mDy = cNoise(wp * 0.14f + float3(0.0f, 0.4f, 0.0f)) - cNoise(wp * 0.14f - float3(0.0f, 0.4f, 0.0f));
+            s.n = normalize(s.n + float3(mDx, mDy, 0.0f) * (0.45f * mossW));
+            // Dry exposed alpine crustose lichen on steep/mid granite faces.
+            const float lichenMask = smoothstep(0.68f, 0.88f, cNoise(wp * 0.022f + float3(21.7f, 5.1f, 17.3f)))
+                                   * smoothstep(0.18f, 0.55f, slope) * (1.0f - mossPatch);
+            const float3 lichenCol = float3(0.42f, 0.46f, 0.36f) * lerp(0.85f, 1.15f, microN);
+            albedo = lerp(albedo, lichenCol, lichenMask * mossFade * 0.24f);
         }
         // Triplanar world-space micro-porosity & pebble/slate relief on close terrain & stone ruins (zero texture mods).
         if (z < 1800.0f && (base == 4u || base == 1u)) {

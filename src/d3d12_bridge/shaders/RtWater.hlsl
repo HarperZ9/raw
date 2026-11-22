@@ -238,8 +238,8 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
             const float3 o = p + float3(0.0f, 0.0f, 2.5f + 0.003f * length(p));
 
-            // Distance-filtered 3D liquid reflection normal (crisp sculpted ripples up close, silky smooth swells at distance).
-            const float reflRelief = lerp(0.82f, 0.34f, saturate(wDist / 6500.0f));
+            // Distance-filtered 3D liquid reflection normal (crisp sculpted ripples up close, living swells at mid-distance).
+            const float reflRelief = lerp(0.92f, 0.52f, saturate(wDist / 8500.0f));
             const float3 nRefl = normalize(lerp(float3(0.0f, 0.0f, 1.0f), n, reflRelief));
             float3 rd = reflect(-v, nRefl);
             if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }
@@ -258,6 +258,13 @@ void water(uint3 id : SV_DispatchThreadID) {
                 if (reflMax > 4.5f) { refl *= 4.5f / reflMax; }
             } else {
                 refl = waterSky(rd);
+                // Physical wave-slope contrast under overcast skies: steep wave faces dipping toward dark riverbanks
+                // darken while upward-tilted wave crests catch crisp zenith silver-sky sheen (eliminates flat satin glass).
+                const float waveTilt = saturate((1.0f - nRefl.z) * 14.0f);
+                const float skyFace = saturate(dot(nRefl, normalize(v + float3(0.0f, 0.0f, 1.0f))));
+                const float crestSheen = pow(skyFace, 28.0f) * 0.55f;
+                refl = refl * lerp(0.74f, 1.24f, smoothstep(0.05f, 0.55f, rd.z)) * (1.0f - waveTilt * 0.22f)
+                     + refl * crestSheen;
             }
 
             // The sun's glint on the waves (true HDR peak feeds 12-pass Jimenez HDR Bloom cleanly).

@@ -63,14 +63,16 @@ int SceneNow() {
 
 void CascadesInit(const Image& img, const std::vector<RefTarget>* refs, const std::string& ini) {
     g_img = &img; g_refs = refs;
-    const char* def[3] = {"", "", ""};
+    // Built-in production presets for full scene-adaptive cascade ownership (overridable via [Cascades] in INI):
+    // Exterior: crisp near shadows + 12k far; Interior: 2.3x shadow texel density; Vista (Z>9000): 22k mountain sweep.
+    const char* def[3] = {"12000,2200,0.18", "4500,950,0.15", "22000,3200,0.22"};
     const char* keys[3] = {"Exterior", "Interior", "Vista"};
     for (int i = 0; i < 3; ++i) {
         char b[128];
         GetPrivateProfileStringA("Cascades", keys[i], def[i], b, sizeof b, ini.c_str());
         g_preset[i] = Parse(b);
     }
-    g_auto = GetPrivateProfileIntA("Cascades", "Auto", 0, ini.c_str()) != 0;
+    g_auto = GetPrivateProfileIntA("Cascades", "Auto", 1, ini.c_str()) != 0;
     g_vistaZ = float(GetPrivateProfileIntA("Cascades", "VistaZ", 9000, ini.c_str()));
 }
 

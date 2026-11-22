@@ -140,7 +140,9 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         const float2 pUv = float2(pClip.x / pClip.w * 0.5f + 0.5f, 0.5f - pClip.y / pClip.w * 0.5f) / resScale.xy;
         if (all(pUv > 0.005f) && all(pUv < 0.995f)) {
             const float4 prevVoxel = samplePrevFroxel(pUv, pClip.w);
-            curVoxel = lerp(prevVoxel, curVoxel, 0.22f);
+            // Motion- and depth-adaptive spatiotemporal blend: silky 0.22 when still, responsive 0.72 during fast pans/sprinting.
+            const float motMag = saturate(length(pUv - uv) * 12.0f + abs(pClip.w - zMid) / max(zMid, 1.0f) * 3.0f);
+            curVoxel = lerp(prevVoxel, curVoxel, lerp(0.22f, 0.72f, motMag));
         }
     }
     return curVoxel;

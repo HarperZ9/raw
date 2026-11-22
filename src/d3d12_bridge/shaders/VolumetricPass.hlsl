@@ -184,7 +184,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float4 prev = VolPrev.SampleLevel(Lin, puv, 0.0f);
             const float zRel = abs(prev.a - min(zCur, 65000.0f)) / max(min(zCur, 65000.0f), 1.0f);
             if (zRel < 0.08f) {
-                scatter = lerp(scatter, prev.rgb, 0.78f);
+                const float2 curUvV = fullPx * dims.zw;
+                const float histW = lerp(0.78f, 0.28f, saturate(length(puv - curUvV) * 14.0f));
+                scatter = lerp(scatter, prev.rgb, histW);
             }
         }
     }

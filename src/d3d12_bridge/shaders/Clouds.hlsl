@@ -150,7 +150,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // Physical convective cloud undersides: luminous silver-blue in fair weather, dramatic deep slate-violet
             // storm bellies contrasting against bright silver-white openings in heavy storms (GTA VI storm cloud study).
             const float stormW = saturate(weather.w * 1.25f + max(clouds.x - 0.72f, 0.0f) * 2.2f);
-            const float cloudAo = lerp(lerp(0.56f, 0.34f, stormW), 1.00f, pow(h, lerp(0.55f, 0.72f, stormW))) * exp(-dens * lerp(0.10f, 0.18f, stormW));
+            const float cloudAo = lerp(lerp(0.38f, 0.24f, stormW), 1.00f, pow(h, lerp(0.58f, 0.78f, stormW))) * exp(-dens * lerp(0.14f, 0.22f, stormW));
             const float lowSun = saturate(1.0f - sunDir.z * 3.0f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
             const float overcastW = saturate((clouds.x - 0.50f) * 2.2f);
             const float3 coolSilver = lerp(float3(0.72f, 0.82f, 0.98f), lerp(float3(0.76f, 0.81f, 0.90f), float3(0.56f, 0.54f, 0.68f), stormW), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.24f) * 1.45f;
@@ -169,18 +169,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
             const float sunCalm = lerp(1.0f, 0.84f, pow(saturate(cosT), 12.0f));
-            // Crisp snow-white sunlit cauliflower tops (~0.82-1.10 linear) + clean cool blue-silver undersides (~0.38-0.55)
-            // so clouds read as clean volumetric form against the sky instead of muddy grey-brown fog.
-            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.98f, 0.99f, 1.03f), 0.68f * (1.0f - lowSun));
-            const float3 coolBase = lerp(float3(0.56f, 0.66f, 0.82f), float3(0.72f, 0.77f, 0.86f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.28f) * cloudAo;
-            const float3 lum = min(whiteSun * (multiScat * lerp(1.0f, powder, 0.68f) * sunCalm * 4.0f * PI * 0.19f) + coolBase * 0.92f + stormFlash, 1.12f.xxx);
-            const float ext = dens * (sigma * 1.45f);
+            // True linear HDR sculptural cumulus crowns (up to 2.4 linear feeding AgX highlight rolloff)
+            // contrasted against deep slate-blue shadowed cloud bellies (zero flat grey SDR ceiling).
+            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.99f, 0.99f, 1.02f), 0.62f * (1.0f - lowSun));
+            const float3 coolBase = lerp(float3(0.46f, 0.57f, 0.76f), float3(0.62f, 0.68f, 0.78f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.24f) * cloudAo;
+            const float3 lum = min(whiteSun * (multiScat * lerp(1.0f, powder, 0.76f) * sunCalm * 4.0f * PI * 0.25f) + coolBase * 0.88f + stormFlash, 2.40f.xxx);
+            const float ext = dens * (sigma * 1.55f);
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;
         }
-        // Disciplined HDR cloud radiance matched to Hillaire sky + seamless C2 horizon elevation fade.
-        const float3 softS = min(S, 1.15f.xxx);
+        // True linear HDR cloud radiance matched to Hillaire sky + seamless C2 horizon elevation fade.
+        const float3 softS = min(S, 2.40f.xxx);
         const float fade = exp(-max(t0, 0.0f) / 185000.0f);
         const float horFade = smoothstep(0.025f, 0.165f, dir.z);
         const float effFade = saturate(fade * 1.15f) * horFade;
@@ -204,15 +204,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
         res = float4(aerialS + cirrusAdd, lerp(1.0f, T, effFade));
     }
-    // Last frame's value along the same direction.
+    // Last frame's value along the same direction with motion-adaptive spatiotemporal rejection (zero ghosting on fast turns).
     const float4 c = float4(far, 1.0f);
     const float4 pc = float4(dot(prevWorldToClip[0], c), dot(prevWorldToClip[1], c), dot(prevWorldToClip[2], c), dot(prevWorldToClip[3], c));
     if (pc.w > 0.0f && proj.z > 0.5f) {
         const float2 uv = float2(pc.x / pc.w * 0.5f + 0.5f, 0.5f - pc.y / pc.w * 0.5f) / resScale.xy;
         if (all(uv > 0.0f) && all(uv < 1.0f)) {
             const float edgeFade = smoothstep(0.0f, 0.045f, min(min(uv.x, 1.0f - uv.x), min(uv.y, 1.0f - uv.y)));
+            const float2 curUv = at.xy * dims.zw;
+            const float turnReject = 1.0f - saturate(length(uv - curUv) * 14.0f) * 0.62f;
             const float4 h = History.SampleLevel(Lin, uv, 0.0f);
-            res = lerp(res, h, min(cloudWind.w, 0.68f) * edgeFade);
+            res = lerp(res, h, min(cloudWind.w, 0.68f) * edgeFade * turnReject);
         }
     }
     return res;

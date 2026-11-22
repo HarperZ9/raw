@@ -42,7 +42,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 o = camPosW.xyz;
     const float maxDist = 400000.0f;
     if (cloudsOn() && cloudSpan(o, dir, maxDist, t0, t1)) {
-        const uint steps = 48u;
+        const uint steps = 64u;
         const float dt = (t1 - t0) / float(steps);
         const float j = rand(lo, proj.z);
         const float cosT = dot(dir, sunDir.xyz);
@@ -84,14 +84,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             [unroll] for (int oct = 0; oct < 4; oct++) {
                 const float phOct = lerp(hg(cosT, -0.22f * cOct), hg(cosT, 0.72f * cOct), 0.56f);
                 multiScat += exp(-odRGB * bOct) * (aOct * min(phOct, 0.42f));
-                aOct *= 0.52f; bOct *= 0.46f; cOct *= 0.54f;
+                aOct *= 0.56f; bOct *= 0.34f; cOct *= 0.52f;
             }
-            const float powder = 1.0f - exp(-od * sigma * 1.9f - dens * 0.58f);
+            const float powder = 1.0f - exp(-od * sigma * 1.6f - dens * 0.45f);
             const float h = saturate((pa.z - clouds.y) / clouds.z);
-            const float cloudAo = lerp(0.32f, 0.96f, pow(h, 0.80f)) * exp(-dens * 0.28f);
+            // Physical high-albedo water-droplet cloud undersides (never dark charcoal ink blots even directly overhead).
+            const float cloudAo = lerp(0.56f, 1.00f, pow(h, 0.55f)) * exp(-dens * 0.10f);
             const float lowSun = saturate(1.0f - sunDir.z * 3.0f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
             const float overcastW = saturate((clouds.x - 0.50f) * 2.2f);
-            const float3 coolSilver = lerp(float3(0.66f, 0.78f, 0.96f), float3(0.76f, 0.81f, 0.89f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.12f) * 1.35f;
+            const float3 coolSilver = lerp(float3(0.72f, 0.82f, 0.98f), float3(0.80f, 0.85f, 0.93f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.24f) * 1.45f;
             const float3 neutralSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.98f, 0.99f, 1.02f), overcastW * 0.65f);
             const float3 baseTint = lerp(coolSilver * cloudAo, coolSilver * (cloudAo * 0.75f) + neutralSun * lerp(0.14f, 0.05f, h), lowSun * 0.40f * (1.0f - overcastW * 0.5f));
             // Volumetric sheet-lightning inside heavy rainstorms (clouds.x > 0.78 && weather.w > 0.25).
@@ -147,7 +148,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (all(uv > 0.0f) && all(uv < 1.0f)) {
             const float edgeFade = smoothstep(0.0f, 0.045f, min(min(uv.x, 1.0f - uv.x), min(uv.y, 1.0f - uv.y)));
             const float4 h = History.SampleLevel(Lin, uv, 0.0f);
-            res = lerp(res, h, cloudWind.w * edgeFade);
+            res = lerp(res, h, min(cloudWind.w, 0.68f) * edgeFade);
         }
     }
     return res;

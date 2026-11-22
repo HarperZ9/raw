@@ -23,28 +23,7 @@ float cRemap(float v, float lo, float hi, float nLo, float nHi) {
     return nLo + saturate((v - lo) / max(hi - lo, 1.0e-5f)) * (nHi - nLo);
 }
 
-// Fast 8-cell 3D inverted Worley cellular noise (Schneider & Vos SIGGRAPH 2015 cauliflower cumulus lobes).
-float cWorley3D(float3 p) {
-    const float3 i = floor(p);
-    const float3 f = frac(p);
-    float minD2 = 1.5f;
-    [unroll] for (int z = 0; z <= 1; z++) {
-        [unroll] for (int y = 0; y <= 1; y++) {
-            [unroll] for (int x = 0; x <= 1; x++) {
-                const float3 g = float3(float(x), float(y), float(z));
-                const float3 c = i + g;
-                const float h0 = cHash(c);
-                const float h1 = cHash(c + float3(17.1f, 31.7f, 11.3f));
-                const float h2 = cHash(c + float3(43.3f, 13.9f, 27.7f));
-                const float3 pt = g + 0.12f + 0.76f * float3(h0, h1, h2) - f;
-                minD2 = min(minD2, dot(pt, pt));
-            }
-        }
-    }
-    return saturate(1.0f - sqrt(minD2) * 0.92f);
-}
-
-// Mathematically C2-continuous 3D domain-warped billow noise (zero cell boundaries or straight cutoff lines ever).
+// Mathematically C2-continuous 3D domain-warped billow noise (100% zero cell boundaries or straight seams ever).
 float cBillow(float3 p) {
     const float w = cNoise(p * 0.85f + float3(3.1f, 7.4f, 1.9f)) * 0.65f;
     const float n0 = cNoise(p + w);
@@ -53,45 +32,46 @@ float cBillow(float3 p) {
 }
 
 bool cloudsOn() { return clouds.x > 0.0f && clouds.z > 0.0f; }
-static const float kCloudSigma = 0.0024f;   // crisp optical density for detailed cumulus edges
+static const float kCloudSigma = 0.0022f;   // crisp optical density for detailed cumulus edges
 
-// Schneider & Vos (SIGGRAPH 2015) Perlin-Worley 3D cumulus volume + weather-driven cloud-type morphing + curl Worley erosion.
+// Seam-free C2-continuous 6-octave curl-eroded cumulus volume + weather-driven anvil/stratus morphing (zero grid seams).
 float cloudDensity(float3 pa, bool detail) {
     const float2 dxy = pa.xy - camPosW.xy;
     const float curvedZ = pa.z + dot(dxy, dxy) * 1.15e-8f;
     const float h = (curvedZ - clouds.y) / clouds.z;   // 0 at floor, 1 at top
     if (h <= 0.0f || h >= 1.0f) { return 0.0f; }
     const float3 wind = float3(cloudWind.xy * camPosW.w, 0.0f);
-    const float3 sheared = pa + wind + float3(cloudWind.xy, 0.0f) * (h * 6.5f);
+    const float3 sheared = pa + wind + float3(cloudWind.xy, 0.0f) * (h * 6.0f);
     const float cover = saturate(clouds.x);
     // Weather-driven cloud-type morphing (0 = fair-weather cumulus humilis, 0.5 = stratocumulus, 1 = towering cumulonimbus anvil).
     const float stormType = saturate(cover * 1.25f - 0.35f + weather.w * 0.45f);
-    const float topCap = lerp(0.68f, 0.96f, stormType);
+    const float topCap = lerp(0.72f, 0.96f, stormType);
     const float baseGrad = smoothstep(0.0f, lerp(0.14f, 0.07f, stormType), h);
-    const float topGrad  = 1.0f - smoothstep(topCap * 0.62f, topCap, h);
-    const float anvilSpread = stormType * smoothstep(0.65f, 0.88f, h) * (1.0f - smoothstep(0.88f, 0.99f, h)) * 0.22f;
+    const float topGrad  = 1.0f - smoothstep(topCap * 0.58f, topCap, h);
+    const float anvilSpread = stormType * smoothstep(0.65f, 0.88f, h) * (1.0f - smoothstep(0.88f, 0.99f, h)) * 0.18f;
     const float hGrad = saturate(baseGrad * topGrad + anvilSpread);
-    // Low-frequency Perlin-Worley base shape: combines organic FBM drift with inverted 3D Worley cumulus domes.
-    const float3 q = float3(sheared.x / 25000.0f, sheared.y / 23000.0f, h * 1.20f);
-    const float basePerlin = cNoise(q) * 0.55f + cNoise(q * 2.13f + 11.3f) * 0.30f + cNoise(q * 4.37f + 5.7f) * 0.15f;
-    const float baseWorley = cWorley3D(q * 2.15f + 2.7f) * 0.68f + cWorley3D(q * 4.30f + 9.1f) * 0.32f;
-    const float perlinWorley = cRemap(basePerlin, (1.0f - baseWorley) * 0.58f, 1.0f, 0.0f, 1.0f);
-    const float thresh = lerp(0.50f, 0.18f, cover);
-    float dens = saturate((perlinWorley * hGrad - thresh) / max(1.0f - thresh, 0.22f));
+    // Macro C2-continuous domain-warped cumulus base shape (higher overhead frequency so looking straight up stays crisp).
+    const float3 q = float3(sheared.x / 18000.0f, sheared.y / 17000.0f, h * 1.35f);
+    const float3 qWarp = float3(cNoise(q * 1.15f + 7.1f), cNoise(q * 1.15f + 19.3f), cNoise(q * 1.15f + 31.7f)) * 0.38f;
+    const float baseFbm = cNoise(q + qWarp) * 0.48f + cNoise(q * 2.13f + 11.3f) * 0.30f + cNoise(q * 4.37f + 5.7f) * 0.22f;
+    const float macroBillow = cBillow(q * 1.85f + 2.7f);
+    const float shape = lerp(baseFbm, baseFbm * 0.52f + macroBillow * 0.54f, 0.58f);
+    const float thresh = lerp(0.52f, 0.20f, cover);
+    float dens = saturate((shape * hGrad - thresh) / max(1.0f - thresh, 0.24f));
     if (detail && dens > 0.0f) {
-        // High-frequency curl-warped 3D Worley detail erosion: carves billowing cauliflower turrets & wispy bases.
-        const float3 r1 = float3((sheared.x + wind.x * 0.35f) / 3800.0f, (sheared.y + wind.y * 0.35f) / 3600.0f, h * 5.2f);
-        const float curlX = (cNoise(r1 * 0.85f + float3(1.7f, 5.3f, 2.1f)) - 0.5f) * 0.55f;
-        const float curlY = (cNoise(r1 * 0.85f + float3(8.3f, 2.9f, 6.7f)) - 0.5f) * 0.55f;
-        const float3 rWarp = r1 + float3(curlX, curlY, 0.0f) * (1.0f - h * 0.5f);
-        const float wDet0 = cWorley3D(rWarp * 1.35f);
-        const float wDet1 = cNoise(rWarp * 3.17f + 7.3f);
-        const float wDet2 = cNoise(rWarp * 6.83f + 19.1f);
-        const float detailFbm = wDet0 * 0.58f + wDet1 * 0.27f + wDet2 * 0.15f;
-        // Invert detail at cloud bases (wispy tendrils) and keep crisp billowing domes near sunlit cloud tops.
-        const float detailMod = lerp(detailFbm, 1.0f - detailFbm, saturate(h * 1.45f));
-        const float erodeAmt = lerp(0.32f, 0.52f, h) * (1.0f - dens * 0.55f);
-        dens = cRemap(dens, detailMod * erodeAmt, 1.0f, 0.0f, 1.0f);
+        // High-frequency 6-octave C2-continuous curl-warped wispy detail erosion (crisp even when staring straight up).
+        const float3 r1 = float3((sheared.x + wind.x * 0.35f) / 2200.0f, (sheared.y + wind.y * 0.35f) / 2100.0f, h * 6.5f);
+        const float curlX = (cNoise(r1 * 0.75f + float3(1.7f, 5.3f, 2.1f)) - 0.5f) * 0.65f;
+        const float curlY = (cNoise(r1 * 0.75f + float3(8.3f, 2.9f, 6.7f)) - 0.5f) * 0.65f;
+        const float3 rW = r1 + float3(curlX, curlY, 0.0f);
+        const float b1 = 1.0f - cBillow(rW);
+        const float f2 = cNoise(rW * 2.17f + 3.7f);
+        const float f3 = cNoise(rW * 4.61f + 9.2f);
+        const float f4 = cNoise(rW * 9.37f + 17.5f);
+        const float f5 = cNoise(rW * 18.7f + 29.1f);
+        const float fineErode = b1 * 0.34f + f2 * 0.24f + f3 * 0.18f + f4 * 0.14f + f5 * 0.10f;
+        const float erodeAmt = lerp(0.42f, 0.68f, h) * (1.0f - dens * 0.50f);
+        dens = cRemap(dens, fineErode * erodeAmt, 1.0f, 0.0f, 1.0f);
     }
     return dens * cloudWind.z;
 }

@@ -24,6 +24,9 @@
 #include "atmo_trans_fs.h"
 #include "atmo_sky_fs.h"
 #include "rt_refl_filter_fs.h"
+#include "dof_coc_fs.h"
+#include "dof_gather_fs.h"
+#include "dof_comp_fs.h"
 
 #include <cmath>
 #include <cstring>
@@ -61,6 +64,9 @@ constexpr RasterBinding kBloom2Layout[3] = {T, T, Sm};
 constexpr RasterBinding kAtmoTransLayout[1] = {U};
 constexpr RasterBinding kAtmoSkyLayout[3] = {U, T, Sm};
 constexpr RasterBinding kReflFilterLayout[6] = {U, T, T, T, T, Sm};
+constexpr RasterBinding kDofCocLayout[4] = {U, T, T, Sm};
+constexpr RasterBinding kDofGatherLayout[3] = {U, T, Sm};
+constexpr RasterBinding kDofCompLayout[5] = {U, T, T, T, Sm};
 
 class LightingPass final : public IBridgePass
 {
@@ -121,6 +127,9 @@ public:
         if (!m_atmoTrans.valid() || !m_atmoSkyView.valid()) return Fail("atmosphere LUT textures");
         for (int k = 0; k < 2; ++k) m_reflHist[k] = m_dev->createTexture({host.width, host.height, TextureFormat::RGBA16Float, RT, "rt refl history"}, m_err);
         if (!m_reflHist[0].valid() || !m_reflHist[1].valid()) return Fail("rt refl history textures");
+        m_dofCoc = m_dev->createTexture({vw, vh, TextureFormat::RGBA16Float, RT, "dof coc"}, m_err);
+        m_dofBokeh = m_dev->createTexture({vw, vh, TextureFormat::RGBA16Float, RT, "dof bokeh"}, m_err);
+        if (!m_dofCoc.valid() || !m_dofBokeh.valid()) return Fail("dof textures");
         m_lin = m_dev->createSampler({Filter::Linear, AddressMode::ClampToEdge, "clouds linear"}, m_err);
         if (!m_cloud[0].valid() || !m_cloud[1].valid() || !m_volFog[0].valid() || !m_volFog[1].valid() || !m_lin.valid()) return Fail("cloud/volFog textures");
         const auto dxil = [](const void* p, size_t n) { return ShaderCode{ShaderFormat::Dxil, p, n}; };
@@ -156,6 +165,13 @@ public:
         d.label = "rt refl filter"; d.fragment = dxil(kDxil_rt_refl_filter_fs, sizeof kDxil_rt_refl_filter_fs); d.layout = kReflFilterLayout;
         m_reflFilterPipe = m_dev->createRasterPipeline(d, m_err);
         if (!m_reflFilterPipe.valid()) return Fail("rt refl filter pipeline");
+        d.label = "dof coc"; d.fragment = dxil(kDxil_dof_coc_fs, sizeof kDxil_dof_coc_fs); d.layout = kDofCocLayout;
+        m_dofCocPipe = m_dev->createRasterPipeline(d, m_err);
+        d.label = "dof gather"; d.fragment = dxil(kDxil_dof_gather_fs, sizeof kDxil_dof_gather_fs); d.layout = kDofGatherLayout;
+        m_dofGatherPipe = m_dev->createRasterPipeline(d, m_err);
+        d.label = "dof comp"; d.fragment = dxil(kDxil_dof_comp_fs, sizeof kDxil_dof_comp_fs); d.layout = kDofCompLayout;
+        m_dofCompPipe = m_dev->createRasterPipeline(d, m_err);
+        if (!m_dofCocPipe.valid() || !m_dofGatherPipe.valid() || !m_dofCompPipe.valid()) return Fail("dof pipelines");
         const ao_rt::Shaders sh{dxil(kDxil_ao_rt_vs, sizeof kDxil_ao_rt_vs), dxil(kDxil_ao_rt_prefilter, sizeof kDxil_ao_rt_prefilter),
                                 dxil(kDxil_ao_rt_level, sizeof kDxil_ao_rt_level), dxil(kDxil_ao_rt_trace, sizeof kDxil_ao_rt_trace),
                                 dxil(kDxil_ao_rt_resolve, sizeof kDxil_ao_rt_resolve)};
@@ -229,10 +245,20 @@ public:
         }
         const RasterBind fog[7] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volNow, {}}, {{}, m_atmoSkyView, {}}, {{}, {}, m_lin}};
         if (ok && (m_u.flags[0] & kMatch) == 0u) {
-            // Render fog into m_aoOut (free full-res RGBA16F scratch), run 6-level Jimenez Karis HDR Bloom Pyramid,
-            // and composite bloomed linear HDR straight into m_out (zero extra full-res VRAM allocation).
+            // Render fog into m_aoOut, optionally run 3-Pass Near/Far Physical Bokeh DoF into m_lit,
+            // then run 6-level Jimenez Karis HDR Bloom Pyramid and composite bloomed linear HDR into m_out.
             Draw(*c, m_aoOut, m_fogPipe, fog);
-            const RasterBind bp[2] = {{{}, m_aoOut, {}}, {{}, {}, m_lin}};
+            TextureHandle bloomSrc = m_aoOut;
+            if (m_u.dofParams[0] > 1.0f) {
+                const RasterBind dc[4] = {{m_uniform, {}, {}}, {{}, m_aoOut, {}}, {{}, m_depth, {}}, {{}, {}, m_lin}};
+                Draw(*c, m_dofCoc, m_dofCocPipe, dc);
+                const RasterBind dg[3] = {{m_uniform, {}, {}}, {{}, m_dofCoc, {}}, {{}, {}, m_lin}};
+                Draw(*c, m_dofBokeh, m_dofGatherPipe, dg);
+                const RasterBind dp[5] = {{m_uniform, {}, {}}, {{}, m_aoOut, {}}, {{}, m_depth, {}}, {{}, m_dofBokeh, {}}, {{}, {}, m_lin}};
+                Draw(*c, m_lit, m_dofCompPipe, dp);
+                bloomSrc = m_lit;
+            }
+            const RasterBind bp[2] = {{{}, bloomSrc, {}}, {{}, {}, m_lin}};
             Draw(*c, m_bloomDown[0], m_bloomPrePipe, bp);
             for (int k = 1; k < 6; ++k) {
                 const RasterBind bd[2] = {{{}, m_bloomDown[k - 1], {}}, {{}, {}, m_lin}};
@@ -243,7 +269,7 @@ public:
                 const RasterBind bu[3] = {{{}, coarser, {}}, {{}, m_bloomDown[k], {}}, {{}, {}, m_lin}};
                 Draw(*c, m_bloomUp[k], m_bloomUpPipe, bu);
             }
-            const RasterBind bc[3] = {{{}, m_aoOut, {}}, {{}, m_bloomUp[0], {}}, {{}, {}, m_lin}};
+            const RasterBind bc[3] = {{{}, bloomSrc, {}}, {{}, m_bloomUp[0], {}}, {{}, {}, m_lin}};
             Draw(*c, m_out, m_bloomCompPipe, bc);
         } else {
             Draw(*c, m_out, m_fogPipe, fog);
@@ -438,8 +464,8 @@ private:
     BufferHandle m_uniform;
     RasterPipelineHandle m_lightPipe, m_fogPipe, m_cloudPipe, m_volPipe;
     RasterPipelineHandle m_bloomPrePipe, m_bloomDownPipe, m_bloomUpPipe, m_bloomCompPipe;
-    RasterPipelineHandle m_atmoTransPipe, m_atmoSkyPipe, m_reflFilterPipe;
-    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoSkyView, m_reflHist[2];
+    RasterPipelineHandle m_atmoTransPipe, m_atmoSkyPipe, m_reflFilterPipe, m_dofCocPipe, m_dofGatherPipe, m_dofCompPipe;
+    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoSkyView, m_reflHist[2], m_dofCoc, m_dofBokeh;
     bool m_atmoTransBuilt = false;
     SamplerHandle m_lin;
     float m_prevWorldToClip[16] = {};

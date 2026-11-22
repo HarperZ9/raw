@@ -480,60 +480,80 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
 
         float2 pomPx = px;
         const bool useRealHeight = (base == 6u && sp.y > 0.002f);
-        float hFinal = useRealHeight ? saturate(sp.y) : saturate((dot(albedo, lw) - 0.04f) * 2.75f);
-        if ((base == 1u || base == 4u || base == 6u) && z < 1800.0f) {
-            const float pomFade = saturate(1.0f - z / 1800.0f) * (base == 6u ? 1.0f : (base == 4u ? 0.95f : 0.88f));
-            const float nvPom = max(abs(dot(s.n, s.v)), 0.25f);
-            // March INTO the surface (-vTan): true parallax shift away from the eye along the tangent plane.
+        // Smooth 5-tap macro heightfield kernel (eliminates 1-pixel wood-grain / stone-speckle "fuzzy spikes" during POM).
+        const float2 invDim = dims.zw;
+        float hFinal = useRealHeight ? saturate(sp.y) : saturate((dot(albedo, lw) - 0.05f) * 2.35f);
+        if ((base == 1u || base == 4u || base == 6u) && z < 1500.0f) {
+            const float pomFade = saturate(1.0f - z / 1500.0f) * (useRealHeight ? 0.95f : (base == 4u ? 0.85f : 0.48f));
+            const float nvPom = max(abs(dot(s.n, s.v)), 0.35f);
+            // Restrained physical relief depth: 2.6u (max 6px) on general wood/stone (no spiky wood planks or fuzzy hearths),
+            // 5.2u (max 11px) on cobblestone terrain (base==4) and 6.5u (max 13px) on authored _p.dds parallax (base==6).
+            const float worldDepth = useRealHeight ? 6.5f : (base == 4u ? 5.2f : 2.6f);
+            const float maxRayPx   = useRealHeight ? 13.0f : (base == 4u ? 11.0f : 6.0f);
             const float3 vInto = -s.v + s.n * dot(s.v, s.n);
-            const float4 sEnd = screenOf(p + vInto * ((useRealHeight ? 14.0f : 11.5f) * pomFade / nvPom));
+            const float4 sEnd = screenOf(p + vInto * (worldDepth * pomFade / nvPom));
             float2 vRayPx = (sEnd.w > 1.0f) ? (sEnd.xy - px) : float2(0.0f, 0.0f);
             const float rayLen = length(vRayPx);
-            if (rayLen > 24.0f) { vRayPx *= (24.0f / rayLen); }
-            if (rayLen > 0.5f) {
+            if (rayLen > maxRayPx) { vRayPx *= (maxRayPx / rayLen); }
+            if (rayLen > 0.45f) {
                 float curLayer = 1.0f;
-                const float dLayer = 1.0f / 16.0f;
+                const float dLayer = 1.0f / 12.0f;
                 float2 curOff = 0.0f.xx;
                 const float2 dOff = vRayPx * dLayer;
                 bool hitPom = false;
-                [unroll] for (int st = 0; st < 16; st++) {
+                [unroll] for (int st = 0; st < 12; st++) {
                     curOff += dOff;
                     curLayer -= dLayer;
-                    const int3 spP = int3(clamp(int2(round(px + curOff)), int2(0, 0), dimMax), 0);
+                    const float2 pSample = clamp(px + curOff, float2(1.0f, 1.0f), dims.xy - 2.0f);
+                    const int3 spP = int3(int2(round(pSample)), 0);
                     const float zq = viewZOf(Depth.Load(spP));
                     const float zPred = z + zSlope.x * curOff.x + zSlope.y * curOff.y;
                     if (abs(zq - zPred) > zPlaneTol) { break; }
-                    const float hCur = useRealHeight ? saturate(Spec.Load(spP).y) : saturate((dot(Albedo.Load(spP).rgb, lw) - 0.04f) * 2.75f);
+                    const float2 uvP = (pSample + 0.5f) * invDim;
+                    float hCur;
+                    if (useRealHeight) {
+                        hCur = saturate(Spec.SampleLevel(Lin, uvP, 0.0f).y);
+                    } else {
+                        // 5-tap cross-filtered bilinear albedo luminance suppresses 1-pixel grain spikes cleanly.
+                        const float hC = dot(Albedo.SampleLevel(Lin, uvP, 0.0f).rgb, lw);
+                        const float hN = dot(Albedo.SampleLevel(Lin, uvP + float2( 1.5f,  0.0f) * invDim, 0.0f).rgb, lw)
+                                       + dot(Albedo.SampleLevel(Lin, uvP + float2(-1.5f,  0.0f) * invDim, 0.0f).rgb, lw)
+                                       + dot(Albedo.SampleLevel(Lin, uvP + float2( 0.0f,  1.5f) * invDim, 0.0f).rgb, lw)
+                                       + dot(Albedo.SampleLevel(Lin, uvP + float2( 0.0f, -1.5f) * invDim, 0.0f).rgb, lw);
+                        hCur = saturate(((hC * 0.40f + hN * 0.15f) - 0.05f) * 2.35f);
+                    }
                     if (hCur >= curLayer) { hitPom = true; break; }
                 }
                 if (hitPom) {
-                    // 4-step binary search refinement for crisp sub-pixel parallax intersection.
+                    // 3-step sub-pixel binary search refinement with bilinear texture sampling (zero jagged stair-step slivers).
                     float2 loOff = curOff - dOff, hiOff = curOff;
                     float loL = curLayer + dLayer, hiL = curLayer;
-                    [unroll] for (int bi = 0; bi < 4; bi++) {
+                    [unroll] for (int bi = 0; bi < 3; bi++) {
                         const float2 midOff = 0.5f * (loOff + hiOff);
                         const float midL = 0.5f * (loL + hiL);
-                        const int3 spM = int3(clamp(int2(round(px + midOff)), int2(0, 0), dimMax), 0);
-                        const float zM = viewZOf(Depth.Load(spM));
+                        const float2 pM = clamp(px + midOff, float2(1.0f, 1.0f), dims.xy - 2.0f);
+                        const float zM = viewZOf(Depth.Load(int3(int2(round(pM)), 0)));
                         const float zPredM = z + zSlope.x * midOff.x + zSlope.y * midOff.y;
+                        const float2 uvM = (pM + 0.5f) * invDim;
                         const float hM = abs(zM - zPredM) < zPlaneTol
-                            ? (useRealHeight ? saturate(Spec.Load(spM).y) : saturate((dot(Albedo.Load(spM).rgb, lw) - 0.04f) * 2.75f))
+                            ? (useRealHeight ? saturate(Spec.SampleLevel(Lin, uvM, 0.0f).y)
+                                             : saturate((dot(Albedo.SampleLevel(Lin, uvM, 0.0f).rgb, lw) - 0.05f) * 2.35f))
                             : midL;
                         if (hM >= midL) { hiOff = midOff; hiL = midL; } else { loOff = midOff; loL = midL; }
                     }
-                    const int3 spFinal = int3(clamp(int2(round(px + hiOff)), int2(0, 0), dimMax), 0);
-                    const float zF = viewZOf(Depth.Load(spFinal));
+                    const float2 pF = clamp(px + hiOff, float2(1.0f, 1.0f), dims.xy - 2.0f);
+                    const float zF = viewZOf(Depth.Load(int3(int2(round(pF)), 0)));
                     const float zPredF = z + zSlope.x * hiOff.x + zSlope.y * hiOff.y;
                     if (abs(zF - zPredF) < zPlaneTol) {
-                        pomPx = px + hiOff;
-                        const float3 dispAlb = Albedo.Load(spFinal).rgb;
+                        pomPx = pF;
+                        const float2 uvF = (pF + 0.5f) * invDim;
+                        const float3 dispAlb = Albedo.SampleLevel(Lin, uvF, 0.0f).rgb;
                         const float aLumD = max(dot(dispAlb, lw), 1.0e-4f);
                         const float3 dispExp = saturate(dispAlb * (saturate(pow(aLumD, 1.12f) * 1.14f) / aLumD));
-                        albedo = lerp(albedo, dispExp, pomFade * 0.96f);
-                        s.n = normalize(lerp(s.n, worldNormal(Normal.Load(spFinal)), pomFade * 0.85f));
-                        hFinal = useRealHeight ? saturate(Spec.Load(spFinal).y) : saturate((aLumD - 0.04f) * 2.75f);
-                        // Physical mortar/crevice ambient occlusion from displaced heightfield.
-                        albedo *= lerp(0.62f, 1.06f, lerp(1.0f, hFinal, pomFade * 0.75f));
+                        albedo = lerp(albedo, dispExp, pomFade * 0.85f);
+                        s.n = normalize(lerp(s.n, worldNormal(Normal.SampleLevel(Lin, uvF, 0.0f)), pomFade * 0.72f));
+                        hFinal = useRealHeight ? saturate(Spec.SampleLevel(Lin, uvF, 0.0f).y) : saturate((aLumD - 0.05f) * 2.35f);
+                        albedo *= lerp(0.76f, 1.04f, lerp(1.0f, hFinal, pomFade * 0.65f));
                     }
                 }
             }
@@ -549,31 +569,33 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float hR = abs(viewZOf(Depth.Load(ipR)) - (zBase + zSlope.x)) < zPlaneTol ? (useRealHeight ? Spec.Load(ipR).y : dot(Albedo.Load(ipR).rgb, lw)) : hc;
         const float hU = abs(viewZOf(Depth.Load(ipU)) - (zBase - zSlope.y)) < zPlaneTol ? (useRealHeight ? Spec.Load(ipU).y : dot(Albedo.Load(ipU).rgb, lw)) : hc;
         const float hD = abs(viewZOf(Depth.Load(ipD)) - (zBase + zSlope.y)) < zPlaneTol ? (useRealHeight ? Spec.Load(ipD).y : dot(Albedo.Load(ipD).rgb, lw)) : hc;
-        const float gx = clamp((hR - hL) * 3.8f, -0.75f, 0.75f) * distFade;
-        const float gy = clamp((hD - hU) * 3.8f, -0.75f, 0.75f) * distFade;
-        s.n = normalize(s.n + (-gx * tVec - gy * bVec) * 0.58f);
+        const float gx = clamp((hR - hL) * 2.6f, -0.55f, 0.55f) * distFade;
+        const float gy = clamp((hD - hU) * 2.6f, -0.55f, 0.55f) * distFade;
+        s.n = normalize(s.n + (-gx * tVec - gy * bVec) * 0.45f);
         const float microSlope = saturate(length(float2(gx, gy)) * 1.4f);
-        s.alpha = clamp(s.alpha + (microSlope - 0.15f) * 0.14f * distFade, 0.05f, 0.95f);
-        // 10-step directional POM relief self-shadowing + crevice-cavity roughness along the sun vector.
-        if ((base == 1u || base == 4u || base == 6u) && z < 2000.0f && sunDir.w > 0.5f) {
-            const float pomFade = saturate(1.0f - z / 2000.0f) * (base == 4u ? 0.92f : 0.96f);
-            const float4 sSun = screenOf(p + (sunDir.xyz - s.n * dot(sunDir.xyz, s.n)) * 6.0f);
+        s.alpha = clamp(s.alpha + (microSlope - 0.15f) * 0.12f * distFade, 0.05f, 0.95f);
+        // 8-step directional POM relief self-shadowing + crevice-cavity roughness along the sun vector.
+        if ((base == 1u || base == 4u || base == 6u) && z < 1800.0f && sunDir.w > 0.5f) {
+            const float pomFade = saturate(1.0f - z / 1800.0f) * (useRealHeight ? 0.92f : (base == 4u ? 0.85f : 0.65f));
+            const float4 sSun = screenOf(p + (sunDir.xyz - s.n * dot(sunDir.xyz, s.n)) * 5.0f);
             const float2 sunDirPx = (sSun.w > 1.0f && length(sSun.xy - px) > 0.05f) ? normalize(sSun.xy - px) : float2(0.707f, -0.707f);
-            const float2 stepPx = sunDirPx * 1.40f;
+            const float2 stepPx = sunDirPx * 1.35f;
             float maxH = hFinal;
-            [unroll] for (int pi = 1; pi <= 10; pi++) {
+            [unroll] for (int pi = 1; pi <= 8; pi++) {
                 const float2 sOff = stepPx * float(pi);
-                const int3 spm = int3(clamp(int2(round(pomPx + sOff)), int2(0, 0), dimMax), 0);
-                const float zS = viewZOf(Depth.Load(spm));
+                const float2 pS = clamp(pomPx + sOff, float2(1.0f, 1.0f), dims.xy - 2.0f);
+                const float zS = viewZOf(Depth.Load(int3(int2(round(pS)), 0)));
                 const float zPredS = zBase + zSlope.x * sOff.x + zSlope.y * sOff.y;
                 if (abs(zS - zPredS) < zPlaneTol) {
-                    const float hs = useRealHeight ? saturate(Spec.Load(spm).y) : saturate((dot(Albedo.Load(spm).rgb, lw) - 0.04f) * 2.75f);
-                    maxH = max(maxH, hs - 0.055f * float(pi));
+                    const float2 uvS = (pS + 0.5f) * invDim;
+                    const float hs = useRealHeight ? saturate(Spec.SampleLevel(Lin, uvS, 0.0f).y)
+                                                   : saturate((dot(Albedo.SampleLevel(Lin, uvS, 0.0f).rgb, lw) - 0.05f) * 2.35f);
+                    maxH = max(maxH, hs - 0.065f * float(pi));
                 }
             }
-            const float pomOcc = saturate(1.0f - max(maxH - hFinal, 0.0f) * 2.6f * pomFade);
-            albedo *= lerp(0.46f, 1.0f, pomOcc);
-            s.alpha = clamp(lerp(min(s.alpha + 0.24f, 0.96f), max(s.alpha - 0.14f, 0.10f), pomOcc), 0.08f, 0.96f);
+            const float pomOcc = saturate(1.0f - max(maxH - hFinal, 0.0f) * 2.2f * pomFade);
+            albedo *= lerp(0.58f, 1.0f, pomOcc);
+            s.alpha = clamp(lerp(min(s.alpha + 0.20f, 0.96f), max(s.alpha - 0.12f, 0.10f), pomOcc), 0.08f, 0.96f);
         }
     }
     // Tokuyoshi-Kaplanyan geometric specular anti-aliasing: filters sub-pixel normal variance to kill GGX sparkle in motion.

@@ -105,6 +105,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             }
         }
     }
+    // Synchronized thunderstorm lightning flash illuminating volumetric rain mist across valleys.
+    if (sunColour.w > 0.5f && weather.w > 0.45f && clouds.x > 0.65f) {
+        const float tSlot = floor(camPosW.w * 1.4f);
+        const float stormTrigger = step(0.945f, frac(sin(tSlot * 127.1f) * 43758.5453f));
+        const float flashEnv = pow(1.0f - frac(camPosW.w * 1.4f), 5.0f) * stormTrigger;
+        scatter += float3(0.45f, 0.62f, 1.05f) * (flashEnv * saturate(tEnd / 6000.0f) * 0.22f);
+    }
     // Physical energy-bounded highlight shoulder (prevents volumetric fog from pushing coastal skies/snow into nuclear bloom).
     const float scMax = max(scatter.r, max(scatter.g, scatter.b));
     scatter = (scatter / (1.0f + scMax * 1.45f)) * 0.36f;

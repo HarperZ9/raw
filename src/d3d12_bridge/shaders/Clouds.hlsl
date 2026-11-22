@@ -75,14 +75,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (dens <= 0.0f) { continue; }
             float od = 0.0f;
             [unroll] for (uint k = 0u; k < 6u; k++) { od += cloudDensity(pa + sunDir.xyz * kSunD[k], false) * kSunW[k]; }
-            // Balanced spectral Beer-Lambert scattering: crisp sunlit ivory-white cumulus tops, clean silver-blue undersides (no beige wash).
+            // Wrenninge 2013 (Oz: The Great and Powerful / Frostbite / UE5) 4-Octave Multiple-Scattering Energy Integral:
+            // Couples per-octave extinction attenuation (b^n), energy attenuation (a^n), and phase-eccentricity decay (c^n)
+            // for luminous translucent silver-lined cumulus rims and deep sculptural cloud undersides.
             const float3 odRGB = od * sigma * float3(0.97f, 1.00f, 1.04f);
-            const float3 beer = (exp(-odRGB) + 0.52f * exp(-odRGB * 0.25f) + 0.26f * exp(-odRGB * 0.0625f)) / 1.78f;
+            float3 multiScat = 0.0f.xxx;
+            float aOct = 1.0f, bOct = 1.0f, cOct = 1.0f;
+            [unroll] for (int oct = 0; oct < 4; oct++) {
+                const float phOct = lerp(hg(cosT, -0.22f * cOct), hg(cosT, 0.72f * cOct), 0.56f);
+                multiScat += exp(-odRGB * bOct) * (aOct * min(phOct, 0.42f));
+                aOct *= 0.52f; bOct *= 0.46f; cOct *= 0.54f;
+            }
             const float powder = 1.0f - exp(-od * sigma * 1.9f - dens * 0.58f);
             const float h = saturate((pa.z - clouds.y) / clouds.z);
             const float cloudAo = lerp(0.32f, 0.96f, pow(h, 0.80f)) * exp(-dens * 0.28f);
             const float lowSun = saturate(1.0f - sunDir.z * 3.0f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
-            // Neutralize warm beige drift on overcast cloud undersides while keeping cool silver-blue relief.
             const float overcastW = saturate((clouds.x - 0.50f) * 2.2f);
             const float3 coolSilver = lerp(float3(0.66f, 0.78f, 0.96f), float3(0.76f, 0.81f, 0.89f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.12f) * 1.35f;
             const float3 neutralSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.98f, 0.99f, 1.02f), overcastW * 0.65f);
@@ -99,9 +106,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     stormFlash = float3(0.65f, 0.82f, 1.25f) * (pulse * cellHit * dens * 1.8f);
                 }
             }
-            // Gently restrain forward solar-cone spike so sun shining through thin clouds produces a delicate silver-gold rim, never white blowout.
-            const float sunCalm = lerp(1.0f, 0.68f, pow(saturate(cosT), 12.0f));
-            const float3 lum = min(sunC * (beer * lerp(1.0f, powder, 0.60f) * phase * sunCalm * 4.0f * PI * 0.36f) + baseTint + stormFlash, 0.86f.xxx);
+            const float sunCalm = lerp(1.0f, 0.72f, pow(saturate(cosT), 12.0f));
+            const float3 lum = min(sunC * (multiScat * lerp(1.0f, powder, 0.52f) * sunCalm * 4.0f * PI * 0.26f) + baseTint + stormFlash, 0.88f.xxx);
             const float ext = dens * sigma;
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
@@ -114,7 +120,23 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float effFade = saturate(fade * 1.15f) * horFade;
         const float3 horizonHaze = skyC + sunC * pow(saturate(cosT), 8.0f) * 0.05f;
         const float3 aerialS = lerp(horizonHaze * (1.0f - T), softS, fade) * horFade;
-        res = float4(aerialS, lerp(1.0f, T, effFade));
+        // High-altitude wispy Cirrus cloud deck (h = 68,000u above cumulus): wind-sheared ice-crystal streaks
+        // illuminated by Hillaire 2020 solar transmittance, visible through gaps in the lower cumulus deck.
+        float3 cirrusAdd = 0.0f.xxx;
+        if (dir.z > 0.04f && T > 0.08f) {
+            const float tCir = (68000.0f - o.z) / max(dir.z, 0.04f);
+            if (tCir > 0.0f && tCir < 450000.0f) {
+                const float2 cPos = (o.xy + dir.xy * tCir + cloudWind.xy * camPosW.w * 1.35f) * 0.000014f;
+                const float warp = cNoise(float3(cPos * 1.8f, 2.3f)) * 1.4f;
+                const float streak = cNoise(float3(cPos.x * 4.2f + warp, cPos.y * 1.15f - warp * 0.5f, 5.1f));
+                const float detail = cNoise(float3(cPos * 9.5f + warp, 8.7f));
+                const float cMask = smoothstep(0.56f, 0.84f, streak * 0.70f + detail * 0.30f) * smoothstep(0.04f, 0.22f, dir.z);
+                const float cFade = exp(-tCir / 280000.0f);
+                const float3 cirCol = (sunC * (0.45f + 0.55f * hg(cosT, 0.55f) * 2.5f) + skyC * 0.35f) * 0.42f;
+                cirrusAdd = cirCol * (cMask * cFade * T * horFade * (1.0f - saturate(clouds.x * 0.65f)));
+            }
+        }
+        res = float4(aerialS + cirrusAdd, lerp(1.0f, T, effFade));
     }
     // Last frame's value along the same direction.
     const float4 c = float4(far, 1.0f);

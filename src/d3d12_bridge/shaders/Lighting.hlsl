@@ -545,9 +545,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float middayTrim = lerp(1.0f, 0.88f, highSun);
             alignedDayCol = lerp(sunColour.rgb, d65Spec * (max(dirLum, 0.05f) / ewLum), 0.62f * (1.0f - nightDir)) * middayTrim;
         }
-        // Physical sun-to-ambient HDR ratio calibration (!match exteriors): restores real 4:1-6:1 sunlit-vs-shadow
-        // dynamic range (replacing Skyrim 2011's flat 1.5:1 ratio) so AgX & HDR Bloom sculpt crisp sunlit highlights.
-        const float sunHdrGain = (!match && sunColour.w > 0.5f) ? lerp(1.85f, 1.18f, saturate(clouds.x * 1.15f)) * (1.0f - nightDir * 0.45f) : 1.0f;
+        // Disciplined physical sun-to-ambient HDR ratio (!match exteriors): crisp sunlit highlights with zero blowout.
+        const float sunHdrGain = (!match && sunColour.w > 0.5f) ? lerp(1.22f, 1.02f, saturate(clouds.x * 1.15f)) * (1.0f - nightDir * 0.30f) : 1.0f;
         const float3 dirCol = lerp(alignedDayCol, max(sunColour.rgb, float3(0.14f, 0.20f, 0.34f)) * float3(0.84f, 0.95f, 1.22f), nightDir * 0.65f) * sunHdrGain;
         // Chan 2018 micro-shadowing: uses fine-scale AO to shadow crevices/mortar/bark where coarse shadow maps cannot reach.
         const float microSh = (!match && !isActorFeat && base != 5u) ? saturate(2.0f * AoHist.Load(ip).x + saturate(dot(s.n, sunDir.xyz)) - 0.85f) : 1.0f;

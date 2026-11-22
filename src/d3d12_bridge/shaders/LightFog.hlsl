@@ -73,15 +73,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float3 hSky = sampleHillaireSky(float3(sDir.xy, max(sDir.z, 0.002f)));
                 // Blend Hillaire clear-sky radiative transfer with overcast atmospheric scatter when cloud cover rises.
                 const float hLum = max(dot(hSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
-                const float3 overcastSky = lerp(float3(0.54f, 0.62f, 0.74f), float3(0.32f, 0.38f, 0.48f), saturate(sDir.z)) * max(hLum * 1.15f, 0.38f);
-                float3 physSky = lerp(hSky * 1.25f, overcastSky, saturate(cover * 0.80f - 0.15f + weather.w * 0.35f));
-                // True HDR physical solar disc + Mie aureole (4.5 linear peak feeds 12-pass Jimenez HDR Bloom).
+                const float3 overcastSky = lerp(float3(0.44f, 0.50f, 0.60f), float3(0.24f, 0.30f, 0.38f), saturate(sDir.z)) * max(hLum * 0.95f, 0.26f);
+                float3 physSky = lerp(hSky, overcastSky, saturate(cover * 0.65f - 0.20f + weather.w * 0.45f));
+                // Crisp physical solar disc + disciplined Mie aureole (zero blown-out yellow sky wash).
                 const float cosS = saturate(dot(sDir, sunDir.xyz));
                 const float lowS = saturate(1.0f - sunDir.z * 2.6f);
-                const float3 sunColH = lerp(float3(1.0f, 0.97f, 0.92f), float3(1.0f, 0.58f, 0.24f), lowS);
-                const float disc = smoothstep(0.99935f, 0.99972f, cosS) * (1.0f - cover * 0.72f);
-                const float corona = (pow(cosS, 140.0f) * 0.85f + pow(cosS, 14.0f) * 0.18f) * (1.0f - cover * 0.78f);
-                physSky += sunColH * (disc * 4.5f + corona);
+                const float3 sunColH = lerp(float3(1.0f, 0.98f, 0.94f), float3(1.0f, 0.60f, 0.26f), lowS);
+                const float disc = smoothstep(0.99950f, 0.99982f, cosS) * (1.0f - cover * 0.75f);
+                const float corona = (pow(cosS, 180.0f) * 0.32f + pow(cosS, 24.0f) * 0.07f) * (1.0f - cover * 0.80f);
+                physSky += sunColH * (disc * 2.2f + corona);
                 baseSky = lerp(baseSky, physSky, dayW * (1.0f - isExotic) * 0.94f);
             }
             if ((flags.x & FLAG_CLOUDS) != 0u) {

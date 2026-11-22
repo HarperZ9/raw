@@ -10,9 +10,58 @@
 #include "LightingCommon.hlsli"
 #include "CloudCommon.hlsli"
 
-Texture2D<float4> History  : register(t0);
-Texture2D<float4> TransLut : register(t1);
-SamplerState      Lin      : register(s0);
+Texture2D<float4> History    : register(t0);
+Texture2D<float4> TransLut   : register(t1);
+Texture2D<float4> CloudNoise : register(t2);
+SamplerState      Lin        : register(s0);
+
+// Hardware-trilinear lookup into the precomputed 64x64x64 (512x512 8x8 slice atlas) Periodic 3D Perlin-Worley Volume.
+float4 sampleCloudVol(float3 uvw) {
+    const float3 p = frac(uvw);
+    const float zF = p.z * 64.0f;
+    const uint z0 = uint(floor(zF)) & 63u;
+    const uint z1 = (z0 + 1u) & 63u;
+    const float zT = frac(zF);
+    // Clamp inside tile [0.5/64 .. 63.5/64] so adjacent Z slices never bleed across 64x64 tile edges.
+    const float2 xy = clamp(p.xy, (0.5f / 64.0f).xx, (63.5f / 64.0f).xx);
+    const float2 uv0 = (float2(float(z0 & 7u), float(z0 >> 3u)) + xy) * 0.125f;
+    const float2 uv1 = (float2(float(z1 & 7u), float(z1 >> 3u)) + xy) * 0.125f;
+    return lerp(CloudNoise.SampleLevel(Lin, uv0, 0.0f), CloudNoise.SampleLevel(Lin, uv1, 0.0f), zT);
+}
+
+// Schneider & Vos (SIGGRAPH 2015) true 3D Perlin-Worley cumulus density from precomputed 64^3 periodic volume LUT.
+float cloudDensityVol(float3 pa, bool detail) {
+    const float2 dxy = pa.xy - camPosW.xy;
+    const float curvedZ = pa.z + dot(dxy, dxy) * 1.15e-8f;
+    const float h = (curvedZ - clouds.y) / clouds.z;
+    if (h <= 0.0f || h >= 1.0f) { return 0.0f; }
+    const float3 wind = float3(cloudWind.xy * camPosW.w, 0.0f);
+    const float3 sheared = pa + wind + float3(cloudWind.xy, 0.0f) * (h * 6.0f);
+    const float cover = saturate(clouds.x);
+    const float stormType = saturate(weather.w * 1.4f + max(cover - 0.80f, 0.0f) * 2.5f);
+    const float topCap = lerp(0.74f, 0.96f, stormType);
+    const float baseGrad = smoothstep(0.0f, lerp(0.14f, 0.07f, stormType), h);
+    const float topGrad  = 1.0f - smoothstep(topCap * 0.56f, topCap, h);
+    const float hGrad = saturate(baseGrad * topGrad);
+
+    // 1st lookup: 4-octave periodic 3D Perlin-Worley macro cumulus domes (zero seams, razor-sharp lobes).
+    const float3 q = float3(sheared.x / 34000.0f, sheared.y / 32000.0f, h * 0.65f);
+    const float4 low = sampleCloudVol(q);
+    const float lowFbm = low.g * 0.625f + low.b * 0.25f + low.a * 0.125f;
+    const float baseShape = cRemap(low.r, -(1.0f - lowFbm) * 0.45f, 1.0f, 0.0f, 1.0f) * hGrad;
+    const float thresh = lerp(0.60f, lerp(0.42f, 0.24f, stormType), cover);
+    float dens = cRemap(baseShape, thresh, 1.0f, 0.0f, 1.0f);
+    if (detail && dens > 0.001f) {
+        // 2nd lookup: 3-octave high-frequency periodic 3D Worley cauliflower turret & wispy edge erosion.
+        const float3 r = float3((sheared.x + wind.x * 0.30f) / 6800.0f, (sheared.y + wind.y * 0.30f) / 6400.0f, h * 2.2f);
+        const float4 hi = sampleCloudVol(r);
+        const float hiFbm = hi.g * 0.625f + hi.b * 0.25f + hi.a * 0.125f;
+        const float hiMod = lerp(hiFbm, 1.0f - hiFbm, saturate(h * 1.9f));
+        const float erode = hiMod * lerp(0.28f, 0.48f, h) * (1.0f - dens * 0.45f);
+        dens = cRemap(dens, erode, 1.0f, 0.0f, 1.0f);
+    }
+    return dens * cloudWind.z;
+}
 
 float3 sampleCloudSunTrans(float mu) {
     const float r = 6360.0f + 4.5f;   // 4.5 km Nordic cumulus deck altitude
@@ -68,17 +117,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Fine-to-deep exponential sun-march offsets capture crisp photographic cumulus tufts and soft undersides.
         static const float kSunD[6] = { 140.0f, 340.0f, 760.0f, 1500.0f, 2800.0f, 4800.0f };
         static const float kSunW[6] = { 140.0f, 200.0f, 420.0f,  740.0f, 1300.0f, 2000.0f };
-        // Adaptive empty-space skipping raymarch: 2x stride in clear sky, fine 1x stride with full detail inside clouds.
+        // Adaptive empty-space skipping raymarch using precomputed 64^3 3D Perlin-Worley Volume LUT.
         float t = t0 + j * dt;
         [loop] for (uint i = 0u; i < steps && t < t1 && T > 0.01f; i++) {
             const float3 pa = o + dir * t;
-            const float coarse = cloudDensity(pa, false);
+            const float coarse = cloudDensityVol(pa, false);
             if (coarse <= 0.001f) { t += dt * 2.0f; continue; }
-            const float dens = cloudDensity(pa, true);
+            const float dens = cloudDensityVol(pa, true);
             if (dens <= 0.001f) { t += dt; continue; }
             t += dt;
             float od = 0.0f;
-            [unroll] for (uint k = 0u; k < 6u; k++) { od += cloudDensity(pa + sunDir.xyz * kSunD[k], false) * kSunW[k]; }
+            [unroll] for (uint k = 0u; k < 6u; k++) { od += cloudDensityVol(pa + sunDir.xyz * kSunD[k], false) * kSunW[k]; }
             // Wrenninge 2013 (Oz: The Great and Powerful / Frostbite / UE5) 4-Octave Multiple-Scattering Energy Integral:
             // Couples per-octave extinction attenuation (b^n), energy attenuation (a^n), and phase-eccentricity decay (c^n)
             // for luminous translucent silver-lined cumulus rims and deep sculptural cloud undersides.
@@ -112,17 +161,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
             const float sunCalm = lerp(1.0f, 0.80f, pow(saturate(cosT), 12.0f));
-            // Balanced photographic cloud-to-sky exposure: crisp snow-white sunlit tops (~1.1-1.6 linear) and cool blue-silver
-            // undersides (~0.45-0.75) so clouds float cleanly in front of the cerulean Hillaire sky with zero yellow blowout.
-            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.98f, 0.99f, 1.02f), 0.45f * (1.0f - lowSun));
-            const float3 lum = min(whiteSun * (multiScat * lerp(1.0f, powder, 0.56f) * sunCalm * 4.0f * PI * 0.20f) + baseTint * 0.78f + stormFlash, 1.65f.xxx);
+            // Disciplined photographic cloud exposure: crisp snow-white sunlit cauliflower turrets (~0.68-0.96 linear)
+            // and sculpted cool blue-slate undersides (~0.24-0.44 linear) — zero yellow blowout or highlight clipping.
+            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.98f, 0.99f, 1.02f), 0.55f * (1.0f - lowSun));
+            const float3 lum = min(whiteSun * (multiScat * lerp(1.0f, powder, 0.62f) * sunCalm * 4.0f * PI * 0.14f) + baseTint * 0.52f + stormFlash, 1.05f.xxx);
             const float ext = dens * sigma;
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;
         }
-        // Clean HDR cloud radiance matched to Hillaire sky + seamless C2 horizon elevation fade.
-        const float3 softS = min(S, 1.85f.xxx);
+        // Disciplined HDR cloud radiance matched to Hillaire sky + seamless C2 horizon elevation fade.
+        const float3 softS = min(S, 1.15f.xxx);
         const float fade = exp(-max(t0, 0.0f) / 185000.0f);
         const float horFade = smoothstep(0.025f, 0.165f, dir.z);
         const float effFade = saturate(fade * 1.15f) * horFade;

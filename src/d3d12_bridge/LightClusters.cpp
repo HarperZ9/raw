@@ -27,7 +27,9 @@ void BuildClusters(const SceneLighting& s, float nearZ, float farZ, uint32_t (*o
     };
     for (uint32_t i = 0; i < s.lightCount && i < kMaxSceneLights; ++i) {
         const SceneLight& l = s.lights[i];
-        const float r = l.radius;
+        // Conservative 1.45x radius + 1-tile/1-slice guard band guarantees Lighting, FroxelPass, VolumetricPass & RtShadow
+        // NEVER clip a light at 16x9x16 cluster tile boundaries (eliminates rectangular/horizontal tile-edge bands!).
+        const float r = l.radius * 1.45f;
         const float zc = row(3, l.position);   // clip w is view z
         if (zc + r < nearZ * 0.5f) continue;   // wholly behind the camera
         float x0 = -1, x1 = 1, y0 = -1, y1 = 1;
@@ -43,11 +45,11 @@ void BuildClusters(const SceneLighting& s, float nearZ, float farZ, uint32_t (*o
         }
         if (!clipped) { x0 = lo[0]; x1 = hi[0]; y0 = lo[1]; y1 = hi[1]; }
         if (x1 < -1 || x0 > 1 || y1 < -1 || y0 > 1) continue;
-        const int tx0 = std::clamp(int((x0 * 0.5f + 0.5f) * kTilesX), 0, int(kTilesX) - 1);
-        const int tx1 = std::clamp(int((x1 * 0.5f + 0.5f) * kTilesX), 0, int(kTilesX) - 1);
-        const int ty0 = std::clamp(int((0.5f - y1 * 0.5f) * kTilesY), 0, int(kTilesY) - 1);   // tiles count from the top
-        const int ty1 = std::clamp(int((0.5f - y0 * 0.5f) * kTilesY), 0, int(kTilesY) - 1);
-        const int s0 = slice(zc - r), s1 = slice(zc + r);
+        const int tx0 = std::clamp(int((x0 * 0.5f + 0.5f) * kTilesX) - 1, 0, int(kTilesX) - 1);
+        const int tx1 = std::clamp(int((x1 * 0.5f + 0.5f) * kTilesX) + 1, 0, int(kTilesX) - 1);
+        const int ty0 = std::clamp(int((0.5f - y1 * 0.5f) * kTilesY) - 1, 0, int(kTilesY) - 1);   // tiles count from the top
+        const int ty1 = std::clamp(int((0.5f - y0 * 0.5f) * kTilesY) + 1, 0, int(kTilesY) - 1);
+        const int s0 = std::max(slice(zc - r) - 1, 0), s1 = std::min(slice(zc + r) + 1, int(kSlices) - 1);
         for (int sl = s0; sl <= s1; ++sl)
             for (int ty = ty0; ty <= ty1; ++ty)
                 for (int tx = tx0; tx <= tx1; ++tx)

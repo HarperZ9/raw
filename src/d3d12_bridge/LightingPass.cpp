@@ -51,10 +51,10 @@ static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
 constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536, kDistantLod = 131072, kEnvMap = 262144, kCharLight = 524288, kUnderwater = 1048576;
 constexpr RasterBinding U = RasterBinding::Uniform, T = RasterBinding::Texture, Sm = RasterBinding::Sampler;
-constexpr RasterBinding kLightLayout[17] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, Sm};
+constexpr RasterBinding kLightLayout[16] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T, T, Sm};
 constexpr RasterBinding kCloudLayout[3] = {U, T, Sm};
 constexpr RasterBinding kVolLayout[5] = {U, T, T, T, Sm};
-constexpr RasterBinding kFogLayout[6] = {U, T, T, T, T, Sm};
+constexpr RasterBinding kFogLayout[7] = {U, T, T, T, T, T, Sm};
 constexpr RasterBinding kBloom1Layout[2] = {T, Sm};
 constexpr RasterBinding kBloom2Layout[3] = {T, T, Sm};
 constexpr RasterBinding kAtmoTransLayout[1] = {U};
@@ -200,12 +200,12 @@ public:
             const RasterBind cb[3] = {{m_uniform, {}, {}}, {{}, cloudLast, {}}, {{}, {}, m_lin}};
             Draw(*c, cloudNow, m_cloudPipe, cb);
         }
-        const RasterBind light[17] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_normal, {}}, {{}, m_albedo, {}}, {{}, m_spec, {}},
+        const RasterBind light[16] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_normal, {}}, {{}, m_albedo, {}}, {{}, m_spec, {}},
                                      {{}, m_mask, {}}, {{}, m_atlas, {}}, {{}, aoVis, {}}, {{}, m_game, {}}, {{}, m_soft.valid() ? m_soft : m_game, {}},
                                      {{}, m_rtVis.valid() ? m_rtVis : m_game, {}}, {{}, m_rtIdx.valid() ? m_rtIdx : m_game, {}},
                                      {{}, m_rtBounce.valid() ? m_rtBounce : m_game, {}},
                                      {{}, m_rtReflect.valid() ? m_rtReflect : m_game, {}},
-                                     {{}, cloudNow, {}}, {{}, m_atmoSkyView, {}}, {{}, {}, m_lin}};
+                                     {{}, cloudNow, {}}, {{}, {}, m_lin}};
         Draw(*c, m_lit, m_lightPipe, light);
         c->timestamp(4);
         const TextureHandle volNow = m_volFog[m_frame & 1], volLast = m_volFog[(m_frame + 1) & 1];
@@ -213,7 +213,7 @@ public:
             const RasterBind vb[5] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volLast, {}}, {{}, {}, m_lin}};
             Draw(*c, volNow, m_volPipe, vb);
         }
-        const RasterBind fog[6] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volNow, {}}, {{}, {}, m_lin}};
+        const RasterBind fog[7] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volNow, {}}, {{}, m_atmoSkyView, {}}, {{}, {}, m_lin}};
         if (ok && (m_u.flags[0] & kMatch) == 0u) {
             // Render fog into m_aoOut (free full-res RGBA16F scratch), run 6-level Jimenez Karis HDR Bloom Pyramid,
             // and composite bloomed linear HDR straight into m_out (zero extra full-res VRAM allocation).

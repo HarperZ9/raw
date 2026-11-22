@@ -25,8 +25,7 @@ Texture2D<float4> SoftMap : register(t8);
 Texture2D<float4> RtVis   : register(t9);    // RtShadow.hlsl: sun and three lights' ray-traced visibility
 Texture2D<float4> RtBounce : register(t11);  // RtSky.cpp: one bounce of indirect light (exteriors)
 Texture2D<float4> RtRefl   : register(t12);  // RtShadow.hlsl: reflected radiance, confidence
-Texture2D<float4> Clouds      : register(t13);  // Clouds.hlsl: full-res volumetric clouds
-Texture2D<float4> AtmoSkyView : register(t14);  // AtmosphereLut.hlsl: Hillaire 2020 192x108 physical Sky-View LUT
+Texture2D<float4> Clouds  : register(t13);  // Clouds.hlsl: full-res volumetric clouds
 SamplerState      Lin     : register(s0);
 Texture2D<float4> RtIdx   : register(t10);   // which lights, index + 1 over 255   // RAW's emissive target: for soft-lit draws the game's soft-lighting colour
 
@@ -128,24 +127,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float sunLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             const float dayW = saturate((sunDir.z - 0.01f) * 4.0f) * saturate((sunLum - 0.20f) * 2.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
             if (dayW > 0.02f && sDir.z > -0.04f) {
-                // Hillaire SIGGRAPH 2020 Physical Sky-View Radiative Transfer LUT (Rayleigh + Mie + Chappuis Ozone):
-                // Replaces hand-tuned sky gradient constants with real radiative transfer at every sun angle & altitude.
                 const float cover = saturate(clouds.x);
                 const float lowSun = saturate(1.0f - sunDir.z * 2.6f);
+                const float3 clearZenith = lerp(float3(0.06f, 0.24f, 0.68f), float3(0.08f, 0.14f, 0.38f), lowSun);
+                const float3 clearMid    = lerp(float3(0.22f, 0.48f, 0.84f), float3(0.38f, 0.36f, 0.52f), lowSun);
+                const float3 clearHoriz  = lerp(float3(0.62f, 0.76f, 0.88f), float3(0.92f, 0.54f, 0.28f), lowSun);
                 const float hUp = saturate(sDir.z);
-                const float az = atan2(sDir.y, sDir.x);
-                const float elev = asin(clamp(sDir.z, -1.0f, 1.0f));
-                const float vNonLin = 0.5f + 0.5f * (elev >= 0.0f ? sqrt(elev / (0.5f * PI)) : -sqrt(-elev / (0.5f * PI)));
-                const float2 skyUv = float2(az / (2.0f * PI) + 0.5f, saturate(vNonLin));
-                float3 clearSky = AtmoSkyView.SampleLevel(Lin, skyUv, 0.0f).rgb;
-                // Crisp, limb-darkened physical solar disc (0.55 deg angular diameter) + soft Mie aureole,
-                // occluded cleanly by passing volumetric clouds (c.a) and locked to stabilized sunDir.
+                float3 clearSky = hUp < 0.25f ? lerp(clearHoriz, clearMid, pow(hUp / 0.25f, 0.75f))
+                                              : lerp(clearMid, clearZenith, pow((hUp - 0.25f) / 0.75f, 0.85f));
                 const float cosTheta = saturate(dot(sDir, sunDir.xyz));
                 const float sunDisc = smoothstep(0.99935f, 0.99972f, cosTheta);
                 const float sunCorona = pow(cosTheta, 160.0f) * 0.48f + pow(cosTheta, 18.0f) * 0.12f;
                 const float3 sunDiscCol = lerp(float3(1.0f, 0.97f, 0.92f), float3(1.0f, 0.66f, 0.32f), lowSun);
                 clearSky += sunDiscCol * (sunCorona * (1.0f - cover * 0.78f));
-                // Overcast / storm atmospheric slate transition.
                 const float3 stormSky = lerp(float3(0.38f, 0.44f, 0.52f), float3(0.22f, 0.28f, 0.36f), hUp);
                 const float3 pureSky = lerp(clearSky, stormSky, saturate(cover * 0.85f - 0.25f + weather.w * 0.35f));
                 const float3 solarCore = sunDiscCol * (sunDisc * 1.15f * (1.0f - cover * 0.55f));

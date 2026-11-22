@@ -12,10 +12,18 @@
 #include "CloudCommon.hlsli"
 #include "ElderOptics.hlsli"
 
-Texture2D<float4> Lit    : register(t0);
-Texture2D<float>  Depth  : register(t1);
-Texture2D<float4> VolFog : register(t3);
-SamplerState      Lin    : register(s0);
+Texture2D<float4> Lit         : register(t0);
+Texture2D<float>  Depth       : register(t1);
+Texture2D<float4> VolFog      : register(t3);
+Texture2D<float4> AtmoSkyView : register(t4);
+SamplerState      Lin         : register(s0);
+
+float3 sampleHillaireSky(float3 rd) {
+    const float az = atan2(rd.y, rd.x);
+    const float elev = asin(clamp(rd.z, -1.0f, 1.0f));
+    const float vNonLin = 0.5f + 0.5f * (elev >= 0.0f ? sqrt(elev / (0.5f * PI)) : -sqrt(-elev / (0.5f * PI)));
+    return AtmoSkyView.SampleLevel(Lin, float2(az / (2.0f * PI) + 0.5f, saturate(vNonLin)), 0.0f).rgb;
+}
 
 float phaseHG(float cosT, float g) {
     const float g2 = g * g;
@@ -110,8 +118,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float lowSunF = saturate(1.0f - sunDir.z * 2.6f);
         const float highSunF = smoothstep(0.18f, 0.48f, sunDir.z);
         const float cosSunF = saturate(dot(w, sunDir.xyz));
-        // Exact elevation-matched sky gradient (sH at horizon -> sM at mid-elevation -> sZ toward mountain peaks).
-        const float3 skyGrad = lerp(sH, lerp(sM, sZ, smoothstep(0.18f, 0.65f, w.z)), smoothstep(-0.08f, 0.28f, w.z));
+        // Exact elevation-matched sky gradient coupled to Hillaire SIGGRAPH 2020 physical Sky-View radiative transfer LUT.
+        const float3 skyGradPal = lerp(sH, lerp(sM, sZ, smoothstep(0.18f, 0.65f, w.z)), smoothstep(-0.08f, 0.28f, w.z));
+        const float3 hillaireSky = sampleHillaireSky(float3(w.xy, max(w.z, 0.01f)));
+        const float3 skyGrad = lerp(skyGradPal, hillaireSky, (1.0f - nightF) * (1.0f - saturate(clouds.x * 0.70f)) * 0.55f);
         // Blend softly with overcast cloud-layer ambient when cloud cover rises so fog never fights the cloud deck color.
         const float cloudCov = saturate(clouds.x);
         const float3 cloudDeckCol = lerp(skyGrad, dot(skyGrad, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.95f, 0.98f, 1.03f), 0.55f);

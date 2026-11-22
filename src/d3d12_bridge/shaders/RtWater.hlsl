@@ -66,7 +66,7 @@ float2 evalTrochoidalWaves(float2 xy, float2 wDir, float wt, float wDist, float 
         const float dWave = cos(ph) + 0.35f * cos(2.0f * ph);
         grad += dir * (dWave * kAmp[wi] * fade);
     }
-    return grad * (0.022f + windAmp * 0.028f);
+    return grad * (0.095f + windAmp * 0.085f);
 }
 
 float3 waterSky(float3 rd) {
@@ -151,8 +151,9 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
             const float3 o = p + float3(0.0f, 0.0f, 2.5f + 0.003f * length(p));
 
-            // Calm reflection normal derived from our slow procedural Gerstner field (eliminates frantic vanilla specular flecks).
-            const float3 nRefl = normalize(lerp(float3(0.0f, 0.0f, 1.0f), n, 0.55f));
+            // Distance-filtered 3D liquid reflection normal (crisp sculpted ripples up close, silky smooth swells at distance).
+            const float reflRelief = lerp(0.82f, 0.34f, saturate(wDist / 6500.0f));
+            const float3 nRefl = normalize(lerp(float3(0.0f, 0.0f, 1.0f), n, reflRelief));
             float3 rd = reflect(-v, nRefl);
             if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }
             float3 refl;
@@ -242,21 +243,20 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float3 bed = float3(PreWater[qR].r, PreWater[q].g, PreWater[qB].b);
                 const float path = length(worldAt(float2(q), Depth.Load(int3(q, 0))) - p);
                 const float3 T = exp(-waterA.z * float3(2.45f, 1.05f, 0.72f) * path);
-                const float3 scatter = float3(0.05f, 0.10f, 0.11f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.0f.xxx) * 2.0f;
-                // Smoothly feather RT water body into distant water LOD well before Skyrim's 4096-unit cell edge.
-                const float nearW = 1.0f - smoothstep(1800.0f, 3400.0f, length(p));
-                // Subsurface turquoise wave-crest forward scatter when backlit by the sun.
+                const float3 scatter = float3(0.018f, 0.068f, 0.092f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) * 1.95f;
+                const float nearW = 1.0f - smoothstep(2800.0f, 5200.0f, wDist);
+                // Rich backlit glacial-emerald wave-crest subsurface scattering.
                 const float3 waveSSS = sunDir.w > 0.5f
-                    ? float3(0.04f, 0.22f, 0.24f) * sunColour.rgb * pow(saturate(dot(-v, sunDir.xyz)), 4.0f) * saturate((1.0f - n.z) * 7.0f) * 0.45f
+                    ? float3(0.03f, 0.28f, 0.26f) * sunColour.rgb * (0.25f + 0.75f * pow(saturate(dot(-v, sunDir.xyz)), 3.5f)) * saturate((1.0f - n.z) * 5.5f) * 0.65f
                     : 0.0f.xxx;
-                // Animated shore-contact foam + turbulent rapids/waterfall whitewater crests.
-                const float shoreBand = (1.0f - smoothstep(0.0f, 20.0f, depthV)) * smoothstep(0.0f, 1.5f, depthV);
-                const float foamCell = saturate(1.0f - cellWalls(wpW.xy / 28.0f, camPosW.w * 0.38f) * 2.4f);
-                const float crestFoam = saturate((1.0f - n.z) * 11.0f - 0.12f) * foamCell;
-                const float foamMask = saturate(max(shoreBand * (0.45f + 0.55f * foamCell * foamCell), crestFoam * 0.72f)) * nearW;
-                const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) + (sunDir.w > 0.5f ? sunColour.rgb * 0.45f : 0.0f.xxx)) * 0.85f;
+                // Organic shore-contact foam collar (rocks, riverbanks, icebergs up to 28u depth) + turbulent rapids crests.
+                const float shoreBand = (1.0f - smoothstep(0.0f, 28.0f, depthV)) * smoothstep(0.0f, 1.2f, depthV);
+                const float foamCell = saturate(1.0f - cellWalls(wpW.xy / 26.0f, camPosW.w * 0.42f) * 2.2f);
+                const float crestFoam = saturate((1.0f - n.z) * 6.5f - 0.14f) * foamCell;
+                const float foamMask = saturate(max(shoreBand * (0.50f + 0.50f * foamCell), crestFoam * 0.78f)) * nearW;
+                const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.06f.xxx) + (sunDir.w > 0.5f ? sunColour.rgb * 0.50f : 0.0f.xxx)) * 0.92f;
                 const float3 waterBody = (bed + caus) * T + scatter * (1.0f - T) + waveSSS;
-                body = lerp(game.rgb, lerp(waterBody, foamLit, foamMask * 0.65f), saturate(waterB.z) * nearW);
+                body = lerp(waterBody, foamLit, foamMask * 0.78f);
             }
             const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;
             const float cellFeather = 1.0f - smoothstep(2200.0f, 4400.0f, wDist);

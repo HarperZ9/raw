@@ -60,12 +60,17 @@ public:
 
     // ── Statistics ────────────────────────────────────────────────────
 
-    uint32_t GetDrawsTested()  const { return m_drawsTested; }
-    uint32_t GetDrawsCulled()  const { return m_drawsCulled; }
-    uint32_t GetDrawsPassed()  const { return m_drawsTested - m_drawsCulled; }
-    uint32_t GetHiZWidth()     const { return m_hizW; }
-    uint32_t GetHiZHeight()    const { return m_hizH; }
-    uint32_t GetHiZMipCount()  const { return m_hizMips; }
+    uint32_t GetDrawsTested()   const { return m_drawsTested; }
+    uint32_t GetDrawsCulled()   const { return m_drawsCulled; }
+    uint32_t GetDrawsPassed()   const { return m_drawsTested - m_drawsCulled; }
+    uint32_t GetFrustumCulled() const { return m_frustumCulled; }
+    uint32_t GetSubPxCulled()   const { return m_subPxCulled; }
+    uint32_t GetHiZCulled()     const { return m_hiZCulled; }
+    uint64_t GetTrisTested()    const { return m_trisTested; }
+    uint64_t GetTrisCulled()    const { return m_trisCulled; }
+    uint32_t GetHiZWidth()      const { return m_hizW; }
+    uint32_t GetHiZHeight()     const { return m_hizH; }
+    uint32_t GetHiZMipCount()   const { return m_hizMips; }
 
 private:
     OcclusionCuller() = default;
@@ -117,8 +122,14 @@ private:
     ID3D11Buffer* m_boundVSCBs[kMaxVSCBSlots] = {};
 
     // ── Per-frame stats ───────────────────────────────────────────────
-    uint32_t m_drawsTested = 0;
-    uint32_t m_drawsCulled = 0;
+    uint32_t m_drawsTested   = 0;
+    uint32_t m_drawsCulled   = 0;
+    uint32_t m_frustumCulled = 0;
+    uint32_t m_subPxCulled   = 0;
+    uint32_t m_hiZCulled     = 0;
+    uint64_t m_trisTested    = 0;
+    uint64_t m_trisCulled    = 0;
+    uint64_t m_frameCount    = 0;
 
     // ── Screen dimensions (for projection) ────────────────────────────
     uint32_t m_screenW = 0;

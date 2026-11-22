@@ -128,6 +128,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Attenuate additive volumetric scatter by transmittance T so far-horizon fog never double-adds into blinding whiteout.
         return float4(lit.rgb * T + atmoCol * (1.0f.xxx - T) + scatter * saturate(T + 0.20f), lit.a);
     }
+    // Dungeons, Caves, Nordic Tombs, Dwemer Ruins, Blackreach & Interiors (sunColour.w < 0.5):
+    // Cell-ambient-coupled subterranean depth mist + drifting 3D cavern haze (preserves deep blacks up close
+    // while giving Blackreach cyan bioluminescence, Dwemer brass steam, and Nordic tombs atmospheric depth).
+    if (sunColour.w < 0.5f && (flags.x & FLAG_FOG) != 0u) {
+        const float3 wpInt = camPosW.xyz + w * min(dist * 0.5f, 3200.0f);
+        const float caveNoise = 0.72f + 0.56f * cNoise(wpInt * 0.00048f + float3(0.0f, 0.0f, camPosW.w * 0.015f));
+        const float intOd = max(dist - 220.0f, 0.0f) * 0.000095f * caveNoise;
+        const float intT = exp(-min(intOd, 1.25f));
+        const float3 cellAmb = max(float3(ambient[0].w, ambient[1].w, ambient[2].w), float3(0.010f, 0.013f, 0.018f));
+        const float3 caveMist = min(cellAmb * 0.65f, 0.22f.xxx);
+        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.85f, lit.a);
+    }
     const float T = (flags.x & FLAG_FOG_REPLACES) != 0u ? exp(-sigma * tEnd) : 1.0f;
     return float4(lit.rgb * T + scatter, lit.a);
 }

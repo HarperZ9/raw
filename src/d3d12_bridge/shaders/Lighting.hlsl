@@ -147,12 +147,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float3 stormSky = lerp(float3(0.38f, 0.44f, 0.52f), float3(0.22f, 0.28f, 0.36f), hUp);
                 const float3 pureSky = lerp(clearSky, stormSky, saturate(cover * 0.85f - 0.25f + weather.w * 0.35f));
                 const float3 solarCore = sunDiscCol * (sunDisc * 1.15f * (1.0f - cover * 0.55f));
-                baseSky = lerp(baseSky, pureSky + solarCore, dayW * 0.96f);
+                // Exotic DLC realm sky protection: preserve Apocrypha emerald void, Soul Cairn/Sovngarde violet nebula,
+                // and Solstheim volcanic ash-storm skies instead of overriding them with standard Nordic blue.
+                const float isApocrypha = saturate((game.g - max(game.r, game.b) * 1.05f) * 6.0f);
+                const float isSoulCairn = saturate((min(game.r, game.b) - game.g * 1.12f) * 6.0f);
+                const float isAshStorm  = saturate((game.r - game.b * 1.48f) * 3.2f) * smoothstep(0.18f, 0.45f, sunDir.z);
+                const float exoticRealm = saturate(max(isApocrypha, max(isSoulCairn, isAshStorm)));
+                baseSky = lerp(baseSky, pureSky + solarCore, dayW * 0.96f * (1.0f - exoticRealm));
             }
         }
         const float4 c = (flags.x & FLAG_CLOUDS) != 0u ? Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f) : float4(0.0f, 0.0f, 0.0f, 1.0f);
-        // Strictly monotonic Beer-Lambert cloud occlusion: solar disc smoothly dims behind thick clouds and shines brightly in clear gaps (never inverts dark).
-        float3 skyOut = baseSky * c.a + c.rgb;
+        // Attenuate Nordic cumulus clouds inside Apocrypha/Soul Cairn exotic realms so alien skies stay authentic.
+        const float exoticCloudKeep = 1.0f - saturate(max((game.g - max(game.r, game.b) * 1.08f) * 6.0f, (min(game.r, game.b) - game.g * 1.15f) * 6.0f));
+        float3 skyOut = lerp(baseSky, baseSky * c.a + c.rgb, exoticCloudKeep);
         if ((flags.x & FLAG_MATCH) == 0u) {
             // Luminous atmospheric moon glow locked strictly to Skyrim's real Masser/Secunda sky pixels (zero camera drift),
             // plus infinite-resolution procedural scintillating starfield and animated volumetric Nordic auroras.

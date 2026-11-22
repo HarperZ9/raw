@@ -256,14 +256,17 @@ float4 main(In i) : SV_Target {
             hdr = lerp(hdr, specSum, 0.85f);
         }
     }
-    // Smooth photographic HDR highlight compression (user-tunable knee RG.w, default 0.68): preserves crisp snowdrifts,
-    // glaciers, whitewater, and coastal horizon detail instead of clipping to flat white under bright Nordic sun.
-    const float hKnee = clamp(RG.w > 0.1f ? RG.w : 0.68f, 0.35f, 1.40f);
-    const float hdrLum = max(dot(hdr, W), 1.0e-5f);
-    if (hdrLum > hKnee) {
-        const float ex = hdrLum - hKnee;
-        const float compLum = hKnee + ex / (1.0f + ex * 0.92f);
-        hdr *= compLum / hdrLum;
+    // Only apply legacy pre-tonemap highlight knee on older LDR curves (RB.x <= 3.5).
+    // Modern wide-gamut HDR curves (AgX, GT, Lottes, Hable) natively handle 0..16+ linear HDR; pre-crushing at 0.68
+    // previously destroyed solar disc peaks, interior window glow, firelight brilliance, and full-range contrast!
+    if (RB.x <= 3.5f) {
+        const float hKnee = clamp(RG.w > 0.1f ? RG.w : 0.68f, 0.35f, 1.40f);
+        const float hdrLum = max(dot(hdr, W), 1.0e-5f);
+        if (hdrLum > hKnee) {
+            const float ex = hdrLum - hKnee;
+            const float compLum = hKnee + ex / (1.0f + ex * 0.92f);
+            hdr *= compLum / hdrLum;
+        }
     }
     const float3 bloom = P[0].x > 0.5f ? Bloom.Sample(S0, suv).rgb : Bloom.Sample(S0, i.uv).rgb;
     const float2 lum = Lum.Sample(S2, i.uv).xy;

@@ -903,6 +903,29 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float csW = (flags.x & FLAG_CLOUDS) != 0u ? cloudShadow(p + camPosW.xyz) : 1.0f;
         return float4(csW, saturate(dot(amb, 0.333f.xxx)), saturate(dot(diff, 0.333f.xxx)), game.a);
     }
+    // Material & Texture Author Diagnostic Views (24..27) for ENB Complex Material / CS PBR / Bottled Shaders / Vanilla:
+    if (flags.w == 24u) {
+        // View 24: PBR Roughness map (dark = mirror/wet/polished metal, bright = matte stone/snow/fabric).
+        return float4(s.alpha.xxx, game.a);
+    }
+    if (flags.w == 25u) {
+        // View 25: Material classification & Metallic/Clearcoat map (R = conductor metallic, G = wet/lacquer clearcoat, B = dielectric).
+        const float envL25 = dot(base == 2u ? max(SoftMap.Load(ip).rgb, 0.0f.xxx) : 0.0f.xxx, float3(0.2126f, 0.7152f, 0.0722f));
+        const float met25 = (base == 2u) ? saturate((max(saturate(s.mask * resScale.w), envL25 * 1.35f) - 0.22f) * 1.95f) : 0.0f;
+        const float cc25 = max(saturate(wet.wet * 0.85f + wet.puddle * 1.15f), (base == 2u ? (1.0f - met25) * 0.35f : 0.0f));
+        return float4(met25, cc25, saturate(1.0f - max(met25, cc25)), game.a);
+    }
+    if (flags.w == 26u) {
+        // View 26: Parallax Height Map Inspector (Cyan = authored _p.dds height from GBuffer SV_Target5.g on base=6; Gold = macro relief height).
+        const bool hasPdds = (base == 6u && sp.y > 0.002f);
+        const float h26 = hasPdds ? saturate(sp.y) : saturate((dot(albedo, float3(0.2126f, 0.7152f, 0.0722f)) - 0.05f) * 2.35f);
+        return float4(hasPdds ? float3(0.15f, 0.90f, 1.0f) * h26 : float3(1.0f, 0.78f, 0.28f) * h26, game.a);
+    }
+    if (flags.w == 27u) {
+        // View 27: SVGF GI Bounce & Sky-Visibility Occlusion Contrast Inspector (R = bounce luma, G = skyVis, B = AO).
+        const float bL27 = saturate(dot(bounce, float3(0.2126f, 0.7152f, 0.0722f)) * 2.5f);
+        return float4(bL27, skyVisShaped, aoTerm, game.a);
+    }
 
     // Environment-mapped (class 2: armour, leather, metal): the game adds its cube map's colour times the env mask
     // times the light the surface receives, before the knee (ps 955d1a31636cbbe4). The patched shader writes that

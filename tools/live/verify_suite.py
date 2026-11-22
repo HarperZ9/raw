@@ -17,9 +17,12 @@ BASE_INI = [
 ]
 
 CONDITIONS = [
-    ("natural", ["WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
-    ("rainstorm", ["WeatherDrive=0", "Wetness=0.95", "Puddles=0.85", "Rain=1.0", "Snow=0.0"]),
-    ("snowstorm", ["WeatherDrive=0", "Wetness=0.0", "Puddles=0.0", "Rain=0.0", "Snow=0.92"]),
+    ("natural", ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
+    ("rainstorm", ["View=0", "WeatherDrive=0", "Wetness=0.95", "Puddles=0.85", "Rain=1.0", "Snow=0.0"]),
+    ("snowstorm", ["View=0", "WeatherDrive=0", "Wetness=0.0", "Puddles=0.0", "Rain=0.0", "Snow=0.92"]),
+    ("diag_gi", ["View=5", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
+    ("diag_roughness", ["View=24", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
+    ("diag_parallax", ["View=26", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
 ]
 
 def run_req(args, timeout=90):
@@ -57,8 +60,8 @@ def main():
             "rt_instances": row.get("rt_instances"),
             "jpg": jpg if matches else None,
         })
-    # Restore natural dynamic weather drive cleanly
-    run_req(["reload_ini"] + BASE_INI + ["WeatherRain=-1", "WeatherSnow=-1"], timeout=30)
+    # Restore natural dynamic weather drive & View=0 cleanly
+    run_req(["reload_ini"] + BASE_INI + ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"], timeout=30)
     print(json.dumps(summary, indent=2))
 
 if __name__ == "__main__":

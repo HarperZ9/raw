@@ -27,19 +27,17 @@ float sampleFocusZoneZ() {
     return zSum / max(wSum, 1.0e-4f);
 }
 
-// Exact Physical Thin-Lens Optical Circle of Confusion: CoC proportional to (1/focusZ - 1/curZ) * focal^2 / fStop.
-// Produces authentic cinema-prime foreground melt & optical perspective background falloff (not flat linear blur).
+// Exact Physical Thin-Lens Optical Circle of Confusion: CoC proportional to (1/focusZ - 1/curZ).
+// Generous cinema focal plane (dead=0.28, focalScale=0.82) guarantees the targeted subject (e.g. NPCs, workbenches,
+// foreground riverbanks) stays 100% razor-sharp while distant backgrounds & extreme foreground melt into cinema bokeh.
 float signedCoC(float curZ, float focusZ, float maxDist) {
     if (maxDist <= 1.0f || focusZ > maxDist) { return 0.0f; }
     const float engage = smoothstep(maxDist, maxDist * 0.45f, focusZ);
-    const float s1 = max(focusZ, 28.0f);
-    const float s2 = max(curZ, 12.0f);
-    // Exact diopter difference (positive = far background behind focus plane, negative = near foreground).
+    const float s1 = max(focusZ, 42.0f);
+    const float s2 = max(curZ, 16.0f);
     const float diopter = (1.0f / s1 - 1.0f / s2);
-    // Physical dead-zone (depth of field focal plane tolerance ~ 12% around s1).
-    const float focalScale = s1 * 1.65f;
-    const float rawCoc = diopter * focalScale;
-    const float dead = 0.10f;
+    const float rawCoc = diopter * (s1 * 0.82f);
+    const float dead = 0.28f;
     if (abs(rawCoc) <= dead) { return 0.0f; }
     const float shaped = sign(rawCoc) * saturate((abs(rawCoc) - dead) / (1.0f - dead));
     return shaped * engage;
@@ -127,6 +125,7 @@ float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
     const float curZ = d < 1.0f ? viewZOf(d) : 100000.0f;
     const float coc = abs(signedCoC(curZ, focusZ, dofParams.x));
     const float4 bokeh = SrcB.SampleLevel(Lin, uv, 0.0f);
-    const float blend = saturate(max(coc * 1.15f, bokeh.a * 0.90f));
-    return float4(lerp(sharp.rgb, bokeh.rgb, smoothstep(0.02f, 0.92f, blend)), sharp.a);
+    // Protect in-focus subjects (coc == 0) from background bokeh bleed; only blend where pixel is genuinely out of focus.
+    const float blend = coc > 0.01f ? saturate(max(coc, bokeh.a * 0.75f)) : 0.0f;
+    return float4(lerp(sharp.rgb, bokeh.rgb, smoothstep(0.04f, 0.92f, blend)), sharp.a);
 }

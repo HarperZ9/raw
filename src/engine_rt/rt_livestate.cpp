@@ -172,11 +172,30 @@ bool Read(Snapshot* s) {
             EngineLight sun{};
             if (ReadLight(At<const uint8_t*>(ssn, 0x200), 4, &sun)) { sun.pad = s->inWater; Push(s, sun, nullptr, "sun"); }
             s->active = ReadArray(ssn + 0x130, 0, s);
-            // Engine-level dynamic shadowcaster & physical flame-flicker ownership:
-            // promote every active point/torch/spell light in ShadowSceneNode to shadow-casting status (flag 2)
-            // so our DXR 1.2 128-light pipeline casts real-time dynamic shadows from every light source in the scene.
+            // Engine-level dynamic shadowcaster & physical blackbody flame-flicker ownership:
+            // 1) Promote every active point/torch/spell light in ShadowSceneNode to shadow-casting status (flag 2).
+            // 2) Smooth Skyrim's harsh 2011 linear triangle flicker on fire/torch lights (kLightFire) via per-light
+            //    temporal EMA + subtle organic dual-harmonic blackbody warmth (warmer amber on dips, crisp gold on flares).
+            const double tSec = double(GetTickCount64() % 3600000ull) / 1000.0;
             for (auto& x : s->lights) {
-                if (!(x.flags & 4)) x.flags |= 2;
+                if (x.flags & 4) continue;
+                x.flags |= 2;
+                if (x.flags & kLightFire) {
+                    const float phase = (x.pos[0] * 0.017f + x.pos[1] * 0.013f + x.pos[2] * 0.029f);
+                    const float breath = float(std::sin(tSec * 5.2 + phase) * 0.032 + std::sin(tSec * 11.7 + phase * 1.9) * 0.016);
+                    for (const auto& prev : g_snap.lights) {
+                        if ((prev.flags & 4) || !(prev.flags & kLightFire)) continue;
+                        const float dx = x.pos[0] - prev.pos[0], dy = x.pos[1] - prev.pos[1], dz = x.pos[2] - prev.pos[2];
+                        if (dx*dx + dy*dy + dz*dz < 24.0f * 24.0f) {
+                            for (int c = 0; c < 3; ++c) x.color[c] = prev.color[c] + (x.color[c] - prev.color[c]) * 0.24f;
+                            break;
+                        }
+                    }
+                    // Organic blackbody tint shift: slight warm red/amber emphasis when flame dips.
+                    x.color[0] *= (1.0f + breath * 0.85f);
+                    x.color[1] *= (1.0f + breath * 1.05f);
+                    x.color[2] *= (1.0f + breath * 1.30f);
+                }
             }
             // shadow casters are also in the active list: mark them there, add any that are not
             const auto* data = At<const uint8_t* const*>(ssn + 0x230, 0x00);

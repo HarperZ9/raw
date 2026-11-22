@@ -219,13 +219,18 @@ void AddEngineLights(SceneLighting& f)
     if (!fn && tries < 600 && (++tries % 60) == 1)
         if (HMODULE m = SB::Proxy::modules::Find("raw_engine.dll")) fn = reinterpret_cast<EngineLightsFn>(GetProcAddress(m, "RAW_EngineLights"));
     if (!fn) return;
-    EngineLight e[raw::bridge::kMaxSceneLights];
+    EngineLight e[512];
     uint64_t at = 0;
-    const uint32_t n = std::min(fn(e, raw::bridge::kMaxSceneLights, &at), raw::bridge::kMaxSceneLights);
+    const uint32_t n = std::min<uint32_t>(fn(e, 512u, &at), 512u);
     ++g_es.frames;
     const uint32_t decoded = f.lightCount;
     bool hasEngineSun = false;
     float engineSunDir[3] = {};
+    // Rank all up-to-512 ShadowSceneNode active/shadow/emitter lights by perceptual importance (luminance * radius / dist)
+    // so dense cities & interiors (Solitude, Whiterun, Dragonsreach) always fill the 128 DX12+DXR slots with zero light popping.
+    uint32_t order[512];
+    float importance[512];
+    uint32_t candCount = 0;
     for (uint32_t k = 0; k < n; ++k) {
         if (e[k].flags & 4) {
             f.inWater = e[k].pad != 0;
@@ -238,8 +243,23 @@ void AddEngineLights(SceneLighting& f)
             }
             continue;
         }
-        if (e[k].radius <= 0) continue;   // keep ShadowSceneNode lights active even when occluded by a pole/pillar (ignore camera-culled bit 1)
+        if (e[k].radius <= 0) continue;
         if (e[k].color[0] <= 0 && e[k].color[1] <= 0 && e[k].color[2] <= 0) continue;
+        const float rx = e[k].pos[0] - f.posAdjust[0], ry = e[k].pos[1] - f.posAdjust[1], rz = e[k].pos[2] - f.posAdjust[2];
+        const float dist = std::sqrt(rx * rx + ry * ry + rz * rz);
+        const float lum = e[k].color[0] * 0.2126f + e[k].color[1] * 0.7152f + e[k].color[2] * 0.0722f;
+        const float casterBoost = (e[k].flags & 2) ? 1.65f : ((e[k].flags & 8) ? 1.25f : 1.0f);
+        order[candCount] = k;
+        importance[k] = (lum * e[k].radius * casterBoost) / (dist + 64.0f);
+        ++candCount;
+    }
+    if (candCount > raw::bridge::kMaxSceneLights) {
+        std::partial_sort(order, order + raw::bridge::kMaxSceneLights, order + candCount,
+                          [&](uint32_t a, uint32_t b) { return importance[a] > importance[b]; });
+        candCount = raw::bridge::kMaxSceneLights;
+    }
+    for (uint32_t ci = 0; ci < candCount; ++ci) {
+        const uint32_t k = order[ci];
         ++g_es.seen;
         float rel[3];
         for (int c = 0; c < 3; ++c) rel[c] = e[k].pos[c] - f.posAdjust[c];   // world to the game's camera-relative space

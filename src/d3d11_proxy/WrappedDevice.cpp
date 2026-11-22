@@ -92,7 +92,10 @@ namespace {
             GetModuleFileNameA(nullptr, path, MAX_PATH);
             std::string ini(path);
             ini = ini.substr(0, ini.rfind('\\') + 1) + "d3d11_proxy.ini";
-            s_val = GetPrivateProfileIntA("Lighting", "TxDepth32", 1, ini.c_str());
+            // Default OFF: Skyrim SE's internal CopyResource calls between main depth and secondary/water/SAO
+            // depth buffers require matching 4-byte R24G8_TYPELESS format families; promoting only >=1024x576
+            // buffers to 8-byte R32G8X24_TYPELESS silently fails those copies and causes slanted/horizontal depth sheets.
+            s_val = GetPrivateProfileIntA("Lighting", "TxDepth32", 0, ini.c_str());
         }
         return s_val != 0;
     }

@@ -145,10 +145,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
     }
     const float3 vol2D = vW > 1.0e-4f ? (vSum / vW) : VolFog.SampleLevel(Lin, uv, 0.0f).rgb;
-    // Blend true 160x90x64 3D Froxel Volumetric Participating Media (world-space 3D mist + 128-light froxel scattering)
-    // with fine-raymarched sunbeam shafts for seamless depth-accurate 3D volumetrics across exteriors and interiors.
+    // Primary volumetric participating media driven by our temporally-reprojected 160x90x64 3D Froxel Volume
+    // (with subtle fine-shadow sunbeam detail from VolFog) — true 3D depth-accurate mist & light shafts.
     const float4 frox = sampleFroxel3D(uv, curZ);
-    const float3 scatter = vol2D * 0.65f + frox.rgb * 0.65f;
+    const float3 scatter = frox.rgb * 1.10f + vol2D * 0.25f;
     // Engine-native underwater medium (FLAG_UNDERWATER from raw_engine.dll camera_in_water): physical Beer-Lambert absorption.
     if ((flags.x & FLAG_UNDERWATER) != 0u) {
         const float3 uw = elderUnderwaterMedium(lit.rgb, dist, 0.0022f);

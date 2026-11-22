@@ -83,6 +83,19 @@ namespace {
     ID3D11Texture2D*          s_mainDepthTex  = nullptr;
     ID3D11ShaderResourceView* s_mainDepthSRV  = nullptr;
     uint32_t                  s_mainDepthArea = 0; // width * height
+    std::unordered_set<ID3D11Resource*> s_promotedD32Textures;
+
+    bool WantTxDepth32() {
+        static int s_val = -1;
+        if (s_val < 0) {
+            char path[MAX_PATH]{};
+            GetModuleFileNameA(nullptr, path, MAX_PATH);
+            std::string ini(path);
+            ini = ini.substr(0, ini.rfind('\\') + 1) + "d3d11_proxy.ini";
+            s_val = GetPrivateProfileIntA("Lighting", "TxDepth32", 0, ini.c_str());
+        }
+        return s_val != 0;
+    }
 
     // Depth format → typeless format
     DXGI_FORMAT ToTypeless(DXGI_FORMAT fmt) {
@@ -217,6 +230,38 @@ HRESULT STDMETHODCALLTYPE WrappedDevice::CreateTexture2D(
             pDesc->BindFlags, pDesc->MipLevels, pDesc->ArraySize);
     }
 
+    // ── Native D32_FLOAT_S8X24_UINT Depth Promotion (TxDepth32=1) ───
+    // Promotes Skyrim's 24-bit main scene depth (R24G8_TYPELESS / D24_UNORM_S8_UINT) to 32-bit float depth
+    // (R32G8X24_TYPELESS) across raw::tx DX12, eliminating distant mountain LOD Z-fighting permanently.
+    if (!PG_IsSafeMode() && WantTxDepth32() &&
+        (pDesc->Format == DXGI_FORMAT_R24G8_TYPELESS || pDesc->Format == DXGI_FORMAT_D24_UNORM_S8_UINT) &&
+        (pDesc->BindFlags & D3D11_BIND_DEPTH_STENCIL) &&
+        pDesc->Width >= 1024 && pDesc->Height >= 576 && pDesc->SampleDesc.Count <= 1) {
+        D3D11_TEXTURE2D_DESC promoted = *pDesc;
+        promoted.Format = DXGI_FORMAT_R32G8X24_TYPELESS;
+        promoted.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
+        HRESULT hr = m_real->CreateTexture2D(&promoted, pInitialData, ppTexture2D);
+        if (SUCCEEDED(hr) && ppTexture2D && *ppTexture2D) {
+            s_promotedD32Textures.insert(*ppTexture2D);
+            s_upgradedDepthTextures.insert(*ppTexture2D);
+            Log("[TxDepth32] Promoted %ux%u depth buffer to R32G8X24_TYPELESS (32-bit float depth)", promoted.Width, promoted.Height);
+            uint32_t area = promoted.Width * promoted.Height;
+            if (area >= s_mainDepthArea) {
+                s_mainDepthTex = *ppTexture2D;
+                s_mainDepthArea = area;
+                if (s_mainDepthSRV) { s_mainDepthSRV->Release(); s_mainDepthSRV = nullptr; }
+                D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+                srvDesc.Format = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+                srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+                srvDesc.Texture2D.MipLevels = 1;
+                if (SUCCEEDED(m_real->CreateShaderResourceView(*ppTexture2D, &srvDesc, &s_mainDepthSRV))) {
+                    if (auto* pi = PG_GetProxyInterface()) pi->gameDepthSRV = s_mainDepthSRV;
+                }
+            }
+            return hr;
+        }
+    }
+
     // ── Depth interception ───────────────────────────────────────────
     // Upgrade typed depth textures to typeless + BIND_SHADER_RESOURCE.
     // Criteria: depth format, DSV-bound, no existing SRV access, ≥512x512.
@@ -304,6 +349,24 @@ HRESULT STDMETHODCALLTYPE WrappedDevice::CreateDepthStencilView(
     ID3D11DepthStencilView** ppDepthStencilView)
 {
     Log("CreateDepthStencilView  resource=%p  desc=%p", pResource, pDesc);
+
+    // Rewrite D24_UNORM_S8_UINT DSVs on TxDepth32-promoted textures to D32_FLOAT_S8X24_UINT cleanly.
+    if (pResource && s_promotedD32Textures.count(pResource) > 0) {
+        D3D11_DEPTH_STENCIL_VIEW_DESC fixedDesc = {};
+        if (pDesc) {
+            fixedDesc = *pDesc;
+            if (fixedDesc.Format == DXGI_FORMAT_D24_UNORM_S8_UINT || fixedDesc.Format == DXGI_FORMAT_UNKNOWN)
+                fixedDesc.Format = DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
+        } else {
+            fixedDesc.Format = DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
+            fixedDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+        }
+        HRESULT hr = m_real->CreateDepthStencilView(pResource, &fixedDesc, ppDepthStencilView);
+        if (SUCCEEDED(hr) && ppDepthStencilView && *ppDepthStencilView && pResource == s_mainDepthTex) {
+            if (auto* pi = PG_GetProxyInterface()) pi->gameDepthDSV = *ppDepthStencilView;
+        }
+        return hr;
+    }
 
     // If this resource is an intercepted depth texture and the game passes
     // a null desc (expecting the format from the texture), we need to provide
@@ -452,6 +515,14 @@ HRESULT STDMETHODCALLTYPE WrappedDevice::CreateShaderResourceView(
     const D3D11_SHADER_RESOURCE_VIEW_DESC* pDesc,
     ID3D11ShaderResourceView** ppSRView)
 {
+    if (pResource && pDesc && s_promotedD32Textures.count(pResource) > 0) {
+        D3D11_SHADER_RESOURCE_VIEW_DESC fixedDesc = *pDesc;
+        if (fixedDesc.Format == DXGI_FORMAT_R24_UNORM_X8_TYPELESS)
+            fixedDesc.Format = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+        else if (fixedDesc.Format == DXGI_FORMAT_X24_TYPELESS_G8_UINT)
+            fixedDesc.Format = DXGI_FORMAT_X32_TYPELESS_G8X24_UINT;
+        return m_real->CreateShaderResourceView(pResource, &fixedDesc, ppSRView);
+    }
     return m_real->CreateShaderResourceView(pResource, pDesc, ppSRView);
 }
 

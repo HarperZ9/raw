@@ -68,7 +68,7 @@ constexpr RasterBinding kLightLayout[16] = {U, T, T, T, T, T, T, T, T, T, T, T, 
 constexpr RasterBinding kCloudLayout[5] = {U, T, T, T, Sm};
 constexpr RasterBinding kVolLayout[7] = {U, T, T, T, T, T, Sm};
 constexpr RasterBinding kFogLayout[9] = {U, T, T, T, T, T, T, T, Sm};
-constexpr RasterBinding kFroxelInjectLayout[5] = {U, T, T, T, Sm};
+constexpr RasterBinding kFroxelInjectLayout[6] = {U, T, T, T, T, Sm};
 constexpr RasterBinding kFroxelIntLayout[2] = {U, T};
 constexpr RasterBinding kBloom1Layout[2] = {T, Sm};
 constexpr RasterBinding kBloom2Layout[3] = {T, T, Sm};
@@ -141,11 +141,11 @@ public:
         m_atmoSkyView = m_dev->createTexture({192, 108, TextureFormat::RGBA16Float, RT, "atmo skyview"}, m_err);
         m_cloudNoise = m_dev->createTexture({512, 512, TextureFormat::RGBA16Float, RT, "cloud 64^3 perlin-worley"}, m_err);
         m_envCube = m_dev->createTexture({256, 256, TextureFormat::RGBA16Float, RT, "dynamic prefiltered env cube"}, m_err);
-        // True 160x90x64 3D Froxel Volumetric Participating Media Grid packed as 1280x720 (8x8 slices of 160x90).
-        m_froxelRaw = m_dev->createTexture({1280, 720, TextureFormat::RGBA16Float, RT, "froxel 160x90x64 raw"}, m_err);
+        // True 160x90x64 Temporally-Reprojected 3D Froxel Volumetric Grid (ping-pong m_froxelRaw[2] + integrated m_froxelInt).
+        for (int k = 0; k < 2; ++k) m_froxelRaw[k] = m_dev->createTexture({1280, 720, TextureFormat::RGBA16Float, RT, "froxel 160x90x64 raw"}, m_err);
         m_froxelInt = m_dev->createTexture({1280, 720, TextureFormat::RGBA16Float, RT, "froxel 160x90x64 integrated"}, m_err);
         if (!m_atmoTrans.valid() || !m_atmoMs.valid() || !m_atmoSkyView.valid() || !m_cloudNoise.valid() || !m_envCube.valid() ||
-            !m_froxelRaw.valid() || !m_froxelInt.valid()) return Fail("atmosphere/cloud/env/froxel LUT textures");
+            !m_froxelRaw[0].valid() || !m_froxelRaw[1].valid() || !m_froxelInt.valid()) return Fail("atmosphere/cloud/env/froxel LUT textures");
         for (int k = 0; k < 2; ++k) m_reflHist[k] = m_dev->createTexture({host.width, host.height, TextureFormat::RGBA16Float, RT, "rt refl history"}, m_err);
         if (!m_reflHist[0].valid() || !m_reflHist[1].valid()) return Fail("rt refl history textures");
         m_dofCoc = m_dev->createTexture({vw, vh, TextureFormat::RGBA16Float, RT, "dof coc"}, m_err);
@@ -299,11 +299,12 @@ public:
             const RasterBind vb[7] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volLast, {}},
                                       {{}, m_atmoTrans, {}}, {{}, m_atmoSkyView, {}}, {{}, {}, m_lin}};
             Draw(*c, volNow, m_volPipe, vb);
-            // True 160x90x64 3D Froxel Volumetric Participating Media Grid (inject -> front-to-back Beer-Lambert integrate).
+            // True 160x90x64 Temporally-Reprojected 3D Froxel Participating Media Grid (inject + temporal -> integrate).
             if ((m_u.flags[0] & kMatch) == 0u) {
-                const RasterBind fi[5] = {{m_uniform, {}, {}}, {{}, m_atlas, {}}, {{}, m_atmoTrans, {}}, {{}, m_atmoSkyView, {}}, {{}, {}, m_lin}};
-                Draw(*c, m_froxelRaw, m_froxelInjectPipe, fi);
-                const RasterBind fn[2] = {{m_uniform, {}, {}}, {{}, m_froxelRaw, {}}};
+                const TextureHandle froxNow = m_froxelRaw[m_frame & 1], froxPrev = m_froxelRaw[(m_frame + 1) & 1];
+                const RasterBind fi[6] = {{m_uniform, {}, {}}, {{}, m_atlas, {}}, {{}, m_atmoTrans, {}}, {{}, m_atmoSkyView, {}}, {{}, froxPrev, {}}, {{}, {}, m_lin}};
+                Draw(*c, froxNow, m_froxelInjectPipe, fi);
+                const RasterBind fn[2] = {{m_uniform, {}, {}}, {{}, froxNow, {}}};
                 Draw(*c, m_froxelInt, m_froxelIntPipe, fn);
             }
         }
@@ -533,7 +534,7 @@ private:
     RasterPipelineHandle m_lightPipe, m_fogPipe, m_cloudPipe, m_volPipe;
     RasterPipelineHandle m_bloomPrePipe, m_bloomDownPipe, m_bloomUpPipe, m_bloomCompPipe;
     RasterPipelineHandle m_atmoTransPipe, m_atmoMsPipe, m_atmoSkyPipe, m_cloudNoisePipe, m_envCubePipe, m_froxelInjectPipe, m_froxelIntPipe, m_reflFilterPipe, m_dofCocPipe, m_dofGatherPipe, m_dofCompPipe, m_giAt1Pipe, m_giAt2Pipe, m_giAt4Pipe;
-    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoMs, m_atmoSkyView, m_cloudNoise, m_envCube, m_froxelRaw, m_froxelInt, m_reflHist[2], m_dofCoc, m_dofBokeh, m_giAtrous[2];
+    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoMs, m_atmoSkyView, m_cloudNoise, m_envCube, m_froxelRaw[2], m_froxelInt, m_reflHist[2], m_dofCoc, m_dofBokeh, m_giAtrous[2];
     bool m_atmoTransBuilt = false;
     SamplerHandle m_lin;
     float m_prevWorldToClip[16] = {};

@@ -16,6 +16,7 @@ Texture2D<float4> FroxelIn : register(t0);
 #include "CloudCommon.hlsli"
 Texture2D<float4> TransLut    : register(t1);
 Texture2D<float4> AtmoSkyView : register(t2);
+Texture2D<float4> FroxelPrev  : register(t3);
 SamplerState      Lin         : register(s0);
 #endif
 
@@ -27,6 +28,17 @@ float froxelSliceZ(float s) {
 }
 
 #ifndef FROXEL_INT
+float4 samplePrevFroxel(float2 uv, float z) {
+    const float zCl = clamp(z, kFroxNear, kFroxFar);
+    const float sF = saturate(log(zCl / kFroxNear) / log(kFroxFar / kFroxNear)) * 63.0f;
+    const uint s0 = min(uint(floor(sF)), 63u);
+    const uint s1 = min(s0 + 1u, 63u);
+    const float sT = frac(sF);
+    const float2 tileUv = clamp(uv, float2(0.5f / 160.0f, 0.5f / 90.0f), float2(159.5f / 160.0f, 89.5f / 90.0f));
+    const float2 uv0 = (float2(float(s0 & 7u), float(s0 >> 3u)) + tileUv) * 0.125f;
+    const float2 uv1 = (float2(float(s1 & 7u), float(s1 >> 3u)) + tileUv) * 0.125f;
+    return lerp(FroxelPrev.SampleLevel(Lin, uv0, 0.0f), FroxelPrev.SampleLevel(Lin, uv1, 0.0f), sT);
+}
 
 float3 froxelTransAt(float mu) {
     const float r = 6360.0f + 0.5f;
@@ -66,13 +78,15 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     const float3 pRel = farDir * zMid;
     const float3 wp = pRel + camPosW.xyz;
 
-    // 3D heterogeneous world-space participating media density (alpine valley mist + localized low-altitude fog + weather).
+    // 3D heterogeneous world-space participating media density:
+    // true 3D drifting alpine valley mist + mountain-collar cloud band + river-valley ground mist + weather storms.
     const bool isInt = (sunColour.w < 0.5f);
-    const float weatherDens = 1.0f + weather.w * 1.45f + weather.z * 1.65f + saturate(clouds.x - 0.30f) * 0.65f;
+    const float weatherDens = 1.0f + weather.w * 1.55f + weather.z * 1.75f + saturate(clouds.x - 0.30f) * 0.72f;
     const float3 drift = wp * 0.00042f + float3(cloudWind.xy * camPosW.w * 0.00014f, 0.0f);
-    const float mist3D = 0.55f + 0.72f * cNoise(drift);
-    const float heightFalloff = isInt ? 1.0f : (0.28f + 0.72f * exp(-max(pRel.z + 180.0f, 0.0f) * 0.00075f));
-    const float sigma = max(tune.x, 0.00010f) * weatherDens * mist3D * heightFalloff;
+    const float mist3D = 0.52f + 0.78f * (cNoise(drift) * 0.65f + cNoise(drift * 2.3f + 7.1f) * 0.35f);
+    const float peakCollar = isInt ? 0.0f : exp(-pow((wp.z - 4600.0f) / 2800.0f, 2.0f)) * smoothstep(3200.0f, 9500.0f, zMid) * 1.25f;
+    const float heightFalloff = isInt ? 1.0f : (0.30f + 0.70f * exp(-max(pRel.z + 180.0f, 0.0f) * 0.00075f) + peakCollar);
+    const float sigma = max(tune.x, 0.00011f) * weatherDens * mist3D * heightFalloff;
 
     float3 inScat = 0.0f.xxx;
     if (!isInt && sunDir.w > 0.5f && tune2.z > 0.0f) {
@@ -114,7 +128,21 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
             }
         }
     }
-    return float4(inScat * sigma, sigma);
+    float4 curVoxel = float4(inScat * sigma, sigma);
+    // Hillaire (SIGGRAPH 2015) Temporal 3D Froxel Reprojection: reprojects 3D froxel center through prevWorldToClip
+    // into last frame's 160x90x64 volume for silky, flicker-free 3D participating media (5x effective sample density).
+    const float4 pClip = float4(dot(prevWorldToClip[0], float4(pRel, 1.0f)),
+                                dot(prevWorldToClip[1], float4(pRel, 1.0f)),
+                                dot(prevWorldToClip[2], float4(pRel, 1.0f)),
+                                dot(prevWorldToClip[3], float4(pRel, 1.0f)));
+    if (pClip.w > 1.0f && proj.z > 0.5f) {
+        const float2 pUv = float2(pClip.x / pClip.w * 0.5f + 0.5f, 0.5f - pClip.y / pClip.w * 0.5f) / resScale.xy;
+        if (all(pUv > 0.005f) && all(pUv < 0.995f)) {
+            const float4 prevVoxel = samplePrevFroxel(pUv, pClip.w);
+            curVoxel = lerp(prevVoxel, curVoxel, 0.22f);
+        }
+    }
+    return curVoxel;
 }
 #else
 // Front-to-back Beer-Lambert integration across z = 0..63 slices in the 8x8 froxel atlas.

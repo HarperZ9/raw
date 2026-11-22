@@ -74,13 +74,25 @@ bool ReadDraw(uint64_t pass, Raw* r, char* path, size_t pathMax) {
         r->geo = geo;
         std::memcpy(r->pos, geo + 0xE4, 12);
         std::memcpy(&r->radius, geo + 0xF0, 4);
+        const char* p = *reinterpret_cast<const char* const*>(mat + 0x70);
+        // Replace Skyrim's static 2011 2D mountain-fog billboard cards (radius 400..15000u) with RAW's
+        // 160x90x64 3D Froxel Alpine Mist by cleanly zeroing their material alpha (100% draw-state safe).
+        if (r->radius >= 380.0f && p) {
+            char mBuf[96] = {};
+            for (size_t i = 0; i + 1 < sizeof mBuf && p[i]; ++i) {
+                const char c = p[i];
+                mBuf[i] = (c >= 'A' && c <= 'Z') ? char(c + 32) : c;
+            }
+            if (std::strstr(mBuf, "mountainfog") || std::strstr(mBuf, "fxclouds")) {
+                *reinterpret_cast<float*>(const_cast<uint8_t*>(mat) + 0x54) = 0.0f;
+            }
+        }
         // over 400 units the glow is a mist or spray plane, not a source (ec7-4: radii of 480 to 1,540 were mist
         // over water and a whole-room effect in the inn)
         if (!(r->radius > 0.5f && r->radius < 400.0f)) return no(6);
         const float a = std::clamp(base[3], 0.0f, 1.0f);
         for (int i = 0; i < 3; ++i) r->color[i] = std::clamp(base[i], 0.0f, 16.0f) * scale * a;
         if (r->color[0] + r->color[1] + r->color[2] < 0.02f) return no(5);
-        const char* p = *reinterpret_cast<const char* const*>(mat + 0x70);
         for (size_t i = 0; p && i + 1 < pathMax && p[i]; ++i) path[i] = p[i];
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {

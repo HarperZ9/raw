@@ -210,30 +210,47 @@ float4 main(In i) : SV_Target {
     }
     const float2 suv = min(max(baseUv * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
     float3 hdr = fxaaAndCas(suv);
-    // OV10 (bit 9 = 512): Optional Radial Peripheral Speed / Cinema Focus Blur (center reticle stays 100% sharp).
+    // OV10 (bit 9 = 512): True Velocity-Gated Cinema Sprint Radial Blur (0.0 blur when standing/walking;
+    // silky 8-tap jittered Gaussian-weighted peripheral momentum ONLY when actually sprinting, center 65% 100% sharp).
     if ((ovInit & 512u) != 0u) {
+        const float sprintGate = smoothstep(2.8f, 8.5f, RO.w);
         const float2 rVec = baseUv - 0.5f.xx;
         const float rDist = length(rVec);
-        const float speedBoost = 1.0f + saturate(RO.w / 7.5f) * 1.35f;
-        const float rStr = pow(saturate(rDist * 1.35f), 2.2f) * 0.010f * speedBoost * clamp(RQ.y, 0.0f, 2.5f);
-        if (rStr > 0.0004f) {
-            float3 rAcc = hdr;
-            [unroll] for (int ri = 1; ri <= 6; ri++) {
-                const float f = float(ri) / 6.0f;
-                rAcc += Scene.Sample(S1, min(max((baseUv - rVec * (rStr * f)) * F[43].xy, 0.0f), float2(F[44].z, F[43].y))).rgb;
+        const float edgeMask = smoothstep(0.32f, 0.72f, rDist);
+        const float rStr = edgeMask * edgeMask * 0.0065f * sprintGate * clamp(RQ.y, 0.0f, 2.5f);
+        if (rStr > 0.00025f) {
+            const float rJit = frac(52.9829189f * frac(dot(i.pos.xy + RO.z * 5.588f, float2(0.06711056f, 0.00583715f))));
+            float3 rAcc = hdr * 1.4f;
+            float rW = 1.4f;
+            [unroll] for (int ri = 1; ri <= 8; ri++) {
+                const float f = (float(ri) - 0.5f + rJit * 0.5f) / 8.0f;
+                const float w = exp(-f * f * 2.2f);
+                rAcc += Scene.Sample(S1, min(max((baseUv - rVec * (rStr * f)) * F[43].xy, 0.0f), float2(F[44].z, F[43].y))).rgb * w;
+                rW += w;
             }
-            hdr = rAcc / 7.0f;
+            hdr = rAcc / rW;
         }
     }
-    // OV11 (bit 10 = 1024): Optional Apochromatic Lateral Chromatic Aberration (zero at center, subtle prism dispersion at edges).
+    // OV11 (bit 10 = 1024): True 5-Tap Spectral Apochromatic Lens Dispersion (Zeiss/Cooke optical glass profile:
+    // zero at center 55%, smooth continuous R/Y/G/C/B prism spectrum at extreme outer corners — zero R/B double-vision).
     if ((ovInit & 1024u) != 0u) {
         const float2 caVec = baseUv - 0.5f.xx;
-        const float caMag = dot(caVec, caVec) * 0.0045f * clamp(RQ.x, 0.0f, 2.5f);
-        if (caMag > 0.0001f) {
-            const float2 uvR = min(max((baseUv + caVec * caMag) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
-            const float2 uvB = min(max((baseUv - caVec * caMag) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
-            hdr.r = lerp(hdr.r, Scene.Sample(S1, uvR).r, 0.72f);
-            hdr.b = lerp(hdr.b, Scene.Sample(S1, uvB).b, 0.72f);
+        const float caR = length(caVec);
+        const float caMag = pow(saturate((caR - 0.28f) / 0.45f), 2.4f) * 0.0022f * clamp(RQ.x, 0.0f, 2.5f);
+        if (caMag > 0.00005f) {
+            const float2 dirC = caVec / max(caR, 1.0e-4f);
+            const float2 uvM2 = min(max((baseUv - dirC * (caMag * 1.0f)) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
+            const float2 uvM1 = min(max((baseUv - dirC * (caMag * 0.5f)) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
+            const float2 uvP1 = min(max((baseUv + dirC * (caMag * 0.5f)) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
+            const float2 uvP2 = min(max((baseUv + dirC * (caMag * 1.0f)) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
+            const float3 sM2 = Scene.Sample(S1, uvM2).rgb;
+            const float3 sM1 = Scene.Sample(S1, uvM1).rgb;
+            const float3 sP1 = Scene.Sample(S1, uvP1).rgb;
+            const float3 sP2 = Scene.Sample(S1, uvP2).rgb;
+            const float3 specSum = sM2 * float3(0.0f, 0.10f, 0.45f) + sM1 * float3(0.08f, 0.25f, 0.35f)
+                                 + hdr * float3(0.24f, 0.30f, 0.16f)
+                                 + sP1 * float3(0.34f, 0.25f, 0.04f) + sP2 * float3(0.34f, 0.10f, 0.0f);
+            hdr = lerp(hdr, specSum, 0.85f);
         }
     }
     // Smooth photographic HDR highlight compression (user-tunable knee RG.w, default 0.68): preserves crisp snowdrifts,
@@ -478,8 +495,8 @@ float4 main(In i) : SV_Target {
         const float nG = frac(52.9829189f * frac(dot(gPos1 + float2(17.0f, 31.0f), float2(0.06711056f, 0.00583715f)))) - 0.5f;
         const float nB = frac(52.9829189f * frac(dot(gPos2 + float2(43.0f, 11.0f), float2(0.06711056f, 0.00583715f)))) - 0.5f;
         const float clump = frac(52.9829189f * frac(dot(gPos2, float2(0.06711056f, 0.00583715f)))) - 0.5f;
-        const float3 halide = float3(nR * 0.92f + clump * 0.35f, nG * 0.85f + clump * 0.30f, nB * 1.18f + clump * 0.42f);
-        c.rgb = saturate(c.rgb + halide * (0.042f * clamp(RP.z, 0.0f, 2.5f) * (0.20f + 0.80f * response)));
+        const float3 halide = float3(nR * 0.65f + clump * 0.45f, nG * 0.62f + clump * 0.48f, nB * 0.72f + clump * 0.42f);
+        c.rgb = saturate(c.rgb + halide * (0.022f * clamp(RP.z, 0.0f, 2.5f) * (0.12f + 0.88f * response)));
     }
     // Layer 8 (bit 7): Cinematic 2.35:1 anamorphic letterbox borders.
     if ((ovMask & 128u) != 0u) {

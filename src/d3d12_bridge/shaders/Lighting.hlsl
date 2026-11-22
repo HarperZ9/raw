@@ -178,20 +178,31 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     const float3 starCol = lerp(float3(0.72f, 0.84f, 1.0f), float3(1.0f, 0.86f, 0.68f), temp);
                     skyOut += starCol * (starCore * twk * nightSkyW * c.a * saturate(sDir.z * 4.5f) * 1.15f);
                 }
-                // Animated multi-curtain volumetric Nordic Aurora Borealis across clear northern skies.
+                // Subtle dusty Galactic Milky Way arch across clear, dark Nordic winter skies.
+                const float mwPlane = abs(dot(sDir, normalize(float3(0.52f, -0.36f, 0.77f))));
+                const float mwBand = exp(-mwPlane * mwPlane * 22.0f) * smoothstep(0.05f, 0.28f, sDir.z);
+                if (mwBand > 0.01f) {
+                    const float mwDust = cNoise(sDir * 6.5f) * 0.65f + cNoise(sDir * 15.0f + 4.3f) * 0.35f;
+                    const float mwLane = smoothstep(0.32f, 0.78f, mwDust);
+                    skyOut += lerp(float3(0.05f, 0.07f, 0.14f), float3(0.14f, 0.12f, 0.19f), mwLane) * (mwBand * mwLane * nightSkyW * c.a * 0.42f);
+                }
+                // Animated 10-layer volumetric Nordic Aurora Borealis (557.7 nm O-I emerald lower edge -> 630.0 nm violet-crimson upper curtain).
                 const float auroraVis = nightSkyW * (1.0f - saturate(clouds.x * 1.15f)) * smoothstep(0.08f, 0.35f, sDir.z) * smoothstep(-0.25f, 0.45f, sDir.y);
                 if (auroraVis > 0.02f) {
                     float3 aurSum = 0.0f.xxx;
-                    [unroll] for (int ai = 0; ai < 6; ai++) {
-                        const float ah = 0.22f + float(ai) * 0.13f;
-                        const float2 ap = sDir.xy / max(sDir.z, 0.12f) * (1.4f + ah * 0.6f);
-                        const float wave = sin(ap.x * 2.2f + camPosW.w * 0.08f + cNoise(float3(ap * 1.3f, camPosW.w * 0.04f)) * 3.2f);
-                        const float band = exp(-abs(ap.y - 0.65f - wave * 0.42f) * 4.8f);
-                        const float rays = 0.55f + 0.45f * cNoise(float3(ap.x * 7.5f, ap.y * 2.0f, camPosW.w * 0.12f + ah * 2.0f));
-                        const float3 aCol = lerp(float3(0.12f, 0.95f, 0.58f), float3(0.42f, 0.26f, 0.96f), saturate((ah - 0.22f) * 1.45f));
-                        aurSum += aCol * (band * rays * (1.0f - ah * 0.65f));
+                    [unroll] for (int ai = 0; ai < 10; ai++) {
+                        const float ah = 0.18f + float(ai) * 0.09f;
+                        const float2 ap = sDir.xy / max(sDir.z, 0.12f) * (1.35f + ah * 0.65f);
+                        const float wave = sin(ap.x * 2.1f + camPosW.w * 0.075f + cNoise(float3(ap * 1.25f, camPosW.w * 0.035f)) * 3.4f);
+                        const float band = exp(-abs(ap.y - 0.62f - wave * 0.44f) * 5.2f);
+                        const float rays = 0.50f + 0.50f * cNoise(float3(ap.x * 9.0f, ap.y * 2.2f, camPosW.w * 0.11f + ah * 2.4f));
+                        const float hT = saturate((ah - 0.18f) * 1.25f);
+                        const float3 aCol = hT < 0.65f
+                            ? lerp(float3(0.08f, 0.96f, 0.54f), float3(0.28f, 0.48f, 0.94f), hT / 0.65f)
+                            : lerp(float3(0.28f, 0.48f, 0.94f), float3(0.76f, 0.18f, 0.52f), (hT - 0.65f) / 0.35f);
+                        aurSum += aCol * (band * rays * (1.0f - ah * 0.58f));
                     }
-                    skyOut += aurSum * (auroraVis * c.a * 0.11f);
+                    skyOut += aurSum * (auroraVis * c.a * 0.085f);
                 }
             }
             // Horizon Fix: seamless atmospheric mist/ocean continuation for sub-horizon sky rays (no empty void past map edge).

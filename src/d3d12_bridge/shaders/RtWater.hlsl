@@ -345,20 +345,28 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float depthV = max(p.z - pb.z, 0.0f);
                 // True Snell's Law optical underwater refraction (n_air/n_water = 1/1.333):
                 // bends view ray into the water column and intersects the riverbed plane at depthV.
+                // True Snell's Law optical underwater refraction (n_air/n_water = 1/1.333) with smooth clamped offset
+                // and bilinear PreWater sampling (eliminates blocky/pixelated contour rings & edge snapping).
                 const float3 refrRay = refract(-v, n, 1.0f / 1.333f);
-                const float tRefr = min(depthV / max(-refrRay.z, 0.25f), 96.0f);
+                const float tRefr = min(depthV / max(-refrRay.z, 0.25f), 84.0f);
                 const float3 pRefrBed = p + refrRay * tRefr;
-                const float4 s2 = screenOf(lerp(pb, pRefrBed, 0.72f));
-                const bool inBounds = s2.w > 0.0f && all(s2.xy >= 2.0f.xx) && all(s2.xy <= dims.xy - 3.0f);
-                int2 q = inBounds ? int2(s2.xy) : int2(id.xy);
-                // A bent look-up that lands off-screen or on something above the water keeps the straight one (prevents vertical edge stretching).
+                const float4 s2 = screenOf(lerp(pb, pRefrBed, 0.65f));
+                float2 qOff = s2.w > 0.0f ? (s2.xy - float2(id.xy)) : 0.0f.xx;
+                const float qLen = length(qOff);
+                if (qLen > 24.0f) { qOff *= (24.0f / qLen); }
+                const float2 qF = clamp(float2(id.xy) + qOff * saturate(depthV / 14.0f), float2(1.0f, 1.0f), dims.xy - 2.0f);
+                int2 q = int2(round(qF));
                 const float4 Lq = Layer.Load(int3(q, 0));
-                if (!inBounds || Depth.Load(int3(q, 0)) <= Lq.x || Lq.a < 1.5f) { q = int2(id.xy); }
-                // Chromatic shallow-water dispersion across submerged pebbles & riverbed rocks.
-                const int2 qR = clamp(q + int2(round(n.xy * 2.0f)), int2(0, 0), int2(dims.xy) - 1);
-                const int2 qB = clamp(q - int2(round(n.xy * 2.0f)), int2(0, 0), int2(dims.xy) - 1);
-                const float3 bed = float3(PreWater[qR].r, PreWater[q].g, PreWater[qB].b);
-                const float path = length(worldAt(float2(q), Depth.Load(int3(q, 0))) - p);
+                const float dQ = Depth.Load(int3(q, 0));
+                const bool qValid = (Lq.a > 1.5f && dQ > Lq.x + 1.0e-5f);
+                const float2 qUse = qValid ? qF : float2(id.xy);
+                const int2 q0 = clamp(int2(floor(qUse)), int2(0, 0), int2(dims.xy) - 2);
+                const float2 qFrac = frac(qUse);
+                const float3 b00 = PreWater[q0].rgb, b10 = PreWater[q0 + int2(1, 0)].rgb;
+                const float3 b01 = PreWater[q0 + int2(0, 1)].rgb, b11 = PreWater[q0 + int2(1, 1)].rgb;
+                const float3 bed = lerp(lerp(b00, b10, qFrac.x), lerp(b01, b11, qFrac.x), qFrac.y);
+                const int2 qDepthPx = qValid ? q : int2(id.xy);
+                const float path = length(worldAt(float2(qDepthPx), Depth.Load(int3(qDepthPx, 0))) - p);
                 // Crystal-clear Nordic glacial river Beer-Lambert absorption:
                 // shallow riverbeds (0..140u) stay razor-sharp and transparent showing every submerged stone & pebble,
                 // transitioning smoothly to luminous glacial emerald-turquoise -> deep Nordic sapphire in deep pools.

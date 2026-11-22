@@ -36,12 +36,16 @@ void main(uint3 id : SV_DispatchThreadID) {
     // Deterministic Interleaved Gradient Noise rotation (eliminates per-frame skin crawl shimmer).
     const float turn = ign(float2(p)) * 6.2831853f;
     float3 sum = c.rgb, wsum = 1.0f.xxx;
+    float thinEdgeCount = 0.0f;
     [unroll] for (uint i = 0u; i < 16u; i++) {
         const float r = sqrt((float(i) + 0.5f) / 16.0f) * rMax;
         const float a = float(i) * 2.3999632f + turn;
         const int2 q = clamp(p + int2(round(float2(cos(a), sin(a)) * r)), int2(0, 0), int2(dims.xy) - 1);
         const float dq = Depth.Load(int3(q, 0));
-        if (dq >= 1.0f || !isSkin(q) || abs(viewZOf(dq) - z) > 0.01f * z + 2.0f) { continue; }
+        if (dq >= 1.0f || !isSkin(q) || abs(viewZOf(dq) - z) > 0.01f * z + 2.0f) {
+            thinEdgeCount += 1.0f;
+            continue;
+        }
         const float ru = r / pxPerUnit;
         const float ru2 = -0.5f * ru * ru;
         const float3 w = 0.45f * exp(ru2 / (sigmaN * sigmaN)) + 0.55f * exp(ru2 / (sigmaW * sigmaW));
@@ -49,10 +53,17 @@ void main(uint3 id : SV_DispatchThreadID) {
         wsum += w;
     }
     const float3 scattered = sum / wsum;
-    // arXiv:2606.27604 (Aliaga & Jarabo 2026) Biophysical Skin Inversion + arXiv:2606.29387 thin-geometry guard:
-    // Estimate epidermal melanin & dermal hemoglobin directly from RGB so every vanilla NPC (fair Nord, Redguard,
-    // Imperial, Dunmer, Bosmer) scatters light according to their real biophysical absorption spectrum instead of
-    // one generic pink/red blur, while preserving crisp high-frequency epidermal pore & eyelash luminance.
+    // arXiv:2606.29387 (Alpay & Basaran 2026) Optical Thickness Laws for Thin Geometry SSS:
+    // Estimate local optical thickness tau = T / l_d from boundary proximity (ears, nostrils, lips, fingers):
+    //   reflectance deficit = C * exp(-2 * tau), single-pass transmitted flux = exp(-tau).
+    const float thinFrac = saturate((thinEdgeCount - 3.0f) / 11.0f);
+    const float localThick = lerp(3.6f * width, 0.45f * width, thinFrac);
+    const float3 tau = localThick / max(sigmaW, 0.05f.xxx);
+    const float3 reflDeficit = exp(-2.0f * tau);
+    const float3 thinTransmit = exp(-tau) * float3(1.15f, 0.42f, 0.18f) * (thinFrac * 0.28f);
+    // arXiv:2606.27604 (Aliaga & Jarabo 2026) Biophysical Skin Inversion:
+    // Estimate epidermal melanin & dermal hemoglobin directly from RGB so every vanilla NPC scatters light
+    // according to their real biophysical absorption spectrum while preserving crisp epidermal pores.
     const float cLum = max(dot(c.rgb, float3(0.2126f, 0.7152f, 0.0722f)), 1.0e-4f);
     const float sLum = max(dot(scattered, float3(0.2126f, 0.7152f, 0.0722f)), 1.0e-4f);
     const float melanin = saturate(1.0f - pow(saturate(cLum * 1.35f), 0.55f));
@@ -61,7 +72,8 @@ void main(uint3 id : SV_DispatchThreadID) {
     const float3 richTint = float3(1.04f, 0.97f, 0.92f);
     const float3 bioTint = lerp(fairTint, richTint, melanin * 0.75f);
     const float bioWeight = saturate(0.35f + hemoglobin * 0.45f) * (1.0f - melanin * 0.30f);
-    const float3 dermalGlow = scattered * lerp(1.0f.xxx, bioTint, bioWeight * saturate(sLum * 0.85f));
+    const float3 dermalGlow = scattered * (1.0f.xxx - reflDeficit * 0.16f) * lerp(1.0f.xxx, bioTint, bioWeight * saturate(sLum * 0.85f))
+                            + c.rgb * thinTransmit;
     const float3 poreKept = dermalGlow * lerp(1.0f, cLum / sLum, 0.40f);
     Out[p] = float4(lerp(c.rgb, poreKept, strength), c.a);
 }

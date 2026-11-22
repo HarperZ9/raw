@@ -318,36 +318,15 @@ float4 main(In i) : SV_Target {
         mapped = rh ? reinhardW(hdr * exposure * RB.z) : filmic(hdr * exposure * RB.z);
         if (RA.x > 0.5f) { pivot = dot(rh ? reinhardW((RB.y * exp2(RA.y) * RB.z).xxx) : filmic((RB.y * exp2(RA.y) * RB.z).xxx), W); }   // the grade turns about mid grey
     }
-    // Multi-Radius Karis-Weighted Spectral Tent-Filter Bloom (Jimenez SIGGRAPH 2014 + Elder Spectral Glare):
-    // Combines a tight warm optical core (1.5 px) and wide cool veiling scatter (4.5 px) with Karis 1/(1+luma)
-    // weighting to eliminate sub-pixel specular firefly pulsing while giving torches, spells & sun a cinema glow.
+    // 100% Native 12-Pass 6-Level Jimenez HDR Bloom Pyramid (BloomPass.hlsl) owns all bloom in !match mode.
+    // Do NOT add Skyrim's blurry 2011 vanilla Bloom buffer (t0) on top of our HDR scene — use t0 strictly for
+    // high-threshold (>1.15) optical halation / Panavision anamorphic flare (OV2) and 5-order lens ghosts (OV3).
     const uint ovMask = uint(RO.y + 0.5f);
     float bw0, bh0;
     Bloom.GetDimensions(bw0, bh0);
     const float2 bTex = 1.0f / max(float2(bw0, bh0), float2(1.0f, 1.0f));
-    const float3 bC = bloom;
-    const float3 bI1 = Bloom.Sample(S0, saturate(suv + float2( bTex.x,  bTex.y) * 1.6f)).rgb;
-    const float3 bI2 = Bloom.Sample(S0, saturate(suv + float2(-bTex.x,  bTex.y) * 1.6f)).rgb;
-    const float3 bI3 = Bloom.Sample(S0, saturate(suv + float2( bTex.x, -bTex.y) * 1.6f)).rgb;
-    const float3 bI4 = Bloom.Sample(S0, saturate(suv + float2(-bTex.x, -bTex.y) * 1.6f)).rgb;
-    const float3 bO1 = Bloom.Sample(S0, saturate(suv + float2( bTex.x * 4.5f, 0.0f))).rgb;
-    const float3 bO2 = Bloom.Sample(S0, saturate(suv + float2(-bTex.x * 4.5f, 0.0f))).rgb;
-    const float3 bO3 = Bloom.Sample(S0, saturate(suv + float2(0.0f,  bTex.y * 4.5f))).rgb;
-    const float3 bO4 = Bloom.Sample(S0, saturate(suv + float2(0.0f, -bTex.y * 4.5f))).rgb;
-    // Karis inverse-luminance weights suppress single-pixel firefly flicker.
-    const float kwC = 1.0f / (1.0f + dot(bC, W));
-    const float kw1 = 1.0f / (1.0f + dot(bI1, W)), kw2 = 1.0f / (1.0f + dot(bI2, W));
-    const float kw3 = 1.0f / (1.0f + dot(bI3, W)), kw4 = 1.0f / (1.0f + dot(bI4, W));
-    const float3 innerBloom = (bC * (kwC * 2.0f) + bI1 * kw1 + bI2 * kw2 + bI3 * kw3 + bI4 * kw4)
-                            / max(kwC * 2.0f + kw1 + kw2 + kw3 + kw4, 1.0e-4f);
-    const float3 outerBloom = (bO1 + bO2 + bO3 + bO4) * 0.25f;
-    const float bloomLum = dot(innerBloom, W);
-    const float kneeB = saturate((bloomLum - 0.52f) / 0.58f);
-    const float outerLum = dot(outerBloom, W);
-    const float kneeO = saturate((outerLum - 0.42f) / 0.65f);
-    const float3 cleanBloom = (innerBloom * float3(1.04f, 0.99f, 0.93f) * (kneeB * kneeB * 0.13f)
-                            + outerBloom * float3(0.93f, 0.98f, 1.06f) * (kneeO * kneeO * 0.08f)) * clamp(RP.x, 0.0f, 2.5f);
-    float3 ovAdd = cleanBloom;
+    const float bloomLum = dot(bloom, W);
+    float3 ovAdd = 0.0f.xxx;
     if ((ovMask & 2u) != 0u) {
         // Layer 2: Multi-radius Photochemical Emulsion Halation + 5-Tap Wide Panavision Anamorphic Streak.
         float bw, bh;
@@ -402,12 +381,24 @@ float4 main(In i) : SV_Target {
     mapped = saturate(mapped + cappedAdd * (1.0f - mapped * 0.74f));
     if (RB.w > 1.5f && RB.w < 2.5f) { return float4(lum.x * 0.25f, lum.y * 0.25f, exposure * 0.25f, 1.0f); }   // view 2: adapted average, the game's target, exposure (over 4, no gamma)
     if (RB.w > 0.5f && RB.w < 1.5f) { return float4(exposure.xxx * 0.25f, 1.0f); }   // view 1: the exposure (4 = white, no gamma)
-    // The game's grade, lane for lane as the game computes it (alpha included; its anti-aliasing reads it).
+    // Modern wide-gamut curves (RB.x > 3.5: AgX / GT / Lottes / Hable): stop Skyrim 2011's muddy ImageSpace
+    // weather tint & contrast from overwriting our Hillaire + AgX color science, while preserving strong gameplay
+    // status flashes (low health, poison, night-eye) softly.
     const float g = dot(mapped, W);
     float4 c = float4(mapped, 1.0f);
-    c = P[3].x * (c - g) + g;
-    c = P[4].w * (g * P[4] - c) + c;
-    c = P[3].z * (P[3].w * c - pivot) + pivot;
+    if (RB.x > 3.5f) {
+        const float imadSat  = lerp(1.0f, P[3].x, 0.32f);
+        const float imadTint = P[4].w * 0.22f;
+        const float imadCon  = lerp(1.0f, P[3].z, 0.25f);
+        const float imadBri  = lerp(1.0f, P[3].w, 0.25f);
+        c = imadSat * (c - g) + g;
+        c = imadTint * (g * P[4] - c) + c;
+        c = imadCon * (imadBri * c - pivot) + pivot;
+    } else {
+        c = P[3].x * (c - g) + g;
+        c = P[4].w * (g * P[4] - c) + c;
+        c = P[3].z * (P[3].w * c - pivot) + pivot;
+    }
     // Built-in procedural LUT profiles when no external 3D PNG LUT is active (ToneX2 = 0..3).
     if (RB.x > 2.5f && RX.x > 0.5f && RO.x <= 0.001f) {
         const float lumG = dot(c.rgb, W);

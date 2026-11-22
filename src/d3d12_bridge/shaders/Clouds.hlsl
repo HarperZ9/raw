@@ -112,15 +112,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
             const float sunCalm = lerp(1.0f, 0.80f, pow(saturate(cosT), 12.0f));
-            // True linear HDR cumulus scattering (no 0.88 SDR clamp): sunlit silver linings reach 1.4-2.8 linear while undersides stay sculptural blue-slate.
-            const float3 lum = min(sunC * (multiScat * lerp(1.0f, powder, 0.56f) * sunCalm * 4.0f * PI * 0.34f) + baseTint + stormFlash, 3.2f.xxx);
+            // Balanced photographic cloud-to-sky exposure: crisp snow-white sunlit tops (~1.1-1.6 linear) and cool blue-silver
+            // undersides (~0.45-0.75) so clouds float cleanly in front of the cerulean Hillaire sky with zero yellow blowout.
+            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.98f, 0.99f, 1.02f), 0.45f * (1.0f - lowSun));
+            const float3 lum = min(whiteSun * (multiScat * lerp(1.0f, powder, 0.56f) * sunCalm * 4.0f * PI * 0.20f) + baseTint * 0.78f + stormFlash, 1.65f.xxx);
             const float ext = dens * sigma;
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;
         }
-        // True linear HDR cloud radiance (no 0.92 SDR crush) + seamless C2 horizon elevation fade.
-        const float3 softS = min(S, 3.5f.xxx);
+        // Clean HDR cloud radiance matched to Hillaire sky + seamless C2 horizon elevation fade.
+        const float3 softS = min(S, 1.85f.xxx);
         const float fade = exp(-max(t0, 0.0f) / 185000.0f);
         const float horFade = smoothstep(0.025f, 0.165f, dir.z);
         const float effFade = saturate(fade * 1.15f) * horFade;

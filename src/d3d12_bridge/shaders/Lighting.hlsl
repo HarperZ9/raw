@@ -152,7 +152,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 baseSky = lerp(baseSky, pureSky + solarCore, dayW * 0.96f * (1.0f - exoticRealm));
             }
         }
-        const float4 c = (flags.x & FLAG_CLOUDS) != 0u ? Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f) : float4(0.0f, 0.0f, 0.0f, 1.0f);
+        const bool deferSkyToFog = ((flags.x & FLAG_MATCH) == 0u) && ((flags.x & FLAG_FOG) != 0u);
+        const float4 c = (!deferSkyToFog && (flags.x & FLAG_CLOUDS) != 0u) ? Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f) : float4(0.0f, 0.0f, 0.0f, 1.0f);
         // Attenuate Nordic cumulus clouds inside Apocrypha/Soul Cairn exotic realms so alien skies stay authentic.
         const float exoticCloudKeep = 1.0f - saturate(max((game.g - max(game.r, game.b) * 1.08f) * 6.0f, (min(game.r, game.b) - game.g * 1.15f) * 6.0f));
         float3 skyOut = lerp(baseSky, baseSky * c.a + c.rgb, exoticCloudKeep);
@@ -211,8 +212,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float3 horizMist = lerp(skyOut, max(float3(ambient[0].w, ambient[1].w, ambient[2].w), 0.04f.xxx) * 0.85f, subW * 0.65f);
                 skyOut = horizMist;
             }
-            const float skyPeak = max(skyOut.r, max(skyOut.g, skyOut.b));
-            skyOut = skyOut / (1.0f + max(skyPeak - 0.56f, 0.0f) * 0.65f);
+            // True linear HDR sky: no 2011 0.56 SDR pre-clamp (Wide-Gamut AgX + 12-pass HDR Bloom handle HDR dynamic range).
         }
         return float4(skyOut, game.a);
     }
@@ -522,7 +522,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             }
         }
         // Skinned actors (skin/hair/eye) keep the game's filtered shadow mask so coarse skinned BLAS triangles never cast blocky self-shadow acne.
-        if (rt && sunColour.w > 0.5f && !isActorFeat) { sunShadow = min(sunShadow, base == 5u ? lerp(1.0f, rv.x, 0.6f) : rv.x); }
+        if (rt && sunColour.w > 0.5f && !isActorFeat) { sunShadow = min(sunShadow, base == 5u ? lerp(1.0f, rv.x, 0.85f) : rv.x); }
         if (!match && sunColour.w > 0.5f && (flags.x & FLAG_CLOUDS) != 0u) { sunShadow *= pow(saturate(cloudShadow(p + camPosW.xyz)), 1.25f); }   // SKY-02 rolling cloud-shadow contrast
         // Skin: warm dermal penumbra + gentle wrap so shadow transitions on faces and shoulders stay lifelike, never muddy grey.
         const float3 sunSh = skin && !match ? pow(saturate(sunShadow).xxx, float3(0.72f, 0.92f, 1.04f)) : sunShadow.xxx;
@@ -647,17 +647,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
 
     float3 amb = float3(dot(ambient[0].xyz, s.n) + ambient[0].w, dot(ambient[1].xyz, s.n) + ambient[1].w,
                         dot(ambient[2].xyz, s.n) + ambient[2].w);
-    // When hardware RayQuery RTAO/skyVis is active, let native 3D RT occlusion dominate and dial back screen-space AO
-    // to subtle micro-crease contact (eliminates screen-space AO halos around trees and actors).
-    const float ssaoMix = (rt && (flags.x & FLAG_SKY) != 0u) ? 0.38f : 1.0f;
-    const float aoWeight = (base == 5u ? 0.35f : (isActorFeat ? 0.48f : 1.0f)) * ssaoMix;
-    const float aoTerm = (flags.x & FLAG_AO) != 0u ? lerp(1.0f, AoHist.Load(ip).x, tune2.x * aoWeight) : 1.0f;
-    // Exteriors: ray-traced sky visibility (RtSky.cpp). Interiors (!match): local SM6.5 RayQuery RTAO from RtShadow.hlsl.
+    // True ENB-class Directional Skylighting + grounded micro-contact AO:
+    // Separates upper-hemisphere sky visibility (strongly darkened under roofs, arches, trees & bush cores)
+    // from multi-bounce colored GI (RtBounce) so shaded recesses have real depth and warm indirect bounce contrast.
+    const float ssaoMix = (rt && (flags.x & FLAG_SKY) != 0u) ? 0.62f : 1.0f;
+    const float aoWeight = (base == 5u ? 0.78f : (isActorFeat ? 0.45f : 1.0f)) * ssaoMix;
+    const float aoRaw = (flags.x & FLAG_AO) != 0u ? lerp(1.0f, AoHist.Load(ip).x, tune2.x * aoWeight) : 1.0f;
+    const float aoTerm = !match ? pow(saturate(aoRaw), 1.22f) : aoRaw;
+    // Exteriors: ray-traced sky visibility (RtSky.cpp). Interiors (!match): local SM6.9 RayQuery RTAO from RtShadow.hlsl.
     const bool isExterior = sunColour.w > 0.5f;
     const float rawSkyVis = rt && (flags.x & FLAG_SKY) != 0u && (isExterior || !match) ? RtIdx.Load(ip).w : 1.0f;
     const float skyVis = isActorFeat ? lerp(0.55f, 1.0f, rawSkyVis) : rawSkyVis;
-    // One occlusion, not two: the ray-traced sky/RTAO visibility already holds near occluders.
-    const float rtOcc = isExterior ? lerp(1.0f, skyVis, cluster.w) : lerp(0.42f, 1.0f, skyVis);
+    // Physical directional skylighting falloff: roofs, covered walkways, arches & dense foliage cores drop to deep rich shade
+    // (0.14..1.0) while open sky-facing ground keeps full crisp skylighting.
+    const float skyVisShaped = !match ? pow(saturate(skyVis), base == 5u ? 1.38f : 1.48f) : skyVis;
+    const float rtOcc = isExterior ? lerp(1.0f, lerp(0.14f, 1.0f, skyVisShaped), max(cluster.w, 0.82f)) : lerp(0.28f, 1.0f, skyVisShaped);
     float combinedOcc = min(aoTerm, rtOcc);
     // Lifelike Vanilla NPCs: lift recessed eye-socket AO (base==12) so eyes never read as dim dark holes,
     // and soften harsh brow/under-eye portrait shadows on skin (base==10).
@@ -667,10 +671,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     }
     // SIGGRAPH GI-12 Visibility-Aware Bent-Normal Hemisphere Skylighting (exteriors) &
     // Directional Vault/Hearth Ambient Shaping (interiors: deepens recessed corners & highlights upper masonry/beams).
-    const float3 bentN = normalize(lerp(s.n, float3(0.0f, 0.0f, 1.0f), (1.0f - combinedOcc) * 0.32f * skyVis));
-    const float hemiSky = !match ? (isExterior ? lerp(0.72f, 1.12f, saturate(bentN.z * 0.5f + 0.5f))
-                                               : lerp(0.66f, 1.16f, saturate(bentN.z * 0.5f + 0.5f))) : 1.0f;
-    amb *= match ? combinedOcc.xxx : gtaoMultiBounce(combinedOcc, saturate(albedo)) * hemiSky;
+    const float3 bentN = normalize(lerp(s.n, float3(0.0f, 0.0f, 1.0f), (1.0f - combinedOcc) * 0.38f * skyVis));
+    const float hemiSky = !match ? (isExterior ? lerp(0.54f, 1.18f, saturate(bentN.z * 0.5f + 0.5f))
+                                               : lerp(0.52f, 1.20f, saturate(bentN.z * 0.5f + 0.5f))) : 1.0f;
+    // Keep multi-bounce AO subtle so deep crevices stay genuinely grounded instead of lifting back to muddy grey.
+    const float3 mbOcc = lerp(combinedOcc.xxx, gtaoMultiBounce(combinedOcc, saturate(albedo)), 0.45f);
+    amb *= match ? combinedOcc.xxx : mbOcc * hemiSky;
     // Multi-bounce hardware RayQuery GI: boosted indirect energy + color-bleed preservation + upward overhang bounce
     // so sunlit grass, cobblestone, snow, water, and warm tavern hearths cast tangible colored indirect light.
     const bool bounceHere = sunColour.w > 0.5f || (flags.x & FLAG_BOUNCE_IN) != 0u;
@@ -748,8 +754,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (flags.w == 19u) { return float4(charLight.xxx, game.a); }   // view 19: the character light
     // Attenuate vanilla's flat white character fill light on skin in direct sunlight so shoulders/faces never blow out.
     const float effCharLight = (!match && skin) ? charLight * lerp(0.85f, 0.12f, saturate(dot(diff, float3(0.33f, 0.33f, 0.34f)))) : charLight;
-    // Attenuate vanilla's compressed 128px DXT1 static cubemap (envRefl) in improved mode so full-res RT + dynamic IBL drive clean metal reflections.
-    float3 lit = knee3((albedo + envRefl * (match ? 1.0f : 0.12f)) * (diff + amb + effCharLight));
+    // True linear HDR diffuse pipeline in !match mode (remove Skyrim 2011's LDR knee3() clamp so Wide-Gamut AgX
+    // and 12-pass Jimenez HDR Bloom receive genuine sunlit dynamic range instead of crushed SDR).
+    const float3 rawLit = (albedo + envRefl * (match ? 1.0f : 0.12f)) * (diff + amb + effCharLight);
+    float3 lit = match ? knee3(rawLit) : rawLit;
     if (!match && skin) {
         // Per-channel dermal highlight roll-off preserves natural skin tone under direct midday sun and close hearth fire.
         lit = lit / (1.0f + max(lit - 0.68f.xxx, 0.0f.xxx) * 0.52f);
@@ -803,6 +811,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // Class-12 Eye corneal wet catchlight: sharp corneal Fresnel reflection of live sky/environment.
             const float eyeFr = 0.025f + 0.975f * pow(1.0f - nv, 5.0f);
             lit += evalDynamicEnvCube(rDir, 0.04f) * (eyeFr * 0.85f * (0.4f + 0.6f * skyVis));
+        } else if (base == 4u || base == 6u || base == 1u || base == 5u) {
+            // Full-world physical dielectric Fresnel environment IBL (cobblestones, rocks, cliffs, timber, waxy pine needles):
+            // eliminates the chalky 2011 matte look by giving every dielectric grazing-angle sky & environment specular
+            // modulated by roughness, moisture, and Lagarde specular occlusion.
+            const float dieF0 = (base == 5u) ? 0.04f : lerp(0.032f, 0.045f, saturate(wet.wet + wet.puddle));
+            const float dieFr = dieF0 + (1.0f - dieF0) * pow(1.0f - nv, 5.0f);
+            const float dieRough = (base == 5u) ? 0.42f : clamp(s.alpha, 0.14f, 0.78f);
+            const float dieEnvStr = (base == 5u) ? 0.42f : lerp(0.48f, 0.92f, saturate(wet.wet + wet.puddle));
+            const float3 dieEnv = evalDynamicEnvCube(rDir, dieRough) * (0.28f + 0.72f * skyVisShaped);
+            lit += dieEnv * (dieFr * specOcc * (1.0f - dieRough * 0.65f) * dieEnvStr);
         }
         // Estevez-Kulla grazing velvet/fuzz rim sheen on rough organic materials (fur, wool, moss, thatch, pine bark).
         if (!skin && base != 2u && s.alpha > 0.52f && sunDir.w > 0.5f && sunShadow > 0.05f) {

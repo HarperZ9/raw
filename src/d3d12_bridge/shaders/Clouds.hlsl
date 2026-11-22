@@ -106,15 +106,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     stormFlash = float3(0.65f, 0.82f, 1.25f) * (pulse * cellHit * dens * 1.8f);
                 }
             }
-            const float sunCalm = lerp(1.0f, 0.72f, pow(saturate(cosT), 12.0f));
-            const float3 lum = min(sunC * (multiScat * lerp(1.0f, powder, 0.52f) * sunCalm * 4.0f * PI * 0.26f) + baseTint + stormFlash, 0.88f.xxx);
+            const float sunCalm = lerp(1.0f, 0.80f, pow(saturate(cosT), 12.0f));
+            // True linear HDR cumulus scattering (no 0.88 SDR clamp): sunlit silver linings reach 1.4-2.8 linear while undersides stay sculptural blue-slate.
+            const float3 lum = min(sunC * (multiScat * lerp(1.0f, powder, 0.56f) * sunCalm * 4.0f * PI * 0.34f) + baseTint + stormFlash, 3.2f.xxx);
             const float ext = dens * sigma;
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;
         }
-        // Soft filmic shoulder + seamless C2 horizon elevation fade (eliminates the curved cloud-shell cutoff ring over Dawnstar).
-        const float3 softS = S / (1.0f + S * 0.92f);
+        // True linear HDR cloud radiance (no 0.92 SDR crush) + seamless C2 horizon elevation fade.
+        const float3 softS = min(S, 3.5f.xxx);
         const float fade = exp(-max(t0, 0.0f) / 185000.0f);
         const float horFade = smoothstep(0.025f, 0.165f, dir.z);
         const float effFade = saturate(fade * 1.15f) * horFade;

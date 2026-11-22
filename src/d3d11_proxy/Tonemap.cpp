@@ -1,5 +1,6 @@
 // Tonemap: see Tonemap.h. Original work, MIT.
 #include "Tonemap.h"
+#include "../d3d12_bridge/StreamlineHost.h"
 #include "TonemapPs.h"
 #include "Overlay.h"
 #include "ProxyLog.h"
@@ -273,9 +274,10 @@ void Tonemap_BeforeDraw(ID3D11DeviceContext* real)
     const float rawStep = std::sqrt(sl.cameraStep[0] * sl.cameraStep[0] + sl.cameraStep[1] * sl.cameraStep[1]);
     const float clampedStep = rawStep > 45.0f ? 0.0f : std::min(rawStep, 18.0f);   // ignore teleports/fast-travel
     s_emaSpeed = s_emaSpeed * 0.86f + clampedStep * 0.14f;
+    const uint32_t effOvMask = t.overlayMask | (raw::bridge::StreamlineHost::Get().GetDeepDvc() ? 4096u : 0u);
     const float v[32] = {float(t.mode), t.bias, t.minLum, t.maxLum, float(t.curve), t.key, t.white, float(t.view),
                          t.adapt, t.ref, t.x[0], t.x[1], t.x[2], t.x[3], t.x[4], inside,
-                         lutStr, float(t.overlayMask), float(s.draws & 63u), s_emaSpeed,
+                         lutStr, float(effOvMask), float(s.draws & 63u), s_emaSpeed,
                          t.bloomScale, t.sharpenStr, t.grainStr, t.vignetteStr,
                          t.caStr, t.radialBlurStr, t.headbobStr, t.lensStr,
                          t.colorTempK, t.oklabSat, t.shadowLift, t.highlightKnee};

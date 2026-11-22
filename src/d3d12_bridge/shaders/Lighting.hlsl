@@ -500,8 +500,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         sunShadow = (flags.x & FLAG_SHADOWS) == 0u ? 1.0f : (flags.x & FLAG_CASCADES) != 0u ? cascadeShadow(p, d, true) : m4.x;
         // When native hardware RT (RayQuery + Persistent World TLAS) is active, skip screen-space contact shadow hacks
         // completely (keeps screenShadow only as fallback when RT is disabled).
-        if (!match && !rt && (flags.x & FLAG_CONTACT) != 0u && base != 5u && !isActorFeat && !isActorCloth && sunShadow > 0.0f && dot(s.n, sunDir.xyz) > 0.0f)
-            sunShadow *= screenShadow(p + lift, sunDir.xyz, tune.w, 0.02f, jit, 12u);
+        if (!match && (flags.x & FLAG_CONTACT) != 0u && base != 5u && !isActorFeat && !isActorCloth && sunShadow > 0.0f && dot(s.n, sunDir.xyz) > 0.0f) {
+            // Even with hardware RT active, run a short-range 6-tap micro-contact shadow march (0..14u, z < 1200)
+            // to ground small clutter, pebbles, cobblestone cracks, and grass roots below BLAS triangle resolution.
+            if (!rt) {
+                sunShadow *= screenShadow(p + lift, sunDir.xyz, tune.w, 0.02f, jit, 12u);
+            } else if (z < 1200.0f) {
+                const float microSh = screenShadow(p + lift * 0.5f, sunDir.xyz, min(tune.w, 14.0f), 0.015f, jit, 6u);
+                sunShadow *= lerp(1.0f, microSh, saturate(1.0f - z / 1200.0f) * 0.72f);
+            }
+        }
         // Skinned actors (skin/hair/eye) keep the game's filtered shadow mask so coarse skinned BLAS triangles never cast blocky self-shadow acne.
         if (rt && sunColour.w > 0.5f && !isActorFeat) { sunShadow = min(sunShadow, base == 5u ? lerp(1.0f, rv.x, 0.6f) : rv.x); }
         if (!match && sunColour.w > 0.5f && (flags.x & FLAG_CLOUDS) != 0u) { sunShadow *= pow(saturate(cloudShadow(p + camPosW.xyz)), 1.25f); }   // SKY-02 rolling cloud-shadow contrast
@@ -789,6 +797,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (!skin && base != 2u && s.alpha > 0.52f && sunDir.w > 0.5f && sunShadow > 0.05f) {
             const float rimFuzz = pow(1.0f - nv, 4.0f) * saturate((s.alpha - 0.52f) * 2.5f) * specOcc;
             lit += albedo * sunColour.rgb * (rimFuzz * sunShadow * 0.28f);
+        }
+        // Synchronized thunderstorm lightning overhead flash on wet surfaces, puddles & open ground during heavy storms.
+        if (isExterior && weather.w > 0.45f && clouds.x > 0.65f) {
+            const float tSlot = floor(camPosW.w * 1.4f);
+            const float stormTrigger = step(0.945f, frac(sin(tSlot * 127.1f) * 43758.5453f));
+            const float flashEnv = pow(1.0f - frac(camPosW.w * 1.4f), 5.0f) * stormTrigger;
+            if (flashEnv > 0.005f) {
+                const float upFace = saturate(s.n.z * 0.65f + 0.35f) * skyVis;
+                const float wetAmp = 1.0f + max(wet.wet, wet.puddle) * 1.6f;
+                lit += (albedo * 0.45f + 0.12f * max(wet.wet, wet.puddle)) * float3(0.62f, 0.78f, 1.25f) * (flashEnv * upFace * wetAmp * 0.65f);
+            }
         }
         // Subtle emerald-cyan Aurora Borealis overhead sky bounce on clear-night snowfields & frost.
         if (isExterior && wet.snow > 0.15f && sunDir.w > 0.5f) {

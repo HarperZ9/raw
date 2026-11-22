@@ -33,6 +33,8 @@
 #include "gi_at4_fs.h"
 #include "cloud_noise_fs.h"
 #include "env_cube_fs.h"
+#include "froxel_inject_fs.h"
+#include "froxel_int_fs.h"
 
 #include <cmath>
 #include <cstring>
@@ -65,7 +67,9 @@ constexpr RasterBinding U = RasterBinding::Uniform, T = RasterBinding::Texture, 
 constexpr RasterBinding kLightLayout[16] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T, T, Sm};
 constexpr RasterBinding kCloudLayout[5] = {U, T, T, T, Sm};
 constexpr RasterBinding kVolLayout[7] = {U, T, T, T, T, T, Sm};
-constexpr RasterBinding kFogLayout[8] = {U, T, T, T, T, T, T, Sm};
+constexpr RasterBinding kFogLayout[9] = {U, T, T, T, T, T, T, T, Sm};
+constexpr RasterBinding kFroxelInjectLayout[5] = {U, T, T, T, Sm};
+constexpr RasterBinding kFroxelIntLayout[2] = {U, T};
 constexpr RasterBinding kBloom1Layout[2] = {T, Sm};
 constexpr RasterBinding kBloom2Layout[3] = {T, T, Sm};
 constexpr RasterBinding kAtmoTransLayout[1] = {U};
@@ -137,7 +141,11 @@ public:
         m_atmoSkyView = m_dev->createTexture({192, 108, TextureFormat::RGBA16Float, RT, "atmo skyview"}, m_err);
         m_cloudNoise = m_dev->createTexture({512, 512, TextureFormat::RGBA16Float, RT, "cloud 64^3 perlin-worley"}, m_err);
         m_envCube = m_dev->createTexture({256, 256, TextureFormat::RGBA16Float, RT, "dynamic prefiltered env cube"}, m_err);
-        if (!m_atmoTrans.valid() || !m_atmoMs.valid() || !m_atmoSkyView.valid() || !m_cloudNoise.valid() || !m_envCube.valid()) return Fail("atmosphere/cloud/env LUT textures");
+        // True 160x90x64 3D Froxel Volumetric Participating Media Grid packed as 1280x720 (8x8 slices of 160x90).
+        m_froxelRaw = m_dev->createTexture({1280, 720, TextureFormat::RGBA16Float, RT, "froxel 160x90x64 raw"}, m_err);
+        m_froxelInt = m_dev->createTexture({1280, 720, TextureFormat::RGBA16Float, RT, "froxel 160x90x64 integrated"}, m_err);
+        if (!m_atmoTrans.valid() || !m_atmoMs.valid() || !m_atmoSkyView.valid() || !m_cloudNoise.valid() || !m_envCube.valid() ||
+            !m_froxelRaw.valid() || !m_froxelInt.valid()) return Fail("atmosphere/cloud/env/froxel LUT textures");
         for (int k = 0; k < 2; ++k) m_reflHist[k] = m_dev->createTexture({host.width, host.height, TextureFormat::RGBA16Float, RT, "rt refl history"}, m_err);
         if (!m_reflHist[0].valid() || !m_reflHist[1].valid()) return Fail("rt refl history textures");
         m_dofCoc = m_dev->createTexture({vw, vh, TextureFormat::RGBA16Float, RT, "dof coc"}, m_err);
@@ -182,7 +190,12 @@ public:
         m_cloudNoisePipe = m_dev->createRasterPipeline(d, m_err);
         d.label = "dynamic env cube"; d.fragment = dxil(kDxil_env_cube_fs, sizeof kDxil_env_cube_fs); d.layout = kEnvCubeLayout;
         m_envCubePipe = m_dev->createRasterPipeline(d, m_err);
-        if (!m_atmoTransPipe.valid() || !m_atmoMsPipe.valid() || !m_atmoSkyPipe.valid() || !m_cloudNoisePipe.valid() || !m_envCubePipe.valid()) return Fail("atmosphere/cloud/env LUT pipelines");
+        d.label = "froxel inject"; d.fragment = dxil(kDxil_froxel_inject_fs, sizeof kDxil_froxel_inject_fs); d.layout = kFroxelInjectLayout;
+        m_froxelInjectPipe = m_dev->createRasterPipeline(d, m_err);
+        d.label = "froxel integrate"; d.fragment = dxil(kDxil_froxel_int_fs, sizeof kDxil_froxel_int_fs); d.layout = kFroxelIntLayout;
+        m_froxelIntPipe = m_dev->createRasterPipeline(d, m_err);
+        if (!m_atmoTransPipe.valid() || !m_atmoMsPipe.valid() || !m_atmoSkyPipe.valid() || !m_cloudNoisePipe.valid() || !m_envCubePipe.valid() ||
+            !m_froxelInjectPipe.valid() || !m_froxelIntPipe.valid()) return Fail("atmosphere/cloud/env/froxel pipelines");
         d.label = "rt refl filter"; d.fragment = dxil(kDxil_rt_refl_filter_fs, sizeof kDxil_rt_refl_filter_fs); d.layout = kReflFilterLayout;
         m_reflFilterPipe = m_dev->createRasterPipeline(d, m_err);
         if (!m_reflFilterPipe.valid()) return Fail("rt refl filter pipeline");
@@ -286,8 +299,15 @@ public:
             const RasterBind vb[7] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volLast, {}},
                                       {{}, m_atmoTrans, {}}, {{}, m_atmoSkyView, {}}, {{}, {}, m_lin}};
             Draw(*c, volNow, m_volPipe, vb);
+            // True 160x90x64 3D Froxel Volumetric Participating Media Grid (inject -> front-to-back Beer-Lambert integrate).
+            if ((m_u.flags[0] & kMatch) == 0u) {
+                const RasterBind fi[5] = {{m_uniform, {}, {}}, {{}, m_atlas, {}}, {{}, m_atmoTrans, {}}, {{}, m_atmoSkyView, {}}, {{}, {}, m_lin}};
+                Draw(*c, m_froxelRaw, m_froxelInjectPipe, fi);
+                const RasterBind fn[2] = {{m_uniform, {}, {}}, {{}, m_froxelRaw, {}}};
+                Draw(*c, m_froxelInt, m_froxelIntPipe, fn);
+            }
         }
-        const RasterBind fog[8] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volNow, {}}, {{}, m_atmoSkyView, {}}, {{}, cloudNow, {}}, {{}, {}, m_lin}};
+        const RasterBind fog[9] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volNow, {}}, {{}, m_atmoSkyView, {}}, {{}, cloudNow, {}}, {{}, m_froxelInt, {}}, {{}, {}, m_lin}};
         if (ok && (m_u.flags[0] & kMatch) == 0u) {
             // Render fog into m_aoOut, optionally run 3-Pass Near/Far Physical Bokeh DoF into m_lit,
             // then run 6-level Jimenez Karis HDR Bloom Pyramid and composite bloomed linear HDR into m_out.
@@ -512,8 +532,8 @@ private:
     BufferHandle m_uniform;
     RasterPipelineHandle m_lightPipe, m_fogPipe, m_cloudPipe, m_volPipe;
     RasterPipelineHandle m_bloomPrePipe, m_bloomDownPipe, m_bloomUpPipe, m_bloomCompPipe;
-    RasterPipelineHandle m_atmoTransPipe, m_atmoMsPipe, m_atmoSkyPipe, m_cloudNoisePipe, m_envCubePipe, m_reflFilterPipe, m_dofCocPipe, m_dofGatherPipe, m_dofCompPipe, m_giAt1Pipe, m_giAt2Pipe, m_giAt4Pipe;
-    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoMs, m_atmoSkyView, m_cloudNoise, m_envCube, m_reflHist[2], m_dofCoc, m_dofBokeh, m_giAtrous[2];
+    RasterPipelineHandle m_atmoTransPipe, m_atmoMsPipe, m_atmoSkyPipe, m_cloudNoisePipe, m_envCubePipe, m_froxelInjectPipe, m_froxelIntPipe, m_reflFilterPipe, m_dofCocPipe, m_dofGatherPipe, m_dofCompPipe, m_giAt1Pipe, m_giAt2Pipe, m_giAt4Pipe;
+    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoMs, m_atmoSkyView, m_cloudNoise, m_envCube, m_froxelRaw, m_froxelInt, m_reflHist[2], m_dofCoc, m_dofBokeh, m_giAtrous[2];
     bool m_atmoTransBuilt = false;
     SamplerHandle m_lin;
     float m_prevWorldToClip[16] = {};

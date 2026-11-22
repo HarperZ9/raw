@@ -17,7 +17,21 @@ Texture2D<float>  Depth       : register(t1);
 Texture2D<float4> VolFog      : register(t3);
 Texture2D<float4> AtmoSkyView : register(t4);
 Texture2D<float4> Clouds      : register(t5);
+Texture2D<float4> FroxelVol   : register(t6);
 SamplerState      Lin         : register(s0);
+
+// Hardware-trilinear lookup into our 160x90x64 3D Froxel Volumetric Participating Media Grid (1280x720 8x8 atlas).
+float4 sampleFroxel3D(float2 uv, float z) {
+    const float zCl = clamp(z, 24.0f, 14000.0f);
+    const float sF = saturate(log(zCl / 24.0f) / log(14000.0f / 24.0f)) * 63.0f;
+    const uint s0 = min(uint(floor(sF)), 63u);
+    const uint s1 = min(s0 + 1u, 63u);
+    const float sT = frac(sF);
+    const float2 tileUv = clamp(uv, float2(0.5f / 160.0f, 0.5f / 90.0f), float2(159.5f / 160.0f, 89.5f / 90.0f));
+    const float2 uv0 = (float2(float(s0 & 7u), float(s0 >> 3u)) + tileUv) * 0.125f;
+    const float2 uv1 = (float2(float(s1 & 7u), float(s1 >> 3u)) + tileUv) * 0.125f;
+    return lerp(FroxelVol.SampleLevel(Lin, uv0, 0.0f), FroxelVol.SampleLevel(Lin, uv1, 0.0f), sT);
+}
 
 float3 sampleHillaireSky(float3 rd) {
     const float az = atan2(rd.y, rd.x);
@@ -130,7 +144,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             vW += wz;
         }
     }
-    const float3 scatter = vW > 1.0e-4f ? (vSum / vW) : VolFog.SampleLevel(Lin, uv, 0.0f).rgb;
+    const float3 vol2D = vW > 1.0e-4f ? (vSum / vW) : VolFog.SampleLevel(Lin, uv, 0.0f).rgb;
+    // Blend true 160x90x64 3D Froxel Volumetric Participating Media (world-space 3D mist + 128-light froxel scattering)
+    // with fine-raymarched sunbeam shafts for seamless depth-accurate 3D volumetrics across exteriors and interiors.
+    const float4 frox = sampleFroxel3D(uv, curZ);
+    const float3 scatter = vol2D * 0.65f + frox.rgb * 0.65f;
     // Engine-native underwater medium (FLAG_UNDERWATER from raw_engine.dll camera_in_water): physical Beer-Lambert absorption.
     if ((flags.x & FLAG_UNDERWATER) != 0u) {
         const float3 uw = elderUnderwaterMedium(lit.rgb, dist, 0.0022f);

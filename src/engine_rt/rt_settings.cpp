@@ -216,6 +216,15 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"bPreCullActors:General", "0"},
         {"bUsePrecipitationOcclusion:Display", "1"},
         {"bEnableParallaxOcclusion:Display", "1"},
+        // Full RAW DX12 SM6.9 rendering ownership: disable competing 2011/2016 vanilla post-effects so they never
+        // waste GPU time or overwrite our RTAO/GTAO, 32-slice Hillaire Volumetrics, 3-pass Bokeh DoF, PBR Snow, or Lens Optics.
+        {"bSAOEnable:Display", "0"},
+        {"bVolumetricLightingEnable:Display", "0"},
+        {"bDoDepthOfField:Imagespace", "0"},
+        {"bEnableImprovedSnow:Display", "0"},
+        {"bLensFlare:Display", "0"},
+        {"bIBLFEnable:Display", "0"},
+        {"bUse64bitsHDRRenderTarget:Display", "1"},
         {"fGrassStartFadeDistance:Grass", "9500.0"},
         {"fLightLODStartFade:Display", "5500.0"},
         {"fBlockLevel0Distance:TerrainManager", "45000.0"},

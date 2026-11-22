@@ -216,6 +216,18 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"bPreCullActors:General", "0"},
         {"bUsePrecipitationOcclusion:Display", "1"},
         {"bEnableParallaxOcclusion:Display", "1"},
+        // Eliminate 2011 Creation Engine LOD/specular/shadow throttling so full-detail geometry & PBR specular
+        // stay crisp across entire valleys, cities, and mountains (zero close-range specular/mesh/tree pop-in).
+        {"fSpecularLODStartFade:Display", "4000.0"},
+        {"fShadowLODStartFade:Display", "2000.0"},
+        {"fMeshLODLevel1FadeDist:Display", "9999999.0"},
+        {"fMeshLODLevel2FadeDist:Display", "9999999.0"},
+        {"fMeshLODLevel1FadeTreeDistance:Display", "9999999.0"},
+        {"fMeshLODLevel2FadeTreeDistance:Display", "9999999.0"},
+        {"bTreesReceiveShadows:Display", "1"},
+        {"bDrawLandShadows:Display", "1"},
+        {"fBlockMaximumDistance:TerrainManager", "250000.0"},
+        {"fSkyCellRefFadeDistance:General", "300000.0"},
         {"fGrassStartFadeDistance:Grass", "9500.0"},
         {"fLightLODStartFade:Display", "5500.0"},
         {"fBlockLevel0Distance:TerrainManager", "45000.0"},

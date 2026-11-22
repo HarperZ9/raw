@@ -174,7 +174,7 @@ uint32_t Device::InternSampler(const D3D11_SAMPLER_DESC& d)
         d.AddressU == D3D11_TEXTURE_ADDRESS_WRAP && d.AddressV == D3D11_TEXTURE_ADDRESS_WRAP) {
         s.Filter = D3D12_FILTER_ANISOTROPIC;
         s.MaxAnisotropy = 16;
-        s.MipLODBias = (d.MipLODBias - 0.30f < -1.0f) ? -1.0f : (d.MipLODBias - 0.30f);
+        s.MipLODBias = (d.MipLODBias - 0.50f < -1.25f) ? -1.25f : (d.MipLODBias - 0.50f);
     }
     s.ComparisonFunc = d.ComparisonFunc ? static_cast<D3D12_COMPARISON_FUNC>(d.ComparisonFunc) : D3D12_COMPARISON_FUNC_NEVER;
     memcpy(s.BorderColor, d.BorderColor, sizeof(s.BorderColor));

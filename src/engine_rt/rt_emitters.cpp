@@ -22,7 +22,7 @@ constexpr size_t kMaxRaw = 1024, kMaxOut = 128;
 constexpr float kMerge = 48.0f;
 
 struct Raw { const void* geo; float pos[3], radius, color[3]; uint32_t flags; };
-Fn g_origEffect = nullptr, g_origParticle = nullptr;
+Fn g_origEffect = nullptr, g_origParticle = nullptr, g_origLighting = nullptr;
 DWORD g_renderTid = 0;
 bool g_installed = false;
 std::vector<Raw> g_raw;            // this frame's glowing draws (render thread only)
@@ -105,6 +105,37 @@ void Note(uint64_t pass) {
     g_raw.push_back(r);
 }
 
+const char* const kWindow[] = {"window", "skylight", "stainedglass", "glassglow", nullptr};
+
+bool ReadWindowLight(uint64_t pass, Raw* r) {
+    __try {
+        const auto* geo = *reinterpret_cast<const uint8_t* const*>(pass + 0x10);
+        if (!geo) return false;
+        const char* name = *reinterpret_cast<const char* const*>(geo + 0x10);
+        if (!name || !name[0]) return false;
+        char buf[96] = {};
+        for (size_t i = 0; i + 1 < sizeof buf && name[i]; ++i) {
+            const char c = name[i];
+            buf[i] = (c >= 'A' && c <= 'Z') ? char(c + 32) : c;
+        }
+        bool isWin = false;
+        for (const char* const* w = kWindow; *w; ++w) {
+            if (std::strstr(buf, *w)) { isWin = true; break; }
+        }
+        if (!isWin) return false;
+        r->geo = geo;
+        std::memcpy(r->pos, geo + 0xE4, 12);
+        std::memcpy(&r->radius, geo + 0xF0, 4);
+        if (!(r->radius >= 12.0f && r->radius <= 360.0f)) return false;
+        // True 3D world-space window portal light (daylight-warm ivory default; modulated by exterior sun in Lighting.hlsl).
+        r->color[0] = 1.45f; r->color[1] = 1.38f; r->color[2] = 1.28f;
+        r->flags = kLightEmitter;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 uint64_t EffectHook(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
     if (GetCurrentThreadId() == g_renderTid) Note(b);
     return g_origEffect(a, b, c, d);
@@ -112,6 +143,13 @@ uint64_t EffectHook(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
 uint64_t ParticleHook(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
     if (GetCurrentThreadId() == g_renderTid) Note(b);
     return g_origParticle(a, b, c, d);
+}
+uint64_t LightingHook(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    if (GetCurrentThreadId() == g_renderTid && g_raw.size() < kMaxRaw) {
+        Raw r{};
+        if (ReadWindowLight(b, &r)) { ++g_glowing; g_raw.push_back(r); }
+    }
+    return g_origLighting(a, b, c, d);
 }
 
 bool Swap(const Image& img, uint32_t vtable, void* hook, Fn* orig) {
@@ -162,8 +200,9 @@ std::string EmittersInstall(const Image& img) {
     g_raw.reserve(kMaxRaw);
     const bool a = Swap(img, Addr("vtable:BSEffectShader"), reinterpret_cast<void*>(&EffectHook), &g_origEffect);
     const bool b = Swap(img, Addr("vtable:BSParticleShader"), reinterpret_cast<void*>(&ParticleHook), &g_origParticle);
-    g_installed = a || b;
-    return std::string("emitters: effect ") + (a ? "hooked" : "failed") + ", particle " + (b ? "hooked" : "failed");
+    const bool c = Swap(img, Addr("vtable:BSLightingShader"), reinterpret_cast<void*>(&LightingHook), &g_origLighting);
+    g_installed = a || b || c;
+    return std::string("emitters: effect ") + (a ? "hooked" : "failed") + ", particle " + (b ? "hooked" : "failed") + ", lighting-windows " + (c ? "hooked" : "failed");
 }
 
 void EmittersOnPresent() {

@@ -28,6 +28,9 @@
 #include "dof_coc_fs.h"
 #include "dof_gather_fs.h"
 #include "dof_comp_fs.h"
+#include "gi_at1_fs.h"
+#include "gi_at2_fs.h"
+#include "gi_at4_fs.h"
 
 #include <cmath>
 #include <cstring>
@@ -69,6 +72,7 @@ constexpr RasterBinding kReflFilterLayout[6] = {U, T, T, T, T, Sm};
 constexpr RasterBinding kDofCocLayout[4] = {U, T, T, Sm};
 constexpr RasterBinding kDofGatherLayout[3] = {U, T, Sm};
 constexpr RasterBinding kDofCompLayout[5] = {U, T, T, T, Sm};
+constexpr RasterBinding kGiAtrousLayout[4] = {U, T, T, T};
 
 class LightingPass final : public IBridgePass
 {
@@ -133,6 +137,8 @@ public:
         m_dofCoc = m_dev->createTexture({vw, vh, TextureFormat::RGBA16Float, RT, "dof coc"}, m_err);
         m_dofBokeh = m_dev->createTexture({vw, vh, TextureFormat::RGBA16Float, RT, "dof bokeh"}, m_err);
         if (!m_dofCoc.valid() || !m_dofBokeh.valid()) return Fail("dof textures");
+        for (int k = 0; k < 2; ++k) m_giAtrous[k] = m_dev->createTexture({host.width, host.height, TextureFormat::RGBA16Float, RT, "gi atrous"}, m_err);
+        if (!m_giAtrous[0].valid() || !m_giAtrous[1].valid()) return Fail("gi atrous textures");
         m_lin = m_dev->createSampler({Filter::Linear, AddressMode::ClampToEdge, "clouds linear"}, m_err);
         if (!m_cloud[0].valid() || !m_cloud[1].valid() || !m_volFog[0].valid() || !m_volFog[1].valid() || !m_lin.valid()) return Fail("cloud/volFog textures");
         const auto dxil = [](const void* p, size_t n) { return ShaderCode{ShaderFormat::Dxil, p, n}; };
@@ -177,6 +183,13 @@ public:
         d.label = "dof comp"; d.fragment = dxil(kDxil_dof_comp_fs, sizeof kDxil_dof_comp_fs); d.layout = kDofCompLayout;
         m_dofCompPipe = m_dev->createRasterPipeline(d, m_err);
         if (!m_dofCocPipe.valid() || !m_dofGatherPipe.valid() || !m_dofCompPipe.valid()) return Fail("dof pipelines");
+        d.label = "gi atrous 1"; d.fragment = dxil(kDxil_gi_at1_fs, sizeof kDxil_gi_at1_fs); d.layout = kGiAtrousLayout;
+        m_giAt1Pipe = m_dev->createRasterPipeline(d, m_err);
+        d.label = "gi atrous 2"; d.fragment = dxil(kDxil_gi_at2_fs, sizeof kDxil_gi_at2_fs); d.layout = kGiAtrousLayout;
+        m_giAt2Pipe = m_dev->createRasterPipeline(d, m_err);
+        d.label = "gi atrous 4"; d.fragment = dxil(kDxil_gi_at4_fs, sizeof kDxil_gi_at4_fs); d.layout = kGiAtrousLayout;
+        m_giAt4Pipe = m_dev->createRasterPipeline(d, m_err);
+        if (!m_giAt1Pipe.valid() || !m_giAt2Pipe.valid() || !m_giAt4Pipe.valid()) return Fail("gi atrous pipelines");
         const ao_rt::Shaders sh{dxil(kDxil_ao_rt_vs, sizeof kDxil_ao_rt_vs), dxil(kDxil_ao_rt_prefilter, sizeof kDxil_ao_rt_prefilter),
                                 dxil(kDxil_ao_rt_level, sizeof kDxil_ao_rt_level), dxil(kDxil_ao_rt_trace, sizeof kDxil_ao_rt_trace),
                                 dxil(kDxil_ao_rt_resolve, sizeof kDxil_ao_rt_resolve)};
@@ -237,10 +250,19 @@ public:
                                       {{}, frame.hasMotion ? m_motion : m_game, {}}, {{}, reflLast, {}}, {{}, {}, m_lin}};
             Draw(*c, reflNow, m_reflFilterPipe, rb);
         }
+        const bool giFilter = ok && m_rtBounce.valid() && (m_u.flags[0] & kBounce) && (m_u.flags[0] & kMatch) == 0u;
+        if (giFilter) {
+            const RasterBind a1[4] = {{m_uniform, {}, {}}, {{}, m_rtBounce, {}}, {{}, m_depth, {}}, {{}, m_normal, {}}};
+            Draw(*c, m_giAtrous[0], m_giAt1Pipe, a1);
+            const RasterBind a2[4] = {{m_uniform, {}, {}}, {{}, m_giAtrous[0], {}}, {{}, m_depth, {}}, {{}, m_normal, {}}};
+            Draw(*c, m_giAtrous[1], m_giAt2Pipe, a2);
+            const RasterBind a4[4] = {{m_uniform, {}, {}}, {{}, m_giAtrous[1], {}}, {{}, m_depth, {}}, {{}, m_normal, {}}};
+            Draw(*c, m_giAtrous[0], m_giAt4Pipe, a4);
+        }
         const RasterBind light[16] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_normal, {}}, {{}, m_albedo, {}}, {{}, m_spec, {}},
                                      {{}, m_mask, {}}, {{}, m_atlas, {}}, {{}, aoVis, {}}, {{}, m_game, {}}, {{}, m_soft.valid() ? m_soft : m_game, {}},
                                      {{}, m_rtVis.valid() ? m_rtVis : m_game, {}}, {{}, m_rtIdx.valid() ? m_rtIdx : m_game, {}},
-                                     {{}, m_rtBounce.valid() ? m_rtBounce : m_game, {}},
+                                     {{}, giFilter ? m_giAtrous[0] : (m_rtBounce.valid() ? m_rtBounce : m_game), {}},
                                      {{}, reflFilter ? reflNow : (m_rtReflect.valid() ? m_rtReflect : m_game), {}},
                                      {{}, cloudNow, {}}, {{}, {}, m_lin}};
         Draw(*c, m_lit, m_lightPipe, light);
@@ -472,8 +494,8 @@ private:
     BufferHandle m_uniform;
     RasterPipelineHandle m_lightPipe, m_fogPipe, m_cloudPipe, m_volPipe;
     RasterPipelineHandle m_bloomPrePipe, m_bloomDownPipe, m_bloomUpPipe, m_bloomCompPipe;
-    RasterPipelineHandle m_atmoTransPipe, m_atmoMsPipe, m_atmoSkyPipe, m_reflFilterPipe, m_dofCocPipe, m_dofGatherPipe, m_dofCompPipe;
-    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoMs, m_atmoSkyView, m_reflHist[2], m_dofCoc, m_dofBokeh;
+    RasterPipelineHandle m_atmoTransPipe, m_atmoMsPipe, m_atmoSkyPipe, m_reflFilterPipe, m_dofCocPipe, m_dofGatherPipe, m_dofCompPipe, m_giAt1Pipe, m_giAt2Pipe, m_giAt4Pipe;
+    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoMs, m_atmoSkyView, m_reflHist[2], m_dofCoc, m_dofBokeh, m_giAtrous[2];
     bool m_atmoTransBuilt = false;
     SamplerHandle m_lin;
     float m_prevWorldToClip[16] = {};

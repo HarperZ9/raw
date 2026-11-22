@@ -190,6 +190,8 @@ void LoadLightingConfig(const std::string& ini)
         tm.grainStr = f("GrainStr", tm.grainStr); tm.vignetteStr = f("VignetteStr", tm.vignetteStr);
         tm.caStr = f("CaStr", tm.caStr); tm.radialBlurStr = f("RadialBlurStr", tm.radialBlurStr);
         tm.headbobStr = f("HeadbobStr", tm.headbobStr); tm.lensStr = f("LensStr", tm.lensStr);
+        tm.colorTempK = f("ColorTempK", tm.colorTempK); tm.oklabSat = f("OklabSat", tm.oklabSat);
+        tm.shadowLift = f("ShadowLift", tm.shadowLift); tm.highlightKnee = f("HighlightKnee", tm.highlightKnee);
         Tonemap_Set(tm);
         t.dof = i("Dof", t.dof ? 1 : 0) != 0; t.dofMaxDist = f("DofMaxDist", t.dofMaxDist);
         t.dofRadius = f("DofRadius", t.dofRadius); t.dofOrbBoost = f("DofOrbBoost", t.dofOrbBoost);

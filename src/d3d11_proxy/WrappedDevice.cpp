@@ -92,7 +92,7 @@ namespace {
             GetModuleFileNameA(nullptr, path, MAX_PATH);
             std::string ini(path);
             ini = ini.substr(0, ini.rfind('\\') + 1) + "d3d11_proxy.ini";
-            s_val = GetPrivateProfileIntA("Lighting", "TxDepth32", 0, ini.c_str());
+            s_val = GetPrivateProfileIntA("Lighting", "TxDepth32", 1, ini.c_str());
         }
         return s_val != 0;
     }

@@ -17,12 +17,15 @@ BASE_INI = [
 ]
 
 CONDITIONS = [
-    ("natural", ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
-    ("rainstorm", ["View=0", "WeatherDrive=0", "Wetness=0.95", "Puddles=0.85", "Rain=1.0", "Snow=0.0"]),
-    ("snowstorm", ["View=0", "WeatherDrive=0", "Wetness=0.0", "Puddles=0.0", "Rain=0.0", "Snow=0.92"]),
-    ("diag_gi", ["View=5", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
-    ("diag_roughness", ["View=24", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
-    ("diag_parallax", ["View=26", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
+    ("natural", None, ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
+    ("sunset", ("set_time", ["hour=18.3"]), ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
+    ("night", ("set_time", ["hour=23.0"]), ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
+    ("noon", ("set_time", ["hour=12.5"]), ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
+    ("rainstorm", None, ["View=0", "WeatherDrive=0", "Wetness=0.95", "Puddles=0.85", "Rain=1.0", "Snow=0.0"]),
+    ("snowstorm", None, ["View=0", "WeatherDrive=0", "Wetness=0.0", "Puddles=0.0", "Rain=0.0", "Snow=0.92"]),
+    ("diag_gi", None, ["View=5", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
+    ("diag_roughness", None, ["View=24", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
+    ("diag_parallax", None, ["View=26", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
 ]
 
 def run_req(args, timeout=90):
@@ -33,7 +36,9 @@ def run_req(args, timeout=90):
 def main():
     tag = sys.argv[1] if len(sys.argv) > 1 else "suite"
     summary = []
-    for name, extra in CONDITIONS:
+    for name, pre_cmd, extra in CONDITIONS:
+        if pre_cmd:
+            run_req([pre_cmd[0]] + pre_cmd[1], timeout=45)
         run_req(["reload_ini"] + BASE_INI + extra, timeout=30)
         cap_name = f"verify_{tag}_{name}"
         rc, out, err = run_req(["capture", "kind=keyframe", f"name={cap_name}", "steps=improved", "hold=16"], timeout=90)

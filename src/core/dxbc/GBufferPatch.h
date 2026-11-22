@@ -65,6 +65,7 @@ struct PatchInfo
     bool        softLight = false;      // soft-lit: the slot 12 sample goes to the emissive target in place of emission
     bool        charLight = false;      // the actors' fixed-direction fill light (slot 11 scale) goes to the emissive target
     bool        envMap = false;         // environment-mapped: the cube's colour times its mask goes to the emissive target
+    bool        parallaxHeight = false; // parallax: the height map (t3 or t8, _p.dds) goes to SV_Target5.g
     bool        hairTint = false;       // the albedo is multiplied by the hair's tint, lerp(1, tint, vertex colour)
     bool        vertexColour = false;   // the albedo carries the vertex colour the lit result is multiplied by
     bool        normal = false;         // the layer carries a normal

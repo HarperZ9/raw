@@ -59,7 +59,10 @@ void MaterialOutputs(const Analysis& a, const Regs& r, const PatchOptions& opt, 
     }
     e->push_back(Make(op::Mov, {Out(kAlbedoTarget, W), alpha}));
     e->push_back(Make(op::Mov, {Out(kSpecularTarget, X), lit ? Rd(r.albedo, kW) : All(0)}));
-    if (a.info.gloss) {
+    if (a.info.materialClass == material::Parallax && a.info.parallaxHeight) {
+        // Export exact authored _p.dds height map [0, 1] into SV_Target5.g for deferred 16+4-step Complex POM.
+        e->push_back(Make(op::Mov, {Out(kSpecularTarget, Y), Rd(r.charl, kY)}, true));
+    } else if (a.info.gloss) {
         // log2(max(shininess, 1)) / 13, clamped to [0, 1].
         const uint32_t c = ComponentOf(a.glossMask);
         e->push_back(Make(op::Max, {Tmp(r.scratch, X), Rd(r.spec, Swz(c, c, c, c)), All(1)}));
@@ -158,9 +161,12 @@ std::multimap<size_t, Instruction> Taps(const Analysis& a, const Regs& r)
         t.emplace(a.softAfter + 1, Make(op::Mov, {Tmp(r.water, XYZ), Rd(a.softReg, a.softSwz)}));
     if (a.info.envMap)      // nor an environment-mapped one: the register holds the cube's colour times its mask
         t.emplace(a.envAfter + 1, Make(op::Mov, {Tmp(r.water, XYZ), Rd(a.envReg, a.envSwz)}));
-    if (a.info.charLight) {
+    if (a.info.charLight || a.info.parallaxHeight) {
         t.emplace(a.body, Make(op::Mov, {Tmp(r.charl, XYZW), All(0)}));
-        t.emplace(a.charBefore, Make(op::Mul, {Tmp(r.charl, X), a.charA, a.charB}));
+        if (a.info.charLight)
+            t.emplace(a.charBefore, Make(op::Mul, {Tmp(r.charl, X), a.charA, a.charB}));
+        if (a.info.parallaxHeight)
+            t.emplace(a.heightAfter + 1, Make(op::Mov, {Tmp(r.charl, Y), Rd(a.heightReg, Swz(a.heightComp, a.heightComp, a.heightComp, a.heightComp))}));
     }
     if (a.waterBefore != kNone)
         t.emplace(a.waterBefore, Make(op::Mov, {Tmp(r.water, XYZ), a.waterOperand}));

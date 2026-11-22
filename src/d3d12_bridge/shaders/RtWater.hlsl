@@ -66,7 +66,7 @@ float2 evalTrochoidalWaves(float2 xy, float2 wDir, float wt, float wDist, float 
         const float dWave = cos(ph) + 0.35f * cos(2.0f * ph);
         grad += dir * (dWave * kAmp[wi] * fade);
     }
-    return grad * (0.21f + windAmp * 0.14f);
+    return grad * (0.58f + windAmp * 0.28f);
 }
 
 // Aperiodic 2D gradient-smooth value noise (zero periodic sine/checkerboard lattice dots on dock pilings).
@@ -207,7 +207,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                                             vNoise2D(capP0 + float2(0.0f, 0.15f)) - vNoise2D(capP0 - float2(0.0f, 0.15f)));
                 const float2 capG1 = float2(vNoise2D(capP1 + float2(0.15f, 0.0f)) - vNoise2D(capP1 - float2(0.15f, 0.0f)),
                                             vNoise2D(capP1 + float2(0.0f, 0.15f)) - vNoise2D(capP1 - float2(0.0f, 0.15f)));
-                const float2 capNormal = lerp(capG0, capG1, flowBlend) * (0.28f * capFade);
+                const float2 capNormal = lerp(capG0, capG1, flowBlend) * (0.52f * capFade);
                 const float2 waveG = lerp(g0, g1, flowBlend) * depthDamp + bowNormal + eddyRipple + capNormal;
                 n = normalize(n + float3(waveG, 0.0f));
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.

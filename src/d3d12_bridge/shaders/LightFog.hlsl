@@ -183,7 +183,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         return float4(lit.rgb * T + atmoCol * (1.0f.xxx - T) + scatter * saturate(T + 0.20f), lit.a);
     }
     // Dungeons, Caves, Nordic Tombs, Dwemer Ruins, Blackreach & Interiors (sunColour.w < 0.5):
-    // Cell-ambient-coupled subterranean depth mist + time-of-day Volumetric Window Light Shafts & Glow!
+    // 100% world-space subterranean depth mist + true 3D shadowed volumetric shafts from VolumetricPass.hlsl
+    // (including 3D world-space BSLightingShader window portal lights from rt_emitters.cpp — zero camera-locked 2D shafts).
     if (sunColour.w < 0.5f && (flags.x & FLAG_FOG) != 0u) {
         const float3 wpInt = camPosW.xyz + w * min(dist * 0.5f, 3200.0f);
         const float caveNoise = 0.72f + 0.56f * cNoise(wpInt * 0.00048f + float3(0.0f, 0.0f, camPosW.w * 0.015f));
@@ -191,26 +192,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float intT = exp(-min(intOd, 1.25f));
         const float3 cellAmb = max(float3(ambient[0].w, ambient[1].w, ambient[2].w), float3(0.010f, 0.013f, 0.018f));
         const float3 caveMist = min(cellAmb * 0.65f, 0.22f.xxx);
-        // Time-of-day Volumetric Window Light Shafts: 8-tap directional screen-space gather from bright HDR windows
-        // (Lit > 1.15) projecting luminous sunlit/moonlit dust-mote shafts across tavern & castle interiors.
-        const float sunE = timeEnv.y;
-        const float dayInt = smoothstep(-0.12f, 0.25f, sunE);
-        const float goldInt = smoothstep(-0.12f, 0.12f, sunE) * (1.0f - smoothstep(0.18f, 0.52f, sunE));
-        const float3 winTint = lerp(float3(0.28f, 0.42f, 0.78f),
-                                    lerp(float3(0.95f, 0.98f, 1.05f), float3(1.18f, 0.76f, 0.38f), goldInt), dayInt);
-        const float2 shaftDir = float2(cos(timeEnv.x * 0.2618f) * 0.018f, -0.022f);
-        const float jitW = ign(px);
-        float3 winShaft = 0.0f.xxx;
-        [unroll] for (int wi = 1; wi <= 8; wi++) {
-            const float f = (float(wi) - 0.5f + jitW * 0.5f) / 8.0f;
-            const float2 suvW = saturate(uv + shaftDir * (f * 3.5f));
-            const float3 wTap = Lit.SampleLevel(Lin, suvW, 0.0f).rgb;
-            const float wLum = dot(wTap, float3(0.2126f, 0.7152f, 0.0722f));
-            winShaft += max(wTap - 1.05f.xxx, 0.0f.xxx) * (smoothstep(1.05f, 2.2f, wLum) * (1.0f - f * 0.65f) * 0.125f);
-        }
-        const float dustW = 0.68f + 0.64f * cNoise(wpInt * 0.0085f - float3(0.0f, 0.0f, camPosW.w * 0.14f));
-        const float3 winVol = winShaft * winTint * (dustW * lerp(0.18f, 0.42f, dayInt));
-        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.85f + winVol, lit.a);
+        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.92f, lit.a);
     }
     const float T = (flags.x & FLAG_FOG_REPLACES) != 0u ? exp(-sigma * tEnd) : 1.0f;
     return float4(lit.rgb * T + scatter, lit.a);

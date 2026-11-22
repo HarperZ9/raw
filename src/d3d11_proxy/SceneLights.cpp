@@ -390,6 +390,11 @@ void SceneLights_BeforeDraw(ID3D11DeviceContext* real)
     const float* g = Shadow(ps[2], 0, &size);
     if (!g) return;
     if (size == kLitPs2 && s.opaque) {   // reflection-cube faces draw lit too, from their own camera
+        if (!s.frame.hasCamera) {
+            ID3D11Buffer* fr[1] = {};
+            BoundCBs(real, 0, 12, 1, fr);
+            if (const float* m = Shadow(fr[0], kFrameCb)) Camera(s.frame, m);
+        }
         ID3D11Buffer* vs[1] = {};
         BoundCBs(real, 0, 2, 1, vs);
         uint32_t vsSize = 0;

@@ -9,6 +9,7 @@
 
 #include "OcclusionCuller.h"
 #include "CBDirtyTracker.h"
+#include "ProxyAPI.h"
 #include "ProxyLog.h"
 #include "RenderPhaseDetector.h"
 #include "SceneLights.h"
@@ -76,6 +77,9 @@ void OcclusionCuller::OnPresent(ID3D11DeviceContext* ctx)
     // ── Get the game's depth buffer ─────────────────────────────────────
     auto& rpd = RenderPhaseDetector::Get();
     ID3D11DepthStencilView* mainDSV = rpd.GetMainDSV();
+    if (!mainDSV) {
+        if (auto* pi = PG_GetProxyInterface()) mainDSV = pi->gameDepthDSV;
+    }
     if (!mainDSV) return;
 
     ID3D11Resource* dsResource = nullptr;
@@ -374,8 +378,7 @@ float OcclusionCuller::EstimateBoundingRadius(uint32_t indexCount, float scale) 
 
 bool OcclusionCuller::ShouldCull(uint32_t indexCount)
 {
-    if (!m_enabled) return false;
-    if (RenderPhaseDetector::Get().GetCurrentPhase() != RenderPhase::GeometryMain) return false;
+    if (!m_enabled || !SceneLights_Opaque()) return false;
     if (indexCount < 36 || indexCount > 10500) return false;
 
     const float* wm = SceneLights_DrawWorld();
@@ -391,27 +394,29 @@ bool OcclusionCuller::ShouldCull(uint32_t indexCount)
     m_drawsTested++;
     m_trisTested += tris;
 
-    // ── Stage 1: Exact Current-Frame Conservative Frustum Sphere Culling ──
-    // Uses THIS frame's worldToClip (zero 1-frame turn lag!) to skip props wholly behind the camera or outside the frustum.
+    // ── Stage 1: Exact Current-Frame Ultra-Conservative Frustum Culling ──
+    // Skyrim terrain chunks (4096u) and building walls can have off-center pivots with <3000 tris;
+    // restrict culling to genuinely small/distant props (indexCount <= 1200, dist > 2600u) with a 1800u
+    // conservative bounding guard so NO terrain, building, cliff, or off-center pivot can EVER pop out.
     const float curX = wm[3], curY = wm[7], curZ = wm[11];
     const float curDist = std::sqrt(curX*curX + curY*curY + curZ*curZ);
-    if (curDist > radius * 2.2f + 140.0f) {
+    if (indexCount <= 1200 && curDist > 2600.0f) {
+        const float safeR = std::max(radius * 2.5f, 1800.0f);
         const float cw0 = sl.worldToClip[3][0]*curX + sl.worldToClip[3][1]*curY + sl.worldToClip[3][2]*curZ + sl.worldToClip[3][3];
-        if (cw0 < -radius * 1.35f) {
+        if (cw0 < -safeR) {
             m_drawsCulled++; m_frustumCulled++; m_trisCulled += tris;
             return true;
         }
         if (cw0 > 1.0f) {
             const float cx0 = (sl.worldToClip[0][0]*curX + sl.worldToClip[0][1]*curY + sl.worldToClip[0][2]*curZ + sl.worldToClip[0][3]) / cw0;
             const float cy0 = (sl.worldToClip[1][0]*curX + sl.worldToClip[1][1]*curY + sl.worldToClip[1][2]*curZ + sl.worldToClip[1][3]) / cw0;
-            const float padNdc = std::clamp((radius * 1.45f) / cw0, 0.02f, 0.90f);
+            const float padNdc = std::clamp(safeR / cw0, 0.25f, 1.50f);
             if (cx0 < -1.0f - padNdc || cx0 > 1.0f + padNdc || cy0 < -1.0f - padNdc || cy0 > 1.0f + padNdc) {
                 m_drawsCulled++; m_frustumCulled++; m_trisCulled += tris;
                 return true;
             }
             // ── Stage 2: Sub-Pixel Distant Micro-Prop Culling ──
-            // Skip tiny distant clutter props (<1.4 px screen diameter past 2,400u) before DX12 DrawIndexed setup.
-            if (curDist > 2400.0f && radius < 120.0f && (radius / cw0) < 0.00070f) {
+            if (curDist > 5500.0f && indexCount <= 300 && (radius / cw0) < 0.00045f) {
                 m_drawsCulled++; m_subPxCulled++; m_trisCulled += tris;
                 return true;
             }

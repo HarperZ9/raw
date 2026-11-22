@@ -159,10 +159,16 @@ void water(uint3 id : SV_DispatchThreadID) {
             float3 refl;
             Hit h;
             if (reflectLength > 0.0f && traceHit(o, rd, reflectLength, h)) {
-                float3 hn;
-                refl = radianceAt(h, o, rd, float2(0.5f, 0.5f), true, hn);
+                float3 cScreen, hn;
+                // Hybrid RT + Screen-Space reflection: use exact lit full-res frame when the 3D ray hit is on-screen
+                // (pixel-sharp reflections of pine needles, characters, bridges & torches), and seamless 3D RT radianceAt off-screen.
+                if (onScreen(o + rd * h.t, cScreen)) {
+                    refl = cScreen;
+                } else {
+                    refl = radianceAt(h, o, rd, float2(0.5f, 0.5f), true, hn);
+                }
                 const float reflMax = max(refl.r, max(refl.g, refl.b));
-                if (reflMax > 2.2f) { refl *= 2.2f / reflMax; }
+                if (reflMax > 2.4f) { refl *= 2.4f / reflMax; }
             } else {
                 refl = waterSky(rd);
             }

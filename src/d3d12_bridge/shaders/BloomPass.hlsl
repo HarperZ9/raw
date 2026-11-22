@@ -92,9 +92,13 @@ float4 up(float4 at : SV_Position) : SV_Target0 {
          SrcA.SampleLevel(Lin, uv + float2( d.x, -d.y), 0.0f).rgb + SrcA.SampleLevel(Lin, uv + float2(-d.x, -d.y), 0.0f).rgb;
     const float3 upCol = s * (1.0f / 16.0f);
     const float3 curCol = SrcB.SampleLevel(Lin, uv, 0.0f).rgb;
+    // Subtle wide horizontal Panavision anamorphic stretch on bright HDR sources across coarser pyramid mips.
+    const float3 anaL = SrcA.SampleLevel(Lin, saturate(uv - float2(d.x * 3.5f, 0.0f)), 0.0f).rgb;
+    const float3 anaR = SrcA.SampleLevel(Lin, saturate(uv + float2(d.x * 3.5f, 0.0f)), 0.0f).rgb;
+    const float3 anaGlow = max((anaL + anaR) * 0.5f - 0.65f.xxx, 0.0f.xxx) * float3(0.72f, 0.88f, 1.12f) * 0.12f;
     // Slight warm crimson-orange photochemical halation bias on wide scattering levels.
     const float3 halTint = float3(1.03f, 0.99f, 0.96f);
-    return float4(curCol * 0.55f + upCol * halTint * 0.65f, 1.0f);
+    return float4(curCol * 0.55f + upCol * halTint * 0.65f + anaGlow, 1.0f);
 }
 
 // Full-res energy-conserving linear HDR composite: SrcA = pre-bloom linear HDR scene, SrcB = 6-level bloom pyramid mip 0.

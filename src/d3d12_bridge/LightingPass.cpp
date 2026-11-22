@@ -62,7 +62,7 @@ constexpr RasterBinding U = RasterBinding::Uniform, T = RasterBinding::Texture, 
 constexpr RasterBinding kLightLayout[16] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T, T, Sm};
 constexpr RasterBinding kCloudLayout[4] = {U, T, T, Sm};
 constexpr RasterBinding kVolLayout[7] = {U, T, T, T, T, T, Sm};
-constexpr RasterBinding kFogLayout[7] = {U, T, T, T, T, T, Sm};
+constexpr RasterBinding kFogLayout[8] = {U, T, T, T, T, T, T, Sm};
 constexpr RasterBinding kBloom1Layout[2] = {T, Sm};
 constexpr RasterBinding kBloom2Layout[3] = {T, T, Sm};
 constexpr RasterBinding kAtmoTransLayout[1] = {U};
@@ -273,7 +273,7 @@ public:
                                       {{}, m_atmoTrans, {}}, {{}, m_atmoSkyView, {}}, {{}, {}, m_lin}};
             Draw(*c, volNow, m_volPipe, vb);
         }
-        const RasterBind fog[7] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volNow, {}}, {{}, m_atmoSkyView, {}}, {{}, {}, m_lin}};
+        const RasterBind fog[8] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volNow, {}}, {{}, m_atmoSkyView, {}}, {{}, cloudNow, {}}, {{}, {}, m_lin}};
         if (ok && (m_u.flags[0] & kMatch) == 0u) {
             // Render fog into m_aoOut, optionally run 3-Pass Near/Far Physical Bokeh DoF into m_lit,
             // then run 6-level Jimenez Karis HDR Bloom Pyramid and composite bloomed linear HDR into m_out.

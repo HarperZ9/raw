@@ -16,6 +16,7 @@ Texture2D<float4> Lit         : register(t0);
 Texture2D<float>  Depth       : register(t1);
 Texture2D<float4> VolFog      : register(t3);
 Texture2D<float4> AtmoSkyView : register(t4);
+Texture2D<float4> Clouds      : register(t5);
 SamplerState      Lin         : register(s0);
 
 float3 sampleHillaireSky(float3 rd) {
@@ -56,7 +57,41 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (dofParams.w > 0.5f && (weather.w >= 0.12f || weather.z >= 0.25f)) {
         lit.rgb = elderWeatherLensPrepass(Lit, px, dims.xy, dims.zw, weather.w, weather.z, camPosW.w);
     }
-    if (d >= 1.0f) { return lit; }   // the sky keeps the game's own atmosphere
+    if (d >= 1.0f) {
+        // Unified Hillaire SIGGRAPH 2020 Physical HDR Sky + Solar Disc + Wrenninge 4-Octave HDR Cloud Composite:
+        // Sky dome, volumetric clouds, aerial perspective, and sunbeams all derive from one physical HDR solver.
+        if (sunColour.w > 0.5f && flags.w != 10u) {
+            const float3 sDir = normalize(worldAt(px, 0.995f) - eyeAt());
+            const float sunLumS = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+            const float dayW = saturate((sunDir.z - 0.01f) * 4.0f) * saturate((sunLumS - 0.20f) * 2.5f);
+            const float cover = saturate(clouds.x);
+            // Preserve exotic DLC skies (Apocrypha emerald, Soul Cairn violet, Solstheim ash).
+            const float isExotic = saturate(max((lit.g - max(lit.r, lit.b) * 1.08f) * 6.0f,
+                                                (min(lit.r, lit.b) - lit.g * 1.15f) * 6.0f));
+            float3 baseSky = lit.rgb;
+            if (dayW > 0.02f && sDir.z > -0.04f) {
+                const float3 hSky = sampleHillaireSky(float3(sDir.xy, max(sDir.z, 0.002f)));
+                // Blend Hillaire clear-sky radiative transfer with overcast atmospheric scatter when cloud cover rises.
+                const float hLum = max(dot(hSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
+                const float3 overcastSky = lerp(float3(0.54f, 0.62f, 0.74f), float3(0.32f, 0.38f, 0.48f), saturate(sDir.z)) * max(hLum * 1.15f, 0.38f);
+                float3 physSky = lerp(hSky * 1.25f, overcastSky, saturate(cover * 0.80f - 0.15f + weather.w * 0.35f));
+                // True HDR physical solar disc + Mie aureole (4.5 linear peak feeds 12-pass Jimenez HDR Bloom).
+                const float cosS = saturate(dot(sDir, sunDir.xyz));
+                const float lowS = saturate(1.0f - sunDir.z * 2.6f);
+                const float3 sunColH = lerp(float3(1.0f, 0.97f, 0.92f), float3(1.0f, 0.58f, 0.24f), lowS);
+                const float disc = smoothstep(0.99935f, 0.99972f, cosS) * (1.0f - cover * 0.72f);
+                const float corona = (pow(cosS, 140.0f) * 0.85f + pow(cosS, 14.0f) * 0.18f) * (1.0f - cover * 0.78f);
+                physSky += sunColH * (disc * 4.5f + corona);
+                baseSky = lerp(baseSky, physSky, dayW * (1.0f - isExotic) * 0.94f);
+            }
+            if ((flags.x & FLAG_CLOUDS) != 0u) {
+                const float4 cl = Clouds.SampleLevel(Lin, (px + 0.5f) * dims.zw, 0.0f);
+                baseSky = lerp(baseSky, baseSky * cl.a + cl.rgb, 1.0f - isExotic);
+            }
+            return float4(baseSky, lit.a);
+        }
+        return lit;
+    }
     const float3 p = worldAt(px, min(d, 0.999999f));
     const float dist = length(p);
     const float3 w = p / max(dist, 1.0e-4f);
@@ -130,8 +165,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Snowstorm frosted whiteout vs night alpine indigo, with physical atmospheric highlight rolloff.
         atmoCol = lerp(atmoCol, lerp(sH, float3(0.58f, 0.63f, 0.70f), 0.55f), weather.z * 0.55f);
         atmoCol = lerp(atmoCol, max(sH * 0.55f, float3(0.05f, 0.09f, 0.18f)), nightF);
-        const float atMax = max(atmoCol.r, max(atmoCol.g, atmoCol.b));
-        atmoCol = atmoCol / (1.0f + max(atMax - 0.65f, 0.0f) * 0.55f);
+        // True linear HDR aerial perspective (no 0.65 SDR clamp so mountains separate with genuine atmospheric luminosity).
+        atmoCol = min(atmoCol, 3.5f.xxx);
         // Attenuate additive volumetric scatter by transmittance T so far-horizon fog never double-adds into blinding whiteout.
         return float4(lit.rgb * T + atmoCol * (1.0f.xxx - T) + scatter * saturate(T + 0.20f), lit.a);
     }

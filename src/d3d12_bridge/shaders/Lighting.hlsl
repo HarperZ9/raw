@@ -479,16 +479,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float zPlaneTol = max(z * 0.055f, 4.5f);
 
         float2 pomPx = px;
-        float hFinal = saturate((dot(albedo, lw) - 0.04f) * 2.75f);
+        const bool useRealHeight = (base == 6u && sp.y > 0.002f);
+        float hFinal = useRealHeight ? saturate(sp.y) : saturate((dot(albedo, lw) - 0.04f) * 2.75f);
         if ((base == 1u || base == 4u || base == 6u) && z < 1800.0f) {
             const float pomFade = saturate(1.0f - z / 1800.0f) * (base == 6u ? 1.0f : (base == 4u ? 0.95f : 0.88f));
             const float nvPom = max(abs(dot(s.n, s.v)), 0.25f);
             // March INTO the surface (-vTan): true parallax shift away from the eye along the tangent plane.
             const float3 vInto = -s.v + s.n * dot(s.v, s.n);
-            const float4 sEnd = screenOf(p + vInto * (11.5f * pomFade / nvPom));
+            const float4 sEnd = screenOf(p + vInto * ((useRealHeight ? 14.0f : 11.5f) * pomFade / nvPom));
             float2 vRayPx = (sEnd.w > 1.0f) ? (sEnd.xy - px) : float2(0.0f, 0.0f);
             const float rayLen = length(vRayPx);
-            if (rayLen > 22.0f) { vRayPx *= (22.0f / rayLen); }
+            if (rayLen > 24.0f) { vRayPx *= (24.0f / rayLen); }
             if (rayLen > 0.5f) {
                 float curLayer = 1.0f;
                 const float dLayer = 1.0f / 16.0f;
@@ -502,7 +503,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     const float zq = viewZOf(Depth.Load(spP));
                     const float zPred = z + zSlope.x * curOff.x + zSlope.y * curOff.y;
                     if (abs(zq - zPred) > zPlaneTol) { break; }
-                    const float hCur = saturate((dot(Albedo.Load(spP).rgb, lw) - 0.04f) * 2.75f);
+                    const float hCur = useRealHeight ? saturate(Spec.Load(spP).y) : saturate((dot(Albedo.Load(spP).rgb, lw) - 0.04f) * 2.75f);
                     if (hCur >= curLayer) { hitPom = true; break; }
                 }
                 if (hitPom) {
@@ -515,7 +516,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                         const int3 spM = int3(clamp(int2(round(px + midOff)), int2(0, 0), dimMax), 0);
                         const float zM = viewZOf(Depth.Load(spM));
                         const float zPredM = z + zSlope.x * midOff.x + zSlope.y * midOff.y;
-                        const float hM = abs(zM - zPredM) < zPlaneTol ? saturate((dot(Albedo.Load(spM).rgb, lw) - 0.04f) * 2.75f) : midL;
+                        const float hM = abs(zM - zPredM) < zPlaneTol
+                            ? (useRealHeight ? saturate(Spec.Load(spM).y) : saturate((dot(Albedo.Load(spM).rgb, lw) - 0.04f) * 2.75f))
+                            : midL;
                         if (hM >= midL) { hiOff = midOff; hiL = midL; } else { loOff = midOff; loL = midL; }
                     }
                     const int3 spFinal = int3(clamp(int2(round(px + hiOff)), int2(0, 0), dimMax), 0);
@@ -528,7 +531,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                         const float3 dispExp = saturate(dispAlb * (saturate(pow(aLumD, 1.12f) * 1.14f) / aLumD));
                         albedo = lerp(albedo, dispExp, pomFade * 0.96f);
                         s.n = normalize(lerp(s.n, worldNormal(Normal.Load(spFinal)), pomFade * 0.85f));
-                        hFinal = saturate((aLumD - 0.04f) * 2.75f);
+                        hFinal = useRealHeight ? saturate(Spec.Load(spFinal).y) : saturate((aLumD - 0.04f) * 2.75f);
                         // Physical mortar/crevice ambient occlusion from displaced heightfield.
                         albedo *= lerp(0.62f, 1.06f, lerp(1.0f, hFinal, pomFade * 0.75f));
                     }
@@ -540,12 +543,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const int3 ipR = int3(clamp(pBase + int2( 1, 0), int2(0, 0), dimMax), 0);
         const int3 ipU = int3(clamp(pBase + int2( 0,-1), int2(0, 0), dimMax), 0);
         const int3 ipD = int3(clamp(pBase + int2( 0, 1), int2(0, 0), dimMax), 0);
-        const float hc = dot(albedo, lw);
+        const float hc = useRealHeight ? hFinal : dot(albedo, lw);
         const float zBase = viewZOf(Depth.Load(int3(pBase, 0)));
-        const float hL = abs(viewZOf(Depth.Load(ipL)) - (zBase - zSlope.x)) < zPlaneTol ? dot(Albedo.Load(ipL).rgb, lw) : hc;
-        const float hR = abs(viewZOf(Depth.Load(ipR)) - (zBase + zSlope.x)) < zPlaneTol ? dot(Albedo.Load(ipR).rgb, lw) : hc;
-        const float hU = abs(viewZOf(Depth.Load(ipU)) - (zBase - zSlope.y)) < zPlaneTol ? dot(Albedo.Load(ipU).rgb, lw) : hc;
-        const float hD = abs(viewZOf(Depth.Load(ipD)) - (zBase + zSlope.y)) < zPlaneTol ? dot(Albedo.Load(ipD).rgb, lw) : hc;
+        const float hL = abs(viewZOf(Depth.Load(ipL)) - (zBase - zSlope.x)) < zPlaneTol ? (useRealHeight ? Spec.Load(ipL).y : dot(Albedo.Load(ipL).rgb, lw)) : hc;
+        const float hR = abs(viewZOf(Depth.Load(ipR)) - (zBase + zSlope.x)) < zPlaneTol ? (useRealHeight ? Spec.Load(ipR).y : dot(Albedo.Load(ipR).rgb, lw)) : hc;
+        const float hU = abs(viewZOf(Depth.Load(ipU)) - (zBase - zSlope.y)) < zPlaneTol ? (useRealHeight ? Spec.Load(ipU).y : dot(Albedo.Load(ipU).rgb, lw)) : hc;
+        const float hD = abs(viewZOf(Depth.Load(ipD)) - (zBase + zSlope.y)) < zPlaneTol ? (useRealHeight ? Spec.Load(ipD).y : dot(Albedo.Load(ipD).rgb, lw)) : hc;
         const float gx = clamp((hR - hL) * 3.8f, -0.75f, 0.75f) * distFade;
         const float gy = clamp((hD - hU) * 3.8f, -0.75f, 0.75f) * distFade;
         s.n = normalize(s.n + (-gx * tVec - gy * bVec) * 0.58f);
@@ -564,7 +567,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float zS = viewZOf(Depth.Load(spm));
                 const float zPredS = zBase + zSlope.x * sOff.x + zSlope.y * sOff.y;
                 if (abs(zS - zPredS) < zPlaneTol) {
-                    const float hs = saturate((dot(Albedo.Load(spm).rgb, lw) - 0.04f) * 2.75f);
+                    const float hs = useRealHeight ? saturate(Spec.Load(spm).y) : saturate((dot(Albedo.Load(spm).rgb, lw) - 0.04f) * 2.75f);
                     maxH = max(maxH, hs - 0.055f * float(pi));
                 }
             }

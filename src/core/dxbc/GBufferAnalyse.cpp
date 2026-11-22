@@ -399,6 +399,21 @@ uint8_t LightingClass(const Analysis& a)
     if (a.texDim[3] || a.texDim[8]) return material::Parallax;
     return material::Lit;
 }
+
+// Parallax height map (_p.dds): Skyrim's BSLightingShader parallax shaders sample t3 (single-layer) or t8 (multi-layer).
+// Tapping channel 0 (R) into SV_Target5.g gives Lighting.hlsl the exact authored height map for 16+4-step Complex POM.
+void FindParallaxHeight(const std::vector<Instruction>& code, const std::vector<int>& depth, Analysis* a)
+{
+    size_t n = FirstSample(code, depth, a->body, 3);
+    if (n == kNone) n = FirstSample(code, depth, a->body, 8);
+    if (n == kNone) return;
+    const int ch = ChannelAt(code[n], 0);
+    if (ch < 0) return;
+    a->heightAfter = n;
+    a->heightReg = code[n].ops[0].index[0];
+    a->heightComp = uint32_t(ch);
+    a->info.parallaxHeight = true;
+}
 } // namespace
 
 bool Analyse(const Container& c, const Program& p, Analysis* a)
@@ -435,6 +450,7 @@ bool Analyse(const Container& c, const Program& p, Analysis* a)
         else { const size_t keep = a->specAfter; FindSpecular(code, depth, a); a->specAfter = keep; a->info.specularMask = false; }
         if (a->info.materialClass == material::SoftLit) FindSoftLight(code, depth, a);
         if (a->info.materialClass == material::EnvironmentMapped) FindEnvMap(code, depth, a);
+        if (a->info.materialClass == material::Parallax) FindParallaxHeight(code, depth, a);
         if (a->info.materialClass != material::Landscape) FindCharLight(code, depth, a);
         a->info.normal = true;
     } else if (a->waterBefore != kNone && a->anyCbAt != kNone) {

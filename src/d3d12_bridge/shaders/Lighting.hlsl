@@ -156,7 +156,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if ((flags.x & FLAG_MATCH) == 0u) {
             baseSky = baseSky / (1.0f + max(max(baseSky.r, max(baseSky.g, baseSky.b)) - 0.65f, 0.0f) * 0.65f);
             const float sunLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-            const float dayW = saturate((sunDir.z - 0.01f) * 4.0f) * saturate((sunLum - 0.20f) * 2.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+            // Gate solar disc & daytime sky strictly on engine gameHour (timeEnv.x: 5.2..20.6) so NiDirectionalLight's
+            // night-time Moon switch never draws a solar disc on Masser/Secunda.
+            const float isDayHour = (timeEnv.x > 0.01f)
+                ? (smoothstep(5.2f, 6.4f, timeEnv.x) * (1.0f - smoothstep(19.2f, 20.6f, timeEnv.x))) : 1.0f;
+            const float dayW = saturate((sunDir.z - 0.01f) * 4.0f) * saturate((sunLum - 0.20f) * 2.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f) * isDayHour;
             if (dayW > 0.02f && sDir.z > -0.04f) {
                 const float cover = saturate(clouds.x);
                 const float lowSun = saturate(1.0f - sunDir.z * 2.6f);
@@ -180,21 +184,26 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float isSoulCairn = saturate((min(game.r, game.b) - game.g * 1.12f) * 6.0f);
                 const float isAshStorm  = saturate((game.r - game.b * 1.48f) * 3.2f) * smoothstep(0.18f, 0.45f, sunDir.z);
                 const float exoticRealm = saturate(max(isApocrypha, max(isSoulCairn, isAshStorm)));
-                baseSky = lerp(baseSky, pureSky + solarCore, dayW * 0.96f * (1.0f - exoticRealm));
+                // Preserve authored Masser & Secunda moon crater textures when visible during dawn/dusk twilight.
+                const float gLumaSky = dot(game.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+                const float moonPreserve = smoothstep(0.18f, 0.52f, gLumaSky) * (1.0f - smoothstep(0.985f, 0.996f, cosTheta)) * (1.0f - smoothstep(0.22f, 0.45f, sunDir.z));
+                baseSky = lerp(baseSky, pureSky + solarCore, dayW * 0.96f * (1.0f - exoticRealm) * (1.0f - moonPreserve * 0.85f));
             }
         }
         // Volumetric clouds composite in LightFog.hlsl (t5) over the unified Hillaire 2020 HDR sky.
         const float4 c = float4(0.0f, 0.0f, 0.0f, 1.0f);
         float3 skyOut = baseSky;
         if ((flags.x & FLAG_MATCH) == 0u) {
-            // Luminous atmospheric moon glow locked strictly to Skyrim's real Masser/Secunda sky pixels (zero camera drift),
+            // Subtle atmospheric moon glow that preserves Masser & Secunda's authored lunar crater detail (never blows out to empty white),
             // plus infinite-resolution procedural scintillating starfield and animated volumetric Nordic auroras.
             const float sunLumN = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-            const float nightSkyW = saturate((0.26f - sunLumN) * 4.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+            const float isNightHour = (timeEnv.x > 0.01f)
+                ? saturate(1.0f - smoothstep(5.2f, 6.6f, timeEnv.x) * (1.0f - smoothstep(19.0f, 20.6f, timeEnv.x))) : 0.0f;
+            const float nightSkyW = max(saturate((0.26f - sunLumN) * 4.5f), isNightHour * 0.85f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
             if (nightSkyW > 0.05f && sDir.z > 0.0f) {
                 const float moonL = dot(baseSky, float3(0.2126f, 0.7152f, 0.0722f));
-                const float moonMask = smoothstep(0.14f, 0.45f, moonL);
-                skyOut += baseSky * float3(0.88f, 0.96f, 1.18f) * (moonMask * nightSkyW * (0.45f + 0.85f * c.a));
+                const float moonMask = smoothstep(0.18f, 0.55f, moonL);
+                skyOut += baseSky * float3(0.88f, 0.96f, 1.15f) * (moonMask * nightSkyW * 0.18f);
                 // Procedural 4K/8K/16K-crisp starfield with stellar color temperatures and subtle scintillation.
                 const float3 starCell = floor(sDir * 260.0f);
                 const float3 starF = frac(sDir * 260.0f) - 0.5f;

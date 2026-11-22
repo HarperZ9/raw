@@ -77,7 +77,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (sunColour.w > 0.5f && flags.w != 10u) {
             const float3 sDir = normalize(worldAt(px, 0.995f) - eyeAt());
             const float sunLumS = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-            const float dayW = saturate((sunDir.z - 0.01f) * 4.0f) * saturate((sunLumS - 0.20f) * 2.5f);
+            // Strictly gate solar core & daytime sky on engine gameHour (timeEnv.x: 5.2..20.6) so NiDirectionalLight's
+            // night-time Moon switch never paints a solar disc over Masser/Secunda.
+            const float isDayHourS = (timeEnv.x > 0.01f)
+                ? (smoothstep(5.2f, 6.4f, timeEnv.x) * (1.0f - smoothstep(19.2f, 20.6f, timeEnv.x))) : 1.0f;
+            const float dayW = saturate((sunDir.z - 0.01f) * 4.0f) * saturate((sunLumS - 0.20f) * 2.5f) * isDayHourS;
             const float cover = saturate(clouds.x);
             // Preserve exotic DLC skies (Apocrypha emerald, Soul Cairn violet, Solstheim ash).
             const float isExotic = saturate(max((lit.g - max(lit.r, lit.b) * 1.08f) * 6.0f,
@@ -98,7 +102,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float solarCore = exp(-sunAng * 135.0f) * 16.0f + smoothstep(0.99962f, 0.99990f, cosS) * 8.0f;
                 const float solarCorona = exp(-sunAng * 22.0f) * 1.65f + exp(-sunAng * 5.5f) * 0.28f;
                 physSky += sunCoreCol * solarCore + sunHaloCol * (solarCorona * (1.0f - cover * 0.55f));
-                baseSky = lerp(baseSky, physSky, dayW * (1.0f - isExotic) * 0.94f);
+                // Preserve Masser & Secunda moon crater textures during twilight instead of overwriting with flat sky.
+                const float moonLumF = dot(baseSky, float3(0.2126f, 0.7152f, 0.0722f));
+                const float moonKeep = smoothstep(0.18f, 0.52f, moonLumF) * (1.0f - smoothstep(0.985f, 0.996f, cosS)) * (1.0f - smoothstep(0.22f, 0.45f, sunDir.z));
+                baseSky = lerp(baseSky, physSky, dayW * (1.0f - isExotic) * (1.0f - moonKeep * 0.85f) * 0.94f);
             }
             if ((flags.x & FLAG_CLOUDS) != 0u) {
                 const float4 cl = Clouds.SampleLevel(Lin, (px + 0.5f) * dims.zw, 0.0f);

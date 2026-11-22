@@ -51,11 +51,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float focusD = Depth.Load(int3(int2(dims.xy * 0.5f), 0));
     const float focusZ = focusD < 1.0f ? viewZOf(focusD) : 10000.0f;
     const float curZ = d < 1.0f ? viewZOf(d) : 100000.0f;
-    // ElderDepthOfField: user-tunable 32-tap heptagonal HDR bokeh (dofParams.x=maxDist, y=radius, z=orbBoost).
-    if (dofParams.x > 1.0f && focusZ < dofParams.x) {
-        lit.rgb = elderBokehDoF(Lit, Depth, px, dims.xy, dims.zw, curZ, focusZ, dofParams.x, dofParams.y, dofParams.z);
-    }
-    // Pre-Pass Weather Optics: procedural HDR rain-on-lens droplets & blizzard crystalline frost edges.
+    // Pre-Pass Weather Optics: procedural HDR rain-on-lens droplets & blizzard crystalline frost edges
+    // (3-pass Near/Far Physical Bokeh DoF runs in dedicated DofPass.hlsl right after LightFog).
     if (dofParams.w > 0.5f && (weather.w >= 0.12f || weather.z >= 0.25f)) {
         lit.rgb = elderWeatherLensPrepass(Lit, px, dims.xy, dims.zw, weather.w, weather.z, camPosW.w);
     }

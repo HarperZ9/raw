@@ -114,16 +114,50 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float sunLumV = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
         const float nightV = isInt ? 0.0f : saturate((0.26f - sunLumV) * 4.5f);
         // Slow-rising 3D hearth-smoke & dust-mote modulation inside taverns, Nordic tombs, and Dwemer halls,
-        // plus GTA-VI-style long-range night local-light volumetric halos across villages & city streets.
+        // plus shadowed 8-step depth-marched volumetric cones for the top 6 local lights so firelight beams
+        // wrap cleanly around pillars, rafters, and arches instead of leaking through solid walls.
         const float3 midWp = camPosW.xyz + w * min(tEnd * 0.45f, 1800.0f);
         const float dustMote = isInt ? (0.72f + 0.56f * cNoise(midWp * 0.011f - float3(0.0f, 0.0f, camPosW.w * 0.16f))) : 1.0f;
-        const float intGain = isInt ? (1.28f * dustMote) : (weatherMistGain * (1.0f + nightV * 0.85f));
+        const float intGain = isInt ? (1.35f * dustMote) : (weatherMistGain * (1.0f + nightV * 0.85f));
+        const float jitL = ign(lo + float2(13.0f, 29.0f));
+        uint shadowedDone = 0u;
         [loop] for (uint li = 0u; li < flags.y; li++) {
-            const float wi = windowIntegral(w, lightPosR[li].xyz, lightPosR[li].w * (1.0f + nightV * 0.35f), tEnd);
+            const float rL = lightPosR[li].w * (1.0f + nightV * 0.35f);
+            const float wi = windowIntegral(w, lightPosR[li].xyz, rL, tEnd);
             if (wi > 0.0f) {
                 const bool isFire = lightColS[li].r > lightColS[li].b * 1.30f;
                 const float3 fCol = isFire ? lightColS[li].rgb * float3(1.22f, 0.86f, 0.54f) * 1.45f : lightColS[li].rgb;
-                scatter += fCol * (sigma * wi * tune2.y * intGain / (4.0f * PI));
+                float visScale = 1.0f;
+                if ((isInt || nightV > 0.35f) && shadowedDone < 6u) {
+                    const float3 lp = lightPosR[li].xyz;
+                    const float b = dot(lp, w);
+                    const float h2 = dot(lp, lp) - b * b;
+                    const float halfL = sqrt(max(rL * rL - h2, 0.0f));
+                    const float tA = max(0.0f, b - halfL);
+                    const float tB = min(tEnd, b + halfL);
+                    if (tB > tA + 4.0f) {
+                        shadowedDone++;
+                        float occAcc = 0.0f;
+                        const float dStep = (tB - tA) * 0.125f;
+                        [unroll] for (int si = 0; si < 8; si++) {
+                            const float ts = tA + (float(si) + jitL) * dStep;
+                            const float3 sp = w * ts;
+                            const float3 toLight = lp - sp;
+                            const float3 midPt = sp + toLight * 0.5f;
+                            const float4 sm = screenOf(midPt);
+                            float visStep = 1.0f;
+                            if (sm.w > 1.0f && all(sm.xy >= 0.0f) && sm.x < dims.x && sm.y < dims.y) {
+                                const float zHit = viewZOf(Depth.Load(int3(sm.xy, 0)));
+                                if (zHit < sm.w * 0.96f) { visStep = 0.15f; }
+                            }
+                            const float cosL = dot(w, normalize(toLight + 1.0e-4f));
+                            const float phL = lerp(0.85f, 1.45f, saturate(cosL * 0.5f + 0.5f));
+                            occAcc += visStep * phL * 0.125f;
+                        }
+                        visScale = occAcc;
+                    }
+                }
+                scatter += fCol * (sigma * wi * visScale * tune2.y * intGain / (4.0f * PI));
             }
         }
     }

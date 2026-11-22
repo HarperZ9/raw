@@ -81,10 +81,14 @@ float3 distantLit(int3 ip, float2 at, float d) {
     if (rt && (flags.x & FLAG_BOUNCE) != 0u && sunColour.w > 0.5f) { amb += RtBounce.Load(ip).rgb * proj.w * (farTreeCard ? 0.65f : 1.25f); }
     float3 direct = sunColour.rgb * (nl * sh * sunBoostL * (farTreeCard ? 0.82f : 1.0f));
     if (nearGrass && sunColour.w > 0.5f) {
-        // Complex vegetation backlit chlorophyll subsurface transmission (luminous sunlit grass blades with deep root grounding).
-        const float backGrass = pow(saturate(dot(-toCam, sunDir.xyz)), 3.0f);
-        direct += sunColour.rgb * float3(1.08f, 1.18f, 0.52f) * (backGrass * 0.45f * (1.0f - saturate(cloudC * 0.75f))) * sh * sunBoostL;
-        direct *= lerp(0.65f, 1.0f, grassAo);
+        // Per-blade directional micro-shadow march (grounds grass tufts cleanly inside terrain, rock & tree shadows).
+        const float grassMicroSh = zDist < 2600.0f ? screenShadow(p + n * 0.6f, sunDir.xyz, 18.0f, 0.02f, ign(px), 6u) : 1.0f;
+        const float gSh = sh * lerp(1.0f, grassMicroSh, saturate(1.0f - zDist / 2600.0f) * 0.82f);
+        direct = sunColour.rgb * (nl * gSh * sunBoostL);
+        // Subtle deep-emerald chlorophyll subsurface transmission + root grounding (no neon-yellow blowout).
+        const float backGrass = pow(saturate(dot(-toCam, sunDir.xyz)), 3.4f);
+        direct += sunColour.rgb * float3(0.62f, 0.94f, 0.38f) * (backGrass * 0.24f * (1.0f - saturate(cloudC * 0.75f))) * gSh * sunBoostL;
+        direct *= lerp(0.58f, 1.0f, grassAo);
     }
     // True linear HDR distant LOD output (removes 2011 double knee3() crush and duplicate fog; LightFog.hlsl applies unified Hillaire aerial perspective).
     return albedo * (direct + max(amb, 0.0f));

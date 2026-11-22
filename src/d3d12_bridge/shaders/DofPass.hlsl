@@ -46,7 +46,7 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
     const float2 invDim = 1.0f / dim;
     const float2 px = floor(at.xy);
     const float4 center = SrcA.Load(int3(px, 0));
-    if (WaveActiveAllTrue(dofParams.x <= 1.0f || abs(center.a) < 0.015f)) { return float4(center.rgb, 0.0f); }
+    if (WaveActiveAllTrue(dofParams.x <= 1.0f)) { return float4(center.rgb, 0.0f); }
 
     const float maxRad = clamp(dofParams.y, 1.5f, 24.0f) * 0.5f;   // half-res radius in pixels
     const float2 uvNorm = (px + 0.5f) * invDim * 2.0f - 1.0f;

@@ -118,9 +118,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
         return lit;
     }
+    const float3 eye = eyeAt();
     const float3 p = worldAt(px, min(d, 0.999999f));
-    const float dist = length(p);
-    const float3 w = p / max(dist, 1.0e-4f);
+    const float3 toP = p - eye;
+    const float dist = length(toP);
+    const float3 w = toP / max(dist, 1.0e-4f);
     const float tEnd = min(dist, tune2.w);
     const float sigma = tune.x;
 
@@ -162,7 +164,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float hStart = max(camPosW.z * 0.00025f, 0.0f);
         const float elevW = lerp(1.12f, 0.44f, smoothstep(-0.15f, 0.30f, w.z));
         // 3D rolling alpine mist & high-altitude mountain-collar cloud band (replaces static billboard fog planes).
-        const float3 midPt = camPosW.xyz + w * min(dist * 0.55f, 45000.0f);
+        const float3 midPt = camPosW.xyz + eye + w * min(dist * 0.55f, 45000.0f);
         const float3 windShift = float3(cloudWind.xy * camPosW.w * 0.00006f, 0.0f);
         const float alpineNoise = cNoise(midPt * 0.00014f + windShift) * 0.65f + cNoise(midPt * 0.00042f - windShift * 1.6f + 7.1f) * 0.35f;
         const float peakCollar = exp(-pow((midPt.z - 5200.0f) / 3600.0f, 2.0f)) * smoothstep(8000.0f, 28000.0f, dist);
@@ -204,7 +206,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // 100% world-space subterranean depth mist + true 3D shadowed volumetric shafts from VolumetricPass.hlsl
     // (including 3D world-space BSLightingShader window portal lights from rt_emitters.cpp — zero camera-locked 2D shafts).
     if (sunColour.w < 0.5f && (flags.x & FLAG_FOG) != 0u) {
-        const float3 wpInt = camPosW.xyz + w * min(dist * 0.5f, 3200.0f);
+        const float3 wpInt = camPosW.xyz + eye + w * min(dist * 0.5f, 3200.0f);
         const float caveNoise = 0.72f + 0.56f * cNoise(wpInt * 0.00048f + float3(0.0f, 0.0f, camPosW.w * 0.015f));
         const float intOd = max(dist - 220.0f, 0.0f) * 0.000095f * caveNoise;
         const float intT = exp(-min(intOd, 1.25f));

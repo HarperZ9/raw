@@ -69,13 +69,14 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     const float2 uv = (float2(px.x % 160u, px.y % 90u) + 0.5f) / float2(160.0f, 90.0f);
     const float2 fullPx = uv * dims.xy;
 
-    // Reconstruct exact 3D world-space ray & froxel center position at exponential slice depth.
-    const float3 farDir = normalize(worldAt(fullPx, 0.995f) - eyeAt());
+    // Reconstruct exact 3D world-space ray & froxel center position from true camera eyeAt() (1st & 3rd person exact).
+    const float3 eye = eyeAt();
+    const float3 farDir = normalize(worldAt(fullPx, 0.995f) - eye);
     const float z0 = froxelSliceZ(float(slice));
     const float z1 = froxelSliceZ(float(slice + 1u));
     const float jit = ign(float2(px.x % 160u, px.y % 90u) + float2(float(slice) * 3.7f, proj.z * 7.1f));
     const float zMid = lerp(z0, z1, 0.35f + 0.30f * jit);
-    const float3 pRel = farDir * zMid;
+    const float3 pRel = eye + farDir * zMid;
     const float3 wp = pRel + camPosW.xyz;
 
     // 3D heterogeneous world-space participating media density:

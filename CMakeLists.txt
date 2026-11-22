@@ -449,10 +449,11 @@ if(RAW_ENGINE_DIR)
     set(RAW_VOLUMETRIC_HLSL ${RAW_SHARE_HLSL}/VolumetricPass.hlsl)
     set(RAW_BLOOM_HLSL ${RAW_SHARE_HLSL}/BloomPass.hlsl)
     set(RAW_ATMO_HLSL ${RAW_SHARE_HLSL}/AtmosphereLut.hlsl)
+    set(RAW_REFL_FILT_HLSL ${RAW_SHARE_HLSL}/RtReflFilter.hlsl)
     set(RAW_LIGHT_HEADERS ${RAW_ENGINE_GEN}/light_vs.h ${RAW_ENGINE_GEN}/light_fs.h ${RAW_ENGINE_GEN}/light_fog_fs.h
         ${RAW_ENGINE_GEN}/clouds_fs.h ${RAW_ENGINE_GEN}/volumetric_fs.h
         ${RAW_ENGINE_GEN}/bloom_pre_fs.h ${RAW_ENGINE_GEN}/bloom_down_fs.h ${RAW_ENGINE_GEN}/bloom_up_fs.h ${RAW_ENGINE_GEN}/bloom_comp_fs.h
-        ${RAW_ENGINE_GEN}/atmo_trans_fs.h ${RAW_ENGINE_GEN}/atmo_sky_fs.h)
+        ${RAW_ENGINE_GEN}/atmo_trans_fs.h ${RAW_ENGINE_GEN}/atmo_sky_fs.h ${RAW_ENGINE_GEN}/rt_refl_filter_fs.h)
     add_custom_command(
         OUTPUT ${RAW_LIGHT_HEADERS}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
@@ -467,9 +468,10 @@ if(RAW_ENGINE_DIR)
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E composite ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/bloom_comp_fs.h -Vn kDxil_bloom_comp_fs ${RAW_BLOOM_HLSL}
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E transmittance ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/atmo_trans_fs.h -Vn kDxil_atmo_trans_fs ${RAW_ATMO_HLSL}
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E skyview ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/atmo_sky_fs.h -Vn kDxil_atmo_sky_fs ${RAW_ATMO_HLSL}
-        DEPENDS ${RAW_LIGHT_HLSL} ${RAW_LIGHTFOG_HLSL} ${RAW_CLOUDS_HLSL} ${RAW_VOLUMETRIC_HLSL} ${RAW_BLOOM_HLSL} ${RAW_ATMO_HLSL} ${RAW_SHARE_HLSL}/LightingCommon.hlsli ${RAW_SHARE_HLSL}/Weather.hlsli
+        COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E fs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_refl_filter_fs.h -Vn kDxil_rt_refl_filter_fs ${RAW_REFL_FILT_HLSL}
+        DEPENDS ${RAW_LIGHT_HLSL} ${RAW_LIGHTFOG_HLSL} ${RAW_CLOUDS_HLSL} ${RAW_VOLUMETRIC_HLSL} ${RAW_BLOOM_HLSL} ${RAW_ATMO_HLSL} ${RAW_REFL_FILT_HLSL} ${RAW_SHARE_HLSL}/LightingCommon.hlsli ${RAW_SHARE_HLSL}/Weather.hlsli
                 ${RAW_SHARE_HLSL}/CloudCommon.hlsli ${RAW_SHARE_HLSL}/DistantLod.hlsli ${RAW_SHARE_HLSL}/ElderOptics.hlsli
-        COMMENT "dxc: SM${RAW_SHADER_MODEL} lighting, cloud, volumetric, 6-level bloom & Hillaire atmosphere LUTs -> DXIL headers"
+        COMMENT "dxc: SM${RAW_SHADER_MODEL} lighting, cloud, volumetric, bloom, atmosphere & RT reflection denoiser -> DXIL headers"
         VERBATIM)
     target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/LightingPass.cpp ${RAW_LIGHT_HEADERS})
 endif()

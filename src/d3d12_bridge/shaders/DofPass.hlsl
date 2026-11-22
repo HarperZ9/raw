@@ -11,20 +11,32 @@ Texture2D<float>  Depth : register(t1);
 Texture2D<float4> SrcB  : register(t2);
 SamplerState      Lin   : register(s0);
 
-// 5-point center-zone autofocus metering (prevents jumpy 1-pixel snap when a twig or edge crosses the crosshair).
+// Wide 9-point foreground-rejecting cinema metering zone (takes upper-quartile depth across the central 12% of the
+// frame so panning across a pillar, twig, or doorway edge never snaps or flickers DoF to the crosshair pixel).
 float sampleFocusZoneZ() {
     const int2 c = int2(dims.xy * 0.5f);
     const int2 dMax = int2(dims.xy) - 1;
-    const int2 o[5] = { int2(0, 0), int2(14, 0), int2(-14, 0), int2(0, 14), int2(0, -14) };
-    const float w[5] = { 0.40f, 0.15f, 0.15f, 0.15f, 0.15f };
-    float zSum = 0.0f, wSum = 0.0f;
-    [unroll] for (int k = 0; k < 5; k++) {
+    const int sx = max(int(dims.x * 0.06f), 24);
+    const int sy = max(int(dims.y * 0.06f), 16);
+    const int2 o[9] = {
+        int2(0, 0), int2(sx, 0), int2(-sx, 0), int2(0, sy), int2(0, -sy),
+        int2(sx, sy), int2(-sx, sy), int2(sx, -sy), int2(-sx, -sy)
+    };
+    float zVals[9];
+    [unroll] for (int k = 0; k < 9; k++) {
         const float dk = Depth.Load(int3(clamp(c + o[k], int2(0, 0), dMax), 0));
-        const float zk = dk < 1.0f ? viewZOf(dk) : 10000.0f;
-        zSum += zk * w[k];
-        wSum += w[k];
+        zVals[k] = dk < 1.0f ? viewZOf(dk) : 10000.0f;
     }
-    return zSum / max(wSum, 1.0e-4f);
+    // Partial insertion sort to select the 6th-deepest (upper-quartile) sample, rejecting thin foreground blockers.
+    [unroll] for (int i = 1; i < 9; i++) {
+        const float key = zVals[i];
+        int j = i - 1;
+        [unroll] for (int s = 0; s < 8; s++) {
+            if (j >= 0 && zVals[j] > key) { zVals[j + 1] = zVals[j]; j--; }
+        }
+        zVals[j + 1] = key;
+    }
+    return (zVals[5] + zVals[6]) * 0.5f;
 }
 
 // Exact Physical Thin-Lens Optical Circle of Confusion: CoC proportional to (1/focusZ - 1/curZ).

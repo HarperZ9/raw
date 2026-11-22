@@ -108,6 +108,9 @@ void LayerOutput(const Analysis& a, const Regs& r, const T& alpha, Code* e)
         e->push_back(Make(op::Div, {Tmp(s, X | Y), Rd(s, Swz(0, 1, 0, 0)), Rd(s, kW)}));
         e->push_back(Make(op::Add, {Tmp(s, X | Y), Rd(s, Swz(0, 1, 0, 0)), All(0.5f)}));
         e->push_back(Make(op::Mov, {Out(L, Y | Z), Rd(s, Swz(0, 0, 1, 1))}));
+        // Exact hardware water tag (Layer.a = 2.0f in RGBA32F): zero ambiguity with smoke, mist, or particles.
+        e->push_back(Make(op::Mov, {Out(L, W), All(2.0f)}));
+        return;
     } else if (a.info.normal) {
         e->push_back(Make(op::Mov, {Out(L, Y | Z), Rd(r.shadow[2], Swz(0, 0, 1, 1))}));   // output 2 holds the encoded normal
     } else {

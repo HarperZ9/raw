@@ -126,13 +126,13 @@ void water(uint3 id : SV_DispatchThreadID) {
     const float4 L = Layer.Load(ip);
     const float dBed = Depth.Load(ip);
     float3 col = game.rgb;
-    // The water shaders write no alpha, so their layer pixels keep the cleared alpha: a water pixel is one with a
-    // depth strictly in front of the bed in linear view-Z (safe under 32-bit float depth TxDepth32=1 where fp16 L.x
-    // rounds by ~0.0005 vs fp32 dBed, completely eliminating the false horizontal water-plane bug at p.z < 0!).
+    // 100% Native Hardware Water Identification: GBufferPatch writes Layer.a == 2.0f exclusively for ShaderKind::Water
+    // and GBufferVariants masks all non-water blended draws (smoke, firepit haze, dust, mist) out of Layer.
+    // Zero false water planes over interiors, towers, NPCs, roads, or smoke billboards.
     const float3 nL = worldNormal(float4(L.y, L.z, 0.0f, 0.0f));
     const float zSurfW = (L.x < 1.0f && L.x > 0.0f) ? viewZOf(L.x) : 1.0e9f;
     const float zBedW  = (dBed < 1.0f && dBed > 0.0f) ? viewZOf(dBed) : 1.0e9f;
-    const bool isWaterPx = (L.z >= 0.0f && L.x < 1.0f && zSurfW < zBedW - max(zSurfW * 0.015f, 2.5f) && nL.z > 0.65f);
+    const bool isWaterPx = (L.a > 1.5f && L.x < 1.0f && zSurfW < zBedW - max(zSurfW * 0.015f, 1.5f));
     // SM6.9 Wave-coherent early exit: non-water waves exit immediately with zero RayQuery divergence.
     if (!WaveActiveAnyTrue(isWaterPx)) { WaterOut[id.xy] = float4(col, game.a); return; }
     if (isWaterPx) {
@@ -345,7 +345,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                 int2 q = inBounds ? int2(s2.xy) : int2(id.xy);
                 // A bent look-up that lands off-screen or on something above the water keeps the straight one (prevents vertical edge stretching).
                 const float4 Lq = Layer.Load(int3(q, 0));
-                if (!inBounds || Depth.Load(int3(q, 0)) <= Lq.x || Lq.z < 0.0f) { q = int2(id.xy); }
+                if (!inBounds || Depth.Load(int3(q, 0)) <= Lq.x || Lq.a < 1.5f) { q = int2(id.xy); }
                 // Chromatic shallow-water dispersion across submerged pebbles & riverbed rocks.
                 const int2 qR = clamp(q + int2(round(n.xy * 2.0f)), int2(0, 0), int2(dims.xy) - 1);
                 const int2 qB = clamp(q - int2(round(n.xy * 2.0f)), int2(0, 0), int2(dims.xy) - 1);
@@ -388,14 +388,9 @@ void water(uint3 id : SV_DispatchThreadID) {
                     }
                     uwShaft = sunColour.rgb * float3(0.06f, 0.34f, 0.38f) * (uwAcc * 0.0028f * phUw * clearW);
                 }
-                // Wind-driven elongated storm whitecap streaks across open water when wind rises.
-                const float windAmpW = saturate(length(cloudWind.xy) / 340.0f);
-                const float2 wDirW = normalize(cloudWind.xy + float2(1.0f, 0.35f));
-                const float2 streakCoord = float2(dot(wpW.xy, wDirW) * 0.015f, dot(wpW.xy, float2(-wDirW.y, wDirW.x)) * 0.095f);
-                const float windStreaks = smoothstep(0.68f, 0.90f, vNoise2D(streakCoord - float2(camPosW.w * 0.25f, 0.0f))) * windAmpW * 0.36f;
                 const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) * 0.85f + (sunDir.w > 0.5f ? sunColour.rgb * 0.32f : 0.0f.xxx));
                 const float3 waterBody = (bed + caus) * T + scatter * (1.0f - T) + waveSSS + uwShaft;
-                body = lerp(waterBody, foamLit, saturate(foamMask + windStreaks) * 0.68f);
+                body = lerp(waterBody, foamLit, foamMask * 0.68f);
             }
             const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;
             // Eliminate the 2,200u mid-river seam: keep full physical refraction & RT reflections out to 6,500-13,500u!

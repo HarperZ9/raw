@@ -88,12 +88,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     }
     if (tune2.y > 0.0f) {
         const float weatherMistGain = 1.0f + saturate(weather.w * 0.85f + weather.z * 0.75f + clouds.x * 0.35f) * 0.65f;
+        const bool isInt = (sunColour.w < 0.5f);
+        // Slow-rising 3D hearth-smoke & dust-mote modulation inside taverns, Nordic tombs, and Dwemer halls.
+        const float3 midWp = camPosW.xyz + w * min(tEnd * 0.45f, 1800.0f);
+        const float dustMote = isInt ? (0.72f + 0.56f * cNoise(midWp * 0.011f - float3(0.0f, 0.0f, camPosW.w * 0.16f))) : 1.0f;
+        const float intGain = isInt ? (1.28f * dustMote) : weatherMistGain;
         [loop] for (uint li = 0u; li < flags.y; li++) {
             const float wi = windowIntegral(w, lightPosR[li].xyz, lightPosR[li].w, tEnd);
             if (wi > 0.0f) {
                 const bool isFire = lightColS[li].r > lightColS[li].b * 1.30f;
                 const float3 fCol = isFire ? lightColS[li].rgb * float3(1.22f, 0.86f, 0.54f) * 1.45f : lightColS[li].rgb;
-                scatter += fCol * (sigma * wi * tune2.y * weatherMistGain / (4.0f * PI));
+                scatter += fCol * (sigma * wi * tune2.y * intGain / (4.0f * PI));
             }
         }
     }

@@ -45,18 +45,51 @@ float causticNet(float2 w, float t, float scale) {
     return pow(saturate(1.0f - a * 3.2f), 7.0f) + 0.6f * pow(saturate(1.0f - b * 3.6f), 7.0f);
 }
 
+// 8-Wave Trochoidal Gerstner Spectrum (irrational frequency ratios, sharp crests, broad troughs, zero tiling).
+float2 evalTrochoidalWaves(float2 xy, float2 wDir, float wt, float wDist, float windAmp) {
+    const float2 wPerp = float2(-wDir.y, wDir.x);
+    const float oceanFade = saturate(1.0f - wDist / 26000.0f);
+    const float nearFade = saturate(1.0f - wDist / 6800.0f);
+    const float microFade = saturate(1.0f - wDist / 2200.0f);
+    static const float kFreq[8]  = {0.0049f, 0.0097f, 0.0193f, 0.0371f, 0.0683f, 0.1190f, 0.1970f, 0.3110f};
+    static const float kSpeed[8] = {0.34f,   0.47f,   0.63f,   0.81f,   1.02f,   1.26f,   1.54f,   1.88f};
+    static const float kAng[8]   = {0.00f,   0.52f,  -0.41f,   0.89f,  -0.78f,   1.24f,  -1.15f,   1.57f};
+    static const float kAmp[8]   = {0.42f,   0.32f,   0.26f,   0.22f,   0.18f,   0.14f,   0.10f,   0.07f};
+    float2 grad = 0.0f.xx;
+    [unroll] for (int wi = 0; wi < 8; wi++) {
+        const float fade = wi < 2 ? oceanFade : (wi < 6 ? nearFade : microFade);
+        if (fade <= 0.001f) { continue; }
+        const float c = cos(kAng[wi]), s = sin(kAng[wi]);
+        const float2 dir = wDir * c + wPerp * s;
+        const float ph = dot(xy, dir) * kFreq[wi] + wt * kSpeed[wi] + float(wi) * 1.618f;
+        // Trochoidal steepening: sharpens crests (sin + 0.35 * sin(2*ph)) for realistic liquid geometry.
+        const float dWave = cos(ph) + 0.35f * cos(2.0f * ph);
+        grad += dir * (dWave * kAmp[wi] * fade);
+    }
+    return grad * (0.022f + windAmp * 0.028f);
+}
+
 float3 waterSky(float3 rd) {
     const float3 base = skyAt(rd);
     const float sunLumW = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
     const float dayW = saturate((sunDir.z - 0.01f) * 4.0f) * saturate((sunLumW - 0.20f) * 2.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+    float3 skyCol = base;
     if (dayW > 0.02f && rd.z > 0.0f) {
         float3 sZ, sM, sH;
         skyPalette(sZ, sM, sH);
         const float hUp = saturate(rd.z);
         const float3 pSky = hUp < 0.25f ? lerp(sH, sM, pow(hUp / 0.25f, 0.75f)) : lerp(sM, sZ, pow((hUp - 0.25f) / 0.75f, 0.85f));
-        return lerp(base, pSky, dayW * 0.65f);
+        skyCol = lerp(base, pSky, dayW * 0.65f);
+        // Drifting volumetric cloud-deck reflection on lakes, rivers, and the Sea of Ghosts.
+        if (clouds.x > 0.08f && rd.z > 0.03f) {
+            const float2 cUv = (camPosW.xy + rd.xy * (34000.0f / max(rd.z, 0.08f)) + cloudWind.xy * camPosW.w * 0.55f) * 0.000018f;
+            const float cn = sin(cUv.x * 3.1f + sin(cUv.y * 2.7f)) * cos(cUv.y * 3.7f - cos(cUv.x * 2.3f)) * 0.5f + 0.5f;
+            const float cov = smoothstep(1.0f - saturate(clouds.x * 0.95f), 1.0f, cn) * smoothstep(0.03f, 0.22f, rd.z);
+            const float3 cloudLit = lerp(sH * 0.85f, max(sunColour.rgb, 0.45f.xxx) * 0.95f, 0.45f);
+            skyCol = lerp(skyCol, cloudLit, cov * 0.52f);
+        }
     }
-    return base;
+    return skyCol;
 }
 
 [numthreads(8, 8, 1)]
@@ -84,25 +117,12 @@ void water(uint3 id : SV_DispatchThreadID) {
             float3 n = normalize(lerp(float3(0.0f, 0.0f, 1.0f), nL, 0.12f));
             const float wDist = length(p);
             if (wDist < 26000.0f) {
-                const float nearWaveFade = saturate(1.0f - wDist / 6500.0f);
-                const float oceanFade = saturate(1.0f - wDist / 26000.0f);
                 const float2 wDir = normalize(cloudWind.xy + float2(1.0f, 0.35f));
-                const float2 wPerp = float2(-wDir.y, wDir.x);
                 const float wt = camPosW.w;
-                // Long-wavelength Nordic ocean & fjord swells (carry out to 26,000 units across the Sea of Ghosts).
-                const float o1 = sin(dot(wpW.xy, wDir) * 0.0052f + wt * 0.36f);
-                const float o2 = cos(dot(wpW.xy, normalize(wDir + wPerp * 0.45f)) * 0.0108f - wt * 0.48f);
-                const float oceanScale = (0.018f + saturate(length(cloudWind.xy) / 380.0f) * 0.022f) * oceanFade;
-                n = normalize(n + float3((wDir * (o1 * 0.62f) + wPerp * (o2 * 0.38f)) * oceanScale, 0.0f));
-                // Mid- and short-wavelength river ripples & capillary waves (near/mid-field).
-                if (nearWaveFade > 0.001f) {
-                    const float g1 = sin(dot(wpW.xy, wDir) * 0.022f + wt * 0.48f);
-                    const float g2 = sin(dot(wpW.xy, normalize(wDir + wPerp * 0.65f)) * 0.048f + wt * 0.72f);
-                    const float g3 = cos(dot(wpW.xy, normalize(wDir - wPerp * 0.85f)) * 0.092f - wt * 0.94f);
-                    const float g4 = sin(dot(wpW.xy, wPerp) * 0.145f + wt * 1.15f);
-                    const float windScale = (0.015f + saturate(length(cloudWind.xy) / 420.0f) * 0.022f) * nearWaveFade;
-                    n = normalize(n + float3((wDir * (g1 * 0.45f + g2 * 0.28f) + wPerp * (g3 * 0.18f + g4 * 0.09f)) * windScale, 0.0f));
-                }
+                const float windAmp = saturate(length(cloudWind.xy) / 380.0f);
+                // 8-Wave Trochoidal Gerstner spectrum replaces regular sine waves with organic liquid crests & troughs.
+                const float2 waveG = evalTrochoidalWaves(wpW.xy, wDir, wt, wDist, windAmp);
+                n = normalize(n + float3(waveG, 0.0f));
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
                 if (wDist < 1600.0f) {
                     float2 wakeG = 0.0f.xx;
@@ -159,6 +179,23 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float vis = sunColour.w > 0.5f ? visible(o, l, 0.0f, sunLength) : 1.0f;
                 glint = min(sunColour.rgb * (D * Fh * nl / (4.0f * max(nv, 0.08f))) * vis, 2.5f.xxx) * waterA.w;
             }
+            // Point-light GGX specular reflections on water (bridge lanterns, harbor braziers, torches & spells shimmer across ripples).
+            if (wDist < 5500.0f && flags.y > 0u) {
+                const uint maxWaterLights = min(flags.y, 24u);
+                [loop] for (uint wli = 0u; wli < maxWaterLights; wli++) {
+                    const float3 toWL = lightPosR[wli].xyz - p;
+                    const float dWL = length(toWL);
+                    const float rWL = lightPosR[wli].w * 1.65f;
+                    if (dWL >= rWL || toWL.z <= 0.0f) { continue; }
+                    const float attWL = pow(saturate(1.0f - dWL / rWL), 2.0f);
+                    const float3 lWL = toWL / max(dWL, 1.0e-4f);
+                    const float3 hWL = normalize(v + lWL);
+                    const float nhWL = saturate(dot(nRefl, hWL));
+                    const float ddWL = nhWL * nhWL * (0.024f - 1.0f) + 1.0f;
+                    const float dSpec = 0.024f / (PI * ddWL * ddWL);
+                    glint += min(lightColS[wli].rgb * (dSpec * attWL * 0.12f * F), 1.4f.xxx);
+                }
+            }
 
             // Caustics on the bed, under the water, with the view through it.
             float3 caus = 0.0f;
@@ -199,9 +236,12 @@ void water(uint3 id : SV_DispatchThreadID) {
                 // A bent look-up that lands off-screen or on something above the water keeps the straight one (prevents vertical edge stretching).
                 const float4 Lq = Layer.Load(int3(q, 0));
                 if (!inBounds || Depth.Load(int3(q, 0)) <= Lq.x || Lq.z < 0.0f) { q = int2(id.xy); }
-                const float3 bed = PreWater[q].rgb;
+                // Chromatic shallow-water refraction: subtle RGB dispersion across pebbles & rocks in clear Nordic streams.
+                const int2 qR = clamp(q + int2(round(n.xy * 1.8f)), int2(0, 0), int2(dims.xy) - 1);
+                const int2 qB = clamp(q - int2(round(n.xy * 1.8f)), int2(0, 0), int2(dims.xy) - 1);
+                const float3 bed = float3(PreWater[qR].r, PreWater[q].g, PreWater[qB].b);
                 const float path = length(worldAt(float2(q), Depth.Load(int3(q, 0))) - p);
-                const float3 T = exp(-waterA.z * float3(2.2f, 1.0f, 0.7f) * path);
+                const float3 T = exp(-waterA.z * float3(2.45f, 1.05f, 0.72f) * path);
                 const float3 scatter = float3(0.05f, 0.10f, 0.11f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.0f.xxx) * 2.0f;
                 // Smoothly feather RT water body into distant water LOD well before Skyrim's 4096-unit cell edge.
                 const float nearW = 1.0f - smoothstep(1800.0f, 3400.0f, length(p));

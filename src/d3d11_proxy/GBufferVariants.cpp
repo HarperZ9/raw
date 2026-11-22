@@ -72,16 +72,17 @@ ID3D11BlendState* BlendVariant(State& s, ID3D11BlendState* game, int mode)
     if (mode == 0 && blended) d.RenderTarget[kSpecularTarget].RenderTargetWriteMask &= ~D3D11_COLOR_WRITE_ENABLE_BLUE;
     auto& layer = d.RenderTarget[kLayerTarget];
     layer = d.RenderTarget[0];
-    if (mode == 2 || colourMask == 0) {
+    if (mode == 3) {
+        // Exact hardware water write: ONLY ShaderKind::Water writes to s.layer.rtv (unblended RGBA32F depth + normal + 2.0 tag).
+        layer.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+        layer.BlendEnable = FALSE;
+    } else if (mode == 2 || mode == 1 || colourMask == 0) {
+        // Non-water blended effects (smoke, firepit haze, dust, mist, spells) never pollute the water layer target.
         layer.RenderTargetWriteMask = 0;
     } else {
         layer.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
         layer.BlendEnable = blended;
         if (blended) {
-            // The shader writes alpha 1 where the draw's alpha reaches 1/255 and 0 elsewhere,
-            // so this blend either replaces the layer or leaves it.
-            // A draw whose colour blend does not weigh by its alpha (additive light, multiply) shows
-            // whatever its alpha is, so it always replaces the layer.
             const bool byAlpha = d.RenderTarget[0].SrcBlend == D3D11_BLEND_SRC_ALPHA;
             layer.SrcBlend = byAlpha ? D3D11_BLEND_SRC_ALPHA : D3D11_BLEND_ONE;
             layer.DestBlend = byAlpha ? D3D11_BLEND_INV_SRC_ALPHA : D3D11_BLEND_ZERO;
@@ -134,7 +135,8 @@ void GBuffer_BeforeDraw(ID3D11DeviceContext* real)
     raw::dxbc::ShaderKind kind{};
     ID3D11PixelShader* v = s.gamePs ? VariantFor(s, s.gamePs, s.span == Span::FirstPerson, &kind) : nullptr;
     const bool material = kind == raw::dxbc::ShaderKind::Lighting || kind == raw::dxbc::ShaderKind::DistantLod;
-    ID3D11BlendState* blend = BlendVariant(s, s.gameBlend, !v ? 2 : material ? 0 : 1);
+    const int blendMode = !v ? 2 : (kind == raw::dxbc::ShaderKind::Water ? 3 : (material ? 0 : 1));
+    ID3D11BlendState* blend = BlendVariant(s, s.gameBlend, blendMode);
     if (v) real->PSSetShader(v, nullptr, 0);
     if (blend) real->OMSetBlendState(blend, s.factor, s.sampleMask);
     s.substituted = true;

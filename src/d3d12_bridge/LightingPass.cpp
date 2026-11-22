@@ -490,8 +490,23 @@ private:
             m_hasLastFoot = true;
         }
         std::memcpy(u.footTrail, m_footTrail, sizeof m_footTrail);
+        // Bake exact world-space camera translation delta (camPos - prevCamPos) into prevWorldToClip so
+        // world-locked temporal reprojection (Froxels, Clouds, Volumetrics, RT Reflections) never smears on movement.
         std::memcpy(u.prevWorldToClip, m_prevWorldToClip, 64);
+        if (m_hasPrevCam) {
+            const float dx = s.posAdjust[0] - m_prevCamPos[0];
+            const float dy = s.posAdjust[1] - m_prevCamPos[1];
+            const float dz = s.posAdjust[2] - m_prevCamPos[2];
+            for (int r = 0; r < 4; ++r) {
+                u.prevWorldToClip[r * 4 + 3] +=
+                    m_prevWorldToClip[r * 4 + 0] * dx +
+                    m_prevWorldToClip[r * 4 + 1] * dy +
+                    m_prevWorldToClip[r * 4 + 2] * dz;
+            }
+        }
         std::memcpy(m_prevWorldToClip, s.worldToClip, 64);
+        m_prevCamPos[0] = s.posAdjust[0]; m_prevCamPos[1] = s.posAdjust[1]; m_prevCamPos[2] = s.posAdjust[2];
+        m_hasPrevCam = true;
         u.camPos[3] = float(double(GetTickCount64() % 3600000ull) / 1000.0);   // seconds, for the rain's rings and the snow's glints
         for (uint32_t i = 0; i < s.lightCount; ++i) {
             const SceneLight& l = s.lights[i];
@@ -538,6 +553,8 @@ private:
     bool m_atmoTransBuilt = false;
     SamplerHandle m_lin;
     float m_prevWorldToClip[16] = {};
+    float m_prevCamPos[3] = {};
+    bool m_hasPrevCam = false;
     float m_footTrail[32][4] = {};
     float m_lastFoot[3] = {};
     uint32_t m_footIdx = 0;

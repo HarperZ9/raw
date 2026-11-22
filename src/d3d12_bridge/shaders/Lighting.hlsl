@@ -23,11 +23,42 @@ Texture2D<float4> AoHist  : register(t6);
 Texture2D<float4> GameLit : register(t7);
 Texture2D<float4> SoftMap : register(t8);
 Texture2D<float4> RtVis   : register(t9);    // RtShadow.hlsl: sun and three lights' ray-traced visibility
-Texture2D<float4> RtBounce : register(t11);  // RtSky.cpp: one bounce of indirect light (exteriors)
-Texture2D<float4> RtRefl   : register(t12);  // RtShadow.hlsl: reflected radiance, confidence
-Texture2D<float4> Clouds  : register(t13);  // Clouds.hlsl: full-res volumetric clouds
-SamplerState      Lin     : register(s0);
-Texture2D<float4> RtIdx   : register(t10);   // which lights, index + 1 over 255   // RAW's emissive target: for soft-lit draws the game's soft-lighting colour
+Texture2D<float4> RtBounce : register(t11);  // RtSky.cpp + GiAtrousPass: 3-pass 25-tap SVGF indirect bounce
+Texture2D<float4> RtRefl   : register(t12);  // RtShadow.hlsl + RtReflFilter: temporal GGX VNDF RT reflection
+Texture2D<float4> EnvCube  : register(t13);  // EnvCubePass.hlsl: live 256x256 dual-band prefiltered dynamic cubemap
+SamplerState      Lin      : register(s0);
+Texture2D<float4> RtIdx   : register(t10);   // which lights, index + 1 over 255
+
+// Sample our live 256x256 dual-band prefiltered dynamic environment cubemap (top: glossy, bottom: rough convolution).
+float3 sampleLiveEnvCube(float3 rd, float roughness) {
+    const float3 d = normalize(rd);
+    const float u = atan2(d.y, d.x) / (2.0f * PI) + 0.5f;
+    const float vLocal = saturate(0.5f - asin(clamp(d.z, -1.0f, 1.0f)) / PI);
+    const float vClamp = clamp(vLocal, 0.5f / 128.0f, 127.5f / 128.0f);
+    const float3 sharp = EnvCube.SampleLevel(Lin, float2(u, vClamp * 0.5f), 0.0f).rgb;
+    const float3 rough = EnvCube.SampleLevel(Lin, float2(u, 0.5f + vClamp * 0.5f), 0.0f).rgb;
+    return lerp(sharp, rough, saturate(roughness * roughness));
+}
+
+// Karis (SIGGRAPH 2013 UE4) / Lazarov analytical Split-Sum Environment BRDF LUT approximation.
+float2 envBRDFScaleBias(float roughness, float NoV) {
+    const float4 c0 = float4(-1.0f, -0.0275f, -0.572f, 0.022f);
+    const float4 c1 = float4( 1.0f,  0.0425f,  1.040f, -0.040f);
+    const float4 r = roughness * c0 + c1;
+    const float a004 = min(r.x * r.x, exp2(-9.28f * NoV)) * r.x + r.y;
+    return float2(-1.04f, 1.04f) * a004 + r.zw;
+}
+
+// Fdez-Aguera (JCGT 2019) Multi-Scattering Specular IBL energy compensation for both dielectrics and conductors.
+float3 evalMultiScatterIBL(float3 F0, float roughness, float NoV, float3 envCol, float specOcc) {
+    const float2 ab = envBRDFScaleBias(roughness, NoV);
+    const float3 FssEss = F0 * ab.x + ab.y;
+    const float Ess = ab.x + ab.y;
+    const float Ems = 1.0f - Ess;
+    const float3 Favg = F0 + (1.0f - F0) / 21.0f;
+    const float3 Fms = FssEss * Favg / max(1.0f - (1.0f - Ess) * Favg, 0.05f.xxx);
+    return envCol * (FssEss + Fms * Ems) * specOcc;
+}
 
 uint clusterOf(float2 px, float z) {
     const uint tx = min(uint(px.x * dims.z * TILES_X), TILES_X - 1u);
@@ -152,11 +183,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 baseSky = lerp(baseSky, pureSky + solarCore, dayW * 0.96f * (1.0f - exoticRealm));
             }
         }
-        const bool deferSkyToFog = ((flags.x & FLAG_MATCH) == 0u) && ((flags.x & FLAG_FOG) != 0u);
-        const float4 c = (!deferSkyToFog && (flags.x & FLAG_CLOUDS) != 0u) ? Clouds.SampleLevel(Lin, (at.xy) * dims.zw, 0.0f) : float4(0.0f, 0.0f, 0.0f, 1.0f);
-        // Attenuate Nordic cumulus clouds inside Apocrypha/Soul Cairn exotic realms so alien skies stay authentic.
-        const float exoticCloudKeep = 1.0f - saturate(max((game.g - max(game.r, game.b) * 1.08f) * 6.0f, (min(game.r, game.b) - game.g * 1.15f) * 6.0f));
-        float3 skyOut = lerp(baseSky, baseSky * c.a + c.rgb, exoticCloudKeep);
+        // Volumetric clouds composite in LightFog.hlsl (t5) over the unified Hillaire 2020 HDR sky.
+        const float4 c = float4(0.0f, 0.0f, 0.0f, 1.0f);
+        float3 skyOut = baseSky;
         if ((flags.x & FLAG_MATCH) == 0u) {
             // Luminous atmospheric moon glow locked strictly to Skyrim's real Masser/Secunda sky pixels (zero camera drift),
             // plus infinite-resolution procedural scintillating starfield and animated volumetric Nordic auroras.
@@ -428,45 +457,96 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
         s.alpha = clamp(s.alpha + (macroN - 0.5f) * 0.14f * tileFade, 0.08f, 0.96f);
     }
-    // Zero-mod procedural PBR micro-normal & roughness synthesis on vanilla stone/wood (excluded on actor skin/hair/eye/cloth & foliage).
-    if (!match && !isActorFeat && !isActorCloth && base != 5u && z < 2800.0f) {
-        const float distFade = saturate(1.0f - z / 2800.0f) * (base == 2u ? 0.22f : 1.0f);
+    // True Robust Screen-Space Complex Parallax Occlusion Mapping (Tatarchuk GDC 2006):
+    // 12-step linear heightfield raymarch + 3-step binary search refinement along the view ray (depth-continuity guarded
+    // so object silhouettes never bleed), displacing sampled albedo & normal on cobblestones, stone walls, bricks & timber,
+    // followed by 8-step directional relief self-shadowing and crevice-cavity roughness.
+    if (!match && !isActorFeat && !isActorCloth && base != 5u && z < 2600.0f) {
+        const float distFade = saturate(1.0f - z / 2600.0f) * (base == 2u ? 0.22f : 1.0f);
         const int2 dimMax = max(int2(dims.xy) - int2(1, 1), int2(0, 0));
-        const int3 ipL = int3(clamp(int2(px) + int2(-1, 0), int2(0, 0), dimMax), 0);
-        const int3 ipR = int3(clamp(int2(px) + int2( 1, 0), int2(0, 0), dimMax), 0);
-        const int3 ipU = int3(clamp(int2(px) + int2( 0,-1), int2(0, 0), dimMax), 0);
-        const int3 ipD = int3(clamp(int2(px) + int2( 0, 1), int2(0, 0), dimMax), 0);
         const float3 lw = float3(0.2126f, 0.7152f, 0.0722f);
+        const float3 upRef = abs(s.n.z) < 0.92f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
+        const float3 tVec = normalize(cross(upRef, s.n));
+        const float3 bVec = cross(s.n, tVec);
+        float2 pomPx = px;
+        if ((base == 1u || base == 4u || base == 6u) && z < 1800.0f) {
+            const float pomFade = saturate(1.0f - z / 1800.0f) * (base == 6u ? 1.0f : (base == 4u ? 0.90f : 0.78f));
+            const float nvPom = max(abs(dot(s.n, s.v)), 0.32f);
+            // Project view tangent into screen pixels via finite world-step projection.
+            const float3 vTan = s.v - s.n * dot(s.v, s.n);
+            const float4 sEnd = screenOf(p + vTan * (3.2f * pomFade / nvPom));
+            float2 vRayPx = (sEnd.w > 1.0f) ? (sEnd.xy - px) : float2(0.0f, 0.0f);
+            const float rayLen = length(vRayPx);
+            if (rayLen > 6.0f) { vRayPx *= (6.0f / rayLen); }
+            if (rayLen > 0.35f) {
+                float curLayer = 1.0f;
+                const float dLayer = 1.0f / 12.0f;
+                float2 curOff = 0.0f.xx;
+                const float2 dOff = vRayPx * dLayer;
+                float hPrev = saturate(dot(albedo, lw) * 1.35f);
+                bool hitPom = false;
+                [unroll] for (int st = 0; st < 12; st++) {
+                    curOff += dOff;
+                    curLayer -= dLayer;
+                    const int3 spP = int3(clamp(int2(round(px + curOff)), int2(0, 0), dimMax), 0);
+                    if (abs(Depth.Load(spP) - d) > 0.0006f) { break; }
+                    const float hCur = saturate(dot(Albedo.Load(spP).rgb, lw) * 1.35f);
+                    if (hCur >= curLayer) { hitPom = true; break; }
+                    hPrev = hCur;
+                }
+                if (hitPom) {
+                    // 3-step binary search refinement for sub-pixel crisp parallax depth intersection.
+                    float2 loOff = curOff - dOff, hiOff = curOff;
+                    float loL = curLayer + dLayer, hiL = curLayer;
+                    [unroll] for (int bi = 0; bi < 3; bi++) {
+                        const float2 midOff = 0.5f * (loOff + hiOff);
+                        const float midL = 0.5f * (loL + hiL);
+                        const int3 spM = int3(clamp(int2(round(px + midOff)), int2(0, 0), dimMax), 0);
+                        const float hM = abs(Depth.Load(spM) - d) < 0.0006f ? saturate(dot(Albedo.Load(spM).rgb, lw) * 1.35f) : midL;
+                        if (hM >= midL) { hiOff = midOff; hiL = midL; } else { loOff = midOff; loL = midL; }
+                    }
+                    const int3 spFinal = int3(clamp(int2(round(px + hiOff)), int2(0, 0), dimMax), 0);
+                    if (abs(Depth.Load(spFinal) - d) < 0.0006f) {
+                        pomPx = px + hiOff;
+                        const float3 dispAlb = Albedo.Load(spFinal).rgb;
+                        const float aLumD = max(dot(dispAlb, lw), 1.0e-4f);
+                        const float3 dispExp = saturate(dispAlb * (saturate(pow(aLumD, 1.12f) * 1.14f) / aLumD));
+                        albedo = lerp(albedo, dispExp, pomFade * 0.72f);
+                        s.n = normalize(lerp(s.n, worldNormal(Normal.Load(spFinal)), pomFade * 0.55f));
+                    }
+                }
+            }
+        }
+        const int2 pBase = clamp(int2(round(pomPx)), int2(0, 0), dimMax);
+        const int3 ipL = int3(clamp(pBase + int2(-1, 0), int2(0, 0), dimMax), 0);
+        const int3 ipR = int3(clamp(pBase + int2( 1, 0), int2(0, 0), dimMax), 0);
+        const int3 ipU = int3(clamp(pBase + int2( 0,-1), int2(0, 0), dimMax), 0);
+        const int3 ipD = int3(clamp(pBase + int2( 0, 1), int2(0, 0), dimMax), 0);
         const float hc = dot(albedo, lw);
         const float hL = abs(Depth.Load(ipL) - d) < 0.0008f ? dot(Albedo.Load(ipL).rgb, lw) : hc;
         const float hR = abs(Depth.Load(ipR) - d) < 0.0008f ? dot(Albedo.Load(ipR).rgb, lw) : hc;
         const float hU = abs(Depth.Load(ipU) - d) < 0.0008f ? dot(Albedo.Load(ipU).rgb, lw) : hc;
         const float hD = abs(Depth.Load(ipD) - d) < 0.0008f ? dot(Albedo.Load(ipD).rgb, lw) : hc;
-        const float gx = clamp((hR - hL) * 2.2f, -0.45f, 0.45f) * distFade;
-        const float gy = clamp((hD - hU) * 2.2f, -0.45f, 0.45f) * distFade;
-        const float3 upRef = abs(s.n.z) < 0.92f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
-        const float3 tVec = normalize(cross(upRef, s.n));
-        const float3 bVec = cross(s.n, tVec);
-        s.n = normalize(s.n + (-gx * tVec - gy * bVec) * 0.42f);
+        const float gx = clamp((hR - hL) * 2.4f, -0.50f, 0.50f) * distFade;
+        const float gy = clamp((hD - hU) * 2.4f, -0.50f, 0.50f) * distFade;
+        s.n = normalize(s.n + (-gx * tVec - gy * bVec) * 0.46f);
         const float microSlope = saturate(length(float2(gx, gy)) * 1.4f);
         s.alpha = clamp(s.alpha + (microSlope - 0.15f) * 0.12f * distFade, 0.05f, 0.95f);
-        // Native zero-mod 6-step Parallax Occlusion Mapping (POM) micro-relief self-shadowing + crevice cavity roughness
-        // on cobblestone roads, stone walls, timber & terrain.
+        // 8-step directional POM relief self-shadowing + crevice-cavity roughness along the sun vector.
         if ((base == 1u || base == 4u || base == 6u) && z < 2000.0f && sunDir.w > 0.5f) {
-            const float pomFade = saturate(1.0f - z / 2000.0f) * (base == 4u ? 0.85f : 0.92f);
+            const float pomFade = saturate(1.0f - z / 2000.0f) * (base == 4u ? 0.88f : 0.94f);
             const float2 sunScreen = float2(dot(sunDir.xyz, tVec), dot(sunDir.xyz, bVec));
-            const float2 stepPx = normalize(sunScreen + float2(1.0e-4f, 0.0f)) * 1.45f;
+            const float2 stepPx = normalize(sunScreen + float2(1.0e-4f, 0.0f)) * 1.30f;
             float maxH = hc;
-            [unroll] for (int pi = 1; pi <= 6; pi++) {
-                const int3 spm = int3(clamp(int2(px + stepPx * float(pi)), int2(0, 0), dimMax), 0);
+            [unroll] for (int pi = 1; pi <= 8; pi++) {
+                const int3 spm = int3(clamp(int2(pomPx + stepPx * float(pi)), int2(0, 0), dimMax), 0);
                 if (abs(Depth.Load(spm) - d) < 0.0008f) {
-                    maxH = max(maxH, dot(Albedo.Load(spm).rgb, lw) - 0.015f * float(pi));
+                    maxH = max(maxH, dot(Albedo.Load(spm).rgb, lw) - 0.013f * float(pi));
                 }
             }
-            const float pomOcc = saturate(1.0f - max(maxH - hc, 0.0f) * 3.6f * pomFade);
-            albedo *= lerp(0.62f, 1.0f, pomOcc);
-            // Crevices/mortar stay rougher while raised cobblestone crowns catch crisp grazing sky specular.
-            s.alpha = clamp(lerp(min(s.alpha + 0.18f, 0.96f), max(s.alpha - 0.08f, 0.12f), pomOcc), 0.08f, 0.96f);
+            const float pomOcc = saturate(1.0f - max(maxH - hc, 0.0f) * 3.8f * pomFade);
+            albedo *= lerp(0.58f, 1.0f, pomOcc);
+            s.alpha = clamp(lerp(min(s.alpha + 0.20f, 0.96f), max(s.alpha - 0.10f, 0.10f), pomOcc), 0.08f, 0.96f);
         }
     }
     // Tokuyoshi-Kaplanyan geometric specular anti-aliasing: filters sub-pixel normal variance to kill GGX sparkle in motion.
@@ -759,10 +839,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (flags.w == 19u) { return float4(charLight.xxx, game.a); }   // view 19: the character light
     // Attenuate vanilla's flat white character fill light on skin in direct sunlight so shoulders/faces never blow out.
     const float effCharLight = (!match && skin) ? charLight * lerp(0.85f, 0.12f, saturate(dot(diff, float3(0.33f, 0.33f, 0.34f)))) : charLight;
-    // True linear HDR diffuse pipeline in !match mode (remove Skyrim 2011's LDR knee3() clamp so Wide-Gamut AgX
-    // and 12-pass Jimenez HDR Bloom receive genuine sunlit dynamic range instead of crushed SDR).
-    const float3 rawLit = (albedo + envRefl * (match ? 1.0f : 0.12f)) * (diff + amb + effCharLight);
+    // True Complex PBR Material Diffuse & Specular IBL:
+    // - Class-2 metals (steel, iron, silver, gold, Dwemer brass): physical conductor metallicity attenuates diffuse
+    //   energy (1 - 0.72*m) and drives chromatic conductor F0 into Karis Split-Sum + Fdez-Aguera Multi-Scattering IBL
+    //   sampled from our live 256x256 dual-band prefiltered Dynamic Environment Cubemap (EnvCube).
+    // - Wet surfaces & oiled armor: dual-lobe Clearcoat GGX water/lacquer film sampling the sharp cubemap band.
+    const float envLumM = dot(envRefl, float3(0.2126f, 0.7152f, 0.0722f));
+    const float metallic = (!match && base == 2u) ? saturate((max(saturate(s.mask * resScale.w), envLumM * 1.35f) - 0.22f) * 1.95f) : 0.0f;
+    const float3 diffAlb = albedo * (1.0f - metallic * 0.72f);
+    const float3 rawLit = (diffAlb + envRefl * (match ? 1.0f : 0.08f)) * (diff + amb + effCharLight);
     float3 lit = match ? knee3(rawLit) : rawLit;
+    // Physical glacial-cyan subsurface wrap transmission on sunlit snowbanks.
+    if (!match && wet.snow > 0.05f && sunDir.w > 0.5f) {
+        const float snowWrap = saturate((dot(s.n, sunDir.xyz) + 0.35f) / 1.35f);
+        lit += sunColour.rgb * float3(0.18f, 0.34f, 0.46f) * (snowWrap * wet.snow * (0.35f + 0.65f * sunShadow) * 0.22f);
+    }
     if (!match && skin) {
         // Per-channel dermal highlight roll-off preserves natural skin tone under direct midday sun and close hearth fire.
         lit = lit / (1.0f + max(lit - 0.68f.xxx, 0.0f.xxx) * 0.52f);
@@ -781,14 +872,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // plus dynamic cubemap enhancement for class-2 metal/armor and clearcoat GGX on wet surfaces.
     if (!match) {
         const float nv = saturate(dot(nSmooth, s.v));
-        const float fr = s.f0 + (1.0f - s.f0) * pow(1.0f - nv, 5.0f);
         // Frostbite (Lagarde 2014) specular occlusion: prevents fake sky/cubemap gloss inside deep occluded rock/timber crevices.
         const float specOcc = saturate(pow(nv + combinedOcc, exp2(-16.0f * s.alpha - 1.0f)) - 1.0f + combinedOcc);
         const float3 rDir = reflect(-s.v, nSmooth);
-        const float3 dynEnv = evalDynamicEnvCube(rDir, max(s.alpha, base == 2u ? 0.28f : 0.0f));
-        const float reflMask = max(saturate(s.mask * resScale.w), max(wet.puddle, 0.5f * wet.wet)) * specOcc;
+        const float envRough = max(s.alpha, base == 2u ? 0.14f : 0.08f);
+        // Live 256x256 Dual-Band Prefiltered Dynamic Environment Cubemap (live sky + clouds + 32 dynamic lights + ground bounce).
+        const float3 dynEnv = sampleLiveEnvCube(rDir, envRough);
+        const float3 F0mat = lerp(s.f0.xxx, saturate(albedo * 1.15f + 0.12f), metallic);
+        const float reflMask = max(saturate(s.mask * resScale.w), max(wet.puddle, 0.5f * wet.wet));
         if (rt && (flags.x & FLAG_REFLECT) != 0u && lobe) {
-            // Depth-aware 3x3 bilateral filter on full-res RtRefl: eliminates checkerboard/rectangular blocks on armor, metal & wet stone.
             const int2 baseRefl = clamp(int2(px + rings * 40.0f), int2(0, 0), int2(dims.xy) - 1);
             float4 rfSum = 0.0f.xxxx;
             float rfW = 0.0f;
@@ -799,32 +891,34 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     if (abs(rdDepth - d) < 0.0012f) {
                         const float kw = (rx == 0 && ry == 0) ? 2.0f : 1.0f;
                         const float4 tap = RtRefl.Load(rp);
-                        rfSum += float4(min(tap.rgb, 2.5f.xxx), tap.a) * kw;
+                        rfSum += float4(min(tap.rgb, 3.0f.xxx), tap.a) * kw;
                         rfW += kw;
                     }
                 }
             }
             const float4 rf = rfW > 0.0f ? (rfSum / rfW) : RtRefl.Load(int3(baseRefl, 0));
-            const float3 envFinal = lerp(dynEnv * (0.35f + 0.65f * skyVis), rf.rgb, rf.a);
-            lit += envFinal * fr * reflMask * (1.0f - s.alpha) * 0.85f;
+            const float3 envFinal = lerp(dynEnv * (0.30f + 0.70f * skyVisShaped), rf.rgb, rf.a);
+            lit += evalMultiScatterIBL(F0mat, envRough, nv, envFinal, specOcc) * max(reflMask, metallic);
             if (flags.w == 6u) { return float4(envFinal, game.a); }
         } else if (base == 2u) {
-            // Class-2 forged metal/armor dynamic cubemap IBL + Turquin multi-scattering metallic energy preservation.
-            const float multiBoost = 1.0f + s.f0 * (1.0f - nv) * 0.85f;
-            lit += dynEnv * fr * max(reflMask, 0.25f) * (1.0f - s.alpha * 0.65f) * (0.35f + 0.65f * skyVis) * 0.58f * multiBoost;
+            // Class-2 forged metal/armor/gold/brass: exact Karis Split-Sum + Fdez-Aguera Multi-Scattering Conductor IBL.
+            const float3 metalEnv = dynEnv * (0.30f + 0.70f * skyVisShaped);
+            lit += evalMultiScatterIBL(F0mat, envRough, nv, metalEnv, specOcc) * max(reflMask, max(metallic, 0.35f));
         } else if (base == 12u) {
-            // Class-12 Eye corneal wet catchlight: sharp corneal Fresnel reflection of live sky/environment.
-            const float eyeFr = 0.025f + 0.975f * pow(1.0f - nv, 5.0f);
-            lit += evalDynamicEnvCube(rDir, 0.04f) * (eyeFr * 0.85f * (0.4f + 0.6f * skyVis));
+            // Class-12 Eye corneal wet catchlight: sharp corneal reflection from live dynamic cubemap (reflects nearby fires & sky).
+            lit += evalMultiScatterIBL(float3(0.028f, 0.028f, 0.028f), 0.04f, nv, sampleLiveEnvCube(rDir, 0.04f), 0.45f + 0.55f * skyVis);
         } else if (base == 4u || base == 6u || base == 1u) {
-            // Full-world physical dielectric Fresnel environment IBL on terrain, stone & timber (excluded on base==5 foliage
-            // so Nordic pines stay deep evergreen instead of washing out with grey-white sky sheen).
-            const float dieF0 = lerp(0.028f, 0.042f, saturate(wet.wet + wet.puddle));
-            const float dieFr = dieF0 + (1.0f - dieF0) * pow(1.0f - nv, 5.0f);
+            // Full-world physical dielectric Split-Sum IBL on terrain, cobblestones, stone & timber (excluded on foliage).
+            const float3 dieF0 = lerp(0.028f, 0.042f, saturate(wet.wet + wet.puddle)).xxx;
             const float dieRough = clamp(s.alpha, 0.16f, 0.82f);
-            const float dieEnvStr = lerp(0.42f, 0.88f, saturate(wet.wet + wet.puddle));
-            const float3 dieEnv = evalDynamicEnvCube(rDir, dieRough) * (0.28f + 0.72f * skyVisShaped);
-            lit += dieEnv * (dieFr * specOcc * (1.0f - dieRough * 0.65f) * dieEnvStr);
+            const float3 dieEnv = sampleLiveEnvCube(rDir, dieRough) * (0.28f + 0.72f * skyVisShaped);
+            lit += evalMultiScatterIBL(dieF0, dieRough, nv, dieEnv, specOcc) * lerp(0.55f, 1.0f, saturate(wet.wet + wet.puddle));
+        }
+        // Dual-Lobe Clearcoat GGX water film (wet stone/wood/roads) & oiled lacquer (low-metallic class-2 armor/leather).
+        const float clearcoat = max(saturate(wet.wet * 0.75f + wet.puddle), (base == 2u ? (1.0f - metallic) * 0.35f : 0.0f));
+        if (clearcoat > 0.05f && !skin && base != 5u) {
+            const float3 ccEnv = sampleLiveEnvCube(rDir, 0.05f) * (0.30f + 0.70f * skyVisShaped);
+            lit += evalMultiScatterIBL(float3(0.02f, 0.02f, 0.02f), 0.05f, nv, ccEnv, specOcc) * (clearcoat * 0.65f);
         }
         // Estevez-Kulla grazing velvet/fuzz rim sheen on rough organic materials (fur, wool, moss, thatch, pine bark).
         if (!skin && base != 2u && s.alpha > 0.52f && sunDir.w > 0.5f && sunShadow > 0.05f) {

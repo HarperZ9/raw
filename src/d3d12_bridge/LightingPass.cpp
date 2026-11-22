@@ -70,6 +70,7 @@ constexpr RasterBinding kBloom2Layout[3] = {T, T, Sm};
 constexpr RasterBinding kAtmoTransLayout[1] = {U};
 constexpr RasterBinding kAtmoMsLayout[3] = {U, T, Sm};
 constexpr RasterBinding kAtmoSkyLayout[4] = {U, T, T, Sm};
+constexpr RasterBinding kEnvCubeLayout[6] = {U, T, T, T, T, Sm};
 constexpr RasterBinding kReflFilterLayout[6] = {U, T, T, T, T, Sm};
 constexpr RasterBinding kDofCocLayout[4] = {U, T, T, Sm};
 constexpr RasterBinding kDofGatherLayout[3] = {U, T, Sm};
@@ -178,7 +179,7 @@ public:
         m_atmoSkyPipe = m_dev->createRasterPipeline(d, m_err);
         d.label = "cloud noise 64^3"; d.fragment = dxil(kDxil_cloud_noise_fs, sizeof kDxil_cloud_noise_fs); d.layout = kAtmoTransLayout;
         m_cloudNoisePipe = m_dev->createRasterPipeline(d, m_err);
-        d.label = "dynamic env cube"; d.fragment = dxil(kDxil_env_cube_fs, sizeof kDxil_env_cube_fs); d.layout = kAtmoSkyLayout;
+        d.label = "dynamic env cube"; d.fragment = dxil(kDxil_env_cube_fs, sizeof kDxil_env_cube_fs); d.layout = kEnvCubeLayout;
         m_envCubePipe = m_dev->createRasterPipeline(d, m_err);
         if (!m_atmoTransPipe.valid() || !m_atmoMsPipe.valid() || !m_atmoSkyPipe.valid() || !m_cloudNoisePipe.valid() || !m_envCubePipe.valid()) return Fail("atmosphere/cloud/env LUT pipelines");
         d.label = "rt refl filter"; d.fragment = dxil(kDxil_rt_refl_filter_fs, sizeof kDxil_rt_refl_filter_fs); d.layout = kReflFilterLayout;
@@ -244,7 +245,8 @@ public:
         if (ok && (m_u.flags[0] & kMatch) == 0u) {
             const RasterBind sb[4] = {{m_uniform, {}, {}}, {{}, m_atmoTrans, {}}, {{}, m_atmoMs, {}}, {{}, {}, m_lin}};
             Draw(*c, m_atmoSkyView, m_atmoSkyPipe, sb);
-            const RasterBind eb[4] = {{m_uniform, {}, {}}, {{}, m_atmoSkyView, {}}, {{}, m_cloudNoise, {}}, {{}, {}, m_lin}};
+            const RasterBind eb[6] = {{m_uniform, {}, {}}, {{}, m_atmoSkyView, {}}, {{}, m_cloudNoise, {}},
+                                      {{}, m_game, {}}, {{}, m_depth, {}}, {{}, {}, m_lin}};
             Draw(*c, m_envCube, m_envCubePipe, eb);
         }
         const TextureHandle aoVis = ao ? m_ao.history() : m_game;   // unused without the flag

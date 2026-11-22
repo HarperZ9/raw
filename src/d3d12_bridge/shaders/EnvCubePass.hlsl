@@ -11,6 +11,8 @@
 
 Texture2D<float4> AtmoSkyView : register(t0);
 Texture2D<float4> CloudNoise  : register(t1);
+Texture2D<float4> GameLit     : register(t2);
+Texture2D<float>  Depth       : register(t3);
 SamplerState      Lin         : register(s0);
 
 float3 sampleAtmo(float3 rd) {
@@ -70,6 +72,19 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
         const float att = pow(saturate(1.0f - dist / rad), 1.6f);
         const float cosL = saturate(dot(rd, toL / dist));
         col += lightColS[li].rgb * (pow(cosL, lExp) * att * lGain);
+    }
+    // Project real live scene geometry (pine trees, mountains, stone arches, tavern beams, hearths)
+    // onto the dynamic environment cubemap wherever the ray falls inside the camera frustum.
+    const float4 sc = screenOf(rd * 4000.0f);
+    if (sc.w > 1.0f && all(sc.xy >= 2.0f.xx) && all(sc.xy <= dims.xy - 3.0f)) {
+        const float2 suv = sc.xy * dims.zw;
+        const float sd = Depth.SampleLevel(Lin, suv, 0.0f);
+        if (sd < 0.9999f) {
+            const float2 edge = min(suv, 1.0f - suv);
+            const float edgeW = smoothstep(0.0f, 0.08f, min(edge.x, edge.y));
+            const float3 sceneCol = min(GameLit.SampleLevel(Lin, suv, 0.0f).rgb, 3.0f.xxx);
+            col = lerp(col, sceneCol, edgeW * (roughBand ? 0.62f : 0.85f));
+        }
     }
     return min(col, 3.5f.xxx);
 }

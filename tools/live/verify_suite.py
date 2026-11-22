@@ -18,7 +18,7 @@ BASE_INI = [
 
 CONDITIONS = [
     ("natural", [("console", ["command=player.setangle x 0"])], ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
-    ("river_closeup", [("set_time", ["hour=14.0"]), ("console", ["command=player.setangle z 355"]), ("console", ["command=player.setangle x 22"])], ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
+    ("river_closeup", [("set_time", ["hour=14.0"]), ("console", ["command=player.setpos x 20120"]), ("console", ["command=player.setpos y -45720"]), ("console", ["command=player.setangle z 335"]), ("console", ["command=player.setangle x 28"])], ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
     ("overhead_sky_clear", [("set_weather", ["id=00081a"]), ("console", ["command=player.setangle z 90"]), ("console", ["command=player.setangle x -38"])], ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
     ("sunset", [("console", ["command=player.setangle x 0"]), ("set_time", ["hour=18.3"])], ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
     ("night", [("set_time", ["hour=23.0"])], ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),

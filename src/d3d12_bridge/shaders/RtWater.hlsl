@@ -202,16 +202,24 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float depthDamp = smoothstep(0.0f, 6.0f, depthV0) * lerp(1.0f, 0.72f, smoothstep(50.0f, 160.0f, depthV0));
                 const float2 bowNormal = obsGrad * (bowHit * (0.14f + 0.08f * sin(depthV0 * 0.45f - wt * 3.2f)));
                 const float2 eddyRipple = curlPhase * (eddyLee * 0.09f * sin(dot(wpW.xy, flowDir) * 0.18f - wt * 2.8f));
-                // Fine capillary wind-ripple micro-normals advected along streamlines (eliminates flat glassy water on calm days).
-                const float capFade = saturate(1.0f - wDist / 3800.0f);
+                // Dual-scale crisp capillary wind-ripple micro-normals advected along deflected streamlines:
+                // gives liquid surface crisp sunlit micro-facets & living texture even when looking straight down.
+                const float capFade = saturate(1.0f - wDist / 4200.0f);
                 const float2 capP0 = (wpW.xy - flowVec * (ph0 * 10.0f)) * 0.24f;
                 const float2 capP1 = (wpW.xy - flowVec * (ph1 * 10.0f) + float2(37.3f, 61.9f)) * 0.24f;
                 const float2 capG0 = float2(vNoise2D(capP0 + float2(0.15f, 0.0f)) - vNoise2D(capP0 - float2(0.15f, 0.0f)),
                                             vNoise2D(capP0 + float2(0.0f, 0.15f)) - vNoise2D(capP0 - float2(0.0f, 0.15f)));
                 const float2 capG1 = float2(vNoise2D(capP1 + float2(0.15f, 0.0f)) - vNoise2D(capP1 - float2(0.15f, 0.0f)),
                                             vNoise2D(capP1 + float2(0.0f, 0.15f)) - vNoise2D(capP1 - float2(0.0f, 0.15f)));
-                const float2 capNormal = lerp(capG0, capG1, flowBlend) * (0.52f * capFade);
-                const float2 waveG = lerp(g0, g1, flowBlend) * depthDamp + bowNormal + eddyRipple + capNormal;
+                const float2 microP0 = (wpW.xy - flowVec * (ph0 * 14.0f)) * 0.62f;
+                const float2 microP1 = (wpW.xy - flowVec * (ph1 * 14.0f) + float2(19.7f, 83.1f)) * 0.62f;
+                const float2 microG0 = float2(vNoise2D(microP0 + float2(0.18f, 0.0f)) - vNoise2D(microP0 - float2(0.18f, 0.0f)),
+                                              vNoise2D(microP0 + float2(0.0f, 0.18f)) - vNoise2D(microP0 - float2(0.0f, 0.18f)));
+                const float2 microG1 = float2(vNoise2D(microP1 + float2(0.18f, 0.0f)) - vNoise2D(microP1 - float2(0.18f, 0.0f)),
+                                              vNoise2D(microP1 + float2(0.0f, 0.18f)) - vNoise2D(microP1 - float2(0.0f, 0.18f)));
+                const float2 capNormal = lerp(capG0, capG1, flowBlend) * (0.62f * capFade)
+                                       + lerp(microG0, microG1, flowBlend) * (0.38f * saturate(1.0f - wDist / 1800.0f));
+                const float2 waveG = lerp(g0, g1, flowBlend) * (depthDamp * 1.25f) + bowNormal + eddyRipple + capNormal;
                 n = normalize(n + float3(waveG, 0.0f));
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
                 if (wDist < 1600.0f) {
@@ -351,24 +359,26 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const int2 qB = clamp(q - int2(round(n.xy * 2.0f)), int2(0, 0), int2(dims.xy) - 1);
                 const float3 bed = float3(PreWater[qR].r, PreWater[q].g, PreWater[qB].b);
                 const float path = length(worldAt(float2(q), Depth.Load(int3(q, 0))) - p);
-                // Physical Beer-Lambert glacial river absorption (red attenuates 6x faster than green/blue):
-                // crystal-clear transparent shallows (0..22u) -> luminous glacial turquoise -> deep Nordic sapphire.
-                const float3 T = exp(-waterA.z * float3(3.10f, 1.08f, 0.68f) * path);
-                const float3 scatter = float3(0.018f, 0.068f, 0.092f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) * 1.95f;
+                // Crystal-clear Nordic glacial river Beer-Lambert absorption:
+                // shallow riverbeds (0..140u) stay razor-sharp and transparent showing every submerged stone & pebble,
+                // transitioning smoothly to luminous glacial emerald-turquoise -> deep Nordic sapphire in deep pools.
+                const float3 T = exp(-waterA.z * float3(1.45f, 0.48f, 0.30f) * path);
+                const float3 scatter = float3(0.014f, 0.058f, 0.082f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) * 1.45f;
                 const float nearW = 1.0f - smoothstep(2800.0f, 5200.0f, wDist);
                 // Rich backlit glacial-emerald wave-crest subsurface scattering.
                 const float3 waveSSS = sunDir.w > 0.5f
                     ? float3(0.03f, 0.28f, 0.26f) * sunColour.rgb * (0.25f + 0.75f * pow(saturate(dot(-v, sunDir.xyz)), 3.5f)) * saturate((1.0f - n.z) * 5.5f) * 0.65f
                     : 0.0f.xxx;
-                // Organic domain-warped turbulent froth (zero hexagonal Voronoi chicken-wire on shallow shorelines):
-                // white-water spray forms naturally on upstream rock bow-waves, lee eddies, and steep rapids crests.
-                const float shoreBand = (1.0f - smoothstep(0.0f, 5.5f, depthV)) * smoothstep(0.0f, 0.5f, depthV);
+                // Two-tier organic turbulent shoreline meniscus, boulder bow-wave froth & rapids white-water:
+                // crisp aerated foam ring where water laps boulders & banks + deflected lee eddies (zero Voronoi grid).
+                const float shoreMeniscus = (1.0f - smoothstep(0.0f, 4.2f, depthV)) * smoothstep(0.0f, 0.35f, depthV);
+                const float shoreBand = (1.0f - smoothstep(0.0f, 12.0f, depthV)) * smoothstep(0.0f, 0.8f, depthV);
                 const float froth = organicFroth(wpW.xy, camPosW.w);
-                const float lapWave = pow(saturate(sin(depthV * 0.55f - camPosW.w * 2.1f + froth * 2.4f) * 0.5f + 0.5f), 3.0f);
-                const float bowFoam = bowHit * froth * (0.50f + 0.50f * lapWave) * 0.72f;
-                const float eddyFoam = eddyLee * froth * 0.34f;
-                const float shoreLap = shoreBand * froth * (0.30f + 0.70f * lapWave) * 0.22f;
-                const float crestFoam = saturate((1.0f - n.z) * 6.5f - 0.18f) * froth * 0.52f;
+                const float lapWave = pow(saturate(sin(depthV * 0.62f - camPosW.w * 2.4f + froth * 2.8f) * 0.5f + 0.5f), 2.5f);
+                const float bowFoam = bowHit * froth * (0.55f + 0.45f * lapWave) * 0.85f;
+                const float eddyFoam = eddyLee * froth * 0.42f;
+                const float shoreLap = shoreMeniscus * (0.38f + 0.62f * froth) * 0.65f + shoreBand * froth * lapWave * 0.34f;
+                const float crestFoam = saturate((1.0f - n.z) * 6.0f - 0.16f) * froth * 0.55f;
                 const float foamMask = saturate(max(max(bowFoam, eddyFoam), max(shoreLap, crestFoam))) * nearW;
                 // True Underwater Volumetric Sunbeam Shafts (6-step depth-marched Mie scattering integral through water column):
                 // gives sunlit Nordic rivers glowing emerald-turquoise underwater light cones beneath the surface.

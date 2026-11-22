@@ -172,6 +172,12 @@ bool Read(Snapshot* s) {
             EngineLight sun{};
             if (ReadLight(At<const uint8_t*>(ssn, 0x200), 4, &sun)) { sun.pad = s->inWater; Push(s, sun, nullptr, "sun"); }
             s->active = ReadArray(ssn + 0x130, 0, s);
+            // Engine-level dynamic shadowcaster & physical flame-flicker ownership:
+            // promote every active point/torch/spell light in ShadowSceneNode to shadow-casting status (flag 2)
+            // so our DXR 1.2 128-light pipeline casts real-time dynamic shadows from every light source in the scene.
+            for (auto& x : s->lights) {
+                if (!(x.flags & 4)) x.flags |= 2;
+            }
             // shadow casters are also in the active list: mark them there, add any that are not
             const auto* data = At<const uint8_t* const*>(ssn + 0x230, 0x00);
             const uint32_t n = std::min<uint32_t>(At<uint32_t>(ssn + 0x230, 0x10), 128);

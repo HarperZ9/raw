@@ -122,7 +122,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
         const size_t n = raw::rt::InstallVTrace(g_img, LoadVTrace(), g_out + "\\vt_trace.tsv");
         Log("vtrace: %zu slots traced", n);
     }
-    if (IniInt("PapyrusTiming", 0)) {
+    if (IniInt("PapyrusTiming", 1)) {
         char b[64];
         GetPrivateProfileStringA("EngineRT", "PapyrusBudgetMs", "-1", b, sizeof b, ini.c_str());
         char v[64];

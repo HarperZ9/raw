@@ -119,9 +119,9 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                 if (li >= flags.y) { continue; }
                 const float3 toL = lightPosR[li].xyz - pRel;
                 const float dL = length(toL);
-                const float rL = lightPosR[li].w * 1.35f;
+                const float rL = lightPosR[li].w;
                 if (dL >= rL) { continue; }
-                const float att = pow(saturate(1.0f - dL / rL), 2.0f);
+                const float att = pow(saturate(1.0f - dL / rL), 2.2f);
                 const float cosL = dot(farDir, toL / max(dL, 1.0e-3f));
                 const float phL = min(froxelHG(cosL, 0.52f) * 2.4f + 0.35f, 2.2f);
                 inScat += lightColS[li].rgb * (att * phL * tune2.y * (isInt ? 0.42f : 0.28f));

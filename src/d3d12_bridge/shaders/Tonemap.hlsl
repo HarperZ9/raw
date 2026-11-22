@@ -39,8 +39,11 @@ float3 tonemapAgX(float3 color) {
     x = (x + 12.47393f) / (4.026069f + 12.47393f);
     const float3 x2 = x * x, x4 = x2 * x2;
     x = 15.5f * x4 * x2 - 40.14f * x4 * x + 31.96f * x4 - 6.868f * x2 * x + 0.4298f * x2 + 0.1191f * x - 0.00232f;
-    // AgX polynomial outputs sRGB-encoded values; decode back to linear so Tonemap.hlsl's single output OETF never double-gammas.
-    return pow(saturate(mul(kAgXOut, x)), 2.2f);
+    // AgX Punchy Look (Troy Sobotka): deepens shadow toe & midtone contrast for full dynamic range & 3D depth pop
+    // while keeping highlights unclipped and hue-faithful; decoded back to linear for Tonemap.hlsl's single output OETF.
+    float3 agxOut = saturate(mul(kAgXOut, x));
+    agxOut = pow(agxOut, 1.12f);
+    return pow(agxOut, 2.2f);
 }
 
 // Gran Turismo / Uchimura piecewise curve (SIGGRAPH 2017): linear midtones, smooth toe & shoulder.
@@ -335,42 +338,42 @@ float4 main(In i) : SV_Target {
         const float3 hNear = Bloom.Sample(S0, suv + float2(bpx.x * 1.5f, bpx.y * 1.5f)).rgb
                            + Bloom.Sample(S0, suv - float2(bpx.x * 1.5f, bpx.y * 1.5f)).rgb;
         const float hLum = dot(hNear * 0.5f, W);
-        const float3 halation = float3(1.0f, 0.36f, 0.14f) * (saturate((bloomLum - 1.02f) * 0.28f) * 0.08f + saturate((hLum - 0.92f) * 0.22f) * 0.05f);
+        const float3 halation = float3(1.08f, 0.34f, 0.10f) * (saturate((bloomLum - 0.72f) * 0.42f) * 0.12f + saturate((hLum - 0.68f) * 0.35f) * 0.08f);
         float3 anaAcc = 0.0f.xxx;
-        [unroll] for (int ai = 1; ai <= 3; ai++) {
-            const float dx = float(ai) * 3.2f * bpx.x;
+        [unroll] for (int ai = 1; ai <= 4; ai++) {
+            const float dx = float(ai) * 3.4f * bpx.x;
             const float aw = 1.0f / float(ai + 1);
-            const float3 bL = max(Bloom.Sample(S0, saturate(suv - float2(dx, 0.0f))).rgb - 1.10f.xxx, 0.0f.xxx);
-            const float3 bR = max(Bloom.Sample(S0, saturate(suv + float2(dx, 0.0f))).rgb - 1.10f.xxx, 0.0f.xxx);
+            const float3 bL = max(Bloom.Sample(S0, saturate(suv - float2(dx, 0.0f))).rgb - 0.78f.xxx, 0.0f.xxx);
+            const float3 bR = max(Bloom.Sample(S0, saturate(suv + float2(dx, 0.0f))).rgb - 0.78f.xxx, 0.0f.xxx);
             anaAcc += (bL + bR) * (0.5f * aw);
         }
-        const float3 anamorphic = anaAcc * float3(0.48f, 0.76f, 1.08f) * 0.055f;
+        const float3 anamorphic = anaAcc * float3(0.45f, 0.78f, 1.15f) * 0.085f;
         ovAdd += (halation + anamorphic) * clamp(RQ.w, 0.0f, 2.5f);
     }
     if ((ovMask & 4u) != 0u) {
         // Layer 3: arXiv:2605.04017 (Hachisuka et al. 2026) 5-Order Optical Lens Transport Ghosts + Cat's-Eye Aperture Halo.
         const float2 cVec = suv - 0.5f.xx;
         const float cDist = length(cVec);
-        const float catsEye = saturate(1.0f - cDist * cDist * 1.15f);
+        const float catsEye = saturate(1.0f - cDist * cDist * 1.10f);
         float3 lensAcc = 0.0f.xxx;
         [unroll] for (int gi = 1; gi <= 5; gi++) {
             const float gScale = 0.35f + float(gi) * 0.24f;
             const float2 gUv = saturate(0.5f.xx - cVec * gScale);
             // Chromatic radial dispersion across RGB lens elements.
-            const float2 disp = cVec * (0.008f * float(gi));
-            const float rC = max(Bloom.Sample(S0, saturate(gUv + disp)).r - 0.85f, 0.0f);
-            const float gC = max(Bloom.Sample(S0, gUv).g - 0.85f, 0.0f);
-            const float bC = max(Bloom.Sample(S0, saturate(gUv - disp)).b - 0.85f, 0.0f);
+            const float2 disp = cVec * (0.009f * float(gi));
+            const float rC = max(Bloom.Sample(S0, saturate(gUv + disp)).r - 0.68f, 0.0f);
+            const float gC = max(Bloom.Sample(S0, gUv).g - 0.68f, 0.0f);
+            const float bC = max(Bloom.Sample(S0, saturate(gUv - disp)).b - 0.68f, 0.0f);
             const float3 gCol = float3(rC, gC, bC);
-            const float3 gTint = gi == 1 ? float3(1.06f, 0.96f, 0.84f)
-                               : (gi == 2 ? float3(0.84f, 1.03f, 1.14f)
-                               : (gi == 3 ? float3(0.98f, 0.88f, 1.08f)
-                               : (gi == 4 ? float3(0.88f, 1.05f, 0.96f) : float3(1.04f, 0.92f, 0.86f))));
+            const float3 gTint = gi == 1 ? float3(1.08f, 0.96f, 0.82f)
+                               : (gi == 2 ? float3(0.80f, 1.04f, 1.18f)
+                               : (gi == 3 ? float3(1.02f, 0.86f, 1.12f)
+                               : (gi == 4 ? float3(0.86f, 1.08f, 0.94f) : float3(1.06f, 0.90f, 0.82f))));
             lensAcc += gCol * gTint * (catsEye / float(gi + 1));
         }
         const float2 haloDir = cDist > 1.0e-4f ? cVec / cDist : float2(0.0f, 1.0f);
-        const float3 haloCol = max(Bloom.Sample(S0, saturate(0.5f.xx - haloDir * 0.22f)).rgb - 0.95f.xxx, 0.0f.xxx);
-        ovAdd += min((lensAcc * 0.048f + haloCol * 0.032f * saturate(1.0f - cDist * 1.35f)) * clamp(RQ.w, 0.0f, 2.5f), 0.20f.xxx);
+        const float3 haloCol = max(Bloom.Sample(S0, saturate(0.5f.xx - haloDir * 0.22f)).rgb - 0.72f.xxx, 0.0f.xxx);
+        ovAdd += min((lensAcc * 0.072f + haloCol * 0.048f * saturate(1.0f - cDist * 1.30f)) * clamp(RQ.w, 0.0f, 2.5f), 0.26f.xxx);
     }
     if ((ovMask & 8u) != 0u) {
         // Layer 4: Subtle Optical Diffusion (restrained wide-radius highlight glow without washing out sharp detail).

@@ -373,95 +373,57 @@ float OcclusionCuller::EstimateBoundingRadius(uint32_t indexCount, float scale) 
 
 bool OcclusionCuller::ShouldCull(uint32_t indexCount)
 {
-    if (!m_enabled || !SceneLights_Opaque()) return false;
-    if (indexCount < 36 || indexCount > 10500) return false;
+    const bool hasBound = m_hasExactBound;
+    m_hasExactBound = false;  // Consume once per draw so no draw ever inherits a stale bound
+    if (!m_enabled || !hasBound || !SceneLights_Opaque()) return false;
+    if (indexCount < 36) return false;
 
-    const float* wm = SceneLights_DrawWorld();
-    if (!wm) return false;
     const auto& sl = SceneLights_Frame();
     if (!sl.hasCamera) return false;
 
-    const float sx = std::sqrt(wm[0]*wm[0] + wm[1]*wm[1] + wm[2]*wm[2]);
-    const float radius = EstimateBoundingRadius(indexCount, sx);
-    if (radius <= 0.0f) return false;
+    // Exact Creation Engine NiAVObject::worldBound (center in world space -> camera-relative, authored radius).
+    const float radius = m_exactBound[3];
+    if (!(radius > 0.1f && radius < 20000.0f)) return false;
+    const float curX = m_exactBound[0] - sl.posAdjust[0];
+    const float curY = m_exactBound[1] - sl.posAdjust[1];
+    const float curZ = m_exactBound[2] - sl.posAdjust[2];
+    const float curDist = std::sqrt(curX*curX + curY*curY + curZ*curZ);
 
     const uint32_t tris = indexCount / 3;
     m_drawsTested++;
     m_trisTested += tris;
 
-    // ── Stage 1: Exact Current-Frame Ultra-Conservative Frustum Culling ──
-    // Skyrim terrain chunks (4096u) and building walls can have off-center pivots with <3000 tris;
-    // restrict culling to genuinely small/distant props (indexCount <= 1200, dist > 2600u) with a 1800u
-    // conservative bounding guard so NO terrain, building, cliff, or off-center pivot can EVER pop out.
-    const float curX = wm[3], curY = wm[7], curZ = wm[11];
-    const float curDist = std::sqrt(curX*curX + curY*curY + curZ*curZ);
-    if (indexCount <= 1200 && curDist > 2600.0f) {
-        const float safeR = std::max(radius * 2.5f, 1800.0f);
-        const float cw0 = sl.worldToClip[3][0]*curX + sl.worldToClip[3][1]*curY + sl.worldToClip[3][2]*curZ + sl.worldToClip[3][3];
-        if (cw0 < -safeR) {
+    // Never cull anything whose bounding sphere contains or approaches the camera.
+    if (curDist <= radius * 1.25f + 64.0f) return false;
+
+    // ── Stage 1: Exact Current-Frame Creation Engine worldBound Frustum Culling ──
+    const float safeR = radius * 1.15f + 16.0f;
+    const float cw0 = sl.worldToClip[3][0]*curX + sl.worldToClip[3][1]*curY + sl.worldToClip[3][2]*curZ + sl.worldToClip[3][3];
+    if (cw0 < -safeR) {
+        m_drawsCulled++; m_frustumCulled++; m_trisCulled += tris;
+        return true;
+    }
+    if (cw0 > 1.0f) {
+        const float cx0 = (sl.worldToClip[0][0]*curX + sl.worldToClip[0][1]*curY + sl.worldToClip[0][2]*curZ + sl.worldToClip[0][3]) / cw0;
+        const float cy0 = (sl.worldToClip[1][0]*curX + sl.worldToClip[1][1]*curY + sl.worldToClip[1][2]*curZ + sl.worldToClip[1][3]) / cw0;
+        const float padNdc = (safeR * 1.35f) / cw0;
+        if (cx0 < -1.0f - padNdc || cx0 > 1.0f + padNdc || cy0 < -1.0f - padNdc || cy0 > 1.0f + padNdc) {
             m_drawsCulled++; m_frustumCulled++; m_trisCulled += tris;
             return true;
         }
-        if (cw0 > 1.0f) {
-            const float cx0 = (sl.worldToClip[0][0]*curX + sl.worldToClip[0][1]*curY + sl.worldToClip[0][2]*curZ + sl.worldToClip[0][3]) / cw0;
-            const float cy0 = (sl.worldToClip[1][0]*curX + sl.worldToClip[1][1]*curY + sl.worldToClip[1][2]*curZ + sl.worldToClip[1][3]) / cw0;
-            const float padNdc = std::clamp(safeR / cw0, 0.25f, 1.50f);
-            if (cx0 < -1.0f - padNdc || cx0 > 1.0f + padNdc || cy0 < -1.0f - padNdc || cy0 > 1.0f + padNdc) {
-                m_drawsCulled++; m_frustumCulled++; m_trisCulled += tris;
-                return true;
-            }
-            // ── Stage 2: Sub-Pixel Distant Micro-Prop Culling ──
-            if (curDist > 5500.0f && indexCount <= 300 && (radius / cw0) < 0.00045f) {
-                m_drawsCulled++; m_subPxCulled++; m_trisCulled += tris;
-                return true;
-            }
+        // ── Stage 2: Exact-Bound Distant Sub-Pixel Micro-Prop Culling ──
+        // Only cull genuinely tiny distant props (<1.2 px diameter past 3,500u, authored radius < 48u).
+        if (curDist > 3500.0f && radius < 48.0f && (radius / cw0) < 0.00060f) {
+            m_drawsCulled++; m_subPxCulled++; m_trisCulled += tris;
+            return true;
         }
-    }
-
-    // ── Stage 3: Standard-Z Temporal-Reprojected CPU Hi-Z Occlusion Culling ──
-    if (indexCount > 1200 || !m_hizReady || !m_hizHasCam || m_hizMips == 0) return false;
-
-    // Re-center object position from current camera-relative space into the Hi-Z frame's camera space.
-    const float px = curX + (sl.posAdjust[0] - m_hizCam[0]);
-    const float py = curY + (sl.posAdjust[1] - m_hizCam[1]);
-    const float pz = curZ + (sl.posAdjust[2] - m_hizCam[2]);
-    const float dist = std::sqrt(px*px + py*py + pz*pz);
-    // Conservative near guard: never cull nearby props, NPCs, weapons, or foreground foliage.
-    if (dist < radius * 2.4f + 160.0f) return false;
-
-    // Project center and nearest point on bounding sphere using the exact Hi-Z frame's worldToClip matrix.
-    const float invD = 1.0f / dist;
-    const float nx = px - px * invD * radius;
-    const float ny = py - py * invD * radius;
-    const float nz = pz - pz * invD * radius;
-
-    auto proj = [&](float x, float y, float z, float& ndcX, float& ndcY, float& ndcZ) -> bool {
-        const float cw = m_hizW2C[3][0]*x + m_hizW2C[3][1]*y + m_hizW2C[3][2]*z + m_hizW2C[3][3];
-        if (cw <= 1.0f) return false;
-        const float cx = m_hizW2C[0][0]*x + m_hizW2C[0][1]*y + m_hizW2C[0][2]*z + m_hizW2C[0][3];
-        const float cy = m_hizW2C[1][0]*x + m_hizW2C[1][1]*y + m_hizW2C[1][2]*z + m_hizW2C[1][3];
-        const float cz = m_hizW2C[2][0]*x + m_hizW2C[2][1]*y + m_hizW2C[2][2]*z + m_hizW2C[2][3];
-        const float iw = 1.0f / cw;
-        ndcX = cx * iw; ndcY = cy * iw; ndcZ = cz * iw;
-        return true;
-    };
-
-    float cx, cy, cz, nxNdc, nyNdc, nearZ;
-    if (!proj(px, py, pz, cx, cy, cz) || !proj(nx, ny, nz, nxNdc, nyNdc, nearZ)) return false;
-    if (nearZ <= 0.0f || nearZ >= 1.0f) return false;
-    // Skip objects straddling the frustum edge (newly visible during camera turns).
-    if (cx < -0.95f || cx > 0.95f || cy < -0.95f || cy > 0.95f) return false;
-
-    const float u = cx * 0.5f + 0.5f;
-    const float v = 0.5f - cy * 0.5f;
-    const float halfU = std::clamp((radius * invD) * 0.95f + 1.5f / float(std::max(m_hizW, 1u)), 0.005f, 0.35f);
-    const float halfV = std::clamp((radius * invD) * 1.45f + 1.5f / float(std::max(m_hizH, 1u)), 0.005f, 0.35f);
-
-    if (TestRect(u - halfU, v - halfV, u + halfU, v + halfV, nearZ)) {
-        m_drawsCulled++; m_hiZCulled++; m_trisCulled += tris;
-        return true;
     }
     return false;
 }
 
 } // namespace SB::Proxy
+
+extern "C" __declspec(dllexport) void PG_SetCurrentDrawBound(float cx, float cy, float cz, float radius)
+{
+    SB::Proxy::OcclusionCuller::Get().SetExactDrawBound(cx, cy, cz, radius);
+}

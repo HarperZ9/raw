@@ -58,6 +58,13 @@ public:
     // Called on ClearState to reset tracked VS CB bindings
     void OnClearState();
 
+    // Receive exact NiAVObject::worldBound (world center XYZ + radius) from raw_engine.dll BSLightingShader::SetupGeometry
+    void SetExactDrawBound(float cx, float cy, float cz, float radius)
+    {
+        m_exactBound[0] = cx; m_exactBound[1] = cy; m_exactBound[2] = cz; m_exactBound[3] = radius;
+        m_hasExactBound = true;
+    }
+
     // ── Statistics ────────────────────────────────────────────────────
 
     uint32_t GetDrawsTested()   const { return m_drawsTested; }
@@ -86,8 +93,10 @@ private:
     float EstimateBoundingRadius(uint32_t indexCount, float scale) const;
 
     bool m_initialized = false;
-    bool m_enabled     = false;  // Disabled: Skyrim terrain/road/riverbed meshes have off-center cell pivots that fail indexCount sphere bounds
-    bool m_hizReady    = false;  // True after first successful readback
+    bool m_enabled     = true;   // Exact NiAVObject::worldBound frustum + sub-pixel culling (zero pivot heuristics)
+    bool m_hizReady    = false;
+    float m_exactBound[4] = {};
+    bool  m_hasExactBound = false;
 
     ID3D11Device*        m_device  = nullptr;
     ID3D11DeviceContext* m_context = nullptr;

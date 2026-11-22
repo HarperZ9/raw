@@ -160,10 +160,31 @@ uint64_t ParticleHook(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
     if (GetCurrentThreadId() == g_renderTid) Note(b);
     return g_origParticle(a, b, c, d);
 }
+using SetBoundFn = void (*)(float, float, float, float);
+SetBoundFn g_setBound = nullptr;
+
+bool ReadGeoBound(uint64_t pass, float out[4]) {
+    __try {
+        const auto* geo = *reinterpret_cast<const uint8_t* const*>(pass + 0x10);
+        if (!geo) return false;
+        std::memcpy(out, geo + 0xE4, 16);  // exact NiAVObject::worldBound (center.xyz, radius)
+        return std::isfinite(out[0]) && std::isfinite(out[1]) && std::isfinite(out[2]) &&
+               std::isfinite(out[3]) && out[3] > 0.1f && out[3] < 100000.0f;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 uint64_t LightingHook(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
-    if (GetCurrentThreadId() == g_renderTid && g_raw.size() < kMaxRaw) {
-        Raw r{};
-        if (ReadWindowLight(b, &r)) { ++g_glowing; g_raw.push_back(r); }
+    if (GetCurrentThreadId() == g_renderTid) {
+        if (g_setBound) {
+            float bound[4];
+            if (ReadGeoBound(b, bound)) g_setBound(bound[0], bound[1], bound[2], bound[3]);
+        }
+        if (g_raw.size() < kMaxRaw) {
+            Raw r{};
+            if (ReadWindowLight(b, &r)) { ++g_glowing; g_raw.push_back(r); }
+        }
     }
     return g_origLighting(a, b, c, d);
 }
@@ -214,6 +235,8 @@ std::string EmittersInstall(const Image& img) {
     if (g_installed) return "emitters: already installed";
     g_renderTid = GetCurrentThreadId();
     g_raw.reserve(kMaxRaw);
+    if (HMODULE proxy = GetModuleHandleA("d3d11.dll"))
+        g_setBound = reinterpret_cast<SetBoundFn>(GetProcAddress(proxy, "PG_SetCurrentDrawBound"));
     const bool a = Swap(img, Addr("vtable:BSEffectShader"), reinterpret_cast<void*>(&EffectHook), &g_origEffect);
     const bool b = Swap(img, Addr("vtable:BSParticleShader"), reinterpret_cast<void*>(&ParticleHook), &g_origParticle);
     const bool c = Swap(img, Addr("vtable:BSLightingShader"), reinterpret_cast<void*>(&LightingHook), &g_origLighting);

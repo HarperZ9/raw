@@ -178,8 +178,16 @@ float4 skyview(float4 at : SV_Position) : SV_Target0 {
         L += T * (scat * (1.0f - stepT) / max(sT, 1.0e-5f.xxx));
         T *= stepT;
     }
-    // Calibrated solar irradiance exposure matching RAW's linear HDR pipeline (CIE D65 high-latitude sun).
+    // Calibrated solar irradiance exposure matching RAW's linear HDR pipeline (CIE D65 high-latitude sun)
+    // + physical Belt of Venus (rosy-violet anti-solar twilight arch above Earth's indigo shadow at dawn/dusk).
     const float sunVisDay = smoothstep(-0.06f, 0.14f, sunD.z);
     const float3 solarIrr = float3(1.18f, 1.15f, 1.12f) * (1.45f * sunVisDay);
-    return float4(L * solarIrr, 1.0f);
+    const float twilightW = smoothstep(-0.08f, 0.02f, sunD.z) * (1.0f - smoothstep(0.05f, 0.22f, sunD.z));
+    const float antiSolar = saturate(dot(rd, -sunD));
+    const float beltBand = exp(-pow((rd.z - 0.14f) / 0.12f, 2.0f)) * pow(antiSolar, 2.0f);
+    const float earthShadow = (1.0f - smoothstep(0.0f, 0.10f, rd.z)) * pow(antiSolar, 1.5f);
+    float3 outSky = L * solarIrr;
+    outSky += float3(0.42f, 0.22f, 0.34f) * (beltBand * twilightW * 0.45f);
+    outSky = lerp(outSky, outSky * float3(0.45f, 0.55f, 0.85f), earthShadow * twilightW * 0.60f);
+    return float4(outSky, 1.0f);
 }

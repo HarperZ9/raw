@@ -28,9 +28,9 @@ public:
     bool Initialize(ID3D12Device* dev12, LUID adapterLuid, LogFn log);
     void Shutdown();
     StreamlineCaps Caps() const { return m_caps; }
-    // Live neural mode: 0 = Off, 1 = DLAA Transformer (Preset K), 2 = DLSS Ray Reconstruction (Preset F).
+    // Live neural mode: 0=Off, 1=DLAA Transformer K, 2=DLSS RayRecon F, 3=DLSS Quality K, 4=DLSS Balanced K, 5=DLSS Perf K.
     int GetMode() const { return m_mode; }
-    void SetMode(int m) { m_mode = (m < 0 ? 0 : (m > 2 ? 2 : m)); }
+    void SetMode(int m) { m_mode = (m < 0 ? 0 : (m > 5 ? 5 : m)); }
     bool GetReflex() const { return m_reflexOn; }
     void SetReflex(bool on) { m_reflexOn = on; }
     bool GetDeepDvc() const { return m_deepDvcOn; }

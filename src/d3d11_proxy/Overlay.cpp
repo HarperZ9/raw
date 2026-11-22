@@ -283,10 +283,10 @@ std::string BuildMenuText()
     } else if (g_tab == 6) {
         static const char* kTiers[5] = {"Low (Raster)", "Medium (RT Sun)", "High (RT GI)", "Ultra (Full RT)", "Overdrive (Max)"};
         static const char* kCurves[8] = {"0:Game", "1:ACES Fitted", "2:ReinhardW", "3:RAW Hybrid", "4:AgX WideGamut", "5:GranTurismo", "6:Lottes", "7:Hable"};
-        static const char* kDlss[3] = {"0:Off (FXAA+CAS)", "1:DLAA Transformer K", "2:DLSS RayRecon F"};
+        static const char* kDlss[6] = {"0:Off (FXAA+CAS)", "1:DLAA Transformer K", "2:DLSS RayRecon F", "3:DLSS Quality K", "4:DLSS Balanced K", "5:DLSS Perf M"};
         const uint32_t lutTotal = Tonemap_LutCount();
         row(0, "Hardware Tier Preset", kTiers[std::clamp(g_hwTier, 0, 4)]);
-        row(1, "NVIDIA Streamline", kDlss[std::clamp(raw::bridge::StreamlineHost::Get().GetMode(), 0, 2)]);
+        row(1, "NVIDIA Streamline", kDlss[std::clamp(raw::bridge::StreamlineHost::Get().GetMode(), 0, 5)]);
         row(2, "Color Space / Curve", kCurves[std::clamp(tm.curve, 0, 7)]);
         row(3, "Elder 3D PNG LUT", FmtI("%d/", tm.lutIndex) + FmtI("%d ", int(lutTotal)) + Tonemap_LutName(tm.lutIndex));
         row(4, "3D LUT Blend Strength", Fmt("%.0f%%", tm.lutStrength * 100.0f));
@@ -458,7 +458,7 @@ bool PollMenu(std::string& outText)
             const int lutN = int(Tonemap_LutCount()) + 1;
             switch (g_sel) {
             case 0: g_hwTier = (g_hwTier + 5 + dir) % 5; ApplyHardwareTier(g_hwTier); break;
-            case 1: raw::bridge::StreamlineHost::Get().SetMode((raw::bridge::StreamlineHost::Get().GetMode() + 3 + dir) % 3); break;
+            case 1: raw::bridge::StreamlineHost::Get().SetMode((raw::bridge::StreamlineHost::Get().GetMode() + 6 + dir) % 6); break;
             case 2: tm.curve = (tm.curve + 8 + dir) % 8; tmDirty = true; break;
             case 3: tm.lutIndex = (tm.lutIndex + lutN + dir) % lutN; tmDirty = true; break;
             case 4: tm.lutStrength = std::clamp(tm.lutStrength + step * 0.05f, 0.0f, 1.0f); tmDirty = true; break;

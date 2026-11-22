@@ -238,7 +238,7 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
     if (!useRR && (!m_caps.dlss || a.dlssFailed || !a.dlssSetOptions)) return false;
 
     const sl::ViewportHandle vp(0);
-    const int activeMode = useRR ? 2 : 1;
+    const int activeMode = useRR ? 2 : m_mode;
     if (a.optW != width || a.optH != height || a.optMode != activeMode) {
         if (useRR) {
             sl::DLSSDOptions opt{};
@@ -257,16 +257,21 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
             }
         } else {
             sl::DLSSOptions opt{};
-            opt.mode = sl::DLSSMode::eDLAA;
+            opt.mode = (m_mode == 3) ? sl::DLSSMode::eMaxQuality
+                     : (m_mode == 4) ? sl::DLSSMode::eBalanced
+                     : (m_mode == 5) ? sl::DLSSMode::eMaxPerformance
+                                     : sl::DLSSMode::eDLAA;
             opt.outputWidth = width;
             opt.outputHeight = height;
             opt.colorBuffersHDR = sl::Boolean::eTrue;
             opt.dlaaPreset = sl::DLSSPreset::ePresetK;
             opt.qualityPreset = sl::DLSSPreset::ePresetK;
+            opt.balancedPreset = sl::DLSSPreset::ePresetK;
+            opt.performancePreset = sl::DLSSPreset::ePresetM;
             const sl::Result r = a.dlssSetOptions(vp, opt);
             if (r != sl::Result::eOk) {
                 a.dlssFailed = true;
-                if (log) log("[Streamline] slDLSSSetOptions(eDLAA, PresetK) failed: %d", static_cast<int>(r));
+                if (log) log("[Streamline] slDLSSSetOptions(mode %d) failed: %d", m_mode, static_cast<int>(r));
                 return false;
             }
         }

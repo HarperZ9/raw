@@ -69,14 +69,30 @@ float2 evalTrochoidalWaves(float2 xy, float2 wDir, float wt, float wDist, float 
     return grad * (0.21f + windAmp * 0.14f);
 }
 
-// Organic 3-octave domain-warped liquid froth (replaces hexagonal Voronoi chicken-wire shore foam).
+// Aperiodic 2D gradient-smooth value noise (zero periodic sine/checkerboard lattice dots on dock pilings).
+float vNoise2D(float2 p) {
+    const float2 i = floor(p);
+    const float2 f = frac(p);
+    const float2 u = f * f * (3.0f - 2.0f * f);
+    const float a = hash21(i);
+    const float b = hash21(i + float2(1.0f, 0.0f));
+    const float c = hash21(i + float2(0.0f, 1.0f));
+    const float d = hash21(i + float2(1.0f, 1.0f));
+    return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
+}
+
+// True aperiodic 4-octave domain-warped organic river froth (zero honeycomb or diamond lattice artifacts).
 float organicFroth(float2 p, float t) {
-    const float w0 = sin(p.x * 0.11f + t * 0.65f) * cos(p.y * 0.13f - t * 0.52f);
-    const float w1 = cos(p.x * 0.23f - p.y * 0.19f + t * 0.88f + w0 * 1.4f);
-    const float w2 = sin(p.x * 0.51f + p.y * 0.47f - t * 1.35f + w1 * 1.8f);
-    const float w3 = cos(p.x * 1.07f - p.y * 0.93f + t * 1.95f + w2 * 1.5f);
-    const float f = saturate(0.45f + 0.28f * w1 + 0.18f * w2 + 0.14f * w3);
-    return smoothstep(0.42f, 0.88f, f);
+    const float2 q = p * 0.055f + float2(t * 0.18f, -t * 0.14f);
+    const float wX = vNoise2D(q * 0.85f + float2(3.1f, 7.4f)) * 1.45f;
+    const float wY = vNoise2D(q * 0.85f + float2(11.7f, 2.3f)) * 1.45f;
+    const float2 qw = q + float2(wX, wY);
+    const float n0 = vNoise2D(qw);
+    const float n1 = vNoise2D(qw * 2.13f + float2(5.3f, 13.1f) - float2(t * 0.25f, 0.0f));
+    const float n2 = vNoise2D(qw * 4.47f + float2(17.9f, 4.7f) + float2(0.0f, t * 0.35f));
+    const float n3 = vNoise2D(qw * 9.19f + float2(29.3f, 19.1f));
+    const float fbm = n0 * 0.44f + n1 * 0.28f + n2 * 0.18f + n3 * 0.10f;
+    return smoothstep(0.46f, 0.80f, fbm);
 }
 
 float3 waterSky(float3 rd) {

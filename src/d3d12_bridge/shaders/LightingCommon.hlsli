@@ -35,6 +35,7 @@ cbuffer P : register(b0) {
     float4 lightColS[MAX_LIGHTS];   // rgb, shadow-mask channel (-1 none)
     uint4  clusters[TILES_X * TILES_Y * SLICES];   // a bit per light
     float4 footTrail[32];           // persistent world-space footprint & terrain-deformation trail (xyz abs, w strength)
+    float4 dofParams;               // x: dofMaxDist (0=off), y: dofRadius (px), z: dofOrbBoost, w: weatherLens (0/1)
 };
 
 static const uint FLAG_MATCH = 1u, FLAG_SOFT = 2u, FLAG_GGX = 4u, FLAG_FOG = 8u, FLAG_CONTACT = 16u, FLAG_AO = 32u,

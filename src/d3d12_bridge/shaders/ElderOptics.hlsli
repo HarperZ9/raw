@@ -15,12 +15,13 @@ float3 elderUnderwaterMedium(float3 scene, float linearDist, float density) {
 
 // ElderDepthOfField: 32-tap Heptagonal-Aperture Cat's-Eye HDR Bokeh DoF with center-reticle autofocus,
 // specular bokeh orb expansion, chromatic lateral bokeh dispersion, IGN rotation, and anti-bleed depth weighting.
-float3 elderBokehDoF(Texture2D<float4> litTex, Texture2D<float> depthTex, float2 px, float2 dim, float2 invDim, float curZ, float focusZ) {
+float3 elderBokehDoF(Texture2D<float4> litTex, Texture2D<float> depthTex, float2 px, float2 dim, float2 invDim,
+                     float curZ, float focusZ, float dofMaxDist, float dofRadius, float dofOrbBoost) {
     const float3 centerCol = litTex.Load(int3(px, 0)).rgb;
-    if (focusZ > 540.0f || curZ <= focusZ * 1.30f) { return centerCol; }
-    const float coc = saturate((curZ - focusZ * 1.40f) / max(focusZ * 4.2f, 360.0f)) * saturate((540.0f - focusZ) / 280.0f);
+    if (dofMaxDist <= 1.0f || focusZ > dofMaxDist || curZ <= focusZ * 1.30f) { return centerCol; }
+    const float coc = saturate((curZ - focusZ * 1.40f) / max(focusZ * 4.2f, 360.0f)) * saturate((dofMaxDist - focusZ) / max(dofMaxDist * 0.52f, 120.0f));
     if (coc < 0.025f) { return centerCol; }
-    const float maxRad = coc * 8.5f;
+    const float maxRad = coc * clamp(dofRadius, 1.5f, 24.0f);
     // Off-axis cat's-eye optical vignetting vector (squeezes bokeh discs toward frame corners like fast f/1.4 cinema glass).
     const float2 uvNorm = px * invDim * 2.0f - 1.0f;
     const float cornerMag = saturate(dot(uvNorm, uvNorm) * 0.45f);
@@ -47,7 +48,7 @@ float3 elderBokehDoF(Texture2D<float4> litTex, Texture2D<float> depthTex, float2
         const float3 tap = litTex.Load(int3(q, 0)).rgb;
         const float tapLum = dot(tap, float3(0.2126f, 0.7152f, 0.0722f));
         // Luminous HDR bokeh orb expansion: out-of-focus torches, candles & sun glints bloom into round orbs.
-        const float orbBoost = 1.0f + saturate(tapLum - 0.65f) * 1.85f;
+        const float orbBoost = 1.0f + saturate(tapLum - 0.65f) * dofOrbBoost;
         // Subtle chromatic lateral dispersion on outer bokeh ring (red slightly wider, blue slightly tighter).
         const float3 chromaW = lerp(1.0f.xxx, float3(1.0f + u * 0.14f, 1.0f, 1.0f - u * 0.10f), coc * 0.65f);
         const float3 w = (depthW * orbBoost) * chromaW;

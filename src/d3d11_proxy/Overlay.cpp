@@ -102,6 +102,10 @@ void SavePresetFile(const std::string& path, const char* tag)
     wI("Tonemap", tm.enabled ? 1 : 0); wI("ToneCurve", tm.curve); wF("ExposureBias", tm.bias); wF("ExposureKey", tm.key);
     wF("ToneX1", tm.x[1]); wF("ToneX2", tm.x[2]); wF("ToneX3", tm.x[3]); wF("ToneX4", tm.x[4]); wF("ToneX5", tm.x[5]);
     wI("ToneView", tm.view); wI("LutIndex", tm.lutIndex); wF("LutStrength", tm.lutStrength); wI("OverlayMask", static_cast<int>(tm.overlayMask));
+    wF("BloomScale", tm.bloomScale); wF("SharpenStr", tm.sharpenStr); wF("GrainStr", tm.grainStr); wF("VignetteStr", tm.vignetteStr);
+    wF("CaStr", tm.caStr); wF("RadialBlurStr", tm.radialBlurStr); wF("HeadbobStr", tm.headbobStr); wF("LensStr", tm.lensStr);
+    wI("Dof", l.dof ? 1 : 0); wF("DofMaxDist", l.dofMaxDist); wF("DofRadius", l.dofRadius); wF("DofOrbBoost", l.dofOrbBoost);
+    wI("WeatherLens", l.weatherLens ? 1 : 0);
     wI("DlssMode", raw::bridge::StreamlineHost::Get().GetMode());
     g_statusTag = tag;
     g_savedFrames = 180;
@@ -132,6 +136,13 @@ void LoadPresetSlot(int slot)
     tm.x[1] = rF("ToneX1", tm.x[1]); tm.x[2] = rF("ToneX2", tm.x[2]); tm.x[3] = rF("ToneX3", tm.x[3]); tm.x[4] = rF("ToneX4", tm.x[4]); tm.x[5] = rF("ToneX5", tm.x[5]);
     tm.view = rI("ToneView", tm.view); tm.lutIndex = rI("LutIndex", tm.lutIndex); tm.lutStrength = rF("LutStrength", tm.lutStrength);
     tm.overlayMask = static_cast<uint32_t>(rI("OverlayMask", static_cast<int>(tm.overlayMask)));
+    tm.bloomScale = rF("BloomScale", tm.bloomScale); tm.sharpenStr = rF("SharpenStr", tm.sharpenStr);
+    tm.grainStr = rF("GrainStr", tm.grainStr); tm.vignetteStr = rF("VignetteStr", tm.vignetteStr);
+    tm.caStr = rF("CaStr", tm.caStr); tm.radialBlurStr = rF("RadialBlurStr", tm.radialBlurStr);
+    tm.headbobStr = rF("HeadbobStr", tm.headbobStr); tm.lensStr = rF("LensStr", tm.lensStr);
+    l.dof = rI("Dof", l.dof ? 1 : 0) != 0; l.dofMaxDist = rF("DofMaxDist", l.dofMaxDist);
+    l.dofRadius = rF("DofRadius", l.dofRadius); l.dofOrbBoost = rF("DofOrbBoost", l.dofOrbBoost);
+    l.weatherLens = rI("WeatherLens", l.weatherLens ? 1 : 0) != 0;
     Tonemap_Set(tm);
     raw::bridge::StreamlineHost::Get().SetMode(rI("DlssMode", raw::bridge::StreamlineHost::Get().GetMode()));
     g_statusTag = " [LOADED SLOT " + std::to_string(slot) + "]";
@@ -165,8 +176,8 @@ bool KeyEdge(bool now, bool& prev) { const bool f = now && !prev; prev = now; re
 
 int TabRowCount(int tab)
 {
-    static const int kCounts[7] = {12, 13, 7, 8, 12, 11, 20};
-    return kCounts[std::clamp(tab, 0, 6)];
+    static const int kCounts[8] = {12, 13, 7, 8, 12, 11, 20, 13};
+    return kCounts[std::clamp(tab, 0, 7)];
 }
 
 std::string Fmt(const char* f, float v) { char b[64]; std::snprintf(b, sizeof b, f, v); return b; }
@@ -177,12 +188,12 @@ std::string BuildMenuText()
 {
     const auto& l = hook::Cfg().light;
     const auto tm = Tonemap_Get();
-    static const char* kTabs[7] = {"1:RT & GI", "2:Sky/Cloud/Fog", "3:Weather/Season", "4:Water", "5:Skin/Shadow/AO", "6:Tonemap/Debug", "7:LUTs/Overlays"};
+    static const char* kTabs[8] = {"1:RT", "2:Sky/Fog", "3:Weather", "4:Water", "5:Skin/AO", "6:Tonemap", "7:LUTs/OV", "8:Cinema/DoF"};
     char hdr[224];
     std::snprintf(hdr, sizeof hdr, "=== RAW DX12 STUDIO | %.1f FPS (%.1f ms) | [End:Close | PgUp/PgDn:Tab | Arrows:Tune | S:Save | L:Load]%s ===\n",
                   g_emaMs > 0.1f ? 1000.0f / g_emaMs : 0.0f, g_emaMs, g_savedFrames ? g_statusTag.c_str() : "");
     std::string out = hdr;
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 8; ++i) {
         out += (i == g_tab ? "[" : " ");
         out += kTabs[i];
         out += (i == g_tab ? "] " : "  ");
@@ -266,7 +277,7 @@ std::string BuildMenuText()
         row(8, "Shadow Lift (X4)", Fmt("%.2f", tm.x[4]));
         row(9, "Interior Factor (X5)", Fmt("%.2f", tm.x[5]));
         row(10, "Debug View (0..23)", FmtI("%d", l.view));
-    } else {
+    } else if (g_tab == 6) {
         static const char* kTiers[5] = {"Low (Raster)", "Medium (RT Sun)", "High (RT GI)", "Ultra (Full RT)", "Overdrive (Max)"};
         static const char* kCurves[8] = {"0:Game", "1:ACES Fitted", "2:ReinhardW", "3:RAW Hybrid", "4:AgX WideGamut", "5:GranTurismo", "6:Lottes", "7:Hable"};
         static const char* kDlss[3] = {"0:Off (FXAA+CAS)", "1:DLAA Transformer K", "2:DLSS RayRecon F"};
@@ -291,6 +302,20 @@ std::string BuildMenuText()
         row(17, "NVIDIA Reflex Latency", OnOff(raw::bridge::StreamlineHost::Get().GetReflex()));
         row(18, "NVIDIA DeepDVC Neural", OnOff(raw::bridge::StreamlineHost::Get().GetDeepDvc()));
         row(19, "User Preset Slot", FmtI("Slot %d  [S=Save | L=Load]", g_presetSlot));
+    } else {
+        row(0, "Bokeh DoF Enabled", OnOff(l.dof));
+        row(1, "DoF Autofocus Range", Fmt("%.0f u", l.dofMaxDist));
+        row(2, "DoF Bokeh Radius", Fmt("%.1f px", l.dofRadius));
+        row(3, "DoF Specular Orb Glow", Fmt("%.2fx", l.dofOrbBoost));
+        row(4, "Rain/Frost Lens FX", OnOff(l.weatherLens));
+        row(5, "Spectral Bloom Scale", Fmt("%.2fx", tm.bloomScale));
+        row(6, "RCAS Sharpen Strength", Fmt("%.2fx", tm.sharpenStr));
+        row(7, "35mm Grain Strength", Fmt("%.2fx", tm.grainStr));
+        row(8, "Optical Vignette Str", Fmt("%.2fx", tm.vignetteStr));
+        row(9, "Chromatic Aberr Str", Fmt("%.2fx", tm.caStr));
+        row(10, "Radial SpeedBlur Str", Fmt("%.2fx", tm.radialBlurStr));
+        row(11, "Run Headbob Strength", Fmt("%.2fx", tm.headbobStr));
+        row(12, "Lens & Halation Str", Fmt("%.2fx", tm.lensStr));
     }
     out += "Web Studio, Presets & Live HLSL Editor: http://127.0.0.1:8844";
     return out;
@@ -319,11 +344,11 @@ bool PollMenu(std::string& outText)
     const bool prevTab = KeyEdge((GetAsyncKeyState(VK_PRIOR) & 0x8000) != 0 || (GetAsyncKeyState(VK_OEM_4) & 0x8000) != 0, g_prevPgUp);
     const bool nextTab2 = KeyEdge((GetAsyncKeyState(VK_NEXT) & 0x8000) != 0 || (GetAsyncKeyState(VK_OEM_6) & 0x8000) != 0, g_prevPgDn);
     if (nextTab || nextTab2) {
-        g_tab = (g_tab + 1) % 7;
+        g_tab = (g_tab + 1) % 8;
         g_sel = std::min(g_sel, TabRowCount(g_tab) - 1);
         changed = true;
     } else if (prevTab) {
-        g_tab = (g_tab + 6) % 7;
+        g_tab = (g_tab + 7) % 8;
         g_sel = std::min(g_sel, TabRowCount(g_tab) - 1);
         changed = true;
     }
@@ -422,7 +447,7 @@ bool PollMenu(std::string& outText)
             case 9: tm.x[5] = std::clamp(tm.x[5] + step * 0.05f, 0.0f, 1.50f); tmDirty = true; break;
             case 10: l.view = (l.view + 24 + dir) % 24; break;
             }
-        } else {
+        } else if (g_tab == 6) {
             const int lutN = int(Tonemap_LutCount()) + 1;
             switch (g_sel) {
             case 0: g_hwTier = (g_hwTier + 5 + dir) % 5; ApplyHardwareTier(g_hwTier); break;
@@ -445,6 +470,22 @@ bool PollMenu(std::string& outText)
             case 17: raw::bridge::StreamlineHost::Get().SetReflex(!raw::bridge::StreamlineHost::Get().GetReflex()); break;
             case 18: raw::bridge::StreamlineHost::Get().SetDeepDvc(!raw::bridge::StreamlineHost::Get().GetDeepDvc()); break;
             case 19: g_presetSlot = ((g_presetSlot - 1 + 5 + dir) % 5) + 1; break;
+            }
+        } else {
+            switch (g_sel) {
+            case 0: l.dof = !l.dof; break;
+            case 1: l.dofMaxDist = std::clamp(l.dofMaxDist + step * 60.0f, 150.0f, 2500.0f); break;
+            case 2: l.dofRadius = std::clamp(l.dofRadius + step * 0.5f, 1.5f, 24.0f); break;
+            case 3: l.dofOrbBoost = std::clamp(l.dofOrbBoost + step * 0.15f, 0.0f, 4.0f); break;
+            case 4: l.weatherLens = !l.weatherLens; break;
+            case 5: tm.bloomScale = std::clamp(tm.bloomScale + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
+            case 6: tm.sharpenStr = std::clamp(tm.sharpenStr + step * 0.10f, 0.0f, 2.0f); tmDirty = true; break;
+            case 7: tm.grainStr = std::clamp(tm.grainStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
+            case 8: tm.vignetteStr = std::clamp(tm.vignetteStr + step * 0.10f, 0.0f, 2.0f); tmDirty = true; break;
+            case 9: tm.caStr = std::clamp(tm.caStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
+            case 10: tm.radialBlurStr = std::clamp(tm.radialBlurStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
+            case 11: tm.headbobStr = std::clamp(tm.headbobStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
+            case 12: tm.lensStr = std::clamp(tm.lensStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
             }
         }
         if (tmDirty) Tonemap_Set(tm);

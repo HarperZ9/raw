@@ -6,9 +6,10 @@
 // Compiled as ps_5_0 by d3dcompiler_47. Original work, MIT.
 cbuffer PerFrame : register(b12) { float4 F[45]; };
 cbuffer Image : register(b2) { float4 P[5]; };
-cbuffer Raw : register(b5) { float4 RA; float4 RB; float4 RC; float4 RX; float4 RO; };   // RA: mode, bias (stops), min lum, max lum;
-// RB: curve, key, white, view; RC: adapt, reference average, ToneX0, ToneX1; RX: ToneX2..5;
-// RO: x = user 3D LUT strength (0=off), y = stackable overlay bitmask (bits 0..7), z = 64-frame temporal dither cycle.
+cbuffer Raw : register(b5) { float4 RA; float4 RB; float4 RC; float4 RX; float4 RO; float4 RP; float4 RQ; };
+// RA: mode, bias, min lum, max lum; RB: curve, key, white, view; RC: adapt, ref, ToneX0, ToneX1; RX: ToneX2..5;
+// RO: x=lutStrength, y=overlayMask, z=64-frame cycle, w=moveSpeed;
+// RP: x=bloomScale, y=sharpenStr, z=grainStr, w=vignetteStr; RQ: x=caStr, y=radialBlurStr, z=headbobStr, w=lensStr.
 Texture2D<float4> Bloom : register(t0);
 Texture2D<float4> Scene : register(t1);
 Texture2D<float4> Lum   : register(t2);
@@ -186,7 +187,7 @@ float3 fxaaAndCas(float2 suv) {
         const float3 mn = min(min(smoothed, min(min(n, s), min(e, ww))), min(min(nw, ne), min(sw, se)));
         const float3 mx = max(max(smoothed, max(max(n, s), max(e, ww))), max(max(nw, ne), max(sw, se)));
         const float3 amp = saturate(min(mn, max(2.0f.xxx - mx, 0.0f.xxx)) / max(mx, 1.0e-4f.xxx));
-        const float3 wCAS = sqrt(amp) * (-0.165f);
+        const float3 wCAS = sqrt(amp) * (-0.165f * clamp(RP.y, 0.0f, 2.0f));
         const float3 sharp = (smoothed + (n + s + e + ww) * wCAS) / max(1.0f.xxx + 4.0f * wCAS, 0.28f.xxx);
         return clamp(sharp, mn * 0.94f, mx * 1.06f);
     }
@@ -201,7 +202,7 @@ float4 main(In i) : SV_Target {
         const float moveAmp = saturate((RO.w - 0.35f) / 6.5f);
         if (moveAmp > 0.01f) {
             const float phase = RO.z * 0.3927f; // smooth stride cadence
-            const float2 bob = float2(sin(phase) * 0.0011f, abs(cos(phase)) * 0.0022f - 0.0011f) * moveAmp;
+            const float2 bob = float2(sin(phase) * 0.0011f, abs(cos(phase)) * 0.0022f - 0.0011f) * (moveAmp * clamp(RQ.z, 0.0f, 2.5f));
             // 0.8% overscan crop keeps edges 100% clean with zero black borders.
             baseUv = saturate(baseUv * 0.992f + 0.004f + bob);
         }
@@ -213,7 +214,7 @@ float4 main(In i) : SV_Target {
         const float2 rVec = baseUv - 0.5f.xx;
         const float rDist = length(rVec);
         const float speedBoost = 1.0f + saturate(RO.w / 7.5f) * 1.35f;
-        const float rStr = pow(saturate(rDist * 1.35f), 2.2f) * 0.010f * speedBoost;
+        const float rStr = pow(saturate(rDist * 1.35f), 2.2f) * 0.010f * speedBoost * clamp(RQ.y, 0.0f, 2.5f);
         if (rStr > 0.0004f) {
             float3 rAcc = hdr;
             [unroll] for (int ri = 1; ri <= 6; ri++) {
@@ -226,7 +227,7 @@ float4 main(In i) : SV_Target {
     // OV11 (bit 10 = 1024): Optional Apochromatic Lateral Chromatic Aberration (zero at center, subtle prism dispersion at edges).
     if ((ovInit & 1024u) != 0u) {
         const float2 caVec = baseUv - 0.5f.xx;
-        const float caMag = dot(caVec, caVec) * 0.0045f;
+        const float caMag = dot(caVec, caVec) * 0.0045f * clamp(RQ.x, 0.0f, 2.5f);
         if (caMag > 0.0001f) {
             const float2 uvR = min(max((baseUv + caVec * caMag) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
             const float2 uvB = min(max((baseUv - caVec * caMag) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
@@ -325,8 +326,8 @@ float4 main(In i) : SV_Target {
     const float kneeB = saturate((bloomLum - 0.52f) / 0.58f);
     const float outerLum = dot(outerBloom, W);
     const float kneeO = saturate((outerLum - 0.42f) / 0.65f);
-    const float3 cleanBloom = innerBloom * float3(1.04f, 0.99f, 0.93f) * (kneeB * kneeB * 0.13f)
-                            + outerBloom * float3(0.93f, 0.98f, 1.06f) * (kneeO * kneeO * 0.08f);
+    const float3 cleanBloom = (innerBloom * float3(1.04f, 0.99f, 0.93f) * (kneeB * kneeB * 0.13f)
+                            + outerBloom * float3(0.93f, 0.98f, 1.06f) * (kneeO * kneeO * 0.08f)) * clamp(RP.x, 0.0f, 2.5f);
     float3 ovAdd = cleanBloom;
     if ((ovMask & 2u) != 0u) {
         // Layer 2: Multi-radius Photochemical Emulsion Halation + 5-Tap Wide Panavision Anamorphic Streak.
@@ -346,7 +347,7 @@ float4 main(In i) : SV_Target {
             anaAcc += (bL + bR) * (0.5f * aw);
         }
         const float3 anamorphic = anaAcc * float3(0.48f, 0.76f, 1.08f) * 0.055f;
-        ovAdd += halation + anamorphic;
+        ovAdd += (halation + anamorphic) * clamp(RQ.w, 0.0f, 2.5f);
     }
     if ((ovMask & 4u) != 0u) {
         // Layer 3: arXiv:2605.04017 (Hachisuka et al. 2026) 5-Order Optical Lens Transport Ghosts + Cat's-Eye Aperture Halo.
@@ -371,7 +372,7 @@ float4 main(In i) : SV_Target {
         }
         const float2 haloDir = cDist > 1.0e-4f ? cVec / cDist : float2(0.0f, 1.0f);
         const float3 haloCol = max(Bloom.Sample(S0, saturate(0.5f.xx - haloDir * 0.22f)).rgb - 0.95f.xxx, 0.0f.xxx);
-        ovAdd += min((lensAcc * 0.048f + haloCol * 0.032f * saturate(1.0f - cDist * 1.35f)), 0.14f.xxx);
+        ovAdd += min((lensAcc * 0.048f + haloCol * 0.032f * saturate(1.0f - cDist * 1.35f)) * clamp(RQ.w, 0.0f, 2.5f), 0.20f.xxx);
     }
     if ((ovMask & 8u) != 0u) {
         // Layer 4: Soft Optical Diffusion (dreamy wide-radius halation/bloom glow).
@@ -434,7 +435,7 @@ float4 main(In i) : SV_Target {
     // Layer 6 (bit 5): Optical cos^4 lens vignette.
     if ((ovMask & 32u) != 0u) {
         const float2 vd = (suv - 0.5f.xx) * float2(1.15f, 1.0f);
-        const float vig = saturate(1.0f - dot(vd, vd) * 0.62f);
+        const float vig = saturate(1.0f - dot(vd, vd) * 0.62f * clamp(RP.w, 0.0f, 2.0f));
         c.rgb *= vig * vig;
     }
     // Layer 7 (bit 6): Physical 35mm Photochemical Film Grain (Kodak Vision3 response-curve bell + dual-octave clumping + RGB silver-halide variance).
@@ -449,7 +450,7 @@ float4 main(In i) : SV_Target {
         const float nB = frac(52.9829189f * frac(dot(gPos2 + float2(43.0f, 11.0f), float2(0.06711056f, 0.00583715f)))) - 0.5f;
         const float clump = frac(52.9829189f * frac(dot(gPos2, float2(0.06711056f, 0.00583715f)))) - 0.5f;
         const float3 halide = float3(nR * 0.92f + clump * 0.35f, nG * 0.85f + clump * 0.30f, nB * 1.18f + clump * 0.42f);
-        c.rgb = saturate(c.rgb + halide * (0.042f * (0.20f + 0.80f * response)));
+        c.rgb = saturate(c.rgb + halide * (0.042f * clamp(RP.z, 0.0f, 2.5f) * (0.20f + 0.80f * response)));
     }
     // Layer 8 (bit 7): Cinematic 2.35:1 anamorphic letterbox borders.
     if ((ovMask & 128u) != 0u) {

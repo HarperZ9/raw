@@ -186,7 +186,14 @@ void LoadLightingConfig(const std::string& ini)
         tm.lutIndex = i("LutIndex", tm.lutIndex);
         tm.lutStrength = f("LutStrength", tm.lutStrength);
         tm.overlayMask = static_cast<uint32_t>(i("OverlayMask", static_cast<int>(tm.overlayMask)));
+        tm.bloomScale = f("BloomScale", tm.bloomScale); tm.sharpenStr = f("SharpenStr", tm.sharpenStr);
+        tm.grainStr = f("GrainStr", tm.grainStr); tm.vignetteStr = f("VignetteStr", tm.vignetteStr);
+        tm.caStr = f("CaStr", tm.caStr); tm.radialBlurStr = f("RadialBlurStr", tm.radialBlurStr);
+        tm.headbobStr = f("HeadbobStr", tm.headbobStr); tm.lensStr = f("LensStr", tm.lensStr);
         Tonemap_Set(tm);
+        t.dof = i("Dof", t.dof ? 1 : 0) != 0; t.dofMaxDist = f("DofMaxDist", t.dofMaxDist);
+        t.dofRadius = f("DofRadius", t.dofRadius); t.dofOrbBoost = f("DofOrbBoost", t.dofOrbBoost);
+        t.weatherLens = i("WeatherLens", t.weatherLens ? 1 : 0) != 0;
         raw::bridge::StreamlineHost::Get().SetMode(i("DlssMode", raw::bridge::StreamlineHost::Get().GetMode()));
         raw::bridge::StreamlineHost::Get().SetReflex(i("Reflex", 1) != 0);
         raw::bridge::StreamlineHost::Get().SetDeepDvc(i("DeepDvc", 0) != 0);

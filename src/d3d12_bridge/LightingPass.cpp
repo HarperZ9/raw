@@ -38,8 +38,9 @@ struct LightUniform
     float lightPosR[kMaxSceneLights][4], lightColS[kMaxSceneLights][4];
     uint32_t clusters[kClusterCount][4];
     float footTrail[32][4];   // persistent world-space boot-print ring buffer (xyz world abs, w active strength)
+    float dofParams[4];       // x: dofMaxDist (0=off), y: dofRadius (px), z: dofOrbBoost, w: weatherLens (0/1)
 };
-static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16, "layout of cbuffer P");
+static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16 + 16, "layout of cbuffer P");
 static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
 constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536, kDistantLod = 131072, kEnvMap = 262144, kCharLight = 524288, kUnderwater = 1048576;
@@ -256,6 +257,10 @@ private:
         const bool interior = (f & kShadows) == 0u;
         if (interior && (f & kBounce) && t.rtBounceInterior > 0.0f) f |= kBounceIn;
         u.flags[0] = f; u.flags[1] = s.lightCount; u.flags[2] = s.cascades; u.flags[3] = uint32_t(t.view);
+        u.dofParams[0] = t.dof ? t.dofMaxDist : 0.0f;
+        u.dofParams[1] = t.dofRadius;
+        u.dofParams[2] = t.dofOrbBoost;
+        u.dofParams[3] = t.weatherLens ? 1.0f : 0.0f;
         std::memcpy(u.clipToWorld, s.clipToWorld, 64);
         std::memcpy(u.worldToClip, s.worldToClip, 64);
         std::memcpy(u.viewToWorld, s.viewToWorld, 48);

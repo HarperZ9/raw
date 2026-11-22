@@ -87,6 +87,12 @@ struct LightingTuning
     bool  rtReflect = true;         // glossy surfaces: one ray-traced reflection ray, the hit's colour in the game's frame
     // Water (RtWater.hlsl), after the game composites its water: improved mode with RT on raw::tx.
     bool  water = true;             // Water
+    // Pre-Pass Cinema DoF & Weather Lens Optics (ElderOptics.hlsli / LightFog.hlsl):
+    bool  dof = true;               // Dof: 32-tap heptagonal HDR bokeh DoF
+    float dofMaxDist = 540.0f;      // DofMaxDist: autofocus engagement range (150..2500 units)
+    float dofRadius = 8.5f;         // DofRadius: bokeh aperture radius (2..24 px)
+    float dofOrbBoost = 1.85f;      // DofOrbBoost: specular bokeh orb glow (0..4)
+    bool  weatherLens = true;       // WeatherLens: procedural HDR rain-on-lens droplets & blizzard frost
     float waterReflect = 1.0f;      // WaterReflect: the ray-traced reflection's share of the Fresnel weight
     float waterCaustics = 1.0f;     // WaterCaustics
     float waterAbsorb = 0.010f;     // WaterAbsorb: extinction a game unit for green (red 2.2x, blue 0.7x); 0.004 read as glass

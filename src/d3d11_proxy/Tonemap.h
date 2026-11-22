@@ -40,6 +40,15 @@ struct TonemapSettings
     int lutIndex = 0;
     float lutStrength = 0.85f;
     uint32_t overlayMask = 0x106u;
+    // User-tunable Post-Pass Cinema Granularity multipliers (all 1.0 = calibrated default, live in Tab 8 & INI):
+    float bloomScale = 1.0f;
+    float sharpenStr = 1.0f;
+    float grainStr = 1.0f;
+    float vignetteStr = 1.0f;
+    float caStr = 1.0f;
+    float radialBlurStr = 1.0f;
+    float headbobStr = 1.0f;
+    float lensStr = 1.0f;
 };
 
 void Tonemap_Set(const TonemapSettings& t);

@@ -58,7 +58,7 @@ constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo
 constexpr RasterBinding U = RasterBinding::Uniform, T = RasterBinding::Texture, Sm = RasterBinding::Sampler;
 constexpr RasterBinding kLightLayout[16] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T, T, Sm};
 constexpr RasterBinding kCloudLayout[4] = {U, T, T, Sm};
-constexpr RasterBinding kVolLayout[5] = {U, T, T, T, Sm};
+constexpr RasterBinding kVolLayout[7] = {U, T, T, T, T, T, Sm};
 constexpr RasterBinding kFogLayout[7] = {U, T, T, T, T, T, Sm};
 constexpr RasterBinding kBloom1Layout[2] = {T, Sm};
 constexpr RasterBinding kBloom2Layout[3] = {T, T, Sm};
@@ -247,7 +247,8 @@ public:
         c->timestamp(4);
         const TextureHandle volNow = m_volFog[m_frame & 1], volLast = m_volFog[(m_frame + 1) & 1];
         if (ok && (m_u.flags[0] & kFog)) {
-            const RasterBind vb[5] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volLast, {}}, {{}, {}, m_lin}};
+            const RasterBind vb[7] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volLast, {}},
+                                      {{}, m_atmoTrans, {}}, {{}, m_atmoSkyView, {}}, {{}, {}, m_lin}};
             Draw(*c, volNow, m_volPipe, vb);
         }
         const RasterBind fog[7] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volNow, {}}, {{}, m_atmoSkyView, {}}, {{}, {}, m_lin}};

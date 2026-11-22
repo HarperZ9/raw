@@ -5,9 +5,26 @@
 #include "LightingCommon.hlsli"
 #include "CloudCommon.hlsli"
 
-Texture2D<float>  Depth   : register(t0);
-Texture2D<float4> VolPrev : register(t2);
-SamplerState      Lin     : register(s0);
+Texture2D<float>  Depth       : register(t0);
+Texture2D<float4> VolPrev     : register(t2);
+Texture2D<float4> TransLut    : register(t3);
+Texture2D<float4> AtmoSkyView : register(t4);
+SamplerState      Lin         : register(s0);
+
+float3 volTransAt(float mu) {
+    const float r = 6360.0f + 0.5f;
+    const float H = sqrt(6460.0f * 6460.0f - 6360.0f * 6360.0f);
+    const float rho = sqrt(r * r - 6360.0f * 6360.0f);
+    const float d = max(0.0f, -r * mu + sqrt(max(r * r * (mu * mu - 1.0f) + 6460.0f * 6460.0f, 0.0f)));
+    return TransLut.SampleLevel(Lin, float2(saturate((d - (6460.0f - r)) / max(rho + H - (6460.0f - r), 1.0e-4f)), saturate(rho / H)), 0.0f).rgb;
+}
+
+float3 volSkyAt(float3 rd) {
+    const float az = atan2(rd.y, rd.x);
+    const float elev = asin(clamp(rd.z, -1.0f, 1.0f));
+    const float vNonLin = 0.5f + 0.5f * (elev >= 0.0f ? sqrt(elev / (0.5f * PI)) : -sqrt(-elev / (0.5f * PI)));
+    return AtmoSkyView.SampleLevel(Lin, float2(az / (2.0f * PI) + 0.5f, saturate(vNonLin)), 0.0f).rgb;
+}
 
 float phaseHG(float cosT, float g) {
     const float g2 = g * g;
@@ -79,12 +96,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             sumSun += vis * hDens * tr * dt;
             sumSky += (0.35f + 0.65f * cs) * hDens * tr * dt;
         }
-        // Spectral alignment: CIE D65 high-latitude sun blended with the live atmospheric gradient & cloud tint.
-        const float3 d65Sun = lerp(sunColour.rgb, float3(0.96f, 0.98f, 1.02f) * max(sunLum, 0.12f), highSun * 0.58f);
-        const float3 shaftCol = lerp(lerp(d65Sun, skyGrad, 0.24f), max(sH, float3(0.18f, 0.26f, 0.42f)), nightW * 0.72f);
+        // Unified Hillaire SIGGRAPH 2020 radiative-transfer sunbeams & sky multi-scattering:
+        // shafts, sky dome, clouds, and aerial perspective now share one exact physical Transmittance + Sky-View LUT.
+        const float3 hTransV = volTransAt(clamp(sunDir.z, -0.10f, 1.0f));
+        const float htLumV = max(dot(hTransV, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
+        const float3 physSunV = lerp(sunColour.rgb, hTransV * (max(sunLum, 0.10f) / htLumV), 0.62f * (1.0f - nightW));
+        const float3 hSkyV = volSkyAt(float3(w.xy, max(w.z, 0.01f)));
+        const float3 unifiedSky = lerp(skyGrad, hSkyV, (1.0f - nightW) * (1.0f - saturate(clouds.x * 0.70f)) * 0.55f);
+        const float3 shaftCol = lerp(lerp(physSunV, unifiedSky, 0.22f), max(sH, float3(0.18f, 0.26f, 0.42f)), nightW * 0.72f);
         scatter += shaftCol * (sigma * ph * sumSun * tune2.z * shaftBoost * 0.95f);
         // Gentle isotropic sky multi-scattering inside volumetric mist (strictly bounded to prevent whiteout).
-        scatter += skyGrad * (sigma * sumSky * 0.016f * (1.0f - nightW * 0.65f));
+        scatter += unifiedSky * (sigma * sumSky * 0.016f * (1.0f - nightW * 0.65f));
     }
     if (tune2.y > 0.0f) {
         const float weatherMistGain = 1.0f + saturate(weather.w * 0.85f + weather.z * 0.75f + clouds.x * 0.35f) * 0.65f;

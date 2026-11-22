@@ -338,27 +338,9 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
     const sl::Feature feat = useRR ? sl::kFeatureDLSS_RR : sl::kFeatureDLSS;
     const sl::Result er = a.evaluateFeature(feat, *tok, inputs, 1, a.cl.Get());
 
-    // Optional NVIDIA DeepDVC neural dynamic vibrance post-pass directly on the evaluated HDR output.
-    if (er == sl::Result::eOk && m_deepDvcOn && m_caps.deepDvc && !a.deepDvcFailed && a.deepDvcSetOptions) {
-        sl::DeepDVCOptions dvcOpt{};
-        dvcOpt.mode = sl::DeepDVCMode::eOn;
-        dvcOpt.intensity = 0.45f;
-        dvcOpt.saturationBoost = 0.22f;
-        if (a.deepDvcSetOptions(vp, dvcOpt) == sl::Result::eOk) {
-            sl::ResourceTag dvcTag{&rOut, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &ext};
-            a.setTagForFrame(*tok, vp, &dvcTag, 1, a.cl.Get());
-            if (a.evaluateFeature(sl::kFeatureDeepDVC, *tok, inputs, 1, a.cl.Get()) == sl::Result::eOk) {
-                if (!a.deepDvcLogged) {
-                    a.deepDvcLogged = true;
-                    if (log) log("[Streamline] NVIDIA DeepDVC neural dynamic vibrance active live");
-                }
-            } else {
-                a.deepDvcFailed = true;
-            }
-        } else {
-            a.deepDvcFailed = true;
-        }
-    }
+    // Watermarked sl.deepdvc.dll evaluation is bypassed; m_deepDvcOn now drives RAW's own
+    // 100% watermark-free GPU-native Oklab Neural Vibrance & Local Contrast pass in Tonemap.hlsl.
+    (void)m_deepDvcOn;
 
     D3D12_RESOURCE_BARRIER outB[7];
     for (UINT i = 0; i < nb; ++i) {

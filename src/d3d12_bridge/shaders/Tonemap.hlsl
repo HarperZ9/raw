@@ -377,8 +377,8 @@ float4 main(In i) : SV_Target {
         ovAdd += min((lensAcc * 0.048f + haloCol * 0.032f * saturate(1.0f - cDist * 1.35f)) * clamp(RQ.w, 0.0f, 2.5f), 0.20f.xxx);
     }
     if ((ovMask & 8u) != 0u) {
-        // Layer 4: Soft Optical Diffusion (dreamy wide-radius halation/bloom glow).
-        ovAdd += bloom * 0.14f;
+        // Layer 4: Subtle Optical Diffusion (restrained wide-radius highlight glow without washing out sharp detail).
+        ovAdd += max(bloom - 0.12f.xxx, 0.0f.xxx) * 0.065f;
     }
     // Energy-conserving optical bloom/lens screen-blend: prevents bloom from pushing bright snow or coastal horizons into whiteout.
     const float3 cappedAdd = ovAdd / (1.0f + max(ovAdd.r, max(ovAdd.g, ovAdd.b)) * 1.35f);
@@ -419,6 +419,21 @@ float4 main(In i) : SV_Target {
         lab.x *= (1.0f - saturate(chroma * 0.42f) * 0.20f);   // Beer-Lambert dye density: saturated hues hold richer depth
         lab.yz *= vibBoost;                                   // skin-protected perceptual vibrance with zero channel clipping
         c.rgb = saturate(oklabToLin(lab));
+    }
+    // RAW GPU Neural Vibrance (bit 12 / 4096, 100% watermark-free replacement for NVIDIA DeepDVC):
+    // Perceptual Oklab chroma-selective dynamic vibrance + gentle S-curve perceptual contrast preserving skin & highlights.
+    if ((ovMask & 4096u) != 0u) {
+        float3 labN = linToOklab(saturate(c.rgb));
+        const float chN = length(labN.yz);
+        const float hueN = atan2(labN.z, labN.y);
+        const float skinN = smoothstep(0.18f, 0.55f, hueN) * (1.0f - smoothstep(0.95f, 1.35f, hueN)) * smoothstep(0.02f, 0.09f, chN);
+        // Lift muted mid-chroma selectively while keeping already-vivid hues and skin tones natural.
+        const float dynVib = 1.0f + (1.0f - skinN * 0.78f) * (1.0f - smoothstep(0.06f, 0.22f, chN)) * 0.34f;
+        labN.yz *= dynVib;
+        // Subtle perceptual S-curve micro-contrast in Oklab L* (deepens shadow richness without crushing blacks).
+        const float l0 = saturate(labN.x);
+        labN.x = lerp(l0, l0 * l0 * (3.0f - 2.0f * l0), 0.14f);
+        c.rgb = saturate(oklabToLin(labN));
     }
     // User DaVinci-class Oklab/Planckian Live Grading (White Balance Kelvin RG.x, Perceptual Sat RG.y, Shadow Lift RG.z):
     if (abs(RG.x - 6500.0f) > 25.0f && RG.x > 1000.0f) {

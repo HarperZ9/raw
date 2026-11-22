@@ -151,7 +151,11 @@ void main(uint3 id : SV_DispatchThreadID) {
         pastB = clamp(pastB, max(cur.rgb - pad.rgb, 0.0f.xxx), cur.rgb + pad.rgb);
     }
     n = have ? min(n + 1.0f, float(maxFrames)) : 1.0f;
-    const float alphaT = 1.0f / n;
+    // Motion-responsive temporal interpolation: reacts rapidly during camera turns/movement (zero motion blur or ghosting)
+    // while converging to silky 32-frame stability when stationary.
+    const float2 mvSpeed = (have && hasMotion != 0u) ? Motion.Load(int3(p, 0)) * dims.xy : float2(0.0f, 0.0f);
+    const float pxVel = length(mvSpeed);
+    const float alphaT = max(1.0f / n, lerp(0.03f, 0.42f, saturate(pxVel * 0.075f)));
     const float vis = have ? lerp(past, cur.a, alphaT) : cur.a;
     const float3 b = have ? lerp(pastB, cur.rgb, alphaT) : cur.rgb;
     const float m2Out = have ? lerp(pastM2, curLum * curLum, alphaT) : (curLum * curLum);

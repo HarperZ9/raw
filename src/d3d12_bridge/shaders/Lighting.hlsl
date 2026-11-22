@@ -654,8 +654,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 sunShadow *= lerp(1.0f, microSh, saturate(1.0f - z / 1200.0f) * 0.72f);
             }
         }
-        // Skinned actors (skin/hair/eye) keep the game's filtered shadow mask so coarse skinned BLAS triangles never cast blocky self-shadow acne.
-        if (rt && sunColour.w > 0.5f && !isActorFeat) { sunShadow = min(sunShadow, base == 5u ? lerp(1.0f, rv.x, 0.85f) : rv.x); }
+        // Skinned actors (skin/hair/eye AND skinned clothing) keep the game's filtered shadow mask so coarse low-poly
+        // skinned BLAS triangles never cast flat triangular self-shadow acne onto NPC tunics/shirts/backs.
+        if (rt && sunColour.w > 0.5f && !isActorFeat && !isActorCloth) { sunShadow = min(sunShadow, base == 5u ? lerp(1.0f, rv.x, 0.85f) : rv.x); }
         if (!match && sunColour.w > 0.5f && (flags.x & FLAG_CLOUDS) != 0u) { sunShadow *= pow(saturate(cloudShadow(p + camPosW.xyz)), 1.25f); }   // SKY-02 rolling cloud-shadow contrast
         // Skin: warm dermal penumbra + gentle wrap so shadow transitions on faces and shoulders stay lifelike, never muddy grey.
         const float3 sunSh = skin && !match ? pow(saturate(sunShadow).xxx, float3(0.72f, 0.92f, 1.04f)) : sunShadow.xxx;
@@ -750,7 +751,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;
             // When hardware RT is active, bypass vanilla's flickering 4-channel shadow-mask swaps completely:
             // top-3 lights use their exact RT shadow vis (rv[slot]); secondary lights (4..128) use stable ReSTIR visibility.
-            if (rt) { sh = slot != 0u ? rv[slot] : lerp(0.68f, 1.0f, restVis); }
+            // On skinned actor clothing/skin, soften BLAS self-shadow to eliminate coarse low-poly triangle acne on backs/shoulders.
+            if (rt) {
+                const float rtSh = slot != 0u ? rv[slot] : lerp(0.68f, 1.0f, restVis);
+                sh = (isActorCloth || isActorFeat) ? lerp(0.60f, 1.0f, rtSh) : rtSh;
+            }
             else if (slot != 0u) { sh = rv[slot]; }
             if (!match && !rt && sunColour.w > 0.5f && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
                 sh *= screenShadow(p + lift, l, min(dist, tune.z), 4.0f / max(dist, 1.0f), jit, 10u);

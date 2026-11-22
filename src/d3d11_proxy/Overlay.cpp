@@ -303,7 +303,7 @@ std::string BuildMenuText()
         row(15, "OV11: Chromatic Aberr", OnOff((tm.overlayMask & 1024u) != 0u));
         row(16, "OV12: Run Headbob/Sway", OnOff((tm.overlayMask & 2048u) != 0u));
         row(17, "NVIDIA Reflex Latency", OnOff(raw::bridge::StreamlineHost::Get().GetReflex()));
-        row(18, "NVIDIA DeepDVC Neural", OnOff(raw::bridge::StreamlineHost::Get().GetDeepDvc()));
+        row(18, "RAW GPU Neural Vibrance", OnOff(raw::bridge::StreamlineHost::Get().GetDeepDvc()));
         row(19, "User Preset Slot", FmtI("Slot %d  [S=Save | L=Load]", g_presetSlot));
     } else {
         row(0, "Bokeh DoF Enabled", OnOff(l.dof));

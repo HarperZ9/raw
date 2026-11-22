@@ -75,24 +75,29 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float hLum = max(dot(hSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
                 const float3 overcastSky = lerp(float3(0.44f, 0.50f, 0.60f), float3(0.24f, 0.30f, 0.38f), saturate(sDir.z)) * max(hLum * 0.95f, 0.26f);
                 float3 physSky = lerp(hSky, overcastSky, saturate(cover * 0.65f - 0.20f + weather.w * 0.45f));
-                // Crisp physical HDR solar disc (5.2 linear peak feeding 12-pass Bloom & Lens Flares) + forward-scattered corona.
+                // Blazing physical exponential HDR solar core + radiating atmospheric Mie aureole (zero flat sticker circle).
                 const float cosS = saturate(dot(sDir, sunDir.xyz));
+                const float sunAng = acos(clamp(cosS, -1.0f, 1.0f));
                 const float lowS = saturate(1.0f - sunDir.z * 2.6f);
-                const float3 sunColH = lerp(float3(1.0f, 0.98f, 0.94f), float3(1.0f, 0.58f, 0.24f), lowS);
-                const float disc = smoothstep(0.99945f, 0.99978f, cosS);
-                const float corona = pow(cosS, 140.0f) * 0.55f + pow(cosS, 20.0f) * 0.11f;
-                physSky += sunColH * (disc * 5.2f + corona * (1.0f - cover * 0.65f));
+                const float3 sunCoreCol = lerp(float3(1.0f, 0.99f, 0.96f), float3(1.0f, 0.72f, 0.38f), lowS);
+                const float3 sunHaloCol = lerp(float3(1.0f, 0.94f, 0.84f), float3(1.0f, 0.52f, 0.18f), lowS);
+                const float solarCore = exp(-sunAng * 135.0f) * 16.0f + smoothstep(0.99962f, 0.99990f, cosS) * 8.0f;
+                const float solarCorona = exp(-sunAng * 22.0f) * 1.65f + exp(-sunAng * 5.5f) * 0.28f;
+                physSky += sunCoreCol * solarCore + sunHaloCol * (solarCorona * (1.0f - cover * 0.55f));
                 baseSky = lerp(baseSky, physSky, dayW * (1.0f - isExotic) * 0.94f);
             }
             if ((flags.x & FLAG_CLOUDS) != 0u) {
                 const float4 cl = Clouds.SampleLevel(Lin, (px + 0.5f) * dims.zw, 0.0f);
                 baseSky = lerp(baseSky, baseSky * cl.a + cl.rgb, 1.0f - isExotic);
-                // Forward-scattered solar disc shining crisply through thin cloud edges.
+                // Forward-scattered blazing solar core + warm Mie silver-lining blooming cleanly through cloud gaps.
                 if (dayW > 0.05f && sDir.z > 0.01f) {
                     const float cosS2 = saturate(dot(sDir, sunDir.xyz));
-                    const float discThru = smoothstep(0.99950f, 0.99982f, cosS2) * lerp(0.32f, 1.0f, cl.a);
-                    const float3 sunThruCol = lerp(float3(1.0f, 0.98f, 0.94f), float3(1.0f, 0.62f, 0.28f), saturate(1.0f - sunDir.z * 2.6f));
-                    baseSky += sunThruCol * (discThru * 3.8f * dayW * (1.0f - isExotic));
+                    const float ang2 = acos(clamp(cosS2, -1.0f, 1.0f));
+                    const float lowS2 = saturate(1.0f - sunDir.z * 2.6f);
+                    const float3 coreC2 = lerp(float3(1.0f, 0.99f, 0.96f), float3(1.0f, 0.72f, 0.38f), lowS2);
+                    const float thru = lerp(0.28f, 1.0f, cl.a);
+                    const float blaze = (exp(-ang2 * 130.0f) * 12.0f + exp(-ang2 * 24.0f) * 1.25f) * thru;
+                    baseSky += coreC2 * (blaze * dayW * (1.0f - isExotic));
                 }
             }
             return float4(baseSky, lit.a);

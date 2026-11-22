@@ -41,7 +41,7 @@ bool Contains(const std::string& s, const char* const* words) {
 }
 
 const char* const kFire[] = {"fire", "flame", "torch", "candle", "brazier", "lantern", "hearth", "ember", "sconce",
-                             "chandelier", "lamp", "burn", "lava", "forge", nullptr};
+                             "chandelier", "lamp", "burn", "lava", "forge", "window", "skylight", "stained", nullptr};
 const char* const kMagic[] = {"magic", "spell", "mgef", "fxmagic", "shock", "frost", "ward", "soul", "aura", "spark",
                               nullptr};
 

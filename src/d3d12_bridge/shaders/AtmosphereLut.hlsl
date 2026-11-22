@@ -4,8 +4,9 @@
 // Original work, MIT.
 #include "LightingCommon.hlsli"
 
-Texture2D<float4> TransLut : register(t0);
-SamplerState      Lin      : register(s0);
+Texture2D<float4> TransLut     : register(t0);
+Texture2D<float4> MultiScatLut : register(t1);
+SamplerState      Lin          : register(s0);
 
 // Physical planetary atmosphere constants (km): Earth/Nordic reference with Rayleigh, Mie aerosol & Ozone absorption.
 static const float kPlanetR  = 6360.0f;
@@ -69,6 +70,63 @@ float4 transmittance(float4 at : SV_Position) : SV_Target0 {
     return float4(exp(-od), 1.0f);
 }
 
+// 32x32 Hillaire SIGGRAPH 2020 Multiple-Scattering LUT (Psi_ms = L_2nd / (1 - f_ms)):
+// Integrates isotropic infinite-order atmospheric multiple scattering over 32 Fibonacci-sphere directions
+// across (cosSunZenith, altitude), replacing analytical multi-scatter approximations with exact radiative transfer.
+float4 multiscat(float4 at : SV_Position) : SV_Target0 {
+    const float2 uv = at.xy / 32.0f;
+    const float cosS = uv.x * 2.0f - 1.0f;
+    const float r = kPlanetR + lerp(0.1f, kAtmoR - kPlanetR - 0.1f, uv.y);
+    const float3 ro = float3(0.0f, 0.0f, r);
+    const float3 sunD = float3(sqrt(max(1.0f - cosS * cosS, 0.0f)), 0.0f, cosS);
+    const float3 groundAlbedo = float3(0.28f, 0.30f, 0.32f);
+
+    float3 L2nd = 0.0f.xxx;
+    float3 fMs = 0.0f.xxx;
+    const uint kDirs = 32u;
+    const float dOmega = (4.0f * PI) / float(kDirs);
+    [loop] for (uint d = 0u; d < kDirs; d++) {
+        // Fibonacci sphere direction for uniform isotropic solid-angle quadrature.
+        const float z = 1.0f - (2.0f * float(d) + 1.0f) / float(kDirs);
+        const float rad = sqrt(max(1.0f - z * z, 0.0f));
+        const float phi = float(d) * 2.39996323f;
+        const float3 rd = float3(rad * cos(phi), rad * sin(phi), z);
+        const float2 hitA = raySphere(ro, rd, kAtmoR);
+        const float2 hitG = raySphere(ro, rd, kPlanetR);
+        float tMax = hitA.y;
+        const bool hitsGround = (hitG.x > 0.0f);
+        if (hitsGround) { tMax = min(tMax, hitG.x); }
+        const uint kSteps = 16u;
+        const float dt = max(tMax, 0.0f) / float(kSteps);
+        float3 Ldir = 0.0f.xxx, fDir = 0.0f.xxx, T = 1.0f.xxx;
+        [loop] for (uint i = 0u; i < kSteps; i++) {
+            const float t = (float(i) + 0.5f) * dt;
+            const float3 p = ro + rd * t;
+            const float rp = length(p);
+            float3 sR, sT; float sM;
+            atmoExtinction(rp - kPlanetR, 1.0f, sR, sM, sT);
+            const float3 sS = sR + sM.xxx;
+            const float muS = dot(p / rp, sunD);
+            const float3 trSun = TransLut.SampleLevel(Lin, transUv(rp, muS), 0.0f).rgb;
+            const float3 stepT = exp(-sT * dt);
+            const float3 intS = (1.0f - stepT) / max(sT, 1.0e-5f.xxx);
+            Ldir += T * (sS * (0.25f / PI) * trSun * intS);
+            fDir += T * (sS * intS);
+            T *= stepT;
+        }
+        if (hitsGround) {
+            const float3 pg = ro + rd * tMax;
+            const float muG = saturate(dot(normalize(pg), sunD));
+            const float3 trG = TransLut.SampleLevel(Lin, transUv(kPlanetR, muG), 0.0f).rgb;
+            Ldir += T * (groundAlbedo / PI) * trG * muG;
+        }
+        L2nd += Ldir * dOmega * (0.25f / PI);
+        fMs  += fDir * dOmega * (0.25f / PI);
+    }
+    const float3 psi = L2nd / max(1.0f.xxx - fMs, 0.05f.xxx);
+    return float4(psi, 1.0f);
+}
+
 // 192x108 Sky-View LUT (non-linear elevation parameterization around horizon for crisp horizon gradients).
 float4 skyview(float4 at : SV_Position) : SV_Target0 {
     const float2 uv = at.xy / float2(192.0f, 108.0f);
@@ -111,8 +169,10 @@ float4 skyview(float4 at : SV_Position) : SV_Target0 {
         atmoExtinction(h, turbidity, sR, sM, sT);
         const float muS = dot(p / r, sunD);
         const float3 transSun = TransLut.SampleLevel(Lin, transUv(r, muS), 0.0f).rgb;
-        // Analytical multi-scattering approximation (Hillaire 2020 isotropic ground-sky bounce).
-        const float3 multiScat = (sR + sM.xxx) * (0.11f * saturate(sunD.z * 2.5f + 0.25f));
+        // Exact Hillaire SIGGRAPH 2020 precomputed infinite-order Multiple-Scattering LUT (32x32 Psi_ms).
+        const float2 msUv = float2(saturate(muS * 0.5f + 0.5f), saturate(h / (kAtmoR - kPlanetR)));
+        const float3 psiMs = MultiScatLut.SampleLevel(Lin, msUv, 0.0f).rgb;
+        const float3 multiScat = (sR + sM.xxx) * psiMs;
         const float3 scat = (sR * phR + sM.xxx * phM) * transSun + multiScat;
         const float3 stepT = exp(-sT * dt);
         L += T * (scat * (1.0f - stepT) / max(sT, 1.0e-5f.xxx));

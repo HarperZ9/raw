@@ -454,7 +454,7 @@ if(RAW_ENGINE_DIR)
     set(RAW_LIGHT_HEADERS ${RAW_ENGINE_GEN}/light_vs.h ${RAW_ENGINE_GEN}/light_fs.h ${RAW_ENGINE_GEN}/light_fog_fs.h
         ${RAW_ENGINE_GEN}/clouds_fs.h ${RAW_ENGINE_GEN}/volumetric_fs.h
         ${RAW_ENGINE_GEN}/bloom_pre_fs.h ${RAW_ENGINE_GEN}/bloom_down_fs.h ${RAW_ENGINE_GEN}/bloom_up_fs.h ${RAW_ENGINE_GEN}/bloom_comp_fs.h
-        ${RAW_ENGINE_GEN}/atmo_trans_fs.h ${RAW_ENGINE_GEN}/atmo_sky_fs.h ${RAW_ENGINE_GEN}/rt_refl_filter_fs.h
+        ${RAW_ENGINE_GEN}/atmo_trans_fs.h ${RAW_ENGINE_GEN}/atmo_ms_fs.h ${RAW_ENGINE_GEN}/atmo_sky_fs.h ${RAW_ENGINE_GEN}/rt_refl_filter_fs.h
         ${RAW_ENGINE_GEN}/dof_coc_fs.h ${RAW_ENGINE_GEN}/dof_gather_fs.h ${RAW_ENGINE_GEN}/dof_comp_fs.h)
     add_custom_command(
         OUTPUT ${RAW_LIGHT_HEADERS}
@@ -469,6 +469,7 @@ if(RAW_ENGINE_DIR)
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E up ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/bloom_up_fs.h -Vn kDxil_bloom_up_fs ${RAW_BLOOM_HLSL}
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E composite ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/bloom_comp_fs.h -Vn kDxil_bloom_comp_fs ${RAW_BLOOM_HLSL}
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E transmittance ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/atmo_trans_fs.h -Vn kDxil_atmo_trans_fs ${RAW_ATMO_HLSL}
+        COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E multiscat ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/atmo_ms_fs.h -Vn kDxil_atmo_ms_fs ${RAW_ATMO_HLSL}
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E skyview ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/atmo_sky_fs.h -Vn kDxil_atmo_sky_fs ${RAW_ATMO_HLSL}
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E fs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_refl_filter_fs.h -Vn kDxil_rt_refl_filter_fs ${RAW_REFL_FILT_HLSL}
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E dof_coc ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/dof_coc_fs.h -Vn kDxil_dof_coc_fs ${RAW_DOF_HLSL}

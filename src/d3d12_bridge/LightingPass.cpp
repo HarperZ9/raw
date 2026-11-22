@@ -22,6 +22,7 @@
 #include "bloom_up_fs.h"
 #include "bloom_comp_fs.h"
 #include "atmo_trans_fs.h"
+#include "atmo_ms_fs.h"
 #include "atmo_sky_fs.h"
 #include "rt_refl_filter_fs.h"
 #include "dof_coc_fs.h"
@@ -62,7 +63,8 @@ constexpr RasterBinding kFogLayout[7] = {U, T, T, T, T, T, Sm};
 constexpr RasterBinding kBloom1Layout[2] = {T, Sm};
 constexpr RasterBinding kBloom2Layout[3] = {T, T, Sm};
 constexpr RasterBinding kAtmoTransLayout[1] = {U};
-constexpr RasterBinding kAtmoSkyLayout[3] = {U, T, Sm};
+constexpr RasterBinding kAtmoMsLayout[3] = {U, T, Sm};
+constexpr RasterBinding kAtmoSkyLayout[4] = {U, T, T, Sm};
 constexpr RasterBinding kReflFilterLayout[6] = {U, T, T, T, T, Sm};
 constexpr RasterBinding kDofCocLayout[4] = {U, T, T, Sm};
 constexpr RasterBinding kDofGatherLayout[3] = {U, T, Sm};
@@ -121,10 +123,11 @@ public:
             if (k < 5) m_bloomUp[k] = m_dev->createTexture({bw, bh, TextureFormat::RGBA16Float, RT, "bloom up"}, m_err);
             if (!m_bloomDown[k].valid() || (k < 5 && !m_bloomUp[k].valid())) return Fail("bloom pyramid textures");
         }
-        // Hillaire SIGGRAPH 2020 Physical Atmosphere LUTs: 256x64 Transmittance + 192x108 Sky-View radiative transfer.
+        // Hillaire SIGGRAPH 2020 Physical Atmosphere LUTs: 256x64 Transmittance + 32x32 Multi-Scattering + 192x108 Sky-View.
         m_atmoTrans = m_dev->createTexture({256, 64, TextureFormat::RGBA16Float, RT, "atmo transmittance"}, m_err);
+        m_atmoMs = m_dev->createTexture({32, 32, TextureFormat::RGBA16Float, RT, "atmo multiscat"}, m_err);
         m_atmoSkyView = m_dev->createTexture({192, 108, TextureFormat::RGBA16Float, RT, "atmo skyview"}, m_err);
-        if (!m_atmoTrans.valid() || !m_atmoSkyView.valid()) return Fail("atmosphere LUT textures");
+        if (!m_atmoTrans.valid() || !m_atmoMs.valid() || !m_atmoSkyView.valid()) return Fail("atmosphere LUT textures");
         for (int k = 0; k < 2; ++k) m_reflHist[k] = m_dev->createTexture({host.width, host.height, TextureFormat::RGBA16Float, RT, "rt refl history"}, m_err);
         if (!m_reflHist[0].valid() || !m_reflHist[1].valid()) return Fail("rt refl history textures");
         m_dofCoc = m_dev->createTexture({vw, vh, TextureFormat::RGBA16Float, RT, "dof coc"}, m_err);
@@ -159,9 +162,11 @@ public:
         if (!m_bloomPrePipe.valid() || !m_bloomDownPipe.valid() || !m_bloomUpPipe.valid() || !m_bloomCompPipe.valid()) return Fail("bloom pipelines");
         d.label = "atmo trans"; d.fragment = dxil(kDxil_atmo_trans_fs, sizeof kDxil_atmo_trans_fs); d.layout = kAtmoTransLayout;
         m_atmoTransPipe = m_dev->createRasterPipeline(d, m_err);
+        d.label = "atmo ms"; d.fragment = dxil(kDxil_atmo_ms_fs, sizeof kDxil_atmo_ms_fs); d.layout = kAtmoMsLayout;
+        m_atmoMsPipe = m_dev->createRasterPipeline(d, m_err);
         d.label = "atmo skyview"; d.fragment = dxil(kDxil_atmo_sky_fs, sizeof kDxil_atmo_sky_fs); d.layout = kAtmoSkyLayout;
         m_atmoSkyPipe = m_dev->createRasterPipeline(d, m_err);
-        if (!m_atmoTransPipe.valid() || !m_atmoSkyPipe.valid()) return Fail("atmosphere LUT pipelines");
+        if (!m_atmoTransPipe.valid() || !m_atmoMsPipe.valid() || !m_atmoSkyPipe.valid()) return Fail("atmosphere LUT pipelines");
         d.label = "rt refl filter"; d.fragment = dxil(kDxil_rt_refl_filter_fs, sizeof kDxil_rt_refl_filter_fs); d.layout = kReflFilterLayout;
         m_reflFilterPipe = m_dev->createRasterPipeline(d, m_err);
         if (!m_reflFilterPipe.valid()) return Fail("rt refl filter pipeline");
@@ -210,10 +215,12 @@ public:
         if (!m_atmoTransBuilt) {
             const RasterBind tb[1] = {{m_uniform, {}, {}}};
             Draw(*c, m_atmoTrans, m_atmoTransPipe, tb);
+            const RasterBind mb[3] = {{m_uniform, {}, {}}, {{}, m_atmoTrans, {}}, {{}, {}, m_lin}};
+            Draw(*c, m_atmoMs, m_atmoMsPipe, mb);
             m_atmoTransBuilt = true;
         }
         if (ok && (m_u.flags[0] & kMatch) == 0u) {
-            const RasterBind sb[3] = {{m_uniform, {}, {}}, {{}, m_atmoTrans, {}}, {{}, {}, m_lin}};
+            const RasterBind sb[4] = {{m_uniform, {}, {}}, {{}, m_atmoTrans, {}}, {{}, m_atmoMs, {}}, {{}, {}, m_lin}};
             Draw(*c, m_atmoSkyView, m_atmoSkyPipe, sb);
         }
         const TextureHandle aoVis = ao ? m_ao.history() : m_game;   // unused without the flag
@@ -464,8 +471,8 @@ private:
     BufferHandle m_uniform;
     RasterPipelineHandle m_lightPipe, m_fogPipe, m_cloudPipe, m_volPipe;
     RasterPipelineHandle m_bloomPrePipe, m_bloomDownPipe, m_bloomUpPipe, m_bloomCompPipe;
-    RasterPipelineHandle m_atmoTransPipe, m_atmoSkyPipe, m_reflFilterPipe, m_dofCocPipe, m_dofGatherPipe, m_dofCompPipe;
-    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoSkyView, m_reflHist[2], m_dofCoc, m_dofBokeh;
+    RasterPipelineHandle m_atmoTransPipe, m_atmoMsPipe, m_atmoSkyPipe, m_reflFilterPipe, m_dofCocPipe, m_dofGatherPipe, m_dofCompPipe;
+    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoMs, m_atmoSkyView, m_reflHist[2], m_dofCoc, m_dofBokeh;
     bool m_atmoTransBuilt = false;
     SamplerHandle m_lin;
     float m_prevWorldToClip[16] = {};

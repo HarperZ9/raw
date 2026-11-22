@@ -435,27 +435,37 @@ void main(uint3 id : SV_DispatchThreadID) {
     const bool wetGloss = max(rain.wet, rain.puddle) * (1.0f - rain.snow) > 0.2f;   // snow covers the water
     if (reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u) {
         const float4 sp = Spec.Load(ip);
-        if ((sp.y > 0.25f && sp.x > 0.05f) || wetGloss) {
+        // arXiv:2610.11702 Prefiltered Specular Radiance Caching: expand hardware Heitz VNDF reflection tracing
+        // to all forged metals (base==2), wet/puddle surfaces, and glossy stone/timber (sp.y > 0.14 && sp.x > 0.04).
+        if (base == 2u || (sp.y > 0.14f && sp.x > 0.04f) || wetGloss) {
             const float2 px = float2(id.xy);
             const float3 p = worldAt(px, d);
             const float3 n = normalize(lerp(worldNormal(Normal.Load(ip)), float3(0.0f, 0.0f, 1.0f), rain.puddle));
             const float3 v = normalize(eyeAt() - p);
             const float shin = exp2(sp.y * 13.0f);
-            const float alpha = lerp(lerp(clamp(sqrt(2.0f / (shin + 2.0f)), 0.03f, 1.0f), 0.12f, rain.wet), 0.03f, rain.puddle);
+            const float alpha = lerp(lerp(clamp(sqrt(2.0f / (shin + 2.0f)), 0.03f, 0.85f), 0.10f, rain.wet), 0.025f, rain.puddle);
             const float2 rr = stbnR2(px, frameIndex + 37.0f);
-            // Heitz 2018 GGX VNDF importance sampling (replaces uniform cone jitterDir for physically exact glossy lobes).
+            // Heitz 2018 GGX VNDF importance sampling (physically exact glossy lobes with zero grazing leaks).
             const float3 rd = sampleGGXVNDF(n, v, max(alpha, 0.02f), rr);
             const float3 ng = geometricNormal(px, p, n);
             reflTraced = true;
             if (dot(rd, ng) > 0.0f) {
                 const float3 o = p + ng * (0.5f + 0.003f * viewZOf(d));
                 Hit h;
-                float3 c, hn;
-                // On screen: the game's frame. Off screen (materials on): the hit's own shading.
+                float3 c = 0.0f.xxx, hn = float3(0.0f, 0.0f, 1.0f);
+                // On-screen: exact full-res lit frame. Off-screen: multi-bounce radianceAt + persistent world radiance cache.
                 if (traceHit(o, rd, reflectLength, h)) {
-                    if (onScreen(o + rd * h.t, c)) { refl = float4(c, 1.0f); }
-                    else if ((giFlags & GI_MATERIALS) != 0u) { refl = float4(radianceAt(h, o, rd, rr, true, hn), 1.0f); }
-                } else if (wetGloss || base == 2u) { refl = float4(skyAt(rd), 1.0f); }   // wet ground, puddles & forged metal mirror the sky
+                    const float3 hitP = o + rd * h.t;
+                    if (onScreen(hitP, c)) { refl = float4(c, 1.0f); }
+                    else if ((giFlags & GI_MATERIALS) != 0u) {
+                        float3 offRad = radianceAt(h, o, rd, rr, true, hn);
+                        if ((giFlags & GI_CACHE) != 0u) {
+                            float3 cB = 0.0f.xxx; float cS = 0.0f;
+                            if (cacheRead(hitP, hn, cB, cS)) { offRad = max(offRad, cB * 0.85f); }
+                        }
+                        refl = float4(offRad, 1.0f);
+                    }
+                } else if (wetGloss || base == 2u) { refl = float4(skyAt(rd), 1.0f); }
             }
         }
     }

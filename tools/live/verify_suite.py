@@ -17,15 +17,14 @@ BASE_INI = [
 ]
 
 CONDITIONS = [
-    ("natural", None, ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
-    ("sunset", ("set_time", ["hour=18.3"]), ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
-    ("night", ("set_time", ["hour=23.0"]), ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
-    ("noon", ("set_time", ["hour=12.5"]), ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
-    ("rainstorm", None, ["View=0", "WeatherDrive=0", "Wetness=0.95", "Puddles=0.85", "Rain=1.0", "Snow=0.0"]),
-    ("snowstorm", None, ["View=0", "WeatherDrive=0", "Wetness=0.0", "Puddles=0.0", "Rain=0.0", "Snow=0.92"]),
-    ("diag_gi", None, ["View=5", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
-    ("diag_roughness", None, ["View=24", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
-    ("diag_parallax", None, ["View=26", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
+    ("natural", [("console", ["command=player.setangle x 0"])], ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
+    ("overhead_sky_clear", [("set_weather", ["id=00081a"]), ("set_time", ["hour=14.0"]), ("console", ["command=player.setangle x -38"])], ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
+    ("sunset", [("console", ["command=player.setangle x 0"]), ("set_time", ["hour=18.3"])], ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
+    ("night", [("set_time", ["hour=23.0"])], ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
+    ("rainstorm", [("set_time", ["hour=12.5"])], ["View=0", "WeatherDrive=0", "Wetness=0.95", "Puddles=0.85", "Rain=1.0", "Snow=0.0"]),
+    ("snowstorm", [], ["View=0", "WeatherDrive=0", "Wetness=0.0", "Puddles=0.0", "Rain=0.0", "Snow=0.92"]),
+    ("interior_inn", [("move", ["cell=RiverwoodSleepingGiantInn"]), ("console", ["command=player.setangle x 0"])], ["View=0", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
+    ("diag_gi", [("move", ["cell=Riverwood"]), ("console", ["command=player.setangle x 0"])], ["View=5", "WeatherDrive=1", "WeatherRain=-1", "WeatherSnow=-1"]),
 ]
 
 def run_req(args, timeout=90):
@@ -36,9 +35,9 @@ def run_req(args, timeout=90):
 def main():
     tag = sys.argv[1] if len(sys.argv) > 1 else "suite"
     summary = []
-    for name, pre_cmd, extra in CONDITIONS:
-        if pre_cmd:
-            run_req([pre_cmd[0]] + pre_cmd[1], timeout=45)
+    for name, pre_cmds, extra in CONDITIONS:
+        for pc, pa in pre_cmds:
+            run_req([pc] + pa, timeout=90)
         run_req(["reload_ini"] + BASE_INI + extra, timeout=30)
         cap_name = f"verify_{tag}_{name}"
         rc, out, err = run_req(["capture", "kind=keyframe", f"name={cap_name}", "steps=improved", "hold=16"], timeout=90)

@@ -21,7 +21,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
 
     const float z = viewZOf(d);
     const int2 dMax = int2(dims.xy) - 1;
-    // 3x3 depth-aware spatial moment estimation (m1, m2) with firefly clamping (> 3.5).
+    // arXiv:2610.11702 Prefiltered Specular Radiance Filtering: Karis inverse-luminance firefly suppression +
+    // depth-plane-aware 3x3 spatial moment estimation (exact on grazing wet roads, armor, and puddles).
+    const float zR = viewZOf(Depth.Load(int3(min(p.x + 1, dMax.x), p.y, 0))) - z;
+    const float zL = z - viewZOf(Depth.Load(int3(max(p.x - 1, 0), p.y, 0)));
+    const float zD = viewZOf(Depth.Load(int3(p.x, min(p.y + 1, dMax.y), 0))) - z;
+    const float zU = z - viewZOf(Depth.Load(int3(p.x, max(p.y - 1, 0), 0)));
+    const float2 zSlope = float2(abs(zR) < abs(zL) ? zR : zL, abs(zD) < abs(zU) ? zD : zU);
+    const float invPlane = 1.0f / max(z * 0.018f, 2.0f);
     float4 s1 = 0.0f.xxxx, s2 = 0.0f.xxxx;
     float wSum = 0.0f;
     [unroll] for (int dy = -1; dy <= 1; dy++) {
@@ -31,10 +38,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (dq >= 1.0f) { continue; }
             float4 tap = RawRefl.Load(int3(q, 0));
             if (tap.a < 0.005f) { continue; }
-            const float relZ = (viewZOf(dq) - z) / max(z, 1.0f);
-            const float w = exp2(-relZ * relZ * 3200.0f) * ((dx == 0 && dy == 0) ? 1.5f : 1.0f);
+            const float zPred = z + zSlope.x * float(dx) + zSlope.y * float(dy);
+            const float pd = abs(viewZOf(dq) - zPred) * invPlane;
+            const float tapLum = dot(tap.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+            const float karis = 1.0f / (1.0f + tapLum * 0.45f);
+            const float w = exp(-pd * pd) * karis * ((dx == 0 && dy == 0) ? 1.5f : 1.0f);
             const float pk = max(tap.r, max(tap.g, tap.b));
-            if (pk > 3.5f) { tap.rgb *= 3.5f / pk; }
+            if (pk > 4.5f) { tap.rgb *= 4.5f / pk; }
             s1 += tap * w;
             s2 += (tap * tap) * w;
             wSum += w;

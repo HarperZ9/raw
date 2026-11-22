@@ -75,15 +75,16 @@ bool ReadDraw(uint64_t pass, Raw* r, char* path, size_t pathMax) {
         std::memcpy(r->pos, geo + 0xE4, 12);
         std::memcpy(&r->radius, geo + 0xF0, 4);
         const char* p = *reinterpret_cast<const char* const*>(mat + 0x70);
-        // Replace Skyrim's static 2011 2D mountain-fog billboard cards (radius 400..15000u) with RAW's
-        // 160x90x64 3D Froxel Alpine Mist by cleanly zeroing their material alpha (100% draw-state safe).
-        if (r->radius >= 380.0f && p) {
+        // Replace Skyrim's static 2011 2D mountain-fog, cloud, and giant valley-mist billboard cards with RAW's
+        // world-locked 160x90x64 3D Froxel Volumetric Participating Media by cleanly zeroing their material alpha.
+        if (r->radius >= 260.0f && p) {
             char mBuf[96] = {};
             for (size_t i = 0; i + 1 < sizeof mBuf && p[i]; ++i) {
                 const char c = p[i];
                 mBuf[i] = (c >= 'A' && c <= 'Z') ? char(c + 32) : c;
             }
-            if (std::strstr(mBuf, "mountainfog") || std::strstr(mBuf, "fxclouds")) {
+            if (std::strstr(mBuf, "mountainfog") || std::strstr(mBuf, "fxclouds") ||
+                std::strstr(mBuf, "fxmist") || std::strstr(mBuf, "fxfog") || std::strstr(mBuf, "fxlowfog")) {
                 *reinterpret_cast<float*>(const_cast<uint8_t*>(mat) + 0x54) = 0.0f;
             }
         }

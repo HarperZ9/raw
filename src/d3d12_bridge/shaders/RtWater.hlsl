@@ -262,16 +262,17 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float3 waveSSS = sunDir.w > 0.5f
                     ? float3(0.03f, 0.28f, 0.26f) * sunColour.rgb * (0.25f + 0.75f * pow(saturate(dot(-v, sunDir.xyz)), 3.5f)) * saturate((1.0f - n.z) * 5.5f) * 0.65f
                     : 0.0f.xxx;
-                // Organic shore-contact foam collar + animated shoreline lapping wave rings (0..32u depth) + turbulent rapids crests.
-                const float shoreBand = (1.0f - smoothstep(0.0f, 32.0f, depthV)) * smoothstep(0.0f, 1.0f, depthV);
-                const float foamCell = saturate(1.0f - cellWalls(wpW.xy / 24.0f, camPosW.w * 0.45f) * 2.2f);
-                const float lapWave = pow(saturate(sin(depthV * 0.34f - camPosW.w * 2.1f + foamCell * 2.6f) * 0.5f + 0.5f), 4.0f);
-                const float shoreLap = shoreBand * (0.45f + 0.55f * foamCell) * (0.55f + 0.65f * lapWave);
-                const float crestFoam = saturate((1.0f - n.z) * 6.5f - 0.14f) * foamCell;
-                const float foamMask = saturate(max(shoreLap, crestFoam * 0.78f)) * nearW;
-                const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.06f.xxx) + (sunDir.w > 0.5f ? sunColour.rgb * 0.50f : 0.0f.xxx)) * 0.92f;
+                // Delicate, broken cellular shoreline froth (0..7.5u depth) + subtle rapids wave-crest foam (eliminates solid painted white rings around quiet river rocks).
+                const float shoreBand = (1.0f - smoothstep(0.0f, 7.5f, depthV)) * smoothstep(0.0f, 0.7f, depthV);
+                const float foamCell = saturate(1.0f - cellWalls(wpW.xy / 14.0f, camPosW.w * 0.48f) * 2.5f);
+                const float laceFoam = pow(foamCell, 2.4f);
+                const float lapWave = pow(saturate(sin(depthV * 0.55f - camPosW.w * 2.0f + foamCell * 2.6f) * 0.5f + 0.5f), 3.0f);
+                const float shoreLap = shoreBand * laceFoam * (0.45f + 0.55f * lapWave) * 0.34f;
+                const float crestFoam = saturate((1.0f - n.z) * 7.5f - 0.22f) * laceFoam * 0.52f;
+                const float foamMask = saturate(max(shoreLap, crestFoam)) * nearW;
+                const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) * 0.85f + (sunDir.w > 0.5f ? sunColour.rgb * 0.32f : 0.0f.xxx));
                 const float3 waterBody = (bed + caus) * T + scatter * (1.0f - T) + waveSSS;
-                body = lerp(waterBody, foamLit, foamMask * 0.78f);
+                body = lerp(waterBody, foamLit, foamMask * 0.68f);
             }
             const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;
             const float cellFeather = 1.0f - smoothstep(2200.0f, 4400.0f, wDist);

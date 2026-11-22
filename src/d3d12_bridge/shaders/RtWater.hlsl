@@ -199,7 +199,16 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float depthDamp = smoothstep(0.0f, 6.0f, depthV0) * lerp(1.0f, 0.72f, smoothstep(50.0f, 160.0f, depthV0));
                 const float2 bowNormal = obsGrad * (bowHit * (0.14f + 0.08f * sin(depthV0 * 0.45f - wt * 3.2f)));
                 const float2 eddyRipple = curlPhase * (eddyLee * 0.09f * sin(dot(wpW.xy, flowDir) * 0.18f - wt * 2.8f));
-                const float2 waveG = lerp(g0, g1, flowBlend) * depthDamp + bowNormal + eddyRipple;
+                // Fine capillary wind-ripple micro-normals advected along streamlines (eliminates flat glassy water on calm days).
+                const float capFade = saturate(1.0f - wDist / 3800.0f);
+                const float2 capP0 = (wpW.xy - flowVec * (ph0 * 10.0f)) * 0.24f;
+                const float2 capP1 = (wpW.xy - flowVec * (ph1 * 10.0f) + float2(37.3f, 61.9f)) * 0.24f;
+                const float2 capG0 = float2(vNoise2D(capP0 + float2(0.15f, 0.0f)) - vNoise2D(capP0 - float2(0.15f, 0.0f)),
+                                            vNoise2D(capP0 + float2(0.0f, 0.15f)) - vNoise2D(capP0 - float2(0.0f, 0.15f)));
+                const float2 capG1 = float2(vNoise2D(capP1 + float2(0.15f, 0.0f)) - vNoise2D(capP1 - float2(0.15f, 0.0f)),
+                                            vNoise2D(capP1 + float2(0.0f, 0.15f)) - vNoise2D(capP1 - float2(0.0f, 0.15f)));
+                const float2 capNormal = lerp(capG0, capG1, flowBlend) * (0.28f * capFade);
+                const float2 waveG = lerp(g0, g1, flowBlend) * depthDamp + bowNormal + eddyRipple + capNormal;
                 n = normalize(n + float3(waveG, 0.0f));
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
                 if (wDist < 1600.0f) {
@@ -314,19 +323,25 @@ void water(uint3 id : SV_DispatchThreadID) {
             if (refr) {
                 const float3 pb = worldAt(px, dBed);
                 const float depthV = max(p.z - pb.z, 0.0f);
-                const float refrShift = min(depthV, 48.0f) * 0.16f;
-                const float4 s2 = screenOf(pb + float3(n.x, n.y, 0.0f) * refrShift);
+                // True Snell's Law optical underwater refraction (n_air/n_water = 1/1.333):
+                // bends view ray into the water column and intersects the riverbed plane at depthV.
+                const float3 refrRay = refract(-v, n, 1.0f / 1.333f);
+                const float tRefr = min(depthV / max(-refrRay.z, 0.25f), 96.0f);
+                const float3 pRefrBed = p + refrRay * tRefr;
+                const float4 s2 = screenOf(lerp(pb, pRefrBed, 0.72f));
                 const bool inBounds = s2.w > 0.0f && all(s2.xy >= 2.0f.xx) && all(s2.xy <= dims.xy - 3.0f);
                 int2 q = inBounds ? int2(s2.xy) : int2(id.xy);
                 // A bent look-up that lands off-screen or on something above the water keeps the straight one (prevents vertical edge stretching).
                 const float4 Lq = Layer.Load(int3(q, 0));
                 if (!inBounds || Depth.Load(int3(q, 0)) <= Lq.x || Lq.z < 0.0f) { q = int2(id.xy); }
-                // Chromatic shallow-water refraction: subtle RGB dispersion across pebbles & rocks in clear Nordic streams.
-                const int2 qR = clamp(q + int2(round(n.xy * 1.8f)), int2(0, 0), int2(dims.xy) - 1);
-                const int2 qB = clamp(q - int2(round(n.xy * 1.8f)), int2(0, 0), int2(dims.xy) - 1);
+                // Chromatic shallow-water dispersion across submerged pebbles & riverbed rocks.
+                const int2 qR = clamp(q + int2(round(n.xy * 2.0f)), int2(0, 0), int2(dims.xy) - 1);
+                const int2 qB = clamp(q - int2(round(n.xy * 2.0f)), int2(0, 0), int2(dims.xy) - 1);
                 const float3 bed = float3(PreWater[qR].r, PreWater[q].g, PreWater[qB].b);
                 const float path = length(worldAt(float2(q), Depth.Load(int3(q, 0))) - p);
-                const float3 T = exp(-waterA.z * float3(2.45f, 1.05f, 0.72f) * path);
+                // Physical Beer-Lambert glacial river absorption (red attenuates 6x faster than green/blue):
+                // crystal-clear transparent shallows (0..22u) -> luminous glacial turquoise -> deep Nordic sapphire.
+                const float3 T = exp(-waterA.z * float3(3.10f, 1.08f, 0.68f) * path);
                 const float3 scatter = float3(0.018f, 0.068f, 0.092f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) * 1.95f;
                 const float nearW = 1.0f - smoothstep(2800.0f, 5200.0f, wDist);
                 // Rich backlit glacial-emerald wave-crest subsurface scattering.

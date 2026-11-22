@@ -280,21 +280,23 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float vis = sunColour.w > 0.5f ? visible(o, l, 0.0f, sunLength) : 1.0f;
                 glint = min(sunColour.rgb * (D * Fh * nl / (4.0f * max(nv, 0.08f))) * vis, 6.0f.xxx) * waterA.w;
             }
-            // Point-light GGX specular reflections on water (bridge lanterns, harbor braziers, torches & spells shimmer across ripples).
-            if (wDist < 5500.0f && flags.y > 0u) {
-                const uint maxWaterLights = min(flags.y, 24u);
+            // Dual-lobe elongated liquid specular reflections on water (tight 0.008 crest sparkle + broad 0.045 shimmer ribbon):
+            // bridge lanterns, harbor braziers, torches & spells cast crisp dancing light ribbons across river ripples (GTA VI harbor study).
+            if (wDist < 8500.0f && flags.y > 0u) {
+                const uint maxWaterLights = min(flags.y, 32u);
                 [loop] for (uint wli = 0u; wli < maxWaterLights; wli++) {
                     const float3 toWL = lightPosR[wli].xyz - p;
                     const float dWL = length(toWL);
-                    const float rWL = lightPosR[wli].w * 1.65f;
+                    const float rWL = lightPosR[wli].w * 2.25f;
                     if (dWL >= rWL || toWL.z <= 0.0f) { continue; }
-                    const float attWL = pow(saturate(1.0f - dWL / rWL), 2.0f);
+                    const float attWL = pow(saturate(1.0f - dWL / rWL), 1.75f);
                     const float3 lWL = toWL / max(dWL, 1.0e-4f);
                     const float3 hWL = normalize(v + lWL);
                     const float nhWL = saturate(dot(nRefl, hWL));
-                    const float ddWL = nhWL * nhWL * (0.024f - 1.0f) + 1.0f;
-                    const float dSpec = 0.024f / (PI * ddWL * ddWL);
-                    glint += min(lightColS[wli].rgb * (dSpec * attWL * 0.12f * F), 1.4f.xxx);
+                    const float ddTight = nhWL * nhWL * (0.008f - 1.0f) + 1.0f;
+                    const float ddBroad = nhWL * nhWL * (0.048f - 1.0f) + 1.0f;
+                    const float dSpec = (0.008f / (PI * ddTight * ddTight)) * 0.55f + (0.048f / (PI * ddBroad * ddBroad)) * 0.45f;
+                    glint += min(lightColS[wli].rgb * (dSpec * attWL * 0.18f * (0.25f + 0.75f * F)), 2.8f.xxx);
                 }
             }
 

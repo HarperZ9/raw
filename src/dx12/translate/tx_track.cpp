@@ -122,6 +122,26 @@ bool Tracker::RequireAll(const std::shared_ptr<TrackedRes>& r, uint32_t state)
 {
     Local& l = Find(r);
     if (NoChange(l, state)) return false;
+    // Fast-path whole-resource ALL_SUBRESOURCES barrier coalescing: replaces 11-48 per-subresource barriers
+    // on mipmapped textures, cubemaps, and shadow atlases with 1 single D3D12 transition barrier.
+    if (r->subs > 1 && l.uni != kMixedState && l.uni != kUnknownState) {
+        const uint32_t c = l.uni;
+        uint32_t ns = state;
+        if (IsRead(state) && IsRead(c)) {
+            ns = c | state;
+            if (ns == c) return false;
+        }
+        bool drop = (faults & FaultSkipBarrier) && c == D3D12_RESOURCE_STATE_RENDER_TARGET &&
+                    (state & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        if (!drop) {
+            pend_.push_back(Transition(l.r->res.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, c, ns));
+            ++barrierCount;
+        }
+        uint32_t* cur = l.S() + r->subs;
+        for (uint32_t i = 0; i < r->subs; ++i) cur[i] = ns;
+        l.uni = ns;
+        return true;
+    }
     bool changed = false;
     for (uint32_t i = 0; i < r->subs; ++i) changed |= Step(l, i, state);
     if (changed) Settle(l);

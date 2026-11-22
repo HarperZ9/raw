@@ -30,6 +30,9 @@ struct State {
     WeatherRead cur, last;
     float pct = 0, density = 0, gameHour = 12.0f;
     float rain = 0, snow = 0, cloud = 0, fog = 0;
+    float smoothRain = 0, smoothSnow = 0, smoothCloud = 0, smoothFog = 0;
+    bool hasSmooth = false;
+    uint64_t lastTickMs = 0;
     float windX = 0, windY = 0, lightning = 0;
     bool ok = false;
     uint64_t calls = 0;
@@ -91,10 +94,34 @@ void Blend(State* s) {
     auto has = [](const WeatherRead& w, uint8_t bit) { return (w.flags & bit) ? 1.0f : 0.0f; };
     s->rain = Sat(has(c, 4) * in + has(l, 4) * out);
     s->snow = Sat(has(c, 8) * in + has(l, 8) * out);
-    // cloud cover: cloudy, rainy and snowy weathers are overcast
-    auto cover = [&](const WeatherRead& w) { return (w.flags & (2 | 4 | 8)) ? 1.0f : 0.0f; };
+    // Graduated physical cloud cover per TESWeather flags (eliminates 100% solid overcast blanket on partly-cloudy days):
+    // Clear=0.24 (fair-weather cumulus), Cloudy=0.58 (sculpted partly-cloudy), Snowy=0.82, Rainy/Storm=0.88.
+    auto cover = [&](const WeatherRead& w) {
+        if (w.flags & 4) return 0.88f;
+        if (w.flags & 8) return 0.82f;
+        if (w.flags & 2) return 0.58f;
+        return 0.24f;
+    };
     s->cloud = Sat(cover(c) * p + cover(l) * (1.0f - p));
     s->fog = Sat(FogOf(c) * p + FogOf(l) * (1.0f - p));
+    // Physical weather hysteresis (asymmetric ramp-up / evaporation drying): puddles & wet stone dry over ~45s
+    // after rain stops and snowdrifts accumulate/melt smoothly over ~35s instead of snapping on weather transitions.
+    const uint64_t nowMs = GetTickCount64();
+    const float dt = s->lastTickMs ? std::clamp(float(nowMs - s->lastTickMs) * 0.001f, 0.0f, 0.25f) : 0.0f;
+    s->lastTickMs = nowMs;
+    if (!s->hasSmooth) {
+        s->smoothRain = s->rain; s->smoothSnow = s->snow; s->smoothCloud = s->cloud; s->smoothFog = s->fog;
+        s->hasSmooth = true;
+    } else if (dt > 0.0f) {
+        auto approach = [](float curV, float tgt, float upRate, float downRate, float d) {
+            const float rate = tgt > curV ? upRate : downRate;
+            return curV + (tgt - curV) * std::min(1.0f, rate * d);
+        };
+        s->smoothRain  = approach(s->smoothRain,  s->rain,  0.065f, 0.024f, dt);   // ~15s wet-up, ~42s dry-down
+        s->smoothSnow  = approach(s->smoothSnow,  s->snow,  0.035f, 0.028f, dt);   // ~28s snowfall, ~35s melt
+        s->smoothCloud = approach(s->smoothCloud, s->cloud, 0.14f,  0.14f,  dt);   // smooth ~7s cloud morph
+        s->smoothFog   = approach(s->smoothFog,   s->fog,   0.18f,  0.18f,  dt);
+    }
     // Engine-native wind velocity (game units/sec for volumetric cloud advection) and storm lightning frequency.
     const float ws = (c.windSpeed * p + l.windSpeed * (1.0f - p)) / 255.0f;
     const float ang = (c.windDir / 255.0f) * 6.2831853f;
@@ -146,7 +173,7 @@ void WeatherOnPresent() {
     State s = g_state;
     s.ok = ReadSky(&s);
     if (s.ok) Blend(&s);
-    if (s.ok && g_set) { g_set(s.rain, s.snow, s.cloud, s.fog); ++s.calls; }
+    if (s.ok && g_set) { g_set(s.smoothRain, s.smoothSnow, s.smoothCloud, s.smoothFog); ++s.calls; }
     if (s.ok && g_setExt) { g_setExt(s.windX, s.windY, s.lightning, s.gameHour); }
     g_state = s;
 }

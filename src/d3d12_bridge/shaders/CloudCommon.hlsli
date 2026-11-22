@@ -52,24 +52,22 @@ float cloudDensity(float3 pa, bool detail) {
     const float hGrad = saturate(baseGrad * topGrad + anvilSpread);
     // Macro C2-continuous domain-warped cumulus base shape (higher overhead frequency so looking straight up stays crisp).
     const float3 q = float3(sheared.x / 18000.0f, sheared.y / 17000.0f, h * 1.35f);
-    const float3 qWarp = float3(cNoise(q * 1.15f + 7.1f), cNoise(q * 1.15f + 19.3f), cNoise(q * 1.15f + 31.7f)) * 0.38f;
-    const float baseFbm = cNoise(q + qWarp) * 0.48f + cNoise(q * 2.13f + 11.3f) * 0.30f + cNoise(q * 4.37f + 5.7f) * 0.22f;
+    const float qW = cNoise(q * 1.15f + 7.1f) * 0.36f;
+    const float baseFbm = cNoise(q + qW) * 0.48f + cNoise(q * 2.13f + 11.3f) * 0.30f + cNoise(q * 4.37f + 5.7f) * 0.22f;
     const float macroBillow = cBillow(q * 1.85f + 2.7f);
     const float shape = lerp(baseFbm, baseFbm * 0.52f + macroBillow * 0.54f, 0.58f);
     const float thresh = lerp(0.52f, 0.20f, cover);
     float dens = saturate((shape * hGrad - thresh) / max(1.0f - thresh, 0.24f));
     if (detail && dens > 0.0f) {
-        // High-frequency 6-octave C2-continuous curl-warped wispy detail erosion (crisp even when staring straight up).
+        // High-frequency C2-continuous curl-warped wispy detail erosion (crisp even when staring straight up).
         const float3 r1 = float3((sheared.x + wind.x * 0.35f) / 2200.0f, (sheared.y + wind.y * 0.35f) / 2100.0f, h * 6.5f);
-        const float curlX = (cNoise(r1 * 0.75f + float3(1.7f, 5.3f, 2.1f)) - 0.5f) * 0.65f;
-        const float curlY = (cNoise(r1 * 0.75f + float3(8.3f, 2.9f, 6.7f)) - 0.5f) * 0.65f;
-        const float3 rW = r1 + float3(curlX, curlY, 0.0f);
+        const float curl = (cNoise(r1 * 0.75f + float3(1.7f, 5.3f, 2.1f)) - 0.5f) * 0.62f;
+        const float3 rW = r1 + float3(curl, -curl * 0.85f, 0.0f);
         const float b1 = 1.0f - cBillow(rW);
         const float f2 = cNoise(rW * 2.17f + 3.7f);
         const float f3 = cNoise(rW * 4.61f + 9.2f);
         const float f4 = cNoise(rW * 9.37f + 17.5f);
-        const float f5 = cNoise(rW * 18.7f + 29.1f);
-        const float fineErode = b1 * 0.34f + f2 * 0.24f + f3 * 0.18f + f4 * 0.14f + f5 * 0.10f;
+        const float fineErode = b1 * 0.38f + f2 * 0.26f + f3 * 0.20f + f4 * 0.16f;
         const float erodeAmt = lerp(0.42f, 0.68f, h) * (1.0f - dens * 0.50f);
         dens = cRemap(dens, fineErode * erodeAmt, 1.0f, 0.0f, 1.0f);
     }

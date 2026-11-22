@@ -42,7 +42,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 o = camPosW.xyz;
     const float maxDist = 400000.0f;
     if (cloudsOn() && cloudSpan(o, dir, maxDist, t0, t1)) {
-        const uint steps = 64u;
+        const uint steps = 48u;
         const float dt = (t1 - t0) / float(steps);
         const float j = rand(lo, proj.z);
         const float cosT = dot(dir, sunDir.xyz);
@@ -68,11 +68,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Fine-to-deep exponential sun-march offsets capture crisp photographic cumulus tufts and soft undersides.
         static const float kSunD[6] = { 140.0f, 340.0f, 760.0f, 1500.0f, 2800.0f, 4800.0f };
         static const float kSunW[6] = { 140.0f, 200.0f, 420.0f,  740.0f, 1300.0f, 2000.0f };
-        [loop] for (uint i = 0u; i < steps && T > 0.01f; i++) {
-            const float t = t0 + (float(i) + j) * dt;
+        // Adaptive empty-space skipping raymarch: 2x stride in clear sky, fine 1x stride with full detail inside clouds.
+        float t = t0 + j * dt;
+        [loop] for (uint i = 0u; i < steps && t < t1 && T > 0.01f; i++) {
             const float3 pa = o + dir * t;
+            const float coarse = cloudDensity(pa, false);
+            if (coarse <= 0.001f) { t += dt * 2.0f; continue; }
             const float dens = cloudDensity(pa, true);
-            if (dens <= 0.0f) { continue; }
+            if (dens <= 0.001f) { t += dt; continue; }
+            t += dt;
             float od = 0.0f;
             [unroll] for (uint k = 0u; k < 6u; k++) { od += cloudDensity(pa + sunDir.xyz * kSunD[k], false) * kSunW[k]; }
             // Wrenninge 2013 (Oz: The Great and Powerful / Frostbite / UE5) 4-Octave Multiple-Scattering Energy Integral:

@@ -125,12 +125,13 @@ void OcclusionCuller::OnPresent(ID3D11DeviceContext* ctx)
         stagingDesc.Usage      = D3D11_USAGE_STAGING;
         stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < kRingSlots; i++) {
             hr = m_device->CreateTexture2D(&stagingDesc, nullptr, &m_depthStaging[i]);
             if (FAILED(hr)) {
                 depthTex->Release();
                 return;
             }
+            m_stageHasCam[i] = false;
         }
 
         m_depthW = depthDesc.Width;
@@ -138,12 +139,11 @@ void OcclusionCuller::OnPresent(ID3D11DeviceContext* ctx)
         m_stagingFmt = depthDesc.Format;
         m_hizReady = false;
         m_hizHasCam = false;
-        m_stageHasCam[0] = m_stageHasCam[1] = false;
     }
 
     // ── Copy depth to staging[writeIdx] and record its exact camera matrix ──
-    int writeIdx = m_readbackIdx;
-    int readIdx  = 1 - m_readbackIdx;
+    const int writeIdx = m_readbackIdx;
+    const int readIdx  = (m_readbackIdx + 1) % kRingSlots;  // 2 frames old: 100% GPU-retired under DX12
 
     ctx->CopyResource(m_depthStaging[writeIdx], depthTex);
     depthTex->Release();
@@ -156,8 +156,8 @@ void OcclusionCuller::OnPresent(ID3D11DeviceContext* ctx)
         }
     }
 
-    // ── Read back staging[readIdx] from previous frame ──────────────────
-    if (m_depthStaging[readIdx] && m_hizReady && m_stageHasCam[readIdx])
+    // ── Read back staging[readIdx] (2 frames old, zero CPU/GPU stall) ───
+    if (m_depthStaging[readIdx] && m_stageHasCam[readIdx])
     {
         D3D11_MAPPED_SUBRESOURCE mapped;
         hr = ctx->Map(m_depthStaging[readIdx], 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
@@ -168,16 +168,11 @@ void OcclusionCuller::OnPresent(ID3D11DeviceContext* ctx)
             std::memcpy(m_hizW2C, m_stageW2C[readIdx], sizeof(m_hizW2C));
             std::memcpy(m_hizCam, m_stageCam[readIdx], sizeof(m_hizCam));
             m_hizHasCam = true;
+            m_hizReady = true;
             ctx->Unmap(m_depthStaging[readIdx], 0);
         }
     }
-    else if (!m_hizReady)
-    {
-        m_hizReady = true;
-    }
-
-    // Swap double buffer
-    m_readbackIdx = readIdx;
+    m_readbackIdx = (m_readbackIdx + 1) % kRingSlots;
 }
 
 
@@ -424,7 +419,7 @@ bool OcclusionCuller::ShouldCull(uint32_t indexCount)
     }
 
     // ── Stage 3: Standard-Z Temporal-Reprojected CPU Hi-Z Occlusion Culling ──
-    if (!m_hizReady || !m_hizHasCam || m_hizMips == 0) return false;
+    if (indexCount > 1200 || !m_hizReady || !m_hizHasCam || m_hizMips == 0) return false;
 
     // Re-center object position from current camera-relative space into the Hi-Z frame's camera space.
     const float px = curX + (sl.posAdjust[0] - m_hizCam[0]);

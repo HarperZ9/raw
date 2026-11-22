@@ -92,16 +92,17 @@ private:
     ID3D11Device*        m_device  = nullptr;
     ID3D11DeviceContext* m_context = nullptr;
 
-    // ── Depth readback (double-buffered) ──────────────────────────────
-    ID3D11Texture2D* m_depthStaging[2] = {};
+    // ── Depth readback (triple-buffered for zero-stall DX12 frames-in-flight) ──
+    static constexpr int kRingSlots = 3;
+    ID3D11Texture2D* m_depthStaging[kRingSlots] = {};
     DXGI_FORMAT      m_stagingFmt = DXGI_FORMAT_UNKNOWN;
-    float            m_stageW2C[2][4][4] = {};
-    float            m_stageCam[2][3] = {};
-    bool             m_stageHasCam[2] = {};
+    float            m_stageW2C[kRingSlots][4][4] = {};
+    float            m_stageCam[kRingSlots][3] = {};
+    bool             m_stageHasCam[kRingSlots] = {};
     float            m_hizW2C[4][4] = {};
     float            m_hizCam[3] = {};
     bool             m_hizHasCam = false;
-    int              m_readbackIdx = 0;  // Ping-pong: write to [readbackIdx], read from [1-readbackIdx]
+    int              m_readbackIdx = 0;  // 3-slot ring: write [idx], read [(idx + 1) % 3] (2 frames old, GPU-retired)
     uint32_t         m_depthW = 0;
     uint32_t         m_depthH = 0;
 

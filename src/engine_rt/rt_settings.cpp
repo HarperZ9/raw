@@ -216,13 +216,6 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"bPreCullActors:General", "0"},
         {"bUsePrecipitationOcclusion:Display", "1"},
         {"bEnableParallaxOcclusion:Display", "1"},
-        // Full RAW DX12 SM6.9 rendering ownership: disable competing 2011/2016 vanilla post-effects safely at runtime
-        // (keep bSAOEnable / bVolumetricLightingEnable / bUse64bitsHDRRenderTarget untouched mid-session so Skyrim's
-        // already-allocated render target graph & BridgeHook pass detector stay 100% locked).
-        {"bDoDepthOfField:Imagespace", "0"},
-        {"bEnableImprovedSnow:Display", "0"},
-        {"bLensFlare:Display", "0"},
-        {"bIBLFEnable:Display", "0"},
         {"fGrassStartFadeDistance:Grass", "9500.0"},
         {"fLightLODStartFade:Display", "5500.0"},
         {"fBlockLevel0Distance:TerrainManager", "45000.0"},

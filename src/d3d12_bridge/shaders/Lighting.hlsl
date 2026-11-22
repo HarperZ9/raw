@@ -607,7 +607,20 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 sh *= screenShadow(p + lift, l, min(dist, tune.z), 4.0f / max(dist, 1.0f), jit, 10u);
                 --softLeft;
             }
-            addLight(s, l, c * sh, c, diff, spec);
+            // GTA-VI-inspired Representative-Point Sphere Area-Light Specular (Karis 2013):
+            // Replaces pinpoint local-light specular dots with broad, physical area-light highlights on tables, stone & armor.
+            Surface sArea = s;
+            if (!match && (flags.x & FLAG_GGX) != 0u) {
+                const float rSrc = (lightColS[li].r > lightColS[li].b * 1.30f) ? 14.0f : 8.0f;
+                const float aPrime = clamp(s.alpha + rSrc / max(2.0f * dist, 12.0f), s.alpha, 0.96f);
+                const float normE = (s.alpha / max(aPrime, 0.02f));
+                sArea.alpha = aPrime;
+                float3 specTmp = 0.0f.xxx;
+                addLight(sArea, l, c * sh, c, diff, specTmp);
+                spec += specTmp * (normE * normE);
+            } else {
+                addLight(s, l, c * sh, c, diff, spec);
+            }
         }
     }
     if (!match && fireMelt > 0.01f) {

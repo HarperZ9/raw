@@ -24,7 +24,7 @@ namespace fs = std::filesystem;
 // The game's tone map pixel shader (ps_99d22a3d198a3b69 in the frame captures: the full-screen draw from
 // the HDR scene into the 8-bit target, after the luminance chain and before the temporal resolve).
 constexpr uint64_t kTonemapHash = 0x99d22a3d198a3b69ull;
-constexpr UINT kCbBytes = 112;   // 28 floats (Tonemap.hlsl, cbuffer Raw: RA, RB, RC, RX, RO, RP, RQ)
+constexpr UINT kCbBytes = 128;   // 32 floats (Tonemap.hlsl, cbuffer Raw: RA, RB, RC, RX, RO, RP, RQ, RG)
 
 using CompileFn = HRESULT(WINAPI*)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
 
@@ -273,11 +273,12 @@ void Tonemap_BeforeDraw(ID3D11DeviceContext* real)
     const float rawStep = std::sqrt(sl.cameraStep[0] * sl.cameraStep[0] + sl.cameraStep[1] * sl.cameraStep[1]);
     const float clampedStep = rawStep > 45.0f ? 0.0f : std::min(rawStep, 18.0f);   // ignore teleports/fast-travel
     s_emaSpeed = s_emaSpeed * 0.86f + clampedStep * 0.14f;
-    const float v[28] = {float(t.mode), t.bias, t.minLum, t.maxLum, float(t.curve), t.key, t.white, float(t.view),
+    const float v[32] = {float(t.mode), t.bias, t.minLum, t.maxLum, float(t.curve), t.key, t.white, float(t.view),
                          t.adapt, t.ref, t.x[0], t.x[1], t.x[2], t.x[3], t.x[4], inside,
                          lutStr, float(t.overlayMask), float(s.draws & 63u), s_emaSpeed,
                          t.bloomScale, t.sharpenStr, t.grainStr, t.vignetteStr,
-                         t.caStr, t.radialBlurStr, t.headbobStr, t.lensStr};
+                         t.caStr, t.radialBlurStr, t.headbobStr, t.lensStr,
+                         t.colorTempK, t.oklabSat, t.shadowLift, t.highlightKnee};
     std::memcpy(mp.pData, v, sizeof v);
     real->Unmap(s.cb, 0);
     real->PSGetConstantBuffers(5, 1, &s.saved);

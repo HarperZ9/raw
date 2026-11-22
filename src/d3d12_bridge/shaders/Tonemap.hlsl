@@ -6,10 +6,11 @@
 // Compiled as ps_5_0 by d3dcompiler_47. Original work, MIT.
 cbuffer PerFrame : register(b12) { float4 F[45]; };
 cbuffer Image : register(b2) { float4 P[5]; };
-cbuffer Raw : register(b5) { float4 RA; float4 RB; float4 RC; float4 RX; float4 RO; float4 RP; float4 RQ; };
+cbuffer Raw : register(b5) { float4 RA; float4 RB; float4 RC; float4 RX; float4 RO; float4 RP; float4 RQ; float4 RG; };
 // RA: mode, bias, min lum, max lum; RB: curve, key, white, view; RC: adapt, ref, ToneX0, ToneX1; RX: ToneX2..5;
 // RO: x=lutStrength, y=overlayMask, z=64-frame cycle, w=moveSpeed;
-// RP: x=bloomScale, y=sharpenStr, z=grainStr, w=vignetteStr; RQ: x=caStr, y=radialBlurStr, z=headbobStr, w=lensStr.
+// RP: x=bloomScale, y=sharpenStr, z=grainStr, w=vignetteStr; RQ: x=caStr, y=radialBlurStr, z=headbobStr, w=lensStr;
+// RG: x=colorTempK (6500 neutral), y=oklabSat (1.0), z=shadowLift (0.0), w=highlightKnee (0.68).
 Texture2D<float4> Bloom : register(t0);
 Texture2D<float4> Scene : register(t1);
 Texture2D<float4> Lum   : register(t2);
@@ -235,12 +236,13 @@ float4 main(In i) : SV_Target {
             hdr.b = lerp(hdr.b, Scene.Sample(S1, uvB).b, 0.72f);
         }
     }
-    // Smooth photographic HDR highlight compression (knee at 0.68): preserves crisp snowdrifts, glaciers, whitewater,
-    // and coastal horizon detail instead of clipping to flat white under bright Nordic sun.
+    // Smooth photographic HDR highlight compression (user-tunable knee RG.w, default 0.68): preserves crisp snowdrifts,
+    // glaciers, whitewater, and coastal horizon detail instead of clipping to flat white under bright Nordic sun.
+    const float hKnee = clamp(RG.w > 0.1f ? RG.w : 0.68f, 0.35f, 1.40f);
     const float hdrLum = max(dot(hdr, W), 1.0e-5f);
-    if (hdrLum > 0.68f) {
-        const float ex = hdrLum - 0.68f;
-        const float compLum = 0.68f + ex / (1.0f + ex * 0.92f);
+    if (hdrLum > hKnee) {
+        const float ex = hdrLum - hKnee;
+        const float compLum = hKnee + ex / (1.0f + ex * 0.92f);
         hdr *= compLum / hdrLum;
     }
     const float3 bloom = P[0].x > 0.5f ? Bloom.Sample(S0, suv).rgb : Bloom.Sample(S0, i.uv).rgb;
@@ -417,6 +419,18 @@ float4 main(In i) : SV_Target {
         lab.x *= (1.0f - saturate(chroma * 0.42f) * 0.20f);   // Beer-Lambert dye density: saturated hues hold richer depth
         lab.yz *= vibBoost;                                   // skin-protected perceptual vibrance with zero channel clipping
         c.rgb = saturate(oklabToLin(lab));
+    }
+    // User DaVinci-class Oklab/Planckian Live Grading (White Balance Kelvin RG.x, Perceptual Sat RG.y, Shadow Lift RG.z):
+    if (abs(RG.x - 6500.0f) > 25.0f && RG.x > 1000.0f) {
+        const float kShift = clamp((6500.0f - RG.x) / 3000.0f, -1.0f, 1.0f);
+        const float3 wb = float3(1.0f + kShift * 0.14f, 1.0f + kShift * 0.02f, 1.0f - kShift * 0.16f);
+        c.rgb = saturate(c.rgb * wb);
+    }
+    if (abs(RG.y - 1.0f) > 0.005f || abs(RG.z) > 0.002f) {
+        float3 labU = linToOklab(saturate(c.rgb));
+        labU.yz *= clamp(RG.y, 0.0f, 2.0f);
+        labU.x = saturate(labU.x + clamp(RG.z, -0.15f, 0.15f) * (1.0f - labU.x));
+        c.rgb = saturate(oklabToLin(labU));
     }
     // Layer 5 (bit 4): Bleach Bypass (silver retention overlay without shadow crush).
     if ((ovMask & 16u) != 0u) {

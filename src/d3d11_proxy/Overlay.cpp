@@ -104,6 +104,7 @@ void SavePresetFile(const std::string& path, const char* tag)
     wI("ToneView", tm.view); wI("LutIndex", tm.lutIndex); wF("LutStrength", tm.lutStrength); wI("OverlayMask", static_cast<int>(tm.overlayMask));
     wF("BloomScale", tm.bloomScale); wF("SharpenStr", tm.sharpenStr); wF("GrainStr", tm.grainStr); wF("VignetteStr", tm.vignetteStr);
     wF("CaStr", tm.caStr); wF("RadialBlurStr", tm.radialBlurStr); wF("HeadbobStr", tm.headbobStr); wF("LensStr", tm.lensStr);
+    wF("ColorTempK", tm.colorTempK); wF("OklabSat", tm.oklabSat); wF("ShadowLift", tm.shadowLift); wF("HighlightKnee", tm.highlightKnee);
     wI("Dof", l.dof ? 1 : 0); wF("DofMaxDist", l.dofMaxDist); wF("DofRadius", l.dofRadius); wF("DofOrbBoost", l.dofOrbBoost);
     wI("WeatherLens", l.weatherLens ? 1 : 0);
     wI("DlssMode", raw::bridge::StreamlineHost::Get().GetMode());
@@ -140,6 +141,8 @@ void LoadPresetSlot(int slot)
     tm.grainStr = rF("GrainStr", tm.grainStr); tm.vignetteStr = rF("VignetteStr", tm.vignetteStr);
     tm.caStr = rF("CaStr", tm.caStr); tm.radialBlurStr = rF("RadialBlurStr", tm.radialBlurStr);
     tm.headbobStr = rF("HeadbobStr", tm.headbobStr); tm.lensStr = rF("LensStr", tm.lensStr);
+    tm.colorTempK = rF("ColorTempK", tm.colorTempK); tm.oklabSat = rF("OklabSat", tm.oklabSat);
+    tm.shadowLift = rF("ShadowLift", tm.shadowLift); tm.highlightKnee = rF("HighlightKnee", tm.highlightKnee);
     l.dof = rI("Dof", l.dof ? 1 : 0) != 0; l.dofMaxDist = rF("DofMaxDist", l.dofMaxDist);
     l.dofRadius = rF("DofRadius", l.dofRadius); l.dofOrbBoost = rF("DofOrbBoost", l.dofOrbBoost);
     l.weatherLens = rI("WeatherLens", l.weatherLens ? 1 : 0) != 0;
@@ -176,7 +179,7 @@ bool KeyEdge(bool now, bool& prev) { const bool f = now && !prev; prev = now; re
 
 int TabRowCount(int tab)
 {
-    static const int kCounts[8] = {12, 13, 7, 8, 12, 11, 20, 13};
+    static const int kCounts[8] = {12, 13, 7, 8, 12, 11, 20, 17};
     return kCounts[std::clamp(tab, 0, 7)];
 }
 
@@ -316,6 +319,10 @@ std::string BuildMenuText()
         row(10, "Radial SpeedBlur Str", Fmt("%.2fx", tm.radialBlurStr));
         row(11, "Run Headbob Strength", Fmt("%.2fx", tm.headbobStr));
         row(12, "Lens & Halation Str", Fmt("%.2fx", tm.lensStr));
+        row(13, "White Balance (K)", Fmt("%.0f K", tm.colorTempK));
+        row(14, "Oklab Saturation", Fmt("%.2fx", tm.oklabSat));
+        row(15, "Oklab Shadow Lift", Fmt("%+.3f", tm.shadowLift));
+        row(16, "HDR Highlight Knee", Fmt("%.2f", tm.highlightKnee));
     }
     out += "Web Studio, Presets & Live HLSL Editor: http://127.0.0.1:8844";
     return out;
@@ -486,6 +493,10 @@ bool PollMenu(std::string& outText)
             case 10: tm.radialBlurStr = std::clamp(tm.radialBlurStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
             case 11: tm.headbobStr = std::clamp(tm.headbobStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
             case 12: tm.lensStr = std::clamp(tm.lensStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
+            case 13: tm.colorTempK = std::clamp(tm.colorTempK + step * 150.0f, 3500.0f, 9500.0f); tmDirty = true; break;
+            case 14: tm.oklabSat = std::clamp(tm.oklabSat + step * 0.05f, 0.0f, 2.0f); tmDirty = true; break;
+            case 15: tm.shadowLift = std::clamp(tm.shadowLift + step * 0.01f, -0.15f, 0.15f); tmDirty = true; break;
+            case 16: tm.highlightKnee = std::clamp(tm.highlightKnee + step * 0.04f, 0.35f, 1.40f); tmDirty = true; break;
             }
         }
         if (tmDirty) Tonemap_Set(tm);

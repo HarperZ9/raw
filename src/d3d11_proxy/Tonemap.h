@@ -22,8 +22,7 @@ struct TonemapSettings
     float bias = 0.0f;       // stops
     float minLum = 0.02f, maxLum = 8.0f;   // the metered average is held in this range
     float key = 0.41f;       // the reference average maps to this exposure x reference
-    int curve = 3;           // 0 the game's, 1 fitted ACES, 2 extended Reinhard per channel, 3 the game's curve on luminance
-                             // with a raised white point and a two-part contrast (Tonemap.hlsl)
+    int curve = 4;           // 0 Game, 1 ACES, 2 ReinhardW, 3 RAW Hybrid, 4 AgX Wide-Gamut (default), 5 GranTurismo, 6 Lottes, 7 Hable
     float white = 1.0f;      // the curve's input scale
     int view = 0;
     float adapt = 0.15f;     // the share of a change of average above the reference the exposure follows
@@ -49,6 +48,11 @@ struct TonemapSettings
     float radialBlurStr = 1.0f;
     float headbobStr = 1.0f;
     float lensStr = 1.0f;
+    // DaVinci-class Oklab/Planckian live color grading (Tab 8 & INI):
+    float colorTempK = 6500.0f;  // White balance Kelvin (3500K warm .. 6500K D65 neutral .. 9500K cool)
+    float oklabSat = 1.0f;       // Perceptual Oklab saturation (0.0 .. 2.0, zero hue twist)
+    float shadowLift = 0.0f;     // Shadow toe lift (-0.15 .. +0.15)
+    float highlightKnee = 0.68f; // Pre-tonemap HDR highlight compression knee (0.40 .. 1.20)
 };
 
 void Tonemap_Set(const TonemapSettings& t);

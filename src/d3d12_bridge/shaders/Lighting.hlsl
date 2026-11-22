@@ -458,61 +458,79 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         s.alpha = clamp(s.alpha + (macroN - 0.5f) * 0.14f * tileFade, 0.08f, 0.96f);
     }
     // True Robust Screen-Space Complex Parallax Occlusion Mapping (Tatarchuk GDC 2006):
-    // 12-step linear heightfield raymarch + 3-step binary search refinement along the view ray (depth-continuity guarded
-    // so object silhouettes never bleed), displacing sampled albedo & normal on cobblestones, stone walls, bricks & timber,
-    // followed by 8-step directional relief self-shadowing and crevice-cavity roughness.
+    // 16-step view-ray heightfield raymarch + 4-step binary search refinement along the INTO-surface view tangent
+    // (-vTan), guarded by linear view-Z plane prediction (works at steep grazing angles on close walls & roads where
+    // raw non-linear |Depth - d| < 0.0006 previously aborted on step 0!), displacing Albedo & Normal up to 22px,
+    // plus strong heightfield micro-normal reconstruction, crevice AO, and 10-step directional relief self-shadowing.
     if (!match && !isActorFeat && !isActorCloth && base != 5u && z < 2600.0f) {
-        const float distFade = saturate(1.0f - z / 2600.0f) * (base == 2u ? 0.22f : 1.0f);
+        const float distFade = saturate(1.0f - z / 2600.0f) * (base == 2u ? 0.25f : 1.0f);
         const int2 dimMax = max(int2(dims.xy) - int2(1, 1), int2(0, 0));
         const float3 lw = float3(0.2126f, 0.7152f, 0.0722f);
         const float3 upRef = abs(s.n.z) < 0.92f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
         const float3 tVec = normalize(cross(upRef, s.n));
         const float3 bVec = cross(s.n, tVec);
+        // Linear view-Z plane slope for silhouette-safe grazing-angle plane prediction.
+        const int2 pInt = int2(px);
+        const float zR = viewZOf(Depth.Load(int3(min(pInt.x + 1, dimMax.x), pInt.y, 0))) - z;
+        const float zL = z - viewZOf(Depth.Load(int3(max(pInt.x - 1, 0), pInt.y, 0)));
+        const float zD = viewZOf(Depth.Load(int3(pInt.x, min(pInt.y + 1, dimMax.y), 0))) - z;
+        const float zU = z - viewZOf(Depth.Load(int3(pInt.x, max(pInt.y - 1, 0), 0)));
+        const float2 zSlope = float2(abs(zR) < abs(zL) ? zR : zL, abs(zD) < abs(zU) ? zD : zU);
+        const float zPlaneTol = max(z * 0.055f, 4.5f);
+
         float2 pomPx = px;
+        float hFinal = saturate((dot(albedo, lw) - 0.04f) * 2.75f);
         if ((base == 1u || base == 4u || base == 6u) && z < 1800.0f) {
-            const float pomFade = saturate(1.0f - z / 1800.0f) * (base == 6u ? 1.0f : (base == 4u ? 0.90f : 0.78f));
-            const float nvPom = max(abs(dot(s.n, s.v)), 0.32f);
-            // Project view tangent into screen pixels via finite world-step projection.
-            const float3 vTan = s.v - s.n * dot(s.v, s.n);
-            const float4 sEnd = screenOf(p + vTan * (3.2f * pomFade / nvPom));
+            const float pomFade = saturate(1.0f - z / 1800.0f) * (base == 6u ? 1.0f : (base == 4u ? 0.95f : 0.88f));
+            const float nvPom = max(abs(dot(s.n, s.v)), 0.25f);
+            // March INTO the surface (-vTan): true parallax shift away from the eye along the tangent plane.
+            const float3 vInto = -s.v + s.n * dot(s.v, s.n);
+            const float4 sEnd = screenOf(p + vInto * (11.5f * pomFade / nvPom));
             float2 vRayPx = (sEnd.w > 1.0f) ? (sEnd.xy - px) : float2(0.0f, 0.0f);
             const float rayLen = length(vRayPx);
-            if (rayLen > 6.0f) { vRayPx *= (6.0f / rayLen); }
-            if (rayLen > 0.35f) {
+            if (rayLen > 22.0f) { vRayPx *= (22.0f / rayLen); }
+            if (rayLen > 0.5f) {
                 float curLayer = 1.0f;
-                const float dLayer = 1.0f / 12.0f;
+                const float dLayer = 1.0f / 16.0f;
                 float2 curOff = 0.0f.xx;
                 const float2 dOff = vRayPx * dLayer;
-                float hPrev = saturate(dot(albedo, lw) * 1.35f);
                 bool hitPom = false;
-                [unroll] for (int st = 0; st < 12; st++) {
+                [unroll] for (int st = 0; st < 16; st++) {
                     curOff += dOff;
                     curLayer -= dLayer;
                     const int3 spP = int3(clamp(int2(round(px + curOff)), int2(0, 0), dimMax), 0);
-                    if (abs(Depth.Load(spP) - d) > 0.0006f) { break; }
-                    const float hCur = saturate(dot(Albedo.Load(spP).rgb, lw) * 1.35f);
+                    const float zq = viewZOf(Depth.Load(spP));
+                    const float zPred = z + zSlope.x * curOff.x + zSlope.y * curOff.y;
+                    if (abs(zq - zPred) > zPlaneTol) { break; }
+                    const float hCur = saturate((dot(Albedo.Load(spP).rgb, lw) - 0.04f) * 2.75f);
                     if (hCur >= curLayer) { hitPom = true; break; }
-                    hPrev = hCur;
                 }
                 if (hitPom) {
-                    // 3-step binary search refinement for sub-pixel crisp parallax depth intersection.
+                    // 4-step binary search refinement for crisp sub-pixel parallax intersection.
                     float2 loOff = curOff - dOff, hiOff = curOff;
                     float loL = curLayer + dLayer, hiL = curLayer;
-                    [unroll] for (int bi = 0; bi < 3; bi++) {
+                    [unroll] for (int bi = 0; bi < 4; bi++) {
                         const float2 midOff = 0.5f * (loOff + hiOff);
                         const float midL = 0.5f * (loL + hiL);
                         const int3 spM = int3(clamp(int2(round(px + midOff)), int2(0, 0), dimMax), 0);
-                        const float hM = abs(Depth.Load(spM) - d) < 0.0006f ? saturate(dot(Albedo.Load(spM).rgb, lw) * 1.35f) : midL;
+                        const float zM = viewZOf(Depth.Load(spM));
+                        const float zPredM = z + zSlope.x * midOff.x + zSlope.y * midOff.y;
+                        const float hM = abs(zM - zPredM) < zPlaneTol ? saturate((dot(Albedo.Load(spM).rgb, lw) - 0.04f) * 2.75f) : midL;
                         if (hM >= midL) { hiOff = midOff; hiL = midL; } else { loOff = midOff; loL = midL; }
                     }
                     const int3 spFinal = int3(clamp(int2(round(px + hiOff)), int2(0, 0), dimMax), 0);
-                    if (abs(Depth.Load(spFinal) - d) < 0.0006f) {
+                    const float zF = viewZOf(Depth.Load(spFinal));
+                    const float zPredF = z + zSlope.x * hiOff.x + zSlope.y * hiOff.y;
+                    if (abs(zF - zPredF) < zPlaneTol) {
                         pomPx = px + hiOff;
                         const float3 dispAlb = Albedo.Load(spFinal).rgb;
                         const float aLumD = max(dot(dispAlb, lw), 1.0e-4f);
                         const float3 dispExp = saturate(dispAlb * (saturate(pow(aLumD, 1.12f) * 1.14f) / aLumD));
-                        albedo = lerp(albedo, dispExp, pomFade * 0.72f);
-                        s.n = normalize(lerp(s.n, worldNormal(Normal.Load(spFinal)), pomFade * 0.55f));
+                        albedo = lerp(albedo, dispExp, pomFade * 0.96f);
+                        s.n = normalize(lerp(s.n, worldNormal(Normal.Load(spFinal)), pomFade * 0.85f));
+                        hFinal = saturate((aLumD - 0.04f) * 2.75f);
+                        // Physical mortar/crevice ambient occlusion from displaced heightfield.
+                        albedo *= lerp(0.62f, 1.06f, lerp(1.0f, hFinal, pomFade * 0.75f));
                     }
                 }
             }
@@ -523,30 +541,36 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const int3 ipU = int3(clamp(pBase + int2( 0,-1), int2(0, 0), dimMax), 0);
         const int3 ipD = int3(clamp(pBase + int2( 0, 1), int2(0, 0), dimMax), 0);
         const float hc = dot(albedo, lw);
-        const float hL = abs(Depth.Load(ipL) - d) < 0.0008f ? dot(Albedo.Load(ipL).rgb, lw) : hc;
-        const float hR = abs(Depth.Load(ipR) - d) < 0.0008f ? dot(Albedo.Load(ipR).rgb, lw) : hc;
-        const float hU = abs(Depth.Load(ipU) - d) < 0.0008f ? dot(Albedo.Load(ipU).rgb, lw) : hc;
-        const float hD = abs(Depth.Load(ipD) - d) < 0.0008f ? dot(Albedo.Load(ipD).rgb, lw) : hc;
-        const float gx = clamp((hR - hL) * 2.4f, -0.50f, 0.50f) * distFade;
-        const float gy = clamp((hD - hU) * 2.4f, -0.50f, 0.50f) * distFade;
-        s.n = normalize(s.n + (-gx * tVec - gy * bVec) * 0.46f);
+        const float zBase = viewZOf(Depth.Load(int3(pBase, 0)));
+        const float hL = abs(viewZOf(Depth.Load(ipL)) - (zBase - zSlope.x)) < zPlaneTol ? dot(Albedo.Load(ipL).rgb, lw) : hc;
+        const float hR = abs(viewZOf(Depth.Load(ipR)) - (zBase + zSlope.x)) < zPlaneTol ? dot(Albedo.Load(ipR).rgb, lw) : hc;
+        const float hU = abs(viewZOf(Depth.Load(ipU)) - (zBase - zSlope.y)) < zPlaneTol ? dot(Albedo.Load(ipU).rgb, lw) : hc;
+        const float hD = abs(viewZOf(Depth.Load(ipD)) - (zBase + zSlope.y)) < zPlaneTol ? dot(Albedo.Load(ipD).rgb, lw) : hc;
+        const float gx = clamp((hR - hL) * 3.8f, -0.75f, 0.75f) * distFade;
+        const float gy = clamp((hD - hU) * 3.8f, -0.75f, 0.75f) * distFade;
+        s.n = normalize(s.n + (-gx * tVec - gy * bVec) * 0.58f);
         const float microSlope = saturate(length(float2(gx, gy)) * 1.4f);
-        s.alpha = clamp(s.alpha + (microSlope - 0.15f) * 0.12f * distFade, 0.05f, 0.95f);
-        // 8-step directional POM relief self-shadowing + crevice-cavity roughness along the sun vector.
+        s.alpha = clamp(s.alpha + (microSlope - 0.15f) * 0.14f * distFade, 0.05f, 0.95f);
+        // 10-step directional POM relief self-shadowing + crevice-cavity roughness along the sun vector.
         if ((base == 1u || base == 4u || base == 6u) && z < 2000.0f && sunDir.w > 0.5f) {
-            const float pomFade = saturate(1.0f - z / 2000.0f) * (base == 4u ? 0.88f : 0.94f);
-            const float2 sunScreen = float2(dot(sunDir.xyz, tVec), dot(sunDir.xyz, bVec));
-            const float2 stepPx = normalize(sunScreen + float2(1.0e-4f, 0.0f)) * 1.30f;
-            float maxH = hc;
-            [unroll] for (int pi = 1; pi <= 8; pi++) {
-                const int3 spm = int3(clamp(int2(pomPx + stepPx * float(pi)), int2(0, 0), dimMax), 0);
-                if (abs(Depth.Load(spm) - d) < 0.0008f) {
-                    maxH = max(maxH, dot(Albedo.Load(spm).rgb, lw) - 0.013f * float(pi));
+            const float pomFade = saturate(1.0f - z / 2000.0f) * (base == 4u ? 0.92f : 0.96f);
+            const float4 sSun = screenOf(p + (sunDir.xyz - s.n * dot(sunDir.xyz, s.n)) * 6.0f);
+            const float2 sunDirPx = (sSun.w > 1.0f && length(sSun.xy - px) > 0.05f) ? normalize(sSun.xy - px) : float2(0.707f, -0.707f);
+            const float2 stepPx = sunDirPx * 1.40f;
+            float maxH = hFinal;
+            [unroll] for (int pi = 1; pi <= 10; pi++) {
+                const float2 sOff = stepPx * float(pi);
+                const int3 spm = int3(clamp(int2(round(pomPx + sOff)), int2(0, 0), dimMax), 0);
+                const float zS = viewZOf(Depth.Load(spm));
+                const float zPredS = zBase + zSlope.x * sOff.x + zSlope.y * sOff.y;
+                if (abs(zS - zPredS) < zPlaneTol) {
+                    const float hs = saturate((dot(Albedo.Load(spm).rgb, lw) - 0.04f) * 2.75f);
+                    maxH = max(maxH, hs - 0.055f * float(pi));
                 }
             }
-            const float pomOcc = saturate(1.0f - max(maxH - hc, 0.0f) * 3.8f * pomFade);
-            albedo *= lerp(0.58f, 1.0f, pomOcc);
-            s.alpha = clamp(lerp(min(s.alpha + 0.20f, 0.96f), max(s.alpha - 0.10f, 0.10f), pomOcc), 0.08f, 0.96f);
+            const float pomOcc = saturate(1.0f - max(maxH - hFinal, 0.0f) * 2.6f * pomFade);
+            albedo *= lerp(0.46f, 1.0f, pomOcc);
+            s.alpha = clamp(lerp(min(s.alpha + 0.24f, 0.96f), max(s.alpha - 0.14f, 0.10f), pomOcc), 0.08f, 0.96f);
         }
     }
     // Tokuyoshi-Kaplanyan geometric specular anti-aliasing: filters sub-pixel normal variance to kill GGX sparkle in motion.
@@ -571,7 +595,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             [unroll] for (int sx = -1; sx <= 1; sx++) {
                 if (sx == 0 && sy == 0) continue;
                 const int3 spS = int3(clamp(ip.xy + int2(sx, sy), int2(0, 0), dMaxS), 0);
-                if (abs(Depth.Load(spS) - d) < 0.0008f) {
+                if (abs(viewZOf(Depth.Load(spS)) - z) < max(z * 0.04f, 3.0f)) {
                     const float4 nRv = RtVis.Load(spS);
                     const uint3 nIdx = uint3(RtIdx.Load(spS).xyz * 255.0f + 0.5f);
                     pvSum.x += nRv.x; pvW.x += 1.0f;
@@ -888,7 +912,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 [unroll] for (int rx = -1; rx <= 1; rx++) {
                     const int3 rp = int3(clamp(baseRefl + int2(rx, ry), int2(0, 0), int2(dims.xy) - 1), 0);
                     const float rdDepth = Depth.Load(rp);
-                    if (abs(rdDepth - d) < 0.0012f) {
+                    if (abs(viewZOf(rdDepth) - z) < max(z * 0.04f, 3.0f)) {
                         const float kw = (rx == 0 && ry == 0) ? 2.0f : 1.0f;
                         const float4 tap = RtRefl.Load(rp);
                         rfSum += float4(min(tap.rgb, 3.0f.xxx), tap.a) * kw;

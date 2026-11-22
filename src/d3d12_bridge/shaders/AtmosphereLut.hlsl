@@ -178,19 +178,18 @@ float4 skyview(float4 at : SV_Position) : SV_Target0 {
         L += T * (scat * (1.0f - stepT) / max(sT, 1.0e-5f.xxx));
         T *= stepT;
     }
-    // Calibrated Hillaire SIGGRAPH 2020 solar irradiance (22.0 linear HDR) so clear Nordic zenith sky stays
-    // luminous cerulean blue (~0.20, 0.42, 0.82) — bright enough that clouds float in front of it without dark-hole inversion.
+    // Disciplined Hillaire SIGGRAPH 2020 linear exposure calibrated to Skyrim's auto-exposure range (0% sky blowout):
+    // rich deep cerulean zenith (~0.07, 0.19, 0.44), crisp alpine mid-sky, and un-clipped Rayleigh-Mie horizon.
     const float sunVisDay = smoothstep(-0.06f, 0.14f, sunD.z);
-    const float3 solarIrr = float3(0.98f, 1.00f, 1.04f) * (22.0f * sunVisDay);
+    const float3 solarIrr = float3(0.96f, 0.99f, 1.04f) * (7.2f * sunVisDay);
     const float twilightW = smoothstep(-0.08f, 0.02f, sunD.z) * (1.0f - smoothstep(0.05f, 0.22f, sunD.z));
     const float antiSolar = saturate(dot(rd, -sunD));
     const float beltBand = exp(-pow((rd.z - 0.14f) / 0.12f, 2.0f)) * pow(antiSolar, 2.0f);
     const float earthShadow = (1.0f - smoothstep(0.0f, 0.10f, rd.z)) * pow(antiSolar, 1.5f);
     float3 outSky = L * solarIrr;
-    // Physical zenith cerulean lift so high-altitude clear sky never looks dark navy or bruised behind bright cumulus.
-    outSky += float3(0.06f, 0.16f, 0.36f) * (sunVisDay * smoothstep(0.05f, 0.65f, rd.z));
-    outSky += float3(0.45f, 0.22f, 0.36f) * (beltBand * twilightW * 0.55f);
+    outSky += float3(0.028f, 0.085f, 0.22f) * (sunVisDay * smoothstep(0.05f, 0.65f, rd.z));
+    outSky += float3(0.32f, 0.16f, 0.26f) * (beltBand * twilightW * 0.48f);
     outSky = lerp(outSky, outSky * float3(0.45f, 0.55f, 0.85f), earthShadow * twilightW * 0.55f);
-    outSky = outSky / (1.0f + outSky * 0.24f);
+    outSky = outSky / (1.0f + outSky * 0.48f);
     return float4(outSky, 1.0f);
 }

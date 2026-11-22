@@ -452,12 +452,13 @@ if(RAW_ENGINE_DIR)
     set(RAW_REFL_FILT_HLSL ${RAW_SHARE_HLSL}/RtReflFilter.hlsl)
     set(RAW_DOF_HLSL ${RAW_SHARE_HLSL}/DofPass.hlsl)
     set(RAW_GI_ATROUS_HLSL ${RAW_SHARE_HLSL}/GiAtrousPass.hlsl)
+    set(RAW_CLOUD_NOISE_HLSL ${RAW_SHARE_HLSL}/CloudNoiseLut.hlsl)
     set(RAW_LIGHT_HEADERS ${RAW_ENGINE_GEN}/light_vs.h ${RAW_ENGINE_GEN}/light_fs.h ${RAW_ENGINE_GEN}/light_fog_fs.h
         ${RAW_ENGINE_GEN}/clouds_fs.h ${RAW_ENGINE_GEN}/volumetric_fs.h
         ${RAW_ENGINE_GEN}/bloom_pre_fs.h ${RAW_ENGINE_GEN}/bloom_down_fs.h ${RAW_ENGINE_GEN}/bloom_up_fs.h ${RAW_ENGINE_GEN}/bloom_comp_fs.h
         ${RAW_ENGINE_GEN}/atmo_trans_fs.h ${RAW_ENGINE_GEN}/atmo_ms_fs.h ${RAW_ENGINE_GEN}/atmo_sky_fs.h ${RAW_ENGINE_GEN}/rt_refl_filter_fs.h
         ${RAW_ENGINE_GEN}/dof_coc_fs.h ${RAW_ENGINE_GEN}/dof_gather_fs.h ${RAW_ENGINE_GEN}/dof_comp_fs.h
-        ${RAW_ENGINE_GEN}/gi_at1_fs.h ${RAW_ENGINE_GEN}/gi_at2_fs.h ${RAW_ENGINE_GEN}/gi_at4_fs.h)
+        ${RAW_ENGINE_GEN}/gi_at1_fs.h ${RAW_ENGINE_GEN}/gi_at2_fs.h ${RAW_ENGINE_GEN}/gi_at4_fs.h ${RAW_ENGINE_GEN}/cloud_noise_fs.h)
     add_custom_command(
         OUTPUT ${RAW_LIGHT_HEADERS}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
@@ -480,7 +481,8 @@ if(RAW_ENGINE_DIR)
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E step1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/gi_at1_fs.h -Vn kDxil_gi_at1_fs ${RAW_GI_ATROUS_HLSL}
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E step2 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/gi_at2_fs.h -Vn kDxil_gi_at2_fs ${RAW_GI_ATROUS_HLSL}
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E step4 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/gi_at4_fs.h -Vn kDxil_gi_at4_fs ${RAW_GI_ATROUS_HLSL}
-        DEPENDS ${RAW_LIGHT_HLSL} ${RAW_LIGHTFOG_HLSL} ${RAW_CLOUDS_HLSL} ${RAW_VOLUMETRIC_HLSL} ${RAW_BLOOM_HLSL} ${RAW_ATMO_HLSL} ${RAW_REFL_FILT_HLSL} ${RAW_DOF_HLSL} ${RAW_GI_ATROUS_HLSL} ${RAW_SHARE_HLSL}/LightingCommon.hlsli ${RAW_SHARE_HLSL}/Weather.hlsli
+        COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E bake ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/cloud_noise_fs.h -Vn kDxil_cloud_noise_fs ${RAW_CLOUD_NOISE_HLSL}
+        DEPENDS ${RAW_LIGHT_HLSL} ${RAW_LIGHTFOG_HLSL} ${RAW_CLOUDS_HLSL} ${RAW_VOLUMETRIC_HLSL} ${RAW_BLOOM_HLSL} ${RAW_ATMO_HLSL} ${RAW_REFL_FILT_HLSL} ${RAW_DOF_HLSL} ${RAW_GI_ATROUS_HLSL} ${RAW_CLOUD_NOISE_HLSL} ${RAW_SHARE_HLSL}/LightingCommon.hlsli ${RAW_SHARE_HLSL}/Weather.hlsli
                 ${RAW_SHARE_HLSL}/CloudCommon.hlsli ${RAW_SHARE_HLSL}/DistantLod.hlsli ${RAW_SHARE_HLSL}/ElderOptics.hlsli
         COMMENT "dxc: SM${RAW_SHADER_MODEL} lighting, cloud, volumetric, bloom, atmosphere, refl denoiser, 3-pass DoF & 3-pass A-Trous GI -> DXIL headers"
         VERBATIM)

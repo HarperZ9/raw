@@ -68,10 +68,10 @@ float3 distantLit(int3 ip, float2 at, float d) {
                    : saturate((dot(n, sunDir.xyz) + 0.25f) / 1.25f);
     float3 amb = float3(dot(ambient[0].xyz, n) + ambient[0].w, dot(ambient[1].xyz, n) + ambient[1].w, dot(ambient[2].xyz, n) + ambient[2].w);
     const float skyVis = rt && (flags.x & FLAG_SKY) != 0u && sunColour.w > 0.5f ? RtIdx.Load(ip).w : 1.0f;
-    // Physical sun-to-ambient HDR ratio matched to Lighting.hlsl so near terrain and distant mountains share one unified HDR scale.
+    // Physical sun-to-ambient HDR ratio matched to Lighting.hlsl so near terrain and distant mountains share one disciplined HDR scale.
     const float cloudC = saturate(clouds.x);
-    const float sunBoostL = lerp(1.85f, 1.18f, saturate(cloudC * 1.15f));
-    const float ambScaleL = lerp(0.76f, 0.92f, cloudC);
+    const float sunBoostL = lerp(1.22f, 1.02f, saturate(cloudC * 1.15f));
+    const float ambScaleL = lerp(0.84f, 0.94f, cloudC);
     // Dynamic near-field grass lighting & distant tree-LOD crown self-shadowing (grounds bright snow pines against alpine ridges).
     const float grassAo = nearGrass && (flags.x & FLAG_AO) != 0u ? lerp(1.0f, AoHist.Load(ip).x, 0.80f) : 1.0f;
     const float occ = min(lerp(1.0f, pow(saturate(skyVis), 1.38f), max(cluster.w, 0.80f)), grassAo);

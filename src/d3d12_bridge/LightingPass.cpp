@@ -31,6 +31,7 @@
 #include "gi_at1_fs.h"
 #include "gi_at2_fs.h"
 #include "gi_at4_fs.h"
+#include "cloud_noise_fs.h"
 
 #include <cmath>
 #include <cstring>
@@ -60,7 +61,7 @@ static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536, kDistantLod = 131072, kEnvMap = 262144, kCharLight = 524288, kUnderwater = 1048576;
 constexpr RasterBinding U = RasterBinding::Uniform, T = RasterBinding::Texture, Sm = RasterBinding::Sampler;
 constexpr RasterBinding kLightLayout[16] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T, T, Sm};
-constexpr RasterBinding kCloudLayout[4] = {U, T, T, Sm};
+constexpr RasterBinding kCloudLayout[5] = {U, T, T, T, Sm};
 constexpr RasterBinding kVolLayout[7] = {U, T, T, T, T, T, Sm};
 constexpr RasterBinding kFogLayout[8] = {U, T, T, T, T, T, T, Sm};
 constexpr RasterBinding kBloom1Layout[2] = {T, Sm};
@@ -127,11 +128,12 @@ public:
             if (k < 5) m_bloomUp[k] = m_dev->createTexture({bw, bh, TextureFormat::RGBA16Float, RT, "bloom up"}, m_err);
             if (!m_bloomDown[k].valid() || (k < 5 && !m_bloomUp[k].valid())) return Fail("bloom pyramid textures");
         }
-        // Hillaire SIGGRAPH 2020 Physical Atmosphere LUTs: 256x64 Transmittance + 32x32 Multi-Scattering + 192x108 Sky-View.
+        // Hillaire SIGGRAPH 2020 Physical Atmosphere LUTs + 64^3 (512x512 8x8 atlas) Periodic 3D Perlin-Worley Cloud Volume LUT.
         m_atmoTrans = m_dev->createTexture({256, 64, TextureFormat::RGBA16Float, RT, "atmo transmittance"}, m_err);
         m_atmoMs = m_dev->createTexture({32, 32, TextureFormat::RGBA16Float, RT, "atmo multiscat"}, m_err);
         m_atmoSkyView = m_dev->createTexture({192, 108, TextureFormat::RGBA16Float, RT, "atmo skyview"}, m_err);
-        if (!m_atmoTrans.valid() || !m_atmoMs.valid() || !m_atmoSkyView.valid()) return Fail("atmosphere LUT textures");
+        m_cloudNoise = m_dev->createTexture({512, 512, TextureFormat::RGBA16Float, RT, "cloud 64^3 perlin-worley"}, m_err);
+        if (!m_atmoTrans.valid() || !m_atmoMs.valid() || !m_atmoSkyView.valid() || !m_cloudNoise.valid()) return Fail("atmosphere/cloud LUT textures");
         for (int k = 0; k < 2; ++k) m_reflHist[k] = m_dev->createTexture({host.width, host.height, TextureFormat::RGBA16Float, RT, "rt refl history"}, m_err);
         if (!m_reflHist[0].valid() || !m_reflHist[1].valid()) return Fail("rt refl history textures");
         m_dofCoc = m_dev->createTexture({vw, vh, TextureFormat::RGBA16Float, RT, "dof coc"}, m_err);
@@ -172,7 +174,9 @@ public:
         m_atmoMsPipe = m_dev->createRasterPipeline(d, m_err);
         d.label = "atmo skyview"; d.fragment = dxil(kDxil_atmo_sky_fs, sizeof kDxil_atmo_sky_fs); d.layout = kAtmoSkyLayout;
         m_atmoSkyPipe = m_dev->createRasterPipeline(d, m_err);
-        if (!m_atmoTransPipe.valid() || !m_atmoMsPipe.valid() || !m_atmoSkyPipe.valid()) return Fail("atmosphere LUT pipelines");
+        d.label = "cloud noise 64^3"; d.fragment = dxil(kDxil_cloud_noise_fs, sizeof kDxil_cloud_noise_fs); d.layout = kAtmoTransLayout;
+        m_cloudNoisePipe = m_dev->createRasterPipeline(d, m_err);
+        if (!m_atmoTransPipe.valid() || !m_atmoMsPipe.valid() || !m_atmoSkyPipe.valid() || !m_cloudNoisePipe.valid()) return Fail("atmosphere/cloud LUT pipelines");
         d.label = "rt refl filter"; d.fragment = dxil(kDxil_rt_refl_filter_fs, sizeof kDxil_rt_refl_filter_fs); d.layout = kReflFilterLayout;
         m_reflFilterPipe = m_dev->createRasterPipeline(d, m_err);
         if (!m_reflFilterPipe.valid()) return Fail("rt refl filter pipeline");
@@ -230,6 +234,7 @@ public:
             Draw(*c, m_atmoTrans, m_atmoTransPipe, tb);
             const RasterBind mb[3] = {{m_uniform, {}, {}}, {{}, m_atmoTrans, {}}, {{}, {}, m_lin}};
             Draw(*c, m_atmoMs, m_atmoMsPipe, mb);
+            Draw(*c, m_cloudNoise, m_cloudNoisePipe, tb);
             m_atmoTransBuilt = true;
         }
         if (ok && (m_u.flags[0] & kMatch) == 0u) {
@@ -240,7 +245,7 @@ public:
         const bool clouds = ok && (m_u.flags[0] & kClouds);
         const TextureHandle cloudNow = m_cloud[m_frame & 1], cloudLast = m_cloud[(m_frame + 1) & 1];
         if (clouds) {
-            const RasterBind cb[4] = {{m_uniform, {}, {}}, {{}, cloudLast, {}}, {{}, m_atmoTrans, {}}, {{}, {}, m_lin}};
+            const RasterBind cb[5] = {{m_uniform, {}, {}}, {{}, cloudLast, {}}, {{}, m_atmoTrans, {}}, {{}, m_cloudNoise, {}}, {{}, {}, m_lin}};
             Draw(*c, cloudNow, m_cloudPipe, cb);
         }
         const TextureHandle reflNow = m_reflHist[m_frame & 1], reflLast = m_reflHist[(m_frame + 1) & 1];
@@ -494,8 +499,8 @@ private:
     BufferHandle m_uniform;
     RasterPipelineHandle m_lightPipe, m_fogPipe, m_cloudPipe, m_volPipe;
     RasterPipelineHandle m_bloomPrePipe, m_bloomDownPipe, m_bloomUpPipe, m_bloomCompPipe;
-    RasterPipelineHandle m_atmoTransPipe, m_atmoMsPipe, m_atmoSkyPipe, m_reflFilterPipe, m_dofCocPipe, m_dofGatherPipe, m_dofCompPipe, m_giAt1Pipe, m_giAt2Pipe, m_giAt4Pipe;
-    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoMs, m_atmoSkyView, m_reflHist[2], m_dofCoc, m_dofBokeh, m_giAtrous[2];
+    RasterPipelineHandle m_atmoTransPipe, m_atmoMsPipe, m_atmoSkyPipe, m_cloudNoisePipe, m_reflFilterPipe, m_dofCocPipe, m_dofGatherPipe, m_dofCompPipe, m_giAt1Pipe, m_giAt2Pipe, m_giAt4Pipe;
+    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoMs, m_atmoSkyView, m_cloudNoise, m_reflHist[2], m_dofCoc, m_dofBokeh, m_giAtrous[2];
     bool m_atmoTransBuilt = false;
     SamplerHandle m_lin;
     float m_prevWorldToClip[16] = {};

@@ -44,20 +44,25 @@ float cloudDensityVol(float3 pa, bool detail) {
     const float topGrad  = 1.0f - smoothstep(topCap * 0.56f, topCap, h);
     const float hGrad = saturate(baseGrad * topGrad);
 
-    // 1st lookup: 4-octave periodic 3D Perlin-Worley macro cumulus domes (zero seams, razor-sharp lobes).
-    const float3 q = float3(sheared.x / 34000.0f, sheared.y / 32000.0f, h * 0.65f);
+    // 1st lookup: 4-octave periodic 3D Perlin-Worley macro cumulus domes (zero seams, crisp sculpted banks).
+    const float3 q = float3(sheared.x / 26000.0f, sheared.y / 25000.0f, h * 0.75f);
     const float4 low = sampleCloudVol(q);
     const float lowFbm = low.g * 0.625f + low.b * 0.25f + low.a * 0.125f;
-    const float baseShape = cRemap(low.r, -(1.0f - lowFbm) * 0.45f, 1.0f, 0.0f, 1.0f) * hGrad;
-    const float thresh = lerp(0.60f, lerp(0.42f, 0.24f, stormType), cover);
+    const float baseShape = cRemap(low.r, -(1.0f - lowFbm) * 0.48f, 1.0f, 0.0f, 1.0f) * hGrad;
+    const float thresh = lerp(0.62f, lerp(0.46f, 0.28f, stormType), cover);
     float dens = cRemap(baseShape, thresh, 1.0f, 0.0f, 1.0f);
     if (detail && dens > 0.001f) {
-        // 2nd lookup: 3-octave high-frequency periodic 3D Worley cauliflower turret & wispy edge erosion.
-        const float3 r = float3((sheared.x + wind.x * 0.30f) / 6800.0f, (sheared.y + wind.y * 0.30f) / 6400.0f, h * 2.2f);
-        const float4 hi = sampleCloudVol(r);
-        const float hiFbm = hi.g * 0.625f + hi.b * 0.25f + hi.a * 0.125f;
-        const float hiMod = lerp(hiFbm, 1.0f - hiFbm, saturate(h * 1.9f));
-        const float erode = hiMod * lerp(0.28f, 0.48f, h) * (1.0f - dens * 0.45f);
+        // 2nd + 3rd lookups: dual-scale high-frequency 3D Worley cauliflower turret & razor-sharp overhead wisp erosion
+        // (1,800u micro-tile resolves fine cloud tufts even when staring straight up at zenith).
+        const float3 r1 = float3((sheared.x + wind.x * 0.30f) / 5600.0f, (sheared.y + wind.y * 0.30f) / 5400.0f, h * 2.4f);
+        const float3 r2 = float3((sheared.x + wind.x * 0.55f) / 1800.0f, (sheared.y + wind.y * 0.55f) / 1750.0f, h * 5.2f);
+        const float4 hi1 = sampleCloudVol(r1);
+        const float4 hi2 = sampleCloudVol(r2);
+        const float hiFbm1 = hi1.g * 0.50f + hi1.b * 0.32f + hi1.a * 0.18f;
+        const float hiFbm2 = hi2.g * 0.40f + hi2.b * 0.35f + hi2.a * 0.25f;
+        const float hiComb = hiFbm1 * 0.62f + hiFbm2 * 0.38f;
+        const float hiMod = lerp(hiComb, 1.0f - hiComb, saturate(h * 1.85f));
+        const float erode = hiMod * lerp(0.36f, 0.58f, h) * (1.0f - dens * 0.40f);
         dens = cRemap(dens, erode, 1.0f, 0.0f, 1.0f);
     }
     return dens * cloudWind.z;
@@ -160,12 +165,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     stormFlash = float3(0.65f, 0.82f, 1.25f) * (pulse * cellHit * dens * 1.8f);
                 }
             }
-            const float sunCalm = lerp(1.0f, 0.80f, pow(saturate(cosT), 12.0f));
-            // Disciplined photographic cloud exposure: crisp snow-white sunlit cauliflower turrets (~0.68-0.96 linear)
-            // and sculpted cool blue-slate undersides (~0.24-0.44 linear) — zero yellow blowout or highlight clipping.
-            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.98f, 0.99f, 1.02f), 0.55f * (1.0f - lowSun));
-            const float3 lum = min(whiteSun * (multiScat * lerp(1.0f, powder, 0.62f) * sunCalm * 4.0f * PI * 0.14f) + baseTint * 0.52f + stormFlash, 1.05f.xxx);
-            const float ext = dens * sigma;
+            const float sunCalm = lerp(1.0f, 0.84f, pow(saturate(cosT), 12.0f));
+            // Crisp snow-white sunlit cauliflower tops (~0.82-1.10 linear) + clean cool blue-silver undersides (~0.38-0.55)
+            // so clouds read as clean volumetric form against the sky instead of muddy grey-brown fog.
+            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.98f, 0.99f, 1.03f), 0.68f * (1.0f - lowSun));
+            const float3 coolBase = lerp(float3(0.56f, 0.66f, 0.82f), float3(0.72f, 0.77f, 0.86f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.28f) * cloudAo;
+            const float3 lum = min(whiteSun * (multiScat * lerp(1.0f, powder, 0.68f) * sunCalm * 4.0f * PI * 0.19f) + coolBase * 0.92f + stormFlash, 1.12f.xxx);
+            const float ext = dens * (sigma * 1.45f);
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;

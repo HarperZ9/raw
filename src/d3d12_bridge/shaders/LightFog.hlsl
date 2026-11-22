@@ -137,7 +137,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float alpineNoise = cNoise(midPt * 0.00014f + windShift) * 0.65f + cNoise(midPt * 0.00042f - windShift * 1.6f + 7.1f) * 0.35f;
         const float peakCollar = exp(-pow((midPt.z - 5200.0f) / 3600.0f, 2.0f)) * smoothstep(8000.0f, 28000.0f, dist);
         const float alpineMist = (0.76f + 0.48f * alpineNoise) * (1.0f + peakCollar * (0.45f + 0.55f * alpineNoise));
-        const float od = baseSigma * min(dist, 240000.0f) * elevW * alpineMist * exp(-hStart * 0.15f);
+        const float od = baseSigma * min(max(dist - 1400.0f, 0.0f), 240000.0f) * elevW * alpineMist * exp(-hStart * 0.15f);
         // Wavelength-dependent Rayleigh + Mie transmittance + smooth far-horizon aerial melt (eliminates the sharp Sea of Ghosts LOD seam).
         const float horizonMelt = smoothstep(85000.0f, 170000.0f, dist);
         const float3 T = exp(-od * float3(0.84f, 0.96f, 1.12f)) * (1.0f - horizonMelt);

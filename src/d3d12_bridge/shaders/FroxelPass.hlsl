@@ -134,8 +134,12 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                 moteBoost += mCore * (1.0f - zMid / 1800.0f) * (weather.z > 0.15f ? 3.2f : 1.8f);
             }
         }
-        inScat += physSun * (sh * ph * tune2.z * lerp(0.55f, 0.95f, nightW) * moteBoost);
-        inScat += hSky * (0.014f * (0.4f + 0.6f * cs) * (1.0f - nightW * 0.65f));
+        float3 uSunFr, uSkyZFr, uSkyHFr, uAmbUpFr, uAmbDnFr;
+        evalWorldAtmosphere(uSunFr, uSkyZFr, uSkyHFr, uAmbUpFr, uAmbDnFr);
+        const float3 syncSunFr = lerp(physSun, uSunFr, 0.65f);
+        const float3 syncSkyFr = lerp(hSky, lerp(uSkyHFr, uSkyZFr, saturate(max(farDir.z, 0.0f) * 2.0f)), 0.58f);
+        inScat += syncSunFr * (sh * ph * tune2.z * lerp(0.55f, 0.95f, nightW) * moteBoost);
+        inScat += syncSkyFr * (0.014f * (0.4f + 0.6f * cs) * (1.0f - nightW * 0.65f));
         // Pillar 7(b): RDR2-grade Cold-Weather Rhythmic Exhaled Breath Plume in 3D Froxel Space (snow/alpine/freezing nights):
         const float coldAmt = saturate(weather.z * 1.4f + smoothstep(2200.0f, 4500.0f, camPosW.z) * 0.75f + nightW * 0.35f);
         if (coldAmt > 0.25f && zMid > 24.0f && zMid < 105.0f) {

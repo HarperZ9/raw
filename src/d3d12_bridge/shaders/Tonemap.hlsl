@@ -471,10 +471,71 @@ float4 main(In i) : SV_Target {
             // 6: Tarkovsky Polaroid / Bleached Umber (low-chroma warm paper highs, muted cool-olive shadows — Cluster I/G).
             const float3 muted = lerp(lumG.xxx, c.rgb, 0.74f);
             c.rgb = saturate(muted * lerp(float3(0.92f, 0.96f, 0.94f), float3(1.08f, 1.02f, 0.90f), smoothstep(0.18f, 0.82f, lumG)));
-        } else {
+        } else if (RX.x < 7.5f) {
             // 7: LomoChrome Purple False-Color Film (shifts foliage greens toward dreamy plum-violet — Cluster M).
             const float grnL = saturate((c.g - max(c.r, c.b)) * 3.0f);
             c.rgb = saturate(lerp(c.rgb, float3(c.g * 0.95f + c.r * 0.35f, c.b * 0.55f + c.g * 0.25f, c.g * 1.10f + c.b * 0.30f), grnL * 0.78f));
+        } else if (RX.x < 8.5f) {
+            // 8: Oil & Impasto Paint Shader (4-quadrant Kuwahara brush filter + subtle linen canvas weave — Commons Cluster H / Tyllinen).
+            float sw, sh; Scene.GetDimensions(sw, sh);
+            const float2 spx = 1.0f / max(float2(sw, sh), float2(1.0f, 1.0f));
+            float3 bestM = c.rgb; float bestV = 1.0e9f;
+            static const int2 kQ[4] = { int2(-1, -1), int2(1, -1), int2(-1, 1), int2(1, 1) };
+            [unroll] for (int qi = 0; qi < 4; ++qi) {
+                float3 m = 0.0f.xxx, m2 = 0.0f.xxx;
+                [unroll] for (int dy = 0; dy <= 2; ++dy) {
+                    [unroll] for (int dx = 0; dx <= 2; ++dx) {
+                        const float3 s0 = saturate(Scene.Sample(S1, suv + float2(float(dx * kQ[qi].x), float(dy * kQ[qi].y)) * spx * 1.6f).rgb * exposure * RB.z);
+                        const float3 sT = tonemapAgX(s0);
+                        m += sT; m2 += sT * sT;
+                    }
+                }
+                m /= 9.0f;
+                const float v = dot(max(m2 / 9.0f - m * m, 0.0f.xxx), W);
+                if (v < bestV) { bestV = v; bestM = m; }
+            }
+            const float canvas = 0.97f + 0.03f * sin(i.pos.x * 1.57f) * sin(i.pos.y * 1.57f);
+            c.rgb = saturate(bestM * canvas);
+        } else if (RX.x < 9.5f) {
+            // 9: Engraved Ink & Cross-Hatch Plate Shader (Sobel ink lines + 3-tier diagonal pen hatching on warm paper — Commons Cluster G / Escher).
+            float sw, sh; Scene.GetDimensions(sw, sh);
+            const float2 spx = 1.0f / max(float2(sw, sh), float2(1.0f, 1.0f));
+            const float lL = dot(tonemapAgX(Scene.Sample(S1, suv - float2(spx.x, 0.0f)).rgb * exposure * RB.z), W);
+            const float lR = dot(tonemapAgX(Scene.Sample(S1, suv + float2(spx.x, 0.0f)).rgb * exposure * RB.z), W);
+            const float lU = dot(tonemapAgX(Scene.Sample(S1, suv - float2(0.0f, spx.y)).rgb * exposure * RB.z), W);
+            const float lD = dot(tonemapAgX(Scene.Sample(S1, suv + float2(0.0f, spx.y)).rgb * exposure * RB.z), W);
+            const float edge = smoothstep(0.06f, 0.22f, length(float2(lR - lL, lD - lU)));
+            const float h1 = step(0.18f, frac((i.pos.x + i.pos.y) * 0.16f));
+            const float h2 = step(0.22f, frac((i.pos.x - i.pos.y) * 0.16f));
+            const float h3 = step(0.26f, frac(i.pos.y * 0.22f));
+            float ink = 1.0f;
+            if (lumG < 0.62f) { ink = min(ink, lerp(0.55f, 1.0f, h1)); }
+            if (lumG < 0.38f) { ink = min(ink, lerp(0.32f, 1.0f, h2)); }
+            if (lumG < 0.18f) { ink = min(ink, lerp(0.12f, 1.0f, h3)); }
+            ink *= (1.0f - edge * 0.88f);
+            const float3 paper = lerp(float3(0.09f, 0.08f, 0.07f), float3(0.93f, 0.89f, 0.80f), ink);
+            c.rgb = saturate(lerp(paper, c.rgb * ink, 0.28f));
+        } else if (RX.x < 10.5f) {
+            // 10: 16-Bit Pixel-Art & 4x4 Bayer Ordered Dither Shader (Commons Cluster V).
+            float sw, sh; Scene.GetDimensions(sw, sh);
+            const float2 cellPx = floor(i.pos.xy / 3.0f) * 3.0f + 1.5f;
+            const float2 qUv = min(max((cellPx / max(float2(sw, sh), float2(1.0f, 1.0f))) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
+            const float3 qCol = tonemapAgX(Scene.Sample(S1, qUv).rgb * exposure * RB.z);
+            const uint2 bp = uint2(floor(i.pos.xy / 3.0f)) & 3u;
+            static const float kB4[16] = { 0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5 };
+            const float bayer = (kB4[bp.y * 4u + bp.x] / 16.0f - 0.5f) * 0.10f;
+            c.rgb = saturate(floor((qCol + bayer) * 10.0f + 0.5f) / 10.0f);
+        } else {
+            // 11: Romantic Watercolor & Wet-Edge Pigment Wash (Commons Cluster H / u-kouklimou).
+            float sw, sh; Scene.GetDimensions(sw, sh);
+            const float2 spx = 1.0f / max(float2(sw, sh), float2(1.0f, 1.0f));
+            const float3 wBlur = (tonemapAgX(Scene.Sample(S1, suv + float2(spx.x * 2.2f, spx.y * 1.4f)).rgb * exposure * RB.z)
+                                + tonemapAgX(Scene.Sample(S1, suv - float2(spx.x * 2.2f, spx.y * 1.4f)).rgb * exposure * RB.z)
+                                + tonemapAgX(Scene.Sample(S1, suv + float2(-spx.x * 1.4f, spx.y * 2.2f)).rgb * exposure * RB.z)
+                                + tonemapAgX(Scene.Sample(S1, suv - float2(-spx.x * 1.4f, spx.y * 2.2f)).rgb * exposure * RB.z)) * 0.25f;
+            const float wetEdge = saturate(length(c.rgb - wBlur) * 4.5f);
+            const float paperG = 0.94f + 0.06f * frac(sin(dot(floor(i.pos.xy * 0.5f), float2(12.9898f, 78.233f))) * 43758.5453f);
+            c.rgb = saturate(lerp(wBlur, c.rgb * 0.82f, wetEdge * 0.65f) * float3(1.02f, 1.00f, 0.96f) * paperG);
         }
     }
     // Layer 1 (bit 0): Film Emulsion & Beer-Lambert Subtractive Density + Skin-Protected Oklab Vibrance

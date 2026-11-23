@@ -170,6 +170,10 @@ pre{margin:0;background:#0a0d12;border:1px solid var(--line);border-radius:4px;p
             <option value="5">5 - Fuji Velvia 50 (Landscape)</option>
             <option value="6">6 - Tarkovsky Polaroid</option>
             <option value="7">7 - LomoChrome Purple</option>
+            <option value="8">8 - Oil &amp; Impasto Paint (Kuwahara)</option>
+            <option value="9">9 - Engraved Ink &amp; Cross-Hatch</option>
+            <option value="10">10 - 16-Bit Pixel-Art + Bayer Dither</option>
+            <option value="11">11 - Romantic Watercolor Wash</option>
           </select>
         </label>
         <label>Elder 64³ 3D PNG LUT (0=Off, 1..46)

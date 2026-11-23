@@ -168,10 +168,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
     }
     const float3 vol2D = vW > 1.0e-4f ? (vSum / vW) : VolFog.SampleLevel(Lin, uv, 0.0f).rgb;
-    // Live 3D World-Map Depth Isolation: keep aerial world-map camera crisp without near-plane froxel haze.
+    // Live 3D World-Map Depth Isolation + Foreground Contrast Protection:
+    // Keep foreground exterior geometry (<1,400u) crisp and un-washed (matching AAA dappled-forest shadow depth)
+    // while preserving full 3D Froxel mountain/valley mist beyond 1,400u and full local-light mist at night/interiors.
     const float mapScale = camPosW.z > 18000.0f ? 0.18f : 1.0f;
+    const float sunLumFg = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+    const float dayFg = (sunColour.w > 0.5f) ? saturate((sunLumFg - 0.18f) * 3.0f) : 0.0f;
+    const float fgClear = lerp(1.0f, smoothstep(320.0f, 1800.0f, dist), dayFg * (1.0f - saturate(weather.w * 0.65f + weather.z * 0.75f)));
     const float4 frox = sampleFroxel3D(uv, curZ);
-    const float3 scatter = (frox.rgb * 1.10f + vol2D * 0.25f) * mapScale;
+    const float3 scatter = (frox.rgb * 1.10f + vol2D * 0.25f) * (mapScale * fgClear);
     // Engine-native underwater medium (FLAG_UNDERWATER from raw_engine.dll camera_in_water): physical Beer-Lambert absorption.
     if ((flags.x & FLAG_UNDERWATER) != 0u) {
         const float3 uw = elderUnderwaterMedium(lit.rgb, dist, 0.0022f);

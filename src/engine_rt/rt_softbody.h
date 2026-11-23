@@ -1,12 +1,13 @@
 #pragma once
 // Native 240 Hz Sub-Stepped XPBD + Anisotropic Viscoelastic Soft-Body Physics Engine (RAW engine runtime).
 // Replaces legacy Euler CBPC and heavy CPU Bullet HDT-SMP bone physics with a zero-allocation,
-// framerate-independent C++23 solver for breasts, glutes, thighs, belly, hair, and cloak bone chains.
+// framerate-independent C++23 solver for breasts, glutes, thighs, belly, pelvic, hair, and cloak bone chains.
 // Original work, MIT.
 #include <cstdint>
 #include <string>
 
 namespace raw::rt {
+struct Image;
 
 enum class TissueKind : uint8_t {
     Breast    = 0,
@@ -32,6 +33,7 @@ struct SoftBoneState {
     float vel[3] = {};          // Current local velocity (game units/sec)
     float prevParent[3] = {};   // Previous parent world position (for acceleration forcing)
     float prevVel[3] = {};      // Previous parent world velocity
+    float restLocal[3] = {};    // Captured bind-pose NiAVObject::local.translate (+0x64)
     bool  initialized = false;
 };
 
@@ -56,6 +58,10 @@ SoftBoneOutput StepSoftBone(SoftBoneState& state,
 // Classifies a Skyrim skeleton bone name (XPMSSE / 3BA / UBE / vanilla) into a TissueKind; returns false if rigid.
 bool ClassifySoftBone(const char* boneName, TissueKind* outKind);
 
+// Live runtime actor / NiNode wiring (SEH-protected traversal of PlayerCharacter & ProcessLists).
+void SoftBodyInit(const Image& img);
+void SoftBodyOnPresent();
+void SoftBodyShutdown();
 std::string SoftBodyStatsJson();
 
 }  // namespace raw::rt

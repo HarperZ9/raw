@@ -86,18 +86,11 @@ namespace {
     std::unordered_set<ID3D11Resource*> s_promotedD32Textures;
 
     bool WantTxDepth32() {
-        static int s_val = -1;
-        if (s_val < 0) {
-            char path[MAX_PATH]{};
-            GetModuleFileNameA(nullptr, path, MAX_PATH);
-            std::string ini(path);
-            ini = ini.substr(0, ini.rfind('\\') + 1) + "d3d11_proxy.ini";
-            // Default OFF: Skyrim SE's internal CopyResource calls between main depth and secondary/water/SAO
-            // depth buffers require matching 4-byte R24G8_TYPELESS format families; promoting only >=1024x576
-            // buffers to 8-byte R32G8X24_TYPELESS silently fails those copies and causes slanted/horizontal depth sheets.
-            s_val = GetPrivateProfileIntA("Lighting", "TxDepth32", 0, ini.c_str());
-        }
-        return s_val != 0;
+        // Hard-disabled: Skyrim SE's internal CopyResource calls between main depth and secondary/water/SAO
+        // depth buffers require matching 4-byte R24G8_TYPELESS format families; promoting only >=1024x576
+        // buffers to 8-byte R32G8X24_TYPELESS silently fails those copies and causes horizontal water sheets,
+        // road/tundra water flooding, and 3D map/UI depth corruption (even if an older INI sets TxDepth32=1).
+        return false;
     }
 
     // Depth format → typeless format

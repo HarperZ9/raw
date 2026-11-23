@@ -1,17 +1,48 @@
 // Native 240 Hz Sub-Stepped XPBD + Anisotropic Viscoelastic Soft-Body Physics Engine (RAW engine runtime).
 // Original work, MIT.
 #include "rt_softbody.h"
+#include "rt_image.h"
+#include "rt_version.h"
+
+#include <windows.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <unordered_map>
 
 namespace raw::rt {
 namespace {
 
 uint64_t g_totalSubsteps = 0;
 uint64_t g_totalBonesStepped = 0;
+const uint8_t* g_base = nullptr;
+uint32_t g_kPlayer = 0;
+uint32_t g_kProcessLists = 0;
+uint64_t g_lastTickUs = 0;
+uint32_t g_lastActorsVisited = 0;
+uint32_t g_lastHighActors = 0;
+uint32_t g_lastBonesFound = 0;
+uint32_t g_frameCounter = 0;
+
+struct LiveBoneEntry {
+    SoftBoneState state;
+    uint32_t lastFrame = 0;
+};
+std::unordered_map<uintptr_t, LiveBoneEntry> g_liveBones;
+
+inline bool IsCanonicalPtr(const void* p) {
+    const uintptr_t v = reinterpret_cast<uintptr_t>(p);
+    return v >= 0x10000ull && v < 0x00007FFFFFFFFFFFull && (v & 0x7ull) == 0;
+}
+
+template <class T>
+T SafeAt(const uint8_t* p, uint32_t off) {
+    T v{};
+    std::memcpy(&v, p + off, sizeof v);
+    return v;
+}
 
 bool ContainsCI(const char* hay, const char* needle) {
     if (!hay || !needle || !*needle) return false;
@@ -175,9 +206,140 @@ SoftBoneOutput StepSoftBone(SoftBoneState& st,
     return out;
 }
 
+namespace {
+
+// SEH-safe recursive NiNode skeleton traversal: validates child->parent == node (+0x30)
+// before descending so leaf BSTriShape / non-NiNode objects are never misread.
+void TraverseSkeletonSEH(uint8_t* node, float dtSec, int depth, uint32_t& bonesOut) {
+    if (!IsCanonicalPtr(node) || depth > 14 || bonesOut >= 64u) return;
+    __try {
+        const char* name = SafeAt<const char*>(node, 0x10);
+        if (IsCanonicalPtr(name)) {
+            TissueKind kind{};
+            if (ClassifySoftBone(name, &kind)) {
+                const uint8_t* parent = SafeAt<const uint8_t*>(node, 0x30);
+                if (IsCanonicalPtr(parent)) {
+                    float parentWorld[3];
+                    std::memcpy(parentWorld, parent + 0xA0, 12);
+                    const bool finiteP = std::isfinite(parentWorld[0]) && std::isfinite(parentWorld[1]) && std::isfinite(parentWorld[2]);
+                    if (finiteP) {
+                        const uintptr_t key = reinterpret_cast<uintptr_t>(node);
+                        LiveBoneEntry& entry = g_liveBones[key];
+                        if (!entry.state.initialized) {
+                            std::memcpy(entry.state.restLocal, node + 0x64, 12);
+                        }
+                        const TissueProfile prof = DefaultTissueProfile(kind);
+                        const SoftBoneOutput out = StepSoftBone(entry.state, parentWorld, prof, dtSec);
+                        // Apply bounded viscoelastic displacement relative to captured bind-pose local.translate (+0x64):
+                        float newLocal[3] = {
+                            entry.state.restLocal[0] + out.localOffset[0],
+                            entry.state.restLocal[1] + out.localOffset[1],
+                            entry.state.restLocal[2] + out.localOffset[2],
+                        };
+                        std::memcpy(node + 0x64, newLocal, 12);
+                        entry.lastFrame = g_frameCounter;
+                        ++bonesOut;
+                    }
+                }
+            }
+        }
+        // NiNode::children (NiTPrimitiveArray<NiAVObject*> at +0x110: data +0x118, size uint16 +0x120 / +0x124):
+        uint8_t* const* data = SafeAt<uint8_t* const*>(node, 0x118);
+        const uint16_t cap = SafeAt<uint16_t>(node, 0x120);
+        const uint16_t sz  = SafeAt<uint16_t>(node, 0x124);
+        if (IsCanonicalPtr(data) && sz > 0 && sz <= cap && sz <= 96u) {
+            for (uint16_t i = 0; i < sz; ++i) {
+                uint8_t* child = data[i];
+                if (!IsCanonicalPtr(child)) continue;
+                // Structural proof: only descend if child->parent (+0x30) points back to this node!
+                if (SafeAt<const uint8_t*>(child, 0x30) != node) continue;
+                TraverseSkeletonSEH(child, dtSec, depth + 1, bonesOut);
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return;
+    }
+}
+
+void StepLiveActorsSEH(float dtSec) {
+    __try {
+        uint32_t actors = 0;
+        uint32_t bones = 0;
+        if (g_base && g_kProcessLists) {
+            const uint8_t* pl = SafeAt<const uint8_t*>(g_base, g_kProcessLists);
+            if (IsCanonicalPtr(pl)) {
+                // ProcessLists::highActorHandles BSTArray size at +0x38/+0x40 (bounded sanity check):
+                const uint32_t hiCount = SafeAt<uint32_t>(pl, 0x40);
+                if (hiCount <= 512u) g_lastHighActors = hiCount;
+            }
+        }
+        if (g_base && g_kPlayer) {
+            const uint8_t* pc = SafeAt<const uint8_t*>(g_base, g_kPlayer);
+            if (IsCanonicalPtr(pc)) {
+                // TESObjectREFR::loadedData (+0x70) -> LOADED_REF_DATA::data3D (+0x00)
+                const uint8_t* loaded = SafeAt<const uint8_t*>(pc, 0x70);
+                if (IsCanonicalPtr(loaded)) {
+                    uint8_t* root3d = SafeAt<uint8_t*>(loaded, 0x00);
+                    if (IsCanonicalPtr(root3d)) {
+                        ++actors;
+                        TraverseSkeletonSEH(root3d, dtSec, 0, bones);
+                    }
+                }
+            }
+        }
+        g_lastActorsVisited = actors;
+        g_lastBonesFound = bones;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return;
+    }
+}
+
+}  // namespace
+
+void SoftBodyInit(const Image& img) {
+    g_base = img.base;
+    g_kPlayer = Addr("PlayerCharacter::Singleton");
+    g_kProcessLists = Addr("ProcessLists::GetSingleton");
+    g_liveBones.clear();
+    g_lastTickUs = 0;
+    g_frameCounter = 0;
+}
+
+void SoftBodyOnPresent() {
+    if (!g_base || !g_kPlayer) return;
+    LARGE_INTEGER freq{}, now{};
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&now);
+    const uint64_t nowUs = freq.QuadPart > 0 ? uint64_t((now.QuadPart * 1000000ll) / freq.QuadPart) : 0;
+    float dtSec = 1.0f / 60.0f;
+    if (g_lastTickUs > 0 && nowUs > g_lastTickUs) {
+        dtSec = float(double(nowUs - g_lastTickUs) * 1e-6);
+    }
+    g_lastTickUs = nowUs;
+    ++g_frameCounter;
+    StepLiveActorsSEH(dtSec);
+    // Prune stale bone entries after cell unload / actor despawn (300 frames):
+    if ((g_frameCounter & 127u) == 0u && !g_liveBones.empty()) {
+        for (auto it = g_liveBones.begin(); it != g_liveBones.end(); ) {
+            if (g_frameCounter - it->second.lastFrame > 300u) it = g_liveBones.erase(it);
+            else ++it;
+        }
+    }
+}
+
+void SoftBodyShutdown() {
+    g_liveBones.clear();
+    g_base = nullptr;
+}
+
 std::string SoftBodyStatsJson() {
-    char b[160];
-    std::snprintf(b, sizeof b, "{\"softbody_bones_stepped\":%llu,\"softbody_substeps_240hz\":%llu}",
+    char b[256];
+    std::snprintf(b, sizeof b,
+                  "{\"cmd\":\"softbody\",\"wired\":%s,\"active_actors\":%u,\"high_actors\":%u,"
+                  "\"tracked_bones\":%zu,\"last_frame_bones\":%u,"
+                  "\"softbody_bones_stepped\":%llu,\"softbody_substeps_240hz\":%llu}",
+                  (g_base && g_kPlayer) ? "true" : "false",
+                  g_lastActorsVisited, g_lastHighActors, g_liveBones.size(), g_lastBonesFound,
                   static_cast<unsigned long long>(g_totalBonesStepped),
                   static_cast<unsigned long long>(g_totalSubsteps));
     return b;

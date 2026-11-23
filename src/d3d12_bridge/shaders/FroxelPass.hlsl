@@ -91,14 +91,20 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     const float3 wp = pRel + camPosW.xyz;
 
     // 3D heterogeneous world-space participating media density:
-    // true 3D drifting alpine valley mist + mountain-collar cloud band + river-valley ground mist + weather storms.
+    // true 3-octave wind-advected 3D rolling valley/river ground fog + alpine mountain-collar mist + storm density.
     const bool isInt = (sunColour.w < 0.5f);
     const float weatherDens = 1.0f + weather.w * 1.55f + weather.z * 1.75f + saturate(clouds.x - 0.30f) * 0.72f;
     const float3 drift = wp * 0.00042f + float3(cloudWind.xy * camPosW.w * 0.00014f, 0.0f);
-    const float mist3D = 0.52f + 0.78f * (cNoise(drift) * 0.65f + cNoise(drift * 2.3f + 7.1f) * 0.35f);
+    const float curlWarp = (cNoise(drift * 1.4f + 3.1f) - 0.5f) * 0.45f;
+    const float mist3D = 0.48f + 0.84f * (cNoise(drift + curlWarp) * 0.58f + cNoise(drift * 2.4f + 7.1f) * 0.28f + cNoise(drift * 5.2f - 4.3f) * 0.14f);
+    // Low-lying rolling 3D ground & river-basin fog banks (thickest near water level / dawn / dusk / wet weather):
+    const float aElevFog = astroSunElev();
+    const float dawnDuskFog = exp(-pow((aElevFog - 0.04f) / 0.18f, 2.0f));
+    const float basinH = max(wp.z - (waterA.w + 45.0f), 0.0f);
+    const float groundBank = isInt ? 0.0f : exp(-basinH * 0.0028f) * (0.45f + 0.55f * cNoise(wp * 0.0014f + float3(cloudWind.xy * camPosW.w * 0.00028f, 0.0f))) * (0.55f + 0.95f * dawnDuskFog + weather.w * 0.85f);
     const float peakCollar = isInt ? 0.0f : exp(-pow((wp.z - 4600.0f) / 2800.0f, 2.0f)) * smoothstep(3200.0f, 9500.0f, zMid) * 1.25f;
-    const float heightFalloff = isInt ? 1.0f : (0.30f + 0.70f * exp(-max(pRel.z + 180.0f, 0.0f) * 0.00075f) + peakCollar);
-    const float sigma = max(tune.x, 0.00011f) * weatherDens * mist3D * heightFalloff;
+    const float heightFalloff = isInt ? 1.0f : (0.30f + 0.70f * exp(-max(pRel.z + 180.0f, 0.0f) * 0.00075f) + peakCollar + groundBank);
+    float sigma = max(tune.x, 0.00011f) * weatherDens * mist3D * heightFalloff;
 
     float3 inScat = 0.0f.xxx;
     if (!isInt && sunDir.w > 0.5f && tune2.z > 0.0f) {
@@ -141,6 +147,30 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                 const float phL = min(froxelHG(cosL, isInt ? 0.64f : 0.54f) * (isInt ? 2.8f : 2.4f) + 0.35f, 2.6f);
                 const float intSmoke = isInt ? (0.72f + 0.56f * cNoise(wp * 0.0095f - float3(0.0f, 0.0f, camPosW.w * 0.20f))) : 1.0f;
                 inScat += lightColS[li].rgb * (att * phL * tune2.y * intSmoke * (isInt ? 0.58f : 0.30f));
+                // Real 3D Buoyant Volumetric Smoke Plumes rising from campfires, hearths, braziers & torches:
+                // conical wind-bent rising turbulent column with physical smoke extinction + warm under-lit flame scatter!
+                if (lightColS[li].r > lightColS[li].b * 1.25f && lightColS[li].r > 0.14f) {
+                    const float dzS = pRel.z - lightPosR[li].z;
+                    if (dzS > 8.0f && dzS < 340.0f) {
+                        const float2 windBend = isInt ? float2(0.0f, 0.0f) : (cloudWind.xy * dzS * 0.014f);
+                        const float2 dXY = (pRel.xy - lightPosR[li].xy) - windBend;
+                        const float plumeR = 22.0f + dzS * 0.24f;
+                        const float rad2 = dot(dXY, dXY) / max(plumeR * plumeR, 1.0f);
+                        if (rad2 < 1.35f) {
+                            const float3 smCoord = wp * 0.020f - float3(windBend * 0.012f, camPosW.w * 0.52f);
+                            const float turb = cNoise(smCoord) * 0.65f + cNoise(smCoord * 2.3f + 5.7f) * 0.35f;
+                            const float hEnv = smoothstep(8.0f, 44.0f, dzS) * (1.0f - smoothstep(160.0f, 340.0f, dzS));
+                            const float plumeD = exp(-rad2 * 2.1f) * hEnv * smoothstep(0.28f, 0.82f, turb);
+                            const float smokeExt = plumeD * 0.0038f;
+                            sigma += smokeExt;
+                            // Warm fire under-lighting near the hearth base fading to soft cool-grey woodsmoke higher up:
+                            const float underLit = exp(-dzS * 0.011f);
+                            const float3 smokeCol = lerp(float3(0.22f, 0.24f, 0.28f) * (isInt ? 0.35f : 0.65f),
+                                                         lightColS[li].rgb * float3(1.15f, 0.68f, 0.36f), underLit);
+                            inScat += smokeCol * (plumeD * 1.15f);
+                        }
+                    }
+                }
             }
         }
     }

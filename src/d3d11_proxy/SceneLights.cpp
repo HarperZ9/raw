@@ -438,12 +438,16 @@ void SceneLights_SetCamera(ID3D11DeviceContext* real)
     if (const float* m = Shadow(fr[0], kFrameCb)) Camera(S().frame, m);
     fr[0]->Release();
     State& s = S();
-    // Direct NiCamera fallback from raw_engine.dll (PG_SetEngineCamera) when b12 posAdjust is unavailable.
+    // Direct NiCamera & TESObjectCELL::IsInterior() ownership from raw_engine.dll (PG_SetEngineCamera).
     EngineCameraState ec;
-    if (EngineCamera_Get(ec) && (s.frame.posAdjust[0] == 0.0f && s.frame.posAdjust[1] == 0.0f && s.frame.posAdjust[2] == 0.0f)) {
-        s.frame.posAdjust[0] = ec.camPos[0];
-        s.frame.posAdjust[1] = ec.camPos[1];
-        s.frame.posAdjust[2] = ec.camPos[2];
+    if (EngineCamera_Get(ec)) {
+        s.frame.hasEngineCell = true;
+        s.frame.isInterior = ec.interior != 0;
+        if (s.frame.posAdjust[0] == 0.0f && s.frame.posAdjust[1] == 0.0f && s.frame.posAdjust[2] == 0.0f) {
+            s.frame.posAdjust[0] = ec.camPos[0];
+            s.frame.posAdjust[1] = ec.camPos[1];
+            s.frame.posAdjust[2] = ec.camPos[2];
+        }
     }
     // Compute exact cameraStep from posAdjust delta (eliminates median-draw/skinned-mesh jitter in RtScene::SetCamera).
     static float s_prevPosAdj[3] = {};

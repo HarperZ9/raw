@@ -165,10 +165,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // Physical convective cloud undersides: luminous silver-blue in fair weather, dramatic deep slate-violet
             // storm bellies contrasting against bright silver-white openings in heavy storms (GTA VI storm cloud study).
             const float stormW = saturate(weather.w * 1.25f + max(clouds.x - 0.72f, 0.0f) * 2.2f);
-            const float cloudAo = lerp(lerp(0.38f, 0.24f, stormW), 1.00f, pow(h, lerp(0.58f, 0.78f, stormW))) * exp(-dens * lerp(0.14f, 0.22f, stormW));
+            const float cloudAo = lerp(lerp(0.62f, 0.42f, stormW), 1.00f, pow(h, lerp(0.55f, 0.72f, stormW))) * exp(-dens * lerp(0.08f, 0.14f, stormW));
             const float lowSun = saturate(1.0f - sunDir.z * 3.0f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
             const float overcastW = saturate((clouds.x - 0.50f) * 2.2f);
-            const float3 coolSilver = lerp(float3(0.72f, 0.82f, 0.98f), lerp(float3(0.76f, 0.81f, 0.90f), float3(0.56f, 0.54f, 0.68f), stormW), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.24f) * 1.45f;
+            const float3 coolSilver = lerp(float3(0.76f, 0.85f, 0.99f), lerp(float3(0.80f, 0.85f, 0.93f), float3(0.62f, 0.62f, 0.74f), stormW), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.34f) * 1.45f;
             const float3 neutralSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.98f, 0.99f, 1.02f), overcastW * 0.65f);
             const float3 baseTint = lerp(coolSilver * cloudAo, coolSilver * (cloudAo * 0.75f) + neutralSun * lerp(0.14f, 0.05f, h), lowSun * 0.40f * (1.0f - overcastW * 0.5f));
             // Volumetric sheet-lightning inside heavy rainstorms (clouds.x > 0.78 && weather.w > 0.25).
@@ -187,8 +187,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // True linear HDR sculptural cumulus crowns (up to 2.4 linear feeding AgX highlight rolloff)
             // contrasted against deep slate-blue shadowed cloud bellies (zero flat grey SDR ceiling).
             const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.99f, 0.99f, 1.02f), 0.62f * (1.0f - lowSun));
-            const float3 coolBase = lerp(float3(0.46f, 0.57f, 0.76f), float3(0.62f, 0.68f, 0.78f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.24f) * cloudAo;
-            const float3 lum = min(whiteSun * (multiScat * lerp(1.0f, powder, 0.76f) * sunCalm * 4.0f * PI * 0.25f) + coolBase * 0.88f + stormFlash, 2.40f.xxx);
+            const float3 coolBase = lerp(float3(0.62f, 0.72f, 0.88f), float3(0.72f, 0.78f, 0.86f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.34f) * cloudAo;
+            const float3 lum = min(whiteSun * (multiScat * lerp(1.0f, powder, 0.76f) * sunCalm * 4.0f * PI * 0.25f) + coolBase * 0.95f + stormFlash, 2.40f.xxx);
             const float ext = dens * (sigma * 1.55f);
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length

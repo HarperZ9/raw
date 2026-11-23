@@ -339,13 +339,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             }
             if (maxDep > 0.02f || maxRim > 0.02f) {
                 const float deformStr = max(snowAmt, mudAmt * 0.85f);
-                s.n = normalize(s.n + float3(bestRad * (maxDep * 0.45f - maxRim * 0.25f), 0.0f) * deformStr);
+                const float stormDepthBoost = 1.0f + saturate(weather.z * 1.4f) * 0.85f;
+                // True 3D carved deep snow-trench normals: steep inward-sloping trench walls + piled-up raised snow berms!
+                s.n = normalize(s.n + float3(bestRad * (maxDep * 0.88f * stormDepthBoost - maxRim * 0.52f * stormDepthBoost), 0.0f) * deformStr);
                 if (snowAmt >= mudAmt) {
-                    albedo *= lerp(1.0f.xxx, float3(0.58f, 0.72f, 0.92f), maxDep * snowAmt * 0.78f);
-                    s.alpha = lerp(s.alpha, 0.24f, maxDep * snowAmt * 0.65f);
+                    // Deep recessed trench self-shadowing + glacial blue-indigo subsurface wall scatter + bright raised berm crest:
+                    const float trenchAo = lerp(1.0f, 0.44f, saturate(maxDep * snowAmt * stormDepthBoost));
+                    const float3 trenchWallSSS = float3(0.36f, 0.58f, 0.88f);
+                    albedo = lerp(albedo, trenchWallSSS, saturate(maxDep * snowAmt * 0.72f)) * trenchAo;
+                    albedo *= lerp(1.0f, 1.14f, saturate(maxRim * snowAmt * 0.85f));
+                    s.alpha = lerp(s.alpha, 0.22f, saturate(maxDep * snowAmt * 0.75f));
                 } else {
-                    albedo *= lerp(1.0f.xxx, float3(0.45f, 0.42f, 0.38f), maxDep * mudAmt * 0.75f);
-                    s.alpha = lerp(s.alpha, 0.08f, maxDep * mudAmt * 0.75f);
+                    albedo *= lerp(1.0f.xxx, float3(0.38f, 0.35f, 0.31f), maxDep * mudAmt * 0.82f);
+                    s.alpha = lerp(s.alpha, 0.07f, maxDep * mudAmt * 0.82f);
                 }
             }
             wet.snow = max(wet.snow, natSnow * 0.65f);
@@ -729,7 +735,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
         // Skinned actors (skin/hair/eye AND skinned clothing) keep the game's filtered shadow mask so coarse low-poly
         // skinned BLAS triangles never cast flat triangular self-shadow acne onto NPC tunics/shirts/backs.
-        if (rt && sunColour.w > 0.5f && !isActorFeat && !isActorCloth) { sunShadow = min(sunShadow, base == 5u ? lerp(1.0f, rv.x, 0.85f) : rv.x); }
+        if (rt && sunColour.w > 0.5f && !isActorFeat && !isActorCloth) { sunShadow = min(sunShadow, rv.x); }
         if (!match && sunColour.w > 0.5f && (flags.x & FLAG_CLOUDS) != 0u) { sunShadow *= pow(saturate(cloudShadow(p + camPosW.xyz)), 1.25f); }   // SKY-02 rolling cloud-shadow contrast
         // Skin: warm dermal penumbra + gentle wrap so shadow transitions on faces and shoulders stay lifelike, never muddy grey.
         const float3 sunSh = skin && !match ? pow(saturate(sunShadow).xxx, float3(0.72f, 0.92f, 1.04f)) : sunShadow.xxx;
@@ -772,14 +778,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float glint = pow(saturate(dot(microN, hGl)), 96.0f) * step(0.82f, cHash(gCell + 83.7f));
             spec += dirCol * (glint * sunShadow * saturate(1.0f - z / 1600.0f) * (1.0f - nightDir) * 1.85f);
         }
-        // Rich dual-lobe translucent chlorophyll subsurface scattering + waxy leaf-cuticle specular sheen (base == 5u).
+        // Rich dual-lobe translucent chlorophyll subsurface scattering + sunlit canopy crown rim + waxy leaf-cuticle sheen (base == 5u).
         if (!match && base == 5u && sunColour.w > 0.5f) {
-            const float backF = pow(saturate(dot(-s.v, sunDir.xyz)), 3.2f);
+            const float backF = pow(saturate(dot(-s.v, sunDir.xyz)), 2.8f);
             const float broadF = saturate(dot(-s.v, sunDir.xyz) * 0.5f + 0.5f);
-            diff += dirCol * float3(0.56f, 0.96f, 0.34f) * ((backF * 0.28f + broadF * 0.06f) * sunShadow * (1.0f - nightDir * 0.75f));
+            const float crownUp = saturate(s.n.z * 0.75f + 0.25f);
+            diff += dirCol * float3(0.54f, 0.98f, 0.30f) * ((backF * 0.44f + broadF * 0.09f) * sunShadow * (1.0f - nightDir * 0.78f));
+            // Direct sunlit crown highlight (breaks up flat 2011 shaded foliage with crisp golden top-canopy direct lighting):
+            diff += dirCol * (crownUp * sunShadow * 0.22f * (1.0f - nightDir * 0.70f));
             const float3 hLeaf = normalize(s.v + sunDir.xyz);
-            const float leafCuticle = pow(saturate(dot(s.n, hLeaf)), 28.0f) * 0.18f;
-            spec += dirCol * (leafCuticle * sunShadow * (0.25f + 0.75f * saturate(s.n.z)));
+            const float leafCuticle = pow(saturate(dot(s.n, hLeaf)), 32.0f) * 0.26f;
+            spec += dirCol * (leafCuticle * sunShadow * (0.30f + 0.70f * crownUp));
         }
         // Marschner dual-lobe shifted hair specular (base == 11: primary colorless cuticle band + warm tinted secondary band).
         if (!match && base == 11u && sunShadow > 0.05f) {

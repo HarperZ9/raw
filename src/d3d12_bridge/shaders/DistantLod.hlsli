@@ -56,9 +56,11 @@ float3 distantLit(int3 ip, float2 at, float d) {
     float3 n = normalize(lerp(worldNormal(Normal.Load(ip)), canopy, cw));
     if (cw > 0.05f) {
         const float3 wpTree = p + camPosW.xyz;
-        const float bough = cNoise(wpTree * 0.018f + float3(0.0f, 0.0f, wpTree.z * 0.025f)) * 2.0f - 1.0f;
+        const float2 wTree = normalize(cloudWind.xy + float2(1.0f, 0.35f));
+        const float swayT = sin(dot(wpTree.xy, wTree) * 0.0045f - camPosW.w * 1.65f) * 0.18f;
+        const float bough = cNoise(wpTree * 0.018f + float3(wTree * swayT, wpTree.z * 0.025f)) * 2.0f - 1.0f;
         const float bough2 = cNoise(wpTree * 0.052f + 7.3f) * 2.0f - 1.0f;
-        n = normalize(n + (right * (bough * 0.28f) + float3(0.0f, 0.0f, bough2 * 0.24f)) * cw);
+        n = normalize(n + (right * (bough * 0.34f) + float3(0.0f, 0.0f, bough2 * 0.28f)) * cw);
     } else if (viewZOf(d) > 3800.0f) {
         // Seamless Near-to-Far Terrain Continuity: tri-planar geological rock-strata + alpine scree contrast on distant mountain LODs!
         const float3 wpM = p + camPosW.xyz;

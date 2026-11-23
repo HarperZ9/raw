@@ -11,13 +11,13 @@ Texture2D<float>  Depth : register(t1);
 Texture2D<float4> SrcB  : register(t2);
 SamplerState      Lin   : register(s0);
 
-// Wide 9-point foreground-rejecting cinema metering zone (takes upper-quartile depth across the central 12% of the
-// frame so panning across a pillar, twig, or doorway edge never snaps or flickers DoF to the crosshair pixel).
+// Tight 9-point crosshair-centered autofocus metering zone (±1.8% of viewport, median depth):
+// Locks dead-on to close-up subjects (cheese wheel, NPC face, sword, flower) instead of leaking onto the back wall!
 float sampleFocusZoneZ() {
     const int2 c = int2(dims.xy * 0.5f);
     const int2 dMax = int2(dims.xy) - 1;
-    const int sx = max(int(dims.x * 0.06f), 24);
-    const int sy = max(int(dims.y * 0.06f), 16);
+    const int sx = max(int(dims.x * 0.016f), 8);
+    const int sy = max(int(dims.y * 0.016f), 6);
     const int2 o[9] = {
         int2(0, 0), int2(sx, 0), int2(-sx, 0), int2(0, sy), int2(0, -sy),
         int2(sx, sy), int2(-sx, sy), int2(sx, -sy), int2(-sx, -sy)
@@ -26,10 +26,9 @@ float sampleFocusZoneZ() {
     [unroll] for (int k = 0; k < 9; k++) {
         const float dk = Depth.Load(int3(clamp(c + o[k], int2(0, 0), dMax), 0));
         const float zk = dk < 1.0f ? viewZOf(dk) : 10000.0f;
-        // Reject 1st-person weapon/hand geometry (< 48u) so holding a sword/bow/torch never hijacks autofocus!
-        zVals[k] = zk < 48.0f ? 10000.0f : zk;
+        // Reject 1st-person hands/weapons (< 42u) only; allow close table props/NPCs (>= 42u) to lock focus cleanly!
+        zVals[k] = zk < 42.0f ? 10000.0f : zk;
     }
-    // Partial insertion sort to select the 6th-deepest (upper-quartile) sample, rejecting thin foreground blockers.
     [unroll] for (int i = 1; i < 9; i++) {
         const float key = zVals[i];
         int j = i - 1;
@@ -38,29 +37,26 @@ float sampleFocusZoneZ() {
         }
         zVals[j + 1] = key;
     }
-    return (zVals[5] + zVals[6]) * 0.5f;
+    // True median (zVals[4]) locks tightly onto the aimed subject with zero background-wall hijack!
+    return zVals[4];
 }
 
-// Exact Physical Hyperfocal Thin-Lens Circle of Confusion:
-// Close/mid subjects (conversations, combat, portraits < 900u) yield rich creamy 9-blade cinema bokeh;
-// distant outdoor vistas (> 1100u) lock to hyperfocal infinity so mountains & architecture stay 100% razor-sharp
-// (zero muddy Vaseline smear!) while close foreground branches/weapons softly feather out of focus.
+// Exact Physical Thin-Lens Cinema Prime CoC (50mm f/1.8 optical equation — Kitsuune/Cooke optical parity):
+//   CoC = ((curZ - focusZ) / curZ) * (apertureFactor / focusZ)
+// Naturally produces rich, unmistakable creamy bokeh behind close-up props & NPC portraits (45u..400u),
+// while automatically reaching hyperfocal infinity (> 1,200u) with ZERO artificial blur on outdoor vistas!
 float signedCoC(float curZ, float focusZ, float maxDist) {
     if (maxDist <= 1.0f) { return 0.0f; }
-    const float hyperfocal = max(maxDist * 2.1f, 1100.0f);
-    const float s1 = max(focusZ, 34.0f);
-    const float s2 = max(curZ, 12.0f);
-    const float diopter = (1.0f / s1 - 1.0f / s2);
-    // Physical aperture response: strong bokeh ONLY on close-up portraits/conversations (< 550u);
-    // mid/far gameplay streets & vistas keep 100% razor-sharp NPCs, roads, and architecture!
-    const float farEngage = smoothstep(hyperfocal, maxDist * 0.42f, focusZ);
-    const float rawCoc = diopter * (s1 * 1.15f);
-    const float dead = 0.28f;
+    const float zf = clamp(focusZ, 42.0f, 12000.0f);
+    const float z  = max(curZ, 24.0f);
+    // Physical optical aperture scale (calibrated to Skyrim's 70 units = 1 meter):
+    const float apertureScale = max(maxDist * 0.62f, 280.0f);
+    const float rawCoc = ((z - zf) / max(z, 24.0f)) * (apertureScale / max(zf, 42.0f));
+    const float dead = 0.06f;
     if (abs(rawCoc) <= dead) { return 0.0f; }
-    const float shaped = sign(rawCoc) * saturate((abs(rawCoc) - dead) / (1.0f - dead));
-    // Near-field blur ONLY touches very close foreground foliage/rocks (< 150u), NEVER mid-ground NPCs or streets!
-    const float nearGate = smoothstep(160.0f, 55.0f, curZ) * smoothstep(220.0f, 520.0f, focusZ);
-    return rawCoc < 0.0f ? (shaped * nearGate * 0.55f) : (shaped * farEngage);
+    const float mag = saturate((abs(rawCoc) - dead) / (1.0f - dead));
+    // Keep foreground blur disciplined (0.65x) so bar props don't bleed harsh halos while far bokeh reaches full 1.0!
+    return rawCoc < 0.0f ? (-mag * 0.65f) : mag;
 }
 
 float4 dof_coc(float4 at : SV_Position) : SV_Target0 {

@@ -442,7 +442,7 @@ ${RAW_TONEMAP_CHUNKS}    nullptr
 ")
 target_include_directories(d3d11_proxy PRIVATE ${RAW_BRIDGE_GEN})
 if(RAW_ENGINE_DIR)
-    set(RAW_SHADER_MODEL "6_8" CACHE STRING "HLSL shader model for lighting, cloud & volumetric passes (e.g. 6_8 or 6_9 with DXC 1.9)")
+    set(RAW_SHADER_MODEL "6_9" CACHE STRING "HLSL shader model for lighting, cloud & volumetric passes (SM 6.9 with DXC 1.9)")
     set(RAW_LIGHT_HLSL ${RAW_SHARE_HLSL}/Lighting.hlsl)
     set(RAW_LIGHTFOG_HLSL ${RAW_SHARE_HLSL}/LightFog.hlsl)
     set(RAW_CLOUDS_HLSL ${RAW_SHARE_HLSL}/Clouds.hlsl)

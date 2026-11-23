@@ -40,13 +40,13 @@ float4 atrousStep(float4 at, int stepSize, bool finalPass) {
     const float invSigmaL = 1.0f / max(3.6f * cSigma + 0.035f, 0.035f);
     const float planeScale = 1.0f / max(z * 0.0085f * float(stepSize), 1.8f);
 
-    static const float kB3[5] = { 0.0625f, 0.25f, 0.375f, 0.25f, 0.0625f };
-    const float w0 = 0.375f * 0.375f;
-    float3 sumRgb = center.rgb * w0;
-    float  wSum   = w0;
-    float  varSum = (w0 * w0) * cVar;
+    static const float16_t kB3[5] = { float16_t(0.0625h), float16_t(0.25h), float16_t(0.375h), float16_t(0.25h), float16_t(0.0625h) };
+    const float16_t w0 = float16_t(0.375h * 0.375h);
+    float16_t3 sumRgb = float16_t3(center.rgb) * w0;
+    float16_t  wSum   = w0;
+    float      varSum = float(w0 * w0) * cVar;
     [unroll] for (int dy = -2; dy <= 2; dy++) {
-        const float wy = kB3[dy + 2];
+        const float16_t wy = kB3[dy + 2];
         [unroll] for (int dx = -2; dx <= 2; dx++) {
             if (dx == 0 && dy == 0) { continue; }
             const int2 q = clamp(p + int2(dx, dy) * stepSize, int2(0, 0), dMax);
@@ -64,15 +64,15 @@ float4 atrousStep(float4 at, int stepSize, bool finalPass) {
             const float3 tChr = tap.rgb / max(tLum, 0.02f);
             const float chrDiff = length(tChr - cChr);
             const float wl = exp(-abs(tLum - cLum) * invSigmaL - chrDiff * 0.35f);
-            const float w = kB3[dx + 2] * wy * wz * wn * wl;
+            const float16_t w = float16_t(float(kB3[dx + 2] * wy) * wz * wn * wl);
             const float qSig = unpackSigma(tap.a);
-            sumRgb += tap.rgb * w;
+            sumRgb += float16_t3(tap.rgb) * w;
             wSum += w;
-            varSum += (w * w) * (qSig * qSig);
+            varSum += float(w * w) * (qSig * qSig);
         }
     }
-    const float invW = 1.0f / max(wSum, 1.0e-5f);
-    const float3 outRgb = sumRgb * invW;
+    const float invW = 1.0f / max(float(wSum), 1.0e-5f);
+    const float3 outRgb = float3(sumRgb) * invW;
     if (finalPass) {
         return float4(outRgb, unpackRestVis(center.a));
     }

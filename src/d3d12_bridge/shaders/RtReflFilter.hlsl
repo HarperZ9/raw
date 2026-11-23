@@ -29,8 +29,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float zU = z - viewZOf(Depth.Load(int3(p.x, max(p.y - 1, 0), 0)));
     const float2 zSlope = float2(abs(zR) < abs(zL) ? zR : zL, abs(zD) < abs(zU) ? zD : zU);
     const float invPlane = 1.0f / max(z * 0.018f, 2.0f);
-    float4 s1 = 0.0f.xxxx, s2 = 0.0f.xxxx;
-    float wSum = 0.0f;
+    float16_t4 s1 = float16_t4(0.0h, 0.0h, 0.0h, 0.0h), s2 = float16_t4(0.0h, 0.0h, 0.0h, 0.0h);
+    float16_t wSum = float16_t(0.0h);
     [unroll] for (int dy = -1; dy <= 1; dy++) {
         [unroll] for (int dx = -1; dx <= 1; dx++) {
             const int2 q = clamp(p + int2(dx, dy), int2(0, 0), dMax);
@@ -42,17 +42,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float pd = abs(viewZOf(dq) - zPred) * invPlane;
             const float tapLum = dot(tap.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             const float karis = 1.0f / (1.0f + tapLum * 0.45f);
-            const float w = exp(-pd * pd) * karis * ((dx == 0 && dy == 0) ? 1.5f : 1.0f);
+            const float16_t w = float16_t(exp(-pd * pd) * karis * ((dx == 0 && dy == 0) ? 1.5f : 1.0f));
             const float pk = max(tap.r, max(tap.g, tap.b));
             if (pk > 2.2f) { tap.rgb *= 2.2f / pk; }
-            s1 += tap * w;
-            s2 += (tap * tap) * w;
+            const float16_t4 t16 = float16_t4(tap);
+            s1 += t16 * w;
+            s2 += (t16 * t16) * w;
             wSum += w;
         }
     }
-    if (wSum < 1.0e-4f) { return float4(0.0f, 0.0f, 0.0f, 0.0f); }
-    const float4 m1 = s1 / wSum;
-    const float4 stdDev = sqrt(max(s2 / wSum - m1 * m1, 0.0f.xxxx));
+    if (float(wSum) < 1.0e-4f) { return float4(0.0f, 0.0f, 0.0f, 0.0f); }
+    const float4 m1 = float4(s1) / float(wSum);
+    const float4 stdDev = sqrt(max(float4(s2) / float(wSum) - m1 * m1, 0.0f.xxxx));
     // Use Karis-filtered spatial mean m1 (eliminates 50% raw 1-spp firefly noise leak on fire-lit stone/wood/armor!).
     float4 cur = m1;
 

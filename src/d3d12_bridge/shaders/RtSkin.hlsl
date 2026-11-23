@@ -33,15 +33,22 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 s = 0.0f;
     const float wSum = dot(wt, 1.0f.xxxx);
     bool bad = (wSum < 0.5f) || (wSum > 1.15f) || any(wt < -0.01f);
+    // Normalize FP16 blend weights to exact unit sum AND subtract camPos from each bone translation
+    // BEFORE weighting: eliminates 20-80u catastrophic cancellation & floating/stretched actor BLAS triangles
+    // at large Tamriel world coordinates (e.g. +/-50,000u).
+    const float4 wn = wt / max(wSum, 1.0e-5f);
     [unroll] for (uint k = 0u; k < 4u; k++) {
         const uint row = min(((iw >> (8u * k)) & 0xFFu) * 3u, 237u);
         const float4 r0 = Bones[boneFirst + row], r1 = Bones[boneFirst + row + 1u], r2 = Bones[boneFirst + row + 2u];
         // Cull zeroed, corrupt, or wildly scaled bone rows so they become DXR-inactive NaN triangles instead of shadow spikes.
         const float bNorm = dot(r0.xyz, r0.xyz) + dot(r1.xyz, r1.xyz) + dot(r2.xyz, r2.xyz);
-        bad = bad || (wt[k] > 0.01f && (bNorm < 1.0e-4f || bNorm > 12.0f));
-        s += wt[k] * float3(dot(r0, p), dot(r1, p), dot(r2, p));
+        bad = bad || (wn[k] > 0.01f && (bNorm < 1.0e-4f || bNorm > 12.0f));
+        const float3 bp = float3(dot(r0.xyz, p.xyz) + (r0.w - camPos.x),
+                                 dot(r1.xyz, p.xyz) + (r1.w - camPos.y),
+                                 dot(r2.xyz, p.xyz) + (r2.w - camPos.z));
+        s += wn[k] * bp;
     }
-    const float3 rel = s - camPos;
+    const float3 rel = s;
     bad = bad || !all(isfinite(rel)) || dot(rel, rel) > (16000.0f * 16000.0f);
     // A NaN position makes its triangles inactive in the BLAS (DXR), so a vertex that cannot be placed
     // takes its triangles out instead of stretching them across the scene.

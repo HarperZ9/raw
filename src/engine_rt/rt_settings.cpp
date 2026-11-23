@@ -162,6 +162,13 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         // Keep vanilla Skyrim water reflection buffer dimensions intact (overriding iWaterReflectWidth/Height
         // or forcing bForceHighDetailReflections=1 at runtime misaligns TESWaterSystem reflection planes!).
         {"bForceHighDetailReflections:Water", "0"},
+        // Disable redundant 2011 Skyrim rendering passes that RAW's native DX12 + SM 6.9 + DXR 1.2 render graph
+        // now owns 100% (eliminates wasted upside-down water reflection camera pass, 2011 SSR, 2011 SAO, 2011 VL & DoF).
+        {"bUseWaterReflections:Water", "0"},
+        {"bScreenSpaceReflectionEnabled:Display", "0"},
+        {"bSAOEnable:Display", "0"},
+        {"bVolumetricLightingEnable:Display", "0"},
+        {"bDoDepthOfField:Imagespace", "0"},
         // Upgrade Creation Engine's native TESWaterSystem simulation (60 FPS wave updates instead of 2011 12-30 FPS,
         // hi-res water & displacements) and eliminate 2011 blurry 3D World-Map depth blur directly in MapMenu settings.
         {"bUseWaterHiRes:Water", "1"},

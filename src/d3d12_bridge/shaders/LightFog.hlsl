@@ -205,9 +205,33 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 baseSky += lit.rgb * float3(0.88f, 0.96f, 1.15f) * (moonKeep * nightSkyW * 0.22f);
             }
             if ((flags.x & FLAG_CLOUDS) != 0u) {
-                const float4 cl = Clouds.SampleLevel(Lin, (px + 0.5f) * dims.zw, 0.0f);
-                // Clouds naturally occlude the solar disc via exact transmittance cl.a (removed duplicate blaze that burned through thick clouds!).
+                const float2 skyUv = (px + 0.5f) * dims.zw;
+                const float4 cl = Clouds.SampleLevel(Lin, skyUv, 0.0f);
+                // Clouds naturally occlude the solar disc via exact transmittance cl.a.
                 baseSky = lerp(baseSky, baseSky * cl.a + cl.rgb, 1.0f - isExotic);
+                // Physical 3D Crepuscular Cloud-Gap Light Rays (6-tap radial transmittance march toward live sun):
+                // beams fan organically out of breaks in the 3D cumulus deck at sunrise, sunset & broken-cloud days!
+                if (sunDiscGate > 0.05f && cover > 0.14f) {
+                    const float4 sunSc = screenOf(eyeAt() + aSun * 50000.0f);
+                    if (sunSc.w > 10.0f) {
+                        const float2 sunUv = sunSc.xy * dims.zw;
+                        const float2 toSunUv = sunUv - skyUv;
+                        const float uvDist = length(toSunUv);
+                        if (uvDist < 0.65f) {
+                            const float2 stepUv = toSunUv * (1.0f / 7.0f);
+                            float rayAcc = 0.0f;
+                            float decay = 1.0f;
+                            [unroll] for (int ri = 1; ri <= 6; ++ri) {
+                                const float2 rUv = saturate(skyUv + stepUv * float(ri));
+                                rayAcc += Clouds.SampleLevel(Lin, rUv, 0.0f).a * decay;
+                                decay *= 0.82f;
+                            }
+                            const float rayW = (rayAcc / 4.2f) * (1.0f - cl.a * 0.55f) * smoothstep(0.65f, 0.05f, uvDist) * pow(saturate(cosS), 3.0f);
+                            const float3 rayCol = lerp(float3(1.0f, 0.94f, 0.84f), float3(1.25f, 0.56f, 0.24f), lowS);
+                            baseSky += rayCol * (rayW * sunDiscGate * saturate(cover * 1.4f) * 0.22f * (1.0f - isExotic));
+                        }
+                    }
+                }
             }
             // Physical 42-deg primary + 51-deg secondary spectral atmospheric rainbow during sunlit rain (Commons own-03 & own-45).
             if (weather.w > 0.08f && aElev > 0.04f && aElev < 0.64f && sDir.z > 0.0f) {

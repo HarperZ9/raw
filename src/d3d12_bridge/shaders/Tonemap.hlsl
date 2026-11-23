@@ -344,6 +344,15 @@ float4 main(In i) : SV_Target {
         const float lBase = max(dot(bloom, W) * exposure * RB.z, 0.025f);
         const float ltmRatio = clamp(log2(lIn / lBase), -1.15f, 1.15f);
         xIn *= exp2(ltmRatio * 0.12f);
+        // Photographic C2 Soft-Curve Rolling Highlights & Velvety Shadow Toe (prevents harsh highlight clipping on
+        // sun-hit snow, clouds & hearth cores while keeping deep shadow detail velvety and open):
+        const float lPost = max(dot(xIn, W), 1.0e-5f);
+        const float rollKnee = max(RC.w * 0.35f, 0.85f);
+        if (lPost > rollKnee) {
+            const float softL = rollKnee + (lPost - rollKnee) / (1.0f + (lPost - rollKnee) * 0.24f);
+            xIn *= (softL / lPost);
+        }
+        xIn = max(xIn, 0.0f.xxx) + (0.0025f / (1.0f + lPost * 18.0f));
         if (RB.x < 4.5f)      mapped = tonemapAgX(xIn);
         else if (RB.x < 5.5f) mapped = tonemapGT(xIn);
         else if (RB.x < 6.5f) mapped = tonemapLottes(xIn);

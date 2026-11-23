@@ -822,8 +822,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float skyVis = isActorFeat ? lerp(0.55f, 1.0f, rawSkyVis) : rawSkyVis;
     // Physical directional skylighting falloff: roofs, covered walkways, arches & dense foliage cores drop to deep rich shade
     // (0.10..1.0 exteriors, 0.16..1.0 velvety interior shadow drama) while open surfaces keep crisp skylighting.
-    const float skyVisShaped = !match ? pow(saturate(skyVis), base == 5u ? 1.42f : 1.56f) : skyVis;
-    const float rtOcc = isExterior ? lerp(1.0f, lerp(0.10f, 1.0f, skyVisShaped), max(cluster.w, 0.85f)) : lerp(0.16f, 1.0f, skyVisShaped);
+    const float skyVisShaped = !match ? pow(saturate(skyVis), base == 5u ? 1.58f : 1.72f) : skyVis;
+    const float rtOcc = isExterior ? lerp(1.0f, lerp(0.06f, 1.0f, skyVisShaped), max(cluster.w, 0.88f)) : lerp(0.11f, 1.0f, skyVisShaped);
     float combinedOcc = min(aoTerm, rtOcc);
     // Lifelike Vanilla NPCs: lift recessed eye-socket AO (base==12) so eyes never read as dim dark holes,
     // and soften harsh brow/under-eye portrait shadows on skin (base==10).

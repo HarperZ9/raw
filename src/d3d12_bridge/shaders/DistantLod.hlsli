@@ -109,13 +109,32 @@ float3 distantLit(int3 ip, float2 at, float d) {
         direct += effSunCol * float3(0.52f, 0.82f, 0.34f) * (backTree * sh * 0.16f * (1.0f - nightLod));
     }
     if (nearGrass && sunColour.w > 0.5f) {
+        // Pillar 7(a): Real-time GPU Grass Bending around player footsteps (footTrail[0..7]) + rolling wind-gust meadow waves!
+        const float3 wpG = p + camPosW.xyz;
+        const float2 windG = normalize(cloudWind.xy + float2(1.0f, 0.35f));
+        const float gustG = sin(dot(wpG.xy, windG) * 0.0048f - camPosW.w * 2.15f) * 0.5f + 0.5f;
+        float2 trampleBend = 0.0f.xx;
+        float trampleOcc = 1.0f;
+        [loop] for (uint gi = 0u; gi < 8u; ++gi) {
+            const float4 ft = footTrail[gi];
+            if (ft.w <= 0.05f) { continue; }
+            const float2 gd = wpG.xy - ft.xy;
+            const float r2 = dot(gd, gd);
+            if (r2 < 2025.0f && abs(wpG.z - ft.z) < 120.0f) {
+                const float rr = sqrt(r2);
+                const float push = (1.0f - rr / 45.0f) * ft.w;
+                trampleBend += (gd / max(rr, 1.0f)) * push * 0.72f;
+                trampleOcc = min(trampleOcc, lerp(1.0f, 0.62f, push));
+            }
+        }
+        n = normalize(n + float3(trampleBend + windG * (gustG * 0.24f), 0.0f));
         // Per-blade directional micro-shadow march (grounds grass tufts cleanly inside terrain, rock & tree shadows).
         const float grassMicroSh = zDist < 2600.0f ? screenShadow(p + n * 0.6f, sunDir.xyz, 18.0f, 0.02f, ign(px), 6u) : 1.0f;
-        const float gSh = sh * lerp(1.0f, grassMicroSh, saturate(1.0f - zDist / 2600.0f) * 0.82f);
-        direct = effSunCol * (nl * gSh * sunBoostL);
+        const float gSh = sh * lerp(1.0f, grassMicroSh, saturate(1.0f - zDist / 2600.0f) * 0.82f) * trampleOcc;
+        direct = effSunCol * (saturate(dot(n, sunDir.xyz)) * gSh * sunBoostL * lerp(0.88f, 1.16f, gustG));
         // Subtle deep-emerald chlorophyll subsurface transmission + root grounding (no neon-yellow blowout).
         const float backGrass = pow(saturate(dot(-toCam, sunDir.xyz)), 3.4f);
-        direct += effSunCol * float3(0.62f, 0.94f, 0.38f) * (backGrass * 0.24f * (1.0f - saturate(cloudC * 0.75f))) * gSh * sunBoostL;
+        direct += effSunCol * float3(0.62f, 0.94f, 0.38f) * (backGrass * (0.24f + gustG * 0.10f) * (1.0f - saturate(cloudC * 0.75f))) * gSh * sunBoostL;
         direct *= lerp(0.58f, 1.0f, grassAo);
     }
     // True linear HDR distant LOD output (removes 2011 double knee3() crush and duplicate fog; LightFog.hlsl applies unified Hillaire aerial perspective).

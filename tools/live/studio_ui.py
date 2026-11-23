@@ -27,6 +27,8 @@ EDITABLE_SHADERS = [
     "Lighting.hlsl",
     "Tonemap.hlsl",
     "VolumetricPass.hlsl",
+    "FroxelPass.hlsl",
+    "GiAtrousPass.hlsl",
     "BloomPass.hlsl",
     "AtmosphereLut.hlsl",
     "RtReflFilter.hlsl",
@@ -38,6 +40,7 @@ EDITABLE_SHADERS = [
     "Clouds.hlsl",
     "CloudCommon.hlsli",
     "LightFog.hlsl",
+    "DistantLod.hlsli",
     "Sss.hlsl",
     "LightingCommon.hlsli",
 ]
@@ -62,11 +65,14 @@ HTML_PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>RAW DX12 Live Studio</title>
 <style>
-:root{--bg:#0d1016;--panel:#151a24;--line:#283142;--ink:#ece8df;--muted:#9ba6b8;--acc:#42d4c4;--warm:#f0a848}
+:root{--bg:#090c12;--panel:rgba(17,22,33,.92);--line:#253247;--ink:#eef1f6;--muted:#93a4bc;--acc:#44e0cf;--warm:#f4b350}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI",system-ui,sans-serif}
-header{display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--panel)}
-header h1{margin:0;font-size:16px;letter-spacing:.03em}
+body{margin:0;background:radial-gradient(ellipse at top,#11192a 0%,#090c12 72%);color:var(--ink);font:14px/1.45 "Segoe UI",system-ui,sans-serif;min-height:100vh}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;border-bottom:2px solid var(--acc);background:rgba(11,15,24,.96);backdrop-filter:blur(10px);position:sticky;top:0;z-index:10}
+header h1{margin:0;font-size:16px;letter-spacing:.04em;color:var(--acc)}
+.preset-bar{display:flex;gap:8px;flex-wrap:wrap;padding:10px 20px;background:rgba(13,18,28,.85);border-bottom:1px solid var(--line)}
+.preset-bar button{font-size:12px;padding:5px 11px;border-radius:999px;background:#162032;border:1px solid #2b3c56}
+.preset-bar button:hover{border-color:var(--warm);color:var(--warm)}
 .grid{display:grid;grid-template-columns:360px 1fr;gap:14px;padding:14px;max-width:1600px;margin:0 auto}
 @media(max-width:980px){.grid{grid-template-columns:1fr}}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px 14px;margin-bottom:14px}
@@ -91,6 +97,15 @@ pre{margin:0;background:#0a0d12;border:1px solid var(--line);border-radius:4px;p
     <button class="primary" onclick="runCapture()">Capture Keyframe</button>
   </div>
 </header>
+<div class="preset-bar">
+  <span style="font-size:12px;color:var(--muted);align-self:center;margin-right:4px">LOOK PRESETS:</span>
+  <button onclick="iniSet('ToneCurve',4);iniSet('ToneX2',0)">Nordic Photoreal (AgX)</button>
+  <button onclick="iniSet('ToneCurve',8);iniSet('ToneX2',2)">ACES 2.0 Kodak 2383</button>
+  <button onclick="iniSet('ToneCurve',4);iniSet('ToneX2',4)">One Warm Light (500T)</button>
+  <button onclick="iniSet('ToneCurve',4);iniSet('ToneX2',6)">Tarkovsky Storm Coast</button>
+  <button onclick="iniSet('ToneCurve',4);iniSet('ToneX2',12)">Sony PVM CRT</button>
+  <button onclick="iniSet('ToneCurve',4);iniSet('ToneX2',13)">1988 NTSC VHS</button>
+</div>
 <div class="grid">
   <div>
     <div class="card">

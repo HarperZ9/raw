@@ -267,8 +267,8 @@ std::string BuildMenuText()
         row(10, "Distant LOD Lighting", OnOff(l.distantLod));
         row(11, "EnvMap / CharLight", OnOff(l.envMap) + " / " + OnOff(l.charLight));
     } else if (g_tab == 5) {
-        static const char* kLuts[8] = {"Neutral", "Nordic Film", "Kodak 2383", "Cinema", "Vision3 500T", "Fuji Velvia 50", "Tarkovsky", "LomoChrome"};
-        const int li = std::clamp(int(tm.x[2] + 0.5f), 0, 7);
+        static const char* kLuts[12] = {"Neutral", "Nordic Film", "Kodak 2383", "Cinema", "Vision3 500T", "Fuji Velvia 50", "Tarkovsky", "LomoChrome", "Oil Impasto", "Ink Hatch", "Pixel Bayer", "Watercolor"};
+        const int li = std::clamp(int(tm.x[2] + 0.5f), 0, 11);
         row(0, "RAW Tonemap + FXAA", OnOff(tm.enabled));
         row(1, "Built-In Grade", FmtI("%d (", li) + kLuts[li] + ")");
         row(2, "Display Output", tm.view >= 3 ? "HDR10 PQ Rec.2020" : "SDR Rec.709");
@@ -443,7 +443,7 @@ bool PollMenu(std::string& outText)
         } else if (g_tab == 5) {
             switch (g_sel) {
             case 0: tm.enabled = !tm.enabled; tmDirty = true; break;
-            case 1: tm.x[2] = float((std::clamp(int(tm.x[2] + 0.5f), 0, 7) + 8 + dir) % 8); tmDirty = true; break;
+            case 1: tm.x[2] = float((std::clamp(int(tm.x[2] + 0.5f), 0, 11) + 12 + dir) % 12); tmDirty = true; break;
             case 2: tm.view = tm.view >= 3 ? 0 : 3; tmDirty = true; break;
             case 3: tm.bias = std::clamp(tm.bias + step * 0.10f, -2.0f, 2.0f); tmDirty = true; break;
             case 4: tm.key = std::clamp(tm.key + step * 0.02f, 0.15f, 0.85f); tmDirty = true; break;

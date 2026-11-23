@@ -17,6 +17,7 @@
 
 #include "rt_atlas.h"
 #include "rt_capture.h"
+#include "rt_forensics.h"
 #include "rt_audit.h"
 #include "rt_cascades.h"
 #include "rt_emitters.h"
@@ -217,6 +218,8 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             Result(WeatherCommand());
         } else if (op == "audit") {
             Result(AuditCommand(*g_img));
+        } else if (op == "forensics") {
+            Result(ForensicsStatusJson());
         } else if (op == "grids") {
             // grids [n]: the loaded grid's array, or a new length while in an interior (rt_grids.h)
             Result(GridsCommand(*g_img, *g_refs, a));
@@ -282,6 +285,7 @@ void ControlOnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     VTimeOnPresent();
     DrawStatsOnPresent();
     WeatherOnPresent();
+    ForensicsOnPresent();
     LiveStateOnPresent();
     ProxyCountersOnPresent();
     if (!g_busy) {

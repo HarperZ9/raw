@@ -101,20 +101,21 @@ float astroSunElev() {
     return timeEnv.x > 0.01f ? timeEnv.y : sunDir.z;
 }
 
+// True 24-hour astronomical solar vector: keeps Skyrim's EXACT engine sun azimuth (sunDir.xy) so shadows,
+// sun disc, volumetric sunbeams, froxels, and lens flares NEVER misalign or slew sideways across the sky,
+// while smoothly driving elevation through 0 deg at sunrise/sunset and below horizon at night (never flipping to Moon!).
 float3 astroSunDir() {
     if (timeEnv.x <= 0.01f) { return normalize(sunDir.xyz); }
     const float sinE = clamp(timeEnv.y, -0.95f, 0.95f);
     const float cosE = sqrt(max(1.0f - sinE * sinE, 1.0e-4f));
-    // Smooth east (+X) -> south (-Y) -> west (-X) Skyrim orbital azimuth across 24h.
-    const float hourAng = (timeEnv.x - 12.5f) * 0.26179939f;   // -pi midnight, -pi/2 6:30 E, 0 12:30 S, +pi/2 18:30 W
-    const float3 orbDir = normalize(float3(-sin(hourAng) * cosE, -cos(hourAng) * cosE * 0.62f, sinE));
-    // During high daytime (sinE > 0.28), lock azimuth smoothly to ShadowSceneNode->sunLight so shadows & sky sun agree,
-    // while sunrise/sunset/dusk/night follow the unbroken orbital arc below the horizon.
-    const float dayLock = smoothstep(0.24f, 0.44f, sinE) * step(0.18f, sunDir.z);
     const float2 sHor = sunDir.xy;
     const float sHorLen = length(sHor);
-    const float3 lockedDir = sHorLen > 1.0e-4f ? float3((sHor / sHorLen) * cosE, sinE) : orbDir;
-    return normalize(lerp(orbDir, lockedDir, dayLock));
+    // During daytime & twilight (sinE > -0.10), lock 100% to Skyrim's exact real engine sun azimuth (zero slew!).
+    // Only use orbital fallback if sunDir.xy is degenerate (zenith/missing).
+    const float hourAng = (timeEnv.x - 12.5f) * 0.26179939f;
+    const float2 fallbackHor = normalize(float2(-sin(hourAng), -cos(hourAng) * 0.62f) + float2(1.0e-4f, 0.0f));
+    const float2 azHor = (sHorLen > 0.05f && sinE > -0.12f) ? (sHor / sHorLen) : fallbackHor;
+    return normalize(float3(azHor * cosE, sinE));
 }
 
 // Shared live atmospheric palette: locks sky dome, world hemisphere ambient, distant mountain fog, and clouds

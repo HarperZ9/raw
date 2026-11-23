@@ -65,7 +65,7 @@ struct LightingTuning
     bool  clouds = true;            // Clouds
     float cloudCover = 0.35f;       // CloudCover: the cover under a clear sky; the weather's cloud report raises it
     float weatherCloud = 0.0f;      // the game's cloud cover now (WeatherDrive), 0 to 1
-    float cloudBase = 36000.0f, cloudThickness = 14000.0f;   // CloudBase, CloudThickness: absolute world height, game units
+    float cloudBase = 46000.0f, cloudThickness = 44000.0f;   // True 3D towering cumulus slab (~650m floor, ~630m->1.3km+ vertical relief; Nubis Evolved SKY-02)
     float cloudShadow = 0.75f;      // CloudShadow: how much of the sun the thickest cloud takes
     float cloudDensity = 1.0f;      // CloudDensity
     float cloudWindX = 180.0f, cloudWindY = 60.0f;   // CloudWindX, CloudWindY: units a second

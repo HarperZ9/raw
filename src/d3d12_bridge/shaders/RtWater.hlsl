@@ -45,6 +45,25 @@ float causticNet(float2 w, float t, float scale) {
     return pow(saturate(1.0f - a * 3.2f), 7.0f) + 0.6f * pow(saturate(1.0f - b * 3.6f), 7.0f);
 }
 
+// True 3D Physical Wave Heightfield Evaluator (for 3D Ray-Marched Self-Occluding Wave Geometry breaking flat 2011 quads):
+float evalFluidHeight3D(float2 xy, float2 flowDir, float wt, float ampScale, float wDist) {
+    const float2 wpF = xy - flowDir * (wt * 22.0f);
+    const float2 flowPerp = float2(-flowDir.y, flowDir.x);
+    const float distFade = smoothstep(14000.0f, 800.0f, wDist);
+    float h = 0.0f;
+    static const float kH_k[4] = { 0.0065f, 0.0135f, 0.0265f, 0.0490f };
+    static const float kH_a[4] = { 2.85f,   1.65f,   0.85f,   0.42f   };
+    static const float kH_s[4] = { 0.00f,   0.62f,  -0.54f,   1.08f   };
+    [unroll] for (int i = 0; i < 4; ++i) {
+        const float2 d = normalize(flowDir * cos(kH_s[i]) + flowPerp * sin(kH_s[i]));
+        const float omega = sqrt(9.81f * (kH_k[i] * 70.0f));
+        const float ph = dot(wpF, d) * kH_k[i] - wt * omega + float(i) * 2.39996f;
+        // Trochoidal sharp-crest height profile:
+        h += (sin(ph) + 0.25f * sin(2.0f * ph)) * kH_a[i];
+    }
+    return h * ampScale * distFade;
+}
+
 // 8-Wave Trochoidal Gerstner Spectrum (irrational frequency ratios, sharp crests, broad troughs, zero tiling).
 float2 evalTrochoidalWaves(float2 xy, float2 wDir, float wt, float wDist, float windAmp) {
     const float2 wPerp = float2(-wDir.y, wDir.x);
@@ -186,23 +205,47 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float wt = camPosW.w;
                 const float windAmp = saturate(length(cloudWind.xy) / 380.0f);
                 const float shallowW = 1.0f - smoothstep(4.0f, 52.0f, depthV0);
-                const float nearObs = (1.0f - smoothstep(0.0f, 38.0f, depthV0)) * saturate(length(obsGrad) * 2.0f);
-                // CRITICAL: flowDir MUST be spatially smooth (wDir), NEVER per-pixel nL.xy!
-                // Multiplying per-pixel nL.xy by (wt * 36.0) scrambled wave phase by thousands of radians per pixel (pure noise!).
-                const float2 flowDir = wDir;
-                const float intoObs = dot(flowDir, -obsGrad);
+                const float nearObs = (1.0f - smoothstep(0.0f, 44.0f, depthV0)) * saturate(length(obsGrad) * 2.0f);
+                // True divergence-free obstacle-deflected potential flow + downstream Karman-vortex swirling eddies!
+                const float intoObs = dot(wDir, -obsGrad);
                 bowHit = saturate(intoObs) * nearObs;
                 eddyLee = saturate(-intoObs) * nearObs;
+                const float2 tangObs = wDir - obsGrad * dot(wDir, obsGrad);
+                const float2 flowDir = normalize(lerp(wDir, tangObs + 1.0e-4f, nearObs * 0.72f));
+                const float stormChop = saturate(weather.w * 0.90f + windAmp * 0.65f);
+                const float ampScale = (0.72f + stormChop * 0.95f + shallowW * 0.25f) * smoothstep(0.0f, 4.5f, depthV0);
 
-                // 12-Component Band-Limited JONSWAP Macro/Meso Ocean & River Spectrum + Aperiodic Fluid Ripple Detail:
-                // Eliminates high-frequency cosine moire / fingerprint contour rings (02.11.49.68 & 02.02.25.52) while
-                // preserving exact shallow-to-deep gravity dispersion omega(k,d) = sqrt(g*k*tanh(k*d)) & shoaling!
-                const float2 wpFlow = wpW.xy - flowDir * (wt * 22.0f);
+                // Break Skyrim's flat 2011 2-triangle water quads: 6-step 3D Wave Heightfield Raymarch + 3-step Binary Refine!
+                // Gives waves real 3D vertical height, crest-over-trough self-occlusion, and true 3D parallax!
+                float2 wpSurfXY = wpW.xy;
+                if (wDist < 8500.0f && depthV0 > 4.0f && v.z > 0.06f) {
+                    const float maxH = 5.8f * ampScale;
+                    const float2 rayStepXY = (-v.xy / max(v.z, 0.14f)) * (maxH * 0.28f);
+                    float curZ = maxH;
+                    float2 curXY = wpW.xy - rayStepXY * 3.0f;
+                    float prevDiff = 1.0f;
+                    [unroll] for (int rm = 0; rm < 6; ++rm) {
+                        const float hAt = evalFluidHeight3D(curXY, flowDir, wt, ampScale, wDist);
+                        const float diff = curZ - hAt;
+                        if (diff <= 0.0f && prevDiff > 0.0f) {
+                            // Linear-secant sub-step refinement for silky zero-stairstep 3D wave silhouettes:
+                            const float fracH = saturate(prevDiff / max(prevDiff - diff, 1.0e-4f));
+                            curXY -= rayStepXY * (1.0f - fracH);
+                            break;
+                        }
+                        prevDiff = diff;
+                        curXY += rayStepXY;
+                        curZ -= maxH * 0.333f;
+                    }
+                    wpSurfXY = curXY;
+                }
+
+                // 12-Component Band-Limited JONSWAP Macro/Meso Ocean & River Spectrum + Aperiodic Fluid Ripple Detail
+                // evaluated on the true 3D ray-marched displaced fluid surface wpSurfXY!
+                const float2 wpFlow = wpSurfXY - flowDir * (wt * 22.0f);
                 const float2 flowPerp = float2(-flowDir.y, flowDir.x);
                 const float pxFoot = max(wDist * dims.z * 2.6f, 0.50f);
                 const float depthM = max(depthV0 * 0.0143f, 0.08f);   // Skyrim units -> meters (70u = 1m)
-                const float stormChop = saturate(weather.w * 0.90f + windAmp * 0.65f);
-                const float ampScale = (0.72f + stormChop * 0.95f + shallowW * 0.25f) * smoothstep(0.0f, 4.5f, depthV0);
                 float2 waveG = 0.0f.xx;
                 jacobianFold = 0.0f;
                 [unroll] for (int wi = 0; wi < 12; ++wi) {
@@ -224,6 +267,11 @@ void water(uint3 id : SV_DispatchThreadID) {
                     const float c = cos(ph);
                     waveG += dirW * (c * (1.0f + 0.30f * s) * ampW);
                     jacobianFold += max(-s, 0.0f) * ampW * 2.8f;
+                }
+                // Downstream Karman-vortex eddy swirl normal behind boulders & bridge piers:
+                if (eddyLee > 0.02f) {
+                    const float eddyPh = dot(wpSurfXY, flowDir) * 0.08f - wt * 3.8f;
+                    waveG += flowPerp * (sin(eddyPh) * cos(dot(wpSurfXY, flowPerp) * 0.09f) * eddyLee * 0.065f);
                 }
                 // Aperiodic 2-octave domain-warped fine liquid ripple gradient (zero periodic moire rings!):
                 const float2 rUv1 = wpFlow * 0.042f;

@@ -23,16 +23,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // World XY coordinate of this simulation cell (centered on camera):
     const float2 worldXY = camPosW.xy + (uv - 0.5f.xx) * kGridSpan;
 
-    // Sample previous frame's PDE state using 9-point isotropic Laplacian stencil (zero axis bias):
-    const float4 c0 = PrevField.SampleLevel(Lin, uv, 0.0f);
-    const float hL  = PrevField.SampleLevel(Lin, uv + float2(-invRes.x, 0.0f), 0.0f).r;
-    const float hR  = PrevField.SampleLevel(Lin, uv + float2( invRes.x, 0.0f), 0.0f).r;
-    const float hD  = PrevField.SampleLevel(Lin, uv + float2(0.0f, -invRes.y), 0.0f).r;
-    const float hU  = PrevField.SampleLevel(Lin, uv + float2(0.0f,  invRes.y), 0.0f).r;
-    const float hDL = PrevField.SampleLevel(Lin, uv + float2(-invRes.x, -invRes.y), 0.0f).r;
-    const float hDR = PrevField.SampleLevel(Lin, uv + float2( invRes.x, -invRes.y), 0.0f).r;
-    const float hUL = PrevField.SampleLevel(Lin, uv + float2(-invRes.x,  invRes.y), 0.0f).r;
-    const float hUR = PrevField.SampleLevel(Lin, uv + float2( invRes.x,  invRes.y), 0.0f).r;
+    // Semi-Lagrangian downstream advection along live wind/river current so ripples & wake foam flow organically!
+    const float2 advUv = clamp(uv - normalize(cloudWind.xy + float2(1.0f, 0.35f)) * (0.35f * invRes), invRes, 1.0f.xx - invRes);
+    const float4 c0 = PrevField.SampleLevel(Lin, advUv, 0.0f);
+    const float hL  = PrevField.SampleLevel(Lin, advUv + float2(-invRes.x, 0.0f), 0.0f).r;
+    const float hR  = PrevField.SampleLevel(Lin, advUv + float2( invRes.x, 0.0f), 0.0f).r;
+    const float hD  = PrevField.SampleLevel(Lin, advUv + float2(0.0f, -invRes.y), 0.0f).r;
+    const float hU  = PrevField.SampleLevel(Lin, advUv + float2(0.0f,  invRes.y), 0.0f).r;
+    const float hDL = PrevField.SampleLevel(Lin, advUv + float2(-invRes.x, -invRes.y), 0.0f).r;
+    const float hDR = PrevField.SampleLevel(Lin, advUv + float2( invRes.x, -invRes.y), 0.0f).r;
+    const float hUL = PrevField.SampleLevel(Lin, advUv + float2(-invRes.x,  invRes.y), 0.0f).r;
+    const float hUR = PrevField.SampleLevel(Lin, advUv + float2( invRes.x,  invRes.y), 0.0f).r;
 
     const float lapH = (hL + hR + hD + hU) * 0.20f + (hDL + hDR + hUL + hUR) * 0.05f - c0.r;
 

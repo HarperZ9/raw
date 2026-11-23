@@ -14,6 +14,8 @@
 #include "rt_emitters.h"
 #include "rt_view.h"
 
+extern "C" uint64_t RAW_EngineView(raw::rt::EngineView* out);
+
 namespace raw::rt {
 namespace {
 
@@ -256,6 +258,42 @@ void Append(const std::string& line) {
     if (f) { std::fprintf(f, "%s\n", line.c_str()); std::fclose(f); }
 }
 
+void SyncCellLights(Snapshot* s) {
+    EngineView ev{};
+    RAW_EngineView(&ev);
+    if (!ev.ok || !s->interior || ev.cellFormId == 0) {
+        g_cellLights.clear();
+        g_cachedCellId = ev.cellFormId;
+        return;
+    }
+    if (ev.cellFormId != g_cachedCellId) {
+        g_cellLights.clear();
+        g_cachedCellId = ev.cellFormId;
+    }
+    for (const auto& L : s->lights) {
+        if (L.flags & 4) continue;
+        bool updated = false;
+        for (auto& c : g_cellLights) {
+            const float dx = c.pos[0] - L.pos[0], dy = c.pos[1] - L.pos[1], dz = c.pos[2] - L.pos[2];
+            if (dx * dx + dy * dy + dz * dz < 28.0f * 28.0f) { c = L; updated = true; break; }
+        }
+        if (!updated && g_cellLights.size() < kMaxLights) g_cellLights.push_back(L);
+    }
+    for (const auto& c : g_cellLights) {
+        if (s->lights.size() >= kMaxLights) break;
+        bool present = false;
+        for (const auto& L : s->lights) {
+            if (L.flags & 4) continue;
+            const float dx = c.pos[0] - L.pos[0], dy = c.pos[1] - L.pos[1], dz = c.pos[2] - L.pos[2];
+            if (dx * dx + dy * dy + dz * dz < 28.0f * 28.0f) { present = true; break; }
+        }
+        if (!present) {
+            s->lights.push_back(c);
+            s->names.emplace_back("cell_cached");
+        }
+    }
+}
+
 }  // namespace
 
 void LiveStateInit(const Image& img, const std::string& outDir, bool exportEmitters) {
@@ -273,7 +311,10 @@ void LiveStateOnPresent() {
     ViewOnPresent();
     EmittersOnPresent();
     s.ok = Read(&s);
-    if (s.ok && g_exportEmitters) AddEmitters(&s);
+    if (s.ok) {
+        SyncCellLights(&s);
+        if (g_exportEmitters) AddEmitters(&s);
+    }
     s.frame = g_frame;
     if (g_every && g_frame % g_every == 0) Append(Json(s, false));
     std::lock_guard<std::mutex> g(g_m);

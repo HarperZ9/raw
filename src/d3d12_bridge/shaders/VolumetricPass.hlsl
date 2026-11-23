@@ -78,8 +78,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float dayG = clamp(lerp(tune.y, max(tune.y, 0.72f), saturate(1.0f - max(aElevV, 0.0f) * 2.5f)), 0.15f, 0.84f);
         const float dynG = lerp(dayG, 0.76f, nightW);
         const float cosT = dot(w, beamDirV);
-        // Dual-lobe Henyey-Greenstein: strong forward Mie sunbeams + gentle back-scatter so fog scatters at all view angles.
-        const float ph = min(0.74f * phaseHG(cosT, dynG) + 0.26f * phaseHG(cosT, -0.22f), 3.6f);
+        // Dual-lobe Henyey-Greenstein: smooth forward Mie sunbeams + gentle back-scatter (clamped to prevent over-bright sunray blowout).
+        const float ph = min(0.68f * phaseHG(cosT, dynG) + 0.32f * phaseHG(cosT, -0.18f), 2.5f);
+        const float twilightGate = lerp(smoothstep(-0.02f, 0.09f, aElevV), 1.0f, nightW);
         // 16 quadratic-clustered temporally-reprojected depth slices (effective ~96-step smoothness alongside 64-slice 3D FroxelPass).
         const uint kSteps = 16u;
         float sumSun = 0.0f, sumSky = 0.0f, cs = 1.0f;
@@ -110,7 +111,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 hSkyV = volSkyAt(float3(w.xy, max(w.z, 0.01f)));
         const float3 unifiedSky = lerp(skyGrad, hSkyV, (1.0f - nightW) * (1.0f - saturate(clouds.x * 0.70f)) * 0.55f);
         const float3 shaftCol = lerp(lerp(physSunV, unifiedSky, 0.22f), max(sH, float3(0.18f, 0.26f, 0.42f)), nightW * 0.72f);
-        scatter += shaftCol * (sigma * ph * sumSun * tune2.z * shaftBoost * 0.95f);
+        scatter += shaftCol * (sigma * ph * sumSun * tune2.z * shaftBoost * 0.88f * twilightGate);
         // Gentle isotropic sky multi-scattering inside volumetric mist (strictly bounded to prevent whiteout).
         scatter += unifiedSky * (sigma * sumSky * 0.016f * (1.0f - nightW * 0.65f));
     }

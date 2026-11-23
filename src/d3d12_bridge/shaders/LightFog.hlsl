@@ -154,13 +154,34 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
                 fullSky = lerp(fullSky, physSky, max(dayW, twilightBell * 0.92f));
             }
-            // Seamless C2 sub-horizon worldbound atmospheric continuation (eliminates any dark world-edge wall).
+            // Infinite Distant Horizon Ocean Plane (Horizon Fix replacement, COMPETITIVE-2026.md):
+            // Beyond Skyrim's map grid edge (sDir.z < 0 on sky pixels), analytically intersect sea level with
+            // Fresnel sky reflection, rippling sun/moon glitter path, and C2 aerial-perspective horizon melt.
             if (sDir.z < 0.0f) {
-                const float subFade = smoothstep(0.0f, -0.24f, sDir.z);
-                fullSky = lerp(fullSky, fullSky * 0.88f, subFade);
+                const float seaElev = max((eyeAt().z + camPosW.z) - waterA.w, 120.0f);
+                const float tSea = min(seaElev / max(-sDir.z, 0.002f), 260000.0f);
+                const float2 seaP = (camPosW.xy + sDir.xy * tSea) * 0.00045f;
+                const float w1 = cNoise(float3(seaP * 2.2f + cloudWind.xy * camPosW.w * 0.0008f, camPosW.w * 0.12f)) * 2.0f - 1.0f;
+                const float w2 = cNoise(float3(seaP * 5.6f - cloudWind.yx * camPosW.w * 0.0014f, camPosW.w * 0.21f)) * 2.0f - 1.0f;
+                const float3 seaN = normalize(float3((w1 * 0.035f + w2 * 0.020f), (w2 * 0.035f - w1 * 0.020f), 1.0f));
+                const float ndv = saturate(dot(seaN, -sDir));
+                const float fres = 0.02f + 0.98f * pow(1.0f - ndv, 5.0f);
+                const float3 reflDir = reflect(sDir, seaN);
+                float3 ocZ, ocM, ocH;
+                skyPalette(ocZ, ocM, ocH);
+                const float3 seaSky = lerp(ocH, ocM, smoothstep(0.0f, 0.35f, max(reflDir.z, 0.0f)));
+                const float3 deepSea = lerp(float3(0.008f, 0.024f, 0.044f), float3(0.014f, 0.048f, 0.072f), dayW) * (0.28f + 0.72f * dayW);
+                const float3 glDir = normalize(lerp(aSun, sunDir.xyz, smoothstep(0.04f, -0.06f, aElev)));
+                const float3 glH = normalize(glDir - sDir);
+                const float glint = pow(saturate(dot(seaN, glH)), 140.0f) * (1.0f - cover * 0.75f);
+                const float3 glintCol = lerp(float3(1.15f, 0.88f, 0.62f), float3(0.45f, 0.62f, 0.95f), smoothstep(0.04f, -0.06f, aElev));
+                const float3 oceanCol = lerp(deepSea, seaSky, fres) + glintCol * (glint * 0.85f);
+                const float hazeSea = exp(-tSea * 0.000018f);
+                const float subFade = smoothstep(-0.001f, -0.048f, sDir.z);
+                fullSky = lerp(fullSky, lerp(fullSky, oceanCol, hazeSea), subFade);
             }
-            // Night sky celestial layer: subtle oxygen-557nm horizon airglow + dual-scale scintillating starfield +
-            // Milky Way + 8-layer Nordic Aurora Borealis, strictly BEHIND 3D volumetric clouds (cl.a)!
+            // Night sky celestial layer: subtle oxygen-557nm horizon airglow + dual-scale crisp procedural starfield
+            // (magnitude 1-3 Planck stars + dense faint-magnitude deep field, zero DXT1) + Milky Way + dual-curtain Nordic Auroras!
             const float nightSkyW = saturate(1.0f - dayW * 1.35f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
             if (nightSkyW > 0.02f && sDir.z > 0.0f) {
                 // Faint upper-atmosphere nocturnal airglow limb just above the horizon (Commons Cluster B astrophotography).
@@ -169,17 +190,27 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float3 sc1 = floor(sDir * 290.0f);
                 const float3 sf1 = frac(sDir * 290.0f) - 0.5f;
                 const float h1 = cHash(sc1);
-                if (h1 > 0.955f) {
+                if (h1 > 0.952f) {
                     const float3 off1 = float3(cHash(sc1 + 11.3f), cHash(sc1 + 27.1f), cHash(sc1 + 43.7f)) - 0.5f;
                     const float d1 = length(sf1 - off1 * 0.52f);
-                    const float core1 = exp(-d1 * d1 * 48.0f) * smoothstep(0.955f, 0.998f, h1);
+                    const float core1 = exp(-d1 * d1 * 58.0f) * smoothstep(0.952f, 0.998f, h1);
                     // Altitude-dependent atmospheric scintillation (stronger twinkling near horizon air mass) + Planck O/B/A/G/K/M star colors.
                     const float scintAmp = lerp(0.42f, 0.14f, saturate(sDir.z * 2.5f));
                     const float twk1 = (1.0f - scintAmp) + scintAmp * sin(camPosW.w * (2.6f + h1 * 5.8f) + h1 * 62.8f);
                     const float spT = cHash(sc1 + 71.9f);
                     const float3 col1 = spT < 0.35f ? lerp(float3(0.62f, 0.78f, 1.0f), float3(0.94f, 0.96f, 1.0f), spT / 0.35f)
                                                     : lerp(float3(0.94f, 0.96f, 1.0f), float3(1.0f, 0.72f, 0.44f), (spT - 0.35f) / 0.65f);
-                    fullSky += col1 * (core1 * twk1 * nightSkyW * saturate(sDir.z * 5.0f) * 1.55f);
+                    fullSky += col1 * (core1 * twk1 * nightSkyW * saturate(sDir.z * 5.0f) * 1.65f);
+                }
+                // Second high-density faint-magnitude pinpoint starfield (replaces blurry 512px DXT1 sky stars at 1080p/4K/8K):
+                const float3 sc2 = floor(sDir * 620.0f);
+                const float3 sf2 = frac(sDir * 620.0f) - 0.5f;
+                const float h2 = cHash(sc2 + 19.7f);
+                if (h2 > 0.945f) {
+                    const float3 off2 = float3(cHash(sc2 + 5.1f), cHash(sc2 + 33.7f), cHash(sc2 + 61.3f)) - 0.5f;
+                    const float d2 = length(sf2 - off2 * 0.48f);
+                    const float core2 = exp(-d2 * d2 * 78.0f) * smoothstep(0.945f, 0.999f, h2);
+                    fullSky += float3(0.84f, 0.90f, 1.0f) * (core2 * nightSkyW * saturate(sDir.z * 4.5f) * 0.62f);
                 }
                 // Multi-band physical Galactic Nebula + H-alpha/O-III emission filaments + dark molecular Bok dust lanes:
                 const float mwPlane = abs(dot(sDir, normalize(float3(0.52f, -0.36f, 0.77f))));
@@ -195,22 +226,26 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                                         + float3(0.06f, 0.22f, 0.26f) * (oIII * 0.45f);
                     fullSky += nebCol * (mwBand * (1.0f - darkRift * 0.68f) * nightSkyW * 0.72f);
                 }
-                const float auroraVis = nightSkyW * (1.0f - saturate(clouds.x * 1.05f)) * smoothstep(0.06f, 0.32f, sDir.z) * smoothstep(-0.25f, 0.45f, sDir.y);
+                // Dual-Curtain Analytic 10-Layer Volumetric Nordic Aurora Borealis (557.7nm O-I green -> 427.8nm N2+ blue -> 630nm O-I crimson):
+                const float auroraVis = nightSkyW * (1.0f - saturate(clouds.x * 1.05f)) * smoothstep(0.05f, 0.28f, sDir.z) * smoothstep(-0.35f, 0.35f, sDir.y);
                 if (auroraVis > 0.02f) {
                     float3 aurSum = 0.0f.xxx;
-                    [unroll] for (int ai = 0; ai < 8; ai++) {
-                        const float ah = 0.18f + float(ai) * 0.11f;
-                        const float2 ap = sDir.xy / max(sDir.z, 0.12f) * (1.35f + ah * 0.65f);
-                        const float wave = sin(ap.x * 2.1f + camPosW.w * 0.075f + cNoise(float3(ap * 1.25f, camPosW.w * 0.035f)) * 3.4f);
-                        const float band = exp(-abs(ap.y - 0.62f - wave * 0.44f) * 5.0f);
-                        const float rays = 0.50f + 0.50f * cNoise(float3(ap.x * 9.0f, ap.y * 2.2f, camPosW.w * 0.11f + ah * 2.4f));
-                        const float hT = saturate((ah - 0.18f) * 1.25f);
-                        const float3 aCol = hT < 0.65f
-                            ? lerp(float3(0.08f, 0.98f, 0.56f), float3(0.28f, 0.48f, 0.96f), hT / 0.65f)
-                            : lerp(float3(0.28f, 0.48f, 0.96f), float3(0.78f, 0.18f, 0.54f), (hT - 0.65f) / 0.35f);
-                        aurSum += aCol * (band * rays * (1.0f - ah * 0.55f));
+                    [unroll] for (int ai = 0; ai < 10; ai++) {
+                        const float ah = 0.14f + float(ai) * 0.095f;
+                        const float2 ap = sDir.xy / max(sDir.z, 0.12f) * (1.30f + ah * 0.68f);
+                        const float nWarp = cNoise(float3(ap * 1.15f, camPosW.w * 0.032f));
+                        const float wave1 = sin(ap.x * 2.0f + camPosW.w * 0.072f + nWarp * 3.6f);
+                        const float band1 = exp(-abs(ap.y - 0.58f - wave1 * 0.46f) * 5.2f);
+                        const float wave2 = sin(ap.x * 1.45f - camPosW.w * 0.054f + nWarp * 2.8f + 1.9f);
+                        const float band2 = exp(-abs(ap.y - 1.12f - wave2 * 0.38f) * 4.4f) * 0.65f;
+                        const float rays = 0.42f + 0.58f * cNoise(float3(ap.x * 11.5f, ap.y * 2.0f, camPosW.w * 0.12f + ah * 2.6f));
+                        const float hT = saturate((ah - 0.14f) * 1.18f);
+                        const float3 aCol = hT < 0.58f
+                            ? lerp(float3(0.06f, 0.98f, 0.54f), float3(0.22f, 0.54f, 0.96f), hT / 0.58f)
+                            : lerp(float3(0.22f, 0.54f, 0.96f), float3(0.84f, 0.16f, 0.52f), (hT - 0.58f) / 0.42f);
+                        aurSum += aCol * ((band1 + band2) * rays * (1.0f - ah * 0.52f));
                     }
-                    fullSky += aurSum * (auroraVis * 0.11f);
+                    fullSky += aurSum * (auroraVis * 0.115f);
                 }
             }
             // Preserve Masser & Secunda twin moons cleanly on top of our procedural night/twilight sky.
@@ -223,26 +258,28 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float4 cl = Clouds.SampleLevel(Lin, skyUv, 0.0f);
                 // Clouds naturally occlude the solar disc via exact transmittance cl.a.
                 baseSky = lerp(baseSky, baseSky * cl.a + cl.rgb, 1.0f - isExotic);
-                // Physical 3D Crepuscular Cloud-Gap Light Rays (6-tap radial transmittance march toward live sun):
-                // beams fan organically out of breaks in the 3D cumulus deck at sunrise, sunset & broken-cloud days!
-                if (sunDiscGate > 0.05f && cover > 0.14f) {
+                // Physical 3D Crepuscular Cloud-Gap Light Rays (12-tap IGN-jittered radial transmittance march toward live sun):
+                // smooth band-free sunrays fanning out of cumulus breaks with soft off-screen sun fade!
+                if (sunDiscGate > 0.04f && cover > 0.12f) {
                     const float4 sunSc = screenOf(eyeAt() + aSun * 50000.0f);
                     if (sunSc.w > 10.0f) {
                         const float2 sunUv = sunSc.xy * dims.zw;
                         const float2 toSunUv = sunUv - skyUv;
                         const float uvDist = length(toSunUv);
-                        if (uvDist < 0.65f) {
-                            const float2 stepUv = toSunUv * (1.0f / 7.0f);
+                        if (uvDist < 1.10f) {
+                            const float2 stepUv = toSunUv * (1.0f / 13.0f);
+                            const float rayJit = ign(px);
                             float rayAcc = 0.0f;
                             float decay = 1.0f;
-                            [unroll] for (int ri = 1; ri <= 6; ++ri) {
-                                const float2 rUv = saturate(skyUv + stepUv * float(ri));
+                            [unroll] for (int ri = 1; ri <= 12; ++ri) {
+                                const float2 rUv = saturate(skyUv + stepUv * (float(ri) - 0.5f + rayJit * 0.65f));
                                 rayAcc += Clouds.SampleLevel(Lin, rUv, 0.0f).a * decay;
-                                decay *= 0.82f;
+                                decay *= 0.88f;
                             }
-                            const float rayW = (rayAcc / 4.2f) * (1.0f - cl.a * 0.55f) * smoothstep(0.65f, 0.05f, uvDist) * pow(saturate(cosS), 3.0f);
-                            const float3 rayCol = lerp(float3(1.0f, 0.94f, 0.84f), float3(1.25f, 0.56f, 0.24f), lowS);
-                            baseSky += rayCol * (rayW * sunDiscGate * saturate(cover * 1.4f) * 0.22f * (1.0f - isExotic));
+                            const float offFade = smoothstep(1.10f, 0.18f, uvDist);
+                            const float rayW = (rayAcc / 6.8f) * (1.0f - cl.a * 0.52f) * offFade * pow(saturate(cosS), 2.4f);
+                            const float3 rayCol = lerp(float3(1.0f, 0.95f, 0.86f), float3(1.28f, 0.58f, 0.24f), lowS);
+                            baseSky += rayCol * (rayW * sunDiscGate * saturate(cover * 1.45f) * 0.26f * (1.0f - isExotic));
                         }
                     }
                 }

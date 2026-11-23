@@ -159,15 +159,19 @@ void water(uint3 id : SV_DispatchThreadID) {
     const float zSurfW = (L.x < 1.0f && L.x > 0.0f) ? viewZOf(L.x) : 1.0e9f;
     const float zBedW  = (dBed < 1.0f && dBed > 0.0f) ? viewZOf(dBed) : 1.0e9f;
     const float waterCompDiff = hasPreWater ? length(game.rgb - PreWater[id.xy].rgb) : 1.0f;
-    const bool gameDrewWater = !hasPreWater || (waterCompDiff > 0.0025f);
-    // Soft 0.25u shoreline depth threshold & sloped aqueduct support (nL.z > 0.35 eliminates hard aqueduct water seam!).
-    const bool isWaterPx = (L.a > 1.5f && L.x < 1.0f && zSurfW > 0.5f && zSurfW < zBedW - max(zSurfW * 0.004f, 0.25f) && nL.z > 0.35f && gameDrewWater);
+    // Never let clear shallow water disappear when its color matches the riverbed: trust L.a > 1.5f + depth separation!
+    const bool gameDrewWater = !hasPreWater || (waterCompDiff > 0.0004f) || (zSurfW < zBedW - 2.0f);
+    // Soft 0.25u shoreline depth threshold & sloped aqueduct support (nL.z > 0.25 eliminates camera-angle water drop-out!).
+    const bool isWaterPx = (L.a > 1.5f && L.x < 1.0f && zSurfW > 0.5f && zSurfW < zBedW - max(zSurfW * 0.004f, 0.25f) && nL.z > 0.25f && gameDrewWater);
     // SM6.9 Wave-coherent early exit: non-water waves exit immediately with zero RayQuery divergence.
     if (!WaveActiveAnyTrue(isWaterPx)) { WaterOut[id.xy] = float4(col, game.a); return; }
     if (isWaterPx) {
         const float2 px = float2(id.xy);
         const float3 p = worldAt(px, L.x);
-        if (p.z < 0.0f) {   // the surface is below the camera: seen from above
+        const float3 eyeW = eyeAt();
+        // True front-face / above-water test against actual eyeAt().z (fixes water disappearing when standing below
+        // a sloped river, waterfall, canal, or in 3rd-person where p.z >= 0.0f!):
+        if (p.z < eyeW.z + 6.0f || dot(nL, normalize(eyeW - p)) > 0.02f) {
             // Feature 13: 100% Independent DX12 Fluid Physics (disconnected from Skyrim's 2011 nL water normal map):
             // Pure multi-directional Gerstner/trochoidal + curl-advected obstacle-deflected fluid wave simulation.
             const float3 v = normalize(eyeAt() - p);

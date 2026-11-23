@@ -139,6 +139,8 @@ void RtSkin::ReadStats(uint32_t slot)
 {
     const std::vector<Meta>& meta = m_meta[slot];
     if (meta.empty()) return;
+    if (!m_log || !m_logEvery || ++m_checkFrames < m_logEvery) return;
+    m_checkFrames = 0;
     void* p = nullptr;
     const D3D12_RANGE r{0, size_t(meta.size()) * kStatWords * 4};
     if (FAILED(m_statsRead[slot]->Map(0, &r, &p)) || !p) return;
@@ -148,8 +150,7 @@ void RtSkin::ReadStats(uint32_t slot)
         tris += s[k * kStatWords]; range += s[k * kStatWords + 1]; stretched += s[k * kStatWords + 2]; floating += s[k * kStatWords + 38];
     }
     m_stretched = stretched; m_floating = floating;
-    if (m_log && m_logEvery && ++m_checkFrames >= m_logEvery) {
-        m_checkFrames = 0;
+    if (true) {
         m_log("[RT] skin check: %zu draws, %llu triangles, %llu stretched (edge over %.1fx its bind length and %.0f units; RtSkinCull=%d), "
               "%llu with an index past the vertex count; %llu floating in front of the game's depth", meta.size(), (unsigned long long)tris,
               (unsigned long long)stretched, m_ratio, m_minUnits, int(m_filter), (unsigned long long)range, (unsigned long long)floating);

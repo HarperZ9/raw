@@ -104,8 +104,23 @@ inline bool FindTable(const std::string& dir, const Exe& exe, Table* out, std::s
     std::snprintf(id, sizeof id, "SkyrimSE.exe %s (time stamp 0x%08X, image 0x%X)", exe.Version().c_str(), exe.timestamp,
                   exe.sizeOfImage);
     std::string seen;
-    WIN32_FIND_DATAA fd;
     const std::string d = dir.empty() || dir.back() == '\\' || dir.back() == '/' ? dir : dir + "\\";
+    // Direct-path lookup FIRST (100% immune to MO2 USVFS FindFirstFileA enumeration quirks on virtualized folders!):
+    {
+        char shortVer[48];
+        std::snprintf(shortVer, sizeof shortVer, "%u.%u.%u", exe.major, exe.minor, exe.build);
+        const std::string cands[2] = { "skyrimse-" + exe.Version() + ".tsv", std::string("skyrimse-") + shortVer + ".tsv" };
+        for (const std::string& fn : cands) {
+            Table t;
+            if (!ReadTable(d + fn, &t)) continue;
+            if (t.version == exe.Version() && t.timestamp == exe.timestamp && t.sizeOfImage == exe.sizeOfImage) {
+                if (why) *why = std::string(id) + ": table " + fn + ", " + std::to_string(t.entries.size()) + " entries";
+                *out = std::move(t);
+                return true;
+            }
+        }
+    }
+    WIN32_FIND_DATAA fd;
     HANDLE f = FindFirstFileA((d + "*.tsv").c_str(), &fd);
     if (f != INVALID_HANDLE_VALUE) {
         do {

@@ -122,7 +122,17 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         const float htLum = max(dot(hTrans, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
         const float3 physSun = lerp(lerp(sunColour.rgb, hTrans * (max(sunLum, 0.10f) / htLum), 0.58f), float3(0.32f, 0.46f, 0.80f) * 0.85f, nightW);
         const float3 hSky = froxelSkyAt(float3(farDir.xy, max(farDir.z, 0.01f)));
-        inScat += physSun * (sh * ph * tune2.z * lerp(0.55f, 0.95f, nightW));
+        // RDR2-grade suspended 3D golden dust motes & alpine diamond-dust ice crystals catching direct sunlit beams:
+        float moteBoost = 1.0f;
+        if (zMid < 1800.0f && sh > 0.25f) {
+            const float3 mCoord = wp * 0.075f - float3(cloudWind.xy * camPosW.w * 0.002f, camPosW.w * 0.35f);
+            const float mCell = cHash(floor(mCoord));
+            if (mCell > 0.965f) {
+                const float mCore = exp(-dot(frac(mCoord) - 0.5f, frac(mCoord) - 0.5f) * 28.0f);
+                moteBoost += mCore * (1.0f - zMid / 1800.0f) * (weather.z > 0.15f ? 3.2f : 1.8f);
+            }
+        }
+        inScat += physSun * (sh * ph * tune2.z * lerp(0.55f, 0.95f, nightW) * moteBoost);
         inScat += hSky * (0.014f * (0.4f + 0.6f * cs) * (1.0f - nightW * 0.65f));
     }
     // Clustered local lights in 3D froxel space (hearths, torches, braziers, 3D window portal lights, spells).

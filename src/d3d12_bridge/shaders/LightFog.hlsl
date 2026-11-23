@@ -95,44 +95,94 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // Preserve exotic DLC skies (Apocrypha emerald, Soul Cairn violet, Solstheim ash).
             const float isExotic = saturate(max((lit.g - max(lit.r, lit.b) * 1.08f) * 6.0f,
                                                 (min(lit.r, lit.b) - lit.g * 1.15f) * 6.0f));
-            float3 baseSky = lit.rgb;
-            if (dayW > 0.02f) {
+            const float cosS = saturate(dot(sDir, sunDir.xyz));
+            const float sunAng = acos(clamp(cosS, -1.0f, 1.0f));
+            const float lowS = saturate(1.0f - sunDir.z * 2.6f);
+            // Preserve authored Masser & Secunda moon crater textures across twilight and night.
+            const float moonLumF = dot(lit.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+            const float moonKeep = smoothstep(0.16f, 0.48f, moonLumF) * (1.0f - smoothstep(0.985f, 0.996f, cosS)) * (1.0f - smoothstep(0.18f, 0.42f, sunDir.z));
+            // 100% Full 24-Hour Dynamic Skybox Replacement (Day, Sunset/Sunrise Belt-of-Venus, Night Indigo + Stars + Milky Way + Auroras):
+            const float hUp = saturate(sDir.z);
+            const float3 nightZen = float3(0.006f, 0.012f, 0.028f);
+            const float3 nightHor = float3(0.024f, 0.038f, 0.068f);
+            float3 fullSky = lerp(nightHor, nightZen, pow(hUp, 0.58f));
+            if (dayW > 0.01f) {
                 const float3 hSky = sampleHillaireSky(float3(sDir.xy, max(sDir.z, 0.002f)));
-                // Blend Hillaire clear-sky radiative transfer with overcast atmospheric scatter when cloud cover rises.
                 const float hLum = max(dot(hSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
-                const float3 overcastSky = lerp(float3(0.44f, 0.50f, 0.60f), float3(0.24f, 0.30f, 0.38f), saturate(sDir.z)) * max(hLum * 0.95f, 0.26f);
+                const float3 overcastSky = lerp(float3(0.44f, 0.50f, 0.60f), float3(0.24f, 0.30f, 0.38f), hUp) * max(hLum * 0.95f, 0.26f);
                 float3 physSky = lerp(hSky, overcastSky, saturate(cover * 0.65f - 0.20f + weather.w * 0.45f));
-                // Seamless C2 sub-horizon atmospheric continuation (eliminates the sharp dark horizon wall behind Whiterun).
-                if (sDir.z < 0.0f) {
-                    const float subFade = smoothstep(0.0f, -0.22f, sDir.z);
-                    physSky = lerp(physSky, physSky * 0.82f, subFade);
-                }
-                // Blazing physical exponential HDR solar core + radiating atmospheric Mie aureole (zero flat sticker circle).
-                const float cosS = saturate(dot(sDir, sunDir.xyz));
-                const float sunAng = acos(clamp(cosS, -1.0f, 1.0f));
-                const float lowS = saturate(1.0f - sunDir.z * 2.6f);
-                const float3 sunCoreCol = lerp(float3(1.0f, 0.99f, 0.96f), float3(1.0f, 0.72f, 0.38f), lowS);
-                const float3 sunHaloCol = lerp(float3(1.0f, 0.94f, 0.84f), float3(1.0f, 0.52f, 0.18f), lowS);
+                // Golden-hour sunrise/sunset solar glow + opposite-horizon Belt of Venus (rose-magenta -> cobalt zenith).
+                const float twilightW = lowS * (1.0f - cover * 0.65f);
+                const float antiSolar = saturate(dot(sDir, -sunDir.xyz));
+                const float horBand = exp(-hUp * 7.5f);
+                physSky += float3(0.96f, 0.42f, 0.16f) * (pow(cosS, 4.0f) * horBand * twilightW * 0.52f);
+                physSky += float3(0.46f, 0.24f, 0.44f) * (pow(antiSolar, 2.0f) * horBand * twilightW * 0.28f);
+                // Blazing physical exponential HDR solar core + radiating atmospheric Mie aureole.
+                const float3 sunCoreCol = lerp(float3(1.0f, 0.99f, 0.96f), float3(1.0f, 0.70f, 0.34f), lowS);
+                const float3 sunHaloCol = lerp(float3(1.0f, 0.94f, 0.84f), float3(1.0f, 0.50f, 0.16f), lowS);
                 const float solarCore = exp(-sunAng * 135.0f) * 16.0f + smoothstep(0.99962f, 0.99990f, cosS) * 8.0f;
                 const float solarCorona = exp(-sunAng * 22.0f) * 1.65f + exp(-sunAng * 5.5f) * 0.28f;
                 physSky += sunCoreCol * solarCore + sunHaloCol * (solarCorona * (1.0f - cover * 0.55f));
-                // Preserve Masser & Secunda moon crater textures during twilight instead of overwriting with flat sky.
-                const float moonLumF = dot(baseSky, float3(0.2126f, 0.7152f, 0.0722f));
-                const float moonKeep = smoothstep(0.18f, 0.52f, moonLumF) * (1.0f - smoothstep(0.985f, 0.996f, cosS)) * (1.0f - smoothstep(0.22f, 0.45f, sunDir.z));
-                baseSky = lerp(baseSky, physSky, dayW * (1.0f - isExotic) * (1.0f - moonKeep * 0.85f) * 0.94f);
+                fullSky = lerp(fullSky, physSky, dayW);
+            }
+            // Seamless C2 sub-horizon worldbound atmospheric continuation (eliminates any dark world-edge wall).
+            if (sDir.z < 0.0f) {
+                const float subFade = smoothstep(0.0f, -0.24f, sDir.z);
+                fullSky = lerp(fullSky, fullSky * 0.88f, subFade);
+            }
+            // Night sky celestial layer: dual-scale scintillating starfield + Milky Way + 10-layer Nordic Aurora Borealis,
+            // composited strictly BEHIND 3D volumetric clouds (cl.a) so clouds naturally occlude stars & auroras!
+            const float nightSkyW = saturate(1.0f - dayW * 1.35f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+            if (nightSkyW > 0.02f && sDir.z > 0.0f) {
+                const float3 sc1 = floor(sDir * 290.0f);
+                const float3 sf1 = frac(sDir * 290.0f) - 0.5f;
+                const float h1 = cHash(sc1);
+                if (h1 > 0.955f) {
+                    const float3 off1 = float3(cHash(sc1 + 11.3f), cHash(sc1 + 27.1f), cHash(sc1 + 43.7f)) - 0.5f;
+                    const float d1 = length(sf1 - off1 * 0.52f);
+                    const float core1 = exp(-d1 * d1 * 48.0f) * smoothstep(0.955f, 0.998f, h1);
+                    const float twk1 = 0.76f + 0.24f * sin(camPosW.w * (2.4f + h1 * 5.2f) + h1 * 62.8f);
+                    const float3 col1 = lerp(float3(0.70f, 0.84f, 1.0f), float3(1.0f, 0.85f, 0.64f), cHash(sc1 + 71.9f));
+                    fullSky += col1 * (core1 * twk1 * nightSkyW * saturate(sDir.z * 5.0f) * 1.45f);
+                }
+                const float mwPlane = abs(dot(sDir, normalize(float3(0.52f, -0.36f, 0.77f))));
+                const float mwBand = exp(-mwPlane * mwPlane * 20.0f) * smoothstep(0.05f, 0.28f, sDir.z);
+                if (mwBand > 0.01f) {
+                    const float mwDust = cNoise(sDir * 6.5f) * 0.65f + cNoise(sDir * 15.0f + 4.3f) * 0.35f;
+                    const float mwLane = smoothstep(0.30f, 0.78f, mwDust);
+                    fullSky += lerp(float3(0.04f, 0.06f, 0.13f), float3(0.14f, 0.12f, 0.20f), mwLane) * (mwBand * mwLane * nightSkyW * 0.55f);
+                }
+                const float auroraVis = nightSkyW * (1.0f - saturate(clouds.x * 1.05f)) * smoothstep(0.06f, 0.32f, sDir.z) * smoothstep(-0.25f, 0.45f, sDir.y);
+                if (auroraVis > 0.02f) {
+                    float3 aurSum = 0.0f.xxx;
+                    [unroll] for (int ai = 0; ai < 8; ai++) {
+                        const float ah = 0.18f + float(ai) * 0.11f;
+                        const float2 ap = sDir.xy / max(sDir.z, 0.12f) * (1.35f + ah * 0.65f);
+                        const float wave = sin(ap.x * 2.1f + camPosW.w * 0.075f + cNoise(float3(ap * 1.25f, camPosW.w * 0.035f)) * 3.4f);
+                        const float band = exp(-abs(ap.y - 0.62f - wave * 0.44f) * 5.0f);
+                        const float rays = 0.50f + 0.50f * cNoise(float3(ap.x * 9.0f, ap.y * 2.2f, camPosW.w * 0.11f + ah * 2.4f));
+                        const float hT = saturate((ah - 0.18f) * 1.25f);
+                        const float3 aCol = hT < 0.65f
+                            ? lerp(float3(0.08f, 0.98f, 0.56f), float3(0.28f, 0.48f, 0.96f), hT / 0.65f)
+                            : lerp(float3(0.28f, 0.48f, 0.96f), float3(0.78f, 0.18f, 0.54f), (hT - 0.65f) / 0.35f);
+                        aurSum += aCol * (band * rays * (1.0f - ah * 0.55f));
+                    }
+                    fullSky += aurSum * (auroraVis * 0.11f);
+                }
+            }
+            // Preserve Masser & Secunda twin moons cleanly on top of our procedural night/twilight sky.
+            float3 baseSky = lerp(lit.rgb, fullSky, (1.0f - isExotic) * (1.0f - moonKeep * 0.90f));
+            if (moonKeep > 0.05f && nightSkyW > 0.05f) {
+                baseSky += lit.rgb * float3(0.88f, 0.96f, 1.15f) * (moonKeep * nightSkyW * 0.22f);
             }
             if ((flags.x & FLAG_CLOUDS) != 0u) {
                 const float4 cl = Clouds.SampleLevel(Lin, (px + 0.5f) * dims.zw, 0.0f);
                 baseSky = lerp(baseSky, baseSky * cl.a + cl.rgb, 1.0f - isExotic);
                 // Forward-scattered blazing solar core + warm Mie silver-lining blooming cleanly through cloud gaps.
                 if (dayW > 0.05f && sDir.z > 0.01f) {
-                    const float cosS2 = saturate(dot(sDir, sunDir.xyz));
-                    const float ang2 = acos(clamp(cosS2, -1.0f, 1.0f));
-                    const float lowS2 = saturate(1.0f - sunDir.z * 2.6f);
-                    const float3 coreC2 = lerp(float3(1.0f, 0.99f, 0.96f), float3(1.0f, 0.72f, 0.38f), lowS2);
                     const float thru = lerp(0.28f, 1.0f, cl.a);
-                    const float blaze = (exp(-ang2 * 130.0f) * 12.0f + exp(-ang2 * 24.0f) * 1.25f) * thru;
-                    baseSky += coreC2 * (blaze * dayW * (1.0f - isExotic));
+                    const float blaze = (exp(-sunAng * 130.0f) * 12.0f + exp(-sunAng * 24.0f) * 1.25f) * thru;
+                    baseSky += lerp(float3(1.0f, 0.99f, 0.96f), float3(1.0f, 0.70f, 0.34f), lowS) * (blaze * dayW * (1.0f - isExotic));
                 }
             }
             return float4(baseSky, lit.a);

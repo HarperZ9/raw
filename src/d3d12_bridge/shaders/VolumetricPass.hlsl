@@ -81,8 +81,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Dual-lobe Henyey-Greenstein: smooth forward Mie sunbeams + gentle back-scatter (clamped to prevent over-bright sunray blowout).
         const float ph = min(0.68f * phaseHG(cosT, dynG) + 0.32f * phaseHG(cosT, -0.18f), 2.5f);
         const float twilightGate = lerp(smoothstep(-0.02f, 0.09f, aElevV), 1.0f, nightW);
-        // 16 quadratic-clustered temporally-reprojected depth slices (effective ~96-step smoothness alongside 64-slice 3D FroxelPass).
-        const uint kSteps = 16u;
+        // Overdrive 24 quadratic-clustered temporally-reprojected depth slices (effective ~144-step smoothness alongside 64-slice 3D FroxelPass).
+        const uint kSteps = 24u;
         float sumSun = 0.0f, sumSky = 0.0f, cs = 1.0f;
         float tPrev = 0.0f;
         [loop] for (uint i = 0u; i < kSteps; i++) {

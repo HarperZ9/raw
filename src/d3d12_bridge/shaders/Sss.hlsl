@@ -37,8 +37,9 @@ void main(uint3 id : SV_DispatchThreadID) {
     const float turn = ign(float2(p)) * 6.2831853f;
     float3 sum = c.rgb, wsum = 1.0f.xxx;
     float thinEdgeCount = 0.0f;
-    [unroll] for (uint i = 0u; i < 16u; i++) {
-        const float r = sqrt((float(i) + 0.5f) / 16.0f) * rMax;
+    // Overdrive 32-tap Golden-Angle Biophysical Epidermal/Dermal SSS (silky zero-noise portrait scattering):
+    [unroll] for (uint i = 0u; i < 32u; i++) {
+        const float r = sqrt((float(i) + 0.5f) / 32.0f) * rMax;
         const float a = float(i) * 2.3999632f + turn;
         const int2 q = clamp(p + int2(round(float2(cos(a), sin(a)) * r)), int2(0, 0), int2(dims.xy) - 1);
         const float dq = Depth.Load(int3(q, 0));
@@ -56,7 +57,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     // arXiv:2606.29387 (Alpay & Basaran 2026) Optical Thickness Laws for Thin Geometry SSS:
     // Estimate local optical thickness tau = T / l_d from boundary proximity (ears, nostrils, lips, fingers):
     //   reflectance deficit = C * exp(-2 * tau), single-pass transmitted flux = exp(-tau).
-    const float thinFrac = saturate((thinEdgeCount - 3.0f) / 11.0f);
+    const float thinFrac = saturate((thinEdgeCount - 6.0f) / 22.0f);
     const float localThick = lerp(3.6f * width, 0.45f * width, thinFrac);
     const float3 tau = localThick / max(sigmaW, 0.05f.xxx);
     const float3 reflDeficit = exp(-2.0f * tau);

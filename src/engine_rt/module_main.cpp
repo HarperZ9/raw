@@ -91,6 +91,17 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     GetPrivateProfileStringA("EngineRT", "OutDir", "raw_engine_out", outName, MAX_PATH, (g_dir + "d3d11_proxy.ini").c_str());
     g_out = g_dir + outName;
     CreateDirectoryA(g_out.c_str(), nullptr);
+    // Fix Skyrim SE's infamous 512-handle False Save Corruption Bug ("The save game is corrupt and cannot be loaded"):
+    // raise ucrtbase.dll + local CRT _setmaxstdio from 512 to 8192 so BGSSaveLoadManager never exhausts stdio handles.
+    int maxStdioHost = _setmaxstdio(8192);
+    if (HMODULE ucrt = GetModuleHandleA("ucrtbase.dll")) {
+        using SetMaxStdioFn = int(__cdecl*)(int);
+        if (auto fn = reinterpret_cast<SetMaxStdioFn>(GetProcAddress(ucrt, "_setmaxstdio"))) {
+            const int r = fn(8192);
+            if (r > 0) maxStdioHost = r;
+        }
+    }
+    Log("save-fix: raised CRT _setmaxstdio limit to %d (prevents 512-handle false save corruption)", maxStdioHost);
     if (!g_img.Load()) { Log("image: no code section or no .pdata"); return; }
     Log("image: text 0x%X-0x%X, %zu pdata functions", g_img.textBegin, g_img.textEnd, g_img.funcs.size());
     std::string why;

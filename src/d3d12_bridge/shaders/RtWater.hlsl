@@ -199,19 +199,19 @@ void water(uint3 id : SV_DispatchThreadID) {
                     float2( 0.94f,  0.34f), float2( 0.82f, -0.57f), float2( 0.52f,  0.85f), float2(-0.28f,  0.96f),
                     float2( 0.74f,  0.67f), float2( 0.61f, -0.79f), float2(-0.46f, -0.89f), float2( 0.98f, -0.19f)
                 };
-                static const float kWFreq[8]  = { 0.022f, 0.036f, 0.058f, 0.092f, 0.148f, 0.235f, 0.370f, 0.580f };
-                static const float kWSpeed[8] = { 1.45f,  1.95f,  2.55f,  3.25f,  4.10f,  5.10f,  6.20f,  7.40f  };
-                static const float kWAmp[8]   = { 0.052f, 0.044f, 0.036f, 0.028f, 0.021f, 0.015f, 0.010f, 0.006f };
-                const float ampScale = (0.75f + windAmp * 0.65f + shallowW * 0.25f) * smoothstep(0.0f, 5.0f, depthV0);
+                static const float kWFreq[8]  = { 0.032f, 0.054f, 0.088f, 0.140f, 0.220f, 0.340f, 0.520f, 0.780f };
+                static const float kWSpeed[8] = { 2.60f,  3.40f,  4.30f,  5.30f,  6.50f,  7.80f,  9.20f, 10.80f  };
+                static const float kWAmp[8]   = { 0.165f, 0.135f, 0.105f, 0.082f, 0.062f, 0.044f, 0.030f, 0.018f };
+                const float ampScale = (0.85f + windAmp * 0.65f + shallowW * 0.30f) * smoothstep(0.0f, 4.0f, depthV0);
                 float2 waveG = 0.0f.xx;
                 [unroll] for (int wi = 0; wi < 8; ++wi) {
                     const float2 dirW = normalize(flowDir * kWDir[wi].x + flowPerp * kWDir[wi].y);
                     const float ph = dot(wpW.xy, dirW) * kWFreq[wi] - wt * kWSpeed[wi];
-                    const float distAtt = saturate(1.0f - wDist / (14000.0f / (1.0f + float(wi) * 0.95f)));
-                    // Steepened trochoidal crest derivative: sharp wave peaks, broad smooth troughs.
+                    const float distAtt = saturate(1.0f - wDist / (16000.0f / (1.0f + float(wi) * 0.85f)));
+                    // Steepened trochoidal crest derivative: sharp travelling wave crests, smooth sunlit troughs.
                     const float s = sin(ph);
                     const float c = cos(ph);
-                    waveG += dirW * (c * (1.0f + 0.35f * s) * kWAmp[wi] * ampScale * distAtt);
+                    waveG += dirW * (c * (1.0f + 0.42f * s) * kWAmp[wi] * ampScale * distAtt);
                 }
                 const float2 bowNormal = obsGrad * (bowHit * (0.12f + 0.07f * sin(depthV0 * 0.35f - wt * 3.8f)));
                 n = normalize(n + float3(waveG + bowNormal, 0.0f));
@@ -243,8 +243,8 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
             const float3 o = p + float3(0.0f, 0.0f, 2.5f + 0.003f * length(p));
 
-            // Crisp recognizable mirror reflections of trees, sawmill, bridges & mountains (not scrambled into noise soup).
-            const float reflRelief = lerp(0.46f, 0.30f, saturate(wDist / 8500.0f));
+            // Crisp recognizable mirror reflections with visibly moving wave facets (0.68 -> 0.42).
+            const float reflRelief = lerp(0.68f, 0.42f, saturate(wDist / 8500.0f));
             const float3 nRefl = normalize(lerp(float3(0.0f, 0.0f, 1.0f), n, reflRelief));
             float3 rd = reflect(-v, nRefl);
             if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }

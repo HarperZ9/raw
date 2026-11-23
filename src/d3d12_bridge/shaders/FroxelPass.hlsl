@@ -52,7 +52,14 @@ float3 froxelSkyAt(float3 rd) {
     const float az = atan2(rd.y, rd.x);
     const float elev = asin(clamp(rd.z, -1.0f, 1.0f));
     const float vNonLin = 0.5f + 0.5f * (elev >= 0.0f ? sqrt(elev / (0.5f * PI)) : -sqrt(-elev / (0.5f * PI)));
-    return AtmoSkyView.SampleLevel(Lin, float2(az / (2.0f * PI) + 0.5f, saturate(vNonLin)), 0.0f).rgb;
+    const float3 c0 = AtmoSkyView.SampleLevel(Lin, float2(az / (2.0f * PI) + 0.5f, saturate(vNonLin)), 0.0f).rgb;
+    const float poleW = smoothstep(0.94f, 0.995f, rd.z);
+    if (poleW > 0.001f) {
+        const float3 zAvg = (AtmoSkyView.SampleLevel(Lin, float2(0.25f, 0.99f), 0.0f).rgb +
+                             AtmoSkyView.SampleLevel(Lin, float2(0.75f, 0.99f), 0.0f).rgb) * 0.5f;
+        return lerp(c0, zAvg, poleW);
+    }
+    return c0;
 }
 
 float froxelHG(float cosT, float g) {

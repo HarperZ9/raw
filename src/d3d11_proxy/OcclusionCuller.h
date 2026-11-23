@@ -93,7 +93,7 @@ private:
     float EstimateBoundingRadius(uint32_t indexCount, float scale) const;
 
     bool m_initialized = false;
-    bool m_enabled     = true;   // Exact NiAVObject::worldBound frustum + sub-pixel culling (zero pivot heuristics)
+    bool m_enabled     = false;  // Disabled: distant LOD / multi-bound terrain chunks use cell-local bounds that can drop quadrants when flying
     bool m_hizReady    = false;
     float m_exactBound[4] = {};
     bool  m_hasExactBound = false;

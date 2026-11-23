@@ -194,24 +194,11 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"uMaxSkinDecalsPerActor:Decals", "60"},
         {"iMaxDecalsPerFrame:Display", "100"},
         {"iMaxSkinDecalsPerFrame:Display", "25"},
-        // Full multithreaded engine subsystems (AI, meshes, LOD, textures, blood, Havok workers).
-        {"bUseThreadedAI:General", "1"},
-        {"bUseThreadedMeshes:General", "1"},
-        {"bUseThreadedLOD:General", "1"},
-        {"bUseThreadedTextures:General", "1"},
-        {"bUseThreadedBlood:General", "1"},
-        {"iNumThreads:Havok", "8"},
-        {"fSplitDistanceMult:TerrainManager", "1.5"},
-        {"fBlockLevel0Distance:TerrainManager", "45000.0"},
-        {"fBlockLevel1Distance:TerrainManager", "90000.0"},
+        // NOTE: Do NOT force bUseThreadedLOD / bUseThreadedMeshes / bUseThreadedTextures / bUseThreadedAI
+        // or runtime TerrainManager fBlockLevel0Distance/fSplitDistanceMult overrides — in Creation Engine they
+        // race the LOD quadtree and drop entire distant terrain quadrants (caught in r231_vid_2.jpg).
         {"bShadowsOnGrass:Display", "1"},
-        {"iMaxGrassTypesPerTexure:Grass", "15"},
-        {"iMaxDecalsPerFrame:Display", "256"},
-        {"uMaxDecals:Decals", "1000"},
         {"fDecalLifetime:Display", "900.0"},
-        {"iMaxSkinDecalsPerFrame:Display", "64"},
-        {"uMaxSkinDecals:Decals", "256"},
-        {"uMaxSkinDecalPerActor:Decals", "32"},
         // Binary-level Havok physics, 120Hz sub-stepped solver, anti-clutter-explosion & realistic ragdoll/IK overhaul:
         {"fTimePerSubStep:HAVOK", "0.0083333"},
         {"iMinNumSubSteps:HAVOK", "2"},

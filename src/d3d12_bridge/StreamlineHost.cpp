@@ -434,17 +434,16 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
     sl::Resource rAlb(sl::ResourceType::eTex2d, albedo, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     sl::Resource rNrm(sl::ResourceType::eTex2d, useRR ? a.normalRough.Get() : normal, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     sl::Resource rSpec(sl::ResourceType::eTex2d, spec, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    sl::ResourceTag tags[8] = {
+    sl::ResourceTag tags[7] = {
         {&rIn,    sl::kBufferTypeScalingInputColor,  sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
         {&rOut,   sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
         {&rDepth, sl::kBufferTypeDepth,              sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
         {&rMvec,  sl::kBufferTypeMotionVectors,      sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
         {&rAlb,   sl::kBufferTypeAlbedo,             sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
         {&rSpec,  sl::kBufferTypeSpecularAlbedo,     sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
-        {&rNrm,   sl::kBufferTypeNormals,            sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
-        {&rNrm,   sl::kBufferTypeRoughness,          sl::ResourceLifecycle::eValidUntilEvaluate, &ext}
+        {&rNrm,   sl::kBufferTypeNormalRoughness,    sl::ResourceLifecycle::eValidUntilEvaluate, &ext}
     };
-    a.setTagForFrame(*tok, vp, tags, useRR ? 8u : 4u, a.cl.Get());
+    a.setTagForFrame(*tok, vp, tags, useRR ? 7u : 4u, a.cl.Get());
 
     const sl::BaseStructure* inputs[] = {&vp};
     const sl::Feature feat = useRR ? sl::kFeatureDLSS_RR : sl::kFeatureDLSS;

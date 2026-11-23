@@ -964,21 +964,6 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float snowWrap = saturate((dot(s.n, sunDir.xyz) + 0.35f) / 1.35f);
         lit += sunColour.rgb * float3(0.18f, 0.34f, 0.46f) * (snowWrap * wet.snow * (0.35f + 0.65f * sunShadow) * 0.22f);
     }
-    // GTA-VI-inspired Above-Surface Reflected Water Caustics (@otariebambelle):
-    // Sunlit water reflects shimmering dancing caustic light patterns upward onto bridge undersides, dock pilings & overhangs.
-    if (!match && isExterior && sunDir.w > 0.5f && sunDir.z > 0.08f && !skin && base != 5u && z < 2600.0f && s.n.z < 0.35f) {
-        const float3 wpC = p + camPosW.xyz;
-        const float underFace = saturate((0.35f - s.n.z) * 2.2f);
-        const float clearC = 1.0f - saturate(clouds.x * 0.78f);
-        const float tC = camPosW.w * 0.85f;
-        const float c1 = cNoise(float3(wpC.xy * 0.022f + float2(tC * 0.35f, -tC * 0.22f), wpC.z * 0.015f + tC * 0.25f));
-        const float c2 = cNoise(float3(wpC.xy * 0.037f - float2(tC * 0.28f, tC * 0.41f), wpC.z * 0.018f - tC * 0.20f));
-        const float causNet = pow(saturate(1.0f - abs(c1 - c2) * 5.5f), 4.0f);
-        const float distC = saturate(1.0f - z / 2600.0f);
-        // Only activate where bounce light already carries cool aquatic/sky undertone (near rivers, bridges & docks).
-        const float nearWaterCue = saturate((bounce.b - bounce.r * 0.75f) * 3.5f + saturate(-s.n.z) * 0.45f);
-        lit += albedo * sunColour.rgb * float3(0.68f, 0.94f, 1.12f) * (causNet * underFace * clearC * distC * nearWaterCue * 0.34f);
-    }
     // True Interior Window-Lighting & HDR Window Bloom Driver (coupled to exterior time-of-day timeEnv.xy):
     // bright interior windows (GlowMapped base==3 or high-emissive vertical glass) radiate physical HDR sunlight by day
     // and cool moonlight by night, directly feeding BloomPass.hlsl (glow/bloom) & LightFog.hlsl (volumetric window shafts).

@@ -581,6 +581,30 @@ bool Render(const std::string& text, UINT maxW, bool isMenu, std::vector<uint8_t
                 FillRect(dc, &pill, offPillBr);
                 SetTextColor(dc, RGB(148, 160, 178));
                 TextOutA(dc, LONG(w) - 56, y0, "OFF", 3);
+            } else {
+                // Draw a sleek 110px horizontal progress slider bar on numeric/percentage rows:
+                const size_t colPos = lines[i].rfind(": ");
+                if (colPos != std::string::npos && colPos + 2 < lines[i].size()) {
+                    char* endP = nullptr;
+                    const float val = std::strtof(lines[i].c_str() + colPos + 2, &endP);
+                    if (endP != lines[i].c_str() + colPos + 2) {
+                        const bool isPct = (*endP == '%');
+                        const float norm = isPct ? std::clamp(val / 100.0f, 0.0f, 1.0f)
+                                         : (val < 0.0f ? std::clamp((val + 2.0f) / 4.0f, 0.0f, 1.0f)
+                                                       : (val <= 2.5f ? std::clamp(val / 2.5f, 0.0f, 1.0f)
+                                                                      : (val <= 30.0f ? std::clamp(val / 30.0f, 0.0f, 1.0f)
+                                                                                      : std::clamp(val / 10000.0f, 0.0f, 1.0f))));
+                        const LONG sx0 = LONG(w) - 128, sx1 = LONG(w) - 14;
+                        const LONG sy = y0 + (lineH / 2) - 3;
+                        RECT trk{sx0, sy, sx1, sy + 5};
+                        FillRect(dc, &trk, offPillBr);
+                        const LONG fillX = sx0 + LONG((sx1 - sx0) * norm);
+                        RECT fl{sx0, sy, std::max(sx0 + 2, fillX), sy + 5};
+                        FillRect(dc, &fl, isSel ? selBarBr : onPillBr);
+                        RECT knob{std::clamp(fillX - 2, sx0, sx1 - 4), sy - 2, std::clamp(fillX + 2, sx0 + 4, sx1), sy + 7};
+                        FillRect(dc, &knob, selBarBr);
+                    }
+                }
             }
         }
         SelectObject(dc, (isMenu && i == 0) ? hdrFont : font);

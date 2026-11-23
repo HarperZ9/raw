@@ -627,6 +627,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             s.alpha = clamp(lerp(min(s.alpha + 0.20f, 0.96f), max(s.alpha - 0.12f, 0.10f), pomOcc), 0.08f, 0.96f);
         }
     }
+    // 2027 Geometric Curvature Cavity AO & Convex Edge-Wear Micro-Detail Synthesis (upgrades 2011 low-poly meshes & normals):
+    // Darkens recessed stone/timber/armor crevices via analytic normal divergence and lifts crisp metallic/stone bevels.
+    if (!match && (base == 1u || base == 2u || base == 4u) && z < 2400.0f) {
+        const float3 dpx = ddx(p), dpy = ddy(p);
+        const float3 dnxC = ddx(s.n), dnyC = ddy(s.n);
+        const float pxScale = max(length(dpx) + length(dpy), 0.25f);
+        const float curv = clamp((dot(dnxC, dpx) + dot(dnyC, dpy)) / max(pxScale * pxScale * 0.25f, 0.15f), -1.0f, 1.0f);
+        const float curvFade = saturate(1.0f - z / 2400.0f);
+        const float cavity = saturate(-curv * 0.85f) * curvFade;
+        const float bevel  = saturate(curv * 0.65f) * curvFade * (base == 2u ? 1.0f : 0.45f);
+        albedo *= (1.0f - cavity * 0.24f + bevel * 0.07f);
+        s.alpha = clamp(s.alpha + cavity * 0.10f - bevel * 0.08f, 0.06f, 0.96f);
+    }
     // Physical Decal Grounding & Surface Micro-Contrast (wet blood gloss, scorch/char matte roughness, contact grounding):
     if (!match && (base == 1u || base == 4u) && z < 1800.0f) {
         const float bloodMask = saturate((albedo.r - max(albedo.g, albedo.b) * 1.85f) * 6.0f) * smoothstep(0.06f, 0.22f, albedo.r) * (1.0f - smoothstep(0.38f, 0.55f, albedo.r));

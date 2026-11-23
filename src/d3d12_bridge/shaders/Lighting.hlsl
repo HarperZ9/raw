@@ -26,6 +26,7 @@ Texture2D<float4> RtVis   : register(t9);    // RtShadow.hlsl: sun and three lig
 Texture2D<float4> RtBounce : register(t11);  // RtSky.cpp + GiAtrousPass: 3-pass 25-tap SVGF indirect bounce
 Texture2D<float4> RtRefl   : register(t12);  // RtShadow.hlsl + RtReflFilter: temporal GGX VNDF RT reflection
 Texture2D<float4> EnvCube  : register(t13);  // EnvCubePass.hlsl: live 256x256 dual-band prefiltered dynamic cubemap
+Texture2D<float4> WorldField : register(t14); // WorldFieldSim.hlsl: 512x512 RGBA16F persistent PDE grid (unlocked by kMaxRasterBindings=60!)
 SamplerState      Lin      : register(s0);
 Texture2D<float4> RtIdx   : register(t10);   // which lights, index + 1 over 255
 
@@ -314,6 +315,24 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 albedo = lerp(albedo, float3(0.14f, 0.12f, 0.10f), meltMask * natSnowMelt * 0.78f);
                 albedo = lerp(albedo, float3(0.44f, 0.54f, 0.64f), slushRing * natSnowMelt * 0.45f);
                 s.alpha = lerp(s.alpha, 0.15f, max(meltMask, slushRing) * max(natSnowMelt, wet.snow) * 0.75f);
+            }
+        }
+        // Persistent 512x512 GPU PDE WorldField snowpack depth, post-rain puddle persistence + carved trench normal relief (t14 via 60-binding RHI!):
+        if ((base == 4u || base == 1u) && z < 1000.0f && s.n.z > 0.42f) {
+            const float2 simUv = saturate(p.xy / 2048.0f + 0.5f.xx);
+            if (all(simUv > 0.02f) && all(simUv < 0.98f)) {
+                const float4 wf = WorldField.SampleLevel(Lin, simUv, 0.0f);
+                const float simSnow = wf.a;
+                const float simWet = wf.b;
+                const float sL = WorldField.SampleLevel(Lin, simUv + float2(-1.0f / 512.0f, 0.0f), 0.0f).a;
+                const float sR = WorldField.SampleLevel(Lin, simUv + float2( 1.0f / 512.0f, 0.0f), 0.0f).a;
+                const float sD = WorldField.SampleLevel(Lin, simUv + float2(0.0f, -1.0f / 512.0f), 0.0f).a;
+                const float sU = WorldField.SampleLevel(Lin, simUv + float2(0.0f,  1.0f / 512.0f), 0.0f).a;
+                if (base == 4u) {
+                    wet.snow = max(wet.snow, simSnow * saturate((s.n.z - 0.42f) * 2.5f));
+                    s.n = normalize(s.n + float3((sL - sR) * 1.85f, (sD - sU) * 1.85f, 0.0f));
+                }
+                wet.wet = max(wet.wet, simWet * (1.0f - wet.snow) * 0.72f);
             }
         }
         // GEO-04 Dual-Frequency Tri-Planar Micro-Displacement Relief on close-range stone, ruins & terrain (< 1,200u):

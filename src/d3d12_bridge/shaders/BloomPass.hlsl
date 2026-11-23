@@ -14,53 +14,53 @@ SamplerState      Lin  : register(s0);
 
 static const float3 kLuma = float3(0.2126f, 0.7152f, 0.0722f);
 
-float karisW(float3 c) {
-    return 1.0f / (1.0f + max(dot(c, kLuma), 0.0f));
+float16_t karisW(float16_t3 c) {
+    return float16_t(1.0h) / (float16_t(1.0h) + max(dot(c, float16_t3(kLuma)), float16_t(0.0h)));
 }
 
-float3 softThreshold(float3 c) {
-    const float br = max(c.r, max(c.g, c.b));
-    const float thresh = 0.85f;
-    const float knee = 0.55f;
-    float soft = clamp(br - thresh + knee, 0.0f, 2.0f * knee);
-    soft = (soft * soft) / max(4.0f * knee, 1.0e-5f);
-    const float contrib = max(soft, br - thresh) / max(br, 1.0e-4f);
-    // Cap extreme single-pixel specular spikes before entering the pyramid so fires/sun stay silky.
-    return min(c * saturate(contrib), 6.0f.xxx);
+float16_t3 softThreshold(float16_t3 c) {
+    const float16_t br = max(c.r, max(c.g, c.b));
+    const float16_t thresh = float16_t(0.85h);
+    const float16_t knee = float16_t(0.55h);
+    float16_t soft = clamp(br - thresh + knee, float16_t(0.0h), float16_t(2.0h) * knee);
+    soft = (soft * soft) / max(float16_t(4.0h) * knee, float16_t(1.0e-4h));
+    const float16_t contrib = max(soft, br - thresh) / max(br, float16_t(1.0e-4h));
+    // Native FP16 2x-throughput RTX 4090/5090 soft-knee HDR threshold & firefly clamp:
+    return min(c * saturate(contrib), float16_t3(6.0h, 6.0h, 6.0h));
 }
 
-// 13-tap Jimenez downsample pattern (eliminates pulsing & box artifacts across mip transitions).
+// 13-tap Jimenez downsample pattern in native 16-bit FP16 (2x ALU throughput & half VGPR pressure on RTX 4090/5090):
 float3 jimenez13(Texture2D<float4> tex, float2 uv, bool useKaris) {
     float w, h;
     tex.GetDimensions(w, h);
     const float2 dx = float2(1.0f / max(w, 1.0f), 0.0f);
     const float2 dy = float2(0.0f, 1.0f / max(h, 1.0f));
-    const float3 a = tex.SampleLevel(Lin, uv - 2.0f * dx + 2.0f * dy, 0.0f).rgb;
-    const float3 b = tex.SampleLevel(Lin, uv + 2.0f * dy, 0.0f).rgb;
-    const float3 c = tex.SampleLevel(Lin, uv + 2.0f * dx + 2.0f * dy, 0.0f).rgb;
-    const float3 d = tex.SampleLevel(Lin, uv - 2.0f * dx, 0.0f).rgb;
-    const float3 e = tex.SampleLevel(Lin, uv, 0.0f).rgb;
-    const float3 f = tex.SampleLevel(Lin, uv + 2.0f * dx, 0.0f).rgb;
-    const float3 g = tex.SampleLevel(Lin, uv - 2.0f * dx - 2.0f * dy, 0.0f).rgb;
-    const float3 hh = tex.SampleLevel(Lin, uv - 2.0f * dy, 0.0f).rgb;
-    const float3 ii = tex.SampleLevel(Lin, uv + 2.0f * dx - 2.0f * dy, 0.0f).rgb;
-    const float3 j = tex.SampleLevel(Lin, uv - dx + dy, 0.0f).rgb;
-    const float3 k = tex.SampleLevel(Lin, uv + dx + dy, 0.0f).rgb;
-    const float3 l = tex.SampleLevel(Lin, uv - dx - dy, 0.0f).rgb;
-    const float3 m = tex.SampleLevel(Lin, uv + dx - dy, 0.0f).rgb;
+    const float16_t3 a = float16_t3(tex.SampleLevel(Lin, uv - 2.0f * dx + 2.0f * dy, 0.0f).rgb);
+    const float16_t3 b = float16_t3(tex.SampleLevel(Lin, uv + 2.0f * dy, 0.0f).rgb);
+    const float16_t3 c = float16_t3(tex.SampleLevel(Lin, uv + 2.0f * dx + 2.0f * dy, 0.0f).rgb);
+    const float16_t3 d = float16_t3(tex.SampleLevel(Lin, uv - 2.0f * dx, 0.0f).rgb);
+    const float16_t3 e = float16_t3(tex.SampleLevel(Lin, uv, 0.0f).rgb);
+    const float16_t3 f = float16_t3(tex.SampleLevel(Lin, uv + 2.0f * dx, 0.0f).rgb);
+    const float16_t3 g = float16_t3(tex.SampleLevel(Lin, uv - 2.0f * dx - 2.0f * dy, 0.0f).rgb);
+    const float16_t3 hh = float16_t3(tex.SampleLevel(Lin, uv - 2.0f * dy, 0.0f).rgb);
+    const float16_t3 ii = float16_t3(tex.SampleLevel(Lin, uv + 2.0f * dx - 2.0f * dy, 0.0f).rgb);
+    const float16_t3 j = float16_t3(tex.SampleLevel(Lin, uv - dx + dy, 0.0f).rgb);
+    const float16_t3 k = float16_t3(tex.SampleLevel(Lin, uv + dx + dy, 0.0f).rgb);
+    const float16_t3 l = float16_t3(tex.SampleLevel(Lin, uv - dx - dy, 0.0f).rgb);
+    const float16_t3 m = float16_t3(tex.SampleLevel(Lin, uv + dx - dy, 0.0f).rgb);
 
     if (useKaris) {
-        const float3 g0 = softThreshold((j + k + l + m) * 0.25f);
-        const float3 g1 = softThreshold((a + b + d + e) * 0.25f);
-        const float3 g2 = softThreshold((b + c + e + f) * 0.25f);
-        const float3 g3 = softThreshold((d + e + g + hh) * 0.25f);
-        const float3 g4 = softThreshold((e + f + hh + ii) * 0.25f);
-        const float w0 = karisW(g0) * 0.50f;
-        const float w1 = karisW(g1) * 0.125f, w2 = karisW(g2) * 0.125f;
-        const float w3 = karisW(g3) * 0.125f, w4 = karisW(g4) * 0.125f;
-        return (g0 * w0 + g1 * w1 + g2 * w2 + g3 * w3 + g4 * w4) / max(w0 + w1 + w2 + w3 + w4, 1.0e-5f);
+        const float16_t3 g0 = softThreshold((j + k + l + m) * float16_t(0.25h));
+        const float16_t3 g1 = softThreshold((a + b + d + e) * float16_t(0.25h));
+        const float16_t3 g2 = softThreshold((b + c + e + f) * float16_t(0.25h));
+        const float16_t3 g3 = softThreshold((d + e + g + hh) * float16_t(0.25h));
+        const float16_t3 g4 = softThreshold((e + f + hh + ii) * float16_t(0.25h));
+        const float16_t w0 = karisW(g0) * float16_t(0.50h);
+        const float16_t w1 = karisW(g1) * float16_t(0.125h), w2 = karisW(g2) * float16_t(0.125h);
+        const float16_t w3 = karisW(g3) * float16_t(0.125h), w4 = karisW(g4) * float16_t(0.125h);
+        return float3((g0 * w0 + g1 * w1 + g2 * w2 + g3 * w3 + g4 * w4) / max(w0 + w1 + w2 + w3 + w4, float16_t(1.0e-4h)));
     }
-    return e * 0.125f + (a + c + g + ii) * 0.03125f + (b + d + f + hh) * 0.0625f + (j + k + l + m) * 0.125f;
+    return float3(e * float16_t(0.125h) + (a + c + g + ii) * float16_t(0.03125h) + (b + d + f + hh) * float16_t(0.0625h) + (j + k + l + m) * float16_t(0.125h));
 }
 
 float4 prefilter(float4 at : SV_Position) : SV_Target0 {

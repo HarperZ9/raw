@@ -97,13 +97,15 @@ float cloudDensityVol(float3 pa, bool detail) {
     // Vertical density gradient: lighter wisps at base, dense billowing core at mid-altitude, crisp crowns.
     dens *= lerp(0.55f, 1.15f, smoothstep(0.05f, 0.38f, h));
     if (detail && dens > 0.002f) {
-        // High-frequency 3D cauliflower turret erosion on cloud boundaries (infinite resolution, zero 64^3 blur).
-        const float3 r = float3((sheared.x + wind.x * 0.30f) / 6200.0f, (sheared.y + wind.y * 0.30f) / 6200.0f, (curvedZ - clouds.y) / 5200.0f);
-        const float d1 = cNoise(r);
-        const float d2 = cNoise(r * 2.19f + float3(5.3f, 17.1f, 9.7f));
-        const float d3 = cNoise(r * 4.61f + float3(19.9f, 3.7f, 21.3f));
-        const float detailFbm = d1 * 0.52f + d2 * 0.31f + d3 * 0.17f;
-        const float erode = detailFbm * lerp(0.32f, 0.54f, h) * (1.0f - dens * 0.50f);
+        // zydak1939 Path-Traced Cumulus Reference: 4-octave ridged-billow cauliflower turret erosion
+        // gives razor-sharp popcorn/cauliflower cumulus edges & delicate wisps instead of blurry cotton!
+        const float3 r = float3((sheared.x + wind.x * 0.30f) / 5600.0f, (sheared.y + wind.y * 0.30f) / 5600.0f, (curvedZ - clouds.y) / 4800.0f);
+        const float d1 = 1.0f - abs(cNoise(r) * 2.0f - 1.0f);
+        const float d2 = 1.0f - abs(cNoise(r * 2.23f + float3(5.3f, 17.1f, 9.7f)) * 2.0f - 1.0f);
+        const float d3 = cNoise(r * 4.71f + float3(19.9f, 3.7f, 21.3f));
+        const float d4 = cNoise(r * 9.53f + float3(11.1f, 29.3f, 7.9f));
+        const float detailFbm = d1 * 0.44f + d2 * 0.30f + d3 * 0.16f + d4 * 0.10f;
+        const float erode = (1.0f - detailFbm) * lerp(0.36f, 0.62f, h) * (1.0f - dens * 0.42f);
         dens = cRemap(dens, erode, 1.0f, 0.0f, 1.0f);
     }
     return dens * cloudWind.z;
@@ -180,22 +182,22 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             t += dt;
             float od = 0.0f;
             [unroll] for (uint k = 0u; k < 4u; k++) { od += cloudDensityVol(pa + cloudLightDir * kSunD[k], false) * kSunW[k]; }
-            // Wrenninge 2013 + Schneider Nubis Evolved 4-Octave Multiple-Scattering Energy Integral:
-            // strong forward-scattering silver lining (g1=0.82) lets sunlight visibly scatter THROUGH thin cloud edges
-            // while deep optical depth carves rich 3D self-shadowed cloud cores!
-            const float3 odRGB = od * (sigma * 0.52f) * float3(0.96f, 1.00f, 1.05f);
+            // 8-Octave Path-Traced-Matched Multiple-Scattering Integral (zydak1939 + CharlesGrassi + Wrenninge):
+            // Water droplets have albedo ~0.999: 8 geometric octaves (a=0.66, b=0.46, c=0.56) reproduce pure luminous
+            // white sunlit cumulus crowns alongside deep cool cerulean-slate self-shadowed hollows!
+            const float3 odRGB = od * (sigma * 0.58f) * float3(0.96f, 1.00f, 1.05f);
             float3 multiScat = 0.0f.xxx;
             float aOct = 1.0f, bOct = 1.0f, cOct = 1.0f;
-            [unroll] for (int oct = 0; oct < 4; oct++) {
-                const float phOct = lerp(hg(cosT, -0.28f * cOct), hg(cosT, 0.82f * cOct), 0.62f);
-                multiScat += exp(-odRGB * bOct) * (aOct * min(phOct, 0.85f));
-                aOct *= 0.58f; bOct *= 0.38f; cOct *= 0.50f;
+            [unroll] for (int oct = 0; oct < 8; oct++) {
+                const float phOct = lerp(hg(cosT, -0.30f * cOct), hg(cosT, 0.84f * cOct), 0.64f);
+                multiScat += exp(-odRGB * bOct) * (aOct * min(phOct, 0.90f));
+                aOct *= 0.66f; bOct *= 0.46f; cOct *= 0.56f;
             }
-            const float powder = 1.0f - exp(-od * sigma * 1.15f - dens * 0.55f);
+            const float powder = 1.0f - exp(-od * sigma * 1.45f - dens * 0.65f);
             const float h = saturate((pa.z - clouds.y) / clouds.z);
             const float stormW = saturate(weather.w * 1.25f + max(clouds.x - 0.72f, 0.0f) * 2.2f);
-            // Deep 3D ambient occlusion inside cloud bellies (0.24..1.00) instead of flat grey 0.62 fill!
-            const float cloudAo = lerp(lerp(0.32f, 0.18f, stormW), 1.00f, pow(h, 0.82f)) * exp(-dens * 0.22f);
+            // Deep 3D ambient occlusion inside cloud bellies (0.22..1.00) with cerulean-slate sky-scatter hollows (zydak1939)!
+            const float cloudAo = lerp(lerp(0.28f, 0.16f, stormW), 1.00f, pow(h, 0.85f)) * exp(-dens * 0.24f);
             const float lowSun = saturate(1.0f - max(aElev, 0.0f) * 3.4f) * (1.0f - nightW);
             const float overcastW = saturate((clouds.x - 0.50f) * 2.2f);
             float3 stormFlash = 0.0f.xxx;
@@ -209,16 +211,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     stormFlash = float3(0.65f, 0.82f, 1.25f) * (pulse * cellHit * dens * 1.8f * timeEnv.z);
                 }
             }
-            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(1.00f, 0.99f, 0.98f), 0.45f * (1.0f - lowSun) * (1.0f - nightW));
-            const float3 dayCoolBase = lerp(float3(0.34f, 0.46f, 0.68f), float3(0.46f, 0.52f, 0.60f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.18f) * cloudAo;
+            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(1.00f, 0.995f, 0.99f), 0.52f * (1.0f - lowSun) * (1.0f - nightW));
+            const float3 dayCoolBase = lerp(float3(0.28f, 0.42f, 0.68f), float3(0.42f, 0.48f, 0.58f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.16f) * cloudAo;
             const float3 nightCloudBase = float3(0.014f, 0.022f, 0.042f) * cloudAo;
             const float3 coolBase = lerp(dayCoolBase, nightCloudBase, nightW);
             const float3 underLit = float3(1.55f, 0.52f, 0.24f) * (twiCloud * (1.0f - h) * (0.40f + 0.60f * pow(saturate(dot(dir, aSun) * 0.5f + 0.5f), 2.0f)) * (1.0f - overcastW * 0.40f) * 0.82f);
             // Night lunar rim glow: clouds near the Moon (sunDir.xyz at night) transmit translucent silver-blue light!
             const float3 moonRim = float3(0.38f, 0.52f, 0.85f) * (nightW * hg(cosT, 0.76f) * exp(-od * sigma * 0.35f) * 0.65f);
-            const float3 rawLum = whiteSun * (multiScat * lerp(0.85f, powder, 0.72f) * 4.0f * PI * 0.38f) + coolBase + underLit + moonRim + stormFlash;
-            const float3 lum = select(rawLum > 0.95f.xxx, 0.95f.xxx + 1.85f * (1.0f.xxx - exp(-(rawLum - 0.95f.xxx) / 1.85f)), rawLum);
-            const float ext = dens * (sigma * 0.65f);
+            const float3 rawLum = whiteSun * (multiScat * lerp(0.80f, powder, 0.75f) * 4.0f * PI * 0.30f) + coolBase + underLit + moonRim + stormFlash;
+            const float3 lum = select(rawLum > 1.05f.xxx, 1.05f.xxx + 2.10f * (1.0f.xxx - exp(-(rawLum - 1.05f.xxx) / 2.10f)), rawLum);
+            const float ext = dens * (sigma * 1.15f);
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;

@@ -181,21 +181,22 @@ bool Read(Snapshot* s) {
                 if (x.flags & 4) continue;
                 x.flags |= 2;
                 if (x.flags & kLightFire) {
+                    // Silky, slow organic hearth breath (replaces harsh 11.7 rad/s 2011 flicker with 0.12 EMA + gentle +/-2.2% glow).
                     const float phase = (x.pos[0] * 0.017f + x.pos[1] * 0.013f + x.pos[2] * 0.029f);
-                    const float breath = float(std::sin(tSec * 5.2 + phase) * 0.032 + std::sin(tSec * 11.7 + phase * 1.9) * 0.016);
+                    const float breath = float(std::sin(tSec * 1.85 + phase) * 0.022);
                     for (const auto& prev : g_snap.lights) {
                         if ((prev.flags & 4) || !(prev.flags & kLightFire)) continue;
                         const float dx = x.pos[0] - prev.pos[0], dy = x.pos[1] - prev.pos[1], dz = x.pos[2] - prev.pos[2];
                         if (dx*dx + dy*dy + dz*dz < 24.0f * 24.0f) {
-                            for (int c = 0; c < 3; ++c) x.color[c] = prev.color[c] + (x.color[c] - prev.color[c]) * 0.24f;
+                            for (int c = 0; c < 3; ++c) x.color[c] = prev.color[c] + (x.color[c] - prev.color[c]) * 0.12f;
                             break;
                         }
                     }
                     // Organic blackbody tint shift + expanded 2027 reach on hearths/torches/candles directly from ShadowSceneNode.
                     x.radius = std::min(x.radius * 1.22f, 2400.0f);
                     x.color[0] *= (1.0f + breath * 0.85f);
-                    x.color[1] *= (1.0f + breath * 1.05f);
-                    x.color[2] *= (1.0f + breath * 1.30f);
+                    x.color[1] *= (1.0f + breath * 1.00f);
+                    x.color[2] *= (1.0f + breath * 1.15f);
                 }
             }
             // shadow casters are also in the active list: mark them there, add any that are not

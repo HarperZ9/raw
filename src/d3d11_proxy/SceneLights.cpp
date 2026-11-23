@@ -281,7 +281,9 @@ void AddEngineLights(SceneLighting& f)
         }
         if (f.lightCount >= raw::bridge::kMaxSceneLights) { ++f.droppedLights; continue; }
         SceneLight& l = f.lights[f.lightCount++];
-        for (int c = 0; c < 3; ++c) { l.position[c] = rel[c]; l.colour[c] = e[k].color[c]; }
+        // Match engine-only ShadowSceneNode lights to Skyrim's decoded BSLightingShader intensity scale
+        // (measured live in d3d11_proxy.log: decoded/engine ratio ~1.85x) so lights NEVER pop/flicker 2x on camera turns!
+        for (int c = 0; c < 3; ++c) { l.position[c] = rel[c]; l.colour[c] = e[k].color[c] * 1.85f; }
         l.radius = e[k].radius;
         l.shadowChannel = -1;
         l.draws = 0;   // from the engine's list: no lit draw carried it

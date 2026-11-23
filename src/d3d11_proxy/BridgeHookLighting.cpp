@@ -223,6 +223,7 @@ void LoadLightingConfig(const std::string& ini)
         tm.colorTempK = f("ColorTempK", tm.colorTempK); tm.oklabSat = f("OklabSat", tm.oklabSat);
         tm.shadowLift = f("ShadowLift", tm.shadowLift); tm.highlightKnee = f("HighlightKnee", tm.highlightKnee);
         Tonemap_Set(tm);
+        t.rawlss5 = i("Rawlss5", t.rawlss5 ? 1 : 0) != 0;
         t.dof = i("Dof", t.dof ? 1 : 0) != 0; t.dofMaxDist = f("DofMaxDist", t.dofMaxDist);
         t.dofRadius = f("DofRadius", t.dofRadius); t.dofOrbBoost = f("DofOrbBoost", t.dofOrbBoost);
         t.weatherLens = i("WeatherLens", t.weatherLens ? 1 : 0) != 0;

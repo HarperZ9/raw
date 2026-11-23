@@ -87,8 +87,9 @@ struct LightingTuning
     bool  rtReflect = true;         // glossy surfaces: one ray-traced reflection ray, the hit's colour in the game's frame
     // Water (RtWater.hlsl), after the game composites its water: improved mode with RT on raw::tx.
     bool  water = true;             // Water
-    // Pre-Pass Cinema DoF & Weather Lens Optics (DofPass.hlsl):
-    bool  dof = true;               // Dof: 64-tap adaptive near/far thin-lens cinema bokeh DoF
+    // Pre-Pass Cinema DoF & Weather Lens Optics (DofPass.hlsl) + RAWLSS 5.0 3D-Guided Reconstruction (Rawlss5Pass.hlsl):
+    bool  rawlss5 = true;           // Rawlss5: native SM 6.9 FP16 3D-Guided Neural & Physical Reconstruction
+    bool  dof = true;               // Dof: 5-pass 91-tap concentric physical thin-lens cinema bokeh DoF
     float dofMaxDist = 420.0f;      // DofMaxDist: optical focal envelope (150..2500 units)
     float dofRadius = 7.5f;         // DofRadius: bokeh aperture radius (1.5..24 px)
     float dofOrbBoost = 1.25f;      // DofOrbBoost: specular bokeh orb glow (0..4)

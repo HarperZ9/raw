@@ -40,16 +40,17 @@ float sampleFocusZoneZ() {
 }
 
 // Exact Physical Thin-Lens Optical Circle of Confusion: CoC proportional to (1/focusZ - 1/curZ).
-// Generous cinema focal plane (dead=0.28, focalScale=0.82) guarantees the targeted subject (e.g. NPCs, workbenches,
-// foreground riverbanks) stays 100% razor-sharp while distant backgrounds & extreme foreground melt into cinema bokeh.
+// Full-range cinema-prime response: creamy anamorphic bokeh on close/mid subjects (<1,800u) AND gentle
+// foreground/far-horizon optical depth separation during exterior vistas, while keeping the focused subject 100% sharp.
 float signedCoC(float curZ, float focusZ, float maxDist) {
-    if (maxDist <= 1.0f || focusZ > maxDist) { return 0.0f; }
-    const float engage = smoothstep(maxDist, maxDist * 0.45f, focusZ);
-    const float s1 = max(focusZ, 42.0f);
-    const float s2 = max(curZ, 16.0f);
+    if (maxDist <= 1.0f) { return 0.0f; }
+    const float extRange = max(maxDist * 3.4f, 1850.0f);
+    const float engage = lerp(0.28f, 1.0f, smoothstep(extRange, maxDist * 0.55f, focusZ));
+    const float s1 = max(focusZ, 38.0f);
+    const float s2 = max(curZ, 14.0f);
     const float diopter = (1.0f / s1 - 1.0f / s2);
-    const float rawCoc = diopter * (s1 * 0.82f);
-    const float dead = 0.28f;
+    const float rawCoc = diopter * (s1 * 1.15f);
+    const float dead = 0.22f;
     if (abs(rawCoc) <= dead) { return 0.0f; }
     const float shaped = sign(rawCoc) * saturate((abs(rawCoc) - dead) / (1.0f - dead));
     return shaped * engage;
@@ -82,7 +83,7 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
     const float4 center = SrcA.Load(int3(px, 0));
     if (WaveActiveAllTrue(dofParams.x <= 1.0f)) { return float4(center.rgb, 0.0f); }
 
-    const float maxRad = clamp(dofParams.y, 1.5f, 26.0f) * 0.55f;   // half-res optical bokeh radius
+    const float maxRad = clamp(dofParams.y, 2.0f, 30.0f) * 0.85f;   // rich full-frame cinema bokeh radius
     const float2 uvNorm = (px + 0.5f) * invDim * 2.0f - 1.0f;
     const float cornerMag = saturate(dot(uvNorm, uvNorm) * 0.52f);
     const float2 radAxis = length(uvNorm) > 1.0e-4f ? normalize(uvNorm) : float2(1.0f, 0.0f);

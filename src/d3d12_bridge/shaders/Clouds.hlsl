@@ -62,10 +62,10 @@ float cloudDensityVol(float3 pa, bool detail) {
     const float4 low = lerp(low1, low2, 0.38f);
     const float lowFbm = low.g * 0.625f + low.b * 0.25f + low.a * 0.125f;
     const float baseShape = cRemap(low.r, -(1.0f - lowFbm) * 0.50f, 1.0f, 0.0f, 1.0f) * hGrad;
-    // Modulate local coverage by continental macroFront so skies have sweeping cloud banks & open blue corridors.
-    const float localCov = saturate(cover * lerp(0.58f, 1.38f, smoothstep(0.24f, 0.78f, macroFront)));
-    const float thresh = lerp(0.68f, lerp(0.50f, 0.28f, stormType), localCov);
-    float dens = cRemap(baseShape, thresh, 1.0f, 0.0f, 1.0f);
+    // Sculpted broken 3D cumulus banks & wide open blue sky corridors (eliminates flat Swiss-cheese cloud sheet with sharp holes).
+    const float localCov = saturate(cover * lerp(0.42f, 1.22f, smoothstep(0.28f, 0.80f, macroFront)));
+    const float thresh = lerp(0.76f, lerp(0.58f, 0.34f, stormType), localCov);
+    float dens = pow(cRemap(baseShape, thresh, 1.0f, 0.0f, 1.0f), 1.45f);
     if (detail && dens > 0.001f) {
         // 2nd + 3rd lookups: dual-scale 3D Worley cauliflower turret erosion + infinite-resolution procedural micro-wisps
         // on cloud edges so overhead zenith clouds stay razor-sharp with zero 64x64 texture blur.

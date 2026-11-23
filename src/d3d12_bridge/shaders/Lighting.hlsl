@@ -1063,8 +1063,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 keyColA = isExterior ? (sunColour.rgb * sunShadow) : max(amb * 1.4f, 0.08f.xxx);
             lit += min(keyColA * f82 * (dAniso * saturate(dot(nSmooth, keyL)) * 0.065f * metallic * specOcc), 2.2f.xxx);
         }
-        // Feature 6: Sony Imageworks Charlie Microfiber Sheen BRDF on actor cloaks, wool tunics & fur pelts (isActorCloth).
-        if (isActorCloth) {
+        // Feature 6: Sony Imageworks Charlie Microfiber Sheen BRDF on actor cloaks, wool tunics, banners & fur pelts.
+        if (isActorCloth || (base == 1u && !skin && s.alpha > 0.68f && s.mask < 0.10f && z < 1600.0f)) {
             const float rCloth = 0.55f;
             const float invR = 1.0f / rCloth;
             const float cos2h = nv * nv;

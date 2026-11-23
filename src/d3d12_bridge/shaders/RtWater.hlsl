@@ -292,50 +292,8 @@ void water(uint3 id : SV_DispatchThreadID) {
             float3 rd = reflect(-v, nRefl);
             if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }
             float3 refl;
-            // 20-step + 4-step Binary-Refined Screen-Space Reflection (eliminates the 12 curved SSR step-bands seen in
-            // 10.35.40.63 & 10.36.15.40 while keeping zero rectangular TLAS reflection holes!):
-            bool ssrHit = false;
-            float3 ssrCol = 0.0f.xxx;
-            float ssrEdge = 0.0f;
-            if (hasPreWater && wDist < 9000.0f) {
-                const float jitS = ign(px);
-                float tPrev = 0.0f;
-                [loop] for (int si = 1; si <= 20; ++si) {
-                    const float tS = pow((float(si) - 0.5f + jitS * 0.5f) / 20.0f, 2.0f) * 2200.0f;
-                    const float3 sp = o + rd * tS;
-                    const float4 scS = screenOf(sp);
-                    if (scS.w <= 1.0f) { break; }
-                    const float2 suv = scS.xy * dims.zw;
-                    if (any(suv < 0.005f) || any(suv > 0.995f)) { break; }
-                    const int2 sip = clamp(int2(scS.xy), int2(0, 0), int2(dims.xy) - 1);
-                    const float dS = Depth.Load(int3(sip, 0));
-                    if (dS < 1.0f) {
-                        const float zHit = viewZOf(dS);
-                        const float thick = max(scS.w * 0.035f, 14.0f);
-                        if (scS.w > zHit && scS.w < zHit + thick) {
-                            // 4-step binary midpoint refinement removes all curved step-banding in water reflections!
-                            float tLo = tPrev, tHi = tS;
-                            int2 bestIp = sip;
-                            float2 bestUv = suv;
-                            [unroll] for (int bi = 0; bi < 4; ++bi) {
-                                const float tMid = 0.5f * (tLo + tHi);
-                                const float4 scM = screenOf(o + rd * tMid);
-                                const float2 mUv = scM.xy * dims.zw;
-                                const int2 mIp = clamp(int2(scM.xy), int2(0, 0), int2(dims.xy) - 1);
-                                const float dM = Depth.Load(int3(mIp, 0));
-                                const float zM = dM < 1.0f ? viewZOf(dM) : 1.0e9f;
-                                if (scM.w > zM) { tHi = tMid; bestIp = mIp; bestUv = mUv; }
-                                else { tLo = tMid; }
-                            }
-                            ssrCol = PreWater[bestIp].rgb;
-                            ssrEdge = smoothstep(0.005f, 0.12f, min(min(bestUv.x, 1.0f - bestUv.x), min(bestUv.y, 1.0f - bestUv.y)));
-                            ssrHit = true;
-                            break;
-                        }
-                    }
-                    tPrev = tS;
-                }
-            }
+            // Pure Hardware DXR 1.2 RayQuery Water Reflections + aerial-perspective sky fade
+            // (removed screen-space SSR loop which caused top-left glitch blocks in 10.51.22.98 & striping in 10.51.15.20!):
             Hit h;
             if (reflectLength > 0.0f && traceHit(o, rd, reflectLength, h)) {
                 float3 cScreen, hn;
@@ -344,15 +302,14 @@ void water(uint3 id : SV_DispatchThreadID) {
                 if (onScreen(hitPt, cScreen)) {
                     const float4 scH = screenOf(hitPt);
                     const float2 hUv = scH.xy * dims.zw;
-                    const float edgeW = smoothstep(0.01f, 0.14f, min(min(hUv.x, 1.0f - hUv.x), min(hUv.y, 1.0f - hUv.y)));
+                    const float edgeW = smoothstep(0.02f, 0.16f, min(min(hUv.x, 1.0f - hUv.x), min(hUv.y, 1.0f - hUv.y)));
                     refl = lerp(rtCol, cScreen, edgeW);
                 } else {
                     refl = rtCol;
                 }
                 const float3 farReflSky = waterSky(rd);
                 const float reflFog = 1.0f - exp(-h.t * 0.00014f);
-                refl = lerp(max(refl, farReflSky * 0.16f), farReflSky, saturate(reflFog));
-                if (ssrHit) { refl = lerp(refl, ssrCol, ssrEdge); }
+                refl = lerp(max(refl, farReflSky * 0.18f), farReflSky, saturate(reflFog));
                 const float reflMax = max(refl.r, max(refl.g, refl.b));
                 if (reflMax > 4.5f) { refl *= 4.5f / reflMax; }
             } else {
@@ -362,7 +319,6 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float crestSheen = pow(skyFace, 36.0f) * 0.72f;
                 refl = refl * lerp(0.60f, 1.36f, smoothstep(0.03f, 0.48f, rd.z)) * (1.0f - waveTilt * 0.28f)
                      + refl * crestSheen;
-                if (ssrHit) { refl = lerp(refl, ssrCol, ssrEdge); }
             }
 
             // Dual-lobe GGX sun glint (tight 0.0045 mirror crest sparkle + broad 0.022 sheen lobe).
@@ -442,7 +398,11 @@ void water(uint3 id : SV_DispatchThreadID) {
                 float2 qOff = s2.w > 0.0f ? (s2.xy - float2(id.xy)) : 0.0f.xx;
                 const float qLen = length(qOff);
                 if (qLen > 10.0f) { qOff *= (10.0f / qLen); }
-                const float2 qF = clamp(float2(id.xy) + qOff * saturate(depthV / 28.0f), float2(1.0f, 1.0f), dims.xy - 2.0f);
+                // Fade refraction offset smoothly to 0 near screen borders (eliminates bottom-edge vertical smear bar
+                // seen in 10.51.17.92 & 10.51.15.20!):
+                const float borderDist = min(min(float(id.x), dims.x - 1.0f - float(id.x)), min(float(id.y), dims.y - 1.0f - float(id.y)));
+                const float borderFade = smoothstep(0.0f, 32.0f, borderDist);
+                const float2 qF = clamp(float2(id.xy) + qOff * (saturate(depthV / 28.0f) * borderFade), float2(1.0f, 1.0f), dims.xy - 2.0f);
                 int2 q = int2(round(qF));
                 const float4 Lq = Layer.Load(int3(q, 0));
                 const float dQ = Depth.Load(int3(q, 0));

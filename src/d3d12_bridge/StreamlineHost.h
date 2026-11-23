@@ -46,9 +46,12 @@ public:
         float aspect = 16.0f / 9.0f;
         float proj[16] = {};
         float viewToWorld[12] = {};
+        float worldToClip[16] = {};
         float pos[3] = {};
         bool  valid = false;
     };
+    using HiZCallback = void(*)(const float* mip0, uint32_t w, uint32_t h, const float w2c[16], const float cam[3]);
+    void SetHiZCallback(HiZCallback cb) { m_hizCb = cb; }
 
     // Live per-frame NVIDIA DLAA Transformer (Preset K) or DLSS Ray Reconstruction (Preset F) on RAW's DX12 HDR buffer.
     // All resources enter and exit in D3D12_RESOURCE_STATE_COMMON.
@@ -65,6 +68,7 @@ private:
     bool m_reflexOn = true;
     bool m_deepDvcOn = false;
     bool m_tried = false;
+    HiZCallback m_hizCb = nullptr;
 };
 
 } // namespace raw::bridge

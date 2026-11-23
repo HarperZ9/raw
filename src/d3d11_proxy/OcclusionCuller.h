@@ -65,6 +65,9 @@ public:
         m_hasExactBound = true;
     }
 
+    // Receive GPU-reduced 8x8 conservative MAX-depth mip0 from DX12 HiZDownsample.hlsl (240x135 R32F, 2 frames retired).
+    void UpdateHiZFromGpu(const float* mip0, uint32_t w, uint32_t h, const float w2c[16], const float cam[3]);
+
     // ── Statistics ────────────────────────────────────────────────────
 
     uint32_t GetDrawsTested()   const { return m_drawsTested; }

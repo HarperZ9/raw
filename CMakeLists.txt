@@ -584,6 +584,13 @@ if(RAW_ENGINE_DIR)
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/NormalUnpack.hlsl
         COMMENT "dxc: DLSS-RR linear world-space normal+roughness unpack -> DXIL header"
         VERBATIM)
+    add_custom_command(
+        OUTPUT ${RAW_ENGINE_GEN}/rt_hiz_downsample.h
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_hiz_downsample.h -Vn kDxil_hiz_downsample ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/HiZDownsample.hlsl
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/HiZDownsample.hlsl
+        COMMENT "dxc: native DX12 compute Hi-Z depth pyramid -> DXIL header"
+        VERBATIM)
     set(RAW_RTALPHA_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtAlphaUv.hlsl)
     add_custom_command(
         OUTPUT ${RAW_ENGINE_GEN}/rt_alpha_uv.h ${RAW_ENGINE_GEN}/rt_alpha_mask.h ${RAW_ENGINE_GEN}/rt_alpha_albedo.h
@@ -627,7 +634,7 @@ if(RAW_ENGINE_DIR)
     target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtSkin.cpp ${RAW_ENGINE_GEN}/rt_skin.h ${RAW_ENGINE_GEN}/rt_skin_check.h)
     target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/RtScene.cpp src/d3d12_bridge/RtSceneRecord.cpp src/d3d12_bridge/RtSceneStage.cpp src/d3d12_bridge/RtAlpha.cpp
                    src/d3d12_bridge/RtAlphaTex.cpp src/d3d12_bridge/RtSky.cpp src/d3d12_bridge/RtCache.cpp
-                   src/d3d12_bridge/RtWater.cpp src/d3d12_bridge/BridgeWater.cpp ${RAW_ENGINE_GEN}/rt_water.h ${RAW_ENGINE_GEN}/rt_sss.h ${RAW_ENGINE_GEN}/rt_normal_unpack.h
+                   src/d3d12_bridge/RtWater.cpp src/d3d12_bridge/BridgeWater.cpp ${RAW_ENGINE_GEN}/rt_water.h ${RAW_ENGINE_GEN}/rt_sss.h ${RAW_ENGINE_GEN}/rt_normal_unpack.h ${RAW_ENGINE_GEN}/rt_hiz_downsample.h
                    ${RAW_ENGINE_GEN}/rt_shadow.h ${RAW_ENGINE_GEN}/rt_alpha_uv.h ${RAW_ENGINE_GEN}/rt_alpha_mask.h
                    ${RAW_ENGINE_GEN}/rt_alpha_albedo.h ${RAW_ENGINE_GEN}/rt_sky_filter.h ${RAW_ENGINE_GEN}/rt_cache_resolve.h)
     if(RAW_AGILITY_DIR)

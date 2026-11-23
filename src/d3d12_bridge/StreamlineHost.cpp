@@ -15,6 +15,7 @@
 #endif
 
 #include "rt_normal_unpack.h"
+#include "rt_hiz_downsample.h"
 #include <cstring>
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
@@ -49,6 +50,15 @@ struct SlApi
     ComPtr<ID3D12PipelineState> unpackPso;
     ComPtr<ID3D12DescriptorHeap> unpackHeap;
     ComPtr<ID3D12Resource> normalRough;
+    ComPtr<ID3D12RootSignature> hizRs;
+    ComPtr<ID3D12PipelineState> hizPso;
+    ComPtr<ID3D12DescriptorHeap> hizHeap;
+    ComPtr<ID3D12Resource> hizGpu;
+    ComPtr<ID3D12Resource> hizRead[3];
+    uint32_t hizW = 0, hizH = 0;
+    float hizW2C[3][16] = {};
+    float hizCam[3][3] = {};
+    bool hizValid[3] = {};
     uint32_t nrW = 0, nrH = 0;
     UINT descInc = 0;
     HANDLE fenceEv = nullptr;
@@ -217,6 +227,36 @@ bool StreamlineHost::Initialize(ID3D12Device* dev12, LUID adapterLuid, LogFn log
                 }
             }
         }
+        // Build SM 6.9 Native DX12 Compute Hi-Z 8x8 MAX-depth reduction PSO (1920x1080 -> 240x135, 129 KB).
+        if (cmdOk) {
+            D3D12_DESCRIPTOR_RANGE hranges[2]{};
+            hranges[0] = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, 0};
+            hranges[1] = {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 1};
+            D3D12_ROOT_PARAMETER hrp[2]{};
+            hrp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+            hrp[0].Constants = {0, 0, 4};
+            hrp[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+            hrp[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            hrp[1].DescriptorTable = {2, hranges};
+            hrp[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+            D3D12_ROOT_SIGNATURE_DESC hrsd{2, hrp, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+            ComPtr<ID3DBlob> hsig, herr;
+            if (SUCCEEDED(D3D12SerializeRootSignature(&hrsd, D3D_ROOT_SIGNATURE_VERSION_1, &hsig, &herr)) &&
+                SUCCEEDED(dev12->CreateRootSignature(0, hsig->GetBufferPointer(), hsig->GetBufferSize(), IID_PPV_ARGS(&a.hizRs)))) {
+                D3D12_COMPUTE_PIPELINE_STATE_DESC hcpd{};
+                hcpd.pRootSignature = a.hizRs.Get();
+                hcpd.CS = {kDxil_hiz_downsample, sizeof(kDxil_hiz_downsample)};
+                if (SUCCEEDED(dev12->CreateComputePipelineState(&hcpd, IID_PPV_ARGS(&a.hizPso)))) {
+                    D3D12_DESCRIPTOR_HEAP_DESC hhd{};
+                    hhd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+                    hhd.NumDescriptors = 2;
+                    hhd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+                    if (SUCCEEDED(dev12->CreateDescriptorHeap(&hhd, IID_PPV_ARGS(&a.hizHeap)))) {
+                        if (!a.descInc) a.descInc = dev12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                    }
+                }
+            }
+        }
     }
 
     if (m_caps.reflex) {
@@ -377,6 +417,17 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
         a.fence->SetEventOnCompletion(a.slotVal[slot], a.fenceEv);
         WaitForSingleObject(a.fenceEv, 100);
     }
+    // Harvest retired Native DX12 Compute Hi-Z depth buffer (2 frames old, 100% GPU-retired, zero stall).
+    if (m_hizCb && a.hizValid[slot] && a.hizRead[slot] && a.hizW && a.hizH) {
+        const D3D12_RANGE rr{0, size_t(a.hizW) * a.hizH * 4};
+        void* hp = nullptr;
+        if (SUCCEEDED(a.hizRead[slot]->Map(0, &rr, &hp)) && hp) {
+            m_hizCb(static_cast<const float*>(hp), a.hizW, a.hizH, a.hizW2C[slot], a.hizCam[slot]);
+            const D3D12_RANGE wr{0, 0};
+            a.hizRead[slot]->Unmap(0, &wr);
+        }
+        a.hizValid[slot] = false;
+    }
     if (FAILED(a.alloc[slot]->Reset()) || FAILED(a.cl->Reset(a.alloc[slot].Get(), nullptr))) return false;
 
     D3D12_RESOURCE_BARRIER inB[8];
@@ -424,6 +475,65 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
         D3D12_RESOURCE_BARRIER nrToSrv = Barrier(a.normalRough.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         a.cl->ResourceBarrier(1, &nrToSrv);
         inB[nb - 1].Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    }
+
+    // Dispatch SM 6.9 Native DX12 Compute Hi-Z 8x8 MAX-depth reduction (1920x1080 -> 240x135, 129 KB) into 3-slot ring.
+    if (m_hizCb && a.hizPso && a.hizHeap && cam.valid) {
+        const uint32_t hw = (width + 7u) / 8u, hh = (height + 7u) / 8u;
+        const uint64_t bytes = uint64_t(hw) * hh * 4ull;
+        if (a.hizW != hw || a.hizH != hh || !a.hizGpu) {
+            a.hizGpu.Reset();
+            for (auto& r : a.hizRead) r.Reset();
+            D3D12_HEAP_PROPERTIES hpDef{D3D12_HEAP_TYPE_DEFAULT};
+            D3D12_HEAP_PROPERTIES hpRb{D3D12_HEAP_TYPE_READBACK};
+            D3D12_RESOURCE_DESC bd{};
+            bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+            bd.Width = bytes; bd.Height = 1; bd.DepthOrArraySize = 1; bd.MipLevels = 1;
+            bd.SampleDesc = {1, 0}; bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+            bd.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+            bool hok = SUCCEEDED(a.dev12->CreateCommittedResource(&hpDef, D3D12_HEAP_FLAG_NONE, &bd,
+                                                                  D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&a.hizGpu)));
+            bd.Flags = D3D12_RESOURCE_FLAG_NONE;
+            for (int k = 0; hok && k < 3; ++k)
+                hok = SUCCEEDED(a.dev12->CreateCommittedResource(&hpRb, D3D12_HEAP_FLAG_NONE, &bd,
+                                                                 D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&a.hizRead[k])));
+            if (hok) { a.hizW = hw; a.hizH = hh; for (bool& v : a.hizValid) v = false; }
+            else { a.hizGpu.Reset(); a.hizW = a.hizH = 0; }
+        }
+        if (a.hizGpu && a.hizRead[slot]) {
+            D3D12_CPU_DESCRIPTOR_HANDLE hh0 = a.hizHeap->GetCPUDescriptorHandleForHeapStart();
+            D3D12_SHADER_RESOURCE_VIEW_DESC dsrv{};
+            dsrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            dsrv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            dsrv.Texture2D.MipLevels = 1;
+            dsrv.Format = DXGI_FORMAT_R32_FLOAT;
+            a.dev12->CreateShaderResourceView(depth, &dsrv, hh0);
+            D3D12_UNORDERED_ACCESS_VIEW_DESC huav{};
+            huav.Format = DXGI_FORMAT_UNKNOWN;
+            huav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+            huav.Buffer.NumElements = hw * hh;
+            huav.Buffer.StructureByteStride = 4;
+            a.dev12->CreateUnorderedAccessView(a.hizGpu.Get(), nullptr, &huav, {hh0.ptr + a.descInc});
+
+            D3D12_RESOURCE_BARRIER hb0 = Barrier(a.hizGpu.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            a.cl->ResourceBarrier(1, &hb0);
+            ID3D12DescriptorHeap* hheaps[1] = {a.hizHeap.Get()};
+            a.cl->SetDescriptorHeaps(1, hheaps);
+            a.cl->SetComputeRootSignature(a.hizRs.Get());
+            a.cl->SetPipelineState(a.hizPso.Get());
+            const uint32_t hcb[4] = {width, height, hw, hh};
+            a.cl->SetComputeRoot32BitConstants(0, 4, hcb, 0);
+            a.cl->SetComputeRootDescriptorTable(1, a.hizHeap->GetGPUDescriptorHandleForHeapStart());
+            a.cl->Dispatch((hw + 7u) / 8u, (hh + 7u) / 8u, 1u);
+            D3D12_RESOURCE_BARRIER hb1 = Barrier(a.hizGpu.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            a.cl->ResourceBarrier(1, &hb1);
+            a.cl->CopyBufferRegion(a.hizRead[slot].Get(), 0, a.hizGpu.Get(), 0, bytes);
+            D3D12_RESOURCE_BARRIER hb2 = Barrier(a.hizGpu.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
+            a.cl->ResourceBarrier(1, &hb2);
+            std::memcpy(a.hizW2C[slot], cam.worldToClip, sizeof(a.hizW2C[slot]));
+            std::memcpy(a.hizCam[slot], cam.pos, sizeof(a.hizCam[slot]));
+            a.hizValid[slot] = true;
+        }
     }
 
     const sl::Extent ext{0, 0, width, height};

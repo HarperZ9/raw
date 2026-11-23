@@ -148,11 +148,11 @@ void water(uint3 id : SV_DispatchThreadID) {
         const float2 px = float2(id.xy);
         const float3 p = worldAt(px, L.x);
         if (p.z < 0.0f) {   // the surface is below the camera: seen from above
-            // Replace Skyrim's frantic fast-scrolling vanilla water normal map (nL) with our own calm, slow-drifting
-            // 4-octave world-space Gerstner & capillary wave field (keeping only 12% of nL for river-flow curvature).
+            // Feature 13: 100% Independent DX12 Fluid Physics (disconnected from Skyrim's 2011 nL water normal map):
+            // Pure multi-directional Gerstner/trochoidal + curl-advected obstacle-deflected fluid wave simulation.
             const float3 v = normalize(eyeAt() - p);
             const float3 wpW = camPosW.xyz + p;
-            float3 n = normalize(lerp(float3(0.0f, 0.0f, 1.0f), nL, 0.14f));
+            float3 n = float3(0.0f, 0.0f, 1.0f);
             const float wDist = length(p);
             // Compute local water depth & world-space obstacle gradient (rocks, bridge piers, riverbanks)
             // for true potential-flow streamline deflection, upstream bow-wave pileup, and downstream eddy wakes.

@@ -365,6 +365,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             albedo = lerp(albedo, float3(0.10f, 0.17f, 0.07f) * (0.75f + 0.50f * microN), mossW * 0.52f);
             s.alpha = lerp(s.alpha, 0.88f, mossW * 0.45f);
         }
+        // Steep-cliff tri-planar geological strata synthesis on terrain (base == 4u, slope < 0.68):
+        // breaks up Skyrim's stretched 2011 vertical cliff UV smears with crisp horizontal basalt/granite strata!
+        if (base == 4u && slope < 0.68f && z < 8500.0f) {
+            const float cliffW = smoothstep(0.68f, 0.35f, slope) * saturate(1.0f - z / 8500.0f);
+            const float strata = cNoise(float3(wp.xy * 0.0045f, wp.z * 0.028f)) * 0.65f + cNoise(float3(wp.xy * 0.016f, wp.z * 0.075f)) * 0.35f;
+            albedo *= lerp(1.0f, lerp(0.76f, 1.22f, strata), cliffW * 0.72f);
+            s.n = normalize(s.n + float3(0.0f, 0.0f, (strata - 0.5f) * 0.38f * cliffW));
+        }
         // Procedural sub-centimeter world-space micro-normal & grazing roughness synthesis on vanilla terrain/rock/bark:
         // gives 2011 meshes crisp sunlit micro-grain and tactile roughness variation without requiring 4K texture mods.
         if (z < 1800.0f) {
@@ -794,15 +802,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const int ch = int(lightColS[li].w);
             if (ch >= 0 && ch <= 3) { sh = m4[ch]; }   // interiors without sun shadows use channel 0 too
             float3 c = lightColS[li].rgb * att;
-            // Rich 2200K-2600K blackbody firelight spectrum (hearths, torches, candles, braziers, forges)
-            // with warm golden specular dance on wood/stone/armor and restrained natural warmth on NPC skin.
+            // Rich 2200K-2600K blackbody firelight spectrum (hearths, torches, candles, braziers, forges):
+            // Removed duplicate high-frequency 6.3 rad/s shader flicker (rt_livestate.cpp already drives silky 0.12-EMA breath!).
             if (!match && lightColS[li].r > lightColS[li].b * 1.25f) {
-                const float lPhase = dot(lightPosR[li].xyz + camPosW.xyz, float3(0.031f, 0.047f, 0.023f));
-                const float flk = 0.955f + 0.045f * (sin(camPosW.w * 2.8f + lPhase) * 0.65f + sin(camPosW.w * 6.3f + lPhase * 2.1f) * 0.35f);
                 const bool isIntLight = (sunColour.w < 0.5f);
                 const float3 fireBoost = skin ? float3(1.06f, 0.95f, 0.86f)
-                                              : (isIntLight ? float3(1.66f, 0.92f, 0.40f) : float3(1.52f, 0.88f, 0.42f));
-                c *= fireBoost * flk;
+                                              : (isIntLight ? float3(1.60f, 0.92f, 0.42f) : float3(1.48f, 0.88f, 0.44f));
+                c *= fireBoost;
             }
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;
             // When hardware RT is active, bypass vanilla's flickering 4-channel shadow-mask swaps completely:

@@ -44,7 +44,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float karis = 1.0f / (1.0f + tapLum * 0.45f);
             const float w = exp(-pd * pd) * karis * ((dx == 0 && dy == 0) ? 1.5f : 1.0f);
             const float pk = max(tap.r, max(tap.g, tap.b));
-            if (pk > 4.5f) { tap.rgb *= 4.5f / pk; }
+            if (pk > 3.0f) { tap.rgb *= 3.0f / pk; }
             s1 += tap * w;
             s2 += (tap * tap) * w;
             wSum += w;
@@ -53,20 +53,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (wSum < 1.0e-4f) { return float4(0.0f, 0.0f, 0.0f, 0.0f); }
     const float4 m1 = s1 / wSum;
     const float4 stdDev = sqrt(max(s2 / wSum - m1 * m1, 0.0f.xxxx));
-    float4 cur = raw.a > 0.005f ? lerp(raw, m1, 0.50f) : m1;
+    // Use Karis-filtered spatial mean m1 (eliminates 50% raw 1-spp firefly noise leak on fire-lit stone/wood/armor!).
+    float4 cur = m1;
 
-    // Motion-vector temporal reprojection + tight 1.8-sigma SVGF neighborhood clamp (zero ghosting in motion).
+    // Motion-vector temporal reprojection + tight 1.35-sigma SVGF neighborhood clamp (silky, zero firefly shimmer).
     const float2 uv = (floor(at.xy) + 0.5f) * dims.zw;
     const float2 mv = Motion.Load(ip);
     const float2 puv = uv + mv;
     if (all(puv > 0.005f) && all(puv < 0.995f)) {
         const float4 prev = HistPrev.SampleLevel(Lin, puv, 0.0f);
         if (prev.a > 0.01f) {
-            const float4 lo = max(m1 - stdDev * 1.8f, 0.0f.xxxx);
-            const float4 hi = m1 + stdDev * 1.8f;
+            const float4 lo = max(m1 - stdDev * 1.35f, 0.0f.xxxx);
+            const float4 hi = m1 + stdDev * 1.35f;
             const float4 clamped = clamp(prev, lo, hi);
             const float speed = length(mv * dims.xy);
-            const float alpha = lerp(0.18f, 0.45f, saturate(speed * 0.08f));
+            const float alpha = lerp(0.12f, 0.38f, saturate(speed * 0.08f));
             cur = lerp(clamped, cur, alpha);
         }
     }

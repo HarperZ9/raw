@@ -51,14 +51,16 @@ float signedCoC(float curZ, float focusZ, float maxDist) {
     const float s1 = max(focusZ, 34.0f);
     const float s2 = max(curZ, 12.0f);
     const float diopter = (1.0f / s1 - 1.0f / s2);
-    // Physical aperture response: strong bokeh at close focus, zero far-field Vaseline smear past hyperfocal distance:
-    const float farEngage = smoothstep(hyperfocal, maxDist * 0.48f, focusZ);
-    const float rawCoc = diopter * (s1 * 1.45f);
-    const float dead = 0.18f;
+    // Physical aperture response: strong bokeh ONLY on close-up portraits/conversations (< 550u);
+    // mid/far gameplay streets & vistas keep 100% razor-sharp NPCs, roads, and architecture!
+    const float farEngage = smoothstep(hyperfocal, maxDist * 0.42f, focusZ);
+    const float rawCoc = diopter * (s1 * 1.15f);
+    const float dead = 0.28f;
     if (abs(rawCoc) <= dead) { return 0.0f; }
     const float shaped = sign(rawCoc) * saturate((abs(rawCoc) - dead) / (1.0f - dead));
-    // Near-field foreground blur always engages naturally; far-field bokeh engages only inside hyperfocal range!
-    return rawCoc < 0.0f ? (shaped * 0.92f) : (shaped * farEngage);
+    // Near-field blur ONLY touches very close foreground foliage/rocks (< 150u), NEVER mid-ground NPCs or streets!
+    const float nearGate = smoothstep(160.0f, 55.0f, curZ) * smoothstep(220.0f, 520.0f, focusZ);
+    return rawCoc < 0.0f ? (shaped * nearGate * 0.55f) : (shaped * farEngage);
 }
 
 float4 dof_coc(float4 at : SV_Position) : SV_Target0 {

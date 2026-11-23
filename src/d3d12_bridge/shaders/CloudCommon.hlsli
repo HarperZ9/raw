@@ -32,13 +32,14 @@ float cBillow(float3 p) {
 }
 
 bool cloudsOn() { return clouds.x > 0.0f && clouds.z > 0.0f; }
-static const float kCloudSigma = 0.0038f;   // crisp, well-defined cumulus optical density (no foggy blurry puffs)
+// True volumetric cloud extinction coefficient (0.00032 instead of 0.0038 which saturated T->0 on step 1
+// and turned 3D cumulus volumes into flat 2D opaque grey walls!):
+static const float kCloudSigma = 0.00032f;
 
 // Seam-free C2-continuous 6-octave curl-eroded cumulus volume + sculptural broken coverage (zero Swiss-cheese sheets).
 float cloudDensity(float3 pa, bool detail) {
-    const float2 dxy = pa.xy - camPosW.xy;
-    const float curvedZ = pa.z + dot(dxy, dxy) * 1.15e-8f;
-    const float h = (curvedZ - clouds.y) / clouds.z;   // 0 at floor, 1 at top
+    // 100% camera-independent spherical altitude (removes camPosW.xy camera-angle shadow shift!):
+    const float h = (pa.z - clouds.y) / clouds.z;   // 0 at floor, 1 at top
     if (h <= 0.0f || h >= 1.0f) { return 0.0f; }
     const float3 wind = float3(cloudWind.xy * camPosW.w, 0.0f);
     const float3 sheared = pa + wind + float3(cloudWind.xy, 0.0f) * (h * 6.0f);
@@ -94,15 +95,18 @@ bool cloudSpan(float3 o, float3 dir, float tMax, out float t0, out float t1) {
     return t1 > t0 + 10.0f;
 }
 
-// How much sun reaches an absolute point through the layer: n samples up the sun's path through it
-// (3 for the ground, 1 for each step of the fog's march).
+// Soft, 100% camera-independent rolling atmospheric cloud shadows on terrain & architecture
+// (replaces 3-step sharp camera-angle-dependent raymarch with smooth broad world-space cumulus projection!):
 float cloudShadowN(float3 pa, uint n) {
-    if (!cloudsOn() || sunDir.z <= 0.02f || clouds.w <= 0.0f) { return 1.0f; }
-    float t0, t1;
-    if (!cloudSpan(pa, sunDir.xyz, 1.0e7f, t0, t1)) { return 1.0f; }
-    const float dt = (t1 - t0) / float(n);
-    float od = 0.0f;
-    [loop] for (uint i = 0u; i < n; i++) { od += cloudDensity(pa + sunDir.xyz * (t0 + (float(i) + 0.5f) * dt), false); }
-    return lerp(1.0f, exp(-od * dt * kCloudSigma), clouds.w);
+    if (!cloudsOn() || sunDir.z <= 0.04f || clouds.w <= 0.0f) { return 1.0f; }
+    const float tHit = max((clouds.y + clouds.z * 0.35f - pa.z) / max(sunDir.z, 0.18f), 0.0f);
+    const float2 projXY = pa.xy + sunDir.xy * min(tHit, 180000.0f) + cloudWind.xy * camPosW.w;
+    // Broad, softly filtered 2-octave macro cumulus shadow deck (zero sharp hard-edged bands, zero camera dependency!):
+    const float2 qS = projXY / 26000.0f;
+    const float m0 = cNoise(float3(qS, 1.7f));
+    const float m1 = cNoise(float3(qS * 2.1f + 5.3f, 3.1f));
+    const float macro = smoothstep(0.32f, 0.78f, m0 * 0.68f + m1 * 0.32f);
+    const float shadowAmt = macro * saturate(clouds.x * 1.15f) * clouds.w * 0.52f;
+    return 1.0f - shadowAmt;
 }
-float cloudShadow(float3 pa) { return cloudShadowN(pa, 3u); }
+float cloudShadow(float3 pa) { return cloudShadowN(pa, 1u); }

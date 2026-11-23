@@ -153,6 +153,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     physSky += (sunCoreCol * solarCore + sunHaloCol * (solarCorona * (1.0f - cover * 0.65f))) * sunDiscGate;
                 }
                 fullSky = lerp(fullSky, physSky, max(dayW, twilightBell * 0.92f));
+                // Reference Archive Cluster B / SHD-07 (AA256): Planetary Earth Shadow + rosy Belt of Venus anti-twilight arch
+                // opposite the rising/setting sun!
+                if (twilightBell > 0.04f && sDir.z > -0.02f && sDir.z < 0.42f) {
+                    const float antiSun = saturate(dot(normalize(float3(sDir.xy, 0.0f)), normalize(float3(-aSun.xy, 0.0f))));
+                    const float earthShadow = (1.0f - smoothstep(0.01f, 0.14f, sDir.z)) * pow(antiSun, 1.8f);
+                    const float venusBelt = exp(-pow((sDir.z - 0.13f) / 0.075f, 2.0f)) * pow(antiSun, 1.6f);
+                    const float twiW = twilightBell * (1.0f - cover * 0.65f);
+                    fullSky = lerp(fullSky, float3(0.035f, 0.055f, 0.125f), earthShadow * twiW * 0.52f);
+                    fullSky += float3(0.36f, 0.14f, 0.20f) * (venusBelt * twiW * 0.48f);
+                }
             }
             // Infinite Distant Horizon Ocean Plane (Horizon Fix replacement, COMPETITIVE-2026.md):
             // Beyond Skyrim's map grid edge (sDir.z < 0 on sky pixels), analytically intersect sea level with

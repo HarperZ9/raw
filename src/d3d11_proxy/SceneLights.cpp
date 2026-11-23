@@ -445,6 +445,7 @@ void SceneLights_SetCamera(ID3D11DeviceContext* real)
         s.frame.isInterior = ec.interior != 0;
         s.frame.menuPaused = ec.menuPaused != 0;
         s.frame.waterHeight = ec.waterHeight;
+        s.frame.camStateId = ec.camStateId;
         if (s.frame.posAdjust[0] == 0.0f && s.frame.posAdjust[1] == 0.0f && s.frame.posAdjust[2] == 0.0f) {
             s.frame.posAdjust[0] = ec.camPos[0];
             s.frame.posAdjust[1] = ec.camPos[1];

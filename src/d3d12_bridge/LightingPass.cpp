@@ -437,7 +437,7 @@ private:
         u.timeEnv[2] = t.lightning;
         u.timeEnv[3] = s.menuPaused ? 1.0f : 0.0f;
         u.engineWorld[0] = s.waterHeight;
-        u.engineWorld[1] = 0.0f;
+        u.engineWorld[1] = s.camStateId <= 16u ? float(s.camStateId) : -1.0f;
         u.engineWorld[2] = s.hasEngineCell ? 1.0f : 0.0f;
         u.engineWorld[3] = 0.0f;
         std::memcpy(u.clipToWorld, s.clipToWorld, 64);

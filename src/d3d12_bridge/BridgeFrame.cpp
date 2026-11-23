@@ -316,7 +316,9 @@ bool D3D12Bridge::ReadTimings(uint64_t frame, bool block, BridgeTimings* out)
     r.copyOutMs = (t[7] - t[6]) * f11;
     r.pass = ds.pass;
     r.passMs = ds.pass.totalMs;
-    r.syncMs = r.stallMs > r.passMs ? r.stallMs - r.passMs : 0.0;
+    const double rtMs = m->rt ? (m->rt->Stats().buildMs + m->rt->Stats().traceMs + m->rt->Stats().cacheMs) : 0.0;
+    const double gpuWorkMs = r.passMs + rtMs;
+    r.syncMs = r.stallMs > gpuWorkMs ? r.stallMs - gpuWorkMs : 0.0;
     r.bridgeCostMs = r.depthCopyMs + r.normalCopyMs + r.copyInMs + r.copyOutMs + r.syncMs;
     m->ProbeRead(frame, dj.Frequency, t[5], t[6], &r);
     *out = r;

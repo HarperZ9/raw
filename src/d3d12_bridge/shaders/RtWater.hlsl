@@ -235,15 +235,16 @@ void water(uint3 id : SV_DispatchThreadID) {
                     const float omega = sqrt((9.81f * kM + 7.4e-5f * kM * kM * kM) * tanh(kdRef));
                     const float spread = (frac(float(wi) * 0.6180339f) - 0.5f) * (1.35f + fracI * 0.85f);
                     const float2 dirW = normalize(flowDir * cos(spread) + flowPerp * sin(spread));
-                    // Depth shoaling modulates wave amplitude smoothly (NEVER wt * omega(depthM), which drew
-                    // topographic iso-depth contour rings across the riverbed in 11.15.38.97 & 11.15.40.46!):
+                    // Heavy physical gravity-wave swell mass on primary modes (wi=0..2) + steep trochoidal Gerstner crests
+                    // (gives water real liquid weight, momentum & 3D volume instead of flat ripples!):
                     const float shoalAmp = smoothstep(0.06f, 0.85f, depthM);
-                    const float ampW = (0.036f * pow(1.0f - fracI * 0.75f, 1.40f)) * ampScale * nyquistFade * shoalAmp;
+                    const float massBoost = wi < 3 ? 1.45f : 1.0f;
+                    const float ampW = (0.042f * pow(1.0f - fracI * 0.72f, 1.35f)) * massBoost * ampScale * nyquistFade * shoalAmp;
                     const float ph = dot(wpFlow, dirW) * kRad - wt * omega + float(wi) * 2.39996f;
                     const float s = sin(ph);
                     const float c = cos(ph);
-                    waveG += dirW * (c * (1.0f + 0.28f * s) * ampW);
-                    jacobianFold += max(-s, 0.0f) * ampW * 2.4f;
+                    waveG += dirW * (c * (1.0f + 0.42f * s) * ampW);
+                    jacobianFold += max(-s, 0.0f) * ampW * 2.6f;
                 }
                 // Aperiodic 2-octave domain-warped fine liquid ripple gradient (zero periodic moire rings!):
                 const float2 rUv1 = wpFlow * 0.038f;
@@ -479,9 +480,10 @@ void water(uint3 id : SV_DispatchThreadID) {
                 }
                 const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) * 0.85f + (sunDir.w > 0.5f ? sunColour.rgb * 0.32f : 0.0f.xxx));
                 const float shoreDark = lerp(0.62f, 1.0f, smoothstep(0.0f, 22.0f, depthV));
-                // Wave-facet luminance modulation makes moving crests & troughs visibly travel even under uniform overcast/night skies.
-                const float waveFacet = lerp(0.76f, 1.28f, saturate(dot(n, normalize(float3(0.35f, 0.25f, 0.90f)))));
-                const float3 waterBody = (((bed * shoreDark + caus) * T + scatter * (1.0f - T)) * waveFacet + waveSSS + uwShaft);
+                // Heavy liquid wave-crest vs trough ambient self-shadowing (makes rolling mass & wave weight unmistakable!):
+                const float waveFacet = lerp(0.68f, 1.32f, saturate(dot(n, normalize(float3(0.35f, 0.25f, 0.90f)))));
+                const float troughWeight = lerp(0.84f, 1.16f, saturate(0.45f + jacobianFold * 0.65f));
+                const float3 waterBody = (((bed * shoreDark + caus) * T + scatter * (1.0f - T)) * (waveFacet * troughWeight) + waveSSS * 1.35f + uwShaft);
                 body = lerp(waterBody, foamLit, foamMask * 0.68f);
             }
             const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;

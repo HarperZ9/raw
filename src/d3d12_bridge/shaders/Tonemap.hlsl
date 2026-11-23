@@ -615,7 +615,7 @@ float4 main(In i) : SV_Target {
             // 13: 1988 NTSC VHS Magnetic Tape Signal (ported from Playground native/src/renderer/style_vhs.cpp).
             float sw, sh; Scene.GetDimensions(sw, sh);
             const float2 spx = 1.0f / max(float2(sw, sh), float2(1.0f, 1.0f));
-            const float jitter = (frac(sin(floor(i.pos.y * 0.5f) * 12.9898f + RD.w * 43.7f) * 43758.5453f) - 0.5f) * 2.2f * spx.x;
+            const float jitter = (frac(sin(floor(i.pos.y * 0.5f) * 12.9898f + RO.z * 43.7f) * 43758.5453f) - 0.5f) * 2.2f * spx.x;
             const float2 jUv = min(max((suv + float2(jitter, 0.0f)), 0.0f), float2(F[44].z, F[43].y));
             const float3 cMid = tonemapAgX(Scene.Sample(S1, jUv).rgb * exposure * RB.z);
             const float3 cL   = tonemapAgX(Scene.Sample(S1, min(max(jUv - float2(spx.x * 5.5f, 0.0f), 0.0f), float2(F[44].z, F[43].y))).rgb * exposure * RB.z);
@@ -629,7 +629,7 @@ float4 main(In i) : SV_Target {
             float3 vhs = float3(yRing + 0.956f * iCh + 0.621f * qCh,
                                 yRing - 0.272f * iCh - 0.647f * qCh,
                                 yRing - 1.106f * iCh + 1.703f * qCh);
-            const float tapeNoise = (frac(sin(dot(i.pos.xy + RD.w * 71.0f, float2(12.9898f, 78.233f))) * 43758.5453f) - 0.5f) * 0.045f;
+            const float tapeNoise = (frac(sin(dot(i.pos.xy + RO.z * 71.0f, float2(12.9898f, 78.233f))) * 43758.5453f) - 0.5f) * 0.045f;
             c.rgb = saturate(vhs + tapeNoise);
         }
     }

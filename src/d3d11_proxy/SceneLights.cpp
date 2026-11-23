@@ -445,11 +445,28 @@ void SceneLights_SetCamera(ID3D11DeviceContext* real)
         s.frame.posAdjust[1] = ec.camPos[1];
         s.frame.posAdjust[2] = ec.camPos[2];
     }
-    s.frame.cameraSteps = uint32_t(s.steps[0].size());
-    for (int k = 0; k < 3 && !s.steps[k].empty(); ++k) {
-        std::vector<float>& v = s.steps[k];
-        std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
-        s.frame.cameraStep[k] = v[v.size() / 2];
+    // Compute exact cameraStep from posAdjust delta (eliminates median-draw/skinned-mesh jitter in RtScene::SetCamera).
+    static float s_prevPosAdj[3] = {};
+    static bool s_hasPrevPosAdj = false;
+    const bool hasPosAdj = (s.frame.posAdjust[0] != 0.0f || s.frame.posAdjust[1] != 0.0f || s.frame.posAdjust[2] != 0.0f);
+    if (hasPosAdj && s_hasPrevPosAdj) {
+        s.frame.cameraStep[0] = s.frame.posAdjust[0] - s_prevPosAdj[0];
+        s.frame.cameraStep[1] = s.frame.posAdjust[1] - s_prevPosAdj[1];
+        s.frame.cameraStep[2] = s.frame.posAdjust[2] - s_prevPosAdj[2];
+        s.frame.cameraSteps = 1024u;
+    } else {
+        s.frame.cameraSteps = uint32_t(s.steps[0].size());
+        for (int k = 0; k < 3 && !s.steps[k].empty(); ++k) {
+            std::vector<float>& v = s.steps[k];
+            std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
+            s.frame.cameraStep[k] = v[v.size() / 2];
+        }
+    }
+    if (hasPosAdj) {
+        s_prevPosAdj[0] = s.frame.posAdjust[0];
+        s_prevPosAdj[1] = s.frame.posAdjust[1];
+        s_prevPosAdj[2] = s.frame.posAdjust[2];
+        s_hasPrevPosAdj = true;
     }
     S().merged = false;
 }

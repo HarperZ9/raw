@@ -39,13 +39,24 @@ public:
     // Per-frame NVIDIA Reflex Low-Latency sleep/pacing (no-op if Reflex is unsupported).
     void ReflexBeginFrame(uint32_t frameIdx);
 
+    struct EvalCamera {
+        float nearZ = 15.0f;
+        float farZ = 400000.0f;
+        float fovY = 1.134464f;   // 65 deg
+        float aspect = 16.0f / 9.0f;
+        float proj[16] = {};
+        float viewToWorld[12] = {};
+        float pos[3] = {};
+        bool  valid = false;
+    };
+
     // Live per-frame NVIDIA DLAA Transformer (Preset K) or DLSS Ray Reconstruction (Preset F) on RAW's DX12 HDR buffer.
     // All resources enter and exit in D3D12_RESOURCE_STATE_COMMON.
     // Returns true if Streamline evaluated into colorOut (caller should read colorOut instead of colorIn).
     bool Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn, ID3D12Resource* colorOut,
                   ID3D12Resource* depth, ID3D12Resource* mvec,
                   ID3D12Resource* albedo, ID3D12Resource* normal, ID3D12Resource* spec,
-                  uint32_t width, uint32_t height, uint32_t frameIdx, LogFn log);
+                  uint32_t width, uint32_t height, uint32_t frameIdx, const EvalCamera& cam, LogFn log);
 
 private:
     StreamlineHost() = default;

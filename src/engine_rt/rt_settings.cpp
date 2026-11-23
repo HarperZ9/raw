@@ -162,23 +162,15 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         // Keep vanilla Skyrim water reflection buffer dimensions intact (overriding iWaterReflectWidth/Height
         // or forcing bForceHighDetailReflections=1 at runtime misaligns TESWaterSystem reflection planes!).
         {"bForceHighDetailReflections:Water", "0"},
-        {"bSelectivePurgeUnusedOnFastTravel:BackgroundLoad", "1"},
-        {"iPostProcessMillisecondsLoadingQueuedPriority:BackgroundLoad", "5"},
-        {"iPostProcessMilliseconds:BackgroundLoad", "5"},
         {"fSunBaseSize:Weather", "160.0"},
         {"fSunGlareSize:Weather", "280.0"},
         {"fSunGlareMultiplier:Weather", "0.35"},
-        {"bMultiThreadBoneUpdate:Animation", "1"},
-        {"bUseThreadedParticleSystem:General", "1"},
-        {"bUseThreadedTempEffects:General", "1"},
-        {"bUseThreadedMorpher:General", "1"},
-        {"bUseMultiThreadedFaceGen:BackgroundLoad", "1"},
-        {"bLoadBackgroundFaceGen:BackgroundLoad", "1"},
         {"uiNumActorsAllowedToMorph:FaceGen", "64"},
         {"fLODFadeOutMultActors:LOD", "15.0"},
         {"fLODFadeOutMultObjects:LOD", "15.0"},
         {"fLODFadeOutMultItems:LOD", "15.0"},
         {"fSpecularLODStartFade:Display", "4000.0"},
+        {"fShadowLODStartFade:Display", "2000.0"},
         {"fMeshLODLevel1FadeDist:Display", "16000.0"},
         {"fMeshLODLevel2FadeDist:Display", "12000.0"},
         {"fGrassStartFadeDistance:Grass", "11000.0"},
@@ -194,10 +186,12 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"uMaxSkinDecalsPerActor:Decals", "60"},
         {"iMaxDecalsPerFrame:Display", "100"},
         {"iMaxSkinDecalsPerFrame:Display", "25"},
-        // NOTE: Do NOT force bUseThreadedLOD / bUseThreadedMeshes / bUseThreadedTextures / bUseThreadedAI
-        // or runtime TerrainManager fBlockLevel0Distance/fSplitDistanceMult overrides — in Creation Engine they
-        // race the LOD quadtree and drop entire distant terrain quadrants (caught in r231_vid_2.jpg).
+        // NOTE: Do NOT force bUseThreaded*, bBackgroundLoadVMData, bBackgroundCellLoads, bPreemptivelyUnloadCells,
+        // bEnableFileCaching, iNumHWThreads=16, or runtime TerrainManager overrides: in Creation Engine they race
+        // BGSSaveLoadManager (causing save corruption) and race the LOD quadtree.
         {"bShadowsOnGrass:Display", "1"},
+        {"bTreesReceiveShadows:Display", "1"},
+        {"bDrawLandShadows:Display", "1"},
         {"fDecalLifetime:Display", "900.0"},
         // Binary-level Havok physics, 120Hz sub-stepped solver, anti-clutter-explosion & realistic ragdoll/IK overhaul:
         {"fTimePerSubStep:HAVOK", "0.0083333"},
@@ -215,12 +209,6 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"bLookIK:RagdollAnim", "1"},
         {"bPoseMatching:RagdollAnim", "1"},
         {"bRagdollFeedback:RagdollAnim", "1"},
-        // Engine-level file caching, water reflection parity, archery aiming & smooth camera collision recovery:
-        {"bEnableFileCaching:General", "1"},
-        {"bReflectLODLand:Water", "1"},
-        {"bReflectLODObjects:Water", "1"},
-        {"bReflectLODTrees:Water", "1"},
-        {"bReflectSky:Water", "1"},
         {"f1PArrowTiltUpAngle:Combat", "0.7"},
         {"f3PArrowTiltUpAngle:Combat", "0.7"},
         {"fCollisionRecoverySpeed:Camera", "4.0"},
@@ -229,38 +217,8 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"fAIMaxHeadTrackDistanceFromPC", "1200.0"},
         {"fAIBestHeadTrackDistance", "600.0"},
         {"fDialogueHeadPitchExaggeration:Audio", "1.15"},
-        {"bUseMultiThreadedTrees:BackgroundLoad", "1"},
-        {"bBackgroundLoadLipFiles:BackgroundLoad", "1"},
-        {"bBackgroundCellLoads:BackgroundLoad", "1"},
-        {"bBackgroundLoadVMData:General", "1"},
-        {"bBackgroundInitializeGeometryDecals:Decals", "1"},
-        {"bBackgroundNavmeshUpdate:Pathfinding", "1"},
-        {"bBackgroundPathing:Pathfinding", "1"},
-        {"iPreloadSizeLimit:General", "268435456"},
-        {"bPreemptivelyUnloadCells:General", "1"},
-        {"bEnableBoundingVolumeOcclusion:General", "0"},
-        {"bPreCullActors:General", "0"},
         {"bUsePrecipitationOcclusion:Display", "1"},
         {"bEnableParallaxOcclusion:Display", "1"},
-        // Eliminate 2011 Creation Engine LOD/specular/shadow throttling so full-detail geometry & PBR specular
-        // stay crisp across entire valleys, cities, and mountains (zero close-range specular/mesh/tree pop-in).
-        {"fSpecularLODStartFade:Display", "4000.0"},
-        {"fShadowLODStartFade:Display", "2000.0"},
-        {"fMeshLODLevel1FadeDist:Display", "9999999.0"},
-        {"fMeshLODLevel2FadeDist:Display", "9999999.0"},
-        {"fMeshLODLevel1FadeTreeDistance:Display", "9999999.0"},
-        {"fMeshLODLevel2FadeTreeDistance:Display", "9999999.0"},
-        {"bTreesReceiveShadows:Display", "1"},
-        {"bDrawLandShadows:Display", "1"},
-        {"fBlockMaximumDistance:TerrainManager", "250000.0"},
-        {"fSkyCellRefFadeDistance:General", "300000.0"},
-        {"fGrassStartFadeDistance:Grass", "9500.0"},
-        {"fLightLODStartFade:Display", "5500.0"},
-        {"fBlockLevel0Distance:TerrainManager", "45000.0"},
-        {"fTreeLoadDistance:TerrainManager", "85000.0"},
-        {"iMaxDesired:Particles", "6000"},
-        {"uParticlesCount:BudgetCaps", "6000"},
-        {"uParticlesCountInterior:BudgetCaps", "6000"},
         {"fUpdateBudgetMS:Papyrus", "2.4"},
         {"fExtraTaskletBudgetMS:Papyrus", "2.4"},
         {"fPostLoadUpdateTimeMS:Papyrus", "1000.0"},
@@ -269,17 +227,9 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
     for (const auto& kv : kTuning) {
         if (SetSetting(img, refs, kv.k, kv.v)) ++applied;
     }
-    // Scale Creation Engine worker thread pool to modern multi-core CPUs (clamped 4..16).
-    SYSTEM_INFO si{};
-    GetSystemInfo(&si);
-    const uint32_t hwThreads = si.dwNumberOfProcessors < 4 ? 4u : (si.dwNumberOfProcessors > 16 ? 16u : si.dwNumberOfProcessors);
-    char thBuf[16];
-    std::snprintf(thBuf, sizeof thBuf, "%u", hwThreads);
-    const bool thOk = SetSetting(img, refs, "iNumHWThreads:General", thBuf);
-    if (thOk) ++applied;
     char out[160];
-    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu architectural fixes applied (iNumHWThreads=%u)",
-                  applied, sizeof(kTuning) / sizeof(kTuning[0]) + 1, hwThreads);
+    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe)",
+                  applied, sizeof(kTuning) / sizeof(kTuning[0]));
     return out;
 }
 

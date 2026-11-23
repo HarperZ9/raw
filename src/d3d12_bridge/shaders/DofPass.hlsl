@@ -54,9 +54,13 @@ float signedCoC(float curZ, float focusZ, float maxDist) {
     if (maxDist <= 1.0f) { return 0.0f; }
     const float dM = max(curZ, 24.0f) / 70.0f;
     const float fM = clamp(focusZ, 42.0f, 14000.0f) / 70.0f;
-    // 50mm lens (F = 0.050m); aperture f-number N smoothly controlled by dofMaxDist (420u -> f/2.0, 200u -> f/4.0, 800u -> f/1.2)
+    // Dynamic Silent Horizons / NAC-X Cinema Aperture Curve:
+    // Opens smoothly to dreamy f/1.6 on close-up portraits & props (focus < 2.2m) while tightening gently to
+    // disciplined f/3.4 in open traversal (focus > 3.5m) so rooms & vistas stay readable with silky optical falloff!
     const float F = 0.050f;
-    const float N = clamp(840.0f / max(maxDist, 120.0f), 1.1f, 8.0f);
+    const float macroT = smoothstep(4.2f, 1.4f, fM);
+    const float baseN = lerp(3.4f, 1.55f, macroT);
+    const float N = clamp(baseN * (420.0f / max(maxDist, 120.0f)), 1.05f, 8.0f);
     // Physical CoC diameter on 35mm sensor (36mm wide), converted to full-res pixels:
     const float cocSensorM = ((dM - fM) / max(dM, 0.25f)) * ((F * F) / (N * max(fM - F, 0.20f)));
     const float cocPx = (cocSensorM / 0.036f) * dims.x;
@@ -202,6 +206,39 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
     const float nearAlpha = saturate(nearCov / 26.0f);
     const float3 outCol = lerp(farCol, nearCol, nearAlpha);
     return float4(outCol, nearAlpha > 0.02f ? -nearAlpha : saturate(centerCoc));
+}
+
+// Jimenez 2014 / UE5 Post-Gather 3x3 Bokeh Flood-Fill & Velvety Tent Filter (reuses m_dofCoc, zero extra VRAM):
+// Closes outer-ring sampling micro-gaps at large radii and turns 91-tap discs into creamy, glass-smooth cinema bokeh!
+float4 dof_post(float4 at : SV_Position) : SV_Target0 {
+    float w, h;
+    SrcA.GetDimensions(w, h);
+    const float2 invDim = 1.0f / max(float2(w, h), float2(1.0f, 1.0f));
+    const float2 uv = (floor(at.xy) + 0.5f) * invDim;
+    const float4 c0 = SrcA.SampleLevel(Lin, uv, 0.0f);
+    const float coc0 = abs(c0.a);
+    if (coc0 < 0.015f) { return c0; }
+    // 9-tap circular tent + highlight-preserving flood-fill (keeps luminous bokeh discs crisp & creamy):
+    static const float2 kOff[8] = {
+        float2(-1.0f, -1.0f), float2( 0.0f, -1.0f), float2( 1.0f, -1.0f),
+        float2(-1.0f,  0.0f),                       float2( 1.0f,  0.0f),
+        float2(-1.0f,  1.0f), float2( 0.0f,  1.0f), float2( 1.0f,  1.0f)
+    };
+    static const float kW[8] = { 0.5f, 1.0f, 0.5f, 1.0f, 1.0f, 0.5f, 1.0f, 0.5f };
+    const float spread = lerp(0.55f, 1.15f, saturate(coc0));
+    float3 acc = c0.rgb * 2.0f;
+    float wSum = 2.0f;
+    float aAcc = c0.a * 2.0f;
+    [unroll] for (int i = 0; i < 8; i++) {
+        const float4 t = SrcA.SampleLevel(Lin, saturate(uv + kOff[i] * invDim * spread), 0.0f);
+        // Prevent sharp background/foreground contamination across depth edges:
+        const float sameSign = (c0.a * t.a >= 0.0f) ? 1.0f : 0.15f;
+        const float wi = kW[i] * sameSign * (0.35f + 0.65f * smoothstep(0.0f, 0.20f, abs(t.a)));
+        acc += t.rgb * wi;
+        aAcc += t.a * wi;
+        wSum += wi;
+    }
+    return float4(acc / wSum, aAcc / wSum);
 }
 
 float4 dof_comp(float4 at : SV_Position) : SV_Target0 {

@@ -28,6 +28,7 @@
 #include "dof_focus_fs.h"
 #include "dof_coc_fs.h"
 #include "dof_gather_fs.h"
+#include "dof_post_fs.h"
 #include "dof_comp_fs.h"
 #include "gi_at1_fs.h"
 #include "gi_at2_fs.h"
@@ -215,9 +216,11 @@ public:
         m_dofCocPipe = m_dev->createRasterPipeline(d, m_err);
         d.label = "dof gather"; d.fragment = dxil(kDxil_dof_gather_fs, sizeof kDxil_dof_gather_fs); d.layout = kDofGatherLayout;
         m_dofGatherPipe = m_dev->createRasterPipeline(d, m_err);
+        d.label = "dof post"; d.fragment = dxil(kDxil_dof_post_fs, sizeof kDxil_dof_post_fs); d.layout = kDofGatherLayout;
+        m_dofPostPipe = m_dev->createRasterPipeline(d, m_err);
         d.label = "dof comp"; d.fragment = dxil(kDxil_dof_comp_fs, sizeof kDxil_dof_comp_fs); d.layout = kDofCompLayout;
         m_dofCompPipe = m_dev->createRasterPipeline(d, m_err);
-        if (!m_dofFocusPipe.valid() || !m_dofCocPipe.valid() || !m_dofGatherPipe.valid() || !m_dofCompPipe.valid()) return Fail("dof pipelines");
+        if (!m_dofFocusPipe.valid() || !m_dofCocPipe.valid() || !m_dofGatherPipe.valid() || !m_dofPostPipe.valid() || !m_dofCompPipe.valid()) return Fail("dof pipelines");
         d.label = "gi atrous 1"; d.fragment = dxil(kDxil_gi_at1_fs, sizeof kDxil_gi_at1_fs); d.layout = kGiAtrousLayout;
         m_giAt1Pipe = m_dev->createRasterPipeline(d, m_err);
         d.label = "gi atrous 2"; d.fragment = dxil(kDxil_gi_at2_fs, sizeof kDxil_gi_at2_fs); d.layout = kGiAtrousLayout;
@@ -343,7 +346,9 @@ public:
                 Draw(*c, m_dofCoc, m_dofCocPipe, dc);
                 const RasterBind dg[3] = {{m_uniform, {}, {}}, {{}, m_dofCoc, {}}, {{}, {}, m_lin}};
                 Draw(*c, m_dofBokeh, m_dofGatherPipe, dg);
-                const RasterBind dp[6] = {{m_uniform, {}, {}}, {{}, m_aoOut, {}}, {{}, m_depth, {}}, {{}, m_dofBokeh, {}}, {{}, focusNow, {}}, {{}, {}, m_lin}};
+                const RasterBind dpost[3] = {{m_uniform, {}, {}}, {{}, m_dofBokeh, {}}, {{}, {}, m_lin}};
+                Draw(*c, m_dofCoc, m_dofPostPipe, dpost);
+                const RasterBind dp[6] = {{m_uniform, {}, {}}, {{}, m_aoOut, {}}, {{}, m_depth, {}}, {{}, m_dofCoc, {}}, {{}, focusNow, {}}, {{}, {}, m_lin}};
                 Draw(*c, m_lit, m_dofCompPipe, dp);
                 bloomSrc = m_lit;
             }
@@ -596,7 +601,7 @@ private:
     BufferHandle m_uniform;
     RasterPipelineHandle m_lightPipe, m_fogPipe, m_cloudPipe, m_volPipe;
     RasterPipelineHandle m_bloomPrePipe, m_bloomDownPipe, m_bloomUpPipe, m_bloomCompPipe;
-    RasterPipelineHandle m_atmoTransPipe, m_atmoMsPipe, m_atmoSkyPipe, m_cloudNoisePipe, m_envCubePipe, m_froxelInjectPipe, m_froxelIntPipe, m_reflFilterPipe, m_dofFocusPipe, m_dofCocPipe, m_dofGatherPipe, m_dofCompPipe, m_giAt1Pipe, m_giAt2Pipe, m_giAt4Pipe, m_worldSimPipe;
+    RasterPipelineHandle m_atmoTransPipe, m_atmoMsPipe, m_atmoSkyPipe, m_cloudNoisePipe, m_envCubePipe, m_froxelInjectPipe, m_froxelIntPipe, m_reflFilterPipe, m_dofFocusPipe, m_dofCocPipe, m_dofGatherPipe, m_dofPostPipe, m_dofCompPipe, m_giAt1Pipe, m_giAt2Pipe, m_giAt4Pipe, m_worldSimPipe;
     TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoMs, m_atmoSkyView, m_cloudNoise, m_envCube, m_froxelRaw[2], m_froxelInt, m_reflHist[2], m_dofFocus[2], m_dofCoc, m_dofBokeh, m_giAtrous[2], m_worldSim[2];
     bool m_atmoTransBuilt = false;
     SamplerHandle m_lin;

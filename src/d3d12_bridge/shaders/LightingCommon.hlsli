@@ -172,8 +172,10 @@ void evalWorldAtmosphere(out float3 outSun, out float3 outSkyZ, out float3 outSk
 
     float3 sZ, sM, sH;
     skyPalette(sZ, sM, sH);
-    const float3 overcastZ = float3(0.28f, 0.33f, 0.40f) * max(ambLum * 1.45f, 0.32f);
-    const float3 overcastH = float3(0.46f, 0.51f, 0.58f) * max(ambLum * 1.65f, 0.42f);
+    // Preserve rich Nordic zenith-to-horizon luminance & color depth even under overcast/storm skies
+    // (prevents flat monochrome grey washout while keeping every pass 100% locked to the same live sky!):
+    const float3 overcastZ = float3(0.22f, 0.28f, 0.38f) * max(ambLum * 1.40f, 0.28f);
+    const float3 overcastH = float3(0.48f, 0.54f, 0.62f) * max(ambLum * 1.72f, 0.44f);
     const float3 snowH = float3(0.58f, 0.63f, 0.70f) * max(ambLum * 1.65f, 0.46f);
     const float3 nightZ = lerp(float3(0.014f, 0.024f, 0.052f), rawAmbUp * float3(0.45f, 0.52f, 0.66f), overcastW * 0.80f);
     const float3 nightH = lerp(float3(0.028f, 0.044f, 0.078f), rawAmbUp * float3(0.68f, 0.74f, 0.84f), overcastW * 0.85f);

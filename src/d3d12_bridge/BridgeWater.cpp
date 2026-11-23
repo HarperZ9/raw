@@ -74,8 +74,8 @@ bool D3D12Bridge::ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, 
     bool inB = false;
     if (!m->rt->RecordWater(u, ub, m->depthIn.res12.Get(), layer12, m->shared[static_cast<UINT>(Shared::Albedo)].res12.Get(),
                             m->shared[static_cast<UINT>(Shared::Specular)].res12.Get(), m->waterIn.res12.Get(), m->waterOut.res12.Get(),
-                            water, sssWidth, sssStrength, &inB, m->bedFrame == m->frames ? m->bed12 : nullptr, m->bedSrv,
-                            m->preWaterFrame == m->frames ? m->preWater.res12.Get() : nullptr))
+                            water, sssWidth, sssStrength, &inB, m->bedFrame + 1 >= m->frames ? m->bed12 : nullptr, m->bedSrv,
+                            m->preWaterFrame + 1 >= m->frames ? m->preWater.res12.Get() : nullptr))
         return false;
     std::vector<ID3D11Resource*> hand{layer, m->waterIn.tex11.Get(), m->waterOut.tex11.Get()};
     if (m->bed11) hand.push_back(m->bed11.Get());

@@ -447,10 +447,13 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float3 farOcean = lerp(deepOceanBody, farSkyRefl, farF);
             const float3 nearCol = refr ? lerp(body, refl, effF) : lerp(game.rgb, refl, effF) + caus * (1.0f - effF);
             col = lerp(farOcean, nearCol, cellFeather) + glint * shoreFeather;
+            // Exact 16-bit horizon merge: at far ocean distances (wDist > 5000u), PreWater[id.xy].rgb holds
+            // LightFog.hlsl's exact sky dome + cloud color at that pixel (Hillaire AtmoSkyView / overcast / sunset / night).
+            // Merging far ocean directly into PreWater guarantees 0.0000 luminance discontinuity at the Sea of Ghosts horizon!
             if (wDist > 5000.0f) {
-                const float3 horSky = waterSky(normalize(float3(rd.xy, 0.025f)));
-                const float seaFog = 1.0f - exp(-max(wDist - 5000.0f, 0.0f) * 0.000055f);
-                col = lerp(col, horSky, saturate(seaFog * 0.96f));
+                const float3 horSky = hasPreWater ? PreWater[id.xy].rgb : waterSky(normalize(float3(rd.xy, 0.025f)));
+                const float seaFog = 1.0f - exp(-max(wDist - 5000.0f, 0.0f) * 0.000065f);
+                col = lerp(col, horSky, saturate(seaFog * 0.98f));
             }
             if (view == 1u) { col = refl; }
             else if (view == 2u) { col = caus * 4.0f; }

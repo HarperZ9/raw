@@ -201,7 +201,16 @@ static void FillDepth(D3D12_DEPTH_STENCIL_DESC& o, const D3D11_DEPTH_STENCIL_DES
 {
     o.DepthEnable = hasDsv && s.DepthEnable;
     o.DepthWriteMask = static_cast<D3D12_DEPTH_WRITE_MASK>(s.DepthWriteMask);
-    o.DepthFunc = static_cast<D3D12_COMPARISON_FUNC>(s.DepthFunc);
+    // Metal Foundation #1: Reversed-Z depth compare flip when [Translate] ReversedZ=1 is active:
+    static const bool kRevZ = GetPrivateProfileIntA("Translate", "ReversedZ", 0, "d3d11_proxy.ini") != 0;
+    D3D12_COMPARISON_FUNC df = static_cast<D3D12_COMPARISON_FUNC>(s.DepthFunc);
+    if (kRevZ) {
+        if (df == D3D12_COMPARISON_FUNC_LESS) df = D3D12_COMPARISON_FUNC_GREATER;
+        else if (df == D3D12_COMPARISON_FUNC_LESS_EQUAL) df = D3D12_COMPARISON_FUNC_GREATER_EQUAL;
+        else if (df == D3D12_COMPARISON_FUNC_GREATER) df = D3D12_COMPARISON_FUNC_LESS;
+        else if (df == D3D12_COMPARISON_FUNC_GREATER_EQUAL) df = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    }
+    o.DepthFunc = df;
     o.StencilEnable = hasDsv && s.StencilEnable;
     o.StencilReadMask = s.StencilReadMask; o.StencilWriteMask = s.StencilWriteMask;
     o.FrontFace = Op(s.FrontFace); o.BackFace = Op(s.BackFace);

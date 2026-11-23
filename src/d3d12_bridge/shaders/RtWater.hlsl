@@ -303,6 +303,11 @@ void water(uint3 id : SV_DispatchThreadID) {
                 } else {
                     refl = rtCol;
                 }
+                // Fix long-range black water reflections: apply physical atmospheric aerial-perspective sky fade
+                // + ambient sky floor on distant RT hits so far reflected mountains & shores never turn pitch black!
+                const float3 farReflSky = waterSky(rd);
+                const float reflFog = 1.0f - exp(-h.t * 0.00014f);
+                refl = lerp(max(refl, farReflSky * 0.16f), farReflSky, saturate(reflFog));
                 const float reflMax = max(refl.r, max(refl.g, refl.b));
                 if (reflMax > 4.5f) { refl *= 4.5f / reflMax; }
             } else {

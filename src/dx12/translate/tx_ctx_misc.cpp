@@ -32,7 +32,9 @@ STDMETHODIMP_(void) Context::ClearDepthStencilView(ID3D11DepthStencilView* view,
     if (!(flags & D3D11_CLEAR_DEPTH)) r.planeMask = 2;
     if (rec_.tracker.RequireRange(c.tr, r, c.mips, c.slices, D3D12_RESOURCE_STATE_DEPTH_WRITE)) dirty_ |= D_SCAN;
     rec_.tracker.Flush(Cl());
-    Cl()->ClearDepthStencilView(v->h, static_cast<D3D12_CLEAR_FLAGS>(f), depth, stencil, 0, nullptr);
+    static const bool kRevZClear = GetPrivateProfileIntA("Translate", "ReversedZ", 0, "d3d11_proxy.ini") != 0;
+    const FLOAT clearD = (kRevZClear && depth == 1.0f) ? 0.0f : depth;
+    Cl()->ClearDepthStencilView(v->h, static_cast<D3D12_CLEAR_FLAGS>(f), clearD, stencil, 0, nullptr);
     ++rec_.cmdCount;
 }
 

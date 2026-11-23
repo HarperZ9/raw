@@ -462,8 +462,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
         }
+        // Cross-shader PDE coupling: sample WorldFieldSim (t7) so freshly wet ground & campfire-melted snow
+        // physically boost low-lying ground evaporation mist in LightFog.hlsl (zero siloed passes!):
+        float pdeMistBoost = 1.0f;
+        if (dist < 1000.0f) {
+            const float2 wfUv = saturate(p.xy / 2048.0f + 0.5f.xx);
+            if (all(wfUv > 0.02f) && all(wfUv < 0.98f)) {
+                const float4 wf = WorldField.SampleLevel(Lin, wfUv, 0.0f);
+                pdeMistBoost = 1.0f + saturate(wf.b * 0.65f + wf.a * 0.35f) * 0.45f;
+            }
+        }
         // Attenuate additive volumetric scatter by transmittance T so far-horizon fog never double-adds into blinding whiteout.
-        return float4(lit.rgb * T + atmoCol * (1.0f.xxx - T) + scatter * saturate(T + 0.20f) + precipAdd, lit.a);
+        return float4(lit.rgb * T + atmoCol * (1.0f.xxx - T) + scatter * saturate(T + 0.20f) * pdeMistBoost + precipAdd, lit.a);
     }
     // Dungeons, Caves, Nordic Tombs, Dwemer Ruins, Blackreach & Interiors (sunColour.w < 0.5):
     // 100% world-space subterranean depth mist + true 3D shadowed volumetric shafts from VolumetricPass.hlsl

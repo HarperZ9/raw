@@ -24,6 +24,7 @@
 #include "ProxyAPI.h"
 #include "rt_callgraph.h"
 #include "rt_control.h"
+#include "rt_forensics.h"
 #include "rt_papyrus.h"
 #include "rt_passes.h"
 #include "rt_vtrace.h"
@@ -165,6 +166,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     // the scene's lights and the shader manager's state each present (rt_livestate.h), exported as RAW_EngineLights
     // with the view (camera, cell, time, screen; RAW_EngineView) and the glowing emitters (rt_emitters.h)
     if (IniInt("LiveState", 1)) { raw::rt::LiveStateInit(g_img, g_out, IniInt("EmitterLights", 1) != 0); raw::rt::ViewInit(g_img); }
+    raw::rt::ForensicsInit(g_out);
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
     if (IniInt("CallGraph", 0)) {
@@ -192,6 +194,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         std::snprintf(why, n, "%d background thread(s) running (sample or call graph); ask again when they finish", t);
         return 0;
     }
+    raw::rt::ForensicsShutdown();
     std::string failures;
     const size_t had = raw::rt::PatchCount(), restored = raw::rt::PatchRestoreAll(&failures);
     std::snprintf(why, n, "%zu of %zu patches restored%s%s", restored, had, failures.empty() ? "" : "; ", failures.c_str());

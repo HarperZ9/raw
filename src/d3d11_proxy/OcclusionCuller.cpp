@@ -9,6 +9,7 @@
 
 #include "OcclusionCuller.h"
 #include "CBDirtyTracker.h"
+#include "GBufferComplete.h"
 #include "ProxyAPI.h"
 #include "ProxyLog.h"
 #include "RenderPhaseDetector.h"
@@ -375,7 +376,7 @@ bool OcclusionCuller::ShouldCull(uint32_t indexCount)
 {
     const bool hasBound = m_hasExactBound;
     m_hasExactBound = false;  // Consume once per draw so no draw ever inherits a stale bound
-    if (!m_enabled || !hasBound || !SceneLights_Opaque()) return false;
+    if (!m_enabled || !hasBound || !GBuffer_CurrentDrawIsCullableProp()) return false;
     if (indexCount < 36) return false;
 
     const auto& sl = SceneLights_Frame();

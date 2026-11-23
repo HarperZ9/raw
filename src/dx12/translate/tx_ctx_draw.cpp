@@ -105,9 +105,9 @@ void Context::ScanGraphics(const RootSig* root)
     }
     if (!(d & D_SCAN_IA)) return;
     for (uint32_t i = 0; i < s_.vbHi; ++i)
-        if (s_.vb[i].buf && s_.vb[i].buf->core.store == Store::Committed)
+        if (s_.vb[i].buf && s_.vb[i].buf->core.store == Store::Committed && s_.vb[i].buf->core.tr)
             t.Require(s_.vb[i].buf->core.tr, 0, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
-    if (s_.ib.buf && s_.ib.buf->core.store == Store::Committed)
+    if (s_.ib.buf && s_.ib.buf->core.store == Store::Committed && s_.ib.buf->core.tr)
         t.Require(s_.ib.buf->core.tr, 0, D3D12_RESOURCE_STATE_INDEX_BUFFER);
 }
 

@@ -109,7 +109,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 nightHor = float3(0.024f, 0.038f, 0.068f);
             float3 fullSky = lerp(nightHor, nightZen, pow(hUp, 0.58f));
             if (dayW > 0.01f) {
-                const float3 hSky = sampleHillaireSky(float3(sDir.xy, max(sDir.z, 0.002f)));
+                const float hElev = max(sDir.z, 0.048f);
+                const float3 hSky = sampleHillaireSky(normalize(float3(sDir.xy, hElev)));
                 const float hLum = max(dot(hSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
                 const float3 overcastSky = lerp(float3(0.44f, 0.50f, 0.60f), float3(0.24f, 0.30f, 0.38f), hUp) * max(hLum * 0.95f, 0.26f);
                 float3 physSky = lerp(hSky, overcastSky, saturate(cover * 0.65f - 0.20f + weather.w * 0.45f));
@@ -264,7 +265,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // (d >= 1.0f) so far mountains and the Sea of Ghosts melt into the sky dome with 0.000 luminance discontinuity
         // (eliminates the dark curved slate horizon band caught in r257_dawnstar_npc.jpg).
         const float cloudCov = saturate(clouds.x);
-        const float3 hillaireSky = sampleHillaireSky(float3(w.xy, max(w.z, 0.002f)));
+        const float3 hillaireSky = sampleHillaireSky(normalize(float3(w.xy, max(w.z, 0.048f))));
         const float hLumF = max(dot(hillaireSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
         const float3 overcastAtmo = lerp(float3(0.44f, 0.50f, 0.60f), float3(0.24f, 0.30f, 0.38f), saturate(w.z)) * max(hLumF * 0.95f, 0.26f);
         float3 atmoCol = lerp(hillaireSky, overcastAtmo, saturate(cloudCov * 0.65f - 0.20f + weather.w * 0.45f));

@@ -249,7 +249,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         Vis[id.xy] = 1.0f; Lights[id.xy] = 0.0f; SkyRaw[id.xy] = float4(0.0f, 0.0f, 0.0f, 1.0f); Refl[id.xy] = 0.0f;
         return;
     }
-    if (d < 1.0f && base != 0u && (base < 7u || base == 10u)) {   // 10: skin
+    if (d < 1.0f && base != 0u && (base < 7u || base == 10u || base == 11u || base == 12u)) {   // 10: skin, 11: hair, 12: eyes
         const float2 px = float2(id.xy);
         const float3 p = worldAt(px, d);
         const float3 n = worldNormal(Normal.Load(ip));

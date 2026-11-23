@@ -185,7 +185,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     }
     if (flags.w == 14u || flags.w == 15u) { return float4(game.rgb * 0.2f, game.a); }
     const bool skin = base == 10u;
-    if (base == 0u || (base >= 7u && !skin) || (cls & 128u) != 0u) { return game; }
+    const bool isHair = base == 11u;
+    const bool isEye = base == 12u;
+    // Unlock full physically-based PBR shading for Hair (base==11) & Eyes (base==12) alongside Skin (base==10)!
+    // (Previously base >= 7u && !skin early-returned vanilla 2011 lighting on every hair & eye pixel!)
+    if (base == 0u || (base >= 7u && !skin && !isHair && !isEye) || (cls & 128u) != 0u) { return game; }
 
     const bool match = (flags.x & FLAG_MATCH) != 0u;
     const float2 px = floor(at.xy);
@@ -215,8 +219,31 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     s.soft = base == 5u || skin ? max(SoftMap.Load(ip).rgb, 0.0f.xxx) : 0.0f.xxx;   // negative: the character light (below)
     // Softer since the hands and bodies joined the class (rt6-wat-3): at 0.55 / 0.22 / 0.12 the arms read orange
     // against the game's brown.
-    s.wrap = skin && !match ? float3(0.30f, 0.12f, 0.06f) : 0.0f.xxx;
-    if (skin && !match) { s.f0 = 0.028f; s.alpha = max(s.alpha, 0.38f); }   // skin's own specular: f0 of 0.028, a soft sheen
+    s.wrap = skin && !match ? float3(0.32f, 0.13f, 0.06f) : (isHair && !match ? float3(0.16f, 0.12f, 0.08f) : 0.0f.xxx);
+    if (skin && !match) {
+        s.f0 = 0.028f;
+        s.alpha = max(s.alpha, 0.36f);
+        // Subtle 3D world-space micro-pore normal breakup on close-up skin (rescues flat 2011 NPC faces without noise!):
+        if (z < 420.0f) {
+            const float3 wpSk = p + camPosW.xyz;
+            const float poreFade = smoothstep(420.0f, 65.0f, z) * 0.045f;
+            const float p1 = cNoise(wpSk * 2.4f) - 0.5f;
+            const float p2 = cNoise(wpSk * 2.4f + float3(7.3f, 11.1f, 3.7f)) - 0.5f;
+            s.n = normalize(s.n + float3(p1, p2, 0.0f) * poreFade);
+        }
+    } else if (isEye && !match) {
+        s.f0 = 0.045f;
+        s.alpha = 0.055f;   // wet physical corneal mirror gloss
+    } else if (isHair && !match) {
+        s.f0 = 0.046f;
+        s.alpha = clamp(s.alpha, 0.28f, 0.55f);
+    } else if (!match && base == 1u && z < 2600.0f) {
+        // Dynamic real-material micro-roughness & wear variation on 2011 stone, masonry, timber & architecture:
+        const float3 wpMat = (p + camPosW.xyz) * 0.032f;
+        const float wear = cNoise(wpMat) * 0.65f + cNoise(wpMat * 2.7f + 5.1f) * 0.35f;
+        const float wearFade = smoothstep(2600.0f, 180.0f, z);
+        s.alpha = clamp(s.alpha * lerp(1.0f, lerp(0.76f, 1.24f, wear), wearFade * 0.65f), 0.06f, 0.96f);
+    }
     if (base == 5u && !any(s.soft > 0.0f)) { s.soft = 0.15f.xxx; }   // a soft-lit shader the patch found no map in
     // Rain (Weather.hlsli), exteriors in improved mode: darker, glossier, puddles flat and mirror-like.
     Wet wet;

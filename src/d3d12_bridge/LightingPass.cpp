@@ -501,7 +501,7 @@ private:
             } else if (d2 >= 1156.0f) {   // stride >= 34 units (~0.5 m)
                 const float invL = 1.0f / std::sqrt(d2);
                 const float side = (m_footIdx & 1u) ? 8.5f : -8.5f;
-                const uint32_t slot = m_footIdx++ & 31u;
+                const uint32_t slot = m_footIdx++ & 15u;   // slots 0..15: player footsteps; slots 16..31: live ProcessLists NPCs!
                 m_footTrail[slot][0] = s.posAdjust[0] - dy * invL * side;
                 m_footTrail[slot][1] = s.posAdjust[1] + dx * invL * side;
                 m_footTrail[slot][2] = s.posAdjust[2];
@@ -513,6 +513,22 @@ private:
             m_hasLastFoot = true;
         }
         std::memcpy(u.footTrail, m_footTrail, sizeof m_footTrail);
+        // Engine-to-GPU Convergence: stream up to 16 live ProcessLists NPC world positions from raw_engine.dll
+        // directly into u.footTrail[16..31] so EVERY NPC bends grass, carves snow trenches & creates water wakes!
+        using ActorsFn = uint32_t (*)(float*, uint32_t);
+        static HMODULE s_engMod = nullptr;
+        static ActorsFn s_actorsFn = nullptr;
+        if (!s_actorsFn) {
+            if (!s_engMod) s_engMod = GetModuleHandleA("raw_engine.dll");
+            if (s_engMod) s_actorsFn = reinterpret_cast<ActorsFn>(GetProcAddress(s_engMod, "RAW_EngineActors"));
+        }
+        if (s_actorsFn) {
+            float npcs[16][4] = {};
+            const uint32_t n = s_actorsFn(&npcs[0][0], 16u);
+            for (uint32_t i = 0; i < n && i < 16u; ++i) {
+                std::memcpy(u.footTrail[16u + i], npcs[i], 16u);
+            }
+        }
         // Bake exact world-space camera translation delta (camPos - prevCamPos) into prevWorldToClip so
         // world-locked temporal reprojection (Froxels, Clouds, Volumetrics, RT Reflections) never smears on movement.
         std::memcpy(u.prevWorldToClip, m_prevWorldToClip, 64);

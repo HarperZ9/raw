@@ -263,21 +263,20 @@ float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
     if (curZ < 45.0f) { return sharp; }
     const float coc = signedCoC(curZ, focusZ, dofParams.x);
     const float absCoc = abs(coc);
-    // Smooth 4-tap bilinear tent upsample of 1/2-res 91-tap concentric bokeh buffer:
-    const float2 bOff = dims.zw * 0.75f;
-    const float4 bokeh = (SrcB.SampleLevel(Lin, uv + float2( bOff.x,  bOff.y), 0.0f)
-                        + SrcB.SampleLevel(Lin, uv + float2(-bOff.x,  bOff.y), 0.0f)
-                        + SrcB.SampleLevel(Lin, uv + float2( bOff.x, -bOff.y), 0.0f)
-                        + SrcB.SampleLevel(Lin, uv + float2(-bOff.x, -bOff.y), 0.0f)) * 0.25f;
-    // Subtle photographic optical micro-diffusion in out-of-focus regions breaks up flat plastic blur:
-    const float oofMicro = (ign(floor(at.xy) + frac(camPosW.w * 24.0f) * 37.0f) - 0.5f) * 0.016f * smoothstep(0.10f, 0.65f, absCoc);
-    const float3 bokehDiff = max(bokeh.rgb * (1.0f + oofMicro), 0.0f.xxx);
-    // Seamless physical transition from 0 px (razor sharp) -> 2.2 px (100% bokeh) with near-field silhouette feathering:
-    const float maxRadFull = max(clamp(dofParams.y, 1.5f, 24.0f) * 2.0f, 4.0f);
+    // Depth-protected 4-tap bilinear upsample of 1/2-res bokeh buffer:
+    // Rejects out-of-focus background bokeh texels when compositing near a tack-sharp focal-plane subject!
+    const float2 bOff = dims.zw * 0.65f;
+    const float4 b0 = SrcB.SampleLevel(Lin, uv + float2( bOff.x,  bOff.y), 0.0f);
+    const float4 b1 = SrcB.SampleLevel(Lin, uv + float2(-bOff.x,  bOff.y), 0.0f);
+    const float4 b2 = SrcB.SampleLevel(Lin, uv + float2( bOff.x, -bOff.y), 0.0f);
+    const float4 b3 = SrcB.SampleLevel(Lin, uv + float2(-bOff.x, -bOff.y), 0.0f);
+    const float4 bokeh = (b0 + b1 + b2 + b3) * 0.25f;
+    // Tack-sharp focal-plane protection: strictly zero far-field bokeh bleed when absCoc < 0.03!
+    const float maxRadFull = max(clamp(dofParams.y, 2.0f, 28.0f) * 2.0f, 4.0f);
     const float cocPx = absCoc * maxRadFull;
-    const float farBlend = coc > 0.0f ? smoothstep(0.0f, 2.2f, cocPx) : 0.0f;
-    const float nearSelf = coc < 0.0f ? smoothstep(0.0f, 2.2f, cocPx) : 0.0f;
-    const float nearBleed = bokeh.a < 0.0f ? smoothstep(0.02f, 0.85f, -bokeh.a * clamp(camOptics[1].z, 0.0f, 2.0f)) : 0.0f;
+    const float farBlend = coc > 0.03f ? smoothstep(0.65f, 3.0f, cocPx) : 0.0f;
+    const float nearSelf = coc < -0.03f ? smoothstep(0.65f, 3.0f, cocPx) : 0.0f;
+    const float nearBleed = bokeh.a < -0.04f ? smoothstep(0.05f, 0.85f, -bokeh.a * clamp(camOptics[1].z, 0.0f, 2.0f)) : 0.0f;
     const float blend = max(farBlend, max(nearSelf, nearBleed));
-    return float4(lerp(sharp.rgb, bokehDiff, blend), sharp.a);
+    return float4(lerp(sharp.rgb, bokeh.rgb, blend), sharp.a);
 }

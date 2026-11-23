@@ -138,7 +138,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 o = camPosW.xyz;
     const float maxDist = 400000.0f;
     if (cloudsOn() && cloudSpan(o, dir, maxDist, t0, t1)) {
-        const uint steps = 48u;
+        // Cap march thickness to 110k units and use 64 uniform steps so light penetrates deeply into 3D cumulus volumes
+        // with lush luminous crowns, translucent backlit silver linings, and deep shadowed cloud bellies!
+        t1 = min(t1, t0 + 110000.0f);
+        const uint steps = 64u;
         const float dt = (t1 - t0) / float(steps);
         const float j = rand(lo, proj.z);
         const float3 aSun = astroSunDir();

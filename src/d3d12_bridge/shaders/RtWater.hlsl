@@ -295,41 +295,43 @@ void water(uint3 id : SV_DispatchThreadID) {
             float3 rd = reflect(-v, nRefl);
             if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }
             float3 refl;
-            // 4-Tap Stratified Cone-Filtered Pure Native Hardware DXR 1.2 RayQuery Water Reflections
-            // + Karis luminance firefly suppression (eliminates noisy edge reflections & single-ray shimmer!):
+            // 5-Tap Deterministic Noise-Free Hardware DXR 1.2 RayQuery Water Reflections (zero per-frame random jitter!):
+            // Center ray + 4 tight symmetric cardinal cone rays eliminate edge shimmer & reflection sparkle completely!
             if (reflectLength > 0.0f) {
                 const bool mats = (giFlags & GI_MATERIALS) != 0u;
                 const float3 farReflSky = waterSky(rd);
-                const float reflCone = lerp(0.014f, 0.038f, saturate(wDist / 4500.0f));
-                static const float2 kStrat4[4] = {
-                    float2(0.125f, 0.375f), float2(0.625f, 0.125f),
-                    float2(0.375f, 0.875f), float2(0.875f, 0.625f)
+                const float reflCone = lerp(0.004f, 0.011f, saturate(wDist / 5000.0f));
+                const float3 t1R = normalize(cross(rd, abs(rd.z) < 0.9f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f)));
+                const float3 t2R = cross(rd, t1R);
+                static const float2 kCross5[5] = {
+                    float2( 0.0f,  0.0f), float2( 1.0f,  0.0f), float2(-1.0f,  0.0f),
+                    float2( 0.0f,  1.0f), float2( 0.0f, -1.0f)
                 };
-                const float2 wJit = float2(ign(px), ign(px.yx + 17.0f)) * 0.25f;
+                static const float kW5[5] = { 2.0f, 1.0f, 1.0f, 1.0f, 1.0f };
                 float3 reflAcc = 0.0f.xxx;
                 float reflW = 0.0f;
-                [unroll] for (int ri = 0; ri < 4; ++ri) {
-                    const float3 rdi = jitterDir(rd, reflCone, frac(kStrat4[ri] + wJit));
+                [unroll] for (int ri = 0; ri < 5; ++ri) {
+                    const float3 rdi = normalize(rd + (t1R * kCross5[ri].x + t2R * kCross5[ri].y) * reflCone);
                     Hit h;
                     float3 sCol;
                     if (traceHit(o, rdi, reflectLength, h)) {
                         const float3 hitPt = o + rdi * h.t;
                         const float3 hn = mats ? hitNormal(h, rdi) : -rdi;
-                        sCol = mats ? shadeHit(hitPt, hn, hitAlbedo(h), kStrat4[ri], true)
+                        sCol = mats ? shadeHit(hitPt, hn, hitAlbedo(h), float2(0.5f, 0.5f), true)
                                     : (0.25f * float3(ambient[0].w, ambient[1].w, ambient[2].w));
-                        const float reflFog = 1.0f - exp(-h.t * 0.00014f);
-                        sCol = lerp(max(sCol, farReflSky * 0.18f), farReflSky, saturate(reflFog));
+                        const float reflFog = 1.0f - exp(-h.t * 0.00016f);
+                        sCol = lerp(max(sCol, farReflSky * 0.22f), farReflSky, saturate(reflFog));
                     } else {
                         sCol = farReflSky;
                     }
                     const float sLum = dot(sCol, float3(0.2126f, 0.7152f, 0.0722f));
-                    const float kw = 1.0f / (1.0f + sLum * 0.45f);
+                    const float kw = kW5[ri] / (1.0f + sLum * 0.45f);
                     reflAcc += sCol * kw;
                     reflW += kw;
                 }
                 refl = reflAcc / max(reflW, 1.0e-4f);
                 const float reflMax = max(refl.r, max(refl.g, refl.b));
-                if (reflMax > 4.2f) { refl *= 4.2f / reflMax; }
+                if (reflMax > 4.0f) { refl *= 4.0f / reflMax; }
             } else {
                 refl = waterSky(rd);
                 const float waveTilt = saturate((1.0f - nRefl.z) * 18.0f);

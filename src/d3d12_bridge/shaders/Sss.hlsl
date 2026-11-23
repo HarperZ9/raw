@@ -72,8 +72,8 @@ void main(uint3 id : SV_DispatchThreadID) {
     const float3 richTint = float3(1.04f, 0.97f, 0.92f);
     const float3 bioTint = lerp(fairTint, richTint, melanin * 0.75f);
     const float bioWeight = saturate(0.35f + hemoglobin * 0.45f) * (1.0f - melanin * 0.30f);
-    const float3 dermalGlow = scattered * (1.0f.xxx - reflDeficit * 0.16f) * lerp(1.0f.xxx, bioTint, bioWeight * saturate(sLum * 0.85f))
+    const float3 dermalGlow = scattered * (1.0f.xxx - reflDeficit * 0.14f) * lerp(1.0f.xxx, bioTint, bioWeight * saturate(sLum * 0.90f))
                             + c.rgb * thinTransmit;
-    const float3 poreKept = dermalGlow * lerp(1.0f, cLum / sLum, 0.40f);
+    const float3 poreKept = dermalGlow * lerp(1.0f, cLum / sLum, 0.48f);
     Out[p] = float4(lerp(c.rgb, poreKept, strength), c.a);
 }

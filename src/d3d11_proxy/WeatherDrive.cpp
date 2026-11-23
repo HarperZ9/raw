@@ -99,6 +99,15 @@ extern "C" __declspec(dllexport) void PG_SetEngineCamera(const float camPos[3], 
     if (cellId) g_lastCellId = cellId;
 }
 
+extern "C" __declspec(dllexport) void PG_SetEngineWorld(float waterHeight, uint32_t camStateId, uint32_t menuPaused)
+{
+    using namespace SB::Proxy;
+    std::lock_guard<std::mutex> lock(g_camMutex);
+    g_engineCam.waterHeight = waterHeight;
+    g_engineCam.camStateId = camStateId;
+    g_engineCam.menuPaused = menuPaused;
+}
+
 extern "C" __declspec(dllexport) void PG_SetWeatherState(float rain, float snow, float cloud, float fog)
 {
     using SB::Proxy::g_report;

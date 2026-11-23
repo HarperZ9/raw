@@ -49,6 +49,8 @@ struct SceneLighting
     bool  hasCascades = false;
     bool  hasEngineCell = false;    // true when raw_engine.dll supplied ground-truth TESObjectCELL::IsInterior()
     bool  isInterior = false;       // exact TESObjectCELL::IsInterior() (eliminates exterior->interior flicker when cascades drop)
+    bool  menuPaused = false;       // exact UI::Singleton->numPausesGame > 0 (MapMenu/Inventory/Pause isolation)
+    float waterHeight = -14000.0f;  // exact TESObjectCELL::waterHeight / TESWorldSpace::defaultWaterHeight
     uint32_t cascades = 0;
     float cascade[2][3][4] = {};
     float cascadeBias[2] = {};

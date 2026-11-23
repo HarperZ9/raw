@@ -32,7 +32,9 @@ struct EngineView {
     uint32_t screen[2];    // the renderer's screen size
     uint32_t viewport[2];  // the frame buffer viewport
     uint32_t ok;           // bit 0 screen, 1 camera, 2 cell, 3 time
-    uint32_t pad;
+    float    waterHeight;  // TESObjectCELL::waterHeight (or TESWorldSpace::defaultWaterHeight)
+    uint32_t camStateId;   // PlayerCamera::currentState->id (0=1stP, 3=Free, 9=3rdP, etc.)
+    uint32_t menuPaused;   // UI::Singleton->numPausesGame > 0 (MapMenu/Inventory/Pause active)
 };
 
 void ViewInit(const Image& img);

@@ -112,6 +112,7 @@ bool Tracker::Step(Local& l, uint32_t sub, uint32_t state)
 
 bool Tracker::Require(const std::shared_ptr<TrackedRes>& r, uint32_t sub, uint32_t state)
 {
+    if (!r || !r->res) return false;
     Local& l = Find(r);
     if (NoChange(l, state) || !Step(l, sub, state)) return false;
     Settle(l);
@@ -120,6 +121,7 @@ bool Tracker::Require(const std::shared_ptr<TrackedRes>& r, uint32_t sub, uint32
 
 bool Tracker::RequireAll(const std::shared_ptr<TrackedRes>& r, uint32_t state)
 {
+    if (!r || !r->res) return false;
     Local& l = Find(r);
     if (NoChange(l, state)) return false;
     // Fast-path whole-resource ALL_SUBRESOURCES barrier coalescing: replaces 11-48 per-subresource barriers

@@ -67,7 +67,9 @@ bool ReadSky(State* s) {
         const auto* cur = *reinterpret_cast<const uint8_t* const*>(sky + 0x48);
         const auto* last = *reinterpret_cast<const uint8_t* const*>(sky + 0x50);
         s->pct = Sat(*reinterpret_cast<const float*>(sky + 0x1B8));
-        const float gh = *reinterpret_cast<const float*>(sky + 0x1BC);
+        // Exact verified Sky::currentGameHour offset on 1.6.1170 / 1.7.104.0 is +0x1B0 (matching rt_view.cpp:85;
+        // +0x1BC was 12 bytes off and broke 24-hour dawn/sunrise/sunset/dusk/night sky & solar gating!).
+        const float gh = *reinterpret_cast<const float*>(sky + 0x1B0);
         if (gh >= 0.0f && gh <= 24.0f) s->gameHour = gh;
         const auto* precip = *reinterpret_cast<const uint8_t* const*>(sky + 0xA0);
         s->density = precip ? *reinterpret_cast<const float*>(precip + 0x84) : 0.0f;

@@ -400,7 +400,9 @@ void water(uint3 id : SV_DispatchThreadID) {
                 }
                 const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) * 0.85f + (sunDir.w > 0.5f ? sunColour.rgb * 0.32f : 0.0f.xxx));
                 const float shoreDark = lerp(0.76f, 1.0f, smoothstep(0.0f, 14.0f, depthV));
-                const float3 waterBody = ((bed * shoreDark + caus) * T + scatter * (1.0f - T) + waveSSS + uwShaft);
+                // Wave-facet luminance modulation makes moving crests & troughs visibly travel even under uniform overcast/night skies.
+                const float waveFacet = lerp(0.76f, 1.28f, saturate(dot(n, normalize(float3(0.35f, 0.25f, 0.90f)))));
+                const float3 waterBody = (((bed * shoreDark + caus) * T + scatter * (1.0f - T)) * waveFacet + waveSSS + uwShaft);
                 body = lerp(waterBody, foamLit, foamMask * 0.68f);
             }
             const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;

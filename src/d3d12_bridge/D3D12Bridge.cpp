@@ -273,9 +273,13 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         m->dev12->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &o7, sizeof(o7));
         m->dev12->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS12, &o12, sizeof(o12));
         m->dev12->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS21, &o21, sizeof(o21));
-        m->log("[D3D12Bridge] HW tiers: SM=0x%X, DXR=%d, Mesh=%d, SamplerFB=%d, EnhancedBarriers=%s, WorkGraphs=%d",
+        D3D12_FEATURE_DATA_D3D12_OPTIONS o0{}; m->dev12->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &o0, sizeof o0);
+        D3D12_FEATURE_DATA_D3D12_OPTIONS1 o1{}; m->dev12->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &o1, sizeof o1);
+        D3D12_FEATURE_DATA_D3D12_OPTIONS4 o4{}; m->dev12->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS4, &o4, sizeof o4);
+        m->log("[D3D12Bridge] HW tiers: SM=0x%X, DXR=%d, Mesh=%d, SamplerFB=%d, EnhancedBarriers=%s, WorkGraphs=%d, FP16=%s, BindlessTier=%d, Wave=%u",
                unsigned(sm.HighestShaderModel), int(o5.RaytracingTier), int(o7.MeshShaderTier),
-               int(o7.SamplerFeedbackTier), o12.EnhancedBarriersSupported ? "YES" : "no", int(o21.WorkGraphsTier));
+               int(o7.SamplerFeedbackTier), o12.EnhancedBarriersSupported ? "YES" : "no", int(o21.WorkGraphsTier),
+               o4.Native16BitShaderOpsSupported ? "YES" : "no", int(o0.ResourceBindingTier), o1.WaveLaneCountMin);
         StreamlineHost::Get().Initialize(m->dev12.Get(), m->dev12->GetAdapterLuid(), m->log);
     }
     if (!ok) { m->log("[D3D12Bridge] initialisation failed at %s; bridge stays off", failed); Shutdown(); return false; }

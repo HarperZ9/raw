@@ -436,6 +436,15 @@ void main(uint3 id : SV_DispatchThreadID) {
     if (d < 1.0f && base >= 1u && base <= 4u && sunColour.w > 0.5f) {
         const float3 wp = worldAt(float2(id.xy), d), wn = worldNormal(Normal.Load(ip));
         rain = wetAt(wp, wn, geometricNormal(float2(id.xy), wp, wn), 1.0f);
+        // Match Lighting.hlsl engine-native capillary wet-shoreline wicking from TESObjectCELL::waterHeight (engineWorld.x)
+        // so wet shoreline rocks, bridge piers, and riverbanks trace full hardware DXR 1.2 reflections too!
+        if (engineWorld.z > 0.5f && engineWorld.x > -13000.0f && (base == 1u || base == 4u) && viewZOf(d) < 4500.0f) {
+            const float aboveW = (wp.z + camPosW.z) - engineWorld.x;
+            if (aboveW > -6.0f && aboveW < 46.0f) {
+                const float wicking = (1.0f - smoothstep(4.0f, 46.0f, aboveW)) * smoothstep(-6.0f, 2.0f, aboveW);
+                rain.wet = max(rain.wet, wicking * 0.88f);
+            }
+        }
     }
     const bool wetGloss = max(rain.wet, rain.puddle) * (1.0f - rain.snow) > 0.2f;   // snow covers the water
     if (reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u) {
@@ -589,7 +598,7 @@ void main(uint3 id : SV_DispatchThreadID) {
 #endif
     // Glossy pixels not traced this frame keep last frame's reflection; every other pixel clears.
     const float4 sp0 = d < 1.0f ? Spec.Load(ip) : 0.0f;
-    const bool glossy = reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u && ((sp0.y > 0.25f && sp0.x > 0.05f) || wetGloss);
+    const bool glossy = reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u && (base == 2u || (sp0.y > 0.14f && sp0.x > 0.04f) || wetGloss);
     if (reflTraced || !glossy || reflectLength < 0.0f) { Refl[id.xy] = refl; }
     Vis[id.xy] = vis;
     Lights[id.xy] = float4(idx.xyz, sky);

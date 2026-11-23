@@ -187,7 +187,7 @@ void SceneSkin_ComparePrepass(ID3D11DeviceContext* real, const Layout& L, UINT i
                 (unsigned long long)p.vs, rows, first, worst);
         }
     }
-    if ((g_ppColour % 2000) == 0)
+    if ((g_ppColour % 200000) == 0)
         Log("[RT] prepass check: %llu actor colour draws, %llu with a prepass of the same streams; index range same %llu, colour inside the "
             "prepass %llu, prepass inside the colour %llu, other %llu; palette equal %llu (rows differing in the rest: %llu); vertex shader equal %llu",
             (unsigned long long)g_ppColour, (unsigned long long)g_ppMatched, (unsigned long long)g_ppSameRange, (unsigned long long)g_ppColourInside,

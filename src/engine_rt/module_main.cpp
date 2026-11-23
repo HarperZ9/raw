@@ -168,7 +168,10 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     // with the view (camera, cell, time, screen; RAW_EngineView) and the glowing emitters (rt_emitters.h)
     if (IniInt("LiveState", 1)) { raw::rt::LiveStateInit(g_img, g_out, IniInt("EmitterLights", 1) != 0); raw::rt::ViewInit(g_img); }
     raw::rt::ForensicsInit(g_out);
-    if (IniInt("SoftBody", 1)) raw::rt::SoftBodyInit(g_img);
+    if (IniInt("SoftBody", 1)) {
+        raw::rt::SoftBodyInit(g_img);
+        Log("softbody: %s", raw::rt::SoftBodyStatsJson().c_str());
+    }
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
     if (IniInt("CallGraph", 0)) {

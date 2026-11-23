@@ -20,9 +20,11 @@ uint64_t g_totalBonesStepped = 0;
 const uint8_t* g_base = nullptr;
 uint32_t g_kPlayer = 0;
 uint32_t g_kProcessLists = 0;
+uint32_t g_kHandleEntries = 0;
 uint64_t g_lastTickUs = 0;
 uint32_t g_lastActorsVisited = 0;
 uint32_t g_lastHighActors = 0;
+uint32_t g_lastNpcActors = 0;
 uint32_t g_lastBonesFound = 0;
 uint32_t g_frameCounter = 0;
 
@@ -264,30 +266,55 @@ void TraverseSkeletonSEH(uint8_t* node, float dtSec, int depth, uint32_t& bonesO
 void StepLiveActorsSEH(float dtSec) {
     __try {
         uint32_t actors = 0;
+        uint32_t npcs = 0;
         uint32_t bones = 0;
-        if (g_base && g_kProcessLists) {
-            const uint8_t* pl = SafeAt<const uint8_t*>(g_base, g_kProcessLists);
-            if (IsCanonicalPtr(pl)) {
-                // ProcessLists::highActorHandles BSTArray size at +0x38/+0x40 (bounded sanity check):
-                const uint32_t hiCount = SafeAt<uint32_t>(pl, 0x40);
-                if (hiCount <= 512u) g_lastHighActors = hiCount;
+        const uint8_t* pc = (g_base && g_kPlayer) ? SafeAt<const uint8_t*>(g_base, g_kPlayer) : nullptr;
+        if (IsCanonicalPtr(pc)) {
+            // TESObjectREFR::loadedData (+0x70) -> LOADED_REF_DATA::data3D (+0x00)
+            const uint8_t* loaded = SafeAt<const uint8_t*>(pc, 0x70);
+            if (IsCanonicalPtr(loaded)) {
+                uint8_t* root3d = SafeAt<uint8_t*>(loaded, 0x00);
+                if (IsCanonicalPtr(root3d)) {
+                    ++actors;
+                    TraverseSkeletonSEH(root3d, dtSec, 0, bones);
+                }
             }
         }
-        if (g_base && g_kPlayer) {
-            const uint8_t* pc = SafeAt<const uint8_t*>(g_base, g_kPlayer);
-            if (IsCanonicalPtr(pc)) {
-                // TESObjectREFR::loadedData (+0x70) -> LOADED_REF_DATA::data3D (+0x00)
-                const uint8_t* loaded = SafeAt<const uint8_t*>(pc, 0x70);
-                if (IsCanonicalPtr(loaded)) {
-                    uint8_t* root3d = SafeAt<uint8_t*>(loaded, 0x00);
-                    if (IsCanonicalPtr(root3d)) {
-                        ++actors;
-                        TraverseSkeletonSEH(root3d, dtSec, 0, bones);
+        // Traverse ALL active high-process NPC actors from ProcessLists::highActorHandles (+0x30 data, +0x40 size)
+        // resolved through BSPointerHandleManager::Entry::GetHandleEntries (16-byte entries, pointer at +0x08).
+        if (g_base && g_kProcessLists && g_kHandleEntries) {
+            const uint8_t* pl = SafeAt<const uint8_t*>(g_base, g_kProcessLists);
+            const uint8_t* entries = g_base + g_kHandleEntries;
+            if (IsCanonicalPtr(pl)) {
+                const uint32_t* handles = SafeAt<const uint32_t*>(pl, 0x30);
+                const uint32_t hiCount = SafeAt<uint32_t>(pl, 0x40);
+                if (hiCount <= 512u) {
+                    g_lastHighActors = hiCount;
+                    if (IsCanonicalPtr(handles)) {
+                        const uint32_t cap = std::min<uint32_t>(hiCount, 48u);
+                        for (uint32_t i = 0; i < cap && bones < 64u; ++i) {
+                            const uint32_t h = handles[i];
+                            const uint32_t idx = h & 0xFFFFFu;
+                            if (!h || idx >= 0x100000u) continue;
+                            const uint8_t* ent = entries + size_t(idx) * 16u;
+                            const uint8_t* refr = SafeAt<const uint8_t*>(ent, 0x08);
+                            if (!IsCanonicalPtr(refr) || refr == pc) continue;
+                            // Structural proof: FormType::ActorCharacter == 62 at TESForm +0x1A
+                            if (SafeAt<uint8_t>(refr, 0x1A) != 62u) continue;
+                            const uint8_t* loaded = SafeAt<const uint8_t*>(refr, 0x70);
+                            if (!IsCanonicalPtr(loaded)) continue;
+                            uint8_t* root3d = SafeAt<uint8_t*>(loaded, 0x00);
+                            if (!IsCanonicalPtr(root3d)) continue;
+                            ++actors;
+                            ++npcs;
+                            TraverseSkeletonSEH(root3d, dtSec, 0, bones);
+                        }
                     }
                 }
             }
         }
         g_lastActorsVisited = actors;
+        g_lastNpcActors = npcs;
         g_lastBonesFound = bones;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return;
@@ -300,6 +327,7 @@ void SoftBodyInit(const Image& img) {
     g_base = img.base;
     g_kPlayer = Addr("PlayerCharacter::Singleton");
     g_kProcessLists = Addr("ProcessLists::GetSingleton");
+    g_kHandleEntries = Addr("BSPointerHandleManager::Entry::GetHandleEntries");
     g_liveBones.clear();
     g_lastTickUs = 0;
     g_frameCounter = 0;
@@ -333,13 +361,13 @@ void SoftBodyShutdown() {
 }
 
 std::string SoftBodyStatsJson() {
-    char b[256];
+    char b[288];
     std::snprintf(b, sizeof b,
-                  "{\"cmd\":\"softbody\",\"wired\":%s,\"active_actors\":%u,\"high_actors\":%u,"
+                  "{\"cmd\":\"softbody\",\"wired\":%s,\"active_actors\":%u,\"npc_actors\":%u,\"high_actors\":%u,"
                   "\"tracked_bones\":%zu,\"last_frame_bones\":%u,"
                   "\"softbody_bones_stepped\":%llu,\"softbody_substeps_240hz\":%llu}",
-                  (g_base && g_kPlayer) ? "true" : "false",
-                  g_lastActorsVisited, g_lastHighActors, g_liveBones.size(), g_lastBonesFound,
+                  (g_base && g_kPlayer && g_kProcessLists && g_kHandleEntries) ? "true" : "false",
+                  g_lastActorsVisited, g_lastNpcActors, g_lastHighActors, g_liveBones.size(), g_lastBonesFound,
                   static_cast<unsigned long long>(g_totalBonesStepped),
                   static_cast<unsigned long long>(g_totalSubsteps));
     return b;

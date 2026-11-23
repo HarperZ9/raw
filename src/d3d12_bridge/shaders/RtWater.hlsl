@@ -270,8 +270,8 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
             const float3 o = p + float3(0.0f, 0.0f, 2.5f + 0.003f * length(p));
 
-            // Distance-filtered 3D liquid reflection normal (sculpted living waves out to 8,500u — no flat plastic sheet from bridges).
-            const float reflRelief = lerp(0.84f, 0.56f, saturate(wDist / 8500.0f));
+            // Crisp recognizable mirror reflections of trees, sawmill, bridges & mountains (not scrambled into noise soup).
+            const float reflRelief = lerp(0.46f, 0.30f, saturate(wDist / 8500.0f));
             const float3 nRefl = normalize(lerp(float3(0.0f, 0.0f, 1.0f), n, reflRelief));
             float3 rd = reflect(-v, nRefl);
             if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }

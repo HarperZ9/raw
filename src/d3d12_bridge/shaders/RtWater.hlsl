@@ -226,9 +226,21 @@ void water(uint3 id : SV_DispatchThreadID) {
                                               vNoise2D(microP0 + float2(0.0f, 0.18f)) - vNoise2D(microP0 - float2(0.0f, 0.18f)));
                 const float2 microG1 = float2(vNoise2D(microP1 + float2(0.18f, 0.0f)) - vNoise2D(microP1 - float2(0.18f, 0.0f)),
                                               vNoise2D(microP1 + float2(0.0f, 0.18f)) - vNoise2D(microP1 - float2(0.0f, 0.18f)));
-                const float2 capNormal = lerp(capG0, capG1, flowBlend) * (0.62f * capFade)
-                                       + lerp(microG0, microG1, flowBlend) * (0.38f * saturate(1.0f - wDist / 1800.0f));
-                const float2 waveG = lerp(g0, g1, flowBlend) * (depthDamp * 1.25f) + bowNormal + eddyRipple + capNormal;
+                const float2 capNormal = lerp(capG0, capG1, flowBlend) * (0.68f * capFade)
+                                       + lerp(microG0, microG1, flowBlend) * (0.44f * saturate(1.0f - wDist / 1800.0f));
+                // 3rd ultra-crisp fine-ripple octave (<900u) so close-up water shows razor-sharp liquid facets instead of matte blur.
+                const float fineFade = saturate(1.0f - wDist / 900.0f);
+                float2 fineNormal = 0.0f.xx;
+                if (fineFade > 0.01f) {
+                    const float2 fP0 = (wpW.xy - flowVec * (ph0 * 16.0f)) * 1.45f;
+                    const float2 fP1 = (wpW.xy - flowVec * (ph1 * 16.0f) + float2(53.1f, 27.9f)) * 1.45f;
+                    const float2 fG0 = float2(vNoise2D(fP0 + float2(0.22f, 0.0f)) - vNoise2D(fP0 - float2(0.22f, 0.0f)),
+                                              vNoise2D(fP0 + float2(0.0f, 0.22f)) - vNoise2D(fP0 - float2(0.0f, 0.22f)));
+                    const float2 fG1 = float2(vNoise2D(fP1 + float2(0.22f, 0.0f)) - vNoise2D(fP1 - float2(0.22f, 0.0f)),
+                                              vNoise2D(fP1 + float2(0.0f, 0.22f)) - vNoise2D(fP1 - float2(0.0f, 0.22f)));
+                    fineNormal = lerp(fG0, fG1, flowBlend) * (0.34f * fineFade);
+                }
+                const float2 waveG = lerp(g0, g1, flowBlend) * (depthDamp * 1.30f) + bowNormal + eddyRipple + capNormal + fineNormal;
                 n = normalize(n + float3(waveG, 0.0f));
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
                 if (wDist < 1600.0f) {
@@ -278,24 +290,25 @@ void water(uint3 id : SV_DispatchThreadID) {
                 if (reflMax > 4.5f) { refl *= 4.5f / reflMax; }
             } else {
                 refl = waterSky(rd);
-                // Physical wave-slope contrast under overcast skies: steep wave faces dipping toward dark riverbanks
-                // darken while upward-tilted wave crests catch crisp zenith silver-sky sheen (eliminates flat satin glass).
-                const float waveTilt = saturate((1.0f - nRefl.z) * 14.0f);
+                // High-contrast wave-slope reflection modulation: dark shadowed wave troughs vs crisp bright crests
+                // (eliminates flat matte-plastic teal water under overcast skies).
+                const float waveTilt = saturate((1.0f - nRefl.z) * 18.0f);
                 const float skyFace = saturate(dot(nRefl, normalize(v + float3(0.0f, 0.0f, 1.0f))));
-                const float crestSheen = pow(skyFace, 28.0f) * 0.55f;
-                refl = refl * lerp(0.74f, 1.24f, smoothstep(0.05f, 0.55f, rd.z)) * (1.0f - waveTilt * 0.22f)
+                const float crestSheen = pow(skyFace, 36.0f) * 0.72f;
+                refl = refl * lerp(0.60f, 1.36f, smoothstep(0.03f, 0.48f, rd.z)) * (1.0f - waveTilt * 0.28f)
                      + refl * crestSheen;
             }
 
-            // The sun's glint on the waves (true HDR peak feeds 12-pass Jimenez HDR Bloom cleanly).
+            // Dual-lobe GGX sun glint (tight 0.0045 mirror crest sparkle + broad 0.022 sheen lobe).
             float3 glint = 0.0f;
             const float3 l = sunDir.xyz;
             const float nl = dot(nRefl, l);
             if (sunDir.w > 0.5f && nl > 0.0f && waterA.w > 0.0f) {
                 const float3 hv = normalize(v + l);
-                const float nh = saturate(dot(nRefl, hv)), a2 = 0.014f;
-                const float dd = nh * nh * (a2 - 1.0f) + 1.0f;
-                const float D = a2 / (PI * dd * dd);
+                const float nh = saturate(dot(nRefl, hv));
+                const float dd1 = nh * nh * (0.0045f - 1.0f) + 1.0f;
+                const float dd2 = nh * nh * (0.0220f - 1.0f) + 1.0f;
+                const float D = (0.0045f / (PI * dd1 * dd1)) * 0.65f + (0.0220f / (PI * dd2 * dd2)) * 0.35f;
                 const float Fh = 0.02f + 0.98f * pow(1.0f - saturate(dot(v, hv)), 5.0f);
                 const float vis = sunColour.w > 0.5f ? visible(o, l, 0.0f, sunLength) : 1.0f;
                 glint = min(sunColour.rgb * (D * Fh * nl / (4.0f * max(nv, 0.08f))) * vis, 6.0f.xxx) * waterA.w;
@@ -354,16 +367,16 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float depthV = max(p.z - pb.z, 0.0f);
                 // True Snell's Law optical underwater refraction (n_air/n_water = 1/1.333):
                 // bends view ray into the water column and intersects the riverbed plane at depthV.
-                // True Snell's Law optical underwater refraction (n_air/n_water = 1/1.333) with smooth clamped offset
-                // and bilinear PreWater sampling (eliminates blocky/pixelated contour rings & edge snapping).
+                // Disciplined Snell's Law underwater refraction (max 10px offset, scaled smoothly by shallow depth):
+                // keeps submerged riverbed pebbles & cobblestones razor-sharp instead of smeared vaseline blur.
                 const float3 refrRay = refract(-v, n, 1.0f / 1.333f);
-                const float tRefr = min(depthV / max(-refrRay.z, 0.25f), 84.0f);
+                const float tRefr = min(depthV / max(-refrRay.z, 0.30f), 48.0f);
                 const float3 pRefrBed = p + refrRay * tRefr;
-                const float4 s2 = screenOf(lerp(pb, pRefrBed, 0.65f));
+                const float4 s2 = screenOf(lerp(pb, pRefrBed, 0.35f));
                 float2 qOff = s2.w > 0.0f ? (s2.xy - float2(id.xy)) : 0.0f.xx;
                 const float qLen = length(qOff);
-                if (qLen > 24.0f) { qOff *= (24.0f / qLen); }
-                const float2 qF = clamp(float2(id.xy) + qOff * saturate(depthV / 14.0f), float2(1.0f, 1.0f), dims.xy - 2.0f);
+                if (qLen > 10.0f) { qOff *= (10.0f / qLen); }
+                const float2 qF = clamp(float2(id.xy) + qOff * saturate(depthV / 28.0f), float2(1.0f, 1.0f), dims.xy - 2.0f);
                 int2 q = int2(round(qF));
                 const float4 Lq = Layer.Load(int3(q, 0));
                 const float dQ = Depth.Load(int3(q, 0));

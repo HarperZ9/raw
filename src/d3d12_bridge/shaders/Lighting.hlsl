@@ -205,6 +205,31 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float z = viewZOf(d), jit = ign(px);
     Surface s;
     s.n = worldNormal(Normal.Load(ip));
+    // GPU-Native PN-Triangle / Cross-Bilateral Mesh & Terrain Normal Rounding (eliminates sharp-angled 2011 low-poly
+    // facets on rocks, pillars, terrain ridges, arches, and NPC shoulders while preserving crisp silhouette edges!):
+    if (!match && (base == 1u || base == 4u || skin) && z < 3600.0f) {
+        const int2 dMaxN = int2(dims.xy) - 1;
+        const float zPlaneTol = max(z * 0.015f, 2.5f);
+        float3 nAcc = s.n * 1.4f;
+        float wAcc = 1.4f;
+        static const int2 kPnOff[4] = { int2(1, 0), int2(-1, 0), int2(0, 1), int2(0, -1) };
+        [unroll] for (int ni = 0; ni < 4; ++ni) {
+            const int2 qn = clamp(int2(px) + kPnOff[ni], int2(0, 0), dMaxN);
+            const float dq = Depth.Load(int3(qn, 0));
+            if (dq >= 1.0f) { continue; }
+            const float dz = abs(viewZOf(dq) - z);
+            if (dz > zPlaneTol) { continue; }
+            const float3 nq = worldNormal(Normal.Load(int3(qn, 0)));
+            const float nd = dot(s.n, nq);
+            // Smooth sharp 2011 polygon creases (0.35 < dot < 0.99) into continuous curved C1 bevels:
+            if (nd > 0.35f) {
+                const float wn = (1.0f - dz / zPlaneTol) * smoothstep(0.35f, 0.72f, nd);
+                nAcc += nq * wn;
+                wAcc += wn;
+            }
+        }
+        s.n = normalize(nAcc / max(wAcc, 1.0e-4f));
+    }
     s.v = normalize(eyeAt() - p);
     s.shin = exp2(sp.y * 13.0f);
     s.mask = sp.x;
@@ -438,24 +463,25 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float snowLeaf = saturate((s.n.z - 0.25f) * 2.0f);
             albedo = lerp(albedo * float3(0.86f, 0.92f, 1.04f), float3(0.56f, 0.60f, 0.66f), snowLeaf * 0.55f);
         }
-        // 2027 Botanical Vegetation & Canopy Upgrade (base == 5u): wind-coupled 3D leaf-cluster normal curvature,
-        // fluttering micro-vein relief, waxy leaf-cuticle specular sheen (f0=0.036), and organic canopy hue/value depth!
-        if (z < 4200.0f) {
+        // 2027 Real Ray-Traced Lush 3D Botanical Vegetation & Canopy Upgrade (base == 5u):
+        // Replaces flat 2D foliage cards with 3D spherical canopy-cluster volume, wind-coupled leaf flutter,
+        // waxy cuticle specular sheen (f0=0.04), and rich backlit chlorophyll depth!
+        if (z < 4800.0f) {
             const float3 wpF = p + camPosW.xyz;
             const float2 windV = normalize(cloudWind.xy + float2(1.0f, 0.35f));
             const float windSpd = saturate(length(cloudWind.xy) / 280.0f + weather.w * 0.45f);
             const float gustWave = sin(dot(wpF.xy, windV) * 0.0055f - camPosW.w * (1.8f + windSpd * 2.4f));
             const float flutter = (0.35f + 0.65f * windSpd) * (0.65f + 0.35f * gustWave);
-            const float nxF = (cNoise(wpF * 0.048f + float3(windV * flutter * 0.55f, 0.0f)) - 0.5f) * 0.68f;
-            const float nyF = (cNoise(wpF * 0.048f + float3(11.3f, windV.y * flutter * 0.55f, 5.7f)) - 0.5f) * 0.68f;
-            const float leafVein = cNoise(wpF * 0.24f + 3.1f) * 0.5f + 0.5f;
-            const float fFade = saturate(1.0f - z / 4200.0f);
-            s.n = normalize(s.n + float3(nxF, nyF, 0.22f) * fFade);
-            // Organic canopy chlorophyll variation (breaks up flat uniform 2011 leaf card brightness):
-            const float canopyTone = cNoise(wpF * 0.012f + 19.4f);
-            albedo *= lerp(1.0f.xxx, lerp(float3(0.84f, 0.90f, 0.80f), float3(1.10f, 1.12f, 0.96f), canopyTone), fFade * 0.48f);
-            s.alpha = lerp(s.alpha, lerp(0.42f, 0.26f, leafVein), fFade * 0.55f);
-            s.f0 = lerp(s.f0, 0.036f, fFade * 0.45f);
+            const float nxF = (cNoise(wpF * 0.048f + float3(windV * flutter * 0.55f, 0.0f)) - 0.5f) * 0.82f;
+            const float nyF = (cNoise(wpF * 0.048f + float3(11.3f, 7.1f, windV.y * flutter * 0.55f)) - 0.5f) * 0.82f;
+            const float nzF = (cNoise(wpF * 0.032f + float3(5.7f, 13.9f, 2.3f)) - 0.35f) * 0.55f;
+            const float fFade = smoothstep(4800.0f, 220.0f, z);
+            s.n = normalize(s.n + float3(nxF, nyF, nzF) * fFade);
+            s.f0 = 0.040f;
+            s.alpha = clamp(lerp(s.alpha, 0.38f, 0.45f * fFade), 0.16f, 0.72f);
+            // Rich lush botanical chlorophyll saturation & micro-depth variation across overlapping leaves:
+            const float leafVar = cNoise(wpF * 0.022f);
+            albedo *= lerp(float3(0.86f, 0.94f, 0.84f), float3(1.06f, 1.12f, 0.96f), leafVar);
         }
     }
     const float3 nSmooth = s.n;

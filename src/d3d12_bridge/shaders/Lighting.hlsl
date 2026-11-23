@@ -896,9 +896,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     float3 diff = 0.0f, spec = 0.0f;
     float sunShadow = 1.0f;
     if (sunDir.w > 0.5f) {
-        // Interiors have no cascades; channel 0 of their mask belongs to a shadowed point light, so the
-        // directional light there is unshadowed, as the game lights it.
-        sunShadow = (flags.x & FLAG_SHADOWS) == 0u ? 1.0f : (flags.x & FLAG_CASCADES) != 0u ? cascadeShadow(p, d, true) : m4.x;
+        // Interiors (sunColour.w < 0.5): NEVER read m4.x (that is vanilla's flickering point-light shadow channel 0!).
+        // Keep interior directional fill unshadowed and calm so turning the camera never flickers the whole room!
+        sunShadow = (sunColour.w < 0.5f || (flags.x & FLAG_SHADOWS) == 0u) ? 1.0f
+                  : ((flags.x & FLAG_CASCADES) != 0u ? cascadeShadow(p, d, true) : m4.x);
         // Pure Native Hardware DXR 1.2 Sun Shadows when RT is active (zero screen-space contact shadow hacks!).
         // screenShadow runs ONLY as a fallback when hardware RT is explicitly disabled.
         if (!match && !rt && (flags.x & FLAG_CONTACT) != 0u && base != 5u && !isActorFeat && !isActorCloth && sunShadow > 0.0f && dot(s.n, sunDir.xyz) > 0.0f) {
@@ -932,7 +933,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Disciplined cool silver-blue moonlight at night (Commons Cluster A: lets warm torches/hearths/windows dominate night scenes).
         const float3 moonDirectCol = float3(0.22f, 0.30f, 0.50f) * clamp(dirLum * 0.75f, 0.14f, 0.48f);
         const float sunHdrGain = (!match && sunColour.w > 0.5f) ? lerp(1.20f, 1.00f, saturate(clouds.x * 1.15f)) * (1.0f - nightDir * 0.42f) : 1.0f;
-        const float3 dirCol = lerp(alignedDayCol * sunHdrGain, moonDirectCol, nightDir);
+        // In interiors, keep directional vault fill disciplined (0.32x) so hearths, torches & candles drive the room!
+        const float3 dirCol = (sunColour.w < 0.5f && !match) ? (sunColour.rgb * 0.32f)
+                            : lerp(alignedDayCol * sunHdrGain, moonDirectCol, nightDir);
         // Chan 2018 micro-shadowing: uses fine-scale AO to shadow crevices/mortar/bark where coarse shadow maps cannot reach.
         const float microSh = (!match && !isActorFeat && base != 5u) ? saturate(2.0f * AoHist.Load(ip).x + saturate(dot(s.n, sunDir.xyz)) - 0.85f) : 1.0f;
         const float sunPunch = (!match && sunColour.w > 0.5f) ? lerp(1.16f, 0.85f, nightDir) : 1.0f;
@@ -1055,10 +1058,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 toL = lightPosR[li].xyz - p;
             const float dist = length(toL);
             const float rNorm = saturate(dist / lightPosR[li].w);
-            // Full-reach physical point-light throw (restores real torch/hearth/lantern/spell light cast across rooms & streets;
-            // previous (win*win)/(1+1.45*rNorm^2) crushed 50-70% of light reach past 40% radius!).
+            // Physical focused point-light falloff (eliminates 3.8x triple-stacked interior fire blow-out so hearths,
+            // torches & candles cast rich, warm, focused pools with deep cozy shadows instead of flat orange wash!):
             const float win = saturate(1.0f - rNorm * rNorm);
-            const float att = pow(win, 1.35f) * 1.28f;
+            const float att = (win * win) / (1.0f + rNorm * rNorm * 0.85f);
             if (att <= 0.0f) { continue; }
             // Native campfire/torch heat snow melt: warm firelights melt surrounding snow into glistening damp ground.
             if (!match && wet.snow > 0.01f && lightColS[li].r > lightColS[li].b * 1.25f) {
@@ -1073,8 +1076,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // Removed duplicate high-frequency 6.3 rad/s shader flicker (rt_livestate.cpp already drives silky 0.12-EMA breath!).
             if (!match && lightColS[li].r > lightColS[li].b * 1.25f) {
                 const bool isIntLight = (sunColour.w < 0.5f);
-                const float3 fireBoost = skin ? float3(1.06f, 0.95f, 0.86f)
-                                              : (isIntLight ? float3(1.60f, 0.92f, 0.42f) : float3(1.48f, 0.88f, 0.44f));
+                const float3 fireBoost = skin ? float3(1.02f, 0.90f, 0.80f)
+                                              : (isIntLight ? float3(1.18f, 0.72f, 0.34f) : float3(1.32f, 0.78f, 0.38f));
                 c *= fireBoost;
             }
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;
@@ -1129,10 +1132,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         } else {
             const float ambWarm = saturate((amb.r - amb.b) * 3.5f);
             const float ambCool = saturate((amb.b - amb.r) * 3.5f);
-            // Architectural vault shaping: deepen floor/corner ambient slightly while lifting upper beams & directional faces:
-            const float3 intTint = lerp(float3(0.92f, 0.95f, 1.02f), float3(1.06f, 0.96f, 0.86f), ambWarm);
+            // Architectural vault shaping: deepen floor/corner ambient (0.58x) so hearths & candles create dramatic
+            // RDR2-grade chiaroscuro pools instead of washed-out grey-beige interiors!
+            const float3 intTint = lerp(float3(0.92f, 0.95f, 1.02f), float3(1.04f, 0.94f, 0.84f), ambWarm);
             const float3 cryptTint = lerp(intTint, float3(0.84f, 0.92f, 1.06f), ambCool);
-            amb *= cryptTint * lerp(0.82f, 1.12f, saturate(s.n.z * 0.5f + 0.5f));
+            amb *= cryptTint * lerp(0.48f, 0.74f, saturate(s.n.z * 0.5f + 0.5f));
         }
     }
     // Pure Native Hardware DXR 1.2 Directional Skylighting & RTAO when RT is active (zero screen-space GTAO halos!):

@@ -46,44 +46,37 @@ float sampleFocusZoneZ() {
     return lerp(zVals[3], zVals[6], 0.35f);
 }
 
-// Exact Physical 35mm Full-Frame Thin-Lens CoC Equation (70 Skyrim units = 1 meter, 50mm cinema prime):
-//   CoC_sensor = ((d - f) / d) * (F^2 / (N * (f - F)))
-// Returns signed normalized CoC in [-1..+1] (negative = near-field foreground, positive = far-field background),
-// smoothly stepping through every intermediate depth plane with zero hard clipping and natural hyperfocal infinity!
+// Full DSLR / Medium Format Physical Thin-Lens CoC Equation (70 Skyrim units = 1 meter):
+// Driven live by camOptics[0] (sensorWidthMm 24/36/44/70mm, focalLengthMm 24..200mm, apertureFStop f/0.95..f/16)
+// and camOptics[1] (nearBlurScale, farBlurScale, nearBleed, focusSpeed)!
 float signedCoC(float curZ, float focusZ, float maxDist) {
     if (maxDist <= 1.0f) { return 0.0f; }
     const float dM = max(curZ, 24.0f) / 70.0f;
     const float fM = clamp(focusZ, 42.0f, 14000.0f) / 70.0f;
-    // Dynamic Silent Horizons / NAC-X Cinema Aperture Curve:
-    // Opens smoothly to dreamy f/1.6 on close-up portraits & props (focus < 2.2m) while tightening gently to
-    // disciplined f/3.4 in open traversal (focus > 3.5m) so rooms & vistas stay readable with silky optical falloff!
-    const float F = 0.050f;
-    const float macroT = smoothstep(4.2f, 1.4f, fM);
-    const float baseN = lerp(3.4f, 1.55f, macroT);
-    const float N = clamp(baseN * (420.0f / max(maxDist, 120.0f)), 1.05f, 8.0f);
-    // Physical CoC diameter on 35mm sensor (36mm wide), converted to full-res pixels:
-    const float cocSensorM = ((dM - fM) / max(dM, 0.25f)) * ((F * F) / (N * max(fM - F, 0.20f)));
-    const float cocPx = (cocSensorM / 0.036f) * dims.x;
-    const float maxRadFull = max(clamp(dofParams.y, 1.5f, 24.0f) * 2.0f, 4.0f);
-    // Sub-pixel dead-zone (< 0.45 px) keeps the exact focal plane razor-sharp with zero softness:
+    const float sensorW = clamp(camOptics[0].x, 20.0f, 80.0f) * 0.001f;   // 24mm APS-C .. 70mm 6x7 Medium Format
+    const float F = clamp(camOptics[0].y, 20.0f, 220.0f) * 0.001f;        // focal length in meters
+    const float N = clamp(camOptics[0].z, 0.90f, 16.0f);                  // physical f-stop
+    const float cocSensorM = ((dM - fM) / max(dM, 0.25f)) * ((F * F) / (N * max(fM - F, 0.18f)));
+    const float cocPx = (cocSensorM / sensorW) * dims.x * clamp(maxDist / 420.0f, 0.25f, 3.0f);
+    const float maxRadFull = max(clamp(dofParams.y, 2.0f, 28.0f) * 2.0f, 4.0f);
     const float absPx = abs(cocPx);
-    if (absPx <= 0.45f) { return 0.0f; }
-    const float norm = saturate((absPx - 0.45f) / maxRadFull);
+    if (absPx <= 0.40f) { return 0.0f; }
+    const float planeScale = cocPx < 0.0f ? clamp(camOptics[1].x, 0.0f, 2.5f) : clamp(camOptics[1].y, 0.0f, 2.5f);
+    const float norm = saturate(((absPx - 0.40f) / maxRadFull) * planeScale);
     return cocPx < 0.0f ? -norm : norm;
 }
 
 // 1x1 GPU-Native Cinema Follow-Focus Motor: smoothly integrates focus distance in diopter (1/z) space
-// so rack-focus glides organically over ~0.25s instead of snapping instantaneously between depth planes!
+// driven by camOptics[1].w (dofFocusSpeed 0.02..0.30)!
 float4 dof_focus(float4 at : SV_Position) : SV_Target0 {
     const float targetZ = clamp(sampleFocusZoneZ(), 42.0f, 14000.0f);
     const float prevZ = SrcA.Load(int3(0, 0, 0)).x;
     if (prevZ < 20.0f || prevZ > 20000.0f) { return float4(targetZ, 0.0f, 0.0f, 1.0f); }
-    // Diopter-space (1/z) exponential follow-focus pull: fast enough for responsive close-ups, silky across rooms!
     const float prevD = 1.0f / prevZ;
     const float targD = 1.0f / targetZ;
     const float diffD = abs(targD - prevD);
-    // Adaptive cinema motor velocity: gentle ~0.07/frame for small shifts, up to 0.14/frame for large rack-focus pulls:
-    const float speed = lerp(0.065f, 0.145f, saturate(diffD * 180.0f));
+    const float baseSpd = clamp(camOptics[1].w, 0.02f, 0.30f);
+    const float speed = lerp(baseSpd * 0.72f, min(baseSpd * 1.85f, 0.45f), saturate(diffD * 180.0f));
     const float nextD = lerp(prevD, targD, speed);
     return float4(clamp(1.0f / max(nextD, 1.0e-5f), 42.0f, 14000.0f), targetZ, 0.0f, 1.0f);
 }
@@ -133,7 +126,11 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
     const float2 uvNorm = (px + 0.5f) * invDim * 2.0f - 1.0f;
     const float cornerMag = saturate(dot(uvNorm, uvNorm) * 0.42f);
     const float2 radAxis = length(uvNorm) > 1.0e-4f ? normalize(uvNorm) : float2(1.0f, 0.0f);
-    const float kBlade = 6.2831853f / 7.0f;   // 7-blade classic cinema iris (Silent Horizons / Cooke signature)
+    const float2 tanAxis = float2(-radAxis.y, radAxis.x);
+    const int shape = int(camOptics[0].w + 0.5f);   // 0:5-blade, 1:6-blade, 2:7-blade, 3:9-blade, 4:Circle, 5:Anamorphic 2x, 6:Petzval Swirl
+    const float blades = (shape == 0) ? 5.0f : (shape == 1) ? 6.0f : (shape == 2) ? 7.0f : 9.0f;
+    const float kBlade = 6.2831853f / blades;
+    const float kCosHalf = cos(3.14159265f / blades);
 
     // Adaptive gather radius for far-field: packs all 5 concentric rings tightly inside centerCoc * maxRad
     // so intermediate depth planes have 100% continuous, zero-stipple, zero-noise optical bokeh!
@@ -156,11 +153,23 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
         const float angOff = float(ring) * 0.5235988f;   // 30-deg alternating ring phase for perfect hexagonal packing
         [loop] for (int t = 0; t < nTaps; t++) {
             const float a = float(t) * dAng + angOff;
-            const float sec = abs(fmod(a, kBlade) - kBlade * 0.5f);
-            const float bladeR = clamp(0.9009689f / max(cos(sec), 0.76f), 0.92f, 1.08f);
+            float bladeR = 1.0f;
+            if (shape <= 3) {
+                const float sec = abs(fmod(a, kBlade) - kBlade * 0.5f);
+                bladeR = clamp(kCosHalf / max(cos(sec), 0.72f), 0.88f, 1.12f);
+            }
             float2 unitOff = float2(cos(a), sin(a)) * (rFrac * bladeR);
-            // Subtle mechanical cat's-eye corner vignette squeeze on outer bokeh discs:
-            unitOff -= radAxis * (dot(unitOff, radAxis) * cornerMag * 0.28f);
+            if (shape == 5) {
+                // 2x Anamorphic Cinema Squeeze (vertical oval bokeh discs):
+                unitOff *= float2(0.68f, 1.38f);
+            } else if (shape == 6) {
+                // Swirly Petzval / Helios-44-2 tangential bokeh stretching toward frame edges:
+                unitOff = radAxis * (dot(unitOff, radAxis) * (1.0f - cornerMag * 0.62f))
+                        + tanAxis * (dot(unitOff, tanAxis) * (1.0f + cornerMag * 0.45f));
+            } else {
+                // Classic mechanical cat's-eye corner vignette squeeze:
+                unitOff -= radAxis * (dot(unitOff, radAxis) * cornerMag * 0.28f);
+            }
 
             // 1) Far-field gather (dense 90-tap packing scaled to exact farGatherRad -> silky smooth step-down!):
             if (farGatherRad > 0.35f) {
@@ -268,7 +277,7 @@ float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
     const float cocPx = absCoc * maxRadFull;
     const float farBlend = coc > 0.0f ? smoothstep(0.0f, 2.2f, cocPx) : 0.0f;
     const float nearSelf = coc < 0.0f ? smoothstep(0.0f, 2.2f, cocPx) : 0.0f;
-    const float nearBleed = bokeh.a < 0.0f ? smoothstep(0.02f, 0.85f, -bokeh.a) : 0.0f;
+    const float nearBleed = bokeh.a < 0.0f ? smoothstep(0.02f, 0.85f, -bokeh.a * clamp(camOptics[1].z, 0.0f, 2.0f)) : 0.0f;
     const float blend = max(farBlend, max(nearSelf, nearBleed));
     return float4(lerp(sharp.rgb, bokehDiff, blend), sharp.a);
 }

@@ -87,12 +87,20 @@ struct LightingTuning
     bool  rtReflect = true;         // glossy surfaces: one ray-traced reflection ray, the hit's colour in the game's frame
     // Water (RtWater.hlsl), after the game composites its water: improved mode with RT on raw::tx.
     bool  water = true;             // Water
-    // Pre-Pass Cinema DoF & Weather Lens Optics (DofPass.hlsl) + RAWLSS 5.0 3D-Guided Reconstruction (Rawlss5Pass.hlsl):
+    // Pre-Pass DSLR / Medium Format Camera & DoF Optics (DofPass.hlsl) + RAWLSS 5.0 (Rawlss5Pass.hlsl):
     bool  rawlss5 = true;           // Rawlss5: native SM 6.9 FP16 3D-Guided Neural & Physical Reconstruction
-    bool  dof = true;               // Dof: 5-pass 91-tap concentric physical thin-lens cinema bokeh DoF
-    float dofMaxDist = 420.0f;      // DofMaxDist: optical focal envelope (150..2500 units)
-    float dofRadius = 7.5f;         // DofRadius: bokeh aperture radius (1.5..24 px)
-    float dofOrbBoost = 1.25f;      // DofOrbBoost: specular bokeh orb glow (0..4)
+    bool  dof = true;               // Dof: 5-pass 91-tap concentric physical DSLR / Medium Format cinema DoF
+    float dofMaxDist = 420.0f;      // DofMaxDist: master DoF optical gain (0=off, 150..2500)
+    float dofRadius = 11.0f;        // DofRadius: max bokeh aperture radius (2..28 px)
+    float dofOrbBoost = 1.85f;      // DofOrbBoost: specular bokeh highlight orb boost (0..5)
+    int   dofSensor = 1;            // DofSensor: 0=APS-C 24mm, 1=35mm Full-Frame, 2=MF 645 44mm, 3=MF 6x7 70mm
+    float dofFocalMm = 50.0f;       // DofFocalMm: lens focal length in mm (24..200)
+    float dofFStop = 1.8f;          // DofFStop: lens aperture f-stop (0.95..16.0)
+    int   dofBokehShape = 2;        // DofBokehShape: 0=5-Blade, 1=6-Blade, 2=7-Blade, 3=9-Blade, 4=Circle, 5=Anamorphic, 6=Petzval Swirl
+    float dofNearScale = 1.0f;      // DofNearScale: near-plane blur multiplier (0..2.5)
+    float dofFarScale = 1.35f;      // DofFarScale: far-plane blur multiplier (0..2.5)
+    float dofNearBleed = 1.0f;      // DofNearBleed: foreground silhouette bleed/feather (0..2.0)
+    float dofFocusSpeed = 0.09f;    // DofFocusSpeed: cinema follow-focus motor speed (0.02..0.30)
     bool  weatherLens = true;       // WeatherLens: procedural HDR rain-on-lens droplets & blizzard frost
     float waterReflect = 1.0f;      // WaterReflect: the ray-traced reflection's share of the Fresnel weight
     float waterCaustics = 1.0f;     // WaterCaustics

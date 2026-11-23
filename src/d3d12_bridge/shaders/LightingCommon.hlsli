@@ -38,6 +38,7 @@ cbuffer P : register(b0) {
     float4 dofParams;               // x: dofMaxDist (0=off), y: dofRadius (px), z: dofOrbBoost, w: weatherLens (0/1)
     float4 timeEnv;                 // x: gameHour (0..24), y: sunElev (-1..+1), z: lightning, w: menuPaused (0/1)
     float4 engineWorld;             // x: cell/worldspace waterHeight, y: camStateId, z: hasEngineCell (0/1), w: unused
+    float4 camOptics[2];            // [0]: sensorWidthMm, focalLengthMm, apertureFStop, bokehShape; [1]: nearScale, farScale, nearBleed, focusSpeed
 };
 
 static const uint FLAG_MATCH = 1u, FLAG_SOFT = 2u, FLAG_GGX = 4u, FLAG_FOG = 8u, FLAG_CONTACT = 16u, FLAG_AO = 32u,

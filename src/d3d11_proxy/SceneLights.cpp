@@ -259,14 +259,17 @@ void AddEngineLights(SceneLighting& f)
                           [&](uint32_t a, uint32_t b) { return importance[a] > importance[b]; });
         candCount = raw::bridge::kMaxSceneLights;
     }
-    // Camera-independent world-space temporal light smoother: prevents 1-frame intensity/radius snaps
-    // when walking through interiors or crossing doorways as ShadowSceneNode updates active lights.
-    struct SmoothLight { float wpos[3]; float col[3]; float radius; uint32_t age; };
+    // Fundamental Engine-Level World-Space Temporal Light Stabilizer:
+    // 1) Smooths BOTH 3D world position (kills Skyrim's 60Hz LIGH FLICKER XYZ jitter that caused RT shadow strobing!)
+    //    AND color/radius with calm 0.08 EMA.
+    // 2) Holds lights that momentarily drop out of Skyrim's frustum culler for 16 frames with smooth fade-out so
+    //    interior lighting NEVER pops or flickers when turning the camera!
+    struct SmoothLight { float wpos[3]; float col[3]; float radius; int shadowCh; uint32_t age; };
     static std::vector<SmoothLight> g_smooth;
     for (auto& sl : g_smooth) ++sl.age;
-    auto smoothColor = [&](const float wpos[3], float col[3], float radius) {
+    auto smoothLight = [&](float wpos[3], float col[3], float& radius, int shadowCh) {
         int hit = -1;
-        float bestD2 = 36.0f * 36.0f;
+        float bestD2 = 44.0f * 44.0f;
         for (size_t i = 0; i < g_smooth.size(); ++i) {
             const float dx = g_smooth[i].wpos[0] - wpos[0], dy = g_smooth[i].wpos[1] - wpos[1], dz = g_smooth[i].wpos[2] - wpos[2];
             const float d2 = dx * dx + dy * dy + dz * dz;
@@ -275,16 +278,20 @@ void AddEngineLights(SceneLighting& f)
         if (hit >= 0) {
             SmoothLight& sl = g_smooth[hit];
             for (int c = 0; c < 3; ++c) {
-                sl.col[c] = sl.col[c] + (col[c] - sl.col[c]) * 0.22f;
+                sl.wpos[c] = sl.wpos[c] + (wpos[c] - sl.wpos[c]) * 0.08f;   // locks out 60Hz LIGH position jitter!
+                wpos[c] = sl.wpos[c];
+                sl.col[c] = sl.col[c] + (col[c] - sl.col[c]) * 0.09f;       // calm physical flame breath, zero strobe!
                 col[c] = sl.col[c];
-                sl.wpos[c] = wpos[c];
             }
-            sl.radius = sl.radius + (radius - sl.radius) * 0.22f;
+            sl.radius = sl.radius + (radius - sl.radius) * 0.09f;
+            radius = sl.radius;
+            if (shadowCh >= 0) sl.shadowCh = shadowCh;
             sl.age = 0;
         } else if (g_smooth.size() < 256) {
             SmoothLight sl{};
-            for (int c = 0; c < 3; ++c) { sl.wpos[c] = wpos[c]; sl.col[c] = col[c] * 0.35f; col[c] = sl.col[c]; }
+            for (int c = 0; c < 3; ++c) { sl.wpos[c] = wpos[c]; sl.col[c] = col[c] * 0.25f; col[c] = sl.col[c]; }
             sl.radius = radius;
+            sl.shadowCh = shadowCh;
             sl.age = 0;
             g_smooth.push_back(sl);
         }
@@ -323,10 +330,12 @@ void AddEngineLights(SceneLighting& f)
         }
         if (f.lightCount >= raw::bridge::kMaxSceneLights) { ++f.droppedLights; continue; }
         SceneLight& l = f.lights[f.lightCount++];
+        float wpos[3] = { e[k].pos[0], e[k].pos[1], e[k].pos[2] };
         float col[3] = { e[k].color[0] * 1.85f, e[k].color[1] * 1.85f, e[k].color[2] * 1.85f };
-        smoothColor(e[k].pos, col, e[k].radius);
-        for (int c = 0; c < 3; ++c) { l.position[c] = rel[c]; l.colour[c] = col[c]; }
-        l.radius = e[k].radius;
+        float rad = e[k].radius;
+        smoothLight(wpos, col, rad, shadowCh);
+        for (int c = 0; c < 3; ++c) { l.position[c] = wpos[c] - f.posAdjust[c]; l.colour[c] = col[c]; }
+        l.radius = rad;
         l.shadowChannel = shadowCh;
         l.draws = draws;
         ++g_es.added;
@@ -338,10 +347,27 @@ void AddEngineLights(SceneLighting& f)
             SceneLight& l = f.lights[f.lightCount++];
             l = decodedCopy[j];
             float wp[3] = { l.position[0] + f.posAdjust[0], l.position[1] + f.posAdjust[1], l.position[2] + f.posAdjust[2] };
-            smoothColor(wp, l.colour, l.radius);
+            smoothLight(wp, l.colour, l.radius, l.shadowChannel);
+            for (int c = 0; c < 3; ++c) l.position[c] = wp[c] - f.posAdjust[c];
         }
     }
-    g_smooth.erase(std::remove_if(g_smooth.begin(), g_smooth.end(), [](const SmoothLight& sl) { return sl.age > 30; }), g_smooth.end());
+    // Graceful 16-frame frustum-cull persistence & fade-out: prevents lights from popping/flickering off for 1-8 frames
+    // when turning the camera in interiors or near doorways!
+    for (const SmoothLight& sl : g_smooth) {
+        if (sl.age >= 1 && sl.age <= 16 && f.lightCount < raw::bridge::kMaxSceneLights) {
+            const float rx = sl.wpos[0] - f.posAdjust[0], ry = sl.wpos[1] - f.posAdjust[1], rz = sl.wpos[2] - f.posAdjust[2];
+            if (rx * rx + ry * ry + rz * rz < 2800.0f * 2800.0f) {
+                const float fade = 1.0f - float(sl.age) / 17.0f;
+                SceneLight& l = f.lights[f.lightCount++];
+                l.position[0] = rx; l.position[1] = ry; l.position[2] = rz;
+                l.colour[0] = sl.col[0] * fade; l.colour[1] = sl.col[1] * fade; l.colour[2] = sl.col[2] * fade;
+                l.radius = sl.radius;
+                l.shadowChannel = sl.shadowCh;
+                l.draws = 0;
+            }
+        }
+    }
+    g_smooth.erase(std::remove_if(g_smooth.begin(), g_smooth.end(), [](const SmoothLight& sl) { return sl.age > 24; }), g_smooth.end());
     if (hasEngineSun) {
         f.hasSun = true;
         for (int c = 0; c < 3; ++c) f.sunDirection[c] = engineSunDir[c];

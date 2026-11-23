@@ -9,6 +9,7 @@
 Texture2D<float4> SrcA  : register(t0);
 Texture2D<float>  Depth : register(t1);
 Texture2D<float4> SrcB  : register(t2);
+Texture2D<float4> FocusTex : register(t3);
 SamplerState      Lin   : register(s0);
 
 // 13-point center-weighted portrait/subject autofocus metering zone (±1.2% inner + ±3.2% outer ring):
@@ -67,6 +68,22 @@ float signedCoC(float curZ, float focusZ, float maxDist) {
     return cocPx < 0.0f ? -norm : norm;
 }
 
+// 1x1 GPU-Native Cinema Follow-Focus Motor: smoothly integrates focus distance in diopter (1/z) space
+// so rack-focus glides organically over ~0.25s instead of snapping instantaneously between depth planes!
+float4 dof_focus(float4 at : SV_Position) : SV_Target0 {
+    const float targetZ = clamp(sampleFocusZoneZ(), 42.0f, 14000.0f);
+    const float prevZ = SrcA.Load(int3(0, 0, 0)).x;
+    if (prevZ < 20.0f || prevZ > 20000.0f) { return float4(targetZ, 0.0f, 0.0f, 1.0f); }
+    // Diopter-space (1/z) exponential follow-focus pull: fast enough for responsive close-ups, silky across rooms!
+    const float prevD = 1.0f / prevZ;
+    const float targD = 1.0f / targetZ;
+    const float diffD = abs(targD - prevD);
+    // Adaptive cinema motor velocity: gentle ~0.07/frame for small shifts, up to 0.14/frame for large rack-focus pulls:
+    const float speed = lerp(0.065f, 0.145f, saturate(diffD * 180.0f));
+    const float nextD = lerp(prevD, targD, speed);
+    return float4(clamp(1.0f / max(nextD, 1.0e-5f), 42.0f, 14000.0f), targetZ, 0.0f, 1.0f);
+}
+
 float4 dof_coc(float4 at : SV_Position) : SV_Target0 {
     // Live 3D World-Map & UI Depth Isolation: exact UI::Singleton menuPaused (timeEnv.w) + aerial world-map altitude.
     if (timeEnv.w > 0.5f || camPosW.z > 18000.0f) {
@@ -77,7 +94,8 @@ float4 dof_coc(float4 at : SV_Position) : SV_Target0 {
     const float2 fullPx = (lo + 0.5f) * 2.0f;
     const int2 dMax = int2(dims.xy) - 1;
     const int2 ip = clamp(int2(fullPx), int2(0, 0), dMax);
-    const float focusZ = sampleFocusZoneZ();
+    const float fGpu = SrcB.Load(int3(0, 0, 0)).x;
+    const float focusZ = (fGpu >= 40.0f && fGpu <= 15000.0f) ? fGpu : sampleFocusZoneZ();
     // 2x2 conservative depth downsample: keeps nearest foreground CoC intact for near-field feathering
     // while using max-depth for background to prevent foreground edges from leaking into far bokeh!
     const float d00 = Depth.Load(int3(ip, 0));
@@ -191,7 +209,8 @@ float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
     const float4 sharp = SrcA.Load(int3(ip, 0));
     if (dofParams.x <= 1.0f) { return sharp; }
     const float2 uv = (floor(at.xy) + 0.5f) * dims.zw;
-    const float focusZ = sampleFocusZoneZ();
+    const float fGpu = FocusTex.Load(int3(0, 0, 0)).x;
+    const float focusZ = (fGpu >= 40.0f && fGpu <= 15000.0f) ? fGpu : sampleFocusZoneZ();
     const float d = Depth.Load(int3(ip, 0));
     const float curZ = d < 1.0f ? viewZOf(d) : 100000.0f;
     // Keep 1st-person hands/weapons/torches (< 45u) razor-sharp:
@@ -204,12 +223,15 @@ float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
                         + SrcB.SampleLevel(Lin, uv + float2(-bOff.x,  bOff.y), 0.0f)
                         + SrcB.SampleLevel(Lin, uv + float2( bOff.x, -bOff.y), 0.0f)
                         + SrcB.SampleLevel(Lin, uv + float2(-bOff.x, -bOff.y), 0.0f)) * 0.25f;
-    // Seamless physical transition from 0 px (razor sharp) -> 2 px (100% bokeh) with near-field silhouette feathering:
+    // Subtle photographic optical micro-diffusion in out-of-focus regions breaks up flat plastic blur:
+    const float oofMicro = (ign(floor(at.xy) + frac(camPosW.w * 24.0f) * 37.0f) - 0.5f) * 0.016f * smoothstep(0.10f, 0.65f, absCoc);
+    const float3 bokehDiff = max(bokeh.rgb * (1.0f + oofMicro), 0.0f.xxx);
+    // Seamless physical transition from 0 px (razor sharp) -> 2.2 px (100% bokeh) with near-field silhouette feathering:
     const float maxRadFull = max(clamp(dofParams.y, 1.5f, 24.0f) * 2.0f, 4.0f);
     const float cocPx = absCoc * maxRadFull;
     const float farBlend = coc > 0.0f ? smoothstep(0.0f, 2.2f, cocPx) : 0.0f;
     const float nearSelf = coc < 0.0f ? smoothstep(0.0f, 2.2f, cocPx) : 0.0f;
     const float nearBleed = bokeh.a < 0.0f ? smoothstep(0.02f, 0.85f, -bokeh.a) : 0.0f;
     const float blend = max(farBlend, max(nearSelf, nearBleed));
-    return float4(lerp(sharp.rgb, bokeh.rgb, blend), sharp.a);
+    return float4(lerp(sharp.rgb, bokehDiff, blend), sharp.a);
 }

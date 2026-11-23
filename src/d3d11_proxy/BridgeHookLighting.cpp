@@ -10,6 +10,7 @@
 //   Hold=45             backbuffer and the match statistics go to CaptureDir (Scene names the files)
 // Needs [D3D12Bridge] Enabled=1 Pass=lighting and [GBuffer] Enabled=1. Original work, MIT.
 #include "BridgeHookState.h"
+#include <dxgi.h>
 #include "GBufferComplete.h"
 #include "ProxyAPI.h"
 #include "ProxyLog.h"
@@ -128,8 +129,25 @@ void LoadLightingConfig(const std::string& ini)
         GetPrivateProfileStringA("Lighting", k, "", buf, sizeof(buf), ini.c_str());
         return buf[0] ? std::strtof(buf, nullptr) : d;
     };
-    // Quality presets (0=Performance, 1=Balanced, 2=High, 3=Ultra, 4=Overdrive). Individual INI keys still override.
-    const int quality = i("Quality", -1);
+    // Quality presets (0=Performance, 1=Balanced, 2=High, 3=Ultra, 4=Overdrive; -1=Auto-detect from GPU VRAM).
+    int quality = i("Quality", -1);
+    if (quality < 0) {
+        size_t vramGB = 16;
+        IDXGIFactory1* fac = nullptr;
+        if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&fac))) && fac) {
+            IDXGIAdapter1* ad = nullptr;
+            if (SUCCEEDED(fac->EnumAdapters1(0, &ad)) && ad) {
+                DXGI_ADAPTER_DESC1 desc{};
+                if (SUCCEEDED(ad->GetDesc1(&desc))) {
+                    vramGB = static_cast<size_t>(desc.DedicatedVideoMemory / (1024ULL * 1024ULL * 1024ULL));
+                }
+                ad->Release();
+            }
+            fac->Release();
+        }
+        quality = (vramGB >= 16) ? 4 : (vramGB >= 10) ? 3 : (vramGB >= 7) ? 2 : (vramGB >= 5) ? 1 : 0;
+        Log("[Lighting] Auto GPU tier: %zu GB VRAM -> Quality=%d", vramGB, quality);
+    }
     int defRt = 1, defRtSky = 1, defRtRefl = 1, defRtFar = 1, defRtSkin = 1, defClouds = 1, defFog = 1;
     if (quality == 0) {
         defRt = 0; defRtSky = 0; defRtRefl = 0; defRtFar = 0; defRtSkin = 0; defClouds = 0; defFog = 0;

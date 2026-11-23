@@ -25,7 +25,9 @@ float sampleFocusZoneZ() {
     float zVals[9];
     [unroll] for (int k = 0; k < 9; k++) {
         const float dk = Depth.Load(int3(clamp(c + o[k], int2(0, 0), dMax), 0));
-        zVals[k] = dk < 1.0f ? viewZOf(dk) : 10000.0f;
+        const float zk = dk < 1.0f ? viewZOf(dk) : 10000.0f;
+        // Reject 1st-person weapon/hand geometry (< 48u) so holding a sword/bow/torch never hijacks autofocus!
+        zVals[k] = zk < 48.0f ? 10000.0f : zk;
     }
     // Partial insertion sort to select the 6th-deepest (upper-quartile) sample, rejecting thin foreground blockers.
     [unroll] for (int i = 1; i < 9; i++) {
@@ -70,9 +72,14 @@ float4 dof_coc(float4 at : SV_Position) : SV_Target0 {
     const int2 dMax = int2(dims.xy) - 1;
     const int2 ip = clamp(int2(fullPx), int2(0, 0), dMax);
     const float focusZ = sampleFocusZoneZ();
-    const float d = Depth.Load(int3(ip, 0));
+    // 2x2 conservative max-depth downsample prevents jagged half-res depth aliasing on thin branches & character edges:
+    const float d00 = Depth.Load(int3(ip, 0));
+    const float d10 = Depth.Load(int3(min(ip + int2(1, 0), dMax), 0));
+    const float d01 = Depth.Load(int3(min(ip + int2(0, 1), dMax), 0));
+    const float d11 = Depth.Load(int3(min(ip + int2(1, 1), dMax), 0));
+    const float d = max(max(d00, d10), max(d01, d11));
     const float curZ = d < 1.0f ? viewZOf(d) : 100000.0f;
-    const float coc = signedCoC(curZ, focusZ, dofParams.x);
+    const float coc = curZ < 45.0f ? 0.0f : signedCoC(curZ, focusZ, dofParams.x);
     const float3 col = SrcA.SampleLevel(Lin, fullPx * dims.zw, 0.0f).rgb;
     return float4(col, coc);
 }
@@ -147,6 +154,8 @@ float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
     const float focusZ = sampleFocusZoneZ();
     const float d = Depth.Load(int3(ip, 0));
     const float curZ = d < 1.0f ? viewZOf(d) : 100000.0f;
+    // Keep 1st-person hands/weapons/torches (< 45u) 100% razor-sharp with zero background bokeh bleed!
+    if (curZ < 45.0f) { return sharp; }
     const float coc = abs(signedCoC(curZ, focusZ, dofParams.x));
     const float4 bokeh = SrcB.SampleLevel(Lin, uv, 0.0f);
     // Allow physical near-field blurred silhouettes (bokeh.a < 0) to feather naturally over sharp backgrounds,

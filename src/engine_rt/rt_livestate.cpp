@@ -38,6 +38,10 @@ struct Snapshot {
 };
 Snapshot g_snap;
 std::mutex g_m;   // guards g_snap for RAW_EngineLights callers on other threads
+// Cell-persistent camera-independent light registry: prevents Skyrim's CPU frustum culler from dropping
+// interior hearths/candles/chandeliers behind the camera when walking or turning in inns & dungeons!
+uint32_t g_cachedCellId = 0;
+std::vector<EngineLight> g_cellLights;
 
 template <class T> T At(const uint8_t* p, uint32_t off) { T v; std::memcpy(&v, p + off, sizeof v); return v; }
 

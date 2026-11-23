@@ -139,7 +139,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 o = camPosW.xyz;
     const float maxDist = 400000.0f;
     if (cloudsOn() && cloudSpan(o, dir, maxDist, t0, t1)) {
-        const uint steps = 32u;
+        const uint steps = 48u;
         const float dt = (t1 - t0) / float(steps);
         const float j = rand(lo, proj.z);
         const float3 aSun = astroSunDir();
@@ -266,7 +266,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float2 cWind = ekmanWind(1.00f);
                 const float2 cPos = (o.xy + dir.xy * tCir + cWind * camPosW.w) * 0.0000095f;
                 const float2 cCurl = cloudCurl2D(cPos * 1.9f, camPosW.w * 0.0042f) * 1.15f;
-                const float streak = cNoise(float3((cPos.x + cCurl.x) * 4.6f, (cPos.y + cCurl.y) * 1.15f, 5.1f + camPosW.w * 0.0018f));
+                const float streak = cNoise(float3((cPos.x + cCurl.x) * 2.4f, (cPos.y + cCurl.y) * 1.25f, 5.1f + camPosW.w * 0.0018f));
                 const float detail = cNoise(float3((cPos + cCurl * 0.6f) * 10.0f, 8.7f));
                 const float cMask = smoothstep(0.54f, 0.84f, streak * 0.68f + detail * 0.32f) * smoothstep(0.03f, 0.20f, dir.z);
                 const float cFade = exp(-tCir / 380000.0f);

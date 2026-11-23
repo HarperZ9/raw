@@ -194,41 +194,46 @@ void water(uint3 id : SV_DispatchThreadID) {
                 bowHit = saturate(intoObs) * nearObs;
                 eddyLee = saturate(-intoObs) * nearObs;
 
-                // 16-Component Physically Dispersed JONSWAP / Phillips Gravity-Capillary Ocean & River Spectrum:
-                // Exact shallow-to-deep dispersion omega(k, d) = sqrt((g*k + sigma*k^3) * tanh(k*d)) + Gerstner trochoidal
-                // crest steepening + analytical Jacobian wave-folding determinant J for physical wave-breaking foam!
+                // 12-Component Band-Limited JONSWAP Macro/Meso Ocean & River Spectrum + Aperiodic Fluid Ripple Detail:
+                // Eliminates high-frequency cosine moire / fingerprint contour rings (02.11.49.68 & 02.02.25.52) while
+                // preserving exact shallow-to-deep gravity dispersion omega(k,d) = sqrt(g*k*tanh(k*d)) & shoaling!
                 const float2 wpFlow = wpW.xy - flowDir * (wt * 22.0f);
                 const float2 flowPerp = float2(-flowDir.y, flowDir.x);
-                const float pxFoot = max(wDist * dims.z * 2.2f, 0.45f);
+                const float pxFoot = max(wDist * dims.z * 2.6f, 0.50f);
                 const float depthM = max(depthV0 * 0.0143f, 0.08f);   // Skyrim units -> meters (70u = 1m)
                 const float stormChop = saturate(weather.w * 0.90f + windAmp * 0.65f);
-                const float ampScale = (0.85f + stormChop * 1.15f + shallowW * 0.35f) * smoothstep(0.0f, 3.5f, depthV0);
+                const float ampScale = (0.72f + stormChop * 0.95f + shallowW * 0.25f) * smoothstep(0.0f, 4.5f, depthV0);
                 float2 waveG = 0.0f.xx;
                 jacobianFold = 0.0f;
-                [unroll] for (int wi = 0; wi < 16; ++wi) {
-                    // Log-spaced wavenumber spectrum from 14m ocean swells down to 0.28m capillary ripples:
-                    const float fracI = float(wi) / 15.0f;
-                    const float kRad = 0.0062f * pow(48.0f, fracI);   // rad / Skyrim unit
-                    const float kM = kRad * 70.0f;                    // rad / meter
+                [unroll] for (int wi = 0; wi < 12; ++wi) {
+                    // Clean macro/meso wavenumber band (16m swell -> 1.4m waves, zero sub-pixel moire frequencies!):
+                    const float fracI = float(wi) / 11.0f;
+                    const float kRad = 0.0055f * pow(11.5f, fracI);
+                    const float kM = kRad * 70.0f;
                     const float wavelength = 6.2831853f / kRad;
-                    const float nyquistFade = smoothstep(pxFoot * 2.2f, pxFoot * 6.5f, wavelength);
+                    const float nyquistFade = smoothstep(pxFoot * 3.5f, pxFoot * 9.0f, wavelength);
                     if (nyquistFade <= 0.001f) { continue; }
-                    // Exact gravity + capillary shallow-water dispersion relation:
                     const float kd = min(kM * depthM, 18.0f);
                     const float omega = sqrt((9.81f * kM + 7.4e-5f * kM * kM * kM) * tanh(kd));
-                    // Directional Hasselman spreading around wind/flow direction using golden-angle decorrelation:
-                    const float spread = (frac(float(wi) * 0.6180339f) - 0.5f) * (1.35f + fracI * 0.95f);
+                    const float spread = (frac(float(wi) * 0.6180339f) - 0.5f) * (1.35f + fracI * 0.85f);
                     const float2 dirW = normalize(flowDir * cos(spread) + flowPerp * sin(spread));
-                    // JONSWAP k^-2.5 energy rolloff + shallow-water shoaling steepness boost (1 / sqrt(tanh(kd))):
-                    const float shoalBoost = clamp(1.0f / sqrt(max(tanh(kd), 0.14f)), 1.0f, 2.2f);
-                    const float ampW = (0.048f * pow(1.0f - fracI * 0.82f, 1.55f)) * ampScale * shoalBoost * nyquistFade;
+                    const float shoalBoost = clamp(1.0f / sqrt(max(tanh(kd), 0.18f)), 1.0f, 1.85f);
+                    const float ampW = (0.040f * pow(1.0f - fracI * 0.78f, 1.45f)) * ampScale * shoalBoost * nyquistFade;
                     const float ph = dot(wpFlow, dirW) * kRad - wt * omega + float(wi) * 2.39996f;
                     const float s = sin(ph);
                     const float c = cos(ph);
-                    // Gerstner trochoidal steepening (sharpens crests, flattens troughs):
-                    waveG += dirW * (c * (1.0f + 0.38f * s) * ampW);
-                    jacobianFold += max(-s, 0.0f) * ampW * 3.2f;
+                    waveG += dirW * (c * (1.0f + 0.30f * s) * ampW);
+                    jacobianFold += max(-s, 0.0f) * ampW * 2.8f;
                 }
+                // Aperiodic 2-octave domain-warped fine liquid ripple gradient (zero periodic moire rings!):
+                const float2 rUv1 = wpFlow * 0.042f;
+                const float2 rUv2 = (wpW.xy + flowPerp * (wt * 11.0f)) * 0.095f;
+                const float rDx = (vNoise2D(rUv1 + float2(0.15f, 0.0f)) - vNoise2D(rUv1 - float2(0.15f, 0.0f))) * 0.045f
+                                + (vNoise2D(rUv2 + float2(0.15f, 0.0f)) - vNoise2D(rUv2 - float2(0.15f, 0.0f))) * 0.025f;
+                const float rDy = (vNoise2D(rUv1 + float2(0.0f, 0.15f)) - vNoise2D(rUv1 - float2(0.0f, 0.15f))) * 0.045f
+                                + (vNoise2D(rUv2 + float2(0.0f, 0.15f)) - vNoise2D(rUv2 - float2(0.0f, 0.15f))) * 0.025f;
+                const float nearRip = smoothstep(3200.0f, 200.0f, wDist) * ampScale;
+                waveG += float2(rDx, rDy) * nearRip;
                 // Grazing-angle anisotropic Nyquist normal filter: prevents high-frequency wave crests from aliasing into
                 // shimmering pixel noise at low view angles while preserving big rolling ocean/river swells!
                 const float grazingSmooth = smoothstep(0.05f, 0.45f, saturate(v.z));
@@ -451,6 +456,8 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float3 farOcean = lerp(deepOceanBody, farSkyRefl, farF);
             const float3 nearCol = refr ? lerp(body, refl, effF) : lerp(game.rgb, refl, effF) + caus * (1.0f - effF);
             col = lerp(farOcean, nearCol, cellFeather) + glint * shoreFeather;
+            // Invisible wet-shoreline alpha feather (eliminates thin bright edge line seen in 02.11.49.68.png!):
+            col = lerp(game.rgb, col, smoothstep(0.0f, 6.0f, depthV0));
             // Exact 16-bit horizon merge: at far ocean distances (wDist > 5000u), PreWater[id.xy].rgb holds
             // LightFog.hlsl's exact sky dome + cloud color at that pixel (Hillaire AtmoSkyView / overcast / sunset / night).
             // Merging far ocean directly into PreWater guarantees 0.0000 luminance discontinuity at the Sea of Ghosts horizon!

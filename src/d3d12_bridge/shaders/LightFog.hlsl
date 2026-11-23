@@ -311,7 +311,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float od = baseSigma * min(max(dist - 1400.0f, 0.0f), 240000.0f) * elevW * alpineMist * exp(-hStart * 0.15f);
         // Wavelength-dependent Rayleigh + Mie transmittance + smooth far-horizon aerial melt (eliminates the sharp Sea of Ghosts / Whiterun LOD seam).
         const float horizonMelt = smoothstep(70000.0f, 145000.0f, dist);
-        const float3 T = exp(-od * float3(0.84f, 0.96f, 1.12f)) * (1.0f - horizonMelt);
+        float3 T = exp(-od * float3(0.84f, 0.96f, 1.12f)) * (1.0f - horizonMelt);
         // Spectral 1:1 atmospheric gradient locked directly to live skyPalette(sZ, sM, sH) + cloud cover + Mie solar aureole:
         // eliminates the color discontinuity between mountain haze, horizon sky, sun, and cloud undersides.
         float3 sZ, sM, sH;
@@ -337,12 +337,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Snowstorm frosted whiteout vs night alpine indigo, with physical atmospheric highlight rolloff.
         atmoCol = lerp(atmoCol, lerp(sH, float3(0.58f, 0.63f, 0.70f), 0.55f), weather.z * 0.55f);
         atmoCol = lerp(atmoCol, max(sH * 0.55f, float3(0.05f, 0.09f, 0.18f)), nightF);
-        // True linear HDR aerial perspective (no 0.65 SDR clamp so mountains separate with genuine atmospheric luminosity).
+        // True linear HDR aerial perspective + Volcanic Solstheim Ashstorm choking diffusion & glowing ash embers!
+        const float ashW = saturate((sunColour.r - sunColour.b * 1.42f) * 2.8f) * saturate(clouds.x * 1.35f) * (1.0f - nightF);
+        if (ashW > 0.05f) {
+            const float3 ashFogCol = float3(0.42f, 0.26f, 0.16f) * max(dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f)), 0.35f);
+            const float ashDens = 1.0f - exp(-dist * 0.00024f * ashW);
+            atmoCol = lerp(atmoCol, ashFogCol, ashW * 0.82f);
+            T *= (1.0f - ashDens * 0.72f);
+        }
         atmoCol = min(atmoCol, 3.5f.xxx);
-        // Feature 16: Native DX12 3D World-Space GPU Weather Precipitation (wind-advected rain streaks & alpine snowflakes)
-        // depth-occluded against scene geometry and lit by live sky/sun/local lights.
+        // Feature 16: Native DX12 3D World-Space GPU Weather Precipitation (wind-advected rain streaks, alpine snowflakes,
+        // AND choking volcanic Solstheim ash flakes + glowing red-orange embers) depth-occluded against scene geometry!
         float3 precipAdd = 0.0f.xxx;
-        if ((weather.w > 0.08f || weather.z > 0.08f) && mapScale > 0.5f) {
+        if ((weather.w > 0.08f || weather.z > 0.08f || ashW > 0.10f) && mapScale > 0.5f) {
             const float2 windP = cloudWind.xy * 0.0025f;
             [unroll] for (int pl = 0; pl < 3; ++pl) {
                 const float pDist = 110.0f + float(pl) * 165.0f;
@@ -363,6 +370,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     if (sCell > 0.955f) {
                         const float sMask = smoothstep(0.955f, 0.995f, sCell) * saturate(1.0f - length(frac(sCoord) - 0.5f) * 2.4f);
                         precipAdd += max(atmoCol * 1.15f + sunColour.rgb * 0.18f, 0.20f.xxx) * (sMask * weather.z * 0.42f / (1.0f + float(pl) * 0.45f));
+                    }
+                }
+                // Swirling Solstheim volcanic ash flakes + rare glowing red-orange embers depth-occluded in 3D space!
+                if (ashW > 0.10f) {
+                    const float3 aCoord = float3((wpP.xy - windP * (camPosW.w * 28.0f)) * 0.11f,
+                                                 wpP.z * 0.11f + camPosW.w * (1.8f + float(pl) * 0.6f));
+                    const float aCell = cHash(floor(aCoord));
+                    if (aCell > 0.935f) {
+                        const float aMask = smoothstep(0.935f, 0.995f, aCell) * saturate(1.0f - length(frac(aCoord) - 0.5f) * 2.5f);
+                        const bool isEmber = aCell > 0.988f;
+                        const float3 aCol = isEmber ? float3(2.40f, 0.62f, 0.14f) : float3(0.32f, 0.25f, 0.20f);
+                        precipAdd += aCol * (aMask * ashW * (isEmber ? 0.95f : 0.48f) / (1.0f + float(pl) * 0.45f));
                     }
                 }
             }

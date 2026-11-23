@@ -722,7 +722,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (li >= flags.y) { continue; }
             const float3 toL = lightPosR[li].xyz - p;
             const float dist = length(toL);
-            const float att = 1.0f - saturate(dist / lightPosR[li].w) * saturate(dist / lightPosR[li].w);
+            const float rNorm = saturate(dist / lightPosR[li].w);
+            // Smooth physically-grounded Frostbite/UE5 windowed falloff (bright realistic core + silky long-tail feathering, zero hard edge).
+            const float win = saturate(1.0f - rNorm * rNorm);
+            const float att = (win * win) / (1.0f + rNorm * rNorm * 1.45f);
             if (att <= 0.0f) { continue; }
             // Native campfire/torch heat snow melt: warm firelights melt surrounding snow into glistening damp ground.
             if (!match && wet.snow > 0.01f && lightColS[li].r > lightColS[li].b * 1.25f) {

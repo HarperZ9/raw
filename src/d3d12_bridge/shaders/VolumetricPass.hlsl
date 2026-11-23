@@ -74,7 +74,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float nightW = smoothstep(0.03f, -0.07f, aElevV);
         const float3 beamDirV = normalize(lerp(aSunV, sunDir.xyz, nightW));
         const float lowSunBoost = lerp(1.0f, 1.32f, saturate(1.0f - abs(max(aElevV, 0.0f) - 0.18f) / 0.28f));
-        const float shaftBoost = lerp(lowSunBoost, 1.45f, nightW);
+        const float shaftBoost = lerp(lowSunBoost, 2.35f, nightW);
         const float dayG = clamp(lerp(tune.y, max(tune.y, 0.72f), saturate(1.0f - max(aElevV, 0.0f) * 2.5f)), 0.15f, 0.84f);
         const float dynG = lerp(dayG, 0.76f, nightW);
         const float cosT = dot(w, beamDirV);

@@ -152,110 +152,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float d = Depth.Load(ip);
     if ((flags.x & FLAG_SURFACE) == 0u) { return game; }
     if (d >= 1.0f) {
-        // The sky: Elder Weathers physical color alignment (Kasten-Young air mass + 1/lambda^4 Rayleigh + Mie + cloud collapse)
-        // harmonizing sky zenith, horizon, sun/moon direct, ambient, and 3D Worley-Perlin clouds into one coherent palette.
+        // Pass raw sky/celestial buffer (Masser, Secunda, exotic DLC realms) cleanly straight to LightFog.hlsl
+        // which owns 100% of the 24h physical Hillaire skybox, single isRealSun() solar disc, lunar halo, stars, aurora & clouds.
+        // (Removes duplicate sunDisc in Lighting.hlsl that previously leaked onto the Moon via moonKeep!)
         if (flags.w == 10u) { return float4(1.0f, 0.0f, 1.0f, game.a); }
-        float3 baseSky = game.rgb;
-        const float3 sDir = normalize(worldAt(floor(at.xy), 0.995f) - eyeAt());
-        if ((flags.x & FLAG_MATCH) == 0u) {
-            baseSky = baseSky / (1.0f + max(max(baseSky.r, max(baseSky.g, baseSky.b)) - 0.65f, 0.0f) * 0.65f);
-            const float sunLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-            // Gate solar disc & daytime sky strictly on engine gameHour (timeEnv.x: 5.2..20.6) so NiDirectionalLight's
-            // night-time Moon switch never draws a solar disc on Masser/Secunda.
-            const float isDayHour = (timeEnv.x > 0.01f)
-                ? (smoothstep(5.2f, 6.4f, timeEnv.x) * (1.0f - smoothstep(19.2f, 20.6f, timeEnv.x))) : 1.0f;
-            const float dayW = saturate((sunDir.z - 0.01f) * 4.0f) * saturate((sunLum - 0.20f) * 2.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f) * isDayHour;
-            if (dayW > 0.02f) {
-                const float cover = saturate(clouds.x);
-                const float lowSun = saturate(1.0f - sunDir.z * 2.6f);
-                const float3 clearZenith = lerp(float3(0.06f, 0.24f, 0.68f), float3(0.08f, 0.14f, 0.38f), lowSun);
-                const float3 clearMid    = lerp(float3(0.22f, 0.48f, 0.84f), float3(0.38f, 0.36f, 0.52f), lowSun);
-                const float3 clearHoriz  = lerp(float3(0.62f, 0.76f, 0.88f), float3(0.92f, 0.54f, 0.28f), lowSun);
-                const float hUp = saturate(sDir.z);
-                float3 clearSky = hUp < 0.25f ? lerp(clearHoriz, clearMid, pow(hUp / 0.25f, 0.75f))
-                                              : lerp(clearMid, clearZenith, pow((hUp - 0.25f) / 0.75f, 0.85f));
-                const float cosTheta = saturate(dot(sDir, sunDir.xyz));
-                const float sunDisc = smoothstep(0.99935f, 0.99972f, cosTheta);
-                const float sunCorona = pow(cosTheta, 160.0f) * 0.48f + pow(cosTheta, 18.0f) * 0.12f;
-                const float3 sunDiscCol = lerp(float3(1.0f, 0.97f, 0.92f), float3(1.0f, 0.66f, 0.32f), lowSun);
-                clearSky += sunDiscCol * (sunCorona * (1.0f - cover * 0.78f));
-                const float3 stormSky = lerp(float3(0.38f, 0.44f, 0.52f), float3(0.22f, 0.28f, 0.36f), hUp);
-                const float3 pureSky = lerp(clearSky, stormSky, saturate(cover * 0.85f - 0.25f + weather.w * 0.35f));
-                const float3 solarCore = sunDiscCol * (sunDisc * 1.15f * (1.0f - cover * 0.55f));
-                // Exotic DLC realm sky protection: preserve Apocrypha emerald void, Soul Cairn/Sovngarde violet nebula,
-                // and Solstheim volcanic ash-storm skies instead of overriding them with standard Nordic blue.
-                const float isApocrypha = saturate((game.g - max(game.r, game.b) * 1.05f) * 6.0f);
-                const float isSoulCairn = saturate((min(game.r, game.b) - game.g * 1.12f) * 6.0f);
-                const float isAshStorm  = saturate((game.r - game.b * 1.48f) * 3.2f) * smoothstep(0.18f, 0.45f, sunDir.z);
-                const float exoticRealm = saturate(max(isApocrypha, max(isSoulCairn, isAshStorm)));
-                // Preserve authored Masser & Secunda moon crater textures when visible during dawn/dusk twilight.
-                const float gLumaSky = dot(game.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-                const float moonPreserve = smoothstep(0.18f, 0.52f, gLumaSky) * (1.0f - smoothstep(0.985f, 0.996f, cosTheta)) * (1.0f - smoothstep(0.22f, 0.45f, sunDir.z));
-                baseSky = lerp(baseSky, pureSky + solarCore, dayW * 0.96f * (1.0f - exoticRealm) * (1.0f - moonPreserve * 0.85f));
-            }
-        }
-        // Volumetric clouds composite in LightFog.hlsl (t5) over the unified Hillaire 2020 HDR sky.
-        const float4 c = float4(0.0f, 0.0f, 0.0f, 1.0f);
-        float3 skyOut = baseSky;
-        if ((flags.x & FLAG_MATCH) == 0u) {
-            // Subtle atmospheric moon glow that preserves Masser & Secunda's authored lunar crater detail (never blows out to empty white),
-            // plus infinite-resolution procedural scintillating starfield and animated volumetric Nordic auroras.
-            const float sunLumN = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-            const float isNightHour = (timeEnv.x > 0.01f)
-                ? saturate(1.0f - smoothstep(5.2f, 6.6f, timeEnv.x) * (1.0f - smoothstep(19.0f, 20.6f, timeEnv.x))) : 0.0f;
-            const float nightSkyW = max(saturate((0.26f - sunLumN) * 4.5f), isNightHour * 0.85f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
-            if (nightSkyW > 0.05f && sDir.z > 0.0f) {
-                const float moonL = dot(baseSky, float3(0.2126f, 0.7152f, 0.0722f));
-                const float moonMask = smoothstep(0.18f, 0.55f, moonL);
-                skyOut += baseSky * float3(0.88f, 0.96f, 1.15f) * (moonMask * nightSkyW * 0.18f);
-                // Procedural 4K/8K/16K-crisp starfield with stellar color temperatures and subtle scintillation.
-                const float3 starCell = floor(sDir * 260.0f);
-                const float3 starF = frac(sDir * 260.0f) - 0.5f;
-                const float sh0 = cHash(starCell);
-                if (sh0 > 0.965f) {
-                    const float3 off = float3(cHash(starCell + 11.3f), cHash(starCell + 27.1f), cHash(starCell + 43.7f)) - 0.5f;
-                    const float dStar = length(starF - off * 0.55f);
-                    const float starCore = exp(-dStar * dStar * 42.0f) * smoothstep(0.965f, 0.998f, sh0);
-                    const float twk = 0.78f + 0.22f * sin(camPosW.w * (2.5f + sh0 * 5.0f) + sh0 * 62.8f);
-                    const float temp = cHash(starCell + 71.9f);
-                    const float3 starCol = lerp(float3(0.72f, 0.84f, 1.0f), float3(1.0f, 0.86f, 0.68f), temp);
-                    skyOut += starCol * (starCore * twk * nightSkyW * c.a * saturate(sDir.z * 4.5f) * 1.15f);
-                }
-                // Subtle dusty Galactic Milky Way arch across clear, dark Nordic winter skies.
-                const float mwPlane = abs(dot(sDir, normalize(float3(0.52f, -0.36f, 0.77f))));
-                const float mwBand = exp(-mwPlane * mwPlane * 22.0f) * smoothstep(0.05f, 0.28f, sDir.z);
-                if (mwBand > 0.01f) {
-                    const float mwDust = cNoise(sDir * 6.5f) * 0.65f + cNoise(sDir * 15.0f + 4.3f) * 0.35f;
-                    const float mwLane = smoothstep(0.32f, 0.78f, mwDust);
-                    skyOut += lerp(float3(0.05f, 0.07f, 0.14f), float3(0.14f, 0.12f, 0.19f), mwLane) * (mwBand * mwLane * nightSkyW * c.a * 0.42f);
-                }
-                // Animated 10-layer volumetric Nordic Aurora Borealis (557.7 nm O-I emerald lower edge -> 630.0 nm violet-crimson upper curtain).
-                const float auroraVis = nightSkyW * (1.0f - saturate(clouds.x * 1.15f)) * smoothstep(0.08f, 0.35f, sDir.z) * smoothstep(-0.25f, 0.45f, sDir.y);
-                if (auroraVis > 0.02f) {
-                    float3 aurSum = 0.0f.xxx;
-                    [unroll] for (int ai = 0; ai < 10; ai++) {
-                        const float ah = 0.18f + float(ai) * 0.09f;
-                        const float2 ap = sDir.xy / max(sDir.z, 0.12f) * (1.35f + ah * 0.65f);
-                        const float wave = sin(ap.x * 2.1f + camPosW.w * 0.075f + cNoise(float3(ap * 1.25f, camPosW.w * 0.035f)) * 3.4f);
-                        const float band = exp(-abs(ap.y - 0.62f - wave * 0.44f) * 5.2f);
-                        const float rays = 0.50f + 0.50f * cNoise(float3(ap.x * 9.0f, ap.y * 2.2f, camPosW.w * 0.11f + ah * 2.4f));
-                        const float hT = saturate((ah - 0.18f) * 1.25f);
-                        const float3 aCol = hT < 0.65f
-                            ? lerp(float3(0.08f, 0.96f, 0.54f), float3(0.28f, 0.48f, 0.94f), hT / 0.65f)
-                            : lerp(float3(0.28f, 0.48f, 0.94f), float3(0.76f, 0.18f, 0.52f), (hT - 0.65f) / 0.35f);
-                        aurSum += aCol * (band * rays * (1.0f - ah * 0.58f));
-                    }
-                    skyOut += aurSum * (auroraVis * c.a * 0.085f);
-                }
-            }
-            // Seamless C2 sub-horizon atmospheric mist continuation (eliminates dark flat horizon wall past LOD edge).
-            if (sDir.z < 0.01f) {
-                const float subW = smoothstep(0.01f, -0.20f, sDir.z);
-                skyOut = lerp(skyOut, skyOut * 0.84f, subW * 0.55f);
-            }
-            // True linear HDR sky: no 2011 0.56 SDR pre-clamp (Wide-Gamut AgX + 12-pass HDR Bloom handle HDR dynamic range).
-        }
-        return float4(skyOut, game.a);
+        return float4(game.rgb, game.a);
     }
     // View 9, a test control: the pass reaches only the top-left quarter, as a half-size viewport
     // would. The coverage check in the capture must fail on it.
@@ -764,10 +665,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float glint = pow(saturate(dot(microN, hGl)), 96.0f) * step(0.82f, cHash(gCell + 83.7f));
             spec += dirCol * (glint * sunShadow * saturate(1.0f - z / 1600.0f) * (1.0f - nightDir) * 1.85f);
         }
-        // Subtle, deep-emerald backlit foliage subsurface transmission (no blown-out pale yellow-green pine glow).
+        // Rich dual-lobe translucent chlorophyll subsurface scattering + waxy leaf-cuticle specular sheen (base == 5u).
         if (!match && base == 5u && sunColour.w > 0.5f) {
-            const float backF = pow(saturate(dot(-s.v, sunDir.xyz)), 3.6f);
-            diff += dirCol * float3(0.45f, 0.85f, 0.35f) * (backF * sunShadow * 0.14f);
+            const float backF = pow(saturate(dot(-s.v, sunDir.xyz)), 3.2f);
+            const float broadF = saturate(dot(-s.v, sunDir.xyz) * 0.5f + 0.5f);
+            diff += dirCol * float3(0.56f, 0.96f, 0.34f) * ((backF * 0.28f + broadF * 0.06f) * sunShadow * (1.0f - nightDir * 0.75f));
+            const float3 hLeaf = normalize(s.v + sunDir.xyz);
+            const float leafCuticle = pow(saturate(dot(s.n, hLeaf)), 28.0f) * 0.18f;
+            spec += dirCol * (leafCuticle * sunShadow * (0.25f + 0.75f * saturate(s.n.z)));
         }
         // Marschner dual-lobe shifted hair specular (base == 11: primary colorless cuticle band + warm tinted secondary band).
         if (!match && base == 11u && sunShadow > 0.05f) {
@@ -827,7 +732,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (!match && lightColS[li].r > lightColS[li].b * 1.25f) {
                 const float lPhase = dot(lightPosR[li].xyz + camPosW.xyz, float3(0.031f, 0.047f, 0.023f));
                 const float flk = 0.955f + 0.045f * (sin(camPosW.w * 2.8f + lPhase) * 0.65f + sin(camPosW.w * 6.3f + lPhase * 2.1f) * 0.35f);
-                const float3 fireBoost = skin ? float3(1.06f, 0.95f, 0.86f) : float3(1.48f, 0.88f, 0.42f);
+                const bool isIntLight = (sunColour.w < 0.5f);
+                const float3 fireBoost = skin ? float3(1.06f, 0.95f, 0.86f)
+                                              : (isIntLight ? float3(1.66f, 0.92f, 0.40f) : float3(1.52f, 0.88f, 0.42f));
                 c *= fireBoost * flk;
             }
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;

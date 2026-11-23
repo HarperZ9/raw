@@ -176,9 +176,11 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"uSurfaceFPS:Water", "60"},
         {"bWorldMapNoSkyDepthBlur:MapMenu", "1"},
         {"fWorldMapMaximumDepthBlur:MapMenu", "0.0"},
-        {"fSunBaseSize:Weather", "160.0"},
-        {"fSunGlareSize:Weather", "280.0"},
-        {"fSunGlareMultiplier:Weather", "0.35"},
+        // Zero Skyrim's 2011 2D Sun billboard & glare so RAW's single physical HDR solar disc in LightFog.hlsl
+        // is the ONLY sun in the sky (eliminates double-sun coordinate drift & night-time glare leaks!).
+        {"fSunBaseSize:Weather", "0.0"},
+        {"fSunGlareSize:Weather", "0.0"},
+        {"fSunGlareMultiplier:Weather", "0.0"},
         {"uiNumActorsAllowedToMorph:FaceGen", "64"},
         {"fLODFadeOutMultActors:LOD", "15.0"},
         {"fLODFadeOutMultObjects:LOD", "15.0"},

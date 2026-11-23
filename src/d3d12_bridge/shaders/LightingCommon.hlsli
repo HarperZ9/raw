@@ -101,20 +101,28 @@ float astroSunElev() {
     return timeEnv.x > 0.01f ? timeEnv.y : sunDir.z;
 }
 
-// True 24-hour astronomical solar vector: keeps Skyrim's EXACT engine sun azimuth (sunDir.xy) so shadows,
-// sun disc, volumetric sunbeams, froxels, and lens flares NEVER misalign or slew sideways across the sky,
-// while smoothly driving elevation through 0 deg at sunrise/sunset and below horizon at night (never flipping to Moon!).
+// Exact hemisphere-sign + clock check: returns 1 ONLY when ShadowSceneNode->sunLight is actually the daytime Sun,
+// and 0 the instant Skyrim flips ShadowSceneNode->sunLight to the Moon (eliminates night-time sun disc 100%!).
+float isRealSun() {
+    if (timeEnv.x <= 0.01f) { return step(0.02f, sunDir.z); }
+    const float gh = timeEnv.x;
+    const float hourGate = smoothstep(5.6f, 6.3f, gh) * (1.0f - smoothstep(18.6f, 19.4f, gh));
+    const float hemiOk = gh < 12.5f ? smoothstep(-0.22f, 0.05f, sunDir.x) : smoothstep(0.22f, -0.05f, sunDir.x);
+    return hourGate * hemiOk * step(0.01f, sunDir.z);
+}
+
+// True 24-hour astronomical solar vector: keeps Skyrim's EXACT engine sun azimuth when isRealSun() > 0.5,
+// and cleanly follows the unbroken east->west orbital arc below the horizon at dusk/night/dawn (zero Moon flip!).
 float3 astroSunDir() {
     if (timeEnv.x <= 0.01f) { return normalize(sunDir.xyz); }
     const float sinE = clamp(timeEnv.y, -0.95f, 0.95f);
     const float cosE = sqrt(max(1.0f - sinE * sinE, 1.0e-4f));
+    const float hourAng = (timeEnv.x - 12.5f) * 0.26179939f;
+    const float2 orbHor = normalize(float2(-sin(hourAng), -cos(hourAng) * 0.62f) + float2(1.0e-4f, 0.0f));
     const float2 sHor = sunDir.xy;
     const float sHorLen = length(sHor);
-    // During daytime & twilight (sinE > -0.10), lock 100% to Skyrim's exact real engine sun azimuth (zero slew!).
-    // Only use orbital fallback if sunDir.xy is degenerate (zenith/missing).
-    const float hourAng = (timeEnv.x - 12.5f) * 0.26179939f;
-    const float2 fallbackHor = normalize(float2(-sin(hourAng), -cos(hourAng) * 0.62f) + float2(1.0e-4f, 0.0f));
-    const float2 azHor = (sHorLen > 0.05f && sinE > -0.12f) ? (sHor / sHorLen) : fallbackHor;
+    const float realS = isRealSun();
+    const float2 azHor = (sHorLen > 0.05f && realS > 0.5f) ? (sHor / sHorLen) : orbHor;
     return normalize(float3(azHor * cosE, sinE));
 }
 

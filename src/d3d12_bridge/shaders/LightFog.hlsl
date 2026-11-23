@@ -415,48 +415,70 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             T *= (1.0f - sheetDens * 0.35f);
         }
         atmoCol = min(atmoCol, 3.5f.xxx);
-        // Feature 16: Native DX12 3D World-Space GPU Weather Precipitation (upgraded 4-layer volumetric snowflakes +
-        // crisp velocity-streaked specular rain droplets catching torch/sky light) depth-occluded against scene geometry!
+        // GTA6-Surpassing 6-Layer Native DX12 3D World-Space Volumetric Precipitation (depth-occluded in 3D space):
+        // Real Rain (wind-slanted specular streaks catching local torch/lantern light!), Real Snow (helical 3D vortex
+        // snowflakes with foreground bokeh flakes & distant blizzard sheets), and Real Volcanic Ashstorms (swirling ash + embers)!
         float3 precipAdd = 0.0f.xxx;
         if ((weather.w > 0.08f || weather.z > 0.08f || ashW > 0.10f) && mapScale > 0.5f) {
-            const float2 windP = cloudWind.xy * 0.0028f;
-            [unroll] for (int pl = 0; pl < 4; ++pl) {
-                const float pDist = 85.0f + float(pl) * 140.0f;
+            const float2 windP = cloudWind.xy * 0.0032f;
+            const uint nPrecipLights = min(flags.y, 12u);
+            [unroll] for (int pl = 0; pl < 6; ++pl) {
+                const float pDist = 65.0f + float(pl) * 115.0f;
                 if (dist <= pDist) { continue; }
-                const float3 wpP = camPosW.xyz + eye + w * pDist;
+                const float3 pRelP = eye + w * pDist;
+                const float3 wpP = camPosW.xyz + pRelP;
+                // Local point-light illumination on nearby rain/snow/ash particles (torches, braziers, lanterns, forges!):
+                float3 localLightP = 0.0f.xxx;
+                if (pl < 3) {
+                    [loop] for (uint li = 0u; li < nPrecipLights; ++li) {
+                        const float3 dL = lightPosR[li].xyz - pRelP;
+                        const float rL = max(lightPosR[li].w * 1.15f, 1.0f);
+                        const float d2 = dot(dL, dL);
+                        if (d2 < rL * rL) {
+                            const float attP = 1.0f - sqrt(d2) / rL;
+                            localLightP += lightColS[li].rgb * (attP * attP * 1.45f);
+                        }
+                    }
+                }
                 if (weather.w > 0.08f) {
-                    const float3 rCoord = float3((wpP.xy - windP * (wpP.z * 0.16f)) * 0.24f, wpP.z * 0.011f + camPosW.w * (13.5f + float(pl) * 3.5f));
+                    const float gust = 1.0f + 0.35f * sin(camPosW.w * 1.1f + wpP.x * 0.002f);
+                    const float3 rCoord = float3((wpP.xy - windP * (wpP.z * 0.18f * gust)) * lerp(0.28f, 0.18f, float(pl) / 5.0f),
+                                                 wpP.z * 0.0095f + camPosW.w * (15.5f + float(pl) * 3.8f));
                     const float rCell = cHash(floor(rCoord));
-                    if (rCell > 0.962f) {
+                    if (rCell > 0.958f) {
                         const float2 rF = frac(rCoord.xy) - 0.5f;
-                        const float rThin = saturate(1.0f - abs(rF.x) * 6.5f) * saturate(1.0f - abs(rF.y) * 2.2f);
-                        const float rMask = smoothstep(0.962f, 0.998f, rCell) * rThin;
-                        precipAdd += max(atmoCol * 1.15f + 0.08f, 0.16f.xxx) * (rMask * weather.w * 0.34f / (1.0f + float(pl) * 0.45f));
+                        const float rThin = saturate(1.0f - abs(rF.x) * 7.2f) * saturate(1.0f - abs(rF.y) * 1.85f);
+                        const float rMask = smoothstep(0.958f, 0.998f, rCell) * rThin;
+                        const float3 rLit = max(atmoCol * 1.20f + 0.08f, 0.16f.xxx) + localLightP * 1.35f;
+                        precipAdd += rLit * (rMask * weather.w * 0.36f / (1.0f + float(pl) * 0.42f));
                     }
                 }
                 if (weather.z > 0.08f) {
-                    const float swayX = sin(camPosW.w * (0.85f + float(pl) * 0.22f) + wpP.z * 0.015f) * 24.0f;
-                    const float swayY = cos(camPosW.w * (0.68f + float(pl) * 0.19f) + wpP.x * 0.012f) * 24.0f;
-                    const float fScale = lerp(0.11f, 0.065f, float(pl) / 3.0f);
-                    const float3 sCoord = float3((wpP.xy - windP * (wpP.z * 0.22f) + float2(swayX, swayY)) * fScale,
-                                                 wpP.z * fScale + camPosW.w * (2.4f + float(pl) * 0.65f));
+                    const float swirlPh = camPosW.w * (0.95f + float(pl) * 0.24f);
+                    const float swayX = sin(swirlPh + wpP.z * 0.018f + wpP.y * 0.006f) * 28.0f;
+                    const float swayY = cos(swirlPh * 0.82f + wpP.x * 0.015f - wpP.z * 0.010f) * 28.0f;
+                    const float fScale = lerp(0.125f, 0.055f, float(pl) / 5.0f);
+                    const float3 sCoord = float3((wpP.xy - windP * (wpP.z * 0.26f) + float2(swayX, swayY)) * fScale,
+                                                 wpP.z * fScale + camPosW.w * (2.6f + float(pl) * 0.65f));
                     const float sCell = cHash(floor(sCoord));
-                    if (sCell > 0.942f) {
+                    if (sCell > 0.936f) {
                         const float dFlake = length(frac(sCoord) - 0.5f);
-                        const float sMask = smoothstep(0.942f, 0.998f, sCell) * exp(-dFlake * dFlake * 18.0f);
-                        precipAdd += max(atmoCol * 1.25f + 0.14f, 0.28f.xxx) * (sMask * weather.z * 0.44f / (1.0f + float(pl) * 0.35f));
+                        const float flakeSharp = pl < 2 ? 12.0f : 22.0f;   // larger soft foreground bokeh flakes!
+                        const float sMask = smoothstep(0.936f, 0.998f, sCell) * exp(-dFlake * dFlake * flakeSharp);
+                        const float3 sLit = max(atmoCol * 1.30f + 0.14f, 0.28f.xxx) + localLightP * 1.65f;
+                        precipAdd += sLit * (sMask * weather.z * 0.46f / (1.0f + float(pl) * 0.32f));
                     }
                 }
-                // Swirling Solstheim volcanic ash flakes + rare glowing red-orange embers depth-occluded in 3D space!
                 if (ashW > 0.10f) {
-                    const float3 aCoord = float3((wpP.xy - windP * (camPosW.w * 28.0f)) * 0.11f,
-                                                 wpP.z * 0.11f + camPosW.w * (1.8f + float(pl) * 0.6f));
+                    const float aTurb = sin(camPosW.w * 1.6f + wpP.z * 0.02f) * 18.0f;
+                    const float3 aCoord = float3((wpP.xy - windP * (camPosW.w * 34.0f) + float2(aTurb, -aTurb * 0.7f)) * lerp(0.13f, 0.075f, float(pl) / 5.0f),
+                                                 wpP.z * 0.10f + camPosW.w * (2.2f + float(pl) * 0.55f));
                     const float aCell = cHash(floor(aCoord));
-                    if (aCell > 0.935f) {
-                        const float aMask = smoothstep(0.935f, 0.995f, aCell) * saturate(1.0f - length(frac(aCoord) - 0.5f) * 2.5f);
-                        const bool isEmber = aCell > 0.988f;
-                        const float3 aCol = isEmber ? float3(2.40f, 0.62f, 0.14f) : float3(0.32f, 0.25f, 0.20f);
-                        precipAdd += aCol * (aMask * ashW * (isEmber ? 0.95f : 0.48f) / (1.0f + float(pl) * 0.45f));
+                    if (aCell > 0.928f) {
+                        const float aMask = smoothstep(0.928f, 0.996f, aCell) * saturate(1.0f - length(frac(aCoord) - 0.5f) * 2.4f);
+                        const bool isEmber = aCell > 0.985f;
+                        const float3 aCol = isEmber ? float3(3.20f, 0.78f, 0.16f) : (float3(0.32f, 0.25f, 0.20f) + localLightP * 0.65f);
+                        precipAdd += aCol * (aMask * ashW * (isEmber ? 1.15f : 0.48f) / (1.0f + float(pl) * 0.38f));
                     }
                 }
             }

@@ -31,37 +31,38 @@ struct Wet { float wet, puddle, snow; };
 // second at a random place and time; its ring spreads and fades. Two offset layers so the rings overlap.
 // Returns the slope of the water's surface (a gradient in x, y), to tilt a puddle's normal.
 float2 rainRings(float2 w, float t) {
-    const float ringCell = 9.0f;
+    const float ringCell = 8.5f;
     float2 g = 0.0f;
-    [unroll] for (uint layer = 0u; layer < 2u; layer++) {
-        const float2 q = w / ringCell + float(layer) * float2(5.37f, 3.11f);
+    // 3-layer overlapping physical capillary raindrop splash ripples (GTA6-grade puddle & wet-stone dynamics):
+    [unroll] for (uint layer = 0u; layer < 3u; layer++) {
+        const float2 q = w / (ringCell * (1.0f + float(layer) * 0.28f)) + float(layer) * float2(5.37f, 3.11f);
         const float2 c = floor(q);
         [unroll] for (int dy = -1; dy <= 1; dy++) {
             [unroll] for (int dx = -1; dx <= 1; dx++) {
                 const float2 cell = c + float2(dx, dy);
                 const float2 at = cell + float2(hash21(cell), hash21(cell + 19.1f));
-                const float age = frac(t * 0.9f + hash21(cell + 7.7f + float(layer)));
+                const float age = frac(t * (0.95f + float(layer) * 0.18f) + hash21(cell + 7.7f + float(layer)));
                 const float2 dv = q - at;
                 const float dist = length(dv);
-                const float x = (dist - age * 1.3f) * 14.0f;   // the ring's crest at age x 1.3 cells
+                const float x = (dist - age * 1.35f) * 15.0f;
                 const float env = (1.0f - age) * (1.0f - age) * saturate(1.0f - abs(x) / 9.42f);
                 if (dist > 1.0e-4f) { g += dv / dist * sin(x) * env; }
             }
         }
     }
-    return g;
+    return g * 0.85f;
 }
 
-// Glints on snow: grains on a world-fixed grid (grain units, growing with distance so a grain never gets
-// smaller than about a pixel), one in six a flat crystal with its own tilt; it flashes when it mirrors the
-// light into the eye, so the glints move as the camera does.
+// Dual-scale crystalline snow micro-glint: sharp diamond-sparkle ice facets + soft frost subsurface sheen!
 float snowGlint(float3 pa, float3 n, float3 v, float3 l, float grain) {
     const float3 q = floor(pa / grain);
     const float h = hash21(q.xy + q.z * 13.7f);
-    if (h < 0.83f) { return 0.0f; }
+    const float3 hv = normalize(l + v);
+    const float frostSheen = pow(saturate(dot(n, hv)), 32.0f) * 0.08f;
+    if (h < 0.80f) { return frostSheen; }
     const float3 tilt = float3(hash21(q.xy + 3.1f), hash21(q.yz + 5.3f), hash21(q.zx + 9.7f)) - 0.5f;
-    const float3 fn = normalize(n + tilt * 1.4f);
-    return pow(saturate(dot(fn, normalize(l + v))), 600.0f);
+    const float3 fn = normalize(n + tilt * 1.35f);
+    return frostSheen + pow(saturate(dot(fn, hv)), 480.0f) * 1.25f;
 }
 
 // ng: the geometric normal (from depth): water pools by the ground's shape, not its normal map's bumps.

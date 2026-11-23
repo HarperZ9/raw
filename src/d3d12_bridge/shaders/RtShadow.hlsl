@@ -348,7 +348,7 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float radK = sourceRadius * 0.36f;
             const float2 rStatic = float2(ign(px + float2(17.0f * float(k), 31.0f)), ign(px.yx + float2(29.0f, 13.0f * float(k))));
             float vAcc = 0.0f;
-            const uint nSpp = (k == 0u) ? 4u : 2u;
+            const uint nSpp = 4u;   // 4-spp static pixel-locked RT shadows on ALL top-3 point lights (zero flicker!)
             [loop] for (uint si = 0u; si < nSpp; si++) {
                 const float2 rki = frac(rStatic + float2(0.25f * float(si), 0.37f * float(si)));
                 const float3 ci = lightPosR[best[k]].xyz + (float3(rki.x, rki.y, frac(rki.x + rki.y + 0.5f)) * 2.0f - 1.0f) * radK;

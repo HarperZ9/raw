@@ -457,11 +457,12 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
     }
     const bool wetGloss = max(rain.wet, rain.puddle) * (1.0f - rain.snow) > 0.2f;   // snow covers the water
-    if (reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u) {
+    const bool wantRefl = (reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u);
+    if (WaveActiveAnyTrue(wantRefl) && wantRefl) {
         const float4 sp = Spec.Load(ip);
-        // arXiv:2610.11702 Prefiltered Specular Radiance Caching: expand hardware Heitz VNDF reflection tracing
-        // to all forged metals (base==2), wet/puddle surfaces, and glossy stone/timber (sp.y > 0.14 && sp.x > 0.04).
-        if (base == 2u || (sp.y > 0.14f && sp.x > 0.04f) || wetGloss) {
+        // SM 6.8/6.9 Wave-Coherent Reflection Gate: skips entire 32-lane matte terrain/snow warps with zero RT divergence!
+        const bool isGlossy = (base == 2u || (sp.y > 0.14f && sp.x > 0.04f) || wetGloss);
+        if (WaveActiveAnyTrue(isGlossy) && isGlossy) {
             const float2 px = float2(id.xy);
             const float3 p = worldAt(px, d);
             const float3 n = normalize(lerp(worldNormal(Normal.Load(ip)), float3(0.0f, 0.0f, 1.0f), rain.puddle));

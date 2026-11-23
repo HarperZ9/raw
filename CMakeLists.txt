@@ -314,15 +314,15 @@ if(RAW_ENGINE_DIR)
     set(RAW_GTAO_HLSL ${E}/src/renderer/gpu/shaders/hlsl/post_gtao.hlsl)
     set(RAW_PACK_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/GamePack.hlsl)
     set(RAW_COMP_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/AoComposite.hlsl)
-    set(RAW_DXC_FLAGS -HV 2021 -Gis -O3 -Qstrip_debug -Qstrip_reflect)
+    set(RAW_DXC_FLAGS -HV 2021 -Gis -O3 -enable-16bit-types -Qstrip_debug -Qstrip_reflect)
     add_custom_command(
         OUTPUT ${RAW_ENGINE_GEN}/post_gtao.h ${RAW_ENGINE_GEN}/game_pack.h
                ${RAW_ENGINE_GEN}/ao_composite_vs.h ${RAW_ENGINE_GEN}/ao_composite_fs.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
-        COMMAND ${RAW_DXC} -T cs_6_0 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/post_gtao.h -Vn kDxil_post_gtao ${RAW_GTAO_HLSL}
-        COMMAND ${RAW_DXC} -T cs_6_0 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/game_pack.h -Vn kDxil_game_pack ${RAW_PACK_HLSL}
-        COMMAND ${RAW_DXC} -T vs_6_0 -E vs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_composite_vs.h -Vn kDxil_ao_composite_vs ${RAW_COMP_HLSL}
-        COMMAND ${RAW_DXC} -T ps_6_0 -E fs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_composite_fs.h -Vn kDxil_ao_composite_fs ${RAW_COMP_HLSL}
+        COMMAND ${RAW_DXC} -T cs_6_2 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/post_gtao.h -Vn kDxil_post_gtao ${RAW_GTAO_HLSL}
+        COMMAND ${RAW_DXC} -T cs_6_2 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/game_pack.h -Vn kDxil_game_pack ${RAW_PACK_HLSL}
+        COMMAND ${RAW_DXC} -T vs_6_2 -E vs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_composite_vs.h -Vn kDxil_ao_composite_vs ${RAW_COMP_HLSL}
+        COMMAND ${RAW_DXC} -T ps_6_2 -E fs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_composite_fs.h -Vn kDxil_ao_composite_fs ${RAW_COMP_HLSL}
         DEPENDS ${RAW_GTAO_HLSL} ${RAW_PACK_HLSL} ${RAW_COMP_HLSL}
         COMMENT "dxc: engine pass shaders -> DXIL headers"
         VERBATIM)
@@ -333,11 +333,11 @@ if(RAW_ENGINE_DIR)
     add_custom_command(
         OUTPUT ${RAW_AORT_HEADERS}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
-        COMMAND ${RAW_DXC} -T vs_6_0 -E vs -DPASS=0 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_rt_vs.h -Vn kDxil_ao_rt_vs ${RAW_AORT_HLSL}
-        COMMAND ${RAW_DXC} -T ps_6_0 -E fs -DPASS=0 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_rt_prefilter.h -Vn kDxil_ao_rt_prefilter ${RAW_AORT_HLSL}
-        COMMAND ${RAW_DXC} -T ps_6_0 -E fs -DPASS=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_rt_level.h -Vn kDxil_ao_rt_level ${RAW_AORT_HLSL}
-        COMMAND ${RAW_DXC} -T ps_6_0 -E fs -DPASS=2 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_rt_trace.h -Vn kDxil_ao_rt_trace ${RAW_AORT_HLSL}
-        COMMAND ${RAW_DXC} -T ps_6_0 -E fs -DPASS=3 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_rt_resolve.h -Vn kDxil_ao_rt_resolve ${RAW_AORT_HLSL}
+        COMMAND ${RAW_DXC} -T vs_6_2 -E vs -DPASS=0 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_rt_vs.h -Vn kDxil_ao_rt_vs ${RAW_AORT_HLSL}
+        COMMAND ${RAW_DXC} -T ps_6_2 -E fs -DPASS=0 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_rt_prefilter.h -Vn kDxil_ao_rt_prefilter ${RAW_AORT_HLSL}
+        COMMAND ${RAW_DXC} -T ps_6_2 -E fs -DPASS=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_rt_level.h -Vn kDxil_ao_rt_level ${RAW_AORT_HLSL}
+        COMMAND ${RAW_DXC} -T ps_6_2 -E fs -DPASS=2 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_rt_trace.h -Vn kDxil_ao_rt_trace ${RAW_AORT_HLSL}
+        COMMAND ${RAW_DXC} -T ps_6_2 -E fs -DPASS=3 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/ao_rt_resolve.h -Vn kDxil_ao_rt_resolve ${RAW_AORT_HLSL}
         DEPENDS ${RAW_AORT_HLSL}
         COMMENT "dxc: real-time AO shaders -> DXIL headers"
         VERBATIM)

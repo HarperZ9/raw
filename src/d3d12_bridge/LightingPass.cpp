@@ -131,11 +131,8 @@ public:
         m_aoOut = m_dev->createTexture({host.width, host.height, TextureFormat::RGBA16Float, RT, "lighting ao frame"}, m_err);
         m_uniform = m_dev->createBuffer({sizeof(LightUniform), BufferUsage::Uniform, "lighting params"}, m_err);
         if (!m_lit.valid() || !m_aoOut.valid() || !m_uniform.valid()) return Fail("createTexture");
-        // The clouds at a quarter of the width and height, two textures in turn (one is last frame's).
-        // Half-resolution temporally-reprojected volumetric clouds (4x GPU speedup vs full-res, 4x density vs 1/4-res;
-        // composited at full native resolution against full-res Depth in LightFog.hlsl so silhouettes stay razor-sharp).
-        const uint32_t cw = (host.width + 1) / 2, ch = (host.height + 1) / 2;
-        for (int k = 0; k < 2; ++k) m_cloud[k] = m_dev->createTexture({cw, ch, TextureFormat::RGBA16Float, RT, "clouds"}, m_err);
+        // Full native-resolution temporally-reprojected 3D Perlin-Worley volumetric clouds (4x sharper than 1/2-res!):
+        for (int k = 0; k < 2; ++k) m_cloud[k] = m_dev->createTexture({host.width, host.height, TextureFormat::RGBA16Float, RT, "clouds"}, m_err);
         const uint32_t vw = (host.width + 1) / 2, vh = (host.height + 1) / 2;
         for (int k = 0; k < 2; ++k) m_volFog[k] = m_dev->createTexture({vw, vh, TextureFormat::RGBA16Float, RT, "volumetric fog"}, m_err);
         // 6-level progressive RGBA16F HDR Bloom & Halation pyramid (Jimenez SIGGRAPH 2014).

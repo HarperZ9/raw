@@ -59,17 +59,31 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
         const float3 floorCol = ambDir * float3(0.42f, 0.38f, 0.34f);
         col = lerp(floorCol, ceilCol, smoothstep(-0.25f, 0.35f, rd.z));
     }
-    // Inject live dynamic local point lights (tavern hearths, torches, braziers, forge fires, magic spells)
-    // directly into the environment cubemap so metal armor, wet floors & eyes reflect real nearby fires!
-    const uint nLights = min(flags.y, 32u);
-    const float lExp = roughBand ? 5.0f : 36.0f;
-    const float lGain = roughBand ? 0.16f : 0.72f;
+    // Feature 1: Live Screen-Space Scene Radiance Projection into the 256x256 Dynamic Cubemap:
+    // Reflects real nearby buildings, trees, firepits, and tavern walls onto metallic armor, wet floors, and eyes.
+    const float4 scEnv = screenOf(eyeAt() + rd * 2400.0f);
+    if (scEnv.w > 10.0f) {
+        const float2 eUv = scEnv.xy * dims.zw;
+        if (all(eUv > 0.04f) && all(eUv < 0.96f)) {
+            const float eEdge = smoothstep(0.04f, 0.18f, min(min(eUv.x, 1.0f - eUv.x), min(eUv.y, 1.0f - eUv.y)));
+            const float eDepth = Depth.SampleLevel(Lin, eUv, 0.0f);
+            if (eDepth < 0.9995f) {
+                const float3 scCol = min(GameLit.SampleLevel(Lin, eUv, 0.0f).rgb, 3.5f.xxx);
+                col = lerp(col, scCol, eEdge * (roughBand ? 0.38f : 0.62f));
+            }
+        }
+    }
+    // Feature 2: 64-Light Dynamic Point-Light Cubemap Injection (hearths, torches, braziers, forge fires, spells)
+    // with boosted interior specular reflection energy so metal armor, wet floors & eyes reflect real nearby fires.
+    const uint nLights = min(flags.y, 64u);
+    const float lExp = roughBand ? 5.0f : 42.0f;
+    const float lGain = (isExt ? 1.0f : 1.55f) * (roughBand ? 0.20f : 0.92f);
     [loop] for (uint li = 0u; li < nLights; li++) {
         const float3 toL = lightPosR[li].xyz;   // camera-relative light position
         const float dist = length(toL);
-        const float rad = max(lightPosR[li].w * 1.8f, 1.0f);
+        const float rad = max(lightPosR[li].w * 2.0f, 1.0f);
         if (dist >= rad || dist < 1.0e-3f) { continue; }
-        const float att = pow(saturate(1.0f - dist / rad), 1.6f);
+        const float att = pow(saturate(1.0f - dist / rad), 1.55f);
         const float cosL = saturate(dot(rd, toL / dist));
         col += lightColS[li].rgb * (pow(cosL, lExp) * att * lGain);
     }

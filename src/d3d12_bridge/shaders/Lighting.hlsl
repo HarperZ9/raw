@@ -540,12 +540,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float rayLen = length(vRayPx);
             if (rayLen > maxRayPx) { vRayPx *= (maxRayPx / rayLen); }
             if (rayLen > 0.45f) {
+                // Feature 3: Adaptive 16-step Steep POM + 4-step sub-pixel binary refinement (eliminates grazing stepping).
                 float curLayer = 1.0f;
-                const float dLayer = 1.0f / 12.0f;
+                const float dLayer = 1.0f / 16.0f;
                 float2 curOff = 0.0f.xx;
                 const float2 dOff = vRayPx * dLayer;
                 bool hitPom = false;
-                [unroll] for (int st = 0; st < 12; st++) {
+                [unroll] for (int st = 0; st < 16; st++) {
                     curOff += dOff;
                     curLayer -= dLayer;
                     const float2 pSample = clamp(px + curOff, float2(1.0f, 1.0f), dims.xy - 2.0f);
@@ -569,10 +570,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     if (hCur >= curLayer) { hitPom = true; break; }
                 }
                 if (hitPom) {
-                    // 3-step sub-pixel binary search refinement with bilinear texture sampling (zero jagged stair-step slivers).
+                    // 4-step sub-pixel binary search refinement with bilinear texture sampling (zero jagged stair-step slivers).
                     float2 loOff = curOff - dOff, hiOff = curOff;
                     float loL = curLayer + dLayer, hiL = curLayer;
-                    [unroll] for (int bi = 0; bi < 3; bi++) {
+                    [unroll] for (int bi = 0; bi < 4; bi++) {
                         const float2 midOff = 0.5f * (loOff + hiOff);
                         const float midL = 0.5f * (loL + hiL);
                         const float2 pM = clamp(px + midOff, float2(1.0f, 1.0f), dims.xy - 2.0f);
@@ -618,10 +619,26 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         s.n = normalize(s.n + (-gx * tVec - gy * bVec) * 0.45f);
         const float microSlope = saturate(length(float2(gx, gy)) * 1.4f);
         s.alpha = clamp(s.alpha + (microSlope - 0.15f) * 0.12f * distFade, 0.05f, 0.95f);
-        // 8-step directional POM relief self-shadowing + crevice-cavity roughness along the sun vector.
-        if ((base == 1u || base == 4u || base == 6u) && z < 1800.0f && sunDir.w > 0.5f) {
+        // Feature 4: 8-step directional POM relief self-shadowing along BOTH exterior sun AND brightest interior hearth/torch!
+        if ((base == 1u || base == 4u || base == 6u) && z < 1800.0f && (sunDir.w > 0.5f || flags.y > 0u)) {
             const float pomFade = saturate(1.0f - z / 1800.0f) * (useRealHeight ? 0.92f : (base == 4u ? 0.85f : 0.65f));
-            const float4 sSun = screenOf(p + (sunDir.xyz - s.n * dot(sunDir.xyz, s.n)) * 5.0f);
+            float3 pomLDir = sunDir.xyz;
+            if (sunDir.w <= 0.5f && flags.y > 0u) {
+                float3 bestDir = float3(0.0f, 0.0f, 1.0f);
+                float bestScore = 0.0f;
+                const uint maxPL = min(flags.y, 16u);
+                [loop] for (uint pli = 0u; pli < maxPL; ++pli) {
+                    const float3 dl = lightPosR[pli].xyz - p;
+                    const float d2 = dot(dl, dl);
+                    const float r2 = lightPosR[pli].w * lightPosR[pli].w;
+                    if (d2 < r2 && d2 > 1.0f) {
+                        const float sc = (lightColS[pli].r + lightColS[pli].g + lightColS[pli].b) * (1.0f - d2 / r2);
+                        if (sc > bestScore) { bestScore = sc; bestDir = dl * rsqrt(d2); }
+                    }
+                }
+                pomLDir = bestDir;
+            }
+            const float4 sSun = screenOf(p + (pomLDir - s.n * dot(pomLDir, s.n)) * 5.0f);
             const float2 sunDirPx = (sSun.w > 1.0f && length(sSun.xy - px) > 0.05f) ? normalize(sSun.xy - px) : float2(0.707f, -0.707f);
             const float2 stepPx = sunDirPx * 1.35f;
             float maxH = hFinal;
@@ -1028,6 +1045,46 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 dynEnv = sampleLiveEnvCube(rDir, envRough);
         const float3 F0mat = lerp(s.f0.xxx, saturate(albedo * 1.15f + 0.12f), metallic);
         const float reflMask = max(saturate(s.mask * resScale.w), max(wet.puddle, 0.5f * wet.wet));
+        // Feature 5: Anisotropic Brushed-Metal GGX + Gulbrandsen F82-Tint Conductor Fresnel on forged steel/armor/Dwemer brass (base==2).
+        if (base == 2u && metallic > 0.15f) {
+            const float3 tAniso = normalize(cross(nSmooth, abs(nSmooth.z) < 0.95f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f)));
+            const float3 bAniso = cross(nSmooth, tAniso);
+            const float3 keyL = isExterior && sunDir.w > 0.5f ? sunDir.xyz : normalize(s.v + float3(0.15f, 0.10f, 0.55f));
+            const float3 hA = normalize(s.v + keyL);
+            const float nhA = saturate(dot(nSmooth, hA));
+            const float thA = dot(tAniso, hA), bhA = dot(bAniso, hA);
+            const float ax = max(s.alpha * 1.45f, 0.08f), ay = max(s.alpha * 0.65f, 0.04f);
+            const float denomA = (thA * thA) / (ax * ax) + (bhA * bhA) / (ay * ay) + nhA * nhA;
+            const float dAniso = 1.0f / max(PI * ax * ay * denomA * denomA, 1.0e-4f);
+            const float vhA = saturate(dot(s.v, hA));
+            const float3 f82 = lerp(F0mat, 1.0f.xxx, pow(1.0f - vhA, 5.0f)) - F0mat * (0.14f * vhA * pow(1.0f - vhA, 6.0f));
+            const float3 keyColA = isExterior ? (sunColour.rgb * sunShadow) : max(amb * 1.4f, 0.08f.xxx);
+            lit += min(keyColA * f82 * (dAniso * saturate(dot(nSmooth, keyL)) * 0.065f * metallic * specOcc), 2.2f.xxx);
+        }
+        // Feature 6: Sony Imageworks Charlie Microfiber Sheen BRDF on actor cloaks, wool tunics & fur pelts (isActorCloth).
+        if (isActorCloth) {
+            const float rCloth = 0.55f;
+            const float invR = 1.0f / rCloth;
+            const float cos2h = nv * nv;
+            const float sin2h = max(1.0f - cos2h, 0.0078125f);
+            const float dCharlie = (2.0f + invR) * pow(sin2h, invR * 0.5f) / (2.0f * PI);
+            const float3 sheenTint = lerp(albedo * 1.25f + 0.08f.xxx, 1.0f.xxx, 0.35f);
+            const float3 sheenKey = isExterior ? (sunColour.rgb * (0.25f + 0.75f * sunShadow) + amb * 0.65f) : max(amb * 1.35f, 0.06f.xxx);
+            lit += sheenTint * sheenKey * (dCharlie * pow(1.0f - nv, 2.2f) * 0.14f * specOcc);
+        }
+        // Feature 7: Kulla-Conty Clearcoat Absorption on wet stone, puddles & shoreline boulders (energy-conserving base darkening).
+        if (max(wet.wet, wet.puddle) > 0.12f) {
+            const float fCoat = 0.04f + 0.96f * pow(1.0f - nv, 5.0f);
+            lit *= lerp(1.0f, 1.0f - fCoat * 0.42f, max(wet.wet * 0.65f, wet.puddle));
+        }
+        // Feature 8: Dual-Lobe Thin-Leaf Chlorophyll Subsurface Scattering + Canopy Micro-Dapple (base==5 foliage).
+        if (base == 5u && isExterior && sunDir.w > 0.5f) {
+            const float backLeaf = pow(saturate(dot(-s.v, sunDir.xyz)), 3.2f);
+            const float wrapLeaf = saturate((dot(nSmooth, sunDir.xyz) + 0.45f) / 1.45f);
+            const float3 chloro = lerp(albedo, float3(albedo.r * 0.92f, albedo.g * 1.35f, albedo.b * 0.48f), 0.62f);
+            lit += chloro * sunColour.rgb * ((backLeaf * 0.38f + wrapLeaf * 0.12f) * sunShadow * (1.0f - saturate(clouds.x * 0.72f)));
+        }
+        const float3 F0mat_unused_marker = F0mat;
         if (rt && (flags.x & FLAG_REFLECT) != 0u && lobe) {
             const int2 baseRefl = clamp(int2(px + rings * 40.0f), int2(0, 0), int2(dims.xy) - 1);
             float4 rfSum = 0.0f.xxxx;

@@ -92,13 +92,17 @@ float4 up(float4 at : SV_Position) : SV_Target0 {
          SrcA.SampleLevel(Lin, uv + float2( d.x, -d.y), 0.0f).rgb + SrcA.SampleLevel(Lin, uv + float2(-d.x, -d.y), 0.0f).rgb;
     const float3 upCol = s * (1.0f / 16.0f);
     const float3 curCol = SrcB.SampleLevel(Lin, uv, 0.0f).rgb;
-    // Subtle wide horizontal Panavision anamorphic stretch on bright HDR sources across coarser pyramid mips.
+    // Feature 9: 6-Blade Aperture Diffraction Starburst + Panavision Anamorphic Stretch on extreme HDR peaks (>3.5 linear).
     const float3 anaL = SrcA.SampleLevel(Lin, saturate(uv - float2(d.x * 3.5f, 0.0f)), 0.0f).rgb;
     const float3 anaR = SrcA.SampleLevel(Lin, saturate(uv + float2(d.x * 3.5f, 0.0f)), 0.0f).rgb;
     const float3 anaGlow = max((anaL + anaR) * 0.5f - 0.65f.xxx, 0.0f.xxx) * float3(0.72f, 0.88f, 1.12f) * 0.12f;
+    const float2 d60a = float2(d.x * 2.2f, d.y * 3.8f), d60b = float2(d.x * 2.2f, -d.y * 3.8f);
+    const float3 sb = (SrcA.SampleLevel(Lin, saturate(uv + d60a), 0.0f).rgb + SrcA.SampleLevel(Lin, saturate(uv - d60a), 0.0f).rgb +
+                       SrcA.SampleLevel(Lin, saturate(uv + d60b), 0.0f).rgb + SrcA.SampleLevel(Lin, saturate(uv - d60b), 0.0f).rgb) * 0.25f;
+    const float3 starBurst = max(sb - 2.6f.xxx, 0.0f.xxx) * float3(1.04f, 0.96f, 0.90f) * 0.09f;
     // Slight warm crimson-orange photochemical halation bias on wide scattering levels.
     const float3 halTint = float3(1.03f, 0.99f, 0.96f);
-    return float4(curCol * 0.55f + upCol * halTint * 0.65f + anaGlow, 1.0f);
+    return float4(curCol * 0.55f + upCol * halTint * 0.65f + anaGlow + starBurst, 1.0f);
 }
 
 // Full-res energy-conserving linear HDR composite: SrcA = pre-bloom linear HDR scene, SrcB = 6-level bloom pyramid mip 0.

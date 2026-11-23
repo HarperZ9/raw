@@ -390,6 +390,13 @@ float4 main(In i) : SV_Target {
     // Modern wide-gamut curves (RB.x > 3.5: AgX / GT / Lottes / Hable): stop Skyrim 2011's muddy ImageSpace
     // weather tint & contrast from overwriting our Hillaire + AgX color science, while preserving strong gameplay
     // status flashes (low health, poison, night-eye) softly.
+    // Feature 10: Luminance-Preserving Filmic Split-Tone Micro-Contrast (cool alpine shadows, warm sunlit highlights).
+    if (RB.x > 3.5f) {
+        const float lSplit = saturate(dot(mapped, W));
+        const float3 shadowCool = float3(0.97f, 0.99f, 1.03f);
+        const float3 highWarm   = float3(1.02f, 1.00f, 0.97f);
+        mapped = saturate(mapped * lerp(shadowCool, highWarm, smoothstep(0.18f, 0.78f, lSplit)));
+    }
     const float g = dot(mapped, W);
     float4 c = float4(mapped, 1.0f);
     if (RB.x > 3.5f) {

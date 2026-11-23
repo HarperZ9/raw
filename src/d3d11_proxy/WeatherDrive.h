@@ -28,8 +28,21 @@ void WeatherDrive_SetTimes(const WeatherTimes& t);
 void WeatherDrive_OnTeleport();
 // Advances the surfaces by dt seconds. False while no weather has been reported (the ini values stay).
 bool WeatherDrive_Step(double dt, WeatherSurfaces& out);
+struct EngineCameraState {
+    float camPos[3] = {};
+    float camRot[9] = {};
+    float fovDeg = 80.0f;
+    uint32_t interior = 0;
+    uint32_t cellId = 0;
+    uint32_t worldId = 0;
+    bool valid = false;
+};
+bool EngineCamera_Get(EngineCameraState& out);
 } // namespace SB::Proxy
 
 // rain, snow: falling now, 0 to 1; cloud: cover 0 to 1; fog: 0 to 1. From the engine module, any thread.
 extern "C" __declspec(dllexport) void PG_SetWeatherState(float rain, float snow, float cloud, float fog);
 extern "C" __declspec(dllexport) void PG_SetWeatherExt(float windX, float windY, float lightning, float gameHour);
+// Ground-truth NiCamera + TESObjectCELL / TESWorldSpace state pushed directly from raw_engine.dll (rt_view.cpp).
+extern "C" __declspec(dllexport) void PG_SetEngineCamera(const float camPos[3], const float camRot[9], float fovDeg,
+                                                         uint32_t interior, uint32_t cellId, uint32_t worldId);

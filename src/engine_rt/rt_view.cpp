@@ -20,6 +20,8 @@ uint32_t kGraphicsState = 0, kPlayerCamera = 0, kPlayer = 0, kGetSky = 0, kCalen
 uint64_t g_frame = 0;
 EngineView g_view{};
 std::mutex g_m;
+using SetCamFn = void (*)(const float*, const float*, float, uint32_t, uint32_t, uint32_t);
+SetCamFn g_setCam = nullptr;
 
 template <class T> T At(const uint8_t* p, uint32_t off) { T v; std::memcpy(&v, p + off, sizeof v); return v; }
 
@@ -94,12 +96,17 @@ void ViewInit(const Image& img) {
     kGraphicsState = Addr("BSGraphics::State::GetSingleton"); kPlayerCamera = Addr("PlayerCamera::Singleton");
     kPlayer = Addr("PlayerCharacter::Singleton"); kGetSky = Addr("fn:Sky::GetSingleton"); kCalendar = Addr("Calendar::Singleton");
     kWorldSpace = Off("off:TESObjectCELL::worldSpace");
+    if (HMODULE proxy = GetModuleHandleA("d3d11.dll"))
+        g_setCam = reinterpret_cast<SetCamFn>(GetProcAddress(proxy, "PG_SetEngineCamera"));
 }
 
 void ViewOnPresent() {
     if (!g_base) return;
     EngineView v{};
     v.ok = (ReadScreen(&v) ? 1u : 0u) | (ReadCamera(&v) ? 2u : 0u) | (ReadCell(&v) ? 4u : 0u) | (ReadTime(&v) ? 8u : 0u);
+    if (g_setCam && (v.ok & 6u)) {
+        g_setCam(v.camPos, v.camRot, v.fov, v.interior, v.cellFormId, v.worldspaceFormId);
+    }
     std::lock_guard<std::mutex> g(g_m);
     g_view = v;
     ++g_frame;

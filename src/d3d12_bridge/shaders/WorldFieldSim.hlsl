@@ -68,8 +68,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (rH > 0.996f) { force -= weather.w * 0.22f; }
     }
 
-    // 3) Player & actor footstep wakes (water PDE) + persistent deep snow-trench excavation (snow PDE):
-    [loop] for (uint fi = 0u; fi < 8u; ++fi) {
+    // 3) Player footsteps (0..15) + live ProcessLists NPC world positions (16..31) -> wakes & snow trenches!
+    [loop] for (uint fi = 0u; fi < 32u; ++fi) {
         const float4 ft = footTrail[fi];
         if (ft.w <= 0.05f) { continue; }
         const float2 fd = worldXY - ft.xy;

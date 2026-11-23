@@ -64,4 +64,7 @@ void SoftBodyOnPresent();
 void SoftBodyShutdown();
 std::string SoftBodyStatsJson();
 
+// Copies up to maxActors live high-process NPC world positions (x, y, z, 1.0f) for GPU world-field interaction.
+uint32_t CopyActiveActorPositions(float* outXyzw, uint32_t maxActors);
+
 }  // namespace raw::rt

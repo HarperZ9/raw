@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <unordered_map>
 
 namespace raw::rt {
@@ -27,6 +28,11 @@ uint32_t g_lastHighActors = 0;
 uint32_t g_lastNpcActors = 0;
 uint32_t g_lastBonesFound = 0;
 uint32_t g_frameCounter = 0;
+
+constexpr uint32_t kMaxExportActors = 32;
+std::mutex g_actorPosMtx;
+float g_actorPos[kMaxExportActors][4] = {};
+uint32_t g_actorPosCount = 0;
 
 struct LiveBoneEntry {
     SoftBoneState state;
@@ -263,6 +269,12 @@ void TraverseSkeletonSEH(uint8_t* node, float dtSec, int depth, uint32_t& bonesO
     }
 }
 
+void PublishActorPositions(const float pos[][4], uint32_t count) {
+    std::lock_guard<std::mutex> lk(g_actorPosMtx);
+    g_actorPosCount = std::min(count, kMaxExportActors);
+    if (g_actorPosCount > 0) std::memcpy(g_actorPos, pos, g_actorPosCount * 16u);
+}
+
 void StepLiveActorsSEH(float dtSec) {
     __try {
         uint32_t actors = 0;
@@ -294,6 +306,8 @@ void StepLiveActorsSEH(float dtSec) {
                     g_lastHighActors = hiCount;
                     if (IsCanonicalPtr(handles)) {
                         const uint32_t cap = std::min<uint32_t>(hiCount, 48u);
+                        float localPos[kMaxExportActors][4] = {};
+                        uint32_t localCount = 0;
                         for (uint32_t i = 0; i < cap && bones < 64u; ++i) {
                             const uint32_t h = handles[i];
                             const uint32_t idx = h & 0xFFFFFu;
@@ -308,6 +322,18 @@ void StepLiveActorsSEH(float dtSec) {
                             }
                             if (!IsCanonicalPtr(refr) || refr == pc) continue;
                             if (SafeAt<uint8_t>(refr, 0x1A) != 62u) continue;
+                            // Export live NPC world position (TESObjectREFR::data.location at +0x54) for GPU grass/snow/water interaction!
+                            if (localCount < kMaxExportActors) {
+                                float pos[3];
+                                std::memcpy(pos, refr + 0x54, 12);
+                                if (std::isfinite(pos[0]) && std::isfinite(pos[1]) && std::isfinite(pos[2])) {
+                                    localPos[localCount][0] = pos[0];
+                                    localPos[localCount][1] = pos[1];
+                                    localPos[localCount][2] = pos[2];
+                                    localPos[localCount][3] = 1.0f;
+                                    ++localCount;
+                                }
+                            }
                             const uint8_t* loaded = SafeAt<const uint8_t*>(refr, 0x70);
                             if (!IsCanonicalPtr(loaded)) continue;
                             uint8_t* root3d = SafeAt<uint8_t*>(loaded, 0x00);
@@ -316,6 +342,7 @@ void StepLiveActorsSEH(float dtSec) {
                             ++npcs;
                             TraverseSkeletonSEH(root3d, dtSec, 0, bones);
                         }
+                        PublishActorPositions(localPos, localCount);
                     }
                 }
             }
@@ -380,4 +407,15 @@ std::string SoftBodyStatsJson() {
     return b;
 }
 
+uint32_t CopyActiveActorPositions(float* outXyzw, uint32_t maxActors) {
+    std::lock_guard<std::mutex> lk(g_actorPosMtx);
+    const uint32_t n = std::min(g_actorPosCount, maxActors);
+    if (outXyzw && n > 0) std::memcpy(outXyzw, g_actorPos, n * 16u);
+    return n;
+}
+
 }  // namespace raw::rt
+
+extern "C" __declspec(dllexport) uint32_t RAW_EngineActors(float* outXyzw, uint32_t maxActors) {
+    return raw::rt::CopyActiveActorPositions(outXyzw, maxActors);
+}

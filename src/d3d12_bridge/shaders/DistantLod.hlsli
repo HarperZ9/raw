@@ -115,7 +115,7 @@ float3 distantLit(int3 ip, float2 at, float d) {
         const float gustG = sin(dot(wpG.xy, windG) * 0.0048f - camPosW.w * 2.15f) * 0.5f + 0.5f;
         float2 trampleBend = 0.0f.xx;
         float trampleOcc = 1.0f;
-        [loop] for (uint gi = 0u; gi < 8u; ++gi) {
+        [loop] for (uint gi = 0u; gi < 32u; ++gi) {
             const float4 ft = footTrail[gi];
             if (ft.w <= 0.05f) { continue; }
             const float2 gd = wpG.xy - ft.xy;

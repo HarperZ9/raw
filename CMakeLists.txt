@@ -708,6 +708,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_drawstats.cpp
         src/engine_rt/rt_grids.cpp
         src/engine_rt/rt_audit.cpp
+        src/engine_rt/rt_softbody.cpp
         src/engine_rt/rt_weather.cpp
         src/engine_rt/rt_livestate.cpp
         src/engine_rt/rt_capture.cpp

@@ -226,6 +226,10 @@ void LoadLightingConfig(const std::string& ini)
         t.rawlss5 = i("Rawlss5", t.rawlss5 ? 1 : 0) != 0;
         t.dof = i("Dof", t.dof ? 1 : 0) != 0; t.dofMaxDist = f("DofMaxDist", t.dofMaxDist);
         t.dofRadius = f("DofRadius", t.dofRadius); t.dofOrbBoost = f("DofOrbBoost", t.dofOrbBoost);
+        t.dofSensor = i("DofSensor", t.dofSensor); t.dofFocalMm = f("DofFocalMm", t.dofFocalMm);
+        t.dofFStop = f("DofFStop", t.dofFStop); t.dofBokehShape = i("DofBokehShape", t.dofBokehShape);
+        t.dofNearScale = f("DofNearScale", t.dofNearScale); t.dofFarScale = f("DofFarScale", t.dofFarScale);
+        t.dofNearBleed = f("DofNearBleed", t.dofNearBleed); t.dofFocusSpeed = f("DofFocusSpeed", t.dofFocusSpeed);
         t.weatherLens = i("WeatherLens", t.weatherLens ? 1 : 0) != 0;
         raw::bridge::StreamlineHost::Get().SetMode(i("DlssMode", raw::bridge::StreamlineHost::Get().GetMode()));
         raw::bridge::StreamlineHost::Get().SetReflex(i("Reflex", 1) != 0);

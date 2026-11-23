@@ -2,6 +2,7 @@
 // and error banner, rendered via GDI into a 32-bit backbuffer-format texture before Present. Original work, MIT.
 #include "Overlay.h"
 #include "HotReload.h"
+#include <cmath>
 #include "BridgeHookState.h"
 #include "ProxyAPI.h"
 #include "ProxyLog.h"
@@ -110,7 +111,10 @@ void SavePresetFile(const std::string& path, const char* tag)
     wF("BloomScale", tm.bloomScale); wF("SharpenStr", tm.sharpenStr); wF("GrainStr", tm.grainStr); wF("VignetteStr", tm.vignetteStr);
     wF("CaStr", tm.caStr); wF("RadialBlurStr", tm.radialBlurStr); wF("HeadbobStr", tm.headbobStr); wF("LensStr", tm.lensStr);
     wF("ColorTempK", tm.colorTempK); wF("OklabSat", tm.oklabSat); wF("ShadowLift", tm.shadowLift); wF("HighlightKnee", tm.highlightKnee);
+    wI("Rawlss5", l.rawlss5 ? 1 : 0);
     wI("Dof", l.dof ? 1 : 0); wF("DofMaxDist", l.dofMaxDist); wF("DofRadius", l.dofRadius); wF("DofOrbBoost", l.dofOrbBoost);
+    wI("DofSensor", l.dofSensor); wF("DofFocalMm", l.dofFocalMm); wF("DofFStop", l.dofFStop); wI("DofBokehShape", l.dofBokehShape);
+    wF("DofNearScale", l.dofNearScale); wF("DofFarScale", l.dofFarScale); wF("DofNearBleed", l.dofNearBleed); wF("DofFocusSpeed", l.dofFocusSpeed);
     wI("WeatherLens", l.weatherLens ? 1 : 0);
     wI("DlssMode", raw::bridge::StreamlineHost::Get().GetMode());
     wI("Reflex", raw::bridge::StreamlineHost::Get().GetReflex() ? 1 : 0);
@@ -158,8 +162,13 @@ void LoadPresetSlot(int slot)
     tm.headbobStr = rF("HeadbobStr", tm.headbobStr); tm.lensStr = rF("LensStr", tm.lensStr);
     tm.colorTempK = rF("ColorTempK", tm.colorTempK); tm.oklabSat = rF("OklabSat", tm.oklabSat);
     tm.shadowLift = rF("ShadowLift", tm.shadowLift); tm.highlightKnee = rF("HighlightKnee", tm.highlightKnee);
+    l.rawlss5 = rI("Rawlss5", l.rawlss5 ? 1 : 0) != 0;
     l.dof = rI("Dof", l.dof ? 1 : 0) != 0; l.dofMaxDist = rF("DofMaxDist", l.dofMaxDist);
     l.dofRadius = rF("DofRadius", l.dofRadius); l.dofOrbBoost = rF("DofOrbBoost", l.dofOrbBoost);
+    l.dofSensor = rI("DofSensor", l.dofSensor); l.dofFocalMm = rF("DofFocalMm", l.dofFocalMm);
+    l.dofFStop = rF("DofFStop", l.dofFStop); l.dofBokehShape = rI("DofBokehShape", l.dofBokehShape);
+    l.dofNearScale = rF("DofNearScale", l.dofNearScale); l.dofFarScale = rF("DofFarScale", l.dofFarScale);
+    l.dofNearBleed = rF("DofNearBleed", l.dofNearBleed); l.dofFocusSpeed = rF("DofFocusSpeed", l.dofFocusSpeed);
     l.weatherLens = rI("WeatherLens", l.weatherLens ? 1 : 0) != 0;
     Tonemap_Set(tm);
     raw::bridge::StreamlineHost::Get().SetMode(rI("DlssMode", raw::bridge::StreamlineHost::Get().GetMode()));
@@ -195,9 +204,22 @@ void SaveMenuToIni()
 
 bool KeyEdge(bool now, bool& prev) { const bool f = now && !prev; prev = now; return f; }
 
+void ExportCameraRecipe()
+{
+    const std::string dir = ExeDir();
+    if (dir.empty()) return;
+    const std::string capDir = dir + "raw_captures";
+    CreateDirectoryA(capDir.c_str(), nullptr);
+    SYSTEMTIME st{}; GetLocalTime(&st);
+    char fname[128];
+    std::snprintf(fname, sizeof fname, "\\RAW_%04u%02u%02u_%02u%02u%02u_camera.ini",
+                  st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    SavePresetFile(capDir + fname, " [CAMERA EXPORTED]");
+}
+
 int TabRowCount(int tab)
 {
-    static const int kCounts[8] = {12, 13, 7, 8, 12, 11, 20, 17};
+    static const int kCounts[8] = {13, 13, 7, 8, 12, 11, 20, 25};
     return kCounts[std::clamp(tab, 0, 7)];
 }
 
@@ -209,9 +231,9 @@ std::string BuildMenuText()
 {
     const auto& l = hook::Cfg().light;
     const auto tm = Tonemap_Get();
-    static const char* kTabs[8] = {"1:RT", "2:Sky/Fog", "3:Weather", "4:Water", "5:Skin/AO", "6:Tonemap", "7:LUTs/OV", "8:Cinema/DoF"};
+    static const char* kTabs[8] = {"1:RT", "2:Sky/Fog", "3:Weather", "4:Water", "5:Skin/AO", "6:Tonemap", "7:LUTs/OV", "8:Camera/DoF"};
     char hdr[224];
-    std::snprintf(hdr, sizeof hdr, "=== RAW DX12 STUDIO | %.1f FPS (%.1f ms) | [End:Close | PgUp/PgDn:Tab | Arrows:Tune | S:Save | L:Load]%s ===\n",
+    std::snprintf(hdr, sizeof hdr, "=== RAW DX12 STUDIO | %.1f FPS (%.1f ms) | [End:Close | PgUp/PgDn:Tab | Arrows:Tune | S:Save | L:Load | P:Export]%s ===\n",
                   g_emaMs > 0.1f ? 1000.0f / g_emaMs : 0.0f, g_emaMs, g_savedFrames ? g_statusTag.c_str() : "");
     std::string out = hdr;
     for (int i = 0; i < 8; ++i) {
@@ -238,6 +260,7 @@ std::string BuildMenuText()
         row(9, "RT Sky Strength", Fmt("%.2f", l.rtSkyStrength));
         row(10, "RT Sky Ray Length", Fmt("%.0f", l.rtSkyLength));
         row(11, "RT Terminator Bias", Fmt("%.2f", l.rtTermDist));
+        row(12, "RAWDLSS 5.0 3D-Guided", OnOff(l.rawlss5));
     } else if (g_tab == 1) {
         row(0, "Volumetric Clouds", OnOff(l.clouds));
         row(1, "Cloud Cover", Fmt("%.2f", l.cloudCover));
@@ -324,23 +347,33 @@ std::string BuildMenuText()
         row(18, "RAW GPU Neural Vibrance", OnOff(raw::bridge::StreamlineHost::Get().GetDeepDvc()));
         row(19, "User Preset Slot", FmtI("Slot %d  [S=Save | L=Load]", g_presetSlot));
     } else {
+        static const char* kSensors[4] = {"APS-C (24mm)", "35mm Full-Frame", "Medium Format 645 (44mm)", "Medium Format 6x7 (70mm)"};
+        static const char* kShapes[7]  = {"5-Blade Pentagon", "6-Blade Hexagon", "7-Blade Cinema", "9-Blade Zeiss", "Circular Ideal", "Anamorphic 2x", "Swirly Petzval"};
         row(0, "Bokeh DoF Enabled", OnOff(l.dof));
-        row(1, "DoF Autofocus Range", Fmt("%.0f u", l.dofMaxDist));
-        row(2, "DoF Bokeh Radius", Fmt("%.1f px", l.dofRadius));
-        row(3, "DoF Specular Orb Glow", Fmt("%.2fx", l.dofOrbBoost));
-        row(4, "Rain/Frost Lens FX", OnOff(l.weatherLens));
-        row(5, "Spectral Bloom Scale", Fmt("%.2fx", tm.bloomScale));
-        row(6, "RCAS Sharpen Strength", Fmt("%.2fx", tm.sharpenStr));
-        row(7, "35mm Grain Strength", Fmt("%.2fx", tm.grainStr));
-        row(8, "Optical Vignette Str", Fmt("%.2fx", tm.vignetteStr));
-        row(9, "Chromatic Aberr Str", Fmt("%.2fx", tm.caStr));
-        row(10, "Radial SpeedBlur Str", Fmt("%.2fx", tm.radialBlurStr));
-        row(11, "Run Headbob Strength", Fmt("%.2fx", tm.headbobStr));
-        row(12, "Lens & Halation Str", Fmt("%.2fx", tm.lensStr));
-        row(13, "White Balance (K)", Fmt("%.0f K", tm.colorTempK));
-        row(14, "Oklab Saturation", Fmt("%.2fx", tm.oklabSat));
-        row(15, "Oklab Shadow Lift", Fmt("%+.3f", tm.shadowLift));
-        row(16, "HDR Highlight Knee", Fmt("%.2f", tm.highlightKnee));
+        row(1, "Camera Sensor Format", kSensors[std::clamp(l.dofSensor, 0, 3)]);
+        row(2, "Lens Focal Length", Fmt("%.0f mm", l.dofFocalMm));
+        row(3, "Aperture f-Stop", Fmt("f/%.2f", l.dofFStop));
+        row(4, "Bokeh Blade Shape", kShapes[std::clamp(l.dofBokehShape, 0, 6)]);
+        row(5, "Near-Plane Blur", Fmt("%.2fx", l.dofNearScale));
+        row(6, "Far-Plane Blur", Fmt("%.2fx", l.dofFarScale));
+        row(7, "Near Foreground Bleed", Fmt("%.2fx", l.dofNearBleed));
+        row(8, "Bokeh Max Radius", Fmt("%.1f px", l.dofRadius));
+        row(9, "Bokeh Specular Orbs", Fmt("%.2fx", l.dofOrbBoost));
+        row(10, "Focus Pull Speed", Fmt("%.2f", l.dofFocusSpeed));
+        row(11, "DoF Master Gain", Fmt("%.0f u", l.dofMaxDist));
+        row(12, "Rain/Frost Lens FX", OnOff(l.weatherLens));
+        row(13, "Spectral Bloom Scale", Fmt("%.2fx", tm.bloomScale));
+        row(14, "RCAS Sharpen Strength", Fmt("%.2fx", tm.sharpenStr));
+        row(15, "35mm Grain Strength", Fmt("%.2fx", tm.grainStr));
+        row(16, "Optical Vignette Str", Fmt("%.2fx", tm.vignetteStr));
+        row(17, "Chromatic Aberr Str", Fmt("%.2fx", tm.caStr));
+        row(18, "Radial SpeedBlur Str", Fmt("%.2fx", tm.radialBlurStr));
+        row(19, "Run Headbob Strength", Fmt("%.2fx", tm.headbobStr));
+        row(20, "Lens & Halation Str", Fmt("%.2fx", tm.lensStr));
+        row(21, "White Balance (K)", Fmt("%.0f K", tm.colorTempK));
+        row(22, "Oklab Saturation", Fmt("%.2fx", tm.oklabSat));
+        row(23, "Oklab Shadow Lift", Fmt("%+.3f", tm.shadowLift));
+        row(24, "HDR Highlight Knee", Fmt("%.2f", tm.highlightKnee));
     }
     out += "Web Studio, Presets & Live HLSL Editor: http://127.0.0.1:8844";
     return out;
@@ -366,6 +399,8 @@ bool PollMenu(std::string& outText)
     if (!g_menuOpen) return false;
     if (KeyEdge((GetAsyncKeyState('S') & 0x8000) != 0, g_prevSave)) { SaveMenuToIni(); changed = true; }
     if (KeyEdge((GetAsyncKeyState('L') & 0x8000) != 0, g_prevLoad)) { LoadPresetSlot(g_presetSlot); changed = true; }
+    static bool g_prevExport = false;
+    if (KeyEdge((GetAsyncKeyState('P') & 0x8000) != 0, g_prevExport)) { ExportCameraRecipe(); changed = true; }
     const bool nextTab = KeyEdge((GetAsyncKeyState(VK_TAB) & 0x8000) != 0, g_prevTab) && !shift;
     const bool prevTab = KeyEdge((GetAsyncKeyState(VK_PRIOR) & 0x8000) != 0 || (GetAsyncKeyState(VK_OEM_4) & 0x8000) != 0, g_prevPgUp);
     const bool nextTab2 = KeyEdge((GetAsyncKeyState(VK_NEXT) & 0x8000) != 0 || (GetAsyncKeyState(VK_OEM_6) & 0x8000) != 0, g_prevPgDn);
@@ -404,6 +439,7 @@ bool PollMenu(std::string& outText)
             case 9: l.rtSkyStrength = std::clamp(l.rtSkyStrength + step * 0.05f, 0.0f, 2.0f); break;
             case 10: l.rtSkyLength = std::clamp(l.rtSkyLength + step * 150.0f, 100.0f, 4000.0f); break;
             case 11: l.rtTermDist = std::clamp(l.rtTermDist + step * 0.50f, 0.0f, 12.0f); break;
+            case 12: l.rawlss5 = !l.rawlss5; break;
             }
         } else if (g_tab == 1) {
             switch (g_sel) {
@@ -500,22 +536,30 @@ bool PollMenu(std::string& outText)
         } else {
             switch (g_sel) {
             case 0: l.dof = !l.dof; break;
-            case 1: l.dofMaxDist = std::clamp(l.dofMaxDist + step * 60.0f, 150.0f, 2500.0f); break;
-            case 2: l.dofRadius = std::clamp(l.dofRadius + step * 0.5f, 1.5f, 24.0f); break;
-            case 3: l.dofOrbBoost = std::clamp(l.dofOrbBoost + step * 0.15f, 0.0f, 4.0f); break;
-            case 4: l.weatherLens = !l.weatherLens; break;
-            case 5: tm.bloomScale = std::clamp(tm.bloomScale + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
-            case 6: tm.sharpenStr = std::clamp(tm.sharpenStr + step * 0.10f, 0.0f, 2.0f); tmDirty = true; break;
-            case 7: tm.grainStr = std::clamp(tm.grainStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
-            case 8: tm.vignetteStr = std::clamp(tm.vignetteStr + step * 0.10f, 0.0f, 2.0f); tmDirty = true; break;
-            case 9: tm.caStr = std::clamp(tm.caStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
-            case 10: tm.radialBlurStr = std::clamp(tm.radialBlurStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
-            case 11: tm.headbobStr = std::clamp(tm.headbobStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
-            case 12: tm.lensStr = std::clamp(tm.lensStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
-            case 13: tm.colorTempK = std::clamp(tm.colorTempK + step * 150.0f, 3500.0f, 9500.0f); tmDirty = true; break;
-            case 14: tm.oklabSat = std::clamp(tm.oklabSat + step * 0.05f, 0.0f, 2.0f); tmDirty = true; break;
-            case 15: tm.shadowLift = std::clamp(tm.shadowLift + step * 0.01f, -0.15f, 0.15f); tmDirty = true; break;
-            case 16: tm.highlightKnee = std::clamp(tm.highlightKnee + step * 0.04f, 0.35f, 1.40f); tmDirty = true; break;
+            case 1: l.dofSensor = (l.dofSensor + 4 + dir) % 4; break;
+            case 2: l.dofFocalMm = std::clamp(l.dofFocalMm + step * 5.0f, 24.0f, 200.0f); break;
+            case 3: l.dofFStop = std::clamp(l.dofFStop + step * 0.2f, 0.95f, 16.0f); break;
+            case 4: l.dofBokehShape = (l.dofBokehShape + 7 + dir) % 7; break;
+            case 5: l.dofNearScale = std::clamp(l.dofNearScale + step * 0.10f, 0.0f, 2.5f); break;
+            case 6: l.dofFarScale = std::clamp(l.dofFarScale + step * 0.10f, 0.0f, 2.5f); break;
+            case 7: l.dofNearBleed = std::clamp(l.dofNearBleed + step * 0.10f, 0.0f, 2.0f); break;
+            case 8: l.dofRadius = std::clamp(l.dofRadius + step * 0.5f, 2.0f, 28.0f); break;
+            case 9: l.dofOrbBoost = std::clamp(l.dofOrbBoost + step * 0.15f, 0.0f, 5.0f); break;
+            case 10: l.dofFocusSpeed = std::clamp(l.dofFocusSpeed + step * 0.01f, 0.02f, 0.30f); break;
+            case 11: l.dofMaxDist = std::clamp(l.dofMaxDist + step * 60.0f, 150.0f, 2500.0f); break;
+            case 12: l.weatherLens = !l.weatherLens; break;
+            case 13: tm.bloomScale = std::clamp(tm.bloomScale + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
+            case 14: tm.sharpenStr = std::clamp(tm.sharpenStr + step * 0.10f, 0.0f, 2.0f); tmDirty = true; break;
+            case 15: tm.grainStr = std::clamp(tm.grainStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
+            case 16: tm.vignetteStr = std::clamp(tm.vignetteStr + step * 0.10f, 0.0f, 2.0f); tmDirty = true; break;
+            case 17: tm.caStr = std::clamp(tm.caStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
+            case 18: tm.radialBlurStr = std::clamp(tm.radialBlurStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
+            case 19: tm.headbobStr = std::clamp(tm.headbobStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
+            case 20: tm.lensStr = std::clamp(tm.lensStr + step * 0.10f, 0.0f, 2.5f); tmDirty = true; break;
+            case 21: tm.colorTempK = std::clamp(tm.colorTempK + step * 150.0f, 3500.0f, 9500.0f); tmDirty = true; break;
+            case 22: tm.oklabSat = std::clamp(tm.oklabSat + step * 0.05f, 0.0f, 2.0f); tmDirty = true; break;
+            case 23: tm.shadowLift = std::clamp(tm.shadowLift + step * 0.01f, -0.15f, 0.15f); tmDirty = true; break;
+            case 24: tm.highlightKnee = std::clamp(tm.highlightKnee + step * 0.04f, 0.35f, 1.40f); tmDirty = true; break;
             }
         }
         if (tmDirty) Tonemap_Set(tm);
@@ -536,8 +580,9 @@ bool Render(const std::string& text, UINT maxW, bool isMenu, std::vector<uint8_t
         at = end + 1;
     }
     const int lineH = 19;
-    w = std::min<UINT>(maxW, isMenu ? 1120 : 1400);
-    h = UINT(lines.size() * lineH + 26);
+    const LONG listW = isMenu ? 1040 : 1400;
+    w = std::min<UINT>(maxW, isMenu ? 1310 : 1400);
+    h = UINT(std::max<size_t>(lines.size(), isMenu ? 27 : lines.size()) * lineH + 26);
     HDC dc = CreateCompatibleDC(nullptr);
     BITMAPINFO bi{};
     bi.bmiHeader.biSize = sizeof bi.bmiHeader;
@@ -579,7 +624,7 @@ bool Render(const std::string& text, UINT maxW, bool isMenu, std::vector<uint8_t
         const int y0 = int(12 + i * lineH);
         const bool isSel = isMenu && lines[i].rfind(">>", 0) == 0;
         if (isMenu && i >= 2) {
-            RECT rowRect{2, y0 - 2, LONG(w) - 2, y0 + lineH - 2};
+            RECT rowRect{2, y0 - 2, listW - 4, y0 + lineH - 2};
             if (isSel) {
                 FillRect(dc, &rowRect, selBgBr);
                 RECT barRect{2, y0 - 2, 6, y0 + lineH - 2};
@@ -591,15 +636,15 @@ bool Render(const std::string& text, UINT maxW, bool isMenu, std::vector<uint8_t
             const size_t posOn = lines[i].rfind(": ON");
             const size_t posOff = lines[i].rfind(": OFF");
             if (posOn != std::string::npos && posOn + 4 == lines[i].size()) {
-                RECT pill{LONG(w) - 68, y0, LONG(w) - 14, y0 + lineH - 4};
+                RECT pill{listW - 68, y0, listW - 14, y0 + lineH - 4};
                 FillRect(dc, &pill, onPillBr);
                 SetTextColor(dc, RGB(88, 240, 196));
-                TextOutA(dc, LONG(w) - 52, y0, "ON", 2);
+                TextOutA(dc, listW - 52, y0, "ON", 2);
             } else if (posOff != std::string::npos && posOff + 5 == lines[i].size()) {
-                RECT pill{LONG(w) - 68, y0, LONG(w) - 14, y0 + lineH - 4};
+                RECT pill{listW - 68, y0, listW - 14, y0 + lineH - 4};
                 FillRect(dc, &pill, offPillBr);
                 SetTextColor(dc, RGB(148, 160, 178));
-                TextOutA(dc, LONG(w) - 56, y0, "OFF", 3);
+                TextOutA(dc, listW - 56, y0, "OFF", 3);
             } else {
                 // Draw a sleek 110px horizontal progress slider bar on numeric/percentage rows:
                 const size_t colPos = lines[i].rfind(": ");
@@ -613,7 +658,7 @@ bool Render(const std::string& text, UINT maxW, bool isMenu, std::vector<uint8_t
                                                        : (val <= 2.5f ? std::clamp(val / 2.5f, 0.0f, 1.0f)
                                                                       : (val <= 30.0f ? std::clamp(val / 30.0f, 0.0f, 1.0f)
                                                                                       : std::clamp(val / 10000.0f, 0.0f, 1.0f))));
-                        const LONG sx0 = LONG(w) - 128, sx1 = LONG(w) - 14;
+                        const LONG sx0 = listW - 128, sx1 = listW - 14;
                         const LONG sy = y0 + (lineH / 2) - 3;
                         RECT trk{sx0, sy, sx1, sy + 5};
                         FillRect(dc, &trk, offPillBr);
@@ -631,6 +676,100 @@ bool Render(const std::string& text, UINT maxW, bool isMenu, std::vector<uint8_t
         else if (isSel) SetTextColor(dc, RGB(252, 204, 96));
         else SetTextColor(dc, RGB(234, 236, 242));
         TextOutA(dc, 14, y0, lines[i].c_str(), int(lines[i].size()));
+    }
+    // Right-Side Live Visual Studio Widget Bay (Color Wheel, Mechanical Aperture Iris & Live Tone Curve Graph):
+    if (isMenu && LONG(w) >= listW + 220) {
+        const auto& l = hook::Cfg().light;
+        const auto tm = Tonemap_Get();
+        const LONG px0 = listW + 10, pw = LONG(w) - px0 - 12;
+        const LONG cx = px0 + pw / 2;
+        RECT bay{px0, 56, px0 + pw, LONG(h) - 14};
+        HBRUSH bayBr = CreateSolidBrush(RGB(10, 14, 21));
+        FillRect(dc, &bay, bayBr);
+        DeleteObject(bayBr);
+        HBRUSH sepBr = CreateSolidBrush(RGB(40, 56, 76));
+        FrameRect(dc, &bay, sepBr);
+        DeleteObject(sepBr);
+        SelectObject(dc, font);
+        // 1) Live Oklab Color Wheel & White-Balance / Saturation Crosshair:
+        SetTextColor(dc, RGB(72, 224, 208));
+        TextOutA(dc, px0 + 12, 64, "OKLAB COLOR WHEEL", 17);
+        const int wCy = 152, wRad = 58;
+        for (int dy = -wRad; dy <= wRad; ++dy) {
+            for (int dx = -wRad; dx <= wRad; ++dx) {
+                const float r = std::sqrt(float(dx * dx + dy * dy)) / float(wRad);
+                if (r > 1.0f) continue;
+                const float ang = std::atan2(float(dy), float(dx));
+                const float hDeg = (ang < 0.0f ? ang + 6.2831853f : ang) * (180.0f / 3.14159265f);
+                const float c = r, x = c * (1.0f - std::fabs(std::fmod(hDeg / 60.0f, 2.0f) - 1.0f)), m = 1.0f - c * 0.55f;
+                float rr = 0, gg = 0, bb = 0;
+                if (hDeg < 60) { rr = c; gg = x; } else if (hDeg < 120) { rr = x; gg = c; }
+                else if (hDeg < 180) { gg = c; bb = x; } else if (hDeg < 240) { gg = x; bb = c; }
+                else if (hDeg < 300) { rr = x; bb = c; } else { rr = c; bb = x; }
+                SetPixelV(dc, cx + dx, wCy + dy, RGB(int(std::clamp((rr + m * 0.35f) * 230.0f, 0.0f, 255.0f)),
+                                                     int(std::clamp((gg + m * 0.35f) * 230.0f, 0.0f, 255.0f)),
+                                                     int(std::clamp((bb + m * 0.35f) * 230.0f, 0.0f, 255.0f))));
+            }
+        }
+        const float wbNorm = std::clamp((tm.colorTempK - 6500.0f) / 3000.0f, -1.0f, 1.0f);
+        const float satNorm = std::clamp(tm.oklabSat * 0.5f, 0.0f, 1.0f);
+        const int dotX = cx + int(wbNorm * wRad * 0.85f);
+        const int dotY = wCy - int((satNorm - 0.5f) * wRad * 1.3f);
+        RECT dotR{dotX - 4, dotY - 4, dotX + 5, dotY + 5};
+        FillRect(dc, &dotR, selBarBr);
+        // 2) Live Mechanical Aperture Iris Diagram (5/6/7/9-blade, Circle, Anamorphic 2x, Petzval):
+        SetTextColor(dc, RGB(72, 224, 208));
+        char irisLbl[48];
+        std::snprintf(irisLbl, sizeof irisLbl, "IRIS: %.0fmm f/%.1f", l.dofFocalMm, l.dofFStop);
+        TextOutA(dc, px0 + 12, 224, irisLbl, int(std::strlen(irisLbl)));
+        const int iCy = 296;
+        const float openT = std::clamp(1.0f - (std::log2(std::max(l.dofFStop, 0.95f)) / 4.0f), 0.16f, 0.96f);
+        const float iRad = 46.0f * openT;
+        HPEN irisPen = CreatePen(PS_SOLID, 2, RGB(248, 196, 86));
+        HGDIOBJ oldPen = SelectObject(dc, irisPen);
+        HBRUSH irisFill = CreateSolidBrush(RGB(22, 34, 48));
+        HGDIOBJ oldBr = SelectObject(dc, irisFill);
+        const int sh = std::clamp(l.dofBokehShape, 0, 6);
+        if (sh <= 3) {
+            const int nb = (sh == 0) ? 5 : (sh == 1) ? 6 : (sh == 2) ? 7 : 9;
+            POINT pts[10];
+            for (int k = 0; k < nb; ++k) {
+                const float a = float(k) * (6.2831853f / float(nb)) - 1.5707963f;
+                pts[k].x = cx + LONG(std::cos(a) * iRad);
+                pts[k].y = iCy + LONG(std::sin(a) * iRad);
+            }
+            Polygon(dc, pts, nb);
+        } else {
+            const float rx = (sh == 5) ? iRad * 0.62f : iRad;
+            const float ry = (sh == 5) ? iRad * 1.18f : iRad;
+            Ellipse(dc, cx - int(rx), iCy - int(ry), cx + int(rx), iCy + int(ry));
+        }
+        // 3) Live HDR Tone & Exposure Response Curve Graph:
+        SetTextColor(dc, RGB(72, 224, 208));
+        TextOutA(dc, px0 + 12, 362, "HDR TONE CURVE", 14);
+        const int gx0 = px0 + 14, gy0 = 386, gw = pw - 28, gh = 92;
+        RECT gBox{gx0, gy0, gx0 + gw, gy0 + gh};
+        FillRect(dc, &gBox, zebraBr);
+        HPEN curvePen = CreatePen(PS_SOLID, 2, RGB(88, 240, 196));
+        SelectObject(dc, curvePen);
+        const float expGain = std::pow(2.0f, tm.bias);
+        for (int xi = 0; xi <= gw; xi += 2) {
+            const float xIn = (float(xi) / float(gw)) * 2.5f * expGain;
+            const float knee = std::max(tm.highlightKnee, 0.25f);
+            const float yOut = std::clamp((xIn / (xIn + knee)) + tm.shadowLift, 0.0f, 1.0f);
+            const int py = gy0 + gh - int(yOut * float(gh - 4)) - 2;
+            if (xi == 0) MoveToEx(dc, gx0 + xi, py, nullptr);
+            else LineTo(dc, gx0 + xi, py);
+        }
+        SelectObject(dc, oldPen);
+        SelectObject(dc, oldBr);
+        DeleteObject(irisPen);
+        DeleteObject(curvePen);
+        DeleteObject(irisFill);
+        char statusLine[48];
+        std::snprintf(statusLine, sizeof statusLine, "RAWDLSS 5.0: %s", l.rawlss5 ? "ACTIVE" : "OFF");
+        SetTextColor(dc, l.rawlss5 ? RGB(88, 240, 196) : RGB(148, 160, 178));
+        TextOutA(dc, px0 + 14, gy0 + gh + 10, statusLine, int(std::strlen(statusLine)));
     }
     DeleteObject(zebraBr);
     DeleteObject(selBgBr);

@@ -78,24 +78,25 @@ float cloudDensityVol(float3 pa, bool detail) {
     const float hGrad = saturate(baseGrad * topGrad + anvilSpread);
     if (hGrad <= 0.001f) { return 0.0f; }
 
-    // 4D evolving convective cumulus structure with curl-noise fluid marbling so turrets grow, diffuse & metamorphose!
-    const float tEvo = camPosW.w * 0.0052f;
-    const float3 p0 = float3(sheared.x / 32000.0f, sheared.y / 32000.0f, (curvedZ - clouds.y) / 22000.0f - tEvo * 0.38f);
-    const float3 w0 = float3(cNoise(p0 * 0.95f + float3(3.1f + tEvo, 7.4f, 1.9f)) - 0.5f,
-                             cNoise(p0 * 0.95f + float3(11.7f, 2.3f - tEvo * 0.85f, 5.1f)) - 0.5f,
-                             cNoise(p0 * 0.95f + float3(6.3f, 14.1f, 2.7f + tEvo * 1.15f)) - 0.5f) * 0.70f;
+    // 4D evolving towering 3D cumulus & anvil volumes (tighter 18k/15k aspect ratio replaces flat 2D pancake streaks
+    // seen in 12.01.38.14.mp4 with sculptural billowing RDR2/MSFS cauliflower crowns and deep convective turbulence!):
+    const float tEvo = camPosW.w * 0.0085f;
+    const float3 p0 = float3(sheared.x / 19500.0f, sheared.y / 19500.0f, (curvedZ - clouds.y) / 14500.0f - tEvo * 0.45f);
+    const float3 w0 = float3(cNoise(p0 * 1.10f + float3(3.1f + tEvo, 7.4f, 1.9f)) - 0.5f,
+                             cNoise(p0 * 1.10f + float3(11.7f, 2.3f - tEvo * 0.90f, 5.1f)) - 0.5f,
+                             cNoise(p0 * 1.10f + float3(6.3f, 14.1f, 2.7f + tEvo * 1.25f)) - 0.5f) * 0.85f;
     const float3 pw = p0 + w0;
-    // Smooth Perlin-Worley cumulus structure (replaces ridged 1-|2n-1| which caused sharp triangular crease holes
-    // seen in 09.57.42.68.png!): organic puffed cumulus domes + crisp multi-octave cauliflower crown erosion!
+    // Sculptural 4D cumulus cauliflower domes: blends smooth Perlin base with rounded billowing Worley-like puffs!
     const float f1 = cNoise(pw);
-    const float f2 = cNoise(pw * 2.13f + float3(13.1f, 5.7f, 3.3f));
-    const float f3 = cNoise(pw * 4.37f + float3(7.9f, 19.3f, 8.1f));
+    const float f2 = cNoise(pw * 2.13f + float3(13.1f, 5.7f, 3.3f + tEvo * 0.35f));
+    const float f3 = cNoise(pw * 4.37f + float3(7.9f, 19.3f, 8.1f - tEvo * 0.45f));
     const float f4 = cNoise(pw * 8.81f + float3(23.7f, 11.1f, 15.7f));
-    const float billow = pow(saturate(f1 * 0.54f + f2 * 0.27f + f3 * 0.13f + f4 * 0.06f), 0.85f);
-    const float localCov = saturate(cover * lerp(0.55f, 1.35f, smoothstep(0.25f, 0.78f, wCov)));
-    const float thresh = lerp(0.62f, lerp(0.40f, 0.24f, stormType), localCov);
+    const float puff = smoothstep(0.18f, 0.86f, f1 * 0.50f + f2 * 0.28f + f3 * 0.15f + f4 * 0.07f);
+    const float billow = pow(puff, 0.78f);
+    const float localCov = saturate(cover * lerp(0.50f, 1.40f, smoothstep(0.22f, 0.78f, wCov)));
+    const float thresh = lerp(0.58f, lerp(0.36f, 0.22f, stormType), localCov);
     float dens = saturate((billow * hGrad - thresh) / max(1.0f - thresh, 0.22f));
-    dens *= lerp(0.55f, 1.15f, smoothstep(0.05f, 0.38f, h));
+    dens *= lerp(0.65f, 1.35f, smoothstep(0.05f, 0.42f, h));
     if (detail && dens > 0.002f) {
         const float3 r = float3((sheared.x + wind.x * 0.30f) / 4800.0f, (sheared.y + wind.y * 0.30f) / 4800.0f, (curvedZ - clouds.y) / 4200.0f);
         const float d1 = cNoise(r);

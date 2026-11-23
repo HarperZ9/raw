@@ -64,8 +64,9 @@ struct LightUniform
     float dofParams[4];       // x: dofMaxDist (0=off), y: dofRadius (px), z: dofOrbBoost, w: weatherLens (0/1)
     float timeEnv[4];         // x: gameHour (0..24), y: sunElev (-1..+1), z: lightning, w: menuPaused (0/1)
     float engineWorld[4];     // x: cell/worldspace waterHeight, y: camStateId, z: hasEngineCell (0/1), w: unused
+    float camOptics[2][4];    // [0]: sensorWidthMm, focalLengthMm, apertureFStop, bokehShape; [1]: nearScale, farScale, nearBleed, focusSpeed
 };
-static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16 + 48, "layout of cbuffer P");
+static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16 + 80, "layout of cbuffer P");
 static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
 constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536, kDistantLod = 131072, kEnvMap = 262144, kCharLight = 524288, kUnderwater = 1048576;
@@ -487,6 +488,15 @@ private:
         u.engineWorld[1] = s.camStateId <= 16u ? float(s.camStateId) : -1.0f;
         u.engineWorld[2] = s.hasEngineCell ? 1.0f : 0.0f;
         u.engineWorld[3] = 0.0f;
+        static const float kSensorMm[4] = { 24.0f, 36.0f, 44.0f, 70.0f };
+        u.camOptics[0][0] = kSensorMm[std::clamp(t.dofSensor, 0, 3)];
+        u.camOptics[0][1] = std::clamp(t.dofFocalMm, 24.0f, 200.0f);
+        u.camOptics[0][2] = std::clamp(t.dofFStop, 0.95f, 16.0f);
+        u.camOptics[0][3] = float(std::clamp(t.dofBokehShape, 0, 6));
+        u.camOptics[1][0] = std::clamp(t.dofNearScale, 0.0f, 2.5f);
+        u.camOptics[1][1] = std::clamp(t.dofFarScale, 0.0f, 2.5f);
+        u.camOptics[1][2] = std::clamp(t.dofNearBleed, 0.0f, 2.0f);
+        u.camOptics[1][3] = std::clamp(t.dofFocusSpeed, 0.02f, 0.30f);
         std::memcpy(u.clipToWorld, s.clipToWorld, 64);
         std::memcpy(u.worldToClip, s.worldToClip, 64);
         std::memcpy(u.viewToWorld, s.viewToWorld, 48);

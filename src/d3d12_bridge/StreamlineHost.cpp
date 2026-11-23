@@ -14,6 +14,8 @@
 #include <sl_deepdvc.h>
 #endif
 
+#include "rt_normal_unpack.h"
+#include <cstring>
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
 
@@ -43,6 +45,12 @@ struct SlApi
     ComPtr<ID3D12CommandAllocator> alloc[3];
     ComPtr<ID3D12GraphicsCommandList> cl;
     ComPtr<ID3D12Fence> fence;
+    ComPtr<ID3D12RootSignature> unpackRs;
+    ComPtr<ID3D12PipelineState> unpackPso;
+    ComPtr<ID3D12DescriptorHeap> unpackHeap;
+    ComPtr<ID3D12Resource> normalRough;
+    uint32_t nrW = 0, nrH = 0;
+    UINT descInc = 0;
     HANDLE fenceEv = nullptr;
     uint64_t fenceVal = 0;
     uint64_t slotVal[3] = {};
@@ -178,6 +186,37 @@ bool StreamlineHost::Initialize(ID3D12Device* dev12, LUID adapterLuid, LogFn log
         if (cmdOk) cmdOk = SUCCEEDED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, a.alloc[0].Get(), nullptr, IID_PPV_ARGS(&a.cl)));
         if (cmdOk) { a.cl->Close(); a.fenceEv = CreateEventW(nullptr, FALSE, FALSE, nullptr); }
         else { a.dlssFailed = true; a.dlssdFailed = true; }
+        // Build SM 6.9 DX12 compute PSO for unpacking Skyrim SE's octahedral R8G8B8A8 normals + gloss
+        // into a linear RGBA16F world-space normal + roughness buffer for DLSS Ray Reconstruction (ePacked).
+        if (cmdOk && m_caps.dlssRR) {
+            D3D12_DESCRIPTOR_RANGE ranges[2]{};
+            ranges[0] = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 0, 0};
+            ranges[1] = {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 2};
+            D3D12_ROOT_PARAMETER rp[2]{};
+            rp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+            rp[0].Constants = {0, 0, 16};
+            rp[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+            rp[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            rp[1].DescriptorTable = {2, ranges};
+            rp[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+            D3D12_ROOT_SIGNATURE_DESC rsd{2, rp, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+            ComPtr<ID3DBlob> sigBlob, errBlob;
+            if (SUCCEEDED(D3D12SerializeRootSignature(&rsd, D3D_ROOT_SIGNATURE_VERSION_1, &sigBlob, &errBlob)) &&
+                SUCCEEDED(dev12->CreateRootSignature(0, sigBlob->GetBufferPointer(), sigBlob->GetBufferSize(), IID_PPV_ARGS(&a.unpackRs)))) {
+                D3D12_COMPUTE_PIPELINE_STATE_DESC cpd{};
+                cpd.pRootSignature = a.unpackRs.Get();
+                cpd.CS = {kDxil_normal_unpack, sizeof(kDxil_normal_unpack)};
+                if (SUCCEEDED(dev12->CreateComputePipelineState(&cpd, IID_PPV_ARGS(&a.unpackPso)))) {
+                    D3D12_DESCRIPTOR_HEAP_DESC hd{};
+                    hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+                    hd.NumDescriptors = 3;
+                    hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+                    if (SUCCEEDED(dev12->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&a.unpackHeap)))) {
+                        a.descInc = dev12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                    }
+                }
+            }
+        }
     }
 
     if (m_caps.reflex) {
@@ -233,14 +272,27 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
     if (!a.ready || m_mode <= 0 || !a.cl || !queue || !colorIn || !colorOut || !depth || !mvec)
         return false;
 
-    // Skyrim SE's m_normalIn is R8G8B8A8_UNORM stereographic octahedral view-space normals, NOT linear unpacked
-    // world-space XYZ normals (which sl::DLSSDNormalRoughnessMode::eUnpacked requires). Feeding octahedral normals
-    // to DLSS-RR causes surface-edge shimmering during movement & cursor placement. Route mode 2 cleanly to
-    // DLAA Transformer Preset K (which uses exact colorIn + depth + mvec with zero normal-format mismatch)
-    // until a dedicated linear world-space normal+roughness unpack pass is wired for DLSS-RR.
-    const bool useRR = false;
-    (void)albedo; (void)normal; (void)spec;
-    if (!m_caps.dlss || a.dlssFailed || !a.dlssSetOptions) return false;
+    // True NVIDIA DLSS Ray Reconstruction (Preset F) with SM 6.9 linear world-space normal+roughness unpack:
+    // NormalUnpack.hlsl decodes Skyrim's octahedral R8G8B8A8 view-space normals + Spec.y gloss into RGBA16F
+    // (RGB = linear world-space normal, A = linear roughness) matching sl::DLSSDNormalRoughnessMode::ePacked.
+    if (m_mode == 2 && a.unpackPso && a.unpackHeap && (a.nrW != width || a.nrH != height || !a.normalRough)) {
+        a.normalRough.Reset();
+        D3D12_HEAP_PROPERTIES hp{};
+        hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC rd{};
+        rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        rd.Width = width; rd.Height = height; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
+        rd.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        rd.SampleDesc = {1, 0};
+        rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        if (SUCCEEDED(a.dev12->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+                                                       D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&a.normalRough)))) {
+            a.nrW = width; a.nrH = height;
+        }
+    }
+    const bool useRR = (m_mode == 2 && m_caps.dlssRR && !a.dlssdFailed && a.dlssdSetOptions &&
+                        a.unpackPso && a.unpackHeap && a.normalRough && albedo && normal && spec && cam.valid);
+    if (!useRR && (!m_caps.dlss || a.dlssFailed || !a.dlssSetOptions)) return false;
 
     const sl::ViewportHandle vp(0);
     const int activeMode = useRR ? 2 : m_mode;
@@ -251,7 +303,7 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
             opt.outputWidth = width;
             opt.outputHeight = height;
             opt.colorBuffersHDR = sl::Boolean::eTrue;
-            opt.normalRoughnessMode = sl::DLSSDNormalRoughnessMode::eUnpacked;
+            opt.normalRoughnessMode = sl::DLSSDNormalRoughnessMode::ePacked;
             opt.dlaaPreset = sl::DLSSDPreset::ePresetF;
             opt.qualityPreset = sl::DLSSDPreset::ePresetF;
             const sl::Result r = a.dlssdSetOptions(vp, opt);
@@ -327,7 +379,7 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
     }
     if (FAILED(a.alloc[slot]->Reset()) || FAILED(a.cl->Reset(a.alloc[slot].Get(), nullptr))) return false;
 
-    D3D12_RESOURCE_BARRIER inB[7];
+    D3D12_RESOURCE_BARRIER inB[8];
     UINT nb = 0;
     inB[nb++] = Barrier(colorIn,  D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     inB[nb++] = Barrier(colorOut, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -337,8 +389,42 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
         inB[nb++] = Barrier(albedo, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         inB[nb++] = Barrier(normal, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         inB[nb++] = Barrier(spec,   D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        inB[nb++] = Barrier(a.normalRough.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
     a.cl->ResourceBarrier(nb, inB);
+
+    if (useRR) {
+        // Dispatch SM 6.9 NormalUnpack.hlsl -> linear RGBA16F world-space normal + roughness for DLSS-RR ePacked.
+        D3D12_CPU_DESCRIPTOR_HANDLE h0 = a.unpackHeap->GetCPUDescriptorHandleForHeapStart();
+        D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+        srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srv.Texture2D.MipLevels = 1;
+        srv.Format = normal->GetDesc().Format;
+        a.dev12->CreateShaderResourceView(normal, &srv, h0);
+        D3D12_CPU_DESCRIPTOR_HANDLE h1{h0.ptr + a.descInc};
+        srv.Format = spec->GetDesc().Format;
+        a.dev12->CreateShaderResourceView(spec, &srv, h1);
+        D3D12_CPU_DESCRIPTOR_HANDLE h2{h0.ptr + 2u * a.descInc};
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+        uav.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+        a.dev12->CreateUnorderedAccessView(a.normalRough.Get(), nullptr, &uav, h2);
+
+        ID3D12DescriptorHeap* heaps[1] = {a.unpackHeap.Get()};
+        a.cl->SetDescriptorHeaps(1, heaps);
+        a.cl->SetComputeRootSignature(a.unpackRs.Get());
+        a.cl->SetPipelineState(a.unpackPso.Get());
+        struct { float v2w[12]; uint32_t w, h, p0, p1; } cb{};
+        std::memcpy(cb.v2w, cam.viewToWorld, sizeof(cb.v2w));
+        cb.w = width; cb.h = height;
+        a.cl->SetComputeRoot32BitConstants(0, 16, &cb, 0);
+        a.cl->SetComputeRootDescriptorTable(1, a.unpackHeap->GetGPUDescriptorHandleForHeapStart());
+        a.cl->Dispatch((width + 7u) / 8u, (height + 7u) / 8u, 1u);
+        D3D12_RESOURCE_BARRIER nrToSrv = Barrier(a.normalRough.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        a.cl->ResourceBarrier(1, &nrToSrv);
+        inB[nb - 1].Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    }
 
     const sl::Extent ext{0, 0, width, height};
     sl::Resource rIn(sl::ResourceType::eTex2d, colorIn, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -346,7 +432,7 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
     sl::Resource rDepth(sl::ResourceType::eTex2d, depth, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     sl::Resource rMvec(sl::ResourceType::eTex2d, mvec, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     sl::Resource rAlb(sl::ResourceType::eTex2d, albedo, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    sl::Resource rNrm(sl::ResourceType::eTex2d, normal, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    sl::Resource rNrm(sl::ResourceType::eTex2d, useRR ? a.normalRough.Get() : normal, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     sl::Resource rSpec(sl::ResourceType::eTex2d, spec, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     sl::ResourceTag tags[8] = {
         {&rIn,    sl::kBufferTypeScalingInputColor,  sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
@@ -356,7 +442,7 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
         {&rAlb,   sl::kBufferTypeAlbedo,             sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
         {&rSpec,  sl::kBufferTypeSpecularAlbedo,     sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
         {&rNrm,   sl::kBufferTypeNormals,            sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
-        {&rSpec,  sl::kBufferTypeRoughness,          sl::ResourceLifecycle::eValidUntilEvaluate, &ext}
+        {&rNrm,   sl::kBufferTypeRoughness,          sl::ResourceLifecycle::eValidUntilEvaluate, &ext}
     };
     a.setTagForFrame(*tok, vp, tags, useRR ? 8u : 4u, a.cl.Get());
 
@@ -368,7 +454,7 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
     // 100% watermark-free GPU-native Oklab Neural Vibrance & Local Contrast pass in Tonemap.hlsl.
     (void)m_deepDvcOn;
 
-    D3D12_RESOURCE_BARRIER outB[7];
+    D3D12_RESOURCE_BARRIER outB[8];
     for (UINT i = 0; i < nb; ++i) {
         outB[i] = inB[i];
         std::swap(outB[i].Transition.StateBefore, outB[i].Transition.StateAfter);

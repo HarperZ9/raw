@@ -182,11 +182,11 @@ void Blend(State* s) {
         s->smoothCloud = approach(s->smoothCloud, s->cloud, 0.14f,  0.14f,  dt);   // smooth ~7s cloud morph
         s->smoothFog   = approach(s->smoothFog,   s->fog,   0.18f,  0.18f,  dt);
     }
-    // Engine-native synoptic wind vector + turbulent gust envelope (drives volumetric clouds, water chop & rain slant):
-    const float ws = std::max((c.windSpeed * p + l.windSpeed * (1.0f - p)) / 255.0f, lowPres * 0.72f + arcticW * 0.28f);
-    const float gust = 1.0f + float(std::sin(tReal * 0.41) * 0.18 + std::sin(tReal * 1.13 + 2.1) * 0.10) * (0.4f + lowPres);
-    const float ang = (c.windDir / 255.0f) * 6.2831853f + float(frontB * 0.35);
-    const float speed = (55.0f + ws * 380.0f) * gust;
+    // Rock-steady synoptic wind velocity (ZERO sin(tReal) oscillation! Multiplying oscillating wind by camPosW.w
+    // caused the entire cloud deck to slosh 20,000u back and forth across the sky; steady wind glides smoothly in one direction!).
+    const float ws = std::max((c.windSpeed * p + l.windSpeed * (1.0f - p)) / 255.0f, lowPres * 0.65f + arcticW * 0.25f);
+    const float ang = (c.windDir / 255.0f) * 6.2831853f;
+    const float speed = 42.0f + ws * 165.0f;
     s->windX = std::cos(ang) * speed;
     s->windY = std::sin(ang) * speed;
     const float cLight = (c.flags & 4) ? ((255.0f - float(c.lightningFreq)) / 255.0f) : 0.0f;

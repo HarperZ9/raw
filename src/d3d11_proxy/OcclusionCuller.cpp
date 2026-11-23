@@ -234,7 +234,7 @@ bool OcclusionCuller::TestRect(float minX, float minY, float maxX, float maxY, f
             if (hizVal > maxHiZ) maxHiZ = hizVal;
         }
     }
-    return nearDepth > (maxHiZ + 0.0025f);
+    return nearDepth > (maxHiZ + 0.0008f);
 }
 
 
@@ -316,17 +316,19 @@ bool OcclusionCuller::ShouldCull(uint32_t indexCount)
             return true;
         }
         // ── Stage 2: Exact-Bound Distant Sub-Pixel Micro-Prop Culling ──
-        // Only cull genuinely tiny distant props (<1.2 px diameter past 3,500u, authored radius < 48u).
-        if (curDist > 3500.0f && radius < 48.0f && (radius / cw0) < 0.00060f) {
+        // Cull genuinely sub-pixel distant clutter (<1.6 px diameter past 2,600u, authored radius < 96u).
+        if (curDist > 2600.0f && radius < 96.0f && (radius / cw0) < 0.00085f) {
             m_drawsCulled++; m_subPxCulled++; m_trisCulled += tris;
             return true;
         }
         // ── Stage 3: Native DX12 Compute Hi-Z Occlusion Culling (240x135 GPU-reduced depth pyramid) ──
         // Conservative screen-space sphere projection against GPU Hi-Z (2 frames retired, exact m_hizW2C/m_hizCam).
-        if (m_hizReady && m_hizHasCam && curDist > 320.0f && radius < 480.0f) {
+        // Expanded up to radius < 1,800u so occluded buildings, walls, cliffs & interior rooms cull cleanly,
+        // with camera-motion-adaptive depth bias (tight 0.0006 steady -> 0.0020 fast movement) for zero popping.
+        if (m_hizReady && m_hizHasCam && curDist > radius * 1.45f + 160.0f && radius < 1800.0f) {
             const float hrx = m_exactBound[0] - m_hizCam[0], hry = m_exactBound[1] - m_hizCam[1], hrz = m_exactBound[2] - m_hizCam[2];
             const float hDist = std::sqrt(hrx * hrx + hry * hry + hrz * hrz);
-            if (hDist > radius + 120.0f) {
+            if (hDist > radius * 1.25f + 100.0f) {
                 const float* hm = &m_hizW2C[0][0];
                 const float hcx = hm[0]*hrx + hm[1]*hry + hm[2]*hrz + hm[3];
                 const float hcy = hm[4]*hrx + hm[5]*hry + hm[6]*hrz + hm[7];
@@ -336,14 +338,18 @@ bool OcclusionCuller::ShouldCull(uint32_t indexCount)
                     const float invW = 1.0f / hcw;
                     const float sx = hcx * invW * 0.5f + 0.5f;
                     const float sy = 0.5f - hcy * invW * 0.5f;
-                    // Conservative 1.25x screen-rect expansion + near-face depth with safety bias prevents any popping.
-                    const float rNdc = (radius * 1.25f) * invW;
-                    const float nearScale = std::max((hDist - radius * 1.15f) / hDist, 0.1f);
+                    // Camera-motion-adaptive screen expansion & depth bias (eliminates double-bias waste when steady).
+                    const float cdx = sl.posAdjust[0] - m_hizCam[0], cdy = sl.posAdjust[1] - m_hizCam[1], cdz = sl.posAdjust[2] - m_hizCam[2];
+                    const float camMove = std::sqrt(cdx * cdx + cdy * cdy + cdz * cdz);
+                    const float rectPad = camMove > 8.0f ? 1.22f : 1.12f;
+                    const float depthBias = camMove > 8.0f ? 0.0018f : 0.0006f;
+                    const float rNdc = (radius * rectPad) * invW;
+                    const float nearScale = std::max((hDist - radius * 1.10f) / hDist, 0.1f);
                     const float hrxN = hrx * nearScale, hryN = hry * nearScale, hrzN = hrz * nearScale;
                     const float hczN = hm[8]*hrxN + hm[9]*hryN + hm[10]*hrzN + hm[11];
                     const float hcwN = hm[12]*hrxN + hm[13]*hryN + hm[14]*hrzN + hm[15];
-                    if (hcwN > 15.0f && sx - rNdc >= 0.02f && sx + rNdc <= 0.98f && sy - rNdc >= 0.02f && sy + rNdc <= 0.98f) {
-                        const float nearDepth = (hczN / hcwN) - 0.0020f;
+                    if (hcwN > 15.0f && sx - rNdc >= 0.01f && sx + rNdc <= 0.99f && sy - rNdc >= 0.01f && sy + rNdc <= 0.99f) {
+                        const float nearDepth = (hczN / hcwN) - depthBias;
                         if (nearDepth > 0.0f && nearDepth < 0.9999f && TestRect(sx - rNdc, sy - rNdc, sx + rNdc, sy + rNdc, nearDepth)) {
                             m_drawsCulled++; m_hiZCulled++; m_trisCulled += tris;
                             return true;

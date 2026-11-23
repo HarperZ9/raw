@@ -407,37 +407,40 @@ float4 main(In i) : SV_Target {
         [unroll] for (int ai = 1; ai <= 6; ai++) {
             const float dx = float(ai) * 3.2f * bpx.x;
             const float aw = 1.0f / float(ai + 1);
-            const float3 bL = max(Bloom.Sample(S0, saturate(suv - float2(dx, 0.0f))).rgb - 0.86f.xxx, 0.0f.xxx);
-            const float3 bR = max(Bloom.Sample(S0, saturate(suv + float2(dx, 0.0f))).rgb - 0.86f.xxx, 0.0f.xxx);
+            const float3 bL = max(Bloom.Sample(S0, saturate(suv - float2(dx, 0.0f))).rgb - 1.45f.xxx, 0.0f.xxx);
+            const float3 bR = max(Bloom.Sample(S0, saturate(suv + float2(dx, 0.0f))).rgb - 1.45f.xxx, 0.0f.xxx);
             anaAcc += (bL + bR) * (0.5f * aw);
         }
-        const float3 anamorphic = anaAcc * float3(0.42f, 0.76f, 1.18f) * 0.080f;
+        // Subtle neutral-warm cinema anamorphic streak ONLY on true >1.45 HDR peaks (eliminates artificial blue glow!).
+        const float3 anamorphic = anaAcc * float3(0.84f, 0.90f, 1.02f) * 0.032f;
         ovAdd += (halation + anamorphic) * clamp(RQ.w, 0.0f, 2.5f);
     }
     if ((ovMask & 4u) != 0u) {
         // Layer 3: arXiv:2605.04017 (Hachisuka et al. 2026) 5-Order Optical Lens Transport Ghosts + Cat's-Eye Aperture Halo.
+        // centerClear keeps the screen-center crosshair / mouse-pointer zone completely free of collapsed lens ghosts & blue halos!
         const float2 cVec = suv - 0.5f.xx;
         const float cDist = length(cVec);
-        const float catsEye = saturate(1.0f - cDist * cDist * 1.10f);
+        const float centerClear = smoothstep(0.08f, 0.26f, cDist);
+        const float catsEye = saturate(1.0f - cDist * cDist * 1.10f) * centerClear;
         float3 lensAcc = 0.0f.xxx;
         [unroll] for (int gi = 1; gi <= 5; gi++) {
             const float gScale = 0.35f + float(gi) * 0.24f;
             const float2 gUv = saturate(0.5f.xx - cVec * gScale);
-            // Chromatic radial dispersion across RGB lens elements.
-            const float2 disp = cVec * (0.009f * float(gi));
-            const float rC = max(Bloom.Sample(S0, saturate(gUv + disp)).r - 0.68f, 0.0f);
-            const float gC = max(Bloom.Sample(S0, gUv).g - 0.68f, 0.0f);
-            const float bC = max(Bloom.Sample(S0, saturate(gUv - disp)).b - 0.68f, 0.0f);
+            // Chromatic radial dispersion across RGB lens elements (high 1.35 HDR threshold so walls/snow never ghost).
+            const float2 disp = cVec * (0.008f * float(gi));
+            const float rC = max(Bloom.Sample(S0, saturate(gUv + disp)).r - 1.35f, 0.0f);
+            const float gC = max(Bloom.Sample(S0, gUv).g - 1.35f, 0.0f);
+            const float bC = max(Bloom.Sample(S0, saturate(gUv - disp)).b - 1.35f, 0.0f);
             const float3 gCol = float3(rC, gC, bC);
-            const float3 gTint = gi == 1 ? float3(1.08f, 0.96f, 0.82f)
-                               : (gi == 2 ? float3(0.80f, 1.04f, 1.18f)
-                               : (gi == 3 ? float3(1.02f, 0.86f, 1.12f)
-                               : (gi == 4 ? float3(0.86f, 1.08f, 0.94f) : float3(1.06f, 0.90f, 0.82f))));
+            const float3 gTint = gi == 1 ? float3(1.06f, 0.98f, 0.88f)
+                               : (gi == 2 ? float3(0.96f, 1.00f, 1.04f)
+                               : (gi == 3 ? float3(1.02f, 0.94f, 1.02f)
+                               : (gi == 4 ? float3(0.94f, 1.02f, 0.96f) : float3(1.04f, 0.96f, 0.90f))));
             lensAcc += gCol * gTint * (catsEye / float(gi + 1));
         }
         const float2 haloDir = cDist > 1.0e-4f ? cVec / cDist : float2(0.0f, 1.0f);
-        const float3 haloCol = max(Bloom.Sample(S0, saturate(0.5f.xx - haloDir * 0.22f)).rgb - 0.85f.xxx, 0.0f.xxx);
-        // 6-Blade Physical Cinema Aperture Diffraction Starburst & Spectral Sun/Spell Glare on ultra-bright HDR peaks (>1.25):
+        const float3 haloCol = max(Bloom.Sample(S0, saturate(0.5f.xx - haloDir * 0.22f)).rgb - 1.50f.xxx, 0.0f.xxx);
+        // 6-Blade Physical Cinema Aperture Diffraction Starburst & Spectral Sun/Spell Glare on ultra-bright HDR peaks (>1.45):
         // sun through trees, fireballs, lightning spells, dragon shouts, enchanted weapons & bright lanterns!
         float3 starAcc = 0.0f.xxx;
         static const float2 kStarDir[3] = { float2(1.0f, 0.0f), float2(0.5f, 0.866025f), float2(-0.5f, 0.866025f) };
@@ -445,13 +448,13 @@ float4 main(In i) : SV_Target {
             [unroll] for (int st = 1; st <= 3; ++st) {
                 const float2 sOff = kStarDir[si] * (bTex * float(st) * 3.8f);
                 const float wS = 1.0f / float(st + 1);
-                const float3 sA = max(Bloom.Sample(S0, saturate(suv + sOff)).rgb - 1.15f.xxx, 0.0f.xxx);
-                const float3 sB = max(Bloom.Sample(S0, saturate(suv - sOff)).rgb - 1.15f.xxx, 0.0f.xxx);
-                const float3 sTint = si == 0 ? float3(1.06f, 0.98f, 0.90f) : (si == 1 ? float3(0.92f, 1.04f, 1.08f) : float3(1.04f, 0.94f, 1.06f));
-                starAcc += (sA + sB) * sTint * (wS * 0.11f);
+                const float3 sA = max(Bloom.Sample(S0, saturate(suv + sOff)).rgb - 1.45f.xxx, 0.0f.xxx);
+                const float3 sB = max(Bloom.Sample(S0, saturate(suv - sOff)).rgb - 1.45f.xxx, 0.0f.xxx);
+                const float3 sTint = si == 0 ? float3(1.04f, 0.99f, 0.94f) : (si == 1 ? float3(0.96f, 1.02f, 1.04f) : float3(1.02f, 0.97f, 1.02f));
+                starAcc += (sA + sB) * sTint * (wS * 0.09f);
             }
         }
-        ovAdd += min((lensAcc * 0.065f + haloCol * 0.035f * saturate(1.0f - cDist * 1.35f) + starAcc) * clamp(RQ.w, 0.0f, 2.5f), 0.28f.xxx);
+        ovAdd += min((lensAcc * 0.048f + haloCol * 0.025f * centerClear * saturate(1.0f - cDist * 1.35f) + starAcc) * clamp(RQ.w, 0.0f, 2.5f), 0.22f.xxx);
     }
     if ((ovMask & 8u) != 0u) {
         // Layer 4 (OV4): Physical Tiffen Black Pro-Mist 1/4 Optical Diffusion — softly halates highlights while preserving deep shadows & crispness.

@@ -287,6 +287,35 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             wet.puddle *= 1.0f - wet.snow;
             wet.wet *= 1.0f - wet.snow;
         }
+        // Real-Time Thermal Campfire / Hearth / Torch Snow Melt (COMPETITIVE-2026.md #192402 Dynamic Terrain Deformation):
+        // Warm fire lights physically melt surrounding snowdrifts into damp bare earth + glistening icy slush rim!
+        if ((wet.snow > 0.05f || base == 4u) && z < 2600.0f && s.n.z > 0.35f && flags.y > 0u) {
+            float meltHeat = 0.0f;
+            const uint maxMeltL = min(flags.y, 16u);
+            [loop] for (uint mi = 0u; mi < maxMeltL; ++mi) {
+                const float3 lc = lightColS[mi].rgb;
+                if (lc.r > lc.b * 1.25f && lc.r > 0.18f) {
+                    const float3 ld = p - lightPosR[mi].xyz;
+                    const float rMelt = min(lightPosR[mi].w * 0.42f, 260.0f);
+                    const float d2 = dot(ld, ld);
+                    if (d2 < rMelt * rMelt) {
+                        const float att = 1.0f - sqrt(d2) / max(rMelt, 1.0f);
+                        meltHeat = max(meltHeat, saturate(att * att * 1.45f));
+                    }
+                }
+            }
+            if (meltHeat > 0.02f) {
+                const float meltMask = smoothstep(0.08f, 0.72f, meltHeat);
+                const float slushRing = smoothstep(0.02f, 0.25f, meltHeat) * (1.0f - smoothstep(0.45f, 0.85f, meltHeat));
+                wet.snow *= (1.0f - meltMask);
+                wet.wet = max(wet.wet, max(meltMask * 0.82f, slushRing * 0.75f));
+                // Darken thawed snow into wet Nordic loam/stone inside the melt core + glossy blue-grey slush rim:
+                const float natSnowMelt = (base == 4u) ? saturate((min(albedo.r, min(albedo.g, albedo.b)) - 0.34f) * 4.5f) : 0.0f;
+                albedo = lerp(albedo, float3(0.14f, 0.12f, 0.10f), meltMask * natSnowMelt * 0.78f);
+                albedo = lerp(albedo, float3(0.44f, 0.54f, 0.64f), slushRing * natSnowMelt * 0.45f);
+                s.alpha = lerp(s.alpha, 0.15f, max(meltMask, slushRing) * max(natSnowMelt, wet.snow) * 0.75f);
+            }
+        }
         // Persistent 32-step world-anchored snow & wet-mud footprint deformation trail (footTrail[0..31]).
         const float natSnow = (base == 4u) ? saturate((min(albedo.r, min(albedo.g, albedo.b)) - 0.36f) * 4.5f) * saturate(s.n.z * 1.4f - 0.3f) : 0.0f;
         const float snowAmt = max(wet.snow, natSnow);

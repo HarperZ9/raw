@@ -259,36 +259,89 @@ void AddEngineLights(SceneLighting& f)
                           [&](uint32_t a, uint32_t b) { return importance[a] > importance[b]; });
         candCount = raw::bridge::kMaxSceneLights;
     }
+    // Camera-independent world-space temporal light smoother: prevents 1-frame intensity/radius snaps
+    // when walking through interiors or crossing doorways as ShadowSceneNode updates active lights.
+    struct SmoothLight { float wpos[3]; float col[3]; float radius; uint32_t age; };
+    static std::vector<SmoothLight> g_smooth;
+    for (auto& sl : g_smooth) ++sl.age;
+    auto smoothColor = [&](const float wpos[3], float col[3], float radius) {
+        int hit = -1;
+        float bestD2 = 36.0f * 36.0f;
+        for (size_t i = 0; i < g_smooth.size(); ++i) {
+            const float dx = g_smooth[i].wpos[0] - wpos[0], dy = g_smooth[i].wpos[1] - wpos[1], dz = g_smooth[i].wpos[2] - wpos[2];
+            const float d2 = dx * dx + dy * dy + dz * dz;
+            if (d2 < bestD2) { bestD2 = d2; hit = int(i); }
+        }
+        if (hit >= 0) {
+            SmoothLight& sl = g_smooth[hit];
+            for (int c = 0; c < 3; ++c) {
+                sl.col[c] = sl.col[c] + (col[c] - sl.col[c]) * 0.22f;
+                col[c] = sl.col[c];
+                sl.wpos[c] = wpos[c];
+            }
+            sl.radius = sl.radius + (radius - sl.radius) * 0.22f;
+            sl.age = 0;
+        } else if (g_smooth.size() < 256) {
+            SmoothLight sl{};
+            for (int c = 0; c < 3; ++c) { sl.wpos[c] = wpos[c]; sl.col[c] = col[c] * 0.35f; col[c] = sl.col[c]; }
+            sl.radius = radius;
+            sl.age = 0;
+            g_smooth.push_back(sl);
+        }
+    };
+
+    // Snapshot decoded draw-scraped lights so we can harvest their shadowChannel WITHOUT letting
+    // frustum-culled draws overwrite ShadowSceneNode's camera-independent color or radius!
+    std::vector<SceneLight> decodedCopy(f.lights, f.lights + decoded);
+    std::vector<bool> decodedUsed(decoded, false);
+    if (candCount > 0) f.lightCount = 0;   // ShadowSceneNode is authoritative when live!
+
     for (uint32_t ci = 0; ci < candCount; ++ci) {
         const uint32_t k = order[ci];
         ++g_es.seen;
         float rel[3];
         for (int c = 0; c < 3; ++c) rel[c] = e[k].pos[c] - f.posAdjust[c];   // world to the game's camera-relative space
         int best = -1;
-        float bestD = 48.0f * 48.0f;
+        float bestD = 56.0f * 56.0f;
         for (uint32_t j = 0; j < decoded; ++j) {
-            const float dx = f.lights[j].position[0] - rel[0], dy = f.lights[j].position[1] - rel[1], dz = f.lights[j].position[2] - rel[2];
+            if (decodedUsed[j]) continue;
+            const float dx = decodedCopy[j].position[0] - rel[0], dy = decodedCopy[j].position[1] - rel[1], dz = decodedCopy[j].position[2] - rel[2];
             const float d = dx * dx + dy * dy + dz * dz;
             if (d < bestD) { bestD = d; best = int(j); }
         }
+        int shadowCh = -1;
+        uint32_t draws = 0;
         if (best >= 0) {
+            decodedUsed[best] = true;
+            shadowCh = decodedCopy[best].shadowChannel;
+            draws = decodedCopy[best].draws;
             ++g_es.matched;
             g_es.dist += std::sqrt(bestD);
-            const float a = f.lights[best].colour[0] + f.lights[best].colour[1] + f.lights[best].colour[2];
+            const float a = decodedCopy[best].colour[0] + decodedCopy[best].colour[1] + decodedCopy[best].colour[2];
             const float b = e[k].color[0] + e[k].color[1] + e[k].color[2];
             if (b > 0) { g_es.ratio += a / b; ++g_es.ratios; }
-            continue;
         }
         if (f.lightCount >= raw::bridge::kMaxSceneLights) { ++f.droppedLights; continue; }
         SceneLight& l = f.lights[f.lightCount++];
-        // Match engine-only ShadowSceneNode lights to Skyrim's decoded BSLightingShader intensity scale
-        // (measured live in d3d11_proxy.log: decoded/engine ratio ~1.85x) so lights NEVER pop/flicker 2x on camera turns!
-        for (int c = 0; c < 3; ++c) { l.position[c] = rel[c]; l.colour[c] = e[k].color[c] * 1.85f; }
+        float col[3] = { e[k].color[0] * 1.85f, e[k].color[1] * 1.85f, e[k].color[2] * 1.85f };
+        smoothColor(e[k].pos, col, e[k].radius);
+        for (int c = 0; c < 3; ++c) { l.position[c] = rel[c]; l.colour[c] = col[c]; }
         l.radius = e[k].radius;
-        l.shadowChannel = -1;
-        l.draws = 0;   // from the engine's list: no lit draw carried it
+        l.shadowChannel = shadowCh;
+        l.draws = draws;
         ++g_es.added;
     }
+    // Keep any unmatched decoded lights (e.g. transient spell impacts not in ShadowSceneNode), smoothly damped.
+    if (candCount > 0) {
+        for (uint32_t j = 0; j < decoded && f.lightCount < raw::bridge::kMaxSceneLights; ++j) {
+            if (decodedUsed[j]) continue;
+            SceneLight& l = f.lights[f.lightCount++];
+            l = decodedCopy[j];
+            float wp[3] = { l.position[0] + f.posAdjust[0], l.position[1] + f.posAdjust[1], l.position[2] + f.posAdjust[2] };
+            smoothColor(wp, l.colour, l.radius);
+        }
+    }
+    g_smooth.erase(std::remove_if(g_smooth.begin(), g_smooth.end(), [](const SmoothLight& sl) { return sl.age > 30; }), g_smooth.end());
     if (hasEngineSun) {
         f.hasSun = true;
         for (int c = 0; c < 3; ++c) f.sunDirection[c] = engineSunDir[c];

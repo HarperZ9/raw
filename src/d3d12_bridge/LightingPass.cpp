@@ -57,9 +57,10 @@ struct LightUniform
     uint32_t clusters[kClusterCount][4];
     float footTrail[32][4];   // persistent world-space boot-print ring buffer (xyz world abs, w active strength)
     float dofParams[4];       // x: dofMaxDist (0=off), y: dofRadius (px), z: dofOrbBoost, w: weatherLens (0/1)
-    float timeEnv[4];         // x: gameHour (0..24), y: sunElev (-1..+1), z: lightning, w: unused
+    float timeEnv[4];         // x: gameHour (0..24), y: sunElev (-1..+1), z: lightning, w: menuPaused (0/1)
+    float engineWorld[4];     // x: cell/worldspace waterHeight, y: camStateId, z: hasEngineCell (0/1), w: unused
 };
-static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16 + 32, "layout of cbuffer P");
+static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16 + 48, "layout of cbuffer P");
 static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
 constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536, kDistantLod = 131072, kEnvMap = 262144, kCharLight = 524288, kUnderwater = 1048576;
@@ -435,6 +436,10 @@ private:
         u.timeEnv[1] = std::sin((t.gameHour - 6.0f) * 0.26179939f);   // -1 midnight, 0 dawn/dusk, +1 noon
         u.timeEnv[2] = t.lightning;
         u.timeEnv[3] = s.menuPaused ? 1.0f : 0.0f;
+        u.engineWorld[0] = s.waterHeight;
+        u.engineWorld[1] = 0.0f;
+        u.engineWorld[2] = s.hasEngineCell ? 1.0f : 0.0f;
+        u.engineWorld[3] = 0.0f;
         std::memcpy(u.clipToWorld, s.clipToWorld, 64);
         std::memcpy(u.worldToClip, s.worldToClip, 64);
         std::memcpy(u.viewToWorld, s.viewToWorld, 48);

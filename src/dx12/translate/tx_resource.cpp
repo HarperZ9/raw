@@ -218,6 +218,7 @@ STDMETHODIMP Device::CreateTexture1D(const D3D11_TEXTURE1D_DESC* d, const D3D11_
     TX_TRACE("Device::CreateTexture1D");
     if (!d) return E_INVALIDARG;
     if (!out) return S_FALSE;
+    *out = nullptr;
     auto* t = new TTex1D(this);
     FillCore(t, *d);
     t->core.slices = d->ArraySize;
@@ -233,6 +234,7 @@ STDMETHODIMP Device::CreateTexture2D(const D3D11_TEXTURE2D_DESC* d, const D3D11_
     TX_TRACE("Device::CreateTexture2D");
     if (!d) return E_INVALIDARG;
     if (!out) return S_FALSE;
+    *out = nullptr;
     auto* t = new TTex2D(this);
     FillCore(t, *d);
     t->core.height = d->Height; t->core.slices = d->ArraySize; t->core.samples = d->SampleDesc.Count; t->core.quality = d->SampleDesc.Quality;
@@ -248,6 +250,7 @@ STDMETHODIMP Device::CreateTexture3D(const D3D11_TEXTURE3D_DESC* d, const D3D11_
     TX_TRACE("Device::CreateTexture3D");
     if (!d) return E_INVALIDARG;
     if (!out) return S_FALSE;
+    *out = nullptr;
     auto* t = new TTex3D(this);
     FillCore(t, *d);
     t->core.height = d->Height; t->core.depth = d->Depth;

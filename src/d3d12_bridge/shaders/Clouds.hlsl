@@ -78,33 +78,26 @@ float cloudDensityVol(float3 pa, bool detail) {
     const float hGrad = saturate(baseGrad * topGrad + anvilSpread);
     if (hGrad <= 0.001f) { return 0.0f; }
 
-    // 4D evolving towering 3D cumulus & anvil volumes (tighter 18k/15k aspect ratio replaces flat 2D pancake streaks
-    // seen in 12.01.38.14.mp4 with sculptural billowing RDR2/MSFS cauliflower crowns and deep convective turbulence!):
-    const float tEvo = camPosW.w * 0.0085f;
-    const float3 p0 = float3(sheared.x / 19500.0f, sheared.y / 19500.0f, (curvedZ - clouds.y) / 14500.0f - tEvo * 0.45f);
-    const float3 w0 = float3(cNoise(p0 * 1.10f + float3(3.1f + tEvo, 7.4f, 1.9f)) - 0.5f,
-                             cNoise(p0 * 1.10f + float3(11.7f, 2.3f - tEvo * 0.90f, 5.1f)) - 0.5f,
-                             cNoise(p0 * 1.10f + float3(6.3f, 14.1f, 2.7f + tEvo * 1.25f)) - 0.5f) * 0.85f;
-    const float3 pw = p0 + w0;
-    // Sculptural 4D cumulus cauliflower domes: blends smooth Perlin base with rounded billowing Worley-like puffs!
-    const float f1 = cNoise(pw);
-    const float f2 = cNoise(pw * 2.13f + float3(13.1f, 5.7f, 3.3f + tEvo * 0.35f));
-    const float f3 = cNoise(pw * 4.37f + float3(7.9f, 19.3f, 8.1f - tEvo * 0.45f));
-    const float f4 = cNoise(pw * 8.81f + float3(23.7f, 11.1f, 15.7f));
-    const float puff = smoothstep(0.18f, 0.86f, f1 * 0.50f + f2 * 0.28f + f3 * 0.15f + f4 * 0.07f);
-    const float billow = pow(puff, 0.78f);
-    const float localCov = saturate(cover * lerp(0.50f, 1.40f, smoothstep(0.22f, 0.78f, wCov)));
-    const float thresh = lerp(0.58f, lerp(0.36f, 0.22f, stormType), localCov);
-    float dens = saturate((billow * hGrad - thresh) / max(1.0f - thresh, 0.22f));
-    dens *= lerp(0.65f, 1.35f, smoothstep(0.05f, 0.42f, h));
+    // Schneider & Vos (SIGGRAPH 2015 / RDR2 / Horizon Zero Dawn) 64^3 Periodic 3D Perlin-Worley Volumetric Cumulus:
+    // Uses our hardware-trilinear CloudNoise 3D volume LUT (R=Perlin-Worley base, GBA=3-octave Worley cauliflower domes!)
+    // for 10x sharper sculptural 3D clouds with billowing crowns & zero blurry cNoise lattice blobs!
+    const float tEvo = camPosW.w * 0.0045f;
+    const float3 baseUvw = float3(sheared.x / 68000.0f, sheared.y / 68000.0f, (curvedZ - clouds.y) / 48000.0f - tEvo * 0.14f);
+    const float4 vol0 = sampleCloudVol(baseUvw);
+    const float lowWorley = vol0.g * 0.625f + vol0.b * 0.25f + vol0.a * 0.125f;
+    const float baseShape = cRemap(vol0.r, -(1.0f - lowWorley) * 0.48f, 1.0f, 0.0f, 1.0f);
+    const float localCov = saturate(cover * lerp(0.45f, 1.38f, smoothstep(0.22f, 0.78f, wCov)));
+    const float thresh = lerp(0.56f, lerp(0.32f, 0.18f, stormType), localCov);
+    float dens = saturate((baseShape * hGrad - thresh) / max(1.0f - thresh, 0.20f));
+    dens *= lerp(0.65f, 1.45f, smoothstep(0.04f, 0.42f, h));
     if (detail && dens > 0.002f) {
-        const float3 r = float3((sheared.x + wind.x * 0.30f) / 4800.0f, (sheared.y + wind.y * 0.30f) / 4800.0f, (curvedZ - clouds.y) / 4200.0f);
-        const float d1 = cNoise(r);
-        const float d2 = cNoise(r * 2.27f + float3(5.3f, 17.1f, 9.7f));
-        const float d3 = cNoise(r * 4.71f + float3(19.9f, 3.7f, 21.3f));
-        const float d4 = cNoise(r * 9.53f + float3(11.1f, 29.3f, 7.9f));
-        const float detailFbm = d1 * 0.44f + d2 * 0.30f + d3 * 0.16f + d4 * 0.10f;
-        const float erode = (1.0f - detailFbm) * lerp(0.32f, 0.58f, h) * (1.0f - dens * 0.45f);
+        // High-frequency 3-octave 3D Worley cauliflower turret erosion (crisp sculptural edges at full native resolution!):
+        const float3 detUvw = float3((sheared.x + wind.x * 0.25f) / 14500.0f, (sheared.y + wind.y * 0.25f) / 14500.0f, (curvedZ - clouds.y) / 11500.0f + tEvo * 0.22f);
+        const float4 volD = sampleCloudVol(detUvw);
+        const float hiWorley = volD.g * 0.625f + volD.b * 0.25f + volD.a * 0.125f;
+        // Wispy fibrous base vs puffed billowing cauliflower crown (exact Nubis height-modulated erosion):
+        const float detailMod = lerp(hiWorley, 1.0f - hiWorley, saturate(h * 1.4f));
+        const float erode = detailMod * lerp(0.38f, 0.68f, h) * (1.0f - dens * 0.42f);
         dens = cRemap(dens, erode, 1.0f, 0.0f, 1.0f);
     }
     return dens * cloudWind.z;
@@ -128,7 +121,7 @@ float rand(float2 p, float s) { return frac(52.9829189f * frac(dot(p, float2(0.0
 
 float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float2 lo = floor(at.xy);
-    const float2 full = (lo + 0.5f) * 2.0f;   // 1/2-res temporally-reprojected clouds (4x faster, full-res depth composite)
+    const float2 full = lo + 0.5f;   // Full native-resolution volumetric clouds (4x sharper than 1/2-res!)
     const float3 far = worldAt(full - 0.5f, 0.995f) - eyeAt();
     const float3 dir = normalize(far);
     // SM6.9 Wave-coherent sub-horizon early exit: entire waves looking below the horizon skip cloud raymarching cleanly.

@@ -141,12 +141,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float horBand = exp(-hUp * 6.5f);
                 physSky += float3(1.18f, 0.46f, 0.14f) * (pow(cosS, 3.2f) * horBand * twilightBell * (1.0f - cover * 0.55f) * 0.78f);
                 physSky += float3(0.52f, 0.24f, 0.48f) * (pow(antiSolar, 2.0f) * horBand * twilightBell * 0.34f);
-                // Crisp physical 0.53-deg solar disc ONLY (behind volumetric clouds via cl.a transmittance — zero fake ring or oversized glow!).
+                // Physical 0.53-deg solar disc with Eddington limb darkening (blazing white-gold photosphere center -> warm amber limb):
                 if (sunDiscGate > 0.01f) {
-                    const float3 sunCoreCol = lerp(float3(1.0f, 0.99f, 0.96f), float3(1.0f, 0.60f, 0.22f), lowS);
+                    const float rDisc = saturate(sunAng / 0.0052f);
+                    const float muLimb = sqrt(max(1.0f - rDisc * rDisc, 0.0f));
+                    const float3 eddLimb = float3(1.0f - 0.45f * (1.0f - muLimb), 1.0f - 0.62f * (1.0f - muLimb), 1.0f - 0.78f * (1.0f - muLimb));
+                    const float3 sunCoreCol = lerp(float3(1.0f, 0.99f, 0.96f), float3(1.0f, 0.58f, 0.20f), lowS) * eddLimb;
                     const float3 sunHaloCol = lerp(float3(1.0f, 0.94f, 0.84f), float3(1.0f, 0.46f, 0.14f), lowS);
-                    const float solarCore = smoothstep(0.99972f, 0.99993f, cosS) * 14.0f;
-                    const float solarCorona = exp(-sunAng * 42.0f) * 0.95f;
+                    const float solarCore = smoothstep(0.99972f, 0.99993f, cosS) * 15.0f;
+                    const float solarCorona = exp(-sunAng * 44.0f) * 0.92f;
                     physSky += (sunCoreCol * solarCore + sunHaloCol * (solarCorona * (1.0f - cover * 0.65f))) * sunDiscGate;
                 }
                 fullSky = lerp(fullSky, physSky, max(dayW, twilightBell * 0.92f));
@@ -170,16 +173,27 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     const float3 off1 = float3(cHash(sc1 + 11.3f), cHash(sc1 + 27.1f), cHash(sc1 + 43.7f)) - 0.5f;
                     const float d1 = length(sf1 - off1 * 0.52f);
                     const float core1 = exp(-d1 * d1 * 48.0f) * smoothstep(0.955f, 0.998f, h1);
-                    const float twk1 = 0.76f + 0.24f * sin(camPosW.w * (2.4f + h1 * 5.2f) + h1 * 62.8f);
-                    const float3 col1 = lerp(float3(0.70f, 0.84f, 1.0f), float3(1.0f, 0.85f, 0.64f), cHash(sc1 + 71.9f));
-                    fullSky += col1 * (core1 * twk1 * nightSkyW * saturate(sDir.z * 5.0f) * 1.45f);
+                    // Altitude-dependent atmospheric scintillation (stronger twinkling near horizon air mass) + Planck O/B/A/G/K/M star colors.
+                    const float scintAmp = lerp(0.42f, 0.14f, saturate(sDir.z * 2.5f));
+                    const float twk1 = (1.0f - scintAmp) + scintAmp * sin(camPosW.w * (2.6f + h1 * 5.8f) + h1 * 62.8f);
+                    const float spT = cHash(sc1 + 71.9f);
+                    const float3 col1 = spT < 0.35f ? lerp(float3(0.62f, 0.78f, 1.0f), float3(0.94f, 0.96f, 1.0f), spT / 0.35f)
+                                                    : lerp(float3(0.94f, 0.96f, 1.0f), float3(1.0f, 0.72f, 0.44f), (spT - 0.35f) / 0.65f);
+                    fullSky += col1 * (core1 * twk1 * nightSkyW * saturate(sDir.z * 5.0f) * 1.55f);
                 }
+                // Multi-band physical Galactic Nebula + H-alpha/O-III emission filaments + dark molecular Bok dust lanes:
                 const float mwPlane = abs(dot(sDir, normalize(float3(0.52f, -0.36f, 0.77f))));
-                const float mwBand = exp(-mwPlane * mwPlane * 20.0f) * smoothstep(0.05f, 0.28f, sDir.z);
+                const float mwBand = exp(-mwPlane * mwPlane * 16.0f) * smoothstep(0.05f, 0.28f, sDir.z);
                 if (mwBand > 0.01f) {
-                    const float mwDust = cNoise(sDir * 6.5f) * 0.65f + cNoise(sDir * 15.0f + 4.3f) * 0.35f;
-                    const float mwLane = smoothstep(0.30f, 0.78f, mwDust);
-                    fullSky += lerp(float3(0.04f, 0.06f, 0.13f), float3(0.14f, 0.12f, 0.20f), mwLane) * (mwBand * mwLane * nightSkyW * 0.55f);
+                    const float mwWarp = cNoise(sDir * 3.8f + 1.9f) * 0.65f;
+                    const float mwDust = cNoise(sDir * 6.5f + mwWarp) * 0.62f + cNoise(sDir * 15.0f - mwWarp + 4.3f) * 0.38f;
+                    const float darkRift = smoothstep(0.44f, 0.66f, cNoise(sDir * 9.5f + float3(7.1f, 2.3f, 5.7f)));
+                    const float hAlpha = smoothstep(0.62f, 0.88f, cNoise(sDir * 8.2f + float3(13.4f, 4.9f, 9.1f)));
+                    const float oIII   = smoothstep(0.64f, 0.90f, cNoise(sDir * 10.5f + float3(2.7f, 17.3f, 3.3f)));
+                    const float3 nebCol = lerp(float3(0.04f, 0.07f, 0.16f), float3(0.16f, 0.14f, 0.24f), smoothstep(0.28f, 0.76f, mwDust))
+                                        + float3(0.28f, 0.07f, 0.14f) * (hAlpha * 0.55f)
+                                        + float3(0.06f, 0.22f, 0.26f) * (oIII * 0.45f);
+                    fullSky += nebCol * (mwBand * (1.0f - darkRift * 0.68f) * nightSkyW * 0.72f);
                 }
                 const float auroraVis = nightSkyW * (1.0f - saturate(clouds.x * 1.05f)) * smoothstep(0.06f, 0.32f, sDir.z) * smoothstep(-0.25f, 0.45f, sDir.y);
                 if (auroraVis > 0.02f) {

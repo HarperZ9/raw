@@ -29,23 +29,48 @@ float4 sampleCloudVol(float3 uvw) {
     return lerp(CloudNoise.SampleLevel(Lin, uv0, 0.0f), CloudNoise.SampleLevel(Lin, uv1, 0.0f), zT);
 }
 
-// Nubis Evolved (Schneider 2022, SKY-02) True 3D Volumetric Cumulus Field:
-// Flat condensation base, per-cloud variable tower heights (cumulus -> towering congestus -> storm anvils),
-// 3D domain-warped cauliflower billows, and infinite-resolution edge wisps inside a tall 44,000u 3D slab.
+// Physical Ekman-Spiral Atmospheric Wind Profile: wind speed accelerates & veers clockwise with altitude
+// (surface friction at base -> +32 deg mid-troposphere shear -> +54 deg upper jet stream),
+// keeping v'(t) == 0 so every altitude layer glides smoothly without back-and-forth oscillation!
+float2 ekmanWind(float altNorm) {
+    const float ang = altNorm * 0.94f;   // 0..+54 deg clockwise Ekman veer with altitude
+    const float ca = cos(ang), sa = sin(ang);
+    const float2 w = cloudWind.xy;
+    const float2 rotW = float2(w.x * ca - w.y * sa, w.x * sa + w.y * ca);
+    return rotW * lerp(0.72f, 2.65f, altNorm);
+}
+
+// Divergence-free 2D curl turbulence for fluid cloud marbling, diffusion & continuous metamorphosis.
+float2 cloudCurl2D(float2 p, float t) {
+    const float e = 0.08f;
+    const float nY1 = cNoise(float3(p.x, p.y + e, t));
+    const float nY0 = cNoise(float3(p.x, p.y - e, t));
+    const float nX1 = cNoise(float3(p.x + e, p.y, t));
+    const float nX0 = cNoise(float3(p.x - e, p.y, t));
+    return float2((nY1 - nY0) / (2.0f * e), -(nX1 - nX0) / (2.0f * e));
+}
+
+// Nubis Evolved (Schneider 2022, SKY-02) True 3D Volumetric Cumulus Field with Ekman-Spiral Altitude Shear
+// & Curl-Turbulence Fluid Marbling: clouds billow, shear downwind at anvil tops, marble & metamorphose organically.
 float cloudDensityVol(float3 pa, bool detail) {
     const float2 dxy = pa.xy - camPosW.xy;
     const float curvedZ = pa.z + dot(dxy, dxy) * 1.15e-8f;
     const float h = (curvedZ - clouds.y) / clouds.z;
     if (h <= 0.0f || h >= 1.0f) { return 0.0f; }
-    const float3 wind = float3(cloudWind.xy * camPosW.w, 0.0f);
-    const float3 sheared = pa + wind + float3(cloudWind.xy, 0.0f) * (h * 12.0f);
+    // Altitude-layered Ekman wind advection (base moves slower, upper turrets & anvils veer & shear faster!).
+    const float2 wLayer = ekmanWind(h * 0.55f);
+    const float3 wind = float3(wLayer * camPosW.w, 0.0f);
+    const float3 sheared = pa + wind + float3(wLayer, 0.0f) * (h * 14.0f);
     const float cover = saturate(clouds.x);
     const float stormType = saturate(weather.w * 1.4f + max(cover - 0.78f, 0.0f) * 2.5f);
 
-    // 2D continental weather map: varies BOTH local coverage AND per-cloud 3D tower height (flat stratus vs tall cumulus towers).
+    // 2D continental weather map + slow convective metamorphosis wave so cloud banks continuously reform & dissolve:
+    const float tMorph = camPosW.w * 0.0032f;
     const float2 wUv = sheared.xy / 62000.0f;
-    const float wCov = cNoise(float3(wUv, 1.3f)) * 0.62f + cNoise(float3(wUv * 2.35f + 7.1f, 3.7f)) * 0.38f;
-    const float wHeight = saturate(cNoise(float3(wUv * 1.45f + 19.3f, 5.1f)) * 0.70f + stormType * 0.45f);
+    const float2 curlW = cloudCurl2D(wUv * 1.35f, tMorph * 0.65f) * 0.28f;
+    const float wCov = cNoise(float3(wUv + curlW, 1.3f + tMorph)) * 0.62f
+                     + cNoise(float3((wUv - curlW * 0.6f) * 2.35f + 7.1f, 3.7f - tMorph * 0.8f)) * 0.38f;
+    const float wHeight = saturate(cNoise(float3(wUv * 1.45f + 19.3f + curlW * 0.5f, 5.1f + tMorph * 0.5f)) * 0.70f + stormType * 0.45f);
     const float topCap = lerp(0.42f, 0.96f, wHeight);
     // Crisp flat cumulus condensation base (0..0.08) + rounded vertical cauliflower dome tapering to topCap.
     const float baseGrad = smoothstep(0.0f, 0.09f, h);
@@ -54,13 +79,12 @@ float cloudDensityVol(float3 pa, bool detail) {
     const float hGrad = saturate(baseGrad * topGrad + anvilSpread);
     if (hGrad <= 0.001f) { return 0.0f; }
 
-    // 4D evolving convective cumulus structure: continuous vertical upwelling + domain-warp boiling over time
-    // so cloud turrets organically grow, billow, shear & dissolve instead of sliding as a rigid static sheet!
-    const float tEvo = camPosW.w * 0.0045f;
-    const float3 p0 = float3(sheared.x / 32000.0f, sheared.y / 32000.0f, (curvedZ - clouds.y) / 22000.0f - tEvo * 0.35f);
+    // 4D evolving convective cumulus structure with curl-noise fluid marbling so turrets grow, diffuse & metamorphose!
+    const float tEvo = camPosW.w * 0.0052f;
+    const float3 p0 = float3(sheared.x / 32000.0f, sheared.y / 32000.0f, (curvedZ - clouds.y) / 22000.0f - tEvo * 0.38f);
     const float3 w0 = float3(cNoise(p0 * 0.95f + float3(3.1f + tEvo, 7.4f, 1.9f)) - 0.5f,
-                             cNoise(p0 * 0.95f + float3(11.7f, 2.3f - tEvo * 0.8f, 5.1f)) - 0.5f,
-                             cNoise(p0 * 0.95f + float3(6.3f, 14.1f, 2.7f + tEvo * 1.1f)) - 0.5f) * 0.62f;
+                             cNoise(p0 * 0.95f + float3(11.7f, 2.3f - tEvo * 0.85f, 5.1f)) - 0.5f,
+                             cNoise(p0 * 0.95f + float3(6.3f, 14.1f, 2.7f + tEvo * 1.15f)) - 0.5f) * 0.70f;
     const float3 pw = p0 + w0;
     const float f1 = cNoise(pw);
     const float f2 = cNoise(pw * 2.09f + float3(13.1f, 5.7f, 3.3f));
@@ -210,28 +234,30 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 aerialS = lerp(horizonHaze * (1.0f - T), softS, fade) * (horFade * distCut);
         // High-altitude wispy Cirrus cloud deck (h = 68,000u above cumulus): wind-sheared ice-crystal streaks
         // illuminated by Hillaire 2020 solar transmittance, visible through gaps in the lower cumulus deck.
-        // 3-Layer Sky Architecture: Mid-Altitude Altocumulus / Lenticular Bands (96,000u) + High-Altitude Cirrus (130,000u)!
-        // Catches fiery magenta-peach-gold twilight light long after the lower cumulus deck enters shadow (surpasses own-13..15/27).
+        // 3-Layer Ekman-Sheared Sky Architecture: Mid-Altitude Altocumulus (96k, +34 deg veer, curl-marbled)
+        // + High-Altitude Jet-Stream Cirrus (130k, +54 deg veer, 2.65x speed, mares'-tail stretching & iridescence)!
         float3 cirrusAdd = 0.0f.xxx;
         if (dir.z > 0.03f && T > 0.06f) {
-            // Layer 2: Mid-altitude altocumulus wave bands at 96,000u
+            // Layer 2: Mid-altitude altocumulus wave bands at 96,000u (Ekman +34 deg, curl-noise marbling)
             const float tAlto = (96000.0f - o.z) / max(dir.z, 0.03f);
             if (tAlto > 0.0f && tAlto < 520000.0f) {
-                const float2 aPos = (o.xy + dir.xy * tAlto + cloudWind.xy * camPosW.w * 1.25f) * 0.000016f;
-                const float aWarp = cNoise(float3(aPos * 1.4f, 1.7f + camPosW.w * 0.002f)) * 1.3f;
-                const float aWave = cNoise(float3(aPos.x * 2.8f + aWarp, aPos.y * 2.1f - aWarp * 0.6f, 4.3f));
-                const float aMask = smoothstep(0.58f, 0.86f, aWave) * smoothstep(0.03f, 0.18f, dir.z) * exp(-tAlto / 320000.0f);
+                const float2 aWind = ekmanWind(0.65f);
+                const float2 aPos = (o.xy + dir.xy * tAlto + aWind * camPosW.w) * 0.000016f;
+                const float2 aCurl = cloudCurl2D(aPos * 1.45f, camPosW.w * 0.0035f) * 0.85f;
+                const float aWave = cNoise(float3((aPos + aCurl) * float2(2.8f, 2.1f), 4.3f + camPosW.w * 0.0022f));
+                const float aMask = smoothstep(0.56f, 0.85f, aWave) * smoothstep(0.03f, 0.18f, dir.z) * exp(-tAlto / 320000.0f);
                 const float3 altoTwi = lerp(sunC, float3(1.55f, 0.44f, 0.34f), twiCloud * 0.88f);
                 const float3 altoCol = (altoTwi * (0.42f + 0.58f * hg(cosT, 0.68f) * 2.2f) + skyC * 0.24f) * lerp(0.38f, 0.14f, nightW);
                 cirrusAdd += altoCol * (aMask * T * horFade * (1.0f - saturate(clouds.x * 0.55f)));
             }
-            // Layer 3: High-altitude ice-crystal cirrus & mares'-tails at 130,000u + pearlescent iridescence
+            // Layer 3: High-altitude jet-stream ice-crystal cirrus at 130,000u (Ekman +54 deg, 2.65x speed, curl wisps)
             const float tCir = (130000.0f - o.z) / max(dir.z, 0.03f);
             if (tCir > 0.0f && tCir < 650000.0f) {
-                const float2 cPos = (o.xy + dir.xy * tCir + cloudWind.xy * camPosW.w * 1.75f) * 0.0000095f;
-                const float warp = cNoise(float3(cPos * 1.8f, 2.3f + camPosW.w * 0.0015f)) * 1.55f;
-                const float streak = cNoise(float3(cPos.x * 4.4f + warp, cPos.y * 1.15f - warp * 0.5f, 5.1f));
-                const float detail = cNoise(float3(cPos * 10.0f + warp, 8.7f));
+                const float2 cWind = ekmanWind(1.00f);
+                const float2 cPos = (o.xy + dir.xy * tCir + cWind * camPosW.w) * 0.0000095f;
+                const float2 cCurl = cloudCurl2D(cPos * 1.9f, camPosW.w * 0.0042f) * 1.15f;
+                const float streak = cNoise(float3((cPos.x + cCurl.x) * 4.6f, (cPos.y + cCurl.y) * 1.15f, 5.1f + camPosW.w * 0.0018f));
+                const float detail = cNoise(float3((cPos + cCurl * 0.6f) * 10.0f, 8.7f));
                 const float cMask = smoothstep(0.54f, 0.84f, streak * 0.68f + detail * 0.32f) * smoothstep(0.03f, 0.20f, dir.z);
                 const float cFade = exp(-tCir / 380000.0f);
                 const float cirAng = acos(clamp(dot(dir, aSun), -1.0f, 1.0f));

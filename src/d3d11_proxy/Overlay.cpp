@@ -517,8 +517,8 @@ bool Render(const std::string& text, UINT maxW, bool isMenu, std::vector<uint8_t
         at = end + 1;
     }
     const int lineH = 19;
-    w = std::min<UINT>(maxW, isMenu ? 1080 : 1400);
-    h = UINT(lines.size() * lineH + 18);
+    w = std::min<UINT>(maxW, isMenu ? 1120 : 1400);
+    h = UINT(lines.size() * lineH + 26);
     HDC dc = CreateCompatibleDC(nullptr);
     BITMAPINFO bi{};
     bi.bmiHeader.biSize = sizeof bi.bmiHeader;
@@ -531,22 +531,75 @@ bool Render(const std::string& text, UINT maxW, bool isMenu, std::vector<uint8_t
     if (!bmp || !bits) { DeleteDC(dc); return false; }
     HGDIOBJ oldBmp = SelectObject(dc, bmp);
     HFONT font = CreateFontA(16, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, ANSI_CHARSET, 0, 0, CLEARTYPE_QUALITY, FIXED_PITCH, "Consolas");
+    HFONT hdrFont = CreateFontA(17, 0, 0, 0, FW_BOLD, 0, 0, 0, ANSI_CHARSET, 0, 0, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
     HGDIOBJ oldFont = SelectObject(dc, font);
     RECT all{0, 0, LONG(w), LONG(h)};
-    HBRUSH bg = CreateSolidBrush(isMenu ? RGB(14, 19, 28) : RGB(90, 10, 10));
+    HBRUSH bg = CreateSolidBrush(isMenu ? RGB(13, 17, 25) : RGB(90, 10, 10));
     FillRect(dc, &all, bg);
-    SetBkMode(dc, TRANSPARENT);
-    for (size_t i = 0; i < lines.size(); ++i) {
-        if (isMenu && i <= 1) SetTextColor(dc, i == 0 ? RGB(66, 212, 196) : RGB(150, 210, 245));
-        else if (isMenu && lines[i].rfind(">>", 0) == 0) SetTextColor(dc, RGB(248, 196, 86));
-        else SetTextColor(dc, RGB(236, 234, 226));
-        TextOutA(dc, 10, int(9 + i * lineH), lines[i].c_str(), int(lines[i].size()));
+    if (isMenu) {
+        // 2027 Architectural Glassmorphic HUD chrome: luminous cyan top accent, obsidian header band & precision steel border.
+        HBRUSH borderBr = CreateSolidBrush(RGB(44, 62, 84));
+        FrameRect(dc, &all, borderBr);
+        DeleteObject(borderBr);
+        RECT hdrRect{1, 4, LONG(w) - 1, LONG(14 + 2 * lineH)};
+        HBRUSH hdrBr = CreateSolidBrush(RGB(9, 13, 20));
+        FillRect(dc, &hdrRect, hdrBr);
+        DeleteObject(hdrBr);
+        RECT accentTop{0, 0, LONG(w), 3};
+        HBRUSH accBr = CreateSolidBrush(RGB(66, 212, 196));
+        FillRect(dc, &accentTop, accBr);
+        DeleteObject(accBr);
     }
+    SetBkMode(dc, TRANSPARENT);
+    HBRUSH zebraBr = CreateSolidBrush(RGB(18, 24, 35));
+    HBRUSH selBgBr = CreateSolidBrush(RGB(34, 43, 58));
+    HBRUSH selBarBr = CreateSolidBrush(RGB(248, 196, 86));
+    HBRUSH onPillBr = CreateSolidBrush(RGB(18, 72, 58));
+    HBRUSH offPillBr = CreateSolidBrush(RGB(38, 43, 54));
+    for (size_t i = 0; i < lines.size(); ++i) {
+        const int y0 = int(12 + i * lineH);
+        const bool isSel = isMenu && lines[i].rfind(">>", 0) == 0;
+        if (isMenu && i >= 2) {
+            RECT rowRect{2, y0 - 2, LONG(w) - 2, y0 + lineH - 2};
+            if (isSel) {
+                FillRect(dc, &rowRect, selBgBr);
+                RECT barRect{2, y0 - 2, 6, y0 + lineH - 2};
+                FillRect(dc, &barRect, selBarBr);
+            } else if ((i & 1u) == 1u) {
+                FillRect(dc, &rowRect, zebraBr);
+            }
+            // Render crisp color-coded ON / OFF status pill badges on right side of boolean rows:
+            const size_t posOn = lines[i].rfind(": ON");
+            const size_t posOff = lines[i].rfind(": OFF");
+            if (posOn != std::string::npos && posOn + 4 == lines[i].size()) {
+                RECT pill{LONG(w) - 68, y0, LONG(w) - 14, y0 + lineH - 4};
+                FillRect(dc, &pill, onPillBr);
+                SetTextColor(dc, RGB(88, 240, 196));
+                TextOutA(dc, LONG(w) - 52, y0, "ON", 2);
+            } else if (posOff != std::string::npos && posOff + 5 == lines[i].size()) {
+                RECT pill{LONG(w) - 68, y0, LONG(w) - 14, y0 + lineH - 4};
+                FillRect(dc, &pill, offPillBr);
+                SetTextColor(dc, RGB(148, 160, 178));
+                TextOutA(dc, LONG(w) - 56, y0, "OFF", 3);
+            }
+        }
+        SelectObject(dc, (isMenu && i == 0) ? hdrFont : font);
+        if (isMenu && i <= 1) SetTextColor(dc, i == 0 ? RGB(72, 224, 208) : RGB(154, 208, 245));
+        else if (isSel) SetTextColor(dc, RGB(252, 204, 96));
+        else SetTextColor(dc, RGB(234, 236, 242));
+        TextOutA(dc, 14, y0, lines[i].c_str(), int(lines[i].size()));
+    }
+    DeleteObject(zebraBr);
+    DeleteObject(selBgBr);
+    DeleteObject(selBarBr);
+    DeleteObject(onPillBr);
+    DeleteObject(offPillBr);
     GdiFlush();
     px.assign(static_cast<uint8_t*>(bits), static_cast<uint8_t*>(bits) + size_t(w) * h * 4);
     SelectObject(dc, oldFont);
     SelectObject(dc, oldBmp);
     DeleteObject(font);
+    DeleteObject(hdrFont);
     DeleteObject(bg);
     DeleteObject(bmp);
     DeleteDC(dc);

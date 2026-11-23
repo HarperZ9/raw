@@ -36,9 +36,15 @@ float4 sampleFroxel3D(float2 uv, float z) {
 float3 sampleHillaireSky(float3 rd) {
     const float az = atan2(rd.y, rd.x);
     const float elev = asin(clamp(rd.z, -1.0f, 1.0f));
-    const float vNonLin = 0.5f + 0.5f * (elev >= 0.0f ? sqrt(elev / (0.5f * PI)) : -sqrt(-elev / (0.5f * PI)));
-    const float uAz = az / (2.0f * PI) + 0.5f;
-    const float3 c0 = AtmoSkyView.SampleLevel(Lin, float2(uAz, saturate(vNonLin)), 0.0f).rgb;
+    const float vNonLin = saturate(0.5f + 0.5f * (elev >= 0.0f ? sqrt(elev / (0.5f * PI)) : -sqrt(-elev / (0.5f * PI))));
+    const float uAz = clamp(az / (2.0f * PI) + 0.5f, 0.004f, 0.996f);
+    float3 c0 = AtmoSkyView.SampleLevel(Lin, float2(uAz, vNonLin), 0.0f).rgb;
+    // Seamless azimuth wrap across +-PI seam (eliminates the straight diagonal sky seam seen in 01.29.15.22.png!):
+    const float edgeD = min(uAz, 1.0f - uAz);
+    if (edgeD < 0.025f) {
+        const float3 cWrap = AtmoSkyView.SampleLevel(Lin, float2(uAz < 0.5f ? 0.996f : 0.004f, vNonLin), 0.0f).rgb;
+        c0 = lerp(0.5f * (c0 + cWrap), c0, smoothstep(0.004f, 0.025f, edgeD));
+    }
     // Eliminate zenith-pole azimuth pinch when looking straight up (rd.z > 0.94).
     const float poleW = smoothstep(0.94f, 0.995f, rd.z);
     if (poleW > 0.001f) {
@@ -106,11 +112,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // Preserve authored Masser & Secunda moon crater textures across daytime, twilight, and night.
             const float moonLumF = dot(lit.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             const float moonKeep = isCelestial ? 1.0f : (smoothstep(0.16f, 0.48f, moonLumF) * (1.0f - smoothstep(0.985f, 0.996f, cosS)) * (1.0f - smoothstep(0.18f, 0.42f, aElev)));
-            // Full 24-Hour Dynamic Skybox (Dawn -> Sunrise -> Day -> Golden Hour -> Sunset -> Dusk -> Star-Studded Night):
+            // Full 24-Hour Dynamic Skybox matched continuously to cloud-deck horizon luminance (eliminates black horizon band
+            // seen in 01.33.15.97.png & 01.31.56.65.png when overcast/snow clouds sit above the horizon!):
             const float hUp = saturate(sDir.z);
-            const float3 nightZen = float3(0.005f, 0.011f, 0.028f);
-            const float3 nightHor = float3(0.022f, 0.036f, 0.068f);
-            float3 fullSky = lerp(nightHor, nightZen, pow(hUp, 0.56f));
+            const float3 ambSkyCol = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.03f.xxx);
+            const float overcastDeck = saturate(cover * 0.85f + weather.w * 0.45f + weather.z * 0.55f);
+            const float3 nightZen = lerp(float3(0.008f, 0.015f, 0.036f), ambSkyCol * float3(0.45f, 0.52f, 0.65f), overcastDeck * 0.72f);
+            const float3 nightHor = lerp(float3(0.028f, 0.044f, 0.078f), ambSkyCol * float3(0.68f, 0.74f, 0.84f), overcastDeck * 0.85f);
+            float3 fullSky = lerp(nightHor, nightZen, pow(hUp, 0.52f));
             // Physical 22-degree warm atmospheric lunar halo around the night Moon (ShadowSceneNode->sunLight at night),
             // calibrated to author-01.jpg own-08..11.
             const float nightHaloW = smoothstep(0.02f, -0.08f, aElev) * (1.0f - cover * 0.55f);
@@ -396,30 +405,36 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             T *= (1.0f - sheetDens * 0.35f);
         }
         atmoCol = min(atmoCol, 3.5f.xxx);
-        // Feature 16: Native DX12 3D World-Space GPU Weather Precipitation (wind-advected rain streaks, alpine snowflakes,
-        // AND choking volcanic Solstheim ash flakes + glowing red-orange embers) depth-occluded against scene geometry!
+        // Feature 16: Native DX12 3D World-Space GPU Weather Precipitation (upgraded 4-layer volumetric snowflakes +
+        // crisp velocity-streaked specular rain droplets catching torch/sky light) depth-occluded against scene geometry!
         float3 precipAdd = 0.0f.xxx;
         if ((weather.w > 0.08f || weather.z > 0.08f || ashW > 0.10f) && mapScale > 0.5f) {
-            const float2 windP = cloudWind.xy * 0.0025f;
-            [unroll] for (int pl = 0; pl < 3; ++pl) {
-                const float pDist = 110.0f + float(pl) * 165.0f;
+            const float2 windP = cloudWind.xy * 0.0028f;
+            [unroll] for (int pl = 0; pl < 4; ++pl) {
+                const float pDist = 85.0f + float(pl) * 140.0f;
                 if (dist <= pDist) { continue; }
                 const float3 wpP = camPosW.xyz + eye + w * pDist;
                 if (weather.w > 0.08f) {
-                    const float3 rCoord = float3((wpP.xy - windP * (wpP.z * 0.15f)) * 0.18f, wpP.z * 0.018f + camPosW.w * (11.0f + float(pl) * 3.0f));
+                    const float3 rCoord = float3((wpP.xy - windP * (wpP.z * 0.16f)) * 0.24f, wpP.z * 0.011f + camPosW.w * (13.5f + float(pl) * 3.5f));
                     const float rCell = cHash(floor(rCoord));
-                    if (rCell > 0.965f) {
-                        const float rMask = smoothstep(0.965f, 0.998f, rCell) * saturate(1.0f - length(frac(rCoord.xy) - 0.5f) * 2.8f);
-                        precipAdd += max(atmoCol * 0.85f, 0.12f.xxx) * (rMask * weather.w * 0.28f / (1.0f + float(pl) * 0.5f));
+                    if (rCell > 0.962f) {
+                        const float2 rF = frac(rCoord.xy) - 0.5f;
+                        const float rThin = saturate(1.0f - abs(rF.x) * 6.5f) * saturate(1.0f - abs(rF.y) * 2.2f);
+                        const float rMask = smoothstep(0.962f, 0.998f, rCell) * rThin;
+                        precipAdd += max(atmoCol * 1.15f + 0.08f, 0.16f.xxx) * (rMask * weather.w * 0.34f / (1.0f + float(pl) * 0.45f));
                     }
                 }
                 if (weather.z > 0.08f) {
-                    const float3 sCoord = float3((wpP.xy + float2(sin(camPosW.w * 0.9f + float(pl)), cos(camPosW.w * 0.7f + float(pl))) * 18.0f) * 0.095f,
-                                                 wpP.z * 0.095f + camPosW.w * (2.6f + float(pl) * 0.8f));
+                    const float swayX = sin(camPosW.w * (0.85f + float(pl) * 0.22f) + wpP.z * 0.015f) * 24.0f;
+                    const float swayY = cos(camPosW.w * (0.68f + float(pl) * 0.19f) + wpP.x * 0.012f) * 24.0f;
+                    const float fScale = lerp(0.11f, 0.065f, float(pl) / 3.0f);
+                    const float3 sCoord = float3((wpP.xy - windP * (wpP.z * 0.22f) + float2(swayX, swayY)) * fScale,
+                                                 wpP.z * fScale + camPosW.w * (2.4f + float(pl) * 0.65f));
                     const float sCell = cHash(floor(sCoord));
-                    if (sCell > 0.955f) {
-                        const float sMask = smoothstep(0.955f, 0.995f, sCell) * saturate(1.0f - length(frac(sCoord) - 0.5f) * 2.4f);
-                        precipAdd += max(atmoCol * 1.15f + sunColour.rgb * 0.18f, 0.20f.xxx) * (sMask * weather.z * 0.42f / (1.0f + float(pl) * 0.45f));
+                    if (sCell > 0.942f) {
+                        const float dFlake = length(frac(sCoord) - 0.5f);
+                        const float sMask = smoothstep(0.942f, 0.998f, sCell) * exp(-dFlake * dFlake * 18.0f);
+                        precipAdd += max(atmoCol * 1.25f + 0.14f, 0.28f.xxx) * (sMask * weather.z * 0.44f / (1.0f + float(pl) * 0.35f));
                     }
                 }
                 // Swirling Solstheim volcanic ash flakes + rare glowing red-orange embers depth-occluded in 3D space!

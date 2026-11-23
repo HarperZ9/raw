@@ -185,8 +185,8 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                             const float fCurl = cNoise(wp * 0.070f - float3(0.0f, 0.0f, camPosW.w * 2.8f));
                             const float fDens = exp(-fRad2 * 3.0f) * smoothstep(0.36f, 0.86f, fCurl) * (1.0f - saturate((dzS + 8.0f) / 38.0f));
                             const float tempT = saturate(1.0f - (dzS + 8.0f) / 34.0f);
-                            const float3 flameBB = lerp(float3(1.5f, 0.28f, 0.04f), float3(3.6f, 2.0f, 0.65f), tempT * tempT);
-                            inScat += flameBB * (fDens * 1.25f);
+                            const float3 flameBB = lerp(float3(1.8f, 0.34f, 0.05f), float3(4.2f, 2.4f, 0.85f), tempT * tempT);
+                            inScat += flameBB * (fDens * 2.85f);
                         }
                     }
                     // 2) Subtle conical wind-bent rising woodsmoke column + glowing embers (+14u..+280u):

@@ -447,6 +447,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 slopeTint = lerp(float3(0.96f, 0.98f, 1.03f), float3(1.02f, 1.01f, 0.97f), smoothstep(0.55f, 0.88f, slope));
         const float tileFade = saturate(1.0f - z / 16000.0f);
         albedo *= lerp(1.0f.xxx, antiTile * slopeTint, tileFade * (base == 4u ? 0.85f : 0.45f));
+        // Procedural sub-centimeter world-space micro-normal & grazing roughness synthesis on vanilla terrain/rock/bark:
+        // gives 2011 meshes crisp sunlit micro-grain and tactile roughness variation without requiring 4K texture mods.
+        if (z < 1800.0f) {
+            const float mgFade = saturate(1.0f - z / 1800.0f) * (1.0f - wet.snow * 0.85f);
+            const float mg0 = cNoise(wp * 0.14f);
+            const float mgX = cNoise(wp * 0.14f + float3(0.45f, 0.0f, 0.0f)) - mg0;
+            const float mgY = cNoise(wp * 0.14f + float3(0.0f, 0.45f, 0.0f)) - mg0;
+            const float mgZ = cNoise(wp * 0.14f + float3(0.0f, 0.0f, 0.45f)) - mg0;
+            s.n = normalize(s.n + float3(mgX, mgY, mgZ) * (0.42f * mgFade));
+            s.alpha = clamp(s.alpha * lerp(1.0f, lerp(0.84f, 1.14f, microN), 0.55f * mgFade), 0.04f, 0.96f);
+        }
         // Triplanar geological crag & fracture normal relief on steep blocky vanilla cliffs (base == 1 or 4, slope < 0.72).
         if (slope < 0.72f && z < 8000.0f) {
             const float cragFade = saturate((0.72f - slope) * 2.5f) * saturate(1.0f - z / 8000.0f);

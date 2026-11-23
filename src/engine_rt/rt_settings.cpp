@@ -162,6 +162,13 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         // Keep vanilla Skyrim water reflection buffer dimensions intact (overriding iWaterReflectWidth/Height
         // or forcing bForceHighDetailReflections=1 at runtime misaligns TESWaterSystem reflection planes!).
         {"bForceHighDetailReflections:Water", "0"},
+        // Upgrade Creation Engine's native TESWaterSystem simulation (60 FPS wave updates instead of 2011 12-30 FPS,
+        // hi-res water & displacements) and eliminate 2011 blurry 3D World-Map depth blur directly in MapMenu settings.
+        {"bUseWaterHiRes:Water", "1"},
+        {"bUseWaterDisplacements:Water", "1"},
+        {"uSurfaceFPS:Water", "60"},
+        {"bWorldMapNoSkyDepthBlur:MapMenu", "1"},
+        {"fWorldMapMaximumDepthBlur:MapMenu", "0.0"},
         {"fSunBaseSize:Weather", "160.0"},
         {"fSunGlareSize:Weather", "280.0"},
         {"fSunGlareMultiplier:Weather", "0.35"},

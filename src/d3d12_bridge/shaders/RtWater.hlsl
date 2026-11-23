@@ -213,7 +213,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float2 eddyRipple = curlPhase * (eddyLee * 0.09f * sin(dot(wpW.xy, flowDir) * 0.18f - wt * 2.8f));
                 // Dual-scale crisp capillary wind-ripple micro-normals advected along deflected streamlines:
                 // gives liquid surface crisp sunlit micro-facets & living texture even when looking straight down.
-                const float capFade = saturate(1.0f - wDist / 4200.0f);
+                const float capFade = saturate(1.0f - wDist / 7500.0f);
                 const float2 capP0 = (wpW.xy - flowVec * (ph0 * 10.0f)) * 0.24f;
                 const float2 capP1 = (wpW.xy - flowVec * (ph1 * 10.0f) + float2(37.3f, 61.9f)) * 0.24f;
                 const float2 capG0 = float2(vNoise2D(capP0 + float2(0.15f, 0.0f)) - vNoise2D(capP0 - float2(0.15f, 0.0f)),
@@ -270,9 +270,8 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
             const float3 o = p + float3(0.0f, 0.0f, 2.5f + 0.003f * length(p));
 
-            // Distance-filtered 3D liquid reflection normal (crisp glassy mirror reflections of waterwheel/trees/stone
-            // matching reference Shot 21 while preserving living fluid ripple detail).
-            const float reflRelief = lerp(0.58f, 0.36f, saturate(wDist / 8500.0f));
+            // Distance-filtered 3D liquid reflection normal (sculpted living waves out to 8,500u — no flat plastic sheet from bridges).
+            const float reflRelief = lerp(0.84f, 0.56f, saturate(wDist / 8500.0f));
             const float3 nRefl = normalize(lerp(float3(0.0f, 0.0f, 1.0f), n, reflRelief));
             float3 rd = reflect(-v, nRefl);
             if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }
@@ -399,17 +398,14 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float3 waveSSS = sunDir.w > 0.5f
                     ? float3(0.03f, 0.28f, 0.26f) * sunColour.rgb * (0.25f + 0.75f * pow(saturate(dot(-v, sunDir.xyz)), 3.5f)) * saturate((1.0f - n.z) * 5.5f) * 0.65f
                     : 0.0f.xxx;
-                // Two-tier organic turbulent shoreline meniscus, boulder bow-wave froth & rapids white-water:
-                // crisp aerated foam ring where water laps boulders & banks + deflected lee eddies (zero Voronoi grid).
-                const float shoreMeniscus = (1.0f - smoothstep(0.0f, 4.2f, depthV)) * smoothstep(0.0f, 0.35f, depthV);
-                const float shoreBand = (1.0f - smoothstep(0.0f, 12.0f, depthV)) * smoothstep(0.0f, 0.8f, depthV);
+                // Organic turbulent shoreline contact foam ONLY at 0..3.5u rock/bank contact (deleted ugly sin(depthV) zebra stripes!).
+                const float shoreMeniscus = (1.0f - smoothstep(0.0f, 3.5f, depthV)) * smoothstep(0.0f, 0.35f, depthV);
                 const float froth = organicFroth(wpW.xy, camPosW.w);
-                const float lapWave = pow(saturate(sin(depthV * 0.62f - camPosW.w * 2.4f + froth * 2.8f) * 0.5f + 0.5f), 2.5f);
-                const float bowFoam = bowHit * froth * (0.55f + 0.45f * lapWave) * 0.85f;
-                const float eddyFoam = eddyLee * froth * 0.42f;
-                const float shoreLap = shoreMeniscus * (0.38f + 0.62f * froth) * 0.65f + shoreBand * froth * lapWave * 0.34f;
+                const float bowFoam = bowHit * froth * 0.72f;
+                const float eddyFoam = eddyLee * froth * 0.36f;
+                const float shoreLap = shoreMeniscus * (0.35f + 0.65f * froth) * 0.58f;
                 const float windSpeedW = saturate(length(cloudWind.xy) / 380.0f);
-                const float crestFoam = saturate((1.0f - n.z) * (6.0f + windSpeedW * 4.5f) - lerp(0.16f, 0.09f, windSpeedW)) * froth * (0.55f + windSpeedW * 0.40f);
+                const float crestFoam = saturate((1.0f - n.z) * (6.0f + windSpeedW * 4.5f) - lerp(0.18f, 0.10f, windSpeedW)) * froth * (0.50f + windSpeedW * 0.38f);
                 const float foamMask = saturate(max(max(bowFoam, eddyFoam), max(shoreLap, crestFoam))) * nearW;
                 // True Underwater Volumetric Sunbeam Shafts (6-step depth-marched Mie scattering integral through water column):
                 // gives sunlit Nordic rivers glowing emerald-turquoise underwater light cones beneath the surface.
@@ -463,6 +459,25 @@ void water(uint3 id : SV_DispatchThreadID) {
             }
             else if (view == 6u) { col = body; }   // the water's body alone: the bent bed, dimmed and filled in
             else if (view == 5u) { col = F > 0.25f ? float3(1.0f, 0.0f, 0.0f) : F > 0.06f ? float3(0.0f, 1.0f, 0.0f) : float3(0.0f, 0.0f, 1.0f); }
+        } else {
+            // Underwater looking UP at the water surface (p.z >= 0):
+            // Physical Snell's Window (48.6 deg critical cone) + Total Internal Reflection outside the cone
+            // (eliminates the solid grey opaque underwater curtain caught in pain_2045_g1.jpg 015..020!).
+            const float3 vUp = normalize(p - eyeAt());
+            const float3 wpU = camPosW.xyz + p;
+            const float2 uwRipple = float2(
+                vNoise2D(wpU.xy * 0.09f + float2(camPosW.w * 0.8f, -camPosW.w * 0.5f)) - 0.5f,
+                vNoise2D(wpU.xy * 0.09f + float2(-camPosW.w * 0.6f, camPosW.w * 0.7f) + 19.3f) - 0.5f
+            ) * 0.16f;
+            const float3 nDown = normalize(float3(uwRipple.x, uwRipple.y, -1.0f));
+            const float cosInc = saturate(dot(-vUp, nDown));
+            // Critical angle sin(theta_c) = 1 / 1.333 = 0.75 => cos(theta_c) = 0.661.
+            const float snellWin = smoothstep(0.60f, 0.76f, cosInc);
+            const float3 refrSky = waterSky(normalize(float3(vUp.xy * 1.333f, max(vUp.z, 0.12f))));
+            const float3 tirCol = float3(0.014f, 0.036f, 0.044f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.08f.xxx) * 1.8f;
+            const float uwAtt = exp(-length(p - eyeAt()) * 0.0022f);
+            const float3 uwFogCol = float3(0.018f, 0.052f, 0.064f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.06f.xxx);
+            col = lerp(uwFogCol, lerp(tirCol, refrSky, snellWin), uwAtt);
         }
     }
     WaterOut[id.xy] = float4(col, game.a);

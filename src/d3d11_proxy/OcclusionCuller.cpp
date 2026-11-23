@@ -54,15 +54,17 @@ void OcclusionCuller::Shutdown()
 //  OnPresent — Depth readback + CPU Hi-Z build
 // ═══════════════════════════════════════════════════════════════════════════
 
-void OcclusionCuller::OnPresent(ID3D11DeviceContext* ctx)
+void OcclusionCuller::OnPresent(ID3D11DeviceContext* /*ctx*/)
 {
     if (!m_initialized || !m_enabled) return;
 
     // Periodic live CPU/GPU draw & triangle savings telemetry (every 300 frames).
+    // Uses zero-copy DXBC shader-class-filtered NiAVObject::worldBound frustum & sub-pixel culling
+    // (eliminated wasted 1920x1080 CPU depth staging CopyResource/Map every frame under raw::tx DX12).
     if (++m_frameCount % 300 == 0) {
-        Log("[OcclusionCuller] frame %llu: hiz=%d tested %u draws (%llu tris), culled %u draws (%llu tris: frustum=%u subpx=%u hiz=%u, %.1f%% tris saved)",
-            static_cast<unsigned long long>(m_frameCount), m_hizReady ? 1 : 0, m_drawsTested, static_cast<unsigned long long>(m_trisTested),
-            m_drawsCulled, static_cast<unsigned long long>(m_trisCulled), m_frustumCulled, m_subPxCulled, m_hiZCulled,
+        Log("[OcclusionCuller] frame %llu: tested %u draws (%llu tris), culled %u draws (%llu tris: frustum=%u subpx=%u, %.1f%% tris saved)",
+            static_cast<unsigned long long>(m_frameCount), m_drawsTested, static_cast<unsigned long long>(m_trisTested),
+            m_drawsCulled, static_cast<unsigned long long>(m_trisCulled), m_frustumCulled, m_subPxCulled,
             m_trisTested ? (100.0 * double(m_trisCulled) / double(m_trisTested)) : 0.0);
     }
 
@@ -74,106 +76,6 @@ void OcclusionCuller::OnPresent(ID3D11DeviceContext* ctx)
     m_hiZCulled     = 0;
     m_trisTested    = 0;
     m_trisCulled    = 0;
-
-    // ── Get the game's depth buffer ─────────────────────────────────────
-    auto& rpd = RenderPhaseDetector::Get();
-    ID3D11DepthStencilView* mainDSV = rpd.GetMainDSV();
-    if (!mainDSV) {
-        if (auto* pi = PG_GetProxyInterface()) mainDSV = pi->gameDepthDSV;
-    }
-    if (!mainDSV) return;
-
-    ID3D11Resource* dsResource = nullptr;
-    mainDSV->GetResource(&dsResource);
-    if (!dsResource) return;
-
-    ID3D11Texture2D* depthTex = nullptr;
-    HRESULT hr = dsResource->QueryInterface(__uuidof(ID3D11Texture2D),
-                                             reinterpret_cast<void**>(&depthTex));
-    dsResource->Release();
-    if (FAILED(hr) || !depthTex) return;
-
-    D3D11_TEXTURE2D_DESC depthDesc;
-    depthTex->GetDesc(&depthDesc);
-
-    m_screenW = depthDesc.Width;
-    m_screenH = depthDesc.Height;
-
-    // ── Create staging textures matching the game's depth format (R24G8_TYPELESS or R32_TYPELESS/R32_FLOAT) ─
-    const bool supportedFmt = (depthDesc.Format == DXGI_FORMAT_R24G8_TYPELESS ||
-                               depthDesc.Format == DXGI_FORMAT_D24_UNORM_S8_UINT ||
-                               depthDesc.Format == DXGI_FORMAT_R32_TYPELESS ||
-                               depthDesc.Format == DXGI_FORMAT_R32_FLOAT ||
-                               depthDesc.Format == DXGI_FORMAT_D32_FLOAT);
-    if (!supportedFmt) {
-        depthTex->Release();
-        return;
-    }
-
-    if (!m_depthStaging[0] || m_depthW != depthDesc.Width || m_depthH != depthDesc.Height || m_stagingFmt != depthDesc.Format)
-    {
-        for (auto& stg : m_depthStaging) {
-            if (stg) { stg->Release(); stg = nullptr; }
-        }
-
-        D3D11_TEXTURE2D_DESC stagingDesc = {};
-        stagingDesc.Width      = depthDesc.Width;
-        stagingDesc.Height     = depthDesc.Height;
-        stagingDesc.MipLevels  = 1;
-        stagingDesc.ArraySize  = 1;
-        stagingDesc.Format     = depthDesc.Format;
-        stagingDesc.SampleDesc = {1, 0};
-        stagingDesc.Usage      = D3D11_USAGE_STAGING;
-        stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-
-        for (int i = 0; i < kRingSlots; i++) {
-            hr = m_device->CreateTexture2D(&stagingDesc, nullptr, &m_depthStaging[i]);
-            if (FAILED(hr)) {
-                depthTex->Release();
-                return;
-            }
-            m_stageHasCam[i] = false;
-        }
-
-        m_depthW = depthDesc.Width;
-        m_depthH = depthDesc.Height;
-        m_stagingFmt = depthDesc.Format;
-        m_hizReady = false;
-        m_hizHasCam = false;
-    }
-
-    // ── Copy depth to staging[writeIdx] and record its exact camera matrix ──
-    const int writeIdx = m_readbackIdx;
-    const int readIdx  = (m_readbackIdx + 1) % kRingSlots;  // 2 frames old: 100% GPU-retired under DX12
-
-    ctx->CopyResource(m_depthStaging[writeIdx], depthTex);
-    depthTex->Release();
-    {
-        const auto& sl = SceneLights_Frame();
-        m_stageHasCam[writeIdx] = sl.hasCamera;
-        if (sl.hasCamera) {
-            std::memcpy(m_stageW2C[writeIdx], sl.worldToClip, sizeof(m_stageW2C[writeIdx]));
-            std::memcpy(m_stageCam[writeIdx], sl.posAdjust, sizeof(m_stageCam[writeIdx]));
-        }
-    }
-
-    // ── Read back staging[readIdx] (2 frames old, zero CPU/GPU stall) ───
-    if (m_depthStaging[readIdx] && m_stageHasCam[readIdx])
-    {
-        D3D11_MAPPED_SUBRESOURCE mapped;
-        hr = ctx->Map(m_depthStaging[readIdx], 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
-        if (SUCCEEDED(hr))
-        {
-            BuildCPUHiZ(static_cast<const uint8_t*>(mapped.pData),
-                        m_depthW, m_depthH, mapped.RowPitch, m_stagingFmt);
-            std::memcpy(m_hizW2C, m_stageW2C[readIdx], sizeof(m_hizW2C));
-            std::memcpy(m_hizCam, m_stageCam[readIdx], sizeof(m_hizCam));
-            m_hizHasCam = true;
-            m_hizReady = true;
-            ctx->Unmap(m_depthStaging[readIdx], 0);
-        }
-    }
-    m_readbackIdx = (m_readbackIdx + 1) % kRingSlots;
 }
 
 

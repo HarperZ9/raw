@@ -115,24 +115,21 @@ float organicFroth(float2 p, float t) {
 }
 
 float3 waterSky(float3 rd) {
+    float3 uSun, uSkyZ, uSkyH, uAmbUp, uAmbDn;
+    evalWorldAtmosphere(uSun, uSkyZ, uSkyH, uAmbUp, uAmbDn);
+    const float hUp = saturate(rd.z);
     const float3 base = skyAt(rd);
-    const float aElevW = astroSunElev();
-    const float dayW = smoothstep(-0.08f, 0.14f, aElevW) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
-    float3 skyCol = base;
-    if (dayW > 0.02f && rd.z > 0.0f) {
-        float3 sZ, sM, sH;
-        skyPalette(sZ, sM, sH);
-        const float hUp = saturate(rd.z);
-        const float3 pSky = hUp < 0.25f ? lerp(sH, sM, pow(hUp / 0.25f, 0.75f)) : lerp(sM, sZ, pow((hUp - 0.25f) / 0.75f, 0.85f));
-        skyCol = lerp(base, pSky, dayW * 0.65f);
-        // Drifting volumetric cloud-deck reflection on lakes, rivers, and the Sea of Ghosts.
-        if (clouds.x > 0.08f && rd.z > 0.03f) {
-            const float2 cUv = (camPosW.xy + rd.xy * (34000.0f / max(rd.z, 0.08f)) + cloudWind.xy * camPosW.w * 0.55f) * 0.000018f;
-            const float cn = sin(cUv.x * 3.1f + sin(cUv.y * 2.7f)) * cos(cUv.y * 3.7f - cos(cUv.x * 2.3f)) * 0.5f + 0.5f;
-            const float cov = smoothstep(1.0f - saturate(clouds.x * 0.95f), 1.0f, cn) * smoothstep(0.03f, 0.22f, rd.z);
-            const float3 cloudLit = lerp(sH * 0.85f, max(sunColour.rgb, 0.45f.xxx) * 0.95f, 0.45f);
-            skyCol = lerp(skyCol, cloudLit, cov * 0.52f);
-        }
+    // Lock water sky reflection directly to the unified world atmosphere (zenith -> horizon) so water seamlessly
+    // mirrors the exact sky dome, mountain aerial perspective, and weather mood with zero color mismatch:
+    float3 skyCol = lerp(uSkyH, uSkyZ, pow(hUp, 0.62f));
+    skyCol = lerp(skyCol, base, 0.28f);
+    // Drifting volumetric cloud-deck reflection matched to unified cloud sun + sky colors:
+    if (clouds.x > 0.08f && rd.z > 0.03f) {
+        const float2 cUv = (camPosW.xy + rd.xy * (34000.0f / max(rd.z, 0.08f)) + cloudWind.xy * camPosW.w * 0.55f) * 0.000018f;
+        const float cn = sin(cUv.x * 3.1f + sin(cUv.y * 2.7f)) * cos(cUv.y * 3.7f - cos(cUv.x * 2.3f)) * 0.5f + 0.5f;
+        const float cov = smoothstep(1.0f - saturate(clouds.x * 0.95f), 1.0f, cn) * smoothstep(0.03f, 0.22f, rd.z);
+        const float3 cloudLit = lerp(uSkyH * 0.90f, max(uSun, uSkyH) * 0.95f, 0.45f);
+        skyCol = lerp(skyCol, cloudLit, cov * 0.50f);
     }
     return skyCol;
 }
@@ -287,24 +284,48 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float3 o = p + float3(0.0f, 0.0f, 2.5f + 0.003f * length(p));
 
             // Silky recognizable mirror reflections with zero high-frequency noise (0.36 -> 0.16).
-            const float reflRelief = lerp(0.36f, 0.16f, saturate(wDist / 8500.0f));
+            // Swell-filtered reflection normal (keeps crisp capillary ripples for sun glint while preventing
+            // pixel-to-pixel reflection ray scatter & edge noise on water reflections!):
+            const float reflRelief = lerp(0.13f, 0.04f, saturate(wDist / 6000.0f));
             const float3 nRefl = normalize(lerp(float3(0.0f, 0.0f, 1.0f), n, reflRelief));
             float3 rd = reflect(-v, nRefl);
             if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }
             float3 refl;
-            // Pure Native World-Space Hardware DXR 1.2 RayQuery Water Reflections (zero SSR, zero onScreen screen-space fallback!):
-            Hit h;
-            if (reflectLength > 0.0f && traceHit(o, rd, reflectLength, h)) {
-                const float3 hitPt = o + rd * h.t;
+            // 4-Tap Stratified Cone-Filtered Pure Native Hardware DXR 1.2 RayQuery Water Reflections
+            // + Karis luminance firefly suppression (eliminates noisy edge reflections & single-ray shimmer!):
+            if (reflectLength > 0.0f) {
                 const bool mats = (giFlags & GI_MATERIALS) != 0u;
-                const float3 hn = mats ? hitNormal(h, rd) : -rd;
-                refl = mats ? shadeHit(hitPt, hn, hitAlbedo(h), float2(0.5f, 0.5f), true)
-                            : (0.25f * float3(ambient[0].w, ambient[1].w, ambient[2].w));
                 const float3 farReflSky = waterSky(rd);
-                const float reflFog = 1.0f - exp(-h.t * 0.00014f);
-                refl = lerp(max(refl, farReflSky * 0.18f), farReflSky, saturate(reflFog));
+                const float reflCone = lerp(0.014f, 0.038f, saturate(wDist / 4500.0f));
+                static const float2 kStrat4[4] = {
+                    float2(0.125f, 0.375f), float2(0.625f, 0.125f),
+                    float2(0.375f, 0.875f), float2(0.875f, 0.625f)
+                };
+                const float2 wJit = float2(ign(px), ign(px.yx + 17.0f)) * 0.25f;
+                float3 reflAcc = 0.0f.xxx;
+                float reflW = 0.0f;
+                [unroll] for (int ri = 0; ri < 4; ++ri) {
+                    const float3 rdi = jitterDir(rd, reflCone, frac(kStrat4[ri] + wJit));
+                    Hit h;
+                    float3 sCol;
+                    if (traceHit(o, rdi, reflectLength, h)) {
+                        const float3 hitPt = o + rdi * h.t;
+                        const float3 hn = mats ? hitNormal(h, rdi) : -rdi;
+                        sCol = mats ? shadeHit(hitPt, hn, hitAlbedo(h), kStrat4[ri], true)
+                                    : (0.25f * float3(ambient[0].w, ambient[1].w, ambient[2].w));
+                        const float reflFog = 1.0f - exp(-h.t * 0.00014f);
+                        sCol = lerp(max(sCol, farReflSky * 0.18f), farReflSky, saturate(reflFog));
+                    } else {
+                        sCol = farReflSky;
+                    }
+                    const float sLum = dot(sCol, float3(0.2126f, 0.7152f, 0.0722f));
+                    const float kw = 1.0f / (1.0f + sLum * 0.45f);
+                    reflAcc += sCol * kw;
+                    reflW += kw;
+                }
+                refl = reflAcc / max(reflW, 1.0e-4f);
                 const float reflMax = max(refl.r, max(refl.g, refl.b));
-                if (reflMax > 4.5f) { refl *= 4.5f / reflMax; }
+                if (reflMax > 4.2f) { refl *= 4.2f / reflMax; }
             } else {
                 refl = waterSky(rd);
                 const float waveTilt = saturate((1.0f - nRefl.z) * 18.0f);

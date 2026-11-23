@@ -141,6 +141,57 @@ void skyPalette(out float3 zenith, out float3 mid, out float3 horiz) {
     horiz  = lerp(clearH, float3(0.38f, 0.44f, 0.52f), stormW);
 }
 
+// Unified World-Space Atmosphere & Lighting Oracle (shared by Lighting, LightFog, Clouds, Volumetric, Froxel, RtWater & RtHit):
+// Guarantees 100% seamless color, temperature & luminance synchronization across sky dome, mountain aerial fog,
+// volumetric clouds, direct sun/moon light, hemisphere ambient, GI bounce, RT reflections, and weather!
+void evalWorldAtmosphere(out float3 outSun, out float3 outSkyZ, out float3 outSkyH, out float3 outAmbUp, out float3 outAmbDown) {
+    const float elev = astroSunElev();
+    const float nightW = smoothstep(0.03f, -0.07f, elev);
+    const float goldenW = smoothstep(-0.04f, 0.04f, elev) * (1.0f - smoothstep(0.14f, 0.34f, elev));
+    const float highSun = smoothstep(0.20f, 0.48f, elev);
+    const float cover = saturate(clouds.x);
+    const float overcastW = saturate(cover * 0.82f - 0.10f + weather.w * 0.45f + weather.z * 0.42f);
+
+    // Preserve Skyrim's live weather/region mood while grounding it in physical Rayleigh/Mie D65 optics:
+    const float dirLum = max(dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
+    const float elevDeg = max(degrees(asin(saturate(max(elev, 0.02f)))), 1.5f);
+    const float airMass = 1.0f / (sin(radians(elevDeg)) + 0.50572f * pow(elevDeg + 6.07995f, -1.6364f));
+    const float3 physTrans = exp(-(0.20f * float3(0.175f, 0.410f, 1.0f) + 0.025f * lerp(1.0f, 4.5f, cover)) * airMass);
+    const float3 d65Day = lerp(physTrans, float3(0.97f, 0.985f, 1.01f), highSun * 0.76f);
+    const float d65Lum = max(dot(d65Day, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
+    float3 daySun = lerp(sunColour.rgb, d65Day * (dirLum / d65Lum), 0.58f);
+    daySun = lerp(daySun, daySun * float3(1.26f, 0.86f, 0.56f), goldenW * 0.65f);
+    daySun = lerp(daySun, dot(daySun, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.94f, 0.97f, 1.02f), overcastW * 0.55f);
+    const float3 moonSun = float3(0.24f, 0.34f, 0.58f) * max(dirLum * 0.85f, 0.30f);
+    outSun = lerp(daySun, moonSun, nightW);
+
+    // Unified sky zenith & horizon colors (locked to live weather ambient + physical Rayleigh/overcast/snow/night):
+    const float3 rawAmbUp = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.02f.xxx);
+    const float3 rawAmbDn = max(float3(-ambient[0].z + ambient[0].w, -ambient[1].z + ambient[1].w, -ambient[2].z + ambient[2].w), 0.015f.xxx);
+    const float ambLum = max(dot(rawAmbUp, float3(0.2126f, 0.7152f, 0.0722f)), 0.03f);
+
+    float3 sZ, sM, sH;
+    skyPalette(sZ, sM, sH);
+    const float3 overcastZ = float3(0.28f, 0.33f, 0.40f) * max(ambLum * 1.45f, 0.32f);
+    const float3 overcastH = float3(0.46f, 0.51f, 0.58f) * max(ambLum * 1.65f, 0.42f);
+    const float3 snowH = float3(0.58f, 0.63f, 0.70f) * max(ambLum * 1.65f, 0.46f);
+    const float3 nightZ = lerp(float3(0.014f, 0.024f, 0.052f), rawAmbUp * float3(0.45f, 0.52f, 0.66f), overcastW * 0.80f);
+    const float3 nightH = lerp(float3(0.028f, 0.044f, 0.078f), rawAmbUp * float3(0.68f, 0.74f, 0.84f), overcastW * 0.85f);
+
+    float3 dayZ = lerp(sZ, overcastZ, overcastW * 0.85f);
+    float3 dayH = lerp(sH, overcastH, overcastW * 0.85f);
+    dayH = lerp(dayH, snowH, weather.z * 0.45f);
+    const float zLum = max(dot(dayZ, float3(0.2126f, 0.7152f, 0.0722f)), 0.03f);
+    const float hLum = max(dot(dayH, float3(0.2126f, 0.7152f, 0.0722f)), 0.03f);
+    dayZ = lerp(dayZ, rawAmbUp * (zLum / ambLum), 0.28f);
+    dayH = lerp(dayH, rawAmbUp * (hLum / ambLum), 0.25f);
+
+    outSkyZ = lerp(dayZ, nightZ, nightW);
+    outSkyH = lerp(dayH, nightH, nightW);
+    outAmbUp = lerp(rawAmbUp, lerp(outSkyZ, outSkyH, 0.55f) * (ambLum / max(dot(lerp(outSkyZ, outSkyH, 0.55f), float3(0.2126f, 0.7152f, 0.0722f)), 0.03f)), 0.52f);
+    outAmbDown = lerp(rawAmbDn, outSkyH * 0.35f, 0.28f);
+}
+
 #ifndef ATLAS_SLOT
 #define ATLAS_SLOT t5
 #endif

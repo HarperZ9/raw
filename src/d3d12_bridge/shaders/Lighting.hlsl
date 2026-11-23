@@ -769,7 +769,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (!match && lightColS[li].r > lightColS[li].b * 1.25f) {
                 const float lPhase = dot(lightPosR[li].xyz + camPosW.xyz, float3(0.031f, 0.047f, 0.023f));
                 const float flk = 0.955f + 0.045f * (sin(camPosW.w * 2.8f + lPhase) * 0.65f + sin(camPosW.w * 6.3f + lPhase * 2.1f) * 0.35f);
-                const float3 fireBoost = skin ? float3(1.06f, 0.95f, 0.86f) : float3(1.36f, 0.85f, 0.44f);
+                const float3 fireBoost = skin ? float3(1.06f, 0.95f, 0.86f) : float3(1.48f, 0.88f, 0.42f);
                 c *= fireBoost * flk;
             }
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;

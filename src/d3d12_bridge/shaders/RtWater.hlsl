@@ -270,8 +270,9 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
             const float3 o = p + float3(0.0f, 0.0f, 2.5f + 0.003f * length(p));
 
-            // Distance-filtered 3D liquid reflection normal (crisp sculpted ripples up close, living swells at mid-distance).
-            const float reflRelief = lerp(0.92f, 0.52f, saturate(wDist / 8500.0f));
+            // Distance-filtered 3D liquid reflection normal (glassy mirror-like reflections of trees/bridges/waterwheel
+            // at grazing angles with crisp sculpted ripples up close, matching AAA reference water).
+            const float reflRelief = lerp(0.76f, 0.44f, saturate(wDist / 8500.0f));
             const float3 nRefl = normalize(lerp(float3(0.0f, 0.0f, 1.0f), n, reflRelief));
             float3 rd = reflect(-v, nRefl);
             if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }
@@ -429,13 +430,14 @@ void water(uint3 id : SV_DispatchThreadID) {
                     uwShaft = sunColour.rgb * float3(0.06f, 0.34f, 0.38f) * (uwAcc * 0.0028f * phUw * clearW);
                 }
                 const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) * 0.85f + (sunDir.w > 0.5f ? sunColour.rgb * 0.32f : 0.0f.xxx));
-                const float3 waterBody = (bed + caus) * T + scatter * (1.0f - T) + waveSSS + uwShaft;
+                const float shoreDark = lerp(0.76f, 1.0f, smoothstep(0.0f, 14.0f, depthV));
+                const float3 waterBody = ((bed * shoreDark + caus) * T + scatter * (1.0f - T) + waveSSS + uwShaft);
                 body = lerp(waterBody, foamLit, foamMask * 0.68f);
             }
             const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;
             // Eliminate the 2,200u mid-river seam: keep full physical refraction & RT reflections out to 6,500-13,500u!
             const float cellFeather = 1.0f - smoothstep(6500.0f, 13500.0f, wDist);
-            const float effF = saturate(F * waterA.x * shoreFeather * cellFeather);
+            const float effF = saturate(lerp(F, pow(saturate(F), 0.72f), 0.45f) * waterA.x * shoreFeather * cellFeather);
             const uint view = uint(waterB.x + 0.5f);
             const float3 farSkyRefl = waterSky(rd);
             // Deep Nordic/Arctic ocean body for mid/far water (replaces matte grey-blue vanilla Sea of Ghosts water).

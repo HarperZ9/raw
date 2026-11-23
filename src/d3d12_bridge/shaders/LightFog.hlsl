@@ -140,6 +140,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float overcastW = saturate(cover * 0.85f - 0.12f + weather.w * 0.45f + weather.z * 0.42f);
                 const float3 overcastScatter = lerp(hSky, hLum.xxx * float3(0.92f, 0.96f, 1.02f), 0.78f);
                 float3 physSky = lerp(hSky, overcastScatter, overcastW * 0.82f);
+                // Exact 1:1 sync with evalWorldAtmosphere() (same 0.42 blend as mountain aerial perspective & clouds
+                // so the sky dome, horizon fog, mountains, water & ambient share one continuous color field!):
+                float3 uSunS, uSkyZS, uSkyHS, uAmbUpS, uAmbDnS;
+                evalWorldAtmosphere(uSunS, uSkyZS, uSkyHS, uAmbUpS, uAmbDnS);
+                physSky = lerp(physSky, lerp(uSkyHS, uSkyZS, saturate(max(sDir.z, 0.0f) * 2.2f)), 0.42f);
                 // Physical 0.53-deg solar disc with Eddington limb darkening & exact atmospheric transmittance:
                 if (sunDiscGate > 0.01f) {
                     const float rDisc = saturate(sunAng / 0.0052f);

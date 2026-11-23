@@ -958,9 +958,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // top-3 lights use their exact RT shadow vis (rv[slot]); secondary lights (4..128) use stable ReSTIR visibility.
             // On skinned actor clothing/skin, soften BLAS self-shadow to eliminate coarse low-poly triangle acne on backs/shoulders.
             if (rt) {
-                // Real hardware DXR 1.2 point-light shadow cast (0.02 floor for primary top-3 RT lights, 0.06 for secondary ReSTIR;
-                // eliminates washed-out shadow leakage while keeping skinned actor self-shadow softening free of BLAS acne):
-                const float rtSh = slot != 0u ? lerp(0.02f, 1.0f, rv[slot]) : lerp(0.06f, 1.0f, restVis);
+                // Crisp hardware DXR 1.2 point-light shadows on primary top-3 RT lights (0.05 floor) +
+                // flicker-free stabilized floor (0.32) on secondary ReSTIR lights (eliminates 60Hz inn wall flicker!):
+                const float rtSh = slot != 0u ? lerp(0.05f, 1.0f, rv[slot]) : lerp(0.32f, 1.0f, restVis);
                 sh = (isActorCloth || isActorFeat) ? lerp(0.45f, 1.0f, rtSh) : rtSh;
             }
             else if (slot != 0u) { sh = rv[slot]; }

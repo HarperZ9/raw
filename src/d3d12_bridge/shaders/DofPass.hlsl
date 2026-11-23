@@ -11,31 +11,38 @@ Texture2D<float>  Depth : register(t1);
 Texture2D<float4> SrcB  : register(t2);
 SamplerState      Lin   : register(s0);
 
-// Tight 9-point crosshair-centered autofocus metering zone (±1.6% of viewport, median depth):
+// 13-point center-weighted portrait/subject autofocus metering zone (±1.2% inner + ±3.2% outer ring):
+// Takes the near-biased 30th-percentile depth so NPC faces & foreground subjects hold lock smoothly even when
+// the crosshair grazes their shoulder or hair (prevents Orgnar blurring out in 11.16.46.11.mp4!).
 float sampleFocusZoneZ() {
     const int2 c = int2(dims.xy * 0.5f);
     const int2 dMax = int2(dims.xy) - 1;
-    const int sx = max(int(dims.x * 0.016f), 8);
-    const int sy = max(int(dims.y * 0.016f), 6);
-    const int2 o[9] = {
-        int2(0, 0), int2(sx, 0), int2(-sx, 0), int2(0, sy), int2(0, -sy),
-        int2(sx, sy), int2(-sx, sy), int2(sx, -sy), int2(-sx, -sy)
+    const int sx1 = max(int(dims.x * 0.012f), 6);
+    const int sy1 = max(int(dims.y * 0.012f), 5);
+    const int sx2 = max(int(dims.x * 0.032f), 16);
+    const int sy2 = max(int(dims.y * 0.032f), 12);
+    const int2 o[13] = {
+        int2(0, 0),
+        int2(sx1, 0), int2(-sx1, 0), int2(0, sy1), int2(0, -sy1),
+        int2(sx1, sy1), int2(-sx1, sy1), int2(sx1, -sy1), int2(-sx1, -sy1),
+        int2(sx2, 0), int2(-sx2, 0), int2(0, sy2), int2(0, -sy2)
     };
-    float zVals[9];
-    [unroll] for (int k = 0; k < 9; k++) {
+    float zVals[13];
+    [unroll] for (int k = 0; k < 13; k++) {
         const float dk = Depth.Load(int3(clamp(c + o[k], int2(0, 0), dMax), 0));
         const float zk = dk < 1.0f ? viewZOf(dk) : 12000.0f;
         zVals[k] = zk < 42.0f ? 12000.0f : zk;
     }
-    [unroll] for (int i = 1; i < 9; i++) {
+    [unroll] for (int i = 1; i < 13; i++) {
         const float key = zVals[i];
         int j = i - 1;
-        [unroll] for (int s = 0; s < 8; s++) {
+        [unroll] for (int s = 0; s < 12; s++) {
             if (j >= 0 && zVals[j] > key) { zVals[j + 1] = zVals[j]; j--; }
         }
         zVals[j + 1] = key;
     }
-    return zVals[4];
+    // Smooth blend between 30th-percentile (subject lock) and median (zVals[6]) prevents instant background hijack:
+    return lerp(zVals[3], zVals[6], 0.35f);
 }
 
 // Exact Physical 35mm Full-Frame Thin-Lens CoC Equation (70 Skyrim units = 1 meter, 50mm cinema prime):
@@ -97,8 +104,8 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
     const float4 center = SrcA.Load(int3(px, 0));
     if (WaveActiveAllTrue(dofParams.x <= 1.0f)) { return float4(center.rgb, 0.0f); }
 
-    // 1/2-res maximum bokeh radius (matches maxRadFull = dofParams.y * 2 in full-res pixels):
-    const float maxRad = clamp(dofParams.y, 1.5f, 24.0f);
+    // 1/2-res cinema aperture bokeh radius (1.40x optical expansion breaks up the flat small-radius Gaussian look!):
+    const float maxRad = clamp(dofParams.y, 2.0f, 24.0f) * 1.40f;
     const float centerCoc = center.a;
     const float centerAbs = abs(centerCoc);
     const float2 uvNorm = (px + 0.5f) * invDim * 2.0f - 1.0f;
@@ -142,9 +149,11 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
                     const float bgOcc = smoothstep(centerCoc * 0.45f - 0.02f, centerCoc * 0.85f + 0.02f, tapCocF);
                     const float discW = smoothstep(rFrac * centerCoc - 0.06f, rFrac * centerCoc + 0.06f, tapCocF);
                     const float lumF = dot(tapF.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-                    // Silent Horizons / ADOF luminous HDR bokeh highlight weighting + spherical-aberration rim:
-                    const float orbF = (1.0f + pow(saturate(lumF - 0.55f), 1.85f) * (dofParams.z * 2.2f)) * (0.92f + 0.24f * rFrac * rFrac);
-                    const float3 locaFar = lerp(1.0f.xxx, float3(0.96f, 1.03f, 1.01f), rFrac * rFrac * 0.32f);
+                    // Zeiss/Cooke cinema-prime spherical-aberration bokeh ring profile (0.58 + 0.85*r^3) +
+                    // strong quadratic HDR bokeh orb expansion (breaks up flat out-of-focus mush into luminous cinema discs!):
+                    const float saRingF = 0.58f + 0.85f * (rFrac * rFrac * rFrac);
+                    const float orbF = (1.0f + pow(saturate(lumF - 0.30f), 2.0f) * (dofParams.z * 3.8f)) * saRingF;
+                    const float3 locaFar = lerp(1.0f.xxx, float3(0.95f, 1.04f, 1.02f), rFrac * rFrac * 0.42f);
                     const float fw = bgOcc * discW * orbF;
                     farAcc += tapF.rgb * locaFar * fw;
                     farW += fw;
@@ -155,11 +164,12 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
             const float4 tapN = SrcA.SampleLevel(Lin, saturate((px + 0.5f + unitOff * nearGatherRad) * invDim), 0.0f);
             if (tapN.a < -0.015f) {
                 const float nRad = -tapN.a;
-                const float covN = smoothstep(rFrac - 0.14f, rFrac + 0.10f, nRad);
+                const float covN = smoothstep(rFrac - 0.16f, rFrac + 0.10f, nRad);
                 if (covN > 0.001f) {
                     const float lumN = dot(tapN.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-                    const float orbN = (1.0f + pow(saturate(lumN - 0.55f), 1.85f) * (dofParams.z * 1.8f)) * (0.92f + 0.24f * rFrac * rFrac);
-                    const float3 locaNear = lerp(1.0f.xxx, float3(1.04f, 0.96f, 1.03f), rFrac * rFrac * 0.32f);
+                    const float saRingN = 0.58f + 0.85f * (rFrac * rFrac * rFrac);
+                    const float orbN = (1.0f + pow(saturate(lumN - 0.30f), 2.0f) * (dofParams.z * 3.2f)) * saRingN;
+                    const float3 locaNear = lerp(1.0f.xxx, float3(1.05f, 0.95f, 1.04f), rFrac * rFrac * 0.42f);
                     const float nw = covN * orbN;
                     nearAcc += tapN.rgb * locaNear * nw;
                     nearW += nw;

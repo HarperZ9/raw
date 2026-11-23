@@ -446,12 +446,12 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float3 farOcean = lerp(deepOceanBody, farSkyRefl, farF);
             const float3 nearCol = refr ? lerp(body, refl, effF) : lerp(game.rgb, refl, effF) + caus * (1.0f - effF);
             col = lerp(farOcean, nearCol, cellFeather) + glint * shoreFeather;
-            // Seamless far-ocean atmospheric horizon merge so the Sea of Ghosts blends smoothly into the sky dome.
-            if (wDist > 12000.0f) {
-                float3 sZ, sM, sH;
-                skyPalette(sZ, sM, sH);
-                const float seaFog = saturate((wDist - 12000.0f) / 110000.0f);
-                col = lerp(col, sH, seaFog * seaFog * 0.85f);
+            // Seamless far-ocean atmospheric horizon merge matched directly to waterSky() at the horizon
+            // (eliminates the dark ocean / bright curved sky-arc seam on the Sea of Ghosts).
+            if (wDist > 6000.0f) {
+                const float3 horSky = waterSky(normalize(float3(rd.xy, 0.025f)));
+                const float seaFog = smoothstep(6000.0f, 88000.0f, wDist);
+                col = lerp(col, horSky, seaFog * seaFog * 0.92f);
             }
             if (view == 1u) { col = refl; }
             else if (view == 2u) { col = caus * 4.0f; }

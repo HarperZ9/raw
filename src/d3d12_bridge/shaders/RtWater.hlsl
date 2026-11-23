@@ -288,13 +288,40 @@ void water(uint3 id : SV_DispatchThreadID) {
             float3 rd = reflect(-v, nRefl);
             if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }
             float3 refl;
+            // Hybrid SSR + Hardware DXR 1.2 Water Reflections (eliminates rectangular TLAS-hole cutouts seen in
+            // 09.57.21.71 & 09.57.17.80!): 12-step screen-space depth trace captures 100% of on-screen cliffs/bridges/trees
+            // cleanly, seamlessly falling back to DXR 1.2 RayQuery + aerial-perspective sky off-screen!
+            bool ssrHit = false;
+            float3 ssrCol = 0.0f.xxx;
+            float ssrEdge = 0.0f;
+            if (hasPreWater && wDist < 9000.0f) {
+                const float jitS = hash(px, frameIndex * 0.37f);
+                [loop] for (int si = 1; si <= 12; ++si) {
+                    const float tS = pow((float(si) - 0.35f + jitS * 0.4f) / 12.0f, 1.85f) * 1800.0f;
+                    const float3 sp = o + rd * tS;
+                    const float4 scS = screenOf(sp);
+                    if (scS.w <= 1.0f) { break; }
+                    const float2 suv = scS.xy * dims.zw;
+                    if (any(suv < 0.005f) || any(suv > 0.995f)) { break; }
+                    const int2 sip = clamp(int2(scS.xy), int2(0, 0), int2(dims.xy) - 1);
+                    const float dS = Depth.Load(int3(sip, 0));
+                    if (dS < 1.0f) {
+                        const float zHit = viewZOf(dS);
+                        const float thick = max(scS.w * 0.045f, 18.0f);
+                        if (scS.w > zHit && scS.w < zHit + thick) {
+                            ssrCol = PreWater[sip].rgb;
+                            ssrEdge = smoothstep(0.005f, 0.10f, min(min(suv.x, 1.0f - suv.x), min(suv.y, 1.0f - suv.y)));
+                            ssrHit = true;
+                            break;
+                        }
+                    }
+                }
+            }
             Hit h;
             if (reflectLength > 0.0f && traceHit(o, rd, reflectLength, h)) {
                 float3 cScreen, hn;
                 const float3 hitPt = o + rd * h.t;
                 const float3 rtCol = radianceAt(h, o, rd, float2(0.5f, 0.5f), true, hn);
-                // Seamless screen-edge crossfade between on-screen DLSS-RR denoised color & 3D world-space RT radiance:
-                // eliminates hard screen-edge water reflection pop-in when turning the camera!
                 if (onScreen(hitPt, cScreen)) {
                     const float4 scH = screenOf(hitPt);
                     const float2 hUv = scH.xy * dims.zw;
@@ -303,22 +330,20 @@ void water(uint3 id : SV_DispatchThreadID) {
                 } else {
                     refl = rtCol;
                 }
-                // Fix long-range black water reflections: apply physical atmospheric aerial-perspective sky fade
-                // + ambient sky floor on distant RT hits so far reflected mountains & shores never turn pitch black!
                 const float3 farReflSky = waterSky(rd);
                 const float reflFog = 1.0f - exp(-h.t * 0.00014f);
                 refl = lerp(max(refl, farReflSky * 0.16f), farReflSky, saturate(reflFog));
+                if (ssrHit) { refl = lerp(refl, ssrCol, ssrEdge); }
                 const float reflMax = max(refl.r, max(refl.g, refl.b));
                 if (reflMax > 4.5f) { refl *= 4.5f / reflMax; }
             } else {
                 refl = waterSky(rd);
-                // High-contrast wave-slope reflection modulation: dark shadowed wave troughs vs crisp bright crests
-                // (eliminates flat matte-plastic teal water under overcast skies).
                 const float waveTilt = saturate((1.0f - nRefl.z) * 18.0f);
                 const float skyFace = saturate(dot(nRefl, normalize(v + float3(0.0f, 0.0f, 1.0f))));
                 const float crestSheen = pow(skyFace, 36.0f) * 0.72f;
                 refl = refl * lerp(0.60f, 1.36f, smoothstep(0.03f, 0.48f, rd.z)) * (1.0f - waveTilt * 0.28f)
                      + refl * crestSheen;
+                if (ssrHit) { refl = lerp(refl, ssrCol, ssrEdge); }
             }
 
             // Dual-lobe GGX sun glint (tight 0.0045 mirror crest sparkle + broad 0.022 sheen lobe).

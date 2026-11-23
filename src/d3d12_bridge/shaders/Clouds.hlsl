@@ -85,27 +85,25 @@ float cloudDensityVol(float3 pa, bool detail) {
                              cNoise(p0 * 0.95f + float3(11.7f, 2.3f - tEvo * 0.85f, 5.1f)) - 0.5f,
                              cNoise(p0 * 0.95f + float3(6.3f, 14.1f, 2.7f + tEvo * 1.15f)) - 0.5f) * 0.70f;
     const float3 pw = p0 + w0;
+    // Smooth Perlin-Worley cumulus structure (replaces ridged 1-|2n-1| which caused sharp triangular crease holes
+    // seen in 09.57.42.68.png!): organic puffed cumulus domes + crisp multi-octave cauliflower crown erosion!
     const float f1 = cNoise(pw);
-    const float f2 = cNoise(pw * 2.09f + float3(13.1f, 5.7f, 3.3f));
-    const float f3 = cNoise(pw * 4.27f + float3(7.9f, 19.3f, 8.1f));
-    const float f4 = cNoise(pw * 8.63f + float3(23.7f, 11.1f, 15.7f));
-    // Billowed ridges (1 - |2n - 1|) sculpt real puffy cumulus domes instead of flat Perlin blobs.
-    const float billow = (1.0f - abs(f1 * 2.0f - 1.0f)) * 0.50f + (1.0f - abs(f2 * 2.0f - 1.0f)) * 0.30f + f3 * 0.13f + f4 * 0.07f;
+    const float f2 = cNoise(pw * 2.13f + float3(13.1f, 5.7f, 3.3f));
+    const float f3 = cNoise(pw * 4.37f + float3(7.9f, 19.3f, 8.1f));
+    const float f4 = cNoise(pw * 8.81f + float3(23.7f, 11.1f, 15.7f));
+    const float billow = pow(saturate(f1 * 0.54f + f2 * 0.27f + f3 * 0.13f + f4 * 0.06f), 0.85f);
     const float localCov = saturate(cover * lerp(0.55f, 1.35f, smoothstep(0.25f, 0.78f, wCov)));
-    const float thresh = lerp(0.64f, lerp(0.42f, 0.24f, stormType), localCov);
+    const float thresh = lerp(0.62f, lerp(0.40f, 0.24f, stormType), localCov);
     float dens = saturate((billow * hGrad - thresh) / max(1.0f - thresh, 0.22f));
-    // Vertical density gradient: lighter wisps at base, dense billowing core at mid-altitude, crisp crowns.
     dens *= lerp(0.55f, 1.15f, smoothstep(0.05f, 0.38f, h));
     if (detail && dens > 0.002f) {
-        // zydak1939 Path-Traced Cumulus Reference: 4-octave ridged-billow cauliflower turret erosion
-        // gives razor-sharp popcorn/cauliflower cumulus edges & delicate wisps instead of blurry cotton!
-        const float3 r = float3((sheared.x + wind.x * 0.30f) / 5600.0f, (sheared.y + wind.y * 0.30f) / 5600.0f, (curvedZ - clouds.y) / 4800.0f);
-        const float d1 = 1.0f - abs(cNoise(r) * 2.0f - 1.0f);
-        const float d2 = 1.0f - abs(cNoise(r * 2.23f + float3(5.3f, 17.1f, 9.7f)) * 2.0f - 1.0f);
+        const float3 r = float3((sheared.x + wind.x * 0.30f) / 4800.0f, (sheared.y + wind.y * 0.30f) / 4800.0f, (curvedZ - clouds.y) / 4200.0f);
+        const float d1 = cNoise(r);
+        const float d2 = cNoise(r * 2.27f + float3(5.3f, 17.1f, 9.7f));
         const float d3 = cNoise(r * 4.71f + float3(19.9f, 3.7f, 21.3f));
         const float d4 = cNoise(r * 9.53f + float3(11.1f, 29.3f, 7.9f));
         const float detailFbm = d1 * 0.44f + d2 * 0.30f + d3 * 0.16f + d4 * 0.10f;
-        const float erode = (1.0f - detailFbm) * lerp(0.36f, 0.62f, h) * (1.0f - dens * 0.42f);
+        const float erode = (1.0f - detailFbm) * lerp(0.32f, 0.58f, h) * (1.0f - dens * 0.45f);
         dens = cRemap(dens, erode, 1.0f, 0.0f, 1.0f);
     }
     return dens * cloudWind.z;

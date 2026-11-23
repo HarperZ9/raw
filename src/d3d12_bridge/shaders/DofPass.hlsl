@@ -95,7 +95,9 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
     const float2 uvNorm = (px + 0.5f) * invDim * 2.0f - 1.0f;
     const float cornerMag = saturate(dot(uvNorm, uvNorm) * 0.52f);
     const float2 radAxis = length(uvNorm) > 1.0e-4f ? normalize(uvNorm) : float2(1.0f, 0.0f);
-    const float rot0 = ign(px) * 6.2831853f;
+    // Smooth coherent Vogel-disc orientation (tiny +/-0.18 rad jitter instead of full 2*PI IGN noise,
+    // eliminating the dark stipple arcs inside pine/sky bokeh seen in 10.43.27.10.mp4!):
+    const float rot0 = (ign(px) - 0.5f) * 0.36f;
     const float kBlade = 6.2831853f / 9.0f;   // 9-blade Cooke/Zeiss cinema iris
 
     float3 farAcc = center.a > 0.01f ? center.rgb : 0.0f.xxx;
@@ -155,7 +157,12 @@ float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
     // Keep 1st-person hands/weapons/torches (< 45u) 100% razor-sharp with zero background bokeh bleed!
     if (curZ < 45.0f) { return sharp; }
     const float coc = abs(signedCoC(curZ, focusZ, dofParams.x));
-    const float4 bokeh = SrcB.SampleLevel(Lin, uv, 0.0f);
+    // 4-tap bilinear tent filter on 1/2-res bokeh buffer removes residual sub-pixel bokeh stippling cleanly:
+    const float2 bOff = dims.zw * 0.85f;
+    const float4 bokeh = (SrcB.SampleLevel(Lin, uv + float2( bOff.x,  bOff.y), 0.0f)
+                        + SrcB.SampleLevel(Lin, uv + float2(-bOff.x,  bOff.y), 0.0f)
+                        + SrcB.SampleLevel(Lin, uv + float2( bOff.x, -bOff.y), 0.0f)
+                        + SrcB.SampleLevel(Lin, uv + float2(-bOff.x, -bOff.y), 0.0f)) * 0.25f;
     // Allow physical near-field blurred silhouettes (bokeh.a < 0) to feather naturally over sharp backgrounds,
     // while strictly protecting sharp foreground subjects from far-field background bokeh bleed!
     const float nearBleed = bokeh.a < 0.0f ? saturate(-bokeh.a) : 0.0f;

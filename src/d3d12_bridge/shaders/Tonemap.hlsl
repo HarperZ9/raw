@@ -692,19 +692,18 @@ float4 main(In i) : SV_Target {
         const float3 glassTint = lerp(1.0f.xxx, float3(1.02f, 1.00f, 0.96f), saturate(r2 * 1.4f));
         c.rgb *= (vig * vig) * glassTint;
     }
-    // Layer 7 (bit 6): Physical 35mm Photochemical Film Grain (Kodak Vision3 response-curve bell + dual-octave clumping + RGB silver-halide variance).
+    // Layer 7 (bit 6): Fine 1px 35mm Sensor/Film Grain (removes blocky 2x2 clump & crawling slow phase;
+    // attenuates cleanly during fast motion so grain NEVER fights with motion blur or DoF!).
     if ((ovMask & 64u) != 0u) {
         const float gLum = dot(c.rgb, W);
-        // Response-curve bell: grain peaks organically in midtones, tapers cleanly to zero in deep blacks & bright highlights.
         const float response = saturate(gLum * (1.0f - gLum) * 4.0f);
-        const float2 gPos1 = i.pos.xy + (5.588238f * RO.z).xx;
-        const float2 gPos2 = floor(i.pos.xy * 0.5f) + (7.131942f * RO.z).xx;
-        const float nR = frac(52.9829189f * frac(dot(gPos1, float2(0.06711056f, 0.00583715f)))) - 0.5f;
-        const float nG = frac(52.9829189f * frac(dot(gPos1 + float2(17.0f, 31.0f), float2(0.06711056f, 0.00583715f)))) - 0.5f;
-        const float nB = frac(52.9829189f * frac(dot(gPos2 + float2(43.0f, 11.0f), float2(0.06711056f, 0.00583715f)))) - 0.5f;
-        const float clump = frac(52.9829189f * frac(dot(gPos2, float2(0.06711056f, 0.00583715f)))) - 0.5f;
-        const float3 halide = float3(nR * 0.65f + clump * 0.45f, nG * 0.62f + clump * 0.48f, nB * 0.72f + clump * 0.42f);
-        c.rgb = saturate(c.rgb + halide * (0.022f * clamp(RP.z, 0.0f, 2.5f) * (0.12f + 0.88f * response)));
+        const float gFrame = floor(RO.z * 60.0f);
+        const float2 gPos1 = i.pos.xy + float2(5.588238f * gFrame, 3.1739f * gFrame);
+        const float nM = frac(52.9829189f * frac(dot(gPos1, float2(0.06711056f, 0.00583715f)))) - 0.5f;
+        const float nC = frac(52.9829189f * frac(dot(gPos1 + float2(17.0f, 31.0f), float2(0.06711056f, 0.00583715f)))) - 0.5f;
+        const float3 halide = float3(nM * 0.85f + nC * 0.15f, nM * 0.90f, nM * 0.85f - nC * 0.15f);
+        const float moveAtten = 1.0f - saturate(RO.w * 0.08f) * 0.55f;
+        c.rgb = saturate(c.rgb + halide * (0.0095f * clamp(RP.z, 0.0f, 2.0f) * response * moveAtten));
     }
     // Layer 8 (bit 7): Cinematic 2.35:1 anamorphic letterbox borders.
     if ((ovMask & 128u) != 0u) {

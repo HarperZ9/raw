@@ -20,20 +20,19 @@ constexpr uint32_t kClusterCount = kTilesX * kTilesY * kSlices;
 // lighting alone. Each improvement has its own switch so its before and after can be shown.
 struct LightingTuning
 {
-    int   mode = 1;                 // 1 match the game, 2 improved
-    bool  softShadows = true;       // improved: screen-space soft shadows for every point light
+    int   mode = 2;                 // 1 match the game, 2 improved (native DX12 + DXR 1.2 default)
+    bool  softShadows = false;      // screen-space soft shadows (fallback only when RT is disabled)
     bool  ggxSpecular = true;       // improved: energy-conserving GGX in place of the game's lobe
     bool  volumetricFog = true;     // improved: fog lit by the sun (shadowed) and every point light
-    bool  contactShadows = true;    // improved: a short march along the sun direction
-    bool  ao = true;                // improved: the engine's real-time AO on the ambient term
+    bool  contactShadows = false;   // screen-space contact shadow march (fallback only when RT is disabled)
+    bool  ao = true;                // fallback AO when RT sky/RTAO is disabled
     bool  cascades = false;         // the sun's shadow from the decoded cascades; off: the game's mask
     int   view = 0;                 // 1 world normal, 2 sun shadow, 3 ambient
     float fogDensity = 0.00006f;    // extinction per game unit
     float fogAnisotropy = 0.35f;    // Henyey-Greenstein g
     float fogLightScale = 1.0f;     // point-light in-scatter gain
-    float fogSunScale = 0.35f;      // sun in-scatter gain (1.0 washed near ground warm on top of the game's haze)
-    bool  fogReplacesGame = false;  // our fog replaces the game's distance fog; off: the game's art-directed
-                                    // haze stays and ours adds lit shafts and lamp glow only
+    float fogSunScale = 0.75f;      // sun in-scatter gain
+    bool  fogReplacesGame = true;   // native 3D volumetric/aerial fog replaces vanilla distance fog
     float fogMaxDistance = 6000.0f; // game units
     float softRange = 400.0f;       // soft-shadow march length cap, game units
     float contactLength = 40.0f;    // game units
@@ -44,10 +43,10 @@ struct LightingTuning
     float rtAlphaRef = 0.5f;        // the alpha cut the rays apply
     float rtTermDist = 48.0f;       // game units: near hits ignored where the surface turns from the sun (facets)
     bool  rtSky = true;             // exteriors: the ambient scaled by the ray-traced sky visibility
-    float rtSkyStrength = 0.5f;     // RtSkyStrength: 0 none, 1 the full visibility; 0.5 since rt9 (the game's own AO still darkens after this pass)
-    float rtSkyLength = 6000.0f;    // game units
-    float rtBounce = 1.0f;          // exteriors: one bounce of indirect light from the sky rays (0 off)
-    float rtBounceInterior = 0.5f;  // interiors: the same bounce on top of the cell's ambient (0 off; the game's fill already holds some)
+    float rtSkyStrength = 1.0f;     // RtSkyStrength: 0 none, 1 full hardware DXR 1.2 sky/RTAO visibility
+    float rtSkyLength = 2400.0f;    // game units
+    float rtBounce = 1.2f;          // exteriors: multi-bounce indirect GI from hardware DXR 1.2
+    float rtBounceInterior = 1.15f; // interiors: multi-bounce indirect GI from hardware DXR 1.2
     bool  rtOmm = true;             // opacity micromaps for the alpha-tested meshes, where the runtime has them
     int   rtDebug = 0;              // the reflection output shows (Lighting view 7): 1 the primary ray, 2 the radiance cache, 3 the colour copies
     bool  rtMaterials = true;       // every mesh keeps its colour, coordinates and normals: off-screen hits are shaded
@@ -88,11 +87,11 @@ struct LightingTuning
     bool  rtReflect = true;         // glossy surfaces: one ray-traced reflection ray, the hit's colour in the game's frame
     // Water (RtWater.hlsl), after the game composites its water: improved mode with RT on raw::tx.
     bool  water = true;             // Water
-    // Pre-Pass Cinema DoF & Weather Lens Optics (ElderOptics.hlsli / LightFog.hlsl):
-    bool  dof = true;               // Dof: 32-tap heptagonal HDR bokeh DoF
-    float dofMaxDist = 540.0f;      // DofMaxDist: autofocus engagement range (150..2500 units)
-    float dofRadius = 8.5f;         // DofRadius: bokeh aperture radius (2..24 px)
-    float dofOrbBoost = 1.85f;      // DofOrbBoost: specular bokeh orb glow (0..4)
+    // Pre-Pass Cinema DoF & Weather Lens Optics (DofPass.hlsl):
+    bool  dof = true;               // Dof: 64-tap adaptive near/far thin-lens cinema bokeh DoF
+    float dofMaxDist = 420.0f;      // DofMaxDist: optical focal envelope (150..2500 units)
+    float dofRadius = 7.5f;         // DofRadius: bokeh aperture radius (1.5..24 px)
+    float dofOrbBoost = 1.25f;      // DofOrbBoost: specular bokeh orb glow (0..4)
     bool  weatherLens = true;       // WeatherLens: procedural HDR rain-on-lens droplets & blizzard frost
     float waterReflect = 1.0f;      // WaterReflect: the ray-traced reflection's share of the Fresnel weight
     float waterCaustics = 1.0f;     // WaterCaustics

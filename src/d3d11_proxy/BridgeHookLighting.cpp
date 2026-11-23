@@ -142,9 +142,9 @@ void LoadLightingConfig(const std::string& ini)
     } else if (quality >= 4) {
         defRt = 1; defRtSky = 1; defRtRefl = 1; defRtFar = 1; defRtSkin = 1; t.rtSkyLength = 2400.0f; t.rtBounce = 1.2f; t.rtBounceInterior = 1.15f; t.rtSkyStrength = 1.0f;
     }
-    t.mode = i("Mode", 1);
-    t.softShadows = i("SoftShadows", 1) != 0; t.ggxSpecular = i("GgxSpecular", 1) != 0;
-    t.volumetricFog = i("VolumetricFog", defFog) != 0; t.contactShadows = i("ContactShadows", 1) != 0;
+    t.mode = i("Mode", 2);
+    t.softShadows = i("SoftShadows", 0) != 0; t.ggxSpecular = i("GgxSpecular", 1) != 0;
+    t.volumetricFog = i("VolumetricFog", defFog) != 0; t.contactShadows = i("ContactShadows", 0) != 0;
     t.rtShadows = i("RtShadows", defRt) != 0;   // on raw::tx only (docs/RAYTRACING.md)
     t.rtAlpha = i("RtAlpha", defRt) != 0;
     t.rtAlphaRef = f("RtAlphaRef", t.rtAlphaRef);

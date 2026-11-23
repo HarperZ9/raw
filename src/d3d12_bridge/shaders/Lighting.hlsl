@@ -775,17 +775,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Interiors have no cascades; channel 0 of their mask belongs to a shadowed point light, so the
         // directional light there is unshadowed, as the game lights it.
         sunShadow = (flags.x & FLAG_SHADOWS) == 0u ? 1.0f : (flags.x & FLAG_CASCADES) != 0u ? cascadeShadow(p, d, true) : m4.x;
-        // When native hardware RT (RayQuery + Persistent World TLAS) is active, skip screen-space contact shadow hacks
-        // completely (keeps screenShadow only as fallback when RT is disabled).
-        if (!match && (flags.x & FLAG_CONTACT) != 0u && base != 5u && !isActorFeat && !isActorCloth && sunShadow > 0.0f && dot(s.n, sunDir.xyz) > 0.0f) {
-            // Even with hardware RT active, run a short-range 6-tap micro-contact shadow march (0..14u, z < 1200)
-            // to ground small clutter, pebbles, cobblestone cracks, and grass roots below BLAS triangle resolution.
-            if (!rt) {
-                sunShadow *= screenShadow(p + lift, sunDir.xyz, tune.w, 0.02f, jit, 12u);
-            } else if (z < 1200.0f) {
-                const float microSh = screenShadow(p + lift * 0.5f, sunDir.xyz, min(tune.w, 14.0f), 0.015f, jit, 6u);
-                sunShadow *= lerp(1.0f, microSh, saturate(1.0f - z / 1200.0f) * 0.72f);
-            }
+        // Pure Native Hardware DXR 1.2 Sun Shadows when RT is active (zero screen-space contact shadow hacks!).
+        // screenShadow runs ONLY as a fallback when hardware RT is explicitly disabled.
+        if (!match && !rt && (flags.x & FLAG_CONTACT) != 0u && base != 5u && !isActorFeat && !isActorCloth && sunShadow > 0.0f && dot(s.n, sunDir.xyz) > 0.0f) {
+            sunShadow *= screenShadow(p + lift, sunDir.xyz, tune.w, 0.02f, jit, 12u);
         }
         // Skinned actors (skin/hair/eye AND skinned clothing) keep the game's filtered shadow mask so coarse low-poly
         // skinned BLAS triangles never cast flat triangular self-shadow acne onto NPC tunics/shirts/backs.
@@ -938,9 +931,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 toL = lightPosR[li].xyz - p;
             const float dist = length(toL);
             const float rNorm = saturate(dist / lightPosR[li].w);
-            // Smooth physically-grounded Frostbite/UE5 windowed falloff (bright realistic core + silky long-tail feathering, zero hard edge).
+            // Full-reach physical point-light throw (restores real torch/hearth/lantern/spell light cast across rooms & streets;
+            // previous (win*win)/(1+1.45*rNorm^2) crushed 50-70% of light reach past 40% radius!).
             const float win = saturate(1.0f - rNorm * rNorm);
-            const float att = (win * win) / (1.0f + rNorm * rNorm * 1.45f);
+            const float att = pow(win, 1.35f) * 1.28f;
             if (att <= 0.0f) { continue; }
             // Native campfire/torch heat snow melt: warm firelights melt surrounding snow into glistening damp ground.
             if (!match && wet.snow > 0.01f && lightColS[li].r > lightColS[li].b * 1.25f) {
@@ -964,10 +958,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // top-3 lights use their exact RT shadow vis (rv[slot]); secondary lights (4..128) use stable ReSTIR visibility.
             // On skinned actor clothing/skin, soften BLAS self-shadow to eliminate coarse low-poly triangle acne on backs/shoulders.
             if (rt) {
-                // Eliminates discontinuous 0.0 -> 0.68 shadow-rank pop when a light moves between slot #3 and #4
-                // as you walk in an inn or hall (both primary RT and secondary ReSTIR share a smooth continuous floor):
-                const float rtSh = slot != 0u ? lerp(0.14f, 1.0f, rv[slot]) : lerp(0.20f, 1.0f, restVis);
-                sh = (isActorCloth || isActorFeat) ? lerp(0.60f, 1.0f, rtSh) : rtSh;
+                // Real hardware DXR 1.2 point-light shadow cast (0.02 floor for primary top-3 RT lights, 0.06 for secondary ReSTIR;
+                // eliminates washed-out shadow leakage while keeping skinned actor self-shadow softening free of BLAS acne):
+                const float rtSh = slot != 0u ? lerp(0.02f, 1.0f, rv[slot]) : lerp(0.06f, 1.0f, restVis);
+                sh = (isActorCloth || isActorFeat) ? lerp(0.45f, 1.0f, rtSh) : rtSh;
             }
             else if (slot != 0u) { sh = rv[slot]; }
             if (!match && !rt && sunColour.w > 0.5f && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
@@ -999,10 +993,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
 
     float3 amb = float3(dot(ambient[0].xyz, s.n) + ambient[0].w, dot(ambient[1].xyz, s.n) + ambient[1].w,
                         dot(ambient[2].xyz, s.n) + ambient[2].w);
-    // True ENB-class Directional Skylighting + grounded micro-contact AO:
-    // Separates upper-hemisphere sky visibility (strongly darkened under roofs, arches, trees & bush cores)
-    // from multi-bounce colored GI (RtBounce) so shaded recesses have real depth and warm indirect bounce contrast.
-    const float ssaoMix = (rt && (flags.x & FLAG_SKY) != 0u) ? 0.62f : 1.0f;
+    // Pure Native Hardware DXR 1.2 Directional Skylighting & RTAO when RT is active (zero screen-space GTAO halos!):
+    // Screen-space GTAO (AoHist) runs ONLY as a fallback when hardware RT sky/RTAO is disabled.
+    const float ssaoMix = (rt && (flags.x & FLAG_SKY) != 0u) ? 0.0f : 1.0f;
     const float aoWeight = (base == 5u ? 0.78f : (isActorFeat ? 0.45f : 1.0f)) * ssaoMix;
     const float aoRaw = (flags.x & FLAG_AO) != 0u ? lerp(1.0f, AoHist.Load(ip).x, tune2.x * aoWeight) : 1.0f;
     const float aoTerm = !match ? pow(saturate(aoRaw), 1.22f) : aoRaw;

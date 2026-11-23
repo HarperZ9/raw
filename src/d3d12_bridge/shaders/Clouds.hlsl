@@ -29,56 +29,44 @@ float4 sampleCloudVol(float3 uvw) {
     return lerp(CloudNoise.SampleLevel(Lin, uv0, 0.0f), CloudNoise.SampleLevel(Lin, uv1, 0.0f), zT);
 }
 
-// Schneider & Vos (SIGGRAPH 2015) true 3D Perlin-Worley cumulus density from precomputed 64^3 periodic volume LUT.
+// Infinite-resolution 6-octave curl-warped Perlin-Billow cumulus density (replaces blurry 64^3 hollow Worley
+// doughnut bubbles caught in s_1/s_2.jpg with crisp, photographic billowing 3D cumulus clouds & zero zenith pinch).
 float cloudDensityVol(float3 pa, bool detail) {
     const float2 dxy = pa.xy - camPosW.xy;
     const float curvedZ = pa.z + dot(dxy, dxy) * 1.15e-8f;
     const float h = (curvedZ - clouds.y) / clouds.z;
     if (h <= 0.0f || h >= 1.0f) { return 0.0f; }
     const float3 wind = float3(cloudWind.xy * camPosW.w, 0.0f);
-    const float3 sheared = pa + wind + float3(cloudWind.xy, 0.0f) * (h * 6.0f);
+    const float3 sheared = pa + wind + float3(cloudWind.xy, 0.0f) * (h * 5.0f);
     const float cover = saturate(clouds.x);
     const float stormType = saturate(weather.w * 1.4f + max(cover - 0.80f, 0.0f) * 2.5f);
-    const float topCap = lerp(0.74f, 0.96f, stormType);
-    const float baseGrad = smoothstep(0.0f, lerp(0.14f, 0.07f, stormType), h);
-    const float topGrad  = 1.0f - smoothstep(topCap * 0.56f, topCap, h);
+    const float topCap = lerp(0.78f, 0.96f, stormType);
+    const float baseGrad = smoothstep(0.0f, lerp(0.16f, 0.08f, stormType), h);
+    const float topGrad  = 1.0f - smoothstep(topCap * 0.52f, topCap, h);
     const float hGrad = saturate(baseGrad * topGrad);
 
-    // Truly aperiodic continental weather-front modulation + domain-warped dual-octave rotated Perlin-Worley LUT:
-    // completely eliminates periodic 64^3 cloud tiling grids across wide vistas (Whiterun tundra, Sea of Ghosts).
-    const float2 pXY = sheared.xy;
-    const float2 rotXY = float2(pXY.x * 0.7986355f - pXY.y * 0.6018150f, pXY.x * 0.6018150f + pXY.y * 0.7986355f); // 37 deg
-    const float macroFront = cNoise(float3(pXY * 0.0000105f, 1.3f)) * 0.62f
-                           + cNoise(float3(rotXY * 0.0000245f + float2(19.3f, 7.1f), 2.7f)) * 0.38f;
-    const float2 domainWarp = float2(cNoise(float3(pXY * 0.000028f + float2(3.7f, 11.1f), h)),
-                                     cNoise(float3(rotXY * 0.000028f + float2(17.9f, 5.3f), h))) - 0.5f;
-    const float2 warpedXY = pXY + domainWarp * 11500.0f;
-    const float2 warpedRot = float2(warpedXY.x * 0.7986355f - warpedXY.y * 0.6018150f,
-                                    warpedXY.x * 0.6018150f + warpedXY.y * 0.7986355f);
-    const float3 q1 = float3(warpedXY.x / 46000.0f, warpedXY.y / 43000.0f, h * 0.72f);
-    const float3 q2 = float3(warpedRot.x / 19700.0f, warpedRot.y / 18900.0f, h * 1.15f);
-    const float4 low1 = sampleCloudVol(q1);
-    const float4 low2 = sampleCloudVol(q2);
-    const float4 low = lerp(low1, low2, 0.38f);
-    const float lowFbm = low.g * 0.625f + low.b * 0.25f + low.a * 0.125f;
-    const float baseShape = cRemap(low.r, -(1.0f - lowFbm) * 0.50f, 1.0f, 0.0f, 1.0f) * hGrad;
-    // Sculpted broken 3D cumulus banks & wide open blue sky corridors (eliminates flat Swiss-cheese cloud sheet with sharp holes).
-    const float localCov = saturate(cover * lerp(0.42f, 1.22f, smoothstep(0.28f, 0.80f, macroFront)));
-    const float thresh = lerp(0.76f, lerp(0.58f, 0.34f, stormType), localCov);
-    float dens = pow(cRemap(baseShape, thresh, 1.0f, 0.0f, 1.0f), 1.45f);
-    if (detail && dens > 0.001f) {
-        // 2nd + 3rd lookups: dual-scale 3D Worley cauliflower turret erosion + infinite-resolution procedural micro-wisps
-        // on cloud edges so overhead zenith clouds stay razor-sharp with zero 64x64 texture blur.
-        const float3 r1 = float3((sheared.x + wind.x * 0.30f) / 4800.0f, (sheared.y + wind.y * 0.30f) / 4600.0f, h * 2.5f);
-        const float3 r2 = float3((sheared.x + wind.x * 0.55f) / 1400.0f, (sheared.y + wind.y * 0.55f) / 1350.0f, h * 5.8f);
-        const float4 hi1 = sampleCloudVol(r1);
-        const float4 hi2 = sampleCloudVol(r2);
-        const float hiFbm1 = hi1.g * 0.50f + hi1.b * 0.32f + hi1.a * 0.18f;
-        const float hiFbm2 = hi2.g * 0.38f + hi2.b * 0.36f + hi2.a * 0.26f;
-        const float microWisp = cNoise((sheared + wind * 0.75f) * 0.0022f) * 0.62f + cNoise((sheared + wind * 0.90f) * 0.0056f + 7.3f) * 0.38f;
-        const float hiComb = hiFbm1 * 0.45f + hiFbm2 * 0.35f + microWisp * 0.20f;
-        const float hiMod = lerp(hiComb, 1.0f - hiComb, saturate(h * 1.85f));
-        const float erode = hiMod * lerp(0.42f, 0.64f, h) * (1.0f - dens * 0.35f);
+    // 4-octave domain-warped continental FBM for broad, natural cloud banks (zero hollow Worley rings/doughnuts).
+    const float3 p0 = float3(sheared.x / 24000.0f, sheared.y / 23000.0f, h * 0.85f);
+    const float3 w0 = float3(cNoise(p0 * 0.95f + float3(3.1f, 7.4f, 1.9f)) - 0.5f,
+                             cNoise(p0 * 0.95f + float3(11.7f, 2.3f, 5.1f)) - 0.5f, 0.0f) * 0.55f;
+    const float3 pw = p0 + w0;
+    const float f1 = cNoise(pw);
+    const float f2 = cNoise(pw * 2.07f + float3(13.1f, 5.7f, 3.3f));
+    const float f3 = cNoise(pw * 4.21f + float3(7.9f, 19.3f, 8.1f));
+    const float f4 = cNoise(pw * 8.53f + float3(23.7f, 11.1f, 15.7f));
+    const float baseFbm = f1 * 0.48f + f2 * 0.28f + f3 * 0.15f + f4 * 0.09f;
+    const float baseShape = baseFbm * hGrad;
+
+    const float thresh = lerp(0.56f, lerp(0.38f, 0.22f, stormType), cover);
+    float dens = pow(saturate((baseShape - thresh) / max(1.0f - thresh, 0.22f)), 1.25f);
+    if (detail && dens > 0.002f) {
+        // High-frequency crisp cauliflower wisps at cloud boundaries (infinite resolution, zero 64^3 texel blur).
+        const float3 r = float3((sheared.x + wind.x * 0.35f) / 3600.0f, (sheared.y + wind.y * 0.35f) / 3500.0f, h * 2.8f);
+        const float d1 = cNoise(r);
+        const float d2 = cNoise(r * 2.19f + float3(5.3f, 17.1f, 9.7f));
+        const float d3 = cNoise(r * 4.61f + float3(19.9f, 3.7f, 21.3f));
+        const float detailFbm = d1 * 0.52f + d2 * 0.31f + d3 * 0.17f;
+        const float erode = detailFbm * lerp(0.36f, 0.56f, h) * (1.0f - dens * 0.45f);
         dens = cRemap(dens, erode, 1.0f, 0.0f, 1.0f);
     }
     return dens * cloudWind.z;

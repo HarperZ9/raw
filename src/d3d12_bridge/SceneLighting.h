@@ -47,6 +47,8 @@ struct SceneLighting
     // Sun shadow cascades, from the shadow-mask draw: camera-relative world to (u, v, depth)
     // of cascade k, its depth bias, and the depth-buffer value where cascade 1 takes over.
     bool  hasCascades = false;
+    bool  hasEngineCell = false;    // true when raw_engine.dll supplied ground-truth TESObjectCELL::IsInterior()
+    bool  isInterior = false;       // exact TESObjectCELL::IsInterior() (eliminates exterior->interior flicker when cascades drop)
     uint32_t cascades = 0;
     float cascade[2][3][4] = {};
     float cascadeBias[2] = {};

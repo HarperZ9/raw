@@ -422,8 +422,9 @@ private:
         if (frame.rt && t.rtShadows && m_rtVis.valid() && m_rtIdx.valid()) f |= kRt | (t.rtSky ? kSky : 0u) | (t.rtSky && t.rtBounce > 0.0f && m_rtBounce.valid() ? kBounce : 0u) |
                      (t.rtSky && t.rtReflect && m_rtReflect.valid() ? kReflect : 0u) | (t.rtSky && t.rtRest && m_rtBounce.valid() ? kRest : 0u);
         if (frame.hasShadows && s.hasCascades) f |= kShadows;
-        // Interiors (no cascades): the bounce at its own strength, on top of the cell's fill.
-        const bool interior = (f & kShadows) == 0u;
+        // True engine TESObjectCELL::IsInterior() ownership (eliminates exterior->interior flicker when
+        // shadow-cascade draws drop during free-cam/fast turns; falls back to !kShadows only if engine_rt is absent).
+        const bool interior = s.hasEngineCell ? s.isInterior : ((f & kShadows) == 0u);
         if (interior && (f & kBounce) && t.rtBounceInterior > 0.0f) f |= kBounceIn;
         u.flags[0] = f; u.flags[1] = s.lightCount; u.flags[2] = s.cascades; u.flags[3] = uint32_t(t.view);
         u.dofParams[0] = t.dof ? t.dofMaxDist : 0.0f;
@@ -440,7 +441,7 @@ private:
         u.resScale[0] = s.resolutionScale[0]; u.resScale[1] = s.resolutionScale[1]; u.resScale[2] = s.knee; u.resScale[3] = s.specularScale;
         for (int k = 0; k < 3; ++k) { u.sunDir[k] = s.sunDirection[k]; u.sunColour[k] = s.sunColour[k]; }
         u.sunDir[3] = s.hasSun ? 1.0f : 0.0f;
-        u.sunColour[3] = (f & kShadows) ? 1.0f : 0.0f;
+        u.sunColour[3] = interior ? 0.0f : 1.0f;
         std::memcpy(u.ambient, s.ambient, 48);
         std::memcpy(u.cascade, s.cascade, 96);
         u.cascadeInfo[0] = s.cascadeBias[0]; u.cascadeInfo[1] = s.cascadeBias[1]; u.cascadeInfo[2] = s.splitDepth;

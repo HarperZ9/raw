@@ -78,14 +78,9 @@ void STDMETHODCALLTYPE WrappedContext::OMSetBlendState(ID3D11BlendState* pBS, co
         bf[2] = BlendFactor[2]; bf[3] = BlendFactor[3];
     }
 
-    if (pBS == m_cachedBlendState && SampleMask == m_cachedSampleMask &&
-        bf[0] == m_cachedBlendFactor[0] && bf[1] == m_cachedBlendFactor[1] &&
-        bf[2] == m_cachedBlendFactor[2] && bf[3] == m_cachedBlendFactor[3])
-    {
-        ++m_redundantBlend;
-        return;
-    }
-
+    // Always forward to m_real: GBuffer_BeforeDraw / BridgeHook / SceneSkin modify m_real directly,
+    // so skipping on m_cachedBlendState leaves overridden GBuffer blend variants stuck on subsequent
+    // draws (including Skyrim's full-screen water composite quad). raw::tx deduplicates PSOs internally.
     m_cachedBlendState = pBS;
     if (pBS) { D3D11_BLEND_DESC d; pBS->GetDesc(&d);
         EmitStateLine("blend", pBS, {{"enable",(int)d.RenderTarget[0].BlendEnable},{"src",(int)d.RenderTarget[0].SrcBlend},{"dst",(int)d.RenderTarget[0].DestBlend},{"op",(int)d.RenderTarget[0].BlendOp},{"writemask",(int)d.RenderTarget[0].RenderTargetWriteMask},{"a2c",(int)d.AlphaToCoverageEnable}}); }
@@ -101,11 +96,7 @@ void STDMETHODCALLTYPE WrappedContext::OMSetDepthStencilState(ID3D11DepthStencil
     if (PG_IsSafeMode()) { m_real->OMSetDepthStencilState(pDSS, StencilRef); return; }
 
     ++m_totalDS;
-    if (pDSS == m_cachedDSState && StencilRef == m_cachedStencilRef)
-    {
-        ++m_redundantDS;
-        return;
-    }
+    // Always forward to m_real so internal proxy passes never leave a stale depth-stencil state bound.
     m_cachedDSState    = pDSS;
     if (pDSS) { D3D11_DEPTH_STENCIL_DESC d; pDSS->GetDesc(&d);
         EmitStateLine("depth", pDSS, {{"depth_enable",(int)d.DepthEnable},{"write",(int)d.DepthWriteMask},{"func",(int)d.DepthFunc},{"stencil",(int)d.StencilEnable}}); }

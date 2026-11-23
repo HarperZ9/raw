@@ -45,6 +45,9 @@ TissueProfile DefaultTissueProfile(TissueKind kind) {
     case TissueKind::Thigh:
         // High-stiffness athletic stride jiggle on impact/sprint.
         return {{280.0f, 260.0f, 240.0f}, {16.5f, 15.5f, 15.0f}, -0.06f, {1.0f, 1.2f, 1.2f}, 0.025f, 0.12f};
+    case TissueKind::Pelvic:
+        // Free-hanging anatomical pendulum & viscoelastic soft-tissue bounce with thigh-collision strain limits.
+        return {{78.0f, 92.0f, 108.0f}, {6.4f, 7.2f, 8.0f}, -0.45f, {2.8f, 3.2f, 3.6f}, 0.145f, 0.16f};
     case TissueKind::Hair:
         // Low-stiffness flowing strand dynamics with wind/motion trail.
         return {{65.0f, 65.0f, 95.0f}, {6.8f, 6.8f, 8.5f}, -0.60f, {5.5f, 5.5f, 4.5f}, 0.160f, 0.0f};
@@ -61,6 +64,9 @@ bool ClassifySoftBone(const char* boneName, TissueKind* outKind) {
     if (ContainsCI(boneName, "butt") || ContainsCI(boneName, "glute")) { *outKind = TissueKind::Glute; return true; }
     if (ContainsCI(boneName, "belly")) { *outKind = TissueKind::Belly; return true; }
     if (ContainsCI(boneName, "thigh") && ContainsCI(boneName, "phys")) { *outKind = TissueKind::Thigh; return true; }
+    if (ContainsCI(boneName, "genital") || ContainsCI(boneName, "scrotum") || ContainsCI(boneName, "pelvic")) {
+        *outKind = TissueKind::Pelvic; return true;
+    }
     if (ContainsCI(boneName, "hair") || ContainsCI(boneName, "ponytail") || ContainsCI(boneName, "braid")) {
         *outKind = TissueKind::Hair; return true;
     }

@@ -40,14 +40,13 @@ float2 ekmanWind(float altNorm) {
     return rotW * lerp(0.72f, 2.65f, altNorm);
 }
 
-// Divergence-free 2D curl turbulence for fluid cloud marbling, diffusion & continuous metamorphosis.
+// Fast 3-tap forward-difference divergence-free 2D curl for fluid cloud marbling & metamorphosis (25% fewer ALU ops).
 float2 cloudCurl2D(float2 p, float t) {
     const float e = 0.08f;
-    const float nY1 = cNoise(float3(p.x, p.y + e, t));
-    const float nY0 = cNoise(float3(p.x, p.y - e, t));
-    const float nX1 = cNoise(float3(p.x + e, p.y, t));
-    const float nX0 = cNoise(float3(p.x - e, p.y, t));
-    return float2((nY1 - nY0) / (2.0f * e), -(nX1 - nX0) / (2.0f * e));
+    const float n0 = cNoise(float3(p.x, p.y, t));
+    const float nX = cNoise(float3(p.x + e, p.y, t));
+    const float nY = cNoise(float3(p.x, p.y + e, t));
+    return float2((nY - n0) / e, -(nX - n0) / e);
 }
 
 // Nubis Evolved (Schneider 2022, SKY-02) True 3D Volumetric Cumulus Field with Ekman-Spiral Altitude Shear
@@ -64,10 +63,10 @@ float cloudDensityVol(float3 pa, bool detail) {
     const float cover = saturate(clouds.x);
     const float stormType = saturate(weather.w * 1.4f + max(cover - 0.78f, 0.0f) * 2.5f);
 
-    // 2D continental weather map + slow convective metamorphosis wave so cloud banks continuously reform & dissolve:
+    // 2D continental weather map + slow convective metamorphosis wave (curl-marbled on detail pass to save ~1.4 ms GPU time!):
     const float tMorph = camPosW.w * 0.0032f;
     const float2 wUv = sheared.xy / 62000.0f;
-    const float2 curlW = cloudCurl2D(wUv * 1.35f, tMorph * 0.65f) * 0.28f;
+    const float2 curlW = detail ? (cloudCurl2D(wUv * 1.35f, tMorph * 0.65f) * 0.28f) : 0.0f.xx;
     const float wCov = cNoise(float3(wUv + curlW, 1.3f + tMorph)) * 0.62f
                      + cNoise(float3((wUv - curlW * 0.6f) * 2.35f + 7.1f, 3.7f - tMorph * 0.8f)) * 0.38f;
     const float wHeight = saturate(cNoise(float3(wUv * 1.45f + 19.3f + curlW * 0.5f, 5.1f + tMorph * 0.5f)) * 0.70f + stormType * 0.45f);

@@ -379,8 +379,9 @@ float4 main(In i) : SV_Target {
         ovAdd += min((lensAcc * 0.065f + haloCol * 0.035f * saturate(1.0f - cDist * 1.35f)) * clamp(RQ.w, 0.0f, 2.5f), 0.22f.xxx);
     }
     if ((ovMask & 8u) != 0u) {
-        // Layer 4: Subtle Optical Diffusion (restrained wide-radius highlight glow without washing out sharp detail).
-        ovAdd += max(bloom - 0.12f.xxx, 0.0f.xxx) * 0.065f;
+        // Layer 4 (OV4): Physical Tiffen Black Pro-Mist 1/4 Optical Diffusion — softly halates highlights while preserving deep shadows & crispness.
+        const float3 proMist = max(bloom - 0.10f.xxx, 0.0f.xxx) * float3(1.04f, 1.00f, 0.96f);
+        ovAdd += proMist * (0.095f * clamp(RQ.w, 0.0f, 2.5f));
     }
     // Energy-conserving optical bloom/lens screen-blend: prevents bloom from pushing bright snow or coastal horizons into whiteout.
     const float3 cappedAdd = ovAdd / (1.0f + max(ovAdd.r, max(ovAdd.g, ovAdd.b)) * 1.35f);
@@ -482,11 +483,13 @@ float4 main(In i) : SV_Target {
         const float3 linOut = pow(max(lutOut, 0.0f.xxx), 2.2f);
         c.rgb = saturate(lerp(c.rgb, linOut, saturate(RO.x)));
     }
-    // Layer 6 (bit 5): Optical cos^4 lens vignette.
+    // Layer 6 (OV6): Physical cos^4 Anamorphic Cinema Lens Vignette with subtle vintage peripheral warmth.
     if ((ovMask & 32u) != 0u) {
-        const float2 vd = (suv - 0.5f.xx) * float2(1.15f, 1.0f);
-        const float vig = saturate(1.0f - dot(vd, vd) * 0.62f * clamp(RP.w, 0.0f, 2.0f));
-        c.rgb *= vig * vig;
+        const float2 vd = (suv - 0.5f.xx) * float2(1.18f, 1.0f);
+        const float r2 = dot(vd, vd);
+        const float vig = saturate(1.0f - r2 * 0.68f * clamp(RP.w, 0.0f, 2.0f));
+        const float3 glassTint = lerp(1.0f.xxx, float3(1.02f, 1.00f, 0.96f), saturate(r2 * 1.4f));
+        c.rgb *= (vig * vig) * glassTint;
     }
     // Layer 7 (bit 6): Physical 35mm Photochemical Film Grain (Kodak Vision3 response-curve bell + dual-octave clumping + RGB silver-halide variance).
     if ((ovMask & 64u) != 0u) {

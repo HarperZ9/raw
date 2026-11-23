@@ -60,11 +60,13 @@ float3 distantLit(int3 ip, float2 at, float d) {
         const float bough2 = cNoise(wpTree * 0.052f + 7.3f) * 2.0f - 1.0f;
         n = normalize(n + (right * (bough * 0.28f) + float3(0.0f, 0.0f, bough2 * 0.24f)) * cw);
     } else if (viewZOf(d) > 3800.0f) {
-        // Organic geological rock-strata micro-relief on blocky distant mountain LOD faces.
+        // Seamless Near-to-Far Terrain Continuity: tri-planar geological rock-strata + alpine scree contrast on distant mountain LODs!
         const float3 wpM = p + camPosW.xyz;
-        const float strata = cNoise(float3(wpM.xy * 0.00085f, wpM.z * 0.0032f)) * 2.0f - 1.0f;
-        const float crag = cNoise(wpM * 0.0024f + 11.7f) * 2.0f - 1.0f;
-        n = normalize(n + float3(crag * 0.20f, strata * 0.22f, strata * 0.14f));
+        const float strata = cNoise(float3(wpM.xy * 0.00085f, wpM.z * 0.0038f)) * 2.0f - 1.0f;
+        const float crag = cNoise(wpM * 0.0026f + 11.7f) * 2.0f - 1.0f;
+        n = normalize(n + float3(crag * 0.24f, strata * 0.26f, strata * 0.16f));
+        const float lodCliff = smoothstep(0.72f, 0.35f, rawNz);
+        albedo *= lerp(1.0f, lerp(0.80f, 1.18f, strata * 0.5f + 0.5f), lodCliff * 0.55f);
     }
     const bool rt = (flags.x & FLAG_RT) != 0u;
     float sh = (flags.x & FLAG_SHADOWS) == 0u ? 1.0f : (flags.x & FLAG_CASCADES) != 0u ? cascadeShadow(p, d, true) : Mask.Load(ip).x;

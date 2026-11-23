@@ -698,8 +698,25 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             spec += dirCol * (s1 * 0.22f + albedo * s2 * 0.34f) * sunShadow;
         }
         if (skin && !match) {
-            const float wrapSun = saturate((dot(s.n, sunDir.xyz) + 0.32f) / 1.32f);
-            diff += sunColour.rgb * float3(0.18f, 0.09f, 0.06f) * wrapSun * (0.35f + 0.65f * sunShadow);
+            // Dual-lobe character skin shading (Callisto Protocol / SKN-09): warm dermal wrap scatter +
+            // subtle secondary oil/pore micro-sheen lobe (alpha=0.18) for lifelike faces & hands (never chalky or plastic).
+            const float wrapSun = saturate((dot(s.n, sunDir.xyz) + 0.35f) / 1.35f);
+            diff += dirCol * float3(0.20f, 0.095f, 0.062f) * wrapSun * (0.35f + 0.65f * sunShadow);
+            const float3 hSkin = normalize(s.v + sunDir.xyz);
+            const float nhSk = saturate(dot(s.n, hSkin));
+            const float ddSk = nhSk * nhSk * (0.0324f - 1.0f) + 1.0f;
+            const float dSk = 0.0324f / (PI * ddSk * ddSk);
+            const float fSk = 0.028f + 0.972f * pow(1.0f - saturate(dot(s.v, hSkin)), 5.0f);
+            spec += dirCol * (min(dSk * fSk * 0.14f, 1.4f) * sunShadow * saturate(dot(s.n, sunDir.xyz)));
+        }
+        // Physical Character Eye Cornea Wetness + Iris Caustic Catchlight (base == 12u, SKN-09):
+        if (base == 12u && !match) {
+            const float3 hEye = normalize(s.v + sunDir.xyz);
+            const float nhE = saturate(dot(s.n, hEye));
+            const float ddE = nhE * nhE * (0.0012f - 1.0f) + 1.0f;
+            const float cornea = min(0.0012f / (PI * ddE * ddE), 18.0f) * (0.04f + 0.96f * pow(1.0f - saturate(dot(s.v, hEye)), 5.0f));
+            spec += dirCol * (cornea * 0.28f * (0.35f + 0.65f * sunShadow));
+            diff += dirCol * float3(0.14f, 0.08f, 0.07f) * (0.25f * saturate(dot(s.n, sunDir.xyz) + 0.4f));
         }
         if (wet.snow > 0.0f && sunShadow > 0.0f) {
             // arXiv:2505.08985 (Wu/Luan/Hasan/Ramamoorthi 2025) Dual-Scale Position-Normal Manifold Micro-Glints:

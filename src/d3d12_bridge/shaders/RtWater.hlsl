@@ -375,9 +375,11 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float3 waveSSS = sunDir.w > 0.5f
                     ? float3(0.03f, 0.28f, 0.26f) * sunColour.rgb * (0.25f + 0.75f * pow(saturate(dot(-v, sunDir.xyz)), 3.5f)) * saturate((1.0f - n.z) * 5.5f) * 0.65f
                     : 0.0f.xxx;
-                // Organic turbulent shoreline contact foam ONLY at 0..3.5u rock/bank contact (deleted ugly sin(depthV) zebra stripes!).
-                const float shoreMeniscus = (1.0f - smoothstep(0.0f, 3.5f, depthV)) * smoothstep(0.0f, 0.35f, depthV);
-                const float froth = organicFroth(wpW.xy, camPosW.w);
+                // Organic animated shoreline wave-runup meniscus at 0..4.5u rock/bank contact (single soft breathing lip, zero zebra stripes!).
+                const float2 foamFlow = normalize(cloudWind.xy + float2(1.0f, 0.35f));
+                const float runup = 3.2f + 1.4f * sin(camPosW.w * 1.35f + (wpW.x + wpW.y) * 0.018f);
+                const float shoreMeniscus = (1.0f - smoothstep(0.0f, runup, depthV)) * smoothstep(0.0f, 0.35f, depthV);
+                const float froth = organicFroth(wpW.xy - foamFlow * (camPosW.w * 14.0f), camPosW.w);
                 const float bowFoam = bowHit * froth * 0.72f;
                 const float eddyFoam = eddyLee * froth * 0.36f;
                 const float shoreLap = shoreMeniscus * (0.35f + 0.65f * froth) * 0.58f;

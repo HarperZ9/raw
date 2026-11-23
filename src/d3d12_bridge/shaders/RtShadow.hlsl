@@ -74,8 +74,9 @@ float2 stbnR2(float2 px, float frameOff) {
     return frac(ignBase + r2Step * fmod(frameOff, 64.0f));
 }
 
-// Duff et al. 2017 (JCGT) branchless orthonormal basis + Heitz 2018 (JCGT) exact GGX VNDF importance sampling.
-// Replaces naive uniform cone jitter with physically exact visible-normal microfacet sampling (zero grazing leaks).
+// Tokuyoshi & Eto (AMD, I3D 2024, MAT-05) Bounded VNDF + Dupuy & Benyoub (HPG 2023, MAT-06) Spherical Cap GGX Sampling:
+// Tightens the visible-normal sampling bound so 0% of reflected rays point below the geometric horizon,
+// slashing 1-spp RT glossy reflection noise & fireflies at grazing angles with fewer instructions than Heitz 2018!
 float3 sampleGGXVNDF(float3 n, float3 v, float alpha, float2 u) {
     const float s = n.z >= 0.0f ? 1.0f : -1.0f;
     const float a = -1.0f / (s + n.z);
@@ -84,16 +85,15 @@ float3 sampleGGXVNDF(float3 n, float3 v, float alpha, float2 u) {
     const float3 t2 = float3(b, s + n.y * n.y * a, -n.y);
     const float3 Ve = float3(dot(v, t1), dot(v, t2), max(dot(v, n), 1.0e-4f));
     const float3 Vh = normalize(float3(alpha * Ve.x, alpha * Ve.y, Ve.z));
-    const float lensq = Vh.x * Vh.x + Vh.y * Vh.y;
-    const float3 T1 = lensq > 1.0e-7f ? float3(-Vh.y, Vh.x, 0.0f) * rsqrt(lensq) : float3(1.0f, 0.0f, 0.0f);
-    const float3 T2 = cross(Vh, T1);
-    const float r = sqrt(saturate(u.x));
-    const float phi = 6.2831853f * u.y;
-    float t1p = r * cos(phi);
-    float t2p = r * sin(phi);
-    const float sBias = 0.5f * (1.0f + Vh.z);
-    t2p = (1.0f - sBias) * sqrt(max(1.0f - t1p * t1p, 0.0f)) + sBias * t2p;
-    const float3 Nh = t1p * T1 + t2p * T2 + sqrt(max(0.0f, 1.0f - t1p * t1p - t2p * t2p)) * Vh;
+    // Bounded spherical-cap parameter k (Tokuyoshi & Eto 2024 eq. 5): removes invalid lower-hemisphere rays.
+    const float a2 = alpha * alpha;
+    const float s2 = 1.0f + length(Ve.xy);
+    const float k = (1.0f - a2) * (s2 * s2) / max(s2 * s2 + a2 * Ve.z * Ve.z, 1.0e-5f);
+    const float phi = 6.2831853f * u.x;
+    const float z = mad((1.0f - u.y), (1.0f + k * Vh.z), -k * Vh.z);
+    const float sinTheta = sqrt(saturate(1.0f - z * z));
+    const float3 c = float3(sinTheta * cos(phi), sinTheta * sin(phi), z);
+    const float3 Nh = c + Vh;
     const float3 Ne = normalize(float3(alpha * Nh.x, alpha * Nh.y, max(0.0f, Nh.z)));
     const float3 H = normalize(t1 * Ne.x + t2 * Ne.y + n * Ne.z);
     return reflect(-v, H);

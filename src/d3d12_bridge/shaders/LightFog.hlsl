@@ -156,10 +156,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float subFade = smoothstep(0.0f, -0.24f, sDir.z);
                 fullSky = lerp(fullSky, fullSky * 0.88f, subFade);
             }
-            // Night sky celestial layer: dual-scale scintillating starfield + Milky Way + 10-layer Nordic Aurora Borealis,
-            // composited strictly BEHIND 3D volumetric clouds (cl.a) so clouds naturally occlude stars & auroras!
+            // Night sky celestial layer: subtle oxygen-557nm horizon airglow + dual-scale scintillating starfield +
+            // Milky Way + 8-layer Nordic Aurora Borealis, strictly BEHIND 3D volumetric clouds (cl.a)!
             const float nightSkyW = saturate(1.0f - dayW * 1.35f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
             if (nightSkyW > 0.02f && sDir.z > 0.0f) {
+                // Faint upper-atmosphere nocturnal airglow limb just above the horizon (Commons Cluster B astrophotography).
+                const float airglow = exp(-pow((sDir.z - 0.055f) / 0.048f, 2.0f));
+                fullSky += float3(0.008f, 0.022f, 0.019f) * (airglow * nightSkyW * (1.0f - cover * 0.70f));
                 const float3 sc1 = floor(sDir * 290.0f);
                 const float3 sf1 = frac(sDir * 290.0f) - 0.5f;
                 const float h1 = cHash(sc1);

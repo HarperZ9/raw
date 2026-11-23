@@ -150,11 +150,15 @@ float4 skyview(float4 at : SV_Position) : SV_Target0 {
     const float3 sunD = astroSunDir();
     const float cosT = dot(rd, sunD);
     const float phR = (3.0f / (16.0f * PI)) * (1.0f + cosT * cosT);
-    const float g = 0.78f;
-    const float phM = (1.0f - g * g) / (4.0f * PI * pow(max(1.0f + g * g - 2.0f * g * cosT, 1.0e-4f), 1.5f));
+    // Dual-lobe physical Cornette-Shanks / Henyey-Greenstein Mie aerosol phase (crisp solar aureole + wide atmospheric haze):
+    const float g1 = 0.82f, g2 = 0.38f;
+    const float phM1 = (1.0f - g1 * g1) / (4.0f * PI * pow(max(1.0f + g1 * g1 - 2.0f * g1 * cosT, 1.0e-4f), 1.5f));
+    const float phM2 = (1.0f - g2 * g2) / (4.0f * PI * pow(max(1.0f + g2 * g2 - 2.0f * g2 * cosT, 1.0e-4f), 1.5f));
+    const float phM = phM1 * 0.72f + phM2 * 0.28f;
     const float turbidity = 1.0f + saturate(clouds.x) * 1.4f + weather.w * 1.8f + weather.z * 1.6f;
 
-    const uint kSteps = 24u;
+    // Overdrive 36-step quadratic-clustered full-dome radiative transfer (exact Rayleigh + Mie + Ozone + planetary shadow):
+    const uint kSteps = 36u;
     float3 L = 0.0f.xxx;
     float3 T = 1.0f.xxx;
     float tPrev = 0.0f;

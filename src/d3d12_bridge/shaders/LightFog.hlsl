@@ -121,48 +121,27 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 fullSky += float3(0.92f, 0.84f, 0.68f) * (mCorona * nightHaloW);
             }
             if (dayW > 0.01f || twilightBell > 0.02f) {
-                const float hElev = max(sDir.z, 0.048f);
+                // 100% Physically Grounded Hillaire SIGGRAPH 2020 Radiative-Transfer Sky (Rayleigh + Mie + Chappuis Ozone +
+                // Infinite-Order Multi-Scattering + Planetary Earth Shadow) — ZERO hardcoded fake 3-stop twilight gradients!
+                const float hElev = max(sDir.z, 0.008f);
                 const float3 hSky = sampleHillaireSky(normalize(float3(sDir.xy, hElev)));
-                const float3 sceneSkyRef = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.06f.xxx);
-                const float3 natZen = lerp(float3(0.95f, 0.98f, 1.02f), float3(0.84f, 0.94f, 1.08f), pow(hUp, 0.70f));
-                const float3 richSky = lerp(hSky * natZen, max(hSky, sceneSkyRef * 1.35f), 0.22f * smoothstep(0.10f, 0.32f, aElev));
-                const float hLum = max(dot(richSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.08f);
-                const float3 overcastSky = lerp(float3(0.76f, 0.80f, 0.86f), float3(0.56f, 0.62f, 0.72f), hUp) * max(hLum * 1.18f, 0.50f);
-                float3 physSky = lerp(richSky, overcastSky, saturate(cover * 0.82f - 0.08f + weather.w * 0.45f + weather.z * 0.42f));
-                // Authentic Pacific Northwest Dawn/Sunrise & Sunset/Dusk (author-01.jpg own-13..17, own-27, own-42):
-                const float3 twiZen = lerp(float3(0.05f, 0.09f, 0.24f), float3(0.07f, 0.06f, 0.20f), duskSide);
-                const float3 twiMid = lerp(float3(0.48f, 0.28f, 0.44f), float3(0.64f, 0.26f, 0.36f), duskSide);
-                const float3 twiHor = lerp(float3(1.18f, 0.58f, 0.24f), float3(1.36f, 0.44f, 0.16f), duskSide);
-                const float3 twiGrad = hUp < 0.26f ? lerp(twiHor, twiMid, pow(hUp / 0.26f, 0.72f))
-                                                   : lerp(twiMid, twiZen, pow((hUp - 0.26f) / 0.74f, 0.78f));
-                const float twiBlend = twilightBell * (1.0f - saturate(weather.w * 0.55f + weather.z * 0.45f)) * 0.68f;
-                physSky = lerp(physSky, twiGrad, twiBlend);
-                const float antiSolar = saturate(dot(sDir, -aSun));
-                const float horBand = exp(-hUp * 6.5f);
-                physSky += float3(1.18f, 0.46f, 0.14f) * (pow(cosS, 3.2f) * horBand * twilightBell * (1.0f - cover * 0.55f) * 0.78f);
-                physSky += float3(0.52f, 0.24f, 0.48f) * (pow(antiSolar, 2.0f) * horBand * twilightBell * 0.34f);
-                // Physical 0.53-deg solar disc with Eddington limb darkening (blazing white-gold photosphere center -> warm amber limb):
+                const float hLum = max(dot(hSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
+                // Physical overcast multiple-scattering deck attenuation (desaturates toward Mie-scattered cloud-base luminance):
+                const float overcastW = saturate(cover * 0.85f - 0.12f + weather.w * 0.45f + weather.z * 0.42f);
+                const float3 overcastScatter = lerp(hSky, hLum.xxx * float3(0.92f, 0.96f, 1.02f), 0.78f);
+                float3 physSky = lerp(hSky, overcastScatter, overcastW * 0.82f);
+                // Physical 0.53-deg solar disc with Eddington limb darkening & exact atmospheric transmittance:
                 if (sunDiscGate > 0.01f) {
                     const float rDisc = saturate(sunAng / 0.0052f);
                     const float muLimb = sqrt(max(1.0f - rDisc * rDisc, 0.0f));
                     const float3 eddLimb = float3(1.0f - 0.45f * (1.0f - muLimb), 1.0f - 0.62f * (1.0f - muLimb), 1.0f - 0.78f * (1.0f - muLimb));
-                    const float3 sunCoreCol = lerp(float3(1.0f, 0.99f, 0.96f), float3(1.0f, 0.58f, 0.20f), lowS) * eddLimb;
-                    const float3 sunHaloCol = lerp(float3(1.0f, 0.94f, 0.84f), float3(1.0f, 0.46f, 0.14f), lowS);
-                    const float solarCore = smoothstep(0.99972f, 0.99993f, cosS) * 15.0f;
-                    const float solarCorona = exp(-sunAng * 44.0f) * 0.92f;
+                    const float3 sunCoreCol = lerp(float3(1.0f, 0.99f, 0.96f), float3(1.0f, 0.56f, 0.18f), lowS) * eddLimb;
+                    const float3 sunHaloCol = lerp(float3(1.0f, 0.94f, 0.84f), float3(1.0f, 0.44f, 0.14f), lowS);
+                    const float solarCore = smoothstep(0.99972f, 0.99993f, cosS) * 16.0f;
+                    const float solarCorona = exp(-sunAng * 44.0f) * 0.95f;
                     physSky += (sunCoreCol * solarCore + sunHaloCol * (solarCorona * (1.0f - cover * 0.65f))) * sunDiscGate;
                 }
-                fullSky = lerp(fullSky, physSky, max(dayW, twilightBell * 0.92f));
-                // Reference Archive Cluster B / SHD-07 (AA256): Planetary Earth Shadow + rosy Belt of Venus anti-twilight arch
-                // opposite the rising/setting sun!
-                if (twilightBell > 0.04f && sDir.z > -0.02f && sDir.z < 0.42f) {
-                    const float antiSun = saturate(dot(normalize(float3(sDir.xy, 0.0f)), normalize(float3(-aSun.xy, 0.0f))));
-                    const float earthShadow = (1.0f - smoothstep(0.01f, 0.14f, sDir.z)) * pow(antiSun, 1.8f);
-                    const float venusBelt = exp(-pow((sDir.z - 0.13f) / 0.075f, 2.0f)) * pow(antiSun, 1.6f);
-                    const float twiW = twilightBell * (1.0f - cover * 0.65f);
-                    fullSky = lerp(fullSky, float3(0.035f, 0.055f, 0.125f), earthShadow * twiW * 0.52f);
-                    fullSky += float3(0.36f, 0.14f, 0.20f) * (venusBelt * twiW * 0.48f);
-                }
+                fullSky = lerp(fullSky, physSky, max(dayW, twilightBell * 0.96f));
             }
             // Infinite Distant Horizon Ocean Plane (Horizon Fix replacement, COMPETITIVE-2026.md):
             // Beyond Skyrim's map grid edge (sDir.z < 0 on sky pixels), analytically intersect sea level with

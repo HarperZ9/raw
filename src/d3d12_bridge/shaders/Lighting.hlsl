@@ -354,10 +354,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float microN = cNoise(wp * 0.024f + 5.3f);
         const float antiTile = lerp(0.89f, 1.11f, macroN) * lerp(0.95f, 1.05f, microN);
         const float slope = saturate(s.n.z);
-        // Natural slope transitions: subtle warm-moss enrichment on flat ledges, crisp cool-slate rock on steep inclines.
+        // Natural slope transitions + Commons Cluster 9 ("Nature retaking structures"): subtle moisture-driven
+        // velvet moss & lichen growth on upward-facing stone/ruin crevices & ledges, plus crisp cool-slate cliffs.
         const float3 slopeTint = lerp(float3(0.96f, 0.98f, 1.03f), float3(1.02f, 1.01f, 0.97f), smoothstep(0.55f, 0.88f, slope));
         const float tileFade = saturate(1.0f - z / 16000.0f);
         albedo *= lerp(1.0f.xxx, antiTile * slopeTint, tileFade * (base == 4u ? 0.85f : 0.45f));
+        if (base == 1u && sunColour.w > 0.5f && z < 4200.0f && wet.snow < 0.25f && slope > 0.58f) {
+            const float mossPatch = smoothstep(0.56f, 0.82f, cNoise(wp * 0.0085f + 4.1f) * 0.65f + microN * 0.35f);
+            const float mossW = mossPatch * smoothstep(0.58f, 0.86f, slope) * (0.28f + 0.42f * saturate(weather.x)) * saturate(1.0f - z / 4200.0f) * (1.0f - wet.snow * 3.5f);
+            albedo = lerp(albedo, float3(0.10f, 0.17f, 0.07f) * (0.75f + 0.50f * microN), mossW * 0.52f);
+            s.alpha = lerp(s.alpha, 0.88f, mossW * 0.45f);
+        }
         // Procedural sub-centimeter world-space micro-normal & grazing roughness synthesis on vanilla terrain/rock/bark:
         // gives 2011 meshes crisp sunlit micro-grain and tactile roughness variation without requiring 4K texture mods.
         if (z < 1800.0f) {
@@ -703,13 +710,22 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             spec += sunColour.rgb * (sunShadow * wet.snow * 2.4f * (gFine + gBroad));
         }
         // Forged metal micro-flake glint + Belcour-Barla (SIGGRAPH 2017) Airy Thin-Film Spectral Iridescence
-        // on tempered Damascus steel, glass/crystal armor, ice, and wet puddles (MAT-01 / Commons Cluster O / u-digitcell).
+        // + MAT-01 Substrate Dual-Lobe Clearcoat/Lacquer on glass, glazed ceramics, polished stone & forged armor!
         if (!match && sunShadow > 0.05f && z < 1800.0f && (base == 2u || wet.wet > 0.35f || s.alpha < 0.22f)) {
             const float nvIr = saturate(dot(s.n, s.v));
             const float filmOpd = (base == 2u ? 480.0f : 360.0f) * sqrt(max(1.0f - (1.0f - nvIr * nvIr) * 0.56f, 0.1f));
             const float3 airy = 0.5f + 0.5f * cos(6.2831853f * filmOpd / float3(615.0f, 540.0f, 465.0f));
             const float irStr = (base == 2u ? 0.24f : 0.14f) * pow(1.0f - nvIr, 2.2f) * saturate(1.0f - z / 1800.0f);
             spec += dirCol * airy * (irStr * sunShadow);
+            // Crisp dual-lobe clearcoat highlight (roughness 0.06 mirror coat over underlying material lobe):
+            if (!skin && s.alpha < 0.25f) {
+                const float3 hCoat = normalize(s.v + sunDir.xyz);
+                const float nhC = saturate(dot(s.n, hCoat));
+                const float ddC = nhC * nhC * (0.0036f - 1.0f) + 1.0f;
+                const float fCoat = 0.04f + 0.96f * pow(1.0f - saturate(dot(s.v, hCoat)), 5.0f);
+                const float dCoat = 0.0036f / (PI * ddC * ddC);
+                spec += dirCol * (min(dCoat * fCoat * 0.16f, 2.2f) * sunShadow * saturate(dot(s.n, sunDir.xyz)));
+            }
             if (base == 2u && z < 1600.0f) {
                 const float mGlint = snowGlint(p + camPosW.xyz, s.n, s.v, sunDir.xyz, max(0.8f, z * 0.0018f));
                 spec += sunColour.rgb * (sunShadow * mGlint * 0.75f * saturate(1.0f - z / 1600.0f));

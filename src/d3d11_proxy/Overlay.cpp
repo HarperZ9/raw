@@ -1,6 +1,7 @@
 // Overlay: interactive 6-tab ENB-class in-game RAW DX12 Control Panel (toggled by End or Shift+Enter)
 // and error banner, rendered via GDI into a 32-bit backbuffer-format texture before Present. Original work, MIT.
 #include "Overlay.h"
+#include "HotReload.h"
 #include "BridgeHookState.h"
 #include "ProxyAPI.h"
 #include "ProxyLog.h"
@@ -89,17 +90,21 @@ void SavePresetFile(const std::string& path, const char* tag)
 {
     const auto& l = hook::Cfg().light;
     const auto tm = Tonemap_Get();
-    auto wF = [&](const char* k, float v) { char b[32]; std::snprintf(b, sizeof b, "%.4g", v); WritePrivateProfileStringA("Lighting", k, b, path.c_str()); };
-    auto wI = [&](const char* k, int v) { char b[32]; std::snprintf(b, sizeof b, "%d", v); WritePrivateProfileStringA("Lighting", k, b, path.c_str()); };
+    bool ok = true;
+    auto wF = [&](const char* k, float v) { char b[32]; std::snprintf(b, sizeof b, "%.4g", v); if (!WritePrivateProfileStringA("Lighting", k, b, path.c_str())) ok = false; };
+    auto wI = [&](const char* k, int v) { char b[32]; std::snprintf(b, sizeof b, "%d", v); if (!WritePrivateProfileStringA("Lighting", k, b, path.c_str())) ok = false; };
+    wI("Mode", l.mode); wI("Quality", g_hwTier);
+    wI("SoftShadows", l.softShadows ? 1 : 0); wI("ContactShadows", l.contactShadows ? 1 : 0);
     wI("Season", l.season); wI("View", l.view);
     wI("RtShadows", l.rtShadows ? 1 : 0); wI("RtSky", l.rtSky ? 1 : 0); wI("RtReflect", l.rtReflect ? 1 : 0);
     wI("RtOmm", l.rtOmm ? 1 : 0); wI("RtFar", l.rtFar ? 1 : 0); wI("RtSkin", l.rtSkin ? 1 : 0); wI("RtRest", l.rtRest ? 1 : 0);
     wF("RtBounce", l.rtBounce); wF("RtBounceInterior", l.rtBounceInterior); wF("RtSkyStrength", l.rtSkyStrength); wF("RtSkyLength", l.rtSkyLength);
+    wF("RtTermDist", l.rtTermDist);
     wI("Clouds", l.clouds ? 1 : 0); wF("CloudCover", l.cloudCover); wF("CloudDensity", l.cloudDensity); wF("CloudShadow", l.cloudShadow);
     wI("VolumetricFog", l.volumetricFog ? 1 : 0); wI("FogReplacesGame", l.fogReplacesGame ? 1 : 0); wF("FogSunScale", l.fogSunScale);
     wI("Water", l.water ? 1 : 0); wF("WaterReflect", l.waterReflect); wF("WaterCaustics", l.waterCaustics); wF("WaterRefract", l.waterRefract);
     wF("Sss", l.sss); wF("AoStrength", l.aoStrength);
-    wI("Tonemap", tm.enabled ? 1 : 0); wI("ToneCurve", tm.curve); wF("ExposureBias", tm.bias); wF("ExposureKey", tm.key);
+    wI("Tonemap", tm.enabled ? 1 : 0); wI("ToneCurve", tm.curve); wF("ExposureBias", tm.bias); wF("ExposureKey", tm.key); wF("ExposureAdapt", tm.adapt);
     wF("ToneX1", tm.x[1]); wF("ToneX2", tm.x[2]); wF("ToneX3", tm.x[3]); wF("ToneX4", tm.x[4]); wF("ToneX5", tm.x[5]);
     wI("ToneView", tm.view); wI("LutIndex", tm.lutIndex); wF("LutStrength", tm.lutStrength); wI("OverlayMask", static_cast<int>(tm.overlayMask));
     wF("BloomScale", tm.bloomScale); wF("SharpenStr", tm.sharpenStr); wF("GrainStr", tm.grainStr); wF("VignetteStr", tm.vignetteStr);
@@ -108,7 +113,12 @@ void SavePresetFile(const std::string& path, const char* tag)
     wI("Dof", l.dof ? 1 : 0); wF("DofMaxDist", l.dofMaxDist); wF("DofRadius", l.dofRadius); wF("DofOrbBoost", l.dofOrbBoost);
     wI("WeatherLens", l.weatherLens ? 1 : 0);
     wI("DlssMode", raw::bridge::StreamlineHost::Get().GetMode());
-    g_statusTag = tag;
+    wI("Reflex", raw::bridge::StreamlineHost::Get().GetReflex() ? 1 : 0);
+    wI("DeepDvc", raw::bridge::StreamlineHost::Get().GetDeepDvc() ? 1 : 0);
+    // Flush Windows INI write cache immediately and sync HotReload's timestamp so HotReload_OnPresent NEVER reloads over our save!
+    WritePrivateProfileStringA(nullptr, nullptr, nullptr, path.c_str());
+    HotReload_SyncIniTime();
+    g_statusTag = ok ? tag : " [SAVE FAILED]";
     g_savedFrames = 180;
 }
 
@@ -123,17 +133,22 @@ void LoadPresetSlot(int slot)
     auto rI = [&](const char* k, int d) { return static_cast<int>(GetPrivateProfileIntA("Lighting", k, d, path.c_str())); };
     auto rF = [&](const char* k, float d) { char b[64]{}; GetPrivateProfileStringA("Lighting", k, "", b, sizeof b, path.c_str()); return b[0] ? std::strtof(b, nullptr) : d; };
     auto& l = hook::Cfg().light;
+    l.mode = rI("Mode", l.mode);
+    g_hwTier = std::clamp(rI("Quality", g_hwTier), 0, 4);
+    l.softShadows = rI("SoftShadows", l.softShadows ? 1 : 0) != 0;
+    l.contactShadows = rI("ContactShadows", l.contactShadows ? 1 : 0) != 0;
     l.season = rI("Season", l.season); l.view = rI("View", l.view);
     l.rtShadows = rI("RtShadows", l.rtShadows) != 0; l.rtSky = rI("RtSky", l.rtSky) != 0; l.rtReflect = rI("RtReflect", l.rtReflect) != 0;
     l.rtOmm = rI("RtOmm", l.rtOmm) != 0; l.rtFar = rI("RtFar", l.rtFar) != 0; l.rtSkin = rI("RtSkin", l.rtSkin) != 0; l.rtRest = rI("RtRest", l.rtRest) != 0;
     l.rtBounce = rF("RtBounce", l.rtBounce); l.rtBounceInterior = rF("RtBounceInterior", l.rtBounceInterior);
     l.rtSkyStrength = rF("RtSkyStrength", l.rtSkyStrength); l.rtSkyLength = rF("RtSkyLength", l.rtSkyLength);
+    l.rtTermDist = rF("RtTermDist", l.rtTermDist);
     l.clouds = rI("Clouds", l.clouds) != 0; l.cloudCover = rF("CloudCover", l.cloudCover); l.cloudDensity = rF("CloudDensity", l.cloudDensity); l.cloudShadow = rF("CloudShadow", l.cloudShadow);
     l.volumetricFog = rI("VolumetricFog", l.volumetricFog) != 0; l.fogReplacesGame = rI("FogReplacesGame", l.fogReplacesGame) != 0; l.fogSunScale = rF("FogSunScale", l.fogSunScale);
     l.water = rI("Water", l.water) != 0; l.waterReflect = rF("WaterReflect", l.waterReflect); l.waterCaustics = rF("WaterCaustics", l.waterCaustics); l.waterRefract = rF("WaterRefract", l.waterRefract);
     l.sss = rF("Sss", l.sss); l.aoStrength = rF("AoStrength", l.aoStrength);
     auto tm = Tonemap_Get();
-    tm.enabled = rI("Tonemap", tm.enabled) != 0; tm.curve = rI("ToneCurve", tm.curve); tm.bias = rF("ExposureBias", tm.bias); tm.key = rF("ExposureKey", tm.key);
+    tm.enabled = rI("Tonemap", tm.enabled) != 0; tm.curve = rI("ToneCurve", tm.curve); tm.bias = rF("ExposureBias", tm.bias); tm.key = rF("ExposureKey", tm.key); tm.adapt = rF("ExposureAdapt", tm.adapt);
     tm.x[1] = rF("ToneX1", tm.x[1]); tm.x[2] = rF("ToneX2", tm.x[2]); tm.x[3] = rF("ToneX3", tm.x[3]); tm.x[4] = rF("ToneX4", tm.x[4]); tm.x[5] = rF("ToneX5", tm.x[5]);
     tm.view = rI("ToneView", tm.view); tm.lutIndex = rI("LutIndex", tm.lutIndex); tm.lutStrength = rF("LutStrength", tm.lutStrength);
     tm.overlayMask = static_cast<uint32_t>(rI("OverlayMask", static_cast<int>(tm.overlayMask)));
@@ -148,6 +163,9 @@ void LoadPresetSlot(int slot)
     l.weatherLens = rI("WeatherLens", l.weatherLens ? 1 : 0) != 0;
     Tonemap_Set(tm);
     raw::bridge::StreamlineHost::Get().SetMode(rI("DlssMode", raw::bridge::StreamlineHost::Get().GetMode()));
+    raw::bridge::StreamlineHost::Get().SetReflex(rI("Reflex", raw::bridge::StreamlineHost::Get().GetReflex() ? 1 : 0) != 0);
+    raw::bridge::StreamlineHost::Get().SetDeepDvc(rI("DeepDvc", raw::bridge::StreamlineHost::Get().GetDeepDvc() ? 1 : 0) != 0);
+    hook::LightingApplyTuning();
     g_statusTag = " [LOADED SLOT " + std::to_string(slot) + "]";
     g_savedFrames = 180;
 }

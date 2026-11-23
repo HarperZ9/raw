@@ -364,7 +364,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float alpineNoise = cNoise(midPt * 0.00014f + windShift) * 0.65f + cNoise(midPt * 0.00042f - windShift * 1.6f + 7.1f) * 0.35f;
         const float peakCollar = exp(-pow((midPt.z - 5200.0f) / 3600.0f, 2.0f)) * smoothstep(8000.0f, 28000.0f, dist);
         const float alpineMist = (0.76f + 0.48f * alpineNoise) * (1.0f + peakCollar * (0.45f + 0.55f * alpineNoise));
-        const float od = baseSigma * min(max(dist - 1400.0f, 0.0f), 240000.0f) * elevW * alpineMist * exp(-hStart * 0.15f);
+        const float od = baseSigma * min(max(dist - 2200.0f, 0.0f), 240000.0f) * elevW * alpineMist * exp(-hStart * 0.15f);
         // Wavelength-dependent Rayleigh + Mie transmittance + smooth far-horizon aerial melt (eliminates the sharp Sea of Ghosts / Whiterun LOD seam).
         const float horizonMelt = smoothstep(70000.0f, 145000.0f, dist);
         float3 T = exp(-od * float3(0.84f, 0.96f, 1.12f)) * (1.0f - horizonMelt);
@@ -395,7 +395,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 d65Mie = lerp(float3(1.0f, 0.66f, 0.36f), float3(0.96f, 0.98f, 1.02f), highSunF);
         const float mieHalo = (pow(cosSunF, 5.0f) * 0.14f + pow(cosSunF, 28.0f) * 0.24f) * (1.0f - cloudCov * 0.72f) * (1.0f - nightF);
         atmoCol += lerp(d65Mie, uSunF, 0.45f) * mieHalo;
-        atmoCol = lerp(atmoCol, uSkyHF, nightF * 0.65f);
+        // Exact 1:1 night horizon sky-dome sync (eliminates dark greenish-grey mountain cutout against indigo night sky
+        // captured in 13.16.31.17.png!): matches LightFog.hlsl:122 nightHor formula identically!
+        const float3 ambSkyF = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.03f.xxx);
+        const float overcastDeckF = saturate(cloudCov * 0.85f + weather.w * 0.45f + weather.z * 0.55f);
+        const float3 nightHorF = lerp(float3(0.028f, 0.044f, 0.078f), ambSkyF * float3(0.68f, 0.74f, 0.84f), overcastDeckF * 0.85f);
+        atmoCol = lerp(atmoCol, nightHorF, nightF);
         // True linear HDR aerial perspective + Volcanic Solstheim Ashstorm choking diffusion & glowing ash embers!
         const float ashW = saturate((sunColour.r - sunColour.b * 1.42f) * 2.8f) * saturate(clouds.x * 1.35f) * (1.0f - nightF);
         if (ashW > 0.05f) {
@@ -408,7 +413,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if ((weather.w > 0.22f || weather.z > 0.22f) && dist > 650.0f && mapScale > 0.5f) {
             const float2 sheetW = normalize(cloudWind.xy + float2(1.0f, 0.35f));
             const float3 sheetP = camPosW.xyz + eye + w * min(dist * 0.55f, 4200.0f);
-            const float slant = dot(sheetP.xy, sheetW) * 0.0014f - sheetP.z * 0.00045f - camPosW.w * 0.42f;
+            const float slant = dot(sheetP.xy, sheetW) * 0.0014f - sheetP.z * 0.00045f - camPosW.w * 0.12f;
             const float curtain = smoothstep(0.35f, 0.85f, cNoise(float3(slant, dot(sheetP.xy, float2(-sheetW.y, sheetW.x)) * 0.0009f, sheetP.z * 0.00025f)));
             const float sheetDens = curtain * saturate((dist - 650.0f) / 3800.0f) * max(weather.w, weather.z) * 0.22f;
             atmoCol = lerp(atmoCol, lerp(float3(0.24f, 0.29f, 0.36f), float3(0.62f, 0.68f, 0.76f), weather.z), sheetDens * 0.55f);
@@ -454,12 +459,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     }
                 }
                 if (weather.z > 0.08f) {
-                    const float swirlPh = camPosW.w * (0.95f + float(pl) * 0.24f);
-                    const float swayX = sin(swirlPh + wpP.z * 0.018f + wpP.y * 0.006f) * 28.0f;
-                    const float swayY = cos(swirlPh * 0.82f + wpP.x * 0.015f - wpP.z * 0.010f) * 28.0f;
+                    const float swirlPh = camPosW.w * (0.42f + float(pl) * 0.10f);
+                    const float swayX = sin(swirlPh + wpP.z * 0.014f + wpP.y * 0.005f) * 20.0f;
+                    const float swayY = cos(swirlPh * 0.82f + wpP.x * 0.012f - wpP.z * 0.008f) * 20.0f;
                     const float fScale = lerp(0.125f, 0.055f, float(pl) / 5.0f);
-                    const float3 sCoord = float3((wpP.xy - windP * (wpP.z * 0.26f) + float2(swayX, swayY)) * fScale,
-                                                 wpP.z * fScale + camPosW.w * (2.6f + float(pl) * 0.65f));
+                    const float3 sCoord = float3((wpP.xy - windP * (wpP.z * 0.12f) + float2(swayX, swayY)) * fScale,
+                                                 wpP.z * fScale + camPosW.w * (1.25f + float(pl) * 0.28f));
                     const float sCell = cHash(floor(sCoord));
                     if (sCell > 0.936f) {
                         const float dFlake = length(frac(sCoord) - 0.5f);

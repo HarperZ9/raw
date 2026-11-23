@@ -74,17 +74,24 @@ float cloudDensity(float3 pa, bool detail) {
     return dens * cloudWind.z;
 }
 
-// The layer's height range a ray crosses, from an absolute origin; false when it misses or ends first.
+// Exact 3D Curved Planetary Atmosphere Shell Ray-Sphere Intersection (eliminates the flat 2D ceiling/disc sky look!):
+// Clouds live inside a spherical shell [rBase, rTop] wrapping organically around Skyrim's 360-deg curved horizon!
 bool cloudSpan(float3 o, float3 dir, float tMax, out float t0, out float t1) {
-    const float top = clouds.y + clouds.z;
-    if (abs(dir.z) < 1.0e-5f) {
-        t0 = 0.0f; t1 = tMax;
-        return o.z > clouds.y && o.z < top;
-    }
-    const float a = (clouds.y - o.z) / dir.z, b = (top - o.z) / dir.z;
-    t0 = max(min(a, b), 0.0f);
-    t1 = min(max(a, b), tMax);
-    return t1 > t0;
+    const float R = 3600000.0f;   // curved planetary horizon shell scaled to Skyrim's 400k vista
+    const float rBase = R + clouds.y;
+    const float rTop  = rBase + clouds.z;
+    const float3 pC = float3(0.0f, 0.0f, R + max(o.z, 0.0f));
+    const float b = dot(pC, dir);
+    const float cBase = dot(pC, pC) - rBase * rBase;
+    const float cTop  = dot(pC, pC) - rTop * rTop;
+    const float dBase = b * b - cBase;
+    const float dTop  = b * b - cTop;
+    if (dTop < 0.0f) { t0 = 0.0f; t1 = 0.0f; return false; }
+    const float tTopFar = -b + sqrt(max(dTop, 0.0f));
+    const float tBaseFar = dBase >= 0.0f ? (-b + sqrt(max(dBase, 0.0f))) : 0.0f;
+    t0 = max(tBaseFar, 0.0f);
+    t1 = min(tTopFar, tMax);
+    return t1 > t0 + 10.0f;
 }
 
 // How much sun reaches an absolute point through the layer: n samples up the sun's path through it

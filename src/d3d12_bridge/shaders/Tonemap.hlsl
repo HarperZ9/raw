@@ -249,20 +249,20 @@ float3 fxaaAndCas(float2 suv) {
 float4 main(In i) : SV_Target {
     const uint ovInit = uint(RO.y + 0.5f);
     float2 baseUv = i.uv;
-    // OV12 (bit 11 = 2048): Distance-locked biomechanical figure-8 stride sway + subtle head-roll tilt
-    // (safe 0.976 overscan margin guarantees UVs NEVER clamp or smear at the bottom/side screen edges!).
+    // OV12 (bit 11 = 2048): Tasteful, ultra-subtle biomechanical stride breathing (0.0008 roll, 0.992 micro-margin
+    // eliminates jarring screen-edge sliding/cropping while keeping natural grounded movement feel!).
     if ((ovInit & 2048u) != 0u) {
-        const float moveAmp = smoothstep(0.35f, 6.0f, RO.w);
+        const float moveAmp = smoothstep(0.45f, 6.5f, RO.w);
         if (moveAmp > 0.002f) {
-            const float str = moveAmp * clamp(RQ.z, 0.0f, 2.0f);
+            const float str = moveAmp * clamp(RQ.z, 0.0f, 2.0f) * 0.42f;
             const float phase = RO.z;
-            const float roll = sin(phase) * 0.0022f * str;
+            const float roll = sin(phase) * 0.0009f * str;
             const float cr = cos(roll), sr = sin(roll);
             const float2 ctr = baseUv - 0.5f.xx;
             const float2 rotUv = float2(ctr.x * cr - ctr.y * sr, ctr.x * sr + ctr.y * cr) + 0.5f.xx;
-            const float2 bob = float2(sin(phase) * 0.0010f, -cos(phase * 2.0f) * 0.0009f) * str;
-            const float zoom = lerp(1.0f, 0.976f, saturate(str));
-            baseUv = clamp((rotUv - 0.5f.xx) * zoom + 0.5f.xx + bob, 0.003f.xx, 0.997f.xx);
+            const float2 bob = float2(sin(phase) * 0.00045f, -cos(phase * 2.0f) * 0.00045f) * str;
+            const float zoom = lerp(1.0f, 0.992f, saturate(str));
+            baseUv = clamp((rotUv - 0.5f.xx) * zoom + 0.5f.xx + bob, 0.002f.xx, 0.998f.xx);
         }
     }
     const float2 suv = min(max(baseUv * F[43].xy, 0.0f), float2(F[44].z, F[43].y));

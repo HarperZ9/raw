@@ -993,13 +993,23 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
 
     float3 amb = float3(dot(ambient[0].xyz, s.n) + ambient[0].w, dot(ambient[1].xyz, s.n) + ambient[1].w,
                         dot(ambient[2].xyz, s.n) + ambient[2].w);
-    // Sync exterior hemisphere ambient directly with evalWorldAtmosphere() sky zenith/horizon + ground bounce
-    // so shaded terrain, stone, snow, and foliage seamlessly match the live sky dome, clouds, and mountain fog!
-    if (!match && sunColour.w > 0.5f) {
-        float3 uSunA, uSkyZA, uSkyHA, uAmbUpA, uAmbDnA;
-        evalWorldAtmosphere(uSunA, uSkyZA, uSkyHA, uAmbUpA, uAmbDnA);
-        const float3 skyHemi = lerp(uAmbDnA, uAmbUpA, saturate(s.n.z * 0.5f + 0.5f));
-        amb = lerp(amb, skyHemi, 0.48f);
+    // Sync exterior hemisphere ambient directly with evalWorldAtmosphere() sky zenith/horizon + ground bounce,
+    // and upgrade interior lighting across all location types (Tavern/Home warm hearth contrast, Nordic Crypt/Cave
+    // cool mineral-slate vault depth, Dwemer Ruin burnished bronze-gold directional bounce):
+    if (!match) {
+        if (sunColour.w > 0.5f) {
+            float3 uSunA, uSkyZA, uSkyHA, uAmbUpA, uAmbDnA;
+            evalWorldAtmosphere(uSunA, uSkyZA, uSkyHA, uAmbUpA, uAmbDnA);
+            const float3 skyHemi = lerp(uAmbDnA, uAmbUpA, saturate(s.n.z * 0.5f + 0.5f));
+            amb = lerp(amb, skyHemi, 0.48f);
+        } else {
+            const float ambWarm = saturate((amb.r - amb.b) * 3.5f);
+            const float ambCool = saturate((amb.b - amb.r) * 3.5f);
+            // Architectural vault shaping: deepen floor/corner ambient slightly while lifting upper beams & directional faces:
+            const float3 intTint = lerp(float3(0.92f, 0.95f, 1.02f), float3(1.06f, 0.96f, 0.86f), ambWarm);
+            const float3 cryptTint = lerp(intTint, float3(0.84f, 0.92f, 1.06f), ambCool);
+            amb *= cryptTint * lerp(0.82f, 1.12f, saturate(s.n.z * 0.5f + 0.5f));
+        }
     }
     // Pure Native Hardware DXR 1.2 Directional Skylighting & RTAO when RT is active (zero screen-space GTAO halos!):
     // Screen-space GTAO (AoHist) runs ONLY as a fallback when hardware RT sky/RTAO is disabled.

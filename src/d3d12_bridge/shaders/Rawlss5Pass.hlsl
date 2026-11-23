@@ -83,15 +83,19 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     rgbBlur /= max(wSum, 1.0e-4f);
     const float3 stdDev = sqrt(max(m2 - m1 * m1, 0.0f.xxx));
 
-    // 3D normal curvature & silhouette edge gate (strictly suppresses sharpening across depth boundaries -> zero halos!):
+    // 3D normal curvature, true surface divergence (concave cavities vs convex bevels) & silhouette depth guard:
     const float3 nR = worldNormal(Normal.Load(int3(min(p.x + 1, dMax.x), p.y, 0)));
     const float3 nL = worldNormal(Normal.Load(int3(max(p.x - 1, 0), p.y, 0)));
     const float3 nD = worldNormal(Normal.Load(int3(p.x, min(p.y + 1, dMax.y), 0)));
     const float3 nU = worldNormal(Normal.Load(int3(p.x, max(p.y - 1, 0), 0)));
     const float curv = saturate((length(nR - nL) + length(nD - nU)) * 0.65f);
+    // True 3D world-space normal divergence: < 0 = concave crevice/crack (micro-AO), > 0 = convex bevel/edge (catchlight)!
+    const float3 tX = normalize(cross(nC, abs(nC.z) < 0.9f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f)));
+    const float3 tY = cross(nC, tX);
+    const float divN = clamp(dot(nR - nL, tX) + dot(nD - nU, tY), -1.5f, 1.5f);
     const float edgeGate = 1.0f - smoothstep(max(z * 0.03f, 4.0f), max(z * 0.12f, 18.0f), maxDz);
 
-    // Evaluate 3D-Guided FP16 Neural Residual Block:
+    // Evaluate 3D-Guided FP16 Neural Residual Block (RAWLSS 5.0 Ultra):
     const float3 curRgb = max(curRaw.rgb, 0.0f.xxx);
     const float curLum = dot(curRgb, float3(0.2126f, 0.7152f, 0.0722f));
     const float blurLum = dot(rgbBlur, float3(0.2126f, 0.7152f, 0.0722f));
@@ -100,12 +104,13 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const float midKey = saturate(curLum * (1.0f / (1.0f + curLum)));
     const float2 mlpOut = rawlss5Mlp(float4(curv, localContrast, fresnel, midKey));
 
-    // Apply hue-preserving 3D micro-relief & grazing micro-sheen (per-class artistic intent):
-    const float classGain = isFace ? 0.18f : (isFoliage ? 0.45f : 0.85f);
-    const float distFade = smoothstep(5500.0f, 350.0f, z);
-    const float3 detailDelta = (curRgb - rgbBlur) * (saturate(mlpOut.x * 0.5f + 0.5f) * 0.34f * classGain * edgeGate * distFade);
-    const float3 sheenAdd = curRgb * (max(mlpOut.y, 0.0f) * fresnel * (isFace ? 0.04f : 0.085f) * distFade);
-    float3 recon = max(curRgb + detailDelta + sheenAdd, 0.0f.xxx);
+    // Hue-preserving 3D micro-relief, concave cavity deepening & convex bevel specular catchlights (zero AI hallucination!):
+    const float classGain = isFace ? 0.16f : (isFoliage ? 0.52f : 0.95f);
+    const float distFade = smoothstep(5500.0f, 320.0f, z);
+    const float cavityMod = 1.0f + clamp(divN * 0.16f, -0.18f, 0.16f) * classGain * edgeGate * distFade;
+    const float3 detailDelta = (curRgb - rgbBlur) * (saturate(mlpOut.x * 0.5f + 0.5f) * 0.42f * classGain * edgeGate * distFade);
+    const float3 sheenAdd = curRgb * (max(mlpOut.y, 0.0f) * fresnel * (isFace ? 0.035f : 0.105f) * distFade);
+    float3 recon = max(curRgb * cavityMod + detailDelta + sheenAdd, 0.0f.xxx);
 
     // 3D-Validated YCoCg Variance-Clipped Temporal Accumulation (zero ghosting, silky foliage & RT stability):
     const float2 uv = (floor(at.xy) + 0.5f) * dims.zw;

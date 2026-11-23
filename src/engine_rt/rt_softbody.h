@@ -9,12 +9,13 @@
 namespace raw::rt {
 
 enum class TissueKind : uint8_t {
-    Breast = 0,
-    Glute  = 1,
-    Belly  = 2,
-    Thigh  = 3,
-    Hair   = 4,
-    Cloak  = 5,
+    Breast    = 0,
+    Glute     = 1,
+    Belly     = 2,
+    Thigh     = 3,
+    Pelvic    = 4,   // Multi-axis anatomical pendulum/scrotal viscoelastic dynamics
+    Hair      = 5,
+    Cloak     = 6,
 };
 
 struct TissueProfile {

@@ -129,7 +129,7 @@ float3 distantLit(int3 ip, float2 at, float d) {
         }
         n = normalize(n + float3(trampleBend + windG * (gustG * 0.24f), 0.0f));
         // Per-blade directional micro-shadow march (grounds grass tufts cleanly inside terrain, rock & tree shadows).
-        const float grassMicroSh = zDist < 2600.0f ? screenShadow(p + n * 0.6f, sunDir.xyz, 18.0f, 0.02f, ign(px), 6u) : 1.0f;
+        const float grassMicroSh = (!rt && zDist < 2600.0f) ? screenShadow(p + n * 0.6f, sunDir.xyz, 18.0f, 0.02f, ign(px), 6u) : 1.0f;
         const float gSh = sh * lerp(1.0f, grassMicroSh, saturate(1.0f - zDist / 2600.0f) * 0.82f) * trampleOcc;
         direct = effSunCol * (saturate(dot(n, sunDir.xyz)) * gSh * sunBoostL * lerp(0.88f, 1.16f, gustG));
         // Subtle deep-emerald chlorophyll subsurface transmission + root grounding (no neon-yellow blowout).

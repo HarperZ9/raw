@@ -292,21 +292,14 @@ void water(uint3 id : SV_DispatchThreadID) {
             float3 rd = reflect(-v, nRefl);
             if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }
             float3 refl;
-            // Pure Hardware DXR 1.2 RayQuery Water Reflections + aerial-perspective sky fade
-            // (removed screen-space SSR loop which caused top-left glitch blocks in 10.51.22.98 & striping in 10.51.15.20!):
+            // Pure Native World-Space Hardware DXR 1.2 RayQuery Water Reflections (zero SSR, zero onScreen screen-space fallback!):
             Hit h;
             if (reflectLength > 0.0f && traceHit(o, rd, reflectLength, h)) {
-                float3 cScreen, hn;
                 const float3 hitPt = o + rd * h.t;
-                const float3 rtCol = radianceAt(h, o, rd, float2(0.5f, 0.5f), true, hn);
-                if (onScreen(hitPt, cScreen)) {
-                    const float4 scH = screenOf(hitPt);
-                    const float2 hUv = scH.xy * dims.zw;
-                    const float edgeW = smoothstep(0.02f, 0.16f, min(min(hUv.x, 1.0f - hUv.x), min(hUv.y, 1.0f - hUv.y)));
-                    refl = lerp(rtCol, cScreen, edgeW);
-                } else {
-                    refl = rtCol;
-                }
+                const bool mats = (giFlags & GI_MATERIALS) != 0u;
+                const float3 hn = mats ? hitNormal(h, rd) : -rd;
+                refl = mats ? shadeHit(hitPt, hn, hitAlbedo(h), float2(0.5f, 0.5f), true)
+                            : (0.25f * float3(ambient[0].w, ambient[1].w, ambient[2].w));
                 const float3 farReflSky = waterSky(rd);
                 const float reflFog = 1.0f - exp(-h.t * 0.00014f);
                 refl = lerp(max(refl, farReflSky * 0.18f), farReflSky, saturate(reflFog));

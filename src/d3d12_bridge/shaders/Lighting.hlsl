@@ -365,13 +365,26 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             albedo = lerp(albedo, float3(0.10f, 0.17f, 0.07f) * (0.75f + 0.50f * microN), mossW * 0.52f);
             s.alpha = lerp(s.alpha, 0.88f, mossW * 0.45f);
         }
-        // Steep-cliff tri-planar geological strata synthesis on terrain (base == 4u, slope < 0.68):
+        // Native Ground-Up Terrain System Replacement (replaces Terrain Helper for ENB + 2011 smeared quad blends, MAT-09):
+        // 1) Wronski Laplacian Band-Preserving Micro-Contrast: sharpens blurry 6-layer linear terrain quad transitions
+        //    into crisp height-blended pebble/gravel/loam/rock boundaries with slope-adaptive tactile roughness!
+        if (base == 4u && z < 4800.0f && wet.snow < 0.45f) {
+            const float tFade = saturate(1.0f - z / 4800.0f) * (1.0f - wet.snow * 1.8f);
+            const float pebbleH = cNoise(wp * 0.085f) * 0.55f + cNoise(wp * 0.24f + 7.1f) * 0.30f + cNoise(wp * 0.62f + 19.3f) * 0.15f;
+            const float lapContrast = (pebbleH - 0.5f) * (slope > 0.80f ? 0.34f : 0.24f);
+            const float3 loamTint = lerp(float3(0.94f, 0.92f, 0.88f), float3(1.06f, 1.04f, 0.99f), smoothstep(0.28f, 0.72f, pebbleH));
+            albedo = saturate(albedo * lerp(1.0f.xxx, loamTint * (1.0f + lapContrast), tFade * 0.85f));
+            // Height-driven micro-roughness: raised pebbles/stones catch crisp specular sheen while dirt crevices stay matte!
+            const float heightGloss = smoothstep(0.54f, 0.82f, pebbleH) * tFade;
+            s.alpha = clamp(lerp(s.alpha, max(s.alpha * 0.68f, 0.28f), heightGloss * 0.55f), 0.06f, 0.96f);
+        }
+        // 2) Steep-cliff tri-planar geological strata synthesis on terrain (base == 4u, slope < 0.68):
         // breaks up Skyrim's stretched 2011 vertical cliff UV smears with crisp horizontal basalt/granite strata!
         if (base == 4u && slope < 0.68f && z < 8500.0f) {
             const float cliffW = smoothstep(0.68f, 0.35f, slope) * saturate(1.0f - z / 8500.0f);
             const float strata = cNoise(float3(wp.xy * 0.0045f, wp.z * 0.028f)) * 0.65f + cNoise(float3(wp.xy * 0.016f, wp.z * 0.075f)) * 0.35f;
-            albedo *= lerp(1.0f, lerp(0.76f, 1.22f, strata), cliffW * 0.72f);
-            s.n = normalize(s.n + float3(0.0f, 0.0f, (strata - 0.5f) * 0.38f * cliffW));
+            albedo *= lerp(1.0f, lerp(0.74f, 1.24f, strata), cliffW * 0.78f);
+            s.n = normalize(s.n + float3(0.0f, 0.0f, (strata - 0.5f) * 0.42f * cliffW));
         }
         // Procedural sub-centimeter world-space micro-normal & grazing roughness synthesis on vanilla terrain/rock/bark:
         // gives 2011 meshes crisp sunlit micro-grain and tactile roughness variation without requiring 4K texture mods.

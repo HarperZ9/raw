@@ -187,4 +187,13 @@ void HotReload_OnPresent()
     }
 }
 
+void HotReload_SyncIniTime()
+{
+    State& s = S();
+    if (s.ini.empty()) return;
+    std::error_code ec;
+    const auto it = fs::last_write_time(s.ini, ec);
+    if (!ec) s.iniTime = it;
+}
+
 } // namespace SB::Proxy

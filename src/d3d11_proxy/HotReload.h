@@ -6,5 +6,6 @@
 namespace SB::Proxy
 {
 void HotReload_LoadConfig(const std::string& ini);
-void HotReload_OnPresent();   // before the game's Present, on the render thread
+void HotReload_OnPresent();
+void HotReload_SyncIniTime();   // before the game's Present, on the render thread
 }

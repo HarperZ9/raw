@@ -101,12 +101,12 @@ pre{margin:0;background:#0a0d12;border:1px solid var(--line);border-radius:4px;p
 </header>
 <div class="preset-bar">
   <span style="font-size:12px;color:var(--muted);align-self:center;margin-right:4px">LOOK PRESETS:</span>
-  <button onclick="iniSet('ToneCurve',4);iniSet('ToneX2',0)">Nordic Photoreal (AgX)</button>
-  <button onclick="iniSet('ToneCurve',8);iniSet('ToneX2',2)">ACES 2.0 Kodak 2383</button>
-  <button onclick="iniSet('ToneCurve',4);iniSet('ToneX2',4)">One Warm Light (500T)</button>
-  <button onclick="iniSet('ToneCurve',4);iniSet('ToneX2',6)">Tarkovsky Storm Coast</button>
-  <button onclick="iniSet('ToneCurve',4);iniSet('ToneX2',12)">Sony PVM CRT</button>
-  <button onclick="iniSet('ToneCurve',4);iniSet('ToneX2',13)">1988 NTSC VHS</button>
+  <button onclick="iniBatch({ToneCurve:4,ToneX2:0})">Nordic Photoreal (AgX)</button>
+  <button onclick="iniBatch({ToneCurve:8,ToneX2:2})">ACES 2.0 Kodak 2383</button>
+  <button onclick="iniBatch({ToneCurve:4,ToneX2:4})">One Warm Light (500T)</button>
+  <button onclick="iniBatch({ToneCurve:4,ToneX2:6})">Tarkovsky Storm Coast</button>
+  <button onclick="iniBatch({ToneCurve:4,ToneX2:12})">Sony PVM CRT</button>
+  <button onclick="iniBatch({ToneCurve:4,ToneX2:13})">1988 NTSC VHS</button>
 </div>
 <div class="grid">
   <div>
@@ -151,7 +151,7 @@ pre{margin:0;background:#0a0d12;border:1px solid var(--line);border-radius:4px;p
           <div class="row" style="margin:0">
             <button onclick="iniSet('WeatherSnow', 1)">Snow 100%</button>
             <button onclick="iniSet('WeatherRain', 1)">Rain 100%</button>
-            <button onclick="iniSet('WeatherSnow', -1); iniSet('WeatherRain', -1)">Auto</button>
+            <button onclick="iniBatch({WeatherSnow:-1,WeatherRain:-1})">Auto</button>
           </div>
         </label>
       </div>
@@ -314,7 +314,8 @@ async function post(url, body) {
   const r = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
   const j = await r.json(); log(j); return j;
 }
-const iniSet = (k, v) => post('/api/ini', { [k]: v });
+const iniBatch = obj => { Object.assign(currentParams, obj); return post('/api/ini', obj); };
+const iniSet = (k, v) => iniBatch({ [k]: v });
 const refreshState = async () => log(await (await fetch('/api/state')).json());
 const runMeasure = () => post('/api/measure', { frames: 120 });
 const runCapture = () => post('/api/capture', { name: 'studio_live' });
@@ -330,7 +331,19 @@ async function loadShader() {
   document.getElementById('shader-src').value = j.source || '';
 }
 const saveAndReloadShader = () => post('/api/shader', { file: document.getElementById('shader-sel').value, source: document.getElementById('shader-src').value });
-const savePreset = () => post('/api/preset/save', { name: document.getElementById('preset-name').value || 'custom', params: currentParams });
+const collectAllParams = () => ({
+  ...currentParams,
+  Quality: document.getElementById('q-tier').value,
+  View: document.getElementById('v-mode').value,
+  Season: document.getElementById('season-mode').value,
+  DlssMode: document.getElementById('dlss-mode').value,
+  ToneCurve: document.getElementById('curve-mode').value,
+  ToneX2: document.getElementById('film-stock').value,
+  LutIndex: document.getElementById('lut-idx').value,
+  OverlayMask: document.getElementById('ov-mask').value,
+  ToneView: document.getElementById('hdr-mode').value,
+});
+const savePreset = async () => { await post('/api/preset/save', { name: document.getElementById('preset-name').value || 'custom', params: collectAllParams() }); refreshPresets(); };
 async function loadPreset() {
   const j = await post('/api/preset/load', { name: document.getElementById('preset-name').value || 'custom' });
   if (j.params) for (const [k, v] of Object.entries(j.params)) {
@@ -384,7 +397,7 @@ async function loadPresetLibrary() {
       drawWheel(R + dx * R * (d > 0 ? Math.min(1, d) / d : 0), R + dy * R * (d > 0 ? Math.min(1, d) / d : 0));
       const kelvin = Math.round(6500 - dx * 2800), sat = +(0.6 + d * 1.1).toFixed(2);
       document.getElementById('wheel-readout').textContent = `${kelvin}K | Sat ${sat.toFixed(2)}`;
-      iniSet('WhiteBalanceK', kelvin); iniSet('ColorSat', sat);
+      iniBatch({ ColorTempK: kelvin, OklabSat: sat });
     }
     cw.onmousedown = e => { drag = true; pick(e); };
     window.addEventListener('mouseup', () => drag = false);

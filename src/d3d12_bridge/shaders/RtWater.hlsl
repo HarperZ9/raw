@@ -231,11 +231,14 @@ void water(uint3 id : SV_DispatchThreadID) {
                     const float wavelength = 6.2831853f / kRad;
                     const float nyquistFade = smoothstep(pxFoot * 4.0f, pxFoot * 10.0f, wavelength);
                     if (nyquistFade <= 0.001f) { continue; }
-                    const float kd = min(kM * depthM, 18.0f);
-                    const float omega = sqrt((9.81f * kM + 7.4e-5f * kM * kM * kM) * tanh(kd));
+                    const float kdRef = min(kM * 2.2f, 18.0f);
+                    const float omega = sqrt((9.81f * kM + 7.4e-5f * kM * kM * kM) * tanh(kdRef));
                     const float spread = (frac(float(wi) * 0.6180339f) - 0.5f) * (1.35f + fracI * 0.85f);
                     const float2 dirW = normalize(flowDir * cos(spread) + flowPerp * sin(spread));
-                    const float ampW = (0.036f * pow(1.0f - fracI * 0.75f, 1.40f)) * ampScale * nyquistFade;
+                    // Depth shoaling modulates wave amplitude smoothly (NEVER wt * omega(depthM), which drew
+                    // topographic iso-depth contour rings across the riverbed in 11.15.38.97 & 11.15.40.46!):
+                    const float shoalAmp = smoothstep(0.06f, 0.85f, depthM);
+                    const float ampW = (0.036f * pow(1.0f - fracI * 0.75f, 1.40f)) * ampScale * nyquistFade * shoalAmp;
                     const float ph = dot(wpFlow, dirW) * kRad - wt * omega + float(wi) * 2.39996f;
                     const float s = sin(ph);
                     const float c = cos(ph);
@@ -444,15 +447,15 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float froth = organicFroth(wpW.xy - foamFlow * (camPosW.w * 16.0f), camPosW.w);
                 const float frothFine = organicFroth(wpW.xy * 1.85f + foamFlow * (camPosW.w * 9.0f) + 13.7f, camPosW.w * 1.25f);
                 const float runup = 4.2f + 2.2f * sin(camPosW.w * 1.45f + (wpW.x + wpW.y) * 0.016f + froth * 1.8f);
-                const float shoreMeniscus = (1.0f - smoothstep(0.0f, runup, depthV)) * smoothstep(0.0f, 0.25f, depthV);
-                // Aperiodic organic shore foam + Jacobian wave-breaking whitecaps (eliminates Dawnstar periodic zebra stripes!):
-                const float surfZone = smoothstep(1.5f, 10.0f, depthV) * (1.0f - smoothstep(16.0f, 40.0f, depthV));
-                const float surfCrest = saturate(jacobianFold * 0.65f + (frothFine - 0.52f) * 1.4f) * surfZone * (0.35f + 0.65f * froth);
-                const float retreatLace = (1.0f - smoothstep(1.0f, 16.0f, depthV)) * smoothstep(0.42f, 0.82f, frothFine) * 0.36f;
-                const float rapidFoam = (1.0f - smoothstep(2.0f, 20.0f, depthV)) * smoothstep(0.50f, 0.88f, froth) * 0.32f;
-                const float bowFoam = bowHit * froth * 0.82f;
-                const float eddyFoam = eddyLee * froth * 0.44f;
-                const float shoreLap = max(max(shoreMeniscus * (0.42f + 0.58f * froth) * 0.72f, max(surfCrest * 0.80f, retreatLace)), rapidFoam);
+                const float shoreMeniscus = (1.0f - smoothstep(0.0f, runup, depthV)) * smoothstep(0.0f, 0.45f, depthV);
+                // Delicate organic shore foam (eliminates bright white wavy shoreline ribbon in 11.15.38.97 & 11.15.40.46!):
+                const float surfZone = smoothstep(1.5f, 10.0f, depthV) * (1.0f - smoothstep(16.0f, 38.0f, depthV));
+                const float surfCrest = saturate(jacobianFold * 0.45f + (frothFine - 0.58f) * 1.1f) * surfZone * (0.25f + 0.75f * froth);
+                const float retreatLace = (1.0f - smoothstep(1.0f, 14.0f, depthV)) * smoothstep(0.50f, 0.86f, frothFine) * 0.16f;
+                const float rapidFoam = (1.0f - smoothstep(2.0f, 18.0f, depthV)) * smoothstep(0.56f, 0.90f, froth) * 0.14f;
+                const float bowFoam = bowHit * froth * 0.65f;
+                const float eddyFoam = eddyLee * froth * 0.30f;
+                const float shoreLap = max(max(shoreMeniscus * (0.30f + 0.70f * froth) * 0.24f, max(surfCrest * 0.28f, retreatLace)), rapidFoam);
                 const float windSpeedW = saturate(length(cloudWind.xy) / 340.0f + weather.w * 0.55f);
                 const float crestFoam = saturate((1.0f - n.z) * (6.5f + windSpeedW * 5.2f) - lerp(0.16f, 0.08f, windSpeedW)) * froth * (0.55f + windSpeedW * 0.42f);
                 const float foamMask = saturate(max(max(bowFoam, eddyFoam), max(shoreLap, crestFoam))) * nearW;

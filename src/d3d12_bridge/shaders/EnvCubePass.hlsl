@@ -65,8 +65,8 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
     const float4 scEnv = screenOf(eyeAt() + rd * 2400.0f);
     if (scEnv.w > 10.0f) {
         const float2 eUv = scEnv.xy * dims.zw;
-        if (all(eUv > 0.04f) && all(eUv < 0.96f)) {
-            const float eEdge = smoothstep(0.04f, 0.18f, min(min(eUv.x, 1.0f - eUv.x), min(eUv.y, 1.0f - eUv.y)));
+        if (all(eUv > 0.03f) && all(eUv < 0.97f)) {
+            const float eEdge = smoothstep(0.03f, 0.24f, min(min(eUv.x, 1.0f - eUv.x), min(eUv.y, 1.0f - eUv.y)));
             const float eDepth = Depth.SampleLevel(Lin, eUv, 0.0f);
             if (eDepth < 0.9995f) {
                 const float3 scCol = min(GameLit.SampleLevel(Lin, eUv, 0.0f).rgb, 3.5f.xxx);

@@ -432,10 +432,10 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float3 bed = lerp(lerp(b00, b10, qFrac.x), lerp(b01, b11, qFrac.x), qFrac.y);
                 const int2 qDepthPx = qValid ? q : int2(id.xy);
                 const float path = length(worldAt(float2(qDepthPx), Depth.Load(int3(qDepthPx, 0))) - p);
-                // Realistic cold Nordic slate-emerald Beer-Lambert absorption (eliminates over-saturated electric royal blue
-                // in Dawnstar Arctic waters & flat cyan under the Riverwood sawmill bridge).
-                const float3 T = exp(-waterA.z * float3(1.08f, 0.74f, 0.64f) * path);
-                const float3 scatter = float3(0.011f, 0.024f, 0.028f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.04f.xxx) * 1.15f;
+                // Rich Spectral Beer-Lambert Nordic Water Optics: crystal-clear amber-emerald riverbed shallows
+                // transitioning smoothly into deep cold glacial teal-indigo pools with zero muddy grey wash!
+                const float3 T = exp(-waterA.z * float3(1.42f, 0.72f, 0.56f) * path);
+                const float3 scatter = float3(0.012f, 0.032f, 0.038f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) * 1.25f;
                 const float nearW = 1.0f - smoothstep(2800.0f, 5200.0f, wDist);
                 // Rich backlit glacial-emerald wave-crest subsurface scattering.
                 const float3 waveSSS = sunDir.w > 0.5f

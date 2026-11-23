@@ -98,6 +98,7 @@ bool D3D12Bridge::ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, 
             slCam.aspect = m->camera.aspect;
             std::memcpy(slCam.proj, m->camera.proj, sizeof(slCam.proj));
             std::memcpy(slCam.viewToWorld, m->lighting.viewToWorld, sizeof(slCam.viewToWorld));
+            std::memcpy(slCam.worldToClip, m->lighting.worldToClip, sizeof(slCam.worldToClip));
             slCam.pos[0] = m->lighting.posAdjust[0];
             slCam.pos[1] = m->lighting.posAdjust[1];
             slCam.pos[2] = m->lighting.posAdjust[2];

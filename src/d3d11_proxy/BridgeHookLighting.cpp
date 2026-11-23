@@ -21,6 +21,7 @@
 #include "Translate.h"
 #include "Overlay.h"
 #include "StreamlineHost.h"
+#include "OcclusionCuller.h"
 #include "WeatherDrive.h"
 #include "Tonemap.h"
 
@@ -210,6 +211,9 @@ void LoadLightingConfig(const std::string& ini)
         raw::bridge::StreamlineHost::Get().SetMode(i("DlssMode", raw::bridge::StreamlineHost::Get().GetMode()));
         raw::bridge::StreamlineHost::Get().SetReflex(i("Reflex", 1) != 0);
         raw::bridge::StreamlineHost::Get().SetDeepDvc(i("DeepDvc", 0) != 0);
+        raw::bridge::StreamlineHost::Get().SetHiZCallback([](const float* mip0, uint32_t w, uint32_t h, const float w2c[16], const float cam[3]) {
+            OcclusionCuller::Get().UpdateHiZFromGpu(mip0, w, h, w2c, cam);
+        });
     }
     t.water = i("Water", 1) != 0; t.waterReflect = f("WaterReflect", t.waterReflect); t.waterCaustics = f("WaterCaustics", t.waterCaustics);
     t.waterAbsorb = f("WaterAbsorb", t.waterAbsorb); t.waterGlint = f("WaterGlint", t.waterGlint);

@@ -62,9 +62,10 @@ void OcclusionCuller::OnPresent(ID3D11DeviceContext* /*ctx*/)
     // Uses zero-copy DXBC shader-class-filtered NiAVObject::worldBound frustum & sub-pixel culling
     // (eliminated wasted 1920x1080 CPU depth staging CopyResource/Map every frame under raw::tx DX12).
     if (++m_frameCount % 300 == 0) {
-        Log("[OcclusionCuller] frame %llu: tested %u draws (%llu tris), culled %u draws (%llu tris: frustum=%u subpx=%u, %.1f%% tris saved)",
-            static_cast<unsigned long long>(m_frameCount), m_drawsTested, static_cast<unsigned long long>(m_trisTested),
-            m_drawsCulled, static_cast<unsigned long long>(m_trisCulled), m_frustumCulled, m_subPxCulled,
+        Log("[OcclusionCuller] frame %llu: hiz=%d (%ux%u) tested %u draws (%llu tris), culled %u draws (%llu tris: frustum=%u subpx=%u hiz=%u, %.1f%% tris saved)",
+            static_cast<unsigned long long>(m_frameCount), m_hizReady ? 1 : 0, m_hizW, m_hizH,
+            m_drawsTested, static_cast<unsigned long long>(m_trisTested),
+            m_drawsCulled, static_cast<unsigned long long>(m_trisCulled), m_frustumCulled, m_subPxCulled, m_hiZCulled,
             m_trisTested ? (100.0 * double(m_trisCulled) / double(m_trisTested)) : 0.0);
     }
 
@@ -320,8 +321,78 @@ bool OcclusionCuller::ShouldCull(uint32_t indexCount)
             m_drawsCulled++; m_subPxCulled++; m_trisCulled += tris;
             return true;
         }
+        // ── Stage 3: Native DX12 Compute Hi-Z Occlusion Culling (240x135 GPU-reduced depth pyramid) ──
+        // Conservative screen-space sphere projection against GPU Hi-Z (2 frames retired, exact m_hizW2C/m_hizCam).
+        if (m_hizReady && m_hizHasCam && curDist > 320.0f && radius < 480.0f) {
+            const float hrx = m_exactBound[0] - m_hizCam[0], hry = m_exactBound[1] - m_hizCam[1], hrz = m_exactBound[2] - m_hizCam[2];
+            const float hDist = std::sqrt(hrx * hrx + hry * hry + hrz * hrz);
+            if (hDist > radius + 120.0f) {
+                const float* hm = &m_hizW2C[0][0];
+                const float hcx = hm[0]*hrx + hm[1]*hry + hm[2]*hrz + hm[3];
+                const float hcy = hm[4]*hrx + hm[5]*hry + hm[6]*hrz + hm[7];
+                const float hcz = hm[8]*hrx + hm[9]*hry + hm[10]*hrz + hm[11];
+                const float hcw = hm[12]*hrx + hm[13]*hry + hm[14]*hrz + hm[15];
+                if (hcw > 40.0f) {
+                    const float invW = 1.0f / hcw;
+                    const float sx = hcx * invW * 0.5f + 0.5f;
+                    const float sy = 0.5f - hcy * invW * 0.5f;
+                    // Conservative 1.25x screen-rect expansion + near-face depth with safety bias prevents any popping.
+                    const float rNdc = (radius * 1.25f) * invW;
+                    const float nearScale = std::max((hDist - radius * 1.15f) / hDist, 0.1f);
+                    const float hrxN = hrx * nearScale, hryN = hry * nearScale, hrzN = hrz * nearScale;
+                    const float hczN = hm[8]*hrxN + hm[9]*hryN + hm[10]*hrzN + hm[11];
+                    const float hcwN = hm[12]*hrxN + hm[13]*hryN + hm[14]*hrzN + hm[15];
+                    if (hcwN > 15.0f && sx - rNdc >= 0.02f && sx + rNdc <= 0.98f && sy - rNdc >= 0.02f && sy + rNdc <= 0.98f) {
+                        const float nearDepth = (hczN / hcwN) - 0.0020f;
+                        if (nearDepth > 0.0f && nearDepth < 0.9999f && TestRect(sx - rNdc, sy - rNdc, sx + rNdc, sy + rNdc, nearDepth)) {
+                            m_drawsCulled++; m_hiZCulled++; m_trisCulled += tris;
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
     }
     return false;
+}
+
+void OcclusionCuller::UpdateHiZFromGpu(const float* mip0, uint32_t w, uint32_t h, const float w2c[16], const float cam[3])
+{
+    if (!mip0 || w < 8 || h < 8 || !w2c || !cam) return;
+    m_hizMipChain[0].width = w;
+    m_hizMipChain[0].height = h;
+    m_hizMipChain[0].data.assign(mip0, mip0 + size_t(w) * h);
+    m_hizW = w;
+    m_hizH = h;
+    m_hizMips = 1;
+    uint32_t prevW = w, prevH = h;
+    for (uint32_t mip = 1; mip < kMaxHiZMips; ++mip) {
+        const uint32_t curW = std::max(prevW / 2, 1u);
+        const uint32_t curH = std::max(prevH / 2, 1u);
+        auto& curMip = m_hizMipChain[mip];
+        const auto& prevMip = m_hizMipChain[mip - 1];
+        curMip.width = curW;
+        curMip.height = curH;
+        curMip.data.resize(size_t(curW) * curH);
+        for (uint32_t y = 0; y < curH; ++y) {
+            for (uint32_t x = 0; x < curW; ++x) {
+                const uint32_t sx = x * 2, sy = y * 2;
+                const float d00 = prevMip.data[sy * prevW + sx];
+                const float d10 = (sx + 1 < prevW) ? prevMip.data[sy * prevW + sx + 1] : d00;
+                const float d01 = (sy + 1 < prevH) ? prevMip.data[(sy + 1) * prevW + sx] : d00;
+                const float d11 = (sx + 1 < prevW && sy + 1 < prevH) ? prevMip.data[(sy + 1) * prevW + sx + 1] : d00;
+                curMip.data[y * curW + x] = std::max({d00, d10, d01, d11});
+            }
+        }
+        ++m_hizMips;
+        prevW = curW;
+        prevH = curH;
+        if (curW == 1 && curH == 1) break;
+    }
+    std::memcpy(m_hizW2C, w2c, sizeof(m_hizW2C));
+    std::memcpy(m_hizCam, cam, sizeof(m_hizCam));
+    m_hizHasCam = true;
+    m_hizReady = true;
 }
 
 } // namespace SB::Proxy

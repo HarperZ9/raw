@@ -44,7 +44,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float karis = 1.0f / (1.0f + tapLum * 0.45f);
             const float w = exp(-pd * pd) * karis * ((dx == 0 && dy == 0) ? 1.5f : 1.0f);
             const float pk = max(tap.r, max(tap.g, tap.b));
-            if (pk > 3.0f) { tap.rgb *= 3.0f / pk; }
+            if (pk > 2.2f) { tap.rgb *= 2.2f / pk; }
             s1 += tap * w;
             s2 += (tap * tap) * w;
             wSum += w;
@@ -70,8 +70,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float curLum = dot(cur.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             const float prevLum = dot(clamped.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             const float lumJump = saturate(abs(curLum - prevLum) / max(curLum + prevLum + 0.08f, 0.08f));
-            // Anti-lag disocclusion-responsive temporal blend (0.18..0.72): razor-sharp reflections in motion!
-            const float alpha = lerp(0.18f, 0.72f, saturate(speed * 0.12f + lumJump * 0.45f));
+            // Rock-solid temporal reflection stabilization (0.10..0.38): eliminates broken/flickering RT reflection noise!
+            const float alpha = lerp(0.10f, 0.38f, saturate(speed * 0.08f + lumJump * 0.35f));
             cur = lerp(clamped, cur, alpha);
         }
     }

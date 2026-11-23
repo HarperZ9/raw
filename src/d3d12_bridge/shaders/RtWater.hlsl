@@ -229,8 +229,11 @@ void water(uint3 id : SV_DispatchThreadID) {
                     waveG += dirW * (c * (1.0f + 0.38f * s) * ampW);
                     jacobianFold += max(-s, 0.0f) * ampW * 3.2f;
                 }
-                const float2 bowNormal = obsGrad * (bowHit * (0.11f + 0.05f * sin(depthV0 * 0.30f - wt * 3.4f)));
-                n = normalize(n + float3(waveG + bowNormal, 0.0f));
+                // Grazing-angle anisotropic Nyquist normal filter: prevents high-frequency wave crests from aliasing into
+                // shimmering pixel noise at low view angles while preserving big rolling ocean/river swells!
+                const float grazingSmooth = smoothstep(0.05f, 0.45f, saturate(v.z));
+                const float2 bowNormal = obsGrad * (bowHit * (0.09f + 0.04f * sin(depthV0 * 0.30f - wt * 3.4f)));
+                n = normalize(n + float3(waveG * lerp(0.28f, 0.72f, grazingSmooth) + bowNormal, 0.0f));
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
                 if (wDist < 1600.0f) {
                     float2 wakeG = 0.0f.xx;

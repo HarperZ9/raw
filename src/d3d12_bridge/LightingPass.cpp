@@ -35,6 +35,7 @@
 #include "env_cube_fs.h"
 #include "froxel_inject_fs.h"
 #include "froxel_int_fs.h"
+#include "world_field_sim_fs.h"
 
 #include <cmath>
 #include <cstring>
@@ -65,7 +66,8 @@ static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
 constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536, kDistantLod = 131072, kEnvMap = 262144, kCharLight = 524288, kUnderwater = 1048576;
 constexpr RasterBinding U = RasterBinding::Uniform, T = RasterBinding::Texture, Sm = RasterBinding::Sampler;
-constexpr RasterBinding kLightLayout[16] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T, T, Sm};
+constexpr RasterBinding kLightLayout[17] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, Sm};
+constexpr RasterBinding kWorldSimLayout[3] = {U, T, Sm};
 constexpr RasterBinding kCloudLayout[5] = {U, T, T, T, Sm};
 constexpr RasterBinding kVolLayout[7] = {U, T, T, T, T, T, Sm};
 constexpr RasterBinding kFogLayout[9] = {U, T, T, T, T, T, T, T, Sm};
@@ -155,6 +157,9 @@ public:
         if (!m_dofCoc.valid() || !m_dofBokeh.valid()) return Fail("dof textures");
         for (int k = 0; k < 2; ++k) m_giAtrous[k] = m_dev->createTexture({host.width, host.height, TextureFormat::RGBA16Float, RT, "gi atrous"}, m_err);
         if (!m_giAtrous[0].valid() || !m_giAtrous[1].valid()) return Fail("gi atrous textures");
+        // Persistent World-Anchored 512x512 RGBA16F GPU PDE Fluid Wave & Snowpack Simulation Grid (2,048x2,048u window):
+        for (int k = 0; k < 2; ++k) m_worldSim[k] = m_dev->createTexture({512, 512, TextureFormat::RGBA16Float, RT, "world field pde sim"}, m_err);
+        if (!m_worldSim[0].valid() || !m_worldSim[1].valid()) return Fail("world field pde sim textures");
         m_lin = m_dev->createSampler({Filter::Linear, AddressMode::ClampToEdge, "clouds linear"}, m_err);
         if (!m_cloud[0].valid() || !m_cloud[1].valid() || !m_volFog[0].valid() || !m_volFog[1].valid() || !m_lin.valid()) return Fail("cloud/volFog textures");
         const auto dxil = [](const void* p, size_t n) { return ShaderCode{ShaderFormat::Dxil, p, n}; };
@@ -212,6 +217,9 @@ public:
         m_giAt1Pipe = m_dev->createRasterPipeline(d, m_err);
         d.label = "gi atrous 2"; d.fragment = dxil(kDxil_gi_at2_fs, sizeof kDxil_gi_at2_fs); d.layout = kGiAtrousLayout;
         m_giAt2Pipe = m_dev->createRasterPipeline(d, m_err);
+        d.label = "world field pde sim"; d.fragment = dxil(kDxil_world_field_sim_fs, sizeof kDxil_world_field_sim_fs); d.layout = kWorldSimLayout;
+        m_worldSimPipe = m_dev->createRasterPipeline(d, m_err);
+        if (!m_worldSimPipe.valid()) return Fail("world field pde sim pipeline");
         d.label = "gi atrous 4"; d.fragment = dxil(kDxil_gi_at4_fs, sizeof kDxil_gi_at4_fs); d.layout = kGiAtrousLayout;
         m_giAt4Pipe = m_dev->createRasterPipeline(d, m_err);
         if (!m_giAt1Pipe.valid() || !m_giAt2Pipe.valid() || !m_giAt4Pipe.valid()) return Fail("gi atrous pipelines");
@@ -288,12 +296,17 @@ public:
             const RasterBind a4[4] = {{m_uniform, {}, {}}, {{}, m_giAtrous[1], {}}, {{}, m_depth, {}}, {{}, m_normal, {}}};
             Draw(*c, m_giAtrous[0], m_giAt4Pipe, a4);
         }
-        const RasterBind light[16] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_normal, {}}, {{}, m_albedo, {}}, {{}, m_spec, {}},
+        const TextureHandle simNow = m_worldSim[m_frame & 1], simPrev = m_worldSim[(m_frame + 1) & 1];
+        if (ok && (m_u.flags[0] & kMatch) == 0u) {
+            const RasterBind ws[3] = {{m_uniform, {}, {}}, {{}, simPrev, {}}, {{}, {}, m_lin}};
+            Draw(*c, simNow, m_worldSimPipe, ws);
+        }
+        const RasterBind light[17] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_normal, {}}, {{}, m_albedo, {}}, {{}, m_spec, {}},
                                      {{}, m_mask, {}}, {{}, m_atlas, {}}, {{}, aoVis, {}}, {{}, m_game, {}}, {{}, m_soft.valid() ? m_soft : m_game, {}},
                                      {{}, m_rtVis.valid() ? m_rtVis : m_game, {}}, {{}, m_rtIdx.valid() ? m_rtIdx : m_game, {}},
                                      {{}, giFilter ? m_giAtrous[0] : (m_rtBounce.valid() ? m_rtBounce : m_game), {}},
                                      {{}, reflFilter ? reflNow : (m_rtReflect.valid() ? m_rtReflect : m_game), {}},
-                                     {{}, m_envCube, {}}, {{}, {}, m_lin}};
+                                     {{}, m_envCube, {}}, {{}, simNow, {}}, {{}, {}, m_lin}};
         Draw(*c, m_lit, m_lightPipe, light);
         c->timestamp(4);
         const TextureHandle volNow = m_volFog[m_frame & 1], volLast = m_volFog[(m_frame + 1) & 1];
@@ -558,8 +571,8 @@ private:
     BufferHandle m_uniform;
     RasterPipelineHandle m_lightPipe, m_fogPipe, m_cloudPipe, m_volPipe;
     RasterPipelineHandle m_bloomPrePipe, m_bloomDownPipe, m_bloomUpPipe, m_bloomCompPipe;
-    RasterPipelineHandle m_atmoTransPipe, m_atmoMsPipe, m_atmoSkyPipe, m_cloudNoisePipe, m_envCubePipe, m_froxelInjectPipe, m_froxelIntPipe, m_reflFilterPipe, m_dofCocPipe, m_dofGatherPipe, m_dofCompPipe, m_giAt1Pipe, m_giAt2Pipe, m_giAt4Pipe;
-    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoMs, m_atmoSkyView, m_cloudNoise, m_envCube, m_froxelRaw[2], m_froxelInt, m_reflHist[2], m_dofCoc, m_dofBokeh, m_giAtrous[2];
+    RasterPipelineHandle m_atmoTransPipe, m_atmoMsPipe, m_atmoSkyPipe, m_cloudNoisePipe, m_envCubePipe, m_froxelInjectPipe, m_froxelIntPipe, m_reflFilterPipe, m_dofCocPipe, m_dofGatherPipe, m_dofCompPipe, m_giAt1Pipe, m_giAt2Pipe, m_giAt4Pipe, m_worldSimPipe;
+    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoMs, m_atmoSkyView, m_cloudNoise, m_envCube, m_froxelRaw[2], m_froxelInt, m_reflHist[2], m_dofCoc, m_dofBokeh, m_giAtrous[2], m_worldSim[2];
     bool m_atmoTransBuilt = false;
     SamplerHandle m_lin;
     float m_prevWorldToClip[16] = {};

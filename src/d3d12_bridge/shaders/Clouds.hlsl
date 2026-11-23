@@ -198,9 +198,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 softS = min(S, 2.40f.xxx);
         const float fade = exp(-max(t0, 0.0f) / 185000.0f);
         const float horFade = smoothstep(0.015f, 0.24f, dir.z);
-        const float effFade = saturate(fade * 1.15f) * horFade;
+        const float distCut = 1.0f - smoothstep(maxDist * 0.50f, maxDist * 0.95f, t0);
+        const float effFade = saturate(fade * 1.15f) * horFade * distCut;
         const float3 horizonHaze = skyC + sunC * pow(saturate(cosT), 8.0f) * 0.05f;
-        const float3 aerialS = lerp(horizonHaze * (1.0f - T), softS, fade) * horFade;
+        const float3 aerialS = lerp(horizonHaze * (1.0f - T), softS, fade) * (horFade * distCut);
         // High-altitude wispy Cirrus cloud deck (h = 68,000u above cumulus): wind-sheared ice-crystal streaks
         // illuminated by Hillaire 2020 solar transmittance, visible through gaps in the lower cumulus deck.
         float3 cirrusAdd = 0.0f.xxx;

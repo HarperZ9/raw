@@ -905,9 +905,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (!match && !rt && (flags.x & FLAG_CONTACT) != 0u && base != 5u && !isActorFeat && !isActorCloth && sunShadow > 0.0f && dot(s.n, sunDir.xyz) > 0.0f) {
             sunShadow *= screenShadow(p + lift, sunDir.xyz, tune.w, 0.02f, jit, 12u);
         }
-        // Skinned actors (skin/hair/eye AND skinned clothing) keep the game's filtered shadow mask so coarse low-poly
-        // skinned BLAS triangles never cast flat triangular self-shadow acne onto NPC tunics/shirts/backs.
-        if (rt && sunColour.w > 0.5f && !isActorFeat && !isActorCloth) { sunShadow = min(sunShadow, rv.x); }
+        // Pure Native Hardware DXR 1.2 Sun Shadows when RT is active on exterior world geometry:
+        // Replaces min(m4.x, rv.x) so Skyrim's 2011 camera-frustum-fitted shadow cascades (m4.x) can NEVER
+        // shift, clip, or pop sharp shadows across the ground as you pitch or turn the camera!
+        // Skinned actors keep m4.x to avoid coarse low-poly skinned BLAS triangle self-shadow acne.
+        if (rt && sunColour.w > 0.5f && !isActorFeat && !isActorCloth) { sunShadow = rv.x; }
         if (!match && sunColour.w > 0.5f && (flags.x & FLAG_CLOUDS) != 0u) { sunShadow *= pow(saturate(cloudShadow(p + camPosW.xyz)), 1.25f); }   // SKY-02 rolling cloud-shadow contrast
         // Skin: warm dermal penumbra + gentle wrap so shadow transitions on faces and shoulders stay lifelike, never muddy grey.
         const float3 sunSh = skin && !match ? pow(saturate(sunShadow).xxx, float3(0.72f, 0.92f, 1.04f)) : sunShadow.xxx;

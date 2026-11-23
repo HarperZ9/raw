@@ -86,19 +86,10 @@ namespace {
     std::unordered_set<ID3D11Resource*> s_promotedD32Textures;
 
     bool WantTxDepth32() {
-        // Full-pipeline uniform 32-bit float depth promotion (D32_FLOAT_S8X24_UINT):
-        // Promotes 100% of Skyrim SE's R24G8_TYPELESS / D24_UNORM_S8_UINT 2D textures (main depth, water depth,
-        // SAO depth, copy targets, and reflection depth at all sizes) into the exact same R32G8X24_TYPELESS
-        // format family so every internal CopyResource succeeds natively on DX12 hardware with 256x depth precision.
-        static int s_val = -1;
-        if (s_val < 0) {
-            char path[MAX_PATH]{};
-            GetModuleFileNameA(nullptr, path, MAX_PATH);
-            std::string ini(path);
-            ini = ini.substr(0, ini.rfind('\\') + 1) + "d3d11_proxy.ini";
-            s_val = GetPrivateProfileIntA("Lighting", "TxDepth32", 1, ini.c_str());
-        }
-        return s_val != 0;
+        // Permanently OFF: live A/B proved promoting Skyrim SE's D3D11 depth buffers to R32G8X24_TYPELESS
+        // (even uniformly across all 5 depth buffers) brings back the horizontal depth/water line artifact
+        // because Skyrim's own compiled DXBC shaders expect 24-bit D24_UNORM_S8_UINT depth semantics.
+        return false;
     }
 
     // Depth format → typeless format

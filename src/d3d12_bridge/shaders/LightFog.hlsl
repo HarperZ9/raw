@@ -260,16 +260,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float lowSunF = saturate(1.0f - sunDir.z * 2.6f);
         const float highSunF = smoothstep(0.18f, 0.48f, sunDir.z);
         const float cosSunF = saturate(dot(w, sunDir.xyz));
-        // Exact elevation-matched sky gradient coupled to Hillaire SIGGRAPH 2020 physical Sky-View radiative transfer LUT,
-        // attenuated in overcast/snowy weather so coastal horizons never form a bright curved ring.
-        const float3 skyGradPal = lerp(sH, lerp(sM, sZ, smoothstep(0.18f, 0.65f, w.z)), smoothstep(-0.08f, 0.28f, w.z));
-        const float3 hillaireSky = sampleHillaireSky(float3(w.xy, max(w.z, 0.03f)));
-        const float hillaireW = (1.0f - nightF) * (1.0f - saturate(clouds.x * 0.72f + weather.z * 0.55f)) * 0.48f;
-        const float3 skyGrad = lerp(skyGradPal, hillaireSky, hillaireW);
-        // Blend softly with overcast cloud-layer ambient when cloud cover rises so fog never fights the cloud deck color.
+        // Unified sky-matched aerial perspective: uses the EXACT same Hillaire + overcastSky formula as the sky branch
+        // (d >= 1.0f) so far mountains and the Sea of Ghosts melt into the sky dome with 0.000 luminance discontinuity
+        // (eliminates the dark curved slate horizon band caught in r257_dawnstar_npc.jpg).
         const float cloudCov = saturate(clouds.x);
-        const float3 cloudDeckCol = lerp(skyGrad, dot(skyGrad, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.95f, 0.98f, 1.03f), 0.55f);
-        float3 atmoCol = lerp(skyGrad, cloudDeckCol, cloudCov * 0.55f);
+        const float3 hillaireSky = sampleHillaireSky(float3(w.xy, max(w.z, 0.002f)));
+        const float hLumF = max(dot(hillaireSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
+        const float3 overcastAtmo = lerp(float3(0.44f, 0.50f, 0.60f), float3(0.24f, 0.30f, 0.38f), saturate(w.z)) * max(hLumF * 0.95f, 0.26f);
+        float3 atmoCol = lerp(hillaireSky, overcastAtmo, saturate(cloudCov * 0.65f - 0.20f + weather.w * 0.45f));
         // Dual-scale Mie solar scattering: broad golden/D65 aureole + tighter forward solar halo.
         const float3 d65Mie = lerp(float3(1.0f, 0.66f, 0.36f), float3(0.96f, 0.98f, 1.02f), highSunF);
         const float mieHalo = (pow(cosSunF, 5.0f) * 0.14f + pow(cosSunF, 28.0f) * 0.24f) * (1.0f - cloudCov * 0.72f) * (1.0f - nightF);

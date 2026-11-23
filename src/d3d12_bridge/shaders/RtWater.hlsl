@@ -437,8 +437,8 @@ void water(uint3 id : SV_DispatchThreadID) {
                 body = lerp(waterBody, foamLit, foamMask * 0.68f);
             }
             const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;
-            // Eliminate the 2,200u mid-river seam: keep full physical refraction & RT reflections out to 6,500-13,500u!
-            const float cellFeather = 1.0f - smoothstep(6500.0f, 13500.0f, wDist);
+            // Continuous single world-space fluid surface from boots to horizon (extends full JONSWAP + RT water out to 42,000u!):
+            const float cellFeather = 1.0f - smoothstep(18000.0f, 42000.0f, wDist);
             const float effF = saturate(max(lerp(F, pow(saturate(F), 0.64f), 0.55f), 0.16f) * waterA.x * shoreFeather * cellFeather);
             const uint view = uint(waterB.x + 0.5f);
             const float3 farSkyRefl = waterSky(rd);

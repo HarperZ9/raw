@@ -234,11 +234,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;
         }
-        // True linear HDR cloud radiance matched to Hillaire sky + seamless C2 horizon elevation fade.
+        // Continuous world-space horizon merge: extend clouds smoothly down to ~4 deg above horizon (eliminates 14-deg gap!).
         const float3 softS = min(S, 2.40f.xxx);
-        const float fade = exp(-max(t0, 0.0f) / 185000.0f);
-        const float horFade = smoothstep(0.015f, 0.24f, dir.z);
-        const float distCut = 1.0f - smoothstep(maxDist * 0.50f, maxDist * 0.95f, t0);
+        const float fade = exp(-max(t0, 0.0f) / 220000.0f);
+        const float horFade = smoothstep(0.002f, 0.085f, dir.z);
+        const float distCut = 1.0f - smoothstep(maxDist * 0.55f, maxDist * 0.96f, t0);
         const float effFade = saturate(fade * 1.15f) * horFade * distCut;
         const float3 horizonHaze = skyC + sunC * pow(saturate(cosT), 8.0f) * 0.05f;
         const float3 aerialS = lerp(horizonHaze * (1.0f - T), softS, fade) * (horFade * distCut);

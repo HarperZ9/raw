@@ -39,21 +39,24 @@ float sampleFocusZoneZ() {
     return (zVals[5] + zVals[6]) * 0.5f;
 }
 
-// Exact Physical Thin-Lens Optical Circle of Confusion: CoC proportional to (1/focusZ - 1/curZ).
-// Full-range cinema-prime response: creamy anamorphic bokeh on close/mid subjects (<1,800u) AND gentle
-// foreground/far-horizon optical depth separation during exterior vistas, while keeping the focused subject 100% sharp.
+// Exact Physical Hyperfocal Thin-Lens Circle of Confusion:
+// Close/mid subjects (conversations, combat, portraits < 900u) yield rich creamy 9-blade cinema bokeh;
+// distant outdoor vistas (> 1100u) lock to hyperfocal infinity so mountains & architecture stay 100% razor-sharp
+// (zero muddy Vaseline smear!) while close foreground branches/weapons softly feather out of focus.
 float signedCoC(float curZ, float focusZ, float maxDist) {
     if (maxDist <= 1.0f) { return 0.0f; }
-    const float extRange = max(maxDist * 3.4f, 1850.0f);
-    const float engage = lerp(0.28f, 1.0f, smoothstep(extRange, maxDist * 0.55f, focusZ));
-    const float s1 = max(focusZ, 38.0f);
-    const float s2 = max(curZ, 14.0f);
+    const float hyperfocal = max(maxDist * 2.1f, 1100.0f);
+    const float s1 = max(focusZ, 34.0f);
+    const float s2 = max(curZ, 12.0f);
     const float diopter = (1.0f / s1 - 1.0f / s2);
-    const float rawCoc = diopter * (s1 * 1.15f);
-    const float dead = 0.22f;
+    // Physical aperture response: strong bokeh at close focus, zero far-field Vaseline smear past hyperfocal distance:
+    const float farEngage = smoothstep(hyperfocal, maxDist * 0.48f, focusZ);
+    const float rawCoc = diopter * (s1 * 1.45f);
+    const float dead = 0.18f;
     if (abs(rawCoc) <= dead) { return 0.0f; }
     const float shaped = sign(rawCoc) * saturate((abs(rawCoc) - dead) / (1.0f - dead));
-    return shaped * engage;
+    // Near-field foreground blur always engages naturally; far-field bokeh engages only inside hyperfocal range!
+    return rawCoc < 0.0f ? (shaped * 0.92f) : (shaped * farEngage);
 }
 
 float4 dof_coc(float4 at : SV_Position) : SV_Target0 {

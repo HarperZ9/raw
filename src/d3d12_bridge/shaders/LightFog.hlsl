@@ -80,9 +80,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (dofParams.w > 0.5f && (weather.w >= 0.12f || weather.z >= 0.25f)) {
         lit.rgb = elderWeatherLensPrepass(Lit, px, dims.xy, dims.zw, weather.w, weather.z, camPosW.w);
     }
-    if (d >= 1.0f) {
-        // Unified Hillaire SIGGRAPH 2020 Physical HDR Sky + Solar Disc + Wrenninge 4-Octave HDR Cloud Composite:
-        // Sky dome, volumetric clouds, aerial perspective, and sunbeams all derive from one physical HDR solver.
+    const bool isCelestial = (d < 1.0f && curZ > 220000.0f);
+    if (d >= 1.0f || isCelestial) {
+        // Unified Hillaire SIGGRAPH 2020 Physical HDR Sky + Solar Disc + Masser/Secunda Celestial Pass + Wrenninge 4-Octave HDR Cloud Composite:
+        // Routing celestial sky-dome geometry (curZ > 220k: Masser & Secunda) here prevents terrestrial horizonMelt from
+        // painting flat blue over the moon and ensures 3D volumetric clouds drift naturally in front of both moons!
         if (sunColour.w > 0.5f && flags.w != 10u) {
             const float3 sDir = normalize(worldAt(px, 0.995f) - eyeAt());
             const float sunLumS = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
@@ -98,9 +100,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float cosS = saturate(dot(sDir, sunDir.xyz));
             const float sunAng = acos(clamp(cosS, -1.0f, 1.0f));
             const float lowS = saturate(1.0f - sunDir.z * 2.6f);
-            // Preserve authored Masser & Secunda moon crater textures across twilight and night.
+            // Preserve authored Masser & Secunda moon crater textures across daytime, twilight, and night.
             const float moonLumF = dot(lit.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-            const float moonKeep = smoothstep(0.16f, 0.48f, moonLumF) * (1.0f - smoothstep(0.985f, 0.996f, cosS)) * (1.0f - smoothstep(0.18f, 0.42f, sunDir.z));
+            const float moonKeep = isCelestial ? 1.0f : (smoothstep(0.16f, 0.48f, moonLumF) * (1.0f - smoothstep(0.985f, 0.996f, cosS)) * (1.0f - smoothstep(0.18f, 0.42f, sunDir.z)));
             // 100% Full 24-Hour Dynamic Skybox Replacement (Day, Sunset/Sunrise Belt-of-Venus, Night Indigo + Stars + Milky Way + Auroras):
             const float hUp = saturate(sDir.z);
             const float3 nightZen = float3(0.006f, 0.012f, 0.028f);

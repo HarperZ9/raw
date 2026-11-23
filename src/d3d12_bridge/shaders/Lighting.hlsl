@@ -714,7 +714,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 dirCol = lerp(alignedDayCol, max(sunColour.rgb, float3(0.14f, 0.20f, 0.34f)) * float3(0.84f, 0.95f, 1.22f), nightDir * 0.65f) * sunHdrGain;
         // Chan 2018 micro-shadowing: uses fine-scale AO to shadow crevices/mortar/bark where coarse shadow maps cannot reach.
         const float microSh = (!match && !isActorFeat && base != 5u) ? saturate(2.0f * AoHist.Load(ip).x + saturate(dot(s.n, sunDir.xyz)) - 0.85f) : 1.0f;
-        const float sunPunch = (!match && sunColour.w > 0.5f) ? 1.14f : 1.0f;
+        const float sunPunch = (!match && sunColour.w > 0.5f) ? 1.18f : 1.0f;
         addLight(s, sunDir.xyz, dirCol * (sunSh * lerp(0.50f, 1.0f, microSh) * sunPunch), dirCol * sunPunch, diff, spec);
         // Subtle, deep-emerald backlit foliage subsurface transmission (no blown-out pale yellow-green pine glow).
         if (!match && base == 5u && sunColour.w > 0.5f) {
@@ -1095,20 +1095,20 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     }
     if (!match) {
         // Character Portrait & Eye-Candy Shading (Vanilla NPCs & PCs):
-        // 1) Skin (base==10): soft portrait dermal wrap-fill + silky peach-fuzz velvet rim sheen (no greasy shine).
+        // 1) Skin (base==10): soft portrait dermal wrap-fill + silky peach-fuzz velvet rim sheen + subtle nose/cheek oil specular.
         if (skin) {
             const float nvSkin = saturate(dot(s.n, s.v));
-            const float fuzzRim = pow(1.0f - nvSkin, 3.2f) * 0.14f;
-            const float3 portFill = isExterior ? (sunColour.rgb * (0.28f + 0.72f * sunShadow) * 0.08f + amb * 0.12f)
-                                               : (max(amb, float3(0.08f, 0.07f, 0.06f)) * 0.24f);
-            lit += albedo * float3(1.06f, 0.90f, 0.84f) * (portFill + fuzzRim * (isExterior ? sunColour.rgb * 0.35f + amb : max(amb, 0.12f.xxx)));
+            const float fuzzRim = pow(1.0f - nvSkin, 2.9f) * 0.18f;
+            const float3 portFill = isExterior ? (sunColour.rgb * (0.30f + 0.70f * sunShadow) * 0.10f + amb * 0.16f)
+                                               : (max(amb, float3(0.10f, 0.08f, 0.07f)) * 0.28f);
+            lit += albedo * float3(1.08f, 0.91f, 0.84f) * (portFill + fuzzRim * (isExterior ? sunColour.rgb * 0.40f + amb : max(amb, 0.14f.xxx)));
             if (isExterior) {
                 const float nlRaw = dot(s.n, sunDir.xyz);
                 const float3 shv = normalize(s.v + sunDir.xyz);
-                const float snh = saturate(dot(s.n, shv)), sa2 = 0.065f;
+                const float snh = saturate(dot(s.n, shv)), sa2 = 0.048f;
                 const float sdd = snh * snh * (sa2 - 1.0f) + 1.0f;
                 const float sD = sa2 / (PI * sdd * sdd);
-                lit += min(sunColour.rgb * (sD * 0.020f * saturate(nlRaw) * sunShadow * 0.14f), 0.45f.xxx);
+                lit += min(sunColour.rgb * (sD * 0.024f * saturate(nlRaw) * sunShadow * 0.18f), 0.52f.xxx);
             }
         } else if (base == 11u) {
             // 2) Hair (base==11): Dual-lobe Kajiya-Kay / Marschner anisotropic hair sheen (works in both exteriors & interiors).

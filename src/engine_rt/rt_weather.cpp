@@ -1,12 +1,15 @@
 // Weather state for the ray-tracing worker's dynamic weather (RAW engine runtime). Original work, MIT. See rt_weather.h.
 #include "rt_weather.h"
 #include "rt_version.h"
+#include "rt_view.h"
 
 #include <windows.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+
+extern "C" uint64_t RAW_EngineView(raw::rt::EngineView* out);
 
 namespace raw::rt {
 namespace {
@@ -35,6 +38,9 @@ struct State {
     uint64_t lastTickMs = 0;
     float windX = 0, windY = 0, lightning = 0;
     float skyUpper[3] = {}, skyLower[3] = {}, skyHoriz[3] = {};
+    // Ground-up native synoptic weather simulator telemetry:
+    float pressureHpa = 1014.0f, tempC = 6.0f, humidity = 0.55f;
+    const char* biome = "temperate";
     bool ok = false;
     uint64_t calls = 0;
 };
@@ -103,16 +109,61 @@ void Blend(State* s) {
     auto has = [](const WeatherRead& w, uint8_t bit) { return (w.flags & bit) ? 1.0f : 0.0f; };
     s->rain = Sat(has(c, 4) * in + has(l, 4) * out);
     s->snow = Sat(has(c, 8) * in + has(l, 8) * out);
-    // Graduated physical cloud cover per TESWeather flags (eliminates 100% solid overcast blanket on partly-cloudy days):
-    // Clear=0.24 (fair-weather cumulus), Cloudy=0.58 (sculpted partly-cloudy), Snowy=0.82, Rainy/Storm=0.88.
+    // Graduated physical cloud cover per TESWeather flags (fallback baseline before synoptic modulation):
     auto cover = [&](const WeatherRead& w) {
         if (w.flags & 4) return 0.88f;
         if (w.flags & 8) return 0.82f;
         if (w.flags & 2) return 0.58f;
         return 0.24f;
     };
-    s->cloud = Sat(cover(c) * p + cover(l) * (1.0f - p));
-    s->fog = Sat(FogOf(c) * p + FogOf(l) * (1.0f - p));
+    const float vanCloud = Sat(cover(c) * p + cover(l) * (1.0f - p));
+    const float vanFog = Sat(FogOf(c) * p + FogOf(l) * (1.0f - p));
+
+    // Ground-Up Native Synoptic Weather Engine (replaces Skyrim's static 2011 TESWeather lookup tables):
+    // Continuous barometric pressure fronts, regional climate biomes from live player coordinates,
+    // diurnal valley mist & convective cumulus cycles, and turbulent wind gusts — while still honoring
+    // scripted quest/shout storms (TESWeather flags & 4 or flags & 8).
+    EngineView ev{};
+    RAW_EngineView(&ev);
+    const float wx = (ev.ok & 2u) ? ev.playerPos[0] : 0.0f;
+    const float wy = (ev.ok & 2u) ? ev.playerPos[1] : 0.0f;
+    const float wz = (ev.ok & 2u) ? ev.playerPos[2] : 0.0f;
+    const double simHours = double(ev.daysPassed) * 24.0 + double(s->gameHour);
+    const double tReal = double(GetTickCount64() % 3600000ull) * 0.001;
+    // Regional climate weights from Tamriel world coordinates:
+    const float arcticW = Sat((wy - 22000.0f) / 38000.0f);               // Dawnstar / Winterhold / Windhelm / Sea of Ghosts
+    const float alpineW = Sat((wz - 1600.0f) / 3800.0f);                 // High mountain passes / Throat of the World
+    const float valleyW = Sat(1.0f - arcticW - alpineW * 0.7f);          // Riverwood / Falkreath / Rift / Whiterun
+    s->biome = arcticW > 0.55f ? "arctic" : (alpineW > 0.45f ? "alpine" : (wy < -20000.0f ? "valley_forest" : "tundra"));
+
+    // Multi-wave synoptic barometric pressure field (984..1028 hPa) advected smoothly across Skyrim:
+    const double frontA = std::sin(simHours * 0.19 + double(wx) * 0.000011 + double(wy) * 0.000008);
+    const double frontB = std::sin(simHours * 0.47 - double(wx) * 0.000017 + 1.9);
+    const double frontC = std::cos(simHours * 0.083 + 0.7);
+    const float pressure = float(1011.0 + frontA * 12.0 + frontB * 6.0 + frontC * 7.0 - double(arcticW) * 5.0);
+    s->pressureHpa = std::clamp(pressure, 982.0f, 1030.0f);
+    // Physical diurnal temperature curve (coldest at 04:30, warmest at 14:30; colder in arctic & alpine regions):
+    const float diurnalT = float(-std::cos((s->gameHour - 4.5f) * 0.26179939f));
+    s->tempC = 8.5f + diurnalT * 6.5f - arcticW * 14.0f - alpineW * 12.0f;
+    // Synoptic moisture & diurnal microclimate (morning valley mist 04:30..07:30, afternoon convective cumulus 13:00..17:00):
+    const float lowPres = Sat((1012.0f - s->pressureHpa) / 24.0f);
+    const float morningMist = float(std::exp(-std::pow((s->gameHour - 5.8f) / 1.45f, 2.0f))) * (0.45f + 0.55f * valleyW);
+    const float afternoonConv = float(std::exp(-std::pow((s->gameHour - 15.0f) / 2.6f, 2.0f))) * 0.16f;
+    s->humidity = Sat(0.42f + lowPres * 0.48f + morningMist * 0.28f + (s->rain > 0.05f ? 0.30f : 0.0f));
+
+    // Blend synoptic cloud/precip/fog with scripted TESWeather (scripted storms always take priority):
+    const float synCloud = Sat(0.18f + lowPres * 0.72f + afternoonConv + arcticW * 0.14f);
+    const float synPrecip = Sat((lowPres - 0.58f) / 0.36f);
+    const float freezeW = Sat((1.5f - s->tempC) / 4.5f);
+    const float synRain = synPrecip * (1.0f - freezeW);
+    const float synSnow = synPrecip * freezeW;
+    const float synFog = Sat(0.12f + morningMist * 0.42f + lowPres * 0.28f + alpineW * 0.18f);
+
+    s->rain  = std::max(s->rain,  synRain  * 0.85f);
+    s->snow  = std::max(s->snow,  synSnow  * 0.85f);
+    s->cloud = Sat(std::max(vanCloud, synCloud));
+    s->fog   = Sat(vanFog * 0.55f + synFog * 0.45f);
+
     // Physical weather hysteresis (asymmetric ramp-up / evaporation drying): puddles & wet stone dry over ~45s
     // after rain stops and snowdrifts accumulate/melt smoothly over ~35s instead of snapping on weather transitions.
     const uint64_t nowMs = GetTickCount64();
@@ -131,16 +182,17 @@ void Blend(State* s) {
         s->smoothCloud = approach(s->smoothCloud, s->cloud, 0.14f,  0.14f,  dt);   // smooth ~7s cloud morph
         s->smoothFog   = approach(s->smoothFog,   s->fog,   0.18f,  0.18f,  dt);
     }
-    // Engine-native wind velocity (game units/sec for volumetric cloud advection) and storm lightning frequency.
-    // Note: TESWeather::Data::lightningFrequency (+0x0A) is INVERTED (255 = NO lightning, 0 = max lightning).
-    const float ws = (c.windSpeed * p + l.windSpeed * (1.0f - p)) / 255.0f;
-    const float ang = (c.windDir / 255.0f) * 6.2831853f;
-    const float speed = 45.0f + ws * 380.0f;
+    // Engine-native synoptic wind vector + turbulent gust envelope (drives volumetric clouds, water chop & rain slant):
+    const float ws = std::max((c.windSpeed * p + l.windSpeed * (1.0f - p)) / 255.0f, lowPres * 0.72f + arcticW * 0.28f);
+    const float gust = 1.0f + float(std::sin(tReal * 0.41) * 0.18 + std::sin(tReal * 1.13 + 2.1) * 0.10) * (0.4f + lowPres);
+    const float ang = (c.windDir / 255.0f) * 6.2831853f + float(frontB * 0.35);
+    const float speed = (55.0f + ws * 380.0f) * gust;
     s->windX = std::cos(ang) * speed;
     s->windY = std::sin(ang) * speed;
     const float cLight = (c.flags & 4) ? ((255.0f - float(c.lightningFreq)) / 255.0f) : 0.0f;
     const float lLight = (l.flags & 4) ? ((255.0f - float(l.lightningFreq)) / 255.0f) : 0.0f;
-    s->lightning = Sat(cLight * p + lLight * (1.0f - p));
+    const float synLight = (synRain > 0.35f && s->pressureHpa < 996.0f) ? Sat((996.0f - s->pressureHpa) / 14.0f) : 0.0f;
+    s->lightning = Sat(std::max(cLight * p + lLight * (1.0f - p), synLight));
 }
 
 }  // namespace
@@ -192,14 +244,16 @@ void WeatherOnPresent() {
 
 std::string WeatherCommand() {
     const State& s = g_state;
-    char b[640];
+    char b[896];
     std::snprintf(b, sizeof b,
                   "{\"cmd\":\"weather\",\"ok\":%s,\"exported\":%s,\"calls\":%llu,\"rain\":%.3f,\"snow\":%.3f,\"cloud\":%.3f,"
                   "\"fog\":%.3f,\"wind_x\":%.1f,\"wind_y\":%.1f,\"lightning\":%.3f,\"game_hour\":%.2f,\"pct\":%.3f,\"density\":%.3f,"
+                  "\"pressure_hpa\":%.1f,\"temp_c\":%.1f,\"humidity\":%.2f,\"biome\":\"%s\","
                   "\"sky_upper\":[%.2f,%.2f,%.2f],\"sky_lower\":[%.2f,%.2f,%.2f],\"sky_horiz\":[%.2f,%.2f,%.2f],"
                   "\"current\":\"0x%08X\",\"current_flags\":%u,\"current_fog_far\":%.0f,\"last\":\"0x%08X\",\"last_flags\":%u}",
                   s.ok ? "true" : "false", g_set ? "true" : "false", (unsigned long long)s.calls, s.rain, s.snow, s.cloud,
                   s.fog, s.windX, s.windY, s.lightning, s.gameHour, s.pct, s.density,
+                  s.pressureHpa, s.tempC, s.humidity, s.biome ? s.biome : "temperate",
                   s.skyUpper[0], s.skyUpper[1], s.skyUpper[2], s.skyLower[0], s.skyLower[1], s.skyLower[2],
                   s.skyHoriz[0], s.skyHoriz[1], s.skyHoriz[2],
                   s.cur.formId, s.cur.flags, s.cur.fogFar,

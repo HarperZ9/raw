@@ -51,7 +51,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         if (!hasRefBone) { refBonePos = bTrans; hasRefBone = true; }
         else {
             const float3 bDiff = bTrans - refBonePos;
-            if (dot(bDiff, bDiff) > (256.0f * 256.0f)) { bad = true; }
+            if (dot(bDiff, bDiff) > (160.0f * 160.0f)) { bad = true; }
         }
         const float3 bp = float3(dot(r0.xyz, p.xyz) + bTrans.x,
                                  dot(r1.xyz, p.xyz) + bTrans.y,

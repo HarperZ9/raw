@@ -363,14 +363,24 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float snowLeaf = saturate((s.n.z - 0.25f) * 2.0f);
             albedo = lerp(albedo * float3(0.86f, 0.92f, 1.04f), float3(0.56f, 0.60f, 0.66f), snowLeaf * 0.55f);
         }
-        // Reconstruct 3D leaf-cluster normal curvature + wind shimmer on flat 2011 alpha-tested foliage cards.
-        if (z < 3600.0f) {
+        // 2027 Botanical Vegetation & Canopy Upgrade (base == 5u): wind-coupled 3D leaf-cluster normal curvature,
+        // fluttering micro-vein relief, waxy leaf-cuticle specular sheen (f0=0.036), and organic canopy hue/value depth!
+        if (z < 4200.0f) {
             const float3 wpF = p + camPosW.xyz;
-            const float wPhase = camPosW.w * 1.4f + dot(wpF.xy, float2(0.008f, 0.006f));
-            const float nxF = (cNoise(wpF * 0.045f + float3(sin(wPhase) * 0.35f, 0.0f, 0.0f)) - 0.5f) * 0.55f;
-            const float nyF = (cNoise(wpF * 0.045f + float3(11.3f, cos(wPhase) * 0.35f, 5.7f)) - 0.5f) * 0.55f;
-            const float fFade = saturate(1.0f - z / 3600.0f);
-            s.n = normalize(s.n + float3(nxF, nyF, 0.18f) * fFade);
+            const float2 windV = normalize(cloudWind.xy + float2(1.0f, 0.35f));
+            const float windSpd = saturate(length(cloudWind.xy) / 280.0f + weather.w * 0.45f);
+            const float gustWave = sin(dot(wpF.xy, windV) * 0.0055f - camPosW.w * (1.8f + windSpd * 2.4f));
+            const float flutter = (0.35f + 0.65f * windSpd) * (0.65f + 0.35f * gustWave);
+            const float nxF = (cNoise(wpF * 0.048f + float3(windV * flutter * 0.55f, 0.0f)) - 0.5f) * 0.68f;
+            const float nyF = (cNoise(wpF * 0.048f + float3(11.3f, windV.y * flutter * 0.55f, 5.7f)) - 0.5f) * 0.68f;
+            const float leafVein = cNoise(wpF * 0.24f + 3.1f) * 0.5f + 0.5f;
+            const float fFade = saturate(1.0f - z / 4200.0f);
+            s.n = normalize(s.n + float3(nxF, nyF, 0.22f) * fFade);
+            // Organic canopy chlorophyll variation (breaks up flat uniform 2011 leaf card brightness):
+            const float canopyTone = cNoise(wpF * 0.012f + 19.4f);
+            albedo *= lerp(1.0f.xxx, lerp(float3(0.84f, 0.90f, 0.80f), float3(1.10f, 1.12f, 0.96f), canopyTone), fFade * 0.48f);
+            s.alpha = lerp(s.alpha, lerp(0.42f, 0.26f, leafVein), fFade * 0.55f);
+            s.f0 = lerp(s.f0, 0.036f, fFade * 0.45f);
         }
     }
     const float3 nSmooth = s.n;
@@ -640,13 +650,25 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         albedo *= (1.0f - cavity * 0.24f + bevel * 0.07f);
         s.alpha = clamp(s.alpha + cavity * 0.10f - bevel * 0.08f, 0.06f, 0.96f);
     }
-    // Physical Decal Grounding & Surface Micro-Contrast (wet blood gloss, scorch/char matte roughness, contact grounding):
-    if (!match && (base == 1u || base == 4u) && z < 1800.0f) {
+    // Physical Decal Grounding & Glacial Ice/Glacier Internal Subsurface Scattering + Crystal Fractures:
+    if (!match && (base == 1u || base == 4u) && z < 2400.0f) {
         const float bloodMask = saturate((albedo.r - max(albedo.g, albedo.b) * 1.85f) * 6.0f) * smoothstep(0.06f, 0.22f, albedo.r) * (1.0f - smoothstep(0.38f, 0.55f, albedo.r));
         if (bloodMask > 0.05f) {
             s.alpha = lerp(s.alpha, 0.16f, bloodMask * 0.82f);
             s.f0 = lerp(s.f0, 0.042f, bloodMask * 0.75f);
             albedo *= lerp(1.0f.xxx, float3(0.88f, 0.78f, 0.78f), bloodMask * 0.5f);
+        }
+        // Deep glacial ice & frozen glacier shelves (Cluster C Iceland ice): parallax-shifted internal crystal fractures
+        // + glossy clearcoat ice specular + luminous blue-turquoise subsurface transmission!
+        const float iceMask = saturate((albedo.b - albedo.r * 1.10f) * 5.5f) * smoothstep(0.24f, 0.48f, albedo.b) * (1.0f - wet.snow * 0.85f);
+        if (iceMask > 0.06f) {
+            const float3 wpIce = (p + camPosW.xyz) - s.v * 14.0f;
+            const float crack = abs(cNoise(wpIce * 0.045f) * 2.0f - 1.0f);
+            const float vein = exp(-crack * 14.0f);
+            const float3 glacialSSS = float3(0.16f, 0.58f, 0.82f) * (0.35f + 0.65f * vein);
+            albedo = lerp(albedo, lerp(albedo * float3(0.82f, 0.96f, 1.12f), glacialSSS, 0.34f), iceMask * 0.78f);
+            s.alpha = lerp(s.alpha, 0.14f, iceMask * 0.72f);
+            s.f0 = lerp(s.f0, 0.032f, iceMask * 0.65f);
         }
     }
     // Tokuyoshi-Kaplanyan geometric specular anti-aliasing: filters sub-pixel normal variance to kill GGX sparkle in motion.

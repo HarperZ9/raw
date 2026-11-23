@@ -156,9 +156,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // crisp silver-white at noon (own-43/44), fiery coral-peach-gold underlit cloud bellies at sunrise/sunset (own-13..15/27).
         const float3 hTrans = sampleCloudSunTrans(clamp(aElev, -0.10f, 1.0f));
         const float htLum = max(dot(hTrans, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
-        const float twiCloud = smoothstep(-0.10f, 0.00f, aElev) * (1.0f - smoothstep(0.06f, 0.26f, aElev));
-        const float3 twiCoral = float3(1.45f, 0.52f, 0.28f) * max(sLum, 0.55f);
-        const float3 physDaySun = lerp(lerp(rawSunC, hTrans * (max(sLum, 0.14f) / htLum), 0.65f), twiCoral, twiCloud * 0.72f);
+        const float twiCloud = smoothstep(-0.10f, 0.00f, aElev) * (1.0f - smoothstep(0.06f, 0.26f, aElev)) * (1.0f - saturate(clouds.x * 0.85f - 0.25f));
+        const float3 twiCoral = float3(1.25f, 0.54f, 0.28f) * max(sLum, 0.45f);
+        const float3 physDaySun = lerp(lerp(rawSunC, hTrans * (max(sLum, 0.14f) / htLum), 0.65f), twiCoral, twiCloud * 0.48f);
         // Luminous silver-indigo lunar forward-scattering on night clouds drifting past Masser & Secunda!
         const float3 sunC = lerp(physDaySun, float3(0.32f, 0.44f, 0.72f) * max(sLum * 0.90f, 0.58f), nightW);
         const float3 rawSkyC = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.0f);
@@ -224,7 +224,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 dayCoolBase = lerp(float3(0.28f, 0.42f, 0.68f), float3(0.42f, 0.48f, 0.58f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.16f) * cloudAo;
             const float3 nightCloudBase = float3(0.014f, 0.022f, 0.042f) * cloudAo;
             const float3 coolBase = lerp(dayCoolBase, nightCloudBase, nightW);
-            const float3 underLit = float3(1.55f, 0.52f, 0.24f) * (twiCloud * (1.0f - h) * (0.40f + 0.60f * pow(saturate(dot(dir, aSun) * 0.5f + 0.5f), 2.0f)) * (1.0f - overcastW * 0.40f) * 0.82f);
+            const float3 underLit = float3(1.25f, 0.50f, 0.24f) * (twiCloud * (1.0f - h) * pow(saturate(dot(dir, aSun)), 2.5f) * (1.0f - overcastW * 0.85f) * 0.55f);
             // Night lunar rim glow: clouds near the Moon (sunDir.xyz at night) transmit translucent silver-blue light!
             const float3 moonRim = float3(0.38f, 0.52f, 0.85f) * (nightW * hg(cosT, 0.76f) * exp(-od * sigma * 0.35f) * 0.65f);
             const float3 rawLum = whiteSun * (multiScat * lerp(0.80f, powder, 0.75f) * 4.0f * PI * 0.30f) + coolBase + underLit + moonRim + stormFlash;

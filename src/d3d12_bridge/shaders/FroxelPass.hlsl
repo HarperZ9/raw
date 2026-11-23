@@ -168,6 +168,16 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                             const float3 smokeCol = lerp(float3(0.22f, 0.24f, 0.28f) * (isInt ? 0.35f : 0.65f),
                                                          lightColS[li].rgb * float3(1.15f, 0.68f, 0.36f), underLit);
                             inScat += smokeCol * (plumeD * 1.15f);
+                            // Rising 3D incandescent blackbody fire embers & sparks spiraling upward in the hearth updraft:
+                            if (dzS < 220.0f && rad2 < 0.85f) {
+                                const float3 embP = (wp - float3(windBend * 0.6f, camPosW.w * 42.0f)) * 0.085f;
+                                const float embH = cHash(floor(embP));
+                                if (embH > 0.972f) {
+                                    const float embCore = exp(-dot(frac(embP) - 0.5f, frac(embP) - 0.5f) * 24.0f);
+                                    const float3 embCol = lerp(float3(1.8f, 0.38f, 0.06f), float3(3.2f, 1.35f, 0.28f), underLit);
+                                    inScat += embCol * (embCore * hEnv * 2.4f);
+                                }
+                            }
                         }
                     }
                 }

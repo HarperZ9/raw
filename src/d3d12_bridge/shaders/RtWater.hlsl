@@ -141,8 +141,8 @@ void water(uint3 id : SV_DispatchThreadID) {
     const float zBedW  = (dBed < 1.0f && dBed > 0.0f) ? viewZOf(dBed) : 1.0e9f;
     const float waterCompDiff = hasPreWater ? length(game.rgb - PreWater[id.xy].rgb) : 1.0f;
     const bool gameDrewWater = !hasPreWater || (waterCompDiff > 0.0025f);
-    // Soft 0.25u shoreline depth threshold (eliminates jagged 1.5u stair-step shoreline cutoffs; shoreFeather blends 0..8u cleanly).
-    const bool isWaterPx = (L.a > 1.5f && L.x < 1.0f && zSurfW > 0.5f && zSurfW < zBedW - max(zSurfW * 0.004f, 0.25f) && nL.z > 0.72f && gameDrewWater);
+    // Soft 0.25u shoreline depth threshold & sloped aqueduct support (nL.z > 0.35 eliminates hard aqueduct water seam!).
+    const bool isWaterPx = (L.a > 1.5f && L.x < 1.0f && zSurfW > 0.5f && zSurfW < zBedW - max(zSurfW * 0.004f, 0.25f) && nL.z > 0.35f && gameDrewWater);
     // SM6.9 Wave-coherent early exit: non-water waves exit immediately with zero RayQuery divergence.
     if (!WaveActiveAnyTrue(isWaterPx)) { WaterOut[id.xy] = float4(col, game.a); return; }
     if (isWaterPx) {
@@ -159,7 +159,7 @@ void water(uint3 id : SV_DispatchThreadID) {
             // for true potential-flow streamline deflection, upstream bow-wave pileup, and downstream eddy wakes.
             float depthV0 = 120.0f;
             float2 obsGrad = 0.0f.xx;
-            float bowHit = 0.0f, eddyLee = 0.0f;
+            float bowHit = 0.0f, eddyLee = 0.0f, jacobianFold = 0.0f;
             if (dBed < 1.0f && wDist < 5500.0f) {
                 const float3 pb0 = worldAt(px, dBed);
                 depthV0 = max(p.z - pb0.z, 0.0f);
@@ -204,7 +204,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float stormChop = saturate(weather.w * 0.90f + windAmp * 0.65f);
                 const float ampScale = (0.85f + stormChop * 1.15f + shallowW * 0.35f) * smoothstep(0.0f, 3.5f, depthV0);
                 float2 waveG = 0.0f.xx;
-                float jacobianFold = 0.0f;
+                jacobianFold = 0.0f;
                 [unroll] for (int wi = 0; wi < 16; ++wi) {
                     // Log-spaced wavenumber spectrum from 14m ocean swells down to 0.28m capillary ripples:
                     const float fracI = float(wi) / 15.0f;
@@ -248,8 +248,9 @@ void water(uint3 id : SV_DispatchThreadID) {
                     n = normalize(n + float3(wakeG, 0.0f));
                 }
             }
-            if (weather.w > 0.0f) {   // rain falling: drops ring the water
-                const float2 g = rainRings(wpW.xy, camPosW.w) * (0.28f * weather.w);
+            if (weather.w > 0.0f && wDist < 1200.0f) {   // delicate physical raindrop ripples (zero dark leopard-spot artifacts!)
+                const float rainFade = smoothstep(1200.0f, 120.0f, wDist);
+                const float2 g = rainRings(wpW.xy, camPosW.w) * (0.065f * weather.w * rainFade);
                 n = normalize(n + float3(-g, 0.0f));
             }
             const float nvRaw = dot(n, v);
@@ -399,10 +400,9 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float frothFine = organicFroth(wpW.xy * 1.85f + foamFlow * (camPosW.w * 9.0f) + 13.7f, camPosW.w * 1.25f);
                 const float runup = 4.2f + 2.2f * sin(camPosW.w * 1.45f + (wpW.x + wpW.y) * 0.016f + froth * 1.8f);
                 const float shoreMeniscus = (1.0f - smoothstep(0.0f, runup, depthV)) * smoothstep(0.0f, 0.25f, depthV);
-                // Rolling shore-wave surf lines advancing from depth 44u -> 2u with lacy retreating foam:
-                const float surfZone = smoothstep(1.5f, 10.0f, depthV) * (1.0f - smoothstep(18.0f, 46.0f, depthV));
-                const float surfPhase = sin(depthV * 0.22f - camPosW.w * 2.55f + froth * 2.4f);
-                const float surfCrest = pow(saturate(surfPhase * 0.5f + 0.5f), 5.0f) * surfZone * (0.45f + 0.55f * frothFine);
+                // Aperiodic organic shore foam + Jacobian wave-breaking whitecaps (eliminates Dawnstar periodic zebra stripes!):
+                const float surfZone = smoothstep(1.5f, 10.0f, depthV) * (1.0f - smoothstep(16.0f, 40.0f, depthV));
+                const float surfCrest = saturate(jacobianFold * 0.65f + (frothFine - 0.52f) * 1.4f) * surfZone * (0.35f + 0.65f * froth);
                 const float retreatLace = (1.0f - smoothstep(1.0f, 16.0f, depthV)) * smoothstep(0.42f, 0.82f, frothFine) * 0.36f;
                 const float rapidFoam = (1.0f - smoothstep(2.0f, 20.0f, depthV)) * smoothstep(0.50f, 0.88f, froth) * 0.32f;
                 const float bowFoam = bowHit * froth * 0.82f;

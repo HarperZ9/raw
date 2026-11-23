@@ -29,44 +29,56 @@ float4 sampleCloudVol(float3 uvw) {
     return lerp(CloudNoise.SampleLevel(Lin, uv0, 0.0f), CloudNoise.SampleLevel(Lin, uv1, 0.0f), zT);
 }
 
-// Infinite-resolution 6-octave curl-warped Perlin-Billow cumulus density (replaces blurry 64^3 hollow Worley
-// doughnut bubbles caught in s_1/s_2.jpg with crisp, photographic billowing 3D cumulus clouds & zero zenith pinch).
+// Nubis Evolved (Schneider 2022, SKY-02) True 3D Volumetric Cumulus Field:
+// Flat condensation base, per-cloud variable tower heights (cumulus -> towering congestus -> storm anvils),
+// 3D domain-warped cauliflower billows, and infinite-resolution edge wisps inside a tall 44,000u 3D slab.
 float cloudDensityVol(float3 pa, bool detail) {
     const float2 dxy = pa.xy - camPosW.xy;
     const float curvedZ = pa.z + dot(dxy, dxy) * 1.15e-8f;
     const float h = (curvedZ - clouds.y) / clouds.z;
     if (h <= 0.0f || h >= 1.0f) { return 0.0f; }
     const float3 wind = float3(cloudWind.xy * camPosW.w, 0.0f);
-    const float3 sheared = pa + wind + float3(cloudWind.xy, 0.0f) * (h * 5.0f);
+    const float3 sheared = pa + wind + float3(cloudWind.xy, 0.0f) * (h * 12.0f);
     const float cover = saturate(clouds.x);
-    const float stormType = saturate(weather.w * 1.4f + max(cover - 0.80f, 0.0f) * 2.5f);
-    const float topCap = lerp(0.78f, 0.96f, stormType);
-    const float baseGrad = smoothstep(0.0f, lerp(0.16f, 0.08f, stormType), h);
-    const float topGrad  = 1.0f - smoothstep(topCap * 0.52f, topCap, h);
-    const float hGrad = saturate(baseGrad * topGrad);
+    const float stormType = saturate(weather.w * 1.4f + max(cover - 0.78f, 0.0f) * 2.5f);
 
-    // 4-octave domain-warped continental FBM for broad, natural cloud banks (zero hollow Worley rings/doughnuts).
-    const float3 p0 = float3(sheared.x / 24000.0f, sheared.y / 23000.0f, h * 0.85f);
+    // 2D continental weather map: varies BOTH local coverage AND per-cloud 3D tower height (flat stratus vs tall cumulus towers).
+    const float2 wUv = sheared.xy / 62000.0f;
+    const float wCov = cNoise(float3(wUv, 1.3f)) * 0.62f + cNoise(float3(wUv * 2.35f + 7.1f, 3.7f)) * 0.38f;
+    const float wHeight = saturate(cNoise(float3(wUv * 1.45f + 19.3f, 5.1f)) * 0.70f + stormType * 0.45f);
+    const float topCap = lerp(0.42f, 0.96f, wHeight);
+    // Crisp flat cumulus condensation base (0..0.08) + rounded vertical cauliflower dome tapering to topCap.
+    const float baseGrad = smoothstep(0.0f, 0.09f, h);
+    const float topGrad  = 1.0f - smoothstep(topCap * 0.48f, topCap, h);
+    const float anvilSpread = stormType * smoothstep(0.68f, 0.88f, h) * (1.0f - smoothstep(0.88f, 0.99f, h)) * 0.18f;
+    const float hGrad = saturate(baseGrad * topGrad + anvilSpread);
+    if (hGrad <= 0.001f) { return 0.0f; }
+
+    // 3D dimensional cumulus structure (isotropic vertical + horizontal scale so clouds read as huge 3D masses, not flat sheets!).
+    const float3 p0 = float3(sheared.x / 32000.0f, sheared.y / 32000.0f, (curvedZ - clouds.y) / 22000.0f);
     const float3 w0 = float3(cNoise(p0 * 0.95f + float3(3.1f, 7.4f, 1.9f)) - 0.5f,
-                             cNoise(p0 * 0.95f + float3(11.7f, 2.3f, 5.1f)) - 0.5f, 0.0f) * 0.55f;
+                             cNoise(p0 * 0.95f + float3(11.7f, 2.3f, 5.1f)) - 0.5f,
+                             cNoise(p0 * 0.95f + float3(6.3f, 14.1f, 2.7f)) - 0.5f) * 0.55f;
     const float3 pw = p0 + w0;
     const float f1 = cNoise(pw);
-    const float f2 = cNoise(pw * 2.07f + float3(13.1f, 5.7f, 3.3f));
-    const float f3 = cNoise(pw * 4.21f + float3(7.9f, 19.3f, 8.1f));
-    const float f4 = cNoise(pw * 8.53f + float3(23.7f, 11.1f, 15.7f));
-    const float baseFbm = f1 * 0.48f + f2 * 0.28f + f3 * 0.15f + f4 * 0.09f;
-    const float baseShape = baseFbm * hGrad;
-
-    const float thresh = lerp(0.56f, lerp(0.38f, 0.22f, stormType), cover);
-    float dens = pow(saturate((baseShape - thresh) / max(1.0f - thresh, 0.22f)), 1.25f);
+    const float f2 = cNoise(pw * 2.09f + float3(13.1f, 5.7f, 3.3f));
+    const float f3 = cNoise(pw * 4.27f + float3(7.9f, 19.3f, 8.1f));
+    const float f4 = cNoise(pw * 8.63f + float3(23.7f, 11.1f, 15.7f));
+    // Billowed ridges (1 - |2n - 1|) sculpt real puffy cumulus domes instead of flat Perlin blobs.
+    const float billow = (1.0f - abs(f1 * 2.0f - 1.0f)) * 0.50f + (1.0f - abs(f2 * 2.0f - 1.0f)) * 0.30f + f3 * 0.13f + f4 * 0.07f;
+    const float localCov = saturate(cover * lerp(0.55f, 1.35f, smoothstep(0.25f, 0.78f, wCov)));
+    const float thresh = lerp(0.64f, lerp(0.42f, 0.24f, stormType), localCov);
+    float dens = saturate((billow * hGrad - thresh) / max(1.0f - thresh, 0.22f));
+    // Vertical density gradient: lighter wisps at base, dense billowing core at mid-altitude, crisp crowns.
+    dens *= lerp(0.55f, 1.15f, smoothstep(0.05f, 0.38f, h));
     if (detail && dens > 0.002f) {
-        // High-frequency crisp cauliflower wisps at cloud boundaries (infinite resolution, zero 64^3 texel blur).
-        const float3 r = float3((sheared.x + wind.x * 0.35f) / 3600.0f, (sheared.y + wind.y * 0.35f) / 3500.0f, h * 2.8f);
+        // High-frequency 3D cauliflower turret erosion on cloud boundaries (infinite resolution, zero 64^3 blur).
+        const float3 r = float3((sheared.x + wind.x * 0.30f) / 6200.0f, (sheared.y + wind.y * 0.30f) / 6200.0f, (curvedZ - clouds.y) / 5200.0f);
         const float d1 = cNoise(r);
         const float d2 = cNoise(r * 2.19f + float3(5.3f, 17.1f, 9.7f));
         const float d3 = cNoise(r * 4.61f + float3(19.9f, 3.7f, 21.3f));
         const float detailFbm = d1 * 0.52f + d2 * 0.31f + d3 * 0.17f;
-        const float erode = detailFbm * lerp(0.36f, 0.56f, h) * (1.0f - dens * 0.45f);
+        const float erode = detailFbm * lerp(0.32f, 0.54f, h) * (1.0f - dens * 0.50f);
         dens = cRemap(dens, erode, 1.0f, 0.0f, 1.0f);
     }
     return dens * cloudWind.z;
@@ -129,10 +141,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float sigma = kCloudSigma;
         float T = 1.0f;
         float3 S = 0.0f;
-        // Fine-to-deep exponential sun-march offsets capture crisp photographic cumulus tufts and soft undersides.
-        static const float kSunD[6] = { 140.0f, 340.0f, 760.0f, 1500.0f, 2800.0f, 4800.0f };
-        static const float kSunW[6] = { 140.0f, 200.0f, 420.0f,  740.0f, 1300.0f, 2000.0f };
-        // Adaptive empty-space skipping raymarch using precomputed 64^3 3D Perlin-Worley Volume LUT.
+        // Deep 6-step exponential sun-ray march spanning the full 44,000u 3D cumulus volume:
+        // gives real self-shadowed cloud bellies, glowing translucent rims, and true light scattering THROUGH clouds.
+        static const float kSunD[6] = { 320.0f, 850.0f, 2100.0f, 4600.0f, 9200.0f, 16500.0f };
+        static const float kSunW[6] = { 320.0f, 530.0f, 1250.0f, 2500.0f, 4600.0f,  7300.0f };
+        // Adaptive empty-space skipping raymarch across the tall 3D cumulus slab.
         float t = t0 + j * dt;
         [loop] for (uint i = 0u; i < steps && t < t1 && T > 0.01f; i++) {
             const float3 pa = o + dir * t;
@@ -143,29 +156,24 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             t += dt;
             float od = 0.0f;
             [unroll] for (uint k = 0u; k < 6u; k++) { od += cloudDensityVol(pa + cloudLightDir * kSunD[k], false) * kSunW[k]; }
-            // Wrenninge 2013 (Oz: The Great and Powerful / Frostbite / UE5) 4-Octave Multiple-Scattering Energy Integral:
-            // Couples per-octave extinction attenuation (b^n), energy attenuation (a^n), and phase-eccentricity decay (c^n)
-            // for luminous translucent silver-lined cumulus rims and deep sculptural cloud undersides.
-            const float3 odRGB = od * sigma * float3(0.97f, 1.00f, 1.04f);
+            // Wrenninge 2013 + Schneider Nubis Evolved 4-Octave Multiple-Scattering Energy Integral:
+            // strong forward-scattering silver lining (g1=0.82) lets sunlight visibly scatter THROUGH thin cloud edges
+            // while deep optical depth carves rich 3D self-shadowed cloud cores!
+            const float3 odRGB = od * (sigma * 0.52f) * float3(0.96f, 1.00f, 1.05f);
             float3 multiScat = 0.0f.xxx;
             float aOct = 1.0f, bOct = 1.0f, cOct = 1.0f;
             [unroll] for (int oct = 0; oct < 4; oct++) {
-                const float phOct = lerp(hg(cosT, -0.22f * cOct), hg(cosT, 0.72f * cOct), 0.56f);
-                multiScat += exp(-odRGB * bOct) * (aOct * min(phOct, 0.42f));
-                aOct *= 0.56f; bOct *= 0.34f; cOct *= 0.52f;
+                const float phOct = lerp(hg(cosT, -0.28f * cOct), hg(cosT, 0.82f * cOct), 0.62f);
+                multiScat += exp(-odRGB * bOct) * (aOct * min(phOct, 0.85f));
+                aOct *= 0.58f; bOct *= 0.38f; cOct *= 0.50f;
             }
-            const float powder = 1.0f - exp(-od * sigma * 1.6f - dens * 0.45f);
+            const float powder = 1.0f - exp(-od * sigma * 1.15f - dens * 0.55f);
             const float h = saturate((pa.z - clouds.y) / clouds.z);
-            // Physical convective cloud undersides: luminous silver-blue in fair weather, dramatic deep slate-violet
-            // storm bellies contrasting against bright silver-white openings in heavy storms (GTA VI storm cloud study).
             const float stormW = saturate(weather.w * 1.25f + max(clouds.x - 0.72f, 0.0f) * 2.2f);
-            const float cloudAo = lerp(lerp(0.62f, 0.42f, stormW), 1.00f, pow(h, lerp(0.55f, 0.72f, stormW))) * exp(-dens * lerp(0.08f, 0.14f, stormW));
+            // Deep 3D ambient occlusion inside cloud bellies (0.24..1.00) instead of flat grey 0.62 fill!
+            const float cloudAo = lerp(lerp(0.32f, 0.18f, stormW), 1.00f, pow(h, 0.82f)) * exp(-dens * 0.22f);
             const float lowSun = saturate(1.0f - max(aElev, 0.0f) * 3.4f) * (1.0f - nightW);
             const float overcastW = saturate((clouds.x - 0.50f) * 2.2f);
-            const float3 coolSilver = lerp(float3(0.76f, 0.85f, 0.99f), lerp(float3(0.80f, 0.85f, 0.93f), float3(0.62f, 0.62f, 0.74f), stormW), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.34f) * 1.45f;
-            const float3 neutralSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.98f, 0.99f, 1.02f), overcastW * 0.65f);
-            const float3 baseTint = lerp(coolSilver * cloudAo, coolSilver * (cloudAo * 0.75f) + neutralSun * lerp(0.14f, 0.05f, h), lowSun * 0.40f * (1.0f - overcastW * 0.5f));
-            // Volumetric sheet-lightning inside heavy rainstorms (strictly gated on true inverted lightning frequency timeEnv.z!).
             float3 stormFlash = 0.0f.xxx;
             if (clouds.x > 0.78f && weather.w > 0.25f && timeEnv.z > 0.05f) {
                 const float tSlot = floor(camPosW.w * 0.55f);
@@ -177,17 +185,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     stormFlash = float3(0.65f, 0.82f, 1.25f) * (pulse * cellHit * dens * 1.8f * timeEnv.z);
                 }
             }
-            const float sunCalm = lerp(1.0f, 0.84f, pow(saturate(cosT), 12.0f));
-            // True linear HDR sculptural cumulus crowns (own-43/44) + fiery coral-peach cloud undersides at sunset/sunrise (own-13..15/27).
-            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.99f, 0.99f, 1.02f), 0.52f * (1.0f - lowSun) * (1.0f - nightW));
-            const float3 dayCoolBase = lerp(float3(0.68f, 0.76f, 0.90f), float3(0.74f, 0.79f, 0.86f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.34f) * cloudAo;
-            const float3 nightCloudBase = float3(0.018f, 0.026f, 0.048f) * cloudAo;
+            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(1.00f, 0.99f, 0.98f), 0.45f * (1.0f - lowSun) * (1.0f - nightW));
+            const float3 dayCoolBase = lerp(float3(0.34f, 0.46f, 0.68f), float3(0.46f, 0.52f, 0.60f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.18f) * cloudAo;
+            const float3 nightCloudBase = float3(0.014f, 0.022f, 0.042f) * cloudAo;
             const float3 coolBase = lerp(dayCoolBase, nightCloudBase, nightW);
-            const float3 underLit = float3(1.25f, 0.44f, 0.24f) * (twiCloud * (1.0f - h) * (0.45f + 0.55f * pow(saturate(dot(dir, aSun) * 0.5f + 0.5f), 2.0f)) * (1.0f - overcastW * 0.45f) * 0.48f);
-            // Highlight shoulder rolloff inspired by superframe/feed-23/build/brush/cloud.js (whites roll off smoothly, never flatten).
-            const float3 rawLum = whiteSun * (multiScat * lerp(1.0f, powder, 0.76f) * sunCalm * 4.0f * PI * 0.28f) + coolBase * 0.98f + underLit + stormFlash;
-            const float3 lum = select(rawLum > 0.85f.xxx, 0.85f.xxx + 1.55f * (1.0f.xxx - exp(-(rawLum - 0.85f.xxx) / 1.55f)), rawLum);
-            const float ext = dens * (sigma * 1.55f);
+            const float3 underLit = float3(1.35f, 0.46f, 0.22f) * (twiCloud * (1.0f - h) * (0.40f + 0.60f * pow(saturate(dot(dir, aSun) * 0.5f + 0.5f), 2.0f)) * (1.0f - overcastW * 0.45f) * 0.58f);
+            const float3 rawLum = whiteSun * (multiScat * lerp(0.85f, powder, 0.72f) * 4.0f * PI * 0.36f) + coolBase + underLit + stormFlash;
+            const float3 lum = select(rawLum > 0.95f.xxx, 0.95f.xxx + 1.85f * (1.0f.xxx - exp(-(rawLum - 0.95f.xxx) / 1.85f)), rawLum);
+            const float ext = dens * (sigma * 0.65f);
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;

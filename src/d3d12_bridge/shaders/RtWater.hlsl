@@ -186,34 +186,37 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float windAmp = saturate(length(cloudWind.xy) / 380.0f);
                 const float shallowW = 1.0f - smoothstep(4.0f, 52.0f, depthV0);
                 const float nearObs = (1.0f - smoothstep(0.0f, 38.0f, depthV0)) * saturate(length(obsGrad) * 2.0f);
-                const float2 flowDir = normalize(wDir + nL.xy * 1.6f);
+                // CRITICAL: flowDir MUST be spatially smooth (wDir), NEVER per-pixel nL.xy!
+                // Multiplying per-pixel nL.xy by (wt * 36.0) scrambled wave phase by thousands of radians per pixel (pure noise!).
+                const float2 flowDir = wDir;
                 const float intoObs = dot(flowDir, -obsGrad);
                 bowHit = saturate(intoObs) * nearObs;
                 eddyLee = saturate(-intoObs) * nearObs;
 
-                // True continuous world-space downstream advection + 8-directional propagating Gerstner wave spectrum:
-                // Now runs AFTER DLSS-RR so neural temporal denoising NEVER freezes or smears moving waves!
-                const float2 wpFlow = wpW.xy - flowDir * (wt * 36.0f);
+                // Silky, Nyquist pixel-footprint band-limited 6-directional Gerstner/swell spectrum with smooth 28 u/s
+                // downstream advection: ZERO pixel-aliasing noise, crisp gliding liquid waves & mirror reflections!
+                const float2 wpFlow = wpW.xy - flowDir * (wt * 28.0f);
                 const float2 flowPerp = float2(-flowDir.y, flowDir.x);
-                static const float2 kWDir[8] = {
-                    float2( 0.94f,  0.34f), float2( 0.82f, -0.57f), float2( 0.52f,  0.85f), float2(-0.28f,  0.96f),
-                    float2( 0.74f,  0.67f), float2( 0.61f, -0.79f), float2(-0.46f, -0.89f), float2( 0.98f, -0.19f)
+                const float pxFoot = max(wDist * dims.z * 2.4f, 0.5f);
+                static const float2 kWDir[6] = {
+                    float2( 0.96f,  0.28f), float2( 0.84f, -0.54f), float2( 0.58f,  0.81f),
+                    float2( 0.72f, -0.69f), float2(-0.34f,  0.94f), float2( 0.92f, -0.39f)
                 };
-                static const float kWFreq[8]  = { 0.032f, 0.054f, 0.088f, 0.140f, 0.220f, 0.340f, 0.520f, 0.780f };
-                static const float kWSpeed[8] = { 2.60f,  3.40f,  4.30f,  5.30f,  6.50f,  7.80f,  9.20f, 10.80f  };
-                static const float kWAmp[8]   = { 0.165f, 0.135f, 0.105f, 0.082f, 0.062f, 0.044f, 0.030f, 0.018f };
-                const float ampScale = (0.85f + windAmp * 0.65f + shallowW * 0.30f) * smoothstep(0.0f, 4.0f, depthV0);
+                static const float kWFreq[6]  = { 0.018f, 0.032f, 0.056f, 0.095f, 0.160f, 0.260f };
+                static const float kWSpeed[6] = { 1.45f,  1.95f,  2.55f,  3.25f,  4.05f,  4.95f  };
+                static const float kWAmp[6]   = { 0.068f, 0.054f, 0.040f, 0.028f, 0.018f, 0.010f };
+                const float ampScale = (0.78f + windAmp * 0.45f + shallowW * 0.22f) * smoothstep(0.0f, 5.0f, depthV0);
                 float2 waveG = 0.0f.xx;
-                [unroll] for (int wi = 0; wi < 8; ++wi) {
+                [unroll] for (int wi = 0; wi < 6; ++wi) {
+                    const float wavelength = 6.2831853f / kWFreq[wi];
+                    const float nyquistFade = smoothstep(pxFoot * 2.5f, pxFoot * 7.0f, wavelength);
                     const float2 dirW = normalize(flowDir * kWDir[wi].x + flowPerp * kWDir[wi].y);
                     const float ph = dot(wpFlow, dirW) * kWFreq[wi] - wt * kWSpeed[wi];
-                    const float distAtt = saturate(1.0f - wDist / (16000.0f / (1.0f + float(wi) * 0.85f)));
-                    // Steepened trochoidal crest derivative: sharp travelling wave crests, smooth sunlit troughs.
                     const float s = sin(ph);
                     const float c = cos(ph);
-                    waveG += dirW * (c * (1.0f + 0.42f * s) * kWAmp[wi] * ampScale * distAtt);
+                    waveG += dirW * (c * (1.0f + 0.30f * s) * kWAmp[wi] * ampScale * nyquistFade);
                 }
-                const float2 bowNormal = obsGrad * (bowHit * (0.12f + 0.07f * sin(depthV0 * 0.35f - wt * 3.8f)));
+                const float2 bowNormal = obsGrad * (bowHit * (0.08f + 0.04f * sin(depthV0 * 0.32f - wt * 3.2f)));
                 n = normalize(n + float3(waveG + bowNormal, 0.0f));
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
                 if (wDist < 1600.0f) {
@@ -243,8 +246,8 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
             const float3 o = p + float3(0.0f, 0.0f, 2.5f + 0.003f * length(p));
 
-            // Crisp recognizable mirror reflections with visibly moving wave facets (0.68 -> 0.42).
-            const float reflRelief = lerp(0.68f, 0.42f, saturate(wDist / 8500.0f));
+            // Silky recognizable mirror reflections with zero high-frequency noise (0.36 -> 0.16).
+            const float reflRelief = lerp(0.36f, 0.16f, saturate(wDist / 8500.0f));
             const float3 nRefl = normalize(lerp(float3(0.0f, 0.0f, 1.0f), n, reflRelief));
             float3 rd = reflect(-v, nRefl);
             if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }

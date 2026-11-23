@@ -68,13 +68,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     float3 scatter = 0.0f.xxx;
     if (sunDir.w > 0.5f && tune2.z > 0.0f) {
         const float jit = ign(lo);
+        const float3 aSunV = astroSunDir();
+        const float aElevV = astroSunElev();
         const float sunLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-        const float nightW = saturate((0.28f - sunLum) * 4.5f);
-        const float lowSunBoost = lerp(1.0f, 1.32f, saturate(1.0f - abs(sunDir.z - 0.18f) / 0.28f));
-        const float shaftBoost = lerp(lowSunBoost, 3.10f, nightW);
-        const float dayG = clamp(lerp(tune.y, max(tune.y, 0.72f), saturate(1.0f - sunDir.z * 2.5f)), 0.15f, 0.84f);
+        const float nightW = smoothstep(0.03f, -0.07f, aElevV);
+        const float3 beamDirV = normalize(lerp(aSunV, sunDir.xyz, nightW));
+        const float lowSunBoost = lerp(1.0f, 1.32f, saturate(1.0f - abs(max(aElevV, 0.0f) - 0.18f) / 0.28f));
+        const float shaftBoost = lerp(lowSunBoost, 1.45f, nightW);
+        const float dayG = clamp(lerp(tune.y, max(tune.y, 0.72f), saturate(1.0f - max(aElevV, 0.0f) * 2.5f)), 0.15f, 0.84f);
         const float dynG = lerp(dayG, 0.76f, nightW);
-        const float cosT = dot(w, sunDir.xyz);
+        const float cosT = dot(w, beamDirV);
         // Dual-lobe Henyey-Greenstein: strong forward Mie sunbeams + gentle back-scatter so fog scatters at all view angles.
         const float ph = min(0.74f * phaseHG(cosT, dynG) + 0.26f * phaseHG(cosT, -0.22f), 3.6f);
         // 16 quadratic-clustered temporally-reprojected depth slices (effective ~96-step smoothness alongside 64-slice 3D FroxelPass).

@@ -77,13 +77,17 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     const float2 fullPx = uv * dims.xy;
 
     // Reconstruct exact 3D world-space ray & froxel center position from true camera eyeAt() (1st & 3rd person exact).
+    // Convert view-space depth zMid -> Euclidean ray distance via dot(farDir, camFwd) so every 3D froxel light glow
+    // and sunbeam aligns pixel-for-pixel with its 3D light source across the entire screen FOV!
     const float3 eye = eyeAt();
+    const float3 camFwd = normalize(worldAt(dims.xy * 0.5f, 0.995f) - eye);
     const float3 farDir = normalize(worldAt(fullPx, 0.995f) - eye);
     const float z0 = froxelSliceZ(float(slice));
     const float z1 = froxelSliceZ(float(slice + 1u));
     const float jit = ign(float2(px.x % 160u, px.y % 90u) + float2(float(slice) * 3.7f, proj.z * 7.1f));
     const float zMid = lerp(z0, z1, 0.35f + 0.30f * jit);
-    const float3 pRel = eye + farDir * zMid;
+    const float rayDist = zMid / max(dot(farDir, camFwd), 0.25f);
+    const float3 pRel = eye + farDir * rayDist;
     const float3 wp = pRel + camPosW.xyz;
 
     // 3D heterogeneous world-space participating media density:
@@ -101,13 +105,16 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         const float4 sc = screenOf(pRel);
         const float cs = (flags.x & FLAG_CLOUDS) != 0u ? cloudShadowN(wp, 1u) : 1.0f;
         const float sh = cascadeShadow(pRel, sc.z, false) * cs;
-        const float cosT = dot(farDir, sunDir.xyz);
+        const float3 aSunF = astroSunDir();
+        const float aElevF = astroSunElev();
+        const float nightW = smoothstep(0.03f, -0.07f, aElevF);
+        const float3 beamDir = normalize(lerp(aSunF, sunDir.xyz, nightW));
+        const float cosT = dot(farDir, beamDir);
         const float sunLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-        const float nightW = saturate((0.28f - sunLum) * 4.5f);
         const float ph = min(0.75f * froxelHG(cosT, lerp(0.68f, 0.76f, nightW)) + 0.25f * froxelHG(cosT, -0.20f), 3.2f);
-        const float3 hTrans = froxelTransAt(clamp(sunDir.z, -0.10f, 1.0f));
+        const float3 hTrans = froxelTransAt(clamp(aElevF, -0.10f, 1.0f));
         const float htLum = max(dot(hTrans, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
-        const float3 physSun = lerp(sunColour.rgb, hTrans * (max(sunLum, 0.10f) / htLum), 0.58f * (1.0f - nightW));
+        const float3 physSun = lerp(lerp(sunColour.rgb, hTrans * (max(sunLum, 0.10f) / htLum), 0.58f), float3(0.22f, 0.32f, 0.52f) * 0.45f, nightW);
         const float3 hSky = froxelSkyAt(float3(farDir.xy, max(farDir.z, 0.01f)));
         inScat += physSun * (sh * ph * tune2.z * 0.55f);
         inScat += hSky * (0.014f * (0.4f + 0.6f * cs) * (1.0f - nightW * 0.65f));

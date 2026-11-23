@@ -141,13 +141,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float horBand = exp(-hUp * 6.5f);
                 physSky += float3(1.18f, 0.46f, 0.14f) * (pow(cosS, 3.2f) * horBand * twilightBell * (1.0f - cover * 0.55f) * 0.78f);
                 physSky += float3(0.52f, 0.24f, 0.48f) * (pow(antiSolar, 2.0f) * horBand * twilightBell * 0.34f);
-                // Blazing physical exponential HDR solar core + Mie aureole along TRUE astroSunDir() (never drawn on the Moon!).
+                // Crisp physical 0.53-deg solar disc ONLY (behind volumetric clouds via cl.a transmittance — zero fake ring or oversized glow!).
                 if (sunDiscGate > 0.01f) {
                     const float3 sunCoreCol = lerp(float3(1.0f, 0.99f, 0.96f), float3(1.0f, 0.60f, 0.22f), lowS);
-                    const float3 sunHaloCol = lerp(float3(1.0f, 0.94f, 0.84f), float3(1.0f, 0.42f, 0.12f), lowS);
-                    const float solarCore = exp(-sunAng * 135.0f) * 16.0f + smoothstep(0.99962f, 0.99990f, cosS) * 8.0f;
-                    const float solarCorona = exp(-sunAng * 22.0f) * 1.65f + exp(-sunAng * 5.5f) * 0.32f;
-                    physSky += (sunCoreCol * solarCore + sunHaloCol * (solarCorona * (1.0f - cover * 0.55f))) * sunDiscGate;
+                    const float3 sunHaloCol = lerp(float3(1.0f, 0.94f, 0.84f), float3(1.0f, 0.46f, 0.14f), lowS);
+                    const float solarCore = smoothstep(0.99972f, 0.99993f, cosS) * 14.0f;
+                    const float solarCorona = exp(-sunAng * 42.0f) * 0.95f;
+                    physSky += (sunCoreCol * solarCore + sunHaloCol * (solarCorona * (1.0f - cover * 0.65f))) * sunDiscGate;
                 }
                 fullSky = lerp(fullSky, physSky, max(dayW, twilightBell * 0.92f));
             }
@@ -203,13 +203,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             }
             if ((flags.x & FLAG_CLOUDS) != 0u) {
                 const float4 cl = Clouds.SampleLevel(Lin, (px + 0.5f) * dims.zw, 0.0f);
+                // Clouds naturally occlude the solar disc via exact transmittance cl.a (removed duplicate blaze that burned through thick clouds!).
                 baseSky = lerp(baseSky, baseSky * cl.a + cl.rgb, 1.0f - isExotic);
-                // Forward-scattered blazing solar core + warm Mie silver-lining blooming cleanly through cloud gaps.
-                if (dayW > 0.05f && sDir.z > 0.01f) {
-                    const float thru = lerp(0.28f, 1.0f, cl.a);
-                    const float blaze = (exp(-sunAng * 130.0f) * 12.0f + exp(-sunAng * 24.0f) * 1.25f) * thru;
-                    baseSky += lerp(float3(1.0f, 0.99f, 0.96f), float3(1.0f, 0.70f, 0.34f), lowS) * (blaze * dayW * (1.0f - isExotic));
-                }
             }
             // Sub-LSB Interleaved Gradient Noise dithering eliminates 8-bit/10-bit sky gradient banding lines cleanly.
             const float skyDith = (ign(px) - 0.5f) * (1.0f / 255.0f);
@@ -281,11 +276,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // eliminates the color discontinuity between mountain haze, horizon sky, sun, and cloud undersides.
         float3 sZ, sM, sH;
         skyPalette(sZ, sM, sH);
-        const float sunLumF = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-        const float nightF = saturate((0.26f - sunLumF) * 4.5f);
-        const float lowSunF = saturate(1.0f - sunDir.z * 2.6f);
-        const float highSunF = smoothstep(0.18f, 0.48f, sunDir.z);
-        const float cosSunF = saturate(dot(w, sunDir.xyz));
+        const float3 aSunFg = astroSunDir();
+        const float aElevFg = astroSunElev();
+        const float nightF = smoothstep(0.03f, -0.07f, aElevFg);
+        const float lowSunF = saturate(1.0f - max(aElevFg, 0.0f) * 3.0f);
+        const float highSunF = smoothstep(0.20f, 0.48f, aElevFg);
+        const float cosSunF = saturate(dot(w, aSunFg));
         // Unified sky-matched aerial perspective: uses the EXACT same Hillaire + overcastSky formula as the sky branch
         // (d >= 1.0f) so far mountains and the Sea of Ghosts melt into the sky dome with 0.000 luminance discontinuity
         // (eliminates the dark curved slate horizon band caught in r257_dawnstar_npc.jpg).

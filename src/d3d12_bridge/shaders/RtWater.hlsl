@@ -256,12 +256,17 @@ void water(uint3 id : SV_DispatchThreadID) {
             Hit h;
             if (reflectLength > 0.0f && traceHit(o, rd, reflectLength, h)) {
                 float3 cScreen, hn;
-                // Hybrid RT + Screen-Space reflection: use exact lit full-res frame when the 3D ray hit is on-screen
-                // (pixel-sharp reflections of pine needles, characters, bridges & torches), and seamless 3D RT radianceAt off-screen.
-                if (onScreen(o + rd * h.t, cScreen)) {
-                    refl = cScreen;
+                const float3 hitPt = o + rd * h.t;
+                const float3 rtCol = radianceAt(h, o, rd, float2(0.5f, 0.5f), true, hn);
+                // Seamless screen-edge crossfade between on-screen DLSS-RR denoised color & 3D world-space RT radiance:
+                // eliminates hard screen-edge water reflection pop-in when turning the camera!
+                if (onScreen(hitPt, cScreen)) {
+                    const float4 scH = screenOf(hitPt);
+                    const float2 hUv = scH.xy * dims.zw;
+                    const float edgeW = smoothstep(0.01f, 0.14f, min(min(hUv.x, 1.0f - hUv.x), min(hUv.y, 1.0f - hUv.y)));
+                    refl = lerp(rtCol, cScreen, edgeW);
                 } else {
-                    refl = radianceAt(h, o, rd, float2(0.5f, 0.5f), true, hn);
+                    refl = rtCol;
                 }
                 const float reflMax = max(refl.r, max(refl.g, refl.b));
                 if (reflMax > 4.5f) { refl *= 4.5f / reflMax; }

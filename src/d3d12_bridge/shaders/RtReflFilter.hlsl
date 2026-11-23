@@ -67,7 +67,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float4 hi = m1 + stdDev * 1.35f;
             const float4 clamped = clamp(prev, lo, hi);
             const float speed = length(mv * dims.xy);
-            const float alpha = lerp(0.12f, 0.38f, saturate(speed * 0.08f));
+            // Responsive temporal blend (0.24..0.55) prevents dark reflection trails behind moving PCs & NPCs!
+            const float alpha = lerp(0.24f, 0.55f, saturate(speed * 0.08f));
             cur = lerp(clamped, cur, alpha);
         }
     }

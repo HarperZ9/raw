@@ -300,55 +300,52 @@ bool OcclusionCuller::ShouldCull(uint32_t indexCount)
     // Never cull anything whose bounding sphere contains or approaches the camera.
     if (curDist <= radius * 1.25f + 64.0f) return false;
 
-    // ── Stage 1: Exact Current-Frame Creation Engine worldBound Frustum Culling ──
-    const float safeR = radius * 1.15f + 16.0f;
+    // ── Stage 1: Generous Current-Frame worldBound Frustum Culling (never culls near screen edges or off-screen RT reflectors!) ──
+    const float safeR = radius * 1.45f + 48.0f;
     const float cw0 = sl.worldToClip[3][0]*curX + sl.worldToClip[3][1]*curY + sl.worldToClip[3][2]*curZ + sl.worldToClip[3][3];
-    if (cw0 < -safeR) {
+    if (cw0 < -safeR * 1.35f) {
         m_drawsCulled++; m_frustumCulled++; m_trisCulled += tris;
         return true;
     }
     if (cw0 > 1.0f) {
         const float cx0 = (sl.worldToClip[0][0]*curX + sl.worldToClip[0][1]*curY + sl.worldToClip[0][2]*curZ + sl.worldToClip[0][3]) / cw0;
         const float cy0 = (sl.worldToClip[1][0]*curX + sl.worldToClip[1][1]*curY + sl.worldToClip[1][2]*curZ + sl.worldToClip[1][3]) / cw0;
-        const float padNdc = (safeR * 1.35f) / cw0;
-        if (cx0 < -1.0f - padNdc || cx0 > 1.0f + padNdc || cy0 < -1.0f - padNdc || cy0 > 1.0f + padNdc) {
+        const float padNdc = (safeR * 1.65f) / cw0;
+        if (cx0 < -1.25f - padNdc || cx0 > 1.25f + padNdc || cy0 < -1.25f - padNdc || cy0 > 1.25f + padNdc) {
             m_drawsCulled++; m_frustumCulled++; m_trisCulled += tris;
             return true;
         }
-        // ── Stage 2: Exact-Bound Distant Sub-Pixel Micro-Prop Culling ──
-        // Cull genuinely sub-pixel distant clutter (<1.6 px diameter past 2,600u, authored radius < 96u).
-        if (curDist > 2600.0f && radius < 96.0f && (radius / cw0) < 0.00085f) {
+        // ── Stage 2: Conservative Distant Sub-Pixel Micro-Prop Culling ──
+        if (curDist > 3800.0f && radius < 48.0f && (radius / cw0) < 0.00055f) {
             m_drawsCulled++; m_subPxCulled++; m_trisCulled += tris;
             return true;
         }
-        // ── Stage 3: Native DX12 Compute Hi-Z Occlusion Culling (240x135 GPU-reduced depth pyramid) ──
-        // Conservative screen-space sphere projection against GPU Hi-Z (2 frames retired, exact m_hizW2C/m_hizCam).
-        // Expanded up to radius < 1,800u so occluded buildings, walls, cliffs & interior rooms cull cleanly,
-        // with camera-motion-adaptive depth bias (tight 0.0006 steady -> 0.0020 fast movement) for zero popping.
-        if (m_hizReady && m_hizHasCam && curDist > radius * 1.45f + 160.0f && radius < 1800.0f) {
+        // ── Stage 3: Ultra-Conservative Native DX12 Compute Hi-Z Occlusion Culling (240x135) ──
+        // Strictly capped to small/medium static props (radius < 380u) with generous 1.35x rect expansion & 0.0022 depth bias
+        // so large buildings, cliffs, decals, skinned meshes & RT reflection geometry NEVER pop or disappear!
+        if (m_hizReady && m_hizHasCam && curDist > radius * 1.75f + 240.0f && radius < 380.0f) {
             const float hrx = m_exactBound[0] - m_hizCam[0], hry = m_exactBound[1] - m_hizCam[1], hrz = m_exactBound[2] - m_hizCam[2];
             const float hDist = std::sqrt(hrx * hrx + hry * hry + hrz * hrz);
-            if (hDist > radius * 1.25f + 100.0f) {
+            if (hDist > radius * 1.50f + 160.0f) {
                 const float* hm = &m_hizW2C[0][0];
                 const float hcx = hm[0]*hrx + hm[1]*hry + hm[2]*hrz + hm[3];
                 const float hcy = hm[4]*hrx + hm[5]*hry + hm[6]*hrz + hm[7];
                 const float hcz = hm[8]*hrx + hm[9]*hry + hm[10]*hrz + hm[11];
                 const float hcw = hm[12]*hrx + hm[13]*hry + hm[14]*hrz + hm[15];
-                if (hcw > 40.0f) {
+                if (hcw > 50.0f) {
                     const float invW = 1.0f / hcw;
                     const float sx = hcx * invW * 0.5f + 0.5f;
                     const float sy = 0.5f - hcy * invW * 0.5f;
-                    // Camera-motion-adaptive screen expansion & depth bias (eliminates double-bias waste when steady).
                     const float cdx = sl.posAdjust[0] - m_hizCam[0], cdy = sl.posAdjust[1] - m_hizCam[1], cdz = sl.posAdjust[2] - m_hizCam[2];
                     const float camMove = std::sqrt(cdx * cdx + cdy * cdy + cdz * cdz);
-                    const float rectPad = camMove > 8.0f ? 1.22f : 1.12f;
-                    const float depthBias = camMove > 8.0f ? 0.0018f : 0.0006f;
+                    const float rectPad = camMove > 4.0f ? 1.48f : 1.35f;
+                    const float depthBias = camMove > 4.0f ? 0.0038f : 0.0022f;
                     const float rNdc = (radius * rectPad) * invW;
-                    const float nearScale = std::max((hDist - radius * 1.10f) / hDist, 0.1f);
+                    const float nearScale = std::max((hDist - radius * 1.25f) / hDist, 0.1f);
                     const float hrxN = hrx * nearScale, hryN = hry * nearScale, hrzN = hrz * nearScale;
                     const float hczN = hm[8]*hrxN + hm[9]*hryN + hm[10]*hrzN + hm[11];
                     const float hcwN = hm[12]*hrxN + hm[13]*hryN + hm[14]*hrzN + hm[15];
-                    if (hcwN > 15.0f && sx - rNdc >= 0.01f && sx + rNdc <= 0.99f && sy - rNdc >= 0.01f && sy + rNdc <= 0.99f) {
+                    if (hcwN > 20.0f && sx - rNdc >= 0.04f && sx + rNdc <= 0.96f && sy - rNdc >= 0.04f && sy + rNdc <= 0.96f) {
                         const float nearDepth = (hczN / hcwN) - depthBias;
                         if (nearDepth > 0.0f && nearDepth < 0.9999f && TestRect(sx - rNdc, sy - rNdc, sx + rNdc, sy + rNdc, nearDepth)) {
                             m_drawsCulled++; m_hiZCulled++; m_trisCulled += tris;

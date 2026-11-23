@@ -144,18 +144,20 @@ void main(uint3 id : SV_DispatchThreadID) {
     const float curLum = dot(cur.rgb, float3(0.2126f, 0.7152f, 0.0722f));
     const float pastLum = dot(pastB, float3(0.2126f, 0.7152f, 0.0722f));
     const float tempVar = have ? max(pastM2 - pastLum * pastLum, 0.0f) : 0.0f;
-    const float sigScale = lerp(1.50f, 2.40f, saturate(n / 12.0f)) * (1.0f + saturate(sqrt(tempVar) * 1.5f) * 0.25f);
-    const float4 pad = max(curStd * sigScale, float4(0.06f, 0.06f, 0.06f, 0.10f));
+    const float sigScale = lerp(1.25f, 1.65f, saturate(n / 12.0f)) * (1.0f + saturate(sqrt(tempVar) * 1.2f) * 0.20f);
+    const float4 pad = max(curStd * sigScale, float4(0.05f, 0.05f, 0.05f, 0.08f));
+    // Dynamic shadow-trail killer: detect moving PC/NPC shadow disocclusion (cur.a jumping away from stale past)
+    // and boost temporal responsiveness immediately so walking characters NEVER drag a dark RTAO shadow trail!
+    const float skyDelta = have ? abs(cur.a - past) : 0.0f;
     if (have) {
         past = clamp(past, saturate(cur.a - pad.a), saturate(cur.a + pad.a));
         pastB = clamp(pastB, max(cur.rgb - pad.rgb, 0.0f.xxx), cur.rgb + pad.rgb);
     }
-    n = have ? min(n + 1.0f, float(maxFrames)) : 1.0f;
-    // Motion-responsive temporal interpolation: reacts rapidly during camera turns/movement (zero motion blur or ghosting)
-    // while converging to silky 32-frame stability when stationary.
+    n = have ? min(n + 1.0f, min(float(maxFrames), 14.0f)) : 1.0f;
     const float2 mvSpeed = (have && hasMotion != 0u) ? Motion.Load(int3(p, 0)) * dims.xy : float2(0.0f, 0.0f);
     const float pxVel = length(mvSpeed);
-    const float alphaT = max(1.0f / n, lerp(0.03f, 0.42f, saturate(pxVel * 0.075f)));
+    const float disoccBoost = smoothstep(0.08f, 0.28f, skyDelta) * 0.36f;
+    const float alphaT = max(max(1.0f / n, lerp(0.085f, 0.45f, saturate(pxVel * 0.075f))), disoccBoost);
     const float vis = have ? lerp(past, cur.a, alphaT) : cur.a;
     const float3 b = have ? lerp(pastB, cur.rgb, alphaT) : cur.rgb;
     const float m2Out = have ? lerp(pastM2, curLum * curLum, alphaT) : (curLum * curLum);

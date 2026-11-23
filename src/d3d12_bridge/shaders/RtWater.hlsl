@@ -288,16 +288,16 @@ void water(uint3 id : SV_DispatchThreadID) {
             float3 rd = reflect(-v, nRefl);
             if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }
             float3 refl;
-            // Hybrid SSR + Hardware DXR 1.2 Water Reflections (eliminates rectangular TLAS-hole cutouts seen in
-            // 09.57.21.71 & 09.57.17.80!): 12-step screen-space depth trace captures 100% of on-screen cliffs/bridges/trees
-            // cleanly, seamlessly falling back to DXR 1.2 RayQuery + aerial-perspective sky off-screen!
+            // 20-step + 4-step Binary-Refined Screen-Space Reflection (eliminates the 12 curved SSR step-bands seen in
+            // 10.35.40.63 & 10.36.15.40 while keeping zero rectangular TLAS reflection holes!):
             bool ssrHit = false;
             float3 ssrCol = 0.0f.xxx;
             float ssrEdge = 0.0f;
             if (hasPreWater && wDist < 9000.0f) {
-                const float jitS = hash(px, frameIndex * 0.37f);
-                [loop] for (int si = 1; si <= 12; ++si) {
-                    const float tS = pow((float(si) - 0.35f + jitS * 0.4f) / 12.0f, 1.85f) * 1800.0f;
+                const float jitS = ign(px);
+                float tPrev = 0.0f;
+                [loop] for (int si = 1; si <= 20; ++si) {
+                    const float tS = pow((float(si) - 0.5f + jitS * 0.5f) / 20.0f, 2.0f) * 2200.0f;
                     const float3 sp = o + rd * tS;
                     const float4 scS = screenOf(sp);
                     if (scS.w <= 1.0f) { break; }
@@ -307,14 +307,29 @@ void water(uint3 id : SV_DispatchThreadID) {
                     const float dS = Depth.Load(int3(sip, 0));
                     if (dS < 1.0f) {
                         const float zHit = viewZOf(dS);
-                        const float thick = max(scS.w * 0.045f, 18.0f);
+                        const float thick = max(scS.w * 0.035f, 14.0f);
                         if (scS.w > zHit && scS.w < zHit + thick) {
-                            ssrCol = PreWater[sip].rgb;
-                            ssrEdge = smoothstep(0.005f, 0.10f, min(min(suv.x, 1.0f - suv.x), min(suv.y, 1.0f - suv.y)));
+                            // 4-step binary midpoint refinement removes all curved step-banding in water reflections!
+                            float tLo = tPrev, tHi = tS;
+                            int2 bestIp = sip;
+                            float2 bestUv = suv;
+                            [unroll] for (int bi = 0; bi < 4; ++bi) {
+                                const float tMid = 0.5f * (tLo + tHi);
+                                const float4 scM = screenOf(o + rd * tMid);
+                                const float2 mUv = scM.xy * dims.zw;
+                                const int2 mIp = clamp(int2(scM.xy), int2(0, 0), int2(dims.xy) - 1);
+                                const float dM = Depth.Load(int3(mIp, 0));
+                                const float zM = dM < 1.0f ? viewZOf(dM) : 1.0e9f;
+                                if (scM.w > zM) { tHi = tMid; bestIp = mIp; bestUv = mUv; }
+                                else { tLo = tMid; }
+                            }
+                            ssrCol = PreWater[bestIp].rgb;
+                            ssrEdge = smoothstep(0.005f, 0.12f, min(min(bestUv.x, 1.0f - bestUv.x), min(bestUv.y, 1.0f - bestUv.y)));
                             ssrHit = true;
                             break;
                         }
                     }
+                    tPrev = tS;
                 }
             }
             Hit h;

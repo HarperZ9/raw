@@ -250,19 +250,19 @@ float4 main(In i) : SV_Target {
     const uint ovInit = uint(RO.y + 0.5f);
     float2 baseUv = i.uv;
     // OV12 (bit 11 = 2048): Distance-locked biomechanical figure-8 stride sway + subtle head-roll tilt
-    // (smooth overscan ramp eliminates 0.8% zoom-pop on W tap; continuous stride phase eliminates 64-frame snap!).
+    // (safe 0.976 overscan margin guarantees UVs NEVER clamp or smear at the bottom/side screen edges!).
     if ((ovInit & 2048u) != 0u) {
-        const float moveAmp = smoothstep(0.25f, 5.5f, RO.w);
+        const float moveAmp = smoothstep(0.35f, 6.0f, RO.w);
         if (moveAmp > 0.002f) {
-            const float str = moveAmp * clamp(RQ.z, 0.0f, 2.5f);
+            const float str = moveAmp * clamp(RQ.z, 0.0f, 2.0f);
             const float phase = RO.z;
-            const float roll = sin(phase) * 0.0026f * str;
+            const float roll = sin(phase) * 0.0022f * str;
             const float cr = cos(roll), sr = sin(roll);
             const float2 ctr = baseUv - 0.5f.xx;
             const float2 rotUv = float2(ctr.x * cr - ctr.y * sr, ctr.x * sr + ctr.y * cr) + 0.5f.xx;
-            const float2 bob = float2(sin(phase) * 0.0012f, -cos(phase * 2.0f) * 0.0011f) * str;
-            const float zoom = lerp(1.0f, 0.984f, saturate(str));
-            baseUv = clamp((rotUv - 0.5f.xx) * zoom + 0.5f.xx + bob, 0.001f.xx, 0.999f.xx);
+            const float2 bob = float2(sin(phase) * 0.0010f, -cos(phase * 2.0f) * 0.0009f) * str;
+            const float zoom = lerp(1.0f, 0.976f, saturate(str));
+            baseUv = clamp((rotUv - 0.5f.xx) * zoom + 0.5f.xx + bob, 0.003f.xx, 0.997f.xx);
         }
     }
     const float2 suv = min(max(baseUv * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
@@ -270,11 +270,11 @@ float4 main(In i) : SV_Target {
     // OV10 (bit 9 = 512): Smooth 12-Tap IGN-Jittered Velocity-Gated Cinema Peripheral Motion Blur
     // (0.0 blur when standing; progressive organic onset from brisk jog to sprint; central 68% 100% sharp).
     if ((ovInit & 512u) != 0u) {
-        const float sprintGate = smoothstep(1.6f, 7.5f, RO.w);
+        const float sprintGate = smoothstep(2.2f, 8.0f, RO.w);
         const float2 rVec = baseUv - 0.5f.xx;
         const float rDist = length(rVec);
-        const float edgeMask = smoothstep(0.34f, 0.74f, rDist);
-        const float rStr = edgeMask * edgeMask * 0.0090f * sprintGate * clamp(RQ.y, 0.0f, 2.5f);
+        const float edgeMask = smoothstep(0.36f, 0.74f, rDist);
+        const float rStr = edgeMask * edgeMask * 0.0070f * sprintGate * clamp(RQ.y, 0.0f, 2.0f);
         if (rStr > 0.0002f) {
             const float rJit = frac(52.9829189f * frac(dot(i.pos.xy + RO.z * 5.588f, float2(0.06711056f, 0.00583715f))));
             float3 rAcc = hdr * 1.5f;
@@ -288,16 +288,16 @@ float4 main(In i) : SV_Target {
             hdr = rAcc / rW;
         }
     }
-    // OV11 (bit 10 = 1024): True Sharp-Green Apochromatic Optical Snell Dispersion (Leica/Zeiss glass profile:
-    // 100% native sharp Green channel with zero green softening; smooth radial r^2 Red/Blue lateral fringe at corners).
+    // OV11 (bit 10 = 1024): Subtle Inward-Only Sharp-Green Apochromatic Lens Dispersion
+    // (samples strictly INWARD toward screen center -> ZERO bottom-edge smear bar & ZERO garish rainbow grass!).
     if ((ovInit & 1024u) != 0u) {
         const float2 caVec = baseUv - 0.5f.xx;
         const float caR = length(caVec);
-        const float caT = saturate((caR - 0.24f) / 0.48f);
-        const float caMag = (caT * caT) * 0.0028f * clamp(RQ.x, 0.0f, 2.5f);
-        if (caMag > 0.00004f) {
+        const float caT = saturate((caR - 0.30f) / 0.44f);
+        const float caMag = (caT * caT) * 0.00095f * clamp(RQ.x, 0.0f, 2.0f);
+        if (caMag > 0.00003f) {
             const float2 dirC = caVec / max(caR, 1.0e-4f);
-            const float2 uvR = min(max((baseUv + dirC * caMag) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
+            const float2 uvR = min(max((baseUv - dirC * (caMag * 0.45f)) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
             const float2 uvB = min(max((baseUv - dirC * caMag) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
             hdr = float3(Scene.Sample(S1, uvR).r, hdr.g, Scene.Sample(S1, uvB).b);
         }

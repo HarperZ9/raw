@@ -93,6 +93,8 @@ pre{margin:0;background:#0a0d12;border:1px solid var(--line);border-radius:4px;p
   <h1>RAW DX12 / SM6.9 Live Remaster Studio</h1>
   <div class="row" style="margin:0">
     <button onclick="refreshState()">Refresh State</button>
+    <button onclick="post('/api/engine',{commands:'engine_optics'})">Engine Optics</button>
+    <button onclick="post('/api/engine',{commands:'softbody'})">Soft-Body</button>
     <button onclick="runMeasure()">Measure 120f GPU</button>
     <button class="primary" onclick="runCapture()">Capture Keyframe</button>
   </div>

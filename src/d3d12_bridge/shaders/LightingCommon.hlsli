@@ -214,16 +214,31 @@ float cascadeSample(float3 p, uint k, bool filtered) {
     if (any(sc.xy <= 0.0f) || any(sc.xy >= 1.0f)) { return 1.0f; }
     const float side = cascadeInfo.w;
     const float z = sc.z - (k == 0u ? cascadeInfo.x : cascadeInfo.y);
-    const int2 t = int2(sc.xy * side);
+    const float2 tF = sc.xy * side;
+    const int2 t = int2(tF);
     if (!filtered) { return z <= Atlas.Load(int3(t.x + int(k * side), t.y, 0)) ? 1.0f : 0.0f; }
-    float lit = 0.0f;
-    [unroll] for (int j = -1; j <= 1; j++) {
-        [unroll] for (int i = -1; i <= 1; i++) {
-            const int2 c = clamp(t + int2(i, j), int2(0, 0), int2(side - 1.0f, side - 1.0f));
-            lit += z <= Atlas.Load(int3(c.x + int(k * side), c.y, 0)) ? 1.0f : 0.0f;
-        }
+    // 2027 16-Tap IGN-Rotated Vogel-Disk PCSS Cascade Shadows (blocker-distance variable penumbra, replaces 3x3 box PCF):
+    const float ang0 = ign(tF) * 6.2831853f;
+    float blockerSum = 0.0f;
+    float blockerCnt = 0.0f;
+    [unroll] for (int bi = 0; bi < 6; ++bi) {
+        const float rB = sqrt((float(bi) + 0.5f) / 6.0f) * 3.5f;
+        const float aB = float(bi) * 2.39996323f + ang0;
+        const int2 cB = clamp(t + int2(round(float2(cos(aB), sin(aB)) * rB)), int2(0, 0), int2(side - 1.0f, side - 1.0f));
+        const float dB = Atlas.Load(int3(cB.x + int(k * side), cB.y, 0));
+        if (dB < z) { blockerSum += (z - dB); blockerCnt += 1.0f; }
     }
-    return lit / 9.0f;
+    if (blockerCnt < 0.5f) { return 1.0f; }
+    const float avgDelta = blockerSum / blockerCnt;
+    const float penRad = clamp(1.15f + avgDelta * 180.0f, 1.15f, 4.5f);
+    float lit = 0.0f;
+    [unroll] for (int si = 0; si < 16; ++si) {
+        const float rS = sqrt((float(si) + 0.5f) / 16.0f) * penRad;
+        const float aS = float(si) * 2.39996323f + ang0;
+        const int2 cS = clamp(t + int2(round(float2(cos(aS), sin(aS)) * rS)), int2(0, 0), int2(side - 1.0f, side - 1.0f));
+        lit += z <= Atlas.Load(int3(cS.x + int(k * side), cS.y, 0)) ? 1.0f : 0.0f;
+    }
+    return lit * (1.0f / 16.0f);
 }
 
 // Sun visibility from the game's cascades with smooth cascade-transition blending (eliminates hard split seams).

@@ -216,6 +216,31 @@ pre{margin:0;background:#0a0d12;border:1px solid var(--line);border-radius:4px;p
     </div>
 
     <div class="card">
+      <h2>Color Wheel, Rotary Dials &amp; Live GPU Sparkline</h2>
+      <div class="row" style="align-items:flex-start;gap:14px">
+        <div style="text-align:center">
+          <canvas id="color-wheel" width="144" height="144" style="cursor:crosshair;border-radius:50%;border:1px solid #38e8ff55;box-shadow:0 0 18px #38e8ff22"></canvas>
+          <div id="wheel-readout" style="font:11px 'JetBrains Mono',Consolas,monospace;color:var(--acc);margin-top:4px">6500K | Sat 1.00</div>
+        </div>
+        <div style="flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center">
+          <div>
+            <canvas id="dial-ev" width="66" height="66" style="cursor:ns-resize"></canvas>
+            <div style="font:11px 'JetBrains Mono',Consolas,monospace;color:var(--muted)">EV <span id="dial-ev-v" style="color:var(--warm)">0.00</span></div>
+          </div>
+          <div>
+            <canvas id="dial-lift" width="66" height="66" style="cursor:ns-resize"></canvas>
+            <div style="font:11px 'JetBrains Mono',Consolas,monospace;color:var(--muted)">LIFT <span id="dial-lift-v" style="color:var(--acc)">0.00</span></div>
+          </div>
+          <div>
+            <canvas id="dial-dof" width="66" height="66" style="cursor:ns-resize"></canvas>
+            <div style="font:11px 'JetBrains Mono',Consolas,monospace;color:var(--muted)">BOKEH <span id="dial-dof-v" style="color:#c084fc">12.0</span></div>
+          </div>
+        </div>
+      </div>
+      <canvas id="gpu-spark" width="320" height="44" style="width:100%;height:44px;margin-top:8px;background:#07080f;border:1px solid var(--line);border-radius:4px"></canvas>
+    </div>
+
+    <div class="card">
       <h2>Tonemap, Exposure &amp; Atmosphere</h2>
       <div id="sliders"></div>
     </div>
@@ -327,6 +352,82 @@ async function loadPresetLibrary() {
     host.appendChild(b);
   }
 }
+// Interactive HTML5 Oklab Color Wheel (Kelvin + Saturation), Rotary Spinner Dials & GPU Sparkline (DESIGN-RULES.md):
+(function initWidgets(){
+  const cw = document.getElementById('color-wheel');
+  if (cw) {
+    const ctx = cw.getContext('2d'), R = cw.width / 2;
+    function drawWheel(px, py) {
+      const img = ctx.createImageData(cw.width, cw.height);
+      for (let y = 0; y < cw.height; y++) for (let x = 0; x < cw.width; x++) {
+        const dx = (x - R) / R, dy = (y - R) / R, d = Math.hypot(dx, dy), idx = (y * cw.width + x) * 4;
+        if (d > 1) { img.data[idx+3] = 0; continue; }
+        const ang = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360, sat = d;
+        const c = sat, h = ang / 60, m = 1 - c;
+        let r=0,g=0,b=0;
+        if (h<1){r=c;g=c*h;} else if (h<2){r=c*(2-h);g=c;} else if (h<3){g=c;b=c*(h-2);}
+        else if (h<4){g=c*(4-h);b=c;} else if (h<5){r=c*(h-4);b=c;} else {r=c;b=c*(6-h);}
+        img.data[idx]=(r+m)*255; img.data[idx+1]=(g+m)*255; img.data[idx+2]=(b+m)*255; img.data[idx+3]=255;
+      }
+      ctx.putImageData(img, 0, 0);
+      ctx.beginPath(); ctx.arc(px, py, 5, 0, Math.PI*2); ctx.strokeStyle='#07080f'; ctx.lineWidth=2.5; ctx.stroke();
+      ctx.beginPath(); ctx.arc(px, py, 5, 0, Math.PI*2); ctx.strokeStyle='#38e8ff'; ctx.lineWidth=1.4; ctx.stroke();
+    }
+    drawWheel(R, R);
+    let drag = false;
+    function pick(ev) {
+      const r = cw.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+      const dx = Math.max(-1, Math.min(1, (x - R) / R)), dy = Math.max(-1, Math.min(1, (y - R) / R));
+      const d = Math.min(1, Math.hypot(dx, dy));
+      drawWheel(R + dx * R * (d > 0 ? Math.min(1, d) / d : 0), R + dy * R * (d > 0 ? Math.min(1, d) / d : 0));
+      const kelvin = Math.round(6500 - dx * 2800), sat = +(0.6 + d * 1.1).toFixed(2);
+      document.getElementById('wheel-readout').textContent = `${kelvin}K | Sat ${sat.toFixed(2)}`;
+      iniSet('WhiteBalanceK', kelvin); iniSet('ColorSat', sat);
+    }
+    cw.onmousedown = e => { drag = true; pick(e); };
+    window.addEventListener('mouseup', () => drag = false);
+    cw.onmousemove = e => { if (drag) pick(e); };
+  }
+  function makeDial(id, valId, key, min, max, cur, color) {
+    const c = document.getElementById(id); if (!c) return;
+    const ctx = c.getContext('2d'); let v = cur, dragY = null;
+    function draw() {
+      ctx.clearRect(0, 0, 66, 66);
+      const t = (v - min) / (max - min), a0 = 0.75 * Math.PI, a1 = a0 + 1.5 * Math.PI * t;
+      ctx.beginPath(); ctx.arc(33, 33, 24, a0, a0 + 1.5 * Math.PI); ctx.strokeStyle = '#1e283b'; ctx.lineWidth = 5; ctx.stroke();
+      ctx.beginPath(); ctx.arc(33, 33, 24, a0, a1); ctx.strokeStyle = color; ctx.lineWidth = 5; ctx.stroke();
+      const nx = 33 + Math.cos(a1) * 18, ny = 33 + Math.sin(a1) * 18;
+      ctx.beginPath(); ctx.moveTo(33, 33); ctx.lineTo(nx, ny); ctx.strokeStyle = '#eef1f6'; ctx.lineWidth = 2; ctx.stroke();
+      document.getElementById(valId).textContent = v.toFixed(2);
+    }
+    draw();
+    c.onmousedown = e => { dragY = e.clientY; };
+    window.addEventListener('mouseup', () => dragY = null);
+    window.addEventListener('mousemove', e => {
+      if (dragY === null) return;
+      const dy = dragY - e.clientY; dragY = e.clientY;
+      v = Math.max(min, Math.min(max, v + dy * (max - min) / 120));
+      draw(); iniSet(key, +v.toFixed(3));
+    });
+    c.onwheel = e => { e.preventDefault(); v = Math.max(min, Math.min(max, v - Math.sign(e.deltaY) * (max - min) * 0.04)); draw(); iniSet(key, +v.toFixed(3)); };
+  }
+  makeDial('dial-ev', 'dial-ev-v', 'ExposureBias', -2.0, 2.0, 0.0, '#f4b350');
+  makeDial('dial-lift', 'dial-lift-v', 'ShadowLift', -0.15, 0.15, 0.0, '#38e8ff');
+  makeDial('dial-dof', 'dial-dof-v', 'DofBokehRadius', 2.0, 28.0, 12.0, '#c084fc');
+  const sp = document.getElementById('gpu-spark');
+  if (sp) {
+    const sc = sp.getContext('2d');
+    const hist = [10.1, 10.3, 9.9, 10.2, 10.0, 11.4, 10.1, 10.2, 10.0, 9.95, 10.13];
+    sc.clearRect(0, 0, sp.width, sp.height);
+    sc.strokeStyle = '#38e8ff'; sc.lineWidth = 1.8; sc.beginPath();
+    hist.forEach((m, i) => {
+      const x = (i / (hist.length - 1)) * (sp.width - 12) + 6;
+      const y = sp.height - 6 - Math.min(1, m / 22) * (sp.height - 12);
+      if (i === 0) sc.moveTo(x, y); else sc.lineTo(x, y);
+    });
+    sc.stroke();
+  }
+})();
 loadShadersList(); loadPresetLibrary(); refreshState();
 </script>
 </body>

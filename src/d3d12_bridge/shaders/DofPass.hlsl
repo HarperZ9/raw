@@ -96,10 +96,10 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
     float  nearW   = 0.0f;
     float  nearCov = 0.0f;
 
-    // 48-tap concentric Vogel-disc cinema bokeh gather with subtle 1.18x anamorphic oval,
-    // aperture-rim specular orb brightening, and physical Longitudinal Chromatic Aberration (LoCA).
-    [loop] for (int i = 1; i <= 48; i++) {
-        const float u = sqrt((float(i) - 0.5f) / 48.0f);
+    // 64-tap Overdrive concentric Vogel-disc cinema bokeh gather with 1.18x anamorphic oval,
+    // cat's-eye corner squeeze, aperture-rim specular orb brightening, halo-free far occlusion, and LoCA.
+    [loop] for (int i = 1; i <= 64; i++) {
+        const float u = sqrt((float(i) - 0.5f) / 64.0f);
         const float a = float(i) * 2.39996323f + rot0;
         const float sec = abs(fmod(a, kBlade) - kBlade * 0.5f);
         const float bladeR = clamp(0.9396926f / max(cos(sec), 0.78f), 0.90f, 1.08f);
@@ -109,8 +109,8 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
         const float4 tap = SrcA.SampleLevel(Lin, saturate((px + 0.5f + off) * invDim), 0.0f);
         const float tapLum = dot(tap.rgb, float3(0.2126f, 0.7152f, 0.0722f));
         // Cinema glass spherical-aberration rim brightening on HDR highlights (creamy luminous bokeh discs).
-        const float rimRing = 0.86f + 0.42f * (u * u);
-        const float orb = (1.0f + pow(saturate(tapLum - 0.55f), 1.35f) * (dofParams.z * 1.35f)) * rimRing;
+        const float rimRing = 0.84f + 0.46f * (u * u);
+        const float orb = (1.0f + pow(saturate(tapLum - 0.52f), 1.35f) * (dofParams.z * 1.45f)) * rimRing;
         // Physical Longitudinal Chromatic Aberration (LoCA): warm magenta near rim, cool emerald-cyan far rim.
         const float3 locaNear = lerp(1.0f.xxx, float3(1.06f, 0.94f, 1.04f), u * u * 0.55f);
         const float3 locaFar  = lerp(1.0f.xxx, float3(0.94f, 1.05f, 1.02f), u * u * 0.55f);
@@ -121,16 +121,19 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
             nearW += nw;
             nearCov += saturate((nRad - u * 0.82f) * 4.5f);
         } else if (tap.a > 0.02f && center.a > 0.01f) {
-            const float fw = saturate((tap.a - u * 0.78f) * 4.0f) * orb;
+            // Halo-free far-field occlusion: reject sharp in-focus foreground taps from bleeding into far bokeh!
+            const float bgGate = smoothstep(center.a * 0.35f, center.a * 0.85f + 0.04f, tap.a);
+            const float fw = saturate((tap.a - u * 0.78f) * 4.0f) * orb * bgGate;
             farAcc += tap.rgb * locaFar * fw;
             farW += fw;
         }
     }
     const float3 farCol = farW > 1.0e-4f ? (farAcc / farW) : center.rgb;
     const float3 nearCol = nearW > 1.0e-4f ? (nearAcc / nearW) : center.rgb;
-    const float nearAlpha = saturate(nearCov / 14.0f);
+    const float nearAlpha = saturate(nearCov / 18.0f);
     const float3 outCol = lerp(farCol, nearCol, nearAlpha);
-    return float4(outCol, max(nearAlpha, saturate(center.a)));
+    // Pack sign-preserving nearAlpha in negative alpha when near-field silhouette bleeds over a sharp background!
+    return float4(outCol, nearAlpha > 0.05f ? -nearAlpha : saturate(center.a));
 }
 
 float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
@@ -143,7 +146,10 @@ float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
     const float curZ = d < 1.0f ? viewZOf(d) : 100000.0f;
     const float coc = abs(signedCoC(curZ, focusZ, dofParams.x));
     const float4 bokeh = SrcB.SampleLevel(Lin, uv, 0.0f);
-    // Protect in-focus subjects (coc == 0) from background bokeh bleed; only blend where pixel is genuinely out of focus.
-    const float blend = coc > 0.01f ? saturate(max(coc, bokeh.a * 0.75f)) : 0.0f;
-    return float4(lerp(sharp.rgb, bokeh.rgb, smoothstep(0.04f, 0.92f, blend)), sharp.a);
+    // Allow physical near-field blurred silhouettes (bokeh.a < 0) to feather naturally over sharp backgrounds,
+    // while strictly protecting sharp foreground subjects from far-field background bokeh bleed!
+    const float nearBleed = bokeh.a < 0.0f ? saturate(-bokeh.a) : 0.0f;
+    const float farBlend = coc > 0.01f ? saturate(max(coc, max(bokeh.a, 0.0f) * 0.78f)) : 0.0f;
+    const float blend = max(farBlend, nearBleed * 0.88f);
+    return float4(lerp(sharp.rgb, bokeh.rgb, smoothstep(0.03f, 0.92f, blend)), sharp.a);
 }

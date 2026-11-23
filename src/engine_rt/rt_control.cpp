@@ -219,6 +219,8 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             Result(WeatherCommand());
         } else if (op == "audit") {
             Result(AuditCommand(*g_img));
+        } else if (op == "engine_optics") {
+            Result(EngineOpticsCommand(*g_img));
         } else if (op == "forensics") {
             Result(ForensicsStatusJson());
         } else if (op == "softbody") {

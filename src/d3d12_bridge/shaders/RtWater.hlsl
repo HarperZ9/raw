@@ -139,8 +139,8 @@ void water(uint3 id : SV_DispatchThreadID) {
     const float3 nL = worldNormal(float4(L.y, L.z, 0.0f, 0.0f));
     const float zSurfW = (L.x < 1.0f && L.x > 0.0f) ? viewZOf(L.x) : 1.0e9f;
     const float zBedW  = (dBed < 1.0f && dBed > 0.0f) ? viewZOf(dBed) : 1.0e9f;
-    const float waterCompDiff = hasPreWater ? length(game.rgb - PreWater[id.xy].rgb) : 1.0f;
-    const bool gameDrewWater = !hasPreWater || (waterCompDiff > 0.0025f);
+    const float waterCompDiff = hasPreWater ? length(game.rgb - PreWater[id.xy].rgb) : 0.0f;
+    const bool gameDrewWater = hasPreWater && (waterCompDiff > 0.005f);
     const bool isWaterPx = (L.a > 1.5f && L.x < 1.0f && zSurfW > 0.5f && zSurfW < zBedW - max(zSurfW * 0.015f, 1.5f) && nL.z > 0.72f && gameDrewWater);
     // SM6.9 Wave-coherent early exit: non-water waves exit immediately with zero RayQuery divergence.
     if (!WaveActiveAnyTrue(isWaterPx)) { WaterOut[id.xy] = float4(col, game.a); return; }

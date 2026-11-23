@@ -3,6 +3,7 @@
 #include "SceneLights.h"
 #include "CBDirtyTracker.h"
 #include "ProxyLog.h"
+#include "WeatherDrive.h"
 #include "../dx12/translate/Translate.h"
 
 #include <algorithm>
@@ -437,6 +438,13 @@ void SceneLights_SetCamera(ID3D11DeviceContext* real)
     if (const float* m = Shadow(fr[0], kFrameCb)) Camera(S().frame, m);
     fr[0]->Release();
     State& s = S();
+    // Direct NiCamera fallback from raw_engine.dll (PG_SetEngineCamera) when b12 posAdjust is unavailable.
+    EngineCameraState ec;
+    if (EngineCamera_Get(ec) && (s.frame.posAdjust[0] == 0.0f && s.frame.posAdjust[1] == 0.0f && s.frame.posAdjust[2] == 0.0f)) {
+        s.frame.posAdjust[0] = ec.camPos[0];
+        s.frame.posAdjust[1] = ec.camPos[1];
+        s.frame.posAdjust[2] = ec.camPos[2];
+    }
     s.frame.cameraSteps = uint32_t(s.steps[0].size());
     for (int k = 0; k < 3 && !s.steps[k].empty(); ++k) {
         std::vector<float>& v = s.steps[k];

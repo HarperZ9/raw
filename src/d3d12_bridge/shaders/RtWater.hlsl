@@ -392,8 +392,8 @@ void water(uint3 id : SV_DispatchThreadID) {
                 // Crystal-clear Nordic glacial river Beer-Lambert absorption:
                 // shallow riverbeds (0..140u) stay razor-sharp and transparent showing every submerged stone & pebble,
                 // transitioning smoothly to luminous glacial emerald-turquoise -> deep Nordic sapphire in deep pools.
-                const float3 T = exp(-waterA.z * float3(1.45f, 0.48f, 0.30f) * path);
-                const float3 scatter = float3(0.014f, 0.058f, 0.082f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) * 1.45f;
+                const float3 T = exp(-waterA.z * float3(1.55f, 0.56f, 0.38f) * path);
+                const float3 scatter = float3(0.009f, 0.032f, 0.044f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.04f.xxx) * 1.25f;
                 const float nearW = 1.0f - smoothstep(2800.0f, 5200.0f, wDist);
                 // Rich backlit glacial-emerald wave-crest subsurface scattering.
                 const float3 waveSSS = sunDir.w > 0.5f

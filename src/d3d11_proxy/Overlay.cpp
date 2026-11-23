@@ -343,7 +343,8 @@ bool PollMenu(std::string& outText)
     const bool endKey = (GetAsyncKeyState(VK_END) & 0x8000) != 0;
     bool changed = false;
     EnsureWndProcHook();
-    if (KeyEdge(endKey || (shift && enter), g_prevToggle)) { g_menuOpen = !g_menuOpen; changed = true; }
+    // Single clean toggle key (End): removes redundant Shift+Enter menu collision.
+    if (KeyEdge(endKey, g_prevToggle)) { g_menuOpen = !g_menuOpen; changed = true; }
     if (!g_menuOpen) return false;
     if (KeyEdge((GetAsyncKeyState('S') & 0x8000) != 0, g_prevSave)) { SaveMenuToIni(); changed = true; }
     if (KeyEdge((GetAsyncKeyState('L') & 0x8000) != 0, g_prevLoad)) { LoadPresetSlot(g_presetSlot); changed = true; }

@@ -39,6 +39,7 @@ ID3D11PixelShader* VariantFor(State& s, ID3D11PixelShader* game, bool firstPerso
             Log("[GBuffer] shader left alone: %s", info.refused ? info.refused : "?");
         }
         e.kind = info.kind;
+        e.materialClass = info.materialClass;
     }
     *kind = e.kind;
     return e.variant[k];
@@ -142,6 +143,21 @@ void GBuffer_BeforeDraw(ID3D11DeviceContext* real)
     s.substituted = true;
     ++s.swaps;
     ++s.kindDraws[static_cast<int>(s.span)][v ? static_cast<int>(kind) : 0];
+}
+
+bool GBuffer_CurrentDrawIsCullableProp()
+{
+    State& s = S();
+    if (s.span != Span::Opaque || !s.gamePs) return false;
+    std::lock_guard<std::mutex> lock(s.mutex);
+    const auto it = s.shaders.find(s.gamePs);
+    if (it == s.shaders.end()) return false;
+    const PsEntry& e = it->second;
+    // Structurally exclude Landscape terrain, DistantLod quadtree chunks, Water, and Effects at the DXBC shader level.
+    return e.kind == raw::dxbc::ShaderKind::Lighting &&
+           e.materialClass != raw::dxbc::material::Landscape &&
+           e.materialClass != raw::dxbc::material::DistantLod &&
+           e.materialClass != raw::dxbc::material::Water;
 }
 
 } // namespace SB::Proxy

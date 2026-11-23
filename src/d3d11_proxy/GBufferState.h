@@ -27,6 +27,7 @@ struct PsEntry
     ID3D11PixelShader* variant[2] = {};      // [1]: with the first-person flag
     bool tried[2] = {};
     raw::dxbc::ShaderKind kind = raw::dxbc::ShaderKind::Unknown;
+    uint8_t materialClass = 0;
 };
 
 struct State

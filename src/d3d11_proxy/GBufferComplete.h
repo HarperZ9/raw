@@ -38,6 +38,7 @@ void GBuffer_OnPixelShader(ID3D11PixelShader* ps);
 void GBuffer_OnBlendState(ID3D11BlendState* state, const float factor[4], UINT sampleMask);
 // Before every draw: binds the patched shader and the blend variant when a span is open.
 void GBuffer_BeforeDraw(ID3D11DeviceContext* real);
+bool GBuffer_CurrentDrawIsCullableProp();
 void GBuffer_OnPresent();
 
 struct GBufferTextures

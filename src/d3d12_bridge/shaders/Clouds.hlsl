@@ -44,12 +44,27 @@ float cloudDensityVol(float3 pa, bool detail) {
     const float topGrad  = 1.0f - smoothstep(topCap * 0.56f, topCap, h);
     const float hGrad = saturate(baseGrad * topGrad);
 
-    // 1st lookup: 4-octave periodic 3D Perlin-Worley macro cumulus domes (distinct sculptural cloud islands across blue sky).
-    const float3 q = float3(sheared.x / 24000.0f, sheared.y / 23000.0f, h * 0.78f);
-    const float4 low = sampleCloudVol(q);
+    // Truly aperiodic continental weather-front modulation + domain-warped dual-octave rotated Perlin-Worley LUT:
+    // completely eliminates periodic 64^3 cloud tiling grids across wide vistas (Whiterun tundra, Sea of Ghosts).
+    const float2 pXY = sheared.xy;
+    const float2 rotXY = float2(pXY.x * 0.7986355f - pXY.y * 0.6018150f, pXY.x * 0.6018150f + pXY.y * 0.7986355f); // 37 deg
+    const float macroFront = cNoise(float3(pXY * 0.0000105f, 1.3f)) * 0.62f
+                           + cNoise(float3(rotXY * 0.0000245f + float2(19.3f, 7.1f), 2.7f)) * 0.38f;
+    const float2 domainWarp = float2(cNoise(float3(pXY * 0.000028f + float2(3.7f, 11.1f), h)),
+                                     cNoise(float3(rotXY * 0.000028f + float2(17.9f, 5.3f), h))) - 0.5f;
+    const float2 warpedXY = pXY + domainWarp * 11500.0f;
+    const float2 warpedRot = float2(warpedXY.x * 0.7986355f - warpedXY.y * 0.6018150f,
+                                    warpedXY.x * 0.6018150f + warpedXY.y * 0.7986355f);
+    const float3 q1 = float3(warpedXY.x / 46000.0f, warpedXY.y / 43000.0f, h * 0.72f);
+    const float3 q2 = float3(warpedRot.x / 19700.0f, warpedRot.y / 18900.0f, h * 1.15f);
+    const float4 low1 = sampleCloudVol(q1);
+    const float4 low2 = sampleCloudVol(q2);
+    const float4 low = lerp(low1, low2, 0.38f);
     const float lowFbm = low.g * 0.625f + low.b * 0.25f + low.a * 0.125f;
     const float baseShape = cRemap(low.r, -(1.0f - lowFbm) * 0.50f, 1.0f, 0.0f, 1.0f) * hGrad;
-    const float thresh = lerp(0.68f, lerp(0.52f, 0.30f, stormType), cover);
+    // Modulate local coverage by continental macroFront so skies have sweeping cloud banks & open blue corridors.
+    const float localCov = saturate(cover * lerp(0.58f, 1.38f, smoothstep(0.24f, 0.78f, macroFront)));
+    const float thresh = lerp(0.68f, lerp(0.50f, 0.28f, stormType), localCov);
     float dens = cRemap(baseShape, thresh, 1.0f, 0.0f, 1.0f);
     if (detail && dens > 0.001f) {
         // 2nd + 3rd lookups: dual-scale 3D Worley cauliflower turret erosion + infinite-resolution procedural micro-wisps

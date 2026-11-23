@@ -87,12 +87,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float isExotic = saturate(max((lit.g - max(lit.r, lit.b) * 1.08f) * 6.0f,
                                                 (min(lit.r, lit.b) - lit.g * 1.15f) * 6.0f));
             float3 baseSky = lit.rgb;
-            if (dayW > 0.02f && sDir.z > -0.04f) {
+            if (dayW > 0.02f) {
                 const float3 hSky = sampleHillaireSky(float3(sDir.xy, max(sDir.z, 0.002f)));
                 // Blend Hillaire clear-sky radiative transfer with overcast atmospheric scatter when cloud cover rises.
                 const float hLum = max(dot(hSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
                 const float3 overcastSky = lerp(float3(0.44f, 0.50f, 0.60f), float3(0.24f, 0.30f, 0.38f), saturate(sDir.z)) * max(hLum * 0.95f, 0.26f);
                 float3 physSky = lerp(hSky, overcastSky, saturate(cover * 0.65f - 0.20f + weather.w * 0.45f));
+                // Seamless C2 sub-horizon atmospheric continuation (eliminates the sharp dark horizon wall behind Whiterun).
+                if (sDir.z < 0.0f) {
+                    const float subFade = smoothstep(0.0f, -0.22f, sDir.z);
+                    physSky = lerp(physSky, physSky * 0.82f, subFade);
+                }
                 // Blazing physical exponential HDR solar core + radiating atmospheric Mie aureole (zero flat sticker circle).
                 const float cosS = saturate(dot(sDir, sunDir.xyz));
                 const float sunAng = acos(clamp(cosS, -1.0f, 1.0f));

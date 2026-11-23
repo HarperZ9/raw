@@ -161,7 +161,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float isDayHour = (timeEnv.x > 0.01f)
                 ? (smoothstep(5.2f, 6.4f, timeEnv.x) * (1.0f - smoothstep(19.2f, 20.6f, timeEnv.x))) : 1.0f;
             const float dayW = saturate((sunDir.z - 0.01f) * 4.0f) * saturate((sunLum - 0.20f) * 2.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f) * isDayHour;
-            if (dayW > 0.02f && sDir.z > -0.04f) {
+            if (dayW > 0.02f) {
                 const float cover = saturate(clouds.x);
                 const float lowSun = saturate(1.0f - sunDir.z * 2.6f);
                 const float3 clearZenith = lerp(float3(0.06f, 0.24f, 0.68f), float3(0.08f, 0.14f, 0.38f), lowSun);
@@ -244,11 +244,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     skyOut += aurSum * (auroraVis * c.a * 0.085f);
                 }
             }
-            // Horizon Fix: seamless atmospheric mist/ocean continuation for sub-horizon sky rays (no empty void past map edge).
-            if (sDir.z < 0.015f) {
-                const float subW = saturate((0.015f - sDir.z) * 18.0f);
-                const float3 horizMist = lerp(skyOut, max(float3(ambient[0].w, ambient[1].w, ambient[2].w), 0.04f.xxx) * 0.85f, subW * 0.65f);
-                skyOut = horizMist;
+            // Seamless C2 sub-horizon atmospheric mist continuation (eliminates dark flat horizon wall past LOD edge).
+            if (sDir.z < 0.01f) {
+                const float subW = smoothstep(0.01f, -0.20f, sDir.z);
+                skyOut = lerp(skyOut, skyOut * 0.84f, subW * 0.55f);
             }
             // True linear HDR sky: no 2011 0.56 SDR pre-clamp (Wide-Gamut AgX + 12-pass HDR Bloom handle HDR dynamic range).
         }

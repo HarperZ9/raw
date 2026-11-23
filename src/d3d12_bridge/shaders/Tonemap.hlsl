@@ -249,61 +249,57 @@ float3 fxaaAndCas(float2 suv) {
 float4 main(In i) : SV_Target {
     const uint ovInit = uint(RO.y + 0.5f);
     float2 baseUv = i.uv;
-    // OV12 (bit 11 = 2048): Smooth biomechanical figure-8 walking/sprinting camera stride sway (0 when standing still;
-    // replaces sharp abs(cos) V-bounce with natural sinusoidal footstep cadence + lateral weight shift).
+    // OV12 (bit 11 = 2048): Distance-locked biomechanical figure-8 stride sway + subtle head-roll tilt
+    // (smooth overscan ramp eliminates 0.8% zoom-pop on W tap; continuous stride phase eliminates 64-frame snap!).
     if ((ovInit & 2048u) != 0u) {
-        const float moveAmp = saturate((RO.w - 0.35f) / 6.5f);
-        if (moveAmp > 0.01f) {
-            const float phase = RO.z * 0.36f;
-            const float2 bob = float2(sin(phase) * 0.0012f, -cos(phase * 2.0f) * 0.0011f) * (moveAmp * clamp(RQ.z, 0.0f, 2.5f));
-            // 0.8% overscan crop keeps edges 100% clean with zero black borders.
-            baseUv = saturate(baseUv * 0.992f + 0.004f + bob);
+        const float moveAmp = smoothstep(0.25f, 5.5f, RO.w);
+        if (moveAmp > 0.002f) {
+            const float str = moveAmp * clamp(RQ.z, 0.0f, 2.5f);
+            const float phase = RO.z;
+            const float roll = sin(phase) * 0.0026f * str;
+            const float cr = cos(roll), sr = sin(roll);
+            const float2 ctr = baseUv - 0.5f.xx;
+            const float2 rotUv = float2(ctr.x * cr - ctr.y * sr, ctr.x * sr + ctr.y * cr) + 0.5f.xx;
+            const float2 bob = float2(sin(phase) * 0.0014f, -cos(phase * 2.0f) * 0.0013f) * str;
+            const float zoom = lerp(1.0f, 0.990f, saturate(str));
+            baseUv = saturate((rotUv - 0.5f.xx) * zoom + 0.5f.xx + bob);
         }
     }
     const float2 suv = min(max(baseUv * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
     float3 hdr = fxaaAndCas(suv);
-    // OV10 (bit 9 = 512): True Velocity-Gated Cinema Sprint Radial Blur (0.0 blur when standing/walking;
-    // silky 8-tap jittered Gaussian-weighted peripheral momentum ONLY when actually sprinting, center 65% 100% sharp).
+    // OV10 (bit 9 = 512): Smooth 12-Tap IGN-Jittered Velocity-Gated Cinema Peripheral Motion Blur
+    // (0.0 blur when standing; progressive organic onset from brisk jog to sprint; central 68% 100% sharp).
     if ((ovInit & 512u) != 0u) {
-        const float sprintGate = smoothstep(2.8f, 8.5f, RO.w);
+        const float sprintGate = smoothstep(1.6f, 7.5f, RO.w);
         const float2 rVec = baseUv - 0.5f.xx;
         const float rDist = length(rVec);
-        const float edgeMask = smoothstep(0.32f, 0.72f, rDist);
-        const float rStr = edgeMask * edgeMask * 0.0065f * sprintGate * clamp(RQ.y, 0.0f, 2.5f);
-        if (rStr > 0.00025f) {
+        const float edgeMask = smoothstep(0.34f, 0.74f, rDist);
+        const float rStr = edgeMask * edgeMask * 0.0090f * sprintGate * clamp(RQ.y, 0.0f, 2.5f);
+        if (rStr > 0.0002f) {
             const float rJit = frac(52.9829189f * frac(dot(i.pos.xy + RO.z * 5.588f, float2(0.06711056f, 0.00583715f))));
-            float3 rAcc = hdr * 1.4f;
-            float rW = 1.4f;
-            [unroll] for (int ri = 1; ri <= 8; ri++) {
-                const float f = (float(ri) - 0.5f + rJit * 0.5f) / 8.0f;
-                const float w = exp(-f * f * 2.2f);
+            float3 rAcc = hdr * 1.5f;
+            float rW = 1.5f;
+            [unroll] for (int ri = 1; ri <= 12; ri++) {
+                const float f = (float(ri) - 0.5f + rJit * 0.65f) / 12.0f;
+                const float w = exp(-f * f * 2.4f);
                 rAcc += Scene.Sample(S1, min(max((baseUv - rVec * (rStr * f)) * F[43].xy, 0.0f), float2(F[44].z, F[43].y))).rgb * w;
                 rW += w;
             }
             hdr = rAcc / rW;
         }
     }
-    // OV11 (bit 10 = 1024): True Cubic r^3 5-Tap Spectral Apochromatic Lens Dispersion (Zeiss/Cooke optical glass profile:
-    // 100% razor-sharp central 65% of screen, smooth continuous R/Y/G/C/B prism spectrum at outer corners).
+    // OV11 (bit 10 = 1024): True Sharp-Green Apochromatic Optical Snell Dispersion (Leica/Zeiss glass profile:
+    // 100% native sharp Green channel with zero green softening; smooth radial r^2 Red/Blue lateral fringe at corners).
     if ((ovInit & 1024u) != 0u) {
         const float2 caVec = baseUv - 0.5f.xx;
         const float caR = length(caVec);
-        const float caT = saturate((caR - 0.30f) / 0.42f);
-        const float caMag = (caT * caT * caT) * 0.0024f * clamp(RQ.x, 0.0f, 2.5f);
-        if (caMag > 0.00005f) {
+        const float caT = saturate((caR - 0.24f) / 0.48f);
+        const float caMag = (caT * caT) * 0.0028f * clamp(RQ.x, 0.0f, 2.5f);
+        if (caMag > 0.00004f) {
             const float2 dirC = caVec / max(caR, 1.0e-4f);
-            const float2 uvM2 = min(max((baseUv - dirC * (caMag * 1.0f)) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
-            const float2 uvM1 = min(max((baseUv - dirC * (caMag * 0.5f)) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
-            const float2 uvP1 = min(max((baseUv + dirC * (caMag * 0.5f)) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
-            const float2 uvP2 = min(max((baseUv + dirC * (caMag * 1.0f)) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
-            const float3 sM2 = Scene.Sample(S1, uvM2).rgb;
-            const float3 sM1 = Scene.Sample(S1, uvM1).rgb;
-            const float3 sP1 = Scene.Sample(S1, uvP1).rgb;
-            const float3 sP2 = Scene.Sample(S1, uvP2).rgb;
-            const float3 specSum = sM2 * float3(0.0f, 0.10f, 0.45f) + sM1 * float3(0.08f, 0.25f, 0.35f)
-                                 + hdr * float3(0.24f, 0.30f, 0.16f)
-                                 + sP1 * float3(0.34f, 0.25f, 0.04f) + sP2 * float3(0.34f, 0.10f, 0.0f);
-            hdr = lerp(hdr, specSum, 0.85f);
+            const float2 uvR = min(max((baseUv + dirC * caMag) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
+            const float2 uvB = min(max((baseUv - dirC * caMag) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
+            hdr = float3(Scene.Sample(S1, uvR).r, hdr.g, Scene.Sample(S1, uvB).b);
         }
     }
     // Only apply legacy pre-tonemap highlight knee on older LDR curves (RB.x <= 3.5).

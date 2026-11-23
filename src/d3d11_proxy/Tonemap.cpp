@@ -269,15 +269,18 @@ void Tonemap_BeforeDraw(ID3D11DeviceContext* real)
     const bool interior = !sl.hasCascades;
     const float inside = interior && t.x[5] > 0.0f ? t.x[5] : 1.0f;
     const float lutStr = (s.lutSrv && t.lutIndex > 0) ? t.lutStrength : 0.0f;
-    // Smoothed horizontal player movement speed (world units/frame) for optional running headbob & radial speed blur.
+    // Smoothed horizontal player movement speed (world units/frame) & continuous distance-locked stride phase
+    // (replaces wrapping `draws & 63u` which caused headbob to snap every 64 frames!).
     static float s_emaSpeed = 0.0f;
+    static float s_stridePhase = 0.0f;
     const float rawStep = std::sqrt(sl.cameraStep[0] * sl.cameraStep[0] + sl.cameraStep[1] * sl.cameraStep[1]);
     const float clampedStep = rawStep > 45.0f ? 0.0f : std::min(rawStep, 18.0f);   // ignore teleports/fast-travel
     s_emaSpeed = s_emaSpeed * 0.86f + clampedStep * 0.14f;
+    s_stridePhase = std::fmod(s_stridePhase + std::max(clampedStep * 0.045f, 0.017f), 6283.185f);
     const uint32_t effOvMask = t.overlayMask | (raw::bridge::StreamlineHost::Get().GetDeepDvc() ? 4096u : 0u);
     const float v[32] = {float(t.mode), t.bias, t.minLum, t.maxLum, float(t.curve), t.key, t.white, float(t.view),
                          t.adapt, t.ref, t.x[0], t.x[1], t.x[2], t.x[3], t.x[4], inside,
-                         lutStr, float(effOvMask), float(s.draws & 63u), s_emaSpeed,
+                         lutStr, float(effOvMask), s_stridePhase, s_emaSpeed,
                          t.bloomScale, t.sharpenStr, t.grainStr, t.vignetteStr,
                          t.caStr, t.radialBlurStr, t.headbobStr, t.lensStr,
                          t.colorTempK, t.oklabSat, t.shadowLift, t.highlightKnee};

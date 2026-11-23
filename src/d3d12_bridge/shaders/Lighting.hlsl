@@ -1025,23 +1025,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 spec += sunColour.rgb * (sunShadow * mGlint * 0.75f * saturate(1.0f - z / 1600.0f));
             }
         }
-        // 2028 Reflective Water-Bounce Caustics (engine TESObjectCELL::waterHeight = engineWorld.x, Commons guycalledfrank / WAT-07):
-        // Sunlit water surfaces bounce animated shimmering light ribbons UPWARD onto bridge undersides, dock pilings,
-        // sawmill wheels, overhangs & riverbanks within 0..240u above the live cell water plane!
-        if (!match && sunColour.w > 0.5f && engineWorld.z > 0.5f && engineWorld.x > -13000.0f && z < 3200.0f && nightDir < 0.75f) {
-            const float3 wpC = p + camPosW.xyz;
-            const float aboveW = wpC.z - engineWorld.x;
-            if (aboveW > -4.0f && aboveW < 240.0f && s.n.z < 0.55f) {
-                const float hFade = smoothstep(-4.0f, 12.0f, aboveW) * (1.0f - smoothstep(70.0f, 240.0f, aboveW));
-                const float downFace = saturate((0.55f - s.n.z) * 1.45f);
-                const float2 cUv = wpC.xy * 0.048f - normalize(cloudWind.xy + float2(1.0f, 0.35f)) * (camPosW.w * 0.85f);
-                const float c1 = sin(cUv.x * 2.1f + sin(cUv.y * 1.9f + camPosW.w * 1.6f));
-                const float c2 = cos(cUv.y * 2.5f - cos(cUv.x * 2.3f - camPosW.w * 1.3f));
-                const float caustNet = pow(saturate(c1 * c2 * 0.5f + 0.5f), 4.0f);
-                const float clearSunW = 1.0f - saturate(clouds.x * 0.78f);
-                diff += dirCol * float3(0.55f, 0.92f, 1.00f) * (caustNet * hFade * downFace * clearSunW * (1.0f - nightDir) * 0.42f);
-            }
-        }
+        // Water caustics belong exclusively on true underwater riverbeds in RtWater.hlsl (never projected across
+        // dry land via cell-wide TESObjectCELL::waterHeight, which leaked caustics onto walls, houses & dry rocks!).
     }
 
     const uint4 bits = clusters[clusterOf(px, z)];

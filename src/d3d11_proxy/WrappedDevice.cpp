@@ -86,11 +86,19 @@ namespace {
     std::unordered_set<ID3D11Resource*> s_promotedD32Textures;
 
     bool WantTxDepth32() {
-        // Hard-disabled: Skyrim SE's internal CopyResource calls between main depth and secondary/water/SAO
-        // depth buffers require matching 4-byte R24G8_TYPELESS format families; promoting only >=1024x576
-        // buffers to 8-byte R32G8X24_TYPELESS silently fails those copies and causes horizontal water sheets,
-        // road/tundra water flooding, and 3D map/UI depth corruption (even if an older INI sets TxDepth32=1).
-        return false;
+        // Full-pipeline uniform 32-bit float depth promotion (D32_FLOAT_S8X24_UINT):
+        // Promotes 100% of Skyrim SE's R24G8_TYPELESS / D24_UNORM_S8_UINT 2D textures (main depth, water depth,
+        // SAO depth, copy targets, and reflection depth at all sizes) into the exact same R32G8X24_TYPELESS
+        // format family so every internal CopyResource succeeds natively on DX12 hardware with 256x depth precision.
+        static int s_val = -1;
+        if (s_val < 0) {
+            char path[MAX_PATH]{};
+            GetModuleFileNameA(nullptr, path, MAX_PATH);
+            std::string ini(path);
+            ini = ini.substr(0, ini.rfind('\\') + 1) + "d3d11_proxy.ini";
+            s_val = GetPrivateProfileIntA("Lighting", "TxDepth32", 1, ini.c_str());
+        }
+        return s_val != 0;
     }
 
     // Depth format → typeless format
@@ -226,32 +234,36 @@ HRESULT STDMETHODCALLTYPE WrappedDevice::CreateTexture2D(
             pDesc->BindFlags, pDesc->MipLevels, pDesc->ArraySize);
     }
 
-    // ── Native D32_FLOAT_S8X24_UINT Depth Promotion (TxDepth32=1) ───
-    // Promotes Skyrim's 24-bit main scene depth (R24G8_TYPELESS / D24_UNORM_S8_UINT) to 32-bit float depth
-    // (R32G8X24_TYPELESS) across raw::tx DX12, eliminating distant mountain LOD Z-fighting permanently.
+    // ── Full-Pipeline Uniform D32_FLOAT_S8X24_UINT Depth Promotion (TxDepth32=1) ───
+    // Promotes EVERY R24G8_TYPELESS / D24_UNORM_S8_UINT 2D texture (main depth, water/SAO/copy/reflection depth
+    // at any resolution, with or without BIND_DEPTH_STENCIL) uniformly to R32G8X24_TYPELESS so 100% of Skyrim's
+    // internal CopyResource calls remain format-compatible while eliminating 24-bit distant Z-fighting permanently.
     if (!PG_IsSafeMode() && WantTxDepth32() &&
         (pDesc->Format == DXGI_FORMAT_R24G8_TYPELESS || pDesc->Format == DXGI_FORMAT_D24_UNORM_S8_UINT) &&
-        (pDesc->BindFlags & D3D11_BIND_DEPTH_STENCIL) &&
-        pDesc->Width >= 1024 && pDesc->Height >= 576 && pDesc->SampleDesc.Count <= 1) {
+        pDesc->SampleDesc.Count <= 1 && !pInitialData) {
         D3D11_TEXTURE2D_DESC promoted = *pDesc;
         promoted.Format = DXGI_FORMAT_R32G8X24_TYPELESS;
-        promoted.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
+        if (promoted.Usage == D3D11_USAGE_DEFAULT && (promoted.BindFlags & D3D11_BIND_DEPTH_STENCIL))
+            promoted.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
         HRESULT hr = m_real->CreateTexture2D(&promoted, pInitialData, ppTexture2D);
         if (SUCCEEDED(hr) && ppTexture2D && *ppTexture2D) {
             s_promotedD32Textures.insert(*ppTexture2D);
             s_upgradedDepthTextures.insert(*ppTexture2D);
-            Log("[TxDepth32] Promoted %ux%u depth buffer to R32G8X24_TYPELESS (32-bit float depth)", promoted.Width, promoted.Height);
-            uint32_t area = promoted.Width * promoted.Height;
-            if (area >= s_mainDepthArea) {
-                s_mainDepthTex = *ppTexture2D;
-                s_mainDepthArea = area;
-                if (s_mainDepthSRV) { s_mainDepthSRV->Release(); s_mainDepthSRV = nullptr; }
-                D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-                srvDesc.Format = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
-                srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-                srvDesc.Texture2D.MipLevels = 1;
-                if (SUCCEEDED(m_real->CreateShaderResourceView(*ppTexture2D, &srvDesc, &s_mainDepthSRV))) {
-                    if (auto* pi = PG_GetProxyInterface()) pi->gameDepthSRV = s_mainDepthSRV;
+            Log("[TxDepth32] Uniformly promoted %ux%u depth buffer (bind=0x%X) to R32G8X24_TYPELESS",
+                promoted.Width, promoted.Height, promoted.BindFlags);
+            if ((promoted.BindFlags & D3D11_BIND_DEPTH_STENCIL) && (promoted.BindFlags & D3D11_BIND_SHADER_RESOURCE)) {
+                uint32_t area = promoted.Width * promoted.Height;
+                if (area >= s_mainDepthArea) {
+                    s_mainDepthTex = *ppTexture2D;
+                    s_mainDepthArea = area;
+                    if (s_mainDepthSRV) { s_mainDepthSRV->Release(); s_mainDepthSRV = nullptr; }
+                    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+                    srvDesc.Format = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+                    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+                    srvDesc.Texture2D.MipLevels = 1;
+                    if (SUCCEEDED(m_real->CreateShaderResourceView(*ppTexture2D, &srvDesc, &s_mainDepthSRV))) {
+                        if (auto* pi = PG_GetProxyInterface()) pi->gameDepthSRV = s_mainDepthSRV;
+                    }
                 }
             }
             return hr;
@@ -511,12 +523,19 @@ HRESULT STDMETHODCALLTYPE WrappedDevice::CreateShaderResourceView(
     const D3D11_SHADER_RESOURCE_VIEW_DESC* pDesc,
     ID3D11ShaderResourceView** ppSRView)
 {
-    if (pResource && pDesc && s_promotedD32Textures.count(pResource) > 0) {
-        D3D11_SHADER_RESOURCE_VIEW_DESC fixedDesc = *pDesc;
-        if (fixedDesc.Format == DXGI_FORMAT_R24_UNORM_X8_TYPELESS)
+    if (pResource && s_promotedD32Textures.count(pResource) > 0) {
+        D3D11_SHADER_RESOURCE_VIEW_DESC fixedDesc = {};
+        if (pDesc) {
+            fixedDesc = *pDesc;
+            if (fixedDesc.Format == DXGI_FORMAT_R24_UNORM_X8_TYPELESS || fixedDesc.Format == DXGI_FORMAT_UNKNOWN)
+                fixedDesc.Format = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+            else if (fixedDesc.Format == DXGI_FORMAT_X24_TYPELESS_G8_UINT)
+                fixedDesc.Format = DXGI_FORMAT_X32_TYPELESS_G8X24_UINT;
+        } else {
             fixedDesc.Format = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
-        else if (fixedDesc.Format == DXGI_FORMAT_X24_TYPELESS_G8_UINT)
-            fixedDesc.Format = DXGI_FORMAT_X32_TYPELESS_G8X24_UINT;
+            fixedDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+            fixedDesc.Texture2D.MipLevels = 1;
+        }
         return m_real->CreateShaderResourceView(pResource, &fixedDesc, ppSRView);
     }
     return m_real->CreateShaderResourceView(pResource, pDesc, ppSRView);

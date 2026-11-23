@@ -35,17 +35,27 @@ void main(uint3 id : SV_DispatchThreadID) {
     bool bad = (wSum < 0.5f) || (wSum > 1.15f) || any(wt < -0.01f);
     // Normalize FP16 blend weights to exact unit sum AND subtract camPos from each bone translation
     // BEFORE weighting: eliminates 20-80u catastrophic cancellation & floating/stretched actor BLAS triangles
-    // at large Tamriel world coordinates (e.g. +/-50,000u).
+    // at large Tamriel world coordinates (e.g. +/-50,000u). Also reject any stale/origin bone whose translation
+    // disagrees with the primary active bone by > 256u (no single vertex spans > 3.6m between weighted bones).
     const float4 wn = wt / max(wSum, 1.0e-5f);
+    float3 refBonePos = 0.0f.xxx;
+    bool hasRefBone = false;
     [unroll] for (uint k = 0u; k < 4u; k++) {
+        if (wn[k] <= 0.005f) { continue; }
         const uint row = min(((iw >> (8u * k)) & 0xFFu) * 3u, 237u);
         const float4 r0 = Bones[boneFirst + row], r1 = Bones[boneFirst + row + 1u], r2 = Bones[boneFirst + row + 2u];
         // Cull zeroed, corrupt, or wildly scaled bone rows so they become DXR-inactive NaN triangles instead of shadow spikes.
         const float bNorm = dot(r0.xyz, r0.xyz) + dot(r1.xyz, r1.xyz) + dot(r2.xyz, r2.xyz);
-        bad = bad || (wn[k] > 0.01f && (bNorm < 1.0e-4f || bNorm > 12.0f));
-        const float3 bp = float3(dot(r0.xyz, p.xyz) + (r0.w - camPos.x),
-                                 dot(r1.xyz, p.xyz) + (r1.w - camPos.y),
-                                 dot(r2.xyz, p.xyz) + (r2.w - camPos.z));
+        bad = bad || (bNorm < 1.0e-4f || bNorm > 12.0f);
+        const float3 bTrans = float3(r0.w, r1.w, r2.w) - camPos;
+        if (!hasRefBone) { refBonePos = bTrans; hasRefBone = true; }
+        else {
+            const float3 bDiff = bTrans - refBonePos;
+            if (dot(bDiff, bDiff) > (256.0f * 256.0f)) { bad = true; }
+        }
+        const float3 bp = float3(dot(r0.xyz, p.xyz) + bTrans.x,
+                                 dot(r1.xyz, p.xyz) + bTrans.y,
+                                 dot(r2.xyz, p.xyz) + bTrans.z);
         s += wn[k] * bp;
     }
     const float3 rel = s;

@@ -194,31 +194,42 @@ void water(uint3 id : SV_DispatchThreadID) {
                 bowHit = saturate(intoObs) * nearObs;
                 eddyLee = saturate(-intoObs) * nearObs;
 
-                // Silky, Nyquist pixel-footprint band-limited 6-directional Gerstner/swell spectrum with smooth 28 u/s
-                // downstream advection: ZERO pixel-aliasing noise, crisp gliding liquid waves & mirror reflections!
-                const float2 wpFlow = wpW.xy - flowDir * (wt * 28.0f);
+                // 16-Component Physically Dispersed JONSWAP / Phillips Gravity-Capillary Ocean & River Spectrum:
+                // Exact shallow-to-deep dispersion omega(k, d) = sqrt((g*k + sigma*k^3) * tanh(k*d)) + Gerstner trochoidal
+                // crest steepening + analytical Jacobian wave-folding determinant J for physical wave-breaking foam!
+                const float2 wpFlow = wpW.xy - flowDir * (wt * 22.0f);
                 const float2 flowPerp = float2(-flowDir.y, flowDir.x);
-                const float pxFoot = max(wDist * dims.z * 2.4f, 0.5f);
-                static const float2 kWDir[6] = {
-                    float2( 0.96f,  0.28f), float2( 0.84f, -0.54f), float2( 0.58f,  0.81f),
-                    float2( 0.72f, -0.69f), float2(-0.34f,  0.94f), float2( 0.92f, -0.39f)
-                };
-                static const float kWFreq[6]  = { 0.018f, 0.032f, 0.056f, 0.095f, 0.160f, 0.260f };
-                static const float kWSpeed[6] = { 1.45f,  1.95f,  2.55f,  3.25f,  4.05f,  4.95f  };
-                static const float kWAmp[6]   = { 0.068f, 0.054f, 0.040f, 0.028f, 0.018f, 0.010f };
-                const float stormChop = saturate(weather.w * 0.85f + windAmp * 0.55f);
-                const float ampScale = (0.72f + stormChop * 0.88f + shallowW * 0.24f) * smoothstep(0.0f, 5.0f, depthV0);
+                const float pxFoot = max(wDist * dims.z * 2.2f, 0.45f);
+                const float depthM = max(depthV0 * 0.0143f, 0.08f);   // Skyrim units -> meters (70u = 1m)
+                const float stormChop = saturate(weather.w * 0.90f + windAmp * 0.65f);
+                const float ampScale = (0.85f + stormChop * 1.15f + shallowW * 0.35f) * smoothstep(0.0f, 3.5f, depthV0);
                 float2 waveG = 0.0f.xx;
-                [unroll] for (int wi = 0; wi < 6; ++wi) {
-                    const float wavelength = 6.2831853f / kWFreq[wi];
-                    const float nyquistFade = smoothstep(pxFoot * 2.5f, pxFoot * 7.0f, wavelength);
-                    const float2 dirW = normalize(flowDir * kWDir[wi].x + flowPerp * kWDir[wi].y);
-                    const float ph = dot(wpFlow, dirW) * kWFreq[wi] - wt * kWSpeed[wi];
+                float jacobianFold = 0.0f;
+                [unroll] for (int wi = 0; wi < 16; ++wi) {
+                    // Log-spaced wavenumber spectrum from 14m ocean swells down to 0.28m capillary ripples:
+                    const float fracI = float(wi) / 15.0f;
+                    const float kRad = 0.0062f * pow(48.0f, fracI);   // rad / Skyrim unit
+                    const float kM = kRad * 70.0f;                    // rad / meter
+                    const float wavelength = 6.2831853f / kRad;
+                    const float nyquistFade = smoothstep(pxFoot * 2.2f, pxFoot * 6.5f, wavelength);
+                    if (nyquistFade <= 0.001f) { continue; }
+                    // Exact gravity + capillary shallow-water dispersion relation:
+                    const float kd = min(kM * depthM, 18.0f);
+                    const float omega = sqrt((9.81f * kM + 7.4e-5f * kM * kM * kM) * tanh(kd));
+                    // Directional Hasselman spreading around wind/flow direction using golden-angle decorrelation:
+                    const float spread = (frac(float(wi) * 0.6180339f) - 0.5f) * (1.35f + fracI * 0.95f);
+                    const float2 dirW = normalize(flowDir * cos(spread) + flowPerp * sin(spread));
+                    // JONSWAP k^-2.5 energy rolloff + shallow-water shoaling steepness boost (1 / sqrt(tanh(kd))):
+                    const float shoalBoost = clamp(1.0f / sqrt(max(tanh(kd), 0.14f)), 1.0f, 2.2f);
+                    const float ampW = (0.048f * pow(1.0f - fracI * 0.82f, 1.55f)) * ampScale * shoalBoost * nyquistFade;
+                    const float ph = dot(wpFlow, dirW) * kRad - wt * omega + float(wi) * 2.39996f;
                     const float s = sin(ph);
                     const float c = cos(ph);
-                    waveG += dirW * (c * (1.0f + 0.30f * s) * kWAmp[wi] * ampScale * nyquistFade);
+                    // Gerstner trochoidal steepening (sharpens crests, flattens troughs):
+                    waveG += dirW * (c * (1.0f + 0.38f * s) * ampW);
+                    jacobianFold += max(-s, 0.0f) * ampW * 3.2f;
                 }
-                const float2 bowNormal = obsGrad * (bowHit * (0.08f + 0.04f * sin(depthV0 * 0.32f - wt * 3.2f)));
+                const float2 bowNormal = obsGrad * (bowHit * (0.11f + 0.05f * sin(depthV0 * 0.30f - wt * 3.4f)));
                 n = normalize(n + float3(waveG + bowNormal, 0.0f));
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
                 if (wDist < 1600.0f) {

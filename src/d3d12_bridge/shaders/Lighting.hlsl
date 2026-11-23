@@ -704,7 +704,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 dirCol = lerp(alignedDayCol, max(sunColour.rgb, float3(0.14f, 0.20f, 0.34f)) * float3(0.84f, 0.95f, 1.22f), nightDir * 0.65f) * sunHdrGain;
         // Chan 2018 micro-shadowing: uses fine-scale AO to shadow crevices/mortar/bark where coarse shadow maps cannot reach.
         const float microSh = (!match && !isActorFeat && base != 5u) ? saturate(2.0f * AoHist.Load(ip).x + saturate(dot(s.n, sunDir.xyz)) - 0.85f) : 1.0f;
-        addLight(s, sunDir.xyz, dirCol * sunSh * lerp(0.50f, 1.0f, microSh), dirCol, diff, spec);
+        const float sunPunch = (!match && sunColour.w > 0.5f) ? 1.14f : 1.0f;
+        addLight(s, sunDir.xyz, dirCol * (sunSh * lerp(0.50f, 1.0f, microSh) * sunPunch), dirCol * sunPunch, diff, spec);
         // Subtle, deep-emerald backlit foliage subsurface transmission (no blown-out pale yellow-green pine glow).
         if (!match && base == 5u && sunColour.w > 0.5f) {
             const float backF = pow(saturate(dot(-s.v, sunDir.xyz)), 3.6f);

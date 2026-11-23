@@ -141,7 +141,8 @@ void water(uint3 id : SV_DispatchThreadID) {
     const float zBedW  = (dBed < 1.0f && dBed > 0.0f) ? viewZOf(dBed) : 1.0e9f;
     const float waterCompDiff = hasPreWater ? length(game.rgb - PreWater[id.xy].rgb) : 1.0f;
     const bool gameDrewWater = !hasPreWater || (waterCompDiff > 0.0025f);
-    const bool isWaterPx = (L.a > 1.5f && L.x < 1.0f && zSurfW > 0.5f && zSurfW < zBedW - max(zSurfW * 0.015f, 1.5f) && nL.z > 0.72f && gameDrewWater);
+    // Soft 0.25u shoreline depth threshold (eliminates jagged 1.5u stair-step shoreline cutoffs; shoreFeather blends 0..8u cleanly).
+    const bool isWaterPx = (L.a > 1.5f && L.x < 1.0f && zSurfW > 0.5f && zSurfW < zBedW - max(zSurfW * 0.004f, 0.25f) && nL.z > 0.72f && gameDrewWater);
     // SM6.9 Wave-coherent early exit: non-water waves exit immediately with zero RayQuery divergence.
     if (!WaveActiveAnyTrue(isWaterPx)) { WaterOut[id.xy] = float4(col, game.a); return; }
     if (isWaterPx) {
@@ -380,17 +381,24 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float3 waveSSS = sunDir.w > 0.5f
                     ? float3(0.03f, 0.28f, 0.26f) * sunColour.rgb * (0.25f + 0.75f * pow(saturate(dot(-v, sunDir.xyz)), 3.5f)) * saturate((1.0f - n.z) * 5.5f) * 0.65f
                     : 0.0f.xxx;
-                // Shallow-stream turbulent rapids shimmer + organic animated shoreline wave-runup (u-key-calligrapher6269):
+                // Cluster D (Point Reyes surf / Aivazovsky storm coasts): rolling shore-breaking surf trains,
+                // wave-shoaling steepening, retreating lacy whitewater webs, and wet-shoreline meniscus!
                 const float2 foamFlow = normalize(cloudWind.xy + float2(1.0f, 0.35f));
-                const float runup = 3.4f + 1.5f * sin(camPosW.w * 1.40f + (wpW.x + wpW.y) * 0.018f);
-                const float shoreMeniscus = (1.0f - smoothstep(0.0f, runup, depthV)) * smoothstep(0.0f, 0.35f, depthV);
                 const float froth = organicFroth(wpW.xy - foamFlow * (camPosW.w * 16.0f), camPosW.w);
-                const float rapidFoam = (1.0f - smoothstep(2.0f, 18.0f, depthV)) * smoothstep(0.55f, 0.90f, froth) * 0.28f;
-                const float bowFoam = bowHit * froth * 0.76f;
-                const float eddyFoam = eddyLee * froth * 0.38f;
-                const float shoreLap = max(shoreMeniscus * (0.38f + 0.62f * froth) * 0.62f, rapidFoam);
-                const float windSpeedW = saturate(length(cloudWind.xy) / 380.0f);
-                const float crestFoam = saturate((1.0f - n.z) * (6.0f + windSpeedW * 4.5f) - lerp(0.18f, 0.10f, windSpeedW)) * froth * (0.50f + windSpeedW * 0.38f);
+                const float frothFine = organicFroth(wpW.xy * 1.85f + foamFlow * (camPosW.w * 9.0f) + 13.7f, camPosW.w * 1.25f);
+                const float runup = 4.2f + 2.2f * sin(camPosW.w * 1.45f + (wpW.x + wpW.y) * 0.016f + froth * 1.8f);
+                const float shoreMeniscus = (1.0f - smoothstep(0.0f, runup, depthV)) * smoothstep(0.0f, 0.25f, depthV);
+                // Rolling shore-wave surf lines advancing from depth 44u -> 2u with lacy retreating foam:
+                const float surfZone = smoothstep(1.5f, 10.0f, depthV) * (1.0f - smoothstep(18.0f, 46.0f, depthV));
+                const float surfPhase = sin(depthV * 0.22f - camPosW.w * 2.55f + froth * 2.4f);
+                const float surfCrest = pow(saturate(surfPhase * 0.5f + 0.5f), 5.0f) * surfZone * (0.45f + 0.55f * frothFine);
+                const float retreatLace = (1.0f - smoothstep(1.0f, 16.0f, depthV)) * smoothstep(0.42f, 0.82f, frothFine) * 0.36f;
+                const float rapidFoam = (1.0f - smoothstep(2.0f, 20.0f, depthV)) * smoothstep(0.50f, 0.88f, froth) * 0.32f;
+                const float bowFoam = bowHit * froth * 0.82f;
+                const float eddyFoam = eddyLee * froth * 0.44f;
+                const float shoreLap = max(max(shoreMeniscus * (0.42f + 0.58f * froth) * 0.72f, max(surfCrest * 0.80f, retreatLace)), rapidFoam);
+                const float windSpeedW = saturate(length(cloudWind.xy) / 340.0f + weather.w * 0.55f);
+                const float crestFoam = saturate((1.0f - n.z) * (6.5f + windSpeedW * 5.2f) - lerp(0.16f, 0.08f, windSpeedW)) * froth * (0.55f + windSpeedW * 0.42f);
                 const float foamMask = saturate(max(max(bowFoam, eddyFoam), max(shoreLap, crestFoam))) * nearW;
                 // True Underwater Volumetric Sunbeam Shafts (6-step depth-marched Mie scattering integral through water column):
                 // gives sunlit Nordic rivers glowing emerald-turquoise underwater light cones beneath the surface.
@@ -411,7 +419,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                     uwShaft = sunColour.rgb * float3(0.06f, 0.34f, 0.38f) * (uwAcc * 0.0028f * phUw * clearW);
                 }
                 const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) * 0.85f + (sunDir.w > 0.5f ? sunColour.rgb * 0.32f : 0.0f.xxx));
-                const float shoreDark = lerp(0.76f, 1.0f, smoothstep(0.0f, 14.0f, depthV));
+                const float shoreDark = lerp(0.62f, 1.0f, smoothstep(0.0f, 22.0f, depthV));
                 // Wave-facet luminance modulation makes moving crests & troughs visibly travel even under uniform overcast/night skies.
                 const float waveFacet = lerp(0.76f, 1.28f, saturate(dot(n, normalize(float3(0.35f, 0.25f, 0.90f)))));
                 const float3 waterBody = (((bed * shoreDark + caus) * T + scatter * (1.0f - T)) * waveFacet + waveSSS + uwShaft);

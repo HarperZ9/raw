@@ -200,15 +200,24 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float cloudAo = lerp(lerp(0.28f, 0.16f, stormW), 1.00f, pow(h, 0.85f)) * exp(-dens * 0.24f);
             const float lowSun = saturate(1.0f - max(aElev, 0.0f) * 3.4f) * (1.0f - nightW);
             const float overcastW = saturate((clouds.x - 0.50f) * 2.2f);
+            // Cluster B (AA425 / AA255 thunderheads lit from inside): broad 3D volumetric internal sheet-lightning
+            // diffusion with stepped-leader double flicker lighting deep cumulonimbus billows from within!
             float3 stormFlash = 0.0f.xxx;
-            if (clouds.x > 0.78f && weather.w > 0.25f && timeEnv.z > 0.05f) {
-                const float tSlot = floor(camPosW.w * 0.55f);
-                const float tFrac = frac(camPosW.w * 0.55f);
-                const float pulse = exp(-tFrac * 18.0f) * step(0.88f, cHash(float3(tSlot, 3.7f, 11.3f)));
+            if (clouds.x > 0.66f && (weather.w > 0.18f || timeEnv.z > 0.05f)) {
+                const float stormInt = max(timeEnv.z, saturate((weather.w - 0.18f) * 1.35f) * saturate((clouds.x - 0.62f) * 2.8f));
+                const float tSlot = floor(camPosW.w * 0.62f);
+                const float tFrac = frac(camPosW.w * 0.62f);
+                const float dblPulse = exp(-tFrac * 16.0f) + 0.55f * exp(-abs(tFrac - 0.14f) * 28.0f);
+                const float trigger = step(0.84f, cHash(float3(tSlot, 3.7f, 11.3f)));
+                const float pulse = dblPulse * trigger;
                 if (pulse > 0.01f) {
-                    const float2 cell = floor(pa.xy / 38000.0f);
-                    const float cellHit = step(0.75f, cHash(float3(cell, tSlot)));
-                    stormFlash = float3(0.65f, 0.82f, 1.25f) * (pulse * cellHit * dens * 1.8f * timeEnv.z);
+                    const float2 cell = floor(pa.xy / 58000.0f);
+                    const float2 cellCtr = (cell + 0.5f + (float2(cHash(float3(cell, tSlot + 1.0f)), cHash(float3(cell, tSlot + 9.0f))) - 0.5f) * 0.55f) * 58000.0f;
+                    const float cellHit = step(0.68f, cHash(float3(cell, tSlot)));
+                    const float distBolt = length(pa.xy - cellCtr) / 36000.0f;
+                    const float glowVol = exp(-distBolt * distBolt * 2.2f) * cellHit;
+                    const float3 boltCol = lerp(float3(0.55f, 0.72f, 1.35f), float3(0.95f, 0.96f, 1.40f), exp(-distBolt * 3.5f));
+                    stormFlash = boltCol * (pulse * glowVol * (0.35f + dens * 2.2f) * stormInt * 2.4f);
                 }
             }
             const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(1.00f, 0.995f, 0.99f), 0.52f * (1.0f - lowSun) * (1.0f - nightW));

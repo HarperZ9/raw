@@ -627,6 +627,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             s.alpha = clamp(lerp(min(s.alpha + 0.20f, 0.96f), max(s.alpha - 0.12f, 0.10f), pomOcc), 0.08f, 0.96f);
         }
     }
+    // Physical Decal Grounding & Surface Micro-Contrast (wet blood gloss, scorch/char matte roughness, contact grounding):
+    if (!match && (base == 1u || base == 4u) && z < 1800.0f) {
+        const float bloodMask = saturate((albedo.r - max(albedo.g, albedo.b) * 1.85f) * 6.0f) * smoothstep(0.06f, 0.22f, albedo.r) * (1.0f - smoothstep(0.38f, 0.55f, albedo.r));
+        if (bloodMask > 0.05f) {
+            s.alpha = lerp(s.alpha, 0.16f, bloodMask * 0.82f);
+            s.f0 = lerp(s.f0, 0.042f, bloodMask * 0.75f);
+            albedo *= lerp(1.0f.xxx, float3(0.88f, 0.78f, 0.78f), bloodMask * 0.5f);
+        }
+    }
     // Tokuyoshi-Kaplanyan geometric specular anti-aliasing: filters sub-pixel normal variance to kill GGX sparkle in motion.
     if (!match) {
         const float3 dnx = ddx(s.n), dny = ddy(s.n);

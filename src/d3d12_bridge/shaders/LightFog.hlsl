@@ -111,11 +111,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (dayW > 0.01f) {
                 const float hElev = max(sDir.z, 0.048f);
                 const float3 hSky = sampleHillaireSky(normalize(float3(sDir.xy, hElev)));
-                // Deepen upper-zenith ozone cerulean while keeping horizon luminous and band-free.
-                const float3 ozoneZen = lerp(float3(1.04f, 1.02f, 0.98f), float3(0.76f, 0.90f, 1.18f), pow(hUp, 0.65f));
-                const float3 richSky = hSky * ozoneZen;
-                const float hLum = max(dot(richSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
-                const float3 overcastSky = lerp(float3(0.74f, 0.78f, 0.85f), float3(0.54f, 0.60f, 0.70f), hUp) * max(hLum * 1.24f, 0.52f);
+                // Lock sky dome color & luminance directly to the live scene ambient + sun palette (eliminates
+                // mismatched dark cobalt sky over bright silver-grey mountains/terrain).
+                const float3 sceneSkyRef = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.06f.xxx);
+                const float3 natZen = lerp(float3(0.95f, 0.98f, 1.02f), float3(0.84f, 0.94f, 1.08f), pow(hUp, 0.70f));
+                const float3 richSky = lerp(hSky * natZen, max(hSky, sceneSkyRef * 1.35f), 0.28f);
+                const float hLum = max(dot(richSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.08f);
+                const float3 overcastSky = lerp(float3(0.76f, 0.80f, 0.86f), float3(0.56f, 0.62f, 0.72f), hUp) * max(hLum * 1.18f, 0.50f);
                 float3 physSky = lerp(richSky, overcastSky, saturate(cover * 0.85f - 0.08f + weather.w * 0.45f + weather.z * 0.42f));
                 // Golden-hour sunrise/sunset solar glow + opposite-horizon Belt of Venus (rose-magenta -> cobalt zenith).
                 const float twilightW = lowS * (1.0f - cover * 0.65f);

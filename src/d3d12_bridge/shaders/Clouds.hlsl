@@ -174,9 +174,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float sunCalm = lerp(1.0f, 0.84f, pow(saturate(cosT), 12.0f));
             // True linear HDR sculptural cumulus crowns (up to 2.4 linear feeding AgX highlight rolloff)
             // contrasted against deep slate-blue shadowed cloud bellies (zero flat grey SDR ceiling).
-            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.99f, 0.99f, 1.02f), 0.62f * (1.0f - lowSun));
-            const float3 coolBase = lerp(float3(0.62f, 0.72f, 0.88f), float3(0.72f, 0.78f, 0.86f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.34f) * cloudAo;
-            const float3 lum = min(whiteSun * (multiScat * lerp(1.0f, powder, 0.76f) * sunCalm * 4.0f * PI * 0.25f) + coolBase * 0.95f + stormFlash, 2.40f.xxx);
+            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.99f, 0.99f, 1.02f), 0.52f * (1.0f - lowSun));
+            const float3 coolBase = lerp(float3(0.68f, 0.76f, 0.90f), float3(0.74f, 0.79f, 0.86f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.38f) * cloudAo;
+            // Highlight shoulder rolloff inspired by superframe/feed-23/build/brush/cloud.js (whites roll off smoothly, never flatten).
+            const float3 rawLum = whiteSun * (multiScat * lerp(1.0f, powder, 0.76f) * sunCalm * 4.0f * PI * 0.28f) + coolBase * 0.98f + stormFlash;
+            const float3 lum = select(rawLum > 0.85f.xxx, 0.85f.xxx + 1.55f * (1.0f.xxx - exp(-(rawLum - 0.85f.xxx) / 1.55f)), rawLum);
             const float ext = dens * (sigma * 1.55f);
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length

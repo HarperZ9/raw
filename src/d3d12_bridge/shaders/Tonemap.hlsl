@@ -398,7 +398,21 @@ float4 main(In i) : SV_Target {
         }
         const float2 haloDir = cDist > 1.0e-4f ? cVec / cDist : float2(0.0f, 1.0f);
         const float3 haloCol = max(Bloom.Sample(S0, saturate(0.5f.xx - haloDir * 0.22f)).rgb - 0.85f.xxx, 0.0f.xxx);
-        ovAdd += min((lensAcc * 0.065f + haloCol * 0.035f * saturate(1.0f - cDist * 1.35f)) * clamp(RQ.w, 0.0f, 2.5f), 0.22f.xxx);
+        // 6-Blade Physical Cinema Aperture Diffraction Starburst & Spectral Sun/Spell Glare on ultra-bright HDR peaks (>1.25):
+        // sun through trees, fireballs, lightning spells, dragon shouts, enchanted weapons & bright lanterns!
+        float3 starAcc = 0.0f.xxx;
+        static const float2 kStarDir[3] = { float2(1.0f, 0.0f), float2(0.5f, 0.866025f), float2(-0.5f, 0.866025f) };
+        [unroll] for (int si = 0; si < 3; ++si) {
+            [unroll] for (int st = 1; st <= 3; ++st) {
+                const float2 sOff = kStarDir[si] * (bTex * float(st) * 3.8f);
+                const float wS = 1.0f / float(st + 1);
+                const float3 sA = max(Bloom.Sample(S0, saturate(suv + sOff)).rgb - 1.15f.xxx, 0.0f.xxx);
+                const float3 sB = max(Bloom.Sample(S0, saturate(suv - sOff)).rgb - 1.15f.xxx, 0.0f.xxx);
+                const float3 sTint = si == 0 ? float3(1.06f, 0.98f, 0.90f) : (si == 1 ? float3(0.92f, 1.04f, 1.08f) : float3(1.04f, 0.94f, 1.06f));
+                starAcc += (sA + sB) * sTint * (wS * 0.11f);
+            }
+        }
+        ovAdd += min((lensAcc * 0.065f + haloCol * 0.035f * saturate(1.0f - cDist * 1.35f) + starAcc) * clamp(RQ.w, 0.0f, 2.5f), 0.28f.xxx);
     }
     if ((ovMask & 8u) != 0u) {
         // Layer 4 (OV4): Physical Tiffen Black Pro-Mist 1/4 Optical Diffusion — softly halates highlights while preserving deep shadows & crispness.

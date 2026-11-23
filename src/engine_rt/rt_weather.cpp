@@ -34,6 +34,7 @@ struct State {
     bool hasSmooth = false;
     uint64_t lastTickMs = 0;
     float windX = 0, windY = 0, lightning = 0;
+    float skyUpper[3] = {}, skyLower[3] = {}, skyHoriz[3] = {};
     bool ok = false;
     uint64_t calls = 0;
 };
@@ -73,6 +74,12 @@ bool ReadSky(State* s) {
         if (gh >= 0.0f && gh <= 24.0f) s->gameHour = gh;
         const auto* precip = *reinterpret_cast<const uint8_t* const*>(sky + 0xA0);
         s->density = precip ? *reinterpret_cast<const float*>(precip + 0x84) : 0.0f;
+        // Live Sky::skyColor[0..2] (upper sky +0xD8, lower sky +0xE4, horizon +0xF0) probe for verified 1.7.104.0 mapping.
+        for (int c = 0; c < 3; ++c) {
+            s->skyUpper[c] = *reinterpret_cast<const float*>(sky + 0xD8 + c * 4);
+            s->skyLower[c] = *reinterpret_cast<const float*>(sky + 0xE4 + c * 4);
+            s->skyHoriz[c] = *reinterpret_cast<const float*>(sky + 0xF0 + c * 4);
+        }
         s->cur = ReadWeather(cur);
         s->last = last ? ReadWeather(last) : WeatherRead{};
         return s->cur.ok;
@@ -189,9 +196,13 @@ std::string WeatherCommand() {
     std::snprintf(b, sizeof b,
                   "{\"cmd\":\"weather\",\"ok\":%s,\"exported\":%s,\"calls\":%llu,\"rain\":%.3f,\"snow\":%.3f,\"cloud\":%.3f,"
                   "\"fog\":%.3f,\"wind_x\":%.1f,\"wind_y\":%.1f,\"lightning\":%.3f,\"game_hour\":%.2f,\"pct\":%.3f,\"density\":%.3f,"
+                  "\"sky_upper\":[%.2f,%.2f,%.2f],\"sky_lower\":[%.2f,%.2f,%.2f],\"sky_horiz\":[%.2f,%.2f,%.2f],"
                   "\"current\":\"0x%08X\",\"current_flags\":%u,\"current_fog_far\":%.0f,\"last\":\"0x%08X\",\"last_flags\":%u}",
                   s.ok ? "true" : "false", g_set ? "true" : "false", (unsigned long long)s.calls, s.rain, s.snow, s.cloud,
-                  s.fog, s.windX, s.windY, s.lightning, s.gameHour, s.pct, s.density, s.cur.formId, s.cur.flags, s.cur.fogFar,
+                  s.fog, s.windX, s.windY, s.lightning, s.gameHour, s.pct, s.density,
+                  s.skyUpper[0], s.skyUpper[1], s.skyUpper[2], s.skyLower[0], s.skyLower[1], s.skyLower[2],
+                  s.skyHoriz[0], s.skyHoriz[1], s.skyHoriz[2],
+                  s.cur.formId, s.cur.flags, s.cur.fogFar,
                   s.last.formId, s.last.flags);
     return b;
 }

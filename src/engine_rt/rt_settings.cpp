@@ -198,8 +198,10 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"uMaxDecals:Decals", "1000"},
         {"uMaxSkinDecals:Decals", "250"},
         {"uMaxSkinDecalsPerActor:Decals", "60"},
-        {"iMaxDecalsPerFrame:Display", "100"},
-        {"iMaxSkinDecalsPerFrame:Display", "25"},
+        {"iMaxDecalsPerFrame:Display", "256"},
+        {"iMaxSkinDecalsPerFrame:Display", "64"},
+        {"fDecalLOD1:Display", "4000.0"},
+        {"fDecalLOD2:Display", "6000.0"},
         // NOTE: Do NOT force bUseThreaded*, bBackgroundLoadVMData, bBackgroundCellLoads, bPreemptivelyUnloadCells,
         // bEnableFileCaching, iNumHWThreads=16, or runtime TerrainManager overrides: in Creation Engine they race
         // BGSSaveLoadManager (causing save corruption) and race the LOD quadtree.

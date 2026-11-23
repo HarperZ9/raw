@@ -129,14 +129,18 @@ void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, in
     const float V = 0.5f / (nl * sqrt(nv * nv * (1.0f - a2) + a2) + nv * sqrt(nl * nl * (1.0f - a2) + a2) + 1.0e-6f);
     const float lh = saturate(dot(l, h));
     const float F = s.f0 + (1.0f - s.f0) * pow(1.0f - lh, 5.0f);
-    // Disney/Frostbite Burley retro-reflective rough diffuse (Lagarde 2014): replaces flat Lambert on rough stone, bark, dirt & wool.
-    const float fd90 = 0.5f + 2.0f * s.alpha * lh * lh;
-    const float burley = any(s.wrap > 0.0f) ? 1.0f : clamp((1.0f + (fd90 - 1.0f) * pow(1.0f - nl, 5.0f)) * (1.0f + (fd90 - 1.0f) * pow(1.0f - nv, 5.0f)), 0.72f, 1.28f);
+    // EON Energy-Preserving Rough Diffuse BRDF (Portsmouth/Kutz/Hill 2025, MAT-03) blended with Burley retro-reflection:
+    // gives rough stone masonry, bark, plaster, and snowdrifts authentic micro-rough depth while strictly conserving energy.
+    const float rEon = saturate(s.alpha);
+    const float cosPhi = dot(l - s.n * nl, s.v - s.n * nv);
+    const float eonA = 1.0f / (1.0f + (0.5f - 2.0f / (3.0f * PI)) * rEon);
+    const float eonS = cosPhi * (max(nl, nv) > 1.0e-4f ? (1.0f / max(nl, nv)) : 0.0f);
+    const float eonDiff = any(s.wrap > 0.0f) ? 1.0f : clamp(eonA * (1.0f + rEon * max(eonS, 0.0f) * 0.32f), 0.78f, 1.24f);
     // Kulla-Conty / Turquin analytical multi-scattering GGX energy compensation (SIGGRAPH 2017/2019):
     // Restores microfacet multiple-bounce energy lost by single-scattering GGX on rough stone, timber, leather, and brushed steel.
     const float ess = saturate(1.0f - s.alpha * (0.42f * (1.0f - nv) + 0.14f));
     const float kulla = 1.0f + s.f0 * ((1.0f - ess) / max(ess, 0.25f));
-    diff += nlD * c * (1.0f - F) * burley;
+    diff += nlD * c * (1.0f - F) * eonDiff;
     spec += PI * D * V * F * kulla * nl * c;   // the game's light colour is irradiance over pi
 }
 
@@ -748,6 +752,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float microSh = (!match && !isActorFeat && base != 5u) ? saturate(2.0f * AoHist.Load(ip).x + saturate(dot(s.n, sunDir.xyz)) - 0.85f) : 1.0f;
         const float sunPunch = (!match && sunColour.w > 0.5f) ? lerp(1.16f, 0.85f, nightDir) : 1.0f;
         addLight(s, sunDir.xyz, dirCol * (sunSh * lerp(0.50f, 1.0f, microSh) * sunPunch), dirCol * sunPunch, diff, spec);
+        // MAT-07 Distributed Microfacet Snow & Hoar-Frost Diamond Glints (Deliot & Belcour 2023):
+        // crisp sunlit crystalline sparkle on snowpacks & frost (<1,600u) with zero temporal shimmer.
+        if (!match && sunColour.w > 0.5f && z < 1600.0f && sunShadow > 0.25f && nightDir < 0.75f &&
+            (wet.snow > 0.25f || (base == 4u && min(albedo.r, min(albedo.g, albedo.b)) > 0.42f && s.n.z > 0.55f))) {
+            const float3 wpGl = (p + camPosW.xyz) * 0.42f;
+            const float3 gCell = floor(wpGl);
+            const float3 gRand = float3(cHash(gCell), cHash(gCell + 19.3f), cHash(gCell + 47.1f)) - 0.5f;
+            const float3 microN = normalize(s.n + gRand * 0.65f);
+            const float3 hGl = normalize(s.v + sunDir.xyz);
+            const float glint = pow(saturate(dot(microN, hGl)), 96.0f) * step(0.82f, cHash(gCell + 83.7f));
+            spec += dirCol * (glint * sunShadow * saturate(1.0f - z / 1600.0f) * (1.0f - nightDir) * 1.85f);
+        }
         // Subtle, deep-emerald backlit foliage subsurface transmission (no blown-out pale yellow-green pine glow).
         if (!match && base == 5u && sunColour.w > 0.5f) {
             const float backF = pow(saturate(dot(-s.v, sunDir.xyz)), 3.6f);

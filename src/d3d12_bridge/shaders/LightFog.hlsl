@@ -206,6 +206,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 // Clouds naturally occlude the solar disc via exact transmittance cl.a (removed duplicate blaze that burned through thick clouds!).
                 baseSky = lerp(baseSky, baseSky * cl.a + cl.rgb, 1.0f - isExotic);
             }
+            // Physical 42-deg primary + 51-deg secondary spectral atmospheric rainbow during sunlit rain (Commons own-03 & own-45).
+            if (weather.w > 0.08f && aElev > 0.04f && aElev < 0.64f && sDir.z > 0.0f) {
+                const float antiAng = acos(clamp(dot(sDir, -aSun), -1.0f, 1.0f));
+                // Primary bow at 42 deg (0.733 rad, red outside -> violet inside); secondary bow at 51 deg (0.890 rad, reversed).
+                const float pR = exp(-pow((antiAng - 0.742f) / 0.011f, 2.0f));
+                const float pG = exp(-pow((antiAng - 0.728f) / 0.011f, 2.0f));
+                const float pB = exp(-pow((antiAng - 0.714f) / 0.011f, 2.0f));
+                const float sR = exp(-pow((antiAng - 0.876f) / 0.014f, 2.0f)) * 0.32f;
+                const float sG = exp(-pow((antiAng - 0.892f) / 0.014f, 2.0f)) * 0.32f;
+                const float sB = exp(-pow((antiAng - 0.908f) / 0.014f, 2.0f)) * 0.32f;
+                const float bowW = saturate(weather.w * 2.2f) * smoothstep(0.04f, 0.14f, aElev) * (1.0f - smoothstep(0.45f, 0.64f, aElev)) * smoothstep(0.0f, 0.08f, sDir.z);
+                baseSky += float3(pR + sR, pG + sG, pB + sB) * (bowW * 0.24f * (1.0f - isExotic));
+            }
             // Sub-LSB Interleaved Gradient Noise dithering eliminates 8-bit/10-bit sky gradient banding lines cleanly.
             const float skyDith = (ign(px) - 0.5f) * (1.0f / 255.0f);
             return float4(max(baseSky + skyDith, 0.0f.xxx), lit.a);

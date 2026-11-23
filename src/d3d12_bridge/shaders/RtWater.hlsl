@@ -205,7 +205,8 @@ void water(uint3 id : SV_DispatchThreadID) {
                 static const float kWFreq[6]  = { 0.018f, 0.032f, 0.056f, 0.095f, 0.160f, 0.260f };
                 static const float kWSpeed[6] = { 1.45f,  1.95f,  2.55f,  3.25f,  4.05f,  4.95f  };
                 static const float kWAmp[6]   = { 0.068f, 0.054f, 0.040f, 0.028f, 0.018f, 0.010f };
-                const float ampScale = (0.78f + windAmp * 0.45f + shallowW * 0.22f) * smoothstep(0.0f, 5.0f, depthV0);
+                const float stormChop = saturate(weather.w * 0.85f + windAmp * 0.55f);
+                const float ampScale = (0.72f + stormChop * 0.88f + shallowW * 0.24f) * smoothstep(0.0f, 5.0f, depthV0);
                 float2 waveG = 0.0f.xx;
                 [unroll] for (int wi = 0; wi < 6; ++wi) {
                     const float wavelength = 6.2831853f / kWFreq[wi];

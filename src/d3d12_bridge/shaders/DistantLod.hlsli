@@ -24,6 +24,16 @@ float3 distantLit(int3 ip, float2 at, float d) {
         const float snowSlope = saturate((worldNormal(Normal.Load(ip)).z - 0.35f) * 2.2f);
         albedo = lerp(albedo, float3(0.54f, 0.58f, 0.64f), snowSlope * 0.78f);
     }
+    const float3 wpLod = p + camPosW.xyz;
+    // Live weather snow & rain response across distant terrain/mountain LODs (eliminates 4,000u weather pop-in boundary!).
+    const float rawNz = worldNormal(Normal.Load(ip)).z;
+    if (weather.z > 0.05f && rawNz > 0.30f) {
+        const float lodSnow = saturate((rawNz - 0.30f) * 2.2f) * saturate(weather.z * 1.15f);
+        albedo = lerp(albedo, float3(0.58f, 0.63f, 0.70f), lodSnow * 0.78f);
+    }
+    if (weather.x > 0.05f) {
+        albedo *= lerp(1.0f, 0.80f, saturate(weather.x) * 0.65f);
+    }
     // Tree LOD is a card whose G-buffer normal is one direction for the whole card (view 14, ec7-3), so a lit card
     // still reads flat. A canopy normal stands in: where the pixel sits across the card's silhouette on screen
     // (its distance to the card's edge left, right, up and down, up to 24 pixels) bends the normal from the camera
@@ -70,24 +80,38 @@ float3 distantLit(int3 ip, float2 at, float d) {
     const float skyVis = rt && (flags.x & FLAG_SKY) != 0u && sunColour.w > 0.5f ? RtIdx.Load(ip).w : 1.0f;
     // Physical sun-to-ambient HDR ratio matched to Lighting.hlsl so near terrain and distant mountains share one disciplined HDR scale.
     const float cloudC = saturate(clouds.x);
-    const float sunBoostL = lerp(1.22f, 1.02f, saturate(cloudC * 1.15f));
+    const float aElevLod = astroSunElev();
+    const float nightLod = smoothstep(0.03f, -0.06f, aElevLod);
+    const float goldenLod = smoothstep(-0.04f, 0.04f, aElevLod) * (1.0f - smoothstep(0.14f, 0.34f, aElevLod));
+    // Synchronize distant mountains & tree billboards with Lighting.hlsl's 24h Sun-vs-Moon direct lighting + sunset alpenglow!
+    const float dirLumL = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+    float3 lodSunCol = sunColour.rgb;
+    lodSunCol = lerp(lodSunCol, lodSunCol * float3(1.36f, 0.80f, 0.48f), goldenLod * 0.72f);
+    const float3 lodMoonCol = float3(0.22f, 0.30f, 0.50f) * clamp(dirLumL * 0.72f, 0.14f, 0.46f);
+    const float3 effSunCol = lerp(lodSunCol, lodMoonCol, nightLod);
+    const float sunBoostL = lerp(1.20f, 1.00f, saturate(cloudC * 1.15f)) * lerp(1.0f, 0.78f, nightLod);
     const float ambScaleL = lerp(0.84f, 0.94f, cloudC);
     // Dynamic near-field grass lighting & distant tree-LOD crown self-shadowing (grounds bright snow pines against alpine ridges).
     const float grassAo = nearGrass && (flags.x & FLAG_AO) != 0u ? lerp(1.0f, AoHist.Load(ip).x, 0.80f) : 1.0f;
     const float occ = min(lerp(1.0f, pow(saturate(skyVis), 1.38f), max(cluster.w, 0.80f)), grassAo);
-    const float crownAo = farTreeCard ? lerp(0.42f, 0.84f, saturate(v * 0.5f + 0.5f)) : 1.0f;
+    const float crownAo = farTreeCard ? lerp(0.38f, 0.88f, saturate(v * 0.5f + 0.5f)) : 1.0f;
     amb *= (nearGrass ? lerp(occ.xxx, gtaoMultiBounce(occ, saturate(albedo)), 0.45f) * lerp(0.52f, 1.0f, saturate(v * 0.5f + 0.65f)) : (occ * crownAo).xxx) * ambScaleL;
     // What the ridges that block the sky send back (RtShadow.hlsl, farOccluded; [Lighting] RtFar), as the near bounce is.
     if (rt && (flags.x & FLAG_BOUNCE) != 0u && sunColour.w > 0.5f) { amb += RtBounce.Load(ip).rgb * proj.w * (farTreeCard ? 0.65f : 1.25f); }
-    float3 direct = sunColour.rgb * (nl * sh * sunBoostL * (farTreeCard ? 0.82f : 1.0f));
+    float3 direct = effSunCol * (nl * sh * sunBoostL * (farTreeCard ? 0.84f : 1.0f));
+    // Warm sunrise/sunset canopy rim transmission on distant tree billboards (FOL-04 relit impostors).
+    if (farTreeCard && sunColour.w > 0.5f && nightLod < 0.85f) {
+        const float backTree = pow(saturate(dot(-toCam, sunDir.xyz)), 3.0f);
+        direct += effSunCol * float3(0.52f, 0.82f, 0.34f) * (backTree * sh * 0.16f * (1.0f - nightLod));
+    }
     if (nearGrass && sunColour.w > 0.5f) {
         // Per-blade directional micro-shadow march (grounds grass tufts cleanly inside terrain, rock & tree shadows).
         const float grassMicroSh = zDist < 2600.0f ? screenShadow(p + n * 0.6f, sunDir.xyz, 18.0f, 0.02f, ign(px), 6u) : 1.0f;
         const float gSh = sh * lerp(1.0f, grassMicroSh, saturate(1.0f - zDist / 2600.0f) * 0.82f);
-        direct = sunColour.rgb * (nl * gSh * sunBoostL);
+        direct = effSunCol * (nl * gSh * sunBoostL);
         // Subtle deep-emerald chlorophyll subsurface transmission + root grounding (no neon-yellow blowout).
         const float backGrass = pow(saturate(dot(-toCam, sunDir.xyz)), 3.4f);
-        direct += sunColour.rgb * float3(0.62f, 0.94f, 0.38f) * (backGrass * 0.24f * (1.0f - saturate(cloudC * 0.75f))) * gSh * sunBoostL;
+        direct += effSunCol * float3(0.62f, 0.94f, 0.38f) * (backGrass * 0.24f * (1.0f - saturate(cloudC * 0.75f))) * gSh * sunBoostL;
         direct *= lerp(0.58f, 1.0f, grassAo);
     }
     // True linear HDR distant LOD output (removes 2011 double knee3() crush and duplicate fog; LightFog.hlsl applies unified Hillaire aerial perspective).

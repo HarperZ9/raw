@@ -220,7 +220,7 @@ HRESULT STDMETHODCALLTYPE WrappedDevice::CreateTexture2D(
         return m_real->CreateTexture2D(pDesc, pInitialData, ppTexture2D);
 
     if (pDesc->BindFlags & (D3D11_BIND_RENDER_TARGET | D3D11_BIND_DEPTH_STENCIL)) {
-        Log("CreateTexture2D  %ux%u  fmt=%u  bind=0x%X  mips=%u  arraySize=%u",
+        LogVerbose("CreateTexture2D  %ux%u  fmt=%u  bind=0x%X  mips=%u  arraySize=%u",
             pDesc->Width, pDesc->Height, (UINT)pDesc->Format,
             pDesc->BindFlags, pDesc->MipLevels, pDesc->ArraySize);
     }
@@ -335,7 +335,7 @@ HRESULT STDMETHODCALLTYPE WrappedDevice::CreateRenderTargetView(
     const D3D11_RENDER_TARGET_VIEW_DESC* pDesc,
     ID3D11RenderTargetView** ppRTView)
 {
-    Log("CreateRenderTargetView  resource=%p  desc=%p", pResource, pDesc);
+    LogVerbose("CreateRenderTargetView  resource=%p  desc=%p", pResource, pDesc);
     return m_real->CreateRenderTargetView(pResource, pDesc, ppRTView);
 }
 

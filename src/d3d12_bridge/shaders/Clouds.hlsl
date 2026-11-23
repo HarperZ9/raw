@@ -171,15 +171,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Fast 4-step exponential sun-ray march spanning the full 44,000u 3D cumulus volume (recovers ~1.3 ms GPU time!):
         static const float kSunD[4] = { 420.0f, 1650.0f, 5200.0f, 13500.0f };
         static const float kSunW[4] = { 420.0f, 1230.0f, 3550.0f,  8300.0f };
-        // Adaptive empty-space skipping raymarch across the tall 3D cumulus slab.
+        // Uniform jittered 48-step march (eliminates 2*dt empty-space skip contour-banding stripes seen in 09.57.42.68.png!):
         float t = t0 + j * dt;
         [loop] for (uint i = 0u; i < steps && t < t1 && T > 0.01f; i++) {
             const float3 pa = o + dir * t;
-            const float coarse = cloudDensityVol(pa, false);
-            if (coarse <= 0.001f) { t += dt * 2.0f; continue; }
-            const float dens = cloudDensityVol(pa, true);
-            if (dens <= 0.001f) { t += dt; continue; }
             t += dt;
+            const float coarse = cloudDensityVol(pa, false);
+            if (coarse <= 0.001f) { continue; }
+            const float dens = cloudDensityVol(pa, true);
+            if (dens <= 0.001f) { continue; }
             float od = 0.0f;
             [unroll] for (uint k = 0u; k < 4u; k++) { od += cloudDensityVol(pa + cloudLightDir * kSunD[k], false) * kSunW[k]; }
             // 8-Octave Path-Traced-Matched Multiple-Scattering Integral (zydak1939 + CharlesGrassi + Wrenninge):

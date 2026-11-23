@@ -260,9 +260,9 @@ float4 main(In i) : SV_Target {
             const float cr = cos(roll), sr = sin(roll);
             const float2 ctr = baseUv - 0.5f.xx;
             const float2 rotUv = float2(ctr.x * cr - ctr.y * sr, ctr.x * sr + ctr.y * cr) + 0.5f.xx;
-            const float2 bob = float2(sin(phase) * 0.0014f, -cos(phase * 2.0f) * 0.0013f) * str;
-            const float zoom = lerp(1.0f, 0.990f, saturate(str));
-            baseUv = saturate((rotUv - 0.5f.xx) * zoom + 0.5f.xx + bob);
+            const float2 bob = float2(sin(phase) * 0.0012f, -cos(phase * 2.0f) * 0.0011f) * str;
+            const float zoom = lerp(1.0f, 0.984f, saturate(str));
+            baseUv = clamp((rotUv - 0.5f.xx) * zoom + 0.5f.xx + bob, 0.001f.xx, 0.999f.xx);
         }
     }
     const float2 suv = min(max(baseUv * F[43].xy, 0.0f), float2(F[44].z, F[43].y));

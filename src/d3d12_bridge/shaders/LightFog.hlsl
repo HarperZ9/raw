@@ -253,7 +253,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             }
             if ((flags.x & FLAG_CLOUDS) != 0u) {
                 const float2 skyUv = (px + 0.5f) * dims.zw;
-                const float4 cl = Clouds.SampleLevel(Lin, skyUv, 0.0f);
+                // 5-tap cross spatial denoise on 1/2-res Clouds buffer (eliminates residual raymarch/IGN sky grain!):
+                const float2 cDx = float2(dims.z * 1.5f, 0.0f), cDy = float2(0.0f, dims.w * 1.5f);
+                const float4 cl = Clouds.SampleLevel(Lin, skyUv, 0.0f) * 0.40f
+                                + (Clouds.SampleLevel(Lin, saturate(skyUv + cDx), 0.0f)
+                                 + Clouds.SampleLevel(Lin, saturate(skyUv - cDx), 0.0f)
+                                 + Clouds.SampleLevel(Lin, saturate(skyUv + cDy), 0.0f)
+                                 + Clouds.SampleLevel(Lin, saturate(skyUv - cDy), 0.0f)) * 0.15f;
                 // Clouds naturally occlude the solar disc via exact transmittance cl.a.
                 baseSky = lerp(baseSky, baseSky * cl.a + cl.rgb, 1.0f - isExotic);
                 // Physical 3D Crepuscular Cloud-Gap Light Rays (12-tap IGN-jittered radial transmittance march toward live sun):

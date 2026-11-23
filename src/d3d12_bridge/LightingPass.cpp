@@ -434,7 +434,7 @@ private:
         u.timeEnv[0] = t.gameHour;
         u.timeEnv[1] = std::sin((t.gameHour - 6.0f) * 0.26179939f);   // -1 midnight, 0 dawn/dusk, +1 noon
         u.timeEnv[2] = t.lightning;
-        u.timeEnv[3] = 0.0f;
+        u.timeEnv[3] = s.menuPaused ? 1.0f : 0.0f;
         std::memcpy(u.clipToWorld, s.clipToWorld, 64);
         std::memcpy(u.worldToClip, s.worldToClip, 64);
         std::memcpy(u.viewToWorld, s.viewToWorld, 48);

@@ -171,7 +171,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Live 3D World-Map Depth Isolation + Foreground Contrast Protection:
     // Keep foreground exterior geometry (<1,400u) crisp and un-washed (matching AAA dappled-forest shadow depth)
     // while preserving full 3D Froxel mountain/valley mist beyond 1,400u and full local-light mist at night/interiors.
-    const float mapScale = camPosW.z > 18000.0f ? 0.18f : 1.0f;
+    const float mapScale = (timeEnv.w > 0.5f || camPosW.z > 18000.0f) ? 0.18f : 1.0f;
     const float sunLumFg = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
     const float dayFg = (sunColour.w > 0.5f) ? saturate((sunLumFg - 0.18f) * 3.0f) : 0.0f;
     const float fgClear = lerp(1.0f, smoothstep(320.0f, 1800.0f, dist), dayFg * (1.0f - saturate(weather.w * 0.65f + weather.z * 0.75f)));

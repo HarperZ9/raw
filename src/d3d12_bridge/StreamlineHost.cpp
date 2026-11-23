@@ -233,9 +233,14 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
     if (!a.ready || m_mode <= 0 || !a.cl || !queue || !colorIn || !colorOut || !depth || !mvec)
         return false;
 
-    const bool wantRR = (m_mode == 2 && m_caps.dlssRR && !a.dlssdFailed && a.dlssdSetOptions && albedo && normal && spec);
-    const bool useRR = wantRR;
-    if (!useRR && (!m_caps.dlss || a.dlssFailed || !a.dlssSetOptions)) return false;
+    // Skyrim SE's m_normalIn is R8G8B8A8_UNORM stereographic octahedral view-space normals, NOT linear unpacked
+    // world-space XYZ normals (which sl::DLSSDNormalRoughnessMode::eUnpacked requires). Feeding octahedral normals
+    // to DLSS-RR causes surface-edge shimmering during movement & cursor placement. Route mode 2 cleanly to
+    // DLAA Transformer Preset K (which uses exact colorIn + depth + mvec with zero normal-format mismatch)
+    // until a dedicated linear world-space normal+roughness unpack pass is wired for DLSS-RR.
+    const bool useRR = false;
+    (void)albedo; (void)normal; (void)spec;
+    if (!m_caps.dlss || a.dlssFailed || !a.dlssSetOptions) return false;
 
     const sl::ViewportHandle vp(0);
     const int activeMode = useRR ? 2 : m_mode;

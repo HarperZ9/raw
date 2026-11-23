@@ -94,14 +94,38 @@ float ign(float2 px) {
     return frac(52.9829189f * frac(dot(p, float2(0.06711056f, 0.00583715f))));
 }
 
+// True 24-hour astronomical solar elevation sin(elev) and 3D sun vector driven by Sky::currentGameHour (+0x1B0).
+// Decouples physical sky scattering, sunrise/sunset/dusk, cloud under-lighting & solar disc from Skyrim's
+// ShadowSceneNode->sunLight (which clamps elevation >15 deg and flips to the Moon at night!).
+float astroSunElev() {
+    return timeEnv.x > 0.01f ? timeEnv.y : sunDir.z;
+}
+
+float3 astroSunDir() {
+    if (timeEnv.x <= 0.01f) { return normalize(sunDir.xyz); }
+    const float sinE = clamp(timeEnv.y, -0.95f, 0.95f);
+    const float cosE = sqrt(max(1.0f - sinE * sinE, 1.0e-4f));
+    // Smooth east (+X) -> south (-Y) -> west (-X) Skyrim orbital azimuth across 24h.
+    const float hourAng = (timeEnv.x - 12.5f) * 0.26179939f;   // -pi midnight, -pi/2 6:30 E, 0 12:30 S, +pi/2 18:30 W
+    const float3 orbDir = normalize(float3(-sin(hourAng) * cosE, -cos(hourAng) * cosE * 0.62f, sinE));
+    // During high daytime (sinE > 0.28), lock azimuth smoothly to ShadowSceneNode->sunLight so shadows & sky sun agree,
+    // while sunrise/sunset/dusk/night follow the unbroken orbital arc below the horizon.
+    const float dayLock = smoothstep(0.24f, 0.44f, sinE) * step(0.18f, sunDir.z);
+    const float2 sHor = sunDir.xy;
+    const float sHorLen = length(sHor);
+    const float3 lockedDir = sHorLen > 1.0e-4f ? float3((sHor / sHorLen) * cosE, sinE) : orbDir;
+    return normalize(lerp(orbDir, lockedDir, dayLock));
+}
+
 // Shared live atmospheric palette: locks sky dome, world hemisphere ambient, distant mountain fog, and clouds
 // to one coherent physical color system across midday, dawn/dusk, overcast, and night.
 void skyPalette(out float3 zenith, out float3 mid, out float3 horiz) {
     const float cover = saturate(clouds.x);
-    const float lowSun = saturate(1.0f - sunDir.z * 2.6f);
-    const float3 clearZ = lerp(float3(0.06f, 0.24f, 0.68f), float3(0.08f, 0.14f, 0.38f), lowSun);
-    const float3 clearM = lerp(float3(0.22f, 0.48f, 0.84f), float3(0.38f, 0.36f, 0.52f), lowSun);
-    const float3 clearH = lerp(float3(0.62f, 0.76f, 0.88f), float3(0.92f, 0.54f, 0.28f), lowSun);
+    const float elev = astroSunElev();
+    const float lowSun = saturate(1.0f - max(elev, 0.0f) * 3.0f);
+    const float3 clearZ = lerp(float3(0.06f, 0.24f, 0.68f), float3(0.07f, 0.10f, 0.28f), lowSun);
+    const float3 clearM = lerp(float3(0.22f, 0.48f, 0.84f), float3(0.46f, 0.26f, 0.42f), lowSun);
+    const float3 clearH = lerp(float3(0.62f, 0.76f, 0.88f), float3(1.05f, 0.48f, 0.22f), lowSun);
     const float stormW = saturate(cover * 0.85f - 0.25f + weather.w * 0.35f);
     zenith = lerp(clearZ, float3(0.22f, 0.28f, 0.36f), stormW);
     mid    = lerp(clearM, float3(0.30f, 0.36f, 0.44f), stormW);

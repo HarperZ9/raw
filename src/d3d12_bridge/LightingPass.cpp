@@ -434,7 +434,10 @@ private:
         u.dofParams[2] = t.dofOrbBoost;
         u.dofParams[3] = t.weatherLens ? 1.0f : 0.0f;
         u.timeEnv[0] = t.gameHour;
-        u.timeEnv[1] = std::sin((t.gameHour - 6.0f) * 0.26179939f);   // -1 midnight, 0 dawn/dusk, +1 noon
+        // True 24-hour astronomical solar elevation (sin(elev)): smoothly rises through 0 at ~5:38, peaks +54 deg (+0.81) at 12:30,
+        // sets smoothly through 0 at ~19:22, and stays deep below horizon (-0.51) at midnight — decoupled from ShadowSceneNode's
+        // night-time Moon flip and minimum-elevation shadow clamp!
+        u.timeEnv[1] = 0.15f + 0.66f * std::cos((t.gameHour - 12.5f) * 0.26179939f);
         u.timeEnv[2] = t.lightning;
         u.timeEnv[3] = s.menuPaused ? 1.0f : 0.0f;
         u.engineWorld[0] = s.waterHeight;

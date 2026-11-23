@@ -103,19 +103,25 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const uint steps = 48u;
         const float dt = (t1 - t0) / float(steps);
         const float j = rand(lo, proj.z);
-        const float cosT = dot(dir, sunDir.xyz);
+        const float3 aSun = astroSunDir();
+        const float aElev = astroSunElev();
+        const float nightW = smoothstep(0.04f, -0.07f, aElev);
+        // Use true astronomical sun by day/twilight (under-lighting clouds cleanly at sunrise/sunset!) and Moon (sunDir) at night.
+        const float3 cloudLightDir = normalize(lerp(aSun, sunDir.xyz, nightW));
+        const float cosT = dot(dir, cloudLightDir);
         // Balanced dual-lobe Henyey-Greenstein: crisp silver lining without blowing into clipped white blobs.
         const float phase = min(lerp(hg(cosT, -0.25f), hg(cosT, 0.65f), 0.48f), 0.24f);
         const float3 rawSunC = sunColour.rgb * (sunDir.w > 0.5f ? 1.0f : 0.0f);
         const float sLum = dot(rawSunC, float3(0.2126f, 0.7152f, 0.0722f));
-        const float nightW = saturate((0.28f - sLum) * 4.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
-        // Couple daytime cloud sunlight directly to Hillaire 2020 256x64 Transmittance LUT at cloud-deck altitude (4.5 km):
-        // crisp CIE D65 silver-white at noon, authentic fiery copper-crimson underlit cloud bellies at sunrise/sunset.
-        const float3 hTrans = sampleCloudSunTrans(clamp(sunDir.z, -0.15f, 1.0f));
+        // Couple daytime/twilight cloud sunlight directly to Hillaire 2020 256x64 Transmittance LUT using TRUE aElev:
+        // crisp silver-white at noon (own-43/44), fiery coral-peach-gold underlit cloud bellies at sunrise/sunset (own-13..15/27).
+        const float3 hTrans = sampleCloudSunTrans(clamp(aElev, -0.10f, 1.0f));
         const float htLum = max(dot(hTrans, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
-        const float3 physDaySun = lerp(rawSunC, hTrans * (max(sLum, 0.08f) / htLum), 0.58f * (1.0f - nightW));
-        // Silver-blue lunar illumination on night clouds so clouds passing Masser & Secunda catch crisp moonlight rims.
-        const float3 sunC = lerp(physDaySun, max(rawSunC, float3(0.24f, 0.34f, 0.54f)) * 1.65f, nightW * 0.78f);
+        const float twiCloud = smoothstep(-0.10f, 0.00f, aElev) * (1.0f - smoothstep(0.06f, 0.26f, aElev));
+        const float3 twiCoral = float3(1.45f, 0.52f, 0.28f) * max(sLum, 0.55f);
+        const float3 physDaySun = lerp(lerp(rawSunC, hTrans * (max(sLum, 0.14f) / htLum), 0.65f), twiCoral, twiCloud * 0.72f);
+        // Subtle silver-indigo lunar illumination on night clouds (never lit like daytime!).
+        const float3 sunC = lerp(physDaySun, float3(0.16f, 0.23f, 0.40f) * max(sLum * 0.65f, 0.35f), nightW);
         const float3 rawSkyC = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.0f);
         const float skyLum = max(dot(rawSkyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
         // Clean atmospheric blue-silver cloud shadow ambient (eliminates muddy brown undersides).
@@ -136,7 +142,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (dens <= 0.001f) { t += dt; continue; }
             t += dt;
             float od = 0.0f;
-            [unroll] for (uint k = 0u; k < 6u; k++) { od += cloudDensityVol(pa + sunDir.xyz * kSunD[k], false) * kSunW[k]; }
+            [unroll] for (uint k = 0u; k < 6u; k++) { od += cloudDensityVol(pa + cloudLightDir * kSunD[k], false) * kSunW[k]; }
             // Wrenninge 2013 (Oz: The Great and Powerful / Frostbite / UE5) 4-Octave Multiple-Scattering Energy Integral:
             // Couples per-octave extinction attenuation (b^n), energy attenuation (a^n), and phase-eccentricity decay (c^n)
             // for luminous translucent silver-lined cumulus rims and deep sculptural cloud undersides.
@@ -154,30 +160,32 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // storm bellies contrasting against bright silver-white openings in heavy storms (GTA VI storm cloud study).
             const float stormW = saturate(weather.w * 1.25f + max(clouds.x - 0.72f, 0.0f) * 2.2f);
             const float cloudAo = lerp(lerp(0.62f, 0.42f, stormW), 1.00f, pow(h, lerp(0.55f, 0.72f, stormW))) * exp(-dens * lerp(0.08f, 0.14f, stormW));
-            const float lowSun = saturate(1.0f - sunDir.z * 3.0f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+            const float lowSun = saturate(1.0f - max(aElev, 0.0f) * 3.4f) * (1.0f - nightW);
             const float overcastW = saturate((clouds.x - 0.50f) * 2.2f);
             const float3 coolSilver = lerp(float3(0.76f, 0.85f, 0.99f), lerp(float3(0.80f, 0.85f, 0.93f), float3(0.62f, 0.62f, 0.74f), stormW), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.34f) * 1.45f;
             const float3 neutralSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.98f, 0.99f, 1.02f), overcastW * 0.65f);
             const float3 baseTint = lerp(coolSilver * cloudAo, coolSilver * (cloudAo * 0.75f) + neutralSun * lerp(0.14f, 0.05f, h), lowSun * 0.40f * (1.0f - overcastW * 0.5f));
-            // Volumetric sheet-lightning inside heavy rainstorms (clouds.x > 0.78 && weather.w > 0.25).
+            // Volumetric sheet-lightning inside heavy rainstorms (strictly gated on true inverted lightning frequency timeEnv.z!).
             float3 stormFlash = 0.0f.xxx;
-            if (clouds.x > 0.78f && weather.w > 0.25f) {
+            if (clouds.x > 0.78f && weather.w > 0.25f && timeEnv.z > 0.05f) {
                 const float tSlot = floor(camPosW.w * 0.55f);
                 const float tFrac = frac(camPosW.w * 0.55f);
                 const float pulse = exp(-tFrac * 18.0f) * step(0.88f, cHash(float3(tSlot, 3.7f, 11.3f)));
                 if (pulse > 0.01f) {
                     const float2 cell = floor(pa.xy / 38000.0f);
                     const float cellHit = step(0.75f, cHash(float3(cell, tSlot)));
-                    stormFlash = float3(0.65f, 0.82f, 1.25f) * (pulse * cellHit * dens * 1.8f);
+                    stormFlash = float3(0.65f, 0.82f, 1.25f) * (pulse * cellHit * dens * 1.8f * timeEnv.z);
                 }
             }
             const float sunCalm = lerp(1.0f, 0.84f, pow(saturate(cosT), 12.0f));
-            // True linear HDR sculptural cumulus crowns (up to 2.4 linear feeding AgX highlight rolloff)
-            // contrasted against deep slate-blue shadowed cloud bellies (zero flat grey SDR ceiling).
-            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.99f, 0.99f, 1.02f), 0.52f * (1.0f - lowSun));
-            const float3 coolBase = lerp(float3(0.68f, 0.76f, 0.90f), float3(0.74f, 0.79f, 0.86f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.38f) * cloudAo;
+            // True linear HDR sculptural cumulus crowns (own-43/44) + fiery coral-peach cloud undersides at sunset/sunrise (own-13..15/27).
+            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(0.99f, 0.99f, 1.02f), 0.52f * (1.0f - lowSun) * (1.0f - nightW));
+            const float3 dayCoolBase = lerp(float3(0.68f, 0.76f, 0.90f), float3(0.74f, 0.79f, 0.86f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.34f) * cloudAo;
+            const float3 nightCloudBase = float3(0.018f, 0.026f, 0.048f) * cloudAo;
+            const float3 coolBase = lerp(dayCoolBase, nightCloudBase, nightW);
+            const float3 underLit = float3(1.25f, 0.44f, 0.24f) * (twiCloud * (1.0f - h) * (0.45f + 0.55f * pow(saturate(dot(dir, aSun) * 0.5f + 0.5f), 2.0f)) * (1.0f - overcastW * 0.45f) * 0.48f);
             // Highlight shoulder rolloff inspired by superframe/feed-23/build/brush/cloud.js (whites roll off smoothly, never flatten).
-            const float3 rawLum = whiteSun * (multiScat * lerp(1.0f, powder, 0.76f) * sunCalm * 4.0f * PI * 0.28f) + coolBase * 0.98f + stormFlash;
+            const float3 rawLum = whiteSun * (multiScat * lerp(1.0f, powder, 0.76f) * sunCalm * 4.0f * PI * 0.28f) + coolBase * 0.98f + underLit + stormFlash;
             const float3 lum = select(rawLum > 0.85f.xxx, 0.85f.xxx + 1.55f * (1.0f.xxx - exp(-(rawLum - 0.85f.xxx) / 1.55f)), rawLum);
             const float ext = dens * (sigma * 1.55f);
             const float stepT = exp(-ext * dt);

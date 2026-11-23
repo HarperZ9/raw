@@ -29,10 +29,11 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
                                      dot(ambient[2].xyz, rd) + ambient[2].w), 0.015f.xxx);
     float3 col = 0.0f.xxx;
     if (isExt) {
-        const float sunLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-        const float dayW = saturate((sunDir.z - 0.01f) * 4.0f) * saturate((sunLum - 0.18f) * 2.5f);
+        const float3 aSun = astroSunDir();
+        const float aElev = astroSunElev();
+        const float dayW = smoothstep(-0.08f, 0.14f, aElev);
         const float3 hSky = sampleAtmo(float3(rd.xy, max(rd.z, 0.005f)));
-        const float3 nightSky = max(ambDir * float3(0.75f, 0.90f, 1.25f), float3(0.015f, 0.025f, 0.055f));
+        const float3 nightSky = max(ambDir * float3(0.65f, 0.82f, 1.20f), float3(0.012f, 0.020f, 0.048f));
         float3 upper = lerp(nightSky, hSky, dayW);
         // Project live cloud-deck luminance onto upper hemisphere using the 64^3 periodic cloud LUT.
         if (rd.z > 0.04f && clouds.x > 0.05f) {

@@ -71,24 +71,61 @@ bool D3D12Bridge::ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, 
     if (!layer12 || !LightingPassUniform(m->pass.get(), &u, &ub)) return false;
     auto* c = m->ctx11.Get();
     c->CopyResource(m->waterIn.tex11.Get(), sceneHdr);
-    bool inB = false;
-    if (!m->rt->RecordWater(u, ub, m->depthIn.res12.Get(), layer12, m->shared[static_cast<UINT>(Shared::Albedo)].res12.Get(),
-                            m->shared[static_cast<UINT>(Shared::Specular)].res12.Get(), m->waterIn.res12.Get(), m->waterOut.res12.Get(),
-                            water, sssWidth, sssStrength, &inB, m->bedFrame + 1 >= m->frames ? m->bed12 : nullptr, m->bedSrv,
-                            m->preWaterFrame + 1 >= m->frames ? m->preWater.res12.Get() : nullptr))
-        return false;
     std::vector<ID3D11Resource*> hand{layer, m->waterIn.tex11.Get(), m->waterOut.tex11.Get()};
     if (m->bed11) hand.push_back(m->bed11.Get());
     if (m->preWater.tex11) hand.push_back(m->preWater.tex11.Get());
-    if (!m->HandToHost(hand) || !m->rt->SubmitWater(m->queue.Get())) {
+    if (!m->HandToHost(hand)) {
         m->log("[RT] water hand-over failed; water off");
         m->waterFailed = true;
         return false;
     }
-    // Live NVIDIA Streamline neural evaluation (0=Off, 1=DLAA Transformer Preset K, 2=DLSS Ray Reconstruction Preset F).
-    if (m->motionIn.res12) {
-        ID3D12Resource* src12 = inB ? m->waterIn.res12.Get() : m->waterOut.res12.Get();
-        ID3D12Resource* dst12 = inB ? m->waterOut.res12.Get() : m->waterIn.res12.Get();
+    // Run NVIDIA DLSS Ray Reconstruction (Preset F) on the opaque RT-lit frame BEFORE RtWater!
+    // Reason: DLSS-RR receives static opaque depth, static opaque normal, and (0,0) motion vectors on water pixels.
+    // Running DLSS-RR *after* RtWater caused it to temporally average/freeze animated water waves as RT noise.
+    // Running DLSS-RR *before* RtWater gives RtWater a clean denoised scene for sharp reflections AND keeps
+    // animated Gerstner waves, flowing river current, caustics & foam 100% crisp and un-smeared!
+    bool slPreRan = false;
+    if (water && m->motionIn.res12) {
+        StreamlineHost::EvalCamera slCam{};
+        if (m->camera.valid && m->lighting.hasCamera) {
+            slCam.valid = true;
+            slCam.nearZ = m->camera.nearZ;
+            slCam.farZ = m->camera.farZ;
+            slCam.fovY = 2.0f * std::atan(m->camera.tanHalfFovY);
+            slCam.aspect = m->camera.aspect;
+            std::memcpy(slCam.proj, m->camera.proj, sizeof(slCam.proj));
+            std::memcpy(slCam.viewToWorld, m->lighting.viewToWorld, sizeof(slCam.viewToWorld));
+            std::memcpy(slCam.worldToClip, m->lighting.worldToClip, sizeof(slCam.worldToClip));
+            slCam.pos[0] = m->lighting.posAdjust[0];
+            slCam.pos[1] = m->lighting.posAdjust[1];
+            slCam.pos[2] = m->lighting.posAdjust[2];
+        }
+        slPreRan = StreamlineHost::Get().Evaluate(m->queue.Get(), m->waterIn.res12.Get(), m->waterOut.res12.Get(),
+                                                  m->depthIn.res12.Get(), m->motionIn.res12.Get(),
+                                                  m->shared[static_cast<UINT>(Shared::Albedo)].res12.Get(),
+                                                  m->normalIn.res12.Get(),
+                                                  m->shared[static_cast<UINT>(Shared::Specular)].res12.Get(),
+                                                  m->cfg.width, m->cfg.height,
+                                                  static_cast<uint32_t>(m->frames), slCam, m->log);
+    }
+    ID3D12Resource* wSrc = slPreRan ? m->waterOut.res12.Get() : m->waterIn.res12.Get();
+    ID3D12Resource* wDst = slPreRan ? m->waterIn.res12.Get() : m->waterOut.res12.Get();
+    bool inB = false;
+    if (!m->rt->RecordWater(u, ub, m->depthIn.res12.Get(), layer12, m->shared[static_cast<UINT>(Shared::Albedo)].res12.Get(),
+                            m->shared[static_cast<UINT>(Shared::Specular)].res12.Get(), wSrc, wDst,
+                            water, sssWidth, sssStrength, &inB, m->bedFrame + 1 >= m->frames ? m->bed12 : nullptr, m->bedSrv,
+                            m->preWaterFrame + 1 >= m->frames ? m->preWater.res12.Get() : nullptr))
+        return false;
+    if (!m->rt->SubmitWater(m->queue.Get())) {
+        m->log("[RT] water submit failed; water off");
+        m->waterFailed = true;
+        return false;
+    }
+    bool resInWaterIn = slPreRan ? !inB : inB;
+    // When there is no water this frame (interiors / dry views), run DLSS-RR after SSS as usual.
+    if (!slPreRan && m->motionIn.res12) {
+        ID3D12Resource* src12 = resInWaterIn ? m->waterIn.res12.Get() : m->waterOut.res12.Get();
+        ID3D12Resource* dst12 = resInWaterIn ? m->waterOut.res12.Get() : m->waterIn.res12.Get();
         StreamlineHost::EvalCamera slCam{};
         if (m->camera.valid && m->lighting.hasCamera) {
             slCam.valid = true;
@@ -110,10 +147,10 @@ bool D3D12Bridge::ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, 
                                            m->shared[static_cast<UINT>(Shared::Specular)].res12.Get(),
                                            m->cfg.width, m->cfg.height,
                                            static_cast<uint32_t>(m->frames), slCam, m->log)) {
-            inB = !inB;
+            resInWaterIn = !resInWaterIn;
         }
     }
-    c->CopyResource(sceneHdr, inB ? m->waterIn.tex11.Get() : m->waterOut.tex11.Get());
+    c->CopyResource(sceneHdr, resInWaterIn ? m->waterIn.tex11.Get() : m->waterOut.tex11.Get());
     return true;
 }
 

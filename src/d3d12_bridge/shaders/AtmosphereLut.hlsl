@@ -147,7 +147,7 @@ float4 skyview(float4 at : SV_Position) : SV_Target0 {
     if (hitGround.x > 0.0f) { tMax = min(tMax, hitGround.x); }
     tMax = max(tMax, 0.0f);
 
-    const float3 sunD = normalize(sunDir.xyz);
+    const float3 sunD = astroSunDir();
     const float cosT = dot(rd, sunD);
     const float phR = (3.0f / (16.0f * PI)) * (1.0f + cosT * cosT);
     const float g = 0.78f;
@@ -180,18 +180,23 @@ float4 skyview(float4 at : SV_Position) : SV_Target0 {
         L += T * (scat * (1.0f - stepT) / max(sT, 1.0e-5f.xxx));
         T *= stepT;
     }
-    // Disciplined Hillaire SIGGRAPH 2020 linear exposure calibrated to Skyrim's auto-exposure range (0% sky blowout):
-    // rich deep cerulean zenith (~0.07, 0.19, 0.44), crisp alpine mid-sky, and un-clipped Rayleigh-Mie horizon.
-    const float sunVisDay = smoothstep(-0.06f, 0.14f, sunD.z);
+    // Disciplined Hillaire SIGGRAPH 2020 linear exposure driven by TRUE astronomical sun elevation (sunD.z):
+    // smoothly traverses dawn/sunrise (-0.08..+0.20, deep indigo zenith -> rose/magenta mid -> coral-gold horizon
+    // matching author-01.jpg own-13..17/27/42), crisp Nordic alpine day, golden-hour sunset/dusk, and dark star-lit night!
+    const float sunVisDay = smoothstep(-0.08f, 0.16f, sunD.z);
     const float3 solarIrr = float3(0.96f, 0.99f, 1.04f) * (7.2f * sunVisDay);
-    const float twilightW = smoothstep(-0.08f, 0.02f, sunD.z) * (1.0f - smoothstep(0.05f, 0.22f, sunD.z));
+    const float twilightW = smoothstep(-0.10f, 0.01f, sunD.z) * (1.0f - smoothstep(0.06f, 0.26f, sunD.z));
     const float antiSolar = saturate(dot(rd, -sunD));
+    const float solarSide = saturate(dot(rd, sunD));
     const float beltBand = exp(-pow((rd.z - 0.14f) / 0.12f, 2.0f)) * pow(antiSolar, 2.0f);
+    const float horGlow = exp(-max(rd.z, 0.0f) * 6.5f) * pow(solarSide, 2.5f);
     const float earthShadow = (1.0f - smoothstep(0.0f, 0.10f, rd.z)) * pow(antiSolar, 1.5f);
     float3 outSky = L * solarIrr;
-    outSky += float3(0.028f, 0.085f, 0.22f) * (sunVisDay * smoothstep(0.05f, 0.65f, rd.z));
-    outSky += float3(0.32f, 0.16f, 0.26f) * (beltBand * twilightW * 0.48f);
-    outSky = lerp(outSky, outSky * float3(0.45f, 0.55f, 0.85f), earthShadow * twilightW * 0.55f);
+    outSky += float3(0.028f, 0.085f, 0.22f) * (smoothstep(0.06f, 0.28f, sunD.z) * smoothstep(0.05f, 0.65f, rd.z));
+    // Authentic Pacific Northwest twilight palette (author-01.jpg own-13..17, own-27, own-42):
+    outSky += float3(1.10f, 0.42f, 0.14f) * (horGlow * twilightW * 0.85f);
+    outSky += float3(0.46f, 0.20f, 0.38f) * (beltBand * twilightW * 0.58f);
+    outSky = lerp(outSky, outSky * float3(0.42f, 0.50f, 0.82f), earthShadow * twilightW * 0.55f);
     outSky = outSky / (1.0f + outSky * 0.48f);
     return float4(outSky, 1.0f);
 }

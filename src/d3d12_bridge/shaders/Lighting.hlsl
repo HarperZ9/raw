@@ -721,28 +721,32 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (!match && sunColour.w > 0.5f && (flags.x & FLAG_CLOUDS) != 0u) { sunShadow *= pow(saturate(cloudShadow(p + camPosW.xyz)), 1.25f); }   // SKY-02 rolling cloud-shadow contrast
         // Skin: warm dermal penumbra + gentle wrap so shadow transitions on faces and shoulders stay lifelike, never muddy grey.
         const float3 sunSh = skin && !match ? pow(saturate(sunShadow).xxx, float3(0.72f, 0.92f, 1.04f)) : sunShadow.xxx;
+        // True engine-synchronized Sun vs Moon direct-lighting separation driven by Sky::currentGameHour (+0x1B0, astroSunElev):
+        // Prevents ShadowSceneNode->sunLight's night-time Moon flip from ever receiving daytime D65 sunlight gain/color,
+        // and drives authentic golden-coral sunrise/sunset direct warmth as astroSunElev crosses 0 deg!
         const float dirLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-        const float nightDir = (!match && sunColour.w > 0.5f) ? saturate((0.26f - dirLum) * 4.5f) : 0.0f;
-        // Elder Weathers physical sun-color alignment by day (eliminates vanilla's muddy green/orange mismatches) + silver-blue moonlight by night.
+        const float aElevL = astroSunElev();
+        const float nightDir = (!match && sunColour.w > 0.5f) ? max(smoothstep(0.03f, -0.06f, aElevL), saturate((0.22f - dirLum) * 4.5f)) : 0.0f;
+        const float goldenW = (!match && sunColour.w > 0.5f) ? (smoothstep(-0.04f, 0.04f, aElevL) * (1.0f - smoothstep(0.14f, 0.34f, aElevL))) : 0.0f;
         float3 alignedDayCol = sunColour.rgb;
         if (!match && sunColour.w > 0.5f && nightDir < 0.95f) {
-            const float elevDegD = max(degrees(asin(saturate(sunDir.z))), 1.2f);
+            const float elevDegD = max(degrees(asin(saturate(max(aElevL, 0.02f)))), 1.5f);
             const float mD = 1.0f / (sin(radians(elevDegD)) + 0.50572f * pow(elevDegD + 6.07995f, -1.6364f));
             const float3 ewTrans = exp(-(0.20f * float3(0.175f, 0.410f, 1.0f) + 0.025f * lerp(1.0f, 4.5f, saturate(clouds.x))) * mD);
-            // High-latitude / alpine plateau CIE D65 midday calibration (Norway / Swiss Alps / Mongolian steppe):
-            // crisp cool-neutral daylight at high sun (sunDir.z > 0.30) transitioning naturally to warm amber only at dawn/dusk.
-            const float highSun = smoothstep(0.18f, 0.48f, sunDir.z);
+            const float highSun = smoothstep(0.22f, 0.48f, aElevL);
             const float3 d65Spec = lerp(ewTrans, float3(0.96f, 0.98f, 1.02f), highSun * 0.78f);
             const float ewLum = max(dot(d65Spec, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
             const float middayTrim = lerp(1.0f, 0.88f, highSun);
             alignedDayCol = lerp(sunColour.rgb, d65Spec * (max(dirLum, 0.05f) / ewLum), 0.62f * (1.0f - nightDir)) * middayTrim;
+            alignedDayCol = lerp(alignedDayCol, alignedDayCol * float3(1.32f, 0.84f, 0.52f), goldenW * 0.68f);
         }
-        // Disciplined physical sun-to-ambient HDR ratio (!match exteriors): crisp sunlit highlights with zero blowout.
-        const float sunHdrGain = (!match && sunColour.w > 0.5f) ? lerp(1.22f, 1.02f, saturate(clouds.x * 1.15f)) * (1.0f - nightDir * 0.30f) : 1.0f;
-        const float3 dirCol = lerp(alignedDayCol, max(sunColour.rgb, float3(0.14f, 0.20f, 0.34f)) * float3(0.84f, 0.95f, 1.22f), nightDir * 0.65f) * sunHdrGain;
+        // Disciplined cool silver-blue moonlight at night (Commons Cluster A: lets warm torches/hearths/windows dominate night scenes).
+        const float3 moonDirectCol = float3(0.22f, 0.30f, 0.50f) * clamp(dirLum * 0.75f, 0.14f, 0.48f);
+        const float sunHdrGain = (!match && sunColour.w > 0.5f) ? lerp(1.20f, 1.00f, saturate(clouds.x * 1.15f)) * (1.0f - nightDir * 0.42f) : 1.0f;
+        const float3 dirCol = lerp(alignedDayCol * sunHdrGain, moonDirectCol, nightDir);
         // Chan 2018 micro-shadowing: uses fine-scale AO to shadow crevices/mortar/bark where coarse shadow maps cannot reach.
         const float microSh = (!match && !isActorFeat && base != 5u) ? saturate(2.0f * AoHist.Load(ip).x + saturate(dot(s.n, sunDir.xyz)) - 0.85f) : 1.0f;
-        const float sunPunch = (!match && sunColour.w > 0.5f) ? 1.18f : 1.0f;
+        const float sunPunch = (!match && sunColour.w > 0.5f) ? lerp(1.16f, 0.85f, nightDir) : 1.0f;
         addLight(s, sunDir.xyz, dirCol * (sunSh * lerp(0.50f, 1.0f, microSh) * sunPunch), dirCol * sunPunch, diff, spec);
         // Subtle, deep-emerald backlit foliage subsurface transmission (no blown-out pale yellow-green pine glow).
         if (!match && base == 5u && sunColour.w > 0.5f) {

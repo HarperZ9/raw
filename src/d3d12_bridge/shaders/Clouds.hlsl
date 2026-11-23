@@ -157,12 +157,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float twiCloud = smoothstep(-0.10f, 0.00f, aElev) * (1.0f - smoothstep(0.06f, 0.26f, aElev)) * (1.0f - saturate(clouds.x * 0.85f - 0.25f));
         const float3 twiCoral = float3(1.25f, 0.54f, 0.28f) * max(sLum, 0.45f);
         const float3 physDaySun = lerp(lerp(rawSunC, hTrans * (max(sLum, 0.14f) / htLum), 0.65f), twiCoral, twiCloud * 0.48f);
-        // Luminous silver-indigo lunar forward-scattering on night clouds drifting past Masser & Secunda!
-        const float3 sunC = lerp(physDaySun, float3(0.32f, 0.44f, 0.72f) * max(sLum * 0.90f, 0.58f), nightW);
-        const float3 rawSkyC = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.0f);
-        const float skyLum = max(dot(rawSkyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
-        // Clean atmospheric blue-silver cloud shadow ambient (eliminates muddy brown undersides).
-        const float3 skyC = lerp(rawSkyC, float3(0.62f, 0.76f, 0.96f) * skyLum, 0.72f);
+        // Unified World-Space Atmosphere sync: lock cloud sun, shadow ambient, and horizon haze directly to evalWorldAtmosphere()
+        // so volumetric clouds fuse seamlessly into the sky dome, mountain aerial perspective, and terrain lighting!
+        float3 uSunC, uSkyZ, uSkyH, uAmbUp, uAmbDn;
+        evalWorldAtmosphere(uSunC, uSkyZ, uSkyH, uAmbUp, uAmbDn);
+        const float3 sunC = lerp(uSunC, physDaySun, 0.25f * (1.0f - nightW));
+        const float3 skyC = lerp(uSkyH, uSkyZ, saturate(dir.z * 1.4f));
         const float sigma = kCloudSigma;
         float T = 1.0f;
         float3 S = 0.0f;
@@ -218,10 +218,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     stormFlash = boltCol * (pulse * glowVol * (0.30f + dens * 2.1f) * stormInt * 2.2f);
                 }
             }
-            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(1.00f, 0.995f, 0.99f), 0.52f * (1.0f - lowSun) * (1.0f - nightW));
-            const float3 dayCoolBase = lerp(float3(0.28f, 0.42f, 0.68f), float3(0.42f, 0.48f, 0.58f), overcastW) * max(dot(skyC, float3(0.2126f, 0.7152f, 0.0722f)), 0.16f) * cloudAo;
-            const float3 nightCloudBase = float3(0.014f, 0.022f, 0.042f) * cloudAo;
-            const float3 coolBase = lerp(dayCoolBase, nightCloudBase, nightW);
+            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(1.00f, 0.995f, 0.99f), 0.45f * (1.0f - lowSun) * (1.0f - nightW));
+            const float3 coolBase = lerp(uSkyZ * 0.78f, uSkyH * 0.85f, overcastW * 0.65f + (1.0f - h) * 0.35f) * cloudAo;
             const float3 underLit = float3(1.25f, 0.50f, 0.24f) * (twiCloud * (1.0f - h) * pow(saturate(dot(dir, aSun)), 2.5f) * (1.0f - overcastW * 0.85f) * 0.55f);
             // Night lunar rim glow: clouds near the Moon (sunDir.xyz at night) transmit translucent silver-blue light!
             const float3 moonRim = float3(0.38f, 0.52f, 0.85f) * (nightW * hg(cosT, 0.76f) * exp(-od * sigma * 0.35f) * 0.65f);

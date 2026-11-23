@@ -377,21 +377,20 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // (d >= 1.0f) so far mountains and the Sea of Ghosts melt into the sky dome with 0.000 luminance discontinuity
         // (eliminates the dark curved slate horizon band caught in r257_dawnstar_npc.jpg).
         const float cloudCov = saturate(clouds.x);
-        // Continuous Single World-Space Atmosphere: use the EXACT same Hillaire Sky-View + overcastScatter + nightHor
-        // formula as the sky dome branch so distant mountains, forests & oceans melt invisibly into the sky (zero floating LOD seam!).
+        // Unified World-Space Atmosphere sync: blend Hillaire Sky-View LUT with evalWorldAtmosphere() horizon
+        // so distant mountains, volumetric fogs, clouds, and sky dome share one exact color & luminance gradient!
+        float3 uSunF, uSkyZF, uSkyHF, uAmbUpF, uAmbDnF;
+        evalWorldAtmosphere(uSunF, uSkyZF, uSkyHF, uAmbUpF, uAmbDnF);
         const float3 hillaireSky = sampleHillaireSky(normalize(float3(w.xy, max(w.z, 0.008f))));
         const float hLumF = max(dot(hillaireSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
         const float overcastWF = saturate(cloudCov * 0.85f - 0.12f + weather.w * 0.45f + weather.z * 0.42f);
         const float3 overcastScatterF = lerp(hillaireSky, hLumF.xxx * float3(0.92f, 0.96f, 1.02f), 0.78f);
         float3 atmoCol = lerp(hillaireSky, overcastScatterF, overcastWF * 0.82f);
+        atmoCol = lerp(atmoCol, lerp(uSkyHF, uSkyZF, saturate(max(w.z, 0.0f) * 2.2f)), 0.42f);
         const float3 d65Mie = lerp(float3(1.0f, 0.66f, 0.36f), float3(0.96f, 0.98f, 1.02f), highSunF);
         const float mieHalo = (pow(cosSunF, 5.0f) * 0.14f + pow(cosSunF, 28.0f) * 0.24f) * (1.0f - cloudCov * 0.72f) * (1.0f - nightF);
-        atmoCol += d65Mie * mieHalo;
-        const float3 ambSkyF = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.03f.xxx);
-        const float overcastDeckF = saturate(cloudCov * 0.85f + weather.w * 0.45f + weather.z * 0.55f);
-        const float3 nightHorF = lerp(float3(0.028f, 0.044f, 0.078f), ambSkyF * float3(0.68f, 0.74f, 0.84f), overcastDeckF * 0.85f);
-        atmoCol = lerp(atmoCol, lerp(sH, float3(0.58f, 0.63f, 0.70f), 0.55f), weather.z * 0.45f);
-        atmoCol = lerp(atmoCol, nightHorF, nightF);
+        atmoCol += lerp(d65Mie, uSunF, 0.45f) * mieHalo;
+        atmoCol = lerp(atmoCol, uSkyHF, nightF * 0.65f);
         // True linear HDR aerial perspective + Volcanic Solstheim Ashstorm choking diffusion & glowing ash embers!
         const float ashW = saturate((sunColour.r - sunColour.b * 1.42f) * 2.8f) * saturate(clouds.x * 1.35f) * (1.0f - nightF);
         if (ashW > 0.05f) {

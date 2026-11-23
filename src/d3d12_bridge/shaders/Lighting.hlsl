@@ -993,6 +993,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
 
     float3 amb = float3(dot(ambient[0].xyz, s.n) + ambient[0].w, dot(ambient[1].xyz, s.n) + ambient[1].w,
                         dot(ambient[2].xyz, s.n) + ambient[2].w);
+    // Sync exterior hemisphere ambient directly with evalWorldAtmosphere() sky zenith/horizon + ground bounce
+    // so shaded terrain, stone, snow, and foliage seamlessly match the live sky dome, clouds, and mountain fog!
+    if (!match && sunColour.w > 0.5f) {
+        float3 uSunA, uSkyZA, uSkyHA, uAmbUpA, uAmbDnA;
+        evalWorldAtmosphere(uSunA, uSkyZA, uSkyHA, uAmbUpA, uAmbDnA);
+        const float3 skyHemi = lerp(uAmbDnA, uAmbUpA, saturate(s.n.z * 0.5f + 0.5f));
+        amb = lerp(amb, skyHemi, 0.48f);
+    }
     // Pure Native Hardware DXR 1.2 Directional Skylighting & RTAO when RT is active (zero screen-space GTAO halos!):
     // Screen-space GTAO (AoHist) runs ONLY as a fallback when hardware RT sky/RTAO is disabled.
     const float ssaoMix = (rt && (flags.x & FLAG_SKY) != 0u) ? 0.0f : 1.0f;

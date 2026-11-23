@@ -192,11 +192,14 @@ void cacheAddWave(float3 p, float3 n, float3 bounce, float sky) {
 float3 shadeHit(float3 hp, float3 n, float3 albedo, float2 r, bool traceSun) {
     float3 light = 0.0f;
     const float3 o = hp + n * (0.5f + 0.002f * length(hp));
+    float3 uSunH, uSkyZH, uSkyHH, uAmbUpH, uAmbDnH;
+    if (sunColour.w > 0.5f) { evalWorldAtmosphere(uSunH, uSkyZH, uSkyHH, uAmbUpH, uAmbDnH); }
+    else { uSunH = sunColour.rgb; uAmbUpH = ambientAt(float3(0.0f, 0.0f, 1.0f)); uAmbDnH = ambientAt(float3(0.0f, 0.0f, -1.0f)); }
     if (sunDir.w > 0.5f) {
         const float nl = dot(n, sunDir.xyz);
         if (nl > 0.0f) {
             const float vis = sunColour.w > 0.5f && traceSun ? visible(o, jitterDir(sunDir.xyz, sunCone, r), 0.0f, sunLength) : 1.0f;
-            light += sunColour.rgb * nl * vis;
+            light += uSunH * nl * vis;
         }
     }
     [loop] for (uint li = 0u; li < flags.y; li++) {
@@ -207,6 +210,9 @@ float3 shadeHit(float3 hp, float3 n, float3 albedo, float2 r, bool traceSun) {
         light += lightColS[li].rgb * (1.0f - x * x) * saturate(dot(n, toL / max(dist, 1.0e-4f)));
     }
     float3 amb = ambientAt(n);
+    if (sunColour.w > 0.5f) {
+        amb = lerp(amb, lerp(uAmbDnH, uAmbUpH, saturate(n.z * 0.5f + 0.5f)), 0.48f);
+    }
     float4 c;
     const float3 j = float3(r, frac(r.x + r.y * 1.618f)) - 0.5f;
     if ((giFlags & GI_CACHE) != 0u && cacheRead(hp, n, j, c)) {

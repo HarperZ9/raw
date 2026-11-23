@@ -50,9 +50,9 @@ bool ReadCamera(EngineView* v) {
         std::memcpy(v->camPos, root + 0xA0, 12);
         v->fov = At<float>(cam, 0x13C);
         v->fovFirstPerson = At<float>(cam, 0x140);
-        // PlayerCamera::currentState (+0x38) -> TESCameraState::id (+0x18): 0=1stP, 3=Free, 9=3rdP, etc.
+        // TESCamera::currentState (+0x28) -> TESCameraState::id (+0x18): 0=1stP, 3=Free, 9=3rdP, 10=Mount, etc.
         v->camStateId = 0xFFFFFFFFu;
-        if (const uint8_t* st = At<const uint8_t*>(cam, 0x38)) {
+        if (const uint8_t* st = At<const uint8_t*>(cam, 0x28)) {
             const uint32_t sid = At<uint32_t>(st, 0x18);
             if (sid <= 16u) v->camStateId = sid;
         }
@@ -72,10 +72,10 @@ bool ReadCell(EngineView* v) {
         if (!cell) return false;
         v->cellFormId = At<uint32_t>(cell, 0x14);
         v->interior = At<uint16_t>(cell, 0x40) & 1u;
-        // TESObjectCELL::waterHeight (+0x54) with TESWorldSpace::defaultWaterHeight (+0x150) fallback.
+        // TESObjectCELL::waterHeight (+0x70 on 1.6.1170/1.7.104) with TESWorldSpace::defaultWaterHeight (+0x150) fallback.
         v->waterHeight = -14000.0f;
-        const float cellWh = At<float>(cell, 0x54);
-        const bool cellWhValid = std::isfinite(cellWh) && cellWh > -50000.0f && cellWh < 50000.0f;
+        const float cellWh = At<float>(cell, 0x70);
+        const bool cellWhValid = std::isfinite(cellWh) && cellWh > -50000.0f && cellWh < 50000.0f && cellWh != 0.0f;
         if (cellWhValid) v->waterHeight = cellWh;
         // the worldspace: off:TESObjectCELL::worldSpace (+0x128 on 1.6.1170, a cell dump in game, ec7-2; CommonLib's
         // +0x120 held zero), checked by its form type (TESWorldSpace, 71)

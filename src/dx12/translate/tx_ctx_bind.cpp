@@ -146,6 +146,8 @@ STDMETHODIMP_(void) Context::IASetVertexBuffers(UINT start, UINT n, ID3D11Buffer
 STDMETHODIMP_(void) Context::IASetIndexBuffer(ID3D11Buffer* b, DXGI_FORMAT f, UINT offset)
 {
     TX_TRACE("Context::IASetIndexBuffer");
+    const uintptr_t bp = reinterpret_cast<uintptr_t>(b);
+    if (b && (bp < 0x10000ull || bp >= 0x00007FFFFFFFFFFFull || (bp & 0x7ull) != 0)) b = nullptr;
     if (seg_) { SHead(SO_IB, uint32_t(f)); SBuf(static_cast<TBuffer*>(b)); seg_->words.push_back(offset); }
     TBuffer* nb = static_cast<TBuffer*>(b);
     if (s_.ib.buf == nb && s_.ib.offset == offset && s_.ibFmt == f) return;   // a rename sets D_IB itself

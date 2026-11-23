@@ -267,8 +267,19 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"fExtraTaskletBudgetMS:Papyrus", "2.4"},
         {"fPostLoadUpdateTimeMS:Papyrus", "1000.0"},
     };
+    const bool hasEngineFixes = GetModuleHandleA("EngineFixes.dll") != nullptr;
     size_t applied = 0;
     for (const auto& kv : kTuning) {
+        // On heavily modded SKSE lists (EngineFixes.dll active), skip aggressive LOD/tree/grass distance inflation
+        // so 32 GB RAM systems never hit 31.5+ GB OOM during save load; keep all rendering, physics & combat fixes!
+        if (hasEngineFixes && (
+                std::strncmp(kv.k, "fLODFadeOutMult", 15) == 0 ||
+                std::strcmp(kv.k, "fTreeLoadDistance:Trees") == 0 ||
+                std::strcmp(kv.k, "uMaxSkinnedTreesToRender:Trees") == 0 ||
+                std::strcmp(kv.k, "fGrassStartFadeDistance:Grass") == 0 ||
+                std::strcmp(kv.k, "fGrassMaxStartFadeDistance:Grass") == 0)) {
+            continue;
+        }
         if (SetSetting(img, refs, kv.k, kv.v)) ++applied;
     }
     char out[160];

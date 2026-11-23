@@ -59,7 +59,11 @@ float4 atrousStep(float4 at, int stepSize, bool finalPass) {
             const float wn = pow(saturate(dot(n, nq)), 64.0f);
             const float4 tap = GiIn.Load(int3(q, 0));
             const float tLum = dot(tap.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-            const float wl = exp(-abs(tLum - cLum) * invSigmaL);
+            // Luminance + chromaticity edge-stopping: prevents warm torch/hearth GI from bleeding onto cold shadowed walls!
+            const float3 cChr = center.rgb / max(cLum, 0.02f);
+            const float3 tChr = tap.rgb / max(tLum, 0.02f);
+            const float chrDiff = length(tChr - cChr);
+            const float wl = exp(-abs(tLum - cLum) * invSigmaL - chrDiff * 0.35f);
             const float w = kB3[dx + 2] * wy * wz * wn * wl;
             const float qSig = unpackSigma(tap.a);
             sumRgb += tap.rgb * w;

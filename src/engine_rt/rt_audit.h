@@ -9,5 +9,6 @@
 namespace raw::rt {
 
 std::string AuditCommand(const Image& img);
+std::string EngineOpticsCommand(const Image& img);
 
 }  // namespace raw::rt

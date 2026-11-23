@@ -235,4 +235,26 @@ std::string AuditCommand(const Image& img) {
     return buf;
 }
 
+std::string EngineOpticsCommand(const Image& img) {
+    AuditData d{};
+    ProbeLive(img, &d);
+    char buf[768];
+    std::snprintf(buf, sizeof buf,
+                  "{\"cmd\":\"engine_optics\",\"sky_ok\":%s,\"game_hour\":%.3f,\"weather_pct\":%.3f,"
+                  "\"sky_colors_valid\":%d,"
+                  "\"zenith_rgb\":[%.3f,%.3f,%.3f],\"horizon_rgb\":[%.3f,%.3f,%.3f],"
+                  "\"sun_rgb\":[%.3f,%.3f,%.3f],\"ambient_rgb\":[%.3f,%.3f,%.3f],"
+                  "\"water_sys_ok\":%s,\"water_objects\":%u,"
+                  "\"decal_mgr_ok\":%s,\"decal_count\":%u,\"grass_mgr_ok\":%s,\"img_space_ok\":%s}",
+                  d.skyOk ? "true" : "false", d.gameHour, d.weatherPct, d.skyColorsValid,
+                  d.skyColors[0][0], d.skyColors[0][1], d.skyColors[0][2],
+                  d.skyColors[2][0], d.skyColors[2][1], d.skyColors[2][2],
+                  d.skyColors[3][0], d.skyColors[3][1], d.skyColors[3][2],
+                  d.skyColors[7][0], d.skyColors[7][1], d.skyColors[7][2],
+                  d.waterSysOk ? "true" : "false", d.waterObjCount,
+                  d.decalMgrOk ? "true" : "false", d.decalCount,
+                  d.grassMgrOk ? "true" : "false", d.imgSpaceOk ? "true" : "false");
+    return buf;
+}
+
 }  // namespace raw::rt

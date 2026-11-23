@@ -260,26 +260,35 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float3 o = p + ng * oScale;
         const float2 r = stbnR2(px, frameIndex);
         if (sunDir.w > 0.5f && sunColour.w > 0.5f && dot(n, sunDir.xyz) > 0.0f) {
-            // Near the terminator of the coarse surface: start past its own facets.
-            // Overdrive 3-spp stratified RayQuery soft sun penumbra shadows.
+            // 2027 Blocker-Distance Variable-Penumbra PCSS RayQuery Sun Shadows (4-spp stratified):
+            // Probe exact occluder distance first: contact shadows under boots/stones stay razor-sharp (0.24x cone),
+            // while high branches & castle eaves cast silky wide penumbrae (up to 1.85x cone)!
             const float turn = saturate(1.0f - dot(ng, sunDir.xyz) / 0.40f);
             const float tMinS = max(termDist, 1.8f) * turn * turn;
-            const float2 r1 = frac(r + float2(0.333333f, 0.618034f));
-            const float2 r2 = frac(r + float2(0.666667f, 0.236068f));
-            const float v0 = visible(o, jitterDir(sunDir.xyz, sunCone, r), tMinS, sunLength);
-            const float v1 = visible(o, jitterDir(sunDir.xyz, sunCone, r1), tMinS, sunLength);
-            const float v2 = visible(o, jitterDir(sunDir.xyz, sunCone, r2), tMinS, sunLength);
-            vis.x = (v0 + v1 + v2) * (1.0f / 3.0f);
+            Hit hBlocker;
+            float effCone = sunCone;
+            float v0 = 1.0f;
+            if (traceHit(o + sunDir.xyz * tMinS, jitterDir(sunDir.xyz, sunCone * 0.45f, r), sunLength, hBlocker)) {
+                v0 = 0.0f;
+                effCone = clamp(sunCone * (0.24f + 1.60f * saturate(hBlocker.t / 220.0f)), sunCone * 0.24f, sunCone * 1.85f);
+            }
+            const float2 r1 = frac(r + float2(0.250000f, 0.618034f));
+            const float2 r2 = frac(r + float2(0.500000f, 0.236068f));
+            const float2 r3 = frac(r + float2(0.750000f, 0.854102f));
+            const float v1 = visible(o, jitterDir(sunDir.xyz, effCone, r1), tMinS, sunLength);
+            const float v2 = visible(o, jitterDir(sunDir.xyz, effCone, r2), tMinS, sunLength);
+            const float v3 = visible(o, jitterDir(sunDir.xyz, effCone, r3), tMinS, sunLength);
+            vis.x = (v0 + v1 + v2 + v3) * 0.25f;
         }
-        // arXiv:2602.08642 Adaptive Path-Tracing Ray Allocation (1..3 spp):
-        // High-curvature edges, corners, foliage silhouettes & interiors receive 3 stratified cosine GI rays;
-        // smooth open plains receive 1-2 rays (paired with 4-neighbor ReSTIR-style reuse + 25-tap SVGF A-Trous).
+        // arXiv:2602.08642 Overdrive Adaptive Path-Tracing Ray Allocation (3..4 spp):
+        // Interiors, foliage silhouettes & high-curvature corners receive 4 stratified cosine GI rays;
+        // open surfaces receive 3 stratified rays + smooth near-contact distance AO!
         const bool isInterior = sunDir.w <= 0.5f;
-        const float aoLen = isInterior ? (skyLength > 0.0f ? min(skyLength, 220.0f) : 180.0f) : skyLength;
+        const float aoLen = isInterior ? (skyLength > 0.0f ? min(skyLength, 240.0f) : 200.0f) : skyLength;
         if (aoLen > 0.0f) {
             const float2 rs0 = stbnR2(px, frameIndex + 11.0f);
             const float edgeDetail = 1.0f - saturate(dot(n, ng));
-            const uint giSpp = (isInterior || edgeDetail > 0.12f || base == 5u) ? 3u : 2u;
+            const uint giSpp = (isInterior || edgeDetail > 0.10f || base == 5u) ? 4u : 3u;
             float skySum = 0.0f;
             float3 bounceSum = 0.0f;
             const bool doCache2 = ((giFlags & GI_CACHE) != 0u) && skyTurn(id.xy);
@@ -292,7 +301,8 @@ void main(uint3 id : SV_DispatchThreadID) {
                     Hit h;
                     if (traceHit(o, sd, aoLen, h)) {
                         float3 hn;
-                        sSample = isInterior ? saturate(h.t / aoLen) : 0.0f;
+                        // Smooth distance-weighted contact AO in both interiors and near exterior crevices:
+                        sSample = isInterior ? saturate(h.t / aoLen) : saturate((h.t - 8.0f) / max(min(aoLen, 260.0f), 32.0f)) * 0.35f;
                         bSample = radianceAt(h, o, sd, rs.yx, true, hn);
                         if (si == 0u && doCache2) {
                             float3 cTmp;
@@ -458,29 +468,35 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float3 v = normalize(eyeAt() - p);
             const float shin = exp2(sp.y * 13.0f);
             const float alpha = lerp(lerp(clamp(sqrt(2.0f / (shin + 2.0f)), 0.03f, 0.85f), 0.10f, rain.wet), 0.025f, rain.puddle);
-            const float2 rr = stbnR2(px, frameIndex + 37.0f);
-            // Heitz 2018 GGX VNDF importance sampling (physically exact glossy lobes with zero grazing leaks).
-            const float3 rd = sampleGGXVNDF(n, v, max(alpha, 0.02f), rr);
+            const float2 rr0 = stbnR2(px, frameIndex + 37.0f);
             const float3 ng = geometricNormal(px, p, n);
+            const float3 o = p + ng * (0.5f + 0.003f * viewZOf(d));
+            // Overdrive 2-spp Stratified Bounded-VNDF Glossy RT Reflections on forged metals & wet surfaces:
+            // halves 1-spp specular variance at source before RtReflFilter temporal denoising!
+            const uint reflSpp = (base == 2u || wetGloss) ? 2u : 1u;
+            float3 reflSum = 0.0f.xxx;
+            float reflHitW = 0.0f;
             reflTraced = true;
-            if (dot(rd, ng) > 0.0f) {
-                const float3 o = p + ng * (0.5f + 0.003f * viewZOf(d));
+            [loop] for (uint rsi = 0u; rsi < reflSpp; ++rsi) {
+                const float2 rr = frac(rr0 + float2(float(rsi) * 0.5f, float(rsi) * 0.618034f));
+                const float3 rd = sampleGGXVNDF(n, v, max(alpha, 0.02f), rr);
+                if (dot(rd, ng) <= 0.0f) { continue; }
                 Hit h;
                 float3 c = 0.0f.xxx, hn = float3(0.0f, 0.0f, 1.0f);
-                // On-screen: exact full-res lit frame. Off-screen: multi-bounce radianceAt + persistent world radiance cache.
                 if (traceHit(o, rd, reflectLength, h)) {
                     const float3 hitP = o + rd * h.t;
-                    if (onScreen(hitP, c)) { refl = float4(c, 1.0f); }
+                    if (onScreen(hitP, c)) { reflSum += c; reflHitW += 1.0f; }
                     else if ((giFlags & GI_MATERIALS) != 0u) {
                         float3 offRad = radianceAt(h, o, rd, rr, true, hn);
                         if ((giFlags & GI_CACHE) != 0u) {
                             float3 cB = 0.0f.xxx; float cS = 0.0f;
                             if (cacheRead(hitP, hn, cB, cS)) { offRad = max(offRad, cB * 0.85f); }
                         }
-                        refl = float4(offRad, 1.0f);
+                        reflSum += offRad; reflHitW += 1.0f;
                     }
-                } else if (wetGloss || base == 2u) { refl = float4(skyAt(rd), 1.0f); }
+                } else if (wetGloss || base == 2u) { reflSum += skyAt(rd); reflHitW += 1.0f; }
             }
+            if (reflHitW > 0.0f) { refl = float4(reflSum / reflHitW, 1.0f); }
         }
     }
 #ifdef RT_DEBUG

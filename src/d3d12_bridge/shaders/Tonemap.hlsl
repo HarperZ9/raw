@@ -251,12 +251,13 @@ float4 main(In i) : SV_Target {
             hdr = rAcc / rW;
         }
     }
-    // OV11 (bit 10 = 1024): True 5-Tap Spectral Apochromatic Lens Dispersion (Zeiss/Cooke optical glass profile:
-    // zero at center 55%, smooth continuous R/Y/G/C/B prism spectrum at extreme outer corners — zero R/B double-vision).
+    // OV11 (bit 10 = 1024): True Cubic r^3 5-Tap Spectral Apochromatic Lens Dispersion (Zeiss/Cooke optical glass profile:
+    // 100% razor-sharp central 65% of screen, smooth continuous R/Y/G/C/B prism spectrum at outer corners).
     if ((ovInit & 1024u) != 0u) {
         const float2 caVec = baseUv - 0.5f.xx;
         const float caR = length(caVec);
-        const float caMag = pow(saturate((caR - 0.28f) / 0.45f), 2.4f) * 0.0022f * clamp(RQ.x, 0.0f, 2.5f);
+        const float caT = saturate((caR - 0.30f) / 0.42f);
+        const float caMag = (caT * caT * caT) * 0.0024f * clamp(RQ.x, 0.0f, 2.5f);
         if (caMag > 0.00005f) {
             const float2 dirC = caVec / max(caR, 1.0e-4f);
             const float2 uvM2 = min(max((baseUv - dirC * (caMag * 1.0f)) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
@@ -351,23 +352,27 @@ float4 main(In i) : SV_Target {
     const float bloomLum = dot(bloom, W);
     float3 ovAdd = 0.0f.xxx;
     if ((ovMask & 2u) != 0u) {
-        // Layer 2: Multi-radius Photochemical Emulsion Halation + 5-Tap Wide Panavision Anamorphic Streak.
+        // Layer 2 (OV2): 2-Stage Kodak 5219 Photochemical Red-Orange Halation + 6-Tap Panavision C-Series Anamorphic Streak.
         float bw, bh;
         Bloom.GetDimensions(bw, bh);
         const float2 bpx = 1.0f / max(float2(bw, bh), float2(1.0f, 1.0f));
-        const float3 hNear = Bloom.Sample(S0, suv + float2(bpx.x * 1.5f, bpx.y * 1.5f)).rgb
-                           + Bloom.Sample(S0, suv - float2(bpx.x * 1.5f, bpx.y * 1.5f)).rgb;
-        const float hLum = dot(hNear * 0.5f, W);
-        const float3 halation = float3(1.08f, 0.34f, 0.10f) * (saturate((bloomLum - 0.72f) * 0.42f) * 0.12f + saturate((hLum - 0.68f) * 0.35f) * 0.08f);
+        const float3 hInner = Bloom.Sample(S0, suv + float2(bpx.x * 1.4f, bpx.y * 1.4f)).rgb
+                            + Bloom.Sample(S0, suv - float2(bpx.x * 1.4f, bpx.y * 1.4f)).rgb;
+        const float3 hOuter = Bloom.Sample(S0, suv + float2(bpx.x * 3.8f, -bpx.y * 3.8f)).rgb
+                            + Bloom.Sample(S0, suv - float2(bpx.x * 3.8f, -bpx.y * 3.8f)).rgb;
+        const float hLumIn = dot(hInner * 0.5f, W);
+        const float hLumOut = dot(hOuter * 0.5f, W);
+        const float3 halation = float3(1.12f, 0.36f, 0.08f) * (saturate((bloomLum - 0.80f) * 0.42f) * 0.11f + saturate((hLumIn - 0.78f) * 0.36f) * 0.075f)
+                              + float3(1.00f, 0.14f, 0.04f) * (saturate((hLumOut - 0.88f) * 0.32f) * 0.065f);
         float3 anaAcc = 0.0f.xxx;
-        [unroll] for (int ai = 1; ai <= 4; ai++) {
-            const float dx = float(ai) * 3.4f * bpx.x;
+        [unroll] for (int ai = 1; ai <= 6; ai++) {
+            const float dx = float(ai) * 3.2f * bpx.x;
             const float aw = 1.0f / float(ai + 1);
-            const float3 bL = max(Bloom.Sample(S0, saturate(suv - float2(dx, 0.0f))).rgb - 0.78f.xxx, 0.0f.xxx);
-            const float3 bR = max(Bloom.Sample(S0, saturate(suv + float2(dx, 0.0f))).rgb - 0.78f.xxx, 0.0f.xxx);
+            const float3 bL = max(Bloom.Sample(S0, saturate(suv - float2(dx, 0.0f))).rgb - 0.86f.xxx, 0.0f.xxx);
+            const float3 bR = max(Bloom.Sample(S0, saturate(suv + float2(dx, 0.0f))).rgb - 0.86f.xxx, 0.0f.xxx);
             anaAcc += (bL + bR) * (0.5f * aw);
         }
-        const float3 anamorphic = anaAcc * float3(0.45f, 0.78f, 1.15f) * 0.085f;
+        const float3 anamorphic = anaAcc * float3(0.42f, 0.76f, 1.18f) * 0.080f;
         ovAdd += (halation + anamorphic) * clamp(RQ.w, 0.0f, 2.5f);
     }
     if ((ovMask & 4u) != 0u) {
@@ -439,21 +444,37 @@ float4 main(In i) : SV_Target {
         c = P[4].w * (g * P[4] - c) + c;
         c = P[3].z * (P[3].w * c - pivot) + pivot;
     }
-    // Built-in procedural LUT profiles when no external 3D PNG LUT is active (ToneX2 = 0..3).
+    // Built-in 8 Photochemical Film-Stock Grades when no external 3D PNG LUT is active (ToneX2 = 0..7):
+    // 0:Neutral, 1:Nordic Alpine, 2:Kodak 2383, 3:Cinema Contrast, 4:Kodak Vision3 500T, 5:Fuji Velvia 50,
+    // 6:Tarkovsky Polaroid, 7:LomoChrome Purple (Commons Clusters A, G, I, M).
     if (RB.x > 2.5f && RX.x > 0.5f && RO.x <= 0.001f) {
         const float lumG = dot(c.rgb, W);
         if (RX.x < 1.5f) {
-            // 1: Nordic Alpine Film (crisp cool-slate shadows, natural midtones, clean CIE D65 alpine highlights - no dry yellow cast).
-            const float3 shTint = float3(0.95f, 0.98f, 1.04f);
-            const float3 hiTint = float3(0.99f, 1.00f, 1.02f);
-            c.rgb = saturate(c.rgb * lerp(shTint, hiTint, smoothstep(0.15f, 0.78f, lumG)));
+            // 1: Nordic Alpine Film (crisp cool-slate shadows, natural midtones, clean CIE D65 alpine highlights).
+            c.rgb = saturate(c.rgb * lerp(float3(0.95f, 0.98f, 1.04f), float3(0.99f, 1.00f, 1.02f), smoothstep(0.15f, 0.78f, lumG)));
         } else if (RX.x < 2.5f) {
             // 2: Kodak 2383 Print Film (deep teal-blue shadows, rich warm golden highlights, S-curve micro-contrast).
-            const float3 kTint = lerp(float3(0.90f, 0.99f, 1.08f), float3(1.07f, 1.01f, 0.91f), smoothstep(0.12f, 0.80f, lumG));
-            c.rgb = saturate(c.rgb * kTint);
+            c.rgb = saturate(c.rgb * lerp(float3(0.89f, 0.99f, 1.09f), float3(1.08f, 1.01f, 0.90f), smoothstep(0.12f, 0.80f, lumG)));
+        } else if (RX.x < 3.5f) {
+            // 3: Cinema Contrast (restrained low-chroma land, crisp shadow toe).
+            c.rgb = saturate(lerp(lumG.xxx, c.rgb, 0.86f) * 1.04f - 0.015f);
+        } else if (RX.x < 4.5f) {
+            // 4: Kodak Vision3 500T Tungsten (deep cyan-indigo night/interior shadows + glowing amber firelight — artmedeiros / Cluster A).
+            c.rgb = saturate(c.rgb * lerp(float3(0.84f, 0.96f, 1.14f), float3(1.10f, 0.98f, 0.86f), smoothstep(0.16f, 0.76f, lumG)));
+        } else if (RX.x < 5.5f) {
+            // 5: Fuji Velvia 50 Slide Film (vivid emerald foliage, deep cobalt skies, glowing sunset corals — author-01.jpg).
+            float3 labV = linToOklab(saturate(c.rgb));
+            labV.yz *= 1.18f;
+            labV.x = lerp(labV.x, labV.x * labV.x * (3.0f - 2.0f * labV.x), 0.18f);
+            c.rgb = saturate(oklabToLin(labV));
+        } else if (RX.x < 6.5f) {
+            // 6: Tarkovsky Polaroid / Bleached Umber (low-chroma warm paper highs, muted cool-olive shadows — Cluster I/G).
+            const float3 muted = lerp(lumG.xxx, c.rgb, 0.74f);
+            c.rgb = saturate(muted * lerp(float3(0.92f, 0.96f, 0.94f), float3(1.08f, 1.02f, 0.90f), smoothstep(0.18f, 0.82f, lumG)));
         } else {
-            // 3: Cinema Contrast (restrained saturation, crisp micro-contrast).
-            c.rgb = saturate(lerp(lumG.xxx, c.rgb, 0.88f) * 1.03f - 0.015f);
+            // 7: LomoChrome Purple False-Color Film (shifts foliage greens toward dreamy plum-violet — Cluster M).
+            const float grnL = saturate((c.g - max(c.r, c.b)) * 3.0f);
+            c.rgb = saturate(lerp(c.rgb, float3(c.g * 0.95f + c.r * 0.35f, c.b * 0.55f + c.g * 0.25f, c.g * 1.10f + c.b * 0.30f), grnL * 0.78f));
         }
     }
     // Layer 1 (bit 0): Film Emulsion & Beer-Lambert Subtractive Density + Skin-Protected Oklab Vibrance

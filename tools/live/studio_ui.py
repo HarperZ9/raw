@@ -160,11 +160,23 @@ pre{margin:0;background:#0a0d12;border:1px solid var(--line);border-radius:4px;p
         </label>
       </div>
       <div class="row">
+        <label>Built-In Film Stock (ToneX2)
+          <select id="film-stock" onchange="iniSet('ToneX2', this.value)">
+            <option value="0">0 - Neutral</option>
+            <option value="1" selected>1 - Nordic Alpine Film</option>
+            <option value="2">2 - Kodak 2383 Print Film</option>
+            <option value="3">3 - Cinema Contrast</option>
+            <option value="4">4 - Kodak Vision3 500T (Night)</option>
+            <option value="5">5 - Fuji Velvia 50 (Landscape)</option>
+            <option value="6">6 - Tarkovsky Polaroid</option>
+            <option value="7">7 - LomoChrome Purple</option>
+          </select>
+        </label>
         <label>Elder 64³ 3D PNG LUT (0=Off, 1..46)
           <input id="lut-idx" type="number" min="0" max="46" value="0" onchange="iniSet('LutIndex', this.value)" style="width:72px">
         </label>
-        <label>Overlay Bitmask (0..255)
-          <input id="ov-mask" type="number" min="0" max="255" value="7" onchange="iniSet('OverlayMask', this.value)" style="width:72px">
+        <label>Overlay Bitmask (0..4095)
+          <input id="ov-mask" type="number" min="0" max="4095" value="263" onchange="iniSet('OverlayMask', this.value)" style="width:72px">
         </label>
         <label>Display Output (ToneView)
           <select id="hdr-mode" onchange="iniSet('ToneView', this.value)">

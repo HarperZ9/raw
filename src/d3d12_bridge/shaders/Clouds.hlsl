@@ -54,11 +54,13 @@ float cloudDensityVol(float3 pa, bool detail) {
     const float hGrad = saturate(baseGrad * topGrad + anvilSpread);
     if (hGrad <= 0.001f) { return 0.0f; }
 
-    // 3D dimensional cumulus structure (isotropic vertical + horizontal scale so clouds read as huge 3D masses, not flat sheets!).
-    const float3 p0 = float3(sheared.x / 32000.0f, sheared.y / 32000.0f, (curvedZ - clouds.y) / 22000.0f);
-    const float3 w0 = float3(cNoise(p0 * 0.95f + float3(3.1f, 7.4f, 1.9f)) - 0.5f,
-                             cNoise(p0 * 0.95f + float3(11.7f, 2.3f, 5.1f)) - 0.5f,
-                             cNoise(p0 * 0.95f + float3(6.3f, 14.1f, 2.7f)) - 0.5f) * 0.55f;
+    // 4D evolving convective cumulus structure: continuous vertical upwelling + domain-warp boiling over time
+    // so cloud turrets organically grow, billow, shear & dissolve instead of sliding as a rigid static sheet!
+    const float tEvo = camPosW.w * 0.0045f;
+    const float3 p0 = float3(sheared.x / 32000.0f, sheared.y / 32000.0f, (curvedZ - clouds.y) / 22000.0f - tEvo * 0.35f);
+    const float3 w0 = float3(cNoise(p0 * 0.95f + float3(3.1f + tEvo, 7.4f, 1.9f)) - 0.5f,
+                             cNoise(p0 * 0.95f + float3(11.7f, 2.3f - tEvo * 0.8f, 5.1f)) - 0.5f,
+                             cNoise(p0 * 0.95f + float3(6.3f, 14.1f, 2.7f + tEvo * 1.1f)) - 0.5f) * 0.62f;
     const float3 pw = p0 + w0;
     const float f1 = cNoise(pw);
     const float f2 = cNoise(pw * 2.09f + float3(13.1f, 5.7f, 3.3f));
@@ -208,15 +210,26 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 aerialS = lerp(horizonHaze * (1.0f - T), softS, fade) * (horFade * distCut);
         // High-altitude wispy Cirrus cloud deck (h = 68,000u above cumulus): wind-sheared ice-crystal streaks
         // illuminated by Hillaire 2020 solar transmittance, visible through gaps in the lower cumulus deck.
-        // 2nd High-Altitude Ice-Crystal Cirrus / Mares'-Tail Layer at 125,000u (above the 46k..90k cumulus slab!):
-        // Catches fiery coral-gold sunrise/sunset light minutes before dawn & after dusk (author-01.jpg own-13..15, own-27)
-        // plus subtle pearlescent cloud iridescence within 5..22 deg of the sun (Commons Cluster B).
+        // 3-Layer Sky Architecture: Mid-Altitude Altocumulus / Lenticular Bands (96,000u) + High-Altitude Cirrus (130,000u)!
+        // Catches fiery magenta-peach-gold twilight light long after the lower cumulus deck enters shadow (surpasses own-13..15/27).
         float3 cirrusAdd = 0.0f.xxx;
         if (dir.z > 0.03f && T > 0.06f) {
-            const float tCir = (125000.0f - o.z) / max(dir.z, 0.03f);
+            // Layer 2: Mid-altitude altocumulus wave bands at 96,000u
+            const float tAlto = (96000.0f - o.z) / max(dir.z, 0.03f);
+            if (tAlto > 0.0f && tAlto < 520000.0f) {
+                const float2 aPos = (o.xy + dir.xy * tAlto + cloudWind.xy * camPosW.w * 1.25f) * 0.000016f;
+                const float aWarp = cNoise(float3(aPos * 1.4f, 1.7f + camPosW.w * 0.002f)) * 1.3f;
+                const float aWave = cNoise(float3(aPos.x * 2.8f + aWarp, aPos.y * 2.1f - aWarp * 0.6f, 4.3f));
+                const float aMask = smoothstep(0.58f, 0.86f, aWave) * smoothstep(0.03f, 0.18f, dir.z) * exp(-tAlto / 320000.0f);
+                const float3 altoTwi = lerp(sunC, float3(1.55f, 0.44f, 0.34f), twiCloud * 0.88f);
+                const float3 altoCol = (altoTwi * (0.42f + 0.58f * hg(cosT, 0.68f) * 2.2f) + skyC * 0.24f) * lerp(0.38f, 0.14f, nightW);
+                cirrusAdd += altoCol * (aMask * T * horFade * (1.0f - saturate(clouds.x * 0.55f)));
+            }
+            // Layer 3: High-altitude ice-crystal cirrus & mares'-tails at 130,000u + pearlescent iridescence
+            const float tCir = (130000.0f - o.z) / max(dir.z, 0.03f);
             if (tCir > 0.0f && tCir < 650000.0f) {
-                const float2 cPos = (o.xy + dir.xy * tCir + cloudWind.xy * camPosW.w * 1.65f) * 0.0000095f;
-                const float warp = cNoise(float3(cPos * 1.8f, 2.3f)) * 1.55f;
+                const float2 cPos = (o.xy + dir.xy * tCir + cloudWind.xy * camPosW.w * 1.75f) * 0.0000095f;
+                const float warp = cNoise(float3(cPos * 1.8f, 2.3f + camPosW.w * 0.0015f)) * 1.55f;
                 const float streak = cNoise(float3(cPos.x * 4.4f + warp, cPos.y * 1.15f - warp * 0.5f, 5.1f));
                 const float detail = cNoise(float3(cPos * 10.0f + warp, 8.7f));
                 const float cMask = smoothstep(0.54f, 0.84f, streak * 0.68f + detail * 0.32f) * smoothstep(0.03f, 0.20f, dir.z);
@@ -224,9 +237,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float cirAng = acos(clamp(dot(dir, aSun), -1.0f, 1.0f));
                 const float iridBand = exp(-pow((cirAng - 0.19f) / 0.10f, 2.0f)) * (1.0f - nightW);
                 const float3 iridTint = float3(0.55f + 0.45f * cos(cirAng * 26.0f), 0.55f + 0.45f * cos(cirAng * 26.0f + 2.094f), 0.55f + 0.45f * cos(cirAng * 26.0f + 4.188f));
-                const float3 cirTwi = lerp(sunC, float3(1.45f, 0.50f, 0.26f), twiCloud * 0.85f);
-                const float3 cirCol = (cirTwi * (0.48f + 0.52f * hg(cosT, 0.60f) * 2.4f) + skyC * 0.28f + iridTint * (iridBand * 0.22f)) * lerp(0.46f, 0.12f, nightW);
-                cirrusAdd = cirCol * (cMask * cFade * T * horFade * (1.0f - saturate(clouds.x * 0.62f)));
+                const float3 cirTwi = lerp(sunC, float3(1.48f, 0.48f, 0.28f), twiCloud * 0.88f);
+                const float3 cirCol = (cirTwi * (0.48f + 0.52f * hg(cosT, 0.62f) * 2.4f) + skyC * 0.26f + iridTint * (iridBand * 0.24f)) * lerp(0.46f, 0.14f, nightW);
+                cirrusAdd += cirCol * (cMask * cFade * T * horFade * (1.0f - saturate(clouds.x * 0.62f)));
             }
         }
         res = float4(aerialS + cirrusAdd, lerp(1.0f, T, effFade));

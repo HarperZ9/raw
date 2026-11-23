@@ -240,11 +240,10 @@ bool SceneSkin_OnDraw(ID3D11DeviceContext* real, const Layout* bound, UINT index
     const bool alphaJoins = alpha && g_skinAlphaOn && uvOk;
     if (alpha && g_skinAlphaOn && !uvOk) ++g_skinAlphaNoUv;
     if (g_skinOn) { if (!open) ++g_skinNotOpaque; else if (!formatOk) ++g_skinFormat; else if (alpha && !alphaJoins) ++g_skinAlpha; }
-    // The actor sheet's cause (rt6-next-3): the floating draws bind no pixel shader and write no depth, a pass that
-    // draws the actors' skinned meshes for something other than the picture (occlusion queries, by the look of it),
-    // with the same view and palette. They make no surface, so they stay out of the scene.
-    if (g_skinOn && open && indexCount >= 3 && formatOk && !alpha && !geom::BoundPs(real)) {
-        if (SceneSkin_PrepassCheckOn()) SceneSkin_KeepPrepass(real, L, g_boneSlot, indexCount, startIndex, baseVertex);
+    // Any skinned draw with NO pixel shader (!BoundPs) makes no visible surface (occlusion/shadow-only prepass):
+    // leaving it out even when alphaFollows/BlendAlpha is set eliminates ~1,000 phantom floating RtSkin triangles at the source!
+    if (g_skinOn && open && indexCount >= 3 && formatOk && !geom::BoundPs(real)) {
+        if (!alpha && SceneSkin_PrepassCheckOn()) SceneSkin_KeepPrepass(real, L, g_boneSlot, indexCount, startIndex, baseVertex);
         ++g_skinNoPs;
         return true;
     }

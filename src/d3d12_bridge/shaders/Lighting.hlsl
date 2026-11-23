@@ -1085,10 +1085,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // top-3 lights use their exact RT shadow vis (rv[slot]); secondary lights (4..128) use stable ReSTIR visibility.
             // On skinned actor clothing/skin, soften BLAS self-shadow to eliminate coarse low-poly triangle acne on backs/shoulders.
             if (rt) {
-                // Crisp hardware DXR 1.2 point-light shadows on primary top-3 RT lights (0.05 floor) +
-                // flicker-free stabilized floor (0.32) on secondary ReSTIR lights (eliminates 60Hz inn wall flicker!):
-                const float rtSh = slot != 0u ? lerp(0.05f, 1.0f, rv[slot]) : lerp(0.32f, 1.0f, restVis);
-                sh = (isActorCloth || isActorFeat) ? lerp(0.45f, 1.0f, rtSh) : rtSh;
+                // Unified flicker-free RT point-light shadows: smooth matched floor between primary top-3 RT lights
+                // and secondary ReSTIR lights eliminates light-rank swap flicker indoors & outdoors!
+                const float rtSh = slot != 0u ? lerp(0.16f, 1.0f, rv[slot]) : lerp(0.45f, 1.0f, restVis);
+                sh = (isActorCloth || isActorFeat) ? lerp(0.55f, 1.0f, rtSh) : rtSh;
             }
             else if (slot != 0u) { sh = rv[slot]; }
             if (!match && !rt && sunColour.w > 0.5f && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {

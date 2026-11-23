@@ -277,13 +277,19 @@ void AddEngineLights(SceneLighting& f)
         }
         if (hit >= 0) {
             SmoothLight& sl = g_smooth[hit];
+            // Position deadband hysteresis (10u): completely kills Skyrim's 60Hz LIGH FLICKER XYZ position strobe
+            // on stationary hearths, candles & braziers while still tracking moving torches & spells smoothly!
+            const float pdx = wpos[0] - sl.wpos[0], pdy = wpos[1] - sl.wpos[1], pdz = wpos[2] - sl.wpos[2];
+            const float pDist2 = pdx * pdx + pdy * pdy + pdz * pdz;
+            const float posAlpha = (pDist2 < 10.0f * 10.0f) ? 0.0f : 0.10f;
             for (int c = 0; c < 3; ++c) {
-                sl.wpos[c] = sl.wpos[c] + (wpos[c] - sl.wpos[c]) * 0.08f;   // locks out 60Hz LIGH position jitter!
+                if (posAlpha > 0.0f) sl.wpos[c] = sl.wpos[c] + (wpos[c] - sl.wpos[c]) * posAlpha;
                 wpos[c] = sl.wpos[c];
-                sl.col[c] = sl.col[c] + (col[c] - sl.col[c]) * 0.09f;       // calm physical flame breath, zero strobe!
+                // Calm 0.055 color EMA kills 60Hz candle/torch/particle intensity flicker indoors & outdoors!
+                sl.col[c] = sl.col[c] + (col[c] - sl.col[c]) * 0.055f;
                 col[c] = sl.col[c];
             }
-            sl.radius = sl.radius + (radius - sl.radius) * 0.09f;
+            sl.radius = sl.radius + (radius - sl.radius) * 0.06f;
             radius = sl.radius;
             if (shadowCh >= 0) sl.shadowCh = shadowCh;
             sl.age = 0;
@@ -340,8 +346,9 @@ void AddEngineLights(SceneLighting& f)
         l.draws = draws;
         ++g_es.added;
     }
-    // Keep any unmatched decoded lights (e.g. transient spell impacts not in ShadowSceneNode), smoothly damped.
-    if (candCount > 0) {
+    // Unify lighting source: when authoritative ShadowSceneNode engine lights are active (candCount > 0),
+    // skip noisy frustum-culled per-draw scraped lights (they conflicted with ShadowSceneNode & flickered on camera turns!).
+    if (candCount == 0) {
         for (uint32_t j = 0; j < decoded && f.lightCount < raw::bridge::kMaxSceneLights; ++j) {
             if (decodedUsed[j]) continue;
             SceneLight& l = f.lights[f.lightCount++];

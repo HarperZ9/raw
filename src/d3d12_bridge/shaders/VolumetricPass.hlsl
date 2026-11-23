@@ -77,8 +77,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float cosT = dot(w, sunDir.xyz);
         // Dual-lobe Henyey-Greenstein: strong forward Mie sunbeams + gentle back-scatter so fog scatters at all view angles.
         const float ph = min(0.74f * phaseHG(cosT, dynG) + 0.26f * phaseHG(cosT, -0.22f), 3.6f);
-        // 32 quadratic-clustered depth slices with per-slice 3D mist, cloud shadows, and multi-scatter ambient sky lift.
-        const uint kSteps = 32u;
+        // 16 quadratic-clustered temporally-reprojected depth slices (effective ~96-step smoothness alongside 64-slice 3D FroxelPass).
+        const uint kSteps = 16u;
         float sumSun = 0.0f, sumSky = 0.0f, cs = 1.0f;
         float tPrev = 0.0f;
         [loop] for (uint i = 0u; i < kSteps; i++) {

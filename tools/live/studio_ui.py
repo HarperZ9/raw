@@ -156,6 +156,7 @@ pre{margin:0;background:#0a0d12;border:1px solid var(--line);border-radius:4px;p
             <option value="5">5 - Gran Turismo (Uchimura)</option>
             <option value="6">6 - Lottes</option>
             <option value="7">7 - Hable</option>
+            <option value="8">8 - ACES 2.0 CAM (Perceptual)</option>
           </select>
         </label>
       </div>
@@ -174,6 +175,8 @@ pre{margin:0;background:#0a0d12;border:1px solid var(--line);border-radius:4px;p
             <option value="9">9 - Engraved Ink &amp; Cross-Hatch</option>
             <option value="10">10 - 16-Bit Pixel-Art + Bayer Dither</option>
             <option value="11">11 - Romantic Watercolor Wash</option>
+            <option value="12">12 - Sony PVM Trinitron CRT</option>
+            <option value="13">13 - 1988 NTSC VHS Tape</option>
           </select>
         </label>
         <label>Elder 64³ 3D PNG LUT (0=Off, 1..46)

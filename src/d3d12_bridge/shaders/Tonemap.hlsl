@@ -85,6 +85,38 @@ float3 tonemapLottes(float3 x) {
 float3 hableP(float3 x) { return ((x * (0.15f * x + 0.05f) + 0.004f) / (x * (0.15f * x + 0.50f) + 0.06f)) - 0.066667f; }
 float3 tonemapHable(float3 x) { return saturate(hableP(max(x, 0.0f.xxx) * 1.85f) / hableP(11.2f.xxx)); }
 
+// ACES 2.0 CAM Perceptual Tonemap (ported from Playground native/src/renderer/aces2_cam.cpp + aces2_gamut.cpp):
+// AP1 gamut compression + Hellwig-JMh perceptual lightness Michaelis-Menten tone scale + constant-hue highlight rolloff.
+float3 tonemapAces2CAM(float3 x) {
+    static const float3x3 kRec709ToAP1 = {
+        0.613097f, 0.339523f, 0.047379f,
+        0.070194f, 0.916354f, 0.013452f,
+        0.020616f, 0.109570f, 0.869815f
+    };
+    static const float3x3 kAP1ToRec709 = {
+         1.705051f, -0.621792f, -0.083259f,
+        -0.130256f,  1.140805f, -0.010548f,
+        -0.024003f, -0.128969f,  1.152972f
+    };
+    float3 ap1 = max(mul(kRec709ToAP1, max(x, 0.0f.xxx)), 0.0f.xxx);
+    // Soft ACES 2.0 gamut compression (prevents neon blue/red out-of-gamut clipping before tone scale):
+    const float ach = max(ap1.r, max(ap1.g, ap1.b));
+    if (ach > 1.0e-5f) {
+        const float3 d = (ach.xxx - ap1) / ach;
+        const float3 cD = d / (1.0f + d * float3(0.18f, 0.14f, 0.22f));
+        ap1 = ach.xxx - cD * ach;
+    }
+    // Perceptual JMh lightness (Y_AP1) Michaelis-Menten s-curve with smooth shoulder:
+    const float y = max(dot(ap1, float3(0.2722287f, 0.6740818f, 0.0536895f)), 1.0e-5f);
+    const float yPow = pow(y * 1.15f, 1.12f);
+    const float yOut = saturate(yPow / (yPow + 0.58f));
+    float3 scaled = ap1 * (yOut / y);
+    // Smooth constant-hue highlight chroma compression (eliminates ACES 1.3 yellow/cyan skew on fire & sky):
+    const float hiDesat = smoothstep(0.45f, 1.0f, yOut);
+    scaled = lerp(scaled, yOut.xxx, hiDesat * hiDesat * 0.62f);
+    return saturate(mul(kAP1ToRec709, scaled));
+}
+
 // Perceptual Oklab color space (Bjorn Ottosson 2020 / Elder EotE_FilmScience.fxh) for detail-preserving grading.
 float3 linToOklab(float3 lin) {
     const float l = pow(max(0.4122214708f * lin.r + 0.5363325363f * lin.g + 0.0514459929f * lin.b, 0.0f), 1.0f / 3.0f);
@@ -306,15 +338,22 @@ float4 main(In i) : SV_Target {
         mapped = hdr * (gameCurve(l * exposure) / l);
     } else if (RB.x > 3.5f) {
         // Wide-gamut modern curves (zero ColorPow shadow crush, true hue & micro-texture preservation):
-        // 4 = AgX (Troy Sobotka), 5 = Gran Turismo (Uchimura), 6 = Lottes, 7 = Hable (Uncharted 2).
-        const float3 xIn = hdr * exposure * RB.z;
+        // 4 = AgX (Troy Sobotka), 5 = Gran Turismo (Uchimura), 6 = Lottes, 7 = Hable, 8 = ACES 2.0 CAM (Playground native/).
+        // SIGGRAPH TON-04 Bilateral Local Tone Mapping: uses low-frequency bloom luma as a free base layer so
+        // dark interiors looking out sunlit doorways retain both shadow readability and crisp exterior highlights.
+        float3 xIn = hdr * exposure * RB.z;
+        const float lIn = max(dot(xIn, W), 1.0e-5f);
+        const float lBase = max(dot(bloom, W) * exposure * RB.z, 0.025f);
+        const float ltmRatio = clamp(log2(lIn / lBase), -1.15f, 1.15f);
+        xIn *= exp2(ltmRatio * 0.12f);
         if (RB.x < 4.5f)      mapped = tonemapAgX(xIn);
         else if (RB.x < 5.5f) mapped = tonemapGT(xIn);
         else if (RB.x < 6.5f) mapped = tonemapLottes(xIn);
-        else                  mapped = tonemapHable(xIn);
+        else if (RB.x < 7.5f) mapped = tonemapHable(xIn);
+        else                  mapped = tonemapAces2CAM(xIn);
         if (RA.x > 0.5f) {
             const float3 pIn = (RB.y * exp2(RA.y) * RB.z).xxx;
-            const float3 pOut = RB.x < 4.5f ? tonemapAgX(pIn) : (RB.x < 5.5f ? tonemapGT(pIn) : (RB.x < 6.5f ? tonemapLottes(pIn) : tonemapHable(pIn)));
+            const float3 pOut = RB.x < 4.5f ? tonemapAgX(pIn) : (RB.x < 5.5f ? tonemapGT(pIn) : (RB.x < 6.5f ? tonemapLottes(pIn) : (RB.x < 7.5f ? tonemapHable(pIn) : tonemapAces2CAM(pIn))));
             pivot = dot(pOut, W);
         }
     } else if (RB.x > 2.5f) {
@@ -539,7 +578,7 @@ float4 main(In i) : SV_Target {
             static const float kB4[16] = { 0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5 };
             const float bayer = (kB4[bp.y * 4u + bp.x] / 16.0f - 0.5f) * 0.10f;
             c.rgb = saturate(floor((qCol + bayer) * 10.0f + 0.5f) / 10.0f);
-        } else {
+        } else if (RX.x < 11.5f) {
             // 11: Romantic Watercolor & Wet-Edge Pigment Wash (Commons Cluster H / u-kouklimou).
             float sw, sh; Scene.GetDimensions(sw, sh);
             const float2 spx = 1.0f / max(float2(sw, sh), float2(1.0f, 1.0f));
@@ -550,6 +589,45 @@ float4 main(In i) : SV_Target {
             const float wetEdge = saturate(length(c.rgb - wBlur) * 4.5f);
             const float paperG = 0.94f + 0.06f * frac(sin(dot(floor(i.pos.xy * 0.5f), float2(12.9898f, 78.233f))) * 43758.5453f);
             c.rgb = saturate(lerp(wBlur, c.rgb * 0.82f, wetEdge * 0.65f) * float3(1.02f, 1.00f, 0.96f) * paperG);
+        } else if (RX.x < 12.5f) {
+            // 12: Physical Sony PVM / Trinitron Aperture-Grille CRT (ported from Playground native/src/renderer/style_crt_beam.cpp + style_crt_glass.cpp).
+            const float2 cc = (i.uv - 0.5f) * 2.0f;
+            const float r2 = dot(cc, cc);
+            const float2 crtUv = 0.5f + (i.uv - 0.5f) * (1.0f + 0.075f * r2);
+            const float inBezel = step(0.0f, crtUv.x) * step(crtUv.x, 1.0f) * step(0.0f, crtUv.y) * step(crtUv.y, 1.0f);
+            const float2 sUvCrt = min(max(crtUv * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
+            float3 crtCol = tonemapAgX(Scene.Sample(S1, sUvCrt).rgb * exposure * RB.z);
+            // Luminance-modulated Gaussian electron beam scanlines (bright phosphors bloom wider vertically):
+            const float scanY = frac(i.pos.y * 0.3333f) - 0.5f;
+            const float lCrt = saturate(dot(crtCol, W));
+            const float beamSig = lerp(0.24f, 0.44f, lCrt);
+            const float scanMask = exp(-(scanY * scanY) / max(2.0f * beamSig * beamSig, 0.02f));
+            // Trinitron RGB vertical aperture-grille phosphor triad:
+            const uint triad = uint(floor(i.pos.x)) % 3u;
+            const float3 maskRGB = triad == 0u ? float3(1.18f, 0.86f, 0.86f)
+                                 : (triad == 1u ? float3(0.86f, 1.18f, 0.86f) : float3(0.86f, 0.86f, 1.18f));
+            const float glassRefl = pow(saturate(1.0f - length(cc - float2(-0.35f, -0.45f)) * 0.72f), 3.0f) * 0.045f;
+            c.rgb = saturate((crtCol * maskRGB * lerp(0.68f, 1.14f, scanMask) + glassRefl) * inBezel * saturate(1.08f - r2 * 0.22f));
+        } else {
+            // 13: 1988 NTSC VHS Magnetic Tape Signal (ported from Playground native/src/renderer/style_vhs.cpp).
+            float sw, sh; Scene.GetDimensions(sw, sh);
+            const float2 spx = 1.0f / max(float2(sw, sh), float2(1.0f, 1.0f));
+            const float jitter = (frac(sin(floor(i.pos.y * 0.5f) * 12.9898f + RD.w * 43.7f) * 43758.5453f) - 0.5f) * 2.2f * spx.x;
+            const float2 jUv = min(max((suv + float2(jitter, 0.0f)), 0.0f), float2(F[44].z, F[43].y));
+            const float3 cMid = tonemapAgX(Scene.Sample(S1, jUv).rgb * exposure * RB.z);
+            const float3 cL   = tonemapAgX(Scene.Sample(S1, min(max(jUv - float2(spx.x * 5.5f, 0.0f), 0.0f), float2(F[44].z, F[43].y))).rgb * exposure * RB.z);
+            const float3 cR   = tonemapAgX(Scene.Sample(S1, min(max(jUv + float2(spx.x * 5.5f, 0.0f), 0.0f), float2(F[44].z, F[43].y))).rgb * exposure * RB.z);
+            // NTSC YIQ separation: full-bandwidth Y luma with horizontal sharpness ringing + band-limited I/Q chroma smear!
+            const float yMid = dot(cMid, float3(0.299f, 0.587f, 0.114f));
+            const float yRing = saturate(yMid + (yMid - 0.5f * (dot(cL, W) + dot(cR, W))) * 0.45f);
+            const float3 cAvg = (cL + cMid + cR) * 0.3333f;
+            const float iCh = dot(cAvg, float3(0.596f, -0.274f, -0.322f));
+            const float qCh = dot(cAvg, float3(0.211f, -0.523f,  0.312f));
+            float3 vhs = float3(yRing + 0.956f * iCh + 0.621f * qCh,
+                                yRing - 0.272f * iCh - 0.647f * qCh,
+                                yRing - 1.106f * iCh + 1.703f * qCh);
+            const float tapeNoise = (frac(sin(dot(i.pos.xy + RD.w * 71.0f, float2(12.9898f, 78.233f))) * 43758.5453f) - 0.5f) * 0.045f;
+            c.rgb = saturate(vhs + tapeNoise);
         }
     }
     // Layer 1 (bit 0): Film Emulsion & Beer-Lambert Subtractive Density + Skin-Protected Oklab Vibrance

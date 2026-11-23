@@ -336,6 +336,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         } else if (season == 1u) {
             wet.wet = max(wet.wet, 0.25f * saturate(s.n.z));
         }
+        // Engine-native capillary wet-shoreline wicking driven directly by TESObjectCELL::waterHeight (engineWorld.x):
+        // Rocks, bridge piers, dock pilings & riverbanks within 0..46u above the live cell water plane darken and turn glossy.
+        if (engineWorld.z > 0.5f && engineWorld.x > -13000.0f && (base == 1u || base == 4u) && z < 4500.0f) {
+            const float aboveW = (p.z + camPosW.z) - engineWorld.x;
+            if (aboveW > -6.0f && aboveW < 46.0f) {
+                const float wicking = (1.0f - smoothstep(4.0f, 46.0f, aboveW)) * smoothstep(-6.0f, 2.0f, aboveW);
+                const float shoreNoise = 0.72f + 0.28f * valueNoise((p.xy + camPosW.xy) * 0.045f);
+                wet.wet = max(wet.wet, wicking * shoreNoise * 0.88f);
+            }
+        }
         // Water fills the pores and standing water hides the ground's own light. At 0.6 and 0.18 the rain frame's
         // lower half read 23 of 255 against the game's 50 (rt5-wx-5, Riverwood under 10a241): too dark for an overcast
         // scene lit mostly by its ambient.

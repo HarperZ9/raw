@@ -125,7 +125,10 @@ void water(uint3 id : SV_DispatchThreadID) {
     const float4 game = GameColour.Load(ip);
     const float4 L = Layer.Load(ip);
     const float dBed = Depth.Load(ip);
-    float3 col = game.rgb;
+    const bool hasPreWater = (skyLength > 0.5f && waterB.z > 0.0f);
+    // On non-water pixels, restore PreWater (captured immediately before Skyrim's 1-draw water composite quad)
+    // so Skyrim's water composite can NEVER bleed upside-down reflection sheets onto dry land, snow, NPCs, or interiors.
+    float3 col = hasPreWater ? PreWater[id.xy].rgb : game.rgb;
     // 100% Native Hardware Water Identification: GBufferPatch writes Layer.a == 2.0f exclusively for ShaderKind::Water
     // and GBufferVariants masks all non-water blended draws (smoke, firepit haze, dust, mist) out of Layer.
     // Zero false water planes over interiors, towers, NPCs, roads, or smoke billboards.

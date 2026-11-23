@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstring>
+#include <mutex>
 
 namespace SB::Proxy
 {
@@ -14,6 +16,9 @@ struct Report {
     std::atomic<bool> seen{false}, extSeen{false};
 };
 Report g_report;
+std::mutex g_camMutex;
+EngineCameraState g_engineCam;
+uint32_t g_lastWorldId = 0, g_lastCellId = 0;
 float g_testRain = -1.0f, g_testSnow = -1.0f;
 WeatherTimes g_times;
 WeatherSurfaces g_s;
@@ -63,7 +68,36 @@ bool WeatherDrive_Step(double dt, WeatherSurfaces& out)
     out = g_s;
     return true;
 }
+
+bool EngineCamera_Get(EngineCameraState& out)
+{
+    std::lock_guard<std::mutex> lock(g_camMutex);
+    if (!g_engineCam.valid) return false;
+    out = g_engineCam;
+    return true;
+}
 } // namespace SB::Proxy
+
+extern "C" __declspec(dllexport) void PG_SetEngineCamera(const float camPos[3], const float camRot[9], float fovDeg,
+                                                         uint32_t interior, uint32_t cellId, uint32_t worldId)
+{
+    using namespace SB::Proxy;
+    std::lock_guard<std::mutex> lock(g_camMutex);
+    if (g_engineCam.valid && worldId != 0 && g_lastWorldId != 0 && worldId != g_lastWorldId) {
+        WeatherDrive_OnTeleport();
+    } else if (g_engineCam.valid && g_engineCam.interior != interior && interior == 0 && cellId != g_lastCellId) {
+        WeatherDrive_OnTeleport();
+    }
+    if (camPos) std::memcpy(g_engineCam.camPos, camPos, 12);
+    if (camRot) std::memcpy(g_engineCam.camRot, camRot, 36);
+    g_engineCam.fovDeg = fovDeg;
+    g_engineCam.interior = interior;
+    g_engineCam.cellId = cellId;
+    g_engineCam.worldId = worldId;
+    g_engineCam.valid = true;
+    if (worldId) g_lastWorldId = worldId;
+    if (cellId) g_lastCellId = cellId;
+}
 
 extern "C" __declspec(dllexport) void PG_SetWeatherState(float rain, float snow, float cloud, float fog)
 {

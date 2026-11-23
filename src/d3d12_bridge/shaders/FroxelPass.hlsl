@@ -114,9 +114,9 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         const float ph = min(0.75f * froxelHG(cosT, lerp(0.68f, 0.76f, nightW)) + 0.25f * froxelHG(cosT, -0.20f), 3.2f);
         const float3 hTrans = froxelTransAt(clamp(aElevF, -0.10f, 1.0f));
         const float htLum = max(dot(hTrans, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
-        const float3 physSun = lerp(lerp(sunColour.rgb, hTrans * (max(sunLum, 0.10f) / htLum), 0.58f), float3(0.22f, 0.32f, 0.52f) * 0.45f, nightW);
+        const float3 physSun = lerp(lerp(sunColour.rgb, hTrans * (max(sunLum, 0.10f) / htLum), 0.58f), float3(0.32f, 0.46f, 0.80f) * 0.85f, nightW);
         const float3 hSky = froxelSkyAt(float3(farDir.xy, max(farDir.z, 0.01f)));
-        inScat += physSun * (sh * ph * tune2.z * 0.55f);
+        inScat += physSun * (sh * ph * tune2.z * lerp(0.55f, 0.95f, nightW));
         inScat += hSky * (0.014f * (0.4f + 0.6f * cs) * (1.0f - nightW * 0.65f));
     }
     // Clustered local lights in 3D froxel space (hearths, torches, braziers, 3D window portal lights, spells).

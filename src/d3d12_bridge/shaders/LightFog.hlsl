@@ -93,7 +93,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 aSun = astroSunDir();
             const float aElev = astroSunElev();
             const float dayW = smoothstep(-0.08f, 0.14f, aElev);
-            const float sunDiscGate = smoothstep(-0.02f, 0.04f, aElev);
+            const float sunDiscGate = smoothstep(-0.02f, 0.04f, aElev) * isRealSun();
             const float twilightBell = smoothstep(-0.10f, 0.00f, aElev) * (1.0f - smoothstep(0.06f, 0.28f, aElev));
             const float duskSide = smoothstep(12.5f, 15.0f, timeEnv.x);
             const float cover = saturate(clouds.x);

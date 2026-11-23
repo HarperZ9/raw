@@ -279,14 +279,54 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             s.n = normalize(s.n + float3((b0 - b1) * 0.65f, (b0 - b2) * 0.65f, 0.0f) * barkFade);
             albedo *= lerp(1.0f, 0.84f + 0.30f * b0, barkFade * 0.55f);
         }
-        // 2) Organic Nordic moss & alpine lichen colonization on upward/north-facing damp exterior stone & bark:
-        if (sunColour.w > 0.5f && s.n.z > 0.35f && z < 2200.0f) {
-            const float mossPatch = smoothstep(0.56f, 0.82f, cNoise(wpMat * 0.55f + float3(13.7f, 4.3f, 2.1f)))
-                                  * smoothstep(0.35f, 0.78f, s.n.z) * (0.45f + 0.55f * saturate(s.n.y * 0.5f + 0.5f));
-            const float mossW = mossPatch * smoothstep(2200.0f, 260.0f, z) * (1.0f - saturate(weather.z * 1.6f)) * 0.48f;
-            if (mossW > 0.02f) {
-                albedo = lerp(albedo, float3(0.14f, 0.21f, 0.09f) * (0.75f + 0.50f * wear), mossW);
-                s.alpha = lerp(s.alpha, 0.88f, mossW);
+        // 2) Procedural 3D Multi-Layer Parallax Shell Moss (3-shell virtual thickness + velvet fuzz rim) +
+        //    Alpine Lichen Decals & Rain-Runoff Weathering Streaks on exterior stone, cliffs & bark!
+        if (sunColour.w > 0.5f && z < 2600.0f) {
+            const float3 wpAbs = p + camPosW.xyz;
+            // (a) 3-Layer Parallax Shell Moss on upward/north-facing damp stone & bark:
+            if (s.n.z > 0.30f && z < 2200.0f) {
+                const float mossPatch = smoothstep(0.54f, 0.80f, cNoise(wpMat * 0.55f + float3(13.7f, 4.3f, 2.1f)))
+                                      * smoothstep(0.30f, 0.74f, s.n.z) * (0.45f + 0.55f * saturate(s.n.y * 0.5f + 0.5f));
+                const float mossW = mossPatch * smoothstep(2200.0f, 220.0f, z) * (1.0f - saturate(weather.z * 1.6f)) * 0.62f;
+                if (mossW > 0.02f) {
+                    const float3 vTang = -s.v / max(dot(s.n, s.v), 0.35f);
+                    float shellCov = 0.0f;
+                    float shellShade = 0.45f;
+                    [unroll] for (int sh = 0; sh < 3; ++sh) {
+                        const float hSh = (float(sh) + 1.0f) * 0.333f;
+                        const float3 spM = (wpAbs + vTang * (hSh * 1.65f)) * 0.58f;
+                        const float tuft = smoothstep(0.38f + hSh * 0.20f, 0.78f, cNoise(spM));
+                        shellCov = max(shellCov, tuft);
+                        shellShade = lerp(shellShade, 0.52f + 0.62f * hSh, tuft);
+                    }
+                    const float fuzzRim = pow(1.0f - saturate(dot(s.n, s.v)), 2.8f) * 0.26f;
+                    const float3 mossCol = float3(0.13f, 0.22f, 0.08f) * shellShade + float3(0.16f, 0.24f, 0.09f) * fuzzRim;
+                    albedo = lerp(albedo, mossCol, mossW * (0.55f + 0.45f * shellCov));
+                    s.alpha = lerp(s.alpha, 0.90f, mossW);
+                }
+            }
+            // (b) Sculpted Tri-Planar Rock-Cliff Sedimentary Strata, Fracture Fissures & Rain-Runoff Decals:
+            const bool isRockCliff = (!isWoodBark && abs(s.n.z) < 0.76f && abs(albedo.r - albedo.b) < 0.14f);
+            if (isRockCliff) {
+                const float cliffFade = smoothstep(2600.0f, 220.0f, z);
+                // Sedimentary horizontal strata ledges + sharp vertical basalt fracture cracks:
+                const float strataWarp = cNoise(wpAbs * 0.014f) * 28.0f;
+                const float strataH = sin((wpAbs.z + strataWarp) * 0.16f) * 0.5f + 0.5f;
+                const float crackN = abs(cNoise(wpAbs * 0.065f + float3(7.1f, 3.3f, 11.7f)) * 2.0f - 1.0f);
+                const float fissure = 1.0f - smoothstep(0.02f, 0.14f, crackN);
+                // Rain-runoff mineral streak decals running vertically down stone walls & cliffs:
+                const float streak = smoothstep(0.58f, 0.86f, cNoise(float3(wpAbs.xy * 0.085f, wpAbs.z * 0.009f + 4.7f)));
+                const float3 cliffGrad = float3((cNoise(wpAbs * 0.11f + float3(0.4f, 0.0f, 0.0f)) - cNoise(wpAbs * 0.11f - float3(0.4f, 0.0f, 0.0f))),
+                                                (cNoise(wpAbs * 0.11f + float3(0.0f, 0.4f, 0.0f)) - cNoise(wpAbs * 0.11f - float3(0.0f, 0.4f, 0.0f))),
+                                                (strataH - 0.5f) * 0.55f);
+                s.n = normalize(s.n + cliffGrad * (0.58f * cliffFade));
+                albedo *= lerp(1.0f, (0.78f + 0.28f * strataH) * (1.0f - fissure * 0.34f) * (1.0f - streak * 0.18f), cliffFade * 0.72f);
+                s.alpha = lerp(s.alpha, max(s.alpha * 0.78f, 0.28f), streak * cliffFade * 0.45f);
+                // Pale silver-green alpine lichen crust decals on exposed rock above 1200u:
+                if (wpAbs.z > 1200.0f) {
+                    const float lichen = smoothstep(0.68f, 0.88f, cNoise(wpAbs * 0.09f + 29.3f)) * smoothstep(1200.0f, 2600.0f, wpAbs.z);
+                    albedo = lerp(albedo, float3(0.48f, 0.52f, 0.44f), lichen * cliffFade * 0.35f);
+                }
             }
         }
     }

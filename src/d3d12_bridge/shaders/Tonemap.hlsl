@@ -21,10 +21,25 @@ SamplerState S2 : register(s2);
 struct In { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
 static const float3 W = float3(0.2125f, 0.7154f, 0.0721f);
 
-float3 filmic(float3 x) { return saturate((x * (2.51f * x + 0.03f)) / (x * (2.43f * x + 0.59f) + 0.14f)); }
+// Stephen Hill's Exact Fitted ACES RRT + ODT (Rec.709 -> AP1 -> RRT/ODT -> Rec.709):
+// Eliminates naive per-channel Narkowicz yellow-shift on fire/sunsets and purple-crush on deep blues.
+float3 filmic(float3 color) {
+    static const float3x3 kAcesIn = float3x3(
+        0.59719f, 0.35458f, 0.04823f,
+        0.07600f, 0.90834f, 0.01566f,
+        0.02840f, 0.13383f, 0.83777f);
+    static const float3x3 kAcesOut = float3x3(
+         1.60475f, -0.53108f, -0.07367f,
+        -0.10208f,  1.10813f, -0.00605f,
+        -0.00327f, -0.07276f,  1.07602f);
+    float3 v = mul(kAcesIn, max(color, 0.0f.xxx));
+    const float3 a = v * (v + 0.0245786f) - 0.000090537f;
+    const float3 b = v * (0.983729f * v + 0.4329510f) + 0.238081f;
+    return saturate(mul(kAcesOut, a / b));
+}
 
-// Wide-gamut Troy Sobotka AgX display transform (from Elder ENB EotE_Tonemappers.fxh):
-// Zero ColorPow shadow crush, true hue preservation under extreme saturation, natural highlight desaturation.
+// Wide-gamut Troy Sobotka AgX Display Transform + Perceptual Linear Punchy Look:
+// Preserves shadow toe detail (removes gamma-space pow(1.12) shadow crush) while keeping vivid fire/sky hues & clean highlight rolloff.
 float3 tonemapAgX(float3 color) {
     static const float3x3 kAgXIn = float3x3(
         0.842479f, 0.0784336f, 0.0792237f,
@@ -39,10 +54,11 @@ float3 tonemapAgX(float3 color) {
     x = (x + 12.47393f) / (4.026069f + 12.47393f);
     const float3 x2 = x * x, x4 = x2 * x2;
     x = 15.5f * x4 * x2 - 40.14f * x4 * x + 31.96f * x4 - 6.868f * x2 * x + 0.4298f * x2 + 0.1191f * x - 0.00232f;
-    // AgX Punchy Look (Troy Sobotka): deepens shadow toe & midtone contrast for full dynamic range & 3D depth pop
-    // while keeping highlights unclipped and hue-faithful; decoded back to linear for Tonemap.hlsl's single output OETF.
     float3 agxOut = saturate(mul(kAgXOut, x));
-    agxOut = pow(agxOut, 1.12f);
+    // Gentle S-curve midtone punch + subtle chroma restoration in display space before clean 2.2 linear decode:
+    const float lumaA = dot(agxOut, W);
+    agxOut = saturate(lerp(lumaA.xxx, agxOut, 1.09f));
+    agxOut = saturate(lerp(agxOut, agxOut * agxOut * (3.0f - 2.0f * agxOut), 0.14f));
     return pow(agxOut, 2.2f);
 }
 
@@ -201,12 +217,13 @@ float3 fxaaAndCas(float2 suv) {
 float4 main(In i) : SV_Target {
     const uint ovInit = uint(RO.y + 0.5f);
     float2 baseUv = i.uv;
-    // OV12 (bit 11 = 2048): Subtle velocity-driven running/walking headbob & camera stride sway (0 when standing still).
+    // OV12 (bit 11 = 2048): Smooth biomechanical figure-8 walking/sprinting camera stride sway (0 when standing still;
+    // replaces sharp abs(cos) V-bounce with natural sinusoidal footstep cadence + lateral weight shift).
     if ((ovInit & 2048u) != 0u) {
         const float moveAmp = saturate((RO.w - 0.35f) / 6.5f);
         if (moveAmp > 0.01f) {
-            const float phase = RO.z * 0.3927f; // smooth stride cadence
-            const float2 bob = float2(sin(phase) * 0.0011f, abs(cos(phase)) * 0.0022f - 0.0011f) * (moveAmp * clamp(RQ.z, 0.0f, 2.5f));
+            const float phase = RO.z * 0.36f;
+            const float2 bob = float2(sin(phase) * 0.0012f, -cos(phase * 2.0f) * 0.0011f) * (moveAmp * clamp(RQ.z, 0.0f, 2.5f));
             // 0.8% overscan crop keeps edges 100% clean with zero black borders.
             baseUv = saturate(baseUv * 0.992f + 0.004f + bob);
         }
@@ -391,6 +408,15 @@ float4 main(In i) : SV_Target {
     // Modern wide-gamut curves (RB.x > 3.5: AgX / GT / Lottes / Hable): stop Skyrim 2011's muddy ImageSpace
     // weather tint & contrast from overwriting our Hillaire + AgX color science, while preserving strong gameplay
     // status flashes (low health, poison, night-eye) softly.
+    // Human Purkinje / Scotopic Night Vision Shift: in deep dark nights/dungeons (avg < 0.06), dark shadows shift subtly
+    // toward cool rod-cell blue-slate while warm firelight & highlights stay vivid amber-gold (Commons Cluster A).
+    if (RB.x > 3.5f && avg < 0.07f) {
+        const float scotW = saturate((0.07f - avg) / 0.055f);
+        const float pxLum = dot(mapped, W);
+        const float rodW = scotW * (1.0f - smoothstep(0.03f, 0.28f, pxLum));
+        const float3 scotTint = float3(pxLum * 0.78f, pxLum * 0.94f, pxLum * 1.24f);
+        mapped = saturate(lerp(mapped, scotTint, rodW * 0.38f));
+    }
     // Feature 10: Luminance-Preserving Filmic Split-Tone Micro-Contrast (cool alpine shadows, warm sunlit highlights).
     if (RB.x > 3.5f) {
         const float lSplit = saturate(dot(mapped, W));

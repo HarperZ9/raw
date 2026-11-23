@@ -103,17 +103,20 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // Preserve authored Masser & Secunda moon crater textures across daytime, twilight, and night.
             const float moonLumF = dot(lit.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             const float moonKeep = isCelestial ? 1.0f : (smoothstep(0.16f, 0.48f, moonLumF) * (1.0f - smoothstep(0.985f, 0.996f, cosS)) * (1.0f - smoothstep(0.18f, 0.42f, sunDir.z)));
-            // 100% Full 24-Hour Dynamic Skybox Replacement (Day, Sunset/Sunrise Belt-of-Venus, Night Indigo + Stars + Milky Way + Auroras):
+            // Feature 11 & 12: Rich Multi-Stop Spectral Sky Gradient + Sub-LSB IGN Dithering (Eliminates Rigid Sky Banding Lines).
             const float hUp = saturate(sDir.z);
-            const float3 nightZen = float3(0.006f, 0.012f, 0.028f);
-            const float3 nightHor = float3(0.024f, 0.038f, 0.068f);
-            float3 fullSky = lerp(nightHor, nightZen, pow(hUp, 0.58f));
+            const float3 nightZen = float3(0.005f, 0.011f, 0.028f);
+            const float3 nightHor = float3(0.022f, 0.036f, 0.068f);
+            float3 fullSky = lerp(nightHor, nightZen, pow(hUp, 0.56f));
             if (dayW > 0.01f) {
                 const float hElev = max(sDir.z, 0.048f);
                 const float3 hSky = sampleHillaireSky(normalize(float3(sDir.xy, hElev)));
-                const float hLum = max(dot(hSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
+                // Deepen upper-zenith ozone cerulean while keeping horizon luminous and band-free.
+                const float3 ozoneZen = lerp(float3(1.04f, 1.02f, 0.98f), float3(0.76f, 0.90f, 1.18f), pow(hUp, 0.65f));
+                const float3 richSky = hSky * ozoneZen;
+                const float hLum = max(dot(richSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
                 const float3 overcastSky = lerp(float3(0.62f, 0.68f, 0.78f), float3(0.38f, 0.44f, 0.54f), hUp) * max(hLum * 1.15f, 0.42f);
-                float3 physSky = lerp(hSky, overcastSky, saturate(cover * 0.78f - 0.12f + weather.w * 0.45f + weather.z * 0.35f));
+                float3 physSky = lerp(richSky, overcastSky, saturate(cover * 0.78f - 0.12f + weather.w * 0.45f + weather.z * 0.35f));
                 // Golden-hour sunrise/sunset solar glow + opposite-horizon Belt of Venus (rose-magenta -> cobalt zenith).
                 const float twilightW = lowS * (1.0f - cover * 0.65f);
                 const float antiSolar = saturate(dot(sDir, -sunDir.xyz));
@@ -188,7 +191,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     baseSky += lerp(float3(1.0f, 0.99f, 0.96f), float3(1.0f, 0.70f, 0.34f), lowS) * (blaze * dayW * (1.0f - isExotic));
                 }
             }
-            return float4(baseSky, lit.a);
+            // Sub-LSB Interleaved Gradient Noise dithering eliminates 8-bit/10-bit sky gradient banding lines cleanly.
+            const float skyDith = (ign(px) - 0.5f) * (1.0f / 255.0f);
+            return float4(max(baseSky + skyDith, 0.0f.xxx), lit.a);
         }
         return lit;
     }

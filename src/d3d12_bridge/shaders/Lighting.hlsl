@@ -598,7 +598,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                         albedo = lerp(albedo, dispExp, pomFade * 0.85f);
                         s.n = normalize(lerp(s.n, worldNormal(Normal.SampleLevel(Lin, uvF, 0.0f)), pomFade * 0.72f));
                         hFinal = useRealHeight ? saturate(Spec.SampleLevel(Lin, uvF, 0.0f).y) : saturate((aLumD - 0.05f) * 2.35f);
-                        albedo *= lerp(0.76f, 1.04f, lerp(1.0f, hFinal, pomFade * 0.65f));
+                        albedo *= lerp(0.68f, 1.08f, lerp(1.0f, hFinal, pomFade * 0.75f));
                     }
                 }
             }
@@ -616,7 +616,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float hD = abs(viewZOf(Depth.Load(ipD)) - (zBase + zSlope.y)) < zPlaneTol ? (useRealHeight ? Spec.Load(ipD).y : dot(Albedo.Load(ipD).rgb, lw)) : hc;
         const float gx = clamp((hR - hL) * 2.6f, -0.55f, 0.55f) * distFade;
         const float gy = clamp((hD - hU) * 2.6f, -0.55f, 0.55f) * distFade;
-        s.n = normalize(s.n + (-gx * tVec - gy * bVec) * 0.45f);
+        s.n = normalize(s.n + (-gx * tVec - gy * bVec) * 0.62f);
         const float microSlope = saturate(length(float2(gx, gy)) * 1.4f);
         s.alpha = clamp(s.alpha + (microSlope - 0.15f) * 0.12f * distFade, 0.05f, 0.95f);
         // Feature 4: 8-step directional POM relief self-shadowing along BOTH exterior sun AND brightest interior hearth/torch!

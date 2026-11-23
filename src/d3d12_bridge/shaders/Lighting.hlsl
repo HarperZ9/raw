@@ -263,11 +263,32 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         s.f0 = 0.046f;
         s.alpha = clamp(s.alpha, 0.28f, 0.55f);
     } else if (!match && base == 1u && z < 2600.0f) {
-        // Dynamic real-material micro-roughness & wear variation on 2011 stone, masonry, timber & architecture:
+        // Dynamic 2026 Real-Material Micro-Relief on 2011 Tree Bark, Timber, Masonry & Nordic Rocks:
         const float3 wpMat = (p + camPosW.xyz) * 0.032f;
         const float wear = cNoise(wpMat) * 0.65f + cNoise(wpMat * 2.7f + 5.1f) * 0.35f;
         const float wearFade = smoothstep(2600.0f, 180.0f, z);
-        s.alpha = clamp(s.alpha * lerp(1.0f, lerp(0.76f, 1.24f, wear), wearFade * 0.65f), 0.06f, 0.96f);
+        s.alpha = clamp(s.alpha * lerp(1.0f, lerp(0.74f, 1.26f, wear), wearFade * 0.68f), 0.06f, 0.96f);
+        // 1) Procedural 4K-grade anisotropic tree bark & wood-grain furrows on vertical warm-brown surfaces:
+        const bool isWoodBark = (abs(s.n.z) < 0.72f && albedo.r > albedo.b * 1.15f && albedo.r > 0.05f && z < 1400.0f);
+        if (isWoodBark) {
+            const float3 bP = float3((p.xy + camPosW.xy) * 0.42f, (p.z + camPosW.z) * 0.075f);
+            const float b0 = cNoise(bP);
+            const float b1 = cNoise(bP + float3(0.18f, 0.0f, 0.0f));
+            const float b2 = cNoise(bP + float3(0.0f, 0.18f, 0.0f));
+            const float barkFade = smoothstep(1400.0f, 140.0f, z);
+            s.n = normalize(s.n + float3((b0 - b1) * 0.65f, (b0 - b2) * 0.65f, 0.0f) * barkFade);
+            albedo *= lerp(1.0f, 0.84f + 0.30f * b0, barkFade * 0.55f);
+        }
+        // 2) Organic Nordic moss & alpine lichen colonization on upward/north-facing damp exterior stone & bark:
+        if (sunColour.w > 0.5f && s.n.z > 0.35f && z < 2200.0f) {
+            const float mossPatch = smoothstep(0.56f, 0.82f, cNoise(wpMat * 0.55f + float3(13.7f, 4.3f, 2.1f)))
+                                  * smoothstep(0.35f, 0.78f, s.n.z) * (0.45f + 0.55f * saturate(s.n.y * 0.5f + 0.5f));
+            const float mossW = mossPatch * smoothstep(2200.0f, 260.0f, z) * (1.0f - saturate(weather.z * 1.6f)) * 0.48f;
+            if (mossW > 0.02f) {
+                albedo = lerp(albedo, float3(0.14f, 0.21f, 0.09f) * (0.75f + 0.50f * wear), mossW);
+                s.alpha = lerp(s.alpha, 0.88f, mossW);
+            }
+        }
     }
     if (base == 5u && !any(s.soft > 0.0f)) { s.soft = 0.15f.xxx; }   // a soft-lit shader the patch found no map in
     // Rain (Weather.hlsli), exteriors in improved mode: darker, glossier, puddles flat and mirror-like.
@@ -463,25 +484,35 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float snowLeaf = saturate((s.n.z - 0.25f) * 2.0f);
             albedo = lerp(albedo * float3(0.86f, 0.92f, 1.04f), float3(0.56f, 0.60f, 0.66f), snowLeaf * 0.55f);
         }
-        // 2027 Real Ray-Traced Lush 3D Botanical Vegetation & Canopy Upgrade (base == 5u):
-        // Replaces flat 2D foliage cards with 3D spherical canopy-cluster volume, wind-coupled leaf flutter,
-        // waxy cuticle specular sheen (f0=0.04), and rich backlit chlorophyll depth!
-        if (z < 4800.0f) {
+        // 2027 Real Ray-Traced Lush 3D Botanical Vegetation, Species Diversity & Traveling Wind-Wave Meadow Ripples (base == 5u):
+        // Replaces cloned 2011 2D foliage cards with per-plant species chlorophyll diversity, 3D spherical canopy-cluster
+        // volume, Ghost-of-Tsushima/RDR2 traveling wind-wave luminance gusts across meadows, and waxy cuticle sheen!
+        if (z < 5200.0f) {
             const float3 wpF = p + camPosW.xyz;
             const float2 windV = normalize(cloudWind.xy + float2(1.0f, 0.35f));
-            const float windSpd = saturate(length(cloudWind.xy) / 280.0f + weather.w * 0.45f);
-            const float gustWave = sin(dot(wpF.xy, windV) * 0.0055f - camPosW.w * (1.8f + windSpd * 2.4f));
-            const float flutter = (0.35f + 0.65f * windSpd) * (0.65f + 0.35f * gustWave);
-            const float nxF = (cNoise(wpF * 0.048f + float3(windV * flutter * 0.55f, 0.0f)) - 0.5f) * 0.82f;
-            const float nyF = (cNoise(wpF * 0.048f + float3(11.3f, 7.1f, windV.y * flutter * 0.55f)) - 0.5f) * 0.82f;
-            const float nzF = (cNoise(wpF * 0.032f + float3(5.7f, 13.9f, 2.3f)) - 0.35f) * 0.55f;
-            const float fFade = smoothstep(4800.0f, 220.0f, z);
+            const float windSpd = saturate(length(cloudWind.xy) / 260.0f + weather.w * 0.45f);
+            // Traveling macro wind-gust wave sweeping visibly across grass meadows, ferns, and pine boughs:
+            const float gustPhase = dot(wpF.xy, windV) * 0.0042f - camPosW.w * (1.9f + windSpd * 2.6f);
+            const float gustWave = sin(gustPhase) * 0.65f + sin(gustPhase * 2.13f + dot(wpF.xy, float2(-windV.y, windV.x)) * 0.0031f) * 0.35f;
+            const float flutter = (0.35f + 0.65f * windSpd) * (0.60f + 0.40f * gustWave);
+            const float nxF = (cNoise(wpF * 0.048f + float3(windV * flutter * 0.62f, 0.0f)) - 0.5f) * 0.85f;
+            const float nyF = (cNoise(wpF * 0.048f + float3(11.3f, 7.1f, windV.y * flutter * 0.62f)) - 0.5f) * 0.85f;
+            const float nzF = (cNoise(wpF * 0.032f + float3(5.7f, 13.9f, 2.3f)) - 0.35f) * 0.58f;
+            const float fFade = smoothstep(5200.0f, 220.0f, z);
             s.n = normalize(s.n + float3(nxF, nyF, nzF) * fFade);
-            s.f0 = 0.040f;
-            s.alpha = clamp(lerp(s.alpha, 0.38f, 0.45f * fFade), 0.16f, 0.72f);
-            // Rich lush botanical chlorophyll saturation & micro-depth variation across overlapping leaves:
-            const float leafVar = cNoise(wpF * 0.022f);
-            albedo *= lerp(float3(0.86f, 0.94f, 0.84f), float3(1.06f, 1.12f, 0.96f), leafVar);
+            s.f0 = 0.042f;
+            s.alpha = clamp(lerp(s.alpha, 0.36f, 0.48f * fFade), 0.14f, 0.72f);
+            // Per-plant/per-tree botanical species diversity (breaks up identical 2011 cloned trees & bushes!):
+            const float speciesId = cNoise(wpF * 0.0045f + float3(17.3f, 9.1f, 3.7f));
+            const float leafVar = cNoise(wpF * 0.024f);
+            const float3 speciesTint = speciesId < 0.35f
+                ? lerp(float3(0.82f, 0.96f, 0.86f), float3(0.94f, 1.06f, 0.90f), speciesId / 0.35f)     // deep Nordic spruce
+                : (speciesId < 0.72f
+                    ? lerp(float3(0.94f, 1.06f, 0.90f), float3(1.08f, 1.04f, 0.82f), (speciesId - 0.35f) / 0.37f)  // sunlit cedar-olive
+                    : lerp(float3(1.08f, 1.04f, 0.82f), float3(1.14f, 0.96f, 0.76f), (speciesId - 0.72f) / 0.28f)); // warm golden-tip pine/fern
+            // Traveling wind-bent specular highlight ripple across sunlit meadows (Ghost of Tsushima / RDR2 grass feel):
+            const float meadowRipple = 1.0f + gustWave * (0.06f + 0.08f * windSpd) * smoothstep(2600.0f, 200.0f, z);
+            albedo *= lerp(1.0f.xxx, speciesTint * lerp(0.88f, 1.12f, leafVar) * meadowRipple, fFade * 0.72f);
         }
     }
     const float3 nSmooth = s.n;

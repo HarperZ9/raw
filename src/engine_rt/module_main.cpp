@@ -122,10 +122,17 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
         Log("startup settings: %zu applied", raw::rt::ApplyStartupSettings(g_img, g_refs, ini, g_out + "\\engine_rt.log"));
         if (const int atlas = IniInt("ShadowAtlas", 4096); atlas > 0)
             Log("%s", raw::rt::ResizeShadowAtlas(g_img, g_refs, uint32_t(atlas)).c_str());
-        // Pre-TES::Init startup-only TerrainManager LOD quadtree sizing (never hot-mutated mid-session).
-        raw::rt::SetSetting(g_img, g_refs, "fSplitDistanceMult:TerrainManager", "1.25");
-        raw::rt::SetSetting(g_img, g_refs, "fBlockLevel0Distance:TerrainManager", "35000.0");
-        raw::rt::SetSetting(g_img, g_refs, "fBlockLevel1Distance:TerrainManager", "70000.0");
+        // Pre-TES::Init startup-only TerrainManager & 2026 Dense Flora/Shadowed Trees sizing (never hot-mutated mid-session).
+        raw::rt::SetSetting(g_img, g_refs, "fSplitDistanceMult:TerrainManager", "1.50");
+        raw::rt::SetSetting(g_img, g_refs, "fBlockLevel0Distance:TerrainManager", "60000.0");
+        raw::rt::SetSetting(g_img, g_refs, "fBlockLevel1Distance:TerrainManager", "110000.0");
+        raw::rt::SetSetting(g_img, g_refs, "fTreeLoadDistance:Display", "125000.0");
+        raw::rt::SetSetting(g_img, g_refs, "bTreesReceiveShadows:Display", "1");
+        raw::rt::SetSetting(g_img, g_refs, "bDrawLandShadows:Display", "1");
+        raw::rt::SetSetting(g_img, g_refs, "iMinGrassSize:Grass", "24");
+        raw::rt::SetSetting(g_img, g_refs, "iMaxGrassTypesPerTexure:Grass", "15");
+        raw::rt::SetSetting(g_img, g_refs, "fGrassStartFadeDistance:Grass", "14000.0");
+        raw::rt::SetSetting(g_img, g_refs, "fGrassMaxStartFadeDistance:Grass", "16000.0");
     }
     if (IniInt("EngineTuning", 1)) Log("%s", raw::rt::ApplyEngineTuning(g_img, g_refs).c_str());
     if (IniInt("HavokFix", 1)) Log("%s", raw::rt::HavokFixInit(g_img, g_refs).c_str());

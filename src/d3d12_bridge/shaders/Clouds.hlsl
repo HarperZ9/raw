@@ -197,7 +197,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // True linear HDR cloud radiance matched to Hillaire sky + seamless C2 horizon elevation fade.
         const float3 softS = min(S, 2.40f.xxx);
         const float fade = exp(-max(t0, 0.0f) / 185000.0f);
-        const float horFade = smoothstep(0.025f, 0.165f, dir.z);
+        const float horFade = smoothstep(0.015f, 0.24f, dir.z);
         const float effFade = saturate(fade * 1.15f) * horFade;
         const float3 horizonHaze = skyC + sunC * pow(saturate(cosT), 8.0f) * 0.05f;
         const float3 aerialS = lerp(horizonHaze * (1.0f - T), softS, fade) * horFade;

@@ -112,8 +112,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float hElev = max(sDir.z, 0.048f);
                 const float3 hSky = sampleHillaireSky(normalize(float3(sDir.xy, hElev)));
                 const float hLum = max(dot(hSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
-                const float3 overcastSky = lerp(float3(0.44f, 0.50f, 0.60f), float3(0.24f, 0.30f, 0.38f), hUp) * max(hLum * 0.95f, 0.26f);
-                float3 physSky = lerp(hSky, overcastSky, saturate(cover * 0.65f - 0.20f + weather.w * 0.45f));
+                const float3 overcastSky = lerp(float3(0.62f, 0.68f, 0.78f), float3(0.38f, 0.44f, 0.54f), hUp) * max(hLum * 1.15f, 0.42f);
+                float3 physSky = lerp(hSky, overcastSky, saturate(cover * 0.78f - 0.12f + weather.w * 0.45f + weather.z * 0.35f));
                 // Golden-hour sunrise/sunset solar glow + opposite-horizon Belt of Venus (rose-magenta -> cobalt zenith).
                 const float twilightW = lowS * (1.0f - cover * 0.65f);
                 const float antiSolar = saturate(dot(sDir, -sunDir.xyz));
@@ -267,8 +267,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float cloudCov = saturate(clouds.x);
         const float3 hillaireSky = sampleHillaireSky(normalize(float3(w.xy, max(w.z, 0.048f))));
         const float hLumF = max(dot(hillaireSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
-        const float3 overcastAtmo = lerp(float3(0.44f, 0.50f, 0.60f), float3(0.24f, 0.30f, 0.38f), saturate(w.z)) * max(hLumF * 0.95f, 0.26f);
-        float3 atmoCol = lerp(hillaireSky, overcastAtmo, saturate(cloudCov * 0.65f - 0.20f + weather.w * 0.45f));
+        const float3 overcastAtmo = lerp(float3(0.62f, 0.68f, 0.78f), float3(0.38f, 0.44f, 0.54f), saturate(w.z)) * max(hLumF * 1.15f, 0.42f);
+        float3 atmoCol = lerp(hillaireSky, overcastAtmo, saturate(cloudCov * 0.78f - 0.12f + weather.w * 0.45f + weather.z * 0.35f));
         // Dual-scale Mie solar scattering: broad golden/D65 aureole + tighter forward solar halo.
         const float3 d65Mie = lerp(float3(1.0f, 0.66f, 0.36f), float3(0.96f, 0.98f, 1.02f), highSunF);
         const float mieHalo = (pow(cosSunF, 5.0f) * 0.14f + pow(cosSunF, 28.0f) * 0.24f) * (1.0f - cloudCov * 0.72f) * (1.0f - nightF);

@@ -97,7 +97,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if ((flags.x & FLAG_CLOUDS) != 0u && (i & 1u) == 0u) { cs = cloudShadowN(wpFog, 1u); }
             const float3 fogFlow = wpFog * 0.00052f + float3(cloudWind.xy * camPosW.w * 0.00018f, 0.0f);
             const float mist3d = 0.58f + 0.64f * cNoise(fogFlow);
-            const float hDens = (0.32f + 0.68f * exp(-max(ptT.z + 140.0f, 0.0f) * 0.00085f)) * mist3d;
+            // True world-space fog altitude above sea/valley level (replaces camera-relative ptT.z so fog NEVER moves with camera height!):
+            const float worldElevV = max(wpFog.z - waterA.w, 0.0f);
+            const float hDens = (0.32f + 0.68f * exp(-worldElevV * 0.00042f)) * mist3d;
             const float tr = exp(-sigma * t * 0.85f);
             const float vis = cascadeShadow(ptT, c.z, false) * cs;
             sumSun += vis * hDens * tr * dt;

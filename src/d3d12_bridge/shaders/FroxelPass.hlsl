@@ -103,7 +103,9 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     const float basinH = max(wp.z - (waterA.w + 45.0f), 0.0f);
     const float groundBank = isInt ? 0.0f : exp(-basinH * 0.0028f) * (0.45f + 0.55f * cNoise(wp * 0.0014f + float3(cloudWind.xy * camPosW.w * 0.00028f, 0.0f))) * (0.55f + 0.95f * dawnDuskFog + weather.w * 0.85f);
     const float peakCollar = isInt ? 0.0f : exp(-pow((wp.z - 4600.0f) / 2800.0f, 2.0f)) * smoothstep(3200.0f, 9500.0f, zMid) * 1.25f;
-    const float heightFalloff = isInt ? 1.0f : (0.30f + 0.70f * exp(-max(pRel.z + 180.0f, 0.0f) * 0.00075f) + peakCollar + groundBank);
+    // True world-space altitude falloff (replaces camera-relative pRel.z so 3D froxel fog is 100% world-locked!):
+    const float worldElevF = max(wp.z - waterA.w, 0.0f);
+    const float heightFalloff = isInt ? 1.0f : (0.30f + 0.70f * exp(-worldElevF * 0.00042f) + peakCollar + groundBank);
     float sigma = max(tune.x, 0.00011f) * weatherDens * mist3D * heightFalloff;
 
     float3 inScat = 0.0f.xxx;

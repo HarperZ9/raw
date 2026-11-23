@@ -1386,7 +1386,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float cosTheta = dot(viewDir, sunDir.xyz);
             const float g = 0.72f;
             const float hg = (1.0f - g * g) / (4.0f * 3.14159f * pow(max(1.0f + g * g - 2.0f * g * cosTheta, 0.04f), 1.5f));
-            const float heightDensity = exp(-max(p.z + 180.0f, 0.0f) * 0.00085f);
+            // True world-space elevation density (replaces camera-relative p.z so height fog never shifts when moving/jumping!):
+            const float heightDensity = exp(-max((p.z + camPosW.z) - waterA.w, 0.0f) * 0.00042f);
             const float distFog = 1.0f - exp(-max(z - 160.0f, 0.0f) * (0.000030f + 0.000028f * heightDensity));
             const float3 rayleighCol = float3(0.42f, 0.58f, 0.86f) * max(dot(amb, float3(0.3f, 0.5f, 0.2f)), 0.06f);
             const float3 mieCol = sunColour.rgb * min(hg, 1.5f) * (0.20f + 0.80f * sunShadow) * (0.45f + 0.55f * skyVis) * 0.045f;

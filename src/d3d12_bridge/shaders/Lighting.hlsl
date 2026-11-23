@@ -317,18 +317,31 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 s.alpha = lerp(s.alpha, 0.15f, max(meltMask, slushRing) * max(natSnowMelt, wet.snow) * 0.75f);
             }
         }
-        // Persistent 512x512 GPU PDE WorldField snowpack depth + central-difference carved trench normal relief:
-        if (base == 4u && z < 1000.0f && s.n.z > 0.42f) {
+        // Persistent 512x512 GPU PDE WorldField snowpack depth, post-rain puddle persistence + carved trench normal relief:
+        if ((base == 4u || base == 1u) && z < 1000.0f && s.n.z > 0.42f) {
             const float2 simUv = saturate(p.xy / 2048.0f + 0.5f.xx);
             if (all(simUv > 0.02f) && all(simUv < 0.98f)) {
-                const float simSnow = WorldField.SampleLevel(Lin, simUv, 0.0f).a;
+                const float4 wf = WorldField.SampleLevel(Lin, simUv, 0.0f);
+                const float simSnow = wf.a;
+                const float simWet = wf.b;
                 const float sL = WorldField.SampleLevel(Lin, simUv + float2(-1.0f / 512.0f, 0.0f), 0.0f).a;
                 const float sR = WorldField.SampleLevel(Lin, simUv + float2( 1.0f / 512.0f, 0.0f), 0.0f).a;
                 const float sD = WorldField.SampleLevel(Lin, simUv + float2(0.0f, -1.0f / 512.0f), 0.0f).a;
                 const float sU = WorldField.SampleLevel(Lin, simUv + float2(0.0f,  1.0f / 512.0f), 0.0f).a;
-                wet.snow = max(wet.snow, simSnow * saturate((s.n.z - 0.42f) * 2.5f));
-                s.n = normalize(s.n + float3((sL - sR) * 1.85f, (sD - sU) * 1.85f, 0.0f));
+                if (base == 4u) {
+                    wet.snow = max(wet.snow, simSnow * saturate((s.n.z - 0.42f) * 2.5f));
+                    s.n = normalize(s.n + float3((sL - sR) * 1.85f, (sD - sU) * 1.85f, 0.0f));
+                }
+                wet.wet = max(wet.wet, simWet * (1.0f - wet.snow) * 0.72f);
             }
+        }
+        // GEO-04 Dual-Frequency Tri-Planar Micro-Displacement Relief on close-range stone, ruins & terrain (< 1,200u):
+        if ((base == 1u || base == 4u) && z < 1200.0f) {
+            const float3 wpM = p + camPosW.xyz;
+            const float mFade = saturate(1.0f - z / 1200.0f);
+            const float mx = (cNoise(wpM * 0.22f) - 0.5f) * 0.18f + (cNoise(wpM * 0.68f + 7.1f) - 0.5f) * 0.10f;
+            const float my = (cNoise(wpM * 0.22f + 13.4f) - 0.5f) * 0.18f + (cNoise(wpM * 0.68f + 19.3f) - 0.5f) * 0.10f;
+            s.n = normalize(s.n + float3(mx, my, 0.0f) * mFade);
         }
         // Persistent 32-step world-anchored snow & wet-mud footprint deformation trail (footTrail[0..31]).
         const float natSnow = (base == 4u) ? saturate((min(albedo.r, min(albedo.g, albedo.b)) - 0.36f) * 4.5f) * saturate(s.n.z * 1.4f - 0.3f) : 0.0f;

@@ -48,12 +48,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         h = 0.0f; v = 0.0f; foam = 0.0f;
     }
 
-    // 1) Storm snowpack accumulation (rises in blizzards) & rain/sun melt:
+    // 1) Storm snowpack accumulation (rises in blizzards) & persistent post-rain puddle/wetness drying:
     if (weather.z > 0.04f) {
         const float driftNoise = 0.72f + 0.56f * cNoise(float3(worldXY * 0.008f, camPosW.w * 0.02f));
         snow = saturate(snow + weather.z * 0.00085f * driftNoise);
     } else if (weather.w > 0.05f) {
         snow = saturate(snow - weather.w * 0.0014f);
+        foam = saturate(foam + weather.w * 0.0035f);
+    } else {
+        // Post-rain puddles dry gradually under sun/wind:
+        foam = saturate(foam - 0.00045f);
     }
 
     // 2) Raindrop impulse forcing into 2D wave heightfield:
@@ -88,6 +92,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (d2 < rMelt * rMelt) {
                 const float att = 1.0f - sqrt(d2) / max(rMelt, 1.0f);
                 snow = saturate(snow - att * att * 0.025f);
+                foam = saturate(foam - att * att * 0.018f);   // Warm campfires/hearths dry nearby puddles & wet stone!
             }
         }
     }

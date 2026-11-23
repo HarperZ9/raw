@@ -17,6 +17,7 @@
 
 #include "rt_atlas.h"
 #include "rt_capture.h"
+#include "rt_audit.h"
 #include "rt_cascades.h"
 #include "rt_emitters.h"
 #include "rt_view.h"
@@ -214,6 +215,8 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             Result("{\"cmd\":\"view\"," + ViewJson() + "}");
         } else if (op == "weather") {
             Result(WeatherCommand());
+        } else if (op == "audit") {
+            Result(AuditCommand(*g_img));
         } else if (op == "grids") {
             // grids [n]: the loaded grid's array, or a new length while in an interior (rt_grids.h)
             Result(GridsCommand(*g_img, *g_refs, a));

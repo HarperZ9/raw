@@ -266,18 +266,24 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         s.mask = max(s.mask, max(wet.wet * 0.6f, wet.puddle));
         lobe = lobe || max(wet.wet, wet.puddle) > 0.2f;
         if (wet.snow > 0.0f) {
-            // Thick powdery 3D snowdrifts (matte high-roughness 0.88, wind-sculpted drift mounds, zero shiny 2D sheet sheen).
+            // SKY-09 Volumetric 3D Sastrugi Snowdrift Relief + Glacial Subsurface Scattering:
+            // Wind-sculpted multi-octave 3D snowdrift dunes with deep drift-trough self-shadowing, icy blue-turquoise
+            // snow subsurface scattering in shadowed troughs, and matte high-roughness powder crests.
             const float3 wpS = p + camPosW.xyz;
-            const float drift = cNoise(wpS * 0.0065f) * 0.65f + cNoise(wpS * 0.019f + 7.3f) * 0.35f;
-            const float driftDx = cNoise((wpS + float3(8.0f, 0.0f, 0.0f)) * 0.014f) - cNoise((wpS - float3(8.0f, 0.0f, 0.0f)) * 0.014f);
-            const float driftDy = cNoise((wpS + float3(0.0f, 8.0f, 0.0f)) * 0.014f) - cNoise((wpS - float3(0.0f, 8.0f, 0.0f)) * 0.014f);
-            const float3 snowCol = float3(0.64f, 0.69f, 0.76f) * lerp(0.86f, 1.08f, drift);
+            const float2 wFlowS = normalize(cloudWind.xy + float2(1.0f, 0.35f));
+            const float2 sCoord = float2(dot(wpS.xy, wFlowS) * 0.0045f, dot(wpS.xy, float2(-wFlowS.y, wFlowS.x)) * 0.014f);
+            const float sastrugi = cNoise(float3(sCoord, wpS.z * 0.008f)) * 0.62f + cNoise(float3(sCoord * 2.4f + 7.3f, wpS.z * 0.018f)) * 0.38f;
+            const float driftDx = cNoise((wpS + float3(7.0f, 0.0f, 0.0f)) * 0.015f) - cNoise((wpS - float3(7.0f, 0.0f, 0.0f)) * 0.015f);
+            const float driftDy = cNoise((wpS + float3(0.0f, 7.0f, 0.0f)) * 0.015f) - cNoise((wpS - float3(0.0f, 7.0f, 0.0f)) * 0.015f);
+            const float3 snowCrest = float3(0.76f, 0.80f, 0.86f);
+            const float3 snowTroughSSS = float3(0.42f, 0.56f, 0.72f);   // glacial ice-blue subsurface scatter in drift troughs
+            const float3 snowCol = lerp(snowTroughSSS, snowCrest, smoothstep(0.22f, 0.78f, sastrugi));
             albedo = lerp(albedo, snowCol, wet.snow);
-            s.alpha = lerp(s.alpha, 0.88f, wet.snow);
-            s.shin = lerp(s.shin, 2.0f / (0.88f * 0.88f) - 2.0f, wet.snow);
-            s.n = normalize(lerp(s.n, normalize(ng + float3(-driftDx * 0.65f, -driftDy * 0.65f, 0.25f)), wet.snow * 0.65f));
-            s.f0 = lerp(s.f0, 0.015f, wet.snow);
-            s.mask = lerp(s.mask, 0.02f, wet.snow);
+            s.alpha = lerp(s.alpha, 0.86f, wet.snow);
+            s.shin = lerp(s.shin, 2.0f / (0.86f * 0.86f) - 2.0f, wet.snow);
+            s.n = normalize(lerp(s.n, normalize(ng + float3(-driftDx * 0.92f, -driftDy * 0.92f, 0.22f)), wet.snow * 0.78f));
+            s.f0 = lerp(s.f0, 0.018f, wet.snow);
+            s.mask = lerp(s.mask, 0.03f, wet.snow);
             wet.puddle *= 1.0f - wet.snow;
             wet.wet *= 1.0f - wet.snow;
         }

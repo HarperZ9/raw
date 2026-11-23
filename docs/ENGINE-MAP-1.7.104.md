@@ -59,6 +59,11 @@ SkyrimSE.exe 1.7.104.0 Memory
 | `TESObjectCELL` | `+0x40` / `+0x70` | `uint16_t` / `float` | Bit 0 = `IsInterior`; `waterHeight` (e.g. `65.2u`) | `engineWorld.x/z` |
 | `TESCamera` | `+0x28 -> +0x18` | `uint32_t` | `0`=1st, `1`=3rd, `<=16` valid | `engineWorld.y` |
 | `UI::Singleton` | `+0x160` | `uint32_t` | `numPausesGame > 0` in Menu/Map/Inventory | `timeEnv.w` |
+| `BGSDecalManager` | `0x21A3DF8` | Singleton* | Live `audit`: `decal_mgr: true` | `rt_audit.cpp` / `rt_settings.cpp` |
+| `BGSGrassManager` | `0x21A05F8` | Singleton* | Live `audit`: `grass_mgr: true` | `rt_audit.cpp` |
+| `ImageSpaceManager` | `0x33D40A0` | Singleton* | Live `audit`: `img_space: true` | `rt_audit.cpp` |
+| `TESWaterSystem` | `0x21A05E8` | Singleton* | Live `audit`: `water_sys: true` | `rt_audit.cpp` |
+| `Sky` (colors) | `+0xD8` / `+0x138` | `NiColor` | Live `audit`: `+0xD8 == ssn.sun_col [0.75,0.71,0.67]`; `+0x138 == [0.45,0.66,0.80]` sky blue (`16/17` finite, `12` non-zero) | `rt_audit.cpp` |
 
 ## 3. Complete 2011 -> 2027 Ground-Up Replacement Status Matrix
 

@@ -66,11 +66,11 @@ static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
 constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536, kDistantLod = 131072, kEnvMap = 262144, kCharLight = 524288, kUnderwater = 1048576;
 constexpr RasterBinding U = RasterBinding::Uniform, T = RasterBinding::Texture, Sm = RasterBinding::Sampler;
-constexpr RasterBinding kLightLayout[17] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, Sm};
+constexpr RasterBinding kLightLayout[16] = {U, T, T, T, T, T, T, T, T, T, T, T, T, T, T, Sm};
 constexpr RasterBinding kWorldSimLayout[3] = {U, T, Sm};
 constexpr RasterBinding kCloudLayout[5] = {U, T, T, T, Sm};
 constexpr RasterBinding kVolLayout[7] = {U, T, T, T, T, T, Sm};
-constexpr RasterBinding kFogLayout[9] = {U, T, T, T, T, T, T, T, Sm};
+constexpr RasterBinding kFogLayout[10] = {U, T, T, T, T, T, T, T, T, Sm};
 constexpr RasterBinding kFroxelInjectLayout[6] = {U, T, T, T, T, Sm};
 constexpr RasterBinding kFroxelIntLayout[2] = {U, T};
 constexpr RasterBinding kBloom1Layout[2] = {T, Sm};
@@ -301,12 +301,12 @@ public:
             const RasterBind ws[3] = {{m_uniform, {}, {}}, {{}, simPrev, {}}, {{}, {}, m_lin}};
             Draw(*c, simNow, m_worldSimPipe, ws);
         }
-        const RasterBind light[17] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_normal, {}}, {{}, m_albedo, {}}, {{}, m_spec, {}},
+        const RasterBind light[16] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_normal, {}}, {{}, m_albedo, {}}, {{}, m_spec, {}},
                                      {{}, m_mask, {}}, {{}, m_atlas, {}}, {{}, aoVis, {}}, {{}, m_game, {}}, {{}, m_soft.valid() ? m_soft : m_game, {}},
                                      {{}, m_rtVis.valid() ? m_rtVis : m_game, {}}, {{}, m_rtIdx.valid() ? m_rtIdx : m_game, {}},
                                      {{}, giFilter ? m_giAtrous[0] : (m_rtBounce.valid() ? m_rtBounce : m_game), {}},
                                      {{}, reflFilter ? reflNow : (m_rtReflect.valid() ? m_rtReflect : m_game), {}},
-                                     {{}, m_envCube, {}}, {{}, simNow, {}}, {{}, {}, m_lin}};
+                                     {{}, m_envCube, {}}, {{}, {}, m_lin}};
         Draw(*c, m_lit, m_lightPipe, light);
         c->timestamp(4);
         const TextureHandle volNow = m_volFog[m_frame & 1], volLast = m_volFog[(m_frame + 1) & 1];
@@ -323,7 +323,7 @@ public:
                 Draw(*c, m_froxelInt, m_froxelIntPipe, fn);
             }
         }
-        const RasterBind fog[9] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volNow, {}}, {{}, m_atmoSkyView, {}}, {{}, cloudNow, {}}, {{}, m_froxelInt, {}}, {{}, {}, m_lin}};
+        const RasterBind fog[10] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volNow, {}}, {{}, m_atmoSkyView, {}}, {{}, cloudNow, {}}, {{}, m_froxelInt, {}}, {{}, simNow, {}}, {{}, {}, m_lin}};
         if (ok && (m_u.flags[0] & kMatch) == 0u) {
             // Render fog into m_aoOut, optionally run 3-Pass Near/Far Physical Bokeh DoF into m_lit,
             // then run 6-level Jimenez Karis HDR Bloom Pyramid and composite bloomed linear HDR into m_out.

@@ -18,6 +18,7 @@ Texture2D<float4> VolFog      : register(t3);
 Texture2D<float4> AtmoSkyView : register(t4);
 Texture2D<float4> Clouds      : register(t5);
 Texture2D<float4> FroxelVol   : register(t6);
+Texture2D<float4> WorldField  : register(t7);
 SamplerState      Lin         : register(s0);
 
 // Hardware-trilinear lookup into our 160x90x64 3D Froxel Volumetric Participating Media Grid (1280x720 8x8 atlas).

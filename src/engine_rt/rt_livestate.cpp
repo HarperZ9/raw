@@ -191,7 +191,8 @@ bool Read(Snapshot* s) {
                             break;
                         }
                     }
-                    // Organic blackbody tint shift: slight warm red/amber emphasis when flame dips.
+                    // Organic blackbody tint shift + expanded 2027 reach on hearths/torches/candles directly from ShadowSceneNode.
+                    x.radius = std::min(x.radius * 1.22f, 2400.0f);
                     x.color[0] *= (1.0f + breath * 0.85f);
                     x.color[1] *= (1.0f + breath * 1.05f);
                     x.color[2] *= (1.0f + breath * 1.30f);

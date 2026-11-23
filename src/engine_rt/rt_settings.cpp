@@ -222,6 +222,7 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"fTimePerSubStep:HAVOK", "0.0083333"},
         {"iMinNumSubSteps:HAVOK", "2"},
         {"bFindContactPointsOnAdd:HAVOK", "1"},
+        {"fVisibleNavmeshMoveDist:Combat", "16000.0"},
         {"bUseConstraintProjector:HAVOK", "1"},
         {"bUseCharRBExtrapolation:HAVOK", "1"},
         {"fInAirFallingCharGravityMult:Havok", "1.15"},

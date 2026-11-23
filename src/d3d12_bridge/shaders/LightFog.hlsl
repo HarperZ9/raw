@@ -88,66 +88,68 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (sunColour.w > 0.5f && flags.w != 10u) {
             const float3 sDir = normalize(worldAt(px, 0.995f) - eyeAt());
             const float sunLumS = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-            // True 24-hour astronomical clock from Sky::currentGameHour (+0x1B0, timeEnv.x = 0..24):
-            // Prevents NiDirectionalLight's night-time Moon switch from ever drawing a solar disc or jumping back across the sky,
-            // and drives rich dynamic dawn/sunrise/day/golden-hour/sunset/dusk/night color transitions!
-            const float ghS = timeEnv.x;
-            const float hasGh = step(0.01f, ghS);
-            const float dawnBell = hasGh * exp(-pow((ghS - 6.1f) / 1.15f, 2.0f));
-            const float duskBell = hasGh * exp(-pow((ghS - 19.2f) / 1.25f, 2.0f));
-            const float twilightBell = saturate(max(dawnBell, duskBell));
-            const float isDayHourS = hasGh > 0.5f
-                ? (smoothstep(5.0f, 6.4f, ghS) * (1.0f - smoothstep(19.0f, 20.5f, ghS)))
-                : 1.0f;
-            const float sunDiscGate = hasGh > 0.5f
-                ? (smoothstep(5.4f, 6.2f, ghS) * (1.0f - smoothstep(19.2f, 20.0f, ghS)))
-                : 1.0f;
-            const float dayW = saturate(max(saturate((sunDir.z + 0.04f) * 4.5f) * saturate((sunLumS - 0.14f) * 2.5f), twilightBell * 0.85f)) * isDayHourS;
+            // True 24-hour astronomical clock & sun vector from Sky::currentGameHour (+0x1B0, timeEnv.x = 0..24):
+            // Completely decoupled from ShadowSceneNode->sunLight's night-time Moon flip & minimum-elevation clamp!
+            const float3 aSun = astroSunDir();
+            const float aElev = astroSunElev();
+            const float dayW = smoothstep(-0.08f, 0.14f, aElev);
+            const float sunDiscGate = smoothstep(-0.02f, 0.04f, aElev);
+            const float twilightBell = smoothstep(-0.10f, 0.00f, aElev) * (1.0f - smoothstep(0.06f, 0.28f, aElev));
+            const float duskSide = smoothstep(12.5f, 15.0f, timeEnv.x);
             const float cover = saturate(clouds.x);
             // Preserve exotic DLC skies (Apocrypha emerald, Soul Cairn violet, Solstheim ash).
             const float isExotic = saturate(max((lit.g - max(lit.r, lit.b) * 1.08f) * 6.0f,
                                                 (min(lit.r, lit.b) - lit.g * 1.15f) * 6.0f));
-            const float cosS = saturate(dot(sDir, sunDir.xyz));
+            const float cosS = saturate(dot(sDir, aSun));
             const float sunAng = acos(clamp(cosS, -1.0f, 1.0f));
-            const float lowS = max(saturate(1.0f - sunDir.z * 2.6f), twilightBell);
+            const float lowS = saturate(1.0f - max(aElev, 0.0f) * 3.2f);
             // Preserve authored Masser & Secunda moon crater textures across daytime, twilight, and night.
             const float moonLumF = dot(lit.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-            const float moonKeep = isCelestial ? 1.0f : (smoothstep(0.16f, 0.48f, moonLumF) * (1.0f - smoothstep(0.985f, 0.996f, cosS)) * (1.0f - smoothstep(0.18f, 0.42f, sunDir.z)));
+            const float moonKeep = isCelestial ? 1.0f : (smoothstep(0.16f, 0.48f, moonLumF) * (1.0f - smoothstep(0.985f, 0.996f, cosS)) * (1.0f - smoothstep(0.18f, 0.42f, aElev)));
             // Full 24-Hour Dynamic Skybox (Dawn -> Sunrise -> Day -> Golden Hour -> Sunset -> Dusk -> Star-Studded Night):
             const float hUp = saturate(sDir.z);
             const float3 nightZen = float3(0.005f, 0.011f, 0.028f);
             const float3 nightHor = float3(0.022f, 0.036f, 0.068f);
             float3 fullSky = lerp(nightHor, nightZen, pow(hUp, 0.56f));
+            // Physical 22-degree warm atmospheric lunar halo around the night Moon (ShadowSceneNode->sunLight at night),
+            // calibrated to author-01.jpg own-08..11.
+            const float nightHaloW = smoothstep(0.02f, -0.08f, aElev) * (1.0f - cover * 0.55f);
+            if (nightHaloW > 0.01f && sunDir.z > 0.04f) {
+                const float cosM = saturate(dot(sDir, normalize(sunDir.xyz)));
+                const float mAng = acos(clamp(cosM, -1.0f, 1.0f));
+                const float mCorona = exp(-mAng * 10.5f) * 0.24f + exp(-pow((mAng - 0.384f) / 0.055f, 2.0f)) * 0.055f;
+                fullSky += float3(0.92f, 0.84f, 0.68f) * (mCorona * nightHaloW);
+            }
             if (dayW > 0.01f || twilightBell > 0.02f) {
                 const float hElev = max(sDir.z, 0.048f);
                 const float3 hSky = sampleHillaireSky(normalize(float3(sDir.xy, hElev)));
                 const float3 sceneSkyRef = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.06f.xxx);
                 const float3 natZen = lerp(float3(0.95f, 0.98f, 1.02f), float3(0.84f, 0.94f, 1.08f), pow(hUp, 0.70f));
-                const float3 richSky = lerp(hSky * natZen, max(hSky, sceneSkyRef * 1.35f), 0.25f);
+                const float3 richSky = lerp(hSky * natZen, max(hSky, sceneSkyRef * 1.35f), 0.22f * smoothstep(0.10f, 0.32f, aElev));
                 const float hLum = max(dot(richSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.08f);
                 const float3 overcastSky = lerp(float3(0.76f, 0.80f, 0.86f), float3(0.56f, 0.62f, 0.72f), hUp) * max(hLum * 1.18f, 0.50f);
                 float3 physSky = lerp(richSky, overcastSky, saturate(cover * 0.82f - 0.08f + weather.w * 0.45f + weather.z * 0.42f));
-                // Dramatic Sunrise (coral-gold/peach) & Sunset/Dusk (crimson-amber + violet Belt of Venus) dynamic palette:
-                const float3 twiZen = lerp(float3(0.06f, 0.11f, 0.28f), float3(0.09f, 0.07f, 0.22f), duskBell / max(dawnBell + duskBell, 0.01f));
-                const float3 twiMid = lerp(float3(0.52f, 0.30f, 0.46f), float3(0.68f, 0.28f, 0.34f), duskBell / max(dawnBell + duskBell, 0.01f));
-                const float3 twiHor = lerp(float3(1.18f, 0.58f, 0.26f), float3(1.32f, 0.44f, 0.18f), duskBell / max(dawnBell + duskBell, 0.01f));
-                const float3 twiGrad = hUp < 0.28f ? lerp(twiHor, twiMid, pow(hUp / 0.28f, 0.72f))
-                                                   : lerp(twiMid, twiZen, pow((hUp - 0.28f) / 0.72f, 0.78f));
-                const float twiBlend = twilightBell * (1.0f - saturate(weather.w * 0.55f + weather.z * 0.45f)) * 0.82f;
+                // Authentic Pacific Northwest Dawn/Sunrise & Sunset/Dusk (author-01.jpg own-13..17, own-27, own-42):
+                const float3 twiZen = lerp(float3(0.05f, 0.09f, 0.24f), float3(0.07f, 0.06f, 0.20f), duskSide);
+                const float3 twiMid = lerp(float3(0.48f, 0.28f, 0.44f), float3(0.64f, 0.26f, 0.36f), duskSide);
+                const float3 twiHor = lerp(float3(1.18f, 0.58f, 0.24f), float3(1.36f, 0.44f, 0.16f), duskSide);
+                const float3 twiGrad = hUp < 0.26f ? lerp(twiHor, twiMid, pow(hUp / 0.26f, 0.72f))
+                                                   : lerp(twiMid, twiZen, pow((hUp - 0.26f) / 0.74f, 0.78f));
+                const float twiBlend = twilightBell * (1.0f - saturate(weather.w * 0.55f + weather.z * 0.45f)) * 0.68f;
                 physSky = lerp(physSky, twiGrad, twiBlend);
-                const float antiSolar = saturate(dot(sDir, -sunDir.xyz));
+                const float antiSolar = saturate(dot(sDir, -aSun));
                 const float horBand = exp(-hUp * 6.5f);
-                physSky += float3(1.15f, 0.46f, 0.14f) * (pow(cosS, 3.5f) * horBand * twilightBell * (1.0f - cover * 0.55f) * 0.72f);
-                physSky += float3(0.52f, 0.24f, 0.48f) * (pow(antiSolar, 2.0f) * horBand * twilightBell * 0.32f);
-                // Blazing physical exponential HDR solar core + Mie aureole (strictly gated on sunDiscGate so the Moon never gets a sun disc!).
+                physSky += float3(1.18f, 0.46f, 0.14f) * (pow(cosS, 3.2f) * horBand * twilightBell * (1.0f - cover * 0.55f) * 0.78f);
+                physSky += float3(0.52f, 0.24f, 0.48f) * (pow(antiSolar, 2.0f) * horBand * twilightBell * 0.34f);
+                // Blazing physical exponential HDR solar core + Mie aureole along TRUE astroSunDir() (never drawn on the Moon!).
                 if (sunDiscGate > 0.01f) {
-                    const float3 sunCoreCol = lerp(float3(1.0f, 0.99f, 0.96f), float3(1.0f, 0.64f, 0.26f), lowS);
-                    const float3 sunHaloCol = lerp(float3(1.0f, 0.94f, 0.84f), float3(1.0f, 0.46f, 0.14f), lowS);
+                    const float3 sunCoreCol = lerp(float3(1.0f, 0.99f, 0.96f), float3(1.0f, 0.60f, 0.22f), lowS);
+                    const float3 sunHaloCol = lerp(float3(1.0f, 0.94f, 0.84f), float3(1.0f, 0.42f, 0.12f), lowS);
                     const float solarCore = exp(-sunAng * 135.0f) * 16.0f + smoothstep(0.99962f, 0.99990f, cosS) * 8.0f;
                     const float solarCorona = exp(-sunAng * 22.0f) * 1.65f + exp(-sunAng * 5.5f) * 0.32f;
                     physSky += (sunCoreCol * solarCore + sunHaloCol * (solarCorona * (1.0f - cover * 0.55f))) * sunDiscGate;
                 }
-                fullSky = lerp(fullSky, physSky, max(dayW, twilightBell * 0.90f));
+                fullSky = lerp(fullSky, physSky, max(dayW, twilightBell * 0.92f));
             }
             // Seamless C2 sub-horizon worldbound atmospheric continuation (eliminates any dark world-edge wall).
             if (sDir.z < 0.0f) {

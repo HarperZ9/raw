@@ -97,8 +97,8 @@ float organicFroth(float2 p, float t) {
 
 float3 waterSky(float3 rd) {
     const float3 base = skyAt(rd);
-    const float sunLumW = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-    const float dayW = saturate((sunDir.z - 0.01f) * 4.0f) * saturate((sunLumW - 0.20f) * 2.5f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
+    const float aElevW = astroSunElev();
+    const float dayW = smoothstep(-0.08f, 0.14f, aElevW) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
     float3 skyCol = base;
     if (dayW > 0.02f && rd.z > 0.0f) {
         float3 sZ, sM, sH;
@@ -191,9 +191,9 @@ void water(uint3 id : SV_DispatchThreadID) {
                 bowHit = saturate(intoObs) * nearObs;
                 eddyLee = saturate(-intoObs) * nearObs;
 
-                // True continuous 8-directional JONSWAP-style propagating Gerstner/capillary wave spectrum:
-                // waves travel continuously along flowDir + cross-swell angles with realistic phase velocity
-                // (eliminates frozen pulsing flowBlend and blobby vNoise2D splotches).
+                // True continuous world-space downstream advection + 8-directional propagating Gerstner wave spectrum:
+                // Now runs AFTER DLSS-RR so neural temporal denoising NEVER freezes or smears moving waves!
+                const float2 wpFlow = wpW.xy - flowDir * (wt * 36.0f);
                 const float2 flowPerp = float2(-flowDir.y, flowDir.x);
                 static const float2 kWDir[8] = {
                     float2( 0.94f,  0.34f), float2( 0.82f, -0.57f), float2( 0.52f,  0.85f), float2(-0.28f,  0.96f),
@@ -206,7 +206,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                 float2 waveG = 0.0f.xx;
                 [unroll] for (int wi = 0; wi < 8; ++wi) {
                     const float2 dirW = normalize(flowDir * kWDir[wi].x + flowPerp * kWDir[wi].y);
-                    const float ph = dot(wpW.xy, dirW) * kWFreq[wi] - wt * kWSpeed[wi];
+                    const float ph = dot(wpFlow, dirW) * kWFreq[wi] - wt * kWSpeed[wi];
                     const float distAtt = saturate(1.0f - wDist / (16000.0f / (1.0f + float(wi) * 0.85f)));
                     // Steepened trochoidal crest derivative: sharp travelling wave crests, smooth sunlit troughs.
                     const float s = sin(ph);

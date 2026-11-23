@@ -125,12 +125,15 @@ void Blend(State* s) {
         s->smoothFog   = approach(s->smoothFog,   s->fog,   0.18f,  0.18f,  dt);
     }
     // Engine-native wind velocity (game units/sec for volumetric cloud advection) and storm lightning frequency.
+    // Note: TESWeather::Data::lightningFrequency (+0x0A) is INVERTED (255 = NO lightning, 0 = max lightning).
     const float ws = (c.windSpeed * p + l.windSpeed * (1.0f - p)) / 255.0f;
     const float ang = (c.windDir / 255.0f) * 6.2831853f;
     const float speed = 45.0f + ws * 380.0f;
     s->windX = std::cos(ang) * speed;
     s->windY = std::sin(ang) * speed;
-    s->lightning = Sat((c.lightningFreq * p + l.lightningFreq * (1.0f - p)) / 255.0f);
+    const float cLight = (c.flags & 4) ? ((255.0f - float(c.lightningFreq)) / 255.0f) : 0.0f;
+    const float lLight = (l.flags & 4) ? ((255.0f - float(l.lightningFreq)) / 255.0f) : 0.0f;
+    s->lightning = Sat(cLight * p + lLight * (1.0f - p));
 }
 
 }  // namespace

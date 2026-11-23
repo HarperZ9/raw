@@ -281,10 +281,12 @@ void StepLiveActorsSEH(float dtSec) {
             }
         }
         // Traverse ALL active high-process NPC actors from ProcessLists::highActorHandles (+0x30 data, +0x40 size)
-        // resolved through BSPointerHandleManager::Entry::GetHandleEntries (16-byte entries, pointer at +0x08).
+        // resolved through BSPointerHandleManager::Entry::GetHandleEntries.
         if (g_base && g_kProcessLists && g_kHandleEntries) {
             const uint8_t* pl = SafeAt<const uint8_t*>(g_base, g_kProcessLists);
-            const uint8_t* entries = g_base + g_kHandleEntries;
+            const uint8_t* rawTbl = g_base + g_kHandleEntries;
+            const uint8_t* indTbl = SafeAt<const uint8_t*>(g_base, g_kHandleEntries);
+            const uint8_t* entries = IsCanonicalPtr(indTbl) ? indTbl : rawTbl;
             if (IsCanonicalPtr(pl)) {
                 const uint32_t* handles = SafeAt<const uint32_t*>(pl, 0x30);
                 const uint32_t hiCount = SafeAt<uint32_t>(pl, 0x40);
@@ -297,9 +299,14 @@ void StepLiveActorsSEH(float dtSec) {
                             const uint32_t idx = h & 0xFFFFFu;
                             if (!h || idx >= 0x100000u) continue;
                             const uint8_t* ent = entries + size_t(idx) * 16u;
-                            const uint8_t* refr = SafeAt<const uint8_t*>(ent, 0x08);
+                            // BSPointerHandleManager::Entry::pointer (+0x08) is a BSHandleRefObject* (TESObjectREFR + 0x20)!
+                            const uint8_t* handleObj = SafeAt<const uint8_t*>(ent, 0x08);
+                            if (!IsCanonicalPtr(handleObj)) continue;
+                            const uint8_t* refr = handleObj - 0x20;
+                            if (!IsCanonicalPtr(refr) || SafeAt<uint8_t>(refr, 0x1A) != 62u) {
+                                refr = handleObj;   // fallback if already TESObjectREFR*
+                            }
                             if (!IsCanonicalPtr(refr) || refr == pc) continue;
-                            // Structural proof: FormType::ActorCharacter == 62 at TESForm +0x1A
                             if (SafeAt<uint8_t>(refr, 0x1A) != 62u) continue;
                             const uint8_t* loaded = SafeAt<const uint8_t*>(refr, 0x70);
                             if (!IsCanonicalPtr(loaded)) continue;

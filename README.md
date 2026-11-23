@@ -1,165 +1,95 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/HarperZ9/raw/master/docs/art/hero-dark.svg">
-  <img src="https://raw.githubusercontent.com/HarperZ9/raw/master/docs/art/hero-light.svg" alt="raw: D3D11 rendering platform for Skyrim SE with mid-frame effect dispatch. Parallel rays pass through a lens drawn in fine lines, gather at a bright core and spread out past it." width="100%">
+  <img src="https://raw.githubusercontent.com/HarperZ9/raw/master/docs/art/hero-light.svg" alt="RAW: Native DirectX 12, Shader Model 6.9, and DXR 1.2 rendering and engine platform for Skyrim Special Edition." width="100%">
 </picture>
 
-# raw
+# RAW
 
-D3D11 rendering platform for Skyrim SE with mid-frame effect dispatch.
-
-```
-cmake -B build -S . -DVCPKG_TARGET_TRIPLET=x64-windows-static
-```
+Native DirectX 12, Shader Model 6.9, DXR 1.2, and NVIDIA Streamline rendering and engine runtime for **The Elder Scrolls V: Skyrim Special Edition** (`1.6.1170.0` and `1.7.104.0`).
 
 [![license](https://img.shields.io/badge/license-MIT-e6e1d6?style=flat-square&labelColor=1a1712)](https://github.com/HarperZ9/raw/blob/master/LICENSE)
 ![C++23](https://img.shields.io/badge/language-C%2B%2B23-e6e1d6?style=flat-square&labelColor=1a1712)
+![DirectX 12](https://img.shields.io/badge/API-DX12%20%2B%20DXR%201.2%20%2B%20SM%206.9-e6e1d6?style=flat-square&labelColor=1a1712)
 
-> **Paused.** This repository holds the original RAW, a Direct3D 11 effects platform for Skyrim SE.
-> Work on it is paused, and the author plans to return to it. The standalone renderer that followed
-> it is a dependency-free C++23 renderer that checks fast screen-space ambient occlusion against a
-> ray-traced reference and writes a certificate with the verdict. It now lives in
-> [superframe](https://github.com/HarperZ9/superframe) under
-> [`native/`](https://github.com/HarperZ9/superframe/tree/main/native). Builds up to v0.8.0 are on
-> the [raw-native releases](https://github.com/HarperZ9/raw-native/releases) page.
+RAW translates Skyrim's D3D11 rendering pipeline directly into a native DirectX 12 render graph (`d3d11.dll` `raw::tx` + `d3d12_bridge`) paired with a compiled Creation Engine runtime (`raw_engine.dll`). It replaces Skyrim's 2011 lighting, shadows, reflections, sky, clouds, fog, water, post-processing, and legacy engine bottlenecks with hardware ray tracing, neural ray reconstruction, physical atmosphere and fluid simulation, and live in-game tuning.
 
-Copyright (c) 2026 Zain D. Harper (papacr0w). MIT, see `LICENSE`.
-
-A D3D11 rendering platform for Skyrim SE. Proxy-based pipeline ownership
-with mid-frame effect dispatch via SKSE plugin.
-
-**Status: Active development. Core effects functional, tuning in progress.**
-
-## What this is becoming
-
-RAW is the seed of a **native, dependency-free rendering engine + algorithm simulator**: a two-way
-surface where a model and a person *see the same rendered frame and cross-examine it in real time*: the
-verification target (*is this right?*) and the creative-improvement target (*make this better*) as one
-loop. It is meant to feed gallery tools and serve as a reusable resource library, a showcase that this
-work has value in any creative or technical workflow.
-
-**Honest scope:** today RAW is a D3D11 proxy for Skyrim SE with the rendering effects below. The
-real-time two-way cross-examination and the dependency-free native renderer (no DirectX/driver) are the
-**telos**, stated as direction, not as shipped. Part of an AI-accountability toolkit
-([HarperZ9](https://github.com/HarperZ9)): the rendering eye (`eye.raw_rendering`) turns frames into
-witnessed, checkable observations.
-
-> **Not affiliated with or endorsed by Bethesda Softworks or ENBSeries.** For use with a legally-owned
-> copy of the base game. Provided as-is, without warranty.
-
-<p align="center">
-  <img src="docs/art/raw-facts.svg" alt="A table of thirteen rows: what the engine declares, how many of each there are, and where the number is read from. The render-phase enum names nine phases, and the proxy classifies each frame across them. The weather system carries nine categories that modulate effect intensity. Six effects are active, and of those six one is verified in-game today while the rest are still being tuned. Three post-processing stages are in the build. The debug tonemapper list holds seven real tone curves alongside a linear passthrough. Seventeen renderers are kept in source but removed from the build. The d3d11 proxy wraps three objects: the device, the context and the swap chain. The shader directory holds eighty-five HLSL files loaded from disk, plus one shared include. Every target builds to the C++23 standard, and the license is MIT. The marked row is the honest null: the engine can capture per-pass frame time to CSV, but no such capture is committed here, so no measured frame time is published.">
-</p>
-
-## Active Effects
-
-| Effect | Algorithm | Status |
-|--------|-----------|--------|
-| GTAO | Jimenez 2019 visibility bitmask | Functional, verified in-game |
-| Contact Shadows | Screen-space directional ray march | Functional, needs tuning |
-| Skylighting | Screen-space hemisphere visibility | Functional, noise reduction in progress |
-| SSR | McGuire & Mara 2014 Hi-Z march | Visible artifacts, needs work |
-| SSGI | Voxel cone tracing | Green tint issue, needs rework |
-| Scene Compositor | Multi-effect blend with multi-bounce AO | Functional |
-
-## Active Post-Processing
-
-| Stage | Status |
-|-------|--------|
-| Bloom (Karis + Jimenez 13-tap) | In build, untested |
-| Color Pipeline (AgX, 7 tonemappers) | In build, untested |
-| Tone Map Manager (auto-exposure) | In build, untested |
-
-## Architecture
-
-- **RendererBase**: shared base class for all renderers (state, init, enable)
-- **SharedRAW.hlsli**: common HLSL utilities (`#include` enabled via `D3D_COMPILE_STANDARD_FILE_INCLUDE`)
-- **d3d11.dll proxy**: wraps Device, Context, SwapChain
-- **Phase detection**: DSV-unbind heuristic classifies 9 render phases
-- **Mid-frame dispatch**: effects run at PostGeometry; PrePresent fallback for legacy mode
-- **HiZ pyramid**: standard-to-reversed-Z depth with mip chain
-- **External HLSL only**: no embedded shader strings; all shaders loaded from disk, F12 hot-reload
-- **Weather system**: 9 categories, auto-modulates effect intensities
-
-## Disabled (source preserved, removed from build)
-
-17 renderers removed from compilation pending individual polish:
-DoF, Lens, Underwater, Atmosphere, Volumetric Clouds, Volumetric Lighting,
-SSS, Frame Gen, TSR, Grass Lighting, Tree LOD, Water Blending,
-Dynamic Cubemap, SDSM, Indirect Specular, Screen-Space Decals, Particle Lighting.
-
-## Build
-
-```
-cmake -B build -S . -DVCPKG_TARGET_TRIPLET=x64-windows-static
-cmake --build build --config Release --target RAW --target d3d11_proxy
-```
-
-## Deploy (MO2)
-
-```
-<mod>/SKSE/plugins/RAW.dll
-<mod>/SKSE/plugins/RAW/Shaders/*.hlsl
-<mod>/SKSE/plugins/RAW/Shaders/*.hlsli
-<mod>/Root/d3d11.dll
-```
-
-## In-Game
-
-1. Press **INSERT** to open debug GUI
-2. Click **Recommended** for safe defaults (GTAO + Contact Shadows + Skylighting + AgX)
-3. **Pipeline Status** section shows proxy/depth/dispatch diagnostics
-
-## Shader Development Workflow (No Restarts)
-
-```
-F5  = Dump all effect textures to Data/SKSE/Plugins/RAW/Captures/
-F7  = Toggle mid-frame dispatch
-F12 = Hot-reload all HLSL shaders from disk
-F11 = GPU profiler overlay (per-pass timing)
-F10 = 600-frame performance capture to CSV
-```
-
-**The loop:** edit .hlsl in your text editor → F12 to reload → see result instantly.
-Use debug modes (SceneCompositor Debug View dropdown) to isolate each effect.
-F5 dumps BMP files you can inspect at full resolution in any image viewer.
-
-## Build
-
-```bash
-cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
-cmake --build build --config Release --target RAW --parallel
-cmake --build build --config Release --target d3d11_proxy --parallel
-```
-
-Requires: VS2022, CMake 3.24+, vcpkg (x64-windows-static), CommonLibSSE-NG.
-
-## Deploy (MO2)
-
-```
-[mod folder]/SKSE/plugins/RAW.dll
-[mod folder]/SKSE/plugins/RAW/RAW.ini          (auto-generated)
-[mod folder]/SKSE/plugins/RAW/Shaders/*.hlsl    (85 files)
-[mod folder]/SKSE/plugins/RAW/ShaderCache/      (auto-generated)
-[mod folder]/ROOT/d3d11.dll
-```
-
-## Hotkeys
-
-| Key | Function |
-|-----|----------|
-| INSERT | Toggle debug GUI |
-| F7 | Toggle mid-frame dispatch |
-| F8 | Toggle compute passes |
-| F9 | Toggle render passes |
-| F10 | Frame capture (CSV) |
-| F11 | GPU profiler |
-| F12 | Hot-reload shaders |
-
-## Documentation
-
-- `ARCHITECTURE.md`: depth conventions, SRV slots, pipeline rules
-- `LICENSE.md`: copyright and third-party licenses
+> Not affiliated with or endorsed by Bethesda Softworks, NVIDIA, or ENBSeries. Requires a legally owned copy of Skyrim Special Edition. Provided as-is under the MIT license (NVIDIA Streamline binaries remain subject to NVIDIA's SDK license).
 
 ---
 
-Built by **[Zain Dana Harper](https://harperz9.github.io)** in Seattle: evidence-first tools that leave a re-checkable artifact behind. The full workbench is at [Project Telos](https://harperz9.github.io).
+## Quick Install
+
+1. Disable or remove conflicting graphics injectors: **ENBSeries** (`d3d11.dll`, `d3dcompiler_46e.dll`), **Community Shaders**, **ReShade**, and **SSE Display Tweaks**.
+2. Extract `RAW-SkyrimSE-DX12-v1.0.0-r304.zip` into your Skyrim Special Edition root folder (next to `SkyrimSE.exe`), or into a Mod Organizer 2 Root Builder mod under `Root/`.
+3. Launch `SkyrimSE.exe` (or `skse64_loader.exe` via MO2).
+
+### In-Game Controls
+
+| Key | Action |
+|---|---|
+| `End` | Open / close RAW DX12 Studio overlay (8 live tabs) |
+| `PgUp` / `PgDn` | Switch studio tabs (`1:RT`, `2:Sky/Fog`, `3:Weather`, `4:Water`, `5:Skin/AO`, `6:Tonemap`, `7:LUTs/OV`, `8:Cinema/DoF`) |
+| Arrow Keys | Adjust selected parameter live |
+| `S` / `L` | Save / load user preset slot |
+| `F10` | Cycle lighting mode (Improved / Match / Off) |
+
+---
+
+## Measured Performance (`1920x1080`, RTX 4090, Full RT + DLSS-RR Preset F)
+
+All measurements below were collected passively over 300-frame windows in live Skyrim SE exterior gameplay (`1,779` to `1,791` tested draws, `~846k` triangles) with DXR 1.2 shadows/GI/reflections/OMMs, NVIDIA DLSS Ray Reconstruction (Preset F), Reflex, 3-layer volumetric clouds, 3D froxel fog, and RT water active:
+
+| Metric | Measured Result | Notes |
+|---|---|---|
+| Live frame time (`measure`, 300 frames) | **8.31 ms to 12.78 ms** (`78` to `120 FPS`) | `p99`: `9.73` to `14.88 ms` |
+| Native D3D12 render graph (`ao` + `lighting` + `fog`) | **2.47 ms to 3.68 ms** | `ao 0.21 ms`, `lighting 2.49–3.01 ms`, `fog 0.47–0.62 ms` |
+| D3D11 -> D3D12 bridge overhead | **0.32 ms to 0.72 ms** | Zero-copy shared handles via `raw::tx` |
+| Native DX12 Compute Hi-Z culling (`240x135`) | **152 to 353 draws culled/frame** | `44k` to `145k` triangles saved (`5.3%` to `17.4%`) |
+| `RtSkin` skinned actor BLAS quality | **0 to 6 stretched tris** of `78k+` | Down from `1,478` stretched tris; `0` out-of-range indices |
+| Papyrus VM governor (`vm_ms_total` / 300 frames) | **5.77 ms to 7.25 ms** | `~0.02 ms/frame` adaptive budget |
+
+---
+
+## Core Systems & Features
+
+### 1. Native DirectX 12, DXR 1.2 & NVIDIA Streamline
+- **`raw::tx` D3D11-to-DX12 Translation:** Adopts a native D3D12 Agility SDK `1.620.1` device, compiles all lighting/atmosphere/RT shaders as SM 6.9 DXIL, and disables 5 redundant 2011 Skyrim passes (`bUseWaterReflections`, `bScreenSpaceReflectionEnabled`, `bSAOEnable`, `bVolumetricLightingEnable`, `bDoDepthOfField`).
+- **DXR 1.2 Inline Ray Tracing:** Hardware ray-traced sun and local-light shadows, Opacity Micromaps (OMMs) for alpha-tested foliage, Bounded VNDF Spherical-Cap GGX reflection sampling (`Tokuyoshi & Eto 2024`), 3-pass SVGF A-Trous GI denoiser, disocclusion-boosted RTAO (`RtSkyFilter.hlsl`), and Karis firefly-suppressed reflection filtering (`RtReflFilter.hlsl`).
+- **NVIDIA Streamline:** Live DLSS Ray Reconstruction (Preset F) fed by a dedicated SM 6.9 `NormalUnpack.hlsl` linear world-space normal+roughness pass, DLAA Transformer (Preset K), and Reflex Low Latency.
+- **Native DX12 Compute Hi-Z (`HiZDownsample.hlsl` + `OcclusionCuller.cpp`):** `1920x1080 -> 240x135` GPU depth reduction driving conservative frustum, sub-pixel, and Hi-Z occlusion culling.
+
+### 2. Sky, 3-Layer Volumetric Clouds & Synoptic Weather
+- **Hillaire SIGGRAPH 2020 Physical Atmosphere (`AtmosphereLut.hlsl`):** 256x64 Transmittance LUT, 32x32 Multiple-Scattering LUT, and 192x108 per-frame Sky-View LUT driven by true 24-hour astronomical solar elevation (`Sky::currentGameHour`) decoupled from `ShadowSceneNode->sunLight`'s night-time Moon flip (`isRealSun()`).
+- **3-Layer 4D Ekman-Sheared Volumetric Clouds (`Clouds.hlsl`):**
+  1. `46,000..90,000u` towering 3D cumulus with 8-octave path-traced-matched multiple scattering and 4-octave ridged-billow cauliflower edge erosion.
+  2. `96,000u` mid-altitude altocumulus wave bands (`+34°` Ekman wind veer, `1.65x` speed).
+  3. `130,000u` jet-stream cirrus & mares'-tails (`+54°` Ekman veer, `2.65x` speed) with twilight under-lighting and pearlescent iridescence.
+- **Optical & Astrophysical Events (`LightFog.hlsl`):** Eddington solar limb darkening, crepuscular cloud-gap rays, 42°/51° spectral rainbows during sunlit rain, 22° warm lunar halo, nocturnal 557.7 nm airglow, Planck blackbody scintillating starfield, multi-band H-alpha/O-III galactic nebula, and 8-layer Nordic aurora.
+- **Ground-Up Synoptic Weather Engine (`rt_weather.cpp`):** Continuous barometric pressure fronts (`982..1030 hPa`), regional climate biomes (`arctic`, `alpine`, `valley_forest`, `tundra`), diurnal valley mist and convective cumulus, Solstheim volcanic ashstorms with glowing embers, and 3D depth-occluded rain/snow/ash precipitation.
+
+### 3. Fluid Water, Materials, Characters & Distant LODs
+- **Decoupled Fluid Water (`RtWater.hlsl` + `BridgeWater.cpp`):** Runs after DLSS-RR so animated waves are never temporally frozen; Nyquist pixel-footprint band-limited 6-directional Gerstner swells, `28 u/s` downstream advection, hybrid screen-edge-crossfaded RT/SSR reflections, Snell's Window + Total Internal Reflection underwater optics, chromatic caustics, and shallow-stream rapids foam.
+- **PBR Materials & Surface Physics (`Lighting.hlsl`):** 128 clustered lights with Frostbite/UE5 windowed falloff, EON energy-preserving rough diffuse (`Portsmouth et al. 2025`), Kulla-Conty multi-scattering GGX, MAT-01 dual-lobe clearcoat, Belcour-Barla Airy thin-film spectral iridescence, moisture-driven stone moss/lichen, steep-cliff tri-planar geological strata, 3D sastrugi snowdrifts with glacial subsurface scattering and diamond micro-glints, and live engine-`waterHeight` reflective water-bounce caustics on bridges and piers.
+- **Characters & Foliage (`Lighting.hlsl`, `Sss.hlsl`, `DistantLod.hlsli`):** Biophysical skin diffusion, dual-lobe skin oil/pore sheen, wet eye cornea specular, Marschner dual-lobe hair, Charlie microfiber cloth sheen, dual-lobe chlorophyll foliage SSS + waxy cuticle sheen, and 24-hour Sun/Moon/weather-relit distant LODs and tree billboards.
+
+### 4. Tonemaps, 12 Live Film/Art Modes & Creation Engine Runtime
+- **Color Science & Camera Optics (`Tonemap.hlsl`, `DofPass.hlsl`, `BloomPass.hlsl`):** Troy Sobotka AgX + perceptual punchy look, Stephen Hill exact ACES RRT+ODT, Gran Turismo, Lottes, Hable, Purkinje scotopic night shift, 12-pass Karis HDR bloom, full-range cinema-prime DoF, 2-stage Kodak 5219 halation + 6-tap Panavision anamorphic flare, 6-blade diffraction starburst, Tiffen Black Pro-Mist 1/4 diffusion, cubic Cooke/Zeiss CA, and biomechanical figure-8 camera stride.
+- **12 Built-In Film & Artistic Modes (`ToneX2 = 0..11`):** `Neutral`, `Nordic Alpine`, `Kodak 2383`, `Cinema Contrast`, `Kodak Vision3 500T`, `Fuji Velvia 50`, `Tarkovsky Polaroid`, `LomoChrome Purple`, plus 4 real-time artistic shaders (`Oil & Impasto Kuwahara Paint`, `Engraved Ink & Cross-Hatch`, `16-Bit Pixel-Art + Bayer Dither`, and `Romantic Watercolor`).
+- **Creation Engine Runtime (`raw_engine.dll`):** False-save-corruption fix (`_setmaxstdio(8192)`), 120 Hz sub-stepped Havok physics with Foot/Look IK, tactical combat AI and weapon stagger tuning, expanded decal/grass/tree budgets, live `Sky`/`ShadowSceneNode`/`TESObjectCELL`/`UI` reads, and a built-in SEH-protected engine heuristic auditor (`engine commands=audit`, documented in `docs/ENGINE-MAP-1.7.104.md`).
+
+---
+
+## Building From Source
+
+Requires Visual Studio 2022/2026 (C++23), CMake 3.25+, Ninja, and DirectX Shader Compiler (`dxc`).
+
+```powershell
+cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target raw_engine d3d11_proxy
+```
+
+## Known Limits
+
+- **Depth format:** `TxDepth32` stays disabled (`TxDepth32=0`) because Skyrim SE's compiled 24-bit DXBC depth shaders mismatch 32-bit float depth promotion.
+- **Mod conflicts:** ENBSeries, Community Shaders, ReShade, and SSE Display Tweaks hook the same D3D11/swapchain entry points and must be disabled when running RAW.
+- **Fallout 4 port:** Architecture is designed for cross-game reuse, but only Skyrim SE (`1.6.1170.0` and `1.7.104.0`) is built and verified today.

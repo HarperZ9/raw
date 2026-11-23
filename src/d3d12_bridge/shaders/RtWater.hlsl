@@ -440,18 +440,17 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float effF = saturate(lerp(F, pow(saturate(F), 0.72f), 0.45f) * waterA.x * shoreFeather * cellFeather);
             const uint view = uint(waterB.x + 0.5f);
             const float3 farSkyRefl = waterSky(rd);
-            // Deep Nordic/Arctic ocean body for mid/far water (replaces matte grey-blue vanilla Sea of Ghosts water).
-            const float3 deepOceanBody = float3(0.020f, 0.056f, 0.084f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.06f.xxx) * 1.65f;
-            const float farF = saturate(F * max(waterA.x, 0.85f) * 0.88f);
+            // Deep Nordic/Arctic ocean body for mid/far water with grazing sky-reflection & exponential horizon merge
+            // (eliminates the dark horizontal slate ocean band at the Sea of Ghosts horizon caught in r253_dawnstar.jpg).
+            const float3 deepOceanBody = float3(0.028f, 0.068f, 0.098f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.08f.xxx) * 1.85f;
+            const float farF = saturate(max(F * max(waterA.x, 0.85f) * 0.90f, smoothstep(5500.0f, 36000.0f, wDist) * 0.68f));
             const float3 farOcean = lerp(deepOceanBody, farSkyRefl, farF);
             const float3 nearCol = refr ? lerp(body, refl, effF) : lerp(game.rgb, refl, effF) + caus * (1.0f - effF);
             col = lerp(farOcean, nearCol, cellFeather) + glint * shoreFeather;
-            // Seamless far-ocean atmospheric horizon merge matched directly to waterSky() at the horizon
-            // (eliminates the dark ocean / bright curved sky-arc seam on the Sea of Ghosts).
-            if (wDist > 6000.0f) {
+            if (wDist > 5000.0f) {
                 const float3 horSky = waterSky(normalize(float3(rd.xy, 0.025f)));
-                const float seaFog = smoothstep(6000.0f, 88000.0f, wDist);
-                col = lerp(col, horSky, seaFog * seaFog * 0.92f);
+                const float seaFog = 1.0f - exp(-max(wDist - 5000.0f, 0.0f) * 0.000055f);
+                col = lerp(col, horSky, saturate(seaFog * 0.96f));
             }
             if (view == 1u) { col = refl; }
             else if (view == 2u) { col = caus * 4.0f; }

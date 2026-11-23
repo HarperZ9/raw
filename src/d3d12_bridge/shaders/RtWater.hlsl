@@ -270,9 +270,9 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
             const float3 o = p + float3(0.0f, 0.0f, 2.5f + 0.003f * length(p));
 
-            // Distance-filtered 3D liquid reflection normal (glassy mirror-like reflections of trees/bridges/waterwheel
-            // at grazing angles with crisp sculpted ripples up close, matching AAA reference water).
-            const float reflRelief = lerp(0.76f, 0.44f, saturate(wDist / 8500.0f));
+            // Distance-filtered 3D liquid reflection normal (crisp glassy mirror reflections of waterwheel/trees/stone
+            // matching reference Shot 21 while preserving living fluid ripple detail).
+            const float reflRelief = lerp(0.58f, 0.36f, saturate(wDist / 8500.0f));
             const float3 nRefl = normalize(lerp(float3(0.0f, 0.0f, 1.0f), n, reflRelief));
             float3 rd = reflect(-v, nRefl);
             if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }
@@ -390,11 +390,10 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float3 bed = lerp(lerp(b00, b10, qFrac.x), lerp(b01, b11, qFrac.x), qFrac.y);
                 const int2 qDepthPx = qValid ? q : int2(id.xy);
                 const float path = length(worldAt(float2(qDepthPx), Depth.Load(int3(qDepthPx, 0))) - p);
-                // Crystal-clear Nordic glacial river Beer-Lambert absorption:
-                // shallow riverbeds (0..140u) stay razor-sharp and transparent showing every submerged stone & pebble,
-                // transitioning smoothly to luminous glacial emerald-turquoise -> deep Nordic sapphire in deep pools.
-                const float3 T = exp(-waterA.z * float3(1.55f, 0.56f, 0.38f) * path);
-                const float3 scatter = float3(0.009f, 0.032f, 0.044f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.04f.xxx) * 1.25f;
+                // Realistic cold Nordic slate-emerald Beer-Lambert absorption (eliminates over-saturated electric royal blue
+                // in Dawnstar Arctic waters & flat cyan under the Riverwood sawmill bridge).
+                const float3 T = exp(-waterA.z * float3(1.08f, 0.74f, 0.64f) * path);
+                const float3 scatter = float3(0.011f, 0.024f, 0.028f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.04f.xxx) * 1.15f;
                 const float nearW = 1.0f - smoothstep(2800.0f, 5200.0f, wDist);
                 // Rich backlit glacial-emerald wave-crest subsurface scattering.
                 const float3 waveSSS = sunDir.w > 0.5f
@@ -409,7 +408,8 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float bowFoam = bowHit * froth * (0.55f + 0.45f * lapWave) * 0.85f;
                 const float eddyFoam = eddyLee * froth * 0.42f;
                 const float shoreLap = shoreMeniscus * (0.38f + 0.62f * froth) * 0.65f + shoreBand * froth * lapWave * 0.34f;
-                const float crestFoam = saturate((1.0f - n.z) * 6.0f - 0.16f) * froth * 0.55f;
+                const float windSpeedW = saturate(length(cloudWind.xy) / 380.0f);
+                const float crestFoam = saturate((1.0f - n.z) * (6.0f + windSpeedW * 4.5f) - lerp(0.16f, 0.09f, windSpeedW)) * froth * (0.55f + windSpeedW * 0.40f);
                 const float foamMask = saturate(max(max(bowFoam, eddyFoam), max(shoreLap, crestFoam))) * nearW;
                 // True Underwater Volumetric Sunbeam Shafts (6-step depth-marched Mie scattering integral through water column):
                 // gives sunlit Nordic rivers glowing emerald-turquoise underwater light cones beneath the surface.
@@ -437,12 +437,11 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;
             // Eliminate the 2,200u mid-river seam: keep full physical refraction & RT reflections out to 6,500-13,500u!
             const float cellFeather = 1.0f - smoothstep(6500.0f, 13500.0f, wDist);
-            const float effF = saturate(lerp(F, pow(saturate(F), 0.72f), 0.45f) * waterA.x * shoreFeather * cellFeather);
+            const float effF = saturate(max(lerp(F, pow(saturate(F), 0.64f), 0.55f), 0.16f) * waterA.x * shoreFeather * cellFeather);
             const uint view = uint(waterB.x + 0.5f);
             const float3 farSkyRefl = waterSky(rd);
-            // Deep Nordic/Arctic ocean body for mid/far water with grazing sky-reflection & exponential horizon merge
-            // (eliminates the dark horizontal slate ocean band at the Sea of Ghosts horizon caught in r253_dawnstar.jpg).
-            const float3 deepOceanBody = float3(0.028f, 0.068f, 0.098f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.08f.xxx) * 1.85f;
+            // Deep cold Nordic steel-slate ocean body (replaces electric royal blue Arctic water).
+            const float3 deepOceanBody = float3(0.016f, 0.028f, 0.036f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.07f.xxx) * 1.65f;
             const float farF = saturate(max(F * max(waterA.x, 0.85f) * 0.90f, smoothstep(5500.0f, 36000.0f, wDist) * 0.68f));
             const float3 farOcean = lerp(deepOceanBody, farSkyRefl, farF);
             const float3 nearCol = refr ? lerp(body, refl, effF) : lerp(game.rgb, refl, effF) + caus * (1.0f - effF);

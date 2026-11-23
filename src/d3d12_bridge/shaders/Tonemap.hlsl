@@ -376,7 +376,11 @@ float4 main(In i) : SV_Target {
         }
         const float2 haloDir = cDist > 1.0e-4f ? cVec / cDist : float2(0.0f, 1.0f);
         const float3 haloCol = max(Bloom.Sample(S0, saturate(0.5f.xx - haloDir * 0.22f)).rgb - 0.72f.xxx, 0.0f.xxx);
-        ovAdd += min((lensAcc * 0.072f + haloCol * 0.048f * saturate(1.0f - cDist * 1.30f)) * clamp(RQ.w, 0.0f, 2.5f), 0.26f.xxx);
+        // Feature 15: Subtle spectral iris diffraction ring on bright off-axis solar/hearth peaks.
+        const float ringW = exp(-pow((cDist - 0.36f) / 0.055f, 2.0f));
+        const float3 irisSpect = float3(0.5f + 0.5f * cos(cDist * 18.0f), 0.5f + 0.5f * cos(cDist * 18.0f + 2.094f), 0.5f + 0.5f * cos(cDist * 18.0f + 4.188f));
+        const float3 irisRing = max(Bloom.Sample(S0, saturate(0.5f.xx - haloDir * 0.34f)).rgb - 1.15f.xxx, 0.0f.xxx) * irisSpect * (ringW * 0.065f);
+        ovAdd += min((lensAcc * 0.085f + haloCol * 0.055f * saturate(1.0f - cDist * 1.30f) + irisRing) * clamp(RQ.w, 0.0f, 2.5f), 0.30f.xxx);
     }
     if ((ovMask & 8u) != 0u) {
         // Layer 4: Subtle Optical Diffusion (restrained wide-radius highlight glow without washing out sharp detail).

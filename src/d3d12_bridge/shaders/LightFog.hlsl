@@ -115,8 +115,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float3 ozoneZen = lerp(float3(1.04f, 1.02f, 0.98f), float3(0.76f, 0.90f, 1.18f), pow(hUp, 0.65f));
                 const float3 richSky = hSky * ozoneZen;
                 const float hLum = max(dot(richSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
-                const float3 overcastSky = lerp(float3(0.62f, 0.68f, 0.78f), float3(0.38f, 0.44f, 0.54f), hUp) * max(hLum * 1.15f, 0.42f);
-                float3 physSky = lerp(richSky, overcastSky, saturate(cover * 0.78f - 0.12f + weather.w * 0.45f + weather.z * 0.35f));
+                const float3 overcastSky = lerp(float3(0.74f, 0.78f, 0.85f), float3(0.54f, 0.60f, 0.70f), hUp) * max(hLum * 1.24f, 0.52f);
+                float3 physSky = lerp(richSky, overcastSky, saturate(cover * 0.85f - 0.08f + weather.w * 0.45f + weather.z * 0.42f));
                 // Golden-hour sunrise/sunset solar glow + opposite-horizon Belt of Venus (rose-magenta -> cobalt zenith).
                 const float twilightW = lowS * (1.0f - cover * 0.65f);
                 const float antiSolar = saturate(dot(sDir, -sunDir.xyz));
@@ -272,8 +272,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float cloudCov = saturate(clouds.x);
         const float3 hillaireSky = sampleHillaireSky(normalize(float3(w.xy, max(w.z, 0.048f))));
         const float hLumF = max(dot(hillaireSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
-        const float3 overcastAtmo = lerp(float3(0.62f, 0.68f, 0.78f), float3(0.38f, 0.44f, 0.54f), saturate(w.z)) * max(hLumF * 1.15f, 0.42f);
-        float3 atmoCol = lerp(hillaireSky, overcastAtmo, saturate(cloudCov * 0.78f - 0.12f + weather.w * 0.45f + weather.z * 0.35f));
+        const float3 overcastAtmo = lerp(float3(0.74f, 0.78f, 0.85f), float3(0.54f, 0.60f, 0.70f), saturate(w.z)) * max(hLumF * 1.24f, 0.52f);
+        float3 atmoCol = lerp(hillaireSky, overcastAtmo, saturate(cloudCov * 0.85f - 0.08f + weather.w * 0.45f + weather.z * 0.42f));
         // Dual-scale Mie solar scattering: broad golden/D65 aureole + tighter forward solar halo.
         const float3 d65Mie = lerp(float3(1.0f, 0.66f, 0.36f), float3(0.96f, 0.98f, 1.02f), highSunF);
         const float mieHalo = (pow(cosSunF, 5.0f) * 0.14f + pow(cosSunF, 28.0f) * 0.24f) * (1.0f - cloudCov * 0.72f) * (1.0f - nightF);
@@ -283,8 +283,36 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         atmoCol = lerp(atmoCol, max(sH * 0.55f, float3(0.05f, 0.09f, 0.18f)), nightF);
         // True linear HDR aerial perspective (no 0.65 SDR clamp so mountains separate with genuine atmospheric luminosity).
         atmoCol = min(atmoCol, 3.5f.xxx);
+        // Feature 16: Native DX12 3D World-Space GPU Weather Precipitation (wind-advected rain streaks & alpine snowflakes)
+        // depth-occluded against scene geometry and lit by live sky/sun/local lights.
+        float3 precipAdd = 0.0f.xxx;
+        if ((weather.w > 0.08f || weather.z > 0.08f) && mapScale > 0.5f) {
+            const float2 windP = cloudWind.xy * 0.0025f;
+            [unroll] for (int pl = 0; pl < 3; ++pl) {
+                const float pDist = 110.0f + float(pl) * 165.0f;
+                if (dist <= pDist) { continue; }
+                const float3 wpP = camPosW.xyz + eye + w * pDist;
+                if (weather.w > 0.08f) {
+                    const float3 rCoord = float3((wpP.xy - windP * (wpP.z * 0.15f)) * 0.18f, wpP.z * 0.018f + camPosW.w * (11.0f + float(pl) * 3.0f));
+                    const float rCell = cHash(floor(rCoord));
+                    if (rCell > 0.965f) {
+                        const float rMask = smoothstep(0.965f, 0.998f, rCell) * saturate(1.0f - length(frac(rCoord.xy) - 0.5f) * 2.8f);
+                        precipAdd += max(atmoCol * 0.85f, 0.12f.xxx) * (rMask * weather.w * 0.28f / (1.0f + float(pl) * 0.5f));
+                    }
+                }
+                if (weather.z > 0.08f) {
+                    const float3 sCoord = float3((wpP.xy + float2(sin(camPosW.w * 0.9f + float(pl)), cos(camPosW.w * 0.7f + float(pl))) * 18.0f) * 0.095f,
+                                                 wpP.z * 0.095f + camPosW.w * (2.6f + float(pl) * 0.8f));
+                    const float sCell = cHash(floor(sCoord));
+                    if (sCell > 0.955f) {
+                        const float sMask = smoothstep(0.955f, 0.995f, sCell) * saturate(1.0f - length(frac(sCoord) - 0.5f) * 2.4f);
+                        precipAdd += max(atmoCol * 1.15f + sunColour.rgb * 0.18f, 0.20f.xxx) * (sMask * weather.z * 0.42f / (1.0f + float(pl) * 0.45f));
+                    }
+                }
+            }
+        }
         // Attenuate additive volumetric scatter by transmittance T so far-horizon fog never double-adds into blinding whiteout.
-        return float4(lit.rgb * T + atmoCol * (1.0f.xxx - T) + scatter * saturate(T + 0.20f), lit.a);
+        return float4(lit.rgb * T + atmoCol * (1.0f.xxx - T) + scatter * saturate(T + 0.20f) + precipAdd, lit.a);
     }
     // Dungeons, Caves, Nordic Tombs, Dwemer Ruins, Blackreach & Interiors (sunColour.w < 0.5):
     // 100% world-space subterranean depth mist + true 3D shadowed volumetric shafts from VolumetricPass.hlsl

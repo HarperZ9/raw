@@ -87,6 +87,7 @@ STDMETHODIMP Device::CreateBuffer(const D3D11_BUFFER_DESC* d, const D3D11_SUBRES
     TX_TRACE("Device::CreateBuffer");
     if (!d || d->ByteWidth == 0) return E_INVALIDARG;
     if (!out) return S_FALSE;
+    *out = nullptr;
     auto* b = new TBuffer(this);
     b->desc = *d;
     ResCore& c = b->core;

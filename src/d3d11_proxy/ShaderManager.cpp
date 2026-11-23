@@ -40,7 +40,7 @@ void ShaderManager::OnVertexShaderCreated(
     m_vsToHash[shader]  = hash;
     m_vsLength[shader]  = length;
 
-    Log("ShaderManager: VS created  hash=%016llX  len=%zu  ptr=%p",
+    LogVerbose("ShaderManager: VS created  hash=%016llX  len=%zu  ptr=%p",
         hash, length, shader);
 }
 
@@ -62,7 +62,7 @@ void ShaderManager::OnPixelShaderCreated(
     stored.resize(length);
     std::memcpy(stored.data(), bytecode, length);
 
-    Log("ShaderManager: PS created  hash=%016llX  len=%zu  ptr=%p",
+    LogVerbose("ShaderManager: PS created  hash=%016llX  len=%zu  ptr=%p",
         hash, length, shader);
 }
 

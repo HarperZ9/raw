@@ -23,6 +23,7 @@ namespace SB::Proxy
 inline FILE* g_logFile = nullptr;
 inline CRITICAL_SECTION g_logCS = {};
 inline bool g_logInitialized = false;
+inline bool g_logVerbose = false;
 
 inline void LogInit(const char* path)
 {
@@ -52,6 +53,18 @@ inline void Log(const char* fmt, ...)
     va_end(args);
     fprintf(g_logFile, "\n");
     fflush(g_logFile);
+    LeaveCriticalSection(&g_logCS);
+}
+
+inline void LogVerbose(const char* fmt, ...)
+{
+    if (!g_logVerbose || !g_logFile) return;
+    EnterCriticalSection(&g_logCS);
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(g_logFile, fmt, args);
+    va_end(args);
+    fprintf(g_logFile, "\n");
     LeaveCriticalSection(&g_logCS);
 }
 

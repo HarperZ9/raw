@@ -172,48 +172,47 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                 const float phL = min(froxelHG(cosL, isInt ? 0.64f : 0.54f) * (isInt ? 2.8f : 2.4f) + 0.35f, 2.6f);
                 const float intSmoke = isInt ? (0.72f + 0.56f * cNoise(wp * 0.0095f - float3(0.0f, 0.0f, camPosW.w * 0.20f))) : 1.0f;
                 inScat += lightColS[li].rgb * (att * phL * tune2.y * intSmoke * (isInt ? 0.58f : 0.30f));
-                // True 3D Volumetric Turbulent Flame Core (breaks flat 2D 2011 fire sprite cards!) + Rising 3D Smoke & Embers:
-                if (lightColS[li].r > lightColS[li].b * 1.25f && lightColS[li].r > 0.14f) {
+                // True 3D Volumetric Turbulent Flame Core + Rising 3D Smoke & Embers ONLY on large hearths/campfires (rL >= 340u),
+                // preventing small tavern candles & sconces from emitting milky grey smoke columns (seen in 10.20.07.03.mp4!):
+                if (lightColS[li].r > lightColS[li].b * 1.25f && lightColS[li].r > 0.14f && rL >= 340.0f) {
                     const float dzS = pRel.z - lightPosR[li].z;
-                    // 1) 3D curling blackbody flame tongue (-8u..+34u around flame origin):
-                    if (dzS > -8.0f && dzS < 34.0f) {
+                    // 1) 3D curling blackbody flame tongue (-8u..+30u around hearth origin):
+                    if (dzS > -8.0f && dzS < 30.0f) {
                         const float2 fXY = pRel.xy - lightPosR[li].xy;
-                        const float flameR = lerp(18.0f, 4.0f, saturate((dzS + 8.0f) / 42.0f));
+                        const float flameR = lerp(15.0f, 3.5f, saturate((dzS + 8.0f) / 38.0f));
                         const float fRad2 = dot(fXY, fXY) / max(flameR * flameR, 1.0f);
                         if (fRad2 < 1.0f) {
-                            const float fCurl = cNoise(wp * 0.065f - float3(0.0f, 0.0f, camPosW.w * 2.8f));
-                            const float fDens = exp(-fRad2 * 2.8f) * smoothstep(0.32f, 0.85f, fCurl) * (1.0f - saturate((dzS + 8.0f) / 42.0f));
-                            const float tempT = saturate(1.0f - (dzS + 8.0f) / 38.0f);
-                            const float3 flameBB = lerp(float3(1.6f, 0.28f, 0.04f), float3(3.8f, 2.2f, 0.75f), tempT * tempT);
-                            inScat += flameBB * (fDens * 1.85f);
+                            const float fCurl = cNoise(wp * 0.070f - float3(0.0f, 0.0f, camPosW.w * 2.8f));
+                            const float fDens = exp(-fRad2 * 3.0f) * smoothstep(0.36f, 0.86f, fCurl) * (1.0f - saturate((dzS + 8.0f) / 38.0f));
+                            const float tempT = saturate(1.0f - (dzS + 8.0f) / 34.0f);
+                            const float3 flameBB = lerp(float3(1.5f, 0.28f, 0.04f), float3(3.6f, 2.0f, 0.65f), tempT * tempT);
+                            inScat += flameBB * (fDens * 1.25f);
                         }
                     }
-                    // 2) Conical wind-bent rising turbulent 3D smoke column + incandescent sparks (+8u..+340u):
-                    if (dzS > 8.0f && dzS < 340.0f) {
+                    // 2) Subtle conical wind-bent rising woodsmoke column + glowing embers (+14u..+280u):
+                    if (dzS > 14.0f && dzS < 280.0f) {
                         const float2 windBend = isInt ? float2(0.0f, 0.0f) : (cloudWind.xy * dzS * 0.014f);
                         const float2 dXY = (pRel.xy - lightPosR[li].xy) - windBend;
-                        const float plumeR = 22.0f + dzS * 0.24f;
+                        const float plumeR = 16.0f + dzS * 0.18f;
                         const float rad2 = dot(dXY, dXY) / max(plumeR * plumeR, 1.0f);
-                        if (rad2 < 1.35f) {
-                            const float3 smCoord = wp * 0.020f - float3(windBend * 0.012f, camPosW.w * 0.52f);
+                        if (rad2 < 1.25f) {
+                            const float3 smCoord = wp * 0.022f - float3(windBend * 0.012f, camPosW.w * 0.52f);
                             const float turb = cNoise(smCoord) * 0.65f + cNoise(smCoord * 2.3f + 5.7f) * 0.35f;
-                            const float hEnv = smoothstep(8.0f, 44.0f, dzS) * (1.0f - smoothstep(160.0f, 340.0f, dzS));
-                            const float plumeD = exp(-rad2 * 2.1f) * hEnv * smoothstep(0.28f, 0.82f, turb);
-                            const float smokeExt = plumeD * 0.0038f;
+                            const float hEnv = smoothstep(14.0f, 52.0f, dzS) * (1.0f - smoothstep(150.0f, 280.0f, dzS));
+                            const float plumeD = exp(-rad2 * 2.4f) * hEnv * smoothstep(0.36f, 0.86f, turb);
+                            const float smokeExt = plumeD * (isInt ? 0.0012f : 0.0026f);
                             sigma += smokeExt;
-                            // Warm fire under-lighting near the hearth base fading to soft cool-grey woodsmoke higher up:
-                            const float underLit = exp(-dzS * 0.011f);
-                            const float3 smokeCol = lerp(float3(0.22f, 0.24f, 0.28f) * (isInt ? 0.35f : 0.65f),
-                                                         lightColS[li].rgb * float3(1.15f, 0.68f, 0.36f), underLit);
-                            inScat += smokeCol * (plumeD * 1.15f);
-                            // Rising 3D incandescent blackbody fire embers & sparks spiraling upward in the hearth updraft:
-                            if (dzS < 220.0f && rad2 < 0.85f) {
+                            const float underLit = exp(-dzS * 0.012f);
+                            const float3 smokeCol = lerp(float3(0.18f, 0.20f, 0.24f) * (isInt ? 0.22f : 0.52f),
+                                                         lightColS[li].rgb * float3(1.10f, 0.62f, 0.32f), underLit);
+                            inScat += smokeCol * (plumeD * (isInt ? 0.42f : 0.78f));
+                            if (dzS < 200.0f && rad2 < 0.75f) {
                                 const float3 embP = (wp - float3(windBend * 0.6f, camPosW.w * 42.0f)) * 0.085f;
                                 const float embH = cHash(floor(embP));
-                                if (embH > 0.972f) {
+                                if (embH > 0.974f) {
                                     const float embCore = exp(-dot(frac(embP) - 0.5f, frac(embP) - 0.5f) * 24.0f);
                                     const float3 embCol = lerp(float3(1.8f, 0.38f, 0.06f), float3(3.2f, 1.35f, 0.28f), underLit);
-                                    inScat += embCol * (embCore * hEnv * 2.4f);
+                                    inScat += embCol * (embCore * hEnv * 2.2f);
                                 }
                             }
                         }

@@ -318,12 +318,14 @@ float4 main(In i) : SV_Target {
     const float2 lum = Lum.Sample(S2, i.uv).xy;
     const float avg = max(lum.x, 1.0e-5f);
     // Human Eye Adaptation (Photopic / Scotopic Asymmetric Pupil Response):
-    // Bright sunlit snowfields & coastal horizons smoothly stop down exposure (down to 0.36x / -1.47 EV)
-    // so snow texture and horizons hold full detail; dark interiors gently open the pupil (up to 1.38x / +0.46 EV).
+    // In interiors (RX.w < 0.99), tighten pupil swing (0.72..1.16) so glancing at bright tavern hearths or upper
+    // windows never pumps or darkens the entire room! Outdoors keeps full 0.36..1.38 snow/horizon dynamic range.
     const float metered = clamp(avg, RA.z, RA.w);
     const float evDiff = log2(max(metered / max(RC.y, 0.05f), 1.0e-4f));
     const float eyeShare = evDiff > 0.0f ? max(RC.x, 0.68f) : (RC.z > 0.0f ? max(RC.z, 0.24f) : 0.24f);
-    const float eyeComp = clamp(exp2(-evDiff * eyeShare), 0.36f, 1.38f);
+    const bool isIntExp = (RX.w > 0.0f && RX.w < 0.99f);
+    const float eyeComp = isIntExp ? clamp(exp2(-evDiff * eyeShare * 0.45f), 0.72f, 1.16f)
+                                   : clamp(exp2(-evDiff * eyeShare), 0.36f, 1.38f);
     const float camera = (RB.y / max(RC.y, 0.05f)) * eyeComp;
     // RX.w: the interior factor the proxy sets per frame (ToneX5 in a cell with no sun cascades, else 1).
     const float exposure = (RA.x < 0.5f ? lum.y / avg : camera * (RX.w > 0.0f ? RX.w : 1.0f)) * exp2(RA.y);

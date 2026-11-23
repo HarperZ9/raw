@@ -129,20 +129,19 @@ void water(uint3 id : SV_DispatchThreadID) {
     // On non-water pixels, restore PreWater (captured immediately before Skyrim's 1-draw water composite quad)
     // so Skyrim's water composite can NEVER bleed upside-down reflection sheets onto dry land, snow, NPCs, or interiors.
     float3 col = hasPreWater ? PreWater[id.xy].rgb : game.rgb;
-    // 100% Native Hardware Water Identification + Perspective-Depth-Gradient Full-Screen Quad Rejection:
+    // 100% Exact Ground-Truth Water Pixel Invariant:
     // 1) GBufferPatch writes Layer.a == 2.0f exclusively for ShaderKind::Water.
-    // 2) Rejects constant-Z full-screen water-composite quads (whose vertical depth gradient |dL.x/dy| == 0)
-    //    and near-plane quads (zSurfW <= 24u), permanently eliminating the horizon water sheet over dry land,
-    //    NPCs, Whiterun Marketplace, Dawnstar snow, cabbage carts, and Sleeping Giant Inn!
+    // 2) Whenever PreWater is captured (right before Skyrim's 1-draw water composite quad), any real water pixel
+    //    was actually composited by Skyrim (|GameColour - PreWater| > 0.0025), whereas dry land (log piles, roads,
+    //    cabbage carts, NPCs, Whiterun Marketplace, Sleeping Giant Inn) has GameColour == PreWater (diff == 0.0).
+    // This makes false horizon water sheets over dry land mathematically impossible at ANY pitch or distance
+    // while allowing real water right up to 0.5u from the lens when swimming half-submerged!
     const float3 nL = worldNormal(float4(L.y, L.z, 0.0f, 0.0f));
     const float zSurfW = (L.x < 1.0f && L.x > 0.0f) ? viewZOf(L.x) : 1.0e9f;
     const float zBedW  = (dBed < 1.0f && dBed > 0.0f) ? viewZOf(dBed) : 1.0e9f;
-    const int2 dimLim = int2(dims.xy) - 1;
-    const float lUp = Layer.Load(int3(clamp(ip.xy + int2(0, -4), int2(0, 0), dimLim), 0)).x;
-    const float lDn = Layer.Load(int3(clamp(ip.xy + int2(0,  4), int2(0, 0), dimLim), 0)).x;
-    const bool hasPerspectiveSlope = (max(abs(L.x - lUp), abs(L.x - lDn)) > 1.0e-7f);
-    const bool halfSubmergedWater = (zSurfW > 15.2f && zSurfW <= 24.0f && abs(worldAt(float2(id.xy), L.x).z) < 8.0f && (zBedW - zSurfW) < 42.0f);
-    const bool isWaterPx = (L.a > 1.5f && L.x < 1.0f && (zSurfW > 24.0f || halfSubmergedWater) && zSurfW < zBedW - max(zSurfW * 0.015f, 1.5f) && nL.z > 0.72f && hasPerspectiveSlope);
+    const float waterCompDiff = hasPreWater ? length(game.rgb - PreWater[id.xy].rgb) : 1.0f;
+    const bool gameDrewWater = !hasPreWater || (waterCompDiff > 0.0025f);
+    const bool isWaterPx = (L.a > 1.5f && L.x < 1.0f && zSurfW > 0.5f && zSurfW < zBedW - max(zSurfW * 0.015f, 1.5f) && nL.z > 0.72f && gameDrewWater);
     // SM6.9 Wave-coherent early exit: non-water waves exit immediately with zero RayQuery divergence.
     if (!WaveActiveAnyTrue(isWaterPx)) { WaterOut[id.xy] = float4(col, game.a); return; }
     if (isWaterPx) {

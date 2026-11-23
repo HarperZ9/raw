@@ -49,14 +49,15 @@ float cloudDensity(float3 pa, bool detail) {
     const float topGrad  = 1.0f - smoothstep(topCap * 0.58f, topCap, h);
     const float anvilSpread = stormType * smoothstep(0.65f, 0.88f, h) * (1.0f - smoothstep(0.88f, 0.99f, h)) * 0.16f;
     const float hGrad = saturate(baseGrad * topGrad + anvilSpread);
-    // Distinct, sculpted cumulus banks (only close into full overcast blanket during real rain/storms).
-    const float3 q = float3(sheared.x / 16000.0f, sheared.y / 15000.0f, h * 1.40f);
-    const float qW = cNoise(q * 1.20f + 7.1f) * 0.42f;
-    const float baseFbm = cNoise(q + qW) * 0.48f + cNoise(q * 2.13f + 11.3f) * 0.30f + cNoise(q * 4.37f + 5.7f) * 0.22f;
-    const float macroBillow = cBillow(q * 1.95f + 2.7f);
-    const float shape = lerp(baseFbm, baseFbm * 0.50f + macroBillow * 0.56f, 0.62f);
-    const float thresh = lerp(0.64f, lerp(0.42f, 0.26f, stormType), cover);
-    float dens = saturate((shape * hGrad - thresh) / max(1.0f - thresh, 0.22f));
+    // Sculpted broken cumulus banks with soft feathered edges (eliminates flat white Swiss-cheese sheet with sharp dark holes).
+    const float3 q = float3(sheared.x / 18000.0f, sheared.y / 17000.0f, h * 1.35f);
+    const float qW = cNoise(q * 1.15f + 7.1f) * 0.48f;
+    const float baseFbm = cNoise(q + qW) * 0.46f + cNoise(q * 2.13f + 11.3f) * 0.32f + cNoise(q * 4.37f + 5.7f) * 0.22f;
+    const float macroBillow = cBillow(q * 1.85f + 2.7f);
+    const float shape = lerp(baseFbm, baseFbm * 0.45f + macroBillow * 0.58f, 0.65f);
+    const float effCov = saturate(cover * 0.78f);
+    const float thresh = lerp(0.68f, lerp(0.48f, 0.34f, stormType), effCov);
+    float dens = pow(saturate((shape * hGrad - thresh) / max(1.0f - thresh, 0.26f)), 1.35f);
     if (detail && dens > 0.0f) {
         // High-frequency C2-continuous curl-warped wispy detail erosion (crisp cumulus edges even overhead).
         const float3 r1 = float3((sheared.x + wind.x * 0.35f) / 1800.0f, (sheared.y + wind.y * 0.35f) / 1700.0f, h * 7.0f);

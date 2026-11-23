@@ -261,14 +261,26 @@ void Append(const std::string& line) {
 void SyncCellLights(Snapshot* s) {
     EngineView ev{};
     RAW_EngineView(&ev);
-    if (!ev.ok || !s->interior || ev.cellFormId == 0) {
+    if (!ev.ok) {
         g_cellLights.clear();
-        g_cachedCellId = ev.cellFormId;
+        g_cachedCellId = 0;
         return;
     }
-    if (ev.cellFormId != g_cachedCellId) {
+    // Unified World-Space Persistent Light Registry (BOTH interiors AND exteriors!):
+    // - Interiors: keyed by cellFormId, retains 100% of room lights regardless of camera angle/frustum.
+    // - Exteriors: keyed by worldspaceFormId, retains every seen streetlamp/campfire/torch within 7,500u
+    //   of the player so turning the camera NEVER drops lights behind you!
+    const uint32_t spaceKey = s->interior ? ev.cellFormId : (ev.worldspaceFormId | 0x80000000u);
+    if (spaceKey == 0 || spaceKey != g_cachedCellId) {
         g_cellLights.clear();
-        g_cachedCellId = ev.cellFormId;
+        g_cachedCellId = spaceKey;
+    }
+    if (!s->interior) {
+        // Prune distant exterior lights beyond 7,500u from player so the cache stays fresh as you travel across Skyrim:
+        g_cellLights.erase(std::remove_if(g_cellLights.begin(), g_cellLights.end(), [&](const EngineLight& c) {
+            const float dx = c.pos[0] - ev.playerPos[0], dy = c.pos[1] - ev.playerPos[1], dz = c.pos[2] - ev.playerPos[2];
+            return (dx * dx + dy * dy + dz * dz) > 7500.0f * 7500.0f;
+        }), g_cellLights.end());
     }
     for (const auto& L : s->lights) {
         if (L.flags & 4) continue;
@@ -289,7 +301,7 @@ void SyncCellLights(Snapshot* s) {
         }
         if (!present) {
             s->lights.push_back(c);
-            s->names.emplace_back("cell_cached");
+            s->names.emplace_back("world_cached");
         }
     }
 }

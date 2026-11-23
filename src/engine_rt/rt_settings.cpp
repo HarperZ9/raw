@@ -194,7 +194,7 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"fGrassWindMagnitudeMin:Grass", "0.45"},
         {"fGrassWindMagnitudeMax:Grass", "1.65"},
         {"iMaxGrassTypesPerTexure:Grass", "15"},
-        {"fLightLODStartFade:Display", "6500.0"},
+        {"fLightLODStartFade:Display", "18000.0"},
         {"fTreeLoadDistance:Trees", "95000.0"},
         {"fTreesMidLODSwitchDist:Display", "14000.0"},
         {"fInteriorShadowDistance:Display", "4500.0"},

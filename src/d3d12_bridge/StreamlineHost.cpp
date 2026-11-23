@@ -222,11 +222,11 @@ void StreamlineHost::ReflexBeginFrame(uint32_t frameIdx)
 bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn, ID3D12Resource* colorOut,
                               ID3D12Resource* depth, ID3D12Resource* mvec,
                               ID3D12Resource* albedo, ID3D12Resource* normal, ID3D12Resource* spec,
-                              uint32_t width, uint32_t height, uint32_t frameIdx, LogFn log)
+                              uint32_t width, uint32_t height, uint32_t frameIdx, const EvalCamera& cam, LogFn log)
 {
 #ifndef RAW_HAS_STREAMLINE
     (void)queue; (void)colorIn; (void)colorOut; (void)depth; (void)mvec; (void)albedo; (void)normal; (void)spec;
-    (void)width; (void)height; (void)frameIdx; (void)log;
+    (void)width; (void)height; (void)frameIdx; (void)cam; (void)log;
     return false;
 #else
     auto& a = Api();
@@ -284,14 +284,35 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
     sl::Constants c{};
     c.jitterOffset = {0.0f, 0.0f};
     c.mvecScale = {1.0f, 1.0f};
-    c.cameraAspectRatio = height ? float(width) / float(height) : 16.0f / 9.0f;
-    c.cameraNear = 22.0f;
-    c.cameraFar = 400000.0f;
+    c.cameraAspectRatio = cam.valid && cam.aspect > 0.1f ? cam.aspect : (height ? float(width) / float(height) : 16.0f / 9.0f);
+    c.cameraNear = cam.valid && cam.nearZ > 0.1f ? cam.nearZ : 15.0f;
+    c.cameraFar = cam.valid && cam.farZ > c.cameraNear ? cam.farZ : 400000.0f;
+    c.cameraFOV = cam.valid && cam.fovY > 0.1f ? cam.fovY : 1.134464f;
     c.depthInverted = sl::Boolean::eFalse;
     c.cameraMotionIncluded = sl::Boolean::eTrue;
     c.motionVectors3D = sl::Boolean::eFalse;
     c.motionVectorsJittered = sl::Boolean::eFalse;
-    c.reset = (frameIdx <= 2u) ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+    static float s_prevPos[3] = {};
+    static bool s_hasPrevPos = false;
+    bool cameraCut = (frameIdx <= 2u);
+    if (cam.valid) {
+        c.cameraPos = {cam.pos[0], cam.pos[1], cam.pos[2]};
+        c.cameraRight = {cam.viewToWorld[0], cam.viewToWorld[4], cam.viewToWorld[8]};
+        c.cameraUp    = {cam.viewToWorld[1], cam.viewToWorld[5], cam.viewToWorld[9]};
+        c.cameraFwd   = {cam.viewToWorld[2], cam.viewToWorld[6], cam.viewToWorld[10]};
+        for (int r = 0; r < 4; ++r) {
+            c.cameraViewToClip[r] = {cam.proj[r * 4 + 0], cam.proj[r * 4 + 1], cam.proj[r * 4 + 2], cam.proj[r * 4 + 3]};
+        }
+        if (s_hasPrevPos) {
+            const float dx = cam.pos[0] - s_prevPos[0];
+            const float dy = cam.pos[1] - s_prevPos[1];
+            const float dz = cam.pos[2] - s_prevPos[2];
+            if (dx * dx + dy * dy + dz * dz > 500.0f * 500.0f) cameraCut = true;
+        }
+        s_prevPos[0] = cam.pos[0]; s_prevPos[1] = cam.pos[1]; s_prevPos[2] = cam.pos[2];
+        s_hasPrevPos = true;
+    }
+    c.reset = cameraCut ? sl::Boolean::eTrue : sl::Boolean::eFalse;
     a.setConstants(c, *tok, vp);
 
     const uint32_t slot = frameIdx % 3u;

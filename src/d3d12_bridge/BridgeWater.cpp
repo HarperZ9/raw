@@ -89,13 +89,26 @@ bool D3D12Bridge::ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, 
     if (m->motionIn.res12) {
         ID3D12Resource* src12 = inB ? m->waterIn.res12.Get() : m->waterOut.res12.Get();
         ID3D12Resource* dst12 = inB ? m->waterOut.res12.Get() : m->waterIn.res12.Get();
+        StreamlineHost::EvalCamera slCam{};
+        if (m->camera.valid && m->lighting.hasCamera) {
+            slCam.valid = true;
+            slCam.nearZ = m->camera.nearZ;
+            slCam.farZ = m->camera.farZ;
+            slCam.fovY = 2.0f * std::atan(m->camera.tanHalfFovY);
+            slCam.aspect = m->camera.aspect;
+            std::memcpy(slCam.proj, m->camera.proj, sizeof(slCam.proj));
+            std::memcpy(slCam.viewToWorld, m->lighting.viewToWorld, sizeof(slCam.viewToWorld));
+            slCam.pos[0] = m->lighting.posAdjust[0];
+            slCam.pos[1] = m->lighting.posAdjust[1];
+            slCam.pos[2] = m->lighting.posAdjust[2];
+        }
         if (StreamlineHost::Get().Evaluate(m->queue.Get(), src12, dst12, m->depthIn.res12.Get(),
                                            m->motionIn.res12.Get(),
                                            m->shared[static_cast<UINT>(Shared::Albedo)].res12.Get(),
                                            m->normalIn.res12.Get(),
                                            m->shared[static_cast<UINT>(Shared::Specular)].res12.Get(),
                                            m->cfg.width, m->cfg.height,
-                                           static_cast<uint32_t>(m->frames), m->log)) {
+                                           static_cast<uint32_t>(m->frames), slCam, m->log)) {
             inB = !inB;
         }
     }

@@ -6,6 +6,7 @@
 #include "FrameLedger.h"
 #include "ProxyAPI.h"
 #include "ProxyLog.h"
+#include "WeatherDrive.h"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -158,7 +159,19 @@ raw::bridge::CameraConstants ReadCamera(ID3D11DeviceContext* real)
     const float* m = cam.proj;
     // A perspective projection along +z: w = z, depth = m[10] + m[11] / z.
     cam.valid = m[14] == 1.0f && m[15] == 0.0f && m[0] > 0.0f && m[5] > 0.0f && m[10] > 1.0f && m[11] < 0.0f;
-    if (!cam.valid) return cam;
+    if (!cam.valid) {
+        // Direct NiCamera fallback from raw_engine.dll (PlayerCamera::Singleton) when b12 is non-projective.
+        EngineCameraState ec;
+        if (EngineCamera_Get(ec) && ec.fovDeg > 10.0f && ec.fovDeg < 170.0f) {
+            const float halfFovRad = ec.fovDeg * 0.5f * 0.0174532925f;
+            cam.aspect = 16.0f / 9.0f;
+            cam.tanHalfFovY = std::tan(halfFovRad) / cam.aspect;
+            cam.nearZ = 15.0f;
+            cam.farZ = 400000.0f;
+            cam.valid = true;
+        }
+        return cam;
+    }
     cam.tanHalfFovY = 1.0f / m[5];
     cam.aspect = m[5] / m[0];
     cam.nearZ = -m[11] / m[10];

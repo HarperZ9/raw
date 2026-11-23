@@ -215,78 +215,44 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float stormChop = saturate(weather.w * 0.90f + windAmp * 0.65f);
                 const float ampScale = (0.72f + stormChop * 0.95f + shallowW * 0.25f) * smoothstep(0.0f, 4.5f, depthV0);
 
-                // Break Skyrim's flat 2011 2-triangle water quads: 6-step 3D Wave Heightfield Raymarch + 3-step Binary Refine!
-                // Gives waves real 3D vertical height, crest-over-trough self-occlusion, and true 3D parallax!
-                float2 wpSurfXY = wpW.xy;
-                if (wDist < 8500.0f && depthV0 > 4.0f && v.z > 0.06f) {
-                    const float maxH = 5.8f * ampScale;
-                    const float2 rayStepXY = (-v.xy / max(v.z, 0.14f)) * (maxH * 0.28f);
-                    float curZ = maxH;
-                    float2 curXY = wpW.xy - rayStepXY * 3.0f;
-                    float prevDiff = 1.0f;
-                    [unroll] for (int rm = 0; rm < 6; ++rm) {
-                        const float hAt = evalFluidHeight3D(curXY, flowDir, wt, ampScale, wDist);
-                        const float diff = curZ - hAt;
-                        if (diff <= 0.0f && prevDiff > 0.0f) {
-                            // Linear-secant sub-step refinement for silky zero-stairstep 3D wave silhouettes:
-                            const float fracH = saturate(prevDiff / max(prevDiff - diff, 1.0e-4f));
-                            curXY -= rayStepXY * (1.0f - fracH);
-                            break;
-                        }
-                        prevDiff = diff;
-                        curXY += rayStepXY;
-                        curZ -= maxH * 0.333f;
-                    }
-                    wpSurfXY = curXY;
-                }
-
-                // 12-Component Band-Limited JONSWAP Macro/Meso Ocean & River Spectrum + Aperiodic Fluid Ripple Detail
-                // evaluated on the true 3D ray-marched displaced fluid surface wpSurfXY!
-                const float2 wpFlow = wpSurfXY - flowDir * (wt * 22.0f);
+                // Clean continuous world-space fluid surface normals (zero 24-bit depth-buffer finite-difference
+                // octagonal contour rings seen in 09.57.21.71 & 09.57.17.80!):
+                const float2 wpFlow = wpW.xy - flowDir * (wt * 22.0f);
                 const float2 flowPerp = float2(-flowDir.y, flowDir.x);
-                const float pxFoot = max(wDist * dims.z * 2.6f, 0.50f);
-                const float depthM = max(depthV0 * 0.0143f, 0.08f);   // Skyrim units -> meters (70u = 1m)
+                const float pxFoot = max(wDist * dims.z * 2.8f, 0.55f);
+                const float depthM = max(depthV0 * 0.0143f, 0.12f);   // Skyrim units -> meters (70u = 1m)
                 float2 waveG = 0.0f.xx;
                 jacobianFold = 0.0f;
-                [unroll] for (int wi = 0; wi < 12; ++wi) {
-                    // Clean macro/meso wavenumber band (16m swell -> 1.4m waves, zero sub-pixel moire frequencies!):
-                    const float fracI = float(wi) / 11.0f;
-                    const float kRad = 0.0055f * pow(11.5f, fracI);
+                [unroll] for (int wi = 0; wi < 8; ++wi) {
+                    const float fracI = float(wi) / 7.0f;
+                    const float kRad = 0.0065f * pow(9.0f, fracI);
                     const float kM = kRad * 70.0f;
                     const float wavelength = 6.2831853f / kRad;
-                    const float nyquistFade = smoothstep(pxFoot * 3.5f, pxFoot * 9.0f, wavelength);
+                    const float nyquistFade = smoothstep(pxFoot * 4.0f, pxFoot * 10.0f, wavelength);
                     if (nyquistFade <= 0.001f) { continue; }
                     const float kd = min(kM * depthM, 18.0f);
                     const float omega = sqrt((9.81f * kM + 7.4e-5f * kM * kM * kM) * tanh(kd));
                     const float spread = (frac(float(wi) * 0.6180339f) - 0.5f) * (1.35f + fracI * 0.85f);
                     const float2 dirW = normalize(flowDir * cos(spread) + flowPerp * sin(spread));
-                    const float shoalBoost = clamp(1.0f / sqrt(max(tanh(kd), 0.18f)), 1.0f, 1.85f);
-                    const float ampW = (0.040f * pow(1.0f - fracI * 0.78f, 1.45f)) * ampScale * shoalBoost * nyquistFade;
+                    const float ampW = (0.036f * pow(1.0f - fracI * 0.75f, 1.40f)) * ampScale * nyquistFade;
                     const float ph = dot(wpFlow, dirW) * kRad - wt * omega + float(wi) * 2.39996f;
                     const float s = sin(ph);
                     const float c = cos(ph);
-                    waveG += dirW * (c * (1.0f + 0.30f * s) * ampW);
-                    jacobianFold += max(-s, 0.0f) * ampW * 2.8f;
-                }
-                // Downstream Karman-vortex eddy swirl normal behind boulders & bridge piers:
-                if (eddyLee > 0.02f) {
-                    const float eddyPh = dot(wpSurfXY, flowDir) * 0.08f - wt * 3.8f;
-                    waveG += flowPerp * (sin(eddyPh) * cos(dot(wpSurfXY, flowPerp) * 0.09f) * eddyLee * 0.065f);
+                    waveG += dirW * (c * (1.0f + 0.28f * s) * ampW);
+                    jacobianFold += max(-s, 0.0f) * ampW * 2.4f;
                 }
                 // Aperiodic 2-octave domain-warped fine liquid ripple gradient (zero periodic moire rings!):
-                const float2 rUv1 = wpFlow * 0.042f;
-                const float2 rUv2 = (wpW.xy + flowPerp * (wt * 11.0f)) * 0.095f;
-                const float rDx = (vNoise2D(rUv1 + float2(0.15f, 0.0f)) - vNoise2D(rUv1 - float2(0.15f, 0.0f))) * 0.045f
-                                + (vNoise2D(rUv2 + float2(0.15f, 0.0f)) - vNoise2D(rUv2 - float2(0.15f, 0.0f))) * 0.025f;
-                const float rDy = (vNoise2D(rUv1 + float2(0.0f, 0.15f)) - vNoise2D(rUv1 - float2(0.0f, 0.15f))) * 0.045f
-                                + (vNoise2D(rUv2 + float2(0.0f, 0.15f)) - vNoise2D(rUv2 - float2(0.0f, 0.15f))) * 0.025f;
+                const float2 rUv1 = wpFlow * 0.038f;
+                const float2 rUv2 = (wpW.xy + flowPerp * (wt * 11.0f)) * 0.082f;
+                const float rDx = (vNoise2D(rUv1 + float2(0.18f, 0.0f)) - vNoise2D(rUv1 - float2(0.18f, 0.0f))) * 0.042f
+                                + (vNoise2D(rUv2 + float2(0.18f, 0.0f)) - vNoise2D(rUv2 - float2(0.18f, 0.0f))) * 0.022f;
+                const float rDy = (vNoise2D(rUv1 + float2(0.0f, 0.18f)) - vNoise2D(rUv1 - float2(0.0f, 0.18f))) * 0.042f
+                                + (vNoise2D(rUv2 + float2(0.0f, 0.18f)) - vNoise2D(rUv2 - float2(0.0f, 0.18f))) * 0.022f;
                 const float nearRip = smoothstep(3200.0f, 200.0f, wDist) * ampScale;
                 waveG += float2(rDx, rDy) * nearRip;
-                // Grazing-angle anisotropic Nyquist normal filter: prevents high-frequency wave crests from aliasing into
-                // shimmering pixel noise at low view angles while preserving big rolling ocean/river swells!
+                // Grazing-angle anisotropic Nyquist normal filter: zero shimmer & zero 24-bit depth contour rings!
                 const float grazingSmooth = smoothstep(0.05f, 0.45f, saturate(v.z));
-                const float2 bowNormal = obsGrad * (bowHit * (0.09f + 0.04f * sin(depthV0 * 0.30f - wt * 3.4f)));
-                n = normalize(n + float3(waveG * lerp(0.28f, 0.72f, grazingSmooth) + bowNormal, 0.0f));
+                n = normalize(n + float3(waveG * lerp(0.28f, 0.72f, grazingSmooth), 0.0f));
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
                 if (wDist < 1600.0f) {
                     float2 wakeG = 0.0f.xx;

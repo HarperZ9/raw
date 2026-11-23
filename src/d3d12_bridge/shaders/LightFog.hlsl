@@ -396,6 +396,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             atmoCol = lerp(atmoCol, ashFogCol, ashW * 0.82f);
             T *= (1.0f - ashDens * 0.72f);
         }
+        // Cluster B (Turner's Snow Storm B15.5): sweeping 3D wind-slanted distant rain/blizzard curtain sheets across valleys!
+        if ((weather.w > 0.22f || weather.z > 0.22f) && dist > 650.0f && mapScale > 0.5f) {
+            const float2 sheetW = normalize(cloudWind.xy + float2(1.0f, 0.35f));
+            const float3 sheetP = camPosW.xyz + eye + w * min(dist * 0.55f, 4200.0f);
+            const float slant = dot(sheetP.xy, sheetW) * 0.0014f - sheetP.z * 0.00045f - camPosW.w * 0.42f;
+            const float curtain = smoothstep(0.35f, 0.85f, cNoise(float3(slant, dot(sheetP.xy, float2(-sheetW.y, sheetW.x)) * 0.0009f, sheetP.z * 0.00025f)));
+            const float sheetDens = curtain * saturate((dist - 650.0f) / 3800.0f) * max(weather.w, weather.z) * 0.22f;
+            atmoCol = lerp(atmoCol, lerp(float3(0.24f, 0.29f, 0.36f), float3(0.62f, 0.68f, 0.76f), weather.z), sheetDens * 0.55f);
+            T *= (1.0f - sheetDens * 0.35f);
+        }
         atmoCol = min(atmoCol, 3.5f.xxx);
         // Feature 16: Native DX12 3D World-Space GPU Weather Precipitation (wind-advected rain streaks, alpine snowflakes,
         // AND choking volcanic Solstheim ash flakes + glowing red-orange embers) depth-occluded against scene geometry!

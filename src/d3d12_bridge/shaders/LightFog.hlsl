@@ -110,9 +110,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float cosS = saturate(dot(sDir, aSun));
             const float sunAng = acos(clamp(cosS, -1.0f, 1.0f));
             const float lowS = saturate(1.0f - max(aElev, 0.0f) * 3.2f);
-            // Preserve authored Masser & Secunda moon crater textures across daytime, twilight, and night.
+            // Preserve authored Masser (crimson-ochre) & Secunda (silver-grey) moon crater textures across night,
+            // twilight & partial phases (0.035..0.18 threshold rescues dim moon craters that 0.16..0.48 wiped out!):
             const float moonLumF = dot(lit.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-            const float moonKeep = isCelestial ? 1.0f : (smoothstep(0.16f, 0.48f, moonLumF) * (1.0f - smoothstep(0.985f, 0.996f, cosS)) * (1.0f - smoothstep(0.18f, 0.42f, aElev)));
+            const float masserWarm = saturate((lit.r - lit.b) * 6.5f) * smoothstep(0.015f, 0.06f, moonLumF);
+            const float moonMask = max(smoothstep(0.035f, 0.18f, moonLumF), masserWarm);
+            const float moonKeep = isCelestial ? 1.0f : (moonMask * (1.0f - smoothstep(0.985f, 0.996f, cosS)) * (1.0f - smoothstep(0.18f, 0.42f, aElev)));
             // Full 24-Hour Dynamic Skybox matched continuously to cloud-deck horizon luminance (eliminates black horizon band
             // seen in 01.33.15.97.png & 01.31.56.65.png when overcast/snow clouds sit above the horizon!):
             const float hUp = saturate(sDir.z);
@@ -253,16 +256,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
             // Preserve Masser & Secunda twin moons cleanly on top of our procedural night/twilight sky.
-            float3 baseSky = lerp(lit.rgb, fullSky, (1.0f - isExotic) * (1.0f - moonKeep * 0.90f));
-            if (moonKeep > 0.05f && nightSkyW > 0.05f) {
-                baseSky += lit.rgb * float3(0.88f, 0.96f, 1.15f) * (moonKeep * nightSkyW * 0.22f);
+            float3 baseSky = lerp(lit.rgb, fullSky, (1.0f - isExotic) * (1.0f - moonKeep * 0.96f));
+            if (moonKeep > 0.04f && nightSkyW > 0.04f) {
+                baseSky += lit.rgb * float3(0.95f, 0.98f, 1.12f) * (moonKeep * nightSkyW * 0.35f);
             }
             if ((flags.x & FLAG_CLOUDS) != 0u) {
                 const float2 skyUv = (px + 0.5f) * dims.zw;
                 // Crisp hardware bilinear lookup (removes 5-tap blur that smeared 48-step cumulus detail into clay):
                 const float4 cl = Clouds.SampleLevel(Lin, skyUv, 0.0f);
-                // Clouds naturally occlude the solar disc via exact transmittance cl.a.
-                baseSky = lerp(baseSky, baseSky * cl.a + cl.rgb, 1.0f - isExotic);
+                // Let Masser & Secunda glow visibly through thin/moderate night clouds instead of disappearing!
+                const float clTrans = lerp(cl.a, max(cl.a, 0.38f), moonKeep * nightSkyW);
+                baseSky = lerp(baseSky, baseSky * clTrans + cl.rgb, 1.0f - isExotic);
                 // Physical 3D Crepuscular Cloud-Gap Light Rays (12-tap IGN-jittered radial transmittance march toward live sun):
                 // smooth band-free sunrays fanning out of cumulus breaks with soft off-screen sun fade!
                 if (sunDiscGate > 0.04f && cover > 0.12f) {

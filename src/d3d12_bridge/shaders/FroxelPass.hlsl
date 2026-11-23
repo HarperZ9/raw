@@ -136,10 +136,11 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                 const float dL = length(toL);
                 const float rL = lightPosR[li].w;
                 if (dL >= rL) { continue; }
-                const float att = pow(saturate(1.0f - dL / rL), 2.2f);
+                const float att = pow(saturate(1.0f - dL / rL), 2.1f);
                 const float cosL = dot(farDir, toL / max(dL, 1.0e-3f));
-                const float phL = min(froxelHG(cosL, 0.52f) * 2.4f + 0.35f, 2.2f);
-                inScat += lightColS[li].rgb * (att * phL * tune2.y * (isInt ? 0.42f : 0.28f));
+                const float phL = min(froxelHG(cosL, isInt ? 0.64f : 0.54f) * (isInt ? 2.8f : 2.4f) + 0.35f, 2.6f);
+                const float intSmoke = isInt ? (0.72f + 0.56f * cNoise(wp * 0.0095f - float3(0.0f, 0.0f, camPosW.w * 0.20f))) : 1.0f;
+                inScat += lightColS[li].rgb * (att * phL * tune2.y * intSmoke * (isInt ? 0.58f : 0.30f));
             }
         }
     }

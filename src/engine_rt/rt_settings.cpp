@@ -191,8 +191,11 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"fMeshLODLevel2FadeDist:Display", "12000.0"},
         {"fGrassStartFadeDistance:Grass", "11000.0"},
         {"fGrassMaxStartFadeDistance:Grass", "14000.0"},
+        {"fGrassWindMagnitudeMin:Grass", "0.45"},
+        {"fGrassWindMagnitudeMax:Grass", "1.65"},
         {"iMaxGrassTypesPerTexure:Grass", "15"},
         {"fLightLODStartFade:Display", "6500.0"},
+        {"fTreeLoadDistance:Trees", "95000.0"},
         {"fTreesMidLODSwitchDist:Display", "14000.0"},
         {"fInteriorShadowDistance:Display", "4500.0"},
         // Uncap 2011 particle system (750 -> 4096) & decal limits so spells, fires, embers & combat stay dense.

@@ -102,7 +102,7 @@ float rand(float2 p, float s) { return frac(52.9829189f * frac(dot(p, float2(0.0
 
 float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float2 lo = floor(at.xy);
-    const float2 full = lo + 0.5f;   // full native 1:1 resolution volumetric clouds (zero upscaling blur)
+    const float2 full = (lo + 0.5f) * 2.0f;   // 1/2-res temporally-reprojected clouds (4x faster, full-res depth composite)
     const float3 far = worldAt(full - 0.5f, 0.995f) - eyeAt();
     const float3 dir = normalize(far);
     // SM6.9 Wave-coherent sub-horizon early exit: entire waves looking below the horizon skip cloud raymarching cleanly.
@@ -227,7 +227,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float2 uv = float2(pc.x / pc.w * 0.5f + 0.5f, 0.5f - pc.y / pc.w * 0.5f) / resScale.xy;
         if (all(uv > 0.0f) && all(uv < 1.0f)) {
             const float edgeFade = smoothstep(0.0f, 0.045f, min(min(uv.x, 1.0f - uv.x), min(uv.y, 1.0f - uv.y)));
-            const float2 curUv = at.xy * dims.zw;
+            const float2 curUv = full * dims.zw;
             const float turnReject = 1.0f - saturate(length(uv - curUv) * 14.0f) * 0.62f;
             const float4 h = History.SampleLevel(Lin, uv, 0.0f);
             res = lerp(res, h, min(cloudWind.w, 0.68f) * edgeFade * turnReject);

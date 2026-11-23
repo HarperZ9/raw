@@ -184,64 +184,37 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float2 wDir = normalize(cloudWind.xy + float2(1.0f, 0.35f));
                 const float wt = camPosW.w;
                 const float windAmp = saturate(length(cloudWind.xy) / 380.0f);
-                // Shallow-water Bernoulli/Venturi acceleration: shallow channels flow faster with tighter ripples;
-                // deep pools calm into broad smooth swells (c = sqrt(g * h)).
                 const float shallowW = 1.0f - smoothstep(4.0f, 52.0f, depthV0);
                 const float nearObs = (1.0f - smoothstep(0.0f, 38.0f, depthV0)) * saturate(length(obsGrad) * 2.0f);
-                const float2 flowBase = nL.xy * (22.0f + shallowW * 16.0f) + wDir * (1.8f + windAmp * 2.2f);
-                const float flowSpd = max(length(flowBase), 0.1f);
-                const float2 flowDir = flowBase / flowSpd;
-                // Potential-flow streamline deflection: current parts & curves smoothly AROUND rocks and riverbanks!
+                const float2 flowDir = normalize(wDir + nL.xy * 1.6f);
                 const float intoObs = dot(flowDir, -obsGrad);
-                const float2 flowTang = flowBase - obsGrad * (dot(flowBase, obsGrad) * nearObs * 0.92f);
-                // Divergence-free 2D curl-noise eddies in calm backwaters & lee wakes behind boulders.
-                const float cEps = 18.0f;
-                const float cn0 = hash21(floor(wpW.xy * 0.015f));
-                const float2 curlPhase = float2(sin(wpW.y * 0.024f + wt * 0.55f + cn0), -cos(wpW.x * 0.024f - wt * 0.48f));
                 bowHit = saturate(intoObs) * nearObs;
                 eddyLee = saturate(-intoObs) * nearObs;
-                const float2 flowVec = flowTang + curlPhase * (1.4f + eddyLee * 6.5f);
-                // Vlachos SIGGRAPH 2010 Dual-Phase Directional Flow-Map Advection along deflected streamlines.
-                const float ph0 = frac(wt * (0.24f + shallowW * 0.14f));
-                const float ph1 = frac(wt * (0.24f + shallowW * 0.14f) + 0.5f);
-                const float flowBlend = abs(2.0f * ph0 - 1.0f);
-                const float2 g0 = evalTrochoidalWaves(wpW.xy - flowVec * (ph0 * 16.0f), flowDir, wt, wDist, windAmp + shallowW * 0.45f);
-                const float2 g1 = evalTrochoidalWaves(wpW.xy - flowVec * (ph1 * 16.0f) + float2(73.1f, 41.7f), flowDir, wt, wDist, windAmp + shallowW * 0.45f);
-                // Damp wave height smoothly at razor-thin 0..4u shore edge while raising upstream bow-wave crest & lee eddy ripples.
-                const float depthDamp = smoothstep(0.0f, 6.0f, depthV0) * lerp(1.0f, 0.72f, smoothstep(50.0f, 160.0f, depthV0));
-                const float2 bowNormal = obsGrad * (bowHit * (0.14f + 0.08f * sin(depthV0 * 0.45f - wt * 3.2f)));
-                const float2 eddyRipple = curlPhase * (eddyLee * 0.09f * sin(dot(wpW.xy, flowDir) * 0.18f - wt * 2.8f));
-                // Dual-scale crisp capillary wind-ripple micro-normals advected along deflected streamlines:
-                // gives liquid surface crisp sunlit micro-facets & living texture even when looking straight down.
-                const float capFade = saturate(1.0f - wDist / 7500.0f);
-                const float2 capP0 = (wpW.xy - flowVec * (ph0 * 10.0f)) * 0.24f;
-                const float2 capP1 = (wpW.xy - flowVec * (ph1 * 10.0f) + float2(37.3f, 61.9f)) * 0.24f;
-                const float2 capG0 = float2(vNoise2D(capP0 + float2(0.15f, 0.0f)) - vNoise2D(capP0 - float2(0.15f, 0.0f)),
-                                            vNoise2D(capP0 + float2(0.0f, 0.15f)) - vNoise2D(capP0 - float2(0.0f, 0.15f)));
-                const float2 capG1 = float2(vNoise2D(capP1 + float2(0.15f, 0.0f)) - vNoise2D(capP1 - float2(0.15f, 0.0f)),
-                                            vNoise2D(capP1 + float2(0.0f, 0.15f)) - vNoise2D(capP1 - float2(0.0f, 0.15f)));
-                const float2 microP0 = (wpW.xy - flowVec * (ph0 * 14.0f)) * 0.62f;
-                const float2 microP1 = (wpW.xy - flowVec * (ph1 * 14.0f) + float2(19.7f, 83.1f)) * 0.62f;
-                const float2 microG0 = float2(vNoise2D(microP0 + float2(0.18f, 0.0f)) - vNoise2D(microP0 - float2(0.18f, 0.0f)),
-                                              vNoise2D(microP0 + float2(0.0f, 0.18f)) - vNoise2D(microP0 - float2(0.0f, 0.18f)));
-                const float2 microG1 = float2(vNoise2D(microP1 + float2(0.18f, 0.0f)) - vNoise2D(microP1 - float2(0.18f, 0.0f)),
-                                              vNoise2D(microP1 + float2(0.0f, 0.18f)) - vNoise2D(microP1 - float2(0.0f, 0.18f)));
-                const float2 capNormal = lerp(capG0, capG1, flowBlend) * (0.68f * capFade)
-                                       + lerp(microG0, microG1, flowBlend) * (0.44f * saturate(1.0f - wDist / 1800.0f));
-                // 3rd ultra-crisp fine-ripple octave (<900u) so close-up water shows razor-sharp liquid facets instead of matte blur.
-                const float fineFade = saturate(1.0f - wDist / 900.0f);
-                float2 fineNormal = 0.0f.xx;
-                if (fineFade > 0.01f) {
-                    const float2 fP0 = (wpW.xy - flowVec * (ph0 * 16.0f)) * 1.45f;
-                    const float2 fP1 = (wpW.xy - flowVec * (ph1 * 16.0f) + float2(53.1f, 27.9f)) * 1.45f;
-                    const float2 fG0 = float2(vNoise2D(fP0 + float2(0.22f, 0.0f)) - vNoise2D(fP0 - float2(0.22f, 0.0f)),
-                                              vNoise2D(fP0 + float2(0.0f, 0.22f)) - vNoise2D(fP0 - float2(0.0f, 0.22f)));
-                    const float2 fG1 = float2(vNoise2D(fP1 + float2(0.22f, 0.0f)) - vNoise2D(fP1 - float2(0.22f, 0.0f)),
-                                              vNoise2D(fP1 + float2(0.0f, 0.22f)) - vNoise2D(fP1 - float2(0.0f, 0.22f)));
-                    fineNormal = lerp(fG0, fG1, flowBlend) * (0.34f * fineFade);
+
+                // True continuous 8-directional JONSWAP-style propagating Gerstner/capillary wave spectrum:
+                // waves travel continuously along flowDir + cross-swell angles with realistic phase velocity
+                // (eliminates frozen pulsing flowBlend and blobby vNoise2D splotches).
+                const float2 flowPerp = float2(-flowDir.y, flowDir.x);
+                static const float2 kWDir[8] = {
+                    float2( 0.94f,  0.34f), float2( 0.82f, -0.57f), float2( 0.52f,  0.85f), float2(-0.28f,  0.96f),
+                    float2( 0.74f,  0.67f), float2( 0.61f, -0.79f), float2(-0.46f, -0.89f), float2( 0.98f, -0.19f)
+                };
+                static const float kWFreq[8]  = { 0.022f, 0.036f, 0.058f, 0.092f, 0.148f, 0.235f, 0.370f, 0.580f };
+                static const float kWSpeed[8] = { 1.45f,  1.95f,  2.55f,  3.25f,  4.10f,  5.10f,  6.20f,  7.40f  };
+                static const float kWAmp[8]   = { 0.052f, 0.044f, 0.036f, 0.028f, 0.021f, 0.015f, 0.010f, 0.006f };
+                const float ampScale = (0.75f + windAmp * 0.65f + shallowW * 0.25f) * smoothstep(0.0f, 5.0f, depthV0);
+                float2 waveG = 0.0f.xx;
+                [unroll] for (int wi = 0; wi < 8; ++wi) {
+                    const float2 dirW = normalize(flowDir * kWDir[wi].x + flowPerp * kWDir[wi].y);
+                    const float ph = dot(wpW.xy, dirW) * kWFreq[wi] - wt * kWSpeed[wi];
+                    const float distAtt = saturate(1.0f - wDist / (14000.0f / (1.0f + float(wi) * 0.95f)));
+                    // Steepened trochoidal crest derivative: sharp wave peaks, broad smooth troughs.
+                    const float s = sin(ph);
+                    const float c = cos(ph);
+                    waveG += dirW * (c * (1.0f + 0.35f * s) * kWAmp[wi] * ampScale * distAtt);
                 }
-                const float2 waveG = lerp(g0, g1, flowBlend) * (depthDamp * 1.30f) + bowNormal + eddyRipple + capNormal + fineNormal;
-                n = normalize(n + float3(waveG, 0.0f));
+                const float2 bowNormal = obsGrad * (bowHit * (0.12f + 0.07f * sin(depthV0 * 0.35f - wt * 3.8f)));
+                n = normalize(n + float3(waveG + bowNormal, 0.0f));
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
                 if (wDist < 1600.0f) {
                     float2 wakeG = 0.0f.xx;

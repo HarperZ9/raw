@@ -172,10 +172,23 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                 const float phL = min(froxelHG(cosL, isInt ? 0.64f : 0.54f) * (isInt ? 2.8f : 2.4f) + 0.35f, 2.6f);
                 const float intSmoke = isInt ? (0.72f + 0.56f * cNoise(wp * 0.0095f - float3(0.0f, 0.0f, camPosW.w * 0.20f))) : 1.0f;
                 inScat += lightColS[li].rgb * (att * phL * tune2.y * intSmoke * (isInt ? 0.58f : 0.30f));
-                // Real 3D Buoyant Volumetric Smoke Plumes rising from campfires, hearths, braziers & torches:
-                // conical wind-bent rising turbulent column with physical smoke extinction + warm under-lit flame scatter!
+                // True 3D Volumetric Turbulent Flame Core (breaks flat 2D 2011 fire sprite cards!) + Rising 3D Smoke & Embers:
                 if (lightColS[li].r > lightColS[li].b * 1.25f && lightColS[li].r > 0.14f) {
                     const float dzS = pRel.z - lightPosR[li].z;
+                    // 1) 3D curling blackbody flame tongue (-8u..+34u around flame origin):
+                    if (dzS > -8.0f && dzS < 34.0f) {
+                        const float2 fXY = pRel.xy - lightPosR[li].xy;
+                        const float flameR = lerp(18.0f, 4.0f, saturate((dzS + 8.0f) / 42.0f));
+                        const float fRad2 = dot(fXY, fXY) / max(flameR * flameR, 1.0f);
+                        if (fRad2 < 1.0f) {
+                            const float fCurl = cNoise(wp * 0.065f - float3(0.0f, 0.0f, camPosW.w * 2.8f));
+                            const float fDens = exp(-fRad2 * 2.8f) * smoothstep(0.32f, 0.85f, fCurl) * (1.0f - saturate((dzS + 8.0f) / 42.0f));
+                            const float tempT = saturate(1.0f - (dzS + 8.0f) / 38.0f);
+                            const float3 flameBB = lerp(float3(1.6f, 0.28f, 0.04f), float3(3.8f, 2.2f, 0.75f), tempT * tempT);
+                            inScat += flameBB * (fDens * 1.85f);
+                        }
+                    }
+                    // 2) Conical wind-bent rising turbulent 3D smoke column + incandescent sparks (+8u..+340u):
                     if (dzS > 8.0f && dzS < 340.0f) {
                         const float2 windBend = isInt ? float2(0.0f, 0.0f) : (cloudWind.xy * dzS * 0.014f);
                         const float2 dXY = (pRel.xy - lightPosR[li].xy) - windBend;

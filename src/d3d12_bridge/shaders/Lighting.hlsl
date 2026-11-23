@@ -335,12 +335,27 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 wet.wet = max(wet.wet, simWet * (1.0f - wet.snow) * 0.72f);
             }
         }
-        // GEO-04 Dual-Frequency Tri-Planar Micro-Displacement Relief on close-range stone, ruins & terrain (< 1,200u):
+        // GEO-04 4-Step Ray-Marched 3D Snowdrift & Cobblestone Relief Occlusion + Dual-Frequency Micro-Displacement (< 1,200u):
+        // Breaks flat 2011 terrain quads with real view-ray heightfield relief & micro-cavity self-shadowing!
         if ((base == 1u || base == 4u) && z < 1200.0f) {
             const float3 wpM = p + camPosW.xyz;
             const float mFade = saturate(1.0f - z / 1200.0f);
-            const float mx = (cNoise(wpM * 0.22f) - 0.5f) * 0.18f + (cNoise(wpM * 0.68f + 7.1f) - 0.5f) * 0.10f;
-            const float my = (cNoise(wpM * 0.22f + 13.4f) - 0.5f) * 0.18f + (cNoise(wpM * 0.68f + 19.3f) - 0.5f) * 0.10f;
+            float3 wpDispl = wpM;
+            if (base == 4u && z < 750.0f && s.v.z > 0.12f) {
+                const float rScale = lerp(3.2f, 6.5f, wet.snow);
+                const float2 stepXY = (-s.v.xy / max(s.v.z, 0.20f)) * (rScale * 0.25f);
+                float hCur = 1.0f;
+                [unroll] for (int rp = 0; rp < 4; ++rp) {
+                    const float hSamp = cNoise(wpDispl * 0.085f) * 0.65f + cNoise(wpDispl * 0.24f + 5.1f) * 0.35f;
+                    if (hSamp >= hCur) { break; }
+                    wpDispl.xy += stepXY;
+                    hCur -= 0.25f;
+                }
+                const float reliefOcc = lerp(0.80f, 1.08f, saturate(hCur));
+                albedo *= lerp(1.0f, reliefOcc, saturate(1.0f - z / 750.0f) * 0.65f);
+            }
+            const float mx = (cNoise(wpDispl * 0.22f) - 0.5f) * 0.18f + (cNoise(wpDispl * 0.68f + 7.1f) - 0.5f) * 0.10f;
+            const float my = (cNoise(wpDispl * 0.22f + 13.4f) - 0.5f) * 0.18f + (cNoise(wpDispl * 0.68f + 19.3f) - 0.5f) * 0.10f;
             s.n = normalize(s.n + float3(mx, my, 0.0f) * mFade);
         }
         // Persistent 32-step world-anchored snow & wet-mud footprint deformation trail (footTrail[0..31]).

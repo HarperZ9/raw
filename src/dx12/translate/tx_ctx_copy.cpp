@@ -13,14 +13,60 @@ void Context::CopyBuffer(ResCore& dst, uint64_t dstOff, ResCore& src, uint64_t s
         const uint8_t* from = nullptr;
         if (src.store == Store::Renamed) from = Pin(static_cast<TBuffer*>(src.self))->cpu;
         else if (src.store == Store::Staging) { Sync(); from = src.mapped; }
-        if (!from) { CountUnsupported(dev_, "copy from a GPU buffer into a constant or dynamic buffer"); return; }
+        if (from) {
+            TBuffer* db = static_cast<TBuffer*>(dst.self);
+            const uint8_t* old = Pin(db)->cpu;
+            RenameBuffer(db);
+            uint8_t* cur = Pin(db)->cpu;
+            if (n != dst.bytes) memcpy(cur, old, dst.bytes);
+            memcpy(cur + dstOff, from + srcOff, n);
+            return;
+        }
+        // GPU-produced buffer -> constant/dynamic buffer copy (Store::Committed -> Store::Renamed):
+        // Promote dst in-place to a DEFAULT-heap Store::Committed buffer (256B-aligned for CBV) so
+        // CopyBufferRegion runs on the GPU without stalling or dropping the copy!
+        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
+        D3D12_RESOURCE_DESC rd{};
+        rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        rd.Width = (dst.bytes + 255ull) & ~255ull;
+        if (rd.Width == 0) rd.Width = 256;
+        rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
+        rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        auto tr = std::make_shared<TrackedRes>();
+        if (FAILED(dev_->d3d->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+                                                      D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&tr->res)))) {
+            CountUnsupported(dev_, "copy from a GPU buffer into a constant or dynamic buffer (alloc failed)");
+            return;
+        }
+        tr->subs = 1;
+        tr->global.assign(1, D3D12_RESOURCE_STATE_COMMON);
         TBuffer* db = static_cast<TBuffer*>(dst.self);
-        const uint8_t* old = Pin(db)->cpu;
-        RenameBuffer(db);
-        uint8_t* cur = Pin(db)->cpu;
-        if (n != dst.bytes) memcpy(cur, old, dst.bytes);
-        memcpy(cur + dstOff, from + srcOff, n);
-        return;
+        const Chunk oldCh = *Pin(db);
+        dst.tr = std::move(tr);
+        if (n != dst.bytes && oldCh.res) {
+            rec_.tracker.Require(dst.tr, 0, D3D12_RESOURCE_STATE_COPY_DEST);
+            rec_.tracker.Flush(Cl());
+            Cl()->CopyBufferRegion(dst.Res(), 0, oldCh.res, oldCh.offset, dst.bytes);
+        }
+        if (dst.chunk.res) rec_.retire.chunks.push_back(dst.chunk);
+        dst.store = Store::Committed;
+        dst.chunk = {};
+        dst.chunk.res = dst.Res();
+        dst.chunk.va = dst.Res()->GetGPUVirtualAddress();
+        dst.chunk.size = dst.bytes;
+        // Update any currently bound CBV / VB / IB slot pointing at this buffer so it sees the new GPU VA:
+        for (int st = 0; st < S_COUNT; ++st) {
+            for (int sl = 0; sl < 14; ++sl) {
+                if (s_.st[st].cb[sl].buf == db) {
+                    s_.st[st].cb[sl].chunk = &dst.chunk;
+                    cbVa_[st][sl] = ~0ull;
+                }
+            }
+        }
+        for (uint32_t i = 0; i < s_.vbHi; ++i)
+            if (s_.vb[i].buf == db) { s_.vb[i].chunk = &dst.chunk; dirty_ |= D_VB; }
+        if (s_.ib.buf == db) { s_.ib.chunk = &dst.chunk; dirty_ |= D_IB; }
+        dirty_ |= D_SCAN;
     }
     ID3D12Resource* sres = src.Res();
     if (src.store == Store::Renamed) {

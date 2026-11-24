@@ -102,6 +102,11 @@ void Context::ScanGraphics(const RootSig* root)
             TSRV* v = ss.srv[std::countr_zero(slots)];
             if (v && v->core->tr) t.RequireRange(v->core->tr, v->range, v->core->mips, v->core->slices, kShaderRead);
         }
+        for (uint32_t cb = 0; cb < 14; ++cb) {
+            TBuffer* b = ss.cb[cb].buf;
+            if (b && b->core.store == Store::Committed && b->core.tr)
+                t.Require(b->core.tr, 0, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+        }
     }
     if (!(d & D_SCAN_IA)) return;
     for (uint32_t i = 0; i < s_.vbHi; ++i)

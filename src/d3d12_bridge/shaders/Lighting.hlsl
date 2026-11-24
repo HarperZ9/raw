@@ -1282,9 +1282,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // - TruePBR / PGPatcher (base==13, _rmaos.dds): exact authored Roughness (R), Metallic (G) & Baked AO (B)!
     // - Class-2 metals (steel, iron, silver, gold, Dwemer brass): physical conductor metallicity attenuates diffuse
     //   energy (1 - 0.72*m) and drives chromatic conductor F0 into Karis Split-Sum + Fdez-Aguera Multi-Scattering IBL.
+    // Unified ENB Complex Material (_m.dds on base==2) + CS TruePBR / PGPatcher (_rmaos.dds on base==13):
+    // Hijacks BOTH competing material pipelines directly into RAW-STRATA + Hardware DXR 1.2 + Dynamic Cubemap IBL!
     const float envLumM = dot(envRefl, float3(0.2126f, 0.7152f, 0.0722f));
+    const bool isEnbComplexMat = (!match && base == 2u && (envRefl.g > envRefl.r * 1.15f || envRefl.b > envRefl.r * 1.15f));
     const float metallic = isTruePbr ? saturate(rmaosPbr.g)
-                         : ((!match && base == 2u) ? saturate((max(saturate(s.mask * resScale.w), envLumM * 1.35f) - 0.22f) * 1.95f) : 0.0f);
+                         : (isEnbComplexMat ? saturate(envRefl.g)
+                         : ((!match && base == 2u) ? saturate((max(saturate(s.mask * resScale.w), envLumM * 1.35f) - 0.22f) * 1.95f) : 0.0f));
     const float pbrBakedAo = isTruePbr ? lerp(0.32f, 1.0f, saturate(rmaosPbr.b)) : 1.0f;
     const float3 diffAlb = albedo * (1.0f - metallic * (isTruePbr ? 0.94f : 0.72f));
     const float3 rawLit = (diffAlb + envRefl * (match ? 1.0f : 0.08f)) * (diff + amb * pbrBakedAo + effCharLight);

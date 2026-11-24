@@ -460,9 +460,11 @@ float4 main(In i) : SV_Target {
         ovAdd += min((lensAcc * 0.048f + haloCol * 0.025f * centerClear * saturate(1.0f - cDist * 1.35f) + starAcc) * clamp(RQ.w, 0.0f, 2.5f), 0.22f.xxx);
     }
     if ((ovMask & 8u) != 0u) {
-        // Layer 4 (OV4): Physical Tiffen Black Pro-Mist 1/4 Optical Diffusion — softly halates highlights while preserving deep shadows & crispness.
-        const float3 proMist = max(bloom - 0.10f.xxx, 0.0f.xxx) * float3(1.04f, 1.00f, 0.96f);
-        ovAdd += proMist * (0.095f * clamp(RQ.w, 0.0f, 2.5f));
+        // Layer 4 (OV4): High-threshold optical highlight diffusion (>1.85 HDR ONLY: flames, sun, spells).
+        // Previously used (bloom - 0.10) which leaked Skyrim's blurry 2011 vanilla bloom onto banners (15.26.57),
+        // bowls (15.26.44), plaster walls (15.27.06) & ice caves!
+        const float3 proMist = max(bloom - 1.85f.xxx, 0.0f.xxx) * float3(1.02f, 1.00f, 0.98f);
+        ovAdd += proMist * (0.045f * clamp(RQ.w, 0.0f, 2.5f));
     }
     // Energy-conserving optical bloom/lens screen-blend: prevents bloom from pushing bright snow or coastal horizons into whiteout.
     const float3 cappedAdd = ovAdd / (1.0f + max(ovAdd.r, max(ovAdd.g, ovAdd.b)) * 1.35f);

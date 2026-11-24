@@ -1376,7 +1376,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
             const float4 rf = rfW > 0.0f ? (rfSum / rfW) : RtRefl.Load(int3(baseRefl, 0));
-            const float3 envFinal = lerp(dynEnv * (0.30f + 0.70f * skyVisShaped), rf.rgb, rf.a);
+            // Smoothly weight RT reflections by roughness so curved metal bowls/jugs (15.26.44) blend cleanly
+            // with the dynamic cubemap instead of showing blocky 1-spp RT speckles on rough/curved interiors:
+            const float rtReflW = saturate(rf.a) * lerp(0.82f, 0.22f, saturate(envRough * 2.4f));
+            const float3 envFinal = lerp(dynEnv * (0.30f + 0.70f * skyVisShaped), rf.rgb, rtReflW);
             lit += evalMultiScatterIBL(F0mat, envRough, nv, envFinal, specOcc) * max(reflMask, metallic);
             if (flags.w == 6u) { return float4(envFinal, game.a); }
         } else if (base == 2u) {

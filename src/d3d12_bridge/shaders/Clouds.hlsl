@@ -245,7 +245,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (tAlto > 0.0f && tAlto < 520000.0f) {
                 const float2 aWind = ekmanWind(0.65f);
                 const float2 aPos = (o.xy + dir.xy * tAlto + aWind * camPosW.w) * 0.000016f;
-                const float2 aCurl = cloudCurl2D(aPos * 1.45f, camPosW.w * 0.0035f) * 0.85f;
+                // Gentle wind-aligned shear (removed 0.85 curl that drew Van Gogh spiral loops in 15.27.49!):
+                const float2 aCurl = cloudCurl2D(aPos * 1.15f, camPosW.w * 0.0025f) * 0.16f;
                 const float aWave = cNoise(float3((aPos + aCurl) * float2(2.8f, 2.1f), 4.3f + camPosW.w * 0.0022f));
                 const float aMask = smoothstep(0.56f, 0.85f, aWave) * smoothstep(0.03f, 0.18f, dir.z) * exp(-tAlto / 320000.0f);
                 const float3 altoTwi = lerp(sunC, float3(1.55f, 0.44f, 0.34f), twiCloud * 0.88f);
@@ -257,7 +258,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (tCir > 0.0f && tCir < 650000.0f) {
                 const float2 cWind = ekmanWind(1.00f);
                 const float2 cPos = (o.xy + dir.xy * tCir + cWind * camPosW.w) * 0.0000095f;
-                const float2 cCurl = cloudCurl2D(cPos * 1.9f, camPosW.w * 0.0042f) * 1.15f;
+                // Natural jet-stream cirrus wisps (removed 1.15 curl that drew painted spiral loops in 15.27.49!):
+                const float2 cCurl = cloudCurl2D(cPos * 1.35f, camPosW.w * 0.0028f) * 0.20f;
                 const float streak = cNoise(float3((cPos.x + cCurl.x) * 2.4f, (cPos.y + cCurl.y) * 1.25f, 5.1f + camPosW.w * 0.0018f));
                 const float detail = cNoise(float3((cPos + cCurl * 0.6f) * 10.0f, 8.7f));
                 const float cMask = smoothstep(0.54f, 0.84f, streak * 0.68f + detail * 0.32f) * smoothstep(0.03f, 0.20f, dir.z);

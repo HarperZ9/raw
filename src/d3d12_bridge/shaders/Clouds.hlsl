@@ -214,14 +214,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     stormFlash = boltCol * (pulse * glowVol * (0.30f + dens * 2.1f) * stormInt * 2.2f);
                 }
             }
-            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(1.00f, 0.995f, 0.99f), 0.60f * (1.0f - lowSun) * (1.0f - nightW));
-            const float3 coolBase = lerp(lerp(uSkyZ * 0.56f, float3(0.30f, 0.35f, 0.42f), overcastW * 0.55f), lerp(uSkyH * 0.66f, float3(0.42f, 0.47f, 0.54f), overcastW * 0.55f), overcastW * 0.65f + (1.0f - h) * 0.35f) * cloudAo;
+            // Crisp luminous white cumulus crowns & cool blue-slate shadowed bellies (toreler ref2):
+            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(1.00f, 1.00f, 1.00f), 0.74f * (1.0f - lowSun) * (1.0f - nightW));
+            const float3 coolBase = lerp(lerp(uSkyZ * 0.54f, float3(0.28f, 0.34f, 0.42f), overcastW * 0.55f), lerp(uSkyH * 0.66f, float3(0.42f, 0.48f, 0.56f), overcastW * 0.55f), overcastW * 0.65f + (1.0f - h) * 0.35f) * cloudAo;
             const float3 underLit = float3(1.15f, 0.58f, 0.30f) * (twiCloud * (1.0f - h) * pow(saturate(dot(dir, aSun)), 4.0f) * (1.0f - overcastW * 0.85f) * 0.28f);
             // Night lunar rim glow: clouds near the Moon (sunDir.xyz at night) transmit translucent silver-blue light!
             const float3 moonRim = float3(0.38f, 0.52f, 0.85f) * (nightW * hg(cosT, 0.76f) * exp(-od * sigma * 0.35f) * 0.65f);
-            // Sculpted 3D cumulus luminance (eliminates flat blown-out beige sky blobs seen in 13.01.55!):
-            const float3 rawLum = whiteSun * (multiScat * lerp(0.65f, powder, 0.82f) * 4.0f * PI * 0.17f) + coolBase + underLit + moonRim + stormFlash;
-            const float3 lum = select(rawLum > 0.78f.xxx, 0.78f.xxx + 0.95f * (1.0f.xxx - exp(-(rawLum - 0.78f.xxx) / 0.95f)), rawLum);
+            const float3 rawLum = whiteSun * (multiScat * lerp(0.68f, powder, 0.84f) * 4.0f * PI * 0.22f) + coolBase + underLit + moonRim + stormFlash;
+            const float3 lum = select(rawLum > 0.92f.xxx, 0.92f.xxx + 0.95f * (1.0f.xxx - exp(-(rawLum - 0.92f.xxx) / 0.95f)), rawLum);
             const float ext = dens * (sigma * 1.15f);
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length

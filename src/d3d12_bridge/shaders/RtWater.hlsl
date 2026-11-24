@@ -521,8 +521,8 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float effF = saturate(F * waterA.x * shoreFeather * cellFeather);
             const uint view = uint(waterB.x + 0.5f);
             const float3 farSkyRefl = waterSky(rd);
-            // Deep cold Nordic steel-slate ocean body (replaces electric royal blue Arctic water).
-            const float3 deepOceanBody = float3(0.016f, 0.028f, 0.036f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.07f.xxx) * 1.65f;
+            // Deep cold Nordic charcoal-slate ocean body (willfauchervfx stormy ocean ref5):
+            const float3 deepOceanBody = float3(0.010f, 0.017f, 0.023f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.06f.xxx) * 1.45f;
             const float farF = saturate(max(F * max(waterA.x, 0.85f) * 0.90f, smoothstep(5500.0f, 36000.0f, wDist) * 0.68f));
             const float3 farOcean = lerp(deepOceanBody, farSkyRefl, farF);
             const float3 nearCol = refr ? lerp(body, refl, effF) : lerp(game.rgb, refl, effF) + caus * (1.0f - effF);

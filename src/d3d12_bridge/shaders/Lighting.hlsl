@@ -449,27 +449,38 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             }
             if (weather.w > 0.05f) { wet.wet = max(wet.wet, simWet * (1.0f - wet.snow) * 0.55f); }
         }
-        // GEO-04 4-Step Ray-Marched 3D Snowdrift & Cobblestone Relief Occlusion + Dual-Frequency Micro-Displacement (< 1,200u):
-        // Breaks flat 2011 terrain quads with real view-ray heightfield relief & micro-cavity self-shadowing!
+        // World-Space Micro-Displacement + Directional Sun-Ray Micro-Self-Shadowing (SSDM 1.1 ref4 + toreler ref1/ref3, < 1,200u):
+        // Turns flat 2011 terrain/cobblestone/rock quads into sculptural micro-shadowed relief with zero navmesh/collision impact!
         if ((base == 1u || base == 4u) && z < 1200.0f) {
             const float3 wpM = p + camPosW.xyz;
             const float mFade = saturate(1.0f - z / 1200.0f);
             float3 wpDispl = wpM;
-            if (base == 4u && z < 750.0f && s.v.z > 0.12f) {
-                const float rScale = lerp(3.2f, 6.5f, wet.snow);
+            float microH0 = 0.5f;
+            if (base == 4u && z < 850.0f && s.v.z > 0.12f) {
+                const float rScale = lerp(3.8f, 6.5f, wet.snow);
                 const float2 stepXY = (-s.v.xy / max(s.v.z, 0.20f)) * (rScale * 0.25f);
                 float hCur = 1.0f;
                 [unroll] for (int rp = 0; rp < 4; ++rp) {
-                    const float hSamp = cNoise(wpDispl * 0.085f) * 0.65f + cNoise(wpDispl * 0.24f + 5.1f) * 0.35f;
+                    const float hSamp = cNoise(wpDispl * 0.085f) * 0.55f + cNoise(wpDispl * 0.24f + 5.1f) * 0.30f + cNoise(wpDispl * 0.58f + 11.7f) * 0.15f;
+                    microH0 = hSamp;
                     if (hSamp >= hCur) { break; }
                     wpDispl.xy += stepXY;
                     hCur -= 0.25f;
                 }
-                const float reliefOcc = lerp(0.80f, 1.08f, saturate(hCur));
-                albedo *= lerp(1.0f, reliefOcc, saturate(1.0f - z / 750.0f) * 0.65f);
+                // 2-step directional sun-ray micro-shadowing along sunDir.xy (SSDM-style pebble/cobble self-shadowing):
+                float microSunOcc = 1.0f;
+                if (sunDir.w > 0.5f && sunDir.z > 0.06f && sunColour.w > 0.5f) {
+                    const float2 sunStep = (sunDir.xy / max(sunDir.z, 0.28f)) * 2.4f;
+                    const float hS1 = cNoise((wpDispl + float3(sunStep, 0.0f)) * 0.085f) * 0.55f + cNoise((wpDispl + float3(sunStep, 0.0f)) * 0.24f + 5.1f) * 0.30f + 0.075f;
+                    const float hS2 = cNoise((wpDispl + float3(sunStep * 2.2f, 0.0f)) * 0.085f) * 0.55f + cNoise((wpDispl + float3(sunStep * 2.2f, 0.0f)) * 0.24f + 5.1f) * 0.30f + 0.075f;
+                    const float occ = saturate(max(hS1 - microH0 - 0.04f, (hS2 - microH0 - 0.09f) * 0.7f) * 4.2f);
+                    microSunOcc = 1.0f - occ * (1.0f - saturate(clouds.x * 0.85f)) * 0.42f;
+                }
+                const float reliefOcc = lerp(0.76f, 1.08f, saturate(hCur)) * microSunOcc;
+                albedo *= lerp(1.0f, reliefOcc, saturate(1.0f - z / 850.0f) * 0.72f);
             }
-            const float mx = (cNoise(wpDispl * 0.22f) - 0.5f) * 0.18f + (cNoise(wpDispl * 0.68f + 7.1f) - 0.5f) * 0.10f;
-            const float my = (cNoise(wpDispl * 0.22f + 13.4f) - 0.5f) * 0.18f + (cNoise(wpDispl * 0.68f + 19.3f) - 0.5f) * 0.10f;
+            const float mx = (cNoise(wpDispl * 0.22f) - 0.5f) * 0.22f + (cNoise(wpDispl * 0.68f + 7.1f) - 0.5f) * 0.12f;
+            const float my = (cNoise(wpDispl * 0.22f + 13.4f) - 0.5f) * 0.22f + (cNoise(wpDispl * 0.68f + 19.3f) - 0.5f) * 0.12f;
             s.n = normalize(s.n + float3(mx, my, 0.0f) * mFade);
         }
         // Wind-swept glacial sastrugi snowdrift relief + discrete world-locked snow/mud footprints (footTrail[0..31]):

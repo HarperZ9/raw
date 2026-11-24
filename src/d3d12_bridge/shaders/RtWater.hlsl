@@ -468,18 +468,18 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float2 foamFlow = normalize(cloudWind.xy + float2(1.0f, 0.35f));
                 const float froth = organicFroth(wpW.xy - foamFlow * (camPosW.w * 16.0f), camPosW.w);
                 const float frothFine = organicFroth(wpW.xy * 1.85f + foamFlow * (camPosW.w * 9.0f) + 13.7f, camPosW.w * 1.25f);
-                const float runup = 4.2f + 2.2f * sin(camPosW.w * 1.45f + (wpW.x + wpW.y) * 0.016f + froth * 1.8f);
-                const float shoreMeniscus = (1.0f - smoothstep(0.0f, runup, depthV)) * smoothstep(0.0f, 0.45f, depthV);
-                // Delicate organic shore foam (eliminates bright white wavy shoreline ribbon in 11.15.38.97 & 11.15.40.46!):
-                const float surfZone = smoothstep(1.5f, 10.0f, depthV) * (1.0f - smoothstep(16.0f, 38.0f, depthV));
-                const float surfCrest = saturate(jacobianFold * 0.45f + (frothFine - 0.58f) * 1.1f) * surfZone * (0.25f + 0.75f * froth);
-                const float retreatLace = (1.0f - smoothstep(1.0f, 14.0f, depthV)) * smoothstep(0.50f, 0.86f, frothFine) * 0.16f;
-                const float rapidFoam = (1.0f - smoothstep(2.0f, 18.0f, depthV)) * smoothstep(0.56f, 0.90f, froth) * 0.14f;
-                const float bowFoam = bowHit * froth * 0.65f;
-                const float eddyFoam = eddyLee * froth * 0.30f;
-                const float shoreLap = max(max(shoreMeniscus * (0.30f + 0.70f * froth) * 0.24f, max(surfCrest * 0.28f, retreatLace)), rapidFoam);
+                // Subtle shore contact meniscus & wind-driven crest foam (eliminates flat grey-white shallow-water blotches in 21.31.58!):
+                const float runup = 1.8f + 0.8f * sin(camPosW.w * 1.45f + (wpW.x + wpW.y) * 0.016f + froth * 1.8f);
+                const float shoreMeniscus = (1.0f - smoothstep(0.0f, runup, depthV)) * smoothstep(0.0f, 0.35f, depthV);
+                const float surfZone = smoothstep(2.0f, 9.0f, depthV) * (1.0f - smoothstep(14.0f, 32.0f, depthV));
+                const float surfCrest = saturate(jacobianFold * 0.35f + (frothFine - 0.68f) * 0.85f) * surfZone * (0.20f + 0.80f * froth);
+                const float retreatLace = (1.0f - smoothstep(0.8f, 6.0f, depthV)) * smoothstep(0.68f, 0.92f, frothFine) * 0.06f;
+                const float rapidFoam = (1.0f - smoothstep(1.5f, 8.0f, depthV)) * smoothstep(0.72f, 0.94f, froth) * 0.05f;
+                const float bowFoam = bowHit * froth * 0.35f;
+                const float eddyFoam = eddyLee * froth * 0.15f;
+                const float shoreLap = max(max(shoreMeniscus * (0.25f + 0.75f * froth) * 0.14f, max(surfCrest * 0.14f, retreatLace)), rapidFoam);
                 const float windSpeedW = saturate(length(cloudWind.xy) / 340.0f + weather.w * 0.55f);
-                const float crestFoam = saturate((1.0f - n.z) * (6.5f + windSpeedW * 5.2f) - lerp(0.16f, 0.08f, windSpeedW)) * froth * (0.55f + windSpeedW * 0.42f);
+                const float crestFoam = saturate((1.0f - n.z) * (5.2f + windSpeedW * 4.5f) - lerp(0.24f, 0.14f, windSpeedW)) * froth * (0.35f + windSpeedW * 0.35f);
                 const float foamMask = saturate(max(max(bowFoam, eddyFoam), max(shoreLap, crestFoam))) * nearW;
                 // True Underwater Volumetric Sunbeam Shafts (EXTERIORS ONLY — never fire cyan sunbeams inside underground sewers!).
                 float3 uwShaft = 0.0f.xxx;
@@ -504,7 +504,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float waveFacet = lerp(0.68f, 1.32f, saturate(dot(n, normalize(float3(0.35f, 0.25f, 0.90f)))));
                 const float troughWeight = lerp(0.84f, 1.16f, saturate(0.45f + jacobianFold * 0.65f));
                 const float3 waterBody = (((bed * shoreDark + caus) * T + scatter * (1.0f - T)) * (waveFacet * troughWeight) + waveSSS * 1.35f + uwShaft);
-                body = lerp(waterBody, foamLit, foamMask * 0.68f);
+                body = lerp(waterBody, foamLit, foamMask * 0.32f);
             }
             const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;
             // Continuous single world-space fluid surface from boots to horizon (extends full JONSWAP + RT water out to 42,000u!):

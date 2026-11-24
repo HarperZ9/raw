@@ -845,17 +845,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             s.f0 = lerp(s.f0, 0.042f, bloodMask * 0.75f);
             albedo *= lerp(1.0f.xxx, float3(0.88f, 0.78f, 0.78f), bloodMask * 0.5f);
         }
-        // Deep glacial ice & frozen glacier shelves (Cluster C Iceland ice): parallax-shifted internal crystal fractures
-        // + glossy clearcoat ice specular + luminous blue-turquoise subsurface transmission!
-        const float iceMask = saturate((albedo.b - albedo.r * 1.10f) * 5.5f) * smoothstep(0.24f, 0.48f, albedo.b) * (1.0f - wet.snow * 0.85f);
+        // Subtle glacial ice internal crystal veins (skipped on 3D World Map camPosW.z > 18000; avoids neon cyan ice-cave blowout!):
+        const float iceMask = (timeEnv.w < 0.5f && camPosW.z < 18000.0f)
+            ? saturate((albedo.b - albedo.r * 1.12f) * 4.5f) * smoothstep(0.28f, 0.54f, albedo.b) * (1.0f - wet.snow * 0.85f)
+            : 0.0f;
         if (iceMask > 0.06f) {
             const float3 wpIce = (p + camPosW.xyz) - s.v * 14.0f;
             const float crack = abs(cNoise(wpIce * 0.045f) * 2.0f - 1.0f);
             const float vein = exp(-crack * 14.0f);
-            const float3 glacialSSS = float3(0.16f, 0.58f, 0.82f) * (0.35f + 0.65f * vein);
-            albedo = lerp(albedo, lerp(albedo * float3(0.82f, 0.96f, 1.12f), glacialSSS, 0.34f), iceMask * 0.78f);
-            s.alpha = lerp(s.alpha, 0.14f, iceMask * 0.72f);
-            s.f0 = lerp(s.f0, 0.032f, iceMask * 0.65f);
+            const float3 glacialTint = float3(0.22f, 0.44f, 0.58f) * (0.25f + 0.45f * vein);
+            albedo = lerp(albedo, lerp(albedo * float3(0.92f, 0.97f, 1.03f), glacialTint, 0.16f), iceMask * 0.38f);
+            s.alpha = lerp(s.alpha, 0.28f, iceMask * 0.48f);
+            s.f0 = lerp(s.f0, 0.032f, iceMask * 0.45f);
         }
     }
     // Tokuyoshi-Kaplanyan geometric specular anti-aliasing: filters sub-pixel normal variance to kill GGX sparkle in motion.

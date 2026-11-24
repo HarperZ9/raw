@@ -130,8 +130,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 o = camPosW.xyz;
     const float maxDist = 650000.0f;
     if (cloudsOn() && cloudSpan(o, dir, maxDist, t0, t1)) {
-        // 36 uniform jittered steps over 110k slab: 2.2x faster than 64 steps with full hardware-trilinear 64^3 detail!
-        t1 = min(t1, t0 + 110000.0f);
+        // Adaptive march span: deeper near the horizon (240k) so shallow-angle clouds never clip into a flat ceiling band (13.17.04)!
+        const float maxSpan = lerp(240000.0f, 115000.0f, smoothstep(0.02f, 0.32f, dir.z));
+        t1 = min(t1, t0 + maxSpan);
         const uint steps = 36u;
         const float dt = (t1 - t0) / float(steps);
         const float j = rand(lo, 0.0f);   // pixel-locked static dither (eliminates frame-to-frame sky flickering across pine trees!)
@@ -215,7 +216,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             }
             const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(1.00f, 0.995f, 0.99f), 0.60f * (1.0f - lowSun) * (1.0f - nightW));
             const float3 coolBase = lerp(uSkyZ * 0.52f, uSkyH * 0.62f, overcastW * 0.65f + (1.0f - h) * 0.35f) * cloudAo;
-            const float3 underLit = float3(1.25f, 0.50f, 0.24f) * (twiCloud * (1.0f - h) * pow(saturate(dot(dir, aSun)), 2.5f) * (1.0f - overcastW * 0.85f) * 0.48f);
+            const float3 underLit = float3(1.15f, 0.58f, 0.30f) * (twiCloud * (1.0f - h) * pow(saturate(dot(dir, aSun)), 4.0f) * (1.0f - overcastW * 0.85f) * 0.28f);
             // Night lunar rim glow: clouds near the Moon (sunDir.xyz at night) transmit translucent silver-blue light!
             const float3 moonRim = float3(0.38f, 0.52f, 0.85f) * (nightW * hg(cosT, 0.76f) * exp(-od * sigma * 0.35f) * 0.65f);
             // Sculpted 3D cumulus luminance (eliminates flat blown-out beige sky blobs seen in 13.01.55!):

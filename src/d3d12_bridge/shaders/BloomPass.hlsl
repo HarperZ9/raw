@@ -20,10 +20,9 @@ float16_t karisW(float16_t3 c) {
 
 float16_t3 softThreshold(float16_t3 c) {
     const float16_t br = max(c.r, max(c.g, c.b));
-    // Responsive photographic HDR bloom (>0.75): vivid soft glow on sun, fires, torches, spells & lit windows
-    // without blowing out midtone stone or ice caves!
-    const float16_t thresh = float16_t(1.08h);
-    const float16_t knee = float16_t(0.34h);
+    // Calibrated strictly above diffuse sunlit snow/ice (<=1.20) and below flames, sun disc, spells & glints (>=1.80):
+    const float16_t thresh = float16_t(1.48h);
+    const float16_t knee = float16_t(0.30h);
     float16_t soft = clamp(br - thresh + knee, float16_t(0.0h), float16_t(2.0h) * knee);
     soft = (soft * soft) / max(float16_t(4.0h) * knee, float16_t(1.0e-4h));
     const float16_t contrib = max(soft, br - thresh) / max(br, float16_t(1.0e-4h));
@@ -101,9 +100,8 @@ float4 up(float4 at : SV_Position) : SV_Target0 {
     const float3 sb = (SrcA.SampleLevel(Lin, saturate(uv + d60a), 0.0f).rgb + SrcA.SampleLevel(Lin, saturate(uv - d60a), 0.0f).rgb +
                        SrcA.SampleLevel(Lin, saturate(uv + d60b), 0.0f).rgb + SrcA.SampleLevel(Lin, saturate(uv - d60b), 0.0f).rgb) * 0.25f;
     const float3 starBurst = max(sb - 2.6f.xxx, 0.0f.xxx) * float3(1.04f, 0.96f, 0.90f) * 0.09f;
-    // Slight warm crimson-orange photochemical halation bias on wide scattering levels.
-    const float3 halTint = float3(1.03f, 0.99f, 0.96f);
-    return float4(curCol * 0.55f + upCol * halTint * 0.65f + anaGlow + starBurst, 1.0f);
+    // Energy-conserving achromatic tent upsample (0.50 + 0.50 = 1.00; kills 1.20^5 pyramid runaway & pink halation on cyan ice caves!):
+    return float4(curCol * 0.50f + upCol * 0.50f + anaGlow * 0.45f + starBurst * 0.60f, 1.0f);
 }
 
 // Full-res energy-conserving linear HDR composite: SrcA = pre-bloom linear HDR scene, SrcB = 6-level bloom pyramid mip 0.
@@ -113,7 +111,7 @@ float4 composite(float4 at : SV_Position) : SV_Target0 {
     const float2 uv = at.xy / max(float2(sw, sh), float2(1.0f, 1.0f));
     const float4 scene = SrcA.Load(int3(at.xy, 0));
     const float3 bl = SrcB.SampleLevel(Lin, uv, 0.0f).rgb;
-    // Soft energy-conserving linear merge so bright snow & coastal skies never whiteout while fires/sun glow richly.
-    const float3 outRgb = scene.rgb + bl * (0.14f / (1.0f + max(scene.r, max(scene.g, scene.b)) * 0.45f));
+    // Clean energy-conserving merge: flames/sun/spells glow without washing out snowbanks or ice caves.
+    const float3 outRgb = scene.rgb + bl * (0.11f / (1.0f + max(scene.r, max(scene.g, scene.b)) * 0.55f));
     return float4(outRgb, scene.a);
 }

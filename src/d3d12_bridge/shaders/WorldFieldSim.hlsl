@@ -20,28 +20,33 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float2 uv = (float2(ip) + 0.5f) / kGridRes;
     const float2 invRes = 1.0f / kGridRes;
 
-    // World XY coordinate of this simulation cell (centered on camera):
-    const float2 worldXY = camPosW.xy + (uv - 0.5f.xx) * kGridSpan;
+    // True toroidal world-locked coordinates (zero camera drag, zero smeared ribbon/railroad ticks!):
+    // Each texel maps permanently to worldXY mod 2048u; only water wave/foam advect while snowpack stays world-stationary!
+    const float2 camWrap = floor(camPosW.xy / kGridSpan) * kGridSpan;
+    float2 worldXY = camWrap + uv * kGridSpan;
+    const float2 dCam = worldXY - camPosW.xy;
+    worldXY.x -= (dCam.x >  0.5f * kGridSpan) ? kGridSpan : (dCam.x < -0.5f * kGridSpan) ? -kGridSpan : 0.0f;
+    worldXY.y -= (dCam.y >  0.5f * kGridSpan) ? kGridSpan : (dCam.y < -0.5f * kGridSpan) ? -kGridSpan : 0.0f;
 
-    // Semi-Lagrangian downstream advection along live wind/river current so ripples & wake foam flow organically!
-    const float2 advUv = clamp(uv - normalize(cloudWind.xy + float2(1.0f, 0.35f)) * (0.35f * invRes), invRes, 1.0f.xx - invRes);
+    const float2 advUv = frac(uv - normalize(cloudWind.xy + float2(1.0f, 0.35f)) * (0.18f * invRes));
+    const float4 cStat = PrevField.SampleLevel(Lin, uv, 0.0f);
     const float4 c0 = PrevField.SampleLevel(Lin, advUv, 0.0f);
-    const float hL  = PrevField.SampleLevel(Lin, advUv + float2(-invRes.x, 0.0f), 0.0f).r;
-    const float hR  = PrevField.SampleLevel(Lin, advUv + float2( invRes.x, 0.0f), 0.0f).r;
-    const float hD  = PrevField.SampleLevel(Lin, advUv + float2(0.0f, -invRes.y), 0.0f).r;
-    const float hU  = PrevField.SampleLevel(Lin, advUv + float2(0.0f,  invRes.y), 0.0f).r;
-    const float hDL = PrevField.SampleLevel(Lin, advUv + float2(-invRes.x, -invRes.y), 0.0f).r;
-    const float hDR = PrevField.SampleLevel(Lin, advUv + float2( invRes.x, -invRes.y), 0.0f).r;
-    const float hUL = PrevField.SampleLevel(Lin, advUv + float2(-invRes.x,  invRes.y), 0.0f).r;
-    const float hUR = PrevField.SampleLevel(Lin, advUv + float2( invRes.x,  invRes.y), 0.0f).r;
+    const float hL  = PrevField.SampleLevel(Lin, frac(advUv + float2(-invRes.x, 0.0f)), 0.0f).r;
+    const float hR  = PrevField.SampleLevel(Lin, frac(advUv + float2( invRes.x, 0.0f)), 0.0f).r;
+    const float hD  = PrevField.SampleLevel(Lin, frac(advUv + float2(0.0f, -invRes.y)), 0.0f).r;
+    const float hU  = PrevField.SampleLevel(Lin, frac(advUv + float2(0.0f,  invRes.y)), 0.0f).r;
+    const float hDL = PrevField.SampleLevel(Lin, frac(advUv + float2(-invRes.x, -invRes.y)), 0.0f).r;
+    const float hDR = PrevField.SampleLevel(Lin, frac(advUv + float2( invRes.x, -invRes.y)), 0.0f).r;
+    const float hUL = PrevField.SampleLevel(Lin, frac(advUv + float2(-invRes.x,  invRes.y)), 0.0f).r;
+    const float hUR = PrevField.SampleLevel(Lin, frac(advUv + float2( invRes.x,  invRes.y)), 0.0f).r;
 
     const float lapH = (hL + hR + hD + hU) * 0.20f + (hDL + hDR + hUL + hUR) * 0.05f - c0.r;
 
     // Symplectic Verlet 2D Wave-Equation step (stable CFL c^2 <= 0.35, gentle viscous damping):
     float h = c0.r;
     float v = c0.g;
-    float foam = c0.b * 0.965f;
-    float snow = c0.a;
+    float foam = c0.b * 0.960f;
+    float snow = cStat.a;   // snowpack stays 100% stationary in toroidal world space (never advected by wind!)
 
     // Initialize snowpack smoothly on first frame from live weather snow state:
     if (proj.z < 1.5f) {
@@ -74,11 +79,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (ft.w <= 0.05f) { continue; }
         const float2 fd = worldXY - ft.xy;
         const float d2 = dot(fd, fd);
-        if (d2 < 324.0f) {
-            const float g = exp(-d2 / 96.0f) * ft.w;
-            force -= g * 0.16f;
-            foam = saturate(foam + g * 0.28f);
-            snow = saturate(snow - g * 0.22f);
+        if (d2 < 144.0f) {
+            const float g = exp(-d2 / 56.0f) * ft.w;
+            force -= g * 0.14f;
+            if (weather.w > 0.08f) { foam = saturate(foam + g * 0.18f * weather.w); }   // never wet-paint dry sunny roads!
+            if (snow > 0.02f) { snow = saturate(snow - g * 0.18f); }
         }
     }
 

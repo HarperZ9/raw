@@ -407,8 +407,11 @@ float4 main(In i) : SV_Target {
                             + Bloom.Sample(S0, suv - float2(bpx.x * 3.8f, -bpx.y * 3.8f)).rgb;
         const float hLumIn = dot(hInner * 0.5f, W);
         const float hLumOut = dot(hOuter * 0.5f, W);
-        const float3 halation = float3(1.12f, 0.36f, 0.08f) * (saturate((bloomLum - 0.80f) * 0.42f) * 0.11f + saturate((hLumIn - 0.78f) * 0.36f) * 0.075f)
-                              + float3(1.00f, 0.14f, 0.04f) * (saturate((hLumOut - 0.88f) * 0.32f) * 0.065f);
+        // Warm-source Kodak 5219 halation STRICTLY on genuine >1.55 HDR warm peaks (flames, sun, torches;
+        // eliminates the pink-orange blotches on cyan ice-cave walls seen in 13.59.17!):
+        const float warmMask = saturate((bloom.r - bloom.b * 0.85f) * 3.5f);
+        const float3 halation = float3(1.12f, 0.36f, 0.08f) * (warmMask * (saturate((bloomLum - 1.55f) * 0.35f) * 0.08f + saturate((hLumIn - 1.55f) * 0.30f) * 0.055f))
+                              + float3(1.00f, 0.14f, 0.04f) * (warmMask * saturate((hLumOut - 1.75f) * 0.28f) * 0.045f);
         float3 anaAcc = 0.0f.xxx;
         [unroll] for (int ai = 1; ai <= 6; ai++) {
             const float dx = float(ai) * 3.2f * bpx.x;

@@ -1536,8 +1536,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float gMin = min(game.r, min(game.g, game.b));
     const float gSat = (gMax - gMin) / max(gMax, 1.0e-4f);
     const float zPix = viewZOf(d);
-    const float emissiveW = (!match && !skin && base != 5u && zPix < 5500.0f && gSat > 0.28f && gLuma > rLuma * 1.65f && gLuma > 0.18f)
-                          ? saturate((gLuma - rLuma * 1.65f) * 2.5f) * saturate((5500.0f - zPix) / 1500.0f) : 0.0f;
+    // Preserve warm emissive tavern windows, lanterns, braziers & fire runes while strictly excluding cold cyan ice caves (13.59.17):
+    const bool isWarmEmissive = (game.r > game.b * 0.95f) || (game.g > game.b * 1.15f);
+    const float emissiveW = (!match && !skin && base != 5u && isWarmEmissive && zPix < 5500.0f && gSat > 0.32f && gLuma > rLuma * 1.85f && gLuma > 0.22f)
+                          ? saturate((gLuma - rLuma * 1.85f) * 2.5f) * saturate((5500.0f - zPix) / 1500.0f) : 0.0f;
     const float3 finalLit = lerp(finalLitRaw, max(finalLitRaw, game.rgb * 0.92f), emissiveW);
     if (flags.w == 20u || flags.w == 21u) {
         const float luma = dot(finalLit, float3(0.2126f, 0.7152f, 0.0722f));

@@ -196,9 +196,18 @@ void water(uint3 id : SV_DispatchThreadID) {
             // Feature 13: 100% Independent DX12 Fluid Physics (disconnected from Skyrim's 2011 nL water normal map):
             // Pure multi-directional Gerstner/trochoidal + curl-advected obstacle-deflected fluid wave simulation.
             const float3 v = normalize(eyeAt() - p);
-            const float3 wpW = camPosW.xyz + p;
+            // Analytically intersect the smooth 32-bit view ray against the water plane (eliminates 24-bit depth
+            // quantization contour rings & fingerprint lines seen in 13.55.34!):
+            const float3 eyePos = eyeAt();
+            const float3 rayDir = normalize(worldAt(px, 0.5f) - eyePos);
+            const float planeZ = (engineWorld.z > 0.5f && abs((p.z + camPosW.z) - engineWorld.x) < 16.0f)
+                               ? (engineWorld.x - camPosW.z) : p.z;
+            const float tPlane = (rayDir.z < -1.0e-4f) ? clamp((planeZ - eyePos.z) / rayDir.z, 1.0f, 48000.0f) : length(p);
+            const float3 pSmooth = (rayDir.z < -1.0e-4f && abs(tPlane - length(p)) < max(length(p) * 0.15f, 32.0f))
+                                 ? (eyePos + rayDir * tPlane) : p;
+            const float3 wpW = camPosW.xyz + pSmooth;
             float3 n = float3(0.0f, 0.0f, 1.0f);
-            const float wDist = length(p);
+            const float wDist = length(pSmooth);
             // Compute local water depth & world-space obstacle gradient (rocks, bridge piers, riverbanks)
             // for true potential-flow streamline deflection, upstream bow-wave pileup, and downstream eddy wakes.
             float depthV0 = 120.0f;
@@ -233,12 +242,11 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float windAmp = saturate(length(cloudWind.xy) / 360.0f);
                 const float shallowW = 1.0f - smoothstep(4.0f, 52.0f, depthV0);
                 const float nearObs = (1.0f - smoothstep(0.0f, 44.0f, depthV0)) * saturate(length(obsGrad) * 2.0f);
-                // True divergence-free obstacle-deflected potential flow + downstream Karman-vortex swirling eddies!
+                // Smooth continuous flowDir (never rotated by 24-bit depth finite differences -> kills topographic contour rings in 13.55.34!):
                 const float intoObs = dot(wDir, -obsGrad);
-                bowHit = saturate(intoObs) * nearObs;
-                eddyLee = saturate(-intoObs) * nearObs;
-                const float2 tangObs = wDir - obsGrad * dot(wDir, obsGrad);
-                const float2 flowDir = normalize(lerp(wDir, tangObs + 1.0e-4f, nearObs * 0.72f));
+                bowHit = saturate(intoObs) * nearObs * 0.45f;
+                eddyLee = saturate(-intoObs) * nearObs * 0.35f;
+                const float2 flowDir = wDir;
                 const float2 flowPerp = float2(-flowDir.y, flowDir.x);
                 const float stormChop = saturate(weather.w * 0.95f + windAmp * 0.75f);
                 // Strictly depth-buffer-free amplitude (eliminates 24-bit depth staircase polygons seen in 21.23.17/25!):

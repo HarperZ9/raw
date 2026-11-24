@@ -261,10 +261,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float clTrans = lerp(cl.a, max(cl.a, 0.38f), moonKeep * nightSkyW);
                 baseSky = lerp(baseSky, baseSky * clTrans + cl.rgb, 1.0f - isExotic);
                 // Allow the solar disc to shine cleanly through thin/moderate cloud veils so the Sun stays perceptible!
-                if (sunDiscGate > 0.01f && clTrans > 0.06f) {
+                // Only show the crisp solar disc when clouds thin out (clTrans > 0.22); thick overcast hides the hard disc (14.06.14)!
+                const float sunCloudVis = smoothstep(0.22f, 0.68f, clTrans);
+                if (sunDiscGate > 0.01f && sunCloudVis > 0.005f) {
                     const float sunVeil = smoothstep(0.99980f, 0.99996f, cosS) * 14.0f + pow(cosS, 64.0f) * 0.16f;
                     const float3 sunVeilCol = lerp(float3(1.0f, 0.97f, 0.90f), float3(1.0f, 0.60f, 0.22f), lowS);
-                    baseSky += sunVeilCol * (sunVeil * pow(clTrans, 0.70f) * sunDiscGate * (1.0f - isExotic));
+                    baseSky += sunVeilCol * (sunVeil * sunCloudVis * sunDiscGate * (1.0f - isExotic));
                 }
                 // Camera-reactive optical lens response (Zeiss/Cooke double-Gauss multi-element chromatic ghosts + anamorphic flare + veiling glare):
                 // Reacts live to camera pan/pitch toward the Sun and automatically dims behind clouds or when looking away.
@@ -415,7 +417,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float overcastWF = saturate(cloudCov * 0.85f - 0.12f + weather.w * 0.45f + weather.z * 0.42f);
         const float3 overcastScatterF = lerp(hillaireSky, hLumF.xxx * float3(0.92f, 0.96f, 1.02f), 0.78f);
         float3 atmoCol = lerp(hillaireSky, overcastScatterF, overcastWF * 0.82f);
-        atmoCol = lerp(atmoCol, lerp(uSkyHF, uSkyZF, saturate(max(w.z, 0.0f) * 2.2f)), 0.42f);
+        // Exact 1:1 sync with sky dome (d >= 1.0f): apply the same 0.76x scale AND composite live Clouds at t5
+        // so distant mountains & Winterhold (14.20.15) converge seamlessly into the exact sky+cloud color behind them!
+        atmoCol = lerp(atmoCol, lerp(uSkyHF, uSkyZF, saturate(max(w.z, 0.0f) * 2.2f)), 0.42f) * 0.76f;
+        if ((flags.x & FLAG_CLOUDS) != 0u) {
+            const float4 clF = Clouds.SampleLevel(Lin, uv, 0.0f);
+            const float clMerge = smoothstep(8000.0f, 45000.0f, dist);
+            atmoCol = lerp(atmoCol, atmoCol * clF.a + clF.rgb, clMerge);
+        }
         const float3 d65Mie = lerp(float3(1.0f, 0.66f, 0.36f), float3(0.96f, 0.98f, 1.02f), highSunF);
         const float mieHalo = (pow(cosSunF, 5.0f) * 0.14f + pow(cosSunF, 28.0f) * 0.24f) * (1.0f - cloudCov * 0.72f) * (1.0f - nightF);
         atmoCol += lerp(d65Mie, uSunF, 0.45f) * mieHalo;
@@ -453,7 +462,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float2 windP = cloudWind.xy * 0.0032f;
             const uint nPrecipLights = min(flags.y, 12u);
             [unroll] for (int pl = 0; pl < 6; ++pl) {
-                const float pDist = 65.0f + float(pl) * 115.0f;
+                const float pDist = 145.0f + float(pl) * 135.0f;
                 if (dist <= pDist) { continue; }
                 const float3 pRelP = eye + w * pDist;
                 const float3 wpP = camPosW.xyz + pRelP;
@@ -479,11 +488,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     const float rCell = cHash(floor(rCoord));
                     const float rGate = lerp(0.948f, 0.916f, stormBoost);
                     if (rCell > rGate) {
+                        // Delicate Gaussian thin-filament rain streaks (kills giant white paper confetti rectangles in v1418_a.png!):
                         const float2 rF = frac(rCoord.xy) - 0.5f;
-                        const float rThin = saturate(1.0f - abs(rF.x) * 8.4f) * saturate(1.0f - abs(rF.y) * 1.45f);
+                        const float rThin = exp(-rF.x * rF.x * 260.0f) * exp(-rF.y * rF.y * 10.0f);
                         const float rMask = smoothstep(rGate, 0.998f, rCell) * rThin;
-                        const float3 rLit = max(atmoCol * 1.35f + 0.10f, 0.20f.xxx) + localLightP * 2.15f;
-                        precipAdd += rLit * (rMask * stormBoost * 0.62f / (1.0f + float(pl) * 0.36f));
+                        const float3 rLit = max(atmoCol * 0.95f + 0.06f, 0.12f.xxx) + localLightP * 0.72f;
+                        precipAdd += rLit * (rMask * stormBoost * 0.24f / (1.0f + float(pl) * 0.40f));
                     }
                     // Sweeping 3D storm wind-squall mist curtains during heavy downpours (pl >= 2):
                     if (pl >= 2 && weather.w > 0.35f) {

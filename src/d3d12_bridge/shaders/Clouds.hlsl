@@ -130,10 +130,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 o = camPosW.xyz;
     const float maxDist = 650000.0f;
     if (cloudsOn() && cloudSpan(o, dir, maxDist, t0, t1)) {
-        // Adaptive march span: deeper near the horizon (240k) so shallow-angle clouds never clip into a flat ceiling band (13.17.04)!
-        const float maxSpan = lerp(240000.0f, 115000.0f, smoothstep(0.02f, 0.32f, dir.z));
+        // Tight 48-step march (eliminates diagonal step-banding streaks seen in 14.06.14 while keeping horizon coverage):
+        const float maxSpan = lerp(165000.0f, 105000.0f, smoothstep(0.02f, 0.32f, dir.z));
         t1 = min(t1, t0 + maxSpan);
-        const uint steps = 36u;
+        const uint steps = 48u;
         const float dt = (t1 - t0) / float(steps);
         const float j = rand(lo, 0.0f);   // pixel-locked static dither (eliminates frame-to-frame sky flickering across pine trees!)
         const float3 aSun = astroSunDir();

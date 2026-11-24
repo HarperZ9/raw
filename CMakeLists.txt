@@ -559,6 +559,15 @@ target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/HotReload.cpp src/d3d11_proxy
 # Ray tracing on the game's geometry (docs/RAYTRACING.md), on raw::tx's device.
 target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/SceneGeometry.cpp src/d3d11_proxy/SceneGeometryBound.cpp src/d3d11_proxy/SceneSkin.cpp src/d3d11_proxy/SceneSkinPrepass.cpp)
 if(RAW_ENGINE_DIR)
+    add_custom_command(
+        OUTPUT ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T as_${RAW_SHADER_MODEL} -E as_main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_mesh_as.h -Vn kDxil_raw_mesh_as ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawMesh.hlsl
+        COMMAND ${RAW_DXC} -T ms_${RAW_SHADER_MODEL} -E ms_main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_mesh_ms.h -Vn kDxil_raw_mesh_ms ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawMesh.hlsl
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawMesh.hlsl
+        COMMENT "dxc: RAW-MESH SM${RAW_SHADER_MODEL} Amplification & Mesh Shader PN-Triangle subdivision -> DXIL headers"
+        VERBATIM)
+    target_sources(raw_d3d12_bridge PRIVATE ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h src/d3d12_bridge/RawAssetBridge.cpp)
     set(RAW_RTSHADOW_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtShadow.hlsl)
     add_custom_command(
         OUTPUT ${RAW_ENGINE_GEN}/rt_shadow.h ${RAW_ENGINE_GEN}/rt_shadow_debug.h

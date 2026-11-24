@@ -66,6 +66,39 @@ float signedCoC(float curZ, float focusZ, float maxDist) {
     return cocPx < 0.0f ? -norm : norm;
 }
 
+// Special Camera Perspective Optical CoC (engineWorld.w = CameraMode 0..5):
+//   0: Standard Cinema Prime   1: Tilt-Shift Miniature (Scheimpflug)   2: ARPG Isometric Diorama
+//   3: Anamorphic 2.39:1       4: Petzval Portrait Swirl               5: Architectural Vertical Tilt-Rise
+float perspectiveCoC(float2 uv, float curZ, float focusZ, float maxDist) {
+    const float baseCoc = signedCoC(curZ, focusZ, maxDist);
+    const uint cm = uint(engineWorld.w + 0.5f);
+    if (cm == 1u) {
+        // True Scheimpflug tilted horizontal focal plane (miniature diorama band at uv.y = 0.50):
+        const float tilt = saturate((abs(uv.y - 0.50f) - 0.11f) * 3.1f);
+        const float signDir = uv.y > 0.50f ? -1.0f : 1.0f;
+        return lerp(baseCoc, signDir * tilt, 0.82f);
+    }
+    if (cm == 2u) {
+        // ARPG Isometric Diorama: tack-sharp character & combat ring at (0.50, 0.52), smooth peripheral bokeh:
+        const float2 dIso = (uv - float2(0.50f, 0.52f)) * float2(1.0f, 1.38f);
+        const float isoBlur = smoothstep(0.24f, 0.64f, length(dIso)) * 0.78f;
+        const float signDir = uv.y > 0.62f ? -1.0f : 1.0f;
+        return abs(baseCoc) > isoBlur ? baseCoc : (signDir * isoBlur);
+    }
+    if (cm == 4u) {
+        // 1840s Brass Petzval Lens: curved field focus with tack-sharp center portrait & swirling edge falloff:
+        const float r2 = dot((uv - 0.5f.xx) * float2(1.25f, 1.0f), (uv - 0.5f.xx) * float2(1.25f, 1.0f));
+        const float fieldBlur = saturate((r2 - 0.06f) * 2.2f) * 0.85f;
+        return abs(baseCoc) > fieldBlur ? baseCoc : fieldBlur;
+    }
+    if (cm == 5u) {
+        // Architectural Vertical Tilt-Rise: vertical Scheimpflug focal column for towers, castles & peaks:
+        const float vTilt = saturate((abs(uv.x - 0.50f) - 0.13f) * 2.9f);
+        return lerp(baseCoc, vTilt, 0.78f);
+    }
+    return baseCoc;
+}
+
 // 1x1 GPU-Native Cinema Follow-Focus Motor: smoothly integrates focus distance in diopter (1/z) space
 // driven by camOptics[1].w (dofFocusSpeed 0.02..0.30)!
 float4 dof_focus(float4 at : SV_Position) : SV_Target0 {
@@ -103,10 +136,11 @@ float4 dof_coc(float4 at : SV_Position) : SV_Target0 {
     const float dMaxV = max(max(d00, d10), max(d01, d11));
     const float zNear = dMin < 1.0f ? viewZOf(dMin) : 100000.0f;
     const float zFar  = dMaxV < 1.0f ? viewZOf(dMaxV) : 100000.0f;
-    const float cocNear = zNear < 45.0f ? 0.0f : signedCoC(zNear, focusZ, dofParams.x);
-    const float cocFar  = zFar < 45.0f ? 0.0f : signedCoC(zFar, focusZ, dofParams.x);
+    const float2 uvFull = fullPx * dims.zw;
+    const float cocNear = zNear < 45.0f ? 0.0f : perspectiveCoC(uvFull, zNear, focusZ, dofParams.x);
+    const float cocFar  = zFar < 45.0f ? 0.0f : perspectiveCoC(uvFull, zFar, focusZ, dofParams.x);
     const float coc = (cocNear < -0.02f) ? cocNear : cocFar;
-    const float3 col = SrcA.SampleLevel(Lin, fullPx * dims.zw, 0.0f).rgb;
+    const float3 col = SrcA.SampleLevel(Lin, uvFull, 0.0f).rgb;
     return float4(col, coc);
 }
 
@@ -127,7 +161,8 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
     const float cornerMag = saturate(dot(uvNorm, uvNorm) * 0.42f);
     const float2 radAxis = length(uvNorm) > 1.0e-4f ? normalize(uvNorm) : float2(1.0f, 0.0f);
     const float2 tanAxis = float2(-radAxis.y, radAxis.x);
-    const int shape = int(camOptics[0].w + 0.5f);   // 0:5-blade, 1:6-blade, 2:7-blade, 3:9-blade, 4:Circle, 5:Anamorphic 2x, 6:Petzval Swirl
+    const uint camModeG = uint(engineWorld.w + 0.5f);
+    const int shape = (camModeG == 3u) ? 5 : (camModeG == 4u) ? 6 : int(camOptics[0].w + 0.5f);   // Anamorphic & Petzval modes auto-select matching aperture geometry!
     const float blades = (shape == 0) ? 5.0f : (shape == 1) ? 6.0f : (shape == 2) ? 7.0f : 9.0f;
     const float kBlade = 6.2831853f / blades;
     const float kCosHalf = cos(3.14159265f / blades);
@@ -259,9 +294,11 @@ float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
     const float focusZ = (fGpu >= 40.0f && fGpu <= 15000.0f) ? fGpu : sampleFocusZoneZ();
     const float d = Depth.Load(int3(ip, 0));
     const float curZ = d < 1.0f ? viewZOf(d) : 100000.0f;
+    const uint camModeC = uint(engineWorld.w + 0.5f);
+    if (camModeC == 3u && (uv.y < 0.122f || uv.y > 0.878f)) { return float4(0.0f, 0.0f, 0.0f, sharp.a); }   // True 2.39:1 Cinemascope framing
     // Keep 1st-person hands/weapons/torches (< 45u) razor-sharp:
     if (curZ < 45.0f) { return sharp; }
-    const float coc = signedCoC(curZ, focusZ, dofParams.x);
+    const float coc = perspectiveCoC(uv, curZ, focusZ, dofParams.x);
     const float absCoc = abs(coc);
     // Depth-protected 4-tap bilinear upsample of 1/2-res bokeh buffer:
     // Rejects out-of-focus background bokeh texels when compositing near a tack-sharp focal-plane subject!

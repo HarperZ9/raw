@@ -219,7 +219,7 @@ void ExportCameraRecipe()
 
 int TabRowCount(int tab)
 {
-    static const int kCounts[8] = {13, 13, 7, 8, 12, 11, 20, 25};
+    static const int kCounts[8] = {14, 13, 7, 8, 12, 11, 20, 26};
     return kCounts[std::clamp(tab, 0, 7)];
 }
 
@@ -269,7 +269,12 @@ std::string BuildMenuText()
         row(9, "RT Sky Strength", Fmt("%.2f", l.rtSkyStrength));
         row(10, "RT Sky Ray Length", Fmt("%.0f", l.rtSkyLength));
         row(11, "RT Terminator Bias", Fmt("%.2f", l.rtTermDist));
-        row(12, "RAWDLSS 5.0 3D-Guided", OnOff(l.rawlss5));
+        row(12, "RAWLSS 5.5 3D-Guided", OnOff(l.rawlss5));
+        static const char* kDbgNames[] = {"0:Final", "1:Normals", "2:SunShadow", "12:MatClass", "20:4Quad", "21:Heatmap", "22:BloomAudit", "23:WorldField", "24:Continuity"};
+        static const int kDbgVals[] = {0, 1, 2, 12, 20, 21, 22, 23, 24};
+        int dbgIdx = 0;
+        for (int di = 0; di < 9; ++di) if (kDbgVals[di] == l.view) { dbgIdx = di; break; }
+        row(13, "Pipeline Debug View", kDbgNames[dbgIdx]);
     } else if (g_tab == 1) {
         row(0, "Volumetric Clouds", OnOff(l.clouds));
         row(1, "Cloud Cover", Fmt("%.2f", l.cloudCover));
@@ -383,6 +388,8 @@ std::string BuildMenuText()
         row(22, "Oklab Saturation", Fmt("%.2fx", tm.oklabSat));
         row(23, "Oklab Shadow Lift", Fmt("%+.3f", tm.shadowLift));
         row(24, "HDR Highlight Knee", Fmt("%.2f", tm.highlightKnee));
+        static const char* kCamModes[6] = {"0:Cinema Prime", "1:Tilt-Shift Miniature", "2:ARPG Isometric Diorama", "3:Anamorphic 2.39:1", "4:Petzval Portrait Swirl", "5:Vertical Tilt-Rise"};
+        row(25, "Camera Perspective", kCamModes[std::clamp(l.cameraMode, 0, 5)]);
     }
     out += "Web Studio, Presets & Live HLSL Editor: http://127.0.0.1:8844";
     return out;
@@ -449,6 +456,13 @@ bool PollMenu(std::string& outText)
             case 10: l.rtSkyLength = std::clamp(l.rtSkyLength + step * 150.0f, 100.0f, 4000.0f); break;
             case 11: l.rtTermDist = std::clamp(l.rtTermDist + step * 0.50f, 0.0f, 12.0f); break;
             case 12: l.rawlss5 = !l.rawlss5; break;
+            case 13: {
+                static const int kDbgVals[9] = {0, 1, 2, 12, 20, 21, 22, 23, 24};
+                int di = 0;
+                for (int k = 0; k < 9; ++k) if (kDbgVals[k] == l.view) { di = k; break; }
+                l.view = kDbgVals[(di + 9 + dir) % 9];
+                break;
+            }
             }
         } else if (g_tab == 1) {
             switch (g_sel) {
@@ -569,6 +583,7 @@ bool PollMenu(std::string& outText)
             case 22: tm.oklabSat = std::clamp(tm.oklabSat + step * 0.05f, 0.0f, 2.0f); tmDirty = true; break;
             case 23: tm.shadowLift = std::clamp(tm.shadowLift + step * 0.01f, -0.15f, 0.15f); tmDirty = true; break;
             case 24: tm.highlightKnee = std::clamp(tm.highlightKnee + step * 0.04f, 0.35f, 1.40f); tmDirty = true; break;
+            case 25: l.cameraMode = (l.cameraMode + 6 + dir) % 6; break;
             }
         }
         if (tmDirty) Tonemap_Set(tm);

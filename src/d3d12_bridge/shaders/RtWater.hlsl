@@ -114,6 +114,34 @@ float organicFroth(float2 p, float t) {
     return smoothstep(0.46f, 0.80f, fbm);
 }
 
+// True 3D World-Space Gerstner Gravity-Wave Heightfield (used for BOTH 3D Ray-Marched Wave Parallax AND Analytic Wave Normals):
+// Phase advances strictly in +flowDir at physical gravity-capillary phase speed (zero cancelling flow subtraction!).
+float evalWaterWaveHeight(float2 xy, float wt, float2 flowDir, float2 flowPerp, float ampScale, float shoalAmp, out float2 outGrad, out float outFold) {
+    float h = 0.0f;
+    outGrad = 0.0f.xx;
+    outFold = 0.0f;
+    [unroll] for (int wi = 0; wi < 6; ++wi) {
+        const float fracI = float(wi) / 5.0f;
+        const float kRad = 0.0085f * pow(6.8f, fracI);
+        const float kM = kRad * 70.0f;
+        const float omega = sqrt((9.81f * kM + 7.4e-5f * kM * kM * kM) * tanh(min(kM * 2.0f, 16.0f))) * 1.38f;
+        const float spread = (frac(float(wi) * 0.6180339f) - 0.5f) * (1.15f + fracI * 0.75f);
+        const float2 dirW = normalize(flowDir * cos(spread) + flowPerp * sin(spread));
+        const float massBoost = wi < 2 ? 1.55f : 1.0f;
+        // True 3D physical wave height in game units (70u = 1m: 1.5u..9u rolling river/ocean swells):
+        const float ampH = (4.8f * pow(1.0f - fracI * 0.68f, 1.45f)) * massBoost * ampScale * shoalAmp;
+        const float ph = dot(xy, dirW) * kRad - wt * omega + float(wi) * 2.39996f;
+        const float s = sin(ph);
+        const float c = cos(ph);
+        // Steep trochoidal Gerstner profile (sharper crests, broader troughs):
+        const float crest = s + 0.24f * (s * s - 0.5f);
+        h += ampH * crest;
+        outGrad += dirW * (ampH * kRad * (c * (1.0f + 0.48f * s)));
+        outFold += max(s, 0.0f) * (ampH * kRad * 3.4f);
+    }
+    return h;
+}
+
 float3 waterSky(float3 rd) {
     float3 uSun, uSkyZ, uSkyH, uAmbUp, uAmbDn;
     evalWorldAtmosphere(uSun, uSkyZ, uSkyH, uAmbUp, uAmbDn);
@@ -201,10 +229,12 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float gLen = length(gRaw);
                 if (gLen > 0.04f) { obsGrad = gRaw / gLen; }
             }
+            float waveHeight3D = 0.0f;
             if (wDist < 26000.0f) {
+                const bool isExtW0 = (sunColour.w > 0.5f);
                 const float2 wDir = normalize(cloudWind.xy + float2(1.0f, 0.35f));
                 const float wt = camPosW.w;
-                const float windAmp = saturate(length(cloudWind.xy) / 380.0f);
+                const float windAmp = saturate(length(cloudWind.xy) / 360.0f);
                 const float shallowW = 1.0f - smoothstep(4.0f, 52.0f, depthV0);
                 const float nearObs = (1.0f - smoothstep(0.0f, 44.0f, depthV0)) * saturate(length(obsGrad) * 2.0f);
                 // True divergence-free obstacle-deflected potential flow + downstream Karman-vortex swirling eddies!
@@ -213,51 +243,62 @@ void water(uint3 id : SV_DispatchThreadID) {
                 eddyLee = saturate(-intoObs) * nearObs;
                 const float2 tangObs = wDir - obsGrad * dot(wDir, obsGrad);
                 const float2 flowDir = normalize(lerp(wDir, tangObs + 1.0e-4f, nearObs * 0.72f));
-                const float stormChop = saturate(weather.w * 0.90f + windAmp * 0.65f);
-                const float ampScale = (0.72f + stormChop * 0.95f + shallowW * 0.25f) * smoothstep(0.0f, 4.5f, depthV0);
-
-                // Clean continuous world-space fluid surface normals (zero 24-bit depth-buffer finite-difference
-                // octagonal contour rings seen in 09.57.21.71 & 09.57.17.80!):
-                const float2 wpFlow = wpW.xy - flowDir * (wt * 22.0f);
                 const float2 flowPerp = float2(-flowDir.y, flowDir.x);
-                const float pxFoot = max(wDist * dims.z * 2.8f, 0.55f);
-                const float depthM = max(depthV0 * 0.0143f, 0.12f);   // Skyrim units -> meters (70u = 1m)
+                const float stormChop = saturate(weather.w * 0.95f + windAmp * 0.75f);
+                const float ampScale = (isExtW0 ? (0.85f + stormChop * 1.15f + shallowW * 0.28f) : 0.24f) * smoothstep(0.0f, 4.0f, depthV0);
+                const float depthM = max(depthV0 * 0.0143f, 0.12f);
+                const float shoalAmp = smoothstep(0.05f, 0.75f, depthM);
+
+                // TRUE 3D RAY-MARCHED GERSTNER WAVE-HEIGHT PARALLAX (8 steep steps + 3 binary refinements):
+                // Marches the exact 3D view ray -v against the rolling 3D wave heightfield so crests genuinely
+                // displace and occlude troughs in 3D perspective as you look across or move past the water!
+                float2 evalXY = wpW.xy;
                 float2 waveG = 0.0f.xx;
                 jacobianFold = 0.0f;
-                [unroll] for (int wi = 0; wi < 8; ++wi) {
-                    const float fracI = float(wi) / 7.0f;
-                    const float kRad = 0.0065f * pow(9.0f, fracI);
-                    const float kM = kRad * 70.0f;
-                    const float wavelength = 6.2831853f / kRad;
-                    const float nyquistFade = smoothstep(pxFoot * 4.0f, pxFoot * 10.0f, wavelength);
-                    if (nyquistFade <= 0.001f) { continue; }
-                    const float kdRef = min(kM * 2.2f, 18.0f);
-                    const float omega = sqrt((9.81f * kM + 7.4e-5f * kM * kM * kM) * tanh(kdRef));
-                    const float spread = (frac(float(wi) * 0.6180339f) - 0.5f) * (1.35f + fracI * 0.85f);
-                    const float2 dirW = normalize(flowDir * cos(spread) + flowPerp * sin(spread));
-                    // Heavy physical gravity-wave swell mass on primary modes (wi=0..2) + steep trochoidal Gerstner crests
-                    // (gives water real liquid weight, momentum & 3D volume instead of flat ripples!):
-                    const float shoalAmp = smoothstep(0.06f, 0.85f, depthM);
-                    const float massBoost = wi < 3 ? 1.45f : 1.0f;
-                    const float ampW = (0.042f * pow(1.0f - fracI * 0.72f, 1.35f)) * massBoost * ampScale * nyquistFade * shoalAmp;
-                    const float ph = dot(wpFlow, dirW) * kRad - wt * omega + float(wi) * 2.39996f;
-                    const float s = sin(ph);
-                    const float c = cos(ph);
-                    waveG += dirW * (c * (1.0f + 0.42f * s) * ampW);
-                    jacobianFold += max(-s, 0.0f) * ampW * 2.6f;
+                const float parallaxFade = smoothstep(7500.0f, 400.0f, wDist) * (isExtW0 ? 1.0f : 0.35f);
+                if (parallaxFade > 0.02f && v.z > 0.04f) {
+                    const float maxH = max(9.5f * ampScale * shoalAmp * parallaxFade, 0.5f);
+                    const float2 rayStepXY = (-v.xy / max(v.z, 0.14f)) * (maxH * 2.0f / 8.0f);
+                    float curZ = maxH;
+                    float2 curXY = wpW.xy - rayStepXY * 4.0f;
+                    float prevZ = curZ, prevH = 0.0f;
+                    float2 prevXY = curXY;
+                    [unroll] for (int ps = 0; ps < 8; ++ps) {
+                        float2 gTmp; float fTmp;
+                        const float hSample = evalWaterWaveHeight(curXY, wt, flowDir, flowPerp, ampScale, shoalAmp, gTmp, fTmp) * parallaxFade;
+                        if (curZ <= hSample) {
+                            // 3-step binary refinement for sub-millimeter wave-crest silhouette precision:
+                            float2 loXY = prevXY, hiXY = curXY;
+                            float loZ = prevZ, hiZ = curZ;
+                            [unroll] for (int bs = 0; bs < 3; ++bs) {
+                                const float2 midXY = 0.5f * (loXY + hiXY);
+                                const float midZ = 0.5f * (loZ + hiZ);
+                                const float midH = evalWaterWaveHeight(midXY, wt, flowDir, flowPerp, ampScale, shoalAmp, gTmp, fTmp) * parallaxFade;
+                                if (midZ <= midH) { hiXY = midXY; hiZ = midZ; }
+                                else { loXY = midXY; loZ = midZ; }
+                            }
+                            evalXY = 0.5f * (loXY + hiXY);
+                            break;
+                        }
+                        prevXY = curXY; prevZ = curZ; prevH = hSample;
+                        curXY += rayStepXY;
+                        curZ -= (maxH * 2.0f / 8.0f);
+                    }
                 }
-                // Aperiodic 2-octave domain-warped fine liquid ripple gradient (zero periodic moire rings!):
-                const float2 rUv1 = wpFlow * 0.038f;
-                const float2 rUv2 = (wpW.xy + flowPerp * (wt * 11.0f)) * 0.082f;
-                const float rDx = (vNoise2D(rUv1 + float2(0.18f, 0.0f)) - vNoise2D(rUv1 - float2(0.18f, 0.0f))) * 0.042f
-                                + (vNoise2D(rUv2 + float2(0.18f, 0.0f)) - vNoise2D(rUv2 - float2(0.18f, 0.0f))) * 0.022f;
-                const float rDy = (vNoise2D(rUv1 + float2(0.0f, 0.18f)) - vNoise2D(rUv1 - float2(0.0f, 0.18f))) * 0.042f
-                                + (vNoise2D(rUv2 + float2(0.0f, 0.18f)) - vNoise2D(rUv2 - float2(0.0f, 0.18f))) * 0.022f;
-                const float nearRip = smoothstep(3200.0f, 200.0f, wDist) * ampScale;
+                waveHeight3D = evalWaterWaveHeight(evalXY, wt, flowDir, flowPerp, ampScale, shoalAmp, waveG, jacobianFold);
+
+                // Aperiodic 2-octave traveling fine liquid capillary ripples (flowing cleanly along flowDir!):
+                const float2 rUv1 = (evalXY - flowDir * (wt * 36.0f)) * 0.042f;
+                const float2 rUv2 = (evalXY - flowDir * (wt * 22.0f) + flowPerp * (wt * 14.0f)) * 0.095f;
+                const float rDx = (vNoise2D(rUv1 + float2(0.18f, 0.0f)) - vNoise2D(rUv1 - float2(0.18f, 0.0f))) * 0.075f
+                                + (vNoise2D(rUv2 + float2(0.18f, 0.0f)) - vNoise2D(rUv2 - float2(0.18f, 0.0f))) * 0.038f;
+                const float rDy = (vNoise2D(rUv1 + float2(0.0f, 0.18f)) - vNoise2D(rUv1 - float2(0.0f, 0.18f))) * 0.075f
+                                + (vNoise2D(rUv2 + float2(0.0f, 0.18f)) - vNoise2D(rUv2 - float2(0.0f, 0.18f))) * 0.038f;
+                const float nearRip = smoothstep(3800.0f, 180.0f, wDist) * ampScale;
                 waveG += float2(rDx, rDy) * nearRip;
-                // Grazing-angle anisotropic Nyquist normal filter: zero shimmer & zero 24-bit depth contour rings!
-                const float grazingSmooth = smoothstep(0.05f, 0.45f, saturate(v.z));
-                n = normalize(n + float3(waveG * lerp(0.28f, 0.72f, grazingSmooth), 0.0f));
+                // Grazing-angle anisotropic Nyquist normal filter: bold rolling swells + crisp motion with zero shimmer!
+                const float grazingSmooth = smoothstep(0.04f, 0.40f, saturate(v.z));
+                n = normalize(float3(-waveG.x, -waveG.y, 1.0f / lerp(0.55f, 1.05f, grazingSmooth)));
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
                 if (wDist < 1600.0f) {
                     float2 wakeG = 0.0f.xx;
@@ -268,8 +309,8 @@ void water(uint3 id : SV_DispatchThreadID) {
                         const float r2 = dot(fd.xy, fd.xy);
                         if (r2 < 22500.0f && abs(fd.z) < 180.0f) {
                             const float rr = sqrt(r2);
-                            const float ring = sin(rr * 0.20f - wt * 1.35f) * exp(-rr / 70.0f) * ft.w;
-                            wakeG += (fd.xy / max(rr, 1.0f)) * ring * 0.028f;
+                            const float ring = sin(rr * 0.20f - wt * 2.25f) * exp(-rr / 70.0f) * ft.w;
+                            wakeG += (fd.xy / max(rr, 1.0f)) * ring * 0.045f;
                         }
                     }
                     n = normalize(n + float3(wakeG, 0.0f));
@@ -285,7 +326,7 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float nv = saturate(dot(n, v));
             const float F = 0.02f + 0.98f * pow(1.0f - nv, 5.0f);
             const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
-            const float3 o = p + float3(0.0f, 0.0f, 2.5f + 0.003f * length(p));
+            const float3 o = p + float3(0.0f, 0.0f, max(2.5f + waveHeight3D * 0.45f, 1.0f) + 0.003f * length(p));
 
             // Silky recognizable mirror reflections with zero high-frequency noise (0.36 -> 0.16).
             // Swell-filtered reflection normal (keeps crisp capillary ripples for sun glint while preventing

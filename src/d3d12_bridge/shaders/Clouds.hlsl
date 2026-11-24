@@ -86,9 +86,10 @@ float cloudDensityVol(float3 pa, bool detail) {
     const float4 vol0 = sampleCloudVol(baseUvw);
     const float lowWorley = vol0.g * 0.625f + vol0.b * 0.25f + vol0.a * 0.125f;
     const float baseShape = cRemap(vol0.r, -(1.0f - lowWorley) * 0.48f, 1.0f, 0.0f, 1.0f);
-    const float localCov = saturate(cover * lerp(0.45f, 1.38f, smoothstep(0.22f, 0.78f, wCov)));
-    const float thresh = lerp(0.56f, lerp(0.32f, 0.18f, stormType), localCov);
-    float dens = saturate((baseShape * hGrad - thresh) / max(1.0f - thresh, 0.20f));
+    const float localCov = saturate(cover * lerp(0.45f, 1.25f, smoothstep(0.22f, 0.78f, wCov)));
+    // Keep overcast skies richly sculpted with dramatic 3D breaks & shadowed bellies (never a flat solid beige wall!):
+    const float thresh = lerp(0.58f, lerp(0.38f, 0.32f, stormType), localCov);
+    float dens = saturate((baseShape * hGrad - thresh) / max(1.0f - thresh, 0.24f));
     dens *= lerp(0.65f, 1.45f, smoothstep(0.04f, 0.42f, h));
     if (detail && dens > 0.002f) {
         // High-frequency 3-octave 3D Worley cauliflower turret erosion (crisp sculptural edges at full native resolution!):
@@ -97,7 +98,7 @@ float cloudDensityVol(float3 pa, bool detail) {
         const float hiWorley = volD.g * 0.625f + volD.b * 0.25f + volD.a * 0.125f;
         // Wispy fibrous base vs puffed billowing cauliflower crown (exact Nubis height-modulated erosion):
         const float detailMod = lerp(hiWorley, 1.0f - hiWorley, saturate(h * 1.4f));
-        const float erode = detailMod * lerp(0.38f, 0.68f, h) * (1.0f - dens * 0.42f);
+        const float erode = detailMod * lerp(0.46f, 0.72f, h) * (1.0f - dens * 0.32f);
         dens = cRemap(dens, erode, 1.0f, 0.0f, 1.0f);
     }
     return dens * cloudWind.z;
@@ -177,17 +178,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (dens <= 0.001f) { continue; }
             float od = 0.0f;
             [unroll] for (uint k = 0u; k < 4u; k++) { od += cloudDensityVol(pa + cloudLightDir * kSunD[k], false) * kSunW[k]; }
-            // 8-Octave Path-Traced-Matched Multiple-Scattering Integral (zydak1939 + CharlesGrassi + Wrenninge):
-            // Water droplets have albedo ~0.999: 8 geometric octaves (a=0.66, b=0.46, c=0.56) reproduce pure luminous
-            // white sunlit cumulus crowns alongside deep cool cerulean-slate self-shadowed hollows!
-            const float3 odRGB = od * (sigma * 0.58f) * float3(0.96f, 1.00f, 1.05f);
+            // 6-Octave Physical Multiple-Scattering Integral (disciplined g=0.58 forward lobe eliminates giant
+            // white-yellow-pink sunset bullseye halo while preserving crisp sunlit cumulus tops & silver linings!):
+            const float3 odRGB = od * (sigma * 0.64f) * float3(0.97f, 1.00f, 1.04f);
             float3 multiScat = 0.0f.xxx;
             float aOct = 1.0f, bOct = 1.0f, cOct = 1.0f;
-            [unroll] for (int oct = 0; oct < 8; oct++) {
-                const float phOct = lerp(hg(cosT, -0.30f * cOct), hg(cosT, 0.84f * cOct), 0.64f);
-                multiScat += exp(-odRGB * bOct) * (aOct * min(phOct, 0.90f));
-                aOct *= 0.66f; bOct *= 0.46f; cOct *= 0.56f;
+            [unroll] for (int oct = 0; oct < 6; oct++) {
+                const float phOct = lerp(hg(cosT, -0.25f * cOct), hg(cosT, 0.58f * cOct), 0.52f);
+                multiScat += exp(-odRGB * bOct) * (aOct * min(phOct, 0.36f));
+                aOct *= 0.56f; bOct *= 0.48f; cOct *= 0.55f;
             }
+            multiScat = min(multiScat, 1.15f.xxx);
             const float powder = 1.0f - exp(-od * sigma * 1.45f - dens * 0.65f);
             const float h = saturate((pa.z - clouds.y) / clouds.z);
             const float stormW = saturate(weather.w * 1.25f + max(clouds.x - 0.72f, 0.0f) * 2.2f);
@@ -227,10 +228,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;
         }
-        // Continuous world-space horizon merge: extend clouds smoothly down to ~4 deg above horizon (eliminates 14-deg gap!).
-        const float3 softS = min(S, 2.40f.xxx);
+        // Continuous world-space horizon merge: smooth C2 fade above horizon eliminates hard horizontal cutoff seam!
+        const float3 softS = min(S, 1.85f.xxx);
         const float fade = exp(-max(t0, 0.0f) / 220000.0f);
-        const float horFade = smoothstep(0.002f, 0.085f, dir.z);
+        const float horFade = smoothstep(0.018f, 0.165f, dir.z);
         const float distCut = 1.0f - smoothstep(maxDist * 0.55f, maxDist * 0.96f, t0);
         const float effFade = saturate(fade * 1.15f) * horFade * distCut;
         const float3 horizonHaze = skyC + sunC * pow(saturate(cosT), 8.0f) * 0.05f;

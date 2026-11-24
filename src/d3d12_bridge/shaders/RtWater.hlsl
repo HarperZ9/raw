@@ -355,29 +355,34 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float vis = sunColour.w > 0.5f ? visible(o, l, 0.0f, sunLength) : 1.0f;
                 glint = min(sunColour.rgb * (D * Fh * nl / (4.0f * max(nv, 0.08f))) * vis, 6.0f.xxx) * waterA.w;
             }
-            // Dual-lobe elongated liquid specular reflections on water (tight 0.008 crest sparkle + broad 0.045 shimmer ribbon):
-            // bridge lanterns, harbor braziers, torches & spells cast crisp dancing light ribbons across river ripples (GTA VI harbor study).
+            // Dual-lobe elongated liquid specular reflections on water:
+            // Softened indoors (sunColour.w < 0.5) so cisterns/caves show natural gentle lantern shimmer instead of white laser beams!
             if (wDist < 8500.0f && flags.y > 0u) {
+                const bool isExtW = (sunColour.w > 0.5f);
+                const float aTight = isExtW ? 0.014f : 0.042f;
+                const float aBroad = isExtW ? 0.055f : 0.110f;
+                const float gGain  = isExtW ? 0.12f  : 0.055f;
+                const float gCap   = isExtW ? 1.85f  : 0.55f;
                 const uint maxWaterLights = min(flags.y, 32u);
                 [loop] for (uint wli = 0u; wli < maxWaterLights; wli++) {
                     const float3 toWL = lightPosR[wli].xyz - p;
                     const float dWL = length(toWL);
-                    const float rWL = lightPosR[wli].w * 2.25f;
+                    const float rWL = lightPosR[wli].w * 2.10f;
                     if (dWL >= rWL || toWL.z <= 0.0f) { continue; }
-                    const float attWL = pow(saturate(1.0f - dWL / rWL), 1.75f);
+                    const float attWL = pow(saturate(1.0f - dWL / rWL), 1.85f);
                     const float3 lWL = toWL / max(dWL, 1.0e-4f);
                     const float3 hWL = normalize(v + lWL);
                     const float nhWL = saturate(dot(nRefl, hWL));
-                    const float ddTight = nhWL * nhWL * (0.008f - 1.0f) + 1.0f;
-                    const float ddBroad = nhWL * nhWL * (0.048f - 1.0f) + 1.0f;
-                    const float dSpec = (0.008f / (PI * ddTight * ddTight)) * 0.55f + (0.048f / (PI * ddBroad * ddBroad)) * 0.45f;
-                    glint += min(lightColS[wli].rgb * (dSpec * attWL * 0.18f * (0.25f + 0.75f * F)), 2.8f.xxx);
+                    const float ddTight = nhWL * nhWL * (aTight - 1.0f) + 1.0f;
+                    const float ddBroad = nhWL * nhWL * (aBroad - 1.0f) + 1.0f;
+                    const float dSpec = (aTight / (PI * ddTight * ddTight)) * 0.45f + (aBroad / (PI * ddBroad * ddBroad)) * 0.55f;
+                    glint += min(lightColS[wli].rgb * (dSpec * attWL * gGain * (0.25f + 0.75f * F)), gCap.xxx);
                 }
             }
 
-            // Caustics on the bed, under the water, with the view through it.
+            // Caustics on the bed, under the water (EXTERIORS ONLY — sunColour.w > 0.5!).
             float3 caus = 0.0f;
-            if (dBed < 1.0f && sunDir.w > 0.5f && waterA.y > 0.0f && l.z > 0.05f) {
+            if (dBed < 1.0f && sunColour.w > 0.5f && sunDir.w > 0.5f && waterA.y > 0.0f && l.z > 0.05f) {
                 const float3 pb = worldAt(px, dBed);
                 const float depthV = max(p.z - pb.z, 0.0f);
                 const float3 sr = refract(-l, float3(0.0f, 0.0f, 1.0f), 1.0f / 1.333f);   // the sun's ray under the surface
@@ -437,11 +442,14 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float path = length(worldAt(float2(qDepthPx), Depth.Load(int3(qDepthPx, 0))) - p);
                 // Rich Spectral Beer-Lambert Nordic Water Optics: crystal-clear amber-emerald riverbed shallows
                 // transitioning smoothly into deep cold glacial teal-indigo pools with zero muddy grey wash!
-                const float3 T = exp(-waterA.z * float3(1.42f, 0.72f, 0.56f) * path);
-                const float3 scatter = float3(0.012f, 0.032f, 0.038f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) * 1.25f;
+                const bool isExtBody = (sunColour.w > 0.5f);
+                const float3 T = exp(-waterA.z * (isExtBody ? float3(1.42f, 0.72f, 0.56f) : float3(1.55f, 1.25f, 1.15f)) * path);
+                // Interiors (Ragged Flagon cisterns, caves, dungeons): dark realistic subterranean water (ZERO neon cyan glow!).
+                const float3 scatterTint = isExtBody ? float3(0.012f, 0.032f, 0.038f) : float3(0.004f, 0.006f, 0.007f);
+                const float3 scatter = scatterTint * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.02f.xxx) * (isExtBody ? 1.25f : 0.65f);
                 const float nearW = 1.0f - smoothstep(2800.0f, 5200.0f, wDist);
-                // Rich backlit glacial-emerald wave-crest subsurface scattering.
-                const float3 waveSSS = sunDir.w > 0.5f
+                // Rich backlit glacial-emerald wave-crest subsurface scattering (EXTERIORS ONLY!).
+                const float3 waveSSS = (isExtBody && sunDir.w > 0.5f)
                     ? float3(0.03f, 0.28f, 0.26f) * sunColour.rgb * (0.25f + 0.75f * pow(saturate(dot(-v, sunDir.xyz)), 3.5f)) * saturate((1.0f - n.z) * 5.5f) * 0.65f
                     : 0.0f.xxx;
                 // Cluster D (Point Reyes surf / Aivazovsky storm coasts): rolling shore-breaking surf trains,
@@ -462,10 +470,9 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float windSpeedW = saturate(length(cloudWind.xy) / 340.0f + weather.w * 0.55f);
                 const float crestFoam = saturate((1.0f - n.z) * (6.5f + windSpeedW * 5.2f) - lerp(0.16f, 0.08f, windSpeedW)) * froth * (0.55f + windSpeedW * 0.42f);
                 const float foamMask = saturate(max(max(bowFoam, eddyFoam), max(shoreLap, crestFoam))) * nearW;
-                // True Underwater Volumetric Sunbeam Shafts (6-step depth-marched Mie scattering integral through water column):
-                // gives sunlit Nordic rivers glowing emerald-turquoise underwater light cones beneath the surface.
+                // True Underwater Volumetric Sunbeam Shafts (EXTERIORS ONLY — never fire cyan sunbeams inside underground sewers!).
                 float3 uwShaft = 0.0f.xxx;
-                if (sunDir.w > 0.5f && sunDir.z > 0.08f && depthV > 6.0f && wDist < 4200.0f) {
+                if (isExtBody && sunDir.w > 0.5f && sunDir.z > 0.08f && depthV > 6.0f && wDist < 4200.0f) {
                     const float clearW = 1.0f - saturate(clouds.x * 0.78f);
                     const float cosUw = dot(-v, sunDir.xyz);
                     const float phUw = 0.45f + 0.55f * pow(saturate(cosUw * 0.5f + 0.5f), 2.5f);

@@ -249,17 +249,27 @@ void BridgeHook_OnTargets(ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetV
             ID3D11Texture2D* bb = nullptr;
             if (SUCCEEDED(pi->swapChain->GetBuffer(0, IID_PPV_ARGS(&bb))) && bb) { s_f.backbuffer = bb; bb->Release(); }
         }
-    if (!s_f.normalTex && n >= 4 && rt[0] && rt[1] && rt[2] && rt[3] && dsv && s_f.backbuffer) {
+    if (!s_f.normalTex && n >= 2 && rt[0] && rt[1] && dsv && s_f.backbuffer) {
         D3D11_TEXTURE2D_DESC bb{};
         static_cast<ID3D11Texture2D*>(s_f.backbuffer)->GetDesc(&bb);
-        // The opaque set: HDR colour, motion vectors, normals, a two-channel mask.
-        if (FullSize(rt[0], DXGI_FORMAT_R16G16B16A16_FLOAT, bb) && FullSize(rt[1], DXGI_FORMAT_R16G16_FLOAT, bb) &&
-            FullSize(rt[2], DXGI_FORMAT_R8G8B8A8_UNORM, bb) && FullSize(rt[3], DXGI_FORMAT_R8G8_UNORM, bb)) {
-            s_f.normalTex = rt[2];
-            s_f.motionTex = rt[1];
-            s_f.sceneTex = rt[0];
-            if (Cfg().lighting) GameComposite_SetScene(rt[0]);
-            s_f.depthTex = ResourceOf(dsv);
+        // Universal opaque set: supports 4-target (TAA+Snow), 3-target (TAA-only or Snow-only), and 2-target (TAA=0, Snow=0).
+        if (FullSize(rt[0], DXGI_FORMAT_R16G16B16A16_FLOAT, bb)) {
+            if (n >= 3 && rt[2] && FullSize(rt[1], DXGI_FORMAT_R16G16_FLOAT, bb) &&
+                FullSize(rt[2], DXGI_FORMAT_R8G8B8A8_UNORM, bb) &&
+                (n == 3 || (rt[3] && FullSize(rt[3], DXGI_FORMAT_R8G8_UNORM, bb)))) {
+                s_f.normalTex = rt[2];
+                s_f.motionTex = rt[1];
+                s_f.sceneTex = rt[0];
+                if (Cfg().lighting) GameComposite_SetScene(rt[0]);
+                s_f.depthTex = ResourceOf(dsv);
+            } else if (FullSize(rt[1], DXGI_FORMAT_R8G8B8A8_UNORM, bb) &&
+                       (n == 2 || (rt[2] && FullSize(rt[2], DXGI_FORMAT_R8G8_UNORM, bb)))) {
+                s_f.normalTex = rt[1];
+                s_f.motionTex = nullptr;
+                s_f.sceneTex = rt[0];
+                if (Cfg().lighting) GameComposite_SetScene(rt[0]);
+                s_f.depthTex = ResourceOf(dsv);
+            }
         }
     }
     // Remember last valid G-buffer handles so sky-only frames (0 opaque draws when pitching straight up)
@@ -299,7 +309,7 @@ void BridgeHook_OnTargets(ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetV
         s_f.bedCaptured = true;
         LightingCaptureBed(s_f.depthTex);
     }
-    s_f.opaqueSet = n >= 4 && rt[0] && rt[0] == s_f.sceneTex && rt[2] == s_f.normalTex && rt[3];
+    s_f.opaqueSet = n >= 2 && rt[0] && rt[0] == s_f.sceneTex && ((rt[2] && rt[2] == s_f.normalTex) || (rt[1] && rt[1] == s_f.normalTex));
     s_f.normalBound = false;
     if (s_f.normalTex)
         for (ID3D11Resource* r : rt) s_f.normalBound |= r == s_f.normalTex;

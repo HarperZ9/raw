@@ -420,7 +420,8 @@ public:
     // Hot reload: new DXIL for the lighting and fog pipelines. Both are made before either is
     // swapped in, so a failure keeps the frame on the old pair. The old pipelines stay alive
     // (a frame in flight may still use them); a reload makes two small objects.
-    bool Reload(const std::vector<uint8_t>& vs, const std::vector<uint8_t>& fs, const std::vector<uint8_t>& fogFs, std::string& err)
+    bool Reload(const std::vector<uint8_t>& vs, const std::vector<uint8_t>& fs, const std::vector<uint8_t>& fogFs, std::string& err,
+                const ExtraShaders* extra = nullptr)
     {
         if (!m_dev) { err = "no device"; return false; }
         const auto dxil = [](const std::vector<uint8_t>& b) { return ShaderCode{ShaderFormat::Dxil, b.data(), b.size()}; };
@@ -433,6 +434,29 @@ public:
         d.label = "lighting fog (reloaded)"; d.fragment = dxil(fogFs); d.layout = kFogLayout;
         RasterPipelineHandle fog = m_dev->createRasterPipeline(d, err);
         if (!fog.valid()) return false;
+        auto trySwap = [&](const std::vector<uint8_t>& bc, const char* lbl, std::span<const RasterBinding> lay, RasterPipelineHandle& dst) -> bool {
+            if (bc.empty()) return true;
+            d.label = lbl; d.fragment = dxil(bc); d.layout = lay;
+            RasterPipelineHandle h = m_dev->createRasterPipeline(d, err);
+            if (!h.valid()) return false;
+            dst = h;
+            return true;
+        };
+        if (extra) {
+            if (!trySwap(extra->clouds,     "clouds (reloaded)",     kCloudLayout,      m_cloudPipe))      return false;
+            if (!trySwap(extra->volumetric, "volumetric (reloaded)", kVolLayout,        m_volPipe))        return false;
+            if (!trySwap(extra->bloomPre,   "bloom pre (reloaded)",  kBloom1Layout,     m_bloomPrePipe))   return false;
+            if (!trySwap(extra->bloomDown,  "bloom down (reloaded)", kBloom1Layout,     m_bloomDownPipe))  return false;
+            if (!trySwap(extra->bloomUp,    "bloom up (reloaded)",   kBloom2Layout,     m_bloomUpPipe))    return false;
+            if (!trySwap(extra->bloomComp,  "bloom comp (reloaded)", kBloom2Layout,     m_bloomCompPipe))  return false;
+            if (!trySwap(extra->reflFilter, "refl filt (reloaded)",  kReflFilterLayout, m_reflFilterPipe)) return false;
+            if (!trySwap(extra->rawlss5,    "rawlss5 (reloaded)",    kRawlss5Layout,    m_rawlss5Pipe))    return false;
+            if (!trySwap(extra->dofFocus,   "dof focus (reloaded)",  kDofFocusLayout,   m_dofFocusPipe))   return false;
+            if (!trySwap(extra->dofCoc,     "dof coc (reloaded)",    kDofCocLayout,     m_dofCocPipe))     return false;
+            if (!trySwap(extra->dofGather,  "dof gather (reloaded)", kDofGatherLayout,  m_dofGatherPipe))  return false;
+            if (!trySwap(extra->dofPost,    "dof post (reloaded)",   kDofGatherLayout,  m_dofPostPipe))    return false;
+            if (!trySwap(extra->dofComp,    "dof comp (reloaded)",   kDofCompLayout,    m_dofCompPipe))    return false;
+        }
         m_lightPipe = light;
         m_fogPipe = fog;
         return true;
@@ -684,11 +708,11 @@ bool LightingPassUniform(IBridgePass* pass, const void** data, size_t* bytes)
 }
 
 bool LightingPassReload(IBridgePass* pass, const std::vector<uint8_t>& vs, const std::vector<uint8_t>& fs, const std::vector<uint8_t>& fogFs,
-                        std::string& err)
+                        std::string& err, const ExtraShaders* extra)
 {
     auto* p = dynamic_cast<LightingPass*>(pass);
     if (!p) { err = "the active pass is not the lighting pass"; return false; }
-    return p->Reload(vs, fs, fogFs, err);
+    return p->Reload(vs, fs, fogFs, err, extra);
 }
 
 bool LightingPassTune(IBridgePass* pass, const LightingTuning& t)

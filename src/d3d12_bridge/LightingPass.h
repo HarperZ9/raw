@@ -121,7 +121,11 @@ void BuildClusters(const SceneLighting& s, float nearZ, float farZ, uint32_t (*o
 std::unique_ptr<IBridgePass> MakeLightingPass();
 bool LightingPassTune(IBridgePass* pass, const LightingTuning& t);
 bool LightingPassUniform(IBridgePass* pass, const void** data, size_t* bytes);   // cbuffer P as filled for this frame
+struct ExtraShaders {
+    std::vector<uint8_t> clouds, volumetric, bloomPre, bloomDown, bloomUp, bloomComp, reflFilter, rawlss5;
+    std::vector<uint8_t> dofFocus, dofCoc, dofGather, dofPost, dofComp;
+};
 bool LightingPassReload(IBridgePass* pass, const std::vector<uint8_t>& vs, const std::vector<uint8_t>& fs,
-                        const std::vector<uint8_t>& fogFs, std::string& err);
+                        const std::vector<uint8_t>& fogFs, std::string& err, const ExtraShaders* extra = nullptr);
 
 } // namespace raw::bridge

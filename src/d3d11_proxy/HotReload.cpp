@@ -28,7 +28,14 @@ namespace
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
 
-struct Compiled { raw::bridge::CompileResult vs, fs, fog, rt, sky, water, sss; bool hasRt = false, hasWater = false; Clock::time_point seen; };
+struct Compiled {
+    raw::bridge::CompileResult vs, fs, fog, rt, sky, water, sss;
+    raw::bridge::CompileResult clouds, volumetric, bloomPre, bloomDown, bloomUp, bloomComp, reflFilter, rawlss5;
+    raw::bridge::CompileResult dofFocus, dofCoc, dofGather, dofPost, dofComp;
+    bool hasRt = false, hasWater = false;
+    bool hasClouds = false, hasVol = false, hasBloom = false, hasReflFilt = false, hasRawlss5 = false, hasDof = false;
+    Clock::time_point seen;
+};
 
 struct State
 {
@@ -93,6 +100,29 @@ void Start(State& s)
             c.water = comp(dir + L"\\RtWater.hlsl", L"water", L"cs_6_6");
             c.sss = comp(dir + L"\\Sss.hlsl", L"main", L"cs_6_6");
         }
+        c.hasClouds = fs::exists(dir + L"\\Clouds.hlsl", ec);
+        if (c.hasClouds) c.clouds = comp(dir + L"\\Clouds.hlsl", L"fs", L"ps_6_6");
+        c.hasVol = fs::exists(dir + L"\\VolumetricPass.hlsl", ec);
+        if (c.hasVol) c.volumetric = comp(dir + L"\\VolumetricPass.hlsl", L"fs", L"ps_6_6");
+        c.hasBloom = fs::exists(dir + L"\\BloomPass.hlsl", ec);
+        if (c.hasBloom) {
+            c.bloomPre  = comp(dir + L"\\BloomPass.hlsl", L"prefilter", L"ps_6_6");
+            c.bloomDown = comp(dir + L"\\BloomPass.hlsl", L"down",      L"ps_6_6");
+            c.bloomUp   = comp(dir + L"\\BloomPass.hlsl", L"up",        L"ps_6_6");
+            c.bloomComp = comp(dir + L"\\BloomPass.hlsl", L"composite", L"ps_6_6");
+        }
+        c.hasReflFilt = fs::exists(dir + L"\\RtReflFilter.hlsl", ec);
+        if (c.hasReflFilt) c.reflFilter = comp(dir + L"\\RtReflFilter.hlsl", L"fs", L"ps_6_6");
+        c.hasRawlss5 = fs::exists(dir + L"\\Rawlss5Pass.hlsl", ec);
+        if (c.hasRawlss5) c.rawlss5 = comp(dir + L"\\Rawlss5Pass.hlsl", L"rawlss5_fs", L"ps_6_6");
+        c.hasDof = fs::exists(dir + L"\\DofPass.hlsl", ec);
+        if (c.hasDof) {
+            c.dofFocus  = comp(dir + L"\\DofPass.hlsl", L"dof_focus",  L"ps_6_6");
+            c.dofCoc    = comp(dir + L"\\DofPass.hlsl", L"dof_coc",    L"ps_6_6");
+            c.dofGather = comp(dir + L"\\DofPass.hlsl", L"dof_gather", L"ps_6_6");
+            c.dofPost   = comp(dir + L"\\DofPass.hlsl", L"dof_post",   L"ps_6_6");
+            c.dofComp   = comp(dir + L"\\DofPass.hlsl", L"dof_comp",   L"ps_6_6");
+        }
         return c;
     });
 }
@@ -101,17 +131,31 @@ void Finish(State& s)
 {
     Compiled c = s.job.get();
     std::string err;
-    for (const raw::bridge::CompileResult* r : {&c.vs, &c.fs, &c.fog, &c.rt, &c.sky, &c.water, &c.sss})
-        if ((r == &c.rt || r == &c.sky) && !c.hasRt) continue;
-        else if ((r == &c.water || r == &c.sss) && !c.hasWater) continue;
-        else if (!r->ok) {
-            const std::string e = r->errors.empty() ? std::string("compile failed\n") : r->errors;
-            if (err.find(e) == std::string::npos) err += e;   // the vertex and pixel entries share a file
-        }
+    auto checkRes = [&](const raw::bridge::CompileResult& r, bool enabled) {
+        if (!enabled || r.ok) return;
+        const std::string e = r.errors.empty() ? std::string("compile failed\n") : r.errors;
+        if (err.find(e) == std::string::npos) err += e;
+    };
+    checkRes(c.vs, true); checkRes(c.fs, true); checkRes(c.fog, true);
+    checkRes(c.rt, c.hasRt); checkRes(c.sky, c.hasRt);
+    checkRes(c.water, c.hasWater); checkRes(c.sss, c.hasWater);
+    checkRes(c.clouds, c.hasClouds); checkRes(c.volumetric, c.hasVol);
+    checkRes(c.bloomPre, c.hasBloom); checkRes(c.bloomDown, c.hasBloom);
+    checkRes(c.bloomUp, c.hasBloom); checkRes(c.bloomComp, c.hasBloom);
+    checkRes(c.reflFilter, c.hasReflFilt); checkRes(c.rawlss5, c.hasRawlss5);
+    checkRes(c.dofFocus, c.hasDof); checkRes(c.dofCoc, c.hasDof);
+    checkRes(c.dofGather, c.hasDof); checkRes(c.dofPost, c.hasDof); checkRes(c.dofComp, c.hasDof);
     bool ok = err.empty();
     if (ok) {
+        raw::bridge::ExtraShaders ex;
+        if (c.hasClouds)   ex.clouds = c.clouds.dxil;
+        if (c.hasVol)      ex.volumetric = c.volumetric.dxil;
+        if (c.hasBloom)    { ex.bloomPre = c.bloomPre.dxil; ex.bloomDown = c.bloomDown.dxil; ex.bloomUp = c.bloomUp.dxil; ex.bloomComp = c.bloomComp.dxil; }
+        if (c.hasReflFilt) ex.reflFilter = c.reflFilter.dxil;
+        if (c.hasRawlss5)  ex.rawlss5 = c.rawlss5.dxil;
+        if (c.hasDof)      { ex.dofFocus = c.dofFocus.dxil; ex.dofCoc = c.dofCoc.dxil; ex.dofGather = c.dofGather.dxil; ex.dofPost = c.dofPost.dxil; ex.dofComp = c.dofComp.dxil; }
         raw::bridge::D3D12Bridge* b = hook::Bridge();
-        ok = b && b->Ready() && raw::bridge::LightingPassReload(b->ActivePass(), c.vs.dxil, c.fs.dxil, c.fog.dxil, err);
+        ok = b && b->Ready() && raw::bridge::LightingPassReload(b->ActivePass(), c.vs.dxil, c.fs.dxil, c.fog.dxil, err, &ex);
         if (!ok && err.empty()) err = "the bridge is not running the lighting pass";
         // The ray-tracing shaders reload with them when the scene runs (RtShadows on raw::tx).
         std::string rtErr;

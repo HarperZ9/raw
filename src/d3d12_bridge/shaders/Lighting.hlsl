@@ -1133,12 +1133,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             amb *= cryptTint * lerp(0.24f, 0.44f, saturate(s.n.z * 0.5f + 0.5f));
         }
     }
-    // Dual-Scale Occlusion: Hardware DXR Skylighting/RTAO handles macro occlusion (roofs, overhangs, canopies),
-    // while tight near-field contact AO (<1,400u) grounds bottles, mugs, rocks, grass roots & furniture crevices!
-    const float nearContactMix = (rt && (flags.x & FLAG_SKY) != 0u) ? (0.68f * saturate(1.0f - z / 1400.0f)) : 1.0f;
-    const float aoWeight = (base == 5u ? 0.82f : (isActorFeat ? 0.35f : 1.0f)) * nearContactMix;
+    // 100% Pure Hardware DXR 3D Contact RTAO & Skylighting (ZERO screen-space GTAO/SSAO when RT is active!):
+    const float ssaoMix = (rt && (flags.x & FLAG_SKY) != 0u) ? 0.0f : 1.0f;
+    const float aoWeight = (base == 5u ? 0.82f : (isActorFeat ? 0.35f : 1.0f)) * ssaoMix;
     const float aoRaw = (flags.x & FLAG_AO) != 0u ? lerp(1.0f, AoHist.Load(ip).x, tune2.x * aoWeight) : 1.0f;
-    const float aoTerm = !match ? pow(saturate(aoRaw), 1.35f) : aoRaw;
+    const float aoTerm = !match ? pow(saturate(aoRaw), 1.25f) : aoRaw;
     // Exteriors: ray-traced sky visibility (RtSky.cpp). Interiors (!match): local SM6.9 RayQuery RTAO from RtShadow.hlsl.
     const bool isExterior = sunColour.w > 0.5f;
     const float rawSkyVis = rt && (flags.x & FLAG_SKY) != 0u && (isExterior || !match) ? RtIdx.Load(ip).w : 1.0f;

@@ -21,8 +21,10 @@ int Api_GetCapabilities(RAW_Capabilities* outCaps)
     outCaps->dxrTier = 12;
     outCaps->meshShaderTier = 10;
     outCaps->qualityTier = static_cast<uint32_t>(hook::Cfg().light.mode);
-    // bit 0: DXR, bit 1: RAWLSS 5.5, bit 2: TruePBR RMAOS, bit 3: RAW-STRATA, bit 4: 3D Ray-Marched Waves
-    outCaps->featuresMask = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4);
+    // bit 0: DXR, bit 1: RAWLSS 5.5, bit 2: TruePBR RMAOS, bit 3: RAW-STRATA, bit 4: 3D Ray-Marched Waves,
+    // bit 5: RAW-LUMEN Bindless65K, bit 6: RAW-MESH (as_6_6/ms_6_6), bit 7: AsyncCompute, bit 8: ExecuteIndirect
+    outCaps->featuresMask = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4)
+                          | (1u << 5) | (1u << 6) | (1u << 7) | (1u << 8);
     return 1;
 }
 
@@ -55,7 +57,7 @@ int Api_GetCameraOptics(RAW_CameraOptics* outOptics)
 
 const char* Api_GetVersionString()
 {
-    return "RAW 1.0.1-r388 (THE PLAYGROUND / DX12 + DXR 1.2 + RAWLSS 5.5 + RAW-STRATA + RAW-API v1)";
+    return "RAW 1.0.3-r394 (THE PLAYGROUND / DX12 + DXR 1.2 + RAWLSS 5.5 + RAW-STRATA + RAW-MESH + RAW-LUMEN + RAW-API v1)";
 }
 
 const RAW_ApiV1 kApiV1 = {

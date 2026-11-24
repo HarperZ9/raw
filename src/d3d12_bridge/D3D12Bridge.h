@@ -150,6 +150,7 @@ struct RtDraw
     UINT uvOffset = 0;
     DXGI_FORMAT uvFormat = DXGI_FORMAT_UNKNOWN;
     ID3D11ShaderResourceView* alphaSrv = nullptr;   // t0, the colour texture (opaque draws too, RtMaterials); a reference
+    uint32_t bindlessAlbedoIdx = 0xFFFFFFFFu;       // RAW-LUMEN live ResourceDescriptorHeap[] SRV slot index
     ID3D11Buffer* uvVb = nullptr;        // the coordinates' own vertex buffer when not the position's (a reference)
     UINT uvStride = 0, uvVbOffset = 0;
     // Skinned draws (RtSkin.h): positions are skinned on the GPU each frame from the blend stream and

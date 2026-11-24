@@ -195,6 +195,21 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         std::vector<ID3D11Resource*> hand;
         bool rtOk = false;
         if (fc.rt) {
+            if (m->bindless.Ready() && m->cfg.layer.native) {
+                for (RtDraw& dr : m->pendingDraws) {
+                    if (!dr.alphaSrv) continue;
+                    ID3D11Resource* r11 = nullptr;
+                    dr.alphaSrv->GetResource(&r11);
+                    if (r11) {
+                        if (ID3D12Resource* r12 = m->cfg.layer.native(r11)) {
+                            D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
+                            dr.alphaSrv->GetDesc(&sd);
+                            dr.bindlessAlbedoIdx = m->bindless.RegisterTexture2D(r12, sd.Format);
+                        }
+                        r11->Release();
+                    }
+                }
+            }
             m->rt->SetCamera(m->lighting.cameraStep, m->lighting.cameraSteps, m->lighting.posAdjust);
             m->rt->SetDraws(std::move(m->pendingDraws), hand, m->cfg.layer.native);
             const void* u = nullptr;

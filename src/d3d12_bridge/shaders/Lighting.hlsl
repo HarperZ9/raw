@@ -1293,10 +1293,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 diffAlb = albedo * (1.0f - metallic * (isTruePbr ? 0.94f : 0.72f));
     const float3 rawLit = (diffAlb + envRefl * (match ? 1.0f : 0.08f)) * (diff + amb * pbrBakedAo + effCharLight);
     float3 lit = match ? knee3(rawLit) : rawLit;
-    // Physical glacial-cyan subsurface wrap transmission on sunlit snowbanks.
+    // Subtle alpine snowbank subsurface wrap (replaces bright neon-cyan glacier glow seen in 21.03.42.30.png!):
     if (!match && wet.snow > 0.05f && sunDir.w > 0.5f) {
-        const float snowWrap = saturate((dot(s.n, sunDir.xyz) + 0.35f) / 1.35f);
-        lit += sunColour.rgb * float3(0.18f, 0.34f, 0.46f) * (snowWrap * wet.snow * (0.35f + 0.65f * sunShadow) * 0.22f);
+        const float snowWrap = saturate((dot(s.n, sunDir.xyz) + 0.30f) / 1.30f);
+        lit += sunColour.rgb * float3(0.08f, 0.14f, 0.22f) * (snowWrap * wet.snow * (0.35f + 0.65f * sunShadow) * 0.10f);
     }
     // True Interior Window-Lighting & HDR Window Bloom Driver (coupled to exterior time-of-day timeEnv.xy):
     // bright interior windows (GlowMapped base==3 or high-emissive vertical glass) radiate physical HDR sunlight by day

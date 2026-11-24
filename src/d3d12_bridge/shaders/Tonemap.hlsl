@@ -317,15 +317,23 @@ float4 main(In i) : SV_Target {
     const float3 bloom = P[0].x > 0.5f ? Bloom.Sample(S0, suv).rgb : Bloom.Sample(S0, i.uv).rgb;
     const float2 lum = Lum.Sample(S2, i.uv).xy;
     const float avg = max(lum.x, 1.0e-5f);
-    // Human Eye Adaptation (Photopic / Scotopic Asymmetric Pupil Response):
-    // In interiors (RX.w < 0.99), tighten pupil swing (0.72..1.16) so glancing at bright tavern hearths or upper
-    // windows never pumps or darkens the entire room! Outdoors keeps full 0.36..1.38 snow/horizon dynamic range.
-    const float metered = clamp(avg, RA.z, RA.w);
+    // Dynamic Location-, Environment- & Camera-Aware Continuous Eye Adaptation:
+    // Blends Skyrim's temporally smoothed luminance (lum.x) with live 5-point peripheral-weighted metering
+    // (weighted away from bottom-center so 3rd-person player back/armor never hijacks exposure while 1st-person stays responsive!).
+    const float2 uvLim = float2(F[44].z, F[43].y);
+    const float lTop  = dot(Scene.SampleLevel(S1, min(float2(0.50f, 0.25f) * F[43].xy, uvLim), 0.0f).rgb, W);
+    const float lLeft = dot(Scene.SampleLevel(S1, min(float2(0.24f, 0.46f) * F[43].xy, uvLim), 0.0f).rgb, W);
+    const float lRgt  = dot(Scene.SampleLevel(S1, min(float2(0.76f, 0.46f) * F[43].xy, uvLim), 0.0f).rgb, W);
+    const float lMid  = dot(Scene.SampleLevel(S1, min(float2(0.50f, 0.42f) * F[43].xy, uvLim), 0.0f).rgb, W);
+    const float liveMeter = clamp((lTop * 0.20f + lLeft * 0.26f + lRgt * 0.26f + lMid * 0.28f), 0.008f, 4.0f);
+    const float blendAvg = lerp(avg, liveMeter, 0.22f);
+    const float metered = clamp(blendAvg, RA.z, RA.w);
     const float evDiff = log2(max(metered / max(RC.y, 0.05f), 1.0e-4f));
-    const float eyeShare = evDiff > 0.0f ? max(RC.x, 0.68f) : (RC.z > 0.0f ? max(RC.z, 0.24f) : 0.24f);
+    const float eyeShare = evDiff > 0.0f ? max(RC.x, 0.72f) : (RC.z > 0.0f ? max(RC.z, 0.34f) : 0.34f);
     const bool isIntExp = (RX.w > 0.0f && RX.w < 0.99f);
-    const float eyeComp = isIntExp ? clamp(exp2(-evDiff * eyeShare * 0.45f), 0.72f, 1.16f)
-                                   : clamp(exp2(-evDiff * eyeShare), 0.36f, 1.38f);
+    // Interiors (caves/taverns/dungeons): controlled dark-adaptation lift (0.68..1.28); Exteriors: full snow-to-night range (0.34..1.48).
+    const float eyeComp = isIntExp ? clamp(exp2(-evDiff * eyeShare * 0.52f), 0.68f, 1.28f)
+                                   : clamp(exp2(-evDiff * eyeShare), 0.34f, 1.48f);
     const float camera = (RB.y / max(RC.y, 0.05f)) * eyeComp;
     // RX.w: the interior factor the proxy sets per frame (ToneX5 in a cell with no sun cascades, else 1).
     const float exposure = (RA.x < 0.5f ? lum.y / avg : camera * (RX.w > 0.0f ? RX.w : 1.0f)) * exp2(RA.y);

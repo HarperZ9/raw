@@ -422,7 +422,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         atmoCol = lerp(atmoCol, lerp(uSkyHF, uSkyZF, saturate(max(w.z, 0.0f) * 2.2f)), 0.42f) * 0.76f;
         if ((flags.x & FLAG_CLOUDS) != 0u) {
             const float4 clF = Clouds.SampleLevel(Lin, uv, 0.0f);
-            const float clMerge = smoothstep(8000.0f, 45000.0f, dist);
+            const float clMerge = smoothstep(2500.0f, 22000.0f, dist);
             atmoCol = lerp(atmoCol, atmoCol * clF.a + clF.rgb, clMerge);
         }
         const float3 d65Mie = lerp(float3(1.0f, 0.66f, 0.36f), float3(0.96f, 0.98f, 1.02f), highSunF);

@@ -22,7 +22,10 @@ float4 atrousStep(float4 at, int stepSize, bool finalPass) {
     const int2 p = int2(at.xy);
     const int3 ip = int3(p, 0);
     const float d = Depth.Load(ip);
-    const float4 center = GiIn.Load(ip);
+    float4 center = GiIn.Load(ip);
+    // Sanitize NaN/Inf in center & taps so a single bad RT sample NEVER stamps a 15x15-29x29 black square (15.00.10.28.png)!
+    if (any(isnan(center.rgb)) || any(isinf(center.rgb))) { center.rgb = 0.0f.xxx; }
+    center.rgb = clamp(center.rgb, 0.0f.xxx, 16.0f.xxx);
     if (WaveActiveAllTrue(d >= 1.0f) || d >= 1.0f) {
         return float4(center.rgb, finalPass ? unpackRestVis(center.a) : center.a);
     }
@@ -57,7 +60,9 @@ float4 atrousStep(float4 at, int stepSize, bool finalPass) {
             const float wz = exp(-planeDist * planeDist);
             const float3 nq = worldNormal(Normal.Load(int3(q, 0)));
             const float wn = pow(saturate(dot(n, nq)), 64.0f);
-            const float4 tap = GiIn.Load(int3(q, 0));
+            float4 tap = GiIn.Load(int3(q, 0));
+            if (any(isnan(tap.rgb)) || any(isinf(tap.rgb))) { continue; }
+            tap.rgb = clamp(tap.rgb, 0.0f.xxx, 16.0f.xxx);
             const float tLum = dot(tap.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             // Luminance + chromaticity edge-stopping: prevents warm torch/hearth GI from bleeding onto cold shadowed walls!
             const float3 cChr = center.rgb / max(cLum, 0.02f);

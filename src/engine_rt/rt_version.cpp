@@ -319,4 +319,81 @@ std::string MissingEntries() {
     return s;
 }
 
+static bool SafeReadU64(uintptr_t addr, uint64_t& out) {
+    __try {
+        out = *reinterpret_cast<const uint64_t*>(addr);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+uint32_t ResolveDeferredSingletons(const Image& img) {
+    if (g_table.file != "<universal-rtti-scan>") return 0;
+    SecRange rdata{}, data{};
+    FindSections(img, rdata, data);
+    if (rdata.end <= rdata.begin || data.end <= data.begin) return 0;
+    const uintptr_t baseAddr = reinterpret_cast<uintptr_t>(img.base);
+
+    // Map decorated MSVC RTTI names -> singleton table keys that are still missing (0).
+    static const std::pair<const char*, const char*> kSingletonClasses[] = {
+        {".?AVTES@@",               "TES::Singleton"},
+        {".?AVPlayerCharacter@@",   "PlayerCharacter::Singleton"},
+        {".?AVPlayerCamera@@",      "PlayerCamera::Singleton"},
+        {".?AVUI@@",                "UI::Singleton"},
+        {".?AVCalendar@@",          "Calendar::Singleton"},
+        {".?AVProcessLists@@",      "ProcessLists::GetSingleton"},
+        {".?AVBGSDecalManager@@",   "BGSDecalManager::GetSingleton"},
+        {".?AVBGSGrassManager@@",   "BGSGrassManager::GetSingleton"},
+        {".?AVImageSpaceManager@@", "ImageSpaceManager::GetSingleton"},
+        {".?AVTESWaterSystem@@",    "TESWaterSystem::GetSingleton"},
+    };
+    std::unordered_map<std::string, const char*> needed;
+    for (const auto& kv : kSingletonClasses) {
+        if (g_table.Get(kv.second) == 0) needed[kv.first] = kv.second;
+    }
+    if (needed.empty()) return 0;
+
+    // 1. Find primary vtable VAs for the missing singleton classes in .rdata.
+    std::unordered_map<uint64_t, const char*> vtVaToKey;
+    for (uint32_t rva = (rdata.begin + 7u) & ~7u; rva + 16u <= rdata.end; rva += 8u) {
+        const uint64_t colVa = *reinterpret_cast<const uint64_t*>(img.base + rva);
+        if (colVa < baseAddr + rdata.begin || colVa + 24u > baseAddr + rdata.end) continue;
+        const uint32_t colRva = static_cast<uint32_t>(colVa - baseAddr);
+        const uint32_t* col = reinterpret_cast<const uint32_t*>(img.base + colRva);
+        if (col[0] != 1u || col[1] != 0u || col[5] != colRva) continue;
+        const uint32_t tdRva = col[3];
+        if (tdRva < data.begin || tdRva + 24u > data.end) continue;
+        const uint64_t fn0 = *reinterpret_cast<const uint64_t*>(img.base + rva + 8u);
+        if (fn0 < baseAddr + img.textBegin || fn0 >= baseAddr + img.textEnd) continue;
+        const char* mangled = reinterpret_cast<const char*>(img.base + tdRva + 16u);
+        if (mangled[0] != '.' || mangled[1] != '?') continue;
+        char nameBuf[128]{};
+        size_t len = 0;
+        while (len + 1 < sizeof(nameBuf) && tdRva + 16u + len < data.end && mangled[len] != '\0') {
+            nameBuf[len] = mangled[len];
+            ++len;
+        }
+        const auto it = needed.find(nameBuf);
+        if (it != needed.end()) vtVaToKey[baseAddr + rva + 8u] = it->second;
+    }
+    if (vtVaToKey.empty()) return 0;
+
+    // 2. Scan .data for global pointers pointing to a live heap instance whose first QWORD is that vtable VA.
+    uint32_t resolved = 0;
+    for (uint32_t rva = (data.begin + 7u) & ~7u; rva + 8u <= data.end; rva += 8u) {
+        const uint64_t ptr = *reinterpret_cast<const uint64_t*>(img.base + rva);
+        if (ptr < 0x10000ull || ptr > 0x00007FFFFFFFFFFFull || (ptr & 7ull) != 0) continue;
+        if (ptr >= baseAddr && ptr < baseAddr + img.sizeOfImage) continue;   // skip intra-image pointers
+        uint64_t firstQw = 0;
+        if (!SafeReadU64(static_cast<uintptr_t>(ptr), firstQw)) continue;
+        const auto it = vtVaToKey.find(firstQw);
+        if (it != vtVaToKey.end() && g_table.Get(it->second) == 0) {
+            g_table.entries[it->second] = {"global", "runtime-deferred-rtti", rva};
+            ++resolved;
+        }
+    }
+    return resolved;
+}
+
 }  // namespace raw::rt

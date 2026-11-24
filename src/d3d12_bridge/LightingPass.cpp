@@ -513,7 +513,7 @@ private:
         u.engineWorld[0] = s.waterHeight;
         u.engineWorld[1] = s.camStateId <= 16u ? float(s.camStateId) : -1.0f;
         u.engineWorld[2] = s.hasEngineCell ? 1.0f : 0.0f;
-        u.engineWorld[3] = 0.0f;
+        u.engineWorld[3] = float(std::clamp(t.cameraMode, 0, 5));
         static const float kSensorMm[4] = { 24.0f, 36.0f, 44.0f, 70.0f };
         u.camOptics[0][0] = kSensorMm[std::clamp(t.dofSensor, 0, 3)];
         u.camOptics[0][1] = std::clamp(t.dofFocalMm, 24.0f, 200.0f);

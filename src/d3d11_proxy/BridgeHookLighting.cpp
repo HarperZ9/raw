@@ -228,6 +228,7 @@ void LoadLightingConfig(const std::string& ini)
         t.dofRadius = f("DofRadius", t.dofRadius); t.dofOrbBoost = f("DofOrbBoost", t.dofOrbBoost);
         t.dofSensor = i("DofSensor", t.dofSensor); t.dofFocalMm = f("DofFocalMm", t.dofFocalMm);
         t.dofFStop = f("DofFStop", t.dofFStop); t.dofBokehShape = i("DofBokehShape", t.dofBokehShape);
+        t.cameraMode = i("CameraMode", t.cameraMode);
         t.dofNearScale = f("DofNearScale", t.dofNearScale); t.dofFarScale = f("DofFarScale", t.dofFarScale);
         t.dofNearBleed = f("DofNearBleed", t.dofNearBleed); t.dofFocusSpeed = f("DofFocusSpeed", t.dofFocusSpeed);
         t.weatherLens = i("WeatherLens", t.weatherLens ? 1 : 0) != 0;

@@ -97,6 +97,7 @@ struct LightingTuning
     float dofFocalMm = 50.0f;       // DofFocalMm: lens focal length in mm (24..200)
     float dofFStop = 1.8f;          // DofFStop: lens aperture f-stop (0.95..16.0)
     int   dofBokehShape = 2;        // DofBokehShape: 0=5-Blade, 1=6-Blade, 2=7-Blade, 3=9-Blade, 4=Circle, 5=Anamorphic, 6=Petzval Swirl
+    int   cameraMode = 0;           // CameraMode: 0=Cinema Prime, 1=Tilt-Shift Miniature, 2=ARPG Isometric Diorama, 3=Anamorphic 2.39:1, 4=Petzval Swirl, 5=Vertical Tilt-Rise
     float dofNearScale = 1.0f;      // DofNearScale: near-plane blur multiplier (0..2.5)
     float dofFarScale = 1.35f;      // DofFarScale: far-plane blur multiplier (0..2.5)
     float dofNearBleed = 1.0f;      // DofNearBleed: foreground silhouette bleed/feather (0..2.0)

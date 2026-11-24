@@ -74,8 +74,8 @@ void MaterialOutputs(const Analysis& a, const Regs& r, const PatchOptions& opt, 
     }
     e->push_back(Make(op::Mov, {Out(kSpecularTarget, Z), All(cls)}));
     e->push_back(Make(op::Mov, {Out(kSpecularTarget, W), alpha}));
-    if (a.info.softLight || a.info.envMap) {
-        // the soft-lighting colour, or the environment map's reflection before the light multiplies it (taps)
+    if (a.info.softLight || a.info.envMap || a.info.rmaosMap) {
+        // the soft-lighting colour, the environment map's reflection, or TruePBR RMAOS (R=Rough, G=Metal, B=AO)
         e->push_back(Make(op::Mov, {Out(kEmissiveTarget, XYZ), Rd(r.water)}));
     } else if (a.info.charLight) {
         // The character light, as -(light) - 1/1024 in all three: no emitted light is negative, so the lighting pass
@@ -164,6 +164,8 @@ std::multimap<size_t, Instruction> Taps(const Analysis& a, const Regs& r)
         t.emplace(a.softAfter + 1, Make(op::Mov, {Tmp(r.water, XYZ), Rd(a.softReg, a.softSwz)}));
     if (a.info.envMap)      // nor an environment-mapped one: the register holds the cube's colour times its mask
         t.emplace(a.envAfter + 1, Make(op::Mov, {Tmp(r.water, XYZ), Rd(a.envReg, a.envSwz)}));
+    if (a.info.rmaosMap)    // TruePBR / PGPatcher _rmaos.dds (t5): R=Roughness, G=Metallic, B=AO -> SV_Target6.rgb
+        t.emplace(a.rmaosAfter + 1, Make(op::Mov, {Tmp(r.water, XYZ), Rd(a.rmaosReg, Swz(0, 1, 2, 2))}));
     if (a.info.charLight || a.info.parallaxHeight) {
         t.emplace(a.body, Make(op::Mov, {Tmp(r.charl, XYZW), All(0)}));
         if (a.info.charLight)

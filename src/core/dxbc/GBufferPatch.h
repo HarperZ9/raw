@@ -49,7 +49,7 @@ enum class ShaderKind : uint8_t
 namespace material
 {
 constexpr uint8_t None = 0, Lit = 1, EnvironmentMapped = 2, GlowMapped = 3, Landscape = 4, SoftLit = 5,
-                  Parallax = 6, DistantLod = 7, Effect = 8, Water = 9, Skin = 10, Hair = 11, Eye = 12;
+                  Parallax = 6, DistantLod = 7, Effect = 8, Water = 9, Skin = 10, Hair = 11, Eye = 12, TruePBR = 13;
 constexpr uint8_t FirstPersonFlag = 128;   // added for draws of the first-person model
 }
 
@@ -66,6 +66,7 @@ struct PatchInfo
     bool        charLight = false;      // the actors' fixed-direction fill light (slot 11 scale) goes to the emissive target
     bool        envMap = false;         // environment-mapped: the cube's colour times its mask goes to the emissive target
     bool        parallaxHeight = false; // parallax: the height map (t3 or t8, _p.dds) goes to SV_Target5.g
+    bool        rmaosMap = false;       // TruePBR / PGPatcher: t5 (_rmaos.dds -> R=Roughness, G=Metallic, B=AO) goes to SV_Target6.rgb
     bool        hairTint = false;       // the albedo is multiplied by the hair's tint, lerp(1, tint, vertex colour)
     bool        vertexColour = false;   // the albedo carries the vertex colour the lit result is multiplied by
     bool        normal = false;         // the layer carries a normal

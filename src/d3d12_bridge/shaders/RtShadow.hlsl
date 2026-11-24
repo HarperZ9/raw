@@ -454,11 +454,11 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
     }
     const bool wetGloss = max(rain.wet, rain.puddle) * (1.0f - rain.snow) > 0.2f;   // snow covers the water
-    const bool wantRefl = (reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u);
+    const bool wantRefl = (reflectLength > 0.0f && d < 1.0f && ((base >= 1u && base <= 4u) || base == 13u));
     if (WaveActiveAnyTrue(wantRefl) && wantRefl) {
         const float4 sp = Spec.Load(ip);
-        // SM 6.8/6.9 Wave-Coherent Reflection Gate: skips entire 32-lane matte terrain/snow warps with zero RT divergence!
-        const bool isGlossy = (base == 2u || (sp.y > 0.14f && sp.x > 0.04f) || wetGloss);
+        // Wave-Coherent Reflection Gate: skips entire 32-lane matte terrain/snow warps with zero RT divergence!
+        const bool isGlossy = (base == 2u || base == 13u || (sp.y > 0.14f && sp.x > 0.04f) || wetGloss);
         if (WaveActiveAnyTrue(isGlossy) && isGlossy) {
             const float2 px = float2(id.xy);
             const float3 p = worldAt(px, d);
@@ -469,9 +469,8 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float2 rr0 = stbnR2(px, frameIndex + 37.0f);
             const float3 ng = geometricNormal(px, p, n);
             const float3 o = p + ng * (0.5f + 0.003f * viewZOf(d));
-            // Overdrive 2-spp Stratified Bounded-VNDF Glossy RT Reflections on forged metals & wet surfaces:
-            // halves 1-spp specular variance at source before RtReflFilter temporal denoising!
-            const uint reflSpp = (base == 2u || wetGloss) ? 2u : 1u;
+            // Overdrive 2-spp Stratified Bounded-VNDF Glossy RT Reflections on forged metals, TruePBR & wet surfaces:
+            const uint reflSpp = (base == 2u || base == 13u || wetGloss) ? 2u : 1u;
             float3 reflSum = 0.0f.xxx;
             float reflHitW = 0.0f;
             reflTraced = true;

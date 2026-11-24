@@ -35,6 +35,7 @@ struct Analysis
     size_t    charBefore = kNone;   std::vector<uint32_t> charA, charB;   // the character light: a * b joins the light sum here
     size_t    envAfter = kNone;     uint32_t envReg = 0, envSwz = 0;     // the cube map's colour times its mask (environment-mapped)
     size_t    heightAfter = kNone;  uint32_t heightReg = 0, heightComp = 0; // parallax height map (t3 or t8, _p.dds) -> SV_Target5.g
+    size_t    rmaosAfter = kNone;   uint32_t rmaosReg = 0;                  // TruePBR / PGPatcher RMAOS map (t5, _rmaos.dds) -> SV_Target6.rgb
 };
 
 // Fills the declarations, the kind, the material class and the taps. False

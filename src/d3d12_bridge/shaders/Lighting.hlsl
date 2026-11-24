@@ -940,18 +940,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float glint = pow(saturate(dot(microN, hGl)), 96.0f) * step(0.82f, cHash(gCell + 83.7f));
             spec += dirCol * (glint * sunShadow * saturate(1.0f - z / 1600.0f) * (1.0f - nightDir) * 1.85f);
         }
-        // Rich dual-lobe translucent chlorophyll subsurface scattering + sunlit canopy crown rim + waxy leaf-cuticle sheen (base == 5u).
-        if (!match && base == 5u && sunColour.w > 0.5f) {
-            const float backF = pow(saturate(dot(-s.v, sunDir.xyz)), 2.8f);
-            const float broadF = saturate(dot(-s.v, sunDir.xyz) * 0.5f + 0.5f);
-            const float crownUp = saturate(s.n.z * 0.75f + 0.25f);
-            diff += dirCol * float3(0.54f, 0.98f, 0.30f) * ((backF * 0.44f + broadF * 0.09f) * sunShadow * (1.0f - nightDir * 0.78f));
-            // Direct sunlit crown highlight (breaks up flat 2011 shaded foliage with crisp golden top-canopy direct lighting):
-            diff += dirCol * (crownUp * sunShadow * 0.22f * (1.0f - nightDir * 0.70f));
-            const float3 hLeaf = normalize(s.v + sunDir.xyz);
-            const float leafCuticle = pow(saturate(dot(s.n, hLeaf)), 32.0f) * 0.26f;
-            spec += dirCol * (leafCuticle * sunShadow * (0.30f + 0.70f * crownUp));
-        }
+        // Foliage (base == 5u) single unified energy-conserving backlit transmission runs once at line ~1491
+        // (removed duplicate stacked diff/spec glow lobes that quadruple-counted chlorophyll and made trees glow!).
         // Marschner dual-lobe shifted hair specular (base == 11: primary colorless cuticle band + warm tinted secondary band).
         if (!match && base == 11u && sunShadow > 0.05f) {
             const float3 hHair = normalize(s.v + sunDir.xyz);
@@ -1336,19 +1326,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 keyColA = isExterior ? (sunColour.rgb * sunShadow) : max(amb * 1.4f, 0.08f.xxx);
             lit += min(keyColA * f82 * (dAniso * saturate(dot(nSmooth, keyL)) * 0.065f * metallic * specOcc), 2.2f.xxx);
         }
-        // RAW-STRATA Unified 4-Slab Energy-Conserving Optical Transport (beats UE Substrate with zero fat G-Buffer bloat):
-        // Couples Slab 3 (Charlie wool/fur/frost/moss fuzz) -> Slab 2 (Kulla-Conty clearcoat + Airy thin-film) -> Substrate below!
-        if (!skin && !isEye) {
+        // RAW-STRATA Unified 4-Slab Energy-Conserving Optical Transport (excluded on skin, eyes & foliage; thin-film strictly on metal):
+        if (!skin && !isEye && base != 5u) {
             StrataSlab st;
             st.baseAlbedo = albedo;
             st.roughness = s.alpha;
             st.metallic = metallic;
-            st.coatWeight = max(saturate(wet.wet * 0.85f + wet.puddle * 1.15f), ((base == 2u || isTruePbr) ? (1.0f - metallic) * 0.32f : 0.0f));
-            st.coatRoughness = lerp(0.10f, 0.03f, saturate(wet.puddle));
-            st.thinFilmNm = (base == 2u && metallic > 0.35f) ? 460.0f : (wet.wet > 0.25f ? 380.0f : 0.0f);
-            st.fuzzWeight = (isActorCloth ? 0.65f : (wet.snow > 0.35f ? 0.42f * wet.snow : 0.0f));
-            st.fuzzTint = wet.snow > 0.35f ? float3(0.86f, 0.94f, 1.04f) : lerp(albedo * 1.22f + 0.06f.xxx, 1.0f.xxx, 0.30f);
-            st.fuzzRoughness = wet.snow > 0.35f ? 0.42f : 0.58f;
+            st.coatWeight = max(saturate(wet.wet * 0.75f + wet.puddle * 1.05f), ((base == 2u || isTruePbr) ? (1.0f - metallic) * 0.30f : 0.0f));
+            st.coatRoughness = lerp(0.14f, 0.04f, saturate(wet.puddle));
+            st.thinFilmNm = (base == 2u && metallic > 0.35f) ? 460.0f : 0.0f;
+            st.fuzzWeight = (isActorCloth ? 0.55f : (wet.snow > 0.40f ? 0.28f * wet.snow : 0.0f));
+            st.fuzzTint = wet.snow > 0.40f ? float3(0.88f, 0.94f, 1.00f) : lerp(albedo * 1.15f + 0.04f.xxx, 1.0f.xxx, 0.25f);
+            st.fuzzRoughness = wet.snow > 0.40f ? 0.52f : 0.62f;
             if (st.coatWeight > 0.02f || st.fuzzWeight > 0.02f) {
                 const float3 stKeyDir = (isExterior && sunDir.w > 0.5f) ? sunDir.xyz : normalize(s.v + float3(0.12f, 0.08f, 0.62f));
                 const float3 stKeyCol = isExterior ? (sunColour.rgb * (0.20f + 0.80f * sunShadow) + amb * 0.35f) : max(amb * 1.25f, 0.05f.xxx);
@@ -1356,13 +1345,6 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float3 upperSlab = evalStrataUpperSlabs(st, nSmooth, s.v, stKeyDir, stKeyCol, specOcc, baseTrans);
                 lit = lit * baseTrans + upperSlab;
             }
-        }
-        // Feature 8: Dual-Lobe Thin-Leaf Chlorophyll Subsurface Scattering + Canopy Micro-Dapple (base==5 foliage).
-        if (base == 5u && isExterior && sunDir.w > 0.5f) {
-            const float backLeaf = pow(saturate(dot(-s.v, sunDir.xyz)), 3.2f);
-            const float wrapLeaf = saturate((dot(nSmooth, sunDir.xyz) + 0.45f) / 1.45f);
-            const float3 chloro = lerp(albedo, float3(albedo.r * 0.92f, albedo.g * 1.35f, albedo.b * 0.48f), 0.62f);
-            lit += chloro * sunColour.rgb * ((backLeaf * 0.38f + wrapLeaf * 0.12f) * sunShadow * (1.0f - saturate(clouds.x * 0.72f)));
         }
         const float3 F0mat_unused_marker = F0mat;
         if (rt && (flags.x & FLAG_REFLECT) != 0u && lobe) {
@@ -1489,19 +1471,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float eyeFr = 0.04f + 0.96f * pow(1.0f - nvEye, 5.0f);
             lit += eyeEnv * eyeFr * 1.25f + eyeKeyCol * (glint1 + glint2);
         } else if (base == 5u && isExterior) {
-            // Deep Nordic Vegetation Lighting (pine needles, ferns, shrubs, ivy):
-            // 1) Rich backlit chlorophyll translucency ONLY under direct unclouded sun (no chalky overcast wash)
-            const float back = pow(saturate(dot(-s.v, sunDir.xyz)), 3.8f);
-            const float cloudClear = 1.0f - saturate(clouds.x * 0.82f);
-            lit += albedo * sunColour.rgb * float3(1.06f, 1.20f, 0.52f) * back * sunShadow * cloudClear * 0.42f;
-            // 2) Subtle albedo-tinted rain-wet sheen only when genuinely wet (eliminates pale frosted sky-wash on dry pines)
-            if (wet.wet > 0.15f) {
-                const float nvLeaf = saturate(dot(s.n, s.v));
-                const float wetFr = pow(1.0f - nvLeaf, 4.5f) * (wet.wet - 0.15f) * 0.18f;
-                lit += evalDynamicEnvCube(reflect(-s.v, s.n), 0.18f) * lerp(albedo, 1.0f.xxx, 0.35f) * (wetFr * (0.3f + 0.7f * skyVis));
-            }
-            // 3) Rich Nordic evergreen canopy depth (prevents glancing pine cards from reading pale/chalky)
-            lit *= lerp(float3(0.74f, 0.82f, 0.70f), 1.0f.xxx, saturate(skyVis * 0.85f + sunShadow * 0.25f));
+            // Single Unified Energy-Conserving Thin-Leaf Foliage Model (zero quadruple-counted chlorophyll glow!):
+            const float back = pow(saturate(dot(-s.v, sunDir.xyz)), 4.0f);
+            const float cloudClear = 1.0f - saturate(clouds.x * 0.85f);
+            const float dayGate = smoothstep(0.02f, 0.12f, astroSunElev());
+            lit += albedo * sunColour.rgb * float3(0.95f, 1.12f, 0.48f) * (back * sunShadow * cloudClear * dayGate * 0.24f);
+            // Rich Nordic evergreen canopy depth (grounds dense pine interiors without chalky wash):
+            lit *= lerp(float3(0.72f, 0.80f, 0.68f), 1.0f.xxx, saturate(skyVis * 0.85f + sunShadow * 0.25f));
         }
         // Grazing micro-Fresnel environmental wrap so vanilla surfaces gain physical material separation.
         const float nvWrap = saturate(dot(s.n, s.v));

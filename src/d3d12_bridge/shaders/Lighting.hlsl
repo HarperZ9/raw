@@ -1060,15 +1060,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const int ch = int(lightColS[li].w);
             if (ch >= 0 && ch <= 3) { sh = m4[ch]; }   // interiors without sun shadows use channel 0 too
             float3 c = lightColS[li].rgb * att;
-            // Rich 2200K-2600K blackbody firelight spectrum (hearths, torches, candles, braziers, forges):
-            // Strong dramatic hearth/candle pools indoors (1.68x) so taverns, dungeons & halls have true RDR2 chiaroscuro!
+            // Rich natural 2400K-2700K warm firelight (hearths, torches, candles, braziers):
+            // Soft peak clamp (1.45) prevents close-range torches from blowing out walls, players & roads into neon yellow!
             if (!match && lightColS[li].r > lightColS[li].b * 1.25f) {
                 const bool isIntLight = (sunColour.w < 0.5f);
-                const float3 fireBoost = skin ? float3(1.16f, 0.94f, 0.78f)
-                                              : (isIntLight ? float3(1.68f, 1.02f, 0.46f) : float3(1.52f, 0.88f, 0.42f));
+                const float3 fireBoost = skin ? float3(1.04f, 0.92f, 0.82f)
+                                              : (isIntLight ? float3(1.16f, 0.86f, 0.56f) : float3(1.12f, 0.84f, 0.54f));
                 c *= fireBoost;
             } else if (!match && sunColour.w < 0.5f) {
-                c *= 1.35f;
+                c *= 1.08f;
+            }
+            if (!match) {
+                const float cPeak = max(c.r, max(c.g, c.b));
+                if (cPeak > 1.35f) { c *= (1.35f + (cPeak - 1.35f) / (1.0f + (cPeak - 1.35f) * 1.25f)) / cPeak; }
             }
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;
             // When hardware RT is active, bypass vanilla's flickering 4-channel shadow-mask swaps completely:
@@ -1522,10 +1526,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             lit += mieCol * saturate(distMie * 0.65f);
         }
     }
-    // True Linear HDR output in native DX12 mode (!match): removes Skyrim's 2011 knee3() soft-knee crush that was
-    // flattening all sunlit highlights, firelight & specular punch before BloomPass and Tonemap.hlsl (AgX / ACES 2.0)!
-    // Soft high-ceiling safety clamp only at >16.0 HDR luminance so Bloom & AgX/ACES 2.0 receive full physical dynamic range.
-    const float3 finalLitRaw = match ? knee3(lit) : min(max(lit, 0.0f.xxx), 16.0f.xxx);
+    // Clean Physical HDR Shoulder in native DX12 mode (!match): preserves full 1:1 linear HDR punch up to 1.20
+    // then rolls off smoothly up to ~2.85 so ice caves, snowbanks & close-range torches NEVER blow out into white/yellow neon,
+    // while BloomPass (threshold 1.65) and Tonemap.hlsl (AgX / ACES 2.0) keep crisp dynamic range!
+    const float litPeak = max(lit.r, max(lit.g, lit.b));
+    const float3 hdrLit = (litPeak > 1.20f)
+        ? lit * ((1.20f + (litPeak - 1.20f) / (1.0f + (litPeak - 1.20f) * 0.62f)) / litPeak)
+        : max(lit, 0.0f.xxx);
+    const float3 finalLitRaw = match ? knee3(lit) : hdrLit;
     // Preserve genuinely chromatic emissive tavern windows, lanterns, braziers, and magic runes
     // while strictly excluding achromatic white/blue snowfields & glaciers (fixes glowing Dawnstar snow/ice patches).
     const float gLuma = dot(game.rgb, float3(0.2126f, 0.7152f, 0.0722f));

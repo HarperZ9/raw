@@ -541,16 +541,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 nSmooth = s.n;
     const bool isActorFeat = (base >= 10u && base <= 12u);   // skin, hair, eye
     const bool isActorCloth = (!isActorFeat && base != 2u && base != 5u && SoftMap.Load(ip).r < 0.0f);   // skinned actor clothing
-    // GTA VI / RDR2-grade dynamic rain-wetness sheen on characters (skin, armor, cloth) outdoors:
-    // soaked cloth darkens realistically while rain-slicked skin & forged steel catch crisp sky/torch highlights!
+    // Physically grounded rain-wetness on characters (roughness 0.38..0.48 avoids polygonal specular facets along low-poly mesh edges!):
     if (!match && sunColour.w > 0.5f && weather.w > 0.08f && (isActorFeat || isActorCloth || base == 2u) && z < 2600.0f) {
-        const float actorWet = saturate(weather.w * 1.15f) * saturate(s.n.z * 0.65f + 0.45f) * (1.0f - weather.z * 0.75f);
+        const float actorWet = saturate(weather.w * 1.15f) * saturate(s.n.z * 0.50f + 0.50f) * (1.0f - weather.z * 0.75f);
         if (isActorCloth) {
-            albedo *= lerp(1.0f, 0.74f, actorWet * 0.75f);
-            s.alpha = lerp(s.alpha, 0.28f, actorWet * 0.65f);
+            albedo *= lerp(1.0f, 0.80f, actorWet * 0.65f);
+            s.alpha = lerp(s.alpha, 0.48f, actorWet * 0.50f);
         } else {
-            s.alpha = lerp(s.alpha, 0.16f, actorWet * 0.72f);
-            s.f0 = lerp(s.f0, 0.042f, actorWet * 0.55f);
+            s.alpha = lerp(s.alpha, 0.38f, actorWet * 0.50f);
+            s.f0 = lerp(s.f0, 0.036f, actorWet * 0.40f);
         }
     }
     // Organic world-space anti-tiling & natural slope curvature on terrain (class 4) and cliffs/rocks (class 1, excluding actor cloth).

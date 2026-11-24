@@ -18,6 +18,7 @@ bool RunMipGeneration(SceneCtx& c, Image& out);
 bool RunOcclusionQuery(SceneCtx& c, Image& out);
 bool RunGbufferFrame(SceneCtx& c, Image& out);
 bool RunVolumesCubesArrays(SceneCtx& c, Image& out);
+bool RunGpuCbCopy(SceneCtx& c, Image& out);
 
 const std::vector<Scene>& AllScenes()
 {
@@ -38,6 +39,7 @@ const std::vector<Scene>& AllScenes()
         {"occlusion_query", RunOcclusionQuery, 1},
         {"gbuffer_frame", RunGbufferFrame, 2},
         {"volumes_cubes_arrays", RunVolumesCubesArrays, 2},
+        {"gpu_cb_copy", RunGpuCbCopy, 1},
     };
     return scenes;
 }

@@ -31,6 +31,7 @@ add_library(tx_scenes STATIC
     scenes/volumes_cubes_arrays_res.cpp
     scenes/volumes_cubes_arrays_shaders.cpp
     scenes/volumes_cubes_arrays_passes.cpp
+    scenes/gpu_cb_copy.cpp
 )
 target_include_directories(tx_scenes PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(tx_scenes PUBLIC d3d11 d3dcompiler dxguid)

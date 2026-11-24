@@ -1557,5 +1557,33 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         return q.x < 0.5f ? float4(isExterior ? sunShadow : skyVis, skyVis, bounceL, game.a)
                           : float4(heat, game.a);
     }
+    if (flags.w == 22u) {
+        // View 22: Radiometric Bloom-Threshold & Energy-Conservation Audit:
+        // Green = safe diffuse (0..1.20), Amber = HDR shoulder (1.20..1.48), Red = active Bloom trigger (>1.48), Magenta = NaN/Inf/neg!
+        const bool bad = any(isnan(finalLit)) || any(isinf(finalLit)) || any(finalLit < -1.0e-4f);
+        const float pk = max(finalLit.r, max(finalLit.g, finalLit.b));
+        const float3 col22 = bad ? float3(1.0f, 0.0f, 1.0f)
+                           : pk > 1.48f ? float3(1.0f, 0.12f, 0.08f)
+                           : pk > 1.20f ? float3(1.0f, 0.72f, 0.10f)
+                           : float3(0.10f, saturate(pk / 1.20f) * 0.85f + 0.10f, 0.18f);
+        return float4(col22, game.a);
+    }
+    if (flags.w == 23u) {
+        // View 23: WorldField Toroidal PDE & Snow/Wetness Continuity Audit (R=wave height, G=wet/foam, B=snowpack depth):
+        const float2 simUv = frac((p.xy + camPosW.xy) / 2048.0f);
+        const float4 wf = WorldField.SampleLevel(Lin, simUv, 0.0f);
+        return float4(saturate(abs(wf.r) * 4.0f), saturate(wf.b), saturate(wf.a), game.a);
+    }
+    if (flags.w == 24u) {
+        // View 24: 4-Quadrant Pipeline Continuity Split (TL: RtVis | TR: RtBounce GI | BL: RtRefl | BR: EnvCube IBL):
+        const float2 q = float2(px) / max(dims.xy, float2(1.0f, 1.0f));
+        if (abs(q.x - 0.5f) < 0.0012f || abs(q.y - 0.5f) < 0.0018f) { return float4(1.0f, 1.0f, 1.0f, game.a); }
+        if (q.y < 0.5f) {
+            return q.x < 0.5f ? float4(rv.x, rv.y, rv.z, game.a)
+                              : float4(saturate(bounce * 3.0f), game.a);
+        }
+        return q.x < 0.5f ? float4(saturate(RtRefl.Load(ip).rgb), game.a)
+                          : float4(saturate(sampleLiveEnvCube(reflect(-s.v, s.n), 0.12f)), game.a);
+    }
     return float4(finalLit, game.a);
 }

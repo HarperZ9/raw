@@ -280,11 +280,10 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float v3 = visible(o, jitterDir(sunDir.xyz, effCone, r3), tMinS, sunLength);
             vis.x = (v0 + v1 + v2 + v3) * 0.25f;
         }
-        // arXiv:2602.08642 Overdrive Adaptive Path-Tracing Ray Allocation (3..4 spp):
-        // Interiors, foliage silhouettes & high-curvature corners receive 4 stratified cosine GI rays;
-        // open surfaces receive 3 stratified rays + smooth near-contact distance AO!
-        const bool isInterior = sunDir.w <= 0.5f;
-        const float aoLen = isInterior ? (skyLength > 0.0f ? min(skyLength, 240.0f) : 200.0f) : skyLength;
+        // Pure Hardware DXR 3D Contact RTAO & Multi-Bounce GI (ZERO screen-space GTAO!):
+        // Use sunColour.w <= 0.5f for true interior detection (sunDir.w stays 1.0 in many Skyrim interiors!).
+        const bool isInterior = (sunColour.w <= 0.5f);
+        const float aoLen = isInterior ? (skyLength > 0.0f ? min(skyLength, 220.0f) : 180.0f) : skyLength;
         if (aoLen > 0.0f) {
             const float2 rs0 = stbnR2(px, frameIndex + 11.0f);
             const float edgeDetail = 1.0f - saturate(dot(n, ng));
@@ -301,14 +300,12 @@ void main(uint3 id : SV_DispatchThreadID) {
                     Hit h;
                     if (traceHit(o, sd, aoLen, h)) {
                         float3 hn;
-                        // Smooth distance-weighted contact AO in both interiors and near exterior crevices:
-                        sSample = isInterior ? saturate(h.t / aoLen) : saturate((h.t - 8.0f) / max(min(aoLen, 260.0f), 32.0f)) * 0.35f;
+                        // True 3D Hardware DXR near-field contact occlusion (grounds bottles, rocks, furniture & feet with zero SSAO halos!):
+                        sSample = isInterior ? pow(saturate(h.t / aoLen), 1.35f)
+                                             : saturate(h.t / 110.0f) * 0.42f;
                         bSample = radianceAt(h, o, sd, rs.yx, true, hn);
                         if (si == 0u && doCache2) {
-                            float3 cTmp;
-                            if (!onScreen(o + sd * h.t, cTmp)) {
-                                cacheFromHit(o + sd * h.t, hn, frac(rs * 1.618f + 0.31f), isInterior);
-                            }
+                            cacheFromHit(o + sd * h.t, hn, frac(rs * 1.618f + 0.31f), isInterior);
                         }
                     }
                 }
@@ -486,8 +483,8 @@ void main(uint3 id : SV_DispatchThreadID) {
                 float3 c = 0.0f.xxx, hn = float3(0.0f, 0.0f, 1.0f);
                 if (traceHit(o, rd, reflectLength, h)) {
                     const float3 hitP = o + rd * h.t;
-                    if (onScreen(hitP, c)) { reflSum += c; reflHitW += 1.0f; }
-                    else if ((giFlags & GI_MATERIALS) != 0u) {
+                    // Pure 3D Hardware DXR World-Space Glossy Reflections (ZERO screen-space onScreen() SSR popping!):
+                    if ((giFlags & GI_MATERIALS) != 0u) {
                         float3 offRad = radianceAt(h, o, rd, rr, true, hn);
                         if ((giFlags & GI_CACHE) != 0u) {
                             float3 cB = 0.0f.xxx; float cS = 0.0f;

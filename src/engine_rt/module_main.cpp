@@ -122,13 +122,30 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
         Log("startup settings: %zu applied", raw::rt::ApplyStartupSettings(g_img, g_refs, ini, g_out + "\\engine_rt.log"));
         if (const int atlas = IniInt("ShadowAtlas", 4096); atlas > 0)
             Log("%s", raw::rt::ResizeShadowAtlas(g_img, g_refs, uint32_t(atlas)).c_str());
-        // Pre-TES::Init startup-only TerrainManager & 2026 Dense Flora/Shadowed Trees sizing (never hot-mutated mid-session).
-        raw::rt::SetSetting(g_img, g_refs, "fSplitDistanceMult:TerrainManager", "1.50");
-        raw::rt::SetSetting(g_img, g_refs, "fBlockLevel0Distance:TerrainManager", "60000.0");
-        raw::rt::SetSetting(g_img, g_refs, "fBlockLevel1Distance:TerrainManager", "110000.0");
-        raw::rt::SetSetting(g_img, g_refs, "fTreeLoadDistance:Display", "125000.0");
+        // Pre-TES::Init Engine-Level Full-Detail Mesh, 3D Skinned Trees, Zero-Pop-In LOD & Dense Flora Overhaul:
+        // Directly mutates Skyrim SE's live Setting singletons before TES::Init (never hot-mutated mid-session).
+        raw::rt::SetSetting(g_img, g_refs, "fSplitDistanceMult:TerrainManager", "1.75");
+        raw::rt::SetSetting(g_img, g_refs, "fBlockLevel0Distance:TerrainManager", "75000.0");
+        raw::rt::SetSetting(g_img, g_refs, "fBlockLevel1Distance:TerrainManager", "140000.0");
+        raw::rt::SetSetting(g_img, g_refs, "fBlockMaximumDistance:TerrainManager", "250000.0");
+        raw::rt::SetSetting(g_img, g_refs, "fTreeLoadDistance:TerrainManager", "150000.0");
+        raw::rt::SetSetting(g_img, g_refs, "bKeepLowDetailTerrain:TerrainManager", "0");
+        raw::rt::SetSetting(g_img, g_refs, "bForceFullDetail:Trees", "1");
+        raw::rt::SetSetting(g_img, g_refs, "bRenderSkinnedTrees:Trees", "1");
+        raw::rt::SetSetting(g_img, g_refs, "uiMaxSkinnedTreesToRender:Trees", "256");
         raw::rt::SetSetting(g_img, g_refs, "bTreesReceiveShadows:Display", "1");
         raw::rt::SetSetting(g_img, g_refs, "bDrawLandShadows:Display", "1");
+        raw::rt::SetSetting(g_img, g_refs, "bActorSelfShadowing:Display", "1");
+        raw::rt::SetSetting(g_img, g_refs, "bLandSpecular:Landscape", "1");
+        raw::rt::SetSetting(g_img, g_refs, "uLargeRefLODGridSize:General", "11");
+        raw::rt::SetSetting(g_img, g_refs, "fDistanceMultiplier:LOD", "1.80");
+        raw::rt::SetSetting(g_img, g_refs, "fLODBoundRadiusMult:LOD", "1.60");
+        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutMultObjects:LOD", "30.0");
+        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutMultItems:LOD", "20.0");
+        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutMultActors:LOD", "25.0");
+        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutObjectMultComplex:LOD", "2.0");
+        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutObjectMultCity:LOD", "2.0");
+        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutObjectMultInterior:LOD", "2.0");
         raw::rt::SetSetting(g_img, g_refs, "iMinGrassSize:Grass", "24");
         raw::rt::SetSetting(g_img, g_refs, "iMaxGrassTypesPerTexure:Grass", "15");
         raw::rt::SetSetting(g_img, g_refs, "fGrassStartFadeDistance:Grass", "14000.0");

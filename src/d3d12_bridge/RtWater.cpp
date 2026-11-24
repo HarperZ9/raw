@@ -250,24 +250,28 @@ bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* dep
 bool RtScene::ReloadWater(const std::vector<uint8_t>& water, const std::vector<uint8_t>& sss, std::string& err)
 {
     if (!m_waterPso || !m_sssPso) { err = "the water pass is not running"; return false; }
-    D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
-    pd.pRootSignature = m_root.Get();
-    pd.CS = {water.data(), water.size()};
-    pd.Flags = D3D12_PIPELINE_STATE_FLAGS(m_psoFlags);
     ComPtr<ID3D12PipelineState> w, s;
-    if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&w)))) { err = "the device refused the reloaded RtWater.hlsl"; return false; }
-    D3D12_COMPUTE_PIPELINE_STATE_DESC sd{};
-    sd.pRootSignature = m_sssRoot.Get();
-    sd.CS = {sss.data(), sss.size()};
-    if (FAILED(m_dev->CreateComputePipelineState(&sd, IID_PPV_ARGS(&s)))) { err = "the device refused the reloaded Sss.hlsl"; return false; }
+    if (!water.empty()) {
+        D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
+        pd.pRootSignature = m_root.Get();
+        pd.CS = {water.data(), water.size()};
+        pd.Flags = D3D12_PIPELINE_STATE_FLAGS(m_psoFlags);
+        if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&w)))) { err = "the device refused the reloaded RtWater.hlsl"; return false; }
+    }
+    if (!sss.empty()) {
+        D3D12_COMPUTE_PIPELINE_STATE_DESC sd{};
+        sd.pRootSignature = m_sssRoot.Get();
+        sd.CS = {sss.data(), sss.size()};
+        if (FAILED(m_dev->CreateComputePipelineState(&sd, IID_PPV_ARGS(&s)))) { err = "the device refused the reloaded Sss.hlsl"; return false; }
+    }
     if (m_wFence->GetCompletedValue() < m_wFenceValue) {   // the lists in flight still use the old pipelines
         HANDLE e = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         m_wFence->SetEventOnCompletion(m_wFenceValue, e);
         WaitForSingleObject(e, 2000);
         CloseHandle(e);
     }
-    m_waterPso = w;
-    m_sssPso = s;
+    if (w) m_waterPso = w;
+    if (s) m_sssPso = s;
     return true;
 }
 

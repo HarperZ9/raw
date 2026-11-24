@@ -426,14 +426,19 @@ public:
         if (!m_dev) { err = "no device"; return false; }
         const auto dxil = [](const std::vector<uint8_t>& b) { return ShaderCode{ShaderFormat::Dxil, b.data(), b.size()}; };
         RasterPipelineDesc d;
-        d.vertex = dxil(vs);
+        d.vertex = vs.empty() ? ShaderCode{ShaderFormat::Dxil, kDxil_light_vs, sizeof kDxil_light_vs} : dxil(vs);
         d.targets[0] = TextureFormat::RGBA16Float;
-        d.label = "lighting (reloaded)"; d.fragment = dxil(fs); d.layout = kLightLayout;
-        RasterPipelineHandle light = m_dev->createRasterPipeline(d, err);
-        if (!light.valid()) return false;
-        d.label = "lighting fog (reloaded)"; d.fragment = dxil(fogFs); d.layout = kFogLayout;
-        RasterPipelineHandle fog = m_dev->createRasterPipeline(d, err);
-        if (!fog.valid()) return false;
+        RasterPipelineHandle light = m_lightPipe, fog = m_fogPipe;
+        if (!fs.empty()) {
+            d.label = "lighting (reloaded)"; d.fragment = dxil(fs); d.layout = kLightLayout;
+            light = m_dev->createRasterPipeline(d, err);
+            if (!light.valid()) return false;
+        }
+        if (!fogFs.empty()) {
+            d.label = "lighting fog (reloaded)"; d.fragment = dxil(fogFs); d.layout = kFogLayout;
+            fog = m_dev->createRasterPipeline(d, err);
+            if (!fog.valid()) return false;
+        }
         auto trySwap = [&](const std::vector<uint8_t>& bc, const char* lbl, std::span<const RasterBinding> lay, RasterPipelineHandle& dst) -> bool {
             if (bc.empty()) return true;
             d.label = lbl; d.fragment = dxil(bc); d.layout = lay;

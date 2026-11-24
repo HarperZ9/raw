@@ -99,6 +99,8 @@ bool D3D12Bridge::ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, 
             slCam.pos[0] = m->lighting.posAdjust[0];
             slCam.pos[1] = m->lighting.posAdjust[1];
             slCam.pos[2] = m->lighting.posAdjust[2];
+            slCam.jitterNdc[0] = m->lighting.jitterNdc[0];
+            slCam.jitterNdc[1] = m->lighting.jitterNdc[1];
         }
         slPreRan = StreamlineHost::Get().Evaluate(m->queue.Get(), m->waterIn.res12.Get(), m->waterOut.res12.Get(),
                                                   m->depthIn.res12.Get(), m->motionIn.res12.Get(),
@@ -139,6 +141,8 @@ bool D3D12Bridge::ExecuteWater(ID3D11Resource* sceneHdr, ID3D11Resource* layer, 
             slCam.pos[0] = m->lighting.posAdjust[0];
             slCam.pos[1] = m->lighting.posAdjust[1];
             slCam.pos[2] = m->lighting.posAdjust[2];
+            slCam.jitterNdc[0] = m->lighting.jitterNdc[0];
+            slCam.jitterNdc[1] = m->lighting.jitterNdc[1];
         }
         if (StreamlineHost::Get().Evaluate(m->queue.Get(), src12, dst12, m->depthIn.res12.Get(),
                                            m->motionIn.res12.Get(),

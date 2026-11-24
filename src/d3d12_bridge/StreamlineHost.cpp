@@ -379,7 +379,10 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
     if (a.getNewFrameToken(tok, &frameIdx) != sl::Result::eOk || !tok) return false;
 
     sl::Constants c{};
-    c.jitterOffset = {0.0f, 0.0f};
+    c.jitterOffset = {
+        cam.jitterNdc[0] * float(width) * 0.5f,
+        -cam.jitterNdc[1] * float(height) * 0.5f
+    };
     c.mvecScale = {1.0f, 1.0f};
     c.cameraAspectRatio = cam.valid && cam.aspect > 0.1f ? cam.aspect : (height ? float(width) / float(height) : 16.0f / 9.0f);
     c.cameraNear = cam.valid && cam.nearZ > 0.1f ? cam.nearZ : 15.0f;

@@ -63,6 +63,7 @@ struct SceneLighting
     bool  hasCamera = false;
     float clipToWorld[4][4] = {};
     float worldToClip[4][4] = {};   // matrix 2, jittered like the depth buffer
+    float jitterNdc[2] = {0.0f, 0.0f};   // exact per-frame sub-pixel TAA projection jitter in NDC (from b12 viewToClip)
     float worldToView[4][4] = {};
     float viewToWorld[4][4] = {};
     float resolutionScale[2] = {1, 1};

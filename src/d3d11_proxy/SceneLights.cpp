@@ -182,6 +182,9 @@ void Camera(SceneLighting& f, const float* m)
     std::memcpy(f.viewToWorld, m + 7 * 16, 64);
     std::memcpy(f.clipToWorld, m + 8 * 16, 64);
     std::memcpy(f.worldToClip, m + 2 * 16, 64);
+    // Extract Skyrim SE's exact per-frame sub-pixel projection jitter from viewToClip (matrix 1, col 2 rows 0/1):
+    f.jitterNdc[0] = (std::fabs(m[16 + 2]) < 0.02f) ? m[16 + 2] : 0.0f;
+    f.jitterNdc[1] = (std::fabs(m[16 + 6]) < 0.02f) ? m[16 + 6] : 0.0f;
     f.resolutionScale[0] = m[44 * 4] > 0 ? m[44 * 4] : 1.0f;
     f.resolutionScale[1] = m[44 * 4 + 1] > 0 ? m[44 * 4 + 1] : 1.0f;
     std::memcpy(f.posAdjust, m + 40 * 4, 16);

@@ -20,6 +20,8 @@
 #include <filesystem>
 #include <future>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace SB::Proxy
 {
@@ -32,7 +34,7 @@ struct Compiled {
     raw::bridge::CompileResult vs, fs, fog, rt, sky, water, sss;
     raw::bridge::CompileResult clouds, volumetric, bloomPre, bloomDown, bloomUp, bloomComp, reflFilter, rawlss5;
     raw::bridge::CompileResult dofFocus, dofCoc, dofGather, dofPost, dofComp;
-    bool hasRt = false, hasWater = false;
+    bool hasLight = false, hasFog = false, hasRt = false, hasSky = false, hasWater = false, hasSss = false;
     bool hasClouds = false, hasVol = false, hasBloom = false, hasReflFilt = false, hasRawlss5 = false, hasDof = false;
     Clock::time_point seen;
 };
@@ -43,6 +45,7 @@ struct State
     std::string ini;
     std::wstring dir, dxc;
     fs::file_time_type shaderTime{}, iniTime{};
+    std::unordered_map<std::wstring, fs::file_time_type> fileTimes;
     std::future<Compiled> job;
     uint64_t presents = 0;
     uint32_t reloads = 0, failures = 0, paramReloads = 0;
@@ -51,13 +54,17 @@ struct State
 };
 State& S() { static State s; return s; }
 
-fs::file_time_type Newest(const std::wstring& dir)
+fs::file_time_type Newest(const std::wstring& dir, std::unordered_map<std::wstring, fs::file_time_type>* times = nullptr)
 {
     fs::file_time_type t{};
     std::error_code ec;
     for (const auto& e : fs::directory_iterator(dir, ec)) {
         const auto x = e.path().extension().wstring();
-        if (x == L".hlsl" || x == L".hlsli") t = std::max(t, e.last_write_time(ec));
+        if (x == L".hlsl" || x == L".hlsli") {
+            const auto wt = e.last_write_time(ec);
+            t = std::max(t, wt);
+            if (times) (*times)[e.path().filename().wstring()] = wt;
+        }
     }
     return t;
 }
@@ -76,46 +83,51 @@ void Status()
     fclose(f);
 }
 
-void Start(State& s)
+void Start(State& s, std::unordered_set<std::wstring> changed, bool allShaders)
 {
     const std::wstring dir = s.dir, dxc = s.dxc;
     const Clock::time_point seen = Clock::now();
-    s.job = std::async(std::launch::async, [dir, dxc, seen] {
+    s.job = std::async(std::launch::async, [dir, dxc, seen, changed = std::move(changed), allShaders] {
         Compiled c;
         c.seen = seen;
+        auto want = [&](const wchar_t* name) {
+            std::error_code ec;
+            return (allShaders || changed.count(name) > 0) && fs::exists(dir + L"\\" + name, ec);
+        };
         auto comp = [&](const std::wstring& file, const wchar_t* entry, const wchar_t* sm66) {
             return raw::bridge::CompileHlsl(file, entry, sm66, dxc);
         };
-        c.vs = comp(dir + L"\\Lighting.hlsl", L"vs", L"vs_6_6");
-        c.fs = comp(dir + L"\\Lighting.hlsl", L"fs", L"ps_6_6");
-        c.fog = comp(dir + L"\\LightFog.hlsl", L"fs", L"ps_6_6");
-        std::error_code ec;
-        c.hasRt = fs::exists(dir + L"\\RtShadow.hlsl", ec) && fs::exists(dir + L"\\RtSkyFilter.hlsl", ec);
-        if (c.hasRt) {
-            c.rt = comp(dir + L"\\RtShadow.hlsl", L"main", L"cs_6_6");
-            c.sky = comp(dir + L"\\RtSkyFilter.hlsl", L"main", L"cs_6_6");
+        c.hasLight = want(L"Lighting.hlsl");
+        if (c.hasLight) {
+            c.vs = comp(dir + L"\\Lighting.hlsl", L"vs", L"vs_6_6");
+            c.fs = comp(dir + L"\\Lighting.hlsl", L"fs", L"ps_6_6");
         }
-        c.hasWater = c.hasRt && fs::exists(dir + L"\\RtWater.hlsl", ec) && fs::exists(dir + L"\\Sss.hlsl", ec);
-        if (c.hasWater) {
-            c.water = comp(dir + L"\\RtWater.hlsl", L"water", L"cs_6_6");
-            c.sss = comp(dir + L"\\Sss.hlsl", L"main", L"cs_6_6");
-        }
-        c.hasClouds = fs::exists(dir + L"\\Clouds.hlsl", ec);
+        c.hasFog = want(L"LightFog.hlsl");
+        if (c.hasFog) c.fog = comp(dir + L"\\LightFog.hlsl", L"fs", L"ps_6_6");
+        c.hasRt = want(L"RtShadow.hlsl");
+        if (c.hasRt) c.rt = comp(dir + L"\\RtShadow.hlsl", L"main", L"cs_6_6");
+        c.hasSky = want(L"RtSkyFilter.hlsl");
+        if (c.hasSky) c.sky = comp(dir + L"\\RtSkyFilter.hlsl", L"main", L"cs_6_6");
+        c.hasWater = want(L"RtWater.hlsl");
+        if (c.hasWater) c.water = comp(dir + L"\\RtWater.hlsl", L"water", L"cs_6_6");
+        c.hasSss = want(L"Sss.hlsl");
+        if (c.hasSss) c.sss = comp(dir + L"\\Sss.hlsl", L"main", L"cs_6_6");
+        c.hasClouds = want(L"Clouds.hlsl");
         if (c.hasClouds) c.clouds = comp(dir + L"\\Clouds.hlsl", L"fs", L"ps_6_6");
-        c.hasVol = fs::exists(dir + L"\\VolumetricPass.hlsl", ec);
+        c.hasVol = want(L"VolumetricPass.hlsl");
         if (c.hasVol) c.volumetric = comp(dir + L"\\VolumetricPass.hlsl", L"fs", L"ps_6_6");
-        c.hasBloom = fs::exists(dir + L"\\BloomPass.hlsl", ec);
+        c.hasBloom = want(L"BloomPass.hlsl");
         if (c.hasBloom) {
             c.bloomPre  = comp(dir + L"\\BloomPass.hlsl", L"prefilter", L"ps_6_6");
             c.bloomDown = comp(dir + L"\\BloomPass.hlsl", L"down",      L"ps_6_6");
             c.bloomUp   = comp(dir + L"\\BloomPass.hlsl", L"up",        L"ps_6_6");
             c.bloomComp = comp(dir + L"\\BloomPass.hlsl", L"composite", L"ps_6_6");
         }
-        c.hasReflFilt = fs::exists(dir + L"\\RtReflFilter.hlsl", ec);
+        c.hasReflFilt = want(L"RtReflFilter.hlsl");
         if (c.hasReflFilt) c.reflFilter = comp(dir + L"\\RtReflFilter.hlsl", L"fs", L"ps_6_6");
-        c.hasRawlss5 = fs::exists(dir + L"\\Rawlss5Pass.hlsl", ec);
+        c.hasRawlss5 = want(L"Rawlss5Pass.hlsl");
         if (c.hasRawlss5) c.rawlss5 = comp(dir + L"\\Rawlss5Pass.hlsl", L"rawlss5_fs", L"ps_6_6");
-        c.hasDof = fs::exists(dir + L"\\DofPass.hlsl", ec);
+        c.hasDof = want(L"DofPass.hlsl");
         if (c.hasDof) {
             c.dofFocus  = comp(dir + L"\\DofPass.hlsl", L"dof_focus",  L"ps_6_6");
             c.dofCoc    = comp(dir + L"\\DofPass.hlsl", L"dof_coc",    L"ps_6_6");
@@ -136,9 +148,9 @@ void Finish(State& s)
         const std::string e = r.errors.empty() ? std::string("compile failed\n") : r.errors;
         if (err.find(e) == std::string::npos) err += e;
     };
-    checkRes(c.vs, true); checkRes(c.fs, true); checkRes(c.fog, true);
-    checkRes(c.rt, c.hasRt); checkRes(c.sky, c.hasRt);
-    checkRes(c.water, c.hasWater); checkRes(c.sss, c.hasWater);
+    checkRes(c.vs, c.hasLight); checkRes(c.fs, c.hasLight); checkRes(c.fog, c.hasFog);
+    checkRes(c.rt, c.hasRt); checkRes(c.sky, c.hasSky);
+    checkRes(c.water, c.hasWater); checkRes(c.sss, c.hasSss);
     checkRes(c.clouds, c.hasClouds); checkRes(c.volumetric, c.hasVol);
     checkRes(c.bloomPre, c.hasBloom); checkRes(c.bloomDown, c.hasBloom);
     checkRes(c.bloomUp, c.hasBloom); checkRes(c.bloomComp, c.hasBloom);
@@ -155,15 +167,17 @@ void Finish(State& s)
         if (c.hasRawlss5)  ex.rawlss5 = c.rawlss5.dxil;
         if (c.hasDof)      { ex.dofFocus = c.dofFocus.dxil; ex.dofCoc = c.dofCoc.dxil; ex.dofGather = c.dofGather.dxil; ex.dofPost = c.dofPost.dxil; ex.dofComp = c.dofComp.dxil; }
         raw::bridge::D3D12Bridge* b = hook::Bridge();
-        ok = b && b->Ready() && raw::bridge::LightingPassReload(b->ActivePass(), c.vs.dxil, c.fs.dxil, c.fog.dxil, err, &ex);
-        if (!ok && err.empty()) err = "the bridge is not running the lighting pass";
-        // The ray-tracing shaders reload with them when the scene runs (RtShadows on raw::tx).
+        const bool anyRaster = c.hasLight || c.hasFog || c.hasClouds || c.hasVol || c.hasBloom || c.hasReflFilt || c.hasRawlss5 || c.hasDof;
+        if (anyRaster) {
+            ok = b && b->Ready() && raw::bridge::LightingPassReload(b->ActivePass(), c.vs.dxil, c.fs.dxil, c.fog.dxil, err, &ex);
+            if (!ok && err.empty()) err = "the bridge is not running the lighting pass";
+        }
         std::string rtErr;
-        if (ok && c.hasRt && !b->ReloadRt(c.rt.dxil, c.sky.dxil, rtErr) && rtErr.find("no ray-tracing") == std::string::npos) {
+        if (ok && (c.hasRt || c.hasSky) && !b->ReloadRt(c.rt.dxil, c.sky.dxil, rtErr) && rtErr.find("no ray-tracing") == std::string::npos) {
             ok = false;
             err = rtErr;
         }
-        if (ok && c.hasWater && !b->ReloadWater(c.water.dxil, c.sss.dxil, rtErr) && rtErr.find("no ray-tracing") == std::string::npos) {
+        if (ok && (c.hasWater || c.hasSss) && !b->ReloadWater(c.water.dxil, c.sss.dxil, rtErr) && rtErr.find("no ray-tracing") == std::string::npos) {
             ok = false;
             err = rtErr;
         }
@@ -197,7 +211,7 @@ void HotReload_LoadConfig(const std::string& ini)
     s.dxc = w;
     std::error_code ec;
     if (s.enabled) {
-        s.shaderTime = s.dir.empty() ? fs::file_time_type{} : Newest(s.dir);
+        s.shaderTime = s.dir.empty() ? fs::file_time_type{} : Newest(s.dir, &s.fileTimes);
         s.iniTime = fs::last_write_time(ini, ec);
         if (!s.dir.empty()) Tonemap_SetSource(s.dir + L"\\Tonemap.hlsl");   // RAW's tone map reloads from the same folder
         Log("[HotReload] watching %ls and the ini", s.dir.empty() ? L"(no shader folder)" : s.dir.c_str());
@@ -222,10 +236,21 @@ void HotReload_OnPresent()
         Status();
     }
     if (s.dir.empty() || s.job.valid()) return;
-    const auto t = Newest(s.dir);
+    std::unordered_map<std::wstring, fs::file_time_type> nowTimes;
+    const auto t = Newest(s.dir, &nowTimes);
     if (t != s.shaderTime) {
         s.shaderTime = t;
-        Start(s);
+        std::unordered_set<std::wstring> changed;
+        bool headerChanged = false;
+        for (const auto& [name, wt] : nowTimes) {
+            auto prev = s.fileTimes.find(name);
+            if (prev == s.fileTimes.end() || prev->second != wt) {
+                changed.insert(name);
+                if (name.size() > 6 && name.compare(name.size() - 6, 6, L".hlsli") == 0) headerChanged = true;
+            }
+        }
+        s.fileTimes = std::move(nowTimes);
+        Start(s, std::move(changed), headerChanged || changed.empty());
     }
 }
 

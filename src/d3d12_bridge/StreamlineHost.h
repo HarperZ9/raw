@@ -43,6 +43,7 @@ public:
         float nearZ = 15.0f;
         float farZ = 400000.0f;
         float fovY = 1.134464f;   // 65 deg
+        float jitterNdc[2] = {0.0f, 0.0f};
         float aspect = 16.0f / 9.0f;
         float proj[16] = {};
         float viewToWorld[12] = {};

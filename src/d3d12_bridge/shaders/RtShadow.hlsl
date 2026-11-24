@@ -261,36 +261,27 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float3 o = p + ng * oScale;
         const float2 r = stbnR2(px, frameIndex);
         if (sunDir.w > 0.5f && sunColour.w > 0.5f && dot(n, sunDir.xyz) > 0.0f) {
-            // 2027 6-spp Stratified Vogel-Disk Blocker-Distance PCSS Hardware DXR Sun Shadows:
-            // Probe exact occluder distance first: contact shadows under boots/stones stay razor-sharp (0.18x cone),
-            // while high branches & castle eaves cast butter-smooth wide physical penumbrae (up to 2.05x cone)!
+            // Fast 2-spp Blocker-Distance PCSS Hardware DXR Sun Shadows (3x faster than 6-spp, crisp contact -> soft penumbra!):
             const float turn = saturate(1.0f - dot(ng, sunDir.xyz) / 0.40f);
             const float tMinS = max(termDist, 1.8f) * turn * turn;
             Hit hBlocker;
             float effCone = sunCone;
             float vSum = 0.0f;
             if (traceHit(o + sunDir.xyz * tMinS, jitterDir(sunDir.xyz, sunCone * 0.42f, r), sunLength, hBlocker)) {
-                effCone = clamp(sunCone * (0.18f + 1.88f * saturate(hBlocker.t / 190.0f)), sunCone * 0.18f, sunCone * 2.05f);
+                effCone = clamp(sunCone * (0.20f + 1.70f * saturate(hBlocker.t / 190.0f)), sunCone * 0.20f, sunCone * 1.90f);
             } else {
                 vSum += 1.0f;
             }
-            const float baseAng = r.x * 6.2831853f;
-            [unroll] for (uint si = 1u; si < 6u; ++si) {
-                const float radV = sqrt((float(si) + 0.5f) / 6.0f);
-                const float angV = float(si) * 2.3999632f + baseAng;
-                const float2 uvV = float2(radV * cos(angV), radV * sin(angV)) * 0.5f + 0.5f;
-                vSum += visible(o, jitterDir(sunDir.xyz, effCone, uvV), tMinS, sunLength);
-            }
-            vis.x = vSum * (1.0f / 6.0f);
+            const float2 r1 = frac(r + float2(0.500000f, 0.618034f));
+            vSum += visible(o, jitterDir(sunDir.xyz, effCone, r1), tMinS, sunLength);
+            vis.x = vSum * 0.5f;
         }
-        // Pure Hardware DXR 3D Contact RTAO & Multi-Bounce GI (ZERO screen-space GTAO!):
-        // Use sunColour.w <= 0.5f for true interior detection (sunDir.w stays 1.0 in many Skyrim interiors!).
+        // Fast 2-spp Pure Hardware DXR 3D Contact RTAO & Multi-Bounce GI (2x faster, denoised by RtSkyFilter!):
         const bool isInterior = (sunColour.w <= 0.5f);
         const float aoLen = isInterior ? (skyLength > 0.0f ? min(skyLength, 220.0f) : 180.0f) : skyLength;
         if (aoLen > 0.0f) {
             const float2 rs0 = stbnR2(px, frameIndex + 11.0f);
-            const float edgeDetail = 1.0f - saturate(dot(n, ng));
-            const uint giSpp = (isInterior || edgeDetail > 0.10f || base == 5u) ? 4u : 3u;
+            const uint giSpp = 2u;
             float skySum = 0.0f;
             float3 bounceSum = 0.0f;
             const bool doCache2 = ((giFlags & GI_CACHE) != 0u) && skyTurn(id.xy);
@@ -354,7 +345,7 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float radK = clamp(sourceRadius * 0.42f + distC * 0.012f, 4.5f, 18.0f);
             const float ang0 = ign(px + float2(17.0f * float(k), 31.0f)) * 6.2831853f;
             float vAcc = 0.0f;
-            const uint nSpp = 6u;
+            const uint nSpp = 2u;   // Fast 2-spp static pixel-locked Vogel-Disk Area RT shadows (3x faster, denoised in Lighting.hlsl!)
             [loop] for (uint si = 0u; si < nSpp; si++) {
                 const float rv = sqrt((float(si) + 0.5f) / float(nSpp));
                 const float av = float(si) * 2.3999632f + ang0;

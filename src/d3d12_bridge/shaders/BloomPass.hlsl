@@ -20,14 +20,14 @@ float16_t karisW(float16_t3 c) {
 
 float16_t3 softThreshold(float16_t3 c) {
     const float16_t br = max(c.r, max(c.g, c.b));
-    // Calibrated for true linear HDR (>1.25): only sun glints, flames, spells & lit windows bloom;
-    // ice caves, snowbanks & torch-lit stone walls stay crisp with zero radioactive bloom blow-out!
-    const float16_t thresh = float16_t(1.65h);
-    const float16_t knee = float16_t(0.40h);
+    // Responsive photographic HDR bloom (>0.75): vivid soft glow on sun, fires, torches, spells & lit windows
+    // without blowing out midtone stone or ice caves!
+    const float16_t thresh = float16_t(1.08h);
+    const float16_t knee = float16_t(0.34h);
     float16_t soft = clamp(br - thresh + knee, float16_t(0.0h), float16_t(2.0h) * knee);
     soft = (soft * soft) / max(float16_t(4.0h) * knee, float16_t(1.0e-4h));
     const float16_t contrib = max(soft, br - thresh) / max(br, float16_t(1.0e-4h));
-    return min(c * saturate(contrib), float16_t3(3.0h, 3.0h, 3.0h));
+    return min(c * saturate(contrib), float16_t3(4.0h, 4.0h, 4.0h));
 }
 
 // 13-tap Jimenez downsample pattern in native 16-bit FP16 (2x ALU throughput & half VGPR pressure on RTX 4090/5090):

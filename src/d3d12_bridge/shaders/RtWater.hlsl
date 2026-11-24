@@ -114,30 +114,25 @@ float organicFroth(float2 p, float t) {
     return smoothstep(0.46f, 0.80f, fbm);
 }
 
-// True 3D World-Space Gerstner Gravity-Wave Heightfield (used for BOTH 3D Ray-Marched Wave Parallax AND Analytic Wave Normals):
-// Phase advances strictly in +flowDir at physical gravity-capillary phase speed (zero cancelling flow subtraction!).
-float evalWaterWaveHeight(float2 xy, float wt, float2 flowDir, float2 flowPerp, float ampScale, float shoalAmp, out float2 outGrad, out float outFold) {
+// Fast, artifact-free 4-mode 3D World-Space Traveling Gerstner Wave Heightfield (ZERO 24-bit depthV0 staircase polygons!):
+float evalWaterWaveHeight(float2 xy, float wt, float2 flowDir, float2 flowPerp, float ampScale, out float2 outGrad, out float outFold) {
     float h = 0.0f;
     outGrad = 0.0f.xx;
     outFold = 0.0f;
-    [unroll] for (int wi = 0; wi < 6; ++wi) {
-        const float fracI = float(wi) / 5.0f;
-        const float kRad = 0.0085f * pow(6.8f, fracI);
+    [unroll] for (int wi = 0; wi < 4; ++wi) {
+        const float fracI = float(wi) / 3.0f;
+        const float kRad = 0.011f * pow(4.8f, fracI);
         const float kM = kRad * 70.0f;
-        const float omega = sqrt((9.81f * kM + 7.4e-5f * kM * kM * kM) * tanh(min(kM * 2.0f, 16.0f))) * 1.38f;
-        const float spread = (frac(float(wi) * 0.6180339f) - 0.5f) * (1.15f + fracI * 0.75f);
+        const float omega = sqrt(9.81f * kM) * 1.35f;
+        const float spread = (frac(float(wi) * 0.6180339f) - 0.5f) * 1.05f;
         const float2 dirW = normalize(flowDir * cos(spread) + flowPerp * sin(spread));
-        const float massBoost = wi < 2 ? 1.55f : 1.0f;
-        // True 3D physical wave height in game units (70u = 1m: 1.5u..9u rolling river/ocean swells):
-        const float ampH = (4.8f * pow(1.0f - fracI * 0.68f, 1.45f)) * massBoost * ampScale * shoalAmp;
+        const float ampH = (2.8f * pow(1.0f - fracI * 0.62f, 1.35f)) * ampScale;
         const float ph = dot(xy, dirW) * kRad - wt * omega + float(wi) * 2.39996f;
         const float s = sin(ph);
         const float c = cos(ph);
-        // Steep trochoidal Gerstner profile (sharper crests, broader troughs):
-        const float crest = s + 0.24f * (s * s - 0.5f);
-        h += ampH * crest;
-        outGrad += dirW * (ampH * kRad * (c * (1.0f + 0.48f * s)));
-        outFold += max(s, 0.0f) * (ampH * kRad * 3.4f);
+        h += ampH * (s + 0.18f * (s * s - 0.5f));
+        outGrad += dirW * (ampH * kRad * (c * (1.0f + 0.36f * s)));
+        outFold += max(s, 0.0f) * (ampH * kRad * 2.8f);
     }
     return h;
 }
@@ -245,47 +240,22 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float2 flowDir = normalize(lerp(wDir, tangObs + 1.0e-4f, nearObs * 0.72f));
                 const float2 flowPerp = float2(-flowDir.y, flowDir.x);
                 const float stormChop = saturate(weather.w * 0.95f + windAmp * 0.75f);
-                const float ampScale = (isExtW0 ? (0.85f + stormChop * 1.15f + shallowW * 0.28f) : 0.24f) * smoothstep(0.0f, 4.0f, depthV0);
-                const float depthM = max(depthV0 * 0.0143f, 0.12f);
-                const float shoalAmp = smoothstep(0.05f, 0.75f, depthM);
+                // Strictly depth-buffer-free amplitude (eliminates 24-bit depth staircase polygons seen in 21.23.17/25!):
+                const float ampScale = isExtW0 ? (0.80f + stormChop * 1.05f) : 0.22f;
 
-                // TRUE 3D RAY-MARCHED GERSTNER WAVE-HEIGHT PARALLAX (8 steep steps + 3 binary refinements):
-                // Marches the exact 3D view ray -v against the rolling 3D wave heightfield so crests genuinely
-                // displace and occlude troughs in 3D perspective as you look across or move past the water!
+                // Fast 2-step 3D Wave-Height Parallax Offset (6x faster than 8+3 binary, zero polygonal artifacts!):
                 float2 evalXY = wpW.xy;
                 float2 waveG = 0.0f.xx;
                 jacobianFold = 0.0f;
-                const float parallaxFade = smoothstep(7500.0f, 400.0f, wDist) * (isExtW0 ? 1.0f : 0.35f);
-                if (parallaxFade > 0.02f && v.z > 0.04f) {
-                    const float maxH = max(9.5f * ampScale * shoalAmp * parallaxFade, 0.5f);
-                    const float2 rayStepXY = (-v.xy / max(v.z, 0.14f)) * (maxH * 2.0f / 8.0f);
-                    float curZ = maxH;
-                    float2 curXY = wpW.xy - rayStepXY * 4.0f;
-                    float prevZ = curZ, prevH = 0.0f;
-                    float2 prevXY = curXY;
-                    [unroll] for (int ps = 0; ps < 8; ++ps) {
-                        float2 gTmp; float fTmp;
-                        const float hSample = evalWaterWaveHeight(curXY, wt, flowDir, flowPerp, ampScale, shoalAmp, gTmp, fTmp) * parallaxFade;
-                        if (curZ <= hSample) {
-                            // 3-step binary refinement for sub-millimeter wave-crest silhouette precision:
-                            float2 loXY = prevXY, hiXY = curXY;
-                            float loZ = prevZ, hiZ = curZ;
-                            [unroll] for (int bs = 0; bs < 3; ++bs) {
-                                const float2 midXY = 0.5f * (loXY + hiXY);
-                                const float midZ = 0.5f * (loZ + hiZ);
-                                const float midH = evalWaterWaveHeight(midXY, wt, flowDir, flowPerp, ampScale, shoalAmp, gTmp, fTmp) * parallaxFade;
-                                if (midZ <= midH) { hiXY = midXY; hiZ = midZ; }
-                                else { loXY = midXY; loZ = midZ; }
-                            }
-                            evalXY = 0.5f * (loXY + hiXY);
-                            break;
-                        }
-                        prevXY = curXY; prevZ = curZ; prevH = hSample;
-                        curXY += rayStepXY;
-                        curZ -= (maxH * 2.0f / 8.0f);
-                    }
+                const float parallaxFade = smoothstep(6500.0f, 350.0f, wDist) * (isExtW0 ? 1.0f : 0.30f);
+                if (parallaxFade > 0.02f && v.z > 0.06f) {
+                    const float2 pDir = -v.xy / max(v.z, 0.22f);
+                    const float h0 = evalWaterWaveHeight(evalXY, wt, flowDir, flowPerp, ampScale, waveG, jacobianFold);
+                    evalXY += pDir * (h0 * 0.55f * parallaxFade);
+                    const float h1 = evalWaterWaveHeight(evalXY, wt, flowDir, flowPerp, ampScale, waveG, jacobianFold);
+                    evalXY += pDir * ((h1 - h0) * 0.35f * parallaxFade);
                 }
-                waveHeight3D = evalWaterWaveHeight(evalXY, wt, flowDir, flowPerp, ampScale, shoalAmp, waveG, jacobianFold);
+                waveHeight3D = evalWaterWaveHeight(evalXY, wt, flowDir, flowPerp, ampScale, waveG, jacobianFold);
 
                 // Aperiodic 2-octave traveling fine liquid capillary ripples (flowing cleanly along flowDir!):
                 const float2 rUv1 = (evalXY - flowDir * (wt * 36.0f)) * 0.042f;

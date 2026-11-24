@@ -544,6 +544,7 @@ private:
         // Continuously evolves barometric pressure, cloud cover, jet-stream wind shear, humidity mist, passing rain/snow
         // fronts, and storm lightning organically over time & world altitude (replacing reliance on static vanilla weathers
         // while still honoring manual weather overrides!).
+        u.camPos[3] = float(double(GetTickCount64() % 3600000ull) / 1000.0);   // seconds (set BEFORE wtSim weather engine!)
         const float wtSim = u.camPos[3];
         const float spatialPhase = s.posAdjust[0] * 0.000018f + s.posAdjust[1] * 0.000013f;
         const float baroWave = std::sin(wtSim * 0.0037f + spatialPhase) * 0.52f
@@ -553,8 +554,9 @@ private:
         const float altCold = std::clamp((s.posAdjust[2] - 1800.0f) / 3800.0f, 0.0f, 1.0f);
         const float procRain = (!interior && t.mode == 2) ? std::clamp((stormFront - 0.52f) * 2.1f, 0.0f, 1.0f) * (1.0f - altCold * 0.85f) : 0.0f;
         const float procSnow = (!interior && t.mode == 2) ? std::clamp((stormFront - 0.46f) * 1.9f, 0.0f, 1.0f) * altCold : 0.0f;
-        const float effRain  = std::fmax(t.rain, procRain * 0.85f);
-        const float effSnow  = std::fmax(t.snow, procSnow * 0.85f);
+        const float skyStorm = (!interior && t.weatherCloud > 0.72f) ? std::clamp((t.weatherCloud - 0.72f) * 3.2f, 0.0f, 1.0f) : 0.0f;
+        const float effRain  = std::clamp(std::fmax(t.rain, std::fmax(procRain * 0.85f, skyStorm * (1.0f - altCold) * 0.75f)), 0.0f, 1.0f);
+        const float effSnow  = std::clamp(std::fmax(t.snow, std::fmax(procSnow * 0.85f, skyStorm * altCold * 0.75f)), 0.0f, 1.0f);
         const float effWet   = std::fmax(t.wetness, std::clamp(effRain * 1.15f + stormFront * 0.22f, 0.0f, 1.0f));
         const float effPud   = std::fmax(t.puddles, std::clamp((effRain - 0.15f) * 0.95f, 0.0f, 0.85f));
         u.weather[0] = t.mode == 2 ? effWet : 0.0f;

@@ -581,7 +581,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         return float4(lit.rgb * T + atmoCol * (1.0f.xxx - T) + scatter * saturate(T + 0.20f) * pdeMistBoost + precipAdd, lit.a);
     }
     // Dungeons, Caves, Nordic Tombs, Dwemer Ruins, Blackreach & Interiors (sunColour.w < 0.5):
-    // Controlled world-space subterranean depth mist (prevents blinding cyan-white haze in Septimus Signus & ice caves).
+    // Controlled world-space subterranean depth mist + True 3D World-Space Rising Blackbody Fire Embers around interior hearths/firepits/braziers!
     if (sunColour.w < 0.5f && (flags.x & FLAG_FOG) != 0u) {
         const float3 wpInt = camPosW.xyz + eye + w * min(dist * 0.5f, 3200.0f);
         const float caveNoise = 0.76f + 0.48f * cNoise(wpInt * 0.00048f + float3(0.0f, 0.0f, camPosW.w * 0.015f));
@@ -590,7 +590,33 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 cellAmb = max(float3(ambient[0].w, ambient[1].w, ambient[2].w), float3(0.010f, 0.012f, 0.015f));
         const float ambL = dot(cellAmb, float3(0.2126f, 0.7152f, 0.0722f));
         const float3 caveMist = min(lerp(ambL.xxx, cellAmb, 0.45f) * 0.35f, 0.065f.xxx);
-        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.42f, lit.a);
+        float3 intEmberAdd = 0.0f;
+        if (flags.y > 0u) {
+            const uint nEmberI = min(flags.y, 16u);
+            [loop] for (uint ei = 0u; ei < nEmberI; ++ei) {
+                const float3 lcE = lightColS[ei].rgb;
+                const float rE = lightPosR[ei].w;
+                if (lcE.r <= lcE.b * 1.28f || lcE.r < 0.14f || rE < 95.0f) { continue; }
+                const float3 lRel = lightPosR[ei].xyz;
+                const float tClosest = dot(lRel - eye, w);
+                if (tClosest <= 28.0f || tClosest >= dist || tClosest > 1400.0f) { continue; }
+                const float3 ptRay = eye + w * tClosest;
+                const float3 offL = ptRay - lRel;
+                if (offL.z < -25.0f || offL.z > 165.0f || dot(offL.xy, offL.xy) > 7200.0f) { continue; }
+                const float hNorm = saturate((offL.z + 25.0f) / 190.0f);
+                const float3 wpE = camPosW.xyz + ptRay;
+                const float3 eGrid = float3((wpE.xy + float2(sin(camPosW.w * 2.1f + wpE.z * 0.085f), cos(camPosW.w * 1.8f + wpE.z * 0.075f)) * 7.0f) * 0.145f,
+                                            wpE.z * 0.092f - camPosW.w * 1.55f);
+                const float eHash = cHash(floor(eGrid));
+                if (eHash > 0.940f) {
+                    const float dSpark = length(frac(eGrid) - 0.5f);
+                    const float spark = smoothstep(0.940f, 0.998f, eHash) * exp(-dSpark * dSpark * 40.0f) * (1.0f - hNorm) * smoothstep(0.0f, 0.10f, hNorm);
+                    const float3 bbCol = lerp(float3(2.10f, 0.96f, 0.26f), float3(1.25f, 0.20f, 0.03f), hNorm);
+                    intEmberAdd += bbCol * (spark * (1.0f - smoothstep(900.0f, 1400.0f, tClosest)) * 0.95f);
+                }
+            }
+        }
+        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.42f + intEmberAdd, lit.a);
     }
     const float T = (flags.x & FLAG_FOG_REPLACES) != 0u ? exp(-sigma * tEnd) : 1.0f;
     return float4(lit.rgb * T + scatter, lit.a);

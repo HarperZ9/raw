@@ -154,6 +154,21 @@ void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT start
     SceneSkin_NoteMainView(real);   // the main view, from the frame's first rigid lit draw
     uint8_t alpha = geom::AlphaKindOf(geom::BoundPs(real));
     if (!alpha) alpha = BlendAlpha(real);
+    // Exclude non-depth-writing alpha-blended ground decals (ant trails, blood/dirt/snow/scorch decals):
+    // flat decals float 1 cm above terrain/stumps and must never enter the DXR TLAS as square shadow casters!
+    if (alpha == raw::bridge::RtAlphaBlend) {
+        ID3D11DepthStencilState* ds = nullptr;
+        UINT sr = 0;
+        real->OMGetDepthStencilState(&ds, &sr);
+        bool writesDepth = true;
+        if (ds) {
+            D3D11_DEPTH_STENCIL_DESC dsd{};
+            ds->GetDesc(&dsd);
+            ds->Release();
+            writesDepth = (dsd.DepthWriteMask == D3D11_DEPTH_WRITE_MASK_ALL);
+        }
+        if (!writesDepth) return;
+    }
     if (!alpha && follows) { alpha = raw::bridge::RtAlphaDiscard; ++g_n.alphaFollowed; }   // its prepass tested the alpha
     if (alpha && !g_alphaOn) { ++g_n.alphaOff; return; }
     if (!bound) { ++g_n.noLayout; return; }

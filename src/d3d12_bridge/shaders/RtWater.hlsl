@@ -142,18 +142,19 @@ float3 waterSky(float3 rd) {
     float3 uSun, uSkyZ, uSkyH, uAmbUp, uAmbDn;
     evalWorldAtmosphere(uSun, uSkyZ, uSkyH, uAmbUp, uAmbDn);
     const float hUp = saturate(rd.z);
-    const float3 base = skyAt(rd);
-    // Lock water sky reflection directly to the unified world atmosphere (zenith -> horizon) so water seamlessly
-    // mirrors the exact sky dome, mountain aerial perspective, and weather mood with zero color mismatch:
-    float3 skyCol = lerp(uSkyH, uSkyZ, pow(hUp, 0.62f));
-    skyCol = lerp(skyCol, base, 0.28f);
-    // Drifting volumetric cloud-deck reflection matched to unified cloud sun + sky colors:
-    if (clouds.x > 0.08f && rd.z > 0.03f) {
-        const float2 cUv = (camPosW.xy + rd.xy * (34000.0f / max(rd.z, 0.08f)) + cloudWind.xy * camPosW.w * 0.55f) * 0.000018f;
-        const float cn = sin(cUv.x * 3.1f + sin(cUv.y * 2.7f)) * cos(cUv.y * 3.7f - cos(cUv.x * 2.3f)) * 0.5f + 0.5f;
-        const float cov = smoothstep(1.0f - saturate(clouds.x * 0.95f), 1.0f, cn) * smoothstep(0.03f, 0.22f, rd.z);
-        const float3 cloudLit = lerp(uSkyH * 0.90f, max(uSun, uSkyH) * 0.95f, 0.45f);
-        skyCol = lerp(skyCol, cloudLit, cov * 0.50f);
+    const float aElevW = astroSunElev();
+    const float nightW = smoothstep(0.03f, -0.07f, aElevW);
+    const float overcastW = saturate(clouds.x * 0.85f - 0.12f + weather.w * 0.45f + weather.z * 0.42f);
+    // Exact 1:1 radiometric scale (0.76x daytime) matching LightFog.hlsl sky dome & mountain aerial perspective:
+    float3 skyCol = lerp(uSkyH, uSkyZ, pow(hUp, 0.62f)) * lerp(0.76f, 1.0f, nightW);
+    // Organic 2-octave drifting cloud-deck reflection matched to Clouds.hlsl wind & slate-silver overcast base:
+    if (clouds.x > 0.08f && rd.z > 0.02f) {
+        const float2 cUv = (camPosW.xy + rd.xy * (42000.0f / max(rd.z, 0.06f)) + cloudWind.xy * camPosW.w * 0.65f) * 0.000028f;
+        const float cn = vNoise2D(cUv * 1.4f) * 0.65f + vNoise2D(cUv * 3.1f + 7.3f) * 0.35f;
+        const float cov = smoothstep(lerp(0.66f, 0.28f, saturate(clouds.x)), 0.92f, cn) * smoothstep(0.02f, 0.18f, rd.z);
+        const float3 overcastBase = float3(0.32f, 0.37f, 0.44f) * lerp(1.0f, 0.18f, nightW);
+        const float3 cloudLit = lerp(lerp(uSkyH * 0.68f, max(uSun, uSkyH) * 0.72f, 0.42f), overcastBase, overcastW * 0.70f);
+        skyCol = lerp(skyCol, cloudLit, cov * 0.58f);
     }
     return skyCol;
 }
@@ -248,9 +249,9 @@ void water(uint3 id : SV_DispatchThreadID) {
                 eddyLee = saturate(-intoObs) * nearObs * 0.35f;
                 const float2 flowDir = wDir;
                 const float2 flowPerp = float2(-flowDir.y, flowDir.x);
-                const float stormChop = saturate(weather.w * 0.95f + windAmp * 0.75f);
-                // Strictly depth-buffer-free amplitude (eliminates 24-bit depth staircase polygons seen in 21.23.17/25!):
-                const float ampScale = isExtW0 ? (0.80f + stormChop * 1.05f) : 0.22f;
+                // Beaufort wind-coupled sea-state amplitude (calm alpine mirror -> stormy Sea of Ghosts swells):
+                const float stormChop = saturate(weather.w * 0.95f + windAmp * 0.85f + saturate(clouds.x - 0.55f) * 0.45f);
+                const float ampScale = isExtW0 ? (0.68f + stormChop * 1.25f) : 0.20f;
 
                 // Fast 2-step 3D Wave-Height Parallax Offset (6x faster than 8+3 binary, zero polygonal artifacts!):
                 float2 evalXY = wpW.xy;

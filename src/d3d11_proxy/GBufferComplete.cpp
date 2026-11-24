@@ -88,14 +88,27 @@ Span Classify(State& s, ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetVie
     for (UINT k = 0; k < n; ++k) v[k] = Describe(rtvs[k]);
     const View depth = Describe(dsv);
     const UINT w = v[0].width, h = v[0].height;
-    auto full = [&](UINT k, DXGI_FORMAT f) { return v[k].format == f && v[k].width == w && v[k].height == h; };
-    if (n == 4 && full(0, DXGI_FORMAT_R16G16B16A16_FLOAT) && full(1, DXGI_FORMAT_R16G16_FLOAT) &&
-        full(2, DXGI_FORMAT_R8G8B8A8_UNORM) && full(3, DXGI_FORMAT_R8G8_UNORM)) {
+    auto full = [&](UINT k, DXGI_FORMAT f) { return k < n && v[k].format == f && v[k].width == w && v[k].height == h; };
+    // Universal opaque G-Buffer detection across ALL SkyrimPrefs.ini configurations (TAA=0/1, Snow=0/1, SAO=0/1):
+    //   n=4 (TAA+Snow): [0]=RGBA16F, [1]=RG16F, [2]=RGBA8 (normals), [3]=R8G8 (mask)
+    //   n=3 (TAA only): [0]=RGBA16F, [1]=RG16F, [2]=RGBA8 (normals)
+    //   n=3 (Snow only): [0]=RGBA16F, [1]=RGBA8 (normals), [2]=R8G8 (mask)
+    //   n=2 (minimal):  [0]=RGBA16F, [1]=RGBA8 (normals)
+    int motionIdx = -1, normalIdx = -1;
+    if (n >= 2 && full(0, DXGI_FORMAT_R16G16B16A16_FLOAT)) {
+        if (n >= 3 && full(1, DXGI_FORMAT_R16G16_FLOAT) && full(2, DXGI_FORMAT_R8G8B8A8_UNORM) &&
+            (n == 3 || full(3, DXGI_FORMAT_R8G8_UNORM))) {
+            motionIdx = 1; normalIdx = 2;
+        } else if (full(1, DXGI_FORMAT_R8G8B8A8_UNORM) && (n == 2 || full(2, DXGI_FORMAT_R8G8_UNORM))) {
+            normalIdx = 1;
+        }
+    }
+    if (normalIdx >= 0) {
         if (!EnsureTargets(s, real, w, h)) return Span::None;
-        s.sceneHdr = v[0].res; s.motion = v[1].res; s.normal = v[2].res; s.mainDepth = depth.res;
-        if (s.normalRtv != rtvs[2]) {
+        s.sceneHdr = v[0].res; s.motion = motionIdx >= 0 ? v[motionIdx].res : nullptr; s.normal = v[normalIdx].res; s.mainDepth = depth.res;
+        if (s.normalRtv != rtvs[normalIdx]) {
             if (s.normalRtv) s.normalRtv->Release();
-            s.normalRtv = rtvs[2];
+            s.normalRtv = rtvs[normalIdx];
             s.normalRtv->AddRef();
         }
         if (!s.opaqueSeen) { ClearTargets(s, real); s.opaqueSeen = true; }
@@ -143,7 +156,7 @@ bool GBuffer_OnTargets(ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetView
     }
     ++s.spans[static_cast<int>(s.span)];
     for (UINT k = 0; k < 8; ++k) out[k] = nullptr;
-    const UINT own = s.span == Span::Opaque ? 4u : s.span == Span::Blended ? 3u : s.span == Span::FirstPerson ? 2u : 1u;
+    const UINT own = s.span == Span::Opaque ? (n < 4u ? n : 4u) : s.span == Span::Blended ? 3u : s.span == Span::FirstPerson ? 2u : 1u;
     for (UINT k = 0; k < own; ++k) out[k] = rtvs[k];
     if (s.span == Span::Opaque || s.span == Span::FirstPerson) {
         if (s.span == Span::FirstPerson) out[2] = s.normalRtv;

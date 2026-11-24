@@ -52,9 +52,12 @@ float2 cloudCurl2D(float2 p, float t) {
 // Nubis Evolved (Schneider 2022, SKY-02) True 3D Volumetric Cumulus Field with Ekman-Spiral Altitude Shear
 // & Curl-Turbulence Fluid Marbling: clouds billow, shear downwind at anvil tops, marble & metamorphose organically.
 float cloudDensityVol(float3 pa, bool detail) {
+    // Exact 3D spherical planetary shell altitude matching CloudCommon.hlsli::cloudSpan (R = 3,600,000):
+    // wraps clouds organically all the way down to the horizon with ZERO ceiling slice or horizon cutoff!
+    const float R = 3600000.0f;
     const float2 dxy = pa.xy - camPosW.xy;
-    const float curvedZ = pa.z + dot(dxy, dxy) * 1.15e-8f;
-    const float h = (curvedZ - clouds.y) / clouds.z;
+    const float alt = length(float3(dxy.x, dxy.y, R + pa.z)) - R;
+    const float h = (alt - clouds.y) / clouds.z;
     if (h <= 0.0f || h >= 1.0f) { return 0.0f; }
     // Altitude-layered Ekman wind advection (base moves slower, upper turrets & anvils veer & shear faster!).
     const float2 wLayer = ekmanWind(h * 0.55f);
@@ -63,41 +66,37 @@ float cloudDensityVol(float3 pa, bool detail) {
     const float cover = saturate(clouds.x);
     const float stormType = saturate(weather.w * 1.4f + max(cover - 0.78f, 0.0f) * 2.5f);
 
-    // 2D continental weather map + slow convective metamorphosis wave (curl-marbled on detail pass to save ~1.4 ms GPU time!):
+    // 2D continental weather map + slow convective metamorphosis wave:
     const float tMorph = camPosW.w * 0.0032f;
-    const float2 wUv = sheared.xy / 62000.0f;
+    const float2 wUv = sheared.xy / 54000.0f;
     const float2 curlW = detail ? (cloudCurl2D(wUv * 1.35f, tMorph * 0.65f) * 0.28f) : 0.0f.xx;
     const float wCov = cNoise(float3(wUv + curlW, 1.3f + tMorph)) * 0.62f
                      + cNoise(float3((wUv - curlW * 0.6f) * 2.35f + 7.1f, 3.7f - tMorph * 0.8f)) * 0.38f;
     const float wHeight = saturate(cNoise(float3(wUv * 1.45f + 19.3f + curlW * 0.5f, 5.1f + tMorph * 0.5f)) * 0.70f + stormType * 0.45f);
     const float topCap = lerp(0.42f, 0.96f, wHeight);
     // Crisp flat cumulus condensation base (0..0.08) + rounded vertical cauliflower dome tapering to topCap.
-    const float baseGrad = smoothstep(0.0f, 0.09f, h);
-    const float topGrad  = 1.0f - smoothstep(topCap * 0.48f, topCap, h);
+    const float baseGrad = smoothstep(0.0f, 0.08f, h);
+    const float topGrad  = 1.0f - smoothstep(topCap * 0.45f, topCap, h);
     const float anvilSpread = stormType * smoothstep(0.68f, 0.88f, h) * (1.0f - smoothstep(0.88f, 0.99f, h)) * 0.18f;
     const float hGrad = saturate(baseGrad * topGrad + anvilSpread);
     if (hGrad <= 0.001f) { return 0.0f; }
 
-    // Schneider & Vos (SIGGRAPH 2015 / RDR2 / Horizon Zero Dawn) 64^3 Periodic 3D Perlin-Worley Volumetric Cumulus:
-    // Uses our hardware-trilinear CloudNoise 3D volume LUT (R=Perlin-Worley base, GBA=3-octave Worley cauliflower domes!)
-    // for 10x sharper sculptural 3D clouds with billowing crowns & zero blurry cNoise lattice blobs!
+    // Sculptural 64^3 Periodic 3D Perlin-Worley Cumulus (tighter 42k towers + crisp 6.8k cauliflower billow erosion):
     const float tEvo = camPosW.w * 0.0045f;
-    const float3 baseUvw = float3(sheared.x / 68000.0f, sheared.y / 68000.0f, (curvedZ - clouds.y) / 48000.0f - tEvo * 0.14f);
+    const float3 baseUvw = float3(sheared.x / 42000.0f, sheared.y / 42000.0f, (alt - clouds.y) / 36000.0f - tEvo * 0.14f);
     const float4 vol0 = sampleCloudVol(baseUvw);
     const float lowWorley = vol0.g * 0.625f + vol0.b * 0.25f + vol0.a * 0.125f;
-    const float baseShape = cRemap(vol0.r, -(1.0f - lowWorley) * 0.48f, 1.0f, 0.0f, 1.0f);
-    const float localCov = saturate(cover * lerp(0.45f, 1.25f, smoothstep(0.22f, 0.78f, wCov)));
-    // Keep overcast skies richly sculpted with dramatic 3D breaks & shadowed bellies (never a flat solid beige wall!):
-    const float thresh = lerp(0.58f, lerp(0.38f, 0.32f, stormType), localCov);
-    float dens = saturate((baseShape * hGrad - thresh) / max(1.0f - thresh, 0.24f));
-    dens *= lerp(0.65f, 1.45f, smoothstep(0.04f, 0.42f, h));
+    const float baseShape = cRemap(vol0.r, -(1.0f - lowWorley) * 0.55f, 1.0f, 0.0f, 1.0f);
+    const float localCov = saturate(cover * lerp(0.40f, 1.32f, smoothstep(0.24f, 0.78f, wCov)));
+    const float thresh = lerp(0.62f, lerp(0.40f, 0.32f, stormType), localCov);
+    float dens = saturate((baseShape * hGrad - thresh) / max(1.0f - thresh, 0.22f));
+    dens *= lerp(0.60f, 1.55f, smoothstep(0.04f, 0.42f, h));
     if (detail && dens > 0.002f) {
-        // Fast hardware-trilinear 3D Worley cauliflower turret erosion (2.5x faster than analytic cNoise inside 64 steps!):
-        const float3 detUvw = float3((sheared.x + wind.x * 0.25f) / 10500.0f, (sheared.y + wind.y * 0.25f) / 10500.0f, (curvedZ - clouds.y) / 9200.0f + tEvo * 0.22f);
+        const float3 detUvw = float3((sheared.x + wind.x * 0.25f) / 6800.0f, (sheared.y + wind.y * 0.25f) / 6800.0f, (alt - clouds.y) / 6200.0f + tEvo * 0.22f);
         const float4 volD = sampleCloudVol(detUvw);
         const float hiWorley = volD.g * 0.625f + volD.b * 0.25f + volD.a * 0.125f;
-        const float detailMod = lerp(hiWorley, 1.0f - hiWorley, saturate(h * 1.4f));
-        const float erode = detailMod * lerp(0.46f, 0.72f, h) * (1.0f - dens * 0.30f);
+        const float detailMod = lerp(hiWorley, 1.0f - hiWorley, saturate(h * 1.35f));
+        const float erode = detailMod * lerp(0.52f, 0.80f, h) * (1.0f - dens * 0.20f);
         dens = cRemap(dens, erode, 1.0f, 0.0f, 1.0f);
     }
     return dens * cloudWind.z;
@@ -124,12 +123,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float2 full = lo + 0.5f;   // Full native-resolution volumetric clouds (4x sharper than 1/2-res!)
     const float3 far = worldAt(full - 0.5f, 0.995f) - eyeAt();
     const float3 dir = normalize(far);
-    // SM6.9 Wave-coherent sub-horizon early exit: entire waves looking below the horizon skip cloud raymarching cleanly.
-    if (WaveActiveAllTrue(dir.z <= 0.015f)) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
+    // March clouds all the way to the physical horizon (eliminates the 10-deg empty cutoff band above mountains!):
+    if (WaveActiveAllTrue(dir.z <= -0.005f)) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
     float4 res = float4(0.0f, 0.0f, 0.0f, 1.0f);
     float t0, t1;
     const float3 o = camPosW.xyz;
-    const float maxDist = 400000.0f;
+    const float maxDist = 650000.0f;
     if (cloudsOn() && cloudSpan(o, dir, maxDist, t0, t1)) {
         // 36 uniform jittered steps over 110k slab: 2.2x faster than 64 steps with full hardware-trilinear 64^3 detail!
         t1 = min(t1, t0 + 110000.0f);
@@ -227,14 +226,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;
         }
-        // Continuous world-space horizon merge: smooth C2 fade above horizon eliminates hard horizontal cutoff seam!
+        // Seamless curved-planet horizon merge (zero 10-deg cutoff band!): distant clouds smoothly recede into atmospheric haze all the way to dir.z = 0.
         const float3 softS = min(S, 1.18f.xxx);
-        const float fade = exp(-max(t0, 0.0f) / 220000.0f);
-        const float horFade = smoothstep(0.018f, 0.165f, dir.z);
-        const float distCut = 1.0f - smoothstep(maxDist * 0.55f, maxDist * 0.96f, t0);
-        const float effFade = saturate(fade * 1.15f) * horFade * distCut;
-        const float3 horizonHaze = skyC + sunC * pow(saturate(cosT), 8.0f) * 0.05f;
-        const float3 aerialS = lerp(horizonHaze * (1.0f - T), softS, fade) * (horFade * distCut);
+        const float fade = exp(-max(t0, 0.0f) / 480000.0f);
+        const float horFade = smoothstep(-0.002f, 0.028f, dir.z);
+        const float distCut = 1.0f - smoothstep(maxDist * 0.68f, maxDist * 0.98f, t0);
+        const float effFade = saturate(fade) * horFade * distCut;
+        const float3 aerialS = softS * effFade;
         // High-altitude wispy Cirrus cloud deck (h = 68,000u above cumulus): wind-sheared ice-crystal streaks
         // illuminated by Hillaire 2020 solar transmittance, visible through gaps in the lower cumulus deck.
         // 3-Layer Ekman-Sheared Sky Architecture: Mid-Altitude Altocumulus (96k, +34 deg veer, curl-marbled)

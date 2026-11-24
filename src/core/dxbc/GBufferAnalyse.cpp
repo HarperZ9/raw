@@ -396,6 +396,7 @@ uint8_t LightingClass(const Analysis& a)
     if (a.texDim[2] == 3 && a.texDim[11] == 3 && a.texDim[12] == 3 && !a.texDim[3]) return material::Skin;
     if (a.texDim[6]) return material::GlowMapped;
     if (a.texDim[12]) return material::SoftLit;
+    if (a.texDim[5] == 3) return material::TruePBR;   // TruePBR / PGPatcher _rmaos.dds at t5 (no cubemap)
     if (a.texDim[3] || a.texDim[8]) return material::Parallax;
     return material::Lit;
 }
@@ -413,6 +414,17 @@ void FindParallaxHeight(const std::vector<Instruction>& code, const std::vector<
     a->heightReg = code[n].ops[0].index[0];
     a->heightComp = uint32_t(ch);
     a->info.parallaxHeight = true;
+}
+
+// TruePBR / PGPatcher RMAOS map (_rmaos.dds): bound at t5 (R=Roughness, G=Metallic, B=AO).
+// Tapping XYZ into SV_Target6.rgb feeds native authored PBR roughness, conductor metallicity & micro-AO into DXR 1.2 + IBL!
+void FindRmaosMap(const std::vector<Instruction>& code, const std::vector<int>& depth, Analysis* a)
+{
+    const size_t n = FirstSample(code, depth, a->body, 5);
+    if (n == kNone) return;
+    a->rmaosAfter = n;
+    a->rmaosReg = code[n].ops[0].index[0];
+    a->info.rmaosMap = true;
 }
 } // namespace
 
@@ -451,6 +463,7 @@ bool Analyse(const Container& c, const Program& p, Analysis* a)
         if (a->info.materialClass == material::SoftLit) FindSoftLight(code, depth, a);
         if (a->info.materialClass == material::EnvironmentMapped) FindEnvMap(code, depth, a);
         if (a->info.materialClass == material::Parallax) FindParallaxHeight(code, depth, a);
+        if (a->info.materialClass == material::TruePBR) FindRmaosMap(code, depth, a);
         if (a->info.materialClass != material::Landscape) FindCharLight(code, depth, a);
         a->info.normal = true;
     } else if (a->waterBefore != kNone && a->anyCbAt != kNone) {

@@ -232,10 +232,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     }
     s.v = normalize(eyeAt() - p);
     s.shin = exp2(sp.y * 13.0f);
-    s.mask = sp.x;
-    bool lobe = sp.y > 0.002f && base != 4u && base != 6u;   // the game's own shader had a lobe here
-    s.f0 = lobe ? lerp(0.02f, 0.08f, saturate(sp.x * resScale.w)) : 0.04f;
-    s.alpha = clamp(sqrt(2.0f / (s.shin + 2.0f)), 0.03f, 1.0f);   // Blinn-Phong exponent to GGX width
+    const bool isTruePbr = (!match && base == 13u);
+    const float3 rmaosPbr = isTruePbr ? saturate(SoftMap.Load(ip).rgb) : 0.0f.xxx;
+    s.mask = isTruePbr ? max(saturate(1.0f - rmaosPbr.r), rmaosPbr.g) : sp.x;
+    bool lobe = isTruePbr || (sp.y > 0.002f && base != 4u && base != 6u);   // TruePBR always has physical GGX lobe
+    s.f0 = isTruePbr ? lerp(0.04f, 0.90f, rmaosPbr.g) : (lobe ? lerp(0.02f, 0.08f, saturate(sp.x * resScale.w)) : 0.04f);
+    s.alpha = isTruePbr ? clamp(rmaosPbr.r * rmaosPbr.r, 0.04f, 0.98f) : clamp(sqrt(2.0f / (s.shin + 2.0f)), 0.03f, 1.0f);
     // Soft-lit (foliage): the game multiplies its wrap term by the soft-lighting map, which the
     // patched shader writes to RAW's emissive target. Before that channel existed a grey constant
     // fitted on one frame (0.15, tools/lighting/fitsoft.py) stood in; it lost the warm back light.
@@ -1268,20 +1270,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // The character light: a white fill the game's actor (and many object) shaders add to the light sum, from two fixed
     // directions and a scale read from slot 11 (GBufferAnalyse.cpp, FindCharLight). Outside classes 2 and 5 the patch
     // writes it to the emissive target as -(light) - 1/1024; emitted light is never negative.
-    const float ea = base != 2u && base != 5u ? SoftMap.Load(ip).r : 0.0f;
+    const float ea = (base != 2u && base != 5u && base != 13u) ? SoftMap.Load(ip).r : 0.0f;
     const float charLight = (flags.x & FLAG_CHAR) != 0u && ea < 0.0f ? max(-ea - 1.0f / 1024.0f, 0.0f) : 0.0f;
     if (flags.w == 19u) { return float4(charLight.xxx, game.a); }   // view 19: the character light
     // Attenuate vanilla's flat white character fill light on skin in direct sunlight so shoulders/faces never blow out.
     const float effCharLight = (!match && skin) ? charLight * lerp(0.85f, 0.12f, saturate(dot(diff, float3(0.33f, 0.33f, 0.34f)))) : charLight;
     // True Complex PBR Material Diffuse & Specular IBL:
+    // - TruePBR / PGPatcher (base==13, _rmaos.dds): exact authored Roughness (R), Metallic (G) & Baked AO (B)!
     // - Class-2 metals (steel, iron, silver, gold, Dwemer brass): physical conductor metallicity attenuates diffuse
-    //   energy (1 - 0.72*m) and drives chromatic conductor F0 into Karis Split-Sum + Fdez-Aguera Multi-Scattering IBL
-    //   sampled from our live 256x256 dual-band prefiltered Dynamic Environment Cubemap (EnvCube).
-    // - Wet surfaces & oiled armor: dual-lobe Clearcoat GGX water/lacquer film sampling the sharp cubemap band.
+    //   energy (1 - 0.72*m) and drives chromatic conductor F0 into Karis Split-Sum + Fdez-Aguera Multi-Scattering IBL.
     const float envLumM = dot(envRefl, float3(0.2126f, 0.7152f, 0.0722f));
-    const float metallic = (!match && base == 2u) ? saturate((max(saturate(s.mask * resScale.w), envLumM * 1.35f) - 0.22f) * 1.95f) : 0.0f;
-    const float3 diffAlb = albedo * (1.0f - metallic * 0.72f);
-    const float3 rawLit = (diffAlb + envRefl * (match ? 1.0f : 0.08f)) * (diff + amb + effCharLight);
+    const float metallic = isTruePbr ? saturate(rmaosPbr.g)
+                         : ((!match && base == 2u) ? saturate((max(saturate(s.mask * resScale.w), envLumM * 1.35f) - 0.22f) * 1.95f) : 0.0f);
+    const float pbrBakedAo = isTruePbr ? lerp(0.32f, 1.0f, saturate(rmaosPbr.b)) : 1.0f;
+    const float3 diffAlb = albedo * (1.0f - metallic * (isTruePbr ? 0.94f : 0.72f));
+    const float3 rawLit = (diffAlb + envRefl * (match ? 1.0f : 0.08f)) * (diff + amb * pbrBakedAo + effCharLight);
     float3 lit = match ? knee3(rawLit) : rawLit;
     // Physical glacial-cyan subsurface wrap transmission on sunlit snowbanks.
     if (!match && wet.snow > 0.05f && sunDir.w > 0.5f) {

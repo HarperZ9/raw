@@ -317,23 +317,16 @@ float4 main(In i) : SV_Target {
     const float3 bloom = P[0].x > 0.5f ? Bloom.Sample(S0, suv).rgb : Bloom.Sample(S0, i.uv).rgb;
     const float2 lum = Lum.Sample(S2, i.uv).xy;
     const float avg = max(lum.x, 1.0e-5f);
-    // Dynamic Location-, Environment- & Camera-Aware Continuous Eye Adaptation:
-    // Blends Skyrim's temporally smoothed luminance (lum.x) with live 5-point peripheral-weighted metering
-    // (weighted away from bottom-center so 3rd-person player back/armor never hijacks exposure while 1st-person stays responsive!).
-    const float2 uvLim = float2(F[44].z, F[43].y);
-    const float lTop  = dot(Scene.SampleLevel(S1, min(float2(0.50f, 0.25f) * F[43].xy, uvLim), 0.0f).rgb, W);
-    const float lLeft = dot(Scene.SampleLevel(S1, min(float2(0.24f, 0.46f) * F[43].xy, uvLim), 0.0f).rgb, W);
-    const float lRgt  = dot(Scene.SampleLevel(S1, min(float2(0.76f, 0.46f) * F[43].xy, uvLim), 0.0f).rgb, W);
-    const float lMid  = dot(Scene.SampleLevel(S1, min(float2(0.50f, 0.42f) * F[43].xy, uvLim), 0.0f).rgb, W);
-    const float liveMeter = clamp((lTop * 0.20f + lLeft * 0.26f + lRgt * 0.26f + lMid * 0.28f), 0.008f, 4.0f);
-    const float blendAvg = lerp(avg, liveMeter, 0.48f);
-    const float metered = clamp(blendAvg, RA.z, RA.w);
+    // True Full-Frame Temporally-Smoothed Eye Adaptation:
+    // Driven 100% by Skyrim's full-screen downsampled & temporally-filtered Lum texture (t2, avg = lum.x).
+    // (Removed the 4-pixel unsmoothed Scene.SampleLevel liveMeter hack that caused whole-screen strobe flicker
+    // whenever a tree branch, pine needle, or water glint crossed one of the 4 sample pixels!)
+    const float metered = clamp(avg, RA.z, RA.w);
     const float evDiff = log2(max(metered / max(RC.y, 0.05f), 1.0e-4f));
-    const float eyeShare = evDiff > 0.0f ? max(RC.x, 0.78f) : (RC.z > 0.0f ? max(RC.z, 0.52f) : 0.52f);
+    const float eyeShare = evDiff > 0.0f ? max(RC.x, 0.72f) : (RC.z > 0.0f ? max(RC.z, 0.45f) : 0.45f);
     const bool isIntExp = (RX.w > 0.0f && RX.w < 0.99f);
-    // Responsive continuous eye adaptation across bright snow, dark caves/taverns & dusk/night:
-    const float eyeComp = isIntExp ? clamp(exp2(-evDiff * eyeShare * 0.65f), 0.55f, 1.65f)
-                                   : clamp(exp2(-evDiff * eyeShare), 0.30f, 1.85f);
+    const float eyeComp = isIntExp ? clamp(exp2(-evDiff * eyeShare * 0.62f), 0.55f, 1.60f)
+                                   : clamp(exp2(-evDiff * eyeShare), 0.35f, 1.80f);
     const float camera = (RB.y / max(RC.y, 0.05f)) * eyeComp;
     // RX.w: the interior factor the proxy sets per frame (ToneX5 in a cell with no sun cascades, else 1).
     const float exposure = (RA.x < 0.5f ? lum.y / avg : camera * (RX.w > 0.0f ? RX.w : 1.0f)) * exp2(RA.y);

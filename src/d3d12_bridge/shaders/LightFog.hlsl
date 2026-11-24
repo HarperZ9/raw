@@ -542,6 +542,34 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 pdeMistBoost = 1.0f + saturate(wf.b * 0.65f + wf.a * 0.35f) * 0.45f;
             }
         }
+        // True 3D World-Space Rising Blackbody Fire Embers around live hearths/campfires/braziers (strictly depth-occluded by dist!):
+        if (mapScale > 0.5f && flags.y > 0u) {
+            const uint nEmberL = min(flags.y, 12u);
+            const float2 windE = normalize(cloudWind.xy + float2(1.0f, 0.35f)) * 18.0f;
+            [loop] for (uint ei = 0u; ei < nEmberL; ++ei) {
+                const float3 lcE = lightColS[ei].rgb;
+                const float rE = lightPosR[ei].w;
+                if (lcE.r <= lcE.b * 1.35f || lcE.r < 0.16f || rE < 110.0f) { continue; }
+                const float3 lRel = lightPosR[ei].xyz;
+                const float tClosest = dot(lRel - eye, w);
+                if (tClosest <= 35.0f || tClosest >= dist || tClosest > 1600.0f) { continue; }
+                const float3 ptRay = eye + w * tClosest;
+                const float3 offL = ptRay - lRel;
+                if (offL.z < -10.0f || offL.z > 155.0f || dot(offL.xy, offL.xy) > 6400.0f) { continue; }
+                const float hNorm = saturate((offL.z + 10.0f) / 165.0f);
+                const float3 wpE = camPosW.xyz + ptRay;
+                const float3 eGrid = float3((wpE.xy - windE * hNorm + float2(sin(camPosW.w * 2.2f + wpE.z * 0.08f), cos(camPosW.w * 1.9f + wpE.z * 0.07f)) * 6.5f) * 0.14f,
+                                            wpE.z * 0.09f - camPosW.w * 1.65f);
+                const float eHash = cHash(floor(eGrid));
+                if (eHash > 0.945f) {
+                    const float dSpark = length(frac(eGrid) - 0.5f);
+                    const float spark = smoothstep(0.945f, 0.998f, eHash) * exp(-dSpark * dSpark * 42.0f) * (1.0f - hNorm) * smoothstep(0.0f, 0.12f, hNorm);
+                    // Blackbody cooling ramp: 2800K bright gold-white near flame -> 1500K deep crimson ember high up!
+                    const float3 bbCol = lerp(float3(1.85f, 0.92f, 0.28f), float3(1.15f, 0.22f, 0.04f), hNorm);
+                    precipAdd += bbCol * (spark * (1.0f - smoothstep(1000.0f, 1600.0f, tClosest)) * 0.85f);
+                }
+            }
+        }
         // Attenuate additive volumetric scatter by transmittance T so far-horizon fog never double-adds into blinding whiteout.
         return float4(lit.rgb * T + atmoCol * (1.0f.xxx - T) + scatter * saturate(T + 0.20f) * pdeMistBoost + precipAdd, lit.a);
     }

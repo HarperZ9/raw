@@ -106,10 +106,15 @@ bool ClassifySoftBone(const char* boneName, TissueKind* outKind) {
     if (ContainsCI(boneName, "genital") || ContainsCI(boneName, "scrotum") || ContainsCI(boneName, "pelvic")) {
         *outKind = TissueKind::Pelvic; return true;
     }
-    if (ContainsCI(boneName, "hair") || ContainsCI(boneName, "ponytail") || ContainsCI(boneName, "braid")) {
+    if (ContainsCI(boneName, "hair") || ContainsCI(boneName, "ponytail") || ContainsCI(boneName, "braid") ||
+        ContainsCI(boneName, "bangs") || ContainsCI(boneName, "strand") || ContainsCI(boneName, "lock") ||
+        ContainsCI(boneName, "tail")) {
         *outKind = TissueKind::Hair; return true;
     }
-    if (ContainsCI(boneName, "cloak") || ContainsCI(boneName, "cape") || ContainsCI(boneName, "skirt")) {
+    if (ContainsCI(boneName, "cloak") || ContainsCI(boneName, "cape") || ContainsCI(boneName, "skirt") ||
+        ContainsCI(boneName, "robe") || ContainsCI(boneName, "dress") || ContainsCI(boneName, "sash") ||
+        ContainsCI(boneName, "cloth") || ContainsCI(boneName, "tassel") || ContainsCI(boneName, "pouch") ||
+        ContainsCI(boneName, "fur") || ContainsCI(boneName, "cowl")) {
         *outKind = TissueKind::Cloak; return true;
     }
     return false;
@@ -159,12 +164,23 @@ SoftBoneOutput StepSoftBone(SoftBoneState& st,
     const int steps = std::clamp(int(std::ceil(clampedDt / kSubDt)), 1, 12);
     const float h = clampedDt / float(steps);
     const float rest[3] = {0.0f, 0.0f, prof.gravitySag};
+    // Aerodynamic wind & gust forcing for flowing hair & cloaks (gravitySag <= -0.55 identifies light strands/cloth):
+    float windAcc[3] = {};
+    if (prof.gravitySag <= -0.55f) {
+        const float wt = float(GetTickCount64() % 3600000ull) * 0.001f;
+        const float ph = parentWorldPos[0] * 0.013f + parentWorldPos[1] * 0.011f;
+        const float gust = 1.0f + 0.55f * std::sin(wt * 1.75f + ph) + 0.30f * std::cos(wt * 3.40f - ph * 1.3f);
+        const float amp = (prof.gravitySag <= -0.80f) ? 42.0f : 26.0f;
+        windAcc[0] = amp * gust * std::cos(wt * 0.22f);
+        windAcc[1] = amp * gust * std::sin(wt * 0.22f);
+        windAcc[2] = amp * 0.18f * std::sin(wt * 2.85f + ph);
+    }
 
     for (int s = 0; s < steps; ++s) {
         for (int i = 0; i < 3; ++i) {
             const float x = st.pos[i] - rest[i];
-            // Inertial counter-force (-pAcc * 0.065) + anisotropic restoring spring + viscoelastic damping:
-            const float f = -pAcc[i] * 0.065f - prof.stiffness[i] * x - prof.damping[i] * st.vel[i];
+            // Inertial counter-force (-pAcc * 0.065) + aerodynamic wind + anisotropic spring + viscoelastic damping:
+            const float f = -pAcc[i] * 0.065f + windAcc[i] - prof.stiffness[i] * x - prof.damping[i] * st.vel[i];
             st.vel[i] += f * h;
             st.pos[i] += st.vel[i] * h;
             // XPBD hard strain-limit projection (zero stretching/clipping):
@@ -235,6 +251,10 @@ void TraverseSkeletonSEH(uint8_t* node, float dtSec, int depth, uint32_t& bonesO
                         LiveBoneEntry& entry = g_liveBones[key];
                         if (!entry.state.initialized) {
                             std::memcpy(entry.state.restLocal, node + 0x64, 12);
+                            std::memcpy(entry.state.restRotate, node + 0x40, 36);
+                            float rSum = 0.0f;
+                            for (int ri = 0; ri < 9; ++ri) rSum += entry.state.restRotate[ri] * entry.state.restRotate[ri];
+                            entry.state.hasRestRotate = std::isfinite(rSum) && rSum > 2.5f && rSum < 3.5f;   // orthonormal 3x3 check
                         }
                         const TissueProfile prof = DefaultTissueProfile(kind);
                         const SoftBoneOutput out = StepSoftBone(entry.state, parentWorld, prof, dtSec);
@@ -245,6 +265,22 @@ void TraverseSkeletonSEH(uint8_t* node, float dtSec, int depth, uint32_t& bonesO
                             entry.state.restLocal[2] + out.localOffset[2],
                         };
                         std::memcpy(node + 0x64, newLocal, 12);
+                        // Apply 3D rotational swing (R_rest * Rx(pitch) * Ry(roll)) to NiAVObject::local.rotate (+0x40):
+                        if (entry.state.hasRestRotate && (std::fabs(out.localPitchRad) > 1e-4f || std::fabs(out.localRollRad) > 1e-4f)) {
+                            const float cp = std::cos(out.localPitchRad), sp = std::sin(out.localPitchRad);
+                            const float cr = std::cos(out.localRollRad),  sr = std::sin(out.localRollRad);
+                            const float dR[9] = {
+                                cr,       0.0f,  sr,
+                                sp * sr,  cp,   -sp * cr,
+                               -cp * sr,  sp,    cp * cr
+                            };
+                            float outR[9]{};
+                            const float* R = entry.state.restRotate;
+                            for (int r = 0; r < 3; ++r)
+                                for (int c = 0; c < 3; ++c)
+                                    outR[r * 3 + c] = R[r * 3 + 0] * dR[0 * 3 + c] + R[r * 3 + 1] * dR[1 * 3 + c] + R[r * 3 + 2] * dR[2 * 3 + c];
+                            std::memcpy(node + 0x40, outR, 36);
+                        }
                         entry.lastFrame = g_frameCounter;
                         ++bonesOut;
                     }

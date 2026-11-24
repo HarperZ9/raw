@@ -34,6 +34,8 @@ struct SoftBoneState {
     float prevParent[3] = {};   // Previous parent world position (for acceleration forcing)
     float prevVel[3] = {};      // Previous parent world velocity
     float restLocal[3] = {};    // Captured bind-pose NiAVObject::local.translate (+0x64)
+    float restRotate[9] = {};   // Captured bind-pose NiAVObject::local.rotate 3x3 (+0x40)
+    bool  hasRestRotate = false;
     bool  initialized = false;
 };
 

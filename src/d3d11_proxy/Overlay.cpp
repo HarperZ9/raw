@@ -236,6 +236,15 @@ std::string BuildMenuText()
     std::snprintf(hdr, sizeof hdr, "=== RAW DX12 STUDIO | %.1f FPS (%.1f ms) | [End:Close | PgUp/PgDn:Tab | Arrows:Tune | S:Save | L:Load | P:Export]%s ===\n",
                   g_emaMs > 0.1f ? 1000.0f / g_emaMs : 0.0f, g_emaMs, g_savedFrames ? g_statusTag.c_str() : "");
     std::string out = hdr;
+    const bool bridgeOk = hook::Bridge() && hook::Bridge()->Ready();
+    if (!bridgeOk) {
+        out += "!! STATUS: DX12 BRIDGE INACTIVE (only Tonemap runs) - check d3d11_proxy.log & ensure Skyrim TAA=1, MSAA=0 !!\n";
+    } else {
+        char st[128];
+        std::snprintf(st, sizeof st, "STATUS: DX12 BRIDGE ACTIVE | Mode=%d | RT=%s | RAWLSS=%s | Tier=%d\n",
+                      l.mode, l.rtShadows ? "ON" : "OFF", l.rawlss5 ? "ON" : "OFF", g_hwTier);
+        out += st;
+    }
     for (int i = 0; i < 8; ++i) {
         out += (i == g_tab ? "[" : " ");
         out += kTabs[i];

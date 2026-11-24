@@ -488,16 +488,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         return float4(lit.rgb * T + atmoCol * (1.0f.xxx - T) + scatter * saturate(T + 0.20f) * pdeMistBoost + precipAdd, lit.a);
     }
     // Dungeons, Caves, Nordic Tombs, Dwemer Ruins, Blackreach & Interiors (sunColour.w < 0.5):
-    // 100% world-space subterranean depth mist + true 3D shadowed volumetric shafts from VolumetricPass.hlsl
-    // (including 3D world-space BSLightingShader window portal lights from rt_emitters.cpp — zero camera-locked 2D shafts).
+    // Controlled world-space subterranean depth mist (prevents blinding cyan-white haze in Septimus Signus & ice caves).
     if (sunColour.w < 0.5f && (flags.x & FLAG_FOG) != 0u) {
         const float3 wpInt = camPosW.xyz + eye + w * min(dist * 0.5f, 3200.0f);
-        const float caveNoise = 0.72f + 0.56f * cNoise(wpInt * 0.00048f + float3(0.0f, 0.0f, camPosW.w * 0.015f));
-        const float intOd = max(dist - 220.0f, 0.0f) * 0.000095f * caveNoise;
-        const float intT = exp(-min(intOd, 1.25f));
-        const float3 cellAmb = max(float3(ambient[0].w, ambient[1].w, ambient[2].w), float3(0.010f, 0.013f, 0.018f));
-        const float3 caveMist = min(cellAmb * 0.65f, 0.22f.xxx);
-        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.92f, lit.a);
+        const float caveNoise = 0.76f + 0.48f * cNoise(wpInt * 0.00048f + float3(0.0f, 0.0f, camPosW.w * 0.015f));
+        const float intOd = max(dist - 320.0f, 0.0f) * 0.000042f * caveNoise;
+        const float intT = exp(-min(intOd, 0.55f));
+        const float3 cellAmb = max(float3(ambient[0].w, ambient[1].w, ambient[2].w), float3(0.010f, 0.012f, 0.015f));
+        const float ambL = dot(cellAmb, float3(0.2126f, 0.7152f, 0.0722f));
+        const float3 caveMist = min(lerp(ambL.xxx, cellAmb, 0.45f) * 0.35f, 0.065f.xxx);
+        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.42f, lit.a);
     }
     const float T = (flags.x & FLAG_FOG_REPLACES) != 0u ? exp(-sigma * tEnd) : 1.0f;
     return float4(lit.rgb * T + scatter, lit.a);

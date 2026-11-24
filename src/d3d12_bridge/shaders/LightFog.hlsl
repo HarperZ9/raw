@@ -140,17 +140,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 // so the sky dome, horizon fog, mountains, water & ambient share one continuous color field!):
                 float3 uSunS, uSkyZS, uSkyHS, uAmbUpS, uAmbDnS;
                 evalWorldAtmosphere(uSunS, uSkyZS, uSkyHS, uAmbUpS, uAmbDnS);
-                physSky = lerp(physSky, lerp(uSkyHS, uSkyZS, saturate(max(sDir.z, 0.0f) * 2.2f)), 0.42f);
-                // Physical 0.53-deg solar disc with Eddington limb darkening & exact atmospheric transmittance:
+                physSky = lerp(physSky, lerp(uSkyHS, uSkyZS, saturate(max(sDir.z, 0.0f) * 2.2f)), 0.42f) * 0.76f;
+                // Unmistakable physical solar disc with Eddington limb darkening & clean warm corona:
                 if (sunDiscGate > 0.01f) {
-                    const float rDisc = saturate(sunAng / 0.0052f);
+                    const float rDisc = saturate(sunAng / 0.018f);
                     const float muLimb = sqrt(max(1.0f - rDisc * rDisc, 0.0f));
-                    const float3 eddLimb = float3(1.0f - 0.45f * (1.0f - muLimb), 1.0f - 0.62f * (1.0f - muLimb), 1.0f - 0.78f * (1.0f - muLimb));
-                    const float3 sunCoreCol = lerp(float3(1.0f, 0.99f, 0.96f), float3(1.0f, 0.56f, 0.18f), lowS) * eddLimb;
-                    const float3 sunHaloCol = lerp(float3(1.0f, 0.94f, 0.84f), float3(1.0f, 0.44f, 0.14f), lowS);
-                    const float solarCore = smoothstep(0.99972f, 0.99993f, cosS) * 16.0f;
-                    const float solarCorona = exp(-sunAng * 44.0f) * 0.95f;
-                    physSky += (sunCoreCol * solarCore + sunHaloCol * (solarCorona * (1.0f - cover * 0.65f))) * sunDiscGate;
+                    const float3 eddLimb = float3(1.0f - 0.35f * (1.0f - muLimb), 1.0f - 0.50f * (1.0f - muLimb), 1.0f - 0.68f * (1.0f - muLimb));
+                    const float3 sunCoreCol = lerp(float3(1.0f, 0.98f, 0.92f), float3(1.0f, 0.56f, 0.18f), lowS) * eddLimb;
+                    const float3 sunHaloCol = lerp(float3(1.0f, 0.92f, 0.78f), float3(1.0f, 0.44f, 0.14f), lowS);
+                    const float solarCore = smoothstep(0.99925f, 0.99978f, cosS) * 28.0f;
+                    const float solarCorona = exp(-sunAng * 22.0f) * 0.58f;
+                    physSky += (sunCoreCol * solarCore + sunHaloCol * (solarCorona * (1.0f - cover * 0.50f))) * sunDiscGate;
                 }
                 fullSky = lerp(fullSky, physSky, max(dayW, twilightBell * 0.96f));
             }
@@ -260,6 +260,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 // Let Masser & Secunda glow visibly through thin/moderate night clouds instead of disappearing!
                 const float clTrans = lerp(cl.a, max(cl.a, 0.38f), moonKeep * nightSkyW);
                 baseSky = lerp(baseSky, baseSky * clTrans + cl.rgb, 1.0f - isExotic);
+                // Allow the solar disc to shine cleanly through thin/moderate cloud veils so the Sun stays perceptible!
+                if (sunDiscGate > 0.01f && clTrans > 0.06f) {
+                    const float sunVeil = smoothstep(0.99920f, 0.99978f, cosS) * 14.0f + exp(-sunAng * 26.0f) * 0.35f;
+                    const float3 sunVeilCol = lerp(float3(1.0f, 0.97f, 0.90f), float3(1.0f, 0.56f, 0.18f), lowS);
+                    baseSky += sunVeilCol * (sunVeil * pow(clTrans, 0.65f) * sunDiscGate * (1.0f - isExotic));
+                }
                 // Physical 3D Crepuscular Cloud-Gap Light Rays (12-tap IGN-jittered radial transmittance march toward live sun):
                 // smooth band-free sunrays fanning out of cumulus breaks with soft off-screen sun fade!
                 // Removed screen-space 12-tap radial sun-spoke hack (21.03.52.63.png): true 3D volumetric godrays

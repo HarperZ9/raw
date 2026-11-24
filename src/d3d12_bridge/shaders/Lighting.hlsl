@@ -433,22 +433,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 s.alpha = lerp(s.alpha, 0.15f, max(meltMask, slushRing) * max(natSnowMelt, wet.snow) * 0.75f);
             }
         }
-        // Persistent 512x512 GPU PDE WorldField snowpack depth, post-rain puddle persistence + carved trench normal relief (t14 via 60-binding RHI!):
-        if ((base == 4u || base == 1u) && z < 1000.0f && s.n.z > 0.42f) {
+        // Persistent 512x512 GPU PDE WorldField: strictly limited to actual snowpack (wet.snow > 0.45);
+        // disabled on cobblestones/roads/dirt to eliminate the black ribbon trail seen in 13.02.17..39!
+        if (base == 4u && wet.snow > 0.45f && z < 800.0f && s.n.z > 0.55f) {
             const float2 simUv = saturate(p.xy / 2048.0f + 0.5f.xx);
             if (all(simUv > 0.02f) && all(simUv < 0.98f)) {
-                const float4 wf = WorldField.SampleLevel(Lin, simUv, 0.0f);
-                const float simSnow = wf.a;
-                const float simWet = wf.b;
                 const float sL = WorldField.SampleLevel(Lin, simUv + float2(-1.0f / 512.0f, 0.0f), 0.0f).a;
                 const float sR = WorldField.SampleLevel(Lin, simUv + float2( 1.0f / 512.0f, 0.0f), 0.0f).a;
                 const float sD = WorldField.SampleLevel(Lin, simUv + float2(0.0f, -1.0f / 512.0f), 0.0f).a;
                 const float sU = WorldField.SampleLevel(Lin, simUv + float2(0.0f,  1.0f / 512.0f), 0.0f).a;
-                if (base == 4u) {
-                    wet.snow = max(wet.snow, simSnow * saturate((s.n.z - 0.42f) * 2.5f));
-                    s.n = normalize(s.n + float3((sL - sR) * 1.85f, (sD - sU) * 1.85f, 0.0f));
-                }
-                wet.wet = max(wet.wet, simWet * (1.0f - wet.snow) * 0.72f);
+                s.n = normalize(s.n + float3((sL - sR) * 0.22f, (sD - sU) * 0.22f, 0.0f) * saturate(wet.snow));
             }
         }
         // GEO-04 4-Step Ray-Marched 3D Snowdrift & Cobblestone Relief Occlusion + Dual-Frequency Micro-Displacement (< 1,200u):
@@ -474,11 +468,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float my = (cNoise(wpDispl * 0.22f + 13.4f) - 0.5f) * 0.18f + (cNoise(wpDispl * 0.68f + 19.3f) - 0.5f) * 0.10f;
             s.n = normalize(s.n + float3(mx, my, 0.0f) * mFade);
         }
-        // Persistent 32-step world-anchored snow & wet-mud footprint deformation trail (footTrail[0..31]).
-        const float natSnow = (base == 4u) ? saturate((min(albedo.r, min(albedo.g, albedo.b)) - 0.36f) * 4.5f) * saturate(s.n.z * 1.4f - 0.3f) : 0.0f;
+        // Persistent 32-step world-anchored deep-snow footprints ONLY (never darkens roads, rocks, or mud — kills 13.02.17..39 black snake trail!).
+        const float natSnow = (base == 4u) ? saturate((min(albedo.r, min(albedo.g, albedo.b)) - 0.48f) * 5.0f) * saturate(s.n.z * 1.4f - 0.4f) : 0.0f;
         const float snowAmt = max(wet.snow, natSnow);
-        const float mudAmt = (base == 4u) ? max(wet.wet, wet.puddle) * (1.0f - snowAmt) : 0.0f;
-        if ((snowAmt > 0.08f || mudAmt > 0.15f) && z < 2200.0f && s.n.z > 0.45f) {
+        if (snowAmt > 0.45f && z < 1600.0f && s.n.z > 0.60f) {
             const float3 wpAbs = p + camPosW.xyz;
             float maxDep = 0.0f, maxRim = 0.0f;
             float2 bestRad = 0.0f.xx;
@@ -487,32 +480,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 if (ft.w <= 0.01f) { continue; }
                 const float3 fd = wpAbs - ft.xyz;
                 const float r2 = dot(fd.xy, fd.xy);
-                if (r2 < 576.0f && abs(fd.z) < 160.0f) {
+                if (r2 < 400.0f && abs(fd.z) < 120.0f) {
                     const float rr = sqrt(r2);
-                    const float dep = exp(-r2 / 145.0f) * ft.w;
-                    const float rim = exp(-pow(rr - 15.0f, 2.0f) / 36.0f) * ft.w;
+                    const float dep = exp(-r2 / 110.0f) * ft.w;
+                    const float rim = exp(-pow(rr - 13.0f, 2.0f) / 28.0f) * ft.w;
                     if (dep > maxDep) { maxDep = dep; bestRad = fd.xy / max(rr, 0.5f); }
                     maxRim = max(maxRim, rim);
                 }
             }
-            if (maxDep > 0.02f || maxRim > 0.02f) {
-                const float deformStr = max(snowAmt, mudAmt * 0.85f);
-                const float stormDepthBoost = 1.0f + saturate(weather.z * 1.4f) * 0.85f;
-                // True 3D carved deep snow-trench normals: steep inward-sloping trench walls + piled-up raised snow berms!
-                s.n = normalize(s.n + float3(bestRad * (maxDep * 0.88f * stormDepthBoost - maxRim * 0.52f * stormDepthBoost), 0.0f) * deformStr);
-                if (snowAmt >= mudAmt) {
-                    // Deep recessed trench self-shadowing + glacial blue-indigo subsurface wall scatter + bright raised berm crest:
-                    const float trenchAo = lerp(1.0f, 0.44f, saturate(maxDep * snowAmt * stormDepthBoost));
-                    const float3 trenchWallSSS = float3(0.36f, 0.58f, 0.88f);
-                    albedo = lerp(albedo, trenchWallSSS, saturate(maxDep * snowAmt * 0.72f)) * trenchAo;
-                    albedo *= lerp(1.0f, 1.14f, saturate(maxRim * snowAmt * 0.85f));
-                    s.alpha = lerp(s.alpha, 0.22f, saturate(maxDep * snowAmt * 0.75f));
-                } else {
-                    albedo *= lerp(1.0f.xxx, float3(0.38f, 0.35f, 0.31f), maxDep * mudAmt * 0.82f);
-                    s.alpha = lerp(s.alpha, 0.07f, maxDep * mudAmt * 0.82f);
-                }
+            if (maxDep > 0.04f || maxRim > 0.04f) {
+                const float deformStr = saturate((snowAmt - 0.45f) * 2.2f);
+                s.n = normalize(s.n + float3(bestRad * (maxDep * 0.24f - maxRim * 0.14f), 0.0f) * deformStr);
+                albedo *= lerp(1.0f, 0.88f, saturate(maxDep * deformStr * 0.65f));
             }
-            wet.snow = max(wet.snow, natSnow * 0.65f);
         }
     }
     // Seasonal foliage palette transformation (base == 5u: Spring emerald, Autumn golden-amber/crimson, Winter frost).
@@ -527,35 +507,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float snowLeaf = saturate((s.n.z - 0.25f) * 2.0f);
             albedo = lerp(albedo * float3(0.86f, 0.92f, 1.04f), float3(0.56f, 0.60f, 0.66f), snowLeaf * 0.55f);
         }
-        // 2027 Real Ray-Traced Lush 3D Botanical Vegetation, Species Diversity & Traveling Wind-Wave Meadow Ripples (base == 5u):
-        // Replaces cloned 2011 2D foliage cards with per-plant species chlorophyll diversity, 3D spherical canopy-cluster
-        // volume, Ghost-of-Tsushima/RDR2 traveling wind-wave luminance gusts across meadows, and waxy cuticle sheen!
+        // Clean, temporally-stable botanical vegetation lighting (zero animated normal-crawl shimmer or plastic tree specular!):
         if (z < 5200.0f) {
             const float3 wpF = p + camPosW.xyz;
-            const float2 windV = normalize(cloudWind.xy + float2(1.0f, 0.35f));
-            const float windSpd = saturate(length(cloudWind.xy) / 260.0f + weather.w * 0.45f);
-            // Traveling macro wind-gust wave sweeping visibly across grass meadows, ferns, and pine boughs:
-            const float gustPhase = dot(wpF.xy, windV) * 0.0042f - camPosW.w * (1.9f + windSpd * 2.6f);
-            const float gustWave = sin(gustPhase) * 0.65f + sin(gustPhase * 2.13f + dot(wpF.xy, float2(-windV.y, windV.x)) * 0.0031f) * 0.35f;
-            const float flutter = (0.35f + 0.65f * windSpd) * (0.60f + 0.40f * gustWave);
-            const float nxF = (cNoise(wpF * 0.048f + float3(windV * flutter * 0.62f, 0.0f)) - 0.5f) * 0.85f;
-            const float nyF = (cNoise(wpF * 0.048f + float3(11.3f, 7.1f, windV.y * flutter * 0.62f)) - 0.5f) * 0.85f;
-            const float nzF = (cNoise(wpF * 0.032f + float3(5.7f, 13.9f, 2.3f)) - 0.35f) * 0.58f;
-            const float fFade = smoothstep(5200.0f, 220.0f, z);
-            s.n = normalize(s.n + float3(nxF, nyF, nzF) * fFade);
-            s.f0 = 0.042f;
-            s.alpha = clamp(lerp(s.alpha, 0.36f, 0.48f * fFade), 0.14f, 0.72f);
-            // Per-plant/per-tree botanical species diversity (breaks up identical 2011 cloned trees & bushes!):
+            const float fFade = smoothstep(5200.0f, 260.0f, z);
+            // Subtle static world-space variation only (no time-varying normal crawl!) and natural matte leaf roughness:
+            const float leafVar = cNoise(wpF * 0.018f);
+            s.f0 = 0.026f;
+            s.alpha = clamp(lerp(s.alpha, 0.68f, 0.60f * fFade), 0.54f, 0.88f);
             const float speciesId = cNoise(wpF * 0.0045f + float3(17.3f, 9.1f, 3.7f));
-            const float leafVar = cNoise(wpF * 0.024f);
             const float3 speciesTint = speciesId < 0.35f
-                ? lerp(float3(0.82f, 0.96f, 0.86f), float3(0.94f, 1.06f, 0.90f), speciesId / 0.35f)     // deep Nordic spruce
-                : (speciesId < 0.72f
-                    ? lerp(float3(0.94f, 1.06f, 0.90f), float3(1.08f, 1.04f, 0.82f), (speciesId - 0.35f) / 0.37f)  // sunlit cedar-olive
-                    : lerp(float3(1.08f, 1.04f, 0.82f), float3(1.14f, 0.96f, 0.76f), (speciesId - 0.72f) / 0.28f)); // warm golden-tip pine/fern
-            // Traveling wind-bent specular highlight ripple across sunlit meadows (Ghost of Tsushima / RDR2 grass feel):
-            const float meadowRipple = 1.0f + gustWave * (0.06f + 0.08f * windSpd) * smoothstep(2600.0f, 200.0f, z);
-            albedo *= lerp(1.0f.xxx, speciesTint * lerp(0.88f, 1.12f, leafVar) * meadowRipple, fFade * 0.72f);
+                ? lerp(float3(0.90f, 0.98f, 0.92f), float3(0.96f, 1.03f, 0.94f), speciesId / 0.35f)
+                : lerp(float3(0.96f, 1.03f, 0.94f), float3(1.04f, 1.00f, 0.88f), (speciesId - 0.35f) / 0.65f);
+            albedo *= lerp(1.0f.xxx, speciesTint * lerp(0.94f, 1.06f, leafVar), fFade * 0.45f);
         }
     }
     const float3 nSmooth = s.n;

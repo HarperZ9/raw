@@ -135,7 +135,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         t1 = min(t1, t0 + 110000.0f);
         const uint steps = 36u;
         const float dt = (t1 - t0) / float(steps);
-        const float j = rand(lo, proj.z);
+        const float j = rand(lo, 0.0f);   // pixel-locked static dither (eliminates frame-to-frame sky flickering across pine trees!)
         const float3 aSun = astroSunDir();
         const float aElev = astroSunElev();
         const float nightW = smoothstep(0.04f, -0.07f, aElev);
@@ -214,20 +214,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     stormFlash = boltCol * (pulse * glowVol * (0.30f + dens * 2.1f) * stormInt * 2.2f);
                 }
             }
-            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(1.00f, 0.995f, 0.99f), 0.45f * (1.0f - lowSun) * (1.0f - nightW));
-            const float3 coolBase = lerp(uSkyZ * 0.78f, uSkyH * 0.85f, overcastW * 0.65f + (1.0f - h) * 0.35f) * cloudAo;
-            const float3 underLit = float3(1.25f, 0.50f, 0.24f) * (twiCloud * (1.0f - h) * pow(saturate(dot(dir, aSun)), 2.5f) * (1.0f - overcastW * 0.85f) * 0.55f);
+            const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(1.00f, 0.995f, 0.99f), 0.60f * (1.0f - lowSun) * (1.0f - nightW));
+            const float3 coolBase = lerp(uSkyZ * 0.52f, uSkyH * 0.62f, overcastW * 0.65f + (1.0f - h) * 0.35f) * cloudAo;
+            const float3 underLit = float3(1.25f, 0.50f, 0.24f) * (twiCloud * (1.0f - h) * pow(saturate(dot(dir, aSun)), 2.5f) * (1.0f - overcastW * 0.85f) * 0.48f);
             // Night lunar rim glow: clouds near the Moon (sunDir.xyz at night) transmit translucent silver-blue light!
             const float3 moonRim = float3(0.38f, 0.52f, 0.85f) * (nightW * hg(cosT, 0.76f) * exp(-od * sigma * 0.35f) * 0.65f);
-            const float3 rawLum = whiteSun * (multiScat * lerp(0.80f, powder, 0.75f) * 4.0f * PI * 0.30f) + coolBase + underLit + moonRim + stormFlash;
-            const float3 lum = select(rawLum > 1.05f.xxx, 1.05f.xxx + 2.10f * (1.0f.xxx - exp(-(rawLum - 1.05f.xxx) / 2.10f)), rawLum);
+            // Sculpted 3D cumulus luminance (eliminates flat blown-out beige sky blobs seen in 13.01.55!):
+            const float3 rawLum = whiteSun * (multiScat * lerp(0.65f, powder, 0.82f) * 4.0f * PI * 0.17f) + coolBase + underLit + moonRim + stormFlash;
+            const float3 lum = select(rawLum > 0.78f.xxx, 0.78f.xxx + 0.95f * (1.0f.xxx - exp(-(rawLum - 0.78f.xxx) / 0.95f)), rawLum);
             const float ext = dens * (sigma * 1.15f);
             const float stepT = exp(-ext * dt);
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;
         }
         // Continuous world-space horizon merge: smooth C2 fade above horizon eliminates hard horizontal cutoff seam!
-        const float3 softS = min(S, 1.85f.xxx);
+        const float3 softS = min(S, 1.18f.xxx);
         const float fade = exp(-max(t0, 0.0f) / 220000.0f);
         const float horFade = smoothstep(0.018f, 0.165f, dir.z);
         const float distCut = 1.0f - smoothstep(maxDist * 0.55f, maxDist * 0.96f, t0);
@@ -282,7 +283,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float2 curUv = full * dims.zw;
             const float turnReject = 1.0f - saturate(length(uv - curUv) * 14.0f) * 0.62f;
             const float4 h = History.SampleLevel(Lin, uv, 0.0f);
-            res = lerp(res, h, min(cloudWind.w, 0.68f) * edgeFade * turnReject);
+            res = lerp(res, h, min(cloudWind.w, 0.22f) * edgeFade * turnReject);
         }
     }
     return res;

@@ -285,11 +285,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                                 const float2 aspectS = float2(dims.x * dims.w, 1.0f);
                                 const float2 curUv = (px + 0.5f) * dims.zw;
                                 const float2 toSunUv = (curUv - sunUv) * aspectS;
-                                // Subtle horizontal anamorphic streak + warm optical veiling glare:
-                                const float anam = exp(-abs(toSunUv.y) * 52.0f) * exp(-abs(toSunUv.x) * 3.8f) * 0.22f;
-                                const float veil = exp(-length(toSunUv) * 2.6f) * 0.14f;
+                                // Subtle horizontal anamorphic streak + warm optical veiling glare + spectral 6-ray aperture diffraction (photos 16/23):
+                                const float rSunLen = length(toSunUv);
+                                const float anam = exp(-abs(toSunUv.y) * 48.0f) * exp(-abs(toSunUv.x) * 3.4f) * 0.24f;
+                                const float veil = exp(-rSunLen * 2.5f) * 0.14f;
+                                const float angS = atan2(toSunUv.y, toSunUv.x);
+                                const float spoke6 = pow(abs(cos(angS * 3.0f)), 24.0f) * exp(-rSunLen * 6.5f);
+                                const float3 prismCol = float3(
+                                    0.65f + 0.35f * cos(rSunLen * 22.0f),
+                                    0.65f + 0.35f * cos(rSunLen * 22.0f - 2.094f),
+                                    0.65f + 0.35f * cos(rSunLen * 22.0f - 4.188f));
                                 const float3 flareCol = lerp(float3(1.0f, 0.92f, 0.78f), float3(1.0f, 0.52f, 0.20f), lowS);
-                                float3 lensAdd = flareCol * (anam + veil);
+                                float3 lensAdd = flareCol * (anam + veil) + prismCol * (spoke6 * 0.28f);
                                 // 3 chromatic multi-element optical ghosts mirrored across the optical center (0.5, 0.5):
                                 const float2 axis = float2(0.5f, 0.5f) - sunUv;
                                 static const float kGPos[3]  = { 0.55f, 1.15f, 1.68f };

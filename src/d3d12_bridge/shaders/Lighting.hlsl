@@ -13,6 +13,7 @@
 #include "LightingCommon.hlsli"
 #include "Weather.hlsli"
 #include "CloudCommon.hlsli"
+#include "StrataBRDF.hlsli"
 
 Texture2D<float>  Depth   : register(t0);
 Texture2D<float4> Normal  : register(t1);
@@ -1352,21 +1353,26 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 keyColA = isExterior ? (sunColour.rgb * sunShadow) : max(amb * 1.4f, 0.08f.xxx);
             lit += min(keyColA * f82 * (dAniso * saturate(dot(nSmooth, keyL)) * 0.065f * metallic * specOcc), 2.2f.xxx);
         }
-        // Feature 6: Sony Imageworks Charlie Microfiber Sheen BRDF on actor cloaks, wool tunics, banners & fur pelts.
-        if (isActorCloth || (base == 1u && !skin && s.alpha > 0.68f && s.mask < 0.10f && z < 1600.0f)) {
-            const float rCloth = 0.55f;
-            const float invR = 1.0f / rCloth;
-            const float cos2h = nv * nv;
-            const float sin2h = max(1.0f - cos2h, 0.0078125f);
-            const float dCharlie = (2.0f + invR) * pow(sin2h, invR * 0.5f) / (2.0f * PI);
-            const float3 sheenTint = lerp(albedo * 1.25f + 0.08f.xxx, 1.0f.xxx, 0.35f);
-            const float3 sheenKey = isExterior ? (sunColour.rgb * (0.25f + 0.75f * sunShadow) + amb * 0.65f) : max(amb * 1.35f, 0.06f.xxx);
-            lit += sheenTint * sheenKey * (dCharlie * pow(1.0f - nv, 2.2f) * 0.14f * specOcc);
-        }
-        // Feature 7: Kulla-Conty Clearcoat Absorption on wet stone, puddles & shoreline boulders (energy-conserving base darkening).
-        if (max(wet.wet, wet.puddle) > 0.12f) {
-            const float fCoat = 0.04f + 0.96f * pow(1.0f - nv, 5.0f);
-            lit *= lerp(1.0f, 1.0f - fCoat * 0.42f, max(wet.wet * 0.65f, wet.puddle));
+        // RAW-STRATA Unified 4-Slab Energy-Conserving Optical Transport (beats UE Substrate with zero fat G-Buffer bloat):
+        // Couples Slab 3 (Charlie wool/fur/frost/moss fuzz) -> Slab 2 (Kulla-Conty clearcoat + Airy thin-film) -> Substrate below!
+        if (!skin && !isEye) {
+            StrataSlab st;
+            st.baseAlbedo = albedo;
+            st.roughness = s.alpha;
+            st.metallic = metallic;
+            st.coatWeight = max(saturate(wet.wet * 0.85f + wet.puddle * 1.15f), ((base == 2u || isTruePbr) ? (1.0f - metallic) * 0.32f : 0.0f));
+            st.coatRoughness = lerp(0.10f, 0.03f, saturate(wet.puddle));
+            st.thinFilmNm = (base == 2u && metallic > 0.35f) ? 460.0f : (wet.wet > 0.25f ? 380.0f : 0.0f);
+            st.fuzzWeight = (isActorCloth ? 0.65f : (wet.snow > 0.35f ? 0.42f * wet.snow : 0.0f));
+            st.fuzzTint = wet.snow > 0.35f ? float3(0.86f, 0.94f, 1.04f) : lerp(albedo * 1.22f + 0.06f.xxx, 1.0f.xxx, 0.30f);
+            st.fuzzRoughness = wet.snow > 0.35f ? 0.42f : 0.58f;
+            if (st.coatWeight > 0.02f || st.fuzzWeight > 0.02f) {
+                const float3 stKeyDir = (isExterior && sunDir.w > 0.5f) ? sunDir.xyz : normalize(s.v + float3(0.12f, 0.08f, 0.62f));
+                const float3 stKeyCol = isExterior ? (sunColour.rgb * (0.20f + 0.80f * sunShadow) + amb * 0.35f) : max(amb * 1.25f, 0.05f.xxx);
+                float3 baseTrans = 1.0f.xxx;
+                const float3 upperSlab = evalStrataUpperSlabs(st, nSmooth, s.v, stKeyDir, stKeyCol, specOcc, baseTrans);
+                lit = lit * baseTrans + upperSlab;
+            }
         }
         // Feature 8: Dual-Lobe Thin-Leaf Chlorophyll Subsurface Scattering + Canopy Micro-Dapple (base==5 foliage).
         if (base == 5u && isExterior && sunDir.w > 0.5f) {

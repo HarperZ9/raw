@@ -222,10 +222,12 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
         const float boxScale = lerp(1.35f, 0.78f, saturate(speedPx * 0.14f + disocc));
         const float3 clampedY = clamp(prevY, m1 - stdDev * boxScale, m1 + stdDev * boxScale);
         const float3 clampedRgb = max(yCoCgToRgb(clampedY), 0.0f.xxx);
-        const float baseAlpha = isFace ? lerp(0.32f, 0.76f, saturate(speedPx * 0.14f))
-                                       : (isWater ? lerp(0.28f, 0.68f, saturate(speedPx * 0.12f))
-                                                  : lerp(0.12f, 0.52f, saturate(speedPx * 0.12f)));
-        const float alpha = saturate(max(baseAlpha, disocc * 0.85f));
+        const float baseAlpha = isFace ? lerp(0.45f, 0.85f, saturate(speedPx * 0.14f))
+                                       : (isWater ? lerp(0.32f, 0.72f, saturate(speedPx * 0.12f))
+                                                  : lerp(0.16f, 0.58f, saturate(speedPx * 0.12f)));
+        // Eliminate 3rd-person player/NPC silhouette double-edge ghosting (21.01.54.98.png) on depth discontinuities:
+        const float silReset = (1.0f - edgeGate) * 0.88f;
+        const float alpha = saturate(max(max(baseAlpha, disocc * 0.88f), silReset));
         recon = lerp(clampedRgb, recon, alpha);
     }
     return float4(recon, curRaw.a);

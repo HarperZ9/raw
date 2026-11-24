@@ -124,15 +124,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 nightZen = lerp(float3(0.008f, 0.015f, 0.036f), ambSkyCol * float3(0.45f, 0.52f, 0.65f), overcastDeck * 0.72f);
             const float3 nightHor = lerp(float3(0.028f, 0.044f, 0.078f), ambSkyCol * float3(0.68f, 0.74f, 0.84f), overcastDeck * 0.85f);
             float3 fullSky = lerp(nightHor, nightZen, pow(hUp, 0.52f));
-            // Physical 22-degree warm atmospheric lunar halo around the night Moon (ShadowSceneNode->sunLight at night),
-            // calibrated to author-01.jpg own-08..11.
-            const float nightHaloW = smoothstep(0.02f, -0.08f, aElev) * (1.0f - cover * 0.55f);
-            if (nightHaloW > 0.01f && sunDir.z > 0.04f) {
-                const float cosM = saturate(dot(sDir, normalize(sunDir.xyz)));
-                const float mAng = acos(clamp(cosM, -1.0f, 1.0f));
-                const float mCorona = exp(-mAng * 10.5f) * 0.24f + exp(-pow((mAng - 0.384f) / 0.055f, 2.0f)) * 0.055f;
-                fullSky += float3(0.92f, 0.84f, 0.68f) * (mCorona * nightHaloW);
-            }
+            // Offset mCorona around sunDir.xyz removed: Skyrim's night shadow light vector does not match Masser's
+            // skybox texture position, which created a floating blue spotlight in empty night sky (21.03.04.78.png).
             if (dayW > 0.01f || twilightBell > 0.02f) {
                 // 100% Physically Grounded Hillaire SIGGRAPH 2020 Radiative-Transfer Sky (Rayleigh + Mie + Chappuis Ozone +
                 // Infinite-Order Multi-Scattering + Planetary Earth Shadow) — ZERO hardcoded fake 3-stop twilight gradients!
@@ -269,29 +262,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 baseSky = lerp(baseSky, baseSky * clTrans + cl.rgb, 1.0f - isExotic);
                 // Physical 3D Crepuscular Cloud-Gap Light Rays (12-tap IGN-jittered radial transmittance march toward live sun):
                 // smooth band-free sunrays fanning out of cumulus breaks with soft off-screen sun fade!
-                if (sunDiscGate > 0.04f && cover > 0.12f) {
-                    const float4 sunSc = screenOf(eyeAt() + aSun * 50000.0f);
-                    if (sunSc.w > 10.0f) {
-                        const float2 sunUv = sunSc.xy * dims.zw;
-                        const float2 toSunUv = sunUv - skyUv;
-                        const float uvDist = length(toSunUv);
-                        if (uvDist < 1.10f) {
-                            const float2 stepUv = toSunUv * (1.0f / 13.0f);
-                            const float rayJit = ign(px);
-                            float rayAcc = 0.0f;
-                            float decay = 1.0f;
-                            [unroll] for (int ri = 1; ri <= 12; ++ri) {
-                                const float2 rUv = saturate(skyUv + stepUv * (float(ri) - 0.5f + rayJit * 0.65f));
-                                rayAcc += Clouds.SampleLevel(Lin, rUv, 0.0f).a * decay;
-                                decay *= 0.88f;
-                            }
-                            const float offFade = smoothstep(1.10f, 0.18f, uvDist);
-                            const float rayW = (rayAcc / 6.8f) * (1.0f - cl.a * 0.52f) * offFade * pow(saturate(cosS), 2.4f);
-                            const float3 rayCol = lerp(float3(1.0f, 0.95f, 0.86f), float3(1.28f, 0.58f, 0.24f), lowS);
-                            baseSky += rayCol * (rayW * sunDiscGate * saturate(cover * 1.45f) * 0.26f * (1.0f - isExotic));
-                        }
-                    }
-                }
+                // Removed screen-space 12-tap radial sun-spoke hack (21.03.52.63.png): true 3D volumetric godrays
+                // belong exclusively in FroxelPass / VolumetricPass (zero screen-space radial spokes across overcast sky!).
             }
             // Physical 42-deg primary + 51-deg secondary spectral atmospheric rainbow during sunlit rain (Commons own-03 & own-45).
             if (weather.w > 0.08f && aElev > 0.04f && aElev < 0.64f && sDir.z > 0.0f) {
@@ -450,17 +422,26 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                         }
                     }
                 }
-                if (weather.w > 0.08f) {
-                    const float gust = 1.0f + 0.35f * sin(camPosW.w * 1.1f + wpP.x * 0.002f);
-                    const float3 rCoord = float3((wpP.xy - windP * (wpP.z * 0.18f * gust)) * lerp(0.28f, 0.18f, float(pl) / 5.0f),
-                                                 wpP.z * 0.0095f + camPosW.w * (15.5f + float(pl) * 3.8f));
+                if (weather.w > 0.06f) {
+                    // Intense wind-driven diagonal torrential rain + dramatic storm squall sheets + backlit torch/lightning glint:
+                    const float stormBoost = saturate(weather.w * 1.45f);
+                    const float gust = 1.0f + 0.55f * sin(camPosW.w * 1.65f + wpP.x * 0.0024f) + 0.25f * cos(camPosW.w * 2.9f - wpP.y * 0.0018f);
+                    const float3 rCoord = float3((wpP.xy - windP * (wpP.z * 0.24f * gust)) * lerp(0.32f, 0.20f, float(pl) / 5.0f),
+                                                 wpP.z * 0.0075f + camPosW.w * (20.0f + float(pl) * 4.8f));
                     const float rCell = cHash(floor(rCoord));
-                    if (rCell > 0.958f) {
+                    const float rGate = lerp(0.948f, 0.916f, stormBoost);
+                    if (rCell > rGate) {
                         const float2 rF = frac(rCoord.xy) - 0.5f;
-                        const float rThin = saturate(1.0f - abs(rF.x) * 7.2f) * saturate(1.0f - abs(rF.y) * 1.85f);
-                        const float rMask = smoothstep(0.958f, 0.998f, rCell) * rThin;
-                        const float3 rLit = max(atmoCol * 1.20f + 0.08f, 0.16f.xxx) + localLightP * 1.35f;
-                        precipAdd += rLit * (rMask * weather.w * 0.36f / (1.0f + float(pl) * 0.42f));
+                        const float rThin = saturate(1.0f - abs(rF.x) * 8.4f) * saturate(1.0f - abs(rF.y) * 1.45f);
+                        const float rMask = smoothstep(rGate, 0.998f, rCell) * rThin;
+                        const float3 rLit = max(atmoCol * 1.35f + 0.10f, 0.20f.xxx) + localLightP * 2.15f;
+                        precipAdd += rLit * (rMask * stormBoost * 0.62f / (1.0f + float(pl) * 0.36f));
+                    }
+                    // Sweeping 3D storm wind-squall mist curtains during heavy downpours (pl >= 2):
+                    if (pl >= 2 && weather.w > 0.35f) {
+                        const float sqN = cNoise(float3((wpP.xy - windP * (camPosW.w * 48.0f)) * 0.0018f, wpP.z * 0.0012f));
+                        const float sqSheet = smoothstep(0.54f, 0.88f, sqN) * saturate((weather.w - 0.35f) * 1.8f);
+                        precipAdd += (atmoCol * 0.72f + localLightP * 0.35f) * (sqSheet * 0.14f / float(pl));
                     }
                 }
                 if (weather.z > 0.08f) {

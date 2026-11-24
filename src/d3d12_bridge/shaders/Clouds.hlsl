@@ -92,13 +92,15 @@ float cloudDensityVol(float3 pa, bool detail) {
     float dens = saturate((baseShape * hGrad - thresh) / max(1.0f - thresh, 0.24f));
     dens *= lerp(0.65f, 1.45f, smoothstep(0.04f, 0.42f, h));
     if (detail && dens > 0.002f) {
-        // High-frequency 3-octave 3D Worley cauliflower turret erosion (crisp sculptural edges at full native resolution!):
+        // High-frequency 3-octave 3D Worley cauliflower turret erosion + analytic 3D FBM micro-puffs
+        // (eliminates 64^3 LUT texel blur/streaking so cumulus clouds have razor-sharp billowing 3D detail!):
         const float3 detUvw = float3((sheared.x + wind.x * 0.25f) / 14500.0f, (sheared.y + wind.y * 0.25f) / 14500.0f, (curvedZ - clouds.y) / 11500.0f + tEvo * 0.22f);
         const float4 volD = sampleCloudVol(detUvw);
         const float hiWorley = volD.g * 0.625f + volD.b * 0.25f + volD.a * 0.125f;
-        // Wispy fibrous base vs puffed billowing cauliflower crown (exact Nubis height-modulated erosion):
-        const float detailMod = lerp(hiWorley, 1.0f - hiWorley, saturate(h * 1.4f));
-        const float erode = detailMod * lerp(0.46f, 0.72f, h) * (1.0f - dens * 0.32f);
+        const float microFbm = cNoise(float3(sheared.xy * 0.00018f, (curvedZ - clouds.y) * 0.00024f)) * 0.65f
+                             + cNoise(float3(sheared.xy * 0.00046f + 7.3f, (curvedZ - clouds.y) * 0.00055f)) * 0.35f;
+        const float detailMod = lerp(lerp(hiWorley, microFbm, 0.42f), 1.0f - lerp(hiWorley, microFbm, 0.42f), saturate(h * 1.4f));
+        const float erode = detailMod * lerp(0.48f, 0.74f, h) * (1.0f - dens * 0.28f);
         dens = cRemap(dens, erode, 1.0f, 0.0f, 1.0f);
     }
     return dens * cloudWind.z;

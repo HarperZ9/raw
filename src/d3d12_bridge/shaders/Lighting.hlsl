@@ -1120,6 +1120,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // (0.10..1.0 exteriors, 0.16..1.0 velvety interior shadow drama) while open surfaces keep crisp skylighting.
     const float skyVisShaped = !match ? pow(saturate(skyVis), base == 5u ? 1.65f : 1.85f) : skyVis;
     const float rtOcc = isExterior ? lerp(1.0f, lerp(0.06f, 1.0f, skyVisShaped), max(cluster.w, 0.88f)) : lerp(0.11f, 1.0f, skyVisShaped);
+    // Smooth physical irradiance soft-shoulder on close-range point lights (prevents bright plaster walls like
+    // Farengar's study 15.00.26 and snow floes under torches from clipping into flat white!):
+    if (!match) {
+        const float dPeak = max(diff.r, max(diff.g, diff.b));
+        if (dPeak > 0.95f) {
+            const float dSoft = 0.95f + (dPeak - 0.95f) / (1.0f + (dPeak - 0.95f) * 0.42f);
+            diff *= (dSoft / dPeak);
+        }
+    }
     // Feature 18: Contact-hardening near-field micro-AO grounding under foliage, rocks, furniture & NPC feet.
     const float nearGroundAo = !match ? pow(saturate(aoTerm), lerp(1.0f, 1.32f, saturate(1.0f - z / 1600.0f))) : aoTerm;
     float combinedOcc = min(nearGroundAo, rtOcc);

@@ -214,13 +214,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     stormFlash = boltCol * (pulse * glowVol * (0.30f + dens * 2.1f) * stormInt * 2.2f);
                 }
             }
-            // Crisp luminous white cumulus crowns & cool blue-slate shadowed bellies (toreler ref2):
             const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(1.00f, 1.00f, 1.00f), 0.74f * (1.0f - lowSun) * (1.0f - nightW));
-            const float3 coolBase = lerp(lerp(uSkyZ * 0.54f, float3(0.28f, 0.34f, 0.42f), overcastW * 0.55f), lerp(uSkyH * 0.66f, float3(0.42f, 0.48f, 0.56f), overcastW * 0.55f), overcastW * 0.65f + (1.0f - h) * 0.35f) * cloudAo;
-            const float3 underLit = float3(1.15f, 0.58f, 0.30f) * (twiCloud * (1.0f - h) * pow(saturate(dot(dir, aSun)), 4.0f) * (1.0f - overcastW * 0.85f) * 0.28f);
+            // Upper-to-lower cloud deck radiative coupling: high stratus/altocumulus modulates sunlight reaching lower cumulus
+            // so lower cloud puffs sit in deep cool indigo shadow while sunlit rims blaze warm gold (photos 5/7/13/14/15/18)!
+            const float upperDeckOcc = (clouds.x > 0.25f)
+                ? (1.0f - smoothstep(0.54f, 0.86f, cNoise(float3((pa.xy + cloudLightDir.xy * 18000.0f) * 0.000022f, 4.3f + camPosW.w * 0.002f))) * saturate(clouds.x) * 0.42f)
+                : 1.0f;
+            const float3 coolBase = lerp(lerp(uSkyZ * 0.48f, float3(0.22f, 0.28f, 0.38f), overcastW * 0.55f), lerp(uSkyH * 0.62f, float3(0.38f, 0.44f, 0.52f), overcastW * 0.55f), overcastW * 0.65f + (1.0f - h) * 0.35f) * cloudAo;
+            // Warm golden-amber horizon rim light on sunlit cloud edges at low sun (Chapman grazing extinction, photos 5/7/8/15):
+            const float3 horizonGold = lerp(float3(1.45f, 0.68f, 0.22f), float3(1.35f, 0.38f, 0.12f), saturate(1.0f - max(aElev, 0.0f) * 8.0f));
+            const float3 underLit = horizonGold * (twiCloud * pow(saturate(dot(dir, aSun) * 0.5f + 0.5f), 3.0f) * exp(-od * sigma * 0.35f) * (1.0f - overcastW * 0.75f) * 0.42f);
             // Night lunar rim glow: clouds near the Moon (sunDir.xyz at night) transmit translucent silver-blue light!
             const float3 moonRim = float3(0.38f, 0.52f, 0.85f) * (nightW * hg(cosT, 0.76f) * exp(-od * sigma * 0.35f) * 0.65f);
-            const float3 rawLum = whiteSun * (multiScat * lerp(0.68f, powder, 0.84f) * 4.0f * PI * 0.22f) + coolBase + underLit + moonRim + stormFlash;
+            const float3 rawLum = whiteSun * (multiScat * lerp(0.68f, powder, 0.84f) * 4.0f * PI * 0.22f * upperDeckOcc) + coolBase + underLit + moonRim + stormFlash;
             const float3 lum = select(rawLum > 0.92f.xxx, 0.92f.xxx + 0.95f * (1.0f.xxx - exp(-(rawLum - 0.92f.xxx) / 0.95f)), rawLum);
             const float ext = dens * (sigma * 1.15f);
             const float stepT = exp(-ext * dt);

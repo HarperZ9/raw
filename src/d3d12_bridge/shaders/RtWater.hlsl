@@ -360,7 +360,8 @@ void water(uint3 id : SV_DispatchThreadID) {
                      + refl * crestSheen;
             }
 
-            // Dual-lobe GGX sun glint driven by FULL crisp wave normal `n` (living sunlit water sparkles across every ripple!):
+            // Triple-lobe GGX sun glint driven by FULL crisp wave normal `n`:
+            // tight mirror sparkle + mid sheen + broad grazing-angle golden glitter road (photos 1/2/4/8) cut sharply by DXR shadows!
             float3 glint = 0.0f;
             const float3 l = sunDir.xyz;
             const float nl = dot(n, l);
@@ -368,8 +369,12 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float3 hv = normalize(v + l);
                 const float nh = saturate(dot(n, hv));
                 const float dd1 = nh * nh * (0.0035f - 1.0f) + 1.0f;
-                const float dd2 = nh * nh * (0.0240f - 1.0f) + 1.0f;
-                const float D = (0.0035f / (PI * dd1 * dd1)) * 0.72f + (0.0240f / (PI * dd2 * dd2)) * 0.28f;
+                const float dd2 = nh * nh * (0.0220f - 1.0f) + 1.0f;
+                const float dd3 = nh * nh * (0.0750f - 1.0f) + 1.0f;
+                const float lowSunRoad = saturate(1.0f - l.z * 2.2f);
+                const float D = (0.0035f / (PI * dd1 * dd1)) * 0.62f
+                              + (0.0220f / (PI * dd2 * dd2)) * 0.26f
+                              + (0.0750f / (PI * dd3 * dd3)) * (0.12f + 0.34f * lowSunRoad);
                 const float Fh = 0.02f + 0.98f * pow(1.0f - saturate(dot(v, hv)), 5.0f);
                 const float vis = sunColour.w > 0.5f ? visible(o, l, 0.0f, sunLength) : 1.0f;
                 glint = min(sunColour.rgb * (D * Fh * nl / (4.0f * max(nv, 0.08f))) * vis, 8.0f.xxx) * waterA.w;

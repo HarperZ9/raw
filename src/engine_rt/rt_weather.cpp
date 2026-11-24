@@ -261,4 +261,11 @@ std::string WeatherCommand() {
     return b;
 }
 
+void WeatherGetWind(float& outVx, float& outVy, float& outStorm) {
+    const State& s = g_state;
+    outVx = s.ok ? s.windX : 35.0f;
+    outVy = s.ok ? s.windY : 12.0f;
+    outStorm = s.ok ? std::clamp(std::max(s.smoothRain, s.smoothSnow) + s.lightning * 0.5f, 0.0f, 1.0f) : 0.0f;
+}
+
 }  // namespace raw::rt

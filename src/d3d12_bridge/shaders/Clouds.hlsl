@@ -215,7 +215,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
             const float3 whiteSun = lerp(sunC, dot(sunC, float3(0.2126f, 0.7152f, 0.0722f)).xxx * float3(1.00f, 0.995f, 0.99f), 0.60f * (1.0f - lowSun) * (1.0f - nightW));
-            const float3 coolBase = lerp(uSkyZ * 0.52f, uSkyH * 0.62f, overcastW * 0.65f + (1.0f - h) * 0.35f) * cloudAo;
+            const float3 coolBase = lerp(lerp(uSkyZ * 0.56f, float3(0.30f, 0.35f, 0.42f), overcastW * 0.55f), lerp(uSkyH * 0.66f, float3(0.42f, 0.47f, 0.54f), overcastW * 0.55f), overcastW * 0.65f + (1.0f - h) * 0.35f) * cloudAo;
             const float3 underLit = float3(1.15f, 0.58f, 0.30f) * (twiCloud * (1.0f - h) * pow(saturate(dot(dir, aSun)), 4.0f) * (1.0f - overcastW * 0.85f) * 0.28f);
             // Night lunar rim glow: clouds near the Moon (sunDir.xyz at night) transmit translucent silver-blue light!
             const float3 moonRim = float3(0.38f, 0.52f, 0.85f) * (nightW * hg(cosT, 0.76f) * exp(-od * sigma * 0.35f) * 0.65f);

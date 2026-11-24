@@ -1145,8 +1145,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                                                : lerp(0.52f, 1.20f, saturate(bentN.z * 0.5f + 0.5f))) : 1.0f;
     // Keep multi-bounce AO subtle so deep crevices stay genuinely grounded instead of lifting back to muddy grey.
     const float3 mbOcc = lerp(combinedOcc.xxx, gtaoMultiBounce(combinedOcc, saturate(albedo)), 0.38f);
-    // Disciplined exterior ambient floor (0.54..0.76x) creates true 3.5:1-5:1 direct-sun-to-shadow dynamic range!
-    const float ambHdrScale = (!match && isExterior) ? lerp(0.54f, 0.76f, saturate(clouds.x)) : 1.0f;
+    // Rich sunlight-to-shadow dynamic range (0.46..0.70x exterior ambient matches forest & sunlit room references):
+    const float ambHdrScale = (!match && isExterior) ? lerp(0.46f, 0.70f, saturate(clouds.x)) : 1.0f;
     amb *= match ? combinedOcc.xxx : mbOcc * hemiSky * ambHdrScale;
     // Multi-bounce hardware RayQuery GI: boosted indirect energy + color-bleed preservation + upward overhang bounce
     // so sunlit grass, cobblestone, snow, water, and warm tavern hearths cast tangible colored indirect light.
@@ -1364,11 +1364,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 [unroll] for (int rx = -1; rx <= 1; rx++) {
                     const int3 rp = int3(clamp(baseRefl + int2(rx, ry), int2(0, 0), int2(dims.xy) - 1), 0);
                     const float rdDepth = Depth.Load(rp);
-                    if (abs(viewZOf(rdDepth) - z) < max(z * 0.04f, 3.0f)) {
-                        const float kw = (rx == 0 && ry == 0) ? 2.0f : 1.0f;
+                    if (abs(viewZOf(rdDepth) - z) < max(z * 0.03f, 2.5f)) {
                         const float4 tap = RtRefl.Load(rp);
-                        rfSum += float4(min(tap.rgb, 3.0f.xxx), tap.a) * kw;
-                        rfW += kw;
+                        if (!any(isnan(tap)) && !any(isinf(tap))) {
+                            const float nw = pow(saturate(dot(nSmooth, worldNormal(Normal.Load(rp)))), 16.0f);
+                            const float kw = ((rx == 0 && ry == 0) ? 2.0f : 1.0f) * max(nw, (rx == 0 && ry == 0) ? 1.0f : 0.0f);
+                            rfSum += float4(clamp(tap.rgb, 0.0f.xxx, 4.0f.xxx), saturate(tap.a)) * kw;
+                            rfW += kw;
+                        }
                     }
                 }
             }

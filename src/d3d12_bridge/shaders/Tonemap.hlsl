@@ -334,17 +334,11 @@ float4 main(In i) : SV_Target {
         const float l = max(dot(hdr, W), 1.0e-5f);
         mapped = hdr * (gameCurve(l * exposure) / l);
     } else if (RB.x > 3.5f) {
-        // Wide-gamut modern curves (zero ColorPow shadow crush, true hue & micro-texture preservation):
-        // 4 = AgX (Troy Sobotka), 5 = Gran Turismo (Uchimura), 6 = Lottes, 7 = Hable, 8 = ACES 2.0 CAM (Playground native/).
-        // SIGGRAPH TON-04 Bilateral Local Tone Mapping: uses low-frequency bloom luma as a free base layer so
-        // dark interiors looking out sunlit doorways retain both shadow readability and crisp exterior highlights.
+        // Wide-gamut modern curves (4=AgX, 5=GT, 6=Lottes, 7=Hable, 8=ACES 2.0 CAM):
+        // Removed Skyrim's blurry 2011 vanilla Bloom (t0) from ltmRatio so our 6-level Jimenez HDR BloomPass.hlsl
+        // is the sole bloom source (zero vanilla bloom halo bleed!).
         float3 xIn = hdr * exposure * RB.z;
-        const float lIn = max(dot(xIn, W), 1.0e-5f);
-        const float lBase = max(dot(bloom, W) * exposure * RB.z, 0.025f);
-        const float ltmRatio = clamp(log2(lIn / lBase), -1.15f, 1.15f);
-        xIn *= exp2(ltmRatio * 0.12f);
-        // Photographic C2 Soft-Curve Rolling Highlights & Velvety Shadow Toe (prevents harsh highlight clipping on
-        // sun-hit snow, clouds & hearth cores while keeping deep shadow detail velvety and open):
+        // Photographic C2 Soft-Curve Rolling Highlights & Velvety Shadow Toe:
         const float lPost = max(dot(xIn, W), 1.0e-5f);
         const float rollKnee = max(RC.w * 0.35f, 0.85f);
         if (lPost > rollKnee) {

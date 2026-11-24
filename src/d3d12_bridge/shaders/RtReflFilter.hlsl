@@ -39,7 +39,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float dq = Depth.Load(int3(q, 0));
             if (dq >= 1.0f) { continue; }
             float4 tap = RawRefl.Load(int3(q, 0));
-            if (tap.a < 0.005f) { continue; }
+            if (tap.a < 0.005f || any(isnan(tap)) || any(isinf(tap))) { continue; }
+            tap.rgb = clamp(tap.rgb, 0.0f.xxx, 8.0f.xxx);
             const float zPred = z + zSlope.x * float(dx) + zSlope.y * float(dy);
             const float pd = abs(viewZOf(dq) - zPred) * invPlane;
             const float r2 = float(dx * dx + dy * dy);

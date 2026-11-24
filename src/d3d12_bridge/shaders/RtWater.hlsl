@@ -126,7 +126,7 @@ float evalWaterWaveHeight(float2 xy, float wt, float2 flowDir, float2 flowPerp, 
         const float omega = sqrt(9.81f * kM) * 1.35f;
         const float spread = (frac(float(wi) * 0.6180339f) - 0.5f) * 1.05f;
         const float2 dirW = normalize(flowDir * cos(spread) + flowPerp * sin(spread));
-        const float ampH = (2.8f * pow(1.0f - fracI * 0.62f, 1.35f)) * ampScale;
+        const float ampH = (4.2f * pow(1.0f - fracI * 0.58f, 1.30f)) * ampScale;
         const float ph = dot(xy, dirW) * kRad - wt * omega + float(wi) * 2.39996f;
         const float s = sin(ph);
         const float c = cos(ph);
@@ -298,10 +298,8 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float2 rr = float2(hash(px, frameIndex * 0.291f + 5.0f), hash(px.yx, frameIndex * 0.733f + 2.0f));
             const float3 o = p + float3(0.0f, 0.0f, max(2.5f + waveHeight3D * 0.45f, 1.0f) + 0.003f * length(p));
 
-            // Silky recognizable mirror reflections with zero high-frequency noise (0.36 -> 0.16).
-            // Swell-filtered reflection normal (keeps crisp capillary ripples for sun glint while preventing
-            // pixel-to-pixel reflection ray scatter & edge noise on water reflections!):
-            const float reflRelief = lerp(0.13f, 0.04f, saturate(wDist / 6000.0f));
+            // Crisp wave-rippled reflections (0.42..0.18 relief instead of flat 0.13 mirror) and full wave-normal sun glint!
+            const float reflRelief = lerp(0.42f, 0.18f, saturate(wDist / 6000.0f));
             const float3 nRefl = normalize(lerp(float3(0.0f, 0.0f, 1.0f), n, reflRelief));
             float3 rd = reflect(-v, nRefl);
             if (rd.z < 0.04f) { rd = normalize(float3(rd.xy, 0.04f)); }
@@ -352,19 +350,19 @@ void water(uint3 id : SV_DispatchThreadID) {
                      + refl * crestSheen;
             }
 
-            // Dual-lobe GGX sun glint (tight 0.0045 mirror crest sparkle + broad 0.022 sheen lobe).
+            // Dual-lobe GGX sun glint driven by FULL crisp wave normal `n` (living sunlit water sparkles across every ripple!):
             float3 glint = 0.0f;
             const float3 l = sunDir.xyz;
-            const float nl = dot(nRefl, l);
+            const float nl = dot(n, l);
             if (sunDir.w > 0.5f && nl > 0.0f && waterA.w > 0.0f) {
                 const float3 hv = normalize(v + l);
-                const float nh = saturate(dot(nRefl, hv));
-                const float dd1 = nh * nh * (0.0045f - 1.0f) + 1.0f;
-                const float dd2 = nh * nh * (0.0220f - 1.0f) + 1.0f;
-                const float D = (0.0045f / (PI * dd1 * dd1)) * 0.65f + (0.0220f / (PI * dd2 * dd2)) * 0.35f;
+                const float nh = saturate(dot(n, hv));
+                const float dd1 = nh * nh * (0.0035f - 1.0f) + 1.0f;
+                const float dd2 = nh * nh * (0.0240f - 1.0f) + 1.0f;
+                const float D = (0.0035f / (PI * dd1 * dd1)) * 0.72f + (0.0240f / (PI * dd2 * dd2)) * 0.28f;
                 const float Fh = 0.02f + 0.98f * pow(1.0f - saturate(dot(v, hv)), 5.0f);
                 const float vis = sunColour.w > 0.5f ? visible(o, l, 0.0f, sunLength) : 1.0f;
-                glint = min(sunColour.rgb * (D * Fh * nl / (4.0f * max(nv, 0.08f))) * vis, 6.0f.xxx) * waterA.w;
+                glint = min(sunColour.rgb * (D * Fh * nl / (4.0f * max(nv, 0.08f))) * vis, 8.0f.xxx) * waterA.w;
             }
             // Dual-lobe elongated liquid specular reflections on water:
             // Softened indoors (sunColour.w < 0.5) so cisterns/caves show natural gentle lantern shimmer instead of white laser beams!
@@ -411,8 +409,8 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float through = exp(-waterA.z * (depthV + length(pb - p)));    // down to the bed and back up to the eye
                 const float focus = saturate(depthV / 22.0f) * exp(-depthV / 340.0f);  // sharp in shallows, softens in deep pools
                 // Attenuate caustics naturally under overcast clouds so diffuse overcast skies never cast harsh laser webs on riverbeds.
-                const float clearSun = 1.0f - saturate(clouds.x * 0.85f);
-                caus = BedAlbedo.Load(ip).rgb * sunColour.rgb * (l.z * sunVis * through * focus * waterA.y * 0.85f * clearSun) * net;
+                const float clearSun = max(1.0f - saturate(clouds.x * 0.80f), 0.22f);
+                caus = BedAlbedo.Load(ip).rgb * sunColour.rgb * (l.z * sunVis * through * focus * waterA.y * 1.45f * clearSun) * net;
             }
 
             // Refraction through the bed's own colour, from the frame RAW lit before the game composited its water: the
@@ -430,10 +428,10 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float3 refrRay = refract(-v, n, 1.0f / 1.333f);
                 const float tRefr = min(depthV / max(-refrRay.z, 0.30f), 48.0f);
                 const float3 pRefrBed = p + refrRay * tRefr;
-                const float4 s2 = screenOf(lerp(pb, pRefrBed, 0.35f));
+                const float4 s2 = screenOf(lerp(pb, pRefrBed, 0.62f));
                 float2 qOff = s2.w > 0.0f ? (s2.xy - float2(id.xy)) : 0.0f.xx;
                 const float qLen = length(qOff);
-                if (qLen > 10.0f) { qOff *= (10.0f / qLen); }
+                if (qLen > 14.0f) { qOff *= (14.0f / qLen); }
                 // Fade refraction offset smoothly to 0 near screen borders (eliminates bottom-edge vertical smear bar
                 // seen in 10.51.17.92 & 10.51.15.20!):
                 const float borderDist = min(min(float(id.x), dims.x - 1.0f - float(id.x)), min(float(id.y), dims.y - 1.0f - float(id.y)));
@@ -509,7 +507,8 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;
             // Continuous single world-space fluid surface from boots to horizon (extends full JONSWAP + RT water out to 42,000u!):
             const float cellFeather = 1.0f - smoothstep(18000.0f, 42000.0f, wDist);
-            const float effF = saturate(max(lerp(F, pow(saturate(F), 0.64f), 0.55f), 0.16f) * waterA.x * shoreFeather * cellFeather);
+            // True physical Schlick Fresnel (crystal-clear looking down into shallows, crisp mirror reflection at grazing angles):
+            const float effF = saturate(F * waterA.x * shoreFeather * cellFeather);
             const uint view = uint(waterB.x + 0.5f);
             const float3 farSkyRefl = waterSky(rd);
             // Deep cold Nordic steel-slate ocean body (replaces electric royal blue Arctic water).

@@ -46,6 +46,11 @@ inline bool IsCanonicalPtr(const void* p) {
     return v >= 0x10000ull && v < 0x00007FFFFFFFFFFFull && (v & 0x7ull) == 0;
 }
 
+inline bool IsCanonicalStr(const char* p) {
+    const uintptr_t v = reinterpret_cast<uintptr_t>(p);
+    return v >= 0x10000ull && v < 0x00007FFFFFFFFFFFull;
+}
+
 template <class T>
 T SafeAt(const uint8_t* p, uint32_t off) {
     T v{};
@@ -115,7 +120,10 @@ bool ClassifySoftBone(const char* boneName, TissueKind* outKind) {
     if (ContainsCI(boneName, "cloak") || ContainsCI(boneName, "cape") || ContainsCI(boneName, "skirt") ||
         ContainsCI(boneName, "robe") || ContainsCI(boneName, "dress") || ContainsCI(boneName, "sash") ||
         ContainsCI(boneName, "cloth") || ContainsCI(boneName, "tassel") || ContainsCI(boneName, "pouch") ||
-        ContainsCI(boneName, "fur") || ContainsCI(boneName, "cowl")) {
+        ContainsCI(boneName, "fur") || ContainsCI(boneName, "cowl") ||
+        ContainsCI(boneName, "quiver") || ContainsCI(boneName, "weaponsword") ||
+        ContainsCI(boneName, "weapondagger") || ContainsCI(boneName, "weaponaxe") ||
+        ContainsCI(boneName, "weaponmace")) {
         *outKind = TissueKind::Cloak; return true;
     }
     return false;
@@ -241,13 +249,14 @@ void TraverseSkeletonSEH(uint8_t* node, float dtSec, int depth, uint32_t& bonesO
     if (!IsCanonicalPtr(node) || depth > 14 || bonesOut >= 64u) return;
     __try {
         const char* name = SafeAt<const char*>(node, 0x10);
-        if (IsCanonicalPtr(name)) {
+        if (IsCanonicalStr(name)) {
             TissueKind kind{};
             if (ClassifySoftBone(name, &kind)) {
                 const uint8_t* parent = SafeAt<const uint8_t*>(node, 0x30);
                 if (IsCanonicalPtr(parent)) {
                     float parentWorld[3];
-                    std::memcpy(parentWorld, parent + 0xA0, 12);
+                    // NiAVObject::world (+0x74): rotate (0x24 bytes) -> world.translate is at +0x98!
+                    std::memcpy(parentWorld, parent + 0x98, 12);
                     const bool finiteP = std::isfinite(parentWorld[0]) && std::isfinite(parentWorld[1]) && std::isfinite(parentWorld[2]);
                     if (finiteP) {
                         const uintptr_t key = reinterpret_cast<uintptr_t>(node);

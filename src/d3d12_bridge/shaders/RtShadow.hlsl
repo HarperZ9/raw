@@ -255,30 +255,33 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float3 n = worldNormal(Normal.Load(ip));
         const float z = viewZOf(d);
         const float3 ng = geometricNormal(px, p, n);
-        // Stronger normal offset on skinned meshes (base == 10) and general surfaces to eliminate RT terminator/self-shadow acne.
-        const float oScale = (base == 10u) ? (1.80f + 0.008f * z) : (0.85f + 0.005f * z);
+        // Stronger normal offset on skinned meshes (base == 10/11/12) to eliminate RT terminator/self-shadow acne cleanly:
+        const bool isSkinnedMesh = (base == 10u || base == 11u || base == 12u);
+        const float oScale = isSkinnedMesh ? (2.25f + 0.008f * z) : (0.85f + 0.005f * z);
         const float3 o = p + ng * oScale;
         const float2 r = stbnR2(px, frameIndex);
         if (sunDir.w > 0.5f && sunColour.w > 0.5f && dot(n, sunDir.xyz) > 0.0f) {
-            // 2027 Blocker-Distance Variable-Penumbra PCSS RayQuery Sun Shadows (4-spp stratified):
-            // Probe exact occluder distance first: contact shadows under boots/stones stay razor-sharp (0.24x cone),
-            // while high branches & castle eaves cast silky wide penumbrae (up to 1.85x cone)!
+            // 2027 6-spp Stratified Vogel-Disk Blocker-Distance PCSS Hardware DXR Sun Shadows:
+            // Probe exact occluder distance first: contact shadows under boots/stones stay razor-sharp (0.18x cone),
+            // while high branches & castle eaves cast butter-smooth wide physical penumbrae (up to 2.05x cone)!
             const float turn = saturate(1.0f - dot(ng, sunDir.xyz) / 0.40f);
             const float tMinS = max(termDist, 1.8f) * turn * turn;
             Hit hBlocker;
             float effCone = sunCone;
-            float v0 = 1.0f;
-            if (traceHit(o + sunDir.xyz * tMinS, jitterDir(sunDir.xyz, sunCone * 0.45f, r), sunLength, hBlocker)) {
-                v0 = 0.0f;
-                effCone = clamp(sunCone * (0.24f + 1.60f * saturate(hBlocker.t / 220.0f)), sunCone * 0.24f, sunCone * 1.85f);
+            float vSum = 0.0f;
+            if (traceHit(o + sunDir.xyz * tMinS, jitterDir(sunDir.xyz, sunCone * 0.42f, r), sunLength, hBlocker)) {
+                effCone = clamp(sunCone * (0.18f + 1.88f * saturate(hBlocker.t / 190.0f)), sunCone * 0.18f, sunCone * 2.05f);
+            } else {
+                vSum += 1.0f;
             }
-            const float2 r1 = frac(r + float2(0.250000f, 0.618034f));
-            const float2 r2 = frac(r + float2(0.500000f, 0.236068f));
-            const float2 r3 = frac(r + float2(0.750000f, 0.854102f));
-            const float v1 = visible(o, jitterDir(sunDir.xyz, effCone, r1), tMinS, sunLength);
-            const float v2 = visible(o, jitterDir(sunDir.xyz, effCone, r2), tMinS, sunLength);
-            const float v3 = visible(o, jitterDir(sunDir.xyz, effCone, r3), tMinS, sunLength);
-            vis.x = (v0 + v1 + v2 + v3) * 0.25f;
+            const float baseAng = r.x * 6.2831853f;
+            [unroll] for (uint si = 1u; si < 6u; ++si) {
+                const float radV = sqrt((float(si) + 0.5f) / 6.0f);
+                const float angV = float(si) * 2.3999632f + baseAng;
+                const float2 uvV = float2(radV * cos(angV), radV * sin(angV)) * 0.5f + 0.5f;
+                vSum += visible(o, jitterDir(sunDir.xyz, effCone, uvV), tMinS, sunLength);
+            }
+            vis.x = vSum * (1.0f / 6.0f);
         }
         // Pure Hardware DXR 3D Contact RTAO & Multi-Bounce GI (ZERO screen-space GTAO!):
         // Use sunColour.w <= 0.5f for true interior detection (sunDir.w stays 1.0 in many Skyrim interiors!).
@@ -339,21 +342,28 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
         [unroll] for (uint k = 0u; k < 3u; k++) {
             if (best[k] == ~0u) { continue; }
-            // Zero-flicker point-light RT shadows: static pixel-locked IGN offsets (no frameIndex jitter!)
-            // + 24-unit fixture clearance eliminates 60Hz interior/hearth/forge pole shadow shimmer completely.
+            // 6-spp Vogel-Disk Physical Area-Light PCSS Point-Light RT Shadows (static pixel-locked IGN phase -> ZERO flicker,
+            // silky smooth physical penumbra softening with distance & zero stipple around hearths/braziers/torches!):
             const float fixClear = max(sourceRadius * 2.4f, 24.0f);
-            const float radK = sourceRadius * 0.36f;
-            const float2 rStatic = float2(ign(px + float2(17.0f * float(k), 31.0f)), ign(px.yx + float2(29.0f, 13.0f * float(k))));
+            const float3 lPos = lightPosR[best[k]].xyz;
+            const float3 toCenter = lPos - o;
+            const float distC = length(toCenter);
+            const float3 lDir = toCenter / max(distC, 1.0e-4f);
+            const float3 lTan = normalize(cross(lDir, abs(lDir.z) < 0.9f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f)));
+            const float3 lBit = cross(lDir, lTan);
+            const float radK = clamp(sourceRadius * 0.42f + distC * 0.012f, 4.5f, 18.0f);
+            const float ang0 = ign(px + float2(17.0f * float(k), 31.0f)) * 6.2831853f;
             float vAcc = 0.0f;
-            const uint nSpp = 4u;   // 4-spp static pixel-locked RT shadows on ALL top-3 point lights (zero flicker!)
+            const uint nSpp = 6u;
             [loop] for (uint si = 0u; si < nSpp; si++) {
-                const float2 rki = frac(rStatic + float2(0.25f * float(si), 0.37f * float(si)));
-                const float3 ci = lightPosR[best[k]].xyz + (float3(rki.x, rki.y, frac(rki.x + rki.y + 0.5f)) * 2.0f - 1.0f) * radK;
+                const float rv = sqrt((float(si) + 0.5f) / float(nSpp));
+                const float av = float(si) * 2.3999632f + ang0;
+                const float3 ci = lPos + (lTan * cos(av) + lBit * sin(av)) * (rv * radK);
                 const float3 toi = ci - o;
                 const float liLen = length(toi);
                 vAcc += liLen > fixClear ? visible(o, toi / max(liLen, 1.0e-4f), 0.0f, liLen - fixClear) : 1.0f;
             }
-            vis[k + 1u] = vAcc / float(nSpp);
+            vis[k + 1u] = vAcc * (1.0f / float(nSpp));
             idx[k] = float(best[k] + 1u) / 255.0f;
         }
         // Every other light of the cluster. Each frame, every pixel picks one of them in proportion to the light it

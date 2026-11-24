@@ -36,7 +36,7 @@ void FindSections(const Image& img, SecRange& rdata, SecRange& data) {
 // Universal runtime RTTI + Creation Engine Setting scanner: resolves vtables, vtable slots,
 // and all ~3,000+ INI/Prefs/GMST Setting singletons on ANY Skyrim SE / AE / GOG / VR executable
 // (1.5.97, 1.6.353, 1.6.640, 1.6.659 GOG, 1.6.1130, 1.6.1170, 1.6.1179 GOG, 1.7.104, etc.).
-bool BuildUniversalRuntimeTable(const Image& img, const raw::versions::Exe& exe, raw::versions::Table* out, std::string* why) {
+bool BuildUniversalRuntimeTable(const Image& img, const std::string& gameDir, const raw::versions::Exe& exe, raw::versions::Table* out, std::string* why) {
     SecRange rdata{}, data{};
     FindSections(img, rdata, data);
     if (rdata.end <= rdata.begin || data.end <= data.begin) return false;
@@ -155,12 +155,105 @@ bool BuildUniversalRuntimeTable(const Image& img, const raw::versions::Exe& exe,
     t.entries["off:UI::menuMap"] = {"offset", "runtime-stable", 0x128};
     t.entries["off:SkyrimVM::impl"] = {"offset", "runtime-stable", (exe.major > 1 || exe.minor >= 7) ? 0x210u : 0x200u};
 
-    if (vtCount == 0 && settingCount == 0) return false;
+    // 4. Universal Address Library runtime loader (format 2 for 1.6.x AE/GOG, format 5 for 1.7.99+):
+    // Reads Data\SKSE\Plugins\versionlib-<major>-<minor>-<build>-<sub>.bin when present to resolve
+    // ALL engine singletons (Sky, TES, PlayerCamera, PlayerCharacter, UI, Calendar, BSGraphics,
+    // BSShaderManager, ProcessLists, Decal/Grass/ImageSpace/Water managers) on ANY AE/GOG version!
+    uint32_t alCount = 0;
+    {
+        char alName[128];
+        std::snprintf(alName, sizeof alName, "Data\\SKSE\\Plugins\\versionlib-%u-%u-%u-%u.bin",
+                      exe.major, exe.minor, exe.build, exe.sub);
+        std::ifstream f(gameDir + alName, std::ios::binary);
+        if (f) {
+            std::vector<uint8_t> buf((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            auto rd = [&](size_t& p, auto& outVal) -> bool {
+                if (p + sizeof(outVal) > buf.size()) return false;
+                std::memcpy(&outVal, buf.data() + p, sizeof(outVal));
+                p += sizeof(outVal);
+                return true;
+            };
+            static const std::pair<uint64_t, std::pair<const char*, const char*>> kWantedIds[] = {
+                {13878,  {"fn:Sky::GetSingleton", "function"}},
+                {35727,  {"fn:BGSSaveLoadManager::Save_Impl", "function"}},
+                {35728,  {"fn:BGSSaveLoadManager::Load_Impl", "function"}},
+                {390951, {"BSShaderManager::State::GetSingleton", "global"}},
+                {400315, {"ProcessLists::GetSingleton", "global"}},
+                {400327, {"UI::Singleton", "global"}},
+                {400447, {"Calendar::Singleton", "global"}},
+                {400450, {"TESWaterSystem::GetSingleton", "global"}},
+                {400452, {"BGSGrassManager::GetSingleton", "global"}},
+                {400561, {"BGSDecalManager::GetSingleton", "global"}},
+                {400622, {"BSPointerHandleManager::Entry::GetHandleEntries", "global"}},
+                {400802, {"PlayerCamera::Singleton", "global"}},
+                {403450, {"TES::Singleton", "global"}},
+                {403521, {"PlayerCharacter::Singleton", "global"}},
+                {411479, {"BSGraphics::State::GetSingleton", "global"}},
+                {414660, {"ImageSpaceManager::GetSingleton", "global"}},
+            };
+            std::unordered_map<uint64_t, std::pair<const char*, const char*>> idMap;
+            for (const auto& kv : kWantedIds) idMap[kv.first] = kv.second;
+
+            size_t p = 0;
+            int32_t fmt = 0;
+            if (rd(p, fmt)) {
+                if (fmt == 5 && buf.size() >= 0x60) {
+                    uint32_t count = 0;
+                    std::memcpy(&count, buf.data() + 0x5C, sizeof(count));
+                    if (0x60ull + uint64_t(count) * 4ull <= buf.size()) {
+                        const uint32_t* offs = reinterpret_cast<const uint32_t*>(buf.data() + 0x60);
+                        for (const auto& [id, meta] : idMap) {
+                            if (id < count && offs[id] != 0) {
+                                t.entries[meta.first] = {meta.second, "runtime-addrlib", offs[id]};
+                                ++alCount;
+                            }
+                        }
+                    }
+                } else if (fmt == 2) {
+                    int32_t v[4]{}, nameLen = 0, ptrSize = 0, count = 0;
+                    bool ok = rd(p, v[0]) && rd(p, v[1]) && rd(p, v[2]) && rd(p, v[3]) && rd(p, nameLen);
+                    if (ok && nameLen >= 0 && p + size_t(nameLen) <= buf.size()) {
+                        p += size_t(nameLen);
+                        ok = rd(p, ptrSize) && rd(p, count) && ptrSize > 0 && count > 0;
+                    } else ok = false;
+                    auto delta = [&](uint8_t kind, uint64_t prev, uint64_t& res) -> bool {
+                        if (kind == 1) { res = prev + 1; return true; }
+                        if (kind == 2) { uint8_t d = 0; if (!rd(p, d)) return false; res = prev + d; return true; }
+                        if (kind == 3) { uint8_t d = 0; if (!rd(p, d)) return false; res = prev - d; return true; }
+                        if (kind == 4) { uint16_t d = 0; if (!rd(p, d)) return false; res = prev + d; return true; }
+                        if (kind == 5) { uint16_t d = 0; if (!rd(p, d)) return false; res = prev - d; return true; }
+                        if (kind == 6) { uint16_t d = 0; if (!rd(p, d)) return false; res = d; return true; }
+                        if (kind == 7) { uint32_t d = 0; if (!rd(p, d)) return false; res = d; return true; }
+                        return false;
+                    };
+                    uint64_t prevId = 0, prevOff = 0;
+                    for (int32_t i = 0; ok && i < count; ++i) {
+                        uint8_t tag = 0;
+                        if (!rd(p, tag)) break;
+                        const uint8_t lo = tag & 0xFu, hi = tag >> 4;
+                        uint64_t id = 0, off = 0;
+                        if (lo == 0) { if (!rd(p, id)) break; } else if (!delta(lo, prevId, id)) break;
+                        const uint64_t baseOff = (hi & 8u) ? (prevOff / uint64_t(ptrSize)) : prevOff;
+                        if ((hi & 7u) == 0) { if (!rd(p, off)) break; } else if (!delta(hi & 7u, baseOff, off)) break;
+                        if (hi & 8u) off *= uint64_t(ptrSize);
+                        prevId = id; prevOff = off;
+                        const auto it = idMap.find(id);
+                        if (it != idMap.end() && off > 0 && off < img.sizeOfImage) {
+                            t.entries[it->second.first] = {it->second.second, "runtime-addrlib", static_cast<uint32_t>(off)};
+                            ++alCount;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (vtCount == 0 && settingCount == 0 && alCount == 0) return false;
     if (why) {
         char buf[256];
         std::snprintf(buf, sizeof buf,
-                      "SkyrimSE.exe %s (universal runtime scan: %u vtables, %u settings resolved; no static .tsv needed)",
-                      exe.Version().c_str(), vtCount, settingCount);
+                      "SkyrimSE.exe %s (universal runtime scan: %u vtables, %u settings, %u addrlib singletons resolved)",
+                      exe.Version().c_str(), vtCount, settingCount, alCount);
         *why = buf;
     }
     *out = std::move(t);
@@ -189,7 +282,7 @@ bool LoadVersionTable(const Image& img, const std::string& gameDir, std::string*
         g_packed = exe.Packed();
         return true;
     }
-    if (BuildUniversalRuntimeTable(img, exe, &g_table, why)) {
+    if (BuildUniversalRuntimeTable(img, gameDir, exe, &g_table, why)) {
         g_packed = exe.Packed();
         return true;
     }

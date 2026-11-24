@@ -326,14 +326,14 @@ float4 main(In i) : SV_Target {
     const float lRgt  = dot(Scene.SampleLevel(S1, min(float2(0.76f, 0.46f) * F[43].xy, uvLim), 0.0f).rgb, W);
     const float lMid  = dot(Scene.SampleLevel(S1, min(float2(0.50f, 0.42f) * F[43].xy, uvLim), 0.0f).rgb, W);
     const float liveMeter = clamp((lTop * 0.20f + lLeft * 0.26f + lRgt * 0.26f + lMid * 0.28f), 0.008f, 4.0f);
-    const float blendAvg = lerp(avg, liveMeter, 0.22f);
+    const float blendAvg = lerp(avg, liveMeter, 0.48f);
     const float metered = clamp(blendAvg, RA.z, RA.w);
     const float evDiff = log2(max(metered / max(RC.y, 0.05f), 1.0e-4f));
-    const float eyeShare = evDiff > 0.0f ? max(RC.x, 0.72f) : (RC.z > 0.0f ? max(RC.z, 0.34f) : 0.34f);
+    const float eyeShare = evDiff > 0.0f ? max(RC.x, 0.78f) : (RC.z > 0.0f ? max(RC.z, 0.52f) : 0.52f);
     const bool isIntExp = (RX.w > 0.0f && RX.w < 0.99f);
-    // Interiors (caves/taverns/dungeons): controlled dark-adaptation lift (0.68..1.28); Exteriors: full snow-to-night range (0.34..1.48).
-    const float eyeComp = isIntExp ? clamp(exp2(-evDiff * eyeShare * 0.52f), 0.68f, 1.28f)
-                                   : clamp(exp2(-evDiff * eyeShare), 0.34f, 1.48f);
+    // Responsive continuous eye adaptation across bright snow, dark caves/taverns & dusk/night:
+    const float eyeComp = isIntExp ? clamp(exp2(-evDiff * eyeShare * 0.65f), 0.55f, 1.65f)
+                                   : clamp(exp2(-evDiff * eyeShare), 0.30f, 1.85f);
     const float camera = (RB.y / max(RC.y, 0.05f)) * eyeComp;
     // RX.w: the interior factor the proxy sets per frame (ToneX5 in a cell with no sun cascades, else 1).
     const float exposure = (RA.x < 0.5f ? lum.y / avg : camera * (RX.w > 0.0f ? RX.w : 1.0f)) * exp2(RA.y);

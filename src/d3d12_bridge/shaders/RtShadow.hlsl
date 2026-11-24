@@ -255,15 +255,17 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float3 n = worldNormal(Normal.Load(ip));
         const float z = viewZOf(d);
         const float3 ng = geometricNormal(px, p, n);
-        // Stronger normal offset on skinned meshes (base == 10/11/12) to eliminate RT terminator/self-shadow acne cleanly:
+        // Stronger normal offset on skinned meshes (10/11/12) and alpha-tested foliage cards (5) to kill self-shadow acne & tree light artifacts:
         const bool isSkinnedMesh = (base == 10u || base == 11u || base == 12u);
-        const float oScale = isSkinnedMesh ? (2.25f + 0.008f * z) : (0.85f + 0.005f * z);
+        const bool isFoliageCard = (base == 5u);
+        const float oScale = isFoliageCard ? (3.20f + 0.008f * z) : isSkinnedMesh ? (2.25f + 0.008f * z) : (0.85f + 0.005f * z);
         const float3 o = p + ng * oScale;
-        const float2 r = stbnR2(px, frameIndex);
+        // Pixel-locked static STBN for sun shadows (eliminates frame-to-frame shadow & pine-needle flicker completely!):
+        const float2 r = stbnR2(px, 0.0f);
         if (sunDir.w > 0.5f && sunColour.w > 0.5f && dot(n, sunDir.xyz) > 0.0f) {
-            // Fast 2-spp Blocker-Distance PCSS Hardware DXR Sun Shadows (3x faster than 6-spp, crisp contact -> soft penumbra!):
+            // Fast 2-spp Blocker-Distance PCSS Hardware DXR Sun Shadows (pixel-locked, zero flicker!):
             const float turn = saturate(1.0f - dot(ng, sunDir.xyz) / 0.40f);
-            const float tMinS = max(termDist, 1.8f) * turn * turn;
+            const float tMinS = max(max(termDist, 1.8f) * turn * turn, isFoliageCard ? 8.0f : 0.0f);
             Hit hBlocker;
             float effCone = sunCone;
             float vSum = 0.0f;

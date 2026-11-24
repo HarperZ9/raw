@@ -114,25 +114,26 @@ float organicFroth(float2 p, float t) {
     return smoothstep(0.46f, 0.80f, fbm);
 }
 
-// Fast, artifact-free 4-mode 3D World-Space Traveling Gerstner Wave Heightfield (ZERO 24-bit depthV0 staircase polygons!):
+// Omnidirectional 6-mode Golden-Angle 3D Gerstner Wave Heightfield (kills parallel corduroy zebra stripes seen in 13.17.04!):
 float evalWaterWaveHeight(float2 xy, float wt, float2 flowDir, float2 flowPerp, float ampScale, out float2 outGrad, out float outFold) {
     float h = 0.0f;
     outGrad = 0.0f.xx;
     outFold = 0.0f;
-    [unroll] for (int wi = 0; wi < 4; ++wi) {
-        const float fracI = float(wi) / 3.0f;
-        const float kRad = 0.011f * pow(4.8f, fracI);
+    static const float kAng[6] = { -1.32f, -0.68f, -0.18f, 0.34f, 0.88f, 1.46f };
+    static const float kFreq[6] = { 0.0085f, 0.0137f, 0.0211f, 0.0329f, 0.0513f, 0.0791f };
+    static const float kAmp[6]  = { 3.6f, 2.5f, 1.75f, 1.15f, 0.72f, 0.44f };
+    [unroll] for (int wi = 0; wi < 6; ++wi) {
+        const float kRad = kFreq[wi];
         const float kM = kRad * 70.0f;
-        const float omega = sqrt(9.81f * kM) * 1.35f;
-        const float spread = (frac(float(wi) * 0.6180339f) - 0.5f) * 1.05f;
-        const float2 dirW = normalize(flowDir * cos(spread) + flowPerp * sin(spread));
-        const float ampH = (4.2f * pow(1.0f - fracI * 0.58f, 1.30f)) * ampScale;
+        const float omega = sqrt(9.81f * kM) * 1.28f;
+        const float2 dirW = normalize(flowDir * cos(kAng[wi]) + flowPerp * sin(kAng[wi]));
+        const float ampH = kAmp[wi] * ampScale;
         const float ph = dot(xy, dirW) * kRad - wt * omega + float(wi) * 2.39996f;
         const float s = sin(ph);
         const float c = cos(ph);
-        h += ampH * (s + 0.18f * (s * s - 0.5f));
-        outGrad += dirW * (ampH * kRad * (c * (1.0f + 0.36f * s)));
-        outFold += max(s, 0.0f) * (ampH * kRad * 2.8f);
+        h += ampH * (s + 0.16f * (s * s - 0.5f));
+        outGrad += dirW * (ampH * kRad * (c * (1.0f + 0.32f * s)));
+        outFold += max(s, 0.0f) * (ampH * kRad * 2.4f);
     }
     return h;
 }

@@ -141,16 +141,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 float3 uSunS, uSkyZS, uSkyHS, uAmbUpS, uAmbDnS;
                 evalWorldAtmosphere(uSunS, uSkyZS, uSkyHS, uAmbUpS, uAmbDnS);
                 physSky = lerp(physSky, lerp(uSkyHS, uSkyZS, saturate(max(sDir.z, 0.0f) * 2.2f)), 0.42f) * 0.76f;
-                // Unmistakable physical solar disc with Eddington limb darkening & clean warm corona:
+                // True 0.53-deg physical solar disc + wide smooth Mie atmospheric forward scattering (eliminates giant sticker-like orange ball in 13.16.34/48!):
                 if (sunDiscGate > 0.01f) {
-                    const float rDisc = saturate(sunAng / 0.018f);
+                    const float rDisc = saturate(sunAng / 0.0062f);
                     const float muLimb = sqrt(max(1.0f - rDisc * rDisc, 0.0f));
                     const float3 eddLimb = float3(1.0f - 0.35f * (1.0f - muLimb), 1.0f - 0.50f * (1.0f - muLimb), 1.0f - 0.68f * (1.0f - muLimb));
-                    const float3 sunCoreCol = lerp(float3(1.0f, 0.98f, 0.92f), float3(1.0f, 0.56f, 0.18f), lowS) * eddLimb;
-                    const float3 sunHaloCol = lerp(float3(1.0f, 0.92f, 0.78f), float3(1.0f, 0.44f, 0.14f), lowS);
-                    const float solarCore = smoothstep(0.99925f, 0.99978f, cosS) * 28.0f;
-                    const float solarCorona = exp(-sunAng * 22.0f) * 0.58f;
-                    physSky += (sunCoreCol * solarCore + sunHaloCol * (solarCorona * (1.0f - cover * 0.50f))) * sunDiscGate;
+                    const float3 sunCoreCol = lerp(float3(1.0f, 0.98f, 0.93f), float3(1.0f, 0.62f, 0.24f), lowS) * eddLimb;
+                    const float3 mieCol = lerp(float3(1.0f, 0.94f, 0.84f), float3(1.0f, 0.54f, 0.22f), lowS);
+                    const float solarCore = smoothstep(0.99982f, 0.99996f, cosS) * 20.0f;
+                    const float wideMie = (pow(cosS, 6.0f) * 0.14f + pow(cosS, 48.0f) * 0.24f) * (1.0f - cover * 0.45f);
+                    physSky += (sunCoreCol * solarCore + mieCol * wideMie) * sunDiscGate;
                 }
                 fullSky = lerp(fullSky, physSky, max(dayW, twilightBell * 0.96f));
             }
@@ -262,9 +262,51 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 baseSky = lerp(baseSky, baseSky * clTrans + cl.rgb, 1.0f - isExotic);
                 // Allow the solar disc to shine cleanly through thin/moderate cloud veils so the Sun stays perceptible!
                 if (sunDiscGate > 0.01f && clTrans > 0.06f) {
-                    const float sunVeil = smoothstep(0.99920f, 0.99978f, cosS) * 14.0f + exp(-sunAng * 26.0f) * 0.35f;
-                    const float3 sunVeilCol = lerp(float3(1.0f, 0.97f, 0.90f), float3(1.0f, 0.56f, 0.18f), lowS);
-                    baseSky += sunVeilCol * (sunVeil * pow(clTrans, 0.65f) * sunDiscGate * (1.0f - isExotic));
+                    const float sunVeil = smoothstep(0.99980f, 0.99996f, cosS) * 14.0f + pow(cosS, 64.0f) * 0.16f;
+                    const float3 sunVeilCol = lerp(float3(1.0f, 0.97f, 0.90f), float3(1.0f, 0.60f, 0.22f), lowS);
+                    baseSky += sunVeilCol * (sunVeil * pow(clTrans, 0.70f) * sunDiscGate * (1.0f - isExotic));
+                }
+                // Camera-reactive optical lens response (Zeiss/Cooke double-Gauss multi-element chromatic ghosts + anamorphic flare + veiling glare):
+                // Reacts live to camera pan/pitch toward the Sun and automatically dims behind clouds or when looking away.
+                if (sunDiscGate > 0.02f && (1.0f - isExotic) > 0.2f) {
+                    const float4 sunScr = screenOf(eyeAt() + aSun * 50000.0f);
+                    if (sunScr.w > 0.0f) {
+                        const float2 sunUv = sunScr.xy * dims.zw;
+                        if (all(sunUv > -0.25f) && all(sunUv < 1.25f)) {
+                            const float edgeFadeS = smoothstep(-0.25f, 0.08f, min(min(sunUv.x, 1.0f - sunUv.x), min(sunUv.y, 1.0f - sunUv.y)));
+                            // Check if the sun center pixel is unobstructed sky & read cloud transmittance at sun position:
+                            const int2 sunPx = clamp(int2(sunScr.xy), int2(0, 0), int2(dims.xy) - 1);
+                            const float sunClear = (Depth.Load(int3(sunPx, 0)) >= 0.9999f) ? 1.0f : 0.0f;
+                            const float sunClT = Clouds.SampleLevel(Lin, saturate(sunUv), 0.0f).a;
+                            const float flareVis = sunClear * pow(saturate(sunClT), 0.75f) * edgeFadeS * sunDiscGate;
+                            if (flareVis > 0.01f) {
+                                const float2 aspectS = float2(dims.x * dims.w, 1.0f);
+                                const float2 curUv = (px + 0.5f) * dims.zw;
+                                const float2 toSunUv = (curUv - sunUv) * aspectS;
+                                // Subtle horizontal anamorphic streak + warm optical veiling glare:
+                                const float anam = exp(-abs(toSunUv.y) * 52.0f) * exp(-abs(toSunUv.x) * 3.8f) * 0.22f;
+                                const float veil = exp(-length(toSunUv) * 2.6f) * 0.14f;
+                                const float3 flareCol = lerp(float3(1.0f, 0.92f, 0.78f), float3(1.0f, 0.52f, 0.20f), lowS);
+                                float3 lensAdd = flareCol * (anam + veil);
+                                // 3 chromatic multi-element optical ghosts mirrored across the optical center (0.5, 0.5):
+                                const float2 axis = float2(0.5f, 0.5f) - sunUv;
+                                static const float kGPos[3]  = { 0.55f, 1.15f, 1.68f };
+                                static const float kGRad[3]  = { 0.045f, 0.075f, 0.032f };
+                                static const float3 kGCol[3] = {
+                                    float3(0.45f, 0.78f, 1.00f),
+                                    float3(1.00f, 0.72f, 0.42f),
+                                    float3(0.65f, 0.95f, 0.72f)
+                                };
+                                [unroll] for (int gi = 0; gi < 3; ++gi) {
+                                    const float2 gCenter = sunUv + axis * kGPos[gi];
+                                    const float gd = length((curUv - gCenter) * aspectS) / kGRad[gi];
+                                    const float ring = exp(-pow(gd - 0.75f, 2.0f) * 9.0f) * 0.06f + exp(-gd * gd * 3.5f) * 0.03f;
+                                    lensAdd += kGCol[gi] * ring;
+                                }
+                                baseSky += lensAdd * (flareVis * 0.65f);
+                            }
+                        }
+                    }
                 }
                 // Physical 3D Crepuscular Cloud-Gap Light Rays (12-tap IGN-jittered radial transmittance march toward live sun):
                 // smooth band-free sunrays fanning out of cumulus breaks with soft off-screen sun fade!

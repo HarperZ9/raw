@@ -433,17 +433,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 s.alpha = lerp(s.alpha, 0.15f, max(meltMask, slushRing) * max(natSnowMelt, wet.snow) * 0.75f);
             }
         }
-        // Persistent 512x512 GPU PDE WorldField: strictly limited to actual snowpack (wet.snow > 0.45);
-        // disabled on cobblestones/roads/dirt to eliminate the black ribbon trail seen in 13.02.17..39!
-        if (base == 4u && wet.snow > 0.45f && z < 800.0f && s.n.z > 0.55f) {
-            const float2 simUv = saturate(p.xy / 2048.0f + 0.5f.xx);
-            if (all(simUv > 0.02f) && all(simUv < 0.98f)) {
-                const float sL = WorldField.SampleLevel(Lin, simUv + float2(-1.0f / 512.0f, 0.0f), 0.0f).a;
-                const float sR = WorldField.SampleLevel(Lin, simUv + float2( 1.0f / 512.0f, 0.0f), 0.0f).a;
-                const float sD = WorldField.SampleLevel(Lin, simUv + float2(0.0f, -1.0f / 512.0f), 0.0f).a;
-                const float sU = WorldField.SampleLevel(Lin, simUv + float2(0.0f,  1.0f / 512.0f), 0.0f).a;
-                s.n = normalize(s.n + float3((sL - sR) * 0.22f, (sD - sU) * 0.22f, 0.0f) * saturate(wet.snow));
+        // Persistent 512x512 Toroidal World-Locked GPU PDE WorldField (exact frac(worldXY/2048) matches WorldFieldSim.hlsl!):
+        if ((base == 4u || base == 1u) && z < 950.0f && s.n.z > 0.48f) {
+            const float2 simUv = frac((p.xy + camPosW.xy) / 2048.0f);
+            const float4 wf = WorldField.SampleLevel(Lin, simUv, 0.0f);
+            const float simSnow = wf.a;
+            const float simWet = wf.b;
+            const float sL = WorldField.SampleLevel(Lin, frac(simUv + float2(-1.0f / 512.0f, 0.0f)), 0.0f).a;
+            const float sR = WorldField.SampleLevel(Lin, frac(simUv + float2( 1.0f / 512.0f, 0.0f)), 0.0f).a;
+            const float sD = WorldField.SampleLevel(Lin, frac(simUv + float2(0.0f, -1.0f / 512.0f)), 0.0f).a;
+            const float sU = WorldField.SampleLevel(Lin, frac(simUv + float2(0.0f,  1.0f / 512.0f)), 0.0f).a;
+            if (base == 4u && simSnow > 0.05f) {
+                wet.snow = max(wet.snow, simSnow * saturate((s.n.z - 0.48f) * 2.5f));
+                s.n = normalize(s.n + float3((sL - sR) * 0.35f, (sD - sU) * 0.35f, 0.0f));
             }
+            if (weather.w > 0.05f) { wet.wet = max(wet.wet, simWet * (1.0f - wet.snow) * 0.55f); }
         }
         // GEO-04 4-Step Ray-Marched 3D Snowdrift & Cobblestone Relief Occlusion + Dual-Frequency Micro-Displacement (< 1,200u):
         // Breaks flat 2011 terrain quads with real view-ray heightfield relief & micro-cavity self-shadowing!
@@ -468,10 +472,22 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float my = (cNoise(wpDispl * 0.22f + 13.4f) - 0.5f) * 0.18f + (cNoise(wpDispl * 0.68f + 19.3f) - 0.5f) * 0.10f;
             s.n = normalize(s.n + float3(mx, my, 0.0f) * mFade);
         }
-        // Persistent 32-step world-anchored deep-snow footprints ONLY (never darkens roads, rocks, or mud — kills 13.02.17..39 black snake trail!).
-        const float natSnow = (base == 4u) ? saturate((min(albedo.r, min(albedo.g, albedo.b)) - 0.48f) * 5.0f) * saturate(s.n.z * 1.4f - 0.4f) : 0.0f;
+        // Wind-swept glacial sastrugi snowdrift relief + discrete world-locked snow/mud footprints (footTrail[0..31]):
+        const float natSnow = (base == 4u || base == 1u) ? saturate((min(albedo.r, min(albedo.g, albedo.b)) - 0.46f) * 4.5f) * saturate(s.n.z * 1.4f - 0.35f) : 0.0f;
         const float snowAmt = max(wet.snow, natSnow);
-        if (snowAmt > 0.45f && z < 1600.0f && s.n.z > 0.60f) {
+        const float mudAmt = (base == 4u && weather.w > 0.08f) ? max(wet.wet, wet.puddle) * (1.0f - snowAmt) : 0.0f;
+        if (snowAmt > 0.25f && z < 3200.0f && s.n.z > 0.45f) {
+            const float3 wpSn = p + camPosW.xyz;
+            const float2 wDirS = normalize(cloudWind.xy + float2(1.0f, 0.35f));
+            const float2 wPerpS = float2(-wDirS.y, wDirS.x);
+            const float2 sUv = float2(dot(wpSn.xy, wDirS) * 0.012f, dot(wpSn.xy, wPerpS) * 0.036f);
+            const float sDx = (cNoise(float3(sUv + float2(0.15f, 0.0f), 2.1f)) - cNoise(float3(sUv - float2(0.15f, 0.0f), 2.1f))) * 0.16f;
+            const float sDy = (cNoise(float3(sUv + float2(0.0f, 0.15f), 2.1f)) - cNoise(float3(sUv - float2(0.0f, 0.15f), 2.1f))) * 0.16f;
+            const float driftFade = saturate((snowAmt - 0.25f) * 1.6f) * smoothstep(3200.0f, 240.0f, z);
+            s.n = normalize(s.n + float3(wDirS * sDx + wPerpS * sDy, 0.0f) * driftFade);
+            s.alpha = max(s.alpha, lerp(0.58f, 0.74f, driftFade));
+        }
+        if ((snowAmt > 0.25f || mudAmt > 0.30f) && z < 1800.0f && s.n.z > 0.55f) {
             const float3 wpAbs = p + camPosW.xyz;
             float maxDep = 0.0f, maxRim = 0.0f;
             float2 bestRad = 0.0f.xx;
@@ -480,18 +496,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 if (ft.w <= 0.01f) { continue; }
                 const float3 fd = wpAbs - ft.xyz;
                 const float r2 = dot(fd.xy, fd.xy);
-                if (r2 < 400.0f && abs(fd.z) < 120.0f) {
+                if (r2 < 169.0f && abs(fd.z) < 120.0f) {
                     const float rr = sqrt(r2);
-                    const float dep = exp(-r2 / 110.0f) * ft.w;
-                    const float rim = exp(-pow(rr - 13.0f, 2.0f) / 28.0f) * ft.w;
+                    const float dep = exp(-r2 / 48.0f) * ft.w;
+                    const float rim = exp(-pow(rr - 9.0f, 2.0f) / 14.0f) * ft.w;
                     if (dep > maxDep) { maxDep = dep; bestRad = fd.xy / max(rr, 0.5f); }
                     maxRim = max(maxRim, rim);
                 }
             }
-            if (maxDep > 0.04f || maxRim > 0.04f) {
-                const float deformStr = saturate((snowAmt - 0.45f) * 2.2f);
-                s.n = normalize(s.n + float3(bestRad * (maxDep * 0.24f - maxRim * 0.14f), 0.0f) * deformStr);
-                albedo *= lerp(1.0f, 0.88f, saturate(maxDep * deformStr * 0.65f));
+            if (maxDep > 0.03f || maxRim > 0.03f) {
+                const float deformStr = max(snowAmt, mudAmt * 0.75f);
+                s.n = normalize(s.n + float3(bestRad * (maxDep * 0.34f - maxRim * 0.20f), 0.0f) * deformStr);
+                albedo *= lerp(1.0f, snowAmt >= mudAmt ? 0.84f : 0.76f, saturate(maxDep * deformStr * 0.75f));
             }
         }
     }
@@ -976,9 +992,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float gBroad = snowGlint(p + camPosW.xyz + 13.7f, s.n, s.v, sunDir.xyz, fp * 2.1f) * 0.45f;
             spec += sunColour.rgb * (sunShadow * wet.snow * 2.4f * (gFine + gBroad));
         }
-        // Forged metal micro-flake glint + Belcour-Barla (SIGGRAPH 2017) Airy Thin-Film Spectral Iridescence
-        // + MAT-01 Substrate Dual-Lobe Clearcoat/Lacquer on glass, glazed ceramics, polished stone & forged armor!
-        if (!match && sunShadow > 0.05f && z < 1800.0f && (base == 2u || wet.wet > 0.35f || s.alpha < 0.22f)) {
+        // Forged metal micro-flake glint + Belcour-Barla thin-film iridescence STRICTLY on metal (base == 2u; never oil-slick rainbow on snow/ice floes!):
+        if (!match && sunShadow > 0.05f && z < 1800.0f && base == 2u) {
             const float nvIr = saturate(dot(s.n, s.v));
             const float filmOpd = (base == 2u ? 480.0f : 360.0f) * sqrt(max(1.0f - (1.0f - nvIr * nvIr) * 0.56f, 0.1f));
             const float3 airy = 0.5f + 0.5f * cos(6.2831853f * filmOpd / float3(615.0f, 540.0f, 465.0f));

@@ -611,6 +611,23 @@ static bool LoadRealD3D11()
     }
 
     SB::Proxy::Log("Real d3d11.dll loaded from %s", s_realDLLPath.c_str());
+
+    // Optional [Proxy] ChainDll= support in d3d11_proxy.ini (e.g., ReShade / external overlay DLLs).
+    char exePath[MAX_PATH]{};
+    if (GetModuleFileNameA(nullptr, exePath, MAX_PATH) > 0)
+    {
+        std::string gDir(exePath);
+        const size_t sl = gDir.find_last_of("\\/");
+        if (sl != std::string::npos) gDir.resize(sl + 1);
+        char chainBuf[MAX_PATH]{};
+        GetPrivateProfileStringA("Proxy", "ChainDll", "", chainBuf, MAX_PATH, (gDir + "d3d11_proxy.ini").c_str());
+        if (chainBuf[0])
+        {
+            const std::string fullChain = (chainBuf[1] == ':' || chainBuf[0] == '\\') ? std::string(chainBuf) : (gDir + chainBuf);
+            HMODULE chained = LoadLibraryA(fullChain.c_str());
+            SB::Proxy::Log("[Proxy] ChainDll='%s' -> %s", fullChain.c_str(), chained ? "LOADED" : "FAILED");
+        }
+    }
     return true;
 }
 

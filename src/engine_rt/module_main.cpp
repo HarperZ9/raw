@@ -80,6 +80,16 @@ std::vector<raw::rt::VTraceClass> LoadVTrace() {
 }
 
 void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
+    static bool s_deferredRan = false;
+    static uint32_t s_presentCount = 0;
+    if (!s_deferredRan && ++s_presentCount == 30) {
+        s_deferredRan = true;
+        if (const uint32_t n = raw::rt::ResolveDeferredSingletons(g_img); n > 0) {
+            Log("version: deferred first-frame RTTI singleton scan resolved %u singletons", n);
+            raw::rt::ViewInit(g_img);
+            raw::rt::SoftBodyInit(g_img);
+        }
+    }
     raw::rt::HavokFixOnPresent();
     raw::rt::VTraceOnPresent();
     raw::rt::ControlOnPresent(ctx, sc);

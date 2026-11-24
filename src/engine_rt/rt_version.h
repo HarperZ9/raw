@@ -37,5 +37,8 @@ uint32_t Off(const char* name);
 std::vector<RefTarget> VersionRefs();
 // One line per entry the code asked for and found missing, for the log.
 std::string MissingEntries();
+// Deferred first-frame .data pointer-to-RTTI-vtable scan: resolves core singletons on pure vanilla
+// installs with neither a static .tsv nor Address Library installed. Returns number of newly resolved entries.
+uint32_t ResolveDeferredSingletons(const Image& img);
 
 }  // namespace raw::rt

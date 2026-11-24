@@ -934,13 +934,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
         // Disciplined cool silver-blue moonlight at night (Commons Cluster A: lets warm torches/hearths/windows dominate night scenes).
         const float3 moonDirectCol = float3(0.22f, 0.30f, 0.50f) * clamp(dirLum * 0.75f, 0.14f, 0.48f);
-        const float sunHdrGain = (!match && sunColour.w > 0.5f) ? lerp(1.20f, 1.00f, saturate(clouds.x * 1.15f)) * (1.0f - nightDir * 0.42f) : 1.0f;
-        // In interiors, keep directional vault fill disciplined (0.32x) so hearths, torches & candles drive the room!
-        const float3 dirCol = (sunColour.w < 0.5f && !match) ? (sunColour.rgb * 0.32f)
+        // True HDR Sun vs Shadow key-to-fill contrast (crisp sunlit highlights + deep dimensional shadows):
+        const float sunHdrGain = (!match && sunColour.w > 0.5f) ? lerp(1.85f, 1.15f, saturate(clouds.x * 1.15f)) * (1.0f - nightDir * 0.52f) : 1.0f;
+        // In interiors, keep flat directional vault fill minimal (0.12x) so real hearths, torches & candles sculpt the room!
+        const float3 dirCol = (sunColour.w < 0.5f && !match) ? (sunColour.rgb * 0.12f)
                             : lerp(alignedDayCol * sunHdrGain, moonDirectCol, nightDir);
         // Chan 2018 micro-shadowing: uses fine-scale AO to shadow crevices/mortar/bark where coarse shadow maps cannot reach.
         const float microSh = (!match && !isActorFeat && base != 5u) ? saturate(2.0f * AoHist.Load(ip).x + saturate(dot(s.n, sunDir.xyz)) - 0.85f) : 1.0f;
-        const float sunPunch = (!match && sunColour.w > 0.5f) ? lerp(1.16f, 0.85f, nightDir) : 1.0f;
+        const float sunPunch = (!match && sunColour.w > 0.5f) ? lerp(1.24f, 0.85f, nightDir) : 1.0f;
         addLight(s, sunDir.xyz, dirCol * (sunSh * lerp(0.50f, 1.0f, microSh) * sunPunch), dirCol * sunPunch, diff, spec);
         // MAT-07 Distributed Microfacet Snow & Hoar-Frost Diamond Glints (Deliot & Belcour 2023):
         // crisp sunlit crystalline sparkle on snowpacks & frost (<1,600u) with zero temporal shimmer.
@@ -1060,12 +1061,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (ch >= 0 && ch <= 3) { sh = m4[ch]; }   // interiors without sun shadows use channel 0 too
             float3 c = lightColS[li].rgb * att;
             // Rich 2200K-2600K blackbody firelight spectrum (hearths, torches, candles, braziers, forges):
-            // Removed duplicate high-frequency 6.3 rad/s shader flicker (rt_livestate.cpp already drives silky 0.12-EMA breath!).
+            // Strong dramatic hearth/candle pools indoors (1.68x) so taverns, dungeons & halls have true RDR2 chiaroscuro!
             if (!match && lightColS[li].r > lightColS[li].b * 1.25f) {
                 const bool isIntLight = (sunColour.w < 0.5f);
-                const float3 fireBoost = skin ? float3(1.02f, 0.90f, 0.80f)
-                                              : (isIntLight ? float3(1.18f, 0.72f, 0.34f) : float3(1.32f, 0.78f, 0.38f));
+                const float3 fireBoost = skin ? float3(1.16f, 0.94f, 0.78f)
+                                              : (isIntLight ? float3(1.68f, 1.02f, 0.46f) : float3(1.52f, 0.88f, 0.42f));
                 c *= fireBoost;
+            } else if (!match && sunColour.w < 0.5f) {
+                c *= 1.35f;
             }
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;
             // When hardware RT is active, bypass vanilla's flickering 4-channel shadow-mask swaps completely:
@@ -1119,19 +1122,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         } else {
             const float ambWarm = saturate((amb.r - amb.b) * 3.5f);
             const float ambCool = saturate((amb.b - amb.r) * 3.5f);
-            // Architectural vault shaping: deepen floor/corner ambient (0.58x) so hearths & candles create dramatic
-            // RDR2-grade chiaroscuro pools instead of washed-out grey-beige interiors!
-            const float3 intTint = lerp(float3(0.92f, 0.95f, 1.02f), float3(1.04f, 0.94f, 0.84f), ambWarm);
-            const float3 cryptTint = lerp(intTint, float3(0.84f, 0.92f, 1.06f), ambCool);
-            amb *= cryptTint * lerp(0.48f, 0.74f, saturate(s.n.z * 0.5f + 0.5f));
+            // Architectural vault shaping: deep dark ceiling corners & recessed wood/stone (0.24..0.44x) so hearths,
+            // candles & windows carve rich chiaroscuro contrast instead of flat 2011 beige-grey interiors!
+            const float3 intTint = lerp(float3(0.86f, 0.92f, 1.04f), float3(1.06f, 0.92f, 0.78f), ambWarm);
+            const float3 cryptTint = lerp(intTint, float3(0.78f, 0.88f, 1.08f), ambCool);
+            amb *= cryptTint * lerp(0.24f, 0.44f, saturate(s.n.z * 0.5f + 0.5f));
         }
     }
-    // Pure Native Hardware DXR 1.2 Directional Skylighting & RTAO when RT is active (zero screen-space GTAO halos!):
-    // Screen-space GTAO (AoHist) runs ONLY as a fallback when hardware RT sky/RTAO is disabled.
-    const float ssaoMix = (rt && (flags.x & FLAG_SKY) != 0u) ? 0.0f : 1.0f;
-    const float aoWeight = (base == 5u ? 0.78f : (isActorFeat ? 0.45f : 1.0f)) * ssaoMix;
+    // Dual-Scale Occlusion: Hardware DXR Skylighting/RTAO handles macro occlusion (roofs, overhangs, canopies),
+    // while tight near-field contact AO (<1,400u) grounds bottles, mugs, rocks, grass roots & furniture crevices!
+    const float nearContactMix = (rt && (flags.x & FLAG_SKY) != 0u) ? (0.68f * saturate(1.0f - z / 1400.0f)) : 1.0f;
+    const float aoWeight = (base == 5u ? 0.82f : (isActorFeat ? 0.35f : 1.0f)) * nearContactMix;
     const float aoRaw = (flags.x & FLAG_AO) != 0u ? lerp(1.0f, AoHist.Load(ip).x, tune2.x * aoWeight) : 1.0f;
-    const float aoTerm = !match ? pow(saturate(aoRaw), 1.22f) : aoRaw;
+    const float aoTerm = !match ? pow(saturate(aoRaw), 1.35f) : aoRaw;
     // Exteriors: ray-traced sky visibility (RtSky.cpp). Interiors (!match): local SM6.9 RayQuery RTAO from RtShadow.hlsl.
     const bool isExterior = sunColour.w > 0.5f;
     const float rawSkyVis = rt && (flags.x & FLAG_SKY) != 0u && (isExterior || !match) ? RtIdx.Load(ip).w : 1.0f;
@@ -1155,8 +1158,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float hemiSky = !match ? (isExterior ? lerp(0.54f, 1.18f, saturate(bentN.z * 0.5f + 0.5f))
                                                : lerp(0.52f, 1.20f, saturate(bentN.z * 0.5f + 0.5f))) : 1.0f;
     // Keep multi-bounce AO subtle so deep crevices stay genuinely grounded instead of lifting back to muddy grey.
-    const float3 mbOcc = lerp(combinedOcc.xxx, gtaoMultiBounce(combinedOcc, saturate(albedo)), 0.45f);
-    const float ambHdrScale = (!match && isExterior) ? lerp(0.76f, 0.92f, saturate(clouds.x)) : 1.0f;
+    const float3 mbOcc = lerp(combinedOcc.xxx, gtaoMultiBounce(combinedOcc, saturate(albedo)), 0.38f);
+    // Disciplined exterior ambient floor (0.54..0.76x) creates true 3.5:1-5:1 direct-sun-to-shadow dynamic range!
+    const float ambHdrScale = (!match && isExterior) ? lerp(0.54f, 0.76f, saturate(clouds.x)) : 1.0f;
     amb *= match ? combinedOcc.xxx : mbOcc * hemiSky * ambHdrScale;
     // Multi-bounce hardware RayQuery GI: boosted indirect energy + color-bleed preservation + upward overhang bounce
     // so sunlit grass, cobblestone, snow, water, and warm tavern hearths cast tangible colored indirect light.
@@ -1506,21 +1510,22 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float nvWrap = saturate(dot(s.n, s.v));
         const float graze = pow(1.0f - nvWrap, 4.5f) * (skin ? 0.14f : base == 5u ? 0.08f : 0.18f);
         lit += (amb + bounce * 0.5f) * graze * (0.35f + 0.65f * skyVis);
-        // Exteriors: height-stratified valley mist + Henyey-Greenstein sun-aligned Mie forward scattering.
-        if (isExterior && z > 160.0f) {
+        // Exteriors: subtle sun-aligned Mie forward scattering beyond 600u (removed duplicate near-field grey Rayleigh wash;
+        // LightFog.hlsl owns unified Hillaire aerial perspective & height fog so foreground stays razor-crisp!).
+        if (isExterior && z > 600.0f) {
             const float3 viewDir = normalize(p);
             const float cosTheta = dot(viewDir, sunDir.xyz);
-            const float g = 0.72f;
+            const float g = 0.76f;
             const float hg = (1.0f - g * g) / (4.0f * 3.14159f * pow(max(1.0f + g * g - 2.0f * g * cosTheta, 0.04f), 1.5f));
-            // True world-space elevation density (replaces camera-relative p.z so height fog never shifts when moving/jumping!):
-            const float heightDensity = exp(-max((p.z + camPosW.z) - waterA.w, 0.0f) * 0.00042f);
-            const float distFog = 1.0f - exp(-max(z - 160.0f, 0.0f) * (0.000030f + 0.000028f * heightDensity));
-            const float3 rayleighCol = float3(0.42f, 0.58f, 0.86f) * max(dot(amb, float3(0.3f, 0.5f, 0.2f)), 0.06f);
-            const float3 mieCol = sunColour.rgb * min(hg, 1.5f) * (0.20f + 0.80f * sunShadow) * (0.45f + 0.55f * skyVis) * 0.045f;
-            lit = lerp(lit, lit + rayleighCol * 0.24f + mieCol, saturate(distFog * 0.55f));
+            const float distMie = 1.0f - exp(-max(z - 600.0f, 0.0f) * 0.000024f);
+            const float3 mieCol = sunColour.rgb * min(hg, 1.8f) * (0.15f + 0.85f * sunShadow) * (0.45f + 0.55f * skyVis) * 0.055f;
+            lit += mieCol * saturate(distMie * 0.65f);
         }
     }
-    const float3 finalLitRaw = knee3(lit);
+    // True Linear HDR output in native DX12 mode (!match): removes Skyrim's 2011 knee3() soft-knee crush that was
+    // flattening all sunlit highlights, firelight & specular punch before BloomPass and Tonemap.hlsl (AgX / ACES 2.0)!
+    // Soft high-ceiling safety clamp only at >16.0 HDR luminance so Bloom & AgX/ACES 2.0 receive full physical dynamic range.
+    const float3 finalLitRaw = match ? knee3(lit) : min(max(lit, 0.0f.xxx), 16.0f.xxx);
     // Preserve genuinely chromatic emissive tavern windows, lanterns, braziers, and magic runes
     // while strictly excluding achromatic white/blue snowfields & glaciers (fixes glowing Dawnstar snow/ice patches).
     const float gLuma = dot(game.rgb, float3(0.2126f, 0.7152f, 0.0722f));

@@ -3,6 +3,10 @@
 // BridgeFrame.cpp (per-frame work).
 #include "D3D12Bridge.h"
 #include "RtScene.h"
+#include "RawBindlessHeap.h"
+#include "RawMeshHost.h"
+#include "RawAsyncCompute.h"
+#include "RawIndirectBatch.h"
 #include <wrl/client.h>
 
 namespace raw::bridge
@@ -57,6 +61,10 @@ struct D3D12Bridge::Impl
     bool CreateAttached(SharedTex& t, DXGI_FORMAT fmt, bool uav, const char* name, UINT w, UINT h);
     bool HandToHost(const std::vector<ID3D11Resource*>& extra);
     std::unique_ptr<RtScene> rt;           // attached only
+    RawBindlessHeap          bindless;     // RAW-LUMEN 65K SM 6.6 ResourceDescriptorHeap[] pool
+    RawMeshHost              meshHost;     // RAW-MESH Hardware DX12 AS+MS PN-Triangle subdivision host
+    RawAsyncCompute          asyncCompute; // Split-Submit Hardware DX12 Async Compute queue
+    RawIndirectBatch         indirect;     // GPU-Driven ExecuteIndirect DrawIndexed + DispatchMesh signatures
     std::vector<RtDraw> pendingDraws;
     RtTuning rtTune;
     bool CreateRt();

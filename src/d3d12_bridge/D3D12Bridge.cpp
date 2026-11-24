@@ -2,6 +2,7 @@
 // fence, descriptor heaps and timestamp queries. Original work, MIT.
 #include "BridgeImpl.h"
 #include "StreamlineHost.h"
+#include "RawTextureBridge.h"
 #include "DepthCopy_CS.h"   // g_DepthCopyCS (fxc, cs_5_0)
 
 namespace raw::bridge
@@ -281,6 +282,26 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                int(o7.SamplerFeedbackTier), o12.EnhancedBarriersSupported ? "YES" : "no", int(o21.WorkGraphsTier),
                o4.Native16BitShaderOpsSupported ? "YES" : "no", int(o0.ResourceBindingTier), o1.WaveLaneCountMin);
         StreamlineHost::Get().Initialize(m->dev12.Get(), m->dev12->GetAdapterLuid(), m->log);
+        // Initialize RAW-LUMEN Bindless Heap, RAW-MESH AS+MS Host, Split-Submit Async Compute & ExecuteIndirect Batcher:
+        const bool bindOk = m->bindless.Init(m->dev12.Get());
+        std::string meshErr;
+        const bool meshOk = m->meshHost.Init(m->dev12.Get(), &meshErr);
+        const bool asyncOk = m->asyncCompute.Init(m->dev12.Get());
+        const bool indOk = m->indirect.Init(m->dev12.Get(), meshOk);
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s)",
+               bindOk ? "READY" : "off", meshOk ? "READY" : "off",
+               (!meshOk && !meshErr.empty()) ? (" (" + meshErr + ")").c_str() : "",
+               asyncOk ? "READY" : "off", indOk ? "READY" : "off",
+               m->indirect.SupportsIndirectMesh() ? "YES" : "no");
+        char exeBuf[MAX_PATH]{};
+        if (GetModuleFileNameA(nullptr, exeBuf, MAX_PATH) > 0) {
+            std::string gDir(exeBuf);
+            const size_t sl = gDir.find_last_of("\\/");
+            if (sl != std::string::npos) gDir.resize(sl + 1);
+            std::string assetLog;
+            const auto summary = ScanRawAssetsFolder(gDir, &assetLog);
+            if (!assetLog.empty() && (summary.meshFiles || summary.textureFiles)) m->log("%s", assetLog.c_str());
+        }
     }
     if (!ok) { m->log("[D3D12Bridge] initialisation failed at %s; bridge stays off", failed); Shutdown(); return false; }
     if (!m->attached && !m->SelfTest()) {
@@ -301,6 +322,7 @@ void D3D12Bridge::Shutdown()
         m->CpuWait(m->lastD12, m->cfg.cpuWaitTimeout);
         if (m->ctx11) m->ctx11->Flush();
     }
+    m->asyncCompute.Shutdown();
     m->pass.reset();   // before the device and the textures it borrows
     m->rt.reset();
     LogFn log = m->log;

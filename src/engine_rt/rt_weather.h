@@ -19,5 +19,7 @@ void WeatherOnPresent();
 // weather: one result line with the blended values, both weathers' form IDs and flags, the transition and the
 // precipitation density.
 std::string WeatherCommand();
+// Live synoptic + TESWeather wind vector (game units/sec) and storm intensity [0..1] for native physics (rt_softbody.cpp).
+void WeatherGetWind(float& outVx, float& outVy, float& outStorm);
 
 }  // namespace raw::rt

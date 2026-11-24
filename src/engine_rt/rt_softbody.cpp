@@ -3,6 +3,7 @@
 #include "rt_softbody.h"
 #include "rt_image.h"
 #include "rt_version.h"
+#include "rt_weather.h"
 
 #include <windows.h>
 
@@ -164,16 +165,18 @@ SoftBoneOutput StepSoftBone(SoftBoneState& st,
     const int steps = std::clamp(int(std::ceil(clampedDt / kSubDt)), 1, 12);
     const float h = clampedDt / float(steps);
     const float rest[3] = {0.0f, 0.0f, prof.gravitySag};
-    // Aerodynamic wind & gust forcing for flowing hair & cloaks (gravitySag <= -0.55 identifies light strands/cloth):
+    // Live synoptic + TESWeather aerodynamic wind & gust forcing for flowing hair & cloaks (rt_weather.cpp):
     float windAcc[3] = {};
     if (prof.gravitySag <= -0.55f) {
+        float wVx = 35.0f, wVy = 12.0f, wStorm = 0.0f;
+        WeatherGetWind(wVx, wVy, wStorm);
         const float wt = float(GetTickCount64() % 3600000ull) * 0.001f;
         const float ph = parentWorldPos[0] * 0.013f + parentWorldPos[1] * 0.011f;
-        const float gust = 1.0f + 0.55f * std::sin(wt * 1.75f + ph) + 0.30f * std::cos(wt * 3.40f - ph * 1.3f);
-        const float amp = (prof.gravitySag <= -0.80f) ? 42.0f : 26.0f;
-        windAcc[0] = amp * gust * std::cos(wt * 0.22f);
-        windAcc[1] = amp * gust * std::sin(wt * 0.22f);
-        windAcc[2] = amp * 0.18f * std::sin(wt * 2.85f + ph);
+        const float gust = 1.0f + (0.45f + 0.55f * wStorm) * std::sin(wt * 1.95f + ph) + 0.28f * std::cos(wt * 3.70f - ph * 1.3f);
+        const float dragScale = (prof.gravitySag <= -0.80f) ? 0.42f : 0.28f;
+        windAcc[0] = std::clamp(wVx * dragScale * gust, -140.0f, 140.0f);
+        windAcc[1] = std::clamp(wVy * dragScale * gust, -140.0f, 140.0f);
+        windAcc[2] = std::clamp(std::sqrt(wVx * wVx + wVy * wVy) * dragScale * 0.20f * std::sin(wt * 2.85f + ph), -32.0f, 32.0f);
     }
 
     for (int s = 0; s < steps; ++s) {
@@ -257,7 +260,24 @@ void TraverseSkeletonSEH(uint8_t* node, float dtSec, int depth, uint32_t& bonesO
                             entry.state.hasRestRotate = std::isfinite(rSum) && rSum > 2.5f && rSum < 3.5f;   // orthonormal 3x3 check
                         }
                         const TissueProfile prof = DefaultTissueProfile(kind);
-                        const SoftBoneOutput out = StepSoftBone(entry.state, parentWorld, prof, dtSec);
+                        // Hierarchical multi-bone chain XPBD coupling: if parent bone is also simulated (braid/cloak chain),
+                        // propagate parent displacement wave + velocity smoothly down the chain!
+                        float effParentWorld[3] = {parentWorld[0], parentWorld[1], parentWorld[2]};
+                        const auto pIt = g_liveBones.find(reinterpret_cast<uintptr_t>(parent));
+                        if (pIt != g_liveBones.end() && pIt->second.state.initialized) {
+                            effParentWorld[0] += pIt->second.state.pos[0] * 0.65f;
+                            effParentWorld[1] += pIt->second.state.pos[1] * 0.65f;
+                            effParentWorld[2] += pIt->second.state.pos[2] * 0.65f;
+                        }
+                        // Anatomical body-surface push-out collider (prevents hair/cloak clipping into head/shoulders/torso
+                        // and constrains soft-tissue inward compression against the ribcage/pelvis):
+                        float colCenter[3] = {0.0f, -2.5f, 0.0f};
+                        float colRad = 0.0f;
+                        if (kind == TissueKind::Hair)       { colCenter[1] = 2.8f;  colRad = 3.2f; }
+                        else if (kind == TissueKind::Cloak) { colCenter[1] = 4.2f;  colRad = 4.8f; }
+                        else if (kind == TissueKind::Breast){ colCenter[1] = -2.6f; colRad = 2.2f; }
+                        else if (kind == TissueKind::Glute) { colCenter[1] = 2.4f;  colRad = 2.0f; }
+                        const SoftBoneOutput out = StepSoftBone(entry.state, effParentWorld, prof, dtSec, colRad, colRad > 0.0f ? colCenter : nullptr);
                         // Apply bounded viscoelastic displacement relative to captured bind-pose local.translate (+0x64):
                         float newLocal[3] = {
                             entry.state.restLocal[0] + out.localOffset[0],

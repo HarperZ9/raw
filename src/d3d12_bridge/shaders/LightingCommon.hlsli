@@ -44,6 +44,8 @@ cbuffer P : register(b0) {
     float4 seasonThermal1;          // x: iceThicknessM, y: blackIce01, z: frostRime01, w: iceFracture01 (RawWeatherSim)
     float4 phenology0;              // x: budBreak01, y: chlorophyll01, z: autumnCarotenoid01, w: autumnAnthocyanin01 (RawWeatherSim)
     float4 phenology1;              // x: leafAbscission01, y: canopySnowLoadKgM2, z: inversionStrength01, w: puddleEvapRate (RawWeatherSim)
+    float4 impactDecalPosR[16];     // xyz: world absolute position, w: radiusU (0 = inactive) (rt_combat_impact)
+    float4 impactDecalMeta[16];     // x: kind (0=blood,1=chip,2=scorch,3=frost,4=shock), y: ageSec, z: seedAngle, w: intensity
 };
 
 static const uint FLAG_MATCH = 1u, FLAG_SOFT = 2u, FLAG_GGX = 4u, FLAG_FOG = 8u, FLAG_CONTACT = 16u, FLAG_AO = 32u,

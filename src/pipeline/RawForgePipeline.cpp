@@ -6,6 +6,7 @@
 #include "RawForgePipeline.h"
 
 #include "../materials/RawMaterialLib.h"
+#include "../worldgen/RawEsmWorldLoader.h"
 #include "../worldgen/RawFloraEngine.h"
 #include "../worldgen/RawWeatherSim.h"
 #include "../worldgen/RawWorldShowcase.h"
@@ -594,6 +595,92 @@ BakeResult BakeMaterialCatalogManifest(const std::string& outDir) {
     res.ok = (!allMats.empty() && res.validationFailures == 0u);
     res.summaryMessage = "MaterialCatalog: " + std::to_string(allMats.size()) + " physical materials validated (" +
                          std::to_string(res.totalGpuBytes) + " GPU bytes)";
+    return res;
+}
+
+BakeResult BakeEsmCellAsset(const std::string& esmPath,
+                            int32_t cellX,
+                            int32_t cellY,
+                            const std::string& outDir,
+                            uint32_t targetWorldFormId,
+                            const ValidatorPolicy& policy,
+                            bool writeGeometryFiles) {
+    using namespace raw::worldgen;
+    BakeResult res{};
+    if (!EnsureDir(outDir)) {
+        res.summaryMessage = "Failed to create ESM cell output directory: " + outDir;
+        return res;
+    }
+
+    EsmWorldIndex index{};
+    std::string err;
+    if (!IndexEsmWorldspace(esmPath, targetWorldFormId, &index, &err)) {
+        res.validationFailures = 1u;
+        res.summaryMessage = "ESM index failed: " + err;
+        return res;
+    }
+
+    EsmLoadedCell cell{};
+    if (!LoadEsmExteriorCell(index, cellX, cellY, &cell, &err)) {
+        res.validationFailures = 1u;
+        res.summaryMessage = "ESM cell load failed (" + std::to_string(cellX) + "," + std::to_string(cellY) + "): " + err;
+        return res;
+    }
+
+    ProceduralMesh mesh{};
+    TerrainChunkData chunk{};
+    if (!BuildMeshFromEsmCell(cell, index.selectedWorld.defaultWaterHeight, 126u, &mesh, &chunk, &err)) {
+        res.validationFailures = 1u;
+        res.summaryMessage = "ESM mesh build failed: " + err;
+        return res;
+    }
+
+    const std::string baseName = "esm_cell_" + std::to_string(cellX) + "_" + std::to_string(cellY);
+    mesh.name = baseName;
+    ++res.assetsGenerated;
+
+    ValidationReport rep{};
+    const bool valid = ValidateProceduralMeshStrict(mesh, &rep, policy);
+    AccumulateReport(rep, res);
+
+    const std::string glbRel = baseName + ".glb";
+    const std::string objRel = baseName + ".obj";
+    if (writeGeometryFiles && valid) {
+        if (ExportMeshToGlbFile(mesh, outDir + "/" + glbRel, true)) ++res.filesWritten;
+        else ++res.validationFailures;
+        if (ExportMeshToObjFile(mesh, outDir + "/" + objRel)) ++res.filesWritten;
+        else ++res.validationFailures;
+    }
+
+    std::ostringstream js;
+    js << std::fixed << std::setprecision(4);
+    js << "{\n  \"pipeline\": \"RAW Clean-Room ESM Cell Asset Bake\",\n"
+       << "  \"esmPath\": \"" << JsonEscape(esmPath) << "\",\n"
+       << "  \"worldspace\": \"" << JsonEscape(index.selectedWorld.edid) << "\",\n"
+       << "  \"cell\": [" << cellX << ", " << cellY << "],\n"
+       << "  \"cellFormId\": " << cell.meta.cellFormId << ",\n"
+       << "  \"cellEdid\": \"" << JsonEscape(cell.meta.edid) << "\",\n"
+       << "  \"minHeightZ\": " << cell.land.minHeightZ << ",\n"
+       << "  \"maxHeightZ\": " << cell.land.maxHeightZ << ",\n"
+       << "  \"meanHeightZ\": " << cell.land.meanHeightZ << ",\n"
+       << "  \"waterHeightZ\": " << (cell.meta.hasWaterHeight ? cell.meta.waterHeight : index.selectedWorld.defaultWaterHeight) << ",\n"
+       << "  \"refrPlacements\": " << cell.placements.size() << ",\n"
+       << "  \"props\": " << cell.props.size() << ",\n"
+       << "  \"glb\": \"" << (writeGeometryFiles ? glbRel : "") << "\",\n"
+       << "  \"obj\": \"" << (writeGeometryFiles ? objRel : "") << "\",\n"
+       << "  \"validation\": " << rep.ToJson() << "\n"
+       << "}\n";
+
+    res.manifestPath = outDir + "/" + baseName + "_manifest.json";
+    if (WriteTextFile(res.manifestPath, js.str())) ++res.filesWritten;
+    else ++res.validationFailures;
+
+    res.ok = valid && (res.validationFailures == 0u);
+    res.summaryMessage = "EsmCell(" + std::to_string(cellX) + "," + std::to_string(cellY) +
+                         ", edid=" + (cell.meta.edid.empty() ? "Wilderness" : cell.meta.edid) +
+                         "): " + std::to_string(rep.meshletCount) + " meshlets, " +
+                         std::to_string(rep.triangleCount) + " tris, " +
+                         std::to_string(cell.placements.size()) + " REFRs";
     return res;
 }
 

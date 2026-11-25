@@ -48,13 +48,16 @@ bool D3D12Bridge::Impl::StepFluidSimOnQueue(bool isInterior)
     fp.enableCeiling = isInterior;
     fp.jacobiIterations = 8u;
 
-    // Anchor domain around closest warm fire emitter within 1400u (falls back to camera pos):
+    // Anchor domain around closest strictly-verified warm fire emitter within 1400u (falls back to camera pos):
     float anchorW[3] = {lighting.posAdjust[0], lighting.posAdjust[1], lighting.posAdjust[2]};
     float bestFireD2 = 1400.0f * 1400.0f;
+    float minEmitterZ = lighting.posAdjust[2] - 110.0f;
     uint32_t emitCount = 0u;
     for (uint32_t i = 0; i < lighting.lightCount && emitCount < 16u; ++i) {
         const SceneLight& l = lighting.lights[i];
-        if (l.colour[0] > l.colour[2] * 1.38f && l.colour[0] > 0.14f && l.radius >= 50.0f && l.radius <= 1500.0f) {
+        // Strict fire-core chromaticity + physical hearth/torch/brazier radius gate (never wide neutral room-fill lights!):
+        if (l.colour[0] > l.colour[1] * 1.25f && l.colour[0] > l.colour[2] * 2.2f &&
+            l.colour[0] > 0.45f && l.radius >= 50.0f && l.radius <= 900.0f) {
             const float wx = lighting.posAdjust[0] + l.position[0];
             const float wy = lighting.posAdjust[1] + l.position[1];
             const float wz = lighting.posAdjust[2] + l.position[2];
@@ -63,12 +66,14 @@ bool D3D12Bridge::Impl::StepFluidSimOnQueue(bool isInterior)
                 bestFireD2 = d2;
                 anchorW[0] = wx; anchorW[1] = wy; anchorW[2] = wz - 32.0f;
             }
+            const float emitZ = wz - 20.0f;
+            minEmitterZ = (emitCount == 0u) ? emitZ : std::min(minEmitterZ, emitZ);
             FluidFireEmitter& em = fp.emitters[emitCount++];
             em.posW[0] = wx;
             em.posW[1] = wy;
-            em.posW[2] = wz - 20.0f;
-            em.radius = std::clamp(l.radius * 0.08f, 6.0f, 28.0f);
-            em.ignitionTempK = std::clamp(1900.0f + l.colour[0] * 950.0f, 1900.0f, 3300.0f);
+            em.posW[2] = emitZ;
+            em.radius = std::clamp(l.radius * 0.08f, 6.0f, 26.0f);
+            em.ignitionTempK = std::clamp(1950.0f + l.colour[0] * 900.0f, 1950.0f, 3300.0f);
             em.fuelRate = 2.4f;
             em.jetSpeed = 30.0f;
             em.curlStrength = 14.0f;
@@ -77,10 +82,38 @@ bool D3D12Bridge::Impl::StepFluidSimOnQueue(bool isInterior)
         }
     }
     fp.emitterCount = emitCount;
-    const float halfDomain = 0.5f * float(RawFluidSimHost::kFireGridRes) * fp.cellSize;
+    const float domainSpan = float(RawFluidSimHost::kFireGridRes) * fp.cellSize;
+    const float halfDomain = 0.5f * domainSpan;
     fp.domainOriginW[0] = anchorW[0] - halfDomain;
     fp.domainOriginW[1] = anchorW[1] - halfDomain;
-    fp.domainOriginW[2] = anchorW[2] - halfDomain * 0.35f;
+    const float floorZ = (emitCount > 0u) ? (minEmitterZ - 14.0f) : (lighting.posAdjust[2] - 124.0f);
+    fp.domainOriginW[2] = floorZ - fp.cellSize * 2.0f;
+    fp.floorZLocal = std::clamp((floorZ - fp.domainOriginW[2]) / fp.cellSize, 1.0f, 10.0f);
+
+    // Inject real physical floor slab + interior ceiling baffle AABBs so 3D NS fire & smoke collide and spread across ceilings:
+    fp.obstacles[0].minW[0] = fp.domainOriginW[0] - 64.0f;
+    fp.obstacles[0].minW[1] = fp.domainOriginW[1] - 64.0f;
+    fp.obstacles[0].minW[2] = floorZ - 24.0f;
+    fp.obstacles[0].maxW[0] = fp.domainOriginW[0] + domainSpan + 64.0f;
+    fp.obstacles[0].maxW[1] = fp.domainOriginW[1] + domainSpan + 64.0f;
+    fp.obstacles[0].maxW[2] = floorZ;
+    fp.obstacles[0].active = true;
+    fp.obstacles[0].roughness = 0.65f;
+    fp.obstacleCount = 1u;
+
+    if (isInterior) {
+        const float ceilZ = floorZ + 240.0f;
+        fp.ceilingZLocal = std::clamp((ceilZ - fp.domainOriginW[2]) / fp.cellSize, 42.0f, 62.0f);
+        fp.obstacles[1].minW[0] = fp.domainOriginW[0] - 64.0f;
+        fp.obstacles[1].minW[1] = fp.domainOriginW[1] - 64.0f;
+        fp.obstacles[1].minW[2] = ceilZ;
+        fp.obstacles[1].maxW[0] = fp.domainOriginW[0] + domainSpan + 64.0f;
+        fp.obstacles[1].maxW[1] = fp.domainOriginW[1] + domainSpan + 64.0f;
+        fp.obstacles[1].maxW[2] = ceilZ + 32.0f;
+        fp.obstacles[1].active = true;
+        fp.obstacles[1].roughness = 0.55f;
+        fp.obstacleCount = 2u;
+    }
 
     // 2. Build 256^2 Toroidal Shallow-Water Hydrodynamics params from camPos, footTrail[0..31], rain & Beaufort swell:
     FluidWaterParams wp{};

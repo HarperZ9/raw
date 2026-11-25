@@ -1,13 +1,15 @@
 #pragma once
 // RawWorldShowcase.h: Live Beyond-the-Borders / Standalone Procedural World Streaming Manager (`raw::worldgen`).
-// Tracks camera coordinates, streams concentric LOD0..LOD3 watertight multi-biome terrain chunks + Poisson props,
-// enforces strict LRU eviction under a configurable VRAM budget cap, and provides a deterministic offline
-// 6-biome showcase diorama generator with optional .glb/.obj export. Zero Skyrim or D3D12 headers required!
-// Original work, MIT.
+// Tracks camera coordinates, streams concentric LOD0..LOD3 watertight multi-biome terrain chunks + Poisson props
+// (synchronously for deterministic unit tests or asynchronously on a bounded RawJobSystem worker pool for
+// <0.2 ms main-thread streaming during 10x tfc flight!), enforces strict LRU eviction under a configurable
+// VRAM budget cap, and provides a deterministic offline 6-biome showcase diorama generator with .glb/.obj export.
+// Zero Skyrim or D3D12 headers required! Original work, MIT.
 
 #include "RawMeshPipeline.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -49,6 +51,9 @@ struct StreamConfig {
     float         borderMaxX           =  148000.0f;
     float         borderMinY           = -118000.0f;
     float         borderMaxY           =  132000.0f;
+    // Non-blocking background chunk generation (false default preserves 100% deterministic sync tests):
+    bool          asyncStreaming       = false;
+    uint32_t      asyncWorkerCount     = 0u;    // 0 = auto bounded RawJobSystem::RecommendedWorkerCount() (2..6)
 };
 
 struct StreamedChunkEntry {
@@ -83,12 +88,26 @@ struct StreamUpdateStats {
     uint64_t vramBudgetBytes  = 0u;
     BiomeId  cameraBiome      = BiomeId::OldGrowthConiferHighlands;
     ChunkKey cameraChunk{};
+    uint32_t pendingAsyncJobs = 0u;
 };
 
 class RawWorldShowcase {
 public:
+    RawWorldShowcase();
+    ~RawWorldShowcase();
+    RawWorldShowcase(RawWorldShowcase&&) noexcept;
+    RawWorldShowcase& operator=(RawWorldShowcase&&) noexcept;
+    RawWorldShowcase(const RawWorldShowcase&) = delete;
+    RawWorldShowcase& operator=(const RawWorldShowcase&) = delete;
+
     bool Init(const StreamConfig& cfg);
     void Reset(IGpuChunkSink* sink = nullptr);
+
+    // Toggle non-blocking background worker streaming at runtime (cleanly drains/shuts down when toggled off).
+    void SetAsyncEnabled(bool enabled);
+    [[nodiscard]] bool     IsAsyncEnabled() const noexcept { return m_cfg.asyncStreaming; }
+    [[nodiscard]] uint32_t PendingAsyncJobs() const noexcept;
+    void WaitForAsyncIdle();
 
     // Advances streaming for current camera world position; returns live telemetry.
     StreamUpdateStats Update(Vec3 camWorldPos, IGpuChunkSink* sink = nullptr);
@@ -107,15 +126,20 @@ public:
     uint32_t ComputeTargetLod(int32_t dx, int32_t dy) const;
 
 private:
+    struct AsyncState;
+
     bool IsCameraInFrontier(Vec3 camWorldPos) const;
     uint8_t ComputeStitchMask(int32_t dx, int32_t dy, uint32_t myLod) const;
     uint32_t EvictLruToBudget(ChunkKey protectedKey, IGpuChunkSink* sink);
+    void EnsureAsyncPool();
+    void ShutdownAsyncPool();
 
     bool                                                           m_initialized   = false;
     StreamConfig                                                   m_cfg{};
     uint64_t                                                       m_frame         = 0u;
     uint64_t                                                       m_usedVramBytes = 0u;
     std::unordered_map<ChunkKey, StreamedChunkEntry, ChunkKeyHash> m_chunks;
+    std::unique_ptr<AsyncState>                                    m_async;
 };
 
 // Deterministic offline showcase diorama across all 6 biomes + hero props.

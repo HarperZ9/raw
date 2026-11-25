@@ -76,8 +76,10 @@ struct LightUniform
     float seasonThermal1[4];  // x: iceThicknessM, y: blackIce01, z: frostRime01, w: iceFracture01
     float phenology0[4];      // x: budBreak01, y: chlorophyll01, z: autumnCarotenoid01, w: autumnAnthocyanin01
     float phenology1[4];      // x: leafAbscission01, y: canopySnowLoadKgM2, z: inversionStrength01, w: puddleEvapRate
+    float impactDecalPosR[16][4]; // xyz: world absolute position, w: radiusU (0 = inactive)
+    float impactDecalMeta[16][4]; // x: kind (0=blood,1=chip,2=scorch,3=frost,4=shock), y: ageSec, z: seedAngle, w: intensity
 };
-static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16 + 176, "layout of cbuffer P");
+static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16 + 176 + 512, "layout of cbuffer P");
 static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
 constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536, kDistantLod = 131072, kEnvMap = 262144, kCharLight = 524288, kUnderwater = 1048576;
@@ -860,6 +862,52 @@ private:
             u.phenology1[1] = wg.phenology1.y;
             u.phenology1[2] = wg.phenology1.z;
             u.phenology1[3] = wg.phenology1.w;
+        }
+
+        // Wave 41: Stream up to 16 live 3D world-space combat/elemental impact decals from raw_engine.dll:
+        std::memset(u.impactDecalPosR, 0, sizeof u.impactDecalPosR);
+        std::memset(u.impactDecalMeta, 0, sizeof u.impactDecalMeta);
+        {
+            using ImpactDecalsFn = uint32_t (*)(float*, uint32_t);
+            static HMODULE s_decMod = nullptr;
+            static ImpactDecalsFn s_decFn = nullptr;
+            if (!s_decFn) {
+                if (!s_decMod) s_decMod = GetModuleHandleA("raw_engine.dll");
+                if (s_decMod) s_decFn = reinterpret_cast<ImpactDecalsFn>(GetProcAddress(s_decMod, "RAW_GetImpactDecals"));
+            }
+            if (s_decFn) {
+                float rawBuf[32 * 8] = {};
+                const uint32_t nRaw = std::min(s_decFn(rawBuf, 32u), 32u);
+                struct Cand { uint32_t idx; float score; };
+                Cand cands[32]{};
+                uint32_t nCand = 0u;
+                for (uint32_t i = 0; i < nRaw; ++i) {
+                    const float* d = &rawBuf[i * 8u];
+                    const float rad = d[3];
+                    const float age = d[5];
+                    const float inten = d[7];
+                    if (rad <= 0.5f || inten <= 0.01f) continue;
+                    const float dx = d[0] - s.posAdjust[0];
+                    const float dy = d[1] - s.posAdjust[1];
+                    const float dz = d[2] - s.posAdjust[2];
+                    const float dist2 = dx * dx + dy * dy + dz * dz;
+                    // Favor closest & freshest combat impacts around the camera:
+                    cands[nCand++] = {i, dist2 + age * 25000.0f};
+                }
+                std::sort(cands, cands + nCand, [](const Cand& a, const Cand& b) { return a.score < b.score; });
+                const uint32_t nPack = std::min(nCand, 16u);
+                for (uint32_t k = 0; k < nPack; ++k) {
+                    const float* d = &rawBuf[cands[k].idx * 8u];
+                    u.impactDecalPosR[k][0] = d[0];
+                    u.impactDecalPosR[k][1] = d[1];
+                    u.impactDecalPosR[k][2] = d[2];
+                    u.impactDecalPosR[k][3] = d[3];
+                    u.impactDecalMeta[k][0] = d[4]; // kind (0=blood,1=chip,2=scorch,3=frost,4=shock)
+                    u.impactDecalMeta[k][1] = d[5]; // ageSec
+                    u.impactDecalMeta[k][2] = d[6]; // seedAngle
+                    u.impactDecalMeta[k][3] = d[7]; // intensity
+                }
+            }
         }
 
         for (uint32_t i = 0; i < s.lightCount; ++i) {

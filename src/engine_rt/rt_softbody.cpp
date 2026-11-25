@@ -607,7 +607,9 @@ SoftBoneOutput StepSoftBone(SoftBoneState& st,
         GetActiveWind(wVec, wGust);
         const float wt = float(GetTickCount64() % 3600000ull) * 0.001f;
         const float ph = parentWorldPos[0] * 0.013f + parentWorldPos[1] * 0.011f;
-        const float gust = 1.0f + (0.45f + 0.55f * wGust) * std::sin(wt * 1.95f + ph) + 0.28f * std::cos(wt * 3.70f - ph * 1.3f);
+        const float gust = std::clamp(
+            1.0f + (0.45f + 0.55f * wGust) * std::sin(wt * 1.95f + ph) + 0.28f * std::cos(wt * 3.70f - ph * 1.3f),
+            0.35f, 2.25f);
         const float dragScale = (prof.gravitySag <= -0.80f) ? 0.42f : 0.28f;
         windAcc[0] = std::clamp(wVec[0] * dragScale * gust, -140.0f, 140.0f);
         windAcc[1] = std::clamp(wVec[1] * dragScale * gust, -140.0f, 140.0f);

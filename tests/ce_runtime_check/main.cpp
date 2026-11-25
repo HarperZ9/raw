@@ -38,11 +38,16 @@ namespace raw::worldgen {
 int RunFloraEngineTests(void (*checkFn)(bool, const char*));
 int RunWeatherSimTests();
 int RunEsmWorldLoaderTests(void (*checkFn)(bool, const char*));
+int RunBsaArchiveTests(void (*checkFn)(bool, const char*));
 }
 namespace raw::rt {
 int RunSkeletonPhysicsTests(void (*checkFn)(bool, const char*));
 int RunGameplayMechanicsTests(void (*checkFn)(bool, const char*));
 int RunStealthSurvivalTests(void (*checkFn)(bool, const char*));
+int RunCombatImpactTests(void (*checkFn)(bool, const char*));
+}
+namespace raw::core {
+int RunCoreRuntimeTests(void (*checkFn)(bool, const char*));
 }
 namespace raw::pipeline {
 int RunPipelineForgeTests(void (*checkFn)(bool, const char*));
@@ -974,6 +979,7 @@ void main() {
 }  // namespace
 
 int main() {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     TestZydisGetters();
     TestGlbImporter();
     TestCeFormats();
@@ -1000,7 +1006,10 @@ int main() {
     raw::rt::RunSkeletonPhysicsTests(Check);
     raw::rt::RunGameplayMechanicsTests(Check);
     raw::rt::RunStealthSurvivalTests(Check);
+    raw::rt::RunCombatImpactTests(Check);
     raw::worldgen::RunEsmWorldLoaderTests(Check);
+    raw::worldgen::RunBsaArchiveTests(Check);
+    raw::core::RunCoreRuntimeTests(Check);
     raw::pipeline::RunPipelineForgeTests(Check);
     std::printf("ce_runtime_check: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

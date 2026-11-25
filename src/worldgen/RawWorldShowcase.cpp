@@ -1,11 +1,17 @@
-// RawWorldShowcase.cpp: Live Frontier World Streaming Manager (LRU + VRAM Budget) & Offline 6-Biome Showcase.
+// RawWorldShowcase.cpp: Live Frontier World Streaming Manager (LRU + VRAM Budget + Async RawJobSystem)
+// & Offline 6-Biome Showcase.
 // Original work, MIT.
 #include "RawWorldShowcase.h"
 #include "RawFloraEngine.h"
+#include "../engine_rt/raw_job_system.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <deque>
 #include <filesystem>
+#include <mutex>
+#include <unordered_set>
 
 namespace raw::worldgen {
 namespace {
@@ -16,22 +22,150 @@ uint64_t EstimateChunkVramBytes(const ProceduralMesh& mesh, size_t propCount) {
     return mesh.EstimateGpuBytes() + uint64_t(propCount) * 64ull + 4096ull;
 }
 
+struct ChunkBuildSpec {
+    ChunkKey key{};
+    uint32_t lod    = 0u;
+    uint8_t  stitch = StitchNone;
+    bool operator==(const ChunkBuildSpec& o) const noexcept {
+        return key == o.key && lod == o.lod && stitch == o.stitch;
+    }
+};
+
+struct ChunkBuildSpecHash {
+    size_t operator()(const ChunkBuildSpec& s) const noexcept {
+        size_t h = ChunkKeyHash{}(s.key);
+        h ^= (size_t(s.lod) << 1) ^ (size_t(s.stitch) << 5);
+        return h;
+    }
+};
+
+// Pure deterministic chunk builder shared identically by sync and async worker paths (guarantees bit-exact parity!).
+bool BuildStreamedChunkData(const StreamConfig& cfg,
+                            ChunkKey key,
+                            uint32_t lod,
+                            uint8_t stitch,
+                            uint64_t frameTag,
+                            StreamedChunkEntry* outEntry) {
+    if (!outEntry) return false;
+    StreamedChunkEntry entry{};
+    entry.key              = key;
+    entry.lodLevel         = lod;
+    entry.stitchMask       = stitch;
+    entry.lastTouchedFrame = frameTag;
+
+    TerrainConfig chunkCfg = cfg.terrain;
+    if (cfg.useCustomBorderBox && chunkCfg.border.enabled) {
+        chunkCfg.border.halfExtentX = (key.x < 0) ? std::fabs(cfg.borderMinX) : cfg.borderMaxX;
+        chunkCfg.border.halfExtentY = (key.y < 0) ? std::fabs(cfg.borderMinY) : cfg.borderMaxY;
+    }
+    if (!GenerateBiomeTerrainChunk(key.x, key.y, lod, chunkCfg, stitch, &entry.terrain)) {
+        return false;
+    }
+    if (!BuildTerrainChunkMesh(entry.terrain, cfg.maxMeshletTris, &entry.mesh)) {
+        return false;
+    }
+    if (lod <= 1u) {
+        GenerateChunkProps(entry.terrain, cfg.terrain.seed, 0.0f, &entry.props);
+    }
+    const float cx = entry.terrain.originX + entry.terrain.chunkSizeU * 0.5f;
+    const float cy = entry.terrain.originY + entry.terrain.chunkSizeU * 0.5f;
+    entry.dominantBiome      = EvaluateBiomeBlend(cx, cy, cfg.terrain.seed).primary;
+    entry.estimatedVramBytes = EstimateChunkVramBytes(entry.mesh, entry.props.size());
+    *outEntry = std::move(entry);
+    return true;
+}
+
 }  // namespace
+
+struct RawWorldShowcase::AsyncState {
+    struct CompletedChunk {
+        uint64_t           generation = 0ull;
+        StreamedChunkEntry entry;
+    };
+
+    raw::core::RawJobSystem                                         jobs;
+    std::atomic<uint64_t>                                           generation{1ull};
+    std::atomic<uint32_t>                                           inFlightCount{0u};
+    std::mutex                                                      mtx;
+    std::unordered_set<ChunkBuildSpec, ChunkBuildSpecHash>          inFlightSpecs;
+    std::deque<CompletedChunk>                                      completed;
+};
+
+RawWorldShowcase::RawWorldShowcase() = default;
+RawWorldShowcase::~RawWorldShowcase() {
+    ShutdownAsyncPool();
+}
+RawWorldShowcase::RawWorldShowcase(RawWorldShowcase&&) noexcept = default;
+RawWorldShowcase& RawWorldShowcase::operator=(RawWorldShowcase&&) noexcept = default;
+
+void RawWorldShowcase::EnsureAsyncPool() {
+    if (!m_async) {
+        m_async = std::make_unique<AsyncState>();
+    }
+    if (!m_async->jobs.IsRunning()) {
+        m_async->jobs.Init(m_cfg.asyncWorkerCount);
+    }
+}
+
+void RawWorldShowcase::ShutdownAsyncPool() {
+    if (!m_async) return;
+    m_async->generation.fetch_add(1ull, std::memory_order_acq_rel);
+    m_async->jobs.Shutdown();
+    {
+        std::lock_guard<std::mutex> lk(m_async->mtx);
+        m_async->inFlightSpecs.clear();
+        m_async->completed.clear();
+    }
+    m_async->inFlightCount.store(0u, std::memory_order_release);
+}
+
+void RawWorldShowcase::SetAsyncEnabled(bool enabled) {
+    if (m_cfg.asyncStreaming == enabled) return;
+    m_cfg.asyncStreaming = enabled;
+    if (enabled && m_initialized) {
+        EnsureAsyncPool();
+    } else if (!enabled) {
+        ShutdownAsyncPool();
+    }
+}
+
+uint32_t RawWorldShowcase::PendingAsyncJobs() const noexcept {
+    return m_async ? m_async->inFlightCount.load(std::memory_order_acquire) : 0u;
+}
+
+void RawWorldShowcase::WaitForAsyncIdle() {
+    if (!m_async) return;
+    while (m_async->inFlightCount.load(std::memory_order_acquire) > 0u) {
+        if (!m_async->jobs.TryRunOnePendingJob()) {
+            std::this_thread::yield();
+        }
+    }
+}
 
 bool RawWorldShowcase::Init(const StreamConfig& cfg) {
     if (cfg.vramBudgetBytes < 65536ull || cfg.terrain.chunkSizeU < 64.0f || cfg.lod3RadiusChunks < 0) {
         m_initialized = false;
         return false;
     }
+    ShutdownAsyncPool();
     m_cfg = cfg;
     m_chunks.clear();
     m_frame = 0u;
     m_usedVramBytes = 0u;
     m_initialized = true;
+    if (m_cfg.asyncStreaming) {
+        EnsureAsyncPool();
+    }
     return true;
 }
 
 void RawWorldShowcase::Reset(IGpuChunkSink* sink) {
+    if (m_async) {
+        m_async->generation.fetch_add(1ull, std::memory_order_acq_rel);
+        std::lock_guard<std::mutex> lk(m_async->mtx);
+        m_async->inFlightSpecs.clear();
+        m_async->completed.clear();
+    }
     if (sink) {
         for (const auto& kv : m_chunks) {
             sink->OnChunkEvicted(kv.first, kv.second.gpuHandle);
@@ -110,7 +244,6 @@ StreamUpdateStats RawWorldShowcase::Update(Vec3 camWorldPos, IGpuChunkSink* sink
     st.activeInFrontier = IsCameraInFrontier(camWorldPos);
 
     if (!st.activeInFrontier) {
-        // Player returned well inside Tamriel: smoothly evict frontier chunks to return 100% VRAM.
         if (!m_chunks.empty()) {
             st.evictedThisFrame = static_cast<uint32_t>(m_chunks.size());
             Reset(sink);
@@ -133,7 +266,6 @@ StreamUpdateStats RawWorldShowcase::Update(Vec3 camWorldPos, IGpuChunkSink* sink
             const uint32_t lod = ComputeTargetLod(dx, dy);
             if (lod > 3u) continue;
             const ChunkKey k{camKey.x + dx, camKey.y + dy};
-            // Never stream chunks strictly inside the Tamriel exclusion box (zero overlap with Skyrim's map!).
             if (!m_cfg.showcaseMode && m_cfg.terrain.border.enabled) {
                 const float x0 = float(k.x) * m_cfg.terrain.chunkSizeU;
                 const float x1 = x0 + m_cfg.terrain.chunkSizeU;
@@ -169,63 +301,111 @@ StreamUpdateStats RawWorldShowcase::Update(Vec3 camWorldPos, IGpuChunkSink* sink
         }
     }
 
-    // 3. Touch resident chunks and stream up to maxLoadsPerFrame new/LOD-changed chunks.
-    uint32_t loadsLeft = std::max(1u, m_cfg.maxLoadsPerFrame);
-    for (const auto& w : wanted) {
-        auto it = m_chunks.find(w.key);
-        if (it != m_chunks.end() && it->second.lodLevel == w.lod && it->second.stitchMask == w.stitch) {
-            it->second.lastTouchedFrame = m_frame;
-            continue;
-        }
-        if (loadsLeft == 0u) continue;
-
-        StreamedChunkEntry entry{};
-        entry.key = w.key;
-        entry.lodLevel = w.lod;
-        entry.stitchMask = w.stitch;
-        entry.lastTouchedFrame = m_frame;
-
-        TerrainConfig chunkCfg = m_cfg.terrain;
-        if (m_cfg.useCustomBorderBox && chunkCfg.border.enabled) {
-            chunkCfg.border.halfExtentX = (w.key.x < 0) ? std::fabs(m_cfg.borderMinX) : m_cfg.borderMaxX;
-            chunkCfg.border.halfExtentY = (w.key.y < 0) ? std::fabs(m_cfg.borderMinY) : m_cfg.borderMaxY;
-        }
-        if (!GenerateBiomeTerrainChunk(w.key.x, w.key.y, w.lod, chunkCfg, w.stitch, &entry.terrain)) {
-            continue;
-        }
-        if (!BuildTerrainChunkMesh(entry.terrain, m_cfg.maxMeshletTris, &entry.mesh)) {
-            continue;
-        }
-        // Populate Poisson props on LOD0 and LOD1 chunks (distant LOD2/LOD3 stay lightweight terrain).
-        if (w.lod <= 1u) {
-            GenerateChunkProps(entry.terrain, m_cfg.terrain.seed, 0.0f, &entry.props);
-        }
-        const float cx = entry.terrain.originX + entry.terrain.chunkSizeU * 0.5f;
-        const float cy = entry.terrain.originY + entry.terrain.chunkSizeU * 0.5f;
-        entry.dominantBiome = EvaluateBiomeBlend(cx, cy, m_cfg.terrain.seed).primary;
-        entry.estimatedVramBytes = EstimateChunkVramBytes(entry.mesh, entry.props.size());
-
-        // If replacing an existing chunk at a different LOD, release its old handle/VRAM first.
+    auto commitBuiltEntry = [&](StreamedChunkEntry&& entry) {
+        if (entry.estimatedVramBytes > m_cfg.vramBudgetBytes) return;
+        const ChunkKey k = entry.key;
+        auto it = m_chunks.find(k);
         if (it != m_chunks.end()) {
             const uint64_t oldBytes = it->second.estimatedVramBytes;
             if (sink) sink->OnChunkEvicted(it->first, it->second.gpuHandle);
             m_usedVramBytes = (m_usedVramBytes >= oldBytes) ? (m_usedVramBytes - oldBytes) : 0ull;
             m_chunks.erase(it);
         }
-
-        // Skip inserting if a single chunk exceeds the entire budget cap (fail-closed guard).
-        if (entry.estimatedVramBytes > m_cfg.vramBudgetBytes) {
-            continue;
-        }
-
+        entry.lastTouchedFrame = m_frame;
         if (sink) entry.gpuHandle = sink->OnChunkLoaded(entry);
         m_usedVramBytes += entry.estimatedVramBytes;
-        m_chunks.emplace(w.key, std::move(entry));
+        m_chunks.emplace(k, std::move(entry));
         ++st.loadedThisFrame;
-        --loadsLeft;
-
-        // Enforce strict VRAM budget via LRU eviction after every insert.
         st.evictedThisFrame += EvictLruToBudget(camKey, sink);
+    };
+
+    const uint32_t maxLoads = std::max(1u, m_cfg.maxLoadsPerFrame);
+
+    if (m_cfg.asyncStreaming) {
+        EnsureAsyncPool();
+        const uint64_t curGen = m_async->generation.load(std::memory_order_acquire);
+
+        // 3a. Drain completed background chunks onto GPU/render thread (<= maxLoads per frame, <0.2ms CPU!).
+        std::vector<StreamedChunkEntry> readyBatch;
+        readyBatch.reserve(maxLoads);
+        {
+            std::lock_guard<std::mutex> lk(m_async->mtx);
+            while (!m_async->completed.empty() && readyBatch.size() < maxLoads) {
+                auto cc = std::move(m_async->completed.front());
+                m_async->completed.pop_front();
+                if (cc.generation != curGen) continue;
+                const int32_t dx = cc.entry.key.x - camKey.x;
+                const int32_t dy = cc.entry.key.y - camKey.y;
+                const uint32_t targetLod = ComputeTargetLod(dx, dy);
+                if (targetLod != cc.entry.lodLevel || ComputeStitchMask(dx, dy, targetLod) != cc.entry.stitchMask) {
+                    continue; // Stale LOD after high-speed flight — discard cleanly
+                }
+                readyBatch.push_back(std::move(cc.entry));
+            }
+        }
+        for (auto& entry : readyBatch) {
+            commitBuiltEntry(std::move(entry));
+        }
+
+        // 3b. Touch resident chunks and dispatch missing chunks to RawJobSystem priority lanes!
+        const uint32_t maxQueueDepth = std::max<uint32_t>(maxLoads * 4u, 16u);
+        for (const auto& w : wanted) {
+            auto it = m_chunks.find(w.key);
+            if (it != m_chunks.end() && it->second.lodLevel == w.lod && it->second.stitchMask == w.stitch) {
+                it->second.lastTouchedFrame = m_frame;
+                continue;
+            }
+            if (m_async->inFlightCount.load(std::memory_order_acquire) >= maxQueueDepth) continue;
+
+            const ChunkBuildSpec spec{w.key, w.lod, w.stitch};
+            {
+                std::lock_guard<std::mutex> lk(m_async->mtx);
+                if (m_async->inFlightSpecs.find(spec) != m_async->inFlightSpecs.end()) continue;
+                m_async->inFlightSpecs.insert(spec);
+            }
+            m_async->inFlightCount.fetch_add(1u, std::memory_order_acq_rel);
+
+            const StreamConfig cfgSnap = m_cfg;
+            const uint64_t frameSnap   = m_frame;
+            AsyncState* asyncPtr       = m_async.get();
+            const raw::core::JobPriority prio =
+                (w.lod == 0u) ? raw::core::JobPriority::High :
+                (w.lod == 1u) ? raw::core::JobPriority::Normal :
+                                raw::core::JobPriority::Low;
+
+            m_async->jobs.Submit(prio, [asyncPtr, cfgSnap, spec, frameSnap, curGen]() {
+                StreamedChunkEntry built{};
+                const bool ok = (asyncPtr->generation.load(std::memory_order_acquire) == curGen) &&
+                                BuildStreamedChunkData(cfgSnap, spec.key, spec.lod, spec.stitch, frameSnap, &built);
+                {
+                    std::lock_guard<std::mutex> lk(asyncPtr->mtx);
+                    asyncPtr->inFlightSpecs.erase(spec);
+                    if (ok && asyncPtr->generation.load(std::memory_order_acquire) == curGen) {
+                        asyncPtr->completed.push_back({curGen, std::move(built)});
+                    }
+                }
+                asyncPtr->inFlightCount.fetch_sub(1u, std::memory_order_acq_rel);
+            });
+        }
+        st.pendingAsyncJobs = m_async->inFlightCount.load(std::memory_order_acquire);
+    } else {
+        // 3. Deterministic synchronous streaming path (default for unit tests & offline showcases).
+        uint32_t loadsLeft = maxLoads;
+        for (const auto& w : wanted) {
+            auto it = m_chunks.find(w.key);
+            if (it != m_chunks.end() && it->second.lodLevel == w.lod && it->second.stitchMask == w.stitch) {
+                it->second.lastTouchedFrame = m_frame;
+                continue;
+            }
+            if (loadsLeft == 0u) continue;
+
+            StreamedChunkEntry entry{};
+            if (!BuildStreamedChunkData(m_cfg, w.key, w.lod, w.stitch, m_frame, &entry)) {
+                continue;
+            }
+            commitBuiltEntry(std::move(entry));
+            --loadsLeft;
+        }
     }
 
     // 4. Aggregate telemetry
@@ -244,7 +424,6 @@ OfflineShowcaseSummary GenerateOfflineShowcaseDiorama(uint32_t seed, const std::
     cfg.seed = seed;
     cfg.border.enabled = false; // Pure showcase mode
 
-    // Deterministic compass coordinates at radius 220,000u (right beyond Tamriel's borders) matching the 6 sectors!
     constexpr float kAngles[6] = {
         +1.5707963f, // 0: Glacial Fjord Spires (N)
         -0.5235988f, // 1: Geothermal Volcanic Caldera (ESE)
@@ -274,7 +453,6 @@ OfflineShowcaseSummary GenerateOfflineShowcaseDiorama(uint32_t seed, const std::
         std::vector<PropInstance> props;
         GenerateChunkProps(chunk, seed, 0.0f, &props);
 
-        // Generate the signature hero prop for biome i
         ProceduralMesh hero{};
         bool heroOk = false;
         switch (i) {
@@ -311,15 +489,17 @@ bool BuildChunkMergedGpuMesh(const StreamedChunkEntry& entry, uint32_t maxMeshle
     *outMerged = entry.mesh;
     if (entry.props.empty()) return true;
 
-    // Build reusable canonical 3D prop templates once (2 seed variants per PropKind, zero external files).
-    // Frontier trees & understory shrubs are generated via RawFloraEngine's biomechanical da Vinci pipe-model
-    // + 3D foliage cluster generator (Sitka Spruce, Windswept Coastal Pine, Silver Birch, Ancient Oak, Shrub).
+    // Thread-safe canonical 3D prop + biomechanical RawFloraEngine template cache.
     struct PropTemplateCache {
-        bool ready = false;
-        ProceduralMesh variants[8][2];
-        ProceduralMesh floraSpecies[5];
+        std::atomic<bool> ready{false};
+        std::mutex        initMtx;
+        ProceduralMesh    variants[8][2];
+        ProceduralMesh    floraSpecies[5];
+
         void Ensure(uint32_t seed) {
-            if (ready) return;
+            if (ready.load(std::memory_order_acquire)) return;
+            std::lock_guard<std::mutex> lk(initMtx);
+            if (ready.load(std::memory_order_relaxed)) return;
             const float floraHeightsM[5] = {8.4f, 6.8f, 7.6f, 8.0f, 1.55f};
             const float floraCrownsM[5]  = {2.5f, 3.0f, 2.2f, 3.6f, 1.45f};
             for (uint32_t sp = 0u; sp < 5u; ++sp) {
@@ -342,7 +522,7 @@ bool BuildChunkMergedGpuMesh(const StreamedChunkEntry& entry, uint32_t maxMeshle
                 BuildCrystalMonolith(s + 107u, 74.0f, 240.0f + 55.0f * float(v), 5u, 126u, &variants[6][v]);
                 BuildAlpineGrassClump(s + 131u, 10u, 48.0f, 126u, &variants[7][v]);
             }
-            ready = true;
+            ready.store(true, std::memory_order_release);
         }
     };
     static PropTemplateCache s_cache;
@@ -357,9 +537,7 @@ bool BuildChunkMergedGpuMesh(const StreamedChunkEntry& entry, uint32_t maxMeshle
     size_t bakedCount = 0u;
     for (const PropInstance& inst : entry.props) {
         if (bakedCount >= maxBakedProps) break;
-        // Skip props underwater or inside the Tamriel border transition margin where terrain is still submerged.
         if (inst.position.z < seaLevelZ + 12.0f) continue;
-        // On LOD1 chunks, skip tiny grass clumps to keep distant chunks crisp & fast.
         if (entry.lodLevel > 0u && inst.kind == PropKind::AlpineGrassClump) continue;
 
         const size_t ki = std::min<size_t>(static_cast<size_t>(inst.kind), 7u);
@@ -386,8 +564,6 @@ bool BuildChunkMergedGpuMesh(const StreamedChunkEntry& entry, uint32_t maxMeshle
         const float sc = Clamp(inst.scale, 0.5f, 2.2f);
         const float sinkZ = (inst.kind == PropKind::ConiferTree) ? 6.0f : 4.0f;
 
-        const uint32_t baseVert = static_cast<uint32_t>(propVerts.size());
-        // Flatten template meshlets into world-transformed vertices/indices.
         for (const auto& ml : tmpl.meshlets) {
             const uint32_t mlVertBase = static_cast<uint32_t>(propVerts.size());
             for (uint32_t i = 0u; i < ml.vertexCount; ++i) {
@@ -403,8 +579,6 @@ bool BuildChunkMergedGpuMesh(const StreamedChunkEntry& entry, uint32_t maxMeshle
                 v.normal[0] = nx * cy - ny * sy;
                 v.normal[1] = nx * sy + ny * cy;
                 if (isBiomechanicalFlora) {
-                    // Map RawFloraEngine bark vs 3D foliage clusters onto RawTerrainWorld.hlsl's
-                    // dedicated furrowed bark (10.0) & deep boreal needle/leaf (11.0) material tags.
                     v.meta[3] = (v.splat1[1] > 0.30f) ? 11.0f : 10.0f;
                 }
                 propVerts.push_back(v);
@@ -413,7 +587,6 @@ bool BuildChunkMergedGpuMesh(const StreamedChunkEntry& entry, uint32_t maxMeshle
                 propIndices.push_back(mlVertBase + tmpl.indices[ml.triangleOffset + t]);
             }
         }
-        (void)baseVert;
         ++bakedCount;
     }
 
@@ -426,7 +599,6 @@ bool BuildChunkMergedGpuMesh(const StreamedChunkEntry& entry, uint32_t maxMeshle
     BuildMeshlets(propVerts, propIndices, 64u, limT, &packedPropV, &packedPropI, &packedPropM);
     if (packedPropM.empty()) return true;
 
-    // Concatenate prop meshlets directly onto terrain mesh (O(N) append, 1 DispatchMesh draws terrain + 3D props!).
     const uint32_t vertBase = static_cast<uint32_t>(outMerged->vertices.size());
     const uint32_t idxBase  = static_cast<uint32_t>(outMerged->indices.size());
     outMerged->vertices.insert(outMerged->vertices.end(), packedPropV.begin(), packedPropV.end());

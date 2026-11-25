@@ -12,6 +12,225 @@
 #ifndef RAW_DECALS_3D_HLSLI
 #define RAW_DECALS_3D_HLSLI
 
+#include "RawProceduralNoise.hlsli"
+
+// ============================================================================
+// Wave 41 Live 3D Dynamic Combat & Elemental Impact Decal System (SM 6.6 / 6.10)
+// Pure-argument standalone evaluator (zero cbuffer dependency):
+//   Kind 0: Physical Blood Splatter (wall drips + glossy arterial -> matte coagulated over 0..120s)
+//   Kind 1: Stone Chip / Wood Splinter Impact (concave crater + pale beveled mineral/wood lip)
+//   Kind 2: Fire Spell / Hearth Charred Scorch Crater (matte soot + cooling 1800K->700K Planck embers 0..18s)
+//   Kind 3: Frost Spell Crystalline Ice Patch (feathered frost rime + IOR 1.31 glaze, sublimates over age)
+//   Kind 4: Shock Spell Vitrified Lichtenberg Burn (dendritic burn + fading cyan-violet corona 0..4s)
+// ============================================================================
+struct RawImpactDecalResult {
+    float3 albedo;
+    float  albedoBlend;
+    float  roughness;
+    float  roughBlend;
+    float3 normalPerturb;
+    float3 emissive;
+    float  f0Override;
+    float  f0Blend;
+    float  bloodMask;
+};
+
+RawImpactDecalResult evalDynamicImpactDecals3D(
+    float3 worldPosAbs,
+    float3 normalW,
+    float4 decalPosR[16],
+    float4 decalMeta[16])
+{
+    RawImpactDecalResult acc;
+    acc.albedo        = 0.0f.xxx;
+    acc.albedoBlend   = 0.0f;
+    acc.roughness     = 0.5f;
+    acc.roughBlend    = 0.0f;
+    acc.normalPerturb = 0.0f.xxx;
+    acc.emissive      = 0.0f.xxx;
+    acc.f0Override    = 0.04f;
+    acc.f0Blend       = 0.0f;
+    acc.bloodMask     = 0.0f;
+
+    const float3 nUnit = normalize(normalW);
+    const float3 upRef = (abs(nUnit.z) < 0.92f) ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
+    const float3 tBase = normalize(cross(upRef, nUnit));
+    const float3 bBase = cross(nUnit, tBase);
+
+    float3 albSum = 0.0f.xxx;
+    float  albW   = 0.0f;
+    float  rghSum = 0.0f;
+    float  rghW   = 0.0f;
+    float  f0Sum  = 0.0f;
+    float  f0W    = 0.0f;
+
+    [loop] for (uint i = 0u; i < 16u; ++i) {
+        const float rad = decalPosR[i].w;
+        if (rad <= 0.5f) { continue; }
+        const float3 rel = worldPosAbs - decalPosR[i].xyz;
+        const float d2 = dot(rel, rel);
+        const float maxR = rad * 1.48f;
+        if (d2 >= maxR * maxR) { continue; }
+
+        const float intensity = saturate(decalMeta[i].w);
+        if (intensity <= 0.005f) { continue; }
+
+        const uint  kind    = uint(decalMeta[i].x + 0.5f);
+        const float ageSec  = max(decalMeta[i].y, 0.0f);
+        const float seedAng = decalMeta[i].z;
+        const float invRad  = 1.0f / max(rad, 1.0f);
+        const float rNorm   = sqrt(d2) * invRad;
+
+        // Tangent-plane coordinates rotated deterministically by per-decal seedAng:
+        const float cs = cos(seedAng), sn = sin(seedAng);
+        const float3 tRot = tBase * cs + bBase * sn;
+        const float3 bRot = -tBase * sn + bBase * cs;
+        const float2 uvT  = float2(dot(rel, tRot), dot(rel, bRot)) * invRad;
+        const float3 relTang = rel - nUnit * dot(rel, nUnit);
+        const float  relTangLen = length(relTang);
+        const float3 radDirT = (relTangLen > 1.0e-3f) ? (relTang / relTangLen) : tRot;
+
+        // 2-octave analytical 3D noise anchored to each decal's local frame (zero Voronoi hexagons!):
+        const float3 seedOff = float3(seedAng * 7.31f + float(i) * 3.17f, float(i) * 11.43f, seedAng * 4.19f + 2.7f);
+        const float4 n1 = rawNoise3Grad(rel * (2.6f * invRad) + seedOff);
+        const float4 n2 = rawNoise3Grad(rel * (6.8f * invRad) + seedOff * 1.73f + float3(19.3f, 5.1f, 13.7f));
+        const float3 n1Tang = n1.yzw - nUnit * dot(n1.yzw, nUnit);
+        const float3 n2Tang = n2.yzw - nUnit * dot(n2.yzw, nUnit);
+
+        if (kind == 0u) {
+            // Kind 0: Physical Blood Splatter (organic multi-droplet + steep-wall -Z drip + arterial->coagulated aging)
+            const float warpedR = rNorm + (n1.x - 0.5f) * 0.56f + (n2.x - 0.5f) * 0.24f;
+            const float coreSplash = 1.0f - smoothstep(0.28f, 0.90f, warpedR);
+            const float droplets = smoothstep(0.66f, 0.88f, n2.x) * (1.0f - smoothstep(0.55f, 1.38f, rNorm));
+            // Gravity drip streaks running down -Z on steep walls/pillars:
+            float drip = 0.0f;
+            const float steepWall = 1.0f - smoothstep(0.45f, 0.78f, abs(nUnit.z));
+            if (steepWall > 0.05f && rel.z < 0.0f && -rel.z < rad * 1.38f) {
+                const float horizR = length(rel.xy) * invRad;
+                const float streakN = rawNoise3Grad(float3(rel.xy * (6.0f * invRad), 0.35f) + seedOff).x;
+                const float dripLen = (0.35f + 0.95f * streakN) * rad;
+                drip = steepWall * (1.0f - smoothstep(0.18f, 0.58f, horizR))
+                     * smoothstep(0.42f, 0.78f, streakN)
+                     * (1.0f - smoothstep(dripLen * 0.65f, dripLen, -rel.z));
+            }
+            const float lifeFade = 1.0f - smoothstep(180.0f, 300.0f, ageSec);
+            const float mask = saturate(max(max(coreSplash, droplets * 0.85f), drip * 0.88f)) * intensity * lifeFade;
+            if (mask > 0.01f) {
+                const float coag01 = smoothstep(4.0f, 120.0f, ageSec);
+                const float3 freshCol = float3(0.24f, 0.012f, 0.009f);
+                const float3 driedCol = float3(0.078f, 0.016f, 0.011f);
+                const float3 bloodAlb = lerp(freshCol, driedCol, coag01);
+                const float  bloodRgh = lerp(0.08f, 0.76f, coag01);
+                const float  bloodF0  = lerp(0.035f, 0.024f, coag01);
+                // Raised glossy liquid meniscus rim while fresh:
+                const float meniscus = saturate(mask * (1.0f - mask) * 4.0f) * (1.0f - coag01 * 0.75f);
+                albSum += bloodAlb * mask; albW += mask;
+                rghSum += bloodRgh * mask; rghW += mask;
+                f0Sum  += bloodF0  * mask; f0W  += mask;
+                acc.normalPerturb += (-radDirT * (meniscus * 0.32f) + n2Tang * (0.06f * mask));
+                acc.bloodMask = max(acc.bloodMask, mask);
+            }
+        } else if (kind == 1u) {
+            // Kind 1: Stone Chip / Wood Splinter Impact (concave crater + pale exposed beveled lip)
+            const float warpedR = rNorm + (n1.x - 0.5f) * 0.44f + (n2.x - 0.5f) * 0.18f;
+            const float cavity = 1.0f - smoothstep(0.16f, 0.66f, warpedR);
+            const float bevelLip = smoothstep(0.44f, 0.72f, warpedR) * (1.0f - smoothstep(0.72f, 1.04f, warpedR))
+                                 * (0.52f + 0.48f * n2.x);
+            const float lifeFade = 1.0f - smoothstep(240.0f, 360.0f, ageSec);
+            const float mask = saturate(max(cavity, bevelLip * 0.85f)) * intensity * lifeFade;
+            if (mask > 0.01f) {
+                const float3 chipAlb = lerp(float3(0.105f, 0.100f, 0.095f), float3(0.45f, 0.42f, 0.38f), bevelLip);
+                albSum += chipAlb * (mask * 0.78f); albW += mask * 0.78f;
+                rghSum += 0.86f * mask;             rghW += mask;
+                // Concave crater normal tilts inward inside pit and chips sharp across lip:
+                acc.normalPerturb += (-radDirT * (cavity * 0.48f - bevelLip * 0.28f) + n2Tang * (0.24f * mask));
+            }
+        } else if (kind == 2u) {
+            // Kind 2: Fire Spell / Hearth Charred Scorch Crater (matte soot + cooling 1800K->700K Planck embers 0..18s)
+            const float warpedR = rNorm + (n1.x - 0.5f) * 0.48f + (n2.x - 0.5f) * 0.20f;
+            const float scorch = 1.0f - smoothstep(0.22f, 1.06f, warpedR);
+            const float lifeFade = 1.0f - smoothstep(180.0f, 320.0f, ageSec);
+            const float mask = saturate(scorch) * intensity * lifeFade;
+            if (mask > 0.01f) {
+                const float3 sootAlb = float3(0.026f, 0.024f, 0.023f) * (0.75f + 0.50f * n2.x);
+                albSum += sootAlb * (mask * 0.86f); albW += mask * 0.86f;
+                rghSum += 0.94f * mask;             rghW += mask;
+                acc.normalPerturb += (n1Tang * 0.14f + n2Tang * 0.18f) * mask;
+                if (ageSec < 18.5f) {
+                    const float cool01 = saturate(ageSec / 18.0f);
+                    const float vein = pow(saturate(1.0f - abs(n2.x * 2.0f - 1.0f)), 4.5f)
+                                     * (1.0f - smoothstep(0.12f, 0.82f, warpedR));
+                    const float localTempK = lerp(1800.0f, 700.0f, saturate(cool01 + (1.0f - vein) * 0.32f));
+                    float bbRad = 0.0f;
+                    const float3 bbCol = rawPlanckBlackbodyRGB(localTempK, bbRad);
+                    acc.emissive += bbCol * (bbRad * vein * (1.0f - cool01) * intensity * 1.45f);
+                }
+            }
+        } else if (kind == 3u) {
+            // Kind 3: Frost Spell Crystalline Ice Patch (feathered rime + IOR 1.31 specular glaze, sublimates over age)
+            const float sublFade = 1.0f - smoothstep(18.0f, 95.0f, ageSec);
+            if (sublFade > 0.01f) {
+                const float warpedR = rNorm + (n1.x - 0.5f) * 0.52f;
+                const float coreIce = 1.0f - smoothstep(0.20f, 0.92f, warpedR);
+                const float crystalRidge = pow(saturate(1.0f - abs(n2.x * 2.0f - 1.0f)), 2.5f);
+                const float rimeEdge = (1.0f - smoothstep(0.55f, 1.24f, warpedR)) * crystalRidge;
+                const float mask = saturate(max(coreIce, rimeEdge * 0.85f)) * intensity * sublFade;
+                if (mask > 0.01f) {
+                    const float3 frostAlb = lerp(float3(0.54f, 0.75f, 0.92f), float3(0.84f, 0.93f, 0.99f), crystalRidge);
+                    const float  frostRgh = lerp(0.28f, 0.09f, coreIce);
+                    albSum += frostAlb * (mask * 0.82f); albW += mask * 0.82f;
+                    rghSum += frostRgh * mask;           rghW += mask;
+                    f0Sum  += 0.018f   * mask;           f0W  += mask; // Exact IOR 1.31 ice F0
+                    acc.normalPerturb += (n1Tang * 0.12f + n2Tang * 0.22f) * mask;
+                }
+            }
+        } else {
+            // Kind 4: Shock Spell Vitrified Lichtenberg Burn (branching dendritic scars + fading cyan-violet corona 0..4s)
+            const float ang = atan2(uvT.y, uvT.x);
+            const float warpAng = ang + (n1.x - 0.5f) * 2.1f + (n2.x - 0.5f) * 0.85f;
+            const float branchWave = abs(sin(warpAng * 4.5f + rNorm * 4.0f));
+            const float branchCore = pow(saturate(1.0f - branchWave * 2.4f), 3.0f)
+                                   * (1.0f - smoothstep(0.18f, 1.28f, rNorm));
+            const float fineFork = pow(saturate(1.0f - abs(n2.x * 2.0f - 1.0f) * 2.6f), 2.5f)
+                                 * (1.0f - smoothstep(0.10f, 1.05f, rNorm));
+            const float burnHub  = 1.0f - smoothstep(0.10f, 0.42f, rNorm);
+            const float lifeFade = 1.0f - smoothstep(140.0f, 260.0f, ageSec);
+            const float dendrite = saturate(max(max(branchCore, fineFork * 0.72f), burnHub));
+            const float mask = dendrite * intensity * lifeFade;
+            if (mask > 0.01f) {
+                const float3 vitAlb = float3(0.032f, 0.038f, 0.052f);
+                albSum += vitAlb * (mask * 0.84f); albW += mask * 0.84f;
+                rghSum += 0.24f  * mask;           rghW += mask;
+                f0Sum  += 0.048f * mask;           f0W  += mask;
+                acc.normalPerturb += (n2Tang * 0.24f) * mask;
+                if (ageSec < 4.1f) {
+                    const float coronaDecay = 1.0f - smoothstep(0.0f, 4.0f, ageSec);
+                    const float flicker = 0.72f + 0.28f * rawNoise3Grad(rel * (4.0f * invRad) + float3(0.0f, 0.0f, ageSec * 14.0f)).x;
+                    const float3 arcCol = lerp(float3(0.30f, 0.78f, 1.45f), float3(0.86f, 0.52f, 1.50f), n2.x);
+                    acc.emissive += arcCol * (dendrite * coronaDecay * flicker * intensity * 3.0f);
+                }
+            }
+        }
+    }
+
+    if (albW > 1.0e-4f) {
+        acc.albedo      = saturate(albSum / albW);
+        acc.albedoBlend = saturate(albW);
+    }
+    if (rghW > 1.0e-4f) {
+        acc.roughness  = clamp(rghSum / rghW, 0.05f, 0.96f);
+        acc.roughBlend = saturate(rghW);
+    }
+    if (f0W > 1.0e-4f) {
+        acc.f0Override = clamp(f0Sum / f0W, 0.015f, 0.12f);
+        acc.f0Blend    = saturate(f0W);
+    }
+    acc.emissive = min(acc.emissive, 8.0f.xxx);
+    return acc;
+}
+
+#ifdef MAX_LIGHTS
+
 struct RawDecalResult {
     float3 albedo;
     float3 normal;
@@ -201,4 +420,5 @@ RawDecalResult evalDecals3D(float3 albedoIn, float3 nIn, float3 vDir, float3 pRe
     return o;
 }
 
+#endif // MAX_LIGHTS
 #endif

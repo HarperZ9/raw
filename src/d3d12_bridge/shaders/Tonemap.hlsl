@@ -21,45 +21,49 @@ SamplerState S2 : register(s2);
 struct In { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
 static const float3 W = float3(0.2125f, 0.7154f, 0.0721f);
 
-// Stephen Hill's Exact Fitted ACES RRT + ODT (Rec.709 -> AP1 -> RRT/ODT -> Rec.709):
-// Eliminates naive per-channel Narkowicz yellow-shift on fire/sunsets and purple-crush on deep blues.
-float3 filmic(float3 color) {
-    static const float3x3 kAcesIn = float3x3(
-        0.59719f, 0.35458f, 0.04823f,
-        0.07600f, 0.90834f, 0.01566f,
-        0.02840f, 0.13383f, 0.83777f);
-    static const float3x3 kAcesOut = float3x3(
-         1.60475f, -0.53108f, -0.07367f,
-        -0.10208f,  1.10813f, -0.00605f,
-        -0.00327f, -0.07276f,  1.07602f);
-    float3 v = mul(kAcesIn, max(color, 0.0f.xxx));
-    const float3 a = v * (v + 0.0245786f) - 0.000090537f;
-    const float3 b = v * (0.983729f * v + 0.4329510f) + 0.238081f;
-    return saturate(mul(kAcesOut, a / b));
+// AgX-Inspired Perceptual Filmic Tone Mapping (Troy Sobotka AgX inset/outset matrix + 7-term C2 sigmoid + Punchy Look):
+// - Keeps bright Planck blackbody fire yellows/oranges luminous golden-white (never salmon-pink!)
+// - Preserves pure luminous emerald-cyan auroras & deep cobalt glacial shadows (zero purple hue skew!)
+// - Protects crisp dark contrast with zero crushed blacks and silky 16.5-stop HDR highlight rolloff.
+float3 tonemapAgX(float3 color) {
+    // Exact AgX perceptual inset matrix (Rec.709 linear -> AgX inset working space):
+    static const float3x3 kAgXIn = float3x3(
+        0.84247906f, 0.07843360f, 0.07922375f,
+        0.04232824f, 0.87846864f, 0.07916613f,
+        0.04237565f, 0.07843360f, 0.87914297f);
+    // Exact inverse AgX outset matrix (AgX display -> Rec.709 display):
+    static const float3x3 kAgXOut = float3x3(
+         1.19687900f, -0.09802088f, -0.09902974f,
+        -0.05289685f,  1.15190313f, -0.09896118f,
+        -0.05297163f, -0.09804345f,  1.15107367f);
+    // Guard against negative out-of-gamut inputs while preserving full linear HDR dynamic range:
+    float3 x = max(color, 0.0f.xxx);
+    x = mul(kAgXIn, x);
+    // Log2 encoding spanning 16.5 photographic stops [-12.47393, +4.026069] EV relative to mid-grey:
+    x = clamp(log2(max(x, 1.0e-10f)), -12.47393f, 4.026069f);
+    x = (x + 12.47393f) * (1.0f / (4.026069f + 12.47393f));
+    // 6th-order C2-continuous AgX sigmoid curve (smooth toe, crisp midtone slope, progressive white convergence):
+    const float3 x2 = x * x;
+    const float3 x4 = x2 * x2;
+    x = 15.5f * x4 * x2 - 40.14f * x4 * x + 31.96f * x4 - 6.868f * x2 * x + 0.4298f * x2 + 0.1191f * x - 0.00232f;
+    // Outset back to Rec.709 display space with smooth gamut-safe highlight preservation:
+    float3 agxOut = saturate(mul(kAgXOut, saturate(x)));
+    // Perceptual AgX Punchy Look (toe-protected midtone contrast + hue-preserving chroma restoration):
+    // Deep shadows below 0.04 stay strictly uncrushed while midtones/highlights gain photographic punch!
+    const float lumaA = dot(agxOut, W);
+    const float toeProtect = smoothstep(0.015f, 0.24f, lumaA);
+    const float3 punchy = pow(max(agxOut, 1.0e-5f.xxx), 1.14f);
+    agxOut = lerp(agxOut, punchy, 0.55f * toeProtect);
+    const float lumaP = dot(agxOut, W);
+    // Restore subtle chroma in midtones while letting extreme highlights (>0.82) glide cleanly to golden/pure white:
+    const float satBoost = lerp(1.13f, 1.02f, smoothstep(0.68f, 0.96f, lumaP));
+    agxOut = saturate(lerp(lumaP.xxx, agxOut, satBoost));
+    return pow(agxOut, 2.2f);
 }
 
-// Wide-gamut Troy Sobotka AgX Display Transform + Perceptual Linear Punchy Look:
-// Preserves shadow toe detail (removes gamma-space pow(1.12) shadow crush) while keeping vivid fire/sky hues & clean highlight rolloff.
-float3 tonemapAgX(float3 color) {
-    static const float3x3 kAgXIn = float3x3(
-        0.842479f, 0.0784336f, 0.0792237f,
-        0.0423304f, 0.878468f, 0.0791661f,
-        0.0423756f, 0.0784336f, 0.879142f);
-    static const float3x3 kAgXOut = float3x3(
-         1.19687f,  -0.0980208f, -0.0990297f,
-        -0.0528968f, 1.15190f,   -0.0989611f,
-        -0.0529716f, -0.0980434f, 1.15107f);
-    float3 x = mul(kAgXIn, max(color, 0.0f.xxx));
-    x = clamp(log2(max(x, 1.0e-10f)), -12.47393f, 4.026069f);
-    x = (x + 12.47393f) / (4.026069f + 12.47393f);
-    const float3 x2 = x * x, x4 = x2 * x2;
-    x = 15.5f * x4 * x2 - 40.14f * x4 * x + 31.96f * x4 - 6.868f * x2 * x + 0.4298f * x2 + 0.1191f * x - 0.00232f;
-    float3 agxOut = saturate(mul(kAgXOut, x));
-    // Gentle S-curve midtone punch + subtle chroma restoration in display space before clean 2.2 linear decode:
-    const float lumaA = dot(agxOut, W);
-    agxOut = saturate(lerp(lumaA.xxx, agxOut, 1.09f));
-    agxOut = saturate(lerp(agxOut, agxOut * agxOut * (3.0f - 2.0f * agxOut), 0.14f));
-    return pow(agxOut, 2.2f);
+// Filmic Curve 1 (Upgraded to AgX-Perceptual inset/outset transform — eliminates legacy ACES salmon-fire & blue-purple skew):
+float3 filmic(float3 color) {
+    return tonemapAgX(color);
 }
 
 // Gran Turismo / Uchimura piecewise curve (SIGGRAPH 2017): linear midtones, smooth toe & shoulder.
@@ -362,14 +366,15 @@ float4 main(In i) : SV_Target {
         const float scotopicW = (1.0f - smoothstep(0.001f, 0.009f, max(lSelf, lSurr * 0.85f))) * saturate(1.0f - saturate((xIn.r - xIn.b) * 4.5f));
         const float rodL = dot(xIn, float3(0.06f, 0.62f, 0.32f));
         xIn = lerp(xIn, rodL * float3(0.84f, 0.94f, 1.10f), scotopicW * 0.12f);
-        // Photographic C2 Soft-Curve Rolling Highlights & Velvety Shadow Toe:
+        // Preserve full 16-stop HDR headroom for AgX/ACES2 (soft safety rolloff only above 3.2 linear,
+        // and crisp dark contrast with ultra-clean 0.00035 toe floor instead of milky 0.0025 black lift!):
         const float lPost = max(dot(xIn, W), 1.0e-5f);
-        const float rollKnee = max(RC.w * 0.35f, 0.85f);
+        const float rollKnee = max(RC.w * 0.75f, 3.20f);
         if (lPost > rollKnee) {
-            const float softL = rollKnee + (lPost - rollKnee) / (1.0f + (lPost - rollKnee) * 0.24f);
+            const float softL = rollKnee + (lPost - rollKnee) / (1.0f + (lPost - rollKnee) * 0.08f);
             xIn *= (softL / lPost);
         }
-        xIn = max(xIn, 0.0f.xxx) + (0.0025f / (1.0f + lPost * 18.0f));
+        xIn = max(xIn, 0.0f.xxx) + (0.00035f / (1.0f + lPost * 32.0f));
         if (RB.x < 4.5f)      mapped = tonemapAgX(xIn);
         else if (RB.x < 5.5f) mapped = tonemapGT(xIn);
         else if (RB.x < 6.5f) mapped = tonemapLottes(xIn);
@@ -391,8 +396,9 @@ float4 main(In i) : SV_Target {
         const float baseLum = max(dot(bloom, W) * exposure * RB.z, 0.02f);
         const float detailRatio = clamp(log2(max(l, 1.0e-4f) / baseLum), -1.25f, 1.25f);
         const float lLocal = l * exp2(detailRatio * 0.16f);
-        const float cHi = lerp(cu, 1.0f, saturate(log2(max(lLocal / RB.y, 1.0f)) * 0.5f));
-        const float lc = RB.y * pow(max(lLocal, 1.0e-5f) / RB.y, lLocal > RB.y ? cHi : lerp(cl, cu, saturate(lLocal / RB.y)));
+        const float rbKey = max(RB.y, 1.0e-4f);
+        const float cHi = lerp(cu, 1.0f, saturate(log2(max(lLocal / rbKey, 1.0f)) * 0.5f));
+        const float lc = rbKey * pow(max(lLocal / rbKey, 1.0e-5f), lLocal > rbKey ? cHi : lerp(cl, cu, saturate(lLocal / rbKey)));
         const float lOut = saturate(lc * (1.0f + lc / w2) / (1.0f + lc));
         float3 col = hdr * exposure * RB.z * (lOut / l);
         // AgX-style highlight shoulder desaturation: prevents neon orange/blue clipping in bright skies and fire.

@@ -55,6 +55,16 @@ BakeResult BakeAnnualClimateAlmanac(const std::string& outDir,
 // Beer-Lambert absorption, roughness, F0, Planck blackbody, thin-film OPD) -> materials_manifest.json + raw_materials_catalog.h.
 BakeResult BakeMaterialCatalogManifest(const std::string& outDir);
 
+// Loads a real exterior Tamriel cell from a TES5 `.esm` plugin via RawEsmWorldLoader, validates the
+// generated 64v/126t GPU meshlet terrain through RawAssetValidator, and exports .glb/.obj + JSON metadata.
+BakeResult BakeEsmCellAsset(const std::string& esmPath,
+                            int32_t cellX,
+                            int32_t cellY,
+                            const std::string& outDir,
+                            uint32_t targetWorldFormId = 0x0000003Cu,
+                            const ValidatorPolicy& policy = {},
+                            bool writeGeometryFiles = true);
+
 // Runs all 4 studio baking & quality-gate validation pipelines and emits pipeline_validation_report.json.
 BakeResult RunFullPipelineValidation(const std::string& outDir,
                                      uint32_t seed = 202607u,

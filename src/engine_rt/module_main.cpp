@@ -24,6 +24,7 @@
 #include "ProxyAPI.h"
 #include "rt_callgraph.h"
 #include "rt_combat_ai.h"
+#include "rt_combat_impact.h"
 #include "rt_control.h"
 #include "rt_core_fixes.h"
 #include "rt_depth_topology.h"
@@ -121,6 +122,11 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     raw::rt::DepthTopologyOnPresent();
     raw::rt::WorldSimOnPresent();
     {
+        raw::rt::EngineView evImpact{};
+        RAW_EngineView(&evImpact);
+        raw::rt::CombatImpactOnPresent(evImpact.menuPaused != 0u);
+    }
+    {
         static uint32_t s_liveLogTick = 0;
         if ((++s_liveLogTick % 300u) == 150u) {
             const auto sk = raw::rt::GetSkeletonPhysicsStats();
@@ -141,6 +147,12 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
                     ss.sneakHookActive, ss.sneakChecksTotal, ss.sneakMaskedCount, ss.sneakCrunchCount,
                     ss.coreWarmth, ss.wetness01, ss.windChillC, ss.staminaRegenMult,
                     ss.hearthProximity01, ss.acousticEnvKind, ss.acousticRt60Sec);
+            }
+            raw::rt::CombatImpactTelemetry ci{};
+            if (raw::rt::CombatImpactGetTelemetry(&ci)) {
+                Log("[CombatImpact] hitstopVerified=%u active=%u triggers=%u skippedSlowTime=%u decalsActive=%u/%u timeScale=%.2f",
+                    ci.hitstopVerified, ci.hitstopActive, ci.hitstopTriggers, ci.hitstopSkipped,
+                    ci.decalsActiveNow, ci.decalsTotal, ci.currentTimeScale);
             }
         }
     }
@@ -283,6 +295,9 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     if (IniInt("StealthSurvival", 1)) {
         Log("%s", raw::rt::StealthSurvivalInstallHooks(g_img).c_str());
     }
+    if (IniInt("CombatImpact", 1)) {
+        Log("%s", raw::rt::CombatImpactInit(g_img).c_str());
+    }
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
     if (IniInt("CallGraph", 0)) {
@@ -310,6 +325,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         std::snprintf(why, n, "%d background thread(s) running (sample or call graph); ask again when they finish", t);
         return 0;
     }
+    raw::rt::CombatImpactShutdown();
     raw::rt::StealthSurvivalShutdown();
     raw::rt::GameplayHooksShutdown();
     raw::rt::WorldSimShutdown();

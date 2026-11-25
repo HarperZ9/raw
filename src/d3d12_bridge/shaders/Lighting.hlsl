@@ -1017,6 +1017,26 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         s.mask    = dec.mask;
         decalEmit = dec.emissive;
         if (dec.mask > prevDecalMask + 0.05f) { lobe = true; }
+        // Wave 41 Live 3D Dynamic Combat & Elemental Impact Decals (blood splatters, stone chips, cooling scorches,
+        // frost ice patches & vitrified shock Lichtenberg burns streamed live from RAW_GetImpactDecals):
+        if (!isActorFeat && z < 4500.0f) {
+            const RawImpactDecalResult imp = evalDynamicImpactDecals3D(p + camPosW.xyz, s.n, impactDecalPosR, impactDecalMeta);
+            const float actorGate = isActorCloth ? (imp.bloodMask * 0.55f) : 1.0f;
+            const float impAlbW = saturate(imp.albedoBlend * actorGate);
+            const float impRghW = saturate(imp.roughBlend  * actorGate);
+            const float impF0W  = saturate(imp.f0Blend     * actorGate);
+            if (impAlbW > 0.005f || impRghW > 0.005f || any(imp.emissive > 0.005f)) {
+                albedo    = lerp(albedo, imp.albedo, impAlbW);
+                s.alpha   = lerp(s.alpha, imp.roughness, impRghW);
+                s.f0      = lerp(s.f0, imp.f0Override, impF0W);
+                s.n       = normalize(s.n + imp.normalPerturb * actorGate);
+                decalEmit += imp.emissive * (isActorCloth ? 0.0f : 1.0f);
+                if (impF0W > 0.08f) {
+                    s.mask = max(s.mask, impF0W * 0.82f);
+                    lobe = true;
+                }
+            }
+        }
         // True 3-Layer Static Parallax Snell-Refracted Crystalline Glacial Ice & Ice-Cave Optical Transport (IOR 1.31):
         // Delegates directly to RawMaterials3D.hlsli::evalFrostGlacier3D (Warren & Brandt 2008 Beer-Lambert absorption +
         // 3-layer Snell Voronoi cleavage fractures + crystal facet normals, 100% static / ZERO time-pulse modulation!).

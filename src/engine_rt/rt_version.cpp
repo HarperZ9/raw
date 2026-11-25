@@ -508,6 +508,8 @@ bool VerifyStartupBinaryOffsets(const Image& img, std::string* reportOut) {
         {"HitData::flags",                    Addr("fn:HitData::PopulateMelee"),                Off("off:HitData::flags"),                    4, false},
         {"TESObjectREFR::loadedData",         Addr("fn:TESObjectREFR::Get3D2"),                 Off("off:TESObjectREFR::loadedData"),         8, false},
         {"Actor::actorStateFlags",            Addr("fn:SneakDetectionCalc"),                    Off("off:Actor::actorStateFlags"),            4, false},
+        {"BSTimer::delta",                    Addr("fn:BSTimer::SetGlobalTimeMultiplier"),      Off("off:BSTimer::delta"),                    4, true},
+        {"BSTimer::useGlobalTimeTarget",      Addr("fn:BSTimer::SetGlobalTimeMultiplier"),      Off("off:BSTimer::useGlobalTimeTarget"),      1, false},
     };
     g_lastVerify = VerifyCriticalOffsets(img, kRules, sizeof(kRules) / sizeof(kRules[0]));
     // Fail-closed: if ANY rule failed, lock out all struct mutations!

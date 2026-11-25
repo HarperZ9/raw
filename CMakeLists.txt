@@ -663,7 +663,8 @@ if(RAW_ENGINE_DIR)
                    src/d3d12_bridge/RawAssetBridge.cpp src/d3d12_bridge/RawTextureBridge.cpp src/d3d12_bridge/RawProceduralLib.cpp
                    src/d3d12_bridge/RawMeshHost.cpp src/d3d12_bridge/RawFluidSimHost.cpp src/d3d12_bridge/RawFluidCompositeHost.cpp src/d3d12_bridge/RawOverrideRegistry.cpp src/d3d12_bridge/RawBindlessHeap.cpp
                    src/d3d12_bridge/RawAsyncCompute.cpp src/d3d12_bridge/RawIndirectBatch.cpp src/d3d12_bridge/RawAssetStream.cpp
-                   src/worldgen/RawTerrainGen.cpp src/worldgen/RawBiomeWorld.cpp src/worldgen/RawMeshPipeline.cpp src/worldgen/RawFloraEngine.cpp src/worldgen/RawWeatherSim.cpp src/worldgen/RawWorldShowcase.cpp src/worldgen/RawEsmWorldLoader.cpp
+                   src/worldgen/RawTerrainGen.cpp src/worldgen/RawBiomeWorld.cpp src/worldgen/RawMeshPipeline.cpp src/worldgen/RawFloraEngine.cpp src/worldgen/RawWeatherSim.cpp src/worldgen/RawWorldShowcase.cpp src/worldgen/RawEsmWorldLoader.cpp src/worldgen/RawBsaArchive.cpp
+                   src/engine_rt/raw_job_system.cpp
                    src/materials/RawMaterialLib.cpp src/materials/RawAssetForge.cpp
                    src/assets/RawOverrideRegistry.cpp src/assets/RawAssetScaffold.cpp)
     add_executable(test_fluid_sim tests/test_fluid_sim.cpp src/d3d12_bridge/RawFluidSimHost.cpp ${RAW_FLUID_HEADERS})
@@ -872,6 +873,9 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_memory_guards.cpp
         src/engine_rt/ce_rebuild_arch.cpp
         src/engine_rt/rt_stealth_survival.cpp
+        src/engine_rt/rt_combat_impact.cpp
+        src/engine_rt/raw_slab_allocator.cpp
+        src/engine_rt/raw_job_system.cpp
         src/engine_rt/rt_patch.cpp)
     set_target_properties(raw_engine PROPERTIES
         CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
@@ -924,6 +928,9 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_memory_guards.cpp
         src/engine_rt/ce_rebuild_arch.cpp
         src/engine_rt/rt_stealth_survival.cpp
+        src/engine_rt/rt_combat_impact.cpp
+        src/engine_rt/raw_slab_allocator.cpp
+        src/engine_rt/raw_job_system.cpp
         src/engine_rt/rt_softbody.cpp
         src/engine_rt/rt_skeleton_ik.cpp
         src/engine_rt/rt_combat_ai.cpp
@@ -935,6 +942,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/worldgen/RawWeatherSim.cpp
         src/worldgen/RawWorldShowcase.cpp
         src/worldgen/RawEsmWorldLoader.cpp
+        src/worldgen/RawBsaArchive.cpp
         src/materials/RawMaterialLib.cpp
         src/materials/RawAssetForge.cpp
         src/assets/RawOverrideRegistry.cpp
@@ -948,12 +956,15 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         tests/test_gameplay_mechanics.cpp
         tests/test_pipeline_forge.cpp
         tests/test_stealth_survival.cpp
-        tests/test_esm_world_loader.cpp)
+        tests/test_esm_world_loader.cpp
+        tests/test_combat_impact.cpp
+        tests/test_bsa_archive.cpp
+        tests/test_core_runtime.cpp)
     set_target_properties(ce_runtime_check PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
     target_include_directories(ce_runtime_check PRIVATE src/engine_rt src/d3d12_bridge src/ce_runtime src/worldgen src/materials src/assets src/pipeline src/ui "${RAW_ZYDIS_ROOT}/include")
-    target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD RAW_SIM_PURE_TEST=1 RAW_WEATHER_SIM_NO_MAIN=1 RAW_GAMEPLAY_MECHANICS_NO_MAIN=1 RAW_STEALTH_SURVIVAL_NO_MAIN=1)
+    target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD RAW_SIM_PURE_TEST=1 RAW_WEATHER_SIM_NO_MAIN=1 RAW_GAMEPLAY_MECHANICS_NO_MAIN=1 RAW_STEALTH_SURVIVAL_NO_MAIN=1 RAW_COMBAT_IMPACT_NO_MAIN=1)
     target_link_libraries(ce_runtime_check PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB} windowscodecs ole32 dxgi)
 
     # raw_forge_cli: standalone C++23 first-principles authoring, batch baking & validation CLI
@@ -967,6 +978,9 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/worldgen/RawFloraEngine.cpp
         src/worldgen/RawWeatherSim.cpp
         src/worldgen/RawWorldShowcase.cpp
+        src/worldgen/RawEsmWorldLoader.cpp
+        src/worldgen/RawBsaArchive.cpp
+        src/engine_rt/raw_job_system.cpp
         src/materials/RawMaterialLib.cpp)
     set_target_properties(raw_forge_cli PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"

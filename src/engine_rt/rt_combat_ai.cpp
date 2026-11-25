@@ -14,6 +14,7 @@
 #include <unordered_map>
 
 #ifndef RAW_SIM_PURE_TEST
+#include "rt_combat_impact.h"
 #include "rt_detour.h"
 #include "rt_image.h"
 #include "rt_version.h"
@@ -1236,6 +1237,7 @@ static void SehRestoreActorStamina(uint8_t* actor, float amount) {
 }
 
 struct HitDataPod {
+    float    hitPos[3];
     uint32_t aggressorHandle;
     uint32_t targetHandle;
     float    totalDamage;
@@ -1248,6 +1250,9 @@ struct HitDataPod {
 static bool SehReadHitData(const uint8_t* hitData, HitDataPod* out) {
     if (!hitData || !out) return false;
     __try {
+        out->hitPos[0]       = *reinterpret_cast<const float*>(hitData + 0x00);
+        out->hitPos[1]       = *reinterpret_cast<const float*>(hitData + 0x04);
+        out->hitPos[2]       = *reinterpret_cast<const float*>(hitData + 0x08);
         out->aggressorHandle = *reinterpret_cast<const uint32_t*>(hitData + 0x18);
         out->targetHandle    = *reinterpret_cast<const uint32_t*>(hitData + 0x1C);
         out->totalDamage     = *reinterpret_cast<const float*>(hitData + 0x50);
@@ -1256,6 +1261,18 @@ static bool SehReadHitData(const uint8_t* hitData, HitDataPod* out) {
         out->flags           = *reinterpret_cast<const uint32_t*>(hitData + 0x80);
         out->flags2          = *(hitData + 0x82);
         return std::isfinite(out->totalDamage) && std::isfinite(out->percentBlocked);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static bool SehReadActorLocation(const uint8_t* actor, float outPos[3]) {
+    if (!actor || !outPos) return false;
+    __try {
+        outPos[0] = *reinterpret_cast<const float*>(actor + 0x54);
+        outPos[1] = *reinterpret_cast<const float*>(actor + 0x58);
+        outPos[2] = *reinterpret_cast<const float*>(actor + 0x5C);
+        return std::isfinite(outPos[0]) && std::isfinite(outPos[1]) && std::isfinite(outPos[2]);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
@@ -1402,6 +1419,45 @@ static void HookHitDataPopulate(uint8_t* hitData, uint8_t ignoreBlock) {
         if (res.guardBroken) g_gp.guardBreaks.fetch_add(1u, std::memory_order_relaxed);
         if (res.counterHit)  g_gp.counterHits.fetch_add(1u, std::memory_order_relaxed);
         SehWriteHitData(hitData, res.outTotalDamage, res.outPhysicalDamage, res.outPercentBlocked);
+    }
+
+    // Wave 41: Emit live 3D world-space combat impact decal + trigger tactile hitstop on parry / guard-break / lethal blow!
+    {
+        uint8_t* aggActor = SehResolveActorHandle(pod.aggressorHandle);
+        const bool involvesPlayer = (playerPtr != nullptr) && (targetActor == playerPtr || aggActor == playerPtr);
+        float targetHp = 100.0f, targetHpMax = 100.0f;
+        if (targetActor) {
+            SehReadActorAv(targetActor, 24 /*kHealth*/, &targetHp, &targetHpMax);
+        }
+        const float finalDmg = (res.timedParry || res.guardBroken || res.counterHit) ? res.outTotalDamage : pod.totalDamage;
+        const bool isLethal = (!res.timedParry) && (finalDmg > 1.0f) &&
+                              (((pod.flags & 0x100u) != 0u) || (targetActor != nullptr && targetHp > 0.0f && targetHp <= finalDmg));
+
+        float impactPos[3] = {pod.hitPos[0], pod.hitPos[1], pod.hitPos[2]};
+        const bool hitPosValid = std::isfinite(impactPos[0]) && std::isfinite(impactPos[1]) && std::isfinite(impactPos[2]) &&
+                                 (std::fabs(impactPos[0]) + std::fabs(impactPos[1]) + std::fabs(impactPos[2]) > 1.0f);
+        bool hasPos = hitPosValid;
+        if (!hasPos && targetActor && SehReadActorLocation(targetActor, impactPos)) {
+            impactPos[2] += 52.0f;   // torso/impact elevation
+            hasPos = true;
+        }
+
+        HitstopEventKind hsKind = HitstopEventKind::None;
+        if (res.timedParry)       hsKind = HitstopEventKind::TimedParry;
+        else if (res.guardBroken) hsKind = HitstopEventKind::HeavyGuardBreak;
+        else if (isLethal)        hsKind = HitstopEventKind::LethalKillBlow;
+
+        ImpactDecalKind decKind = ImpactDecalKind::BloodSplatter;
+        float decRadius = std::clamp(32.0f + finalDmg * 0.45f, 28.0f, 72.0f);
+        float decIntensity = std::clamp(0.55f + finalDmg * 0.012f, 0.45f, 1.35f);
+        if (res.timedParry || ((pod.flags & 1u) != 0u && finalDmg < 4.0f)) {
+            decKind = ImpactDecalKind::StoneChip;
+            decRadius = 30.0f;
+            decIntensity = 0.85f;
+        }
+        if (hasPos || hsKind != HitstopEventKind::None) {
+            CombatImpactOnHit(hasPos ? impactPos : nullptr, decKind, decRadius, decIntensity, hsKind, involvesPlayer);
+        }
     }
 }
 

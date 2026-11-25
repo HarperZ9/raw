@@ -29,16 +29,65 @@ struct SeasonalFoliageEval {
     float  frostRim01;       // Sub-zero needle/leaf hoarfrost edge glint
 };
 
+// Wave 61: Strict finite sanitization & safe normalization helpers for seasonal thermal physics.
+float3 safeNormThermal(float3 v, float3 fallback) {
+    const float l2 = dot(v, v);
+    return (isfinite(l2) && l2 > 1.0e-8f) ? (v * rsqrt(l2)) : fallback;
+}
+
+// Wave 61: Diurnal Thermal-Lag Hysteresis (afternoon heat peak ~15:00, pre-dawn frost minimum ~05:00).
+// Infers thermal lag directly from astronomical sun vector (sd.x > 0 morning east, sd.x < 0 afternoon west)
+// so callers without an explicit gameHour uniform remain 100% backward-compatible.
+float evalDiurnalThermalLagFromSunC(float3 sunDirUnit) {
+    const float sdZ = clamp(isfinite(sunDirUnit.z) ? sunDirUnit.z : 0.0f, -1.0f, 1.0f);
+    const float sdX = clamp(isfinite(sunDirUnit.x) ? sunDirUnit.x : 0.0f, -1.0f, 1.0f);
+    // Afternoon thermal accumulation peaks when sun descends into west (-X) after solar noon (+2.4 C):
+    const float afternoonWarm = saturate(-sdX * 0.85f + 0.15f) * smoothstep(-0.08f, 0.42f, sdZ) * 2.4f;
+    // Pre-dawn radiative cooling reaches frost minimum right before sunrise (+X, low/negative elevation, -2.6 C):
+    const float predawnCold   = saturate(sdX * 0.85f + 0.20f) * (1.0f - smoothstep(-0.06f, 0.26f, sdZ)) * 2.6f;
+    return clamp(afternoonWarm - predawnCold, -3.0f, 3.0f);
+}
+
+// Explicit 24-hour diurnal thermal-lag hysteresis helper (peak +2.5 C at 15:00, minimum -2.5 C at 03:00-05:00).
+float evalDiurnalThermalLagFromHourC(float gameHour) {
+    const float h = isfinite(gameHour) ? (frac(gameHour / 24.0f) * 24.0f) : 12.0f;
+    // Cosine wave peaking at 15.0h (3 PM thermal lag behind solar noon):
+    return clamp(cos((h - 15.0f) * (6.2831853f / 24.0f)) * 2.5f, -3.0f, 3.0f);
+}
+
 // Inverse-square windowed thermal flux helper for a single fire/hearth/forge/magma source.
 // Returns normalized heat intensity in [0, 1.5] (1.0 at warm melt core, 0.0 outside fireRadiusU).
 float evalFireThermalMeltMask(float3 posRel, float3 firePosRel, float fireRadiusU, float fireHeat01) {
-    if (fireRadiusU <= 1.0f || fireHeat01 <= 0.01f) { return 0.0f; }
+    if (!isfinite(fireRadiusU) || fireRadiusU <= 1.0f || !isfinite(fireHeat01) || fireHeat01 <= 0.01f) { return 0.0f; }
     const float3 d = posRel - firePosRel;
+    if (!all(isfinite(d))) { return 0.0f; }
     const float r2 = fireRadiusU * fireRadiusU;
     const float d2 = dot(d, d);
     if (d2 >= r2) { return 0.0f; }
-    const float u = 1.0f - sqrt(d2) / fireRadiusU;
-    return saturate(u * u * 1.65f * fireHeat01);
+    const float u = saturate(1.0f - sqrt(max(d2, 0.0f)) / fireRadiusU);
+    return clamp(u * u * 1.65f * saturate(fireHeat01), 0.0f, 1.5f);
+}
+
+// Wave 61: Radiant campfire / hearth / volcanic lava local snow-melt helper with slush perimeter ring.
+// Scales physical radiant reach by blackbody temperature (1050K campfire -> 2400K molten lava).
+float evalRadiantMeltFlux(float3 posRel, float3 sourcePosRel, float radiusU, float sourceTempK, out float outSlushRim01) {
+    outSlushRim01 = 0.0f;
+    if (!isfinite(radiusU) || radiusU <= 1.0f || !isfinite(sourceTempK) || sourceTempK <= 310.0f) { return 0.0f; }
+    const float3 d = posRel - sourcePosRel;
+    if (!all(isfinite(d))) { return 0.0f; }
+    const float d2 = dot(d, d);
+    const float r2 = radiusU * radiusU;
+    if (d2 >= r2) { return 0.0f; }
+    const float dist = sqrt(max(d2, 0.0f));
+    const float normD = saturate(dist / radiusU);
+    // Smooth radiant window: inverse-square core with C2 cutoff at radiusU:
+    const float win = (1.0f - normD * normD);
+    const float tempScale = clamp((sourceTempK - 310.0f) / 1100.0f, 0.25f, 2.2f);
+    const float invSq = 1.0f / (1.0f + normD * normD * 5.2f);
+    const float flux = clamp(invSq * win * win * 1.85f * tempScale, 0.0f, 1.5f);
+    // Wet slush transition collar rings the perimeter right outside the bare thawed heat core:
+    outSlushRim01 = saturate(smoothstep(0.05f, 0.28f, flux) * (1.0f - smoothstep(0.48f, 0.92f, flux)));
+    return flux;
 }
 
 // Evaluates per-pixel directional solar/aspect snow melt, fire/hearth melt rings, metamorphic snowpack
@@ -59,25 +108,35 @@ SurfaceThermalEval evalSeasonalSurfaceThermals(
     float  puddleEvapRate)
 {
     SurfaceThermalEval o;
-    const float3 n = normalize(normalW);
-    const float3 sd = (dot(sunDir, sunDir) > 1.0e-4f) ? normalize(sunDir) : float3(0.0f, 0.0f, 1.0f);
-    const float windLen = length(windXY);
-    const float2 windDir = (windLen > 1.0e-3f) ? (windXY / windLen) : float2(0.866f, 0.5f);
+    const float3 n = safeNormThermal(normalW, float3(0.0f, 0.0f, 1.0f));
+    const float3 sd = safeNormThermal(sunDir, float3(0.0f, 0.0f, 1.0f));
+    const float2 wSafe = all(isfinite(windXY)) ? windXY : float2(0.866f, 0.5f);
+    const float windLen = length(wSafe);
+    const float2 windDir = (windLen > 1.0e-3f) ? (wSafe / windLen) : float2(0.866f, 0.5f);
 
-    const float baseSnowDepthM = max(seasonThermal0.x, 0.0f);
-    const float agedAlbedoS    = clamp(seasonThermal0.y, 0.48f, 0.92f);
-    const float compaction01   = saturate(seasonThermal0.z);
-    const float surfTempC      = seasonThermal0.w;
+    const float baseSnowDepthM = isfinite(seasonThermal0.x) ? max(seasonThermal0.x, 0.0f) : 0.0f;
+    const float agedAlbedoS    = isfinite(seasonThermal0.y) ? clamp(seasonThermal0.y, 0.48f, 0.92f) : 0.78f;
+    const float compaction01   = isfinite(seasonThermal0.z) ? saturate(seasonThermal0.z) : 0.0f;
+    const float rawTempC       = isfinite(seasonThermal0.w) ? clamp(seasonThermal0.w, -45.0f, 45.0f) : 0.0f;
 
-    const float iceThickM  = max(seasonThermal1.x, 0.0f);
-    const float blackIceIn = saturate(seasonThermal1.y);
-    const float rimeIn     = saturate(seasonThermal1.z);
-    const float fractureIn = saturate(seasonThermal1.w);
+    const float iceThickM  = isfinite(seasonThermal1.x) ? max(seasonThermal1.x, 0.0f) : 0.0f;
+    const float blackIceIn = isfinite(seasonThermal1.y) ? saturate(seasonThermal1.y) : 0.0f;
+    const float rimeIn     = isfinite(seasonThermal1.z) ? saturate(seasonThermal1.z) : 0.0f;
+    const float fractureIn = isfinite(seasonThermal1.w) ? saturate(seasonThermal1.w) : 0.0f;
 
-    // Organic world-locked 3D noise breakup (zero tiling, 100% static — zero time pulse!):
+    // Organic world-locked 3D noise breakup (zero tiling, 100% static, zero time pulse!):
     const float nMacro = rawNoise3Grad(worldPosAbs * 0.0085f + float3(7.1f, 13.3f, 2.9f)).x;
     const float nMicro = rawNoise3Grad(worldPosAbs * 0.0650f + float3(23.7f, 4.1f, 17.9f)).x;
     const float driftNoise = nMacro * 0.68f + nMicro * 0.32f;
+
+    // Wave 61: Diurnal Thermal-Lag Hysteresis + Elevation Lapse-Rate Snowline Micro-Undulation:
+    // Afternoon thermal inertia accelerates solar snowmelt while pre-dawn radiative cooling deepens morning frost;
+    // higher alpine elevations chill at environmental lapse rate (~-4.5 C per 5,000u) with organic gully undulation!
+    const float diurnalLagC = evalDiurnalThermalLagFromSunC(sd);
+    const float altExcessU  = max(worldPosAbs.z - 600.0f, 0.0f);
+    const float lapseDropC  = min(altExcessU * (4.5f / 5000.0f), 14.0f);
+    const float snowlineUndulC = (nMacro - 0.5f) * 1.50f + (nMicro - 0.5f) * 0.55f;
+    const float surfTempC = clamp(rawTempC + diurnalLagC - lapseDropC + snowlineUndulC, -45.0f, 45.0f);
 
     // 1) Directional Aspect & Slope Solar Melt:
     // South-facing sunlit slopes (-Y in Skyrim's North=+Y world) melt first while shaded north shelves keep snow.
@@ -86,14 +145,16 @@ SurfaceThermalEval evalSeasonalSurfaceThermals(
     const float warmMeltBias = smoothstep(-2.5f, 6.0f, surfTempC) * (0.35f + 0.65f * max(sunExposure, southAspect * 0.65f));
     const float slopeHold = smoothstep(0.32f, 0.78f, n.z);
 
-    // 2) Active Fire / Hearth / Forge Heat-Radius Melt Ring:
+    // 2) Active Fire / Hearth / Forge / Lava Heat-Radius Melt Ring:
     // Carves realistic bare damp ground/stone in the heat core surrounded by a glossy blue-grey slush perimeter!
-    const float heatNoised = saturate(fireHeat01 * (0.86f + 0.28f * nMicro));
+    const float heatSafe = isfinite(fireHeat01) ? max(fireHeat01, 0.0f) : 0.0f;
+    const float heatNoised = saturate(heatSafe * (0.86f + 0.28f * nMicro));
     const float fireCore = smoothstep(0.16f, 0.68f, heatNoised);
     const float slushRim = smoothstep(0.03f, 0.24f, heatNoised) * (1.0f - smoothstep(0.44f, 0.82f, heatNoised));
 
-    // Effective local snow thickness & coverage:
-    const float aspectDepth = max(baseSnowDepthM * slopeHold * (0.65f + 0.70f * driftNoise) - warmMeltBias * 0.14f, 0.0f);
+    // Effective local snow thickness & coverage (elevation chill subtly reinforces snowpack above snowline):
+    const float lapseSnowBoost = smoothstep(0.5f, -5.5f, surfTempC) * smoothstep(1400.0f, 4800.0f, worldPosAbs.z) * 0.08f * step(0.005f, baseSnowDepthM);
+    const float aspectDepth = max((baseSnowDepthM + lapseSnowBoost) * slopeHold * (0.65f + 0.70f * driftNoise) - warmMeltBias * 0.14f, 0.0f);
     const float localDepthM = aspectDepth * (1.0f - fireCore);
     const float snowCov = smoothstep(0.015f, 0.12f, localDepthM) * slopeHold;
 
@@ -107,14 +168,15 @@ SurfaceThermalEval evalSeasonalSurfaceThermals(
     const float3 snowAlb   = lerp(powderCol, slushCol, wetMeltMask * 0.65f) * lerp(0.92f, 1.05f, driftNoise);
     const float  snowRough = lerp(lerp(0.88f, 0.60f, compaction01), 0.28f, wetMeltMask);
 
-    // 3) Freeze-Thaw Black Ice Glaze & Windward Hoarfrost Rime (100% static!):
+    // 3) Freeze-Thaw Black Ice Glaze & Pre-Dawn Windward Hoarfrost Rime (100% static!):
     const float upFlat = smoothstep(0.55f, 0.90f, n.z);
     const float windward = saturate(dot(n.xy, -windDir)) * smoothstep(0.05f, 0.75f, n.z);
     const float iceCrackN = rawNoise3Grad(worldPosAbs * 0.042f + float3(11.3f, 19.7f, 5.1f)).x;
     const float thawBreak = 1.0f - fractureIn * smoothstep(0.45f, 0.85f, iceCrackN) * 0.75f;
+    const float predawnRimeBoost = smoothstep(-0.5f, -3.5f, surfTempC) * saturate(-diurnalLagC * 0.35f) * 0.22f;
     const float iceGlaze = saturate(max(blackIceIn * upFlat, smoothstep(0.02f, 0.18f, iceThickM) * upFlat * 0.75f)
                                     * thawBreak * (1.0f - snowCov * 0.75f) * (1.0f - fireCore));
-    const float frostRime = saturate(rimeIn * (0.42f * upFlat + 0.68f * windward) * (0.55f + 0.45f * driftNoise)
+    const float frostRime = saturate(max(rimeIn, predawnRimeBoost) * (0.42f * upFlat + 0.68f * windward) * (0.55f + 0.45f * driftNoise)
                                      * (1.0f - fireCore) * (1.0f - slushRim * 0.6f));
 
     // 4) Snowmelt Runoff -> Wetness & Puddle Evaporation Balance:

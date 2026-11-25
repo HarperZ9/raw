@@ -21,6 +21,7 @@
 #include "RawPostCinematicHost.h"
 #include "RawGpuParticlesHost.h"
 #include "RawTsrUpscaleHost.h"
+#include "RawWaterCausticsHost.h"
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
@@ -100,6 +101,7 @@ struct D3D12Bridge::Impl
     std::unique_ptr<RawPostCinematicHost> postCinematic; // Live GPU Tile-Max Motion Blur + Depth-Aware Hexagonal Bokeh DoF solver
     std::unique_ptr<RawGpuParticlesHost> gpuParticles; // Live GPU 16,384-Particle 3D Physics & Additive Splat solver
     std::unique_ptr<RawTsrUpscaleHost> tsrUpscale; // Live GPU RAW-TSR Temporal Super-Resolution + RCAS upscaler
+    std::unique_ptr<RawWaterCausticsHost> waterCaustics; // Live GPU Physical Water Caustics & Underwater God-Ray solver
     bool                     fluidReady = false;
     bool                     radianceReady = false;
     bool                     xpbdSimReady = false;
@@ -118,6 +120,7 @@ struct D3D12Bridge::Impl
     bool                     postCinematicReady = false;
     bool                     gpuParticlesReady = false;
     bool                     tsrUpscaleReady = false;
+    bool                     waterCausticsReady = false;
     ComPtr<ID3D12CommandAllocator>    fluidAlloc[kRing];
     ComPtr<ID3D12GraphicsCommandList> fluidList;
     ComPtr<ID3D12Fence>               fluidFence;
@@ -268,6 +271,14 @@ struct D3D12Bridge::Impl
     float                             tsrLastJitterX = 0.0f;
     float                             tsrLastJitterY = 0.0f;
     bool                              tsrPrevInterior = false;
+    ComPtr<ID3D12CommandAllocator>    waterCausticsAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList> waterCausticsList;
+    ComPtr<ID3D12Fence>               waterCausticsFence;
+    HANDLE                            waterCausticsEvent = nullptr;
+    uint64_t                          waterCausticsFenceVal = 0;
+    uint64_t                          waterCausticsSlotVal[kRing] = {};
+    uint32_t                          waterCausticsSlot = 0;
+    uint64_t                          waterCausticsStepFrames = 0;
     std::string                       telemetryOutDir;
     bool InitFluidSim();
     void ShutdownFluidSim();
@@ -311,6 +322,9 @@ struct D3D12Bridge::Impl
     bool InitTsrUpscale();
     void ShutdownTsrUpscale();
     bool ExecuteTsrUpscaleOnQueue(bool hasMotion, bool isInterior);
+    bool InitWaterCaustics();
+    void ShutdownWaterCaustics();
+    bool ExecuteWaterCausticsOnQueue(bool isInterior);
     bool InitOverlayHost();
     void ShutdownOverlayHost();
     void PollOverlayHotkey();

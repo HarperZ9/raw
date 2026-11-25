@@ -7,6 +7,7 @@
 #include "rt_boot_selfcheck.h"
 #include "rt_engine_health.h"
 #include "rt_frame_governor.h"
+#include "rt_hotkey_router.h"
 #include "rt_live_dashboard.h"
 #include "rt_mod_load_audit.h"
 #include "rt_profile_presets.h"
@@ -190,7 +191,13 @@ bool DispatchDiagnosticCommand(const char* cmdLine, std::string& outResponse) no
                 "  preset <ultra|balanced|competitive|safemode> - Query or apply a validated 4-tier quality preset\n"
                 "  reload_shaders - Run atomic pre-validation & trigger raw_shaders\\ hot-reload generation\n"
                 "  dashboard - Atomically export raw_live_dashboard.json & self-contained raw_live_dashboard.html\n"
-                "  selfcheck - Run 12-point boot & runtime integrity verifier and write boot_selfcheck.txt";
+                "  selfcheck - Run 12-point boot & runtime integrity verifier and write boot_selfcheck.txt\n"
+                "  hotkeys - Report foreground-safe debounced live hotkey bindings and trigger counters";
+            return true;
+        }
+
+        if (verb == "hotkeys") {
+            outResponse = HotkeyRouterFormatBindings();
             return true;
         }
 
@@ -372,7 +379,7 @@ std::string ConsoleDiagInit(const std::string& outDir) {
     }
     char buf[224];
     std::snprintf(buf, sizeof(buf),
-                  "[ConsoleDiag] initialized (11 commands: help/health/sdk/flight/mods/saves/status/preset/reload_shaders/dashboard/selfcheck | poll=%uf -> %s\\raw_cmd.txt)",
+                  "[ConsoleDiag] initialized (12 commands: help/health/sdk/flight/mods/saves/status/preset/reload_shaders/dashboard/selfcheck/hotkeys | poll=%uf -> %s\\raw_cmd.txt)",
                   kPollCadenceFrames, outDir.empty() ? "raw_engine_out" : outDir.c_str());
     return buf;
 }

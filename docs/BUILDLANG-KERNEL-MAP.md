@@ -1,6 +1,6 @@
-# RAW Engine BuildLang Core Kernel Map (14 Modules, 84 Verified Kernels)
+# RAW Engine BuildLang Core Kernel Map (15 Modules, 90 Verified Kernels)
 
-This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, regional economy, GPU pipeline, world-systems, volumetric clouds, archery, dungeon, animation IK, cinematic post-FX, profile-tiering, GPU particle dynamics, combat-mechanics, TSR upscaling, quest persuasion, water caustics, crafting, and spellcraft kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**14 modules, 84 verified kernels**):
+This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, regional economy, GPU pipeline, world-systems, volumetric clouds, archery, dungeon, animation IK, cinematic post-FX, profile-tiering, GPU particle dynamics, combat-mechanics, TSR upscaling, quest persuasion, water caustics, crafting, spellcraft, snow deformation, and seasonal ecology kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**15 modules, 90 verified kernels**):
 
 1. [`native/bld/RawPhysicsKernels.bld`](../native/bld/RawPhysicsKernels.bld) (6 core scalar physics & anti-exploit kernels)
 2. [`native/bld/RawAtmoWeather.bld`](../native/bld/RawAtmoWeather.bld) (7 planetary atmosphere, orbital solar, snowpack ODE & black-ice kernels)
@@ -16,10 +16,11 @@ This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar 
 12. [`native/bld/RawParticlesCombat.bld`](../native/bld/RawParticlesCombat.bld) (6 particle bounce, curl-wind drag, timed-parry stagger, wet/frost elemental damage, armor mitigation & poise recovery kernels)
 13. [`native/bld/RawTsrQuests.bld`](../native/bld/RawTsrQuests.bld) (6 Halton-2/3 jitter, YCoCg variance clamp, RCAS sharpening lobe, quest persuasion, smithing temper & encumbrance speed kernels)
 14. [`native/bld/RawCausticsCrafting.bld`](../native/bld/RawCausticsCrafting.bld) (6 Snell refraction, underwater Beer-Lambert transmittance, caustic Jacobian clamp, anti-loop crafting cap, soul-gem budget & dual-cast efficiency kernels)
+15. [`native/bld/RawSnowEcology.bld`](../native/bld/RawSnowEcology.bld) (6 snow footprint rim displacement, campfire snow melt, slush-to-black-ice freeze, storm shelter probability, camera spring zoom & seasonal photoperiod kernels)
 
 ## Toolchain Verification Receipts (`buildc 1.4.0`)
 
-Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **14/14 `check` PASS**, **14/14 `run` PASS**):
+Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **15/15 `check` PASS**, **15/15 `run` PASS**):
 
 ### Module 1: `native/bld/RawPhysicsKernels.bld`
 - `buildc check`: Exit Code `0` (`Lexing... OK (763 tokens)`, `Parsing... OK (9 items)`, `Type checking... OK`, `No errors found`)
@@ -188,7 +189,19 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
   dual_cast_eff_ratio(2.2x / 2.8x) = 0.7857142857142857
   ```
 
-## Kernel-by-Kernel Mapping (84 Kernels)
+### Module 15: `native/bld/RawSnowEcology.bld`
+- `buildc check`: Exit Code `0` (`Lexing... OK (1146 tokens)`, `Parsing... OK (11 items)`, `Type checking... OK`, `No errors found`)
+- `buildc run`: Exit Code `0`
+  ```text
+  snow_rim_displace(center) = -0.16 | (rim peak) = 0.055999999999999994
+  campfire_snow_melt(1m 60s) = 0.0008465011260362349 | (8m 60s) = 0
+  slush_black_ice_frac(freeze -8C) = 0.9137064135006295 | (thaw +6C) = 0.07574669123157933
+  storm_shelter_prob(calm) = 0.027990511187118247 | (blizzard) = 0.99
+  camera_spring_zoom(220->420, 0.1s) = 310.2376727811947
+  seasonal_photoperiod_hr(60N sum/eq/win) = 18.488845693795454 | 11.99948413328645 | 5.511154306204544
+  ```
+
+## Kernel-by-Kernel Mapping (90 Kernels)
 
 ### 1. Core Physics Kernels (`native/bld/RawPhysicsKernels.bld`)
 
@@ -344,10 +357,21 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
 | 83 | `soul_gem_cast_charges(gem_capacity, base_cost, skill_0_100)` | `src/engine_rt/rt_spellcraft_gmst.cpp` | `capacity / max(base_cost * (1 - 0.55*skill01), 1.0)` | Grand gem (`3000`): novice `54.5` casts vs master `111.1` casts (`2.04x`) |
 | 84 | `dual_cast_eff_ratio(base_magicka, base_magnitude, cost_mult, mag_mult)` | `src/engine_rt/rt_spellcraft_gmst.cpp` | `(mag_mult / cost_mult)` efficiency relative to single-cast baseline | Canonical 1.7.104 `2.2x / 2.8x` = `0.7857` efficiency per magicka |
 
-## Reproducing All 14 BuildLang Module Checks
+### 15. Snow Deformation, Radiant Melt, Shelter AI and Photoperiod Kernels (`native/bld/RawSnowEcology.bld`)
+
+| # | BuildLang Function | Engine C++ / HLSL Counterpart | Governing Equation | Verified Invariant |
+| --- | --- | --- | --- | --- |
+| 85 | `snow_rim_displace(r_norm, depth_m, rim_gain)` | `src/d3d12_bridge/shaders/RawSnowDeformSim.hlsl` | Bowl `-d*(1 - r^2)^2` inside `r<1`, raised rim `+d*g*sin^2(...)` in `[1, 1.75]` | Center `-0.16 m` depression with `+0.056 m` pushed-out rim peak |
+| 86 | `campfire_snow_melt(dist_m, power_kw, air_temp_c, dt_sec)` | `src/d3d12_bridge/shaders/RawSeasonsThermals.hlsli` | Inverse-square radiant flux `P/(4*pi*(d^2+0.35))` minus sub-zero chill / `rho*L_f` | `25 kW` @ `1 m` melts `0.847 mm/min`; `8 m` away melts exact `0.0 m` |
+| 87 | `slush_black_ice_frac(prev_ice, temp_c, slush_m, dt_sec)` | `src/d3d12_bridge/shaders/RawSeasonsThermals.hlsli` | Exponential freeze below `-1 C`, thaw above `+0.5 C`, hysteresis in between | `-8 C` freezes `0 -> 0.914` in `10 s`; `+6 C` thaws `0.9 -> 0.076` |
+| 88 | `storm_shelter_prob(wind_bft, precip01, temp_c, indoor_dist_m)` | `src/engine_rt/rt_npc_behavior.cpp`, `RawWildlifeBoids.cpp` | Logistic storm severity (wind + precip + chill - shelter distance) in `[0.02, 0.99]` | Calm `14 C` = `0.028`; `-12 C` blizzard = `0.99` shelter-seeking |
+| 89 | `camera_spring_zoom(cur_dist, target_dist, stiffness, dt_sec)` | `src/engine_rt/rt_camera_world_gmst.cpp` | Overshoot-free exponential `cur + (target - cur) * (1 - exp(-k*dt))` | `220 -> 420` @ `k=6, 0.1 s` steps smoothly to `310.24` (zero overshoot) |
+| 90 | `seasonal_photoperiod_hr(lat_deg, decl_rad)` | `src/worldgen/RawWeatherSim.cpp`, `RawSeasonsThermals.hlsli` | `(24 / pi) * acos(-tan(lat) * tan(decl))` clamped `[0, 24]` | `60 deg N`: summer `18.49 h`, equinox `12.00 h`, winter `5.51 h` |
+
+## Reproducing All 15 BuildLang Module Checks
 
 ```powershell
-foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim','RawGpuPipeline','RawWorldSystems','RawCloudsDungeon','RawAnimKinematics','RawParticlesCombat','RawTsrQuests','RawCausticsCrafting')) {
+foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim','RawGpuPipeline','RawWorldSystems','RawCloudsDungeon','RawAnimKinematics','RawParticlesCombat','RawTsrQuests','RawCausticsCrafting','RawSnowEcology')) {
     buildc check "E:\wt\raw-rt9\native\bld\$m.bld"
     buildc run   "E:\wt\raw-rt9\native\bld\$m.bld"
 }

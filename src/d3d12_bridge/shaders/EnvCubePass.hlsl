@@ -19,11 +19,33 @@ Texture2D<float4> GameLit     : register(t2);
 Texture2D<float>  Depth       : register(t3);
 SamplerState      Lin         : register(s0);
 
+// Wave 61: Strict NaN/Inf sanitization & anisotropic mountain-silhouette horizon contour helpers.
+float3 sanitizeEnv3(float3 c) {
+    return all(isfinite(c)) ? clamp(c, 0.0f.xxx, 3.5f.xxx) : 0.0f.xxx;
+}
+
+// Evaluates a world-locked 360-deg alpine mountain-ridge silhouette elevation angle (radians) around the horizon.
+// Higher jagged ridges to the north/east & lower open coastal valleys to the south/west, receding smoothly at summit altitude.
+float evalHorizonMountainRidgeSin(float2 rdXY, float3 camAbs) {
+    const float hLen = length(rdXY);
+    const float az = (hLen > 1.0e-5f) ? atan2(rdXY.y, rdXY.x) : 0.0f;
+    const float shift = (camAbs.x * 0.000018f - camAbs.y * 0.000014f);
+    // Multi-harmonic alpine ridge silhouette (smoothly periodic in 2*PI around the horizon):
+    const float r1 = 0.50f + 0.50f * sin(az * 2.0f + 0.65f + shift);
+    const float r2 = 0.50f + 0.50f * sin(az * 5.0f - 1.35f - shift * 1.4f);
+    const float r3 = 0.50f + 0.50f * cos(az * 9.0f + 2.10f + shift * 0.7f);
+    const float ridgeProfile = r1 * 0.48f + r2 * 0.34f + r3 * 0.18f;
+    // Taller mountain walls toward northern/eastern alpine ranges (+Y/+X); lower when camera stands on high peaks:
+    const float northEastBias = 0.72f + 0.28f * saturate((rdXY.y + rdXY.x * 0.5f) / max(hLen, 1.0e-4f) * 0.5f + 0.5f);
+    const float altRecede = 1.0f - smoothstep(4500.0f, 18000.0f, max(camAbs.z, 0.0f)) * 0.70f;
+    return lerp(0.012f, 0.092f, ridgeProfile) * northEastBias * altRecede;
+}
+
 float3 sampleAtmo(float3 rd) {
-    const float az = atan2(rd.y, rd.x);
+    const float az = (abs(rd.x) + abs(rd.y) > 1.0e-5f) ? atan2(rd.y, rd.x) : 0.0f;
     const float elev = asin(clamp(rd.z, -1.0f, 1.0f));
     const float vNonLin = 0.5f + 0.5f * (elev >= 0.0f ? sqrt(elev / (0.5f * PI)) : -sqrt(-elev / (0.5f * PI)));
-    return AtmoSkyView.SampleLevel(Lin, float2(az / (2.0f * PI) + 0.5f, saturate(vNonLin)), 0.0f).rgb;
+    return sanitizeEnv3(AtmoSkyView.SampleLevel(Lin, float2(az / (2.0f * PI) + 0.5f, saturate(vNonLin)), 0.0f).rgb);
 }
 
 float3 evalEnvDir(float3 rd, bool roughBand) {
@@ -85,6 +107,39 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
         // During twilight transition, preserve sharp stars/zodiacal light/aurora emerging cleanly above the ozone arch:
         upper += liveCosmos * (twilightW * (1.0f - dayW) * (roughBand ? 0.25f : 0.42f));
 
+        // Wave 61: Twilight Belt-of-Venus & Earth-Shadow Reflection Coupling (synchronized with AtmosphereLut.hlsl):
+        // Ensures puddles, wet stone, glacial ice, and forged armor reflect the true rose-magenta anti-solar arch!
+        if (twilightW > 0.005f && rd.z > -0.04f) {
+            const float clearTwE = twilightW * (1.0f - saturate(clouds.x - 0.38f) * 1.15f);
+            const float2 rdHorE  = rd.xy * rsqrt(max(dot(rd.xy, rd.xy), 1.0e-6f));
+            const float2 sunHorE = aSun.xy * rsqrt(max(dot(aSun.xy, aSun.xy), 1.0e-6f));
+            const float antiAzE  = saturate(dot(rdHorE, -sunHorE));
+            const float archCurv = (1.0f - antiAzE) * 0.032f;
+            const float shElevE  = clamp(0.026f - aElev * 1.28f - archCurv, 0.006f, 0.25f);
+            const float beltCtrE = shElevE + lerp(0.040f, 0.056f, saturate(-aElev * 5.5f + 0.40f));
+            const float beltDyE  = rd.z - beltCtrE;
+            const float beltSigE = (beltDyE < 0.0f) ? 0.045f : 0.082f;
+            const float beltEnv  = exp(-min((beltDyE * beltDyE) / (beltSigE * beltSigE), 36.0f))
+                                 * pow(max(antiAzE, 1.0e-4f), 1.40f) * smoothstep(-0.02f, 0.03f, rd.z);
+            const float earthShE = (1.0f - smoothstep(shElevE - 0.030f, shElevE + 0.040f, rd.z))
+                                 * pow(max(antiAzE, 1.0e-4f), 1.35f) * smoothstep(-0.04f, 0.02f, rd.z);
+            const float3 venusColE = lerp(float3(0.58f, 0.21f, 0.34f), float3(0.46f, 0.18f, 0.40f), smoothstep(-0.015f, 0.085f, beltDyE));
+            upper += venusColE * (beltEnv * clearTwE * (roughBand ? 0.28f : 0.36f));
+            upper = lerp(upper, upper * float3(0.44f, 0.54f, 0.86f) + float3(0.008f, 0.014f, 0.036f), saturate(earthShE * clearTwE * 0.45f));
+        }
+
+        // Wave 61: Subtle Aurora Borealis Zenith Sky-Reflection Tint at Northern High Latitudes:
+        // Gives clear northern nights an authentic emerald-cyan/violet zenith aurora reflection across puddles, ice & steel.
+        if (nightW > 0.02f && rd.z > 0.08f) {
+            const float latNorth = smoothstep(-25000.0f, 85000.0f, camPosW.y);
+            const float clearAur = pow(1.0f - saturate(clouds.x * 0.95f), 1.35f);
+            const float zenArch  = smoothstep(0.08f, 0.72f, rd.z) * (0.58f + 0.42f * saturate(rd.y * 0.5f + 0.5f));
+            const float curtainWave = 0.65f + 0.35f * sin(rd.x * 3.8f + rd.y * 2.4f + simTime * 0.16f);
+            const float3 aurZenCol = lerp(float3(0.014f, 0.068f, 0.050f), float3(0.024f, 0.044f, 0.072f), smoothstep(0.45f, 0.92f, rd.z));
+            const float aurW = nightW * clearAur * lerp(0.28f, 1.0f, latNorth) * zenArch * curtainWave * (roughBand ? 0.55f : 0.78f);
+            upper += min(aurZenCol * aurW, float3(0.035f, 0.085f, 0.065f));
+        }
+
         // Daytime & twilight live 22-deg glacial ice halo + horizontal parhelia (sundogs) + Eddington solar corona
         // reflected faithfully into glacial ice, rivers, puddles, and brushed steel armor (zero night double-count!):
         if (rd.z > -0.01f && atmoDayW > 0.01f) {
@@ -109,11 +164,17 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
             upper = lerp(upper, cCol, cCov * (roughBand ? 0.48f : 0.74f));
         }
 
-        // Lower hemisphere: physical terrain/snow/valley bounce + dark horizon mountain silhouette.
+        // Lower hemisphere + Wave 61 Anisotropic Horizon Mountain-Silhouette Bounce Occlusion:
+        // Replaces the flat horizon line with an undulating 360-deg alpine ridge silhouette & terrain/snow bounce!
         const float3 groundBounce = ambDir * lerp(float3(0.36f, 0.34f, 0.30f), float3(0.60f, 0.66f, 0.76f), saturate(weather.z))
                                   * lerp(1.0f.xxx, dualMoon.moonTintRGB * moonAmbScale, nightW * 0.65f);
-        const float horBand = smoothstep(-0.18f, 0.05f, rd.z);
-        col = lerp(groundBounce, upper, horBand);
+        const float ridgeSin = evalHorizonMountainRidgeSin(rd.xy, camPosW.xyz);
+        const float ridgeSoft = roughBand ? 0.065f : 0.028f;
+        const float skyClearOfRidge = smoothstep(ridgeSin - ridgeSoft, ridgeSin + ridgeSoft, rd.z);
+        const float3 ridgeSilCol = lerp(groundBounce * 0.80f, upper * float3(0.38f, 0.46f, 0.64f), 0.36f * (1.0f - nightW * 0.45f));
+        const float lowerBlend = smoothstep(-0.18f, 0.01f, rd.z);
+        const float3 lowerAndRidge = lerp(groundBounce, ridgeSilCol, lowerBlend);
+        col = lerp(lowerAndRidge, upper, skyClearOfRidge);
 
         // Sun/dual-moon specular lobe (tight in sharp band, wide GGX convolution in rough band; modulated by lunar phase at night!):
         // Daytime sharp-band gain yields cleanly to the Eddington limb-darkened solar disk + Mie corona already in `upper`.
@@ -140,7 +201,7 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
             const float eEdge = smoothstep(0.03f, 0.24f, min(min(eUv.x, 1.0f - eUv.x), min(eUv.y, 1.0f - eUv.y)));
             const float eDepth = Depth.SampleLevel(Lin, eUv, 0.0f);
             if (eDepth < 0.9995f) {
-                const float3 scCol = min(GameLit.SampleLevel(Lin, eUv, 0.0f).rgb, 3.5f.xxx);
+                const float3 scCol = sanitizeEnv3(GameLit.SampleLevel(Lin, eUv, 0.0f).rgb);
                 col = lerp(col, scCol, eEdge * (roughBand ? 0.38f : 0.62f));
             }
         }
@@ -158,7 +219,7 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
         if (dist >= rad || dist < 1.0e-3f) { continue; }
         const float att = pow(saturate(1.0f - dist / rad), 1.55f);
         const float cosL = saturate(dot(rd, toL / dist));
-        col += lightColS[li].rgb * (pow(cosL, lExp) * att * lGain);
+        col += sanitizeEnv3(lightColS[li].rgb) * (pow(cosL, lExp) * att * lGain);
     }
 
     // Project real live scene geometry (pine trees, mountains, stone arches, tavern beams, hearths)
@@ -170,11 +231,11 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
         if (sd < 0.9999f) {
             const float2 edge = min(suv, 1.0f - suv);
             const float edgeW = smoothstep(0.0f, 0.08f, min(edge.x, edge.y));
-            const float3 sceneCol = min(GameLit.SampleLevel(Lin, suv, 0.0f).rgb, 3.0f.xxx);
+            const float3 sceneCol = min(sanitizeEnv3(GameLit.SampleLevel(Lin, suv, 0.0f).rgb), 3.0f.xxx);
             col = lerp(col, sceneCol, edgeW * (roughBand ? 0.62f : 0.85f));
         }
     }
-    return min(col, 3.5f.xxx);
+    return sanitizeEnv3(col);
 }
 
 float4 bake(float4 at : SV_Position) : SV_Target0 {

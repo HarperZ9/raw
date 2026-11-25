@@ -21,7 +21,8 @@
 //   F9 / H              : Toggle Live GPU Telemetry HUD & 64-Sample Frame-Time Sparkline (RawOverlayHost!)
 //   F12                 : Capture Instant 24-Bit .bmp Screenshot (raw_viewer_shot_<N>.bmp)
 //   1 / 2 / 3 / 4       : Live Season Switch (Spring / Summer / Autumn / Winter)
-//   F                   : Toggle Live 64^3 3D Navier-Stokes Fire + Smoke
+//   F                   : Cycle Live Anti-Exploit Forge/Alchemy/Enchanting (RawCraftingInventoryEngine!)
+//   U                   : Toggle Live 64^3 3D Navier-Stokes Fire + Smoke
 //   G                   : Toggle Live 4-Cascade Radiance Cascades Screen GI
 //   B                   : Cycle/Teleport Across All 6 Procedural Frontier Biomes
 //   L                   : Teleport Across 4 Iconic Tamriel Landmarks (Riverwood / Whiterun / High Hrothgar / Solitude)
@@ -78,6 +79,7 @@
 #include "RawPostCinematicHost.h"
 #include "RawGpuParticlesHost.h"
 #include "RawTsrUpscaleHost.h"
+#include "RawWaterCausticsHost.h"
 #include "RawWeatherSim.h"
 #include "RawWorldShowcase.h"
 #include "RawDestructionEngine.h"
@@ -97,6 +99,7 @@
 #include "RawSkeletonAnimEngine.h"
 #include "RawCombatSandboxEngine.h"
 #include "RawQuestStoryEngine.h"
+#include "RawCraftingInventoryEngine.h"
 #include "RawHydrologyGen.h"
 #include "RawAudioOutput.h"
 
@@ -509,6 +512,14 @@ public:
         if (!m_tsrUpscaleOk) {
             std::printf("[Viewer] RawTsrUpscaleHost warning: %s\n", err.c_str());
         }
+        err.clear();
+        WaterCausticsDesc wcd{};
+        wcd.initialWidth  = 512u;
+        wcd.initialHeight = 512u;
+        m_waterCausticsOk = m_waterCaustics.Init(m_dev.Get(), wcd, &err);
+        if (!m_waterCausticsOk) {
+            std::printf("[Viewer] RawWaterCausticsHost warning: %s\n", err.c_str());
+        }
         UINT64 tsFreq = 0;
         if (SUCCEEDED(m_queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
             if (m_fluidOk)         m_fluidSim.SetTimestampFrequency(tsFreq);
@@ -526,7 +537,9 @@ public:
             if (m_postCinematicOk) m_postCinematic.SetTimestampFrequency(tsFreq);
             if (m_gpuParticlesOk)  m_gpuParticles.SetTimestampFrequency(tsFreq);
             if (m_tsrUpscaleOk)    m_tsrUpscale.SetTimestampFrequency(tsFreq);
+            if (m_waterCausticsOk) m_waterCaustics.SetTimestampFrequency(tsFreq);
         }
+        InitStarterCraftingLoadout();
         m_settlementSim.Reset(202653u);
         m_settlementTelemetry   = m_settlementSim.ComputeWorldTelemetry();
         m_initialSettlementGold = m_settlementTelemetry.totalGold;
@@ -1993,6 +2006,7 @@ public:
         player.maxHp         = 320.0f;
         player.armorRating   = 220.0f;
         player.aiControlled  = false;
+        m_equippedStats.ApplyToCombatActor(player);
         m_combatPlayerId     = m_combatSandbox.SpawnActor(player);
 
         static constexpr raw::worldgen::CombatRole kRoles[4] = {
@@ -2299,6 +2313,202 @@ public:
         p.journalJsonValid = (j.find("\"quests\"") != std::string::npos &&
                               j.find("\"activeCount\"") != std::string::npos &&
                               j.find("\xE2\x80\x94") == std::string::npos);
+        return p;
+    }
+
+    void RefreshCraftingTelemetryAndApplyToHero()
+    {
+        m_encumbrance   = m_craftingEngine.EvaluateEncumbrance();
+        m_equippedStats = m_craftingEngine.ComputeEquippedCombatStats();
+        if (m_combatActive && m_combatPlayerId != 0u) {
+            if (auto* hero = m_combatSandbox.FindActor(m_combatPlayerId)) {
+                m_equippedStats.ApplyToCombatActor(*hero);
+            }
+        }
+    }
+
+    void InitStarterCraftingLoadout()
+    {
+        m_craftingEngine.Clear(300.0f);
+
+        raw::worldgen::ItemDef sword{};
+        sword.name          = "Nordic Greatsword";
+        sword.category      = raw::worldgen::ItemCategory::Weapon;
+        sword.material      = raw::worldgen::MaterialTier::Steel;
+        sword.weight        = 16.0f;
+        sword.baseValueGold = 420.0f;
+        sword.baseDamage    = 34.0f;
+        m_forgeSwordId      = m_craftingEngine.AddItem(sword, 1u);
+
+        raw::worldgen::ItemDef cuirass{};
+        cuirass.name          = "Nordic Carved Cuirass";
+        cuirass.category      = raw::worldgen::ItemCategory::ArmorChest;
+        cuirass.material      = raw::worldgen::MaterialTier::Steel;
+        cuirass.weight        = 28.0f;
+        cuirass.baseValueGold = 650.0f;
+        cuirass.baseArmor     = 115.0f;
+        m_forgeArmorId        = m_craftingEngine.AddItem(cuirass, 1u);
+
+        raw::worldgen::ItemDef helm{};
+        helm.name          = "Nordic Steel Helm";
+        helm.category      = raw::worldgen::ItemCategory::ArmorHead;
+        helm.material      = raw::worldgen::MaterialTier::Steel;
+        helm.weight        = 7.0f;
+        helm.baseValueGold = 180.0f;
+        helm.baseArmor     = 45.0f;
+        const uint32_t helmId = m_craftingEngine.AddItem(helm, 1u);
+
+        raw::worldgen::ItemDef ring{};
+        ring.name          = "Silver Signet Ring";
+        ring.category      = raw::worldgen::ItemCategory::Ring;
+        ring.material      = raw::worldgen::MaterialTier::Steel;
+        ring.weight        = 0.5f;
+        ring.baseValueGold = 210.0f;
+        m_forgeRingId      = m_craftingEngine.AddItem(ring, 1u);
+
+        raw::worldgen::ItemDef ingA{};
+        ingA.name              = "Snowberries";
+        ingA.category          = raw::worldgen::ItemCategory::Ingredient;
+        ingA.weight            = 0.2f;
+        ingA.baseValueGold     = 12.0f;
+        ingA.ingredientEffects = {
+            raw::worldgen::AlchemyEffect::ResistFrost,
+            raw::worldgen::AlchemyEffect::FortifyEnchanting,
+            raw::worldgen::AlchemyEffect::ResistFire,
+            raw::worldgen::AlchemyEffect::None
+        };
+        m_forgeIngAId = m_craftingEngine.AddItem(ingA, 8u);
+
+        raw::worldgen::ItemDef ingB{};
+        ingB.name              = "Blue Butterfly Wing";
+        ingB.category          = raw::worldgen::ItemCategory::Ingredient;
+        ingB.weight            = 0.1f;
+        ingB.baseValueGold     = 15.0f;
+        ingB.ingredientEffects = {
+            raw::worldgen::AlchemyEffect::FortifyEnchanting,
+            raw::worldgen::AlchemyEffect::DamageHealth,
+            raw::worldgen::AlchemyEffect::None,
+            raw::worldgen::AlchemyEffect::None
+        };
+        m_forgeIngBId = m_craftingEngine.AddItem(ingB, 8u);
+
+        (void)m_craftingEngine.EquipItem(m_forgeSwordId);
+        (void)m_craftingEngine.EquipItem(m_forgeArmorId);
+        (void)m_craftingEngine.EquipItem(helmId);
+        (void)m_craftingEngine.EquipItem(m_forgeRingId);
+        m_forgeCycleIdx = 0u;
+        RefreshCraftingTelemetryAndApplyToHero();
+    }
+
+    void CycleCraftingForgeAction()
+    {
+        const uint32_t step = m_forgeCycleIdx++ % 4u;
+        if (step == 0u) {
+            const auto tr = m_craftingEngine.TemperItem(m_forgeSwordId, 85.0f, true, m_equippedStats.fortifySmithingPct);
+            RefreshCraftingTelemetryAndApplyToHero();
+            std::printf("[Forge] Tempered Nordic Greatsword: ok=%d bonus=%.1f->%.1f effDmg=%.1f\n",
+                        int(tr.succeeded), static_cast<double>(tr.oldTemperBonus),
+                        static_cast<double>(tr.newTemperBonus), static_cast<double>(tr.effectiveStat));
+        } else if (step == 1u) {
+            const auto br = m_craftingEngine.BrewPotion({m_forgeIngAId, m_forgeIngBId}, 82.0f, m_equippedStats.fortifyAlchemyPct);
+            RefreshCraftingTelemetryAndApplyToHero();
+            std::printf("[Forge] Brewed 2-Ingredient Potion: ok=%d effects=%zu val=%.0fg\n",
+                        int(br.succeeded), br.matchedEffects.size(), static_cast<double>(br.potionValueG));
+        } else if (step == 2u) {
+            const auto erW = m_craftingEngine.EnchantItem(
+                m_forgeSwordId, raw::worldgen::SoulGemTier::Grand,
+                raw::worldgen::AlchemyEffect::ShockDamage, 85.0f, 0.65f, 24.0f);
+            const auto erR = m_craftingEngine.EnchantItem(
+                m_forgeRingId, raw::worldgen::SoulGemTier::Grand,
+                raw::worldgen::AlchemyEffect::FortifyAlchemy, 85.0f, 0.65f, 24.0f);
+            RefreshCraftingTelemetryAndApplyToHero();
+            std::printf("[Forge] Grand Soul Enchant: swordMag=%.1f (%u uses) ringAlch=%.1f%%\n",
+                        static_cast<double>(erW.magnitude), erW.estimatedUses, static_cast<double>(erR.magnitude));
+        } else {
+            RefreshCraftingTelemetryAndApplyToHero();
+            const auto* swSlot = m_craftingEngine.FindSlot(m_forgeSwordId);
+            const auto hid = static_cast<raw::worldgen::HoldId>(m_activeHoldIdx % static_cast<uint32_t>(raw::worldgen::kHoldCount));
+            const float buyG  = swSlot ? raw::worldgen::EvaluateBarterPrice(swSlot->item, true,  65.0f, hid, &m_settlementSim, &m_diplomacy) : 0.0f;
+            const float sellG = swSlot ? raw::worldgen::EvaluateBarterPrice(swSlot->item, false, 65.0f, hid, &m_settlementSim, &m_diplomacy) : 0.0f;
+            std::printf("[Forge] Loadout Sync -> Hero: dmg=%.1f arm=%.1f enc=%.2fx barter(buy=%.0fg sell=%.0fg)\n",
+                        static_cast<double>(m_equippedStats.weaponDamage),
+                        static_cast<double>(m_equippedStats.totalArmorRating),
+                        static_cast<double>(m_encumbrance.moveSpeedMult),
+                        static_cast<double>(buyG), static_cast<double>(sellG));
+        }
+    }
+
+    struct CraftingForgeProbe {
+        bool  temperOk          = false;
+        bool  brewOk            = false;
+        bool  enchantOk         = false;
+        bool  antiExploitBounded = false;
+        bool  heroCoupled       = false;
+        bool  barterSpreadValid = false;
+        float finalWeaponDmg    = 0.0f;
+        float finalArmorRating  = 0.0f;
+        float convergedAlchPct  = 0.0f;
+        float convergedEnchPct  = 0.0f;
+        bool  allFinite         = true;
+    };
+
+    CraftingForgeProbe RunCraftingForgeSelfTest()
+    {
+        CraftingForgeProbe p{};
+        InitStarterCraftingLoadout();
+
+        // 1. Temper Nordic Greatsword, brew 2-ingredient potion, Grand Soul enchant sword + ring
+        const auto tr  = m_craftingEngine.TemperItem(m_forgeSwordId, 88.0f, true, 18.0f);
+        const auto br  = m_craftingEngine.BrewPotion({m_forgeIngAId, m_forgeIngBId}, 85.0f, 15.0f);
+        const auto erW = m_craftingEngine.EnchantItem(
+            m_forgeSwordId, raw::worldgen::SoulGemTier::Grand,
+            raw::worldgen::AlchemyEffect::ShockDamage, 88.0f, 0.65f, 25.0f);
+        const auto erR = m_craftingEngine.EnchantItem(
+            m_forgeRingId, raw::worldgen::SoulGemTier::Grand,
+            raw::worldgen::AlchemyEffect::FortifyAlchemy, 88.0f, 0.65f, 25.0f);
+        p.temperOk  = tr.succeeded && tr.newTemperBonus > 0.0f;
+        p.brewOk    = br.succeeded && !br.matchedEffects.empty();
+        p.enchantOk = erW.succeeded && erW.estimatedUses > 0u && erR.succeeded;
+
+        // 2. 50-iteration Banach anti-exploit Fortify Alchemy <-> Fortify Enchanting convergence check
+        float gearAlchPct = 0.0f;
+        float potEnchPct  = 0.0f;
+        float prevAlchPct = -1.0f;
+        for (int iter = 0; iter < 50; ++iter) {
+            prevAlchPct = gearAlchPct;
+            potEnchPct  = raw::worldgen::CompressCraftingFortifyPct(
+                18.0f + gearAlchPct * 0.55f, raw::worldgen::kMaxFortifyEnchantPotionPct);
+            const float singlePiece = raw::worldgen::CompressCraftingFortifyPct(
+                14.0f + potEnchPct * 0.45f, raw::worldgen::kMaxSinglePieceFortifyPct);
+            gearAlchPct = raw::worldgen::CompressCraftingFortifyPct(
+                singlePiece * 4.0f, raw::worldgen::kMaxFortifyAlchemyTotalPct);
+        }
+        p.convergedAlchPct   = gearAlchPct;
+        p.convergedEnchPct   = potEnchPct;
+        p.antiExploitBounded = std::isfinite(gearAlchPct) && std::isfinite(potEnchPct) &&
+                               gearAlchPct < raw::worldgen::kMaxFortifyAlchemyTotalPct &&
+                               potEnchPct  < raw::worldgen::kMaxFortifyEnchantPotionPct &&
+                               std::abs(gearAlchPct - prevAlchPct) < 1.0e-3f;
+
+        // 3. Apply live forged/enchanted equipment stats directly onto RawCombatSandboxEngine's player hero!
+        RefreshCraftingTelemetryAndApplyToHero();
+        p.finalWeaponDmg   = m_equippedStats.weaponDamage;
+        p.finalArmorRating = m_equippedStats.totalArmorRating;
+        if (m_combatActive && m_combatPlayerId != 0u) {
+            if (const auto* hero = m_combatSandbox.FindActor(m_combatPlayerId)) {
+                p.heroCoupled = (hero->baseAttackDamage > 34.0f && hero->armorRating >= 150.0f &&
+                                 hero->attackElement == raw::worldgen::DamageElement::Shock);
+            }
+        }
+        if (const auto* swSlot = m_craftingEngine.FindSlot(m_forgeSwordId)) {
+            const float buyG  = raw::worldgen::EvaluateBarterPrice(
+                swSlot->item, true,  65.0f, raw::worldgen::HoldId::Whiterun, &m_settlementSim, &m_diplomacy);
+            const float sellG = raw::worldgen::EvaluateBarterPrice(
+                swSlot->item, false, 65.0f, raw::worldgen::HoldId::Whiterun, &m_settlementSim, &m_diplomacy);
+            p.barterSpreadValid = std::isfinite(buyG) && std::isfinite(sellG) && sellG > 0.0f && sellG < buyG;
+        }
+        p.allFinite = std::isfinite(p.finalWeaponDmg) && std::isfinite(p.finalArmorRating) &&
+                      std::isfinite(m_encumbrance.moveSpeedMult);
         return p;
     }
 
@@ -3222,6 +3432,37 @@ public:
                 D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COMMON);
         }
 
+        // Live GPU Physical Water Caustics & Underwater Volumetric God-Rays (RawWaterCausticsHost - 17th Live GPU Solver!)
+        if (m_waterCausticsOk) {
+            WaterCausticsParams wcp{};
+            wcp.timeSec         = m_simTimeSec;
+            const float sx      = u.sunDir[0];
+            const float sy      = std::max(0.10f, u.sunDir[2]);
+            const float sz      = u.sunDir[1];
+            const float sl      = std::max(1.0e-4f, std::sqrt(sx * sx + sy * sy + sz * sz));
+            wcp.sunDir[0]       = sx / sl; wcp.sunDir[1] = sy / sl; wcp.sunDir[2] = sz / sl;
+            wcp.sunIntensity    = (m_timePreset == TimePreset::MidnightAurora) ? 0.35f : 1.0f;
+            wcp.sunColor[0]     = u.sunColour[0]; wcp.sunColor[1] = u.sunColour[1]; wcp.sunColor[2] = u.sunColour[2];
+            const float waterZ  = (m_wildlifeWaterZ > -10000.0f) ? m_wildlifeWaterZ : (m_camPos[2] - 240.0f);
+            wcp.bedDepthM       = std::clamp(std::abs(m_camPos[2] - waterZ) / 70.0f, 1.4f, 8.0f);
+            wcp.waveAmp         = std::clamp(0.09f + wGpu.beaufortScale * 0.025f, 0.09f, 0.34f);
+            wcp.domainSizeM     = 8.0f;
+            wcp.dispersionScale = 1.0f;
+            wcp.mieG            = 0.78f;
+            wcp.camPos[0]       = m_camPos[0] / 70.0f;
+            wcp.camPos[1]       = -std::min(wcp.bedDepthM * 0.75f, 3.0f);
+            wcp.camPos[2]       = m_camPos[1] / 70.0f;
+            wcp.waterSurfaceY   = 0.0f;
+            wcp.camRight[0]     = cam.right[0]; wcp.camRight[1]   = cam.right[2]; wcp.camRight[2]   = cam.right[1];
+            wcp.camUp[0]        = cam.up[0];    wcp.camUp[1]      = cam.up[2];    wcp.camUp[2]      = cam.up[1];
+            wcp.camForward[0]   = cam.fwd[0];   wcp.camForward[1] = cam.fwd[2];   wcp.camForward[2] = cam.fwd[1];
+            wcp.fovYDeg         = 1.12f * (180.0f / 3.14159265f);
+            wcp.maxRayDistM     = 24.0f;
+            wcp.shaftIntensity  = 2.2f;
+            wcp.frameIndex      = static_cast<uint32_t>(m_frameCount & 0xFFFFFFFFull);
+            m_waterCausticsRan  = m_waterCaustics.Execute(m_dispCmd.Get(), 512u, 512u, wcp);
+        }
+
         if (m_radOk && m_giEnabled) {
             m_radianceHost.ExecuteScreenGI(m_dispCmd.Get(), m_hdrColor.Get(), m_depthIn.Get(),
                                            m_width, m_height, 0.16f);
@@ -3355,6 +3596,8 @@ public:
         float    tsrUpscaleMs         = 0.0f;
         uint32_t tsrOutWidth          = 0u;
         uint32_t tsrOutHeight         = 0u;
+        bool     waterCausticsActive  = false;
+        float    waterCausticsMs      = 0.0f;
         uint32_t biomesFound          = 0u;
     };
 
@@ -3410,6 +3653,8 @@ public:
         out->tsrUpscaleMs = m_tsrUpscale.HasValidTiming() ? m_tsrUpscale.GetLastTotalMs() : 0.0f;
         out->tsrOutWidth = m_tsrUpscale.OutputWidth();
         out->tsrOutHeight = m_tsrUpscale.OutputHeight();
+        out->waterCausticsActive = m_waterCausticsOk && m_waterCaustics.Ready() && m_waterCausticsRan;
+        out->waterCausticsMs = m_waterCaustics.HasValidTiming() ? m_waterCaustics.GetLastTotalMs() : 0.0f;
 
         const UINT hdrPitch  = (m_width * 8u + 255u) & ~255u;
         const UINT dispPitch = (m_width * 4u + 255u) & ~255u;
@@ -3553,6 +3798,8 @@ public:
         }
         m_cullInstUpload.Reset();
         m_cullInstBuf.Reset();
+        m_waterCaustics.Shutdown();
+        m_craftingEngine.Clear();
         m_tsrUpscale.Shutdown();
         m_questStory.Clear();
         m_gpuParticles.Shutdown();
@@ -3658,6 +3905,7 @@ public:
         const float postMs        = m_postCinematic.HasValidTiming() ? m_postCinematic.GetLastTotalMs() : 0.0f;
         const float prtMs         = m_gpuParticles.HasValidTiming() ? m_gpuParticles.GetLastTotalMs() : 0.0f;
         const float tsrMs         = m_tsrUpscale.HasValidTiming() ? m_tsrUpscale.GetLastTotalMs() : 0.0f;
+        const float cauMs         = m_waterCaustics.HasValidTiming() ? m_waterCaustics.GetLastTotalMs() : 0.0f;
         const auto activeHid      = static_cast<raw::worldgen::HoldId>(m_activeHoldIdx % static_cast<uint32_t>(raw::worldgen::kHoldCount));
         const auto* activeHold    = m_settlementSim.GetHold(activeHid);
         const float holdGrain     = activeHold ? activeHold->price[static_cast<size_t>(raw::worldgen::CommodityKind::Grain)] : 0.0f;
@@ -3686,7 +3934,7 @@ public:
         }
         char buf[1536]{};
         std::snprintf(buf, sizeof(buf),
-                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms PCSS:%.3fms GTAO:%.3fms SSR:%.3fms AE:%.3fms Cloud:%.3fms POST:%.3fms PRT:%.3fms TSR:%.3fms HUD:%.3fms | IK:%.1fu Cbt:%u/%u(P:%u) Qst:%uA/%uC(%.0fg) | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u | %s:%.1fg Car:%u(Snw:%u) Scarce:%s%s%s%s%s%s | Shards:%u",
+                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms PCSS:%.3fms GTAO:%.3fms SSR:%.3fms AE:%.3fms Cloud:%.3fms POST:%.3fms PRT:%.3fms TSR:%.3fms CAU:%.3fms HUD:%.3fms | IK:%.1fu Cbt:%u/%u(P:%u) Qst:%uA/%uC(%.0fg) Frg:%.0f/%.0f | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u | %s:%.1fg Car:%u(Snw:%u) Scarce:%s%s%s%s%s%s | Shards:%u",
                       m_walkMode ? "WALK" : "FLY",
                       fps, m_lastDrawnMeshlets, m_meshHost.TerrainUsesMeshShaders() ? "AS+MS" : "VS+PS",
                       locBuf, TimePresetName(m_timePreset), ActiveWeatherDisplayName(),
@@ -3705,6 +3953,7 @@ public:
                       postMs,
                       prtMs,
                       tsrMs,
+                      cauMs,
                       m_overlayHost.HasValidTiming() ? m_overlayHost.GetLastOverlayMs() : 0.0f,
                       static_cast<double>(m_playerPose.pelvisDropZ),
                       m_combatTelemetry.aliveAllies,
@@ -3713,6 +3962,8 @@ public:
                       m_questTelemetry.activeCount,
                       m_questTelemetry.completedCount,
                       m_questTelemetry.totalGoldAwarded,
+                      static_cast<double>(m_equippedStats.weaponDamage),
+                      static_cast<double>(m_equippedStats.totalArmorRating),
                       m_ecoTelemetry.activeFireCells,
                       static_cast<double>(m_ecoTelemetry.totalSnowVolumeM3),
                       m_ecoTelemetry.blackIceCells,
@@ -4192,30 +4443,29 @@ private:
         const float postMs   = m_postCinematic.HasValidTiming() ? m_postCinematic.GetLastTotalMs() : 0.0f;
         const float prtMs    = m_gpuParticles.HasValidTiming() ? m_gpuParticles.GetLastTotalMs() : 0.0f;
         const float tsrMs    = m_tsrUpscale.HasValidTiming() ? m_tsrUpscale.GetLastTotalMs() : 0.0f;
+        const float cauMs    = m_waterCaustics.HasValidTiming() ? m_waterCaustics.GetLastTotalMs() : 0.0f;
         std::memset(outHud.lines[2], 0, sizeof(outHud.lines[2]));
         std::snprintf(outHud.lines[2], sizeof(outHud.lines[2]), "GPU F:%.2f W:%.2f GI:%.2f XP:%.2f FX:%.2f PS:%.2f",
                       static_cast<double>(snap.fireMs), static_cast<double>(snap.waterMs),
                       static_cast<double>(snap.giMs), static_cast<double>(snap.xpbdMs),
                       static_cast<double>(froxMs), static_cast<double>(pcssMs));
         std::memset(outHud.lines[3], 0, sizeof(outHud.lines[3]));
-        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "AO:%.2f CD:%.2f PS:%.2f PT:%.2f TSR:%.3f LC:%.2f",
-                      static_cast<double>(gtaoMs + ssrMs + aeMs),
+        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "CD:%.2f PS:%.2f PT:%.2f TS:%.2f CAU:%.3f LC:%.2f",
                       static_cast<double>(cloudMs),
                       static_cast<double>(postMs),
                       static_cast<double>(prtMs),
                       static_cast<double>(tsrMs),
-                      static_cast<double>(lclustMs + hizMs + cullMs));
+                      static_cast<double>(cauMs),
+                      static_cast<double>(lclustMs + hizMs + cullMs + gtaoMs + ssrMs + aeMs));
 
-        const char* topEvName = m_eventDirector.ActiveEvents().empty()
-                              ? "NONE"
-                              : raw::worldgen::GetWorldEventKindName(m_eventDirector.ActiveEvents()[0].kind);
         std::memset(outHud.lines[6], 0, sizeof(outHud.lines[6]));
-        std::snprintf(outHud.lines[6], sizeof(outHud.lines[6]), "ECO F:%u FAUNA:%u S:%u | EV:%u %.14s",
-                      m_ecoTelemetry.activeFireCells,
-                      m_wildlifeTelemetry.activeAgents,
-                      m_wildlifeTelemetry.startledCount,
+        std::snprintf(outHud.lines[6], sizeof(outHud.lines[6]), "FRG D:%.0f A:%.0f E:%.2fx AL:%.0f%% | EV:%u F:%u",
+                      static_cast<double>(m_equippedStats.weaponDamage),
+                      static_cast<double>(m_equippedStats.totalArmorRating),
+                      static_cast<double>(m_encumbrance.moveSpeedMult),
+                      static_cast<double>(m_equippedStats.fortifyAlchemyPct),
                       m_eventTelemetry.activeCount,
-                      topEvName);
+                      m_ecoTelemetry.activeFireCells);
         outHud.lineColorTag[6] = (m_ecoTelemetry.activeFireCells > 0u || m_eventTelemetry.activeCount > 0u)
                                ? kOverlayColorAmber : kOverlayColorMuted;
 
@@ -4649,6 +4899,8 @@ private:
     bool          m_gpuParticlesRan = false;
     bool          m_tsrUpscaleOk = false;
     bool          m_tsrUpscaleRan = false;
+    bool          m_waterCausticsOk = false;
+    bool          m_waterCausticsRan = false;
     std::string   m_adapterName;
 
     ComPtr<IDXGIFactory4>              m_factory;
@@ -4697,6 +4949,16 @@ private:
     RawPostCinematicHost               m_postCinematic;
     RawGpuParticlesHost                m_gpuParticles;
     RawTsrUpscaleHost                  m_tsrUpscale;
+    RawWaterCausticsHost               m_waterCaustics;
+    raw::worldgen::RawCraftingInventoryEngine m_craftingEngine;
+    raw::worldgen::EquippedCombatStats m_equippedStats{};
+    raw::worldgen::EncumbranceReport   m_encumbrance{};
+    uint32_t                           m_forgeSwordId = 0u;
+    uint32_t                           m_forgeArmorId = 0u;
+    uint32_t                           m_forgeRingId  = 0u;
+    uint32_t                           m_forgeIngAId  = 0u;
+    uint32_t                           m_forgeIngBId  = 0u;
+    uint32_t                           m_forgeCycleIdx = 0u;
     raw::worldgen::RawQuestStoryEngine m_questStory;
     raw::worldgen::QuestDirectorTelemetry m_questTelemetry{};
     uint32_t                           m_questSeedCounter = 0u;
@@ -4886,7 +5148,8 @@ LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     case 'H':
                     case VK_F9: st->viewer->ToggleHud(); break;
                     case VK_F12: st->viewer->CaptureScreenshotBmp(); break;
-                    case 'F': st->viewer->ToggleFire(); break;
+                    case 'F': st->viewer->CycleCraftingForgeAction(); break;
+                    case 'U': st->viewer->ToggleFire(); break;
                     case 'G': st->viewer->ToggleGI(); break;
                     case 'B': st->viewer->CycleBiome(); break;
                     case 'L': st->viewer->CycleTamrielLandmark(); break;
@@ -4958,7 +5221,7 @@ int main(int argc, char** argv)
     if (opt.showHelp) {
         std::printf(
             "RAW Interactive Real-Time Win32/DX12 Standalone Engine Viewer\n"
-            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, V startle wildlife, E economy +6h/cycle hold, O resolve/poll world event, K cycle hold/faction diplomacy, D cycle 3D dungeon explorer, X toggle/cycle combat skirmish+parry, Q radiant quest/dialogue journal, F5/F8 quicksave/quickload, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
+            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, V startle wildlife, E economy +6h/cycle hold, O resolve/poll world event, K cycle hold/faction diplomacy, D cycle 3D dungeon explorer, X toggle/cycle combat skirmish+parry, Q radiant quest/dialogue journal, F forge/alchemy/enchant, F5/F8 quicksave/quickload, F9/H HUD, F12 BMP screenshot, 1-4 seasons, U fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
             "CLI: [--headless-frames N] [--warp] [--debug] [--width W] [--height H] [--esm <Skyrim.esm>]\n");
         return 0;
     }
@@ -4993,6 +5256,7 @@ int main(int argc, char** argv)
         RawEngineViewer::SkeletonFootIkProbe skelProbe{};
         RawEngineViewer::CombatSkirmishProbe combatProbe{};
         RawEngineViewer::QuestStoryProbe questProbe{};
+        RawEngineViewer::CraftingForgeProbe forgeProbe{};
         bool teleportedToWhiterun = false;
         for (uint32_t f = 0; f < opt.headlessFrames; ++f) {
             if (f == 0u) {
@@ -5011,6 +5275,7 @@ int main(int argc, char** argv)
                 skelProbe       = viewer.RunSkeletonFootIkSelfTest();
                 combatProbe     = viewer.RunCombatSkirmishSelfTest();
                 questProbe      = viewer.RunQuestStorySelfTest();
+                forgeProbe      = viewer.RunCraftingForgeSelfTest();
             }
             if (f == opt.headlessFrames / 2u) {
                 if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {
@@ -5033,7 +5298,7 @@ int main(int argc, char** argv)
 
         RawEngineViewer::HeadlessAudit audit{};
         const bool rbOk = viewer.ReadbackHeadlessAudit(&audit);
-        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), pcss=%s (%.4fms), gtao=%s (main=%.4fms, den=%.4fms), ssr=%s (%.4fms), ae=%s (hist=%.4fms, adapt=%.4fms), cloud=%s (%.4fms), post=%s (%.4fms), prt=%s (%u p, %.4fms), tsr=%s (%ux%u, %.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
+        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), pcss=%s (%.4fms), gtao=%s (main=%.4fms, den=%.4fms), ssr=%s (%.4fms), ae=%s (hist=%.4fms, adapt=%.4fms), cloud=%s (%.4fms), post=%s (%.4fms), prt=%s (%u p, %.4fms), tsr=%s (%ux%u, %.4fms), cau=%s (%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
                     audit.usedMeshShaders ? "AS+MS+PS" : "VS+PS",
                     audit.drawnMeshlets, audit.activeShards, audit.biomesFound,
                     audit.radianceActive ? "ON" : "off", audit.radianceGiMs,
@@ -5050,6 +5315,7 @@ int main(int argc, char** argv)
                     audit.postCinematicActive ? "ON" : "off", audit.postCinematicMs,
                     audit.gpuParticlesActive ? "ON" : "off", audit.gpuParticleCount, audit.gpuParticlesMs,
                     audit.tsrUpscaleActive ? "ON" : "off", audit.tsrOutWidth, audit.tsrOutHeight, audit.tsrUpscaleMs,
+                    audit.waterCausticsActive ? "ON" : "off", audit.waterCausticsMs,
                     audit.overlayActive ? "ON" : "off", audit.overlayMs, audit.hudNonZeroPx,
                     audit.hdrLitPixels, audit.hdrNanInf,
                     audit.dispNonZeroPx, audit.dispMeanLuma, audit.dispStdDevLuma);
@@ -5065,6 +5331,12 @@ int main(int argc, char** argv)
                     questProbe.generatedCount, questProbe.activeCount, questProbe.completedCount,
                     int(questProbe.dialoguePassed), int(questProbe.stageCompleted),
                     questProbe.totalGoldAwarded, int(questProbe.journalJsonValid));
+        std::printf("       Crafting Forge: temper=%d brew=%d enchant=%d bounded=%d (alch=%.1f%% ench=%.1f%%) heroCoupled=%d (dmg=%.1f arm=%.1f) barter=%d finite=%d\n",
+                    int(forgeProbe.temperOk), int(forgeProbe.brewOk), int(forgeProbe.enchantOk),
+                    int(forgeProbe.antiExploitBounded), static_cast<double>(forgeProbe.convergedAlchPct),
+                    static_cast<double>(forgeProbe.convergedEnchPct), int(forgeProbe.heroCoupled),
+                    static_cast<double>(forgeProbe.finalWeaponDmg), static_cast<double>(forgeProbe.finalArmorRating),
+                    int(forgeProbe.barterSpreadValid), int(forgeProbe.allFinite));
         std::printf("       Ecosystem: ignited=%u activeFire=%u burned=%.1fm2 snow=%.1fm3 runoff=%.2fm3 ice=%u peakTemp=%.1fC finite=%d\n",
                     ecoProbe.ignitedCells, ecoProbe.activeFireCells, ecoProbe.burnedAreaM2,
                     ecoProbe.snowVolumeM3, ecoProbe.meltRunoffM3, ecoProbe.blackIceCells,
@@ -5125,6 +5397,8 @@ int main(int argc, char** argv)
         check(audit.tsrUpscaleActive && audit.tsrOutWidth >= opt.width && audit.tsrOutHeight >= opt.height &&
               std::isfinite(audit.tsrUpscaleMs) && audit.tsrUpscaleMs >= 0.0f,
               "Live GPU RAW-TSR Temporal Super-Resolution + RCAS (RawTsrUpscaleHost - 16th GPU Solver) executed cleanly");
+        check(audit.waterCausticsActive && std::isfinite(audit.waterCausticsMs) && audit.waterCausticsMs >= 0.0f,
+              "Live GPU Physical Water Caustics & Underwater God-Rays (RawWaterCausticsHost - 17th GPU Solver) executed cleanly");
         check(skelProbe.evaluatedRigs >= 1u && skelProbe.maxQuatNormErr < 1.0e-4f &&
               skelProbe.footPlanted && skelProbe.xpbdAnchorsFinite && skelProbe.coupledToXpbd,
               "Live 24-Bone Procedural Skeleton Animation + Terrain Foot-IK + XPBD Anchor Coupling passed cleanly");
@@ -5134,6 +5408,9 @@ int main(int argc, char** argv)
         check(questProbe.generatedCount >= 1u && questProbe.dialoguePassed && questProbe.stageCompleted &&
               questProbe.completedCount >= 1u && questProbe.totalGoldAwarded > 0.0 && questProbe.journalJsonValid,
               "Live Radiant Quest & Branching Dialogue Engine (RawQuestStoryEngine) generated, persuaded, completed & exported JSON");
+        check(forgeProbe.temperOk && forgeProbe.brewOk && forgeProbe.enchantOk &&
+              forgeProbe.antiExploitBounded && forgeProbe.heroCoupled && forgeProbe.barterSpreadValid && forgeProbe.allFinite,
+              "Live Anti-Exploit Crafting/Alchemy/Enchanting Forge (RawCraftingInventoryEngine) converged & coupled to Combat Hero");
         check(dungeonProbe.barrowOk && dungeonProbe.iceCavernOk && dungeonProbe.dwemerRuinOk && dungeonProbe.returnedOk &&
               dungeonProbe.navWalkable > 100u && dungeonProbe.astarWaypoints >= 2u && dungeonProbe.walkGrounded,
               "Interactive Procedural 3D Dungeon Explorer cycled all 3 archetypes + interior NavMesh A* + Walk Mode & returned cleanly");

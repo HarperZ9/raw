@@ -9,6 +9,7 @@
 #include "rt_ai_packages.h"
 #include "rt_alchemy_enchant_gmst.h"
 #include "rt_archery_mount_gmst.h"
+#include "rt_camera_world_gmst.h"
 #include "rt_companion_hazard_gmst.h"
 #include "rt_control.h"
 #include "rt_crafting_inventory_gmst.h"
@@ -394,9 +395,10 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
     const std::string cmMsg   = InitCrimeMountGmst(img, refs);
     const std::string ciMsg   = InitCraftingInventoryGmst(img, refs);
     const std::string scMsg   = InitSpellcraftGmst(img, refs);
-    char out[3712];
-    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s",
-                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str(), progMsg.c_str(), aiMsg.c_str(), wrMsg.c_str(), pcMsg.c_str(), ssMsg.c_str(), lmMsg.c_str(), aeMsg.c_str(), chMsg.c_str(), amMsg.c_str(), ssvMsg.c_str(), cmMsg.c_str(), ciMsg.c_str(), scMsg.c_str());
+    const std::string cwMsg   = InitCameraWorldGmst(img, refs);
+    char out[3968];
+    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s",
+                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str(), progMsg.c_str(), aiMsg.c_str(), wrMsg.c_str(), pcMsg.c_str(), ssMsg.c_str(), lmMsg.c_str(), aeMsg.c_str(), chMsg.c_str(), amMsg.c_str(), ssvMsg.c_str(), cmMsg.c_str(), ciMsg.c_str(), scMsg.c_str(), cwMsg.c_str());
     return out;
 }
 
@@ -468,6 +470,7 @@ void WorldSimApplyLivePlanetaryGravity(float gravityMps2) {
 }
 
 void WorldSimRestoreDynamicSettings() {
+    ShutdownCameraWorldGmst();
     ShutdownSpellcraftGmst();
     ShutdownCraftingInventoryGmst();
     ShutdownCrimeMountGmst();

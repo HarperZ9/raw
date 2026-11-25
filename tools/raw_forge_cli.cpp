@@ -17,6 +17,7 @@
 #include "../src/pipeline/RawForgePipeline.h"
 #include "../src/worldgen/RawBsaArchive.h"
 #include "../src/worldgen/RawCombatSandboxEngine.h"
+#include "../src/worldgen/RawCraftingInventoryEngine.h"
 #include "../src/worldgen/RawDungeonGen.h"
 #include "../src/worldgen/RawEsmModelResolver.h"
 #include "../src/worldgen/RawEsmNpcWeatherLoader.h"
@@ -2192,6 +2193,166 @@ bool RunQuestSimAudit() {
     return ok;
 }
 
+bool RunCraftingSimAudit() {
+    using namespace raw::worldgen;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    // 1. 50-Iteration Fortify-Alchemy <-> Fortify-Enchanting Banach Fixed-Point Convergence Proof
+    float lastPotionMag = 0.0f;
+    float lastGearAlch  = 0.0f;
+    float iter50Delta   = 999.0f;
+    bool  loopOk        = false;
+    {
+        RawCraftingInventoryEngine inv(400.0f);
+        ItemDef head{};   head.name = "Circlet";   head.category = ItemCategory::ArmorHead;
+        ItemDef hands{};  hands.name = "Gloves";   hands.category = ItemCategory::ArmorHands;
+        ItemDef ring{};   ring.name = "Gold Ring"; ring.category = ItemCategory::Ring;
+        ItemDef amulet{}; amulet.name = "Amulet";  amulet.category = ItemCategory::Amulet;
+        const uint32_t gearIds[4] = {
+            inv.AddItem(head, 1u), inv.AddItem(hands, 1u),
+            inv.AddItem(ring, 1u), inv.AddItem(amulet, 1u)
+        };
+        for (uint32_t gid : gearIds) inv.EquipItem(gid);
+
+        ItemDef snowberries{};
+        snowberries.name = "Snowberries";
+        snowberries.category = ItemCategory::Ingredient;
+        snowberries.ingredientEffects = {AlchemyEffect::FortifyEnchanting, AlchemyEffect::ResistFire,
+                                         AlchemyEffect::None, AlchemyEffect::None};
+        const uint32_t idSnow = inv.AddItem(snowberries, 100u);
+
+        ItemDef blueButterfly{};
+        blueButterfly.name = "Blue Butterfly Wing";
+        blueButterfly.category = ItemCategory::Ingredient;
+        blueButterfly.ingredientEffects = {AlchemyEffect::FortifyEnchanting, AlchemyEffect::DamageHealth,
+                                           AlchemyEffect::None, AlchemyEffect::None};
+        const uint32_t idWing = inv.AddItem(blueButterfly, 100u);
+
+        float prevMag = 0.0f;
+        bool allFinite = true;
+        for (int iter = 0; iter < 50; ++iter) {
+            const AlchemyBrewResult brew = inv.BrewPotion({idSnow, idWing}, 100.0f, 0.0f);
+            if (!brew.succeeded || brew.matchedEffects.empty()) {
+                allFinite = false;
+                break;
+            }
+            const float potMag = brew.matchedEffects.front().magnitude;
+            iter50Delta   = std::fabs(potMag - prevMag);
+            prevMag       = potMag;
+            lastPotionMag = potMag;
+            for (uint32_t gid : gearIds) {
+                inv.EnchantItem(gid, SoulGemTier::Grand, AlchemyEffect::FortifyAlchemy, 100.0f, 1.0f, potMag);
+            }
+            lastGearAlch = inv.ComputeEquippedCombatStats().fortifyAlchemyPct;
+            if (!std::isfinite(potMag) || !std::isfinite(lastGearAlch)) {
+                allFinite = false;
+                break;
+            }
+        }
+        loopOk = allFinite &&
+                 (lastPotionMag > 15.0f) && (lastPotionMag < kMaxFortifyEnchantPotionPct) &&
+                 (lastGearAlch > 30.0f) && (lastGearAlch < kMaxFortifyAlchemyTotalPct) &&
+                 (iter50Delta < 1.0e-3f);
+    }
+
+    // 2. 4-Effect Multi-Ingredient Alchemy Potion Brew
+    bool brewOk = false;
+    size_t matchedEffectCount = 0u;
+    float potionVal = 0.0f;
+    {
+        RawCraftingInventoryEngine inv(300.0f);
+        ItemDef i1{}; i1.name = "Wheat"; i1.category = ItemCategory::Ingredient;
+        i1.ingredientEffects = {AlchemyEffect::RestoreHealth, AlchemyEffect::ResistFrost,
+                                AlchemyEffect::RestoreStamina, AlchemyEffect::None};
+        ItemDef i2{}; i2.name = "Blue Mountain Flower"; i2.category = ItemCategory::Ingredient;
+        i2.ingredientEffects = {AlchemyEffect::RestoreHealth, AlchemyEffect::FortifySmithing,
+                                AlchemyEffect::ResistFrost, AlchemyEffect::None};
+        ItemDef i3{}; i3.name = "Purple Mountain Flower"; i3.category = ItemCategory::Ingredient;
+        i3.ingredientEffects = {AlchemyEffect::RestoreStamina, AlchemyEffect::FortifySmithing,
+                                AlchemyEffect::None, AlchemyEffect::None};
+        const uint32_t a = inv.AddItem(i1, 2u);
+        const uint32_t b = inv.AddItem(i2, 2u);
+        const uint32_t c = inv.AddItem(i3, 2u);
+        const AlchemyBrewResult r = inv.BrewPotion({a, b, c}, 85.0f, 20.0f);
+        matchedEffectCount = r.matchedEffects.size();
+        potionVal          = r.potionValueG;
+        brewOk = r.succeeded && (matchedEffectCount >= 3u) && (potionVal > 0.0f);
+    }
+
+    // 3. Smithing Temper Ceiling, Soul-Gem Charge Tradeoff, Encumbrance Tiers & Coupled Barter
+    RawCraftingInventoryEngine inv(200.0f);
+    ItemDef swordA{};
+    swordA.name = "Ebony Sword A"; swordA.category = ItemCategory::Weapon;
+    swordA.material = MaterialTier::Ebony; swordA.weight = 16.0f;
+    swordA.baseDamage = 40.0f; swordA.baseValueGold = 720.0f;
+    const uint32_t idLow = inv.AddItem(swordA, 1u);
+
+    ItemDef swordB = swordA;
+    swordB.name = "Ebony Sword B";
+    const uint32_t idHigh = inv.AddItem(swordB, 1u);
+
+    const TemperResult tLow  = inv.TemperItem(idLow,  25.0f, false, 0.0f);
+    const TemperResult tHigh = inv.TemperItem(idHigh, 100.0f, true, 50.0f);
+    const EnchantResult eManyUses  = inv.EnchantItem(idLow,  SoulGemTier::Grand, AlchemyEffect::ShockDamage, 80.0f, 0.20f);
+    const EnchantResult eHighPower = inv.EnchantItem(idHigh, SoulGemTier::Grand, AlchemyEffect::ShockDamage, 80.0f, 0.95f);
+
+    ItemDef plate{};
+    plate.name = "Ebony Plate"; plate.category = ItemCategory::ArmorChest;
+    plate.material = MaterialTier::Ebony; plate.weight = 48.0f; plate.baseArmor = 160.0f;
+    const uint32_t idPlate = inv.AddItem(plate, 1u);
+    inv.EquipItem(idHigh);
+    inv.EquipItem(idPlate);
+
+    const EncumbranceReport encLight = inv.EvaluateEncumbrance();
+    const EquippedCombatStats cstats = inv.ComputeEquippedCombatStats();
+    CombatActor hero{};
+    cstats.ApplyToCombatActor(hero);
+
+    ItemDef ingot{};
+    ingot.name = "Iron Ingot"; ingot.category = ItemCategory::Ingot; ingot.weight = 25.0f;
+    inv.AddItem(ingot, 8u);
+    const EncumbranceReport encOver = inv.EvaluateEncumbrance();
+
+    RawSettlementSim settle(6101u);
+    RawFactionDiplomacy dip;
+    dip.AdjustHoldReputation(HoldId::Whiterun, 50.0f);
+    const ItemDef& highRef = inv.FindSlot(idHigh)->item;
+    const float buyPrice   = EvaluateBarterPrice(highRef, true,  60.0f, HoldId::Whiterun, &settle, &dip);
+    const float sellPrice  = EvaluateBarterPrice(highRef, false, 60.0f, HoldId::Whiterun, &settle, &dip);
+
+    const bool craftBarterOk =
+        tLow.succeeded && tHigh.succeeded && (tHigh.effectiveStat > tLow.effectiveStat) && (tHigh.effectiveStat < 85.0f) &&
+        eManyUses.succeeded && eHighPower.succeeded &&
+        (eManyUses.estimatedUses > eHighPower.estimatedUses) && (eHighPower.magnitude > eManyUses.magnitude) &&
+        (encLight.tier == EncumbranceTier::Light) && (encOver.tier == EncumbranceTier::Overencumbered) &&
+        (encOver.moveSpeedMult < encLight.moveSpeedMult) &&
+        (hero.baseAttackDamage > 70.0f) && (hero.attackElement == DamageElement::Shock) &&
+        (sellPrice < buyPrice) && (sellPrice > 0.0f);
+
+    const double totalMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    const bool ok = loopOk && brewOk && craftBarterOk;
+
+    std::printf(
+        "[INFO] Anti-Exploit Crafting, Enchanting, Encumbrance & Barter Audit (%.2f ms):\n"
+        "  1. 50-Iter Anti-Loop   : fortEnch=%.2f%% (<%.0f%%) fortAlch=%.2f%% (<%.0f%%) delta50=%.2e [%s]\n"
+        "  2. 4-Effect Alchemy    : matchedEffects=%zu value=%.0fg [%s]\n"
+        "  3. Temper & Soul-Gem   : temper %.1f<%.1f (<85) uses %u>%u mag %.1f<%.1f [%s]\n"
+        "  4. Encumbrance & Barter: speed %.2f->%.2f heroDmg=%.1f buy=%.0fg sell=%.0fg [%s]\n"
+        "[%s] crafting-sim: anti-exploit crafting/alchemy/enchant/encumbrance/barter audit %s (%.2f ms)\n",
+        totalMs,
+        lastPotionMag, kMaxFortifyEnchantPotionPct, lastGearAlch, kMaxFortifyAlchemyTotalPct, iter50Delta,
+        loopOk ? "PASS" : "FAIL",
+        matchedEffectCount, potionVal, brewOk ? "PASS" : "FAIL",
+        tLow.effectiveStat, tHigh.effectiveStat, eManyUses.estimatedUses, eHighPower.estimatedUses,
+        eManyUses.magnitude, eHighPower.magnitude,
+        (tLow.succeeded && tHigh.succeeded && eManyUses.estimatedUses > eHighPower.estimatedUses) ? "PASS" : "FAIL",
+        encLight.moveSpeedMult, encOver.moveSpeedMult, hero.baseAttackDamage, buyPrice, sellPrice,
+        craftBarterOk ? "PASS" : "FAIL",
+        ok ? "PASS" : "FAIL", ok ? "PASS" : "FAIL", totalMs);
+    return ok;
+}
+
 bool ParseCellXY(const std::string& s, int32_t* outX, int32_t* outY) {
     const size_t comma = s.find(',');
     if (comma == std::string::npos || comma == 0u || comma + 1u >= s.size()) return false;
@@ -2237,6 +2398,7 @@ void PrintUsage() {
         "  raw_forge_cli --skeleton-ik                             24-bone humanoid FK/IK/slope-FootIK/XPBD/64-rig audit\n"
         "  raw_forge_cli --combat-sim                              8v8 parry/poise/weather-synergy/ballistic-LOS combat audit\n"
         "  raw_forge_cli --quest-sim                               Quest DAG, branching dialogue & 4-system radiant story audit\n"
+        "  raw_forge_cli --crafting-sim                            Anti-exploit crafting, alchemy, enchanting & barter audit\n"
         "  raw_forge_cli --validate-all [dir]                      Run all 4 procedural pipelines + quality gates\n"
         "Options:\n"
         "  --seed <N>         Deterministic RNG seed (default: 202607)\n"
@@ -2302,6 +2464,7 @@ int main(int argc, char** argv) {
     bool runSkeletonIk      = false;
     bool runCombatSim       = false;
     bool runQuestSim        = false;
+    bool runCraftingSim     = false;
     bool writeGeometry      = true;
     uint32_t seed       = 202607u;
     float latitudeDeg   = 60.0f;
@@ -2470,6 +2633,8 @@ int main(int argc, char** argv) {
             runCombatSim = true;
         } else if (arg == "--quest-sim") {
             runQuestSim = true;
+        } else if (arg == "--crafting-sim") {
+            runCraftingSim = true;
         } else if (arg == "--validate-all") {
             runValidateAll = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -2497,10 +2662,11 @@ int main(int argc, char** argv) {
     if (!runValidateAll && !runEsmMeta && !runPhysicsProbe && !runTamrielStream && !runNavMeshAudit &&
         !runEcosystemSim && !runWildlifeSim && !runSettlementSim && !runEventsSim && !runDiplomacySim &&
         !runWorldSnapshot && !runDungeonGen && !runSkeletonIk && !runCombatSim && !runQuestSim &&
+        !runCraftingSim &&
         floraDir.empty() && dioramaDir.empty() && almanacDir.empty() &&
         materialsDir.empty() && texturesDir.empty() && esmPath.empty() && esmScenePath.empty() &&
         bsaListPath.empty() && nifPath.empty() && bsaNifArchive.empty() && ddsPath.empty() && bsaDdsArchive.empty()) {
-        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, --events-sim, --diplomacy-sim, --world-snapshot, --dungeon-gen, --skeleton-ik, --combat-sim, --quest-sim, or --validate-all).\n");
+        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, --events-sim, --diplomacy-sim, --world-snapshot, --dungeon-gen, --skeleton-ik, --combat-sim, --quest-sim, --crafting-sim, or --validate-all).\n");
         PrintUsage();
         return 2;
     }
@@ -2649,6 +2815,10 @@ int main(int argc, char** argv) {
 
     if (runQuestSim) {
         if (!RunQuestSimAudit()) allOk = false;
+    }
+
+    if (runCraftingSim) {
+        if (!RunCraftingSimAudit()) allOk = false;
     }
 
     if (runValidateAll) {

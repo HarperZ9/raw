@@ -37,6 +37,7 @@
 #include "rt_engine_health.h"
 #include "rt_forensics.h"
 #include "rt_frame_governor.h"
+#include "rt_hotkey_router.h"
 #include "rt_live_config.h"
 #include "rt_live_dashboard.h"
 #include "rt_memory_guards.h"
@@ -153,6 +154,7 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     raw::rt::ProfilePresetsOnPresent();
     raw::rt::ShaderHotReloadOnPresent();
     raw::rt::LiveDashboardOnPresent();
+    raw::rt::HotkeyRouterOnPresent();
     raw::rt::ConsoleDiagOnPresent();
     {
         static LARGE_INTEGER s_qpcFreq{};
@@ -411,6 +413,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     Log("%s", raw::rt::ProfilePresetsInit().c_str());
     Log("%s", raw::rt::ShaderHotReloadInit(g_dir + "raw_shaders").c_str());
     Log("%s", raw::rt::LiveDashboardInit(g_out).c_str());
+    Log("%s", raw::rt::HotkeyRouterInit().c_str());
     Log("%s", raw::rt::ConsoleDiagInit(g_out).c_str());
     Log("%s", raw::rt::BootSelfCheckInit(g_dir, g_out).c_str());
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
@@ -442,6 +445,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
     }
     raw::rt::BootSelfCheckShutdown();
     raw::rt::ConsoleDiagShutdown();
+    raw::rt::HotkeyRouterShutdown();
     raw::rt::LiveDashboardShutdown();
     raw::rt::ShaderHotReloadShutdown();
     raw::rt::ProfilePresetsShutdown();

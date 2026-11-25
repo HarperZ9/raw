@@ -310,7 +310,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         const bool postCinOk = m->InitPostCinematic();
         const bool particlesOk = m->InitGpuParticles();
         const bool tsrOk = m->InitTsrUpscale();
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s, Gtao=%s, Ssr=%s, AutoExposure=%s, CloudRaymarch=%s, PostCinematic=%s, GpuParticles(16K)=%s, TsrUpscale=%s",
+        const bool causticsOk = m->InitWaterCaustics();
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s, Gtao=%s, Ssr=%s, AutoExposure=%s, CloudRaymarch=%s, PostCinematic=%s, GpuParticles(16K)=%s, TsrUpscale=%s, WaterCaustics=%s",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
                terrainOk ? "READY" : "off",
                m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
@@ -331,7 +332,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                cloudOk ? "READY" : "off",
                postCinOk ? "READY" : "off",
                particlesOk ? "READY" : "off",
-               tsrOk ? "READY" : "off");
+               tsrOk ? "READY" : "off",
+               causticsOk ? "READY" : "off");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
         {
             const auto& matReg = raw::materials::DefaultMaterialRegistry();
@@ -1552,6 +1554,75 @@ void D3D12Bridge::Impl::ShutdownTsrUpscale()
     tsrUpscaleReady      = false;
 }
 
+bool D3D12Bridge::Impl::InitWaterCaustics()
+{
+    ShutdownWaterCaustics();
+    if (!dev12) return false;
+    waterCaustics = std::make_unique<RawWaterCausticsHost>();
+    WaterCausticsDesc desc{};
+    desc.initialWidth  = 512u;
+    desc.initialHeight = 512u;
+    std::string caustErr;
+    if (!waterCaustics->Init(dev12.Get(), desc, &caustErr)) {
+        log("[WaterCaustics] off: %s", caustErr.c_str());
+        waterCaustics.reset();
+        return false;
+    }
+    UINT64 tsFreq = 0;
+    if (queue && SUCCEEDED(queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+        waterCaustics->SetTimestampFrequency(tsFreq);
+    }
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&waterCausticsAlloc[i])))) {
+            ShutdownWaterCaustics();
+            return false;
+        }
+    }
+    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, waterCausticsAlloc[0].Get(), nullptr, IID_PPV_ARGS(&waterCausticsList))) ||
+        FAILED(waterCausticsList->Close()) ||
+        FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&waterCausticsFence)))) {
+        ShutdownWaterCaustics();
+        return false;
+    }
+    waterCausticsEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!waterCausticsEvent) {
+        ShutdownWaterCaustics();
+        return false;
+    }
+    waterCausticsReady = true;
+    log("[WaterCaustics] GPU Physical Water Caustics + Underwater God-Rays ready (%ux%u RGBA16F)",
+        desc.initialWidth, desc.initialHeight);
+    return true;
+}
+
+void D3D12Bridge::Impl::ShutdownWaterCaustics()
+{
+    if (waterCausticsFence && waterCausticsEvent && waterCausticsFenceVal > 0) {
+        if (waterCausticsFence->GetCompletedValue() < waterCausticsFenceVal) {
+            waterCausticsFence->SetEventOnCompletion(waterCausticsFenceVal, waterCausticsEvent);
+            WaitForSingleObject(waterCausticsEvent, 3000);
+        }
+    }
+    waterCausticsList.Reset();
+    for (UINT i = 0; i < kRing; ++i) {
+        waterCausticsAlloc[i].Reset();
+        waterCausticsSlotVal[i] = 0;
+    }
+    waterCausticsFence.Reset();
+    if (waterCausticsEvent) {
+        CloseHandle(waterCausticsEvent);
+        waterCausticsEvent = nullptr;
+    }
+    if (waterCaustics) {
+        waterCaustics->Shutdown();
+        waterCaustics.reset();
+    }
+    waterCausticsFenceVal   = 0;
+    waterCausticsSlot       = 0;
+    waterCausticsStepFrames = 0;
+    waterCausticsReady      = false;
+}
+
 void D3D12Bridge::Shutdown()
 {
     if (!m) return;
@@ -1560,6 +1631,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->ShutdownWaterCaustics();
     m->ShutdownTsrUpscale();
     m->ShutdownGpuParticles();
     m->ShutdownPostCinematic();

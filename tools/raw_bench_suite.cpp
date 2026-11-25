@@ -1,5 +1,5 @@
 // tools/raw_bench_suite.cpp: Studio-Grade Automated GPU/CPU Benchmark & Visual Invariant Suite for RAW.
-// Benchmarks all 19 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
+// Benchmarks all 20 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
 //   1. GPU 64^3 Navier-Stokes Fire/Smoke + 256^2 SWE Water (RawFluidSimHost)
 //   2. GPU 4-Cascade Radiance Cascades GI (RawRadianceHost)
 //   3. Procedural PBR Texture Forge (RawTextureForge, all 8 seamless PBR sets)
@@ -19,6 +19,7 @@
 //  17. GPU Cinematic Post-Process: Tile-Max Motion Blur + Depth-Aware Hexagonal Bokeh DoF (RawPostCinematicHost)
 //  18. GPU 16,384-Particle 3D Physics & Screen-Space Additive Splat Engine (RawGpuParticlesHost)
 //  19. GPU RAW-TSR Temporal Super-Resolution (2x 640x360 -> 1280x720) & RCAS Sharpening (RawTsrUpscaleHost)
+//  20. GPU Physical Water Caustics & 16-Step Henyey-Greenstein Underwater God-Rays (RawWaterCausticsHost)
 //
 // CLI:
 //   raw_bench_suite [--warp] [--quick] [--frames N] [--json <path>] [--esm <path>] [--bsa <path>] [--no-debug-layer]
@@ -50,6 +51,7 @@
 #include "../src/d3d12_bridge/RawPostCinematicHost.h"
 #include "../src/d3d12_bridge/RawGpuParticlesHost.h"
 #include "../src/d3d12_bridge/RawTsrUpscaleHost.h"
+#include "../src/d3d12_bridge/RawWaterCausticsHost.h"
 #include "../src/materials/RawTextureForge.h"
 #include "../src/audio/RawAudioDsp.h"
 #include "../src/worldgen/RawDestructionEngine.h"
@@ -1127,6 +1129,27 @@ struct TsrUpscaleBenchResult {
     float       reactiveSparkR   = 0.0f;
     float       rcasGradBoostPct = 0.0f;
     uint32_t    nanInfCount      = 0u;
+    std::string note;
+};
+
+struct WaterCausticsBenchResult {
+    bool        passed         = false;
+    Percentiles totalGpuMs{};
+    Percentiles cpuRecordMs{};
+    uint32_t    width          = 512u;
+    uint32_t    height         = 512u;
+    float       hostCausticsMs = 0.0f;
+    float       hostRaysMs     = 0.0f;
+    float       flatMaxErr     = 1.0f;
+    float       peakFocus      = 0.0f;
+    float       meanEnergy     = 0.0f;
+    float       rbMeanDiff     = 0.0f;
+    float       rbMaxDiff      = 0.0f;
+    float       redRetention   = 1.0f;
+    float       blueRetention  = 0.0f;
+    float       sunwardRatio   = 0.0f;
+    float       aboveSkyMax    = 1.0f;
+    uint32_t    nanInfCount    = 0u;
     std::string note;
 };
 
@@ -4744,6 +4767,250 @@ TsrUpscaleBenchResult RunTsrUpscaleBenchmark(BenchDx12Rig& rig, uint32_t warmupF
 }
 
 // ----------------------------------------------------------------------------
+// 20. GPU Physical Water Caustics & Underwater Volumetric God-Rays (RawWaterCausticsHost)
+// ----------------------------------------------------------------------------
+WaterCausticsBenchResult RunWaterCausticsBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames, uint32_t measuredFrames)
+{
+    WaterCausticsBenchResult res{};
+    constexpr uint32_t kRes = 512u;
+    res.width  = kRes;
+    res.height = kRes;
+
+    raw::bridge::RawWaterCausticsHost host;
+    raw::bridge::WaterCausticsDesc desc{};
+    desc.initialWidth  = kRes;
+    desc.initialHeight = kRes;
+    std::string err;
+    if (!host.Init(rig.dev.Get(), desc, &err)) {
+        res.note = "RawWaterCausticsHost::Init failed: " + err;
+        return res;
+    }
+    host.SetTimestampFrequency(rig.tsFreqHz);
+
+    auto runOnce = [&](const raw::bridge::WaterCausticsParams& wp,
+                       std::vector<float>* outCaustics,
+                       std::vector<float>* outRays) -> bool {
+        if (!rig.BeginFrame()) return false;
+        const bool ok = host.Execute(rig.cmd.Get(), kRes, kRes, wp);
+        if (!rig.FlushAndWait() || !ok) return false;
+        uint32_t rw = 0u, rh = 0u, rd = 0u;
+        if (outCaustics) {
+            if (!rig.ReadbackRgba16Tex(host.GetCausticsResource(), host.CausticsResourceState(), rw, rh, rd, *outCaustics)) {
+                return false;
+            }
+            for (float v : *outCaustics) {
+                if (!std::isfinite(v)) ++res.nanInfCount;
+            }
+        }
+        if (outRays) {
+            if (!rig.ReadbackRgba16Tex(host.GetUnderwaterRaysResource(), host.UnderwaterRaysResourceState(), rw, rh, rd, *outRays)) {
+                return false;
+            }
+            for (float v : *outRays) {
+                if (!std::isfinite(v)) ++res.nanInfCount;
+            }
+        }
+        return true;
+    };
+
+    const size_t totalPx = static_cast<size_t>(kRes) * kRes;
+
+    // 1) Flat water unit irradiance check
+    raw::bridge::WaterCausticsParams pFlat{};
+    pFlat.timeSec          = 0.0f;
+    pFlat.waveAmp          = 0.0f;
+    pFlat.bedDepthM        = 2.4f;
+    pFlat.domainSizeM      = 8.0f;
+    pFlat.sunDir[0]        = 0.42f;
+    pFlat.sunDir[1]        = 0.82f;
+    pFlat.sunDir[2]        = 0.39f;
+    pFlat.sunColor[0]      = 1.0f;
+    pFlat.sunColor[1]      = 1.0f;
+    pFlat.sunColor[2]      = 1.0f;
+    pFlat.sunIntensity     = 1.0f;
+    pFlat.absorptionRGB[0] = 0.0f;
+    pFlat.absorptionRGB[1] = 0.0f;
+    pFlat.absorptionRGB[2] = 0.0f;
+    pFlat.dispersionScale  = 1.0f;
+
+    std::vector<float> flatBuf;
+    if (!runOnce(pFlat, &flatBuf, nullptr)) {
+        res.note = "Flat water caustics pass failed";
+        return res;
+    }
+    res.flatMaxErr = 0.0f;
+    for (size_t i = 0u; i < totalPx * 4u; ++i) {
+        res.flatMaxErr = std::max(res.flatMaxErr, std::fabs(flatBuf[i] - 1.0f));
+    }
+
+    // 2) Wavy surface Jacobian focusing (>2.0x), energy conservation (within 15%) & Cauchy RGB dispersion
+    raw::bridge::WaterCausticsParams pWavy = pFlat;
+    pWavy.timeSec = 1.35f;
+    pWavy.waveAmp = 0.195f;
+    std::vector<float> wavyBuf;
+    if (!runOnce(pWavy, &wavyBuf, nullptr)) {
+        res.note = "Wavy water caustics pass failed";
+        return res;
+    }
+    double sumG = 0.0, sumAbsRB = 0.0;
+    float  peakF = 0.0f, maxRB = 0.0f;
+    for (size_t i = 0u; i < totalPx; ++i) {
+        const float r = wavyBuf[i * 4u + 0u];
+        const float g = wavyBuf[i * 4u + 1u];
+        const float b = wavyBuf[i * 4u + 2u];
+        sumG += g;
+        peakF = std::max(peakF, g);
+        const float diff = std::fabs(r - b);
+        sumAbsRB += diff;
+        maxRB = std::max(maxRB, diff);
+    }
+    res.peakFocus  = peakF;
+    res.meanEnergy = static_cast<float>(sumG / static_cast<double>(totalPx));
+    res.rbMeanDiff = static_cast<float>(sumAbsRB / static_cast<double>(totalPx));
+    res.rbMaxDiff  = maxRB;
+
+    // 3) Beer-Lambert spectral extinction: shallow 1m vs deep 6m (red attenuates much faster than blue)
+    raw::bridge::WaterCausticsParams pShallow = pWavy;
+    pShallow.bedDepthM        = 1.0f;
+    pShallow.absorptionRGB[0] = 0.38f;
+    pShallow.absorptionRGB[1] = 0.065f;
+    pShallow.absorptionRGB[2] = 0.022f;
+    raw::bridge::WaterCausticsParams pDeep = pShallow;
+    pDeep.bedDepthM = 6.0f;
+
+    std::vector<float> shallowBuf, deepBuf;
+    if (!runOnce(pShallow, &shallowBuf, nullptr) || !runOnce(pDeep, &deepBuf, nullptr)) {
+        res.note = "Beer-Lambert depth caustics pass failed";
+        return res;
+    }
+    auto meanChan = [&](const std::vector<float>& buf, uint32_t ch) -> double {
+        double s = 0.0;
+        for (size_t i = 0u; i < totalPx; ++i) s += buf[i * 4u + ch];
+        return s / static_cast<double>(totalPx);
+    };
+    const double sR = meanChan(shallowBuf, 0u);
+    const double sG = meanChan(shallowBuf, 1u);
+    const double sB = meanChan(shallowBuf, 2u);
+    const double dR = meanChan(deepBuf, 0u);
+    const double dG = meanChan(deepBuf, 1u);
+    const double dB = meanChan(deepBuf, 2u);
+    res.redRetention  = static_cast<float>(dR / std::max(sR, 1.0e-6));
+    res.blueRetention = static_cast<float>(dB / std::max(sB, 1.0e-6));
+
+    // 4) Underwater 16-step Henyey-Greenstein sun-shafts: sunward vs anti-solar + above-water zero check
+    raw::bridge::WaterCausticsParams pSun{};
+    pSun.timeSec          = 1.35f;
+    pSun.waveAmp          = 0.195f;
+    pSun.bedDepthM        = 2.4f;
+    pSun.domainSizeM      = 8.0f;
+    pSun.sunDir[0]        = 0.0f;   pSun.sunDir[1]     = 0.60f;    pSun.sunDir[2]     = 0.80f;
+    pSun.sunColor[0]      = 1.0f;   pSun.sunColor[1]   = 0.96f;    pSun.sunColor[2]   = 0.88f;
+    pSun.sunIntensity     = 3.0f;
+    pSun.absorptionRGB[0] = 0.38f;  pSun.absorptionRGB[1] = 0.065f; pSun.absorptionRGB[2] = 0.022f;
+    pSun.scatterCoeff     = 0.065f;
+    pSun.mieG             = 0.78f;
+    pSun.camPos[0]        = 0.0f;   pSun.camPos[1]     = -2.5f;    pSun.camPos[2]     = 0.0f;
+    pSun.waterSurfaceY    = 0.0f;
+    pSun.camRight[0]      = 1.0f;   pSun.camRight[1]   = 0.0f;     pSun.camRight[2]   = 0.0f;
+    pSun.camUp[0]         = 0.0f;   pSun.camUp[1]      = 0.96825f; pSun.camUp[2]      = -0.25f;
+    pSun.camForward[0]    = 0.0f;   pSun.camForward[1] = 0.25f;    pSun.camForward[2] = 0.96825f;
+    pSun.fovYDeg          = 60.0f;
+    pSun.maxRayDistM      = 24.0f;
+    pSun.shaftIntensity   = 2.5f;
+    pSun.frameIndex       = 1u;
+
+    raw::bridge::WaterCausticsParams pAnti = pSun;
+    pAnti.camRight[0]   = -1.0f;
+    pAnti.camUp[2]      = 0.25f;
+    pAnti.camForward[2] = -0.96825f;
+
+    raw::bridge::WaterCausticsParams pAbove = pSun;
+    pAbove.camPos[1]     = 3.0f;
+    pAbove.camForward[1] = 0.76604f; pAbove.camForward[2] = 0.64279f;
+    pAbove.camUp[1]      = 0.64279f; pAbove.camUp[2]      = -0.76604f;
+
+    std::vector<float> sunBuf, antiBuf, aboveBuf;
+    if (!runOnce(pSun, nullptr, &sunBuf) ||
+        !runOnce(pAnti, nullptr, &antiBuf) ||
+        !runOnce(pAbove, nullptr, &aboveBuf)) {
+        res.note = "Underwater shafts invariant pass failed";
+        return res;
+    }
+    auto meanLuma = [&](const std::vector<float>& buf) -> double {
+        double s = 0.0;
+        for (size_t i = 0u; i < totalPx; ++i) {
+            s += 0.2126 * buf[i * 4u + 0u] + 0.7152 * buf[i * 4u + 1u] + 0.0722 * buf[i * 4u + 2u];
+        }
+        return s / static_cast<double>(totalPx);
+    };
+    const double sunLuma  = meanLuma(sunBuf);
+    const double antiLuma = meanLuma(antiBuf);
+    res.sunwardRatio = static_cast<float>(sunLuma / std::max(antiLuma, 1.0e-6));
+    res.aboveSkyMax  = 0.0f;
+    for (size_t i = 0u; i < totalPx; ++i) {
+        res.aboveSkyMax = std::max(res.aboveSkyMax, std::max(aboveBuf[i * 4u + 0u],
+                                   std::max(aboveBuf[i * 4u + 1u], aboveBuf[i * 4u + 2u])));
+    }
+
+    // 5) Steady-state 512x512 GPU timing benchmark (cs_caustics_trace + cs_underwater_rays)
+    std::vector<double> gpuSamples, cpuSamples;
+    gpuSamples.reserve(measuredFrames);
+    cpuSamples.reserve(measuredFrames);
+
+    raw::bridge::WaterCausticsParams pBench = pSun;
+    for (uint32_t f = 0u; f < warmupFrames + measuredFrames; ++f) {
+        pBench.timeSec    = 1.0f + static_cast<float>(f) * (1.0f / 60.0f);
+        pBench.frameIndex = f;
+        if (!rig.BeginFrame()) {
+            res.note = "BeginFrame failed in WaterCaustics timing loop";
+            return res;
+        }
+        const auto c0 = Clock::now();
+        rig.MarkTimestamp(0u);
+        host.Execute(rig.cmd.Get(), kRes, kRes, pBench);
+        rig.MarkTimestamp(1u);
+        rig.ResolveTimestamps(0u, 2u);
+        const auto c1 = Clock::now();
+        if (!rig.FlushAndWait()) {
+            res.note = "FlushAndWait failed in WaterCaustics timing loop";
+            return res;
+        }
+        if (f >= warmupFrames) {
+            double gMs = 0.0;
+            rig.ReadTimestampRangeMs(0u, 1u, gMs);
+            gpuSamples.push_back(gMs);
+            cpuSamples.push_back(ElapsedMs(c0, c1));
+        }
+    }
+
+    res.totalGpuMs     = ComputePercentiles(gpuSamples);
+    res.cpuRecordMs    = ComputePercentiles(cpuSamples);
+    res.hostCausticsMs = host.HasValidTiming() ? host.GetLastCausticsMs() : 0.0f;
+    res.hostRaysMs     = host.HasValidTiming() ? host.GetLastRaysMs() : 0.0f;
+
+    const bool optOk = (res.nanInfCount == 0u) &&
+                       (res.flatMaxErr < 2.0e-3f) &&
+                       (res.peakFocus > 2.0f) &&
+                       (res.meanEnergy >= 0.85f && res.meanEnergy <= 1.15f) &&
+                       (res.rbMeanDiff > 0.025f && res.rbMaxDiff > 0.20f) &&
+                       (sR < sG && sG < sB && dR < dG && dG < dB) &&
+                       (res.redRetention < res.blueRetention * 0.35f) &&
+                       (res.sunwardRatio > 2.5f) &&
+                       (res.aboveSkyMax < 1.0e-5f);
+    const bool budgetOk = rig.isWarp ? true : (res.totalGpuMs.mean < 0.06);
+    res.passed = optOk && budgetOk;
+    if (!optOk) {
+        res.note = "Water caustics/dispersion/Beer-Lambert/god-rays invariant failed";
+    } else if (!budgetOk) {
+        res.note = "HW GPU 512x512 Water Caustics + God-Rays mean exceeded 0.06 ms budget";
+    } else {
+        res.note = rig.isWarp ? "WARP 512x512 Snell caustics, Beer-Lambert & underwater shafts PASS"
+                              : "HW GPU < 0.06 ms & 512x512 Snell caustics/god-rays PASS";
+    }
+    return res;
+}
+
+// ----------------------------------------------------------------------------
 // JSON Serializer & Console Scorecard Printer
 // ----------------------------------------------------------------------------
 void WriteBenchJson(const std::string& path,
@@ -4771,7 +5038,8 @@ void WriteBenchJson(const std::string& path,
                     const CloudRaymarchBenchResult& cloudRaymarch,
                     const PostCinematicBenchResult& postCinematic,
                     const GpuParticlesBenchResult& gpuParticles,
-                    const TsrUpscaleBenchResult& tsrUpscale)
+                    const TsrUpscaleBenchResult& tsrUpscale,
+                    const WaterCausticsBenchResult& waterCaustics)
 {
     std::ostringstream os;
     os << std::fixed << std::setprecision(4);
@@ -5134,6 +5402,28 @@ void WriteBenchJson(const std::string& path,
     os << "      \"rcasGradBoostPct\": " << tsrUpscale.rcasGradBoostPct << ",\n";
     os << "      \"nanInfCount\": " << tsrUpscale.nanInfCount << ",\n";
     os << "      \"note\": \"" << JsonEscape(tsrUpscale.note) << "\"\n";
+    os << "    },\n";
+
+    // 20. GPU Physical Water Caustics & Underwater Volumetric God-Rays
+    os << "    \"waterCaustics\": {\n";
+    os << "      \"passed\": " << (waterCaustics.passed ? "true" : "false") << ",\n";
+    os << "      \"width\": " << waterCaustics.width << ",\n";
+    os << "      \"height\": " << waterCaustics.height << ",\n";
+    os << "      \"totalGpuMs\": "; pctObj(waterCaustics.totalGpuMs); os << ",\n";
+    os << "      \"cpuRecordMs\": "; pctObj(waterCaustics.cpuRecordMs); os << ",\n";
+    os << "      \"hostCausticsMs\": " << waterCaustics.hostCausticsMs << ",\n";
+    os << "      \"hostRaysMs\": " << waterCaustics.hostRaysMs << ",\n";
+    os << "      \"flatMaxErr\": " << waterCaustics.flatMaxErr << ",\n";
+    os << "      \"peakFocus\": " << waterCaustics.peakFocus << ",\n";
+    os << "      \"meanEnergy\": " << waterCaustics.meanEnergy << ",\n";
+    os << "      \"rbMeanDiff\": " << waterCaustics.rbMeanDiff << ",\n";
+    os << "      \"rbMaxDiff\": " << waterCaustics.rbMaxDiff << ",\n";
+    os << "      \"redRetention\": " << waterCaustics.redRetention << ",\n";
+    os << "      \"blueRetention\": " << waterCaustics.blueRetention << ",\n";
+    os << "      \"sunwardRatio\": " << waterCaustics.sunwardRatio << ",\n";
+    os << "      \"aboveSkyMax\": " << waterCaustics.aboveSkyMax << ",\n";
+    os << "      \"nanInfCount\": " << waterCaustics.nanInfCount << ",\n";
+    os << "      \"note\": \"" << JsonEscape(waterCaustics.note) << "\"\n";
     os << "    }\n";
 
     os << "  }\n";
@@ -5169,7 +5459,8 @@ void PrintScorecard(const BenchDx12Rig& rig,
                     const CloudRaymarchBenchResult& cloudRaymarch,
                     const PostCinematicBenchResult& postCinematic,
                     const GpuParticlesBenchResult& gpuParticles,
-                    const TsrUpscaleBenchResult& tsrUpscale)
+                    const TsrUpscaleBenchResult& tsrUpscale,
+                    const WaterCausticsBenchResult& waterCaustics)
 {
     std::printf("\n");
     std::printf("=====================================================================================================\n");
@@ -5310,6 +5601,13 @@ void PrintScorecard(const BenchDx12Rig& rig,
                   tsrUpscale.reactiveSparkR, tsrUpscale.rcasGradBoostPct, tsrUpscale.nanInfCount);
     std::printf("  %-30s | %-6s | %-28s | %s\n", "19. GPU RAW-TSR 2x + RCAS", tsrUpscale.passed ? "PASS" : "FAIL", metric, detail);
 
+    std::snprintf(metric, sizeof(metric), "Cau %.4f ms (p95 %.4f)", waterCaustics.totalGpuMs.mean, waterCaustics.totalGpuMs.p95);
+    std::snprintf(detail, sizeof(detail), "C=%.4f R=%.4f | pk=%.2fx E=%.3f RB=%.3f sun=%.1fx | NaN=%u",
+                  waterCaustics.hostCausticsMs, waterCaustics.hostRaysMs,
+                  waterCaustics.peakFocus, waterCaustics.meanEnergy,
+                  waterCaustics.rbMeanDiff, waterCaustics.sunwardRatio, waterCaustics.nanInfCount);
+    std::printf("  %-30s | %-6s | %-28s | %s\n", "20. GPU Water Caustics+Rays", waterCaustics.passed ? "PASS" : "FAIL", metric, detail);
+
     std::printf("=====================================================================================================\n");
 }
 
@@ -5379,6 +5677,7 @@ int main(int argc, char** argv)
     const PostCinematicBenchResult     postCinematic = RunPostCinematicBenchmark(rig, warmupFrames, measuredFrames);
     const GpuParticlesBenchResult      gpuParticles  = RunGpuParticlesBenchmark(rig, warmupFrames, measuredFrames);
     const TsrUpscaleBenchResult        tsrUpscale    = RunTsrUpscaleBenchmark(rig, warmupFrames, measuredFrames);
+    const WaterCausticsBenchResult     waterCaustics = RunWaterCausticsBenchmark(rig, warmupFrames, measuredFrames);
 
     const uint32_t debugErrors = rig.DrainDebugErrors();
     const bool allPassed = fluid.passed && rc.passed && tex.passed && audio.passed &&
@@ -5387,14 +5686,14 @@ int main(int argc, char** argv)
                            shadowPcss.passed && gtao.passed && ssr.passed &&
                            autoExposure.passed && cloudRaymarch.passed &&
                            postCinematic.passed && gpuParticles.passed &&
-                           tsrUpscale.passed && (debugErrors == 0u);
+                           tsrUpscale.passed && waterCaustics.passed && (debugErrors == 0u);
 
     PrintScorecard(rig, quickMode, warmupFrames, measuredFrames, debugErrors,
-                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles, tsrUpscale);
+                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles, tsrUpscale, waterCaustics);
 
     if (!jsonPath.empty()) {
         WriteBenchJson(jsonPath, rig, quickMode, warmupFrames, measuredFrames, debugErrors, allPassed,
-                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles, tsrUpscale);
+                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles, tsrUpscale, waterCaustics);
         std::printf("  JSON report written: %s\n", jsonPath.c_str());
     }
 

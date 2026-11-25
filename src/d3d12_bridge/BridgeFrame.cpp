@@ -140,8 +140,11 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
     const float tsrUpscaleMs = (tsrUpscaleReady && tsrUpscale && tsrUpscale->HasValidTiming() &&
                                 std::isfinite(tsrUpscale->GetLastTotalMs()))
         ? tsrUpscale->GetLastTotalMs() : 0.0f;
+    const float waterCausticsMs = (waterCausticsReady && waterCaustics && waterCaustics->HasValidTiming() &&
+                                   std::isfinite(waterCaustics->GetLastTotalMs()))
+        ? waterCaustics->GetLastTotalMs() : 0.0f;
 
-    char jsonBuf[3584]{};
+    char jsonBuf[4096]{};
     const int n = std::snprintf(
         jsonBuf, sizeof(jsonBuf),
         "{\n"
@@ -182,6 +185,7 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"postCinematicMs\": %.4f,\n"
         "  \"gpuParticlesMs\": %.4f,\n"
         "  \"tsrUpscaleMs\": %.4f,\n"
+        "  \"waterCausticsMs\": %.4f,\n"
         "  \"seasonSnowM\": %.4f,\n"
         "  \"seasonIceM\": %.4f,\n"
         "  \"skinTempC\": %.3f,\n"
@@ -226,6 +230,7 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         postCinematicMs,
         gpuParticlesMs,
         tsrUpscaleMs,
+        waterCausticsMs,
         seasonSnowM,
         seasonIceM,
         skinTempC,
@@ -1795,6 +1800,84 @@ bool D3D12Bridge::Impl::ExecuteTsrUpscaleOnQueue(bool hasMotion, bool isInterior
     return true;
 }
 
+bool D3D12Bridge::Impl::ExecuteWaterCausticsOnQueue(bool isInterior)
+{
+    if (!waterCausticsReady || !waterCaustics || !waterCaustics->Ready() ||
+        !queue || !waterCausticsList || !waterCausticsFence || !waterCausticsEvent) {
+        return false;
+    }
+
+    const uint32_t slot = waterCausticsSlot;
+    if (waterCausticsSlotVal[slot] > 0 && waterCausticsFence->GetCompletedValue() < waterCausticsSlotVal[slot]) {
+        waterCausticsFence->SetEventOnCompletion(waterCausticsSlotVal[slot], waterCausticsEvent);
+        WaitForSingleObject(waterCausticsEvent, 3000);
+    }
+    if (FAILED(waterCausticsAlloc[slot]->Reset()) ||
+        FAILED(waterCausticsList->Reset(waterCausticsAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    LightingFluidInputs fi{};
+    LightingPassFluidInputs(pass.get(), &fi);
+
+    // Convert Skyrim Z-up coordinates (1 m ~ 70 units) into Y-up meter optics parameters
+    constexpr float kUnitsPerMeter = 70.0f;
+    const float windSpeedMs = isInterior
+        ? 0.6f
+        : std::clamp(std::hypot(fi.windXY[0], fi.windXY[1]) * 0.05f, 0.8f, 18.0f);
+    const float camToWaterM = (fi.waterPlaneZ - lighting.posAdjust[2]) / kUnitsPerMeter;
+    const bool  submerged   = (camToWaterM > 0.05f && camToWaterM < 80.0f);
+    const float waterDepthM = submerged ? std::clamp(camToWaterM + 2.2f, 1.0f, 18.0f) : 2.4f;
+
+    WaterCausticsParams wp{};
+    wp.timeSec         = std::isfinite(fi.simTimeSec) ? fi.simTimeSec : static_cast<float>(waterCausticsStepFrames) * (1.0f / 60.0f);
+    wp.sunDir[0]       = std::isfinite(lighting.sunDirection[0]) ? lighting.sunDirection[0] : 0.42f;
+    wp.sunDir[1]       = std::isfinite(lighting.sunDirection[2]) ? std::max(lighting.sunDirection[2], 0.16f) : 0.82f;
+    wp.sunDir[2]       = std::isfinite(lighting.sunDirection[1]) ? lighting.sunDirection[1] : 0.39f;
+    wp.sunIntensity    = (lighting.hasSun && !isInterior) ? 2.4f : 0.65f;
+    wp.sunColor[0]     = std::isfinite(lighting.sunColour[0]) ? std::clamp(lighting.sunColour[0], 0.15f, 4.0f) : 1.0f;
+    wp.sunColor[1]     = std::isfinite(lighting.sunColour[1]) ? std::clamp(lighting.sunColour[1], 0.15f, 4.0f) : 0.96f;
+    wp.sunColor[2]     = std::isfinite(lighting.sunColour[2]) ? std::clamp(lighting.sunColour[2], 0.15f, 4.0f) : 0.88f;
+    wp.bedDepthM       = waterDepthM;
+    wp.absorptionRGB[0] = 0.38f;
+    wp.absorptionRGB[1] = 0.065f;
+    wp.absorptionRGB[2] = 0.022f;
+    wp.scatterCoeff    = isInterior ? 0.035f : (0.055f + std::clamp(fi.rainIntensity, 0.0f, 1.0f) * 0.035f);
+    wp.waveAmp         = std::clamp(0.08f + windSpeedMs * 0.011f, 0.08f, 0.22f);
+    wp.domainSizeM     = 8.0f;
+    wp.dispersionScale = 1.0f;
+    wp.mieG            = 0.78f;
+    wp.waterSurfaceY   = 0.0f;
+    wp.camPos[0]       = 0.0f;
+    wp.camPos[1]       = submerged ? -std::clamp(camToWaterM, 0.2f, 20.0f) : -2.2f;
+    wp.camPos[2]       = 0.0f;
+    wp.camRight[0]     = 1.0f; wp.camRight[1]   = 0.0f;    wp.camRight[2]   = 0.0f;
+    wp.camUp[0]        = 0.0f; wp.camUp[1]      = 0.96825f; wp.camUp[2]     = -0.25f;
+    wp.camForward[0]   = 0.0f; wp.camForward[1] = 0.25f;   wp.camForward[2] = 0.96825f;
+    wp.fovYDeg         = 60.0f;
+    wp.maxRayDistM     = isInterior ? 14.0f : 24.0f;
+    wp.shaftIntensity  = submerged ? 2.8f : 1.6f;
+    wp.frameIndex      = static_cast<uint32_t>(waterCausticsStepFrames & 0xFFFFu);
+
+    waterCaustics->Execute(waterCausticsList.Get(), 512u, 512u, wp);
+
+    if (FAILED(waterCausticsList->Close())) return false;
+    ID3D12CommandList* lists[1] = {waterCausticsList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(waterCausticsFence.Get(), ++waterCausticsFenceVal);
+    waterCausticsSlotVal[slot] = waterCausticsFenceVal;
+    waterCausticsSlot = (slot + 1u) % kRing;
+
+    if ((waterCausticsStepFrames++ % 180ull) == 0ull) {
+        log("[WaterCaustics] live 512x512 caustics+rays: causticsMs=%.4f, raysMs=%.4f, totalMs=%.4f, waveAmp=%.3f, submerged=%s",
+            waterCaustics->HasValidTiming() ? waterCaustics->GetLastCausticsMs() : 0.0f,
+            waterCaustics->HasValidTiming() ? waterCaustics->GetLastRaysMs() : 0.0f,
+            waterCaustics->HasValidTiming() ? waterCaustics->GetLastTotalMs() : 0.0f,
+            wp.waveAmp, submerged ? "yes" : "no");
+    }
+    return true;
+}
+
 bool D3D12Bridge::Impl::CpuWait(uint64_t value, DWORD timeoutMs)
 {
     return WaitFence(fence12.Get(), value, cpuEvent, timeoutMs);
@@ -2042,8 +2125,10 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     const bool runTsrUpscale = m->cfg.lightingPass && m->lighting.valid && m->tsrUpscaleReady &&
                                m->tsrUpscale && m->tsrUpscale->Ready() &&
                                m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr;
+    const bool runWaterCaustics = m->cfg.lightingPass && m->lighting.valid && m->waterCausticsReady &&
+                                  m->waterCaustics && m->waterCaustics->Ready();
     const bool runOverlay = m->overlayHudEnabled && m->overlayHostReady && m->overlayHost && m->overlayHost->Ready();
-    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runAutoExposure || runCloudRaymarch || runPostCinematic || runGpuParticles || runTsrUpscale || runOverlay;
+    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runAutoExposure || runCloudRaymarch || runPostCinematic || runGpuParticles || runTsrUpscale || runWaterCaustics || runOverlay;
     auto runPostLightingPasses = [&]() -> bool {
         if (!hasPostWork) return true;
         if (runTerrain) {
@@ -2153,6 +2238,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         }
         if (runTsrUpscale) {
             m->ExecuteTsrUpscaleOnQueue(s.hasMotion, isInterior);
+        }
+        if (runWaterCaustics) {
+            m->ExecuteWaterCausticsOnQueue(isInterior);
         }
         if (runOverlay) {
             m->ExecuteOverlayHudOnQueue(isInterior);

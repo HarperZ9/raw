@@ -83,9 +83,13 @@ struct D3D12Bridge::Impl
     uint64_t                          fluidStepFrames = 0;
     uint64_t                          fluidCompFrames = 0;
     uint64_t                          fluidLastMs = 0;
+    uint32_t                          lastFluidFireEmitters = 0;
+    uint32_t                          lastFluidWaterWakes = 0;
+    std::string                       telemetryOutDir;
     bool InitFluidSim();
     void ShutdownFluidSim();
     bool StepFluidSimOnQueue(bool isInterior);
+    void EmitLiveTelemetry(bool rtActive);
     std::vector<RawMeshGpuAsset> proceduralMeshes; // Zero-external-asset built-in procedural GPU meshlet library
     raw::worldgen::RawWorldShowcase worldShowcase; // Live beyond-Tamriel 6-biome procedural frontier streaming manager
     raw::worldgen::StreamUpdateStats lastWorldStats{};

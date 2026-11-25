@@ -48,6 +48,8 @@ void PrintUsage() {
         "  raw_forge_cli --materials <dir>                         Validate & export physical optical material catalog\n"
         "  raw_forge_cli --esm <path> --cell <x,y> --out <dir>     Extract, validate & export real Tamriel ESM cell\n"
         "  raw_forge_cli --bsa-list <path> [--filter <substr>]     Inspect & list files in a v104/v105 .bsa archive\n"
+        "  raw_forge_cli --nif <path> --out <dir>                  Parse, validate & export a Skyrim SE .nif mesh\n"
+        "  raw_forge_cli --bsa-nif <bsa> --entry <vpath> --out <d> Extract .nif from .bsa, validate & export .glb/.obj\n"
         "  raw_forge_cli --validate-all [dir]                      Run all 4 procedural pipelines + quality gates\n"
         "Options:\n"
         "  --seed <N>         Deterministic RNG seed (default: 202607)\n"
@@ -74,6 +76,9 @@ int main(int argc, char** argv) {
     std::string esmOutDir;
     std::string bsaListPath;
     std::string bsaFilter;
+    std::string nifPath;
+    std::string bsaNifArchive;
+    std::string bsaNifEntry;
     bool hasEsmCell     = false;
     int32_t esmCellX    = 0;
     int32_t esmCellY    = 0;
@@ -131,6 +136,18 @@ int main(int argc, char** argv) {
             const char* v = needNext("--bsa-list");
             if (!v) return 2;
             bsaListPath = v;
+        } else if (arg == "--nif") {
+            const char* v = needNext("--nif");
+            if (!v) return 2;
+            nifPath = v;
+        } else if (arg == "--bsa-nif") {
+            const char* v = needNext("--bsa-nif");
+            if (!v) return 2;
+            bsaNifArchive = v;
+        } else if (arg == "--entry") {
+            const char* v = needNext("--entry");
+            if (!v) return 2;
+            bsaNifEntry = v;
         } else if (arg == "--filter") {
             const char* v = needNext("--filter");
             if (!v) return 2;
@@ -164,8 +181,9 @@ int main(int argc, char** argv) {
     }
 
     if (!runValidateAll && floraDir.empty() && dioramaDir.empty() && almanacDir.empty() &&
-        materialsDir.empty() && esmPath.empty() && bsaListPath.empty()) {
-        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --esm, --bsa-list, or --validate-all).\n");
+        materialsDir.empty() && esmPath.empty() && bsaListPath.empty() &&
+        nifPath.empty() && bsaNifArchive.empty()) {
+        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --esm, --bsa-list, --nif, --bsa-nif, or --validate-all).\n");
         PrintUsage();
         return 2;
     }
@@ -216,6 +234,20 @@ int main(int argc, char** argv) {
         const std::string outDir = esmOutDir.empty() ? "raw_forge_esm_out" : esmOutDir;
         runStep("esm-cell", raw::pipeline::BakeEsmCellAsset(
             esmPath, esmCellX, esmCellY, outDir, 0x0000003Cu, policy, writeGeometry));
+    }
+
+    if (!nifPath.empty()) {
+        const std::string outDir = esmOutDir.empty() ? "raw_forge_nif_out" : esmOutDir;
+        runStep("nif", raw::pipeline::BakeNifFileAsset(nifPath, outDir, policy, writeGeometry));
+    }
+
+    if (!bsaNifArchive.empty()) {
+        if (bsaNifEntry.empty()) {
+            std::fprintf(stderr, "Error: --bsa-nif requires --entry <virtualPath>.\n");
+            return 2;
+        }
+        const std::string outDir = esmOutDir.empty() ? "raw_forge_nif_out" : esmOutDir;
+        runStep("bsa-nif", raw::pipeline::BakeBsaNifAsset(bsaNifArchive, bsaNifEntry, outDir, policy, writeGeometry));
     }
 
     if (runValidateAll) {

@@ -48,6 +48,58 @@ float3 sampleLiveEnvCube(float3 rd, float roughness) {
     return lerp(sharp, rough, saturate(roughness * roughness));
 }
 
+// Wave 42 Aperiodic Dual-Layer Curl-Convergence Underwater Caustics (zero Voronoi grids, zero periodic stripes):
+float evalCurlCausticLayer(float2 xy, float tSec) {
+    const float2 q1 = xy * 0.024f + float2(tSec * 0.22f, -tSec * 0.14f);
+    const float4 n1 = rawNoise3Grad(float3(q1, tSec * 0.32f));
+    const float2 warp1 = float2(n1.z, -n1.y) * 0.65f;
+    const float f1 = pow(saturate(1.0f - abs(rawNoise3Grad(float3(q1 + warp1, tSec * 0.36f + 7.1f)).x * 2.0f - 1.0f) * 2.4f), 3.6f);
+
+    // Incommensurately rotated second layer (53 deg) for organic intersecting caustic filaments:
+    const float2 q2 = float2(xy.x * 0.6018f - xy.y * 0.7986f, xy.x * 0.7986f + xy.y * 0.6018f) * 0.049f
+                    + float2(-tSec * 0.18f, tSec * 0.26f);
+    const float4 n2 = rawNoise3Grad(float3(q2, -tSec * 0.44f + 19.3f));
+    const float2 warp2 = float2(n2.z, -n2.y) * 0.55f;
+    const float f2 = pow(saturate(1.0f - abs(rawNoise3Grad(float3(q2 + warp2, -tSec * 0.48f + 31.7f)).x * 2.0f - 1.0f) * 2.6f), 3.8f);
+    return saturate(f1 * 0.55f + f2 * 0.45f + f1 * f2 * 1.15f);
+}
+
+// Wave 42 Multi-Cell Hashed Aperiodic Expanding Raindrop Splash Ring Gradient (ddx-safe analytical ring normal):
+float2 evalRainSplashCellGrid(float2 pGrid, float tSec, float seedOff) {
+    const float2 baseCell = floor(pGrid);
+    const float2 fLocal = frac(pGrid);
+    float2 grad = 0.0f.xx;
+    [unroll] for (int dy = -1; dy <= 1; ++dy) {
+        [unroll] for (int dx = -1; dx <= 1; ++dx) {
+            const float2 cell = baseCell + float2(float(dx), float(dy));
+            const float3 h0 = rawHash33(float3(cell, seedOff));
+            const float cycle = tSec * (1.15f + 0.65f * h0.z) + h0.x * 7.31f;
+            const float dropId = floor(cycle);
+            const float age = frac(cycle);
+            const float3 hd = rawHash33(float3(cell + dropId * 1.37f, seedOff + 13.7f));
+            const float2 center = float2(dx, dy) + (0.16f + 0.68f * hd.xy);
+            const float2 d = fLocal - center;
+            const float r = length(d);
+            const float ringR = age * 0.54f;
+            const float dr = r - ringR;
+            const float env = exp(-dr * dr * 58.0f) * (1.0f - age) * (1.0f - age) * smoothstep(0.0f, 0.06f, age);
+            const float waveSlope = cos(dr * 32.0f) * env;
+            if (r > 1.0e-3f) {
+                grad += (d / r) * waveSlope;
+            }
+        }
+    }
+    return grad;
+}
+
+float2 evalRainSplashRippleGrad(float2 worldXY, float tSec) {
+    const float2 g1 = evalRainSplashCellGrid(worldXY * 0.088f, tSec, 3.1f);
+    const float2 rotXY = float2(worldXY.x * 0.7986f - worldXY.y * 0.6018f, worldXY.x * 0.6018f + worldXY.y * 0.7986f);
+    const float2 g2r = evalRainSplashCellGrid(rotXY * 0.142f + float2(11.3f, 7.9f), tSec * 1.18f, 17.7f);
+    const float2 g2 = float2(g2r.x * 0.7986f + g2r.y * 0.6018f, -g2r.x * 0.6018f + g2r.y * 0.7986f);
+    return g1 * 0.62f + g2 * 0.42f;
+}
+
 // Karis (SIGGRAPH 2013 UE4) / Lazarov analytical Split-Sum Environment BRDF LUT approximation.
 float2 envBRDFScaleBias(float roughness, float NoV) {
     const float4 c0 = float4(-1.0f, -0.0275f, -0.572f, 0.022f);
@@ -512,6 +564,20 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 albedo    = lerp(albedo, float3(0.14f, 0.12f, 0.10f), meltMask * natSnowMelt * 0.78f);
                 albedo    = lerp(albedo, float3(0.44f, 0.54f, 0.64f), slushRing * natSnowMelt * 0.45f);
                 s.alpha   = lerp(s.alpha, 0.15f, max(meltMask, slushRing) * max(natSnowMelt, wet.snow) * 0.75f);
+            }
+            // Wave 42 Dynamic Raindrop Splash Ripples on Wet Surfaces & Puddles (strictly rain-gated; 100% calm on dry days!):
+            const float effWetRain = max(wet.wet, wet.puddle);
+            if (weather.w > 0.08f && s.n.z > 0.72f && effWetRain > 0.15f && wet.snow < 0.25f && z < 1800.0f) {
+                const float splashFade = smoothstep(1800.0f, 120.0f, z)
+                                       * smoothstep(0.08f, 0.42f, weather.w)
+                                       * smoothstep(0.15f, 0.65f, effWetRain)
+                                       * smoothstep(0.72f, 0.92f, s.n.z)
+                                       * (1.0f - saturate(wet.snow * 4.0f));
+                const float wtRain = (physWorld[0].x > 0.001f) ? physWorld[0].x : camPosW.w;
+                const float2 splashG = evalRainSplashRippleGrad((p + camPosW.xyz).xy, wtRain);
+                const float splashAmp = lerp(0.10f, 0.24f, saturate(wet.puddle * 1.25f)) * splashFade;
+                s.n = normalize(s.n + float3(-splashG.x, -splashG.y, 0.0f) * splashAmp);
+                rings += splashG * (splashAmp * 0.65f);
             }
         }
         // Persistent 512x512 Toroidal World-Locked GPU PDE WorldField (exact frac(worldXY/2048) matches WorldFieldSim.hlsl!):
@@ -1249,8 +1315,34 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 spec += sunColour.rgb * (sunShadow * mGlint * 0.55f * saturate(1.0f - z / 1600.0f));
             }
         }
-        // Water caustics belong exclusively on true underwater riverbeds in RtWater.hlsl (never projected across
-        // dry land via cell-wide TESObjectCELL::waterHeight, which leaked caustics onto walls, houses & dry rocks!).
+        // Wave 42 Dual-Layer Snell-Refracted RGB Underwater Caustics (strictly gated on truly submerged exterior surfaces):
+        // Refracts sunDir through water (IOR 1.333) and evaluates aperiodic curl-convergence RGB filaments attenuated by
+        // Beer-Lambert water depth & cloud shadow (ZERO Voronoi grids, ZERO caustics on dry land above liveWaterZ!).
+        if (!match && sunColour.w > 0.5f && !isActorFeat && z < 4800.0f && sunDir.z > 0.05f && sunShadow > 0.02f) {
+            const bool liveWaterZValid = (engineWorld.z > 0.5f && engineWorld.x > -48000.0f && engineWorld.x < 48000.0f);
+            if (liveWaterZValid) {
+                const float liveWaterZ = rawLiveWaterZ(engineWorld, physWorld[0]);
+                const float3 absPosC = p + camPosW.xyz;
+                const float subDepthU = liveWaterZ - absPosC.z;
+                if (subDepthU > 1.5f && subDepthU < 900.0f) {
+                    const float3 srC = refract(-sunDir.xyz, float3(0.0f, 0.0f, 1.0f), 1.0f / 1.333f);
+                    const float2 surfXY = absPosC.xy - srC.xy * (subDepthU / max(-srC.z, 0.22f));
+                    const float wtCaust = (physWorld[0].x > 0.001f) ? physWorld[0].x : camPosW.w;
+                    const float2 dispDir = (length(srC.xy) > 1.0e-3f) ? normalize(srC.xy) : float2(0.8f, 0.6f);
+                    const float dispU = clamp(subDepthU * 0.032f, 0.25f, 2.2f);
+                    const float3 causRGB = float3(
+                        evalCurlCausticLayer(surfXY + dispDir * dispU, wtCaust),
+                        evalCurlCausticLayer(surfXY, wtCaust),
+                        evalCurlCausticLayer(surfXY - dispDir * dispU, wtCaust));
+                    const float3 beerDepth = exp(-subDepthU * float3(0.0085f, 0.0028f, 0.0018f));
+                    const float focusW = smoothstep(1.5f, 18.0f, subDepthU);
+                    const float upW = saturate(s.n.z * 0.75f + 0.25f);
+                    const float clearSunC = max(1.0f - saturate(clouds.x * 0.78f), 0.18f);
+                    const float distFadeC = smoothstep(4800.0f, 320.0f, z);
+                    diff += dirCol * causRGB * (beerDepth * (focusW * upW * clearSunC * sunShadow * distFadeC * 0.78f));
+                }
+            }
+        }
     }
 
     const uint4 bits = clusters[clusterOf(px, z)];
@@ -1362,6 +1454,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 intTint = lerp(float3(0.86f, 0.92f, 1.04f), float3(1.06f, 0.92f, 0.78f), ambWarm);
             const float3 cryptTint = lerp(intTint, float3(0.78f, 0.88f, 1.08f), ambCool);
             amb *= cryptTint * lerp(0.24f, 0.44f, saturate(s.n.z * 0.5f + 0.5f));
+        }
+        // Wave 42 Physical Underwater Ambient & Direct Beer-Lambert Extinction (kUnderwater = FLAG_UNDERWATER):
+        // Applies calibrated red-first spectral water absorption when submerged so rivers & Sea of Ghosts feel genuinely aqueous!
+        if ((flags.x & FLAG_UNDERWATER) != 0u) {
+            const float liveWZU = (engineWorld.z > 0.5f && engineWorld.x > -48000.0f && engineWorld.x < 48000.0f)
+                ? rawLiveWaterZ(engineWorld, physWorld[0]) : (camPosW.z + 60.0f);
+            const float subColU = max(liveWZU - (p.z + camPosW.z), 0.0f);
+            const float3 beerDepth = exp(-min(subColU, 1400.0f) * float3(0.0028f, 0.00075f, 0.00042f));
+            const float3 beerView  = exp(-min(z, 3000.0f) * float3(0.0034f, 0.00088f, 0.00050f));
+            const float3 uwAbsorb  = max(beerDepth * beerView, float3(0.035f, 0.14f, 0.22f));
+            amb  *= uwAbsorb;
+            diff *= max(beerDepth, float3(0.08f, 0.26f, 0.36f));
         }
     }
     // 100% Pure Hardware DXR 3D Contact RTAO & Skylighting (ZERO screen-space GTAO/SSAO when RT is active!):

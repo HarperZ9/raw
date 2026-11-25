@@ -16,6 +16,7 @@
 #ifndef RAW_SIM_PURE_TEST
 #include "rt_combat_impact.h"
 #include "rt_detour.h"
+#include "rt_economy_ledger.h"
 #include "rt_image.h"
 #include "rt_version.h"
 #include "rt_view.h"
@@ -1524,15 +1525,12 @@ static uint32_t HookBarterProcessMessage(void* menu, uint8_t* uiMsg) {
         float cal6[6] = {201.0f, 7.0f, 17.0f, 12.0f, 0.0f, 20.0f};
         RAW_GetCalendarState(cal6);
 
-        BarterEconomyInput econIn{};
-        econIn.gameMonth0_11 = cal6[1];
-        econIn.gameDay1_31   = cal6[2];
-        econIn.storm01       = g_gp.storm01.load(std::memory_order_relaxed);
-        econIn.snowDepthU    = g_gp.snowDepthU.load(std::memory_order_relaxed);
-        econIn.worldY        = (ev.ok & 2u) ? ev.playerPos[1] : 0.0f;
+        const float storm     = g_gp.storm01.load(std::memory_order_relaxed);
+        const float snowDepth = g_gp.snowDepthU.load(std::memory_order_relaxed);
+        const bool  inInt     = (ev.interior != 0u);
+        const float* posPtr   = ((ev.ok & 2u) != 0u) ? ev.playerPos : nullptr;
         {
             std::lock_guard<std::mutex> lk(g_gp.mu);
-            econIn.recentTradeCount = g_gp.recentTrades;
             if (!g_gp.barterSaved.saved && g_gp.barterSaved.pMin) {
                 SehReadFloatPtr(g_gp.barterSaved.pMin, &g_gp.barterSaved.vMin);
                 SehReadFloatPtr(g_gp.barterSaved.pMax, &g_gp.barterSaved.vMax);
@@ -1541,27 +1539,36 @@ static uint32_t HookBarterProcessMessage(void* menu, uint8_t* uiMsg) {
                 g_gp.barterSaved.saved = true;
             }
         }
-        const BarterEconomyGmsts gm = EvaluateRegionalBarterEconomy(econIn);
-        SehWriteFloatPtr(g_gp.barterSaved.pMin, gm.barterMin);
-        SehWriteFloatPtr(g_gp.barterSaved.pMax, gm.barterMax);
-        SehWriteFloatPtr(g_gp.barterSaved.pBuyMin, gm.barterBuyMin);
-        SehWriteFloatPtr(g_gp.barterSaved.pSellMax, gm.barterSellMax);
-        g_gp.lastBarterMin.store(gm.barterMin, std::memory_order_relaxed);
-        g_gp.lastBarterMax.store(gm.barterMax, std::memory_order_relaxed);
+        // Wave 42: Pull live Hold-specific supply/demand, caravan disruption, seasonal & oversupply pricing from EconomyLedger!
+        const HoldBarterMultipliers holdQuote = EconomyLedgerQueryLiveBarter(
+            posPtr, inInt, storm, snowDepth, cal6[1], cal6[2]);
+        SehWriteFloatPtr(g_gp.barterSaved.pMin, holdQuote.barterMin);
+        SehWriteFloatPtr(g_gp.barterSaved.pMax, holdQuote.barterMax);
+        SehWriteFloatPtr(g_gp.barterSaved.pBuyMin, holdQuote.barterBuyMin);
+        SehWriteFloatPtr(g_gp.barterSaved.pSellMax, holdQuote.barterSellMax);
+        g_gp.lastBarterMin.store(holdQuote.barterMin, std::memory_order_relaxed);
+        g_gp.lastBarterMax.store(holdQuote.barterMax, std::memory_order_relaxed);
         if (msgType == 1u) g_gp.barterOpens.fetch_add(1u, std::memory_order_relaxed);
     }
 
     const uint32_t res = g_gp.origBarterProcMsg ? g_gp.origBarterProcMsg(menu, uiMsg) : 0u;
 
     if (gotType && msgType == 3u /*kHide*/) {
-        std::lock_guard<std::mutex> lk(g_gp.mu);
-        if (g_gp.barterSaved.saved) {
-            SehWriteFloatPtr(g_gp.barterSaved.pMin, g_gp.barterSaved.vMin);
-            SehWriteFloatPtr(g_gp.barterSaved.pMax, g_gp.barterSaved.vMax);
-            SehWriteFloatPtr(g_gp.barterSaved.pBuyMin, g_gp.barterSaved.vBuyMin);
-            SehWriteFloatPtr(g_gp.barterSaved.pSellMax, g_gp.barterSaved.vSellMax);
+        EngineView ev{};
+        RAW_EngineView(&ev);
+        const bool inInt    = (ev.interior != 0u);
+        const float* posPtr = ((ev.ok & 2u) != 0u) ? ev.playerPos : nullptr;
+        {
+            std::lock_guard<std::mutex> lk(g_gp.mu);
+            if (g_gp.barterSaved.saved) {
+                SehWriteFloatPtr(g_gp.barterSaved.pMin, g_gp.barterSaved.vMin);
+                SehWriteFloatPtr(g_gp.barterSaved.pMax, g_gp.barterSaved.vMax);
+                SehWriteFloatPtr(g_gp.barterSaved.pBuyMin, g_gp.barterSaved.vBuyMin);
+                SehWriteFloatPtr(g_gp.barterSaved.pSellMax, g_gp.barterSaved.vSellMax);
+            }
+            g_gp.recentTrades = std::min(g_gp.recentTrades + 1u, 20u);
         }
-        g_gp.recentTrades = std::min(g_gp.recentTrades + 1u, 20u);
+        EconomyLedgerRecordLiveBarterSession(posPtr, inInt, 12.0f);
     }
     return res;
 }

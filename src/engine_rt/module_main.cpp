@@ -28,6 +28,7 @@
 #include "rt_control.h"
 #include "rt_core_fixes.h"
 #include "rt_depth_topology.h"
+#include "rt_economy_ledger.h"
 #include "rt_forensics.h"
 #include "rt_memory_guards.h"
 #include "rt_softbody.h"
@@ -153,6 +154,14 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
                 Log("[CombatImpact] hitstopVerified=%u active=%u triggers=%u skippedSlowTime=%u decalsActive=%u/%u timeScale=%.2f",
                     ci.hitstopVerified, ci.hitstopActive, ci.hitstopTriggers, ci.hitstopSkipped,
                     ci.decalsActiveNow, ci.decalsTotal, ci.currentTimeScale);
+            }
+            raw::rt::EconomyLedgerTelemetry ec{};
+            if (raw::rt::EconomyLedgerGetTelemetry(&ec) && ec.initialized) {
+                Log("[EconomyLedger] hold=%s tier=%u days=%u doy=%u buy=%.2f sell=%.2f scarcity=%.2f caravanDisrupt=%.2f trades=%u queries=%u saves=%u npc(dir=%u sh=%.2f torch=%.2f alert=%.2f)",
+                    raw::rt::SkyrimHoldName(static_cast<raw::rt::SkyrimHold>(ec.activeHold)),
+                    ec.marketTier, ec.daysSimulated, ec.dayOfYear, ec.buyPriceMult, ec.sellPriceMult,
+                    ec.scarcity01, ec.caravanDisruption01, ec.totalPlayerTrades, ec.barterQueries, ec.jsonSaves,
+                    ec.npcDirective, ec.npcShelterUrgency01, ec.npcTorchNeed01, ec.npcAlertness01);
             }
         }
     }
@@ -289,6 +298,9 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     }
     raw::rt::WorldSimInit(g_img, g_dir);
     Log("worldsim: live zero-SKSE world simulation & Skyrim.esm compressed NAVM loader started");
+    if (IniInt("EconomyLedger", 1)) {
+        Log("%s", raw::rt::EconomyLedgerInit(g_out + "\\economy_ledger.json").c_str());
+    }
     if (IniInt("GameplayHooks", 1)) {
         Log("%s", raw::rt::GameplayHooksInit(g_img).c_str());
     }
@@ -328,6 +340,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
     raw::rt::CombatImpactShutdown();
     raw::rt::StealthSurvivalShutdown();
     raw::rt::GameplayHooksShutdown();
+    raw::rt::EconomyLedgerShutdown();
     raw::rt::WorldSimShutdown();
     raw::rt::DepthTopologyShutdown();
     raw::rt::TerrainLodShutdown();

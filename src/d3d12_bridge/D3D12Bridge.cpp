@@ -327,8 +327,9 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
             wcfg.borderMaxX =  148000.0f;
             wcfg.borderMinY = -118000.0f;
             wcfg.borderMaxY =  132000.0f;
+            wcfg.asyncStreaming = true;
             const bool worldOk = m->worldShowcase.Init(wcfg);
-            m->log("[D3D12Bridge] Physical Materials & Frontier WorldGen: %zu measured 64B GPU materials (8 families), WorldShowcase=%s (128MB cap, Tamriel box [-148k..148k]x[-118k..132k], margin 24.5k)",
+            m->log("[D3D12Bridge] Physical Materials & Frontier WorldGen: %zu measured 64B GPU materials (8 families), WorldShowcase=%s (128MB cap, async=ON, Tamriel box [-148k..148k]x[-118k..132k], margin 24.5k)",
                    m->materialGpuRecords.size(), worldOk ? "READY" : "off");
         }
         if (meshOk) {
@@ -378,6 +379,7 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
             std::string gDir(exeBuf);
             const size_t sl = gDir.find_last_of("\\/");
             if (sl != std::string::npos) gDir.resize(sl + 1);
+            m->telemetryOutDir = gDir + "raw_engine_out";
             std::string assetLog;
             const auto summary = ScanRawAssetsFolder(gDir, &assetLog);
             if (!assetLog.empty() && (summary.meshFiles || summary.textureFiles)) m->log("%s", assetLog.c_str());
@@ -475,6 +477,9 @@ void D3D12Bridge::Shutdown()
     }
     m->asyncCompute.Shutdown();
     m->ShutdownFluidSim();
+    m->worldShowcase.WaitForAsyncIdle();
+    m->worldShowcase.Reset();
+    m->worldShowcase.SetAsyncEnabled(false);
     m->streamedTerrainGpu.clear();
     m->meshHost.Shutdown();
     m->pass.reset();   // before the device and the textures it borrows

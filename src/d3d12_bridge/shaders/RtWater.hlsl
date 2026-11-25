@@ -48,10 +48,25 @@ float cellWalls(float2 q, float t) {
     return f2 - f1;
 }
 
-// The caustic net at an absolute world point (units), two fields at different scales and speeds.
+// Wave 42 Aperiodic Dual-Layer Curl-Convergence Caustic Filaments (zero Voronoi grids, zero periodic stripes!):
+float evalAperiodicCurlCaustic(float2 xy, float tSec, float scaleU) {
+    const float invSc = 1.0f / max(scaleU, 12.0f);
+    const float2 q1 = xy * invSc + float2(tSec * 0.24f, -tSec * 0.16f);
+    const float4 n1 = rawNoise3Grad(float3(q1, tSec * 0.34f));
+    const float2 w1 = float2(n1.z, -n1.y) * 0.68f;
+    const float f1 = pow(saturate(1.0f - abs(rawNoise3Grad(float3(q1 + w1, tSec * 0.38f + 5.7f)).x * 2.0f - 1.0f) * 2.5f), 3.6f);
+
+    const float2 q2 = float2(xy.x * 0.6018f - xy.y * 0.7986f, xy.x * 0.7986f + xy.y * 0.6018f) * (invSc * 1.92f)
+                    + float2(-tSec * 0.19f, tSec * 0.28f);
+    const float4 n2 = rawNoise3Grad(float3(q2, -tSec * 0.46f + 17.3f));
+    const float2 w2 = float2(n2.z, -n2.y) * 0.56f;
+    const float f2 = pow(saturate(1.0f - abs(rawNoise3Grad(float3(q2 + w2, -tSec * 0.50f + 29.1f)).x * 2.0f - 1.0f) * 2.7f), 3.8f);
+    return saturate(f1 * 0.55f + f2 * 0.45f + f1 * f2 * 1.15f);
+}
+
+// The caustic net at an absolute world point (units), kept for compatibility and routed to aperiodic curl caustics.
 float causticNet(float2 w, float t, float scale) {
-    const float a = cellWalls(w / scale, t), b = cellWalls(w / (scale * 0.61f) + 17.3f, t * 1.37f);
-    return pow(saturate(1.0f - a * 3.2f), 7.0f) + 0.6f * pow(saturate(1.0f - b * 3.6f), 7.0f);
+    return evalAperiodicCurlCaustic(w, t * 2.0f, scale);
 }
 
 // True 3D Physical Wave Heightfield Evaluator (for 3D Ray-Marched Self-Occluding Wave Geometry breaking flat 2011 quads):
@@ -260,9 +275,10 @@ void water(uint3 id : SV_DispatchThreadID) {
         const float2 px = float2(id.xy);
         const float3 p = worldAt(px, L.x);
         const float3 eyeW = eyeAt();
-        // True front-face / above-water test against actual eyeAt().z (fixes water disappearing when standing below
-        // a sloped river, waterfall, canal, or in 3rd-person where p.z >= 0.0f!):
-        if (p.z < eyeW.z + 6.0f || dot(nL, normalize(eyeW - p)) > 0.02f) {
+        // True underwater vs above-water test (supports kUnderwater FLAG_UNDERWATER & sloped rivers/waterfalls):
+        const bool isUnderwaterView = (((flags.x & FLAG_UNDERWATER) != 0u) && (p.z > eyeW.z + 0.5f))
+                                   || (p.z >= eyeW.z + 6.0f && dot(nL, normalize(eyeW - p)) <= 0.02f);
+        if (!isUnderwaterView) {
             // Feature 13: 100% Independent DX12 Fluid Physics (disconnected from Skyrim's 2011 nL water normal map):
             // Pure multi-directional Gerstner/trochoidal + curl-advected obstacle-deflected fluid wave simulation.
             const float3 v = normalize(eyeAt() - p);
@@ -795,32 +811,56 @@ void water(uint3 id : SV_DispatchThreadID) {
             else if (view == 6u) { col = body; }   // the water's body alone: the bent bed, dimmed and filled in
             else if (view == 5u) { col = F > 0.25f ? float3(1.0f, 0.0f, 0.0f) : F > 0.06f ? float3(0.0f, 1.0f, 0.0f) : float3(0.0f, 0.0f, 1.0f); }
         } else {
-            // Underwater looking UP at the water surface (p.z >= eyeW.z + 6.0f):
-            // Luminous Snell's Window (48.6 deg critical cone) + realistic sunlit Nordic sea-teal Total Internal Reflection
-            // (eliminates the pitch-black horizontal waterline stripe seen when swimming half-submerged!).
-            const float3 vUp = normalize(p - eyeAt());
+            // Wave 42 Exact Physical Underwater Snell's Window (48.6 deg critical angle, sin(theta_c) = 1 / 1.333):
+            // Outside the critical cone: exact Total Internal Reflection of the aqueous Nordic depth & underside foam.
+            // Inside Snell's Window: exact water->air dielectric Fresnel transmission into refracted sky & sun disc!
+            const float3 vUp = normalize(p - eyeW);
             const float3 wpU = camPosW.xyz + p;
             const float wtU = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
-            const float2 uwRipple = float2(
-                vNoise2D(wpU.xy * 0.09f + float2(wtU * 0.8f, -wtU * 0.5f)) - 0.5f,
-                vNoise2D(wpU.xy * 0.09f + float2(-wtU * 0.6f, wtU * 0.7f) + 19.3f) - 0.5f
-            ) * 0.22f;
-            const float3 nDown = normalize(float3(uwRipple.x, uwRipple.y, -1.0f));
-            const float cosInc = saturate(dot(-vUp, nDown));
-            const float snellWin = smoothstep(0.46f, 0.72f, cosInc);
-            const float3 refrSky = waterSky(normalize(float3(vUp.xy * 1.333f, max(vUp.z, 0.14f))));
+            // Smooth aperiodic underside wave normal via analytical rawNoise3Grad (zero periodic grid!):
+            const float4 uWave1 = rawNoise3Grad(float3(wpU.xy * 0.032f + float2(wtU * 0.35f, -wtU * 0.22f), wtU * 0.42f));
+            const float4 uWave2 = rawNoise3Grad(float3(wpU.xy * 0.084f + float2(-wtU * 0.28f, wtU * 0.31f), wtU * 0.65f + 13.7f));
+            const float2 uwSlope = (uWave1.yz * 0.14f + uWave2.yz * 0.065f);
+            const float3 nDown = normalize(float3(uwSlope.x, uwSlope.y, -1.0f));
+
+            // Exact Snell's Law (water n1 = 1.333 -> air n2 = 1.0): sin(theta_t) = 1.333 * sin(theta_i)
+            const float kWaterIor = 1.333f;
+            const float cosI = saturate(dot(-vUp, nDown));
+            const float sin2I = max(1.0f - cosI * cosI, 0.0f);
+            const float sin2T = sin2I * (kWaterIor * kWaterIor);
+            // Exact unpolarized water->air Fresnel reflectance (1.0 identically for theta_i >= 48.6 deg TIR!):
+            float F_uw = 1.0f;
+            float3 refrSky = 0.0f.xxx;
+            if (sin2T < 0.9999f) {
+                const float cosT = sqrt(max(1.0f - sin2T, 0.0f));
+                const float rs = (kWaterIor * cosI - cosT) / max(kWaterIor * cosI + cosT, 1.0e-5f);
+                const float rp = (cosI - kWaterIor * cosT) / max(cosI + kWaterIor * cosT, 1.0e-5f);
+                F_uw = saturate(0.5f * (rs * rs + rp * rp));
+                const float3 refrDir = refract(vUp, nDown, kWaterIor);
+                const float3 skyRd = (dot(refrDir, refrDir) > 1.0e-4f) ? normalize(refrDir) : float3(0.0f, 0.0f, 1.0f);
+                refrSky = waterSky(float3(skyRd.xy, max(skyRd.z, 0.02f)));
+                // Direct solar aureole & sun disc refracted sharply through Snell's Window:
+                if (sunDir.w > 0.5f && sunDir.z > 0.02f) {
+                    const float cosSun = saturate(dot(skyRd, normalize(sunDir.xyz)));
+                    const float sunBloom = pow(cosSun, 18.0f) * 0.65f + pow(cosSun, 240.0f) * 4.5f;
+                    refrSky += sunColour.rgb * (sunBloom * (1.0f - saturate(clouds.x * 0.78f)));
+                }
+            }
+
+            const float snellOpen = 1.0f - F_uw;
             const float3 uwAmb = max(ambientAt(float3(0.0f, 0.0f, 1.0f)), float3(0.14f, 0.18f, 0.22f));
-            const float3 sunFill = (sunDir.w > 0.5f) ? (sunColour.rgb * 0.34f) : 0.0f.xxx;
-            const float uwCaust = causticNet(wpU.xy, wtU * 0.45f, 38.0f) * snellWin * 0.48f;
-            // Animated underside lacy foam silhouettes (24Ronin 00:10-00:13 + EasyWaterscape overhead surface):
-            const float underFoam = cellularFoamLace(wpU.xy, wtU, 0.42f) * 0.38f;
-            const float3 tirCol = float3(0.025f, 0.095f, 0.125f) * (uwAmb * 2.2f + sunFill) + uwAmb * (underFoam * 0.65f);
-            const float uwAtt = exp(-length(p - eyeAt()) * 0.0014f);
-            const float3 uwFogCol = float3(0.018f, 0.072f, 0.098f) * (uwAmb * 1.8f + sunFill * 0.45f);
-            const float3 uwSurf = lerp(uwFogCol, lerp(tirCol, refrSky + sunFill * uwCaust + uwAmb * (underFoam * 0.55f), snellWin), uwAtt);
-            // Smoothly bridge grazing waterline pixels (abs(p.z - eyeW.z) < 22u) so half-submerged cameras have zero hard bar!
-            const float grazingFade = smoothstep(4.0f, 24.0f, abs(p.z - eyeW.z));
-            col = lerp(lerp(refrSky * 0.65f, uwFogCol, 0.45f), uwSurf, grazingFade);
+            const float3 sunFill = (sunDir.w > 0.5f) ? (sunColour.rgb * 0.36f) : 0.0f.xxx;
+            const float uwCaust = evalAperiodicCurlCaustic(wpU.xy, wtU, 42.0f) * snellOpen * 0.45f;
+            const float underFoam = cellularFoamLace(wpU.xy, wtU, 0.42f) * 0.36f;
+            const float3 tirCol = float3(0.022f, 0.088f, 0.122f) * (uwAmb * 2.2f + sunFill) + uwAmb * (underFoam * 0.62f);
+            // Calibrated Pope & Fry red-first underwater Beer-Lambert extinction along ray to surface:
+            const float uwDist = length(p - eyeW);
+            const float3 uwBeer = exp(-uwDist * float3(0.0036f, 0.0011f, 0.00068f));
+            const float3 uwFogCol = float3(0.015f, 0.068f, 0.095f) * (uwAmb * 1.85f + sunFill * 0.45f);
+            const float3 surfCol = lerp(refrSky + sunFill * uwCaust + uwAmb * (underFoam * 0.45f), tirCol, F_uw);
+            const float3 uwSurf = lerp(uwFogCol, surfCol, uwBeer);
+            const float grazingFade = smoothstep(2.0f, 18.0f, abs(p.z - eyeW.z));
+            col = lerp(lerp(refrSky * 0.55f + uwFogCol * 0.45f, uwFogCol, F_uw * 0.65f), uwSurf, grazingFade);
         }
     }
     WaterOut[id.xy] = float4(col, game.a);

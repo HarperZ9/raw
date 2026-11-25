@@ -8,9 +8,131 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <string>
 
 namespace raw::bridge
 {
+namespace
+{
+
+// Exact byte-for-byte mirror of LightingPass.cpp LightUniform (cbuffer P) for zero-coupling telemetry readback.
+struct TelemetryLightUniformView
+{
+    float dims[4], proj[4], clipToWorld[16], worldToClip[16], viewToWorld[12];
+    float resScale[4], sunDir[4], sunColour[4], ambient[12], cascade[24], cascadeInfo[4];
+    uint32_t flags[4];
+    float cluster[4], tune[4], tune2[4], weather[4], camPos[4], clouds[4], cloudWind[4], waterA[4], waterB[4], prevWorldToClip[16];
+    float lightPosR[kMaxSceneLights][4], lightColS[kMaxSceneLights][4];
+    uint32_t clusters[kClusterCount][4];
+    float footTrail[32][4];
+    float dofParams[4];
+    float timeEnv[4];
+    float engineWorld[4];
+    float camOptics[2][4];
+    float physWorld[2][4];
+    float seasonThermal0[4];      // x: snowDepthM, y: snowAlbedo, z: snowCompaction01, w: surfaceTempC
+    float seasonThermal1[4];      // x: iceThicknessM, y: blackIce01, z: frostRime01, w: iceFracture01
+    float phenology0[4];
+    float phenology1[4];
+    float impactDecalPosR[16][4]; // xyz: world pos, w: radiusU (0 = inactive)
+    float impactDecalMeta[16][4];
+};
+static_assert(sizeof(TelemetryLightUniformView) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16 + 176 + 512,
+              "TelemetryLightUniformView must match LightingPass cbuffer P");
+
+} // namespace
+
+void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
+{
+    if (frames != 1ull && (frames % 180ull) != 0ull) return;
+
+    float seasonSnowM = 0.0f;
+    float seasonIceM = 0.0f;
+    float skinTempC = 0.0f;
+    uint32_t activeImpactDecals = 0u;
+
+    const void* uPtr = nullptr;
+    size_t uBytes = 0;
+    if (pass && LightingPassUniform(pass.get(), &uPtr, &uBytes) &&
+        uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+        const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+        seasonSnowM = std::isfinite(u->seasonThermal0[0]) ? u->seasonThermal0[0] : 0.0f;
+        skinTempC   = std::isfinite(u->seasonThermal0[3]) ? u->seasonThermal0[3] : 0.0f;
+        seasonIceM  = std::isfinite(u->seasonThermal1[0]) ? u->seasonThermal1[0] : 0.0f;
+        for (uint32_t i = 0; i < 16u; ++i) {
+            if (u->impactDecalPosR[i][3] > 0.0f) ++activeImpactDecals;
+        }
+    }
+
+    uint32_t gpuMeshlets = 0u;
+    for (const auto& kv : streamedTerrainGpu) {
+        gpuMeshlets += kv.second.meshletCount;
+    }
+    const uint32_t worldGenMeshlets = (gpuMeshlets > 0u) ? gpuMeshlets : lastWorldStats.totalMeshlets;
+    const uint32_t worldGenActiveChunks = lastWorldStats.activeChunkCount;
+    const uint32_t worldGenPendingAsync = worldShowcase.PendingAsyncJobs();
+    const char* biomeName = raw::worldgen::GetBiomeName(lastWorldStats.cameraBiome);
+    if (!biomeName) biomeName = "Unknown";
+
+    char jsonBuf[1024]{};
+    const int n = std::snprintf(
+        jsonBuf, sizeof(jsonBuf),
+        "{\n"
+        "  \"frame\": %llu,\n"
+        "  \"width\": %u,\n"
+        "  \"height\": %u,\n"
+        "  \"attached\": %s,\n"
+        "  \"rtActive\": %s,\n"
+        "  \"worldGenActiveChunks\": %u,\n"
+        "  \"worldGenMeshlets\": %u,\n"
+        "  \"worldGenPendingAsync\": %u,\n"
+        "  \"worldGenBiome\": \"%s\",\n"
+        "  \"fluidFireEmitters\": %u,\n"
+        "  \"fluidWaterWakes\": %u,\n"
+        "  \"seasonSnowM\": %.4f,\n"
+        "  \"seasonIceM\": %.4f,\n"
+        "  \"skinTempC\": %.3f,\n"
+        "  \"activeImpactDecals\": %u\n"
+        "}\n",
+        static_cast<unsigned long long>(frames),
+        static_cast<unsigned>(cfg.width),
+        static_cast<unsigned>(cfg.height),
+        attached ? "true" : "false",
+        rtActive ? "true" : "false",
+        worldGenActiveChunks,
+        worldGenMeshlets,
+        worldGenPendingAsync,
+        biomeName,
+        lastFluidFireEmitters,
+        lastFluidWaterWakes,
+        seasonSnowM,
+        seasonIceM,
+        skinTempC,
+        activeImpactDecals);
+    if (n <= 0) return;
+
+    try {
+        const std::string outDir = telemetryOutDir.empty() ? std::string("raw_engine_out") : telemetryOutDir;
+        CreateDirectoryA(outDir.c_str(), nullptr);
+        const std::string tmpPath = outDir + "\\bridge_live_telemetry.json.tmp";
+        const std::string dstPath = outDir + "\\bridge_live_telemetry.json";
+        std::ofstream ofs(tmpPath, std::ios::binary | std::ios::trunc);
+        if (ofs.is_open()) {
+            ofs.write(jsonBuf, static_cast<std::streamsize>(n));
+            ofs.flush();
+            const bool writeOk = ofs.good();
+            ofs.close();
+            if (writeOk) {
+                MoveFileExA(tmpPath.c_str(), dstPath.c_str(), MOVEFILE_REPLACE_EXISTING);
+            }
+        }
+    } catch (...) {
+        // Non-blocking telemetry: I/O failures must never impact frame rendering.
+    }
+}
 
 bool D3D12Bridge::Impl::StepFluidSimOnQueue(bool isInterior)
 {
@@ -142,6 +264,8 @@ bool D3D12Bridge::Impl::StepFluidSimOnQueue(bool isInterior)
         }
     }
     wp.trailCount = wakeCount;
+    lastFluidFireEmitters = emitCount;
+    lastFluidWaterWakes = wakeCount;
 
     if (emitCount > 0u || fluidStepFrames == 0ull) {
         fluidSim.StepFire(fluidList.Get(), fp);
@@ -505,6 +629,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         s.open = false;
         s.executed = true;
         ++m->frames;
+        m->EmitLiveTelemetry(fc.rt);
         StreamlineHost::Get().ReflexBeginFrame(static_cast<uint32_t>(m->frames));
         return true;
     }
@@ -553,6 +678,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     s.open = false;
     s.executed = true;
     ++m->frames;
+    m->EmitLiveTelemetry(fc.rt);
     StreamlineHost::Get().ReflexBeginFrame(static_cast<uint32_t>(m->frames));
     return true;
 }

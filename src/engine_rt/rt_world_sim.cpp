@@ -4,6 +4,7 @@
 
 #include "CeNavMesh.h"
 #include "rt_combat_ai.h"
+#include "rt_economy_ledger.h"
 #include "rt_skeleton_ik.h"
 #include "rt_stealth_survival.h"
 #ifndef RAW_SIM_PURE_TEST
@@ -72,10 +73,23 @@ RawWorldSimTelemetry StepWorldSimSnapshot(const float playerPos[3], float gameHo
     out.windSpeed       = windSpeed;
     out.snowDepthU      = inInterior ? 0.0f : std::clamp(snow01 * 28.0f, 0.0f, 48.0f);
 
-    // 1. Living-world weather/time NPC ecosystem directive
+    // 1. Living-world weather/time NPC shelter, hearth & torch ecosystem heuristic
     const bool nearFire = inInterior;
-    const auto dir = EvaluateWorldEcosystem(gameHour, rain01, snow01, out.snowDepthU, nearFire, false);
-    out.activeDirective = static_cast<uint8_t>(dir);
+    NpcEcosystemInput npcIn{};
+    npcIn.gameHour     = gameHour;
+    npcIn.rain01       = rain01;
+    npcIn.snow01       = snow01;
+    npcIn.storm01      = std::max(rain01, snow01);
+    npcIn.snowDepthU   = out.snowDepthU;
+    npcIn.windSpeedMs  = windSpeed;
+    npcIn.ambientTempC = inInterior ? 18.0f : (10.0f - snow01 * 14.0f);
+    npcIn.inInterior   = inInterior;
+    npcIn.nearFire     = nearFire;
+    npcIn.inCombat     = false;
+    npcIn.hold         = playerPos ? ClassifySkyrimHold(playerPos[0], playerPos[1]) : SkyrimHold::Whiterun;
+    npcIn.nearbyActors = actorCount;
+    const auto npcDec  = EvaluateNpcShelterTorchHeuristic(npcIn);
+    out.activeDirective = static_cast<uint8_t>(npcDec.directive);
 
     // 2. 2-bone analytical foot-planting + volumetric snow-sink stride calibration
     FootPlantInput fp{};
@@ -328,14 +342,13 @@ void WorldSimOnPresent() {
     snap.adaptiveQuality = StepExtremumSeekingGovernor(g_gpuEsState, esCost, tickDtSec, 0.75f, 1.0f, 0.015f, 8.0f, 0.35f);
     g_coreWarmth = snap.coreWarmth;
     g_shiverAtomic.store(snap.shiverIntensity, std::memory_order_relaxed);
-    // Feed bounded live economy, thermal survival, tidal water buoyancy, stealth & acoustics into Skyrim's live engine memory:
-    const auto liveGm = ComputeDynamicGameplayGmsts(snap.economyBuyMult, snap.staminaRegenMult);
-    WorldSimApplyLiveGmsts(liveGm.barterMin, liveGm.barterMax, liveGm.sprintStaminaDrainMult);
+    // Feed bounded live planetary gravity, tidal water buoyancy, and squad telemetry into Skyrim's live engine memory:
     WorldSimApplyLivePlanetaryGravity(snap.gravityMps2);
     ViewApplyLiveTide(snap.tideHeightU);
     GameplayHooksUpdateSquadSnapshot(snap.actorsTracked, snap.attackTokensUsed, snap.tacticalAction, storm, snap.snowDepthU);
 
-    // Wave 40: Feed live weather, wind direction, hearth/fire proximity, water submersion & acoustics to rt_stealth_survival:
+    // Wave 40: Feed live weather, wind direction, hearth/fire proximity, water submersion & acoustics to rt_stealth_survival,
+    // and Wave 42: Step regional 9-Hold EconomyLedger caravans/seasonal shocks + live NPC weather/night shelter & torch heuristics!
     {
         float hearthProx = 0.0f;
         EngineLight lights[32]{};
@@ -354,6 +367,45 @@ void WorldSimOnPresent() {
         }
         const float windMs = std::max(windSpd * 0.014f, synLive.windSpeedMs);
         const float wLen = std::sqrt(wx * wx + wy * wy);
+        const bool nearHearth = (hearthProx > 0.12f);
+
+        // Wave 42: Evaluate dynamic NPC weather/night shelter & torch heuristics and step live 9-Hold EconomyLedger!
+        float cal6[6] = {201.0f, ev.gameMonth, ev.gameDay, ev.gameHour, ev.daysPassed, ev.timeScale};
+        RAW_GetCalendarState(cal6);
+        const SkyrimHold curHold = inInt ? SkyrimHold::Whiterun : ClassifySkyrimHold(ev.playerPos[0], ev.playerPos[1]);
+        NpcEcosystemInput liveNpcIn{};
+        liveNpcIn.gameHour            = ev.gameHour;
+        liveNpcIn.rain01              = std::max(rain01, synLive.rainRate01 * 0.5f);
+        liveNpcIn.snow01              = std::max(snow01, synLive.snowRate01 * 0.5f);
+        liveNpcIn.storm01             = storm;
+        liveNpcIn.snowDepthU          = snap.snowDepthU;
+        liveNpcIn.windSpeedMs         = windMs;
+        liveNpcIn.ambientTempC        = snap.ambientTempC;
+        liveNpcIn.inInterior          = inInt;
+        liveNpcIn.nearFire            = nearHearth;
+        liveNpcIn.inCombat            = false;
+        liveNpcIn.hold                = curHold;
+        liveNpcIn.nearbyActors        = nActors;
+        liveNpcIn.caravanDisruption01 = storm * 0.65f;
+        NpcEcosystemDecision liveNpcDec = EvaluateNpcShelterTorchHeuristic(liveNpcIn);
+
+        const HoldBarterMultipliers holdEcon = EconomyLedgerOnWorldTick(
+            ev.playerPos, inInt, cal6[4], cal6[1], cal6[2],
+            storm, liveNpcIn.rain01, snap.snowDepthU, liveNpcDec);
+
+        // Re-evaluate alertness if hold caravan disruption exceeds raw local storm level:
+        if (holdEcon.caravanDisruption01 > liveNpcIn.caravanDisruption01 + 0.05f) {
+            liveNpcIn.hold = holdEcon.hold;
+            liveNpcIn.caravanDisruption01 = holdEcon.caravanDisruption01;
+            liveNpcDec = EvaluateNpcShelterTorchHeuristic(liveNpcIn);
+        }
+        snap.activeDirective = static_cast<uint8_t>(liveNpcDec.directive);
+        snap.marketTier      = holdEcon.marketTier;
+        snap.economyBuyMult  = holdEcon.buyPriceMult;
+        // Feed live 9-Hold economy & thermal stamina multipliers into Skyrim's live GMSTs:
+        const auto liveGm = ComputeDynamicGameplayGmsts(snap.economyBuyMult, snap.staminaRegenMult);
+        WorldSimApplyLiveGmsts(liveGm.barterMin, liveGm.barterMax, liveGm.sprintStaminaDrainMult);
+
         StealthEnvSnapshot sEnv{};
         sEnv.rain01          = rain01;
         sEnv.snow01          = snow01;
@@ -376,7 +428,7 @@ void WorldSimOnPresent() {
         tIn.altitudeZ         = ev.playerPos[2];
         tIn.inInterior        = inInt;
         tIn.inWater           = inWater;
-        tIn.nearHearth        = (hearthProx > 0.12f);
+        tIn.nearHearth        = nearHearth;
         tIn.hearthProximity01 = hearthProx;
         tIn.dtSec             = tickDtSec;
 

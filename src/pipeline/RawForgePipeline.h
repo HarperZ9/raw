@@ -65,6 +65,20 @@ BakeResult BakeEsmCellAsset(const std::string& esmPath,
                             const ValidatorPolicy& policy = {},
                             bool writeGeometryFiles = true);
 
+// Loads a Skyrim SE `.nif` file from disk or extracts it directly from a `.bsa` archive via RawBsaArchive,
+// decodes hierarchical BSTriShape geometry & texture sets via RawNifLoader, validates 64v/126t GPU meshlets
+// through RawAssetValidator, and exports .glb/.obj + JSON metadata.
+BakeResult BakeNifFileAsset(const std::string& nifPath,
+                            const std::string& outDir,
+                            const ValidatorPolicy& policy = {},
+                            bool writeGeometryFiles = true);
+
+BakeResult BakeBsaNifAsset(const std::string& bsaPath,
+                           const std::string& virtualNifPath,
+                           const std::string& outDir,
+                           const ValidatorPolicy& policy = {},
+                           bool writeGeometryFiles = true);
+
 // Runs all 4 studio baking & quality-gate validation pipelines and emits pipeline_validation_report.json.
 BakeResult RunFullPipelineValidation(const std::string& outDir,
                                      uint32_t seed = 202607u,

@@ -340,6 +340,127 @@ float4 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float curZ, fl
     return float4(accEmit, finalT);
 }
 
+// Wave 42: Physical Underwater Volumetric Sun-Shafts, Pope & Fry Beer-Lambert Marine Absorption & Glacial Silt Motes.
+// Activated strictly when camera is submerged ((flags.x & FLAG_UNDERWATER) != 0u):
+//   - Pope & Fry Beer-Lambert absorption sigma_a = (0.42, 0.10, 0.055) (red dies fast, glacial teal mid-range, deep indigo at depth)
+//   - 12 IGN-jittered ray steps marching refracted downward volumetric sun-shafts (animated surface wave caustics via rawNoise3Grad)
+//   - Sparse gently drifting world-locked glacial silt / micro-plankton motes (rawHash33) forward-lit by Mie phase
+float3 evalUnderwaterVolumetrics(float3 litCol, float3 eye, float3 w, float dist, float2 px, float liveWaterZ, bool isSkyRay) {
+    // Pope & Fry pure/glacial marine spectral absorption (m^-1 scaled cleanly to Skyrim units: 145u ~ 1 optical meter):
+    static const float3 kPopeFrySigmaA = float3(0.42f, 0.10f, 0.055f);
+    const float invOptU = 1.0f / 145.0f;
+    const float wtUw = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
+    const float jit = ign(px + float2(13.0f, 37.0f));
+
+    // Unified sun/moon & sky palette so underwater light responds cleanly to time of day & weather:
+    float3 uSunUw, uSkyZUw, uSkyHUw, uAmbUpUw, uAmbDnUw;
+    evalWorldAtmosphere(uSunUw, uSkyZUw, uSkyHUw, uAmbUpUw, uAmbDnUw);
+    const float aElevUw = astroSunElev();
+    const float nightUw = smoothstep(0.04f, -0.07f, aElevUw);
+    const float dayUw   = smoothstep(-0.04f, 0.18f, aElevUw);
+    const float coverUw = saturate(clouds.x);
+
+    // Exact Snell-refracted light vector inside water (eta = n_air / n_water = 1 / 1.333 = 0.75):
+    const float3 airLightDir = normalize(lerp(astroSunDir(), sunDir.xyz, nightUw));
+    const float2 refrXY = airLightDir.xy * 0.75f;
+    const float3 uwLightDir = normalize(float3(refrXY, sqrt(max(1.0f - dot(refrXY, refrXY), 0.04f))));
+    const float cosUw = dot(w, uwLightDir);
+    const float phUw = min(phaseHG(cosUw, 0.72f) * 2.4f + 0.18f, 2.5f);
+
+    // Effective submerged ray length (for underwater sky rays outside Snell's window, march deep marine column):
+    const float camSubDepth = max(liveWaterZ - (camPosW.z + eye.z), 0.0f);
+    const float tSurface = (isSkyRay && w.z > 0.02f) ? (camSubDepth / max(w.z, 0.02f)) : dist;
+    const float uwDist = isSkyRay ? min(tSurface, 2600.0f) : dist;
+    const float pathM = uwDist * invOptU;
+    const float3 T_uw = exp(-kPopeFrySigmaA * pathM);
+
+    // Depth-stratified glacial marine ambient color (shallow emerald-teal -> deep arctic indigo):
+    const float midSubM = max(liveWaterZ - (camPosW.z + eye.z + w.z * min(uwDist * 0.5f, 1200.0f)), 0.0f) * invOptU;
+    const float3 depthAtten = exp(-kPopeFrySigmaA * (midSubM * 0.52f));
+    const float lightEnergy = lerp(0.18f, 1.0f, dayUw) * (1.0f - coverUw * 0.35f);
+    const float3 shallowTeal = float3(0.042f, 0.195f, 0.245f) * (0.45f + 0.55f * saturate(dot(uSkyHUw + uSunUw, float3(0.25f, 0.50f, 0.25f))));
+    const float3 deepIndigo  = float3(0.006f, 0.028f, 0.068f);
+    const float3 marineAmb   = lerp(deepIndigo, shallowTeal, saturate(depthAtten.g)) * lightEnergy;
+
+    // Snell's Window modulation on sky rays looking up from below the water surface (critical angle 48.6 deg -> cos = 0.661):
+    float3 baseUw = litCol * T_uw + marineAmb * (1.0f.xxx - T_uw);
+    if (isSkyRay) {
+        const float snellWin = smoothstep(0.60f, 0.70f, w.z);
+        const float3 tirWater = marineAmb * (0.75f + 0.25f * saturate(w.z + 0.4f));
+        baseUw = lerp(tirWater, litCol * T_uw + marineAmb * (1.0f.xxx - T_uw), snellWin);
+    }
+
+    // 12 IGN-jittered underwater ray steps: refracted volumetric sun-shafts + suspended glacial silt / plankton motes!
+    const float tMarchMax = min(uwDist, 2200.0f);
+    const float ds = tMarchMax * (1.0f / 12.0f);
+    const float3 shaftCol = lerp(uSunUw * 1.15f + uSkyHUw * 0.35f, float3(0.16f, 0.32f, 0.58f), nightUw)
+                          * (1.0f - coverUw * 0.62f) * (sunColour.w > 0.5f ? 1.0f : 0.22f);
+
+    float3 shaftAcc = 0.0f.xxx;
+    float3 moteAcc  = 0.0f.xxx;
+
+    if (tMarchMax > 8.0f) {
+        [unroll] for (int si = 0; si < 12; ++si) {
+            const float t = (float(si) + jit) * ds;
+            const float3 wp = camPosW.xyz + eye + w * t;
+            const float subZ = max(liveWaterZ - wp.z, 0.0f);
+            // Project along refracted underwater sun vector up to the water surface to sample wave-focused caustics:
+            const float2 surfXY = wp.xy + uwLightDir.xy * (subZ / max(uwLightDir.z, 0.22f));
+            const float2 cUv = surfXY * 0.0115f + float2(wtUw * 0.26f, -wtUw * 0.18f);
+            const float4 cg1 = rawNoise3Grad(float3(cUv, wtUw * 0.32f));
+            const float4 cg2 = rawNoise3Grad(float3(cUv * 1.90f + cg1.yz * 0.34f, -wtUw * 0.40f + 5.7f));
+            const float cFocus = pow(saturate(1.0f - abs(cg1.x * 2.0f - 1.0f) * 1.85f), 2.3f) * 0.60f
+                               + pow(saturate(1.0f - abs(cg2.x * 2.0f - 1.0f) * 2.05f), 2.7f) * 0.40f;
+
+            // Pope & Fry spectral transmittance along both downward light path and camera view path:
+            const float downPathM = (subZ / max(uwLightDir.z, 0.22f)) * invOptU;
+            const float3 T_down = exp(-kPopeFrySigmaA * downPathM);
+            const float3 T_view = exp(-kPopeFrySigmaA * (t * invOptU));
+            const float shaftStep = (0.14f + 0.86f * cFocus) * (ds * (1.0f / 1400.0f));
+            shaftAcc += shaftCol * (T_down * T_view * phUw * shaftStep);
+
+            // Calm, sparse world-locked suspended glacial silt / micro-plankton motes lit forward by Mie phase:
+            if (t > 24.0f && t < 900.0f) {
+                const float3 driftM = float3(sin(wtUw * 0.42f + wp.z * 0.018f) * 3.2f,
+                                             cos(wtUw * 0.36f - wp.x * 0.018f) * 3.2f,
+                                             sin(wtUw * 0.24f + wp.y * 0.014f) * 2.0f);
+                const float3 mGrid = (wp + driftM) * 0.145f;
+                const float3 mCell = floor(mGrid);
+                const float3 mRnd  = rawHash33(mCell);
+                if (mRnd.x > 0.940f) {
+                    const float dM = length((frac(mGrid) - 0.5f) - (mRnd - 0.5f) * 0.58f);
+                    const float mote = smoothstep(0.940f, 0.998f, mRnd.x) * exp(-dM * dM * 58.0f)
+                                     * smoothstep(24.0f, 95.0f, t) * (1.0f - smoothstep(480.0f, 900.0f, t));
+                    const float3 moteLit = (shaftCol * (0.30f + 0.70f * cFocus) * phUw + marineAmb * 1.45f) * T_down * T_view;
+                    moteAcc += moteLit * (mote * 0.38f);
+                }
+            }
+        }
+    }
+
+    // Subtle near-surface rising aerated micro-bubbles coupled to planetary gravity:
+    const float gNorm = clamp(physWorld[0].y / 9.80665f, 0.2f, 2.5f);
+    float3 bubAdd = 0.0f.xxx;
+    [unroll] for (int bl = 0; bl < 4; ++bl) {
+        const float bDist = 42.0f + float(bl) * 58.0f;
+        if (uwDist <= bDist) { continue; }
+        const float3 wpB = camPosW.xyz + eye + w * bDist;
+        const float subDepth = max(liveWaterZ - wpB.z, 0.0f);
+        const float surfZone = exp(-subDepth / 240.0f);
+        const float bScale = lerp(0.24f, 0.12f, float(bl) / 3.0f);
+        const float3 bCoord = float3((wpB.xy + float2(sin(wtUw * 1.8f + wpB.z * 0.05f), cos(wtUw * 1.5f - wpB.z * 0.04f)) * 4.5f) * bScale,
+                                     wpB.z * bScale - wtUw * (3.2f * gNorm));
+        const float bCell = cHash(floor(bCoord));
+        if (bCell > 0.952f) {
+            const float dB = length(frac(bCoord) - 0.5f);
+            const float bSp = smoothstep(0.952f, 0.998f, bCell) * exp(-dB * dB * 38.0f) * surfZone;
+            bubAdd += float3(0.45f, 0.74f, 0.80f) * (bSp * 0.30f / (1.0f + float(bl) * 0.35f));
+        }
+    }
+
+    return max(baseUw + min(shaftAcc, 0.85f.xxx) + moteAcc + bubAdd, 0.0f.xxx);
+}
+
 float4 fs(float4 at : SV_Position) : SV_Target0 {
     const int3 ip = int3(at.xy, 0);
     float4 lit = Lit.Load(ip);
@@ -620,8 +741,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 baseSky *= (1.0f - alexBand * bowW * 0.15f + superInner * bowW * 0.065f);
                 baseSky += float3(pR + sR, pG + sG, pB + sB) * (bowW * 0.12f);
             }
-            // Allow verified outdoor fire smoke & embers to billow cleanly in front of lower sky pixels:
-            if (!isCelestial && (1.0f - isExotic) > 0.2f && sDir.z > -0.10f && sDir.z < 0.52f) {
+            // When camera is submerged, apply physical underwater Snell's Window + volumetric sun-shafts to sky pixels:
+            if ((flags.x & FLAG_UNDERWATER) != 0u) {
+                const float liveSeaUw = rawLiveWaterZ(engineWorld, physWorld[0]);
+                baseSky = evalUnderwaterVolumetrics(baseSky, eyeCel, sDir, 2600.0f, px, liveSeaUw, true);
+            } else if (!isCelestial && (1.0f - isExotic) > 0.2f && sDir.z > -0.10f && sDir.z < 0.52f) {
+                // Allow verified outdoor fire smoke & embers to billow cleanly in front of lower sky pixels:
                 const float4 skyFireVol = evalVolumetricFirePlumes(eyeCel, sDir, 2400.0f, 100000.0f, px, false);
                 baseSky = baseSky * skyFireVol.a + skyFireVol.rgb;
             }
@@ -672,31 +797,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 froxScat = frox.rgb * mapScale;
     const float3 shaftScatter = vol2D * (0.14f * mapScale * fgClear);
     const float3 scatter = froxScat + shaftScatter;
-    // Engine-native underwater medium + Wave 34 EasyWaterscape Rising Buoyant Bubble Plumes (coupled to planetary gravity!):
-    const float tideWaterZ = engineWorld.x + physWorld[0].z;
+    // Wave 42 Physical Underwater Volumetrics: Pope & Fry Beer-Lambert marine absorption + 12-step refracted sun-shafts + glacial silt motes!
+    const float tideWaterZ = rawLiveWaterZ(engineWorld, physWorld[0]);
     if ((flags.x & FLAG_UNDERWATER) != 0u && (engineWorld.z < 0.5f || (p.z + camPosW.z) <= tideWaterZ + 12.0f)) {
-        float3 uw = elderUnderwaterMedium(lit.rgb, dist, 0.0016f);
-        // Buoyancy-driven rising aerated micro-bubbles near surface/waterline (rise speed proportional to gravity!):
-        const float wtBub = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
-        const float gNorm = clamp(physWorld[0].y / 9.80665f, 0.2f, 2.5f);
-        float3 bubAdd = 0.0f.xxx;
-        [unroll] for (int bl = 0; bl < 4; ++bl) {
-            const float bDist = 42.0f + float(bl) * 58.0f;
-            if (dist <= bDist) { continue; }
-            const float3 wpB = camPosW.xyz + eye + w * bDist;
-            const float subDepth = max(tideWaterZ - wpB.z, 0.0f);
-            const float surfZone = exp(-subDepth / 260.0f);
-            const float bScale = lerp(0.24f, 0.12f, float(bl) / 3.0f);
-            const float3 bCoord = float3((wpB.xy + float2(sin(wtBub * 1.8f + wpB.z * 0.05f), cos(wtBub * 1.5f - wpB.z * 0.04f)) * 4.5f) * bScale,
-                                         wpB.z * bScale - wtBub * (3.2f * gNorm));
-            const float bCell = cHash(floor(bCoord));
-            if (bCell > 0.945f) {
-                const float dB = length(frac(bCoord) - 0.5f);
-                const float bSp = smoothstep(0.945f, 0.998f, bCell) * exp(-dB * dB * 34.0f) * surfZone;
-                bubAdd += float3(0.45f, 0.72f, 0.78f) * (bSp * 0.38f / (1.0f + float(bl) * 0.35f));
-            }
-        }
-        return float4(uw + scatter * float3(0.22f, 0.68f, 0.82f) * 1.15f + bubAdd, lit.a);
+        const float3 uwFinal = evalUnderwaterVolumetrics(lit.rgb, eye, w, dist, px, tideWaterZ, false);
+        return float4(uwFinal, lit.a);
     }
     // Engine-level unified 3D froxel (0..42,000u) + Hillaire far-mountain aerial perspective (beyond kFroxFar=42,000u):
     if ((flags.x & FLAG_FOG_REPLACES) != 0u && sunColour.w > 0.5f) {
@@ -711,8 +816,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float alpineNoise = cNoise(midPt * 0.00014f + windShift) * 0.65f + cNoise(midPt * 0.00042f - windShift * 1.6f + 7.1f) * 0.35f;
         const float peakCollar = exp(-pow((midPt.z - 5200.0f) / 3600.0f, 2.0f)) * smoothstep(24000.0f, 52000.0f, dist);
         const float alpineMist = (0.76f + 0.48f * alpineNoise) * (1.0f + peakCollar * (0.42f + 0.50f * alpineNoise));
-        const float odFar = baseSigma * farSpan * elevW * alpineMist * exp(-hStart * 0.15f);
-        const float horizonMelt = smoothstep(75000.0f, 150000.0f, dist);
+        // Smooth exponential far-horizon aerial decay aligned with RawTerrainWorld.hlsl's exp(-optDepth) frontier curve:
+        const float odFar = baseSigma * farSpan * elevW * alpineMist * exp(-hStart * 0.15f)
+                          + max(dist - 85000.0f, 0.0f) * 0.000016f;
+        const float horizonMelt = smoothstep(95000.0f, 190000.0f, dist);
         // Wavelength-dependent far aerial transmittance composed multiplicatively with true 3D froxel transmittance froxT:
         float3 Tfar = exp(-odFar * float3(0.84f, 0.96f, 1.12f)) * (1.0f - horizonMelt);
         float3 T = froxT * Tfar;
@@ -732,7 +839,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float overcastWF = saturate((cloudCov - 0.55f) * 1.95f + weather.w * 0.52f + weather.z * 0.45f);
         const float3 overcastScatterF = lerp(hillaireSky, hLumF.xxx * float3(0.88f, 0.94f, 1.04f), 0.72f);
         float3 atmoCol = lerp(hillaireSky, overcastScatterF, overcastWF * 0.78f);
+        // Seamless Far-Horizon Aerial Fusion with RawTerrainWorld.hlsl's evalWorldAtmosphere() frontier scatter:
+        const float frontierFuse = smoothstep(65000.0f, 165000.0f, dist);
+        const float3 worldAtmoRef = lerp(uSkyHF, uSkyZF, saturate((w.z * 0.5f + 0.5f) * 0.72f))
+                                  + uSunF * (rawMultiScatterPhase(cosSunF, clamp(tune.y, 0.25f, 0.78f), odFar) * saturate(aElevFg * 4.0f + 0.15f) * 0.42f);
         atmoCol = lerp(atmoCol, lerp(uSkyHF, uSkyZF, saturate(max(w.z, 0.0f) * 2.2f)), 0.28f) * (0.92f * lerp(1.0f, 0.78f, twilightF * (1.0f - horizonMelt)));
+        atmoCol = lerp(atmoCol, worldAtmoRef, frontierFuse * 0.38f * (1.0f - nightF));
         if ((flags.x & FLAG_CLOUDS) != 0u) {
             const float4 clF = Clouds.SampleLevel(Lin, uv, 0.0f);
             const float clMerge = smoothstep(28000.0f, 75000.0f, dist);

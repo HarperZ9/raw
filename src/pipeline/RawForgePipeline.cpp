@@ -6,8 +6,10 @@
 #include "RawForgePipeline.h"
 
 #include "../materials/RawMaterialLib.h"
+#include "../worldgen/RawBsaArchive.h"
 #include "../worldgen/RawEsmWorldLoader.h"
 #include "../worldgen/RawFloraEngine.h"
+#include "../worldgen/RawNifLoader.h"
 #include "../worldgen/RawWeatherSim.h"
 #include "../worldgen/RawWorldShowcase.h"
 
@@ -682,6 +684,133 @@ BakeResult BakeEsmCellAsset(const std::string& esmPath,
                          std::to_string(rep.triangleCount) + " tris, " +
                          std::to_string(cell.placements.size()) + " REFRs";
     return res;
+}
+
+namespace {
+
+BakeResult BakeParsedNifScene(const raw::worldgen::NifScene& scene,
+                              const std::string& sourceLabel,
+                              const std::string& outDir,
+                              const ValidatorPolicy& policy,
+                              bool writeGeometryFiles) {
+    using namespace raw::worldgen;
+    BakeResult res{};
+    if (!EnsureDir(outDir)) {
+        res.summaryMessage = "Failed to create NIF output directory: " + outDir;
+        return res;
+    }
+
+    ProceduralMesh mesh{};
+    std::string err;
+    if (!BuildProceduralMeshFromNif(scene, 126u, &mesh, &err)) {
+        res.validationFailures = 1u;
+        res.summaryMessage = "NIF mesh build failed (" + sourceLabel + "): " + err;
+        return res;
+    }
+
+    const std::filesystem::path stemPath(sourceLabel);
+    const std::string baseName = "nif_" + SanitizeId(stemPath.stem().string().empty() ? "asset" : stemPath.stem().string());
+    mesh.name = baseName;
+    ++res.assetsGenerated;
+
+    ValidationReport rep{};
+    const bool valid = ValidateProceduralMeshStrict(mesh, &rep, policy);
+    AccumulateReport(rep, res);
+
+    const std::string glbRel = baseName + ".glb";
+    const std::string objRel = baseName + ".obj";
+    if (writeGeometryFiles && valid) {
+        if (ExportMeshToGlbFile(mesh, outDir + "/" + glbRel, true)) ++res.filesWritten;
+        else ++res.validationFailures;
+        if (ExportMeshToObjFile(mesh, outDir + "/" + objRel)) ++res.filesWritten;
+        else ++res.validationFailures;
+    }
+
+    std::ostringstream js;
+    js << std::fixed << std::setprecision(4);
+    js << "{\n  \"pipeline\": \"RAW Clean-Room Skyrim SE NIF Asset Bake\",\n"
+       << "  \"source\": \"" << JsonEscape(sourceLabel) << "\",\n"
+       << "  \"header\": \"" << JsonEscape(scene.header.headerString) << "\",\n"
+       << "  \"userVersion\": " << scene.header.userVersion << ",\n"
+       << "  \"userVersion2\": " << scene.header.userVersion2 << ",\n"
+       << "  \"numBlocks\": " << scene.header.numBlocks << ",\n"
+       << "  \"nodeCount\": " << scene.nodes.size() << ",\n"
+       << "  \"triShapeCount\": " << scene.shapes.size() << ",\n"
+       << "  \"glb\": \"" << (writeGeometryFiles ? glbRel : "") << "\",\n"
+       << "  \"obj\": \"" << (writeGeometryFiles ? objRel : "") << "\",\n"
+       << "  \"shapes\": [\n";
+    for (size_t i = 0u; i < scene.shapes.size(); ++i) {
+        const auto& s = scene.shapes[i];
+        if (i > 0u) js << ",\n";
+        js << "    {"
+           << "\"name\":\"" << JsonEscape(s.name) << "\","
+           << "\"type\":\"" << JsonEscape(s.blockType) << "\","
+           << "\"vertices\":" << s.vertices.size() << ","
+           << "\"triangles\":" << (s.indices.size() / 3u) << ","
+           << "\"fullPrecision\":" << (s.fullPrecisionPos ? "true" : "false") << ","
+           << "\"diffuse\":\"" << JsonEscape(s.textureSet.diffusePath) << "\","
+           << "\"normal\":\"" << JsonEscape(s.textureSet.normalPath) << "\","
+           << "\"specular\":\"" << JsonEscape(s.textureSet.specularPath) << "\""
+           << "}";
+    }
+    js << "\n  ],\n  \"validation\": " << rep.ToJson() << "\n}\n";
+
+    res.manifestPath = outDir + "/" + baseName + "_manifest.json";
+    if (WriteTextFile(res.manifestPath, js.str())) ++res.filesWritten;
+    else ++res.validationFailures;
+
+    res.ok = valid && (res.validationFailures == 0u);
+    res.summaryMessage = "NifAsset(" + baseName + "): " + std::to_string(scene.shapes.size()) +
+                         " shapes, " + std::to_string(rep.meshletCount) + " meshlets, " +
+                         std::to_string(rep.triangleCount) + " tris";
+    return res;
+}
+
+}  // namespace
+
+BakeResult BakeNifFileAsset(const std::string& nifPath,
+                            const std::string& outDir,
+                            const ValidatorPolicy& policy,
+                            bool writeGeometryFiles) {
+    raw::worldgen::NifScene scene{};
+    std::string err;
+    if (!raw::worldgen::ParseNifFile(nifPath, &scene, &err)) {
+        BakeResult res{};
+        res.validationFailures = 1u;
+        res.summaryMessage = "NIF parse failed: " + err;
+        return res;
+    }
+    return BakeParsedNifScene(scene, nifPath, outDir, policy, writeGeometryFiles);
+}
+
+BakeResult BakeBsaNifAsset(const std::string& bsaPath,
+                           const std::string& virtualNifPath,
+                           const std::string& outDir,
+                           const ValidatorPolicy& policy,
+                           bool writeGeometryFiles) {
+    raw::worldgen::RawBsaArchive bsa;
+    std::string err;
+    if (!bsa.Open(bsaPath, &err)) {
+        BakeResult res{};
+        res.validationFailures = 1u;
+        res.summaryMessage = "BSA open failed: " + err;
+        return res;
+    }
+    std::vector<uint8_t> nifBytes;
+    if (!bsa.ExtractFile(virtualNifPath, &nifBytes, &err)) {
+        BakeResult res{};
+        res.validationFailures = 1u;
+        res.summaryMessage = "BSA extract failed: " + err;
+        return res;
+    }
+    raw::worldgen::NifScene scene{};
+    if (!raw::worldgen::ParseNifBytes(nifBytes.data(), nifBytes.size(), virtualNifPath, &scene, &err)) {
+        BakeResult res{};
+        res.validationFailures = 1u;
+        res.summaryMessage = "NIF parse failed: " + err;
+        return res;
+    }
+    return BakeParsedNifScene(scene, virtualNifPath, outDir, policy, writeGeometryFiles);
 }
 
 BakeResult RunFullPipelineValidation(const std::string& outDir,

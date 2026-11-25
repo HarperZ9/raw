@@ -306,7 +306,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         const bool gtaoOk = m->InitGtaoHost();
         const bool ssrOk = m->InitSsrHost();
         const bool autoExpOk = m->InitAutoExposure();
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s, Gtao=%s, Ssr=%s, AutoExposure=%s",
+        const bool cloudOk = m->InitCloudRaymarch();
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s, Gtao=%s, Ssr=%s, AutoExposure=%s, CloudRaymarch=%s",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
                terrainOk ? "READY" : "off",
                m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
@@ -323,7 +324,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                pcssOk ? "READY" : "off",
                gtaoOk ? "READY" : "off",
                ssrOk ? "READY" : "off",
-               autoExpOk ? "READY" : "off");
+               autoExpOk ? "READY" : "off",
+               cloudOk ? "READY" : "off");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
         {
             const auto& matReg = raw::materials::DefaultMaterialRegistry();
@@ -1253,6 +1255,77 @@ void D3D12Bridge::Impl::ShutdownAutoExposure()
     autoExposureReady = false;
 }
 
+bool D3D12Bridge::Impl::InitCloudRaymarch()
+{
+    ShutdownCloudRaymarch();
+    if (!dev12) return false;
+    cloudRaymarch = std::make_unique<RawCloudRaymarchHost>();
+    CloudRaymarchDesc desc{};
+    desc.initialWidth  = std::max(cfg.width / 4u, 64u);
+    desc.initialHeight = std::max(cfg.height / 4u, 36u);
+    std::string cloudErr;
+    if (!cloudRaymarch->Init(dev12.Get(), desc, &cloudErr)) {
+        log("[CloudRaymarch] off: %s", cloudErr.c_str());
+        cloudRaymarch.reset();
+        return false;
+    }
+    UINT64 tsFreq = 0;
+    if (queue && SUCCEEDED(queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+        cloudRaymarch->SetTimestampFrequency(tsFreq);
+    }
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cloudAlloc[i])))) {
+            ShutdownCloudRaymarch();
+            return false;
+        }
+    }
+    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cloudAlloc[0].Get(), nullptr, IID_PPV_ARGS(&cloudList))) ||
+        FAILED(cloudList->Close()) ||
+        FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&cloudFence)))) {
+        ShutdownCloudRaymarch();
+        return false;
+    }
+    cloudEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!cloudEvent) {
+        ShutdownCloudRaymarch();
+        return false;
+    }
+    cloudRaymarchReady = true;
+    cloudPrevInterior = false;
+    log("[CloudRaymarch] GPU 3D Volumetric Cloud Raymarcher ready (quarter-res %ux%u RGBA16F)",
+        desc.initialWidth, desc.initialHeight);
+    return true;
+}
+
+void D3D12Bridge::Impl::ShutdownCloudRaymarch()
+{
+    if (cloudFence && cloudEvent && cloudFenceVal > 0) {
+        if (cloudFence->GetCompletedValue() < cloudFenceVal) {
+            cloudFence->SetEventOnCompletion(cloudFenceVal, cloudEvent);
+            WaitForSingleObject(cloudEvent, 3000);
+        }
+    }
+    cloudList.Reset();
+    for (UINT i = 0; i < kRing; ++i) {
+        cloudAlloc[i].Reset();
+        cloudSlotVal[i] = 0;
+    }
+    cloudFence.Reset();
+    if (cloudEvent) {
+        CloseHandle(cloudEvent);
+        cloudEvent = nullptr;
+    }
+    if (cloudRaymarch) {
+        cloudRaymarch->Shutdown();
+        cloudRaymarch.reset();
+    }
+    cloudFenceVal = 0;
+    cloudSlot = 0;
+    cloudStepFrames = 0;
+    cloudPrevInterior = false;
+    cloudRaymarchReady = false;
+}
+
 void D3D12Bridge::Shutdown()
 {
     if (!m) return;
@@ -1261,6 +1334,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->ShutdownCloudRaymarch();
     m->ShutdownAutoExposure();
     m->ShutdownSsrHost();
     m->ShutdownGtaoHost();

@@ -13,8 +13,10 @@
 // Exit code: 0 on 100% validation pass, 1 on any pipeline/validation defect, 2 on bad CLI arguments.
 // Original work, MIT.
 
+#include "../src/pipeline/RawAssetValidator.h"
 #include "../src/pipeline/RawForgePipeline.h"
 #include "../src/worldgen/RawBsaArchive.h"
+#include "../src/worldgen/RawDungeonGen.h"
 #include "../src/worldgen/RawEsmModelResolver.h"
 #include "../src/worldgen/RawEsmNpcWeatherLoader.h"
 #include "../src/worldgen/RawFactionDiplomacy.h"
@@ -1531,6 +1533,134 @@ bool RunWorldSnapshotAudit() {
     return ok;
 }
 
+bool RunDungeonGenAudit() {
+    using namespace raw::worldgen;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    const DungeonArchetype archetypes[3] = {
+        DungeonArchetype::NordicBarrow,
+        DungeonArchetype::GlacialIceCavern,
+        DungeonArchetype::BasaltDwemerRuin,
+    };
+
+    bool allArchetypesOk = true;
+    struct ArchSummary {
+        const char* name = "";
+        size_t      rooms = 0u;
+        uint32_t    bfs = 0u;
+        size_t      corridors = 0u;
+        size_t      lights = 0u;
+        size_t      meshlets = 0u;
+        uint32_t    tris = 0u;
+        uint32_t    errors = 0u;
+        bool        ok = false;
+    } summaries[3];
+
+    for (int i = 0; i < 3; ++i) {
+        DungeonGenConfig cfg{};
+        cfg.archetype = archetypes[i];
+        cfg.seed      = 5700u + static_cast<uint32_t>(i * 19);
+        cfg.roomCount = 9u + static_cast<uint32_t>(i);
+
+        GeneratedDungeon d{};
+        const bool generated = RawDungeonGen::GenerateDungeon(cfg, d);
+        raw::pipeline::ValidationReport rep{};
+        const bool strictValid = generated && raw::pipeline::ValidateProceduralMeshStrict(d.mesh, &rep);
+
+        const bool archOk = generated &&
+                            (d.bfsReachableRooms == d.rooms.size()) &&
+                            (d.mesh.meshlets.size() >= 10u) &&
+                            (d.lights.size() >= 6u) &&
+                            strictValid && (rep.TotalErrors() == 0u);
+
+        summaries[i].name      = GetDungeonArchetypeName(archetypes[i]);
+        summaries[i].rooms     = d.rooms.size();
+        summaries[i].bfs       = d.bfsReachableRooms;
+        summaries[i].corridors = d.corridors.size();
+        summaries[i].lights    = d.lights.size();
+        summaries[i].meshlets  = d.mesh.meshlets.size();
+        summaries[i].tris      = rep.triangleCount;
+        summaries[i].errors    = rep.TotalErrors();
+        summaries[i].ok        = archOk;
+        if (!archOk) allArchetypesOk = false;
+    }
+
+    // Live Physics + NavMesh Entrance -> Boss A* Path Proof on NordicBarrow
+    DungeonGenConfig navCfg{};
+    navCfg.archetype = DungeonArchetype::NordicBarrow;
+    navCfg.seed      = 202656u;
+    navCfg.roomCount = 8u;
+
+    GeneratedDungeon barrow{};
+    const bool genBarrow = RawDungeonGen::GenerateDungeon(navCfg, barrow);
+    RawWorldPhysics phys;
+    const bool addedMesh = genBarrow && phys.AddCellCollider(PackCellKey(0, 0), barrow.mesh, 1u, 1u);
+
+    RawNavMesh nav;
+    NavBakeConfig ncfg{};
+    ncfg.originX        = barrow.worldBoundsMin.x - 64.0f;
+    ncfg.originY        = barrow.worldBoundsMin.y - 64.0f;
+    ncfg.sizeX          = (barrow.worldBoundsMax.x - barrow.worldBoundsMin.x) + 128.0f;
+    ncfg.sizeY          = (barrow.worldBoundsMax.y - barrow.worldBoundsMin.y) + 128.0f;
+    ncfg.cellSizeU      = 64.0f;
+    ncfg.rayStartZ      = barrow.recommendedNavRayStartZ;
+    ncfg.rayMaxDist     = 2000.0f;
+    ncfg.agentHeadroomU = 130.0f;
+    const bool baked = addedMesh && nav.BakeFromPhysics(phys, ncfg);
+
+    const Vec3 start{barrow.entrancePos[0], barrow.entrancePos[1], barrow.entrancePos[2]};
+    const Vec3 goal{barrow.bossPos[0], barrow.bossPos[1], barrow.bossPos[2]};
+    const NavPathResult path = baked ? nav.FindPath(start, goal, &phys, 32768u) : NavPathResult{};
+
+    bool pathClean = path.found && path.waypoints.size() >= 2u;
+    for (size_t i = 0u; i < path.waypoints.size() && pathClean; ++i) {
+        if (!IsFinite3(path.waypoints[i].position)) {
+            pathClean = false;
+            break;
+        }
+        if (i + 1u < path.waypoints.size()) {
+            const Vec3 a = path.waypoints[i].position;
+            const Vec3 b = path.waypoints[i + 1u].position;
+            const Vec3 p0{a.x, a.y, a.z + 52.0f};
+            const Vec3 p1{b.x, b.y, b.z + 52.0f};
+            const Vec3 d = p1 - p0;
+            const float len = Length(d);
+            if (len > 1.0f) {
+                const RayHit h = phys.RayCast(p0, d / len, len - 2.0f);
+                if (h.hit) pathClean = false;
+            }
+        }
+    }
+    const NavMeshStats nst = nav.GetStats();
+    const bool navOk = genBarrow && addedMesh && baked && pathClean && (path.totalLengthU > 400.0f);
+
+    const double totalMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    const bool ok = allArchetypesOk && navOk;
+
+    std::printf(
+        "[INFO] Procedural 3D Dungeon Generator & NavMesh Audit (%.2f ms):\n"
+        "  1. %-17s : rooms=%zu bfs=%u/%zu corridors=%zu torches=%zu meshlets=%zu tris=%u err=%u [%s]\n"
+        "  2. %-17s : rooms=%zu bfs=%u/%zu corridors=%zu torches=%zu meshlets=%zu tris=%u err=%u [%s]\n"
+        "  3. %-17s : rooms=%zu bfs=%u/%zu corridors=%zu torches=%zu meshlets=%zu tris=%u err=%u [%s]\n"
+        "  4. Physics+NavMesh A*: walkable=%u bake=%.2fms | Entrance->Boss raw=%u -> smooth=%zu len=%.1fu search=%.3fms clean=%s [%s]\n"
+        "[%s] dungeon-gen: 3-archetype watertight meshlet + Entrance->Boss A* audit %s (%.2f ms)\n",
+        totalMs,
+        summaries[0].name, summaries[0].rooms, summaries[0].bfs, summaries[0].rooms,
+        summaries[0].corridors, summaries[0].lights, summaries[0].meshlets, summaries[0].tris, summaries[0].errors,
+        summaries[0].ok ? "PASS" : "FAIL",
+        summaries[1].name, summaries[1].rooms, summaries[1].bfs, summaries[1].rooms,
+        summaries[1].corridors, summaries[1].lights, summaries[1].meshlets, summaries[1].tris, summaries[1].errors,
+        summaries[1].ok ? "PASS" : "FAIL",
+        summaries[2].name, summaries[2].rooms, summaries[2].bfs, summaries[2].rooms,
+        summaries[2].corridors, summaries[2].lights, summaries[2].meshlets, summaries[2].tris, summaries[2].errors,
+        summaries[2].ok ? "PASS" : "FAIL",
+        nst.walkableCells, nst.bakeTimeMs, path.rawGridNodes, path.waypoints.size(),
+        path.totalLengthU, path.searchTimeMs, pathClean ? "yes" : "no", navOk ? "PASS" : "FAIL",
+        ok ? "PASS" : "FAIL", ok ? "PASS" : "FAIL", totalMs);
+    return ok;
+}
+
 bool ParseCellXY(const std::string& s, int32_t* outX, int32_t* outY) {
     const size_t comma = s.find(',');
     if (comma == std::string::npos || comma == 0u || comma + 1u >= s.size()) return false;
@@ -1572,6 +1702,7 @@ void PrintUsage() {
         "  raw_forge_cli --events-sim                              Emergent 9-hold radiant world-event director 30-day audit\n"
         "  raw_forge_cli --diplomacy-sim                           9-hold & 6-faction diplomacy, bounty & amnesty audit\n"
         "  raw_forge_cli --world-snapshot                          5-pillar RAWWORLD v1 CRC-32 binary + JSON snapshot audit\n"
+        "  raw_forge_cli --dungeon-gen                             3-archetype 3D dungeon meshlet + Entrance->Boss A* audit\n"
         "  raw_forge_cli --validate-all [dir]                      Run all 4 procedural pipelines + quality gates\n"
         "Options:\n"
         "  --seed <N>         Deterministic RNG seed (default: 202607)\n"
@@ -1633,6 +1764,7 @@ int main(int argc, char** argv) {
     bool runEventsSim       = false;
     bool runDiplomacySim    = false;
     bool runWorldSnapshot   = false;
+    bool runDungeonGen      = false;
     bool writeGeometry      = true;
     uint32_t seed       = 202607u;
     float latitudeDeg   = 60.0f;
@@ -1793,6 +1925,8 @@ int main(int argc, char** argv) {
             runDiplomacySim = true;
         } else if (arg == "--world-snapshot") {
             runWorldSnapshot = true;
+        } else if (arg == "--dungeon-gen") {
+            runDungeonGen = true;
         } else if (arg == "--validate-all") {
             runValidateAll = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -1819,11 +1953,11 @@ int main(int argc, char** argv) {
 
     if (!runValidateAll && !runEsmMeta && !runPhysicsProbe && !runTamrielStream && !runNavMeshAudit &&
         !runEcosystemSim && !runWildlifeSim && !runSettlementSim && !runEventsSim && !runDiplomacySim &&
-        !runWorldSnapshot &&
+        !runWorldSnapshot && !runDungeonGen &&
         floraDir.empty() && dioramaDir.empty() && almanacDir.empty() &&
         materialsDir.empty() && texturesDir.empty() && esmPath.empty() && esmScenePath.empty() &&
         bsaListPath.empty() && nifPath.empty() && bsaNifArchive.empty() && ddsPath.empty() && bsaDdsArchive.empty()) {
-        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, --events-sim, --diplomacy-sim, --world-snapshot, or --validate-all).\n");
+        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, --events-sim, --diplomacy-sim, --world-snapshot, --dungeon-gen, or --validate-all).\n");
         PrintUsage();
         return 2;
     }
@@ -1956,6 +2090,10 @@ int main(int argc, char** argv) {
 
     if (runWorldSnapshot) {
         if (!RunWorldSnapshotAudit()) allOk = false;
+    }
+
+    if (runDungeonGen) {
+        if (!RunDungeonGenAudit()) allOk = false;
     }
 
     if (runValidateAll) {

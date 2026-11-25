@@ -7,6 +7,7 @@
 #include "rt_engine_health.h"
 #include "rt_frame_governor.h"
 #include "rt_mod_load_audit.h"
+#include "rt_profile_presets.h"
 #include "rt_save_papyrus_guard.h"
 #include "rt_sdk_bridge.h"
 #include "rt_telemetry_recorder.h"
@@ -167,10 +168,11 @@ bool DispatchDiagnosticCommand(const char* cmdLine, std::string& outResponse) no
             return false;
         }
 
-        // Extract primary verb (first whitespace-delimited token) and normalize to lowercase.
+        // Extract primary verb (first whitespace-delimited token) and optional argument.
         size_t sp = 0u;
         while (sp < trimmed.size() && std::isspace(static_cast<unsigned char>(trimmed[sp])) == 0) ++sp;
         const std::string verb = ToLowerAscii(trimmed.substr(0u, sp));
+        const std::string arg  = (sp < trimmed.size()) ? TrimWhitespace(trimmed.substr(sp)) : std::string();
 
         if (verb == "help") {
             outResponse =
@@ -181,7 +183,38 @@ bool DispatchDiagnosticCommand(const char* cmdLine, std::string& outResponse) no
                 "  flight - Flush session_flight_recorder.json & report p50/p95/p99 frame stats and hitches\n"
                 "  mods   - Report TES4 mod load-order plugin/ESL counts and integrity issues\n"
                 "  saves  - Report .ESS save Papyrus string-table health & frame hitch watchdog telemetry\n"
-                "  status - Concise unified snapshot (health, governor, audio mood, weather & GMST modules)";
+                "  status - Concise unified snapshot (health, governor, audio mood, weather & GMST modules)\n"
+                "  preset <ultra|balanced|competitive|safemode> - Query or apply a validated 4-tier quality preset";
+            return true;
+        }
+
+        if (verb == "preset") {
+            if (arg.empty()) {
+                RawProfilePresetState st{};
+                const int active = RAW_GetProfilePresetState(&st);
+                char buf[256];
+                std::snprintf(buf, sizeof(buf),
+                              "[Preset] active=%s live=%d targetFps=%.0f renderFloor=%.2f | watchdog=%s (RAM=%.0f%% VRAM=%.0f%% rec=%s) | usage: preset <ultra|balanced|competitive|safemode>",
+                              QualityPresetName(static_cast<QualityPreset>(st.activePreset)),
+                              active, double(st.targetFps), double(st.renderScaleFloor),
+                              BudgetPressureName(static_cast<BudgetPressureLevel>(st.overallPressure)),
+                              double(st.ramUtilizationPct), double(st.vramUtilizationPct),
+                              QualityPresetName(static_cast<QualityPreset>(st.recommendedPreset)));
+                outResponse = buf;
+                return true;
+            }
+            QualityPreset target = QualityPreset::Balanced;
+            if (!ParseQualityPresetName(arg.c_str(), target)) {
+                outResponse = "Error: unknown preset '" + arg +
+                              "'. Usage: preset <ultra|balanced|competitive|safemode> (type 'help' for commands).";
+                return false;
+            }
+            std::string summary;
+            if (!ApplyActiveQualityPreset(target, &summary)) {
+                outResponse = "Error: failed to apply preset '" + arg + "'.";
+                return false;
+            }
+            outResponse = summary;
             return true;
         }
 
@@ -312,7 +345,7 @@ std::string ConsoleDiagInit(const std::string& outDir) {
     }
     char buf[224];
     std::snprintf(buf, sizeof(buf),
-                  "[ConsoleDiag] initialized (7 commands: help/health/sdk/flight/mods/saves/status | poll=%uf -> %s\\raw_cmd.txt)",
+                  "[ConsoleDiag] initialized (8 commands: help/health/sdk/flight/mods/saves/status/preset | poll=%uf -> %s\\raw_cmd.txt)",
                   kPollCadenceFrames, outDir.empty() ? "raw_engine_out" : outDir.c_str());
     return buf;
 }

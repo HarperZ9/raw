@@ -14,6 +14,7 @@
 //   E                   : Advance 9-Hold Economy +6h & Cycle Active Hold Market Readout (RawSettlementSim!)
 //   O                   : Resolve Highest-Urgency Emergent World Event or Poll +4h (RawWorldEventDirector!)
 //   K                   : Cycle 9-Hold & 6-Faction Reputation / Bounty / Guard Posture Readout (RawFactionDiplomacy!)
+//   D                   : Cycle Procedural 3D Dungeon Explorer (Nordic Barrow -> Ice Cavern -> Dwemer Ruin -> Overworld)
 //   F5 / F8             : CRC-32 Persistent World Quicksave (.bin + .json) / Quickload (RawWorldSerializer!)
 //   F9 / H              : Toggle Live GPU Telemetry HUD & 64-Sample Frame-Time Sparkline (RawOverlayHost!)
 //   F12                 : Capture Instant 24-Bit .bmp Screenshot (raw_viewer_shot_<N>.bmp)
@@ -71,6 +72,7 @@
 #include "RawGtaoHost.h"
 #include "RawSsrHost.h"
 #include "RawAutoExposureHost.h"
+#include "RawCloudRaymarchHost.h"
 #include "RawWeatherSim.h"
 #include "RawWorldShowcase.h"
 #include "RawDestructionEngine.h"
@@ -86,6 +88,7 @@
 #include "RawWorldEventDirector.h"
 #include "RawFactionDiplomacy.h"
 #include "RawWorldSerializer.h"
+#include "RawDungeonGen.h"
 #include "RawHydrologyGen.h"
 #include "RawAudioOutput.h"
 
@@ -135,7 +138,7 @@ struct AgxDisplayCB {
 };
 static_assert(sizeof(AgxDisplayCB) == 256u, "AgxDisplayCB must be 256 bytes");
 
-enum class WorldMode { Frontier, RiverwoodEsm };
+enum class WorldMode { Frontier, RiverwoodEsm, Dungeon };
 enum class SeasonChoice { Spring = 0, Summer = 1, Autumn = 2, Winter = 3 };
 enum class TimePreset : uint8_t { Dawn = 0, Noon = 1, GoldenHour = 2, MidnightAurora = 3 };
 enum class WeatherPreset : uint8_t { Clear = 0, Overcast = 1, Rainstorm = 2, Blizzard = 3 };
@@ -463,6 +466,14 @@ public:
         if (!m_autoExposureOk) {
             std::printf("[Viewer] RawAutoExposureHost warning: %s\n", err.c_str());
         }
+        err.clear();
+        CloudRaymarchDesc crd{};
+        crd.initialWidth  = std::max(1u, m_width / 2u);
+        crd.initialHeight = std::max(1u, m_height / 2u);
+        m_cloudRaymarchOk = m_cloudRaymarch.Init(m_dev.Get(), crd, &err);
+        if (!m_cloudRaymarchOk) {
+            std::printf("[Viewer] RawCloudRaymarchHost warning: %s\n", err.c_str());
+        }
         UINT64 tsFreq = 0;
         if (SUCCEEDED(m_queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
             if (m_fluidOk)         m_fluidSim.SetTimestampFrequency(tsFreq);
@@ -476,6 +487,7 @@ public:
             if (m_gtaoOk)          m_gtao.SetTimestampFrequency(tsFreq);
             if (m_ssrOk)           m_ssr.SetTimestampFrequency(tsFreq);
             if (m_autoExposureOk)  m_autoExposure.SetTimestampFrequency(tsFreq);
+            if (m_cloudRaymarchOk) m_cloudRaymarch.SetTimestampFrequency(tsFreq);
         }
         m_settlementSim.Reset(202653u);
         m_settlementTelemetry   = m_settlementSim.ComputeWorldTelemetry();
@@ -692,14 +704,15 @@ public:
     {
         m_walkMode = !m_walkMode;
         if (m_walkMode) {
+            auto& phys = ActivePhysics();
             float groundZ = m_camPos[2] - 120.0f;
-            const auto downHit = m_worldPhysics.RayCast({m_camPos[0], m_camPos[1], m_camPos[2] + 64.0f},
-                                                        {0.0f, 0.0f, -1.0f}, 6000.0f);
+            const auto downHit = phys.RayCast({m_camPos[0], m_camPos[1], m_camPos[2] + 64.0f},
+                                              {0.0f, 0.0f, -1.0f}, 6000.0f);
             if (downHit.hit) {
                 groundZ = downHit.point[2];
             } else {
                 float hz = 0.0f;
-                if (m_worldPhysics.SampleTerrainHeight(m_camPos[0], m_camPos[1], &hz)) {
+                if (phys.SampleTerrainHeight(m_camPos[0], m_camPos[1], &hz)) {
                     groundZ = hz;
                 }
             }
@@ -716,7 +729,7 @@ public:
         const float cy = std::cos(m_camYaw),   sy = std::sin(m_camYaw);
         const raw::worldgen::Vec3 origin{m_camPos[0], m_camPos[1], m_camPos[2]};
         const raw::worldgen::Vec3 dir{sy * cp, cy * cp, sp};
-        const auto hit = m_worldPhysics.RayCast(origin, dir, 8000.0f);
+        const auto hit = ActivePhysics().RayCast(origin, dir, 8000.0f);
         m_lastRayHit = hit;
         if (hit.hit) {
             std::printf("[Physics] RayCast HIT: dist=%.1fu mat=%u (%s) at (%.0f, %.0f, %.0f)\n",
@@ -788,6 +801,21 @@ public:
 
     void ComputeLiveNavPath()
     {
+        if (m_mode == WorldMode::Dungeon) {
+            if (!m_navMesh.IsBaked()) return;
+            const raw::worldgen::Vec3 startW{m_camPos[0], m_camPos[1], m_camPos[2] - 120.0f};
+            const raw::worldgen::Vec3 goalW{m_activeDungeon.bossPos[0], m_activeDungeon.bossPos[1], m_activeDungeon.bossPos[2]};
+            auto res = m_navMesh.FindPath(startW, goalW, &m_dungeonPhysics, 32768u);
+            if (!res.found) {
+                const raw::worldgen::Vec3 entW{m_activeDungeon.entrancePos[0], m_activeDungeon.entrancePos[1], m_activeDungeon.entrancePos[2]};
+                res = m_navMesh.FindPath(entW, goalW, &m_dungeonPhysics, 32768u);
+            }
+            m_lastNavPath = res;
+            const auto st = m_navMesh.GetStats();
+            std::printf("[Dungeon NavMesh] Entrance->Boss A* Path: found=%d waypoints=%zu (raw=%u) len=%.1fu search=%.3fms | walkable=%u\n",
+                        int(res.found), res.waypoints.size(), res.rawGridNodes, res.totalLengthU, res.searchTimeMs, st.walkableCells);
+            return;
+        }
         if (!m_navMesh.IsBaked()) {
             if (m_mode == WorldMode::RiverwoodEsm) {
                 const auto& lm = kTamrielLandmarks[m_landmarkIdx % 4u];
@@ -1621,6 +1649,170 @@ public:
         return p;
     }
 
+    bool EnterProceduralDungeon(raw::worldgen::DungeonArchetype arch, uint32_t seed = 202657u)
+    {
+        if (m_mode != WorldMode::Dungeon) {
+            m_preDungeonMode    = m_mode;
+            m_savedOverCam[0]   = m_camPos[0];
+            m_savedOverCam[1]   = m_camPos[1];
+            m_savedOverCam[2]   = m_camPos[2];
+            m_savedOverYaw      = m_camYaw;
+            m_savedOverPitch    = m_camPitch;
+        }
+        raw::worldgen::DungeonGenConfig dcfg{};
+        dcfg.archetype      = arch;
+        dcfg.seed           = seed + static_cast<uint32_t>(arch) * 977u;
+        dcfg.roomCount      = 9u;
+        dcfg.tileSizeU      = 128.0f;
+        dcfg.ceilingHeightU = 384.0f;
+        dcfg.maxMeshletTris = 126u;
+
+        raw::worldgen::GeneratedDungeon dg{};
+        if (!raw::worldgen::RawDungeonGen::GenerateDungeon(dcfg, dg) || dg.mesh.meshlets.empty()) {
+            return false;
+        }
+        TerrainGpuChunk gpu{};
+        if (!m_meshHost.UploadTerrainChunk(dg.mesh, &gpu)) {
+            return false;
+        }
+        for (auto& kv : m_dungeonChunks) {
+            m_meshHost.DeferRelease(std::move(kv.second));
+        }
+        m_dungeonChunks.clear();
+        m_dungeonChunks.emplace(kDungeonChunkKey, std::move(gpu));
+
+        m_dungeonPhysics.Clear();
+        m_dungeonPhysics.AddCellCollider(raw::worldgen::PackCellKey(0, 0), dg.mesh, 7001u, 2u);
+
+        m_activeDungeon = std::move(dg);
+        m_mode          = WorldMode::Dungeon;
+        m_hasPrevFroxelView = false;
+        m_volFroxels.ResetHistory();
+        m_cloudRaymarch.ResetHistory();
+
+        // Bake interior 3D NavMesh strictly below vaulted ceilings & above dungeon floors
+        raw::worldgen::NavBakeConfig ncfg{};
+        ncfg.originX        = m_activeDungeon.worldBoundsMin.x - 64.0f;
+        ncfg.originY        = m_activeDungeon.worldBoundsMin.y - 64.0f;
+        ncfg.sizeX          = (m_activeDungeon.worldBoundsMax.x - m_activeDungeon.worldBoundsMin.x) + 128.0f;
+        ncfg.sizeY          = (m_activeDungeon.worldBoundsMax.y - m_activeDungeon.worldBoundsMin.y) + 128.0f;
+        ncfg.cellSizeU      = 64.0f;
+        ncfg.rayStartZ      = m_activeDungeon.recommendedNavRayStartZ;
+        ncfg.rayMaxDist     = 2000.0f;
+        ncfg.agentHeadroomU = 130.0f;
+        m_navMesh.BakeFromPhysics(m_dungeonPhysics, ncfg);
+        m_navMeshDirty = false;
+        ++m_navMeshBakeCount;
+
+        // Place camera at dungeon entrance facing toward first corridor / boss chamber
+        m_camPos[0] = m_activeDungeon.entrancePos[0];
+        m_camPos[1] = m_activeDungeon.entrancePos[1];
+        m_camPos[2] = m_activeDungeon.entrancePos[2] + 120.0f;
+        const float dx = m_activeDungeon.bossPos[0] - m_activeDungeon.entrancePos[0];
+        const float dy = m_activeDungeon.bossPos[1] - m_activeDungeon.entrancePos[1];
+        m_camYaw   = std::atan2(dx, dy);
+        m_camPitch = -0.10f;
+        if (m_walkMode) {
+            m_playerBody = raw::worldgen::CharacterBody{};
+            m_playerBody.position = {m_activeDungeon.entrancePos[0], m_activeDungeon.entrancePos[1], m_activeDungeon.entrancePos[2] + 6.0f};
+        }
+        InitTacticalSquadAround(m_activeDungeon.entrancePos[0], m_activeDungeon.entrancePos[1]);
+        ComputeLiveNavPath();
+        std::printf("[Dungeon] Entered %s: rooms=%zu (bfs=%u) corridors=%zu meshlets=%zu lights=%zu navWalk=%u\n",
+                    raw::worldgen::GetDungeonArchetypeName(m_activeDungeon.archetype),
+                    m_activeDungeon.rooms.size(), m_activeDungeon.bfsReachableRooms,
+                    m_activeDungeon.corridors.size(), m_activeDungeon.mesh.meshlets.size(),
+                    m_activeDungeon.lights.size(), m_navMesh.GetStats().walkableCells);
+        return true;
+    }
+
+    void ExitDungeonToOverworld()
+    {
+        if (m_mode != WorldMode::Dungeon) return;
+        m_mode      = m_preDungeonMode;
+        m_camPos[0] = m_savedOverCam[0];
+        m_camPos[1] = m_savedOverCam[1];
+        m_camPos[2] = m_savedOverCam[2];
+        m_camYaw    = m_savedOverYaw;
+        m_camPitch  = m_savedOverPitch;
+        m_navMeshDirty      = true;
+        m_hasPrevFroxelView = false;
+        m_volFroxels.ResetHistory();
+        m_cloudRaymarch.ResetHistory();
+        std::printf("[Dungeon] Returned to Overworld (%s)\n",
+                    m_mode == WorldMode::RiverwoodEsm ? ActiveLandmarkName() : "Frontier");
+    }
+
+    void CycleDungeonExplorer()
+    {
+        if (m_mode != WorldMode::Dungeon) {
+            m_dungeonCycleIdx = 0u;
+            EnterProceduralDungeon(raw::worldgen::DungeonArchetype::NordicBarrow);
+        } else if (m_dungeonCycleIdx + 1u < static_cast<uint32_t>(raw::worldgen::DungeonArchetype::Count)) {
+            ++m_dungeonCycleIdx;
+            EnterProceduralDungeon(static_cast<raw::worldgen::DungeonArchetype>(m_dungeonCycleIdx));
+        } else {
+            m_dungeonCycleIdx = 0u;
+            ExitDungeonToOverworld();
+        }
+    }
+
+    struct DungeonExplorerProbe {
+        bool     barrowOk        = false;
+        bool     iceCavernOk     = false;
+        bool     dwemerRuinOk    = false;
+        bool     returnedOk      = false;
+        uint32_t navWalkable     = 0u;
+        size_t   astarWaypoints  = 0u;
+        float    astarLengthU    = 0.0f;
+        uint32_t totalMeshlets   = 0u;
+        uint32_t totalLights     = 0u;
+        bool     walkGrounded    = false;
+    };
+
+    DungeonExplorerProbe RunDungeonExplorerSelfTest()
+    {
+        DungeonExplorerProbe p{};
+        const WorldMode origMode = m_mode;
+
+        // 1. Nordic Barrow: generate, upload GPU meshlets, bake interior NavMesh, Entrance->Boss A* + Walk capsule
+        p.barrowOk = EnterProceduralDungeon(raw::worldgen::DungeonArchetype::NordicBarrow, 202657u);
+        if (p.barrowOk) {
+            p.navWalkable    = m_navMesh.GetStats().walkableCells;
+            p.astarWaypoints = m_lastNavPath.found ? m_lastNavPath.waypoints.size() : 0u;
+            p.astarLengthU   = m_lastNavPath.totalLengthU;
+            p.totalMeshlets += static_cast<uint32_t>(m_activeDungeon.mesh.meshlets.size());
+            p.totalLights   += static_cast<uint32_t>(m_activeDungeon.lights.size());
+
+            raw::worldgen::CharacterBody body{};
+            body.position = {m_activeDungeon.entrancePos[0], m_activeDungeon.entrancePos[1], m_activeDungeon.entrancePos[2] + 24.0f};
+            raw::worldgen::CharacterInput cin{};
+            cin.wishDirXY = {std::sin(m_camYaw), std::cos(m_camYaw)};
+            cin.maxSpeed  = 240.0f;
+            for (int s = 0; s < 20; ++s) {
+                m_dungeonPhysics.StepCharacterCapsule(body, cin, 1.0f / 60.0f);
+            }
+            p.walkGrounded = body.grounded;
+        }
+        // 2. Glacial Ice Cavern
+        p.iceCavernOk = EnterProceduralDungeon(raw::worldgen::DungeonArchetype::GlacialIceCavern, 202657u);
+        if (p.iceCavernOk) {
+            p.totalMeshlets += static_cast<uint32_t>(m_activeDungeon.mesh.meshlets.size());
+            p.totalLights   += static_cast<uint32_t>(m_activeDungeon.lights.size());
+        }
+        // 3. Basalt Dwemer Ruin + render 1 live GPU frame inside the dungeon!
+        p.dwemerRuinOk = EnterProceduralDungeon(raw::worldgen::DungeonArchetype::BasaltDwemerRuin, 202657u);
+        if (p.dwemerRuinOk) {
+            p.totalMeshlets += static_cast<uint32_t>(m_activeDungeon.mesh.meshlets.size());
+            p.totalLights   += static_cast<uint32_t>(m_activeDungeon.lights.size());
+            (void)RenderFrame(1.0f / 60.0f, false);
+        }
+        // 4. Return cleanly to original Overworld mode!
+        ExitDungeonToOverworld();
+        p.returnedOk = (m_mode == origMode);
+        return p;
+    }
+
     void ToggleAudio()
     {
         if (m_opt.headlessFrames > 0u) return; // Strictly OFF in headless CI mode
@@ -1744,7 +1936,7 @@ public:
             cin.maxSpeed     = fast ? 540.0f : 280.0f;
             cin.jumpPressed  = down(VK_SPACE);
             cin.swimVertical = (down('E') ? 1.0f : 0.0f) - (down('Q') ? 1.0f : 0.0f);
-            m_worldPhysics.StepCharacterCapsule(m_playerBody, cin, dt);
+            ActivePhysics().StepCharacterCapsule(m_playerBody, cin, dt);
             m_camPos[0] = m_playerBody.position.x;
             m_camPos[1] = m_playerBody.position.y;
             m_camPos[2] = m_playerBody.position.z + 120.0f; // Eye height +120u above capsule feet
@@ -1812,7 +2004,7 @@ public:
         }
 
         // 3b. Lazily bake 64x64 local 3D NavMesh on newly loaded terrain/NIF physics & step 4-agent Tactical Squad AI!
-        if (m_navMeshDirty && m_worldPhysics.GetStats().heightfieldCount > 0u) {
+        if (m_navMeshDirty && m_mode != WorldMode::Dungeon && m_worldPhysics.GetStats().heightfieldCount > 0u) {
             if (m_mode == WorldMode::RiverwoodEsm) {
                 const auto& lm = kTamrielLandmarks[m_landmarkIdx % 4u];
                 BakeLocalNavMesh(float(lm.cellX) * raw::worldgen::kEsmCellSizeU,
@@ -1821,19 +2013,21 @@ public:
                 BakeLocalNavMesh(m_frontierCenter[0], m_frontierCenter[1], false);
             }
         }
-        if (!m_tacticalSquad.empty() && m_worldPhysics.GetStats().heightfieldCount > 0u) {
+        auto& activePhys = ActivePhysics();
+        const auto activePhysStats = activePhys.GetStats();
+        if (!m_tacticalSquad.empty() && (activePhysStats.heightfieldCount > 0u || activePhysStats.totalTriangles > 0u)) {
             raw::worldgen::ThreatTarget threat{};
             float groundZ = m_camPos[2] - 120.0f;
             if (m_walkMode) {
                 threat.position = m_playerBody.position;
             } else {
                 float hz = 0.0f;
-                if (m_worldPhysics.SampleTerrainHeight(m_camPos[0], m_camPos[1], &hz)) groundZ = hz;
+                if (activePhys.SampleTerrainHeight(m_camPos[0], m_camPos[1], &hz)) groundZ = hz;
                 threat.position = {m_camPos[0], m_camPos[1], groundZ};
             }
             threat.facing = {std::sin(m_camYaw), std::cos(m_camYaw), 0.0f};
             m_lastSquadOut = raw::worldgen::StepSquadTactics(
-                m_tacticalSquad, threat, m_worldPhysics, m_navMesh.IsBaked() ? &m_navMesh : nullptr, dtClamped);
+                m_tacticalSquad, threat, activePhys, m_navMesh.IsBaked() ? &m_navMesh : nullptr, dtClamped);
         }
 
         // 4. Build camera & LightingCommon.hlsli cbuffer P.
@@ -2122,8 +2316,20 @@ public:
                 bl.typeFlags   = (li % 3u == 0u) ? kClusterLightSpell : kClusterLightFire;
                 clusterLights.push_back(bl);
             }
-            // 5. Active cellular wildfire lights directly from RawWorldEcosystem (up to 64 burning cells!)
-            if (m_ecoTelemetry.activeFireCells > 0u) {
+            // 5. Active cellular wildfire lights directly from RawWorldEcosystem (or dungeon sconces/braziers!)
+            if (m_mode == WorldMode::Dungeon) {
+                for (const auto& dl : m_activeDungeon.lights) {
+                    GpuClusterLight dcl{};
+                    worldToView(dl.pos[0], dl.pos[1], dl.pos[2], dcl.posView);
+                    dcl.radius      = dl.radiusU;
+                    dcl.colorRgb[0] = dl.color[0] * dl.intensity * 2.5f;
+                    dcl.colorRgb[1] = dl.color[1] * dl.intensity * 2.5f;
+                    dcl.colorRgb[2] = dl.color[2] * dl.intensity * 2.5f;
+                    dcl.typeFlags   = (dl.kind == raw::worldgen::DungeonLightKind::BossAltarCrystal)
+                                    ? kClusterLightSpell : kClusterLightFire;
+                    clusterLights.push_back(dcl);
+                }
+            } else if (m_ecoTelemetry.activeFireCells > 0u) {
                 uint32_t ecoAdded = 0u;
                 const uint32_t ew = m_ecosystem.Width();
                 const uint32_t eh = m_ecosystem.Height();
@@ -2333,6 +2539,34 @@ public:
                                                         D3D12_RESOURCE_STATE_COMMON);
         }
 
+        // Live GPU 3D Volumetric Cloud Raymarcher + Temporal Reprojection (RawCloudRaymarchHost - 13th Live GPU Solver!)
+        if (m_cloudRaymarchOk) {
+            CloudRaymarchParams crp{};
+            // Convert viewer Z-up Skyrim units (70u = 1m) cleanly to Y-up meters for spherical cloud shell
+            crp.camPos[0]       = m_camPos[0] / 70.0f;
+            crp.camPos[1]       = std::max(50.0f, m_camPos[2] / 70.0f + 150.0f);
+            crp.camPos[2]       = m_camPos[1] / 70.0f;
+            crp.camRight[0]     = cam.right[0]; crp.camRight[1]   = cam.right[2]; crp.camRight[2]   = cam.right[1];
+            crp.camUp[0]        = cam.up[0];    crp.camUp[1]      = cam.up[2];    crp.camUp[2]      = cam.up[1];
+            crp.camForward[0]   = cam.fwd[0];   crp.camForward[1] = cam.fwd[2];   crp.camForward[2] = cam.fwd[1];
+            crp.fovYDeg         = 1.12f * (180.0f / 3.14159265f);
+            crp.timeSec         = m_simTimeSec;
+            crp.cloudCoverage   = std::clamp(u.clouds[0], 0.15f, 0.92f);
+            crp.densityScale    = 0.0022f;
+            crp.anvilFactor     = 0.35f;
+            crp.historyWeight   = 0.75f;
+            crp.windVel[0]      = wGpu.cloudWind.x * 0.4f;
+            crp.windVel[1]      = 0.0f;
+            crp.windVel[2]      = wGpu.cloudWind.y * 0.4f;
+            crp.sunDir[0]       = u.sunDir[0]; crp.sunDir[1] = u.sunDir[2]; crp.sunDir[2] = u.sunDir[1];
+            crp.sunColor[0]     = u.sunColour[0]; crp.sunColor[1] = u.sunColour[1]; crp.sunColor[2] = u.sunColour[2];
+            crp.sunIntensity    = (m_timePreset == TimePreset::MidnightAurora) ? 1.4f : 6.5f;
+            crp.frameIndex      = static_cast<uint32_t>(m_frameCount & 0xFFFFFFFFull);
+            const uint32_t halfW = std::max(1u, m_width / 2u);
+            const uint32_t halfH = std::max(1u, m_height / 2u);
+            m_cloudRaymarchRan  = m_cloudRaymarch.Execute(m_dispCmd.Get(), halfW, halfH, crp);
+        }
+
         if (m_radOk && m_giEnabled) {
             m_radianceHost.ExecuteScreenGI(m_dispCmd.Get(), m_hdrColor.Get(), m_depthIn.Get(),
                                            m_width, m_height, 0.16f);
@@ -2455,6 +2689,8 @@ public:
         bool     autoExposureActive   = false;
         float    autoExpHistMs        = 0.0f;
         float    autoExpAdaptMs       = 0.0f;
+        bool     cloudRaymarchActive  = false;
+        float    cloudRaymarchMs      = 0.0f;
         uint32_t biomesFound          = 0u;
     };
 
@@ -2499,6 +2735,8 @@ public:
         out->autoExposureActive = m_autoExposureOk && m_autoExposure.Ready() && m_autoExposureRan;
         out->autoExpHistMs = m_autoExposure.HasValidTiming() ? m_autoExposure.GetLastHistMs() : 0.0f;
         out->autoExpAdaptMs = m_autoExposure.HasValidTiming() ? m_autoExposure.GetLastAdaptMs() : 0.0f;
+        out->cloudRaymarchActive = m_cloudRaymarchOk && m_cloudRaymarch.Ready() && m_cloudRaymarchRan;
+        out->cloudRaymarchMs = m_cloudRaymarch.HasValidTiming() ? m_cloudRaymarch.GetLastCloudMs() : 0.0f;
 
         const UINT hdrPitch  = (m_width * 8u + 255u) & ~255u;
         const UINT dispPitch = (m_width * 4u + 255u) & ~255u;
@@ -2630,16 +2868,19 @@ public:
         m_navMesh.Clear();
         m_tacticalSquad.clear();
         m_lastSquadOut.clear();
+        m_dungeonPhysics.Clear();
         m_worldPhysics.Clear();
 
         m_frontierChunks.clear();
         m_esmChunks.clear();
+        m_dungeonChunks.clear();
         if (m_cullInstUpload && m_cullInstMapped) {
             m_cullInstUpload->Unmap(0u, nullptr);
             m_cullInstMapped = nullptr;
         }
         m_cullInstUpload.Reset();
         m_cullInstBuf.Reset();
+        m_cloudRaymarch.Shutdown();
         m_autoExposure.Shutdown();
         m_ssr.Shutdown();
         m_gtao.Shutdown();
@@ -2697,6 +2938,10 @@ public:
         if (m_mode == WorldMode::Frontier) {
             std::snprintf(locBuf, sizeof(locBuf), "%s",
                           raw::worldgen::GetBiomeName(static_cast<raw::worldgen::BiomeId>(m_biomeIdx)));
+        } else if (m_mode == WorldMode::Dungeon) {
+            std::snprintf(locBuf, sizeof(locBuf), "Dungeon:%s (%zu rms, %zu L)",
+                          raw::worldgen::GetDungeonArchetypeName(m_activeDungeon.archetype),
+                          m_activeDungeon.rooms.size(), m_activeDungeon.lights.size());
         } else {
             std::snprintf(locBuf, sizeof(locBuf), "%s (%u cells, %llu LRU hits)",
                           kTamrielLandmarks[m_landmarkIdx % 4u].name,
@@ -2727,6 +2972,7 @@ public:
         const float gtaoMs        = m_gtao.HasValidTiming() ? (m_gtao.GetLastMainMs() + m_gtao.GetLastDenoiseMs()) : 0.0f;
         const float ssrMs         = m_ssr.HasValidTiming() ? m_ssr.GetLastSsrMs() : 0.0f;
         const float aeMs          = m_autoExposure.HasValidTiming() ? (m_autoExposure.GetLastHistMs() + m_autoExposure.GetLastAdaptMs()) : 0.0f;
+        const float cloudMs       = m_cloudRaymarch.HasValidTiming() ? m_cloudRaymarch.GetLastCloudMs() : 0.0f;
         const auto activeHid      = static_cast<raw::worldgen::HoldId>(m_activeHoldIdx % static_cast<uint32_t>(raw::worldgen::kHoldCount));
         const auto* activeHold    = m_settlementSim.GetHold(activeHid);
         const float holdGrain     = activeHold ? activeHold->price[static_cast<size_t>(raw::worldgen::CommodityKind::Grain)] : 0.0f;
@@ -2753,9 +2999,9 @@ public:
         } else {
             std::snprintf(evBuf, sizeof(evBuf), " | Ev:0");
         }
-        char buf[1408]{};
+        char buf[1536]{};
         std::snprintf(buf, sizeof(buf),
-                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms PCSS:%.3fms GTAO:%.3fms SSR:%.3fms AE:%.3fms HUD:%.3fms | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u | %s:%.1fg Car:%u(Snw:%u) Scarce:%s%s%s%s%s%s | Shards:%u",
+                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms PCSS:%.3fms GTAO:%.3fms SSR:%.3fms AE:%.3fms Cloud:%.3fms HUD:%.3fms | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u | %s:%.1fg Car:%u(Snw:%u) Scarce:%s%s%s%s%s%s | Shards:%u",
                       m_walkMode ? "WALK" : "FLY",
                       fps, m_lastDrawnMeshlets, m_meshHost.TerrainUsesMeshShaders() ? "AS+MS" : "VS+PS",
                       locBuf, TimePresetName(m_timePreset), ActiveWeatherDisplayName(),
@@ -2770,6 +3016,7 @@ public:
                       gtaoMs,
                       ssrMs,
                       aeMs,
+                      cloudMs,
                       m_overlayHost.HasValidTiming() ? m_overlayHost.GetLastOverlayMs() : 0.0f,
                       m_ecoTelemetry.activeFireCells,
                       static_cast<double>(m_ecoTelemetry.totalSnowVolumeM3),
@@ -2790,11 +3037,18 @@ public:
     const std::string& AdapterName() const { return m_adapterName; }
 
 private:
-    static constexpr uint64_t kDebrisChunkKey = 0xDEBB1500ull;
+    static constexpr uint64_t kDebrisChunkKey  = 0xDEBB1500ull;
+    static constexpr uint64_t kDungeonChunkKey = 0xD006E001ull;
 
     std::unordered_map<uint64_t, TerrainGpuChunk>& ActiveChunkMap()
     {
+        if (m_mode == WorldMode::Dungeon) return m_dungeonChunks;
         return (m_mode == WorldMode::Frontier) ? m_frontierChunks : m_esmChunks;
+    }
+
+    raw::worldgen::RawWorldPhysics& ActivePhysics()
+    {
+        return (m_mode == WorldMode::Dungeon) ? m_dungeonPhysics : m_worldPhysics;
     }
 
     D3D12_CPU_DESCRIPTOR_HANDLE RtvHandle(UINT idx) const
@@ -3185,6 +3439,10 @@ private:
         if (m_mode == WorldMode::RiverwoodEsm) {
             std::snprintf(locLabel, sizeof(locLabel), "%s [%s]",
                           kTamrielLandmarks[m_landmarkIdx % 4u].name, m_walkMode ? "WALK" : "FLY");
+        } else if (m_mode == WorldMode::Dungeon) {
+            std::snprintf(locLabel, sizeof(locLabel), "DNG:%s [%s]",
+                          raw::worldgen::GetDungeonArchetypeName(m_activeDungeon.archetype),
+                          m_walkMode ? "WALK" : "FLY");
         } else {
             std::snprintf(locLabel, sizeof(locLabel), "%s [%s]",
                           raw::worldgen::GetBiomeName(static_cast<raw::worldgen::BiomeId>(m_biomeIdx)),
@@ -3235,16 +3493,18 @@ private:
         const float gtaoMs   = m_gtao.HasValidTiming() ? (m_gtao.GetLastMainMs() + m_gtao.GetLastDenoiseMs()) : 0.0f;
         const float ssrMs    = m_ssr.HasValidTiming() ? m_ssr.GetLastSsrMs() : 0.0f;
         const float aeMs     = m_autoExposure.HasValidTiming() ? (m_autoExposure.GetLastHistMs() + m_autoExposure.GetLastAdaptMs()) : 0.0f;
+        const float cloudMs  = m_cloudRaymarch.HasValidTiming() ? m_cloudRaymarch.GetLastCloudMs() : 0.0f;
         std::memset(outHud.lines[2], 0, sizeof(outHud.lines[2]));
         std::snprintf(outHud.lines[2], sizeof(outHud.lines[2]), "GPU F:%.2f W:%.2f GI:%.2f XP:%.2f FX:%.2f PS:%.2f",
                       static_cast<double>(snap.fireMs), static_cast<double>(snap.waterMs),
                       static_cast<double>(snap.giMs), static_cast<double>(snap.xpbdMs),
                       static_cast<double>(froxMs), static_cast<double>(pcssMs));
         std::memset(outHud.lines[3], 0, sizeof(outHud.lines[3]));
-        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "AO:%.3f SSR:%.3f AE:%.3f CL:%.3f LC:%.3f",
+        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "AO:%.3f SSR:%.3f AE:%.3f CLD:%.3f CL:%.3f LC:%.3f",
                       static_cast<double>(gtaoMs),
                       static_cast<double>(ssrMs),
                       static_cast<double>(aeMs),
+                      static_cast<double>(cloudMs),
                       static_cast<double>(hizMs + cullMs),
                       static_cast<double>(lclustMs));
 
@@ -3636,7 +3896,7 @@ private:
             if (m_navMesh.IsBaked() && m_navMesh.FindNearestWalkableCell({sx, sy, 0.0f}, 12, &gx, &gy)) {
                 a.position = m_navMesh.GridToWorldCenter(gx, gy);
             } else {
-                m_worldPhysics.SampleTerrainHeight(sx, sy, &sz);
+                ActivePhysics().SampleTerrainHeight(sx, sy, &sz);
                 a.position = {sx, sy, sz};
             }
             a.hpRatio = 1.0f;
@@ -3669,6 +3929,8 @@ private:
     bool          m_ssrRan = false;
     bool          m_autoExposureOk = false;
     bool          m_autoExposureRan = false;
+    bool          m_cloudRaymarchOk = false;
+    bool          m_cloudRaymarchRan = false;
     std::string   m_adapterName;
 
     ComPtr<IDXGIFactory4>              m_factory;
@@ -3713,6 +3975,7 @@ private:
     RawGtaoHost                        m_gtao;
     RawSsrHost                         m_ssr;
     RawAutoExposureHost                m_autoExposure;
+    RawCloudRaymarchHost               m_cloudRaymarch;
     ComPtr<ID3D12Resource>             m_shadowOutTex;
     ComPtr<ID3D12Resource>             m_shadowMapProxy;
     float                              m_prevWorldToClip[16] = {};
@@ -3753,6 +4016,14 @@ private:
     uint32_t                              m_diplomacyHoldIdx = 0u;
     uint32_t                              m_diplomacyFactionIdx = 0u;
     std::string                           m_lastSaveStatus;
+    raw::worldgen::RawWorldPhysics        m_dungeonPhysics;
+    raw::worldgen::GeneratedDungeon       m_activeDungeon{};
+    std::unordered_map<uint64_t, TerrainGpuChunk> m_dungeonChunks;
+    WorldMode                             m_preDungeonMode = WorldMode::Frontier;
+    uint32_t                              m_dungeonCycleIdx = 0u;
+    float                                 m_savedOverCam[3] = {};
+    float                                 m_savedOverYaw = 0.0f;
+    float                                 m_savedOverPitch = -0.45f;
     std::vector<raw::worldgen::SquadAgent> m_tacticalSquad;
     std::vector<raw::worldgen::TacticalSteeringOutput> m_lastSquadOut;
     raw::worldgen::NavPathResult          m_lastNavPath{};
@@ -3871,6 +4142,7 @@ LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     case 'E': st->viewer->AdvanceEconomyAndCycleHold(); break;
                     case 'O': st->viewer->ResolveOrPollWorldEvent(); break;
                     case 'K': st->viewer->CycleDiplomacyInspect(); break;
+                    case 'D': st->viewer->CycleDungeonExplorer(); break;
                     case VK_F5: st->viewer->QuicksaveWorld(); break;
                     case VK_F8: st->viewer->QuickloadWorld(); break;
                     case 'H':
@@ -3948,7 +4220,7 @@ int main(int argc, char** argv)
     if (opt.showHelp) {
         std::printf(
             "RAW Interactive Real-Time Win32/DX12 Standalone Engine Viewer\n"
-            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, V startle wildlife, E economy +6h/cycle hold, O resolve/poll world event, K cycle hold/faction diplomacy, F5/F8 quicksave/quickload, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
+            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, V startle wildlife, E economy +6h/cycle hold, O resolve/poll world event, K cycle hold/faction diplomacy, D cycle 3D dungeon explorer, F5/F8 quicksave/quickload, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
             "CLI: [--headless-frames N] [--warp] [--debug] [--width W] [--height H] [--esm <Skyrim.esm>]\n");
         return 0;
     }
@@ -3979,6 +4251,7 @@ int main(int argc, char** argv)
         RawEngineViewer::WorldEventProbe eventProbe{};
         RawEngineViewer::DiplomacyProbe diplomacyProbe{};
         RawEngineViewer::SerializerProbe serializerProbe{};
+        RawEngineViewer::DungeonExplorerProbe dungeonProbe{};
         bool teleportedToWhiterun = false;
         for (uint32_t f = 0; f < opt.headlessFrames; ++f) {
             if (f == 0u) {
@@ -3993,6 +4266,7 @@ int main(int argc, char** argv)
                     riverwoodPhys = viewer.RunPhysicsWalkSelfTest();
                     riverwoodNav  = viewer.RunNavMeshSquadSelfTest();
                 }
+                dungeonProbe    = viewer.RunDungeonExplorerSelfTest();
             }
             if (f == opt.headlessFrames / 2u) {
                 if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {
@@ -4015,7 +4289,7 @@ int main(int argc, char** argv)
 
         RawEngineViewer::HeadlessAudit audit{};
         const bool rbOk = viewer.ReadbackHeadlessAudit(&audit);
-        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), pcss=%s (%.4fms), gtao=%s (main=%.4fms, den=%.4fms), ssr=%s (%.4fms), ae=%s (hist=%.4fms, adapt=%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
+        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), pcss=%s (%.4fms), gtao=%s (main=%.4fms, den=%.4fms), ssr=%s (%.4fms), ae=%s (hist=%.4fms, adapt=%.4fms), cloud=%s (%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
                     audit.usedMeshShaders ? "AS+MS+PS" : "VS+PS",
                     audit.drawnMeshlets, audit.activeShards, audit.biomesFound,
                     audit.radianceActive ? "ON" : "off", audit.radianceGiMs,
@@ -4028,6 +4302,7 @@ int main(int argc, char** argv)
                     audit.gtaoActive ? "ON" : "off", audit.gtaoMainMs, audit.gtaoDenoiseMs,
                     audit.ssrActive ? "ON" : "off", audit.ssrMs,
                     audit.autoExposureActive ? "ON" : "off", audit.autoExpHistMs, audit.autoExpAdaptMs,
+                    audit.cloudRaymarchActive ? "ON" : "off", audit.cloudRaymarchMs,
                     audit.overlayActive ? "ON" : "off", audit.overlayMs, audit.hudNonZeroPx,
                     audit.hdrLitPixels, audit.hdrNanInf,
                     audit.dispNonZeroPx, audit.dispMeanLuma, audit.dispStdDevLuma);
@@ -4053,6 +4328,10 @@ int main(int argc, char** argv)
                     serializerProbe.binaryBytes, serializerProbe.jsonBytes,
                     int(serializerProbe.roundTripOk), int(serializerProbe.bitExact),
                     int(serializerProbe.tamperRejected), int(serializerProbe.jsonValid));
+        std::printf("       Dungeon Explorer: barrow=%d ice=%d dwemer=%d returned=%d | totalMeshlets=%u totalLights=%u | navWalk=%u astarWp=%zu len=%.1fu walkGrounded=%d\n",
+                    int(dungeonProbe.barrowOk), int(dungeonProbe.iceCavernOk), int(dungeonProbe.dwemerRuinOk),
+                    int(dungeonProbe.returnedOk), dungeonProbe.totalMeshlets, dungeonProbe.totalLights,
+                    dungeonProbe.navWalkable, dungeonProbe.astarWaypoints, dungeonProbe.astarLengthU, int(dungeonProbe.walkGrounded));
         check(audit.xpbdActive && audit.xpbdParticles == 4096u && std::isfinite(audit.xpbdStepMs) && audit.xpbdStepMs >= 0.0f,
               "Live GPU XPBD soft-body/hair/bush solver (4,096 particles / 256 chains) stepped cleanly");
         check(audit.gpuCullActive && audit.gpuHiZMips > 1u &&
@@ -4071,12 +4350,17 @@ int main(int argc, char** argv)
               "Live GPU Variable-Penumbra PCSS Contact-Hardening Shadows (RawShadowPcssHost) executed cleanly");
         check(audit.gtaoActive && std::isfinite(audit.gtaoMainMs) && audit.gtaoMainMs >= 0.0f &&
               std::isfinite(audit.gtaoDenoiseMs) && audit.gtaoDenoiseMs >= 0.0f,
-              "Live GPU Jimenez GTAO + Bent Normals (RawGtaoHost — 10th GPU Solver) executed cleanly");
+              "Live GPU Jimenez GTAO + Bent Normals (RawGtaoHost - 10th GPU Solver) executed cleanly");
         check(audit.ssrActive && std::isfinite(audit.ssrMs) && audit.ssrMs >= 0.0f,
-              "Live GPU GGX Stochastic SSR (RawSsrHost — 11th GPU Solver) executed cleanly");
+              "Live GPU GGX Stochastic SSR (RawSsrHost - 11th GPU Solver) executed cleanly");
         check(audit.autoExposureActive && std::isfinite(audit.autoExpHistMs) && audit.autoExpHistMs >= 0.0f &&
               std::isfinite(audit.autoExpAdaptMs) && audit.autoExpAdaptMs >= 0.0f,
-              "Live GPU 256-Bin Auto-Exposure (RawAutoExposureHost — 12th GPU Solver) executed cleanly");
+              "Live GPU 256-Bin Auto-Exposure (RawAutoExposureHost - 12th GPU Solver) executed cleanly");
+        check(audit.cloudRaymarchActive && std::isfinite(audit.cloudRaymarchMs) && audit.cloudRaymarchMs >= 0.0f,
+              "Live GPU 3D Volumetric Cloud Raymarcher (RawCloudRaymarchHost - 13th GPU Solver) executed cleanly");
+        check(dungeonProbe.barrowOk && dungeonProbe.iceCavernOk && dungeonProbe.dwemerRuinOk && dungeonProbe.returnedOk &&
+              dungeonProbe.navWalkable > 100u && dungeonProbe.astarWaypoints >= 2u && dungeonProbe.walkGrounded,
+              "Interactive Procedural 3D Dungeon Explorer cycled all 3 archetypes + interior NavMesh A* + Walk Mode & returned cleanly");
         check(ecoProbe.ignitedCells > 0u && ecoProbe.activeFireCells > 0u && ecoProbe.allFinite,
               "Live Cellular Ecosystem (RawWorldEcosystem) ignited wildfire, stepped 10x with active fire & finite telemetry");
         check(wildlifeProbe.activeAgents == 128u && wildlifeProbe.startledCount > 0u && wildlifeProbe.allFinite,

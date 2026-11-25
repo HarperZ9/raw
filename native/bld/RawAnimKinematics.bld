@@ -1,0 +1,137 @@
+// RawAnimKinematics.bld: RAW Engine Deterministic Inverse Kinematics, Spring Dynamics, Cinematic Post-FX,
+// VRAM Tiering & Shout Recovery Kernels in BuildLang 1.4.0.
+// Counterparts to RawAnimIkSolver.cpp, RawPostCinematicSim.hlsl, rt_profile_presets.cpp, and rt_shouts_survival_gmst.cpp:
+//   1. ik_two_bone_knee_rad - Exact law-of-cosines 2-bone IK interior knee angle (radians)
+//   2. spring_damper_step   - Analytical unconditionally-stable critically damped spring step
+//   3. coc_bokeh_radius_px  - Thin-lens physical Circle-of-Confusion bokeh radius (pixels)
+//   4. motion_blur_clamp    - Shutter-scaled per-pixel motion-blur velocity clamp (pixels)
+//   5. vram_budget_tier     - VRAM & frame-time pressure profile tier classifier (0..3)
+//   6. shout_cooldown_sec   - Dragon Shout 1/2/3-word cooldown recovery curve (seconds)
+// Original work, MIT.
+
+fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
+}
+
+fn max_f64(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+fn abs_f64(x: f64) -> f64 {
+    if x < 0.0 { -x } else { x }
+}
+
+// High-precision Abramowitz-Stegun 4.4.45 acos(x) for x in [-1, 1] (max error < 5e-5 rad, pure arithmetic + sqrt).
+fn acos_safe(x_raw: f64) -> f64 {
+    let pi: f64 = 3.141592653589793;
+    let x: f64 = clamp_f64(x_raw, -1.0, 1.0);
+    let ax: f64 = abs_f64(x);
+    let poly: f64 = (((-0.0187293 * ax + 0.0742610) * ax - 0.2121144) * ax + 1.5707288);
+    let r: f64 = poly * sqrt(max_f64(1.0 - ax, 0.0));
+    if x < 0.0 { pi - r } else { r }
+}
+
+// 1. Exact law-of-cosines 2-bone inverse kinematics interior knee/elbow angle in radians.
+// Matches src/worldgen/RawAnimIkSolver.cpp analytical 2-bone limb solver.
+fn ik_two_bone_knee_rad(upper_len: f64, lower_len: f64, target_dist: f64) -> f64 {
+    let l1: f64 = max_f64(upper_len, 1.0e-3);
+    let l2: f64 = max_f64(lower_len, 1.0e-3);
+    let min_d: f64 = abs_f64(l1 - l2) + 1.0e-4;
+    let max_d: f64 = (l1 + l2) - 1.0e-4;
+    let d: f64 = clamp_f64(target_dist, min_d, max_d);
+    let cos_k: f64 = clamp_f64((l1 * l1 + l2 * l2 - d * d) / (2.0 * l1 * l2), -1.0, 1.0);
+    acos_safe(cos_k)
+}
+
+// 2. Analytical unconditionally-stable critically damped spring-damper position step (zeta = 1.0).
+// Matches src/worldgen/RawAnimIkSolver.cpp secondary cloak/camera/foot-plant smoothing.
+fn spring_damper_step(pos: f64, vel: f64, target: f64, omega: f64, dt_sec: f64) -> f64 {
+    let w: f64 = max_f64(omega, 0.0);
+    let dt: f64 = max_f64(dt_sec, 0.0);
+    let x0: f64 = pos - target;
+    let decay: f64 = exp(-w * dt);
+    target + (x0 + (vel + w * x0) * dt) * decay
+}
+
+// 3. Thin-lens physical Circle-of-Confusion (CoC) bokeh radius in pixels (signed: <0 near, >0 far).
+// Matches src/d3d12_bridge/shaders/RawPostCinematicSim.hlsl physical depth-of-field pass.
+fn coc_bokeh_radius_px(depth_m: f64, focus_m: f64, focal_mm: f64, f_stop: f64, sensor_h_mm: f64, viewport_h_px: f64, max_radius_px: f64) -> f64 {
+    let f_m: f64 = max_f64(focal_mm, 1.0) * 0.001;
+    let z: f64 = max_f64(depth_m, f_m + 0.05);
+    let z_f: f64 = max_f64(focus_m, f_m + 0.05);
+    let aperture_m: f64 = f_m / max_f64(f_stop, 0.95);
+    let coc_mm: f64 = aperture_m * f_m * (z - z_f) / (z * max_f64(z_f - f_m, 1.0e-4)) * 1000.0;
+    let px_per_mm: f64 = max_f64(viewport_h_px, 1.0) / max_f64(sensor_h_mm, 1.0);
+    let cap: f64 = max_f64(max_radius_px, 0.0);
+    clamp_f64(0.5 * coc_mm * px_per_mm, -cap, cap)
+}
+
+// 4. Shutter-scaled per-pixel motion-blur velocity magnitude clamped to [0..max_vel_px].
+// Matches src/d3d12_bridge/shaders/RawPostCinematicSim.hlsl tile-clamped velocity blur.
+fn motion_blur_clamp(vx_px: f64, vy_px: f64, max_vel_px: f64, shutter_scale: f64) -> f64 {
+    let cap: f64 = max_f64(max_vel_px, 0.0);
+    let shutter: f64 = clamp_f64(shutter_scale, 0.0, 2.0);
+    let speed: f64 = sqrt(vx_px * vx_px + vy_px * vy_px) * shutter;
+    if speed > cap { cap } else { speed }
+}
+
+// 5. VRAM & frame-time pressure profile tier classifier:
+//    0 = Ultra, 1 = Balanced, 2 = Competitive, 3 = SafeMode fallback.
+// Matches src/engine_rt/rt_profile_presets.cpp automatic pressure classification.
+fn vram_budget_tier(vram_used_mb: f64, vram_budget_mb: f64, frame_ms: f64, target_ms: f64) -> i32 {
+    let vr: f64 = max_f64(vram_used_mb, 0.0) / max_f64(vram_budget_mb, 1.0);
+    let fr: f64 = max_f64(frame_ms, 0.0) / max_f64(target_ms, 1.0);
+    if vr >= 0.95 || fr >= 1.40 {
+        3
+    } else if vr >= 0.85 || fr >= 1.15 {
+        2
+    } else if vr >= 0.72 || fr >= 0.95 {
+        1
+    } else {
+        0
+    }
+}
+
+// 6. Dragon Shout 1/2/3-word cooldown recovery curve with anti-zero-cooldown floor (3.0 s).
+// Matches src/engine_rt/rt_shouts_survival_gmst.cpp voice recovery GMST curve.
+fn shout_cooldown_sec(base_cd_s: f64, recovery_mult: f64, word_count: i32) -> f64 {
+    let base: f64 = max_f64(base_cd_s, 3.0);
+    let mult: f64 = clamp_f64(recovery_mult, 0.20, 2.0);
+    let word_scale: f64 = if word_count <= 1 {
+        1.0
+    } else if word_count == 2 {
+        1.45
+    } else {
+        2.15
+    };
+    max_f64(base * word_scale * mult, 3.0)
+}
+
+fn main() ~ Console {
+    let knee_right: f64 = ik_two_bone_knee_rad(0.45, 0.45, 0.45 * sqrt(2.0));
+    let knee_ext: f64 = ik_two_bone_knee_rad(0.45, 0.45, 0.89);
+    let spr_step: f64 = spring_damper_step(0.0, 0.0, 1.0, 8.0, 0.10);
+    let spr_settle: f64 = spring_damper_step(0.0, 0.0, 1.0, 8.0, 1.00);
+    let coc_focus: f64 = coc_bokeh_radius_px(5.0, 5.0, 50.0, 2.0, 24.0, 1080.0, 24.0);
+    let coc_far: f64 = coc_bokeh_radius_px(50.0, 5.0, 50.0, 2.0, 24.0, 1080.0, 24.0);
+    let coc_near: f64 = coc_bokeh_radius_px(2.0, 5.0, 50.0, 2.0, 24.0, 1080.0, 24.0);
+    let mb_norm: f64 = motion_blur_clamp(6.0, 8.0, 24.0, 0.50);
+    let mb_cap: f64 = motion_blur_clamp(90.0, 120.0, 24.0, 1.00);
+    let tier_ultra: i32 = vram_budget_tier(4200.0, 16000.0, 11.2, 16.67);
+    let tier_safe: i32 = vram_budget_tier(15400.0, 16000.0, 25.0, 16.67);
+    let shout_w1: f64 = shout_cooldown_sec(15.0, 0.80, 1);
+    let shout_w3: f64 = shout_cooldown_sec(15.0, 0.80, 3);
+
+    println!("ik_two_bone_knee_rad(90deg) = {} | (near-ext) = {}", knee_right, knee_ext);
+    println!("spring_damper_step(0.1s) = {} | (1.0s) = {}", spr_step, spr_settle);
+    println!("coc_bokeh_radius_px(focus) = {} | (far 50m) = {} | (near 2m) = {}", coc_focus, coc_far, coc_near);
+    println!("motion_blur_clamp(norm) = {} | (clamped) = {}", mb_norm, mb_cap);
+    println!("vram_budget_tier(ultra) = {} | (safemode) = {}", tier_ultra, tier_safe);
+    println!("shout_cooldown_sec(1-word talos) = {} | (3-word talos) = {}", shout_w1, shout_w3);
+}

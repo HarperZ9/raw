@@ -1,5 +1,5 @@
 // tools/raw_bench_suite.cpp: Studio-Grade Automated GPU/CPU Benchmark & Visual Invariant Suite for RAW.
-// Benchmarks all 15 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
+// Benchmarks all 16 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
 //   1. GPU 64^3 Navier-Stokes Fire/Smoke + 256^2 SWE Water (RawFluidSimHost)
 //   2. GPU 4-Cascade Radiance Cascades GI (RawRadianceHost)
 //   3. Procedural PBR Texture Forge (RawTextureForge, all 8 seamless PBR sets)
@@ -15,6 +15,7 @@
 //  13. GPU Jimenez GTAO + Unoccluded Bent Normals & Bilateral Denoise (RawGtaoHost)
 //  14. GPU GGX Stochastic Screen-Space Reflections (RawSsrHost)
 //  15. GPU 256-Bin Log-Luminance Histogram & Asymmetric Human Eye-Adaptation Auto-Exposure (RawAutoExposureHost)
+//  16. GPU 3D Volumetric Cloud Raymarching + Beer-Powder Silver-Lining & Temporal Reprojection (RawCloudRaymarchHost)
 //
 // CLI:
 //   raw_bench_suite [--warp] [--quick] [--frames N] [--json <path>] [--esm <path>] [--bsa <path>] [--no-debug-layer]
@@ -42,6 +43,7 @@
 #include "../src/d3d12_bridge/RawGtaoHost.h"
 #include "../src/d3d12_bridge/RawSsrHost.h"
 #include "../src/d3d12_bridge/RawAutoExposureHost.h"
+#include "../src/d3d12_bridge/RawCloudRaymarchHost.h"
 #include "../src/materials/RawTextureForge.h"
 #include "../src/audio/RawAudioDsp.h"
 #include "../src/worldgen/RawDestructionEngine.h"
@@ -1040,6 +1042,24 @@ struct AutoExposureBenchResult {
     float       asymDarkFrac     = 0.0f;
     float       asymRatio        = 0.0f;
     bool        nanFinite        = false;
+    std::string note;
+};
+
+struct CloudRaymarchBenchResult {
+    bool        passed          = false;
+    Percentiles cloudGpuMs{};
+    Percentiles cpuRecordMs{};
+    uint32_t    width           = 480u;
+    uint32_t    height          = 270u;
+    float       hostCloudMs     = 0.0f;
+    float       clearMaxRad     = 1.0f;
+    uint32_t    belowHorizonBad = 0u;
+    float       minTrans        = 1.0f;
+    uint32_t    cloudyPixels    = 0u;
+    float       forwardLuma     = 0.0f;
+    float       antiSolarLuma   = 0.0f;
+    float       silverRatio     = 0.0f;
+    uint32_t    nanInfCount     = 0u;
     std::string note;
 };
 
@@ -3502,6 +3522,241 @@ AutoExposureBenchResult RunAutoExposureBenchmark(BenchDx12Rig& rig, uint32_t war
 }
 
 // ----------------------------------------------------------------------------
+// 16. GPU 3D Volumetric Cloud Raymarcher + Beer-Powder Silver-Lining (RawCloudRaymarchHost)
+// ----------------------------------------------------------------------------
+CloudRaymarchBenchResult RunCloudRaymarchBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames, uint32_t measuredFrames)
+{
+    CloudRaymarchBenchResult res{};
+    constexpr uint32_t kW = 480u;
+    constexpr uint32_t kH = 270u;
+    res.width  = kW;
+    res.height = kH;
+
+    raw::bridge::RawCloudRaymarchHost host;
+    raw::bridge::CloudRaymarchDesc desc{};
+    desc.initialWidth  = kW;
+    desc.initialHeight = kH;
+    std::string err;
+    if (!host.Init(rig.dev.Get(), desc, &err)) {
+        res.note = "RawCloudRaymarchHost::Init failed: " + err;
+        return res;
+    }
+    host.SetTimestampFrequency(rig.tsFreqHz);
+
+    raw::bridge::CloudRaymarchParams baseP{};
+    baseP.camPos[0] = 0.0f; baseP.camPos[1] = 80.0f; baseP.camPos[2] = 0.0f;
+    baseP.camRight[0] = 1.0f; baseP.camRight[1] = 0.0f; baseP.camRight[2] = 0.0f;
+    baseP.camUp[0]    = 0.0f; baseP.camUp[1]    = 1.0f; baseP.camUp[2]    = 0.0f;
+    baseP.camForward[0] = 0.0f; baseP.camForward[1] = 0.0f; baseP.camForward[2] = 1.0f;
+    baseP.fovYDeg       = 65.0f;
+    baseP.timeSec       = 12.0f;
+    baseP.planetRadiusM = 6371000.0f;
+    baseP.cloudBaseM    = 1500.0f;
+    baseP.cloudTopM     = 5500.0f;
+    baseP.densityScale  = 0.0024f;
+    baseP.anvilFactor   = 0.35f;
+
+    // 1) Clear-sky exact (0,0,0,1.0) check
+    raw::bridge::CloudRaymarchParams clearP = baseP;
+    clearP.cloudCoverage = 0.0f;
+    clearP.historyWeight = 0.0f;
+    host.ResetHistory();
+    if (!rig.BeginFrame()) {
+        res.note = "BeginFrame (clear sky) failed";
+        return res;
+    }
+    host.Execute(rig.cmd.Get(), kW, kH, clearP);
+    if (!rig.FlushAndWait()) {
+        res.note = "FlushAndWait (clear sky) failed";
+        return res;
+    }
+    uint32_t rbW = 0u, rbH = 0u, rbD = 0u;
+    std::vector<float> clearRgba;
+    if (!rig.ReadbackRgba16Tex(host.GetOutputResource(), host.OutputResourceState(), rbW, rbH, rbD, clearRgba) ||
+        rbW != kW || rbH != kH) {
+        res.note = "Readback clear-sky cloud output failed";
+        return res;
+    }
+    float clearMaxRad = 0.0f;
+    float clearMinT   = 1.0f;
+    for (size_t i = 0u; i < static_cast<size_t>(kW) * kH; ++i) {
+        const float r = clearRgba[i * 4u + 0u];
+        const float g = clearRgba[i * 4u + 1u];
+        const float b = clearRgba[i * 4u + 2u];
+        const float a = clearRgba[i * 4u + 3u];
+        if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b) || !std::isfinite(a)) {
+            ++res.nanInfCount;
+            continue;
+        }
+        clearMaxRad = std::max({clearMaxRad, std::fabs(r), std::fabs(g), std::fabs(b)});
+        clearMinT   = std::min(clearMinT, a);
+    }
+    res.clearMaxRad = clearMaxRad;
+
+    // 2) Dense cumulus (coverage = 0.85) with temporal history + forward sun silver-lining timed loop
+    raw::bridge::CloudRaymarchParams fwdP = baseP;
+    fwdP.cloudCoverage = 0.85f;
+    fwdP.historyWeight = 0.75f;
+    fwdP.sunDir[0] = 0.0f; fwdP.sunDir[1] = 0.3090f; fwdP.sunDir[2] = 0.9511f;
+    host.ResetHistory();
+
+    std::vector<double> gpuSamples, cpuSamples;
+    gpuSamples.reserve(measuredFrames);
+    cpuSamples.reserve(measuredFrames);
+    const uint32_t totalFrames = warmupFrames + measuredFrames;
+    for (uint32_t f = 0u; f < totalFrames; ++f) {
+        fwdP.frameIndex = f;
+        const auto c0 = Clock::now();
+        if (!rig.BeginFrame()) {
+            res.note = "BeginFrame (dense clouds) failed";
+            return res;
+        }
+        rig.MarkTimestamp(0u);
+        host.Execute(rig.cmd.Get(), kW, kH, fwdP);
+        rig.MarkTimestamp(1u);
+        rig.ResolveTimestamps(0u, 2u);
+        const auto c1 = Clock::now();
+        if (!rig.FlushAndWait()) {
+            res.note = "FlushAndWait (dense clouds) failed";
+            return res;
+        }
+        if (f >= warmupFrames) {
+            double gMs = 0.0;
+            rig.ReadTimestampRangeMs(0u, 1u, gMs);
+            gpuSamples.push_back(gMs);
+            cpuSamples.push_back(ElapsedMs(c0, c1));
+        }
+    }
+
+    res.cloudGpuMs  = ComputePercentiles(gpuSamples);
+    res.cpuRecordMs = ComputePercentiles(cpuSamples);
+    res.hostCloudMs = host.HasValidTiming() ? host.GetLastCloudMs() : 0.0f;
+
+    std::vector<float> fwdRgba;
+    if (!rig.ReadbackRgba16Tex(host.GetOutputResource(), host.OutputResourceState(), rbW, rbH, rbD, fwdRgba) ||
+        rbW != kW || rbH != kH) {
+        res.note = "Readback dense cloud output failed";
+        return res;
+    }
+
+    const float tanHalfY = std::tan(0.5f * fwdP.fovYDeg * (3.14159265359f / 180.0f));
+    const float aspect   = static_cast<float>(kW) / static_cast<float>(kH);
+    const float tanHalfX = tanHalfY * aspect;
+
+    uint32_t belowHorBad = 0u;
+    uint32_t cloudyPx    = 0u;
+    float    minT        = 1.0f;
+    double   fwdLumaSum  = 0.0;
+    uint32_t fwdSunPx    = 0u;
+
+    for (uint32_t y = 0u; y < kH; ++y) {
+        const float ndcY = 1.0f - (static_cast<float>(y) + 0.5f) / static_cast<float>(kH) * 2.0f;
+        const float dirY = ndcY * tanHalfY;
+        for (uint32_t x = 0u; x < kW; ++x) {
+            const float ndcX = (static_cast<float>(x) + 0.5f) / static_cast<float>(kW) * 2.0f - 1.0f;
+            const float dirX = ndcX * tanHalfX;
+            const float invL = 1.0f / std::sqrt(dirX * dirX + dirY * dirY + 1.0f);
+            const float rx   = dirX * invL;
+            const float ry   = dirY * invL;
+            const float rz   = invL;
+
+            const size_t i = static_cast<size_t>(y) * kW + x;
+            const float r = fwdRgba[i * 4u + 0u];
+            const float g = fwdRgba[i * 4u + 1u];
+            const float b = fwdRgba[i * 4u + 2u];
+            const float a = fwdRgba[i * 4u + 3u];
+            if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b) || !std::isfinite(a)) {
+                ++res.nanInfCount;
+                continue;
+            }
+            if (ry <= 0.0f) {
+                if (r != 0.0f || g != 0.0f || b != 0.0f || a != 1.0f) ++belowHorBad;
+            } else {
+                minT = std::min(minT, a);
+                if (a < 0.85f) ++cloudyPx;
+                const float cosSun = rx * fwdP.sunDir[0] + ry * fwdP.sunDir[1] + rz * fwdP.sunDir[2];
+                if (cosSun > 0.927f && a < 0.90f) {
+                    fwdLumaSum += (0.2126f * r + 0.7152f * g + 0.0722f * b);
+                    ++fwdSunPx;
+                }
+            }
+        }
+    }
+    res.belowHorizonBad = belowHorBad;
+    res.minTrans        = minT;
+    res.cloudyPixels    = cloudyPx;
+    res.forwardLuma     = (fwdSunPx > 0u) ? static_cast<float>(fwdLumaSum / fwdSunPx) : 0.0f;
+
+    // 3) Anti-solar probe on the exact same cloud field (silver-lining ratio proof)
+    raw::bridge::CloudRaymarchParams antiP = fwdP;
+    antiP.sunDir[0] = 0.0f; antiP.sunDir[1] = 0.3090f; antiP.sunDir[2] = -0.9511f;
+    antiP.historyWeight = 0.0f;
+    antiP.frameIndex    = 0u;
+    host.ResetHistory();
+    if (!rig.BeginFrame()) {
+        res.note = "BeginFrame (anti-solar probe) failed";
+        return res;
+    }
+    host.Execute(rig.cmd.Get(), kW, kH, antiP);
+    if (!rig.FlushAndWait()) {
+        res.note = "FlushAndWait (anti-solar probe) failed";
+        return res;
+    }
+    std::vector<float> antiRgba;
+    if (!rig.ReadbackRgba16Tex(host.GetOutputResource(), host.OutputResourceState(), rbW, rbH, rbD, antiRgba) ||
+        rbW != kW || rbH != kH) {
+        res.note = "Readback anti-solar cloud output failed";
+        return res;
+    }
+    double   antiLumaSum = 0.0;
+    uint32_t antiPx      = 0u;
+    for (uint32_t y = 0u; y < kH; ++y) {
+        const float ndcY = 1.0f - (static_cast<float>(y) + 0.5f) / static_cast<float>(kH) * 2.0f;
+        const float dirY = ndcY * tanHalfY;
+        if (dirY <= 0.0f) continue;
+        for (uint32_t x = 0u; x < kW; ++x) {
+            const float ndcX = (static_cast<float>(x) + 0.5f) / static_cast<float>(kW) * 2.0f - 1.0f;
+            const float dirX = ndcX * tanHalfX;
+            const float invL = 1.0f / std::sqrt(dirX * dirX + dirY * dirY + 1.0f);
+            const float rx   = dirX * invL;
+            const float ry   = dirY * invL;
+            const float rz   = invL;
+            const float cosFwd = rx * fwdP.sunDir[0] + ry * fwdP.sunDir[1] + rz * fwdP.sunDir[2];
+            const size_t i = static_cast<size_t>(y) * kW + x;
+            const float r = antiRgba[i * 4u + 0u];
+            const float g = antiRgba[i * 4u + 1u];
+            const float b = antiRgba[i * 4u + 2u];
+            const float a = antiRgba[i * 4u + 3u];
+            if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b) || !std::isfinite(a)) {
+                ++res.nanInfCount;
+                continue;
+            }
+            if (cosFwd > 0.927f && a < 0.90f) {
+                antiLumaSum += (0.2126f * r + 0.7152f * g + 0.0722f * b);
+                ++antiPx;
+            }
+        }
+    }
+    res.antiSolarLuma = (antiPx > 0u) ? static_cast<float>(antiLumaSum / antiPx) : 0.0f;
+    res.silverRatio   = res.forwardLuma / std::max(res.antiSolarLuma, 1.0e-5f);
+
+    const bool optOk = (res.nanInfCount == 0u) && (res.clearMaxRad == 0.0f) && (clearMinT == 1.0f) &&
+                       (res.belowHorizonBad == 0u) && (res.minTrans < 0.35f) && (res.cloudyPixels > 10000u) &&
+                       (fwdSunPx > 500u) && (antiPx > 500u) && (res.silverRatio > 2.0f);
+    const bool budgetOk = rig.isWarp ? true : (res.cloudGpuMs.mean < 0.15);
+    res.passed = optOk && budgetOk;
+    if (!optOk) {
+        res.note = "Volumetric cloud clear/horizon/occlusion/silver-lining/NaN invariant failed";
+    } else if (!budgetOk) {
+        res.note = "HW GPU 480x270 Volumetric Cloud mean exceeded 0.15 ms budget";
+    } else {
+        res.note = rig.isWarp ? "WARP 480x270 Beer-Powder volumetric clouds PASS"
+                              : "HW GPU < 0.15 ms & Beer-Powder silver-lining clouds PASS";
+    }
+    return res;
+}
+
+// ----------------------------------------------------------------------------
 // JSON Serializer & Console Scorecard Printer
 // ----------------------------------------------------------------------------
 void WriteBenchJson(const std::string& path,
@@ -3525,7 +3780,8 @@ void WriteBenchJson(const std::string& path,
                     const ShadowPcssBenchResult& shadowPcss,
                     const GtaoBenchResult& gtao,
                     const SsrBenchResult& ssr,
-                    const AutoExposureBenchResult& autoExposure)
+                    const AutoExposureBenchResult& autoExposure,
+                    const CloudRaymarchBenchResult& cloudRaymarch)
 {
     std::ostringstream os;
     os << std::fixed << std::setprecision(4);
@@ -3805,6 +4061,25 @@ void WriteBenchJson(const std::string& path,
     os << "      \"asymRatio\": " << autoExposure.asymRatio << ",\n";
     os << "      \"nanFinite\": " << (autoExposure.nanFinite ? "true" : "false") << ",\n";
     os << "      \"note\": \"" << JsonEscape(autoExposure.note) << "\"\n";
+    os << "    },\n";
+
+    // 16. GPU 3D Volumetric Cloud Raymarcher
+    os << "    \"cloudRaymarch\": {\n";
+    os << "      \"passed\": " << (cloudRaymarch.passed ? "true" : "false") << ",\n";
+    os << "      \"width\": " << cloudRaymarch.width << ",\n";
+    os << "      \"height\": " << cloudRaymarch.height << ",\n";
+    os << "      \"cloudGpuMs\": "; pctObj(cloudRaymarch.cloudGpuMs); os << ",\n";
+    os << "      \"cpuRecordMs\": "; pctObj(cloudRaymarch.cpuRecordMs); os << ",\n";
+    os << "      \"hostCloudMs\": " << cloudRaymarch.hostCloudMs << ",\n";
+    os << "      \"clearMaxRad\": " << cloudRaymarch.clearMaxRad << ",\n";
+    os << "      \"belowHorizonBad\": " << cloudRaymarch.belowHorizonBad << ",\n";
+    os << "      \"minTrans\": " << cloudRaymarch.minTrans << ",\n";
+    os << "      \"cloudyPixels\": " << cloudRaymarch.cloudyPixels << ",\n";
+    os << "      \"forwardLuma\": " << cloudRaymarch.forwardLuma << ",\n";
+    os << "      \"antiSolarLuma\": " << cloudRaymarch.antiSolarLuma << ",\n";
+    os << "      \"silverRatio\": " << cloudRaymarch.silverRatio << ",\n";
+    os << "      \"nanInfCount\": " << cloudRaymarch.nanInfCount << ",\n";
+    os << "      \"note\": \"" << JsonEscape(cloudRaymarch.note) << "\"\n";
     os << "    }\n";
 
     os << "  }\n";
@@ -3836,7 +4111,8 @@ void PrintScorecard(const BenchDx12Rig& rig,
                     const ShadowPcssBenchResult& shadowPcss,
                     const GtaoBenchResult& gtao,
                     const SsrBenchResult& ssr,
-                    const AutoExposureBenchResult& autoExposure)
+                    const AutoExposureBenchResult& autoExposure,
+                    const CloudRaymarchBenchResult& cloudRaymarch)
 {
     std::printf("\n");
     std::printf("=====================================================================================================\n");
@@ -3950,6 +4226,12 @@ void PrintScorecard(const BenchDx12Rig& rig,
                   autoExposure.fireflyErrPct, autoExposure.asymRatio);
     std::printf("  %-30s | %-6s | %-28s | %s\n", "15. GPU 256-Bin Auto-Exposure", autoExposure.passed ? "PASS" : "FAIL", metric, detail);
 
+    std::snprintf(metric, sizeof(metric), "Cloud %.4f ms (p95 %.4f)", cloudRaymarch.cloudGpuMs.mean, cloudRaymarch.cloudGpuMs.p95);
+    std::snprintf(detail, sizeof(detail), "host=%.4f | minT=%.3f px=%u silver=%.2fx horBad=%u | NaN=%u",
+                  cloudRaymarch.hostCloudMs, cloudRaymarch.minTrans, cloudRaymarch.cloudyPixels,
+                  cloudRaymarch.silverRatio, cloudRaymarch.belowHorizonBad, cloudRaymarch.nanInfCount);
+    std::printf("  %-30s | %-6s | %-28s | %s\n", "16. GPU 3D Volumetric Clouds", cloudRaymarch.passed ? "PASS" : "FAIL", metric, detail);
+
     std::printf("=====================================================================================================\n");
 }
 
@@ -4015,20 +4297,21 @@ int main(int argc, char** argv)
     const GtaoBenchResult              gtao          = RunGtaoBenchmark(rig, warmupFrames, measuredFrames);
     const SsrBenchResult               ssr           = RunSsrBenchmark(rig, warmupFrames, measuredFrames);
     const AutoExposureBenchResult      autoExposure  = RunAutoExposureBenchmark(rig, warmupFrames, measuredFrames);
+    const CloudRaymarchBenchResult     cloudRaymarch = RunCloudRaymarchBenchmark(rig, warmupFrames, measuredFrames);
 
     const uint32_t debugErrors = rig.DrainDebugErrors();
     const bool allPassed = fluid.passed && rc.passed && tex.passed && audio.passed &&
                            destr.passed && flora.passed && tamriel.passed && xpbd.passed &&
                            gpuCull.passed && lightClusters.passed && volFroxels.passed &&
                            shadowPcss.passed && gtao.passed && ssr.passed &&
-                           autoExposure.passed && (debugErrors == 0u);
+                           autoExposure.passed && cloudRaymarch.passed && (debugErrors == 0u);
 
     PrintScorecard(rig, quickMode, warmupFrames, measuredFrames, debugErrors,
-                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure);
+                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch);
 
     if (!jsonPath.empty()) {
         WriteBenchJson(jsonPath, rig, quickMode, warmupFrames, measuredFrames, debugErrors, allPassed,
-                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure);
+                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch);
         std::printf("  JSON report written: %s\n", jsonPath.c_str());
     }
 

@@ -1,6 +1,6 @@
-# RAW Engine BuildLang Core Kernel Map (10 Modules, 60 Verified Kernels)
+# RAW Engine BuildLang Core Kernel Map (11 Modules, 66 Verified Kernels)
 
-This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, regional economy, GPU pipeline, world-systems, volumetric clouds, archery, and dungeon kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**10 modules, 60 verified kernels**):
+This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, regional economy, GPU pipeline, world-systems, volumetric clouds, archery, dungeon, animation IK, cinematic post-FX, and profile-tiering kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**11 modules, 66 verified kernels**):
 
 1. [`native/bld/RawPhysicsKernels.bld`](../native/bld/RawPhysicsKernels.bld) (6 core scalar physics & anti-exploit kernels)
 2. [`native/bld/RawAtmoWeather.bld`](../native/bld/RawAtmoWeather.bld) (7 planetary atmosphere, orbital solar, snowpack ODE & black-ice kernels)
@@ -12,10 +12,11 @@ This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar 
 8. [`native/bld/RawGpuPipeline.bld`](../native/bld/RawGpuPipeline.bld) (6 froxel Z-slice, cascade texel-snap, SSR edge fade, PI frame governor, clustered sphere-AABB & event bounty kernels)
 9. [`native/bld/RawWorldSystems.bld`](../native/bld/RawWorldSystems.bld) (6 log-luminance histogram, eye adaptation, diplomacy pricing, guard posture, audio crossfade & Purkinje night-vision kernels)
 10. [`native/bld/RawCloudsDungeon.bld`](../native/bld/RawCloudsDungeon.bld) (6 dual-lobe HG clouds, Beer-Powder scattering, spherical cloud shell, bow draw power, dungeon connectivity & compass marker kernels)
+11. [`native/bld/RawAnimKinematics.bld`](../native/bld/RawAnimKinematics.bld) (6 2-bone IK knee angle, critically damped spring-damper, CoC bokeh radius, motion-blur clamp, VRAM budget tier & shout cooldown kernels)
 
 ## Toolchain Verification Receipts (`buildc 1.4.0`)
 
-Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **10/10 `check` PASS**, **10/10 `run` PASS**):
+Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **11/11 `check` PASS**, **11/11 `run` PASS**):
 
 ### Module 1: `native/bld/RawPhysicsKernels.bld`
 - `buildc check`: Exit Code `0` (`Lexing... OK (763 tokens)`, `Parsing... OK (9 items)`, `Type checking... OK`, `No errors found`)
@@ -136,7 +137,19 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
   compass_marker_scale(220m clear) = 0.798027875783642 | (220m fog 0.85) = 0.4165139923901944
   ```
 
-## Kernel-by-Kernel Mapping (60 Kernels)
+### Module 11: `native/bld/RawAnimKinematics.bld`
+- `buildc check`: Exit Code `0` (`Lexing... OK (1122 tokens)`, `Parsing... OK (11 items)`, `Type checking... OK`, `No errors found`)
+- `buildc run`: Exit Code `0`
+  ```text
+  ik_two_bone_knee_rad(90deg) = 1.5708638535897932 | (near-ext) = 2.843173036743716
+  spring_damper_step(0.1s) = 0.1912078645890012 | (1.0s) = 0.9969808363488774
+  coc_bokeh_radius_px(focus) = 0 | (far 50m) = 5.113636363636364 | (near 2m) = -8.522727272727273
+  motion_blur_clamp(norm) = 5 | (clamped) = 24
+  vram_budget_tier(ultra) = 0 | (safemode) = 3
+  shout_cooldown_sec(1-word talos) = 12 | (3-word talos) = 25.8
+  ```
+
+## Kernel-by-Kernel Mapping (66 Kernels)
 
 ### 1. Core Physics Kernels (`native/bld/RawPhysicsKernels.bld`)
 
@@ -248,10 +261,21 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
 | 59 | `dungeon_conn_ratio(room_count, corridor_count, reachable_rooms)` | `src/worldgen/RawDungeonGen.cpp` | `(reachable / N) * clamp(corridors / (N - 1), 0, 2)` | Spanning tree = `1.0`, braided loop = `1.333`, disconnected = `0.467` |
 | 60 | `compass_marker_scale(dist_m, near_m, far_m, fog_density01, min_s, max_s)` | `src/engine_rt/rt_archery_mount_gmst.cpp` | Fog-shrunk range + smoothstep proximity scale * weather attenuation | `220 m` clear = `0.7980` vs heavy blizzard (`fog=0.85`) = `0.4165` |
 
-## Reproducing All 10 BuildLang Module Checks
+### 11. Inverse Kinematics, Spring Dynamics, Cinematic Post-FX and Profile Kernels (`native/bld/RawAnimKinematics.bld`)
+
+| # | BuildLang Function | Engine C++ / HLSL Counterpart | Governing Equation | Verified Invariant |
+| --- | --- | --- | --- | --- |
+| 61 | `ik_two_bone_knee_rad(upper_len, lower_len, target_dist)` | `src/worldgen/RawAnimIkSolver.cpp` | Law of cosines `acos((L1^2 + L2^2 - d^2) / (2*L1*L2))` | Right triangle `(0.45, 0.45, 0.45*sqrt(2))` = `1.5709 rad` (`90 deg`); near-ext = `2.843 rad` |
+| 62 | `spring_damper_step(pos, vel, target, omega, dt_sec)` | `src/worldgen/RawAnimIkSolver.cpp` | Critically damped analytical `target + (x0 + (v + w*x0)*dt) * exp(-w*dt)` | Unconditionally stable zero-overshoot: `0 -> 0.1912` (`0.1 s`) -> `0.9970` (`1.0 s`) |
+| 63 | `coc_bokeh_radius_px(depth_m, focus_m, focal_mm, f_stop, sensor_h_mm, viewport_h_px, max_r)` | `src/d3d12_bridge/shaders/RawPostCinematicSim.hlsl` | Thin-lens signed CoC `0.5 * (f^2/N)*(z - z_f)/(z*(z_f - f)) * px_per_mm` | Exact `0.0 px` at focus; `+5.114 px` far (`50 m`), `-8.523 px` near (`2 m`) |
+| 64 | `motion_blur_clamp(vx_px, vy_px, max_vel_px, shutter_scale)` | `src/d3d12_bridge/shaders/RawPostCinematicSim.hlsl` | `min(sqrt(vx^2 + vy^2) * shutter, max_vel_px)` | `(6,8)` @ `0.5x` shutter = exact `5.0 px`; `(90,120)` clamped to `24.0 px` |
+| 65 | `vram_budget_tier(vram_used_mb, vram_budget_mb, frame_ms, target_ms)` | `src/engine_rt/rt_profile_presets.cpp` | Pressure thresholds on VRAM & frame-time ratio (`0` Ultra .. `3` SafeMode) | Nominal `4.2/16 GB @ 11.2 ms` -> `0` (Ultra); `15.4/16 GB @ 25 ms` -> `3` (SafeMode) |
+| 66 | `shout_cooldown_sec(base_cd_s, recovery_mult, word_count)` | `src/engine_rt/rt_shouts_survival_gmst.cpp` | `max(base * word_scale(1.0/1.45/2.15) * clamp(mult, 0.2, 2.0), 3.0)` | Amulet of Talos (`0.8x`): 1-word = `12.0 s`, 3-word = `25.8 s` |
+
+## Reproducing All 11 BuildLang Module Checks
 
 ```powershell
-foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim','RawGpuPipeline','RawWorldSystems','RawCloudsDungeon')) {
+foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim','RawGpuPipeline','RawWorldSystems','RawCloudsDungeon','RawAnimKinematics')) {
     buildc check "E:\wt\raw-rt9\native\bld\$m.bld"
     buildc run   "E:\wt\raw-rt9\native\bld\$m.bld"
 }

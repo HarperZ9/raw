@@ -128,6 +128,9 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
     const float autoExposureAdaptMs = (autoExposureReady && autoExposure && autoExposure->HasValidTiming() &&
                                        std::isfinite(autoExposure->GetLastAdaptMs()))
         ? autoExposure->GetLastAdaptMs() : 0.0f;
+    const float cloudRaymarchMs = (cloudRaymarchReady && cloudRaymarch && cloudRaymarch->HasValidTiming() &&
+                                   std::isfinite(cloudRaymarch->GetLastCloudMs()))
+        ? cloudRaymarch->GetLastCloudMs() : 0.0f;
 
     char jsonBuf[3072]{};
     const int n = std::snprintf(
@@ -166,6 +169,7 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"ssrTraceMs\": %.4f,\n"
         "  \"autoExposureHistMs\": %.4f,\n"
         "  \"autoExposureAdaptMs\": %.4f,\n"
+        "  \"cloudRaymarchMs\": %.4f,\n"
         "  \"seasonSnowM\": %.4f,\n"
         "  \"seasonIceM\": %.4f,\n"
         "  \"skinTempC\": %.3f,\n"
@@ -206,6 +210,7 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         ssrTraceMs,
         autoExposureHistMs,
         autoExposureAdaptMs,
+        cloudRaymarchMs,
         seasonSnowM,
         seasonIceM,
         skinTempC,
@@ -1393,6 +1398,155 @@ bool D3D12Bridge::Impl::ExecuteAutoExposureOnQueue()
     return true;
 }
 
+bool D3D12Bridge::Impl::ExecuteCloudRaymarchOnQueue(bool isInterior)
+{
+    if (!cloudRaymarchReady || !cloudRaymarch || !cloudRaymarch->Ready() ||
+        !queue || !cloudList || !cloudFence || !cloudEvent) {
+        return false;
+    }
+
+    const uint32_t slot = cloudSlot;
+    if (cloudSlotVal[slot] > 0 && cloudFence->GetCompletedValue() < cloudSlotVal[slot]) {
+        cloudFence->SetEventOnCompletion(cloudSlotVal[slot], cloudEvent);
+        WaitForSingleObject(cloudEvent, 3000);
+    }
+    if (FAILED(cloudAlloc[slot]->Reset()) ||
+        FAILED(cloudList->Reset(cloudAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    if (isInterior != cloudPrevInterior) {
+        cloudRaymarch->ResetHistory();
+        cloudPrevInterior = isInterior;
+    }
+
+    LightingFluidInputs fi{};
+    LightingPassFluidInputs(pass.get(), &fi);
+
+    float cloudCov = 0.55f;
+    float weatherSnow = 0.0f;
+    const void* uPtr = nullptr;
+    size_t uBytes = 0;
+    if (pass && LightingPassUniform(pass.get(), &uPtr, &uBytes) &&
+        uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+        const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+        if (std::isfinite(u->clouds[0]) && u->clouds[0] > 0.0f) {
+            cloudCov = std::clamp(u->clouds[0], 0.0f, 1.0f);
+        }
+        if (std::isfinite(u->weather[1])) {
+            weatherSnow = std::clamp(u->weather[1], 0.0f, 1.0f);
+        }
+    }
+    const float precipBoost = std::clamp(std::max(fi.rainIntensity, weatherSnow) * 0.35f, 0.0f, 0.35f);
+    cloudCov = isInterior ? 0.0f : std::clamp(cloudCov + precipBoost, 0.0f, 0.95f);
+
+    // Derive orthonormal Y-up camera basis & vertical FOV from camera-relative clipToWorld (Skyrim Z-up -> Y-up).
+    float fovYDeg = 65.0f;
+    float camFwdYUp[3] = {0.0f, 0.0f, 1.0f};
+    float camRightYUp[3] = {1.0f, 0.0f, 0.0f};
+    float camUpYUp[3] = {0.0f, 1.0f, 0.0f};
+    {
+        const float* inv = &lighting.clipToWorld[0][0];
+        auto rayDirZUp = [&](float ndcX, float ndcY, float out[3]) -> bool {
+            const float wN = ndcX * inv[0 * 4 + 3] + ndcY * inv[1 * 4 + 3] + inv[3 * 4 + 3];
+            const float wF = ndcX * inv[0 * 4 + 3] + ndcY * inv[1 * 4 + 3] + inv[2 * 4 + 3] + inv[3 * 4 + 3];
+            if (std::fabs(wN) <= 1.0e-6f || std::fabs(wF) <= 1.0e-6f) return false;
+            const float nx = (ndcX * inv[0 * 4 + 0] + ndcY * inv[1 * 4 + 0] + inv[3 * 4 + 0]) / wN;
+            const float ny = (ndcX * inv[0 * 4 + 1] + ndcY * inv[1 * 4 + 1] + inv[3 * 4 + 1]) / wN;
+            const float nz = (ndcX * inv[0 * 4 + 2] + ndcY * inv[1 * 4 + 2] + inv[3 * 4 + 2]) / wN;
+            const float fx = (ndcX * inv[0 * 4 + 0] + ndcY * inv[1 * 4 + 0] + inv[2 * 4 + 0] + inv[3 * 4 + 0]) / wF;
+            const float fy = (ndcX * inv[0 * 4 + 1] + ndcY * inv[1 * 4 + 1] + inv[2 * 4 + 1] + inv[3 * 4 + 1]) / wF;
+            const float fz = (ndcX * inv[0 * 4 + 2] + ndcY * inv[1 * 4 + 2] + inv[2 * 4 + 2] + inv[3 * 4 + 2]) / wF;
+            const float dx = fx - nx, dy = fy - ny, dz = fz - nz;
+            const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (!std::isfinite(len) || len <= 1.0e-5f) return false;
+            out[0] = dx / len;
+            out[1] = dy / len;
+            out[2] = dz / len;
+            return true;
+        };
+        float ctrD[3]{}, topD[3]{}, botD[3]{}, rgtD[3]{};
+        if (rayDirZUp(0.0f, 0.0f, ctrD)) {
+            camFwdYUp[0] = ctrD[0];
+            camFwdYUp[1] = ctrD[2]; // Skyrim Z -> Y-up
+            camFwdYUp[2] = ctrD[1]; // Skyrim Y -> Z-forward
+        }
+        if (rayDirZUp(0.0f, 1.0f, topD) && rayDirZUp(0.0f, -1.0f, botD)) {
+            const float dotTB = std::clamp(topD[0] * botD[0] + topD[1] * botD[1] + topD[2] * botD[2], -1.0f, 1.0f);
+            const float deg = std::acos(dotTB) * 57.2957795f;
+            if (std::isfinite(deg) && deg >= 25.0f && deg <= 130.0f) {
+                fovYDeg = std::clamp(deg, 30.0f, 120.0f);
+            }
+            const float uy0 = topD[0] - botD[0];
+            const float uy1 = topD[2] - botD[2];
+            const float uy2 = topD[1] - botD[1];
+            const float uLen = std::sqrt(uy0 * uy0 + uy1 * uy1 + uy2 * uy2);
+            if (std::isfinite(uLen) && uLen > 1.0e-5f) {
+                camUpYUp[0] = uy0 / uLen;
+                camUpYUp[1] = uy1 / uLen;
+                camUpYUp[2] = uy2 / uLen;
+            }
+        }
+        if (rayDirZUp(1.0f, 0.0f, rgtD)) {
+            const float rx0 = rgtD[0] - ctrD[0];
+            const float rx1 = rgtD[2] - ctrD[2];
+            const float rx2 = rgtD[1] - ctrD[1];
+            const float rLen = std::sqrt(rx0 * rx0 + rx1 * rx1 + rx2 * rx2);
+            if (std::isfinite(rLen) && rLen > 1.0e-5f) {
+                camRightYUp[0] = rx0 / rLen;
+                camRightYUp[1] = rx1 / rLen;
+                camRightYUp[2] = rx2 / rLen;
+            }
+        }
+    }
+
+    const uint32_t outW = std::max(cfg.width / 4u, 64u);
+    const uint32_t outH = std::max(cfg.height / 4u, 36u);
+
+    constexpr float kSkyrimUnitsToMeters = 0.0142857f;
+    CloudRaymarchParams cp{};
+    cp.camPos[0]     = std::isfinite(lighting.posAdjust[0]) ? lighting.posAdjust[0] * kSkyrimUnitsToMeters : 0.0f;
+    cp.camPos[1]     = std::clamp(std::isfinite(lighting.posAdjust[2]) ? (lighting.posAdjust[2] * kSkyrimUnitsToMeters + 80.0f) : 80.0f, 10.0f, 1200.0f);
+    cp.camPos[2]     = std::isfinite(lighting.posAdjust[1]) ? lighting.posAdjust[1] * kSkyrimUnitsToMeters : 0.0f;
+    cp.camRight[0]   = camRightYUp[0]; cp.camRight[1]   = camRightYUp[1]; cp.camRight[2]   = camRightYUp[2];
+    cp.camUp[0]      = camUpYUp[0];    cp.camUp[1]      = camUpYUp[1];    cp.camUp[2]      = camUpYUp[2];
+    cp.camForward[0] = camFwdYUp[0];   cp.camForward[1] = camFwdYUp[1];   cp.camForward[2] = camFwdYUp[2];
+    cp.fovYDeg       = fovYDeg;
+    cp.timeSec       = std::isfinite(fi.simTimeSec) ? fi.simTimeSec : 0.0f;
+    cp.cloudCoverage = cloudCov;
+    cp.densityScale  = 0.0022f + precipBoost * 0.0018f;
+    cp.anvilFactor   = 0.35f + precipBoost * 0.50f;
+    cp.historyWeight = isInterior ? 0.0f : 0.75f;
+    cp.windVel[0]    = isInterior ? 0.0f : std::clamp(fi.windXY[0] * 0.08f, -40.0f, 40.0f);
+    cp.windVel[1]    = 0.0f;
+    cp.windVel[2]    = isInterior ? 0.0f : std::clamp(fi.windXY[1] * 0.08f, -40.0f, 40.0f);
+    cp.sunDir[0]     = std::isfinite(lighting.sunDirection[0]) ? lighting.sunDirection[0] : 0.25f;
+    cp.sunDir[1]     = std::isfinite(lighting.sunDirection[2]) ? lighting.sunDirection[2] : 0.35f;
+    cp.sunDir[2]     = std::isfinite(lighting.sunDirection[1]) ? lighting.sunDirection[1] : 0.90f;
+    cp.sunColor[0]   = std::max(0.05f, std::isfinite(lighting.sunColour[0]) ? lighting.sunColour[0] : 1.0f);
+    cp.sunColor[1]   = std::max(0.05f, std::isfinite(lighting.sunColour[1]) ? lighting.sunColour[1] : 0.94f);
+    cp.sunColor[2]   = std::max(0.05f, std::isfinite(lighting.sunColour[2]) ? lighting.sunColour[2] : 0.84f);
+    cp.sunIntensity  = lighting.hasSun ? 6.5f : 1.2f;
+    cp.frameIndex    = static_cast<uint32_t>(cloudStepFrames & 0xFFFFu);
+
+    cloudRaymarch->Execute(cloudList.Get(), outW, outH, cp);
+
+    if (FAILED(cloudList->Close())) return false;
+    ID3D12CommandList* lists[1] = {cloudList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(cloudFence.Get(), ++cloudFenceVal);
+    cloudSlotVal[slot] = cloudFenceVal;
+    cloudSlot = (slot + 1u) % kRing;
+
+    if ((cloudStepFrames++ % 180ull) == 0ull) {
+        log("[CloudRaymarch] live quarter-res %ux%u clouds: cloudMs=%.4f, cov=%.2f, interior=%s",
+            outW, outH,
+            cloudRaymarch->HasValidTiming() ? cloudRaymarch->GetLastCloudMs() : 0.0f,
+            cloudCov, isInterior ? "yes" : "no");
+    }
+    return true;
+}
+
 bool D3D12Bridge::Impl::CpuWait(uint64_t value, DWORD timeoutMs)
 {
     return WaitFence(fence12.Get(), value, cpuEvent, timeoutMs);
@@ -1630,8 +1784,10 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                         m->ssrHost && m->ssrHost->Ready() && m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr;
     const bool runAutoExposure = m->cfg.lightingPass && m->lighting.valid && m->autoExposureReady &&
                                  m->autoExposure && m->autoExposure->Ready() && m->colorOut.res12 != nullptr;
+    const bool runCloudRaymarch = m->cfg.lightingPass && m->lighting.valid && m->cloudRaymarchReady &&
+                                  m->cloudRaymarch && m->cloudRaymarch->Ready();
     const bool runOverlay = m->overlayHudEnabled && m->overlayHostReady && m->overlayHost && m->overlayHost->Ready();
-    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runAutoExposure || runOverlay;
+    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runAutoExposure || runCloudRaymarch || runOverlay;
     auto runPostLightingPasses = [&]() -> bool {
         if (!hasPostWork) return true;
         if (runTerrain) {
@@ -1729,6 +1885,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         }
         if (runAutoExposure) {
             m->ExecuteAutoExposureOnQueue();
+        }
+        if (runCloudRaymarch) {
+            m->ExecuteCloudRaymarchOnQueue(isInterior);
         }
         if (runOverlay) {
             m->ExecuteOverlayHudOnQueue(isInterior);

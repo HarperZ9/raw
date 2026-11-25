@@ -16,6 +16,7 @@
 #include "rt_magic_physics.h"
 #include "rt_physics_camera_gmst.h"
 #include "rt_progression_economy.h"
+#include "rt_shouts_survival_gmst.h"
 #include "rt_stealth_social_gmst.h"
 #include "rt_version.h"
 #include "rt_world_rules_gmst.h"
@@ -386,9 +387,10 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
     const std::string aeMsg   = InitAlchemyEnchantGmst(img, refs);
     const std::string chMsg   = InitCompanionHazardGmst(img, refs);
     const std::string amMsg   = InitArcheryMountGmst(img, refs);
-    char out[2688];
-    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s",
-                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str(), progMsg.c_str(), aiMsg.c_str(), wrMsg.c_str(), pcMsg.c_str(), ssMsg.c_str(), lmMsg.c_str(), aeMsg.c_str(), chMsg.c_str(), amMsg.c_str());
+    const std::string ssvMsg  = InitShoutsSurvivalGmst(img, refs);
+    char out[2944];
+    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s",
+                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str(), progMsg.c_str(), aiMsg.c_str(), wrMsg.c_str(), pcMsg.c_str(), ssMsg.c_str(), lmMsg.c_str(), aeMsg.c_str(), chMsg.c_str(), amMsg.c_str(), ssvMsg.c_str());
     return out;
 }
 
@@ -460,6 +462,7 @@ void WorldSimApplyLivePlanetaryGravity(float gravityMps2) {
 }
 
 void WorldSimRestoreDynamicSettings() {
+    ShutdownShoutsSurvivalGmst();
     ShutdownArcheryMountGmst();
     ShutdownCompanionHazardGmst();
     ShutdownAlchemyEnchantGmst();

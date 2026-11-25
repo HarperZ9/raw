@@ -46,7 +46,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float2 lo = floor(at.xy);
     const float2 fullPx = (lo + 0.5f) * 2.0f;
     const int2 fullIp = clamp(int2(fullPx), int2(0, 0), int2(dims.xy) - 1);
-    if ((flags.x & FLAG_FOG) == 0u || (flags.x & FLAG_MATCH) != 0u) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
+    const bool isWorldMap = (camPosW.z > 12500.0f) || (timeEnv.w > 0.5f && camPosW.z > 7500.0f);
+    if ((flags.x & FLAG_FOG) == 0u || (flags.x & FLAG_MATCH) != 0u || isWorldMap) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
     const float d = Depth.Load(int3(fullIp, 0));
     const float3 eye = eyeAt();
     const float3 p = worldAt(fullPx - 0.5f, min(d, 0.999999f));
@@ -127,8 +128,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // with crisp anisotropic Mie forward scattering (g=0.65) + rising 3D hearth smoke/dust motes + night city haze.
         const float3 midWp = camPosW.xyz + eye + w * min(tEnd * 0.45f, 1800.0f);
         const float dustMote = isInt ? (0.78f + 0.44f * cNoise(midWp * 0.011f - float3(0.0f, 0.0f, camPosW.w * 0.16f))) : 1.0f;
-        // Disciplined interior volumetric gain (0.38 vs old 1.55) prevents milky orange/cyan fog wash across halls & ice caves:
-        const float intGain = isInt ? (0.38f * dustMote) : (weatherMistGain * (1.0f + nightV * 1.25f));
+        // Disciplined interior volumetric gain (0.18 vs old 0.38/1.55) keeps halls & ice caves crisp with deep contrast:
+        const float intGain = isInt ? (0.18f * dustMote) : (weatherMistGain * (1.0f + nightV * 1.25f));
         const float jitL = ign(lo + float2(13.0f, 29.0f));
         uint shadowedDone = 0u;
         [loop] for (uint li = 0u; li < flags.y; li++) {

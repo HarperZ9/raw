@@ -77,6 +77,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const int3 ip = int3(at.xy, 0);
     float4 lit = Lit.Load(ip);
     if ((flags.x & FLAG_FOG) == 0u || (flags.x & FLAG_MATCH) != 0u) { return lit; }
+    // Clean 3D World Map isolation: never paint volumetric fog, skybox, clouds, aurora, or weather droplets onto the MapMenu!
+    const bool isWorldMap = (camPosW.z > 12500.0f) || (timeEnv.w > 0.5f && camPosW.z > 7500.0f);
+    if (isWorldMap) { return lit; }
     const float d = Depth.Load(ip);
     const float2 px = floor(at.xy);
     const float focusD = Depth.Load(int3(int2(dims.xy * 0.5f), 0));
@@ -322,18 +325,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 // Removed screen-space 12-tap radial sun-spoke hack (21.03.52.63.png): true 3D volumetric godrays
                 // belong exclusively in FroxelPass / VolumetricPass (zero screen-space radial spokes across overcast sky!).
             }
-            // Physical 42-deg primary + 51-deg secondary spectral atmospheric rainbow during sunlit rain (Commons own-03 & own-45).
-            if (weather.w > 0.08f && aElev > 0.04f && aElev < 0.64f && sDir.z > 0.0f) {
+            // Physical 42-deg primary + 51-deg secondary spectral atmospheric rainbow STRICTLY during genuine sunlit rain
+            // (requires active rainfall weather.w > 0.32 AND real cloud cover > 0.35 -> zero fake rainbows on dry sunny days!).
+            if (weather.w > 0.32f && clouds.x > 0.35f && aElev > 0.05f && aElev < 0.52f && sDir.z > 0.02f) {
                 const float antiAng = acos(clamp(dot(sDir, -aSun), -1.0f, 1.0f));
                 // Primary bow at 42 deg (0.733 rad, red outside -> violet inside); secondary bow at 51 deg (0.890 rad, reversed).
                 const float pR = exp(-pow((antiAng - 0.742f) / 0.011f, 2.0f));
                 const float pG = exp(-pow((antiAng - 0.728f) / 0.011f, 2.0f));
                 const float pB = exp(-pow((antiAng - 0.714f) / 0.011f, 2.0f));
-                const float sR = exp(-pow((antiAng - 0.876f) / 0.014f, 2.0f)) * 0.32f;
-                const float sG = exp(-pow((antiAng - 0.892f) / 0.014f, 2.0f)) * 0.32f;
-                const float sB = exp(-pow((antiAng - 0.908f) / 0.014f, 2.0f)) * 0.32f;
-                const float bowW = saturate(weather.w * 2.2f) * smoothstep(0.04f, 0.14f, aElev) * (1.0f - smoothstep(0.45f, 0.64f, aElev)) * smoothstep(0.0f, 0.08f, sDir.z);
-                baseSky += float3(pR + sR, pG + sG, pB + sB) * (bowW * 0.24f * (1.0f - isExotic));
+                const float sR = exp(-pow((antiAng - 0.876f) / 0.014f, 2.0f)) * 0.25f;
+                const float sG = exp(-pow((antiAng - 0.892f) / 0.014f, 2.0f)) * 0.25f;
+                const float sB = exp(-pow((antiAng - 0.908f) / 0.014f, 2.0f)) * 0.25f;
+                const float bowW = smoothstep(0.32f, 0.72f, weather.w) * smoothstep(0.35f, 0.65f, clouds.x)
+                                 * smoothstep(0.05f, 0.14f, aElev) * (1.0f - smoothstep(0.36f, 0.52f, aElev))
+                                 * smoothstep(0.02f, 0.10f, sDir.z);
+                baseSky += float3(pR + sR, pG + sG, pB + sB) * (bowW * 0.11f * (1.0f - isExotic));
             }
             // Sub-LSB Interleaved Gradient Noise dithering eliminates 8-bit/10-bit sky gradient banding lines cleanly.
             const float skyDith = (ign(px) - 0.5f) * (1.0f / 255.0f);
@@ -586,15 +592,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         return float4(lit.rgb * T + froxScat * pdeMistBoost + farInScat + shaftScatter * saturate(T + 0.15f) * pdeMistBoost + precipAdd, lit.a);
     }
     // Dungeons, Caves, Nordic Tombs, Dwemer Ruins, Blackreach & Interiors (sunColour.w < 0.5):
-    // Controlled world-space subterranean depth mist + True 3D World-Space Rising Blackbody Fire Embers around interior hearths/firepits/braziers!
+    // Crisp, deep-contrast interior air (eliminates milky grey Dragonsreach haze & Septimus ice-cave whiteout) + rising hearth embers.
     if (sunColour.w < 0.5f && (flags.x & FLAG_FOG) != 0u) {
         const float3 wpInt = camPosW.xyz + eye + w * min(dist * 0.5f, 3200.0f);
-        const float caveNoise = 0.76f + 0.48f * cNoise(wpInt * 0.00048f + float3(0.0f, 0.0f, camPosW.w * 0.015f));
-        const float intOd = max(dist - 320.0f, 0.0f) * 0.000042f * caveNoise;
-        const float intT = exp(-min(intOd, 0.55f));
-        const float3 cellAmb = max(float3(ambient[0].w, ambient[1].w, ambient[2].w), float3(0.010f, 0.012f, 0.015f));
+        const float caveNoise = 0.78f + 0.44f * cNoise(wpInt * 0.00048f + float3(0.0f, 0.0f, camPosW.w * 0.015f));
+        const float intOd = max(dist - 750.0f, 0.0f) * 0.000014f * caveNoise;
+        const float intT = exp(-min(intOd, 0.18f));
+        const float3 cellAmb = max(float3(ambient[0].w, ambient[1].w, ambient[2].w), float3(0.008f, 0.010f, 0.012f));
         const float ambL = dot(cellAmb, float3(0.2126f, 0.7152f, 0.0722f));
-        const float3 caveMist = min(lerp(ambL.xxx, cellAmb, 0.45f) * 0.35f, 0.065f.xxx);
+        const float3 caveMist = min(lerp(ambL.xxx, cellAmb, 0.45f) * 0.16f, 0.024f.xxx);
         float3 intEmberAdd = 0.0f;
         if (flags.y > 0u) {
             const uint nEmberI = min(flags.y, 16u);
@@ -621,7 +627,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
         }
-        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.18f + intEmberAdd, lit.a);
+        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.08f + intEmberAdd, lit.a);
     }
     const float T = (flags.x & FLAG_FOG_REPLACES) != 0u ? exp(-sigma * tEnd) : 1.0f;
     return float4(lit.rgb * T + scatter, lit.a);

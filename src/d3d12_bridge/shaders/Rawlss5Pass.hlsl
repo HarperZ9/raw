@@ -122,7 +122,7 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const float4 curRaw = CurHdr.Load(ip);
     const float d = Depth.Load(ip);
     // Leave sky dome, UI/menu pause, and world map completely untouched (100% artistic fidelity):
-    if (d >= 1.0f || timeEnv.w > 0.5f || camPosW.z > 18000.0f) { return curRaw; }
+    if (d >= 1.0f || timeEnv.w > 0.5f || camPosW.z > 12500.0f) { return curRaw; }
 
     const int2 dMax = int2(dims.xy) - 1;
     const float z = viewZOf(d);

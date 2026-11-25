@@ -153,6 +153,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float4 game = GameLit.Load(ip);
     const float d = Depth.Load(ip);
     if ((flags.x & FLAG_SURFACE) == 0u) { return game; }
+    // Clean 3D World Map isolation: bypass deferred relighting, LOD relighting, and RT bounce on the overhead MapMenu camera.
+    const bool isWorldMap = (camPosW.z > 12500.0f) || (timeEnv.w > 0.5f && camPosW.z > 7500.0f);
+    if (isWorldMap) { return game; }
     if (d >= 1.0f) {
         // Pass raw sky/celestial buffer (Masser, Secunda, exotic DLC realms) cleanly straight to LightFog.hlsl
         // which owns 100% of the 24h physical Hillaire skybox, single isRealSun() solar disc, lunar halo, stars, aurora & clouds.
@@ -250,11 +253,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     s.wrap = skin && !match ? float3(0.32f, 0.13f, 0.06f) : (isHair && !match ? float3(0.16f, 0.12f, 0.08f) : 0.0f.xxx);
     if (skin && !match) {
         s.f0 = 0.028f;
-        s.alpha = max(s.alpha, 0.36f);
+        s.alpha = max(s.alpha, 0.42f);
         // Subtle 3D world-space micro-pore normal breakup on close-up skin (rescues flat 2011 NPC faces without noise!):
         if (z < 420.0f) {
             const float3 wpSk = p + camPosW.xyz;
-            const float poreFade = smoothstep(420.0f, 65.0f, z) * 0.045f;
+            const float poreFade = smoothstep(420.0f, 65.0f, z) * 0.055f;
             const float p1 = cNoise(wpSk * 2.4f) - 0.5f;
             const float p2 = cNoise(wpSk * 2.4f + float3(7.3f, 11.1f, 3.7f)) - 0.5f;
             s.n = normalize(s.n + float3(p1, p2, 0.0f) * poreFade);
@@ -322,9 +325,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float3 cliffGrad = float3((cNoise(wpAbs * 0.11f + float3(0.4f, 0.0f, 0.0f)) - cNoise(wpAbs * 0.11f - float3(0.4f, 0.0f, 0.0f))),
                                                 (cNoise(wpAbs * 0.11f + float3(0.0f, 0.4f, 0.0f)) - cNoise(wpAbs * 0.11f - float3(0.0f, 0.4f, 0.0f))),
                                                 (strataH - 0.5f) * 0.55f);
-                s.n = normalize(s.n + cliffGrad * (0.58f * cliffFade));
-                albedo *= lerp(1.0f, (0.78f + 0.28f * strataH) * (1.0f - fissure * 0.34f) * (1.0f - streak * 0.18f), cliffFade * 0.72f);
-                s.alpha = lerp(s.alpha, max(s.alpha * 0.78f, 0.28f), streak * cliffFade * 0.45f);
+                s.n = normalize(s.n + cliffGrad * (0.42f * cliffFade));
+                albedo *= lerp(1.0f, (0.86f + 0.22f * strataH) * (1.0f - fissure * 0.16f) * (1.0f - streak * 0.10f), cliffFade * 0.62f);
+                s.alpha = lerp(s.alpha, max(s.alpha * 0.82f, 0.30f), streak * cliffFade * 0.40f);
                 // Pale silver-green alpine lichen crust decals on exposed rock above 1200u:
                 if (wpAbs.z > 1200.0f) {
                     const float lichen = smoothstep(0.68f, 0.88f, cNoise(wpAbs * 0.09f + 29.3f)) * smoothstep(1200.0f, 2600.0f, wpAbs.z);
@@ -692,7 +695,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Smooth 5-tap macro heightfield kernel (eliminates 1-pixel wood-grain / stone-speckle "fuzzy spikes" during POM).
         const float2 invDim = dims.zw;
         float hFinal = useRealHeight ? saturate(sp.y) : saturate((dot(albedo, lw) - 0.05f) * 2.35f);
-        if ((base == 1u || base == 4u || base == 6u) && z < 1500.0f) {
+        // Keep 16-step Steep POM strictly on authored _p.dds heightmaps (base==6) and cobblestone terrain (base==4):
+        // never displace smooth ceramic jugs, furniture, or ashlar stone walls (base==1) by painted luminance!
+        if ((base == 4u || useRealHeight) && z < 1500.0f) {
             const float pomFade = saturate(1.0f - z / 1500.0f) * (useRealHeight ? 0.95f : (base == 4u ? 0.85f : 0.48f));
             const float nvPom = max(abs(dot(s.n, s.v)), 0.35f);
             // Restrained physical relief depth: 2.6u (max 6px) on general wood/stone (no spiky wood planks or fuzzy hearths),
@@ -781,12 +786,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float hD = abs(viewZOf(Depth.Load(ipD)) - (zBase + zSlope.y)) < zPlaneTol ? (useRealHeight ? Spec.Load(ipD).y : dot(Albedo.Load(ipD).rgb, lw)) : hc;
         const float gx = clamp((hR - hL) * 2.6f, -0.55f, 0.55f) * distFade;
         const float gy = clamp((hD - hU) * 2.6f, -0.55f, 0.55f) * distFade;
-        s.n = normalize(s.n + (-gx * tVec - gy * bVec) * 0.62f);
+        const float microNormScale = (base == 1u && !useRealHeight) ? 0.24f : 0.62f;
+        s.n = normalize(s.n + (-gx * tVec - gy * bVec) * microNormScale);
         const float microSlope = saturate(length(float2(gx, gy)) * 1.4f);
-        s.alpha = clamp(s.alpha + (microSlope - 0.15f) * 0.12f * distFade, 0.05f, 0.95f);
-        // Feature 4: 8-step directional POM relief self-shadowing along BOTH exterior sun AND brightest interior hearth/torch!
-        if ((base == 1u || base == 4u || base == 6u) && z < 1800.0f && (sunDir.w > 0.5f || flags.y > 0u)) {
-            const float pomFade = saturate(1.0f - z / 1800.0f) * (useRealHeight ? 0.92f : (base == 4u ? 0.85f : 0.65f));
+        s.alpha = clamp(s.alpha + (microSlope - 0.15f) * 0.10f * distFade, 0.05f, 0.95f);
+        // Feature 4: 8-step directional POM relief self-shadowing (gentle on base==1 so ashlar stone walls stay clean):
+        if ((base == 4u || useRealHeight || (base == 1u && z < 900.0f)) && z < 1800.0f && (sunDir.w > 0.5f || flags.y > 0u)) {
+            const float pomFade = saturate(1.0f - z / 1800.0f) * (useRealHeight ? 0.92f : (base == 4u ? 0.80f : 0.35f));
             float3 pomLDir = sunDir.xyz;
             if (sunDir.w <= 0.5f && flags.y > 0u) {
                 float3 bestDir = float3(0.0f, 0.0f, 1.0f);
@@ -819,9 +825,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     maxH = max(maxH, hs - 0.065f * float(pi));
                 }
             }
-            const float pomOcc = saturate(1.0f - max(maxH - hFinal, 0.0f) * 2.2f * pomFade);
-            albedo *= lerp(0.58f, 1.0f, pomOcc);
-            s.alpha = clamp(lerp(min(s.alpha + 0.20f, 0.96f), max(s.alpha - 0.12f, 0.10f), pomOcc), 0.08f, 0.96f);
+            const float pomOcc = saturate(1.0f - max(maxH - hFinal, 0.0f) * 2.0f * pomFade);
+            albedo *= lerp(base == 1u ? 0.86f : 0.70f, 1.0f, pomOcc);
+            s.alpha = clamp(lerp(min(s.alpha + 0.16f, 0.96f), max(s.alpha - 0.10f, 0.10f), pomOcc), 0.08f, 0.96f);
         }
     }
     // 2027 Geometric Curvature Cavity AO & Convex Edge-Wear Micro-Detail Synthesis (upgrades 2011 low-poly meshes & normals):
@@ -832,15 +838,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float pxScale = max(length(dpx) + length(dpy), 0.25f);
         const float curv = clamp((dot(dnxC, dpx) + dot(dnyC, dpy)) / max(pxScale * pxScale * 0.25f, 0.15f), -1.0f, 1.0f);
         const float curvFade = saturate(1.0f - z / 2400.0f);
-        const float cavity = saturate(-curv * 0.85f) * curvFade;
-        const float bevel  = saturate(curv * 0.65f) * curvFade * (base == 2u ? 1.0f : 0.45f);
-        albedo *= (1.0f - cavity * 0.24f + bevel * 0.07f);
-        s.alpha = clamp(s.alpha + cavity * 0.10f - bevel * 0.08f, 0.06f, 0.96f);
+        const float cavity = saturate(-curv * 0.72f) * curvFade;
+        const float bevel  = saturate(curv * 0.60f) * curvFade * (base == 2u ? 1.0f : 0.42f);
+        albedo *= (1.0f - cavity * 0.13f + bevel * 0.06f);
+        s.alpha = clamp(s.alpha + cavity * 0.08f - bevel * 0.06f, 0.06f, 0.96f);
     }
-    // Physical Decal Grounding & Smooth Distance-Filtered Glacial Ice Optical Transport:
+    // Physical Decal Grounding & Smooth Distance-Filtered Glacial Ice Optical Transport (includes base==2u EnvMap ice caves!):
     float iceMask = 0.0f;
-    if (!match && (base == 1u || base == 4u) && z < 12000.0f) {
-        if (z < 2400.0f) {
+    if (!match && (base == 1u || base == 2u || base == 4u) && z < 12000.0f) {
+        if (z < 2400.0f && base != 2u) {
             const float bloodMask = saturate((albedo.r - max(albedo.g, albedo.b) * 1.85f) * 6.0f) * smoothstep(0.06f, 0.22f, albedo.r) * (1.0f - smoothstep(0.38f, 0.55f, albedo.r));
             if (bloodMask > 0.05f) {
                 s.alpha = lerp(s.alpha, 0.16f, bloodMask * 0.82f);
@@ -848,24 +854,24 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 albedo *= lerp(1.0f.xxx, float3(0.88f, 0.78f, 0.78f), bloodMask * 0.5f);
             }
         }
-        // Smooth Beer-Lambert glacial ice optical shading (zero high-frequency crack stairsteps, smooth distance fade up to 12,000u,
-        // and explicit damping of noisy half-res RtRefl below so outdoor glaciers never look pixelated or glow!):
-        iceMask = (timeEnv.w < 0.5f && camPosW.z < 18000.0f)
-            ? saturate((albedo.b - albedo.r * 1.10f) * 4.0f) * smoothstep(0.24f, 0.52f, albedo.b) * (1.0f - wet.snow * 0.82f) * saturate(1.0f - z / 12000.0f)
-            : 0.0f;
+        // Detect both exterior glaciers (base==1/2/4) and interior ice cave walls (Septimus Signus's Outpost, base==2 EnvMap!):
+        const float blueIce = saturate((albedo.b - albedo.r * 1.06f) * 4.5f) * smoothstep(0.18f, 0.46f, albedo.b);
+        const float caveIce = (sunColour.w < 0.5f && base == 2u)
+            ? smoothstep(0.28f, 0.58f, albedo.b) * saturate((albedo.b - albedo.r * 0.90f) * 3.8f) : 0.0f;
+        iceMask = max(blueIce, caveIce) * (1.0f - wet.snow * 0.82f) * saturate(1.0f - z / 12000.0f);
         if (iceMask > 0.04f) {
             const float iceNear = smoothstep(1100.0f, 120.0f, z);
             const float3 wpIce = (p + camPosW.xyz) - s.v * (8.0f * iceNear);
-            // Smooth dual-octave low-frequency internal glacial scatter (zero aliased thin crack pixels!):
             const float depthScatter = cNoise(wpIce * 0.0085f) * 0.65f + cNoise(wpIce * 0.019f + 4.7f) * 0.35f;
-            const float3 beerIce = exp(-float3(0.52f, 0.24f, 0.12f) * (0.65f + 0.55f * depthScatter));
-            const float3 glacialTint = lerp(float3(0.22f, 0.36f, 0.48f), float3(0.36f, 0.52f, 0.64f), depthScatter) * beerIce;
-            albedo = lerp(albedo, lerp(albedo * float3(0.86f, 0.92f, 0.98f), glacialTint, 0.22f + 0.14f * iceNear), iceMask * 0.42f);
-            albedo = min(albedo, float3(0.62f, 0.68f, 0.74f));
-            // Frosted glacier dielectric coat (IOR 1.31 -> F0 ~ 0.018..0.024, smooth frost roughness 0.38..0.52):
+            const float3 beerIce = exp(-float3(0.56f, 0.28f, 0.16f) * (0.72f + 0.55f * depthScatter));
+            const float3 glacialTint = lerp(float3(0.18f, 0.30f, 0.40f), float3(0.30f, 0.44f, 0.54f), depthScatter) * beerIce;
+            albedo = lerp(albedo, lerp(albedo * float3(0.84f, 0.90f, 0.96f), glacialTint, 0.24f + 0.14f * iceNear), iceMask * 0.46f);
+            const float3 iceCap = (sunColour.w > 0.5f) ? float3(0.58f, 0.65f, 0.72f) : float3(0.34f, 0.44f, 0.54f);
+            albedo = min(albedo, iceCap);
+            // Frosted glacier/cave dielectric coat (IOR 1.31 -> F0 ~ 0.018..0.022, smooth frost roughness 0.34..0.50):
             const float frostSlope = saturate(s.n.z * 0.65f + 0.35f);
-            s.alpha = max(lerp(s.alpha, lerp(0.38f, 0.52f, frostSlope), iceMask * 0.65f), lerp(s.alpha, 0.40f, iceMask));
-            s.f0 = lerp(s.f0, 0.022f, iceMask * 0.55f);
+            s.alpha = max(lerp(s.alpha, lerp(0.34f, 0.50f, frostSlope), iceMask * 0.78f), lerp(s.alpha, 0.36f, iceMask));
+            s.f0 = lerp(s.f0, 0.020f, iceMask * 0.85f);
         }
     }
     // Tokuyoshi-Kaplanyan geometric specular anti-aliasing: filters sub-pixel normal variance to kill GGX sparkle in motion.
@@ -983,16 +989,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             spec += dirCol * (s1 * 0.22f + albedo * s2 * 0.34f) * sunShadow;
         }
         if (skin && !match) {
-            // Dual-lobe character skin shading (Callisto Protocol / SKN-09): warm dermal wrap scatter +
-            // subtle secondary oil/pore micro-sheen lobe (alpha=0.18) for lifelike faces & hands (never chalky or plastic).
-            const float wrapSun = saturate((dot(s.n, sunDir.xyz) + 0.35f) / 1.35f);
-            diff += dirCol * float3(0.20f, 0.095f, 0.062f) * wrapSun * (0.35f + 0.65f * sunShadow);
+            // Dual-lobe character skin shading (Callisto Protocol / SKN-09): terminator-peaked warm dermal SSS +
+            // secondary sebum/pore micro-sheen lobe (alpha=0.22) for lifelike sculptural faces (never waxy or flat).
+            const float nlSk = dot(s.n, sunDir.xyz);
+            const float termBand = exp(-abs(nlSk) * 3.6f) * (0.25f + 0.75f * sunShadow);
+            diff += dirCol * float3(0.18f, 0.072f, 0.042f) * termBand;
             const float3 hSkin = normalize(s.v + sunDir.xyz);
             const float nhSk = saturate(dot(s.n, hSkin));
-            const float ddSk = nhSk * nhSk * (0.0324f - 1.0f) + 1.0f;
-            const float dSk = 0.0324f / (PI * ddSk * ddSk);
+            const float ddSk = nhSk * nhSk * (0.0484f - 1.0f) + 1.0f;
+            const float dSk = 0.0484f / (PI * ddSk * ddSk);
             const float fSk = 0.028f + 0.972f * pow(1.0f - saturate(dot(s.v, hSkin)), 5.0f);
-            spec += dirCol * (min(dSk * fSk * 0.14f, 1.4f) * sunShadow * saturate(dot(s.n, sunDir.xyz)));
+            spec += dirCol * (min(dSk * fSk * 0.16f, 1.3f) * sunShadow * saturate(nlSk));
         }
         // Physical Character Eye Cornea Wetness + Iris Caustic Catchlight (base == 12u, SKN-09):
         if (base == 12u && !match) {
@@ -1011,12 +1018,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float gBroad = snowGlint(p + camPosW.xyz + 13.7f, s.n, s.v, sunDir.xyz, fp * 2.1f) * 0.45f;
             spec += sunColour.rgb * (sunShadow * wet.snow * 2.4f * (gFine + gBroad));
         }
-        // Forged metal micro-flake glint + Belcour-Barla thin-film iridescence STRICTLY on metal (base == 2u; never oil-slick rainbow on snow/ice floes!):
-        if (!match && sunShadow > 0.05f && z < 1800.0f && base == 2u) {
+        // Forged metal micro-flake glint + restrained tempered-steel sheen STRICTLY on non-ice metal (never on EnvMap ice caves!):
+        if (!match && sunShadow > 0.05f && z < 1800.0f && base == 2u && iceMask < 0.08f) {
             const float nvIr = saturate(dot(s.n, s.v));
-            const float filmOpd = (base == 2u ? 480.0f : 360.0f) * sqrt(max(1.0f - (1.0f - nvIr * nvIr) * 0.56f, 0.1f));
-            const float3 airy = 0.5f + 0.5f * cos(6.2831853f * filmOpd / float3(615.0f, 540.0f, 465.0f));
-            const float irStr = (base == 2u ? 0.24f : 0.14f) * pow(1.0f - nvIr, 2.2f) * saturate(1.0f - z / 1800.0f);
+            const float filmOpd = 480.0f * sqrt(max(1.0f - (1.0f - nvIr * nvIr) * 0.56f, 0.1f));
+            const float3 airy = 0.78f + 0.22f * cos(6.2831853f * filmOpd / float3(615.0f, 540.0f, 465.0f));
+            const float irStr = 0.09f * pow(1.0f - nvIr, 2.6f) * saturate(1.0f - z / 1800.0f);
             spec += dirCol * airy * (irStr * sunShadow);
             // Crisp dual-lobe clearcoat highlight (roughness 0.06 mirror coat over underlying material lobe):
             if (!skin && s.alpha < 0.25f) {
@@ -1025,11 +1032,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float ddC = nhC * nhC * (0.0036f - 1.0f) + 1.0f;
                 const float fCoat = 0.04f + 0.96f * pow(1.0f - saturate(dot(s.v, hCoat)), 5.0f);
                 const float dCoat = 0.0036f / (PI * ddC * ddC);
-                spec += dirCol * (min(dCoat * fCoat * 0.16f, 2.2f) * sunShadow * saturate(dot(s.n, sunDir.xyz)));
+                spec += dirCol * (min(dCoat * fCoat * 0.14f, 2.0f) * sunShadow * saturate(dot(s.n, sunDir.xyz)));
             }
-            if (base == 2u && z < 1600.0f) {
+            if (z < 1600.0f) {
                 const float mGlint = snowGlint(p + camPosW.xyz, s.n, s.v, sunDir.xyz, max(0.8f, z * 0.0018f));
-                spec += sunColour.rgb * (sunShadow * mGlint * 0.75f * saturate(1.0f - z / 1600.0f));
+                spec += sunColour.rgb * (sunShadow * mGlint * 0.55f * saturate(1.0f - z / 1600.0f));
             }
         }
         // Water caustics belong exclusively on true underwater riverbeds in RtWater.hlsl (never projected across
@@ -1162,17 +1169,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Feature 18: Contact-hardening near-field micro-AO grounding under foliage, rocks, furniture & NPC feet.
     // Strengthen near-field chair/table/jug contact grounding (<650u) on BOTH ambient and direct local light so
     // furniture legs, throne crevices, and tableware sit with crisp physical contact shadows instead of floating!
-    const float nearGroundAo = !match ? pow(saturate(aoTerm), lerp(1.0f, 1.65f, saturate(1.0f - z / 900.0f))) : aoTerm;
+    const float nearGroundAo = !match ? pow(saturate(aoTerm), lerp(1.0f, 1.45f, saturate(1.0f - z / 900.0f))) : aoTerm;
     if (!match && !skin && base != 12u && z < 650.0f) {
-        const float microDiffOcc = lerp(1.0f, lerp(0.38f, 1.0f, nearGroundAo), saturate(1.0f - z / 650.0f));
+        const float microDiffOcc = lerp(1.0f, lerp(0.66f, 1.0f, nearGroundAo), saturate(1.0f - z / 650.0f));
         diff *= microDiffOcc;
     }
     float combinedOcc = min(nearGroundAo, rtOcc);
     // Lifelike Vanilla NPCs: lift recessed eye-socket AO (base==12) so eyes never read as dim dark holes,
-    // and soften harsh brow/under-eye portrait shadows on skin (base==10).
+    // while preserving sculptural brow/cheek contour modeling on skin (base==10).
     if (!match) {
         if (base == 12u) combinedOcc = lerp(combinedOcc, 1.0f, 0.80f);
-        else if (skin)   combinedOcc = lerp(combinedOcc, 1.0f, 0.36f);
+        else if (skin)   combinedOcc = lerp(combinedOcc, 1.0f, 0.20f);
     }
     // SIGGRAPH GI-12 Visibility-Aware Bent-Normal Hemisphere Skylighting (exteriors) &
     // Directional Vault/Hearth Ambient Shaping (interiors: deepens recessed corners & highlights upper masonry/beams).
@@ -1299,10 +1306,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Unified ENB Complex Material (_m.dds on base==2) + CS TruePBR / PGPatcher (_rmaos.dds on base==13):
     // Hijacks BOTH competing material pipelines directly into RAW-STRATA + Hardware DXR 1.2 + Dynamic Cubemap IBL!
     const float envLumM = dot(envRefl, float3(0.2126f, 0.7152f, 0.0722f));
-    const bool isEnbComplexMat = (!match && base == 2u && (envRefl.g > envRefl.r * 1.15f || envRefl.b > envRefl.r * 1.15f));
-    const float metallic = isTruePbr ? saturate(rmaosPbr.g)
-                         : (isEnbComplexMat ? saturate(envRefl.g)
-                         : ((!match && base == 2u) ? saturate((max(saturate(s.mask * resScale.w), envLumM * 1.35f) - 0.22f) * 1.95f) : 0.0f));
+    const bool isEnbComplexMat = (!match && base == 2u && iceMask < 0.08f && (envRefl.g > envRefl.r * 1.15f || envRefl.b > envRefl.r * 1.15f));
+    const float rawMetallic = isTruePbr ? saturate(rmaosPbr.g)
+                            : (isEnbComplexMat ? saturate(envRefl.g)
+                            : ((!match && base == 2u) ? saturate((max(saturate(s.mask * resScale.w), envLumM * 1.35f) - 0.22f) * 1.95f) : 0.0f));
+    const float metallic = rawMetallic * (1.0f - iceMask);
     const float pbrBakedAo = isTruePbr ? lerp(0.32f, 1.0f, saturate(rmaosPbr.b)) : 1.0f;
     const float3 diffAlb = albedo * (1.0f - metallic * (isTruePbr ? 0.94f : 0.72f));
     const float3 rawLit = (diffAlb + envRefl * (match ? 1.0f : 0.08f)) * (diff + amb * pbrBakedAo + effCharLight);
@@ -1378,9 +1386,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             st.baseAlbedo = albedo;
             st.roughness = s.alpha;
             st.metallic = metallic;
-            st.coatWeight = max(saturate(wet.wet * 0.75f + wet.puddle * 1.05f), ((base == 2u || isTruePbr) ? (1.0f - metallic) * 0.30f : 0.0f));
+            st.coatWeight = max(saturate(wet.wet * 0.75f + wet.puddle * 1.05f), ((base == 2u && iceMask < 0.08f) || isTruePbr ? (1.0f - metallic) * 0.30f : 0.0f));
             st.coatRoughness = lerp(0.14f, 0.04f, saturate(wet.puddle));
-            st.thinFilmNm = (base == 2u && metallic > 0.35f) ? 460.0f : 0.0f;
+            st.thinFilmNm = (base == 2u && metallic > 0.50f && iceMask < 0.08f) ? 460.0f : 0.0f;
             st.fuzzWeight = (isActorCloth ? 0.55f : (wet.snow > 0.40f ? 0.28f * wet.snow : 0.0f));
             st.fuzzTint = wet.snow > 0.40f ? float3(0.88f, 0.94f, 1.00f) : lerp(albedo * 1.15f + 0.04f.xxx, 1.0f.xxx, 0.25f);
             st.fuzzRoughness = wet.snow > 0.40f ? 0.52f : 0.62f;
@@ -1463,35 +1471,35 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float aurBounce = saturate((0.26f - sLumAur) * 4.5f) * (1.0f - saturate(clouds.x * 1.15f)) * saturate(s.n.z);
             lit += albedo * float3(0.06f, 0.24f, 0.19f) * (aurBounce * wet.snow * skyVis * 0.45f);
         }
-        // Physical clearcoat GGX + subtle Belcour-Barla thin-film spectral iridescence on wet water films & glacial ice.
+        // Physical clearcoat GGX on wet water films (neutral physical water dielectric — zero rainbow oil-slick stripes!).
         if (max(wet.wet, wet.puddle) > 0.08f && isExterior && sunShadow > 0.0f) {
             const float3 ch = normalize(s.v + sunDir.xyz);
             const float cnh = saturate(dot(s.n, ch)), ca2 = 0.0036f;
             const float cdd = cnh * cnh * (ca2 - 1.0f) + 1.0f;
             const float cD = ca2 / (PI * cdd * cdd);
             const float vh = saturate(dot(s.v, ch));
-            const float cF = 0.04f + 0.96f * pow(1.0f - vh, 5.0f);
-            const float3 thinFilm = 0.88f + 0.12f * cos(float3(0.0f, 2.094f, 4.188f) + vh * 9.5f);
-            lit += min(sunColour.rgb * thinFilm * (cD * cF * saturate(dot(s.n, sunDir.xyz)) * sunShadow * 0.26f), 2.5f.xxx) * max(wet.wet * 0.6f, wet.puddle);
+            const float cF = 0.02f + 0.98f * pow(1.0f - vh, 5.0f);
+            lit += min(sunColour.rgb * (cD * cF * saturate(dot(s.n, sunDir.xyz)) * sunShadow * 0.24f), 2.2f.xxx) * max(wet.wet * 0.6f, wet.puddle);
         }
     }
     if (!match) {
         // Character Portrait & Eye-Candy Shading (Vanilla NPCs & PCs):
-        // 1) Skin (base==10): soft portrait dermal wrap-fill + silky peach-fuzz velvet rim sheen + subtle nose/cheek oil specular.
+        // 1) Skin (base==10): restrained dermal wrap + fine pore-oil micro-specular in BOTH exteriors & interiors (never flat wax!).
         if (skin) {
             const float nvSkin = saturate(dot(s.n, s.v));
-            const float fuzzRim = pow(1.0f - nvSkin, 2.9f) * 0.18f;
-            const float3 portFill = isExterior ? (sunColour.rgb * (0.30f + 0.70f * sunShadow) * 0.10f + amb * 0.16f)
-                                               : (max(amb, float3(0.10f, 0.08f, 0.07f)) * 0.28f);
-            lit += albedo * float3(1.08f, 0.91f, 0.84f) * (portFill + fuzzRim * (isExterior ? sunColour.rgb * 0.40f + amb : max(amb, 0.14f.xxx)));
-            if (isExterior) {
-                const float nlRaw = dot(s.n, sunDir.xyz);
-                const float3 shv = normalize(s.v + sunDir.xyz);
-                const float snh = saturate(dot(s.n, shv)), sa2 = 0.048f;
-                const float sdd = snh * snh * (sa2 - 1.0f) + 1.0f;
-                const float sD = sa2 / (PI * sdd * sdd);
-                lit += min(sunColour.rgb * (sD * 0.024f * saturate(nlRaw) * sunShadow * 0.18f), 0.52f.xxx);
-            }
+            const float fuzzRim = pow(1.0f - nvSkin, 3.2f) * 0.10f;
+            const float3 portFill = isExterior ? (sunColour.rgb * (0.20f + 0.80f * sunShadow) * 0.06f + amb * 0.09f)
+                                               : (max(amb, float3(0.05f, 0.04f, 0.035f)) * 0.11f);
+            lit += albedo * float3(1.06f, 0.90f, 0.82f) * (portFill + fuzzRim * (isExterior ? sunColour.rgb * 0.35f + amb : max(amb, 0.10f.xxx)));
+            const float3 skKeyDir = isExterior ? sunDir.xyz : normalize(s.v + float3(0.18f, 0.12f, 0.58f));
+            const float3 skKeyCol = isExterior ? (sunColour.rgb * sunShadow) : max(diff * 0.65f + amb * 0.45f, 0.04f.xxx);
+            const float nlRaw = dot(s.n, skKeyDir);
+            const float3 shv = normalize(s.v + skKeyDir);
+            const float snh = saturate(dot(s.n, shv)), sa2 = 0.048f;
+            const float sdd = snh * snh * (sa2 - 1.0f) + 1.0f;
+            const float sD = sa2 / (PI * sdd * sdd);
+            const float sF = 0.028f + 0.972f * pow(1.0f - saturate(dot(s.v, shv)), 5.0f);
+            lit += min(skKeyCol * (sD * sF * saturate(nlRaw) * 0.24f), 0.48f.xxx);
         } else if (base == 11u) {
             // 2) Hair (base==11): Dual-lobe Kajiya-Kay / Marschner anisotropic hair sheen (works in both exteriors & interiors).
             const float3 tHair = normalize(cross(s.n, float3(1.0f, 0.0f, 0.0f)) + float3(0.0f, 0.0f, 0.35f));
@@ -1551,8 +1559,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // then rolls off smoothly up to ~2.75 so ice caves, snowbanks & bright surfaces stay strictly below BloomPass (2.25),
     // while true HDR flames/sun/emissives stay crisp through BloomPass and Tonemap.hlsl (AgX / ACES 2.0)!
     const float litPeak = max(lit.r, max(lit.g, lit.b));
-    const float3 hdrLit = (litPeak > 1.20f)
-        ? lit * ((1.20f + (litPeak - 1.20f) / (1.0f + (litPeak - 1.20f) * 0.62f)) / litPeak)
+    const float kneeStart = (!isExterior && iceMask > 0.10f) ? 0.72f : 1.20f;
+    const float kneeSlope = (!isExterior && iceMask > 0.10f) ? 1.45f : 0.62f;
+    const float3 hdrLit = (litPeak > kneeStart)
+        ? lit * ((kneeStart + (litPeak - kneeStart) / (1.0f + (litPeak - kneeStart) * kneeSlope)) / litPeak)
         : max(lit, 0.0f.xxx);
     const float3 finalLitRaw = match ? knee3(lit) : hdrLit;
     // Preserve genuinely chromatic emissive tavern windows, lanterns, braziers, and magic runes

@@ -90,17 +90,17 @@ struct LightingTuning
     // Pre-Pass DSLR / Medium Format Camera & DoF Optics (DofPass.hlsl) + RAWLSS 5.0 (Rawlss5Pass.hlsl):
     bool  rawlss5 = true;           // Rawlss5: native SM 6.9 FP16 3D-Guided Neural & Physical Reconstruction
     bool  dof = true;               // Dof: 5-pass 91-tap concentric physical DSLR / Medium Format cinema DoF
-    float dofMaxDist = 420.0f;      // DofMaxDist: master DoF optical gain (0=off, 150..2500)
-    float dofRadius = 11.0f;        // DofRadius: max bokeh aperture radius (2..28 px)
-    float dofOrbBoost = 1.85f;      // DofOrbBoost: specular bokeh highlight orb boost (0..5)
+    float dofMaxDist = 360.0f;      // DofMaxDist: master DoF optical gain (0=off, 150..2500)
+    float dofRadius = 6.5f;         // DofRadius: max bokeh aperture radius (2..18 px)
+    float dofOrbBoost = 1.25f;      // DofOrbBoost: specular bokeh highlight orb boost (0..5)
     int   dofSensor = 1;            // DofSensor: 0=APS-C 24mm, 1=35mm Full-Frame, 2=MF 645 44mm, 3=MF 6x7 70mm
-    float dofFocalMm = 50.0f;       // DofFocalMm: lens focal length in mm (24..200)
-    float dofFStop = 1.8f;          // DofFStop: lens aperture f-stop (0.95..16.0)
+    float dofFocalMm = 35.0f;       // DofFocalMm: lens focal length in mm (24..200)
+    float dofFStop = 4.0f;          // DofFStop: refined gameplay aperture f-stop (2.8..16.0)
     int   dofBokehShape = 2;        // DofBokehShape: 0=5-Blade, 1=6-Blade, 2=7-Blade, 3=9-Blade, 4=Circle, 5=Anamorphic, 6=Petzval Swirl
     int   cameraMode = 0;           // CameraMode: 0=Cinema Prime, 1=Tilt-Shift Miniature, 2=ARPG Isometric Diorama, 3=Anamorphic 2.39:1, 4=Petzval Swirl, 5=Vertical Tilt-Rise
-    float dofNearScale = 1.0f;      // DofNearScale: near-plane blur multiplier (0..2.5)
-    float dofFarScale = 1.35f;      // DofFarScale: far-plane blur multiplier (0..2.5)
-    float dofNearBleed = 1.0f;      // DofNearBleed: foreground silhouette bleed/feather (0..2.0)
+    float dofNearScale = 0.55f;     // DofNearScale: near-plane blur multiplier (0..1.5)
+    float dofFarScale = 0.85f;      // DofFarScale: far-plane blur multiplier (0..1.5)
+    float dofNearBleed = 0.45f;     // DofNearBleed: foreground silhouette bleed/feather (0..1.0)
     float dofFocusSpeed = 0.09f;    // DofFocusSpeed: cinema follow-focus motor speed (0.02..0.30)
     bool  weatherLens = true;       // WeatherLens: procedural HDR rain-on-lens droplets & blizzard frost
     float waterReflect = 1.0f;      // WaterReflect: the ray-traced reflection's share of the Fresnel weight

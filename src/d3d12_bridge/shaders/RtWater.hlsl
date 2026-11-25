@@ -145,8 +145,14 @@ float3 waterSky(float3 rd) {
     const float aElevW = astroSunElev();
     const float nightW = smoothstep(0.03f, -0.07f, aElevW);
     const float overcastW = saturate(clouds.x * 0.85f - 0.12f + weather.w * 0.45f + weather.z * 0.42f);
-    // Exact 1:1 radiometric scale (0.76x daytime) matching LightFog.hlsl sky dome & mountain aerial perspective:
+    // Exact 1:1 radiometric scale (0.76x daytime) matching LightFog.hlsl sky dome + nocturnal arctic sky floor
+    // so Windhelm harbor & dark northern fjords reflect luminous silver-indigo night skies instead of black ink!
     float3 skyCol = lerp(uSkyH, uSkyZ, pow(hUp, 0.62f)) * lerp(0.76f, 1.0f, nightW);
+    if (nightW > 0.05f) {
+        const float3 ambSkyN = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), float3(0.028f, 0.042f, 0.068f));
+        const float3 arcticNightRefl = lerp(float3(0.032f, 0.050f, 0.082f), ambSkyN * float3(0.75f, 0.84f, 0.96f), overcastW * 0.72f) * lerp(1.18f, 0.68f, pow(hUp, 0.55f));
+        skyCol = max(skyCol, arcticNightRefl * nightW);
+    }
     // Organic 2-octave drifting cloud-deck reflection matched to Clouds.hlsl wind & slate-silver overcast base:
     if (clouds.x > 0.08f && rd.z > 0.02f) {
         const float2 cUv = (camPosW.xy + rd.xy * (42000.0f / max(rd.z, 0.06f)) + cloudWind.xy * camPosW.w * 0.65f) * 0.000028f;
@@ -339,7 +345,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                         sCol = mats ? shadeHit(hitPt, hn, hitAlbedo(h), float2(0.5f, 0.5f), true)
                                     : (0.25f * float3(ambient[0].w, ambient[1].w, ambient[2].w));
                         const float reflFog = 1.0f - exp(-h.t * 0.00016f);
-                        sCol = lerp(max(sCol, farReflSky * 0.22f), farReflSky, saturate(reflFog));
+                        sCol = lerp(max(sCol, farReflSky * 0.38f), farReflSky, saturate(reflFog));
                     } else {
                         sCol = farReflSky;
                     }
@@ -464,17 +470,18 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float3 bed = lerp(lerp(b00, b10, qFrac.x), lerp(b01, b11, qFrac.x), qFrac.y);
                 const int2 qDepthPx = qValid ? q : int2(id.xy);
                 const float path = length(worldAt(float2(qDepthPx), Depth.Load(int3(qDepthPx, 0))) - p);
-                // Rich Spectral Beer-Lambert Nordic Water Optics: crystal-clear amber-emerald riverbed shallows
-                // transitioning smoothly into deep cold glacial teal-indigo pools with zero muddy grey wash!
+                // Calibrated Nordic Alpine River & Fjord Beer-Lambert Optics:
+                // Crystal-clear natural riverbed stones in Riverwood shallows grading into cool Nordic slate-emerald in deep pools
+                // (eliminates electric Caribbean turquoise tint while giving arctic night harbors real depth!).
                 const bool isExtBody = (sunColour.w > 0.5f);
-                const float3 T = exp(-waterA.z * (isExtBody ? float3(1.42f, 0.72f, 0.56f) : float3(1.55f, 1.25f, 1.15f)) * path);
+                const float3 T = exp(-waterA.z * (isExtBody ? float3(0.96f, 0.68f, 0.62f) : float3(1.55f, 1.25f, 1.15f)) * path);
                 // Interiors (Ragged Flagon cisterns, caves, dungeons): dark realistic subterranean water (ZERO neon cyan glow!).
-                const float3 scatterTint = isExtBody ? float3(0.012f, 0.032f, 0.038f) : float3(0.004f, 0.006f, 0.007f);
-                const float3 scatter = scatterTint * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.02f.xxx) * (isExtBody ? 1.25f : 0.65f);
+                const float3 scatterTint = isExtBody ? float3(0.015f, 0.025f, 0.031f) : float3(0.004f, 0.006f, 0.007f);
+                const float3 scatter = scatterTint * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), float3(0.035f, 0.045f, 0.062f)) * (isExtBody ? 1.15f : 0.65f);
                 const float nearW = 1.0f - smoothstep(2800.0f, 5200.0f, wDist);
-                // Rich backlit glacial-emerald wave-crest subsurface scattering (EXTERIORS ONLY!).
+                // Restrained cold Nordic glacial-emerald wave-crest subsurface scattering (EXTERIORS ONLY!).
                 const float3 waveSSS = (isExtBody && sunDir.w > 0.5f)
-                    ? float3(0.03f, 0.28f, 0.26f) * sunColour.rgb * (0.25f + 0.75f * pow(saturate(dot(-v, sunDir.xyz)), 3.5f)) * saturate((1.0f - n.z) * 5.5f) * 0.65f
+                    ? float3(0.02f, 0.10f, 0.09f) * sunColour.rgb * (0.25f + 0.75f * pow(saturate(dot(-v, sunDir.xyz)), 3.5f)) * saturate((1.0f - n.z) * 5.0f) * 0.45f
                     : 0.0f.xxx;
                 // Cluster D (Point Reyes surf / Aivazovsky storm coasts): rolling shore-breaking surf trains,
                 // wave-shoaling steepening, retreating lacy whitewater webs, and wet-shoreline meniscus!
@@ -509,31 +516,50 @@ void water(uint3 id : SV_DispatchThreadID) {
                         const float dCol = max(p.z - pu.z, 0.0f);
                         uwAcc += exp(-waterA.z * 0.85f * (tu + dCol)) * stepUw;
                     }
-                    uwShaft = sunColour.rgb * float3(0.06f, 0.34f, 0.38f) * (uwAcc * 0.0028f * phUw * clearW);
+                    uwShaft = sunColour.rgb * float3(0.04f, 0.14f, 0.16f) * (uwAcc * 0.0022f * phUw * clearW);
                 }
                 const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.05f.xxx) * 0.85f + (sunDir.w > 0.5f ? sunColour.rgb * 0.32f : 0.0f.xxx));
-                const float shoreDark = lerp(0.62f, 1.0f, smoothstep(0.0f, 22.0f, depthV));
+                const float shoreDark = lerp(0.68f, 1.0f, smoothstep(0.0f, 22.0f, depthV));
                 // Heavy liquid wave-crest vs trough ambient self-shadowing (makes rolling mass & wave weight unmistakable!):
-                const float waveFacet = lerp(0.68f, 1.32f, saturate(dot(n, normalize(float3(0.35f, 0.25f, 0.90f)))));
-                const float troughWeight = lerp(0.84f, 1.16f, saturate(0.45f + jacobianFold * 0.65f));
-                const float3 waterBody = (((bed * shoreDark + caus) * T + scatter * (1.0f - T)) * (waveFacet * troughWeight) + waveSSS * 1.35f + uwShaft);
-                body = lerp(waterBody, foamLit, foamMask * 0.32f);
+                const float waveFacet = lerp(0.74f, 1.26f, saturate(dot(n, normalize(float3(0.35f, 0.25f, 0.90f)))));
+                const float troughWeight = lerp(0.86f, 1.14f, saturate(0.45f + jacobianFold * 0.65f));
+                const float3 waterBody = (((bed * shoreDark + caus) * T + scatter * (1.0f - T)) * (waveFacet * troughWeight) + waveSSS + uwShaft);
+                body = lerp(waterBody, foamLit, foamMask * 0.30f);
             }
             const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;
             // Continuous single world-space fluid surface from boots to horizon (extends full JONSWAP + RT water out to 42,000u!):
             const float cellFeather = 1.0f - smoothstep(18000.0f, 42000.0f, wDist);
-            // True physical Schlick Fresnel (crystal-clear looking down into shallows, crisp mirror reflection at grazing angles):
-            const float effF = saturate(F * waterA.x * shoreFeather * cellFeather);
+            // Physical Schlick Fresnel + arctic night-sky grazing lift (prevents Windhelm harbor from turning into flat black ink!):
+            const float nightF = smoothstep(0.04f, -0.06f, astroSunElev());
+            const float effF = saturate(max(F, lerp(0.04f, 0.24f, nightF)) * max(waterA.x, 0.78f) * shoreFeather * cellFeather);
             const uint view = uint(waterB.x + 0.5f);
             const float3 farSkyRefl = waterSky(rd);
-            // Deep cold Nordic charcoal-slate ocean body (willfauchervfx stormy ocean ref5):
-            const float3 deepOceanBody = float3(0.010f, 0.017f, 0.023f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.06f.xxx) * 1.45f;
+            // Deep cold Nordic slate-navy ocean body (keeps liquid depth at night instead of pitch-black void):
+            const float3 deepOceanBody = float3(0.016f, 0.028f, 0.042f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), float3(0.08f, 0.10f, 0.13f)) * 1.45f;
             const float farF = saturate(max(F * max(waterA.x, 0.85f) * 0.90f, smoothstep(5500.0f, 36000.0f, wDist) * 0.68f));
             const float3 farOcean = lerp(deepOceanBody, farSkyRefl, farF);
             const float3 nearCol = refr ? lerp(body, refl, effF) : lerp(game.rgb, refl, effF) + caus * (1.0f - effF);
             col = lerp(farOcean, nearCol, cellFeather) + glint * shoreFeather;
-            // Invisible wet-shoreline alpha feather (eliminates thin bright edge line seen in 02.11.49.68.png!):
-            col = lerp(game.rgb, col, smoothstep(0.0f, 6.0f, depthV0));
+            // 3x3 Sub-Pixel Water-Silhouette Coverage Anti-Aliasing + Wet-Shoreline Feather:
+            // Eliminates razor-jagged 1-pixel stairstep edges where floating Windhelm ice floes & piers jut out of deep water!
+            float edgeCov = 1.0f;
+            if (wDist < 9000.0f) {
+                const int2 limE = int2(dims.xy) - 1;
+                float wHits = 0.0f;
+                [unroll] for (int ey = -1; ey <= 1; ++ey) {
+                    [unroll] for (int ex = -1; ex <= 1; ++ex) {
+                        if (ex == 0 && ey == 0) continue;
+                        const int3 np = int3(clamp(ip.xy + int2(ex, ey), int2(0, 0), limE), 0);
+                        const float4 Ln = Layer.Load(np);
+                        const float dBn = Depth.Load(np);
+                        if (Ln.a > 1.5f && Ln.x < 1.0f && Ln.x < dBn - 1.0e-5f) { wHits += 1.0f; }
+                    }
+                }
+                edgeCov = smoothstep(1.0f, 7.5f, wHits);
+            }
+            const float3 edgeBg = hasPreWater ? PreWater[id.xy].rgb : game.rgb;
+            const float shoreBlend = min(smoothstep(0.0f, 7.0f, depthV0), lerp(0.28f, 1.0f, edgeCov));
+            col = lerp(edgeBg, col, shoreBlend);
             // Exact 16-bit horizon merge: at far ocean distances (wDist > 5000u), PreWater[id.xy].rgb holds
             // LightFog.hlsl's exact sky dome + cloud color at that pixel (Hillaire AtmoSkyView / overcast / sunset / night).
             // Merging far ocean directly into PreWater guarantees 0.0000 luminance discontinuity at the Sea of Ghosts horizon!

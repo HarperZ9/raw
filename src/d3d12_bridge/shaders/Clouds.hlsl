@@ -279,7 +279,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float iridBand = exp(-pow((cirAng - 0.19f) / 0.10f, 2.0f)) * (1.0f - nightW);
                 const float3 iridTint = float3(0.55f + 0.45f * cos(cirAng * 26.0f), 0.55f + 0.45f * cos(cirAng * 26.0f + 2.094f), 0.55f + 0.45f * cos(cirAng * 26.0f + 4.188f));
                 const float3 cirTwi = lerp(sunC, float3(1.48f, 0.48f, 0.28f), twiCloud * 0.88f);
-                const float3 cirCol = (cirTwi * (0.48f + 0.52f * hg(cosT, 0.62f) * 2.4f) + skyC * 0.26f + iridTint * (iridBand * 0.24f)) * lerp(0.38f, 0.12f, nightW);
+                const float3 cirCol = (cirTwi * (0.48f + 0.52f * hg(cosT, 0.62f) * 2.4f) + skyC * 0.26f + iridTint * (iridBand * 0.07f)) * lerp(0.38f, 0.12f, nightW);
                 cirrusAdd += cirCol * (cMask * cFade * T * horFade * (1.0f - saturate(clouds.x * 0.62f)));
             }
         }

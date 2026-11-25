@@ -589,19 +589,19 @@ private:
                              + std::sin(wtSim * 0.0211f + 4.3f) * 0.17f;   // [-1..+1], aperiodic infinite fronts
         const float stormFront = std::clamp((0.35f - baroWave) * 0.85f, 0.0f, 1.0f);
         const float altCold = std::clamp((s.posAdjust[2] - 1800.0f) / 3800.0f, 0.0f, 1.0f);
-        const float procRain = (!interior && t.mode == 2) ? std::clamp((stormFront - 0.52f) * 2.1f, 0.0f, 1.0f) * (1.0f - altCold * 0.85f) : 0.0f;
-        const float procSnow = (!interior && t.mode == 2) ? std::clamp((stormFront - 0.46f) * 1.9f, 0.0f, 1.0f) * altCold : 0.0f;
-        const float skyStorm = (!interior && t.weatherCloud > 0.72f) ? std::clamp((t.weatherCloud - 0.72f) * 3.2f, 0.0f, 1.0f) : 0.0f;
-        const float effRain  = std::clamp(std::fmax(t.rain, std::fmax(procRain * 0.85f, skyStorm * (1.0f - altCold) * 0.75f)), 0.0f, 1.0f);
-        const float effSnow  = std::clamp(std::fmax(t.snow, std::fmax(procSnow * 0.85f, skyStorm * altCold * 0.75f)), 0.0f, 1.0f);
-        const float effWet   = std::fmax(t.wetness, std::clamp(effRain * 1.15f + stormFront * 0.22f, 0.0f, 1.0f));
-        const float effPud   = std::fmax(t.puddles, std::clamp((effRain - 0.15f) * 0.95f, 0.0f, 0.85f));
+        // Respect Skyrim's actual weather state for rain & snow (never conjure phantom rain/rainbows on dry sunny Whiterun days!):
+        // Procedural synoptic wave gently evolves high-altitude cloud cover and jet-stream wind without overriding dry weather!
+        const float skyStorm = (!interior && t.weatherCloud > 0.78f) ? std::clamp((t.weatherCloud - 0.78f) * 3.0f, 0.0f, 1.0f) : 0.0f;
+        const float effRain  = std::clamp(std::fmax(t.rain, skyStorm * (1.0f - altCold) * 0.65f), 0.0f, 1.0f);
+        const float effSnow  = std::clamp(std::fmax(t.snow, skyStorm * altCold * 0.65f), 0.0f, 1.0f);
+        const float effWet   = std::fmax(t.wetness, std::clamp(effRain * 1.15f, 0.0f, 1.0f));
+        const float effPud   = std::fmax(t.puddles, std::clamp((effRain - 0.18f) * 0.90f, 0.0f, 0.85f));
         u.weather[0] = t.mode == 2 ? effWet : 0.0f;
         u.weather[1] = t.mode == 2 ? effPud : 0.0f;
         u.weather[2] = t.mode == 2 ? effSnow : 0.0f;
         u.weather[3] = t.mode == 2 ? effRain : 0.0f;
-        if (!interior && stormFront > 0.78f && u.timeEnv[2] < 0.05f) {
-            u.timeEnv[2] = std::clamp((stormFront - 0.78f) * 4.2f, 0.0f, 1.0f);   // procedural convective thunderhead lightning
+        if (!interior && effRain > 0.45f && t.weatherCloud > 0.72f && u.timeEnv[2] < 0.05f) {
+            u.timeEnv[2] = std::clamp((effRain - 0.45f) * 1.8f, 0.0f, 1.0f);   // storm lightning only during genuine rainfall
         }
         for (int k = 0; k < 3; ++k) u.camPos[k] = s.posAdjust[k];
         // Clouds: infinite procedural synoptic fronts blended seamlessly with weather cover.

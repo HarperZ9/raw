@@ -253,7 +253,9 @@ private:
     std::unordered_map<uint64_t, uint32_t> layoutIds_;
     std::unordered_map<uint64_t, std::unique_ptr<RootSig>> rootSigs_;
     std::unordered_map<uint64_t, D3D12_GPU_DESCRIPTOR_HANDLE> sampTables_;
+    uint32_t sampSlotIds_[2048]{};
     uint32_t sampUsed_ = 0;
+    bool sampExhaustedLogged_ = false;
     std::unordered_map<uint32_t, D3D12_CPU_DESCRIPTOR_HANDLE> nullSrv_, nullUav_;
     std::unordered_map<uint32_t, uint32_t> planes_;
 

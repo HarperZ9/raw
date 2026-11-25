@@ -55,14 +55,16 @@ float signedCoC(float curZ, float focusZ, float maxDist) {
     const float fM = clamp(focusZ, 42.0f, 14000.0f) / 70.0f;
     const float sensorW = clamp(camOptics[0].x, 20.0f, 80.0f) * 0.001f;   // 24mm APS-C .. 70mm 6x7 Medium Format
     const float F = clamp(camOptics[0].y, 20.0f, 220.0f) * 0.001f;        // focal length in meters
-    const float N = clamp(camOptics[0].z, 0.90f, 16.0f);                  // physical f-stop
-    const float cocSensorM = ((dM - fM) / max(dM, 0.25f)) * ((F * F) / (N * max(fM - F, 0.18f)));
-    const float cocPx = (cocSensorM / sensorW) * dims.x * clamp(maxDist / 420.0f, 0.25f, 3.0f);
-    const float maxRadFull = max(clamp(dofParams.y, 2.0f, 28.0f) * 2.0f, 4.0f);
+    const float N = max(clamp(camOptics[0].z, 0.90f, 16.0f), 2.8f);       // refined gameplay f-stop floor (zero macro soup)
+    const float cocSensorM = ((dM - fM) / max(dM, 0.25f)) * ((F * F) / (N * max(fM - F, 0.28f)));
+    const float cocPx = (cocSensorM / sensorW) * dims.x * clamp(maxDist / 420.0f, 0.20f, 2.2f) * 0.52f;
+    const float maxRadFull = max(clamp(dofParams.y, 2.0f, 18.0f) * 2.0f, 4.0f);
     const float absPx = abs(cocPx);
-    if (absPx <= 0.40f) { return 0.0f; }
-    const float planeScale = cocPx < 0.0f ? clamp(camOptics[1].x, 0.0f, 2.5f) : clamp(camOptics[1].y, 0.0f, 2.5f);
-    const float norm = saturate(((absPx - 0.40f) / maxRadFull) * planeScale);
+    // Clean tack-sharp focal corridor (1.45px deadzone keeps NPC heads/shoulders/foreground props razor sharp):
+    if (absPx <= 1.45f) { return 0.0f; }
+    const float nearSnowDamp = (cocPx < 0.0f) ? smoothstep(45.0f, 125.0f, curZ) * 0.55f : 1.0f;
+    const float planeScale = (cocPx < 0.0f ? clamp(camOptics[1].x, 0.0f, 1.5f) * nearSnowDamp : clamp(camOptics[1].y, 0.0f, 1.5f));
+    const float norm = pow(saturate(((absPx - 1.45f) / maxRadFull) * planeScale), 1.15f);
     return cocPx < 0.0f ? -norm : norm;
 }
 
@@ -116,7 +118,7 @@ float4 dof_focus(float4 at : SV_Position) : SV_Target0 {
 
 float4 dof_coc(float4 at : SV_Position) : SV_Target0 {
     // Live 3D World-Map & UI Depth Isolation: exact UI::Singleton menuPaused (timeEnv.w) + aerial world-map altitude.
-    if (timeEnv.w > 0.5f || camPosW.z > 18000.0f) {
+    if (timeEnv.w > 0.5f || camPosW.z > 12500.0f) {
         const float2 fullPx0 = (floor(at.xy) + 0.5f) * 2.0f;
         return float4(SrcA.SampleLevel(Lin, fullPx0 * dims.zw, 0.0f).rgb, 0.0f);
     }
@@ -126,21 +128,35 @@ float4 dof_coc(float4 at : SV_Position) : SV_Target0 {
     const int2 ip = clamp(int2(fullPx), int2(0, 0), dMax);
     const float fGpu = SrcB.Load(int3(0, 0, 0)).x;
     const float focusZ = (fGpu >= 40.0f && fGpu <= 15000.0f) ? fGpu : sampleFocusZoneZ();
-    // 2x2 conservative depth downsample: keeps nearest foreground CoC intact for near-field feathering
-    // while using max-depth for background to prevent foreground edges from leaking into far bokeh!
-    const float d00 = Depth.Load(int3(ip, 0));
-    const float d10 = Depth.Load(int3(min(ip + int2(1, 0), dMax), 0));
-    const float d01 = Depth.Load(int3(min(ip + int2(0, 1), dMax), 0));
-    const float d11 = Depth.Load(int3(min(ip + int2(1, 1), dMax), 0));
-    const float dMin = min(min(d00, d10), min(d01, d11));
-    const float dMaxV = max(max(d00, d10), max(d01, d11));
-    const float zNear = dMin < 1.0f ? viewZOf(dMin) : 100000.0f;
-    const float zFar  = dMaxV < 1.0f ? viewZOf(dMaxV) : 100000.0f;
+    // Depth-consistent 2x2 downsample: pairs each selected depth tap with its EXACT own RGB color
+    // (eliminates bilinear hair/cloak RGB bleeding into bright background CoC -> kills black smudge halos!).
+    const int2 p00 = ip;
+    const int2 p10 = min(ip + int2(1, 0), dMax);
+    const int2 p01 = min(ip + int2(0, 1), dMax);
+    const int2 p11 = min(ip + int2(1, 1), dMax);
+    const float d00 = Depth.Load(int3(p00, 0));
+    const float d10 = Depth.Load(int3(p10, 0));
+    const float d01 = Depth.Load(int3(p01, 0));
+    const float d11 = Depth.Load(int3(p11, 0));
+    float dNear = d00; int2 pNear = p00;
+    if (d10 < dNear) { dNear = d10; pNear = p10; }
+    if (d01 < dNear) { dNear = d01; pNear = p01; }
+    if (d11 < dNear) { dNear = d11; pNear = p11; }
+    float dFar = d00; int2 pFar = p00;
+    if (d10 > dFar) { dFar = d10; pFar = p10; }
+    if (d01 > dFar) { dFar = d01; pFar = p01; }
+    if (d11 > dFar) { dFar = d11; pFar = p11; }
+    const float zNear = dNear < 1.0f ? viewZOf(dNear) : 100000.0f;
+    const float zFar  = dFar < 1.0f ? viewZOf(dFar) : 100000.0f;
     const float2 uvFull = fullPx * dims.zw;
     const float cocNear = zNear < 45.0f ? 0.0f : perspectiveCoC(uvFull, zNear, focusZ, dofParams.x);
     const float cocFar  = zFar < 45.0f ? 0.0f : perspectiveCoC(uvFull, zFar, focusZ, dofParams.x);
-    const float coc = (cocNear < -0.02f) ? cocNear : cocFar;
-    const float3 col = SrcA.SampleLevel(Lin, uvFull, 0.0f).rgb;
+    const bool pickNear = (cocNear < -0.05f);
+    const float coc = pickNear ? cocNear : cocFar;
+    const int2 pCol = pickNear ? pNear : pFar;
+    // Average matching-depth taps only when the 2x2 quad is continuous; point-load on silhouette edges!
+    const bool quadSmooth = (abs(zFar - zNear) / max(zNear, 1.0f)) < 0.04f;
+    const float3 col = quadSmooth ? SrcA.SampleLevel(Lin, uvFull, 0.0f).rgb : SrcA.Load(int3(pCol, 0)).rgb;
     return float4(col, coc);
 }
 
@@ -148,44 +164,41 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
     float w, h;
     SrcA.GetDimensions(w, h);
     const float2 dim = max(float2(w, h), float2(1.0f, 1.0f));
+    const int2 dimMax = max(int2(dim) - 1, int2(0, 0));
     const float2 invDim = 1.0f / dim;
     const float2 px = floor(at.xy);
     const float4 center = SrcA.Load(int3(px, 0));
     if (WaveActiveAllTrue(dofParams.x <= 1.0f)) { return float4(center.rgb, 0.0f); }
 
-    // 1/2-res cinema aperture bokeh radius (1.40x optical expansion breaks up the flat small-radius Gaussian look!):
-    const float maxRad = clamp(dofParams.y, 2.0f, 24.0f) * 1.40f;
+    const float maxRad = clamp(dofParams.y, 2.0f, 18.0f);
     const float centerCoc = center.a;
-    const float centerAbs = abs(centerCoc);
     const float2 uvNorm = (px + 0.5f) * invDim * 2.0f - 1.0f;
     const float cornerMag = saturate(dot(uvNorm, uvNorm) * 0.42f);
     const float2 radAxis = length(uvNorm) > 1.0e-4f ? normalize(uvNorm) : float2(1.0f, 0.0f);
     const float2 tanAxis = float2(-radAxis.y, radAxis.x);
     const uint camModeG = uint(engineWorld.w + 0.5f);
-    const int shape = (camModeG == 3u) ? 5 : (camModeG == 4u) ? 6 : int(camOptics[0].w + 0.5f);   // Anamorphic & Petzval modes auto-select matching aperture geometry!
+    const int shape = (camModeG == 3u) ? 5 : (camModeG == 4u) ? 6 : int(camOptics[0].w + 0.5f);
     const float blades = (shape == 0) ? 5.0f : (shape == 1) ? 6.0f : (shape == 2) ? 7.0f : 9.0f;
     const float kBlade = 6.2831853f / blades;
     const float kCosHalf = cos(3.14159265f / blades);
 
-    // Adaptive gather radius for far-field: packs all 5 concentric rings tightly inside centerCoc * maxRad
-    // so intermediate depth planes have 100% continuous, zero-stipple, zero-noise optical bokeh!
-    const float farGatherRad = max(centerCoc > 0.0f ? centerCoc * maxRad : 0.0f, 0.0f);
-    const float nearGatherRad = maxRad;
+    const float farGatherRad = max(centerCoc > 0.02f ? centerCoc * maxRad : 0.0f, 0.0f);
+    const float nearGatherRad = min(maxRad * 0.65f, 10.0f);
 
-    float3 farAcc = centerCoc > 0.005f ? center.rgb : 0.0f.xxx;
-    float  farW   = centerCoc > 0.005f ? 1.0f : 0.0f;
-    float3 nearAcc = centerCoc < -0.005f ? center.rgb : 0.0f.xxx;
-    float  nearW   = centerCoc < -0.005f ? 1.0f : 0.0f;
-    float  nearCov = centerCoc < -0.005f ? 1.0f : 0.0f;
+    float3 farAcc = centerCoc > 0.02f ? center.rgb : 0.0f.xxx;
+    float  farW   = centerCoc > 0.02f ? 1.0f : 0.0f;
+    float3 nearAcc = centerCoc < -0.06f ? center.rgb : 0.0f.xxx;
+    float  nearW   = centerCoc < -0.06f ? 1.0f : 0.0f;
+    float  nearCov = centerCoc < -0.06f ? 1.0f : 0.0f;
 
-    // 91-tap 5-Ring Concentric Aperture Disc Gather (6 + 12 + 18 + 24 + 30 = 90 ring taps + 1 center = 91 taps):
-    // Zero per-pixel random noise -> completely eliminates stipple, shimmer, and Vogel swirl arcs!
+    // 91-tap 5-Ring Concentric Aperture Disc Gather using EXACT POINT LOADS (zero bilinear silhouette contamination ->
+    // completely eliminates dark hair/shoulder smudge halos and translucent NPC ghosting!).
     const float kInvRings = 1.0f / 5.0f;
     [loop] for (int ring = 1; ring <= 5; ring++) {
         const float rFrac = float(ring) * kInvRings;
         const int nTaps = ring * 6;
         const float dAng = 6.2831853f / float(nTaps);
-        const float angOff = float(ring) * 0.5235988f;   // 30-deg alternating ring phase for perfect hexagonal packing
+        const float angOff = float(ring) * 0.5235988f;
         [loop] for (int t = 0; t < nTaps; t++) {
             const float a = float(t) * dAng + angOff;
             float bladeR = 1.0f;
@@ -195,49 +208,44 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
             }
             float2 unitOff = float2(cos(a), sin(a)) * (rFrac * bladeR);
             if (shape == 5) {
-                // 2x Anamorphic Cinema Squeeze (vertical oval bokeh discs):
                 unitOff *= float2(0.68f, 1.38f);
             } else if (shape == 6) {
-                // Swirly Petzval / Helios-44-2 tangential bokeh stretching toward frame edges:
                 unitOff = radAxis * (dot(unitOff, radAxis) * (1.0f - cornerMag * 0.62f))
                         + tanAxis * (dot(unitOff, tanAxis) * (1.0f + cornerMag * 0.45f));
             } else {
-                // Classic mechanical cat's-eye corner vignette squeeze:
                 unitOff -= radAxis * (dot(unitOff, radAxis) * cornerMag * 0.28f);
             }
 
-            // 1) Far-field gather (dense 90-tap packing scaled to exact farGatherRad -> silky smooth step-down!):
+            // 1) Far-field gather (point-loaded from SrcA -> strictly rejects sharp NPC silhouettes & dark hair edges!):
             if (farGatherRad > 0.35f) {
-                const float4 tapF = SrcA.SampleLevel(Lin, saturate((px + 0.5f + unitOff * farGatherRad) * invDim), 0.0f);
-                if (tapF.a > 0.005f) {
-                    // Exact disc-overlap & foreground-occlusion test (prevents sharp foreground leaking into far bokeh):
+                const int2 tapFPx = clamp(int2(round(px + unitOff * farGatherRad)), int2(0, 0), dimMax);
+                const float4 tapF = SrcA.Load(int3(tapFPx, 0));
+                if (tapF.a > 0.04f) {
                     const float tapCocF = tapF.a;
-                    const float bgOcc = smoothstep(centerCoc * 0.45f - 0.02f, centerCoc * 0.85f + 0.02f, tapCocF);
-                    const float discW = smoothstep(rFrac * centerCoc - 0.06f, rFrac * centerCoc + 0.06f, tapCocF);
+                    const float bgOcc = smoothstep(centerCoc * 0.65f, centerCoc * 0.95f + 0.02f, tapCocF);
+                    const float discW = smoothstep(rFrac * centerCoc - 0.05f, rFrac * centerCoc + 0.05f, tapCocF);
                     const float lumF = dot(tapF.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-                    // Zeiss/Cooke cinema-prime spherical-aberration bokeh ring profile (0.58 + 0.85*r^3) +
-                    // strong quadratic HDR bokeh orb expansion (breaks up flat out-of-focus mush into luminous cinema discs!):
-                    const float saRingF = 0.58f + 0.85f * (rFrac * rFrac * rFrac);
-                    const float orbF = (1.0f + pow(saturate(lumF - 0.30f), 2.0f) * (dofParams.z * 3.8f)) * saRingF;
-                    const float3 locaFar = lerp(1.0f.xxx, float3(0.95f, 1.04f, 1.02f), rFrac * rFrac * 0.42f);
+                    const float saRingF = 0.65f + 0.70f * (rFrac * rFrac * rFrac);
+                    const float orbF = (1.0f + pow(saturate(lumF - 0.45f), 2.0f) * (dofParams.z * 2.4f)) * saRingF;
+                    const float3 locaFar = lerp(1.0f.xxx, float3(0.97f, 1.02f, 1.01f), rFrac * rFrac * 0.25f);
                     const float fw = bgOcc * discW * orbF;
                     farAcc += tapF.rgb * locaFar * fw;
                     farW += fw;
                 }
             }
 
-            // 2) Near-field gather (probes full nearGatherRad so close out-of-focus foreground feathers over sharp bg!):
-            const float4 tapN = SrcA.SampleLevel(Lin, saturate((px + 0.5f + unitOff * nearGatherRad) * invDim), 0.0f);
-            if (tapN.a < -0.015f) {
+            // 2) Near-field gather (point-loaded, strictly gated on genuinely out-of-focus foreground tapN.a < -0.10f):
+            const int2 tapNPx = clamp(int2(round(px + unitOff * nearGatherRad)), int2(0, 0), dimMax);
+            const float4 tapN = SrcA.Load(int3(tapNPx, 0));
+            if (tapN.a < -0.10f) {
                 const float nRad = -tapN.a;
-                const float covN = smoothstep(rFrac - 0.16f, rFrac + 0.10f, nRad);
+                const float covN = smoothstep(rFrac - 0.14f, rFrac + 0.08f, nRad);
                 if (covN > 0.001f) {
                     const float lumN = dot(tapN.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-                    const float saRingN = 0.58f + 0.85f * (rFrac * rFrac * rFrac);
-                    const float orbN = (1.0f + pow(saturate(lumN - 0.30f), 2.0f) * (dofParams.z * 3.2f)) * saRingN;
-                    const float3 locaNear = lerp(1.0f.xxx, float3(1.05f, 0.95f, 1.04f), rFrac * rFrac * 0.42f);
+                    const float saRingN = 0.65f + 0.70f * (rFrac * rFrac * rFrac);
+                    const float orbN = (1.0f + pow(saturate(lumN - 0.45f), 2.0f) * (dofParams.z * 2.0f)) * saRingN;
                     const float nw = covN * orbN;
-                    nearAcc += tapN.rgb * locaNear * nw;
+                    nearAcc += tapN.rgb * nw;
                     nearW += nw;
                     nearCov += covN;
                 }
@@ -247,9 +255,9 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
 
     const float3 farCol = farW > 1.0e-4f ? (farAcc / farW) : center.rgb;
     const float3 nearCol = nearW > 1.0e-4f ? (nearAcc / nearW) : center.rgb;
-    const float nearAlpha = saturate(nearCov / 26.0f);
+    const float nearAlpha = saturate(nearCov / 42.0f) * 0.55f;
     const float3 outCol = lerp(farCol, nearCol, nearAlpha);
-    return float4(outCol, nearAlpha > 0.02f ? -nearAlpha : saturate(centerCoc));
+    return float4(outCol, nearAlpha > 0.04f ? -nearAlpha : saturate(centerCoc));
 }
 
 // Jimenez 2014 / UE5 Post-Gather 3x3 Bokeh Flood-Fill & Velvety Tent Filter (reuses m_dofCoc, zero extra VRAM):
@@ -288,7 +296,7 @@ float4 dof_post(float4 at : SV_Position) : SV_Target0 {
 float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
     const int2 ip = int2(at.xy);
     const float4 sharp = SrcA.Load(int3(ip, 0));
-    if (dofParams.x <= 1.0f) { return sharp; }
+    if (dofParams.x <= 1.0f || timeEnv.w > 0.5f || camPosW.z > 12500.0f) { return sharp; }
     const float2 uv = (floor(at.xy) + 0.5f) * dims.zw;
     const float fGpu = FocusTex.Load(int3(0, 0, 0)).x;
     const float focusZ = (fGpu >= 40.0f && fGpu <= 15000.0f) ? fGpu : sampleFocusZoneZ();
@@ -300,20 +308,38 @@ float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
     if (curZ < 45.0f) { return sharp; }
     const float coc = perspectiveCoC(uv, curZ, focusZ, dofParams.x);
     const float absCoc = abs(coc);
-    // Depth-protected 4-tap bilinear upsample of 1/2-res bokeh buffer:
-    // Rejects out-of-focus background bokeh texels when compositing near a tack-sharp focal-plane subject!
-    const float2 bOff = dims.zw * 0.65f;
-    const float4 b0 = SrcB.SampleLevel(Lin, uv + float2( bOff.x,  bOff.y), 0.0f);
-    const float4 b1 = SrcB.SampleLevel(Lin, uv + float2(-bOff.x,  bOff.y), 0.0f);
-    const float4 b2 = SrcB.SampleLevel(Lin, uv + float2( bOff.x, -bOff.y), 0.0f);
-    const float4 b3 = SrcB.SampleLevel(Lin, uv + float2(-bOff.x, -bOff.y), 0.0f);
-    const float4 bokeh = (b0 + b1 + b2 + b3) * 0.25f;
-    // Tack-sharp focal-plane protection: strictly zero far-field bokeh bleed when absCoc < 0.03!
-    const float maxRadFull = max(clamp(dofParams.y, 2.0f, 28.0f) * 2.0f, 4.0f);
+    // True CoC-bilateral 4-tap upsample of 1/2-res bokeh buffer:
+    // Weights each 1/2-res bokeh tap by CoC compatibility so sharp foreground NPCs & pine branches NEVER pick up dark/bright background ghosts!
+    float bw, bh;
+    SrcB.GetDimensions(bw, bh);
+    const int2 bMax = max(int2(bw, bh) - 1, int2(0, 0));
+    const float2 bCoord = (floor(at.xy) + 0.5f) * 0.5f - 0.5f;
+    const int2 bBase = int2(floor(bCoord));
+    const float2 bFrac = saturate(bCoord - float2(bBase));
+    float4 bTaps[4];
+    bTaps[0] = SrcB.Load(int3(clamp(bBase + int2(0, 0), int2(0, 0), bMax), 0));
+    bTaps[1] = SrcB.Load(int3(clamp(bBase + int2(1, 0), int2(0, 0), bMax), 0));
+    bTaps[2] = SrcB.Load(int3(clamp(bBase + int2(0, 1), int2(0, 0), bMax), 0));
+    bTaps[3] = SrcB.Load(int3(clamp(bBase + int2(1, 1), int2(0, 0), bMax), 0));
+    const float bilW[4] = { (1.0f - bFrac.x) * (1.0f - bFrac.y), bFrac.x * (1.0f - bFrac.y),
+                            (1.0f - bFrac.x) * bFrac.y,          bFrac.x * bFrac.y };
+    float4 bAcc = 0.0f.xxxx;
+    float bWSum = 0.0f;
+    [unroll] for (int bi = 0; bi < 4; ++bi) {
+        const float tc = bTaps[bi].a;
+        const float compat = (coc > 0.03f) ? smoothstep(-0.02f, 0.05f, tc)
+                           : ((coc < -0.03f) ? smoothstep(0.02f, -0.05f, tc) : (tc < -0.10f ? 0.5f : 0.05f));
+        const float w = bilW[bi] * (0.04f + 0.96f * compat);
+        bAcc += bTaps[bi] * w;
+        bWSum += w;
+    }
+    const float4 bokeh = bWSum > 1.0e-4f ? (bAcc / bWSum) : float4(sharp.rgb, 0.0f);
+    // Tack-sharp focal-plane protection: strictly zero far-field bokeh bleed when absCoc < 0.04!
+    const float maxRadFull = max(clamp(dofParams.y, 2.0f, 18.0f) * 2.0f, 4.0f);
     const float cocPx = absCoc * maxRadFull;
-    const float farBlend = coc > 0.03f ? smoothstep(0.65f, 3.0f, cocPx) : 0.0f;
-    const float nearSelf = coc < -0.03f ? smoothstep(0.65f, 3.0f, cocPx) : 0.0f;
-    const float nearBleed = bokeh.a < -0.04f ? smoothstep(0.05f, 0.85f, -bokeh.a * clamp(camOptics[1].z, 0.0f, 2.0f)) : 0.0f;
+    const float farBlend = coc > 0.04f ? smoothstep(1.0f, 3.6f, cocPx) : 0.0f;
+    const float nearSelf = coc < -0.04f ? smoothstep(1.0f, 3.6f, cocPx) : 0.0f;
+    const float nearBleed = bokeh.a < -0.12f ? smoothstep(0.14f, 0.85f, -bokeh.a) * 0.45f * clamp(camOptics[1].z, 0.0f, 1.0f) : 0.0f;
     const float blend = max(farBlend, max(nearSelf, nearBleed));
     return float4(lerp(sharp.rgb, bokeh.rgb, blend), sharp.a);
 }

@@ -220,28 +220,16 @@ float3 fxaaAndCas(float2 suv) {
         aa = Scene.Sample(S1, aaUv).rgb;
     }
 
-    // Stage 1: Bilateral Edge-Preserving Micro-Smoothing (smooths flat skin/plaster/sky noise while locking edges).
-    // Stage 2: Anti-Ringing 9-Tap RCAS Adaptive Contrast Sharpening (OV9, bit 8 = 256).
+    // Anti-Ringing 9-Tap RCAS Adaptive Contrast Sharpening (OV9, bit 8 = 256):
+    // Removed flat-surface bilateral skin blur that smoothed facial pores & wrinkles into waxy plastic!
     const uint ovPost = uint(RO.y + 0.5f);
     if ((ovPost & 256u) != 0u) {
-        // Edge-preserving bilateral micro-smoothing on low-gradient flats (skin, stone faces, calm water).
-        const float lA = dot(aa / (1.0f + aa), W);
-        float3 bSum = aa;
-        float bW = 1.0f;
-        const float wN = exp(-abs(ln - lA) * 32.0f) * 0.22f;
-        const float wS = exp(-abs(ls - lA) * 32.0f) * 0.22f;
-        const float wE = exp(-abs(le - lA) * 32.0f) * 0.22f;
-        const float wW = exp(-abs(lw - lA) * 32.0f) * 0.22f;
-        bSum += n * wN + s * wS + e * wE + ww * wW;
-        bW += wN + wS + wE + wW;
-        const float3 smoothed = bSum / bW;
-        // 9-tap local min/max anti-ringing RCAS micro-contrast sharpening (crisp stone/bark/armor with zero halos).
-        const float3 mn = min(min(smoothed, min(min(n, s), min(e, ww))), min(min(nw, ne), min(sw, se)));
-        const float3 mx = max(max(smoothed, max(max(n, s), max(e, ww))), max(max(nw, ne), max(sw, se)));
+        const float3 mn = min(min(aa, min(min(n, s), min(e, ww))), min(min(nw, ne), min(sw, se)));
+        const float3 mx = max(max(aa, max(max(n, s), max(e, ww))), max(max(nw, ne), max(sw, se)));
         const float3 amp = saturate(min(mn, max(2.0f.xxx - mx, 0.0f.xxx)) / max(mx, 1.0e-4f.xxx));
-        const float3 wCAS = sqrt(amp) * (-0.165f * clamp(RP.y, 0.0f, 2.0f));
-        const float3 sharp = (smoothed + (n + s + e + ww) * wCAS) / max(1.0f.xxx + 4.0f * wCAS, 0.28f.xxx);
-        return clamp(sharp, mn * 0.94f, mx * 1.06f);
+        const float3 wCAS = sqrt(amp) * (-0.135f * clamp(RP.y, 0.0f, 2.0f));
+        const float3 sharp = (aa + (n + s + e + ww) * wCAS) / max(1.0f.xxx + 4.0f * wCAS, 0.30f.xxx);
+        return clamp(sharp, mn * 0.96f, mx * 1.04f);
     }
     return aa;
 }
@@ -410,54 +398,51 @@ float4 main(In i) : SV_Target {
         [unroll] for (int ai = 1; ai <= 6; ai++) {
             const float dx = float(ai) * 3.2f * bpx.x;
             const float aw = 1.0f / float(ai + 1);
-            const float3 bL = max(Bloom.Sample(S0, saturate(suv - float2(dx, 0.0f))).rgb - 1.45f.xxx, 0.0f.xxx);
-            const float3 bR = max(Bloom.Sample(S0, saturate(suv + float2(dx, 0.0f))).rgb - 1.45f.xxx, 0.0f.xxx);
+            const float3 bL = max(Bloom.Sample(S0, saturate(suv - float2(dx, 0.0f))).rgb - 2.35f.xxx, 0.0f.xxx);
+            const float3 bR = max(Bloom.Sample(S0, saturate(suv + float2(dx, 0.0f))).rgb - 2.35f.xxx, 0.0f.xxx);
             anaAcc += (bL + bR) * (0.5f * aw);
         }
-        // Subtle neutral-warm cinema anamorphic streak ONLY on true >1.45 HDR peaks (eliminates artificial blue glow!).
-        const float3 anamorphic = anaAcc * float3(0.84f, 0.90f, 1.02f) * 0.032f;
+        // Subtle neutral-warm cinema anamorphic streak ONLY on true >2.35 HDR peaks (eliminates bright ice/snow streaking!).
+        const float3 anamorphic = anaAcc * float3(0.88f, 0.92f, 1.00f) * 0.022f;
         ovAdd += (halation + anamorphic) * clamp(RQ.w, 0.0f, 2.5f);
     }
     if ((ovMask & 4u) != 0u) {
-        // Layer 3: arXiv:2605.04017 (Hachisuka et al. 2026) 5-Order Optical Lens Transport Ghosts + Cat's-Eye Aperture Halo.
-        // centerClear keeps the screen-center crosshair / mouse-pointer zone completely free of collapsed lens ghosts & blue halos!
+        // Layer 3: Optical Lens Transport Ghosts + Aperture Starburst strictly on genuine >2.45 HDR peaks
+        // (sun disc, roaring fireballs, spells — eliminates prismatic blue/orange ring halos inside bright ice caves!).
         const float2 cVec = suv - 0.5f.xx;
         const float cDist = length(cVec);
-        const float centerClear = smoothstep(0.08f, 0.26f, cDist);
-        const float catsEye = saturate(1.0f - cDist * cDist * 1.10f) * centerClear;
+        const float centerClear = smoothstep(0.10f, 0.28f, cDist);
+        const float catsEye = saturate(1.0f - cDist * cDist * 1.15f) * centerClear;
         float3 lensAcc = 0.0f.xxx;
         [unroll] for (int gi = 1; gi <= 5; gi++) {
             const float gScale = 0.35f + float(gi) * 0.24f;
             const float2 gUv = saturate(0.5f.xx - cVec * gScale);
-            // Chromatic radial dispersion across RGB lens elements (high 1.35 HDR threshold so walls/snow never ghost).
-            const float2 disp = cVec * (0.008f * float(gi));
-            const float rC = max(Bloom.Sample(S0, saturate(gUv + disp)).r - 1.35f, 0.0f);
-            const float gC = max(Bloom.Sample(S0, gUv).g - 1.35f, 0.0f);
-            const float bC = max(Bloom.Sample(S0, saturate(gUv - disp)).b - 1.35f, 0.0f);
+            const float2 disp = cVec * (0.006f * float(gi));
+            const float rC = max(Bloom.Sample(S0, saturate(gUv + disp)).r - 2.45f, 0.0f);
+            const float gC = max(Bloom.Sample(S0, gUv).g - 2.45f, 0.0f);
+            const float bC = max(Bloom.Sample(S0, saturate(gUv - disp)).b - 2.45f, 0.0f);
             const float3 gCol = float3(rC, gC, bC);
-            const float3 gTint = gi == 1 ? float3(1.06f, 0.98f, 0.88f)
-                               : (gi == 2 ? float3(0.96f, 1.00f, 1.04f)
-                               : (gi == 3 ? float3(1.02f, 0.94f, 1.02f)
-                               : (gi == 4 ? float3(0.94f, 1.02f, 0.96f) : float3(1.04f, 0.96f, 0.90f))));
+            const float3 gTint = gi == 1 ? float3(1.04f, 0.99f, 0.92f)
+                               : (gi == 2 ? float3(0.97f, 1.00f, 1.03f)
+                               : (gi == 3 ? float3(1.01f, 0.96f, 1.01f)
+                               : (gi == 4 ? float3(0.96f, 1.01f, 0.97f) : float3(1.02f, 0.98f, 0.94f))));
             lensAcc += gCol * gTint * (catsEye / float(gi + 1));
         }
         const float2 haloDir = cDist > 1.0e-4f ? cVec / cDist : float2(0.0f, 1.0f);
-        const float3 haloCol = max(Bloom.Sample(S0, saturate(0.5f.xx - haloDir * 0.22f)).rgb - 1.50f.xxx, 0.0f.xxx);
-        // 6-Blade Physical Cinema Aperture Diffraction Starburst & Spectral Sun/Spell Glare on ultra-bright HDR peaks (>1.45):
-        // sun through trees, fireballs, lightning spells, dragon shouts, enchanted weapons & bright lanterns!
+        const float3 haloCol = max(Bloom.Sample(S0, saturate(0.5f.xx - haloDir * 0.22f)).rgb - 2.65f.xxx, 0.0f.xxx);
         float3 starAcc = 0.0f.xxx;
         static const float2 kStarDir[3] = { float2(1.0f, 0.0f), float2(0.5f, 0.866025f), float2(-0.5f, 0.866025f) };
         [unroll] for (int si = 0; si < 3; ++si) {
             [unroll] for (int st = 1; st <= 3; ++st) {
                 const float2 sOff = kStarDir[si] * (bTex * float(st) * 3.8f);
                 const float wS = 1.0f / float(st + 1);
-                const float3 sA = max(Bloom.Sample(S0, saturate(suv + sOff)).rgb - 1.45f.xxx, 0.0f.xxx);
-                const float3 sB = max(Bloom.Sample(S0, saturate(suv - sOff)).rgb - 1.45f.xxx, 0.0f.xxx);
-                const float3 sTint = si == 0 ? float3(1.04f, 0.99f, 0.94f) : (si == 1 ? float3(0.96f, 1.02f, 1.04f) : float3(1.02f, 0.97f, 1.02f));
-                starAcc += (sA + sB) * sTint * (wS * 0.09f);
+                const float3 sA = max(Bloom.Sample(S0, saturate(suv + sOff)).rgb - 2.50f.xxx, 0.0f.xxx);
+                const float3 sB = max(Bloom.Sample(S0, saturate(suv - sOff)).rgb - 2.50f.xxx, 0.0f.xxx);
+                const float3 sTint = si == 0 ? float3(1.03f, 0.99f, 0.96f) : (si == 1 ? float3(0.97f, 1.01f, 1.03f) : float3(1.01f, 0.98f, 1.01f));
+                starAcc += (sA + sB) * sTint * (wS * 0.055f);
             }
         }
-        ovAdd += min((lensAcc * 0.048f + haloCol * 0.025f * centerClear * saturate(1.0f - cDist * 1.35f) + starAcc) * clamp(RQ.w, 0.0f, 2.5f), 0.22f.xxx);
+        ovAdd += min((lensAcc * 0.022f + haloCol * 0.010f * centerClear * saturate(1.0f - cDist * 1.35f) + starAcc) * clamp(RQ.w, 0.0f, 2.5f), 0.16f.xxx);
     }
     if ((ovMask & 8u) != 0u) {
         // Layer 4 (OV4): High-threshold optical highlight diffusion (>1.85 HDR ONLY: flames, sun, spells).

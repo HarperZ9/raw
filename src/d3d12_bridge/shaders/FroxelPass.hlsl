@@ -65,7 +65,8 @@ float froxelHG(float cosT, float g) {
 }
 
 float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
-    if ((flags.x & FLAG_FOG) == 0u || (flags.x & FLAG_MATCH) != 0u) { return float4(0.0f, 0.0f, 0.0f, 0.0f); }
+    const bool isWorldMap = (camPosW.z > 12500.0f) || (timeEnv.w > 0.5f && camPosW.z > 7500.0f);
+    if ((flags.x & FLAG_FOG) == 0u || (flags.x & FLAG_MATCH) != 0u || isWorldMap) { return float4(0.0f, 0.0f, 0.0f, 0.0f); }
     const uint2 px = uint2(at.xy);
     const uint tileX = px.x / 160u;
     const uint tileY = px.y / 90u;
@@ -108,7 +109,7 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     // Smooth near-camera exterior ramp so foreground (<650u) stays crystal crisp while valleys/mountains gain full 3D depth:
     const float extNearRamp = isInt ? 1.0f : lerp(smoothstep(220.0f, 1600.0f, rayDist), 1.0f, saturate(weather.w * 0.65f + weather.z * 0.75f));
     const float heightFalloff = isInt ? 1.0f : (0.24f + 0.66f * valleyFogF + peakCollar * 1.45f + groundBank * 1.25f);
-    const float baseExt = isInt ? clamp(tune.x * 0.35f, 0.000018f, 0.000045f)
+    const float baseExt = isInt ? clamp(tune.x * 0.14f, 0.000006f, 0.000016f)
                                 : clamp(tune.x * 0.145f, 0.000011f, 0.000024f);
     float sigma = baseExt * weatherDens * mist3D * heightFalloff * extNearRamp;
 
@@ -198,8 +199,8 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                 const float phL = min(froxelHG(cosL, isInt ? 0.50f : 0.46f) * (isInt ? 1.8f : 1.6f) + 0.20f, 1.5f);
                 const float intSmoke = isInt ? (0.78f + 0.44f * cNoise(wp * 0.0095f - float3(0.0f, 0.0f, camPosW.w * 0.16f))) : 1.0f;
                 // Ensure nearby exterior local lights scatter visibly even when extNearRamp keeps daylight air clear:
-                sigma = max(sigma, (isInt ? 0.000024f : 0.000020f) * att * intSmoke);
-                inScat += min(lightColS[li].rgb * (att * phL * tune2.y * intSmoke * (isInt ? 0.16f : 0.28f)), (isInt ? 0.14f : 0.35f).xxx);
+                sigma = max(sigma, (isInt ? 0.000012f : 0.000020f) * att * intSmoke);
+                inScat += min(lightColS[li].rgb * (att * phL * tune2.y * intSmoke * (isInt ? 0.09f : 0.28f)), (isInt ? 0.065f : 0.35f).xxx);
             }
         }
     }

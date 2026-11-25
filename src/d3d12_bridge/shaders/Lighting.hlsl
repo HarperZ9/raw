@@ -1141,7 +1141,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
     }
     // Feature 18: Contact-hardening near-field micro-AO grounding under foliage, rocks, furniture & NPC feet.
-    const float nearGroundAo = !match ? pow(saturate(aoTerm), lerp(1.0f, 1.32f, saturate(1.0f - z / 1600.0f))) : aoTerm;
+    // Strengthen near-field chair/table/jug contact grounding (<650u) on BOTH ambient and direct local light so
+    // furniture legs, throne crevices, and tableware sit with crisp physical contact shadows instead of floating!
+    const float nearGroundAo = !match ? pow(saturate(aoTerm), lerp(1.0f, 1.65f, saturate(1.0f - z / 900.0f))) : aoTerm;
+    if (!match && !skin && base != 12u && z < 650.0f) {
+        const float microDiffOcc = lerp(1.0f, lerp(0.38f, 1.0f, nearGroundAo), saturate(1.0f - z / 650.0f));
+        diff *= microDiffOcc;
+    }
     float combinedOcc = min(nearGroundAo, rtOcc);
     // Lifelike Vanilla NPCs: lift recessed eye-socket AO (base==12) so eyes never read as dim dark holes,
     // and soften harsh brow/under-eye portrait shadows on skin (base==10).
@@ -1288,19 +1294,20 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         lit += sunColour.rgb * float3(0.08f, 0.14f, 0.22f) * (snowWrap * wet.snow * (0.35f + 0.65f * sunShadow) * 0.10f);
     }
     // True Interior Window-Lighting & HDR Window Bloom Driver (coupled to exterior time-of-day timeEnv.xy):
-    // bright interior windows (GlowMapped base==3 or high-emissive vertical glass) radiate physical HDR sunlight by day
-    // and cool moonlight by night, directly feeding BloomPass.hlsl (glow/bloom) & LightFog.hlsl (volumetric window shafts).
-    if (!match && !isExterior && !skin && !isActorFeat && !isActorCloth) {
+    // STRICTLY base == 3u (GlowMapped emissive windows ONLY!). Previously matched base != 3u vertical surfaces
+    // with gLumW > 0.55, which falsely treated Farengar's plaster wall (16.00.49) and Septimus Signus's vertical
+    // ice cave walls (16.02.00 / 16.02.04) as 2.65x HDR windows and blasted them into blinding white/cyan bloom!
+    if (!match && !isExterior && base == 3u && !skin && !isActorFeat && !isActorCloth) {
         const float gLumW = dot(game.rgb, float3(0.2126f, 0.7152f, 0.0722f));
         const float isVertGlass = smoothstep(0.68f, 0.35f, abs(s.n.z));
-        const float winMask = (base == 3u ? smoothstep(0.22f, 0.65f, gLumW) : smoothstep(0.55f, 0.95f, gLumW)) * isVertGlass;
+        const float winMask = smoothstep(0.26f, 0.68f, gLumW) * isVertGlass;
         if (winMask > 0.02f) {
             const float sunE = timeEnv.y;
             const float dayW = smoothstep(-0.12f, 0.26f, sunE);
             const float goldW = smoothstep(-0.12f, 0.12f, sunE) * (1.0f - smoothstep(0.18f, 0.52f, sunE));
             const float3 winCol = lerp(float3(0.28f, 0.46f, 0.92f),
                                        lerp(float3(1.02f, 1.06f, 1.15f), float3(1.35f, 0.82f, 0.36f), goldW), dayW);
-            const float winHdr = lerp(0.55f, 2.65f, dayW) * (1.0f - saturate(clouds.x * 0.38f));
+            const float winHdr = lerp(0.55f, 2.20f, dayW) * (1.0f - saturate(clouds.x * 0.38f));
             lit = lerp(lit, max(lit, game.rgb * winCol * winHdr), winMask);
         }
     }

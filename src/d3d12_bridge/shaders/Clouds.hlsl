@@ -245,36 +245,40 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // 3-Layer Ekman-Sheared Sky Architecture: Mid-Altitude Altocumulus (96k, +34 deg veer, curl-marbled)
         // + High-Altitude Jet-Stream Cirrus (130k, +54 deg veer, 2.65x speed, mares'-tail stretching & iridescence)!
         float3 cirrusAdd = 0.0f.xxx;
-        if (dir.z > 0.03f && T > 0.06f) {
-            // Layer 2: Mid-altitude altocumulus wave bands at 96,000u (Ekman +34 deg, curl-noise marbling)
-            const float tAlto = (96000.0f - o.z) / max(dir.z, 0.03f);
-            if (tAlto > 0.0f && tAlto < 520000.0f) {
+        if (dir.z > 0.10f && T > 0.06f) {
+            // Curved-planet shell intersection for upper decks (R = 3,600,000) eliminates flat-plane 1/dir.z radial smear streaks (16.01.20)!
+            const float rP = 3600000.0f;
+            const float r0 = rP + o.z;
+            const float bP = r0 * dir.z;
+            // Layer 2: Mid-altitude altocumulus wave bands at 96,000u on spherical shell
+            const float rAlto = rP + 96000.0f;
+            const float tAlto = max(sqrt(max(bP * bP + rAlto * rAlto - r0 * r0, 0.0f)) - bP, 0.0f);
+            if (tAlto > 0.0f && tAlto < 420000.0f) {
                 const float2 aWind = ekmanWind(0.65f);
-                const float2 aPos = (o.xy + dir.xy * tAlto + aWind * camPosW.w) * 0.000016f;
-                // Gentle wind-aligned shear (removed 0.85 curl that drew Van Gogh spiral loops in 15.27.49!):
-                const float2 aCurl = cloudCurl2D(aPos * 1.15f, camPosW.w * 0.0025f) * 0.16f;
-                const float aWave = cNoise(float3((aPos + aCurl) * float2(2.8f, 2.1f), 4.3f + camPosW.w * 0.0022f));
-                const float aMask = smoothstep(0.56f, 0.85f, aWave) * smoothstep(0.03f, 0.18f, dir.z) * exp(-tAlto / 320000.0f);
+                const float2 aPos = (o.xy + dir.xy * tAlto + aWind * camPosW.w) * 0.000018f;
+                const float2 aCurl = cloudCurl2D(aPos * 1.15f, camPosW.w * 0.0025f) * 0.14f;
+                const float aWave = cNoise(float3((aPos + aCurl) * 2.2f, 4.3f + camPosW.w * 0.0022f));
+                const float aMask = smoothstep(0.58f, 0.86f, aWave) * smoothstep(0.10f, 0.34f, dir.z) * exp(-tAlto / 280000.0f);
                 const float3 altoTwi = lerp(sunC, float3(1.55f, 0.44f, 0.34f), twiCloud * 0.88f);
-                const float3 altoCol = (altoTwi * (0.42f + 0.58f * hg(cosT, 0.68f) * 2.2f) + skyC * 0.24f) * lerp(0.38f, 0.14f, nightW);
+                const float3 altoCol = (altoTwi * (0.42f + 0.58f * hg(cosT, 0.68f) * 2.2f) + skyC * 0.24f) * lerp(0.32f, 0.12f, nightW);
                 cirrusAdd += altoCol * (aMask * T * horFade * (1.0f - saturate(clouds.x * 0.55f)));
             }
-            // Layer 3: High-altitude jet-stream ice-crystal cirrus at 130,000u (Ekman +54 deg, 2.65x speed, curl wisps)
-            const float tCir = (130000.0f - o.z) / max(dir.z, 0.03f);
-            if (tCir > 0.0f && tCir < 650000.0f) {
+            // Layer 3: High-altitude jet-stream ice-crystal cirrus at 130,000u on spherical shell
+            const float rCir = rP + 130000.0f;
+            const float tCir = max(sqrt(max(bP * bP + rCir * rCir - r0 * r0, 0.0f)) - bP, 0.0f);
+            if (tCir > 0.0f && tCir < 480000.0f) {
                 const float2 cWind = ekmanWind(1.00f);
-                const float2 cPos = (o.xy + dir.xy * tCir + cWind * camPosW.w) * 0.0000095f;
-                // Natural jet-stream cirrus wisps (removed 1.15 curl that drew painted spiral loops in 15.27.49!):
-                const float2 cCurl = cloudCurl2D(cPos * 1.35f, camPosW.w * 0.0028f) * 0.20f;
-                const float streak = cNoise(float3((cPos.x + cCurl.x) * 2.4f, (cPos.y + cCurl.y) * 1.25f, 5.1f + camPosW.w * 0.0018f));
-                const float detail = cNoise(float3((cPos + cCurl * 0.6f) * 10.0f, 8.7f));
-                const float cMask = smoothstep(0.54f, 0.84f, streak * 0.68f + detail * 0.32f) * smoothstep(0.03f, 0.20f, dir.z);
-                const float cFade = exp(-tCir / 380000.0f);
+                const float2 cPos = (o.xy + dir.xy * tCir + cWind * camPosW.w) * 0.000011f;
+                const float2 cCurl = cloudCurl2D(cPos * 1.35f, camPosW.w * 0.0028f) * 0.16f;
+                const float streak = cNoise(float3((cPos.x + cCurl.x) * 1.85f, (cPos.y + cCurl.y) * 1.35f, 5.1f + camPosW.w * 0.0018f));
+                const float detail = cNoise(float3((cPos + cCurl * 0.6f) * 8.5f, 8.7f));
+                const float cMask = smoothstep(0.56f, 0.86f, streak * 0.68f + detail * 0.32f) * smoothstep(0.12f, 0.38f, dir.z);
+                const float cFade = exp(-tCir / 320000.0f);
                 const float cirAng = acos(clamp(dot(dir, aSun), -1.0f, 1.0f));
                 const float iridBand = exp(-pow((cirAng - 0.19f) / 0.10f, 2.0f)) * (1.0f - nightW);
                 const float3 iridTint = float3(0.55f + 0.45f * cos(cirAng * 26.0f), 0.55f + 0.45f * cos(cirAng * 26.0f + 2.094f), 0.55f + 0.45f * cos(cirAng * 26.0f + 4.188f));
                 const float3 cirTwi = lerp(sunC, float3(1.48f, 0.48f, 0.28f), twiCloud * 0.88f);
-                const float3 cirCol = (cirTwi * (0.48f + 0.52f * hg(cosT, 0.62f) * 2.4f) + skyC * 0.26f + iridTint * (iridBand * 0.24f)) * lerp(0.46f, 0.14f, nightW);
+                const float3 cirCol = (cirTwi * (0.48f + 0.52f * hg(cosT, 0.62f) * 2.4f) + skyC * 0.26f + iridTint * (iridBand * 0.24f)) * lerp(0.38f, 0.12f, nightW);
                 cirrusAdd += cirCol * (cMask * cFade * T * horFade * (1.0f - saturate(clouds.x * 0.62f)));
             }
         }

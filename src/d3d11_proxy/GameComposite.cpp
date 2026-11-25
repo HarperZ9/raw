@@ -10,8 +10,9 @@ namespace SB::Proxy
 {
 namespace
 {
-constexpr uint64_t kCompositeHash = 0xa9facbe07de6f5d0ull;   // ps_a9facbe07de6f5d0 in reference captures
-constexpr uint64_t kTonemapHash   = 0x99d22a3d198a3b69ull;   // Skyrim tone map PS (never intercept as composite)
+constexpr uint64_t kCompositeHash     = 0xa9facbe07de6f5d0ull;   // ps_a9facbe07de6f5d0 in reference captures
+constexpr uint64_t kCompositeHash1170 = 0xc29d75356434a10aull;   // Skyrim SE 1.6.1170 live composite PS (t0=R11G11B10F, t1=AO, t2=Depth)
+constexpr uint64_t kTonemapHash       = 0x99d22a3d198a3b69ull;   // Skyrim tone map PS (never intercept as composite)
 
 struct SrvInfo
 {
@@ -52,6 +53,12 @@ bool IsDepthFormat(DXGI_FORMAT f)
            f == DXGI_FORMAT_D32_FLOAT;
 }
 
+bool IsHdrColorFormat(DXGI_FORMAT f)
+{
+    return f == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+           f == DXGI_FORMAT_R11G11B10_FLOAT;
+}
+
 bool IsFullSizeHdr16F(ID3D11Resource* r, UINT w, UINT h)
 {
     if (!r || w == 0 || h == 0) return false;
@@ -60,7 +67,7 @@ bool IsFullSizeHdr16F(ID3D11Resource* r, UINT w, UINT h)
     if (dim != D3D11_RESOURCE_DIMENSION_TEXTURE2D) return false;
     D3D11_TEXTURE2D_DESC td{};
     static_cast<ID3D11Texture2D*>(r)->GetDesc(&td);
-    return td.Width == w && td.Height == h && td.Format == DXGI_FORMAT_R16G16B16A16_FLOAT && td.SampleDesc.Count == 1;
+    return td.Width == w && td.Height == h && IsHdrColorFormat(td.Format) && td.SampleDesc.Count == 1;
 }
 
 void InspectSrv(ID3D11ShaderResourceView* srv, SrvInfo& out)
@@ -173,11 +180,12 @@ void GameComposite_BeforeDraw(ID3D11DeviceContext* real, UINT vertexCount)
     SrvInfo info[3];
     for (int k = 0; k < 3; ++k) InspectSrv(srvs[k], info[k]);
 
-    // Fast path: known reference composite hash; structural path: all Skyrim 1.6.1170 composite permutations.
-    bool matched = (hash == kCompositeHash);
+    // Fast path: known reference & Skyrim 1.6.1170 composite hashes; structural path: all HDR composite permutations.
+    const bool knownHash = (hash == kCompositeHash || hash == kCompositeHash1170);
+    bool matched = knownHash;
     if (!matched) {
         const bool t0Ok = info[0].valid && info[0].w == s.sceneW && info[0].h == s.sceneH &&
-                          (info[0].srvFmt == DXGI_FORMAT_R16G16B16A16_FLOAT || info[0].texFmt == DXGI_FORMAT_R16G16B16A16_FLOAT);
+                          (IsHdrColorFormat(info[0].srvFmt) || IsHdrColorFormat(info[0].texFmt));
         const bool t2Ok = info[2].valid && info[2].w == s.sceneW && info[2].h == s.sceneH &&
                           (IsDepthFormat(info[2].srvFmt) || IsDepthFormat(info[2].texFmt));
         const bool t1Ok = info[1].valid && info[1].res != info[0].res && info[1].res != info[2].res && info[0].res != info[2].res;
@@ -215,7 +223,7 @@ void GameComposite_BeforeDraw(ID3D11DeviceContext* real, UINT vertexCount)
     ++s.totalMatches;
     if (RecordUniqueHash(s.loggedHashes, s.loggedHashCount, 8, hash)) {
         Log("[GameComposite] composite matched (%s, hash=%016llx, rt=%s, t0=fmt%u %ux%u, t1=fmt%u %ux%u, t2=fmt%u %ux%u): AO %s, fog %s",
-            (hash == kCompositeHash ? "hash" : "structural"),
+            (knownHash ? "hash" : "structural"),
             (unsigned long long)hash, (rt0 == s.scene ? "scene" : "hdr16f"),
             (unsigned)info[0].srvFmt, info[0].w, info[0].h,
             (unsigned)info[1].srvFmt, info[1].w, info[1].h,

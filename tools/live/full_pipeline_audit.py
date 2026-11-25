@@ -18,6 +18,7 @@ Original work, MIT.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import dataclasses
 import json
 import os
@@ -159,6 +160,12 @@ class SkyrimCustomIniGuard:
             if not wrote_active:
                 out_lines.append("bAlwaysActive=1")
 
+        # Wave 67: temporarily disable gamepad in SkyrimCustom.ini (restored bit-exact on exit) so
+        # Skyrim SE accepts hardware keyboard/mouse dismissal of Creation Club Survival Mode modals.
+        has_main_gamepad = any(ln.strip().lower().startswith("bgamepaddisable") or ln.strip().lower().startswith("bgamepadenable=") for ln in out_lines)
+        if not has_main_gamepad:
+            out_lines.extend(["[MAIN]", "bGamepadEnable=0"])
+
         self.ini_path.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
 
     def restore(self) -> None:
@@ -169,6 +176,37 @@ class SkyrimCustomIniGuard:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.restore()
+
+
+class SkyrimPrefsGamepadGuard:
+    """Temporarily sets `bGamepadEnable=0` in SkyrimPrefs.ini so hardware keyboard modal dismissal works,
+    restoring the exact original file bytes in `__exit__`."""
+
+    def __init__(self, prefs_path: Path):
+        self.prefs_path = Path(prefs_path)
+        self._existed = False
+        self._orig_bytes: bytes = b""
+
+    def __enter__(self) -> "SkyrimPrefsGamepadGuard":
+        if self.prefs_path.exists():
+            self._existed = True
+            self._orig_bytes = self.prefs_path.read_bytes()
+            text = self._orig_bytes.decode("utf-8", errors="replace")
+            out_lines: list[str] = []
+            replaced = False
+            for ln in text.splitlines():
+                if ln.strip().lower().startswith("bgamepadenable="):
+                    out_lines.append("bGamepadEnable=0")
+                    replaced = True
+                else:
+                    out_lines.append(ln)
+            if replaced:
+                self.prefs_path.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._existed:
+            self.prefs_path.write_bytes(self._orig_bytes)
 
 
 def write_scene_init_bat(game_dir: Path, console_cmd: str) -> Path:
@@ -219,6 +257,262 @@ def emit_set_time(game_dir: Path, hour: float) -> Path:
 def emit_dismiss_modal(game_dir: Path) -> Path:
     """Writes `dismiss_modal` to `game_dir/raw_engine_go.txt` to close Creation Club modals cleanly."""
     return emit_engine_commands(game_dir, ["dismiss_modal"])
+
+
+def _send_win32_scancode_key(scan_code: int, extended: bool = False, hold_sec: float = 0.07) -> bool:
+    """Sends a real hardware scancode keydown+hold+keyup via Win32 SendInput (for DirectInput/Scaleform menus)."""
+    if sys.platform != "win32":
+        return False
+    try:
+        user32 = ctypes.windll.user32
+
+        class _KeybdInput(ctypes.Structure):
+            _fields_ = [
+                ("wVk", ctypes.c_ushort),
+                ("wScan", ctypes.c_ushort),
+                ("dwFlags", ctypes.c_uint32),
+                ("time", ctypes.c_uint32),
+                ("dwExtraInfo", ctypes.c_size_t),
+            ]
+
+        class _InputUnion(ctypes.Union):
+            _fields_ = [("ki", _KeybdInput), ("_pad", ctypes.c_ubyte * 32)]
+
+        class _Input(ctypes.Structure):
+            _fields_ = [("type", ctypes.c_uint32), ("u", _InputUnion)]
+
+        flags_down = 0x0008 | (0x0001 if extended else 0)  # KEYEVENTF_SCANCODE | KEYEVENTF_EXTENDEDKEY
+        flags_up = flags_down | 0x0002  # KEYEVENTF_KEYUP
+
+        down = _Input()
+        down.type = 1  # INPUT_KEYBOARD
+        down.u.ki = _KeybdInput(0, scan_code, flags_down, 0, 0)
+        up = _Input()
+        up.type = 1
+        up.u.ki = _KeybdInput(0, scan_code, flags_up, 0, 0)
+
+        sent1 = user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(_Input))
+        time.sleep(max(0.02, float(hold_sec)))
+        sent2 = user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(_Input))
+        return bool(sent1 == 1 and sent2 == 1)
+    except OSError:
+        return False
+
+
+def _focus_skyrim_window(pid: int | None = None) -> bool:
+    """Brings the live SkyrimSE.exe window to foreground so DirectInput receives modal dismissal keys."""
+    if sys.platform != "win32":
+        return False
+    try:
+        user32 = ctypes.windll.user32
+        found_hwnd = ctypes.c_void_p(0)
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        def _enum_cb(hwnd: int, _lp: int) -> bool:
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            if pid is not None:
+                wpid = ctypes.c_uint32(0)
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wpid))
+                if int(wpid.value) != int(pid):
+                    return True
+            buf = ctypes.create_unicode_buffer(128)
+            user32.GetWindowTextW(hwnd, buf, 128)
+            if "skyrim" in buf.value.lower() or pid is not None:
+                found_hwnd.value = hwnd
+                return False
+            return True
+
+        user32.EnumWindows(_enum_cb, 0)
+        if found_hwnd.value:
+            user32.ShowWindow(found_hwnd.value, 9)  # SW_RESTORE
+            user32.SetForegroundWindow(found_hwnd.value)
+            return True
+    except OSError:
+        return False
+    return False
+
+
+def _click_skyrim_client_frac(pid: int | None, fx: float = 0.531, fy: float = 0.761, hold_sec: float = 0.06) -> bool:
+    """Moves cursor to normalized `(fx, fy)` inside SkyrimSE's client area (default: Survival Mode 'No' button)
+    and sends a real hardware left mouse click via Win32 SendInput."""
+    if sys.platform != "win32":
+        return False
+    try:
+        user32 = ctypes.windll.user32
+        found_hwnd = ctypes.c_void_p(0)
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        def _enum_cb(hwnd: int, _lp: int) -> bool:
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            if pid is not None:
+                wpid = ctypes.c_uint32(0)
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wpid))
+                if int(wpid.value) != int(pid):
+                    return True
+            buf = ctypes.create_unicode_buffer(128)
+            user32.GetWindowTextW(hwnd, buf, 128)
+            if "skyrim" in buf.value.lower() or pid is not None:
+                found_hwnd.value = hwnd
+                return False
+            return True
+
+        user32.EnumWindows(_enum_cb, 0)
+        hwnd = found_hwnd.value
+        if not hwnd:
+            return False
+
+        class _Rect(ctypes.Structure):
+            _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+        class _Point(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+        class _MouseInput(ctypes.Structure):
+            _fields_ = [
+                ("dx", ctypes.c_long),
+                ("dy", ctypes.c_long),
+                ("mouseData", ctypes.c_uint32),
+                ("dwFlags", ctypes.c_uint32),
+                ("time", ctypes.c_uint32),
+                ("dwExtraInfo", ctypes.c_size_t),
+            ]
+
+        class _InputUnion(ctypes.Union):
+            _fields_ = [("mi", _MouseInput), ("_pad", ctypes.c_ubyte * 32)]
+
+        class _Input(ctypes.Structure):
+            _fields_ = [("type", ctypes.c_uint32), ("u", _InputUnion)]
+
+        rc = _Rect()
+        if not user32.GetClientRect(hwnd, ctypes.byref(rc)):
+            return False
+        cw = max(1, int(rc.right - rc.left))
+        ch = max(1, int(rc.bottom - rc.top))
+        pt = _Point(int(cw * fx), int(ch * fy))
+        user32.ClientToScreen(hwnd, ctypes.byref(pt))
+
+        user32.ShowWindow(hwnd, 9)
+        # Attach to current foreground thread so Windows grants SetForegroundWindow cleanly
+        fg_hwnd = user32.GetForegroundWindow()
+        cur_tid = ctypes.windll.kernel32.GetCurrentThreadId()
+        fg_tid = user32.GetWindowThreadProcessId(fg_hwnd, None) if fg_hwnd else 0
+        tgt_tid = user32.GetWindowThreadProcessId(hwnd, None)
+        if fg_tid and fg_tid != cur_tid:
+            user32.AttachThreadInput(cur_tid, fg_tid, True)
+        if tgt_tid and tgt_tid != cur_tid:
+            user32.AttachThreadInput(cur_tid, tgt_tid, True)
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+        user32.SetFocus(hwnd)
+        if tgt_tid and tgt_tid != cur_tid:
+            user32.AttachThreadInput(cur_tid, tgt_tid, False)
+        if fg_tid and fg_tid != cur_tid:
+            user32.AttachThreadInput(cur_tid, fg_tid, False)
+        time.sleep(0.08)
+
+        # Skyrim SE Scaleform reads relative DirectInput mouse deltas from screen center (0.5, 0.5).
+        # Step relative mouse movement smoothly from center -> (fx, fy) so Scaleform highlights "No", then click!
+        rel_dx = int(cw * (fx - 0.5))
+        rel_dy = int(ch * (fy - 0.5))
+        steps = 8
+        for step_i in range(steps):
+            sdx = rel_dx // steps + (1 if step_i < abs(rel_dx) % steps and rel_dx > 0 else (-1 if step_i < abs(rel_dx) % steps and rel_dx < 0 else 0))
+            sdy = rel_dy // steps + (1 if step_i < abs(rel_dy) % steps and rel_dy > 0 else (-1 if step_i < abs(rel_dy) % steps and rel_dy < 0 else 0))
+            mv = _Input()
+            mv.type = 0  # INPUT_MOUSE
+            mv.u.mi = _MouseInput(sdx, sdy, 0, 0x0001, 0, 0)  # relative MOUSEEVENTF_MOVE
+            user32.SendInput(1, ctypes.byref(mv), ctypes.sizeof(_Input))
+            time.sleep(0.015)
+
+        user32.SetCursorPos(pt.x, pt.y)
+        lp = (int(ch * fy) << 16) | (int(cw * fx) & 0xFFFF)
+        user32.PostMessageW(hwnd, 0x0200, 0, lp)
+        time.sleep(0.06)
+
+        dn = _Input()
+        dn.type = 0
+        dn.u.mi = _MouseInput(0, 0, 0, 0x0002, 0, 0)  # MOUSEEVENTF_LEFTDOWN
+        up = _Input()
+        up.type = 0
+        up.u.mi = _MouseInput(0, 0, 0, 0x0004, 0, 0)  # MOUSEEVENTF_LEFTUP
+        user32.SendInput(1, ctypes.byref(dn), ctypes.sizeof(_Input))
+        user32.PostMessageW(hwnd, 0x0201, 1, lp)
+        time.sleep(max(0.04, float(hold_sec)))
+        user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(_Input))
+        user32.PostMessageW(hwnd, 0x0202, 0, lp)
+        return True
+    except OSError:
+        return False
+
+
+def dismiss_survival_modal_if_paused(
+    game_dir: Path,
+    engine_out: Path,
+    proc: subprocess.Popen[bytes] | None = None,
+    max_attempts: int = 3,
+    force_check_first: bool = False,
+) -> bool:
+    """Checks `view` for Creation Club Survival Mode modal pause and dismisses it cleanly via mouse click on 'No' + Right/Enter."""
+    dismissed_any = False
+    for attempt in range(max(1, int(max_attempts))):
+        v = query_engine_view_state(game_dir, engine_out, timeout_sec=1.5)
+        paused = (v is not None) and (int(v.get("menu_paused", 0)) != 0 or int(v.get("menu_stack_depth", 1)) > 1)
+        if not paused and not (force_check_first and attempt == 0 and v is None):
+            break
+        emit_dismiss_modal(game_dir)
+        pid = proc.pid if (proc is not None and proc.poll() is None) else None
+        # Click "No" button at (0.531, 0.761) inside Skyrim's MessageBoxMenu, then fallback Right -> Enter
+        _click_skyrim_client_frac(pid, fx=0.531, fy=0.761, hold_sec=0.06)
+        time.sleep(0.15)
+        if _focus_skyrim_window(pid):
+            _send_win32_scancode_key(0x4D, extended=True, hold_sec=0.07)   # Right Arrow
+            time.sleep(0.12)
+            _send_win32_scancode_key(0x1C, extended=False, hold_sec=0.07)  # Enter
+        dismissed_any = True
+        time.sleep(0.30)
+    return dismissed_any
+
+
+def emit_audit_flywheel_receipt(
+    out_dir: Path,
+    report_json: Path,
+    report_md: Path,
+    repo_root: Path | None = None,
+    catalogue: bool = False,
+    run_oracle: bool = True,
+) -> dict[str, Any] | None:
+    """Emits a canonical `engine-receipt/1` JSON envelope via `engine_to_flywheel_receipt.py`."""
+    bridge = Path(r"C:\dev\tools\interop\engine_to_flywheel_receipt.py")
+    root = repo_root or Path(__file__).resolve().parents[2]
+    receipt_out = Path(out_dir) / "engine_receipt.json"
+    if not bridge.is_file():
+        return None
+    cmd = [
+        sys.executable,
+        str(bridge),
+        "emit",
+        "--engine", "raw",
+        "--flagship", "superframe",
+        "--task-id", f"raw-live-audit-{Path(out_dir).name}",
+        "--root", str(root),
+        "--artifact", str(report_json),
+        "--artifact", str(report_md),
+        "--out", str(receipt_out),
+    ]
+    if catalogue:
+        cmd.append("--catalogue")
+    test_script = root / "tests" / "test_visual_heuristics.py"
+    if run_oracle and test_script.is_file():
+        cmd.extend(["--oracle-cmd", "--", sys.executable, str(test_script)])
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        if proc.returncode == 0 and receipt_out.is_file():
+            return json.loads(proc.stdout.strip() or "{}")
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        return None
+    return None
 
 
 def build_cam_sweep_command(
@@ -509,8 +803,13 @@ def run_offline_audit(
         },
         "scenes": scene_reports,
     }
-    (out_dir / "full_pipeline_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    (out_dir / "full_pipeline_report.md").write_text(_format_markdown(report), encoding="utf-8")
+    report_json = out_dir / "full_pipeline_report.json"
+    report_md = out_dir / "full_pipeline_report.md"
+    report_json.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    report_md.write_text(_format_markdown(report), encoding="utf-8")
+    receipt_meta = emit_audit_flywheel_receipt(out_dir, report_json, report_md, run_oracle=False)
+    if receipt_meta is not None:
+        report["engine_receipt"] = receipt_meta
     return report
 
 
@@ -550,7 +849,8 @@ def run_live_audit(
     sentinel_cleaned = False
     scene_init_path = game_dir / SCENE_INIT_FILENAME
 
-    with SkyrimCustomIniGuard(custom_ini_path) as ini_guard:
+    prefs_ini_path = Path(custom_ini_path).with_name("SkyrimPrefs.ini")
+    with SkyrimCustomIniGuard(custom_ini_path) as ini_guard, SkyrimPrefsGamepadGuard(prefs_ini_path):
         try:
             for spec in selected:
                 scene_out = out_dir / spec.name
@@ -579,23 +879,32 @@ def run_live_audit(
                     )
 
                     if proc.poll() is None:
-                        # Wave 66: immediately apply exact gamehour (set_time) & dismiss Creation Club modals
+                        # Wave 67: apply exact gamehour (set_time), wait briefly on exteriors for CC Survival Mode
+                        # modal to settle, and reliably dismiss any MessageBoxMenu BEFORE starting bursts!
                         post_ready_cmds: list[str] = []
                         scene_hour = parse_scene_gamehour(spec.console_cmd)
                         if scene_hour is not None:
                             post_ready_cmds.append(f"set_time {max(0.0, min(23.99, scene_hour)):g}")
                         post_ready_cmds.append("dismiss_modal")
                         emit_engine_commands(game_dir, post_ready_cmds)
-                        time.sleep(0.45)
+                        time.sleep(1.5 if not spec.is_interior else 0.45)
+                        dismiss_survival_modal_if_paused(game_dir, engine_out, proc=proc, max_attempts=4)
 
+                        # Wave 67: lock sweep_sign = +1.0 (unidirectional) across improved, view_motion_outline,
+                        # and view_sun_shadow so MV reprojection compares identical camera pan direction (+mv)!
                         sweep_sign = 1.0
+                        sweep_pulse_frames = max(480, int(cam_sweep_frames))
                         last_sweep_emit = 0.0
                         last_modal_poll = time.time()
-                        # Second dismiss_modal right before starting capture (+ cam_sweep if enabled)
                         pre_cap_cmds: list[str] = ["dismiss_modal"]
                         if cam_sweep:
                             pre_cap_cmds.append(
-                                build_cam_sweep_command(cam_sweep_yaw, cam_sweep_pitch, cam_sweep_fwd, cam_sweep_frames)
+                                build_cam_sweep_command(
+                                    cam_sweep_yaw * sweep_sign,
+                                    cam_sweep_pitch * sweep_sign,
+                                    cam_sweep_fwd,
+                                    sweep_pulse_frames,
+                                )
                             )
                             last_sweep_emit = time.time()
                         emit_engine_commands(game_dir, pre_cap_cmds)
@@ -619,25 +928,21 @@ def run_live_audit(
                             if proc.poll() is not None:
                                 break
                             now_t = time.time()
-                            # Periodically check for delayed Survival Mode modal pauses and dismiss cleanly
-                            if (now_t - last_modal_poll) >= 5.0 and not engine_go.exists():
+                            # Poll every 1.5s for delayed Survival Mode modal pauses and dismiss immediately
+                            if (now_t - last_modal_poll) >= 1.5 and not engine_go.exists():
                                 last_modal_poll = now_t
-                                v_chk = query_engine_view_state(game_dir, engine_out, timeout_sec=1.2)
-                                if v_chk is not None and int(v_chk.get("menu_paused", 0)) != 0:
-                                    emit_dismiss_modal(game_dir)
-                                    time.sleep(0.25)
-                            # Keep gentle camera sweep alive across long multi-step captures by alternating yaw/pitch
-                            if cam_sweep and (now_t - last_sweep_emit) >= 3.5 and not engine_go.exists():
-                                sweep_sign = -sweep_sign
+                                dismiss_survival_modal_if_paused(game_dir, engine_out, proc=proc, max_attempts=2)
+                            # Keep unidirectional gentle camera sweep alive (never flip sweep_sign mid-burst!)
+                            if cam_sweep and (now_t - last_sweep_emit) >= 4.5 and not engine_go.exists():
                                 emit_cam_sweep(
                                     game_dir,
                                     cam_sweep_yaw * sweep_sign,
                                     cam_sweep_pitch * sweep_sign,
                                     cam_sweep_fwd,
-                                    cam_sweep_frames,
+                                    sweep_pulse_frames,
                                 )
                                 last_sweep_emit = now_t
-                            time.sleep(0.4)
+                            time.sleep(0.35)
                 finally:
                     _stop_skyrim(proc)
                     for tmpf in (go_file, done_file, engine_go):
@@ -688,8 +993,13 @@ def run_live_audit(
         },
         "scenes": scene_reports,
     }
-    (out_dir / "full_pipeline_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    (out_dir / "full_pipeline_report.md").write_text(_format_markdown(report), encoding="utf-8")
+    report_json = out_dir / "full_pipeline_report.json"
+    report_md = out_dir / "full_pipeline_report.md"
+    report_json.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    report_md.write_text(_format_markdown(report), encoding="utf-8")
+    receipt_meta = emit_audit_flywheel_receipt(out_dir, report_json, report_md, run_oracle=True)
+    if receipt_meta is not None:
+        report["engine_receipt"] = receipt_meta
     return report
 
 

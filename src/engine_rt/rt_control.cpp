@@ -93,11 +93,27 @@ HWND FindMainGameWindow() {
 bool PostBackgroundVirtualKey(HWND hwnd, UINT vk) {
     if (!hwnd || !IsWindow(hwnd)) return false;
     const UINT scan = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
-    const LPARAM ext = (vk == VK_RIGHT || vk == VK_LEFT || vk == VK_UP || vk == VK_DOWN) ? (LPARAM(1) << 24) : 0;
+    const bool isExt = (vk == VK_RIGHT || vk == VK_LEFT || vk == VK_UP || vk == VK_DOWN);
+    const LPARAM ext = isExt ? (LPARAM(1) << 24) : 0;
     const LPARAM lpDown = 1 | (LPARAM(scan & 0xFFu) << 16) | ext;
     const LPARAM lpUp   = lpDown | (LPARAM(1) << 30) | (LPARAM(1) << 31);
     const BOOL ok1 = PostMessageW(hwnd, WM_KEYDOWN, static_cast<WPARAM>(vk), lpDown);
     const BOOL ok2 = PostMessageW(hwnd, WM_KEYUP,   static_cast<WPARAM>(vk), lpUp);
+    // Skyrim SE Scaleform MessageBoxMenu reads DirectInput scan codes rather than WM_KEYDOWN alone;
+    // when the game window is foreground, also emit hardware scan-code SendInput events.
+    if (GetForegroundWindow() == hwnd && scan != 0u) {
+        INPUT in[2]{};
+        const DWORD extFlag = isExt ? KEYEVENTF_EXTENDEDKEY : 0u;
+        in[0].type       = INPUT_KEYBOARD;
+        in[0].ki.wVk     = static_cast<WORD>(vk);
+        in[0].ki.wScan   = static_cast<WORD>(scan);
+        in[0].ki.dwFlags = KEYEVENTF_SCANCODE | extFlag;
+        in[1].type       = INPUT_KEYBOARD;
+        in[1].ki.wVk     = static_cast<WORD>(vk);
+        in[1].ki.wScan   = static_cast<WORD>(scan);
+        in[1].ki.dwFlags = KEYEVENTF_SCANCODE | extFlag | KEYEVENTF_KEYUP;
+        SendInput(2u, in, sizeof(INPUT));
+    }
     return ok1 != FALSE && ok2 != FALSE;
 }
 

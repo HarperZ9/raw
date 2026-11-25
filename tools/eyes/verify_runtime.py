@@ -31,16 +31,21 @@ def _rows(live_dir, name, n=8000):
         return None
     out = []
     try:
-        lines = open(p, encoding="utf-8", errors="ignore").read().splitlines()
-    except Exception:
+        with open(p, encoding="utf-8", errors="ignore") as fh:
+            lines = fh.read().splitlines()
+    except OSError as exc:
+        print("[verify_runtime] failed to read %s: %s" % (p, exc), file=sys.stderr)
         return None
+    malformed = 0
     for ln in lines[-n:]:
         ln = ln.strip()
         if ln:
             try:
                 out.append(json.loads(ln))
-            except Exception:
-                pass
+            except (ValueError, json.JSONDecodeError):
+                malformed += 1
+    if malformed:
+        print("[verify_runtime] skipped %d malformed JSON line(s) in %s" % (malformed, name), file=sys.stderr)
     return out
 
 

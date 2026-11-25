@@ -1461,8 +1461,11 @@ def analyze_water_temporal_flow_speed(
     if water_flow_diag_image is not None:
         wf = load_rgb_float(water_flow_diag_image)
         _, wf = _match_shape(imgs[0], wf)
-        # WaterView=7 dims non-water pixels cleanly; active water pixels carry R=flow, G=depth, B=shore
-        active_v7 = (wf.max(axis=2) > 0.22) & (_luminance(wf) > 0.08)
+        hud_ok_wf = _hud_valid_mask(h, w)
+        # WaterView=7 dims non-water pixels to 0.12x and encodes real water with chromatic aqua/teal/magenta channels;
+        # exclude neutral white/grey HUD/snow/modal pixels where (max - min) <= 0.12!
+        wf_chroma = wf.max(axis=2) - wf.min(axis=2)
+        active_v7 = hud_ok_wf & (wf.max(axis=2) > 0.22) & (_luminance(wf) > 0.12) & (wf_chroma > 0.12)
         active_v7_frac = float(np.mean(active_v7))
         if active_v7_frac < 0.005:
             return HeuristicResult(
@@ -1485,7 +1488,8 @@ def analyze_water_temporal_flow_speed(
         wf = load_rgb_float(water_flow_diag_image)
         _, wf = _match_shape(imgs[0], wf)
         wf_roi = wf[y0:y1, x0:x1, :]
-        wmask = (wf_roi.max(axis=2) > 0.22) & (_luminance(wf_roi) > 0.08)
+        wf_roi_chroma = wf_roi.max(axis=2) - wf_roi.min(axis=2)
+        wmask = (wf_roi.max(axis=2) > 0.22) & (_luminance(wf_roi) > 0.12) & (wf_roi_chroma > 0.12)
     else:
         r0, g0, b0 = imgs[0][y0:y1, x0:x1, 0], imgs[0][y0:y1, x0:x1, 1], imgs[0][y0:y1, x0:x1, 2]
         wmask = (b0 > r0 * 1.10) & (b0 > 0.14) & (((b0 + g0) * 0.5) > (r0 + 0.025))
@@ -1979,7 +1983,7 @@ def audit_scene_bundle(
             results.append(
                 analyze_water_temporal_flow_speed(
                     imp_seq,
-                    water_mask=w_depth,
+                    water_mask=None if w_flow is not None else w_depth,
                     is_interior=resolved_interior,
                     water_flow_diag_image=w_flow,
                     mv_seq_frames=mv_seq,

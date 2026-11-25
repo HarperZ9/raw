@@ -875,6 +875,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                 float wHits = 0.0f;
                 int hHits = 0, vHits = 0;
                 bool vFgOccluded = false;
+                bool vDroppedWater = false;
                 [unroll] for (int ey = -1; ey <= 1; ++ey) {
                     [unroll] for (int ex = -1; ex <= 1; ++ex) {
                         if (ex == 0 && ey == 0) continue;
@@ -888,16 +889,20 @@ void water(uint3 id : SV_DispatchThreadID) {
                             wHits += 1.0f;
                             if (ey == 0) { hHits += 1; }
                             if (ex == 0) { vHits += 1; }
-                        } else if (ex == 0 && zBn < zSurfW - 2.0f) {
-                            // Foreground grass blade, branch, rock, or railing crossing in front of water: NOT a scanline hole!
-                            vFgOccluded = true;
+                        } else if (ex == 0) {
+                            if (Ln.a <= 1.5f || zBn < zSurfW + 1.0f) {
+                                // Foreground grass blade, twig, reed, rock, or riverbank crossing water: NOT a scanline hole!
+                                vFgOccluded = true;
+                            } else if (Ln.a > 1.5f && Ln.x < 1.0f) {
+                                vDroppedWater = true;
+                            }
                         }
                     }
                 }
                 edgeCov = smoothstep(0.5f, 7.0f, wHits);
-                // Detect true un-occluded alternating-row water-plane dropout ONLY when neither vertical neighbor
-                // is occluded by foreground geometry (zBn >= zSurfW - 2.0f) and vertical +-2 has water:
-                if (view == 7u && !vFgOccluded && depthV0 > 1.5f && depthV0 < 24.0f && hHits == 2 && vHits == 0) {
+                // Detect true un-occluded alternating-row water-plane dropout ONLY when a vertical neighbor actually
+                // carried water layer (Ln.a > 1.5) that dropped out with no foreground twig/reed occlusion:
+                if (view == 7u && vDroppedWater && !vFgOccluded && depthV0 > 1.5f && depthV0 < 24.0f && hHits == 2 && vHits == 0) {
                     const float4 Lu2 = Layer.Load(int3(clamp(ip.xy + int2(0, -2), int2(0, 0), limE), 0));
                     const float4 Ld2 = Layer.Load(int3(clamp(ip.xy + int2(0,  2), int2(0, 0), limE), 0));
                     scanlineGapAlarm = (Lu2.a > 1.5f && Lu2.x < 1.0f) || (Ld2.a > 1.5f && Ld2.x < 1.0f);
@@ -939,15 +944,15 @@ void water(uint3 id : SV_DispatchThreadID) {
             else if (view == 6u) { col = body; }   // the water's body alone: the bent bed, dimmed and filled in
             else if (view == 5u) { col = F > 0.25f ? float3(1.0f, 0.0f, 0.0f) : F > 0.06f ? float3(0.0f, 1.0f, 0.0f) : float3(0.0f, 0.0f, 1.0f); }
             else if (view == 7u) {
-                // Wave 65 Water Flow Velocity, Optical Depth & Scanline Continuity Diagnostic:
-                // Healthy channels kept strictly disjoint from bright MAGENTA (1,0,1) alarm even after sRGB gamma:
-                //   R = flow * 0.55 (sRGB <= 0.76), G = 0.10 + depth/120 * 0.85 (sRGB >= 0.35), B = shoreAlpha * 0.65.
-                // Bright MAGENTA (1,0,1) fires EXCLUSIVELY on genuine shallow-water continuity dropouts / scanline holes!
+                // Wave 67 Water Flow Velocity, Optical Depth & Scanline Continuity Diagnostic:
+                // Healthy channels encode clean emerald-teal strictly disjoint from bright MAGENTA (1,0,1) alarm:
+                //   R = flow * 0.32, G = 0.38 + depth/120 * 0.58 (dominant green eliminates lavender cast on shallows),
+                //   B = shoreAlpha * 0.46. Bright MAGENTA (1,0,1) fires EXCLUSIVELY on genuine un-occluded dropouts!
                 const bool shallowDropAlarm = scanlineGapAlarm || (depthV0 > 2.5f && shoreBlend < 0.05f);
                 col = shallowDropAlarm ? float3(1.0f, 0.0f, 1.0f)
-                                       : float3(saturate(riverFlowSpeed) * 0.55f,
-                                                0.10f + saturate(depthV0 / 120.0f) * 0.85f,
-                                                saturate(shoreAlpha) * 0.65f);
+                                       : float3(saturate(riverFlowSpeed) * 0.32f,
+                                                0.38f + saturate(depthV0 / 120.0f) * 0.58f,
+                                                saturate(shoreAlpha) * 0.46f);
             }
         } else {
             // Wave 42 Exact Physical Underwater Snell's Window (48.6 deg critical angle, sin(theta_c) = 1 / 1.333):

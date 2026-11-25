@@ -109,12 +109,16 @@ def oracle_violations(live_dir):
         return None
     try:
         bindings, raw_eyes = _imports()
-    except Exception:
+    except ImportError as exc:
+        print("[membrane_gate] oracle import unavailable: %s" % exc, file=sys.stderr)
         return None
     v = []
     def safe(fn):
-        try: return fn()
-        except Exception: return None
+        try:
+            return fn()
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            print("[membrane_gate] oracle reader error: %s" % exc, file=sys.stderr)
+            return None
     a = safe(lambda: bindings.asserts(live_dir))
     if a and not a.get("clean", True):
         v += ["binding: %s -> %s" % (x.get("pass"), [d["assert"] for d in x.get("asserts", [])])
@@ -140,7 +144,8 @@ def build_freshness(manifest=None, roots=None):
     """True=fresh, False=stale, None=cannot tell. Source-content hash vs manifest."""
     try:
         import build_stamp
-    except Exception:
+    except ImportError as exc:
+        print("[membrane_gate] build_stamp unavailable: %s" % exc, file=sys.stderr)
         return None
     if manifest is None:
         manifest = os.path.join(HERE, "build_manifest.json")
@@ -150,10 +155,12 @@ def build_freshness(manifest=None, roots=None):
     if not os.path.exists(manifest):
         return None
     try:
-        built = json.load(open(manifest, encoding="utf-8"))
+        with open(manifest, encoding="utf-8") as mf:
+            built = json.load(mf)
         cur, _n = build_stamp.hash_sources(roots)
         return cur == built.get("source_sha")
-    except Exception:
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print("[membrane_gate] build_freshness error: %s" % exc, file=sys.stderr)
         return None
 
 

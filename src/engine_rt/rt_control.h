@@ -21,8 +21,8 @@ bool SetSetting(const Image& img, const std::vector<RefTarget>& refs, const std:
 size_t ApplyStartupSettings(const Image& img, const std::vector<RefTarget>& refs, const std::string& ini,
                             const std::string& logPath);
 
-// The go-file protocol: raw_engine_go.txt holds commands (set, wait, measure, capture, atlas); results go to
-// <out>/control_results.jsonl and raw_engine_done.txt answers.
+// The go-file protocol: raw_engine_go.txt holds commands (set, wait, measure, capture, atlas, view,
+// cam_sweep, cam_stop, set_pose); results go to <out>/control_results.jsonl and raw_engine_done.txt answers.
 // invalidateStateCache: the proxy's, called after a command touches pipeline state on the real context.
 void ControlInit(const Image& img, const std::vector<RefTarget>* refs, const std::string& gameDir, const std::string& outDir,
                  void (*invalidateStateCache)());

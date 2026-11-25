@@ -462,6 +462,11 @@ struct GpuTestRig {
 
     ~GpuTestRig()
     {
+        if (fence && fenceEvent && fence->GetCompletedValue() < fenceVal) {
+            if (SUCCEEDED(fence->SetEventOnCompletion(fenceVal, fenceEvent))) {
+                WaitForSingleObject(fenceEvent, 60000);
+            }
+        }
         if (fenceEvent) {
             CloseHandle(fenceEvent);
             fenceEvent = nullptr;
@@ -549,7 +554,7 @@ struct GpuTestRig {
         if (FAILED(queue->Signal(fence.Get(), fenceVal))) return false;
         if (fence->GetCompletedValue() < fenceVal) {
             if (FAILED(fence->SetEventOnCompletion(fenceVal, fenceEvent))) return false;
-            WaitForSingleObject(fenceEvent, 15000);
+            WaitForSingleObject(fenceEvent, isWarp ? 60000 : 15000);
         }
         return fence->GetCompletedValue() >= fenceVal;
     }

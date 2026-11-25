@@ -141,8 +141,8 @@ float4 dof_focus(float4 at : SV_Position) : SV_Target0 {
 }
 
 float4 dof_coc(float4 at : SV_Position) : SV_Target0 {
-    // Live 3D World-Map & UI Depth Isolation: exact UI::Singleton menuPaused (timeEnv.w) + aerial world-map altitude.
-    if (timeEnv.w > 0.5f) {
+    // Live 3D World-Map, UI & Debug-View Isolation: zero CoC on menus (timeEnv.w) and ALL Lighting/Water Debug Views (flags.w != 0).
+    if (flags.w != 0u || timeEnv.w > 0.5f) {
         const float2 fullPx0 = (floor(at.xy) + 0.5f) * 2.0f;
         const float3 uiCol = SrcA.SampleLevel(Lin, saturate(fullPx0 * dims.zw), 0.0f).rgb;
         return float4((any(isnan(uiCol)) || any(isinf(uiCol))) ? 0.0f.xxx : clamp(uiCol, 0.0f.xxx, 32.0f.xxx), 0.0f);
@@ -207,6 +207,7 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
     const float2 invDim = 1.0f / dim;
     const float2 px = floor(at.xy);
     const float4 centerRaw = SrcA.Load(int3(px, 0));
+    if (flags.w != 0u) { return float4(centerRaw.rgb, 0.0f); }
     const float3 centerRgb = dofSanitizeRgb(centerRaw.rgb);
     const float centerCoc = (isnan(centerRaw.a) || isinf(centerRaw.a)) ? 0.0f : clamp(centerRaw.a, -1.0f, 1.0f);
     if (WaveActiveAllTrue(dofParams.x <= 1.0f)) { return float4(centerRgb, 0.0f); }
@@ -328,6 +329,10 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
 float4 dof_post(float4 at : SV_Position) : SV_Target0 {
     float w, h;
     SrcA.GetDimensions(w, h);
+    if (flags.w != 0u) {
+        const int2 pMax = max(int2(w, h) - 1, int2(0, 0));
+        return SrcA.Load(int3(clamp(int2(floor(at.xy)), int2(0, 0), pMax), 0));
+    }
     const float2 invDim = 1.0f / max(float2(w, h), float2(1.0f, 1.0f));
     const float2 uv = (floor(at.xy) + 0.5f) * invDim;
     const float4 c0Raw = SrcA.SampleLevel(Lin, uv, 0.0f);
@@ -401,7 +406,8 @@ float3 applyWetLensOptics(float2 uv, float3 baseCol) {
 float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
     const int2 ip = int2(at.xy);
     const float4 sharp = SrcA.Load(int3(ip, 0));
-    if (timeEnv.w > 0.5f) { return sharp; }
+    // Bit-exact passthrough on ALL Lighting/Water Debug Views (flags.w != 0) and paused menus (timeEnv.w > 0.5):
+    if (flags.w != 0u || timeEnv.w > 0.5f) { return sharp; }
     const float2 uv = (floor(at.xy) + 0.5f) * dims.zw;
     if (dofParams.x <= 1.0f) { return float4(applyWetLensOptics(uv, sharp.rgb), sharp.a); }
     const float fGpu = FocusTex.Load(int3(0, 0, 0)).x;

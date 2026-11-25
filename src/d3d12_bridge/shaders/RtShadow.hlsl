@@ -299,9 +299,13 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float4 q4 = stbnPrime4(px, frameIndex);
         const float2 rDisk = stbnR2(px, frameIndex + 3.0f);
         const float3 sunDirUnit = (dot(sunDir.xyz, sunDir.xyz) > 1.0e-8f) ? normalize(sunDir.xyz) : float3(0.0f, 0.0f, 1.0f);
+        const uint rtTier = (giFlags >> 8u) & 7u;
         if (sunDir.w > 0.5f && sunColour.w > 0.5f && dot(n, sunDirUnit) > 0.0f) {
-            // Wave 54 Physical 0.53-deg Solar-Disk Angular-Cone Soft Shadows (tan(0.265 deg) = 0.0046251):
-            // Widens smoothly under overcast cloud cover + scales penumbra with blocker distance for physical soft shadows!
+            // Wave 54 + Wave 65 Boil-Free World-Locked Multi-Tap PCSS Solar-Disk Shadows:
+            // Vis.x has no temporal history pass, so frameIndex-jittered rays caused exterior shadow boiling!
+            // Instead, trace 1 exact unjittered center blocker-search ray + N deterministic equilateral
+            // golden-angle solar-disk taps rotated by a smooth world-space hash (zero frameIndex jitter,
+            // zero screen-space crawl during cam_sweep, silky penumbras after Lighting.hlsl bilateral filter!).
             static const float kSolarDiskTan = 0.0046251f;
             const float overcastWiden = lerp(1.0f, 1.85f, saturate(clouds.x * 0.85f + weather.w * 0.35f));
             const float solarCone = max(sunCone, kSolarDiskTan) * overcastWiden;
@@ -309,19 +313,32 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float3 oSun = p + biasN * clamp((0.015f + 0.002f * z) * (1.0f + grazingSun * 1.35f) + (isSkinnedMesh ? 0.42f : 0.28f), 0.30f, 4.5f);
             const float turn = saturate(1.0f - dot(ng, sunDirUnit) / 0.45f);
             const float tMinS = max(max(termDist, 1.8f) * turn * turn, oScale * 0.25f * turn);
+
+            const float3 sTan = normalize(cross(sunDirUnit, abs(sunDirUnit.z) < 0.9f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f)));
+            const float3 sBit = cross(sunDirUnit, sTan);
+            // Smooth world-anchored phase (static in world space -> zero boiling when still AND zero screen-swim on cam_sweep):
+            const float3 wpSun = p + camPosW.xyz;
+            const float worldPhase = frac(dot(floor(wpSun * 0.25f), float3(0.1031f, 0.11369f, 0.13787f))) * 6.2831853f;
+
             Hit hBlocker;
-            float effCone = solarCone;
+            float effCone = solarCone * 0.65f;
             float vSum = 0.0f;
-            if (traceHit(oSun + sunDirUnit * tMinS, jitterDir(sunDirUnit, solarCone * 0.55f, rDisk), sunLength, hBlocker)) {
-                effCone = clamp(solarCone * (0.35f + 1.55f * saturate(hBlocker.t / 190.0f)), kSolarDiskTan * 0.50f, solarCone * 2.0f);
+            if (traceHit(oSun + sunDirUnit * tMinS, sunDirUnit, sunLength, hBlocker)) {
+                effCone = clamp(solarCone * (0.32f + 1.48f * saturate(hBlocker.t / 190.0f)), kSolarDiskTan * 0.45f, solarCone * 1.85f);
             } else {
                 vSum += 1.0f;
             }
-            vSum += visible(oSun, jitterDir(sunDirUnit, effCone, q4.zw), tMinS, sunLength);
-            vis.x = saturate(vSum * 0.5f);
+            const uint nSunRing = (rtTier <= 1u) ? 2u : 3u;
+            const float ringStep = 6.2831853f / float(nSunRing);
+            [loop] for (uint siS = 0u; siS < nSunRing; ++siS) {
+                const float angS = worldPhase + float(siS) * ringStep;
+                const float radS = effCone * (0.62f + 0.30f * (float(siS & 1u)));
+                const float3 dRing = normalize(sunDirUnit + (sTan * cos(angS) + sBit * sin(angS)) * radS);
+                vSum += visible(oSun, dRing, tMinS, sunLength);
+            }
+            vis.x = saturate(vSum / float(nSunRing + 1u));
         }
         // Hardware-tier adaptive DXR ray budget (RTX 3060=Tier 1 -> 1 spp, 4070/4090=Tier 2-3 -> 2 spp, 5090=Tier 4 -> 3 spp GI):
-        const uint rtTier = (giFlags >> 8u) & 7u;
         const bool isInterior = (sunColour.w <= 0.5f);
         const float aoLen = isInterior ? (skyLength > 0.0f ? min(skyLength, 220.0f) : 180.0f) : skyLength;
         if (aoLen > 0.0f) {

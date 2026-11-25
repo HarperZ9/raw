@@ -50,6 +50,7 @@ bool g_busy = false;
 uint64_t g_presents = 0;
 void (*g_invalidate)() = nullptr;
 bool g_emittersAtStart = false;
+CameraSweepState g_camSweep{};
 
 const RefTarget* Find(const std::string& name) {
     for (const auto& r : *g_refs)
@@ -218,6 +219,38 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             Result(j);
         } else if (op == "view") {
             Result("{\"cmd\":\"view\"," + ViewJson() + "}");
+        } else if (op == "cam_sweep") {
+            float dy = 0.0f, dp = 0.0f, df = 0.0f;
+            int frames = 0;
+            const bool parsed = ParseCamSweepArgs(a, b, dy, dp, df, frames);
+            const bool ok = parsed && StartCameraSweepState(g_camSweep, dy, dp, df, frames);
+            SetCameraSweepActiveFlag(g_camSweep.active);
+            char jb[256];
+            std::snprintf(jb, sizeof jb,
+                          "{\"cmd\":\"cam_sweep\",\"event\":\"started\",\"ok\":%s,\"dyaw\":%.5f,\"dpitch\":%.5f,\"dfwd\":%.3f,\"frames\":%u}",
+                          ok ? "true" : "false", g_camSweep.dYawRadPerFrame, g_camSweep.dPitchRadPerFrame,
+                          g_camSweep.dFwdUnitsPerFrame, g_camSweep.framesRemaining);
+            Result(jb);
+        } else if (op == "cam_stop") {
+            const uint32_t exec = g_camSweep.framesExecuted;
+            const uint32_t rem  = g_camSweep.framesRemaining;
+            const uint32_t app  = g_camSweep.framesApplied;
+            StopCameraSweepState(g_camSweep);
+            SetCameraSweepActiveFlag(false);
+            char jb[192];
+            std::snprintf(jb, sizeof jb,
+                          "{\"cmd\":\"cam_stop\",\"ok\":true,\"frames_executed\":%u,\"frames_applied\":%u,\"frames_remaining\":%u}",
+                          exec, app, rem);
+            Result(jb);
+        } else if (op == "set_pose") {
+            float x = 0.0f, y = 0.0f, z = 0.0f, pitch = 0.0f, yaw = 0.0f;
+            const bool parsed = ParseSetPoseArgs(a, b, x, y, z, pitch, yaw);
+            const bool ok = parsed && SetPlayerPose(x, y, z, pitch, yaw);
+            char jb[256];
+            std::snprintf(jb, sizeof jb,
+                          "{\"cmd\":\"set_pose\",\"ok\":%s,\"pos\":[%.2f,%.2f,%.2f],\"pitch\":%.4f,\"yaw\":%.4f}",
+                          ok ? "true" : "false", x, y, z, ClampPitchRad(pitch), WrapYawTwoPi(yaw));
+            Result(jb);
         } else if (op == "weather") {
             Result(WeatherCommand());
         } else if (op == "audit") {
@@ -309,6 +342,19 @@ void ControlOnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
         if (++tick % 15 == 0) PollGoFile();
     }
     if (g_busy) Step(ctx, sc);
+    if (g_camSweep.active && g_camSweep.framesRemaining > 0u) {
+        const bool applied = ApplyCameraSweepStep(g_camSweep.dYawRadPerFrame,
+                                                  g_camSweep.dPitchRadPerFrame,
+                                                  g_camSweep.dFwdUnitsPerFrame);
+        if (AdvanceCameraSweepState(g_camSweep, applied)) {
+            SetCameraSweepActiveFlag(false);
+            char jb[192];
+            std::snprintf(jb, sizeof jb,
+                          "{\"cmd\":\"cam_sweep\",\"event\":\"finished\",\"ok\":true,\"frames_executed\":%u,\"frames_applied\":%u}",
+                          g_camSweep.framesExecuted, g_camSweep.framesApplied);
+            Result(jb);
+        }
+    }
 }
 
 void ControlSetProxy(SB::Proxy::ProxyInterface* proxy) { g_proxy = proxy; }

@@ -97,7 +97,7 @@ float3 tonemapAgX(float3 color) {
     return pow(max(agxOut, 1.0e-6f.xxx), 2.2f);
 }
 
-// Filmic Curve 1 (Upgraded to AgX-Perceptual inset/outset transform — eliminates legacy ACES salmon-fire & blue-purple skew):
+// Filmic Curve 1 (Upgraded to AgX-Perceptual inset/outset transform - eliminates legacy ACES salmon-fire & blue-purple skew):
 float3 filmic(float3 color) {
     return tonemapAgX(color);
 }
@@ -278,6 +278,14 @@ float3 fxaaAndCas(float2 suv) {
 
 float4 main(In i) : SV_Target {
     const uint ovInit = uint(RO.y + 0.5f);
+    // Wave 65 Bit-Exact Raw Debug-Layer Bypass (bit 13 = 8192 set by Tonemap.cpp when light.view != 0 || light.waterView != 0):
+    // Skips headbob, FXAA/CAS, motion blur, CA, exposure, AgX curve, bloom, LUT, vignette, grain, and display gamma
+    // so every Lighting (1..36) and Water (1..7) diagnostic channel (normals, MVs, classes, masks, NaN heatmap) lands bit-exact.
+    if ((ovInit & 8192u) != 0u) {
+        const float2 dbgUv = min(max(i.uv * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
+        const float3 rawDbg = sanitizeHdr3(Scene.SampleLevel(S1, dbgUv, 0.0f).rgb);
+        return float4(saturate(rawDbg), 1.0f);
+    }
     float2 baseUv = i.uv;
     // OV12 (bit 11 = 2048): Tasteful, ultra-subtle biomechanical stride breathing (0.0008 roll, 0.992 micro-margin
     // eliminates jarring screen-edge sliding/cropping while keeping natural grounded movement feel!).
@@ -452,7 +460,7 @@ float4 main(In i) : SV_Target {
         if (RA.x > 0.5f) { pivot = dot(rh ? reinhardW((RB.y * exp2(clamp(RA.y, -12.0f, 12.0f)) * RB.z).xxx) : filmic((RB.y * exp2(clamp(RA.y, -12.0f, 12.0f)) * RB.z).xxx), W); }   // the grade turns about mid grey
     }
     // 100% Native 12-Pass 6-Level Jimenez HDR Bloom Pyramid (BloomPass.hlsl) owns all bloom in !match mode.
-    // Do NOT add Skyrim's blurry 2011 vanilla Bloom buffer (t0) on top of our HDR scene — use t0 strictly for
+    // Do NOT add Skyrim's blurry 2011 vanilla Bloom buffer (t0) on top of our HDR scene - use t0 strictly for
     // high-threshold (>1.15) optical halation / Panavision anamorphic flare (OV2) and 5-order lens ghosts (OV3).
     const uint ovMask = uint(RO.y + 0.5f);
     float bw0, bh0;
@@ -495,7 +503,7 @@ float4 main(In i) : SV_Target {
     }
     if ((ovMask & 4u) != 0u) {
         // Layer 3: Optical Lens Transport Ghosts + Aperture Starburst strictly on genuine >2.45 HDR peaks
-        // (sun disc, roaring fireballs, spells — eliminates prismatic blue/orange ring halos inside bright ice caves!).
+        // (sun disc, roaring fireballs, spells - eliminates prismatic blue/orange ring halos inside bright ice caves!).
         const float starOutdoorGate = isIntExp ? 0.0f : smoothstep(0.11f, 0.24f, avg);
         const float2 cVec = suv - 0.5f.xx;
         const float cDist = length(cVec);
@@ -587,24 +595,24 @@ float4 main(In i) : SV_Target {
             // 3: Cinema Contrast (restrained low-chroma land, crisp shadow toe).
             c.rgb = saturate(lerp(lumG.xxx, c.rgb, 0.86f) * 1.04f - 0.015f);
         } else if (RX.x < 4.5f) {
-            // 4: Kodak Vision3 500T Tungsten (deep cyan-indigo night/interior shadows + glowing amber firelight — artmedeiros / Cluster A).
+            // 4: Kodak Vision3 500T Tungsten (deep cyan-indigo night/interior shadows + glowing amber firelight - artmedeiros / Cluster A).
             c.rgb = saturate(c.rgb * lerp(float3(0.84f, 0.96f, 1.14f), float3(1.10f, 0.98f, 0.86f), smoothstep(0.16f, 0.76f, lumG)));
         } else if (RX.x < 5.5f) {
-            // 5: Fuji Velvia 50 Slide Film (vivid emerald foliage, deep cobalt skies, glowing sunset corals — author-01.jpg).
+            // 5: Fuji Velvia 50 Slide Film (vivid emerald foliage, deep cobalt skies, glowing sunset corals - author-01.jpg).
             float3 labV = linToOklab(saturate(c.rgb));
             labV.yz *= 1.18f;
             labV.x = lerp(labV.x, labV.x * labV.x * (3.0f - 2.0f * labV.x), 0.18f);
             c.rgb = saturate(oklabToLin(labV));
         } else if (RX.x < 6.5f) {
-            // 6: Tarkovsky Polaroid / Bleached Umber (low-chroma warm paper highs, muted cool-olive shadows — Cluster I/G).
+            // 6: Tarkovsky Polaroid / Bleached Umber (low-chroma warm paper highs, muted cool-olive shadows - Cluster I/G).
             const float3 muted = lerp(lumG.xxx, c.rgb, 0.74f);
             c.rgb = saturate(muted * lerp(float3(0.92f, 0.96f, 0.94f), float3(1.08f, 1.02f, 0.90f), smoothstep(0.18f, 0.82f, lumG)));
         } else if (RX.x < 7.5f) {
-            // 7: LomoChrome Purple False-Color Film (shifts foliage greens toward dreamy plum-violet — Cluster M).
+            // 7: LomoChrome Purple False-Color Film (shifts foliage greens toward dreamy plum-violet - Cluster M).
             const float grnL = saturate((c.g - max(c.r, c.b)) * 3.0f);
             c.rgb = saturate(lerp(c.rgb, float3(c.g * 0.95f + c.r * 0.35f, c.b * 0.55f + c.g * 0.25f, c.g * 1.10f + c.b * 0.30f), grnL * 0.78f));
         } else if (RX.x < 8.5f) {
-            // 8: Oil & Impasto Paint Shader (4-quadrant Kuwahara brush filter + subtle linen canvas weave — Commons Cluster H / Tyllinen).
+            // 8: Oil & Impasto Paint Shader (4-quadrant Kuwahara brush filter + subtle linen canvas weave - Commons Cluster H / Tyllinen).
             float sw, sh; Scene.GetDimensions(sw, sh);
             const float2 spx = 1.0f / max(float2(sw, sh), float2(1.0f, 1.0f));
             float3 bestM = c.rgb; float bestV = 1.0e9f;
@@ -625,7 +633,7 @@ float4 main(In i) : SV_Target {
             const float canvas = 0.97f + 0.03f * sin(i.pos.x * 1.57f) * sin(i.pos.y * 1.57f);
             c.rgb = saturate(bestM * canvas);
         } else if (RX.x < 9.5f) {
-            // 9: Engraved Ink & Cross-Hatch Plate Shader (Sobel ink lines + 3-tier diagonal pen hatching on warm paper — Commons Cluster G / Escher).
+            // 9: Engraved Ink & Cross-Hatch Plate Shader (Sobel ink lines + 3-tier diagonal pen hatching on warm paper - Commons Cluster G / Escher).
             float sw, sh; Scene.GetDimensions(sw, sh);
             const float2 spx = 1.0f / max(float2(sw, sh), float2(1.0f, 1.0f));
             const float lL = dot(tonemapAgX(Scene.Sample(S1, suv - float2(spx.x, 0.0f)).rgb * exposure * RB.z), W);

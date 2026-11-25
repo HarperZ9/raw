@@ -282,16 +282,21 @@ void water(uint3 id : SV_DispatchThreadID) {
     const float zBedW  = (dBed < 1.0f && dBed > 0.0f) ? viewZOf(dBed) : 1.0e9f;
     const float rawDepthDiff = (zBedW < 1.0e8f && zSurfW < 1.0e8f) ? max(zBedW - zSurfW, 0.0f) : 120.0f;
     const float waterCompDiff = hasPreWater ? length(game.rgb - PreWater[id.xy].rgb) : 1.0f;
-    // Wave 63 + Wave 64: Eliminate horizontal 24-bit quantized shallow-water scanline cutouts completely!
+    // Wave 63 + Wave 65: Eliminate horizontal 24-bit quantized shallow-water scanline cutouts completely!
     // Never binary-discard shallow shorelines where zSurfW ~= zBedW; instead include pixels up to
-    // zSurfW < zBedW + 1.0f and feather smoothly with continuous optical-depth coverage alpha.
+    // distance-scaled shallowDepthTol and feather smoothly with continuous optical-depth coverage alpha.
     const uint view = uint(waterB.x + 0.5f);
-    const bool gameDrewWater = !hasPreWater || (waterCompDiff > 0.0002f) || (zSurfW < zBedW + 1.0f);
-    const bool isWaterPx = (L.a > 1.5f && L.x < 1.0f && zSurfW > 0.5f && zSurfW < zBedW + 1.0f && nL.z > 0.15f && gameDrewWater);
-    // For WaterView=7 continuity diagnostic, keep shallow L.a > 1.5 pixels active even if dropped so alarms surface!
-    const bool diagDroppedShallow = (view == 7u) && !isWaterPx && (L.a > 1.5f && L.x < 1.0f && zSurfW > 0.5f && zSurfW < zBedW + 1.0f && nL.z > 0.15f);
+    const float shallowDepthTol = max(zSurfW * 0.0025f, 1.5f);
+    const bool gameDrewWater = !hasPreWater || (waterCompDiff > 0.0002f) || (zSurfW < zBedW + shallowDepthTol);
+    const bool isWaterPx = (L.a > 1.5f && L.x < 1.0f && zSurfW > 0.5f && zSurfW < zBedW + shallowDepthTol && nL.z > 0.08f && gameDrewWater);
+    // For WaterView=7 continuity diagnostic, keep shallow horizontal L.a > 1.5 pixels active even if dropped!
+    const bool diagDroppedShallow = (view == 7u) && !isWaterPx && (L.a > 1.5f && L.x < 1.0f && zSurfW > 0.5f && zSurfW < zBedW + shallowDepthTol && nL.z > 0.15f);
     // SM6.9 Wave-coherent early exit: non-water waves exit immediately with zero RayQuery divergence.
-    if (!WaveActiveAnyTrue(isWaterPx || diagDroppedShallow)) { WaterOut[id.xy] = float4(sanitizeWater3(col), isfinite(game.a) ? saturate(game.a) : 1.0f); return; }
+    if (!WaveActiveAnyTrue(isWaterPx || diagDroppedShallow)) {
+        const float3 bgOut = (view != 0u) ? min(sanitizeWater3(col) * 0.12f, 0.35f.xxx) : sanitizeWater3(col);
+        WaterOut[id.xy] = float4(bgOut, isfinite(game.a) ? saturate(game.a) : 1.0f);
+        return;
+    }
     if (diagDroppedShallow) {
         col = float3(1.0f, 0.0f, 1.0f);
     } else if (isWaterPx) {
@@ -860,9 +865,9 @@ void water(uint3 id : SV_DispatchThreadID) {
                     col = lerp(col, iceCol, saturate(freezeMask * 0.92f));
                 }
             }
-            // Wave 63: Smooth Continuous Optical-Depth Shoreline Coverage & Sub-Pixel Silhouette AA:
-            // Relaxed 3x3 neighbor depth test + continuous Beer-Lambert optical coverage alpha eliminates
-            // jagged horizontal scanline cutouts along shallow riverbeds, rocks, and snowbanks completely!
+            // Wave 63 + Wave 65: Smooth Continuous Optical-Depth Shoreline Coverage & View-Space Silhouette AA:
+            // Compare neighbor water/bed depths in exact linear view-space (matches isWaterPx at ALL distances,
+            // fixing close-range nonlinear NDC depth rejection on shallow Riverwood creeks!).
             float edgeCov = 1.0f;
             bool scanlineGapAlarm = false;
             if (wDist < 9000.0f) {
@@ -875,7 +880,9 @@ void water(uint3 id : SV_DispatchThreadID) {
                         const int3 np = int3(clamp(ip.xy + int2(ex, ey), int2(0, 0), limE), 0);
                         const float4 Ln = Layer.Load(np);
                         const float dBn = Depth.Load(np);
-                        const bool nOk = (Ln.a > 1.5f && Ln.x < 1.0f && Ln.x < dBn + 5.0e-5f);
+                        const float zSn = (Ln.x < 1.0f && Ln.x > 0.0f) ? viewZOf(Ln.x) : 1.0e9f;
+                        const float zBn = (dBn < 1.0f && dBn > 0.0f) ? viewZOf(dBn) : 1.0e9f;
+                        const bool nOk = (Ln.a > 1.5f && Ln.x < 1.0f && zSn < zBn + max(zSn * 0.0025f, 1.5f));
                         if (nOk) {
                             wHits += 1.0f;
                             if (ey == 0) { hHits += 1; }
@@ -884,15 +891,21 @@ void water(uint3 id : SV_DispatchThreadID) {
                     }
                 }
                 edgeCov = smoothstep(0.5f, 7.0f, wHits);
-                scanlineGapAlarm = (depthV0 > 1.5f && depthV0 < 24.0f && hHits == 2 && vHits == 0);
+                // Detect true alternating-row scanline hole: horizontal neighbors present, vertical +-1 both missing,
+                // yet vertical +-2 has water (avoids false alarms on thin 1px slits under bridge railings/grass).
+                if (view == 7u && depthV0 > 1.5f && depthV0 < 24.0f && hHits == 2 && vHits == 0) {
+                    const float4 Lu2 = Layer.Load(int3(clamp(ip.xy + int2(0, -2), int2(0, 0), limE), 0));
+                    const float4 Ld2 = Layer.Load(int3(clamp(ip.xy + int2(0,  2), int2(0, 0), limE), 0));
+                    scanlineGapAlarm = (Lu2.a > 1.5f && Lu2.x < 1.0f) || (Ld2.a > 1.5f && Ld2.x < 1.0f);
+                }
             }
             const float3 edgeBg = hasPreWater ? PreWater[id.xy].rgb : game.rgb;
-            const float depthRamp = smoothstep(0.0f, max(zSurfW * 0.010f, 2.5f), rawDepthDiff);
-            const float opticalCov = saturate(1.0f - exp(-effShoreDepth * 0.22f));
+            const float depthRamp = smoothstep(0.0f, max(zSurfW * 0.008f, 2.0f), rawDepthDiff);
+            const float opticalCov = saturate(1.0f - exp(-effShoreDepth * 0.24f));
             const float shoreAlpha = (dBed < 1.0f)
-                ? saturate(max(opticalCov, depthRamp * 0.85f) * smoothstep(0.0f, 1.8f, effShoreDepth + rawDepthDiff * 0.5f))
+                ? saturate(max(opticalCov, depthRamp * 0.90f) * smoothstep(0.0f, 1.2f, effShoreDepth + rawDepthDiff * 0.65f))
                 : 1.0f;
-            const float shoreBlend = saturate(shoreAlpha * lerp(0.55f, 1.0f, edgeCov));
+            const float shoreBlend = saturate(shoreAlpha * lerp(0.65f, 1.0f, edgeCov));
             col = lerp(edgeBg, col, shoreBlend);
             // Daylight Cluster D (img-003 68-77, BUILD-LIST #15): Physical Waterline Split-Surface Meniscus Band
             // when the camera lens grazes the exact water plane (abs(eyeW.z - p.z) < 14u and wDist < 220u):
@@ -920,12 +933,15 @@ void water(uint3 id : SV_DispatchThreadID) {
             else if (view == 6u) { col = body; }   // the water's body alone: the bent bed, dimmed and filled in
             else if (view == 5u) { col = F > 0.25f ? float3(1.0f, 0.0f, 0.0f) : F > 0.06f ? float3(0.0f, 1.0f, 0.0f) : float3(0.0f, 0.0f, 1.0f); }
             else if (view == 7u) {
-                // Wave 64 Water Flow Velocity, Optical Depth & Scanline Continuity Diagnostic:
-                // R = riverFlowSpeed, G = saturate(depthV0 / 120.0), B = shoreAlpha;
-                // bright MAGENTA alarm if shallow L.a > 1.5 water fails continuity!
+                // Wave 65 Water Flow Velocity, Optical Depth & Scanline Continuity Diagnostic:
+                // Healthy channels kept strictly disjoint from bright MAGENTA (1,0,1) alarm even after sRGB gamma:
+                //   R = flow * 0.55 (sRGB <= 0.76), G = 0.10 + depth/120 * 0.85 (sRGB >= 0.35), B = shoreAlpha * 0.65.
+                // Bright MAGENTA (1,0,1) fires EXCLUSIVELY on genuine shallow-water continuity dropouts / scanline holes!
                 const bool shallowDropAlarm = scanlineGapAlarm || (depthV0 > 2.5f && shoreBlend < 0.05f);
                 col = shallowDropAlarm ? float3(1.0f, 0.0f, 1.0f)
-                                       : float3(saturate(riverFlowSpeed), saturate(depthV0 / 120.0f), saturate(shoreAlpha));
+                                       : float3(saturate(riverFlowSpeed) * 0.55f,
+                                                0.10f + saturate(depthV0 / 120.0f) * 0.85f,
+                                                saturate(shoreAlpha) * 0.65f);
             }
         } else {
             // Wave 42 Exact Physical Underwater Snell's Window (48.6 deg critical angle, sin(theta_c) = 1 / 1.333):
@@ -980,9 +996,12 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float grazingFade = smoothstep(2.0f, 18.0f, abs(p.z - eyeW.z));
             col = lerp(lerp(refrSky * 0.55f + uwFogCol * 0.45f, uwFogCol, F_uw * 0.65f), uwSurf, grazingFade);
             if (view == 7u) {
-                col = float3(0.0f, saturate(uwDist / 120.0f), saturate(grazingFade));
+                col = float3(0.0f, 0.10f + saturate(uwDist / 120.0f) * 0.85f, saturate(grazingFade) * 0.65f);
             }
         }
+    } else if (view != 0u) {
+        // Wave 65: Dim non-water background pixels cleanly in WaterView 1..7 so water diagnostics pop clearly!
+        col = min(sanitizeWater3(col) * 0.12f, 0.35f.xxx);
     }
     WaterOut[id.xy] = float4(sanitizeWater3(col), isfinite(game.a) ? saturate(game.a) : 1.0f);
 }

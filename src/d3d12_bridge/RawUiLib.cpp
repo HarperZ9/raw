@@ -417,6 +417,136 @@ void UiDrawList::AddEngineVarBool(float x, float y, float rowWidth,
                     value ? tokens::kAccentPass : tokens::kAccentNull, scale);
 }
 
+void UiDrawList::AddMotionTelemetryStrip(float x, float y, float w,
+                                         const MotionTelemetrySnapshot& motion,
+                                         uint32_t scale)
+{
+    if (w <= 48.0f) return;
+    const uint32_t s = std::clamp(scale, 1u, 3u);
+    const float sf = static_cast<float>(s);
+    const float h = 46.0f * sf;
+    const float pad = 6.0f * sf;
+
+    const float safeSpeed = (std::isfinite(motion.cameraSpeedUps) && motion.cameraSpeedUps >= 0.0f)
+                                ? motion.cameraSpeedUps : 0.0f;
+    const float safeYaw   = std::isfinite(motion.yawRateDegPerSec) ? motion.yawRateDegPerSec : 0.0f;
+    const float safeShd   = (std::isfinite(motion.temporalShadowStd) && motion.temporalShadowStd >= 0.0f)
+                                ? motion.temporalShadowStd : 0.0f;
+    const float safeRmse  = (std::isfinite(motion.mvReprojRmse) && motion.mvReprojRmse >= 0.0f)
+                                ? motion.mvReprojRmse : 0.0f;
+
+    const uint32_t shdCol = (safeShd <= 0.035f) ? tokens::kAccentPass
+                          : ((safeShd <= 0.075f) ? tokens::kAccentLead : tokens::kAccentFail);
+    const uint32_t mvCol  = (!motion.mvSignValid || safeRmse > 0.085f) ? tokens::kAccentFail
+                          : ((safeRmse <= 0.045f) ? tokens::kAccentPass : tokens::kAccentLead);
+    const uint32_t healthCol = (!motion.mvSignValid || shdCol == tokens::kAccentFail || mvCol == tokens::kAccentFail)
+                                   ? tokens::kAccentFail
+                                   : ((shdCol == tokens::kAccentLead || mvCol == tokens::kAccentLead)
+                                          ? tokens::kAccentLead : tokens::kAccentPass);
+
+    // Strip card with top health accent bar
+    AddPanel(x, y, w, h, 4.0f * sf, tokens::kSurface, tokens::kBorderStrong, healthCol, 1.0f);
+
+    const float ix = x + pad;
+    const float iw = std::max(16.0f, w - pad * 2.0f);
+    const float row0Y = y + 5.0f * sf;
+    const float row1Y = y + 20.0f * sf;
+    const float row2Y = y + 32.0f * sf;
+
+    // Row 0: Health verdict dot + caption + right-aligned burst/sweep badge
+    AddVerdictDot(ix, row0Y + 1.0f * sf, 7.0f * sf, healthCol, tokens::kBorderStrong);
+    AddText(ix + 11.0f * sf, row0Y, "MOTION / TEMPORAL", tokens::kInkPrimary, s);
+
+    char badgeBuf[32]{};
+    uint32_t badgeDot = tokens::kAccentNull;
+    uint32_t badgeBg  = tokens::kPillOffBg;
+    if (motion.burstFrameCount > 0u) {
+        const uint32_t idx1 = std::min(motion.burstFrameIndex + 1u, motion.burstFrameCount);
+        std::snprintf(badgeBuf, sizeof(badgeBuf), "%s F%02u/%02u",
+                      motion.camSweepActive ? "SWEEP" : "BURST", idx1, motion.burstFrameCount);
+        badgeDot = motion.camSweepActive ? tokens::kAccentEmerald : tokens::kAccentLead;
+        badgeBg  = tokens::kPillOnBg;
+    } else if (motion.camSweepActive) {
+        std::snprintf(badgeBuf, sizeof(badgeBuf), "SWEEP ON");
+        badgeDot = tokens::kAccentEmerald;
+        badgeBg  = tokens::kPillOnBg;
+    } else {
+        std::snprintf(badgeBuf, sizeof(badgeBuf), "FREE");
+    }
+    const float badgeW = static_cast<float>(MeasureTextWidthPx(badgeBuf, s)) + 25.0f * sf;
+    if (badgeW < iw - 100.0f * sf) {
+        AddPill(ix + iw - badgeW, y + 3.0f * sf, badgeBuf, badgeBg, tokens::kInkPrimary,
+                tokens::kBorderStrong, badgeDot, s);
+    }
+
+    // Row 1: Camera speed & yaw rate
+    char camBuf[64]{};
+    std::snprintf(camBuf, sizeof(camBuf), "CAM %5.1f u/s | YAW %+5.1f d/s | MV:%s",
+                  static_cast<double>(safeSpeed), static_cast<double>(safeYaw),
+                  motion.mvSignValid ? "OK" : "INV");
+    PushClipRect(ix, row1Y - 1.0f, iw, 11.0f * sf);
+    AddText(ix, row1Y, camBuf, tokens::kInkSecondary, s);
+    PopClipRect();
+
+    // Row 2: Temporal shadow std & MV reprojection RMSE (side-by-side color-coded verdicts)
+    char shdBuf[32]{};
+    char rmseBuf[32]{};
+    std::snprintf(shdBuf, sizeof(shdBuf), "SHD STD %.4f", static_cast<double>(safeShd));
+    std::snprintf(rmseBuf, sizeof(rmseBuf), "MV RMSE %.4f", static_cast<double>(safeRmse));
+    const float halfW = iw * 0.5f;
+    PushClipRect(ix, row2Y - 1.0f, halfW - 2.0f * sf, 11.0f * sf);
+    AddText(ix, row2Y, shdBuf, shdCol, s);
+    PopClipRect();
+    PushClipRect(ix + halfW, row2Y - 1.0f, halfW, 11.0f * sf);
+    AddText(ix + halfW, row2Y, rmseBuf, mvCol, s);
+    PopClipRect();
+}
+
+void UiDrawList::AddDebugViewQuickGrid(float x, float y, float w,
+                                       const uint32_t* viewIds, uint32_t viewCount,
+                                       uint32_t activeViewId,
+                                       bool waterViews,
+                                       uint32_t columns,
+                                       uint32_t scale)
+{
+    if (!viewIds || viewCount == 0u || w <= 24.0f) return;
+    const uint32_t s = std::clamp(scale, 1u, 3u);
+    const float sf = static_cast<float>(s);
+    const uint32_t cols = std::clamp(columns, 1u, 8u);
+    const uint32_t count = std::min(viewCount, 16u);
+    const float gap = 4.0f * sf;
+    const float cellW = (w - gap * static_cast<float>(cols - 1u)) / static_cast<float>(cols);
+    const float cellH = 20.0f * sf;
+    if (cellW < 18.0f * sf) return;
+
+    for (uint32_t i = 0u; i < count; ++i) {
+        const uint32_t colIdx = i % cols;
+        const uint32_t rowIdx = i / cols;
+        const float cx = x + static_cast<float>(colIdx) * (cellW + gap);
+        const float cy = y + static_cast<float>(rowIdx) * (cellH + gap);
+        const uint32_t vid = viewIds[i];
+        const bool isActive = (vid == activeViewId);
+        const DebugViewDescriptor desc = waterViews
+            ? GetWaterDebugViewDescriptor(vid)
+            : GetDebugViewDescriptor(vid);
+
+        const uint32_t bgCol     = isActive ? tokens::kPillOnBg : tokens::kSurface;
+        const uint32_t borderCol = isActive ? desc.accentRgba : tokens::kBorder;
+        const uint32_t topAccent = isActive ? desc.accentRgba : 0u;
+        AddPanel(cx, cy, cellW, cellH, 3.0f * sf, bgCol, borderCol, topAccent, isActive ? 1.5f : 1.0f);
+
+        // Compact semantic dot + clipped shortName inside tile
+        const float dotD = 6.0f * sf;
+        AddVerdictDot(cx + 4.0f * sf, cy + (cellH - dotD) * 0.5f, dotD, desc.accentRgba, tokens::kBorderStrong);
+
+        const float tx = cx + 13.0f * sf;
+        const float tw = std::max(4.0f, cellW - 16.0f * sf);
+        PushClipRect(tx, cy + 2.0f * sf, tw, cellH - 4.0f * sf);
+        AddText(tx, cy + 5.5f * sf, desc.shortName, isActive ? tokens::kInkPrimary : tokens::kInkSecondary, s, 0u);
+        PopClipRect();
+    }
+}
+
 void UiDrawList::AddPill(float x, float y, const char* label,
                          uint32_t bgRgba, uint32_t textRgba,
                          uint32_t borderRgba, uint32_t dotRgba,
@@ -1115,10 +1245,12 @@ void FormatDebugLayerHud(const DebugLayerHudSnapshot& snap, UiDrawList& outList)
     const float legendH   = snap.drawerOpen ? (static_cast<float>(view.legend.size()) * 14.0f * sf + 20.0f * sf) : 0.0f;
     const float togglesH  = snap.drawerOpen ? (4.0f * 15.0f * sf + 18.0f * sf) : 0.0f;
     const float budgetH   = snap.drawerOpen ? (16.0f * sf + 14.0f * sf + 3.0f * 14.0f * sf + 18.0f * sf) : 0.0f;
+    const float motionH   = (snap.drawerOpen && snap.motionTelemetry != nullptr) ? (52.0f * sf) : 0.0f;
+    const float quickH    = (snap.drawerOpen && snap.showQuickGrid) ? (62.0f * sf) : 0.0f;
     const float sparkH    = (snap.historyFrameMs && snap.historyCount > 0u) ? (40.0f * sf) : 0.0f;
     const float headerH   = 44.0f * sf;
     const float footerH   = 20.0f * sf;
-    const float panelH    = pad * 2.0f + headerH + tabBarH + legendH + togglesH + budgetH + sparkH + footerH;
+    const float panelH    = pad * 2.0f + headerH + tabBarH + legendH + togglesH + budgetH + motionH + quickH + sparkH + footerH;
 
     // 1. Calm dark ink panel with crisp elevation border and active-view semantic accent top bar
     outList.AddPanel(x0, y0, panelW, panelH, 6.0f * sf,
@@ -1201,6 +1333,26 @@ void FormatDebugLayerHud(const DebugLayerHudSnapshot& snap, UiDrawList& outList)
         outList.AddEngineVarFloat(cx, cy, innerW, "Lighting + Fluid", safeLight + safeFluid, "ms", tokens::kAccentLead, s); cy += 14.0f * sf;
         outList.AddEngineVarRow(cx, cy, innerW, "Active Layer", view.shortName, view.accentRgba, s); cy += 14.0f * sf;
         cy += 2.0f * sf;
+
+        // 6b. Optional Wave 65 Live Motion & Temporal Telemetry Strip
+        if (snap.motionTelemetry != nullptr) {
+            outList.AddMotionTelemetryStrip(cx, cy, innerW, *snap.motionTelemetry, s);
+            cy += 52.0f * sf;
+        }
+
+        // 6c. Optional Wave 65 Quick-Select Debug View Grid
+        if (snap.showQuickGrid) {
+            outList.AddSectionHeader(cx, cy, innerW, waterMode ? "Water Views" : "Quick Debug Views", view.accentRgba, s, true, true);
+            cy += 16.0f * sf;
+            if (waterMode) {
+                static constexpr uint32_t kWaterHot[7] = {1u, 2u, 3u, 4u, 5u, 6u, 7u};
+                outList.AddDebugViewQuickGrid(cx, cy, innerW, kWaterHot, 7u, snap.activeWaterDebugView, true, 4u, s);
+            } else {
+                static constexpr uint32_t kLightHot[8] = {0u, 1u, 2u, 28u, 31u, 33u, 34u, 35u};
+                outList.AddDebugViewQuickGrid(cx, cy, innerW, kLightHot, 8u, snap.activeDebugView, false, 4u, s);
+            }
+            cy += 46.0f * sf;
+        }
     }
 
     // 7. Optional 64-sample Frame-Time Sparkline

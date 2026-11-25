@@ -1239,20 +1239,24 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const bool rt = !match && (flags.x & FLAG_RT) != 0u;
     float4 rv = rt ? RtVis.Load(ip) : 1.0f.xxxx;
     const uint3 rIdx = rt ? uint3(RtIdx.Load(ip).xyz * 255.0f + 0.5f) : uint3(0u, 0u, 0u);
-    // Wave 63 Cross-Slot Light-ID-Matched Depth+Normal 3x3 Bilateral RT Shadow Filter:
-    // Matches each center top-3 light ID (rIdx.x/y/z) against ALL 3 neighbor slots (nIdx.x/y/z), so even when
-    // adjacent pixels rank two overlapping torches/hearths in swapped slot order, shadows stay silky-smooth & flicker-free!
+    // Wave 63 + Wave 65 Cross-Slot Light-ID-Matched Depth+Normal Gaussian Bilateral RT Shadow Filter:
+    // Matches each center top-3 light ID (rIdx.x/y/z) across ALL 3 neighbor slots (nIdx.x/y/z) AND adds
+    // 4 outer cardinal radius-2 taps on sun shadow (rv.x) so multi-tap PCSS sun penumbras are silky-smooth
+    // and rock-solid across both stationary frames and cam_sweep camera motion!
     if (rt) {
         rv = all(isfinite(rv)) ? saturate(rv) : 1.0f.xxxx;
-        float4 pvSum = rv * 2.0f;
-        float4 pvW = 2.0f.xxxx;
+        float4 pvSum = rv * 2.25f;
+        float4 pvW = 2.25f.xxxx;
         const int2 dMaxS = int2(dims.xy) - 1;
+        const float zTolS = max(z * 0.032f, 2.5f);
         [unroll] for (int sy = -1; sy <= 1; sy++) {
             [unroll] for (int sx = -1; sx <= 1; sx++) {
                 if (sx == 0 && sy == 0) continue;
                 const int3 spS = int3(clamp(ip.xy + int2(sx, sy), int2(0, 0), dMaxS), 0);
-                if (abs(viewZOf(Depth.Load(spS)) - z) < max(z * 0.035f, 2.8f)) {
-                    const float nwS = smoothstep(0.68f, 0.96f, dot(nSmooth, worldNormal(Normal.Load(spS))));
+                const float dzS = abs(viewZOf(Depth.Load(spS)) - z);
+                if (dzS < zTolS) {
+                    const float gW = ((sx == 0 || sy == 0) ? 1.15f : 0.78f) * (1.0f - (dzS / zTolS) * 0.55f);
+                    const float nwS = smoothstep(0.70f, 0.96f, dot(nSmooth, worldNormal(Normal.Load(spS)))) * gW;
                     if (nwS <= 0.01f) continue;
                     const float4 nRvRaw = RtVis.Load(spS);
                     const float4 nRv = all(isfinite(nRvRaw)) ? saturate(nRvRaw) : 1.0f.xxxx;
@@ -1272,6 +1276,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                         if      (nIdx.z == rIdx.z) { pvSum.w += nRv.w * nwS; pvW.w += nwS; }
                         else if (nIdx.x == rIdx.z) { pvSum.w += nRv.y * nwS; pvW.w += nwS; }
                         else if (nIdx.y == rIdx.z) { pvSum.w += nRv.z * nwS; pvW.w += nwS; }
+                    }
+                }
+            }
+        }
+        // 4 outer radius-2 cardinal taps strictly for exterior sun-shadow penumbra smoothness (zero light-slot overhead):
+        if (sunColour.w > 0.5f) {
+            static const int2 kSunR2[4] = { int2(2, 0), int2(-2, 0), int2(0, 2), int2(0, -2) };
+            [unroll] for (int ri = 0; ri < 4; ++ri) {
+                const int3 sp2 = int3(clamp(ip.xy + kSunR2[ri], int2(0, 0), dMaxS), 0);
+                const float dz2 = abs(viewZOf(Depth.Load(sp2)) - z);
+                if (dz2 < zTolS) {
+                    const float nw2 = smoothstep(0.76f, 0.97f, dot(nSmooth, worldNormal(Normal.Load(sp2)))) * 0.52f * (1.0f - dz2 / zTolS);
+                    if (nw2 > 0.01f) {
+                        const float nSun2 = RtVis.Load(sp2).x;
+                        if (isfinite(nSun2)) { pvSum.x += saturate(nSun2) * nw2; pvW.x += nw2; }
                     }
                 }
             }
@@ -1622,14 +1641,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float rawSkyVis = rt && (flags.x & FLAG_SKY) != 0u && (isExterior || !match) ? RtIdx.Load(ip).w : 1.0f;
     const float skyVis = isActorFeat ? lerp(0.28f, 1.0f, rawSkyVis)
                        : (isActorCloth ? lerp(0.26f, 1.0f, rawSkyVis)
-                       : (isWoodBark ? lerp(0.36f, 1.0f, rawSkyVis)
-                       : (isBotanicalCard ? lerp(0.22f, 1.0f, rawSkyVis) : rawSkyVis)));
+                       : (isWoodBark ? lerp(0.44f, 1.0f, rawSkyVis)
+                       : (isBotanicalCard ? lerp(0.24f, 1.0f, rawSkyVis) : rawSkyVis)));
     // Physical directional skylighting falloff: roofs, covered walkways, arches & dense foliage cores drop to deep rich shade
-    // while vertical pine tree trunks (isWoodBark) enforce a realistic >= 0.30 skyVisShaped floor so trunks NEVER crush to #050505!
+    // while vertical pine tree trunks (isWoodBark) enforce a realistic >= 0.36 skyVisShaped floor so ZERO bark pixels crush!
     const float skyVisPow = !match ? pow(saturate(skyVis), isBotanicalCard ? 1.50f : 1.85f) : skyVis;
-    const float skyVisShaped = (!match && isWoodBark) ? max(skyVisPow, 0.30f) : skyVisPow;
-    const float rtOccRaw = isExterior ? lerp(1.0f, lerp(0.08f, 1.0f, skyVisShaped), max(cluster.w, 0.88f)) : lerp(0.12f, 1.0f, skyVisShaped);
-    const float rtOcc = (!match && isWoodBark) ? max(rtOccRaw, 0.34f) : rtOccRaw;
+    const float skyVisShaped = (!match && isWoodBark) ? max(skyVisPow, 0.36f) : skyVisPow;
+    const float rtOccRaw = isExterior ? lerp(1.0f, lerp(0.10f, 1.0f, skyVisShaped), max(cluster.w, 0.88f)) : lerp(0.12f, 1.0f, skyVisShaped);
+    const float rtOcc = (!match && isWoodBark) ? max(rtOccRaw, 0.40f) : rtOccRaw;
     // Smooth physical irradiance soft-shoulder on close-range point lights (prevents bright plaster walls like
     // Farengar's study 15.00.26 and snow floes under torches from clipping into flat white!):
     if (!match) {
@@ -1640,41 +1659,43 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
     }
     // Feature 18: Contact-hardening near-field micro-AO grounding under foliage, rocks, furniture & NPC feet.
-    // Wave 63 + Wave 64: Strictly exclude faces/skin/hair/eyes (isActorFeat) and keep skinned cloth/fur (0.90)
-    // and tree trunks (isWoodBark, 0.92) gentle so actors & pine trunks NEVER crush into dark blotches!
+    // Wave 63 + Wave 65: Strictly exclude faces/skin/hair/eyes (isActorFeat) and keep skinned cloth/fur (0.90)
+    // and tree trunks (isWoodBark, 0.94) gentle so actors & pine trunks NEVER crush into dark blotches!
     const float nearGroundAo = !match ? pow(saturate(aoTerm), lerp(1.0f, 1.45f, saturate(1.0f - z / 900.0f))) : aoTerm;
     if (!match && !isActorFeat && z < 650.0f) {
-        const float microFloor = isWoodBark ? 0.92f : (isActorCloth ? 0.90f : 0.68f);
+        const float microFloor = isWoodBark ? 0.94f : (isActorCloth ? 0.90f : 0.70f);
         const float microDiffOcc = lerp(1.0f, lerp(microFloor, 1.0f, nearGroundAo), saturate(1.0f - z / 650.0f));
         diff *= microDiffOcc;
     }
     float combinedOcc = min(nearGroundAo, rtOcc);
     // Lifelike Vanilla NPCs & Forest Trunks: lift recessed eye-socket AO (12), cushion facial skin (10) & cloth (14),
-    // and guarantee exterior tree trunks (isWoodBark) retain >= 0.32 ambient visibility under dense pine canopies!
+    // and guarantee exterior tree trunks (isWoodBark) retain >= 0.38 ambient visibility under dense pine canopies!
     if (!match) {
         if (base == 12u)       combinedOcc = lerp(combinedOcc, 1.0f, 0.82f);
         else if (skin)         combinedOcc = lerp(combinedOcc, 1.0f, 0.14f);
         else if (isActorCloth) combinedOcc = lerp(combinedOcc, 1.0f, 0.10f);
-        else if (isWoodBark)   combinedOcc = max(combinedOcc, 0.32f);
+        else if (isWoodBark)   combinedOcc = max(combinedOcc, 0.38f);
     }
     // SIGGRAPH GI-12 Visibility-Aware Bent-Normal Hemisphere Skylighting (exteriors) &
     // Directional Vault/Hearth Ambient Shaping (interiors: deepens recessed corners & highlights upper masonry/beams).
     const float3 bentN = normalize(lerp(s.n, float3(0.0f, 0.0f, 1.0f), (1.0f - combinedOcc) * 0.38f * skyVis));
-    const float hemiSky = !match ? (isExterior ? lerp(0.60f, 1.18f, saturate(bentN.z * 0.5f + 0.5f))
+    const float hemiSky = !match ? (isExterior ? lerp(0.62f, 1.18f, saturate(bentN.z * 0.5f + 0.5f))
                                                : lerp(0.54f, 1.20f, saturate(bentN.z * 0.5f + 0.5f))) : 1.0f;
     // Keep multi-bounce AO subtle so deep crevices stay genuinely grounded instead of lifting back to muddy grey.
     const float3 mbOcc = lerp(combinedOcc.xxx, gtaoMultiBounce(combinedOcc, saturate(albedo)), 0.38f);
-    // Rich sunlight-to-shadow dynamic range (0.54..0.74x exterior ambient preserves hillside slope readability):
-    const float ambHdrScale = (!match && isExterior) ? lerp(0.54f, 0.74f, saturate(clouds.x)) : 1.0f;
+    // Wave 65: Rich sunlight-to-shadow dynamic range with >= 0.64 overcast/rain ambient floor so foreground boulders
+    // and foliage keep crisp readable micro-detail during Riverwood rainstorms!
+    const float overcastStormW = saturate(max(clouds.x * 0.90f, weather.w * 0.95f));
+    const float ambHdrScale = (!match && isExterior) ? lerp(0.56f, 0.78f, saturate(overcastStormW * 0.85f + 0.25f * smoothstep(0.25f, 0.70f, overcastStormW))) : 1.0f;
     amb *= match ? combinedOcc.xxx : mbOcc * hemiSky * ambHdrScale;
-    // Wave 64 Forest Ground-Bounce Fill on Vertical Tree Trunks (isWoodBark):
-    // Sunlit pine-needle floor & sky scatter bounce warm earth-lit fill onto shadowed bark trunks so 3D bark ridges
-    // remain richly readable even inside dense Riverwood forests instead of crushing to pitch-black #050505!
+    // Wave 64 + Wave 65 Forest Ground-Bounce Fill & Deep-Furrow Floor on Vertical Tree Trunks (isWoodBark):
+    // Eliminates every remaining crushed-black bark red speckle (luma < 0.015) on shadowed Riverwood pine trunks!
     if (!match && isExterior && isWoodBark) {
+        albedo = max(albedo, float3(0.038f, 0.030f, 0.022f));
         const float barkVertW = saturate(1.0f - abs(s.n.z));
-        const float dayBarkW = smoothstep(-0.04f, 0.16f, astroSunElev());
-        const float3 forestBounce = barkGroundBounce * float3(1.18f, 1.02f, 0.80f);
-        amb += forestBounce * (barkVertW * lerp(0.24f, 0.42f, dayBarkW) * lerp(0.65f, 1.0f, sunShadow));
+        const float dayBarkW = smoothstep(-0.06f, 0.14f, astroSunElev());
+        const float3 forestBounce = max(barkGroundBounce, float3(0.11f, 0.095f, 0.072f)) * float3(1.18f, 1.02f, 0.80f);
+        amb += forestBounce * (barkVertW * lerp(0.36f, 0.56f, dayBarkW) * lerp(0.75f, 1.0f, sunShadow));
     }
     // Multi-bounce hardware RayQuery GI: physically energy-conserving gain + smooth Reinhard shoulder + contact-AO grounding
     // (eliminates runaway GI glow on walls, snow, ice, and interiors while keeping rich natural color bleed!).

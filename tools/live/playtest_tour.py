@@ -207,10 +207,14 @@ def run_live_tour(
     starting_cell: str = "Riverwood",
     console_cmd: str = "fw 81a; set gamehour to 13",
     hold_frames: int = 35,
-    boot_wait_sec: float = 90.0,
+    burst: int = 6,
+    stride: int = 3,
+    cam_sweep: bool = True,
+    boot_wait_sec: float = 120.0,
     custom_ini_path: Path = fpa.DEFAULT_CUSTOM_INI,
 ) -> dict[str, Any]:
-    """Launches SkyrimSE.exe headlessly into `starting_cell` via SkyrimCustom.ini + raw_harness_go.txt."""
+    """Launches SkyrimSE.exe headlessly into `starting_cell` via `bat raw_scene_init`, readiness wait,
+    headless `cam_sweep` camera motion, and `raw_harness_go.txt`."""
     out_dir.mkdir(parents=True, exist_ok=True)
     engine_out = game_dir / "raw_engine_out"
     exe = game_dir / "SkyrimSE.exe"
@@ -226,6 +230,9 @@ def run_live_tour(
     env = dict(os.environ, SteamAppId="489830", SteamGameId="489830")
     go_file = game_dir / "raw_harness_go.txt"
     done_file = game_dir / "raw_harness_done.txt"
+    status_file = game_dir / "raw_harness_status.txt"
+    engine_go = game_dir / "raw_engine_go.txt"
+    scene_init_path = game_dir / fpa.SCENE_INIT_FILENAME
     boot_info: dict[str, Any] = {"present": False}
     bridge_info: dict[str, Any] = {"present": False}
     sentinel_cleaned = False
@@ -233,32 +240,41 @@ def run_live_tour(
     with fpa.SkyrimCustomIniGuard(custom_ini_path) as ini_guard:
         proc: subprocess.Popen[bytes] | None = None
         try:
-            ini_guard.write_scene_boot(starting_cell, console_cmd)
-            done_file.unlink(missing_ok=True)
-            go_file.write_text(
-                "\n".join([
-                    f"scene={starting_cell.lower()}",
-                    "keyframe=tour",
-                    f"steps={','.join(steps)}",
-                    f"hold={int(hold_frames)}",
-                    f"dir={out_dir}",
-                ]) + "\n",
-                encoding="utf-8",
-            )
+            fpa.write_scene_init_bat(game_dir, console_cmd)
+            ini_guard.write_scene_boot(starting_cell, fpa.SCENE_INIT_BAT_CMD)
+            for stale in (go_file, done_file, status_file, engine_go):
+                stale.unlink(missing_ok=True)
             proc = subprocess.Popen([str(exe)], cwd=str(game_dir), env=env)
-            deadline = time.time() + boot_wait_sec
-            while time.time() < deadline:
-                if done_file.exists():
-                    break
-                if proc.poll() is not None:
-                    break
-                time.sleep(0.5)
+            fpa.wait_for_world_ready(game_dir, engine_out, proc=proc, timeout_sec=min(90.0, boot_wait_sec * 0.55))
+            if proc.poll() is None:
+                if cam_sweep:
+                    fpa.emit_cam_sweep(game_dir)
+                    time.sleep(0.15)
+                go_file.write_text(
+                    "\n".join([
+                        f"scene={starting_cell.lower()}",
+                        "keyframe=tour",
+                        f"steps={','.join(steps)}",
+                        f"hold={int(hold_frames)}",
+                        f"burst={max(1, min(16, int(burst)))}",
+                        f"stride={max(1, min(30, int(stride)))}",
+                        f"dir={out_dir}",
+                    ]) + "\n",
+                    encoding="utf-8",
+                )
+                deadline = time.time() + boot_wait_sec
+                while time.time() < deadline:
+                    if done_file.exists():
+                        break
+                    if proc.poll() is not None:
+                        break
+                    time.sleep(0.5)
             boot_info = read_boot_selfcheck(engine_out)
             bridge_info = read_bridge_telemetry(game_dir, engine_out)
         finally:
             fpa._stop_skyrim(proc)
-            go_file.unlink(missing_ok=True)
-            done_file.unlink(missing_ok=True)
+            for tmpf in (go_file, done_file, engine_go, scene_init_path):
+                tmpf.unlink(missing_ok=True)
             sentinel_cleaned = cleanup_boot_sentinel(engine_out)
 
     # Convert BMP captures to PNGs and audit all frames

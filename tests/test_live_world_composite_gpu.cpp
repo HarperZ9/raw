@@ -726,6 +726,27 @@ int RunBackendSuite(bool useWarp, const char* label)
         pxRgb(out36, 192u, 64u, c36r, c36g, c36b);
         pxRgb(out36, 64u, 192u, f36r, f36g, f36b);
         check(c36b > 0.50f && f36g > 0.50f, "debug_view_36_thermal_and_live_solver_energy");
+
+        // Verify strict bit-exact 0-pixel bypass when lightingDebugActive == true (protects Lighting/Water debug views!):
+        UploadTex2D(ctx, colorOut.Get(), D3D12_RESOURCE_STATE_COMMON, baseColor.data(), W * 8u, H);
+        LiveWorldCompositeParams lpBypass = lwp;
+        lpBypass.activeDebugView     = 0u;
+        lpBypass.lightingDebugActive = true;
+        host.Composite(ctx.queue.Get(), lwr, lpBypass);
+        ctx.WaitIdle();
+        std::vector<float> outBypass;
+        ReadbackRgba16f(ctx, colorOut.Get(), D3D12_RESOURCE_STATE_COMMON, W, H, outBypass);
+        float maxBypassDelta = 0.0f;
+        for (uint32_t y = 0u; y < H; ++y) {
+            for (uint32_t x = 0u; x < W; ++x) {
+                float br, bg, bb;
+                pxRgb(outBypass, x, y, br, bg, bb);
+                maxBypassDelta = std::max(maxBypassDelta, std::fabs(br - 0.50f));
+                maxBypassDelta = std::max(maxBypassDelta, std::fabs(bg - 0.50f));
+                maxBypassDelta = std::max(maxBypassDelta, std::fabs(bb - 0.50f));
+            }
+        }
+        check(maxBypassDelta < 1e-5f, "strict_lighting_and_water_debug_view_bypass");
     }
 
     // -------------------------------------------------------------------------

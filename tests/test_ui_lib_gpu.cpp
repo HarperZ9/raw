@@ -1,12 +1,12 @@
-// test_ui_lib_gpu.cpp: Standalone DX12 GPU Verification Suite for Wave 64 RawUiLib + Debug-Layer HUD.
+// test_ui_lib_gpu.cpp: Standalone DX12 GPU Verification Suite for Wave 65 RawUiLib + Debug-Layer HUD.
 // Runs on BOTH WARP and Hardware GPU (RTX 4090) with D3D12 Debug Layer ENABLED:
-//   1. Pure CPU UiDrawList layout, proportional 7x9 ASCII metrics, ALL 37 Lighting DebugViews (0..36)
-//      and ALL 7 Water DebugViews (1..7, incl. W7:FlowDiag) metadata & legend swatches.
+//   1. Pure CPU UiDrawList layout, proportional 7x9 ASCII metrics, ALL 37 Lighting DebugViews (0..36),
+//      ALL 7 Water DebugViews (1..7, incl. W7:FlowDiag), MotionTelemetryStrip & DebugViewQuickGrid.
 //   2. Empty UiDrawList zero-touch invariance proof (0 modified pixels).
 //   3. Full UI widget gallery (Panel, TabBar, BudgetBar, Collapsible SectionHeader expanded/collapsed,
-//      EngineVarRow/Float/Bool verdict discs, Divider, Toggle ON/OFF, Slider, Pill, Swatch, Sparkline,
-//      Uppercase+Lowercase 7x9 outline typography) + strict PushClipRect scissor proof.
-//   4. Debug-Layer Control & Legend HUD rendered via RawOverlayHost::RecordDebugLayerHud (Views 34 & W7).
+//      EngineVarRow/Float/Bool verdict discs, MotionTelemetryStrip Pass/Fail, DebugViewQuickGrid Lighting/Water,
+//      Divider, Toggle ON/OFF, Slider, Pill, Swatch, Sparkline, 7x9 outline text) + PushClipRect scissor proof.
+//   4. Debug-Layer Control & Legend HUD rendered via RawOverlayHost::RecordDebugLayerHud (Views 34 & W7 + Motion/Grid).
 //   5. RGBA16F zero NaN/Inf check, 0 D3D12 Debug Layer errors, and HW GPU timing < 0.04 ms.
 // Original clean-room implementation, MIT License.
 
@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -364,6 +365,35 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
     gallery.AddEngineVarBool(372.0f, 276.0f, 356.0f, "Indoor Fog Clamp", false, 1u);
     gallery.AddEngineVarRow(372.0f, 292.0f, 356.0f, "Water Audit", "W7:FlowDiag", tokens::kAccentFail, 1u);
 
+    // Wave 65 Widget Gallery Panel: MotionTelemetryStrip (Pass & Fail) + DebugViewQuickGrid (Lighting & Water)
+    gallery.AddPanel(20.0f, 344.0f, 720.0f, 166.0f, 6.0f, tokens::kGround, tokens::kBorderStrong, tokens::kAccentPass);
+    MotionTelemetrySnapshot motPass{};
+    motPass.cameraSpeedUps    = 142.5f;
+    motPass.yawRateDegPerSec  = 18.4f;
+    motPass.temporalShadowStd = 0.0124f;
+    motPass.mvReprojRmse      = 0.0185f;
+    motPass.burstFrameIndex   = 2u;
+    motPass.burstFrameCount   = 6u;
+    motPass.camSweepActive    = true;
+    motPass.mvSignValid       = true;
+    gallery.AddMotionTelemetryStrip(32.0f, 356.0f, 336.0f, motPass, 1u);
+
+    MotionTelemetrySnapshot motFail{};
+    motFail.cameraSpeedUps    = 285.0f;
+    motFail.yawRateDegPerSec  = -42.0f;
+    motFail.temporalShadowStd = 0.1450f;
+    motFail.mvReprojRmse      = 0.2200f;
+    motFail.burstFrameIndex   = 5u;
+    motFail.burstFrameCount   = 6u;
+    motFail.camSweepActive    = true;
+    motFail.mvSignValid       = false;
+    gallery.AddMotionTelemetryStrip(32.0f, 412.0f, 336.0f, motFail, 1u);
+
+    static constexpr uint32_t kLightQuick[8] = {0u, 1u, 2u, 28u, 31u, 33u, 34u, 35u};
+    static constexpr uint32_t kWaterQuick[7] = {1u, 2u, 3u, 4u, 5u, 6u, 7u};
+    gallery.AddDebugViewQuickGrid(384.0f, 356.0f, 344.0f, kLightQuick, 8u, 35u, false, 4u, 1u);
+    gallery.AddDebugViewQuickGrid(384.0f, 414.0f, 344.0f, kWaterQuick, 7u, 7u, true, 4u, 1u);
+
     const UiPixelRect dirty = gallery.ComputeDirtyRect(kW, kH);
     std::vector<uint8_t> galRb;
     const bool galOk = RunWithCallback([&](ID3D12GraphicsCommandList* cl, ID3D12Resource* tex) {
@@ -393,6 +423,10 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
     uint32_t varDotBrassPx = 0u;
     uint32_t varDotBluePx = 0u;
     uint32_t varDotCoralPx = 0u;
+    uint32_t motPassBluePx = 0u;
+    uint32_t motFailCoralPx = 0u;
+    uint32_t gridLightActiveCyanPx = 0u;
+    uint32_t gridWaterActiveMagPx = 0u;
     for (uint32_t y = 0u; y < kH; ++y) {
         for (uint32_t x = 0u; x < kW; ++x) {
             const size_t off = (static_cast<size_t>(y) * kW + x) * 4u;
@@ -461,10 +495,24 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
             if (y >= 292u && y < 302u && x >= 371u && x < 381u && r > 185u && g < 130u && b < 110u) {
                 ++varDotCoralPx;
             }
+            // Wave 65 MotionTelemetryStrip Pass (blue accent/verdict) & Fail (coral accent/verdict)
+            if (y >= 356u && y < 402u && x >= 32u && x < 368u && b > 185u && r < 140u) {
+                ++motPassBluePx;
+            }
+            if (y >= 412u && y < 458u && x >= 32u && x < 368u && r > 185u && g < 130u && b < 110u) {
+                ++motFailCoralPx;
+            }
+            // Wave 65 DebugViewQuickGrid active cells: Lighting 35 (cyan accent, col 3 row 1) & Water 7 (magenta accent, col 2 row 1)
+            if (y >= 380u && y < 404u && x >= 642u && x < 728u && g > 170u && b > 200u && r < 130u) {
+                ++gridLightActiveCyanPx;
+            }
+            if (y >= 438u && y < 462u && x >= 556u && x < 644u && r > 200u && g < 110u && b > 150u) {
+                ++gridWaterActiveMagPx;
+            }
         }
     }
 
-    // 3) Debug-Layer Control & Legend HUD rendered via RawOverlayHost::RecordDebugLayerHud (View 34 + W7)
+    // 3) Debug-Layer Control & Legend HUD rendered via RawOverlayHost::RecordDebugLayerHud (View 34 + W7 + Motion + QuickGrid)
     // Time 10 frames of the real production Debug-Layer HUD (344px drawer) for accurate GPU cost!
     DebugLayerHudSnapshot dbgSnap{};
     dbgSnap.activeDebugView = 34u;
@@ -481,6 +529,8 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
     dbgSnap.uiMs            = 0.015f;
     dbgSnap.historyFrameMs  = hist;
     dbgSnap.historyCount    = 64u;
+    dbgSnap.motionTelemetry = &motPass;
+    dbgSnap.showQuickGrid   = true;
 
     std::vector<uint8_t> dbgRb;
     bool dbgOk = true;
@@ -590,8 +640,10 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
                 budgetMarkerBonePx, chevExpandedBrassPx, chevCollapsedEmeraldPx,
                 varDotBrassPx, varDotBluePx, varDotCoralPx,
                 dbgModPx, w7ModPx, nanInf, static_cast<double>(meanMs), static_cast<double>(minMs), dbgErrs);
+    std::printf("  [%s] w65: motPassBlue=%u motFailCoral=%u gridLight35Cyan=%u gridWater7Mag=%u\n",
+                tag, motPassBluePx, motFailCoralPx, gridLightActiveCyanPx, gridWaterActiveMagPx);
 
-    Check(galOk && insideDirtyMod > 90000u && outsideDirtyMod == 0u,
+    Check(galOk && insideDirtyMod > 180000u && outsideDirtyMod == 0u,
           useWarp ? "WARP: Widget gallery rendered strictly inside dirtyRect (0 out-of-bounds)"
                   : "HW: Widget gallery rendered strictly inside dirtyRect (0 out-of-bounds)");
     Check(clipInsideRed > 5000u && clipLeakRed == 0u,
@@ -609,9 +661,13 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
               varDotBrassPx >= 12u && varDotBluePx >= 12u && varDotCoralPx >= 12u,
           useWarp ? "WARP: Wave 64 TabBar, 4-seg BudgetBar+marker, Collapsible Chevrons & EngineVarRow discs verified"
                   : "HW: Wave 64 TabBar, 4-seg BudgetBar+marker, Collapsible Chevrons & EngineVarRow discs verified");
+    Check(motPassBluePx >= 400u && motFailCoralPx >= 400u &&
+              gridLightActiveCyanPx >= 150u && gridWaterActiveMagPx >= 150u,
+          useWarp ? "WARP: Wave 65 MotionTelemetryStrip (Pass/Fail) & DebugViewQuickGrid (View 35 & W7) verified"
+                  : "HW: Wave 65 MotionTelemetryStrip (Pass/Fail) & DebugViewQuickGrid (View 35 & W7) verified");
     Check(dbgOk && dbgModPx > 60000u && w7Ok && w7ModPx > 60000u,
-          useWarp ? "WARP: RecordDebugLayerHud rendered Lighting View 34 (FloraTrees) & Water View 7 (FlowDiag)"
-                  : "HW: RecordDebugLayerHud rendered Lighting View 34 (FloraTrees) & Water View 7 (FlowDiag)");
+          useWarp ? "WARP: RecordDebugLayerHud rendered View 34 + W7 with Motion Strip & Quick-Grid"
+                  : "HW: RecordDebugLayerHud rendered View 34 + W7 with Motion Strip & Quick-Grid");
     Check(nanInf == 0u,
           useWarp ? "WARP: 0 NaN/Inf pixels on RGBA16F HDR target"
                   : "HW: 0 NaN/Inf pixels on RGBA16F HDR target");
@@ -635,7 +691,7 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
 
 int main()
 {
-    std::printf("=== Wave 64 GPU-Native UI Library (RawUiLib) + 37+7 Debug-Layer HUD Proof ===\n");
+    std::printf("=== Wave 65 GPU-Native UI Library (RawUiLib) + Motion Telemetry & Quick-Grid Proof ===\n");
 
     // Pure CPU checks: proportional metrics, ALL 37 Lighting DebugViews (0..36) & ALL 7 Water Views (1..7)
     {
@@ -691,6 +747,24 @@ int main()
         const DebugViewDescriptor w7 = GetWaterDebugViewDescriptor(7u);
         Check(allWaterViewsValid && std::strcmp(w7.shortName, "W7:FlowDiag") == 0 && w7.legend.size() >= 4u,
               "CPU: ALL 7 Water DebugView descriptors (W1..W7 incl. W7:FlowDiag) valid");
+
+        // Wave 65 CPU checks: MotionTelemetryStrip & DebugViewQuickGrid finite guards + bounds
+        UiDrawList w65Dl;
+        MotionTelemetrySnapshot badMot{};
+        badMot.cameraSpeedUps    = std::numeric_limits<float>::quiet_NaN();
+        badMot.yawRateDegPerSec  = std::numeric_limits<float>::infinity();
+        badMot.temporalShadowStd = -1.0f;
+        badMot.mvReprojRmse      = std::numeric_limits<float>::quiet_NaN();
+        badMot.burstFrameIndex   = 9u;
+        badMot.burstFrameCount   = 6u;
+        badMot.camSweepActive    = true;
+        badMot.mvSignValid       = false;
+        w65Dl.AddMotionTelemetryStrip(16.0f, 16.0f, 320.0f, badMot, 1u);
+        static constexpr uint32_t kIds[4] = {0u, 34u, 35u, 36u};
+        w65Dl.AddDebugViewQuickGrid(16.0f, 70.0f, 320.0f, kIds, 4u, 35u, false, 4u, 1u);
+        const UiPixelRect r = w65Dl.ComputeDirtyRect(800u, 600u);
+        Check(!w65Dl.Empty() && w65Dl.Commands().size() >= 18u && r.w > 280u && r.h > 60u,
+              "CPU: Wave 65 MotionTelemetryStrip (NaN-safe) & DebugViewQuickGrid command generation valid");
     }
 
     ComPtr<ID3D12Debug> dbg;

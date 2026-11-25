@@ -2498,17 +2498,37 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     m->RecordFrameTimingSample();
     m->PollOverlayHotkey();
 
+    // Inspect active LightingPass / Water debug view flags (flags[3] = LightingTuning::view, waterB[0] = waterView)
+    // so Debug Views 1..35 and WaterViews 1..7 pass through 100% uncorrupted by ScreenGI, Fire, or LiveWorld!
+    uint32_t lpDebugView = 0u;
+    uint32_t lpWaterView = 0u;
+    {
+        const void* dbgU = nullptr;
+        size_t dbgUb = 0u;
+        if (m->pass && LightingPassUniform(m->pass.get(), &dbgU, &dbgUb) &&
+            dbgU != nullptr && dbgUb >= sizeof(TelemetryLightUniformView)) {
+            const auto* u = static_cast<const TelemetryLightUniformView*>(dbgU);
+            lpDebugView = u->flags[3];
+            if (std::isfinite(u->waterB[0]) && u->waterB[0] > 0.5f) {
+                lpWaterView = static_cast<uint32_t>(u->waterB[0] + 0.5f);
+            }
+        }
+    }
+    const bool anyPipelineDebugView = (lpDebugView != 0u) || (lpWaterView != 0u);
+    const bool skipFireCompositeForDebug = (lpDebugView != 0u && lpDebugView != 36u) || (lpWaterView != 0u);
+
     // Determine whether live RawTerrainWorld.hlsl multi-biome rendering runs after LightingPass this frame.
     const bool isInterior = m->lighting.hasEngineCell
         ? m->lighting.isInterior
         : !(s.hasShadows && m->lighting.hasCascades);
     const void* terrainU = nullptr;
     size_t terrainUb = 0;
-    const bool runTerrain = m->cfg.lightingPass && m->lighting.valid && !isInterior &&
+    const bool runTerrain = !anyPipelineDebugView && m->cfg.lightingPass && m->lighting.valid && !isInterior &&
                             !m->streamedTerrainGpu.empty() && m->meshHost.TerrainReady() &&
                             LightingPassUniform(m->pass.get(), &terrainU, &terrainUb);
     const bool runFluid = m->cfg.lightingPass && m->lighting.valid && m->fluidReady && m->fluidSim.Ready();
-    const bool runRadiance = m->cfg.lightingPass && m->lighting.valid && m->radianceReady && m->radianceHost.ScreenGIReady();
+    const bool runRadiance = !anyPipelineDebugView && m->cfg.lightingPass && m->lighting.valid &&
+                             m->radianceReady && m->radianceHost.ScreenGIReady();
     const bool runXpbd = m->cfg.lightingPass && m->lighting.valid && m->xpbdSimReady && m->xpbdSim && m->xpbdSim->Ready();
     const bool runGpuCull = m->cfg.lightingPass && m->lighting.valid && m->gpuCullReady && m->gpuCull &&
                             m->gpuCull->Ready() && m->depthIn.res12 != nullptr;
@@ -2544,7 +2564,8 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     }
     const bool runGrassWind = m->cfg.lightingPass && m->lighting.valid && lwRt.grassReady && lwRt.grassWind && lwRt.grassWind->Ready();
     const bool runLiveWorld = m->cfg.lightingPass && m->lighting.valid && lwRt.liveWorldReady && lwRt.liveWorld &&
-                              lwRt.liveWorld->Ready() && m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr;
+                              lwRt.liveWorld->Ready() && m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr &&
+                              (!anyPipelineDebugView || lwRt.activeDebugView != 0u);
     const bool runOverlay = (m->overlayHudEnabled || lwRt.debugDrawerEnabled || lwRt.activeDebugView != 0u) &&
                             m->overlayHostReady && m->overlayHost && m->overlayHost->Ready();
     const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runAutoExposure || runCloudRaymarch || runPostCinematic || runGpuParticles || runTsrUpscale || runWaterCaustics || runSnowDeform || runGrassWind || runLiveWorld || runOverlay;
@@ -2579,9 +2600,10 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                         wDom.originXY[0], wDom.originXY[1], wDom.worldSpanU);
                 }
             }
-            // Composite live 64x64x64 GPU 3D Navier-Stokes fire/smoke/radiance directly onto colorOut with SceneDepth occlusion:
+            // Composite live 64x64x64 GPU 3D Navier-Stokes fire/smoke/radiance directly onto colorOut with SceneDepth occlusion
+            // (strictly skipped on Lighting Debug Views 1..35 and WaterViews 1..7 so debug buffers stay bit-exact pure!):
             const auto fDom = m->fluidSim.GetFireDomainInfo();
-            if (m->fluidComposite.Ready() && fDom.active && fDom.emitterCount > 0u &&
+            if (!skipFireCompositeForDebug && m->fluidComposite.Ready() && fDom.active && fDom.emitterCount > 0u &&
                 m->fluidSim.FireThermoResource() && m->fluidSim.FireRadianceResource()) {
                 LightingFluidInputs fi{};
                 LightingPassFluidInputs(m->pass.get(), &fi);
@@ -2609,6 +2631,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                 cp.height = m->cfg.height;
                 cp.activeEmitters = fDom.emitterCount;
                 cp.isInterior = isInterior;
+                if constexpr (requires { cp.debugOverlayMode; }) {
+                    cp.debugOverlayMode = (lpDebugView == 36u);
+                }
                 if (m->fluidComposite.Composite(
                         m->queue.Get(), m->colorOut.res12.Get(), m->depthIn.res12.Get(),
                         m->fluidSim.FireThermoResource(), m->fluidSim.FireRadianceResource(), cp)) {
@@ -2795,7 +2820,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                 if (std::isfinite(u->seasonThermal0[0])) lwp.seasonSnowDepthM = std::max(0.0f, u->seasonThermal0[0]);
                 const float wSnow = std::isfinite(u->weather[1]) ? std::clamp(u->weather[1], 0.0f, 1.0f) : 0.0f;
                 lwp.snowBaselineDepthM = std::clamp(0.12f + wSnow * 0.42f, 0.12f, 0.55f);
-                lwp.lightingDebugActive = (u->flags[3] != 0u);
+                lwp.lightingDebugActive = anyPipelineDebugView;
             }
 
             LiveWorldInputResources lwr{};

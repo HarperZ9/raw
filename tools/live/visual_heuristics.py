@@ -162,8 +162,24 @@ def detect_indoor_black_orbs(
     image: str | Path | Image.Image | np.ndarray,
     box_density_threshold: float = 0.92,
     min_surround_bright_frac: float = 0.35,
+    is_interior: bool | None = None,
 ) -> HeuristicResult:
-    """#1: Detects large contiguous pitch-black soot/orb blotches occluding lit interiors/caves."""
+    """#1: Detects large contiguous pitch-black soot/orb blotches occluding lit interiors/caves.
+
+    When `is_interior=False` (known outdoor scene such as High Hrothgar or Windhelm), returns PASS
+    so dark architectural pillars or cliff shadows in bright exterior snow never false-flag.
+    When `is_interior` is True or None, runs the full interior soot-orb check (100% baseline coverage).
+    """
+    if is_interior is False:
+        return HeuristicResult(
+            name="detect_indoor_black_orbs",
+            detected=False,
+            score=0.0,
+            threshold=box_density_threshold,
+            severity="pass",
+            details={"is_interior": False, "skipped_exterior_scene": True},
+        )
+
     rgb = load_rgb_float(image)
     h, w, _ = rgb.shape
     lum = _luminance(rgb)
@@ -189,6 +205,7 @@ def detect_indoor_black_orbs(
         threshold=box_density_threshold,
         severity="fail" if detected else "pass",
         details={
+            "is_interior": True if is_interior is True else "unspecified",
             "max_black_box_density": round(max_box, 4),
             "box_size_px": int(k),
             "surround_bright_frac": round(bright_frac, 4),
@@ -240,17 +257,21 @@ def detect_water_scanline_holes(
     """
     if water_flow_diag_image is not None:
         wf = load_rgb_float(water_flow_diag_image)
-        mag = (wf[:, :, 0] > 0.82) & (wf[:, :, 2] > 0.82) & (wf[:, :, 1] < 0.18)
+        mag = (wf[:, :, 0] > 0.78) & (wf[:, :, 2] > 0.78) & (wf[:, :, 1] < 0.22)
         mag_frac = float(np.mean(mag))
-        if mag_frac > 0.001:
-            return HeuristicResult(
-                name="detect_water_scanline_holes",
-                detected=True,
-                score=mag_frac,
-                threshold=0.001,
-                severity="fail",
-                details={"mode": "water_flow_diag_view7", "magenta_continuity_alarm_frac": round(mag_frac, 5)},
-            )
+        detected_v7 = mag_frac > 0.0005
+        return HeuristicResult(
+            name="detect_water_scanline_holes",
+            detected=detected_v7,
+            score=mag_frac,
+            threshold=0.0005,
+            severity="fail" if detected_v7 else "pass",
+            details={
+                "mode": "water_flow_diag_view7",
+                "magenta_continuity_alarm_frac": round(mag_frac, 6),
+                "magenta_pixels": int(mag.sum()),
+            },
+        )
 
     rgb = load_rgb_float(image)
     h, w, _ = rgb.shape
@@ -1256,18 +1277,40 @@ def analyze_motion_vector_reprojection(
     max_mv_px = float(np.percentile(mag_px, 95))
     margin = int(min(max(4, math.ceil(max_mv_px) + 2), min(h, w) // 6))
 
-    warp_plus = _warp_bilinear_rgb(a, dx_px, dy_px)
-    warp_minus = _warp_bilinear_rgb(a, -dx_px, -dy_px)
-
     sl_y = slice(margin, h - margin)
     sl_x = slice(margin, w - margin)
     ref = b[sl_y, sl_x, :]
-    rmse_plus = float(np.sqrt(np.mean((ref - warp_plus[sl_y, sl_x, :]) ** 2)))
-    rmse_minus = float(np.sqrt(np.mean((ref - warp_minus[sl_y, sl_x, :]) ** 2)))
     rmse_zero = float(np.sqrt(np.mean((ref - a[sl_y, sl_x, :]) ** 2)))
 
-    sign_inverted = (mean_mv_px >= 0.40) and ((rmse_minus + 0.015) < rmse_plus)
-    no_improvement = (mean_mv_px >= 0.80) and (rmse_plus > rmse_zero * 1.05) and (rmse_plus > 0.03)
+    # Distinguish stationary bursts (mean_mv_px < 0.25) from moving cam_sweep bursts (>= 0.25)
+    if mean_mv_px < 0.25:
+        detected_static = rmse_zero > max_reproj_rmse
+        return HeuristicResult(
+            name="analyze_motion_vector_reprojection",
+            detected=detected_static,
+            score=rmse_zero,
+            threshold=max_reproj_rmse,
+            severity="fail" if detected_static else "pass",
+            details={
+                "motion_regime": "stationary",
+                "rmse_plus_mv": round(rmse_zero, 5),
+                "rmse_minus_mv": round(rmse_zero, 5),
+                "rmse_zero_mv": round(rmse_zero, 5),
+                "static_temporal_rmse": round(rmse_zero, 5),
+                "mean_mv_px": round(mean_mv_px, 3),
+                "p95_mv_px": round(max_mv_px, 3),
+                "sign_inverted": False,
+                "best_sign": "stationary",
+            },
+        )
+
+    warp_plus = _warp_bilinear_rgb(a, dx_px, dy_px)
+    warp_minus = _warp_bilinear_rgb(a, -dx_px, -dy_px)
+    rmse_plus = float(np.sqrt(np.mean((ref - warp_plus[sl_y, sl_x, :]) ** 2)))
+    rmse_minus = float(np.sqrt(np.mean((ref - warp_minus[sl_y, sl_x, :]) ** 2)))
+
+    sign_inverted = (rmse_minus + 0.015) < rmse_plus
+    no_improvement = (mean_mv_px >= 0.50) and (rmse_plus > rmse_zero * 1.05) and (rmse_plus > 0.03)
     high_residual = min(rmse_plus, rmse_minus) > max_reproj_rmse
 
     best_sign = "+mv" if rmse_plus <= min(rmse_minus, rmse_zero) else ("-mv" if rmse_minus <= rmse_zero else "zero")
@@ -1279,6 +1322,7 @@ def analyze_motion_vector_reprojection(
         threshold=max_reproj_rmse,
         severity="fail" if detected else "pass",
         details={
+            "motion_regime": "moving_cam_sweep",
             "rmse_plus_mv": round(rmse_plus, 5),
             "rmse_minus_mv": round(rmse_minus, 5),
             "rmse_zero_mv": round(rmse_zero, 5),
@@ -1562,6 +1606,7 @@ def analyze_world_lock_anti_swimming(
     ratios: list[float] = []
     world_rmses: list[float] = []
     screen_rmses: list[float] = []
+    stationary_rmses: list[float] = []
 
     for k in range(n - 1):
         a, b = _match_shape(load_rgb_float(seq_frames[k]), load_rgb_float(seq_frames[k + 1]))
@@ -1569,32 +1614,42 @@ def analyze_world_lock_anti_swimming(
         a, mv_b = _match_shape(a, mv_b)
         b, mv_b = _match_shape(b, mv_b)
         dx, dy, _ = decode_debug35_motion_vectors(mv_b)
-        mean_mv = float(np.hypot(dx, dy).mean())
-        if mean_mv < 1.0:
-            continue
+        mag = np.hypot(dx, dy)
+        mean_mv = float(mag.mean())
 
         h, w, _ = a.shape
-        margin = int(min(max(4, math.ceil(float(np.percentile(np.hypot(dx, dy), 95))) + 2), min(h, w) // 6))
+        margin = int(min(max(4, math.ceil(float(np.percentile(mag, 95))) + 2), min(h, w) // 6))
         sl_y = slice(margin, h - margin)
         sl_x = slice(margin, w - margin)
+        rmse_screen = float(np.sqrt(np.mean((b[sl_y, sl_x] - a[sl_y, sl_x]) ** 2)))
+
+        if mean_mv < 0.25:
+            stationary_rmses.append(rmse_screen)
+            continue
 
         warped = _warp_bilinear_rgb(a, dx, dy)
         rmse_world = float(np.sqrt(np.mean((b[sl_y, sl_x] - warped[sl_y, sl_x]) ** 2)))
-        rmse_screen = float(np.sqrt(np.mean((b[sl_y, sl_x] - a[sl_y, sl_x]) ** 2)))
         world_rmses.append(rmse_world)
         screen_rmses.append(rmse_screen)
         # If image stays glued to screen coordinates during motion, rmse_screen << rmse_world!
-        ratio = rmse_screen / (rmse_world + 1e-6)
+        ratio = rmse_screen / max(rmse_world, 1e-6)
         ratios.append(ratio)
 
     if not ratios:
+        max_static = float(np.max(stationary_rmses)) if stationary_rmses else 0.0
+        detected_static = max_static > 0.14
         return HeuristicResult(
             name="analyze_world_lock_anti_swimming",
-            detected=False,
-            score=1.0,
-            threshold=max_screen_lock_ratio,
-            severity="pass",
-            details={"skipped_no_camera_motion": True},
+            detected=detected_static,
+            score=max_static,
+            threshold=0.14,
+            severity="fail" if detected_static else "pass",
+            details={
+                "motion_regime": "stationary",
+                "stationary_pairs_analyzed": len(stationary_rmses),
+                "max_static_temporal_rmse": round(max_static, 5),
+                "skipped_no_camera_motion": True,
+            },
         )
 
     min_ratio = float(np.min(ratios))
@@ -1607,6 +1662,7 @@ def analyze_world_lock_anti_swimming(
         threshold=max_screen_lock_ratio,
         severity="fail" if detected else "pass",
         details={
+            "motion_regime": "moving_cam_sweep",
             "moving_pairs_analyzed": len(ratios),
             "min_screen_to_world_rmse_ratio": round(min_ratio, 4),
             "max_world_locked_rmse": round(max_world_rmse, 5),
@@ -1662,14 +1718,27 @@ def audit_image(
     }
 
 
+def _infer_is_interior(scene_name: str, is_interior: bool | None) -> bool | None:
+    if is_interior is not None:
+        return bool(is_interior)
+    low = scene_name.lower()
+    if any(tok in low for tok in ("inn", "cave", "interior", "dungeon", "outpost", "barrow", "tomb", "mine", "ruin")):
+        return True
+    if any(tok in low for tok in ("ext", "day", "sunset", "rain", "night", "river", "hrothgar", "whiterun", "windhelm")):
+        return False
+    return None
+
+
 def audit_scene_bundle(
     step_images: Mapping[str, str | Path | Image.Image | np.ndarray],
     scene_name: str = "scene",
     telemetry: Mapping[str, str | Path | None] | None = None,
     burst_sequences: Mapping[str, Sequence[str | Path | Image.Image | np.ndarray]] | None = None,
+    is_interior: bool | None = None,
 ) -> dict[str, Any]:
     """Runs ALL applicable heuristics (up to 25!) across a scene's stills, debug layers, telemetry & bursts."""
     results: list[HeuristicResult] = []
+    resolved_interior = _infer_is_interior(scene_name, is_interior)
     imp = step_images.get("improved")
     v1 = step_images.get("view_normals")
     v2 = step_images.get("view_sun_shadow")
@@ -1688,7 +1757,7 @@ def audit_scene_bundle(
     if imp is not None:
         rgb = load_rgb_float(imp)
         results.extend([
-            detect_indoor_black_orbs(rgb),
+            detect_indoor_black_orbs(rgb, is_interior=resolved_interior),
             detect_red_sky_fire_bleed(rgb),
             detect_water_scanline_holes(rgb, water_depth_image=w_depth, water_flow_diag_image=w_flow),
             detect_water_zebra_stripes(rgb),
@@ -1739,6 +1808,7 @@ def audit_scene_bundle(
     failed = [r.name for r in results if r.detected]
     return {
         "scene": scene_name,
+        "is_interior": bool(resolved_interior) if resolved_interior is not None else False,
         "steps_present": sorted(step_images.keys()),
         "burst_steps_present": sorted(k for k, v in (burst_sequences or {}).items() if len(v) >= 2),
         "heuristics_run": len(results),
@@ -1769,7 +1839,7 @@ def audit_directory(directory: str | Path, glob_pattern: str = "*.png", include_
 
 
 def _main(argv: Sequence[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="RAW 20-Heuristic Full-Pipeline Visual Inspector (Wave 64+)")
+    ap = argparse.ArgumentParser(description="RAW 25-Heuristic Full-Pipeline Visual & Temporal Inspector (Wave 65)")
     ap.add_argument("target", help="PNG/BMP file or directory of screenshots to audit")
     ap.add_argument("--pair", help="Optional second frame for camera_turn_shadow_flicker comparison")
     ap.add_argument("--glob", default="*.png", help="Filename glob when target is a directory")

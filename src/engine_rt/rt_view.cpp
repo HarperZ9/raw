@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -15,8 +16,6 @@
 namespace raw::rt {
 namespace {
 
-
-
 const uint8_t* g_base = nullptr;
 // from the version table at ViewInit; a part whose address is 0 reads as not available
 uint32_t kGraphicsState = 0, kPlayerCamera = 0, kPlayer = 0, kGetSky = 0, kCalendar = 0, kWorldSpace = 0, kUiSingleton = 0;
@@ -24,6 +23,7 @@ uint32_t kCellWaterHeightOff = 0x78u, kWorldDefaultWaterOff = 0x214u;
 uint64_t g_frame = 0;
 EngineView g_view{};
 std::mutex g_m;
+std::atomic<bool> g_sweepActiveFlag{false};
 struct SavedCellWater {
     uintptr_t cellAddr = 0;
     float     baseHeight = -14000.0f;
@@ -196,7 +196,85 @@ bool ReadTime(EngineView* v) {
                 v->timeScale  = std::clamp(readGlobal(cal, 0x30, 20.0f), 0.0f, 1000.0f);
             }
         }
-        return hasHour && v->gameHour >= 0.0f && v->gameHour <= 24.0f;
+    return hasHour && v->gameHour >= 0.0f && v->gameHour <= 24.0f;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+bool SehApplyCameraSweepStep(float dYawRad, float dPitchRad, float dFwdUnits) {
+    __try {
+        if (!g_base || !kPlayer || !kPlayerCamera) return false;
+        const uint8_t* cam = At<const uint8_t*>(g_base, kPlayerCamera);
+        if (!cam) return false;
+        const uint8_t* camRoot = At<const uint8_t*>(cam, 0x20);
+        if (!camRoot) return false;
+
+        uint8_t* pc = const_cast<uint8_t*>(At<const uint8_t*>(g_base, kPlayer));
+        if (!pc) return false;
+        const uint8_t* cell = At<const uint8_t*>(pc, 0x60);
+        if (!cell) return false;
+        const uint32_t cellId = At<uint32_t>(cell, 0x14);
+        if (cellId == 0u) return false;
+
+        if (kUiSingleton) {
+            if (const uint8_t* ui = At<const uint8_t*>(g_base, kUiSingleton)) {
+                const uint32_t np = At<uint32_t>(ui, 0x160);
+                if (np > 0u && np < 64u) return false;
+            }
+        }
+
+        float rot[3]{};
+        float pos[3]{};
+        std::memcpy(rot, pc + 0x48, sizeof rot);
+        std::memcpy(pos, pc + 0x54, sizeof pos);
+
+        CameraPose pose{};
+        pose.pitchRad = rot[0];
+        pose.rollRad  = rot[1];
+        pose.yawRad   = rot[2];
+        pose.pos[0]   = pos[0];
+        pose.pos[1]   = pos[1];
+        pose.pos[2]   = pos[2];
+        if (!ComputeCameraSweepStep(pose, dYawRad, dPitchRad, dFwdUnits)) return false;
+
+        rot[0] = pose.pitchRad;
+        rot[1] = pose.rollRad;
+        rot[2] = pose.yawRad;
+        std::memcpy(pc + 0x48, rot, sizeof rot);
+        if (std::fabs(dFwdUnits) > 1.0e-6f) {
+            std::memcpy(pc + 0x54, pose.pos, sizeof pose.pos);
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+bool SehSetPlayerPose(float x, float y, float z, float pitchRad, float yawRad) {
+    __try {
+        if (!g_base || !kPlayer || !kPlayerCamera) return false;
+        const uint8_t* cam = At<const uint8_t*>(g_base, kPlayerCamera);
+        if (!cam) return false;
+        const uint8_t* camRoot = At<const uint8_t*>(cam, 0x20);
+        if (!camRoot) return false;
+
+        uint8_t* pc = const_cast<uint8_t*>(At<const uint8_t*>(g_base, kPlayer));
+        if (!pc) return false;
+        const uint8_t* cell = At<const uint8_t*>(pc, 0x60);
+        if (!cell) return false;
+        if (At<uint32_t>(cell, 0x14) == 0u) return false;
+
+        if (kUiSingleton) {
+            if (const uint8_t* ui = At<const uint8_t*>(g_base, kUiSingleton)) {
+                const uint32_t np = At<uint32_t>(ui, 0x160);
+                if (np > 0u && np < 64u) return false;
+            }
+        }
+
+        CameraPose pose{};
+        if (!ComputeSetPlayerPose(pose, x, y, z, pitchRad, yawRad)) return false;
+
+        const float rot[3] = {pose.pitchRad, pose.rollRad, pose.yawRad};
+        std::memcpy(pc + 0x48, rot, sizeof rot);
+        std::memcpy(pc + 0x54, pose.pos, sizeof pose.pos);
+        return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
@@ -284,20 +362,39 @@ void ViewRestoreAllTides() {
     }
 }
 
+bool ApplyCameraSweepStep(float dYawRad, float dPitchRad, float dFwdUnits) {
+    return SehApplyCameraSweepStep(dYawRad, dPitchRad, dFwdUnits);
+}
+
+bool SetPlayerPose(float x, float y, float z, float pitchRad, float yawRad) {
+    return SehSetPlayerPose(x, y, z, pitchRad, yawRad);
+}
+
+bool IsCameraSweepActive() noexcept {
+    return g_sweepActiveFlag.load(std::memory_order_acquire);
+}
+
+void SetCameraSweepActiveFlag(bool active) noexcept {
+    g_sweepActiveFlag.store(active, std::memory_order_release);
+}
+
 std::string ViewJson() {
     EngineView v;
     { std::lock_guard<std::mutex> g(g_m); v = g_view; }
-    char b[1024];
+    const uint32_t sweepAct = IsCameraSweepActive() ? 1u : 0u;
+    char b[1152];
     std::snprintf(b, sizeof b,
                   "\"view_ok\":%u,\"screen\":[%u,%u],\"fb_viewport\":[%u,%u],\"cam_pos\":[%.1f,%.1f,%.1f],"
                   "\"cam_fwd\":[%.3f,%.3f,%.3f],\"fov\":%.2f,\"fov_1st\":%.2f,\"player_pos\":[%.1f,%.1f,%.1f],"
-                  "\"cell\":\"0x%08X\",\"worldspace\":\"0x%08X\",\"cell_interior\":%u,\"water_height\":%.1f,"
-                  "\"cam_state\":%u,\"menu_paused\":%u,\"game_year\":%.0f,\"game_month\":%.0f,\"game_day\":%.0f,"
+                  "\"cell\":\"0x%08X\",\"cell_id\":%u,\"worldspace\":\"0x%08X\",\"cell_interior\":%u,\"interior\":%u,"
+                  "\"water_height\":%.1f,\"cam_state\":%u,\"menu_paused\":%u,\"sweep_active\":%u,"
+                  "\"game_year\":%.0f,\"game_month\":%.0f,\"game_day\":%.0f,"
                   "\"game_hour\":%.3f,\"days_passed\":%.3f,\"time_scale\":%.2f",
                   v.ok, v.screen[0], v.screen[1], v.viewport[0], v.viewport[1], v.camPos[0], v.camPos[1], v.camPos[2],
                   v.camRot[1], v.camRot[4], v.camRot[7], v.fov, v.fovFirstPerson, v.playerPos[0], v.playerPos[1],
-                  v.playerPos[2], v.cellFormId, v.worldspaceFormId, v.interior, v.waterHeight,
-                  v.camStateId, v.menuPaused, v.gameYear, v.gameMonth, v.gameDay,
+                  v.playerPos[2], v.cellFormId, v.cellFormId, v.worldspaceFormId, v.interior, v.interior,
+                  v.waterHeight, v.camStateId, v.menuPaused, sweepAct,
+                  v.gameYear, v.gameMonth, v.gameDay,
                   v.gameHour, v.daysPassed, v.timeScale);
     return b;
 }

@@ -145,10 +145,37 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const int3 ip = int3(p, 0);
     const float4 curRaw = CurHdr.Load(ip);
     const float d = Depth.Load(ip);
-    // Wave 64 Addendum (#471): DebugView 35 decodable signed GPU Motion Vectors + Divergence on sky!
-    if (flags.w == 35u && d >= 0.99998f) { return float4(0.5f, 0.5f, 0.0f, 1.0f); }
+    const float safeAlpha0 = isfinite(curRaw.a) ? saturate(curRaw.a) : 1.0f;
+    // Wave 65 Pure Debug Layer Contract:
+    // 1) Check flags.w == 35u FIRST (even when paused timeEnv.w > 0.5f or on sky d >= 0.99998f!):
+    //    outputs exact decodable signed GPU Motion Vectors + 3x3 divergence directly from Skyrim Motion texture.
+    //    Verified Skyrim Motion sign convention: prevUv = curUv + mv (matches RtSkyFilter, RtShadow, RtReflFilter).
+    if (flags.w == 35u) {
+        if (d >= 0.99998f) { return float4(0.5f, 0.5f, 0.0f, 1.0f); }
+        const int2 dMax35 = max(int2(dims.xy) - 1, int2(0, 0));
+        const float2 mvC35Raw = Motion.Load(ip);
+        const float2 mvC35 = (any(isnan(mvC35Raw)) || any(isinf(mvC35Raw))) ? 0.0f.xx : mvC35Raw;
+        float mvDiv35 = 0.0f;
+        [unroll] for (int dy35 = -1; dy35 <= 1; dy35++) {
+            [unroll] for (int dx35 = -1; dx35 <= 1; dx35++) {
+                if (dx35 == 0 && dy35 == 0) continue;
+                const int2 q35 = clamp(p + int2(dx35, dy35), int2(0, 0), dMax35);
+                const float2 mvQ35Raw = Motion.Load(int3(q35, 0));
+                const float2 mvQ35 = (any(isnan(mvQ35Raw)) || any(isinf(mvQ35Raw))) ? mvC35 : mvQ35Raw;
+                mvDiv35 = max(mvDiv35, length((mvQ35 - mvC35) * dims.xy));
+            }
+        }
+        return float4(
+            saturate(mvC35.x * 16.0f + 0.5f),
+            saturate(mvC35.y * 16.0f + 0.5f),
+            saturate(mvDiv35 * 0.25f),
+            1.0f
+        );
+    }
+    // 2) For ALL other Debug Views (1..34, 36): bit-exact passthrough (ZERO TAA smearing, cavity or detail edits!).
+    if (flags.w != 0u) { return float4(sanitizeFiniteRgb(curRaw.rgb), safeAlpha0); }
     // Leave sky dome (d >= 0.99998) and paused UI/MapMenu untouched; NEVER bypass on walkable alpine mountains!
-    if (d >= 0.99998f || timeEnv.w > 0.5f) { return float4(sanitizeFiniteRgb(curRaw.rgb), curRaw.a); }
+    if (d >= 0.99998f || timeEnv.w > 0.5f) { return float4(sanitizeFiniteRgb(curRaw.rgb), safeAlpha0); }
 
     const int2 dMax = max(int2(dims.xy) - 1, int2(0, 0));
     const float z = viewZOf(d);
@@ -220,19 +247,6 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     m1 /= max(wSum, 1.0e-4f);
     m2 /= max(wSum, 1.0e-4f);
     rgbBlur /= max(wSum, 1.0e-4f);
-    // Wave 64 Addendum (#471): Exact decodable signed GPU Motion Vector & Divergence output for DebugView 35!
-    // R = mvCenter.x * 16 + 0.5 (0.5 = zero X motion, +-1/32 UV full scale),
-    // G = mvCenter.y * 16 + 0.5 (0.5 = zero Y motion),
-    // B = mvDivPx * 0.25 (3x3 motion-vector divergence / moving actor silhouette rim).
-    // Verified Skyrim Motion sign convention: prevUv = curUv + mv (matches RtSkyFilter, RtShadow & RtReflFilter).
-    if (flags.w == 35u) {
-        return float4(
-            saturate(mvCenter.x * 16.0f + 0.5f),
-            saturate(mvCenter.y * 16.0f + 0.5f),
-            saturate(mvDivPx * 0.25f),
-            1.0f
-        );
-    }
     const float3 stdDev = sqrt(max(m2 - m1 * m1, 0.0f.xxx));
     const float lumMean3 = lumM1 * (1.0f / 9.0f);
     const float lumStd3 = sqrt(max(lumM2 * (1.0f / 9.0f) - lumMean3 * lumMean3, 0.0f));

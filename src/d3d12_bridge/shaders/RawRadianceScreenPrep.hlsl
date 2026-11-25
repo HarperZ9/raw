@@ -12,10 +12,10 @@
 
 cbuffer ScreenPrepCB : register(b0)
 {
-    uint4  dims;            // x = fullWidth, y = fullHeight, z = atlasRes (256), w = flags
+    uint4  dims;            // x = fullWidth, y = fullHeight, z = atlasRes (256), w = flags (bit0 = bypassDebugView)
     float4 invDims;         // x = 1/fullW, y = 1/fullH, z = 1/256, w = giStrength
     float4 extractParams;   // x = emissiveThresh (1.35), y = emissiveCap (6.0), z = depthEdgeScale (45.0), w = skyDepthThresh (0.99998)
-    float4 bilateralParams; // x = bilateralDepthSigma (0.015), y = lumaShoulder (2.5), z = maxBounceLuma (1.25), w = unused
+    float4 bilateralParams; // x = bilateralDepthSigma (0.015), y = lumaShoulder (2.5), z = maxBounceLuma (1.25), w = bypassDebugView (> 0.5 skips writes)
 };
 
 Texture2D<float4>   ColorOrIrrad : register(t0); // prep: full-res HDR ColorTex | apply: 256x256 IrradianceTex
@@ -37,6 +37,11 @@ void cs_rc_screen_prep(uint3 tid : SV_DispatchThreadID)
 {
     const uint atlasRes = max(dims.z, 1u);
     if (tid.x >= atlasRes || tid.y >= atlasRes) {
+        return;
+    }
+    // Clean bypass on active Debug Views (bit0 of dims.w or bilateralParams.w > 0.5): emit zero radiance.
+    if (((dims.w & 1u) != 0u) || bilateralParams.w > 0.5f) {
+        OutTex[tid.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         return;
     }
 
@@ -129,9 +134,14 @@ void cs_rc_screen_apply(uint3 tid : SV_DispatchThreadID)
     if (tid.x >= dims.x || tid.y >= dims.y) {
         return;
     }
+    // Clean bypass on active Debug Views (bit0 of dims.w or bilateralParams.w > 0.5): zero writes to ColorOut!
+    if (((dims.w & 1u) != 0u) || bilateralParams.w > 0.5f) {
+        return;
+    }
 
     const int3 ip = int3(int(tid.x), int(tid.y), 0);
-    const float dCenter = SceneDepth.Load(ip);
+    const float dCenterRaw = SceneDepth.Load(ip);
+    const float dCenter = (isnan(dCenterRaw) || isinf(dCenterRaw)) ? 1.0f : saturate(dCenterRaw);
     const float skyThresh = extractParams.w;
 
     // Strict sky gate: sky pixels (depth >= 0.99998) are 100% untouched
@@ -180,20 +190,23 @@ void cs_rc_screen_apply(uint3 tid : SV_DispatchThreadID)
         ? (giSum / wSum)
         : max(ColorOrIrrad.SampleLevel(LinClamp, uv, 0.0f).rgb, float3(0.0f, 0.0f, 0.0f));
 
-    const float4 cur = OutTex[tid.xy];
-    const float curLuma = rec709Luma(cur.rgb);
+    const float4 curRaw = OutTex[tid.xy];
+    const float3 curRgb = (any(isnan(curRaw.rgb)) || any(isinf(curRaw.rgb))) ? float3(0.0f, 0.0f, 0.0f) : max(curRaw.rgb, float3(0.0f, 0.0f, 0.0f));
+    const float curLuma = rec709Luma(curRgb);
 
     // Luminance-shoulder self-amplification guard: bright flames/torches never glow brighter onto themselves
     const float shoulder = max(bilateralParams.y, 0.5f);
     const float lumaRatio = curLuma / shoulder;
     const float selfGuard = 1.0f / (1.0f + lumaRatio * lumaRatio * lumaRatio);
 
-    float3 bounce = giIrrad * (giStrength * selfGuard);
+    const float3 giIrradSafe = (any(isnan(giIrrad)) || any(isinf(giIrrad))) ? float3(0.0f, 0.0f, 0.0f) : max(giIrrad, float3(0.0f, 0.0f, 0.0f));
+    float3 bounce = giIrradSafe * (giStrength * selfGuard);
     const float maxBounce = max(bilateralParams.z, 0.1f);
     const float bounceLum = rec709Luma(bounce);
     if (bounceLum > 1.0e-5f) {
         bounce *= maxBounce / (bounceLum + maxBounce);
     }
 
-    OutTex[tid.xy] = float4(cur.rgb + bounce, cur.a);
+    const float3 outRgb = (any(isnan(bounce)) || any(isinf(bounce))) ? curRgb : (curRgb + bounce);
+    OutTex[tid.xy] = float4(outRgb, curRaw.a);
 }

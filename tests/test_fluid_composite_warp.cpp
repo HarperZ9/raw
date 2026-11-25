@@ -751,6 +751,88 @@ int main()
                         dbgWirePx, dbgCorePx, dbgGreenPx, dbgRedAlarmPx, dbgLeftMod, dbgNanInf);
             Check(dbgInitOk && dbgNanInf == 0u && dbgLeftMod == 0u && dbgWirePx >= 20u && dbgCorePx >= 20u && dbgGreenPx >= 20u && dbgRedAlarmPx == 0u,
                   "DebugView 36 debugOverlayMode visualizes cyan domain wireframe, gold emitter cores & green compliant indoor transmittance (0 red alarms)");
+
+            // Pass 3c (Wave 65): Non-fire DebugView 1..35 Bypass Proof (debugOverlayParams.y > 0.5 && .x <= 0.5)
+            // Must produce ZERO writes to ColorOut across the entire 256x144 image even over active flames!
+            uint32_t bypassTotalMod = 0u, bypassNanInf = 0u;
+            if (dbgInitOk) {
+                DebugFireCompCB bcb{};
+                std::memcpy(bcb.clipToWorld, cpInt.clipToWorld, 64u);
+                bcb.camPosW[0] = cpInt.camPosW[0]; bcb.camPosW[1] = cpInt.camPosW[1]; bcb.camPosW[2] = cpInt.camPosW[2]; bcb.camPosW[3] = cpInt.simTimeSec;
+                bcb.domainMinW[0] = cpInt.domainMinW[0]; bcb.domainMinW[1] = cpInt.domainMinW[1]; bcb.domainMinW[2] = cpInt.domainMinW[2]; bcb.domainMinW[3] = cpInt.domainSpanW;
+                const float invSpan = 1.0f / cpInt.domainSpanW;
+                bcb.domainInvSpanW[0] = invSpan; bcb.domainInvSpanW[1] = invSpan; bcb.domainInvSpanW[2] = invSpan; bcb.domainInvSpanW[3] = 0.0f;
+                bcb.dimsAndInv[0] = float(W); bcb.dimsAndInv[1] = float(H); bcb.dimsAndInv[2] = 1.0f / float(W); bcb.dimsAndInv[3] = 1.0f / float(H);
+                bcb.resScaleAndFlags[0] = 1.0f; bcb.resScaleAndFlags[1] = 1.0f; bcb.resScaleAndFlags[2] = float(intDom.emitterCount); bcb.resScaleAndFlags[3] = 0.0f;
+                bcb.sunDir[0] = cpInt.sunDir[0]; bcb.sunDir[1] = cpInt.sunDir[1]; bcb.sunDir[2] = cpInt.sunDir[2]; bcb.sunDir[3] = 1.0f;
+                bcb.sunCol[0] = cpInt.sunCol[0]; bcb.sunCol[1] = cpInt.sunCol[1]; bcb.sunCol[2] = cpInt.sunCol[2]; bcb.sunCol[3] = cpInt.ambientFill;
+                bcb.debugOverlayParams[0] = 0.0f; // non-fire debug view
+                bcb.debugOverlayParams[1] = 1.0f; // bypassDebugView = true
+                void* bcp = nullptr;
+                dbgCb->Map(0, nullptr, &bcp);
+                std::memcpy(bcp, &bcb, sizeof(bcb));
+                dbgCb->Unmap(0, nullptr);
+
+                ca->Reset();
+                cl->Reset(ca.Get(), nullptr);
+                D3D12_RESOURCE_BARRIER bB0{};
+                bB0.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                bB0.Transition = {colorOut.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET};
+                cl->ResourceBarrier(1, &bB0);
+                cl->ClearRenderTargetView(rtvHeap->GetCPUDescriptorHandleForHeapStart(), bgCol, 0, nullptr);
+                D3D12_RESOURCE_BARRIER bB1[2]{};
+                bB1[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                bB1[0].Transition = {colorOut.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_UNORDERED_ACCESS};
+                bB1[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                bB1[1].Transition = {depthIn.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
+                cl->ResourceBarrier(2, bB1);
+
+                ID3D12DescriptorHeap* bHeaps[1] = {dbgHeap.Get()};
+                cl->SetDescriptorHeaps(1, bHeaps);
+                cl->SetComputeRootSignature(dbgRoot.Get());
+                cl->SetPipelineState(dbgPso.Get());
+                cl->SetComputeRootConstantBufferView(0, dbgCb->GetGPUVirtualAddress());
+                D3D12_GPU_DESCRIPTOR_HANDLE gpu0 = dbgHeap->GetGPUDescriptorHandleForHeapStart();
+                D3D12_GPU_DESCRIPTOR_HANDLE gpu3 = {gpu0.ptr + UINT64(3) * dInc};
+                cl->SetComputeRootDescriptorTable(1, gpu0);
+                cl->SetComputeRootDescriptorTable(2, gpu3);
+                cl->Dispatch((W + 7u) / 8u, (H + 7u) / 8u, 1u);
+
+                D3D12_RESOURCE_BARRIER bB2[2]{};
+                bB2[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                bB2[0].Transition = {colorOut.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE};
+                bB2[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                bB2[1].Transition = {depthIn.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON};
+                cl->ResourceBarrier(2, bB2);
+                cl->CopyTextureRegion(&rbDst, 0, 0, 0, &rbSrc, nullptr);
+                cl->Close();
+                ID3D12CommandList* bL[1] = {cl.Get()};
+                queue->ExecuteCommandLists(1, bL);
+                flushQueue();
+
+                void* pByp = nullptr;
+                rb->Map(0, nullptr, &pByp);
+                for (UINT y = 0; y < H; ++y) {
+                    const uint16_t* row = reinterpret_cast<const uint16_t*>(static_cast<const uint8_t*>(pByp) + size_t(y) * colorPitch);
+                    for (UINT x = 0; x < W; ++x) {
+                        const float r = HalfToFloat(row[x * 4u + 0u]);
+                        const float g = HalfToFloat(row[x * 4u + 1u]);
+                        const float b = HalfToFloat(row[x * 4u + 2u]);
+                        const float a = HalfToFloat(row[x * 4u + 3u]);
+                        if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b) || !std::isfinite(a)) {
+                            ++bypassNanInf;
+                            continue;
+                        }
+                        if (std::fabs(r - kBgR) + std::fabs(g - kBgG) + std::fabs(b - kBgB) > 0.002f) {
+                            ++bypassTotalMod;
+                        }
+                    }
+                }
+                rb->Unmap(0, nullptr);
+            }
+            std::printf("       DebugView 1..35 Bypass Proof: totalMod=%u, nanInf=%u\n", bypassTotalMod, bypassNanInf);
+            Check(dbgInitOk && bypassNanInf == 0u && bypassTotalMod == 0u,
+                  "Non-fire DebugView 1..35 bypass flag produces 0 writes to ColorOut over active flames");
         }
     }
 

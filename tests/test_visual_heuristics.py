@@ -140,7 +140,7 @@ def run_tests() -> int:
         if not cond:
             failures += 1
 
-    print("=== RAW Wave 64: 25-Heuristic Full-Pipeline Visual, Temporal & Harness Suite ===")
+    print("=== RAW Wave 65: 25-Heuristic Full-Pipeline Visual, Temporal & Harness Suite ===")
     check(len(vh.ALL_HEURISTIC_NAMES) == 25, f"ALL_HEURISTIC_NAMES has exact count 25 (got {len(vh.ALL_HEURISTIC_NAMES)})")
     check(all(k in vh.DEBUG_VIEW_NAMES for k in (0, 28, 33, 34, 35, 36)) and len(vh.WATER_DEBUG_VIEW_NAMES) == 7,
           "DEBUG_VIEW_NAMES (0..36) & WATER_DEBUG_VIEW_NAMES (1..7) registered")
@@ -358,8 +358,50 @@ def run_tests() -> int:
     # #25: World-lock anti-swimming: world-locked shift PASS vs screen-locked static texture during camera motion FAIL
     r25_ok = vh.analyze_world_lock_anti_swimming([base_tex, frame_t1_shift], [mv_true, mv_true])
     r25_swim = vh.analyze_world_lock_anti_swimming([base_tex, base_tex.copy()], [mv_true, mv_true])
-    check(not r25_ok.detected and r25_swim.detected,
+    check(not r25_ok.detected and r25_swim.detected and r25_ok.details.get("motion_regime") == "moving_cam_sweep",
           f"Heuristic #25 world-lock anti-swimming: world_locked_ratio={r25_ok.score:.2f} vs screen_locked_ratio={r25_swim.score:.4f}")
+
+    # Wave 65 calibration checks:
+    # (a) Stationary MV bursts (< 0.25 px) in #21 & #25: clean PASS (no div0) vs corrupted frame FAIL
+    mv_zero = _encode_mv35(th, tw, dx_px=0.0, dy_px=0.0)
+    r21_stat_ok = vh.analyze_motion_vector_reprojection(base_tex, base_tex.copy(), mv_zero)
+    r21_stat_bad = vh.analyze_motion_vector_reprojection(base_tex, np.zeros_like(base_tex), mv_zero)
+    r25_stat_ok = vh.analyze_world_lock_anti_swimming([base_tex, base_tex.copy()], [mv_zero, mv_zero])
+    r25_stat_bad = vh.analyze_world_lock_anti_swimming([base_tex, np.zeros_like(base_tex)], [mv_zero, mv_zero])
+    check(
+        (not r21_stat_ok.detected)
+        and r21_stat_ok.details.get("motion_regime") == "stationary"
+        and r21_stat_bad.detected
+        and (not r25_stat_ok.detected)
+        and r25_stat_ok.details.get("motion_regime") == "stationary"
+        and r25_stat_bad.detected,
+        "Wave 65 stationary vs moving MV burst handling in #21 & #25 PASS (no divide-by-zero)",
+    )
+
+    # (b) detect_indoor_black_orbs gated on is_interior (skips outdoor dark pillars at High Hrothgar)
+    outdoor_pillar = np.full((180, 320, 3), 0.72, dtype=np.float32)
+    outdoor_pillar[30:140, 100:210, :] = 0.004
+    r1_ext_skip = vh.detect_indoor_black_orbs(outdoor_pillar, is_interior=False)
+    r1_int_flag = vh.detect_indoor_black_orbs(outdoor_pillar, is_interior=True)
+    check(not r1_ext_skip.detected and r1_ext_skip.details.get("skipped_exterior_scene") and r1_int_flag.detected,
+          "Wave 65 detect_indoor_black_orbs is_interior gate PASS (skips exterior, flags interior)")
+
+    # (c) detect_water_scanline_holes WaterView=7 magenta direct mode (> 0.0005 -> FAIL, clean -> PASS)
+    wv7_clean = np.zeros((180, 320, 3), dtype=np.float32)
+    wv7_clean[90:, :, 0] = 0.35  # flow
+    wv7_clean[90:, :, 1] = 0.45  # depth
+    wv7_clean[90:, :, 2] = 0.65  # shoreAlpha
+    wv7_magenta = wv7_clean.copy()
+    wv7_magenta[110:122, 100:130, :] = [1.0, 0.0, 1.0]  # > 0.0005 magenta continuity alarm
+    r3_v7_ok = vh.detect_water_scanline_holes(clean_ext, water_flow_diag_image=wv7_clean)
+    r3_v7_bad = vh.detect_water_scanline_holes(clean_ext, water_flow_diag_image=wv7_magenta)
+    check(
+        (not r3_v7_ok.detected)
+        and r3_v7_ok.details.get("mode") == "water_flow_diag_view7"
+        and r3_v7_bad.detected
+        and r3_v7_bad.score > 0.0005,
+        f"Wave 65 WaterView=7 magenta continuity gate PASS (clean={r3_v7_ok.score:.6f} vs planted={r3_v7_bad.score:.5f})",
+    )
 
     # -------------------------------------------------------------------------
     # 4. Heuristic #20 + full_pipeline_audit.py + SkyrimCustomIniGuard + playtest_tour.py
@@ -421,16 +463,38 @@ def run_tests() -> int:
             f"full_pipeline_audit.py offline multi-view+burst audit ({fp_rep['scenes'][0]['heuristics_run']} heuristics/scene), MD/JSON & sentinel cleanup PASS",
         )
 
-        # SkyrimCustomIniGuard bit-exact save & restore proof
+        # SkyrimCustomIniGuard + bat raw_scene_init + cam_sweep + readiness parser proof (Wave 65)
         fake_ini = tmp_root / "SkyrimCustom.ini"
         orig_bytes = b"[General]\r\nsLanguage=ENGLISH\r\nbAlwaysActive=0\r\n"
         fake_ini.write_bytes(orig_bytes)
+        bat_p = fpa.write_scene_init_bat(cap_dir, "fw c8221; set gamehour to 14")
+        bat_txt = bat_p.read_text(encoding="utf-8")
+        check(
+            "set Survival_ModeEnabled to 0" in bat_txt
+            and "stopquest ccQDRSSE001_SurvivalModeQuest" in bat_txt
+            and "fw c8221" in bat_txt
+            and "set gamehour to 14" in bat_txt,
+            "Wave 65 write_scene_init_bat writes Survival suppress + weather/TOD lines",
+        )
         with fpa.SkyrimCustomIniGuard(fake_ini) as guard:
-            guard.write_scene_boot("WindhelmExterior01", "fw c8221; set gamehour to 14")
+            guard.write_scene_boot("WindhelmExterior01", fpa.SCENE_INIT_BAT_CMD)
             mid_txt = fake_ini.read_text(encoding="utf-8")
-            check("sStartingCell=WindhelmExterior01" in mid_txt and "sStartingConsoleCommand=fw c8221" in mid_txt,
-                  "SkyrimCustomIniGuard injects sStartingCell & sStartingConsoleCommand cleanly")
+            check("sStartingCell=WindhelmExterior01" in mid_txt and "sStartingConsoleCommand=bat raw_scene_init" in mid_txt,
+                  "SkyrimCustomIniGuard injects sStartingCell & bat raw_scene_init cleanly")
         check(fake_ini.read_bytes() == orig_bytes, "SkyrimCustomIniGuard restores SkyrimCustom.ini bit-exact on exit")
+
+        sweep_p = fpa.emit_cam_sweep(cap_dir)
+        sweep_txt = sweep_p.read_text(encoding="utf-8").strip()
+        check(sweep_txt == "cam_sweep 0.008 0.0012 0.0 240",
+              f"Wave 65 emit_cam_sweep writes exact command ({sweep_txt})")
+
+        (cap_dir / "raw_harness_status.txt").write_text("presents=300 world=240 loads=1 cell=1000042101 active=0\n", encoding="utf-8")
+        (eng_out / "control_results.jsonl").write_text(
+            json.dumps({"cmd": "view", "cell_id": 65537, "menu_paused": 0, "interior": 0, "sweep_active": 0}) + "\n",
+            encoding="utf-8",
+        )
+        st = fpa.parse_harness_status((cap_dir / "raw_harness_status.txt").read_text(encoding="utf-8"))
+        check(st.get("world") == 240 and st.get("cell") != 1, "Wave 65 parse_harness_status parses world/cell readiness")
 
         # playtest_tour.py offline audit check
         pt_out = tmp_root / "tour_out"

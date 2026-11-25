@@ -784,6 +784,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 diag36 = float3(diagR, diagG, diagB);
         return float4(all(isfinite(diag36)) ? diag36 : 0.0f.xxx, 1.0f);
     }
+    // Wave 65 Bit-Exact Debug-Layer Passthrough: skip lens droplets, atmospheric fog, rain mist, and sky replacement
+    // for all Lighting Debug Views 1..35 (normals, albedo, sun_shadow, classes, moss, skin, NaN heatmap, flora, MVs)!
+    if (flags.w != 0u) { return lit; }
     // Pre-Pass Weather Optics: procedural HDR rain-on-lens droplets & blizzard crystalline frost edges
     // (3-pass Near/Far Physical Bokeh DoF runs in dedicated DofPass.hlsl right after LightFog).
     if (dofParams.w > 0.5f && (weather.w >= 0.12f || weather.z >= 0.25f)) {
@@ -1162,7 +1165,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 hillaireSky = sampleHillaireSky(normalize(float3(w.xy, max(w.z, 0.008f))));
         const float hLumF = max(dot(hillaireSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
         const float overcastWF = saturate((cloudCov - 0.55f) * 1.95f + weather.w * 0.52f + weather.z * 0.45f);
-        const float3 overcastScatterF = lerp(hillaireSky, hLumF.xxx * float3(0.88f, 0.94f, 1.04f), 0.72f);
+        // Wave 65: keep rainy/overcast mid-distance mist neutral silver-slate rather than heavy dark indigo washout:
+        const float rainOvercastW = saturate(weather.w * 0.85f + saturate(cloudCov - 0.50f) * 0.55f) * (1.0f - nightF);
+        const float3 overcastTintF = lerp(float3(0.88f, 0.94f, 1.04f), float3(0.95f, 0.97f, 1.00f), rainOvercastW);
+        const float3 overcastScatterF = lerp(hillaireSky, hLumF.xxx * overcastTintF, 0.72f);
         float3 atmoCol = lerp(hillaireSky, overcastScatterF, overcastWF * 0.78f);
         // Seamless Far-Horizon Aerial Fusion with RawTerrainWorld.hlsl's evalWorldAtmosphere() frontier scatter:
         const float frontierFuse = smoothstep(65000.0f, 165000.0f, dist);
@@ -1181,7 +1187,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float fogSunPhase = 0.18f + 0.82f * pow(cosSunF, 3.0f);
         const float3 d65Mie = lerp(float3(1.0f, 0.62f, 0.30f), float3(0.96f, 0.98f, 1.02f), highSunF);
         const float mieHalo = (pow(cosSunF, 5.0f) * 0.10f + pow(cosSunF, 28.0f) * 0.16f) * (1.0f - cloudCov * 0.72f) * (1.0f - nightF) * fogCloudVis;
-        const float cloudMod = lerp(lerp(0.46f, 0.94f, fogCloudVis * (1.0f - nightF * 0.65f)), 1.0f, horizonMelt);
+        const float cloudModFloor = lerp(0.46f, 0.62f, rainOvercastW);
+        const float cloudMod = lerp(lerp(cloudModFloor, 0.96f, fogCloudVis * (1.0f - nightF * 0.65f)), 1.0f, horizonMelt);
         atmoCol = atmoCol * cloudMod + lerp(d65Mie, uSunF, 0.60f) * (mieHalo + fogSunPhase * fogCloudVis * (1.0f - nightF) * (1.0f - horizonMelt) * 0.06f);
         const float3 ambSkyF = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.03f.xxx);
         const float overcastDeckF = saturate(cloudCov * 0.85f + weather.w * 0.45f + weather.z * 0.55f);
@@ -1206,7 +1213,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float curtain = smoothstep(0.35f, 0.85f, cNoise(float3(slant, dot(sheetP.xy, float2(-sheetW.y, sheetW.x)) * 0.0009f, sheetP.z * 0.00025f)));
             const float sheetDens = curtain * saturate((dist - 650.0f) / 3800.0f) * max(weather.w, weather.z) * 0.22f;
             // Attenuate blizzard sheet luminance by nightF so snowy night cliffs never glow bright grey-green against dark indigo sky (16.01.41/48)!
-            const float3 daySheetCol = lerp(float3(0.24f, 0.29f, 0.36f), float3(0.62f, 0.68f, 0.76f), weather.z);
+            const float3 daySheetCol = lerp(float3(0.38f, 0.42f, 0.46f), float3(0.62f, 0.68f, 0.76f), weather.z);
             const float3 sheetCol = lerp(daySheetCol, nightHorF * 1.05f, nightF);
             atmoCol = lerp(atmoCol, sheetCol, sheetDens * 0.48f);
             T *= (1.0f - sheetDens * 0.35f);
@@ -1296,8 +1303,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 farInScat = atmoCol * (1.0f.xxx - Tfar) * froxT;
         const float dynW = 0.52f * smoothstep(260.0f, 1800.0f, dist);
         const float dynT = lerp(1.0f, dynFog.transmittance, dynW);
-        const float3 dynScat = dynFog.inscatter * (dynW * lerp(0.55f, 1.0f, froxT));
-        const float3 extBase = lit.rgb * T + (froxScat * cavityTint) * pdeMistBoost + farInScat + shaftScatter * saturate(T + 0.15f) * pdeMistBoost;
+        const float3 dynScatRaw = dynFog.inscatter * (dynW * lerp(0.55f, 1.0f, froxT));
+        // Neutralize excessive indigo chroma in daytime rain/overcast mid-distance mist so rainy Riverwood reads crisp & natural:
+        const float froxLumR = dot(froxScat, float3(0.2126f, 0.7152f, 0.0722f));
+        const float3 froxBalanced = lerp(froxScat, lerp(froxScat, froxLumR.xxx * float3(0.95f, 0.97f, 1.01f), 0.55f), rainOvercastW);
+        const float dynLumR = dot(dynScatRaw, float3(0.2126f, 0.7152f, 0.0722f));
+        const float3 dynScat = lerp(dynScatRaw, lerp(dynScatRaw, dynLumR.xxx * float3(0.96f, 0.98f, 1.01f), 0.50f), rainOvercastW);
+        const float3 extBase = lit.rgb * T + (froxBalanced * cavityTint) * pdeMistBoost + farInScat + shaftScatter * saturate(T + 0.15f) * pdeMistBoost;
         float3 extScene = (extBase * dynT + dynScat + precipAdd + silDiffAdd) * extSpellVol.a + extSpellVol.rgb;
         extScene = extScene * extFireVol.a + extFireVol.rgb;
         if (mapScale > 0.5f && seasonThermal0.w < -1.0f) {

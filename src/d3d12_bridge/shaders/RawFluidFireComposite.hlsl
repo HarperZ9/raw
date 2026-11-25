@@ -15,7 +15,7 @@ cbuffer FireCompCB : register(b0)
     float4 resScaleAndFlags;    // xy = resScale.xy; z = activeEmitters; w = interiorFlag (0=ext, 1=int)
     float4 sunDir;              // xyz = unit sun dir, w = sunIntensity
     float4 sunCol;              // rgb = sun HDR color, w = ambientFill
-    float4 debugOverlayParams;  // x = debugOverlayMode (> 0.5 enables DebugView 36 bounds/emitters/transmittance overlay), yzw = reserved
+    float4 debugOverlayParams;  // x = debugOverlayMode (> 0.5 enables DebugView 36 overlay), y = bypassDebugView (> 0.5 skips writes on views 1..35), zw = reserved
     float4 _pad[4];
 };
 
@@ -120,6 +120,10 @@ void cs_fire_composite(uint3 dtid : SV_DispatchThreadID)
 {
     const uint2 dimsU = uint2(dimsAndInv.xy + 0.5f);
     if (dtid.x >= dimsU.x || dtid.y >= dimsU.y || resScaleAndFlags.z < 0.5f || domainMinW.w <= 1.0f) {
+        return;
+    }
+    // Clean bypass when a non-fire debug view (1..35) is active: zero writes to ColorOut, preserving DebugView 36 overlay.
+    if (debugOverlayParams.y > 0.5f && debugOverlayParams.x <= 0.5f) {
         return;
     }
 

@@ -1,6 +1,7 @@
 // Tonemap: see Tonemap.h. Original work, MIT.
 #include "Tonemap.h"
 #include "../d3d12_bridge/StreamlineHost.h"
+#include "BridgeHookState.h"
 #include "TonemapPs.h"
 #include "Overlay.h"
 #include "ProxyLog.h"
@@ -277,7 +278,11 @@ void Tonemap_BeforeDraw(ID3D11DeviceContext* real)
     const float clampedStep = rawStep > 45.0f ? 0.0f : std::min(rawStep, 18.0f);   // ignore teleports/fast-travel
     s_emaSpeed = s_emaSpeed * 0.86f + clampedStep * 0.14f;
     s_stridePhase = std::fmod(s_stridePhase + std::max(clampedStep * 0.045f, 0.017f), 6283.185f);
-    const uint32_t effOvMask = t.overlayMask | (raw::bridge::StreamlineHost::Get().GetDeepDvc() ? 4096u : 0u);
+    const auto& hookCfg = SB::Proxy::hook::Cfg();
+    const bool rawDebugBypass = hookCfg.enabled && hookCfg.lighting
+                             && (hookCfg.light.view != 0 || hookCfg.light.waterView != 0);
+    const uint32_t effOvMask = (t.overlayMask | (raw::bridge::StreamlineHost::Get().GetDeepDvc() ? 4096u : 0u))
+                             | (rawDebugBypass ? 8192u : 0u);
     const float v[32] = {float(t.mode), t.bias, t.minLum, t.maxLum, float(t.curve), t.key, t.white, float(t.view),
                          t.adapt, t.ref, t.x[0], t.x[1], t.x[2], t.x[3], t.x[4], inside,
                          lutStr, float(effOvMask), s_stridePhase, s_emaSpeed,

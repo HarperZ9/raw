@@ -79,6 +79,17 @@ struct UiBudgetSegment {
     uint32_t    colorRgba = tokens::kAccentPass;
 };
 
+struct MotionTelemetrySnapshot {
+    float    cameraSpeedUps    = 0.0f;  // Camera linear speed (world units/sec)
+    float    yawRateDegPerSec  = 0.0f;  // Camera angular yaw rate (deg/sec)
+    float    temporalShadowStd = 0.0f;  // Motion-compensated shadow std dev
+    float    mvReprojRmse      = 0.0f;  // DebugView 35 MV reprojection RMSE
+    uint32_t burstFrameIndex   = 0u;    // Current burst frame (0..N-1)
+    uint32_t burstFrameCount   = 0u;    // Total burst frames (0 = free-run)
+    bool     camSweepActive    = false; // True while headless cam_sweep runs
+    bool     mvSignValid       = true;  // True when +mv beats -mv / zero warp
+};
+
 // Exact 80-byte GPU command structure mirrored byte-for-byte in RawUiLibPass.hlsl.
 struct GpuUiCmd {
     float    rect[4]     = {};
@@ -159,6 +170,19 @@ public:
                           const char* key, bool value,
                           uint32_t scale = 1u);
 
+    // Compact live temporal / motion-vector health telemetry strip (height = 46 * scale px).
+    void AddMotionTelemetryStrip(float x, float y, float w,
+                                 const MotionTelemetrySnapshot& motion,
+                                 uint32_t scale = 1u);
+
+    // Multi-column quick-select grid of Lighting (0..36) or Water (1..7) debug views.
+    void AddDebugViewQuickGrid(float x, float y, float w,
+                               const uint32_t* viewIds, uint32_t viewCount,
+                               uint32_t activeViewId,
+                               bool waterViews = false,
+                               uint32_t columns = 4u,
+                               uint32_t scale = 1u);
+
     void AddPill(float x, float y, const char* label,
                  uint32_t bgRgba = tokens::kPillOnBg,
                  uint32_t textRgba = tokens::kInkPrimary,
@@ -237,8 +261,10 @@ struct DebugLayerHudSnapshot {
     uint32_t     scale           = 1u;
     const float* historyFrameMs  = nullptr;
     uint32_t     historyCount    = 0u;
-    uint32_t     activeWaterDebugView = 0u; // 0=Off, 1..7=Water Debug Views (W1..W7)
-    uint32_t     activeTabIndex       = 0u; // 0=Layers, 1=Perf, 2=Vars
+    uint32_t                       activeWaterDebugView = 0u; // 0=Off, 1..7=Water Debug Views (W1..W7)
+    uint32_t                       activeTabIndex       = 0u; // 0=Layers, 1=Perf, 2=Vars
+    const MotionTelemetrySnapshot* motionTelemetry      = nullptr; // Optional Wave 65 temporal/MV strip
+    bool                           showQuickGrid        = false;   // Optional Wave 65 quick-view grid
 };
 
 // Returns full metadata & color legend swatches for ALL 37 Lighting DebugView IDs (0..36).

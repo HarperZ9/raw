@@ -57,6 +57,7 @@ struct FluidFireParams {
     float    ceilingZLocal     = 63.0f;              // optional solid ceiling voxel layer (0..64)
     bool     enableCeiling     = false;              // enable solid ceiling deflection (interiors/caves)
     bool     debugOverlayMode  = false;              // DebugView 36: visualize fire bounds, emitters & indoor transmittance compliance
+    bool     bypassDebugView   = false;              // non-fire DebugView 1..35 active: compositor skips writes to ColorOut
     float    scatterExtinction = 1.65f;              // Beer-Lambert soot extinction for Radiance Cascade
     uint32_t jacobiIterations  = 8u;                 // pressure relaxation iterations (even count recommended; min 2, max 32)
     uint32_t emitterCount      = 0u;                 // active emitters (0..16)
@@ -108,6 +109,7 @@ struct FluidFireDomainInfo {
     uint32_t emitterCount     = 0u;                 // active verified world emitters in the last StepFire
     bool     isInterior       = false;              // true when interior ceiling mode was active in the last StepFire
     bool     debugOverlayMode = false;              // true when DebugView 36 overlay flag was requested
+    bool     bypassDebugView  = false;              // true when non-fire DebugView 1..35 bypass flag was requested
 };
 
 struct FluidGpuTimings {

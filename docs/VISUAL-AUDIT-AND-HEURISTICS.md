@@ -12,18 +12,22 @@ regression-verified by `python tests/test_visual_heuristics.py`.
 
 ---
 
-## 1. Wave 63 Live In-World `SkyrimSE.exe` Verification Results
+## 1. Live In-World `SkyrimSE.exe` Verification Results (Wave 63 & Wave 64 10-Scene 640-Frame Audit)
 
 Real `1920x1080` GPU backbuffer captures obtained via `sStartingCell=` + `raw_harness_go.txt`:
 
-- **PASS - Sleeping Giant Inn (`w63_cell_inn_improved.png`):** Floating neon red-yellow fireballs and giant pitch-black indoor orbs are 100% eliminated. Grounded hearth flames, delicate curling smoke wisps, and warm candlelight verified clean.
-- **PASS - Septimus Signus Ice Cave (`w63_cell_septimus_improved.png`):** Giant black concentric soot orbs and flat angular triangles are 100% eliminated. Organic conchoidal ice veining and deep teal-sapphire glacial refraction verified live.
-- **PASS - Riverwood Material Classes (`w63_cell_riverwood_view_classes.png`):** Brand-new `base == 14u` Skinned Actor / Creature / Fur / Clothing tagging is live in `SkyrimSE.exe` (NPC renders vivid orange, completely isolated from grey rocks and terrain weathering).
-- **Wave 64 Active Targets (`w63_cell_riverwood_improved.png`):**
-  1. Near/mid pine tree trunks still crushed pitch-black (`#050505`) in `Lighting.hlsl` -> fixed in Wave 64 Track 1 + audited by DebugView `34` & Heuristic `#10`.
-  2. Sunlit upper pine needles still bleached chalky pale grey-white in `Lighting.hlsl` -> fixed in Wave 64 Track 1 + audited by DebugView `34` & Heuristic `#11`.
-  3. Foreground pine saplings tagged as grey `base == 1u` instead of green `base == 5u` foliage -> fixed in Wave 64 Track 4 (`GBufferPatch.cpp` / `GBufferVariants.cpp`).
-  4. Deeper 3D world-space procedural grass shells, glacier volume, and live `RawUiLib` Debug Drawer -> wired in Wave 64 Track 3 & Track 6.
+- **PASS - Wave 63/64 Confirmed Fixed Live across all 10 Scenes (640 frames):**
+  - ZERO `NaN`/`Inf`/`HDR > 32.0` overflow pixels across all 10 scenes (`view_nan_hdr` 100% clean).
+  - Bleached white pine needles FIXED across exteriors (`view_flora_trees` clean).
+  - Indoor pitch-black soot orbs & floating neon fireballs 100% ELIMINATED (`inn_interior` & `septimus_cave` clean).
+  - `base == 14u` Skinned Actors / Creatures cleanly isolated (`view_full_classes` orange NPCs, `view_moss_mask` ZERO actor violations).
+  - `high_hrothgar` alpine snow & sky verified clean.
+- **Wave 64 Live Audit Findings Fixed in Wave 65:**
+  1. **Riverwood `WaterView=7` Magenta Shallow-Water Alarm:** Live `riverwood_day_audit_water_flow_diag_f00.png` lit up bright magenta on Riverwood's shallow stream -> fixed in `RtWater.hlsl` + audited directly via `detect_water_scanline_holes(..., water_flow_diag_image=...)` (`magenta_frac > 0.0005` -> FAIL).
+  2. **Debug-Layer Post-Pass Contamination:** `LightFog.hlsl`, `Rawlss5Pass.hlsl`, `DofPass.hlsl`, `Tonemap.hlsl`, `RawFluidFireComposite.hlsl`, and `BridgeFrame.cpp` now pass Debug Views `1..35` / `WaterView 1..7` through bit-exact without rain-fog, TAA smearing, DOF blur, or AgX filmic distortion.
+  3. **Exterior 1-spp Temporal Shadow Boiling:** `analyze_shadow_temporal_stability` flagged all 8 exterior scenes (0 interiors) -> tightened in `RtSkyFilter.hlsl` & `Lighting.hlsl`.
+  4. **Headless Moving-Camera Bursts (`cam_sweep`), `bat raw_scene_init` & Load-Fade Guard:** Upgraded `tools/live/full_pipeline_audit.py` to suppress Survival Mode via `bat raw_scene_init`, poll `raw_harness_status.txt` (`cell != 1 && world >= 220`) + `raw_engine_go.txt` `view` (`cell_id != 0 && menu_paused == 0`) + `4.0s` fade-in settle before emitting `cam_sweep 0.008 0.0012 0.0 240` and triggering `burst=6, stride=3` captures.
+  5. **Heuristic Calibration:** `detect_indoor_black_orbs` gated on `is_interior` (no false positive on dark outdoor High Hrothgar pillars), `detect_water_scanline_holes` prioritizes `WaterView=7` magenta continuity check (`> 0.0005`) over RGB grass-edge fallback, and `#21` / `#25` distinguish stationary (`mean_mv_px < 0.25`) vs moving `cam_sweep` (`mean_mv_px >= 0.25`) bursts cleanly.
 
 ---
 
@@ -127,13 +131,13 @@ Source directory: `C:\Users\Zain\Videos\NVIDIA\The Elder Scrolls V Skyrim Specia
 
 ---
 
-## 4. All 20 Automated Visual & Telemetry Heuristics (`tools/live/visual_heuristics.py`)
+## 4. All 25 Automated Visual, Temporal Motion-Vector & Telemetry Heuristics (`tools/live/visual_heuristics.py`)
 
 | # | Heuristic | Target Input | Threshold / Gate | Planted-Failure Proof |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | `detect_indoor_black_orbs` | `improved` | `128x128` black density `>= 0.92` in lit scene | `09.36.08` = `1.000`, `09.36.11` = `1.000` |
+| 1 | `detect_indoor_black_orbs` | `improved` (`is_interior`) | `128x128` black density `>= 0.92` in lit interior (skipped when `is_interior=False`) | `09.36.08` = `1.000`, `09.36.11` = `1.000` |
 | 2 | `detect_red_sky_fire_bleed` | `improved` | Upper sky red-dominant area `>= 0.025` | `09.33.23` = `0.0456`, `09.33.34` = `0.2047` |
-| 3 | `detect_water_scanline_holes` | `improved` + opt `water_depth` / `water_flow_diag` | `alt >= 0.060` & `scan >= 0.032` (or View 7 magenta `> 0.001`) | `09.31.34` = `0.0910`, `09.34.56` = `0.0939` |
+| 3 | `detect_water_scanline_holes` | `improved` + opt `water_flow_diag` (`WaterView=7`) / `water_depth` | `WaterView=7` magenta `> 0.0005` (direct!) or RGB fallback `alt >= 0.060` & `scan >= 0.032` | `09.31.34` = `0.0910`, `09.34.56` = `0.0939`, View 7 magenta flagged |
 | 4 | `detect_water_zebra_stripes` | `improved` | FFT mid-band peak `>= 12.0` & `dy/dx >= 1.25` | `09.35.44` peak = `24.82`, aniso = `1.636` |
 | 5 | `detect_sky_diagonal_cutout` | `improved` | Radon collinear sky-seam width ratio `>= 0.28` | `09.37.13` ratio = `0.822` at `-12.0 deg` |
 | 6 | `detect_actor_green_moss_chroma` | `improved` or DebugView `28`+`31` | RGB `>= 0.16` or DebugView actor/moss overlap `> 0.002` | `09.33.46` (Stump) = `0.2504`; DebugView leak = `0.200` |
@@ -151,26 +155,28 @@ Source directory: `C:\Users\Zain\Videos\NVIDIA\The Elder Scrolls V Skyrim Specia
 | 18 | `detect_exposure_and_tonemap_clipping` | `improved` | Crushed black `> 0.38`, blown white `> 0.18`, or mean out of `[0.025..0.88]` | Planted overexposed frame flagged |
 | 19 | `detect_depth_and_stencil_integrity` | DebugView `29` | Depth `p95 - p05 >= 0.08` & zero-depth fraction `<= 0.85` | Planted flat depth buffer flagged |
 | 20 | `detect_live_world_compositor_activity` | `boot_selfcheck.txt` + `bridge_live_telemetry.json` + `harness_results.jsonl` | `boot_selfcheck >= 11/12`, `d3d12DebugErrors == 0`, finite GPU solver timings `> 0` | Planted missing/corrupt telemetry flagged |
-| 21 | `analyze_motion_vector_reprojection` | `frame_t`, `frame_t1`, DebugView `35` (`mv_debug35_t1`) | Decodes `(R-0.5)/16, (G-0.5)/16`; tests `+mv` vs `-mv` vs `0`; flags sign inversion or RMSE `> 0.14` | Planted inverted `-mv` flagged (`sign_inverted=True`) |
-| 22 | `analyze_water_temporal_flow_speed` | Burst `improved` (`_f00.._f05`) + opt `water_depth` | 2D FFT phase correlation speed in `[0.15 .. 4.50]` px/frame | Planted frozen `0.0 px/f` AND frantic `8.0 px/f` flagged |
+| 21 | `analyze_motion_vector_reprojection` | `frame_t`, `frame_t1`, DebugView `35` (`mv_debug35_t1`) | Stationary (`< 0.25 px`): low static RMSE; Moving (`>= 0.25 px`): `+mv`/`-mv`/`0` sign & RMSE `<= 0.14` | Planted inverted `-mv` flagged (`sign_inverted=True`) |
+| 22 | `analyze_water_temporal_flow_speed` | Burst `improved` (`_f00.._f05`) + opt `water_depth` | Regularized GCC-PHAT FFT phase correlation on contiguous water patch: `[0.15 .. 4.50]` px/f | Planted frozen `0.0 px/f` AND frantic `8.0 px/f` flagged |
 | 23 | `analyze_shadow_temporal_stability` | Burst `view_sun_shadow` + opt DebugView `35` MV | Motion-compensated boil std `<= 0.055`, global pop `<= 0.14`, flicker `<= 0.08` | Planted shadow boil/pop burst flagged |
 | 24 | `analyze_temporal_ghosting_and_motion_outline` | Burst `improved` + DebugView `35` (`B > 0.15` divergence) | Moving-silhouette dark rim `<= 0.14` & trailing ghost RMSE `<= 0.12` | Planted moving dark rim & ghost streak flagged |
-| 25 | `analyze_world_lock_anti_swimming` | Burst `improved` + DebugView `35` MV | World-locked warp beats screen-locked residual (`screen/world RMSE >= 0.75`) | Planted camera-swimming screen-locked texture flagged |
+| 25 | `analyze_world_lock_anti_swimming` | Burst `improved` + DebugView `35` MV | Stationary (`< 0.25 px`): low static diff; Moving (`>= 0.25 px`): `screen/world RMSE >= 0.75` | Planted camera-swimming screen-locked texture flagged |
 
 ---
 
-## 5. 10-Scene Headless Multi-Frame Burst Auditor (`tools/live/full_pipeline_audit.py`)
+## 5. Wave 65 Headless Moving-Camera (`cam_sweep`) 10-Scene Auditor (`tools/live/full_pipeline_audit.py`)
 
-Uses `SkyrimCustom.ini` (`[General] sStartingCell=` + `sStartingConsoleCommand=`) and
-`raw_harness_go.txt` (`burst=6`, `stride=3`, writing `*_f00.bmp .. *_f05.bmp` converted to PNGs)
-to capture both stills and true multi-frame temporal sequences directly from the native GPU backbuffer:
+Per-scene live protocol (zero Main-Menu focus lock, zero Survival Mode popup, zero loading-screen race):
+1. Writes multi-line `raw_scene_init.txt` in the Skyrim SE folder (`set Survival_ModeEnabled to 0`, `stopquest ccQDRSSE001_SurvivalModeQuest`, `fw <weatherId>`, `set gamehour to <H>`) and sets `sStartingConsoleCommand=bat raw_scene_init` in `SkyrimCustom.ini`.
+2. Launches `SkyrimSE.exe` with stale `raw_harness_go.txt` / `raw_harness_status.txt` cleared.
+3. Polls `raw_harness_status.txt` until `cell != 1 && world >= 220`, queries `raw_engine_go.txt` `view` until `cell_id != 0 && menu_paused == 0`, then waits `4.0s` for black load fade-in completion.
+4. Emits `cam_sweep 0.008 0.0012 0.0 240` to `raw_engine_go.txt` (default `--cam-sweep` ON, oscillating gently during long multi-step captures) and triggers `raw_harness_go.txt` (`burst=6`, `stride=3`, writing `*_f00.bmp .. *_f05.bmp` converted to PNGs).
 
 ```powershell
-# Quick 4-scene live temporal burst audit (burst=6, stride=3)
-python tools/live/full_pipeline_audit.py --profile quick --burst 6 --stride 3 --out-dir .\w64_audit_quick
+# Quick 4-scene live moving-camera burst audit (cam_sweep ON, burst=6, stride=3)
+python tools/live/full_pipeline_audit.py --profile quick --burst 6 --stride 3 --out-dir .\w65_audit_quick
 
-# Full 10-scene live temporal burst audit (all biomes, weather, TOD & interiors)
-python tools/live/full_pipeline_audit.py --profile full --burst 6 --stride 3 --out-dir .\w64_audit_full
+# Full 10-scene live moving-camera burst audit (all biomes, weather, TOD & interiors)
+python tools/live/full_pipeline_audit.py --profile full --burst 6 --stride 3 --out-dir .\w65_audit_full
 
 # Offline audit of an existing multi-scene capture folder
 python tools/live/full_pipeline_audit.py --offline-dir .\captures --out-dir .\audit_out
@@ -178,5 +184,6 @@ python tools/live/full_pipeline_audit.py --offline-dir .\captures --out-dir .\au
 
 Safety guarantees enforced in `finally:`:
 - Bit-exact restoration of `SkyrimCustom.ini` via `SkyrimCustomIniGuard`.
+- Removal of temporary `raw_scene_init.txt`, `raw_harness_go.txt`, `raw_harness_done.txt`, and `raw_engine_go.txt`.
 - Clean process termination of `SkyrimSE.exe` between scenes.
 - Removal of `raw_engine_out\boot_sentinel.state` on exit so automated audits never trigger a false SafeMode crash-loop rollover.

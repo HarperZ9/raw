@@ -84,6 +84,8 @@ void main(uint3 id : SV_DispatchThreadID) {
     const float4 cRaw = Colour.Load(int3(p, 0));
     const float3 cRgb = sssSanitizeRgb(cRaw.rgb);
     const float safeAlpha = isfinite(cRaw.a) ? saturate(cRaw.a) : 1.0f;
+    // Wave 65 Pure Debug Layer Contract: never blur Debug Views (flags.w != 0u) with subsurface diffusion!
+    if (flags.w != 0u) { Out[p] = float4(cRgb, safeAlpha); return; }
     const float safeStr = isfinite(strength) ? saturate(strength) : 0.0f;
     const float d = Depth.Load(int3(p, 0));
     // Standard-Z sky guard (d >= 0.99998 untouched!) + wave-coherent early exit:

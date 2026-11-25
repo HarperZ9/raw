@@ -111,6 +111,7 @@ int RunCameraWorldGmstTests(void (*checkFn)(bool, const char*));
 int RunSafeRecoveryTests(void (*checkFn)(bool, const char*));
 int RunAiBallisticsGmstTests(void (*checkFn)(bool, const char*));
 int RunSkeletonStencilMathTests(void (*checkFn)(bool, const char*));
+int RunCamSweepControlTests(void (*checkFn)(bool, const char*));
 }
 namespace raw::core {
 int RunCoreRuntimeTests(void (*checkFn)(bool, const char*));
@@ -1111,6 +1112,7 @@ int main() {
     raw::rt::RunSafeRecoveryTests(Check);
     raw::rt::RunAiBallisticsGmstTests(Check);
     raw::rt::RunSkeletonStencilMathTests(Check);
+    raw::rt::RunCamSweepControlTests(Check);
     raw::worldgen::RunEsmWorldLoaderTests(Check);
     raw::worldgen::RunEsmModelResolverTests(Check);
     raw::worldgen::RunEsmWorldMetaTests(Check);

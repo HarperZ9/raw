@@ -687,7 +687,8 @@ void RawFluidSimHost::StepFire(ID3D12GraphicsCommandList* cmd, const FluidFirePa
 
     const uint32_t flagBits = (m_fireResetNext ? 1u : 0u)
                             | (params.enableCeiling ? 2u : 0u)
-                            | (params.debugOverlayMode ? 4u : 0u);
+                            | (params.debugOverlayMode ? 4u : 0u)
+                            | (params.bypassDebugView ? 8u : 0u);
     cb.boundsAndFlags[0] = floorZLocal;
     cb.boundsAndFlags[1] = ceilingZLocal;
     cb.boundsAndFlags[2] = std::clamp(sanitizeFinite(params.scatterExtinction, 1.65f), 0.25f, 8.0f);
@@ -885,6 +886,7 @@ void RawFluidSimHost::StepFire(ID3D12GraphicsCommandList* cmd, const FluidFirePa
     m_fireDomain.emitterCount     = cb.counts[0];
     m_fireDomain.isInterior       = params.enableCeiling;
     m_fireDomain.debugOverlayMode = params.debugOverlayMode;
+    m_fireDomain.bypassDebugView  = params.bypassDebugView;
 
     m_fireParity = q;
     m_fireResetNext = false;

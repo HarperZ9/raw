@@ -269,13 +269,16 @@ void main(uint3 id : SV_DispatchThreadID) {
     const float cloudSpeed01  = saturate(length(cloudWind.xy) / 60.0f);
     const float cloudTransW   = (sunColour.w > 0.5f) ? saturate(cloudCoverAct * (0.35f + 0.65f * cloudSpeed01)) : 0.0f;
 
-    // Fast reactive temporal clipping & light-change tracking (stops moving torches, NPCs & cloud shadows from smearing!):
+    // Wave 65: Separate rigid camera-pan velocity (pxVel, where reprojection is exact!) from non-rigid
+    // moving-actor silhouette divergence (mvDivPx) so cam_sweep keeps temporal sky-vis & GI rock-solid
+    // instead of flushing 54% of history every frame during smooth camera rotation!
     const float curLum = dot(cur.rgb, float3(0.2126f, 0.7152f, 0.0722f));
     const float pastLum = dot(pastB, float3(0.2126f, 0.7152f, 0.0722f));
-    const float motionTight = saturate(pxVel * 0.22f + mvDivPx * 0.35f);
-    const float dynTight = max(motionTight, cloudTransW * 0.65f);
-    const float gammaY = lerp(1.18f, 0.72f, dynTight);
-    const float skyPad = max(curStd.a * lerp(1.00f, 1.20f, saturate(n / 8.0f)) * lerp(1.0f, 0.62f, dynTight), lerp(0.044f, 0.024f, cloudTransW));
+    const float rigidPanFactor = saturate(pxVel * 0.035f);
+    const float motionTight = saturate(rigidPanFactor + mvDivPx * 0.42f);
+    const float dynTight = max(motionTight, cloudTransW * 0.60f);
+    const float gammaY = lerp(1.22f, 0.78f, dynTight);
+    const float skyPad = max(curStd.a * lerp(1.05f, 1.25f, saturate(n / 8.0f)) * lerp(1.0f, 0.68f, dynTight), lerp(0.044f, 0.024f, cloudTransW));
     const float skyLo = max(saturate(cur.a - skyPad), saturate(skyMin - 0.020f));
     const float skyHi = min(saturate(cur.a + skyPad), saturate(skyMax + 0.020f));
 
@@ -288,22 +291,22 @@ void main(uint3 id : SV_DispatchThreadID) {
         pastB = skyYCoCgToRgb(skyClipYCoCg(meanY, stdY, gammaY, skyRgbToYCoCg(pastB)));
     }
 
-    // Wave 63 Camera-Rotation-Stable Disocclusion & Temporal Decay:
+    // Wave 63 + Wave 65 Camera-Rotation-Stable Disocclusion & Temporal Decay:
     // Pure rigid camera yaw/pitch has tiny motion divergence (mvDivPx < 0.85): decay history smoothly instead
-    // of binary hard-resetting on 1-spp ray variance (kills shadow/GI flicker during camera turns!), while
+    // of binary hard-resetting on 1-spp ray variance (kills shadow/GI flicker during cam_sweep!), while
     // moving NPCs/torches/silhouettes (mvDivPx > 1.35) still reset immediately with zero ghosting!
-    const bool hardDisocc = (mvDivPx > 1.45f) || (giRelDelta > 0.62f && skyDelta > 0.32f) || (giChrDelta > 0.68f && mvDivPx > 0.55f);
-    const float nDecayed = max(n * lerp(1.0f, 0.48f, saturate(giRelDelta * 1.15f + motionTight * 0.45f + skyDelta * (0.45f + cloudTransW * 1.65f))), 1.0f);
-    n = (have && !hardDisocc) ? min(nDecayed + 1.0f, min(float(maxFrames), 10.0f)) : 1.0f;
+    const bool hardDisocc = (mvDivPx > 1.45f) || (giRelDelta > 0.65f && skyDelta > 0.34f) || (giChrDelta > 0.68f && mvDivPx > 0.55f);
+    const float nDecayed = max(n * lerp(1.0f, 0.55f, saturate(giRelDelta * 1.05f + motionTight * 0.38f + skyDelta * (0.40f + cloudTransW * 1.50f))), 1.0f);
+    n = (have && !hardDisocc) ? min(nDecayed + 1.0f, min(float(maxFrames), 12.0f)) : 1.0f;
 
-    const float trapSky = have ? rawTrappingSeparator(cur.a, past, curStd.a, pxVel, 0.5f) : 0.0f;
-    const float trapGi  = have ? rawTrappingSeparator(curLum, pastLum, dot(curStd.rgb, float3(0.2126f, 0.7152f, 0.0722f)), pxVel, 0.5f) : 0.0f;
-    const float giJumpBoost = max(smoothstep(0.20f, 0.52f, giRelDelta) * 0.74f, smoothstep(0.26f, 0.58f, giChrDelta) * 0.66f);
+    const float trapSky = have ? rawTrappingSeparator(cur.a, past, curStd.a, pxVel * 0.35f, 0.5f) : 0.0f;
+    const float trapGi  = have ? rawTrappingSeparator(curLum, pastLum, dot(curStd.rgb, float3(0.2126f, 0.7152f, 0.0722f)), pxVel * 0.35f, 0.5f) : 0.0f;
+    const float giJumpBoost = max(smoothstep(0.24f, 0.58f, giRelDelta) * 0.68f, smoothstep(0.30f, 0.62f, giChrDelta) * 0.60f);
     const float mvDivBoost  = smoothstep(0.55f, 1.60f, mvDivPx) * 0.85f;
-    const float cloudBoost  = smoothstep(0.035f, 0.16f, skyDelta) * cloudTransW * 0.55f;
-    const float disoccBoost = max(max(max(smoothstep(0.10f, 0.28f, skyDelta) * 0.48f, cloudBoost), giJumpBoost),
-                                  max(max(trapSky, trapGi) * 0.78f, mvDivBoost));
-    const float alphaT = saturate(max(max(1.0f / max(n, 1.0f), lerp(0.12f, 0.54f, motionTight)), disoccBoost));
+    const float cloudBoost  = smoothstep(0.035f, 0.16f, skyDelta) * cloudTransW * 0.50f;
+    const float disoccBoost = max(max(max(smoothstep(0.14f, 0.34f, skyDelta) * 0.42f, cloudBoost), giJumpBoost),
+                                  max(max(trapSky, trapGi) * 0.70f, mvDivBoost));
+    const float alphaT = saturate(max(max(1.0f / max(n, 1.0f), lerp(0.10f, 0.42f, motionTight)), disoccBoost));
 
     const float vis = saturate(sanitizeSkyScalar(have ? lerp(past, cur.a, alphaT) : cur.a, cur.a));
     const float3 bFiltered = sanitizeSkyRgb(have ? lerp(pastB, cur.rgb, alphaT) : cur.rgb);

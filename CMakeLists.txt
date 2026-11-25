@@ -598,19 +598,21 @@ target_link_libraries(raw_dx12_translate PUBLIC dxguid)
 # The translate mode (docs/TX_IN_GAME.md): the game on raw::tx instead of the system runtime.
 target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/TxMode.cpp src/d3d11_proxy/TxHarness.cpp)
 # Hot reload (docs/HOT_RELOAD.md): shaders and parameters while the game runs.
-target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/HotReload.cpp src/d3d11_proxy/Overlay.cpp src/d3d11_proxy/RawApi.cpp)
+target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/HotReload.cpp src/d3d11_proxy/Overlay.cpp src/d3d11_proxy/RawApi.cpp
+               src/ui/RawInputEngine.cpp src/ui/RawStudioUi.cpp)
 # Ray tracing on the game's geometry (docs/RAYTRACING.md), on raw::tx's device.
 target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/SceneGeometry.cpp src/d3d11_proxy/SceneGeometryBound.cpp src/d3d11_proxy/SceneSkin.cpp src/d3d11_proxy/SceneSkinPrepass.cpp)
 if(RAW_ENGINE_DIR)
     add_custom_command(
-        OUTPUT ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h
+        OUTPUT ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h ${RAW_ENGINE_GEN}/raw_subdiv_cs.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
         COMMAND ${RAW_DXC} -T as_${RAW_SHADER_MODEL} -E as_main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_mesh_as.h -Vn kDxil_raw_mesh_as ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawMesh.hlsl
         COMMAND ${RAW_DXC} -T ms_${RAW_SHADER_MODEL} -E ms_main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_mesh_ms.h -Vn kDxil_raw_mesh_ms ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawMesh.hlsl
-        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawMesh.hlsl
-        COMMENT "dxc: RAW-MESH SM${RAW_SHADER_MODEL} Amplification & Mesh Shader PN-Triangle subdivision -> DXIL headers"
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E subdiv_main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_subdiv_cs.h -Vn kDxil_raw_subdiv_cs ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawSubdiv.hlsl
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawMesh.hlsl ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawSubdiv.hlsl
+        COMMENT "dxc: RAW-MESH 2.0 SM${RAW_SHADER_MODEL} Amplification, Mesh & Compute PN-Triangle subdivision -> DXIL headers"
         VERBATIM)
-    target_sources(raw_d3d12_bridge PRIVATE ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h src/d3d12_bridge/RawAssetBridge.cpp src/d3d12_bridge/RawTextureBridge.cpp src/d3d12_bridge/RawMeshHost.cpp src/d3d12_bridge/RawOverrideRegistry.cpp src/d3d12_bridge/RawBindlessHeap.cpp src/d3d12_bridge/RawAsyncCompute.cpp src/d3d12_bridge/RawIndirectBatch.cpp src/d3d12_bridge/RawAssetStream.cpp)
+    target_sources(raw_d3d12_bridge PRIVATE ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h ${RAW_ENGINE_GEN}/raw_subdiv_cs.h src/d3d12_bridge/RawAssetBridge.cpp src/d3d12_bridge/RawTextureBridge.cpp src/d3d12_bridge/RawMeshHost.cpp src/d3d12_bridge/RawOverrideRegistry.cpp src/d3d12_bridge/RawBindlessHeap.cpp src/d3d12_bridge/RawAsyncCompute.cpp src/d3d12_bridge/RawIndirectBatch.cpp src/d3d12_bridge/RawAssetStream.cpp)
     set(RAW_RTSHADOW_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtShadow.hlsl)
     add_custom_command(
         OUTPUT ${RAW_ENGINE_GEN}/rt_shadow.h ${RAW_ENGINE_GEN}/rt_shadow_debug.h
@@ -782,6 +784,9 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_audit.cpp
         src/engine_rt/rt_forensics.cpp
         src/engine_rt/rt_softbody.cpp
+        src/engine_rt/rt_skeleton_ik.cpp
+        src/engine_rt/rt_combat_ai.cpp
+        src/ce_runtime/CeNavMesh.cpp
         src/engine_rt/rt_weather.cpp
         src/engine_rt/rt_livestate.cpp
         src/engine_rt/rt_capture.cpp
@@ -801,7 +806,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
     set_target_properties(raw_engine PROPERTIES
         CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_include_directories(raw_engine PRIVATE src/engine_rt src/d3d11_proxy "${RAW_ZYDIS_ROOT}/include")
+    target_include_directories(raw_engine PRIVATE src/engine_rt src/ce_runtime src/d3d11_proxy "${RAW_ZYDIS_ROOT}/include")
     target_compile_definitions(raw_engine PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD)
     target_link_libraries(raw_engine PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB} version winmm)
 
@@ -837,13 +842,17 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         tests/ce_runtime_check/main.cpp
         src/ce_runtime/CeFormatReader.cpp
         src/ce_runtime/CeNifReader.cpp
+        src/ce_runtime/CeNavMesh.cpp
         src/d3d12_bridge/RawAssetBridge.cpp
         src/d3d12_bridge/RawTextureBridge.cpp
-        src/engine_rt/rt_zydis_offsets.cpp)
+        src/engine_rt/rt_zydis_offsets.cpp
+        src/engine_rt/rt_skeleton_ik.cpp
+        src/engine_rt/rt_combat_ai.cpp
+        src/ui/RawInputEngine.cpp)
     set_target_properties(ce_runtime_check PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
-    target_include_directories(ce_runtime_check PRIVATE src/engine_rt src/d3d12_bridge src/ce_runtime "${RAW_ZYDIS_ROOT}/include")
+    target_include_directories(ce_runtime_check PRIVATE src/engine_rt src/d3d12_bridge src/ce_runtime src/ui "${RAW_ZYDIS_ROOT}/include")
     target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD)
     target_link_libraries(ce_runtime_check PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB} windowscodecs ole32)
 else()

@@ -29,7 +29,9 @@ struct alignas(256) RawMeshFrameCB {
     float    frustumPlanes[6][4];
     float    camPosAndNear[4];   // xyz = camera pos, w = PN-Triangle subdivision distance threshold
     uint32_t meshletCount;
-    uint32_t pad[3];
+    float    curvatureGain;      // Vlachos cubic Bezier normal projection gain (default 0.72)
+    float    displaceAmp;        // world-space micro-displacement scale
+    float    snowDepthU;         // live 3D volumetric snowpack buildup thickness (0..48 world units)
 };
 
 class RawMeshHost {

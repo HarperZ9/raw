@@ -15,9 +15,14 @@
 
 #include "../../src/ce_runtime/CeFormatReader.h"
 #include "../../src/ce_runtime/CeNifReader.h"
+#include "../../src/ce_runtime/CeNavMesh.h"
 #include "../../src/d3d12_bridge/RawAssetBridge.h"
 #include "../../src/d3d12_bridge/RawTextureBridge.h"
 #include "../../src/engine_rt/rt_zydis_offsets.h"
+#include "../../src/engine_rt/rt_skeleton_ik.h"
+#include "../../src/engine_rt/rt_combat_ai.h"
+#include "../../src/ui/RawDesignTokens.h"
+#include "../../src/ui/RawInputEngine.h"
 
 namespace {
 
@@ -293,6 +298,149 @@ void TestWicMemoryAndRealSkyrimData() {
     }
 }
 
+void TestDesignTokensAndUnifiedInput() {
+    const auto dark = raw::ui::DarkTheme();
+    const auto light = raw::ui::LightTheme();
+    // WCAG AAA primary text contrast (>= 15.0:1) + WCAG AA semantic tokens (>= 4.5:1)
+    Check(raw::ui::ContrastRatio(dark.inkPrimary, dark.ground) >= 15.0f, "design_tokens_dark_aaa_ink");
+    Check(raw::ui::ContrastRatio(light.inkPrimary, light.ground) >= 15.0f, "design_tokens_light_aaa_ink");
+    Check(raw::ui::ContrastRatio(dark.accentPass, dark.ground) >= 4.5f &&
+          raw::ui::ContrastRatio(dark.accentLead, dark.ground) >= 4.5f &&
+          raw::ui::ContrastRatio(dark.accentFail, dark.ground) >= 4.5f &&
+          raw::ui::ContrastRatio(light.accentPass, light.ground) >= 4.5f &&
+          raw::ui::ContrastRatio(light.accentLead, light.ground) >= 4.5f &&
+          raw::ui::ContrastRatio(light.accentFail, light.ground) >= 4.5f,
+          "design_tokens_wcag_aa_semantic");
+
+    // Analog stick radial deadzone & monotonic response curve
+    float ox = 1.0f, oy = 1.0f;
+    raw::ui::FilterAnalogStick(4000, -3000, 0.22f, ox, oy);
+    Check(ox == 0.0f && oy == 0.0f, "input_stick_deadzone_zero");
+    float mx = 0.0f, my = 0.0f, hx = 0.0f, hy = 0.0f;
+    raw::ui::FilterAnalogStick(18000, 0, 0.22f, mx, my);
+    raw::ui::FilterAnalogStick(32767, 0, 0.22f, hx, hy);
+    Check(mx > 0.1f && mx < hx && std::fabs(hx - 1.0f) < 1e-3f && std::fabs(my) < 1e-5f, "input_stick_monotonic_curve");
+}
+
+void TestCustomNavMeshAndWorldSim() {
+    // 1) Synthetic 2x4 quad strip (15 verts, 16 triangles) to verify A*, SSFA funnel, dynamic obstacle detour & planted block.
+    raw::ce::CeNavMeshData mesh{};
+    mesh.formId = 0x0010AA01u;
+    mesh.nvnmVersion = 12;
+    const int nx = 5, ny = 3;  // 4x2 quads -> 16 tris
+    for (int y = 0; y < ny; ++y) {
+        for (int x = 0; x < nx; ++x) {
+            mesh.vertices.push_back({float(x * 100), float(y * 100), 0.0f});
+        }
+    }
+    auto vIdx = [&](int x, int y) { return uint16_t(y * nx + x); };
+    auto triId = [&](int qx, int qy, int half) { return int16_t((qy * 4 + qx) * 2 + half); };
+    mesh.triangles.resize(16);
+    for (int qy = 0; qy < 2; ++qy) {
+        for (int qx = 0; qx < 4; ++qx) {
+            const int t0 = triId(qx, qy, 0);
+            const int t1 = triId(qx, qy, 1);
+            // t0: (x,y)-(x+1,y)-(x+1,y+1), t1: (x,y)-(x+1,y+1)-(x,y+1)
+            mesh.triangles[t0] = {{vIdx(qx, qy), vIdx(qx + 1, qy), vIdx(qx + 1, qy + 1)},
+                                  {qy > 0 ? triId(qx, qy - 1, 1) : int16_t(-1),
+                                   qx < 3 ? triId(qx + 1, qy, 1) : int16_t(-1),
+                                   int16_t(t1)}, 0};
+            mesh.triangles[t1] = {{vIdx(qx, qy), vIdx(qx + 1, qy + 1), vIdx(qx, qy + 1)},
+                                  {int16_t(t0),
+                                   qy < 1 ? triId(qx, qy + 1, 0) : int16_t(-1),
+                                   qx > 0 ? triId(qx - 1, qy, 0) : int16_t(-1)}, 0};
+        }
+    }
+
+    raw::ce::RawNavGraph nav;
+    nav.Load(mesh);
+    const auto straight = nav.FindPath({20.0f, 30.0f, 0.0f}, {380.0f, 30.0f, 0.0f});
+    Check(straight.found && straight.waypoints.size() == 2 && straight.totalCost > 250.0f, "navmesh_astar_funnel_straight");
+
+    // Inject dynamic obstacle right in middle of lower lane -> A* must detour cleanly through upper lane!
+    nav.AddDynamicObstacle({1u, {200.0f, 40.0f, 0.0f}, 85.0f, 1000.0f});
+    const auto detour = nav.FindPath({20.0f, 30.0f, 0.0f}, {380.0f, 30.0f, 0.0f});
+    Check(detour.found && detour.totalCost > straight.totalCost, "navmesh_dynamic_obstacle_detour");
+
+    // Planted failure: goal placed inside hard-blocked obstacle must reject cleanly.
+    const auto blocked = nav.FindPath({20.0f, 30.0f, 0.0f}, {200.0f, 40.0f, 0.0f});
+    Check(!blocked.found, "navmesh_planted_blocked_goal_reject");
+
+    // Off-mesh climb/vault link connecting a disconnected elevated island
+    mesh.vertices.push_back({500.0f, 0.0f, 120.0f});
+    mesh.vertices.push_back({600.0f, 0.0f, 120.0f});
+    mesh.vertices.push_back({550.0f, 100.0f, 120.0f});
+    const uint16_t bv = uint16_t(mesh.vertices.size() - 3);
+    mesh.triangles.push_back({{bv, uint16_t(bv + 1), uint16_t(bv + 2)}, {-1, -1, -1}, 0});
+    nav.Load(mesh);
+    Check(!nav.FindPath({20.0f, 30.0f, 0.0f}, {550.0f, 30.0f, 120.0f}).found, "navmesh_island_unreachable_without_link");
+    nav.AddOffMeshLink({7u, 16u, {380.0f, 50.0f, 0.0f}, {550.0f, 30.0f, 120.0f}, 1.35f, 2});
+    Check(nav.FindPath({20.0f, 30.0f, 0.0f}, {550.0f, 30.0f, 120.0f}).found, "navmesh_offmesh_climb_link_connects");
+
+    // Real Skyrim.esm NAVM clean-room extraction + live A* check when game install is present
+    const std::string skyrimEsm = "H:\\SteamLibrary\\steamapps\\common\\Skyrim Special Edition\\Data\\Skyrim.esm";
+    if (std::filesystem::exists(skyrimEsm)) {
+        std::vector<raw::ce::CeNavMeshData> realNavs;
+        std::string nErr;
+        if (raw::ce::ExtractNavMeshesFromPlugin(skyrimEsm, 8, realNavs, &nErr) && !realNavs.empty()) {
+            uint32_t totalVerts = 0, totalTris = 0;
+            for (const auto& m : realNavs) { totalVerts += uint32_t(m.vertices.size()); totalTris += uint32_t(m.triangles.size()); }
+            std::printf("INFO real Skyrim.esm NAVM: meshes=%zu totalVerts=%u totalTris=%u\n", realNavs.size(), totalVerts, totalTris);
+            Check(totalVerts > 20 && totalTris > 10, "navmesh_real_skyrim_esm_parse");
+        }
+    }
+
+    // 2) Analytical 2-Bone IK & Foot Planting
+    const auto ik = raw::rt::SolveTwoBoneIK({0.0f, 0.0f, 80.0f}, {0.0f, 15.0f, 10.0f}, {0.0f, 1.0f, 0.0f}, 42.0f, 42.0f);
+    auto d3 = [](raw::rt::Vec3 a, raw::rt::Vec3 b) {
+        return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
+    };
+    Check(ik.solved && std::fabs(d3({0, 0, 80}, ik.midPos) - 42.0f) < 1e-2f &&
+          std::fabs(d3(ik.midPos, ik.endPos) - 42.0f) < 1e-2f &&
+          d3(ik.endPos, {0, 15, 10}) < 1e-2f && ik.midPos.y > 0.0f, "skeleton_ik_two_bone_exact");
+
+    raw::rt::FootPlantInput fp{};
+    fp.leftGroundZ = -16.0f; fp.rightGroundZ = 6.0f; fp.pelvisBaseZ = 0.0f; fp.snowDepthU = 20.0f;
+    fp.leftGroundN = {0.0f, 0.35f, 0.936f}; fp.rightGroundN = {0.0f, 0.0f, 1.0f};
+    const auto fpOut = raw::rt::ComputeFootPlanting(fp);
+    Check(fpOut.pelvisOffsetZ < -10.0f && fpOut.rightFootLiftZ > 15.0f && fpOut.leftAnklePitchRad > 0.25f && fpOut.strideDampMult < 0.85f,
+          "skeleton_foot_planting_and_snow_sink");
+
+    // 3) Tactical Squad Combat AI, Timed Parry, Dodge I-Frames & Living World Ecosystem
+    const float targetPos[3] = {0.0f, 0.0f, 0.0f};
+    const float targetFwd[2] = {0.0f, 1.0f};
+    std::vector<raw::rt::CombatAgentSnapshot> squad = {
+        {1u, {  0.0f,  90.0f, 0.0f}, 1.0f, false, false},
+        {2u, { 40.0f, 140.0f, 0.0f}, 1.0f, false, false},
+        {3u, {-50.0f, 160.0f, 0.0f}, 1.0f, false, false},
+        {4u, { 10.0f, 300.0f, 0.0f}, 1.0f, true,  false},
+        {5u, {-20.0f, 350.0f, 0.0f}, 1.0f, false, true},
+    };
+    const auto orders = raw::rt::CoordinateSquadTactics(targetPos, targetFwd, squad, 2);
+    uint32_t tokens = 0;
+    for (const auto& o : orders) if (o.attackToken) ++tokens;
+    Check(orders.size() == 5 && orders[0].role == raw::rt::TacticalRole::Vanguard &&
+          orders[1].role == raw::rt::TacticalRole::FlankerLeft && orders[2].role == raw::rt::TacticalRole::FlankerRight &&
+          orders[3].role == raw::rt::TacticalRole::SkirmisherRanged && orders[4].role == raw::rt::TacticalRole::SupportCaster &&
+          tokens == 2, "combat_squad_flanking_and_tokens");
+
+    raw::rt::CombatActorState def{}, atk{};
+    raw::rt::StepCombatTimers(def, true, true, false, 0.016f);
+    raw::rt::StepCombatTimers(def, true, false, false, 0.080f);  // 80ms inside 160ms parry window
+    const auto parryRes = raw::rt::ResolveCombatHit(def, atk, {40.0f, 35.0f, false, false}, 160.0f, 45.0f);
+    Check(parryRes.perfectParry && parryRes.attackerStagger && parryRes.appliedHpDamage == 0.0f && atk.staggerSec > 1.0f,
+          "combat_precision_timed_parry");
+
+    raw::rt::StepCombatTimers(def, false, false, true, 0.016f);  // dodge edge -> 240ms i-frames
+    const auto dodgeRes = raw::rt::ResolveCombatHit(def, atk, {50.0f, 50.0f, true, true}, 160.0f, 45.0f);
+    Check(dodgeRes.dodgedIFrame && dodgeRes.appliedHpDamage == 0.0f, "combat_iframe_dodge_evasion");
+
+    Check(raw::rt::EvaluateWorldEcosystem(14.0f, 0.0f, 0.8f, 18.0f, false, false) == raw::rt::WorldNpcDirective::SeekShelter &&
+          raw::rt::EvaluateWorldEcosystem(14.0f, 0.0f, 0.8f, 18.0f, true,  false) == raw::rt::WorldNpcDirective::WarmAtBrazier &&
+          raw::rt::EvaluateWorldEcosystem(22.0f, 0.0f, 0.0f,  0.0f, false, false) == raw::rt::WorldNpcDirective::EquipTorch,
+          "world_ecosystem_weather_directives");
+}
+
 }  // namespace
 
 int main() {
@@ -300,6 +448,8 @@ int main() {
     TestGlbImporter();
     TestCeFormats();
     TestWicMemoryAndRealSkyrimData();
+    TestDesignTokensAndUnifiedInput();
+    TestCustomNavMeshAndWorldSim();
     std::printf("ce_runtime_check: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

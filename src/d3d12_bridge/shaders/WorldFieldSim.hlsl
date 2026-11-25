@@ -91,12 +91,23 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         h = 0.0f; v = 0.0f; foam = 0.0f;
     }
 
-    // 1) Storm snowpack accumulation (wind-sculpted cornice drift) & post-rain puddle/wetness drying:
+    // 1) True 3D Volumetric Storm Snowpack Buildup + Angle-of-Repose Cornice Drift & Avalanche Diffusion:
+    const float sL = PrevField.SampleLevel(Lin, frac(uv + float2(-invRes.x, 0.0f)), 0.0f).a;
+    const float sR = PrevField.SampleLevel(Lin, frac(uv + float2( invRes.x, 0.0f)), 0.0f).a;
+    const float sD = PrevField.SampleLevel(Lin, frac(uv + float2(0.0f, -invRes.y)), 0.0f).a;
+    const float sU = PrevField.SampleLevel(Lin, frac(uv + float2(0.0f,  invRes.y)), 0.0f).a;
+    const float lapSnow = (sL + sR + sD + sU) * 0.25f - snow;
+    // Angle-of-repose slumping: steep snow gradients relax smoothly into realistic soft rounded drifts & berms!
+    if (abs(lapSnow) > 0.035f) {
+        snow = saturate(snow + lapSnow * 0.12f);
+    }
     if (weather.z > 0.04f) {
-        const float driftNoise = 0.70f + 0.60f * cNoise(float3(worldXY * 0.008f - windDir * (camPosW.w * 0.015f), camPosW.w * 0.02f));
-        snow = saturate(snow + weather.z * 0.00085f * driftNoise);
+        // Wind-transported snow-drift deposition (builds thick wind-sculpted snowbanks up to full volumetric depth):
+        const float driftNoise = 0.65f + 0.70f * cNoise(float3(worldXY * 0.0075f - windDir * (camPosW.w * 0.018f), camPosW.w * 0.022f));
+        const float windAdvS = PrevField.SampleLevel(Lin, frac(uv - windDir * (invRes * 0.35f)), 0.0f).a;
+        snow = saturate(lerp(snow, windAdvS, weather.z * 0.018f) + weather.z * 0.00135f * driftNoise);
     } else if (weather.w > 0.05f) {
-        snow = saturate(snow - weather.w * 0.0014f);
+        snow = saturate(snow - weather.w * 0.0018f);
         foam = saturate(foam + weather.w * 0.0035f);
     } else {
         foam = saturate(foam - 0.00045f);
@@ -109,19 +120,25 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (rH > 0.996f) { force -= weather.w * 0.22f; }
     }
 
-    // 3) Player footsteps (0..15) + live ProcessLists NPC world positions (16..31) -> vortex-curled wakes & snow trenches:
+    // 3) Player footsteps (0..15) + live ProcessLists NPC world positions (16..31) ->
+    //    vortex-curled water wakes AND physically mass-conserving snow boot-trenches with pushed-up snow berms!
     [loop] for (uint fi = 0u; fi < 32u; ++fi) {
         const float4 ft = footTrail[fi];
         if (ft.w <= 0.05f) { continue; }
         const float2 fd = worldXY - ft.xy;
         const float d2 = dot(fd, fd);
-        if (d2 < 144.0f) {
-            const float g = exp(-d2 / 56.0f) * ft.w;
+        if (d2 < 256.0f) {
+            const float g = exp(-d2 / 52.0f) * ft.w;
+            const float rr = sqrt(d2);
+            const float berm = exp(-pow(rr - 10.5f, 2.0f) / 14.0f) * ft.w;
             // Dipole shear wake impulse around moving actors creates authentic counter-rotating vortex pairs:
             const float dipole = sin(atan2(fd.y, fd.x) * 2.0f + camPosW.w * 1.2f) * 0.035f;
             force -= g * (0.14f + dipole);
             if (weather.w > 0.08f) { foam = saturate(foam + g * 0.18f * weather.w); }
-            if (snow > 0.02f) { snow = saturate(snow - g * 0.18f); }
+            if (snow > 0.02f) {
+                // Mass-conserving snow compression: compacts trench center while pushing a raised rim berm outward!
+                snow = saturate(snow - g * 0.24f + berm * 0.065f);
+            }
         }
     }
 

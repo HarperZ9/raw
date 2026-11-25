@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAW DX12 | THE PLAYGROUND Release Specification</title>
+<style>
+  :root, [data-theme="dark"] {
+    --ground: #101318;
+    --surface: #161a22;
+    --surface-alt: #1b202a;
+    --border: #2a3240;
+    --border-strong: #424e62;
+    --ink: #ede9e1;
+    --ink-muted: #beb8ad;
+    --ink-subtle: #929292;
+    --pass: #619ff9;
+    --lead: #eeb153;
+    --fail: #f47154;
+    --null: #929292;
+    --ochre: #937e6b;
+  }
+  [data-theme="light"] {
+    --ground: #f9f5ed;
+    --surface: #f2ece1;
+    --surface-alt: #eae2d4;
+    --border: #cec4b4;
+    --border-strong: #9e9382;
+    --ink: #1b1e24;
+    --ink-muted: #444851;
+    --ink-subtle: #666666;
+    --pass: #235aad;
+    --lead: #8a580a;
+    --fail: #b5341b;
+    --null: #6e6e6e;
+    --ochre: #7a6047;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "Hanken Grotesk", "Segoe UI", system-ui, -apple-system, sans-serif;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  code, pre, .mono {
+    font-family: "Conso", "Consolas", ui-monospace, monospace;
+    font-size: 0.92em;
+  }
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--surface);
+    border-top: 3px solid var(--lead);
+    border-bottom: 1px solid var(--border);
+    padding: 0.85rem 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .brand {
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  nav {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  nav a {
+    color: var(--ink-muted);
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  nav a:hover, nav a:focus-visible { color: var(--lead); outline: none; }
+  button.ctrl {
+    background: var(--surface-alt);
+    color: var(--ink);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 0.35rem 0.75rem;
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.ctrl:hover, button.ctrl:focus-visible { border-color: var(--lead); color: var(--lead); }
+  main {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+  }
+  h1 {
+    font-size: clamp(1.8rem, 3.2vw, 2.5rem);
+    line-height: 1.15;
+    margin: 0 0 0.75rem;
+    letter-spacing: -0.02em;
+  }
+  h2 {
+    font-size: 1.25rem;
+    margin: 2.25rem 0 0.85rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
+    letter-spacing: -0.01em;
+  }
+  p.lede {
+    color: var(--ink-muted);
+    max-width: 72ch;
+    margin: 0 0 1.5rem;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.15rem 1.25rem;
+  }
+  .card h3 {
+    margin: 0 0 0.45rem;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .card p { margin: 0; color: var(--ink-muted); font-size: 0.92rem; }
+  .glyph {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    flex-shrink: 0;
+  }
+  .g-pass { border-radius: 50%; background: var(--pass); }
+  .g-lead { border-radius: 50%; background: linear-gradient(90deg, var(--lead) 50%, transparent 50%); border: 1.5px solid var(--lead); }
+  .g-null { border-radius: 50%; border: 1.5px solid var(--null); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.75rem;
+    font-size: 0.92rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+  th, td {
+    text-align: left;
+    padding: 0.65rem 0.85rem;
+    border-bottom: 1px solid var(--border);
+  }
+  th { color: var(--ink-muted); font-weight: 600; background: var(--surface-alt); }
+  .verified-box {
+    margin-top: 2rem;
+    padding: 1rem 1.25rem;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-left: 4px solid var(--pass);
+    border-radius: 6px;
+    font-size: 0.9rem;
+  }
+  .verified-box strong { color: var(--pass); }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="glyph g-pass" aria-hidden="true"></span>
+    <span>THE PLAYGROUND / RAW DX12</span>
+  </div>
+  <nav aria-label="Primary sections">
+    <a href="#pipeline">Pipeline</a>
+    <a href="#geometry">Geometry &amp; Snow</a>
+    <a href="#worldsim">World Sim &amp; AI</a>
+    <a href="#controls">Controls</a>
+    <a href="#verified">Verified</a>
+    <button type="button" class="ctrl" id="themeBtn" aria-label="Toggle light or dark theme">Light Ground</button>
+  </nav>
+</header>
+
+<main>
+  <h1>Native DX12 Rendering, Runtime Geometry Uplift, and Zero-SKSE World Simulation</h1>
+  <p class="lede">
+    RAW upgrades Creation Engine titles from the metal layer upward through a drop-in Direct3D 12 translator,
+    hardware DXR 1.2 ray tracing, SM 6.9 Long-Vector neural reconstruction, runtime GPU PN-Triangle subdivision,
+    volumetric snowpack physics, clean-room navmesh pathfinding, procedural skeletal IK, and tactical squad combat AI.
+    Zero SKSE loader or utility mods required.
+  </p>
+
+  <h2 id="pipeline">Core Rendering Pipeline</h2>
+  <div class="grid">
+    <article class="card">
+      <h3><span class="glyph g-pass" aria-hidden="true"></span>DXR 1.2 &amp; SM 6.9 DXIL 1.9</h3>
+      <p>Hardware RayQuery soft sun and point shadows, 4-state Opacity Micromaps on alpha foliage, visibility-reused ReSTIR DI/GI, and direct bindless descriptor heap indexing.</p>
+    </article>
+    <article class="card">
+      <h3><span class="glyph g-pass" aria-hidden="true"></span>RAWLSS 7.0 Split-Manifold</h3>
+      <p>12-to-16-to-4 neural ray reconstructor executing on native SM 6.9 16-wide FP16 long vectors with wave-quad register shuffles and zero-lag disocclusion GI priors.</p>
+    </article>
+    <article class="card">
+      <h3><span class="glyph g-pass" aria-hidden="true"></span>Unified 3D Atmosphere &amp; Optics</h3>
+      <p>Blelloch block-scan 160x90x64 3D froxels, Hillaire physical sky, Beer-Lambert Nordic water with 3x3 sub-pixel shoreline anti-aliasing, and point-sampled CoC-bilateral cinema DoF.</p>
+    </article>
+  </div>
+
+  <h2 id="geometry">Runtime Geometry Uplift and Volumetric Snow</h2>
+  <div class="grid">
+    <article class="card">
+      <h3><span class="glyph g-lead" aria-hidden="true"></span>RAW-MESH 2.0 &amp; RawSubdiv</h3>
+      <p>Adaptive 1x/4x/9x curved Vlachos PN-Triangle tessellation and 4x compute subdivision with sharp-crease preservation and world-space micro-displacement, leaving stock collision and stock navmesh untouched.</p>
+    </article>
+    <article class="card">
+      <h3><span class="glyph g-lead" aria-hidden="true"></span>3D Volumetric Snowpack PDE</h3>
+      <p>Toroidal 512x512 world-locked PDE simulating storm accumulation, angle-of-repose slumping, mass-conserving boot-trench berms, thermal campfire melt craters, and geometric vertex lift.</p>
+    </article>
+    <article class="card">
+      <h3><span class="glyph g-pass" aria-hidden="true"></span>Direct .glb &amp; .nif Asset Bridge</h3>
+      <p>Drop Blender .glb or .obj files into <code>raw_assets/overrides/</code> for live hot-swap meshlet overrides, or stream meshes straight out of .bsa/.ba2 archives via clean-room LZ4 and BSTriShape decoders.</p>
+    </article>
+  </div>
+
+  <h2 id="worldsim">Zero-SKSE World Simulation, NavMesh, IK, and Combat</h2>
+  <div class="grid">
+    <article class="card">
+      <h3><span class="glyph g-pass" aria-hidden="true"></span>CeNavMesh &amp; RawNavGraph</h3>
+      <p>Clean-room .esm NAVM parser paired with dynamic obstacle detouring, snow-depth path costs, off-mesh jump/vault links, and Simple Stupid Funnel waypoint smoothing.</p>
+    </article>
+    <article class="card">
+      <h3><span class="glyph g-pass" aria-hidden="true"></span>Procedural Skeletal IK &amp; 240 Hz XPBD</h3>
+      <p>Exact analytical 2-bone Foot/Arm IK, terrain-conforming pelvis drop and ankle slope alignment, upper-body gaze distribution, and 240 Hz sub-stepped XPBD cloth, hair, and tissue dynamics.</p>
+    </article>
+    <article class="card">
+      <h3><span class="glyph g-pass" aria-hidden="true"></span>Tactical Squad Combat &amp; Living World</h3>
+      <p>Non-overlapping vanguard, flanker, skirmisher, and caster roles; 160 ms precision timed parry with posture break; stamina-gated i-frame dodge; melee hit-stop; and weather-reactive NPC shelter routines.</p>
+    </article>
+  </div>
+
+  <h2 id="controls">RAW DX12 Studio UI Controls</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Action</th>
+        <th>Keyboard / Mouse</th>
+        <th>XInput Controller</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Open or Close Studio UI</td><td class="mono">End</td><td class="mono">LB + RB + Start</td></tr>
+      <tr><td>Switch Domain (10 Domains)</td><td class="mono">Click Rail / Tab / PgUp / PgDn</td><td class="mono">LB / RB</td></tr>
+      <tr><td>Select and Tune Controls</td><td class="mono">Click, Drag Slider, Wheel, Arrows</td><td class="mono">D-Pad / Left Stick / A</td></tr>
+      <tr><td>Fine or Coarse Scrub</td><td class="mono">Shift (Fine) / Ctrl (Coarse)</td><td class="mono">LT (Fine) / RT (Coarse)</td></tr>
+      <tr><td>Save Config / Load Preset / Export</td><td class="mono">S / L / P</td><td class="mono">Y / X / View</td></tr>
+      <tr><td>Toggle Dark or Light Ground</td><td class="mono">T or Header Button</td><td class="mono">Right Stick Click</td></tr>
+    </tbody>
+  </table>
+
+  <div class="verified-box" id="verified">
+    <strong>Verified:</strong> Build checked with MSVC C++23, Ninja, retail-signed DXC 1.9 (SM 6.9 DXIL 1.9), and DXC 1.10 preview (SM 6.10).
+    D3D11-to-D3D12 pixel parity checked by <code>d3d11_translate_suite</code> on WARP (41 passed, 0 failed, 0 debug errors, 0 leaked refs).
+    Clean-room format parsers, WCAG AAA palette contrast, analog stick deadzone math, A* funnel navmesh detouring, 2-bone IK, and tactical combat/parry state machines checked by <code>ce_runtime_check</code>.
+    Live in-game playtest visuals for Wave 10 to 14 await the next interactive capture session.
+  </div>
+</main>
+
+<script>
+  const btn = document.getElementById('themeBtn');
+  btn.addEventListener('click', () => {
+    const root = document.documentElement;
+    const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    btn.textContent = next === 'dark' ? 'Light Ground' : 'Dark Ground';
+  });
+</script>
+</body>
+</html>

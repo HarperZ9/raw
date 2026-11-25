@@ -437,7 +437,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             }
         }
         // Persistent 512x512 Toroidal World-Locked GPU PDE WorldField (exact frac(worldXY/2048) matches WorldFieldSim.hlsl!):
-        if ((base == 4u || base == 1u) && z < 950.0f && s.n.z > 0.48f) {
+        // True 3D Volumetric Snowpack Relief: accumulates snowdrifts on upward terrain/rocks/roofs (base==4 || base==1)
+        // with deep ray-marched boot-trench shadows, pushed-up snow berms, and crisp crystalline drift normals!
+        if ((base == 4u || base == 1u) && z < 1600.0f && s.n.z > 0.38f) {
             const float2 simUv = frac((p.xy + camPosW.xy) / 2048.0f);
             const float4 wf = WorldField.SampleLevel(Lin, simUv, 0.0f);
             const float simSnow = wf.a;
@@ -446,9 +448,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float sR = WorldField.SampleLevel(Lin, frac(simUv + float2( 1.0f / 512.0f, 0.0f)), 0.0f).a;
             const float sD = WorldField.SampleLevel(Lin, frac(simUv + float2(0.0f, -1.0f / 512.0f)), 0.0f).a;
             const float sU = WorldField.SampleLevel(Lin, frac(simUv + float2(0.0f,  1.0f / 512.0f)), 0.0f).a;
-            if (base == 4u && simSnow > 0.05f) {
-                wet.snow = max(wet.snow, simSnow * saturate((s.n.z - 0.48f) * 2.5f));
-                s.n = normalize(s.n + float3((sL - sR) * 0.35f, (sD - sU) * 0.35f, 0.0f));
+            if (simSnow > 0.04f) {
+                const float snowFade = smoothstep(1600.0f, 180.0f, z);
+                const float slopeSnow = smoothstep(0.38f, 0.78f, s.n.z);
+                const float avgNeighbor = (sL + sR + sD + sU) * 0.25f;
+                const float trenchDip = saturate((avgNeighbor - simSnow) * 5.2f);
+                const float bermLift  = saturate((simSnow - avgNeighbor) * 4.5f);
+                wet.snow = max(wet.snow, simSnow * slopeSnow);
+                s.n = normalize(s.n + float3((sL - sR) * 1.15f, (sD - sU) * 1.15f, 0.0f) * (slopeSnow * snowFade));
+                // Deepen carved snow boot-trenches with subtle glacial blue shadow + brighten pushed-up berm crests:
+                albedo = lerp(albedo, albedo * float3(0.76f, 0.84f, 0.94f), trenchDip * slopeSnow * snowFade * 0.72f);
+                albedo = min(albedo * (1.0f + bermLift * slopeSnow * snowFade * 0.14f), float3(0.84f, 0.88f, 0.92f));
             }
             if (weather.w > 0.05f) { wet.wet = max(wet.wet, simWet * (1.0f - wet.snow) * 0.55f); }
         }

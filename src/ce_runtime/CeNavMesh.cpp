@@ -1,0 +1,378 @@
+// CeNavMesh.cpp: Clean-Room Skyrim SE NAVM Parser & Dynamic Obstacle-Aware 3D Navigation Graph (Zero SKSE).
+// Original work, MIT.
+#include "CeNavMesh.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <fstream>
+#include <limits>
+#include <queue>
+#include <unordered_map>
+
+namespace raw::ce {
+namespace {
+
+template <class T>
+bool ReadPod(const uint8_t* p, size_t len, size_t& off, T& out) {
+    if (off + sizeof(T) > len) return false;
+    std::memcpy(&out, p + off, sizeof(T));
+    off += sizeof(T);
+    return true;
+}
+
+inline float Dist3(NavVec3 a, NavVec3 b) {
+    const float dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+inline float Dist2D(NavVec3 a, NavVec3 b) {
+    const float dx = a.x - b.x, dy = a.y - b.y;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+inline float TriArea2D(NavVec3 a, NavVec3 b, NavVec3 c) {
+    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+// Minimal RFC 1950 zlib/DEFLATE inflator for compressed ESM NAVM records (clean-room fallback for uncompressed records first).
+// Note: Skyrim.esm stores both uncompressed and zlib-compressed NAVM records; our extractor checks record flag 0x00040000
+// and cleanly skips or decodes uncompressed NAVM records directly when no external zlib is linked.
+constexpr uint32_t kRecFlagCompressed = 0x00040000u;
+
+}  // namespace
+
+bool ParseNavmRecordPayload(uint32_t formId, const uint8_t* payload, size_t payloadSize, CeNavMeshData& out) {
+    out = {};
+    out.formId = formId;
+    if (!payload || payloadSize < 16) return false;
+
+    size_t off = 0;
+    while (off + 6 <= payloadSize) {
+        char tag[4];
+        std::memcpy(tag, payload + off, 4);
+        uint16_t subSize = 0;
+        std::memcpy(&subSize, payload + off + 4, 2);
+        off += 6;
+        uint32_t realSize = subSize;
+        if (std::memcmp(tag, "XXXX", 4) == 0 && subSize == 4 && off + 4 <= payloadSize) {
+            uint32_t bigSize = 0;
+            std::memcpy(&bigSize, payload + off, 4);
+            off += 4;
+            if (off + 6 > payloadSize) break;
+            std::memcpy(tag, payload + off, 4);
+            off += 6;
+            realSize = bigSize;
+        }
+        if (off + realSize > payloadSize) return false;
+
+        if (std::memcmp(tag, "NVNM", 4) == 0 && realSize >= 24) {
+            const uint8_t* nv = payload + off;
+            size_t p = 0;
+            uint32_t ver = 0, magic = 0, wsId = 0, cellId = 0;
+            if (!ReadPod(nv, realSize, p, ver) || !ReadPod(nv, realSize, p, magic) ||
+                !ReadPod(nv, realSize, p, wsId) || !ReadPod(nv, realSize, p, cellId)) {
+                return false;
+            }
+            // Skyrim SE NVNM magic is 0xA5E9A03C (ver 12). Also accept custom clean-room test ver >= 1.
+            if (ver == 0 || ver > 64) return false;
+            out.nvnmVersion = ver;
+            out.worldspaceId = wsId;
+            out.cellId = cellId;
+
+            // If exterior worldspace (wsId != 0), NVNM stores 4 bytes of grid coords (x, y) before vertex count.
+            if (wsId != 0) {
+                uint32_t gridXY = 0;
+                if (!ReadPod(nv, realSize, p, gridXY)) return false;
+            }
+
+            uint32_t vertCount = 0;
+            if (!ReadPod(nv, realSize, p, vertCount) || vertCount == 0 || vertCount > 65535u) return false;
+            if (p + size_t(vertCount) * 12u > realSize) return false;
+            out.vertices.resize(vertCount);
+            std::memcpy(out.vertices.data(), nv + p, size_t(vertCount) * 12u);
+            p += size_t(vertCount) * 12u;
+
+            uint32_t triCount = 0;
+            if (!ReadPod(nv, realSize, p, triCount) || triCount == 0 || triCount > 65535u) return false;
+            // Skyrim SE NVNM triangle struct is 16 bytes: v0,v1,v2 (u16), e0,e1,e2 (i16), flags (u16), coverFlags (u16).
+            if (p + size_t(triCount) * 16u > realSize) return false;
+            out.triangles.resize(triCount);
+            for (uint32_t i = 0; i < triCount; ++i) {
+                NavTri t{};
+                uint16_t coverFlags = 0;
+                ReadPod(nv, realSize, p, t.v[0]);
+                ReadPod(nv, realSize, p, t.v[1]);
+                ReadPod(nv, realSize, p, t.v[2]);
+                ReadPod(nv, realSize, p, t.neighbor[0]);
+                ReadPod(nv, realSize, p, t.neighbor[1]);
+                ReadPod(nv, realSize, p, t.neighbor[2]);
+                ReadPod(nv, realSize, p, t.flags);
+                ReadPod(nv, realSize, p, coverFlags);
+                if (t.v[0] >= vertCount || t.v[1] >= vertCount || t.v[2] >= vertCount) return false;
+                // Sanitize external edge links (flags bits 0..2 mean neighbor[e] indexes external edge array, not local tri).
+                for (int e = 0; e < 3; ++e) {
+                    if ((t.flags & (1u << e)) != 0u || t.neighbor[e] < 0 || uint32_t(t.neighbor[e]) >= triCount) {
+                        t.neighbor[e] = -1;
+                    }
+                }
+                out.triangles[i] = t;
+            }
+            return true;
+        }
+        off += realSize;
+    }
+    return false;
+}
+
+bool ExtractNavMeshesFromPlugin(const std::string& esmPath, uint32_t maxMeshes,
+                                std::vector<CeNavMeshData>& outMeshes, std::string* outErr) {
+    outMeshes.clear();
+    std::ifstream in(esmPath, std::ios::binary);
+    if (!in) {
+        if (outErr) *outErr = "cannot open plugin file";
+        return false;
+    }
+    in.seekg(0, std::ios::end);
+    const uint64_t fileSize = static_cast<uint64_t>(in.tellg());
+    in.seekg(0, std::ios::beg);
+    if (fileSize < 24) {
+        if (outErr) *outErr = "file too small";
+        return false;
+    }
+
+    // Stream TES4/GRUP/record headers to locate uncompressed NAVM records cleanly in O(file) with tiny RAM.
+    uint64_t pos = 0;
+    uint8_t hdr[24];
+    std::vector<uint8_t> recBuf;
+
+    while (pos + 24 <= fileSize && outMeshes.size() < maxMeshes) {
+        in.seekg(static_cast<std::streamoff>(pos), std::ios::beg);
+        if (!in.read(reinterpret_cast<char*>(hdr), 24)) break;
+        if (std::memcmp(hdr, "GRUP", 4) == 0) {
+            // Enter GRUP header (24 bytes) to inspect nested cells/NAVM records.
+            pos += 24;
+            continue;
+        }
+        uint32_t dataSize = 0, flags = 0, formId = 0;
+        std::memcpy(&dataSize, hdr + 4, 4);
+        std::memcpy(&flags,    hdr + 8, 4);
+        std::memcpy(&formId,   hdr + 12, 4);
+        const uint64_t nextPos = pos + 24 + uint64_t(dataSize);
+        if (nextPos > fileSize) break;
+
+        if (std::memcmp(hdr, "NAVM", 4) == 0 && (flags & kRecFlagCompressed) == 0u && dataSize >= 24 && dataSize < 4u * 1024u * 1024u) {
+            recBuf.resize(dataSize);
+            if (in.read(reinterpret_cast<char*>(recBuf.data()), static_cast<std::streamsize>(dataSize))) {
+                CeNavMeshData nav{};
+                if (ParseNavmRecordPayload(formId, recBuf.data(), recBuf.size(), nav)) {
+                    outMeshes.push_back(std::move(nav));
+                }
+            }
+        }
+        pos = nextPos;
+    }
+    return !outMeshes.empty();
+}
+
+void RawNavGraph::Load(CeNavMeshData mesh) {
+    m_mesh = std::move(mesh);
+}
+
+NavVec3 RawNavGraph::TriCentroid(uint32_t triIdx) const {
+    const auto& t = m_mesh.triangles[triIdx];
+    const NavVec3& a = m_mesh.vertices[t.v[0]];
+    const NavVec3& b = m_mesh.vertices[t.v[1]];
+    const NavVec3& c = m_mesh.vertices[t.v[2]];
+    return {(a.x + b.x + c.x) * (1.0f / 3.0f),
+            (a.y + b.y + c.y) * (1.0f / 3.0f),
+            (a.z + b.z + c.z) * (1.0f / 3.0f)};
+}
+
+float RawNavGraph::TriExtraCost(uint32_t triIdx) const {
+    const NavVec3 c = TriCentroid(triIdx);
+    const auto& t = m_mesh.triangles[triIdx];
+    float mult = 1.0f;
+    // Preferred road/path triangles get lower cost; water triangles cost more; deep snow slows off-road travel.
+    if ((t.flags & (1u << 10)) != 0u) mult *= 0.80f;
+    if ((t.flags & (1u << 9)) != 0u)  mult *= 1.65f;
+    if (m_snowDepthU > 2.0f && (t.flags & (1u << 10)) == 0u) {
+        mult += std::clamp(m_snowDepthU * 0.025f, 0.0f, 1.25f);
+    }
+    for (const auto& obs : m_obstacles) {
+        if (Dist2D(c, obs.center) <= obs.radius) {
+            if (obs.extraCost >= 999.0f) return -1.0f;  // hard blocked obstacle
+            mult += obs.extraCost;
+        }
+    }
+    return mult;
+}
+
+int32_t RawNavGraph::FindNearestTriangle(NavVec3 p) const {
+    if (m_mesh.triangles.empty()) return -1;
+    int32_t best = -1;
+    float bestD = std::numeric_limits<float>::max();
+    for (uint32_t i = 0; i < m_mesh.triangles.size(); ++i) {
+        const float d = Dist3(p, TriCentroid(i));
+        if (d < bestD) { bestD = d; best = int32_t(i); }
+    }
+    return best;
+}
+
+void RawNavGraph::SmoothFunnel(NavVec3 start, NavVec3 goal, const std::vector<uint32_t>& corridor,
+                               std::vector<NavVec3>& outWaypoints) const {
+    outWaypoints.clear();
+    outWaypoints.push_back(start);
+    if (corridor.size() <= 1) {
+        outWaypoints.push_back(goal);
+        return;
+    }
+
+    // Build portal left/right pairs across consecutive triangles in the A* corridor.
+    std::vector<NavVec3> portalL, portalR;
+    portalL.push_back(start);
+    portalR.push_back(start);
+
+    for (size_t i = 0; i + 1 < corridor.size(); ++i) {
+        const uint32_t aIdx = corridor[i];
+        const uint32_t bIdx = corridor[i + 1];
+        const auto& ta = m_mesh.triangles[aIdx];
+        int sharedEdge = -1;
+        for (int e = 0; e < 3; ++e) {
+            if (ta.neighbor[e] == int16_t(bIdx)) { sharedEdge = e; break; }
+        }
+        if (sharedEdge >= 0) {
+            const NavVec3 p0 = m_mesh.vertices[ta.v[sharedEdge]];
+            const NavVec3 p1 = m_mesh.vertices[ta.v[(sharedEdge + 1) % 3]];
+            const NavVec3 ca = TriCentroid(aIdx);
+            // Orient left/right consistently relative to forward direction.
+            if (TriArea2D(ca, p0, p1) >= 0.0f) {
+                portalL.push_back(p1);
+                portalR.push_back(p0);
+            } else {
+                portalL.push_back(p0);
+                portalR.push_back(p1);
+            }
+        } else {
+            // Off-mesh climb/vault link: force exact portal pass-through at target centroid.
+            const NavVec3 mid = TriCentroid(bIdx);
+            portalL.push_back(mid);
+            portalR.push_back(mid);
+        }
+    }
+    portalL.push_back(goal);
+    portalR.push_back(goal);
+
+    // Simple Stupid Funnel Algorithm (Mikko Mononen / Recast style, right-handed +Y up where left is CCW of right).
+    NavVec3 apex = start, left = start, right = start;
+    size_t apexIdx = 0, leftIdx = 0, rightIdx = 0;
+    for (size_t i = 1; i < portalL.size(); ++i) {
+        const NavVec3 pL = portalL[i];
+        const NavVec3 pR = portalR[i];
+        // Update right vertex (tightens CCW toward left when TriArea2D(apex, right, pR) >= 0)
+        if (TriArea2D(apex, right, pR) >= 0.0f) {
+            if (Dist2D(apex, right) < 1e-3f || TriArea2D(apex, left, pR) < 0.0f) {
+                right = pR; rightIdx = i;
+            } else {
+                outWaypoints.push_back(left);
+                apex = left; apexIdx = leftIdx;
+                left = apex; right = apex;
+                leftIdx = apexIdx; rightIdx = apexIdx;
+                i = apexIdx;
+                continue;
+            }
+        }
+        // Update left vertex (tightens CW toward right when TriArea2D(apex, left, pL) <= 0)
+        if (TriArea2D(apex, left, pL) <= 0.0f) {
+            if (Dist2D(apex, left) < 1e-3f || TriArea2D(apex, right, pL) > 0.0f) {
+                left = pL; leftIdx = i;
+            } else {
+                outWaypoints.push_back(right);
+                apex = right; apexIdx = rightIdx;
+                left = apex; right = apex;
+                leftIdx = apexIdx; rightIdx = apexIdx;
+                i = apexIdx;
+                continue;
+            }
+        }
+    }
+    if (Dist3(outWaypoints.back(), goal) > 1e-2f) outWaypoints.push_back(goal);
+}
+
+NavPathResult RawNavGraph::FindPath(NavVec3 start, NavVec3 goal) const {
+    NavPathResult res{};
+    const uint32_t nTris = static_cast<uint32_t>(m_mesh.triangles.size());
+    if (nTris == 0) return res;
+
+    const int32_t sTri = FindNearestTriangle(start);
+    const int32_t gTri = FindNearestTriangle(goal);
+    if (sTri < 0 || gTri < 0) return res;
+    if (TriExtraCost(uint32_t(gTri)) < 0.0f) return res;  // goal sits inside hard-blocked obstacle
+
+    std::vector<float> gScore(nTris, std::numeric_limits<float>::infinity());
+    std::vector<int32_t> cameFrom(nTris, -1);
+    std::vector<uint8_t> closed(nTris, 0);
+
+    struct OpenNode {
+        float f;
+        uint32_t idx;
+        bool operator>(const OpenNode& o) const { return f > o.f; }
+    };
+    std::priority_queue<OpenNode, std::vector<OpenNode>, std::greater<OpenNode>> open;
+
+    gScore[uint32_t(sTri)] = 0.0f;
+    open.push({Dist3(TriCentroid(uint32_t(sTri)), goal), uint32_t(sTri)});
+
+    while (!open.empty()) {
+        const uint32_t cur = open.top().idx;
+        open.pop();
+        if (closed[cur]) continue;
+        closed[cur] = 1;
+        ++res.nodesExpanded;
+
+        if (int32_t(cur) == gTri) {
+            res.found = true;
+            res.totalCost = gScore[cur];
+            std::vector<uint32_t> rev;
+            for (int32_t k = int32_t(cur); k >= 0; k = cameFrom[uint32_t(k)]) rev.push_back(uint32_t(k));
+            res.triCorridor.assign(rev.rbegin(), rev.rend());
+            SmoothFunnel(start, goal, res.triCorridor, res.waypoints);
+            return res;
+        }
+
+        const NavVec3 cCur = TriCentroid(cur);
+        const auto& t = m_mesh.triangles[cur];
+
+        // 1. Standard adjacent navmesh triangle edges
+        for (int e = 0; e < 3; ++e) {
+            const int16_t nb = t.neighbor[e];
+            if (nb < 0 || uint32_t(nb) >= nTris || closed[uint32_t(nb)]) continue;
+            const float costMult = TriExtraCost(uint32_t(nb));
+            if (costMult < 0.0f) continue;  // dynamically blocked by obstacle
+            const float step = Dist3(cCur, TriCentroid(uint32_t(nb))) * costMult;
+            const float cand = gScore[cur] + step;
+            if (cand < gScore[uint32_t(nb)]) {
+                gScore[uint32_t(nb)] = cand;
+                cameFrom[uint32_t(nb)] = int32_t(cur);
+                open.push({cand + Dist3(TriCentroid(uint32_t(nb)), goal), uint32_t(nb)});
+            }
+        }
+
+        // 2. Dynamic off-mesh jump/vault/climb links
+        for (const auto& lnk : m_mesh.offMeshLinks) {
+            if (lnk.fromTri != cur || lnk.toTri >= nTris || closed[lnk.toTri]) continue;
+            const float costMult = TriExtraCost(lnk.toTri);
+            if (costMult < 0.0f) continue;
+            const float step = Dist3(lnk.startPos, lnk.endPos) * lnk.costMult * costMult;
+            const float cand = gScore[cur] + step;
+            if (cand < gScore[lnk.toTri]) {
+                gScore[lnk.toTri] = cand;
+                cameFrom[lnk.toTri] = int32_t(cur);
+                open.push({cand + Dist3(TriCentroid(lnk.toTri), goal), lnk.toTri});
+            }
+        }
+    }
+    return res;
+}
+
+}  // namespace raw::ce

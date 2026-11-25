@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "../common/raw_engine_profile.h"
 #include "rt_callgraph.h"
 #include "rt_image.h"
 
@@ -28,6 +29,7 @@ RunningExe ReadRunningExe(const Image& img);
 bool LoadVersionTable(const Image& img, const std::string& gameDir, std::string* why);
 const std::string& TableVersion();          // "" until a table is loaded
 uint32_t RuntimeVersion();                  // packed major<<24 | minor<<16 | build<<4, 0 when unknown
+const raw::versions::EngineProfile& ActiveProfile();
 
 // An entry's value for the running version; 0 when the table has no value (the feature then stays off).
 uint32_t Addr(const char* name);

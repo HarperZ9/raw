@@ -19,6 +19,8 @@
 #include <string>
 #include <vector>
 
+#include "raw_engine_profile.h"
+
 #pragma comment(lib, "version.lib")
 
 namespace raw::versions {
@@ -26,6 +28,8 @@ namespace raw::versions {
 struct Exe {
     uint32_t major = 0, minor = 0, build = 0, sub = 0;   // VS_FIXEDFILEINFO
     uint32_t timestamp = 0, sizeOfImage = 0;             // the loaded PE header
+    std::string exeName;                                 // e.g. "SkyrimSE.exe", "Fallout4.exe", "Starfield.exe"
+    EngineProfile profile{};
     std::string Version() const {
         char b[48];
         std::snprintf(b, sizeof b, "%u.%u.%u.%u", major, minor, build, sub);
@@ -71,6 +75,9 @@ inline Exe ReadRunningExe() {
         r.major = HIWORD(fi->dwFileVersionMS); r.minor = LOWORD(fi->dwFileVersionMS);
         r.build = HIWORD(fi->dwFileVersionLS); r.sub = LOWORD(fi->dwFileVersionLS);
     }
+    r.exeName = RunningExeBaseName();
+    if (r.exeName.empty()) r.exeName = "SkyrimSE.exe";
+    r.profile = DetectEngineProfile(r.major, r.minor);
     return r;
 }
 
@@ -100,8 +107,10 @@ inline bool ReadTable(const std::string& path, Table* t) {
 
 // The table in dir (any *.tsv) that names exe. why: what was found, or why nothing matched.
 inline bool FindTable(const std::string& dir, const Exe& exe, Table* out, std::string* why) {
-    char id[160];
-    std::snprintf(id, sizeof id, "SkyrimSE.exe %s (time stamp 0x%08X, image 0x%X)", exe.Version().c_str(), exe.timestamp,
+    char id[200];
+    const char* hostName = exe.exeName.empty() ? "CreationEngine.exe" : exe.exeName.c_str();
+    const std::string prefix = (exe.profile.tablePrefix && exe.profile.tablePrefix[0]) ? std::string(exe.profile.tablePrefix) : std::string("skyrimse");
+    std::snprintf(id, sizeof id, "%s %s (time stamp 0x%08X, image 0x%X)", hostName, exe.Version().c_str(), exe.timestamp,
                   exe.sizeOfImage);
     std::string seen;
     const std::string d = dir.empty() || dir.back() == '\\' || dir.back() == '/' ? dir : dir + "\\";
@@ -109,7 +118,7 @@ inline bool FindTable(const std::string& dir, const Exe& exe, Table* out, std::s
     {
         char shortVer[48];
         std::snprintf(shortVer, sizeof shortVer, "%u.%u.%u", exe.major, exe.minor, exe.build);
-        const std::string cands[2] = { "skyrimse-" + exe.Version() + ".tsv", std::string("skyrimse-") + shortVer + ".tsv" };
+        const std::string cands[2] = { prefix + "-" + exe.Version() + ".tsv", prefix + "-" + shortVer + ".tsv" };
         for (const std::string& fn : cands) {
             Table t;
             if (!ReadTable(d + fn, &t)) continue;

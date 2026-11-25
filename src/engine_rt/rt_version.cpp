@@ -15,6 +15,7 @@ namespace {
 
 raw::versions::Table g_table;
 uint32_t g_packed = 0;
+raw::versions::EngineProfile g_profile{};
 std::set<std::string> g_missing;
 std::mutex g_missingM;
 
@@ -58,6 +59,7 @@ bool BuildUniversalRuntimeTable(const Image& img, const std::string& gameDir, co
         {".?AVBSCullingProcess@@",                 "vtable:BSCullingProcess"},
         {".?AVBSBatchRenderer@@",                  "vtable:BSBatchRenderer"},
         {".?AVBSShadowDirectionalLight@@",         "vtable:BSShadowDirectionalLight"},
+        {".?AVShadowSceneNode@@",                  "vtable:ShadowSceneNode"},
         {".?AVGridCellArray@@",                    "vtable:GridCellArray"},
         {".?AV?$SettingT@VINISettingCollection@@@@",     "__setting_ini"},
         {".?AV?$SettingT@VINIPrefSettingCollection@@@@", "__setting_prefs"},
@@ -149,20 +151,18 @@ bool BuildUniversalRuntimeTable(const Image& img, const std::string& gameDir, co
         }
     }
 
-    // 3. Stable structure offsets across SE/AE/GOG (1.5.97 through 1.7.x).
-    t.entries["off:TES::gridCells"] = {"offset", "runtime-stable", 0x78};
-    t.entries["off:TESObjectCELL::worldSpace"] = {"offset", "runtime-stable", 0x128};
-    t.entries["off:UI::menuMap"] = {"offset", "runtime-stable", 0x128};
-    t.entries["off:SkyrimVM::impl"] = {"offset", "runtime-stable", (exe.major > 1 || exe.minor >= 7) ? 0x210u : 0x200u};
+    // 3. Per-title ABI offsets from the detected Creation Engine profile (never assumes Skyrim offsets on FO4/Starfield).
+    if (exe.profile.offTesGridCells)   t.entries["off:TES::gridCells"]          = {"offset", "runtime-profile", exe.profile.offTesGridCells};
+    if (exe.profile.offCellWorldSpace) t.entries["off:TESObjectCELL::worldSpace"] = {"offset", "runtime-profile", exe.profile.offCellWorldSpace};
+    if (exe.profile.offUiMenuMap)      t.entries["off:UI::menuMap"]             = {"offset", "runtime-profile", exe.profile.offUiMenuMap};
+    if (exe.profile.offVmImpl)         t.entries["off:SkyrimVM::impl"]          = {"offset", "runtime-profile", exe.profile.offVmImpl};
 
-    // 4. Universal Address Library runtime loader (format 2 for 1.6.x AE/GOG, format 5 for 1.7.99+):
-    // Reads Data\SKSE\Plugins\versionlib-<major>-<minor>-<build>-<sub>.bin when present to resolve
-    // ALL engine singletons (Sky, TES, PlayerCamera, PlayerCharacter, UI, Calendar, BSGraphics,
-    // BSShaderManager, ProcessLists, Decal/Grass/ImageSpace/Water managers) on ANY AE/GOG version!
+    // 4. Universal Address Library runtime loader (SKSE for Skyrim SE/AE, F4SE for Fallout 4, SFSE for Starfield):
     uint32_t alCount = 0;
-    {
-        char alName[128];
-        std::snprintf(alName, sizeof alName, "Data\\SKSE\\Plugins\\versionlib-%u-%u-%u-%u.bin",
+    if (exe.profile.addrLibRelDir && exe.profile.addrLibRelDir[0] && exe.profile.gen == raw::versions::EngineGen::CE1_DX11) {
+        char alName[160];
+        std::snprintf(alName, sizeof alName, "%s%s%u-%u-%u-%u.bin",
+                      exe.profile.addrLibRelDir, exe.profile.addrLibPrefix,
                       exe.major, exe.minor, exe.build, exe.sub);
         std::ifstream f(gameDir + alName, std::ios::binary);
         if (f) {
@@ -251,9 +251,10 @@ bool BuildUniversalRuntimeTable(const Image& img, const std::string& gameDir, co
     if (vtCount == 0 && settingCount == 0 && alCount == 0) return false;
     if (why) {
         char buf[256];
+        const char* hostName = exe.exeName.empty() ? "CreationEngine.exe" : exe.exeName.c_str();
         std::snprintf(buf, sizeof buf,
-                      "SkyrimSE.exe %s (universal runtime scan: %u vtables, %u settings, %u addrlib singletons resolved)",
-                      exe.Version().c_str(), vtCount, settingCount, alCount);
+                      "%s %s [%s] (universal runtime scan: %u vtables, %u settings, %u addrlib singletons resolved)",
+                      hostName, exe.Version().c_str(), exe.profile.displayName, vtCount, settingCount, alCount);
         *why = buf;
     }
     *out = std::move(t);
@@ -278,6 +279,7 @@ RunningExe ReadRunningExe(const Image&) {
 
 bool LoadVersionTable(const Image& img, const std::string& gameDir, std::string* why) {
     const auto exe = raw::versions::ReadRunningExe();
+    g_profile = exe.profile;
     if (raw::versions::FindTable(gameDir + "raw_versions", exe, &g_table, why)) {
         g_packed = exe.Packed();
         return true;
@@ -291,6 +293,7 @@ bool LoadVersionTable(const Image& img, const std::string& gameDir, std::string*
 
 const std::string& TableVersion() { return g_table.version; }
 uint32_t RuntimeVersion() { return g_packed; }
+const raw::versions::EngineProfile& ActiveProfile() { return g_profile; }
 
 uint32_t Addr(const char* name) {
     if (const uint32_t v = g_table.Get(name)) return v;
@@ -347,15 +350,28 @@ uint32_t ResolveDeferredSingletons(const Image& img) {
         {".?AVBGSGrassManager@@",   "BGSGrassManager::GetSingleton"},
         {".?AVImageSpaceManager@@", "ImageSpaceManager::GetSingleton"},
         {".?AVTESWaterSystem@@",    "TESWaterSystem::GetSingleton"},
+        {".?AVShadowSceneNode@@",   "ShadowSceneNode::Singleton"},
+    };
+    // Also map vtables needed for live pointer-graph structural offset discovery (eliminates hardcoded offsets across CE1/CE1.5/CE2):
+    static const std::pair<const char*, const char*> kProbeVtables[] = {
+        {".?AVGridCellArray@@",            "vt_GridCellArray"},
+        {".?AVShadowSceneNode@@",          "vt_ShadowSceneNode"},
+        {".?AVBSShadowDirectionalLight@@", "vt_BSShadowDirLight"},
+        {".?AVNiDirectionalLight@@",       "vt_NiDirLight"},
+        {".?AVTESWorldSpace@@",            "vt_TESWorldSpace"},
+        {".?AVTESObjectCELL@@",            "vt_TESObjectCELL"},
     };
     std::unordered_map<std::string, const char*> needed;
     for (const auto& kv : kSingletonClasses) {
         if (g_table.Get(kv.second) == 0) needed[kv.first] = kv.second;
     }
-    if (needed.empty()) return 0;
+    std::unordered_map<std::string, const char*> probeWanted;
+    for (const auto& kv : kProbeVtables) probeWanted[kv.first] = kv.second;
+    if (needed.empty() && probeWanted.empty()) return 0;
 
-    // 1. Find primary vtable VAs for the missing singleton classes in .rdata.
+    // 1. Find primary vtable VAs for missing singletons and structural probe targets in .rdata.
     std::unordered_map<uint64_t, const char*> vtVaToKey;
+    std::unordered_map<std::string, uint64_t> probeVtVa;
     for (uint32_t rva = (rdata.begin + 7u) & ~7u; rva + 16u <= rdata.end; rva += 8u) {
         const uint64_t colVa = *reinterpret_cast<const uint64_t*>(img.base + rva);
         if (colVa < baseAddr + rdata.begin || colVa + 24u > baseAddr + rdata.end) continue;
@@ -374,23 +390,60 @@ uint32_t ResolveDeferredSingletons(const Image& img) {
             nameBuf[len] = mangled[len];
             ++len;
         }
-        const auto it = needed.find(nameBuf);
-        if (it != needed.end()) vtVaToKey[baseAddr + rva + 8u] = it->second;
+        const uint64_t vtVa = baseAddr + rva + 8u;
+        if (const auto it = needed.find(nameBuf); it != needed.end()) vtVaToKey[vtVa] = it->second;
+        if (const auto pt = probeWanted.find(nameBuf); pt != probeWanted.end()) probeVtVa[pt->second] = vtVa;
     }
-    if (vtVaToKey.empty()) return 0;
 
     // 2. Scan .data for global pointers pointing to a live heap instance whose first QWORD is that vtable VA.
     uint32_t resolved = 0;
-    for (uint32_t rva = (data.begin + 7u) & ~7u; rva + 8u <= data.end; rva += 8u) {
-        const uint64_t ptr = *reinterpret_cast<const uint64_t*>(img.base + rva);
-        if (ptr < 0x10000ull || ptr > 0x00007FFFFFFFFFFFull || (ptr & 7ull) != 0) continue;
-        if (ptr >= baseAddr && ptr < baseAddr + img.sizeOfImage) continue;   // skip intra-image pointers
-        uint64_t firstQw = 0;
-        if (!SafeReadU64(static_cast<uintptr_t>(ptr), firstQw)) continue;
-        const auto it = vtVaToKey.find(firstQw);
-        if (it != vtVaToKey.end() && g_table.Get(it->second) == 0) {
-            g_table.entries[it->second] = {"global", "runtime-deferred-rtti", rva};
-            ++resolved;
+    if (!vtVaToKey.empty()) {
+        for (uint32_t rva = (data.begin + 7u) & ~7u; rva + 8u <= data.end; rva += 8u) {
+            const uint64_t ptr = *reinterpret_cast<const uint64_t*>(img.base + rva);
+            if (ptr < 0x10000ull || ptr > 0x00007FFFFFFFFFFFull || (ptr & 7ull) != 0) continue;
+            if (ptr >= baseAddr && ptr < baseAddr + img.sizeOfImage) continue;   // skip intra-image pointers
+            uint64_t firstQw = 0;
+            if (!SafeReadU64(static_cast<uintptr_t>(ptr), firstQw)) continue;
+            const auto it = vtVaToKey.find(firstQw);
+            if (it != vtVaToKey.end() && g_table.Get(it->second) == 0) {
+                g_table.entries[it->second] = {"global", "runtime-deferred-rtti", rva};
+                ++resolved;
+            }
+        }
+    }
+
+    // 3. Zero-hardcode live pointer-graph structural offset discovery:
+    // Probes live heap instances for member pointers whose target vtable matches a known RTTI class.
+    auto probeFieldOffset = [&](uint64_t objAddr, uint32_t maxBytes, uint64_t wantVtVa, const char* offKey) -> uint64_t {
+        if (!objAddr || !wantVtVa) return 0;
+        for (uint32_t off = 0; off + 8u <= maxBytes; off += 8u) {
+            uint64_t child = 0, childVt = 0;
+            if (!SafeReadU64(static_cast<uintptr_t>(objAddr + off), child)) break;
+            if (child < 0x10000ull || child > 0x00007FFFFFFFFFFFull || (child & 7ull) != 0) continue;
+            if (!SafeReadU64(static_cast<uintptr_t>(child), childVt)) continue;
+            if (childVt == wantVtVa) {
+                g_table.entries[offKey] = {"offset", "runtime-rtti-probe", off};
+                ++resolved;
+                return child;
+            }
+        }
+        return 0;
+    };
+
+    if (const uint32_t tesRva = g_table.Get("TES::Singleton"); tesRva != 0) {
+        uint64_t tesObj = 0;
+        if (SafeReadU64(baseAddr + tesRva, tesObj) && tesObj > 0x10000ull) {
+            probeFieldOffset(tesObj, 0x280u, probeVtVa["vt_GridCellArray"], "off:TES::gridCells");
+            if (const uint64_t cellObj = probeFieldOffset(tesObj, 0x280u, probeVtVa["vt_TESObjectCELL"], "off:TES::interiorCell")) {
+                probeFieldOffset(cellObj, 0x200u, probeVtVa["vt_TESWorldSpace"], "off:TESObjectCELL::worldSpace");
+            }
+        }
+    }
+    if (const uint32_t ssnRva = g_table.Get("ShadowSceneNode::Singleton"); ssnRva != 0) {
+        uint64_t ssnObj = 0;
+        if (SafeReadU64(baseAddr + ssnRva, ssnObj) && ssnObj > 0x10000ull) {
+            probeFieldOffset(ssnObj, 0x380u, probeVtVa["vt_BSShadowDirLight"], "off:ShadowSceneNode::shadowDirLight");
+            probeFieldOffset(ssnObj, 0x380u, probeVtVa["vt_NiDirLight"],      "off:ShadowSceneNode::sunLight");
         }
     }
     return resolved;

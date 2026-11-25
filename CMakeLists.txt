@@ -775,6 +775,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_callgraph.cpp
         src/engine_rt/rt_vtrace.cpp
         src/engine_rt/rt_control.cpp
+        src/engine_rt/rt_core_fixes.cpp
         src/engine_rt/rt_settings.cpp
         src/engine_rt/rt_drawstats.cpp
         src/engine_rt/rt_grids.cpp
@@ -801,7 +802,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_include_directories(raw_engine PRIVATE src/engine_rt src/d3d11_proxy "${RAW_ZYDIS_ROOT}/include")
     target_compile_definitions(raw_engine PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD)
-    target_link_libraries(raw_engine PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB} version)
+    target_link_libraries(raw_engine PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB} version winmm)
 
     # raw_skse.dll: the SKSE plugin host (docs/SKSE_HOSTING.md). Loads Data/SKSE/Plugins with no SKSE installed.
     add_library(raw_skse SHARED
@@ -813,7 +814,8 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/skse_host/skse_papyrus.cpp
         src/skse_host/skse_engine.cpp
         src/skse_host/skse_addrlib.cpp
-        src/engine_rt/rt_detour.cpp)
+        src/engine_rt/rt_detour.cpp
+        src/engine_rt/rt_patch.cpp)
     set_target_properties(raw_skse PROPERTIES
         CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

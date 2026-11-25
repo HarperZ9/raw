@@ -104,6 +104,10 @@ void* FindSettingPtr(const Image& img, const std::vector<RefTarget>& refs, const
 
 std::string HavokFixInit(const Image& img, const std::vector<RefTarget>& refs) {
     g_havok = {};
+    const auto& prof = ActiveProfile();
+    if (!prof.hasHavok60HzBug || prof.isMultiplayerOnline) {
+        return "havok fix: skipped (not needed on this Creation Engine generation or online client)";
+    }
     g_havok.fMaxTime = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fMaxTime:HAVOK"));
     g_havok.fMaxTimeComplex = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fMaxTimeComplex:HAVOK"));
     g_havok.uMaxSteps = reinterpret_cast<uint32_t*>(FindSettingPtr(img, refs, "uMaxNumPhysicsStepsPerUpdate:HAVOK"));
@@ -111,15 +115,16 @@ std::string HavokFixInit(const Image& img, const std::vector<RefTarget>& refs) {
     g_havok.bLockFps = reinterpret_cast<uint8_t*>(FindSettingPtr(img, refs, "bLockFramerate:Display"));
     if (!g_havok.fMaxTime) return "havok fix: fMaxTime:HAVOK not found in version table";
     if (g_havok.bLockFps) *g_havok.bLockFps = 0;
-    if (g_havok.uMaxSteps && *g_havok.uMaxSteps < 4u) *g_havok.uMaxSteps = 4u;
-    if (g_havok.uMaxStepsComplex && *g_havok.uMaxStepsComplex < 4u) *g_havok.uMaxStepsComplex = 4u;
+    // Raise sub-step ceilings to 6 so 144-360 Hz gameplay stays deterministic with zero clutter/water explosions:
+    if (g_havok.uMaxSteps && *g_havok.uMaxSteps < 6u) *g_havok.uMaxSteps = 6u;
+    if (g_havok.uMaxStepsComplex && *g_havok.uMaxStepsComplex < 6u) *g_havok.uMaxStepsComplex = 6u;
     QueryPerformanceFrequency(&g_havok.freq);
     QueryPerformanceCounter(&g_havok.lastQpc);
     g_havok.emaDt = 1.0f / 60.0f;
     g_havok.enabled = true;
-    char out[192];
-    std::snprintf(out, sizeof out, "havok fix: active (fMaxTime=%p complex=%p lockFps=%p steps=%p)",
-                  g_havok.fMaxTime, g_havok.fMaxTimeComplex, g_havok.bLockFps, g_havok.uMaxSteps);
+    char out[224];
+    std::snprintf(out, sizeof out, "havok fix: active 30-360Hz (%s, fMaxTime=%p complex=%p lockFps=%p steps=%p)",
+                  prof.displayName, g_havok.fMaxTime, g_havok.fMaxTimeComplex, g_havok.bLockFps, g_havok.uMaxSteps);
     return out;
 }
 
@@ -129,18 +134,23 @@ void HavokFixOnPresent() {
     QueryPerformanceCounter(&now);
     const double rawDt = double(now.QuadPart - g_havok.lastQpc.QuadPart) / double(g_havok.freq.QuadPart);
     g_havok.lastQpc = now;
-    if (rawDt <= 0.0005 || rawDt > 0.25) return;  // ignore loading screens / paused spikes
-    const float clampedDt = rawDt < 0.003333 ? 0.003333f : (rawDt > 0.041667 ? 0.041667f : float(rawDt));
+    if (rawDt <= 0.0004 || rawDt > 0.25) return;  // ignore loading screens / paused spikes
+    // Smooth 24 Hz to 360 Hz adaptive Havok step (0.002778s .. 0.041667s) across Skyrim SE & Fallout 4:
+    const float clampedDt = rawDt < 0.002778 ? 0.002778f : (rawDt > 0.041667 ? 0.041667f : float(rawDt));
     g_havok.emaDt = g_havok.emaDt * 0.65f + clampedDt * 0.35f;
-    const float mt = g_havok.emaDt < 0.003333f ? 0.003333f : (g_havok.emaDt > 0.041667f ? 0.041667f : g_havok.emaDt);
+    const float mt = g_havok.emaDt < 0.002778f ? 0.002778f : (g_havok.emaDt > 0.041667f ? 0.041667f : g_havok.emaDt);
     *g_havok.fMaxTime = mt;
     if (g_havok.fMaxTimeComplex) {
         const float mtc = mt * 2.0f;
-        *g_havok.fMaxTimeComplex = mtc < 0.006667f ? 0.006667f : (mtc > 0.066667f ? 0.066667f : mtc);
+        *g_havok.fMaxTimeComplex = mtc < 0.005556f ? 0.005556f : (mtc > 0.066667f ? 0.066667f : mtc);
     }
 }
 
 std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& refs) {
+    const auto& prof = ActiveProfile();
+    if (prof.isMultiplayerOnline || prof.gen != raw::versions::EngineGen::CE1_DX11) {
+        return "engine tuning: Skyrim CE1 table skipped for " + std::string(prof.displayName) + " (handled by CoreFixesApplyEngine)";
+    }
     struct KV { const char* k; const char* v; };
     static const KV kTuning[] = {
         {"fNearDistance:Display", "15.0"},

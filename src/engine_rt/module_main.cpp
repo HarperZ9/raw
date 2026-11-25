@@ -24,6 +24,7 @@
 #include "ProxyAPI.h"
 #include "rt_callgraph.h"
 #include "rt_control.h"
+#include "rt_core_fixes.h"
 #include "rt_forensics.h"
 #include "rt_softbody.h"
 #include "rt_papyrus.h"
@@ -103,22 +104,15 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     GetPrivateProfileStringA("EngineRT", "OutDir", "raw_engine_out", outName, MAX_PATH, (g_dir + "d3d11_proxy.ini").c_str());
     g_out = g_dir + outName;
     CreateDirectoryA(g_out.c_str(), nullptr);
-    // Fix Skyrim SE's infamous 512-handle False Save Corruption Bug ("The save game is corrupt and cannot be loaded"):
-    // raise ucrtbase.dll + local CRT _setmaxstdio from 512 to 8192 so BGSSaveLoadManager never exhausts stdio handles.
-    int maxStdioHost = _setmaxstdio(8192);
-    if (HMODULE ucrt = GetModuleHandleA("ucrtbase.dll")) {
-        using SetMaxStdioFn = int(__cdecl*)(int);
-        if (auto fn = reinterpret_cast<SetMaxStdioFn>(GetProcAddress(ucrt, "_setmaxstdio"))) {
-            const int r = fn(8192);
-            if (r > 0) maxStdioHost = r;
-        }
-    }
-    Log("save-fix: raised CRT _setmaxstdio limit to %d (prevents 512-handle false save corruption)", maxStdioHost);
+    // Stage 1 Core Creation Engine OS fixes (0.5ms timer, EcoQoS P-core scheduling, LFH heaps, 8192 CRT stdio):
+    // Runs on ALL Creation Engine titles (Skyrim SE/AE/VR, Fallout 4/VR, Fallout 76, Starfield CE2) before version lookup.
+    Log("%s", raw::rt::CoreFixesInitProcess().c_str());
     if (!g_img.Load()) { Log("image: no code section or no .pdata"); return; }
     Log("image: text 0x%X-0x%X, %zu pdata functions", g_img.textBegin, g_img.textEnd, g_img.funcs.size());
     std::string why;
     if (!raw::rt::LoadVersionTable(g_img, g_dir, &why)) { Log("version: %s", why.c_str()); return; }
     Log("version: %s", why.c_str());
+    const auto& prof = raw::rt::ActiveProfile();
     g_refs = raw::rt::VersionRefs();
     Log("refs: %zu settings and globals from the table", g_refs.size());
     const std::string ini = g_dir + "d3d11_proxy.ini";
@@ -128,39 +122,42 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     // Startup settings land before the renderer creates its targets (this runs inside the game's
     // first D3D11CreateDevice), so iShadowMapResolution and iNumSplits size the shadow atlas. In a reload the
     // targets exist already, so they are not touched again.
-    if (!generation) {
+    if (!generation && !prof.isMultiplayerOnline) {
         Log("startup settings: %zu applied", raw::rt::ApplyStartupSettings(g_img, g_refs, ini, g_out + "\\engine_rt.log"));
-        if (const int atlas = IniInt("ShadowAtlas", 4096); atlas > 0)
-            Log("%s", raw::rt::ResizeShadowAtlas(g_img, g_refs, uint32_t(atlas)).c_str());
-        // Pre-TES::Init Engine-Level Full-Detail Mesh, 3D Skinned Trees, Zero-Pop-In LOD & Dense Flora Overhaul:
-        // Directly mutates Skyrim SE's live Setting singletons before TES::Init (never hot-mutated mid-session).
-        raw::rt::SetSetting(g_img, g_refs, "fSplitDistanceMult:TerrainManager", "1.75");
-        raw::rt::SetSetting(g_img, g_refs, "fBlockLevel0Distance:TerrainManager", "75000.0");
-        raw::rt::SetSetting(g_img, g_refs, "fBlockLevel1Distance:TerrainManager", "140000.0");
-        raw::rt::SetSetting(g_img, g_refs, "fBlockMaximumDistance:TerrainManager", "250000.0");
-        raw::rt::SetSetting(g_img, g_refs, "fTreeLoadDistance:TerrainManager", "150000.0");
-        raw::rt::SetSetting(g_img, g_refs, "bKeepLowDetailTerrain:TerrainManager", "0");
-        raw::rt::SetSetting(g_img, g_refs, "bForceFullDetail:Trees", "1");
-        raw::rt::SetSetting(g_img, g_refs, "bRenderSkinnedTrees:Trees", "1");
-        raw::rt::SetSetting(g_img, g_refs, "uiMaxSkinnedTreesToRender:Trees", "256");
-        raw::rt::SetSetting(g_img, g_refs, "bTreesReceiveShadows:Display", "1");
-        raw::rt::SetSetting(g_img, g_refs, "bDrawLandShadows:Display", "1");
-        raw::rt::SetSetting(g_img, g_refs, "bActorSelfShadowing:Display", "1");
-        raw::rt::SetSetting(g_img, g_refs, "bLandSpecular:Landscape", "1");
-        raw::rt::SetSetting(g_img, g_refs, "uLargeRefLODGridSize:General", "11");
-        raw::rt::SetSetting(g_img, g_refs, "fDistanceMultiplier:LOD", "1.80");
-        raw::rt::SetSetting(g_img, g_refs, "fLODBoundRadiusMult:LOD", "1.60");
-        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutMultObjects:LOD", "30.0");
-        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutMultItems:LOD", "20.0");
-        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutMultActors:LOD", "25.0");
-        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutObjectMultComplex:LOD", "2.0");
-        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutObjectMultCity:LOD", "2.0");
-        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutObjectMultInterior:LOD", "2.0");
-        raw::rt::SetSetting(g_img, g_refs, "iMinGrassSize:Grass", "24");
-        raw::rt::SetSetting(g_img, g_refs, "iMaxGrassTypesPerTexure:Grass", "15");
-        raw::rt::SetSetting(g_img, g_refs, "fGrassStartFadeDistance:Grass", "14000.0");
-        raw::rt::SetSetting(g_img, g_refs, "fGrassMaxStartFadeDistance:Grass", "16000.0");
+        if (prof.gen == raw::versions::EngineGen::CE1_DX11) {
+            if (const int atlas = IniInt("ShadowAtlas", 4096); atlas > 0)
+                Log("%s", raw::rt::ResizeShadowAtlas(g_img, g_refs, uint32_t(atlas)).c_str());
+            // Pre-TES::Init Engine-Level Full-Detail Mesh, 3D Skinned Trees, Zero-Pop-In LOD & Dense Flora Overhaul:
+            // Directly mutates Skyrim SE's live Setting singletons before TES::Init (never hot-mutated mid-session).
+            raw::rt::SetSetting(g_img, g_refs, "fSplitDistanceMult:TerrainManager", "1.75");
+            raw::rt::SetSetting(g_img, g_refs, "fBlockLevel0Distance:TerrainManager", "75000.0");
+            raw::rt::SetSetting(g_img, g_refs, "fBlockLevel1Distance:TerrainManager", "140000.0");
+            raw::rt::SetSetting(g_img, g_refs, "fBlockMaximumDistance:TerrainManager", "250000.0");
+            raw::rt::SetSetting(g_img, g_refs, "fTreeLoadDistance:TerrainManager", "150000.0");
+            raw::rt::SetSetting(g_img, g_refs, "bKeepLowDetailTerrain:TerrainManager", "0");
+            raw::rt::SetSetting(g_img, g_refs, "bForceFullDetail:Trees", "1");
+            raw::rt::SetSetting(g_img, g_refs, "bRenderSkinnedTrees:Trees", "1");
+            raw::rt::SetSetting(g_img, g_refs, "uiMaxSkinnedTreesToRender:Trees", "256");
+            raw::rt::SetSetting(g_img, g_refs, "bTreesReceiveShadows:Display", "1");
+            raw::rt::SetSetting(g_img, g_refs, "bDrawLandShadows:Display", "1");
+            raw::rt::SetSetting(g_img, g_refs, "bActorSelfShadowing:Display", "1");
+            raw::rt::SetSetting(g_img, g_refs, "bLandSpecular:Landscape", "1");
+            raw::rt::SetSetting(g_img, g_refs, "uLargeRefLODGridSize:General", "11");
+            raw::rt::SetSetting(g_img, g_refs, "fDistanceMultiplier:LOD", "1.80");
+            raw::rt::SetSetting(g_img, g_refs, "fLODBoundRadiusMult:LOD", "1.60");
+            raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutMultObjects:LOD", "30.0");
+            raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutMultItems:LOD", "20.0");
+            raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutMultActors:LOD", "25.0");
+            raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutObjectMultComplex:LOD", "2.0");
+            raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutObjectMultCity:LOD", "2.0");
+            raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutObjectMultInterior:LOD", "2.0");
+            raw::rt::SetSetting(g_img, g_refs, "iMinGrassSize:Grass", "24");
+            raw::rt::SetSetting(g_img, g_refs, "iMaxGrassTypesPerTexure:Grass", "15");
+            raw::rt::SetSetting(g_img, g_refs, "fGrassStartFadeDistance:Grass", "14000.0");
+            raw::rt::SetSetting(g_img, g_refs, "fGrassMaxStartFadeDistance:Grass", "16000.0");
+        }
     }
+    if (IniInt("CoreFixes", 1)) Log("%s", raw::rt::CoreFixesApplyEngine(g_img, g_refs).c_str());
     if (IniInt("EngineTuning", 1)) Log("%s", raw::rt::ApplyEngineTuning(g_img, g_refs).c_str());
     if (IniInt("HavokFix", 1)) Log("%s", raw::rt::HavokFixInit(g_img, g_refs).c_str());
     raw::rt::ControlInit(g_img, &g_refs, g_dir, g_out, proxy ? proxy->InvalidateStateCache : nullptr);
@@ -235,6 +232,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
     }
     raw::rt::SoftBodyShutdown();
     raw::rt::ForensicsShutdown();
+    raw::rt::CoreFixesShutdown();
     std::string failures;
     const size_t had = raw::rt::PatchCount(), restored = raw::rt::PatchRestoreAll(&failures);
     std::snprintf(why, n, "%zu of %zu patches restored%s%s", restored, had, failures.empty() ? "" : "; ", failures.c_str());

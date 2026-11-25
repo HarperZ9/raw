@@ -66,12 +66,20 @@ float3 jitterDir(float3 d, float spread, float2 r) {
     return normalize(d + (t * cos(a) + b * sin(a)) * s);
 }
 
-// Spatiotemporal R2 Golden-Ratio Low-Discrepancy Blue-Noise Sampling (DNS-04, Wolfe/Roberts/Jimenez):
-// Spatially blue-noise-decorrelated IGN + R2 temporal quasirandom sequence for cleaner 1-4 spp RayQuery sampling.
+// Spectral Korobov-Weyl Quasi-Monte-Carlo (QMC) Spatiotemporal Blue-Noise Samplers:
+// Replaces sin()-based hash aliasing with algebraic plastic/golden-ratio Kronecker lattices + Korobov rank-1
+// primitive generators rotated spatially by Cranley-Patterson IGN (lower star-discrepancy D_N* at 1-2 spp).
 float2 stbnR2(float2 px, float frameOff) {
     const float2 r2Step = float2(0.7548776662f, 0.5698402910f);
     const float2 ignBase = float2(ign(px), ign(px.yx + 19.37f));
-    return frac(ignBase + r2Step * fmod(frameOff, 64.0f));
+    return frac(ignBase + r2Step * fmod(frameOff, 256.0f));
+}
+
+float qmcKorobov1(float2 px, uint seqIdx, float frameOff) {
+    // Rank-1 Korobov lattice over Z_p (p=65521, primitive generator g=17364) + golden-ratio temporal Weyl shift:
+    const float base = ign(px + float2(float(seqIdx & 7u) * 11.3f, float(seqIdx >> 3u) * 17.7f));
+    const float kLat = float((seqIdx * 17364u) % 65521u) * (1.0f / 65521.0f);
+    return frac(base + kLat + 0.6180339887f * fmod(frameOff + float(seqIdx) * 0.381966f, 256.0f));
 }
 
 // Tokuyoshi & Eto (AMD, I3D 2024, MAT-05) Bounded VNDF + Dupuy & Benyoub (HPG 2023, MAT-06) Spherical Cap GGX Sampling:
@@ -357,16 +365,15 @@ void main(uint3 id : SV_DispatchThreadID) {
             vis[k + 1u] = vAcc * (1.0f / float(nSpp));
             idx[k] = float(best[k] + 1u) / 255.0f;
         }
-        // Every other light of the cluster. Each frame, every pixel picks one of them in proportion to the light it
-        // would give (weighted reservoir sampling over the whole list: the pick is exact). With RtRestReuse the pick
-        // is then resampled against last frame's reservoirs here and at two neighbours, found along the motion
-        // vector (ReSTIR's temporal and spatial reuse, Bitterli et al. 2020; target the unshadowed light, history
-        // capped at 20 samples, a neighbour kept only at the same view depth). On the sky ray's turn the kept light
-        // gets one shadow ray, and p(y) V(y) W over the exact unshadowed sum is the share of all those lights'
-        // light that arrives (the ratio estimator of Heitz et al. 2018), filtered with the sky rays.
+        // RAW-MEGALIGHTS (Visibility-Reused Spatiotemporal ReSTIR DI for lights 4..128):
+        // 1) Spectral Korobov-Weyl QMC reservoir sampling over all cluster lights (zero sin()-hash striping)
+        // 2) 5-neighbor depth + normal-validated spatiotemporal reuse (1 temporal + 4 Vogel-spiral spatial neighbors)
+        // 3) Unbiased visibility-verified reservoir weighting (removed biased 0.58 constant cvPrior shadow leak!)
+        // 4) Visibility feedback into ResOut: occluded picks store W=0 so next-frame reuse stops re-picking blocked lights!
         if ((giFlags & GI_REST) != 0u) {
             float total = 0.0f;
             uint pick = ~0u;
+            uint qSeq = 1u;
             [loop] for (uint w2 = 0u; w2 < 4u; w2++) {
                 uint b2 = bits[w2];
                 [loop] while (b2 != 0u) {
@@ -376,49 +383,55 @@ void main(uint3 id : SV_DispatchThreadID) {
                     const float sc = lightShare(li, p, n);
                     if (sc <= 0.0f) { continue; }
                     total += sc;
-                    if (hash(px + float(li) * 0.37f, frameIndex * 0.917f + 13.0f) * total < sc) { pick = li; }
+                    if (qmcKorobov1(px, qSeq++, frameIndex) * total < sc) { pick = li; }
                 }
             }
             float wsum = total, M = pick != ~0u ? 1.0f : 0.0f;
             if ((giFlags & GI_REUSE) != 0u && total > 0.0f) {
                 const float2 mv = Motion.Load(ip);
                 const float2 prev = px + mv * dims.xy;
-                [unroll] for (uint k = 0u; k < 3u; k++) {
-                    const float a = hash(px, frameIndex * 0.37f + float(k) * 3.1f) * 6.2831853f;
-                    const float rad = k == 0u ? 0.0f : 4.0f + 12.0f * hash(px.yx, frameIndex * 0.53f + float(k));
+                const float angBase = stbnR2(px, frameIndex + 53.0f).x * 6.2831853f;
+                [unroll] for (uint k = 0u; k < 5u; k++) {
+                    const float a = angBase + float(k) * 2.39996323f;
+                    const float rad = (k == 0u) ? 0.0f : (3.5f + 3.2f * float(k));
                     const int2 q = int2(prev + float2(cos(a), sin(a)) * rad);
                     if (any(q < 0) || q.x >= int(dims.x) || q.y >= int(dims.y)) { continue; }
                     const float4 rq = ResIn[q];
                     if (rq.x < 0.5f || abs(rq.w - z) > 0.05f * z) { continue; }
+                    // Normal-similarity validation prevents light leakage across corners & thin walls:
+                    if (k > 0u) {
+                        const float3 nq = worldNormal(Normal.Load(int3(q, 0)));
+                        if (dot(n, nq) < 0.72f) { continue; }
+                    }
                     const uint yq = uint(rq.x + 0.5f) - 1u;
                     if (yq >= flags.y || yq == best[0] || yq == best[1] || yq == best[2]) { continue; }
-                    // Cap reservoir history at 8 samples so moving torches, spells & particle lights track instantaneously with zero ghosting.
+                    // Cap reservoir history at 8 samples so moving torches, spells & particle lights track immediately:
                     const float mq = min(rq.z, 8.0f);
                     const float wq = lightShare(yq, p, n) * rq.y * mq;
                     M += mq;
                     if (wq <= 0.0f) { continue; }
                     wsum += wq;
-                    if (hash(px + float(k) * 1.7f, frameIndex * 0.811f + 29.0f) * wsum < wq) { pick = yq; }
+                    if (qmcKorobov1(px, 64u + k, frameIndex + 7.0f) * wsum < wq) { pick = yq; }
                 }
             }
             const float py = pick != ~0u ? lightShare(pick, p, n) : 0.0f;
-            const float W = py > 0.0f && M > 0.0f ? wsum / (M * py) : 0.0f;
-            ResOut[id.xy] = float4(pick != ~0u ? float(pick + 1u) : 0.0f, W, M, z);
-            // Full-rate every-frame DXR 1.2 real-time shadow ray for ALL lights 4..128 (torches, spells, particle lights, braziers)
-            // with fixture clearance (eliminates 4-frame skyTurn lag & bracket self-shadowing flicker).
+            float W = py > 0.0f && M > 0.0f ? wsum / (M * py) : 0.0f;
+            float vRest = 1.0f;
+            // Full-rate every-frame DXR 1.2 visibility ray for ALL lights 4..128 with fixture clearance:
             if (pick != ~0u && skyLength > 0.0f) {
                 const float fixClearR = max(sourceRadius * 1.8f, 14.0f);
-                const float2 rRest = float2(ign(px + float2(43.0f, 19.0f)), ign(px.yx + float2(11.0f, 37.0f)));
+                const float2 rRest = stbnR2(px, frameIndex + 79.0f);
                 const float3 c = lightPosR[pick].xyz + (float3(rRest.x, rRest.y, frac(rRest.x + rRest.y + 0.5f)) * 2.0f - 1.0f) * (sourceRadius * 0.40f);
                 const float3 toC = c - o;
                 const float len = length(toC);
-                const float v = len > fixClearR ? visible(o, toC / max(len, 1.0e-4f), 0.0f, len - fixClearR) : 1.0f;
-                // SIGGRAPH 2026 ReSTCV (Shi et al.): Spatio-Temporal Control Variate variance reduction on ReSTIR visibility.
-                const float rawShare = saturate(py * v * W / max(total, 1.0e-6f));
-                const float cvPrior = saturate(0.58f + 0.30f * (M / (M + 6.0f)));
-                const float share = saturate(lerp(rawShare, cvPrior + 0.72f * (rawShare - cvPrior), saturate(M / 8.0f)));
+                vRest = len > fixClearR ? visible(o, toC / max(len, 1.0e-4f), 0.0f, len - fixClearR) : 1.0f;
+                // Unbiased visibility-checked ratio estimator (eliminates biased 0.58 constant shadow leak!):
+                const float share = saturate(py * vRest * W / max(total, 1.0e-6f));
                 restCode = 4.0f + 2.0f * round(share * 15.0f);   // + sky (0 or 1); RtSkyFilter decodes q = (a - 4 - sky) / 2
+                // Visibility feedback (MegaLights / ReSTIR-VIS): zero stored weight when occluded so blocked lights stop recycling!
+                if (vRest < 0.5f) { W = 0.0f; }
             }
+            ResOut[id.xy] = float4(pick != ~0u ? float(pick + 1u) : 0.0f, W, M, z);
         }
     }
     // Reflection: glossy lit surfaces (the game's lobe, not foliage), one ray around the mirror
@@ -458,8 +471,10 @@ void main(uint3 id : SV_DispatchThreadID) {
     const bool wantRefl = (reflectLength > 0.0f && d < 1.0f && ((base >= 1u && base <= 4u) || base == 13u));
     if (WaveActiveAnyTrue(wantRefl) && wantRefl) {
         const float4 sp = Spec.Load(ip);
-        // Wave-Coherent Reflection Gate: skips entire 32-lane matte terrain/snow warps with zero RT divergence!
-        const bool isGlossy = (base == 2u || base == 13u || (sp.y > 0.14f && sp.x > 0.04f) || wetGloss);
+        // Wave-Coherent Reflection Gate: skips matte terrain/snow/frosted-ice warps cleanly (saves RT rays for glossy/wet/metal):
+        const float shinGate = exp2(sp.y * 13.0f);
+        const float roughGate = clamp(sqrt(2.0f / (shinGate + 2.0f)), 0.03f, 0.85f);
+        const bool isGlossy = (base == 2u || base == 13u || wetGloss || (sp.y > 0.16f && sp.x > 0.06f && roughGate < 0.44f));
         if (WaveActiveAnyTrue(isGlossy) && isGlossy) {
             const float2 px = float2(id.xy);
             const float3 p = worldAt(px, d);

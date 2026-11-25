@@ -8,6 +8,9 @@
 //   Right-Mouse Drag    : Smooth Freelook Yaw / Pitch
 //   1 / 2 / 3 / 4       : Live Season Switch (Spring / Summer / Autumn / Winter)
 //   F                   : Toggle Live 64^3 3D Navier-Stokes Fire + Smoke
+//   G                   : Toggle Live 4-Cascade Radiance Cascades Screen GI
+//   B                   : Cycle/Teleport Across All 6 Procedural Frontier Biomes
+//   A                   : Toggle Live 48kHz WASAPI Ambient Soundscape (Interactive Mode Only)
 //   R                   : Fracture Fresh 20-Shard NordicStonePillar (60Hz Rigid-Body Debris!)
 //   M                   : Toggle World Mode (Frontier Biomes <-> Real Riverwood ESM+NIF)
 //   ESC                 : Clean Exit
@@ -44,12 +47,14 @@
 #include "RawMeshHost.h"
 #include "RawFluidSimHost.h"
 #include "RawFluidCompositeHost.h"
+#include "RawRadianceHost.h"
 #include "RawWeatherSim.h"
 #include "RawWorldShowcase.h"
 #include "RawDestructionEngine.h"
 #include "RawEsmWorldLoader.h"
 #include "RawEsmModelResolver.h"
 #include "RawHydrologyGen.h"
+#include "RawAudioOutput.h"
 
 #include "raw_agx_display_vs.h"
 #include "raw_agx_display_ps.h"
@@ -306,6 +311,16 @@ public:
         if (!m_fluidOk) {
             std::printf("[Viewer] FluidSim warning: %s\n", err.c_str());
         }
+        err.clear();
+        m_radOk = m_radianceHost.Init(m_dev.Get(), &err) && m_radianceHost.ScreenGIReady();
+        if (!m_radOk) {
+            std::printf("[Viewer] RadianceCascades warning: %s\n", err.c_str());
+        }
+        UINT64 tsFreq = 0;
+        if (SUCCEEDED(m_queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+            if (m_fluidOk) m_fluidSim.SetTimestampFrequency(tsFreq);
+            if (m_radOk)   m_radianceHost.SetTimestampFrequency(tsFreq);
+        }
 
         // Enable real hydraulic & thermal erosion + D8 rivers for procedural frontier terrain!
         raw::worldgen::SetTerrainGenHydrologyErosionEnabled(true);
@@ -331,6 +346,7 @@ public:
         sc.asyncStreaming            = true;
         sc.asyncWorkerCount          = 2u;
         m_showcase.Init(sc);
+        DiscoverAllSixBiomeAnchors(sc.terrain.seed);
 
         // Start in Frontier (or Riverwood if --esm requested and available)
         if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {
@@ -392,6 +408,39 @@ public:
     }
 
     void ToggleFire() { m_fireEnabled = !m_fireEnabled; }
+    void ToggleGI() { m_giEnabled = !m_giEnabled; }
+
+    void ToggleAudio()
+    {
+        if (m_opt.headlessFrames > 0u) return; // Strictly OFF in headless CI mode
+        if (!m_audioEnabled) {
+            if (m_audio.Start(raw::audio::AudioBackendMode::WasapiShared, 48000u, 202646u)) {
+                m_audioEnabled = true;
+                PushAudioSceneState(m_weatherSim.GetGpuUniforms());
+            }
+        } else {
+            m_audio.Stop();
+            m_audioEnabled = false;
+        }
+    }
+
+    void CycleBiome()
+    {
+        m_biomeIdx = (m_biomeIdx + 1u) % 6u;
+        m_mode = WorldMode::Frontier;
+        m_hasFrontierCenter = false;
+        const auto& a = m_biomeAnchors[m_biomeIdx];
+        m_frontierCenter[0] = a.x;
+        m_frontierCenter[1] = a.y;
+        m_frontierCenter[2] = 1200.0f;
+        PumpFrontierShowcase(true);
+        m_camPos[0] = m_frontierCenter[0];
+        m_camPos[1] = m_frontierCenter[1] - 1800.0f;
+        m_camPos[2] = m_frontierCenter[2] + 1150.0f;
+        m_camYaw    = 0.0f;
+        m_camPitch  = -0.50f;
+        TriggerFreshFracture();
+    }
 
     void ToggleWorldMode()
     {
@@ -472,9 +521,12 @@ public:
         const float dtClamped = std::clamp(dtSec, 1.0e-4f, 0.05f);
         m_simTimeSec += dtClamped;
 
-        // 1. Step seasonal weather simulation.
+        // 1. Step seasonal weather simulation (and push live acoustics/weather to optional WASAPI audio).
         m_weatherSim.Step(dtClamped, {m_camPos[0], m_camPos[1], m_camPos[2]});
         const auto wGpu = m_weatherSim.GetGpuUniforms();
+        if (m_audioEnabled && m_audio.IsRunning()) {
+            PushAudioSceneState(wGpu);
+        }
 
         // 2. Stream async Frontier chunks if in Frontier mode.
         if (m_mode == WorldMode::Frontier) {
@@ -601,12 +653,18 @@ public:
             }
         }
 
-        // 8. Execute RawAgxDisplay.hlsl fullscreen triangle pass: HDR RGBA16F -> Display R8G8B8A8_UNORM!
+        // 8. Execute Live 4-Cascade Radiance Cascades Screen GI + RawAgxDisplay.hlsl fullscreen pass!
         const UINT dispSlot = static_cast<UINT>(m_frameCount % kRingFrames);
         WaitFenceVal(m_dispFenceVal[dispSlot]);
-        if (FAILED(m_dispAlloc[dispSlot]->Reset()) || FAILED(m_dispCmd->Reset(m_dispAlloc[dispSlot].Get(), m_agxPso.Get()))) {
+        if (FAILED(m_dispAlloc[dispSlot]->Reset()) || FAILED(m_dispCmd->Reset(m_dispAlloc[dispSlot].Get(), nullptr))) {
             return false;
         }
+
+        if (m_radOk && m_giEnabled) {
+            m_radianceHost.ExecuteScreenGI(m_dispCmd.Get(), m_hdrColor.Get(), m_depthIn.Get(),
+                                           m_width, m_height, 0.16f);
+        }
+        m_dispCmd->SetPipelineState(m_agxPso.Get());
 
         const UINT bbIdx = m_swapChain ? m_swapChain->GetCurrentBackBufferIndex() : 0u;
         ID3D12Resource* dispTarget = m_swapChain ? m_backBuffers[bbIdx].Get() : m_headlessDisplay.Get();
@@ -680,6 +738,11 @@ public:
         uint32_t drawnMeshlets    = 0u;
         uint32_t activeShards     = 0u;
         bool     usedMeshShaders  = false;
+        bool     radianceActive   = false;
+        float    fireStepMs       = 0.0f;
+        float    waterStepMs      = 0.0f;
+        float    radianceGiMs     = 0.0f;
+        uint32_t biomesFound      = 0u;
     };
 
     bool ReadbackHeadlessAudit(HeadlessAudit* out)
@@ -689,6 +752,13 @@ public:
         out->drawnMeshlets = m_lastDrawnMeshlets;
         out->activeShards = m_activeShards;
         out->usedMeshShaders = m_meshHost.TerrainUsesMeshShaders();
+        out->radianceActive = m_radOk && m_giEnabled;
+        out->biomesFound = m_discoveredBiomeCount;
+        const auto ft = m_fluidOk ? m_fluidSim.GetLastTimings() : FluidGpuTimings{};
+        const auto rt = m_radOk ? m_radianceHost.GetLastTimings() : RadianceGpuTimings{};
+        out->fireStepMs = ft.valid ? ft.fireStepMs : 0.0f;
+        out->waterStepMs = ft.valid ? ft.waterStepMs : 0.0f;
+        out->radianceGiMs = rt.valid ? rt.giPassMs : 0.0f;
 
         const UINT hdrPitch  = (m_width * 8u + 255u) & ~255u;
         const UINT dispPitch = (m_width * 4u + 255u) & ~255u;
@@ -798,6 +868,8 @@ public:
 
     void Shutdown()
     {
+        m_audio.Stop();
+        m_audioEnabled = false;
         if (!m_ready && !m_dev) return;
         WaitGpuIdle();
         m_showcase.WaitForAsyncIdle();
@@ -843,12 +915,21 @@ public:
 
     std::string FormatTitle(double fps) const
     {
-        char buf[256]{};
+        const auto ft = m_fluidOk ? m_fluidSim.GetLastTimings() : FluidGpuTimings{};
+        const auto rt = m_radOk ? m_radianceHost.GetLastTimings() : RadianceGpuTimings{};
+        char buf[384]{};
         std::snprintf(buf, sizeof(buf),
-                      "RAW Native Engine | %.1f FPS | %u Meshlets (%s) | Mode: %s | Season: %s | Fire: %s | Shards: %u | %s",
+                      "RAW Engine | %.1f FPS | %u Meshlets (%s) | %s | %s | Fire:%s(%.2fms) Water:%.2fms GI:%s(%.2fms) | Audio:%s | Shards:%u",
                       fps, m_lastDrawnMeshlets, m_meshHost.TerrainUsesMeshShaders() ? "AS+MS" : "VS+PS",
-                      m_mode == WorldMode::Frontier ? "Frontier Biomes" : "Riverwood (ESM+NIF)",
-                      SeasonName(m_season), m_fireEnabled ? "ON" : "OFF", m_activeShards, m_adapterName.c_str());
+                      m_mode == WorldMode::Frontier
+                          ? raw::worldgen::GetBiomeName(static_cast<raw::worldgen::BiomeId>(m_biomeIdx))
+                          : "Riverwood (ESM+NIF)",
+                      SeasonName(m_season),
+                      m_fireEnabled ? "ON" : "OFF", ft.valid ? ft.fireStepMs : 0.0f,
+                      ft.valid ? ft.waterStepMs : 0.0f,
+                      (m_radOk && m_giEnabled) ? "ON" : "OFF", rt.valid ? rt.giPassMs : 0.0f,
+                      m_audioEnabled ? "ON" : "OFF",
+                      m_activeShards);
         return buf;
     }
 
@@ -1084,7 +1165,7 @@ private:
 
         const raw::worldgen::Vec3 anchor = m_hasFrontierCenter
             ? raw::worldgen::Vec3{m_camPos[0], m_camPos[1], m_camPos[2]}
-            : raw::worldgen::Vec3{75776.0f, 157696.0f, 1200.0f};
+            : raw::worldgen::Vec3{m_biomeAnchors[m_biomeIdx].x, m_biomeAnchors[m_biomeIdx].y, 1200.0f};
         (void)m_showcase.Update(anchor, &sink);
         if (waitInitial) {
             m_showcase.WaitForAsyncIdle();
@@ -1248,6 +1329,73 @@ private:
         u.phenology1[2] = wGpu.phenology1.z; u.phenology1[3] = wGpu.phenology1.w;
     }
 
+    void DiscoverAllSixBiomeAnchors(uint32_t seed)
+    {
+        // Deterministic 4-quadrant frontier search strictly outside Tamriel's border box covering all 6 biomes.
+        std::array<bool, 6> found{};
+        for (size_t i = 0; i < 6u; ++i) {
+            m_biomeAnchors[i] = {75776.0f, 157696.0f};
+        }
+        m_discoveredBiomeCount = 0u;
+        for (int32_t ring = 1; ring <= 48 && m_discoveredBiomeCount < 6u; ++ring) {
+            const int32_t step = (ring <= 12) ? 2 : 4;
+            const int32_t span = 38 + ring * 2;
+            for (int32_t cy = -span; cy <= span && m_discoveredBiomeCount < 6u; cy += step) {
+                for (int32_t cx = -span; cx <= span && m_discoveredBiomeCount < 6u; cx += step) {
+                    const float wx = float(cx) * 4096.0f + 2048.0f;
+                    const float wy = float(cy) * 4096.0f + 2048.0f;
+                    // Strictly outside Tamriel exclusion box [-148k..148k] x [-118k..132k] + 12k shoreline apron
+                    if (wx > -160000.0f && wx < 160000.0f && wy > -130000.0f && wy < 144000.0f) continue;
+                    const auto b = raw::worldgen::EvaluateBiomeBlend(wx, wy, seed);
+                    const size_t bi = static_cast<size_t>(b.primary);
+                    if (bi < 6u && !found[bi]) {
+                        found[bi] = true;
+                        m_biomeAnchors[bi] = {wx, wy};
+                        ++m_discoveredBiomeCount;
+                    }
+                }
+            }
+        }
+    }
+
+    void PushAudioSceneState(const raw::worldgen::WeatherGpuUniforms& wGpu)
+    {
+        raw::audio::AudioSceneState as{};
+        as.beaufortScale = wGpu.beaufortScale;
+        as.rain01 = wGpu.weather.w;
+        as.snow01 = (m_season == SeasonChoice::Winter) ? std::max(wGpu.weather.z, 0.55f) : wGpu.weather.z;
+        as.fireIntensity01 = m_fireEnabled ? 0.65f : 0.0f;
+        as.fireDistanceU = 280.0f;
+        as.masterGain = 0.25f;
+        if (m_mode == WorldMode::RiverwoodEsm) {
+            as.environment = raw::audio::AcousticEnvironment::SnowDampedPineForest;
+            as.waterIntensity01 = 0.40f;
+        } else {
+            switch (static_cast<raw::worldgen::BiomeId>(m_biomeIdx)) {
+                case raw::worldgen::BiomeId::GlacialFjordSpires:
+                case raw::worldgen::BiomeId::BioluminescentCrystalTundra:
+                    as.environment = raw::audio::AcousticEnvironment::GlacierIceCavern;
+                    as.waterIntensity01 = 0.25f;
+                    break;
+                case raw::worldgen::BiomeId::OldGrowthConiferHighlands:
+                    as.environment = raw::audio::AcousticEnvironment::SnowDampedPineForest;
+                    as.waterIntensity01 = 0.15f;
+                    break;
+                case raw::worldgen::BiomeId::ObsidianBasaltCanyons:
+                case raw::worldgen::BiomeId::GeothermalVolcanicCaldera:
+                    as.environment = raw::audio::AcousticEnvironment::NordicStoneCrypt;
+                    as.fireIntensity01 = std::max(as.fireIntensity01, 0.45f);
+                    break;
+                case raw::worldgen::BiomeId::AlpineMeltwaterDeltas:
+                default:
+                    as.environment = raw::audio::AcousticEnvironment::OpenWindyTundra;
+                    as.waterIntensity01 = 0.55f;
+                    break;
+            }
+        }
+        m_audio.UpdateSceneState(as);
+    }
+
     ViewerOptions m_opt{};
     HWND          m_hwnd = nullptr;
     UINT          m_width = 1280u;
@@ -1255,6 +1403,7 @@ private:
     bool          m_ready = false;
     bool          m_isWarp = false;
     bool          m_fluidOk = false;
+    bool          m_radOk = false;
     std::string   m_adapterName;
 
     ComPtr<IDXGIFactory4>              m_factory;
@@ -1288,9 +1437,16 @@ private:
     RawMeshHost                        m_meshHost;
     RawFluidSimHost                    m_fluidSim;
     RawFluidCompositeHost              m_fluidComposite;
+    RawRadianceHost                    m_radianceHost;
+    raw::audio::RawAudioOutput         m_audio;
     raw::worldgen::RawWeatherSim       m_weatherSim;
     raw::worldgen::RawWorldShowcase    m_showcase;
     raw::worldgen::DestructionSimulation m_destSim;
+
+    struct BiomeAnchor { float x = 75776.0f, y = 157696.0f; };
+    std::array<BiomeAnchor, 6>         m_biomeAnchors{};
+    uint32_t                           m_discoveredBiomeCount = 0u;
+    uint32_t                           m_biomeIdx = 0u;
 
     std::unordered_map<uint64_t, TerrainGpuChunk> m_frontierChunks;
     std::unordered_map<uint64_t, TerrainGpuChunk> m_esmChunks;
@@ -1305,6 +1461,8 @@ private:
     WorldMode                          m_mode = WorldMode::Frontier;
     SeasonChoice                       m_season = SeasonChoice::Winter;
     bool                               m_fireEnabled = true;
+    bool                               m_giEnabled = true;
+    bool                               m_audioEnabled = false;
     uint32_t                           m_fractureCounter = 0u;
     uint32_t                           m_activeShards = 0u;
     bool                               m_destructionDirty = false;
@@ -1369,6 +1527,9 @@ LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     case '3': st->viewer->ApplySeason(SeasonChoice::Autumn); break;
                     case '4': st->viewer->ApplySeason(SeasonChoice::Winter); break;
                     case 'F': st->viewer->ToggleFire(); break;
+                    case 'G': st->viewer->ToggleGI(); break;
+                    case 'B': st->viewer->CycleBiome(); break;
+                    case 'A': st->viewer->ToggleAudio(); break;
                     case 'R': st->viewer->TriggerFreshFracture(); break;
                     case 'M': st->viewer->ToggleWorldMode(); break;
                     default: break;
@@ -1434,7 +1595,7 @@ int main(int argc, char** argv)
     if (opt.showHelp) {
         std::printf(
             "RAW Interactive Real-Time Win32/DX12 Standalone Engine Viewer\n"
-            "Controls: WASD/QE flight, Shift boost, RMB freelook, 1-4 seasons, F fire, R fracture, M frontier/Riverwood, ESC exit\n"
+            "Controls: WASD/QE flight, Shift boost, RMB freelook, 1-4 seasons, F fire, G GI, B biomes, A audio, R fracture, M frontier/Riverwood, ESC exit\n"
             "CLI: [--headless-frames N] [--warp] [--debug] [--width W] [--height H] [--esm <Skyrim.esm>]\n");
         return 0;
     }
@@ -1469,12 +1630,15 @@ int main(int argc, char** argv)
 
         RawEngineViewer::HeadlessAudit audit{};
         const bool rbOk = viewer.ReadbackHeadlessAudit(&audit);
-        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
+        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
                     audit.usedMeshShaders ? "AS+MS+PS" : "VS+PS",
-                    audit.drawnMeshlets, audit.activeShards, audit.hdrLitPixels, audit.hdrNanInf,
+                    audit.drawnMeshlets, audit.activeShards, audit.biomesFound,
+                    audit.radianceActive ? "ON" : "off", audit.radianceGiMs,
+                    audit.fireStepMs, audit.waterStepMs,
+                    audit.hdrLitPixels, audit.hdrNanInf,
                     audit.dispNonZeroPx, audit.dispMeanLuma, audit.dispStdDevLuma);
-        check(rbOk && audit.drawnMeshlets > 0u && audit.activeShards >= 10u,
-              "Rendered multi-biome terrain + baked flora + 20-shard rigid-body destruction + 64^3 NS fire");
+        check(rbOk && audit.drawnMeshlets > 0u && audit.activeShards >= 10u && audit.radianceActive && audit.biomesFound == 6u,
+              "Rendered terrain + flora + 20-shard destruction + 64^3 NS fire + 4-cascade Radiance GI (6/6 biomes discovered)");
         check(audit.hdrNanInf == 0u, "HDR RGBA16F scene buffer contains 0 NaN/Inf pixels");
         check(audit.hdrLitPixels > (opt.width * opt.height) / 5u &&
               audit.dispNonZeroPx > (opt.width * opt.height) * 9u / 10u &&

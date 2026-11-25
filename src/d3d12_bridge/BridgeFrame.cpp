@@ -78,7 +78,14 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
     const char* biomeName = raw::worldgen::GetBiomeName(lastWorldStats.cameraBiome);
     if (!biomeName) biomeName = "Unknown";
 
-    char jsonBuf[1024]{};
+    const FluidGpuTimings fluidTimings = fluidReady ? fluidSim.GetLastTimings() : FluidGpuTimings{};
+    const RadianceGpuTimings radTimings = radianceReady ? radianceHost.GetLastTimings() : RadianceGpuTimings{};
+    const float fluidFireMs = (fluidTimings.valid && std::isfinite(fluidTimings.fireStepMs)) ? fluidTimings.fireStepMs : 0.0f;
+    const float fluidWaterMs = (fluidTimings.valid && std::isfinite(fluidTimings.waterStepMs)) ? fluidTimings.waterStepMs : 0.0f;
+    const uint32_t fluidPressureIters = fluidTimings.activePressureIters;
+    const float radianceGiMs = (radTimings.valid && std::isfinite(radTimings.giPassMs)) ? radTimings.giPassMs : 0.0f;
+
+    char jsonBuf[1536]{};
     const int n = std::snprintf(
         jsonBuf, sizeof(jsonBuf),
         "{\n"
@@ -93,6 +100,10 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"worldGenBiome\": \"%s\",\n"
         "  \"fluidFireEmitters\": %u,\n"
         "  \"fluidWaterWakes\": %u,\n"
+        "  \"fluidFireMs\": %.4f,\n"
+        "  \"fluidWaterMs\": %.4f,\n"
+        "  \"fluidPressureIters\": %u,\n"
+        "  \"radianceGiMs\": %.4f,\n"
         "  \"seasonSnowM\": %.4f,\n"
         "  \"seasonIceM\": %.4f,\n"
         "  \"skinTempC\": %.3f,\n"
@@ -111,6 +122,10 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         biomeName,
         lastFluidFireEmitters,
         lastFluidWaterWakes,
+        fluidFireMs,
+        fluidWaterMs,
+        fluidPressureIters,
+        radianceGiMs,
         seasonSnowM,
         seasonIceM,
         skinTempC,

@@ -718,6 +718,8 @@ void TestDx12LiveGpuSolvers(bool preferWarp)
         float maxSoot = 0.0f;
         float plumeTempAbove = 0.0f;
         float maxRadR = 0.0f;
+        float minSunShadowT = 1.0f;
+        float maxSunShadowT = 0.0f;
         float scatterGlowR = 0.0f, scatterGlowG = 0.0f, scatterGlowB = 0.0f;
 
         for (size_t i = 0; i < thermoData.size(); ++i) {
@@ -736,6 +738,8 @@ void TestDx12LiveGpuSolvers(bool preferWarp)
                     maxTempK = std::max(maxTempK, thermoData[o + 0]);
                     maxSoot  = std::max(maxSoot,  thermoData[o + 2]);
                     maxRadR  = std::max(maxRadR,  radData[o + 0]);
+                    minSunShadowT = std::min(minSunShadowT, radData[o + 3]);
+                    maxSunShadowT = std::max(maxSunShadowT, radData[o + 3]);
                 }
             }
         }
@@ -753,13 +757,15 @@ void TestDx12LiveGpuSolvers(bool preferWarp)
         scatterGlowG = radData[scOff + 1];
         scatterGlowB = radData[scOff + 2];
 
-        std::printf("       GPU Fire 24f: maxT=%.1fK plumeAbove=%.1fK maxSoot=%.3f maxRadR=%.2f scatterRGB=(%.3f,%.3f,%.3f)\n",
-                    maxTempK, plumeTempAbove, maxSoot, maxRadR, scatterGlowR, scatterGlowG, scatterGlowB);
+        std::printf("       GPU Fire 24f: maxT=%.1fK plumeAbove=%.1fK maxSoot=%.3f maxRadR=%.2f scatterRGB=(%.3f,%.3f,%.3f) sunShadowT=[%.3f..%.3f]\n",
+                    maxTempK, plumeTempAbove, maxSoot, maxRadR, scatterGlowR, scatterGlowG, scatterGlowB, minSunShadowT, maxSunShadowT);
         Check(allFinite, "GPU 64x64x64 FireThermo & FireRadiance volumes contain zero NaN/Inf");
         Check(maxTempK > 1400.0f && maxSoot > 0.05f, "GPU Fire combustion heats core >1400K and generates soot smoke");
         Check(plumeTempAbove > fp.ambientTempK + 40.0f, "GPU Fire thermal buoyancy + jet lofts hot plume upward (+Z)");
         Check(maxRadR > 5.0f && scatterGlowR > 0.02f && scatterGlowR > scatterGlowG && scatterGlowG > scatterGlowB,
               "GPU 3D Radiance Cascade propagates warm orange firelight outward into surrounding smoke");
+        Check(minSunShadowT >= 0.0f && maxSunShadowT <= 1.005f && minSunShadowT < 0.85f && maxSunShadowT > 0.98f,
+              "GPU 4-tap directional sun self-shadow transmittance (FireRadiance.a) shadows dense smoke core cleanly");
     }
 
     // --- 5b) Step 2D Shallow-Water + Wakes + Rain + Normals for 10 frames ---

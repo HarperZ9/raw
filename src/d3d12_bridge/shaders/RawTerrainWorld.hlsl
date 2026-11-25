@@ -302,6 +302,11 @@ float4 ps_terrain_main(TerrainOutVert inp, bool isFrontFace : SV_IsFrontFace) : 
     // Unified world-space atmosphere & lighting oracle from LightingCommon.hlsli
     float3 sunCol, skyZ, skyH, ambUp, ambDown;
     evalWorldAtmosphere(sunCol, skyZ, skyH, ambUp, ambDown);
+    // Wave 46 Unified Convective Cloud Shadowing: synchronize frontier mountains, glacial fjords,
+    // volcanic calderas & biomechanical forests with Tamriel's live 3-layer wind-advected cloud field!
+    const float3 sunColFog = sunCol;
+    const float cloudSh = saturate(cloudShadowN(inp.absWorldPos));
+    sunCol *= cloudSh;
     const float3 envCol = evalDynamicEnvCube(reflect(-V, nGeo), 0.35f);
 
     const float curvature = clamp(inp.meta.x, -1.0f, 1.0f);
@@ -542,7 +547,7 @@ float4 ps_terrain_main(TerrainOutVert inp, bool isFrontFace : SV_IsFrontFace) : 
     const float miePhase = rawMultiScatterPhase(cosSun, clamp(tune.y, 0.25f, 0.78f), optDepth);
     const float viewElev = saturate(-V.z * 0.5f + 0.5f);
     const float3 fogCol = lerp(skyH, skyZ, saturate(viewElev * 0.72f))
-                        + sunCol * (miePhase * saturate(astroSunElev() * 4.0f + 0.15f) * 0.62f);
+                        + sunColFog * (miePhase * saturate(astroSunElev() * 4.0f + 0.15f) * 0.62f);
 
     hdrColor = hdrColor * trans + fogCol * (1.0f - trans);
     return float4(max(hdrColor, 0.0f.xxx), 1.0f);

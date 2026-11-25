@@ -5721,3 +5721,7 @@ fn:PlayerCamera::SetCameraFOV_Cmd	function	0x3757C0	high	binary disassembly cons
 fn:ActorState::HasMovementFlag	function	0x6E1530	high	binary disassembly tests ActorState::actorState1 [rcx+0x08] mask 0x100 sprinting (SkyrimSE 1.7.104)
 off:PlayerCamera::worldFOV	offset	0x13C	high	binary disassembly 0x8F7AA8 movss [rbx+0x13C], xmm0 from fDefaultWorldFOV:Display 0x20CF9E0 (SkyrimSE 1.7.104)
 off:PlayerCamera::firstPersonFOV	offset	0x140	high	binary disassembly 0x8F7AB8 movss [rbx+0x140], xmm1 from fDefault1stPersonFOV:Display 0x20CF9F8 (SkyrimSE 1.7.104)
+fn:Arrow::ComputeGravity	function	0x41FAA0	high	binary disassembly reads fArrowGravityBase(0x20A7388=0.3) fArrowGravityMult(0x20A73A0=0.002) fArrowWeakGravity(0x20A7478=1.75) (SkyrimSE 1.7.104)
+fn:Arrow::ComputeDrawPower	function	0x41FAF0	high	binary disassembly reads fArrowBowMinTime(0x20A73D0=0.8) fBowDrawTime(0x20A7418=1.6667) fArrowMinPower(0x20A7430=0.35) (SkyrimSE 1.7.104)
+fn:Combat::ComputePowerAttackStamina	function	0x41F7E0	high	binary disassembly reads fStaminaAttackWeaponMult(0x20A7EF8=0.1) fStaminaAttackWeaponBase(0x20A7EE0=7.0) fPowerAttackStaminaPenalty(0x20A7F10=5.0) (SkyrimSE 1.7.104)
+fn:Armor::ComputePlayerRatingScale	function	0x41F460	high	binary disassembly reads fArmorRatingPCMax(0x20A7DC0=2.5) fArmorRatingPCBase(0x20A7DD8=1.0) (SkyrimSE 1.7.104)

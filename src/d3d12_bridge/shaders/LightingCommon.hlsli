@@ -341,3 +341,71 @@ float rawTrappingSeparator(float curVal, float prevVal, float sigma, float speed
     const float motionGate = saturate(speedPx * 0.085f + (1.0f - saturate(edgeGate)) * 0.72f);
     return saturate(barrier * (0.45f + 0.55f * motionGate));
 }
+
+// Wave 46 Unified Wind-Advected Convective Cloud Shadow Model (shared 1:1 by Clouds.hlsl, Lighting.hlsl,
+// VolumetricPass.hlsl, FroxelPass.hlsl, LightFog.hlsl, DistantLod.hlsli, and RawTerrainWorld.hlsl!):
+// Zero cbuffer changes; projects worldPosAbs along sunDir to the convective LCL cloud base (clouds.y),
+// advects with cloudWind.xy * simTime * 0.28 (exact match to Clouds.hlsl!), and evaluates dual-octave
+// domain-warped convective coverage matching clouds.x cover & storm density.
+#define RAW_HAS_UNIFIED_CLOUD_SHADOW 1
+
+float rawCloudHash3(float3 p) {
+    p = frac(p * 0.3183099f + 0.1f);
+    p *= 17.0f;
+    return frac(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+
+float rawCloudNoise3(float3 x) {
+    const float3 i = floor(x), f = frac(x);
+    const float3 u = f * f * (3.0f - 2.0f * f);
+    return lerp(lerp(lerp(rawCloudHash3(i), rawCloudHash3(i + float3(1.0f, 0.0f, 0.0f)), u.x),
+                     lerp(rawCloudHash3(i + float3(0.0f, 1.0f, 0.0f)), rawCloudHash3(i + float3(1.0f, 1.0f, 0.0f)), u.x), u.y),
+                lerp(lerp(rawCloudHash3(i + float3(0.0f, 0.0f, 1.0f)), rawCloudHash3(i + float3(1.0f, 0.0f, 1.0f)), u.x),
+                     lerp(rawCloudHash3(i + float3(0.0f, 1.0f, 1.0f)), rawCloudHash3(i + float3(1.0f, 1.0f, 1.0f)), u.x), u.y),
+                u.z);
+}
+
+// Single-source-of-truth 2D wind-advected dual-octave domain-warped convective cloud field (shared with Clouds.hlsl).
+float rawCloudConvectiveField(float2 worldXY, float simTime) {
+    const float2 advXY = worldXY + cloudWind.xy * (simTime * 0.28f);
+    const float2 wUv = advXY * (1.0f / 46000.0f);
+    const float tMorph = simTime * 0.0022f;
+    const float2 warp = float2(
+        rawCloudNoise3(float3(wUv * 1.35f + float2(3.1f, 7.4f), tMorph * 0.65f)) - 0.5f,
+        rawCloudNoise3(float3(wUv * 1.35f + float2(11.7f, 2.3f), tMorph * 0.65f + 5.1f)) - 0.5f) * 0.44f;
+    const float o0 = rawCloudNoise3(float3(wUv + warp, 1.3f + tMorph));
+    const float o1 = rawCloudNoise3(float3((wUv - warp * 0.60f) * 2.35f + 7.1f, 3.7f - tMorph * 0.80f));
+    return o0 * 0.62f + o1 * 0.38f;
+}
+
+float cloudShadowN(float3 worldPosAbs, uint samples = 1u) {
+    if (clouds.x <= 0.005f || clouds.z <= 0.0f || clouds.w <= 0.0f) { return 1.0f; }
+    const float3 sunD = astroSunDir();
+    if (sunD.z <= 0.04f) { return 1.0f; }
+
+    const float simTime = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
+    const float cover = saturate(clouds.x);
+    const float stormType = saturate(weather.w * 1.4f + max(cover - 0.78f, 0.0f) * 2.5f);
+
+    // Project absolute world position along sunDir up to the convective LCL cloud base (clouds.y + 0.16 * thickness):
+    const float lclZ = clouds.y + clouds.z * 0.16f;
+    const float tHit = min(max((lclZ - worldPosAbs.z) / max(sunD.z, 0.16f), 0.0f), 220000.0f);
+    const float2 projXY = worldPosAbs.xy + sunD.xy * tHit;
+
+    float wCov = rawCloudConvectiveField(projXY, simTime);
+    if (samples > 1u) {
+        // Optional 2nd sample at mid-tower altitude for thick convective cumulus banks:
+        const float tMid = min(max((clouds.y + clouds.z * 0.52f - worldPosAbs.z) / max(sunD.z, 0.16f), 0.0f), 220000.0f);
+        const float wMid = rawCloudConvectiveField(worldPosAbs.xy + sunD.xy * tMid, simTime);
+        wCov = wCov * 0.62f + wMid * 0.38f;
+    }
+
+    // Smooth physically soft cloud-shadow coverage matching Clouds.hlsl convective threshold & storm density:
+    const float thresh = lerp(0.70f, lerp(0.38f, 0.24f, stormType), cover);
+    const float cloudOcc = smoothstep(thresh - 0.14f, min(thresh + 0.26f, 0.96f), wCov);
+    const float sunElFade = smoothstep(0.04f, 0.16f, sunD.z);
+    const float shadowStrength = saturate(clouds.w) * lerp(0.56f, 0.84f, stormType) * saturate(cover * 1.32f) * sunElFade;
+    return saturate(1.0f - cloudOcc * shadowStrength);
+}
+
+float cloudShadow(float3 worldPosAbs) { return cloudShadowN(worldPosAbs, 1u); }

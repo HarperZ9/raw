@@ -680,5 +680,21 @@ void cs_fire_radiance(uint3 tid : SV_DispatchThreadID)
     const float sootScatterWeight = 1.0f - exp(-sigmaExt * localSoot);
     const float3 finalRad = selfEmit + gatheredRad * sootAlbedo * (0.25f + 0.75f * sootScatterWeight);
 
-    RadianceOut[id] = float4(min(finalRad, float3(256.0f, 256.0f, 256.0f)), saturate(sootScatterWeight));
+    // 4-tap directional sunlight self-shadow march through the 64^3 soot density volume toward exterior sun key dir.
+    // Stored in FireRadiance.a [0..1]: 1.0 = sunlit upper smoke curls/open air, -> 0.0 = deep self-shadowed undersides.
+    static const float3 kSunKeyDir   = float3(0.40209f, 0.30157f, 0.86450f); // normalize(0.4, 0.3, 0.86)
+    static const float  kSunDist[4]  = { 1.50f, 3.75f, 7.50f, 13.50f };
+    static const float  kSunWidth[4] = { 1.50f, 2.75f, 4.75f,  7.50f };
+    float sunOptDepth = 0.0f;
+    [unroll] for (int si = 0; si < 4; ++si) {
+        const float3 sUvw = uvw + kSunKeyDir * (kSunDist[si] * kInvGridRes);
+        if (any(sUvw < 0.0f) || any(sUvw > 1.0f)) {
+            break;
+        }
+        const float sSoot = max(ThermoIn.SampleLevel(LinClamp, sUvw, 0.0f).z, 0.0f);
+        sunOptDepth += sigmaExt * sSoot * (kSunWidth[si] * 0.44f);
+    }
+    const float sunShadowT = exp(-sunOptDepth);
+
+    RadianceOut[id] = float4(min(finalRad, float3(256.0f, 256.0f, 256.0f)), saturate(sunShadowT));
 }

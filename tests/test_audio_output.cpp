@@ -4,6 +4,8 @@
 // Original work, MIT.
 
 #include "../src/audio/RawAudioOutput.h"
+#include "../src/engine_rt/rt_audio_bridge.h"
+#include "../src/engine_rt/rt_live_config.h"
 
 #include <algorithm>
 #include <chrono>
@@ -255,6 +257,134 @@ int RunAudioOutputTests(void (*checkFn)(bool, const char*)) {
                         static_cast<unsigned>(info.lastHresult));
         }
         check(probeValid, "audio_output_wasapi_device_probe_graceful_and_valid");
+    }
+
+    // 7. Wave 46 [Audio] INI defaults (LiveAudioAmbience=0, LiveAudioGain=0.22), parsing & safe clamping
+    {
+        const raw::rt::LiveEngineConfig def = raw::rt::DefaultLiveEngineConfig();
+        const std::string iniText = raw::rt::FormatDefaultLiveConfigIni(def);
+        raw::rt::LiveEngineConfig parsedDef{};
+        raw::rt::ParseLiveConfigIni(iniText, parsedDef);
+        const bool defaultOptInOff =
+            (!def.liveAudioAmbience) &&
+            (std::fabs(def.liveAudioGain - 0.22f) < 1.0e-5f) &&
+            (iniText.find("[Audio]") != std::string::npos) &&
+            (iniText.find("LiveAudioAmbience=0") != std::string::npos) &&
+            (iniText.find("LiveAudioGain=0.22") != std::string::npos) &&
+            (!parsedDef.liveAudioAmbience) &&
+            (std::fabs(parsedDef.liveAudioGain - 0.22f) < 1.0e-5f);
+        check(defaultOptInOff, "audio_bridge_ini_default_opt_in_off_and_gain_022");
+
+        raw::rt::LiveEngineConfig parsedOn{};
+        raw::rt::ParseLiveConfigIni("[Audio]\nLiveAudioAmbience=1\nLiveAudioGain=3.50\n", parsedOn);
+        const bool parsedClampedOk =
+            parsedOn.liveAudioAmbience &&
+            std::fabs(parsedOn.liveAudioGain - 0.50f) < 1.0e-5f;
+        check(parsedClampedOk, "audio_bridge_ini_parse_on_and_clamp_max_050");
+    }
+
+    // 8. Wave 46 rt_audio_bridge enum mapping & runtime mailbox coupling (hearth, water, interior, menu pause)
+    {
+        const bool enumMapOk =
+            raw::rt::MapRuntimeAcousticEnvToDsp(0u) == AcousticEnvironment::OpenWindyTundra &&
+            raw::rt::MapRuntimeAcousticEnvToDsp(1u) == AcousticEnvironment::SnowDampedPineForest &&
+            raw::rt::MapRuntimeAcousticEnvToDsp(2u) == AcousticEnvironment::NordicStoneCrypt &&
+            raw::rt::MapRuntimeAcousticEnvToDsp(3u) == AcousticEnvironment::GlacierIceCavern &&
+            raw::rt::MapRuntimeAcousticEnvToDsp(4u) == AcousticEnvironment::Underwater;
+        check(enumMapOk, "audio_bridge_5_environment_enum_mapping_exact");
+
+        raw::rt::AudioBridgeInput in{};
+        in.acousticEnvClass  = 2u; // NordicStoneCrypt
+        in.beaufortScale     = 10.0f;
+        in.rain01            = 0.8f;
+        in.hearthProximity01 = 0.9f;
+        in.inInterior        = true;
+        in.inWater           = false;
+        in.menuPaused        = false;
+        in.liveAudioEnabled  = true;
+        in.liveAudioGain     = 0.30f;
+
+        const AudioSceneState cryptState = raw::rt::BuildAudioSceneStateFromRuntime(in);
+        const bool cryptOk =
+            cryptState.environment == AcousticEnvironment::NordicStoneCrypt &&
+            cryptState.beaufortScale < 3.0f && // interior wind muffled
+            cryptState.fireIntensity01 > 0.85f &&
+            cryptState.fireDistanceU < 130.0f &&
+            !cryptState.muted &&
+            std::fabs(cryptState.masterGain - 0.30f) < 1.0e-5f;
+
+        in.menuPaused = true;
+        const AudioSceneState pausedState = raw::rt::BuildAudioSceneStateFromRuntime(in);
+
+        in.menuPaused = false;
+        in.inWater    = true;
+        const AudioSceneState waterState = raw::rt::BuildAudioSceneStateFromRuntime(in);
+
+        check(cryptOk && pausedState.muted &&
+              waterState.environment == AcousticEnvironment::Underwater &&
+              waterState.underwater01 >= 0.99f && !waterState.muted,
+              "audio_bridge_mailbox_coupling_hearth_water_interior_pause");
+    }
+
+    // 9. Wave 46 AudioBridgeController live hot-toggle 0 -> 1 -> 0 using NullSink (< 5 ms shutdown join)
+    {
+        raw::rt::AudioBridgeController ctrl;
+        ctrl.Init(AudioBackendMode::NullSink, 48000u, 202646u);
+
+        raw::rt::AudioBridgeInput in{};
+        in.acousticEnvClass  = 1u; // SnowDampedPineForest
+        in.beaufortScale     = 7.0f;
+        in.hearthProximity01 = 0.75f;
+        in.liveAudioEnabled  = false; // Starts OFF (opt-in)
+        in.liveAudioGain     = 0.28f;
+
+        // Tick while OFF: must NOT start worker thread or render frames
+        ctrl.Tick(in);
+        const raw::rt::AudioBridgeTelemetry tOff0 = ctrl.GetTelemetry();
+
+        // Hot-toggle 0 -> 1
+        in.liveAudioEnabled = true;
+        ctrl.Tick(in);
+
+        std::vector<float> captured;
+        std::vector<float> tmp(1024u * 2u, 0.0f);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+        while (captured.size() < 960u * 2u && std::chrono::steady_clock::now() < deadline) {
+            // Also exercise live pause -> unpause + environment shift while streaming!
+            in.acousticEnvClass = (captured.size() >= 480u * 2u) ? 3u : 1u; // Forest -> GlacierIceCavern
+            ctrl.Tick(in);
+            const size_t got = ctrl.Output().ReadNullSinkStereo(tmp.data(), 1024u);
+            if (got > 0u) {
+                captured.insert(captured.end(), tmp.begin(), tmp.begin() + static_cast<ptrdiff_t>(got * 2u));
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        }
+        const raw::rt::AudioBridgeTelemetry tOn = ctrl.GetTelemetry();
+
+        // Hot-toggle 1 -> 0 and measure clean join time
+        in.liveAudioEnabled = false;
+        const auto tStop0 = std::chrono::steady_clock::now();
+        ctrl.Tick(in);
+        const double toggleStopMs = std::chrono::duration<double, std::milli>(
+                                        std::chrono::steady_clock::now() - tStop0).count();
+        const raw::rt::AudioBridgeTelemetry tOff1 = ctrl.GetTelemetry();
+        ctrl.Shutdown();
+
+        const WaveMetrics wm = AnalyzeStereoWave(captured, 0u, captured.size() / 2u);
+        if (!checkFn) {
+            std::printf("[AudioBridge 0->1->0] frames=%llu captured=%zu stopMs=%.3f rms=%.4f maxJump=%.4f\n",
+                        static_cast<unsigned long long>(tOn.framesRendered),
+                        captured.size() / 2u, toggleStopMs, double(wm.rms), double(wm.maxSampleJump));
+        }
+
+        const bool hotToggleOk =
+            !tOff0.streamRunning && tOff0.framesRendered == 0ull && tOff0.toggleStarts == 0u &&
+            tOn.enabled && tOn.streamRunning && tOn.toggleStarts == 1u &&
+            captured.size() >= 960u * 2u && wm.allFinite && wm.peakAbs <= 1.0f && wm.maxSampleJump < 0.25f &&
+            !tOff1.enabled && !tOff1.streamRunning && tOff1.toggleStops == 1u &&
+            toggleStopMs < 50.0;
+        check(hotToggleOk, "audio_bridge_hot_toggle_0_1_0_nullsink_clean_join");
     }
 
     if (!checkFn) {

@@ -422,6 +422,10 @@ bool D3D12Bridge::Impl::InitFluidSim()
         log("[FluidSim] off: %s", fluidErr.c_str());
         return false;
     }
+    UINT64 tsFreq = 0;
+    if (queue && SUCCEEDED(queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+        fluidSim.SetTimestampFrequency(tsFreq);
+    }
     for (UINT i = 0; i < kRing; ++i) {
         if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&fluidAlloc[i])))) {
             ShutdownFluidSim();
@@ -481,6 +485,10 @@ bool D3D12Bridge::Impl::InitRadianceCascades()
     if (!radianceHost.Init(dev12.Get(), &radErr)) {
         log("[RadianceCascades] off: %s", radErr.c_str());
         return false;
+    }
+    UINT64 tsFreq = 0;
+    if (queue && SUCCEEDED(queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+        radianceHost.SetTimestampFrequency(tsFreq);
     }
     for (UINT i = 0; i < kRing; ++i) {
         if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&radAlloc[i])))) {

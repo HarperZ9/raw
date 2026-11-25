@@ -61,25 +61,22 @@ float cloudDensityVol(float3 pa, bool detail) {
     const float alt = length(float3(dxy.x, dxy.y, R + pa.z)) - R;
     const float h = (alt - clouds.y) / clouds.z;
     if (h <= 0.0f || h >= 1.0f) { return 0.0f; }
-    // Wave 33 Time-Invariant Bulk Wind Advection + Bounded Static Anvil Tilt:
-    // Previously multiplying altitude-dependent ekmanWind(h) by unbounded camPosW.w grew dv/dh * t to 45,000u+
-    // over a 20-minute play session, stretching every cumulus cloud into razor-parallel zebra stripes (00.10.37.77)!
-    // Advecting the entire cumulus deck by uniform cloudWind.xy while keeping anvil tilt strictly static fixes it permanently.
+    // Wave 46 Pause-Aware Bulk Wind Advection + Shared Convective Weather Field (1:1 synced with LightingCommon::cloudShadowN!):
+    const float simTimeV = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
     const float2 wBulk = cloudWind.xy;
     const float2 wUnit = normalize(wBulk + float2(1.0e-3f, 0.0f));
-    const float3 wind = float3(wBulk * (camPosW.w * 0.28f), 0.0f);
+    const float3 wind = float3(wBulk * (simTimeV * 0.28f), 0.0f);
     const float3 sheared = pa + wind + float3(wUnit, 0.0f) * (h * h * 650.0f);
     const float cover = saturate(clouds.x);
     const float stormType = saturate(weather.w * 1.4f + max(cover - 0.78f, 0.0f) * 2.5f);
 
-    // 2D continental weather & convective buoyancy map + isotropic curl-vortex metamorphosis:
-    const float tMorph = camPosW.w * 0.0022f;
+    // Unified 2D continental convective weather map (matches cloudShadowN 1:1!) + fine detail curl-vortex modulation:
+    const float tMorph = simTimeV * 0.0022f;
     const float2 wUv = sheared.xy / 46000.0f;
-    const float2 curl1 = detail ? (cloudCurl2D(wUv * 1.35f, tMorph * 0.65f) * 0.18f) : 0.0f.xx;
-    const float2 curl2 = detail ? (cloudCurl2D(wUv * 2.85f + curl1 * 0.55f, tMorph * 1.15f) * 0.08f) : 0.0f.xx;
-    const float2 curlW = clamp(curl1 + curl2, -0.28f.xx, 0.28f.xx);
-    const float wCov = cNoise(float3(wUv + curlW, 1.3f + tMorph)) * 0.62f
-                     + cNoise(float3((wUv - curlW * 0.6f) * 2.35f + 7.1f, 3.7f - tMorph * 0.8f)) * 0.38f;
+    const float2 curl1 = detail ? (cloudCurl2D(wUv * 1.35f, tMorph * 0.65f) * 0.14f) : 0.0f.xx;
+    const float2 curl2 = detail ? (cloudCurl2D(wUv * 2.85f + curl1 * 0.55f, tMorph * 1.15f) * 0.06f) : 0.0f.xx;
+    const float2 curlW = clamp(curl1 + curl2, -0.22f.xx, 0.22f.xx);
+    const float wCov = rawCloudConvectiveField(pa.xy + curlW * 12000.0f, simTimeV);
     const float wConv = saturate(cNoise(float3(wUv * 1.55f + 19.3f + curlW * 0.5f, 5.1f + tMorph * 0.5f)) * 0.72f + stormType * 0.45f);
     const float topCap = lerp(0.46f, 0.97f, wConv);
     // Flat Lifting Condensation Level (LCL) base (0..0.062) + billowing convective thermal towers + cumulonimbus anvil spread:

@@ -39,6 +39,7 @@ int RunFloraEngineTests(void (*checkFn)(bool, const char*));
 int RunWeatherSimTests();
 int RunEsmWorldLoaderTests(void (*checkFn)(bool, const char*));
 int RunEsmModelResolverTests(void (*checkFn)(bool, const char*));
+int RunTamrielStreamerTests(void (*checkFn)(bool, const char*));
 int RunBsaArchiveTests(void (*checkFn)(bool, const char*));
 int RunNifLoaderTests(void (*checkFn)(bool, const char*));
 int RunDdsDecoderTests(void (*checkFn)(bool, const char*));
@@ -60,6 +61,7 @@ int RunCombatImpactTests(void (*checkFn)(bool, const char*));
 int RunEconomyLedgerTests(void (*checkFn)(bool, const char*));
 int RunMovementCombatTests(void (*checkFn)(bool, const char*));
 int RunLiveConfigTests(void (*checkFn)(bool, const char*));
+int RunEncounterBalanceTests(void (*checkFn)(bool, const char*));
 }
 namespace raw::core {
 int RunCoreRuntimeTests(void (*checkFn)(bool, const char*));
@@ -1026,8 +1028,10 @@ int main() {
     raw::rt::RunEconomyLedgerTests(Check);
     raw::rt::RunMovementCombatTests(Check);
     raw::rt::RunLiveConfigTests(Check);
+    raw::rt::RunEncounterBalanceTests(Check);
     raw::worldgen::RunEsmWorldLoaderTests(Check);
     raw::worldgen::RunEsmModelResolverTests(Check);
+    raw::worldgen::RunTamrielStreamerTests(Check);
     raw::worldgen::RunBsaArchiveTests(Check);
     raw::worldgen::RunNifLoaderTests(Check);
     raw::worldgen::RunDdsDecoderTests(Check);

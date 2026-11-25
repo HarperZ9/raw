@@ -22,6 +22,7 @@
 #include <thread>
 
 #include "ProxyAPI.h"
+#include "rt_audio_bridge.h"
 #include "rt_callgraph.h"
 #include "rt_combat_ai.h"
 #include "rt_combat_impact.h"
@@ -131,6 +132,7 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     }
     raw::rt::MovementCombatOnTick();
     raw::rt::LiveConfigOnPresent([](const char* msg) { Log("%s", msg); });
+    raw::rt::AudioBridgeOnPresent();
     {
         static uint32_t s_liveLogTick = 0;
         if ((++s_liveLogTick % 300u) == 150u) {
@@ -184,6 +186,14 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
                         mg.landPoolActive, mg.landPoolFree, mg.liveGridLength,
                         static_cast<unsigned long long>(mg.workingSetMB));
                 }
+            }
+            raw::rt::AudioBridgeTelemetry ab{};
+            if (raw::rt::AudioBridgeGetTelemetry(&ab) && (ab.enabled || ab.toggleStarts > 0u)) {
+                Log("[AudioBridge] enabled=%u running=%u device=%u env=%u gain=%.2f muted=%u starts=%u stops=%u frames=%llu rms=%.4f",
+                    ab.enabled ? 1u : 0u, ab.streamRunning ? 1u : 0u, ab.deviceActive ? 1u : 0u,
+                    ab.mappedDspEnv, ab.appliedGain, ab.muted ? 1u : 0u,
+                    ab.toggleStarts, ab.toggleStops,
+                    static_cast<unsigned long long>(ab.framesRendered), ab.lastRms);
             }
         }
     }
@@ -336,6 +346,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
         Log("%s", raw::rt::MovementCombatInit(g_img).c_str());
     }
     Log("%s", raw::rt::LiveConfigInit(g_dir + "raw_engine.ini", g_out + "\\live_status_dump.txt").c_str());
+    Log("%s", raw::rt::AudioBridgeInit().c_str());
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
     if (IniInt("CallGraph", 0)) {
@@ -363,6 +374,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         std::snprintf(why, n, "%d background thread(s) running (sample or call graph); ask again when they finish", t);
         return 0;
     }
+    raw::rt::AudioBridgeShutdown();
     raw::rt::LiveConfigShutdown();
     raw::rt::MovementCombatShutdown();
     raw::rt::CombatImpactShutdown();

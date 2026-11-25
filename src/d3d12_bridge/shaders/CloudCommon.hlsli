@@ -95,13 +95,13 @@ bool cloudSpan(float3 o, float3 dir, float tMax, out float t0, out float t1) {
     return t1 > t0 + 10.0f;
 }
 
+#ifndef RAW_HAS_UNIFIED_CLOUD_SHADOW
 // Soft, 100% camera-independent rolling atmospheric cloud shadows on terrain & architecture
-// (replaces 3-step sharp camera-angle-dependent raymarch with smooth broad world-space cumulus projection!):
+// (fallback when LightingCommon.hlsli does not supply unified cloudShadowN):
 float cloudShadowN(float3 pa, uint n) {
     if (!cloudsOn() || sunDir.z <= 0.04f || clouds.w <= 0.0f) { return 1.0f; }
     const float tHit = max((clouds.y + clouds.z * 0.35f - pa.z) / max(sunDir.z, 0.18f), 0.0f);
     const float2 projXY = pa.xy + sunDir.xy * min(tHit, 180000.0f) + cloudWind.xy * camPosW.w;
-    // Broad, softly filtered 2-octave macro cumulus shadow deck (zero sharp hard-edged bands, zero camera dependency!):
     const float2 qS = projXY / 26000.0f;
     const float m0 = cNoise(float3(qS, 1.7f));
     const float m1 = cNoise(float3(qS * 2.1f + 5.3f, 3.1f));
@@ -110,3 +110,4 @@ float cloudShadowN(float3 pa, uint n) {
     return 1.0f - shadowAmt;
 }
 float cloudShadow(float3 pa) { return cloudShadowN(pa, 1u); }
+#endif

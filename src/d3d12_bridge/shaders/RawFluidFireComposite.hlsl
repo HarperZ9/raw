@@ -20,7 +20,7 @@ cbuffer FireCompCB : register(b0)
 
 Texture2D<float>    SceneDepth   : register(t0);
 Texture3D<float4>   FireThermo   : register(t1); // x=TempK, y=Fuel, z=Soot, w=BurnRate
-Texture3D<float4>   FireRadiance : register(t2); // rgb=InternalFireScatterRGB, a=OpticalExtinction
+Texture3D<float4>   FireRadiance : register(t2); // rgb=InternalFireScatterRGB, a=SunShadowTransmittance [0..1]
 RWTexture2D<float4> ColorOut     : register(u0);
 SamplerState        LinClamp     : register(s0);
 
@@ -125,14 +125,22 @@ void cs_fire_composite(uint3 dtid : SV_DispatchThreadID)
     const float jit = fireCompIgn(px, domainInvSpanW.w);
 
     const float3 Lsun = (dot(sunDir.xyz, sunDir.xyz) > 1.0e-4f) ? normalize(sunDir.xyz) : float3(0.0f, 0.0f, 1.0f);
-    const float  hgSoot = evalPhaseHG(dot(rayDir, Lsun), 0.35f);
-    const float  isInt = resScaleAndFlags.w;
-    const float3 ambFill = lerp(float3(0.06f, 0.07f, 0.09f), float3(0.035f, 0.030f, 0.026f), isInt) * max(sunCol.w, 0.35f);
-    const float3 extLight = sunCol.rgb * (sunDir.w * (1.0f - isInt * 0.85f) * (0.28f + 0.72f * hgSoot)) + ambFill;
-    const float3 sootAlbedo = float3(0.052f, 0.050f, 0.054f); // true dark charcoal carbon soot
+    // Dual-lobe Henyey-Greenstein Mie phase function (forward silver-lining peak + back-scatter billow modeling)
+    const float  cosSun = dot(rayDir, Lsun);
+    const float  hgFwd  = evalPhaseHG(cosSun, 0.62f);
+    const float  hgBack = evalPhaseHG(cosSun, -0.22f);
+    const float  hgDual = lerp(hgFwd, hgBack, 0.35f);
+    const float  isInt  = resScaleAndFlags.w;
+    const float  extSunMask = sunDir.w * (1.0f - isInt * 0.88f);
+    const float3 sunKeyCol  = sunCol.rgb * (extSunMask * (0.45f + 5.2f * hgDual));
+    const float3 ambSkyFill = lerp(float3(0.020f, 0.023f, 0.028f), float3(0.014f, 0.012f, 0.010f), isInt) * max(sunCol.w, 0.35f);
+    // Physical ash/wood-smoke single-scattering albedo: deep dark charcoal where self-shadowed (sunShadowT -> 0.03),
+    // luminous warm sunlit curls on upper sunward billows (sunShadowT -> 1.0) via Beer-Powder multi-scattering.
+    const float3 sootAlbedo = float3(0.20f, 0.185f, 0.165f);
 
     float3 accumRgb = float3(0.0f, 0.0f, 0.0f);
     float  trans = 1.0f;
+    float  accumSootOpt = 0.0f;
 
     [loop] for (uint i = 0u; i < kSteps; ++i) {
         const float t = tEnter + (float(i) + jit) * ds;
@@ -164,14 +172,22 @@ void cs_fire_composite(uint3 dtid : SV_DispatchThreadID)
             flameEmit = evalPlanckFlameRGB(tempK) * flameWeight;
         }
 
-        // 2. Beer-Lambert dark soot extinction + internal 3D Fire-to-Smoke Radiance Cascade scatter
+        // 2. Beer-Lambert dark soot extinction + directional sun self-shadowing + Beer-Powder multi-scattering
         const float sigmaSoot = soot * 0.036f;
         const float stepOpt = sigmaSoot * ds;
         const float stepTrans = exp(-stepOpt);
+        accumSootOpt += stepOpt;
 
-        // Glowing burnt-orange smoke undersides from internal 3D Radiance Cascade transitioning to dark charcoal tops
+        const float sunShadowT = saturate(rad.a);
+        // Beer-Powder multi-scattering (1 - exp(-2 * opticalDepth)): luminous sunlit upper curls, deep dark shadowed undersides
+        const float beerPowder = 1.0f - exp(-2.0f * (accumSootOpt + soot * 0.85f));
+        const float sunDirect  = pow(sunShadowT, 1.75f) * (0.55f + 1.85f * beerPowder);
+        const float sunMulti   = pow(sunShadowT, 1.45f) * 0.24f * beerPowder;
+        const float3 sunLight  = sunKeyCol * (sunDirect + sunMulti) + ambSkyFill * (0.20f + 0.80f * sunShadowT);
+
+        // Glowing burnt-orange smoke undersides from internal 3D Radiance Cascade transitioning to sunlit/charcoal tops
         const float3 internalBounce = max(rad.rgb, 0.0f.xxx) * float3(1.18f, 0.56f, 0.18f) * (0.62f * edgeFade);
-        const float3 sootScatter = sootAlbedo * extLight + internalBounce * smoothstep(0.01f, 0.22f, soot);
+        const float3 sootScatter = sootAlbedo * sunLight + internalBounce * smoothstep(0.01f, 0.22f, soot);
 
         accumRgb += trans * (flameEmit * (ds * 0.060f) + sootScatter * (1.0f - stepTrans));
         trans *= stepTrans;

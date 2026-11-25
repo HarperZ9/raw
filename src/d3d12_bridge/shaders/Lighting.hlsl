@@ -1059,6 +1059,34 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         s.n     = wRes.normal;
         s.alpha = wRes.roughness;
     }
+    // Wave 46 Rainstorm Vertical Wall Wet-Streak Sheen (100% inactive on dry days & interiors!):
+    // Animated downward-streaming rain rivulets stretched vertically along +Z drifting down at simTime * 3.8
+    // modulate vertical wall roughness (-0.24) and add subtle clearcoat water-rivulet glints.
+    float rainWallStreak = 0.0f;
+    if (!match && sunColour.w > 0.5f && weather.w > 0.20f && !isActorFeat && !isActorCloth && base != 5u && abs(s.n.z) < 0.45f && z < 2400.0f) {
+        const float3 wpRain = p + camPosW.xyz;
+        const float simTimeR = (physWorld[0].x > 1.0e-4f) ? physWorld[0].x : camPosW.w;
+        const float rainAmtW = smoothstep(0.20f, 0.72f, weather.w) * (1.0f - saturate(wet.snow * 2.5f));
+        const float vertGate = smoothstep(0.45f, 0.14f, abs(s.n.z)) * smoothstep(2400.0f, 180.0f, z);
+        // Vertically stretched meandering wet channels + downward-drifting raindrop rivulet beads (+Z drift = falling):
+        const float4 chanN = rawNoise3Grad(float3(wpRain.xy * 0.095f, wpRain.z * 0.016f + simTimeR * 0.12f));
+        const float3 rivP  = float3(wpRain.xy * 0.135f + chanN.yz * 0.42f, wpRain.z * 0.022f + simTimeR * 3.8f * 0.18f);
+        const float4 rivN  = rawNoise3Grad(rivP);
+        const float4 beadN = rawNoise3Grad(float3(wpRain.xy * 0.22f + chanN.yz * 0.35f + 7.3f, wpRain.z * 0.055f + simTimeR * 3.8f * 0.38f));
+        const float streakShape = smoothstep(0.48f, 0.84f, rivN.x * 0.65f + chanN.x * 0.35f);
+        const float beadPulse   = smoothstep(0.55f, 0.88f, beadN.x);
+        rainWallStreak = saturate((streakShape * 0.72f + streakShape * beadPulse * 0.48f) * rainAmtW * vertGate);
+        if (rainWallStreak > 0.01f) {
+            albedo  *= lerp(1.0f, 0.84f, rainWallStreak);
+            s.alpha  = clamp(s.alpha - 0.24f * rainWallStreak, 0.06f, 0.96f);
+            s.f0     = lerp(s.f0, 0.024f, rainWallStreak * 0.65f);
+            s.mask   = max(s.mask, rainWallStreak * 0.72f);
+            lobe     = true;
+            const float3 rivGrad = rivN.yzw * 0.16f + beadN.yzw * 0.10f;
+            const float3 rivTang = rivGrad - s.n * dot(rivGrad, s.n);
+            s.n = normalize(s.n + rivTang * rainWallStreak);
+        }
+    }
     // True 3D Physical Relief Decals (blood pools, static frost-creep, charred scorches & weapon cracks) +
     // 100% Static, Non-Pulsing Crystalline Glacial Ice Optical Transport (includes base==2u EnvMap ice caves!):
     float iceMask = 0.0f;
@@ -1874,9 +1902,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
         // Dual-Lobe Clearcoat GGX water film (crisp mirror-like reflections on rain-soaked roads/puddles, GTA VI storm study)
         // & oiled lacquer (low-metallic class-2 armor/leather; strictly excluded on glacial ice so ice never double-counts EnvCube!).
-        const float clearcoat = max(saturate(wet.wet * 0.85f + wet.puddle * 1.15f), ((base == 2u && iceMask < 0.08f) ? (1.0f - metallic) * 0.35f : 0.0f)) * (1.0f - saturate(iceMask * 2.0f));
+        const float clearcoat = max(max(saturate(wet.wet * 0.85f + wet.puddle * 1.15f), rainWallStreak * 0.78f), ((base == 2u && iceMask < 0.08f) ? (1.0f - metallic) * 0.35f : 0.0f)) * (1.0f - saturate(iceMask * 2.0f));
         if (clearcoat > 0.05f && !skin && base != 5u) {
-            const float ccRough = lerp(0.08f, 0.03f, saturate(wet.puddle));
+            const float ccRough = lerp(lerp(0.08f, 0.055f, rainWallStreak), 0.03f, saturate(wet.puddle));
             const float3 ccEnv = sampleLiveEnvCube(rDir, ccRough) * (0.30f + 0.70f * skyVisShaped);
             lit += evalMultiScatterIBL(float3(0.022f, 0.022f, 0.022f), ccRough, nv, ccEnv, specOcc) * (clearcoat * 0.95f);
         }
@@ -1884,6 +1912,32 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (!skin && base != 2u && base != 5u && s.alpha > 0.52f && sunDir.w > 0.5f && sunShadow > 0.05f) {
             const float rimFuzz = pow(1.0f - nv, 4.0f) * saturate((s.alpha - 0.52f) * 2.5f) * specOcc;
             lit += albedo * sunColour.rgb * (rimFuzz * sunShadow * 0.28f);
+        }
+        // Wave 46 Blizzard Alpine Spindrift (strictly gated on active snowstorms; 100% inactive on calm/dry days!):
+        // Subtle wind-advected blowing snow-dust grazing highlights whipping along exposed rocky ridges & cliff faces.
+        if (isExterior && weather.z > 0.25f && !isActorFeat && !isActorCloth && base != 5u && s.n.z < 0.65f && z < 2600.0f) {
+            const float3 wpSpin = p + camPosW.xyz;
+            const float simTimeS = (physWorld[0].x > 1.0e-4f) ? physWorld[0].x : camPosW.w;
+            const float2 windDirS = normalize(cloudWind.xy + float2(1.0f, 0.35f));
+            const float2 windPerpS = float2(-windDirS.y, windDirS.x);
+            const float windBoost = clamp(1.0f + physWorld[1].x * 0.14f, 1.0f, 2.4f);
+            const float3 spinP = float3(
+                dot(wpSpin.xy, windDirS) * 0.0085f - simTimeS * (1.85f * windBoost),
+                dot(wpSpin.xy, windPerpS) * 0.030f,
+                wpSpin.z * 0.026f - simTimeS * 0.28f);
+            const float4 sn0 = rawNoise3Grad(spinP);
+            const float4 sn1 = rawNoise3Grad(spinP * 2.15f + float3(sn0.y * 0.75f - simTimeS * 1.1f, sn0.z * 0.75f, 7.1f));
+            const float wispMask = smoothstep(0.46f, 0.86f, sn0.x * 0.58f + sn1.x * 0.42f);
+            const float stormGate = smoothstep(0.25f, 0.72f, weather.z);
+            const float distGate  = smoothstep(2600.0f, 220.0f, z);
+            const float ridgeSlope = smoothstep(-0.20f, 0.18f, s.n.z) * smoothstep(0.65f, 0.18f, s.n.z);
+            const float grazeRim   = pow(1.0f - nv, 2.8f);
+            const float windShear  = 0.45f + 0.55f * (1.0f - abs(dot(s.n.xy, windDirS)));
+            const float skyExp     = saturate(0.20f + 0.80f * skyVis);
+            const float fwdScatter = pow(saturate(dot(-s.v, sunDir.xyz) * 0.5f + 0.5f), 2.0f);
+            const float3 spinLight = amb * float3(1.12f, 1.22f, 1.36f)
+                                   + sunColour.rgb * float3(0.86f, 0.92f, 1.00f) * (0.14f + 0.42f * sunShadow * fwdScatter);
+            lit += min(spinLight, 1.65f.xxx) * (wispMask * grazeRim * ridgeSlope * windShear * stormGate * distGate * skyExp * 0.48f);
         }
         // Synchronized thunderstorm lightning overhead flash on wet surfaces & puddles during heavy rainstorms
         // (strictly gated off on frozen glaciers/ice/snow so cold regions never pulse!).
@@ -1904,14 +1958,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             lit += albedo * float3(0.06f, 0.24f, 0.19f) * (aurBounce * wet.snow * skyVis * 0.45f);
         }
         // Physical clearcoat GGX on wet water films (neutral physical water dielectric — zero rainbow oil-slick stripes!).
-        if (max(wet.wet, wet.puddle) > 0.08f && isExterior && sunShadow > 0.0f) {
+        const float wetFilmGlint = max(max(wet.wet * 0.6f, wet.puddle), rainWallStreak * 0.55f);
+        if (wetFilmGlint > 0.08f && isExterior && sunShadow > 0.0f) {
             const float3 ch = rawSafeHalfVec(s.v, sunDir.xyz, s.n);
             const float cnh = saturate(dot(s.n, ch)), ca2 = 0.0036f;
             const float cdd = max(cnh * cnh * (ca2 - 1.0f) + 1.0f, 1.0e-4f);
             const float cD = ca2 / (PI * cdd * cdd);
             const float vh = saturate(dot(s.v, ch));
             const float cF = 0.02f + 0.98f * pow(1.0f - vh, 5.0f);
-            lit += min(sunColour.rgb * (cD * cF * saturate(dot(s.n, sunDir.xyz)) * sunShadow * 0.24f), 2.2f.xxx) * max(wet.wet * 0.6f, wet.puddle);
+            lit += min(sunColour.rgb * (cD * cF * saturate(dot(s.n, sunDir.xyz)) * sunShadow * 0.24f), 2.2f.xxx) * wetFilmGlint;
         }
     }
     if (!match) {

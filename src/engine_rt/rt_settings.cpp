@@ -7,6 +7,7 @@
 #include <string>
 
 #include "rt_control.h"
+#include "rt_encounter_balance.h"
 #include "rt_version.h"
 
 namespace raw::rt {
@@ -308,10 +309,8 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"fSneakDistanceAttenuationExponent", "1.55"},
         // Binary-verified 0x41CEE6: xmm10 += inCombat * fSneakCombatMod (default -0.4; negative = harder to re-hide)
         {"fSneakCombatMod", "-0.55"},
-        // True ballistic archery & zero magnetic auto-aim (replaces Archery Gameplay Overhaul / Proper Aiming):
-        {"fArrowSpeedMult", "1.38"},
-        {"fArrowGravityMult", "0.85"},
-        {"fArrowWobbleAmplitude", "0.0"},
+        // Zero magnetic auto-aim (true ballistic archery, armor mitigation & resource GMSTs applied cleanly
+        // via binary-verified ApplyEncounterBalanceGmsts below — fixes legacy fArrowSpeedMult/fArrowGravityMult units!):
         {"fAutoAimMaxDegrees", "0.0"},
         {"fAutoAimMaxDegrees3rdPerson", "0.0"},
         {"fAutoAimMaxDegreesMelee", "0.0"},
@@ -366,9 +365,10 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         }
         if (SetSetting(img, refs, kv.k, kv.v)) ++applied;
     }
-    char out[160];
-    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe)",
-                  applied, sizeof(kTuning) / sizeof(kTuning[0]));
+    const std::string balMsg = ApplyEncounterBalanceGmsts(img, refs);
+    char out[320];
+    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s",
+                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str());
     return out;
 }
 
@@ -383,7 +383,7 @@ struct DynamicGmstBindings {
     float baseBarterMin = 1.35f;
     float baseBarterMax = 3.60f;
     float baseSprintDrain = 14.5f;
-    float baseArrowGravity = 0.85f;
+    float baseArrowGravity = 0.0016f;
     float baseJumpFall = 1.0f;
 } g_dynGmsts;
 }  // namespace
@@ -440,6 +440,7 @@ void WorldSimApplyLivePlanetaryGravity(float gravityMps2) {
 }
 
 void WorldSimRestoreDynamicSettings() {
+    RestoreEncounterBalanceGmsts();
     if (!g_dynGmsts.bound) return;
     if (g_dynGmsts.fBarterMin) *g_dynGmsts.fBarterMin = g_dynGmsts.baseBarterMin;
     if (g_dynGmsts.fBarterMax) *g_dynGmsts.fBarterMax = g_dynGmsts.baseBarterMax;

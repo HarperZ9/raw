@@ -370,6 +370,100 @@ int main()
     Check(rightSootPixels >= 20u && minRightB < kBgB - 0.08f,
           "Visible right half renders Beer-Lambert dark soot attenuation & internal fire scatter");
 
+    // Pass 2: Daytime Sunlight Volumetric Self-Shadowing & Beer-Powder Multi-Scattering Check:
+    // Re-clear ColorOut, run Composite with night sunIntensity=0 vs strong daytime sunIntensity=2.5,
+    // and compare mean RGB over the exact same smoke-billow pixel mask!
+    std::vector<uint8_t> smokeMask(size_t(W) * H, 0u);
+    auto runSunPass = [&](float sunInt, bool recordMask, double& outRightSmokeSum, uint32_t& outSmokePx, uint32_t& outLeftMod) -> bool {
+        ca->Reset();
+        cl->Reset(ca.Get(), nullptr);
+        D3D12_RESOURCE_BARRIER b0{};
+        b0.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b0.Transition = {colorOut.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET};
+        cl->ResourceBarrier(1, &b0);
+        cl->ClearRenderTargetView(rtvHeap->GetCPUDescriptorHandleForHeapStart(), bgCol, 0, nullptr);
+        b0.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        b0.Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
+        cl->ResourceBarrier(1, &b0);
+        cl->Close();
+        ID3D12CommandList* clrL[1] = {cl.Get()};
+        queue->ExecuteCommandLists(1, clrL);
+        flushQueue();
+
+        FluidCompositeParams cp2 = cp;
+        cp2.sunIntensity = sunInt;
+        if (!compHost.Composite(queue.Get(), colorOut.Get(), depthIn.Get(),
+                                fluidSim.FireThermoResource(), fluidSim.FireRadianceResource(), cp2)) {
+            return false;
+        }
+        flushQueue();
+
+        ca->Reset();
+        cl->Reset(ca.Get(), nullptr);
+        b0.Transition = {colorOut.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE};
+        cl->ResourceBarrier(1, &b0);
+        cl->CopyTextureRegion(&rbDst, 0, 0, 0, &rbSrc, nullptr);
+        cl->Close();
+        ID3D12CommandList* rbL2[1] = {cl.Get()};
+        queue->ExecuteCommandLists(1, rbL2);
+        flushQueue();
+
+        void* p2 = nullptr;
+        rb->Map(0, nullptr, &p2);
+        outRightSmokeSum = 0.0;
+        outSmokePx = 0u;
+        outLeftMod = 0u;
+        for (UINT y = 0; y < H; ++y) {
+            const uint16_t* row = reinterpret_cast<const uint16_t*>(static_cast<const uint8_t*>(p2) + size_t(y) * colorPitch);
+            for (UINT x = 0; x < W; ++x) {
+                const float r = HalfToFloat(row[x * 4u + 0u]);
+                const float g = HalfToFloat(row[x * 4u + 1u]);
+                const float b = HalfToFloat(row[x * 4u + 2u]);
+                if (x < W / 2u) {
+                    if (std::fabs(r - kBgR) + std::fabs(g - kBgG) + std::fabs(b - kBgB) > 0.01f) ++outLeftMod;
+                } else {
+                    const size_t idx = size_t(y) * W + x;
+                    if (recordMask && b < kBgB - 0.05f && r <= 1.20f) {
+                        smokeMask[idx] = 1u;
+                    }
+                    if (smokeMask[idx]) {
+                        outRightSmokeSum += double(r + g + b);
+                        ++outSmokePx;
+                    }
+                }
+            }
+        }
+        rb->Unmap(0, nullptr);
+        return true;
+    };
+
+    double smokeDarkSum = 0.0, smokeSunSum = 0.0;
+    uint32_t smokePxDark = 0u, smokePxSun = 0u;
+    uint32_t leftModDark = 0u, leftModSun = 0u;
+    const bool sunCompOk = runSunPass(0.0f, true, smokeDarkSum, smokePxDark, leftModDark) &&
+                           runSunPass(2.5f, false, smokeSunSum, smokePxSun, leftModSun);
+    uint32_t d3dErrorsAfterSun = 0u;
+    if (iq) {
+        const UINT64 nMsg2 = iq->GetNumStoredMessages();
+        for (UINT64 i = 0; i < nMsg2; ++i) {
+            SIZE_T len = 0;
+            iq->GetMessage(i, nullptr, &len);
+            std::vector<uint8_t> buf(len);
+            auto* msg = reinterpret_cast<D3D12_MESSAGE*>(buf.data());
+            if (SUCCEEDED(iq->GetMessage(i, msg, &len)) &&
+                (msg->Severity == D3D12_MESSAGE_SEVERITY_ERROR || msg->Severity == D3D12_MESSAGE_SEVERITY_CORRUPTION)) {
+                std::printf("  D3D12_DEBUG_ERR: %s\n", msg->pDescription);
+                ++d3dErrorsAfterSun;
+            }
+        }
+    }
+    const double meanSmokeLift = (smokeSunSum - smokeDarkSum) / std::max(double(smokePxDark), 1.0);
+    std::printf("       Daytime Beer-Powder Sun Scatter (%u smoke px): nightSum=%.2f -> sunlitSum=%.2f (gain=%.2fx, meanLift=+%.3f/px), leftMod=%u, d3d12Err=%u\n",
+                smokePxDark, smokeDarkSum, smokeSunSum, smokeSunSum / std::max(smokeDarkSum, 1.0e-5), meanSmokeLift, leftModDark + leftModSun, d3dErrorsAfterSun);
+    Check(sunCompOk && d3dErrorsAfterSun == 0u && leftModDark == 0u && leftModSun == 0u && smokePxDark >= 20u &&
+          smokeSunSum > smokeDarkSum * 1.04 && meanSmokeLift > 0.05,
+          "Daytime directional sun self-shadowing + Beer-Powder Mie scatter illuminates sunlit smoke billows cleanly");
+
     compHost.Shutdown();
     CloseHandle(ev);
     std::printf("=== Summary: %d passed, %d failed ===\n", g_pass, g_fail);

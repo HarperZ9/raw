@@ -32,6 +32,10 @@ struct LiveEngineConfig {
     bool  weatherStealthEnabled  = true;
     bool  thermalSurvivalEnabled = true;
 
+    // [Audio]
+    bool  liveAudioAmbience      = false;   // Opt-in live 48kHz WASAPI FDN-8 ambient soundscape (0/1, default 0)
+    float liveAudioGain          = 0.22f;   // [0.0 .. 0.50] master ambient gain
+
     // [Diagnostics]
     uint32_t statusDumpHotkeyVK      = 121u;  // VK_F10 (0x79)
     uint32_t hotReloadIntervalFrames = 60u;   // [10 .. 600] frames

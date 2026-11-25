@@ -12,6 +12,9 @@
 #include <mutex>
 #include <sstream>
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 
 #ifndef RAW_SIM_PURE_TEST
@@ -128,6 +131,7 @@ void ClampLiveEngineConfig(LiveEngineConfig& cfg) {
     cfg.hitstopScale           = ClampFinite(cfg.hitstopScale,      0.0f,   2.0f, def.hitstopScale);
     cfg.xpbdWindScale          = ClampFinite(cfg.xpbdWindScale,     0.0f,   3.0f, def.xpbdWindScale);
     cfg.fovBreathScale         = ClampFinite(cfg.fovBreathScale,    0.0f,   2.5f, def.fovBreathScale);
+    cfg.liveAudioGain          = ClampFinite(cfg.liveAudioGain,     0.0f,   0.50f, def.liveAudioGain);
     if (cfg.statusDumpHotkeyVK != 0u) {
         cfg.statusDumpHotkeyVK = std::clamp(cfg.statusDumpHotkeyVK, 0x08u, 0xFEu);
     }
@@ -140,7 +144,7 @@ std::string FormatDefaultLiveConfigIni(const LiveEngineConfig& inCfg) {
     std::ostringstream os;
     char fbuf[32];
     auto fmtF = [&](float v, int prec = 1) -> const char* {
-        std::snprintf(fbuf, sizeof fbuf, prec == 0 ? "%.0f" : "%.1f", v);
+        std::snprintf(fbuf, sizeof fbuf, prec == 0 ? "%.0f" : (prec == 2 ? "%.2f" : "%.1f"), v);
         return fbuf;
     };
 
@@ -181,6 +185,11 @@ std::string FormatDefaultLiveConfigIni(const LiveEngineConfig& inCfg) {
        << "WeatherStealthEnabled=" << (c.weatherStealthEnabled ? 1 : 0) << "\n"
        << "; Enable/disable thermal exposure & hypothermia stamina survival (0/1)\n"
        << "ThermalSurvivalEnabled=" << (c.thermalSurvivalEnabled ? 1 : 0) << "\n\n"
+       << "[Audio]\n"
+       << "; Opt-in live 48kHz WASAPI FDN-8 ambient weather/fire/water soundscape (0/1, default 0)\n"
+       << "LiveAudioAmbience=" << (c.liveAudioAmbience ? 1 : 0) << "\n"
+       << "; Master gain for live procedural ambience (0.00..0.50, default 0.22)\n"
+       << "LiveAudioGain=" << fmtF(c.liveAudioGain, 2) << "\n\n"
        << "[Diagnostics]\n"
        << "; Virtual-key code for live status dump (default 121 = VK_F10; 0 disables)\n"
        << "StatusDumpHotkeyVK=" << c.statusDumpHotkeyVK << "\n"
@@ -248,6 +257,10 @@ bool ParseLiveConfigIni(const std::string& iniText, LiveEngineConfig& outCfg) {
             else if (key == "livingeconomyenabled" && ParseBoolVal(val, b)) cfg.livingEconomyEnabled = b;
             else if (key == "weatherstealthenabled" && ParseBoolVal(val, b)) cfg.weatherStealthEnabled = b;
             else if (key == "thermalsurvivalenabled" && ParseBoolVal(val, b)) cfg.thermalSurvivalEnabled = b;
+        }
+        if (section.empty() || section == "audio") {
+            if (key == "liveaudioambience" && ParseBoolVal(val, b))       cfg.liveAudioAmbience = b;
+            else if (key == "liveaudiogain" && ParseFloatVal(val, f))     cfg.liveAudioGain = f;
         }
         if (section.empty() || section == "diagnostics") {
             if (key == "statusdumphotkeyvk" && ParseUintVal(val, u))      cfg.statusDumpHotkeyVK = u;
@@ -364,9 +377,13 @@ std::string FormatLiveStatusDump(const LiveStatusDumpData& d) {
                   d.config.fovBreathEnabled ? 1u : 0u, d.config.fovBreathScale);
     os << buf;
     std::snprintf(buf, sizeof buf,
-                  "  World   : TfcLodGuard=%u LivingEconomy=%u WeatherStealth=%u ThermalSurvival=%u\n\n",
+                  "  World   : TfcLodGuard=%u LivingEconomy=%u WeatherStealth=%u ThermalSurvival=%u\n",
                   d.config.tfcLodVoidGuard ? 1u : 0u, d.config.livingEconomyEnabled ? 1u : 0u,
                   d.config.weatherStealthEnabled ? 1u : 0u, d.config.thermalSurvivalEnabled ? 1u : 0u);
+    os << buf;
+    std::snprintf(buf, sizeof buf,
+                  "  Audio   : LiveAmbience=%u LiveGain=%.2f\n\n",
+                  d.config.liveAudioAmbience ? 1u : 0u, d.config.liveAudioGain);
     os << buf;
 
     os << "[Skeleton IK & 240Hz XPBD Soft-Body]\n";

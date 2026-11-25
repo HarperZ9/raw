@@ -47,6 +47,10 @@ int RunDestructionEngineTests(void (*checkFn)(bool, const char*));
 }
 namespace raw::audio {
 int RunAudioDspTests(void (*checkFn)(bool, const char*));
+int RunAudioOutputTests(void (*checkFn)(bool, const char*));
+}
+namespace raw::materials {
+int RunTextureForgeTests(void (*checkFn)(bool, const char*));
 }
 namespace raw::rt {
 int RunSkeletonPhysicsTests(void (*checkFn)(bool, const char*));
@@ -1013,6 +1017,7 @@ int main() {
               "wave38_ce_rebuild_arch_manifest_and_seh_fail_closed");
     }
     raw::materials::RunRawMaterialsTests(Check);
+    raw::materials::RunTextureForgeTests(Check);
     raw::assets::RunRawAssetsTests(Check);
     raw::rt::RunSkeletonPhysicsTests(Check);
     raw::rt::RunGameplayMechanicsTests(Check);
@@ -1029,6 +1034,7 @@ int main() {
     raw::worldgen::RunHydrologyGenTests(Check);
     raw::worldgen::RunDestructionEngineTests(Check);
     raw::audio::RunAudioDspTests(Check);
+    raw::audio::RunAudioOutputTests(Check);
     raw::core::RunCoreRuntimeTests(Check);
     raw::pipeline::RunPipelineForgeTests(Check);
     std::printf("ce_runtime_check: %d passed, %d failed\n", g_pass, g_fail);

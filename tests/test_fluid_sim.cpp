@@ -449,13 +449,16 @@ void TestSweWaveSpeedCflAndConservation()
 // ----------------------------------------------------------------------------
 struct GpuTestRig {
     ComPtr<ID3D12Device>              dev;
+    ComPtr<ID3D12InfoQueue>           infoQueue;
     ComPtr<ID3D12CommandQueue>        queue;
     ComPtr<ID3D12CommandAllocator>    alloc;
     ComPtr<ID3D12GraphicsCommandList> cmd;
     ComPtr<ID3D12Fence>               fence;
     HANDLE                            fenceEvent = nullptr;
     uint64_t                          fenceVal   = 0;
+    uint64_t                          tsFreqHz   = 0;
     bool                              isWarp     = false;
+    bool                              debugLayer = false;
 
     ~GpuTestRig()
     {
@@ -467,6 +470,12 @@ struct GpuTestRig {
 
     bool Init(bool preferWarp)
     {
+        ComPtr<ID3D12Debug> dbg;
+        if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&dbg)))) {
+            dbg->EnableDebugLayer();
+            debugLayer = true;
+        }
+
         ComPtr<IDXGIFactory4> factory;
         if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
             return false;
@@ -490,6 +499,10 @@ struct GpuTestRig {
             isWarp = true;
         }
 
+        if (debugLayer) {
+            dev.As(&infoQueue);
+        }
+
         D3D12_COMMAND_QUEUE_DESC qd{};
         qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
         if (FAILED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&queue))) ||
@@ -498,9 +511,33 @@ struct GpuTestRig {
             FAILED(dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)))) {
             return false;
         }
+        queue->GetTimestampFrequency(&tsFreqHz);
         cmd->Close();
         fenceEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         return fenceEvent != nullptr;
+    }
+
+    uint32_t CountDebugErrors()
+    {
+        if (!infoQueue) return 0u;
+        uint32_t errCount = 0u;
+        const UINT64 n = infoQueue->GetNumStoredMessagesAllowedByRetrievalFilter();
+        for (UINT64 i = 0; i < n; ++i) {
+            SIZE_T len = 0;
+            infoQueue->GetMessage(i, nullptr, &len);
+            if (len == 0) continue;
+            std::vector<uint8_t> buf(len);
+            auto* msg = reinterpret_cast<D3D12_MESSAGE*>(buf.data());
+            if (SUCCEEDED(infoQueue->GetMessage(i, msg, &len))) {
+                if (msg->Severity == D3D12_MESSAGE_SEVERITY_CORRUPTION ||
+                    msg->Severity == D3D12_MESSAGE_SEVERITY_ERROR) {
+                    std::printf("       [D3D12 ERROR] %s\n", msg->pDescription ? msg->pDescription : "(null)");
+                    ++errCount;
+                }
+            }
+        }
+        infoQueue->ClearStoredMessages();
+        return errCount;
     }
 
     bool FlushAndWait()
@@ -612,7 +649,10 @@ void TestDx12LiveGpuSolvers(bool preferWarp)
         Check(false, "DX12 device creation (hardware or WARP) succeeded");
         return;
     }
-    std::printf("       DX12 test adapter: %s\n", rig.isWarp ? "WARP software rasterizer" : "Hardware GPU");
+    std::printf("       DX12 test adapter: %s | DebugLayer: %s | tsFreq=%llu Hz\n",
+                rig.isWarp ? "WARP software rasterizer" : "Hardware GPU",
+                rig.debugLayer ? "ON" : "OFF",
+                static_cast<unsigned long long>(rig.tsFreqHz));
 
     RawFluidSimHost host;
     std::string err;
@@ -622,6 +662,9 @@ void TestDx12LiveGpuSolvers(bool preferWarp)
     }
     Check(initOk && host.Ready(), "RawFluidSimHost::Init created all 10 SM 6.6 compute PSOs, 3D/2D textures & heaps");
     if (!initOk) return;
+
+    host.SetTimestampFrequency(rig.tsFreqHz);
+    host.SetTargetBudgetMs(rig.isWarp ? 2000.0f : 1.2f);
 
     Check(host.FireThermoSrv().ptr != 0 && host.FireRadianceSrv().ptr != 0 &&
           host.WaterStateSrv().ptr != 0 && host.WaterNormalSrv().ptr != 0,
@@ -807,6 +850,44 @@ void TestDx12LiveGpuSolvers(bool preferWarp)
         Check(normalsUnit && maxNormTilt > 0.005f,
               "GPU WaterNormal outputs valid unit-length curl-free Z-up normals with active wave slope");
     }
+
+    // --- 5c) Hardware GPU Timestamp Profiling & Adaptive Jacobi Budget [4..8] ---
+    const FluidGpuTimings baseT = host.GetLastTimings();
+    std::printf("       GPU Fluid Timings (baseline): valid=%d fireStepMs=%.4f ms | waterStepMs=%.4f ms | activePressureIters=%u\n",
+                baseT.valid ? 1 : 0, baseT.fireStepMs, baseT.waterStepMs, baseT.activePressureIters);
+    Check(baseT.valid && std::isfinite(baseT.fireStepMs) && baseT.fireStepMs >= 0.0f &&
+          std::isfinite(baseT.waterStepMs) && baseT.waterStepMs >= 0.0f,
+          "GPU timestamp query ring harvested finite non-negative fireStepMs & waterStepMs");
+    Check(baseT.activePressureIters >= 4u && baseT.activePressureIters <= 8u,
+          "Baseline adaptive Jacobi iteration count stays cleanly within [4..8]");
+
+    // Tight budget stress test -> must step down smoothly to floor 4 (and never below 4)
+    host.SetTargetBudgetMs(0.0001f);
+    for (int f = 0; f < 6; ++f) {
+        fp.timeSec += fp.dt;
+        if (!rig.BeginFrame()) break;
+        host.StepFire(rig.cmd.Get(), fp);
+        if (!rig.FlushAndWait()) break;
+    }
+    const FluidGpuTimings tightT = host.GetLastTimings();
+
+    // Generous budget recovery -> must step back up smoothly to full 8 (and never above 8)
+    host.SetTargetBudgetMs(2500.0f);
+    for (int f = 0; f < 8; ++f) {
+        fp.timeSec += fp.dt;
+        if (!rig.BeginFrame()) break;
+        host.StepFire(rig.cmd.Get(), fp);
+        if (!rig.FlushAndWait()) break;
+    }
+    const FluidGpuTimings recovT = host.GetLastTimings();
+    std::printf("       Adaptive Jacobi budget: tightBudgetIters=%u -> recoveredBudgetIters=%u (fire=%.4f ms)\n",
+                tightT.activePressureIters, recovT.activePressureIters, recovT.fireStepMs);
+    Check(tightT.activePressureIters == 4u && recovT.activePressureIters == 8u,
+          "Adaptive Jacobi budget drops smoothly to 4 under pressure and recovers to 8 with headroom");
+
+    const uint32_t d3d12Errors = rig.CountDebugErrors();
+    std::printf("       D3D12 Debug Layer errors: %u\n", d3d12Errors);
+    Check(d3d12Errors == 0u, "D3D12 Debug Layer reported 0 errors/corruptions across Fluid Sim");
 }
 
 } // namespace

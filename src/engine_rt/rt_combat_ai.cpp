@@ -1081,6 +1081,48 @@ float EvaluateTacticalAiBashChance(const TacticalAiChanceInput& in) {
     return std::clamp(c, 0.0f, 0.88f);
 }
 
+// Wave 45: Directional Flanking Angle & Low-HP Morale Combat AI Modifier (compiled in both raw_engine.dll and tests).
+// Computes 2D relative bearing between attacker XY and target XY + Skyrim heading yaw (angleZ at TESObjectREFR+0x4C,
+// forward = (sin(yaw), cos(yaw))):
+//   - Flanking/rear bearing (dot < 0.25): +22% aggressive attack pressure (attackMult = 1.22)
+//   - Low-HP morale (< 0.30): cautious defensive posture (+28% block, -20% reckless attack)
+struct FlankingMoraleResult {
+    float dotFacing  = 1.0f;
+    float attackMult = 1.0f;
+    float blockAdd   = 0.0f;
+    bool  isFlanking = false;
+    bool  lowMorale  = false;
+};
+
+FlankingMoraleResult EvaluateFlankingAndMorale(const float attackerPosXY[2],
+                                               const float targetPosXY[2],
+                                               float targetYawRad,
+                                               float attackerHpFrac) {
+    FlankingMoraleResult out{};
+    if (attackerPosXY && targetPosXY && std::isfinite(targetYawRad)) {
+        const float dx = attackerPosXY[0] - targetPosXY[0];
+        const float dy = attackerPosXY[1] - targetPosXY[1];
+        const float len = std::sqrt(dx * dx + dy * dy);
+        if (len > 1.0e-3f) {
+            // Skyrim heading angleZ=0 faces +Y (North), clockwise toward +X (East): fwd = (sin(yaw), cos(yaw)).
+            const float fwdX = std::sin(targetYawRad);
+            const float fwdY = std::cos(targetYawRad);
+            out.dotFacing = std::clamp((dx / len) * fwdX + (dy / len) * fwdY, -1.0f, 1.0f);
+            if (out.dotFacing < 0.25f) {
+                out.isFlanking = true;
+                out.attackMult *= 1.22f;
+            }
+        }
+    }
+    const float hp = std::isfinite(attackerHpFrac) ? std::clamp(attackerHpFrac, 0.0f, 1.0f) : 1.0f;
+    if (hp < 0.30f) {
+        out.lowMorale = true;
+        out.attackMult *= 0.80f;
+        out.blockAdd   += 0.28f;
+    }
+    return out;
+}
+
 BarterEconomyGmsts EvaluateRegionalBarterEconomy(const BarterEconomyInput& in) {
     BarterEconomyGmsts out{};
     const int month = std::clamp(static_cast<int>(std::floor(in.gameMonth0_11)), 0, 11);
@@ -1276,6 +1318,19 @@ static bool SehReadActorLocation(const uint8_t* actor, float outPos[3]) {
         outPos[1] = *reinterpret_cast<const float*>(actor + 0x58);
         outPos[2] = *reinterpret_cast<const float*>(actor + 0x5C);
         return std::isfinite(outPos[0]) && std::isfinite(outPos[1]) && std::isfinite(outPos[2]);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static bool SehReadActorYawZ(const uint8_t* actor, float* outYawRad) {
+    if (!actor || !outYawRad) return false;
+    __try {
+        // TESObjectREFR::data.angle.z (+0x4C) in radians
+        const float y = *reinterpret_cast<const float*>(actor + 0x4C);
+        if (!std::isfinite(y)) return false;
+        *outYawRad = y;
+        return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
@@ -1499,7 +1554,18 @@ static float HookCombatAttackChance(void* actor, void* target) {
     const uintptr_t hash = (reinterpret_cast<uintptr_t>(actor) >> 4) % 3u;
     in.role = (hash == 0u) ? TacticalRole::Vanguard : (hash == 1u ? TacticalRole::FlankerLeft : TacticalRole::FlankerRight);
     in.selfPoisePressured = (g_gp.squadAction.load(std::memory_order_relaxed) == static_cast<uint8_t>(TacticalAction::GuardParry));
-    return EvaluateTacticalAiAttackChance(in);
+    float chance = EvaluateTacticalAiAttackChance(in);
+
+    // Wave 45: Live directional flanking bearing (dot < 0.25 -> +22% aggression) & low-HP morale (< 0.30 -> -20% attack):
+    float atkPos[3]{}, tgtPos[3]{}, tgtYaw = 0.0f;
+    const uint8_t* tgtPtr = target ? static_cast<const uint8_t*>(target) : SehGetPlayerPtr();
+    const bool hasGeo = SehReadActorLocation(static_cast<const uint8_t*>(actor), atkPos) &&
+                        tgtPtr != nullptr && SehReadActorLocation(tgtPtr, tgtPos) &&
+                        SehReadActorYawZ(tgtPtr, &tgtYaw);
+    const FlankingMoraleResult fm = EvaluateFlankingAndMorale(
+        hasGeo ? atkPos : nullptr, hasGeo ? tgtPos : nullptr, tgtYaw, in.hpFrac);
+    chance = std::clamp(chance * fm.attackMult, 0.04f, 0.96f);
+    return chance;
 }
 
 static float HookCombatBlockChance(void* actor) {
@@ -1516,7 +1582,10 @@ static float HookCombatBlockChance(void* actor) {
     in.hpFrac             = hp / std::max(hpMax, 1.0f);
     in.staminaFrac        = stam / std::max(stamMax, 1.0f);
     in.selfPoisePressured = (g_gp.squadAction.load(std::memory_order_relaxed) == static_cast<uint8_t>(TacticalAction::GuardParry));
-    return EvaluateTacticalAiBlockChance(in);
+    float chance = EvaluateTacticalAiBlockChance(in);
+    const FlankingMoraleResult fm = EvaluateFlankingAndMorale(nullptr, nullptr, 0.0f, in.hpFrac);
+    chance = std::clamp(chance + fm.blockAdd, 0.0f, 0.94f);
+    return chance;
 }
 
 static float HookCombatBashChance(void* actor, void* target) {

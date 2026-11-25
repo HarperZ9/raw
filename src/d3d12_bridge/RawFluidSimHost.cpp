@@ -410,6 +410,30 @@ bool RawFluidSimHost::InitWithBlobs(ID3D12Device* dev, const FluidShaderBlobs& b
         return false;
     }
 
+    // 6b) Optional 4-frame ring GPU timestamp query heap (4 queries/frame: FireStart/End, WaterStart/End)
+    {
+        constexpr uint32_t kTotalQueries = kCbRingCount * 4u;
+        D3D12_QUERY_HEAP_DESC qd{};
+        qd.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+        qd.Count = kTotalQueries;
+        D3D12_HEAP_PROPERTIES hpRb{};
+        hpRb.Type = D3D12_HEAP_TYPE_READBACK;
+        D3D12_RESOURCE_DESC rbd{};
+        rbd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        rbd.Width = static_cast<UINT64>(kTotalQueries) * sizeof(uint64_t);
+        rbd.Height = 1;
+        rbd.DepthOrArraySize = 1;
+        rbd.MipLevels = 1;
+        rbd.SampleDesc.Count = 1;
+        rbd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (FAILED(dev->CreateQueryHeap(&qd, IID_PPV_ARGS(&m_tsHeap))) ||
+            FAILED(dev->CreateCommittedResource(&hpRb, D3D12_HEAP_FLAG_NONE, &rbd,
+                                                D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&m_tsReadback)))) {
+            m_tsHeap.Reset();
+            m_tsReadback.Reset();
+        }
+    }
+
     // 7) Populate static descriptor tables cleanly (null descriptors in unused slots prevent D3D12 state hazards)
     WriteSrv3D(dev, m_fireThermo[0].Get(), kFmtRgba16, CpuAt(kSlotExtFireThermo0));
     WriteSrv3D(dev, m_fireThermo[1].Get(), kFmtRgba16, CpuAt(kSlotExtFireThermo1));
@@ -543,15 +567,79 @@ D3D12_GPU_DESCRIPTOR_HANDLE RawFluidSimHost::GpuAt(uint32_t slot) const
     return h;
 }
 
+void RawFluidSimHost::SetTargetBudgetMs(float maxFireMs)
+{
+    m_targetBudgetMs = (maxFireMs > 0.0f) ? maxFireMs : 0.0f;
+    m_headroomStreak = 0u;
+}
+
+bool RawFluidSimHost::HarvestTimestampPair(uint32_t queryStartIdx, float& outMs) const
+{
+    if (!m_tsReadback || m_tsFreqHz == 0u) {
+        return false;
+    }
+    const SIZE_T byteOff = static_cast<SIZE_T>(queryStartIdx) * sizeof(uint64_t);
+    const D3D12_RANGE rr{byteOff, byteOff + 2u * sizeof(uint64_t)};
+    void* ptr = nullptr;
+    if (FAILED(m_tsReadback->Map(0, &rr, &ptr))) {
+        return false;
+    }
+    const auto* ticks = reinterpret_cast<const uint64_t*>(static_cast<const uint8_t*>(ptr) + byteOff);
+    const uint64_t t0 = ticks[0];
+    const uint64_t t1 = ticks[1];
+    const D3D12_RANGE wr{0, 0};
+    m_tsReadback->Unmap(0, &wr);
+    if (t1 < t0) {
+        return false;
+    }
+    const double ms = static_cast<double>(t1 - t0) * 1000.0 / static_cast<double>(m_tsFreqHz);
+    if (!std::isfinite(ms) || ms < 0.0 || ms > 5000.0) {
+        return false;
+    }
+    outMs = static_cast<float>(ms);
+    return true;
+}
+
 void RawFluidSimHost::StepFire(ID3D12GraphicsCommandList* cmd, const FluidFireParams& params)
 {
     if (!m_ready || !cmd || !m_fireCbMapped) {
         return;
     }
 
+    // Non-blocking harvest of 3-frames-old retired Fire timestamp slot + adaptive Jacobi budget [4..8]
+    if (m_fireFrameIdx >= (kCbRingCount - 1u)) {
+        const uint32_t retiredSlot = (m_fireFrameIdx - (kCbRingCount - 1u)) % kCbRingCount;
+        float measuredMs = 0.0f;
+        if (HarvestTimestampPair(retiredSlot * 4u + 0u, measuredMs)) {
+            m_timings.fireStepMs = measuredMs;
+            m_timings.valid = true;
+            if (m_targetBudgetMs > 0.0f) {
+                if (measuredMs > m_targetBudgetMs * 1.05f) {
+                    m_headroomStreak = 0u;
+                    if (m_activePressureIters > 4u) {
+                        m_activePressureIters -= 2u;
+                    }
+                } else if (measuredMs < m_targetBudgetMs * 0.80f) {
+                    ++m_headroomStreak;
+                    if (m_headroomStreak >= 2u && m_activePressureIters < 8u) {
+                        m_activePressureIters += 2u;
+                        m_headroomStreak = 0u;
+                    }
+                } else {
+                    m_headroomStreak = 0u;
+                }
+            }
+            m_timings.activePressureIters = m_activePressureIters;
+        }
+    }
+
     const uint32_t p = m_fireParity;
     const uint32_t q = 1u - p;
-    const uint32_t jacobiCount = std::clamp((params.jacobiIterations + 1u) & ~1u, 2u, 32u); // enforce even count
+    const uint32_t reqEven = std::clamp((params.jacobiIterations + 1u) & ~1u, 2u, 32u);
+    const uint32_t jacobiCount = (m_targetBudgetMs > 0.0f && reqEven <= 8u)
+        ? std::clamp(m_activePressureIters, 4u, 8u)
+        : reqEven;
+    m_timings.activePressureIters = jacobiCount;
     const float cellSize = std::max(params.cellSize, 0.05f);
 
     GpuFireSimCB cb{};
@@ -627,6 +715,10 @@ void RawFluidSimHost::StepFire(ID3D12GraphicsCommandList* cmd, const FluidFirePa
     const size_t cbOffset = static_cast<size_t>(ringIdx) * sizeof(GpuFireSimCB);
     std::memcpy(m_fireCbMapped + cbOffset, &cb, sizeof(cb));
     const D3D12_GPU_VIRTUAL_ADDRESS cbGpu = m_fireCbBuf->GetGPUVirtualAddress() + cbOffset;
+
+    if (m_tsHeap) {
+        cmd->EndQuery(m_tsHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, ringIdx * 4u + 0u);
+    }
 
     ID3D12DescriptorHeap* heaps[1] = {m_heap.Get()};
     cmd->SetDescriptorHeaps(1, heaps);
@@ -717,6 +809,12 @@ void RawFluidSimHost::StepFire(ID3D12GraphicsCommandList* cmd, const FluidFirePa
     Transition(cmd, m_fireVel[q],   kAllSrv);
     Transition(cmd, m_fireRad[q],   kAllSrv);
 
+    if (m_tsHeap && m_tsReadback) {
+        cmd->EndQuery(m_tsHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, ringIdx * 4u + 1u);
+        cmd->ResolveQueryData(m_tsHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, ringIdx * 4u + 0u, 2u,
+                              m_tsReadback.Get(), static_cast<UINT64>(ringIdx * 4u + 0u) * sizeof(uint64_t));
+    }
+
     m_fireDomain.originXYZ[0] = params.domainOriginW[0];
     m_fireDomain.originXYZ[1] = params.domainOriginW[1];
     m_fireDomain.originXYZ[2] = params.domainOriginW[2];
@@ -733,6 +831,16 @@ void RawFluidSimHost::StepWater(ID3D12GraphicsCommandList* cmd, const FluidWater
 {
     if (!m_ready || !cmd || !m_waterCbMapped) {
         return;
+    }
+
+    // Non-blocking harvest of 3-frames-old retired Water timestamp slot
+    if (m_waterFrameIdx >= (kCbRingCount - 1u)) {
+        const uint32_t retiredSlot = (m_waterFrameIdx - (kCbRingCount - 1u)) % kCbRingCount;
+        float measuredMs = 0.0f;
+        if (HarvestTimestampPair(retiredSlot * 4u + 2u, measuredMs)) {
+            m_timings.waterStepMs = measuredMs;
+            m_timings.valid = true;
+        }
     }
 
     const float dx = std::max(params.cellSize, 0.25f);
@@ -792,6 +900,10 @@ void RawFluidSimHost::StepWater(ID3D12GraphicsCommandList* cmd, const FluidWater
     std::memcpy(m_waterCbMapped + cbOffset, &cb, sizeof(cb));
     const D3D12_GPU_VIRTUAL_ADDRESS cbGpu = m_waterCbBuf->GetGPUVirtualAddress() + cbOffset;
 
+    if (m_tsHeap) {
+        cmd->EndQuery(m_tsHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, ringIdx * 4u + 2u);
+    }
+
     ID3D12DescriptorHeap* heaps[1] = {m_heap.Get()};
     cmd->SetDescriptorHeaps(1, heaps);
     cmd->SetComputeRootSignature(m_waterRoot.Get());
@@ -827,6 +939,12 @@ void RawFluidSimHost::StepWater(ID3D12GraphicsCommandList* cmd, const FluidWater
 
     // Leave WaterState and WaterNormal in NON_PIXEL_SHADER_RESOURCE so RtWater (Direct or Async Compute) binds with 0 barrier hazards
     Transition(cmd, m_waterNormal, kCsSrv);
+
+    if (m_tsHeap && m_tsReadback) {
+        cmd->EndQuery(m_tsHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, ringIdx * 4u + 3u);
+        cmd->ResolveQueryData(m_tsHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, ringIdx * 4u + 2u, 2u,
+                              m_tsReadback.Get(), static_cast<UINT64>(ringIdx * 4u + 2u) * sizeof(uint64_t));
+    }
 
     const float waterSpan = static_cast<float>(kWaterGridRes) * dx;
     m_waterDomain.originXY[0] = params.camPosXY[0] - 0.5f * waterSpan;

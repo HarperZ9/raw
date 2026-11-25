@@ -461,6 +461,92 @@ float3 evalUnderwaterVolumetrics(float3 litCol, float3 eye, float3 w, float dist
     return max(baseUw + min(shaftAcc, 0.85f.xxx) + moteAcc + bubAdd, 0.0f.xxx);
 }
 
+// Wave 45: Sub-Zero Thermal Steam Wisps ("Arctic Sea Smoke" over cold open water + Freezing Hearth Condensation Rim).
+// Strictly gated on freezing exterior air (seasonThermal0.w < -1.0C, !interior, !underwater, !celestial, d < 0.99995)
+// and strictly anchored to verified water-plane surface depth (`liveWaterZ`) or verified scene-anchored flame plumes
+// (`fireVol`) — ZERO standalone floating spheres, ZERO activation in warm weather!
+// Returns float4(steamEmitRGB, steamTransmittance).
+float4 evalSubZeroThermalSteam(
+    float3 eye, float3 w, float dist, float d, float3 pAbs,
+    float2 px, float liveWaterZ, float3 sunCol, float3 skyCol, float3 sunDirW,
+    float4 fireVol)
+{
+    const float airTempC = seasonThermal0.w;
+    if (d >= 0.99995f || airTempC >= -1.0f || dist < 18.0f || dist > 2600.0f) {
+        return float4(0.0f, 0.0f, 0.0f, 1.0f);
+    }
+
+    const float freeze01     = saturate((-airTempC - 1.0f) / 11.0f);
+    const float seaSmokeCold = saturate((-airTempC - 1.5f) / 10.5f);
+    const float distFade     = 1.0f - smoothstep(1400.0f, 2600.0f, dist);
+    const float tClock       = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
+    const float2 windSteam   = clamp(cloudWind.xy * 0.065f, -26.0f.xx, 26.0f.xx);
+    const float jit          = ign(px + float2(41.0f, 11.0f));
+
+    // Soft Mie-scattered cool water-vapor condensation radiance lit by live sun/moon & sky:
+    const float phSteam = min(phaseHG(dot(w, sunDirW), 0.55f) * 1.65f + 0.30f, 1.85f);
+    const float3 steamLit = (sunCol * (phSteam * 0.42f) + skyCol * 0.72f + float3(0.015f, 0.020f, 0.028f))
+                          * float3(0.92f, 0.96f, 1.02f);
+
+    float3 accEmit = 0.0f.xxx;
+    float T = 1.0f;
+
+    // 1) Cold-Air River / Water Surface Steam ("Arctic Sea Smoke"):
+    // Anchored strictly to verified pixels right along `liveWaterZ` (|pAbs.z - liveWaterZ| < 48u) over open water:
+    const float waterProx = 1.0f - smoothstep(26.0f, 48.0f, abs(pAbs.z - liveWaterZ));
+    // Arctic sea smoke rises from open/partially-open unfrozen rivers & leads, tapering off on solid frozen sheets:
+    const float openWater = 1.0f - smoothstep(0.18f, 0.48f, seasonThermal1.x);
+    const float waterGate = seaSmokeCold * waterProx * openWater * distFade;
+    if (waterGate > 0.01f && dist < 2200.0f) {
+        const float slabLen = min(max(dist - 16.0f, 0.0f), 150.0f);
+        const float tStart  = dist - slabLen;
+        const float ds      = slabLen * (1.0f / 6.0f);
+        const float3 advW   = float3(windSteam * tClock, tClock * 15.5f);
+        [unroll] for (int si = 0; si < 6; ++si) {
+            const float t = tStart + (float(si) + jit) * ds;
+            const float3 wp = camPosW.xyz + eye + w * t;
+            const float hW = wp.z - liveWaterZ;
+            if (hW < -4.0f || hW > 56.0f) { continue; }
+            const float hEnv = smoothstep(-4.0f, 8.0f, hW) * (1.0f - smoothstep(20.0f, 56.0f, hW));
+            const float3 sP1 = (wp - advW) * float3(0.018f, 0.018f, 0.026f);
+            const float4 sg1 = rawNoise3Grad(sP1);
+            const float3 sCurl = float3(sg1.z - sg1.w, sg1.w - sg1.y, sg1.y - sg1.z);
+            const float4 sg2 = rawNoise3Grad(sP1 * 2.35f + sCurl * 0.42f + float3(6.1f, -9.4f, -tClock * 0.55f));
+            const float wisp = smoothstep(0.40f, 0.86f, sg1.x * 0.62f + sg2.x * 0.38f) * hEnv;
+            const float sigmaW = wisp * waterGate * 0.0044f;
+            if (sigmaW > 1.0e-5f) {
+                const float stepT = exp(-sigmaW * ds);
+                // Subtle sunlit upper curl shading from analytical vertical gradient sg1.w:
+                const float curlLit = lerp(0.74f, 1.16f, saturate(sg1.w * 0.65f + 0.55f));
+                accEmit += T * (steamLit * curlLit) * (1.0f - stepT);
+                T *= stepT;
+            }
+        }
+    }
+
+    // 2) Freezing Exterior Forge / Hearth Condensation Steam Rim:
+    // Strictly coupled to verified real scene-anchored fire plumes (`fireVol`) — NEVER spawns without a real fire!
+    const float firePlumePresence = saturate((1.0f - fireVol.a) * 2.2f + max(fireVol.r, fireVol.g) * 0.45f);
+    if (firePlumePresence > 0.02f && freeze01 > 0.01f) {
+        const float outerHalo = smoothstep(0.02f, 0.28f, firePlumePresence)
+                              * (1.0f - smoothstep(0.65f, 1.45f, max(fireVol.r, fireVol.g)));
+        const float3 advH = float3(windSteam * (tClock * 1.15f), tClock * 26.0f);
+        const float3 hP = (pAbs - advH) * float3(0.024f, 0.024f, 0.020f);
+        const float4 hg1 = rawNoise3Grad(hP);
+        const float4 hg2 = rawNoise3Grad(hP * 2.25f + hg1.yzw * 0.35f + float3(11.3f, 4.7f, -tClock * 0.70f));
+        const float steamWisp = smoothstep(0.36f, 0.84f, hg1.x * 0.60f + hg2.x * 0.40f);
+        const float snowBoost = 1.0f + saturate(weather.z + seasonThermal0.x) * 0.45f;
+        const float rimAlpha = saturate(outerHalo * steamWisp * freeze01 * snowBoost * distFade * 0.24f);
+        if (rimAlpha > 0.002f) {
+            const float3 warmKiss = lerp(steamLit, float3(1.12f, 0.68f, 0.38f) * 0.42f + steamLit * 0.65f, saturate(fireVol.r * 0.55f));
+            accEmit += T * warmKiss * rimAlpha;
+            T *= (1.0f - rimAlpha * 0.65f);
+        }
+    }
+
+    return float4(min(accEmit, 0.65f.xxx), clamp(T, 0.70f, 1.0f));
+}
+
 float4 fs(float4 at : SV_Position) : SV_Target0 {
     const int3 ip = int3(at.xy, 0);
     float4 lit = Lit.Load(ip);
@@ -1039,14 +1125,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
         // Exact front-to-back Beer-Lambert composition:
         //   lit * (froxT * Tfar) + froxScat (0..42k 3D volume) + farInScat (42k..horizon, attenuated by froxT) + shafts
-        //   composed with dynamic mountain/valley weather fog, then scene-anchored 3D fire & self-shadowed soot smoke!
+        //   composed with dynamic mountain/valley weather fog, sub-zero thermal steam wisps, then scene-anchored 3D fire & smoke!
         const float3 farInScat = atmoCol * (1.0f.xxx - Tfar) * froxT;
         const float dynW = 0.52f * smoothstep(260.0f, 1800.0f, dist);
         const float dynT = lerp(1.0f, dynFog.transmittance, dynW);
         const float3 dynScat = dynFog.inscatter * (dynW * lerp(0.55f, 1.0f, froxT));
         const float3 extBase = lit.rgb * T + (froxScat * cavityTint) * pdeMistBoost + farInScat + shaftScatter * saturate(T + 0.15f) * pdeMistBoost;
-        const float3 extScene = (extBase * dynT + dynScat + precipAdd + silDiffAdd) * extSpellVol.a + extSpellVol.rgb;
-        return float4(extScene * extFireVol.a + extFireVol.rgb, lit.a);
+        float3 extScene = (extBase * dynT + dynScat + precipAdd + silDiffAdd) * extSpellVol.a + extSpellVol.rgb;
+        extScene = extScene * extFireVol.a + extFireVol.rgb;
+        if (mapScale > 0.5f && seasonThermal0.w < -1.0f) {
+            const float4 subZeroSteam = evalSubZeroThermalSteam(
+                eye, w, dist, d, camPosW.xyz + p, px, tideWaterZ,
+                uSunF, atmoCol, aSunFg, extFireVol);
+            extScene = extScene * subZeroSteam.a + subZeroSteam.rgb;
+        }
+        return float4(extScene, lit.a);
     }
     // Dungeons, Caves, Nordic Tombs, Dwemer Ruins, Blackreach & Interiors (sunColour.w < 0.5):
     // Crisp, deep-contrast interior air (eliminates milky grey Dragonsreach haze & Septimus ice-cave whiteout) + scene-anchored fire/smoke.

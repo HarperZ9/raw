@@ -23,6 +23,11 @@ struct RadianceCascadeParams {
     float skyRadianceRGB[3]  = {0.0f, 0.0f, 0.0f}; // Optional far-field ambient sky radiance
 };
 
+struct RadianceGpuTimings {
+    float giPassMs = 0.0f; // measured GPU time for 4-cascade GI (or full ExecuteScreenGI pass)
+    bool  valid    = false;
+};
+
 // Optional explicit DXIL shader bytecode bundle (for runtime loading or standalone test harnesses).
 struct RadianceShaderBlobs {
     D3D12_SHADER_BYTECODE traceMerge  = {};
@@ -85,6 +90,10 @@ public:
                          uint32_t height,
                          float giStrength = 0.16f);
 
+    // Hardware DX12 GPU timestamp profiling (4-frame ring query heap):
+    void SetTimestampFrequency(uint64_t hz) { m_tsFreqHz = hz; }
+    RadianceGpuTimings GetLastTimings() const { return m_timings; }
+
     ID3D12DescriptorHeap*       DescriptorHeap() const { return m_heap.Get(); }
     D3D12_GPU_DESCRIPTOR_HANDLE IrradianceSrv() const;
     D3D12_CPU_DESCRIPTOR_HANDLE IrradianceSrvCpu() const;
@@ -100,6 +109,7 @@ private:
     };
 
     void Transition(ID3D12GraphicsCommandList* cmd, TrackedTex& tex, D3D12_RESOURCE_STATES target);
+    bool HarvestTimestampPair(uint32_t queryStartIdx, float& outMs) const;
     D3D12_CPU_DESCRIPTOR_HANDLE CpuAt(uint32_t slot) const;
     D3D12_GPU_DESCRIPTOR_HANDLE GpuAt(uint32_t slot) const;
 
@@ -122,6 +132,14 @@ private:
     uint8_t*                               m_cbMapped = nullptr;
     uint32_t                               m_frameIdx = 0u;
     uint32_t                               m_screenFrameIdx = 0u;
+
+    // 4-frame ring GPU timestamp query heap (2 queries/frame: Start, End)
+    Microsoft::WRL::ComPtr<ID3D12QueryHeap> m_tsHeap;
+    Microsoft::WRL::ComPtr<ID3D12Resource>  m_tsReadback;
+    uint64_t                                m_tsFreqHz   = 0u;
+    uint32_t                                m_tsWriteIdx = 0u;
+    bool                                    m_inScreenGi = false;
+    RadianceGpuTimings                      m_timings{};
 };
 
 } // namespace raw::bridge

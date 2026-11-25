@@ -100,6 +100,7 @@ struct RcGpuRig {
     ComPtr<ID3D12Fence>               fence;
     HANDLE                            fenceEvent = nullptr;
     uint64_t                          fenceVal   = 0;
+    uint64_t                          tsFreqHz   = 0;
     bool                              isWarp     = false;
     bool                              debugLayer = false;
 
@@ -152,6 +153,7 @@ struct RcGpuRig {
             FAILED(dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)))) {
             return false;
         }
+        queue->GetTimestampFrequency(&tsFreqHz);
         cmd->Close();
         fenceEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         return fenceEvent != nullptr;
@@ -521,6 +523,7 @@ void RunRadianceCascadesSuite(bool preferWarp)
     Check(initOk && host.Ready() && host.IrradianceSrv().ptr != 0,
           "RawRadianceHost::Init created 256x256 atlases, irradiance map, root sig & PSOs");
     if (!initOk) return;
+    host.SetTimestampFrequency(rig.tsFreqHz);
 
     constexpr uint32_t kDim = RawRadianceHost::kAtlasRes;
     ComPtr<ID3D12Resource> sceneTex;
@@ -728,6 +731,19 @@ void RunRadianceCascadesSuite(bool preferWarp)
               "ExecuteScreenGI foreground stone pillar casts clear penumbra bounce shadow onto far wall");
         Check(std::fabs(fireDR) < 0.08f,
               "ExecuteScreenGI luminance-shoulder suppresses bright emitter self-amplification");
+
+        // Run 4 additional ExecuteScreenGI frames to fill & harvest the 4-frame timestamp ring
+        bool tsExecOk = true;
+        for (int f = 0; f < 4; ++f) {
+            if (!rig.BeginFrame()) { tsExecOk = false; break; }
+            host.ExecuteScreenGI(rig.cmd.Get(), colorTex.Get(), depthTex.Get(), kSW, kSH, 0.18f);
+            if (!rig.FlushAndWait()) { tsExecOk = false; break; }
+        }
+        const RadianceGpuTimings rcT = host.GetLastTimings();
+        std::printf("       GPU Radiance Cascades Timings (512x288 ExecuteScreenGI): valid=%d giPassMs=%.4f ms\n",
+                    rcT.valid ? 1 : 0, rcT.giPassMs);
+        Check(tsExecOk && rcT.valid && std::isfinite(rcT.giPassMs) && rcT.giPassMs >= 0.0f,
+              "RawRadianceHost 4-frame timestamp ring harvested finite non-negative giPassMs");
     }
 
     // --- Pass D: D3D12 Debug Layer Error Count ---

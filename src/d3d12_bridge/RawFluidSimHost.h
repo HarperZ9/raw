@@ -107,6 +107,13 @@ struct FluidFireDomainInfo {
     uint32_t emitterCount = 0u;                 // active verified world emitters in the last StepFire
 };
 
+struct FluidGpuTimings {
+    float    fireStepMs          = 0.0f; // measured GPU time for 3D Navier-Stokes Fire + Radiance Cascade
+    float    waterStepMs         = 0.0f; // measured GPU time for 2D SWE Water + Foam + Normals
+    uint32_t activePressureIters = 8u;   // live adaptive Jacobi iteration count clamped [4..8]
+    bool     valid               = false;
+};
+
 // Optional explicit DXIL shader bytecode bundle (for runtime loading or standalone test harnesses).
 struct FluidShaderBlobs {
     D3D12_SHADER_BYTECODE fireInject   = {};
@@ -185,6 +192,11 @@ public:
     D3D12_RESOURCE_STATES FireResourceState() const { return m_fireThermo[m_fireParity].state; }
     D3D12_RESOURCE_STATES WaterResourceState() const { return m_waterState[0].state; }
 
+    // Hardware DX12 GPU timestamp profiling & adaptive Jacobi pressure budgeting ([4..8] iters):
+    void SetTimestampFrequency(uint64_t hz) { m_tsFreqHz = hz; }
+    void SetTargetBudgetMs(float maxFireMs);
+    FluidGpuTimings GetLastTimings() const { return m_timings; }
+
     uint32_t FireFrameIndex() const { return m_fireFrameIdx; }
     uint32_t WaterFrameIndex() const { return m_waterFrameIdx; }
 
@@ -197,6 +209,7 @@ private:
 
     void Transition(ID3D12GraphicsCommandList* cmd, TrackedTex& tex, D3D12_RESOURCE_STATES target);
     void UavBarrier(ID3D12GraphicsCommandList* cmd, ID3D12Resource* res);
+    bool HarvestTimestampPair(uint32_t queryStartIdx, float& outMs) const;
     D3D12_CPU_DESCRIPTOR_HANDLE CpuAt(uint32_t slot) const;
     D3D12_GPU_DESCRIPTOR_HANDLE GpuAt(uint32_t slot) const;
 
@@ -234,6 +247,15 @@ private:
     uint8_t*                               m_fireCbMapped = nullptr;
     Microsoft::WRL::ComPtr<ID3D12Resource> m_waterCbBuf;
     uint8_t*                               m_waterCbMapped = nullptr;
+
+    // 4-frame ring GPU timestamp query heap (4 queries/frame: FireStart, FireEnd, WaterStart, WaterEnd)
+    Microsoft::WRL::ComPtr<ID3D12QueryHeap> m_tsHeap;
+    Microsoft::WRL::ComPtr<ID3D12Resource>  m_tsReadback;
+    uint64_t                                m_tsFreqHz            = 0u;
+    float                                   m_targetBudgetMs      = 1.2f;
+    uint32_t                                m_activePressureIters = kFireJacobiIters;
+    uint32_t                                m_headroomStreak      = 0u;
+    FluidGpuTimings                         m_timings{};
 
     uint32_t m_fireParity     = 0u;
     uint32_t m_fireFrameIdx   = 0u;

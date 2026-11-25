@@ -1,9 +1,15 @@
-// test_live_config.cpp: Wave 44 verification suite for Live Hot-Reloading Configuration (raw_engine.ini)
-// & F10 In-Game Runtime Diagnostics Dump (rt_live_config.h/.cpp).
+// test_live_config.cpp: Wave 44/45 verification suite for Live Hot-Reloading Configuration (raw_engine.ini),
+// F10 In-Game Runtime Diagnostics Dump, 100% live INI propagation across softbody/movement/stealth/survival,
+// Directional Flanking & Low-HP Morale Combat AI, and BSPointerHandleManager 1M Ref-Cap Watchdog!
 // Compiles standalone (default) OR links into ce_runtime_check with -DRAW_LIVE_CONFIG_NO_MAIN.
 // Original work, MIT.
 
+#include "../src/engine_rt/rt_combat_ai.h"
 #include "../src/engine_rt/rt_live_config.h"
+#include "../src/engine_rt/rt_memory_guards.h"
+#include "../src/engine_rt/rt_movement_combat.h"
+#include "../src/engine_rt/rt_softbody.h"
+#include "../src/engine_rt/rt_stealth_survival.h"
 
 #include <cmath>
 #include <cstdio>
@@ -11,10 +17,23 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include <windows.h>
 
 namespace raw::rt {
+
+struct FlankingMoraleResult {
+    float dotFacing  = 1.0f;
+    float attackMult = 1.0f;
+    float blockAdd   = 0.0f;
+    bool  isFlanking = false;
+    bool  lowMorale  = false;
+};
+FlankingMoraleResult EvaluateFlankingAndMorale(const float attackerPosXY[2],
+                                               const float targetPosXY[2],
+                                               float targetYawRad,
+                                               float attackerHpFrac);
 
 int RunLiveConfigTests(void (*checkFn)(bool, const char*) = nullptr) {
     int pass = 0, fail = 0;
@@ -53,7 +72,6 @@ int RunLiveConfigTests(void (*checkFn)(bool, const char*) = nullptr) {
             loaded.statusDumpHotkeyVK == 121u &&
             loaded.hotReloadIntervalFrames == 60u;
 
-        // Append a custom comment and confirm EnsureDefaultLiveConfigFile does NOT overwrite existing file!
         {
             std::ofstream app(iniPath, std::ios::binary | std::ios::app);
             app << "; user custom marker\n";
@@ -124,11 +142,9 @@ int RunLiveConfigTests(void (*checkFn)(bool, const char*) = nullptr) {
         LiveConfigHotReloader hr;
         hr.Init(iniPath.string(), true);
 
-        // Unchanged file must NOT trigger reload
         const bool unchanged1 = !hr.PollReload(true);
         const uint32_t count0 = hr.ReloadCount();
 
-        // Mutate file contents and bump mtime explicitly by +2 seconds so NTFS mtime changes deterministically
         {
             std::ofstream out(iniPath, std::ios::binary | std::ios::trunc);
             out << "[Combat]\nParryWindowMs=310\nHitstopScale=1.4\n[Diagnostics]\nHotReloadIntervalFrames=15\n";
@@ -142,7 +158,7 @@ int RunLiveConfigTests(void (*checkFn)(bool, const char*) = nullptr) {
             ULARGE_INTEGER uli{};
             uli.LowPart  = ft.dwLowDateTime;
             uli.HighPart = ft.dwHighDateTime;
-            uli.QuadPart += 30000000ull;  // +3 seconds
+            uli.QuadPart += 30000000ull;
             ft.dwLowDateTime  = uli.LowPart;
             ft.dwHighDateTime = uli.HighPart;
             SetFileTime(hFile, nullptr, nullptr, &ft);
@@ -213,6 +229,161 @@ int RunLiveConfigTests(void (*checkFn)(bool, const char*) = nullptr) {
             (txt.find("4E 201") != std::string::npos);
 
         check(written && hasAllSections, "f10_status_dump_completeness");
+    }
+
+    // 5. Wave 45: 100% Live INI Propagation across SoftBody, MovementCombat, Stealth & Thermal Survival (ZERO decorative keys!):
+    {
+        // A) SoftBody xpbdWindScale (0.0 vs 2.5):
+        SkeletonPhysicsSetWind(120.0f, 0.0f, 0.0f, 0.8f);
+        const TissueProfile cloakProf = DefaultTissueProfile(TissueKind::Cloak);
+        const float parentPos[3] = {100.0f, 200.0f, 50.0f};
+
+        LiveEngineConfig cfgZeroWind = DefaultLiveEngineConfig();
+        cfgZeroWind.xpbdWindScale = 0.0f;
+        SetLiveConfigSnapshot(cfgZeroWind);
+        SoftBoneState sbZero{};
+        SoftBoneOutput outZero{};
+        for (int i = 0; i < 15; ++i) outZero = StepSoftBone(sbZero, parentPos, cloakProf, 1.0f / 60.0f);
+
+        LiveEngineConfig cfgHighWind = DefaultLiveEngineConfig();
+        cfgHighWind.xpbdWindScale = 2.5f;
+        SetLiveConfigSnapshot(cfgHighWind);
+        SoftBoneState sbHigh{};
+        SoftBoneOutput outHigh{};
+        for (int i = 0; i < 15; ++i) outHigh = StepSoftBone(sbHigh, parentPos, cloakProf, 1.0f / 60.0f);
+        const bool windScaledOk = (std::fabs(outZero.localOffset[0]) < 1e-3f) && (outHigh.localOffset[0] > 0.5f);
+
+        // B) MovementCombat: dodgeIFramesEnabled, dodgeIFrameMs=400, dodgeStaminaCost=30, fovBreathEnabled & fovBreathScale=1.5:
+        LiveEngineConfig cfgNoDodge = DefaultLiveEngineConfig();
+        cfgNoDodge.dodgeIFramesEnabled = false;
+        cfgNoDodge.fovBreathEnabled    = false;
+        SetLiveConfigSnapshot(cfgNoDodge);
+        DodgeControllerState dcOff{};
+        DodgeTriggerInput di{};
+        di.nowMs = 1000ull; di.currentStamina = 100.0f; di.altEdge = true;
+        const auto rOff = StepDodgeController(dcOff, di);
+
+        FovSpringState fsOff{};
+        FovStepInput fi{};
+        fi.liveReadFovDeg = 80.0f; fi.sprinting = true; fi.dtSec = 1.0f / 60.0f;
+        const auto foOff = StepFovBreathSpring(fsOff, fi);
+
+        LiveEngineConfig cfgCustomDodge = DefaultLiveEngineConfig();
+        cfgCustomDodge.dodgeIFrameMs    = 400.0f;
+        cfgCustomDodge.dodgeStaminaCost = 30.0f;
+        cfgCustomDodge.fovBreathScale   = 1.5f;
+        SetLiveConfigSnapshot(cfgCustomDodge);
+        DodgeControllerState dcCust{};
+        di.currentStamina = 25.0f;
+        const auto rCustLow = StepDodgeController(dcCust, di);
+        di.currentStamina = 35.0f; di.nowMs = 1050ull;
+        const auto rCustOk  = StepDodgeController(dcCust, di);
+        const bool iFrame400 = IsDodgeEvadingAt(dcCust, 1440ull) && !IsDodgeEvadingAt(dcCust, 1455ull);
+
+        FovSpringState fsScale{};
+        float liveFov = 80.0f;
+        FovStepOutput foScale{};
+        for (int i = 0; i < 60; ++i) {
+            fi.liveReadFovDeg = liveFov;
+            foScale = StepFovBreathSpring(fsScale, fi);
+            if (foScale.needWrite) liveFov = foScale.desiredWorldFovDeg;
+        }
+        const bool moveConfigOk =
+            !rOff.triggered && (std::fabs(foOff.appliedOffsetDeg) < 1e-4f) &&
+            !rCustLow.triggered && rCustLow.rejectedStamina &&
+            rCustOk.triggered && std::fabs(rCustOk.staminaCost - 30.0f) < 1e-3f && iFrame400 &&
+            std::fabs(foScale.appliedOffsetDeg - 6.3f) < 0.08f;
+
+        // C) Stealth & Thermal Survival toggles:
+        LiveEngineConfig cfgOffWorld = DefaultLiveEngineConfig();
+        cfgOffWorld.weatherStealthEnabled  = false;
+        cfgOffWorld.thermalSurvivalEnabled = false;
+        SetLiveConfigSnapshot(cfgOffWorld);
+
+        StealthDetectInput sIn{};
+        sIn.baseScore = 60; sIn.soundScore = 40.0f; sIn.visualScore = 30.0f;
+        sIn.distanceU = 500.0f; sIn.isExterior = true; sIn.isMoving = true; sIn.hasLOS = true;
+        StealthEnvSnapshot sEnv{};
+        sEnv.rain01 = 0.95f; sEnv.storm01 = 0.95f; sEnv.fog01 = 0.80f;
+        const auto srOff = EvaluateWeatherMaskedStealth(sIn, sEnv);
+
+        ThermalSurvivalState tsPrev{};
+        tsPrev.coreWarmth = 75.0f;
+        ThermalSurvivalInput tIn{};
+        tIn.ambientTempC = -25.0f; tIn.windSpeedMs = 20.0f; tIn.snow01 = 1.0f; tIn.dtSec = 1.0f;
+        const auto tsOff = StepThermalSurvival(tsPrev, tIn);
+
+        // Restore defaults cleanly so other suites in ce_runtime_check always see default config!
+        SetLiveConfigSnapshot(DefaultLiveEngineConfig());
+        const auto srOn = EvaluateWeatherMaskedStealth(sIn, sEnv);
+        const auto tsOn = StepThermalSurvival(tsPrev, tIn);
+
+        const bool stealthThermalOk =
+            (srOff.adjustedScore == 60 && std::fabs(srOff.soundMaskMult - 1.0f) < 1e-4f) &&
+            (srOn.adjustedScore < 60 && srOn.soundMaskMult < 0.85f) &&
+            (std::fabs(tsOff.coreWarmth - 75.0f) < 1e-4f && std::fabs(tsOff.staminaRegenMult - 1.0f) < 1e-4f) &&
+            (tsOn.coreWarmth < 75.0f);
+
+        check(windScaledOk && moveConfigOk && stealthThermalOk,
+              "live_ini_propagates_to_all_subsystems");
+    }
+
+    // 6. Wave 45: Directional Flanking Bearing (+22% flank/rear) & Low-HP Morale (+28% block, -20% attack):
+    {
+        const float targetPos[2] = {0.0f, 0.0f};
+        const float yawNorth = 0.0f;  // facing +Y (0, +1)
+
+        const float frontPos[2] = {0.0f, 150.0f};    // dot = +1.0 (in front)
+        const float flankPos[2] = {150.0f, 0.0f};    // dot =  0.0 (90 deg right flank)
+        const float rearPos[2]  = {0.0f, -150.0f};   // dot = -1.0 (directly behind)
+
+        const auto fmFront   = EvaluateFlankingAndMorale(frontPos, targetPos, yawNorth, 0.90f);
+        const auto fmFlank   = EvaluateFlankingAndMorale(flankPos, targetPos, yawNorth, 0.90f);
+        const auto fmRear    = EvaluateFlankingAndMorale(rearPos,  targetPos, yawNorth, 0.90f);
+        const auto fmWounded = EvaluateFlankingAndMorale(frontPos, targetPos, yawNorth, 0.22f);
+
+        const bool ok =
+            (!fmFront.isFlanking && !fmFront.lowMorale && std::fabs(fmFront.dotFacing - 1.0f) < 1e-3f &&
+             std::fabs(fmFront.attackMult - 1.0f) < 1e-3f && std::fabs(fmFront.blockAdd) < 1e-3f) &&
+            (fmFlank.isFlanking && std::fabs(fmFlank.dotFacing) < 1e-3f &&
+             std::fabs(fmFlank.attackMult - 1.22f) < 1e-3f) &&
+            (fmRear.isFlanking && std::fabs(fmRear.dotFacing - (-1.0f)) < 1e-3f &&
+             std::fabs(fmRear.attackMult - 1.22f) < 1e-3f) &&
+            (!fmWounded.isFlanking && fmWounded.lowMorale &&
+             std::fabs(fmWounded.attackMult - 0.80f) < 1e-3f &&
+             std::fabs(fmWounded.blockAdd - 0.28f) < 1e-3f);
+        check(ok, "flanking_bearing_and_low_hp_morale_combat_ai");
+    }
+
+    // 7. Wave 45: BSPointerHandleManager 1M Ref-Cap Saturation Watchdog threshold verification:
+    {
+        constexpr uint32_t kCap = 4096u;
+        std::vector<uint8_t> table(static_cast<size_t>(kCap) * kRefHandleEntryStride, 0u);
+        auto fillRatio = [&](uint32_t activeCount) {
+            std::fill(table.begin(), table.end(), uint8_t{0});
+            for (uint32_t i = 0; i < activeCount && i < kCap; ++i) {
+                uint32_t bits = kRefHandleInUseBit | ((i & 0x3Fu) << 20);
+                std::memcpy(table.data() + static_cast<size_t>(i) * kRefHandleEntryStride, &bits, 4u);
+            }
+        };
+
+        fillRatio(820u);   // ~20.0% -> Healthy
+        const auto rHealthy = SampleRefHandleSaturation(table.data(), kCap, 4u);
+        fillRatio(2376u);  // ~58.0% -> Elevated
+        const auto rElev    = SampleRefHandleSaturation(table.data(), kCap, 4u);
+        fillRatio(3072u);  //  75.0% -> Warning
+        const auto rWarn    = SampleRefHandleSaturation(table.data(), kCap, 4u);
+        fillRatio(3686u);  // ~90.0% -> Critical
+        const auto rCrit    = SampleRefHandleSaturation(table.data(), kCap, 4u);
+        const auto rNull    = SampleRefHandleSaturation(nullptr, kCap, 4u);
+
+        const bool ok =
+            (rHealthy.level == RefHandleHealthLevel::Healthy && !rHealthy.warningTriggered && rHealthy.saturationPct > 19.0f && rHealthy.saturationPct < 21.0f) &&
+            (rElev.level == RefHandleHealthLevel::Elevated && !rElev.warningTriggered && rElev.saturationPct > 56.0f && rElev.saturationPct < 60.0f) &&
+            (rWarn.level == RefHandleHealthLevel::Warning && rWarn.warningTriggered && std::fabs(rWarn.saturationPct - 75.0f) < 0.5f && rWarn.estimatedActive == 3072u) &&
+            (rCrit.level == RefHandleHealthLevel::Critical && rCrit.warningTriggered && rCrit.saturationPct > 89.0f) &&
+            (rNull.sampledSlots == 0u && !rNull.warningTriggered);
+        check(ok, "ref_handle_cap_watchdog_saturation_thresholds");
     }
 
     std::filesystem::remove(iniPath, ec);

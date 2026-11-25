@@ -102,6 +102,13 @@ BakeResult BakeTamrielCellSceneBundle(const std::string& esmPath,
                                       const ValidatorPolicy& policy = {},
                                       bool writeGeometryFiles = true);
 
+// Generates all 8 seamless 4D-torus-mapped procedural PBR texture sets (Albedo + Normal + ORMH + full mip chains),
+// round-trip verifies every exported DX10 .dds through RawDdsDecoder + PBR analysis, and writes textures_manifest.json.
+BakeResult BakeProceduralTextureLibrary(const std::string& outDir,
+                                        uint32_t resolution = 256u,
+                                        uint32_t seed = 202607u,
+                                        bool writeFiles = true);
+
 // Runs all 4 studio baking & quality-gate validation pipelines and emits pipeline_validation_report.json.
 BakeResult RunFullPipelineValidation(const std::string& outDir,
                                      uint32_t seed = 202607u,

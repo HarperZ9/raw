@@ -46,6 +46,7 @@ void PrintUsage() {
         "  raw_forge_cli --diorama <dir>                           Bake & validate 6 frontier biomes + hero props\n"
         "  raw_forge_cli --almanac <dir>                           Bake 365-day orbital climate & phenology almanac\n"
         "  raw_forge_cli --materials <dir>                         Validate & export physical optical material catalog\n"
+        "  raw_forge_cli --textures <dir> [--tex-size 256|512]     Generate 8 seamless PBR texture sets (.dds + .bmp)\n"
         "  raw_forge_cli --esm <path> --cell <x,y> --out <dir>     Extract, validate & export real Tamriel ESM cell\n"
         "  raw_forge_cli --esm-scene <esm> --bsa <bsa> --cell <x,y> --out <d> Reconstruct full cell (terrain + NIF props)\n"
         "  raw_forge_cli --bsa-list <path> [--filter <substr>]     Inspect & list files in a v104/v105 .bsa archive\n"
@@ -74,6 +75,8 @@ int main(int argc, char** argv) {
     std::string dioramaDir;
     std::string almanacDir;
     std::string materialsDir;
+    std::string texturesDir;
+    uint32_t    texSize = 256u;
     std::string validateAllDir;
     std::string esmPath;
     std::string esmScenePath;
@@ -125,6 +128,14 @@ int main(int argc, char** argv) {
             const char* v = needNext("--materials");
             if (!v) return 2;
             materialsDir = v;
+        } else if (arg == "--textures") {
+            const char* v = needNext("--textures");
+            if (!v) return 2;
+            texturesDir = v;
+        } else if (arg == "--tex-size") {
+            const char* v = needNext("--tex-size");
+            if (!v) return 2;
+            texSize = static_cast<uint32_t>(std::strtoul(v, nullptr, 10));
         } else if (arg == "--esm") {
             const char* v = needNext("--esm");
             if (!v) return 2;
@@ -209,9 +220,9 @@ int main(int argc, char** argv) {
     }
 
     if (!runValidateAll && floraDir.empty() && dioramaDir.empty() && almanacDir.empty() &&
-        materialsDir.empty() && esmPath.empty() && esmScenePath.empty() && bsaListPath.empty() &&
-        nifPath.empty() && bsaNifArchive.empty() && ddsPath.empty() && bsaDdsArchive.empty()) {
-        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, or --validate-all).\n");
+        materialsDir.empty() && texturesDir.empty() && esmPath.empty() && esmScenePath.empty() &&
+        bsaListPath.empty() && nifPath.empty() && bsaNifArchive.empty() && ddsPath.empty() && bsaDdsArchive.empty()) {
+        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, or --validate-all).\n");
         PrintUsage();
         return 2;
     }
@@ -317,6 +328,9 @@ int main(int argc, char** argv) {
         }
         if (!materialsDir.empty()) {
             runStep("materials", raw::pipeline::BakeMaterialCatalogManifest(materialsDir));
+        }
+        if (!texturesDir.empty()) {
+            runStep("textures", raw::pipeline::BakeProceduralTextureLibrary(texturesDir, texSize, seed, writeGeometry));
         }
     }
 

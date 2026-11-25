@@ -3,6 +3,7 @@
 // Original work, MIT.
 #include "rt_movement_combat.h"
 #include "rt_image.h"
+#include "rt_live_config.h"
 
 #include <Zydis/Zydis.h>
 
@@ -33,8 +34,9 @@ bool IsDodgeEvasionFeelActive(const DodgeControllerState& st, uint64_t nowMs) {
 
 DodgeTriggerResult StepDodgeController(DodgeControllerState& st, const DodgeTriggerInput& in) {
     DodgeTriggerResult res{};
+    const LiveEngineConfig cfg = GetLiveConfig();
 
-    if (in.menuPaused) {
+    if (in.menuPaused || !cfg.dodgeIFramesEnabled) {
         st.evadingNow = false;
         return res;
     }
@@ -79,23 +81,25 @@ DodgeTriggerResult StepDodgeController(DodgeControllerState& st, const DodgeTrig
         return res;
     }
 
+    const float stamCost = cfg.dodgeStaminaCost;
     const float stam = std::isfinite(in.currentStamina) ? in.currentStamina : 0.0f;
-    if (stam < kDodgeStaminaCost) {
+    if (stam < stamCost) {
         res.rejectedStamina = true;
         ++st.dodgesRejectedStamina;
         return res;
     }
 
-    // Engage 260 ms invulnerability window & 550 ms cooldown:
+    // Engage configured invulnerability window (default 260 ms) & 550 ms cooldown:
+    const uint64_t iFrameMs = static_cast<uint64_t>(std::lround(cfg.dodgeIFrameMs));
     st.dodgeStartMs  = in.nowMs;
-    st.iFrameEndMs   = in.nowMs + kDodgeIFrameDurationMs;
+    st.iFrameEndMs   = in.nowMs + iFrameMs;
     st.cooldownEndMs = in.nowMs + kDodgeCooldownMs;
     st.activeDir     = dir;
     st.evadingNow    = true;
     ++st.dodgesTriggered;
 
     res.triggered   = true;
-    res.staminaCost = kDodgeStaminaCost;
+    res.staminaCost = stamCost;
     res.direction   = dir;
     return res;
 }
@@ -144,7 +148,8 @@ FovStepOutput StepFovBreathSpring(FovSpringState& st, const FovStepInput& in) {
         }
     }
 
-    if (in.menuPaused) {
+    const LiveEngineConfig cfg = GetLiveConfig();
+    if (in.menuPaused || !cfg.fovBreathEnabled || cfg.fovBreathScale <= 0.001f) {
         const bool wasOffset = st.hasWrittenLive && (std::fabs(st.lastWrittenFovDeg - st.baselineFovDeg) > 1.0e-3f);
         st.currentOffsetDeg  = 0.0f;
         st.velocityDegPerSec = 0.0f;
@@ -166,6 +171,7 @@ FovStepOutput StepFovBreathSpring(FovSpringState& st, const FovStepInput& in) {
     if (in.evasionFeelActive) {
         target = std::min(target + kFovEvasionPulseDeg, 5.2f);
     }
+    target = std::clamp(target * cfg.fovBreathScale, 0.0f, 12.5f);
 
     // Exact closed-form critically-damped harmonic spring (zeta = 1.0, unconditionally stable & zero overshoot):
     const float dt = std::clamp(std::isfinite(in.dtSec) ? in.dtSec : (1.0f / 60.0f), 1.0e-4f, 0.05f);
@@ -177,7 +183,7 @@ FovStepOutput StepFovBreathSpring(FovSpringState& st, const FovStepInput& in) {
     const float x1 = (x0 + c * dt) * e;
     const float v1 = (v0 - w * c * dt) * e;
 
-    st.currentOffsetDeg  = std::clamp(target + x1, -0.5f, 6.0f);
+    st.currentOffsetDeg  = std::clamp(target + x1, -0.5f, 13.0f);
     st.velocityDegPerSec = v1;
     if (std::fabs(st.currentOffsetDeg - target) < 0.005f && std::fabs(st.velocityDegPerSec) < 0.02f) {
         st.currentOffsetDeg  = target;

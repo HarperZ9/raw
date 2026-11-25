@@ -3,6 +3,7 @@
 // and immediate NiNode::UpdateDownwardPass (0xEE24D0) world-transform propagation into NiSkinInstance.
 // Original work, MIT.
 #include "rt_softbody.h"
+#include "rt_live_config.h"
 #include "rt_skeleton_ik.h"
 
 #include <Zydis/Zydis.h>
@@ -610,10 +611,11 @@ SoftBoneOutput StepSoftBone(SoftBoneState& st,
         const float gust = std::clamp(
             1.0f + (0.45f + 0.55f * wGust) * std::sin(wt * 1.95f + ph) + 0.28f * std::cos(wt * 3.70f - ph * 1.3f),
             0.35f, 2.25f);
-        const float dragScale = (prof.gravitySag <= -0.80f) ? 0.42f : 0.28f;
-        windAcc[0] = std::clamp(wVec[0] * dragScale * gust, -140.0f, 140.0f);
-        windAcc[1] = std::clamp(wVec[1] * dragScale * gust, -140.0f, 140.0f);
-        windAcc[2] = std::clamp(wVec[2] * dragScale + std::sqrt(wVec[0] * wVec[0] + wVec[1] * wVec[1]) * dragScale * 0.20f * std::sin(wt * 2.85f + ph), -36.0f, 36.0f);
+        const float windScale = GetLiveConfig().xpbdWindScale;
+        const float dragScale = ((prof.gravitySag <= -0.80f) ? 0.42f : 0.28f) * windScale;
+        windAcc[0] = std::clamp(wVec[0] * dragScale * gust, -220.0f, 220.0f);
+        windAcc[1] = std::clamp(wVec[1] * dragScale * gust, -220.0f, 220.0f);
+        windAcc[2] = std::clamp(wVec[2] * dragScale + std::sqrt(wVec[0] * wVec[0] + wVec[1] * wVec[1]) * dragScale * 0.20f * std::sin(wt * 2.85f + ph), -54.0f, 54.0f);
     }
 
     // Distance/tether sphere radius for XPBD radial strain limit
@@ -798,6 +800,7 @@ uint32_t StepSkeletonSubtree(void* rootNode,
     if (outIkBones)      *outIkBones = 0;
     if (outXpbdBones)    *outXpbdBones = 0;
     if (outUpdatedNodes) *outUpdatedNodes = 0;
+    if (!GetLiveConfig().skeletonXpbdEnabled) return 0;
     if (!IsCanonicalPtr(rootNode)) return 0;
 
     auto* root = static_cast<uint8_t*>(rootNode);

@@ -6,6 +6,7 @@
 #include "RawForgePipeline.h"
 
 #include "../materials/RawMaterialLib.h"
+#include "../materials/RawTextureForge.h"
 #include "../worldgen/RawBsaArchive.h"
 #include "../worldgen/RawDdsDecoder.h"
 #include "../worldgen/RawEsmModelResolver.h"
@@ -1035,6 +1036,92 @@ BakeResult BakeTamrielCellSceneBundle(const std::string& esmPath,
                          "): " + std::to_string(scene.uniqueModels.size()) + " unique NIFs, " +
                          std::to_string(scene.instances.size()) + " instances, " +
                          std::to_string(res.totalMeshlets) + " meshlets";
+    return res;
+}
+
+BakeResult BakeProceduralTextureLibrary(const std::string& outDir,
+                                        uint32_t resolution,
+                                        uint32_t seed,
+                                        bool writeFiles) {
+    using namespace raw::materials;
+    using namespace raw::worldgen;
+    BakeResult res{};
+    if (!EnsureDir(outDir)) {
+        res.summaryMessage = "Failed to create procedural textures output directory: " + outDir;
+        return res;
+    }
+
+    std::ostringstream js;
+    js << std::fixed << std::setprecision(4);
+    js << "{\n  \"pipeline\": \"RAW Seamless 4D-Torus Procedural PBR Texture Library\",\n"
+       << "  \"seed\": " << seed << ",\n"
+       << "  \"resolution\": " << resolution << ",\n"
+       << "  \"materials\": [\n";
+
+    for (uint32_t i = 0u; i < static_cast<uint32_t>(ProceduralTextureKind::Count); ++i) {
+        const auto kind = static_cast<ProceduralTextureKind>(i);
+        ProceduralPbrTextureSet set{};
+        if (!GenerateProceduralPbrTextureSet(kind, resolution, seed, &set)) {
+            ++res.validationFailures;
+            continue;
+        }
+        ++res.assetsGenerated;
+
+        // Round-trip verify Albedo & Normal DX10 .dds serialization through RawDdsDecoder!
+        const auto albDdsBytes = SerializeDdsRgba8Bytes(set.albedo);
+        const auto nrmDdsBytes = SerializeDdsRgba8Bytes(set.normal);
+        DdsImage decAlb{}, decNrm{};
+        const bool rtOk =
+            DecodeDdsBytes(albDdsBytes.data(), albDdsBytes.size(), 0u, &decAlb) &&
+            DecodeDdsBytes(nrmDdsBytes.data(), nrmDdsBytes.size(), 0u, &decNrm) &&
+            decAlb.rgba8 == set.albedo.mips[0].rgba8 &&
+            decNrm.rgba8 == set.normal.mips[0].rgba8;
+        if (!rtOk) ++res.validationFailures;
+        ++res.assetsValidated;
+
+        const DdsPbrAnalysis albPbr = AnalyzeDecodedTexture(decAlb, false);
+        const DdsPbrAnalysis nrmPbr = AnalyzeDecodedTexture(decNrm, true);
+        const TileabilityMetrics tile = MeasureSeamlessTileability(set.albedo.mips[0]);
+
+        const std::string slug = SanitizeId(set.name);
+        if (writeFiles) {
+            if (WriteDdsRgba8(outDir + "/" + slug + "_albedo.dds", set.albedo)) ++res.filesWritten;
+            else ++res.validationFailures;
+            if (WriteDdsRgba8(outDir + "/" + slug + "_normal.dds", set.normal)) ++res.filesWritten;
+            else ++res.validationFailures;
+            if (WriteDdsRgba8(outDir + "/" + slug + "_ormh.dds", set.ormh)) ++res.filesWritten;
+            else ++res.validationFailures;
+            if (WriteTextureMip0ToBmp(outDir + "/" + slug + "_albedo.bmp", set.albedo)) ++res.filesWritten;
+            else ++res.validationFailures;
+            if (WriteTextureMip0ToBmp(outDir + "/" + slug + "_normal.bmp", set.normal)) ++res.filesWritten;
+            else ++res.validationFailures;
+        }
+
+        res.totalGpuBytes += uint64_t(albDdsBytes.size() + nrmDdsBytes.size() + SerializeDdsRgba8Bytes(set.ormh).size());
+
+        if (i > 0u) js << ",\n";
+        js << "    {"
+           << "\"name\":\"" << JsonEscape(set.name) << "\","
+           << "\"resolution\":" << resolution << ","
+           << "\"mipCount\":" << set.albedo.MipCount() << ","
+           << "\"ddsRoundtripPassed\":" << (rtOk ? "true" : "false") << ","
+           << "\"meanEdgeDiffX\":" << tile.meanEdgeDiffX << ","
+           << "\"meanEdgeDiffY\":" << tile.meanEdgeDiffY << ","
+           << "\"meanLuminance\":" << albPbr.meanLuminance << ","
+           << "\"toksvigRoughness\":" << nrmPbr.toksvigRoughness
+           << "}";
+    }
+
+    js << "\n  ]\n}\n";
+    res.manifestPath = outDir + "/textures_manifest.json";
+    if (WriteTextFile(res.manifestPath, js.str())) ++res.filesWritten;
+    else ++res.validationFailures;
+
+    res.ok = (res.assetsGenerated == 8u && res.validationFailures == 0u);
+    res.summaryMessage = "ProceduralTextures: " + std::to_string(res.assetsGenerated) + " PBR sets @" +
+                         std::to_string(resolution) + "x" + std::to_string(resolution) +
+                         " (" + std::to_string(res.filesWritten) + " files, " +
+                         std::to_string(res.validationFailures) + " failures)";
     return res;
 }
 

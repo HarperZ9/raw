@@ -2,6 +2,7 @@
 // (SneakDetectionCalc 0x41CD90), Thermal Survival & Warmth Coupling, and 3D Acoustic Classifier.
 // Original work, MIT.
 #include "rt_stealth_survival.h"
+#include "rt_live_config.h"
 
 #include <algorithm>
 #include <atomic>
@@ -31,8 +32,8 @@ StealthDetectResult EvaluateWeatherMaskedStealth(const StealthDetectInput& in, c
     r.visualOcclMult = 1.0f;
     r.windBiasDelta  = 0.0f;
 
-    if (!in.isExterior) {
-        // Interiors are sheltered from weather/wind masking; leave detection untouched.
+    if (!in.isExterior || !GetLiveConfig().weatherStealthEnabled) {
+        // Interiors or user-disabled weather stealth leave detection untouched.
         return r;
     }
 
@@ -96,6 +97,13 @@ StealthDetectResult EvaluateWeatherMaskedStealth(const StealthDetectInput& in, c
 // =================================================================================================
 ThermalSurvivalState StepThermalSurvival(const ThermalSurvivalState& prev, const ThermalSurvivalInput& in) {
     ThermalSurvivalState s = prev;
+    if (!GetLiveConfig().thermalSurvivalEnabled) {
+        s.comfortTier       = ThermalComfortTier::Comfortable;
+        s.staminaRegenMult  = 1.00f;
+        s.combatStaminaMult = 0.75f;
+        s.staminaDelayMax   = 5.00f;
+        return s;
+    }
     const float dt = std::clamp(in.dtSec, 0.0f, 1.0f);
     const float windKmh = std::clamp(in.windSpeedMs, 0.0f, 45.0f) * 3.6f;
 
@@ -453,8 +461,13 @@ void StealthSurvivalUpdateFrame(const StealthEnvSnapshot& env,
         g_ss.lastHearthProx = thermalIn.hearthProximity01;
     }
     if (g_ss.active.load(std::memory_order_acquire) && g_ss.gmstBound.load(std::memory_order_relaxed)) {
-        if (g_ss.pCombatStaminaMult) SehWriteFloat(g_ss.pCombatStaminaMult, nextTherm.combatStaminaMult);
-        if (g_ss.pStaminaDelayMax)   SehWriteFloat(g_ss.pStaminaDelayMax,   nextTherm.staminaDelayMax);
+        const bool thermalOn = GetLiveConfig().thermalSurvivalEnabled;
+        if (g_ss.pCombatStaminaMult) {
+            SehWriteFloat(g_ss.pCombatStaminaMult, thermalOn ? nextTherm.combatStaminaMult : g_ss.baseCombatStamina);
+        }
+        if (g_ss.pStaminaDelayMax) {
+            SehWriteFloat(g_ss.pStaminaDelayMax, thermalOn ? nextTherm.staminaDelayMax : g_ss.baseStaminaDelay);
+        }
     }
 }
 

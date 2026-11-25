@@ -34,6 +34,28 @@ constexpr uint64_t kShaderFlag1ModelNormals  = (1ull << 12);  // 0x1000 verified
 constexpr uint64_t kShaderFlag2ZBufferWrite  = (1ull << 32);  // SF2 bit 0
 constexpr uint64_t kShaderFlag2DoubleSided   = (1ull << 36);  // SF2 bit 4
 
+// Binary-verified BSPointerHandleManager::Entry (0x21A4280) active reference handle cap constants:
+constexpr uint32_t kRefHandleCapacity        = 1048576u;      // 2^20 = 1,048,576 hard CE ref-handle limit
+constexpr uint32_t kRefHandleInUseBit        = 0x04000000u;   // bit 26 verified @ 0x1764F0..0x17652E
+constexpr uint32_t kRefHandleEntryStride     = 16u;           // 16 bytes per BSPointerHandleManager::Entry
+
+enum class RefHandleHealthLevel : uint8_t {
+    Healthy  = 0,  // < 50%
+    Elevated = 1,  // 50% .. < 70%
+    Warning  = 2,  // 70% .. < 85%
+    Critical = 3,  // >= 85% (imminent 1M CE ref-cap crash risk)
+};
+
+struct RefHandleSaturationReport {
+    uint32_t             sampledSlots     = 0;
+    uint32_t             sampledInUse     = 0;
+    uint32_t             estimatedActive  = 0;
+    uint32_t             capacity         = kRefHandleCapacity;
+    float                saturationPct    = 0.0f;
+    RefHandleHealthLevel level            = RefHandleHealthLevel::Healthy;
+    bool                 warningTriggered = false;
+};
+
 enum class GuardRejectReason : uint32_t {
     Ok = 0,
     OffsetsNotVerified,
@@ -111,6 +133,10 @@ struct RawMemoryGuardTelemetry {
     uint32_t passedChecks       = 0;
     uint64_t workingSetMB       = 0;
     uint64_t availPhysMB        = 0;
+    // Wave 45 BSPointerHandleManager 1,048,576 ref-cap saturation watchdog:
+    uint32_t refHandlesEstimated = 0;
+    float    refHandleSatPct     = 0.0f;
+    uint8_t  refHandleWarnLevel  = 0;   // RefHandleHealthLevel (0=Healthy, 1=Elevated, 2=Warning, 3=Critical)
 };
 
 // Pure deterministic invariant guards:
@@ -119,6 +145,10 @@ GuardVerdict ValidateGridResizeTransition(const GridTransitionState& st);
 ShaderPropertyAudit AuditShaderPropertyFlags(uint64_t flags, bool hasMaterial, bool hasRenderPasses);
 ScrapHeapAudit AnalyzeScrapHeapBounds(uint64_t baseAddress, uint64_t endAddress,
                                       uint32_t activeAllocs, uint64_t testPtr = 0);
+// SEH-guarded strided BSPointerHandleManager (0x21A4280) active-handle saturation sampler:
+RefHandleSaturationReport SampleRefHandleSaturation(const void* handleEntriesBase,
+                                                    uint32_t totalCapacity = kRefHandleCapacity,
+                                                    uint32_t strideEntries = 256u);
 
 // Live runtime hooks & master write gate:
 void MemoryGuardsInit(const Image& img);

@@ -682,7 +682,7 @@ if(RAW_ENGINE_DIR)
                    src/d3d12_bridge/RawAsyncCompute.cpp src/d3d12_bridge/RawIndirectBatch.cpp src/d3d12_bridge/RawAssetStream.cpp
                    src/worldgen/RawTerrainGen.cpp src/worldgen/RawHydrologyGen.cpp src/worldgen/RawBiomeWorld.cpp src/worldgen/RawMeshPipeline.cpp src/worldgen/RawFloraEngine.cpp src/worldgen/RawWeatherSim.cpp src/worldgen/RawWorldShowcase.cpp src/worldgen/RawEsmWorldLoader.cpp src/worldgen/RawEsmModelResolver.cpp src/worldgen/RawBsaArchive.cpp src/worldgen/RawNifLoader.cpp src/worldgen/RawDdsDecoder.cpp src/worldgen/RawDestructionEngine.cpp
                    src/engine_rt/raw_job_system.cpp
-                   src/materials/RawMaterialLib.cpp src/materials/RawAssetForge.cpp
+                   src/materials/RawMaterialLib.cpp src/materials/RawAssetForge.cpp src/materials/RawTextureForge.cpp
                    src/assets/RawOverrideRegistry.cpp src/assets/RawAssetScaffold.cpp)
     add_executable(test_fluid_sim tests/test_fluid_sim.cpp src/d3d12_bridge/RawFluidSimHost.cpp ${RAW_FLUID_HEADERS})
     target_include_directories(test_fluid_sim PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge)
@@ -743,6 +743,44 @@ if(RAW_ENGINE_DIR)
     target_compile_definitions(raw_sandbox_render PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_link_libraries(raw_sandbox_render PRIVATE d3d12 dxgi dxguid)
     set_target_properties(raw_sandbox_render PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tools)
+    set(RAW_AGX_DISPLAY_HLSL ${RAW_SHARE_HLSL}/RawAgxDisplay.hlsl)
+    set(RAW_AGX_DISPLAY_HEADERS
+        ${RAW_ENGINE_GEN}/raw_agx_display_vs.h
+        ${RAW_ENGINE_GEN}/raw_agx_display_ps.h)
+    add_custom_command(
+        OUTPUT ${RAW_AGX_DISPLAY_HEADERS}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T vs_${RAW_SHADER_MODEL} -E vs_agx_display ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_agx_display_vs.h -Vn kDxil_raw_agx_display_vs ${RAW_AGX_DISPLAY_HLSL}
+        COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E ps_agx_display ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_agx_display_ps.h -Vn kDxil_raw_agx_display_ps ${RAW_AGX_DISPLAY_HLSL}
+        DEPENDS ${RAW_AGX_DISPLAY_HLSL}
+        COMMENT "dxc: RAW Interactive Viewer AgX Display SM${RAW_SHADER_MODEL} -> DXIL headers"
+        VERBATIM)
+    add_executable(raw_engine_viewer
+        tools/raw_engine_viewer.cpp
+        src/d3d12_bridge/RawMeshHost.cpp
+        src/d3d12_bridge/RawFluidSimHost.cpp
+        src/d3d12_bridge/RawFluidCompositeHost.cpp
+        src/worldgen/RawTerrainGen.cpp
+        src/worldgen/RawHydrologyGen.cpp
+        src/worldgen/RawBiomeWorld.cpp
+        src/worldgen/RawMeshPipeline.cpp
+        src/worldgen/RawFloraEngine.cpp
+        src/worldgen/RawWeatherSim.cpp
+        src/worldgen/RawWorldShowcase.cpp
+        src/worldgen/RawDestructionEngine.cpp
+        src/worldgen/RawEsmWorldLoader.cpp
+        src/worldgen/RawEsmModelResolver.cpp
+        src/worldgen/RawBsaArchive.cpp
+        src/worldgen/RawNifLoader.cpp
+        src/engine_rt/raw_job_system.cpp
+        ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h ${RAW_ENGINE_GEN}/raw_subdiv_cs.h
+        ${RAW_ENGINE_GEN}/raw_terrain_as.h ${RAW_ENGINE_GEN}/raw_terrain_ms.h ${RAW_ENGINE_GEN}/raw_terrain_vs.h ${RAW_ENGINE_GEN}/raw_terrain_ps.h
+        ${RAW_FLUID_HEADERS}
+        ${RAW_AGX_DISPLAY_HEADERS})
+    target_include_directories(raw_engine_viewer PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge ${CMAKE_CURRENT_SOURCE_DIR}/src/worldgen ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_rt)
+    target_compile_definitions(raw_engine_viewer PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(raw_engine_viewer PRIVATE d3d12 dxgi dxguid user32)
+    set_target_properties(raw_engine_viewer PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tools)
     target_include_directories(raw_d3d12_bridge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/worldgen ${CMAKE_CURRENT_SOURCE_DIR}/src/materials ${CMAKE_CURRENT_SOURCE_DIR}/src/assets)
     set(RAW_RTSHADOW_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtShadow.hlsl)
     add_custom_command(
@@ -1021,8 +1059,10 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/worldgen/RawHydrologyGen.cpp
         src/worldgen/RawDestructionEngine.cpp
         src/audio/RawAudioDsp.cpp
+        src/audio/RawAudioOutput.cpp
         src/materials/RawMaterialLib.cpp
         src/materials/RawAssetForge.cpp
+        src/materials/RawTextureForge.cpp
         src/assets/RawOverrideRegistry.cpp
         src/assets/RawAssetScaffold.cpp
         src/pipeline/RawAssetValidator.cpp
@@ -1046,7 +1086,9 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         tests/test_hydrology_gen.cpp
         tests/test_movement_combat.cpp
         tests/test_live_config.cpp
-        tests/test_audio_dsp.cpp)
+        tests/test_audio_dsp.cpp
+        tests/test_audio_output.cpp
+        tests/test_texture_forge.cpp)
     set_target_properties(ce_runtime_check PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
@@ -1073,7 +1115,8 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/worldgen/RawDdsDecoder.cpp
         src/worldgen/RawDestructionEngine.cpp
         src/engine_rt/raw_job_system.cpp
-        src/materials/RawMaterialLib.cpp)
+        src/materials/RawMaterialLib.cpp
+        src/materials/RawTextureForge.cpp)
     set_target_properties(raw_forge_cli PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tools)

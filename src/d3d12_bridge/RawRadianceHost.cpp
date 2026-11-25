@@ -307,6 +307,30 @@ bool RawRadianceHost::InitWithBlobs(ID3D12Device* dev, const RadianceShaderBlobs
         return false;
     }
 
+    // Optional 4-frame ring GPU timestamp query heap (2 queries/frame: Start, End)
+    {
+        constexpr uint32_t kTotalQueries = kCbRingCount * 2u;
+        D3D12_QUERY_HEAP_DESC qd{};
+        qd.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+        qd.Count = kTotalQueries;
+        D3D12_HEAP_PROPERTIES hpRb{};
+        hpRb.Type = D3D12_HEAP_TYPE_READBACK;
+        D3D12_RESOURCE_DESC rbd{};
+        rbd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        rbd.Width = static_cast<UINT64>(kTotalQueries) * sizeof(uint64_t);
+        rbd.Height = 1;
+        rbd.DepthOrArraySize = 1;
+        rbd.MipLevels = 1;
+        rbd.SampleDesc.Count = 1;
+        rbd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (FAILED(dev->CreateQueryHeap(&qd, IID_PPV_ARGS(&m_tsHeap))) ||
+            FAILED(dev->CreateCommittedResource(&hpRb, D3D12_HEAP_FLAG_NONE, &rbd,
+                                                D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&m_tsReadback)))) {
+            m_tsHeap.Reset();
+            m_tsReadback.Reset();
+        }
+    }
+
     // Populate static descriptors
     WriteSrv2D(dev, m_irradiance.Get(),    kFmt, CpuAt(kSlotExtIrradSrv));
     WriteUav2D(dev, m_atlas[0].Get(),      kFmt, CpuAt(kSlotUavAtlas0));
@@ -362,6 +386,33 @@ D3D12_GPU_DESCRIPTOR_HANDLE RawRadianceHost::GpuAt(uint32_t slot) const
     return h;
 }
 
+bool RawRadianceHost::HarvestTimestampPair(uint32_t queryStartIdx, float& outMs) const
+{
+    if (!m_tsReadback || m_tsFreqHz == 0u) {
+        return false;
+    }
+    const SIZE_T byteOff = static_cast<SIZE_T>(queryStartIdx) * sizeof(uint64_t);
+    const D3D12_RANGE rr{byteOff, byteOff + 2u * sizeof(uint64_t)};
+    void* ptr = nullptr;
+    if (FAILED(m_tsReadback->Map(0, &rr, &ptr))) {
+        return false;
+    }
+    const auto* ticks = reinterpret_cast<const uint64_t*>(static_cast<const uint8_t*>(ptr) + byteOff);
+    const uint64_t t0 = ticks[0];
+    const uint64_t t1 = ticks[1];
+    const D3D12_RANGE wr{0, 0};
+    m_tsReadback->Unmap(0, &wr);
+    if (t1 < t0) {
+        return false;
+    }
+    const double ms = static_cast<double>(t1 - t0) * 1000.0 / static_cast<double>(m_tsFreqHz);
+    if (!std::isfinite(ms) || ms < 0.0 || ms > 5000.0) {
+        return false;
+    }
+    outMs = static_cast<float>(ms);
+    return true;
+}
+
 void RawRadianceHost::ComputeGI(ID3D12GraphicsCommandList* cmd,
                                 ID3D12Resource* sceneEmissiveAlpha,
                                 const RadianceCascadeParams& params,
@@ -369,6 +420,21 @@ void RawRadianceHost::ComputeGI(ID3D12GraphicsCommandList* cmd,
 {
     if (!m_ready || !cmd || !sceneEmissiveAlpha || !m_cbMapped) {
         return;
+    }
+
+    uint32_t tsSlot = 0u;
+    const bool recordTs = (!m_inScreenGi && m_tsHeap != nullptr && m_tsReadback != nullptr);
+    if (recordTs) {
+        if (m_tsWriteIdx >= (kCbRingCount - 1u)) {
+            const uint32_t retired = (m_tsWriteIdx - (kCbRingCount - 1u)) % kCbRingCount;
+            float measuredMs = 0.0f;
+            if (HarvestTimestampPair(retired * 2u, measuredMs)) {
+                m_timings.giPassMs = measuredMs;
+                m_timings.valid = true;
+            }
+        }
+        tsSlot = m_tsWriteIdx % kCbRingCount;
+        cmd->EndQuery(m_tsHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, tsSlot * 2u + 0u);
     }
 
     const D3D12_RESOURCE_DESC sDesc = sceneEmissiveAlpha->GetDesc();
@@ -494,6 +560,13 @@ void RawRadianceHost::ComputeGI(ID3D12GraphicsCommandList* cmd,
         cmd->ResourceBarrier(1, &b);
     }
 
+    if (recordTs) {
+        cmd->EndQuery(m_tsHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, tsSlot * 2u + 1u);
+        cmd->ResolveQueryData(m_tsHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, tsSlot * 2u + 0u, 2u,
+                              m_tsReadback.Get(), static_cast<UINT64>(tsSlot * 2u) * sizeof(uint64_t));
+        ++m_tsWriteIdx;
+    }
+
     ++m_frameIdx;
 }
 
@@ -506,6 +579,21 @@ void RawRadianceHost::ExecuteScreenGI(ID3D12GraphicsCommandList* cmd,
 {
     if (!ScreenGIReady() || !cmd || !colorInOut || !sceneDepth || width == 0u || height == 0u || !m_cbMapped) {
         return;
+    }
+
+    uint32_t tsSlot = 0u;
+    const bool recordTs = (m_tsHeap != nullptr && m_tsReadback != nullptr);
+    if (recordTs) {
+        if (m_tsWriteIdx >= (kCbRingCount - 1u)) {
+            const uint32_t retired = (m_tsWriteIdx - (kCbRingCount - 1u)) % kCbRingCount;
+            float measuredMs = 0.0f;
+            if (HarvestTimestampPair(retired * 2u, measuredMs)) {
+                m_timings.giPassMs = measuredMs;
+                m_timings.valid = true;
+            }
+        }
+        tsSlot = m_tsWriteIdx % kCbRingCount;
+        cmd->EndQuery(m_tsHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, tsSlot * 2u + 0u);
     }
 
     const D3D12_RESOURCE_DESC cDesc = colorInOut->GetDesc();
@@ -581,7 +669,9 @@ void RawRadianceHost::ExecuteScreenGI(ID3D12GraphicsCommandList* cmd,
     rcParams.opacityScale       = 2.2f;
     rcParams.emissiveScale      = 0.15f;
     rcParams.irradianceScale    = 1.0f;
+    m_inScreenGi = true;
     ComputeGI(cmd, m_emissiveAlpha.Get(), rcParams, kCsSrv);
+    m_inScreenGi = false;
 
     // 3) Bilateral depth-aware upsample & energy-conserving diffuse GI bounce onto ColorOut
     D3D12_RESOURCE_BARRIER colToUav = makeBarrier(colorInOut, kCsSrv, kUav);
@@ -601,6 +691,13 @@ void RawRadianceHost::ExecuteScreenGI(ID3D12GraphicsCommandList* cmd,
         makeBarrier(sceneDepth, kCsSrv, kCommon)
     };
     cmd->ResourceBarrier(2, postB);
+
+    if (recordTs) {
+        cmd->EndQuery(m_tsHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, tsSlot * 2u + 1u);
+        cmd->ResolveQueryData(m_tsHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, tsSlot * 2u + 0u, 2u,
+                              m_tsReadback.Get(), static_cast<UINT64>(tsSlot * 2u) * sizeof(uint64_t));
+        ++m_tsWriteIdx;
+    }
 
     ++m_screenFrameIdx;
 }

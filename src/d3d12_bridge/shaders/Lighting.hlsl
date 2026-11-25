@@ -1187,6 +1187,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                                : lerp(float3(0.56f, 0.58f, 0.61f), saturate(albedo * 1.35f + 0.20f), 0.55f));
     const float metalAniso = isGoldBronzeAlloy ? 0.56f : (albLumMetal > 0.38f ? 0.66f : 0.48f);
     const bool useAnisoMetal = (!match && earlyMetallic > 0.22f && !isActorFeat && base != 5u && iceMask < 0.08f);
+    // Wave 45 100%-Analytical Micro-Relief Crevice Self-Shadowing parameters (stone/terrain/cobbles/wood/bark < 2200u):
+    const float mrDistFade = (!match && !isActorFeat && !isActorCloth && (base == 1u || base == 4u || base == 6u) && z < 2200.0f)
+        ? smoothstep(2200.0f, 160.0f, z) * (1.0f - saturate(wet.snow * 0.72f)) * (1.0f - saturate(wet.puddle * 0.85f)) * (1.0f - saturate(iceMask * 0.85f))
+        : 0.0f;
+    const float mrStrength = mrDistFade * ((base == 4u || base == 6u) ? 0.85f : 0.72f);
+    const float mrScale    = (base == 4u || base == 6u) ? 0.22f : 0.28f;
     if (sunDir.w > 0.5f) {
         // Interiors (sunColour.w < 0.5): NEVER read m4.x (that is vanilla's flickering point-light shadow channel 0!).
         // Keep interior directional fill unshadowed and calm so turning the camera never flickers the whole room!
@@ -1242,10 +1248,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // In interiors, keep flat directional vault fill minimal (0.12x) so real hearths, torches & candles sculpt the room!
         const float3 dirCol = (sunColour.w < 0.5f && !match) ? (sunColour.rgb * 0.12f)
                             : lerp(alignedDayCol * sunHdrGain, moonDirectCol, nightDir);
-        // Chan 2018 micro-shadowing: uses fine-scale AO to shadow crevices/mortar/bark where coarse shadow maps cannot reach.
+        // Chan 2018 micro-shadowing + Wave 45 100%-analytical directional micro-relief crevice self-shadowing:
         const float microSh = (!match && !isActorFeat && base != 5u) ? saturate(2.0f * AoHist.Load(ip).x + saturate(dot(s.n, sunDir.xyz)) - 0.85f) : 1.0f;
+        const float sunMicroRelief = (mrStrength > 0.01f && sunShadow > 0.02f)
+            ? evalMicroReliefSelfShadow(p + camPosW.xyz, s.n, sunDir.xyz, mrStrength, mrScale) : 1.0f;
         const float sunPunch = (!match && sunColour.w > 0.5f) ? lerp(1.24f, 0.85f, nightDir) : 1.0f;
-        addLight(s, sunDir.xyz, dirCol * (sunSh * lerp(0.50f, 1.0f, microSh) * sunPunch), dirCol * sunPunch, diff, spec);
+        addLight(s, sunDir.xyz, dirCol * (sunSh * lerp(0.50f, 1.0f, microSh) * sunMicroRelief * sunPunch), dirCol * sunPunch, diff, spec);
         // Wave 34 OverdrawGames UE5 Substrate IOR 1.31 Micro-Facet Snow & Hoar-Frost Diamond Glints:
         // Dual-tier pinpoint ice-crystal sparkles (F0=0.018, tight pow-220 diamond flash + pow-52 frost twinkle)
         // on BOTH live snowfall and permanent snowpacks, anchored in world space for natural camera-motion twinkle!
@@ -1349,6 +1357,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
 
     const uint4 bits = clusters[clusterOf(px, z)];
     uint softLeft = 4u;
+    bool mrKeyUsed = false;
     float fireMelt = 0.0f;
     [loop] for (uint w = 0u; w < 4u; w++) {
         // SM6.9 Wave-scalarized clustered light loop: WaveActiveBitOr keeps all lanes in lockstep so
@@ -1406,6 +1415,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (!match && !rt && sunColour.w > 0.5f && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
                 sh *= screenShadow(p + lift, l, min(dist, tune.z), 4.0f / max(dist, 1.0f), jit, 10u);
                 --softLeft;
+            }
+            // Wave 45 analytical micro-relief crevice self-shadowing on the nearest/strongest key point light (torches/hearths):
+            if (mrStrength > 0.01f && !mrKeyUsed && (slot == 1u || max(c.r, max(c.g, c.b)) > 0.06f) && dot(s.n, l) > 0.01f) {
+                sh *= evalMicroReliefSelfShadow(p + camPosW.xyz, s.n, l, mrStrength, mrScale);
+                mrKeyUsed = true;
             }
             // GTA-VI-inspired Representative-Point Sphere Area-Light Specular (Karis 2013):
             // Replaces pinpoint local-light specular dots with broad, physical area-light highlights on tables, stone & armor.

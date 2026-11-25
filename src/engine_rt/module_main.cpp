@@ -173,6 +173,18 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
                     mc.dodgesTriggered, mc.evadedHits, mc.dodgesRejectedStam, mc.sprintingNow,
                     mc.weaponDrawnNow, mc.baselineFovDeg, mc.appliedFovOffset, mc.fovBaselineResyncs);
             }
+            raw::rt::RawMemoryGuardTelemetry mg{};
+            if (RAW_GetMemoryGuardTelemetry(&mg)) {
+                if (mg.refHandleWarnLevel >= static_cast<uint8_t>(raw::rt::RefHandleHealthLevel::Warning)) {
+                    Log("[MemGuard] WARNING: active ref-handles ~%u/%u (%.1f%% saturation, level=%u) - approaching 1M CE ref-cap!",
+                        mg.refHandlesEstimated, raw::rt::kRefHandleCapacity, mg.refHandleSatPct, mg.refHandleWarnLevel);
+                } else {
+                    Log("[MemGuard] refHandles=~%u/%u (%.1f%%, lvl=%u) landPool=%u/%u grid=%u ws=%lluMB",
+                        mg.refHandlesEstimated, raw::rt::kRefHandleCapacity, mg.refHandleSatPct, mg.refHandleWarnLevel,
+                        mg.landPoolActive, mg.landPoolFree, mg.liveGridLength,
+                        static_cast<unsigned long long>(mg.workingSetMB));
+                }
+            }
         }
     }
 }

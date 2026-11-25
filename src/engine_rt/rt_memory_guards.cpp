@@ -3,13 +3,14 @@
 #include "rt_memory_guards.h"
 #include "rt_terrain_lod.h"
 
+#include <windows.h>
 #ifndef RAW_SIM_PURE_TEST
 #include "rt_forensics.h"
 #include "rt_version.h"
-#include <windows.h>
 #include <psapi.h>
 #endif
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -102,6 +103,61 @@ ScrapHeapAudit AnalyzeScrapHeapBounds(uint64_t baseAddress, uint64_t endAddress,
     return out;
 }
 
+static bool SehSampleRefHandleBuckets(const uint8_t* entriesBase,
+                                      uint32_t totalCapacity,
+                                      uint32_t strideEntries,
+                                      uint32_t* outSampled,
+                                      uint32_t* outInUse) noexcept {
+    if (!entriesBase || totalCapacity == 0u || strideEntries == 0u || !outSampled || !outInUse) {
+        return false;
+    }
+    uint32_t sampled = 0u;
+    uint32_t inUse = 0u;
+    __try {
+        for (uint32_t i = 0u; i < totalCapacity; i += strideEntries) {
+            const uint32_t bits = *reinterpret_cast<const uint32_t*>(
+                entriesBase + static_cast<size_t>(i) * kRefHandleEntryStride);
+            ++sampled;
+            if ((bits & kRefHandleInUseBit) != 0u) {
+                ++inUse;
+            }
+        }
+        *outSampled = sampled;
+        *outInUse   = inUse;
+        return sampled > 0u;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        *outSampled = 0u;
+        *outInUse   = 0u;
+        return false;
+    }
+}
+
+RefHandleSaturationReport SampleRefHandleSaturation(const void* handleEntriesBase,
+                                                    uint32_t totalCapacity,
+                                                    uint32_t strideEntries) {
+    RefHandleSaturationReport r{};
+    r.capacity = totalCapacity;
+    if (!handleEntriesBase || totalCapacity == 0u || strideEntries == 0u) {
+        return r;
+    }
+    uint32_t sampled = 0u, inUse = 0u;
+    if (!SehSampleRefHandleBuckets(static_cast<const uint8_t*>(handleEntriesBase),
+                                   totalCapacity, strideEntries, &sampled, &inUse) || sampled == 0u) {
+        return r;
+    }
+    r.sampledSlots    = sampled;
+    r.sampledInUse    = inUse;
+    const double frac = static_cast<double>(inUse) / static_cast<double>(sampled);
+    r.estimatedActive = static_cast<uint32_t>(std::lround(frac * static_cast<double>(totalCapacity)));
+    r.saturationPct   = static_cast<float>(std::clamp(frac * 100.0, 0.0, 100.0));
+    if (r.saturationPct >= 85.0f)      r.level = RefHandleHealthLevel::Critical;
+    else if (r.saturationPct >= 70.0f) r.level = RefHandleHealthLevel::Warning;
+    else if (r.saturationPct >= 50.0f) r.level = RefHandleHealthLevel::Elevated;
+    else                               r.level = RefHandleHealthLevel::Healthy;
+    r.warningTriggered = (r.level >= RefHandleHealthLevel::Warning);
+    return r;
+}
+
 #ifndef RAW_SIM_PURE_TEST
 namespace {
 
@@ -122,6 +178,10 @@ uint32_t kOffCellLock = 0x120u;
 uint32_t kGlobPoolFree = 0;
 uint32_t kGlobPoolActive = 0;
 uint32_t kGlobCachedGrids = 0;
+uint32_t kHandleEntriesRva = 0;
+uint32_t g_lastRefEst = 0;
+float    g_lastRefPct = 0.0f;
+uint8_t  g_lastRefLvl = 0;
 
 template <class T>
 T ReadAt(const uint8_t* p, uint32_t off) {
@@ -186,6 +246,7 @@ void MemoryGuardsInit(const Image& img) {
     kGlobPoolFree    = Addr("global:LoadedLandPoolCount");
     kGlobPoolActive  = Addr("global:LoadedLandPoolActive");
     kGlobCachedGrids = Addr("global:TerrainCachedGridsToLoad");
+    kHandleEntriesRva = Addr("BSPointerHandleManager::Entry::GetHandleEntries");
     if (uint32_t v = Off("off:TES::gridCells"))           kOffTesGrid = v;
     if (uint32_t v = Off("off:TESObjectCELL::cellFlags")) kOffCellFlags = v;
     if (uint32_t v = Off("off:TESObjectCELL::cellState")) kOffCellState = v;
@@ -212,6 +273,20 @@ void MemoryGuardsOnPresent() {
     next.passedChecks = g_passedChecks.load(std::memory_order_relaxed);
 
     ProbeMemoryStateSeh(&next);
+
+    // Sample BSPointerHandleManager 1M ref-cap saturation every ~5 seconds (every 5th 60-frame guard tick):
+    if (kHandleEntriesRva && ((tick / 60u) % 5u) == 0u) {
+        const auto sat = SampleRefHandleSaturation(g_base + kHandleEntriesRva, kRefHandleCapacity, 256u);
+        g_lastRefEst = sat.estimatedActive;
+        g_lastRefPct = sat.saturationPct;
+        g_lastRefLvl = static_cast<uint8_t>(sat.level);
+        if (sat.warningTriggered) {
+            ForensicsRecord("ref_handle_cap_warning", sat.estimatedActive, static_cast<uint64_t>(sat.level));
+        }
+    }
+    next.refHandlesEstimated = g_lastRefEst;
+    next.refHandleSatPct     = g_lastRefPct;
+    next.refHandleWarnLevel  = g_lastRefLvl;
 
     MEMORYSTATUSEX ms{}; ms.dwLength = sizeof ms;
     if (GlobalMemoryStatusEx(&ms)) next.availPhysMB = ms.ullAvailPhys >> 20;
@@ -261,14 +336,16 @@ std::string MemoryGuardsStatsJson() {
                   "\"mem_mgr_present\":%s,\"live_grid_len\":%u,\"terrain_cached_grids\":%u,"
                   "\"grids_desync\":%s,\"land_pool\":[%u,%u,37],\"land_pool_pressure\":%s,"
                   "\"active_cell_state\":%u,\"active_cell_flags\":\"0x%04X\",\"active_cell_locked\":%s,"
-                  "\"passed_checks\":%u,\"blocked_writes\":%u,\"working_set_mb\":%llu,\"avail_phys_mb\":%llu}",
+                  "\"passed_checks\":%u,\"blocked_writes\":%u,\"working_set_mb\":%llu,\"avail_phys_mb\":%llu,"
+                  "\"ref_handles_est\":%u,\"ref_handle_sat_pct\":%.1f,\"ref_handle_level\":%u}",
                   t.offsetsVerified ? "true" : "false", t.writesLocked ? "true" : "false",
                   t.memManagerPresent ? "true" : "false", t.liveGridLength, t.terrainCachedGrids,
                   t.gridsCacheDesync ? "true" : "false", t.landPoolFree, t.landPoolActive,
                   t.landPoolPressure ? "true" : "false", t.activeCellState, t.activeCellFlags,
                   t.activeCellLocked ? "true" : "false", t.passedChecks, t.blockedWrites,
                   static_cast<unsigned long long>(t.workingSetMB),
-                  static_cast<unsigned long long>(t.availPhysMB));
+                  static_cast<unsigned long long>(t.availPhysMB),
+                  t.refHandlesEstimated, t.refHandleSatPct, t.refHandleWarnLevel);
     return buf;
 }
 

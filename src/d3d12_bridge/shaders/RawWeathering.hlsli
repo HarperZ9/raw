@@ -161,4 +161,50 @@ RawWeatheringResult evalSurfaceWeathering3D(
     return o;
 }
 
+// ============================================================================
+// Wave 45 100%-Analytical Micro-Relief Crevice Self-Shadowing (ZERO staircase bands!)
+// Evaluates a smooth 2-tap analytical directional height derivative along the tangent-
+// projected light direction using rawNoise3Grad so grazing sun & torchlight cast crisp,
+// band-free micro-shadows inside cobblestone joints, ruined stonework, and bark fissures.
+// Returns smooth horizon self-occlusion strictly in [0.48, 1.0].
+// ============================================================================
+float evalMicroReliefSelfShadow(
+    float3 worldPosAbs,
+    float3 N,
+    float3 L,
+    float  reliefStrength,
+    float  detailScale)
+{
+    const float str = saturate(reliefStrength);
+    if (str <= 1.0e-3f) { return 1.0f; }
+
+    const float3 nUnit = (dot(N, N) > 1.0e-8f) ? normalize(N) : float3(0.0f, 0.0f, 1.0f);
+    const float3 lUnit = (dot(L, L) > 1.0e-8f) ? normalize(L) : nUnit;
+    const float nl = dot(nUnit, lUnit);
+    if (nl <= 0.005f) { return 1.0f; }
+
+    // Project light direction onto local surface tangent plane (zero horizon shadow when straight overhead):
+    const float3 lTangRaw = lUnit - nUnit * nl;
+    const float lTangLen2 = dot(lTangRaw, lTangRaw);
+    if (lTangLen2 <= 1.0e-5f) { return 1.0f; }
+    const float3 lTangDir = lTangRaw * rsqrt(lTangLen2);
+
+    const float sc = clamp(detailScale, 0.02f, 2.0f);
+    const float stepU = clamp(1.35f / sc, 1.5f, 10.0f);
+    const float3 seedOff = float3(5.3f, 11.7f, 2.9f);
+
+    // 2-tap analytical height + directional gradient along tangent-projected light vector (zero loops/steps!):
+    const float4 g0 = rawNoise3Grad(worldPosAbs * sc + seedOff);
+    const float4 g1 = rawNoise3Grad((worldPosAbs + lTangDir * stepU) * sc + seedOff);
+
+    const float grazing = saturate(1.0f - nl);
+    const float chordRise = max(g1.x - g0.x, 0.0f);
+    const float localSlope = max(dot(g0.yzw, lTangDir), 0.0f);
+    const float troughBias = saturate(0.58f - g0.x);
+
+    const float horizonSlope = chordRise * 1.35f + localSlope * 0.45f;
+    const float occDrive = saturate((horizonSlope * (0.65f + 1.35f * grazing) + troughBias * grazing * 0.42f) * str);
+    return lerp(1.0f, 0.48f, smoothstep(0.04f, 0.78f, occDrive));
+}
+
 #endif

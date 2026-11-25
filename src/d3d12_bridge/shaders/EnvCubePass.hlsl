@@ -55,10 +55,11 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
         const float cAtt = 1.0f - saturate(clouds.x * 0.72f);
         col += sunColour.rgb * (pow(cosS, expS) * gainS * cAtt * step(0.0f, rd.z));
     } else {
-        // Interiors, taverns, dungeons, Dwemer ruins: directional stone-vault gradient + warm floor bounce.
-        const float3 ceilCol = ambDir * lerp(0.55f, 1.10f, saturate(rd.z * 0.5f + 0.5f));
-        const float3 floorCol = ambDir * float3(0.42f, 0.38f, 0.34f);
-        col = lerp(floorCol, ceilCol, smoothstep(-0.25f, 0.35f, rd.z));
+        // Interiors, taverns, dungeons, Dwemer ruins: high-contrast directional stone-vault gradient
+        // (cool-neutral high vault ceiling vs rich dark floor bounce so metallic jugs, goblets & armor read crisp, not muddy brown!).
+        const float3 ceilCol = ambDir * float3(0.88f, 0.94f, 1.06f) * lerp(0.45f, 1.35f, pow(saturate(rd.z * 0.5f + 0.5f), 1.4f));
+        const float3 floorCol = ambDir * float3(0.22f, 0.19f, 0.16f);
+        col = lerp(floorCol, ceilCol, smoothstep(-0.22f, 0.38f, rd.z));
     }
     // Feature 1: Live Screen-Space Scene Radiance Projection into the 256x256 Dynamic Cubemap:
     // Reflects real nearby buildings, trees, firepits, and tavern walls onto metallic armor, wet floors, and eyes.

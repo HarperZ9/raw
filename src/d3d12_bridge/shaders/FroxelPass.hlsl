@@ -180,7 +180,8 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                 const float cosL = dot(farDir, toL / max(dL, 1.0e-3f));
                 const float phL = min(froxelHG(cosL, isInt ? 0.50f : 0.46f) * (isInt ? 1.8f : 1.6f) + 0.20f, 1.5f);
                 const float intSmoke = isInt ? (0.78f + 0.44f * cNoise(wp * 0.0095f - float3(0.0f, 0.0f, camPosW.w * 0.16f))) : 1.0f;
-                inScat += min(lightColS[li].rgb * (att * phL * tune2.y * intSmoke * (isInt ? 0.24f : 0.14f)), 0.18f.xxx);
+                // Disciplined interior scatter (0.065 vs old 0.24) kills milky yellow haze in Dragonsreach (16.00.35) & cyan ice cave wash (16.02.00):
+                inScat += min(lightColS[li].rgb * (att * phL * tune2.y * intSmoke * (isInt ? 0.065f : 0.12f)), (isInt ? 0.045f : 0.14f).xxx);
                 // Removed blurry 160x90 froxel fake flame/smoke blob that washed out real hearths & braziers.
             }
         }

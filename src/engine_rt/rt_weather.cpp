@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <unordered_map>
 
 extern "C" uint64_t RAW_EngineView(raw::rt::EngineView* out);
 
@@ -48,7 +49,44 @@ State g_state;
 
 float Sat(float x) { return std::clamp(x, 0.0f, 1.0f); }
 
-WeatherRead ReadWeather(const uint8_t* w) {
+struct SavedFog {
+    float f[8];   // TESWeather::FogData (FNAM +0x678): dayNear, dayFar, nightNear, nightFar, dayPow, nightPow, dayMax, nightMax
+};
+std::unordered_map<const uint8_t*, SavedFog> g_savedFog;
+
+void NeutralizeVanillaFog(uint8_t* w) {
+    if (!w) return;
+    __try {
+        float* fnam = reinterpret_cast<float*>(w + 0x678);
+        if (g_savedFog.find(w) == g_savedFog.end()) {
+            SavedFog sf{};
+            for (int i = 0; i < 8; ++i) sf.f[i] = fnam[i];
+            g_savedFog.emplace(w, sf);
+        }
+        // Push Creation Engine's 2011 flat vertex/pixel fog out beyond 250k..500k units and zero max opacity
+        // so Skyrim never bakes flat grey-green fog cutouts onto distant mountains before DX12 volumetric fog runs!
+        fnam[0] = 250000.0f;   // dayNear
+        fnam[1] = 500000.0f;   // dayFar
+        fnam[2] = 250000.0f;   // nightNear
+        fnam[3] = 500000.0f;   // nightFar
+        fnam[6] = 0.0f;        // dayMax
+        fnam[7] = 0.0f;        // nightMax
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+void RestoreVanillaFog() {
+    for (const auto& kv : g_savedFog) {
+        __try {
+            float* fnam = reinterpret_cast<float*>(const_cast<uint8_t*>(kv.first) + 0x678);
+            for (int i = 0; i < 8; ++i) fnam[i] = kv.second.f[i];
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
+    g_savedFog.clear();
+}
+
+WeatherRead ReadWeather(uint8_t* w) {
     WeatherRead r;
     if (!w) return r;
     __try {
@@ -59,7 +97,9 @@ WeatherRead ReadWeather(const uint8_t* w) {
         r.lightningFreq = w[0x664 + 0x0A];
         r.flags = w[0x664 + 0x0B];
         r.windDir = w[0x664 + 0x0F];
-        r.fogFar = *reinterpret_cast<const float*>(w + 0x678 + 0x04);
+        auto it = g_savedFog.find(w);
+        r.fogFar = (it != g_savedFog.end()) ? it->second.f[1] : *reinterpret_cast<const float*>(w + 0x678 + 0x04);
+        NeutralizeVanillaFog(w);
         r.ok = true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         r.ok = false;
@@ -71,8 +111,8 @@ bool ReadSky(State* s) {
     __try {
         const uint8_t* sky = g_getSky();
         if (!sky) return false;
-        const auto* cur = *reinterpret_cast<const uint8_t* const*>(sky + 0x48);
-        const auto* last = *reinterpret_cast<const uint8_t* const*>(sky + 0x50);
+        auto* cur = *reinterpret_cast<uint8_t* const*>(sky + 0x48);
+        auto* last = *reinterpret_cast<uint8_t* const*>(sky + 0x50);
         s->pct = Sat(*reinterpret_cast<const float*>(sky + 0x1B8));
         // Exact verified Sky::currentGameHour offset on 1.6.1170 / 1.7.104.0 is +0x1B0 (matching rt_view.cpp:85;
         // +0x1BC was 12 bytes off and broke 24-hour dawn/sunrise/sunset/dusk/night sky & solar gating!).

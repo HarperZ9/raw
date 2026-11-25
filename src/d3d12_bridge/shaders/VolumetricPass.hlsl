@@ -126,8 +126,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // GTA-VI-inspired shadowed long-range local-light volumetrics (top 12 lights x 10 depth-marched steps)
         // with crisp anisotropic Mie forward scattering (g=0.65) + rising 3D hearth smoke/dust motes + night city haze.
         const float3 midWp = camPosW.xyz + eye + w * min(tEnd * 0.45f, 1800.0f);
-        const float dustMote = isInt ? (0.72f + 0.56f * cNoise(midWp * 0.011f - float3(0.0f, 0.0f, camPosW.w * 0.16f))) : 1.0f;
-        const float intGain = isInt ? (1.55f * dustMote) : (weatherMistGain * (1.0f + nightV * 1.25f));
+        const float dustMote = isInt ? (0.78f + 0.44f * cNoise(midWp * 0.011f - float3(0.0f, 0.0f, camPosW.w * 0.16f))) : 1.0f;
+        // Disciplined interior volumetric gain (0.38 vs old 1.55) prevents milky orange/cyan fog wash across halls & ice caves:
+        const float intGain = isInt ? (0.38f * dustMote) : (weatherMistGain * (1.0f + nightV * 1.25f));
         const float jitL = ign(lo + float2(13.0f, 29.0f));
         uint shadowedDone = 0u;
         [loop] for (uint li = 0u; li < flags.y; li++) {
@@ -136,7 +137,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float wi = windowIntegral(w, lpRel, rL, tEnd);
             if (wi > 0.0f) {
                 const bool isFire = lightColS[li].r > lightColS[li].b * 1.25f;
-                const float3 fCol = isFire ? lightColS[li].rgb * float3(1.28f, 0.84f, 0.48f) * 1.55f : lightColS[li].rgb;
+                const float3 fCol = isFire ? lightColS[li].rgb * float3(1.18f, 0.86f, 0.52f) * 1.05f : lightColS[li].rgb;
                 float visScale = 1.0f;
                 if ((isInt || nightV > 0.25f) && shadowedDone < 12u) {
                     const float3 lp = lightPosR[li].xyz;

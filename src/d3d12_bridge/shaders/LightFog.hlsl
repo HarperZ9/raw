@@ -457,9 +457,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float slant = dot(sheetP.xy, sheetW) * 0.0014f - sheetP.z * 0.00045f - camPosW.w * 0.12f;
             const float curtain = smoothstep(0.35f, 0.85f, cNoise(float3(slant, dot(sheetP.xy, float2(-sheetW.y, sheetW.x)) * 0.0009f, sheetP.z * 0.00025f)));
             const float sheetDens = curtain * saturate((dist - 650.0f) / 3800.0f) * max(weather.w, weather.z) * 0.22f;
-            atmoCol = lerp(atmoCol, lerp(float3(0.24f, 0.29f, 0.36f), float3(0.62f, 0.68f, 0.76f), weather.z), sheetDens * 0.55f);
+            // Attenuate blizzard sheet luminance by nightF so snowy night cliffs never glow bright grey-green against dark indigo sky (16.01.41/48)!
+            const float3 daySheetCol = lerp(float3(0.24f, 0.29f, 0.36f), float3(0.62f, 0.68f, 0.76f), weather.z);
+            const float3 sheetCol = lerp(daySheetCol, nightHorF * 1.05f, nightF);
+            atmoCol = lerp(atmoCol, sheetCol, sheetDens * 0.48f);
             T *= (1.0f - sheetDens * 0.35f);
         }
+        // Re-lock distant snowy/overcast twilight & night horizon color to exact sky-dome nightHorF so Winterhold cliffs never cut out!
+        atmoCol = lerp(atmoCol, nightHorF, nightF * 0.85f);
         atmoCol = min(atmoCol, 3.5f.xxx);
         // GTA6-Surpassing 6-Layer Native DX12 3D World-Space Volumetric Precipitation (depth-occluded in 3D space):
         // Real Rain (wind-slanted specular streaks catching local torch/lantern light!), Real Snow (helical 3D vortex
@@ -616,7 +621,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
         }
-        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.42f + intEmberAdd, lit.a);
+        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.18f + intEmberAdd, lit.a);
     }
     const float T = (flags.x & FLAG_FOG_REPLACES) != 0u ? exp(-sigma * tEnd) : 1.0f;
     return float4(lit.rgb * T + scatter, lit.a);

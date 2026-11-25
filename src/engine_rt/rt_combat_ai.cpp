@@ -302,4 +302,89 @@ void QuantizeE8Lattice(const float in8[8], float scale, float out8[8]) {
     for (int i = 0; i < 8; ++i) out8[i] = pick[i] * invS;
 }
 
+PhysicsSubstepPlan ComputePhysicsSubstep(float rawFrameDtSec) {
+    PhysicsSubstepPlan p{};
+    constexpr float kMinDt = 1.0f / 360.0f;
+    constexpr float kMaxDt = 0.050f;         // clamp >50ms hitches so rigid bodies never tunnel/explode
+    constexpr float kMaxSubstep = 1.0f / 120.0f;
+    if (!std::isfinite(rawFrameDtSec) || rawFrameDtSec <= 0.0f) {
+        p.clampedFrameDt = 1.0f / 60.0f;
+        p.spikeClamped = true;
+    } else if (rawFrameDtSec > kMaxDt) {
+        p.clampedFrameDt = kMaxDt;
+        p.spikeClamped = true;
+    } else {
+        p.clampedFrameDt = std::max(rawFrameDtSec, kMinDt);
+    }
+    const uint32_t steps = std::clamp<uint32_t>(
+        static_cast<uint32_t>(std::ceil(p.clampedFrameDt / kMaxSubstep)), 1u, 6u);
+    p.substeps = steps;
+    p.substepDt = p.clampedFrameDt / static_cast<float>(steps);
+    return p;
+}
+
+ThermalExposureState EvaluateThermalExposure(float altitudeZ, float windSpeed, float rain01, float snow01,
+                                             bool inInterior, bool nearFire, float prevWarmth, float dtSec) {
+    ThermalExposureState s{};
+    const float dt = std::clamp(dtSec, 0.0f, 10.0f);
+    // Atmospheric environmental lapse rate (-6.5 C per 1000m; Skyrim 1m ~= 70 world units):
+    const float altMeters = std::max(0.0f, altitudeZ / 70.0f);
+    const float baseTemp = inInterior ? 18.0f : (11.0f - altMeters * 0.0065f - std::clamp(snow01, 0.0f, 1.0f) * 14.0f);
+    const float windChill = inInterior ? 0.0f : std::min(16.0f, std::max(0.0f, windSpeed) * 0.045f);
+    const float wetDrain = inInterior ? 0.0f : (std::clamp(rain01, 0.0f, 1.0f) * 7.5f);
+    s.ambientTempC = baseTemp - windChill - (nearFire ? -26.0f : 0.0f);
+
+    float ratePerSec = 0.0f;
+    if (nearFire) {
+        ratePerSec = +8.5f;
+    } else if (inInterior) {
+        ratePerSec = +2.8f;
+    } else {
+        const float coldDelta = std::max(0.0f, 8.0f - (baseTemp - windChill));
+        ratePerSec = -(coldDelta * 0.14f + wetDrain * 0.25f) + (coldDelta <= 0.0f ? 0.9f : 0.0f);
+    }
+    s.coreWarmth = std::clamp(prevWarmth + ratePerSec * dt, 0.0f, 100.0f);
+    s.shiverIntensity = std::clamp((42.0f - s.coreWarmth) / 42.0f, 0.0f, 1.0f);
+    s.freezingRisk = (s.coreWarmth < 25.0f);
+    s.staminaRegenMult = std::clamp(0.40f + 0.65f * (s.coreWarmth / 100.0f) + (nearFire ? 0.10f : 0.0f), 0.35f, 1.15f);
+    return s;
+}
+
+WeaponArcHitResult EvaluateWeaponArcHit(const float swingStart[3], const float swingEnd[3],
+                                        const float targetCenter[3], float targetRadius,
+                                        float targetHeight, float swingSpeed) {
+    WeaponArcHitResult r{};
+    if (!swingStart || !swingEnd || !targetCenter || targetRadius <= 0.0f || targetHeight <= 0.0f) return r;
+    const float dx = swingEnd[0] - swingStart[0];
+    const float dy = swingEnd[1] - swingStart[1];
+    const float dz = swingEnd[2] - swingStart[2];
+    const float segLen2 = dx * dx + dy * dy + dz * dz;
+    float t = 0.0f;
+    if (segLen2 > 1.0e-6f) {
+        const float px = targetCenter[0] - swingStart[0];
+        const float py = targetCenter[1] - swingStart[1];
+        const float pz = targetCenter[2] - swingStart[2];
+        t = std::clamp((px * dx + py * dy + pz * dz) / segLen2, 0.0f, 1.0f);
+    }
+    const float cx = swingStart[0] + dx * t;
+    const float cy = swingStart[1] + dy * t;
+    const float cz = swingStart[2] + dz * t;
+    const float rx = cx - targetCenter[0];
+    const float ry = cy - targetCenter[1];
+    const float horizDist = std::sqrt(rx * rx + ry * ry);
+    const float halfH = targetHeight * 0.5f;
+    const float vertGap = std::max(0.0f, std::fabs(cz - targetCenter[2]) - halfH);
+    const float radGap = std::max(0.0f, horizDist - targetRadius);
+    r.closestDist = std::sqrt(radGap * radGap + vertGap * vertGap);
+    r.impactParamT = t;
+    r.hit = (horizDist <= targetRadius && vertGap <= 0.0f);
+    if (r.hit) {
+        const float sweetSpot = 0.72f + 0.58f * t; // tip strikes carry peak angular momentum
+        const float spd = std::clamp(swingSpeed, 0.25f, 4.0f);
+        r.momentumMult = sweetSpot * (0.75f + 0.35f * spd);
+        r.poiseImpulse = 18.0f * r.momentumMult;
+    }
+    return r;
+}
+
 }  // namespace raw::rt

@@ -169,6 +169,10 @@ struct RtDraw
     uint32_t blendInfo = 0;              // actors: colour write mask of target 0 | blend on << 8 | depth write << 9
     uint8_t* diagVb = nullptr; uint8_t* diagBv = nullptr;
     uint32_t diagVbBytes = 0, diagBvBytes = 0;
+    // Live 4x curved/snowpack-lifted TxSubdiv D3D12 buffers (optional, COM ref held until ReleaseRtDraw):
+    ID3D12Resource* subdivVb = nullptr;
+    ID3D12Resource* subdivIb = nullptr;
+    uint32_t subdivIndexCount = 0, subdivVertCount = 0;
     // How the references are given back; nullptr: Release. The RAW proxy on raw::tx takes them as the
     // layer's plain host references (raw::tx::HoldBuffer, HoldView): no locked instruction per draw.
     void (*drop)(RtDraw&) = nullptr;
@@ -183,9 +187,12 @@ inline void ReleaseRtDraw(RtDraw& d)
     if (d.alphaSrv) d.alphaSrv->Release();
     if (d.uvVb) d.uvVb->Release();
     if (d.blendVb) d.blendVb->Release();
+    if (d.subdivVb) d.subdivVb->Release();
+    if (d.subdivIb) d.subdivIb->Release();
     delete[] d.bones;
     delete[] d.diagVb; delete[] d.diagBv;
     d.diagVb = nullptr; d.diagBv = nullptr; d.diagVbBytes = d.diagBvBytes = 0;
+    d.subdivVb = nullptr; d.subdivIb = nullptr; d.subdivIndexCount = d.subdivVertCount = 0;
     d.vb = nullptr; d.ib = nullptr; d.alphaSrv = nullptr; d.uvVb = nullptr; d.blendVb = nullptr; d.bones = nullptr;
 }
 

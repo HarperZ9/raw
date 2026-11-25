@@ -250,6 +250,26 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     }
                     fullSky += aurSum * (auroraVis * 0.115f);
                 }
+                // Natural shooting-star meteor streaks across clear dark northern skies (1 streak every ~9 sec):
+                const float metBucket = floor(camPosW.w * 0.11f);
+                const float metPhase = frac(camPosW.w * 0.11f);
+                if (metPhase < 0.085f && cover < 0.45f) {
+                    const float mRand = cHash(float3(metBucket, 17.3f, 3.1f));
+                    if (mRand > 0.35f) {
+                        const float3 mStart = normalize(float3(cHash(float3(metBucket, 1.1f, 2.2f)) * 2.0f - 1.0f,
+                                                               cHash(float3(metBucket, 5.7f, 8.3f)) * 2.0f - 1.0f,
+                                                               0.32f + 0.52f * cHash(float3(metBucket, 9.1f, 4.4f))));
+                        const float3 mDir = normalize(cross(mStart, float3(0.2f, 0.3f, 0.9f)) - float3(0.0f, 0.0f, 0.45f));
+                        const float mT = metPhase / 0.085f;
+                        const float3 mHead = normalize(mStart + mDir * (mT * 0.22f));
+                        const float3 mRel = sDir - mHead;
+                        const float along = dot(mRel, -mDir);
+                        const float perp = length(mRel + mDir * clamp(along, 0.0f, 0.065f));
+                        const float tail = saturate(1.0f - along / 0.065f) * step(0.0f, along);
+                        const float streak = exp(-perp * perp * 220000.0f) * tail * sin(mT * 3.14159265f);
+                        fullSky += float3(0.92f, 0.96f, 1.0f) * (streak * nightSkyW * (1.0f - cover) * 2.4f);
+                    }
+                }
             }
             // Preserve Masser & Secunda twin moons cleanly on top of our procedural night/twilight sky.
             float3 baseSky = lerp(lit.rgb, fullSky, (1.0f - isExotic) * (1.0f - moonKeep * 0.96f));

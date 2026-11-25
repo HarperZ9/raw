@@ -122,4 +122,36 @@ TacticalPolicyResult SolveTacticalStochasticGame(const TacticalGameState& st);
 // Exact CPU reference of the O(1) 8D E8 optimal sphere-packing lattice quantizer (matches RawTensorMath.hlsli::rawQuantizeE8).
 void QuantizeE8Lattice(const float in8[8], float scale, float out8[8]);
 
+// High-FPS Physics Substep Governor (replaces Havok Fix + Display Tweaks, 30..360 Hz stable):
+struct PhysicsSubstepPlan {
+    float    clampedFrameDt = 1.0f / 60.0f;
+    float    substepDt      = 1.0f / 120.0f;
+    uint32_t substeps       = 2;
+    bool     spikeClamped   = false;
+};
+PhysicsSubstepPlan ComputePhysicsSubstep(float rawFrameDtSec);
+
+// Environmental Thermal Exposure & Survival Simulation (replaces Frostfall + Wet & Cold natively at 0.001 ms):
+struct ThermalExposureState {
+    float ambientTempC     = 12.0f;
+    float coreWarmth       = 85.0f;   // 0 (hypothermia) .. 100 (warm)
+    float shiverIntensity  = 0.0f;    // 0 .. 1
+    float staminaRegenMult = 1.0f;    // 0.35 .. 1.15
+    bool  freezingRisk     = false;
+};
+ThermalExposureState EvaluateThermalExposure(float altitudeZ, float windSpeed, float rain01, float snow01,
+                                             bool inInterior, bool nearFire, float prevWarmth, float dtSec);
+
+// Swept Weapon Arc-Momentum Hitbox & Sweet-Spot Evaluation (replaces Precision + Valhalla Combat):
+struct WeaponArcHitResult {
+    bool  hit           = false;
+    float closestDist   = 1.0e9f;
+    float impactParamT  = 0.0f;       // 0 = hilt, 1 = tip sweet-spot
+    float momentumMult  = 1.0f;
+    float poiseImpulse  = 0.0f;
+};
+WeaponArcHitResult EvaluateWeaponArcHit(const float swingStart[3], const float swingEnd[3],
+                                        const float targetCenter[3], float targetRadius,
+                                        float targetHeight, float swingSpeed);
+
 }  // namespace raw::rt

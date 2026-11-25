@@ -17,6 +17,9 @@ EXPORTS
     ; === SkyrimBridge proxy API ===
     SB_GetProxyInterface
     PG_GetProxyInterface
+    RAW_GetApi
+    RAW_SubmitLiveShader
+    RAW_GetLiveShaderStatus
 
     ; === Force discrete GPU on laptops ===
     ; Data exports (value=1). ENB exports NvOptimusEnablement.

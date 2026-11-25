@@ -12,6 +12,7 @@
 #include "SceneLights.h"
 #include "ProxyLog.h"
 #include "CBDirtyTracker.h"
+#include "Translate.h"
 #include "../core/dxbc/GBufferPatch.h"
 
 #include <algorithm>
@@ -217,6 +218,11 @@ void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT start
     if (!d.vb || !d.ib) { raw::bridge::ReleaseRtDraw(d); ++g_n.noBuffers; return; }
     d.stride = stride; d.vbOffset = offset; d.posOffset = L.pos.offset; d.posFormat = pf;
     d.indexCount = indexCount; d.startIndex = startIndex; d.baseVertex = baseVertex;
+    // Sync DXR 1.2 BLAS directly to the 4x curved/snow-lifted TxSubdiv mesh when cached on raw::tx:
+    if (!alpha && raw::tx::IsLayerContext(real)) {
+        raw::tx::PeekSubdivMesh(real, indexCount, startIndex, baseVertex,
+                                &d.subdivVb, &d.subdivIb, &d.subdivIndexCount, &d.subdivVertCount);
+    }
     std::memcpy(d.world, w, sizeof d.world);
     // Alpha-tested too: most of the land's draws follow a prepass that tested the alpha (AlphaFollows).
     if (LodLand(real, w, d.lodRect)) { d.lodLand = true; ++g_n.lodLand; }

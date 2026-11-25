@@ -110,4 +110,9 @@ void GetNative(ID3D11Device* device, void** d3d12Device, void** d3d12Queue);
 // Live runtime control of TxSubdiv curved PN-Triangle curvature, 3D volumetric snowpack buildup, and micro-relief.
 void SetSubdivParams(ID3D11Device* device, float curvatureGain, float snowDepthU, float displaceAmp);
 
+// Looks up the cached 4x curved/snowpack-lifted D3D12 buffers for the currently bound draw so DXR 1.2 BLAS
+// builds match the subdivided on-screen silhouette. Adds a COM reference to outVb and outIb when returning true.
+bool PeekSubdivMesh(ID3D11DeviceContext* context, UINT indexCount, UINT startIndex, INT baseVertex,
+                    ID3D12Resource** outVb, ID3D12Resource** outIb, UINT* outIndexCount, UINT* outVertCount);
+
 }  // namespace raw::tx

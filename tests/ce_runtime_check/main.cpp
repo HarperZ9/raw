@@ -578,6 +578,26 @@ void main() {
         "#version 450\nvoid main() { vec3 x = nonexistent_fn(1.0, ); }\n",
         L"bad.glsl", L"main", L"cs_6_6", L"", nullptr, raw::bridge::ShaderOutput::Dxil, true);
     Check(!rBad.ok && !rBad.errors.empty(), "glsl_planted_syntax_error_reject");
+
+    // 9) Wave 20 All-Category Engine Simulation (High-FPS Physics Substep + Thermal Exposure + Weapon Arc Hitbox)
+    const auto sub240 = raw::rt::ComputePhysicsSubstep(1.0f / 240.0f);
+    const auto subSpike = raw::rt::ComputePhysicsSubstep(0.25f); // 250ms hitch must clamp to 50ms & multi-substep
+    Check(sub240.substeps == 1 && !sub240.spikeClamped && subSpike.spikeClamped &&
+          subSpike.clampedFrameDt <= 0.0501f && subSpike.substeps == 6 && subSpike.substepDt <= 1.0f / 119.0f,
+          "physics_high_fps_substep_governor");
+
+    const auto thBlizz = raw::rt::EvaluateThermalExposure(4200.0f, 200.0f, 0.0f, 1.0f, false, false, 60.0f, 10.0f);
+    const auto thHearth = raw::rt::EvaluateThermalExposure(4200.0f, 200.0f, 0.0f, 1.0f, true, true, 30.0f, 5.0f);
+    Check(thBlizz.coreWarmth < 60.0f && thBlizz.ambientTempC < 0.0f && thBlizz.staminaRegenMult < 0.90f &&
+          thHearth.coreWarmth > 65.0f && !thHearth.freezingRisk,
+          "thermal_exposure_survival_sim");
+
+    const float swA[3] = {-40.0f, 10.0f, 80.0f}, swB[3] = {50.0f, 10.0f, 80.0f};
+    const float tgtHit[3] = {20.0f, 15.0f, 65.0f}, tgtMiss[3] = {20.0f, 95.0f, 65.0f};
+    const auto arcHit = raw::rt::EvaluateWeaponArcHit(swA, swB, tgtHit, 24.0f, 120.0f, 1.8f);
+    const auto arcMiss = raw::rt::EvaluateWeaponArcHit(swA, swB, tgtMiss, 24.0f, 120.0f, 1.8f);
+    Check(arcHit.hit && arcHit.impactParamT > 0.5f && arcHit.poiseImpulse > 20.0f && !arcMiss.hit,
+          "weapon_arc_momentum_hitbox");
 }
 
 }  // namespace

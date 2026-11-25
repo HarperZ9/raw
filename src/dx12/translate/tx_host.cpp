@@ -91,4 +91,47 @@ HRESULT PrepareForHost(ID3D11DeviceContext* context, ID3D11Resource* const* res,
     return S_OK;
 }
 
+bool PeekSubdivMesh(ID3D11DeviceContext* context, UINT indexCount, UINT startIndex, INT baseVertex,
+                    ID3D12Resource** outVb, ID3D12Resource** outIb, UINT* outIndexCount, UINT* outVertCount)
+{
+    if (!context || !outVb || !outIb || !outIndexCount || !outVertCount) return false;
+    auto* ctx = static_cast<Context*>(context);
+    ID3D11Device* d11 = nullptr;
+    ctx->GetDevice(&d11);
+    if (!d11) return false;
+    Device* dev = Dev(d11);
+    const bool enabled = dev->geometrySubdiv && dev->subdiv.Ready();
+    const uint32_t epoch = dev->subdivEpoch.load(std::memory_order_relaxed);
+    d11->Release();
+    if (!enabled) return false;
+
+    const State& s = ctx->Bound();
+    if (!s.layout || !s.layout->id || !s.vb[0].buf || !s.ib.buf) return false;
+    if (s.vb[0].buf->core.store != Store::Committed || s.ib.buf->core.store != Store::Committed) return false;
+    if (!s.vb[0].buf->core.tr || !s.ib.buf->core.tr) return false;
+
+    SubdivKey key{};
+    key.vbTr = s.vb[0].buf->core.tr.get();
+    key.ibTr = s.ib.buf->core.tr.get();
+    key.vbOffset = s.vb[0].offset;
+    key.ibOffset = s.ib.offset;
+    key.startIndex = startIndex;
+    key.indexCount = indexCount;
+    key.baseVertex = baseVertex;
+    key.layoutId = s.layout->id;
+    key.stride = s.vb[0].stride;
+    key.ibFmt = static_cast<uint32_t>(s.ibFmt);
+    key.epoch = epoch;
+
+    auto hit = dev->subdiv.Find(key);
+    if (!hit || !hit->vbTr || !hit->ibTr || !hit->vbTr->res || !hit->ibTr->res) return false;
+    *outVb = hit->vbTr->res.Get();
+    *outIb = hit->ibTr->res.Get();
+    (*outVb)->AddRef();
+    (*outIb)->AddRef();
+    *outIndexCount = hit->outIndexCount;
+    *outVertCount = hit->vbView.StrideInBytes ? (hit->vbView.SizeInBytes / hit->vbView.StrideInBytes) : 0u;
+    return *outVertCount > 0u && *outIndexCount >= 3u;
+}
+
 }  // namespace raw::tx

@@ -25,6 +25,7 @@
 #include "OcclusionCuller.h"
 #include "WeatherDrive.h"
 #include "Tonemap.h"
+#include "../ui/RawStudioUi.h"
 #include "../d3d12_bridge/HardwareProfile.h"
 
 #include <algorithm>
@@ -331,9 +332,12 @@ bool LightingAtOpaque(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr)
     b->SetLighting(l);
     if (TxMode_Get() == 1) {
         if (auto* pi = PG_GetProxyInterface(); pi && pi->device) {
+            const auto& sim = raw::ui::GetWorldSimTuning();
             const bool isExt = l.hasEngineCell ? !l.isInterior : l.hasCascades;
-            const float snowU = isExt ? (Cfg().light.snow * 12.0f) : 0.0f;
-            raw::tx::SetSubdivParams(pi->device, 0.62f, snowU, 0.08f);
+            const float curv = (sim.geomSubdivLevel > 0) ? sim.geomCurvature : 0.0f;
+            const float snowU = (isExt && sim.snowVolumetric) ? (Cfg().light.snow * sim.snowMaxDepthU * 0.55f) : 0.0f;
+            const float disp = (sim.geomSubdivLevel > 0) ? (sim.geomDisplaceScale * 0.14f) : 0.0f;
+            raw::tx::SetSubdivParams(pi->device, curv, snowU, disp);
         }
     }
     b->SetRtDraws(SceneGeometry_Take());

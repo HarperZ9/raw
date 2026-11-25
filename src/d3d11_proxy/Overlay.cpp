@@ -8,6 +8,8 @@
 #include "ProxyLog.h"
 #include "Tonemap.h"
 #include "StreamlineHost.h"
+#include "Translate.h"
+#include "TxMode.h"
 #include "WeatherDrive.h"
 #include "../ui/RawDesignTokens.h"
 #include "../ui/RawInputEngine.h"
@@ -275,6 +277,14 @@ std::vector<raw::ui::StudioRow> BuildRows(int tab)
         AddToggle(rows, "Meshlet Wireframe Audit", sim.geomWireframe);
         AddToggle(rows, "EnvMap Conductor Split", l.envMap);
         AddToggle(rows, "GGX Energy-Conserving", l.ggxSpecular);
+        if (TxMode_Get() == 1) {
+            if (auto* pi = PG_GetProxyInterface(); pi && pi->device) {
+                const auto st = raw::tx::GetStats(pi->device);
+                AddCycle(rows, "Live 4x Uplift + DXR Sync",
+                         FmtI("%d meshes | ", int(st.subdivMeshes)) + FmtI("%d draws", int(st.subdivDraws)),
+                         st.subdivMeshes > 0);
+            }
+        }
         AddCycle(rows, "Asset Hot-Swap (.glb)", "raw_assets\\overrides\\", true);
     } else if (tab == 2) {
         AddToggle(rows, "3D Volumetric Clouds", l.clouds);
@@ -396,6 +406,7 @@ std::vector<raw::ui::StudioRow> BuildRows(int tab)
         AddCycle(rows, "User Preset Slot", FmtI("Slot %d  (S=Save | L=Load)", g_presetSlot), true);
         AddToggle(rows, "Studio Dark Ground", sim.darkTheme);
         AddToggle(rows, "Reduced Motion Mode", sim.reducedMotion);
+        AddCycle(rows, "Live Shader Lab (HLSL/GLSL)", HotReload_LiveStatus(), true);
     }
     return rows;
 }

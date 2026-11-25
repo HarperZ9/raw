@@ -4,6 +4,7 @@
 // Original work, MIT.
 #include "../../include/raw_api.h"
 #include "BridgeHookState.h"
+#include "HotReload.h"
 
 #include <cstring>
 
@@ -57,7 +58,7 @@ int Api_GetCameraOptics(RAW_CameraOptics* outOptics)
 
 const char* Api_GetVersionString()
 {
-    return "RAW 1.0.3-r394 (THE PLAYGROUND / DX12 + DXR 1.2 + RAWLSS 5.5 + RAW-STRATA + RAW-MESH + RAW-LUMEN + RAW-API v1)";
+    return "RAW 2.0 (THE PLAYGROUND / DX12 + DXR 1.2 + TxSubdiv 4x + Dual HLSL/GLSL + RAWLSS 7.0 + Zero-SKSE WorldSim)";
 }
 
 const RAW_ApiV1 kApiV1 = {
@@ -75,4 +76,20 @@ extern "C" __declspec(dllexport) const RAW_ApiV1* RAW_GetApi(uint32_t requestedV
 {
     if (requestedVersion == 0 || requestedVersion > RAW_API_VERSION) return nullptr;
     return &SB::Proxy::kApiV1;
+}
+
+extern "C" __declspec(dllexport) int RAW_SubmitLiveShader(const char* passName, const char* sourceUtf8, int isGlsl)
+{
+    if (!passName || !sourceUtf8) return 0;
+    return SB::Proxy::HotReload_SubmitLiveShader(passName, sourceUtf8, isGlsl != 0) ? 1 : 0;
+}
+
+extern "C" __declspec(dllexport) int RAW_GetLiveShaderStatus(char* outBuf, uint32_t cap)
+{
+    if (!outBuf || cap == 0) return 0;
+    const std::string s = SB::Proxy::HotReload_LiveStatus();
+    const size_t n = (s.size() < size_t(cap - 1)) ? s.size() : size_t(cap - 1);
+    std::memcpy(outBuf, s.data(), n);
+    outBuf[n] = '\0';
+    return int(n);
 }

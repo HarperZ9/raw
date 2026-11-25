@@ -73,6 +73,8 @@ private:
     {
         ID3D11Buffer* vb = nullptr;
         ID3D11Buffer* ib = nullptr;
+        ID3D12Resource* subdivVb = nullptr;
+        ID3D12Resource* subdivIb = nullptr;
         D3D12_RAYTRACING_GEOMETRY_TRIANGLES_DESC tri{};
         uint64_t blas = 0, bytes = 0, seen = 0;
         uint32_t alphaRecord = 0;   // RtAlpha record + 1 (the instance ID); 0: none

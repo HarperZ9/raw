@@ -24,7 +24,10 @@ RtScene::~RtScene()
         WaitForSingleObject(e, 5000);
         CloseHandle(e);
     }
-    for (Mesh& m : m_meshes) { if (m.vb) m.vb->Release(); if (m.ib) m.ib->Release(); }
+    for (Mesh& m : m_meshes) {
+        if (m.vb) m.vb->Release(); if (m.ib) m.ib->Release();
+        if (m.subdivVb) m.subdivVb->Release(); if (m.subdivIb) m.subdivIb->Release();
+    }
     for (RtDraw& d : m_draws) ReleaseRtDraw(d);
 }
 
@@ -278,7 +281,10 @@ void RtScene::Evict()
         WaitForSingleObject(e, 2000);
         CloseHandle(e);
     }
-    for (Mesh& m : m_meshes) { if (m.vb) m.vb->Release(); if (m.ib) m.ib->Release(); }
+    for (Mesh& m : m_meshes) {
+        if (m.vb) m.vb->Release(); if (m.ib) m.ib->Release();
+        if (m.subdivVb) m.subdivVb->Release(); if (m.subdivIb) m.subdivIb->Release();
+    }
     m_meshes.clear(); m_meshOf.clear(); m_skinRecOf.clear(); m_build.clear(); m_lastKeys.clear(); m_lastMesh.clear();
     m_persistInst.clear();
     m_blasUsed = 0;
@@ -346,8 +352,11 @@ void RtScene::SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resou
     for (size_t di = 0; di < m_draws.size(); ++di) {
         RtDraw& d = m_draws[di];
         if (d.skinned) continue;   // RtSkin's, rebuilt every frame
-        const Key k{uintptr_t(d.vb), uintptr_t(d.ib), uint64_t(d.vbOffset) << 32 | d.ibOffset,
-                    uint64_t(d.startIndex) << 32 | uint32_t(d.baseVertex) ^ uint64_t(d.indexCount) << 12};
+        const bool useSubdiv = (d.subdivVb != nullptr && d.subdivIb != nullptr && d.subdivIndexCount >= 3u && d.subdivVertCount > 0u && !d.alphaKind);
+        const Key k = useSubdiv
+            ? Key{uintptr_t(d.subdivVb), uintptr_t(d.subdivIb), uint64_t(d.subdivVertCount) << 32 | d.stride, uint64_t(d.subdivIndexCount)}
+            : Key{uintptr_t(d.vb), uintptr_t(d.ib), uint64_t(d.vbOffset) << 32 | d.ibOffset,
+                  uint64_t(d.startIndex) << 32 | uint32_t(d.baseVertex) ^ uint64_t(d.indexCount) << 12};
         keys[di] = k;
         if (m_tune.incremental && di < m_lastKeys.size() && m_lastKeys[di] == k && m_lastMesh[di] < m_meshes.size()) {
             // The same draw at the same place in the list as last frame: its mesh without a lookup.
@@ -360,27 +369,30 @@ void RtScene::SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resou
         if (m_build.size() >= m_tune.maxNewPerFrame || (wantMat && !m_alpha.Room())) { ++m_stats.skipped; continue; }
         D3D11_BUFFER_DESC vd{}, id{};
         d.vb->GetDesc(&vd); d.ib->GetDesc(&id);
-        ID3D12Resource* v12 = native(d.vb);
-        ID3D12Resource* i12 = native(d.ib);
-        const uint64_t vStart = uint64_t(d.vbOffset) + int64_t(d.baseVertex) * d.stride;
-        const uint32_t isz = d.ibFormat == DXGI_FORMAT_R16_UINT ? 2 : 4;
-        const uint64_t iStart = uint64_t(d.ibOffset) + uint64_t(d.startIndex) * isz;
-        const bool usable = v12 && i12 && vd.Usage != D3D11_USAGE_DYNAMIC && id.Usage != D3D11_USAGE_DYNAMIC && d.stride &&
-                            vStart < vd.ByteWidth && iStart + uint64_t(d.indexCount) * isz <= id.ByteWidth && d.indexCount >= 3;
+        ID3D12Resource* v12 = useSubdiv ? d.subdivVb : native(d.vb);
+        ID3D12Resource* i12 = useSubdiv ? d.subdivIb : native(d.ib);
+        const uint64_t vStart = useSubdiv ? 0ull : (uint64_t(d.vbOffset) + int64_t(d.baseVertex) * d.stride);
+        const uint32_t isz = useSubdiv ? 4u : (d.ibFormat == DXGI_FORMAT_R16_UINT ? 2u : 4u);
+        const uint64_t iStart = useSubdiv ? 0ull : (uint64_t(d.ibOffset) + uint64_t(d.startIndex) * isz);
+        const bool usable = useSubdiv
+            ? (v12 && i12 && d.stride && d.subdivIndexCount >= 3u)
+            : (v12 && i12 && vd.Usage != D3D11_USAGE_DYNAMIC && id.Usage != D3D11_USAGE_DYNAMIC && d.stride &&
+               vStart < vd.ByteWidth && iStart + uint64_t(d.indexCount) * isz <= id.ByteWidth && d.indexCount >= 3);
         Mesh m;
         m.seen = m_frame;
         if (!usable) { m.failed = true; ++m_stats.skipped; }
         else {
             m.vb = d.vb; m.ib = d.ib; m.vb->AddRef(); m.ib->AddRef();
+            if (useSubdiv) { m.subdivVb = d.subdivVb; m.subdivIb = d.subdivIb; m.subdivVb->AddRef(); m.subdivIb->AddRef(); }
             D3D12_RAYTRACING_GEOMETRY_TRIANGLES_DESC& t = m.tri;
             t.VertexFormat = d.posFormat == DXGI_FORMAT_R16G16B16A16_FLOAT ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R32G32B32_FLOAT;
             t.VertexBuffer.StartAddress = v12->GetGPUVirtualAddress() + vStart + d.posOffset;
             t.VertexBuffer.StrideInBytes = d.stride;
-            t.VertexCount = UINT((vd.ByteWidth - vStart) / d.stride);
-            t.IndexFormat = d.ibFormat;
+            t.VertexCount = useSubdiv ? d.subdivVertCount : UINT((vd.ByteWidth - vStart) / d.stride);
+            t.IndexFormat = useSubdiv ? DXGI_FORMAT_R32_UINT : d.ibFormat;
             t.IndexBuffer = i12->GetGPUVirtualAddress() + iStart;
-            t.IndexCount = d.indexCount / 3 * 3;
-            if (!d.alphaKind && wantMat) {
+            t.IndexCount = (useSubdiv ? d.subdivIndexCount : d.indexCount) / 3 * 3;
+            if (!d.alphaKind && wantMat && !useSubdiv) {
                 // Opaque: its coordinates, normals and colour copy, for hits off screen; without them it
                 // still joins (record 0: shaded grey off screen).
                 m.alphaRecord = m_alpha.AddMesh(d, v12, i12, vStart, iStart, t.IndexCount / 3, false, toHand, native);
@@ -398,7 +410,7 @@ void RtScene::SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resou
                 }
 #endif
             }
-            if (!m.failed) { toHand.push_back(d.vb); toHand.push_back(d.ib); }
+            if (!m.failed && !useSubdiv) { toHand.push_back(d.vb); toHand.push_back(d.ib); }
         }
         m_drawMesh[di] = uint32_t(m_meshes.size());
         m_meshOf.emplace(k, uint32_t(m_meshes.size()));

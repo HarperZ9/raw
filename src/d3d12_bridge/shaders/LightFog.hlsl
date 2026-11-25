@@ -739,6 +739,51 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float focusD = Depth.Load(int3(int2(dims.xy * 0.5f), 0));
     const float focusZ = focusD < 1.0f ? viewZOf(focusD) : 10000.0f;
     const float curZ = d < 1.0f ? viewZOf(d) : 100000.0f;
+    // Wave 64 Debug View 36 (flags.w == 36u): Froxel + Volumetric Fog + Fire-Plume Diagnostic!
+    // R = fire plume emission / opacity (+ subtle Lighting.hlsl thermal pass-through),
+    // G = 1 - froxelTransmittance (3D participating media optical density),
+    // B = volumetric shaft energy (1/2-res bilateral upsampled god-rays & shafts).
+    if (flags.w == 36u) {
+        const float2 uv36 = (px + 0.5f) * dims.zw;
+        const float4 froxRaw36 = sampleFroxel3D(uv36, min(curZ, kFroxFar));
+        const float froxT36 = isfinite(froxRaw36.a) ? saturate(froxRaw36.a) : 1.0f;
+        const float2 volPx36 = (px + 0.5f) * 0.5f;
+        const float2 volDim36 = max(floor((dims.xy + 1.0f) * 0.5f), float2(1.0f, 1.0f));
+        const int2 vBase36 = clamp(int2(floor(volPx36 - 0.5f)), int2(0, 0), int2(volDim36) - 1);
+        const int2 vMax36 = int2(volDim36) - 1;
+        const float zPix36 = min(curZ, 65000.0f);
+        float3 vSum36 = 0.0f.xxx;
+        float vW36 = 0.0f;
+        [unroll] for (int dy36 = 0; dy36 <= 1; dy36++) {
+            [unroll] for (int dx36 = 0; dx36 <= 1; dx36++) {
+                const int2 q36 = clamp(vBase36 + int2(dx36, dy36), int2(0, 0), vMax36);
+                const float4 tap36 = VolFog.Load(int3(q36, 0));
+                if (all(isfinite(tap36))) {
+                    const float relZ36 = abs(tap36.a - zPix36) / max(zPix36, 1.0f);
+                    const float wz36 = exp(-min(relZ36 * 18.0f, 32.0f));
+                    vSum36 += max(tap36.rgb, 0.0f.xxx) * wz36;
+                    vW36 += wz36;
+                }
+            }
+        }
+        const float3 vol36 = (vW36 > 1.0e-4f) ? (vSum36 / vW36) : max(VolFog.SampleLevel(Lin, uv36, 0.0f).rgb, 0.0f.xxx);
+        float4 fireVol36 = float4(0.0f, 0.0f, 0.0f, 1.0f);
+        if (d < 1.0f) {
+            const float3 eye36 = eyeAt();
+            const float3 p36 = worldAt(px, min(d, 0.999999f));
+            const float3 toP36 = p36 - eye36;
+            const float dist36 = length(toP36);
+            const float3 w36 = (isfinite(dist36) && dist36 > 1.0e-4f) ? (toP36 / dist36) : float3(0.0f, 1.0f, 0.0f);
+            fireVol36 = evalVolumetricFirePlumes(eye36, w36, dist36, curZ, px, sunColour.w < 0.5f);
+        }
+        const float fireEmit36 = dot(max(fireVol36.rgb, 0.0f.xxx), float3(0.55f, 0.35f, 0.10f));
+        const float litHeat36 = isfinite(lit.r) ? saturate(lit.r) : 0.0f;
+        const float diagR = saturate(max(fireEmit36 * 1.40f, (1.0f - saturate(fireVol36.a)) * 2.20f) + litHeat36 * 0.22f);
+        const float diagG = saturate(1.0f - froxT36);
+        const float diagB = saturate(dot(vol36, float3(0.2126f, 0.7152f, 0.0722f)) * 3.50f);
+        const float3 diag36 = float3(diagR, diagG, diagB);
+        return float4(all(isfinite(diag36)) ? diag36 : 0.0f.xxx, 1.0f);
+    }
     // Pre-Pass Weather Optics: procedural HDR rain-on-lens droplets & blizzard crystalline frost edges
     // (3-pass Near/Far Physical Bokeh DoF runs in dedicated DofPass.hlsl right after LightFog).
     if (dofParams.w > 0.5f && (weather.w >= 0.12f || weather.z >= 0.25f)) {
@@ -1053,22 +1098,26 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         [unroll] for (int dx = 0; dx <= 1; dx++) {
             const int2 q = clamp(vBase + int2(dx, dy), int2(0, 0), vMax);
             const float4 tap = VolFog.Load(int3(q, 0));
-            const float relZ = abs(tap.a - zPix) / max(zPix, 1.0f);
-            const float wz = exp(-relZ * 18.0f);
-            vSum += tap.rgb * wz;
-            vW += wz;
+            if (all(isfinite(tap))) {
+                const float relZ = abs(tap.a - zPix) / max(zPix, 1.0f);
+                const float wz = exp(-min(relZ * 18.0f, 32.0f));
+                vSum += max(tap.rgb, 0.0f.xxx) * wz;
+                vW += wz;
+            }
         }
     }
-    const float3 vol2D = vW > 1.0e-4f ? (vSum / vW) : VolFog.SampleLevel(Lin, uv, 0.0f).rgb;
+    const float3 volRawFallback = VolFog.SampleLevel(Lin, uv, 0.0f).rgb;
+    const float3 vol2D = vW > 1.0e-4f ? (vSum / vW) : (all(isfinite(volRawFallback)) ? max(volRawFallback, 0.0f.xxx) : 0.0f.xxx);
     // Live 3D World-Map Depth Isolation + True 3D Froxel Transmittance & In-Scatter Composition:
     // Within 24u..42,000u (kFroxFar), FroxelVol supplies genuine 3D Beer-Lambert transmittance (frox.a) and
     // dynamically lit 3D in-scattering (frox.rgb); VolFog adds fine crepuscular shafts without double-fogging.
     const float mapScale = (timeEnv.w > 0.5f && camPosW.z > 42000.0f) ? 0.18f : 1.0f;
-    const float sunLumFg = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-    const float dayFg = (sunColour.w > 0.5f) ? saturate((sunLumFg - 0.18f) * 3.0f) : 0.0f;
+    // Smooth astronomical 24h day ramp (prevents sudden foreground haze pops across dawn/dusk transitions!):
+    const float dayFg = (sunColour.w > 0.5f) ? smoothstep(-0.04f, 0.14f, astroSunElev()) : 0.0f;
     const float fgClear = lerp(1.0f, smoothstep(260.0f, 1500.0f, dist), dayFg * (1.0f - saturate(weather.w * 0.65f + weather.z * 0.75f)));
-    const float4 frox = sampleFroxel3D(uv, curZ);
-    const float froxT = lerp(1.0f, saturate(frox.a), mapScale);
+    const float4 froxRaw = sampleFroxel3D(uv, curZ);
+    const float4 frox = all(isfinite(froxRaw)) ? float4(clamp(froxRaw.rgb, 0.0f.xxx, 8.0f.xxx), saturate(froxRaw.a)) : float4(0.0f, 0.0f, 0.0f, 1.0f);
+    const float froxT = lerp(1.0f, frox.a, mapScale);
     const float3 froxScat = frox.rgb * mapScale;
     const float3 shaftScatter = vol2D * (0.14f * mapScale * fgClear);
     const float3 scatter = froxScat + shaftScatter;
@@ -1089,11 +1138,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 midPt = camPosW.xyz + eye + w * clamp(kFroxFar + farSpan * 0.50f, min(dist * 0.65f, kFroxFar), 120000.0f);
         const float3 windShift = float3(cloudWind.xy * camPosW.w * 0.00006f, 0.0f);
         const float alpineNoise = cNoise(midPt * 0.00014f + windShift) * 0.65f + cNoise(midPt * 0.00042f - windShift * 1.6f + 7.1f) * 0.35f;
-        const float peakCollar = exp(-pow((midPt.z - 5200.0f) / 3600.0f, 2.0f)) * smoothstep(24000.0f, 52000.0f, dist);
+        const float pcDz = (midPt.z - 5200.0f) / 3600.0f;
+        const float peakCollar = exp(-min(pcDz * pcDz, 32.0f)) * smoothstep(24000.0f, 52000.0f, dist);
         const float alpineMist = (0.76f + 0.48f * alpineNoise) * (1.0f + peakCollar * (0.42f + 0.50f * alpineNoise));
         // Smooth exponential far-horizon aerial decay aligned with RawTerrainWorld.hlsl's exp(-optDepth) frontier curve:
-        const float odFar = baseSigma * farSpan * elevW * alpineMist * exp(-hStart * 0.15f)
-                          + max(dist - 85000.0f, 0.0f) * 0.000016f;
+        const float odFar = clamp(baseSigma * farSpan * elevW * alpineMist * exp(-min(hStart * 0.15f, 24.0f))
+                          + max(dist - 85000.0f, 0.0f) * 0.000016f, 0.0f, 40.0f);
         const float horizonMelt = smoothstep(95000.0f, 190000.0f, dist);
         // Wavelength-dependent far aerial transmittance composed multiplicatively with true 3D froxel transmittance froxT:
         float3 Tfar = exp(-odFar * float3(0.84f, 0.96f, 1.12f)) * (1.0f - horizonMelt);
@@ -1256,7 +1306,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 uSunF, atmoCol, aSunFg, extFireVol);
             extScene = extScene * subZeroSteam.a + subZeroSteam.rgb;
         }
-        return float4(extScene, lit.a);
+        return float4(all(isfinite(extScene)) ? max(extScene, 0.0f.xxx) : max(lit.rgb, 0.0f.xxx), lit.a);
     }
     // Dungeons, Caves, Nordic Tombs, Dwemer Ruins, Blackreach & Interiors (sunColour.w < 0.5):
     // Crisp, deep-contrast interior air (eliminates milky grey Dragonsreach haze & Septimus ice-cave whiteout) + scene-anchored fire/smoke.
@@ -1278,8 +1328,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (dLensI >= d - 0.002f) { lit.rgb = lerp(lit.rgb, Lit.SampleLevel(Lin, lensUvI, 0.0f).rgb, 0.65f); }
         }
         const float3 intScene = (lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.34f) * intSpellVol.a + intSpellVol.rgb;
-        return float4(intScene * intFireVol.a + intFireVol.rgb, lit.a);
+        const float3 intOut = intScene * intFireVol.a + intFireVol.rgb;
+        return float4(all(isfinite(intOut)) ? max(intOut, 0.0f.xxx) : max(lit.rgb, 0.0f.xxx), lit.a);
     }
-    const float T = (flags.x & FLAG_FOG_REPLACES) != 0u ? exp(-sigma * tEnd) : 1.0f;
-    return float4(lit.rgb * T + scatter, lit.a);
+    const float T = (flags.x & FLAG_FOG_REPLACES) != 0u ? exp(-min(max(sigma * tEnd, 0.0f), 40.0f)) : 1.0f;
+    const float3 fallbackOut = lit.rgb * T + scatter;
+    return float4(all(isfinite(fallbackOut)) ? max(fallbackOut, 0.0f.xxx) : max(lit.rgb, 0.0f.xxx), lit.a);
 }

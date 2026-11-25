@@ -16,12 +16,13 @@ SamplerState      Lin   : register(s0);
 // Takes the near-biased 30th-percentile depth so NPC faces & foreground subjects hold lock smoothly even when
 // the crosshair grazes their shoulder or hair (prevents Orgnar blurring out in 11.16.46.11.mp4!).
 float sampleFocusZoneZ() {
-    const int2 c = int2(dims.xy * 0.5f);
-    const int2 dMax = int2(dims.xy) - 1;
-    const int sx1 = max(int(dims.x * 0.012f), 6);
-    const int sy1 = max(int(dims.y * 0.012f), 5);
-    const int sx2 = max(int(dims.x * 0.032f), 16);
-    const int sy2 = max(int(dims.y * 0.032f), 12);
+    const float2 safeDims = max(dims.xy, float2(1.0f, 1.0f));
+    const int2 c = int2(safeDims * 0.5f);
+    const int2 dMax = max(int2(safeDims) - 1, int2(0, 0));
+    const int sx1 = max(int(safeDims.x * 0.012f), 6);
+    const int sy1 = max(int(safeDims.y * 0.012f), 5);
+    const int sx2 = max(int(safeDims.x * 0.032f), 16);
+    const int sy2 = max(int(safeDims.y * 0.032f), 12);
     const int2 o[13] = {
         int2(0, 0),
         int2(sx1, 0), int2(-sx1, 0), int2(0, sy1), int2(0, -sy1),
@@ -43,8 +44,13 @@ float sampleFocusZoneZ() {
         }
         zVals[j + 1] = key;
     }
-    // Smooth blend between 30th-percentile (subject lock) and median (zVals[6]) prevents instant background hijack:
-    return lerp(zVals[3], zVals[6], 0.35f);
+    // Coherence-aware subject lock: holds lock on characters when the metering zone is coherent,
+    // while biasing strongly toward the median (zVals[6]) when panning past thin pine trunks or branches
+    // so transient foreground occluders never hijack autofocus or cause focus breathing.
+    const float spreadRatio = zVals[9] / max(zVals[3], 42.0f);
+    const float branchGuard = smoothstep(1.65f, 3.20f, spreadRatio);
+    const float coherentZ = lerp(zVals[4], zVals[6], 0.45f);
+    return clamp(lerp(coherentZ, zVals[6], branchGuard), 42.0f, 14000.0f);
 }
 
 // Full DSLR / Medium Format Physical Thin-Lens CoC Equation (70 Skyrim units = 1 meter):
@@ -107,43 +113,60 @@ float perspectiveCoC(float2 uv, float curZ, float focusZ, float maxDist) {
 }
 
 // 1x1 GPU-Native Cinema Follow-Focus Motor: smoothly integrates focus distance in diopter (1/z) space
-// driven by camOptics[1].w (dofFocusSpeed 0.02..0.30)!
+// driven by camOptics[1].w (dofFocusSpeed 0.02..0.30) with hysteresis deadband and per-frame slew-rate
+// clamping so rapid camera pans across trees/characters never trigger focus breathing or pumping.
 float4 dof_focus(float4 at : SV_Position) : SV_Target0 {
     const float rawTargetZ = sampleFocusZoneZ();
     const float targetZ = (isnan(rawTargetZ) || isinf(rawTargetZ)) ? 500.0f : clamp(rawTargetZ, 42.0f, 14000.0f);
     const float prevZ = SrcA.Load(int3(0, 0, 0)).x;
-    if (isnan(prevZ) || isinf(prevZ) || prevZ < 20.0f || prevZ > 20000.0f) { return float4(targetZ, 0.0f, 0.0f, 1.0f); }
-    const float prevD = 1.0f / prevZ;
+    if (isnan(prevZ) || isinf(prevZ) || prevZ < 20.0f || prevZ > 20000.0f) { return float4(targetZ, targetZ, 0.0f, 1.0f); }
+    const float prevD = 1.0f / clamp(prevZ, 42.0f, 14000.0f);
     const float targD = 1.0f / targetZ;
-    const float diffD = abs(targD - prevD);
-    const float baseSpd = clamp(camOptics[1].w, 0.02f, 0.30f);
-    const float speed = lerp(baseSpd * 0.72f, min(baseSpd * 1.85f, 0.45f), saturate(diffD * 180.0f));
-    const float nextD = lerp(prevD, targD, speed);
-    return float4(clamp(1.0f / max(nextD, 1.0e-5f), 42.0f, 14000.0f), targetZ, 0.0f, 1.0f);
+    const float rawDeltaD = targD - prevD;
+    const float diffD = abs(rawDeltaD);
+    // Diopter hysteresis deadband eliminates micro-pumping on swaying foliage / branch edges:
+    static const float kDeadbandD = 0.00018f;
+    if (diffD <= kDeadbandD) {
+        return float4(clamp(prevZ, 42.0f, 14000.0f), targetZ, 0.0f, 1.0f);
+    }
+    const float baseSpd = clamp((isnan(camOptics[1].w) || isinf(camOptics[1].w)) ? 0.10f : camOptics[1].w, 0.02f, 0.30f);
+    // Smooth critically-damped tracking: gentle on sudden transient branch spikes, steady on sustained pans:
+    const float transientDamp = lerp(1.0f, 0.58f, smoothstep(0.0022f, 0.0085f, diffD));
+    const float speed = clamp(baseSpd * lerp(0.55f, 1.10f, smoothstep(kDeadbandD, 0.0020f, diffD)) * transientDamp, 0.015f, 0.28f);
+    const float maxStepD = max(baseSpd * 0.0045f, 0.00035f);
+    const float stepD = clamp(rawDeltaD * speed, -maxStepD, maxStepD);
+    const float nextD = clamp(prevD + stepD, 1.0f / 14000.0f, 1.0f / 42.0f);
+    const float nextZ = clamp(1.0f / max(nextD, 1.0e-5f), 42.0f, 14000.0f);
+    return float4((isnan(nextZ) || isinf(nextZ)) ? targetZ : nextZ, targetZ, 0.0f, 1.0f);
 }
 
 float4 dof_coc(float4 at : SV_Position) : SV_Target0 {
     // Live 3D World-Map & UI Depth Isolation: exact UI::Singleton menuPaused (timeEnv.w) + aerial world-map altitude.
     if (timeEnv.w > 0.5f) {
         const float2 fullPx0 = (floor(at.xy) + 0.5f) * 2.0f;
-        return float4(SrcA.SampleLevel(Lin, fullPx0 * dims.zw, 0.0f).rgb, 0.0f);
+        const float3 uiCol = SrcA.SampleLevel(Lin, saturate(fullPx0 * dims.zw), 0.0f).rgb;
+        return float4((any(isnan(uiCol)) || any(isinf(uiCol))) ? 0.0f.xxx : clamp(uiCol, 0.0f.xxx, 32.0f.xxx), 0.0f);
     }
     const float2 lo = floor(at.xy);
     const float2 fullPx = (lo + 0.5f) * 2.0f;
-    const int2 dMax = int2(dims.xy) - 1;
+    const int2 dMax = max(int2(dims.xy) - 1, int2(0, 0));
     const int2 ip = clamp(int2(fullPx), int2(0, 0), dMax);
     const float fGpu = SrcB.Load(int3(0, 0, 0)).x;
-    const float focusZ = (fGpu >= 40.0f && fGpu <= 15000.0f) ? fGpu : sampleFocusZoneZ();
+    const float focusZ = (!isnan(fGpu) && !isinf(fGpu) && fGpu >= 40.0f && fGpu <= 15000.0f) ? fGpu : sampleFocusZoneZ();
     // Depth-consistent 2x2 downsample: pairs each selected depth tap with its EXACT own RGB color
     // (eliminates bilinear hair/cloak RGB bleeding into bright background CoC -> kills black smudge halos!).
     const int2 p00 = ip;
     const int2 p10 = min(ip + int2(1, 0), dMax);
     const int2 p01 = min(ip + int2(0, 1), dMax);
     const int2 p11 = min(ip + int2(1, 1), dMax);
-    const float d00 = Depth.Load(int3(p00, 0));
-    const float d10 = Depth.Load(int3(p10, 0));
-    const float d01 = Depth.Load(int3(p01, 0));
-    const float d11 = Depth.Load(int3(p11, 0));
+    const float d00Raw = Depth.Load(int3(p00, 0));
+    const float d10Raw = Depth.Load(int3(p10, 0));
+    const float d01Raw = Depth.Load(int3(p01, 0));
+    const float d11Raw = Depth.Load(int3(p11, 0));
+    const float d00 = (isnan(d00Raw) || isinf(d00Raw)) ? 1.0f : saturate(d00Raw);
+    const float d10 = (isnan(d10Raw) || isinf(d10Raw)) ? 1.0f : saturate(d10Raw);
+    const float d01 = (isnan(d01Raw) || isinf(d01Raw)) ? 1.0f : saturate(d01Raw);
+    const float d11 = (isnan(d11Raw) || isinf(d11Raw)) ? 1.0f : saturate(d11Raw);
     float dNear = d00; int2 pNear = p00;
     if (d10 < dNear) { dNear = d10; pNear = p10; }
     if (d01 < dNear) { dNear = d01; pNear = p01; }
@@ -152,20 +175,23 @@ float4 dof_coc(float4 at : SV_Position) : SV_Target0 {
     if (d10 > dFar) { dFar = d10; pFar = p10; }
     if (d01 > dFar) { dFar = d01; pFar = p01; }
     if (d11 > dFar) { dFar = d11; pFar = p11; }
-    const float zNear = dNear < 1.0f ? viewZOf(dNear) : 100000.0f;
-    const float zFar  = dFar < 1.0f ? viewZOf(dFar) : 100000.0f;
-    const float2 uvFull = fullPx * dims.zw;
+    const float zNearRaw = dNear < 1.0f ? viewZOf(dNear) : 100000.0f;
+    const float zFarRaw  = dFar < 1.0f ? viewZOf(dFar) : 100000.0f;
+    const float zNear = (isnan(zNearRaw) || isinf(zNearRaw)) ? 100000.0f : max(zNearRaw, 0.0f);
+    const float zFar  = (isnan(zFarRaw) || isinf(zFarRaw)) ? 100000.0f : max(zFarRaw, 0.0f);
+    const float2 uvFull = saturate(fullPx * dims.zw);
     const float cocNear = zNear < 45.0f ? 0.0f : perspectiveCoC(uvFull, zNear, focusZ, dofParams.x);
     const float cocFar  = zFar < 45.0f ? 0.0f : perspectiveCoC(uvFull, zFar, focusZ, dofParams.x);
     const bool pickNear = (cocNear < -0.05f);
-    const float coc = pickNear ? cocNear : cocFar;
+    const float cocRaw = pickNear ? cocNear : cocFar;
+    const float coc = (isnan(cocRaw) || isinf(cocRaw)) ? 0.0f : clamp(cocRaw, -1.0f, 1.0f);
     const int2 pCol = pickNear ? pNear : pFar;
     // Average matching-depth taps only when the 2x2 quad is continuous AND never straddles sky (d >= 0.99998)!
     const bool straddlesSky = (dFar >= 0.99998f && dNear < 0.99998f);
     const bool quadSmooth = !straddlesSky && ((abs(zFar - zNear) / max(zNear, 1.0f)) < 0.04f);
     float3 col = quadSmooth ? SrcA.SampleLevel(Lin, uvFull, 0.0f).rgb : SrcA.Load(int3(pCol, 0)).rgb;
     col = (any(isnan(col)) || any(isinf(col))) ? 0.0f.xxx : clamp(col, 0.0f.xxx, 32.0f.xxx);
-    return float4(col, clamp(coc, -1.0f, 1.0f));
+    return float4(col, coc);
 }
 
 // NaN/Inf-safe HDR tap sanitization + Karis-style highlight stability weight for creamy hexagonal bokeh discs.

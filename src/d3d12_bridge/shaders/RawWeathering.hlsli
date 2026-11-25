@@ -80,8 +80,11 @@ RawWeatheringResult evalSurfaceWeathering3D(
     o.hoarfrostGlint01 = 0.0f;
 
     // Strictly exclude ALL skinned actors, creatures, fur, clothing (14), skin (10), hair (11), eyes (12),
-    // foliage (5), water (9), and TruePBR (13) from terrain/stone weathering, chipping, moss, and soot!
+    // foliage (5), water (9), and alpha-tested base==1 green pine saplings/shrubs from rock/stone weathering!
     if (matBase == 0u || matBase == 5u || matBase == 9u || matBase == 10u || matBase == 11u || matBase == 12u || matBase == 14u) {
+        return o;
+    }
+    if (matBase == 1u && o.albedo.g > max(o.albedo.r, o.albedo.b) * 1.04f && o.albedo.g > 0.02f) {
         return o;
     }
 
@@ -215,12 +218,13 @@ RawWeatheringResult evalSurfaceWeathering3D(
     }
 
     // -------------------------------------------------------------------------
-    // 4) Wave 58: Sub-Zero Hoarfrost & Rime Micro-Sparkle (Temperature + Altitude + Exposure)
+    // 4) Wave 58 + Wave 64: Sub-Zero Hoarfrost & Rime Micro-Sparkle (Strictly Freezing/Snowy/Alpine Only)
     // -------------------------------------------------------------------------
     if (isExterior) {
-        const float thermFreeze = hasTherm ? (1.0f - smoothstep(-4.8f, 1.2f, surfTempC)) : 0.0f;
-        const float altFreeze   = smoothstep(2600.0f, 5200.0f, worldPosAbs.z) * 0.65f;
-        const float snowFreeze  = saturate(snowSafe * 0.95f + max(seasonThermal0.x, 0.0f) * 1.25f);
+        const float thermFreeze = (hasTherm && surfTempC < 1.2f) ? (1.0f - smoothstep(-4.8f, 1.2f, surfTempC)) : 0.0f;
+        const float altFreeze   = smoothstep(3200.0f, 5600.0f, worldPosAbs.z) * 0.65f;
+        const float snowFreeze  = (snowSafe > 0.12f || seasonThermal0.x > 0.05f)
+            ? saturate(snowSafe * 0.95f + max(seasonThermal0.x, 0.0f) * 1.25f) : 0.0f;
         const float coldDrive   = saturate(max(thermFreeze, max(altFreeze, snowFreeze * 0.72f)));
         if (coldDrive > 0.03f) {
             const float frostNear = 1.0f - smoothstep(120.0f, 2200.0f, zSafe);

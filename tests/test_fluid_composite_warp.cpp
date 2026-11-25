@@ -24,6 +24,7 @@
 
 #include "RawFluidSimHost.h"
 #include "RawFluidCompositeHost.h"
+#include "raw_fluid_fire_composite_cs.h"
 
 using Microsoft::WRL::ComPtr;
 using namespace raw::bridge;
@@ -472,6 +473,7 @@ int main()
         fluidSim.Reset();
         FluidFireParams fpInt = fp;
         fpInt.enableCeiling = true;
+        fpInt.debugOverlayMode = true;
         fpInt.ceilingZLocal = 46.0f;
         fpInt.sootYield = 1.40f;
         fpInt.sootDamping = 0.05f;
@@ -500,8 +502,8 @@ int main()
         }
 
         const auto intDom = fluidSim.GetFireDomainInfo();
-        Check(intDom.active && intDom.emitterCount == 2u,
-              "RawFluidSimHost emitter hygiene rejected oversized (160u) & cool (900K) room-fill lights");
+        Check(intDom.active && intDom.emitterCount == 2u && intDom.isInterior && intDom.debugOverlayMode,
+              "RawFluidSimHost emitter hygiene rejected oversized (160u) & cool (900K) room-fill lights & exposed DebugView 36 flags");
 
         ca->Reset();
         cl->Reset(ca.Get(), nullptr);
@@ -578,6 +580,178 @@ int main()
               "Indoor composite preserves background transmittance >= 0.78 (0 black concentric orbs)");
         Check(intFlamePx >= 10u && maxIntR > 1.20f,
               "Indoor active flame core still renders crisp turbulent Planck blackbody flames");
+
+        // Pass 3b (Wave 64): DebugView 36 debugOverlayMode (_pad[0].x > 0.5f) WARP GPU Proof
+        // Verifies live 3D domain wireframe bounds (cyan), active emitter cores (gold), and indoor
+        // transmittance compliance heatmap (green >= 0.78, ZERO red < 0.78 alarms) with SceneDepth occlusion!
+        {
+            struct DebugFireCompCB {
+                float clipToWorld[16];
+                float camPosW[4];
+                float domainMinW[4];
+                float domainInvSpanW[4];
+                float dimsAndInv[4];
+                float resScaleAndFlags[4];
+                float sunDir[4];
+                float sunCol[4];
+                float debugOverlayParams[4];
+                float _pad[16];
+            };
+            static_assert(sizeof(DebugFireCompCB) == 256u, "DebugFireCompCB must be 256 bytes");
+
+            D3D12_DESCRIPTOR_RANGE srvR{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND};
+            D3D12_DESCRIPTOR_RANGE uavR{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND};
+            D3D12_ROOT_PARAMETER rps[3]{};
+            rps[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+            rps[0].Descriptor = {0, 0};
+            rps[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+            rps[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            rps[1].DescriptorTable = {1, &srvR};
+            rps[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+            rps[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            rps[2].DescriptorTable = {1, &uavR};
+            rps[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+            D3D12_STATIC_SAMPLER_DESC ss{};
+            ss.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+            ss.AddressU = ss.AddressV = ss.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+            ss.MaxLOD = D3D12_FLOAT32_MAX;
+            ss.ShaderRegister = 0;
+            ss.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+            D3D12_ROOT_SIGNATURE_DESC rsd{3, rps, 1, &ss, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+            ComPtr<ID3DBlob> sigBlob, errBlob;
+            ComPtr<ID3D12RootSignature> dbgRoot;
+            ComPtr<ID3D12PipelineState> dbgPso;
+            bool dbgInitOk = SUCCEEDED(D3D12SerializeRootSignature(&rsd, D3D_ROOT_SIGNATURE_VERSION_1, &sigBlob, &errBlob)) &&
+                             SUCCEEDED(dev->CreateRootSignature(0, sigBlob->GetBufferPointer(), sigBlob->GetBufferSize(), IID_PPV_ARGS(&dbgRoot)));
+            if (dbgInitOk) {
+                D3D12_COMPUTE_PIPELINE_STATE_DESC cpd{};
+                cpd.pRootSignature = dbgRoot.Get();
+                cpd.CS = {kDxil_raw_fluid_fire_composite, sizeof(kDxil_raw_fluid_fire_composite)};
+                dbgInitOk = SUCCEEDED(dev->CreateComputePipelineState(&cpd, IID_PPV_ARGS(&dbgPso)));
+            }
+
+            ComPtr<ID3D12DescriptorHeap> dbgHeap;
+            D3D12_DESCRIPTOR_HEAP_DESC dhd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 4, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+            dbgInitOk = dbgInitOk && SUCCEEDED(dev->CreateDescriptorHeap(&dhd, IID_PPV_ARGS(&dbgHeap)));
+            const UINT dInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+            D3D12_RESOURCE_DESC cbDesc = upDesc;
+            cbDesc.Width = 256u;
+            ComPtr<ID3D12Resource> dbgCb;
+            dbgInitOk = dbgInitOk && SUCCEEDED(dev->CreateCommittedResource(&upHp, D3D12_HEAP_FLAG_NONE, &cbDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&dbgCb)));
+
+            uint32_t dbgLeftMod = 0u, dbgNanInf = 0u, dbgWirePx = 0u, dbgCorePx = 0u, dbgGreenPx = 0u, dbgRedAlarmPx = 0u;
+            if (dbgInitOk) {
+                DebugFireCompCB dcb{};
+                std::memcpy(dcb.clipToWorld, cpInt.clipToWorld, 64u);
+                dcb.camPosW[0] = cpInt.camPosW[0]; dcb.camPosW[1] = cpInt.camPosW[1]; dcb.camPosW[2] = cpInt.camPosW[2]; dcb.camPosW[3] = cpInt.simTimeSec;
+                dcb.domainMinW[0] = cpInt.domainMinW[0]; dcb.domainMinW[1] = cpInt.domainMinW[1]; dcb.domainMinW[2] = cpInt.domainMinW[2]; dcb.domainMinW[3] = cpInt.domainSpanW;
+                const float invSpan = 1.0f / cpInt.domainSpanW;
+                dcb.domainInvSpanW[0] = invSpan; dcb.domainInvSpanW[1] = invSpan; dcb.domainInvSpanW[2] = invSpan; dcb.domainInvSpanW[3] = 0.0f;
+                dcb.dimsAndInv[0] = float(W); dcb.dimsAndInv[1] = float(H); dcb.dimsAndInv[2] = 1.0f / float(W); dcb.dimsAndInv[3] = 1.0f / float(H);
+                dcb.resScaleAndFlags[0] = 1.0f; dcb.resScaleAndFlags[1] = 1.0f; dcb.resScaleAndFlags[2] = float(intDom.emitterCount); dcb.resScaleAndFlags[3] = 1.0f; // interior
+                dcb.sunDir[0] = cpInt.sunDir[0]; dcb.sunDir[1] = cpInt.sunDir[1]; dcb.sunDir[2] = cpInt.sunDir[2]; dcb.sunDir[3] = 0.0f;
+                dcb.sunCol[0] = cpInt.sunCol[0]; dcb.sunCol[1] = cpInt.sunCol[1]; dcb.sunCol[2] = cpInt.sunCol[2]; dcb.sunCol[3] = cpInt.ambientFill;
+                dcb.debugOverlayParams[0] = 1.0f; // enable DebugView 36 overlay
+                void* cbp = nullptr;
+                dbgCb->Map(0, nullptr, &cbp);
+                std::memcpy(cbp, &dcb, sizeof(dcb));
+                dbgCb->Unmap(0, nullptr);
+
+                D3D12_CPU_DESCRIPTOR_HANDLE cpu0 = dbgHeap->GetCPUDescriptorHandleForHeapStart();
+                D3D12_SHADER_RESOURCE_VIEW_DESC dsrv{};
+                dsrv.Format = DXGI_FORMAT_R32_FLOAT;
+                dsrv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+                dsrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+                dsrv.Texture2D.MipLevels = 1;
+                dev->CreateShaderResourceView(depthIn.Get(), &dsrv, cpu0);
+
+                D3D12_SHADER_RESOURCE_VIEW_DESC vsrv{};
+                vsrv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+                vsrv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
+                vsrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+                vsrv.Texture3D.MipLevels = 1;
+                D3D12_CPU_DESCRIPTOR_HANDLE cpu1 = {cpu0.ptr + dInc};
+                D3D12_CPU_DESCRIPTOR_HANDLE cpu2 = {cpu0.ptr + size_t(2) * dInc};
+                D3D12_CPU_DESCRIPTOR_HANDLE cpu3 = {cpu0.ptr + size_t(3) * dInc};
+                dev->CreateShaderResourceView(fluidSim.FireThermoResource(), &vsrv, cpu1);
+                dev->CreateShaderResourceView(fluidSim.FireRadianceResource(), &vsrv, cpu2);
+                D3D12_UNORDERED_ACCESS_VIEW_DESC uavd{};
+                uavd.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+                uavd.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+                dev->CreateUnorderedAccessView(colorOut.Get(), nullptr, &uavd, cpu3);
+
+                ca->Reset();
+                cl->Reset(ca.Get(), nullptr);
+                D3D12_RESOURCE_BARRIER bD0{};
+                bD0.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                bD0.Transition = {colorOut.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET};
+                cl->ResourceBarrier(1, &bD0);
+                cl->ClearRenderTargetView(rtvHeap->GetCPUDescriptorHandleForHeapStart(), bgCol, 0, nullptr);
+                D3D12_RESOURCE_BARRIER bD1[2]{};
+                bD1[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                bD1[0].Transition = {colorOut.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_UNORDERED_ACCESS};
+                bD1[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                bD1[1].Transition = {depthIn.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
+                cl->ResourceBarrier(2, bD1);
+
+                ID3D12DescriptorHeap* dHeaps[1] = {dbgHeap.Get()};
+                cl->SetDescriptorHeaps(1, dHeaps);
+                cl->SetComputeRootSignature(dbgRoot.Get());
+                cl->SetPipelineState(dbgPso.Get());
+                cl->SetComputeRootConstantBufferView(0, dbgCb->GetGPUVirtualAddress());
+                D3D12_GPU_DESCRIPTOR_HANDLE gpu0 = dbgHeap->GetGPUDescriptorHandleForHeapStart();
+                D3D12_GPU_DESCRIPTOR_HANDLE gpu3 = {gpu0.ptr + UINT64(3) * dInc};
+                cl->SetComputeRootDescriptorTable(1, gpu0);
+                cl->SetComputeRootDescriptorTable(2, gpu3);
+                cl->Dispatch((W + 7u) / 8u, (H + 7u) / 8u, 1u);
+
+                D3D12_RESOURCE_BARRIER bD2[2]{};
+                bD2[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                bD2[0].Transition = {colorOut.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE};
+                bD2[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                bD2[1].Transition = {depthIn.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON};
+                cl->ResourceBarrier(2, bD2);
+                cl->CopyTextureRegion(&rbDst, 0, 0, 0, &rbSrc, nullptr);
+                cl->Close();
+                ID3D12CommandList* dL[1] = {cl.Get()};
+                queue->ExecuteCommandLists(1, dL);
+                flushQueue();
+
+                void* pDbg = nullptr;
+                rb->Map(0, nullptr, &pDbg);
+                for (UINT y = 0; y < H; ++y) {
+                    const uint16_t* row = reinterpret_cast<const uint16_t*>(static_cast<const uint8_t*>(pDbg) + size_t(y) * colorPitch);
+                    for (UINT x = 0; x < W; ++x) {
+                        const float r = HalfToFloat(row[x * 4u + 0u]);
+                        const float g = HalfToFloat(row[x * 4u + 1u]);
+                        const float b = HalfToFloat(row[x * 4u + 2u]);
+                        const float a = HalfToFloat(row[x * 4u + 3u]);
+                        if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b) || !std::isfinite(a)) {
+                            ++dbgNanInf;
+                            continue;
+                        }
+                        if (x < W / 2u) {
+                            if (std::fabs(r - kBgR) + std::fabs(g - kBgG) + std::fabs(b - kBgB) > 0.01f) ++dbgLeftMod;
+                        } else {
+                            // Cyan domain wireframe: B > 0.90 && G > 0.80 && R < 0.25
+                            if (b > 0.90f && g > 0.80f && r < 0.25f) ++dbgWirePx;
+                            // Gold-amber active emitter core: R > 0.78 && G > 0.55 && B < 0.45
+                            if (r > 0.78f && g > 0.55f && b < 0.45f) ++dbgCorePx;
+                            // Green compliant indoor transmittance (>= 0.78): G > 0.74 && G > R + 0.18 && G > B + 0.08
+                            if (g > 0.74f && g > r + 0.18f && g > b + 0.08f) ++dbgGreenPx;
+                            // Red indoor transmittance violation alarm (< 0.78): R > 0.90 && G < 0.15 && B < 0.15
+                            if (r > 0.90f && g < 0.15f && b < 0.15f) ++dbgRedAlarmPx;
+                        }
+                    }
+                }
+                rb->Unmap(0, nullptr);
+            }
+            std::printf("       DebugView 36 Overlay Proof: wirePx=%u, corePx=%u, greenCompliantPx=%u, redAlarmPx=%u, leftMod=%u, nanInf=%u\n",
+                        dbgWirePx, dbgCorePx, dbgGreenPx, dbgRedAlarmPx, dbgLeftMod, dbgNanInf);
+            Check(dbgInitOk && dbgNanInf == 0u && dbgLeftMod == 0u && dbgWirePx >= 20u && dbgCorePx >= 20u && dbgGreenPx >= 20u && dbgRedAlarmPx == 0u,
+                  "DebugView 36 debugOverlayMode visualizes cyan domain wireframe, gold emitter cores & green compliant indoor transmittance (0 red alarms)");
+        }
     }
 
     // Pass 4 (Wave 63): No Red Low-Temp Sky Bleed Proof

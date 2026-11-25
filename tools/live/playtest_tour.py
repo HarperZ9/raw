@@ -1,22 +1,22 @@
-"""Automated live Skyrim SE playtest tour & visual audit harness (Wave 63+).
+"""Automated live Skyrim SE playtest tour & visual audit harness (Wave 63/64+).
 
 Capabilities:
-  1. Live launch mode (--launch): launches SkyrimSE.exe with SteamAppId=489830 /
-     SteamGameId=489830, verifies raw_engine_out/boot_selfcheck.txt and
-     bridge_live_telemetry.json, captures live frames via Windows GDI / Pillow
-     ImageGrab, cycles RAW debug views (0, 28, 29, 30, 31, 32, 33), runs
-     visual_heuristics.py on all frames, writes playtest_report.json +
-     playtest_report.md, and cleans raw_engine_out/boot_sentinel.state on exit.
+  1. Live launch mode (--launch): uses the proven headless `SkyrimCustom.ini`
+     `[General] sStartingCell=` + `sStartingConsoleCommand=` + `raw_harness_go.txt`
+     GPU backbuffer capture protocol (zero Main-Menu focus-lock hang!), verifies
+     `raw_engine_out/boot_selfcheck.txt` and `bridge_live_telemetry.json`, converts
+     captured BMPs to PNGs, runs `visual_heuristics.py`, emits `playtest_report.json` +
+     `playtest_report.md`, restores `SkyrimCustom.ini` bit-exact, and cleans
+     `raw_engine_out/boot_sentinel.state` on clean harness exit.
   2. Offline audit mode (--offline-dir): audits an existing screenshot directory
-     + optional raw_engine_out telemetry directory without launching Skyrim SE,
-     producing identical playtest_report.json & playtest_report.md artifacts.
+     + optional `raw_engine_out` telemetry directory without launching Skyrim SE,
+     producing identical `playtest_report.json` & `playtest_report.md` artifacts.
 
 Original work, MIT.
 """
 from __future__ import annotations
 
 import argparse
-import ctypes
 import json
 import os
 import subprocess
@@ -25,15 +25,47 @@ import time
 from pathlib import Path
 from typing import Any, Sequence
 
+from PIL import Image
+
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+import full_pipeline_audit as fpa  # noqa: E402
 import visual_heuristics as vh  # noqa: E402
 
 
-DEFAULT_GAME_DIR = Path(r"H:\SteamLibrary\steamapps\common\Skyrim Special Edition")
-DEFAULT_DEBUG_VIEWS = [0, 28, 29, 30, 31, 32, 33]
+DEFAULT_GAME_DIR = fpa.DEFAULT_GAME_DIR
+DEFAULT_DEBUG_VIEWS = [0, 28, 29, 30, 31, 32, 33, 34, 35, 36]
+
+DEBUG_VIEW_ID_TO_STEP: dict[int, str] = {
+    0: "improved",
+    1: "view_normals",
+    2: "view_sun_shadow",
+    3: "view_ambient",
+    4: "view_sky_vis",
+    5: "view_gi_bounce",
+    6: "view_rt_refl",
+    8: "view_weather",
+    11: "view_cloud_shadow",
+    12: "view_classes",
+    16: "view_albedo",
+    19: "view_char_light",
+    22: "view_wireframe",
+    24: "view_roughness",
+    25: "view_metallic",
+    26: "view_parallax",
+    27: "view_gi_contrast",
+    28: "view_full_classes",
+    29: "view_depth_edge",
+    30: "view_shadow_stab",
+    31: "view_moss_mask",
+    32: "view_skin_sss",
+    33: "view_nan_hdr",
+    34: "view_flora_trees",
+    35: "view_motion_outline",
+    36: "view_fire_froxel",
+}
 
 
 def read_boot_selfcheck(engine_out_dir: Path) -> dict[str, Any]:
@@ -75,48 +107,6 @@ def cleanup_boot_sentinel(engine_out_dir: Path) -> bool:
         sentinel.unlink(missing_ok=True)
         return True
     return False
-
-
-def capture_desktop_frame(out_png: Path) -> bool:
-    """Captures the live primary display via Pillow ImageGrab (GDI BitBlt)."""
-    try:
-        from PIL import ImageGrab
-    except ImportError:
-        return False
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    im = ImageGrab.grab()
-    im.convert("RGB").save(out_png, compress_level=6)
-    return out_png.exists()
-
-
-def set_proxy_debug_view(game_dir: Path, view_id: int) -> bool:
-    """Updates [Lighting] DebugView=<id> in d3d11_proxy.ini for hot-reload cycling."""
-    ini_path = game_dir / "d3d11_proxy.ini"
-    if not ini_path.exists():
-        return False
-    lines = ini_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    out_lines: list[str] = []
-    in_lighting = False
-    replaced = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            if in_lighting and not replaced:
-                out_lines.append(f"DebugView={int(view_id)}")
-                replaced = True
-            in_lighting = stripped.lower() == "[lighting]"
-            out_lines.append(line)
-        elif in_lighting and stripped.lower().startswith("debugview="):
-            out_lines.append(f"DebugView={int(view_id)}")
-            replaced = True
-        else:
-            out_lines.append(line)
-    if not replaced:
-        if not in_lighting:
-            out_lines.append("[Lighting]")
-        out_lines.append(f"DebugView={int(view_id)}")
-    ini_path.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
-    return True
 
 
 def _is_skyrim_running() -> bool:
@@ -214,10 +204,13 @@ def run_live_tour(
     game_dir: Path,
     out_dir: Path,
     debug_views: Sequence[int] = DEFAULT_DEBUG_VIEWS,
-    boot_wait_sec: float = 25.0,
-    view_dwell_sec: float = 2.0,
+    starting_cell: str = "Riverwood",
+    console_cmd: str = "fw 81a; set gamehour to 13",
+    hold_frames: int = 35,
+    boot_wait_sec: float = 90.0,
+    custom_ini_path: Path = fpa.DEFAULT_CUSTOM_INI,
 ) -> dict[str, Any]:
-    """Launches SkyrimSE.exe with SteamAppId=489830, cycles debug views, captures & audits live frames."""
+    """Launches SkyrimSE.exe headlessly into `starting_cell` via SkyrimCustom.ini + raw_harness_go.txt."""
     out_dir.mkdir(parents=True, exist_ok=True)
     engine_out = game_dir / "raw_engine_out"
     exe = game_dir / "SkyrimSE.exe"
@@ -226,46 +219,56 @@ def run_live_tour(
     if _is_skyrim_running():
         raise RuntimeError("SkyrimSE.exe is already running; close it before starting playtest_tour")
 
+    steps = [DEBUG_VIEW_ID_TO_STEP[v] for v in debug_views if v in DEBUG_VIEW_ID_TO_STEP]
+    if "improved" not in steps:
+        steps.insert(0, "improved")
+
     env = dict(os.environ, SteamAppId="489830", SteamGameId="489830")
-    proc: subprocess.Popen[bytes] | None = None
-    captured_files: list[Path] = []
+    go_file = game_dir / "raw_harness_go.txt"
+    done_file = game_dir / "raw_harness_done.txt"
     boot_info: dict[str, Any] = {"present": False}
     bridge_info: dict[str, Any] = {"present": False}
     sentinel_cleaned = False
 
-    try:
-        proc = subprocess.Popen([str(exe)], cwd=str(game_dir), env=env)
-        deadline = time.time() + boot_wait_sec
-        while time.time() < deadline:
-            if proc.poll() is not None:
-                raise RuntimeError(f"SkyrimSE.exe exited prematurely during boot (rc={proc.returncode})")
-            if (engine_out / "boot_selfcheck.txt").exists():
-                break
-            time.sleep(0.5)
+    with fpa.SkyrimCustomIniGuard(custom_ini_path) as ini_guard:
+        proc: subprocess.Popen[bytes] | None = None
+        try:
+            ini_guard.write_scene_boot(starting_cell, console_cmd)
+            done_file.unlink(missing_ok=True)
+            go_file.write_text(
+                "\n".join([
+                    f"scene={starting_cell.lower()}",
+                    "keyframe=tour",
+                    f"steps={','.join(steps)}",
+                    f"hold={int(hold_frames)}",
+                    f"dir={out_dir}",
+                ]) + "\n",
+                encoding="utf-8",
+            )
+            proc = subprocess.Popen([str(exe)], cwd=str(game_dir), env=env)
+            deadline = time.time() + boot_wait_sec
+            while time.time() < deadline:
+                if done_file.exists():
+                    break
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.5)
+            boot_info = read_boot_selfcheck(engine_out)
+            bridge_info = read_bridge_telemetry(game_dir, engine_out)
+        finally:
+            fpa._stop_skyrim(proc)
+            go_file.unlink(missing_ok=True)
+            done_file.unlink(missing_ok=True)
+            sentinel_cleaned = cleanup_boot_sentinel(engine_out)
 
-        boot_info = read_boot_selfcheck(engine_out)
-        bridge_info = read_bridge_telemetry(game_dir, engine_out)
+    # Convert BMP captures to PNGs and audit all frames
+    for bmp in sorted(out_dir.glob("*.bmp")):
+        png = bmp.with_suffix(".png")
+        with Image.open(bmp) as im:
+            im.convert("RGB").save(png, compress_level=6)
+        bmp.unlink(missing_ok=True)
 
-        for vid in debug_views:
-            set_proxy_debug_view(game_dir, vid)
-            time.sleep(view_dwell_sec)
-            vname = vh.DEBUG_VIEW_NAMES.get(vid, f"view{vid}")
-            shot_path = out_dir / f"live_view_{vid:02d}_{vname}.png"
-            if capture_desktop_frame(shot_path):
-                captured_files.append(shot_path)
-        set_proxy_debug_view(game_dir, 0)
-    finally:
-        if proc is not None and proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=10.0)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-        if _is_skyrim_running():
-            subprocess.run(["taskkill", "/IM", "SkyrimSE.exe", "/F"], capture_output=True, check=False)
-            time.sleep(1.5)
-        sentinel_cleaned = cleanup_boot_sentinel(engine_out)
-
+    captured_files = sorted(out_dir.glob("*.png"))
     frames = [vh.audit_image(p, label=p.name) for p in captured_files]
     hist: dict[str, int] = {}
     for rep in frames:
@@ -276,6 +279,7 @@ def run_live_tour(
         "mode": "live",
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "game_dir": str(game_dir),
+        "starting_cell": starting_cell,
         "boot_selfcheck": boot_info,
         "bridge_telemetry": bridge_info,
         "sentinel_cleaned": sentinel_cleaned,
@@ -300,10 +304,12 @@ def _main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--offline-dir", help="Audit an existing screenshot directory without launching Skyrim SE")
     ap.add_argument("--engine-out-dir", help="Optional raw_engine_out path for offline mode")
     ap.add_argument("--glob", default="*.png", help="Filename glob for --offline-dir")
-    ap.add_argument("--launch", action="store_true", help="Launch live SkyrimSE.exe playtest tour")
-    ap.add_argument("--views", default="0,28,29,30,31,32,33", help="Comma-separated DebugView IDs to cycle")
-    ap.add_argument("--boot-wait", type=float, default=25.0, help="Seconds to wait for boot_selfcheck.txt")
-    ap.add_argument("--dwell", type=float, default=2.0, help="Seconds to dwell per debug view before capture")
+    ap.add_argument("--launch", action="store_true", help="Launch live headless SkyrimSE.exe playtest tour")
+    ap.add_argument("--cell", default="Riverwood", help="sStartingCell for --launch mode")
+    ap.add_argument("--console-cmd", default="fw 81a; set gamehour to 13", help="sStartingConsoleCommand for --launch mode")
+    ap.add_argument("--views", default="0,28,29,30,31,32,33,34,35,36", help="Comma-separated DebugView IDs")
+    ap.add_argument("--hold", type=int, default=35, help="Frames to hold per debug step")
+    ap.add_argument("--boot-wait", type=float, default=90.0, help="Seconds timeout for headless capture")
     args = ap.parse_args(argv)
 
     out_dir = Path(args.out_dir)
@@ -314,7 +320,15 @@ def _main(argv: Sequence[str] | None = None) -> int:
         rep = run_offline_tour(Path(args.offline_dir), out_dir, game_dir=game_dir, engine_out_dir=eout, glob_pattern=args.glob)
     elif args.launch:
         views = [int(v.strip()) for v in args.views.split(",") if v.strip()]
-        rep = run_live_tour(game_dir, out_dir, debug_views=views, boot_wait_sec=args.boot_wait, view_dwell_sec=args.dwell)
+        rep = run_live_tour(
+            game_dir,
+            out_dir,
+            debug_views=views,
+            starting_cell=args.cell,
+            console_cmd=args.console_cmd,
+            hold_frames=args.hold,
+            boot_wait_sec=args.boot_wait,
+        )
     else:
         ap.error("Specify either --offline-dir <dir> or --launch")
         return 2

@@ -427,8 +427,12 @@ int RunBackendSuite(bool useWarp, const char* label)
             float d = 0.20f; // worldZ = +100 - 0.20*250 = +50u
 
             if (x < 128u && y < 128u) {
-                // Q0: Snowy terrain
-                cls = 4u; ar = 235u; ag = 240u; ab = 245u; d = 0.20f;
+                // Q0: Snowy terrain (top half y < 96) + 3D Glacial Ice Facets (y in [96..127], base == 6u)!
+                if (y < 96u) {
+                    cls = 4u; ar = 235u; ag = 240u; ab = 245u; d = 0.20f;
+                } else {
+                    cls = 6u; ar = 175u; ag = 210u; ab = 245u; d = 0.22f;
+                }
             } else if (x >= 128u && y < 128u) {
                 // Q1: Submerged riverbed (worldZ = +100 - 0.88*250 = -120u < waterPlaneZ=0u)
                 cls = 4u; ar = 110u; ag = 120u; ab = 115u; d = 0.88f;
@@ -591,8 +595,26 @@ int RunBackendSuite(bool useWarp, const char* label)
                 label, caustLuma, caR, caG, caB);
     check(caustLuma > 0.54f && caB > caR, "live_water_caustics_submerged_injection");
 
+    // Check 3b: 3D Glacial Ice Facet Contrast & Teal Subsurface Scatter (Q0 lower band y in [100..124], base == 6u)
+    float iceMinLuma = 10.0f, iceMaxLuma = 0.0f;
+    double iceBlueBiasSum = 0.0;
+    for (uint32_t y = 100u; y < 124u; ++y) {
+        for (uint32_t x = 16u; x < 112u; ++x) {
+            float ir, ig, ib;
+            pxRgb(outCalm, x, y, ir, ig, ib);
+            const float l = 0.2126f * ir + 0.7152f * ig + 0.0722f * ib;
+            iceMinLuma = std::min(iceMinLuma, l);
+            iceMaxLuma = std::max(iceMaxLuma, l);
+            iceBlueBiasSum += static_cast<double>(ib - ir);
+        }
+    }
+    const float iceContrast = iceMaxLuma - iceMinLuma;
+    const float iceBlueBias = static_cast<float>(iceBlueBiasSum / (24.0 * 96.0));
+    std::printf("  [%s] Glacier3D: facetContrast=%.4f tealBlueBias=%.4f\n", label, iceContrast, iceBlueBias);
+    check(iceContrast > 0.03f && iceBlueBias > 0.03f, "glacier_3d_internal_facet_contrast");
+
     // -------------------------------------------------------------------------
-    // Run 2: Grass Wind Modulation (Calm vs Gust)
+    // Run 2: 4-Shell 3D Grass Wind Modulation (Calm vs Gust + Non-Uniform Blade Detail)
     // -------------------------------------------------------------------------
     UploadTex2D(ctx, colorOut.Get(),  D3D12_RESOURCE_STATE_COMMON, baseColor.data(), W * 8u, H);
     UploadTex2D(ctx, grassBend.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, grassGust.data(), S * 8u, S);
@@ -602,17 +624,22 @@ int RunBackendSuite(bool useWarp, const char* label)
     ReadbackRgba16f(ctx, colorOut.Get(), D3D12_RESOURCE_STATE_COMMON, W, H, outGust);
 
     double grassDiffSum = 0.0;
+    float  grassMinG = 10.0f, grassMaxG = 0.0f;
     for (uint32_t y = 140u; y < 240u; ++y) {
         for (uint32_t x = 16u; x < 112u; ++x) {
             float r0, g0, b0, r1, g1, b1;
             pxRgb(outCalm, x, y, r0, g0, b0);
             pxRgb(outGust, x, y, r1, g1, b1);
             grassDiffSum += std::fabs(g1 - g0) + std::fabs(r1 - r0);
+            grassMinG = std::min(grassMinG, g1);
+            grassMaxG = std::max(grassMaxG, g1);
         }
     }
     const double grassMeanDiff = grassDiffSum / (100.0 * 96.0);
-    std::printf("  [%s] GrassWind: calm-vs-gust meanDelta=%.5f\n", label, grassMeanDiff);
-    check(grassMeanDiff > 0.015, "live_grass_wind_gust_modulation");
+    const float  grassBladeRange = grassMaxG - grassMinG;
+    std::printf("  [%s] Grass3D (4-shell): calm-vs-gust meanDelta=%.5f bladeDetailRange=%.4f\n",
+                label, grassMeanDiff, grassBladeRange);
+    check(grassMeanDiff > 0.015 && grassBladeRange > 0.04f, "live_3d_grass_4shell_and_wind_modulation");
 
     // -------------------------------------------------------------------------
     // Run 3: World-Space Stability Under Camera Shift (Zero Screen-Space Swimming!)
@@ -663,6 +690,43 @@ int RunBackendSuite(bool useWarp, const char* label)
     float ovR, ovG, ovB;
     pxRgb(outDbg33, 32u, 32u, ovR, ovG, ovB);
     check(ovR > 0.95f && ovG < 0.05f && ovB > 0.95f, "debug_view_33_flags_hdr_overflow_magenta");
+
+    // Verify Debug Views 34 (Flora/3D Grass Audit), 35 (Silhouette/Outline Risk), and 36 (Thermal/Solver Energy):
+    {
+        UploadTex2D(ctx, colorOut.Get(), D3D12_RESOURCE_STATE_COMMON, baseColor.data(), W * 8u, H);
+        LiveWorldCompositeParams dbg34 = lwp;
+        dbg34.activeDebugView = 34u;
+        host.Composite(ctx.queue.Get(), lwr, dbg34);
+        ctx.WaitIdle();
+        std::vector<float> out34;
+        ReadbackRgba16f(ctx, colorOut.Get(), D3D12_RESOURCE_STATE_COMMON, W, H, out34);
+        float g34r, g34g, g34b;
+        pxRgb(out34, 64u, 192u, g34r, g34g, g34b); // Q2 grass terrain -> lime green (G high)
+        check(g34g > 0.75f && g34r > 0.30f && g34b < 0.35f, "debug_view_34_flora_grass_audit");
+
+        LiveWorldCompositeParams dbg35 = lwp;
+        dbg35.activeDebugView = 35u;
+        host.Composite(ctx.queue.Get(), lwr, dbg35);
+        ctx.WaitIdle();
+        std::vector<float> out35;
+        ReadbackRgba16f(ctx, colorOut.Get(), D3D12_RESOURCE_STATE_COMMON, W, H, out35);
+        // Depth discontinuity at Q0/Q1 border (x=127..128, y=64) must trigger bright edge highlight!
+        float e35r, e35g, e35b;
+        pxRgb(out35, 128u, 64u, e35r, e35g, e35b);
+        check(e35r > 0.70f && e35g > 0.65f, "debug_view_35_silhouette_discontinuity_risk");
+
+        LiveWorldCompositeParams dbg36 = lwp;
+        dbg36.activeDebugView = 36u;
+        host.Composite(ctx.queue.Get(), lwr, dbg36);
+        ctx.WaitIdle();
+        std::vector<float> out36;
+        ReadbackRgba16f(ctx, colorOut.Get(), D3D12_RESOURCE_STATE_COMMON, W, H, out36);
+        // Submerged Q1 (x=192, y=64) has strong blue caustic energy; grass Q2 (x=64, y=192) has strong green bend energy:
+        float c36r, c36g, c36b, f36r, f36g, f36b;
+        pxRgb(out36, 192u, 64u, c36r, c36g, c36b);
+        pxRgb(out36, 64u, 192u, f36r, f36g, f36b);
+        check(c36b > 0.50f && f36g > 0.50f, "debug_view_36_thermal_and_live_solver_energy");
+    }
 
     // -------------------------------------------------------------------------
     // Run 5: Timing Benchmark (1080p equivalent dispatch budget < 0.06 ms on HW)

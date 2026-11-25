@@ -145,6 +145,8 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const int3 ip = int3(p, 0);
     const float4 curRaw = CurHdr.Load(ip);
     const float d = Depth.Load(ip);
+    // Wave 64 Addendum (#471): DebugView 35 decodable signed GPU Motion Vectors + Divergence on sky!
+    if (flags.w == 35u && d >= 0.99998f) { return float4(0.5f, 0.5f, 0.0f, 1.0f); }
     // Leave sky dome (d >= 0.99998) and paused UI/MapMenu untouched; NEVER bypass on walkable alpine mountains!
     if (d >= 0.99998f || timeEnv.w > 0.5f) { return float4(sanitizeFiniteRgb(curRaw.rgb), curRaw.a); }
 
@@ -218,6 +220,19 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     m1 /= max(wSum, 1.0e-4f);
     m2 /= max(wSum, 1.0e-4f);
     rgbBlur /= max(wSum, 1.0e-4f);
+    // Wave 64 Addendum (#471): Exact decodable signed GPU Motion Vector & Divergence output for DebugView 35!
+    // R = mvCenter.x * 16 + 0.5 (0.5 = zero X motion, +-1/32 UV full scale),
+    // G = mvCenter.y * 16 + 0.5 (0.5 = zero Y motion),
+    // B = mvDivPx * 0.25 (3x3 motion-vector divergence / moving actor silhouette rim).
+    // Verified Skyrim Motion sign convention: prevUv = curUv + mv (matches RtSkyFilter, RtShadow & RtReflFilter).
+    if (flags.w == 35u) {
+        return float4(
+            saturate(mvCenter.x * 16.0f + 0.5f),
+            saturate(mvCenter.y * 16.0f + 0.5f),
+            saturate(mvDivPx * 0.25f),
+            1.0f
+        );
+    }
     const float3 stdDev = sqrt(max(m2 - m1 * m1, 0.0f.xxx));
     const float lumMean3 = lumM1 * (1.0f / 9.0f);
     const float lumStd3 = sqrt(max(lumM2 * (1.0f / 9.0f) - lumMean3 * lumMean3, 0.0f));
@@ -307,29 +322,35 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     );
 
     const float rawClassGain = isEye || isEmissive ? 0.0f
-        : (isSkin ? 0.14f : (isSkinnedActor ? 0.24f : (isWater ? 0.18f : (isLod ? 0.25f : (isHair ? 0.32f : (isFoliage ? 0.48f : 1.0f))))));
+        : (isSkin ? 0.14f : (isSkinnedActor ? 0.24f : (isWater ? 0.18f : (isLod ? 0.25f : (isHair ? 0.32f : (isFoliage ? 0.30f : 1.0f))))));
     const float classGain = rawClassGain * (1.0f - isIceLike * 0.22f);
     const float distFade = 1.0f - smoothstep(260.0f, 5200.0f, z);
+    // Wave 64: Protect dark tree bark and shadowed stone seams from extra cavity/micro darkening into #050505!
+    const float darkShadowGuard = smoothstep(0.025f, 0.14f, curLum);
 
-    // World-space locked micro-photogrammetry grain: strictly DISABLED on actors, faces, water, emissives, and blown highlights!
+    // World-space locked micro-photogrammetry grain: strictly DISABLED on actors, faces, foliage, water, emissives, and blown highlights!
     float worldMicro = 0.0f;
-    if (!isActor && !isWater && !isEmissive && !isLod && hlGuard > 0.08f && z < 1400.0f) {
+    if (!isActor && !isFoliage && !isWater && !isEmissive && !isLod && hlGuard > 0.08f && z < 1400.0f) {
         const float3 pAbs = pW + camPosW.xyz;
         const float microFade = (1.0f - smoothstep(120.0f, 1400.0f, z)) * edgeGate * hlGuard * (1.0f - isIceLike * 0.45f);
-        const float freq = isMetal ? 1.85f : (isFoliage ? 1.35f : 0.72f);
+        const float freq = isMetal ? 1.85f : 0.72f;
         const float g1 = vNoise3(pAbs * freq) - 0.5f;
         const float g2 = vNoise3(pAbs * (freq * 2.7f) + 17.3f) - 0.5f;
-        worldMicro = (g1 * 0.65f + g2 * 0.35f) * (isMetal ? 0.055f : (isFoliage ? 0.055f : 0.085f)) * microFade;
+        const float rawMicro = (g1 * 0.65f + g2 * 0.35f) * (isMetal ? 0.055f : 0.085f) * microFade;
+        worldMicro = (rawMicro < 0.0f) ? (rawMicro * darkShadowGuard) : rawMicro;
     }
 
-    // Highlight-guarded dual-scale cavity deepening + bevel catchlights (Wave 63: strictly zero cavity darkening
-    // on ALL characters/actors/creatures AND smoothly faded off silhouette edges so moving NPCs never get dark rims!):
+    // Highlight-guarded dual-scale cavity deepening + bevel catchlights (Wave 63 + Wave 64: strictly zero cavity
+    // darkening on ALL actors/creatures AND foliage pine needles, guarded off silhouette edges & dark bark/stone seams!):
     const float cavNeg = min(divTotal, 0.0f);
     const float bevPos = max(divTotal, 0.0f);
-    const float cavSilGuard = isActor ? 0.0f : smoothstep(0.82f, 0.99f, edgeGate);
-    const float cavityScale = 1.0f + clamp(cavNeg * 0.18f, -0.18f, 0.0f) * classGain * edgeGate * cavSilGuard * distFade;
+    const float cavSilGuard = (isActor || isFoliage) ? 0.0f : (smoothstep(0.84f, 0.99f, edgeGate) * darkShadowGuard);
+    const float cavityScale = 1.0f + clamp(cavNeg * 0.16f, -0.16f, 0.0f) * classGain * edgeGate * cavSilGuard * distFade;
     const float bevelLift = clamp(bevPos * 0.13f, 0.0f, 0.14f) * (0.45f + 0.55f * fresnel) * classGain * edgeGate * distFade * hlGuard;
-    const float3 detailDelta = (curRgb - rgbBlur) * (saturate(mlpOut.x * 0.5f + 0.5f) * 0.32f * classGain * edgeGate * distFade * hlGuard);
+    // Clamp negative unsharp-mask undershoot along high-contrast pine needle & stone silhouette rims (zero dark halo ringing!):
+    const float3 rawDetailDelta = (curRgb - rgbBlur) * (saturate(mlpOut.x * 0.5f + 0.5f) * 0.32f * classGain * edgeGate * distFade * hlGuard);
+    const float negRingCap = (isFoliage ? 0.04f : 0.10f) * smoothstep(0.70f, 0.98f, edgeGate) * darkShadowGuard;
+    const float3 detailDelta = max(rawDetailDelta, -curRgb * negRingCap);
     const float3 sheenAdd = curRgb * ((max(mlpOut.y, 0.0f) * fresnel * (isMetal ? 0.10f : (isSkin ? 0.02f : 0.055f)) + bevelLift) * distFade * hlGuard);
     const float3 bounceHarm = rgbBlur * (max(mlpOut.z, 0.0f) * (1.0f - midKey) * 0.020f * classGain * edgeGate * edgeGate * distFade * hlGuard);
     float3 recon = max(curRgb * (cavityScale + worldMicro) + detailDelta + sheenAdd + bounceHarm, 0.0f.xxx);

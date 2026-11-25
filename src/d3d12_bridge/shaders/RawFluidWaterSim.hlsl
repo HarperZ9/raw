@@ -413,12 +413,15 @@ void cs_water_step(uint3 tid : SV_DispatchThreadID)
     const float2 advUv = clamp((totalVel * dt) / span, float2(-0.02f, -0.02f), float2(0.02f, 0.02f));
     const float4 advState = sampleMacCormack2D(uv, advUv);
 
-    // 2) Momentum equation: du/dt = -g * grad(h) - gamma * u + nu * lap(u) (semi-implicit drag)
+    // 2) Momentum equation: du/dt = -g * grad(h + 0.12*h_swell) - gamma * u + nu * lap(u) (semi-implicit drag)
+    const float2 worldXY = texelToToroidalWorld(ip);
+    const float sponge = evalBoundarySponge(worldXY);
+    const float4 swellStep = evalJonswapSwell(worldXY, timeSec);
     const float inv2dx = 0.5f / dx;
     const float2 gradH = float2(cR.x - cL.x, cU.x - cD.x) * inv2dx;
     const float2 lapU = (cL.yz + cR.yz + cD.yz + cU.yz - 4.0f * cC.yz) / (dx * dx);
 
-    float2 uNew = (advState.yz - dt * g * gradH + dt * nu * lapU) / (1.0f + dt * gamma);
+    float2 uNew = (advState.yz - dt * g * (gradH + swellStep.yz * 0.12f) + dt * nu * lapU) / (1.0f + dt * gamma);
     const float maxVel = 0.45f * dx / max(dt, 1.0e-4f);
     const float uMag = length(uNew);
     if (uMag > maxVel) {
@@ -437,9 +440,7 @@ void cs_water_step(uint3 tid : SV_DispatchThreadID)
     float hNew = cC.x - dt * fluxDiv + 0.04f * lapH;
 
     // 4) Lacy cellular foam advection strictly from genuine wake convergence & splash energy
-    // (Wave 63: zero plane-wave swell stripe triggers!)
-    const float2 worldXY = texelToToroidalWorld(ip);
-    const float sponge = evalBoundarySponge(worldXY);
+    // (Wave 63 + Wave 64: zero plane-wave swell stripe triggers!)
     const float conv = max(0.0f, -((cR.y - cL.y) + (cU.z - cD.z)) * inv2dx);
     const float crestCurv = max(0.0f, -lapH / max(dx, 0.25f));
 
@@ -490,9 +491,9 @@ void cs_water_normals(uint3 tid : SV_DispatchThreadID)
     // Analytical aperiodic gravity-wave swell height gradient
     const float4 swell = evalJonswapSwell(worldXY, timeSec);
 
-    // Total curl-free height gradient: grad(h_swe + h_swell)
+    // Total curl-free height gradient: grad(h_swe + h_swell), clamped for steep-bed stability
     const float2 gradSwe = float2(cR.x - cL.x, cU.x - cD.x) * inv2dx;
-    const float2 totalGrad = gradSwe + swell.yz;
+    const float2 totalGrad = clamp(gradSwe + swell.yz, float2(-1.6f, -1.6f), float2(1.6f, 1.6f));
     const float3 rawN = float3(-totalGrad.x, -totalGrad.y, 1.0f);
     const float3 normalZUp = all(isfinite(rawN)) ? normalize(rawN) : float3(0.0f, 0.0f, 1.0f);
 

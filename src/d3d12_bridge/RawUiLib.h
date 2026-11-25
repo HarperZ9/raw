@@ -70,6 +70,13 @@ enum class UiCmdKind : uint32_t {
     Sparkline = 5u,
     Text      = 6u,
     Swatch    = 7u,
+    Disc      = 8u,
+};
+
+struct UiBudgetSegment {
+    const char* label     = "";
+    float       valueMs   = 0.0f;
+    uint32_t    colorRgba = tokens::kAccentPass;
 };
 
 // Exact 80-byte GPU command structure mirrored byte-for-byte in RawUiLibPass.hlsl.
@@ -120,6 +127,36 @@ public:
 
     void AddSectionHeader(float x, float y, float w, const char* title,
                           uint32_t accentRgba = tokens::kAccentPass,
+                          uint32_t scale = 1u,
+                          bool collapsible = false,
+                          bool expanded = true);
+
+    void AddTabBar(float x, float y, float w,
+                   const char* const* labels, uint32_t tabCount, uint32_t activeIndex,
+                   uint32_t accentRgba = tokens::kAccentPass,
+                   uint32_t scale = 1u);
+
+    void AddBudgetBar(float x, float y, float w, float h,
+                      const UiBudgetSegment* segments, uint32_t segmentCount,
+                      float budgetTargetMs = 16.667f, float maxScaleMs = 20.0f,
+                      uint32_t scale = 1u);
+
+    void AddVerdictDot(float x, float y, float diameter,
+                       uint32_t fillRgba,
+                       uint32_t borderRgba = tokens::kBorderStrong);
+
+    void AddEngineVarRow(float x, float y, float rowWidth,
+                         const char* key, const char* valueText,
+                         uint32_t verdictRgba = tokens::kAccentPass,
+                         uint32_t scale = 1u);
+
+    void AddEngineVarFloat(float x, float y, float rowWidth,
+                           const char* key, float value, const char* unit = "",
+                           uint32_t verdictRgba = tokens::kAccentPass,
+                           uint32_t scale = 1u);
+
+    void AddEngineVarBool(float x, float y, float rowWidth,
+                          const char* key, bool value,
                           uint32_t scale = 1u);
 
     void AddPill(float x, float y, const char* label,
@@ -200,10 +237,15 @@ struct DebugLayerHudSnapshot {
     uint32_t     scale           = 1u;
     const float* historyFrameMs  = nullptr;
     uint32_t     historyCount    = 0u;
+    uint32_t     activeWaterDebugView = 0u; // 0=Off, 1..7=Water Debug Views (W1..W7)
+    uint32_t     activeTabIndex       = 0u; // 0=Layers, 1=Perf, 2=Vars
 };
 
-// Returns full metadata & color legend swatches for any DebugView ID (0, 1, 2, 8, 12, 28..33).
+// Returns full metadata & color legend swatches for ALL 37 Lighting DebugView IDs (0..36).
 DebugViewDescriptor GetDebugViewDescriptor(uint32_t debugViewId);
+
+// Returns full metadata & color legend swatches for Water DebugView IDs (0 + 1..7, incl. W7:FlowDiag).
+DebugViewDescriptor GetWaterDebugViewDescriptor(uint32_t waterDebugViewId);
 
 // Populates a complete, crisp, high-contrast Debug-Layer Control & Legend Overlay into outList.
 void FormatDebugLayerHud(const DebugLayerHudSnapshot& snap, UiDrawList& outList);

@@ -15,7 +15,8 @@ cbuffer FireCompCB : register(b0)
     float4 resScaleAndFlags;    // xy = resScale.xy; z = activeEmitters; w = interiorFlag (0=ext, 1=int)
     float4 sunDir;              // xyz = unit sun dir, w = sunIntensity
     float4 sunCol;              // rgb = sun HDR color, w = ambientFill
-    float4 _pad[5];
+    float4 debugOverlayParams;  // x = debugOverlayMode (> 0.5 enables DebugView 36 bounds/emitters/transmittance overlay), yzw = reserved
+    float4 _pad[4];
 };
 
 Texture2D<float>    SceneDepth   : register(t0);
@@ -185,10 +186,13 @@ void cs_fire_composite(uint3 dtid : SV_DispatchThreadID)
     const float3 sootAlbedo = float3(0.130f, 0.115f, 0.098f);
     // Hard indoor transmittance floor (>= 0.78f): mathematically prevents pitch-black indoor orbs!
     const float  minTransFloor = lerp(0.015f, 0.78f, isInt);
+    const bool   debugOverlay  = (debugOverlayParams.x > 0.5f);
 
     float3 accumRgb = float3(0.0f, 0.0f, 0.0f);
     float  trans = 1.0f;
     float  accumSootOpt = 0.0f;
+    float  maxSeenTempK = 0.0f;
+    float  maxSeenSoot  = 0.0f;
 
     [loop] for (uint i = 0u; i < kSteps; ++i) {
         const float t = tEnter + (float(i) + jit) * ds;
@@ -210,6 +214,8 @@ void cs_fire_composite(uint3 dtid : SV_DispatchThreadID)
         const float tempK = thermo.x;
         const float rawSoot = max(thermo.z, 0.0f) * edgeFade;
         const float burn  = max(thermo.w, 0.0f) * edgeFade;
+        maxSeenTempK = max(maxSeenTempK, tempK);
+        maxSeenSoot  = max(maxSeenSoot, rawSoot);
 
         if (tempK < 1180.0f && rawSoot < 0.004f) {
             continue;
@@ -265,6 +271,51 @@ void cs_fire_composite(uint3 dtid : SV_DispatchThreadID)
 
     trans = clamp((isnan(trans) || isinf(trans)) ? 1.0f : trans, minTransFloor, 1.0f);
     accumRgb = (any(isnan(accumRgb)) || any(isinf(accumRgb))) ? 0.0f.xxx : clamp(accumRgb, 0.0f.xxx, 64.0f.xxx);
+
+    if (debugOverlay) {
+        // DebugView 36 diagnostic overlay: 3D fire domain wireframe bounds (cyan), active hot emitter cores (gold-amber),
+        // and indoor transmittance compliance heatmap (green >= 0.78 compliant, bright red < 0.78 violation alarm).
+        const float3 uvwEnter = saturate(((rayOriginAbs + rayDir * tEnter) - boxMin) * domainInvSpanW.xyz);
+        const float3 dEnter = min(uvwEnter, 1.0f.xxx - uvwEnter);
+        const bool enterEdge = ((dEnter.x < 0.028f ? 1 : 0) + (dEnter.y < 0.028f ? 1 : 0) + (dEnter.z < 0.028f ? 1 : 0)) >= 2;
+
+        bool exitEdge = false;
+        if (tExit <= sceneDist) {
+            const float3 uvwExit = saturate(((rayOriginAbs + rayDir * tExit) - boxMin) * domainInvSpanW.xyz);
+            const float3 dExit = min(uvwExit, 1.0f.xxx - uvwExit);
+            exitEdge = ((dExit.x < 0.028f ? 1 : 0) + (dExit.y < 0.028f ? 1 : 0) + (dExit.z < 0.028f ? 1 : 0)) >= 2;
+        }
+
+        const float4 bgRaw = ColorOut[dtid.xy];
+        const float3 bgRgb = (any(isnan(bgRaw.rgb)) || any(isinf(bgRaw.rgb))) ? 0.0f.xxx : max(bgRaw.rgb, 0.0f.xxx);
+        float3 dbgRgb = bgRgb;
+
+        if (isInt > 0.5f) {
+            const float activeVolume = saturate(smoothstep(0.002f, 0.04f, maxSeenSoot) + smoothstep(0.0005f, 0.06f, 1.0f - trans));
+            if (trans < 0.779f) {
+                // Red violation alarm if indoor transmittance ever breaches 0.78
+                dbgRgb = float3(1.0f, 0.05f, 0.05f);
+            } else if (activeVolume > 0.02f) {
+                // Green compliant indoor transmittance (>= 0.78)
+                dbgRgb = lerp(dbgRgb, float3(0.12f, 0.92f, 0.34f), saturate(0.45f + 0.50f * activeVolume));
+            }
+        } else if (trans < 0.998f || maxSeenSoot > 0.01f) {
+            const float smokeVis = saturate((1.0f - trans) * 2.2f + maxSeenSoot * 0.65f);
+            dbgRgb = lerp(dbgRgb, float3(0.18f, 0.58f, 0.88f), saturate(smokeVis * 0.75f));
+        }
+
+        if (maxSeenTempK >= 1180.0f) {
+            const float coreHeat = smoothstep(1180.0f, 2250.0f, maxSeenTempK);
+            dbgRgb = lerp(dbgRgb, float3(1.0f, 0.68f, 0.08f), saturate(0.55f + 0.45f * coreHeat));
+        }
+
+        if (enterEdge || exitEdge) {
+            dbgRgb = float3(0.10f, 0.88f, 1.0f);
+        }
+
+        ColorOut[dtid.xy] = float4((any(isnan(dbgRgb)) || any(isinf(dbgRgb))) ? 0.0f.xxx : max(dbgRgb, 0.0f.xxx), bgRaw.a);
+        return;
+    }
 
     if (trans < 0.9995f || any(accumRgb > 1.0e-4f)) {
         const float4 bgRaw = ColorOut[dtid.xy];

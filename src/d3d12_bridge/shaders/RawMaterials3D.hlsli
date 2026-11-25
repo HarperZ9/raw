@@ -290,10 +290,13 @@ RawMaterialEvalResult evalFrostGlacier3D(
     const float crack2 = (1.0f - smoothstep(0.0f, 0.210f, abs(nS2.x * 2.0f - 1.0f))) * zone2;
     const float3 trans2 = exp(-sigmaIce * (0.62f * (1.0f + invNvOptical)));
 
-    // Deep refracted glacial compression strata (layered sapphire-teal bands visible inside the wall):
+    // Deep refracted glacial compression strata + 4th ultra-deep shadow-core parallax sample (0.95m):
+    const float3 pS3 = worldPos + rayDir * (0.95f * 70.0f * thickScale) + warpOff * 1.75f;
     const float4 strata1 = rawNoise3Grad(float3(pS1.xy * 0.014f, pS1.z * 0.042f) + float3(3.1f, 7.4f, 1.9f));
     const float4 strata2 = rawNoise3Grad(float3(pS2.xy * 0.028f, pS2.z * 0.076f) + float3(17.3f, 5.2f, 9.7f));
-    const float strataBand = saturate(strata1.x * 0.62f + strata2.x * 0.38f);
+    const float  deepCav = rawNoise3Grad(float3(pS3.xy * 0.011f, pS3.z * 0.028f) + float3(53.1f, 29.7f, 14.3f)).x;
+    const float  strataBand = saturate(strata1.x * 0.52f + strata2.x * 0.30f + deepCav * 0.18f);
+    const float3 trans3 = exp(-sigmaIce * (0.95f * (1.0f + invNvOptical)));
 
     // Final sculpted surface normal combining conchoidal fracture bowls + strata tilt + shallow cleavage edge:
     const float3 extraPert = strata1.yzw * 0.045f + nS0.yzw * (crack0 * 0.095f);
@@ -306,21 +309,23 @@ RawMaterialEvalResult evalFrostGlacier3D(
     const float3 pCol1 = worldPos + rayDir * (0.20f * 70.0f * thickScale);
     const float bubTrail0 = smoothstep(0.56f, 0.88f, rawNoise3Grad(float3(pCol0.xy * 0.095f, pCol0.z * 0.028f) + float3(13.1f, 27.4f, 5.3f)).x);
     const float bubTrail1 = smoothstep(0.52f, 0.86f, rawNoise3Grad(float3(pCol1.xy * 0.068f, pCol1.z * 0.022f) + float3(37.7f, 11.9f, 21.1f)).x);
-    const float3 bubbleVeil = (float3(0.74f, 0.88f, 0.96f) * (bubTrail0 * 0.24f) * exp(-sigmaIce * (0.07f * invNvOptical))
-                             + float3(0.32f, 0.72f, 0.88f) * (bubTrail1 * 0.28f) * exp(-sigmaIce * (0.20f * invNvOptical)))
+    const float3 bubbleVeil = (float3(0.76f, 0.90f, 0.98f) * (bubTrail0 * 0.26f) * exp(-sigmaIce * (0.07f * invNvOptical))
+                             + float3(0.32f, 0.74f, 0.90f) * (bubTrail1 * 0.30f) * exp(-sigmaIce * (0.20f * invNvOptical)))
                             * (1.0f - dust * 0.65f);
 
-    // Deep Warren & Brandt Beer-Lambert glacial volume + conchoidal cavity-vs-ridge optical contrast:
-    const float pathMeters = (effThick * 0.016f) * invNvOptical * lerp(1.30f, 0.68f, bowlCrest);
+    // Deep Warren & Brandt Beer-Lambert glacial volume + 4-layer sapphire-teal depth parallax gradient:
+    const float pathMeters = (effThick * 0.017f) * invNvOptical * lerp(1.34f, 0.64f, bowlCrest);
     const float3 transDeep = exp(-sigmaIce * pathMeters);
-    const float3 deepArcticCore = lerp(float3(0.016f, 0.092f, 0.205f), float3(0.078f, 0.335f, 0.465f), strataBand) * transDeep;
-    const float3 fractureScatter = float3(0.84f, 0.94f, 1.00f) * (crack0 * 0.26f) * trans0
-                                 + float3(0.34f, 0.78f, 0.94f) * (crack1 * 0.26f) * trans1
-                                 + float3(0.11f, 0.48f, 0.78f) * (crack2 * 0.24f) * trans2;
+    const float3 deepCavCore = lerp(float3(0.010f, 0.068f, 0.165f), float3(0.032f, 0.185f, 0.320f), deepCav) * trans3;
+    const float3 deepArcticCore = lerp(float3(0.016f, 0.092f, 0.205f), float3(0.082f, 0.350f, 0.480f), strataBand) * transDeep
+                                + deepCavCore * 0.55f;
+    const float3 fractureScatter = float3(0.86f, 0.95f, 1.00f) * (crack0 * 0.28f) * trans0
+                                 + float3(0.34f, 0.80f, 0.95f) * (crack1 * 0.28f) * trans1
+                                 + float3(0.11f, 0.50f, 0.80f) * (crack2 * 0.26f) * trans2;
 
     // Subsurface forward-transmitted glacial sapphire-turquoise glow when backlit by torches/sun:
     const float backLit = pow(saturate(dot(-vUnit, lUnit)), 2.8f);
-    const float3 sssGlow = safeLight * float3(0.075f, 0.36f, 0.56f) * (backLit * (0.30f + 0.70f * transDeep.b) * 0.44f);
+    const float3 sssGlow = safeLight * float3(0.075f, 0.38f, 0.58f) * (backLit * (0.30f + 0.70f * transDeep.b) * 0.48f);
 
     // Trapped Micro-Air-Bubble Specular Glints inside top 0.16m layer (100% static world-locked):
     const float3 H = rawSafeHalfVec(vUnit, lUnit, nIce);
@@ -333,9 +338,9 @@ RawMaterialEvalResult evalFrostGlacier3D(
     const float3 nBubA = normalize(nIce + (hBubA - 0.5f.xxx) * 1.35f);
     const float3 nBubB = normalize(nIce + (hBubB - 0.5f.xxx) * 1.45f);
     const float glintBubA = (hBubA.x > 0.80f && dBubA < 0.30f)
-        ? pow(saturate(dot(nBubA, H)), 145.0f) * smoothstep(0.30f, 0.06f, dBubA) * 0.90f : 0.0f;
+        ? pow(saturate(dot(nBubA, H)), 145.0f) * smoothstep(0.30f, 0.06f, dBubA) * 0.92f : 0.0f;
     const float glintBubB = (hBubB.x > 0.82f && dBubB < 0.32f)
-        ? pow(saturate(dot(nBubB, H)), 120.0f) * smoothstep(0.32f, 0.08f, dBubB) * 0.68f : 0.0f;
+        ? pow(saturate(dot(nBubB, H)), 120.0f) * smoothstep(0.32f, 0.08f, dBubB) * 0.70f : 0.0f;
     const float3 bubbleGlint = (glintBubA * exp(-sigmaIce * 0.06f) + glintBubB * exp(-sigmaIce * 0.15f))
                              * (1.0f - dust * 0.70f);
 
@@ -352,26 +357,29 @@ RawMaterialEvalResult evalFrostGlacier3D(
         flakeGlint = (frostHash.x > 0.79f) ? pow(saturate(dot(flakeN, H)), 175.0f) * max(dust, hoarEdge * 0.55f) * 0.68f : 0.0f;
     }
 
-    // Crisp dielectric Fresnel specular glaze at exact ice IOR 1.309 (F0 = 0.018):
+    // Wave 64 Dual-Lobe Crystalline Dielectric Specular + Conchoidal Rim Catchlight (exact ice IOR 1.309, F0 = 0.018):
     const float vh = saturate(dot(vUnit, H));
     const float nh = saturate(dot(nIce, H));
+    const float nlIce = saturate(dot(nIce, lUnit));
     const float Fdie = rawDielectricFresnel(vh, kIceIor);
-    const float crackRough = saturate(crack0 * 0.70f + crack1 * 0.28f + bubTrail0 * 0.18f);
-    const float glazeRough = clamp(lerp(lerp(0.052f, 0.19f, crackRough), 0.56f, max(dust, hoarEdge * 0.50f)), 0.045f, 0.82f);
-    const float specLobe = rawGgxSpecTerm(nh, nvFinal, saturate(dot(nIce, lUnit)), glazeRough, 0.018f);
+    const float crackRough = saturate(crack0 * 0.68f + crack1 * 0.28f + bubTrail0 * 0.18f);
+    const float glazeRough = clamp(lerp(lerp(0.044f, 0.18f, crackRough), 0.56f, max(dust, hoarEdge * 0.50f)), 0.038f, 0.82f);
+    const float specLobe = rawGgxSpecTerm(nh, nvFinal, nlIce, glazeRough, 0.018f);
+    const float crystalSheen = rawGgxSpecTerm(nh, nvFinal, nlIce, clamp(glazeRough * 3.2f, 0.18f, 0.42f), 0.018f);
+    const float ridgeCatch = pow(saturate(bowlCrest), 2.2f) * (1.0f - dust * 0.72f);
+    const float3 rimCrystalSpec = float3(0.55f, 0.86f, 1.00f) * (grazeRim * Fdie * (0.28f + 0.55f * ridgeCatch) * (0.35f + 0.65f * nlIce) * (1.0f - dust * 0.68f));
 
     // Combine authored glacial relief with rich deep sapphire-teal Beer-Lambert interior & conchoidal bowl shading:
-    // Recessed conchoidal hollows absorb deeply into dark sapphire-teal; protruding ridges glow translucent turquoise!
     const float baseLum = max(dot(safeBase, float3(0.2126f, 0.7152f, 0.0722f)), 0.08f);
-    const float bowlShade = lerp(0.74f, 1.22f, smoothstep(0.18f, 0.84f, macroBowl.x * 0.68f + mesoScallop.x * 0.32f));
-    const float3 absorbedBase = safeBase * lerp(float3(0.84f, 0.97f, 1.08f), float3(0.56f, 0.90f, 1.14f), (1.0f - transDeep.r) * 0.68f) * bowlShade;
-    const float3 iceBody = absorbedBase * 0.58f
-                         + (deepArcticCore * clamp(baseLum * 1.65f, 0.36f, 1.45f)) * 0.42f
-                         + (fractureScatter + bubbleVeil) * clamp(baseLum * 1.30f + 0.24f, 0.32f, 1.25f);
+    const float bowlShade = lerp(0.72f, 1.24f, smoothstep(0.16f, 0.84f, macroBowl.x * 0.68f + mesoScallop.x * 0.32f));
+    const float3 absorbedBase = safeBase * lerp(float3(0.82f, 0.97f, 1.08f), float3(0.52f, 0.89f, 1.15f), (1.0f - transDeep.r) * 0.72f) * bowlShade;
+    const float3 iceBody = absorbedBase * 0.54f
+                         + (deepArcticCore * clamp(baseLum * 1.70f, 0.38f, 1.50f)) * 0.46f
+                         + (fractureScatter + bubbleVeil) * clamp(baseLum * 1.32f + 0.26f, 0.34f, 1.28f);
 
-    const float frostBlend = saturate(max(dust * 0.52f, hoarEdge * 0.30f));
+    const float frostBlend = saturate(max(dust * 0.52f, hoarEdge * 0.28f));
     const float3 finalAlbedo = saturate(lerp(iceBody, float3(0.76f, 0.86f, 0.94f), frostBlend));
-    const float3 finalSpecAdd = min(safeLight * (Fdie * specLobe * 0.44f + flakeGlint.xxx + bubbleGlint * 0.62f) + sssGlow, 3.0f.xxx);
+    const float3 finalSpecAdd = min(safeLight * (Fdie * (specLobe * 0.46f + crystalSheen * 0.16f) + rimCrystalSpec + flakeGlint.xxx + bubbleGlint * 0.68f) + sssGlow, 3.2f.xxx);
 
     res.albedo = all(isfinite(finalAlbedo)) ? finalAlbedo : safeBase;
     res.normal = all(isfinite(nIce)) ? nIce : nUnit;
@@ -381,8 +389,8 @@ RawMaterialEvalResult evalFrostGlacier3D(
     res.specularAdd = all(isfinite(finalSpecAdd)) ? max(finalSpecAdd, 0.0f.xxx) : 0.0f.xxx;
     res.emissive = 0.0f.xxx;
     res.transmittance = saturate(all(isfinite(transDeep)) ? (transDeep * (1.0f - Fdie)) : 0.25f.xxx);
-    res.clearcoat = saturate((1.0f - max(dust, hoarEdge * 0.60f)) * 0.84f);
-    res.clearcoatRough = 0.036f;
+    res.clearcoat = saturate((1.0f - max(dust, hoarEdge * 0.58f)) * 0.88f);
+    res.clearcoatRough = 0.032f;
     return res;
 }
 

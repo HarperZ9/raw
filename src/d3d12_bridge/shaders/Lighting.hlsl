@@ -186,12 +186,13 @@ void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, in
         if ((flags.x & FLAG_GGX) == 0u) {
             diff += s.soft * wrapTrans * cFull;
         } else if (!any(s.wrap > 0.0f)) {
-            // Foliage (base==5u): strictly SHADOWED `c` (never unshadowed cFull!), restrained rich boreal
-            // chlorophyll transmission (<= 0.22x) with ZERO white waxSpec wash so sunlit pines stay lush green!
+            // Foliage (base==5u): strictly SHADOWED `c` (never unshadowed cFull!), chlorophyll-tinted wrap
+            // & restrained boreal transmission so sunlit pine needles stay lush evergreen instead of chalky grey!
             const float backView = pow(saturate(dot(-s.v, l)), 3.6f);
-            const float3 chloroTint = float3(0.46f, 0.82f, 0.24f);
-            const float3 softClamped = min(s.soft, 0.45f.xxx);
-            diff += softClamped * (wrapTrans * 0.16f + chloroTint * (backView * 0.20f * (1.0f - nl * 0.65f))) * c;
+            const float3 wrapChloro = float3(0.68f, 0.94f, 0.44f);
+            const float3 chloroTint = float3(0.46f, 0.86f, 0.24f);
+            const float3 softClamped = min(s.soft, 0.42f.xxx);
+            diff += softClamped * (wrapChloro * (wrapTrans * 0.14f) + chloroTint * (backView * 0.22f * (1.0f - nl * 0.65f))) * c;
         } else {
             // Skin soft-map wrap: keeps arms/hands matched to shadowed direct light with zero foliage tint/wax!
             diff += min(s.soft, 0.35f.xxx) * (wrapTrans * 0.35f) * c;
@@ -280,7 +281,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (flags.w == 10u) { return float4(1.0f, 0.0f, 1.0f, game.a); }
         if (flags.w == 28u) { return float4(0.04f, 0.06f, 0.12f, game.a); }
         if (flags.w == 29u) { return float4(0.02f, 0.04f, 0.10f, game.a); }
-        if (flags.w == 30u || flags.w == 31u || flags.w == 32u) { return float4(0.03f, 0.04f, 0.06f, game.a); }
+        if (flags.w == 30u || flags.w == 31u || flags.w == 32u || flags.w == 34u || flags.w == 35u || flags.w == 36u) {
+            return float4(0.03f, 0.04f, 0.06f, game.a);
+        }
         if (flags.w == 33u) { return float4(debugHdrEnergyHeatmap(game.rgb), game.a); }
         return float4(game.rgb, game.a);
     }
@@ -311,7 +314,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
         if (flags.w == 30u) { return float4(saturate(RtVis.Load(ip).x), 0.0f, 1.0f, game.a); }
         if (flags.w == 31u) { return float4(0.08f, 0.0f, 0.08f, game.a); }
-        if (flags.w == 32u) { return float4(Albedo.Load(ip).rgb * 0.18f, game.a); }
+        if (flags.w == 32u || flags.w == 34u) { return float4(Albedo.Load(ip).rgb * 0.16f, game.a); }
+        if (flags.w == 35u) {
+            const float zLod35 = max(viewZOf(d), 1.0f);
+            const float zEdge35 = smoothstep(0.025f, 0.10f, (abs(ddx(zLod35)) + abs(ddy(zLod35))) / zLod35);
+            return float4(zEdge35 * 0.85f, zEdge35 * 0.45f, 0.08f, game.a);
+        }
+        if (flags.w == 36u) { return float4(0.02f, 0.02f, 0.04f, game.a); }
         if (flags.w == 14u) { return float4(worldNormal(Normal.Load(ip)) * 0.5f + 0.5f, game.a); }
         if (flags.w == 15u) { return float4(Albedo.Load(ip).rgb, game.a); }
         // Views 2, 4 and 5 on distant LOD: the sun, sky and bounce of the march through the depth (RtShadow.hlsl, RtFar).
@@ -340,6 +349,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             return float4(lerp(float3(zRamp * 0.85f, zRamp * 0.55f, 1.0f - zRamp * 0.65f), float3(0.15f, 1.0f, 0.95f), zDisc), game.a);
         }
         if (flags.w == 33u) { return float4(debugHdrEnergyHeatmap(game.rgb), game.a); }
+        if (flags.w == 34u || flags.w == 35u || flags.w == 36u) { return float4(0.04f, 0.05f, 0.07f, game.a); }
         return game;
     }
 
@@ -353,10 +363,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 p = worldAt(px, d);
     float3 albedo = Albedo.Load(ip).rgb;
     // Full-range PBR albedo expansion (!match, non-skin): rescues vanilla Skyrim's narrow washed-out 2011 texture range
-    // into crisp deep darks and rich natural reflectance while preserving exact hue.
+    // while protecting dark bark/timber albedos (aLum < 0.10) from crushing down into pitch black!
     if (!match && !skin && base != 12u) {
         const float aLum = max(dot(albedo, float3(0.2126f, 0.7152f, 0.0722f)), 1.0e-4f);
-        const float expLum = saturate(pow(aLum, 1.12f) * 1.14f);
+        const float darkProtect = smoothstep(0.02f, 0.12f, aLum);
+        const float expLum = lerp(aLum, saturate(pow(aLum, 1.12f) * 1.14f), darkProtect);
         albedo = saturate(albedo * (expLum / aLum));
     }
     const float z = viewZOf(d), jit = ign(px);
@@ -403,6 +414,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Softer since the hands and bodies joined the class (rt6-wat-3): at 0.55 / 0.22 / 0.12 the arms read orange
     // against the game's brown.
     s.wrap = skin && !match ? float3(0.36f, 0.16f, 0.08f) : (isHair && !match ? float3(0.16f, 0.12f, 0.08f) : 0.0f.xxx);
+    // Wave 64: Classify living green pine saplings/shrubs rendered under base==1u AND vertical warm-brown tree bark
+    // at fs() scope so BOTH bark shadow-floor protection AND pine chalk-bleach protection run consistently across every pass!
+    const bool isGreenPineCard = (!match && base == 1u && !isActorCloth && sunColour.w > 0.5f
+        && albedo.g > max(albedo.r, albedo.b) * 1.04f && albedo.g > 0.020f && z < 6500.0f);
+    const bool isWoodBark = (!match && base == 1u && !isActorCloth && !isGreenPineCard && sunColour.w > 0.5f
+        && abs(s.n.z) < 0.72f && albedo.r > albedo.b * 1.06f && albedo.r >= albedo.g * 0.96f && albedo.r > 0.015f && z < 5500.0f);
     if (skin && !match) {
         // Preserve 100% native facial normal-map pores/creases (no synthetic cNoise breakup) with physiological roughness floor:
         s.f0 = 0.026f;
@@ -417,22 +434,22 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Wave 63 Class-14 Skinned Actor / Creature / Fur / Clothing PBR defaults (strictly excludes moss/strata/bark):
         s.f0 = 0.036f;
         s.alpha = clamp(s.alpha, 0.34f, 0.88f);
-    } else if (!match && base == 1u && !isActorCloth && z < 2600.0f) {
+    } else if (!match && base == 1u && !isActorCloth && !isGreenPineCard && z < 2600.0f) {
         // Dynamic 2026 Real-Material Micro-Relief on 2011 Tree Bark, Timber, Masonry & Nordic Rocks:
         const float3 wpMat = (p + camPosW.xyz) * 0.032f;
         const float wear = cNoise(wpMat) * 0.65f + cNoise(wpMat * 2.7f + 5.1f) * 0.35f;
         const float wearFade = 1.0f - smoothstep(180.0f, 2600.0f, z);
         s.alpha = clamp(s.alpha * lerp(1.0f, lerp(0.74f, 1.26f, wear), wearFade * 0.68f), 0.06f, 0.96f);
         // 1) Procedural 4K-grade anisotropic tree bark & wood-grain furrows on vertical warm-brown surfaces:
-        const bool isWoodBark = (abs(s.n.z) < 0.72f && albedo.r > albedo.b * 1.15f && albedo.r > 0.05f && z < 1400.0f);
-        if (isWoodBark) {
+        if (isWoodBark && z < 2000.0f) {
             const float3 bP = float3((p.xy + camPosW.xy) * 0.42f, (p.z + camPosW.z) * 0.075f);
             const float b0 = cNoise(bP);
             const float b1 = cNoise(bP + float3(0.18f, 0.0f, 0.0f));
             const float b2 = cNoise(bP + float3(0.0f, 0.18f, 0.0f));
-            const float barkFade = 1.0f - smoothstep(140.0f, 1400.0f, z);
-            s.n = normalize(s.n + float3((b0 - b1) * 0.65f, (b0 - b2) * 0.65f, 0.0f) * barkFade);
-            albedo *= lerp(1.0f, 0.84f + 0.30f * b0, barkFade * 0.55f);
+            const float barkFade = 1.0f - smoothstep(140.0f, 2000.0f, z);
+            s.n = normalize(s.n + float3((b0 - b1) * 0.68f, (b0 - b2) * 0.68f, 0.0f) * barkFade);
+            // Lift sculpted sunlit/shaded bark ridges gently (0.90..1.16) so dark spruce bark never crushes to #050505!
+            albedo *= lerp(1.0f, 0.90f + 0.26f * b0, barkFade * 0.60f);
         }
         // 2) Sculpted Tri-Planar Rock-Cliff Sedimentary Strata, Fracture Fissures & Rain-Runoff Decals
         //    (Wave 63: removed redundant stacked parallax moss pass #1; moss is unified cleanly in RawWeathering.hlsli!):
@@ -464,10 +481,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     }
     if (base == 5u && !any(s.soft > 0.0f)) { s.soft = 0.15f.xxx; }   // a soft-lit shader the patch found no map in
     // Rain (Weather.hlsli), exteriors in improved mode: darker, glossier, puddles flat and mirror-like.
-    // Wave 63: Strictly exclude actors/creatures (isActorFeat || isActorCloth) from terrain snow-crust & puddle overlays!
+    // Wave 63 + Wave 64: Strictly exclude actors/creatures (isActorFeat || isActorCloth) AND track fireHeatDbg for View 36!
     Wet wet;
     wet.wet = 0.0f; wet.puddle = 0.0f; wet.snow = 0.0f;
     float2 rings = 0.0f;   // rain on the puddles: the water's slope, which also bends the reflection
+    float fireHeatDbg = 0.0f;
     if (!match && sunColour.w > 0.5f && base != 5u && !isActorFeat && !isActorCloth) {
         const float sv = (flags.x & FLAG_RT) != 0u && (flags.x & FLAG_SKY) != 0u ? RtIdx.Load(ip).w : 1.0f;
         // The geometric normal from the depth buffer's neighbours (shorter step on each axis).
@@ -512,11 +530,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         s.f0 = lerp(s.f0, 0.02f, max(wet.wet, wet.puddle));
         s.mask = max(s.mask, max(wet.wet * 0.6f, wet.puddle));
         lobe = lobe || max(wet.wet, wet.puddle) > 0.2f;
-        // Detect living green pine/shrub foliage even when Skyrim renders it under base==1u alpha-test:
-        const bool isGreenPine = (base == 1u && albedo.g > max(albedo.r, albedo.b) * 1.07f && albedo.g > 0.025f);
+        // Wave 64: Use unified isGreenPineCard so alpha-tested pine saplings NEVER get snow-painted white on clear days!
+        const bool isGreenPine = isGreenPineCard;
+        const bool activeSnowWx = (weather.z > 0.08f || seasonThermal0.x > 0.05f || season == 4u);
         if (wet.snow > 0.0f) {
-            // Never paint living green pine branches solid white chalk; cap pine-needle snow dusting to delicate frost tips!
-            const float snowEff = isGreenPine ? (wet.snow * 0.22f) : wet.snow;
+            // Never paint living green pine branches chalky white on clear days; cap winter snow dusting to delicate tips!
+            const float snowEff = isGreenPine ? (activeSnowWx ? (wet.snow * 0.18f) : 0.0f) : wet.snow;
             // SKY-09 Volumetric 3D Sastrugi Snowdrift Relief + Glacial Subsurface Scattering:
             const float3 wpS = p + camPosW.xyz;
             const float2 wFlowS = normalize(cloudWind.xy + float2(1.0f, 0.35f));
@@ -566,6 +585,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     }
                 }
             }
+            fireHeatDbg = max(fireHeatDbg, fireHeat01);
             const bool hasSeasonState = (seasonThermal0.x > 0.005f || seasonThermal1.x > 0.005f
                                       || seasonThermal1.y > 0.01f  || seasonThermal1.z > 0.01f
                                       || phenology1.w > 0.001f);
@@ -739,8 +759,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             }
         }
     }
-    // Seasonal & 3D Botanical Canopy Volume Transport for BOTH soft-lit (base==5u) AND alpha-tested pine/shrub cards (base==1u green):
-    const bool isBotanicalCard = (!match && (base == 5u || (base == 1u && sunColour.w > 0.5f && albedo.g > max(albedo.r, albedo.b) * 1.08f && albedo.g > 0.025f && z < 6000.0f)));
+    // Seasonal & 3D Botanical Canopy Volume Transport for BOTH soft-lit (base==5u) AND alpha-tested pine/shrub cards (isGreenPineCard):
+    const bool isBotanicalCard = (!match && (base == 5u || isGreenPineCard));
     if (isBotanicalCard) {
         const uint seasonF = uint(waterB.w + 0.5f);
         if (seasonF == 1u) {
@@ -752,12 +772,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float snowLeaf = saturate((s.n.z - 0.25f) * 2.0f);
             albedo = lerp(albedo * float3(0.86f, 0.92f, 1.04f), float3(0.56f, 0.60f, 0.66f), snowLeaf * 0.55f);
         }
-        // Wave 36 Old-Growth 3D Conifer Canopy Volume:
-        // Rich deep Nordic spruce/fir chlorophyll albedo (eliminates chalky bleached white-green pine needles!),
-        // 3-step view-tangent bough parallax heightfield, and sculpted 3D crown-to-underside shading.
+        // Wave 36 + Wave 64 Old-Growth 3D Conifer Canopy Volume:
+        // Rich deep Nordic spruce/fir chlorophyll albedo (zero chalky bleached white-green pine needles!),
+        // 3-step view-tangent bough parallax heightfield, and balanced 3D crown-to-underside shading.
         if (z < 7200.0f) {
             const float3 wpF = p + camPosW.xyz;
-            const float fFade = smoothstep(7200.0f, 240.0f, z);
+            const float fFade = 1.0f - smoothstep(240.0f, 7200.0f, z);
             const float3 vTanF = -s.v / max(abs(dot(s.n, s.v)), 0.35f);
             float boughDepth = 0.0f;
             [unroll] for (int bp = 0; bp < 3; ++bp) {
@@ -770,38 +790,40 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                                                          s.n.z * 0.62f + 0.24f + bGrad.w * 0.24f));
             s.n = normalize(lerp(s.n, canopyMacroN, 0.46f * fFade));
             const float leafVar = saturate(boughDepth * 1.25f);
-            s.f0 = 0.018f;
-            s.alpha = clamp(lerp(s.alpha, 0.76f, 0.72f * fFade), 0.58f, 0.92f);
+            s.f0 = 0.016f;
+            s.alpha = clamp(lerp(s.alpha, 0.80f, 0.78f * fFade), 0.64f, 0.94f);
             const float speciesId = cNoise(wpF * 0.0045f + float3(17.3f, 9.1f, 3.7f));
             // Deep saturated boreal spruce & old-growth redwood/fir reflectance (Crimson Desert / NordicCanopy palette):
             const float3 speciesTint = speciesId < 0.5f
-                ? lerp(float3(0.38f, 0.70f, 0.38f), float3(0.48f, 0.78f, 0.44f), speciesId * 2.0f)
-                : lerp(float3(0.48f, 0.78f, 0.44f), float3(0.56f, 0.76f, 0.40f), (speciesId - 0.5f) * 2.0f);
-            const float crownDepthAo = lerp(0.36f, 0.98f, saturate(s.n.z * 0.55f + 0.45f)) * lerp(0.64f, 1.08f, leafVar);
+                ? lerp(float3(0.42f, 0.76f, 0.38f), float3(0.50f, 0.82f, 0.42f), speciesId * 2.0f)
+                : lerp(float3(0.50f, 0.82f, 0.42f), float3(0.56f, 0.80f, 0.38f), (speciesId - 0.5f) * 2.0f);
+            const float crownDepthAo = lerp(0.50f, 0.98f, saturate(s.n.z * 0.55f + 0.45f)) * lerp(0.70f, 1.08f, leafVar);
             albedo *= lerp(1.0f.xxx, speciesTint * crownDepthAo, fFade * 0.86f);
-            // Boost living pine chlorophyll saturation while capping washed-out white-green needles:
+            // Boost living pine chlorophyll saturation while preventing chalky pale white-green needles:
             const float fLuma = dot(albedo, float3(0.2126f, 0.7152f, 0.0722f));
-            albedo = saturate(lerp(fLuma.xxx, albedo, 1.28f));
-            // Wave 39 Live Seasonal Botanical Phenology (RawSeasonsThermals.hlsli):
-            // Boreal pines/spruces stay deep saturated evergreen with restrained winter bough frost/snow dusting,
-            // while deciduous aspens, birches & shrubs shift smoothly through spring bud-break, summer green,
-            // autumn golden carotenoid & crimson anthocyanin, and winter frost — NEVER bleached pale white!
+            albedo = saturate(lerp(fLuma.xxx, albedo, 1.36f));
+            // Wave 39 + Wave 64 Live Seasonal Botanical Phenology (RawSeasonsThermals.hlsli):
+            // Strictly gate winter bough snow & frost rim on genuine freezing/snowy conditions so clear-day
+            // Riverwood pine boughs NEVER pick up pale grey-white frost bleach!
             const bool hasLivePhen = (sunColour.w > 0.5f)
                 && ((phenology0.x + phenology0.y + phenology0.z + phenology0.w + phenology1.x + phenology1.y) > 0.01f);
+            const bool activeSnowFrost = (weather.z > 0.08f || seasonThermal0.x > 0.05f || seasonF == 4u
+                || (seasonThermal0.y > 0.05f && seasonThermal0.w < -1.5f));
             if (hasLivePhen) {
-                const bool isEvergreenConifer = (base == 1u) || (albedo.g < 0.22f && albedo.b >= albedo.r * 0.70f);
+                const bool isEvergreenConifer = (base == 1u) || (albedo.g < 0.26f && albedo.b >= albedo.r * 0.65f);
                 const SeasonalFoliageEval sf = evalSeasonalFoliagePhenology(
                     wpF, s.n, albedo, phenology0, phenology1, seasonThermal0, seasonThermal1, isEvergreenConifer);
                 albedo = saturate(albedo * sf.albedoTint);
-                // Restrained winter bough snow dusting & sub-zero frost rim (never chalky white wash!):
-                const float boughSnow = sf.canopySnowCov01 * (isEvergreenConifer ? 0.24f : 0.30f) * fFade;
-                const float frostEdge = sf.frostRim01 * 0.14f * fFade;
-                albedo = lerp(albedo, float3(0.58f, 0.65f, 0.72f), saturate(boughSnow + frostEdge));
+                const float boughSnow = activeSnowFrost ? (sf.canopySnowCov01 * (isEvergreenConifer ? 0.22f : 0.28f) * fFade) : 0.0f;
+                const float frostEdge = activeSnowFrost ? (sf.frostRim01 * 0.12f * fFade) : 0.0f;
+                if (boughSnow + frostEdge > 0.005f) {
+                    albedo = lerp(albedo, float3(0.58f, 0.65f, 0.72f), saturate(boughSnow + frostEdge));
+                }
                 albedo = isEvergreenConifer
-                    ? min(albedo, lerp(float3(0.22f, 0.31f, 0.19f), float3(0.42f, 0.48f, 0.46f), boughSnow))
-                    : min(albedo, float3(0.46f, 0.36f, 0.24f));
+                    ? min(albedo, lerp(float3(0.22f, 0.34f, 0.19f), float3(0.42f, 0.48f, 0.46f), boughSnow))
+                    : min(albedo, float3(0.46f, 0.38f, 0.24f));
             } else {
-                albedo = min(albedo, float3(0.22f, 0.31f, 0.19f));
+                albedo = min(albedo, float3(0.22f, 0.34f, 0.19f));
             }
         }
     }
@@ -1059,7 +1081,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     float porosityWetW = 0.0f;
     float hoarfrostGlintW = 0.0f;
     float weatherMossMask = 0.0f;
-    if (!match && !isActorFeat && !isActorCloth && (base == 1u || base == 2u || base == 4u) && z < 3200.0f) {
+    float sootHeatDbg = 0.0f;
+    if (!match && !isActorFeat && !isActorCloth && !isBotanicalCard && (base == 1u || base == 2u || base == 4u) && z < 3200.0f) {
         const float pxScaleW = max(length(wDpx) + length(wDpy), 0.25f);
         const float curvW = clamp((dot(wDnx, wDpx) + dot(wDny, wDpy)) / max(pxScaleW * pxScaleW * 0.25f, 0.15f), -1.0f, 1.0f);
         const float edgeMagW = saturate((length(wDnx) + length(wDny)) * 1.15f);
@@ -1102,6 +1125,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         porosityWetW    = wRes.porosityWet01;
         hoarfrostGlintW = wRes.hoarfrostGlint01;
         weatherMossMask = wRes.mossCov01;
+        sootHeatDbg     = max(sootHeat01, wRes.sootMask01);
         if (porosityWetW > 0.15f) {
             s.mask = max(s.mask, porosityWetW * 0.55f);
             lobe = true;
@@ -1452,6 +1476,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     uint softLeft = 4u;
     bool mrKeyUsed = false;
     float fireMelt = 0.0f;
+    float localWarmIrradDbg = 0.0f;
     [loop] for (uint w = 0u; w < 4u; w++) {
         // SM6.9 Wave-scalarized clustered light loop: WaveActiveBitOr keeps all lanes in lockstep so
         // lightPosR[li] / lightColS[li] compile to uniform SGPR scalar broadcasts with zero warp divergence.
@@ -1506,6 +1531,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 sh = isActorFeat ? lerp(0.68f, 1.0f, rtSh) : (isActorCloth ? lerp(0.50f, 1.0f, rtSh) : rtSh);
             }
             else if (slot != 0u) { sh = rv[slot]; }
+            if (lightColS[li].r > lightColS[li].b * 1.18f) {
+                localWarmIrradDbg += dot(c * sh, float3(0.2126f, 0.7152f, 0.0722f)) * saturate(dot(s.n, l) * 0.5f + 0.5f);
+            }
             if (!match && !rt && sunColour.w > 0.5f && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
                 sh *= screenShadow(p + lift, l, min(dist, tune.z), 4.0f / max(dist, 1.0f), jit, 10u);
                 --softLeft;
@@ -1554,10 +1582,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Sync exterior hemisphere ambient directly with evalWorldAtmosphere() sky zenith/horizon + ground bounce,
     // and upgrade interior lighting across all location types (Tavern/Home warm hearth contrast, Nordic Crypt/Cave
     // cool mineral-slate vault depth, Dwemer Ruin burnished bronze-gold directional bounce):
+    float3 barkGroundBounce = float3(0.085f, 0.072f, 0.054f);
     if (!match) {
         if (sunColour.w > 0.5f) {
             float3 uSunA, uSkyZA, uSkyHA, uAmbUpA, uAmbDnA;
             evalWorldAtmosphere(uSunA, uSkyZA, uSkyHA, uAmbUpA, uAmbDnA);
+            barkGroundBounce = max(uAmbDnA, float3(0.085f, 0.072f, 0.054f));
             const float3 skyHemi = lerp(uAmbDnA, uAmbUpA, saturate(s.n.z * 0.5f + 0.5f));
             amb = lerp(amb, skyHemi, 0.48f);
         } else {
@@ -1590,11 +1620,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Exteriors: ray-traced sky visibility (RtSky.cpp). Interiors (!match): local SM6.9 RayQuery RTAO from RtShadow.hlsl.
     const bool isExterior = sunColour.w > 0.5f;
     const float rawSkyVis = rt && (flags.x & FLAG_SKY) != 0u && (isExterior || !match) ? RtIdx.Load(ip).w : 1.0f;
-    const float skyVis = isActorFeat ? lerp(0.28f, 1.0f, rawSkyVis) : (isActorCloth ? lerp(0.26f, 1.0f, rawSkyVis) : rawSkyVis);
+    const float skyVis = isActorFeat ? lerp(0.28f, 1.0f, rawSkyVis)
+                       : (isActorCloth ? lerp(0.26f, 1.0f, rawSkyVis)
+                       : (isWoodBark ? lerp(0.36f, 1.0f, rawSkyVis)
+                       : (isBotanicalCard ? lerp(0.22f, 1.0f, rawSkyVis) : rawSkyVis)));
     // Physical directional skylighting falloff: roofs, covered walkways, arches & dense foliage cores drop to deep rich shade
-    // (0.10..1.0 exteriors, 0.16..1.0 velvety interior shadow drama) while open surfaces keep crisp skylighting.
-    const float skyVisShaped = !match ? pow(saturate(skyVis), base == 5u ? 1.65f : 1.85f) : skyVis;
-    const float rtOcc = isExterior ? lerp(1.0f, lerp(0.08f, 1.0f, skyVisShaped), max(cluster.w, 0.88f)) : lerp(0.12f, 1.0f, skyVisShaped);
+    // while vertical pine tree trunks (isWoodBark) enforce a realistic >= 0.30 skyVisShaped floor so trunks NEVER crush to #050505!
+    const float skyVisPow = !match ? pow(saturate(skyVis), isBotanicalCard ? 1.50f : 1.85f) : skyVis;
+    const float skyVisShaped = (!match && isWoodBark) ? max(skyVisPow, 0.30f) : skyVisPow;
+    const float rtOccRaw = isExterior ? lerp(1.0f, lerp(0.08f, 1.0f, skyVisShaped), max(cluster.w, 0.88f)) : lerp(0.12f, 1.0f, skyVisShaped);
+    const float rtOcc = (!match && isWoodBark) ? max(rtOccRaw, 0.34f) : rtOccRaw;
     // Smooth physical irradiance soft-shoulder on close-range point lights (prevents bright plaster walls like
     // Farengar's study 15.00.26 and snow floes under torches from clipping into flat white!):
     if (!match) {
@@ -1605,21 +1640,22 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
     }
     // Feature 18: Contact-hardening near-field micro-AO grounding under foliage, rocks, furniture & NPC feet.
-    // Wave 63: Strictly exclude faces/skin/hair/eyes (isActorFeat) and keep skinned cloth/fur gentle (0.90 floor)
-    // so characters & dogs NEVER develop dark blotchy contact-AO rings!
+    // Wave 63 + Wave 64: Strictly exclude faces/skin/hair/eyes (isActorFeat) and keep skinned cloth/fur (0.90)
+    // and tree trunks (isWoodBark, 0.92) gentle so actors & pine trunks NEVER crush into dark blotches!
     const float nearGroundAo = !match ? pow(saturate(aoTerm), lerp(1.0f, 1.45f, saturate(1.0f - z / 900.0f))) : aoTerm;
     if (!match && !isActorFeat && z < 650.0f) {
-        const float microFloor = isActorCloth ? 0.90f : 0.68f;
+        const float microFloor = isWoodBark ? 0.92f : (isActorCloth ? 0.90f : 0.68f);
         const float microDiffOcc = lerp(1.0f, lerp(microFloor, 1.0f, nearGroundAo), saturate(1.0f - z / 650.0f));
         diff *= microDiffOcc;
     }
     float combinedOcc = min(nearGroundAo, rtOcc);
-    // Lifelike Vanilla NPCs: lift recessed eye-socket AO (base==12) so eyes never read as dim dark holes,
-    // and gently cushion facial skin (10) & skinned fur/cloth (14) against dark blotchy shadow crushing!
+    // Lifelike Vanilla NPCs & Forest Trunks: lift recessed eye-socket AO (12), cushion facial skin (10) & cloth (14),
+    // and guarantee exterior tree trunks (isWoodBark) retain >= 0.32 ambient visibility under dense pine canopies!
     if (!match) {
         if (base == 12u)       combinedOcc = lerp(combinedOcc, 1.0f, 0.82f);
         else if (skin)         combinedOcc = lerp(combinedOcc, 1.0f, 0.14f);
         else if (isActorCloth) combinedOcc = lerp(combinedOcc, 1.0f, 0.10f);
+        else if (isWoodBark)   combinedOcc = max(combinedOcc, 0.32f);
     }
     // SIGGRAPH GI-12 Visibility-Aware Bent-Normal Hemisphere Skylighting (exteriors) &
     // Directional Vault/Hearth Ambient Shaping (interiors: deepens recessed corners & highlights upper masonry/beams).
@@ -1631,6 +1667,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Rich sunlight-to-shadow dynamic range (0.54..0.74x exterior ambient preserves hillside slope readability):
     const float ambHdrScale = (!match && isExterior) ? lerp(0.54f, 0.74f, saturate(clouds.x)) : 1.0f;
     amb *= match ? combinedOcc.xxx : mbOcc * hemiSky * ambHdrScale;
+    // Wave 64 Forest Ground-Bounce Fill on Vertical Tree Trunks (isWoodBark):
+    // Sunlit pine-needle floor & sky scatter bounce warm earth-lit fill onto shadowed bark trunks so 3D bark ridges
+    // remain richly readable even inside dense Riverwood forests instead of crushing to pitch-black #050505!
+    if (!match && isExterior && isWoodBark) {
+        const float barkVertW = saturate(1.0f - abs(s.n.z));
+        const float dayBarkW = smoothstep(-0.04f, 0.16f, astroSunElev());
+        const float3 forestBounce = barkGroundBounce * float3(1.18f, 1.02f, 0.80f);
+        amb += forestBounce * (barkVertW * lerp(0.24f, 0.42f, dayBarkW) * lerp(0.65f, 1.0f, sunShadow));
+    }
     // Multi-bounce hardware RayQuery GI: physically energy-conserving gain + smooth Reinhard shoulder + contact-AO grounding
     // (eliminates runaway GI glow on walls, snow, ice, and interiors while keeping rich natural color bleed!).
     const bool bounceHere = sunColour.w > 0.5f || (flags.x & FLAG_BOUNCE_IN) != 0u;
@@ -1753,9 +1798,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (dot(emissiveRim, float3(0.2126f, 0.7152f, 0.0722f)) > 0.005f) {
             diff += emissiveRim * (0.25f + 0.75f * pow(1.0f - saturate(dot(s.n, s.v)), 2.0f));
         }
-        // Environmental Asymmetry Breaking (Windward Rime on exterior stone/terrain, strictly excluding actors!):
-        // (Wave 63: removed redundant shaded-side moss pass #4; moss lives strictly once in RawWeathering.hlsli!)
-        if (isExterior && !isActorFeat && !isActorCloth && (base == 1u || base == 4u)) {
+        // Environmental Asymmetry Breaking (Windward Rime on exterior stone/terrain, strictly excluding actors & foliage!):
+        // (Wave 63 + Wave 64: removed redundant shaded-side moss pass #4 and excluded isBotanicalCard pine saplings!)
+        if (isExterior && !isActorFeat && !isActorCloth && !isBotanicalCard && (base == 1u || base == 4u)) {
             const float3 wpAsym = p + camPosW.xyz;
             const float2 windD = normalize(cloudWind.xy + float2(1.0f, 0.35f));
             const float windward = saturate(dot(s.n.xy, -windD));
@@ -1886,8 +1931,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // GGX follows the game's specular map where the game had a lobe, as the game's own term does (mask x scale x lobe):
     // a sharp lobe at f0 0.02 on a surface the map leaves dark (the inn's beams, rt7-glint-1) read as white streaks the
     // game never draws, and a weight full from a mask of 0.25 still left them on the planks (rt7-glint-5).
-    const float specMap = lobe && !(skin && !match) ? saturate(s.mask * resScale.w) : 1.0f;
-    lit += (flags.x & FLAG_GGX) != 0u ? spec * specMap : spec * (lobe ? s.mask * resScale.w : 0.0f);
+    // Wave 64: Fix white-specular chalk bleaching on sunlit pine needles (base==5u AND base==1u pine saplings!):
+    // Previously `specMap = lobe ? ... : 1.0f` dumped 100% raw white sun GGX specular onto non-lobe foliage!
+    const float specMap = lobe && !(skin && !match) ? saturate(s.mask * resScale.w) : (isBotanicalCard ? 0.08f : 1.0f);
+    const float3 foliageSpecTint = isBotanicalCard ? float3(0.14f, 0.24f, 0.10f) : 1.0f.xxx;
+    lit += ((flags.x & FLAG_GGX) != 0u ? spec * specMap : spec * (lobe ? s.mask * resScale.w : 0.0f)) * foliageSpecTint;
     // Ray-traced reflection on glossy surfaces with live dynamic-cubemap IBL fallback on RT misses,
     // plus dynamic cubemap enhancement for class-2 metal/armor and clearcoat GGX on wet surfaces.
     if (!match) {
@@ -1902,8 +1950,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float reflMask = max(saturate(s.mask * resScale.w), max(wet.puddle, 0.5f * wet.wet));
         // Note: Direct brushed-metal anisotropic GGX (evalBrushedMetalAniso) runs cleanly across both sun and clustered
         // torches/forges above (no duplicate unshadowed ad-hoc anisotropy lobe here!).
-        // RAW-STRATA Unified 4-Slab Energy-Conserving Optical Transport (excluded on skin, eyes & foliage; thin-film strictly on metal):
-        if (!skin && !isEye && base != 5u) {
+        // RAW-STRATA Unified 4-Slab Energy-Conserving Optical Transport (excluded on skin, eyes & ALL botanical foliage!):
+        if (!skin && !isEye && !isBotanicalCard) {
             StrataSlab st;
             st.baseAlbedo = albedo;
             st.roughness = s.alpha;
@@ -1923,7 +1971,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             }
         }
         const float3 F0mat_unused_marker = F0mat;
-        if (rt && (flags.x & FLAG_REFLECT) != 0u && lobe) {
+        if (rt && (flags.x & FLAG_REFLECT) != 0u && lobe && !isBotanicalCard) {
             const int2 baseRefl = clamp(int2(px + rings * 40.0f), int2(0, 0), int2(dims.xy) - 1);
             float4 rfSum = 0.0f.xxxx;
             float rfW = 0.0f;
@@ -1956,8 +2004,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         } else if (base == 12u) {
             // Class-12 Eye corneal wet catchlight: sharp corneal reflection from live dynamic cubemap (reflects nearby fires & sky).
             lit += evalMultiScatterIBL(float3(0.028f, 0.028f, 0.028f), 0.04f, nv, sampleLiveEnvCube(rDir, 0.04f), 0.45f + 0.55f * skyVis);
-        } else if (base == 4u || base == 6u || base == 1u || isSkinnedActor) {
-            // Full-world physical dielectric Split-Sum IBL on terrain, cobblestones, stone, timber & skinned actor cloth/fur (excluded on foliage).
+        } else if ((base == 4u || base == 6u || base == 1u || isSkinnedActor) && !isBotanicalCard) {
+            // Full-world physical dielectric Split-Sum IBL on terrain, cobblestones, stone, timber & skinned actor cloth/fur (excluded on ALL foliage!).
             const float3 dieF0 = lerp(0.028f, 0.042f, saturate(wet.wet + wet.puddle)).xxx;
             const float dieRough = clamp(s.alpha, 0.16f, 0.82f);
             const float3 dieEnv = sampleLiveEnvCube(rDir, dieRough) * (0.28f + 0.72f * skyVisShaped);
@@ -1974,7 +2022,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float clearcoat = saturate(max(
             max(saturate(wet.wet * 0.85f + wet.puddle * 1.15f + porosityWetW * 0.48f), rainWallStreak * 0.78f),
             ((base == 2u && iceMask < 0.08f) ? (1.0f - metallic) * 0.35f : 0.0f))) * (1.0f - saturate(iceMask * 2.0f));
-        if (clearcoat > 0.04f && !skin && base != 5u) {
+        if (clearcoat > 0.04f && !skin && !isBotanicalCard) {
             const float fCoatV = saturate(0.0204f + 0.9796f * pow(1.0f - nv, 5.0f));
             // Strictly conserve energy: base layer transmits (1 - coat * F_coat) beneath the dielectric water/lacquer film!
             lit *= saturate(1.0f - clearcoat * fCoatV * 0.85f);
@@ -1987,8 +2035,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 ccLobe2 = evalMultiScatterIBL(float3(0.0204f, 0.0204f, 0.0204f), ccRough2, nv, ccEnv2, specOcc);
             lit += (ccLobe1 * 0.72f + ccLobe2 * 0.28f) * (clearcoat * 0.92f);
         }
-        // Estevez-Kulla grazing velvet/fuzz rim sheen on rough organic materials (excluded on foliage base==5 to avoid pale halo).
-        if (!skin && base != 2u && base != 5u && s.alpha > 0.52f && sunDir.w > 0.5f && sunShadow > 0.05f) {
+        // Estevez-Kulla grazing velvet/fuzz rim sheen on rough organic materials (excluded on ALL foliage to avoid pale chalk halo!).
+        if (!skin && base != 2u && !isBotanicalCard && s.alpha > 0.52f && sunDir.w > 0.5f && sunShadow > 0.05f) {
             const float rimFuzz = pow(1.0f - nv, 4.0f) * saturate((s.alpha - 0.52f) * 2.5f) * specOcc;
             lit += albedo * sunColour.rgb * (rimFuzz * sunShadow * 0.28f);
         }
@@ -2156,26 +2204,32 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 eyeEnv = evalDynamicEnvCube(reflect(-s.v, s.n), 0.04f);
             const float eyeFr = 0.04f + 0.96f * pow(1.0f - nvEye, 5.0f);
             lit += eyeEnv * eyeFr * 1.25f + eyeKeyCol * (glint1 + glint2);
-        } else if (base == 5u && isExterior) {
-            // Engine-Level 3D Botanical Canopy Volume Transport:
-            // Combines DXR/cloud-gated backlit chlorophyll subsurface scattering, gentle forward-wrap foliage bounce,
-            // and 3D crown-to-underside canopy self-occlusion so vanilla pine/deciduous cards read as lush 3D volumes!
+        } else if ((base == 5u || isGreenPineCard) && isExterior) {
+            // Engine-Level 3D Botanical Canopy Volume Transport (Wave 64: unified for base==5u AND base==1u pine saplings!):
+            // Combines DXR/cloud-gated backlit chlorophyll subsurface scattering, balanced crown shadow fill,
+            // and deep emerald needle warmth so sunlit pines stay lush Nordic spruce green with zero chalk bleach!
             const float3 wpCan = p + camPosW.xyz;
             const float back = pow(saturate(dot(-s.v, sunDir.xyz)), 3.6f);
             const float cloudClear = 1.0f - saturate(clouds.x * 0.82f);
             const float dayGate = smoothstep(0.02f, 0.14f, astroSunElev());
             const float foliageThickness = lerp(0.45f, 1.0f, cNoise(wpCan * 0.024f + 5.1f));
-            // Backlit warm golden-emerald chlorophyll rim translucency (Crimson Desert / NordicCanopy):
-            // Strictly gated away from front-lit sun-facing needles so pine trees NEVER double-bleach pale white!
+            // Backlit warm golden-emerald chlorophyll rim translucency (strictly gated away from front-lit needles):
             const float frontSun = saturate(dot(s.n, sunDir.xyz));
             const float backTight = pow(saturate(dot(-s.v, sunDir.xyz)), 5.0f);
-            const float backEdgeGate = 1.0f - frontSun * 0.72f;
-            const float3 sssCol = albedo * float3(0.92f, 1.14f, 0.28f);
+            const float backEdgeGate = 1.0f - frontSun * 0.78f;
+            const float3 sssCol = albedo * float3(0.84f, 1.18f, 0.24f);
             lit += sssCol * sunColour.rgb * ((back * 0.09f + backTight * 0.18f) * backEdgeGate * foliageThickness * sunShadow * cloudClear * dayGate);
-            // Deep 3D vertical crown-to-underside & interior pine self-shadowing (carves lush 3D volume out of crossed boughs!):
+            // Balanced 3D vertical crown-to-underside pine self-shadowing (rich green shadow volume, never black or chalk!):
             const float crownUp = saturate(s.n.z * 0.55f + 0.50f);
-            const float canopyOcc = saturate(skyVis * 0.68f + sunShadow * 0.24f + crownUp * 0.20f);
-            lit *= lerp(float3(0.32f, 0.42f, 0.30f), 1.0f.xxx, canopyOcc);
+            const float canopyOcc = saturate(skyVis * 0.62f + sunShadow * 0.24f + crownUp * 0.22f);
+            lit *= lerp(float3(0.42f, 0.54f, 0.38f), 1.0f.xxx, canopyOcc);
+            // Preserve rich emerald needle saturation under bright midday sunlight (prevents white-grey highlight wash!):
+            if (wet.snow < 0.15f) {
+                const float pLum = dot(lit, float3(0.2126f, 0.7152f, 0.0722f));
+                const float brightSunW = smoothstep(0.28f, 0.75f, pLum);
+                const float3 richNeedles = max(lerp(pLum.xxx, lit, 1.24f), 0.0f.xxx) * float3(0.94f, 1.04f, 0.88f);
+                lit = lerp(lit, richNeedles, brightSunW * 0.65f);
+            }
         }
         // Wave 58: Horizon-Occluded Sky-Bounce Ambient Fill Respecting Grazing Fresnel (energy-conserving):
         // Uses Lagarde geometric horizon occlusion against macro normal nSmooth + physical dielectric grazing Fresnel
@@ -2185,7 +2239,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float horizBounce = saturate(1.0f + 1.25f * dot(rWrap, nSmooth));
         const float horizBounceOcc = horizBounce * horizBounce;
         const float fGraze = saturate(s.f0 + (1.0f - s.f0) * pow(1.0f - nvWrap, 5.0f));
-        const float skyBounceScale = (skin ? 0.08f : base == 5u ? 0.045f : 0.14f) * (1.0f - metallic * 0.55f);
+        const float skyBounceScale = (skin ? 0.08f : isBotanicalCard ? 0.030f : 0.14f) * (1.0f - metallic * 0.55f);
         const float3 skyBounceTint = isExterior ? lerp(1.0f.xxx, float3(0.86f, 0.94f, 1.12f), skyVisShaped * (1.0f - (skin ? 0.92f : 0.0f)) * 0.45f) : 1.0f.xxx;
         lit += amb * skyBounceTint * (fGraze * skyBounceScale * horizBounceOcc * (0.25f + 0.75f * skyVisShaped) * combinedOcc * (1.0f - iceMask * 0.55f)) + decalEmit;
         // Note: removed redundant 3rd Mie scatter wash in Lighting.hlsl; FroxelPass.hlsl (0..42,000u) + LightFog.hlsl
@@ -2261,6 +2315,48 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float emissiveW = (!match && !skin && base != 5u && isWarmEmissive && zPix < 5500.0f && gSat > 0.32f && gLuma > rLuma * 1.85f && gLuma > 0.22f)
                           ? saturate((gLuma - rLuma * 1.85f) * 2.5f) * saturate((5500.0f - zPix) / 1500.0f) : 0.0f;
     const float3 finalLit = lerp(finalLitRaw, max(finalLitRaw, game.rgb * 0.92f), emissiveW);
+    // Wave 64 Custom Pipeline Debug Views (flags.w = 34, 35, 36):
+    // 34: Flora, Bark, Pine & Foliage Lighting Audit (green=base 5 foliage, lime=base 1 pine sapling, amber=bark trunk,
+    //     bright RED alarm=crushed-black bark luma<0.015, bright MAGENTA alarm=bleached-chalk non-snow foliage!)
+    // 35: Motion Vector, Disocclusion & Cel-Outline Risk Map (depth/normal silhouette jumps, edge-gate risk & actor borders)
+    // 36: Thermal / Fire-Heat / Local-Light Energy & Specular Balance Inspector (R=fireHeat+warmIrrad, G=sootHeat, B=spec)
+    if (flags.w == 34u) {
+        const float3 flSafe = sanitizeLit3(finalLit);
+        const float flLum = dot(flSafe, float3(0.2126f, 0.7152f, 0.0722f));
+        const float flMax = max(flSafe.r, max(flSafe.g, flSafe.b));
+        const float flMin = min(flSafe.r, min(flSafe.g, flSafe.b));
+        const float flSat = (flMax - flMin) / max(flMax, 1.0e-4f);
+        if (isWoodBark) {
+            if (flLum < 0.015f) { return float4(1.0f, 0.04f, 0.04f, game.a); }   // RED alarm: crushed-black bark!
+            return float4(float3(0.88f, 0.56f, 0.16f) * (0.45f + 0.55f * saturate(flLum * 3.0f)), game.a);
+        }
+        if (base == 5u || isGreenPineCard) {
+            if (wet.snow < 0.18f && flSat < 0.12f && flLum > 0.42f) {
+                return float4(1.0f, 0.0f, 1.0f, game.a);   // MAGENTA alarm: bleached chalky non-snow foliage!
+            }
+            const float3 floraC = (base == 5u) ? float3(0.12f, 0.80f, 0.24f) : float3(0.50f, 0.94f, 0.16f);
+            return float4(floraC * (0.42f + 0.58f * saturate(flLum * 2.4f)), game.a);
+        }
+        return float4((flLum * 0.14f).xxx, game.a);
+    }
+    if (flags.w == 35u) {
+        const float zSafe35 = max(z, 1.0f);
+        const float zJump = (abs(ddx(zSafe35)) + abs(ddy(zSafe35))) / zSafe35;
+        const float nJump = length(ddx(nSmooth)) + length(ddy(nSmooth));
+        const float edgeRisk = smoothstep(0.022f, 0.095f, zJump);
+        const float normRisk = smoothstep(0.22f, 0.75f, nJump);
+        const bool isAct35 = (isActorFeat || isActorCloth);
+        const float3 col35 = isAct35
+            ? lerp(float3(0.10f, 0.36f, 0.85f), float3(0.18f, 1.00f, 0.96f), saturate(max(edgeRisk, normRisk * 0.7f)))
+            : float3(saturate(edgeRisk * 1.15f), saturate(normRisk * 0.85f), 0.08f);
+        return float4(col35, game.a);
+    }
+    if (flags.w == 36u) {
+        const float warmEnergy = saturate(max(fireHeatDbg, localWarmIrradDbg * 0.85f));
+        const float sootEnergy = saturate(sootHeatDbg * 1.4f);
+        const float specEnergy = saturate(dot(max(spec, 0.0f.xxx), float3(0.2126f, 0.7152f, 0.0722f)) * 1.6f);
+        return float4(warmEnergy, sootEnergy, specEnergy, game.a);
+    }
     if (flags.w == 20u || flags.w == 21u) {
         const float luma = dot(finalLit, float3(0.2126f, 0.7152f, 0.0722f));
         // Crushed black (<0.015) -> cyan, blown highlight (>0.95) -> magenta, midtones -> calibrated thermal ramp

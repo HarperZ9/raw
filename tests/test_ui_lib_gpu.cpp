@@ -1,11 +1,13 @@
-// test_ui_lib_gpu.cpp: Standalone DX12 GPU Verification Suite for Wave 63 RawUiLib + Debug-Layer HUD.
+// test_ui_lib_gpu.cpp: Standalone DX12 GPU Verification Suite for Wave 64 RawUiLib + Debug-Layer HUD.
 // Runs on BOTH WARP and Hardware GPU (RTX 4090) with D3D12 Debug Layer ENABLED:
-//   1. Pure CPU UiDrawList layout, proportional 7x9 ASCII metrics, scissor clipping & DebugView 0..33 metadata.
+//   1. Pure CPU UiDrawList layout, proportional 7x9 ASCII metrics, ALL 37 Lighting DebugViews (0..36)
+//      and ALL 7 Water DebugViews (1..7, incl. W7:FlowDiag) metadata & legend swatches.
 //   2. Empty UiDrawList zero-touch invariance proof (0 modified pixels).
-//   3. Full UI widget gallery (Panel, SectionHeader, Divider, Toggle ON vs OFF, Slider, Pill, Swatch,
-//      Sparkline, Uppercase+Lowercase 7x9 outline typography) + strict PushClipRect scissor proof.
-//   4. Debug-Layer Control & Legend HUD rendered via RawOverlayHost::RecordDebugLayerHud (views 28..33).
-//   5. RGBA16F zero NaN/Inf check, 0 D3D12 Debug Layer errors, and HW GPU timing < 0.05 ms.
+//   3. Full UI widget gallery (Panel, TabBar, BudgetBar, Collapsible SectionHeader expanded/collapsed,
+//      EngineVarRow/Float/Bool verdict discs, Divider, Toggle ON/OFF, Slider, Pill, Swatch, Sparkline,
+//      Uppercase+Lowercase 7x9 outline typography) + strict PushClipRect scissor proof.
+//   4. Debug-Layer Control & Legend HUD rendered via RawOverlayHost::RecordDebugLayerHud (Views 34 & W7).
+//   5. RGBA16F zero NaN/Inf check, 0 D3D12 Debug Layer errors, and HW GPU timing < 0.04 ms.
 // Original clean-room implementation, MIT License.
 
 #ifndef NOMINMAX
@@ -343,22 +345,30 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
     gallery.AddRect(420.0f, 40.0f, 200.0f, 80.0f, PackRgba8(0xFF, 0x20, 0x20, 255));
     gallery.PopClipRect();
 
+    // Wave 64 Widget Gallery Panel: TabBar, Collapsible SectionHeader (expanded & collapsed),
+    // multi-segment BudgetBar with target marker, and EngineVarRow/Float/Bool verdict discs.
+    gallery.AddPanel(360.0f, 140.0f, 380.0f, 190.0f, 6.0f, tokens::kGround, tokens::kBorderStrong, tokens::kAccentLead);
+    static const char* const kGalleryTabs[3] = {"Layers", "Perf", "Vars"};
+    gallery.AddTabBar(372.0f, 152.0f, 356.0f, kGalleryTabs, 3u, 1u, tokens::kAccentPass, 1u);
+    gallery.AddSectionHeader(372.0f, 178.0f, 356.0f, "gpu pass budget", tokens::kAccentLead, 1u, true, true);
+    const UiBudgetSegment kBudSegs[4] = {
+        {"Light",  2.5f, tokens::kAccentPass},
+        {"Fluid",  3.0f, tokens::kAccentLead},
+        {"GI",     2.0f, tokens::kAccentEmerald},
+        {"Post",   2.5f, tokens::kAccentFail},
+    };
+    gallery.AddBudgetBar(372.0f, 198.0f, 356.0f, 16.0f, kBudSegs, 4u, 8.333f, 16.667f, 1u);
+    gallery.AddSectionHeader(372.0f, 224.0f, 356.0f, "live engine vars", tokens::kAccentEmerald, 1u, true, false);
+    gallery.AddEngineVarFloat(372.0f, 244.0f, 356.0f, "Sun Elevation", 34.5f, "deg", tokens::kAccentLead, 1u);
+    gallery.AddEngineVarBool(372.0f, 260.0f, 356.0f, "RT Reflections", true, 1u);
+    gallery.AddEngineVarBool(372.0f, 276.0f, 356.0f, "Indoor Fog Clamp", false, 1u);
+    gallery.AddEngineVarRow(372.0f, 292.0f, 356.0f, "Water Audit", "W7:FlowDiag", tokens::kAccentFail, 1u);
+
     const UiPixelRect dirty = gallery.ComputeDirtyRect(kW, kH);
     std::vector<uint8_t> galRb;
-    bool galOk = true;
-    float minMs = 1e9f, sumMs = 0.0f;
-    uint32_t validTs = 0u;
-    for (uint32_t f = 0u; f < 10u; ++f) {
-        galOk = galOk && RunWithCallback([&](ID3D12GraphicsCommandList* cl, ID3D12Resource* tex) {
-            uiHost.RecordDrawList(cl, tex, D3D12_RESOURCE_STATE_RENDER_TARGET, kW, kH, gallery, true);
-        }, galRb);
-        if (uiHost.HasValidTiming()) {
-            const float ms = uiHost.GetLastUiMs();
-            minMs = std::min(minMs, ms);
-            sumMs += ms;
-            ++validTs;
-        }
-    }
+    const bool galOk = RunWithCallback([&](ID3D12GraphicsCommandList* cl, ID3D12Resource* tex) {
+        uiHost.RecordDrawList(cl, tex, D3D12_RESOURCE_STATE_RENDER_TARGET, kW, kH, gallery, true);
+    }, galRb);
 
     uint32_t insideDirtyMod = 0u;
     uint32_t outsideDirtyMod = 0u;
@@ -372,6 +382,17 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
     uint32_t sparkBluePx = 0u;
     uint32_t sparkBrassPx = 0u;
     uint32_t sparkCoralPx = 0u;
+    uint32_t tabActiveUnderlineBluePx = 0u;
+    uint32_t budgetBluePx = 0u;
+    uint32_t budgetBrassPx = 0u;
+    uint32_t budgetEmeraldPx = 0u;
+    uint32_t budgetCoralPx = 0u;
+    uint32_t budgetMarkerBonePx = 0u;
+    uint32_t chevExpandedBrassPx = 0u;
+    uint32_t chevCollapsedEmeraldPx = 0u;
+    uint32_t varDotBrassPx = 0u;
+    uint32_t varDotBluePx = 0u;
+    uint32_t varDotCoralPx = 0u;
     for (uint32_t y = 0u; y < kH; ++y) {
         for (uint32_t x = 0u; x < kW; ++x) {
             const size_t off = (static_cast<size_t>(y) * kW + x) * 4u;
@@ -411,12 +432,42 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
                 else if (r > 180u && g > 120u && b < 110u) ++sparkBrassPx;
                 else if (r > 180u && g < 120u && b < 110u) ++sparkCoralPx;
             }
+            // Wave 64 TabBar active tab 1 underline [492..608, 168..170]
+            if (y >= 167u && y < 171u && x >= 492u && x < 608u && b > 190u && r < 140u) {
+                ++tabActiveUnderlineBluePx;
+            }
+            // Wave 64 BudgetBar 4 segments + bone target marker [374..726, 200..212]
+            if (y >= 200u && y < 212u && x >= 374u && x < 726u) {
+                if (r > 210u && g > 205u && b > 195u) ++budgetMarkerBonePx;
+                else if (b > 190u && r < 140u) ++budgetBluePx;
+                else if (r > 190u && g > 140u && b < 110u) ++budgetBrassPx;
+                else if (g > 175u && r < 110u && b < 160u) ++budgetEmeraldPx;
+                else if (r > 195u && g < 130u && b < 110u) ++budgetCoralPx;
+            }
+            // Wave 64 Collapsible chevrons (expanded down brass, collapsed right emerald)
+            if (y >= 177u && y < 188u && x >= 371u && x < 382u && r > 180u && g > 120u && b < 120u) {
+                ++chevExpandedBrassPx;
+            }
+            if (y >= 223u && y < 234u && x >= 371u && x < 382u && g > 165u && r < 120u) {
+                ++chevCollapsedEmeraldPx;
+            }
+            // Wave 64 EngineVarRow verdict discs (brass, pass blue, fail coral)
+            if (y >= 244u && y < 254u && x >= 371u && x < 381u && r > 180u && g > 130u && b < 110u) {
+                ++varDotBrassPx;
+            }
+            if (y >= 260u && y < 270u && x >= 371u && x < 381u && b > 180u && r < 140u) {
+                ++varDotBluePx;
+            }
+            if (y >= 292u && y < 302u && x >= 371u && x < 381u && r > 185u && g < 130u && b < 110u) {
+                ++varDotCoralPx;
+            }
         }
     }
 
-    // 3) Debug-Layer Control & Legend HUD rendered via RawOverlayHost::RecordDebugLayerHud (View 28)
+    // 3) Debug-Layer Control & Legend HUD rendered via RawOverlayHost::RecordDebugLayerHud (View 34 + W7)
+    // Time 10 frames of the real production Debug-Layer HUD (344px drawer) for accurate GPU cost!
     DebugLayerHudSnapshot dbgSnap{};
-    dbgSnap.activeDebugView = 28u;
+    dbgSnap.activeDebugView = 34u;
     dbgSnap.drawerOpen      = true;
     dbgSnap.hudEnabled      = true;
     dbgSnap.fps             = 144.2f;
@@ -432,14 +483,42 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
     dbgSnap.historyCount    = 64u;
 
     std::vector<uint8_t> dbgRb;
-    const bool dbgOk = RunWithCallback([&](ID3D12GraphicsCommandList* cl, ID3D12Resource* tex) {
-        ovHost.RecordDebugLayerHud(cl, tex, D3D12_RESOURCE_STATE_RENDER_TARGET, kW, kH, dbgSnap, true);
-    }, dbgRb);
+    bool dbgOk = true;
+    float minMs = 1e9f, sumMs = 0.0f;
+    uint32_t validTs = 0u;
+    for (uint32_t f = 0u; f < 10u; ++f) {
+        dbgOk = dbgOk && RunWithCallback([&](ID3D12GraphicsCommandList* cl, ID3D12Resource* tex) {
+            ovHost.RecordDebugLayerHud(cl, tex, D3D12_RESOURCE_STATE_RENDER_TARGET, kW, kH, dbgSnap, true);
+        }, dbgRb);
+        if (ovHost.HasValidUiLibTiming()) {
+            const float ms = ovHost.GetLastUiLibMs();
+            minMs = std::min(minMs, ms);
+            sumMs += ms;
+            ++validTs;
+        }
+    }
     uint32_t dbgModPx = 0u;
     for (uint32_t i = 0u; i < kW * kH; ++i) {
         const size_t off = static_cast<size_t>(i) * 4u;
         if (dbgRb[off + 0] != basePx[off + 0] || dbgRb[off + 1] != basePx[off + 1] || dbgRb[off + 2] != basePx[off + 2]) {
             ++dbgModPx;
+        }
+    }
+
+    // Water Debug View 7 (W7:FlowDiag) HUD proof
+    DebugLayerHudSnapshot waterSnap = dbgSnap;
+    waterSnap.activeDebugView      = 0u;
+    waterSnap.activeWaterDebugView = 7u;
+    waterSnap.activeTabIndex       = 1u;
+    std::vector<uint8_t> w7Rb;
+    const bool w7Ok = RunWithCallback([&](ID3D12GraphicsCommandList* cl, ID3D12Resource* tex) {
+        ovHost.RecordDebugLayerHud(cl, tex, D3D12_RESOURCE_STATE_RENDER_TARGET, kW, kH, waterSnap, true);
+    }, w7Rb);
+    uint32_t w7ModPx = 0u;
+    for (uint32_t i = 0u; i < kW * kH; ++i) {
+        const size_t off = static_cast<size_t>(i) * 4u;
+        if (w7Rb[off + 0] != basePx[off + 0] || w7Rb[off + 1] != basePx[off + 1] || w7Rb[off + 2] != basePx[off + 2]) {
+            ++w7ModPx;
         }
     }
 
@@ -502,13 +581,17 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
     const float meanMs = (validTs > 0u) ? (sumMs / static_cast<float>(validTs)) : -1.0f;
     const uint32_t dbgErrs = CountDebugErrors(dev.Get());
 
-    std::printf("  [%s] dirty=(%u,%u %ux%u) inMod=%u outMod=%u clipRed=%u clipLeak=%u glyphPx=%u swMag=%u togOn=%u togOff=%u sldBrass=%u spk(B=%u Y=%u R=%u) dbgHudPx=%u nanInf=%u uiMs=%.4f (min=%.4f) dbgErrs=%u\n",
+    std::printf("  [%s] dirty=(%u,%u %ux%u) inMod=%u outMod=%u clipRed=%u clipLeak=%u glyphPx=%u swMag=%u togOn=%u togOff=%u sldBrass=%u spk(B=%u Y=%u R=%u)\n",
                 tag, dirty.x, dirty.y, dirty.w, dirty.h, insideDirtyMod, outsideDirtyMod,
                 clipInsideRed, clipLeakRed, glyphBrightPx, swatchMagentaPx, toggleOnBluePx, toggleOffBluePx,
-                sliderBrassPx, sparkBluePx, sparkBrassPx, sparkCoralPx,
-                dbgModPx, nanInf, static_cast<double>(meanMs), static_cast<double>(minMs), dbgErrs);
+                sliderBrassPx, sparkBluePx, sparkBrassPx, sparkCoralPx);
+    std::printf("  [%s] w64: tabLine=%u bud(B=%u Y=%u G=%u R=%u M=%u) chev(v=%u >=%u) dots(Y=%u B=%u R=%u) v34HudPx=%u w7HudPx=%u nanInf=%u uiMs=%.4f (min=%.4f) dbgErrs=%u\n",
+                tag, tabActiveUnderlineBluePx, budgetBluePx, budgetBrassPx, budgetEmeraldPx, budgetCoralPx,
+                budgetMarkerBonePx, chevExpandedBrassPx, chevCollapsedEmeraldPx,
+                varDotBrassPx, varDotBluePx, varDotCoralPx,
+                dbgModPx, w7ModPx, nanInf, static_cast<double>(meanMs), static_cast<double>(minMs), dbgErrs);
 
-    Check(galOk && insideDirtyMod > 40000u && outsideDirtyMod == 0u,
+    Check(galOk && insideDirtyMod > 90000u && outsideDirtyMod == 0u,
           useWarp ? "WARP: Widget gallery rendered strictly inside dirtyRect (0 out-of-bounds)"
                   : "HW: Widget gallery rendered strictly inside dirtyRect (0 out-of-bounds)");
     Check(clipInsideRed > 5000u && clipLeakRed == 0u,
@@ -519,15 +602,22 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
               sparkBluePx > 80u && sparkBrassPx > 80u && sparkCoralPx > 80u,
           useWarp ? "WARP: 7x9 text, swatch, toggle ON/OFF, slider & 3-band sparkline verified"
                   : "HW: 7x9 text, swatch, toggle ON/OFF, slider & 3-band sparkline verified");
-    Check(dbgOk && dbgModPx > 60000u,
-          useWarp ? "WARP: RawOverlayHost::RecordDebugLayerHud rendered DebugView 28 legend drawer"
-                  : "HW: RawOverlayHost::RecordDebugLayerHud rendered DebugView 28 legend drawer");
+    Check(tabActiveUnderlineBluePx >= 150u &&
+              budgetBluePx >= 400u && budgetBrassPx >= 500u && budgetEmeraldPx >= 300u &&
+              budgetCoralPx >= 400u && budgetMarkerBonePx >= 16u &&
+              chevExpandedBrassPx >= 12u && chevCollapsedEmeraldPx >= 12u &&
+              varDotBrassPx >= 12u && varDotBluePx >= 12u && varDotCoralPx >= 12u,
+          useWarp ? "WARP: Wave 64 TabBar, 4-seg BudgetBar+marker, Collapsible Chevrons & EngineVarRow discs verified"
+                  : "HW: Wave 64 TabBar, 4-seg BudgetBar+marker, Collapsible Chevrons & EngineVarRow discs verified");
+    Check(dbgOk && dbgModPx > 60000u && w7Ok && w7ModPx > 60000u,
+          useWarp ? "WARP: RecordDebugLayerHud rendered Lighting View 34 (FloraTrees) & Water View 7 (FlowDiag)"
+                  : "HW: RecordDebugLayerHud rendered Lighting View 34 (FloraTrees) & Water View 7 (FlowDiag)");
     Check(nanInf == 0u,
           useWarp ? "WARP: 0 NaN/Inf pixels on RGBA16F HDR target"
                   : "HW: 0 NaN/Inf pixels on RGBA16F HDR target");
     if (!useWarp) {
-        Check(validTs > 0u && meanMs >= 0.0f && meanMs < 0.05f,
-              "HW: Real GPU timestamp cost < 0.05 ms");
+        Check(validTs > 0u && meanMs >= 0.0f && meanMs < 0.04f,
+              "HW: Real GPU timestamp cost < 0.04 ms");
     } else {
         Check(validTs > 0u && meanMs >= 0.0f,
               "WARP: Valid GPU timestamp harvested");
@@ -545,32 +635,62 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
 
 int main()
 {
-    std::printf("=== Wave 63 GPU-Native UI Library (RawUiLib) + Debug-Layer HUD Proof ===\n");
+    std::printf("=== Wave 64 GPU-Native UI Library (RawUiLib) + 37+7 Debug-Layer HUD Proof ===\n");
 
-    // Pure CPU checks: proportional metrics, DebugView 0..33 legend descriptors, zero em dashes
+    // Pure CPU checks: proportional metrics, ALL 37 Lighting DebugViews (0..36) & ALL 7 Water Views (1..7)
     {
         const uint32_t wNarrow = MeasureTextWidthPx("iii", 1u);
         const uint32_t wWide   = MeasureTextWidthPx("WWW", 1u);
         Check(wNarrow > 0u && wWide > wNarrow,
               "CPU: Proportional 7x9 ASCII font advance (WWW > iii)");
 
-        bool allViewsValid = true;
-        static constexpr uint32_t kViews[] = {0u, 1u, 2u, 8u, 12u, 28u, 29u, 30u, 31u, 32u, 33u};
-        for (uint32_t v : kViews) {
+        bool allLightingViewsValid = true;
+        for (uint32_t v = 0u; v <= 36u; ++v) {
             const DebugViewDescriptor d = GetDebugViewDescriptor(v);
-            if (!d.shortName || d.shortName[0] == '\0' || !d.title || d.legend.empty()) {
-                allViewsValid = false;
+            if (!d.shortName || d.shortName[0] == '\0' || std::strcmp(d.shortName, "CustomView") == 0 ||
+                !d.title || d.title[0] == '\0' || d.legend.empty()) {
+                std::printf("  [FAIL-DETAIL] Lighting DebugView %u invalid\n", v);
+                allLightingViewsValid = false;
             }
             DebugLayerHudSnapshot snap{};
             snap.activeDebugView = v;
             snap.drawerOpen = true;
             UiDrawList dl;
             FormatDebugLayerHud(snap, dl);
-            if (dl.Empty() || dl.Commands().size() < 12u) {
-                allViewsValid = false;
+            if (dl.Empty() || dl.Commands().size() < 16u || dl.Commands().size() >= UiDrawList::kMaxCommands) {
+                std::printf("  [FAIL-DETAIL] FormatDebugLayerHud failed for view %u (cmds=%zu)\n", v, dl.Commands().size());
+                allLightingViewsValid = false;
             }
         }
-        Check(allViewsValid, "CPU: DebugView descriptors & FormatDebugLayerHud valid across all 11 views (0..33)");
+        const DebugViewDescriptor d34 = GetDebugViewDescriptor(34u);
+        const DebugViewDescriptor d35 = GetDebugViewDescriptor(35u);
+        const DebugViewDescriptor d36 = GetDebugViewDescriptor(36u);
+        const bool new3Valid = (std::strcmp(d34.shortName, "34:FloraTrees") == 0 && d34.legend.size() >= 4u) &&
+                               (std::strcmp(d35.shortName, "35:MotionEdge") == 0 && d35.legend.size() >= 4u) &&
+                               (std::strcmp(d36.shortName, "36:FireFroxel") == 0 && d36.legend.size() >= 4u);
+        Check(allLightingViewsValid && new3Valid,
+              "CPU: ALL 37 Lighting DebugView descriptors (0..36 incl. 34:FloraTrees, 35:MotionEdge, 36:FireFroxel) valid");
+
+        bool allWaterViewsValid = true;
+        for (uint32_t wv = 1u; wv <= 7u; ++wv) {
+            const DebugViewDescriptor wd = GetWaterDebugViewDescriptor(wv);
+            if (!wd.shortName || wd.shortName[0] != 'W' || std::strcmp(wd.shortName, "W0:Final") == 0 ||
+                !wd.title || wd.legend.empty()) {
+                std::printf("  [FAIL-DETAIL] Water DebugView %u invalid\n", wv);
+                allWaterViewsValid = false;
+            }
+            DebugLayerHudSnapshot snap{};
+            snap.activeWaterDebugView = wv;
+            snap.drawerOpen = true;
+            UiDrawList dl;
+            FormatDebugLayerHud(snap, dl);
+            if (dl.Empty() || dl.Commands().size() < 16u) {
+                allWaterViewsValid = false;
+            }
+        }
+        const DebugViewDescriptor w7 = GetWaterDebugViewDescriptor(7u);
+        Check(allWaterViewsValid && std::strcmp(w7.shortName, "W7:FlowDiag") == 0 && w7.legend.size() >= 4u,
+              "CPU: ALL 7 Water DebugView descriptors (W1..W7 incl. W7:FlowDiag) valid");
     }
 
     ComPtr<ID3D12Debug> dbg;

@@ -36,6 +36,8 @@ uint classifySssKind(int2 q, float3 rgb, float viewZ) {
     if (m == 10u) { return SSS_KIND_SKIN; }
     if (m == 5u && viewZ < 1400.0f) { return SSS_KIND_FOLIAGE; }
     if ((m == 1u || m == 2u || m == 4u) && viewZ < 1400.0f) {
+        // Strictly exclude living green pine/shrub saplings rendered under base==1u from blue-white snow/ice SSS:
+        if (m == 1u && rgb.g > max(rgb.r, rgb.b) * 1.04f && rgb.g > 0.02f) { return SSS_KIND_NONE; }
         const float cMin = min(rgb.r, min(rgb.g, rgb.b));
         const float cMax = max(rgb.r, max(rgb.g, rgb.b));
         // Neutral bright snow or blue-cyan glacial ice (excludes stone, bark, metal & dark dirt):

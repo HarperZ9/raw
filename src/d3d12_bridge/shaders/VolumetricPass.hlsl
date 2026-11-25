@@ -18,15 +18,22 @@ float3 volTransAt(float mu) {
     const float r = 6360.0f + 0.5f;
     const float H = sqrt(6460.0f * 6460.0f - 6360.0f * 6360.0f);
     const float rho = sqrt(r * r - 6360.0f * 6360.0f);
-    const float d = max(0.0f, -r * mu + sqrt(max(r * r * (mu * mu - 1.0f) + 6460.0f * 6460.0f, 0.0f)));
+    const float muCl = clamp(isfinite(mu) ? mu : 0.0f, -1.0f, 1.0f);
+    const float d = max(0.0f, -r * muCl + sqrt(max(r * r * (muCl * muCl - 1.0f) + 6460.0f * 6460.0f, 0.0f)));
     return TransLut.SampleLevel(Lin, float2(saturate((d - (6460.0f - r)) / max(rho + H - (6460.0f - r), 1.0e-4f)), saturate(rho / H)), 0.0f).rgb;
 }
 
 float3 volSkyAt(float3 rd) {
-    const float az = atan2(rd.y, rd.x);
-    const float elev = asin(clamp(rd.z, -1.0f, 1.0f));
-    const float vNonLin = 0.5f + 0.5f * (elev >= 0.0f ? sqrt(elev / (0.5f * PI)) : -sqrt(-elev / (0.5f * PI)));
-    return AtmoSkyView.SampleLevel(Lin, float2(az / (2.0f * PI) + 0.5f, saturate(vNonLin)), 0.0f).rgb;
+    const float rdLen2 = dot(rd, rd);
+    const float3 d = (isfinite(rdLen2) && rdLen2 > 1.0e-8f) ? (rd * rsqrt(rdLen2)) : float3(0.0f, 0.0f, 1.0f);
+    const float az = (abs(d.x) + abs(d.y) > 1.0e-5f) ? atan2(d.y, d.x) : 0.0f;
+    const float elev = asin(clamp(d.z, -1.0f, 1.0f));
+    const float vNonLin = saturate(0.5f + 0.5f * (elev >= 0.0f ? sqrt(elev / (0.5f * PI)) : -sqrt(-elev / (0.5f * PI))));
+    // Exact texel-center inverse of AtmosphereLut.hlsl::skyview (zero +-PI seam on camera pans):
+    const float uRaw = frac(az / (2.0f * PI) + 0.5f);
+    const float uLut = (uRaw * 191.0f + 0.5f) / 192.0f;
+    const float vLut = (vNonLin * 107.0f + 0.5f) / 108.0f;
+    return AtmoSkyView.SampleLevel(Lin, float2(uLut, vLut), 0.0f).rgb;
 }
 
 float phaseHG(float cosT, float g) {
@@ -121,13 +128,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 eye = eyeAt();
     const float3 p = worldAt(fullPx - 0.5f, min(d, 0.999999f));
     const float3 toP = p - eye;
-    const float dist = length(toP);
-    const float3 w = toP / max(dist, 1.0e-4f);
+    const float toPLen2 = dot(toP, toP);
+    const float dist = (isfinite(toPLen2) && toPLen2 > 1.0e-8f) ? sqrt(toPLen2) : 1.0e-4f;
+    const float3 w = (isfinite(toPLen2) && toPLen2 > 1.0e-8f) ? (toP / dist) : float3(0.0f, 1.0f, 0.0f);
     // Cap volumetric shaft integration to 12,000 units so open ocean/coast horizons never over-accumulate nuclear scatter.
-    const float tEnd = min(dist, min(tune2.w, 12000.0f));
+    const float tEnd = min(dist, min(max(tune2.w, 1.0f), 12000.0f));
     const float weatherDens = 1.0f + weather.w * 1.15f + weather.z * 1.35f + saturate(clouds.x - 0.25f) * 0.55f;
     const float sigma = max(tune.x, 0.00014f) * weatherDens;
-    const float zCur = d < 0.99998f ? viewZOf(d) : 65000.0f;
+    const float zCur = d < 0.99998f ? clamp(viewZOf(d), 0.1f, 65000.0f) : 65000.0f;
     const float simTime = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
     const float liveWaterZV = rawLiveWaterZ(engineWorld, physWorld[0]);
     const float estSeaTempC = lerp(8.5f, -4.5f, saturate(weather.z * 0.85f + smoothstep(20000.0f, 110000.0f, camPosW.y) * 0.55f));
@@ -136,11 +144,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     float3 scatter = 0.0f.xxx;
     const bool isExterior = (sunColour.w > 0.5f);
     if (isExterior && sunDir.w > 0.5f && tune2.z > 0.0f) {
-        const float jit = ign(lo);
+        // Golden-ratio temporally-phased IGN jitter converges smoothly across frames without static banding on pans:
+        const float jit = frac(ign(lo) + 0.61803399f * float(uint(proj.z) & 63u));
         const float3 aSunV = astroSunDir();
         const float aElevV = astroSunElev();
         const float nightW = smoothstep(0.03f, -0.07f, aElevV);
-        const float3 beamDirV = normalize(lerp(aSunV, sunDir.xyz, nightW));
+        const float3 beamRawV = lerp(aSunV, sunDir.xyz, nightW);
+        const float beamLen2V = dot(beamRawV, beamRawV);
+        const float3 beamDirV = (isfinite(beamLen2V) && beamLen2V > 1.0e-8f) ? (beamRawV * rsqrt(beamLen2V)) : float3(0.0f, 0.0f, 1.0f);
         const float lowSun = saturate(1.0f - max(aElevV, 0.0f) * 2.6f);
         const float lowSunBoost = lerp(1.0f, 1.42f, saturate(1.0f - abs(max(aElevV, 0.0f) - 0.17f) / 0.28f));
         const float shaftBoost = lerp(lowSunBoost, 2.25f, nightW);
@@ -175,7 +186,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if ((i & 1u) == 0u) {
                 if (clouds.x > 0.005f) {
                     const float csRaw = cloudShadowN(wpFog, 2u);
-                    cs = ((flags.x & FLAG_CLOUDS) != 0u) ? pow(saturate(csRaw), 1.35f) : saturate(csRaw);
+                    cs = ((flags.x & FLAG_CLOUDS) != 0u) ? pow(max(saturate(csRaw), 1.0e-5f), 1.35f) : saturate(csRaw);
                 } else {
                     cs = 1.0f;
                 }
@@ -186,11 +197,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 fogFlow = wpFog * 0.00050f + float3(cloudWind.xy * (simTime * 0.00018f), 0.0f);
             const float mist3d = 0.50f + 0.66f * cNoise(fogFlow) + 0.28f * cNoise(fogFlow * 2.4f + 7.3f);
             const float worldElevV = max(wpFog.z - liveWaterZV, 0.0f);
-            const float valleyBank = exp(-worldElevV * 0.00038f) * invPersist;
-            const float alpineCollar = exp(-pow((wpFog.z - 4600.0f) / 2400.0f, 2.0f)) * 0.68f;
+            const float valleyBank = exp(-min(worldElevV * 0.00038f, 32.0f)) * invPersist;
+            const float collarDz = (wpFog.z - 4600.0f) / 2400.0f;
+            const float alpineCollar = exp(-min(collarDz * collarDz, 32.0f)) * 0.68f;
             const float hDens = (0.26f + 0.74f * valleyBank + alpineCollar + weatherCouple * 0.95f) * mist3d;
-            const float tr = exp(-sigma * t * (0.85f + weatherCouple * 0.35f));
-            const float vis = cascadeShadow(ptT, c.z, false) * cs;
+            const float tr = exp(-min(sigma * t * (0.85f + weatherCouple * 0.35f), 40.0f));
+            const float vis = (c.w > 0.5f ? cascadeShadow(ptT, saturate(c.z), false) : 1.0f) * cs;
             sumSun += vis * hDens * tr * dt;
             sumSky += (0.35f + 0.65f * cs) * hDens * tr * dt;
         }
@@ -234,17 +246,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (tune2.y > 0.0f) {
         const float weatherMistGain = 1.0f + saturate(weather.w * 0.85f + weather.z * 0.75f + clouds.x * 0.35f) * 0.65f;
         const bool isInt = !isExterior;
-        const float sunLumV = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-        const float nightV = isInt ? 0.0f : saturate((0.26f - sunLumV) * 4.5f);
+        const float nightV = isInt ? 0.0f : smoothstep(0.03f, -0.07f, astroSunElev());
         const float3 midWp = camPosW.xyz + eye + w * min(tEnd * 0.45f, 1800.0f);
         const float dustMote = isInt ? (0.78f + 0.44f * cNoise(midWp * 0.011f - float3(0.0f, 0.0f, simTime * 0.16f))) : 1.0f;
         // Crisp clear-foreground interior volumetric gain eliminates milky beige haze over candles & hearths:
         const float intGain = isInt ? (0.042f * dustMote) : (weatherMistGain * (1.0f + nightV * 1.10f));
         const float tMinLocal = isInt ? 220.0f : 130.0f;
-        const float jitL = ign(lo + float2(13.0f, 29.0f));
+        const float jitL = frac(ign(lo + float2(13.0f, 29.0f)) + 0.61803399f * float(uint(proj.z) & 63u));
         uint shadowedDone = 0u;
         [loop] for (uint li = 0u; li < flags.y; li++) {
             const float rL = lightPosR[li].w * (1.0f + nightV * 0.55f);
+            if (!isfinite(rL) || rL <= 1.0e-3f) { continue; }
             const float3 lpRel = lightPosR[li].xyz - eye;
             const float wi = windowIntegral(w, lpRel, rL, tMinLocal, tEnd);
             if (wi > 0.0f) {
@@ -270,10 +282,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                             const float4 sm = screenOf(midPt);
                             float visStep = 1.0f;
                             if (sm.w > 1.0f && all(sm.xy >= 0.0f) && sm.x < dims.x && sm.y < dims.y) {
+                                const float2 smUv = sm.xy * dims.zw;
+                                const float edgeV = smoothstep(0.0f, 0.06f, min(min(smUv.x, 1.0f - smUv.x), min(smUv.y, 1.0f - smUv.y)));
                                 const float zHit = viewZOf(Depth.Load(int3(sm.xy, 0)));
-                                if (zHit < sm.w * 0.96f) { visStep = 0.08f; }
+                                if (zHit < sm.w * 0.96f) { visStep = lerp(1.0f, 0.08f, edgeV); }
                             }
-                            const float cosL = dot(w, normalize(toLight + 1.0e-4f));
+                            const float tlLen2 = dot(toLight, toLight);
+                            const float3 tlDir = (isfinite(tlLen2) && tlLen2 > 1.0e-8f) ? (toLight * rsqrt(tlLen2)) : w;
+                            const float cosL = clamp(dot(w, tlDir), -1.0f, 1.0f);
                             const float phL = min(phaseHG(cosL, 0.62f) * 3.8f + 0.55f, 2.8f);
                             occAcc += visStep * phL * 0.10f;
                         }
@@ -288,7 +304,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (isExterior && weather.w > 0.45f && clouds.x > 0.65f) {
         const float tSlot = floor(simTime * 1.4f);
         const float stormTrigger = step(0.945f, frac(sin(tSlot * 127.1f) * 43758.5453f));
-        const float flashEnv = max(pow(1.0f - frac(simTime * 1.4f), 5.0f) * stormTrigger, saturate(timeEnv.z));
+        const float flashEnv = max(pow(max(1.0f - frac(simTime * 1.4f), 0.0f), 5.0f) * stormTrigger, saturate(timeEnv.z));
         scatter += float3(0.45f, 0.62f, 1.05f) * (flashEnv * saturate(tEnd / 6000.0f) * 0.22f);
     }
     // Physical energy-bounded highlight shoulder + NaN/Inf sanitization (prevents volumetric fog from pushing coastal skies/snow into nuclear bloom).
@@ -296,19 +312,28 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float scMax = max(scatter.r, max(scatter.g, scatter.b));
     scatter = (scatter / (1.0f + scMax * 1.45f)) * 0.36f;
 
-    // Temporal reprojection with depth-disocclusion rejection (stores viewZ in alpha for depth-aware upsampling).
-    const float4 cp = float4(p, 1.0f);
+    // Smooth C1 temporal reprojection with far-sky directional projection, border fade, pause guard,
+    // and continuous depth + luma disocclusion rejection (zero silhouette popping on rapid camera pans!).
+    const float3 reprojPos = (d < 0.99998f) ? p : (eye + w * 200000.0f);
+    const float4 cp = float4(reprojPos, 1.0f);
     const float4 pc = float4(dot(prevWorldToClip[0], cp), dot(prevWorldToClip[1], cp), dot(prevWorldToClip[2], cp), dot(prevWorldToClip[3], cp));
-    if (pc.w > 0.0f && proj.z > 0.5f) {
+    if (pc.w > 1.0e-4f && proj.z > 0.5f && timeEnv.w < 0.5f) {
         const float2 puv = float2(pc.x / pc.w * 0.5f + 0.5f, 0.5f - pc.y / pc.w * 0.5f) / max(resScale.xy, float2(1.0e-4f, 1.0e-4f));
-        if (all(puv > 0.01f) && all(puv < 0.99f)) {
+        if (all(isfinite(puv)) && all(puv > 0.005f) && all(puv < 0.995f)) {
             const float4 prev = VolPrev.SampleLevel(Lin, puv, 0.0f);
-            const float prevZ = (isnan(prev.a) || isinf(prev.a)) ? -1.0f : prev.a;
-            const float zRel = abs(prevZ - min(zCur, 65000.0f)) / max(min(zCur, 65000.0f), 1.0f);
-            if (prevZ > 0.0f && zRel < 0.08f) {
+            const float prevZ = isfinite(prev.a) ? prev.a : -1.0f;
+            const float curZCl = min(zCur, 65000.0f);
+            const float zRel = abs(prevZ - curZCl) / max(curZCl, 1.0f);
+            const float zAccept = (prevZ > 0.0f) ? (1.0f - smoothstep(0.03f, 0.14f, zRel)) : 0.0f;
+            if (zAccept > 0.002f) {
+                const float edgeFade = smoothstep(0.005f, 0.065f, min(min(puv.x, 1.0f - puv.x), min(puv.y, 1.0f - puv.y)));
                 const float2 curUvV = fullPx * dims.zw;
-                const float histW = lerp(0.78f, 0.28f, saturate(length(puv - curUvV) * 14.0f));
-                scatter = lerp(scatter, sanitizeVolRgb(prev.rgb), histW);
+                const float3 prevCol = sanitizeVolRgb(prev.rgb);
+                const float curL = dot(scatter, float3(0.2126f, 0.7152f, 0.0722f));
+                const float prevL = dot(prevCol, float3(0.2126f, 0.7152f, 0.0722f));
+                const float lReject = 1.0f - smoothstep(0.50f, 1.40f, abs(prevL - curL) / max(max(curL, prevL), 0.04f));
+                const float histW = lerp(0.76f, 0.22f, saturate(length(puv - curUvV) * 16.0f)) * zAccept * edgeFade * lReject;
+                scatter = lerp(scatter, prevCol, saturate(histW));
             }
         }
     }

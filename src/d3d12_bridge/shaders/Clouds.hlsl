@@ -217,7 +217,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float simTimeC = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
         const float seasonProgC = rawCosmosSeasonProgress01(phenology0, phenology1, physWorld[1].w, waterB.w, simTimeC);
         const DualMoonLight dualMoon = evalDualMoonPhaseIllum(seasonProgC, timeEnv.x);
-        const float moonPhaseGain = lerp(0.18f, 1.42f, pow(dualMoon.totalPhase01, 1.15f));
+        const float moonPhaseGain = lerp(0.18f, 1.42f, pow(max(dualMoon.totalPhase01, 1.0e-5f), 1.15f));
         const float3 nightMoonSun = uSunC * dualMoon.moonTintRGB * moonPhaseGain;
         const float3 sunC = lerp(lerp(uSunC, physDaySun, 0.25f), nightMoonSun, nightW);
         const float3 skyC = lerp(uSkyH, uSkyZ, saturate(dir.z * 1.4f)) * lerp(1.0f.xxx, dualMoon.moonTintRGB * lerp(0.52f, 1.28f, dualMoon.totalPhase01), nightW);
@@ -293,11 +293,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float beerSugar  = 2.0f * exp(-min(odS * 0.85f, 24.0f)) * (1.0f - exp(-min(2.0f * (odS + dens * 0.42f), 24.0f)));
             const float silverRim  = exp(-min(odS * 0.72f, 20.0f)) * pow(saturate(cosT * 0.5f + 0.5f), 4.0f) * 0.34f;
             const float powder = saturate(lerp(powderSync, beerSugar, 0.48f) + silverRim);
-            const float h = saturate((pa.z - clouds.y) / clouds.z);
+            // Synchronize spherical shell normalized height h with cloudDensityVol (keeps low-horizon cloud crowns bright!):
+            const float2 dxyH = pa.xy - camPosW.xy;
+            const float paZH = max(camPosW.z, 0.0f) + (pa.z - camPosW.z);
+            const float altH = length(float3(dxyH.x, dxyH.y, 3600000.0f + paZH)) - 3600000.0f;
+            const float h = saturate((altH - clouds.y) / max(clouds.z, 1.0f));
             const float stormW = saturate(weather.w * 1.25f + max(clouds.x - 0.72f, 0.0f) * 2.2f);
             // Deep 3D ambient occlusion inside convective LCL cloud bellies (crisp dark undersides vs luminous tops):
             const float bellyFloor = lerp(lerp(0.24f, 0.13f, stormW), 0.12f, nightW);
-            const float cloudAo = lerp(bellyFloor, 1.00f, pow(h, lerp(0.88f, 1.05f, nightW))) * exp(-dens * 0.26f);
+            const float cloudAo = lerp(bellyFloor, 1.00f, pow(max(h, 1.0e-5f), lerp(0.88f, 1.05f, nightW))) * exp(-min(dens * 0.26f, 24.0f));
             const float lowSun = saturate(1.0f - max(aElev, 0.0f) * 3.4f) * (1.0f - nightW);
             const float overcastW = saturate((clouds.x - 0.50f) * 2.2f);
             // Cluster B (AA425 / AA255 thunderheads lit from inside): continuous gridless 3D volumetric sheet-lightning
@@ -305,9 +309,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             float3 stormFlash = 0.0f.xxx;
             if (clouds.x > 0.66f && (weather.w > 0.18f || timeEnv.z > 0.05f)) {
                 const float stormInt = max(timeEnv.z * 1.45f, saturate((weather.w - 0.18f) * 1.35f) * saturate((clouds.x - 0.62f) * 2.8f));
-                const float tSlot = floor(camPosW.w * 0.62f);
-                const float tFrac = frac(camPosW.w * 0.62f);
-                const float dblPulse = exp(-tFrac * 16.0f) + 0.55f * exp(-abs(tFrac - 0.14f) * 28.0f);
+                const float tSlot = floor(simTimeC * 0.62f);
+                const float tFrac = frac(simTimeC * 0.62f);
+                const float dblPulse = exp(-min(tFrac * 16.0f, 32.0f)) + 0.55f * exp(-min(abs(tFrac - 0.14f) * 28.0f, 32.0f));
                 const float trigger = max(step(0.84f, cHash(float3(tSlot, 3.7f, 11.3f))), smoothstep(0.15f, 0.65f, timeEnv.z));
                 const float pulse = max(dblPulse * trigger, timeEnv.z * 0.85f);
                 if (pulse > 0.01f) {
@@ -315,8 +319,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     const float boltDist = 24000.0f + cHash(float3(tSlot, 29.7f, 8.9f)) * 75000.0f;
                     const float2 boltPos = camPosW.xy + float2(cos(boltAng), sin(boltAng)) * boltDist;
                     const float distBolt = length(pa.xy - boltPos) / 28000.0f;
-                    const float glowVol = exp(-distBolt * distBolt * 2.2f);
-                    const float3 boltCol = lerp(float3(0.55f, 0.72f, 1.35f), float3(0.95f, 0.96f, 1.45f), exp(-distBolt * 3.2f));
+                    const float glowVol = exp(-min(distBolt * distBolt * 2.2f, 32.0f));
+                    const float3 boltCol = lerp(float3(0.55f, 0.72f, 1.35f), float3(0.95f, 0.96f, 1.45f), exp(-min(distBolt * 3.2f, 32.0f)));
                     stormFlash = boltCol * (pulse * glowVol * (0.32f + dens * 2.2f) * stormInt * 2.35f);
                 }
             }
@@ -324,7 +328,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // Upper-to-lower cloud deck radiative coupling: high stratus/altocumulus modulates sunlight reaching lower cumulus
             // so lower cloud puffs sit in deep cool indigo shadow while sunlit rims blaze warm gold (photos 5/7/13/14/15/18)!
             const float upperDeckOcc = (clouds.x > 0.25f)
-                ? (1.0f - smoothstep(0.54f, 0.86f, cNoise(float3((pa.xy + cloudLightDir.xy * 18000.0f) * 0.000022f, 4.3f + camPosW.w * 0.002f))) * saturate(clouds.x) * 0.42f)
+                ? (1.0f - smoothstep(0.54f, 0.86f, cNoise(float3((pa.xy + cloudLightDir.xy * 18000.0f) * 0.000022f, 4.3f + simTimeC * 0.002f))) * saturate(clouds.x) * 0.42f)
                 : 1.0f;
             // Wave 44 Golden-Hour Alpenglow vs Cool Slate-Violet Cumulus Bellies (sunElev in [-0.06..0.22]):
             // Sunlit rims & cloud undersides catch rich golden-amber -> rose-crimson alpenglow forward scatter
@@ -354,15 +358,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float ozoneShadowW = civilTwOzone * (1.0f - solarAzC * 0.55f) * bellyCoolMask;
             coolBase = lerp(coolBase, coolBase * float3(0.68f, 0.76f, 1.18f) + float3(0.010f, 0.015f, 0.036f), saturate(ozoneShadowW * 0.48f));
             // Orbital dual-moon phase-coupled silver-lining along thin cloud edges & crowns (warm rose Masser / cool cyan Secunda / dark new-moon):
-            const float moonEdge = exp(-od * sigma * 0.40f) * lerp(0.45f, 1.0f, powder);
+            const float moonEdge = exp(-min(od * sigma * 0.40f, 24.0f)) * lerp(0.45f, 1.0f, powder);
             const float3 moonRimCol = dualMoon.moonTintRGB * float3(0.56f, 0.62f, 0.84f) * moonPhaseGain;
-            const float3 moonRim = moonRimCol * (nightW * (hg(cosT, 0.76f) * 0.62f + 0.08f * pow(h, 1.25f)) * moonEdge);
-            const float3 townUnderGlow = nightSkyglow * ((1.0f - h) * (1.0f - h) * exp(-t / 95000.0f));
+            const float3 moonRim = moonRimCol * (nightW * (hg(cosT, 0.76f) * 0.62f + 0.08f * pow(max(h, 1.0e-5f), 1.25f)) * moonEdge);
+            const float3 townUnderGlow = nightSkyglow * ((1.0f - h) * (1.0f - h) * exp(-min(t / 95000.0f, 24.0f)));
             // Crisp sunlit cumulus crowns (0.40x) against deep convective LCL bellies (kills muddy brown-grey flat clouds!):
             const float3 rawLum = whiteSun * (multiScat * lerp(0.68f, powder, 0.88f) * 4.0f * PI * 0.40f * upperDeckOcc) + coolBase + underLit + moonRim + townUnderGlow + stormFlash;
-            const float3 lum = select(rawLum > 1.25f.xxx, 1.25f.xxx + 1.15f * (1.0f.xxx - exp(-(rawLum - 1.25f.xxx) / 1.15f)), rawLum);
+            const float3 lum = select(rawLum > 1.25f.xxx, 1.25f.xxx + 1.15f * (1.0f.xxx - exp(-min(max(rawLum - 1.25f.xxx, 0.0f.xxx) / 1.15f, 40.0f.xxx))), rawLum);
             const float ext = dens * (sigma * 1.15f);
-            const float stepT = exp(-ext * dtStep);
+            const float stepT = exp(-min(ext * dtStep, 40.0f));
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;
         }
@@ -382,7 +386,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float highAlpenglow = smoothstep(-0.12f, -0.01f, aElev) * (1.0f - smoothstep(0.05f, 0.24f, aElev));
         if (dir.z > 0.06f && T > 0.06f) {
             const float rP = 3600000.0f;
-            const float r0 = rP + o.z;
+            const float r0 = rP + max(o.z, 0.0f);
             const float bP = r0 * dir.z;
             // Layer 2: Mid-altitude altocumulus / orographic wave bands at 96,000u on spherical shell
             const float rAlto = rP + 96000.0f;
@@ -391,11 +395,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float2 aWind = ekmanWind(0.65f);
                 const float2 aDir = normalize(aWind + float2(1.0e-3f, 0.0f));
                 const float2 aPerp = float2(-aDir.y, aDir.x);
-                const float2 aPosW = (o.xy + dir.xy * tAlto + aWind * camPosW.w) * 0.000018f;
-                const float2 aCurl = cloudCurl2D(aPosW * 1.15f, camPosW.w * 0.0025f) * 0.14f;
+                const float2 aPosW = (o.xy + dir.xy * tAlto + aWind * simTimeC) * 0.000018f;
+                const float2 aCurl = cloudCurl2D(aPosW * 1.15f, simTimeC * 0.0025f) * 0.14f;
                 // Anisotropic wind-sheared orographic lee-wave coordinates (elongated across wind, undulating along wind):
                 const float2 aWaveUv = float2(dot(aPosW + aCurl, aDir) * 3.1f, dot(aPosW + aCurl, aPerp) * 1.45f);
-                const float4 agW1 = rawNoise3Grad(float3(aWaveUv, 4.3f + camPosW.w * 0.0022f));
+                const float4 agW1 = rawNoise3Grad(float3(aWaveUv, 4.3f + simTimeC * 0.0022f));
                 const float4 agW2 = rawNoise3Grad(float3(aWaveUv * 2.4f + agW1.yz * 0.35f, 7.1f));
                 const float aWave = agW1.x * 0.64f + (1.0f - abs(agW2.x * 2.0f - 1.0f)) * 0.36f;
                 const float aMask = smoothstep(0.54f, 0.84f, aWave) * smoothstep(0.06f, 0.28f, dir.z) * exp(-tAlto / 290000.0f);
@@ -413,12 +417,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float2 cWind = ekmanWind(1.00f);
                 const float2 cDir = normalize(cWind + float2(1.0e-3f, 0.0f));
                 const float2 cPerp = float2(-cDir.y, cDir.x);
-                const float2 cPosW = (o.xy + dir.xy * tCir + cWind * camPosW.w) * 0.000012f;
+                const float2 cPosW = (o.xy + dir.xy * tCir + cWind * simTimeC) * 0.000012f;
                 // Domain-warped jet-stream curl streaks (delicate mares'-tail ice filaments):
-                const float4 cg1 = rawNoise3Grad(float3(cPosW * 1.6f, 5.1f + camPosW.w * 0.0018f));
+                const float4 cg1 = rawNoise3Grad(float3(cPosW * 1.6f, 5.1f + simTimeC * 0.0018f));
                 const float2 cWarp = float2(cg1.z, -cg1.y) * 0.28f;
                 const float2 cJetUv = float2(dot(cPosW + cWarp, cDir) * 1.15f, dot(cPosW + cWarp, cPerp) * 3.45f);
-                const float4 cg2 = rawNoise3Grad(float3(cJetUv * 1.85f, 8.3f + camPosW.w * 0.0022f));
+                const float4 cg2 = rawNoise3Grad(float3(cJetUv * 1.85f, 8.3f + simTimeC * 0.0022f));
                 const float4 cg3 = rawNoise3Grad(float3(cJetUv * 5.20f + float2(cg2.z, -cg2.y) * 0.45f, 11.7f));
                 const float filament = saturate(1.0f - abs(cg2.x * 2.0f - 1.0f) * 1.65f);
                 const float wisp = cg1.x * 0.35f + filament * 0.42f + cg3.x * 0.23f;

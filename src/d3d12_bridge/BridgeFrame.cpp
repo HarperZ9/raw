@@ -49,7 +49,7 @@ struct TelemetryLightUniformView
 static_assert(sizeof(TelemetryLightUniformView) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16 + 176 + 512,
               "TelemetryLightUniformView must match LightingPass cbuffer P");
 
-constexpr std::array<uint32_t, 10> kDebugViewCycle = {0u, 28u, 29u, 30u, 31u, 32u, 33u, 1u, 2u, 8u};
+constexpr std::array<uint32_t, 13> kDebugViewCycle = {0u, 28u, 29u, 30u, 31u, 32u, 33u, 34u, 35u, 36u, 1u, 2u, 8u};
 
 const char* DebugViewLabel(uint32_t v)
 {
@@ -61,6 +61,9 @@ const char* DebugViewLabel(uint32_t v)
         case 31u: return "31 MOSS/SNOW/ICE MASK";
         case 32u: return "32 ACTOR SKIN/SSS/14";
         case 33u: return "33 NAN/INF/HDR HEATMAP";
+        case 34u: return "34 FLORA/BARK/PINE AUDIT";
+        case 35u: return "35 MOTION/OUTLINE RISK";
+        case 36u: return "36 FIRE/MELT/SOLVER MAP";
         case 1u:  return "1 WORLD NORMALS";
         case 2u:  return "2 GPU SNOW/GRASS/CAUST";
         case 8u:  return "8 RAW ALBEDO";
@@ -77,10 +80,13 @@ const char* DebugViewLegend(uint32_t v)
         case 31u: return "RED=PROTECTED ACTOR | CYAN=SNOW GRN=GRASS BLU=CAUST WHT=ICE";
         case 32u: return "BRIGHT=ACTORS (10/11/12/14) | DIM=WORLD ENVIRONMENT";
         case 33u: return "MAGENTA=NAN/INF OR >32 HDR OVERFLOW | BLUE->RED=LUMA";
+        case 34u: return "GRN=PINE LIME=3DGRASS AMBER=BARK | RED=BLACK MAG=BLEACH";
+        case 35u: return "AMBER=ACTOR SILHOUETTE RISK | YELLOW=WORLD EDGE JUMP";
+        case 36u: return "R=FIRE/MELT/CHAR | G=SNOW+GRASS FIELD | B=CAUSTICS/SPEC";
         case 1u:  return "RGB = 0.5 + 0.5 * WORLD NORMAL (Z-UP)";
         case 2u:  return "R=SNOW DEPTH | G=GRASS WIND BEND | B=WATER CAUSTICS";
         case 8u:  return "UNLIT G-BUFFER ALBEDO (BASE COLOR)";
-        default:  return "LIVE SNOW TRACKS + CAUSTICS + 65K GRASS + GLACIER/CONIFER";
+        default:  return "LIVE SNOW TRACKS + CAUSTICS + 4-SHELL 3D GRASS + GLACIERS";
     }
 }
 
@@ -917,38 +923,74 @@ bool D3D12Bridge::Impl::ExecuteOverlayHudOnQueue(bool isInterior)
     snap.historyFrameMs = orderedHist;
     snap.historyCount   = histCount;
 
-    OverlayHudData hud{};
-    hud.enabled    = true;
-    hud.originX    = 16u;
-    hud.originY    = 16u;
-    hud.glyphScale = (cfg.height >= 1800u) ? 2u : 1u;
-    hud.opacity    = 0.86f;
-    hud.srgbOutput = (outDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
-                      outDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB);
-    FormatEngineTelemetryLines(snap, hud);
-    if (showDebugDrawer) {
-        const float snwMs = (snowDeformReady && snowDeform && snowDeform->HasValidTiming()) ? snowDeform->GetLastTotalMs() : 0.0f;
-        const float cauMs = (waterCausticsReady && waterCaustics && waterCaustics->HasValidTiming()) ? waterCaustics->GetLastTotalMs() : 0.0f;
-        const float grsMs = (lwRt.grassReady && lwRt.grassWind && lwRt.grassWind->HasValidTiming()) ? lwRt.grassWind->GetLastStepMs() : 0.0f;
-        const float cmpMs = (lwRt.liveWorldReady && lwRt.liveWorld && lwRt.liveWorld->HasValidTiming()) ? lwRt.liveWorld->GetLastCompositeMs() : 0.0f;
-        std::snprintf(hud.lines[0], OverlayHudData::kMaxCols + 1u,
-                      "RAW DEBUG DRAWER [F10 DRAWER | F11 CYCLE | F9 HUD]");
-        hud.lineColorTag[0] = kOverlayColorCyan;
-        std::snprintf(hud.lines[1], OverlayHudData::kMaxCols + 1u,
-                      "LAYER: %s", DebugViewLabel(lwRt.activeDebugView));
-        hud.lineColorTag[1] = (lwRt.activeDebugView == 0u) ? kOverlayColorGreen : kOverlayColorAmber;
-        std::snprintf(hud.lines[2], OverlayHudData::kMaxCols + 1u,
-                      "%s", DebugViewLegend(lwRt.activeDebugView));
-        hud.lineColorTag[2] = kOverlayColorDefault;
-        std::snprintf(hud.lines[3], OverlayHudData::kMaxCols + 1u,
-                      "LIVE WORLD: SNW %.2f | CAU %.2f | GRS %.2f | CMP %.2f MS",
-                      snwMs, cauMs, grsMs, cmpMs);
-        hud.lineColorTag[3] = kOverlayColorGreen;
-        if (hud.lineCount < 4u) hud.lineCount = 4u;
-    }
+    const bool isSrgbTarget = (outDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
+                               outDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB);
+    if (showDebugDrawer && overlayHost->UiLibReady()) {
+        // Sleek GPU-native RawUiLib Debug Drawer & Legend HUD (color swatches, solver timings, sparkline):
+        raw::ui::DebugLayerHudSnapshot dbgSnap{};
+        dbgSnap.activeDebugView  = lwRt.activeDebugView;
+        dbgSnap.drawerOpen       = lwRt.debugDrawerEnabled || (lwRt.activeDebugView != 0u);
+        dbgSnap.hudEnabled       = overlayHudEnabled;
+        dbgSnap.isInterior       = isInterior;
+        dbgSnap.fps              = snap.fps;
+        dbgSnap.frameMs          = snap.frameMs;
+        dbgSnap.lightingMs       = (lwRt.liveWorldReady && lwRt.liveWorld && lwRt.liveWorld->HasValidTiming())
+            ? lwRt.liveWorld->GetLastCompositeMs() : 0.0f;
+        dbgSnap.waterMs          = (waterCausticsReady && waterCaustics && waterCaustics->HasValidTiming())
+            ? waterCaustics->GetLastTotalMs() : snap.waterMs;
+        dbgSnap.fireMs           = snap.fireMs;
+        dbgSnap.giMs             = snap.giMs;
+        dbgSnap.cloudsMs         = (cloudRaymarchReady && cloudRaymarch && cloudRaymarch->HasValidTiming())
+            ? cloudRaymarch->GetLastCloudMs() : 0.0f;
+        dbgSnap.postMs           = (postCinematicReady && postCinematic && postCinematic->HasValidTiming())
+            ? postCinematic->GetLastTotalMs() : 0.0f;
+        dbgSnap.uiMs             = overlayHost->HasValidUiLibTiming() ? overlayHost->GetLastUiLibMs() : 0.0f;
+        dbgSnap.rtActive         = (attached && rt && rt->Active());
+        dbgSnap.fluidActive      = (fluidReady && fluidSim.Ready());
+        dbgSnap.snowDeformActive = (snowDeformReady && snowDeform && snowDeform->Ready());
+        dbgSnap.grassWindActive  = (lwRt.grassReady && lwRt.grassWind && lwRt.grassWind->Ready());
+        dbgSnap.originX          = 16u;
+        dbgSnap.originY          = 16u;
+        dbgSnap.scale            = (cfg.height >= 1800u) ? 2u : 1u;
+        dbgSnap.historyFrameMs   = orderedHist;
+        dbgSnap.historyCount     = histCount;
 
-    overlayHost->RecordOverlay(overlayList.Get(), colorOut.res12.Get(),
-                               D3D12_RESOURCE_STATE_COMMON, cfg.width, cfg.height, hud);
+        overlayHost->RecordDebugLayerHud(overlayList.Get(), colorOut.res12.Get(),
+                                         D3D12_RESOURCE_STATE_COMMON, cfg.width, cfg.height,
+                                         dbgSnap, isSrgbTarget);
+    } else {
+        OverlayHudData hud{};
+        hud.enabled    = true;
+        hud.originX    = 16u;
+        hud.originY    = 16u;
+        hud.glyphScale = (cfg.height >= 1800u) ? 2u : 1u;
+        hud.opacity    = 0.86f;
+        hud.srgbOutput = isSrgbTarget;
+        FormatEngineTelemetryLines(snap, hud);
+        if (showDebugDrawer) {
+            const float snwMs = (snowDeformReady && snowDeform && snowDeform->HasValidTiming()) ? snowDeform->GetLastTotalMs() : 0.0f;
+            const float cauMs = (waterCausticsReady && waterCaustics && waterCaustics->HasValidTiming()) ? waterCaustics->GetLastTotalMs() : 0.0f;
+            const float grsMs = (lwRt.grassReady && lwRt.grassWind && lwRt.grassWind->HasValidTiming()) ? lwRt.grassWind->GetLastStepMs() : 0.0f;
+            const float cmpMs = (lwRt.liveWorldReady && lwRt.liveWorld && lwRt.liveWorld->HasValidTiming()) ? lwRt.liveWorld->GetLastCompositeMs() : 0.0f;
+            std::snprintf(hud.lines[0], OverlayHudData::kMaxCols + 1u,
+                          "RAW DEBUG DRAWER [F10 DRAWER | F11 CYCLE | F9 HUD]");
+            hud.lineColorTag[0] = kOverlayColorCyan;
+            std::snprintf(hud.lines[1], OverlayHudData::kMaxCols + 1u,
+                          "LAYER: %s", DebugViewLabel(lwRt.activeDebugView));
+            hud.lineColorTag[1] = (lwRt.activeDebugView == 0u) ? kOverlayColorGreen : kOverlayColorAmber;
+            std::snprintf(hud.lines[2], OverlayHudData::kMaxCols + 1u,
+                          "%s", DebugViewLegend(lwRt.activeDebugView));
+            hud.lineColorTag[2] = kOverlayColorDefault;
+            std::snprintf(hud.lines[3], OverlayHudData::kMaxCols + 1u,
+                          "LIVE WORLD: SNW %.2f | CAU %.2f | GRS %.2f | CMP %.2f MS",
+                          snwMs, cauMs, grsMs, cmpMs);
+            hud.lineColorTag[3] = kOverlayColorGreen;
+            if (hud.lineCount < 4u) hud.lineCount = 4u;
+        }
+
+        overlayHost->RecordOverlay(overlayList.Get(), colorOut.res12.Get(),
+                                   D3D12_RESOURCE_STATE_COMMON, cfg.width, cfg.height, hud);
+    }
 
     if (FAILED(overlayList->Close())) return false;
     ID3D12CommandList* lists[1] = {overlayList.Get()};

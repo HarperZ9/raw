@@ -58,15 +58,21 @@ float3 froxelTransAt(float mu) {
 }
 
 float3 froxelSkyAt(float3 rd) {
-    const float az = (abs(rd.x) + abs(rd.y) > 1.0e-5f) ? atan2(rd.y, rd.x) : 0.0f;
-    const float elev = asin(clamp(rd.z, -1.0f, 1.0f));
-    const float vNonLin = 0.5f + 0.5f * (elev >= 0.0f ? sqrt(elev / (0.5f * PI)) : -sqrt(-elev / (0.5f * PI)));
-    const float3 c0 = sanitizeFroxel3(AtmoSkyView.SampleLevel(Lin, float2(az / (2.0f * PI) + 0.5f, saturate(vNonLin)), 0.0f).rgb);
-    const float poleW = smoothstep(0.94f, 0.995f, rd.z);
+    const float rdLen2 = dot(rd, rd);
+    const float3 d = (isfinite(rdLen2) && rdLen2 > 1.0e-8f) ? (rd * rsqrt(rdLen2)) : float3(0.0f, 0.0f, 1.0f);
+    const float az = (abs(d.x) + abs(d.y) > 1.0e-5f) ? atan2(d.y, d.x) : 0.0f;
+    const float elev = asin(clamp(d.z, -1.0f, 1.0f));
+    const float vNonLin = saturate(0.5f + 0.5f * (elev >= 0.0f ? sqrt(elev / (0.5f * PI)) : -sqrt(-elev / (0.5f * PI))));
+    // Exact texel-center inverse of AtmosphereLut.hlsl::skyview (zero +-PI seam on camera pans):
+    const float uRaw = frac(az / (2.0f * PI) + 0.5f);
+    const float uLut = (uRaw * 191.0f + 0.5f) / 192.0f;
+    const float vLut = (vNonLin * 107.0f + 0.5f) / 108.0f;
+    float3 c0 = sanitizeFroxel3(AtmoSkyView.SampleLevel(Lin, float2(uLut, vLut), 0.0f).rgb);
+    const float poleW = smoothstep(0.94f, 0.995f, d.z);
     if (poleW > 0.001f) {
-        const float3 zAvg = (sanitizeFroxel3(AtmoSkyView.SampleLevel(Lin, float2(0.25f, 0.99f), 0.0f).rgb) +
-                             sanitizeFroxel3(AtmoSkyView.SampleLevel(Lin, float2(0.75f, 0.99f), 0.0f).rgb)) * 0.5f;
-        return lerp(c0, zAvg, poleW);
+        const float3 zAvg = (sanitizeFroxel3(AtmoSkyView.SampleLevel(Lin, float2(0.25f, 107.5f / 108.0f), 0.0f).rgb) +
+                             sanitizeFroxel3(AtmoSkyView.SampleLevel(Lin, float2(0.75f, 107.5f / 108.0f), 0.0f).rgb)) * 0.5f;
+        c0 = lerp(c0, zAvg, poleW);
     }
     return c0;
 }
@@ -100,16 +106,23 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     // Convert view-space depth zMid -> Euclidean ray distance via dot(farDir, camFwd) so every 3D froxel light glow
     // and sunbeam aligns pixel-for-pixel with its 3D light source across the entire screen FOV!
     const float3 eye = eyeAt();
-    const float3 camFwd = normalize(worldAt(dims.xy * 0.5f, 0.995f) - eye);
-    const float3 farDir = normalize(worldAt(fullPx, 0.995f) - eye);
+    const float3 fwdRaw = worldAt(dims.xy * 0.5f, 0.995f) - eye;
+    const float fwdLen2 = dot(fwdRaw, fwdRaw);
+    const float3 camFwd = (isfinite(fwdLen2) && fwdLen2 > 1.0e-8f) ? (fwdRaw * rsqrt(fwdLen2)) : float3(0.0f, 1.0f, 0.0f);
+    const float3 farRaw = worldAt(fullPx, 0.995f) - eye;
+    const float farLen2 = dot(farRaw, farRaw);
+    const float3 farDir = (isfinite(farLen2) && farLen2 > 1.0e-8f) ? (farRaw * rsqrt(farLen2)) : camFwd;
     const float z0 = froxelSliceZ(float(slice));
     const float z1 = froxelSliceZ(float(slice + 1u));
     // Wave 30 Plastic-Constant R2 Low-Discrepancy Slice Jitter (phi_2 = 1.32471795724, minimal 2D star-discrepancy):
     const float jit = frac(dot(float2(px.x % 160u, px.y % 90u), float2(0.7548776662f, 0.5698402910f))
-                         + float(slice) * 0.3819660113f + proj.z * 0.6180339887f);
+                         + float(slice) * 0.3819660113f + float(uint(proj.z) & 63u) * 0.6180339887f);
+    const float zCenter = 0.5f * (z0 + z1);
     const float zMid = lerp(z0, z1, 0.35f + 0.30f * jit);
-    const float rayDist = zMid / max(dot(farDir, camFwd), 0.25f);
+    const float cosView = max(dot(farDir, camFwd), 0.25f);
+    const float rayDist = zMid / cosView;
     const float3 pRel = eye + farDir * rayDist;
+    const float3 pRelCenter = eye + farDir * (zCenter / cosView);
     const float3 wp = pRel + camPosW.xyz;
 
     // 3D heterogeneous world-space participating media density across 24u..42,000u:
@@ -126,7 +139,8 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     // + Daylight Video Rule VW-1: interactive actor-wake fog clearing that parts around moving bodies and heals!
     const float liveWaterZ = rawLiveWaterZ(engineWorld, physWorld[0]);
     const float aElevFog = astroSunElev();
-    const float dawnDuskFog = exp(-pow((aElevFog - 0.03f) / 0.16f, 2.0f));
+    const float dawnDuskDx = (aElevFog - 0.03f) / 0.16f;
+    const float dawnDuskFog = exp(-min(dawnDuskDx * dawnDuskDx, 32.0f));
     const float basinH = max(wp.z - (liveWaterZ + 45.0f), 0.0f);
     float fogWakeClear = 1.0f;
     if (!isInt && rayDist < 1200.0f) {
@@ -135,15 +149,15 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
             if (ft.w <= 0.05f) { continue; }
             const float3 fd = wp - ft.xyz;
             const float d2 = dot(fd.xy, fd.xy) + fd.z * fd.z * 0.25f;
-            fogWakeClear *= (1.0f - exp(-d2 / 5600.0f) * ft.w * 0.62f);
+            fogWakeClear *= (1.0f - exp(-min(d2 / 5600.0f, 32.0f)) * ft.w * 0.62f);
         }
     }
-    const float groundBank = isInt ? 0.0f : exp(-basinH * 0.0018f) * (0.42f + 0.58f * cNoise(wp * 0.0011f + float3(cloudWind.xy * simTime * 0.00008f, 0.0f))) * (0.52f + 0.90f * dawnDuskFog + weather.w * 0.85f) * fogWakeClear;
-    // Wave 35 Lush Forest & Valley Humidity Layer (NordicCanopy / Scionti / JustHoj cool misty forest depth):
-    // Pools softly 120..1,400u above local terrain/water level in wooded valleys while keeping snow peaks crisp!
-    const float forestCanopyBelt = isInt ? 0.0f : exp(-max(wp.z - (camPosW.z - 220.0f), 0.0f) * 0.0014f) * smoothstep(550.0f, 3400.0f, rayDist) * (0.45f + 0.55f * cNoise(wp * 0.00062f - float3(cloudWind.xy * simTime * 0.00009f, 0.0f))) * (0.38f + 0.62f * dawnDuskFog + weather.w * 0.55f + saturate(clouds.x - 0.25f) * 0.35f) * fogWakeClear;
+    const float groundBank = isInt ? 0.0f : exp(-min(basinH * 0.0018f, 32.0f)) * (0.42f + 0.58f * cNoise(wp * 0.0011f + float3(cloudWind.xy * simTime * 0.00008f, 0.0f))) * (0.52f + 0.90f * dawnDuskFog + weather.w * 0.85f) * fogWakeClear;
+    // World-locked forest & valley humidity layer anchored to liveWaterZ (zero vertical swimming as player climbs/jumps!):
+    const float forestCanopyBelt = isInt ? 0.0f : exp(-min(max(wp.z - (liveWaterZ + 180.0f), 0.0f) * 0.0014f, 32.0f)) * smoothstep(550.0f, 3400.0f, rayDist) * (0.45f + 0.55f * cNoise(wp * 0.00062f - float3(cloudWind.xy * simTime * 0.00009f, 0.0f))) * (0.38f + 0.62f * dawnDuskFog + weather.w * 0.55f + saturate(clouds.x - 0.25f) * 0.35f) * fogWakeClear;
     // True 3D alpine ridge collar clouds hugging mountain flanks (3,800u..7,800u world altitude):
-    const float peakCollar = isInt ? 0.0f : exp(-pow((wp.z - 5000.0f) / 2600.0f, 2.0f)) * smoothstep(3600.0f, 11000.0f, zMid) * (0.55f + 0.65f * cNoise(wp * 0.00022f - float3(cloudWind.xy * simTime * 0.00007f, 0.0f)));
+    const float peakDz = (wp.z - 5000.0f) / 2600.0f;
+    const float peakCollar = isInt ? 0.0f : exp(-min(peakDz * peakDz, 32.0f)) * smoothstep(3600.0f, 11000.0f, zMid) * (0.55f + 0.65f * cNoise(wp * 0.00022f - float3(cloudWind.xy * simTime * 0.00007f, 0.0f)));
     // Wave 51 + Wave 62 Altitude-Stratified Valley Mist & Mountain Cloud-Deck Temperature-Inversion Mist Bands:
     // Traps a crisp horizontal sea-of-clouds inversion deck in mountain valleys & below cloud-deck altitude (outdoor only!).
     float valleyStratMist = 0.0f;
@@ -189,14 +203,16 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         // Couples 2-tap convective cloudShadowN(wp, 2u) directly into sun volumetric in-scattering so moving 3D
         // clouds carve crisp traveling light-and-shadow shafts through mountain valley mist!
         const float csRaw = (clouds.x > 0.005f) ? cloudShadowN(wp, 2u) : 1.0f;
-        const float cs = ((flags.x & FLAG_CLOUDS) != 0u) ? pow(saturate(csRaw), 1.35f) : saturate(csRaw);
-        const float sh = (zMid < 12000.0f ? cascadeShadow(pRel, sc.z, false) : 1.0f) * cs;
+        const float cs = ((flags.x & FLAG_CLOUDS) != 0u) ? pow(max(saturate(csRaw), 1.0e-5f), 1.35f) : saturate(csRaw);
+        const float sh = ((zMid < 12000.0f && sc.w > 1.0f) ? cascadeShadow(pRel, saturate(sc.z), false) : 1.0f) * cs;
         const float3 aSunF = astroSunDir();
         const float aElevF = astroSunElev();
         const float nightW = smoothstep(0.03f, -0.07f, aElevF);
         const float twilightW = smoothstep(-0.08f, 0.02f, aElevF) * (1.0f - smoothstep(0.08f, 0.26f, aElevF));
-        const float3 beamDir = normalize(lerp(aSunF, sunDir.xyz, nightW));
-        const float cosT = dot(farDir, beamDir);
+        const float3 beamRaw = lerp(aSunF, sunDir.xyz, nightW);
+        const float beamLen2 = dot(beamRaw, beamRaw);
+        const float3 beamDir = (isfinite(beamLen2) && beamLen2 > 1.0e-8f) ? (beamRaw * rsqrt(beamLen2)) : float3(0.0f, 0.0f, 1.0f);
+        const float cosT = clamp(dot(farDir, beamDir), -1.0f, 1.0f);
         const float sunLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
         // Jendersie & d'Eon (2023) Unified HG + Draine Mie phase blended with 3-octave Wrenninge/Hillaire
         // multi-scattering phase (gives creamy sunlit forest godrays and soft aerial volume without single-scatter harshness):
@@ -243,7 +259,8 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
             const float moonRayleigh = (3.0f / (16.0f * PI)) * (1.0f + cosMoon * cosMoon);
             const float moonMieHalo = min(froxelHG(cosMoon, 0.76f), 2.4f);
             const float moonAng = acos(cosMoon);
-            const float moonRing22 = exp(-min(pow((moonAng - 0.384f) / 0.090f, 2.0f), 24.0f)) * saturate(0.32f + weather.z * 0.68f);
+            const float moonDr = (moonAng - 0.384f) / 0.090f;
+            const float moonRing22 = exp(-min(moonDr * moonDr, 24.0f)) * saturate(0.32f + weather.z * 0.68f);
             const float moonClear = (1.0f - overcastFr * 0.68f) * smoothstep(-0.02f, 0.12f, moonDir.z);
             const float3 moonTint = float3(0.30f, 0.42f, 0.70f);
             inScat += moonTint * (nightW * moonClear * sh * tune2.z * (moonRayleigh * 0.24f + moonMieHalo * 0.14f + moonRing22 * 0.10f));
@@ -302,7 +319,8 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     if (tune2.y > 0.0f && flags.y > 0u) {
         const uint tx = min(uint(uv.x * TILES_X), TILES_X - 1u);
         const uint ty = min(uint(uv.y * TILES_Y), TILES_Y - 1u);
-        const float sl = log(max(zMid, cluster.x) / cluster.x) * cluster.z;
+        const float nearCl = max(cluster.x, 1.0e-3f);
+        const float sl = log(max(zMid, nearCl) / nearCl) * cluster.z;
         const uint cIdx = (min(uint(max(sl, 0.0f)), SLICES - 1u) * TILES_Y + ty) * TILES_X + tx;
         const uint4 bits = clusters[cIdx];
         [loop] for (uint w = 0u; w < 4u; w++) {
@@ -314,10 +332,11 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                 const float3 toL = lightPosR[li].xyz - pRel;
                 const float dL = length(toL);
                 const float rL = lightPosR[li].w;
-                if (dL >= rL) { continue; }
+                if (!isfinite(rL) || rL <= 1.0e-3f || dL >= rL) { continue; }
                 // Soft, wide atmospheric local-light scatter (zero sharp sphere/donut halo around empty room-fill lights!):
                 const float rNorm = saturate(dL / max(rL, 1.0f));
-                const float softCore = 1.0f / (1.0f + pow(dL / max(rL * 0.32f, 52.0f), 2.0f));
+                const float dRatio = dL / max(rL * 0.32f, 52.0f);
+                const float softCore = 1.0f / (1.0f + dRatio * dRatio);
                 const float nearRamp = isInt ? smoothstep(140.0f, 420.0f, rayDist) : smoothstep(75.0f, 260.0f, rayDist);
                 const float att = (1.0f - rNorm) * (1.0f - rNorm) * lerp(0.55f, 1.0f, softCore) * nearRamp;
                 const float cosL = dot(farDir, toL / max(dL, 1.0e-3f));
@@ -356,9 +375,11 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                         const float tS = (float(si) - 0.35f) * 0.22f;
                         const float4 sm = screenOf(pRel + toL * tS);
                         if (sm.w > 1.0f && all(sm.xy >= 0.0f) && sm.x < dims.x && sm.y < dims.y) {
+                            const float2 smUv = sm.xy * dims.zw;
+                            const float edgeV = smoothstep(0.0f, 0.06f, min(min(smUv.x, 1.0f - smUv.x), min(smUv.y, 1.0f - smUv.y)));
                             const float zHit = viewZOf(Depth.Load(int3(sm.xy, 0)));
                             if (zHit < sm.w * 0.94f && (sm.w - zHit) < max(sm.w * 0.38f, 180.0f)) {
-                                occF *= 0.28f;
+                                occF *= lerp(1.0f, 0.28f, edgeV);
                             }
                         }
                     }
@@ -375,19 +396,22 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         }
     }
     float4 curVoxel = sanitizeFroxel4(float4(inScat * sigma, sigma));
-    // Hillaire (SIGGRAPH 2015) Temporal 3D Froxel Reprojection: reprojects 3D froxel center through prevWorldToClip
-    // into last frame's 160x90x64 volume for silky, flicker-free 3D participating media (5x effective sample density).
-    const float4 pClip = float4(dot(prevWorldToClip[0], float4(pRel, 1.0f)),
-                                dot(prevWorldToClip[1], float4(pRel, 1.0f)),
-                                dot(prevWorldToClip[2], float4(pRel, 1.0f)),
-                                dot(prevWorldToClip[3], float4(pRel, 1.0f)));
-    if (pClip.w > 1.0f && proj.z > 0.5f && resScale.x > 1.0e-4f && resScale.y > 1.0e-4f) {
+    // Hillaire (SIGGRAPH 2015) Temporal 3D Froxel Reprojection using unjittered slice center pRelCenter:
+    // eliminates radial jitter oscillation, border pops, paused-menu drift, and rapid-turn swimming!
+    const float4 pClip = float4(dot(prevWorldToClip[0], float4(pRelCenter, 1.0f)),
+                                dot(prevWorldToClip[1], float4(pRelCenter, 1.0f)),
+                                dot(prevWorldToClip[2], float4(pRelCenter, 1.0f)),
+                                dot(prevWorldToClip[3], float4(pRelCenter, 1.0f)));
+    if (pClip.w > kFroxNear && pClip.w < kFroxFar && proj.z > 0.5f && timeEnv.w < 0.5f && resScale.x > 1.0e-4f && resScale.y > 1.0e-4f) {
         const float2 pUv = float2(pClip.x / pClip.w * 0.5f + 0.5f, 0.5f - pClip.y / pClip.w * 0.5f) / resScale.xy;
-        if (all(pUv > 0.005f) && all(pUv < 0.995f)) {
+        if (all(isfinite(pUv)) && all(pUv > 0.005f) && all(pUv < 0.995f)) {
+            const float edgeFade = smoothstep(0.005f, 0.060f, min(min(pUv.x, 1.0f - pUv.x), min(pUv.y, 1.0f - pUv.y)));
             const float4 prevVoxel = samplePrevFroxel(pUv, pClip.w);
-            // Motion- and depth-adaptive spatiotemporal blend: silky 0.22 when still, responsive 0.72 during fast pans/sprinting.
-            const float motMag = saturate(length(pUv - uv) * 12.0f + abs(pClip.w - zMid) / max(zMid, 1.0f) * 3.0f);
-            curVoxel = lerp(prevVoxel, curVoxel, lerp(0.22f, 0.72f, motMag));
+            const float motMag = saturate(length(pUv - uv) * 14.0f + abs(pClip.w - zCenter) / max(zCenter, 1.0f) * 3.5f);
+            const float sigRel = abs(prevVoxel.a - curVoxel.a) / max(max(prevVoxel.a, curVoxel.a), 1.0e-5f);
+            const float disocc = smoothstep(0.45f, 1.35f, sigRel);
+            const float histKeep = (1.0f - lerp(0.22f, 0.80f, max(motMag, disocc))) * edgeFade;
+            curVoxel = lerp(curVoxel, prevVoxel, saturate(histKeep));
         }
     }
     return sanitizeFroxel4(curVoxel);
@@ -409,16 +433,15 @@ float4 froxel_block_scan(float4 at : SV_Position) : SV_Target0 {
         const uint s = sStart + r;
         const uint sx = (s & 7u) * 160u + lx;
         const uint sy = (s >> 3u) * 90u + ly;
-        const float4 voxelRaw = FroxelIn.Load(int3(sx, sy, 0));
-        const float4 voxel = (any(isnan(voxelRaw)) || any(isinf(voxelRaw))) ? 0.0f.xxxx : max(voxelRaw, 0.0f.xxxx);
+        const float4 voxel = sanitizeFroxel4(FroxelIn.Load(int3(sx, sy, 0)));
         const float dz = max(froxelSliceZ(float(s + 1u)) - froxelSliceZ(float(s)), 1.0f);
         const float ext = max(voxel.a, 0.0f);
-        const float stepT = exp(-ext * dz);
+        const float stepT = exp(-min(ext * dz, 40.0f));
         const float3 stepS = ext > 1.0e-6f ? (voxel.rgb * ((1.0f - stepT) / ext)) : (voxel.rgb * dz);
         accScat += accTrans * stepS;
         accTrans *= stepT;
     }
-    return float4(min(accScat, 3.5f.xxx), accTrans);
+    return float4(min(sanitizeFroxel3(accScat), 3.5f.xxx), saturate(accTrans));
 }
 #else
 // Pass 2 of Blelloch Associative Monoid Scan (1280x720):
@@ -438,24 +461,25 @@ float4 froxel_integrate(float4 at : SV_Position) : SV_Target0 {
     [loop] for (uint b = 0u; b < targetBlk; b++) {
         const uint bx = (b & 3u) * 160u + lx;
         const uint by = (b >> 2u) * 90u + ly;
-        const float4 blk = FroxelBlocks.Load(int3(bx, by, 0));
-        accScat += accTrans * blk.rgb;
-        accTrans *= blk.a;
-        if (accTrans < 0.02f) { return float4(min(accScat, 3.5f.xxx), accTrans); }
+        const float4 blkRaw = FroxelBlocks.Load(int3(bx, by, 0));
+        const float3 blkRgb = sanitizeFroxel3(blkRaw.rgb);
+        const float  blkT   = isfinite(blkRaw.a) ? saturate(blkRaw.a) : 1.0f;
+        accScat += accTrans * blkRgb;
+        accTrans *= blkT;
+        if (accTrans < 0.02f) { return float4(min(sanitizeFroxel3(accScat), 3.5f.xxx), saturate(accTrans)); }
     }
     [loop] for (uint s = sStart; s <= targetSlice; s++) {
         const uint sx = (s & 7u) * 160u + lx;
         const uint sy = (s >> 3u) * 90u + ly;
-        const float4 voxelRaw = FroxelIn.Load(int3(sx, sy, 0));
-        const float4 voxel = (any(isnan(voxelRaw)) || any(isinf(voxelRaw))) ? 0.0f.xxxx : max(voxelRaw, 0.0f.xxxx);
+        const float4 voxel = sanitizeFroxel4(FroxelIn.Load(int3(sx, sy, 0)));
         const float dz = max(froxelSliceZ(float(s + 1u)) - froxelSliceZ(float(s)), 1.0f);
         const float ext = max(voxel.a, 0.0f);
-        const float stepT = exp(-ext * dz);
+        const float stepT = exp(-min(ext * dz, 40.0f));
         const float3 stepS = ext > 1.0e-6f ? (voxel.rgb * ((1.0f - stepT) / ext)) : (voxel.rgb * dz);
         accScat += accTrans * stepS;
         accTrans *= stepT;
         if (accTrans < 0.02f) { break; }
     }
-    return float4(min(accScat, 3.5f.xxx), accTrans);
+    return float4(min(sanitizeFroxel3(accScat), 3.5f.xxx), saturate(accTrans));
 }
 #endif

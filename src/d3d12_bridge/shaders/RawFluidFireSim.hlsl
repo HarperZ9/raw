@@ -28,7 +28,7 @@ cbuffer FireSimCB : register(b0)
     float4 physicsA;               // x = vorticityEps, y = buoyancyAlpha, z = sootWeightBeta, w = windDrag
     float4 physicsB;               // x = arrheniusRateA, y = activationTempTa, z = heatReleaseQ, w = sootYield
     float4 physicsC;               // x = radiativeCoolSigma, y = velDamping, z = sootDamping, w = thermalExpansion
-    float4 boundsAndFlags;         // x = floorZLocal (voxels), y = ceilingZLocal (voxels), z = scatterExtinction, w = flags (bit0=reset, bit1=ceiling)
+    float4 boundsAndFlags;         // x = floorZLocal (voxels), y = ceilingZLocal (voxels), z = scatterExtinction, w = flags (bit0=reset, bit1=ceiling, bit2=debugOverlay)
     uint4  counts;                 // x = emitterCount (0..16), y = obstacleCount (0..8), z = gridRes (64), w = jacobiIter
     float4 emitterPosRadius[16];   // xyz = verified world pos, w = radius (world units, <= 0 inactive)
     float4 emitterThermoJet[16];   // x = ignitionTempK (1800..3400), y = fuelRate, z = jetSpeed (u/s), w = curlStrength
@@ -119,6 +119,11 @@ bool hasResetBit()
 bool hasCeilingBit()
 {
     return (uint(boundsAndFlags.w + 0.5f) & 2u) != 0u;
+}
+
+bool hasDebugOverlayBit()
+{
+    return (uint(boundsAndFlags.w + 0.5f) & 4u) != 0u;
 }
 
 bool isSolidVoxel(int3 id)

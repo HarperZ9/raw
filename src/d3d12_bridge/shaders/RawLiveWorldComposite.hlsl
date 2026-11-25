@@ -1,14 +1,16 @@
-// RawLiveWorldComposite.hlsl: Live World-Space GPU Compositor & Debug-Layer Inspector (SM 6.6 / 6.10).
+// RawLiveWorldComposite.hlsl: Live World-Space 3D Procedural Compositor & Full-Pipeline Debug-Layer
+// Inspector (SM 6.6 / 6.10).
 // Composites live GPU solvers directly onto HDR ColorOut (RGBA16F) strictly anchored in 3D world space
-// via `camPosW + worldAt(px, SceneDepth)` and strictly occluded by `SceneDepth`:
+// via `camPosW + WorldRelAt(px, SceneDepth)` and strictly occluded by `SceneDepth`:
 //   1. RawSnowDeformHost (512x512): world-space snow footprint trenches, raised compacted rims,
 //      campfire thermal slush rings, black-ice sheen, and snow micro-crystal sparkle.
 //   2. RawWaterCausticsHost (512x512): Beer-Lambert chromatic underwater caustics on submerged
 //      riverbeds & shallow rock contacts below `waterPlaneZ`.
-//   3. RawGrassWindHost (256x256, 65,536 blades): world-anchored wind-swaying Nordic grass micro-tufts,
-//      travelling gust sheen ripples, actor-trampled trails, snow droop, and wildfire char.
-//   4. World-space glacier crystalline facet volume & conifer canopy micro-depth lift.
-//   5. Live Visual Debug Layers (activeDebugView = 1, 2, 8, 28, 29, 30, 31, 32, 33) cycled via F11.
+//   3. RawGrassWindHost (256x256, 65,536 blades): 4-shell ray-stepped 3D wind-swaying Nordic grass
+//      blades with quadratic cantilever bend, directional shading, backlit tip translucency,
+//      actor-trampled trails, snow droop, and wildfire char (zero camera swimming!).
+//   4. 3D Crystalline Glacier Depth & Internal Fracture Volume + Conifer Bark Shadow-Lift & Canopy Relief.
+//   5. Live Visual Debug Layers (activeDebugView = 1, 2, 8, 28..36) cycled via F11.
 // Strictly bypasses sky (d >= 0.99998), paused UI/menus, and ALL actors/creatures (base 10/11/12/14).
 // Original clean-room implementation, MIT License.
 
@@ -80,6 +82,13 @@ float Hash21(float2 p)
     return frac((q.x + q.y) * q.x);
 }
 
+float2 Hash22(float2 p)
+{
+    float3 p3 = frac(float3(p.xyx) * float3(0.1031f, 0.1030f, 0.0973f));
+    p3 += dot(p3, p3.yzx + 33.33f);
+    return frac((p3.xx + p3.yz) * p3.zy);
+}
+
 float ValueNoise2D(float2 p)
 {
     const float2 i = floor(p);
@@ -92,8 +101,8 @@ float ValueNoise2D(float2 p)
     return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
 }
 
-// World-space 3D Voronoi facet distance for glacial ice micro-crystals.
-float GlacierFacet3D(float3 pM)
+// World-space 3D Voronoi facet distance for glacial ice micro-crystals & internal fracture veins.
+float GlacierFacet3D(float3 pM, out float outEdgeCrack)
 {
     const float3 i = floor(pM);
     const float3 f = frac(pM);
@@ -120,23 +129,55 @@ float GlacierFacet3D(float3 pM)
             }
         }
     }
-    return saturate((d2 - d1) * 2.4f);
+    const float border = max(d2 - d1, 0.0f);
+    outEdgeCrack       = 1.0f - smoothstep(0.015f, 0.11f, border);
+    return saturate(border * 2.4f);
+}
+
+// Evaluates one horizontal slice of tapered world-space 3D Nordic grass blades at height hFrac in [0..1].
+float EvalGrassShellDensity(float2 worldXYm, float hFrac, out float bladeHueVar)
+{
+    const float2 gridP  = worldXYm * 9.0f;
+    const float2 cell   = floor(gridP);
+    const float2 localF = frac(gridP);
+    const float2 rnd    = Hash22(cell);
+
+    // Individual blade stalk center inside cell + per-tuft height variation:
+    const float2 center = float2(0.20f, 0.20f) + rnd * 0.60f;
+    const float  maxH   = 0.48f + 0.52f * Hash21(cell + float2(7.1f, 3.7f));
+    const float  taper  = lerp(0.46f, 0.11f, hFrac);
+    const float  dStalk = length(localF - center);
+    const float  blade1 = (1.0f - smoothstep(taper * 0.55f, taper, dStalk)) * smoothstep(hFrac - 0.08f, hFrac + 0.14f, maxH);
+
+    // Secondary fine blade cluster offset by half-cell for dense natural Nordic meadow cover:
+    const float2 gridP2 = worldXYm * 15.5f + float2(4.3f, 9.1f);
+    const float2 cell2  = floor(gridP2);
+    const float2 loc2   = frac(gridP2);
+    const float2 rnd2   = Hash22(cell2);
+    const float  maxH2  = 0.35f + 0.65f * Hash21(cell2 + float2(13.3f, 5.9f));
+    const float  d2     = length(loc2 - (float2(0.22f, 0.22f) + rnd2 * 0.56f));
+    const float  blade2 = (1.0f - smoothstep(taper * 0.45f, taper * 0.92f, d2)) * smoothstep(hFrac - 0.06f, hFrac + 0.12f, maxH2);
+
+    // Macro meadow clumping prevents uniform carpet look:
+    const float clump = smoothstep(0.22f, 0.78f, ValueNoise2D(worldXYm * 1.45f));
+    bladeHueVar       = rnd.x;
+    return saturate(max(blade1, blade2 * 0.85f) * (0.45f + 0.55f * clump));
 }
 
 float3 DebugClassColor(uint base, uint cls, bool isSky)
 {
-    if (isSky)          return float3(0.04f, 0.06f, 0.14f);
+    if (isSky)              return float3(0.04f, 0.06f, 0.14f);
     if ((cls & 128u) != 0u) return float3(0.95f, 0.30f, 0.95f); // First-person / special
-    if (base == 14u)    return float3(0.08f, 0.96f, 0.96f); // Skinned Actor / Creature / Cloth (Wave 63!)
-    if (base == 10u)    return float3(0.98f, 0.52f, 0.36f); // Skin
-    if (base == 11u)    return float3(0.96f, 0.80f, 0.18f); // Hair
-    if (base == 12u)    return float3(0.98f, 0.98f, 0.98f); // Eye
-    if (base == 4u)     return float3(0.56f, 0.44f, 0.18f); // Terrain / Landscape
-    if (base == 5u)     return float3(0.14f, 0.82f, 0.24f); // Foliage / Trees
-    if (base == 6u)     return float3(0.32f, 0.72f, 0.98f); // Glacier / Parallax / Ice
-    if (base == 7u)     return float3(0.22f, 0.54f, 0.62f); // Distant LOD
-    if (base == 1u)     return float3(0.46f, 0.48f, 0.54f); // Architecture / Solid
-    if (base == 0u)     return float3(0.08f, 0.08f, 0.10f); // Unclassified
+    if (base == 14u)        return float3(0.08f, 0.96f, 0.96f); // Skinned Actor / Creature / Cloth
+    if (base == 10u)        return float3(0.98f, 0.52f, 0.36f); // Skin
+    if (base == 11u)        return float3(0.96f, 0.80f, 0.18f); // Hair
+    if (base == 12u)        return float3(0.98f, 0.98f, 0.98f); // Eye
+    if (base == 4u)         return float3(0.56f, 0.44f, 0.18f); // Terrain / Landscape
+    if (base == 5u)         return float3(0.14f, 0.82f, 0.24f); // Foliage / Trees
+    if (base == 6u)         return float3(0.32f, 0.72f, 0.98f); // Glacier / Parallax / Ice
+    if (base == 7u)         return float3(0.22f, 0.54f, 0.62f); // Distant LOD
+    if (base == 1u)         return float3(0.46f, 0.48f, 0.54f); // Architecture / Solid
+    if (base == 0u)         return float3(0.08f, 0.08f, 0.10f); // Unclassified
     return float3(0.75f, 0.42f, 0.78f);
 }
 
@@ -168,29 +209,36 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
 
     const bool isActor = (base == 10u || base == 11u || base == 12u || base == 14u || (cls & 128u) != 0u);
 
-    const float2 px       = float2(dtid.xy);
-    const float3 worldRel = isSky ? float3(0.0f, 0.0f, 0.0f) : WorldRelAt(px, d);
+    const float2 px           = float2(dtid.xy);
+    const float3 worldRel     = isSky ? float3(0.0f, 0.0f, 0.0f) : WorldRelAt(px, d);
+    const float3 worldRelNext = isSky ? float3(0.0f, 0.0f, -1.0f) : WorldRelAt(px, min(d + 0.005f, 0.9995f));
+    const float3 rayDiff      = worldRelNext - worldRel;
+    const float  rayDiffLen   = length(rayDiff);
+    const float3 rayDir       = (isfinite(rayDiffLen) && rayDiffLen > 1.0e-5f) ? (rayDiff / rayDiffLen) : float3(0.0f, 0.0f, -1.0f);
+
     const float3 worldAbs = camPosW.xyz + worldRel;
     const float3 worldM   = worldAbs * kInvUnitsPerMeter;
     const float  distM    = isSky ? 1.0e5f : (length(worldRel) * kInvUnitsPerMeter);
     const float3 N        = (hasNorm && !isSky) ? DecodeWorldNormal(SceneNormal.Load(ip)) : float3(0.0f, 0.0f, 1.0f);
 
-    // Precompute world-space UVs for our 3 live GPU solver domains:
     const float2 snowUv  = (worldM.xy - snowDomain.xy) * snowDomain.z;
     const bool   inSnow  = (snowDomain.w > 0.01f) && all(snowUv > 0.01f) && all(snowUv < 0.99f);
     const float2 grassUv = (worldM.xy - grassDomain.xy) * grassDomain.z + 0.5f;
     const bool   inGrass = (grassDomain.w > 0.01f) && all(grassUv > 0.01f) && all(grassUv < 0.99f);
     const float2 caustUv = worldM.xy * max(waterAndCaustics.y, 0.02f);
 
+    const float3 sD = (length(sunDir.xyz) > 1.0e-4f) ? normalize(sunDir.xyz) : float3(0.4f, 0.3f, 0.86f);
+    const float3 sC = SanitizeColor3(sunCol.rgb) * max(sunDir.w, 0.15f);
+
     // =========================================================================
-    // LIVE VISUAL DEBUG LAYERS (cycled via F11: 0, 28, 29, 30, 31, 32, 33, 1, 2, 8)
+    // LIVE VISUAL DEBUG LAYERS (cycled via F11: 0, 28..36, 1, 2, 8)
     // =========================================================================
     if (dbgView != 0u) {
         float3 dbgRgb = SanitizeColor3(origColor.rgb);
 
         if (dbgView == 28u) {
             // Material & Actor/Creature/Foliage/Glacier Class ID Map (including base == 14u Skinned Actor)
-            const float shade = isSky ? 1.0f : (0.45f + 0.55f * saturate(dot(N, normalize(sunDir.xyz)) * 0.5f + 0.5f));
+            const float shade = isSky ? 1.0f : (0.45f + 0.55f * saturate(dot(N, sD) * 0.5f + 0.5f));
             dbgRgb = DebugClassColor(base, cls, isSky) * shade;
         } else if (dbgView == 29u) {
             // Linear Depth & Silhouette Discontinuity Inspector
@@ -205,7 +253,7 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
                           float3(1.0f, 0.78f, 0.08f), silMask);
         } else if (dbgView == 30u) {
             // Sun Alignment & Live-World GPU Domain Coverage Map
-            const float ndl = isSky ? 0.0f : saturate(dot(N, normalize(sunDir.xyz)));
+            const float ndl = isSky ? 0.0f : saturate(dot(N, sD));
             dbgRgb = float3(ndl * 0.75f + 0.12f, ndl * 0.75f + 0.12f, ndl * 0.70f + 0.15f);
             if (!isSky && inSnow)  dbgRgb = lerp(dbgRgb, float3(0.20f, 0.85f, 1.00f), 0.30f);
             if (!isSky && inGrass) dbgRgb = lerp(dbgRgb, float3(0.20f, 0.90f, 0.30f), 0.25f);
@@ -217,21 +265,20 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
             if (isSky) {
                 dbgRgb = float3(0.03f, 0.04f, 0.08f);
             } else if (isActor) {
-                // Bright crimson proves actors/dogs/NPCs are 100% protected from moss/snow/grass!
                 dbgRgb = float3(0.95f, 0.08f, 0.12f);
             } else {
                 const bool subWater  = (worldAbs.z < waterAndCaustics.x + 12.0f && worldAbs.z > waterAndCaustics.x - 900.0f);
                 const float albLum   = dot(alb, float3(0.2126f, 0.7152f, 0.0722f));
                 const bool snowySurf = (base == 4u) && (albLum > 0.46f || waterAndCaustics.w > 0.08f);
-                const bool grassSurf = (base == 4u) && !snowySurf && !subWater && (N.z > 0.62f) && (distM < 45.0f);
+                const bool grassSurf = (base == 4u) && !snowySurf && !subWater && (N.z > 0.62f) && (distM < 38.0f);
                 dbgRgb = float3(0.16f, 0.17f, 0.20f);
-                if (subWater)       dbgRgb = float3(0.10f, 0.45f, 1.00f);
-                else if (snowySurf) dbgRgb = float3(0.25f, 0.92f, 0.98f);
-                else if (grassSurf) dbgRgb = float3(0.15f, 0.88f, 0.25f);
+                if (subWater)        dbgRgb = float3(0.10f, 0.45f, 1.00f);
+                else if (snowySurf)  dbgRgb = float3(0.25f, 0.92f, 0.98f);
+                else if (grassSurf)  dbgRgb = float3(0.15f, 0.88f, 0.25f);
                 else if (base == 6u) dbgRgb = float3(0.85f, 0.95f, 1.00f);
             }
         } else if (dbgView == 32u) {
-            // Actor Skin / Hair / Eye / Skinned-14 & Surface Normal/Spec Inspector
+            // Actor Skin / Hair / Eye / Skinned-14 & Surface Normal Inspector
             if (isActor) {
                 dbgRgb = DebugClassColor(base, cls, false) * (0.45f + 0.55f * saturate(N.z * 0.5f + 0.5f));
             } else {
@@ -247,11 +294,69 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
                 const float h = saturate(log2(1.0f + max(peakC, 0.0f)) / 5.0f);
                 dbgRgb = float3(h * h, saturate(h * 1.4f - 0.15f), saturate(1.0f - h * 1.3f));
             }
+        } else if (dbgView == 34u) {
+            // Flora, Bark, Pine & 3D Grass-Shell Lighting Audit:
+            //   Green   = healthy base==5 foliage
+            //   Lime    = 3D grass-shell eligible terrain
+            //   Amber   = healthy vertical bark
+            //   RED     = alarm: crushed pitch-black bark (luma < 0.015)
+            //   MAGENTA = alarm: bleached chalky non-snow foliage (sat < 0.12 && luma > 0.42)
+            if (isSky) {
+                dbgRgb = float3(0.03f, 0.05f, 0.09f);
+            } else {
+                const float3 cLit  = SanitizeColor3(origColor.rgb);
+                const float  luma  = dot(cLit, float3(0.2126f, 0.7152f, 0.0722f));
+                const float  maxC  = max(cLit.r, max(cLit.g, cLit.b));
+                const float  minC  = min(cLit.r, min(cLit.g, cLit.b));
+                const float  sat   = (maxC > 1.0e-4f) ? ((maxC - minC) / maxC) : 0.0f;
+                const bool   isBark = (base == 1u) && (abs(N.z) < 0.55f) && (alb.r > alb.b * 1.15f) && (alb.r < 0.45f);
+                const bool   isGrassTerrain = (base == 4u) && (N.z > 0.62f) && (alb.g > alb.b * 1.10f) && (distM < 38.0f);
+
+                if (base == 5u) {
+                    const bool bleached = (sat < 0.12f) && (luma > 0.42f) && (waterAndCaustics.w < 0.15f);
+                    dbgRgb = bleached ? float3(1.0f, 0.05f, 0.95f) : float3(0.12f, 0.84f, 0.26f);
+                } else if (isBark) {
+                    const bool crushed = (luma < 0.015f);
+                    dbgRgb = crushed ? float3(1.0f, 0.04f, 0.04f) : float3(0.88f, 0.58f, 0.18f);
+                } else if (isGrassTerrain) {
+                    dbgRgb = float3(0.45f, 0.92f, 0.22f);
+                } else {
+                    dbgRgb = cLit * 0.22f;
+                }
+            }
+        } else if (dbgView == 35u) {
+            // Motion / Silhouette Discontinuity & Cel-Outline Risk Map
+            const float dL = SceneDepth.Load(int3(max(int(dtid.x) - 1, 0), int(dtid.y), 0));
+            const float dR = SceneDepth.Load(int3(min(int(dtid.x) + 1, int(dimsU.x) - 1), int(dtid.y), 0));
+            const float dU = SceneDepth.Load(int3(int(dtid.x), max(int(dtid.y) - 1, 0), 0));
+            const float dD = SceneDepth.Load(int3(int(dtid.x), min(int(dtid.y) + 1, int(dimsU.y) - 1), 0));
+            const float depthJump = max(max(abs(d - dL), abs(d - dR)), max(abs(d - dU), abs(d - dD)));
+            const float3 nL = hasNorm ? DecodeWorldNormal(SceneNormal.Load(int3(max(int(dtid.x) - 1, 0), int(dtid.y), 0))) : N;
+            const float3 nU = hasNorm ? DecodeWorldNormal(SceneNormal.Load(int3(int(dtid.x), max(int(dtid.y) - 1, 0), 0))) : N;
+            const float  normJump = max(1.0f - saturate(dot(N, nL)), 1.0f - saturate(dot(N, nU)));
+            const float  silRisk  = saturate(depthJump * 280.0f + normJump * 0.85f);
+            if (isSky) {
+                dbgRgb = float3(0.02f, 0.04f, 0.08f);
+            } else if (isActor) {
+                dbgRgb = lerp(float3(0.10f, 0.40f, 0.58f), float3(0.98f, 0.62f, 0.08f), silRisk);
+            } else {
+                dbgRgb = lerp(float3(0.06f, 0.09f, 0.15f), float3(0.95f, 0.90f, 0.20f), silRisk);
+            }
+        } else if (dbgView == 36u) {
+            // Thermal / Fire-Heat / Snow-Melt / Live-World Solver Energy Map
+            const float4 sVal = inSnow  ? SnowState.SampleLevel(LinClamp, snowUv, 0) : float4(0.0f, 0.0f, 0.0f, 0.0f);
+            const float4 gVal = inGrass ? GrassBend.SampleLevel(LinClamp, grassUv, 0) : float4(0.0f, 0.0f, 0.0f, 0.0f);
+            const float4 cVal = WaterCaustics.SampleLevel(LinWrap, caustUv, 0);
+            const float3 cLit = SanitizeColor3(origColor.rgb);
+            const float  warmEnergy = saturate((cLit.r - cLit.b) * 0.55f) + saturate(sVal.b * 0.8f + gVal.w * 0.9f);
+            const float  liveField  = saturate(sVal.g * 0.9f + length(gVal.xy) * 0.85f);
+            const float  caustEnergy = (worldAbs.z < waterAndCaustics.x + 12.0f)
+                ? saturate(dot(cVal.rgb, float3(0.33f, 0.34f, 0.33f)) * 0.85f)
+                : saturate(sp.x * 0.6f);
+            dbgRgb = float3(saturate(warmEnergy), liveField, caustEnergy);
         } else if (dbgView == 1u) {
-            // World-Space Surface Normals
             dbgRgb = isSky ? float3(0.05f, 0.06f, 0.12f) : (N * 0.5f + 0.5f);
         } else if (dbgView == 2u) {
-            // Raw Live GPU Field Tri-Channel Inspector (R=SnowDeform, G=GrassWindBend, B=Caustics)
             const float4 sVal = inSnow  ? SnowState.SampleLevel(LinClamp, snowUv, 0) : float4(0.0f, 0.0f, 0.0f, 0.0f);
             const float4 gVal = inGrass ? GrassBend.SampleLevel(LinClamp, grassUv, 0) : float4(0.0f, 0.0f, 0.0f, 0.0f);
             const float4 cVal = WaterCaustics.SampleLevel(LinWrap, caustUv, 0);
@@ -260,7 +365,6 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
                 saturate(length(gVal.xy) * 1.2f + gVal.b * 0.4f),
                 saturate(dot(cVal.rgb, float3(0.33f, 0.34f, 0.33f)) * 0.85f));
         } else if (dbgView == 8u) {
-            // Raw Albedo Inspector
             dbgRgb = isSky ? float3(0.05f, 0.06f, 0.10f) : saturate(alb);
         }
 
@@ -269,16 +373,14 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
     }
 
     // =========================================================================
-    // LIVE WORLD-SPACE COMPOSITING MODE (activeDebugView == 0)
+    // LIVE WORLD-SPACE 3D COMPOSITING MODE (activeDebugView == 0)
     // =========================================================================
     if (menuPause || lpDebug || isSky || isActor) {
         return;
     }
 
-    float3 col      = SanitizeColor3(origColor.rgb);
-    const float3 sD = (length(sunDir.xyz) > 1.0e-4f) ? normalize(sunDir.xyz) : float3(0.4f, 0.3f, 0.86f);
-    const float3 sC = SanitizeColor3(sunCol.rgb) * max(sunDir.w, 0.15f);
-    bool modified   = false;
+    float3 col    = SanitizeColor3(origColor.rgb);
+    bool modified = false;
 
     // -------------------------------------------------------------------------
     // 1. LIVE GPU SNOW DEFORMATION, FOOTPRINT TRENCHES & CAMPFIRE MELT RINGS
@@ -302,7 +404,6 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
             const float4 sNormY = SnowNormal.SampleLevel(LinClamp, snowUv, 0);
             const float  baseH  = max(windAndWeather.w, 0.18f);
 
-            // Footprint depression trench vs compacted rim height differential:
             const float trench  = saturate((baseH - sState.r) / max(baseH * 0.85f, 0.12f));
             const float rim     = saturate((sState.r - baseH) / 0.12f);
             const float compact = saturate(sState.g);
@@ -310,21 +411,15 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
             const float blkIce  = saturate(sState.a);
             const float sparkle = saturate(sNormY.a);
 
-            // Convert SnowNormal (Y-up) into Skyrim Z-up for directional trench wall shading:
-            const float3 tNorm  = normalize(float3(sNormY.x, sNormY.z, max(sNormY.y, 0.15f)));
-            const float  ndotS  = saturate(dot(tNorm, sD));
-            const float  baseNS = saturate(dot(N, sD));
+            const float3 tNorm   = normalize(float3(sNormY.x, sNormY.z, max(sNormY.y, 0.15f)));
+            const float  ndotS   = saturate(dot(tNorm, sD));
+            const float  baseNS  = saturate(dot(N, sD));
             const float  slopeSh = clamp(0.65f + 0.70f * (ndotS - baseNS), 0.52f, 1.28f);
 
-            // Deepen shadowed boot/NPC snow trenches with cool glacial shadow tint + rim catchlight:
             const float  trackDepth = max(trench, compact * 0.65f);
             const float3 trenchTint = lerp(float3(1.0f, 1.0f, 1.0f), float3(0.56f, 0.68f, 0.86f), trackDepth * 0.62f * wSnow);
             col *= trenchTint * lerp(1.0f, slopeSh, saturate(trackDepth + rim) * wSnow);
-
-            // Raised rim sunlit micro-lip:
             col += sC * (rim * 0.085f * wSnow);
-
-            // Campfire/thermal slush wetting darkens snow cleanly; black ice adds crisp specular glint:
             col *= lerp(1.0f, 0.72f, slush * 0.65f * wSnow);
             col += (sC * 0.12f + float3(0.05f, 0.08f, 0.12f)) * (blkIce * 0.55f + sparkle * 0.18f) * wSnow;
             modified = true;
@@ -347,7 +442,6 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
             if (wCaust > 0.005f) {
                 const float4 cSample = WaterCaustics.SampleLevel(LinWrap, caustUv, 0);
                 const float3 cRgb    = SanitizeColor3(cSample.rgb);
-                // Physically scaled chromatic caustic bounce modulated by bed albedo & sunlight:
                 const float3 bedTint = max(alb, float3(0.18f, 0.20f, 0.22f));
                 col += cRgb * bedTint * (0.48f * wCaust * max(sunDir.w, 0.20f));
                 modified = true;
@@ -356,19 +450,19 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
     }
 
     // -------------------------------------------------------------------------
-    // 3. WORLD-ANCHORED 3D WIND-SWAYING NORDIC GRASS MICRO-TUFTS (RawGrassWindHost)
+    // 3. 4-SHELL RAY-STEPPED 3D WIND-SWAYING NORDIC GRASS BLADES (RawGrassWindHost)
     // -------------------------------------------------------------------------
-    if (!isInt && inGrass && base == 4u && N.z > 0.62f && distM < 45.0f &&
+    if (!isInt && inGrass && base == 4u && N.z > 0.62f && distM < 38.0f &&
         worldAbs.z > waterAndCaustics.x + 14.0f) {
         const float albLum   = dot(alb, float3(0.2126f, 0.7152f, 0.0722f));
-        const float greenDom = saturate((alb.g - alb.b * 0.85f) * 3.8f) * saturate(1.0f - (albLum - 0.45f) * 3.5f);
-        const float loamOk   = saturate((0.50f - albLum) * 2.5f) * saturate((alb.g - 0.06f) * 6.0f);
-        const float turfMask = max(greenDom, loamOk * 0.55f) * saturate((N.z - 0.62f) * 3.5f);
+        const float greenDom = saturate((alb.g - alb.b * 0.85f) * 3.8f) * saturate(1.0f - (albLum - 0.46f) * 3.5f);
+        const float loamOk   = saturate((0.48f - albLum) * 2.5f) * saturate((alb.g - 0.06f) * 6.0f);
+        const float turfMask = max(greenDom, loamOk * 0.50f) * saturate((N.z - 0.62f) * 3.5f);
 
         if (turfMask > 0.05f) {
             const float2 gEdge     = min(grassUv, 1.0f - grassUv);
             const float  gEdgeFade = smoothstep(0.01f, 0.10f, min(gEdge.x, gEdge.y));
-            const float  gDistFade = 1.0f - smoothstep(26.0f, 45.0f, distM);
+            const float  gDistFade = 1.0f - smoothstep(22.0f, 38.0f, distM);
             const float  wGrass    = turfMask * gEdgeFade * gDistFade * saturate(grassDomain.w);
 
             const float4 gBend     = GrassBend.SampleLevel(LinClamp, grassUv, 0);
@@ -378,51 +472,96 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
             const float  droop01   = saturate(isfinite(gBend.z) ? gBend.z : 0.0f);
             const float  char01    = saturate(isfinite(gBend.w) ? gBend.w : 0.0f);
 
-            // World-anchored multi-octave blade tuft pattern advected by real GPU wind/trample bend:
-            const float2 pTuft     = worldM.xy * 5.2f + bendXZ * 0.65f;
-            const float  tuftCoarse = ValueNoise2D(pTuft);
-            const float  tuftFine   = ValueNoise2D(worldM.xy * 13.5f + bendXZ * 1.15f);
-            const float  bladeTip   = saturate((tuftCoarse * 0.62f + tuftFine * 0.38f - 0.34f) * 2.3f);
+            // Step front-to-back across 4 physical 3D grass height shells (0.28m -> 0.04m):
+            const float  maxBladeH = 0.28f * (1.0f - 0.55f * droop01) * (1.0f - 0.60f * char01);
+            const float  invRayZ   = 1.0f / max(abs(rayDir.z), 0.35f);
+            const float  backLit   = pow(saturate(dot(rayDir, sD)), 3.0f) * max(sunDir.w, 0.15f);
+            const float3 bladeNorm = normalize(float3(-bendXZ.x * 0.65f, -bendXZ.y * 0.65f, 1.0f));
+            const float  sunBlade  = 0.38f + 0.62f * saturate(dot(bladeNorm, sD));
+            const float  gustSheen = saturate(bendMag * 0.55f) * sunBlade;
 
-            // Travelling wind-wave sheen ripple (sunlight catching bent grass blades):
-            const float  sunAlign   = saturate(dot(normalize(float3(bendXZ.x, bendXZ.y, 1.0f)), sD));
-            const float  gustSheen  = saturate(bendMag * 0.55f) * (0.35f + 0.65f * sunAlign);
+            float3 shellColor = float3(0.0f, 0.0f, 0.0f);
+            float  shellAlpha = 0.0f;
 
-            // Root ambient occlusion + lush sunlit blade tip contrast + trampled path + wildfire char:
-            const float3 lushTip    = float3(0.24f, 0.36f, 0.11f) * max(sC, float3(0.25f, 0.28f, 0.22f));
-            const float  aoRoot     = lerp(0.84f, 1.12f, bladeTip);
-            col *= lerp(1.0f, aoRoot, wGrass * 0.55f);
-            col += lushTip * ((bladeTip * 0.14f + gustSheen * 0.18f) * (1.0f - droop01 * 0.55f) * (1.0f - char01) * wGrass);
+            [unroll]
+            for (int k = 3; k >= 0; --k) {
+                const float hFrac = (float(k) + 0.5f) * 0.25f;
+                const float hM    = hFrac * maxBladeH;
+                // Parallax step into 3D shell along -rayDir + quadratic cantilever wind deflection:
+                const float2 pShell = worldM.xy - rayDir.xy * (hM * invRayZ) - bendXZ * (0.26f * hFrac * hFrac);
+                float hueVar = 0.5f;
+                const float dens = EvalGrassShellDensity(pShell, hFrac, hueVar);
+                const float a    = dens * lerp(0.55f, 0.34f, hFrac) * (1.0f - shellAlpha);
 
-            // Wildfire thermal char darkens & stiffens scorched undergrowth:
+                // Root AO -> lush sunlit Nordic spruce-meadow tip + warm backlit blade translucency:
+                const float3 rootCol = float3(0.08f, 0.14f, 0.05f);
+                const float3 tipCol  = lerp(float3(0.20f, 0.36f, 0.10f), float3(0.30f, 0.42f, 0.12f), hueVar);
+                float3 bCol = lerp(rootCol, tipCol, hFrac) * (0.45f + 0.55f * hFrac) * sunBlade;
+                bCol *= max(sC, float3(0.32f, 0.36f, 0.30f));
+                bCol += float3(0.22f, 0.34f, 0.08f) * (backLit * hFrac * 0.55f + gustSheen * hFrac * 0.32f);
+
+                shellColor += bCol * a;
+                shellAlpha += a;
+            }
+
+            // Blend 3D grass shells cleanly over ground with root-contact ambient darkening & wildfire char:
+            const float rootShadow = lerp(1.0f, 0.80f, shellAlpha * wGrass * 0.65f);
+            col = lerp(col * rootShadow, shellColor / max(shellAlpha, 1.0e-3f), saturate(shellAlpha * 0.72f * wGrass));
             col *= lerp(1.0f, 0.34f, char01 * 0.85f * wGrass);
             modified = true;
         }
     }
 
     // -------------------------------------------------------------------------
-    // 4. WORLD-SPACE GLACIER CRYSTALLINE FACETS & CONIFER CANOPY MICRO-DEPTH
+    // 4. 3D CRYSTALLINE GLACIER FRACTURE VOLUME & CONIFER BARK/CANOPY RELIEF
     // -------------------------------------------------------------------------
-    if (!isInt && base == 6u && distM < 85.0f) {
-        const float coolIce = saturate((alb.b - alb.r * 0.88f) * 4.0f + (dot(alb, float3(0.33f, 0.33f, 0.34f)) - 0.42f));
-        if (coolIce > 0.10f) {
-            const float facet    = GlacierFacet3D(worldM * 1.35f);
+    if (base == 6u && distM < 85.0f) {
+        const float coolIce = saturate((alb.b - alb.r * 0.88f) * 4.0f + (dot(alb, float3(0.33f, 0.33f, 0.34f)) - 0.36f));
+        if (coolIce > 0.08f) {
+            float crack0 = 0.0f, crack1 = 0.0f;
+            const float facet0   = GlacierFacet3D(worldM * 1.35f, crack0);
+            const float facet1   = GlacierFacet3D((worldM + rayDir * 0.28f) * 2.10f, crack1);
             const float distFade = 1.0f - smoothstep(50.0f, 85.0f, distM);
             const float wIce     = saturate(coolIce) * distFade;
-            // Subtle glacial blue-cyan subsurface depth in facet troughs + sunlit crystal edges:
-            const float3 iceSub  = float3(0.06f, 0.18f, 0.26f) * (1.0f - facet) * max(sunDir.w, 0.25f);
-            const float3 iceEdge = sC * (smoothstep(0.65f, 0.96f, facet) * 0.10f);
-            col += (iceSub + iceEdge) * (0.45f * wIce);
+
+            // Deep Beer-Lambert teal-sapphire internal parallax volume + bright conchoidal fracture veins:
+            const float3 deepTeal   = float3(0.03f, 0.19f, 0.30f) * (1.0f - facet0 * 0.65f) * (0.65f + 0.35f * facet1);
+            const float3 crystalRim = sC * (smoothstep(0.62f, 0.96f, facet0) * 0.14f + crack0 * 0.10f + crack1 * 0.08f);
+            col = lerp(col, col * 0.88f + deepTeal * max(sunDir.w, 0.30f), 0.55f * wIce) + crystalRim * (0.55f * wIce);
             modified = true;
         }
     } else if (!isInt && base == 5u && distM < 85.0f) {
-        // Gentle conifer canopy sunlit chlorophyll depth & crushed-shadow rescue (never touches actors!):
+        // Conifer canopy 3D needle-whorl relief, crushed-shadow rescue & backlit emerald translucency:
         const float distFade = 1.0f - smoothstep(50.0f, 85.0f, distM);
         const float lum      = dot(col, float3(0.2126f, 0.7152f, 0.0722f));
-        const float needleN  = ValueNoise2D(worldM.xy * 3.8f + worldM.z * 1.7f);
+        const float maxC     = max(col.r, max(col.g, col.b));
+        const float minC     = min(col.r, min(col.g, col.b));
+        const float sat      = (maxC > 1.0e-4f) ? ((maxC - minC) / maxC) : 0.0f;
+        const float needleN  = ValueNoise2D(worldM.xy * 4.2f + worldM.z * 2.1f);
+        const float backLit  = pow(saturate(dot(rayDir, sD)), 2.5f) * max(sunDir.w, 0.15f);
+
+        // Lift crushed near-black pine shadow cavities softly:
         const float shadowLift = saturate((0.08f - lum) * 10.0f) * distFade;
-        col += float3(0.014f, 0.022f, 0.010f) * shadowLift * (0.6f + 0.4f * needleN);
+        col += float3(0.016f, 0.028f, 0.012f) * shadowLift * (0.55f + 0.45f * needleN);
+        col += float3(0.045f, 0.085f, 0.024f) * (backLit * 0.35f * needleN * distFade);
+
+        // Gently restore rich Nordic spruce green if non-snow needles were over-bleached chalky grey:
+        if (waterAndCaustics.w < 0.15f && sat < 0.18f && lum > 0.35f) {
+            const float bleachW = saturate((0.18f - sat) * 5.0f) * saturate((lum - 0.35f) * 3.0f) * distFade;
+            col = lerp(col, col * float3(0.76f, 0.96f, 0.72f), bleachW * 0.45f);
+        }
         modified = true;
+    } else if (!isInt && base == 1u && abs(N.z) < 0.55f && distM < 55.0f) {
+        // Vertical warm-brown conifer bark shadow-lift (eliminates #050505 crushed black tree trunks!):
+        const float lum = dot(col, float3(0.2126f, 0.7152f, 0.0722f));
+        const bool isWarmBark = (alb.r > alb.b * 1.12f) && (alb.r < 0.48f) && (alb.g < 0.42f);
+        if (isWarmBark && lum < 0.06f) {
+            const float distFade = 1.0f - smoothstep(32.0f, 55.0f, distM);
+            const float barkRidge = ValueNoise2D(float2(worldM.x + worldM.y, worldM.z * 0.45f) * 8.5f);
+            const float liftW     = saturate((0.06f - lum) * 16.0f) * distFade;
+            col += max(alb, float3(0.14f, 0.10f, 0.07f)) * (0.20f * liftW * (0.65f + 0.35f * barkRidge));
+            modified = true;
+        }
     }
 
     if (modified) {

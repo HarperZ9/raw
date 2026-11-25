@@ -685,7 +685,9 @@ void RawFluidSimHost::StepFire(ID3D12GraphicsCommandList* cmd, const FluidFirePa
     cb.physicsC[2] = params.enableCeiling ? std::max(rawSootDamping, 1.65f) : rawSootDamping;
     cb.physicsC[3] = std::clamp(sanitizeFinite(params.thermalExpansion, 1.65f), 0.0f, 12.0f);
 
-    const uint32_t flagBits = (m_fireResetNext ? 1u : 0u) | (params.enableCeiling ? 2u : 0u);
+    const uint32_t flagBits = (m_fireResetNext ? 1u : 0u)
+                            | (params.enableCeiling ? 2u : 0u)
+                            | (params.debugOverlayMode ? 4u : 0u);
     cb.boundsAndFlags[0] = floorZLocal;
     cb.boundsAndFlags[1] = ceilingZLocal;
     cb.boundsAndFlags[2] = std::clamp(sanitizeFinite(params.scatterExtinction, 1.65f), 0.25f, 8.0f);
@@ -875,12 +877,14 @@ void RawFluidSimHost::StepFire(ID3D12GraphicsCommandList* cmd, const FluidFirePa
                               m_tsReadback.Get(), static_cast<UINT64>(ringIdx * 4u + 0u) * sizeof(uint64_t));
     }
 
-    m_fireDomain.originXYZ[0] = params.domainOriginW[0];
-    m_fireDomain.originXYZ[1] = params.domainOriginW[1];
-    m_fireDomain.originXYZ[2] = params.domainOriginW[2];
-    m_fireDomain.worldSpanU   = static_cast<float>(kFireGridRes) * cellSize;
-    m_fireDomain.active       = true;
-    m_fireDomain.emitterCount = cb.counts[0];
+    m_fireDomain.originXYZ[0]     = originX;
+    m_fireDomain.originXYZ[1]     = originY;
+    m_fireDomain.originXYZ[2]     = originZ;
+    m_fireDomain.worldSpanU       = domainSpan;
+    m_fireDomain.active           = true;
+    m_fireDomain.emitterCount     = cb.counts[0];
+    m_fireDomain.isInterior       = params.enableCeiling;
+    m_fireDomain.debugOverlayMode = params.debugOverlayMode;
 
     m_fireParity = q;
     m_fireResetNext = false;

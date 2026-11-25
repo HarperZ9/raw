@@ -54,8 +54,8 @@ constexpr uint8_t None = 0, Lit = 1, EnvironmentMapped = 2, GlowMapped = 3, Land
 constexpr uint8_t FirstPersonFlag = 128;   // added for draws of the first-person model
 
 // Resolves final SV_Target5.b class byte. A non-zero classOverride promotes generic Lighting+Lit (base==1)
-// draws (e.g., skinned creatures, horses, dogs, NPC clothing/gloves) to SkinnedActor (base==14) while
-// strictly preserving specialized classes (Skin=10, Hair=11, Eye=12, SoftLit/Foliage=5, Landscape=4, etc.).
+// draws (e.g., skinned creatures/NPC clothing -> SkinnedActor=14, alpha-tested pine saplings/shrubs -> SoftLit=5)
+// while strictly preserving specialized classes (Skin=10, Hair=11, Eye=12, SoftLit=5, Landscape=4, EnvMap=2, etc.).
 constexpr uint8_t ResolveMaterialClass(uint8_t analysedClass, uint8_t classOverride, uint8_t classFlags) noexcept
 {
     const uint8_t base = (classOverride != None && analysedClass == Lit) ? classOverride : analysedClass;
@@ -77,6 +77,12 @@ constexpr bool IsActorMaterialClass(uint8_t classByte) noexcept
 {
     const uint8_t base = static_cast<uint8_t>(classByte & 127u);
     return base == Skin || base == Hair || base == Eye || base == SkinnedActor;
+}
+
+constexpr bool IsFoliageMaterialClass(uint8_t classByte) noexcept
+{
+    const uint8_t base = static_cast<uint8_t>(classByte & 127u);
+    return base == SoftLit;
 }
 }
 

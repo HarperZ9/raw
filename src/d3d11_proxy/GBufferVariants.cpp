@@ -14,34 +14,68 @@ namespace gbuffer
 
 namespace
 {
-// Identifies skinned character/creature/fur/clothing draws (dogs, horses, wolves, NPCs, first-person arms)
-// using Skyrim's BLENDINDICES + BLENDWEIGHT input layout and per-draw actor world block (excluding wind-skinned
-// trees which carry no actor world block in SceneLights, matching SceneSkin.cpp).
-bool IsSkinnedActorDraw(ID3D11DeviceContext* real, Span span)
+bool DepthWritesEnabled(ID3D11DeviceContext* real)
 {
-    if (!real || (span != Span::Opaque && span != Span::FirstPerson)) return false;
+    if (!real) return true;
+    ID3D11DepthStencilState* ds = nullptr;
+    UINT sr = 0;
+    real->OMGetDepthStencilState(&ds, &sr);
+    if (!ds) return true;
+    D3D11_DEPTH_STENCIL_DESC dsd{};
+    ds->GetDesc(&dsd);
+    ds->Release();
+    return dsd.DepthWriteMask == D3D11_DEPTH_WRITE_MASK_ALL;
+}
+
+// Classifies per-draw promotion hints for generic Lighting+Lit (base==1) pixel shaders:
+//   1. SkinnedActor (base==14): BLENDINDICES + BLENDWEIGHT with per-draw actor world block (dogs, horses,
+//      wolves, NPC clothing/gloves, first-person arms; takes priority over foliage even on alpha-tested fur/capes).
+//   2. Foliage (base==5): opaque-span non-actor alpha-tested pine saplings, pine boughs, shrubs & ferns
+//      (PS discard, AlphaToCoverage, or depth-writing alpha-blended cutout cards; excludes solid tree trunks,
+//      static rock/wood architecture, and non-depth-writing ground decals).
+DrawClassHint ClassifyDrawHint(ID3D11DeviceContext* real, Span span, ID3D11PixelShader* gamePs, bool* outDepthBlendFoliage)
+{
+    if (outDepthBlendFoliage) *outDepthBlendFoliage = false;
+    if (!real || (span != Span::Opaque && span != Span::FirstPerson)) return DrawClassHint::None;
+
     const geom::Layout* bound = geom::LayoutOf(geom::BoundLayout(real));
-    if (!bound || !bound->blendIdx.set || !bound->blendW.set) return false;
-    if (span == Span::FirstPerson) return true;
-    if (g_sceneLightsActive) {
-        return SceneLights_DrawWorld() != nullptr;
+    const bool hasSkinLayout = (bound != nullptr && bound->blendIdx.set && bound->blendW.set);
+    if (hasSkinLayout) {
+        if (span == Span::FirstPerson) return DrawClassHint::SkinnedActor;
+        if (g_sceneLightsActive) {
+            if (SceneLights_DrawWorld() != nullptr) return DrawClassHint::SkinnedActor;
+            // Wind-skinned non-actor draw (tree trunk or branch): fall through so alpha-tested pine
+            // branches promote to Foliage (base==5) while solid tree trunks stay Lit (base==1)!
+        } else {
+            // Fallback when SceneLights is inactive: Skyrim binds its 80-bone actor skinning palette (>= 3840 bytes) on VS CB10.
+            ID3D11Buffer* bb[1] = {};
+            real->VSGetConstantBuffers(10, 1, bb);
+            bool hasBones = false;
+            if (bb[0]) {
+                D3D11_BUFFER_DESC bd{};
+                bb[0]->GetDesc(&bd);
+                hasBones = (bd.ByteWidth >= 3840u);
+                bb[0]->Release();
+            }
+            if (hasBones) return DrawClassHint::SkinnedActor;
+        }
     }
-    // Fallback when SceneLights is inactive: Skyrim binds its 80-bone actor skinning palette (>= 3840 bytes) on VS CB10.
-    ID3D11Buffer* bb[1] = {};
-    real->VSGetConstantBuffers(10, 1, bb);
-    bool hasBones = false;
-    if (bb[0]) {
-        D3D11_BUFFER_DESC bd{};
-        bb[0]->GetDesc(&bd);
-        hasBones = (bd.ByteWidth >= 3840u);
-        bb[0]->Release();
+
+    if (span == Span::Opaque) {
+        if (gamePs && geom::IsDiscardPs(gamePs)) return DrawClassHint::Foliage;
+        const uint8_t blendAlpha = geom::BlendAlpha(real);
+        if (blendAlpha == raw::bridge::RtAlphaCoverage) return DrawClassHint::Foliage;
+        if (blendAlpha == raw::bridge::RtAlphaBlend && DepthWritesEnabled(real)) {
+            if (outDepthBlendFoliage) *outDepthBlendFoliage = true;
+            return DrawClassHint::Foliage;
+        }
     }
-    return hasBones;
+    return DrawClassHint::None;
 }
 } // namespace
 
 ID3D11PixelShader* VariantFor(State& s, ID3D11PixelShader* game, bool firstPerson, raw::dxbc::ShaderKind* kind,
-                              uint8_t* matClass, bool skinnedActor)
+                              uint8_t* matClass, DrawClassHint hint)
 {
     std::lock_guard<std::mutex> lock(s.mutex);
     const auto it = s.shaders.find(game);
@@ -80,18 +114,21 @@ ID3D11PixelShader* VariantFor(State& s, ID3D11PixelShader* game, bool firstPerso
     // Always inspect/compile the base slot first so e.kind and e.materialClass are known cleanly.
     compileSlot(baseSlot, 0);
 
-    // Promote ONLY generic Lighting+Lit (base==1) skinned actor/creature/clothing draws to SkinnedActor (base==14).
-    // Specialized classes (Skin=10, Hair=11, Eye=12, SoftLit/Foliage=5, EnvMap=2, TruePBR=13, Landscape=4) keep baseSlot!
-    const bool promoteSkinned = skinnedActor &&
-                                e.kind == raw::dxbc::ShaderKind::Lighting &&
-                                e.materialClass == raw::dxbc::material::Lit;
-    const int k = promoteSkinned ? (baseSlot | 2) : baseSlot;
-    if (promoteSkinned) {
-        compileSlot(k, raw::dxbc::material::SkinnedActor);
+    // Promote ONLY generic Lighting+Lit (base==1) draws to SkinnedActor (14) or Foliage/SoftLit (5).
+    // Specialized classes (Skin=10, Hair=11, Eye=12, SoftLit=5, EnvMap=2, TruePBR=13, Landscape=4) keep baseSlot!
+    const bool canPromote = (hint != DrawClassHint::None) &&
+                            e.kind == raw::dxbc::ShaderKind::Lighting &&
+                            e.materialClass == raw::dxbc::material::Lit;
+    const uint8_t overrideClass = canPromote
+        ? (hint == DrawClassHint::SkinnedActor ? raw::dxbc::material::SkinnedActor : raw::dxbc::material::SoftLit)
+        : raw::dxbc::material::None;
+    const int k = canPromote ? (baseSlot + static_cast<int>(hint) * 2) : baseSlot;
+    if (canPromote) {
+        compileSlot(k, overrideClass);
     }
 
     *kind = e.kind;
-    if (matClass) *matClass = promoteSkinned ? raw::dxbc::material::SkinnedActor : e.materialClass;
+    if (matClass) *matClass = canPromote ? overrideClass : e.materialClass;
     return e.variant[k];
 }
 
@@ -114,12 +151,14 @@ ID3D11BlendState* BlendVariant(State& s, ID3D11BlendState* game, int mode)
     const bool blended = d.RenderTarget[0].BlendEnable != FALSE;
     const UINT8 colourMask = d.RenderTarget[0].RenderTargetWriteMask;
     using raw::dxbc::kAlbedoTarget, raw::dxbc::kEmissiveTarget, raw::dxbc::kLayerTarget, raw::dxbc::kSpecularTarget;
+    const bool writesMaterial = (mode == 0 || mode == 4);
     for (UINT k = kAlbedoTarget; k <= kEmissiveTarget; ++k) {
         // The material targets follow the colour target's blend. A shader that has no material leaves them alone.
         d.RenderTarget[k] = d.RenderTarget[0];
-        if (mode != 0) d.RenderTarget[k].RenderTargetWriteMask = 0;
+        if (!writesMaterial) d.RenderTarget[k].RenderTargetWriteMask = 0;
     }
-    // A blended draw (a decal) keeps the class of the surface under it.
+    // A non-depth-writing blended draw (a decal) keeps the class of the surface under it;
+    // mode 4 (depth-writing alpha-blended foliage/sapling cards) keeps Spec.z write enabled so base==5u lands cleanly.
     if (mode == 0 && blended) d.RenderTarget[kSpecularTarget].RenderTargetWriteMask &= ~D3D11_COLOR_WRITE_ENABLE_BLUE;
     auto& layer = d.RenderTarget[kLayerTarget];
     layer = d.RenderTarget[0];
@@ -183,6 +222,7 @@ void GBuffer_BeforeDraw(ID3D11DeviceContext* real)
     State& s = S();
     if (s.span == Span::None) {
         s.lastDrawSkinnedActor = false;
+        s.lastDrawHint = DrawClassHint::None;
         if (s.lastDrawWater) {
             s.lastDrawWater = false;
             raw::tx::SetDrawWaterHint(real, false);
@@ -193,36 +233,42 @@ void GBuffer_BeforeDraw(ID3D11DeviceContext* real)
         }
         return;
     }
-    // Check skinned-actor status every draw even when PS/blend did not change: Skyrim shares generic
-    // BSLightingShader (Lit=1) between static stone/wood props and skinned creatures/dogs/NPC clothing.
-    const bool skinnedActor = IsSkinnedActorDraw(real, s.span);
-    if (!s.dirty && skinnedActor == s.lastDrawSkinnedActor) {
+    // Check per-draw actor/foliage hint every draw even when PS/blend did not change: Skyrim shares generic
+    // BSLightingShader (Lit=1) across static rocks, skinned creatures/NPC clothing, and alpha-tested pine saplings.
+    bool depthBlendFoliage = false;
+    const DrawClassHint hint = ClassifyDrawHint(real, s.span, s.gamePs, &depthBlendFoliage);
+    if (!s.dirty && hint == s.lastDrawHint) {
         if (s.lastDrawWater) raw::tx::SetDrawWaterHint(real, true);
         if (s.lastDrawSkipSubdiv) raw::tx::SetDrawSkipSubdivHint(real, true);
         return;
     }
     s.dirty = false;
-    s.lastDrawSkinnedActor = skinnedActor;
+    s.lastDrawHint = hint;
+    s.lastDrawSkinnedActor = (hint == DrawClassHint::SkinnedActor);
     raw::dxbc::ShaderKind kind{};
     uint8_t matClass = 0;
     ID3D11PixelShader* v = s.gamePs
-        ? VariantFor(s, s.gamePs, s.span == Span::FirstPerson, &kind, &matClass, skinnedActor)
+        ? VariantFor(s, s.gamePs, s.span == Span::FirstPerson, &kind, &matClass, hint)
         : nullptr;
     if (matClass == raw::dxbc::material::SkinnedActor) ++s.skinnedActorDraws;
+    if (hint == DrawClassHint::Foliage && matClass == raw::dxbc::material::SoftLit) ++s.foliagePromotedDraws;
     const bool material = kind == raw::dxbc::ShaderKind::Lighting || kind == raw::dxbc::ShaderKind::DistantLod;
     const bool isWater = (s.span == Span::Water) || (kind == raw::dxbc::ShaderKind::Water);
-    // Structurally exclude Landscape terrain, DistantLod quadtree chunks, and skinned actors from TxSubdiv so
-    // cell edges stay watertight and animated character silhouettes never suffer seam splits.
+    // Structurally exclude Landscape terrain, DistantLod quadtree chunks, skinned actors, and alpha-tested foliage
+    // from TxSubdiv so cell edges stay watertight, actor silhouettes never split, and sapling cards stay clean.
     const bool skipSubdiv = !isWater && (kind == raw::dxbc::ShaderKind::DistantLod ||
                                          matClass == raw::dxbc::material::Landscape ||
                                          matClass == raw::dxbc::material::DistantLod ||
                                          matClass == raw::dxbc::material::SkinnedActor ||
-                                         skinnedActor);
+                                         matClass == raw::dxbc::material::SoftLit ||
+                                         hint != DrawClassHint::None);
     s.lastDrawWater = isWater;
     s.lastDrawSkipSubdiv = skipSubdiv;
     raw::tx::SetDrawWaterHint(real, isWater);
     raw::tx::SetDrawSkipSubdivHint(real, skipSubdiv);
-    const int blendMode = !v ? 2 : (kind == raw::dxbc::ShaderKind::Water ? 3 : (material ? 0 : 1));
+    const int blendMode = !v ? 2
+        : (kind == raw::dxbc::ShaderKind::Water ? 3
+            : (material ? (depthBlendFoliage ? 4 : 0) : 1));
     ID3D11BlendState* blend = BlendVariant(s, s.gameBlend, blendMode);
     // Preserve depth/stencil state 100% untouched (never call OMSetDepthStencilState); restore original PS on refused draws.
     if (v) real->PSSetShader(v, nullptr, 0);

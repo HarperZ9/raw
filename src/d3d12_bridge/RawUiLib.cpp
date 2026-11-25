@@ -252,12 +252,169 @@ void UiDrawList::AddText(float x, float y, const char* text,
 }
 
 void UiDrawList::AddSectionHeader(float x, float y, float w, const char* title,
-                                  uint32_t accentRgba, uint32_t scale)
+                                  uint32_t accentRgba, uint32_t scale,
+                                  bool collapsible, bool expanded)
 {
     const uint32_t s = std::clamp(scale, 1u, 3u);
-    AddRect(x, y + 1.0f, 3.0f * static_cast<float>(s), 7.0f * static_cast<float>(s), accentRgba);
-    AddText(x + 7.0f * static_cast<float>(s), y, title, tokens::kInkPrimary, s);
-    AddDivider(x, y + static_cast<float>(11u * s), w, tokens::kBorder);
+    const float sf = static_cast<float>(s);
+
+    // Crisp uppercase section caption per RAW Design Canon
+    char upper[128]{};
+    if (title) {
+        size_t i = 0u;
+        for (; i + 1u < sizeof(upper) && title[i] != '\0'; ++i) {
+            const char ch = title[i];
+            upper[i] = (ch >= 'a' && ch <= 'z') ? static_cast<char>(ch - 'a' + 'A') : ch;
+        }
+        upper[i] = '\0';
+    }
+
+    if (collapsible) {
+        GpuUiCmd chev{};
+        chev.rect[0]     = x;
+        chev.rect[1]     = y + 0.5f * sf;
+        chev.rect[2]     = 8.0f * sf;
+        chev.rect[3]     = 8.0f * sf;
+        chev.colorFill   = accentRgba;
+        chev.kindAndMeta = PackKindAndMeta(UiCmdKind::Disc, expanded ? 1u : 2u, 0u);
+        chev.params[0]   = 1.15f * sf;
+        PushCommand(chev);
+        AddText(x + 11.0f * sf, y, upper, tokens::kInkPrimary, s);
+    } else {
+        AddRect(x, y + 1.0f, 3.0f * sf, 7.0f * sf, accentRgba);
+        AddText(x + 7.0f * sf, y, upper, tokens::kInkPrimary, s);
+    }
+    AddDivider(x, y + static_cast<float>(11u * s), w, tokens::kBorderStrong);
+}
+
+void UiDrawList::AddTabBar(float x, float y, float w,
+                           const char* const* labels, uint32_t tabCount, uint32_t activeIndex,
+                           uint32_t accentRgba, uint32_t scale)
+{
+    if (!labels || tabCount == 0u || w <= 4.0f) return;
+    const uint32_t s = std::clamp(scale, 1u, 3u);
+    const float sf = static_cast<float>(s);
+    const uint32_t clampedCount = std::min(tabCount, 8u);
+    const uint32_t clampedActive = (activeIndex < clampedCount) ? activeIndex : 0u;
+    const float barH = 18.0f * sf;
+    const float tabW = w / static_cast<float>(clampedCount);
+
+    // Subtle tab strip surface
+    AddRect(x, y, w, barH, tokens::kSurface);
+
+    for (uint32_t i = 0u; i < clampedCount; ++i) {
+        const float tx = x + static_cast<float>(i) * tabW;
+        const bool isActive = (i == clampedActive);
+        if (isActive) {
+            AddRect(tx, y, tabW, barH - 2.0f * sf, tokens::kPillOnBg);
+            AddRect(tx + 2.0f * sf, y + barH - 2.0f * sf, std::max(2.0f, tabW - 4.0f * sf), 2.0f * sf, accentRgba);
+        }
+        const char* lbl = (labels[i] && labels[i][0] != '\0') ? labels[i] : "-";
+        const float tw = static_cast<float>(MeasureTextWidthPx(lbl, s));
+        const float lx = tx + std::max(2.0f * sf, (tabW - tw) * 0.5f);
+        AddText(lx, y + 4.0f * sf, lbl, isActive ? tokens::kInkPrimary : tokens::kInkMuted, s, 0u);
+    }
+
+    // Bottom hairline divider across full tab strip
+    AddDivider(x, y + barH, w, tokens::kBorderStrong);
+}
+
+void UiDrawList::AddBudgetBar(float x, float y, float w, float h,
+                              const UiBudgetSegment* segments, uint32_t segmentCount,
+                              float budgetTargetMs, float maxScaleMs, uint32_t scale)
+{
+    if (w <= 6.0f || h <= 4.0f) return;
+    const uint32_t s = std::clamp(scale, 1u, 3u);
+    const float sf = static_cast<float>(s);
+    const float safeMax = (std::isfinite(maxScaleMs) && maxScaleMs > 0.05f) ? maxScaleMs : 20.0f;
+
+    // Rounded dark graph-well container
+    AddPanel(x, y, w, h, 3.0f * sf, tokens::kGraphWell, tokens::kBorderStrong, 0u, 1.0f);
+
+    const float pad = 2.0f;
+    const float innerX = x + pad;
+    const float innerY = y + pad;
+    const float innerW = std::max(1.0f, w - pad * 2.0f);
+    const float innerH = std::max(1.0f, h - pad * 2.0f);
+
+    PushClipRect(innerX, innerY, innerW, innerH);
+    if (segments && segmentCount > 0u) {
+        const uint32_t count = std::min(segmentCount, 8u);
+        float cursorX = innerX;
+        for (uint32_t i = 0u; i < count; ++i) {
+            const float v = (std::isfinite(segments[i].valueMs) && segments[i].valueMs > 0.0f)
+                                ? segments[i].valueMs : 0.0f;
+            if (v <= 0.0f) continue;
+            const float segW = (v / safeMax) * innerW;
+            if (segW < 0.5f) continue;
+            const float drawW = std::min(segW, (innerX + innerW) - cursorX);
+            if (drawW <= 0.0f) break;
+            AddRect(cursorX, innerY, drawW, innerH, segments[i].colorRgba);
+            cursorX += drawW;
+            if (cursorX >= innerX + innerW) break;
+        }
+    }
+    PopClipRect();
+
+    // Vertical target frame-budget marker line
+    if (std::isfinite(budgetTargetMs) && budgetTargetMs > 0.0f && budgetTargetMs <= safeMax) {
+        const float frac = std::clamp(budgetTargetMs / safeMax, 0.0f, 1.0f);
+        const float mx = innerX + frac * innerW - 1.0f;
+        AddRect(mx, y + 1.0f, 2.0f, std::max(1.0f, h - 2.0f), tokens::kInkPrimary);
+    }
+}
+
+void UiDrawList::AddVerdictDot(float x, float y, float diameter,
+                               uint32_t fillRgba, uint32_t borderRgba)
+{
+    GpuUiCmd dot{};
+    dot.rect[0]     = x;
+    dot.rect[1]     = y;
+    dot.rect[2]     = std::max(4.0f, diameter);
+    dot.rect[3]     = std::max(4.0f, diameter);
+    dot.colorFill   = fillRgba;
+    dot.colorBorder = borderRgba;
+    dot.kindAndMeta = PackKindAndMeta(UiCmdKind::Disc, 0u, 0u);
+    PushCommand(dot);
+}
+
+void UiDrawList::AddEngineVarRow(float x, float y, float rowWidth,
+                                 const char* key, const char* valueText,
+                                 uint32_t verdictRgba, uint32_t scale)
+{
+    const uint32_t s = std::clamp(scale, 1u, 3u);
+    const float sf = static_cast<float>(s);
+    const float dotD = 7.0f * sf;
+
+    AddVerdictDot(x, y + 1.0f * sf, dotD, verdictRgba, tokens::kBorderStrong);
+    if (key && key[0] != '\0') {
+        AddText(x + dotD + 5.0f * sf, y, key, tokens::kInkSecondary, s);
+    }
+    if (valueText && valueText[0] != '\0') {
+        const float vw = static_cast<float>(MeasureTextWidthPx(valueText, s));
+        AddText(x + std::max(dotD + 8.0f * sf, rowWidth - vw), y, valueText, tokens::kInkPrimary, s);
+    }
+}
+
+void UiDrawList::AddEngineVarFloat(float x, float y, float rowWidth,
+                                   const char* key, float value, const char* unit,
+                                   uint32_t verdictRgba, uint32_t scale)
+{
+    char buf[48]{};
+    const float safe = std::isfinite(value) ? value : 0.0f;
+    if (unit && unit[0] != '\0') {
+        std::snprintf(buf, sizeof(buf), "%.2f %s", static_cast<double>(safe), unit);
+    } else {
+        std::snprintf(buf, sizeof(buf), "%.3f", static_cast<double>(safe));
+    }
+    AddEngineVarRow(x, y, rowWidth, key, buf, verdictRgba, scale);
+}
+
+void UiDrawList::AddEngineVarBool(float x, float y, float rowWidth,
+                                  const char* key, bool value, uint32_t scale)
+{
+    AddEngineVarRow(x, y, rowWidth, key, value ? "ON" : "OFF",
+                    value ? tokens::kAccentPass : tokens::kAccentNull, scale);
 }
 
 void UiDrawList::AddPill(float x, float y, const char* label,
@@ -459,35 +616,270 @@ DebugViewDescriptor GetDebugViewDescriptor(uint32_t debugViewId)
         };
         break;
     case 2u:
-        d.shortName  = "2:Albedo";
+        d.shortName  = "2:SunShadow";
+        d.title      = "Sun Shadow Visibility";
+        d.purpose    = "RT & cascade sun occlusion term";
+        d.accentRgba = tokens::kAccentLead;
+        d.legend = {
+            {PackRgba8(0xF2, 0xEE, 0xE2), "Direct Sun Lit",    "1.0"},
+            {PackRgba8(0x20, 0x26, 0x34), "Occluded Shadow",   "0.0"},
+        };
+        break;
+    case 3u:
+        d.shortName  = "3:Ambient";
+        d.title      = "Ambient + Sky + GI Bounce";
+        d.purpose    = "Hemisphere ambient plus indirect bounce";
+        d.accentRgba = PackRgba8(0x7A, 0xC4, 0xF8);
+        d.legend = {
+            {PackRgba8(0x7A, 0xC4, 0xF8), "Cool Sky Ambient",  "SKY"},
+            {PackRgba8(0xC8, 0x98, 0x62), "Warm Bounce Fill",  "GI"},
+        };
+        break;
+    case 4u:
+        d.shortName  = "4:SkyVis";
+        d.title      = "Sky Hemisphere Visibility";
+        d.purpose    = "RT sky-cone openness & RTAO factor";
+        d.accentRgba = PackRgba8(0x90, 0xD2, 0xFF);
+        d.legend = {
+            {PackRgba8(0xEC, 0xF2, 0xFC), "Open Sky Dome",     "OPEN"},
+            {PackRgba8(0x1E, 0x24, 0x30), "Deep Crevice Occ",  "OCC"},
+        };
+        break;
+    case 5u:
+        d.shortName  = "5:GIBounce";
+        d.title      = "Multi-Bounce GI Irradiance";
+        d.purpose    = "SVGF filtered indirect diffuse light";
+        d.accentRgba = tokens::kAccentLead;
+        d.legend = {
+            {PackRgba8(0xEE, 0xB1, 0x53), "Warm Indirect GI",  "GI+"},
+            {PackRgba8(0x3C, 0x76, 0xB8), "Cool Sky Bounce",   "SKY"},
+        };
+        break;
+    case 6u:
+        d.shortName  = "6:RtRefl";
+        d.title      = "Ray-Traced Reflections";
+        d.purpose    = "Primary reflection ray hits & fallback";
+        d.accentRgba = PackRgba8(0x52, 0xD4, 0xF2);
+        d.legend = {
+            {PackRgba8(0x52, 0xD4, 0xF2), "RT Specular Hit",   "HIT"},
+            {PackRgba8(0x36, 0x4E, 0x72), "EnvCube Fallback",  "ENV"},
+        };
+        break;
+    case 7u:
+        d.shortName  = "7:RtDebug";
+        d.title      = "RT Reflection / Primary Buffer";
+        d.purpose    = "Raw RtRefl buffer before composite";
+        d.accentRgba = PackRgba8(0x64, 0xD2, 0xE8);
+        d.legend = {
+            {PackRgba8(0x64, 0xD2, 0xE8), "RtRefl RGB Sample", "RT"},
+            {PackRgba8(0x1C, 0x22, 0x2E), "No RT Reflection",  "MISS"},
+        };
+        break;
+    case 8u:
+        d.shortName  = "8:Weather";
+        d.title      = "Weather Wetness / Puddle / Snow";
+        d.purpose    = "Surface wetness, rain puddles & snow";
+        d.accentRgba = PackRgba8(0x64, 0xD2, 0xE8);
+        d.legend = {
+            {PackRgba8(0xF0, 0x5A, 0x4A), "Rain Wetness",      "R"},
+            {PackRgba8(0x46, 0xDC, 0x72), "Standing Puddles",  "G"},
+            {PackRgba8(0x5A, 0xA8, 0xFF), "Snow Accumulation", "B"},
+        };
+        break;
+    case 9u:
+        d.shortName  = "9:SoftMap";
+        d.title      = "Emissive & SoftMap Mask";
+        d.purpose    = "Emissive glow & character light slot";
+        d.accentRgba = tokens::kAccentLead;
+        d.legend = {
+            {PackRgba8(0xFA, 0xC8, 0x58), "Emissive / Glow",   "EM"},
+            {PackRgba8(0x56, 0x98, 0xF8), "EnvMap / Spec",     "SP"},
+        };
+        break;
+    case 10u:
+        d.shortName  = "10:SkyMask";
+        d.title      = "Sky & Unlit Depth Mask";
+        d.purpose    = "Highlights sky pixels (depth >= 1.0)";
+        d.accentRgba = PackRgba8(0xF0, 0x48, 0xD8);
+        d.legend = {
+            {PackRgba8(0xFF, 0x28, 0xE0), "Sky / Empty Depth", "SKY"},
+            {PackRgba8(0x68, 0x74, 0x86), "Solid World Geo",   "GEO"},
+        };
+        break;
+    case 11u:
+        d.shortName  = "11:CloudShd";
+        d.title      = "Volumetric Cloud Shadow";
+        d.purpose    = "Projected 3D cloud transmittance";
+        d.accentRgba = PackRgba8(0xA8, 0xC6, 0xE8);
+        d.legend = {
+            {PackRgba8(0xEC, 0xF0, 0xF8), "Clear Sun Beam",    "1.0"},
+            {PackRgba8(0x28, 0x34, 0x48), "Cloud Umbra",       "SHD"},
+        };
+        break;
+    case 12u:
+        d.shortName  = "12:Classes";
+        d.title      = "Legacy G-Buffer Classes";
+        d.purpose    = "Core material class tags from Spec.z";
+        d.accentRgba = tokens::kAccentLead;
+        d.legend = {
+            {PackRgba8(0xF0, 0x4E, 0x46), "Actor Skin",        "RED"},
+            {PackRgba8(0x3C, 0xD4, 0x62), "Foliage / Tree",    "GRN"},
+            {PackRgba8(0x98, 0x6A, 0x38), "Terrain / Ground",  "BRN"},
+            {PackRgba8(0x3C, 0x78, 0xF4), "Parallax Masonry",  "BLU"},
+        };
+        break;
+    case 13u:
+        d.shortName  = "13:Irrad";
+        d.title      = "Total Received Irradiance";
+        d.purpose    = "Direct diffuse + ambient irradiance";
+        d.accentRgba = tokens::kAccentLead;
+        d.legend = {
+            {PackRgba8(0xFA, 0xE2, 0xA8), "High Irradiance",   "LIT"},
+            {PackRgba8(0x28, 0x34, 0x4C), "Shadowed Ambient",  "AMB"},
+        };
+        break;
+    case 14u:
+        d.shortName  = "14:RestVis";
+        d.title      = "Untraced Lights RT Share";
+        d.purpose    = "ReSTIR / untraced point light visibility";
+        d.accentRgba = tokens::kAccentPass;
+        d.legend = {
+            {PackRgba8(0xE8, 0xEE, 0xF6), "Visible Local Light", "VIS"},
+            {PackRgba8(0x24, 0x2C, 0x3C), "Occluded Local",      "OCC"},
+        };
+        break;
+    case 15u:
+        d.shortName  = "15:LodAlbedo";
+        d.title      = "Distant LOD & Surface Albedo";
+        d.purpose    = "Raw G-Buffer Albedo including LOD";
+        d.accentRgba = tokens::kAccentEmerald;
+        d.legend = {
+            {PackRgba8(0xC8, 0xC2, 0xB4), "Surface Albedo",    "ALB"},
+            {PackRgba8(0x46, 0xB8, 0xB8), "Distant LOD (7)",   "LOD"},
+        };
+        break;
+    case 16u:
+        d.shortName  = "16:Albedo";
         d.title      = "Base Diffuse Albedo";
-        d.purpose    = "Unlit surface reflectance before shadows";
+        d.purpose    = "Unlit surface reflectance before lighting";
         d.accentRgba = tokens::kAccentLead;
         d.legend = {
             {PackRgba8(0xDE, 0xD6, 0xC8), "Diffuse Reflectance", "ALB"},
             {PackRgba8(0x4A, 0x70, 0x42), "Conifer & Moss Base", "FLR"},
         };
         break;
-    case 8u:
-        d.shortName  = "8:RoughSpec";
-        d.title      = "Roughness & Specular";
-        d.purpose    = "Microfacet roughness & wet clearcoat";
-        d.accentRgba = PackRgba8(0x64, 0xD2, 0xE8);
+    case 17u:
+        d.shortName  = "17:GameRatio";
+        d.title      = "Game Frame vs RAW Diffuse Ratio";
+        d.purpose    = "0.25 grey = exact exposure parity";
+        d.accentRgba = tokens::kAccentNull;
         d.legend = {
-            {PackRgba8(0x38, 0xB2, 0xF0), "Low Rough / Wet Coat", "SM"},
-            {PackRgba8(0xE6, 0xC4, 0x5A), "Matte Stone / Soil",   "RG"},
+            {PackRgba8(0x44, 0x44, 0x44), "0.25 Exact Parity", "EQ"},
+            {PackRgba8(0xEC, 0xEC, 0xEC), "Game Brighter",     "HI"},
         };
         break;
-    case 12u:
-        d.shortName  = "12:Classes";
-        d.title      = "Legacy G-Buffer Classes";
-        d.purpose    = "Material class tags from Spec.z";
-        d.accentRgba = tokens::kAccentLead;
+    case 18u:
+        d.shortName  = "18:EnvRefl";
+        d.title      = "Class-2 Environment Reflection";
+        d.purpose    = "Armor, metal & leather cubemap term";
+        d.accentRgba = PackRgba8(0xF2, 0xC6, 0x44);
         d.legend = {
-            {PackRgba8(0x52, 0xB8, 0x64), "Terrain / Ground (4)", "C4"},
-            {PackRgba8(0x98, 0xA4, 0xB8), "Stone / Arch (1)",     "C1"},
-            {PackRgba8(0x3C, 0xD4, 0x80), "Foliage / Tree (5)",   "C5"},
-            {PackRgba8(0xF0, 0x96, 0x78), "Skin / Hair / Eye",    "10-12"},
+            {PackRgba8(0xF2, 0xC6, 0x44), "Metallic EnvMap",   "C2"},
+            {PackRgba8(0x20, 0x24, 0x30), "Non-Env Surface",   "OFF"},
+        };
+        break;
+    case 19u:
+        d.shortName  = "19:CharLight";
+        d.title      = "Character Fill Light";
+        d.purpose    = "Audits flat camera-attached actor fill";
+        d.accentRgba = PackRgba8(0xE8, 0xB4, 0x92);
+        d.legend = {
+            {PackRgba8(0xEC, 0xE8, 0xE0), "Active Char Light", "CHR"},
+            {PackRgba8(0x1E, 0x22, 0x2C), "No Char Fill",      "0.0"},
+        };
+        break;
+    case 20u:
+        d.shortName  = "20:QuadAudit";
+        d.title      = "4-Quadrant Live Diagnostic";
+        d.purpose    = "TL Final | TR Norm+Env | BL RT | BR Heat";
+        d.accentRgba = tokens::kAccentPass;
+        d.legend = {
+            {tokens::kAccentPass,         "TL Final / BL RT",  "L"},
+            {tokens::kAccentLead,         "TR Norm / BR Heat", "R"},
+        };
+        break;
+    case 21u:
+        d.shortName  = "21:LumaHeat";
+        d.title      = "Luminance & Clipping Heatmap";
+        d.purpose    = "Flags crushed blacks & blown highlights";
+        d.accentRgba = PackRgba8(0xFF, 0x34, 0xC4);
+        d.legend = {
+            {PackRgba8(0x10, 0xD8, 0xF8), "Crushed < 0.015",   "LOW"},
+            {PackRgba8(0xEE, 0xC8, 0x48), "Balanced Midtones", "MID"},
+            {PackRgba8(0xFF, 0x18, 0xCC), "Blown > 0.95",      "HI"},
+        };
+        break;
+    case 22u:
+        d.shortName  = "22:Wireframe";
+        d.title      = "Mesh Wireframe & Silhouette Facets";
+        d.purpose    = "Normal & depth edge discontinuities";
+        d.accentRgba = PackRgba8(0x26, 0xF2, 0xD8);
+        d.legend = {
+            {PackRgba8(0x26, 0xF2, 0xD8), "Facet / Edge Wire", "EDG"},
+            {PackRgba8(0x28, 0x30, 0x3E), "Dimmed Albedo",     "GEO"},
+        };
+        break;
+    case 23u:
+        d.shortName  = "23:CloudScat";
+        d.title      = "Cloud Shadow & Spectral Scatter";
+        d.purpose    = "R=cloudShadow, G=ambient, B=direct";
+        d.accentRgba = PackRgba8(0x88, 0xC2, 0xF8);
+        d.legend = {
+            {PackRgba8(0xEE, 0x58, 0x4A), "Cloud Shadow",      "R"},
+            {PackRgba8(0x4C, 0xDC, 0x76), "Ambient Term",      "G"},
+            {PackRgba8(0x5A, 0x9E, 0xFA), "Direct Diffuse",    "B"},
+        };
+        break;
+    case 24u:
+        d.shortName  = "24:Roughness";
+        d.title      = "PBR Microfacet Roughness";
+        d.purpose    = "Dark=mirror/wet, Bright=matte stone/snow";
+        d.accentRgba = PackRgba8(0xB8, 0xC8, 0xDC);
+        d.legend = {
+            {PackRgba8(0x24, 0x2C, 0x38), "Smooth / Mirror",   "0.0"},
+            {PackRgba8(0xE4, 0xE8, 0xF0), "Rough Matte",       "1.0"},
+        };
+        break;
+    case 25u:
+        d.shortName  = "25:Metallic";
+        d.title      = "Metallic / Clearcoat / Dielectric";
+        d.purpose    = "R=conductor, G=wet coat, B=dielectric";
+        d.accentRgba = PackRgba8(0xF4, 0x78, 0x52);
+        d.legend = {
+            {PackRgba8(0xF0, 0x52, 0x46), "Conductor Metal",   "R"},
+            {PackRgba8(0x44, 0xDC, 0x74), "Wet / Clearcoat",   "G"},
+            {PackRgba8(0x52, 0x92, 0xF8), "Dielectric Base",   "B"},
+        };
+        break;
+    case 26u:
+        d.shortName  = "26:Parallax";
+        d.title      = "Parallax Height Map Inspector";
+        d.purpose    = "Cyan=_p.dds height, Gold=macro relief";
+        d.accentRgba = PackRgba8(0x26, 0xE6, 0xFF);
+        d.legend = {
+            {PackRgba8(0x26, 0xE6, 0xFF), "Authored _p.dds",   "P6"},
+            {PackRgba8(0xFF, 0xC6, 0x46), "Macro Relief",      "REL"},
+        };
+        break;
+    case 27u:
+        d.shortName  = "27:GiContrast";
+        d.title      = "SVGF GI Bounce & AO Contrast";
+        d.purpose    = "R=bounce luma, G=skyVis, B=AO term";
+        d.accentRgba = tokens::kAccentEmerald;
+        d.legend = {
+            {PackRgba8(0xF0, 0x62, 0x48), "GI Bounce Luma",    "R"},
+            {PackRgba8(0x48, 0xDC, 0x78), "Sky Visibility",    "G"},
+            {PackRgba8(0x58, 0x9C, 0xF8), "Ambient Occlusion", "B"},
         };
         break;
     case 28u:
@@ -496,11 +888,11 @@ DebugViewDescriptor GetDebugViewDescriptor(uint32_t debugViewId)
         d.purpose    = "Verifies zero moss/rock on creatures/NPCs";
         d.accentRgba = tokens::kAccentFail;
         d.legend = {
-            {PackRgba8(0xFF, 0x3C, 0xA6), "Skinned Actor/Fur/Cloth", "14"},
-            {PackRgba8(0xF4, 0xA2, 0x72), "Skin / Hair / Eye",       "10-12"},
-            {PackRgba8(0x42, 0xC8, 0x62), "Foliage / Trees",         "05"},
-            {PackRgba8(0x56, 0x98, 0xF8), "Terrain / Snow / Water",  "04/13"},
-            {PackRgba8(0x9C, 0xA6, 0xB4), "Static Stone / Arch",     "01"},
+            {PackRgba8(0xFF, 0x52, 0x10), "Skinned Actor/Fur/Cloth", "14"},
+            {PackRgba8(0xFF, 0x42, 0x3D), "Skin / Hair / Eye",       "10-12"},
+            {PackRgba8(0x20, 0xD2, 0x3E), "Foliage / Trees",         "05"},
+            {PackRgba8(0x8F, 0x61, 0x2E), "Terrain / Landscape",     "04"},
+            {PackRgba8(0x94, 0x9A, 0xA4), "Static Stone / Arch",     "01"},
         };
         break;
     case 29u:
@@ -509,43 +901,43 @@ DebugViewDescriptor GetDebugViewDescriptor(uint32_t debugViewId)
         d.purpose    = "Inspects silhouette edges & sky depth";
         d.accentRgba = PackRgba8(0x58, 0xD0, 0xE8);
         d.legend = {
-            {PackRgba8(0xF0, 0xF4, 0xFA), "Near Foreground",      "NEAR"},
-            {PackRgba8(0x3A, 0x68, 0xA8), "Mid / Far Landscape",  "FAR"},
-            {PackRgba8(0xF4, 0x71, 0x54), "Silhouette Edge Step", "EDGE"},
+            {PackRgba8(0x3A, 0x68, 0xE8), "Near Foreground",      "NEAR"},
+            {PackRgba8(0xD8, 0x92, 0x5A), "Mid / Far Landscape",  "FAR"},
+            {PackRgba8(0x26, 0xFF, 0xF2), "Silhouette Edge Step", "EDGE"},
         };
         break;
     case 30u:
-        d.shortName  = "30:Shadows";
+        d.shortName  = "30:ShadowStab";
         d.title      = "Shadow Stability & RT Light Slots";
-        d.purpose    = "Detects cascade seams & RT light pops";
+        d.purpose    = "R=sunShadow, G=RT top-3 slots, B=ReSTIR";
         d.accentRgba = tokens::kAccentLead;
         d.legend = {
-            {PackRgba8(0xEC, 0xE4, 0xC8), "Lit Sun / Cascade",   "SUN"},
-            {PackRgba8(0x28, 0x36, 0x54), "Shadowed Receiver",   "SHD"},
-            {PackRgba8(0xEE, 0xB1, 0x53), "Active RT Point Slot","RT-L"},
+            {PackRgba8(0xF0, 0x58, 0x48), "Sun Shadow Vis",       "R"},
+            {PackRgba8(0x48, 0xDC, 0x72), "RT Point-Light Slots", "G"},
+            {PackRgba8(0x58, 0x9C, 0xFA), "ReSTIR Visibility",    "B"},
         };
         break;
     case 31u:
         d.shortName  = "31:MossSnowIce";
         d.title      = "Moss / Snow / Glacier Mask";
-        d.purpose    = "Must be BLACK on dogs/NPCs/interiors";
+        d.purpose    = "Magenta alarm if moss leaks onto actors";
         d.accentRgba = tokens::kAccentEmerald;
         d.legend = {
-            {PackRgba8(0x3E, 0xD2, 0x66), "Exterior Moss Mask",   "MOS"},
-            {PackRgba8(0xE8, 0xF0, 0xFA), "Snow Overhang / Pack", "SNW"},
-            {PackRgba8(0x4C, 0xB8, 0xF8), "Glacial Ice Facets",   "ICE"},
-            {PackRgba8(0x18, 0x1B, 0x22), "Protected Actor/Indr", "OFF"},
+            {PackRgba8(0xF2, 0x56, 0x48), "Snow Overhang / Pack", "R"},
+            {PackRgba8(0x3E, 0xD2, 0x66), "Exterior Moss Mask",   "G"},
+            {PackRgba8(0x4C, 0x98, 0xF8), "Glacial Ice Facets",   "B"},
+            {PackRgba8(0xFF, 0x10, 0xE8), "ALARM: Actor Leak",    "ERR"},
         };
         break;
     case 32u:
-        d.shortName  = "32:SkinSSS";
+        d.shortName  = "32:SkinSSS/AO";
         d.title      = "Actor Skin / SSS & Contact-AO";
         d.purpose    = "Audits blotchy faces & outline halos";
         d.accentRgba = PackRgba8(0xF2, 0x9C, 0x7A);
         d.legend = {
-            {PackRgba8(0xF2, 0x9C, 0x7A), "Subsurface Scatter",  "SSS"},
-            {PackRgba8(0x61, 0x9F, 0xF9), "Soft Contact AO",     "AO"},
-            {PackRgba8(0xEE, 0xB1, 0x53), "Specular Rim Wrap",   "SPC"},
+            {PackRgba8(0xF2, 0x6C, 0x5A), "Actor / Skin SSS",     "R"},
+            {PackRgba8(0x4C, 0xD8, 0x7A), "Soft Contact AO",      "G"},
+            {PackRgba8(0x61, 0x9F, 0xF9), "Specular Rim Wrap",    "B"},
         };
         break;
     case 33u:
@@ -554,9 +946,46 @@ DebugViewDescriptor GetDebugViewDescriptor(uint32_t debugViewId)
         d.purpose    = "Magenta flash = NaN/Inf or HDR > 32";
         d.accentRgba = PackRgba8(0xFF, 0x2E, 0xD0);
         d.legend = {
-            {PackRgba8(0x22, 0x78, 0x54), "Safe Nominal [0..4]",  "OK"},
+            {PackRgba8(0x22, 0x98, 0x58), "Safe Nominal [0..4]",  "OK"},
             {PackRgba8(0xEE, 0xB1, 0x53), "Bright HDR [4..32]",   "HI"},
             {PackRgba8(0xFF, 0x20, 0xD4), "NaN / Inf / >32 BUG",  "ERR"},
+        };
+        break;
+    case 34u:
+        d.shortName  = "34:FloraTrees";
+        d.title      = "Flora, Bark, Pine & Foliage Audit";
+        d.purpose    = "Flags crushed-black bark & bleached needles";
+        d.accentRgba = tokens::kAccentEmerald;
+        d.legend = {
+            {PackRgba8(0x2E, 0xC8, 0x5A), "Foliage Canopy (b=5)", "FLR"},
+            {PackRgba8(0x8E, 0xE2, 0x3A), "Pine Sapling (b=1)",   "PIN"},
+            {PackRgba8(0xC8, 0x84, 0x38), "Bark Trunk Timber",    "BRK"},
+            {PackRgba8(0xF4, 0x32, 0x2E), "ALARM: Crushed <0.015","BLK"},
+            {PackRgba8(0xFF, 0x20, 0xD8), "ALARM: Bleached Chalk","CHK"},
+        };
+        break;
+    case 35u:
+        d.shortName  = "35:MotionEdge";
+        d.title      = "Motion Vector & Silhouette Audit";
+        d.purpose    = "R/G=signed MV (0.5=0), B=MV divergence";
+        d.accentRgba = PackRgba8(0x52, 0xD8, 0xF8);
+        d.legend = {
+            {PackRgba8(0xF4, 0x5A, 0x4A), "Signed Motion X (0.5=0)", "R"},
+            {PackRgba8(0x4A, 0xE2, 0x82), "Signed Motion Y (0.5=0)", "G"},
+            {PackRgba8(0x58, 0xA8, 0xFF), "MV Divergence / Outline", "B"},
+            {PackRgba8(0x80, 0x80, 0x10), "Static / Sky (0.5,0.5)",  "0"},
+        };
+        break;
+    case 36u:
+        d.shortName  = "36:FireFroxel";
+        d.title      = "Thermal Fire, Froxel & Transmittance";
+        d.purpose    = "Indoor transmittance compliance >= 0.78";
+        d.accentRgba = tokens::kAccentFail;
+        d.legend = {
+            {PackRgba8(0xFF, 0x52, 0x2A), "Fire Heat / Emission", "R"},
+            {PackRgba8(0x46, 0xDC, 0x7A), "Froxel Ext (1-T)",     "G"},
+            {PackRgba8(0x58, 0xA6, 0xFF), "Volumetric Sun Shaft", "B"},
+            {PackRgba8(0xF4, 0x2A, 0x3A), "ALARM: Indoor T<0.78", "FOG"},
         };
         break;
     default:
@@ -572,6 +1001,98 @@ DebugViewDescriptor GetDebugViewDescriptor(uint32_t debugViewId)
     return d;
 }
 
+DebugViewDescriptor GetWaterDebugViewDescriptor(uint32_t waterDebugViewId)
+{
+    DebugViewDescriptor d{};
+    d.viewId = waterDebugViewId;
+    switch (waterDebugViewId) {
+    case 1u:
+        d.shortName  = "W1:Refl";
+        d.title      = "Water Surface Reflections";
+        d.purpose    = "RT & sky cubemap mirror reflectance";
+        d.accentRgba = PackRgba8(0x52, 0xD2, 0xF8);
+        d.legend = {
+            {PackRgba8(0x64, 0xD2, 0xFA), "Sky / RT Reflection",  "RFL"},
+            {PackRgba8(0x28, 0x42, 0x62), "Grazing Horizon",      "HRZ"},
+        };
+        break;
+    case 2u:
+        d.shortName  = "W2:Caustics";
+        d.title      = "Underwater Refracted Caustics";
+        d.purpose    = "Refracted sunlit caustic filaments (4x)";
+        d.accentRgba = PackRgba8(0x6C, 0xF0, 0xE0);
+        d.legend = {
+            {PackRgba8(0x7C, 0xFA, 0xE8), "Focused Caustic Web",  "CAU"},
+            {PackRgba8(0x18, 0x36, 0x44), "Deep Attenuated Bed",  "DEP"},
+        };
+        break;
+    case 3u:
+        d.shortName  = "W3:Fresnel";
+        d.title      = "Schlick Fresnel & View Grazing";
+        d.purpose    = "R=Fresnel F, G=NdotV, B=1.0";
+        d.accentRgba = PackRgba8(0x90, 0xB8, 0xFF);
+        d.legend = {
+            {PackRgba8(0xF4, 0x58, 0x58), "Fresnel Factor (F)",   "R"},
+            {PackRgba8(0x4C, 0xE0, 0x7A), "View Dot Normal",      "G"},
+        };
+        break;
+    case 4u:
+        d.shortName  = "W4:Depth";
+        d.title      = "Optical Water Bed & Depth";
+        d.purpose    = "Red=no bed, Green=deep, Blue=shallow";
+        d.accentRgba = PackRgba8(0x46, 0xC8, 0xF2);
+        d.legend = {
+            {PackRgba8(0xF4, 0x36, 0x32), "No Bed Behind Water",  "RED"},
+            {PackRgba8(0x36, 0xD8, 0x64), "Deep River / Lake",    "GRN"},
+            {PackRgba8(0x46, 0x8E, 0xFF), "Shallow Shore Bed",    "BLU"},
+        };
+        break;
+    case 5u:
+        d.shortName  = "W5:Normal";
+        d.title      = "Wave Normal & Fresnel Bands";
+        d.purpose    = "Red F>0.25, Green F>0.06, Blue F<=0.06";
+        d.accentRgba = PackRgba8(0x64, 0xE0, 0x98);
+        d.legend = {
+            {PackRgba8(0xF4, 0x38, 0x34), "Grazing Band F>0.25",  "HI"},
+            {PackRgba8(0x3E, 0xD8, 0x66), "Mid Band F>0.06",      "MID"},
+            {PackRgba8(0x48, 0x88, 0xFF), "Steep Normal F<=0.06", "LO"},
+        };
+        break;
+    case 6u:
+        d.shortName  = "W6:Body";
+        d.title      = "Water Body Absorption & Scatter";
+        d.purpose    = "Refracted riverbed + Beer-Lambert volume";
+        d.accentRgba = PackRgba8(0x38, 0xB8, 0xB2);
+        d.legend = {
+            {PackRgba8(0x38, 0xB8, 0xB2), "Refracted Volume",     "VOL"},
+            {PackRgba8(0x16, 0x34, 0x42), "Deep Extinction",      "ABS"},
+        };
+        break;
+    case 7u:
+        d.shortName  = "W7:FlowDiag";
+        d.title      = "River Flow, Depth & Shore Audit";
+        d.purpose    = "R=flow, G=depth/120, B=shore, Mag=seam";
+        d.accentRgba = PackRgba8(0xFF, 0x3C, 0xC8);
+        d.legend = {
+            {PackRgba8(0xF4, 0x4C, 0x42), "River Flow Velocity",  "R"},
+            {PackRgba8(0x3E, 0xDC, 0x72), "Optical Depth / 120",  "G"},
+            {PackRgba8(0x4C, 0x96, 0xFF), "Shore Alpha Feather",  "B"},
+            {PackRgba8(0xFF, 0x1E, 0xDC), "ALARM: Shallow Seam",  "ERR"},
+        };
+        break;
+    default:
+        d.shortName  = "W0:Final";
+        d.title      = "Final Physical Water Surface";
+        d.purpose    = "Normal water rendering (debug off)";
+        d.accentRgba = tokens::kAccentPass;
+        d.legend = {
+            {tokens::kAccentPass, "Physical Water", "WTR"},
+        };
+        break;
+    }
+    return d;
+}
+
 void FormatDebugLayerHud(const DebugLayerHudSnapshot& snap, UiDrawList& outList)
 {
     outList.Clear();
@@ -579,7 +1100,10 @@ void FormatDebugLayerHud(const DebugLayerHudSnapshot& snap, UiDrawList& outList)
 
     const uint32_t s = std::clamp(snap.scale, 1u, 2u);
     const float sf = static_cast<float>(s);
-    const DebugViewDescriptor view = GetDebugViewDescriptor(snap.activeDebugView);
+    const bool waterMode = (snap.activeWaterDebugView > 0u);
+    const DebugViewDescriptor view = waterMode
+        ? GetWaterDebugViewDescriptor(snap.activeWaterDebugView)
+        : GetDebugViewDescriptor(snap.activeDebugView);
 
     const float x0 = static_cast<float>(snap.originX);
     const float y0 = static_cast<float>(snap.originY);
@@ -587,13 +1111,14 @@ void FormatDebugLayerHud(const DebugLayerHudSnapshot& snap, UiDrawList& outList)
     const float panelW = (snap.drawerOpen ? 344.0f : 268.0f) * sf;
     const float innerW = panelW - pad * 2.0f;
 
-    const float legendH = snap.drawerOpen ? (static_cast<float>(view.legend.size()) * 14.0f * sf + 20.0f * sf) : 0.0f;
-    const float togglesH = snap.drawerOpen ? (4.0f * 16.0f * sf + 18.0f * sf) : 0.0f;
-    const float slidersH = snap.drawerOpen ? (4.0f * 24.0f * sf + 18.0f * sf) : 0.0f;
-    const float sparkH = (snap.historyFrameMs && snap.historyCount > 0u) ? (42.0f * sf) : 0.0f;
-    const float headerH = 44.0f * sf;
-    const float footerH = 22.0f * sf;
-    const float panelH = pad * 2.0f + headerH + legendH + togglesH + slidersH + sparkH + footerH;
+    const float tabBarH   = snap.drawerOpen ? (24.0f * sf) : 0.0f;
+    const float legendH   = snap.drawerOpen ? (static_cast<float>(view.legend.size()) * 14.0f * sf + 20.0f * sf) : 0.0f;
+    const float togglesH  = snap.drawerOpen ? (4.0f * 15.0f * sf + 18.0f * sf) : 0.0f;
+    const float budgetH   = snap.drawerOpen ? (16.0f * sf + 14.0f * sf + 3.0f * 14.0f * sf + 18.0f * sf) : 0.0f;
+    const float sparkH    = (snap.historyFrameMs && snap.historyCount > 0u) ? (40.0f * sf) : 0.0f;
+    const float headerH   = 44.0f * sf;
+    const float footerH   = 20.0f * sf;
+    const float panelH    = pad * 2.0f + headerH + tabBarH + legendH + togglesH + budgetH + sparkH + footerH;
 
     // 1. Calm dark ink panel with crisp elevation border and active-view semantic accent top bar
     outList.AddPanel(x0, y0, panelW, panelH, 6.0f * sf,
@@ -603,9 +1128,7 @@ void FormatDebugLayerHud(const DebugLayerHudSnapshot& snap, UiDrawList& outList)
     const float cx = x0 + pad;
 
     // 2. Title + Active DebugView Pill
-    char titleBuf[64]{};
-    std::snprintf(titleBuf, sizeof(titleBuf), "RAW Debug Layers");
-    outList.AddText(cx, cy + 2.0f * sf, titleBuf, tokens::kInkPrimary, s);
+    outList.AddText(cx, cy + 2.0f * sf, waterMode ? "RAW Water Debug" : "RAW Debug Layers", tokens::kInkPrimary, s);
 
     const float pillW = static_cast<float>(MeasureTextWidthPx(view.shortName, s)) + 25.0f * sf;
     outList.AddPill(cx + std::max(0.0f, innerW - pillW), cy - 1.0f * sf, view.shortName,
@@ -628,8 +1151,13 @@ void FormatDebugLayerHud(const DebugLayerHudSnapshot& snap, UiDrawList& outList)
     cy += 13.0f * sf;
 
     if (snap.drawerOpen) {
-        // 3. Color Legend Swatches for active DebugView
-        outList.AddSectionHeader(cx, cy, innerW, "Legend", view.accentRgba, s);
+        // 3. Compact Tab Bar
+        static const char* const kTabs[3] = {"Layers", "Perf", "Vars"};
+        outList.AddTabBar(cx, cy, innerW, kTabs, 3u, snap.activeTabIndex % 3u, view.accentRgba, s);
+        cy += 24.0f * sf;
+
+        // 4. Collapsible Color Legend Swatches for active Lighting or Water DebugView
+        outList.AddSectionHeader(cx, cy, innerW, "Legend", view.accentRgba, s, true, true);
         cy += 16.0f * sf;
         for (const auto& sw : view.legend) {
             outList.AddLegendSwatch(cx, cy, sw.rgba, sw.label, sw.code, s);
@@ -637,44 +1165,56 @@ void FormatDebugLayerHud(const DebugLayerHudSnapshot& snap, UiDrawList& outList)
         }
         cy += 4.0f * sf;
 
-        // 4. Live World / Solver Toggle Switches
-        outList.AddSectionHeader(cx, cy, innerW, "Live GPU Systems", tokens::kAccentPass, s);
+        // 5. Live World / Solver Toggle Switches
+        outList.AddSectionHeader(cx, cy, innerW, "Live GPU Systems", tokens::kAccentPass, s, true, true);
         cy += 16.0f * sf;
-        outList.AddToggle(cx, cy, innerW, "RT Shadows & GI",   snap.rtActive,         tokens::kAccentPass, s); cy += 16.0f * sf;
-        outList.AddToggle(cx, cy, innerW, "Fluid Fire & Water",snap.fluidActive,      tokens::kAccentLead, s); cy += 16.0f * sf;
-        outList.AddToggle(cx, cy, innerW, "Snow Deformation",  snap.snowDeformActive, tokens::kAccentPass, s); cy += 16.0f * sf;
-        outList.AddToggle(cx, cy, innerW, "Dynamic Grass Wind",snap.grassWindActive,  tokens::kAccentEmerald, s); cy += 16.0f * sf;
+        outList.AddToggle(cx, cy, innerW, "RT Shadows & GI",    snap.rtActive,         tokens::kAccentPass, s);    cy += 15.0f * sf;
+        outList.AddToggle(cx, cy, innerW, "Fluid Fire & Water", snap.fluidActive,      tokens::kAccentLead, s);    cy += 15.0f * sf;
+        outList.AddToggle(cx, cy, innerW, "Snow Deformation",   snap.snowDeformActive, tokens::kAccentPass, s);    cy += 15.0f * sf;
+        outList.AddToggle(cx, cy, innerW, "Dynamic Grass Wind", snap.grassWindActive,  tokens::kAccentEmerald, s); cy += 15.0f * sf;
         cy += 2.0f * sf;
 
-        // 5. GPU Pass Budget Sliders (normalized against 2.0ms per pass)
-        outList.AddSectionHeader(cx, cy, innerW, "GPU Pass Timings", tokens::kAccentLead, s);
+        // 6. Stacked GPU Pass Budget Bar + Live Engine Var Rows
+        outList.AddSectionHeader(cx, cy, innerW, "GPU Pass Budget", tokens::kAccentLead, s, true, true);
         cy += 16.0f * sf;
-        auto addPassBar = [&](const char* name, float ms, uint32_t barCol) {
-            const float safe = (std::isfinite(ms) && ms >= 0.0f) ? ms : 0.0f;
-            char vbuf[24]{};
-            std::snprintf(vbuf, sizeof(vbuf), "%.3f ms", static_cast<double>(safe));
-            outList.AddSlider(cx, cy, innerW, name, std::clamp(safe / 1.5f, 0.0f, 1.0f), vbuf, barCol, s);
-            cy += 24.0f * sf;
+
+        const float safeLight = (std::isfinite(snap.lightingMs) && snap.lightingMs >= 0.0f) ? snap.lightingMs : 0.0f;
+        const float safeFluid = ((std::isfinite(snap.waterMs) && snap.waterMs >= 0.0f) ? snap.waterMs : 0.0f) +
+                                ((std::isfinite(snap.fireMs) && snap.fireMs >= 0.0f) ? snap.fireMs : 0.0f);
+        const float safeGiCl  = ((std::isfinite(snap.giMs) && snap.giMs >= 0.0f) ? snap.giMs : 0.0f) +
+                                ((std::isfinite(snap.cloudsMs) && snap.cloudsMs >= 0.0f) ? snap.cloudsMs : 0.0f);
+        const float safePost  = ((std::isfinite(snap.postMs) && snap.postMs >= 0.0f) ? snap.postMs : 0.0f) + safeUi;
+        const float totalGpu  = safeLight + safeFluid + safeGiCl + safePost;
+
+        const UiBudgetSegment segs[4] = {
+            {"Lighting",    safeLight, tokens::kAccentPass},
+            {"Water+Fire",  safeFluid, tokens::kAccentLead},
+            {"GI+Clouds",   safeGiCl,  tokens::kAccentEmerald},
+            {"Post+UI",     safePost,  tokens::kAccentFail},
         };
-        addPassBar("Lighting + Shadows", snap.lightingMs, tokens::kAccentPass);
-        addPassBar("Water + Fire Fluid", snap.waterMs + snap.fireMs, tokens::kAccentLead);
-        addPassBar("GI + Clouds",        snap.giMs + snap.cloudsMs, tokens::kAccentEmerald);
-        addPassBar("Post + UI",          snap.postMs + snap.uiMs, tokens::kAccentPass);
+        outList.AddBudgetBar(cx, cy, innerW, 12.0f * sf, segs, 4u, 2.0f, 3.0f, s);
+        cy += 16.0f * sf;
+
+        const uint32_t gpuVerdict = (totalGpu <= 2.0f) ? tokens::kAccentPass
+                                  : ((totalGpu <= 3.0f) ? tokens::kAccentLead : tokens::kAccentFail);
+        outList.AddEngineVarFloat(cx, cy, innerW, "RAW GPU Total", totalGpu, "ms", gpuVerdict, s); cy += 14.0f * sf;
+        outList.AddEngineVarFloat(cx, cy, innerW, "Lighting + Fluid", safeLight + safeFluid, "ms", tokens::kAccentLead, s); cy += 14.0f * sf;
+        outList.AddEngineVarRow(cx, cy, innerW, "Active Layer", view.shortName, view.accentRgba, s); cy += 14.0f * sf;
         cy += 2.0f * sf;
     }
 
-    // 6. Optional 64-sample Frame-Time Sparkline
+    // 7. Optional 64-sample Frame-Time Sparkline
     if (snap.historyFrameMs && snap.historyCount > 0u) {
-        outList.AddSparkline(cx, cy, innerW, 36.0f * sf,
+        outList.AddSparkline(cx, cy, innerW, 34.0f * sf,
                              snap.historyFrameMs, snap.historyCount,
                              8.333f, 16.667f, 25.0f);
-        cy += 42.0f * sf;
+        cy += 40.0f * sf;
     }
 
-    // 7. Hotkey hint strip
+    // 8. Hotkey hint strip
     outList.AddDivider(cx, cy, innerW, tokens::kBorder);
     cy += 5.0f * sf;
-    outList.AddText(cx, cy, "F9 HUD | F10 Debug Drawer | F11 Cycle View", tokens::kInkMuted, s);
+    outList.AddText(cx, cy, "F9 HUD | F10 Drawer | F11 View (0..36 / W1..W7)", tokens::kInkMuted, s);
 }
 
 RawUiLibHost::~RawUiLibHost()

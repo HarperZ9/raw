@@ -24,6 +24,7 @@ namespace
 uint64_t s_world = 0;
 size_t s_step = 0;
 uint32_t s_held = 0;
+uint32_t s_burstIdx = 0;
 raw::bridge::BridgeTimings s_sum{};
 uint32_t s_timed = 0, s_probed = 0;
 
@@ -31,9 +32,9 @@ struct Step { const char* name; LightingTuning t; };
 std::vector<Step> s_steps, s_all;
 
 // The harness (tools/harness/run.py) asks for a capture set by writing raw_harness_go.txt beside
-// the game: key=value lines scene, keyframe, steps (names from s_all, in order), hold, dir. The
+// the game: key=value lines scene, keyframe, steps (names from s_all, in order), hold, burst, stride, dir. The
 // proxy answers with raw_harness_done.txt and one JSON line a step in <dir>\harness_results.jsonl.
-struct Request { std::string scene, keyframe, dir; bool active = false; };
+struct Request { std::string scene, keyframe, dir; uint32_t burst = 1, stride = 2; bool active = false; };
 Request s_req;
 uint64_t s_polls = 0;
 
@@ -63,6 +64,8 @@ bool PollHarness()
         const std::string k = l.substr(0, eq), v = l.substr(eq + 1);
         if (k == "scene") r.scene = v; else if (k == "keyframe") r.keyframe = v; else if (k == "dir") r.dir = v;
         else if (k == "steps") steps = v; else if (k == "hold") hold = std::atoi(v.c_str());
+        else if (k == "burst") r.burst = static_cast<uint32_t>(std::clamp(std::atoi(v.c_str()), 1, 16));
+        else if (k == "stride") r.stride = static_cast<uint32_t>(std::clamp(std::atoi(v.c_str()), 1, 30));
     }
     fclose(f);
     DeleteFileA(go.c_str());
@@ -78,8 +81,9 @@ bool PollHarness()
     Cfg().lightScene = r.scene + "_" + r.keyframe;
     r.active = !s_steps.empty() && !r.dir.empty();
     s_req = r;
-    s_step = 0; s_held = 0;
-    Log("[Harness] go: scene %s keyframe %s, %zu steps, hold %d", r.scene.c_str(), r.keyframe.c_str(), s_steps.size(), Cfg().lightHold);
+    s_step = 0; s_held = 0; s_burstIdx = 0;
+    Log("[Harness] go: scene %s keyframe %s, %zu steps, hold %d, burst %u, stride %u",
+        r.scene.c_str(), r.keyframe.c_str(), s_steps.size(), Cfg().lightHold, r.burst, r.stride);
     if (!r.active) { FILE* d = nullptr; if (fopen_s(&d, GameFile("raw_harness_done.txt").c_str(), "w") == 0 && d) { fprintf(d, "%s refused\n", r.keyframe.c_str()); fclose(d); } }
     return r.active;
 }
@@ -119,7 +123,14 @@ void TimingSample()
 void LightingMakeSteps()
 {
     const LightingTuning base = Cfg().light;
-    auto with = [&](int mode, auto edit) { LightingTuning t = base; t.mode = mode; edit(t); return t; };
+    auto with = [&](int mode, auto edit) {
+        LightingTuning t = base;
+        t.mode = mode;
+        t.view = 0;
+        t.waterView = 0;
+        edit(t);
+        return t;
+    };
     auto none = [](LightingTuning& t) { t.softShadows = t.ggxSpecular = t.volumetricFog = t.contactShadows = t.ao = t.rtShadows = false; };
     s_all = {
         {"game", with(0, [](LightingTuning&) {})},
@@ -140,9 +151,41 @@ void LightingMakeSteps()
         {"improved_no_env", with(2, [](LightingTuning& t) { t.envMap = false; })},
         {"match_no_char", with(1, [](LightingTuning& t) { t.charLight = false; })},       // control: no character light
         {"improved_no_char", with(2, [](LightingTuning& t) { t.charLight = false; })},
+        // Full-pipeline custom Lighting debug render views (flags.w = 1..36):
+        {"view_normals", with(2, [](LightingTuning& t) { t.view = 1; })},
+        {"view_sun_shadow", with(2, [](LightingTuning& t) { t.view = 2; })},
+        {"view_ambient", with(2, [](LightingTuning& t) { t.view = 3; })},
+        {"view_sky_vis", with(2, [](LightingTuning& t) { t.view = 4; })},
+        {"view_gi_bounce", with(2, [](LightingTuning& t) { t.view = 5; })},
+        {"view_rt_refl", with(2, [](LightingTuning& t) { t.view = 6; })},
+        {"view_weather", with(2, [](LightingTuning& t) { t.view = 8; })},
+        {"view_cloud_shadow", with(2, [](LightingTuning& t) { t.view = 11; })},
         {"view_classes", with(2, [](LightingTuning& t) { t.view = 12; })},
         {"view_lod_normal", with(2, [](LightingTuning& t) { t.view = 14; })},            // distant LOD: its G-buffer normal
         {"view_lod_albedo", with(2, [](LightingTuning& t) { t.view = 15; })},            // distant LOD: its G-buffer base colour
+        {"view_albedo", with(2, [](LightingTuning& t) { t.view = 16; })},
+        {"view_char_light", with(2, [](LightingTuning& t) { t.view = 19; })},
+        {"view_wireframe", with(2, [](LightingTuning& t) { t.view = 22; })},
+        {"view_roughness", with(2, [](LightingTuning& t) { t.view = 24; })},
+        {"view_metallic", with(2, [](LightingTuning& t) { t.view = 25; })},
+        {"view_parallax", with(2, [](LightingTuning& t) { t.view = 26; })},
+        {"view_gi_contrast", with(2, [](LightingTuning& t) { t.view = 27; })},
+        {"view_full_classes", with(2, [](LightingTuning& t) { t.view = 28; })},
+        {"view_depth_edge", with(2, [](LightingTuning& t) { t.view = 29; })},
+        {"view_shadow_stab", with(2, [](LightingTuning& t) { t.view = 30; })},
+        {"view_moss_mask", with(2, [](LightingTuning& t) { t.view = 31; })},
+        {"view_skin_sss", with(2, [](LightingTuning& t) { t.view = 32; })},
+        {"view_nan_hdr", with(2, [](LightingTuning& t) { t.view = 33; })},
+        {"view_flora_trees", with(2, [](LightingTuning& t) { t.view = 34; })},
+        {"view_motion_outline", with(2, [](LightingTuning& t) { t.view = 35; })},
+        {"view_fire_froxel", with(2, [](LightingTuning& t) { t.view = 36; })},
+        // Full-pipeline custom Water debug render views (RtWater.hlsl waterView = 1..7):
+        {"water_refl", with(2, [](LightingTuning& t) { t.water = true; t.waterView = 1; })},
+        {"water_caustics", with(2, [](LightingTuning& t) { t.water = true; t.waterView = 2; })},
+        {"water_fresnel", with(2, [](LightingTuning& t) { t.water = true; t.waterView = 3; })},
+        {"water_depth", with(2, [](LightingTuning& t) { t.water = true; t.waterView = 4; })},
+        {"water_body", with(2, [](LightingTuning& t) { t.water = true; t.waterView = 6; })},
+        {"water_flow_diag", with(2, [](LightingTuning& t) { t.water = true; t.waterView = 7; })},
         {"game_after", with(0, [](LightingTuning&) {})},
     };
     s_steps = s_all;
@@ -181,16 +224,33 @@ void LightingScheduleOnPresent(bool worldFrame)
         if (Cfg().lightCaptureAfter <= 0 || Cfg().lightCaptureDir.empty() || s_step >= s_steps.size()) return;
         if (++s_world < static_cast<uint64_t>(Cfg().lightCaptureAfter)) return;
     }
-    if (s_held == 0) {
+    if (s_held == 0 && s_burstIdx == 0) {
         Cfg().light = s_steps[s_step].t;
         Tune();
         s_sum = {}; s_timed = 0; s_probed = 0;
     }
     if (b && b->Ready() && Cfg().light.mode > 0) TimingSample();
-    if (++s_held < static_cast<uint32_t>(Cfg().lightHold)) return;
+    const uint32_t burstTotal = (Cfg().harness && s_req.active) ? s_req.burst : 1u;
+    const uint32_t targetHold = (s_burstIdx == 0u)
+        ? static_cast<uint32_t>(Cfg().lightHold)
+        : ((Cfg().harness && s_req.active) ? s_req.stride : 1u);
+    if (++s_held < targetHold) return;
     const Step& st = s_steps[s_step];
     _mkdir(Cfg().lightCaptureDir.c_str());
-    CaptureBackbuffer(Cfg().lightCaptureDir + "\\" + Cfg().lightScene + "_" + st.name + ".bmp");
+    std::string bmpPath;
+    if (burstTotal <= 1u) {
+        bmpPath = Cfg().lightCaptureDir + "\\" + Cfg().lightScene + "_" + st.name + ".bmp";
+    } else {
+        char suffix[20];
+        std::snprintf(suffix, sizeof suffix, "_f%02u.bmp", s_burstIdx);
+        bmpPath = Cfg().lightCaptureDir + "\\" + Cfg().lightScene + "_" + st.name + suffix;
+    }
+    CaptureBackbuffer(bmpPath);
+    if (s_burstIdx + 1u < burstTotal) {
+        ++s_burstIdx;
+        s_held = 0;
+        return;
+    }
     std::string stats;
     if (b && b->Ready()) LightingStats(st.name, st.t.mode, &stats);
     if (b && b->Ready()) {
@@ -213,6 +273,7 @@ void LightingScheduleOnPresent(bool worldFrame)
             s_sum.passMs / s_timed, s_sum.pass.stageMs[0] / s_timed, s_sum.pass.stageMs[1] / s_timed, s_sum.pass.stageMs[2] / s_timed,
             s_sum.bridgeCostMs / s_timed);
     s_held = 0;
+    s_burstIdx = 0;
     if (++s_step < s_steps.size()) return;
     Log("[Lighting] capture set done");
     if (Cfg().harness && s_req.active) {

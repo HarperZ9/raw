@@ -34,17 +34,21 @@ int RunSkeletonStencilMathTests(void (*checkFn)(bool, const char*) = nullptr) {
         using namespace raw::dxbc::material;
         bool ok = (SkinnedActor == 14u);
 
-        // Generic Lighting+Lit (1) promoted cleanly to SkinnedActor (14) and FirstPerson SkinnedActor (142):
+        // Generic Lighting+Lit (1) promoted cleanly to SkinnedActor (14), FirstPerson SkinnedActor (142),
+        // or Foliage/SoftLit (5) for alpha-tested pine saplings/shrubs while static Lit stays 1:
         const uint8_t clsActor3p = ResolveMaterialClass(Lit, SkinnedActor, 0u);
         const uint8_t clsActor1p = ResolveMaterialClass(Lit, SkinnedActor, FirstPersonFlag);
+        const uint8_t clsFoliage = ResolveMaterialClass(Lit, SoftLit, 0u);
         const uint8_t clsStatic  = ResolveMaterialClass(Lit, None, 0u);
-        ok = ok && (clsActor3p == 14u) && (clsActor1p == 142u) && (clsStatic == 1u);
+        ok = ok && (clsActor3p == 14u) && (clsActor1p == 142u) && (clsFoliage == 5u) && (clsStatic == 1u);
         ok = ok && IsActorMaterialClass(clsActor3p) && IsActorMaterialClass(clsActor1p) && !IsActorMaterialClass(clsStatic);
+        ok = ok && IsFoliageMaterialClass(clsFoliage) && !IsFoliageMaterialClass(clsActor3p) && !IsFoliageMaterialClass(clsStatic);
 
-        // Specialized classes MUST NOT be overwritten by SkinnedActor override:
+        // Specialized classes MUST NOT be overwritten by either SkinnedActor or Foliage overrides:
         const uint8_t preserved[] = {Skin, Hair, Eye, SoftLit, Landscape, EnvironmentMapped, GlowMapped, Parallax, TruePBR, Water, Effect, DistantLod};
         for (uint8_t c : preserved) {
             if (ResolveMaterialClass(c, SkinnedActor, 0u) != c) ok = false;
+            if (ResolveMaterialClass(c, SoftLit, 0u) != c) ok = false;
         }
         ok = ok && IsActorMaterialClass(Skin) && IsActorMaterialClass(Hair) && IsActorMaterialClass(Eye);
         ok = ok && !IsActorMaterialClass(SoftLit) && !IsActorMaterialClass(Landscape) && !IsActorMaterialClass(EnvironmentMapped);
@@ -56,8 +60,9 @@ int RunSkeletonStencilMathTests(void (*checkFn)(bool, const char*) = nullptr) {
             if (dec != static_cast<uint8_t>(v)) ok = false;
         }
         ok = ok && (DecodeMaterialClassUnorm(EncodeMaterialClassUnorm(SkinnedActor)) == 14u);
+        ok = ok && (DecodeMaterialClassUnorm(EncodeMaterialClassUnorm(SoftLit)) == 5u);
         ok = ok && (DecodeMaterialClassUnorm(-0.5f) == 0u) && (DecodeMaterialClassUnorm(1.5f) == 255u);
-        check(ok, "gbuffer_skinned_actor_base14_resolution_and_roundtrip");
+        check(ok, "gbuffer_skinned_actor_base14_and_foliage_base5_roundtrip");
     }
 
     // 2. Quaternion shortest-path antipodal SLERP, near-zero NLERP fallback, unit norm & NaN fail-closed:

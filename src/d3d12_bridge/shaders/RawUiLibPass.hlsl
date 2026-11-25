@@ -36,6 +36,7 @@ static const uint kCmdSlider    = 4u;
 static const uint kCmdSparkline = 5u;
 static const uint kCmdText      = 6u;
 static const uint kCmdSwatch    = 7u;
+static const uint kCmdDisc      = 8u; // meta 0=verdict disc, 1=down chevron, 2=right chevron
 
 // Clean-room 7x9 ASCII bitmap font covering ALL 95 printable ASCII chars (32 ' ' .. 126 '~').
 // Each glyph is 9 rows x 7 columns packed into uint3(x, y, z):
@@ -272,6 +273,13 @@ float roundedBoxSdf(float2 p, float2 halfSize, float radius) {
     return length(max(q, 0.0f.xx)) + min(max(q.x, q.y), 0.0f) - r;
 }
 
+float segmentSdf(float2 p, float2 a, float2 b) {
+    const float2 pa = p - a;
+    const float2 ba = b - a;
+    const float h = saturate(dot(pa, ba) / max(dot(ba, ba), 1.0e-5f));
+    return length(pa - ba * h);
+}
+
 bool sampleGlyph7x9(uint asciiCode, int gx, int gy) {
     if (gx < 0 || gx >= 7 || gy < 0 || gy >= 9) return false;
     if (asciiCode < 32u || asciiCode > 126u) return false;
@@ -288,8 +296,39 @@ bool sampleGlyph7x9(uint asciiCode, int gx, int gy) {
     return (colBit != 0u);
 }
 
+groupshared uint s_activeMask[8];
+
 [numthreads(8, 8, 1)]
-void cs_uilib_draw(uint3 dtid : SV_DispatchThreadID) {
+void cs_uilib_draw(uint3 dtid : SV_DispatchThreadID,
+                   uint3 gid  : SV_GroupID,
+                   uint  gtid : SV_GroupIndex) {
+    const uint cmdCount = min(targetInfo.z, 256u);
+    if (cmdCount == 0u) {
+        return;
+    }
+
+    // Cooperative 8x8 tile AABB + clipRect culling in exact painter's order (bitmask of 256 commands)
+    if (gtid < 8u) {
+        s_activeMask[gtid] = 0u;
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    const float2 tileMin = float2(dirtyRect.xy + gid.xy * 8u);
+    const float2 tileMax = tileMin + 8.0f;
+    for (uint ci = gtid; ci < cmdCount; ci += 64u) {
+        const GpuUiCmd c = g_cmds[ci];
+        const bool overlapsClip =
+            (tileMax.x > c.clipRect.x && tileMin.x < c.clipRect.z &&
+             tileMax.y > c.clipRect.y && tileMin.y < c.clipRect.w);
+        const bool overlapsBox =
+            (tileMax.x >= c.rect.x - 2.0f && tileMin.x <= c.rect.x + c.rect.z + 2.0f &&
+             tileMax.y >= c.rect.y - 2.0f && tileMin.y <= c.rect.y + c.rect.w + 2.0f);
+        if (overlapsClip && overlapsBox) {
+            InterlockedOr(s_activeMask[ci >> 5u], 1u << (ci & 31u));
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
+
     const uint2 localPx = dtid.xy;
     if (localPx.x >= dirtyRect.z || localPx.y >= dirtyRect.w) {
         return;
@@ -299,45 +338,64 @@ void cs_uilib_draw(uint3 dtid : SV_DispatchThreadID) {
         return;
     }
 
-    const float2 p = float2(dstPx) + 0.5f;
-    const uint cmdCount = min(targetInfo.z, 256u);
-    if (cmdCount == 0u) {
+    const uint wordCount = (cmdCount + 31u) >> 5u;
+    uint anyCmd = 0u;
+    [unroll]
+    for (uint w0 = 0u; w0 < 8u; ++w0) {
+        if (w0 < wordCount) anyCmd |= s_activeMask[w0];
+    }
+    if (anyCmd == 0u) {
         return;
     }
 
+    const float2 p = float2(dstPx) + 0.5f;
     const float4 bgSample = g_target[dstPx];
     const bool isSrgb = (targetInfo.w & 1u) != 0u;
     float3 col = isSrgb ? srgbToLinear(bgSample.rgb) : max(bgSample.rgb, 0.0f.xxx);
     bool touched = false;
 
-    [loop]
-    for (uint i = 0u; i < cmdCount; ++i) {
-        const GpuUiCmd cmd = g_cmds[i];
+    for (uint w = 0u; w < wordCount; ++w) {
+        uint mask = s_activeMask[w];
+        [loop]
+        while (mask != 0u) {
+            const uint bit = firstbitlow(mask);
+            mask &= (mask - 1u);
+            const uint i = (w << 5u) + bit;
+            const GpuUiCmd cmd = g_cmds[i];
 
-        // Strict clip-rect scissor rejection
-        if (p.x < cmd.clipRect.x || p.x >= cmd.clipRect.z ||
-            p.y < cmd.clipRect.y || p.y >= cmd.clipRect.w) {
-            continue;
-        }
-        // Tight command bounding-box rejection (+2px margin for SDF antialiasing/outline)
-        if (p.x < cmd.rect.x - 2.0f || p.x > cmd.rect.x + cmd.rect.z + 2.0f ||
-            p.y < cmd.rect.y - 2.0f || p.y > cmd.rect.y + cmd.rect.w + 2.0f) {
-            continue;
-        }
+            // Strict clip-rect scissor rejection
+            if (p.x < cmd.clipRect.x || p.x >= cmd.clipRect.z ||
+                p.y < cmd.clipRect.y || p.y >= cmd.clipRect.w) {
+                continue;
+            }
+            // Tight command bounding-box rejection (+2px margin for SDF antialiasing/outline)
+            if (p.x < cmd.rect.x - 2.0f || p.x > cmd.rect.x + cmd.rect.z + 2.0f ||
+                p.y < cmd.rect.y - 2.0f || p.y > cmd.rect.y + cmd.rect.w + 2.0f) {
+                continue;
+            }
 
-        const uint kind     = cmd.kindAndMeta & 0xFFu;
-        const uint meta     = (cmd.kindAndMeta >> 8u) & 0xFFu;
-        const uint dataOff  = (cmd.kindAndMeta >> 16u) & 0xFFFFu;
+            const uint kind     = cmd.kindAndMeta & 0xFFu;
+            const uint meta     = (cmd.kindAndMeta >> 8u) & 0xFFu;
+            const uint dataOff  = (cmd.kindAndMeta >> 16u) & 0xFFFFu;
 
-        const float4 fillCol   = unpackRgba8Linear(cmd.colorFill);
-        const float4 borderCol = unpackRgba8Linear(cmd.colorBorder);
-        const float4 accentCol = unpackRgba8Linear(cmd.colorAccent);
+            const float4 fillCol = unpackRgba8Linear(cmd.colorFill);
+            if (kind == kCmdRect) {
+                if (p.x >= cmd.rect.x && p.x <= cmd.rect.x + cmd.rect.z &&
+                    p.y >= cmd.rect.y && p.y <= cmd.rect.y + cmd.rect.w) {
+                    col = lerp(col, fillCol.rgb, fillCol.a);
+                    touched = true;
+                }
+                continue;
+            }
 
-        const float2 halfSz = max(cmd.rect.zw * 0.5f, 0.5f.xx);
-        const float2 center = cmd.rect.xy + halfSz;
-        const float2 rel    = p - center;
+            const float4 borderCol = (cmd.colorBorder != 0u) ? unpackRgba8Linear(cmd.colorBorder) : 0.0f.xxxx;
+            const float4 accentCol = (cmd.colorAccent != 0u) ? unpackRgba8Linear(cmd.colorAccent) : 0.0f.xxxx;
 
-        if (kind == kCmdPanel) {
+            const float2 halfSz = max(cmd.rect.zw * 0.5f, 0.5f.xx);
+            const float2 center = cmd.rect.xy + halfSz;
+            const float2 rel    = p - center;
+
+            if (kind == kCmdPanel) {
             const float sdf = roundedBoxSdf(rel, halfSz - 0.5f, cmd.params.x);
             if (sdf <= 1.5f) {
                 const float edgeCov = saturate(0.5f - sdf);
@@ -359,12 +417,6 @@ void cs_uilib_draw(uint3 dtid : SV_DispatchThreadID) {
                     }
                     touched = true;
                 }
-            }
-        } else if (kind == kCmdRect) {
-            if (p.x >= cmd.rect.x && p.x <= cmd.rect.x + cmd.rect.z &&
-                p.y >= cmd.rect.y && p.y <= cmd.rect.y + cmd.rect.w) {
-                col = lerp(col, fillCol.rgb, fillCol.a);
-                touched = true;
             }
         } else if (kind == kCmdPill) {
             const float r = min(halfSz.x, halfSz.y);
@@ -543,6 +595,43 @@ void cs_uilib_draw(uint3 dtid : SV_DispatchThreadID) {
                     touched = true;
                 }
             }
+        } else if (kind == kCmdDisc) {
+            const float rad = max(min(halfSz.x, halfSz.y) - 0.5f, 1.0f);
+            if (meta == 0u) {
+                // Antialiased semantic verdict disc
+                const float d = length(rel) - rad;
+                if (d <= 0.75f) {
+                    const float cov = saturate(0.5f - d);
+                    col = lerp(col, fillCol.rgb, fillCol.a * cov);
+                    const float ringCov = saturate(1.0f - abs(d + 0.5f));
+                    if (borderCol.a > 0.01f) {
+                        col = lerp(col, borderCol.rgb, borderCol.a * ringCov * 0.85f);
+                    }
+                    touched = true;
+                }
+            } else {
+                // Antialiased disclosure chevron: meta 1 = expanded (down 'v'), meta 2 = collapsed (right '>')
+                const float arm = max(rad * 0.78f, 1.5f);
+                const float thick = max(cmd.params.x, 1.15f);
+                float dChev = 100.0f;
+                if (meta == 1u) {
+                    const float2 pL = float2(-arm, -arm * 0.42f);
+                    const float2 pM = float2( 0.0f, arm * 0.52f);
+                    const float2 pR = float2( arm, -arm * 0.42f);
+                    dChev = min(segmentSdf(rel, pL, pM), segmentSdf(rel, pM, pR)) - thick;
+                } else {
+                    const float2 pT = float2(-arm * 0.42f, -arm);
+                    const float2 pM = float2( arm * 0.52f,  0.0f);
+                    const float2 pB = float2(-arm * 0.42f,  arm);
+                    dChev = min(segmentSdf(rel, pT, pM), segmentSdf(rel, pM, pB)) - thick;
+                }
+                if (dChev <= 0.75f) {
+                    const float cov = saturate(0.5f - dChev);
+                    col = lerp(col, fillCol.rgb, fillCol.a * cov);
+                    touched = true;
+                }
+            }
+        }
         }
     }
 

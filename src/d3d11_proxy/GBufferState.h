@@ -21,11 +21,17 @@ struct Target
     ID3D11RenderTargetView* rtv = nullptr;
 };
 
+enum class DrawClassHint : uint8_t { None = 0, SkinnedActor = 1, Foliage = 2 };
+
 struct PsEntry
 {
     std::vector<uint8_t> code;
-    ID3D11PixelShader* variant[4] = {};      // bit 0: first-person flag, bit 1: skinned actor/creature (base 1 -> 14)
-    bool tried[4] = {};
+    // Slot index: (firstPerson ? 1 : 0) + (static_cast<int>(DrawClassHint) * 2)
+    //   [0,1]: base analysed class (3P, 1P)
+    //   [2,3]: SkinnedActor promotion (Lit 1 -> 14)
+    //   [4,5]: Foliage/Sapling promotion (Lit 1 -> SoftLit 5)
+    ID3D11PixelShader* variant[6] = {};
+    bool tried[6] = {};
     raw::dxbc::ShaderKind kind = raw::dxbc::ShaderKind::Unknown;
     uint8_t materialClass = 0;               // base analysed class (0..13)
 };
@@ -45,6 +51,7 @@ struct State
     Span span = Span::None;
     bool dirty = false, substituted = false, lastDrawWater = false, lastDrawSkipSubdiv = false;
     bool lastDrawSkinnedActor = false;
+    DrawClassHint lastDrawHint = DrawClassHint::None;
     ID3D11PixelShader* gamePs = nullptr;
     ID3D11BlendState* gameBlend = nullptr;
     float factor[4] = {1, 1, 1, 1};
@@ -56,17 +63,18 @@ struct State
 
     // Counters, logged every 600 frames.
     uint64_t frame = 0;
-    uint32_t spans[5] = {}, patched = 0, refused = 0, createFailed = 0, swaps = 0, skinnedActorDraws = 0;
+    uint32_t spans[5] = {}, patched = 0, refused = 0, createFailed = 0, swaps = 0;
+    uint32_t skinnedActorDraws = 0, foliagePromotedDraws = 0;
     uint32_t kindDraws[5][6] = {};                  // per span, draws by shader kind (0: not patched)
 };
 
 State& S();
 
 // The patched form of the game's bound shader for the open span, or null.
-// kind receives the shader's kind; matClass (optional) receives the resolved material class (incl. 14 for skinned actors).
+// kind receives the shader's kind; matClass (optional) receives the resolved material class (incl. 14 actor, 5 foliage).
 ID3D11PixelShader* VariantFor(State& s, ID3D11PixelShader* game, bool firstPerson, raw::dxbc::ShaderKind* kind,
-                              uint8_t* matClass = nullptr, bool skinnedActor = false);
-// mode 0: the shader writes the material targets; 1: it writes the layer only; 2: it writes none of RAW's targets.
+                              uint8_t* matClass = nullptr, DrawClassHint hint = DrawClassHint::None);
+// mode 0: writes material targets (blended decals mask Spec.z); 1: layer only; 2: none; 3: water layer; 4: depth-writing foliage (keeps Spec.z).
 ID3D11BlendState* BlendVariant(State& s, ID3D11BlendState* game, int mode);
 
 } // namespace SB::Proxy::gbuffer

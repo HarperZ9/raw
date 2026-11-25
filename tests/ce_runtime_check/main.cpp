@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -670,6 +671,42 @@ void main() {
     raw::rt::EvaluateLoopCdContrast(lcEarly, lcRef, 0.25f, lcOut);
     Check(lcOut[0] > 0.52f && std::fabs(lcOut[1] - 0.50f) < 1e-4f && lcOut[2] < 0.38f && lcOut[2] >= 0.34f,
           "loopcd_contrastive_extrapolation");
+
+    // 13) Wave 25 First-Step Trapping-Region Disocclusion Separator + Mod-Manager Save Resolver + Live GMST Feedback
+    const float trapCalm = raw::rt::EvaluateTrappingSeparator(0.50f, 0.52f, 0.08f, 0.5f, 1.0f);
+    const float trapJump = raw::rt::EvaluateTrappingSeparator(0.95f, 0.15f, 0.06f, 14.0f, 0.1f);
+    const float trapFloor = raw::rt::EvaluateTrappingSeparator(0.50f, 0.51f, 0.0f, 0.0f, 1.0f);
+    Check(trapCalm < 0.01f && trapJump > 0.90f && trapFloor < 0.01f,
+          "trapping_separator_disocclusion_barrier");
+
+    {
+        namespace fs = std::filesystem;
+        const fs::path tmpRoot = fs::temp_directory_path() / "raw_wave25_saves_test";
+        std::error_code ec;
+        fs::remove_all(tmpRoot, ec);
+        fs::create_directories(tmpRoot / "__MO_Saves", ec);
+        {
+            std::ofstream ini(tmpRoot / "Skyrim.ini");
+            ini << "[General]\nsLocalSavePath=__MO_Saves\\\n";
+        }
+        {
+            std::ofstream ess(tmpRoot / "__MO_Saves" / "rawharness_test.ess", std::ios::binary);
+            std::string payload(4096, 'R');
+            ess.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+        }
+        const std::string resolved = raw::rt::ResolveSkyrimSavesDir(tmpRoot.string().c_str());
+        const auto sh = raw::rt::InspectSaveHealth(resolved.c_str());
+        const bool ok = (resolved.find("__MO_Saves") != std::string::npos) && sh.totalSaves == 1 && !sh.bloatWarning && sh.largestSaveMb > 0.0f;
+        fs::remove_all(tmpRoot, ec);
+        Check(ok, "skyrim_ini_local_save_path_resolver");
+    }
+
+    const auto gmCalm  = raw::rt::ComputeDynamicGameplayGmsts(0.95f, 1.0f);
+    const auto gmBlizz = raw::rt::ComputeDynamicGameplayGmsts(1.38f, 0.65f);
+    Check(gmBlizz.barterMin > gmCalm.barterMin + 0.30f && gmBlizz.barterMax > gmCalm.barterMax + 0.30f &&
+          gmBlizz.sprintStaminaDrainMult > gmCalm.sprintStaminaDrainMult + 0.30f &&
+          gmBlizz.barterMin <= 1.85f && gmBlizz.barterMax <= 4.40f && gmBlizz.sprintStaminaDrainMult <= 1.35f,
+          "dynamic_gameplay_gmst_feedback");
 }
 
 }  // namespace

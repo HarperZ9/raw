@@ -322,3 +322,14 @@ float cascadeShadow(float3 p, float d, bool filtered) {
     const float w = smoothstep(band, split, d);
     return lerp(cascadeSample(p, 0u, filtered), cascadeSample(p, 1u, filtered), w);
 }
+
+// Wave 25 First-Step Trapping-Region Disocclusion Separator:
+// Stays 0 inside the converged temporal basin (|cur - prev| <= 1.65 * sigma on calm surfaces)
+// and snaps decisively toward 1 on step 1 when disocclusion or fast camera motion crosses the barrier.
+float rawTrappingSeparator(float curVal, float prevVal, float sigma, float speedPx, float edgeGate) {
+    const float safeSig = max(sigma, 0.035f);
+    const float zDist = abs(curVal - prevVal) / safeSig;
+    const float barrier = smoothstep(1.65f, 3.40f, zDist);
+    const float motionGate = saturate(speedPx * 0.085f + (1.0f - saturate(edgeGate)) * 0.72f);
+    return saturate(barrier * (0.45f + 0.55f * motionGate));
+}

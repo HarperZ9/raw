@@ -156,7 +156,9 @@ void main(uint3 id : SV_DispatchThreadID) {
     n = have ? min(n + 1.0f, min(float(maxFrames), 14.0f)) : 1.0f;
     const float2 mvSpeed = (have && hasMotion != 0u) ? Motion.Load(int3(p, 0)) * dims.xy : float2(0.0f, 0.0f);
     const float pxVel = length(mvSpeed);
-    const float disoccBoost = smoothstep(0.08f, 0.28f, skyDelta) * 0.36f;
+    const float trapSky = have ? rawTrappingSeparator(cur.a, past, curStd.a, pxVel, 0.5f) : 0.0f;
+    const float trapGi  = have ? rawTrappingSeparator(curLum, pastLum, dot(curStd.rgb, float3(0.2126f, 0.7152f, 0.0722f)), pxVel, 0.5f) : 0.0f;
+    const float disoccBoost = max(smoothstep(0.08f, 0.28f, skyDelta) * 0.36f, max(trapSky, trapGi) * 0.72f);
     const float alphaT = max(max(1.0f / n, lerp(0.085f, 0.45f, saturate(pxVel * 0.075f))), disoccBoost);
     const float vis = have ? lerp(past, cur.a, alphaT) : cur.a;
     const float3 b = have ? lerp(pastB, cur.rgb, alphaT) : cur.rgb;

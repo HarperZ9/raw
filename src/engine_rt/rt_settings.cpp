@@ -1,6 +1,7 @@
 // Engine settings by name and the shadow atlas size at startup (RAW engine runtime). Original work, MIT.
 #include <windows.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -358,6 +359,58 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
     std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe)",
                   applied, sizeof(kTuning) / sizeof(kTuning[0]));
     return out;
+}
+
+namespace {
+struct DynamicGmstBindings {
+    bool bound = false;
+    float* fBarterMin = nullptr;
+    float* fBarterMax = nullptr;
+    float* fSprintStaminaDrainMult = nullptr;
+    float baseBarterMin = 1.35f;
+    float baseBarterMax = 3.60f;
+    float baseSprintDrain = 0.82f;
+} g_dynGmsts;
+}  // namespace
+
+std::string WorldSimBindDynamicSettings(const Image& img, const std::vector<RefTarget>& refs) {
+    g_dynGmsts = {};
+    const auto& prof = ActiveProfile();
+    if (prof.isMultiplayerOnline || prof.gen != raw::versions::EngineGen::CE1_DX11) {
+        return "worldsim gmst feedback: skipped (non-CE1 or online profile)";
+    }
+    g_dynGmsts.fBarterMin = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fBarterMin"));
+    g_dynGmsts.fBarterMax = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fBarterMax"));
+    g_dynGmsts.fSprintStaminaDrainMult = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fSprintStaminaDrainMult"));
+    if (g_dynGmsts.fBarterMin) g_dynGmsts.baseBarterMin = *g_dynGmsts.fBarterMin;
+    if (g_dynGmsts.fBarterMax) g_dynGmsts.baseBarterMax = *g_dynGmsts.fBarterMax;
+    if (g_dynGmsts.fSprintStaminaDrainMult) g_dynGmsts.baseSprintDrain = *g_dynGmsts.fSprintStaminaDrainMult;
+    g_dynGmsts.bound = (g_dynGmsts.fBarterMin || g_dynGmsts.fBarterMax || g_dynGmsts.fSprintStaminaDrainMult);
+    char out[192];
+    std::snprintf(out, sizeof out, "worldsim gmst feedback: bound=%d (barterMin=%p barterMax=%p sprintDrain=%p)",
+                  g_dynGmsts.bound ? 1 : 0, g_dynGmsts.fBarterMin, g_dynGmsts.fBarterMax, g_dynGmsts.fSprintStaminaDrainMult);
+    return out;
+}
+
+void WorldSimApplyLiveGmsts(float barterMin, float barterMax, float sprintStaminaDrainMult) {
+    if (!g_dynGmsts.bound) return;
+    if (g_dynGmsts.fBarterMin && std::fabs(*g_dynGmsts.fBarterMin - barterMin) > 0.005f) {
+        *g_dynGmsts.fBarterMin = barterMin;
+    }
+    if (g_dynGmsts.fBarterMax && std::fabs(*g_dynGmsts.fBarterMax - barterMax) > 0.005f) {
+        *g_dynGmsts.fBarterMax = barterMax;
+    }
+    if (g_dynGmsts.fSprintStaminaDrainMult && std::fabs(*g_dynGmsts.fSprintStaminaDrainMult - sprintStaminaDrainMult) > 0.005f) {
+        *g_dynGmsts.fSprintStaminaDrainMult = sprintStaminaDrainMult;
+    }
+}
+
+void WorldSimRestoreDynamicSettings() {
+    if (!g_dynGmsts.bound) return;
+    if (g_dynGmsts.fBarterMin) *g_dynGmsts.fBarterMin = g_dynGmsts.baseBarterMin;
+    if (g_dynGmsts.fBarterMax) *g_dynGmsts.fBarterMax = g_dynGmsts.baseBarterMax;
+    if (g_dynGmsts.fSprintStaminaDrainMult) *g_dynGmsts.fSprintStaminaDrainMult = g_dynGmsts.baseSprintDrain;
+    g_dynGmsts.bound = false;
 }
 
 }  // namespace raw::rt

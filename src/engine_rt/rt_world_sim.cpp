@@ -6,6 +6,7 @@
 #include "rt_combat_ai.h"
 #include "rt_skeleton_ik.h"
 #ifndef RAW_SIM_PURE_TEST
+#include "rt_control.h"
 #include "rt_patch.h"
 #include "rt_softbody.h"
 #include "rt_view.h"
@@ -190,11 +191,19 @@ void WorldSimInit(const Image&, const std::string& gameDir) {
             g_tel.navReady        = 1u;
             g_navLoaded.store(true, std::memory_order_release);
         }
-        // Background save-file health & bloat scan (zero main-thread I/O):
+        // Background save-file health & bloat scan (honors Skyrim.ini sLocalSavePath such as __MO_Saves):
         char userProf[MAX_PATH]{};
         if (GetEnvironmentVariableA("USERPROFILE", userProf, MAX_PATH) > 0) {
-            const std::string savesDir = std::string(userProf) + "\\Documents\\My Games\\Skyrim Special Edition\\Saves";
-            const auto sh = InspectSaveHealth(savesDir.c_str());
+            const std::string docsDir = std::string(userProf) + "\\Documents\\My Games\\Skyrim Special Edition";
+            const std::string activeSavesDir = ResolveSkyrimSavesDir(docsDir.c_str());
+            const std::string defaultSavesDir = docsDir + "\\Saves";
+            auto sh = InspectSaveHealth(activeSavesDir.c_str());
+            if (activeSavesDir != defaultSavesDir) {
+                const auto shDef = InspectSaveHealth(defaultSavesDir.c_str());
+                sh.totalSaves += shDef.totalSaves;
+                sh.largestSaveMb = std::max(sh.largestSaveMb, shDef.largestSaveMb);
+                sh.bloatWarning = sh.bloatWarning || shDef.bloatWarning;
+            }
             std::lock_guard<std::mutex> lk(g_simMu);
             g_saveCount = sh.totalSaves;
             g_largestSaveMb = sh.largestSaveMb;
@@ -254,6 +263,9 @@ void WorldSimOnPresent() {
     snap.saveBloatWarn   = g_saveBloatWarn ? 1u : 0u;
     g_coreWarmth = snap.coreWarmth;
     g_shiverAtomic.store(snap.shiverIntensity, std::memory_order_relaxed);
+    // Feed bounded live economy & thermal survival state back into Skyrim's live Setting singletons:
+    const auto liveGm = ComputeDynamicGameplayGmsts(snap.economyBuyMult, snap.staminaRegenMult);
+    WorldSimApplyLiveGmsts(liveGm.barterMin, liveGm.barterMax, liveGm.sprintStaminaDrainMult);
 
     std::lock_guard<std::mutex> lk(g_simMu);
     g_tel = snap;
@@ -261,6 +273,7 @@ void WorldSimOnPresent() {
 
 void WorldSimShutdown() {
     g_shutdown.store(true, std::memory_order_release);
+    WorldSimRestoreDynamicSettings();
 }
 #endif
 

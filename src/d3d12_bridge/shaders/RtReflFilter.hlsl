@@ -74,8 +74,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float speed = length(mv * dims.xy);
             const float curLum = dot(cur.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             const float prevLum = dot(clamped.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+            const float stdLum = dot(stdDev.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+            const float edgeStab = 1.0f - saturate(length(zSlope) * invPlane * 0.65f);
+            const float trapSep = rawTrappingSeparator(curLum, prevLum, stdLum, speed, edgeStab);
             const float lumJump = saturate(abs(curLum - prevLum) / max(curLum + prevLum + 0.08f, 0.08f));
-            const float alpha = lerp(0.06f, 0.24f, saturate(speed * 0.06f + lumJump * 0.30f));
+            const float alpha = max(lerp(0.06f, 0.24f, saturate(speed * 0.06f + lumJump * 0.30f)), trapSep * 0.85f);
             cur = lerp(clamped, cur, alpha);
         }
     }

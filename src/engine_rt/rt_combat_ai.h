@@ -7,6 +7,7 @@
 // Original work, MIT.
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace raw::rt {
@@ -225,5 +226,19 @@ int LegendreSymbol(int a, int oddPrimeP);
 
 // Wave 23 LoopCD / Richardson Iterative Contrast CPU reference (matches RawTensorMath.hlsli::rawLoopCdContrast):
 void EvaluateLoopCdContrast(const float passEarly[3], const float passRefined[3], float omega, float outRgb[3]);
+
+// Wave 25 First-Step Trapping-Region Disocclusion Separator CPU reference (matches LightingCommon.hlsli::rawTrappingSeparator):
+float EvaluateTrappingSeparator(float curVal, float prevVal, float sigma, float speedPx, float edgeGate);
+
+// Wave 25 Mod-Manager-Aware Skyrim.ini sLocalSavePath resolver (finds __MO_Saves or custom profile save dirs):
+std::string ResolveSkyrimSavesDir(const char* docsSkyrimDir);
+
+// Wave 25 Bounded Live Dynamic Economy + Thermal Stamina GMST feedback (feeds Skyrim's live Setting singletons):
+struct DynamicGameplayGmsts {
+    float barterMin              = 1.35f;
+    float barterMax              = 3.60f;
+    float sprintStaminaDrainMult = 0.82f;
+};
+DynamicGameplayGmsts ComputeDynamicGameplayGmsts(float economyBuyMult, float staminaRegenMult);
 
 }  // namespace raw::rt

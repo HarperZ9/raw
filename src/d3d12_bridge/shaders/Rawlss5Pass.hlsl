@@ -282,7 +282,8 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
         const float3 curY = rgbToYCoCg(curTm);
 
         const float lumDelta = abs(prevY.x - curY.x) / max(curY.x + 0.08f, 0.08f);
-        const float disocc = saturate((lumDelta - 0.38f) * 1.8f) * (1.0f - edgeGate * 0.45f);
+        const float trapSep = rawTrappingSeparator(curY.x, prevY.x, stdDev.x, speedPx, edgeGate);
+        const float disocc = max(saturate((lumDelta - 0.38f) * 1.8f) * (1.0f - edgeGate * 0.45f), trapSep);
         // Material-aware reactive mask (high responsiveness on water, emissives, disoccluded edges & fast specular glints):
         const float reactive = saturate(max(isWater ? 0.52f : (isEmissive ? 0.65f : 0.0f),
                                             disocc * 0.85f + (1.0f - edgeGate) * 0.82f));

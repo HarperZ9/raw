@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <string>
 
 namespace raw::rt {
 
@@ -568,6 +570,61 @@ void EvaluateLoopCdContrast(const float passEarly[3], const float passRefined[3]
         const float hi = std::max(passEarly[i], passRefined[i]) * 1.15f + 0.02f;
         outRgb[i] = std::clamp(extrap, lo, hi);
     }
+}
+
+float EvaluateTrappingSeparator(float curVal, float prevVal, float sigma, float speedPx, float edgeGate) {
+    const float safeSig = std::max(sigma, 0.035f);
+    const float zDist = std::fabs(curVal - prevVal) / safeSig;
+    const float t = std::clamp((zDist - 1.65f) / (3.40f - 1.65f), 0.0f, 1.0f);
+    const float barrier = t * t * (3.0f - 2.0f * t);
+    const float motionGate = std::clamp(speedPx * 0.085f + (1.0f - std::clamp(edgeGate, 0.0f, 1.0f)) * 0.72f, 0.0f, 1.0f);
+    return std::clamp(barrier * (0.45f + 0.55f * motionGate), 0.0f, 1.0f);
+}
+
+std::string ResolveSkyrimSavesDir(const char* docsSkyrimDir) {
+    if (!docsSkyrimDir || !*docsSkyrimDir) return {};
+    const std::filesystem::path baseDir(docsSkyrimDir);
+    const std::filesystem::path iniPath = baseDir / "Skyrim.ini";
+    std::string relPath = "Saves";
+    std::ifstream in(iniPath);
+    if (in) {
+        std::string line;
+        while (std::getline(in, line)) {
+            const size_t eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            std::string key = line.substr(0, eq);
+            while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
+            size_t kStart = 0;
+            while (kStart < key.size() && (key[kStart] == ' ' || key[kStart] == '\t')) ++kStart;
+            key = key.substr(kStart);
+            if (key == "sLocalSavePath" || key == "SLocalSavePath") {
+                std::string val = line.substr(eq + 1);
+                while (!val.empty() && (val.back() == '\r' || val.back() == '\n' || val.back() == ' ' || val.back() == '\t' || val.back() == '\\' || val.back() == '/')) {
+                    val.pop_back();
+                }
+                size_t vStart = 0;
+                while (vStart < val.size() && (val[vStart] == ' ' || val[vStart] == '\t')) ++vStart;
+                val = val.substr(vStart);
+                if (!val.empty()) relPath = val;
+                break;
+            }
+        }
+    }
+    std::filesystem::path cand(relPath);
+    if (cand.is_relative()) cand = baseDir / cand;
+    std::error_code ec;
+    if (std::filesystem::exists(cand, ec)) return cand.string();
+    return (baseDir / "Saves").string();
+}
+
+DynamicGameplayGmsts ComputeDynamicGameplayGmsts(float economyBuyMult, float staminaRegenMult) {
+    DynamicGameplayGmsts g{};
+    const float econ = std::clamp(economyBuyMult, 0.85f, 1.45f);
+    const float stam = std::clamp(staminaRegenMult, 0.55f, 1.10f);
+    g.barterMin = std::clamp(1.35f * econ, 1.15f, 1.85f);
+    g.barterMax = std::clamp(3.60f * (0.65f + 0.35f * econ), 3.10f, 4.40f);
+    g.sprintStaminaDrainMult = std::clamp(0.82f / stam, 0.78f, 1.35f);
+    return g;
 }
 
 }  // namespace raw::rt

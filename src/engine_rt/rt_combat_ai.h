@@ -154,4 +154,25 @@ WeaponArcHitResult EvaluateWeaponArcHit(const float swingStart[3], const float s
                                         const float targetCenter[3], float targetRadius,
                                         float targetHeight, float swingSpeed);
 
+// Physical Sabine-Eyring 3D Acoustic Room Reverb & Occlusion Estimator (replaces True 3D Sound / Reverb Overhaul):
+enum class AcousticEnvClass : uint8_t {
+    OpenSky       = 0,
+    AlpineValley  = 1,
+    StoneInterior = 2,
+    CavernVault   = 3,
+    Underwater    = 4,
+};
+
+struct AcousticReverbState {
+    float            rt60Sec         = 0.25f;
+    float            earlyReflGain   = 0.15f;
+    float            lowPassHz       = 18000.0f;
+    float            airAbsorbDbPerM = 0.005f;
+    AcousticEnvClass envClass        = AcousticEnvClass::OpenSky;
+};
+
+AcousticReverbState ComputeAcousticReverb(bool inInterior, float enclosureRadiusU,
+                                          float snowCover01, float rain01,
+                                          float windSpeed, bool underwater);
+
 }  // namespace raw::rt

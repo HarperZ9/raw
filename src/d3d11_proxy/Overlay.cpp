@@ -40,6 +40,8 @@ int  g_sel = 0;
 int  g_scroll = 0;
 int  g_hwTier = 4;
 int  g_presetSlot = 1;
+int  g_liveShaderPass = 0;
+bool g_liveShaderGlsl = false;
 float g_menuSnow = -1.0f, g_menuRain = -1.0f;
 
 HWND g_hookHwnd = nullptr;
@@ -52,6 +54,35 @@ LARGE_INTEGER g_qpcFreq{}, g_qpcLast{};
 float g_emaMs = 11.0f;
 uint32_t g_savedFrames = 0;
 std::string g_statusTag;
+
+static const char* const kLiveShaderPasses[8] = {
+    "Lighting", "LightFog", "Clouds", "RtShadow", "RtWater", "FroxelPass", "Rawlss5Pass", "DofPass"
+};
+
+bool SubmitClipboardLiveShader()
+{
+    std::string src;
+    if (OpenClipboard(nullptr)) {
+        if (HANDLE h = GetClipboardData(CF_TEXT)) {
+            if (const char* p = static_cast<const char*>(GlobalLock(h))) {
+                src.assign(p);
+                GlobalUnlock(h);
+            }
+        }
+        CloseClipboard();
+    }
+    if (src.size() < 16) {
+        g_statusTag = " [CLIPBOARD EMPTY]";
+        g_savedFrames = 150;
+        return false;
+    }
+    const char* pass = kLiveShaderPasses[std::clamp(g_liveShaderPass, 0, 7)];
+    const bool ok = HotReload_SubmitLiveShader(pass, src, g_liveShaderGlsl);
+    g_statusTag = ok ? (std::string(" [COMPILING ") + pass + (g_liveShaderGlsl ? " GLSL]" : " HLSL]"))
+                     : " [SHADER BUSY]";
+    g_savedFrames = 180;
+    return ok;
+}
 
 // Window subclass captures mouse/keyboard cleanly when RAW Studio is open and feeds wheel/coords to RawInputEngine.
 LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
@@ -343,6 +374,9 @@ std::vector<raw::ui::StudioRow> BuildRows(int tab)
             uint32_t simTicks, actorsTracked, navMeshesLoaded, navVertsLoaded, navTrisLoaded;
             uint8_t  activeDirective, tacticalAction, attackTokensUsed, navReady;
             float    expectedPayoff, strideDampMult, snowDepthU, windSpeed;
+            float    ambientTempC, coreWarmth, shiverIntensity, staminaRegenMult;
+            float    physicsSubstepMs, acousticRt60Sec, acousticLowPassHz;
+            uint8_t  physicsSubsteps, acousticEnvClass, freezingRisk, _padTel;
         };
         using SimTelFn = int(*)(WorldSimTelPod*);
         static SimTelFn s_simTel = nullptr;
@@ -356,9 +390,13 @@ std::vector<raw::ui::StudioRow> BuildRows(int tab)
         if (s_simTel && s_simTel(&wtel)) {
             static const char* kDirs[5] = {"Routine", "SeekShelter", "WarmBrazier", "EquipTorch", "AlertPatrol"};
             static const char* kActs[4] = {"PressAttack", "FlankCircle", "GuardParry", "Retreat"};
+            static const char* kAcEnv[5] = {"OpenSky", "AlpineValley", "StoneInterior", "CavernVault", "Underwater"};
             AddCycle(rows, "Live NavMesh Cache", FmtI("%d cells / ", int(wtel.navMeshesLoaded)) + FmtI("%d tris", int(wtel.navTrisLoaded)), wtel.navReady != 0);
             AddCycle(rows, "Live Squad & Policy", FmtI("%d actors | ", int(wtel.actorsTracked)) + std::string(kActs[wtel.tacticalAction & 3u]), wtel.actorsTracked > 0);
             AddCycle(rows, "World Ecosystem", std::string(kDirs[std::min<int>(wtel.activeDirective, 4)]) + Fmt(" | Stride %.2fx", wtel.strideDampMult), true);
+            AddCycle(rows, "Thermal Survival", Fmt("%.1fC | ", wtel.ambientTempC) + Fmt("Warm %.0f%% | ", wtel.coreWarmth) + Fmt("Stam %.2fx", wtel.staminaRegenMult), wtel.freezingRisk != 0);
+            AddCycle(rows, "Physics Substep Gov", FmtI("%dx @ ", int(wtel.physicsSubsteps)) + Fmt("%.2f ms", wtel.physicsSubstepMs), true);
+            AddCycle(rows, "3D Acoustic Reverb", std::string(kAcEnv[std::min<int>(wtel.acousticEnvClass, 4)]) + Fmt(" | RT60 %.2fs", wtel.acousticRt60Sec), true);
         } else {
             AddCycle(rows, "Runtime Autonomy", "Zero SKSE / Native raw_engine.dll", true);
         }
@@ -406,7 +444,10 @@ std::vector<raw::ui::StudioRow> BuildRows(int tab)
         AddCycle(rows, "User Preset Slot", FmtI("Slot %d  (S=Save | L=Load)", g_presetSlot), true);
         AddToggle(rows, "Studio Dark Ground", sim.darkTheme);
         AddToggle(rows, "Reduced Motion Mode", sim.reducedMotion);
-        AddCycle(rows, "Live Shader Lab (HLSL/GLSL)", HotReload_LiveStatus(), true);
+        AddCycle(rows, "Live Shader Target", kLiveShaderPasses[std::clamp(g_liveShaderPass, 0, 7)], true);
+        AddCycle(rows, "Live Shader Language", g_liveShaderGlsl ? "GLSL 450 (Vulkan/SPIR-V)" : "HLSL 2021 (SM 6.6+)", g_liveShaderGlsl);
+        AddCycle(rows, "Compile Clipboard -> Live", "Press Enter / Click (Zero Disk)", true);
+        AddCycle(rows, "Live Shader Lab Status", HotReload_LiveStatus(), true);
     }
     return rows;
 }
@@ -565,6 +606,9 @@ void ApplyRowEdit(int tab, int row, int dir, bool hasDirectNorm, float directNor
         case 4: g_presetSlot = ((g_presetSlot - 1 + 5 + d) % 5) + 1; break;
         case 5: sim.darkTheme = !sim.darkTheme; break;
         case 6: sim.reducedMotion = !sim.reducedMotion; break;
+        case 7: g_liveShaderPass = (g_liveShaderPass + 8 + d) % 8; break;
+        case 8: g_liveShaderGlsl = !g_liveShaderGlsl; break;
+        case 9: SubmitClipboardLiveShader(); break;
         }
     }
     if (tmDirty) Tonemap_Set(tm);

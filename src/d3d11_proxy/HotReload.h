@@ -12,7 +12,7 @@ void HotReload_SyncIniTime();   // before the game's Present, on the render thre
 // Live in-memory HLSL/GLSL shader edit without disk writes or file-watcher polling:
 // Compiles `source` asynchronously on a worker thread and swaps the target pass PSO on the next Present.
 // Supported passName values: "Lighting", "LightFog", "Clouds", "VolumetricPass", "RtShadow",
-// "RtSkyFilter", "RtWater", "Sss", "RtReflFilter", "Rawlss5Pass", "FroxelPass".
+// "RtSkyFilter", "RtWater", "Sss", "RtReflFilter", "Rawlss5Pass", "FroxelPass", "DofPass".
 bool HotReload_SubmitLiveShader(const std::string& passName, const std::string& source, bool isGlsl);
 std::string HotReload_LiveStatus();
 }

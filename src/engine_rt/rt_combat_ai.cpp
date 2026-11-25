@@ -387,4 +387,43 @@ WeaponArcHitResult EvaluateWeaponArcHit(const float swingStart[3], const float s
     return r;
 }
 
+AcousticReverbState ComputeAcousticReverb(bool inInterior, float enclosureRadiusU,
+                                          float snowCover01, float rain01,
+                                          float windSpeed, bool underwater) {
+    AcousticReverbState a{};
+    const float snow = std::clamp(snowCover01, 0.0f, 1.0f);
+    const float rain = std::clamp(rain01, 0.0f, 1.0f);
+    const float wind = std::max(0.0f, windSpeed);
+    if (underwater) {
+        a.envClass = AcousticEnvClass::Underwater;
+        a.rt60Sec = 0.42f;
+        a.earlyReflGain = 0.30f;
+        a.lowPassHz = 650.0f;
+        a.airAbsorbDbPerM = 0.085f;
+        return a;
+    }
+    // Convert Skyrim enclosure radius (70u ~= 1m) into an equivalent spherical room for Sabine RT60 = 0.161 * V / (S * alpha)
+    // where V / S = R / 3.
+    const float radiusM = std::clamp(enclosureRadiusU / 70.0f, 1.5f, 120.0f);
+    if (inInterior) {
+        const bool isCavern = (radiusM >= 14.0f);
+        a.envClass = isCavern ? AcousticEnvClass::CavernVault : AcousticEnvClass::StoneInterior;
+        // Effective absorption (furniture/wood/stone ~0.36; rough damp cavern rock ~0.22) with 1.5x architectural surface complexity:
+        const float alpha = isCavern ? 0.22f : 0.36f;
+        a.rt60Sec = std::clamp(0.161f * (radiusM / 4.5f) / alpha, 0.45f, 4.80f);
+        a.earlyReflGain = std::clamp(0.68f - radiusM * 0.006f, 0.25f, 0.72f);
+        a.lowPassHz = isCavern ? 9200.0f : 12800.0f;
+        a.airAbsorbDbPerM = 0.008f;
+        return a;
+    }
+    // Exterior: porous fresh snow acts as a broad acoustic absorber (ISO 9613 ground absorption); wind & rain add HF attenuation.
+    a.envClass = (radiusM < 45.0f) ? AcousticEnvClass::AlpineValley : AcousticEnvClass::OpenSky;
+    const float baseRt = (a.envClass == AcousticEnvClass::AlpineValley) ? 0.58f : 0.18f;
+    a.rt60Sec = std::clamp(baseRt * (1.0f - 0.52f * snow) * (1.0f - 0.18f * rain), 0.06f, 1.10f);
+    a.earlyReflGain = std::clamp((a.envClass == AcousticEnvClass::AlpineValley ? 0.26f : 0.08f) * (1.0f - 0.45f * snow), 0.02f, 0.35f);
+    a.lowPassHz = std::clamp(19500.0f - snow * 5800.0f - rain * 3200.0f - std::min(wind * 12.0f, 3500.0f), 4500.0f, 20000.0f);
+    a.airAbsorbDbPerM = 0.004f + snow * 0.012f + rain * 0.009f;
+    return a;
+}
+
 }  // namespace raw::rt

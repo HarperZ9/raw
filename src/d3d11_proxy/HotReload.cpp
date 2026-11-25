@@ -292,7 +292,15 @@ bool HotReload_SubmitLiveShader(const std::string& passName, const std::string& 
 {
     State& s = S();
     if (passName.empty() || source.empty() || s.job.valid()) return false;
-    const std::wstring dir = s.dir, dxc = s.dxc;
+    std::wstring dir = s.dir;
+    if (dir.empty()) {
+        wchar_t exe[MAX_PATH]{};
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        std::wstring p(exe);
+        const size_t sl = p.rfind(L'\\');
+        if (sl != std::wstring::npos) dir = p.substr(0, sl + 1) + L"raw_shaders";
+    }
+    const std::wstring dxc = s.dxc;
     const Clock::time_point seen = Clock::now();
     s.job = std::async(std::launch::async, [passName, source, isGlsl, dir, dxc, seen] {
         Compiled c;
@@ -327,6 +335,13 @@ bool HotReload_SubmitLiveShader(const std::string& passName, const std::string& 
             c.hasReflFilt = true; c.reflFilter = compMem(L"fs", L"ps_6_6");
         } else if (passName == "Rawlss5Pass") {
             c.hasRawlss5 = true; c.rawlss5 = compMem(L"rawlss5_fs", L"ps_6_6");
+        } else if (passName == "DofPass") {
+            c.hasDof = true;
+            c.dofFocus  = compMem(L"dof_focus",  L"ps_6_6");
+            c.dofCoc    = compMem(L"dof_coc",    L"ps_6_6");
+            c.dofGather = compMem(L"dof_gather", L"ps_6_6");
+            c.dofPost   = compMem(L"dof_post",   L"ps_6_6");
+            c.dofComp   = compMem(L"dof_comp",   L"ps_6_6");
         } else if (passName == "FroxelPass") {
             c.hasFroxel = true;
             c.froxelInject = compMem(L"froxel_inject", L"ps_6_6");

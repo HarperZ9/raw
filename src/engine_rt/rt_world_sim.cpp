@@ -10,6 +10,7 @@
 #include "rt_softbody.h"
 #include "rt_view.h"
 #include "rt_weather.h"
+#include <windows.h>
 #endif
 
 #include <algorithm>
@@ -28,15 +29,23 @@ RawWorldSimTelemetry g_tel{};
 std::vector<raw::ce::CeNavMeshData> g_navMeshes;
 std::atomic<bool> g_navLoaded{false};
 std::atomic<bool> g_shutdown{false};
+std::atomic<float> g_shiverAtomic{0.0f};
 float g_snowAccumU = 0.0f;
+float g_coreWarmth = 85.0f;
 uint32_t g_tickCounter = 0;
+uint64_t g_lastTickUs = 0;
 
 }  // namespace
+
+float WorldSimGetShiverIntensity() {
+    return g_shiverAtomic.load(std::memory_order_relaxed);
+}
 
 RawWorldSimTelemetry StepWorldSimSnapshot(const float playerPos[3], float gameHour,
                                           float rain01, float snow01, float windSpeed,
                                           bool inInterior, const float* actorXyzw, uint32_t actorCount,
-                                          uint32_t navMeshes, uint32_t navVerts, uint32_t navTris) {
+                                          uint32_t navMeshes, uint32_t navVerts, uint32_t navTris,
+                                          float frameDtSec, float prevWarmth) {
     RawWorldSimTelemetry out{};
     out.actorsTracked   = actorCount;
     out.navMeshesLoaded = navMeshes;
@@ -97,6 +106,28 @@ RawWorldSimTelemetry StepWorldSimSnapshot(const float playerPos[3], float gameHo
         out.tacticalAction = static_cast<uint8_t>(TacticalAction::FlankCircle);
         out.expectedPayoff = 0.0f;
     }
+
+    // 4. High-FPS physics substep governor (30..360 Hz stable + 50 ms spike clamp)
+    const auto physPlan = ComputePhysicsSubstep(frameDtSec);
+    out.physicsSubsteps  = static_cast<uint8_t>(std::min<uint32_t>(physPlan.substeps, 16u));
+    out.physicsSubstepMs = physPlan.substepDt * 1000.0f;
+
+    // 5. Environmental thermal exposure & hypothermia survival state
+    const float altZ = playerPos ? playerPos[2] : 0.0f;
+    const auto therm = EvaluateThermalExposure(altZ, windSpeed, rain01, snow01,
+                                               inInterior, nearFire, prevWarmth, physPlan.clampedFrameDt * 2.0f);
+    out.ambientTempC     = therm.ambientTempC;
+    out.coreWarmth       = therm.coreWarmth;
+    out.shiverIntensity  = therm.shiverIntensity;
+    out.staminaRegenMult = therm.staminaRegenMult;
+    out.freezingRisk     = therm.freezingRisk ? 1u : 0u;
+
+    // 6. Sabine-Eyring 3D acoustic room reverb & occlusion estimate
+    const float encRadU = inInterior ? 700.0f : (altZ > 2200.0f ? 2100.0f : 4200.0f);
+    const auto ac = ComputeAcousticReverb(inInterior, encRadU, snow01, rain01, windSpeed, false);
+    out.acousticRt60Sec   = ac.rt60Sec;
+    out.acousticLowPassHz = ac.lowPassHz;
+    out.acousticEnvClass  = static_cast<uint8_t>(ac.envClass);
     return out;
 }
 
@@ -155,10 +186,23 @@ void WorldSimOnPresent() {
         nv = g_tel.navVertsLoaded;
         nt = g_tel.navTrisLoaded;
     }
+    LARGE_INTEGER freq{}, now{};
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&now);
+    const uint64_t nowUs = freq.QuadPart > 0 ? uint64_t((now.QuadPart * 1000000ll) / freq.QuadPart) : 0;
+    float tickDtSec = 1.0f / 30.0f;
+    if (g_lastTickUs > 0 && nowUs > g_lastTickUs) {
+        tickDtSec = std::clamp(float(double(nowUs - g_lastTickUs) * 1e-6), 0.002f, 0.25f);
+    }
+    g_lastTickUs = nowUs;
+
     RawWorldSimTelemetry snap = StepWorldSimSnapshot(
-        ev.playerPos, ev.gameHour, rain01, snow01, windSpd, inInt, actors, nActors, nm, nv, nt);
+        ev.playerPos, ev.gameHour, rain01, snow01, windSpd, inInt, actors, nActors, nm, nv, nt,
+        tickDtSec * 0.5f, g_coreWarmth);
     snap.simTicks = g_tickCounter / 2u;
     if (!inInt) snap.snowDepthU = std::max(snap.snowDepthU, g_snowAccumU);
+    g_coreWarmth = snap.coreWarmth;
+    g_shiverAtomic.store(snap.shiverIntensity, std::memory_order_relaxed);
 
     std::lock_guard<std::mutex> lk(g_simMu);
     g_tel = snap;

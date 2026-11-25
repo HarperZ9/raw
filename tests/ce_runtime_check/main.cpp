@@ -598,6 +598,29 @@ void main() {
     const auto arcMiss = raw::rt::EvaluateWeaponArcHit(swA, swB, tgtMiss, 24.0f, 120.0f, 1.8f);
     Check(arcHit.hit && arcHit.impactParamT > 0.5f && arcHit.poiseImpulse > 20.0f && !arcMiss.hit,
           "weapon_arc_momentum_hitbox");
+
+    // 10) Wave 21 Acoustic Sabine-Eyring Reverb + Live Wired Thermal/Physics/Acoustic WorldSim Telemetry
+    const auto acSky    = raw::rt::ComputeAcousticReverb(false, 4200.0f, 0.0f, 0.0f, 10.0f, false);
+    const auto acSnow   = raw::rt::ComputeAcousticReverb(false, 4200.0f, 1.0f, 0.0f, 10.0f, false);
+    const auto acStone  = raw::rt::ComputeAcousticReverb(true,   700.0f, 0.0f, 0.0f,  0.0f, false);
+    const auto acCavern = raw::rt::ComputeAcousticReverb(true,  1800.0f, 0.0f, 0.0f,  0.0f, false);
+    const auto acWater  = raw::rt::ComputeAcousticReverb(false, 4200.0f, 0.0f, 0.0f,  0.0f, true);
+    Check(acSky.envClass == raw::rt::AcousticEnvClass::OpenSky &&
+          acSnow.rt60Sec < acSky.rt60Sec && acSnow.lowPassHz < acSky.lowPassHz &&
+          acStone.envClass == raw::rt::AcousticEnvClass::StoneInterior &&
+          acCavern.envClass == raw::rt::AcousticEnvClass::CavernVault &&
+          acSky.rt60Sec < acStone.rt60Sec && acStone.rt60Sec < acCavern.rt60Sec &&
+          acWater.envClass == raw::rt::AcousticEnvClass::Underwater && acWater.lowPassHz < 900.0f,
+          "acoustic_room_reverb_estimator");
+
+    const float alpinePos[3] = {100.0f, 200.0f, 4200.0f};
+    const auto wsWave21 = raw::rt::StepWorldSimSnapshot(
+        alpinePos, 14.0f, 0.0f, 0.95f, 180.0f, false, npcs, 3, 8, 2072, 2219, 1.0f / 60.0f, 32.0f);
+    Check(wsWave21.ambientTempC < 0.0f && wsWave21.coreWarmth < 32.0f && wsWave21.shiverIntensity > 0.20f &&
+          wsWave21.physicsSubsteps == 2 && wsWave21.physicsSubstepMs <= 8.4f &&
+          wsWave21.acousticEnvClass == uint8_t(raw::rt::AcousticEnvClass::AlpineValley) &&
+          wsWave21.acousticRt60Sec > 0.05f && wsWave21.acousticLowPassHz < 16000.0f,
+          "world_sim_wave21_telemetry");
 }
 
 }  // namespace

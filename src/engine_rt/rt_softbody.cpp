@@ -5,6 +5,7 @@
 #include "rt_skeleton_ik.h"
 #include "rt_version.h"
 #include "rt_weather.h"
+#include "rt_world_sim.h"
 
 #include <windows.h>
 
@@ -272,8 +273,10 @@ void TraverseSkeletonSEH(uint8_t* node, float dtSec, int depth, uint32_t& bonesO
                 WeatherGetWind(wVx, wVy, wStorm);
                 const float tSec = float(GetTickCount64() % 3600000ull) * 0.001f + float(pKey & 0xFFu) * 0.031f;
                 const auto upPose = ComputeSpineGaze(0.0f, 0.0f, 0.0f, tSec, wStorm * 0.45f);
+                const float shiver = WorldSimGetShiverIntensity();
+                const float tremor = (shiver > 0.12f) ? (shiver * 0.022f * std::sin(tSec * 72.25f)) : 0.0f;
                 if (isSpine2 && pEnt.state.hasRestRotate) {
-                    const float pitch = std::clamp(upPose.breathChestLift * 0.045f, -0.05f, 0.05f);
+                    const float pitch = std::clamp(upPose.breathChestLift * 0.045f + tremor, -0.065f, 0.065f);
                     const float cp = std::cos(pitch), sp = std::sin(pitch);
                     const float* R = pEnt.state.restRotate;
                     float outR[9] = {
@@ -283,8 +286,8 @@ void TraverseSkeletonSEH(uint8_t* node, float dtSec, int depth, uint32_t& bonesO
                     };
                     std::memcpy(node + 0x40, outR, 36);
                     ++bonesOut;
-                } else if (isHead && pEnt.state.hasRestRotate && wStorm > 0.15f) {
-                    const float bracePitch = std::clamp(wStorm * 0.10f, 0.0f, 0.12f);
+                } else if (isHead && pEnt.state.hasRestRotate && (wStorm > 0.15f || shiver > 0.12f)) {
+                    const float bracePitch = std::clamp(wStorm * 0.10f + tremor * 0.85f, -0.03f, 0.13f);
                     const float cp = std::cos(bracePitch), sp = std::sin(bracePitch);
                     const float* R = pEnt.state.restRotate;
                     float outR[9] = {

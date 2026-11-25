@@ -32,6 +32,7 @@
 #include "rt_crash_forensics.h"
 #include "rt_depth_topology.h"
 #include "rt_economy_ledger.h"
+#include "rt_engine_health.h"
 #include "rt_forensics.h"
 #include "rt_live_config.h"
 #include "rt_memory_guards.h"
@@ -141,6 +142,7 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     raw::rt::AudioBridgeOnPresent();
     raw::rt::CrashForensicsOnPresent();
     raw::rt::NpcBehaviorOnPresent();
+    raw::rt::EngineHealthOnPresent();
     {
         static LARGE_INTEGER s_qpcFreq{};
         static LARGE_INTEGER s_prevQpc{};
@@ -390,6 +392,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     Log("%s", raw::rt::NpcBehaviorInit().c_str());
     Log("%s", raw::rt::AudioDirectorInit().c_str());
     Log("%s", raw::rt::FlightRecorderInit(g_out).c_str());
+    Log("%s", raw::rt::EngineHealthInit().c_str());
     Log("%s", raw::rt::AudioBridgeInit().c_str());
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
@@ -419,6 +422,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         return 0;
     }
     raw::rt::AudioBridgeShutdown();
+    raw::rt::EngineHealthShutdown();
     raw::rt::FlightRecorderShutdown();
     raw::rt::AudioDirectorShutdown();
     raw::rt::NpcBehaviorShutdown();

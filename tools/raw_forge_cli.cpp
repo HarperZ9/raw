@@ -18,6 +18,7 @@
 #include "../src/worldgen/RawEsmModelResolver.h"
 #include "../src/worldgen/RawEsmNpcWeatherLoader.h"
 #include "../src/worldgen/RawNavMeshAi.h"
+#include "../src/worldgen/RawSettlementSim.h"
 #include "../src/worldgen/RawTamrielWorldStreamer.h"
 #include "../src/worldgen/RawWildlifeBoids.h"
 #include "../src/worldgen/RawWorldEcosystem.h"
@@ -909,6 +910,127 @@ bool RunWildlifeSimAudit() {
     return ok;
 }
 
+bool RunSettlementSimAudit() {
+    const auto t0 = std::chrono::steady_clock::now();
+
+    // 1. Exact Transit Commodity & Gold Conservation across 200 hours (< 1e-4 relative error)
+    double maxCommRelErr = 1.0;
+    double goldRelErr    = 1.0;
+    uint32_t consDeliv   = 0u;
+    bool consOk          = false;
+    {
+        raw::worldgen::RawSettlementSim sim(2026u);
+        std::array<double, raw::worldgen::kCommodityCount> initTotals{};
+        for (size_t c = 0u; c < raw::worldgen::kCommodityCount; ++c) {
+            initTotals[c] = sim.TotalWorldCommodityUnits(static_cast<raw::worldgen::CommodityKind>(c));
+        }
+        const double initGold = sim.ComputeWorldTelemetry().totalGold;
+
+        raw::worldgen::SettlementWeatherMap frozenWx{};
+        frozenWx.enableProductionConsumption = false;
+        frozenWx.enableBanditAmbushes        = false;
+        sim.StepHours(200.0f, frozenWx);
+
+        maxCommRelErr = 0.0;
+        for (size_t c = 0u; c < raw::worldgen::kCommodityCount; ++c) {
+            const double now = sim.TotalWorldCommodityUnits(static_cast<raw::worldgen::CommodityKind>(c));
+            const double err = std::fabs(now - initTotals[c]) / std::max(1.0, initTotals[c]);
+            if (err > maxCommRelErr) maxCommRelErr = err;
+        }
+        const auto tel = sim.ComputeWorldTelemetry();
+        consDeliv  = tel.deliveriesCompleted;
+        goldRelErr = std::fabs(tel.totalGold - initGold) / std::max(1.0, initGold);
+        consOk = (consDeliv >= 5u) && (maxCommRelErr < 1.0e-4) && (goldRelErr < 1.0e-4);
+    }
+
+    // 2. 72-Hour Windhelm/Winterhold/Dawnstar Blizzard Blockade -> Snowbound Caravans & Grain Price Spike
+    uint32_t peakSnowbound = 0u;
+    float clearGrainPrice  = 0.0f;
+    float blizGrainPrice   = 0.0f;
+    float clearTavern      = 0.0f;
+    float blizTavern       = 0.0f;
+    bool blockadeOk        = false;
+    {
+        raw::worldgen::RawSettlementSim clearSim(3030u);
+        raw::worldgen::RawSettlementSim blizSim(3030u);
+
+        raw::worldgen::SettlementWeatherMap clearWx{};
+        clearWx.enableProductionConsumption = true;
+        clearWx.enableBanditAmbushes        = false;
+
+        raw::worldgen::SettlementWeatherMap blizWx = clearWx;
+        blizWx.byHold[static_cast<size_t>(raw::worldgen::HoldId::Windhelm)].blizzard01   = 0.92f;
+        blizWx.byHold[static_cast<size_t>(raw::worldgen::HoldId::Winterhold)].blizzard01 = 0.95f;
+        blizWx.byHold[static_cast<size_t>(raw::worldgen::HoldId::Dawnstar)].blizzard01   = 0.88f;
+
+        for (int h = 0; h < 72; ++h) {
+            clearSim.StepHours(1.0f, clearWx);
+            blizSim.StepHours(1.0f, blizWx);
+            const uint32_t sb = blizSim.ComputeWorldTelemetry().snowboundCaravans;
+            if (sb > peakSnowbound) peakSnowbound = sb;
+        }
+        clearGrainPrice = clearSim.GetHold(raw::worldgen::HoldId::Winterhold)->price[static_cast<size_t>(raw::worldgen::CommodityKind::Grain)];
+        blizGrainPrice  = blizSim.GetHold(raw::worldgen::HoldId::Winterhold)->price[static_cast<size_t>(raw::worldgen::CommodityKind::Grain)];
+        clearTavern     = clearSim.GetHold(raw::worldgen::HoldId::Winterhold)->tavernOccupancy01;
+        blizTavern      = blizSim.GetHold(raw::worldgen::HoldId::Winterhold)->tavernOccupancy01;
+        blockadeOk = (peakSnowbound > 0u) && (blizGrainPrice > clearGrainPrice * 1.05f) && (blizTavern > clearTavern);
+    }
+
+    // 3. 720-Hour (30-Day) 9-Hold Regional Economy Stability (deliveries > 10, zero NaN/negatives)
+    uint32_t sim30Deliv = 0u;
+    double   sim30Gold  = 0.0;
+    float    sim30Price = 0.0f;
+    const char* scarceHoldName = "Unknown";
+    bool stable30Ok = false;
+    {
+        raw::worldgen::RawSettlementSim sim(4040u);
+        raw::worldgen::SettlementWeatherMap wx{};
+        wx.seasonDaylightHours = 11.0f;
+
+        bool allValid = true;
+        for (int day = 0; day < 30; ++day) {
+            wx.byHold[static_cast<size_t>(raw::worldgen::HoldId::Winterhold)].blizzard01 = (day % 7 == 0) ? 0.75f : 0.15f;
+            wx.byHold[static_cast<size_t>(raw::worldgen::HoldId::Riften)].rain01         = (day % 5 == 0) ? 0.60f : 0.10f;
+            sim.StepHours(24.0f, wx);
+
+            for (size_t i = 0u; i < raw::worldgen::kHoldCount; ++i) {
+                const auto* h = sim.GetHold(static_cast<raw::worldgen::HoldId>(i));
+                if (!h || !std::isfinite(h->treasuryGold) || h->treasuryGold < 0.0f) allValid = false;
+                for (size_t c = 0u; c < raw::worldgen::kCommodityCount; ++c) {
+                    if (!std::isfinite(h->stock[c]) || h->stock[c] < 0.0f ||
+                        !std::isfinite(h->price[c]) || h->price[c] <= 0.0f) {
+                        allValid = false;
+                    }
+                }
+            }
+        }
+        const auto tel = sim.ComputeWorldTelemetry();
+        sim30Deliv     = tel.deliveriesCompleted;
+        sim30Gold      = tel.totalGold;
+        sim30Price     = tel.meanPriceIndex;
+        scarceHoldName = raw::worldgen::GetHoldName(tel.mostScarceHold);
+        stable30Ok     = allValid && (sim30Deliv > 10u) && std::isfinite(sim30Price) &&
+                         (sim30Price > 0.4f) && (sim30Price < 3.0f);
+    }
+
+    const double totalMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    const bool ok = consOk && blockadeOk && stable30Ok;
+
+    std::printf(
+        "[INFO] 9-Hold Living Settlement & Caravan Economy Audit (%.2f ms):\n"
+        "  1. Transit Conservation (200h) : deliveries=%u | maxCommErr=%.2e | goldErr=%.2e [%s]\n"
+        "  2. Blizzard Blockade (72h)     : peakSnowbound=%u | Winterhold grain %.2fg -> %.2fg | tavern %.2f -> %.2f [%s]\n"
+        "  3. 30-Day 9-Hold Stability     : deliveries=%u | totalGold=%.0f | meanPriceIdx=%.2f | scarce=%s [%s]\n"
+        "[%s] settlement-sim: 9-hold caravan economy & blizzard blockade audit %s (%.2f ms)\n",
+        totalMs,
+        consDeliv, maxCommRelErr, goldRelErr, consOk ? "PASS" : "FAIL",
+        peakSnowbound, clearGrainPrice, blizGrainPrice, clearTavern, blizTavern, blockadeOk ? "PASS" : "FAIL",
+        sim30Deliv, sim30Gold, sim30Price, scarceHoldName, stable30Ok ? "PASS" : "FAIL",
+        ok ? "PASS" : "FAIL", ok ? "PASS" : "FAIL", totalMs);
+    return ok;
+}
+
 bool ParseCellXY(const std::string& s, int32_t* outX, int32_t* outY) {
     const size_t comma = s.find(',');
     if (comma == std::string::npos || comma == 0u || comma + 1u >= s.size()) return false;
@@ -946,6 +1068,7 @@ void PrintUsage() {
         "  raw_forge_cli --navmesh-audit [Skyrim.esm] [cx cy]      NavMesh bake + A* funnel + 4-agent squad AI audit\n"
         "  raw_forge_cli --ecosystem-sim                           Coupled wildfire/rain/snowmelt-D8/black-ice/regrowth audit\n"
         "  raw_forge_cli --wildlife-sim                            512-agent O(N) wildlife boids (hawk/crow/deer/salmon) audit\n"
+        "  raw_forge_cli --settlement-sim                          9-hold living settlement, caravan & blizzard blockade audit\n"
         "  raw_forge_cli --validate-all [dir]                      Run all 4 procedural pipelines + quality gates\n"
         "Options:\n"
         "  --seed <N>         Deterministic RNG seed (default: 202607)\n"
@@ -1003,6 +1126,7 @@ int main(int argc, char** argv) {
     bool hasNavCellArg      = false;
     bool runEcosystemSim    = false;
     bool runWildlifeSim     = false;
+    bool runSettlementSim   = false;
     bool writeGeometry      = true;
     uint32_t seed       = 202607u;
     float latitudeDeg   = 60.0f;
@@ -1155,6 +1279,8 @@ int main(int argc, char** argv) {
             runEcosystemSim = true;
         } else if (arg == "--wildlife-sim") {
             runWildlifeSim = true;
+        } else if (arg == "--settlement-sim") {
+            runSettlementSim = true;
         } else if (arg == "--validate-all") {
             runValidateAll = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -1180,11 +1306,11 @@ int main(int argc, char** argv) {
     }
 
     if (!runValidateAll && !runEsmMeta && !runPhysicsProbe && !runTamrielStream && !runNavMeshAudit &&
-        !runEcosystemSim && !runWildlifeSim &&
+        !runEcosystemSim && !runWildlifeSim && !runSettlementSim &&
         floraDir.empty() && dioramaDir.empty() && almanacDir.empty() &&
         materialsDir.empty() && texturesDir.empty() && esmPath.empty() && esmScenePath.empty() &&
         bsaListPath.empty() && nifPath.empty() && bsaNifArchive.empty() && ddsPath.empty() && bsaDdsArchive.empty()) {
-        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, or --validate-all).\n");
+        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, or --validate-all).\n");
         PrintUsage();
         return 2;
     }
@@ -1301,6 +1427,10 @@ int main(int argc, char** argv) {
 
     if (runWildlifeSim) {
         if (!RunWildlifeSimAudit()) allOk = false;
+    }
+
+    if (runSettlementSim) {
+        if (!RunSettlementSimAudit()) allOk = false;
     }
 
     if (runValidateAll) {

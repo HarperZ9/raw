@@ -49,6 +49,7 @@ struct LiveEngineConfig {
     uint32_t hotReloadIntervalFrames = 60u;   // [10 .. 600] frames
     bool     crashForensicsEnabled   = true;  // VEH fatal crash dump & 7,376-class RTTI symbolizer (0/1, default 1)
     bool     flightRecorderEnabled   = true;  // Zero-alloc 300-frame flight-recorder ring & JSON profiler dump (0/1, default 1)
+    bool     engineHealthReport      = true;  // Unified 0-100 engine health scoreboard & remediation adviser (0/1, default 1)
 };
 
 LiveEngineConfig DefaultLiveEngineConfig();
@@ -193,6 +194,12 @@ struct LiveStatusDumpData {
     float    flightP95Ms            = 0.0f;
     float    flightP99Ms            = 0.0f;
     float    flightMaxMs            = 0.0f;
+
+    // Unified 0-100 Engine Health Scoreboard
+    uint8_t     healthScore         = 100u;
+    uint8_t     healthGrade         = 0u; // 0=Optimal, 1=Healthy, 2=Degraded, 3=Critical
+    uint8_t     healthAdvisoryCount = 0u;
+    std::string healthAdvisories[4];
 };
 
 std::string FormatLiveStatusDump(const LiveStatusDumpData& d);

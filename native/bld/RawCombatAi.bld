@@ -1,0 +1,137 @@
+// RawCombatAi.bld: RAW Engine Deterministic Combat, Ballistics, Stealth & Pathfinding Kernels in BuildLang 1.4.0.
+// Counterparts to rt_movement_combat, rt_physics_camera_gmst, rt_stealth_social_gmst, and RawNavMeshAi:
+//   1. parry_posture_damage   - 220ms timed-parry posture damage & guard-break ratio
+//   2. arrow_drop_z           - Ballistic arrow gravity drop & crosswind aerodynamic drag offset
+//   3. ragdoll_impulse_n      - Hyperbolic-tangent ragdoll death-impulse kinetic cap
+//   4. block_mitigation       - Directional shield/weapon block damage mitigation
+//   5. stealth_audible_radius - Boot-weight & rain/wind-damped stealth audible radius (units)
+//   6. octile_3d_heuristic    - 3D Octile A* pathfinding heuristic distance
+// Original work, MIT.
+
+fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
+}
+
+fn max_f64(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+fn min_f64(a: f64, b: f64) -> f64 {
+    if a < b { a } else { b }
+}
+
+fn abs_f64(v: f64) -> f64 {
+    if v < 0.0 { -v } else { v }
+}
+
+// 1. Timed-parry posture damage fraction relative to guard_max (220 ms active parry window).
+//    Perfect parry near t=0 delivers peak counter-posture shock; tapers smoothly toward window_ms.
+// Matches src/engine_rt/rt_movement_combat.cpp timed parry & posture system.
+fn parry_posture_damage(base_dmg: f64, parry_dt_ms: f64, window_ms: f64, guard_max: f64) -> f64 {
+    let dmg: f64 = max_f64(base_dmg, 0.0);
+    let win: f64 = max_f64(window_ms, 1.0);
+    let dt: f64 = abs_f64(parry_dt_ms);
+    let gmax: f64 = max_f64(guard_max, 1.0);
+    if dt > win {
+        0.0
+    } else {
+        let timing_quality: f64 = 1.0 - (dt / win);
+        let posture_shock: f64 = dmg * (1.25 + 1.35 * timing_quality * timing_quality);
+        clamp_f64(posture_shock / gmax, 0.0, 1.5)
+    }
+}
+
+// 2. Ballistic arrow gravity drop (meters, negative Z) with linear aerodynamic velocity damping.
+// Matches src/engine_rt/rt_ai_packages.cpp & rt_magic_physics.cpp projectile ballistics.
+fn arrow_drop_z(flight_time_s: f64, gravity_mps2: f64, wind_mps: f64, drag_k: f64) -> f64 {
+    let t: f64 = max_f64(flight_time_s, 0.0);
+    let g: f64 = max_f64(gravity_mps2, 0.0);
+    let k: f64 = clamp_f64(drag_k, 0.0, 1.5);
+    let damp: f64 = exp(-0.5 * k * t);
+    let grav_drop: f64 = -0.5 * g * t * t * (0.65 + 0.35 * damp);
+    // Subtle vertical updraft/turbulence bias coupled to crosswind magnitude:
+    let wind_pert: f64 = -0.015 * abs_f64(wind_mps) * t * t * k;
+    grav_drop + wind_pert
+}
+
+// 3. Hyperbolic-tangent ragdoll death-impulse kinetic cap (Newtons):
+//    Ceiling = 22 N (ranged) or 48 N (melee), smoothly saturating via ceiling * tanh(raw / ceiling).
+// Matches src/engine_rt/rt_physics_camera_gmst.cpp (EvaluateRagdollDeathImpulse, L145-L167).
+fn ragdoll_impulse_n(proj_mass_kg: f64, impact_speed_mps: f64, damage_amt: f64, is_ranged: i32) -> f64 {
+    let mass: f64 = max_f64(proj_mass_kg, 0.0);
+    let speed: f64 = max_f64(impact_speed_mps, 0.0);
+    let dmg: f64 = max_f64(damage_amt, 0.0);
+    let ceiling: f64 = if is_ranged != 0 { 22.0 } else { 48.0 };
+    let dmg_scale: f64 = if is_ranged != 0 { 0.08 } else { 0.22 };
+    let dmg_imp: f64 = min_f64(dmg * dmg_scale, ceiling * 0.45);
+    let raw_imp: f64 = mass * speed + dmg_imp;
+    clamp_f64(ceiling * tanh(raw_imp / ceiling), 0.0, ceiling)
+}
+
+// 4. Directional shield / weapon block damage mitigation fraction [0..max_cap <= 0.85].
+// Matches src/engine_rt/rt_physics_camera_gmst.cpp (EvaluateBlockMitigation, L169-L195).
+fn block_mitigation(block_skill: f64, shield_armor: f64, is_shield: i32, max_cap: f64) -> f64 {
+    let s01: f64 = clamp_f64(block_skill, 0.0, 100.0) / 100.0;
+    let armor: f64 = clamp_f64(shield_armor, 0.0, 200.0);
+    let cap: f64 = clamp_f64(max_cap, 0.20, 0.85);
+    let raw_mit: f64 = if is_shield != 0 {
+        0.45 + 0.25 * s01 + 0.0022 * armor
+    } else {
+        0.28 + 0.30 * s01
+    };
+    clamp_f64(raw_mit, 0.0, cap)
+}
+
+// 5. Boot-weight & rain/wind-damped stealth audible radius (Skyrim world units, clamped [80, 2200]).
+// Matches src/engine_rt/rt_stealth_social_gmst.cpp (EvaluateStealthNoiseAndVisibility, L150-L167).
+fn stealth_audible_radius(boot_weight: f64, sneak_skill: f64, rain01: f64, wind_bft: f64, is_running: i32) -> f64 {
+    let boot_w: f64 = clamp_f64(boot_weight, 0.0, 50.0);
+    let skill01: f64 = clamp_f64(sneak_skill, 0.0, 100.0) / 100.0;
+    let rain: f64 = clamp_f64(rain01, 0.0, 1.0);
+    let wind01: f64 = clamp_f64(wind_bft, 0.0, 12.0) / 12.0;
+    let move_mult: f64 = if is_running != 0 { 2.15 } else { 0.72 };
+    let skill_quiet: f64 = 1.0 - 0.55 * skill01;
+    let raw_noise: f64 = (8.0 + boot_w * 0.68) * move_mult * skill_quiet;
+    let weather_mask: f64 = clamp_f64(1.0 - 0.36 * rain - 0.22 * wind01, 0.42, 1.0);
+    let audible_score: f64 = max_f64(0.0, raw_noise * weather_mask);
+    clamp_f64(audible_score * 28.0, 80.0, 2200.0)
+}
+
+// 6. 3D Octile A* admissible pathfinding heuristic distance (world units):
+//    h = max(|dx|, |dy|) + (sqrt(2) - 1) * min(|dx|, |dy|) + 0.35 * |dz|.
+// Matches src/worldgen/RawNavMeshAi.cpp Octile A* heuristic.
+fn octile_3d_heuristic(dx: f64, dy: f64, dz: f64) -> f64 {
+    let ax: f64 = abs_f64(dx);
+    let ay: f64 = abs_f64(dy);
+    let az: f64 = abs_f64(dz);
+    let hi: f64 = max_f64(ax, ay);
+    let lo: f64 = min_f64(ax, ay);
+    let diag_extra: f64 = sqrt(2.0) - 1.0;
+    hi + diag_extra * lo + 0.35 * az
+}
+
+fn main() ~ Console {
+    let p_perf: f64 = parry_posture_damage(45.0, 25.0, 220.0, 100.0);
+    let p_late: f64 = parry_posture_damage(45.0, 250.0, 220.0, 100.0);
+    let drop_1s: f64 = arrow_drop_z(1.0, 9.81, 10.0, 0.08);
+    let rag_norm: f64 = ragdoll_impulse_n(0.06, 65.0, 40.0, 1);
+    let rag_huge: f64 = ragdoll_impulse_n(5.0, 100.0, 10000.0, 0);
+    let blk_shd: f64 = block_mitigation(75.0, 60.0, 1, 0.85);
+    let blk_wpn: f64 = block_mitigation(75.0, 0.0, 0, 0.85);
+    let snd_dry: f64 = stealth_audible_radius(12.0, 50.0, 0.0, 1.0, 0);
+    let snd_rain: f64 = stealth_audible_radius(12.0, 50.0, 0.9, 6.0, 0);
+    let h_oct: f64 = octile_3d_heuristic(640.0, 384.0, 128.0);
+
+    println!("parry_posture_damage(25ms) = {} | (250ms miss) = {}", p_perf, p_late);
+    println!("arrow_drop_z(1.0s, g=9.81, wind=10) = {}", drop_1s);
+    println!("ragdoll_impulse_n(arrow) = {} | (10k dmg cap) = {}", rag_norm, rag_huge);
+    println!("block_mitigation(shield) = {} | (weapon) = {}", blk_shd, blk_wpn);
+    println!("stealth_audible_radius(dry) = {} | (rainstorm) = {}", snd_dry, snd_rain);
+    println!("octile_3d_heuristic(640, 384, 128) = {}", h_oct);
+}

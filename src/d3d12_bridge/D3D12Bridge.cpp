@@ -302,7 +302,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         const bool cullOk = m->InitGpuCull();
         const bool clusterOk = m->InitLightClusters();
         const bool froxelOk = m->InitVolFroxels();
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s",
+        const bool pcssOk = m->InitShadowPcss();
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
                terrainOk ? "READY" : "off",
                m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
@@ -315,7 +316,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                overlayOk ? "READY(OFF)" : "off",
                cullOk ? "READY" : "off",
                clusterOk ? "READY" : "off",
-               froxelOk ? "READY" : "off");
+               froxelOk ? "READY" : "off",
+               pcssOk ? "READY" : "off");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
         {
             const auto& matReg = raw::materials::DefaultMaterialRegistry();
@@ -937,6 +939,108 @@ void D3D12Bridge::Impl::ShutdownVolFroxels()
     volFroxelsReady = false;
 }
 
+bool D3D12Bridge::Impl::InitShadowPcss()
+{
+    ShutdownShadowPcss();
+    if (!dev12) return false;
+    shadowPcss = std::make_unique<RawShadowPcssHost>();
+    std::string pcssErr;
+    if (!shadowPcss->Init(dev12.Get(), {}, &pcssErr)) {
+        log("[ShadowPcss] off: %s", pcssErr.c_str());
+        shadowPcss.reset();
+        return false;
+    }
+    UINT64 tsFreq = 0;
+    if (queue && SUCCEEDED(queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+        shadowPcss->SetTimestampFrequency(tsFreq);
+    }
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&shadowPcssAlloc[i])))) {
+            ShutdownShadowPcss();
+            return false;
+        }
+    }
+    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, shadowPcssAlloc[0].Get(), nullptr, IID_PPV_ARGS(&shadowPcssList))) ||
+        FAILED(shadowPcssList->Close()) ||
+        FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&shadowPcssFence)))) {
+        ShutdownShadowPcss();
+        return false;
+    }
+    shadowPcssEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!shadowPcssEvent) {
+        ShutdownShadowPcss();
+        return false;
+    }
+
+    shadowPcssOutW = std::max(cfg.width / 2u, 16u);
+    shadowPcssOutH = std::max(cfg.height / 2u, 16u);
+
+    D3D12_HEAP_PROPERTIES hpDef{};
+    hpDef.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC outRd{};
+    outRd.Dimension        = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    outRd.Width            = shadowPcssOutW;
+    outRd.Height           = shadowPcssOutH;
+    outRd.DepthOrArraySize = 1u;
+    outRd.MipLevels        = 1u;
+    outRd.Format           = DXGI_FORMAT_R16G16_FLOAT;
+    outRd.SampleDesc.Count = 1u;
+    outRd.Flags            = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+
+    D3D12_RESOURCE_DESC smRd{};
+    smRd.Dimension        = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    smRd.Width            = 64u;
+    smRd.Height           = 64u;
+    smRd.DepthOrArraySize = 1u;
+    smRd.MipLevels        = 1u;
+    smRd.Format           = DXGI_FORMAT_R32_FLOAT;
+    smRd.SampleDesc.Count = 1u;
+
+    if (FAILED(dev12->CreateCommittedResource(&hpDef, D3D12_HEAP_FLAG_NONE, &outRd,
+                                              D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&shadowPcssOut))) ||
+        FAILED(dev12->CreateCommittedResource(&hpDef, D3D12_HEAP_FLAG_NONE, &smRd,
+                                              D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&shadowPcssFallbackMap)))) {
+        ShutdownShadowPcss();
+        return false;
+    }
+
+    shadowPcssReady = true;
+    log("[ShadowPcss] GPU Variable-Penumbra PCSS ready (half-res %ux%u RG16F)", shadowPcssOutW, shadowPcssOutH);
+    return true;
+}
+
+void D3D12Bridge::Impl::ShutdownShadowPcss()
+{
+    if (shadowPcssFence && shadowPcssEvent && shadowPcssFenceVal > 0) {
+        if (shadowPcssFence->GetCompletedValue() < shadowPcssFenceVal) {
+            shadowPcssFence->SetEventOnCompletion(shadowPcssFenceVal, shadowPcssEvent);
+            WaitForSingleObject(shadowPcssEvent, 3000);
+        }
+    }
+    shadowPcssList.Reset();
+    for (UINT i = 0; i < kRing; ++i) {
+        shadowPcssAlloc[i].Reset();
+        shadowPcssSlotVal[i] = 0;
+    }
+    shadowPcssFence.Reset();
+    if (shadowPcssEvent) {
+        CloseHandle(shadowPcssEvent);
+        shadowPcssEvent = nullptr;
+    }
+    shadowPcssOut.Reset();
+    shadowPcssFallbackMap.Reset();
+    if (shadowPcss) {
+        shadowPcss->Shutdown();
+        shadowPcss.reset();
+    }
+    shadowPcssOutW = 0;
+    shadowPcssOutH = 0;
+    shadowPcssFenceVal = 0;
+    shadowPcssSlot = 0;
+    shadowPcssFrames = 0;
+    shadowPcssReady = false;
+}
+
 void D3D12Bridge::Shutdown()
 {
     if (!m) return;
@@ -945,6 +1049,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->ShutdownShadowPcss();
     m->ShutdownVolFroxels();
     m->ShutdownLightClusters();
     m->ShutdownGpuCull();

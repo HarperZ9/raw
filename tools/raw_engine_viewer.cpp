@@ -11,6 +11,7 @@
 //   N                   : Compute Live 3D NavMesh Octile A* Funnel-Smoothed Path (RawNavMeshAi!)
 //   I                   : Ignite Live Directional Wildfire / Snowmelt / Black-Ice Field (RawWorldEcosystem!)
 //   V                   : Emit Loud Acoustic Shockwave Startling Wildlife Boids Skyward (RawWildlifeBoids!)
+//   E                   : Advance 9-Hold Economy +6h & Cycle Active Hold Market Readout (RawSettlementSim!)
 //   F9 / H              : Toggle Live GPU Telemetry HUD & 64-Sample Frame-Time Sparkline (RawOverlayHost!)
 //   F12                 : Capture Instant 24-Bit .bmp Screenshot (raw_viewer_shot_<N>.bmp)
 //   1 / 2 / 3 / 4       : Live Season Switch (Spring / Summer / Autumn / Winter)
@@ -63,6 +64,7 @@
 #include "RawGpuCullHost.h"
 #include "RawLightClusterHost.h"
 #include "RawVolumetricFroxelHost.h"
+#include "RawShadowPcssHost.h"
 #include "RawWeatherSim.h"
 #include "RawWorldShowcase.h"
 #include "RawDestructionEngine.h"
@@ -74,6 +76,7 @@
 #include "RawNavMeshAi.h"
 #include "RawWorldEcosystem.h"
 #include "RawWildlifeBoids.h"
+#include "RawSettlementSim.h"
 #include "RawHydrologyGen.h"
 #include "RawAudioOutput.h"
 
@@ -425,6 +428,11 @@ public:
         if (!m_volFroxelsOk) {
             std::printf("[Viewer] RawVolumetricFroxelHost warning: %s\n", err.c_str());
         }
+        err.clear();
+        m_shadowPcssOk = m_shadowPcss.Init(m_dev.Get(), {}, &err) && CreateShadowMapProxy();
+        if (!m_shadowPcssOk) {
+            std::printf("[Viewer] RawShadowPcssHost warning: %s\n", err.c_str());
+        }
         UINT64 tsFreq = 0;
         if (SUCCEEDED(m_queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
             if (m_fluidOk)         m_fluidSim.SetTimestampFrequency(tsFreq);
@@ -434,7 +442,11 @@ public:
             if (m_gpuCullOk)       m_gpuCull.SetTimestampFrequency(tsFreq);
             if (m_lightClustersOk) m_lightClusters.SetTimestampFrequency(tsFreq);
             if (m_volFroxelsOk)    m_volFroxels.SetTimestampFrequency(tsFreq);
+            if (m_shadowPcssOk)    m_shadowPcss.SetTimestampFrequency(tsFreq);
         }
+        m_settlementSim.Reset(202653u);
+        m_settlementTelemetry   = m_settlementSim.ComputeWorldTelemetry();
+        m_initialSettlementGold = m_settlementTelemetry.totalGold;
 
         // Enable real hydraulic & thermal erosion + D8 rivers for procedural frontier terrain!
         raw::worldgen::SetTerrainGenHydrologyErosionEnabled(true);
@@ -485,6 +497,7 @@ public:
         m_displayLdr.Reset();
         m_hdrColor.Reset();
         m_depthIn.Reset();
+        m_shadowOutTex.Reset();
         if (SUCCEEDED(m_swapChain->ResizeBuffers(kBackBufferCount, w, h, DXGI_FORMAT_R8G8B8A8_UNORM, 0))) {
             CreateSizeDependentTargets(w, h);
         }
@@ -1221,6 +1234,95 @@ public:
         return p;
     }
 
+    static raw::worldgen::SettlementWeatherMap BuildSettlementWeatherMap(
+        const raw::worldgen::WeatherGpuUniforms& wGpu, SeasonChoice season, WeatherPreset weather)
+    {
+        raw::worldgen::SettlementWeatherMap wm{};
+        wm.seasonDaylightHours = (season == SeasonChoice::Summer) ? 16.0f
+                               : (season == SeasonChoice::Winter ? 8.0f : 12.0f);
+        wm.enableProductionConsumption = true;
+        wm.enableBanditAmbushes        = true;
+        const float baseBlizz = (weather == WeatherPreset::Blizzard) ? 0.85f
+                              : (season == SeasonChoice::Winter ? std::max(wGpu.weather.z * 0.75f, 0.25f) : wGpu.weather.z * 0.4f);
+        const float baseRain  = (weather == WeatherPreset::Rainstorm) ? 0.85f : wGpu.weather.w;
+        for (size_t i = 0u; i < raw::worldgen::kHoldCount; ++i) {
+            auto& hw = wm.byHold[i];
+            const auto hid = static_cast<raw::worldgen::HoldId>(i);
+            const bool northern = (hid == raw::worldgen::HoldId::Winterhold ||
+                                   hid == raw::worldgen::HoldId::Windhelm ||
+                                   hid == raw::worldgen::HoldId::Dawnstar);
+            hw.blizzard01 = std::clamp(baseBlizz + (northern ? 0.18f : 0.0f), 0.0f, 1.0f);
+            hw.rain01     = std::clamp(baseRain, 0.0f, 1.0f);
+            hw.tempC      = wGpu.seasonThermal0.w - (northern ? 5.5f : 0.0f);
+        }
+        return wm;
+    }
+
+    void AdvanceEconomyAndCycleHold()
+    {
+        const auto wGpu = m_weatherSim.GetGpuUniforms();
+        const auto wm   = BuildSettlementWeatherMap(wGpu, m_season, m_weatherPreset);
+        m_settlementSim.StepHours(6.0f, wm);
+        m_settlementTelemetry = m_settlementSim.ComputeWorldTelemetry();
+        m_activeHoldIdx = (m_activeHoldIdx + 1u) % static_cast<uint32_t>(raw::worldgen::kHoldCount);
+        const auto hid = static_cast<raw::worldgen::HoldId>(m_activeHoldIdx);
+        const auto* hs = m_settlementSim.GetHold(hid);
+        const float grainPrice = hs ? hs->price[static_cast<size_t>(raw::worldgen::CommodityKind::Grain)] : 0.0f;
+        std::printf("[Economy] +6h | Hold=%s grain=%.1fg | caravans=%u (snowbound=%u) | scarce=%s | gold=%.0f\n",
+                    raw::worldgen::GetHoldName(hid), grainPrice,
+                    m_settlementTelemetry.totalCaravansActive, m_settlementTelemetry.snowboundCaravans,
+                    raw::worldgen::GetHoldName(m_settlementTelemetry.mostScarceHold),
+                    m_settlementTelemetry.totalGold);
+    }
+
+    struct SettlementProbe {
+        double   initialGold         = 0.0;
+        double   finalGold           = 0.0;
+        uint32_t activeCaravans      = 0u;
+        uint32_t snowboundCaravans   = 0u;
+        uint32_t deliveriesCompleted = 0u;
+        float    meanPriceIndex      = 0.0f;
+        const char* scarceHoldName   = "";
+        bool     goldConserved       = false;
+        bool     allFinite           = true;
+    };
+
+    SettlementProbe RunSettlementSelfTest()
+    {
+        SettlementProbe p{};
+        const auto before = m_settlementSim.ComputeWorldTelemetry();
+        p.initialGold = before.totalGold;
+
+        const auto wGpu = m_weatherSim.GetGpuUniforms();
+        const auto wm   = BuildSettlementWeatherMap(wGpu, m_season, m_weatherPreset);
+        m_settlementSim.StepHours(24.0f, wm);
+        const auto after = m_settlementSim.ComputeWorldTelemetry();
+        m_settlementTelemetry = after;
+
+        p.finalGold           = after.totalGold;
+        p.activeCaravans      = after.totalCaravansActive;
+        p.snowboundCaravans   = after.snowboundCaravans;
+        p.deliveriesCompleted = after.deliveriesCompleted;
+        p.meanPriceIndex      = after.meanPriceIndex;
+        p.scarceHoldName      = raw::worldgen::GetHoldName(after.mostScarceHold);
+        p.goldConserved       = std::abs(p.finalGold - p.initialGold) < 1.0e-2 && p.initialGold > 0.0;
+        p.allFinite           = std::isfinite(after.totalGold) && std::isfinite(after.meanPriceIndex) &&
+                                std::isfinite(after.simHoursElapsed) && std::isfinite(after.timeOfDayHours);
+        for (size_t i = 0u; i < raw::worldgen::kHoldCount; ++i) {
+            if (const auto* hs = m_settlementSim.GetHold(static_cast<raw::worldgen::HoldId>(i))) {
+                if (!std::isfinite(hs->treasuryGold) || !std::isfinite(hs->tavernOccupancy01)) {
+                    p.allFinite = false;
+                }
+                for (size_t c = 0u; c < raw::worldgen::kCommodityCount; ++c) {
+                    if (!std::isfinite(hs->stock[c]) || !std::isfinite(hs->price[c])) {
+                        p.allFinite = false;
+                    }
+                }
+            }
+        }
+        return p;
+    }
+
     void ToggleAudio()
     {
         if (m_opt.headlessFrames > 0u) return; // Strictly OFF in headless CI mode
@@ -1385,6 +1487,9 @@ public:
                 dtClamped, BuildWildlifeEnvInput(wGpu, m_season, m_weatherPreset, m_wildlifeWaterZ),
                 &m_worldPhysics, &m_ecosystem);
         }
+        m_settlementSim.StepHours(dtClamped * (90.0f / 3600.0f),
+                                  BuildSettlementWeatherMap(wGpu, m_season, m_weatherPreset));
+        m_settlementTelemetry = m_settlementSim.ComputeWorldTelemetry();
         if (m_audioEnabled && m_audio.IsRunning()) {
             PushAudioSceneState(wGpu);
         }
@@ -1842,6 +1947,37 @@ public:
             m_hasPrevFroxelView = true;
         }
 
+        // Live GPU Variable-Penumbra PCSS Contact-Hardening Shadows + Texel-Snapped Cascade (RawShadowPcssHost)!
+        if (m_shadowPcssOk && m_shadowMapProxy && m_shadowOutTex) {
+            const float targetW[3] = {
+                m_camPos[0] + cam.fwd[0] * 400.0f,
+                m_camPos[1] + cam.fwd[1] * 400.0f,
+                m_camPos[2] + cam.fwd[2] * 400.0f
+            };
+            const auto casc = BuildTexelSnappedCascade(targetW, u.sunDir, 2400.0f, 8000.0f, kShadowProxySize);
+            ShadowPcssParams sp{};
+            BuildWorldRowVectorInvViewProj(u.clipToWorld, m_camPos, sp.invViewProj);
+            std::memcpy(sp.lightViewProj, casc.lightViewProj, sizeof(sp.lightViewProj));
+            sp.sunDirW[0]          = u.sunDir[0]; sp.sunDirW[1] = u.sunDir[1]; sp.sunDirW[2] = u.sunDir[2];
+            sp.baseDepthBias       = 4.0e-4f;
+            sp.slopeDepthBias      = 8.0e-4f;
+            sp.normalOffsetWorld   = 1.5f;
+            sp.lightAngularSize    = 18.0f;
+            sp.frameJitter         = static_cast<float>(m_frameCount & 63ull);
+            sp.blockerSearchTexels = 12.0f;
+            sp.minFilterTexels     = 0.75f;
+            sp.maxFilterTexels     = 20.0f;
+            sp.shadowMapSize       = kShadowProxySize;
+            const uint32_t halfW   = std::max(1u, m_width / 2u);
+            const uint32_t halfH   = std::max(1u, m_height / 2u);
+            m_shadowPcssRan = m_shadowPcss.Execute(
+                m_dispCmd.Get(), m_depthIn.Get(), m_shadowMapProxy.Get(), m_shadowOutTex.Get(),
+                halfW, halfH, sp,
+                D3D12_RESOURCE_STATE_COMMON,
+                D3D12_RESOURCE_STATE_COMMON,
+                D3D12_RESOURCE_STATE_COMMON);
+        }
+
         if (m_radOk && m_giEnabled) {
             m_radianceHost.ExecuteScreenGI(m_dispCmd.Get(), m_hdrColor.Get(), m_depthIn.Get(),
                                            m_width, m_height, 0.16f);
@@ -1954,6 +2090,8 @@ public:
         bool     volFroxelsActive     = false;
         float    froxelInjectMs       = 0.0f;
         float    froxelIntegrateMs    = 0.0f;
+        bool     shadowPcssActive     = false;
+        float    shadowPcssMs         = 0.0f;
         uint32_t biomesFound          = 0u;
     };
 
@@ -1988,6 +2126,8 @@ public:
         out->volFroxelsActive = m_volFroxelsOk && m_volFroxels.Ready() && m_hasPrevFroxelView;
         out->froxelInjectMs = m_volFroxels.HasValidTiming() ? m_volFroxels.GetLastInjectMs() : 0.0f;
         out->froxelIntegrateMs = m_volFroxels.HasValidTiming() ? m_volFroxels.GetLastIntegrateMs() : 0.0f;
+        out->shadowPcssActive = m_shadowPcssOk && m_shadowPcss.Ready() && m_shadowPcssRan;
+        out->shadowPcssMs = m_shadowPcss.HasValidTiming() ? m_shadowPcss.GetLastPcssMs() : 0.0f;
 
         const UINT hdrPitch  = (m_width * 8u + 255u) & ~255u;
         const UINT dispPitch = (m_width * 4u + 255u) & ~255u;
@@ -2129,6 +2269,9 @@ public:
         }
         m_cullInstUpload.Reset();
         m_cullInstBuf.Reset();
+        m_shadowPcss.Shutdown();
+        m_shadowOutTex.Reset();
+        m_shadowMapProxy.Reset();
         m_volFroxels.Shutdown();
         m_lightClusters.Shutdown();
         m_gpuCull.Shutdown();
@@ -2204,9 +2347,13 @@ public:
         const float froxTotalMs   = m_volFroxels.HasValidTiming()
                                   ? (m_volFroxels.GetLastInjectMs() + m_volFroxels.GetLastIntegrateMs())
                                   : 0.0f;
-        char buf[896]{};
+        const float pcssMs        = m_shadowPcss.HasValidTiming() ? m_shadowPcss.GetLastPcssMs() : 0.0f;
+        const auto activeHid      = static_cast<raw::worldgen::HoldId>(m_activeHoldIdx % static_cast<uint32_t>(raw::worldgen::kHoldCount));
+        const auto* activeHold    = m_settlementSim.GetHold(activeHid);
+        const float holdGrain     = activeHold ? activeHold->price[static_cast<size_t>(raw::worldgen::CommodityKind::Grain)] : 0.0f;
+        char buf[1024]{};
         std::snprintf(buf, sizeof(buf),
-                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms HUD:%.3fms | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u%s%s | Shards:%u",
+                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms PCSS:%.3fms HUD:%.3fms | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u | %s:%.1fg Car:%u(Snw:%u) Scarce:%s%s%s | Shards:%u",
                       m_walkMode ? "WALK" : "FLY",
                       fps, m_lastDrawnMeshlets, m_meshHost.TerrainUsesMeshShaders() ? "AS+MS" : "VS+PS",
                       locBuf, TimePresetName(m_timePreset), ActiveWeatherDisplayName(),
@@ -2217,6 +2364,7 @@ public:
                       cullTotalMs,
                       lclustTotalMs,
                       froxTotalMs,
+                      pcssMs,
                       m_overlayHost.HasValidTiming() ? m_overlayHost.GetLastOverlayMs() : 0.0f,
                       m_ecoTelemetry.activeFireCells,
                       static_cast<double>(m_ecoTelemetry.totalSnowVolumeM3),
@@ -2224,6 +2372,11 @@ public:
                       m_wildlifeTelemetry.activeAgents,
                       m_wildlifeTelemetry.roostingCount,
                       m_wildlifeTelemetry.startledCount,
+                      raw::worldgen::GetHoldName(activeHid),
+                      static_cast<double>(holdGrain),
+                      m_settlementTelemetry.totalCaravansActive,
+                      m_settlementTelemetry.snowboundCaravans,
+                      raw::worldgen::GetHoldName(m_settlementTelemetry.mostScarceHold),
                       hitBuf, navBuf,
                       m_activeShards);
         return buf;
@@ -2383,6 +2536,21 @@ private:
         hdrSrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         hdrSrv.Texture2D.MipLevels = 1;
         m_dev->CreateShaderResourceView(m_hdrColor.Get(), &hdrSrv, m_srvHeap->GetCPUDescriptorHandleForHeapStart());
+
+        // Owned half-res R16G16_FLOAT PCSS shadow visibility + penumbra output UAV (W/2 x H/2)
+        D3D12_RESOURCE_DESC pcssOutDesc{};
+        pcssOutDesc.Dimension        = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        pcssOutDesc.Width            = std::max(1u, w / 2u);
+        pcssOutDesc.Height           = std::max(1u, h / 2u);
+        pcssOutDesc.DepthOrArraySize = 1u;
+        pcssOutDesc.MipLevels        = 1u;
+        pcssOutDesc.Format           = DXGI_FORMAT_R16G16_FLOAT;
+        pcssOutDesc.SampleDesc.Count = 1u;
+        pcssOutDesc.Flags            = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        if (FAILED(m_dev->CreateCommittedResource(&defHp, D3D12_HEAP_FLAG_NONE, &pcssOutDesc,
+                                                  D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&m_shadowOutTex)))) {
+            return false;
+        }
 
         // R32_FLOAT SceneDepth filled with 1.0f (open sky for standalone viewer)
         D3D12_RESOURCE_DESC depthDesc = hdrDesc;
@@ -2658,11 +2826,12 @@ private:
         const float froxMs   = m_volFroxels.HasValidTiming()
                              ? (m_volFroxels.GetLastInjectMs() + m_volFroxels.GetLastIntegrateMs())
                              : 0.0f;
+        const float pcssMs   = m_shadowPcss.HasValidTiming() ? m_shadowPcss.GetLastPcssMs() : 0.0f;
         std::memset(outHud.lines[2], 0, sizeof(outHud.lines[2]));
-        std::snprintf(outHud.lines[2], sizeof(outHud.lines[2]), "GPU F:%.2f W:%.2f GI:%.2f XP:%.2f FX:%.3f MS",
+        std::snprintf(outHud.lines[2], sizeof(outHud.lines[2]), "GPU F:%.2f W:%.2f GI:%.2f XP:%.2f FX:%.2f PS:%.2f",
                       static_cast<double>(snap.fireMs), static_cast<double>(snap.waterMs),
                       static_cast<double>(snap.giMs), static_cast<double>(snap.xpbdMs),
-                      static_cast<double>(froxMs));
+                      static_cast<double>(froxMs), static_cast<double>(pcssMs));
         std::memset(outHud.lines[3], 0, sizeof(outHud.lines[3]));
         std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "CL:%.3f LC:%.3f(%uL) HUD:%.3fMS | GI:%s",
                       static_cast<double>(hizMs + cullMs),
@@ -2682,17 +2851,16 @@ private:
         outHud.lineColorTag[6] = (m_ecoTelemetry.activeFireCells > 0u || m_wildlifeTelemetry.startledCount > 0u)
                                ? kOverlayColorAmber : kOverlayColorMuted;
 
-        const auto nst = m_navMesh.GetStats();
+        const auto activeHid = static_cast<raw::worldgen::HoldId>(m_activeHoldIdx % static_cast<uint32_t>(raw::worldgen::kHoldCount));
+        const auto* activeH  = m_settlementSim.GetHold(activeHid);
+        const float hGrain   = activeH ? activeH->price[static_cast<size_t>(raw::worldgen::CommodityKind::Grain)] : 0.0f;
         std::memset(outHud.lines[7], 0, sizeof(outHud.lines[7]));
-        if (m_lastNavPath.found && !m_lastNavPath.waypoints.empty()) {
-            std::snprintf(outHud.lines[7], sizeof(outHud.lines[7]), "NAV W:%u | A* %zuWP %.0fU %.2fMS | SQ:%zu",
-                          nst.walkableCells, m_lastNavPath.waypoints.size(),
-                          static_cast<double>(m_lastNavPath.totalLengthU),
-                          m_lastNavPath.searchTimeMs, m_tacticalSquad.size());
-        } else {
-            std::snprintf(outHud.lines[7], sizeof(outHud.lines[7]), "NAV W:%u BAKE:%.1fMS | SQ:%zu | N I V F12",
-                          nst.walkableCells, nst.bakeTimeMs, m_tacticalSquad.size());
-        }
+        std::snprintf(outHud.lines[7], sizeof(outHud.lines[7]), "ECON %s %.0fG | CAR:%u(S:%u) SC:%s | N I V E",
+                      raw::worldgen::GetHoldName(activeHid),
+                      static_cast<double>(hGrain),
+                      m_settlementTelemetry.totalCaravansActive,
+                      m_settlementTelemetry.snowboundCaravans,
+                      raw::worldgen::GetHoldName(m_settlementTelemetry.mostScarceHold));
         outHud.lineColorTag[7] = kOverlayColorCyan;
         outHud.lineCount       = 8u;
         outHud.enabled    = m_hudEnabled;
@@ -2939,6 +3107,68 @@ private:
         return true;
     }
 
+    bool CreateShadowMapProxy()
+    {
+        D3D12_HEAP_PROPERTIES defHp{D3D12_HEAP_TYPE_DEFAULT};
+        D3D12_HEAP_PROPERTIES upHp{D3D12_HEAP_TYPE_UPLOAD};
+        D3D12_RESOURCE_DESC sd{};
+        sd.Dimension        = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        sd.Width            = kShadowProxySize;
+        sd.Height           = kShadowProxySize;
+        sd.DepthOrArraySize = 1u;
+        sd.MipLevels        = 1u;
+        sd.Format           = DXGI_FORMAT_R32_FLOAT;
+        sd.SampleDesc.Count = 1u;
+        if (FAILED(m_dev->CreateCommittedResource(&defHp, D3D12_HEAP_FLAG_NONE, &sd,
+                                                  D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&m_shadowMapProxy)))) {
+            return false;
+        }
+        const UINT pitch = (kShadowProxySize * 4u + 255u) & ~255u;
+        D3D12_RESOURCE_DESC ud{};
+        ud.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+        ud.Width            = static_cast<UINT64>(pitch) * kShadowProxySize;
+        ud.Height           = 1u;
+        ud.DepthOrArraySize = 1u;
+        ud.MipLevels        = 1u;
+        ud.SampleDesc.Count = 1u;
+        ud.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        ComPtr<ID3D12Resource> upBuf;
+        if (FAILED(m_dev->CreateCommittedResource(&upHp, D3D12_HEAP_FLAG_NONE, &ud,
+                                                  D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upBuf)))) {
+            return false;
+        }
+        void* ptr = nullptr;
+        if (FAILED(upBuf->Map(0u, nullptr, &ptr)) || !ptr) return false;
+        for (UINT y = 0u; y < kShadowProxySize; ++y) {
+            float* row = reinterpret_cast<float*>(static_cast<uint8_t*>(ptr) + static_cast<size_t>(y) * pitch);
+            const float fy = static_cast<float>(y) / static_cast<float>(kShadowProxySize);
+            for (UINT x = 0u; x < kShadowProxySize; ++x) {
+                const float fx = static_cast<float>(x) / static_cast<float>(kShadowProxySize);
+                const float ridge = 0.55f + 0.18f * std::sin(fx * 9.4247f) * std::cos(fy * 6.2832f);
+                row[x] = std::clamp(ridge, 0.25f, 0.95f);
+            }
+        }
+        upBuf->Unmap(0u, nullptr);
+
+        WaitGpuIdle();
+        if (FAILED(m_alloc[0]->Reset()) || FAILED(m_cmd->Reset(m_alloc[0].Get(), nullptr))) return false;
+        D3D12_TEXTURE_COPY_LOCATION dDst{};
+        dDst.pResource = m_shadowMapProxy.Get();
+        dDst.Type      = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        D3D12_TEXTURE_COPY_LOCATION dSrc{};
+        dSrc.pResource = upBuf.Get();
+        dSrc.Type      = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        dSrc.PlacedFootprint.Footprint = {DXGI_FORMAT_R32_FLOAT, kShadowProxySize, kShadowProxySize, 1u, pitch};
+        m_cmd->CopyTextureRegion(&dDst, 0u, 0u, 0u, &dSrc, nullptr);
+        auto bOut = MakeBarrier(m_shadowMapProxy.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON);
+        m_cmd->ResourceBarrier(1u, &bOut);
+        if (FAILED(m_cmd->Close())) return false;
+        ID3D12CommandList* lists[1] = {m_cmd.Get()};
+        m_queue->ExecuteCommandLists(1u, lists);
+        WaitGpuIdle();
+        return true;
+    }
+
     static void BuildWorldRowVectorViewProj(const float camRelColMajor[16], const float camPos[3], float outRowVec[16])
     {
         // Convert camera-relative column-vector matrix M (clip = M * float4(p - cam, 1))
@@ -3007,6 +3237,7 @@ private:
     }
 
     static constexpr uint32_t kMaxCullInstances = 1024u;
+    static constexpr uint32_t kShadowProxySize  = 512u;
 
     ViewerOptions m_opt{};
     HWND          m_hwnd = nullptr;
@@ -3022,6 +3253,8 @@ private:
     bool          m_gpuCullOk = false;
     bool          m_lightClustersOk = false;
     bool          m_volFroxelsOk = false;
+    bool          m_shadowPcssOk = false;
+    bool          m_shadowPcssRan = false;
     std::string   m_adapterName;
 
     ComPtr<IDXGIFactory4>              m_factory;
@@ -3062,6 +3295,9 @@ private:
     RawLightClusterHost                m_lightClusters;
     uint32_t                           m_lastClusterLightCount = 0u;
     RawVolumetricFroxelHost            m_volFroxels;
+    RawShadowPcssHost                  m_shadowPcss;
+    ComPtr<ID3D12Resource>             m_shadowOutTex;
+    ComPtr<ID3D12Resource>             m_shadowMapProxy;
     float                              m_prevWorldToClip[16] = {};
     float                              m_prevCamPos[3] = {};
     float                              m_prevCamFwd[3] = {0.0f, 1.0f, 0.0f};
@@ -3089,6 +3325,10 @@ private:
     raw::worldgen::WildlifeTelemetry      m_wildlifeTelemetry{};
     bool                                  m_wildlifeInitialized = false;
     float                                 m_wildlifeWaterZ = -14000.0f;
+    raw::worldgen::RawSettlementSim       m_settlementSim;
+    raw::worldgen::SettlementTelemetry    m_settlementTelemetry{};
+    double                                m_initialSettlementGold = 0.0;
+    uint32_t                              m_activeHoldIdx = 0u;
     std::vector<raw::worldgen::SquadAgent> m_tacticalSquad;
     std::vector<raw::worldgen::TacticalSteeringOutput> m_lastSquadOut;
     raw::worldgen::NavPathResult          m_lastNavPath{};
@@ -3204,6 +3444,7 @@ LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     case 'N': st->viewer->ComputeLiveNavPath(); break;
                     case 'I': st->viewer->IgniteWildfireAtLookHit(); break;
                     case 'V': st->viewer->TriggerWildlifeStartle(); break;
+                    case 'E': st->viewer->AdvanceEconomyAndCycleHold(); break;
                     case 'H':
                     case VK_F9: st->viewer->ToggleHud(); break;
                     case VK_F12: st->viewer->CaptureScreenshotBmp(); break;
@@ -3279,7 +3520,7 @@ int main(int argc, char** argv)
     if (opt.showHelp) {
         std::printf(
             "RAW Interactive Real-Time Win32/DX12 Standalone Engine Viewer\n"
-            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, V startle wildlife, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
+            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, V startle wildlife, E economy +6h/cycle hold, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
             "CLI: [--headless-frames N] [--warp] [--debug] [--width W] [--height H] [--esm <Skyrim.esm>]\n");
         return 0;
     }
@@ -3306,11 +3547,13 @@ int main(int argc, char** argv)
         RawEngineViewer::NavMeshSquadProbe riverwoodNav{};
         RawEngineViewer::EcosystemProbe ecoProbe{};
         RawEngineViewer::WildlifeProbe wildlifeProbe{};
+        RawEngineViewer::SettlementProbe settlementProbe{};
         bool teleportedToWhiterun = false;
         for (uint32_t f = 0; f < opt.headlessFrames; ++f) {
             if (f == 0u) {
-                ecoProbe      = viewer.RunEcosystemSelfTest();
-                wildlifeProbe = viewer.RunWildlifeSelfTest();
+                ecoProbe        = viewer.RunEcosystemSelfTest();
+                wildlifeProbe   = viewer.RunWildlifeSelfTest();
+                settlementProbe = viewer.RunSettlementSelfTest();
                 if (opt.startEsm) {
                     riverwoodStats = viewer.GetTamrielStats();
                     riverwoodPhys = viewer.RunPhysicsWalkSelfTest();
@@ -3338,7 +3581,7 @@ int main(int argc, char** argv)
 
         RawEngineViewer::HeadlessAudit audit{};
         const bool rbOk = viewer.ReadbackHeadlessAudit(&audit);
-        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
+        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), pcss=%s (%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
                     audit.usedMeshShaders ? "AS+MS+PS" : "VS+PS",
                     audit.drawnMeshlets, audit.activeShards, audit.biomesFound,
                     audit.radianceActive ? "ON" : "off", audit.radianceGiMs,
@@ -3347,6 +3590,7 @@ int main(int argc, char** argv)
                     audit.gpuCullActive ? "ON" : "off", audit.gpuCullInstances, audit.gpuHiZMips, audit.gpuHiZMs, audit.gpuCullMs,
                     audit.lightClustersActive ? "ON" : "off", audit.lightClusterCount, audit.lightClusterBuildMs, audit.lightClusterAssignMs,
                     audit.volFroxelsActive ? "ON" : "off", audit.froxelInjectMs, audit.froxelIntegrateMs,
+                    audit.shadowPcssActive ? "ON" : "off", audit.shadowPcssMs,
                     audit.overlayActive ? "ON" : "off", audit.overlayMs, audit.hudNonZeroPx,
                     audit.hdrLitPixels, audit.hdrNanInf,
                     audit.dispNonZeroPx, audit.dispMeanLuma, audit.dispStdDevLuma);
@@ -3357,6 +3601,10 @@ int main(int argc, char** argv)
         std::printf("       Wildlife: agents=%u roost=%u startle=%u meanSpeed=%.1fu/s step=%.3fms finite=%d\n",
                     wildlifeProbe.activeAgents, wildlifeProbe.roostingCount, wildlifeProbe.startledCount,
                     wildlifeProbe.meanSpeed, wildlifeProbe.stepMs, int(wildlifeProbe.allFinite));
+        std::printf("       Settlement Economy (24h): gold=%.0f->%.0f (conserved=%d) caravans=%u (snowbound=%u, delivered=%u) priceIdx=%.3f scarce=%s finite=%d\n",
+                    settlementProbe.initialGold, settlementProbe.finalGold, int(settlementProbe.goldConserved),
+                    settlementProbe.activeCaravans, settlementProbe.snowboundCaravans, settlementProbe.deliveriesCompleted,
+                    settlementProbe.meanPriceIndex, settlementProbe.scarceHoldName, int(settlementProbe.allFinite));
         check(audit.xpbdActive && audit.xpbdParticles == 4096u && std::isfinite(audit.xpbdStepMs) && audit.xpbdStepMs >= 0.0f,
               "Live GPU XPBD soft-body/hair/bush solver (4,096 particles / 256 chains) stepped cleanly");
         check(audit.gpuCullActive && audit.gpuHiZMips > 1u &&
@@ -3371,10 +3619,14 @@ int main(int argc, char** argv)
               std::isfinite(audit.froxelInjectMs) && audit.froxelInjectMs >= 0.0f &&
               std::isfinite(audit.froxelIntegrateMs) && audit.froxelIntegrateMs >= 0.0f,
               "Live GPU 160x90x64 3D Volumetric Froxels (RawVolumetricFroxelHost) executed cleanly with finite timings");
+        check(audit.shadowPcssActive && std::isfinite(audit.shadowPcssMs) && audit.shadowPcssMs >= 0.0f,
+              "Live GPU Variable-Penumbra PCSS Contact-Hardening Shadows (RawShadowPcssHost) executed cleanly");
         check(ecoProbe.ignitedCells > 0u && ecoProbe.activeFireCells > 0u && ecoProbe.allFinite,
               "Live Cellular Ecosystem (RawWorldEcosystem) ignited wildfire, stepped 10x with active fire & finite telemetry");
         check(wildlifeProbe.activeAgents == 128u && wildlifeProbe.startledCount > 0u && wildlifeProbe.allFinite,
               "Live 3D Wildlife Boids (RawWildlifeBoids, 128 agents) flushed skyward on LoudNoise stimulus with zero NaNs");
+        check(settlementProbe.goldConserved && settlementProbe.activeCaravans > 0u && settlementProbe.allFinite,
+              "Live 9-Hold Caravan & Economy Sim (RawSettlementSim) stepped 24h with exact gold conservation & zero NaNs");
         check(audit.overlayActive && std::isfinite(audit.overlayMs) && audit.overlayMs >= 0.0f && audit.hudNonZeroPx > 500u,
               "Live GPU Telemetry & Sparkline HUD (RawOverlayHost) rendered cleanly onto LDR display buffer");
         if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {

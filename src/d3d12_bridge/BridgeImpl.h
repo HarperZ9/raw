@@ -13,6 +13,7 @@
 #include "RawGpuCullHost.h"
 #include "RawLightClusterHost.h"
 #include "RawVolumetricFroxelHost.h"
+#include "RawShadowPcssHost.h"
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
@@ -84,6 +85,7 @@ struct D3D12Bridge::Impl
     std::unique_ptr<RawGpuCullHost> gpuCull;     // Live GPU Hi-Z Pyramid + Frustum/Occlusion/Distance Culler
     std::unique_ptr<RawLightClusterHost> lightClusters; // Live GPU 16x9x24 (3,456-cluster) 1,024-light grid
     std::unique_ptr<RawVolumetricFroxelHost> volFroxels; // Live GPU 160x90x64 3D Volumetric Froxel Fog & Mie solver
+    std::unique_ptr<RawShadowPcssHost> shadowPcss; // Live GPU Variable-Penumbra PCSS Contact-Hardening Shadow solver
     bool                     fluidReady = false;
     bool                     radianceReady = false;
     bool                     xpbdSimReady = false;
@@ -94,6 +96,7 @@ struct D3D12Bridge::Impl
     bool                     gpuCullReady = false;
     bool                     lightClustersReady = false;
     bool                     volFroxelsReady = false;
+    bool                     shadowPcssReady = false;
     ComPtr<ID3D12CommandAllocator>    fluidAlloc[kRing];
     ComPtr<ID3D12GraphicsCommandList> fluidList;
     ComPtr<ID3D12Fence>               fluidFence;
@@ -169,6 +172,18 @@ struct D3D12Bridge::Impl
     float                             froxelPrevViewProj[16] = {};
     float                             froxelPrevCamFwd[3] = {0.0f, 1.0f, 0.0f};
     bool                              froxelHasPrev = false;
+    ComPtr<ID3D12CommandAllocator>    shadowPcssAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList> shadowPcssList;
+    ComPtr<ID3D12Fence>               shadowPcssFence;
+    HANDLE                            shadowPcssEvent = nullptr;
+    uint64_t                          shadowPcssFenceVal = 0;
+    uint64_t                          shadowPcssSlotVal[kRing] = {};
+    uint32_t                          shadowPcssSlot = 0;
+    uint64_t                          shadowPcssFrames = 0;
+    ComPtr<ID3D12Resource>            shadowPcssOut;
+    uint32_t                          shadowPcssOutW = 0;
+    uint32_t                          shadowPcssOutH = 0;
+    ComPtr<ID3D12Resource>            shadowPcssFallbackMap;
     std::string                       telemetryOutDir;
     bool InitFluidSim();
     void ShutdownFluidSim();
@@ -188,6 +203,9 @@ struct D3D12Bridge::Impl
     bool InitVolFroxels();
     void ShutdownVolFroxels();
     bool ExecuteVolFroxelsOnQueue(bool isInterior);
+    bool InitShadowPcss();
+    void ShutdownShadowPcss();
+    bool ExecuteShadowPcssOnQueue(bool hasShadows);
     bool InitOverlayHost();
     void ShutdownOverlayHost();
     void PollOverlayHotkey();

@@ -15,10 +15,12 @@ Texture2D<float>  Depth  : register(t1);
 Texture2D<float4> Normal : register(t2);
 
 float unpackSigma(float a) {
-    return a > 1.5f ? max(a - floor(a * 0.5f) * 2.0f, 0.0f) : 0.12f;
+    if (isnan(a) || isinf(a)) { return 0.12f; }
+    return a > 1.5f ? clamp(a - floor(a * 0.5f) * 2.0f, 0.0f, 1.5f) : 0.12f;
 }
 
 float unpackRestVis(float a) {
+    if (isnan(a) || isinf(a)) { return 1.0f; }
     return a > 1.5f ? saturate(floor(a * 0.5f) / 15.0f) : saturate(a);
 }
 
@@ -41,18 +43,22 @@ float4 atrousStep(float4 at, int stepSize, bool finalPass) {
     const float d = Depth.Load(ip);
     float4 center = GiIn.Load(ip);
     center.rgb = sanitizeGiRadiance(center.rgb);
-    if (WaveActiveAllTrue(d >= 1.0f) || d >= 1.0f) {
-        return float4(center.rgb, finalPass ? unpackRestVis(center.a) : center.a);
+    const float safeCenterA = (isnan(center.a) || isinf(center.a)) ? 1.0f : center.a;
+    // Strict Standard-Z sky guard (d >= 0.99998 untouched!):
+    if (WaveActiveAllTrue(d >= 0.99998f) || d >= 0.99998f) {
+        return float4(center.rgb, finalPass ? unpackRestVis(safeCenterA) : safeCenterA);
     }
 
-    const float z = viewZOf(d);
+    const float z = max(viewZOf(d), 0.25f);
+    const float invZ = 1.0f / z;
     const float3 wp = worldAt(float2(p), d);
-    const float3 n = worldNormal(Normal.Load(ip));
+    const float3 nRaw = worldNormal(Normal.Load(ip));
+    const float3 n = (dot(nRaw, nRaw) > 1.0e-8f) ? normalize(nRaw) : float3(0.0f, 0.0f, 1.0f);
     const float cLum = dot(center.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-    const float cSigma = unpackSigma(center.a);
+    const float cSigma = unpackSigma(safeCenterA);
     const float cVar = cSigma * cSigma;
-    const float restIdx2 = center.a > 1.5f ? (floor(center.a * 0.5f) * 2.0f) : (floor(saturate(center.a) * 15.0f + 0.5f) * 2.0f);
-    const int2 dMax = int2(dims.xy) - 1;
+    const float restIdx2 = safeCenterA > 1.5f ? (floor(safeCenterA * 0.5f) * 2.0f) : (floor(saturate(safeCenterA) * 15.0f + 0.5f) * 2.0f);
+    const int2 dMax = max(int2(dims.xy) - 1, int2(0, 0));
 
     // Exact screen-space view-depth gradient (min-slope across +-1px prevents silhouette depth inflation!):
     const float zR = viewZOf(Depth.Load(int3(min(p.x + 1, dMax.x), p.y, 0)));
@@ -62,22 +68,20 @@ float4 atrousStep(float4 at, int stepSize, bool finalPass) {
     const float2 gradZ = float2(
         min(abs(zR - z), abs(z - zL)),
         min(abs(zD - z), abs(z - zU)));
-    // Tight depth-gradient-aware phiZ + world plane-distance scale:
-    // Blocks bright walls/fires/sky behind foreground weapons, NPCs, and roof eaves from leaking even when coplanar!
-    const float phiZBase = max(length(gradZ) * float(stepSize) * 1.35f + z * 0.0045f, 0.55f);
-    const float invPhiZ  = 1.0f / phiZBase;
-    const float planeScale = 1.0f / max(z * 0.0062f * float(stepSize), 1.25f);
+    // Wave 53 Reciprocal Geometric Plane-Distance Tolerance (oblique-wall & floor safe, zero doorway leak!):
+    const float phiZBase = max(length(gradZ) * float(stepSize) * 1.45f + z * 0.0065f, 0.65f);
+    const float planeTol = clamp(0.0058f * float(stepSize), 0.0058f, 0.028f);
 
-    // Tightened SVGF variance-guided luminance edge-stopping with upper variance cap:
-    // Even on freshly disoccluded pixels (high cSigma), prevents a 2.0 fire hit from bleeding onto 0.1 shadow!
-    const float effSigmaL = clamp(1.80f * cSigma + 0.020f, 0.020f, 0.42f);
-    const float invSigmaL = 1.0f / effSigmaL;
-
-    // Structure-tensor edge orientation from 1px neighbors aligns wavelet along lighting tangents:
+    // Local 5-tap luminance variance + SVGF temporal sigma guidance (stable even on frame 1 / sudden torch ignition!):
     const float lR1 = dot(sanitizeGiRadiance(GiIn.Load(int3(min(p.x + 1, dMax.x), p.y, 0)).rgb), float3(0.2126f, 0.7152f, 0.0722f));
     const float lL1 = dot(sanitizeGiRadiance(GiIn.Load(int3(max(p.x - 1, 0),      p.y, 0)).rgb), float3(0.2126f, 0.7152f, 0.0722f));
     const float lD1 = dot(sanitizeGiRadiance(GiIn.Load(int3(p.x, min(p.y + 1, dMax.y), 0)).rgb), float3(0.2126f, 0.7152f, 0.0722f));
     const float lU1 = dot(sanitizeGiRadiance(GiIn.Load(int3(p.x, max(p.y - 1, 0),      0)).rgb), float3(0.2126f, 0.7152f, 0.0722f));
+    const float localMean5 = (cLum + lR1 + lL1 + lD1 + lU1) * 0.20f;
+    const float localSq5   = (cLum * cLum + lR1 * lR1 + lL1 * lL1 + lD1 * lD1 + lU1 * lU1) * 0.20f;
+    const float localStd5  = sqrt(max(localSq5 - localMean5 * localMean5, 0.0f));
+    const float effSigmaL = clamp(max(1.80f * cSigma, 1.35f * localStd5) + 0.018f, 0.018f, 0.42f);
+    const float invSigmaL = 1.0f / effSigmaL;
     const float2 gradL = float2(lR1 - lL1, lD1 - lU1);
     const float gradMag = length(gradL);
     const float2 edgeN = gradMag > 1.0e-4f ? (gradL / gradMag) : float2(1.0f, 0.0f);
@@ -95,35 +99,40 @@ float4 atrousStep(float4 at, int stepSize, bool finalPass) {
             if (dx == 0 && dy == 0) { continue; }
             const int2 q = clamp(p + int2(dx, dy) * stepSize, int2(0, 0), dMax);
             const float dq = Depth.Load(int3(q, 0));
-            if (dq >= 1.0f) { continue; }
-            const float zq = viewZOf(dq);
+            if (dq >= 0.99998f) { continue; }
+            const float zq = max(viewZOf(dq), 0.25f);
 
-            // 1) Depth-gradient-aware phiZ stopping (hard cut on foreground/background depth silhouettes!):
-            const float stepDist = max(length(float2(float(dx), float(dy))), 1.0f);
-            const float expectedDz = max(abs(gradZ.x * float(dx * stepSize)) + abs(gradZ.y * float(dy * stepSize)), 0.0f);
-            const float zRatio = abs(z - zq) / max(expectedDz * 1.45f + phiZBase * stepDist * 0.65f, 0.55f);
-            if (zRatio > 3.6f) { continue; }
-            const float wPhiZ = exp(-zRatio * zRatio * 0.85f);
-
-            // 2) World-space tangent-plane distance stopping (kills leaks across roof eaves & doorways):
-            const float3 wq = worldAt(float2(q), dq);
-            const float planeDist = abs(dot(n, wq - wp)) * planeScale;
-            const float wPlane = exp(-planeDist * planeDist);
-            const float wz = wPhiZ * wPlane;
-            if (wz < 1.0e-4f) { continue; }
-
-            // 3) Sharp Normal^64 geometric edge-stopping:
-            const float3 nq = worldNormal(Normal.Load(int3(q, 0)));
+            // 1) Sharp Normal^64 geometric edge-stopping (evaluated early to power reciprocal plane-distance!):
+            const float3 nqRaw = worldNormal(Normal.Load(int3(q, 0)));
+            const float3 nq = (dot(nqRaw, nqRaw) > 1.0e-8f) ? normalize(nqRaw) : n;
             const float nd = saturate(dot(n, nq));
             if (nd < 0.72f) { continue; }
             const float wn = pow(nd, 64.0f);
+
+            // 2) Wave 53 Reciprocal Geometric Plane-Distance Stopping:
+            //    planeDist = max(|dot(wq - wp, n)|, |dot(wq - wp, nq)|) / max(z, 0.25)
+            //    Oblique walls, floors & curved snowdrifts stay coplanar (zero dark outlines!) while doorways,
+            //    roof eaves & character silhouettes stop GI light-leaks cleanly from both sides!
+            const float3 wq = worldAt(float2(q), dq);
+            const float3 dPos = wq - wp;
+            const float planeDist = max(abs(dot(dPos, n)), abs(dot(dPos, nq))) * invZ;
+            const float wPlane = exp(-pow(planeDist / planeTol, 2.0f));
+            if (wPlane < 1.0e-4f) { continue; }
+
+            // 3) Relaxed depth-silhouette safety stop (prevents distant coplanar background bleed):
+            const float stepDist = max(length(float2(float(dx), float(dy))), 1.0f);
+            const float expectedDz = max(abs(gradZ.x * float(dx * stepSize)) + abs(gradZ.y * float(dy * stepSize)), 0.0f);
+            const float zRatio = abs(z - zq) / max(expectedDz * 2.10f + phiZBase * stepDist * 0.95f, 0.85f);
+            if (zRatio > 4.2f) { continue; }
+            const float wPhiZ = exp(-zRatio * zRatio * 0.45f);
+            const float wz = wPlane * wPhiZ;
+            if (wz < 1.0e-4f) { continue; }
 
             float4 tap = GiIn.Load(int3(q, 0));
             tap.rgb = sanitizeGiRadiance(tap.rgb);
             const float tLum = dot(tap.rgb, float3(0.2126f, 0.7152f, 0.0722f));
 
-            // 4) Luminance-variance + chromaticity edge-stopping + asymmetric dark-basin flux guard:
-            //    Bright fire/sky neighbors NEVER bleed upward across shadow borders into dark foregrounds!
+            // 4) Local-Variance + SVGF Luminance & Chromaticity Edge-Stopping + Asymmetric Dark-Basin Flux Guard:
             const float3 cChr = center.rgb / max(cLum, 0.025f);
             const float3 tChr = tap.rgb / max(tLum, 0.025f);
             const float chrDiff = length(tChr - cChr);
@@ -149,7 +158,7 @@ float4 atrousStep(float4 at, int stepSize, bool finalPass) {
         const float cleanGate = saturate(1.0f - cSigma * 3.8f);
         const float3 detailClamp = clamp(outRgb + (center.rgb - outRgb) * (0.18f * cleanGate),
                                          min(outRgb, center.rgb), max(outRgb, center.rgb));
-        return float4(max(detailClamp, 0.0f.xxx), unpackRestVis(center.a));
+        return float4(sanitizeGiRadiance(detailClamp), unpackRestVis(safeCenterA));
     }
     // Schied SVGF HPG 2017 Eq. 3 filtered variance propagation into next wavelet level.
     const float nextSigma = clamp(sqrt(max(varSum * (invW * invW), 0.0f)), 0.0f, 1.25f);

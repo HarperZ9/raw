@@ -1,5 +1,5 @@
 // tools/raw_bench_suite.cpp: Studio-Grade Automated GPU/CPU Benchmark & Visual Invariant Suite for RAW.
-// Benchmarks all 11 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
+// Benchmarks all 12 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
 //   1. GPU 64^3 Navier-Stokes Fire/Smoke + 256^2 SWE Water (RawFluidSimHost)
 //   2. GPU 4-Cascade Radiance Cascades GI (RawRadianceHost)
 //   3. Procedural PBR Texture Forge (RawTextureForge, all 8 seamless PBR sets)
@@ -11,6 +11,7 @@
 //   9. GPU Conservative Hi-Z Pyramid + 16,384-Instance Frustum/Occlusion Culler (RawGpuCullHost)
 //  10. GPU 16x9x24 3D Clustered 1,024-Light Grid Assignment (RawLightClusterHost)
 //  11. GPU 160x90x64 3D Volumetric Froxel Fog, Mie Scattering & Temporal Reprojection (RawVolumetricFroxelHost)
+//  12. GPU Variable-Penumbra PCSS Contact-Hardening Shadows & Texel-Snapped Cascade (RawShadowPcssHost)
 //
 // CLI:
 //   raw_bench_suite [--warp] [--quick] [--frames N] [--json <path>] [--esm <path>] [--bsa <path>] [--no-debug-layer]
@@ -34,6 +35,7 @@
 #include "../src/d3d12_bridge/RawGpuCullHost.h"
 #include "../src/d3d12_bridge/RawLightClusterHost.h"
 #include "../src/d3d12_bridge/RawVolumetricFroxelHost.h"
+#include "../src/d3d12_bridge/RawShadowPcssHost.h"
 #include "../src/materials/RawTextureForge.h"
 #include "../src/audio/RawAudioDsp.h"
 #include "../src/worldgen/RawDestructionEngine.h"
@@ -881,6 +883,26 @@ struct VolumetricFroxelsBenchResult {
     float       peakTau         = 0.0f;
     float       hostInjectMs    = 0.0f;
     float       hostIntegrateMs = 0.0f;
+    std::string note;
+};
+
+struct ShadowPcssBenchResult {
+    bool        passed          = false;
+    Percentiles pcssGpuMs{};
+    Percentiles cpuRecordMs{};
+    uint32_t    outWidth        = 960u;
+    uint32_t    outHeight       = 540u;
+    uint32_t    shadowMapSize   = 1024u;
+    float       openVis         = 0.0f;
+    float       nearUmbraVis    = 1.0f;
+    float       farUmbraVis     = 1.0f;
+    float       skyMinVis       = 0.0f;
+    float       nearEdgePen     = 0.0f;
+    float       farEdgePen      = 0.0f;
+    float       penumbraRatio   = 0.0f;
+    uint32_t    softBandPx      = 0u;
+    uint32_t    nanInfCount     = 0u;
+    float       hostPcssMs      = 0.0f;
     std::string note;
 };
 
@@ -2273,6 +2295,258 @@ VolumetricFroxelsBenchResult RunVolumetricFroxelsBenchmark(BenchDx12Rig& rig, ui
 }
 
 // ----------------------------------------------------------------------------
+// 12. GPU Variable-Penumbra PCSS Contact-Hardening Shadows (RawShadowPcssHost)
+// ----------------------------------------------------------------------------
+ShadowPcssBenchResult RunShadowPcssBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames, uint32_t measuredFrames)
+{
+    ShadowPcssBenchResult res{};
+    raw::bridge::RawShadowPcssHost host;
+    std::string err;
+    if (!host.Init(rig.dev.Get(), {}, &err)) {
+        res.note = "RawShadowPcssHost::Init failed: " + err;
+        return res;
+    }
+    host.SetTimestampFrequency(rig.tsFreqHz);
+
+    const uint32_t kW = res.outWidth;
+    const uint32_t kH = res.outHeight;
+    const uint32_t kSmRes = res.shadowMapSize;
+
+    const float targetW[3] = {0.0f, 0.0f, 0.0f};
+    const float sunDir[3]  = {0.0f, 0.0f, 1.0f};
+    const raw::bridge::TexelSnappedCascade cascade =
+        raw::bridge::BuildTexelSnappedCascade(targetW, sunDir, 32.0f, 64.0f, kSmRes);
+
+    auto mulRow4 = [](const float v[4], const float m[16], float out[4]) {
+        for (int c = 0; c < 4; ++c) {
+            out[c] = v[0] * m[0 * 4 + c] + v[1] * m[1 * 4 + c] + v[2] * m[2 * 4 + c] + v[3] * m[3 * 4 + c];
+        }
+    };
+
+    raw::bridge::ShadowPcssParams params{};
+    std::memset(params.invViewProj, 0, sizeof(params.invViewProj));
+    params.invViewProj[0 * 4 + 0] = 24.0f;
+    params.invViewProj[1 * 4 + 1] = 13.5f;
+    params.invViewProj[2 * 4 + 2] = -40.0f;
+    params.invViewProj[3 * 4 + 2] = 20.0f;
+    params.invViewProj[3 * 4 + 3] = 1.0f;
+    std::memcpy(params.lightViewProj, cascade.lightViewProj, sizeof(params.lightViewProj));
+    params.sunDirW[0]          = sunDir[0];
+    params.sunDirW[1]          = sunDir[1];
+    params.sunDirW[2]          = sunDir[2];
+    params.baseDepthBias       = 5.0e-4f;
+    params.slopeDepthBias      = 5.0e-4f;
+    params.normalOffsetWorld   = 0.0f;
+    params.lightAngularSize    = 14.0f;
+    params.blockerSearchTexels = 16.0f;
+    params.minFilterTexels     = 0.75f;
+    params.maxFilterTexels     = 24.0f;
+    params.shadowMapSize       = kSmRes;
+
+    std::vector<float> depthImg(static_cast<size_t>(kW) * kH, 0.5f);
+    for (uint32_t y = 0u; y < 40u; ++y) {
+        for (uint32_t x = 0u; x < kW; ++x) {
+            depthImg[static_cast<size_t>(y) * kW + x] = 1.0f;
+        }
+    }
+
+    std::vector<float> smImg(static_cast<size_t>(kSmRes) * kSmRes, 0.50f);
+    auto rasterBox = [&](float minX, float maxX, float minY, float maxY, float worldHeightZ) {
+        const float pt[4] = {0.5f * (minX + maxX), 0.5f * (minY + maxY), worldHeightZ, 1.0f};
+        float lc[4]{};
+        mulRow4(pt, cascade.lightViewProj, lc);
+        const float casterZ = lc[2];
+        float uMin = 1.0f, uMax = 0.0f, vMin = 1.0f, vMax = 0.0f;
+        const float xs[2] = {minX, maxX};
+        const float ys[2] = {minY, maxY};
+        for (int ix = 0; ix < 2; ++ix) {
+            for (int iy = 0; iy < 2; ++iy) {
+                const float cPt[4] = {xs[ix], ys[iy], worldHeightZ, 1.0f};
+                float cLc[4]{};
+                mulRow4(cPt, cascade.lightViewProj, cLc);
+                const float u = cLc[0] * 0.5f + 0.5f;
+                const float v = 0.5f - cLc[1] * 0.5f;
+                uMin = std::min(uMin, u); uMax = std::max(uMax, u);
+                vMin = std::min(vMin, v); vMax = std::max(vMax, v);
+            }
+        }
+        const uint32_t x0 = static_cast<uint32_t>(std::clamp(std::floor(uMin * kSmRes), 0.0f, static_cast<float>(kSmRes - 1u)));
+        const uint32_t x1 = static_cast<uint32_t>(std::clamp(std::ceil(uMax * kSmRes), 0.0f, static_cast<float>(kSmRes - 1u)));
+        const uint32_t y0 = static_cast<uint32_t>(std::clamp(std::floor(vMin * kSmRes), 0.0f, static_cast<float>(kSmRes - 1u)));
+        const uint32_t y1 = static_cast<uint32_t>(std::clamp(std::ceil(vMax * kSmRes), 0.0f, static_cast<float>(kSmRes - 1u)));
+        for (uint32_t y = y0; y <= y1; ++y) {
+            for (uint32_t x = x0; x <= x1; ++x) {
+                float& dst = smImg[static_cast<size_t>(y) * kSmRes + x];
+                dst = std::min(dst, casterZ);
+            }
+        }
+    };
+    rasterBox(-16.0f, -6.0f, -5.0f, 5.0f, 0.8f);
+    rasterBox(  6.0f, 16.0f, -5.0f, 5.0f, 22.0f);
+
+    ComPtr<ID3D12Resource> depthTex, smTex, outTex, rbBuf;
+    if (!rig.UploadR32Tex2D(depthTex, kW, kH, depthImg) ||
+        !rig.UploadR32Tex2D(smTex, kSmRes, kSmRes, smImg)) {
+        res.note = "Upload PCSS depth/shadow textures failed";
+        return res;
+    }
+
+    D3D12_HEAP_PROPERTIES hpDef{D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC outRd{};
+    outRd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    outRd.Width = kW; outRd.Height = kH; outRd.DepthOrArraySize = 1u; outRd.MipLevels = 1u;
+    outRd.Format = DXGI_FORMAT_R16G16_FLOAT; outRd.SampleDesc.Count = 1u;
+    outRd.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    if (FAILED(rig.dev->CreateCommittedResource(&hpDef, D3D12_HEAP_FLAG_NONE, &outRd,
+                                                D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&outTex)))) {
+        res.note = "Create RG16F PCSS output texture failed";
+        return res;
+    }
+
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT outFp{};
+    UINT outRows = 0u; UINT64 outRowB = 0ull, outTotB = 0ull;
+    rig.dev->GetCopyableFootprints(&outRd, 0u, 1u, 0ull, &outFp, &outRows, &outRowB, &outTotB);
+    D3D12_HEAP_PROPERTIES hpRb{D3D12_HEAP_TYPE_READBACK};
+    D3D12_RESOURCE_DESC rbRd{};
+    rbRd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; rbRd.Width = outTotB; rbRd.Height = 1u;
+    rbRd.DepthOrArraySize = 1u; rbRd.MipLevels = 1u; rbRd.SampleDesc.Count = 1u;
+    rbRd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    if (FAILED(rig.dev->CreateCommittedResource(&hpRb, D3D12_HEAP_FLAG_NONE, &rbRd,
+                                                D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&rbBuf)))) {
+        res.note = "Create PCSS readback buffer failed";
+        return res;
+    }
+
+    std::vector<double> gpuSamples, cpuSamples;
+    gpuSamples.reserve(measuredFrames);
+    cpuSamples.reserve(measuredFrames);
+    const uint32_t totalFrames = warmupFrames + measuredFrames;
+    for (uint32_t f = 0u; f < totalFrames; ++f) {
+        params.frameJitter = static_cast<float>(f & 63u);
+        const auto c0 = Clock::now();
+        if (!rig.BeginFrame()) {
+            res.note = "BeginFrame failed";
+            return res;
+        }
+        rig.MarkTimestamp(0u);
+        host.Execute(rig.cmd.Get(), depthTex.Get(), smTex.Get(), outTex.Get(), kW, kH, params);
+        rig.MarkTimestamp(1u);
+        rig.ResolveTimestamps(0u, 2u);
+        const auto c1 = Clock::now();
+        if (!rig.FlushAndWait()) {
+            res.note = "FlushAndWait failed";
+            return res;
+        }
+        if (f >= warmupFrames) {
+            double gMs = 0.0;
+            rig.ReadTimestampRangeMs(0u, 1u, gMs);
+            gpuSamples.push_back(gMs);
+            cpuSamples.push_back(ElapsedMs(c0, c1));
+        }
+    }
+
+    res.pcssGpuMs   = ComputePercentiles(gpuSamples);
+    res.cpuRecordMs = ComputePercentiles(cpuSamples);
+    res.hostPcssMs  = host.HasValidTiming() ? host.GetLastPcssMs() : 0.0f;
+
+    // Readback RG16F ShadowOut
+    if (!rig.BeginFrame()) {
+        res.note = "BeginFrame (readback) failed";
+        return res;
+    }
+    D3D12_RESOURCE_BARRIER toSrc{};
+    toSrc.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    toSrc.Transition = {outTex.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE};
+    rig.cmd->ResourceBarrier(1u, &toSrc);
+    D3D12_TEXTURE_COPY_LOCATION dLoc{rbBuf.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {}};
+    dLoc.PlacedFootprint = outFp;
+    D3D12_TEXTURE_COPY_LOCATION sLoc{outTex.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
+    sLoc.SubresourceIndex = 0u;
+    rig.cmd->CopyTextureRegion(&dLoc, 0u, 0u, 0u, &sLoc, nullptr);
+    D3D12_RESOURCE_BARRIER toUav = toSrc;
+    std::swap(toUav.Transition.StateBefore, toUav.Transition.StateAfter);
+    rig.cmd->ResourceBarrier(1u, &toUav);
+    if (!rig.FlushAndWait()) {
+        res.note = "FlushAndWait (readback) failed";
+        return res;
+    }
+
+    std::vector<float> visImg(static_cast<size_t>(kW) * kH, 0.0f);
+    std::vector<float> penImg(static_cast<size_t>(kW) * kH, 0.0f);
+    {
+        void* p = nullptr;
+        D3D12_RANGE rr{0u, static_cast<SIZE_T>(outTotB)};
+        if (FAILED(rbBuf->Map(0u, &rr, &p)) || !p) {
+            res.note = "Map PCSS readback failed";
+            return res;
+        }
+        const auto* base = static_cast<const uint8_t*>(p) + outFp.Offset;
+        for (uint32_t y = 0u; y < kH; ++y) {
+            const auto* row = reinterpret_cast<const uint16_t*>(base + static_cast<size_t>(y) * outFp.Footprint.RowPitch);
+            for (uint32_t x = 0u; x < kW; ++x) {
+                const uint16_t hv = row[x * 2u + 0u];
+                const uint16_t hp = row[x * 2u + 1u];
+                if ((hv & 0x7C00u) == 0x7C00u || (hp & 0x7C00u) == 0x7C00u) ++res.nanInfCount;
+                visImg[static_cast<size_t>(y) * kW + x] = HalfToFloat(hv);
+                penImg[static_cast<size_t>(y) * kW + x] = HalfToFloat(hp);
+            }
+        }
+        D3D12_RANGE wr{0u, 0u};
+        rbBuf->Unmap(0u, &wr);
+    }
+
+    auto sampleW = [&](float wx, float wy, float& vOut, float& pOut) {
+        const float u = (wx / 24.0f) * 0.5f + 0.5f;
+        const float v = 0.5f - (wy / 13.5f) * 0.5f;
+        const uint32_t px = static_cast<uint32_t>(std::clamp(std::floor(u * kW), 0.0f, static_cast<float>(kW - 1u)));
+        const uint32_t py = static_cast<uint32_t>(std::clamp(std::floor(v * kH), 0.0f, static_cast<float>(kH - 1u)));
+        vOut = visImg[static_cast<size_t>(py) * kW + px];
+        pOut = penImg[static_cast<size_t>(py) * kW + px];
+    };
+
+    res.skyMinVis = 1.0f;
+    for (uint32_t x = 0u; x < kW; ++x) res.skyMinVis = std::min(res.skyMinVis, visImg[static_cast<size_t>(10u) * kW + x]);
+    float openPen = 0.0f, nearUmbraPen = 0.0f, farUmbraPen = 0.0f;
+    sampleW(  0.0f, 0.0f, res.openVis,      openPen);
+    sampleW(-11.0f, 0.0f, res.nearUmbraVis, nearUmbraPen);
+    sampleW( 11.0f, 0.0f, res.farUmbraVis,  farUmbraPen);
+
+    float nearSum = 0.0f, farSum = 0.0f;
+    uint32_t nearCnt = 0u, farCnt = 0u;
+    for (uint32_t y = 220u; y < 320u; ++y) {
+        for (uint32_t x = 0u; x < kW; ++x) {
+            const float wx = ((static_cast<float>(x) + 0.5f) / kW * 2.0f - 1.0f) * 24.0f;
+            const float v  = visImg[static_cast<size_t>(y) * kW + x];
+            const float pn = penImg[static_cast<size_t>(y) * kW + x];
+            if (std::fabs(wx - (-6.0f)) < 0.6f && pn > 1.0e-4f) { nearSum += pn; ++nearCnt; }
+            if (std::fabs(wx - 6.0f) < 1.2f && pn > 1.0e-4f) {
+                farSum += pn; ++farCnt;
+                if (v > 0.05f && v < 0.95f) ++res.softBandPx;
+            }
+        }
+    }
+    res.nearEdgePen   = (nearCnt > 0u) ? (nearSum / static_cast<float>(nearCnt)) : nearUmbraPen;
+    res.farEdgePen    = (farCnt > 0u)  ? (farSum / static_cast<float>(farCnt))   : farUmbraPen;
+    res.penumbraRatio = (res.nearEdgePen > 1.0e-5f) ? (res.farEdgePen / res.nearEdgePen) : 0.0f;
+
+    const bool optOk    = (res.nanInfCount == 0u) && (res.openVis >= 0.999f) &&
+                          (res.nearUmbraVis <= 0.001f) && (res.farUmbraVis <= 0.001f) &&
+                          (res.skyMinVis >= 0.999f) && (res.penumbraRatio > 2.0f) && (res.softBandPx > 20u);
+    const bool budgetOk = rig.isWarp ? true : (res.pcssGpuMs.mean < 0.15);
+    res.passed = optOk && budgetOk;
+    if (!optOk) {
+        res.note = "PCSS contact-hardening/umbra/sky/NaN invariant failed";
+    } else if (!budgetOk) {
+        res.note = "HW GPU 960x540 PCSS mean exceeded 0.15 ms budget";
+    } else {
+        res.note = rig.isWarp ? "WARP 960x540 PCSS 32x contact hardening PASS"
+                              : "HW GPU < 0.15 ms & 32x contact hardening PASS";
+    }
+    return res;
+}
+
+// ----------------------------------------------------------------------------
 // JSON Serializer & Console Scorecard Printer
 // ----------------------------------------------------------------------------
 void WriteBenchJson(const std::string& path,
@@ -2292,7 +2566,8 @@ void WriteBenchJson(const std::string& path,
                     const XpbdBenchResult& xpbd,
                     const GpuCullBenchResult& gpuCull,
                     const LightClusterBenchResult& lightClusters,
-                    const VolumetricFroxelsBenchResult& volFroxels)
+                    const VolumetricFroxelsBenchResult& volFroxels,
+                    const ShadowPcssBenchResult& shadowPcss)
 {
     std::ostringstream os;
     os << std::fixed << std::setprecision(4);
@@ -2491,6 +2766,27 @@ void WriteBenchJson(const std::string& path,
     os << "      \"nanCount\": " << volFroxels.nanCount << ",\n";
     os << "      \"nonMonoCount\": " << volFroxels.nonMonoCount << ",\n";
     os << "      \"note\": \"" << JsonEscape(volFroxels.note) << "\"\n";
+    os << "    },\n";
+
+    // 12. GPU Variable-Penumbra PCSS Contact-Hardening Shadows
+    os << "    \"shadowPcss\": {\n";
+    os << "      \"passed\": " << (shadowPcss.passed ? "true" : "false") << ",\n";
+    os << "      \"outWidth\": " << shadowPcss.outWidth << ",\n";
+    os << "      \"outHeight\": " << shadowPcss.outHeight << ",\n";
+    os << "      \"shadowMapSize\": " << shadowPcss.shadowMapSize << ",\n";
+    os << "      \"pcssGpuMs\": "; pctObj(shadowPcss.pcssGpuMs); os << ",\n";
+    os << "      \"cpuRecordMs\": "; pctObj(shadowPcss.cpuRecordMs); os << ",\n";
+    os << "      \"hostPcssMs\": " << shadowPcss.hostPcssMs << ",\n";
+    os << "      \"openVis\": " << shadowPcss.openVis << ",\n";
+    os << "      \"nearUmbraVis\": " << shadowPcss.nearUmbraVis << ",\n";
+    os << "      \"farUmbraVis\": " << shadowPcss.farUmbraVis << ",\n";
+    os << "      \"skyMinVis\": " << shadowPcss.skyMinVis << ",\n";
+    os << "      \"nearEdgePen\": " << shadowPcss.nearEdgePen << ",\n";
+    os << "      \"farEdgePen\": " << shadowPcss.farEdgePen << ",\n";
+    os << "      \"penumbraRatio\": " << shadowPcss.penumbraRatio << ",\n";
+    os << "      \"softBandPx\": " << shadowPcss.softBandPx << ",\n";
+    os << "      \"nanInfCount\": " << shadowPcss.nanInfCount << ",\n";
+    os << "      \"note\": \"" << JsonEscape(shadowPcss.note) << "\"\n";
     os << "    }\n";
 
     os << "  }\n";
@@ -2518,7 +2814,8 @@ void PrintScorecard(const BenchDx12Rig& rig,
                     const XpbdBenchResult& xpbd,
                     const GpuCullBenchResult& gpuCull,
                     const LightClusterBenchResult& lightClusters,
-                    const VolumetricFroxelsBenchResult& volFroxels)
+                    const VolumetricFroxelsBenchResult& volFroxels,
+                    const ShadowPcssBenchResult& shadowPcss)
 {
     std::printf("\n");
     std::printf("=====================================================================================================\n");
@@ -2607,6 +2904,12 @@ void PrintScorecard(const BenchDx12Rig& rig,
                   volFroxels.mieForwardRatio, volFroxels.valleyTau, volFroxels.peakTau, volFroxels.nanCount);
     std::printf("  %-30s | %-6s | %-28s | %s\n", "11. 160x90x64 3D Vol Froxels", volFroxels.passed ? "PASS" : "FAIL", metric, detail);
 
+    std::snprintf(metric, sizeof(metric), "PCSS %.4f ms (p95 %.4f)", shadowPcss.pcssGpuMs.mean, shadowPcss.pcssGpuMs.p95);
+    std::snprintf(detail, sizeof(detail), "p50=%.4f ms | ratio=%.1fx | open=%.1f umb=%.1f sky=%.1f | NaN=%u",
+                  shadowPcss.pcssGpuMs.p50, shadowPcss.penumbraRatio,
+                  shadowPcss.openVis, shadowPcss.nearUmbraVis, shadowPcss.skyMinVis, shadowPcss.nanInfCount);
+    std::printf("  %-30s | %-6s | %-28s | %s\n", "12. GPU Variable-Pen PCSS", shadowPcss.passed ? "PASS" : "FAIL", metric, detail);
+
     std::printf("=====================================================================================================\n");
 }
 
@@ -2668,18 +2971,20 @@ int main(int argc, char** argv)
     const GpuCullBenchResult           gpuCull       = RunGpuCullBenchmark(rig, warmupFrames, measuredFrames);
     const LightClusterBenchResult      lightClusters = RunLightClusterBenchmark(rig, warmupFrames, measuredFrames);
     const VolumetricFroxelsBenchResult volFroxels    = RunVolumetricFroxelsBenchmark(rig, warmupFrames, measuredFrames);
+    const ShadowPcssBenchResult        shadowPcss    = RunShadowPcssBenchmark(rig, warmupFrames, measuredFrames);
 
     const uint32_t debugErrors = rig.DrainDebugErrors();
     const bool allPassed = fluid.passed && rc.passed && tex.passed && audio.passed &&
                            destr.passed && flora.passed && tamriel.passed && xpbd.passed &&
-                           gpuCull.passed && lightClusters.passed && volFroxels.passed && (debugErrors == 0u);
+                           gpuCull.passed && lightClusters.passed && volFroxels.passed &&
+                           shadowPcss.passed && (debugErrors == 0u);
 
     PrintScorecard(rig, quickMode, warmupFrames, measuredFrames, debugErrors,
-                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels);
+                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss);
 
     if (!jsonPath.empty()) {
         WriteBenchJson(jsonPath, rig, quickMode, warmupFrames, measuredFrames, debugErrors, allPassed,
-                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels);
+                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss);
         std::printf("  JSON report written: %s\n", jsonPath.c_str());
     }
 

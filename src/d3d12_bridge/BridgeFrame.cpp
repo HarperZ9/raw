@@ -110,6 +110,9 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
     const float froxelIntegrateMs = (volFroxelsReady && volFroxels && volFroxels->HasValidTiming() &&
                                      std::isfinite(volFroxels->GetLastIntegrateMs()))
         ? volFroxels->GetLastIntegrateMs() : 0.0f;
+    const float shadowPcssMs = (shadowPcssReady && shadowPcss && shadowPcss->HasValidTiming() &&
+                                std::isfinite(shadowPcss->GetLastPcssMs()))
+        ? shadowPcss->GetLastPcssMs() : 0.0f;
 
     char jsonBuf[2048]{};
     const int n = std::snprintf(
@@ -142,6 +145,7 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"lightClusterLights\": %u,\n"
         "  \"froxelInjectMs\": %.4f,\n"
         "  \"froxelIntegrateMs\": %.4f,\n"
+        "  \"shadowPcssMs\": %.4f,\n"
         "  \"seasonSnowM\": %.4f,\n"
         "  \"seasonIceM\": %.4f,\n"
         "  \"skinTempC\": %.3f,\n"
@@ -176,6 +180,7 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         lightClusterLights,
         froxelInjectMs,
         froxelIntegrateMs,
+        shadowPcssMs,
         seasonSnowM,
         seasonIceM,
         skinTempC,
@@ -1063,6 +1068,88 @@ bool D3D12Bridge::Impl::ExecuteVolFroxelsOnQueue(bool isInterior)
     return true;
 }
 
+bool D3D12Bridge::Impl::ExecuteShadowPcssOnQueue(bool hasShadows)
+{
+    if (!shadowPcssReady || !shadowPcss || !shadowPcss->Ready() ||
+        !queue || !shadowPcssList || !shadowPcssFence || !shadowPcssEvent ||
+        !depthIn.res12 || !shadowPcssOut || shadowPcssOutW == 0u || shadowPcssOutH == 0u) {
+        return false;
+    }
+
+    const uint32_t slot = shadowPcssSlot;
+    if (shadowPcssSlotVal[slot] > 0 && shadowPcssFence->GetCompletedValue() < shadowPcssSlotVal[slot]) {
+        shadowPcssFence->SetEventOnCompletion(shadowPcssSlotVal[slot], shadowPcssEvent);
+        WaitForSingleObject(shadowPcssEvent, 3000);
+    }
+    if (FAILED(shadowPcssAlloc[slot]->Reset()) ||
+        FAILED(shadowPcssList->Reset(shadowPcssAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    ID3D12Resource* smRes = (hasShadows && shared[static_cast<UINT>(Shared::ShadowAtlas)].res12)
+        ? shared[static_cast<UINT>(Shared::ShadowAtlas)].res12.Get()
+        : shadowPcssFallbackMap.Get();
+    if (!smRes) {
+        shadowPcssList->Close();
+        return false;
+    }
+
+    const D3D12_RESOURCE_DESC smDesc = smRes->GetDesc();
+    const uint32_t smSize = static_cast<uint32_t>(std::max<UINT64>(smDesc.Height, 64ull));
+
+    float sunDir[3] = {
+        std::isfinite(lighting.sunDirection[0]) ? lighting.sunDirection[0] : 0.35f,
+        std::isfinite(lighting.sunDirection[1]) ? lighting.sunDirection[1] : 0.25f,
+        std::isfinite(lighting.sunDirection[2]) ? lighting.sunDirection[2] : 0.90f
+    };
+    const float camRelTarget[3] = {0.0f, 0.0f, 0.0f};
+    const TexelSnappedCascade cascade =
+        BuildTexelSnappedCascade(camRelTarget, sunDir, 2048.0f, 8192.0f, smSize);
+
+    ShadowPcssParams params{};
+    // lighting.clipToWorld stores rows dotting column vectors; transpose for row-vector mul(v, M)
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            params.invViewProj[r * 4 + c] = lighting.clipToWorld[c][r];
+        }
+    }
+    std::memcpy(params.lightViewProj, cascade.lightViewProj, sizeof(params.lightViewProj));
+    params.sunDirW[0]          = sunDir[0];
+    params.sunDirW[1]          = sunDir[1];
+    params.sunDirW[2]          = sunDir[2];
+    params.baseDepthBias       = 4.0e-4f;
+    params.slopeDepthBias      = 8.0e-4f;
+    params.normalOffsetWorld   = 1.5f;
+    params.lightAngularSize    = 14.0f;
+    params.frameJitter         = static_cast<float>(shadowPcssFrames & 63ull);
+    params.blockerSearchTexels = 14.0f;
+    params.minFilterTexels     = 0.75f;
+    params.maxFilterTexels     = 22.0f;
+    params.shadowMapSize       = smSize;
+
+    shadowPcss->Execute(shadowPcssList.Get(), depthIn.res12.Get(), smRes, shadowPcssOut.Get(),
+                        shadowPcssOutW, shadowPcssOutH, params,
+                        D3D12_RESOURCE_STATE_COMMON,
+                        D3D12_RESOURCE_STATE_COMMON,
+                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    if (FAILED(shadowPcssList->Close())) return false;
+    ID3D12CommandList* lists[1] = {shadowPcssList.Get()};
+    queue->ExecuteCommandLists(1, lists);
+    queue->Signal(shadowPcssFence.Get(), ++shadowPcssFenceVal);
+    shadowPcssSlotVal[slot] = shadowPcssFenceVal;
+    shadowPcssSlot = (slot + 1u) % kRing;
+
+    if ((shadowPcssFrames++ % 180ull) == 0ull) {
+        log("[ShadowPcss] live half-res %ux%u PCSS: pcssMs=%.4f, shadowMap=%ux%u (%s)",
+            shadowPcssOutW, shadowPcssOutH,
+            shadowPcss->HasValidTiming() ? shadowPcss->GetLastPcssMs() : 0.0f,
+            static_cast<unsigned>(smDesc.Width), static_cast<unsigned>(smDesc.Height),
+            hasShadows ? "ShadowAtlas" : "fallback");
+    }
+    return true;
+}
+
 bool D3D12Bridge::Impl::CpuWait(uint64_t value, DWORD timeoutMs)
 {
     return WaitFence(fence12.Get(), value, cpuEvent, timeoutMs);
@@ -1292,8 +1379,10 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                                   m->lightClusters && m->lightClusters->Ready();
     const bool runVolFroxels = m->cfg.lightingPass && m->lighting.valid && m->volFroxelsReady &&
                                m->volFroxels && m->volFroxels->Ready();
+    const bool runShadowPcss = m->cfg.lightingPass && m->lighting.valid && m->shadowPcssReady &&
+                               m->shadowPcss && m->shadowPcss->Ready() && m->depthIn.res12 != nullptr;
     const bool runOverlay = m->overlayHudEnabled && m->overlayHostReady && m->overlayHost && m->overlayHost->Ready();
-    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runOverlay;
+    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runOverlay;
     auto runPostLightingPasses = [&]() -> bool {
         if (!hasPostWork) return true;
         if (runTerrain) {
@@ -1379,6 +1468,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         }
         if (runVolFroxels) {
             m->ExecuteVolFroxelsOnQueue(isInterior);
+        }
+        if (runShadowPcss) {
+            m->ExecuteShadowPcssOnQueue(s.hasShadows);
         }
         if (runOverlay) {
             m->ExecuteOverlayHudOnQueue(isInterior);

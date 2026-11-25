@@ -1,16 +1,18 @@
-# RAW Engine BuildLang Physics, Atmosphere, Biome, Optics and Fluid Kernel Map
+# RAW Engine BuildLang Core Kernel Map (7 Modules, 42 Verified Kernels)
 
-This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustic, and shadow kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**5 modules, 30 verified kernels**):
+This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, and regional economy kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**7 modules, 42 verified kernels**):
 
 1. [`native/bld/RawPhysicsKernels.bld`](../native/bld/RawPhysicsKernels.bld) (6 core scalar physics & anti-exploit kernels)
 2. [`native/bld/RawAtmoWeather.bld`](../native/bld/RawAtmoWeather.bld) (7 planetary atmosphere, orbital solar, snowpack ODE & black-ice kernels)
 3. [`native/bld/RawBiomeFlora.bld`](../native/bld/RawBiomeFlora.bld) (5 botanical biomechanics, fluvial erosion & phenology kernels)
 4. [`native/bld/RawRenderOptics.bld`](../native/bld/RawRenderOptics.bld) (6 PBR BRDF, multi-scatter GGX, Christensen-Burley SSS, AgX & multi-bounce AO kernels)
 5. [`native/bld/RawFluidDynamics.bld`](../native/bld/RawFluidDynamics.bld) (6 buoyancy, shallow-water, CFL, froxel scattering, Sabine-Eyring RT60 & PCSS kernels)
+6. [`native/bld/RawCombatAi.bld`](../native/bld/RawCombatAi.bld) (6 timed-parry, arrow ballistics, ragdoll kinetic cap, block mitigation, stealth & 3D Octile A* kernels)
+7. [`native/bld/RawEconomySim.bld`](../native/bld/RawEconomySim.bld) (6 9-hold scarcity pricing, Rothermel wildfire, blizzard caravan speed, cold-water breath, wet-elemental & GTAO kernels)
 
 ## Toolchain Verification Receipts (`buildc 1.4.0`)
 
-Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **5/5 `check` PASS**, **5/5 `run` PASS**):
+Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **7/7 `check` PASS**, **7/7 `run` PASS**):
 
 ### Module 1: `native/bld/RawPhysicsKernels.bld`
 - `buildc check`: Exit Code `0` (`Lexing... OK (763 tokens)`, `Parsing... OK (9 items)`, `Type checking... OK`, `No errors found`)
@@ -71,7 +73,31 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
   pcss_penumbra_radius(near) = 0.025 | (far) = 0.4
   ```
 
-## Kernel-by-Kernel Mapping (30 Kernels)
+### Module 6: `native/bld/RawCombatAi.bld`
+- `buildc check`: Exit Code `0` (`Lexing... OK (1090 tokens)`, `Parsing... OK (11 items)`, `Type checking... OK`, `No errors found`)
+- `buildc run`: Exit Code `0`
+  ```text
+  parry_posture_damage(25ms) = 1.0397766012396694 | (250ms miss) = 0
+  arrow_drop_z(1.0s, g=9.81, wind=10) = -4.84968526966475
+  ragdoll_impulse_n(arrow) = 6.86335870404108 | (10k dmg cap) = 47.99999996503734
+  block_mitigation(shield) = 0.7695 | (weapon) = 0.505
+  stealth_audible_radius(dry) = 231.86432639999995 | (rainstorm) = 133.68612095999995
+  octile_3d_heuristic(640, 384, 128) = 843.8580079512685
+  ```
+
+### Module 7: `native/bld/RawEconomySim.bld`
+- `buildc check`: Exit Code `0` (`Lexing... OK (945 tokens)`, `Parsing... OK (9 items)`, `Type checking... OK`, `No errors found`)
+- `buildc run`: Exit Code `0`
+  ```text
+  hold_commodity_price(surplus) = 7.367531668195611 | (scarce) = 24.622888266898325
+  wildfire_spread_rate(calm) = 0.3435833333333333 | (gale+upslope) = 2.942056746453832
+  caravan_weather_speed(clear) = 4.5 | (blizzard) = 0
+  cold_water_breath_s(14C) = 45 | (-1C glacial) = 20.531250000000004
+  elemental_wet_mult(shock wet) = 72.5 | (fire wet) = 37.5
+  gtao_slice_vis(open hemi) = 1 | (occluded corner) = 0.22984884706593012
+  ```
+
+## Kernel-by-Kernel Mapping (42 Kernels)
 
 ### 1. Core Physics Kernels (`native/bld/RawPhysicsKernels.bld`)
 
@@ -128,10 +154,32 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
 | 29 | `sabine_rt60_s(volume_m3, surface_area_m2, mean_alpha)` | `src/audio/RawAudioDsp.cpp` (FDN-8 room calibration) | `-0.161 * V / (S * ln(1 - alpha))` (Sabine-Eyring) | Nordic stone crypt (`V=1800, S=960, alpha=0.08`) = `3.620 s` RT60 |
 | 30 | `pcss_penumbra_radius(receiver_z, blocker_z, light_size)` | `src/d3d12_bridge/shaders/RawShadowPcssSim.hlsl` | `max(z_rec - z_blk, 0) * light_size / max(z_blk, eps)` | Contact-hardening: `0.025` near blocker vs `0.40` far (`16x` softer) |
 
-## Reproducing All 5 BuildLang Module Checks
+### 6. Combat, Ballistics, Stealth and Pathfinding Kernels (`native/bld/RawCombatAi.bld`)
+
+| # | BuildLang Function | Engine C++ / HLSL Counterpart | Governing Equation | Verified Invariant |
+| --- | --- | --- | --- | --- |
+| 31 | `parry_posture_damage(base_dmg, parry_dt_ms, window_ms, guard_max)` | `src/engine_rt/rt_movement_combat.cpp` | `dmg * (1.25 + 1.35 * (1 - dt/win)^2) / guard_max` inside `220 ms` window | `25 ms` parry breaks guard (`1.0398`); `250 ms` late miss = `0.0` |
+| 32 | `arrow_drop_z(flight_time_s, gravity_mps2, wind_mps, drag_k)` | `rt_ai_packages.cpp`, `rt_magic_physics.cpp` | `-0.5 * g * t^2 * (0.65 + 0.35 * exp(-0.5*k*t)) - 0.015*|w|*t^2*k` | `1.0 s` flight under `9.81 m/s^2` & `10 m/s` wind drops `-4.850 m` |
+| 33 | `ragdoll_impulse_n(proj_mass_kg, impact_speed_mps, damage_amt, is_ranged)` | `src/engine_rt/rt_physics_camera_gmst.cpp` (L145-L167) | `ceiling * tanh(raw_imp / ceiling)` (`22 N` ranged, `48 N` melee) | Arrow = `6.863 N`; `10,000`-dmg melee smoothly capped `< 48.0 N` |
+| 34 | `block_mitigation(block_skill, shield_armor, is_shield, max_cap)` | `src/engine_rt/rt_physics_camera_gmst.cpp` (L169-L195) | Shield `0.45 + 0.25*s + 0.0022*armor` vs weapon `0.28 + 0.30*s`, cap `<= 0.85` | Skill 75 + armor 60 shield = `0.7695` vs weapon `0.505` |
+| 35 | `stealth_audible_radius(boot_weight, sneak_skill, rain01, wind_bft, is_running)` | `src/engine_rt/rt_stealth_social_gmst.cpp` (L150-L167) | `(8 + 0.68*boot) * moveMult * (1 - 0.55*s) * weatherMask * 28` | Dry `231.9u` damped to `133.7u` in heavy rainstorm |
+| 36 | `octile_3d_heuristic(dx, dy, dz)` | `src/worldgen/RawNavMeshAi.cpp` | `max(|dx|,|dy|) + (sqrt(2)-1)*min(|dx|,|dy|) + 0.35*|dz|` | Admissible 3D Octile distance `(640,384,128)` = `843.86u` |
+
+### 7. Regional Economy, Wildfire, Survival and GTAO Kernels (`native/bld/RawEconomySim.bld`)
+
+| # | BuildLang Function | Engine C++ / HLSL Counterpart | Governing Equation | Verified Invariant |
+| --- | --- | --- | --- | --- |
+| 37 | `hold_commodity_price(base_price, stock, target_stock)` | `src/worldgen/RawSettlementSim.cpp` | `base * clamp((target / max(stock, 0.05*target))^0.65, 0.45, 3.25)` | Surplus `7.37g` vs scarce `24.62g` (`3.34x` scarcity signal) |
+| 38 | `wildfire_spread_rate(base_rate_mps, wind_mps, slope_tan, moisture01)` | `src/worldgen/RawWorldEcosystem.cpp` | `base * (1 - m/0.72) * (1 + 0.24*v^1.35 + 5.275*slope^2)` | Calm `0.344 m/s` accelerates to `2.942 m/s` under gale + upslope |
+| 39 | `caravan_weather_speed(base_kmh, blizzard01, pass_exposure01)` | `src/worldgen/RawSettlementSim.cpp` | `0.0` when `blizzard01 > 0.60`; smooth exposure drag below | Clear `4.5 km/h` -> snowbound `0.0 km/h` at `blizzard01=0.85` |
+| 40 | `cold_water_breath_s(base_breath_s, water_temp_c, frost_resist01)` | `rt_world_rules_gmst.cpp`, `rt_stealth_survival.cpp` | `base * (1 - chill01 * 0.58 * (1 - resist))` | Warm `45.0 s` drops to `20.53 s` in `-1 C` Sea of Ghosts |
+| 41 | `elemental_wet_mult(base_dmg, wetness01, elem_kind)` | `rt_magic_physics.cpp`, `RawSpells3D.hlsli` | Shock `1+0.45*w`, Frost `1+0.30*w`, Fire `1-0.25*w` | Soaked `50` dmg -> Shock `72.5`, Fire `37.5` |
+| 42 | `gtao_slice_vis(h1_rad, h2_rad, n_rad)` | `src/d3d12_bridge/shaders/RawGtaoSim.hlsl` | `0.25 * sum(-cos(2*h_i - n) + cos(n) + 2*h_i*sin(n))` | Open hemisphere `1.000`; occluded corner `[-0.5, 0.5]` = `0.2298` |
+
+## Reproducing All 7 BuildLang Module Checks
 
 ```powershell
-foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics')) {
+foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim')) {
     buildc check "E:\wt\raw-rt9\native\bld\$m.bld"
     buildc run   "E:\wt\raw-rt9\native\bld\$m.bld"
 }

@@ -1,0 +1,130 @@
+// RawEconomySim.bld: RAW Engine Deterministic Economy, Wildfire, Survival & GTAO Kernels in BuildLang 1.4.0.
+// Counterparts to RawSettlementSim, RawWorldEcosystem, rt_world_rules_gmst, rt_magic_physics, and RawGtaoSim:
+//   1. hold_commodity_price - 9-Hold supply/demand scarcity price discovery
+//   2. wildfire_spread_rate - Rothermel wind-and-slope wildfire spread velocity (m/s)
+//   3. caravan_weather_speed - Blizzard mountain-pass caravan travel speed factor (km/h)
+//   4. cold_water_breath_s  - Glacial cold-water survival breath duration (seconds)
+//   5. elemental_wet_mult   - Wet-target elemental shock/frost/fire amplification multiplier
+//   6. gtao_slice_vis       - Jimenez (SIGGRAPH 2016) GTAO cosine-weighted horizon slice visibility
+// Original work, MIT.
+
+fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
+}
+
+fn max_f64(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+// 1. 9-Hold supply/demand scarcity price discovery (gold per unit):
+//    price = base_price * clamp((target_stock / max(stock, 0.05 * target_stock))^0.65, 0.45, 3.25).
+// Matches src/worldgen/RawSettlementSim.cpp RecomputeAllPrices().
+fn hold_commodity_price(base_price: f64, stock: f64, target_stock: f64) -> f64 {
+    let base: f64 = max_f64(base_price, 0.1);
+    let tgt: f64 = max_f64(target_stock, 1.0);
+    let stk: f64 = max_f64(stock, 0.05 * tgt);
+    let scarcity: f64 = pow(tgt / stk, 0.65);
+    base * clamp_f64(scarcity, 0.45, 3.25)
+}
+
+// 2. Rothermel-inspired wind-and-slope wildfire spread velocity (m/s):
+//    Accelerates with downwind speed and upslope terrain preheating; suppressed by fuel moisture.
+// Matches src/worldgen/RawWorldEcosystem.cpp cellular wildfire propagation.
+fn wildfire_spread_rate(base_rate_mps: f64, wind_mps: f64, slope_tan: f64, moisture01: f64) -> f64 {
+    let base: f64 = max_f64(base_rate_mps, 0.0);
+    let m: f64 = clamp_f64(moisture01, 0.0, 1.0);
+    if m >= 0.72 {
+        0.0
+    } else {
+        let dry_factor: f64 = clamp_f64(1.0 - (m / 0.72), 0.0, 1.0);
+        let phi_wind: f64 = 0.24 * pow(max_f64(wind_mps, 0.0), 1.35);
+        let s_pos: f64 = max_f64(slope_tan, 0.0);
+        let phi_slope: f64 = 5.275 * s_pos * s_pos;
+        base * dry_factor * (1.0 + phi_wind + phi_slope)
+    }
+}
+
+// 3. Blizzard mountain-pass caravan travel speed (km/h):
+//    Snowbounds completely (0.0 km/h) when blizzard01 > 0.60; scales smoothly by pass exposure below.
+// Matches src/worldgen/RawSettlementSim.cpp caravan weather transit step.
+fn caravan_weather_speed(base_kmh: f64, blizzard01: f64, pass_exposure01: f64) -> f64 {
+    let spd: f64 = max_f64(base_kmh, 0.0);
+    let bliz: f64 = clamp_f64(blizzard01, 0.0, 1.0);
+    let exp01: f64 = clamp_f64(pass_exposure01, 0.0, 1.0);
+    if bliz > 0.60 {
+        0.0
+    } else {
+        let drag: f64 = clamp_f64(1.0 - bliz * (0.45 + 0.55 * exp01), 0.20, 1.0);
+        spd * drag
+    }
+}
+
+// 4. Glacial cold-water survival breath duration (seconds):
+//    Freezing northern Sea of Ghosts water (< 4 C) induces cold-shock breath reduction mitigated by frost resistance.
+// Matches src/engine_rt/rt_world_rules_gmst.cpp & rt_stealth_survival.cpp aquatic cold shock.
+fn cold_water_breath_s(base_breath_s: f64, water_temp_c: f64, frost_resist01: f64) -> f64 {
+    let base: f64 = max_f64(base_breath_s, 5.0);
+    let resist: f64 = clamp_f64(frost_resist01, 0.0, 0.85);
+    let chill01: f64 = clamp_f64((14.0 - water_temp_c) / 16.0, 0.0, 1.0);
+    let penalty: f64 = chill01 * 0.58 * (1.0 - resist);
+    base * clamp_f64(1.0 - penalty, 0.35, 1.0)
+}
+
+// 5. Wet-target elemental damage amplification (elem_kind: 0=Fire, 1=Frost, 2=Shock):
+//    Shock conducts (+45%), Frost flash-freezes (+30%), Fire steams/damps (-25%) on soaked targets.
+// Matches src/engine_rt/rt_magic_physics.cpp & RawSpells3D.hlsli weather-coupled magic optics.
+fn elemental_wet_mult(base_dmg: f64, wetness01: f64, elem_kind: i32) -> f64 {
+    let dmg: f64 = max_f64(base_dmg, 0.0);
+    let wet: f64 = clamp_f64(wetness01, 0.0, 1.0);
+    let mult: f64 = if elem_kind == 2 {
+        1.0 + 0.45 * wet
+    } else if elem_kind == 1 {
+        1.0 + 0.30 * wet
+    } else {
+        1.0 - 0.25 * wet
+    };
+    dmg * mult
+}
+
+// 6. Jimenez et al. (SIGGRAPH 2016) GTAO analytical cosine-weighted horizon slice visibility:
+//    V = 0.25 * [(-cos(2*h1 - n) + cos(n) + 2*h1*sin(n)) + (-cos(2*h2 - n) + cos(n) + 2*h2*sin(n))].
+// Matches src/d3d12_bridge/shaders/RawGtaoSim.hlsl.
+fn gtao_slice_vis(h1_rad: f64, h2_rad: f64, n_rad: f64) -> f64 {
+    let half_pi: f64 = 1.5707963267948966;
+    let n: f64 = clamp_f64(n_rad, -half_pi, half_pi);
+    let h1: f64 = clamp_f64(h1_rad, -half_pi, half_pi);
+    let h2: f64 = clamp_f64(h2_rad, -half_pi, half_pi);
+    let cos_n: f64 = cos(n);
+    let sin_n: f64 = sin(n);
+    let t1: f64 = -cos(2.0 * h1 - n) + cos_n + 2.0 * h1 * sin_n;
+    let t2: f64 = -cos(2.0 * h2 - n) + cos_n + 2.0 * h2 * sin_n;
+    clamp_f64(0.25 * (t1 + t2), 0.0, 1.0)
+}
+
+fn main() ~ Console {
+    let p_surplus: f64 = hold_commodity_price(10.0, 160.0, 100.0);
+    let p_scarce: f64 = hold_commodity_price(10.0, 25.0, 100.0);
+    let wf_calm: f64 = wildfire_spread_rate(0.35, 1.0, 0.0, 0.15);
+    let wf_gale: f64 = wildfire_spread_rate(0.35, 15.0, 0.25, 0.15);
+    let spd_clear: f64 = caravan_weather_speed(4.5, 0.0, 0.8);
+    let spd_bliz: f64 = caravan_weather_speed(4.5, 0.85, 0.8);
+    let br_warm: f64 = cold_water_breath_s(45.0, 14.0, 0.0);
+    let br_glacial: f64 = cold_water_breath_s(45.0, -1.0, 0.0);
+    let shock_wet: f64 = elemental_wet_mult(50.0, 1.0, 2);
+    let fire_wet: f64 = elemental_wet_mult(50.0, 1.0, 0);
+    let vis_open: f64 = gtao_slice_vis(-1.5707963267948966, 1.5707963267948966, 0.0);
+    let vis_corner: f64 = gtao_slice_vis(-0.5, 0.5, 0.0);
+
+    println!("hold_commodity_price(surplus) = {} | (scarce) = {}", p_surplus, p_scarce);
+    println!("wildfire_spread_rate(calm) = {} | (gale+upslope) = {}", wf_calm, wf_gale);
+    println!("caravan_weather_speed(clear) = {} | (blizzard) = {}", spd_clear, spd_bliz);
+    println!("cold_water_breath_s(14C) = {} | (-1C glacial) = {}", br_warm, br_glacial);
+    println!("elemental_wet_mult(shock wet) = {} | (fire wet) = {}", shock_wet, fire_wet);
+    println!("gtao_slice_vis(open hemi) = {} | (occluded corner) = {}", vis_open, vis_corner);
+}

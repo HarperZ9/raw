@@ -22,6 +22,7 @@
 #include "rt_combat_ai.h"
 #include "rt_combat_impact.h"
 #include "rt_economy_ledger.h"
+#include "rt_engine_health.h"
 #include "rt_mod_load_audit.h"
 #include "rt_movement_combat.h"
 #include "rt_npc_behavior.h"
@@ -213,7 +214,9 @@ std::string FormatDefaultLiveConfigIni(const LiveEngineConfig& inCfg) {
        << "; Enable/disable VEH fatal crash forensics & 7,376-class RTTI symbolizer (0/1, default 1)\n"
        << "CrashForensics=" << (c.crashForensicsEnabled ? 1 : 0) << "\n"
        << "; Enable/disable zero-allocation 300-frame flight recorder & F10/shutdown JSON dump (0/1, default 1)\n"
-       << "FlightRecorder=" << (c.flightRecorderEnabled ? 1 : 0) << "\n";
+       << "FlightRecorder=" << (c.flightRecorderEnabled ? 1 : 0) << "\n"
+       << "; Enable/disable unified 0-100 engine health scoreboard & remediation adviser (0/1, default 1)\n"
+       << "EngineHealthReport=" << (c.engineHealthReport ? 1 : 0) << "\n";
     return os.str();
 }
 
@@ -294,6 +297,7 @@ bool ParseLiveConfigIni(const std::string& iniText, LiveEngineConfig& outCfg) {
             else if (key == "hotreloadintervalframes" && ParseUintVal(val, u)) cfg.hotReloadIntervalFrames = u;
             else if (key == "crashforensics" && ParseBoolVal(val, b))     cfg.crashForensicsEnabled = b;
             else if (key == "flightrecorder" && ParseBoolVal(val, b))     cfg.flightRecorderEnabled = b;
+            else if (key == "enginehealthreport" && ParseBoolVal(val, b)) cfg.engineHealthReport = b;
         }
     }
 
@@ -387,12 +391,28 @@ std::string FormatLiveStatusDump(const LiveStatusDumpData& d) {
                   d.runtimeVersion.c_str(), d.zydisPassed, d.zydisChecked,
                   d.zydisOk ? "OK - VERIFIED" : "FAIL-CLOSED");
     os << buf;
-    std::snprintf(buf, sizeof buf, "Config: %s | HotReloads: %u | HotkeyVK: %u | PollInterval: %u frames | CrashForensics: %u | FlightRecorder: %u\n\n",
+    std::snprintf(buf, sizeof buf, "Config: %s | HotReloads: %u | HotkeyVK: %u | PollInterval: %u frames | CrashForensics: %u | FlightRecorder: %u | HealthReport: %u\n\n",
                   d.iniPath.empty() ? "raw_engine.ini" : d.iniPath.c_str(),
                   d.configReloads, d.config.statusDumpHotkeyVK, d.config.hotReloadIntervalFrames,
                   d.config.crashForensicsEnabled ? 1u : 0u,
-                  d.config.flightRecorderEnabled ? 1u : 0u);
+                  d.config.flightRecorderEnabled ? 1u : 0u,
+                  d.config.engineHealthReport ? 1u : 0u);
     os << buf;
+
+    os << "[Engine Health Scoreboard]\n";
+    static constexpr const char* kGradeNames[4] = {"Optimal", "Healthy", "Degraded", "Critical"};
+    const char* gradeStr = kGradeNames[d.healthGrade < 4u ? d.healthGrade : 3u];
+    std::snprintf(buf, sizeof buf, "  CompositeScore=%u/100 (%s) | Enabled=%u | Advisories=%u\n",
+                  static_cast<unsigned>(d.healthScore), gradeStr,
+                  d.config.engineHealthReport ? 1u : 0u,
+                  static_cast<unsigned>(d.healthAdvisoryCount));
+    os << buf;
+    for (uint8_t i = 0u; i < d.healthAdvisoryCount && i < 4u; ++i) {
+        if (!d.healthAdvisories[i].empty()) {
+            os << "  ! " << d.healthAdvisories[i] << "\n";
+        }
+    }
+    os << "\n";
 
     os << "[Active Configuration]\n";
     std::snprintf(buf, sizeof buf,
@@ -766,6 +786,19 @@ bool LiveConfigWriteStatusDump(std::string* outPathWritten) {
         d.flightP95Ms       = frs.p95FrameMs;
         d.flightP99Ms       = frs.p99FrameMs;
         d.flightMaxMs       = frs.maxFrameMs;
+    }
+
+    if (d.config.engineHealthReport) {
+        EngineHealthRefresh();
+    }
+    RawEngineHealthReport ehr{};
+    if (RAW_GetEngineHealthReport(&ehr)) {
+        d.healthScore         = ehr.compositeScore;
+        d.healthGrade         = ehr.grade;
+        d.healthAdvisoryCount = ehr.advisoryCount;
+        for (uint8_t i = 0u; i < ehr.advisoryCount && i < 4u; ++i) {
+            d.healthAdvisories[i] = ehr.advisories[i];
+        }
     }
 
     const bool ok = WriteLiveStatusDumpToFile(outPath, d);

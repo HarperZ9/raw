@@ -12,6 +12,7 @@
 #include "RawOverlayHost.h"
 #include "RawGpuCullHost.h"
 #include "RawLightClusterHost.h"
+#include "RawVolumetricFroxelHost.h"
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
@@ -82,6 +83,7 @@ struct D3D12Bridge::Impl
     std::unique_ptr<RawOverlayHost> overlayHost; // Opt-in F9 <0.02ms GPU Compute Telemetry & Sparkline HUD
     std::unique_ptr<RawGpuCullHost> gpuCull;     // Live GPU Hi-Z Pyramid + Frustum/Occlusion/Distance Culler
     std::unique_ptr<RawLightClusterHost> lightClusters; // Live GPU 16x9x24 (3,456-cluster) 1,024-light grid
+    std::unique_ptr<RawVolumetricFroxelHost> volFroxels; // Live GPU 160x90x64 3D Volumetric Froxel Fog & Mie solver
     bool                     fluidReady = false;
     bool                     radianceReady = false;
     bool                     xpbdSimReady = false;
@@ -91,6 +93,7 @@ struct D3D12Bridge::Impl
     bool                     overlayPrevF9Down = false;
     bool                     gpuCullReady = false;
     bool                     lightClustersReady = false;
+    bool                     volFroxelsReady = false;
     ComPtr<ID3D12CommandAllocator>    fluidAlloc[kRing];
     ComPtr<ID3D12GraphicsCommandList> fluidList;
     ComPtr<ID3D12Fence>               fluidFence;
@@ -155,6 +158,17 @@ struct D3D12Bridge::Impl
     uint32_t                          lightClusterSlot = 0;
     uint64_t                          lightClusterFrames = 0;
     uint32_t                          lastClusterLightCount = 0;
+    ComPtr<ID3D12CommandAllocator>    froxelAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList> froxelList;
+    ComPtr<ID3D12Fence>               froxelFence;
+    HANDLE                            froxelEvent = nullptr;
+    uint64_t                          froxelFenceVal = 0;
+    uint64_t                          froxelSlotVal[kRing] = {};
+    uint32_t                          froxelSlot = 0;
+    uint64_t                          froxelStepFrames = 0;
+    float                             froxelPrevViewProj[16] = {};
+    float                             froxelPrevCamFwd[3] = {0.0f, 1.0f, 0.0f};
+    bool                              froxelHasPrev = false;
     std::string                       telemetryOutDir;
     bool InitFluidSim();
     void ShutdownFluidSim();
@@ -171,6 +185,9 @@ struct D3D12Bridge::Impl
     bool InitLightClusters();
     void ShutdownLightClusters();
     bool ExecuteLightClustersOnQueue();
+    bool InitVolFroxels();
+    void ShutdownVolFroxels();
+    bool ExecuteVolFroxelsOnQueue(bool isInterior);
     bool InitOverlayHost();
     void ShutdownOverlayHost();
     void PollOverlayHotkey();

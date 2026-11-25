@@ -1,14 +1,16 @@
-# RAW Engine BuildLang Physics, Atmosphere and Biome Kernel Map
+# RAW Engine BuildLang Physics, Atmosphere, Biome, Optics and Fluid Kernel Map
 
-This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, hydrology, and botanical kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/`:
+This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustic, and shadow kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**5 modules, 30 verified kernels**):
 
 1. [`native/bld/RawPhysicsKernels.bld`](../native/bld/RawPhysicsKernels.bld) (6 core scalar physics & anti-exploit kernels)
 2. [`native/bld/RawAtmoWeather.bld`](../native/bld/RawAtmoWeather.bld) (7 planetary atmosphere, orbital solar, snowpack ODE & black-ice kernels)
 3. [`native/bld/RawBiomeFlora.bld`](../native/bld/RawBiomeFlora.bld) (5 botanical biomechanics, fluvial erosion & phenology kernels)
+4. [`native/bld/RawRenderOptics.bld`](../native/bld/RawRenderOptics.bld) (6 PBR BRDF, multi-scatter GGX, Christensen-Burley SSS, AgX & multi-bounce AO kernels)
+5. [`native/bld/RawFluidDynamics.bld`](../native/bld/RawFluidDynamics.bld) (6 buoyancy, shallow-water, CFL, froxel scattering, Sabine-Eyring RT60 & PCSS kernels)
 
 ## Toolchain Verification Receipts (`buildc 1.4.0`)
 
-Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`):
+Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **5/5 `check` PASS**, **5/5 `run` PASS**):
 
 ### Module 1: `native/bld/RawPhysicsKernels.bld`
 - `buildc check`: Exit Code `0` (`Lexing... OK (763 tokens)`, `Parsing... OK (9 items)`, `Type checking... OK`, `No errors found`)
@@ -45,7 +47,31 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
   phototropism_weight(top) = 0.8184881664000001 | (shaded) = 0.022618944000000002
   ```
 
-## Kernel-by-Kernel Mapping
+### Module 4: `native/bld/RawRenderOptics.bld`
+- `buildc check`: Exit Code `0` (`Lexing... OK (913 tokens)`, `Parsing... OK (10 items)`, `Type checking... OK`, `No errors found`)
+- `buildc run`: Exit Code `0`
+  ```text
+  fresnel_schlick(0.04, 1.0) = 0.04 | (0.04, 0.05) = 0.7828297
+  ggx_ndf(1.0, 0.35) = 21.211820820244274
+  multi_scatter_boost(iron F0=0.56, nv=0.20, r=0.85) = 1.491643192488263
+  burley_diffusion(r=0.5, d=1.0 red) = 0.11562705169167452 | (d=0.22 blue) = 0.2068407816930146
+  agx_sigmoid(0.60) = 0.4842776 | (0.95) = 0.9762452234375046
+  multi_bounce_ao_ch(ao=0.35, snow=0.88) = 0.7146357120000002 | (dark=0.08) = 0.35
+  ```
+
+### Module 5: `native/bld/RawFluidDynamics.bld`
+- `buildc check`: Exit Code `0` (`Lexing... OK (617 tokens)`, `Parsing... OK (9 items)`, `Type checking... OK`, `No errors found`)
+- `buildc run`: Exit Code `0`
+  ```text
+  buoyancy_accel(1800K flame) = 50.276211604095565
+  swe_wave_celerity(g=9.81, h=1.5m) = 3.8360135557633264
+  cfl_dt_limit(dx=0.125m, v=12m/s, cfl=0.8) = 0.008333333333333333
+  froxel_slice_scatter(S=0.45, ext=0.08, ds=2.5m) = 1.0196395139363523
+  sabine_rt60_s(Nordic crypt V=1800, S=960, a=0.08) = 3.6204026744154088
+  pcss_penumbra_radius(near) = 0.025 | (far) = 0.4
+  ```
+
+## Kernel-by-Kernel Mapping (30 Kernels)
 
 ### 1. Core Physics Kernels (`native/bld/RawPhysicsKernels.bld`)
 
@@ -80,13 +106,33 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
 | 17 | `autumn_phenology_blend(day_of_year, day_length_hr, temp_c)` | `src/worldgen/RawWeatherSim.cpp` (phenology0 senescence) | Seasonal window gated by photoperiod (`< 12.2 h`) & chill (`< 11 C`) | `0.0` in summer (`doy=185`), `0.7562` in October (`doy=288`) |
 | 18 | `phototropism_weight(height_frac01, canopy_occlusion01, sun_dot)` | `src/worldgen/RawFloraEngine.cpp` (phototropism growth bias) | `(0.25 + 0.75*smoothstep(h)) * (1 - occ) * (0.35 + 0.65*sun_dot)` | Sunlit crown top `0.8185` vs shaded lower limb `0.0226` |
 
-## Reproducing All BuildLang Checks
+### 4. Rendering Optics and Post-Processing Kernels (`native/bld/RawRenderOptics.bld`)
+
+| # | BuildLang Function | Engine C++ / HLSL Counterpart | Governing Equation | Verified Invariant |
+| --- | --- | --- | --- | --- |
+| 19 | `fresnel_schlick(f0, cos_theta)` | `src/d3d12_bridge/shaders/StrataBRDF.hlsli`, `Lighting.hlsl` | `f0 + (1 - f0) * (1 - cos_theta)^5` | Dielectric `0.04` at normal incidence, `0.7828` at grazing `cos=0.05` |
+| 20 | `ggx_ndf(n_dot_h, roughness)` | `src/d3d12_bridge/shaders/StrataBRDF.hlsli` (L118-L125) | `alpha^2 / (pi * ((n_dot_h^2)*(alpha^2 - 1) + 1)^2)`, `alpha = r^2` | Peak lobe `21.2118` at `n_dot_h=1.0, r=0.35` |
+| 21 | `multi_scatter_boost(f0, nv, roughness)` | `src/d3d12_bridge/shaders/StrataBRDF.hlsli` (L87-L104) | `1 + f0 * (1 / E_ss(nv, r) - 1)` (Turquin / Kulla-Conty) | Rough brushed iron (`F0=0.56, nv=0.20, r=0.85`) receives `1.4916x` compensation |
+| 22 | `burley_diffusion(r, d)` | `src/d3d12_bridge/shaders/Sss.hlsl` | `(exp(-r/d) + exp(-r/(3*d))) / (8 * pi * d * r)` | Positive normalized diffusion (`0.1156` at `d=1.0`, `0.2068` at `d=0.22`) |
+| 23 | `agx_sigmoid(x_norm)` | `src/d3d12_bridge/shaders/Tonemap.hlsl` (L46-L48) | 6th-order C2 AgX polynomial over normalized log2 `[0, 1]` | Monotonic midtone `0.4843` (`x=0.60`), smooth shoulder `0.9762` (`x=0.95`) |
+| 24 | `multi_bounce_ao_ch(ao, albedo_ch)` | `src/d3d12_bridge/shaders/AoComposite.hlsl` (L47-L55) | `max(ao, ao * (a*ao^2 + b*ao + c))` (Jimenez 2016) | Snow (`0.88`) lifts `ao=0.35 -> 0.7146`; dark (`0.08`) stays `0.35` |
+
+### 5. Fluid Dynamics, Volumetrics, Acoustics and Shadow Kernels (`native/bld/RawFluidDynamics.bld`)
+
+| # | BuildLang Function | Engine C++ / HLSL Counterpart | Governing Equation | Verified Invariant |
+| --- | --- | --- | --- | --- |
+| 25 | `buoyancy_accel(temp_k, ambient_k, smoke_density, alpha_buoy, beta_smoke)` | `src/d3d12_bridge/shaders/RawFluidFireForces.hlsl` | `alpha * (T - T_amb) / T_amb - beta * rho_smoke` | `1800 K` torch plume yields `+50.276 m/s^2` net upward buoyancy |
+| 26 | `swe_wave_celerity(gravity_mps2, depth_m)` | `src/d3d12_bridge/shaders/RawFluidWaterStep.hlsl` | `c = sqrt(g * h)` | `1.5 m` river depth wave speed = `3.836 m/s` |
+| 27 | `cfl_dt_limit(cell_size_m, max_vel_mps, cfl_safety)` | `RawFluidSimHost.cpp`, `RawFluidFireAdvect.hlsl` | `cfl_safety * dx / max(v, eps)` | `dx=0.125 m, v=12 m/s, cfl=0.8` -> `dt <= 8.333 ms` |
+| 28 | `froxel_slice_scatter(in_scatter, sigma_t, slice_thickness_m)` | `FroxelPass.hlsl`, `RawVolumetricFroxelSim.hlsl` | `S * (1 - exp(-sigma_t * ds)) / sigma_t` (Taylor limit as `sigma_t -> 0`) | `S=0.45, ext=0.08, ds=2.5 m` integrates to `1.0196` |
+| 29 | `sabine_rt60_s(volume_m3, surface_area_m2, mean_alpha)` | `src/audio/RawAudioDsp.cpp` (FDN-8 room calibration) | `-0.161 * V / (S * ln(1 - alpha))` (Sabine-Eyring) | Nordic stone crypt (`V=1800, S=960, alpha=0.08`) = `3.620 s` RT60 |
+| 30 | `pcss_penumbra_radius(receiver_z, blocker_z, light_size)` | `src/d3d12_bridge/shaders/RawShadowPcssSim.hlsl` | `max(z_rec - z_blk, 0) * light_size / max(z_blk, eps)` | Contact-hardening: `0.025` near blocker vs `0.40` far (`16x` softer) |
+
+## Reproducing All 5 BuildLang Module Checks
 
 ```powershell
-buildc check E:\wt\raw-rt9\native\bld\RawPhysicsKernels.bld
-buildc run   E:\wt\raw-rt9\native\bld\RawPhysicsKernels.bld
-buildc check E:\wt\raw-rt9\native\bld\RawAtmoWeather.bld
-buildc run   E:\wt\raw-rt9\native\bld\RawAtmoWeather.bld
-buildc check E:\wt\raw-rt9\native\bld\RawBiomeFlora.bld
-buildc run   E:\wt\raw-rt9\native\bld\RawBiomeFlora.bld
+foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics')) {
+    buildc check "E:\wt\raw-rt9\native\bld\$m.bld"
+    buildc run   "E:\wt\raw-rt9\native\bld\$m.bld"
+}
 ```

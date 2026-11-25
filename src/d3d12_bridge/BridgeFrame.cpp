@@ -104,6 +104,12 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
                                         std::isfinite(lightClusters->GetLastAssignMs()))
         ? lightClusters->GetLastAssignMs() : 0.0f;
     const uint32_t lightClusterLights = lightClustersReady ? lastClusterLightCount : 0u;
+    const float froxelInjectMs = (volFroxelsReady && volFroxels && volFroxels->HasValidTiming() &&
+                                  std::isfinite(volFroxels->GetLastInjectMs()))
+        ? volFroxels->GetLastInjectMs() : 0.0f;
+    const float froxelIntegrateMs = (volFroxelsReady && volFroxels && volFroxels->HasValidTiming() &&
+                                     std::isfinite(volFroxels->GetLastIntegrateMs()))
+        ? volFroxels->GetLastIntegrateMs() : 0.0f;
 
     char jsonBuf[2048]{};
     const int n = std::snprintf(
@@ -134,6 +140,8 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"lightClusterBuildMs\": %.4f,\n"
         "  \"lightClusterAssignMs\": %.4f,\n"
         "  \"lightClusterLights\": %u,\n"
+        "  \"froxelInjectMs\": %.4f,\n"
+        "  \"froxelIntegrateMs\": %.4f,\n"
         "  \"seasonSnowM\": %.4f,\n"
         "  \"seasonIceM\": %.4f,\n"
         "  \"skinTempC\": %.3f,\n"
@@ -166,6 +174,8 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         lightClusterBuildMs,
         lightClusterAssignMs,
         lightClusterLights,
+        froxelInjectMs,
+        froxelIntegrateMs,
         seasonSnowM,
         seasonIceM,
         skinTempC,
@@ -910,6 +920,149 @@ bool D3D12Bridge::Impl::ExecuteGpuCullOnQueue()
     return true;
 }
 
+bool D3D12Bridge::Impl::ExecuteVolFroxelsOnQueue(bool isInterior)
+{
+    if (!volFroxelsReady || !volFroxels || !volFroxels->Ready() || !queue ||
+        !froxelList || !froxelFence || !froxelEvent) {
+        return false;
+    }
+
+    const uint32_t slot = froxelSlot;
+    if (froxelSlotVal[slot] > 0 && froxelFence->GetCompletedValue() < froxelSlotVal[slot]) {
+        froxelFence->SetEventOnCompletion(froxelSlotVal[slot], froxelEvent);
+        WaitForSingleObject(froxelEvent, 3000);
+    }
+    if (FAILED(froxelAlloc[slot]->Reset()) || FAILED(froxelList->Reset(froxelAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    LightingFluidInputs fi{};
+    LightingPassFluidInputs(pass.get(), &fi);
+
+    float weatherSnow = 0.0f;
+    const void* uPtr = nullptr;
+    size_t uBytes = 0;
+    if (pass && LightingPassUniform(pass.get(), &uPtr, &uBytes) &&
+        uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+        const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+        if (std::isfinite(u->weather[1])) weatherSnow = std::clamp(u->weather[1], 0.0f, 1.0f);
+    }
+
+    // Derive camera forward vector directly from camera-relative clipToWorld center ray
+    float camFwd[3] = {0.0f, 1.0f, 0.0f};
+    {
+        const float* inv = &lighting.clipToWorld[0][0];
+        const float wNear = inv[3 * 4 + 3];
+        const float wFar  = inv[2 * 4 + 3] + inv[3 * 4 + 3];
+        if (std::fabs(wNear) > 1.0e-6f && std::fabs(wFar) > 1.0e-6f) {
+            const float nx = inv[3 * 4 + 0] / wNear;
+            const float ny = inv[3 * 4 + 1] / wNear;
+            const float nz = inv[3 * 4 + 2] / wNear;
+            const float fx = (inv[2 * 4 + 0] + inv[3 * 4 + 0]) / wFar;
+            const float fy = (inv[2 * 4 + 1] + inv[3 * 4 + 1]) / wFar;
+            const float fz = (inv[2 * 4 + 2] + inv[3 * 4 + 2]) / wFar;
+            const float dx = fx - nx, dy = fy - ny, dz = fz - nz;
+            const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (len > 1.0e-5f) {
+                camFwd[0] = dx / len;
+                camFwd[1] = dy / len;
+                camFwd[2] = dz / len;
+            }
+        }
+    }
+
+    VolumetricFroxelParams fp{};
+    std::memcpy(fp.invViewProj, &lighting.clipToWorld[0][0], sizeof(fp.invViewProj));
+    if (froxelHasPrev) {
+        std::memcpy(fp.prevViewProj, froxelPrevViewProj, sizeof(fp.prevViewProj));
+        fp.prevCameraForwardW[0] = froxelPrevCamFwd[0];
+        fp.prevCameraForwardW[1] = froxelPrevCamFwd[1];
+        fp.prevCameraForwardW[2] = froxelPrevCamFwd[2];
+    } else {
+        std::memcpy(fp.prevViewProj, &lighting.worldToClip[0][0], sizeof(fp.prevViewProj));
+        fp.prevCameraForwardW[0] = camFwd[0];
+        fp.prevCameraForwardW[1] = camFwd[1];
+        fp.prevCameraForwardW[2] = camFwd[2];
+    }
+    fp.cameraPosW[0]         = 0.0f; // lighting.clipToWorld / worldToClip are camera-relative
+    fp.cameraPosW[1]         = 0.0f;
+    fp.cameraPosW[2]         = 0.0f;
+    fp.cameraForwardW[0]     = camFwd[0];
+    fp.cameraForwardW[1]     = camFwd[1];
+    fp.cameraForwardW[2]     = camFwd[2];
+    fp.prevCameraPosW[0]     = 0.0f;
+    fp.prevCameraPosW[1]     = 0.0f;
+    fp.prevCameraPosW[2]     = 0.0f;
+    fp.nearZ                 = 16.0f;
+    fp.farZ                  = isInterior ? 4096.0f : 16384.0f;
+    fp.simTimeSec            = fi.simTimeSec;
+    fp.historyWeight         = froxelHasPrev ? 0.85f : 0.0f;
+    fp.enableTemporal        = froxelHasPrev;
+    fp.enableHaltonJitter    = true;
+    fp.baseFogDensity        = isInterior ? 0.00018f : 0.00028f;
+    fp.valleyFloorZ          = isInterior ? -256.0f : std::clamp(fi.waterPlaneZ - lighting.posAdjust[2], -4096.0f, 4096.0f);
+    fp.fogScaleHeight        = isInterior ? 640.0f : 1800.0f;
+    fp.scatterAlbedo         = 0.90f;
+    fp.rainIntensity         = isInterior ? 0.0f : std::clamp(fi.rainIntensity, 0.0f, 1.0f);
+    fp.snowIntensity         = isInterior ? 0.0f : weatherSnow;
+    fp.noiseAmp              = 0.25f;
+    fp.noiseScale            = 0.0018f;
+    fp.windVelW[0]           = isInterior ? 0.0f : std::clamp(fi.windXY[0] * 0.04f, -12.0f, 12.0f);
+    fp.windVelW[1]           = isInterior ? 0.0f : std::clamp(fi.windXY[1] * 0.04f, -12.0f, 12.0f);
+    fp.windVelW[2]           = 0.0f;
+    fp.mieAnisotropyG        = 0.68f;
+    fp.sunDirW[0]            = lighting.sunDirection[0];
+    fp.sunDirW[1]            = lighting.sunDirection[1];
+    fp.sunDirW[2]            = lighting.sunDirection[2];
+    fp.sunIntensity          = (lighting.hasSun && !isInterior) ? 5.5f : 0.35f;
+    fp.sunColor[0]           = lighting.sunColour[0];
+    fp.sunColor[1]           = lighting.sunColour[1];
+    fp.sunColor[2]           = lighting.sunColour[2];
+    fp.ambientIntensity      = isInterior ? 0.18f : 0.32f;
+    fp.ambientColor[0]       = 0.35f;
+    fp.ambientColor[1]       = 0.48f;
+    fp.ambientColor[2]       = 0.72f;
+
+    uint32_t lc = 0u;
+    for (uint32_t i = 0u; i < lighting.lightCount && lc < 16u; ++i) {
+        const SceneLight& l = lighting.lights[i];
+        if (l.radius < 24.0f) continue;
+        FroxelPointLight& pl = fp.lights[lc++];
+        pl.posW[0]   = l.position[0];
+        pl.posW[1]   = l.position[1];
+        pl.posW[2]   = l.position[2];
+        pl.radius    = std::clamp(l.radius, 32.0f, 2400.0f);
+        pl.color[0]  = std::max(0.0f, l.colour[0]);
+        pl.color[1]  = std::max(0.0f, l.colour[1]);
+        pl.color[2]  = std::max(0.0f, l.colour[2]);
+        pl.intensity = std::clamp(l.radius * 0.6f, 24.0f, 600.0f);
+    }
+    fp.lightCount = lc;
+
+    volFroxels->Execute(froxelList.Get(), fp);
+
+    if (FAILED(froxelList->Close())) return false;
+    ID3D12CommandList* lists[1] = {froxelList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(froxelFence.Get(), ++froxelFenceVal);
+    froxelSlotVal[slot] = froxelFenceVal;
+    froxelSlot = (slot + 1u) % kRing;
+
+    std::memcpy(froxelPrevViewProj, &lighting.worldToClip[0][0], sizeof(froxelPrevViewProj));
+    froxelPrevCamFwd[0] = camFwd[0];
+    froxelPrevCamFwd[1] = camFwd[1];
+    froxelPrevCamFwd[2] = camFwd[2];
+    froxelHasPrev = true;
+
+    if ((froxelStepFrames++ % 180ull) == 0ull) {
+        log("[VolFroxels] live 160x90x64 step: lights=%u, injectMs=%.4f, integrateMs=%.4f",
+            lc,
+            volFroxels->HasValidTiming() ? volFroxels->GetLastInjectMs() : 0.0f,
+            volFroxels->HasValidTiming() ? volFroxels->GetLastIntegrateMs() : 0.0f);
+    }
+    return true;
+}
+
 bool D3D12Bridge::Impl::CpuWait(uint64_t value, DWORD timeoutMs)
 {
     return WaitFence(fence12.Get(), value, cpuEvent, timeoutMs);
@@ -1137,8 +1290,10 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                             m->gpuCull->Ready() && m->depthIn.res12 != nullptr;
     const bool runLightClusters = m->cfg.lightingPass && m->lighting.valid && m->lightClustersReady &&
                                   m->lightClusters && m->lightClusters->Ready();
+    const bool runVolFroxels = m->cfg.lightingPass && m->lighting.valid && m->volFroxelsReady &&
+                               m->volFroxels && m->volFroxels->Ready();
     const bool runOverlay = m->overlayHudEnabled && m->overlayHostReady && m->overlayHost && m->overlayHost->Ready();
-    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runOverlay;
+    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runOverlay;
     auto runPostLightingPasses = [&]() -> bool {
         if (!hasPostWork) return true;
         if (runTerrain) {
@@ -1221,6 +1376,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         }
         if (runLightClusters) {
             m->ExecuteLightClustersOnQueue();
+        }
+        if (runVolFroxels) {
+            m->ExecuteVolFroxelsOnQueue(isInterior);
         }
         if (runOverlay) {
             m->ExecuteOverlayHudOnQueue(isInterior);

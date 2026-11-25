@@ -301,7 +301,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         const bool overlayOk = m->InitOverlayHost();
         const bool cullOk = m->InitGpuCull();
         const bool clusterOk = m->InitLightClusters();
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s",
+        const bool froxelOk = m->InitVolFroxels();
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
                terrainOk ? "READY" : "off",
                m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
@@ -313,7 +314,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                xpbdOk ? "READY" : "off",
                overlayOk ? "READY(OFF)" : "off",
                cullOk ? "READY" : "off",
-               clusterOk ? "READY" : "off");
+               clusterOk ? "READY" : "off",
+               froxelOk ? "READY" : "off");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
         {
             const auto& matReg = raw::materials::DefaultMaterialRegistry();
@@ -864,6 +866,77 @@ void D3D12Bridge::Impl::ShutdownLightClusters()
     lightClustersReady = false;
 }
 
+bool D3D12Bridge::Impl::InitVolFroxels()
+{
+    ShutdownVolFroxels();
+    if (!dev12) return false;
+    volFroxels = std::make_unique<RawVolumetricFroxelHost>();
+    VolumetricFroxelDesc desc{};
+    desc.gridWidth  = 160u;
+    desc.gridHeight = 90u;
+    desc.gridDepth  = 64u;
+    std::string fxErr;
+    if (!volFroxels->Init(dev12.Get(), desc, &fxErr)) {
+        log("[VolFroxels] off: %s", fxErr.c_str());
+        volFroxels.reset();
+        return false;
+    }
+    UINT64 tsFreq = 0;
+    if (queue && SUCCEEDED(queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+        volFroxels->SetTimestampFrequency(tsFreq);
+    }
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&froxelAlloc[i])))) {
+            ShutdownVolFroxels();
+            return false;
+        }
+    }
+    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, froxelAlloc[0].Get(), nullptr, IID_PPV_ARGS(&froxelList))) ||
+        FAILED(froxelList->Close()) ||
+        FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&froxelFence)))) {
+        ShutdownVolFroxels();
+        return false;
+    }
+    froxelEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!froxelEvent) {
+        ShutdownVolFroxels();
+        return false;
+    }
+    froxelHasPrev = false;
+    volFroxelsReady = true;
+    log("[VolFroxels] GPU 160x90x64 (921,600-voxel) 3D Volumetric Froxel Fog & Mie solver ready");
+    return true;
+}
+
+void D3D12Bridge::Impl::ShutdownVolFroxels()
+{
+    if (froxelFence && froxelEvent && froxelFenceVal > 0) {
+        if (froxelFence->GetCompletedValue() < froxelFenceVal) {
+            froxelFence->SetEventOnCompletion(froxelFenceVal, froxelEvent);
+            WaitForSingleObject(froxelEvent, 3000);
+        }
+    }
+    froxelList.Reset();
+    for (UINT i = 0; i < kRing; ++i) {
+        froxelAlloc[i].Reset();
+        froxelSlotVal[i] = 0;
+    }
+    froxelFence.Reset();
+    if (froxelEvent) {
+        CloseHandle(froxelEvent);
+        froxelEvent = nullptr;
+    }
+    if (volFroxels) {
+        volFroxels->Shutdown();
+        volFroxels.reset();
+    }
+    froxelFenceVal = 0;
+    froxelSlot = 0;
+    froxelStepFrames = 0;
+    froxelHasPrev = false;
+    volFroxelsReady = false;
+}
+
 void D3D12Bridge::Shutdown()
 {
     if (!m) return;
@@ -872,6 +945,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->ShutdownVolFroxels();
     m->ShutdownLightClusters();
     m->ShutdownGpuCull();
     m->ShutdownOverlayHost();

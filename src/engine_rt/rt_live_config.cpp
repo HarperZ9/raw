@@ -28,6 +28,7 @@
 #include "rt_save_papyrus_guard.h"
 #include "rt_softbody.h"
 #include "rt_stealth_survival.h"
+#include "rt_telemetry_recorder.h"
 #include "rt_version.h"
 #include "rt_view.h"
 #endif
@@ -210,7 +211,9 @@ std::string FormatDefaultLiveConfigIni(const LiveEngineConfig& inCfg) {
        << "; Frame cadence for live raw_engine.ini mtime hot-reload check (10..600, default 60)\n"
        << "HotReloadIntervalFrames=" << c.hotReloadIntervalFrames << "\n"
        << "; Enable/disable VEH fatal crash forensics & 7,376-class RTTI symbolizer (0/1, default 1)\n"
-       << "CrashForensics=" << (c.crashForensicsEnabled ? 1 : 0) << "\n";
+       << "CrashForensics=" << (c.crashForensicsEnabled ? 1 : 0) << "\n"
+       << "; Enable/disable zero-allocation 300-frame flight recorder & F10/shutdown JSON dump (0/1, default 1)\n"
+       << "FlightRecorder=" << (c.flightRecorderEnabled ? 1 : 0) << "\n";
     return os.str();
 }
 
@@ -290,6 +293,7 @@ bool ParseLiveConfigIni(const std::string& iniText, LiveEngineConfig& outCfg) {
             if (key == "statusdumphotkeyvk" && ParseUintVal(val, u))      cfg.statusDumpHotkeyVK = u;
             else if (key == "hotreloadintervalframes" && ParseUintVal(val, u)) cfg.hotReloadIntervalFrames = u;
             else if (key == "crashforensics" && ParseBoolVal(val, b))     cfg.crashForensicsEnabled = b;
+            else if (key == "flightrecorder" && ParseBoolVal(val, b))     cfg.flightRecorderEnabled = b;
         }
     }
 
@@ -383,10 +387,11 @@ std::string FormatLiveStatusDump(const LiveStatusDumpData& d) {
                   d.runtimeVersion.c_str(), d.zydisPassed, d.zydisChecked,
                   d.zydisOk ? "OK - VERIFIED" : "FAIL-CLOSED");
     os << buf;
-    std::snprintf(buf, sizeof buf, "Config: %s | HotReloads: %u | HotkeyVK: %u | PollInterval: %u frames | CrashForensics: %u\n\n",
+    std::snprintf(buf, sizeof buf, "Config: %s | HotReloads: %u | HotkeyVK: %u | PollInterval: %u frames | CrashForensics: %u | FlightRecorder: %u\n\n",
                   d.iniPath.empty() ? "raw_engine.ini" : d.iniPath.c_str(),
                   d.configReloads, d.config.statusDumpHotkeyVK, d.config.hotReloadIntervalFrames,
-                  d.config.crashForensicsEnabled ? 1u : 0u);
+                  d.config.crashForensicsEnabled ? 1u : 0u,
+                  d.config.flightRecorderEnabled ? 1u : 0u);
     os << buf;
 
     os << "[Active Configuration]\n";
@@ -492,10 +497,19 @@ std::string FormatLiveStatusDump(const LiveStatusDumpData& d) {
 
     os << "[Adaptive Audio Director]\n";
     std::snprintf(buf, sizeof buf,
-                  "  Director=%u Mood=%u Lpf=%.0fHz ReverbWet=%.2fx Duck=%.2f Stinger=%u Transitions=%u\n",
+                  "  Director=%u Mood=%u Lpf=%.0fHz ReverbWet=%.2fx Duck=%.2f Stinger=%u Transitions=%u\n\n",
                   d.config.adaptiveAudioDirector ? 1u : 0u, d.audioDirectorMood,
                   d.audioDirectorLpfHz, d.audioDirectorReverbWet, d.audioDirectorDuckGain,
                   d.audioDirectorStinger, d.audioDirectorSwitches);
+    os << buf;
+
+    os << "[Flight Recorder]\n";
+    std::snprintf(buf, sizeof buf,
+                  "  Recorder=%u Recorded=%llu Ring=%u/300 Mean=%.2fms P50=%.2fms P95=%.2fms P99=%.2fms Max=%.2fms Hitches(>50ms)=%u Flushes=%u\n",
+                  d.config.flightRecorderEnabled ? 1u : 0u,
+                  static_cast<unsigned long long>(d.flightTotalFrames), d.flightRingFill,
+                  d.flightMeanMs, d.flightP50Ms, d.flightP95Ms, d.flightP99Ms, d.flightMaxMs,
+                  d.flightHitches50ms, d.flightFlushes);
     os << buf;
     return os.str();
 }
@@ -736,6 +750,22 @@ bool LiveConfigWriteStatusDump(std::string* outPathWritten) {
         d.audioDirectorReverbWet = ads.reverbWetMult;
         d.audioDirectorDuckGain  = ads.dialogueDuckGain;
         d.audioDirectorSwitches  = ads.transitionCount;
+    }
+
+    if (d.config.flightRecorderEnabled) {
+        FlightRecorderFlushJson(nullptr);
+    }
+    RawFlightRecorderStats frs{};
+    if (RAW_GetFlightRecorderStats(&frs)) {
+        d.flightTotalFrames = frs.totalRecordedFrames;
+        d.flightRingFill    = frs.ringFillCount;
+        d.flightHitches50ms = frs.hitchFramesOver50ms;
+        d.flightFlushes     = frs.flushCount;
+        d.flightMeanMs      = frs.meanFrameMs;
+        d.flightP50Ms       = frs.p50FrameMs;
+        d.flightP95Ms       = frs.p95FrameMs;
+        d.flightP99Ms       = frs.p99FrameMs;
+        d.flightMaxMs       = frs.maxFrameMs;
     }
 
     const bool ok = WriteLiveStatusDumpToFile(outPath, d);

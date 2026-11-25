@@ -19,6 +19,7 @@
 #include "../src/worldgen/RawEsmNpcWeatherLoader.h"
 #include "../src/worldgen/RawNavMeshAi.h"
 #include "../src/worldgen/RawTamrielWorldStreamer.h"
+#include "../src/worldgen/RawWildlifeBoids.h"
 #include "../src/worldgen/RawWorldEcosystem.h"
 #include "../src/worldgen/RawWorldPhysics.h"
 
@@ -735,6 +736,179 @@ bool RunEcosystemSimAudit() {
     return ok;
 }
 
+bool RunWildlifeSimAudit() {
+    const auto t0 = std::chrono::steady_clock::now();
+
+    auto makeFlatHf = [](uint64_t key, float ox, float oy, float sx, float sy, float baseZ, float waterZ) {
+        raw::worldgen::TerrainCellHeightfield hf{};
+        hf.cellKey     = key;
+        hf.originX     = ox;
+        hf.originY     = oy;
+        hf.sizeX       = sx;
+        hf.sizeY       = sy;
+        hf.gridW       = 17u;
+        hf.gridH       = 17u;
+        hf.waterLevelZ = waterZ;
+        hf.heights.assign(17u * 17u, baseZ);
+        return hf;
+    };
+
+    // 1. AlpineHawk thermal soaring vs blizzard roosting
+    float hawkStartZ = 0.0f, hawkThermalZ = 0.0f, hawkRoostZ = 0.0f;
+    uint32_t hawkRoostCount = 0u;
+    bool hawkOk = false;
+    {
+        raw::worldgen::RawWorldPhysics phys;
+        phys.AddTerrainHeightfield(makeFlatHf(1ull, -4096.0f, -4096.0f, 8192.0f, 8192.0f, 0.0f, -500.0f));
+        raw::worldgen::RawWildlifeBoids hawks;
+        hawks.SpawnGuild(raw::worldgen::FaunaGuild::AlpineHawk, 16u, {0.0f, 0.0f, 750.0f}, 220.0f, 42u);
+        auto meanZ = [&]() {
+            double s = 0.0;
+            for (const auto& a : hawks.Agents()) s += a.position.z;
+            return static_cast<float>(s / static_cast<double>(hawks.Agents().size()));
+        };
+        hawkStartZ = meanZ();
+        raw::worldgen::WildlifeEnvInput sunny{};
+        sunny.solarInsolation01 = 1.0f;
+        sunny.windBeaufort      = 2.0f;
+        for (int f = 0; f < 180; ++f) hawks.Step(1.0f / 60.0f, sunny, &phys);
+        hawkThermalZ = meanZ();
+
+        raw::worldgen::WildlifeEnvInput bliz{};
+        bliz.solarInsolation01 = 0.0f;
+        bliz.snowIntensity01   = 0.95f;
+        bliz.windBeaufort      = 10.0f;
+        raw::worldgen::WildlifeTelemetry tel{};
+        for (int f = 0; f < 360; ++f) tel = hawks.Step(1.0f / 60.0f, bliz, &phys);
+        hawkRoostZ     = meanZ();
+        hawkRoostCount = tel.roostingCount;
+        hawkOk = (hawkThermalZ > hawkStartZ + 120.0f) && (hawkRoostZ < hawkThermalZ - 350.0f) && (hawkRoostCount >= 12u);
+    }
+
+    // 2. PineCrowFlock explosive acoustic flush (EmitStimulus(LoudNoise))
+    float crowPreZ = 0.0f, crowPostZ = 0.0f, crowPreSpd = 0.0f, crowPostSpd = 0.0f;
+    uint32_t crowStartled = 0u;
+    bool crowOk = false;
+    {
+        raw::worldgen::RawWorldPhysics phys;
+        phys.AddTerrainHeightfield(makeFlatHf(1ull, -4096.0f, -4096.0f, 8192.0f, 8192.0f, 0.0f, -500.0f));
+        raw::worldgen::RawWildlifeBoids crows;
+        crows.SpawnGuild(raw::worldgen::FaunaGuild::PineCrowFlock, 24u, {0.0f, 0.0f, 280.0f}, 140.0f, 77u);
+        auto meanZ = [&]() {
+            double s = 0.0;
+            for (const auto& a : crows.Agents()) s += a.position.z;
+            return static_cast<float>(s / static_cast<double>(crows.Agents().size()));
+        };
+        raw::worldgen::WildlifeEnvInput calm{};
+        calm.solarInsolation01 = 0.6f;
+        raw::worldgen::WildlifeTelemetry preTel{};
+        for (int f = 0; f < 30; ++f) preTel = crows.Step(1.0f / 60.0f, calm, &phys);
+        crowPreZ   = meanZ();
+        crowPreSpd = preTel.meanSpeed;
+
+        crows.EmitStimulus({0.0f, 0.0f, 250.0f}, 1200.0f, raw::worldgen::StimulusKind::LoudNoise, 1.0f, 2.5f);
+        raw::worldgen::WildlifeTelemetry postTel{};
+        for (int f = 0; f < 45; ++f) postTel = crows.Step(1.0f / 60.0f, calm, &phys);
+        crowPostZ    = meanZ();
+        crowPostSpd  = postTel.meanSpeed;
+        crowStartled = postTel.startledCount;
+        crowOk = (crowStartled == 24u) && (crowPostZ > crowPreZ + 120.0f) && (crowPostSpd > crowPreSpd * 1.25f);
+    }
+
+    // 3. TundraDeerHerd grounded upwind evasion from live RawWorldEcosystem wildfire
+    float deerBefore = 0.0f, deerAfter = 0.0f;
+    bool deerGrounded = true;
+    bool deerOk = false;
+    {
+        raw::worldgen::RawWorldPhysics phys;
+        phys.AddTerrainHeightfield(makeFlatHf(1ull, -4096.0f, -4096.0f, 8192.0f, 8192.0f, 120.0f, -500.0f));
+        raw::worldgen::EcoGridConfig ecfg{};
+        ecfg.gridW = 32u; ecfg.gridH = 32u; ecfg.cellSizeM = 2.0f;
+        raw::worldgen::RawWorldEcosystem eco(ecfg);
+        const auto fireM = eco.CellCenterWorldM(16u, 16u);
+        eco.IgniteAt(fireM.x, fireM.y, 6.0f, 600.0f);
+        const raw::worldgen::Vec3 fireW{fireM.x * 70.0f, fireM.y * 70.0f, 120.0f};
+
+        raw::worldgen::RawWildlifeBoids deer;
+        deer.SpawnGuild(raw::worldgen::FaunaGuild::TundraDeerHerd, 16u, {fireW.x + 450.0f, fireW.y + 100.0f, 120.0f}, 90.0f, 99u);
+        auto meanDist = [&]() {
+            double s = 0.0;
+            for (const auto& a : deer.Agents()) {
+                const float dx = a.position.x - fireW.x;
+                const float dy = a.position.y - fireW.y;
+                s += std::sqrt(dx * dx + dy * dy);
+            }
+            return static_cast<float>(s / static_cast<double>(deer.Agents().size()));
+        };
+        deerBefore = meanDist();
+        raw::worldgen::WildlifeEnvInput env{};
+        env.ecoUnitsPerMeter = 70.0f;
+        env.windDirXY        = {1.0f, 0.0f};
+        for (int f = 0; f < 120; ++f) {
+            deer.Step(1.0f / 60.0f, env, &phys, &eco);
+            for (const auto& a : deer.Agents()) {
+                if (std::fabs(a.position.z - 120.0f) > 1.0e-2f || !IsFinite3(a.position)) deerGrounded = false;
+            }
+        }
+        deerAfter = meanDist();
+        deerOk = deerGrounded && (deerAfter > deerBefore + 150.0f);
+    }
+
+    // 4. RiverSalmonSchool depth confinement + 512-agent O(N) < 1.0 ms/frame perf check
+    double swarmMeanMs = 0.0;
+    uint32_t swarmCount = 0u;
+    bool salmonConfined = true;
+    bool swarmFinite    = true;
+    bool swarmOk        = false;
+    {
+        raw::worldgen::RawWorldPhysics phys;
+        phys.AddTerrainHeightfield(makeFlatHf(1ull, -8192.0f, -8192.0f, 16384.0f, 16384.0f, -200.0f, 0.0f));
+        raw::worldgen::RawWildlifeBoids swarm;
+        swarm.SpawnGuild(raw::worldgen::FaunaGuild::AlpineHawk,        64u,  {0.0f, 0.0f, 900.0f},    800.0f, 101u);
+        swarm.SpawnGuild(raw::worldgen::FaunaGuild::PineCrowFlock,     160u, {300.0f, 200.0f, 260.0f}, 500.0f, 102u);
+        swarm.SpawnGuild(raw::worldgen::FaunaGuild::TundraDeerHerd,    128u, {-400.0f, 300.0f, -200.0f}, 600.0f, 103u);
+        swarm.SpawnGuild(raw::worldgen::FaunaGuild::RiverSalmonSchool, 160u, {0.0f, 0.0f, -90.0f},    350.0f, 104u);
+        swarmCount = static_cast<uint32_t>(swarm.Agents().size());
+
+        raw::worldgen::WildlifeEnvInput env{};
+        env.defaultWaterLevelZ = 0.0f;
+        env.riverCurrentXY     = {1.0f, 0.0f};
+        double sumMs = 0.0;
+        constexpr int kFrames = 40;
+        for (int f = 0; f < kFrames; ++f) {
+            const auto tel = swarm.Step(1.0f / 60.0f, env, &phys);
+            if (f >= 5) sumMs += tel.stepMs;
+            for (const auto& a : swarm.Agents()) {
+                if (!IsFinite3(a.position) || !IsFinite3(a.velocity)) swarmFinite = false;
+                if (a.guild == raw::worldgen::FaunaGuild::RiverSalmonSchool) {
+                    if (a.position.z < -190.0f || a.position.z > -10.0f) salmonConfined = false;
+                }
+            }
+        }
+        swarmMeanMs = sumMs / static_cast<double>(kFrames - 5);
+        swarmOk = (swarmCount == 512u) && salmonConfined && swarmFinite && (swarmMeanMs < 1.0);
+    }
+
+    const double totalMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    const bool ok = hawkOk && crowOk && deerOk && swarmOk;
+
+    std::printf(
+        "[INFO] Wildlife 3D Spatial-Hash Boids Audit (%.2f ms):\n"
+        "  1. AlpineHawk Thermal/Roost : Z %.1f -> %.1f -> %.1f (roosting=%u/16) [%s]\n"
+        "  2. PineCrow Acoustic Flush  : Z %.1f -> %.1f | spd %.1f -> %.1f | startled=%u/24 [%s]\n"
+        "  3. TundraDeer Fire Evasion  : dist %.1fu -> %.1fu | grounded=%s [%s]\n"
+        "  4. 512-Agent Swarm & Salmon : agents=%u | meanStep=%.3f ms (<1.0ms) | salmonBox=%s | finite=%s [%s]\n"
+        "[%s] wildlife-sim: 4 guilds / 512 agents O(N) spatial-hash audit %s (%.2f ms)\n",
+        totalMs,
+        hawkStartZ, hawkThermalZ, hawkRoostZ, hawkRoostCount, hawkOk ? "PASS" : "FAIL",
+        crowPreZ, crowPostZ, crowPreSpd, crowPostSpd, crowStartled, crowOk ? "PASS" : "FAIL",
+        deerBefore, deerAfter, deerGrounded ? "yes" : "no", deerOk ? "PASS" : "FAIL",
+        swarmCount, swarmMeanMs, salmonConfined ? "yes" : "no", swarmFinite ? "yes" : "no", swarmOk ? "PASS" : "FAIL",
+        ok ? "PASS" : "FAIL", ok ? "PASS" : "FAIL", totalMs);
+    return ok;
+}
+
 bool ParseCellXY(const std::string& s, int32_t* outX, int32_t* outY) {
     const size_t comma = s.find(',');
     if (comma == std::string::npos || comma == 0u || comma + 1u >= s.size()) return false;
@@ -771,6 +945,7 @@ void PrintUsage() {
         "  raw_forge_cli --tamriel-stream [Skyrim.esm]             3-landmark Tamriel multi-cell streaming & LRU audit\n"
         "  raw_forge_cli --navmesh-audit [Skyrim.esm] [cx cy]      NavMesh bake + A* funnel + 4-agent squad AI audit\n"
         "  raw_forge_cli --ecosystem-sim                           Coupled wildfire/rain/snowmelt-D8/black-ice/regrowth audit\n"
+        "  raw_forge_cli --wildlife-sim                            512-agent O(N) wildlife boids (hawk/crow/deer/salmon) audit\n"
         "  raw_forge_cli --validate-all [dir]                      Run all 4 procedural pipelines + quality gates\n"
         "Options:\n"
         "  --seed <N>         Deterministic RNG seed (default: 202607)\n"
@@ -827,6 +1002,7 @@ int main(int argc, char** argv) {
     int32_t navCellY        = -12;
     bool hasNavCellArg      = false;
     bool runEcosystemSim    = false;
+    bool runWildlifeSim     = false;
     bool writeGeometry      = true;
     uint32_t seed       = 202607u;
     float latitudeDeg   = 60.0f;
@@ -977,6 +1153,8 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "--ecosystem-sim") {
             runEcosystemSim = true;
+        } else if (arg == "--wildlife-sim") {
+            runWildlifeSim = true;
         } else if (arg == "--validate-all") {
             runValidateAll = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -1002,11 +1180,11 @@ int main(int argc, char** argv) {
     }
 
     if (!runValidateAll && !runEsmMeta && !runPhysicsProbe && !runTamrielStream && !runNavMeshAudit &&
-        !runEcosystemSim &&
+        !runEcosystemSim && !runWildlifeSim &&
         floraDir.empty() && dioramaDir.empty() && almanacDir.empty() &&
         materialsDir.empty() && texturesDir.empty() && esmPath.empty() && esmScenePath.empty() &&
         bsaListPath.empty() && nifPath.empty() && bsaNifArchive.empty() && ddsPath.empty() && bsaDdsArchive.empty()) {
-        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, or --validate-all).\n");
+        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, or --validate-all).\n");
         PrintUsage();
         return 2;
     }
@@ -1119,6 +1297,10 @@ int main(int argc, char** argv) {
 
     if (runEcosystemSim) {
         if (!RunEcosystemSimAudit()) allOk = false;
+    }
+
+    if (runWildlifeSim) {
+        if (!RunWildlifeSimAudit()) allOk = false;
     }
 
     if (runValidateAll) {

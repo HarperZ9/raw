@@ -32,13 +32,17 @@ float16_t karisW(float16_t3 c) {
 
 float16_t3 softThreshold(float16_t3 c) {
     const float16_t br = max(c.r, max(c.g, c.b));
-    // Strictly above diffuse surfaces, snow, clouds & plaster (<=1.95); genuine fire cores, sun shafts & spells bloom cleanly!
+    // Wave 52 C2 smoothstep soft-knee + energy-conserved shoulder roll-off:
+    // Strictly above diffuse surfaces, snow, clouds & plaster (<=1.95); torches, campfires, aurora & glints bloom cleanly!
     const float16_t thresh = float16_t(2.25h);
-    const float16_t knee = float16_t(0.28h);
-    float16_t soft = clamp(br - thresh + knee, float16_t(0.0h), float16_t(2.0h) * knee);
-    soft = (soft * soft) / max(float16_t(4.0h) * knee, float16_t(1.0e-4h));
-    const float16_t contrib = max(soft, br - thresh) / max(br, float16_t(1.0e-4h));
-    return min(c * saturate(contrib), float16_t3(3.0h, 3.0h, 3.0h));
+    const float16_t knee   = float16_t(0.32h);
+    const float16_t kneeT  = smoothstep(thresh - knee, thresh + knee, br);
+    const float16_t excess = max(br - thresh, float16_t(0.0h));
+    const float16_t softVal = kneeT * (excess + knee * float16_t(0.45h) * kneeT);
+    // Smooth rational shoulder roll-off prevents extreme HDR spikes from blowing out or clipping flat:
+    const float16_t rolled = (softVal * float16_t(3.2h)) / (float16_t(3.2h) + softVal);
+    const float16_t scale = rolled / max(br, float16_t(1.0e-4h));
+    return min(c * saturate(scale), float16_t3(3.2h, 3.2h, 3.2h));
 }
 
 // Per-tap Karis-weighted 2x2 downsample with isolated 1-pixel firefly suppression:
@@ -136,20 +140,48 @@ float4 up(float4 at : SV_Position) : SV_Target0 {
           SrcA.SampleLevel(Lin, uv + float2(0.0f,  d.y), 0.0f).rgb + SrcA.SampleLevel(Lin, uv + float2(0.0f, -d.y), 0.0f).rgb) * 2.0f;
     s += SrcA.SampleLevel(Lin, uv + float2( d.x,  d.y), 0.0f).rgb + SrcA.SampleLevel(Lin, uv + float2(-d.x,  d.y), 0.0f).rgb +
          SrcA.SampleLevel(Lin, uv + float2( d.x, -d.y), 0.0f).rgb + SrcA.SampleLevel(Lin, uv + float2(-d.x, -d.y), 0.0f).rgb;
-    const float3 upCol = s * (1.0f / 16.0f);
-    const float3 curCol = SrcB.SampleLevel(Lin, uv, 0.0f).rgb;
+    const float3 upCol = float3(sanitizeHdrTap(s * (1.0f / 16.0f)));
+    const float3 curCol = float3(sanitizeHdrTap(SrcB.SampleLevel(Lin, uv, 0.0f).rgb));
     // Pure energy-conserving achromatic tent upsample (zero low-threshold glare leakage):
     return float4(curCol * 0.50f + upCol * 0.50f, 1.0f);
 }
 
-// Full-res energy-conserving linear HDR composite: SrcA = pre-bloom linear HDR scene, SrcB = 6-level bloom pyramid mip 0.
+// Full-res energy-conserving linear HDR composite with Wave 52 Subtle Radial Chromatic Lens Dispersion
+// on extreme HDR highlights (lum > 2.5 near frame corners: warm-amber outer / cool-cyan inner radial micro-shift!).
+// SrcA = pre-bloom linear HDR scene, SrcB = 6-level bloom pyramid mip 0.
 float4 composite(float4 at : SV_Position) : SV_Target0 {
     float sw, sh;
     SrcA.GetDimensions(sw, sh);
-    const float2 uv = at.xy / max(float2(sw, sh), float2(1.0f, 1.0f));
-    const float4 scene = SrcA.Load(int3(at.xy, 0));
-    const float3 bl = max(SrcB.SampleLevel(Lin, uv, 0.0f).rgb, 0.0f.xxx);
-    // Disciplined linear HDR bloom merge (0.055): genuine emissives glow softly without any surface highlight bleed.
-    const float3 outRgb = scene.rgb + bl * (0.055f / (1.0f + max(scene.r, max(scene.g, scene.b)) * 0.78f));
-    return float4(outRgb, scene.a);
+    const float2 dim = max(float2(sw, sh), float2(1.0f, 1.0f));
+    const float2 uv = at.xy / dim;
+    const float4 sceneRaw = SrcA.Load(int3(clamp(int2(at.xy), int2(0, 0), max(int2(dim) - 1, int2(0, 0))), 0));
+    const float3 sceneRgb = (any(isnan(sceneRaw.rgb)) || any(isinf(sceneRaw.rgb))) ? 0.0f.xxx : max(sceneRaw.rgb, 0.0f.xxx);
+    const float3 blCenter = float3(sanitizeHdrTap(SrcB.SampleLevel(Lin, uv, 0.0f).rgb));
+
+    // Subtle physically-grounded radial chromatic lens dispersion strictly on extreme HDR highlights (lum > 2.5):
+    const float sceneLum = dot(sceneRgb, kLuma);
+    const float blLum    = dot(blCenter, kLuma);
+    const float2 fromCenter = uv - 0.5f.xx;
+    const float r2 = dot(fromCenter, fromCenter);
+    const float cornerWeight = smoothstep(0.06f, 0.44f, r2);
+    const float extremeGate = max(smoothstep(2.50f, 5.20f, sceneLum), smoothstep(0.45f, 1.55f, blLum)) * cornerWeight;
+
+    float3 bl = blCenter;
+    if (extremeGate > 0.01f) {
+        const float2 radOff = fromCenter * (0.0052f * extremeGate);
+        const float3 blOuter = float3(sanitizeHdrTap(SrcB.SampleLevel(Lin, saturate(uv + radOff), 0.0f).rgb));
+        const float3 blInner = float3(sanitizeHdrTap(SrcB.SampleLevel(Lin, saturate(uv - radOff), 0.0f).rgb));
+        // Slight warm-amber outer radial shift (R + subtle G) / cool-cyan inner radial shift (B + subtle G), energy-conserved:
+        const float3 blDisp = float3(
+            lerp(blCenter.r, blOuter.r * 1.06f, 0.68f),
+            lerp(blCenter.g, (blOuter.g * 0.52f + blInner.g * 0.48f), 0.45f),
+            lerp(blCenter.b, blInner.b * 1.06f, 0.68f));
+        bl = lerp(blCenter, blDisp, extremeGate * 0.65f);
+    }
+
+    // Disciplined linear HDR bloom merge (0.055): genuine emissives glow cinematically without washing out midtones!
+    const float scenePeak = max(sceneRgb.r, max(sceneRgb.g, sceneRgb.b));
+    const float3 outRgb = sceneRgb + bl * (0.055f / (1.0f + scenePeak * 0.78f));
+    const float3 safeOut = (any(isnan(outRgb)) || any(isinf(outRgb))) ? sceneRgb : max(outRgb, 0.0f.xxx);
+    return float4(safeOut, sceneRaw.a);
 }

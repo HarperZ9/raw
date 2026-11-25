@@ -21,14 +21,21 @@ SamplerState      Lin       : register(s0);
 
 static const float3 kLumaW = float3(0.2126f, 0.7152f, 0.0722f);
 
+// Finite NaN/Inf sanitizer for HDR RGB taps (guarantees zero poison propagation across temporal history):
+float3 sanitizeFiniteRgb(float3 c) {
+    return (any(isnan(c)) || any(isinf(c))) ? 0.0f.xxx : clamp(c, 0.0f.xxx, 64.0f.xxx);
+}
+
 float3 tonemapKaris(float3 c) {
-    const float l = max(dot(max(c, 0.0f.xxx), kLumaW), 0.0f);
-    return max(c, 0.0f.xxx) * rcp(1.0f + l);
+    const float3 s = sanitizeFiniteRgb(c);
+    const float l = max(dot(s, kLumaW), 0.0f);
+    return s * rcp(1.0f + l);
 }
 
 float3 invTonemapKaris(float3 c) {
-    const float l = clamp(dot(max(c, 0.0f.xxx), kLumaW), 0.0f, 0.992f);
-    return max(c, 0.0f.xxx) * rcp(max(1.0f - l, 0.008f));
+    const float3 s = sanitizeFiniteRgb(c);
+    const float l = clamp(dot(s, kLumaW), 0.0f, 0.992f);
+    return s * rcp(max(1.0f - l, 0.008f));
 }
 
 float3 rgbToYCoCg(float3 c) {
@@ -41,8 +48,8 @@ float3 yCoCgToRgb(float3 y) {
     return float3(y.x + y.y - y.z, y.x + y.z, y.x - y.y - y.z);
 }
 
-// Ray-to-mean YCoCg AABB clipping (Playdead / Karis SIGGRAPH 2014): projects out-of-box history along ray toward mean
-// instead of snapping to box corners (eliminates chroma shifting and specular edge shimmer).
+// Ray-to-mean YCoCg AABB + Statistical Ellipsoid Hybrid Clipping (Playdead / Karis + Wave 52 Variance Ellipsoid):
+// Tighter than AABB along diagonal luma/chroma corners, eliminating ghosting halos on moving silhouettes & embers!
 float3 clipAABB(float3 aabbMin, float3 aabbMax, float3 mean, float3 history) {
     const float3 pClip = 0.5f * (aabbMax + aabbMin);
     const float3 eClip = max(0.5f * (aabbMax - aabbMin), 1.0e-5f.xxx);
@@ -56,11 +63,26 @@ float3 clipAABB(float3 aabbMin, float3 aabbMax, float3 mean, float3 history) {
     return history;
 }
 
-// Perceptual Karis-tonemapped 5-tap Jimenez Catmull-Rom bicubic history fetch:
-// Resamples in compressed perceptual space so negative Catmull-Rom lobes NEVER ring around HDR highlights or glaciers.
-float3 sampleCatmullRom5Perceptual(Texture2D<float4> tex, float2 uv) {
-    const float2 texSize = dims.xy;
-    const float2 invSize = dims.zw;
+float3 clipYCoCgEllipse(float3 nMinY, float3 nMaxY, float3 mean, float3 stdDev, float gammaClip, float3 history) {
+    const float3 rad = max(stdDev * max(gammaClip, 0.25f), 1.0e-4f.xxx);
+    const float3 boxMin = max(nMinY, mean - rad);
+    const float3 boxMax = min(nMaxY, mean + rad);
+    float3 h = clipAABB(boxMin, boxMax, mean, history);
+    // Project onto exact L2 statistical ellipsoid around neighborhood mean:
+    const float3 dNorm = (h - mean) / rad;
+    const float dLen2 = dot(dNorm, dNorm);
+    if (dLen2 > 1.0f) {
+        h = mean + (h - mean) * rsqrt(dLen2);
+    }
+    return clamp(h, nMinY, nMaxY);
+}
+
+// Perceptual Karis-tonemapped 5-tap Jimenez Catmull-Rom sharpening bicubic history fetch:
+// Resamples in compressed perceptual space with convex-hull clamp so negative Catmull-Rom lobes sharpen static
+// detail cleanly without ever ringing around HDR highlights, water glints, or glaciers.
+float3 sampleCatmullRom5Perceptual(Texture2D<float4> tex, float2 uv, float sharpBias) {
+    const float2 texSize = max(dims.xy, float2(1.0f, 1.0f));
+    const float2 invSize = 1.0f / texSize;
     const float2 pos = uv * texSize;
     const float2 tc1 = floor(pos - 0.5f) + 0.5f;
     const float2 f = pos - tc1;
@@ -73,9 +95,9 @@ float3 sampleCatmullRom5Perceptual(Texture2D<float4> tex, float2 uv) {
     const float2 w2 = 1.0f - w0 - w1 - w3;
 
     const float2 w12 = w1 + w2;
-    const float2 tc0 = (tc1 - 1.0f) * invSize;
-    const float2 tc3 = (tc1 + 2.0f) * invSize;
-    const float2 tc12 = (tc1 + w2 / max(w12, 1.0e-4f)) * invSize;
+    const float2 tc0 = clamp((tc1 - 1.0f) * invSize, 0.0005f.xx, 0.9995f.xx);
+    const float2 tc3 = clamp((tc1 + 2.0f) * invSize, 0.0005f.xx, 0.9995f.xx);
+    const float2 tc12 = clamp((tc1 + w2 / max(w12, 1.0e-4f)) * invSize, 0.0005f.xx, 0.9995f.xx);
 
     const float3 c0 = tonemapKaris(tex.SampleLevel(Lin, float2(tc12.x, tc0.y),  0.0f).rgb);
     const float3 c1 = tonemapKaris(tex.SampleLevel(Lin, float2(tc0.x,  tc12.y), 0.0f).rgb);
@@ -83,12 +105,15 @@ float3 sampleCatmullRom5Perceptual(Texture2D<float4> tex, float2 uv) {
     const float3 c3 = tonemapKaris(tex.SampleLevel(Lin, float2(tc3.x,  tc12.y), 0.0f).rgb);
     const float3 c4 = tonemapKaris(tex.SampleLevel(Lin, float2(tc12.x, tc3.y),  0.0f).rgb);
 
-    float3 sum = c0 * (w12.x * w0.y) + c1 * (w0.x * w12.y) + c2 * (w12.x * w12.y) + c3 * (w3.x * w12.y) + c4 * (w12.x * w3.y);
+    const float3 sum = c0 * (w12.x * w0.y) + c1 * (w0.x * w12.y) + c2 * (w12.x * w12.y) + c3 * (w3.x * w12.y) + c4 * (w12.x * w3.y);
     const float wTot = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
-    // Clamp Catmull-Rom negative overshoot strictly inside the 5-tap convex hull in perceptual space:
+    const float3 cr = sum / max(wTot, 1.0e-4f);
+    // Subtle center-weighted unsharp lift on static detail, strictly clamped inside the 5-tap convex hull:
+    const float3 crossMean = 0.25f * (c0 + c1 + c3 + c4);
+    const float3 crSharp = cr + (c2 - crossMean) * clamp(sharpBias, 0.0f, 0.24f);
     const float3 hullMin = min(c2, min(min(c0, c1), min(c3, c4)));
     const float3 hullMax = max(c2, max(max(c0, c1), max(c3, c4)));
-    return clamp(sum / max(wTot, 1.0e-4f), hullMin, hullMax);
+    return clamp(crSharp, hullMin, hullMax);
 }
 
 // World-space anchored tri-planar micro-photogrammetry hash (strictly locked to world coordinates).
@@ -120,14 +145,16 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const int3 ip = int3(p, 0);
     const float4 curRaw = CurHdr.Load(ip);
     const float d = Depth.Load(ip);
-    // Leave sky dome and paused UI/MapMenu untouched; NEVER bypass on walkable alpine mountains!
-    if (d >= 1.0f || timeEnv.w > 0.5f) { return curRaw; }
+    // Leave sky dome (d >= 0.99998) and paused UI/MapMenu untouched; NEVER bypass on walkable alpine mountains!
+    if (d >= 0.99998f || timeEnv.w > 0.5f) { return float4(sanitizeFiniteRgb(curRaw.rgb), curRaw.a); }
 
-    const int2 dMax = int2(dims.xy) - 1;
+    const int2 dMax = max(int2(dims.xy) - 1, int2(0, 0));
     const float z = viewZOf(d);
     const float3 nC = worldNormal(Normal.Load(ip));
     const float3 pW = worldAt(float2(p), d);
-    const float3 vDir = normalize(eyeAt() - pW);
+    const float3 toEyeC = eyeAt() - pW;
+    const float toEyeLen2 = dot(toEyeC, toEyeC);
+    const float3 vDir = (toEyeLen2 > 1.0e-8f) ? (toEyeC * rsqrt(toEyeLen2)) : float3(0.0f, 0.0f, 1.0f);
     const float4 specTap = Layer.Load(ip);
     const uint base = uint(specTap.z * 255.0f + 0.5f) & 127u;
     const bool isEye      = (base == 12u);
@@ -140,13 +167,15 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const bool isLod      = (base == 7u);
     const bool isWater    = (base == 9u);
 
-    const float2 mvCenter = Motion.Load(ip);
+    const float2 mvCenterRaw = Motion.Load(ip);
+    const float2 mvCenter = (any(isnan(mvCenterRaw)) || any(isinf(mvCenterRaw))) ? 0.0f.xx : mvCenterRaw;
 
-    // 3x3 Perceptual Karis-Tonemapped YCoCg neighborhood moments + depth/normal/motion-divergence disocclusion scan:
+    // 3x3 Perceptual Karis-Tonemapped YCoCg neighborhood moments + luminance variance + depth/normal/motion-divergence scan:
     float3 m1 = 0.0f.xxx, m2 = 0.0f.xxx;
     float3 nMinY = 1.0e6f.xxx, nMaxY = -1.0e6f.xxx;
     float3 rgbBlur = 0.0f.xxx;
     float wSum = 0.0f;
+    float lumM1 = 0.0f, lumM2 = 0.0f, lumMax3 = 0.0f;
     float maxDz = 0.0f;
     float minDotN = 1.0f;
     float mvDivPx = 0.0f;
@@ -158,18 +187,22 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
             const int3 iq = int3(q, 0);
             const float dq = Depth.Load(iq);
             if (dq < bestD) { bestD = dq; bestVelPx = q; }
-            const float zq = dq < 1.0f ? viewZOf(dq) : 1.0e6f;
+            const float zq = dq < 0.99998f ? viewZOf(dq) : 1.0e6f;
             maxDz = max(maxDz, abs(zq - z));
             if (dx != 0 || dy != 0) {
                 const float3 nq = worldNormal(Normal.Load(iq));
                 minDotN = min(minDotN, dot(nC, nq));
-                const float2 mvq = Motion.Load(iq);
+                const float2 mvqRaw = Motion.Load(iq);
+                const float2 mvq = (any(isnan(mvqRaw)) || any(isinf(mvqRaw))) ? mvCenter : mvqRaw;
                 mvDivPx = max(mvDivPx, length((mvq - mvCenter) * dims.xy));
             }
-            const float3 cq = max(CurHdr.Load(iq).rgb, 0.0f.xxx);
+            const float3 cq = sanitizeFiniteRgb(CurHdr.Load(iq).rgb);
             const float3 cqTm = tonemapKaris(cq);
             const float3 yq = rgbToYCoCg(cqTm);
             const float lumQ = dot(cq, kLumaW);
+            lumM1 += lumQ;
+            lumM2 += lumQ * lumQ;
+            lumMax3 = max(lumMax3, lumQ);
             // Karis luminance anti-flicker weighting preserves crisp fine foliage & snow sparkles!
             const float kw = (dx == 0 && dy == 0) ? 1.55f : (1.0f / (1.0f + lumQ * 0.55f));
             m1 += yq * kw;
@@ -184,6 +217,8 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     m2 /= max(wSum, 1.0e-4f);
     rgbBlur /= max(wSum, 1.0e-4f);
     const float3 stdDev = sqrt(max(m2 - m1 * m1, 0.0f.xxx));
+    const float lumMean3 = lumM1 * (1.0f / 9.0f);
+    const float lumStd3 = sqrt(max(lumM2 * (1.0f / 9.0f) - lumMean3 * lumMean3, 0.0f));
 
     // Metal-Level Dual-Scale 3D Weingarten Curvature:
     // Fine 1px differential runs via hardware QuadReadAcrossX/Y register shuffles (ZERO extra Normal L1 loads!),
@@ -203,7 +238,7 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     // Hypergraph 4-Party Quad-Cut Firefly vs Geometric Glint Separator:
     //   - Radiance splits (1 vs 3) while normal & depth are uniform (4 vs 0) -> isolated RT firefly -> clamp cleanly!
     //   - Radiance AND normal/depth BOTH split (1 vs 3) -> true geometric bevel glint or snow diamond -> preserve 100%!
-    float3 curRgb = max(curRaw.rgb, 0.0f.xxx);
+    float3 curRgb = sanitizeFiniteRgb(curRaw.rgb);
     const float curLumRaw = dot(curRgb, kLumaW);
     const float qLumX = QuadReadAcrossX(curLumRaw);
     const float qLumY = QuadReadAcrossY(curLumRaw);
@@ -287,54 +322,69 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const float3 bounceHarm = rgbBlur * (max(mlpOut.z, 0.0f) * (1.0f - midKey) * 0.020f * classGain * edgeGate * edgeGate * distFade * hlGuard);
     float3 recon = max(curRgb * (cavityScale + worldMicro) + detailDelta + sheenAdd + bounceHarm, 0.0f.xxx);
 
-    // Perceptual Karis-Tonemapped 5-Tap Catmull-Rom + Velocity-Adaptive YCoCg Variance Clipping (gamma 1.25 -> 0.85)
-    // + Depth/Normal/Motion-Divergence Disocclusion History Reset:
+    // Wave 52 Razor-Crisp Reactive-Mask YCoCg Ellipsoid Temporal Reconstruction:
+    // Detects intense fire/ember spikes, specular water glints, falling snow/rain streaks & fast-moving foreground
+    // silhouettes (3x3 luminance variance + motion-vector divergence) so dynamic FX NEVER ghost while distant pines
+    // and mountain ridges stay silky-smooth & shimmer-free!
     const float2 uv = (floor(at.xy) + 0.5f) * dims.zw;
-    const float2 puv = uv + mv;
+    const float2 mvSafe = (any(isnan(mv)) || any(isinf(mv))) ? 0.0f.xx : mv;
+    const float2 puv = uv + mvSafe;
     if (all(puv > 0.004f) && all(puv < 0.996f)) {
-        const float3 prevTm = sampleCatmullRom5Perceptual(HistPrev, puv);
+        // High-contrast reactive mask (0 on calm static scenery -> 1 on dynamic embers, water glints, precip & sword swings):
+        const float depthDisocc  = smoothstep(max(z * 0.022f, 2.2f), max(z * 0.085f, 10.0f), maxDz);
+        const float normalDisocc = smoothstep(0.18f, 0.52f, 1.0f - minDotN) * saturate(speedPx * 0.45f + mvDivPx * 0.85f);
+        const float mvDivDisocc  = smoothstep(0.38f, 1.45f, mvDivPx);
+        const float speedRamp    = smoothstep(0.65f, 6.20f, speedPx);
+        const float relLumVar    = lumStd3 / max(lumMean3 + 0.08f, 0.08f);
+        const float fireEmberReact = (curRgb.r > curRgb.b * 1.65f && curLum > 0.72f)
+            ? smoothstep(0.72f, 2.20f, curLum) * 0.94f : 0.0f;
+        const float waterGlintReact = isWater
+            ? saturate(0.64f + smoothstep(0.18f, 0.80f, localContrast) * 0.34f) : 0.0f;
+        const float precipReact = ((weather.z > 0.06f || weather.w > 0.06f) && curLum > blurLum * 1.24f && curLum > 0.18f)
+            ? saturate((curLum - blurLum) * 1.85f) * 0.88f : 0.0f;
+        const float fgSwingReact = smoothstep(0.45f, 3.20f, speedPx) * smoothstep(260.0f, 45.0f, z) * 0.96f;
+        const float varMotionReact = smoothstep(0.20f, 0.72f, relLumVar) * saturate(speedPx * 0.42f + mvDivPx * 0.78f);
+        const float spikeContrastReact = smoothstep(0.65f, 2.20f, (lumMax3 - lumMean3) / max(lumMean3 + 0.15f, 0.15f))
+            * saturate(mvDivDisocc + speedRamp * 0.65f);
+        const float reactiveMask = saturate(max(
+            max(max(fireEmberReact, waterGlintReact), max(precipReact, fgSwingReact)),
+            max(max(varMotionReact, spikeContrastReact), max(mvDivDisocc * 0.98f, isEmissive ? 0.90f : 0.0f))));
+
+        // Catmull-Rom 5-tap sharpening history sample (sharper when static, neutral under high reactivity):
+        const float histSharp = (1.0f - max(speedRamp, reactiveMask)) * 0.14f * edgeGate;
+        const float3 prevTm = sampleCatmullRom5Perceptual(HistPrev, puv, histSharp);
         const float3 prevY = rgbToYCoCg(prevTm);
         const float3 curTm = tonemapKaris(recon);
         const float3 curY = rgbToYCoCg(curTm);
 
-        // Multi-signal disocclusion detector (depth silhouette + normal break + motion-vector divergence + velocity + color):
-        const float depthDisocc  = smoothstep(max(z * 0.022f, 2.2f), max(z * 0.085f, 10.0f), maxDz);
-        const float normalDisocc = smoothstep(0.18f, 0.52f, 1.0f - minDotN) * saturate(speedPx * 0.45f + mvDivPx * 0.85f);
-        const float mvDivDisocc  = smoothstep(0.42f, 1.55f, mvDivPx);
-        const float speedRamp    = smoothstep(0.65f, 6.50f, speedPx);
-        const float lumDelta     = abs(prevY.x - curY.x) / max(curY.x + 0.05f, 0.05f);
-        const float chrDelta     = length(prevY.yz - curY.yz) / max(curY.x + 0.07f, 0.07f);
-        const float trapSep      = rawTrappingSeparator(curY.x, prevY.x, stdDev.x, speedPx, edgeGate);
-        const float colDisocc    = max(saturate((lumDelta - 0.18f) * 2.6f), saturate((chrDelta - 0.22f) * 2.4f));
-        const float geoDisocc    = max(mvDivDisocc, max(depthDisocc * 0.92f, normalDisocc * 0.85f));
-        const float disocc       = saturate(max(max(colDisocc, trapSep), geoDisocc));
+        const float lumDelta  = abs(prevY.x - curY.x) / max(curY.x + 0.05f, 0.05f);
+        const float chrDelta  = length(prevY.yz - curY.yz) / max(curY.x + 0.07f, 0.07f);
+        const float trapSep   = rawTrappingSeparator(curY.x, prevY.x, stdDev.x, speedPx, edgeGate);
+        const float colDisocc = max(saturate((lumDelta - 0.18f) * 2.6f), saturate((chrDelta - 0.22f) * 2.4f));
+        const float geoDisocc = max(mvDivDisocc, max(depthDisocc * 0.92f, normalDisocc * 0.85f));
+        const float disocc    = saturate(max(max(colDisocc, trapSep), geoDisocc));
 
-        // Velocity-adaptive 3x3 YCoCg variance clipping:
-        // Tightens gamma smoothly from 1.25 when static (crisp anti-flicker on fine foliage & snow sparkles!)
-        // down to 0.85 under rapid motion, camera sweeps, or moving-NPC/weapon velocity divergence!
-        const float motionTight = saturate(max(speedRamp, mvDivDisocc * 0.95f));
-        const float gammaClip   = lerp(1.25f, 0.85f, motionTight);
-        const float3 boxMin = max(nMinY, m1 - stdDev * gammaClip);
-        const float3 boxMax = min(nMaxY, m1 + stdDev * gammaClip);
-        const float3 clippedY = clipAABB(boxMin, boxMax, m1, prevY);
+        // Tightened YCoCg Ellipsoid + Variance Clipping: gamma modulated inversely by reactiveMask & velocity!
+        // Static pine forests & ridges get silky gamma=1.28; embers, water glints & sword swings snap to gamma=0.62!
+        const float tightDrive = saturate(max(max(speedRamp, mvDivDisocc * 0.95f), reactiveMask));
+        const float gammaClip  = lerp(1.28f, 0.62f, tightDrive);
+        const float3 clippedY  = clipYCoCgEllipse(nMinY, nMaxY, m1, stdDev, gammaClip, prevY);
 
-        // Material-aware & silhouette-reactive history reset (cleanly flushes stale history on moving NPCs/weapons!):
-        const float reactive = saturate(max(
-            isWater ? 0.68f : (isEmissive ? 0.82f : (isSkin || isHair ? (0.48f + speedRamp * 0.48f) : 0.0f)),
-            max(disocc * 0.96f, mvDivDisocc * 0.98f)));
-        // Tighter static accumulation keeps snow/foliage flicker-free while motion snaps cleanly with zero trails:
+        // Material-aware & reactive history flush (zero trails on moving actors/weapons/sparks/snow/water!):
+        const float actorReact = (isSkin || isHair) ? (0.48f + speedRamp * 0.48f) : 0.0f;
+        const float reactiveFinal = saturate(max(reactiveMask, max(actorReact, disocc * 0.96f)));
         const float baseAlpha = isFace ? lerp(0.54f, 0.96f, speedRamp)
-                                       : (isWater ? lerp(0.50f, 0.94f, speedRamp)
+                                       : (isWater ? lerp(0.52f, 0.96f, speedRamp)
                                                   : (isFoliage ? lerp(0.22f, 0.86f, speedRamp)
                                                                : (isIceLike > 0.25f ? lerp(0.24f, 0.84f, speedRamp)
                                                                                     : lerp(0.26f, 0.88f, speedRamp))));
-        const float alpha = saturate(max(baseAlpha, reactive));
+        const float alpha = saturate(max(baseAlpha, reactiveFinal));
         const float3 blendedY = lerp(clippedY, curY, alpha);
-        recon = invTonemapKaris(max(yCoCgToRgb(blendedY), 0.0f.xxx));
+        recon = sanitizeFiniteRgb(invTonemapKaris(max(yCoCgToRgb(blendedY), 0.0f.xxx)));
 
         // Zero-Lag Disocclusion Split-Manifold Prior + Native-Resolution Albedo Sharpness Preservation:
-        // Suppresses priorRgb on moving silhouette divergence (mvDivDisocc) so swinging weapons/NPCs stay razor-sharp!
-        if (useDemod && edgeGate > 0.30f && mvDivDisocc < 0.35f) {
+        // Suppresses priorRgb on moving silhouette divergence & high reactiveMask so dynamic FX stay razor-sharp!
+        if (useDemod && edgeGate > 0.30f && mvDivDisocc < 0.35f && reactiveMask < 0.40f) {
             const float priorW = saturate(colDisocc * mlpOut.w * 0.26f * (1.0f - isIceLike * 0.5f) * (1.0f - mvDivDisocc * 2.5f));
             if (priorW > 0.01f) {
                 const float3 priorRgb = max(quadIrradMean * albedoBase, giTap * albedoBase * 0.60f);
@@ -347,5 +397,5 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
             }
         }
     }
-    return float4(recon, curRaw.a);
+    return float4(sanitizeFiniteRgb(recon), curRaw.a);
 }

@@ -10,6 +10,7 @@
 //   C / Left-Click      : Fire Real Physics Raycast Against .NIF Buildings & Terrain (+ Destruction Burst!)
 //   N                   : Compute Live 3D NavMesh Octile A* Funnel-Smoothed Path (RawNavMeshAi!)
 //   I                   : Ignite Live Directional Wildfire / Snowmelt / Black-Ice Field (RawWorldEcosystem!)
+//   V                   : Emit Loud Acoustic Shockwave Startling Wildlife Boids Skyward (RawWildlifeBoids!)
 //   F9 / H              : Toggle Live GPU Telemetry HUD & 64-Sample Frame-Time Sparkline (RawOverlayHost!)
 //   F12                 : Capture Instant 24-Bit .bmp Screenshot (raw_viewer_shot_<N>.bmp)
 //   1 / 2 / 3 / 4       : Live Season Switch (Spring / Summer / Autumn / Winter)
@@ -61,6 +62,7 @@
 #include "RawOverlayHost.h"
 #include "RawGpuCullHost.h"
 #include "RawLightClusterHost.h"
+#include "RawVolumetricFroxelHost.h"
 #include "RawWeatherSim.h"
 #include "RawWorldShowcase.h"
 #include "RawDestructionEngine.h"
@@ -71,6 +73,7 @@
 #include "RawWorldPhysics.h"
 #include "RawNavMeshAi.h"
 #include "RawWorldEcosystem.h"
+#include "RawWildlifeBoids.h"
 #include "RawHydrologyGen.h"
 #include "RawAudioOutput.h"
 
@@ -417,6 +420,11 @@ public:
         if (!m_lightClustersOk) {
             std::printf("[Viewer] RawLightClusterHost warning: %s\n", err.c_str());
         }
+        err.clear();
+        m_volFroxelsOk = m_volFroxels.Init(m_dev.Get(), {}, &err);
+        if (!m_volFroxelsOk) {
+            std::printf("[Viewer] RawVolumetricFroxelHost warning: %s\n", err.c_str());
+        }
         UINT64 tsFreq = 0;
         if (SUCCEEDED(m_queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
             if (m_fluidOk)         m_fluidSim.SetTimestampFrequency(tsFreq);
@@ -425,6 +433,7 @@ public:
             if (m_overlayOk)       m_overlayHost.SetTimestampFrequency(tsFreq);
             if (m_gpuCullOk)       m_gpuCull.SetTimestampFrequency(tsFreq);
             if (m_lightClustersOk) m_lightClusters.SetTimestampFrequency(tsFreq);
+            if (m_volFroxelsOk)    m_volFroxels.SetTimestampFrequency(tsFreq);
         }
 
         // Enable real hydraulic & thermal erosion + D8 rivers for procedural frontier terrain!
@@ -596,14 +605,21 @@ public:
         m_esmLoaded = (st.activeCells > 0u);
         if (m_esmLoaded) {
             m_navMeshDirty = true;
+            m_hasPrevFroxelView = false;
+            m_volFroxels.ResetHistory();
             BakeLocalNavMesh(float(lm.cellX) * raw::worldgen::kEsmCellSizeU,
                              float(lm.cellY) * raw::worldgen::kEsmCellSizeU,
                              true);
+            float ecoGroundZ = 0.0f;
+            float ecoWaterZ  = -14000.0f;
             if (const auto* cell = m_tamrielStreamer.FindCell(lm.cellX, lm.cellY)) {
                 m_ecosystem.InitFromTerrainChunk(cell->terrainChunk, 70.0f, cell->waterHeightZ);
                 m_ecoInitialized = true;
                 m_ecoTelemetry   = m_ecosystem.ComputeTelemetry();
+                ecoGroundZ       = 0.5f * (cell->terrainMesh.aabbMin.z + cell->terrainMesh.aabbMax.z);
+                ecoWaterZ        = cell->waterHeightZ;
             }
+            SpawnWildlifeAround(midX, midY, ecoGroundZ, ecoWaterZ);
         }
         return m_esmLoaded;
     }
@@ -1104,6 +1120,107 @@ public:
         return p;
     }
 
+    static raw::worldgen::WildlifeEnvInput BuildWildlifeEnvInput(const raw::worldgen::WeatherGpuUniforms& wGpu,
+                                                                 SeasonChoice season, WeatherPreset weather,
+                                                                 float waterLevelZ)
+    {
+        raw::worldgen::WildlifeEnvInput env{};
+        env.solarInsolation01  = std::clamp(0.55f + 0.40f * (1.0f - std::min(wGpu.cloudWind.z, 1.0f)), 0.05f, 1.0f);
+        env.rainIntensity01    = (weather == WeatherPreset::Rainstorm) ? std::max(wGpu.weather.w, 0.75f) : wGpu.weather.w;
+        env.snowIntensity01    = (season == SeasonChoice::Winter || weather == WeatherPreset::Blizzard)
+                               ? std::max(wGpu.weather.z, 0.35f) : wGpu.weather.z;
+        env.windBeaufort       = std::clamp(wGpu.beaufortScale, 0.0f, 12.0f);
+        env.windDirXY          = {wGpu.cloudWind.x, wGpu.cloudWind.y};
+        env.riverCurrentXY     = {0.866f, 0.5f};
+        env.defaultWaterLevelZ = waterLevelZ;
+        env.ecoUnitsPerMeter   = 70.0f;
+        return env;
+    }
+
+    void SpawnWildlifeAround(float cx, float cy, float groundZ, float waterZ)
+    {
+        m_wildlife.Clear();
+        const float safeWaterZ = (waterZ > -10000.0f) ? waterZ : (groundZ - 120.0f);
+        m_wildlife.SpawnGuild(raw::worldgen::FaunaGuild::AlpineHawk,        16u, {cx, cy, groundZ + 1100.0f}, 1200.0f, 5201u);
+        m_wildlife.SpawnGuild(raw::worldgen::FaunaGuild::PineCrowFlock,     32u, {cx, cy, groundZ + 280.0f},   650.0f, 5202u);
+        m_wildlife.SpawnGuild(raw::worldgen::FaunaGuild::TundraDeerHerd,    40u, {cx, cy, groundZ + 12.0f},    900.0f, 5203u);
+        m_wildlife.SpawnGuild(raw::worldgen::FaunaGuild::RiverSalmonSchool, 40u, {cx, cy, safeWaterZ - 35.0f}, 500.0f, 5204u);
+        m_wildlifeWaterZ      = safeWaterZ;
+        m_wildlifeInitialized = true;
+        m_wildlifeTelemetry   = m_wildlife.GetLastTelemetry();
+        m_wildlifeTelemetry.activeAgents = static_cast<uint32_t>(m_wildlife.Agents().size());
+    }
+
+    void TriggerWildlifeStartle()
+    {
+        if (!m_wildlifeInitialized) {
+            SpawnWildlifeAround(m_camPos[0], m_camPos[1], m_camPos[2] - 250.0f, m_camPos[2] - 400.0f);
+        }
+        m_wildlife.EmitStimulus({m_camPos[0], m_camPos[1], m_camPos[2]}, 2500.0f,
+                                raw::worldgen::StimulusKind::LoudNoise, 1.0f, 3.0f);
+        const auto wGpu = m_weatherSim.GetGpuUniforms();
+        m_wildlifeTelemetry = m_wildlife.Step(
+            1.0f / 60.0f, BuildWildlifeEnvInput(wGpu, m_season, m_weatherPreset, m_wildlifeWaterZ),
+            &m_worldPhysics, &m_ecosystem);
+        std::printf("[Wildlife] Acoustic shockwave at (%.0f, %.0f, %.0f) r=2500u | agents=%u roost=%u startle=%u\n",
+                    m_camPos[0], m_camPos[1], m_camPos[2],
+                    m_wildlifeTelemetry.activeAgents, m_wildlifeTelemetry.roostingCount,
+                    m_wildlifeTelemetry.startledCount);
+    }
+
+    struct WildlifeProbe {
+        uint32_t activeAgents  = 0u;
+        uint32_t roostingCount = 0u;
+        uint32_t startledCount = 0u;
+        float    meanSpeed     = 0.0f;
+        double   stepMs        = 0.0;
+        bool     allFinite     = true;
+    };
+
+    WildlifeProbe RunWildlifeSelfTest()
+    {
+        WildlifeProbe p{};
+        if (!m_wildlifeInitialized || m_wildlife.Agents().size() != 128u) {
+            SpawnWildlifeAround(m_camPos[0], m_camPos[1], m_camPos[2] - 300.0f, m_camPos[2] - 450.0f);
+        }
+        // Emit loud acoustic shockwave right at the PineCrowFlock centroid (r=2500u) and verify startle flush!
+        raw::worldgen::Vec3 crowCenter{m_camPos[0], m_camPos[1], m_camPos[2]};
+        uint32_t crowCnt = 0u;
+        raw::worldgen::Vec3 acc{0.0f, 0.0f, 0.0f};
+        for (const auto& ag : m_wildlife.Agents()) {
+            if (ag.guild == raw::worldgen::FaunaGuild::PineCrowFlock) {
+                acc.x += ag.position.x; acc.y += ag.position.y; acc.z += ag.position.z;
+                ++crowCnt;
+            }
+        }
+        if (crowCnt > 0u) {
+            crowCenter = {acc.x / float(crowCnt), acc.y / float(crowCnt), acc.z / float(crowCnt)};
+        }
+        m_wildlife.EmitStimulus(crowCenter, 2500.0f, raw::worldgen::StimulusKind::LoudNoise, 1.0f, 3.0f);
+
+        const auto wGpu = m_weatherSim.GetGpuUniforms();
+        const auto env  = BuildWildlifeEnvInput(wGpu, m_season, m_weatherPreset, m_wildlifeWaterZ);
+        raw::worldgen::WildlifeTelemetry tel{};
+        for (int s = 0; s < 10; ++s) {
+            tel = m_wildlife.Step(1.0f / 60.0f, env, &m_worldPhysics, &m_ecosystem);
+        }
+        m_wildlifeTelemetry = tel;
+        p.activeAgents  = tel.activeAgents;
+        p.roostingCount = tel.roostingCount;
+        p.startledCount = tel.startledCount;
+        p.meanSpeed     = tel.meanSpeed;
+        p.stepMs        = tel.stepMs;
+        p.allFinite     = std::isfinite(tel.meanSpeed) && std::isfinite(tel.stepMs);
+        for (const auto& ag : m_wildlife.Agents()) {
+            if (!std::isfinite(ag.position.x) || !std::isfinite(ag.position.y) || !std::isfinite(ag.position.z) ||
+                !std::isfinite(ag.velocity.x) || !std::isfinite(ag.velocity.y) || !std::isfinite(ag.velocity.z) ||
+                !std::isfinite(ag.bankAngleRad)) {
+                p.allFinite = false;
+            }
+        }
+        return p;
+    }
+
     void ToggleAudio()
     {
         if (m_opt.headlessFrames > 0u) return; // Strictly OFF in headless CI mode
@@ -1133,8 +1250,11 @@ public:
         m_camPos[2] = m_frontierCenter[2] + 1150.0f;
         m_camYaw    = 0.0f;
         m_camPitch  = -0.50f;
-        m_navMeshDirty   = true;
-        m_ecoInitialized = false;
+        m_navMeshDirty      = true;
+        m_ecoInitialized    = false;
+        m_wildlifeInitialized = false;
+        m_hasPrevFroxelView = false;
+        m_volFroxels.ResetHistory();
         TriggerFreshFracture();
     }
 
@@ -1255,11 +1375,16 @@ public:
         ++m_frameMsRingPos;
         if (m_frameMsCount < 64u) ++m_frameMsCount;
 
-        // 1. Step seasonal weather simulation & coupled cellular ecosystem field (wildfire/snowmelt/black-ice)!
+        // 1. Step seasonal weather simulation, cellular ecosystem field & 3D wildlife boids!
         m_weatherSim.Step(dtClamped, {m_camPos[0], m_camPos[1], m_camPos[2]});
         const auto wGpu = m_weatherSim.GetGpuUniforms();
         m_ecosystem.Step(dtClamped, BuildEcoWeatherInput(wGpu, m_season, m_weatherPreset));
         m_ecoTelemetry = m_ecosystem.ComputeTelemetry();
+        if (m_wildlifeInitialized) {
+            m_wildlifeTelemetry = m_wildlife.Step(
+                dtClamped, BuildWildlifeEnvInput(wGpu, m_season, m_weatherPreset, m_wildlifeWaterZ),
+                &m_worldPhysics, &m_ecosystem);
+        }
         if (m_audioEnabled && m_audio.IsRunning()) {
             PushAudioSceneState(wGpu);
         }
@@ -1625,6 +1750,98 @@ public:
             m_lastClusterLightCount = static_cast<uint32_t>(clusterLights.size());
         }
 
+        // Live 160x90x64 3D Volumetric Froxel Fog, Mie Scattering & Temporal Reprojection (RawVolumetricFroxelHost)!
+        if (m_volFroxelsOk) {
+            float currWorldViewProj[16]{};
+            BuildWorldRowVectorViewProj(u.worldToClip, m_camPos, currWorldViewProj);
+            VolumetricFroxelParams fp{};
+            BuildWorldRowVectorInvViewProj(u.clipToWorld, m_camPos, fp.invViewProj);
+            if (m_hasPrevFroxelView) {
+                std::memcpy(fp.prevViewProj, m_prevWorldToClip, sizeof(fp.prevViewProj));
+                fp.prevCameraPosW[0]     = m_prevCamPos[0];
+                fp.prevCameraPosW[1]     = m_prevCamPos[1];
+                fp.prevCameraPosW[2]     = m_prevCamPos[2];
+                fp.prevCameraForwardW[0] = m_prevCamFwd[0];
+                fp.prevCameraForwardW[1] = m_prevCamFwd[1];
+                fp.prevCameraForwardW[2] = m_prevCamFwd[2];
+                fp.historyWeight         = 0.85f;
+                fp.enableTemporal        = true;
+            } else {
+                std::memcpy(fp.prevViewProj, currWorldViewProj, sizeof(fp.prevViewProj));
+                fp.prevCameraPosW[0]     = m_camPos[0];
+                fp.prevCameraPosW[1]     = m_camPos[1];
+                fp.prevCameraPosW[2]     = m_camPos[2];
+                fp.prevCameraForwardW[0] = cam.fwd[0];
+                fp.prevCameraForwardW[1] = cam.fwd[1];
+                fp.prevCameraForwardW[2] = cam.fwd[2];
+                fp.historyWeight         = 0.0f;
+                fp.enableTemporal        = false;
+            }
+            fp.cameraPosW[0]     = m_camPos[0]; fp.cameraPosW[1] = m_camPos[1]; fp.cameraPosW[2] = m_camPos[2];
+            fp.cameraForwardW[0] = cam.fwd[0];  fp.cameraForwardW[1] = cam.fwd[1]; fp.cameraForwardW[2] = cam.fwd[2];
+            fp.nearZ             = nearZ;
+            fp.farZ              = 16000.0f;
+            fp.simTimeSec        = m_simTimeSec;
+            fp.enableHaltonJitter = true;
+
+            float valleyZ = m_camPos[2] - 600.0f;
+            (void)m_worldPhysics.SampleTerrainHeight(m_camPos[0], m_camPos[1], &valleyZ);
+            fp.baseFogDensity    = 0.00018f;
+            fp.valleyFloorZ      = valleyZ;
+            fp.fogScaleHeight    = 2800.0f;
+            fp.scatterAlbedo     = 0.90f;
+            fp.rainIntensity     = u.weather[3];
+            fp.snowIntensity     = u.weather[2];
+            fp.noiseAmp          = 0.28f;
+            fp.noiseScale        = 0.0006f;
+            fp.windVelW[0]       = wGpu.cloudWind.x;
+            fp.windVelW[1]       = wGpu.cloudWind.y;
+            fp.windVelW[2]       = 0.0f;
+            fp.mieAnisotropyG    = 0.68f;
+            fp.sunDirW[0]        = u.sunDir[0]; fp.sunDirW[1] = u.sunDir[1]; fp.sunDirW[2] = u.sunDir[2];
+            fp.sunIntensity      = 5.5f;
+            fp.sunColor[0]       = u.sunColour[0]; fp.sunColor[1] = u.sunColour[1]; fp.sunColor[2] = u.sunColour[2];
+            fp.ambientIntensity  = 0.35f;
+            fp.ambientColor[0]   = 0.35f; fp.ambientColor[1] = 0.48f; fp.ambientColor[2] = 0.72f;
+
+            uint32_t fLightCount = 0u;
+            if (m_fireEnabled && fLightCount < 16u) {
+                auto& fl = fp.lights[fLightCount++];
+                fl.posW[0]   = m_camPos[0] + cam.fwd[0] * 300.0f + cam.right[0] * 48.0f - cam.up[0] * 48.0f;
+                fl.posW[1]   = m_camPos[1] + cam.fwd[1] * 300.0f + cam.right[1] * 48.0f - cam.up[1] * 48.0f;
+                fl.posW[2]   = m_camPos[2] + cam.fwd[2] * 300.0f + cam.right[2] * 48.0f - cam.up[2] * 48.0f;
+                fl.radius    = 720.0f;
+                fl.color[0]  = 1.0f; fl.color[1] = 0.55f; fl.color[2] = 0.18f;
+                fl.intensity = 4.2f;
+            }
+            if (m_ecoTelemetry.activeFireCells > 0u) {
+                const uint32_t ew = m_ecosystem.Width();
+                const uint32_t eh = m_ecosystem.Height();
+                for (uint32_t gy = 0u; gy < eh && fLightCount < 16u; gy += 4u) {
+                    for (uint32_t gx = 0u; gx < ew && fLightCount < 16u; gx += 4u) {
+                        const auto* cell = m_ecosystem.CellAt(gx, gy);
+                        if (cell && cell->fireIntensity01 > 0.2f) {
+                            const auto cc = m_ecosystem.CellCenterWorldM(gx, gy);
+                            auto& el = fp.lights[fLightCount++];
+                            el.posW[0]   = cc.x * 70.0f;
+                            el.posW[1]   = cc.y * 70.0f;
+                            el.posW[2]   = cell->elevationM * 70.0f + 56.0f;
+                            el.radius    = 480.0f;
+                            el.color[0]  = 1.0f; el.color[1] = 0.42f; el.color[2] = 0.10f;
+                            el.intensity = 3.5f * cell->fireIntensity01;
+                        }
+                    }
+                }
+            }
+            fp.lightCount = fLightCount;
+            m_volFroxels.Execute(m_dispCmd.Get(), fp);
+
+            std::memcpy(m_prevWorldToClip, currWorldViewProj, sizeof(m_prevWorldToClip));
+            m_prevCamPos[0] = m_camPos[0]; m_prevCamPos[1] = m_camPos[1]; m_prevCamPos[2] = m_camPos[2];
+            m_prevCamFwd[0] = cam.fwd[0];  m_prevCamFwd[1] = cam.fwd[1];  m_prevCamFwd[2] = cam.fwd[2];
+            m_hasPrevFroxelView = true;
+        }
+
         if (m_radOk && m_giEnabled) {
             m_radianceHost.ExecuteScreenGI(m_dispCmd.Get(), m_hdrColor.Get(), m_depthIn.Get(),
                                            m_width, m_height, 0.16f);
@@ -1734,6 +1951,9 @@ public:
         float    lightClusterBuildMs  = 0.0f;
         float    lightClusterAssignMs = 0.0f;
         uint32_t lightClusterCount    = 0u;
+        bool     volFroxelsActive     = false;
+        float    froxelInjectMs       = 0.0f;
+        float    froxelIntegrateMs    = 0.0f;
         uint32_t biomesFound          = 0u;
     };
 
@@ -1765,6 +1985,9 @@ public:
         out->lightClusterBuildMs = m_lightClusters.HasValidTiming() ? m_lightClusters.GetLastBuildMs() : 0.0f;
         out->lightClusterAssignMs = m_lightClusters.HasValidTiming() ? m_lightClusters.GetLastAssignMs() : 0.0f;
         out->lightClusterCount = m_lastClusterLightCount;
+        out->volFroxelsActive = m_volFroxelsOk && m_volFroxels.Ready() && m_hasPrevFroxelView;
+        out->froxelInjectMs = m_volFroxels.HasValidTiming() ? m_volFroxels.GetLastInjectMs() : 0.0f;
+        out->froxelIntegrateMs = m_volFroxels.HasValidTiming() ? m_volFroxels.GetLastIntegrateMs() : 0.0f;
 
         const UINT hdrPitch  = (m_width * 8u + 255u) & ~255u;
         const UINT dispPitch = (m_width * 4u + 255u) & ~255u;
@@ -1906,8 +2129,10 @@ public:
         }
         m_cullInstUpload.Reset();
         m_cullInstBuf.Reset();
+        m_volFroxels.Shutdown();
         m_lightClusters.Shutdown();
         m_gpuCull.Shutdown();
+        m_wildlife.Clear();
         m_overlayHost.Shutdown();
         m_xpbdSim.Shutdown();
         m_fluidComposite.Shutdown();
@@ -1976,9 +2201,12 @@ public:
         const float lclustTotalMs = m_lightClusters.HasValidTiming()
                                   ? (m_lightClusters.GetLastBuildMs() + m_lightClusters.GetLastAssignMs())
                                   : 0.0f;
-        char buf[768]{};
+        const float froxTotalMs   = m_volFroxels.HasValidTiming()
+                                  ? (m_volFroxels.GetLastInjectMs() + m_volFroxels.GetLastIntegrateMs())
+                                  : 0.0f;
+        char buf[896]{};
         std::snprintf(buf, sizeof(buf),
-                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms HUD:%.3fms | Eco:fire=%u snow=%.0fm3 ice=%u%s%s | Shards:%u",
+                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms HUD:%.3fms | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u%s%s | Shards:%u",
                       m_walkMode ? "WALK" : "FLY",
                       fps, m_lastDrawnMeshlets, m_meshHost.TerrainUsesMeshShaders() ? "AS+MS" : "VS+PS",
                       locBuf, TimePresetName(m_timePreset), ActiveWeatherDisplayName(),
@@ -1988,10 +2216,14 @@ public:
                       m_xpbdSim.HasValidTiming() ? m_xpbdSim.GetLastStepMs() : 0.0f,
                       cullTotalMs,
                       lclustTotalMs,
+                      froxTotalMs,
                       m_overlayHost.HasValidTiming() ? m_overlayHost.GetLastOverlayMs() : 0.0f,
                       m_ecoTelemetry.activeFireCells,
                       static_cast<double>(m_ecoTelemetry.totalSnowVolumeM3),
                       m_ecoTelemetry.blackIceCells,
+                      m_wildlifeTelemetry.activeAgents,
+                      m_wildlifeTelemetry.roostingCount,
+                      m_wildlifeTelemetry.startledCount,
                       hitBuf, navBuf,
                       m_activeShards);
         return buf;
@@ -2224,6 +2456,10 @@ private:
                     v->m_ecoInitialized = true;
                     v->m_ecoTelemetry   = v->m_ecosystem.ComputeTelemetry();
                 }
+                if (!v->m_wildlifeInitialized) {
+                    v->SpawnWildlifeAround(v->m_frontierCenter[0], v->m_frontierCenter[1],
+                                           v->m_frontierGroundZ, sc.terrain.seaLevelZ);
+                }
                 return h;
             }
             void OnChunkEvicted(raw::worldgen::ChunkKey key, uint64_t h) override {
@@ -2413,26 +2649,38 @@ private:
         snap.historyCount   = count;
 
         FormatEngineTelemetryLines(snap, outHud);
-        // Append Wave 50-51 live GPU Hi-Z Cull + 3D Light Clusters on line 3, Ecosystem on line 6, and NavMesh/Squad on line 7!
+        // Append Wave 50-52 live GPU Hi-Z Cull + 3D Light Clusters + Volumetric Froxels on lines 2-3, Ecosystem + Fauna on line 6, NavMesh on line 7!
         const float hizMs    = m_gpuCull.HasValidHiZTiming() ? m_gpuCull.GetLastHiZMs() : 0.0f;
         const float cullMs   = m_gpuCull.HasValidCullTiming() ? m_gpuCull.GetLastCullMs() : 0.0f;
         const float lclustMs = m_lightClusters.HasValidTiming()
                              ? (m_lightClusters.GetLastBuildMs() + m_lightClusters.GetLastAssignMs())
                              : 0.0f;
+        const float froxMs   = m_volFroxels.HasValidTiming()
+                             ? (m_volFroxels.GetLastInjectMs() + m_volFroxels.GetLastIntegrateMs())
+                             : 0.0f;
+        std::memset(outHud.lines[2], 0, sizeof(outHud.lines[2]));
+        std::snprintf(outHud.lines[2], sizeof(outHud.lines[2]), "GPU F:%.2f W:%.2f GI:%.2f XP:%.2f FX:%.3f MS",
+                      static_cast<double>(snap.fireMs), static_cast<double>(snap.waterMs),
+                      static_cast<double>(snap.giMs), static_cast<double>(snap.xpbdMs),
+                      static_cast<double>(froxMs));
         std::memset(outHud.lines[3], 0, sizeof(outHud.lines[3]));
-        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "CULL %.3fMS | LCLUST %.3fMS (%uL) | GI:%s XP:%s",
+        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "CL:%.3f LC:%.3f(%uL) HUD:%.3fMS | GI:%s",
                       static_cast<double>(hizMs + cullMs),
                       static_cast<double>(lclustMs),
                       m_lastClusterLightCount,
-                      snap.giEnabled ? "ON" : "OFF",
-                      snap.xpbdEnabled ? "ON" : "OFF");
+                      static_cast<double>(snap.overlayMs),
+                      snap.giEnabled ? "ON" : "OFF");
 
         std::memset(outHud.lines[6], 0, sizeof(outHud.lines[6]));
-        std::snprintf(outHud.lines[6], sizeof(outHud.lines[6]), "ECO FIRE:%u SNOW:%.0fM3 ICE:%u | I=IGNITE F12=BMP",
+        std::snprintf(outHud.lines[6], sizeof(outHud.lines[6]), "ECO F:%u SN:%.0f ICE:%u | FAUNA:%u R:%u S:%u",
                       m_ecoTelemetry.activeFireCells,
                       static_cast<double>(m_ecoTelemetry.totalSnowVolumeM3),
-                      m_ecoTelemetry.blackIceCells);
-        outHud.lineColorTag[6] = (m_ecoTelemetry.activeFireCells > 0u) ? kOverlayColorAmber : kOverlayColorMuted;
+                      m_ecoTelemetry.blackIceCells,
+                      m_wildlifeTelemetry.activeAgents,
+                      m_wildlifeTelemetry.roostingCount,
+                      m_wildlifeTelemetry.startledCount);
+        outHud.lineColorTag[6] = (m_ecoTelemetry.activeFireCells > 0u || m_wildlifeTelemetry.startledCount > 0u)
+                               ? kOverlayColorAmber : kOverlayColorMuted;
 
         const auto nst = m_navMesh.GetStats();
         std::memset(outHud.lines[7], 0, sizeof(outHud.lines[7]));
@@ -2442,7 +2690,7 @@ private:
                           static_cast<double>(m_lastNavPath.totalLengthU),
                           m_lastNavPath.searchTimeMs, m_tacticalSquad.size());
         } else {
-            std::snprintf(outHud.lines[7], sizeof(outHud.lines[7]), "NAV W:%u BAKE:%.1fMS | SQ:%zu | N=PATH",
+            std::snprintf(outHud.lines[7], sizeof(outHud.lines[7]), "NAV W:%u BAKE:%.1fMS | SQ:%zu | N I V F12",
                           nst.walkableCells, nst.bakeTimeMs, m_tacticalSquad.size());
         }
         outHud.lineColorTag[7] = kOverlayColorCyan;
@@ -2694,7 +2942,7 @@ private:
     static void BuildWorldRowVectorViewProj(const float camRelColMajor[16], const float camPos[3], float outRowVec[16])
     {
         // Convert camera-relative column-vector matrix M (clip = M * float4(p - cam, 1))
-        // into absolute world-space row-vector matrix V (clip = float4(p, 1) * V) for RawGpuCullHost.
+        // into absolute world-space row-vector matrix V (clip = float4(p, 1) * V) for RawGpuCullHost / Froxels.
         for (int r = 0; r < 4; ++r) {
             const float m0 = camRelColMajor[r * 4 + 0];
             const float m1 = camRelColMajor[r * 4 + 1];
@@ -2704,6 +2952,22 @@ private:
             outRowVec[1 * 4 + r] = m1;
             outRowVec[2 * 4 + r] = m2;
             outRowVec[3 * 4 + r] = m3 - (m0 * camPos[0] + m1 * camPos[1] + m2 * camPos[2]);
+        }
+    }
+
+    static void BuildWorldRowVectorInvViewProj(const float camRelInvColMajor[16], const float camPos[3], float outRowVecInv[16])
+    {
+        // Convert camera-relative column-vector invViewProj M (world = cam + (M * clip).xyz / (M * clip).w)
+        // into absolute world-space row-vector invViewProj IV (worldH = float4(clip, 1) * IV).
+        for (int c = 0; c < 4; ++c) {
+            const float m0 = camRelInvColMajor[0 * 4 + c];
+            const float m1 = camRelInvColMajor[1 * 4 + c];
+            const float m2 = camRelInvColMajor[2 * 4 + c];
+            const float m3 = camRelInvColMajor[3 * 4 + c];
+            outRowVecInv[c * 4 + 0] = m0 + camPos[0] * m3;
+            outRowVecInv[c * 4 + 1] = m1 + camPos[1] * m3;
+            outRowVecInv[c * 4 + 2] = m2 + camPos[2] * m3;
+            outRowVecInv[c * 4 + 3] = m3;
         }
     }
 
@@ -2757,6 +3021,7 @@ private:
     bool          m_overlayOk = false;
     bool          m_gpuCullOk = false;
     bool          m_lightClustersOk = false;
+    bool          m_volFroxelsOk = false;
     std::string   m_adapterName;
 
     ComPtr<IDXGIFactory4>              m_factory;
@@ -2796,6 +3061,11 @@ private:
     RawGpuCullHost                     m_gpuCull;
     RawLightClusterHost                m_lightClusters;
     uint32_t                           m_lastClusterLightCount = 0u;
+    RawVolumetricFroxelHost            m_volFroxels;
+    float                              m_prevWorldToClip[16] = {};
+    float                              m_prevCamPos[3] = {};
+    float                              m_prevCamFwd[3] = {0.0f, 1.0f, 0.0f};
+    bool                               m_hasPrevFroxelView = false;
     ComPtr<ID3D12Resource>             m_cullInstBuf;
     ComPtr<ID3D12Resource>             m_cullInstUpload;
     uint8_t*                           m_cullInstMapped = nullptr;
@@ -2815,6 +3085,10 @@ private:
     raw::worldgen::RawWorldEcosystem      m_ecosystem;
     raw::worldgen::EcoFieldTelemetry      m_ecoTelemetry{};
     bool                                  m_ecoInitialized = false;
+    raw::worldgen::RawWildlifeBoids       m_wildlife;
+    raw::worldgen::WildlifeTelemetry      m_wildlifeTelemetry{};
+    bool                                  m_wildlifeInitialized = false;
+    float                                 m_wildlifeWaterZ = -14000.0f;
     std::vector<raw::worldgen::SquadAgent> m_tacticalSquad;
     std::vector<raw::worldgen::TacticalSteeringOutput> m_lastSquadOut;
     raw::worldgen::NavPathResult          m_lastNavPath{};
@@ -2929,6 +3203,7 @@ LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     case 'C': st->viewer->FireRaycastStrike(); break;
                     case 'N': st->viewer->ComputeLiveNavPath(); break;
                     case 'I': st->viewer->IgniteWildfireAtLookHit(); break;
+                    case 'V': st->viewer->TriggerWildlifeStartle(); break;
                     case 'H':
                     case VK_F9: st->viewer->ToggleHud(); break;
                     case VK_F12: st->viewer->CaptureScreenshotBmp(); break;
@@ -3004,7 +3279,7 @@ int main(int argc, char** argv)
     if (opt.showHelp) {
         std::printf(
             "RAW Interactive Real-Time Win32/DX12 Standalone Engine Viewer\n"
-            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
+            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, V startle wildlife, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
             "CLI: [--headless-frames N] [--warp] [--debug] [--width W] [--height H] [--esm <Skyrim.esm>]\n");
         return 0;
     }
@@ -3030,10 +3305,12 @@ int main(int argc, char** argv)
         RawEngineViewer::PhysicsWalkProbe riverwoodPhys{};
         RawEngineViewer::NavMeshSquadProbe riverwoodNav{};
         RawEngineViewer::EcosystemProbe ecoProbe{};
+        RawEngineViewer::WildlifeProbe wildlifeProbe{};
         bool teleportedToWhiterun = false;
         for (uint32_t f = 0; f < opt.headlessFrames; ++f) {
             if (f == 0u) {
-                ecoProbe = viewer.RunEcosystemSelfTest();
+                ecoProbe      = viewer.RunEcosystemSelfTest();
+                wildlifeProbe = viewer.RunWildlifeSelfTest();
                 if (opt.startEsm) {
                     riverwoodStats = viewer.GetTamrielStats();
                     riverwoodPhys = viewer.RunPhysicsWalkSelfTest();
@@ -3061,7 +3338,7 @@ int main(int argc, char** argv)
 
         RawEngineViewer::HeadlessAudit audit{};
         const bool rbOk = viewer.ReadbackHeadlessAudit(&audit);
-        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
+        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
                     audit.usedMeshShaders ? "AS+MS+PS" : "VS+PS",
                     audit.drawnMeshlets, audit.activeShards, audit.biomesFound,
                     audit.radianceActive ? "ON" : "off", audit.radianceGiMs,
@@ -3069,6 +3346,7 @@ int main(int argc, char** argv)
                     audit.xpbdActive ? "ON" : "off", audit.xpbdParticles, audit.xpbdStepMs,
                     audit.gpuCullActive ? "ON" : "off", audit.gpuCullInstances, audit.gpuHiZMips, audit.gpuHiZMs, audit.gpuCullMs,
                     audit.lightClustersActive ? "ON" : "off", audit.lightClusterCount, audit.lightClusterBuildMs, audit.lightClusterAssignMs,
+                    audit.volFroxelsActive ? "ON" : "off", audit.froxelInjectMs, audit.froxelIntegrateMs,
                     audit.overlayActive ? "ON" : "off", audit.overlayMs, audit.hudNonZeroPx,
                     audit.hdrLitPixels, audit.hdrNanInf,
                     audit.dispNonZeroPx, audit.dispMeanLuma, audit.dispStdDevLuma);
@@ -3076,6 +3354,9 @@ int main(int argc, char** argv)
                     ecoProbe.ignitedCells, ecoProbe.activeFireCells, ecoProbe.burnedAreaM2,
                     ecoProbe.snowVolumeM3, ecoProbe.meltRunoffM3, ecoProbe.blackIceCells,
                     ecoProbe.peakTempC, int(ecoProbe.allFinite));
+        std::printf("       Wildlife: agents=%u roost=%u startle=%u meanSpeed=%.1fu/s step=%.3fms finite=%d\n",
+                    wildlifeProbe.activeAgents, wildlifeProbe.roostingCount, wildlifeProbe.startledCount,
+                    wildlifeProbe.meanSpeed, wildlifeProbe.stepMs, int(wildlifeProbe.allFinite));
         check(audit.xpbdActive && audit.xpbdParticles == 4096u && std::isfinite(audit.xpbdStepMs) && audit.xpbdStepMs >= 0.0f,
               "Live GPU XPBD soft-body/hair/bush solver (4,096 particles / 256 chains) stepped cleanly");
         check(audit.gpuCullActive && audit.gpuHiZMips > 1u &&
@@ -3086,8 +3367,14 @@ int main(int argc, char** argv)
               std::isfinite(audit.lightClusterBuildMs) && audit.lightClusterBuildMs >= 0.0f &&
               std::isfinite(audit.lightClusterAssignMs) && audit.lightClusterAssignMs >= 0.0f,
               "Live GPU 16x9x24 3D Clustered Light Grid (RawLightClusterHost) built & assigned cleanly");
+        check(audit.volFroxelsActive &&
+              std::isfinite(audit.froxelInjectMs) && audit.froxelInjectMs >= 0.0f &&
+              std::isfinite(audit.froxelIntegrateMs) && audit.froxelIntegrateMs >= 0.0f,
+              "Live GPU 160x90x64 3D Volumetric Froxels (RawVolumetricFroxelHost) executed cleanly with finite timings");
         check(ecoProbe.ignitedCells > 0u && ecoProbe.activeFireCells > 0u && ecoProbe.allFinite,
               "Live Cellular Ecosystem (RawWorldEcosystem) ignited wildfire, stepped 10x with active fire & finite telemetry");
+        check(wildlifeProbe.activeAgents == 128u && wildlifeProbe.startledCount > 0u && wildlifeProbe.allFinite,
+              "Live 3D Wildlife Boids (RawWildlifeBoids, 128 agents) flushed skyward on LoudNoise stimulus with zero NaNs");
         check(audit.overlayActive && std::isfinite(audit.overlayMs) && audit.overlayMs >= 0.0f && audit.hudNonZeroPx > 500u,
               "Live GPU Telemetry & Sparkline HUD (RawOverlayHost) rendered cleanly onto LDR display buffer");
         if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {

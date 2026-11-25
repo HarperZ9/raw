@@ -41,6 +41,7 @@
 #include "rt_save_papyrus_guard.h"
 #include "rt_softbody.h"
 #include "rt_stealth_survival.h"
+#include "rt_telemetry_recorder.h"
 #include "rt_terrain_lod.h"
 #include "rt_world_sim.h"
 #include "rt_papyrus.h"
@@ -150,6 +151,7 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             const double frameMs = double(nowQpc.QuadPart - s_prevQpc.QuadPart) * 1000.0 / double(s_qpcFreq.QuadPart);
             raw::rt::SavePapyrusGuardOnPresent(frameMs);
             raw::rt::AudioDirectorOnPresent(static_cast<float>(frameMs * 0.001));
+            raw::rt::FlightRecorderOnPresent(frameMs);
         }
         s_prevQpc = nowQpc;
     }
@@ -387,6 +389,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     Log("%s", raw::rt::ModLoadAuditInit(g_dir).c_str());
     Log("%s", raw::rt::NpcBehaviorInit().c_str());
     Log("%s", raw::rt::AudioDirectorInit().c_str());
+    Log("%s", raw::rt::FlightRecorderInit(g_out).c_str());
     Log("%s", raw::rt::AudioBridgeInit().c_str());
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
@@ -416,6 +419,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         return 0;
     }
     raw::rt::AudioBridgeShutdown();
+    raw::rt::FlightRecorderShutdown();
     raw::rt::AudioDirectorShutdown();
     raw::rt::NpcBehaviorShutdown();
     raw::rt::ModLoadAuditShutdown();

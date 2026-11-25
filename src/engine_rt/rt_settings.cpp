@@ -12,6 +12,7 @@
 #include "rt_magic_physics.h"
 #include "rt_physics_camera_gmst.h"
 #include "rt_progression_economy.h"
+#include "rt_stealth_social_gmst.h"
 #include "rt_version.h"
 #include "rt_world_rules_gmst.h"
 
@@ -376,9 +377,10 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
     const std::string aiMsg   = InitAiPackages(img, refs);
     const std::string wrMsg   = InitWorldRulesGmst(img, refs);
     const std::string pcMsg   = InitPhysicsCameraGmst(img, refs);
-    char out[1408];
-    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s | %s | %s | %s | %s",
-                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str(), progMsg.c_str(), aiMsg.c_str(), wrMsg.c_str(), pcMsg.c_str());
+    const std::string ssMsg   = InitStealthSocialGmst(img, refs);
+    char out[1664];
+    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s | %s | %s | %s | %s | %s",
+                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str(), progMsg.c_str(), aiMsg.c_str(), wrMsg.c_str(), pcMsg.c_str(), ssMsg.c_str());
     return out;
 }
 
@@ -450,6 +452,7 @@ void WorldSimApplyLivePlanetaryGravity(float gravityMps2) {
 }
 
 void WorldSimRestoreDynamicSettings() {
+    ShutdownStealthSocialGmst();
     ShutdownPhysicsCameraGmst();
     ShutdownWorldRulesGmst();
     ShutdownAiPackages();

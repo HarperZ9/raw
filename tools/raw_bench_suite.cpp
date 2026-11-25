@@ -1,5 +1,5 @@
 // tools/raw_bench_suite.cpp: Studio-Grade Automated GPU/CPU Benchmark & Visual Invariant Suite for RAW.
-// Benchmarks all 10 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
+// Benchmarks all 11 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
 //   1. GPU 64^3 Navier-Stokes Fire/Smoke + 256^2 SWE Water (RawFluidSimHost)
 //   2. GPU 4-Cascade Radiance Cascades GI (RawRadianceHost)
 //   3. Procedural PBR Texture Forge (RawTextureForge, all 8 seamless PBR sets)
@@ -10,6 +10,7 @@
 //   8. GPU XPBD Soft-Body / Hair / Cloth / Bush-Bone Solver (RawXpbdSimHost, 256 chains / 4,096 particles)
 //   9. GPU Conservative Hi-Z Pyramid + 16,384-Instance Frustum/Occlusion Culler (RawGpuCullHost)
 //  10. GPU 16x9x24 3D Clustered 1,024-Light Grid Assignment (RawLightClusterHost)
+//  11. GPU 160x90x64 3D Volumetric Froxel Fog, Mie Scattering & Temporal Reprojection (RawVolumetricFroxelHost)
 //
 // CLI:
 //   raw_bench_suite [--warp] [--quick] [--frames N] [--json <path>] [--esm <path>] [--bsa <path>] [--no-debug-layer]
@@ -32,6 +33,7 @@
 #include "../src/d3d12_bridge/RawXpbdSimHost.h"
 #include "../src/d3d12_bridge/RawGpuCullHost.h"
 #include "../src/d3d12_bridge/RawLightClusterHost.h"
+#include "../src/d3d12_bridge/RawVolumetricFroxelHost.h"
 #include "../src/materials/RawTextureForge.h"
 #include "../src/audio/RawAudioDsp.h"
 #include "../src/worldgen/RawDestructionEngine.h"
@@ -861,6 +863,24 @@ struct LightClusterBenchResult {
     uint32_t    nanAabbCount     = 0u;
     float       hostBuildMs      = 0.0f;
     float       hostAssignMs     = 0.0f;
+    std::string note;
+};
+
+struct VolumetricFroxelsBenchResult {
+    bool        passed          = false;
+    Percentiles totalGpuMs{};
+    Percentiles cpuRecordMs{};
+    uint32_t    gridWidth       = 160u;
+    uint32_t    gridHeight      = 90u;
+    uint32_t    gridDepth       = 64u;
+    uint32_t    lightCount      = 16u;
+    uint32_t    nanCount        = 0u;
+    uint32_t    nonMonoCount    = 0u;
+    float       mieForwardRatio = 0.0f;
+    float       valleyTau       = 0.0f;
+    float       peakTau         = 0.0f;
+    float       hostInjectMs    = 0.0f;
+    float       hostIntegrateMs = 0.0f;
     std::string note;
 };
 
@@ -2061,6 +2081,198 @@ LightClusterBenchResult RunLightClusterBenchmark(BenchDx12Rig& rig, uint32_t war
 }
 
 // ----------------------------------------------------------------------------
+// 11. GPU 160x90x64 3D Volumetric Froxel Fog & Mie Scattering (RawVolumetricFroxelHost)
+// ----------------------------------------------------------------------------
+VolumetricFroxelsBenchResult RunVolumetricFroxelsBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames, uint32_t measuredFrames)
+{
+    VolumetricFroxelsBenchResult res{};
+    raw::bridge::RawVolumetricFroxelHost host;
+    raw::bridge::VolumetricFroxelDesc desc{};
+    desc.gridWidth  = res.gridWidth;
+    desc.gridHeight = res.gridHeight;
+    desc.gridDepth  = res.gridDepth;
+    std::string err;
+    if (!host.Init(rig.dev.Get(), desc, &err)) {
+        res.note = "RawVolumetricFroxelHost::Init failed: " + err;
+        return res;
+    }
+    host.SetTimestampFrequency(rig.tsFreqHz);
+
+    auto makeZUpParams = [](float camZ) -> raw::bridge::VolumetricFroxelParams {
+        raw::bridge::VolumetricFroxelParams p{};
+        const float fovYDeg = 60.0f;
+        const float aspect  = 16.0f / 9.0f;
+        const float nearZ   = 1.0f;
+        const float farZ    = 300.0f;
+        const float sy      = 1.0f / std::tan(fovYDeg * 0.5f * 3.14159265359f / 180.0f);
+        const float sx      = sy / aspect;
+        const float q       = farZ / (farZ - nearZ);
+        const float invQ    = 1.0f / q;
+
+        p.prevViewProj[0 * 4 + 0] = sx;
+        p.prevViewProj[1 * 4 + 2] = q;
+        p.prevViewProj[1 * 4 + 3] = 1.0f;
+        p.prevViewProj[2 * 4 + 1] = sy;
+        p.prevViewProj[3 * 4 + 1] = -camZ * sy;
+        p.prevViewProj[3 * 4 + 2] = -nearZ * q;
+
+        p.invViewProj[0 * 4 + 0] = nearZ / sx;
+        p.invViewProj[1 * 4 + 2] = nearZ / sy;
+        p.invViewProj[2 * 4 + 2] = -camZ * invQ;
+        p.invViewProj[2 * 4 + 3] = -invQ;
+        p.invViewProj[3 * 4 + 1] = nearZ;
+        p.invViewProj[3 * 4 + 2] = camZ;
+        p.invViewProj[3 * 4 + 3] = 1.0f;
+
+        p.cameraPosW[2]         = camZ;
+        p.cameraForwardW[1]     = 1.0f;
+        p.prevCameraPosW[2]     = camZ;
+        p.prevCameraForwardW[1] = 1.0f;
+        p.nearZ                 = nearZ;
+        p.farZ                  = farZ;
+        p.baseFogDensity        = 0.018f;
+        p.valleyFloorZ          = 0.0f;
+        p.fogScaleHeight        = 25.0f;
+        p.scatterAlbedo         = 0.90f;
+        p.mieAnisotropyG        = 0.68f;
+        p.sunDirW[1]            = 1.0f;
+        p.sunIntensity          = 8.0f;
+        p.sunColor[0]           = 1.0f; p.sunColor[1] = 0.90f; p.sunColor[2] = 0.72f;
+        p.ambientIntensity      = 0.25f;
+        p.ambientColor[0]       = 0.30f; p.ambientColor[1] = 0.45f; p.ambientColor[2] = 0.70f;
+        return p;
+    };
+
+    // 1. Timed full-load pass: 16 local lights + 3D wind noise + rain + 0.85 temporal reprojection
+    auto pFull = makeZUpParams(30.0f);
+    pFull.enableTemporal     = true;
+    pFull.enableHaltonJitter = true;
+    pFull.historyWeight      = 0.85f;
+    pFull.noiseAmp           = 0.25f;
+    pFull.rainIntensity      = 0.35f;
+    pFull.lightCount         = 16u;
+    for (uint32_t i = 0u; i < 16u; ++i) {
+        const float a = static_cast<float>(i) * 0.392699f;
+        pFull.lights[i].posW[0]   = std::sin(a) * 35.0f;
+        pFull.lights[i].posW[1]   = 15.0f + static_cast<float>(i) * 10.0f;
+        pFull.lights[i].posW[2]   = 20.0f + std::cos(a) * 10.0f;
+        pFull.lights[i].radius    = 28.0f;
+        pFull.lights[i].color[0]  = 1.0f;
+        pFull.lights[i].color[1]  = 0.60f;
+        pFull.lights[i].color[2]  = 0.22f;
+        pFull.lights[i].intensity = 240.0f;
+    }
+
+    std::vector<double> gpuSamples, cpuSamples;
+    gpuSamples.reserve(measuredFrames);
+    cpuSamples.reserve(measuredFrames);
+
+    const uint32_t totalFrames = warmupFrames + measuredFrames;
+    for (uint32_t f = 0u; f < totalFrames; ++f) {
+        pFull.simTimeSec = static_cast<float>(f) * (1.0f / 60.0f);
+        const auto c0 = Clock::now();
+        if (!rig.BeginFrame()) {
+            res.note = "BeginFrame failed";
+            return res;
+        }
+        rig.MarkTimestamp(0u);
+        host.Execute(rig.cmd.Get(), pFull);
+        rig.MarkTimestamp(1u);
+        rig.ResolveTimestamps(0u, 2u);
+        const auto c1 = Clock::now();
+        if (!rig.FlushAndWait()) {
+            res.note = "FlushAndWait failed";
+            return res;
+        }
+        if (f >= warmupFrames) {
+            double gMs = 0.0;
+            rig.ReadTimestampRangeMs(0u, 1u, gMs);
+            gpuSamples.push_back(gMs);
+            cpuSamples.push_back(ElapsedMs(c0, c1));
+        }
+    }
+
+    res.totalGpuMs      = ComputePercentiles(gpuSamples);
+    res.cpuRecordMs     = ComputePercentiles(cpuSamples);
+    res.hostInjectMs    = host.HasValidTiming() ? host.GetLastInjectMs() : 0.0f;
+    res.hostIntegrateMs = host.HasValidTiming() ? host.GetLastIntegrateMs() : 0.0f;
+
+    // 2. Optical & Beer-Lambert readback invariants (forward-sun vs anti-solar + altitude stratification)
+    auto pFwd = makeZUpParams(30.0f);
+    pFwd.enableTemporal     = false;
+    pFwd.enableHaltonJitter = false;
+    pFwd.historyWeight      = 0.0f;
+    pFwd.noiseAmp           = 0.0f;
+    host.ResetHistory();
+    if (!rig.BeginFrame() || !host.Execute(rig.cmd.Get(), pFwd) || !rig.FlushAndWait()) {
+        res.note = "Forward-sun invariant pass failed";
+        return res;
+    }
+    std::vector<float> volFwd, volAnti;
+    uint32_t w = 0u, h = 0u, d = 0u;
+    if (!rig.ReadbackRgba16Tex(host.GetIntegratedVolumeResource(), host.IntegratedVolumeResourceState(), w, h, d, volFwd)) {
+        res.note = "Forward-sun 3D froxel readback failed";
+        return res;
+    }
+
+    auto sampleAt = [&](const std::vector<float>& v, uint32_t x, uint32_t y, uint32_t z, uint32_t ch) -> float {
+        return v[((static_cast<size_t>(z) * h + y) * w + x) * 4u + ch];
+    };
+    auto lumaAt = [&](const std::vector<float>& v, uint32_t x, uint32_t y, uint32_t z) -> float {
+        return 0.2126f * sampleAt(v, x, y, z, 0u) +
+               0.7152f * sampleAt(v, x, y, z, 1u) +
+               0.0722f * sampleAt(v, x, y, z, 2u);
+    };
+
+    uint32_t badT = 0u;
+    for (float v : volFwd) {
+        if (!std::isfinite(v)) ++res.nanCount;
+    }
+    for (uint32_t y = 0u; y < h; ++y) {
+        for (uint32_t x = 0u; x < w; ++x) {
+            float prevT = 1.002f;
+            for (uint32_t z = 0u; z < d; ++z) {
+                const float T = sampleAt(volFwd, x, y, z, 3u);
+                if (!(T > 0.0f && T <= 1.001f)) ++badT;
+                if (T > prevT + 2.5e-3f) ++res.nonMonoCount;
+                prevT = T;
+            }
+        }
+    }
+
+    const float tValley = sampleAt(volFwd, 80u, 82u, d - 1u, 3u);
+    const float tPeak   = sampleAt(volFwd, 80u, 8u, d - 1u, 3u);
+    res.valleyTau = -std::log(std::max(tValley, 1.0e-5f));
+    res.peakTau   = -std::log(std::max(tPeak, 1.0e-5f));
+
+    auto pAnti = pFwd;
+    pAnti.sunDirW[1] = -1.0f;
+    host.ResetHistory();
+    if (!rig.BeginFrame() || !host.Execute(rig.cmd.Get(), pAnti) || !rig.FlushAndWait() ||
+        !rig.ReadbackRgba16Tex(host.GetIntegratedVolumeResource(), host.IntegratedVolumeResourceState(), w, h, d, volAnti)) {
+        res.note = "Anti-solar 3D froxel pass/readback failed";
+        return res;
+    }
+    const float fwdLuma  = lumaAt(volFwd, 80u, 45u, 48u);
+    const float antiLuma = lumaAt(volAnti, 80u, 45u, 48u);
+    res.mieForwardRatio  = (antiLuma > 1.0e-6f) ? (fwdLuma / antiLuma) : 0.0f;
+
+    const bool optOk    = (res.nanCount == 0u) && (badT == 0u) && (res.nonMonoCount == 0u) &&
+                          (res.mieForwardRatio > 2.0f) && (res.valleyTau > res.peakTau * 2.5f);
+    const bool budgetOk = rig.isWarp ? true : (res.totalGpuMs.mean < 0.25);
+    res.passed = optOk && budgetOk;
+    if (!optOk) {
+        res.note = "Volumetric froxel Beer-Lambert/Mie/stratification invariant failed";
+    } else if (!budgetOk) {
+        res.note = "HW GPU 160x90x64 volumetric froxels mean exceeded 0.25 ms budget";
+    } else {
+        res.note = rig.isWarp ? "WARP 921.6k froxels Beer-Lambert & Mie PASS"
+                              : "HW GPU < 0.25 ms & 921.6k froxels Beer-Lambert/Mie PASS";
+    }
+    return res;
+}
+
+// ----------------------------------------------------------------------------
 // JSON Serializer & Console Scorecard Printer
 // ----------------------------------------------------------------------------
 void WriteBenchJson(const std::string& path,
@@ -2079,7 +2291,8 @@ void WriteBenchJson(const std::string& path,
                     const TamrielBenchResult& tamriel,
                     const XpbdBenchResult& xpbd,
                     const GpuCullBenchResult& gpuCull,
-                    const LightClusterBenchResult& lightClusters)
+                    const LightClusterBenchResult& lightClusters,
+                    const VolumetricFroxelsBenchResult& volFroxels)
 {
     std::ostringstream os;
     os << std::fixed << std::setprecision(4);
@@ -2259,6 +2472,25 @@ void WriteBenchJson(const std::string& path,
     os << "      \"overflowErrors\": " << lightClusters.overflowErrors << ",\n";
     os << "      \"nanAabbCount\": " << lightClusters.nanAabbCount << ",\n";
     os << "      \"note\": \"" << JsonEscape(lightClusters.note) << "\"\n";
+    os << "    },\n";
+
+    // 11. GPU 160x90x64 3D Volumetric Froxels
+    os << "    \"volumetricFroxels\": {\n";
+    os << "      \"passed\": " << (volFroxels.passed ? "true" : "false") << ",\n";
+    os << "      \"gridWidth\": " << volFroxels.gridWidth << ",\n";
+    os << "      \"gridHeight\": " << volFroxels.gridHeight << ",\n";
+    os << "      \"gridDepth\": " << volFroxels.gridDepth << ",\n";
+    os << "      \"lightCount\": " << volFroxels.lightCount << ",\n";
+    os << "      \"totalGpuMs\": "; pctObj(volFroxels.totalGpuMs); os << ",\n";
+    os << "      \"cpuRecordMs\": "; pctObj(volFroxels.cpuRecordMs); os << ",\n";
+    os << "      \"hostInjectMs\": " << volFroxels.hostInjectMs << ",\n";
+    os << "      \"hostIntegrateMs\": " << volFroxels.hostIntegrateMs << ",\n";
+    os << "      \"mieForwardRatio\": " << volFroxels.mieForwardRatio << ",\n";
+    os << "      \"valleyTau\": " << volFroxels.valleyTau << ",\n";
+    os << "      \"peakTau\": " << volFroxels.peakTau << ",\n";
+    os << "      \"nanCount\": " << volFroxels.nanCount << ",\n";
+    os << "      \"nonMonoCount\": " << volFroxels.nonMonoCount << ",\n";
+    os << "      \"note\": \"" << JsonEscape(volFroxels.note) << "\"\n";
     os << "    }\n";
 
     os << "  }\n";
@@ -2285,7 +2517,8 @@ void PrintScorecard(const BenchDx12Rig& rig,
                     const TamrielBenchResult& tamriel,
                     const XpbdBenchResult& xpbd,
                     const GpuCullBenchResult& gpuCull,
-                    const LightClusterBenchResult& lightClusters)
+                    const LightClusterBenchResult& lightClusters,
+                    const VolumetricFroxelsBenchResult& volFroxels)
 {
     std::printf("\n");
     std::printf("=====================================================================================================\n");
@@ -2368,6 +2601,12 @@ void PrintScorecard(const BenchDx12Rig& rig,
                   lightClusters.totalLightLinks, lightClusters.overflowErrors);
     std::printf("  %-30s | %-6s | %-28s | %s\n", "10. 3D Clustered 1024-Lights", lightClusters.passed ? "PASS" : "FAIL", metric, detail);
 
+    std::snprintf(metric, sizeof(metric), "Froxel %.4f ms (p95 %.4f)", volFroxels.totalGpuMs.mean, volFroxels.totalGpuMs.p95);
+    std::snprintf(detail, sizeof(detail), "Inj=%.4f Int=%.4f ms | Mie=%.1fx | tau=%.2f/%.2f | NaN=%u",
+                  volFroxels.hostInjectMs, volFroxels.hostIntegrateMs,
+                  volFroxels.mieForwardRatio, volFroxels.valleyTau, volFroxels.peakTau, volFroxels.nanCount);
+    std::printf("  %-30s | %-6s | %-28s | %s\n", "11. 160x90x64 3D Vol Froxels", volFroxels.passed ? "PASS" : "FAIL", metric, detail);
+
     std::printf("=====================================================================================================\n");
 }
 
@@ -2425,21 +2664,22 @@ int main(int argc, char** argv)
     const DestructionBenchResult destr   = RunDestructionBenchmark(quickMode);
     const FloraHydroBenchResult  flora   = RunFloraAndHydrologyBenchmark(quickMode);
     const TamrielBenchResult     tamriel = RunTamrielStreamerBenchmark(esmPath, bsaPath);
-    const XpbdBenchResult         xpbd          = RunXpbdBenchmark(rig, warmupFrames, measuredFrames);
-    const GpuCullBenchResult      gpuCull       = RunGpuCullBenchmark(rig, warmupFrames, measuredFrames);
-    const LightClusterBenchResult lightClusters = RunLightClusterBenchmark(rig, warmupFrames, measuredFrames);
+    const XpbdBenchResult              xpbd          = RunXpbdBenchmark(rig, warmupFrames, measuredFrames);
+    const GpuCullBenchResult           gpuCull       = RunGpuCullBenchmark(rig, warmupFrames, measuredFrames);
+    const LightClusterBenchResult      lightClusters = RunLightClusterBenchmark(rig, warmupFrames, measuredFrames);
+    const VolumetricFroxelsBenchResult volFroxels    = RunVolumetricFroxelsBenchmark(rig, warmupFrames, measuredFrames);
 
     const uint32_t debugErrors = rig.DrainDebugErrors();
     const bool allPassed = fluid.passed && rc.passed && tex.passed && audio.passed &&
                            destr.passed && flora.passed && tamriel.passed && xpbd.passed &&
-                           gpuCull.passed && lightClusters.passed && (debugErrors == 0u);
+                           gpuCull.passed && lightClusters.passed && volFroxels.passed && (debugErrors == 0u);
 
     PrintScorecard(rig, quickMode, warmupFrames, measuredFrames, debugErrors,
-                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters);
+                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels);
 
     if (!jsonPath.empty()) {
         WriteBenchJson(jsonPath, rig, quickMode, warmupFrames, measuredFrames, debugErrors, allPassed,
-                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters);
+                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels);
         std::printf("  JSON report written: %s\n", jsonPath.c_str());
     }
 

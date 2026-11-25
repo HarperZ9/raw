@@ -48,6 +48,7 @@ struct LiveEngineConfig {
     uint32_t statusDumpHotkeyVK      = 121u;  // VK_F10 (0x79)
     uint32_t hotReloadIntervalFrames = 60u;   // [10 .. 600] frames
     bool     crashForensicsEnabled   = true;  // VEH fatal crash dump & 7,376-class RTTI symbolizer (0/1, default 1)
+    bool     flightRecorderEnabled   = true;  // Zero-alloc 300-frame flight-recorder ring & JSON profiler dump (0/1, default 1)
 };
 
 LiveEngineConfig DefaultLiveEngineConfig();
@@ -181,6 +182,17 @@ struct LiveStatusDumpData {
     float    audioDirectorReverbWet = 1.0f;
     float    audioDirectorDuckGain  = 1.0f;
     uint32_t audioDirectorSwitches  = 0u;
+
+    // Flight Recorder Ring
+    uint64_t flightTotalFrames      = 0ull;
+    uint32_t flightRingFill         = 0u;
+    uint32_t flightHitches50ms      = 0u;
+    uint32_t flightFlushes          = 0u;
+    float    flightMeanMs           = 0.0f;
+    float    flightP50Ms            = 0.0f;
+    float    flightP95Ms            = 0.0f;
+    float    flightP99Ms            = 0.0f;
+    float    flightMaxMs            = 0.0f;
 };
 
 std::string FormatLiveStatusDump(const LiveStatusDumpData& d);

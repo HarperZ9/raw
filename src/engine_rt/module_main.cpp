@@ -44,6 +44,7 @@
 #include "rt_profile_presets.h"
 #include "rt_save_papyrus_guard.h"
 #include "rt_sdk_bridge.h"
+#include "rt_shader_hotreload.h"
 #include "rt_softbody.h"
 #include "rt_stealth_survival.h"
 #include "rt_telemetry_recorder.h"
@@ -148,6 +149,7 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     raw::rt::NpcBehaviorOnPresent();
     raw::rt::EngineHealthOnPresent();
     raw::rt::ProfilePresetsOnPresent();
+    raw::rt::ShaderHotReloadOnPresent();
     raw::rt::ConsoleDiagOnPresent();
     {
         static LARGE_INTEGER s_qpcFreq{};
@@ -404,6 +406,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     Log("%s", raw::rt::AudioBridgeInit().c_str());
     Log("%s", raw::rt::SdkBridgeInit(g_out).c_str());
     Log("%s", raw::rt::ProfilePresetsInit().c_str());
+    Log("%s", raw::rt::ShaderHotReloadInit(g_dir + "raw_shaders").c_str());
     Log("%s", raw::rt::ConsoleDiagInit(g_out).c_str());
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
@@ -433,6 +436,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         return 0;
     }
     raw::rt::ConsoleDiagShutdown();
+    raw::rt::ShaderHotReloadShutdown();
     raw::rt::ProfilePresetsShutdown();
     raw::rt::SdkBridgeShutdown();
     raw::rt::AudioBridgeShutdown();

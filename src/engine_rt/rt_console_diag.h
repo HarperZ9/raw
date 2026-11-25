@@ -1,8 +1,8 @@
 #pragma once
-// rt_console_diag.h: Wave 56/57 Live File-Triggered Engine Diagnostic Command Dispatcher (`raw::rt`).
-// Clean-room, zero-dependency synchronous command router (8 live runtime commands: help, health,
-// sdk, flight, mods, saves, status, preset <ultra|balanced|competitive|safemode>) + non-blocking
-// 60-frame file-trigger poll (`raw_cmd.txt` -> atomic `raw_cmd_result.txt`, single-shot 1 KB cap).
+// rt_console_diag.h: Wave 56/57/58 Live File-Triggered Engine Diagnostic Command Dispatcher (`raw::rt`).
+// Clean-room, zero-dependency synchronous command router (9 live runtime commands: help, health,
+// sdk, flight, mods, saves, status, preset <ultra|balanced|competitive|safemode>, reload_shaders) +
+// non-blocking 60-frame file-trigger poll (`raw_cmd.txt` -> atomic `raw_cmd_result.txt`, 1 KB cap).
 // Original work, MIT.
 
 #include <cstdint>
@@ -11,7 +11,7 @@
 namespace raw::rt {
 
 // Pure synchronous command dispatcher (case-insensitive, whitespace-trimmed).
-// Supports: help, health, sdk, flight, mods, saves, status, preset <ultra|balanced|competitive|safemode>.
+// Supports: help, health, sdk, flight, mods, saves, status, preset <name>, reload_shaders.
 // Unknown, empty, or malformed inputs fail closed returning false with a clean usage hint (never throws).
 bool DispatchDiagnosticCommand(const char* cmdLine, std::string& outResponse) noexcept;
 

@@ -1,5 +1,5 @@
 // tools/raw_bench_suite.cpp: Studio-Grade Automated GPU/CPU Benchmark & Visual Invariant Suite for RAW.
-// Benchmarks all 16 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
+// Benchmarks all 17 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
 //   1. GPU 64^3 Navier-Stokes Fire/Smoke + 256^2 SWE Water (RawFluidSimHost)
 //   2. GPU 4-Cascade Radiance Cascades GI (RawRadianceHost)
 //   3. Procedural PBR Texture Forge (RawTextureForge, all 8 seamless PBR sets)
@@ -16,6 +16,7 @@
 //  14. GPU GGX Stochastic Screen-Space Reflections (RawSsrHost)
 //  15. GPU 256-Bin Log-Luminance Histogram & Asymmetric Human Eye-Adaptation Auto-Exposure (RawAutoExposureHost)
 //  16. GPU 3D Volumetric Cloud Raymarching + Beer-Powder Silver-Lining & Temporal Reprojection (RawCloudRaymarchHost)
+//  17. GPU Cinematic Post-Process: Tile-Max Motion Blur + Depth-Aware Hexagonal Bokeh DoF (RawPostCinematicHost)
 //
 // CLI:
 //   raw_bench_suite [--warp] [--quick] [--frames N] [--json <path>] [--esm <path>] [--bsa <path>] [--no-debug-layer]
@@ -44,6 +45,7 @@
 #include "../src/d3d12_bridge/RawSsrHost.h"
 #include "../src/d3d12_bridge/RawAutoExposureHost.h"
 #include "../src/d3d12_bridge/RawCloudRaymarchHost.h"
+#include "../src/d3d12_bridge/RawPostCinematicHost.h"
 #include "../src/materials/RawTextureForge.h"
 #include "../src/audio/RawAudioDsp.h"
 #include "../src/worldgen/RawDestructionEngine.h"
@@ -1060,6 +1062,25 @@ struct CloudRaymarchBenchResult {
     float       antiSolarLuma   = 0.0f;
     float       silverRatio     = 0.0f;
     uint32_t    nanInfCount     = 0u;
+    std::string note;
+};
+
+struct PostCinematicBenchResult {
+    bool        passed             = false;
+    Percentiles totalGpuMs{};
+    Percentiles cpuRecordMs{};
+    uint32_t    width              = 960u;
+    uint32_t    height             = 540u;
+    float       hostTileMs         = 0.0f;
+    float       hostCompMs         = 0.0f;
+    float       identityMaxDiff    = 1.0f;
+    float       horizStreakR       = 0.0f;
+    float       vertSmearR         = 1.0f;
+    float       focusStd           = 0.0f;
+    float       farBlurStd         = 1.0f;
+    float       maxBgBleedR        = 1.0f;
+    float       vignetteFalloffPct = 0.0f;
+    uint32_t    nanInfCount        = 0u;
     std::string note;
 };
 
@@ -3757,6 +3778,291 @@ CloudRaymarchBenchResult RunCloudRaymarchBenchmark(BenchDx12Rig& rig, uint32_t w
 }
 
 // ----------------------------------------------------------------------------
+// 17. GPU Cinematic Post-Process: Tile-Max Motion Blur & Bokeh DoF (RawPostCinematicHost)
+// ----------------------------------------------------------------------------
+PostCinematicBenchResult RunPostCinematicBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames, uint32_t measuredFrames)
+{
+    PostCinematicBenchResult res{};
+    constexpr uint32_t kW = 960u;
+    constexpr uint32_t kH = 540u;
+    constexpr float kNearZ = 0.5f;
+    constexpr float kFarZ  = 500.0f;
+    res.width  = kW;
+    res.height = kH;
+
+    raw::bridge::RawPostCinematicHost host;
+    raw::bridge::PostCinematicDesc desc{};
+    desc.initialWidth  = kW;
+    desc.initialHeight = kH;
+    std::string err;
+    if (!host.Init(rig.dev.Get(), desc, &err)) {
+        res.note = "RawPostCinematicHost::Init failed: " + err;
+        return res;
+    }
+    host.SetTimestampFrequency(rig.tsFreqHz);
+
+    auto linearToStdZ = [](float vz) -> float {
+        const float q = kFarZ / (kFarZ - kNearZ);
+        return std::clamp(q * (1.0f - kNearZ / vz), 0.0f, 0.99997f);
+    };
+    const float zFocus = linearToStdZ(6.0f);
+    const float zFar   = linearToStdZ(35.0f);
+
+    auto uploadFloatTex = [&](ComPtr<ID3D12Resource>& tex, DXGI_FORMAT fmt,
+                              uint32_t floatsPerPx, const std::vector<float>& data) -> bool {
+        D3D12_HEAP_PROPERTIES hpDef{D3D12_HEAP_TYPE_DEFAULT};
+        D3D12_RESOURCE_DESC rd{};
+        rd.Dimension        = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        rd.Width            = kW;
+        rd.Height           = kH;
+        rd.DepthOrArraySize = 1u;
+        rd.MipLevels        = 1u;
+        rd.Format           = fmt;
+        rd.SampleDesc.Count = 1u;
+        if (FAILED(rig.dev->CreateCommittedResource(&hpDef, D3D12_HEAP_FLAG_NONE, &rd,
+                                                    D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&tex)))) {
+            return false;
+        }
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+        UINT numRows = 0u;
+        UINT64 rowBytes = 0ull, totalBytes = 0ull;
+        rig.dev->GetCopyableFootprints(&rd, 0u, 1u, 0ull, &fp, &numRows, &rowBytes, &totalBytes);
+
+        D3D12_HEAP_PROPERTIES hpUp{D3D12_HEAP_TYPE_UPLOAD};
+        D3D12_RESOURCE_DESC ubd{};
+        ubd.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+        ubd.Width            = totalBytes;
+        ubd.Height           = 1u;
+        ubd.DepthOrArraySize = 1u;
+        ubd.MipLevels        = 1u;
+        ubd.SampleDesc.Count = 1u;
+        ubd.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        ComPtr<ID3D12Resource> up;
+        if (FAILED(rig.dev->CreateCommittedResource(&hpUp, D3D12_HEAP_FLAG_NONE, &ubd,
+                                                    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&up)))) {
+            return false;
+        }
+        void* mapped = nullptr;
+        const D3D12_RANGE rr{0u, 0u};
+        if (FAILED(up->Map(0u, &rr, &mapped)) || !mapped) return false;
+        auto* base = static_cast<uint8_t*>(mapped) + fp.Offset;
+        const size_t srcRowBytes = static_cast<size_t>(kW) * floatsPerPx * sizeof(float);
+        for (uint32_t y = 0u; y < kH; ++y) {
+            std::memcpy(base + static_cast<size_t>(y) * fp.Footprint.RowPitch,
+                        data.data() + static_cast<size_t>(y) * kW * floatsPerPx,
+                        srcRowBytes);
+        }
+        up->Unmap(0u, nullptr);
+
+        if (!rig.BeginFrame()) return false;
+        D3D12_TEXTURE_COPY_LOCATION dst{tex.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
+        dst.SubresourceIndex = 0u;
+        D3D12_TEXTURE_COPY_LOCATION src{up.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {}};
+        src.PlacedFootprint = fp;
+        rig.cmd->CopyTextureRegion(&dst, 0u, 0u, 0u, &src, nullptr);
+
+        D3D12_RESOURCE_BARRIER b{};
+        b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b.Transition.pResource   = tex.Get();
+        b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+        b.Transition.StateAfter  = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        rig.cmd->ResourceBarrier(1u, &b);
+        return rig.FlushAndWait();
+    };
+
+    // Build test scenes: identity, directional +24px motion bar, DoF/foreground-bleed, and NaN/vignette
+    const size_t nPx = static_cast<size_t>(kW) * kH;
+    std::vector<float> idColor(nPx * 4u, 0.0f);
+    std::vector<float> idDepth(nPx, zFocus);
+    std::vector<float> zeroVel(nPx * 2u, 0.0f);
+    std::vector<float> mbColor(nPx * 4u, 0.0f);
+    std::vector<float> mbVel(nPx * 2u, 0.0f);
+    std::vector<float> dofColor(nPx * 4u, 0.0f);
+    std::vector<float> dofDepth(nPx, zFar);
+    std::vector<float> nanColor(nPx * 4u, 1.0f);
+
+    const float velU = 24.0f / static_cast<float>(kW);
+    for (uint32_t y = 0u; y < kH; ++y) {
+        for (uint32_t x = 0u; x < kW; ++x) {
+            const size_t i = static_cast<size_t>(y) * kW + x;
+            idColor[i * 4u + 0u] = static_cast<float>((x * 7u + y * 3u) % 256u) / 255.0f * 1.5f;
+            idColor[i * 4u + 1u] = static_cast<float>((x * 5u + y * 11u) % 256u) / 255.0f * 1.2f;
+            idColor[i * 4u + 2u] = static_cast<float>((x * 13u + y * 2u) % 256u) / 255.0f * 0.9f;
+            idColor[i * 4u + 3u] = 1.0f;
+
+            if (y >= 200u && y < 340u && x >= 470u && x < 490u) {
+                mbColor[i * 4u + 0u] = 2.0f;
+                mbColor[i * 4u + 1u] = 1.6f;
+                mbColor[i * 4u + 2u] = 0.8f;
+                mbColor[i * 4u + 3u] = 1.0f;
+                mbVel[i * 2u + 0u]   = velU;
+            }
+
+            if (y < 40u) {
+                dofDepth[i] = 1.0f;
+                dofColor[i * 4u + 2u] = 0.4f;
+                dofColor[i * 4u + 3u] = 1.0f;
+            } else if (y >= 160u && y < 380u) {
+                if (x >= 80u && x < 240u) {
+                    const float s = (((x / 4u) & 1u) == 0u) ? 1.0f : 0.0f;
+                    dofColor[i * 4u + 0u] = s; dofColor[i * 4u + 1u] = s; dofColor[i * 4u + 2u] = s; dofColor[i * 4u + 3u] = 1.0f;
+                    dofDepth[i] = zFocus;
+                } else if (x >= 360u && x < 520u) {
+                    const float s = (((x / 4u) & 1u) == 0u) ? 1.0f : 0.0f;
+                    dofColor[i * 4u + 0u] = s; dofColor[i * 4u + 1u] = s; dofColor[i * 4u + 2u] = s; dofColor[i * 4u + 3u] = 1.0f;
+                    dofDepth[i] = zFar;
+                } else if (x >= 600u && x < 880u) {
+                    if (x >= 700u && x < 780u) {
+                        dofColor[i * 4u + 0u] = 4.0f; dofColor[i * 4u + 3u] = 1.0f;
+                        dofDepth[i] = zFocus;
+                    } else {
+                        dofColor[i * 4u + 2u] = 0.25f; dofColor[i * 4u + 3u] = 1.0f;
+                        dofDepth[i] = zFar;
+                    }
+                }
+            }
+        }
+    }
+    const float qNaN = std::numeric_limits<float>::quiet_NaN();
+    const float pInf = std::numeric_limits<float>::infinity();
+    for (size_t i = 0u; i < nPx; i += 97u) {
+        nanColor[i * 4u + 0u] = ((i & 1u) == 0u) ? qNaN : pInf;
+    }
+
+    ComPtr<ID3D12Resource> idColorTex, idDepthTex, zeroVelTex, mbColorTex, mbVelTex, dofColorTex, dofDepthTex, nanColorTex;
+    if (!uploadFloatTex(idColorTex,  DXGI_FORMAT_R32G32B32A32_FLOAT, 4u, idColor) ||
+        !uploadFloatTex(idDepthTex,  DXGI_FORMAT_R32_FLOAT,          1u, idDepth) ||
+        !uploadFloatTex(zeroVelTex,  DXGI_FORMAT_R32G32_FLOAT,       2u, zeroVel) ||
+        !uploadFloatTex(mbColorTex,  DXGI_FORMAT_R32G32B32A32_FLOAT, 4u, mbColor) ||
+        !uploadFloatTex(mbVelTex,    DXGI_FORMAT_R32G32_FLOAT,       2u, mbVel)   ||
+        !uploadFloatTex(dofColorTex, DXGI_FORMAT_R32G32B32A32_FLOAT, 4u, dofColor) ||
+        !uploadFloatTex(dofDepthTex, DXGI_FORMAT_R32_FLOAT,          1u, dofDepth) ||
+        !uploadFloatTex(nanColorTex, DXGI_FORMAT_R32G32B32A32_FLOAT, 4u, nanColor)) {
+        res.note = "Upload 960x540 PostCinematic test textures failed";
+        return res;
+    }
+
+    uint32_t rbW = 0u, rbH = 0u, rbD = 0u;
+    std::vector<float> outRgba;
+
+    // 1. Zero-velocity & zero-DoF/vignette identity
+    raw::bridge::PostCinematicParams pId{};
+    pId.nearZ = kNearZ; pId.farZ = kFarZ;
+    pId.dofStrength = 0.0f; pId.motionBlurScale = 1.0f; pId.vignetteStrength = 0.0f; pId.frameJitter = 0.0f;
+    if (!rig.BeginFrame() || !host.Execute(rig.cmd.Get(), idColorTex.Get(), idDepthTex.Get(), zeroVelTex.Get(), kW, kH, pId) ||
+        !rig.FlushAndWait() || !rig.ReadbackRgba16Tex(host.GetOutputResource(), host.OutputResourceState(), rbW, rbH, rbD, outRgba)) {
+        res.note = "PostCinematic identity pass failed";
+        return res;
+    }
+    res.identityMaxDiff = 0.0f;
+    for (size_t i = 0u; i < nPx; ++i) {
+        for (int c = 0; c < 3; ++c) {
+            res.identityMaxDiff = std::max(res.identityMaxDiff, std::fabs(outRgba[i * 4u + c] - idColor[i * 4u + c]));
+        }
+    }
+
+    // 2. Directional motion streak (+24px X)
+    raw::bridge::PostCinematicParams pMb = pId;
+    pMb.motionBlurScale = 1.0f; pMb.maxMotionRadiusPx = 24.0f;
+    if (!rig.BeginFrame() || !host.Execute(rig.cmd.Get(), mbColorTex.Get(), idDepthTex.Get(), mbVelTex.Get(), kW, kH, pMb) ||
+        !rig.FlushAndWait() || !rig.ReadbackRgba16Tex(host.GetOutputResource(), host.OutputResourceState(), rbW, rbH, rbD, outRgba)) {
+        res.note = "PostCinematic motion blur pass failed";
+        return res;
+    }
+    res.horizStreakR = outRgba[(static_cast<size_t>(270u) * kW + 498u) * 4u + 0u];
+    res.vertSmearR   = outRgba[(static_cast<size_t>(192u) * kW + 480u) * 4u + 0u];
+
+    // 3. Physical CoC focus sharpness vs far bokeh blur + foreground bleed guard
+    raw::bridge::PostCinematicParams pDof{};
+    pDof.nearZ = kNearZ; pDof.farZ = kFarZ;
+    pDof.focusDistanceM = 6.0f; pDof.focalLengthMm = 50.0f; pDof.apertureFStop = 1.8f; pDof.cocScale = 2.0f;
+    pDof.dofStrength = 1.0f; pDof.maxBokehRadiusPx = 10.0f;
+    pDof.motionBlurScale = 0.0f; pDof.vignetteStrength = 0.0f; pDof.frameJitter = 0.0f;
+    if (!rig.BeginFrame() || !host.Execute(rig.cmd.Get(), dofColorTex.Get(), dofDepthTex.Get(), nullptr, kW, kH, pDof) ||
+        !rig.FlushAndWait() || !rig.ReadbackRgba16Tex(host.GetOutputResource(), host.OutputResourceState(), rbW, rbH, rbD, outRgba)) {
+        res.note = "PostCinematic DoF pass failed";
+        return res;
+    }
+    auto patchStd = [&](uint32_t x0, uint32_t x1, uint32_t y0, uint32_t y1) -> float {
+        double s = 0.0, s2 = 0.0;
+        uint32_t c = 0u;
+        for (uint32_t y = y0; y < y1; ++y) {
+            for (uint32_t x = x0; x < x1; ++x) {
+                const float v = outRgba[(static_cast<size_t>(y) * kW + x) * 4u + 0u];
+                s += v; s2 += v * v; ++c;
+            }
+        }
+        const double m = s / c;
+        return static_cast<float>(std::sqrt(std::max(0.0, s2 / c - m * m)));
+    };
+    res.focusStd   = patchStd(110u, 210u, 200u, 340u);
+    res.farBlurStd = patchStd(390u, 490u, 200u, 340u);
+    res.maxBgBleedR = 0.0f;
+    for (uint32_t x = 692u; x < 700u; ++x) res.maxBgBleedR = std::max(res.maxBgBleedR, outRgba[(static_cast<size_t>(270u) * kW + x) * 4u + 0u]);
+    for (uint32_t x = 780u; x < 788u; ++x) res.maxBgBleedR = std::max(res.maxBgBleedR, outRgba[(static_cast<size_t>(270u) * kW + x) * 4u + 0u]);
+
+    // 4. Filmic vignette + NaN/Inf resilience
+    raw::bridge::PostCinematicParams pFull = pDof;
+    pFull.motionBlurScale = 1.0f; pFull.vignetteStrength = 0.35f;
+    if (!rig.BeginFrame() || !host.Execute(rig.cmd.Get(), nanColorTex.Get(), dofDepthTex.Get(), mbVelTex.Get(), kW, kH, pFull) ||
+        !rig.FlushAndWait() || !rig.ReadbackRgba16Tex(host.GetOutputResource(), host.OutputResourceState(), rbW, rbH, rbD, outRgba)) {
+        res.note = "PostCinematic vignette+NaN pass failed";
+        return res;
+    }
+    for (float v : outRgba) {
+        if (!std::isfinite(v)) ++res.nanInfCount;
+    }
+    const float centerG = outRgba[(static_cast<size_t>(kH / 2u) * kW + (kW / 2u)) * 4u + 1u];
+    const float cornerG = outRgba[(static_cast<size_t>(4u) * kW + 4u) * 4u + 1u];
+    res.vignetteFalloffPct = (1.0f - cornerG / std::max(centerG, 1.0e-5f)) * 100.0f;
+
+    // 5. Steady-state GPU timing benchmark (full 3-pass TileMax + NeighborMax + DoF + MotionBlur + Vignette)
+    std::vector<double> gpuSamples, cpuSamples;
+    gpuSamples.reserve(measuredFrames);
+    cpuSamples.reserve(measuredFrames);
+    const uint32_t totalFrames = warmupFrames + measuredFrames;
+    for (uint32_t f = 0u; f < totalFrames; ++f) {
+        pFull.frameJitter = static_cast<float>(f & 63u);
+        const auto c0 = Clock::now();
+        if (!rig.BeginFrame()) { res.note = "BeginFrame (timing) failed"; return res; }
+        rig.MarkTimestamp(0u);
+        host.Execute(rig.cmd.Get(), dofColorTex.Get(), dofDepthTex.Get(), mbVelTex.Get(), kW, kH, pFull);
+        rig.MarkTimestamp(1u);
+        rig.ResolveTimestamps(0u, 2u);
+        const auto c1 = Clock::now();
+        if (!rig.FlushAndWait()) { res.note = "FlushAndWait (timing) failed"; return res; }
+        if (f >= warmupFrames) {
+            double gMs = 0.0;
+            rig.ReadTimestampRangeMs(0u, 1u, gMs);
+            gpuSamples.push_back(gMs);
+            cpuSamples.push_back(ElapsedMs(c0, c1));
+        }
+    }
+
+    res.totalGpuMs  = ComputePercentiles(gpuSamples);
+    res.cpuRecordMs = ComputePercentiles(cpuSamples);
+    res.hostTileMs  = host.HasValidTiming() ? host.GetLastTileMs() : 0.0f;
+    res.hostCompMs  = host.HasValidTiming() ? host.GetLastCompositeMs() : 0.0f;
+
+    const bool optOk = (res.nanInfCount == 0u) && (res.identityMaxDiff < 0.002f) &&
+                       (res.horizStreakR > 0.25f) && (res.vertSmearR < 0.005f) &&
+                       (res.focusStd > 0.49f) && (res.farBlurStd < 0.25f) &&
+                       (res.maxBgBleedR < 0.005f) && (res.vignetteFalloffPct > 10.0f);
+    const bool budgetOk = rig.isWarp ? true : (res.totalGpuMs.mean < 0.08);
+    res.passed = optOk && budgetOk;
+    if (!optOk) {
+        res.note = "PostCinematic identity/motion/DoF/bleed-guard/vignette/NaN invariant failed";
+    } else if (!budgetOk) {
+        res.note = "HW GPU 960x540 PostCinematic mean exceeded 0.08 ms budget";
+    } else {
+        res.note = rig.isWarp ? "WARP 960x540 Tile-Max MotionBlur & Bokeh DoF PASS"
+                              : "HW GPU < 0.08 ms & MotionBlur/Bokeh/Zero-Bleed PASS";
+    }
+    return res;
+}
+
+// ----------------------------------------------------------------------------
 // JSON Serializer & Console Scorecard Printer
 // ----------------------------------------------------------------------------
 void WriteBenchJson(const std::string& path,
@@ -3781,7 +4087,8 @@ void WriteBenchJson(const std::string& path,
                     const GtaoBenchResult& gtao,
                     const SsrBenchResult& ssr,
                     const AutoExposureBenchResult& autoExposure,
-                    const CloudRaymarchBenchResult& cloudRaymarch)
+                    const CloudRaymarchBenchResult& cloudRaymarch,
+                    const PostCinematicBenchResult& postCinematic)
 {
     std::ostringstream os;
     os << std::fixed << std::setprecision(4);
@@ -4080,6 +4387,26 @@ void WriteBenchJson(const std::string& path,
     os << "      \"silverRatio\": " << cloudRaymarch.silverRatio << ",\n";
     os << "      \"nanInfCount\": " << cloudRaymarch.nanInfCount << ",\n";
     os << "      \"note\": \"" << JsonEscape(cloudRaymarch.note) << "\"\n";
+    os << "    },\n";
+
+    // 17. GPU Cinematic Post-Process (Tile-Max Motion Blur & Bokeh DoF)
+    os << "    \"postCinematic\": {\n";
+    os << "      \"passed\": " << (postCinematic.passed ? "true" : "false") << ",\n";
+    os << "      \"width\": " << postCinematic.width << ",\n";
+    os << "      \"height\": " << postCinematic.height << ",\n";
+    os << "      \"totalGpuMs\": "; pctObj(postCinematic.totalGpuMs); os << ",\n";
+    os << "      \"cpuRecordMs\": "; pctObj(postCinematic.cpuRecordMs); os << ",\n";
+    os << "      \"hostTileMs\": " << postCinematic.hostTileMs << ",\n";
+    os << "      \"hostCompMs\": " << postCinematic.hostCompMs << ",\n";
+    os << "      \"identityMaxDiff\": " << postCinematic.identityMaxDiff << ",\n";
+    os << "      \"horizStreakR\": " << postCinematic.horizStreakR << ",\n";
+    os << "      \"vertSmearR\": " << postCinematic.vertSmearR << ",\n";
+    os << "      \"focusStd\": " << postCinematic.focusStd << ",\n";
+    os << "      \"farBlurStd\": " << postCinematic.farBlurStd << ",\n";
+    os << "      \"maxBgBleedR\": " << postCinematic.maxBgBleedR << ",\n";
+    os << "      \"vignetteFalloffPct\": " << postCinematic.vignetteFalloffPct << ",\n";
+    os << "      \"nanInfCount\": " << postCinematic.nanInfCount << ",\n";
+    os << "      \"note\": \"" << JsonEscape(postCinematic.note) << "\"\n";
     os << "    }\n";
 
     os << "  }\n";
@@ -4112,7 +4439,8 @@ void PrintScorecard(const BenchDx12Rig& rig,
                     const GtaoBenchResult& gtao,
                     const SsrBenchResult& ssr,
                     const AutoExposureBenchResult& autoExposure,
-                    const CloudRaymarchBenchResult& cloudRaymarch)
+                    const CloudRaymarchBenchResult& cloudRaymarch,
+                    const PostCinematicBenchResult& postCinematic)
 {
     std::printf("\n");
     std::printf("=====================================================================================================\n");
@@ -4232,6 +4560,13 @@ void PrintScorecard(const BenchDx12Rig& rig,
                   cloudRaymarch.silverRatio, cloudRaymarch.belowHorizonBad, cloudRaymarch.nanInfCount);
     std::printf("  %-30s | %-6s | %-28s | %s\n", "16. GPU 3D Volumetric Clouds", cloudRaymarch.passed ? "PASS" : "FAIL", metric, detail);
 
+    std::snprintf(metric, sizeof(metric), "Post %.4f ms (p95 %.4f)", postCinematic.totalGpuMs.mean, postCinematic.totalGpuMs.p95);
+    std::snprintf(detail, sizeof(detail), "T=%.4f C=%.4f | strk=%.2f dof=%.2f->%.2f bld=%.4f | NaN=%u",
+                  postCinematic.hostTileMs, postCinematic.hostCompMs,
+                  postCinematic.horizStreakR, postCinematic.focusStd, postCinematic.farBlurStd,
+                  postCinematic.maxBgBleedR, postCinematic.nanInfCount);
+    std::printf("  %-30s | %-6s | %-28s | %s\n", "17. GPU Cinematic MB + DoF", postCinematic.passed ? "PASS" : "FAIL", metric, detail);
+
     std::printf("=====================================================================================================\n");
 }
 
@@ -4298,20 +4633,22 @@ int main(int argc, char** argv)
     const SsrBenchResult               ssr           = RunSsrBenchmark(rig, warmupFrames, measuredFrames);
     const AutoExposureBenchResult      autoExposure  = RunAutoExposureBenchmark(rig, warmupFrames, measuredFrames);
     const CloudRaymarchBenchResult     cloudRaymarch = RunCloudRaymarchBenchmark(rig, warmupFrames, measuredFrames);
+    const PostCinematicBenchResult     postCinematic = RunPostCinematicBenchmark(rig, warmupFrames, measuredFrames);
 
     const uint32_t debugErrors = rig.DrainDebugErrors();
     const bool allPassed = fluid.passed && rc.passed && tex.passed && audio.passed &&
                            destr.passed && flora.passed && tamriel.passed && xpbd.passed &&
                            gpuCull.passed && lightClusters.passed && volFroxels.passed &&
                            shadowPcss.passed && gtao.passed && ssr.passed &&
-                           autoExposure.passed && cloudRaymarch.passed && (debugErrors == 0u);
+                           autoExposure.passed && cloudRaymarch.passed &&
+                           postCinematic.passed && (debugErrors == 0u);
 
     PrintScorecard(rig, quickMode, warmupFrames, measuredFrames, debugErrors,
-                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch);
+                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic);
 
     if (!jsonPath.empty()) {
         WriteBenchJson(jsonPath, rig, quickMode, warmupFrames, measuredFrames, debugErrors, allPassed,
-                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch);
+                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic);
         std::printf("  JSON report written: %s\n", jsonPath.c_str());
     }
 

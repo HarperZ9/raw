@@ -39,12 +39,15 @@ struct Mat3 {
     };
 };
 
+#ifndef RAW_WORLDGEN_QUAT_DEFINED
+#define RAW_WORLDGEN_QUAT_DEFINED
 struct Quat {
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;
     float w = 1.0f;
 };
+#endif
 
 struct PolyFace {
     std::vector<Vec3> vertices;           // Planar convex polygon, CCW viewed from outside (+normal)

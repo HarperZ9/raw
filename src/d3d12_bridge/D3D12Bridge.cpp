@@ -307,7 +307,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         const bool ssrOk = m->InitSsrHost();
         const bool autoExpOk = m->InitAutoExposure();
         const bool cloudOk = m->InitCloudRaymarch();
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s, Gtao=%s, Ssr=%s, AutoExposure=%s, CloudRaymarch=%s",
+        const bool postCinOk = m->InitPostCinematic();
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s, Gtao=%s, Ssr=%s, AutoExposure=%s, CloudRaymarch=%s, PostCinematic=%s",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
                terrainOk ? "READY" : "off",
                m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
@@ -325,7 +326,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                gtaoOk ? "READY" : "off",
                ssrOk ? "READY" : "off",
                autoExpOk ? "READY" : "off",
-               cloudOk ? "READY" : "off");
+               cloudOk ? "READY" : "off",
+               postCinOk ? "READY" : "off");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
         {
             const auto& matReg = raw::materials::DefaultMaterialRegistry();
@@ -1326,6 +1328,75 @@ void D3D12Bridge::Impl::ShutdownCloudRaymarch()
     cloudRaymarchReady = false;
 }
 
+bool D3D12Bridge::Impl::InitPostCinematic()
+{
+    ShutdownPostCinematic();
+    if (!dev12) return false;
+    postCinematic = std::make_unique<RawPostCinematicHost>();
+    PostCinematicDesc desc{};
+    desc.initialWidth  = std::max(cfg.width / 2u, 64u);
+    desc.initialHeight = std::max(cfg.height / 2u, 36u);
+    std::string postErr;
+    if (!postCinematic->Init(dev12.Get(), desc, &postErr)) {
+        log("[PostCinematic] off: %s", postErr.c_str());
+        postCinematic.reset();
+        return false;
+    }
+    UINT64 tsFreq = 0;
+    if (queue && SUCCEEDED(queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+        postCinematic->SetTimestampFrequency(tsFreq);
+    }
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&postCinematicAlloc[i])))) {
+            ShutdownPostCinematic();
+            return false;
+        }
+    }
+    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, postCinematicAlloc[0].Get(), nullptr, IID_PPV_ARGS(&postCinematicList))) ||
+        FAILED(postCinematicList->Close()) ||
+        FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&postCinematicFence)))) {
+        ShutdownPostCinematic();
+        return false;
+    }
+    postCinematicEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!postCinematicEvent) {
+        ShutdownPostCinematic();
+        return false;
+    }
+    postCinematicReady = true;
+    log("[PostCinematic] GPU Motion-Blur + Hexagonal Bokeh DoF ready (half-res %ux%u RGBA16F)",
+        desc.initialWidth, desc.initialHeight);
+    return true;
+}
+
+void D3D12Bridge::Impl::ShutdownPostCinematic()
+{
+    if (postCinematicFence && postCinematicEvent && postCinematicFenceVal > 0) {
+        if (postCinematicFence->GetCompletedValue() < postCinematicFenceVal) {
+            postCinematicFence->SetEventOnCompletion(postCinematicFenceVal, postCinematicEvent);
+            WaitForSingleObject(postCinematicEvent, 3000);
+        }
+    }
+    postCinematicList.Reset();
+    for (UINT i = 0; i < kRing; ++i) {
+        postCinematicAlloc[i].Reset();
+        postCinematicSlotVal[i] = 0;
+    }
+    postCinematicFence.Reset();
+    if (postCinematicEvent) {
+        CloseHandle(postCinematicEvent);
+        postCinematicEvent = nullptr;
+    }
+    if (postCinematic) {
+        postCinematic->Shutdown();
+        postCinematic.reset();
+    }
+    postCinematicFenceVal = 0;
+    postCinematicSlot = 0;
+    postCinematicStepFrames = 0;
+    postCinematicReady = false;
+}
+
 void D3D12Bridge::Shutdown()
 {
     if (!m) return;
@@ -1334,6 +1405,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->ShutdownPostCinematic();
     m->ShutdownCloudRaymarch();
     m->ShutdownAutoExposure();
     m->ShutdownSsrHost();

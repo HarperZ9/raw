@@ -37,14 +37,20 @@ Texture2D<float4> WorldField : register(t14); // WorldFieldSim.hlsl: 512x512 RGB
 SamplerState      Lin      : register(s0);
 Texture2D<float4> RtIdx   : register(t10);   // which lights, index + 1 over 255
 
+// Wave 58: Strict NaN/Inf sanitization helper for HDR lighting outputs & IBL samples.
+float3 sanitizeLit3(float3 c) {
+    return all(isfinite(c)) ? max(c, 0.0f.xxx) : 0.0f.xxx;
+}
+
 // Sample our live 256x256 dual-band prefiltered dynamic environment cubemap (top: glossy, bottom: rough convolution).
 float3 sampleLiveEnvCube(float3 rd, float roughness) {
-    const float3 d = normalize(rd);
-    const float u = atan2(d.y, d.x) / (2.0f * PI) + 0.5f;
+    const float rd2 = dot(rd, rd);
+    const float3 d = (isfinite(rd2) && rd2 > 1.0e-8f) ? (rd * rsqrt(rd2)) : float3(0.0f, 0.0f, 1.0f);
+    const float u = (abs(d.x) + abs(d.y) > 1.0e-5f) ? (atan2(d.y, d.x) / (2.0f * PI) + 0.5f) : 0.5f;
     const float vLocal = saturate(0.5f - asin(clamp(d.z, -1.0f, 1.0f)) / PI);
     const float vClamp = clamp(vLocal, 0.5f / 128.0f, 127.5f / 128.0f);
-    const float3 sharp = EnvCube.SampleLevel(Lin, float2(u, vClamp * 0.5f), 0.0f).rgb;
-    const float3 rough = EnvCube.SampleLevel(Lin, float2(u, 0.5f + vClamp * 0.5f), 0.0f).rgb;
+    const float3 sharp = sanitizeLit3(EnvCube.SampleLevel(Lin, float2(u, vClamp * 0.5f), 0.0f).rgb);
+    const float3 rough = sanitizeLit3(EnvCube.SampleLevel(Lin, float2(u, 0.5f + vClamp * 0.5f), 0.0f).rgb);
     return lerp(sharp, rough, saturate(roughness * roughness));
 }
 
@@ -1013,11 +1019,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             s.alpha = clamp(lerp(min(s.alpha + 0.16f, 0.96f), max(s.alpha - 0.10f, 0.10f), pomOcc), 0.08f, 0.96f);
         }
     }
-    // Wave 40 Unified 3D Procedural Weathering (RawWeathering.hlsli):
-    // Curvature-driven edge chipping & mortar erosion (quad-safe ddx/ddy), seasonal creeping north-facing moss/lichen,
-    // and rising thermal soot/smoke stains above active hearths, forges & wall sconces!
+    // Wave 40 + Wave 58 Unified 3D Procedural Weathering (RawWeathering.hlsli):
+    // Curvature-driven edge chipping & mortar erosion, multi-scale rainwater porosity darkening,
+    // north-facing moss/lichen moisture accumulation, sub-zero hoarfrost micro-sparkle & thermal soot!
     const float3 wDpx = ddx(p), wDpy = ddy(p);
     const float3 wDnx = ddx(s.n), wDny = ddy(s.n);
+    float porosityWetW = 0.0f;
+    float hoarfrostGlintW = 0.0f;
     if (!match && !isActorFeat && !isActorCloth && (base == 1u || base == 2u || base == 4u) && z < 3200.0f) {
         const float pxScaleW = max(length(wDpx) + length(wDpy), 0.25f);
         const float curvW = clamp((dot(wDnx, wDpx) + dot(wDny, wDpy)) / max(pxScaleW * pxScaleW * 0.25f, 0.15f), -1.0f, 1.0f);
@@ -1043,7 +1051,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
         }
-        // River/shoreline proximity boost for creeping damp moss:
+        // River/shoreline proximity boost for creeping damp moss & capillary porosity darkening:
         float waterProxW = 0.0f;
         if (sunColour.w > 0.5f && engineWorld.z > 0.5f && engineWorld.x > -13000.0f) {
             const float abW = (p.z + camPosW.z) - engineWorld.x;
@@ -1058,6 +1066,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         albedo  = wRes.albedo;
         s.n     = wRes.normal;
         s.alpha = wRes.roughness;
+        porosityWetW    = wRes.porosityWet01;
+        hoarfrostGlintW = wRes.hoarfrostGlint01;
+        if (porosityWetW > 0.15f) {
+            s.mask = max(s.mask, porosityWetW * 0.55f);
+            lobe = true;
+        }
     }
     // Wave 46 Rainstorm Vertical Wall Wet-Streak Sheen (100% inactive on dry days & interiors!):
     // Animated downward-streaming rain rivulets stretched vertically along +Z drifting down at simTime * 3.8
@@ -1900,13 +1914,29 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 dieEnv = sampleLiveEnvCube(rDir, dieRough) * (0.28f + 0.72f * skyVisShaped);
             lit += evalMultiScatterIBL(dieF0, dieRough, nv, dieEnv, specOcc) * lerp(0.55f, 1.0f, saturate(wet.wet + wet.puddle));
         }
-        // Dual-Lobe Clearcoat GGX water film (crisp mirror-like reflections on rain-soaked roads/puddles, GTA VI storm study)
-        // & oiled lacquer (low-metallic class-2 armor/leather; strictly excluded on glacial ice so ice never double-counts EnvCube!).
-        const float clearcoat = max(max(saturate(wet.wet * 0.85f + wet.puddle * 1.15f), rainWallStreak * 0.78f), ((base == 2u && iceMask < 0.08f) ? (1.0f - metallic) * 0.35f : 0.0f)) * (1.0f - saturate(iceMask * 2.0f));
-        if (clearcoat > 0.05f && !skin && base != 5u) {
-            const float ccRough = lerp(lerp(0.08f, 0.055f, rainWallStreak), 0.03f, saturate(wet.puddle));
-            const float3 ccEnv = sampleLiveEnvCube(rDir, ccRough) * (0.30f + 0.70f * skyVisShaped);
-            lit += evalMultiScatterIBL(float3(0.022f, 0.022f, 0.022f), ccRough, nv, ccEnv, specOcc) * (clearcoat * 0.95f);
+        // Wave 58: Marmoset/Lagarde Horizon Specular Occlusion prevents micro-normal reflection rays pointing
+        // behind the macro surface normal nSmooth from leaking bright sky/cubemap glow across grazing creases.
+        const float3 rDetail = reflect(-s.v, s.n);
+        const float horizonDot = saturate(1.0f + 1.35f * dot(rDetail, nSmooth));
+        const float horizonOcc = horizonDot * horizonDot;
+        // Energy-Conserving Dual-Lobe Clearcoat / Wetness Specular (sharp primary mirror-water film + broader
+        // capillary wet-sheen secondary lobe; strictly attenuates base layer by (1 - clearcoat * F_coat) and
+        // excludes glacial ice so ice caves never double-count EnvCube!).
+        const float clearcoat = saturate(max(
+            max(saturate(wet.wet * 0.85f + wet.puddle * 1.15f + porosityWetW * 0.48f), rainWallStreak * 0.78f),
+            ((base == 2u && iceMask < 0.08f) ? (1.0f - metallic) * 0.35f : 0.0f))) * (1.0f - saturate(iceMask * 2.0f));
+        if (clearcoat > 0.04f && !skin && base != 5u) {
+            const float fCoatV = saturate(0.0204f + 0.9796f * pow(1.0f - nv, 5.0f));
+            // Strictly conserve energy: base layer transmits (1 - coat * F_coat) beneath the dielectric water/lacquer film!
+            lit *= saturate(1.0f - clearcoat * fCoatV * 0.85f);
+            const float ccRough1 = lerp(lerp(0.075f, 0.050f, rainWallStreak), 0.028f, saturate(wet.puddle));
+            const float ccRough2 = lerp(0.24f, 0.14f, saturate(wet.puddle));
+            const float skyEnvGate = (0.30f + 0.70f * skyVisShaped) * horizonOcc;
+            const float3 ccEnv1 = sampleLiveEnvCube(rDir, ccRough1) * skyEnvGate;
+            const float3 ccEnv2 = sampleLiveEnvCube(rDir, ccRough2) * skyEnvGate;
+            const float3 ccLobe1 = evalMultiScatterIBL(float3(0.0204f, 0.0204f, 0.0204f), ccRough1, nv, ccEnv1, specOcc);
+            const float3 ccLobe2 = evalMultiScatterIBL(float3(0.0204f, 0.0204f, 0.0204f), ccRough2, nv, ccEnv2, specOcc);
+            lit += (ccLobe1 * 0.72f + ccLobe2 * 0.28f) * (clearcoat * 0.92f);
         }
         // Estevez-Kulla grazing velvet/fuzz rim sheen on rough organic materials (excluded on foliage base==5 to avoid pale halo).
         if (!skin && base != 2u && base != 5u && s.alpha > 0.52f && sunDir.w > 0.5f && sunShadow > 0.05f) {
@@ -1957,16 +1987,35 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float aurBounce = saturate((0.26f - sLumAur) * 4.5f) * (1.0f - saturate(clouds.x * 1.15f)) * saturate(s.n.z);
             lit += albedo * float3(0.06f, 0.24f, 0.19f) * (aurBounce * wet.snow * skyVis * 0.45f);
         }
-        // Physical clearcoat GGX on wet water films (neutral physical water dielectric — zero rainbow oil-slick stripes!).
-        const float wetFilmGlint = max(max(wet.wet * 0.6f, wet.puddle), rainWallStreak * 0.55f);
-        if (wetFilmGlint > 0.08f && isExterior && sunShadow > 0.0f) {
-            const float3 ch = rawSafeHalfVec(s.v, sunDir.xyz, s.n);
-            const float cnh = saturate(dot(s.n, ch)), ca2 = 0.0036f;
-            const float cdd = max(cnh * cnh * (ca2 - 1.0f) + 1.0f, 1.0e-4f);
-            const float cD = ca2 / (PI * cdd * cdd);
-            const float vh = saturate(dot(s.v, ch));
-            const float cF = 0.02f + 0.98f * pow(1.0f - vh, 5.0f);
-            lit += min(sunColour.rgb * (cD * cF * saturate(dot(s.n, sunDir.xyz)) * sunShadow * 0.24f), 2.2f.xxx) * wetFilmGlint;
+        // Wave 58: Energy-Conserving Direct Sun Dual-Lobe Clearcoat GGX on wet water films (full Smith visibility V +
+        // Schlick Fresnel IOR 1.333 + sharp primary mirror lobe & soft wet-sheen secondary lobe; zero oil-slick stripes!).
+        const float wetFilmGlint = saturate(max(max(wet.wet * 0.62f + porosityWetW * 0.45f, wet.puddle), rainWallStreak * 0.58f));
+        if (wetFilmGlint > 0.06f && isExterior && sunShadow > 0.0f && !skin && base != 5u) {
+            const float cnl = saturate(dot(s.n, sunDir.xyz));
+            if (cnl > 1.0e-4f) {
+                const float3 ch = rawSafeHalfVec(s.v, sunDir.xyz, s.n);
+                const float cnh = saturate(dot(s.n, ch));
+                const float cvh = saturate(dot(s.v, ch));
+                const float cnv = max(dot(s.n, s.v), 1.0e-4f);
+                const float cF = saturate(0.0204f + 0.9796f * pow(1.0f - cvh, 5.0f));
+                // Primary sharp mirror-film lobe (alpha = 0.058 -> a2 = 0.003364) + secondary capillary sheen lobe (alpha = 0.22 -> a2 = 0.0484):
+                const float ca1 = 0.003364f, ca2 = 0.0484f;
+                const float cd1 = max(cnh * cnh * (ca1 - 1.0f) + 1.0f, 1.0e-4f);
+                const float cd2 = max(cnh * cnh * (ca2 - 1.0f) + 1.0f, 1.0e-4f);
+                const float cD1 = ca1 / (PI * cd1 * cd1);
+                const float cD2 = ca2 / (PI * cd2 * cd2);
+                const float cV1 = 0.5f / (cnl * sqrt(cnv * cnv * (1.0f - ca1) + ca1) + cnv * sqrt(cnl * cnl * (1.0f - ca1) + ca1) + 1.0e-5f);
+                const float cV2 = 0.5f / (cnl * sqrt(cnv * cnv * (1.0f - ca2) + ca2) + cnv * sqrt(cnl * cnl * (1.0f - ca2) + ca2) + 1.0e-5f);
+                const float dualLobe = (cD1 * cV1 * 0.68f + cD2 * cV2 * 0.32f) * PI * cF * cnl;
+                lit += min(sunColour.rgb * (dualLobe * sunShadow * horizonOcc * 0.65f), 2.2f.xxx) * wetFilmGlint;
+            }
+        }
+        // Wave 58: Sub-Zero Hoarfrost / Rime Crystal Micro-Sparkle (crisp sunlit frost needle glints on sub-zero edges):
+        if (hoarfrostGlintW > 0.01f && isExterior && sunShadow > 0.05f) {
+            const float3 fh = rawSafeHalfVec(s.v, sunDir.xyz, s.n);
+            const float fnh = saturate(dot(s.n, fh));
+            const float frostSpec = pow(fnh, 42.0f) * saturate(dot(s.n, sunDir.xyz)) * sunShadow * horizonOcc;
+            lit += min(sunColour.rgb * float3(0.88f, 0.95f, 1.08f) * (frostSpec * hoarfrostGlintW * 1.45f), 1.35f.xxx);
         }
     }
     if (!match) {
@@ -2079,16 +2128,24 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float canopyOcc = saturate(skyVis * 0.68f + sunShadow * 0.24f + crownUp * 0.20f);
             lit *= lerp(float3(0.32f, 0.42f, 0.30f), 1.0f.xxx, canopyOcc);
         }
-        // Grazing micro-Fresnel environmental wrap (amb already includes bounce from line ~1430 — zero bounce double-counting!):
+        // Wave 58: Horizon-Occluded Sky-Bounce Ambient Fill Respecting Grazing Fresnel (energy-conserving):
+        // Uses Lagarde geometric horizon occlusion against macro normal nSmooth + physical dielectric grazing Fresnel
+        // so exposed stone, roofs, and wet terrain pick up crisp cool-sky grazing fill while occluded overhangs stay grounded!
         const float nvWrap = saturate(dot(s.n, s.v));
-        const float graze = pow(1.0f - nvWrap, 4.5f) * (skin ? 0.10f : base == 5u ? 0.05f : 0.12f);
-        lit += amb * graze * (0.30f + 0.70f * skyVis) * (1.0f - iceMask * 0.55f) + decalEmit;
-        // Note: removed redundant 3rd Mie scatter wash in Lighting.hlsl — FroxelPass.hlsl (0..42,000u) + LightFog.hlsl
+        const float3 rWrap = reflect(-s.v, s.n);
+        const float horizBounce = saturate(1.0f + 1.25f * dot(rWrap, nSmooth));
+        const float horizBounceOcc = horizBounce * horizBounce;
+        const float fGraze = saturate(s.f0 + (1.0f - s.f0) * pow(1.0f - nvWrap, 5.0f));
+        const float skyBounceScale = (skin ? 0.08f : base == 5u ? 0.045f : 0.14f) * (1.0f - metallic * 0.55f);
+        const float3 skyBounceTint = isExterior ? lerp(1.0f.xxx, float3(0.86f, 0.94f, 1.12f), skyVisShaped * (1.0f - (skin ? 0.92f : 0.0f)) * 0.45f) : 1.0f.xxx;
+        lit += amb * skyBounceTint * (fGraze * skyBounceScale * horizBounceOcc * (0.25f + 0.75f * skyVisShaped) * combinedOcc * (1.0f - iceMask * 0.55f)) + decalEmit;
+        // Note: removed redundant 3rd Mie scatter wash in Lighting.hlsl; FroxelPass.hlsl (0..42,000u) + LightFog.hlsl
         // now own unified engine-level 3D volumetric transmittance and Hillaire aerial perspective with zero double-fogging.
     }
     // Clean Physical HDR Shoulder in native DX12 mode (!match): preserves full 1:1 linear HDR punch up to 1.20
     // then rolls off smoothly up to ~2.75 so ice caves, snowbanks & bright surfaces stay strictly below BloomPass (2.25),
     // while true HDR flames/sun/emissives stay crisp through BloomPass and Tonemap.hlsl (AgX / ACES 2.0)!
+    lit = sanitizeLit3(lit);
     const float litPeak = max(lit.r, max(lit.g, lit.b));
     const float kneeStart = (!isExterior && iceMask > 0.10f) ? 0.72f : 1.20f;
     const float kneeSlope = (!isExterior && iceMask > 0.10f) ? 1.45f : 0.62f;
@@ -2155,5 +2212,5 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         return q.x < 0.5f ? float4(saturate(RtRefl.Load(ip).rgb), game.a)
                           : float4(saturate(sampleLiveEnvCube(reflect(-s.v, s.n), 0.12f)), game.a);
     }
-    return float4(finalLit, game.a);
+    return float4(sanitizeLit3(finalLit), isfinite(game.a) ? saturate(game.a) : 1.0f);
 }

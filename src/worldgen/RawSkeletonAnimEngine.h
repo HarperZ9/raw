@@ -59,12 +59,15 @@ enum class AnimClipId : uint8_t {
     Count      = 6,
 };
 
+#ifndef RAW_WORLDGEN_QUAT_DEFINED
+#define RAW_WORLDGEN_QUAT_DEFINED
 struct Quat {
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;
     float w = 1.0f;
 };
+#endif
 
 struct BoneTransform {
     Vec3 pos{};

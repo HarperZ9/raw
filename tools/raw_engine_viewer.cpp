@@ -73,6 +73,7 @@
 #include "RawSsrHost.h"
 #include "RawAutoExposureHost.h"
 #include "RawCloudRaymarchHost.h"
+#include "RawPostCinematicHost.h"
 #include "RawWeatherSim.h"
 #include "RawWorldShowcase.h"
 #include "RawDestructionEngine.h"
@@ -89,6 +90,7 @@
 #include "RawFactionDiplomacy.h"
 #include "RawWorldSerializer.h"
 #include "RawDungeonGen.h"
+#include "RawSkeletonAnimEngine.h"
 #include "RawHydrologyGen.h"
 #include "RawAudioOutput.h"
 
@@ -474,6 +476,14 @@ public:
         if (!m_cloudRaymarchOk) {
             std::printf("[Viewer] RawCloudRaymarchHost warning: %s\n", err.c_str());
         }
+        err.clear();
+        PostCinematicDesc pcd{};
+        pcd.initialWidth  = std::max(1u, m_width / 2u);
+        pcd.initialHeight = std::max(1u, m_height / 2u);
+        m_postCinematicOk = m_postCinematic.Init(m_dev.Get(), pcd, &err);
+        if (!m_postCinematicOk) {
+            std::printf("[Viewer] RawPostCinematicHost warning: %s\n", err.c_str());
+        }
         UINT64 tsFreq = 0;
         if (SUCCEEDED(m_queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
             if (m_fluidOk)         m_fluidSim.SetTimestampFrequency(tsFreq);
@@ -488,6 +498,7 @@ public:
             if (m_ssrOk)           m_ssr.SetTimestampFrequency(tsFreq);
             if (m_autoExposureOk)  m_autoExposure.SetTimestampFrequency(tsFreq);
             if (m_cloudRaymarchOk) m_cloudRaymarch.SetTimestampFrequency(tsFreq);
+            if (m_postCinematicOk) m_postCinematic.SetTimestampFrequency(tsFreq);
         }
         m_settlementSim.Reset(202653u);
         m_settlementTelemetry   = m_settlementSim.ComputeWorldTelemetry();
@@ -1813,6 +1824,111 @@ public:
         return p;
     }
 
+    void UpdateSkeletonRigsAndFootIk(float dtSec)
+    {
+        (void)dtSec;
+        auto& phys = ActivePhysics();
+        const auto pst = phys.GetStats();
+        const raw::worldgen::RawWorldPhysics* physOpt =
+            (pst.heightfieldCount > 0u || pst.totalTriangles > 0u) ? &phys : nullptr;
+
+        // 1. Player 24-bone procedural rig with live Terrain Foot-IK & XPBD attachment anchors
+        raw::worldgen::Vec3 playerRoot{m_camPos[0], m_camPos[1], m_camPos[2] - 120.0f};
+        float playerSpeedXY = 0.0f;
+        if (m_walkMode) {
+            playerRoot    = m_playerBody.position;
+            playerSpeedXY = std::hypot(m_playerBody.velocity.x, m_playerBody.velocity.y);
+        } else if (physOpt) {
+            const auto dh = physOpt->RayCast({m_camPos[0], m_camPos[1], m_camPos[2] + 64.0f},
+                                             {0.0f, 0.0f, -1.0f}, 20000.0f);
+            if (dh.hit) {
+                playerRoot.z = dh.point[2];
+            } else {
+                float hz = 0.0f;
+                if (physOpt->SampleTerrainHeight(m_camPos[0], m_camPos[1], &hz)) playerRoot.z = hz;
+            }
+        }
+        raw::worldgen::AnimBlendParams pbp{};
+        pbp.phaseSec = m_simTimeSec;
+        if (playerSpeedXY > 300.0f) {
+            pbp.primaryClip   = raw::worldgen::AnimClipId::Walk;
+            pbp.secondaryClip = raw::worldgen::AnimClipId::Run;
+            pbp.blendAlpha    = std::clamp((playerSpeedXY - 280.0f) / 240.0f, 0.0f, 1.0f);
+        } else {
+            pbp.primaryClip   = raw::worldgen::AnimClipId::Idle;
+            pbp.secondaryClip = raw::worldgen::AnimClipId::Walk;
+            pbp.blendAlpha    = std::clamp(playerSpeedXY / 260.0f, 0.0f, 1.0f);
+        }
+        raw::worldgen::RawSkeletonAnimEngine::EvaluateCharacterRig(
+            playerRoot, m_camYaw, pbp, physOpt, m_playerPose, &m_playerXpbdAnchors);
+        m_playerRootPos = playerRoot;
+        m_playerRigEvaluated = true;
+
+        // 2. NavMesh Tactical Squad 24-bone procedural rigs with live Terrain Foot-IK
+        m_squadPoses.resize(m_tacticalSquad.size());
+        m_squadAnchors.resize(m_tacticalSquad.size());
+        for (size_t i = 0u; i < m_tacticalSquad.size(); ++i) {
+            const auto& ag = m_tacticalSquad[i];
+            const float spd = std::hypot(ag.velocity.x, ag.velocity.y);
+            const float yaw = (spd > 1.0f) ? std::atan2(ag.velocity.x, ag.velocity.y)
+                                           : std::atan2(ag.facing.x, ag.facing.y);
+            raw::worldgen::AnimBlendParams sbp{};
+            sbp.phaseSec                = m_simTimeSec + static_cast<float>(i) * 0.37f;
+            sbp.primaryClip             = (spd > 180.0f) ? raw::worldgen::AnimClipId::Run : raw::worldgen::AnimClipId::Walk;
+            sbp.secondaryClip           = raw::worldgen::AnimClipId::Idle;
+            sbp.blendAlpha              = (spd > 15.0f) ? 0.0f : 1.0f;
+            sbp.upperBodyClip           = (ag.archetype == raw::worldgen::TacticalArchetype::MeleeFlanker)
+                                        ? raw::worldgen::AnimClipId::MeleeSwing
+                                        : raw::worldgen::AnimClipId::BowDraw;
+            sbp.upperBodyAdditiveWeight = 0.65f;
+            sbp.upperBodyPhaseSec       = m_simTimeSec * 1.15f + static_cast<float>(i) * 0.5f;
+            raw::worldgen::RawSkeletonAnimEngine::EvaluateCharacterRig(
+                ag.position, yaw, sbp, physOpt, m_squadPoses[i], &m_squadAnchors[i]);
+        }
+    }
+
+    struct SkeletonFootIkProbe {
+        uint32_t evaluatedRigs     = 0u;
+        float    maxQuatNormErr    = 0.0f;
+        float    pelvisDropZ       = 0.0f;
+        bool     footPlanted       = false;
+        bool     xpbdAnchorsFinite = true;
+        bool     coupledToXpbd     = false;
+    };
+
+    SkeletonFootIkProbe RunSkeletonFootIkSelfTest()
+    {
+        SkeletonFootIkProbe p{};
+        UpdateSkeletonRigsAndFootIk(1.0f / 60.0f);
+        p.evaluatedRigs = 1u + static_cast<uint32_t>(m_squadPoses.size());
+        p.pelvisDropZ   = m_playerPose.pelvisDropZ;
+        p.footPlanted   = m_playerPose.leftFootPlanted || m_playerPose.rightFootPlanted;
+
+        auto checkPose = [&](const raw::worldgen::SkeletonPose& pose) {
+            for (const auto& bt : pose.world) {
+                const float err = std::abs(raw::worldgen::QuatNorm(bt.rot) - 1.0f);
+                p.maxQuatNormErr = std::max(p.maxQuatNormErr, err);
+                if (!std::isfinite(bt.pos.x) || !std::isfinite(bt.pos.y) || !std::isfinite(bt.pos.z) ||
+                    !std::isfinite(bt.rot.x) || !std::isfinite(bt.rot.y) || !std::isfinite(bt.rot.z) || !std::isfinite(bt.rot.w)) {
+                    p.xpbdAnchorsFinite = false;
+                }
+            }
+        };
+        checkPose(m_playerPose);
+        for (const auto& sp : m_squadPoses) checkPose(sp);
+
+        auto fin3 = [](const raw::worldgen::Vec3& v) {
+            return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+        };
+        if (!fin3(m_playerXpbdAnchors.hairRootPos) || !fin3(m_playerXpbdAnchors.capeShoulderLeft) ||
+            !fin3(m_playerXpbdAnchors.capeShoulderRight) || !fin3(m_playerXpbdAnchors.torsoCapsuleA) ||
+            !fin3(m_playerXpbdAnchors.torsoCapsuleB) || !fin3(m_playerXpbdAnchors.headCenter)) {
+            p.xpbdAnchorsFinite = false;
+        }
+        p.coupledToXpbd = m_playerRigEvaluated && m_xpbdOk && p.xpbdAnchorsFinite;
+        return p;
+    }
+
     void ToggleAudio()
     {
         if (m_opt.headlessFrames > 0u) return; // Strictly OFF in headless CI mode
@@ -1989,7 +2105,7 @@ public:
         // 2. Stream async Frontier chunks OR live multi-cell Tamriel (Skyrim.esm + .NIF) ring around camera!
         if (m_mode == WorldMode::Frontier) {
             PumpFrontierShowcase(false);
-        } else if (m_tamrielStreamer.IsInitialized()) {
+        } else if (m_mode == WorldMode::RiverwoodEsm && m_tamrielStreamer.IsInitialized()) {
             PumpTamrielStreamer(false);
         }
 
@@ -2029,6 +2145,7 @@ public:
             m_lastSquadOut = raw::worldgen::StepSquadTactics(
                 m_tacticalSquad, threat, activePhys, m_navMesh.IsBaked() ? &m_navMesh : nullptr, dtClamped);
         }
+        UpdateSkeletonRigsAndFootIk(dtClamped);
 
         // 4. Build camera & LightingCommon.hlsli cbuffer P.
         const float nearZ = 15.0f, farZ = 353840.0f;
@@ -2124,13 +2241,38 @@ public:
                 xp.windSpeedMps = std::clamp(wGpu.beaufortScale * 2.2f, 0.5f, 28.0f);
                 xp.gustPhase = m_simTimeSec * 1.4f;
                 xp.snowLoad01 = std::clamp(wGpu.seasonThermal0.x, 0.0f, 1.0f);
-                // Player world position wake sphere for interactive bush parting (scaled cleanly to meters)
-                xp.colliderCount = 1u;
-                xp.colliders[0].p0[0] = std::fmod(m_camPos[0] / 70.0f, 8.0f);
-                xp.colliders[0].p0[1] = std::fmod(m_camPos[1] / 70.0f, 8.0f);
-                xp.colliders[0].p0[2] = 0.85f;
-                xp.colliders[0].radius = 0.65f;
-                xp.colliders[0].flags = 0.0f; // sphere
+                // Couple live 24-bone Terrain Foot-IK animated head/torso/shoulder XPBD anchors directly into cloth/hair!
+                if (m_playerRigEvaluated) {
+                    auto toLocalM = [&](const raw::worldgen::Vec3& wPos, float outM[3]) {
+                        outM[0] = (wPos.x - m_playerRootPos.x) / 70.0f;
+                        outM[1] = (wPos.y - m_playerRootPos.y) / 70.0f;
+                        outM[2] = std::max(0.05f, (wPos.z - m_playerRootPos.z) / 70.0f);
+                    };
+                    xp.colliderCount = 4u;
+                    // 0: Animated head sphere collider
+                    toLocalM(m_playerXpbdAnchors.headCenter, xp.colliders[0].p0);
+                    xp.colliders[0].radius = 0.14f;
+                    xp.colliders[0].flags  = 0.0f; // sphere
+                    // 1: Animated torso capsule collider
+                    toLocalM(m_playerXpbdAnchors.torsoCapsuleA, xp.colliders[1].p0);
+                    toLocalM(m_playerXpbdAnchors.torsoCapsuleB, xp.colliders[1].p1);
+                    xp.colliders[1].radius = 0.22f;
+                    xp.colliders[1].flags  = 1.0f; // capsule
+                    // 2 & 3: Animated left & right cape shoulder sphere colliders
+                    toLocalM(m_playerXpbdAnchors.capeShoulderLeft, xp.colliders[2].p0);
+                    xp.colliders[2].radius = 0.12f;
+                    xp.colliders[2].flags  = 0.0f;
+                    toLocalM(m_playerXpbdAnchors.capeShoulderRight, xp.colliders[3].p0);
+                    xp.colliders[3].radius = 0.12f;
+                    xp.colliders[3].flags  = 0.0f;
+                } else {
+                    xp.colliderCount = 1u;
+                    xp.colliders[0].p0[0] = std::fmod(m_camPos[0] / 70.0f, 8.0f);
+                    xp.colliders[0].p0[1] = std::fmod(m_camPos[1] / 70.0f, 8.0f);
+                    xp.colliders[0].p0[2] = 0.85f;
+                    xp.colliders[0].radius = 0.65f;
+                    xp.colliders[0].flags = 0.0f; // sphere
+                }
                 m_xpbdSim.Step(m_cmd.Get(), xp);
             }
         }
@@ -2567,6 +2709,28 @@ public:
             m_cloudRaymarchRan  = m_cloudRaymarch.Execute(m_dispCmd.Get(), halfW, halfH, crp);
         }
 
+        // Live GPU Cinematic Post-Process: Hexagonal Bokeh DoF + Motion Blur + Vignette (RawPostCinematicHost - 14th Live GPU Solver!)
+        if (m_postCinematicOk) {
+            PostCinematicParams pcp{};
+            pcp.nearZ             = nearZ;
+            pcp.farZ              = farZ;
+            pcp.focusDistanceM    = m_lastRayHit.hit ? std::clamp(m_lastRayHit.distance, 60.0f, 8000.0f) : 950.0f;
+            pcp.focalLengthMm     = 50.0f;
+            pcp.apertureFStop     = 2.2f;
+            pcp.cocScale          = 1.25f;
+            pcp.dofStrength       = 0.85f;
+            pcp.maxBokehRadiusPx  = 8.0f;
+            pcp.motionBlurScale   = 0.85f;
+            pcp.maxMotionRadiusPx = 18.0f;
+            pcp.vignetteStrength  = 0.16f;
+            pcp.frameJitter       = static_cast<float>(m_frameCount & 63ull);
+            const uint32_t halfW  = std::max(1u, m_width / 2u);
+            const uint32_t halfH  = std::max(1u, m_height / 2u);
+            m_postCinematicRan    = m_postCinematic.Execute(
+                m_dispCmd.Get(), m_hdrColor.Get(), m_depthIn.Get(), nullptr, halfW, halfH, pcp,
+                D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COMMON);
+        }
+
         if (m_radOk && m_giEnabled) {
             m_radianceHost.ExecuteScreenGI(m_dispCmd.Get(), m_hdrColor.Get(), m_depthIn.Get(),
                                            m_width, m_height, 0.16f);
@@ -2691,6 +2855,8 @@ public:
         float    autoExpAdaptMs       = 0.0f;
         bool     cloudRaymarchActive  = false;
         float    cloudRaymarchMs      = 0.0f;
+        bool     postCinematicActive  = false;
+        float    postCinematicMs      = 0.0f;
         uint32_t biomesFound          = 0u;
     };
 
@@ -2737,6 +2903,8 @@ public:
         out->autoExpAdaptMs = m_autoExposure.HasValidTiming() ? m_autoExposure.GetLastAdaptMs() : 0.0f;
         out->cloudRaymarchActive = m_cloudRaymarchOk && m_cloudRaymarch.Ready() && m_cloudRaymarchRan;
         out->cloudRaymarchMs = m_cloudRaymarch.HasValidTiming() ? m_cloudRaymarch.GetLastCloudMs() : 0.0f;
+        out->postCinematicActive = m_postCinematicOk && m_postCinematic.Ready() && m_postCinematicRan;
+        out->postCinematicMs = m_postCinematic.HasValidTiming() ? m_postCinematic.GetLastTotalMs() : 0.0f;
 
         const UINT hdrPitch  = (m_width * 8u + 255u) & ~255u;
         const UINT dispPitch = (m_width * 4u + 255u) & ~255u;
@@ -2880,6 +3048,10 @@ public:
         }
         m_cullInstUpload.Reset();
         m_cullInstBuf.Reset();
+        m_postCinematic.Shutdown();
+        m_squadPoses.clear();
+        m_squadAnchors.clear();
+        m_playerRigEvaluated = false;
         m_cloudRaymarch.Shutdown();
         m_autoExposure.Shutdown();
         m_ssr.Shutdown();
@@ -2973,6 +3145,7 @@ public:
         const float ssrMs         = m_ssr.HasValidTiming() ? m_ssr.GetLastSsrMs() : 0.0f;
         const float aeMs          = m_autoExposure.HasValidTiming() ? (m_autoExposure.GetLastHistMs() + m_autoExposure.GetLastAdaptMs()) : 0.0f;
         const float cloudMs       = m_cloudRaymarch.HasValidTiming() ? m_cloudRaymarch.GetLastCloudMs() : 0.0f;
+        const float postMs        = m_postCinematic.HasValidTiming() ? m_postCinematic.GetLastTotalMs() : 0.0f;
         const auto activeHid      = static_cast<raw::worldgen::HoldId>(m_activeHoldIdx % static_cast<uint32_t>(raw::worldgen::kHoldCount));
         const auto* activeHold    = m_settlementSim.GetHold(activeHid);
         const float holdGrain     = activeHold ? activeHold->price[static_cast<size_t>(raw::worldgen::CommodityKind::Grain)] : 0.0f;
@@ -3001,7 +3174,7 @@ public:
         }
         char buf[1536]{};
         std::snprintf(buf, sizeof(buf),
-                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms PCSS:%.3fms GTAO:%.3fms SSR:%.3fms AE:%.3fms Cloud:%.3fms HUD:%.3fms | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u | %s:%.1fg Car:%u(Snw:%u) Scarce:%s%s%s%s%s%s | Shards:%u",
+                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms PCSS:%.3fms GTAO:%.3fms SSR:%.3fms AE:%.3fms Cloud:%.3fms POST:%.3fms HUD:%.3fms | IK:%.1fu | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u | %s:%.1fg Car:%u(Snw:%u) Scarce:%s%s%s%s%s%s | Shards:%u",
                       m_walkMode ? "WALK" : "FLY",
                       fps, m_lastDrawnMeshlets, m_meshHost.TerrainUsesMeshShaders() ? "AS+MS" : "VS+PS",
                       locBuf, TimePresetName(m_timePreset), ActiveWeatherDisplayName(),
@@ -3017,7 +3190,9 @@ public:
                       ssrMs,
                       aeMs,
                       cloudMs,
+                      postMs,
                       m_overlayHost.HasValidTiming() ? m_overlayHost.GetLastOverlayMs() : 0.0f,
+                      static_cast<double>(m_playerPose.pelvisDropZ),
                       m_ecoTelemetry.activeFireCells,
                       static_cast<double>(m_ecoTelemetry.totalSnowVolumeM3),
                       m_ecoTelemetry.blackIceCells,
@@ -3494,19 +3669,20 @@ private:
         const float ssrMs    = m_ssr.HasValidTiming() ? m_ssr.GetLastSsrMs() : 0.0f;
         const float aeMs     = m_autoExposure.HasValidTiming() ? (m_autoExposure.GetLastHistMs() + m_autoExposure.GetLastAdaptMs()) : 0.0f;
         const float cloudMs  = m_cloudRaymarch.HasValidTiming() ? m_cloudRaymarch.GetLastCloudMs() : 0.0f;
+        const float postMs   = m_postCinematic.HasValidTiming() ? m_postCinematic.GetLastTotalMs() : 0.0f;
         std::memset(outHud.lines[2], 0, sizeof(outHud.lines[2]));
         std::snprintf(outHud.lines[2], sizeof(outHud.lines[2]), "GPU F:%.2f W:%.2f GI:%.2f XP:%.2f FX:%.2f PS:%.2f",
                       static_cast<double>(snap.fireMs), static_cast<double>(snap.waterMs),
                       static_cast<double>(snap.giMs), static_cast<double>(snap.xpbdMs),
                       static_cast<double>(froxMs), static_cast<double>(pcssMs));
         std::memset(outHud.lines[3], 0, sizeof(outHud.lines[3]));
-        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "AO:%.3f SSR:%.3f AE:%.3f CLD:%.3f CL:%.3f LC:%.3f",
+        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "AO:%.2f SR:%.2f AE:%.2f CD:%.2f POST:%.3f LC:%.2f",
                       static_cast<double>(gtaoMs),
                       static_cast<double>(ssrMs),
                       static_cast<double>(aeMs),
                       static_cast<double>(cloudMs),
-                      static_cast<double>(hizMs + cullMs),
-                      static_cast<double>(lclustMs));
+                      static_cast<double>(postMs),
+                      static_cast<double>(lclustMs + hizMs + cullMs));
 
         const char* topEvName = m_eventDirector.ActiveEvents().empty()
                               ? "NONE"
@@ -3931,6 +4107,8 @@ private:
     bool          m_autoExposureRan = false;
     bool          m_cloudRaymarchOk = false;
     bool          m_cloudRaymarchRan = false;
+    bool          m_postCinematicOk = false;
+    bool          m_postCinematicRan = false;
     std::string   m_adapterName;
 
     ComPtr<IDXGIFactory4>              m_factory;
@@ -3976,6 +4154,13 @@ private:
     RawSsrHost                         m_ssr;
     RawAutoExposureHost                m_autoExposure;
     RawCloudRaymarchHost               m_cloudRaymarch;
+    RawPostCinematicHost               m_postCinematic;
+    raw::worldgen::SkeletonPose        m_playerPose{};
+    raw::worldgen::XpbdAttachmentAnchors m_playerXpbdAnchors{};
+    raw::worldgen::Vec3                m_playerRootPos{};
+    bool                               m_playerRigEvaluated = false;
+    std::vector<raw::worldgen::SkeletonPose> m_squadPoses;
+    std::vector<raw::worldgen::XpbdAttachmentAnchors> m_squadAnchors;
     ComPtr<ID3D12Resource>             m_shadowOutTex;
     ComPtr<ID3D12Resource>             m_shadowMapProxy;
     float                              m_prevWorldToClip[16] = {};
@@ -4252,6 +4437,7 @@ int main(int argc, char** argv)
         RawEngineViewer::DiplomacyProbe diplomacyProbe{};
         RawEngineViewer::SerializerProbe serializerProbe{};
         RawEngineViewer::DungeonExplorerProbe dungeonProbe{};
+        RawEngineViewer::SkeletonFootIkProbe skelProbe{};
         bool teleportedToWhiterun = false;
         for (uint32_t f = 0; f < opt.headlessFrames; ++f) {
             if (f == 0u) {
@@ -4267,6 +4453,7 @@ int main(int argc, char** argv)
                     riverwoodNav  = viewer.RunNavMeshSquadSelfTest();
                 }
                 dungeonProbe    = viewer.RunDungeonExplorerSelfTest();
+                skelProbe       = viewer.RunSkeletonFootIkSelfTest();
             }
             if (f == opt.headlessFrames / 2u) {
                 if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {
@@ -4289,7 +4476,7 @@ int main(int argc, char** argv)
 
         RawEngineViewer::HeadlessAudit audit{};
         const bool rbOk = viewer.ReadbackHeadlessAudit(&audit);
-        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), pcss=%s (%.4fms), gtao=%s (main=%.4fms, den=%.4fms), ssr=%s (%.4fms), ae=%s (hist=%.4fms, adapt=%.4fms), cloud=%s (%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
+        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), pcss=%s (%.4fms), gtao=%s (main=%.4fms, den=%.4fms), ssr=%s (%.4fms), ae=%s (hist=%.4fms, adapt=%.4fms), cloud=%s (%.4fms), post=%s (%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
                     audit.usedMeshShaders ? "AS+MS+PS" : "VS+PS",
                     audit.drawnMeshlets, audit.activeShards, audit.biomesFound,
                     audit.radianceActive ? "ON" : "off", audit.radianceGiMs,
@@ -4303,9 +4490,14 @@ int main(int argc, char** argv)
                     audit.ssrActive ? "ON" : "off", audit.ssrMs,
                     audit.autoExposureActive ? "ON" : "off", audit.autoExpHistMs, audit.autoExpAdaptMs,
                     audit.cloudRaymarchActive ? "ON" : "off", audit.cloudRaymarchMs,
+                    audit.postCinematicActive ? "ON" : "off", audit.postCinematicMs,
                     audit.overlayActive ? "ON" : "off", audit.overlayMs, audit.hudNonZeroPx,
                     audit.hdrLitPixels, audit.hdrNanInf,
                     audit.dispNonZeroPx, audit.dispMeanLuma, audit.dispStdDevLuma);
+        std::printf("       Skeleton Foot-IK: rigs=%u maxQuatErr=%.2e pelvisDrop=%.2fu footPlant=%d xpbdAnchorsFinite=%d coupled=%d\n",
+                    skelProbe.evaluatedRigs, static_cast<double>(skelProbe.maxQuatNormErr),
+                    static_cast<double>(skelProbe.pelvisDropZ), int(skelProbe.footPlanted),
+                    int(skelProbe.xpbdAnchorsFinite), int(skelProbe.coupledToXpbd));
         std::printf("       Ecosystem: ignited=%u activeFire=%u burned=%.1fm2 snow=%.1fm3 runoff=%.2fm3 ice=%u peakTemp=%.1fC finite=%d\n",
                     ecoProbe.ignitedCells, ecoProbe.activeFireCells, ecoProbe.burnedAreaM2,
                     ecoProbe.snowVolumeM3, ecoProbe.meltRunoffM3, ecoProbe.blackIceCells,
@@ -4358,6 +4550,11 @@ int main(int argc, char** argv)
               "Live GPU 256-Bin Auto-Exposure (RawAutoExposureHost - 12th GPU Solver) executed cleanly");
         check(audit.cloudRaymarchActive && std::isfinite(audit.cloudRaymarchMs) && audit.cloudRaymarchMs >= 0.0f,
               "Live GPU 3D Volumetric Cloud Raymarcher (RawCloudRaymarchHost - 13th GPU Solver) executed cleanly");
+        check(audit.postCinematicActive && std::isfinite(audit.postCinematicMs) && audit.postCinematicMs >= 0.0f,
+              "Live GPU Cinematic Post-Process DoF+MotionBlur+Vignette (RawPostCinematicHost - 14th GPU Solver) executed cleanly");
+        check(skelProbe.evaluatedRigs >= 1u && skelProbe.maxQuatNormErr < 1.0e-4f &&
+              skelProbe.footPlanted && skelProbe.xpbdAnchorsFinite && skelProbe.coupledToXpbd,
+              "Live 24-Bone Procedural Skeleton Animation + Terrain Foot-IK + XPBD Anchor Coupling passed cleanly");
         check(dungeonProbe.barrowOk && dungeonProbe.iceCavernOk && dungeonProbe.dwemerRuinOk && dungeonProbe.returnedOk &&
               dungeonProbe.navWalkable > 100u && dungeonProbe.astarWaypoints >= 2u && dungeonProbe.walkGrounded,
               "Interactive Procedural 3D Dungeon Explorer cycled all 3 archetypes + interior NavMesh A* + Walk Mode & returned cleanly");

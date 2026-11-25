@@ -22,6 +22,7 @@
 #include "../src/worldgen/RawFactionDiplomacy.h"
 #include "../src/worldgen/RawNavMeshAi.h"
 #include "../src/worldgen/RawSettlementSim.h"
+#include "../src/worldgen/RawSkeletonAnimEngine.h"
 #include "../src/worldgen/RawTamrielWorldStreamer.h"
 #include "../src/worldgen/RawWildlifeBoids.h"
 #include "../src/worldgen/RawWorldEcosystem.h"
@@ -1661,6 +1662,158 @@ bool RunDungeonGenAudit() {
     return ok;
 }
 
+bool RunSkeletonIkAudit() {
+    using namespace raw::worldgen;
+    const auto t0 = std::chrono::steady_clock::now();
+    constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
+
+    auto makeSlope = [&](uint64_t key, float slopeDegX, float baseZ) -> TerrainCellHeightfield {
+        TerrainCellHeightfield hf{};
+        hf.cellKey     = key;
+        hf.originX     = -2048.0f;
+        hf.originY     = -2048.0f;
+        hf.sizeX       = 4096.0f;
+        hf.sizeY       = 4096.0f;
+        hf.gridW       = 33u;
+        hf.gridH       = 33u;
+        hf.waterLevelZ = -14000.0f;
+        hf.heights.resize(33u * 33u, baseZ);
+        const float tanS = std::tan(slopeDegX * kDegToRad);
+        const float dx   = hf.sizeX / 32.0f;
+        for (uint32_t iy = 0u; iy < 33u; ++iy) {
+            for (uint32_t ix = 0u; ix < 33u; ++ix) {
+                const float wx = hf.originX + static_cast<float>(ix) * dx;
+                hf.heights[static_cast<size_t>(iy) * 33u + ix] = baseZ + wx * tanS;
+            }
+        }
+        return hf;
+    };
+
+    const auto& rig = RawSkeletonAnimEngine::HumanoidRig();
+
+    // 1. Unit Quaternion Norm & Bone-Length Invariance across 24 bones x 6 clips
+    float maxQuatErr = 0.0f;
+    float maxLenErr  = 0.0f;
+    bool  fkFinite   = true;
+    for (uint8_t c = 0u; c < static_cast<uint8_t>(AnimClipId::Count); ++c) {
+        AnimBlendParams bp{};
+        bp.primaryClip = static_cast<AnimClipId>(c);
+        bp.phaseSec    = 0.37f + static_cast<float>(c) * 0.21f;
+        SkeletonPose pose{};
+        RawSkeletonAnimEngine::EvaluateCharacterRig({100.0f, -50.0f, 10.0f}, 0.7f, bp, nullptr, pose);
+        for (size_t i = 0u; i < kHumanoidBoneCount; ++i) {
+            if (!IsFinite3(pose.world[i].pos)) fkFinite = false;
+            const float qErr = std::fabs(QuatNorm(pose.world[i].rot) - 1.0f);
+            if (qErr > maxQuatErr) maxQuatErr = qErr;
+            const int32_t pIdx = rig[i].parentIndex;
+            if (pIdx >= 0) {
+                const float curLen = Length(pose.world[i].pos - pose.world[static_cast<size_t>(pIdx)].pos);
+                const float lErr   = std::fabs(curLen - rig[i].restLength);
+                if (lErr > maxLenErr) maxLenErr = lErr;
+            }
+        }
+    }
+    const bool fkOk = fkFinite && (maxQuatErr < 1.0e-5f) && (maxLenErr < 1.0e-4f);
+
+    // 2. Analytic 2-Bone IK Reach + Knee Pole Lock + FABRIK Chain
+    const Vec3 hip{0.0f, 0.0f, 64.0f};
+    const Vec3 knee{0.0f, 0.0f, 34.0f};
+    const Vec3 ankle{0.0f, 0.0f, 6.0f};
+    const Vec3 target{4.0f, 14.0f, 22.0f};
+    const Vec3 pole{0.0f, 60.0f, 34.0f};
+    const TwoBoneIkResult ik = RawSkeletonAnimEngine::SolveTwoBoneIK(hip, knee, ankle, target, pole);
+    const float errL1 = std::fabs(Length(ik.midPos - hip) - 30.0f);
+    const float errL2 = std::fabs(Length(ik.endPos - ik.midPos) - 28.0f);
+    const bool poleOk = (ik.midPos.y > 0.5f * (hip.y + target.y));
+
+    std::vector<Vec3> chain = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 20.0f}, {0.0f, 0.0f, 40.0f}, {0.0f, 0.0f, 60.0f}};
+    const float fabErr = RawSkeletonAnimEngine::SolveFabrikChain(chain, {28.0f, 16.0f, 32.0f}, 16u, 1.0e-4f);
+    const bool ikOk = !ik.clampedToReach && (ik.reachError < 1.0e-3f) &&
+                      (errL1 < 1.0e-4f) && (errL2 < 1.0e-4f) && poleOk && (fabErr < 1.0e-3f);
+
+    // 3. Live RawWorldPhysics 22-deg Slope Terrain Foot-IK & XPBD Anchors
+    RawWorldPhysics slopeWorld;
+    slopeWorld.AddTerrainHeightfield(makeSlope(PackCellKey(0, 0), 22.0f, 100.0f));
+    float centerZ = 0.0f;
+    slopeWorld.SampleTerrainHeight(0.0f, 0.0f, &centerZ);
+    AnimBlendParams idle{};
+    idle.primaryClip = AnimClipId::Idle;
+    SkeletonPose slopePose{};
+    XpbdAttachmentAnchors anchors{};
+    RawSkeletonAnimEngine::EvaluateCharacterRig({0.0f, 0.0f, centerZ}, 0.0f, idle, &slopeWorld, slopePose, &anchors);
+
+    const Vec3 footL = slopePose.world[static_cast<size_t>(BoneId::FootL)].pos;
+    const Vec3 footR = slopePose.world[static_cast<size_t>(BoneId::FootR)].pos;
+    float gZL = 0.0f, gZR = 0.0f;
+    slopeWorld.SampleTerrainHeight(footL.x, footL.y, &gZL);
+    slopeWorld.SampleTerrainHeight(footR.x, footR.y, &gZR);
+    const float footErrL = std::fabs((footL.z - 6.0f) - gZL);
+    const float footErrR = std::fabs((footR.z - 6.0f) - gZR);
+    const float legL     = Length(footL - slopePose.world[static_cast<size_t>(BoneId::ThighL)].pos);
+    const float legR     = Length(footR - slopePose.world[static_cast<size_t>(BoneId::ThighR)].pos);
+    const bool anchorsOk = IsFinite3(anchors.hairRootPos) && IsFinite3(anchors.capeShoulderLeft) &&
+                           IsFinite3(anchors.capeShoulderRight) && IsFinite3(anchors.beltBack) &&
+                           IsFinite3(anchors.torsoCapsuleA) && IsFinite3(anchors.headCenter) &&
+                           (anchors.hairRootPos.z > anchors.torsoCapsuleB.z) &&
+                           (anchors.torsoCapsuleB.z > anchors.torsoCapsuleA.z);
+    const bool footIkOk = slopePose.leftFootPlanted && slopePose.rightFootPlanted &&
+                          (slopePose.pelvisDropZ < -0.5f) && (footErrL < 0.5f) && (footErrR < 0.5f) &&
+                          (legL <= 58.0f) && (legR <= 58.0f) && (footR.z > footL.z + 2.0f) && anchorsOk;
+
+    // 4. 64-Rig Full Blend + FK + Terrain Foot-IK + XPBD Anchor Throughput
+    RawWorldPhysics benchWorld;
+    benchWorld.AddTerrainHeightfield(makeSlope(PackCellKey(0, 0), 12.0f, 0.0f));
+    std::vector<SkeletonPose> batchPoses(64u);
+    std::vector<XpbdAttachmentAnchors> batchAnchors(64u);
+    AnimBlendParams runBp{};
+    runBp.primaryClip             = AnimClipId::Walk;
+    runBp.secondaryClip           = AnimClipId::Run;
+    runBp.blendAlpha              = 0.65f;
+    runBp.upperBodyClip           = AnimClipId::MeleeSwing;
+    runBp.upperBodyAdditiveWeight = 0.35f;
+
+    for (int w = 0; w < 4; ++w) {
+        for (size_t r = 0u; r < 64u; ++r) {
+            runBp.phaseSec = static_cast<float>(r) * 0.1f;
+            RawSkeletonAnimEngine::EvaluateCharacterRig(
+                {static_cast<float>(r) * 15.0f - 480.0f, 0.0f, 0.0f}, 0.25f,
+                runBp, &benchWorld, batchPoses[r], &batchAnchors[r]);
+        }
+    }
+    constexpr int kBenchIters = 20;
+    const auto tb0 = std::chrono::steady_clock::now();
+    for (int it = 0; it < kBenchIters; ++it) {
+        for (size_t r = 0u; r < 64u; ++r) {
+            runBp.phaseSec = static_cast<float>(it) * 0.016f + static_cast<float>(r) * 0.1f;
+            RawSkeletonAnimEngine::EvaluateCharacterRig(
+                {static_cast<float>(r) * 15.0f - 480.0f, 0.0f, 0.0f}, 0.25f,
+                runBp, &benchWorld, batchPoses[r], &batchAnchors[r]);
+        }
+    }
+    const double msPer64Rigs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - tb0).count() / static_cast<double>(kBenchIters);
+    const bool perfOk = (msPer64Rigs < 1.0);
+
+    const double totalMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    const bool ok = fkOk && ikOk && footIkOk && perfOk;
+
+    std::printf(
+        "[INFO] 24-Bone Humanoid Skeleton & Terrain Foot-IK Audit (%.2f ms):\n"
+        "  1. FK 24-Bone x 6 Clips : maxQuatErr=%.2e maxLenErr=%.2e finite=%s [%s]\n"
+        "  2. 2-Bone IK + FABRIK   : reachErr=%.2e errL1=%.2e errL2=%.2e pole=%s fabrikErr=%.2e [%s]\n"
+        "  3. Slope Foot-IK (22deg): pelvisDrop=%.2fu footErr=(%.3f,%.3f)u leg=(%.1f,%.1f)/58u xpbdAnchors=%s [%s]\n"
+        "  4. 64-Rig Throughput    : 64 rigs (Blend+FK+FootIK+XPBD) = %.3f ms/frame (<1.0ms) [%s]\n"
+        "[%s] skeleton-ik: 24-bone FK/IK/slope-FootIK/XPBD/64-rig audit %s (%.2f ms)\n",
+        totalMs,
+        maxQuatErr, maxLenErr, fkFinite ? "yes" : "no", fkOk ? "PASS" : "FAIL",
+        ik.reachError, errL1, errL2, poleOk ? "yes" : "no", fabErr, ikOk ? "PASS" : "FAIL",
+        slopePose.pelvisDropZ, footErrL, footErrR, legL, legR, anchorsOk ? "valid" : "invalid", footIkOk ? "PASS" : "FAIL",
+        msPer64Rigs, perfOk ? "PASS" : "FAIL",
+        ok ? "PASS" : "FAIL", ok ? "PASS" : "FAIL", totalMs);
+    return ok;
+}
+
 bool ParseCellXY(const std::string& s, int32_t* outX, int32_t* outY) {
     const size_t comma = s.find(',');
     if (comma == std::string::npos || comma == 0u || comma + 1u >= s.size()) return false;
@@ -1703,6 +1856,7 @@ void PrintUsage() {
         "  raw_forge_cli --diplomacy-sim                           9-hold & 6-faction diplomacy, bounty & amnesty audit\n"
         "  raw_forge_cli --world-snapshot                          5-pillar RAWWORLD v1 CRC-32 binary + JSON snapshot audit\n"
         "  raw_forge_cli --dungeon-gen                             3-archetype 3D dungeon meshlet + Entrance->Boss A* audit\n"
+        "  raw_forge_cli --skeleton-ik                             24-bone humanoid FK/IK/slope-FootIK/XPBD/64-rig audit\n"
         "  raw_forge_cli --validate-all [dir]                      Run all 4 procedural pipelines + quality gates\n"
         "Options:\n"
         "  --seed <N>         Deterministic RNG seed (default: 202607)\n"
@@ -1765,6 +1919,7 @@ int main(int argc, char** argv) {
     bool runDiplomacySim    = false;
     bool runWorldSnapshot   = false;
     bool runDungeonGen      = false;
+    bool runSkeletonIk      = false;
     bool writeGeometry      = true;
     uint32_t seed       = 202607u;
     float latitudeDeg   = 60.0f;
@@ -1927,6 +2082,8 @@ int main(int argc, char** argv) {
             runWorldSnapshot = true;
         } else if (arg == "--dungeon-gen") {
             runDungeonGen = true;
+        } else if (arg == "--skeleton-ik") {
+            runSkeletonIk = true;
         } else if (arg == "--validate-all") {
             runValidateAll = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -1953,11 +2110,11 @@ int main(int argc, char** argv) {
 
     if (!runValidateAll && !runEsmMeta && !runPhysicsProbe && !runTamrielStream && !runNavMeshAudit &&
         !runEcosystemSim && !runWildlifeSim && !runSettlementSim && !runEventsSim && !runDiplomacySim &&
-        !runWorldSnapshot && !runDungeonGen &&
+        !runWorldSnapshot && !runDungeonGen && !runSkeletonIk &&
         floraDir.empty() && dioramaDir.empty() && almanacDir.empty() &&
         materialsDir.empty() && texturesDir.empty() && esmPath.empty() && esmScenePath.empty() &&
         bsaListPath.empty() && nifPath.empty() && bsaNifArchive.empty() && ddsPath.empty() && bsaDdsArchive.empty()) {
-        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, --events-sim, --diplomacy-sim, --world-snapshot, --dungeon-gen, or --validate-all).\n");
+        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, --events-sim, --diplomacy-sim, --world-snapshot, --dungeon-gen, --skeleton-ik, or --validate-all).\n");
         PrintUsage();
         return 2;
     }
@@ -2094,6 +2251,10 @@ int main(int argc, char** argv) {
 
     if (runDungeonGen) {
         if (!RunDungeonGenAudit()) allOk = false;
+    }
+
+    if (runSkeletonIk) {
+        if (!RunSkeletonIkAudit()) allOk = false;
     }
 
     if (runValidateAll) {

@@ -131,6 +131,9 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
     const float cloudRaymarchMs = (cloudRaymarchReady && cloudRaymarch && cloudRaymarch->HasValidTiming() &&
                                    std::isfinite(cloudRaymarch->GetLastCloudMs()))
         ? cloudRaymarch->GetLastCloudMs() : 0.0f;
+    const float postCinematicMs = (postCinematicReady && postCinematic && postCinematic->HasValidTiming() &&
+                                   std::isfinite(postCinematic->GetLastTotalMs()))
+        ? postCinematic->GetLastTotalMs() : 0.0f;
 
     char jsonBuf[3072]{};
     const int n = std::snprintf(
@@ -170,6 +173,7 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"autoExposureHistMs\": %.4f,\n"
         "  \"autoExposureAdaptMs\": %.4f,\n"
         "  \"cloudRaymarchMs\": %.4f,\n"
+        "  \"postCinematicMs\": %.4f,\n"
         "  \"seasonSnowM\": %.4f,\n"
         "  \"seasonIceM\": %.4f,\n"
         "  \"skinTempC\": %.3f,\n"
@@ -211,6 +215,7 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         autoExposureHistMs,
         autoExposureAdaptMs,
         cloudRaymarchMs,
+        postCinematicMs,
         seasonSnowM,
         seasonIceM,
         skinTempC,
@@ -1547,6 +1552,66 @@ bool D3D12Bridge::Impl::ExecuteCloudRaymarchOnQueue(bool isInterior)
     return true;
 }
 
+bool D3D12Bridge::Impl::ExecutePostCinematicOnQueue(bool hasMotion)
+{
+    if (!postCinematicReady || !postCinematic || !postCinematic->Ready() ||
+        !queue || !postCinematicList || !postCinematicFence || !postCinematicEvent ||
+        !colorOut.res12 || !depthIn.res12) {
+        return false;
+    }
+
+    const uint32_t slot = postCinematicSlot;
+    if (postCinematicSlotVal[slot] > 0 && postCinematicFence->GetCompletedValue() < postCinematicSlotVal[slot]) {
+        postCinematicFence->SetEventOnCompletion(postCinematicSlotVal[slot], postCinematicEvent);
+        WaitForSingleObject(postCinematicEvent, 3000);
+    }
+    if (FAILED(postCinematicAlloc[slot]->Reset()) ||
+        FAILED(postCinematicList->Reset(postCinematicAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    const uint32_t outW = std::max(cfg.width / 2u, 64u);
+    const uint32_t outH = std::max(cfg.height / 2u, 36u);
+    ID3D12Resource* velRes = (hasMotion && motionIn.res12) ? motionIn.res12.Get() : nullptr;
+
+    PostCinematicParams pp{};
+    pp.nearZ             = 16.0f;
+    pp.farZ              = 16384.0f;
+    pp.focusDistanceM    = 640.0f;
+    pp.focalLengthMm     = 50.0f;
+    pp.apertureFStop     = 2.2f;
+    pp.cocScale          = 1.25f;
+    pp.dofStrength       = 0.85f;
+    pp.maxBokehRadiusPx  = 8.0f;
+    pp.motionBlurScale   = velRes ? 1.0f : 0.0f;
+    pp.maxMotionRadiusPx = 20.0f;
+    pp.vignetteStrength  = 0.18f;
+    pp.frameJitter       = static_cast<float>(postCinematicStepFrames & 63ull);
+
+    postCinematic->Execute(postCinematicList.Get(),
+                           colorOut.res12.Get(), depthIn.res12.Get(), velRes,
+                           outW, outH, pp,
+                           D3D12_RESOURCE_STATE_COMMON,
+                           D3D12_RESOURCE_STATE_COMMON,
+                           D3D12_RESOURCE_STATE_COMMON);
+
+    if (FAILED(postCinematicList->Close())) return false;
+    ID3D12CommandList* lists[1] = {postCinematicList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(postCinematicFence.Get(), ++postCinematicFenceVal);
+    postCinematicSlotVal[slot] = postCinematicFenceVal;
+    postCinematicSlot = (slot + 1u) % kRing;
+
+    if ((postCinematicStepFrames++ % 180ull) == 0ull) {
+        log("[PostCinematic] live half-res %ux%u MB+DoF: tileMs=%.4f, compMs=%.4f, motion=%s",
+            outW, outH,
+            postCinematic->HasValidTiming() ? postCinematic->GetLastTileMs() : 0.0f,
+            postCinematic->HasValidTiming() ? postCinematic->GetLastCompositeMs() : 0.0f,
+            velRes ? "on" : "off");
+    }
+    return true;
+}
+
 bool D3D12Bridge::Impl::CpuWait(uint64_t value, DWORD timeoutMs)
 {
     return WaitFence(fence12.Get(), value, cpuEvent, timeoutMs);
@@ -1786,8 +1851,11 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                                  m->autoExposure && m->autoExposure->Ready() && m->colorOut.res12 != nullptr;
     const bool runCloudRaymarch = m->cfg.lightingPass && m->lighting.valid && m->cloudRaymarchReady &&
                                   m->cloudRaymarch && m->cloudRaymarch->Ready();
+    const bool runPostCinematic = m->cfg.lightingPass && m->lighting.valid && m->postCinematicReady &&
+                                  m->postCinematic && m->postCinematic->Ready() &&
+                                  m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr;
     const bool runOverlay = m->overlayHudEnabled && m->overlayHostReady && m->overlayHost && m->overlayHost->Ready();
-    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runAutoExposure || runCloudRaymarch || runOverlay;
+    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runAutoExposure || runCloudRaymarch || runPostCinematic || runOverlay;
     auto runPostLightingPasses = [&]() -> bool {
         if (!hasPostWork) return true;
         if (runTerrain) {
@@ -1888,6 +1956,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         }
         if (runCloudRaymarch) {
             m->ExecuteCloudRaymarchOnQueue(isInterior);
+        }
+        if (runPostCinematic) {
+            m->ExecutePostCinematicOnQueue(s.hasMotion);
         }
         if (runOverlay) {
             m->ExecuteOverlayHudOnQueue(isInterior);

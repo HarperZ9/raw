@@ -18,6 +18,7 @@
 #include "RawSsrHost.h"
 #include "RawAutoExposureHost.h"
 #include "RawCloudRaymarchHost.h"
+#include "RawPostCinematicHost.h"
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
@@ -94,6 +95,7 @@ struct D3D12Bridge::Impl
     std::unique_ptr<RawSsrHost> ssrHost; // Live GPU GGX Stochastic Screen-Space Reflections solver
     std::unique_ptr<RawAutoExposureHost> autoExposure; // Live GPU 256-Bin Log-Luminance Histogram & Eye-Adaptation Auto-Exposure
     std::unique_ptr<RawCloudRaymarchHost> cloudRaymarch; // Live GPU 3D Volumetric Cloud Raymarching + Beer-Powder Silver-Lining solver
+    std::unique_ptr<RawPostCinematicHost> postCinematic; // Live GPU Tile-Max Motion Blur + Depth-Aware Hexagonal Bokeh DoF solver
     bool                     fluidReady = false;
     bool                     radianceReady = false;
     bool                     xpbdSimReady = false;
@@ -109,6 +111,7 @@ struct D3D12Bridge::Impl
     bool                     ssrHostReady = false;
     bool                     autoExposureReady = false;
     bool                     cloudRaymarchReady = false;
+    bool                     postCinematicReady = false;
     ComPtr<ID3D12CommandAllocator>    fluidAlloc[kRing];
     ComPtr<ID3D12GraphicsCommandList> fluidList;
     ComPtr<ID3D12Fence>               fluidFence;
@@ -230,6 +233,14 @@ struct D3D12Bridge::Impl
     uint32_t                          cloudSlot = 0;
     uint64_t                          cloudStepFrames = 0;
     bool                              cloudPrevInterior = false;
+    ComPtr<ID3D12CommandAllocator>    postCinematicAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList> postCinematicList;
+    ComPtr<ID3D12Fence>               postCinematicFence;
+    HANDLE                            postCinematicEvent = nullptr;
+    uint64_t                          postCinematicFenceVal = 0;
+    uint64_t                          postCinematicSlotVal[kRing] = {};
+    uint32_t                          postCinematicSlot = 0;
+    uint64_t                          postCinematicStepFrames = 0;
     std::string                       telemetryOutDir;
     bool InitFluidSim();
     void ShutdownFluidSim();
@@ -264,6 +275,9 @@ struct D3D12Bridge::Impl
     bool InitCloudRaymarch();
     void ShutdownCloudRaymarch();
     bool ExecuteCloudRaymarchOnQueue(bool isInterior);
+    bool InitPostCinematic();
+    void ShutdownPostCinematic();
+    bool ExecutePostCinematicOnQueue(bool hasMotion);
     bool InitOverlayHost();
     void ShutdownOverlayHost();
     void PollOverlayHotkey();

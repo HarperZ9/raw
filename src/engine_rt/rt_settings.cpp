@@ -11,6 +11,7 @@
 #include "rt_archery_mount_gmst.h"
 #include "rt_companion_hazard_gmst.h"
 #include "rt_control.h"
+#include "rt_crime_mount_gmst.h"
 #include "rt_encounter_balance.h"
 #include "rt_locomotion_melee_gmst.h"
 #include "rt_magic_physics.h"
@@ -388,9 +389,10 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
     const std::string chMsg   = InitCompanionHazardGmst(img, refs);
     const std::string amMsg   = InitArcheryMountGmst(img, refs);
     const std::string ssvMsg  = InitShoutsSurvivalGmst(img, refs);
-    char out[2944];
-    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s",
-                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str(), progMsg.c_str(), aiMsg.c_str(), wrMsg.c_str(), pcMsg.c_str(), ssMsg.c_str(), lmMsg.c_str(), aeMsg.c_str(), chMsg.c_str(), amMsg.c_str(), ssvMsg.c_str());
+    const std::string cmMsg   = InitCrimeMountGmst(img, refs);
+    char out[3200];
+    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s",
+                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str(), progMsg.c_str(), aiMsg.c_str(), wrMsg.c_str(), pcMsg.c_str(), ssMsg.c_str(), lmMsg.c_str(), aeMsg.c_str(), chMsg.c_str(), amMsg.c_str(), ssvMsg.c_str(), cmMsg.c_str());
     return out;
 }
 
@@ -462,6 +464,7 @@ void WorldSimApplyLivePlanetaryGravity(float gravityMps2) {
 }
 
 void WorldSimRestoreDynamicSettings() {
+    ShutdownCrimeMountGmst();
     ShutdownShoutsSurvivalGmst();
     ShutdownArcheryMountGmst();
     ShutdownCompanionHazardGmst();

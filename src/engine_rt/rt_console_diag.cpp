@@ -10,6 +10,7 @@
 #include "rt_profile_presets.h"
 #include "rt_save_papyrus_guard.h"
 #include "rt_sdk_bridge.h"
+#include "rt_shader_hotreload.h"
 #include "rt_telemetry_recorder.h"
 
 #include <algorithm>
@@ -184,7 +185,15 @@ bool DispatchDiagnosticCommand(const char* cmdLine, std::string& outResponse) no
                 "  mods   - Report TES4 mod load-order plugin/ESL counts and integrity issues\n"
                 "  saves  - Report .ESS save Papyrus string-table health & frame hitch watchdog telemetry\n"
                 "  status - Concise unified snapshot (health, governor, audio mood, weather & GMST modules)\n"
-                "  preset <ultra|balanced|competitive|safemode> - Query or apply a validated 4-tier quality preset";
+                "  preset <ultra|balanced|competitive|safemode> - Query or apply a validated 4-tier quality preset\n"
+                "  reload_shaders - Run atomic pre-validation & trigger raw_shaders\\ hot-reload generation";
+            return true;
+        }
+
+        if (verb == "reload_shaders") {
+            std::string summary;
+            (void)ShaderHotReloadTriggerNow(&summary);
+            outResponse = summary;
             return true;
         }
 
@@ -345,7 +354,7 @@ std::string ConsoleDiagInit(const std::string& outDir) {
     }
     char buf[224];
     std::snprintf(buf, sizeof(buf),
-                  "[ConsoleDiag] initialized (8 commands: help/health/sdk/flight/mods/saves/status/preset | poll=%uf -> %s\\raw_cmd.txt)",
+                  "[ConsoleDiag] initialized (9 commands: help/health/sdk/flight/mods/saves/status/preset/reload_shaders | poll=%uf -> %s\\raw_cmd.txt)",
                   kPollCadenceFrames, outDir.empty() ? "raw_engine_out" : outDir.c_str());
     return buf;
 }

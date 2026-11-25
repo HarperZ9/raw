@@ -1,0 +1,118 @@
+// RawParticlesCombat.bld: RAW Engine Deterministic GPU Particle Dynamics & Combat Mechanics Kernels in BuildLang 1.4.0.
+// Counterparts to RawGpuParticleSim.hlsl, rt_movement_combat.cpp, RawCombatEngine.cpp, and rt_magic_physics.cpp:
+//   1. particle_bounce_vz      - Ballistic particle ground-bounce vertical velocity reflection
+//   2. curl_wind_drag          - Unconditionally-stable exponential curl-wind aerodynamic drag
+//   3. timed_parry_stagger     - 220 ms timed-parry quadratic stagger/counter-damage evaluator
+//   4. weather_elem_damage     - Coupled wetness & sub-zero frost elemental damage multiplier
+//   5. armor_damage_mitigation - Physical armor mitigation curve with penetration & hard cap
+//   6. poise_recovery_step     - Hitstun-gated combat poise regeneration step
+// Original work, MIT.
+
+fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
+}
+
+fn max_f64(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+// 1. Ballistic particle ground-bounce vertical velocity reflection with resting threshold.
+// Matches src/d3d12_bridge/shaders/RawGpuParticleSim.hlsl heightfield collision bounce.
+fn particle_bounce_vz(vz: f64, restitution: f64, stop_thresh: f64) -> f64 {
+    if vz >= 0.0 {
+        vz
+    } else {
+        let e: f64 = clamp_f64(restitution, 0.0, 0.98);
+        let rebound: f64 = -vz * e;
+        if rebound < max_f64(stop_thresh, 0.0) {
+            0.0
+        } else {
+            rebound
+        }
+    }
+}
+
+// 2. Unconditionally-stable exponential curl-wind drag attenuation factor in (0..1].
+// Matches src/d3d12_bridge/shaders/RawGpuParticleSim.hlsl snow/ember/ash wind drag step.
+fn curl_wind_drag(rel_speed: f64, drag_coeff: f64, dt_sec: f64) -> f64 {
+    let k: f64 = max_f64(drag_coeff, 0.0) * (1.0 + 0.12 * max_f64(rel_speed, 0.0));
+    exp(-k * max_f64(dt_sec, 0.0))
+}
+
+// 3. 220 ms timed-parry quadratic stagger/counter evaluator (0 outside active parry window).
+// Matches src/engine_rt/rt_movement_combat.cpp timed-parry window evaluation.
+fn timed_parry_stagger(base_dmg: f64, timing_ms: f64, window_ms: f64, stagger_mult: f64) -> f64 {
+    let win: f64 = max_f64(window_ms, 1.0);
+    if timing_ms < 0.0 || timing_ms > win {
+        0.0
+    } else {
+        let q: f64 = 1.0 - (timing_ms / win);
+        max_f64(base_dmg, 0.0) * (1.0 + max_f64(stagger_mult, 0.0) * q * q)
+    }
+}
+
+// 4. Coupled wetness + sub-zero frost elemental combat damage multiplier:
+//    elem_id: 0 = Fire, 1 = Frost, 2 = Shock.
+// Matches src/worldgen/RawCombatEngine.cpp & src/engine_rt/rt_magic_physics.cpp.
+fn weather_elem_damage(base_dmg: f64, wetness01: f64, frost01: f64, elem_id: i32) -> f64 {
+    let dmg: f64 = max_f64(base_dmg, 0.0);
+    let w: f64 = clamp_f64(wetness01, 0.0, 1.0);
+    let f: f64 = clamp_f64(frost01, 0.0, 1.0);
+    if elem_id == 0 {
+        dmg * (1.0 - 0.25 * w + 0.15 * f)
+    } else if elem_id == 1 {
+        dmg * (1.0 + 0.25 * w + 0.20 * f)
+    } else {
+        dmg * (1.0 + 0.45 * w - 0.10 * f)
+    }
+}
+
+// 5. Physical armor mitigation curve with armor penetration and strict anti-invulnerability cap (<= 0.80).
+// Matches src/worldgen/RawCombatEngine.cpp & src/engine_rt/rt_physics_camera_gmst.cpp.
+fn armor_damage_mitigation(armor_rating: f64, armor_pen01: f64, max_cap: f64) -> f64 {
+    let cap: f64 = clamp_f64(max_cap, 0.10, 0.80);
+    let pen: f64 = clamp_f64(armor_pen01, 0.0, 0.85);
+    let eff_armor: f64 = max_f64(armor_rating, 0.0) * (1.0 - pen);
+    clamp_f64(eff_armor * 0.0012, 0.0, cap)
+}
+
+// 6. Hitstun-gated combat poise recovery step clamped to [0..max_poise].
+// Matches src/worldgen/RawCombatEngine.cpp poise & stagger regeneration.
+fn poise_recovery_step(cur_poise: f64, max_poise: f64, since_hit_s: f64, delay_s: f64, regen_rate: f64, dt_sec: f64) -> f64 {
+    let cap: f64 = max_f64(max_poise, 1.0);
+    let cur: f64 = clamp_f64(cur_poise, 0.0, cap);
+    if since_hit_s < max_f64(delay_s, 0.0) {
+        cur
+    } else {
+        clamp_f64(cur + max_f64(regen_rate, 0.0) * max_f64(dt_sec, 0.0), 0.0, cap)
+    }
+}
+
+fn main() ~ Console {
+    let b_hit: f64 = particle_bounce_vz(-8.0, 0.45, 0.50);
+    let b_rest: f64 = particle_bounce_vz(-0.8, 0.45, 0.50);
+    let drag_calm: f64 = curl_wind_drag(2.0, 0.8, 0.05);
+    let drag_gale: f64 = curl_wind_drag(20.0, 0.8, 0.05);
+    let parry_perf: f64 = timed_parry_stagger(40.0, 22.0, 220.0, 1.50);
+    let parry_miss: f64 = timed_parry_stagger(40.0, 260.0, 220.0, 1.50);
+    let dmg_shock: f64 = weather_elem_damage(50.0, 1.0, 0.0, 2);
+    let dmg_frost: f64 = weather_elem_damage(50.0, 0.8, 1.0, 1);
+    let dmg_fire: f64 = weather_elem_damage(50.0, 1.0, 0.0, 0);
+    let arm_mace: f64 = armor_damage_mitigation(300.0, 0.50, 0.80);
+    let arm_cap: f64 = armor_damage_mitigation(1200.0, 0.0, 0.80);
+    let poise_hold: f64 = poise_recovery_step(35.0, 100.0, 0.8, 1.5, 25.0, 0.5);
+    let poise_reg: f64 = poise_recovery_step(35.0, 100.0, 2.0, 1.5, 25.0, 0.5);
+
+    println!("particle_bounce_vz(-8.0) = {} | (rest -0.8) = {}", b_hit, b_rest);
+    println!("curl_wind_drag(calm) = {} | (gale) = {}", drag_calm, drag_gale);
+    println!("timed_parry_stagger(22ms) = {} | (260ms miss) = {}", parry_perf, parry_miss);
+    println!("weather_elem_damage(shock wet) = {} | (frost wet+ice) = {} | (fire wet) = {}", dmg_shock, dmg_frost, dmg_fire);
+    println!("armor_damage_mitigation(300 pen50%) = {} | (1200 cap) = {}", arm_mace, arm_cap);
+    println!("poise_recovery_step(hitstun) = {} | (recovering) = {}", poise_hold, poise_reg);
+}

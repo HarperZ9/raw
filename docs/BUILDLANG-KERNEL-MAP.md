@@ -1,6 +1,6 @@
-# RAW Engine BuildLang Core Kernel Map (11 Modules, 66 Verified Kernels)
+# RAW Engine BuildLang Core Kernel Map (12 Modules, 72 Verified Kernels)
 
-This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, regional economy, GPU pipeline, world-systems, volumetric clouds, archery, dungeon, animation IK, cinematic post-FX, and profile-tiering kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**11 modules, 66 verified kernels**):
+This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, regional economy, GPU pipeline, world-systems, volumetric clouds, archery, dungeon, animation IK, cinematic post-FX, profile-tiering, GPU particle dynamics, and combat-mechanics kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**12 modules, 72 verified kernels**):
 
 1. [`native/bld/RawPhysicsKernels.bld`](../native/bld/RawPhysicsKernels.bld) (6 core scalar physics & anti-exploit kernels)
 2. [`native/bld/RawAtmoWeather.bld`](../native/bld/RawAtmoWeather.bld) (7 planetary atmosphere, orbital solar, snowpack ODE & black-ice kernels)
@@ -13,10 +13,11 @@ This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar 
 9. [`native/bld/RawWorldSystems.bld`](../native/bld/RawWorldSystems.bld) (6 log-luminance histogram, eye adaptation, diplomacy pricing, guard posture, audio crossfade & Purkinje night-vision kernels)
 10. [`native/bld/RawCloudsDungeon.bld`](../native/bld/RawCloudsDungeon.bld) (6 dual-lobe HG clouds, Beer-Powder scattering, spherical cloud shell, bow draw power, dungeon connectivity & compass marker kernels)
 11. [`native/bld/RawAnimKinematics.bld`](../native/bld/RawAnimKinematics.bld) (6 2-bone IK knee angle, critically damped spring-damper, CoC bokeh radius, motion-blur clamp, VRAM budget tier & shout cooldown kernels)
+12. [`native/bld/RawParticlesCombat.bld`](../native/bld/RawParticlesCombat.bld) (6 particle bounce, curl-wind drag, timed-parry stagger, wet/frost elemental damage, armor mitigation & poise recovery kernels)
 
 ## Toolchain Verification Receipts (`buildc 1.4.0`)
 
-Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **11/11 `check` PASS**, **11/11 `run` PASS**):
+Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **12/12 `check` PASS**, **12/12 `run` PASS**):
 
 ### Module 1: `native/bld/RawPhysicsKernels.bld`
 - `buildc check`: Exit Code `0` (`Lexing... OK (763 tokens)`, `Parsing... OK (9 items)`, `Type checking... OK`, `No errors found`)
@@ -149,7 +150,19 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
   shout_cooldown_sec(1-word talos) = 12 | (3-word talos) = 25.8
   ```
 
-## Kernel-by-Kernel Mapping (66 Kernels)
+### Module 12: `native/bld/RawParticlesCombat.bld`
+- `buildc check`: Exit Code `0` (`Lexing... OK (836 tokens)`, `Parsing... OK (9 items)`, `Type checking... OK`, `No errors found`)
+- `buildc run`: Exit Code `0`
+  ```text
+  particle_bounce_vz(-8.0) = 3.6 | (rest -0.8) = 0
+  curl_wind_drag(calm) = 0.9516099923790157 | (gale) = 0.8728426324887193
+  timed_parry_stagger(22ms) = 88.6 | (260ms miss) = 0
+  weather_elem_damage(shock wet) = 72.5 | (frost wet+ice) = 70 | (fire wet) = 37.5
+  armor_damage_mitigation(300 pen50%) = 0.18 | (1200 cap) = 0.8
+  poise_recovery_step(hitstun) = 35 | (recovering) = 47.5
+  ```
+
+## Kernel-by-Kernel Mapping (72 Kernels)
 
 ### 1. Core Physics Kernels (`native/bld/RawPhysicsKernels.bld`)
 
@@ -272,10 +285,21 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
 | 65 | `vram_budget_tier(vram_used_mb, vram_budget_mb, frame_ms, target_ms)` | `src/engine_rt/rt_profile_presets.cpp` | Pressure thresholds on VRAM & frame-time ratio (`0` Ultra .. `3` SafeMode) | Nominal `4.2/16 GB @ 11.2 ms` -> `0` (Ultra); `15.4/16 GB @ 25 ms` -> `3` (SafeMode) |
 | 66 | `shout_cooldown_sec(base_cd_s, recovery_mult, word_count)` | `src/engine_rt/rt_shouts_survival_gmst.cpp` | `max(base * word_scale(1.0/1.45/2.15) * clamp(mult, 0.2, 2.0), 3.0)` | Amulet of Talos (`0.8x`): 1-word = `12.0 s`, 3-word = `25.8 s` |
 
-## Reproducing All 11 BuildLang Module Checks
+### 12. GPU Particle Dynamics and Combat Mechanics Kernels (`native/bld/RawParticlesCombat.bld`)
+
+| # | BuildLang Function | Engine C++ / HLSL Counterpart | Governing Equation | Verified Invariant |
+| --- | --- | --- | --- | --- |
+| 67 | `particle_bounce_vz(vz, restitution, stop_thresh)` | `src/d3d12_bridge/shaders/RawGpuParticleSim.hlsl` | `-vz * clamp(e, 0, 0.98)` above rest threshold, else `0.0` | `-8.0 m/s` @ `e=0.45` bounces to `+3.6 m/s`; `-0.8 m/s` settles to `0.0` |
+| 68 | `curl_wind_drag(rel_speed, drag_coeff, dt_sec)` | `src/d3d12_bridge/shaders/RawGpuParticleSim.hlsl` | `exp(-k * (1 + 0.12*v) * dt)` unconditionally in `(0, 1]` | Calm drag `0.9516` vs gale drag `0.8728` (monotonic damping) |
+| 69 | `timed_parry_stagger(base_dmg, timing_ms, window_ms, stagger_mult)` | `src/engine_rt/rt_movement_combat.cpp` | `base * (1 + mult * (1 - t/win)^2)` inside `[0, 220 ms]`, else `0.0` | `22 ms` crisp parry = `88.6` stagger; `260 ms` late miss = `0.0` |
+| 70 | `weather_elem_damage(base_dmg, wetness01, frost01, elem_id)` | `src/worldgen/RawCombatEngine.cpp`, `rt_magic_physics.cpp` | Wet/frost elemental matrix (Fire dampened, Frost/Shock boosted) | `50` base -> Shock wet `72.5`, Frost wet+ice `70.0`, Fire wet `37.5` |
+| 71 | `armor_damage_mitigation(armor_rating, armor_pen01, max_cap)` | `src/worldgen/RawCombatEngine.cpp` | `clamp(armor * (1 - pen) * 0.0012, 0, min(cap, 0.80))` | `300` armor vs `50%` mace pen = `0.18`; `1200` armor hard-capped at `0.80` |
+| 72 | `poise_recovery_step(cur_poise, max_poise, since_hit_s, delay_s, regen_rate, dt_sec)` | `src/worldgen/RawCombatEngine.cpp` | Hold during hitstun (`t < delay`), else `min(cur + rate*dt, max)` | Frozen at `35.0` during hitstun (`0.8 s`); regenerates to `47.5` post-delay |
+
+## Reproducing All 12 BuildLang Module Checks
 
 ```powershell
-foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim','RawGpuPipeline','RawWorldSystems','RawCloudsDungeon','RawAnimKinematics')) {
+foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim','RawGpuPipeline','RawWorldSystems','RawCloudsDungeon','RawAnimKinematics','RawParticlesCombat')) {
     buildc check "E:\wt\raw-rt9\native\bld\$m.bld"
     buildc run   "E:\wt\raw-rt9\native\bld\$m.bld"
 }

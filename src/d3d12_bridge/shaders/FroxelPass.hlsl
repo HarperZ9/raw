@@ -96,11 +96,22 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     const float3 drift = wp * 0.00032f + float3(cloudWind.xy * camPosW.w * 0.00012f, 0.0f);
     const float curlWarp = (cNoise(drift * 1.35f + 3.1f) - 0.5f) * 0.48f;
     const float mist3D = 0.42f + 0.92f * (cNoise(drift + curlWarp) * 0.56f + cNoise(drift * 2.4f + 7.1f) * 0.29f + cNoise(drift * 5.0f - 4.3f) * 0.15f);
-    // Low-lying rolling 3D ground & river-basin fog banks (thickest near water level, dawn/dusk, and wet weather):
+    // Low-lying rolling 3D ground & river-basin fog banks (thickest near water level, dawn/dusk, and wet weather)
+    // with Daylight Video Rule VW-1: interactive actor-wake fog clearing that parts around moving bodies and heals!
     const float aElevFog = astroSunElev();
     const float dawnDuskFog = exp(-pow((aElevFog - 0.03f) / 0.16f, 2.0f));
     const float basinH = max(wp.z - (waterA.w + 45.0f), 0.0f);
-    const float groundBank = isInt ? 0.0f : exp(-basinH * 0.0024f) * (0.42f + 0.58f * cNoise(wp * 0.0011f + float3(cloudWind.xy * camPosW.w * 0.00008f, 0.0f))) * (0.48f + 0.85f * dawnDuskFog + weather.w * 0.78f);
+    float fogWakeClear = 1.0f;
+    if (!isInt && rayDist < 1200.0f) {
+        [unroll] for (uint fi = 0u; fi < 6u; ++fi) {
+            const float4 ft = footTrail[fi];
+            if (ft.w <= 0.05f) { continue; }
+            const float3 fd = wp - ft.xyz;
+            const float d2 = dot(fd.xy, fd.xy) + fd.z * fd.z * 0.25f;
+            fogWakeClear *= (1.0f - exp(-d2 / 5600.0f) * ft.w * 0.62f);
+        }
+    }
+    const float groundBank = isInt ? 0.0f : exp(-basinH * 0.0024f) * (0.42f + 0.58f * cNoise(wp * 0.0011f + float3(cloudWind.xy * camPosW.w * 0.00008f, 0.0f))) * (0.48f + 0.85f * dawnDuskFog + weather.w * 0.78f) * fogWakeClear;
     // True 3D alpine ridge collar clouds hugging mountain flanks (3,800u..7,800u world altitude):
     const float peakCollar = isInt ? 0.0f : exp(-pow((wp.z - 5000.0f) / 2600.0f, 2.0f)) * smoothstep(3600.0f, 11000.0f, zMid) * (0.55f + 0.65f * cNoise(wp * 0.00022f - float3(cloudWind.xy * camPosW.w * 0.00007f, 0.0f)));
     // True world-space altitude falloff (100% world-locked, zero camera-height drift!):
@@ -198,9 +209,22 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                 const float cosL = dot(farDir, toL / max(dL, 1.0e-3f));
                 const float phL = min(froxelHG(cosL, isInt ? 0.50f : 0.46f) * (isInt ? 1.8f : 1.6f) + 0.20f, 1.5f);
                 const float intSmoke = isInt ? (0.78f + 0.44f * cNoise(wp * 0.0095f - float3(0.0f, 0.0f, camPosW.w * 0.16f))) : 1.0f;
+                // Daylight Video Rule VL-1 ("light the weather at the lamp"): wind-slanted rain/snow flakes resolve
+                // inside warm lamp cones + Quake-style subtle procedural firelight flicker (25:Z7)!
+                float lampWeather = 1.0f;
+                if (!isInt && (weather.w > 0.08f || weather.z > 0.08f)) {
+                    const float3 wFlow = float3(cloudWind.xy * 0.025f, weather.w > weather.z ? -42.0f : -14.0f);
+                    const float3 streakP = (wp - wFlow * camPosW.w) * float3(0.065f, 0.065f, weather.w > weather.z ? 0.016f : 0.048f);
+                    const float flake = smoothstep(0.58f, 0.90f, cNoise(streakP));
+                    lampWeather += flake * max(weather.w, weather.z) * 0.95f;
+                }
+                const bool isWarmFire = (lightColS[li].r > lightColS[li].b * 1.35f);
+                const float fireFlicker = isWarmFire
+                    ? (0.94f + 0.06f * sin(camPosW.w * 7.3f + float(li) * 2.1f) * cos(camPosW.w * 11.7f + float(li) * 1.3f))
+                    : 1.0f;
                 // Ensure nearby exterior local lights scatter visibly even when extNearRamp keeps daylight air clear:
-                sigma = max(sigma, (isInt ? 0.000012f : 0.000020f) * att * intSmoke);
-                inScat += min(lightColS[li].rgb * (att * phL * tune2.y * intSmoke * (isInt ? 0.09f : 0.28f)), (isInt ? 0.065f : 0.35f).xxx);
+                sigma = max(sigma, (isInt ? 0.000012f : 0.000020f) * att * intSmoke * lampWeather);
+                inScat += min(lightColS[li].rgb * (att * phL * tune2.y * intSmoke * lampWeather * fireFlicker * (isInt ? 0.09f : 0.28f)), (isInt ? 0.065f : 0.35f).xxx);
             }
         }
     }

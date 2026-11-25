@@ -601,7 +601,7 @@ float4 main(In i) : SV_Target {
                                  : (triad == 1u ? float3(0.86f, 1.18f, 0.86f) : float3(0.86f, 0.86f, 1.18f));
             const float glassRefl = pow(saturate(1.0f - length(cc - float2(-0.35f, -0.45f)) * 0.72f), 3.0f) * 0.045f;
             c.rgb = saturate((crtCol * maskRGB * lerp(0.68f, 1.14f, scanMask) + glassRefl) * inBezel * saturate(1.08f - r2 * 0.22f));
-        } else {
+        } else if (RX.x < 13.5f) {
             // 13: 1988 NTSC VHS Magnetic Tape Signal (ported from Playground native/src/renderer/style_vhs.cpp).
             float sw, sh; Scene.GetDimensions(sw, sh);
             const float2 spx = 1.0f / max(float2(sw, sh), float2(1.0f, 1.0f));
@@ -621,6 +621,26 @@ float4 main(In i) : SV_Target {
                                 yRing - 1.106f * iCh + 1.703f * qCh);
             const float tapeNoise = (frac(sin(dot(i.pos.xy + RO.z * 71.0f, float2(12.9898f, 78.233f))) * 43758.5453f) - 0.5f) * 0.045f;
             c.rgb = saturate(vhs + tapeNoise);
+        } else if (RX.x < 14.5f) {
+            // 14: Kodak Aerochrome Infrared False-Color Emulsion (Daylight Cluster M: chlorophyll reflects crimson-magenta, clear sky drops deep cobalt).
+            const float chlorophyll = saturate((c.g - max(c.r * 0.85f, c.b * 0.90f)) * 4.2f);
+            const float skyBlue     = saturate((c.b - max(c.r, c.g * 0.92f)) * 3.5f);
+            const float3 irFoliage  = float3(saturate(c.g * 1.45f + c.r * 0.35f), c.b * 0.28f + c.r * 0.16f, c.g * 0.52f + c.b * 0.42f);
+            const float3 irSky      = float3(c.r * 0.22f, c.g * 0.38f, saturate(c.b * 0.72f + 0.04f));
+            float3 aero = lerp(c.rgb * float3(1.06f, 0.92f, 0.88f), irFoliage, chlorophyll * 0.88f);
+            aero = lerp(aero, irSky, skyBlue * 0.72f);
+            c.rgb = saturate(aero);
+        } else {
+            // 15: Prokudin-Gorskii Trichrome Glass-Plate Emulsion (Daylight Cluster M, BUILD-LIST #9: velocity-coupled RGB separation fringes).
+            float sw, sh; Scene.GetDimensions(sw, sh);
+            const float2 spx = 1.0f / max(float2(sw, sh), float2(1.0f, 1.0f));
+            const float plateShift = (1.5f + saturate(RO.w * 0.35f) * 4.5f) * spx.x;
+            const float rP = tonemapAgX(Scene.Sample(S1, min(max(suv + float2(plateShift,  plateShift * 0.35f), 0.0f), float2(F[44].z, F[43].y))).rgb * exposure * RB.z).r;
+            const float gP = c.g;
+            const float bP = tonemapAgX(Scene.Sample(S1, min(max(suv - float2(plateShift, -plateShift * 0.35f), 0.0f), float2(F[44].z, F[43].y))).rgb * exposure * RB.z).b;
+            const float3 tri = float3(rP, gP, bP);
+            const float silver = dot(tri, W);
+            c.rgb = saturate(lerp(silver.xxx, tri, 0.92f) * float3(1.03f, 1.00f, 0.93f));
         }
     }
     // Layer 1 (bit 0): Film Emulsion & Beer-Lambert Subtractive Density + Skin-Protected Oklab Vibrance

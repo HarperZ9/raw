@@ -92,4 +92,34 @@ HitResolution ResolveCombatHit(CombatActorState& defender, CombatActorState& att
 WorldNpcDirective EvaluateWorldEcosystem(float gameHour, float rain01, float snow01, float snowDepthU,
                                          bool nearFire, bool inCombat);
 
+// Mean-Payoff / Condon Simple Stochastic Game Tactical Policy Solver:
+// Computes optimal action over 4 combat states via exact Bellman value iteration (converges monotonically in <= 24 steps).
+enum class TacticalAction : uint8_t {
+    PressAttack    = 0,
+    FlankCircle    = 1,
+    GuardParry     = 2,
+    RetreatRecover = 3,
+};
+
+struct TacticalGameState {
+    float hpFrac         = 1.0f;
+    float staminaFrac    = 1.0f;
+    float poiseFrac      = 1.0f;
+    float distUnits      = 140.0f;
+    bool  hasAttackToken = true;
+    bool  enemyAttacking = false;
+};
+
+struct TacticalPolicyResult {
+    TacticalAction bestAction = TacticalAction::FlankCircle;
+    float          actionValues[4] = {};
+    float          expectedPayoff  = 0.0f;
+    uint32_t       iterations      = 0;
+};
+
+TacticalPolicyResult SolveTacticalStochasticGame(const TacticalGameState& st);
+
+// Exact CPU reference of the O(1) 8D E8 optimal sphere-packing lattice quantizer (matches RawTensorMath.hlsli::rawQuantizeE8).
+void QuantizeE8Lattice(const float in8[8], float scale, float out8[8]);
+
 }  // namespace raw::rt

@@ -18,6 +18,7 @@
 #include "../../src/ce_runtime/CeNavMesh.h"
 #include "../../src/d3d12_bridge/RawAssetBridge.h"
 #include "../../src/d3d12_bridge/RawTextureBridge.h"
+#include "../../src/d3d12_bridge/HardwareProfile.h"
 #include "../../src/engine_rt/rt_zydis_offsets.h"
 #include "../../src/engine_rt/rt_skeleton_ik.h"
 #include "../../src/engine_rt/rt_combat_ai.h"
@@ -377,17 +378,29 @@ void TestCustomNavMeshAndWorldSim() {
     nav.AddOffMeshLink({7u, 16u, {380.0f, 50.0f, 0.0f}, {550.0f, 30.0f, 120.0f}, 1.35f, 2});
     Check(nav.FindPath({20.0f, 30.0f, 0.0f}, {550.0f, 30.0f, 120.0f}).found, "navmesh_offmesh_climb_link_connects");
 
-    // Real Skyrim.esm NAVM clean-room extraction + live A* check when game install is present
+    // Real Skyrim.esm compressed NAVM clean-room zlib extraction + live A* pathfinding when game install is present
     const std::string skyrimEsm = "H:\\SteamLibrary\\steamapps\\common\\Skyrim Special Edition\\Data\\Skyrim.esm";
     if (std::filesystem::exists(skyrimEsm)) {
         std::vector<raw::ce::CeNavMeshData> realNavs;
         std::string nErr;
-        if (raw::ce::ExtractNavMeshesFromPlugin(skyrimEsm, 8, realNavs, &nErr) && !realNavs.empty()) {
-            uint32_t totalVerts = 0, totalTris = 0;
-            for (const auto& m : realNavs) { totalVerts += uint32_t(m.vertices.size()); totalTris += uint32_t(m.triangles.size()); }
-            std::printf("INFO real Skyrim.esm NAVM: meshes=%zu totalVerts=%u totalTris=%u\n", realNavs.size(), totalVerts, totalTris);
-            Check(totalVerts > 20 && totalTris > 10, "navmesh_real_skyrim_esm_parse");
+        const bool okNav = raw::ce::ExtractNavMeshesFromPlugin(skyrimEsm, 8, realNavs, &nErr);
+        uint32_t totalVerts = 0, totalTris = 0;
+        bool livePathFound = false;
+        for (const auto& m : realNavs) {
+            totalVerts += uint32_t(m.vertices.size());
+            totalTris += uint32_t(m.triangles.size());
+            if (!livePathFound && m.triangles.size() >= 8) {
+                raw::ce::RawNavGraph realGraph;
+                realGraph.Load(m);
+                const auto& t0 = m.triangles[0];
+                const auto& tLast = m.triangles[m.triangles.size() / 2];
+                const auto rPath = realGraph.FindPath(m.vertices[t0.v[0]], m.vertices[tLast.v[0]]);
+                if (rPath.found && rPath.waypoints.size() >= 2) livePathFound = true;
+            }
         }
+        std::printf("INFO real Skyrim.esm compressed NAVM: ok=%d meshes=%zu totalVerts=%u totalTris=%u liveAStar=%d\n",
+                    int(okNav), realNavs.size(), totalVerts, totalTris, int(livePathFound));
+        Check(okNav && realNavs.size() >= 4 && totalVerts > 50 && totalTris > 30 && livePathFound, "navmesh_real_skyrim_esm_zlib_astar");
     }
 
     // 2) Analytical 2-Bone IK & Foot Planting
@@ -439,6 +452,65 @@ void TestCustomNavMeshAndWorldSim() {
           raw::rt::EvaluateWorldEcosystem(14.0f, 0.0f, 0.8f, 18.0f, true,  false) == raw::rt::WorldNpcDirective::WarmAtBrazier &&
           raw::rt::EvaluateWorldEcosystem(22.0f, 0.0f, 0.0f,  0.0f, false, false) == raw::rt::WorldNpcDirective::EquipTorch,
           "world_ecosystem_weather_directives");
+
+    // 4) Wave 15 Math Kernels: Mean-Payoff Stochastic-Game Tactical Policy Solver + Exact 8D E8 Lattice Quantizer
+    const auto polAdv = raw::rt::SolveTacticalStochasticGame({0.95f, 0.90f, 0.95f, 110.0f, true, false});
+    const auto polDef = raw::rt::SolveTacticalStochasticGame({0.75f, 0.85f, 0.60f, 120.0f, true, true});
+    const auto polLow = raw::rt::SolveTacticalStochasticGame({0.14f, 0.20f, 0.30f, 120.0f, false, true});
+    Check(polAdv.bestAction == raw::rt::TacticalAction::PressAttack &&
+          polDef.bestAction == raw::rt::TacticalAction::GuardParry &&
+          polLow.bestAction == raw::rt::TacticalAction::RetreatRecover &&
+          polAdv.iterations > 0 && polAdv.iterations <= 24,
+          "stochastic_game_tactical_policy_solver");
+
+    // E8 Lattice Quantizer: verify exact E8 membership (all integer even-sum OR all half-integer even-sum)
+    // and strictly lower mean-squared error than cubic Z^8 rounding across 128 pseudo-random 8D vectors!
+    bool allValidE8 = true;
+    double mseE8 = 0.0, mseZ8 = 0.0;
+    uint32_t rng = 0x13579BDFu;
+    auto nextF = [&]() -> float {
+        rng = rng * 1664525u + 1013904223u;
+        return (float(rng & 0xFFFFu) / 32768.0f) - 1.0f;
+    };
+    for (int n = 0; n < 128; ++n) {
+        float x[8], q[8];
+        for (int i = 0; i < 8; ++i) x[i] = nextF() * 3.0f;
+        raw::rt::QuantizeE8Lattice(x, 1.0f, q);
+        bool allInt = true, allHalf = true;
+        int sumInt = 0, sumHalf = 0;
+        for (int i = 0; i < 8; ++i) {
+            const float ri = std::round(q[i]);
+            const float rh = std::round(q[i] - 0.5f) + 0.5f;
+            if (std::fabs(q[i] - ri) > 1e-4f) allInt = false;
+            if (std::fabs(q[i] - rh) > 1e-4f) allHalf = false;
+            sumInt += int(ri);
+            sumHalf += int(std::round(q[i] * 2.0f));
+            const double e8 = double(x[i] - q[i]);
+            const double z8 = double(x[i] - std::round(x[i]));
+            mseE8 += e8 * e8;
+            mseZ8 += z8 * z8;
+        }
+        // In E8: either all integer with even sum, OR all half-integer with sum of coords even (sum(2*q_i) % 4 == 0).
+        const bool okInt  = allInt && ((sumInt & 1) == 0);
+        const bool okHalf = allHalf && ((sumHalf & 3) == 0);
+        if (!okInt && !okHalf) allValidE8 = false;
+    }
+    std::printf("INFO E8 lattice quantizer (128x8D): valid=%d mseE8=%.4f mseZ8=%.4f gain=%.2f%%\n",
+                int(allValidE8), mseE8 / 128.0, mseZ8 / 128.0, (1.0 - mseE8 / mseZ8) * 100.0);
+    Check(allValidE8 && mseE8 < mseZ8 * 0.90, "e8_lattice_optimal_8d_quantization");
+
+    // 5) Wave 15 Linear-Program GPU Frame-Budget Allocator (Smale's 9th LP budget feasibility + interior zero-cloud optimality)
+    raw::bridge::HardwareProfile p5090{};
+    p5090.tier = 4;
+    raw::bridge::HardwareProfile p3060{};
+    p3060.tier = 1;
+    const auto allocExt = raw::bridge::SolveFrameBudgetLP(p5090, 11.11f, false);  // 90 Hz exterior
+    const auto allocInt = raw::bridge::SolveFrameBudgetLP(p5090, 11.11f, true);   // 90 Hz interior
+    const auto allocTight = raw::bridge::SolveFrameBudgetLP(p3060, 8.33f, false); // 120 Hz tight budget
+    Check(allocExt.totalMs <= 11.11f * 0.52f + 1e-3f && allocExt.cloudSteps >= 24 &&
+          allocInt.cloudMarchMs == 0.0f && allocInt.cloudSteps == 0 && allocInt.giBounceMs >= allocExt.giBounceMs &&
+          allocTight.totalMs <= 8.33f * 0.52f + 1e-3f && allocTight.dxrShadowMs > 0.30f,
+          "lp_gpu_frame_budget_allocator");
 }
 
 }  // namespace

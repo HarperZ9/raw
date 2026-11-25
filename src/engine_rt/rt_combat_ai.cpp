@@ -185,4 +185,121 @@ WorldNpcDirective EvaluateWorldEcosystem(float gameHour, float rain01, float sno
     return WorldNpcDirective::NormalRoutine;
 }
 
+TacticalPolicyResult SolveTacticalStochasticGame(const TacticalGameState& st) {
+    // 4-state discounted/mean-payoff stochastic combat game:
+    // States: 0=Advantage (healthy+poise), 1=Contested, 2=Pressured (enemy swinging/low poise), 3=Critical (low HP/stamina)
+    // Actions: 0=PressAttack, 1=FlankCircle, 2=GuardParry, 3=RetreatRecover
+    const float hp   = std::clamp(st.hpFrac, 0.0f, 1.0f);
+    const float stam = std::clamp(st.staminaFrac, 0.0f, 1.0f);
+    const float pois = std::clamp(st.poiseFrac, 0.0f, 1.0f);
+    const float closeW = std::clamp(1.0f - (st.distUnits - 90.0f) / 260.0f, 0.0f, 1.0f);
+    const float tok    = st.hasAttackToken ? 1.0f : 0.0f;
+    const float threat = st.enemyAttacking ? 1.0f : 0.0f;
+
+    // Immediate state-conditioned reward matrix R[s][a] and stochastic transition kernels T[s][a][s']
+    float R[4][4] = {
+        { 0.92f * tok * closeW - 0.55f * threat,  0.58f,  0.35f + 0.65f * threat,  0.10f },
+        { 0.68f * tok * closeW - 0.72f * threat,  0.54f,  0.48f + 0.78f * threat,  0.26f },
+        { 0.20f * tok - 1.10f * threat,           0.32f,  0.65f + 0.92f * threat * stam, 0.58f },
+        {-0.85f,                                  0.18f,  0.35f * stam,            1.05f + 0.45f * (1.0f - hp) }
+    };
+    static constexpr float T[4][4][4] = {
+        { {0.65f, 0.25f, 0.08f, 0.02f}, {0.55f, 0.35f, 0.08f, 0.02f}, {0.50f, 0.40f, 0.08f, 0.02f}, {0.35f, 0.50f, 0.12f, 0.03f} },
+        { {0.38f, 0.38f, 0.18f, 0.06f}, {0.42f, 0.44f, 0.11f, 0.03f}, {0.46f, 0.40f, 0.12f, 0.02f}, {0.30f, 0.52f, 0.15f, 0.03f} },
+        { {0.15f, 0.25f, 0.38f, 0.22f}, {0.20f, 0.42f, 0.28f, 0.10f}, {0.36f, 0.40f, 0.18f, 0.06f}, {0.22f, 0.54f, 0.18f, 0.06f} },
+        { {0.05f, 0.10f, 0.35f, 0.50f}, {0.08f, 0.28f, 0.36f, 0.28f}, {0.10f, 0.30f, 0.35f, 0.25f}, {0.18f, 0.48f, 0.24f, 0.10f} }
+    };
+
+    float V[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    constexpr float gamma = 0.82f;
+    uint32_t it = 0;
+    for (; it < 24u; ++it) {
+        float nextV[4] = {};
+        float maxDelta = 0.0f;
+        for (int s = 0; s < 4; ++s) {
+            float bestQ = -1.0e9f;
+            for (int a = 0; a < 4; ++a) {
+                float q = R[s][a];
+                for (int sp = 0; sp < 4; ++sp) q += gamma * T[s][a][sp] * V[sp];
+                if (q > bestQ) bestQ = q;
+            }
+            nextV[s] = bestQ;
+            maxDelta = std::max(maxDelta, std::fabs(nextV[s] - V[s]));
+        }
+        for (int s = 0; s < 4; ++s) V[s] = nextV[s];
+        if (maxDelta < 1.0e-4f) { ++it; break; }
+    }
+
+    // Softly project live continuous combat snapshot onto the 4-state belief simplex:
+    float w[4] = {};
+    if (hp < 0.28f || (hp < 0.40f && stam < 0.22f)) {
+        w[3] = 0.85f; w[2] = 0.15f;
+    } else if (st.enemyAttacking || pois < 0.35f) {
+        w[2] = 0.75f; w[1] = 0.20f; w[3] = 0.05f;
+    } else if (hp > 0.65f && stam > 0.45f && st.hasAttackToken) {
+        w[0] = 0.78f; w[1] = 0.22f;
+    } else {
+        w[1] = 0.70f; w[0] = 0.20f; w[2] = 0.10f;
+    }
+
+    TacticalPolicyResult out{};
+    out.iterations = it;
+    int bestA = 1;
+    float bestVal = -1.0e9f;
+    for (int a = 0; a < 4; ++a) {
+        float val = 0.0f;
+        for (int s = 0; s < 4; ++s) {
+            float q = R[s][a];
+            for (int sp = 0; sp < 4; ++sp) q += gamma * T[s][a][sp] * V[sp];
+            val += w[s] * q;
+        }
+        out.actionValues[a] = val;
+        if (val > bestVal) { bestVal = val; bestA = a; }
+    }
+    out.bestAction = static_cast<TacticalAction>(bestA);
+    out.expectedPayoff = bestVal;
+    return out;
+}
+
+namespace {
+void QuantizeD8Cpu(const float in8[8], float out8[8]) {
+    int parity = 0;
+    for (int i = 0; i < 8; ++i) {
+        out8[i] = std::round(in8[i]);
+        parity ^= (static_cast<int>(out8[i]) & 1);
+    }
+    if (parity != 0) {
+        int best = 0;
+        float maxD = -1.0f;
+        for (int i = 0; i < 8; ++i) {
+            const float ad = std::fabs(in8[i] - out8[i]);
+            if (ad > maxD) { maxD = ad; best = i; }
+        }
+        out8[best] += (in8[best] - out8[best] >= 0.0f) ? 1.0f : -1.0f;
+    }
+}
+}  // namespace
+
+void QuantizeE8Lattice(const float in8[8], float scale, float out8[8]) {
+    const float s = std::max(scale, 1.0e-4f);
+    const float invS = 1.0f / s;
+    float sc[8], sh[8], p0[8], p1[8];
+    for (int i = 0; i < 8; ++i) {
+        sc[i] = in8[i] * s;
+        sh[i] = sc[i] - 0.5f;
+    }
+    QuantizeD8Cpu(sc, p0);
+    QuantizeD8Cpu(sh, p1);
+    float d0 = 0.0f, d1 = 0.0f;
+    for (int i = 0; i < 8; ++i) {
+        p1[i] += 0.5f;
+        const float e0 = sc[i] - p0[i];
+        const float e1 = sc[i] - p1[i];
+        d0 += e0 * e0;
+        d1 += e1 * e1;
+    }
+    const float* pick = (d0 <= d1) ? p0 : p1;
+    for (int i = 0; i < 8; ++i) out8[i] = pick[i] * invS;
+}
+
 }  // namespace raw::rt

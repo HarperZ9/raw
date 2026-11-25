@@ -41,4 +41,19 @@ HardwareProfile DetectHardwareProfile(ID3D12Device* dev = nullptr);
 // Recommends parallel raw::tx command-list worker count from physical/logical CPU concurrency.
 uint32_t RecommendTxWorkers();
 
+// Deterministic Linear-Program GPU Frame-Budget Allocator:
+// Maximizes sum(u_i * x_i) subject to l_i <= x_i <= uMax_i and sum(x_i) <= budgetMs across the 5 heavy GPU stages.
+struct FrameBudgetAllocation {
+    float    dxrShadowMs  = 0.0f;
+    float    giBounceMs   = 0.0f;
+    float    froxelVolMs  = 0.0f;
+    float    cloudMarchMs = 0.0f;
+    float    meshSubdivMs = 0.0f;
+    float    totalMs      = 0.0f;
+    uint32_t cloudSteps   = 24;
+    uint32_t subdivTier   = 1;
+};
+
+FrameBudgetAllocation SolveFrameBudgetLP(const HardwareProfile& prof, float targetFrameMs, bool isInterior);
+
 } // namespace raw::bridge

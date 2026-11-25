@@ -43,6 +43,7 @@ cbuffer MeshConstants : register(b0) {
     float    curvatureGain;   // 0..1.25 Vlachos normal curvature strength
     float    displaceAmp;     // world-space micro-displacement scale
     float    snowDepthU;      // live volumetric snowpack buildup thickness (0..48 world units)
+    float4   windAndTime;     // xy = synoptic wind dir * speed, z = timeSec, w = foliageWindMask (0=rigid, 1=vegetation)
 };
 
 StructuredBuffer<MeshletDesc> Meshlets  : register(t0);
@@ -150,6 +151,26 @@ void evalPnTriangleUplift(RawVertex v0, RawVertex v1, RawVertex v2, float u, flo
     if (snowMaxU > 0.05f && upMask > 0.01f) {
         const float drift = 0.68f + 0.52f * meshNoise3(outP * 0.014f + float3(3.1f, 7.7f, 0.0f));
         outP.z += upMask * drift * snowMaxU * 0.35f;
+    }
+    // Simulated Multi-Scale Vegetation Wind Field with Traveling Canopy Gust Fronts & Actor-Wake Parting
+    // (Daylight FOL-06 / vid-299 r0 / vid-046 r5: zero static 2011 wobble; anchored at trunk base via uv.y):
+    if (windAndTime.w > 0.01f) {
+        const float2 wVec = windAndTime.xy;
+        const float wMag = length(wVec);
+        const float2 wDir = wMag > 1.0e-4f ? (wVec / wMag) : float2(1.0f, 0.35f);
+        const float tW = windAndTime.z;
+        const float flex = saturate(1.0f - (v0.uv.y * w + v1.uv.y * u + v2.uv.y * v)) * windAndTime.w;
+        const float gustFront = 0.55f + 0.45f * sin(dot(outP.xy, wDir) * 0.014f - tW * (1.8f + wMag * 0.8f));
+        const float flutter = sin(tW * 7.2f + outP.x * 0.21f + outP.y * 0.17f) * 0.25f;
+        const float swayAmp = (0.85f + wMag * 3.8f) * gustFront * flex * flex;
+        outP.xy += wDir * swayAmp + float2(-wDir.y, wDir.x) * (flutter * flex * (0.4f + wMag));
+        // Player/camera body parting push when walking through grass/shrubs:
+        const float2 fromCam = outP.xy - camPosAndNear.xy;
+        const float camD2 = dot(fromCam, fromCam);
+        if (camD2 > 1.0f && camD2 < 14400.0f && abs(outP.z - camPosAndNear.z) < 130.0f) {
+            const float push = (1.0f - sqrt(camD2) / 120.0f) * flex * 18.0f;
+            outP.xy += (fromCam / sqrt(camD2)) * push;
+        }
     }
 }
 

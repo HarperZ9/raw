@@ -143,4 +143,60 @@ HardwareProfile DetectHardwareProfile(ID3D12Device* dev)
     return p;
 }
 
+FrameBudgetAllocation SolveFrameBudgetLP(const HardwareProfile& prof, float targetFrameMs, bool isInterior)
+{
+    // Exact 2-segment piecewise-linear concave LP (Core tier + High-Detail tier per GPU pass):
+    // Maximizes sum(w_core_i * x_core_i + w_hi_i * x_hi_i) s.t. lo_i <= x_i <= hi_i and sum(x_i) <= fxBudgetMs.
+    // Prevents any single pass from starving clouds/froxels/subdivision while strictly respecting the frame budget.
+    const float fxBudget = std::max(targetFrameMs * 0.52f, 1.5f);
+    const float tierScale = (prof.tier >= 4) ? 1.35f : (prof.tier == 3 ? 1.15f : (prof.tier == 2 ? 0.92f : 0.68f));
+
+    struct StageSpec { float lo, mid, hi, uCore, uHi, alloc; };
+    // Order: 0=DXR Shadow, 1=GI Bounce, 2=Froxel Vol, 3=Cloud March, 4=Mesh Subdiv
+    StageSpec st[5] = {
+        { 0.35f, 1.15f * tierScale, 2.20f * tierScale, isInterior ? 2.40f : 2.60f, 1.25f, 0.0f },
+        { 0.30f, 1.25f * tierScale, 2.60f * tierScale, isInterior ? 2.75f : 2.35f, 1.30f, 0.0f },
+        { 0.25f, 0.85f * tierScale, 1.85f * tierScale, isInterior ? 2.05f : 2.15f, 1.05f, 0.0f },
+        { isInterior ? 0.00f : 0.25f, isInterior ? 0.00f : 0.85f * tierScale, isInterior ? 0.00f : 1.90f * tierScale,
+          isInterior ? 0.00f : 2.00f, isInterior ? 0.00f : 0.98f, 0.0f },
+        { 0.20f, 0.75f * tierScale, 1.75f * tierScale, 1.90f, 0.95f, 0.0f }
+    };
+
+    float sumLo = 0.0f;
+    for (int i = 0; i < 5; ++i) sumLo += st[i].lo;
+    if (sumLo > fxBudget) {
+        const float shrink = fxBudget / std::max(sumLo, 1.0e-4f);
+        for (int i = 0; i < 5; ++i) st[i].alloc = st[i].lo * shrink;
+    } else {
+        float rem = fxBudget - sumLo;
+        for (int i = 0; i < 5; ++i) st[i].alloc = st[i].lo;
+        struct Seg { int stage; float cap; float util; };
+        Seg segs[10];
+        int nSeg = 0;
+        for (int i = 0; i < 5; ++i) {
+            const float c1 = std::max(0.0f, st[i].mid - st[i].lo);
+            const float c2 = std::max(0.0f, st[i].hi - std::max(st[i].mid, st[i].lo));
+            if (c1 > 1.0e-5f && st[i].uCore > 0.0f) segs[nSeg++] = {i, c1, st[i].uCore};
+            if (c2 > 1.0e-5f && st[i].uHi > 0.0f)   segs[nSeg++] = {i, c2, st[i].uHi};
+        }
+        std::sort(segs, segs + nSeg, [](const Seg& a, const Seg& b) { return a.util > b.util; });
+        for (int k = 0; k < nSeg && rem > 1.0e-5f; ++k) {
+            const float add = std::min(rem, segs[k].cap);
+            st[segs[k].stage].alloc += add;
+            rem -= add;
+        }
+    }
+
+    FrameBudgetAllocation out{};
+    out.dxrShadowMs  = st[0].alloc;
+    out.giBounceMs   = st[1].alloc;
+    out.froxelVolMs  = st[2].alloc;
+    out.cloudMarchMs = st[3].alloc;
+    out.meshSubdivMs = st[4].alloc;
+    out.totalMs = out.dxrShadowMs + out.giBounceMs + out.froxelVolMs + out.cloudMarchMs + out.meshSubdivMs;
+    out.cloudSteps = isInterior ? 0u : static_cast<uint32_t>(std::clamp(int(16.0f + out.cloudMarchMs * 24.0f), 16, 64));
+    out.subdivTier = (out.meshSubdivMs >= 1.15f) ? 3u : ((out.meshSubdivMs >= 0.55f) ? 2u : 1u);
+    return out;
+}
+
 } // namespace raw::bridge

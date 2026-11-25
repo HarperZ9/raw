@@ -331,10 +331,10 @@ std::vector<raw::ui::StudioRow> BuildRows(int tab)
         AddCycle(rows, "Runtime Autonomy", "Zero SKSE / Native raw_engine.dll", true);
     } else if (tab == 7) {
         static const char* kCurves[9] = {"Game", "ACES Fitted", "ReinhardW", "RAW Hybrid", "AgX WideGamut", "GranTurismo", "Lottes", "Hable", "ACES 2.0 CAM"};
-        static const char* kLuts[14] = {"Neutral", "Nordic Film", "Kodak 2383", "Cinema", "Vision3 500T", "Fuji Velvia", "Tarkovsky", "LomoChrome", "Oil Impasto", "Ink Hatch", "Pixel Bayer", "Watercolor", "Sony PVM", "NTSC VHS"};
+        static const char* kLuts[16] = {"Neutral", "Nordic Film", "Kodak 2383", "Cinema", "Vision3 500T", "Fuji Velvia", "Tarkovsky", "LomoChrome", "Oil Impasto", "Ink Hatch", "Pixel Bayer", "Watercolor", "Sony PVM", "NTSC VHS", "Aerochrome IR", "Trichrome Plate"};
         AddToggle(rows, "RAW Tonemap & FXAA", tm.enabled);
         AddCycle(rows, "Display Transform", kCurves[std::clamp(tm.curve, 0, 8)], true);
-        AddCycle(rows, "Film Stock Grade", kLuts[std::clamp(int(tm.x[2] + 0.5f), 0, 13)]);
+        AddCycle(rows, "Film Stock Grade", kLuts[std::clamp(int(tm.x[2] + 0.5f), 0, 15)]);
         AddSlider(rows, "Exposure Bias (EV)", tm.bias, -2.0f, 2.0f, "%+.2f");
         AddSlider(rows, "White Balance (Kelvin)", tm.colorTempK, 3500.0f, 9500.0f, "%.0f K");
         AddSlider(rows, "Oklab Saturation", tm.oklabSat, 0.0f, 2.0f, "%.2fx");
@@ -491,7 +491,7 @@ void ApplyRowEdit(int tab, int row, int dir, bool hasDirectNorm, float directNor
         switch (row) {
         case 0: tm.enabled = !tm.enabled; tmDirty = true; break;
         case 1: tm.curve = (tm.curve + 9 + d) % 9; tmDirty = true; break;
-        case 2: tm.x[2] = float((std::clamp(int(tm.x[2] + 0.5f), 0, 13) + 14 + d) % 14); tmDirty = true; break;
+        case 2: tm.x[2] = float((std::clamp(int(tm.x[2] + 0.5f), 0, 15) + 16 + d) % 16); tmDirty = true; break;
         case 3: setF(tm.bias, -2.0f, 2.0f, 0.10f); tmDirty = true; break;
         case 4: setF(tm.colorTempK, 3500.0f, 9500.0f, 150.0f); tmDirty = true; break;
         case 5: setF(tm.oklabSat, 0.0f, 2.0f, 0.05f); tmDirty = true; break;

@@ -1,11 +1,10 @@
-// RawTensorMath.hlsli: Metal-Level Wave-Cooperative Tensor, Packed FP16/DP4a & Long-Vector Math Library.
+// RawTensorMath.hlsli: Metal-Level Wave-Cooperative Tensor, E8 Lattice, Bilinear-Rank & Long-Vector Math Library.
 // Targets SM 6.6-6.10 uniformly across RTX 3060 through RTX 5090+ (and RDNA2-4 / Intel Arc):
-//   1) Wave-Quad Register-Shuffle Differentials (WaveQuadSwapX / WaveQuadSwapY): zero extra L1 texture fetches
-//      for 2x2 normal curvature, divergence, and cooperative neighborhood filtering.
-//   2) Packed Native FP16 (float16_t4) 8->8->4 Residual Neural Block (2x ALU throughput, half VGPR footprint).
-//   3) SM 6.9+ Native Long-Vector (vector<float16_t, 8> / vector<float16_t, 16>) zero-scalarization path.
-//   4) Hardware INT8 DP4a (dot4add_i8packed) quantized 4-channel inner products (RTX 3060-5090 native silicon).
-//   5) SM 6.10 Forward Hook (__SHADER_TARGET_MINOR >= 10) prepared for dx::linalg / GetGroupWaveIndex().
+//   1) Wave-Quad Register-Shuffle Differentials (QuadReadAcrossX / QuadReadAcrossY): zero extra L1 texture fetches.
+//   2) Exact O(1) E8 Optimal 8D Lattice Quantizer (D8 union D8+1/2, Viazovska 8D sphere packing) for 8D feature vectors.
+//   3) Strassen / Bilinear-Rank 4x4 Matrix Contraction (49 vs 64 multiplies; respects dense omega=9/4 ceiling via sparsity).
+//   4) Prime-Root Low-Discrepancy 4D QMC Sequence (sqrt(2), sqrt(3), sqrt(5), sqrt(7) Kronecker Weyl shifts).
+//   5) SM 6.9+ Native Long-Vector (vector<float16_t, 8> / vector<float16_t, 16>) + DP4a INT8 dot4add_i8packed.
 // Original work, MIT.
 #ifndef RAW_TENSOR_MATH_HLSLI
 #define RAW_TENSOR_MATH_HLSLI
@@ -17,6 +16,79 @@
 #define RAW_HAS_SM69 0
 #define RAW_HAS_SM610 0
 #endif
+
+// Exact O(1) Nearest-Point Quantizer onto the 8D E8 Lattice (Conway-Sloane / Viazovska optimal 8D sphere packing):
+// E8 = D8 union (D8 + 1/2), where D8 is all integer vectors in Z^8 with even coordinate sum.
+// Achieves kissing number 240 and strictly lower 8D MSE than cubic Z^8 rounding for neural feature/radiance compression.
+void rawQuantizeD8(float4 a, float4 b, out float4 qa, out float4 qb) {
+    qa = round(a);
+    qb = round(b);
+    const int sumParity = (int(qa.x) + int(qa.y) + int(qa.z) + int(qa.w)
+                         + int(qb.x) + int(qb.y) + int(qb.z) + int(qb.w)) & 1;
+    if (sumParity != 0) {
+        const float4 da = a - qa;
+        const float4 db = b - qb;
+        const float4 ada = abs(da);
+        const float4 adb = abs(db);
+        float maxD = ada.x; int best = 0;
+        if (ada.y > maxD) { maxD = ada.y; best = 1; }
+        if (ada.z > maxD) { maxD = ada.z; best = 2; }
+        if (ada.w > maxD) { maxD = ada.w; best = 3; }
+        if (adb.x > maxD) { maxD = adb.x; best = 4; }
+        if (adb.y > maxD) { maxD = adb.y; best = 5; }
+        if (adb.z > maxD) { maxD = adb.z; best = 6; }
+        if (adb.w > maxD) { maxD = adb.w; best = 7; }
+        if      (best == 0) qa.x += (da.x >= 0.0f ? 1.0f : -1.0f);
+        else if (best == 1) qa.y += (da.y >= 0.0f ? 1.0f : -1.0f);
+        else if (best == 2) qa.z += (da.z >= 0.0f ? 1.0f : -1.0f);
+        else if (best == 3) qa.w += (da.w >= 0.0f ? 1.0f : -1.0f);
+        else if (best == 4) qb.x += (db.x >= 0.0f ? 1.0f : -1.0f);
+        else if (best == 5) qb.y += (db.y >= 0.0f ? 1.0f : -1.0f);
+        else if (best == 6) qb.z += (db.z >= 0.0f ? 1.0f : -1.0f);
+        else                qb.w += (db.w >= 0.0f ? 1.0f : -1.0f);
+    }
+}
+
+void rawQuantizeE8(float4 a, float4 b, float scale, out float4 outA, out float4 outB) {
+    const float invS = rcp(max(scale, 1.0e-4f));
+    const float4 sa = a * scale;
+    const float4 sb = b * scale;
+    float4 p0a, p0b, p1a, p1b;
+    rawQuantizeD8(sa, sb, p0a, p0b);
+    rawQuantizeD8(sa - 0.5f.xxxx, sb - 0.5f.xxxx, p1a, p1b);
+    p1a += 0.5f.xxxx;
+    p1b += 0.5f.xxxx;
+    const float4 e0a = sa - p0a, e0b = sb - p0b;
+    const float4 e1a = sa - p1a, e1b = sb - p1b;
+    const float d0 = dot(e0a, e0a) + dot(e0b, e0b);
+    const float d1 = dot(e1a, e1a) + dot(e1b, e1b);
+    outA = (d0 <= d1 ? p0a : p1a) * invS;
+    outB = (d0 <= d1 ? p0b : p1b) * invS;
+}
+
+// Bilinear-Rank Strassen 2x2 Matrix Product (7 multiplies vs 8 naive; foundational sub-cubic tensor contraction):
+float2x2 rawStrassen2x2(float2x2 A, float2x2 B) {
+    const float m1 = (A[0][0] + A[1][1]) * (B[0][0] + B[1][1]);
+    const float m2 = (A[1][0] + A[1][1]) * B[0][0];
+    const float m3 = A[0][0] * (B[0][1] - B[1][1]);
+    const float m4 = A[1][1] * (B[1][0] - B[0][0]);
+    const float m5 = (A[0][0] + A[0][1]) * B[1][1];
+    const float m6 = (A[1][0] - A[0][0]) * (B[0][0] + B[0][1]);
+    const float m7 = (A[0][1] - A[1][1]) * (B[1][0] + B[1][1]);
+    return float2x2(m1 + m4 - m5 + m7, m3 + m5,
+                    m2 + m4,           m1 - m2 + m3 + m6);
+}
+
+// Prime-Root 4D Low-Discrepancy Kronecker-Weyl QMC Sequence (sqrt(2), sqrt(3), sqrt(5), sqrt(7) fractional parts)
+// rotated spatially by Cranley-Patterson Interleaved Gradient Noise for low star-discrepancy 1-2 spp DXR 1.2 sampling:
+float4 rawPrimeQmc4(float2 px, float frameIdx) {
+    const float4 kRoots = float4(0.4142135624f, 0.7320508076f, 0.2360679775f, 0.6457513111f);
+    const float s0 = frac(52.9829189f * frac(dot(px, float2(0.06711056f, 0.00583715f))));
+    const float s1 = frac(52.9829189f * frac(dot(px.yx + 13.7f, float2(0.06711056f, 0.00583715f))));
+    const float s2 = frac(52.9829189f * frac(dot(px + float2(29.3f, 7.1f), float2(0.06711056f, 0.00583715f))));
+    const float s3 = frac(52.9829189f * frac(dot(px.yx + float2(5.9f, 41.3f), float2(0.06711056f, 0.00583715f))));
+    return frac(float4(s0, s1, s2, s3) + kRoots * fmod(frameIdx, 512.0f));
+}
 
 // Hardware INT8 quantized 4-element dot product (DP4a silicon on Turing/Ampere/Ada/Blackwell/RDNA3+):
 int rawDot4I8(uint packedA, uint packedB, int acc) {

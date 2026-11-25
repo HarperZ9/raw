@@ -226,10 +226,18 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const float2 mv = Motion.Load(int3(bestVelPx, 0));
     const float speedPx = length(mv * dims.xy);
 
-    // RAWLSS 7.0 12->16->4 Split-Manifold Neural Ray Reconstructor (native 16-wide SM 6.9 Long Vectors on DXIL 1.9!):
-    const float4 mlpOut = rawEvalSplitManifoldNet12x16x4(
+    // RAWLSS 7.0 12->16->4 Split-Manifold Neural Ray Reconstructor (native 16-wide SM 6.9 Long Vectors on DXIL 1.9!)
+    // Pre-stabilizes the 8D geometric/radiance input manifold onto the optimal E8 sphere-packing lattice (scale 16)
+    // to suppress 1-spp sub-LSB quantization chatter across stationary surfaces while preserving continuous edges!
+    float4 qf0, qf1;
+    rawQuantizeE8(
         float4(curv, divTotal * 0.5f, localContrast, fresnel),
         float4(midKey, nC.z * 0.5f + 0.5f, saturate(quadIrradStd * 0.65f), saturate(giLum * 0.8f)),
+        16.0f, qf0, qf1
+    );
+    const float4 mlpOut = rawEvalSplitManifoldNet12x16x4(
+        lerp(float4(curv, divTotal * 0.5f, localContrast, fresnel), qf0, 0.35f),
+        lerp(float4(midKey, nC.z * 0.5f + 0.5f, saturate(quadIrradStd * 0.65f), saturate(giLum * 0.8f)), qf1, 0.35f),
         float4(saturate(specTap.x), saturate(specTap.y), saturate(speedPx * 0.12f), 1.0f - edgeGate)
     );
 

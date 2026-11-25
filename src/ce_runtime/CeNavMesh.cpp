@@ -35,10 +35,210 @@ inline float TriArea2D(NavVec3 a, NavVec3 b, NavVec3 c) {
     return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
 }
 
-// Minimal RFC 1950 zlib/DEFLATE inflator for compressed ESM NAVM records (clean-room fallback for uncompressed records first).
-// Note: Skyrim.esm stores both uncompressed and zlib-compressed NAVM records; our extractor checks record flag 0x00040000
-// and cleanly skips or decodes uncompressed NAVM records directly when no external zlib is linked.
+// Clean-room zero-dependency RFC 1950 zlib / RFC 1951 DEFLATE inflator for compressed Skyrim.esm NAVM records.
+// Supports stored (type 0), fixed Huffman (type 1), and dynamic Huffman (type 2) blocks with strict bounds checks.
 constexpr uint32_t kRecFlagCompressed = 0x00040000u;
+
+struct BitReader {
+    const uint8_t* data = nullptr;
+    size_t size = 0;
+    size_t bytePos = 0;
+    uint32_t bitBuf = 0;
+    int bitCount = 0;
+
+    bool Ensure(int n) {
+        while (bitCount < n) {
+            if (bytePos >= size) return false;
+            bitBuf |= uint32_t(data[bytePos++]) << bitCount;
+            bitCount += 8;
+        }
+        return true;
+    }
+    bool ReadBits(int n, uint32_t& out) {
+        if (n == 0) { out = 0; return true; }
+        if (!Ensure(n)) return false;
+        out = bitBuf & ((1u << n) - 1u);
+        bitBuf >>= n;
+        bitCount -= n;
+        return true;
+    }
+    void AlignByte() {
+        const int drop = bitCount & 7;
+        bitBuf >>= drop;
+        bitCount -= drop;
+    }
+};
+
+struct HuffTable {
+    static constexpr int kMaxBits = 15;
+    int count[kMaxBits + 1] = {};
+    uint16_t symbols[320] = {};
+    int maxSym = 0;
+
+    bool Build(const uint8_t* lengths, int numSyms) {
+        std::memset(count, 0, sizeof count);
+        maxSym = numSyms;
+        for (int i = 0; i < numSyms; ++i) {
+            if (lengths[i] > kMaxBits) return false;
+            count[lengths[i]]++;
+        }
+        count[0] = 0;
+        int offs[kMaxBits + 1] = {};
+        int total = 0;
+        for (int b = 1; b <= kMaxBits; ++b) {
+            offs[b] = total;
+            total += count[b];
+        }
+        if (total > 320) return false;
+        for (int i = 0; i < numSyms; ++i) {
+            if (lengths[i] != 0) symbols[offs[lengths[i]]++] = uint16_t(i);
+        }
+        return true;
+    }
+
+    bool Decode(BitReader& br, int& outSym) const {
+        int code = 0, first = 0, idx = 0;
+        for (int len = 1; len <= kMaxBits; ++len) {
+            uint32_t bit = 0;
+            if (!br.ReadBits(1, bit)) return false;
+            code |= int(bit);
+            const int c = count[len];
+            if (code - c < first) {
+                outSym = symbols[idx + (code - first)];
+                return true;
+            }
+            idx += c;
+            first = (first + c) << 1;
+            code <<= 1;
+        }
+        return false;
+    }
+};
+
+bool InflateZlibStream(const uint8_t* src, size_t srcLen, size_t expectedOut, std::vector<uint8_t>& out) {
+    out.clear();
+    if (!src || srcLen < 6 || expectedOut == 0 || expectedOut > 16u * 1024u * 1024u) return false;
+    const uint8_t cmf = src[0], flg = src[1];
+    if ((cmf & 0x0Fu) != 8u || (((uint32_t(cmf) << 8) | flg) % 31u) != 0u) return false;
+    size_t hdr = 2;
+    if (flg & 0x20u) { if (srcLen < 10) return false; hdr += 4; }
+
+    BitReader br{src + hdr, srcLen - hdr, 0, 0, 0};
+    out.reserve(expectedOut);
+
+    static constexpr uint16_t kLenBase[29] = {
+        3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258
+    };
+    static constexpr uint8_t kLenExtra[29] = {
+        0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0
+    };
+    static constexpr uint16_t kDistBase[30] = {
+        1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577
+    };
+    static constexpr uint8_t kDistExtra[30] = {
+        0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13
+    };
+    static constexpr uint8_t kClOrder[19] = {16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15};
+
+    uint32_t bfinal = 0;
+    do {
+        uint32_t btype = 0;
+        if (!br.ReadBits(1, bfinal) || !br.ReadBits(2, btype)) return false;
+        if (btype == 0u) {
+            br.AlignByte();
+            uint32_t len = 0, nlen = 0;
+            if (!br.ReadBits(16, len) || !br.ReadBits(16, nlen)) return false;
+            if ((len ^ 0xFFFFu) != nlen) return false;
+            for (uint32_t i = 0; i < len; ++i) {
+                uint32_t b = 0;
+                if (!br.ReadBits(8, b)) return false;
+                if (out.size() >= expectedOut + 64) return false;
+                out.push_back(uint8_t(b));
+            }
+        } else if (btype == 1u || btype == 2u) {
+            HuffTable litTab{}, distTab{};
+            if (btype == 1u) {
+                uint8_t ll[288], dl[32];
+                for (int i = 0; i <= 143; ++i) ll[i] = 8;
+                for (int i = 144; i <= 255; ++i) ll[i] = 9;
+                for (int i = 256; i <= 279; ++i) ll[i] = 7;
+                for (int i = 280; i <= 287; ++i) ll[i] = 8;
+                for (int i = 0; i < 32; ++i) dl[i] = 5;
+                if (!litTab.Build(ll, 288) || !distTab.Build(dl, 32)) return false;
+            } else {
+                uint32_t hlit = 0, hdist = 0, hclen = 0;
+                if (!br.ReadBits(5, hlit) || !br.ReadBits(5, hdist) || !br.ReadBits(4, hclen)) return false;
+                hlit += 257u; hdist += 1u; hclen += 4u;
+                if (hlit > 286u || hdist > 30u) return false;
+                uint8_t clLens[19] = {};
+                for (uint32_t i = 0; i < hclen; ++i) {
+                    uint32_t v = 0;
+                    if (!br.ReadBits(3, v)) return false;
+                    clLens[kClOrder[i]] = uint8_t(v);
+                }
+                HuffTable clTab{};
+                if (!clTab.Build(clLens, 19)) return false;
+                uint8_t allLens[320] = {};
+                uint32_t idx = 0, need = hlit + hdist;
+                while (idx < need) {
+                    int sym = 0;
+                    if (!clTab.Decode(br, sym)) return false;
+                    if (sym < 16) {
+                        allLens[idx++] = uint8_t(sym);
+                    } else if (sym == 16) {
+                        if (idx == 0) return false;
+                        uint32_t rep = 0;
+                        if (!br.ReadBits(2, rep)) return false;
+                        rep += 3u;
+                        const uint8_t prev = allLens[idx - 1];
+                        while (rep-- && idx < need) allLens[idx++] = prev;
+                    } else if (sym == 17) {
+                        uint32_t rep = 0;
+                        if (!br.ReadBits(3, rep)) return false;
+                        rep += 3u;
+                        while (rep-- && idx < need) allLens[idx++] = 0;
+                    } else if (sym == 18) {
+                        uint32_t rep = 0;
+                        if (!br.ReadBits(7, rep)) return false;
+                        rep += 11u;
+                        while (rep-- && idx < need) allLens[idx++] = 0;
+                    } else {
+                        return false;
+                    }
+                }
+                if (!litTab.Build(allLens, int(hlit)) || !distTab.Build(allLens + hlit, int(hdist))) return false;
+            }
+            for (;;) {
+                int sym = 0;
+                if (!litTab.Decode(br, sym)) return false;
+                if (sym < 256) {
+                    if (out.size() >= expectedOut + 64) return false;
+                    out.push_back(uint8_t(sym));
+                } else if (sym == 256) {
+                    break;
+                } else {
+                    const int lc = sym - 257;
+                    if (lc < 0 || lc >= 29) return false;
+                    uint32_t lExtra = 0;
+                    if (!br.ReadBits(kLenExtra[lc], lExtra)) return false;
+                    const uint32_t copyLen = kLenBase[lc] + lExtra;
+                    int dc = 0;
+                    if (!distTab.Decode(br, dc) || dc < 0 || dc >= 30) return false;
+                    uint32_t dExtra = 0;
+                    if (!br.ReadBits(kDistExtra[dc], dExtra)) return false;
+                    const uint32_t dist = kDistBase[dc] + dExtra;
+                    if (dist == 0 || dist > out.size() || out.size() + copyLen > expectedOut + 64) return false;
+                    for (uint32_t k = 0; k < copyLen; ++k) {
+                        out.push_back(out[out.size() - dist]);
+                    }
+                }
+            }
+        } else {
+            return false;
+        }
+    } while (!bfinal);
+    return out.size() >= expectedOut;
+}
 
 }  // namespace
 
@@ -161,13 +361,24 @@ bool ExtractNavMeshesFromPlugin(const std::string& esmPath, uint32_t maxMeshes,
         const uint64_t nextPos = pos + 24 + uint64_t(dataSize);
         if (nextPos > fileSize) break;
 
-        if (std::memcmp(hdr, "NAVM", 4) == 0 && (flags & kRecFlagCompressed) == 0u && dataSize >= 24 && dataSize < 4u * 1024u * 1024u) {
+        if (std::memcmp(hdr, "NAVM", 4) == 0 && dataSize >= 24 && dataSize < 4u * 1024u * 1024u) {
             recBuf.resize(dataSize);
             if (in.read(reinterpret_cast<char*>(recBuf.data()), static_cast<std::streamsize>(dataSize))) {
                 CeNavMeshData nav{};
-                if (ParseNavmRecordPayload(formId, recBuf.data(), recBuf.size(), nav)) {
-                    outMeshes.push_back(std::move(nav));
+                bool parsed = false;
+                if ((flags & kRecFlagCompressed) != 0u) {
+                    if (recBuf.size() > 10) {
+                        uint32_t uncompSize = 0;
+                        std::memcpy(&uncompSize, recBuf.data(), 4);
+                        std::vector<uint8_t> inflated;
+                        if (InflateZlibStream(recBuf.data() + 4, recBuf.size() - 4, uncompSize, inflated)) {
+                            parsed = ParseNavmRecordPayload(formId, inflated.data(), inflated.size(), nav);
+                        }
+                    }
+                } else {
+                    parsed = ParseNavmRecordPayload(formId, recBuf.data(), recBuf.size(), nav);
                 }
+                if (parsed) outMeshes.push_back(std::move(nav));
             }
         }
         pos = nextPos;

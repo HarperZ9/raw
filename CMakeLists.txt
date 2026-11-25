@@ -845,6 +845,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/ce_runtime/CeNavMesh.cpp
         src/d3d12_bridge/RawAssetBridge.cpp
         src/d3d12_bridge/RawTextureBridge.cpp
+        src/d3d12_bridge/HardwareProfile.cpp
         src/engine_rt/rt_zydis_offsets.cpp
         src/engine_rt/rt_skeleton_ik.cpp
         src/engine_rt/rt_combat_ai.cpp
@@ -854,7 +855,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
     target_include_directories(ce_runtime_check PRIVATE src/engine_rt src/d3d12_bridge src/ce_runtime src/ui "${RAW_ZYDIS_ROOT}/include")
     target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD)
-    target_link_libraries(ce_runtime_check PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB} windowscodecs ole32)
+    target_link_libraries(ce_runtime_check PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB} windowscodecs ole32 dxgi)
 else()
     message(STATUS "raw_engine: Zydis not found under ${RAW_ZYDIS_ROOT}; module not built")
 endif()

@@ -560,6 +560,14 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float3 edgeBg = hasPreWater ? PreWater[id.xy].rgb : game.rgb;
             const float shoreBlend = min(smoothstep(0.0f, 7.0f, depthV0), lerp(0.28f, 1.0f, edgeCov));
             col = lerp(edgeBg, col, shoreBlend);
+            // Daylight Cluster D (img-003 68-77, BUILD-LIST #15): Physical Waterline Split-Surface Meniscus Band
+            // when the camera lens grazes the exact water plane (abs(eyeW.z - p.z) < 14u and wDist < 220u):
+            const float eyeWaterGap = abs(eyeW.z - p.z);
+            if (eyeWaterGap < 14.0f && wDist < 220.0f) {
+                const float meniscusBand = exp(-pow(eyeWaterGap / 3.2f, 2.0f)) * smoothstep(220.0f, 24.0f, wDist);
+                const float3 meniscusTint = lerp(float3(0.015f, 0.032f, 0.042f), farSkyRefl * 0.65f, F);
+                col = lerp(col, meniscusTint, meniscusBand * 0.42f);
+            }
             // Exact 16-bit horizon merge: at far ocean distances (wDist > 5000u), PreWater[id.xy].rgb holds
             // LightFog.hlsl's exact sky dome + cloud color at that pixel (Hillaire AtmoSkyView / overcast / sunset / night).
             // Merging far ocean directly into PreWater guarantees 0.0000 luminance discontinuity at the Sea of Ghosts horizon!

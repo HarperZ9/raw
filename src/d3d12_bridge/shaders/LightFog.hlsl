@@ -254,7 +254,30 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // Preserve Masser & Secunda twin moons cleanly on top of our procedural night/twilight sky.
             float3 baseSky = lerp(lit.rgb, fullSky, (1.0f - isExotic) * (1.0f - moonKeep * 0.96f));
             if (moonKeep > 0.04f && nightSkyW > 0.04f) {
-                baseSky += lit.rgb * float3(0.95f, 0.98f, 1.12f) * (moonKeep * nightSkyW * 0.35f);
+                baseSky += lit.rgb * float3(1.06f, 0.98f, 0.88f) * (moonKeep * nightSkyW * 0.38f);
+            }
+            // Daylight/Commons Cluster B (author-01.jpg own-08..11): Physical 22-Degree Hexagonal Ice-Crystal Halo
+            // (refractive index n=1.31, minimum deviation theta_min = 21.84 deg = 0.381 rad) around Moon at cold/cirrus nights
+            // AND subtle 22-deg alpine Sundog Parhelia on freezing low-sun days (strictly zero fake glow in warm clear noon)!
+            if ((1.0f - isExotic) > 0.2f && sDir.z > 0.04f) {
+                const float coldAir = saturate(weather.z * 1.25f + smoothstep(2200.0f, 4400.0f, camPosW.z) * 0.65f + saturate(clouds.x - 0.18f) * 0.55f);
+                if (coldAir > 0.15f) {
+                    if (nightSkyW > 0.20f && sunDir.w > 0.5f && sunDir.z > 0.10f) {
+                        const float mAng = acos(clamp(dot(sDir, normalize(sunDir.xyz)), -1.0f, 1.0f));
+                        const float halo22 = exp(-pow((mAng - 0.381f) / 0.022f, 2.0f)) * smoothstep(0.32f, 0.381f, mAng);
+                        const float3 iceDisp = float3(
+                            exp(-pow((mAng - 0.376f) / 0.018f, 2.0f)),
+                            exp(-pow((mAng - 0.383f) / 0.019f, 2.0f)),
+                            exp(-pow((mAng - 0.391f) / 0.021f, 2.0f)));
+                        baseSky += (float3(0.95f, 0.86f, 0.72f) * halo22 * 0.55f + iceDisp * 0.45f) * (coldAir * nightSkyW * (1.0f - cover * 0.65f) * 0.028f);
+                    } else if (dayW > 0.20f && aElev > 0.04f && aElev < 0.34f && weather.z > 0.10f) {
+                        const float sAng = acos(clamp(dot(sDir, aSun), -1.0f, 1.0f));
+                        const float elevDiff = abs(sDir.z - aSun.z);
+                        const float parhelia = exp(-pow((sAng - 0.381f) / 0.020f, 2.0f)) * exp(-pow(elevDiff / 0.045f, 2.0f));
+                        const float3 dogCol = float3(1.15f, 0.94f, 0.72f);
+                        baseSky += dogCol * (parhelia * coldAir * dayW * (1.0f - cover * 0.55f) * 0.095f);
+                    }
+                }
             }
             if ((flags.x & FLAG_CLOUDS) != 0u) {
                 const float2 skyUv = (px + 0.5f) * dims.zw;

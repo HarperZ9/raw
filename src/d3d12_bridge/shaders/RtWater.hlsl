@@ -410,15 +410,52 @@ void water(uint3 id : SV_DispatchThreadID) {
                 }
             }
 
-            // Caustics on the bed, under the water (EXTERIORS ONLY — sunColour.w > 0.5!).
+            // Wave 29: Physical Refracted Flux-Jacobian Chromatic Caustics + Negative-Space Dark Troughs (EXTERIORS ONLY):
+            // Computes the live 2x2 wave-refracted sunlight footprint Jacobian J = |dX_sun/dx x dX_sun/dy| directly from
+            // our 8-wave trochoidal + capillary normal field at two Cauchy-dispersed wavelengths (n_R=1.331, n_B=1.340).
+            // Converging rays (J < J0) spike into blazing filaments; diverging rays (J > J0) carve physical dark troughs!
             float3 caus = 0.0f;
+            float3 causTrough = 1.0f.xxx;
             if (dBed < 1.0f && sunColour.w > 0.5f && sunDir.w > 0.5f && waterA.y > 0.0f && l.z > 0.05f) {
                 const float3 pb = worldAt(px, dBed);
                 const float depthV = max(p.z - pb.z, 0.0f);
-                const float3 sr = refract(-l, float3(0.0f, 0.0f, 1.0f), 1.0f / 1.333f);   // the sun's ray under the surface
-                // Flow-advected chromatic dispersion caustics: prism RGB spread scales naturally with water depth.
+                const float3 sr = refract(-l, float3(0.0f, 0.0f, 1.0f), 1.0f / 1.333f);   // unrefracted flat-surface sun ray
+                // Live neighbor-differential wave-normal refraction Jacobian across +-6u world footprint:
+                const float2 wDirC = normalize(cloudWind.xy + float2(1.0f, 0.35f));
+                const float2 wPerpC = float2(-wDirC.y, wDirC.x);
+                const float wtC = camPosW.w;
+                const float ampC = 0.68f + saturate(weather.w * 0.95f + saturate(length(cloudWind.xy) / 360.0f) * 0.85f) * 1.15f;
+                const float epsW = 6.0f;
+                float2 g0C = 0.0f.xx, gXC = 0.0f.xx, gYC = 0.0f.xx;
+                float fDum = 0.0f;
+                evalWaterWaveHeight(wpW.xy, wtC, wDirC, wPerpC, ampC, g0C, fDum);
+                evalWaterWaveHeight(wpW.xy + float2(epsW, 0.0f), wtC, wDirC, wPerpC, ampC, gXC, fDum);
+                evalWaterWaveHeight(wpW.xy + float2(0.0f, epsW), wtC, wDirC, wPerpC, ampC, gYC, fDum);
+                const float3 nC0 = normalize(float3(-g0C.x, -g0C.y, 1.0f));
+                const float3 nCX = normalize(float3(-gXC.x, -gXC.y, 1.0f));
+                const float3 nCY = normalize(float3(-gYC.x, -gYC.y, 1.0f));
+                const float dEff = clamp(depthV, 2.0f, 180.0f);
+                // Cauchy dispersion: red (620nm, n=1.331) vs green (540nm, n=1.334) vs blue (470nm, n=1.340)
+                float3 jacFocus = 1.0f.xxx;
+                static const float kInvIor[3] = { 1.0f / 1.331f, 1.0f / 1.334f, 1.0f / 1.340f };
+                [unroll] for (int ci = 0; ci < 3; ci++) {
+                    const float3 r0 = refract(-l, nC0, kInvIor[ci]);
+                    const float3 rX = refract(-l, nCX, kInvIor[ci]);
+                    const float3 rY = refract(-l, nCY, kInvIor[ci]);
+                    const float2 h0 = r0.xy * (dEff / max(-r0.z, 0.25f));
+                    const float2 hX = float2(epsW, 0.0f) + rX.xy * (dEff / max(-rX.z, 0.25f));
+                    const float2 hY = float2(0.0f, epsW) + rY.xy * (dEff / max(-rY.z, 0.25f));
+                    const float2 dX = hX - h0;
+                    const float2 dY = hY - h0;
+                    const float detJ = abs(dX.x * dY.y - dX.y * dY.x);
+                    const float flux = clamp((epsW * epsW) / max(detJ, epsW * epsW * 0.22f), 0.38f, 3.6f);
+                    if (ci == 0) jacFocus.r = flux;
+                    else if (ci == 1) jacFocus.g = flux;
+                    else jacFocus.b = flux;
+                }
+                // Flow-advected fine micro-web blended with live physical wave-Jacobian filaments:
                 const float2 flowOff = (cloudWind.xy * 0.012f + nL.xy * 5.5f) * camPosW.w;
-                const float3 at = camPosW.xyz + pb - sr * (depthV / max(-sr.z, 0.2f));      // where it crossed the surface
+                const float3 at = camPosW.xyz + pb - sr * (depthV / max(-sr.z, 0.2f));
                 const float t = camPosW.w * 0.42f;
                 const float sc = max(waterB.y, 1.0f);
                 const float disp = clamp(depthV * 0.025f, 0.30f, 1.65f);
@@ -427,11 +464,14 @@ void water(uint3 id : SV_DispatchThreadID) {
                                           causticNet(cPos, t, sc),
                                           causticNet(cPos - float2(disp, 0.25f * disp), t, sc));
                 const float sunVis = sunColour.w > 0.5f ? visible(pb + float3(0.0f, 0.0f, 1.0f + 0.002f * length(pb)), l, 0.0f, sunLength) : 1.0f;
-                const float through = exp(-waterA.z * (depthV + length(pb - p)));    // down to the bed and back up to the eye
-                const float focus = saturate(depthV / 22.0f) * exp(-depthV / 340.0f);  // sharp in shallows, softens in deep pools
-                // Attenuate caustics naturally under overcast clouds so diffuse overcast skies never cast harsh laser webs on riverbeds.
+                const float through = exp(-waterA.z * (depthV + length(pb - p)));
+                const float focus = saturate(depthV / 22.0f) * exp(-depthV / 340.0f);
                 const float clearSun = max(1.0f - saturate(clouds.x * 0.80f), 0.22f);
-                caus = BedAlbedo.Load(ip).rgb * sunColour.rgb * (l.z * sunVis * through * focus * waterA.y * 1.45f * clearSun) * net;
+                // Negative-space caustic trough modulation (< 1.0 where rays diverge, > 1.0 where wave crests converge):
+                const float troughFade = saturate(focus * sunVis * clearSun * (1.0f - smoothstep(2600.0f, 5200.0f, wDist)));
+                causTrough = lerp(1.0f.xxx, clamp(jacFocus, 0.62f.xxx, 1.25f.xxx), troughFade * 0.65f);
+                const float3 jacFilament = max(jacFocus - 1.0f.xxx, 0.0f.xxx) * 0.72f + net * 0.68f;
+                caus = BedAlbedo.Load(ip).rgb * sunColour.rgb * (l.z * sunVis * through * focus * waterA.y * 1.45f * clearSun) * jacFilament;
             }
 
             // Refraction through the bed's own colour, from the frame RAW lit before the game composited its water: the
@@ -467,7 +507,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float2 qFrac = frac(qUse);
                 const float3 b00 = PreWater[q0].rgb, b10 = PreWater[q0 + int2(1, 0)].rgb;
                 const float3 b01 = PreWater[q0 + int2(0, 1)].rgb, b11 = PreWater[q0 + int2(1, 1)].rgb;
-                float3 bed = lerp(lerp(b00, b10, qFrac.x), lerp(b01, b11, qFrac.x), qFrac.y);
+                float3 bed = lerp(lerp(b00, b10, qFrac.x), lerp(b01, b11, qFrac.x), qFrac.y) * causTrough;
                 // Physical 3-Band Cauchy Optical Dispersion (surpassing Blender 5.3 spectral refraction in real time):
                 // Splits red (n=1.331) and blue (n=1.340) refracted paths across steep wave facets & shallow riverbeds!
                 if (qValid && wDist < 1800.0f && qLen > 0.65f) {

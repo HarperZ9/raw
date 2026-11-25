@@ -326,6 +326,38 @@ float4 main(In i) : SV_Target {
         // Removed Skyrim's blurry 2011 vanilla Bloom (t0) from ltmRatio so our 6-level Jimenez HDR BloomPass.hlsl
         // is the sole bloom source (zero vanilla bloom halo bleed!).
         float3 xIn = hdr * exposure * RB.z;
+        // Wave 29 Retinal Lateral-Inhibition, Local Mesopic Purkinje Rod/Cone Shift & Opponent Simultaneous Contrast:
+        // Uses an edge-stopped 4-tap local surround on Scene (+-9 px, similarity-weighted to prevent dark-pole haloing)
+        // so dark nocturnal shadows shift softly toward scotopic 507nm silver-blue while warm torch pools stay rich photopic amber!
+        float swR, shR;
+        Scene.GetDimensions(swR, shR);
+        const float2 spxR = 9.0f / max(float2(swR, shR), float2(1.0f, 1.0f));
+        const float2 uvMaxR = float2(F[44].z, F[43].y);
+        const float lSelf = max(dot(xIn, W), 1.0e-5f);
+        float3 surrAcc = xIn;
+        float surrW = 1.0f;
+        static const float2 kRetOff[4] = { float2(1.0f, 0.0f), float2(-1.0f, 0.0f), float2(0.0f, 1.0f), float2(0.0f, -1.0f) };
+        [unroll] for (int ri = 0; ri < 4; ri++) {
+            const float2 rUv = min(max(suv + kRetOff[ri] * spxR, 0.0f.xx), uvMaxR);
+            const float3 sTap = max(Scene.Sample(S1, rUv).rgb, 0.0f.xxx) * exposure * RB.z;
+            const float lTap = max(dot(sTap, W), 1.0e-5f);
+            // Strict edge-stop by log-luminance parity so bright sky NEVER halos onto dark foreground silhouettes:
+            const float relE = abs(log2(lTap / lSelf));
+            const float wR = exp(-relE * relE * 1.45f);
+            surrAcc += sTap * wR;
+            surrW += wR;
+        }
+        const float3 locSurr = surrAcc / max(surrW, 1.0e-4f);
+        const float lSurr = max(dot(locSurr, W), 1.0e-5f);
+        // 1) Local Mesopic Purkinje rod/cone response: deep dark surrounds (< 0.035) shift softly toward cool scotopic 507nm:
+        const float scotopicW = (1.0f - smoothstep(0.006f, 0.048f, max(lSelf, lSurr * 0.65f))) * saturate(1.0f - saturate((xIn.r - xIn.b) * 3.5f));
+        const float rodL = dot(xIn, float3(0.06f, 0.62f, 0.32f));
+        xIn = lerp(xIn, rodL * float3(0.76f, 0.90f, 1.18f), scotopicW * 0.24f);
+        // 2) Opponent Simultaneous Contrast: warm surround gently induces cooler shadow opposition (and vice versa):
+        const float3 bloomSurr = max(bloom, 0.0f.xxx) * exposure * RB.z;
+        const float surrWarmth = clamp((bloomSurr.r - bloomSurr.b) / max(dot(bloomSurr, W) + 0.12f, 0.12f), -0.65f, 0.65f);
+        const float oppGate = smoothstep(0.008f, 0.12f, lSelf) * (1.0f - smoothstep(0.45f, 1.25f, lSelf));
+        xIn *= (1.0f.xxx + float3(-0.045f, 0.005f, 0.055f) * (surrWarmth * oppGate));
         // Photographic C2 Soft-Curve Rolling Highlights & Velvety Shadow Toe:
         const float lPost = max(dot(xIn, W), 1.0e-5f);
         const float rollKnee = max(RC.w * 0.35f, 0.85f);

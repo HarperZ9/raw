@@ -154,6 +154,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     const float wideMie = pow(cosS, 6.0f) * 0.16f * (1.0f - cover * 0.45f);
                     physSky += (sunCoreCol * solarCore + mieCol * (innerAureole + wideMie)) * sunDiscGate;
                 }
+                // Wave 29 Target-Frame Curved-Planet Belt of Venus (Antitwilight Arch) & Rising Earth Shadow Band:
+                // Intersects each sky ray opposite the low sun against the curved planetary shadow tangent (R=6360 km),
+                // painting the authentic deep slate-indigo Earth shadow below the rose-coral Belt of Venus at dawn/dusk!
+                if (twilightBell > 0.03f && sDir.z > 0.0f && sDir.z < 0.42f) {
+                    const float antiSunW = smoothstep(-0.15f, 0.85f, dot(normalize(float3(sDir.xy, 0.0f)), normalize(float3(-aSun.xy, 0.0f))));
+                    // Earth shadow elevation rises opposite the sun as aElev drops below +0.06:
+                    const float shadowElev = clamp(0.045f - aElev * 1.15f, 0.015f, 0.22f);
+                    const float inEarthShadow = (1.0f - smoothstep(shadowElev - 0.035f, shadowElev + 0.045f, sDir.z)) * antiSunW;
+                    const float venusArch = exp(-pow((sDir.z - (shadowElev + 0.048f)) / 0.052f, 2.0f)) * antiSunW;
+                    const float clearTw = (1.0f - overcastW * 0.82f) * twilightBell;
+                    physSky = lerp(physSky, physSky * float3(0.48f, 0.56f, 0.82f), inEarthShadow * clearTw * 0.62f);
+                    physSky += float3(0.24f, 0.105f, 0.155f) * (venusArch * clearTw * 0.42f);
+                }
                 fullSky = lerp(fullSky, physSky, max(dayW, twilightBell * 0.96f));
             }
             // Infinite Distant Horizon Ocean Plane (Horizon Fix replacement, COMPETITIVE-2026.md):
@@ -289,26 +302,36 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (moonKeep > 0.04f && nightSkyW > 0.04f) {
                 baseSky += lit.rgb * float3(1.06f, 0.98f, 0.88f) * (moonKeep * nightSkyW * 0.38f);
             }
-            // Daylight/Commons Cluster B (author-01.jpg own-08..11): Physical 22-Degree Hexagonal Ice-Crystal Halo
-            // (refractive index n=1.31, minimum deviation theta_min = 21.84 deg = 0.381 rad) around Moon at cold/cirrus nights
-            // AND subtle 22-deg alpine Sundog Parhelia on freezing low-sun days (strictly zero fake glow in warm clear noon)!
+            // Wave 29 Target-Frame Cirrus-Gated 22-Degree Hexagonal Ice-Crystal Halo & Sundogs (own-08..11):
+            // Intersects each sky ray with the curved 10 km cirrus ice-crystal shell (R=6360+10 km) and modulates the
+            // 6-band Snell minimum-deviation dispersion (21.7 deg red inside -> 22.5 deg violet outside) by actual cirrus crystal density!
             if ((1.0f - isExotic) > 0.2f && sDir.z > 0.04f) {
                 const float coldAir = saturate(weather.z * 1.25f + smoothstep(2200.0f, 4400.0f, camPosW.z) * 0.65f + saturate(clouds.x - 0.18f) * 0.55f);
                 if (coldAir > 0.15f) {
+                    const float rEC = 6360.0f;
+                    const float bC = rEC * sDir.z;
+                    const float tCirKm = sqrt(max(bC * bC + (rEC + 10.0f) * (rEC + 10.0f) - rEC * rEC, 0.0f)) - bC;
+                    const float2 cirHit = sDir.xy * tCirKm * 0.045f + cloudWind.xy * (camPosW.w * 0.00018f);
+                    const float cirWisp = smoothstep(0.28f, 0.78f, cNoise(float3(cirHit, 3.7f)) * 0.65f + cNoise(float3(cirHit * 2.6f, 9.1f)) * 0.35f);
+                    const float cirCrystal = lerp(0.30f, 1.0f, cirWisp);
                     if (nightSkyW > 0.20f && sunDir.w > 0.5f && sunDir.z > 0.10f) {
                         const float mAng = acos(clamp(dot(sDir, normalize(sunDir.xyz)), -1.0f, 1.0f));
-                        const float halo22 = exp(-pow((mAng - 0.381f) / 0.022f, 2.0f)) * smoothstep(0.32f, 0.381f, mAng);
+                        // Forbidden dark inner sky inside 21.5 deg + crisp red-inner / blue-outer Snell dispersion:
+                        const float halo22 = exp(-pow((mAng - 0.381f) / 0.020f, 2.0f)) * smoothstep(0.345f, 0.376f, mAng);
                         const float3 iceDisp = float3(
-                            exp(-pow((mAng - 0.376f) / 0.018f, 2.0f)),
-                            exp(-pow((mAng - 0.383f) / 0.019f, 2.0f)),
-                            exp(-pow((mAng - 0.391f) / 0.021f, 2.0f)));
-                        baseSky += (float3(0.95f, 0.86f, 0.72f) * halo22 * 0.55f + iceDisp * 0.45f) * (coldAir * nightSkyW * (1.0f - cover * 0.65f) * 0.028f);
+                            exp(-pow((mAng - 0.378f) / 0.015f, 2.0f)),
+                            exp(-pow((mAng - 0.384f) / 0.017f, 2.0f)),
+                            exp(-pow((mAng - 0.393f) / 0.019f, 2.0f)));
+                        baseSky += (float3(0.95f, 0.86f, 0.72f) * halo22 * 0.45f + iceDisp * 0.55f) * (coldAir * cirCrystal * nightSkyW * (1.0f - cover * 0.65f) * 0.036f);
                     } else if (dayW > 0.20f && aElev > 0.04f && aElev < 0.34f && weather.z > 0.10f) {
                         const float sAng = acos(clamp(dot(sDir, aSun), -1.0f, 1.0f));
                         const float elevDiff = abs(sDir.z - aSun.z);
-                        const float parhelia = exp(-pow((sAng - 0.381f) / 0.020f, 2.0f)) * exp(-pow(elevDiff / 0.045f, 2.0f));
-                        const float3 dogCol = float3(1.15f, 0.94f, 0.72f);
-                        baseSky += dogCol * (parhelia * coldAir * dayW * (1.0f - cover * 0.55f) * 0.095f);
+                        const float parhelia = exp(-pow((sAng - 0.381f) / 0.018f, 2.0f)) * exp(-pow(elevDiff / 0.042f, 2.0f));
+                        const float3 dogDisp = float3(
+                            exp(-pow((sAng - 0.378f) / 0.015f, 2.0f)),
+                            exp(-pow((sAng - 0.384f) / 0.017f, 2.0f)),
+                            exp(-pow((sAng - 0.393f) / 0.020f, 2.0f)));
+                        baseSky += (float3(1.12f, 0.92f, 0.70f) * parhelia * 0.55f + dogDisp * 0.45f) * (coldAir * cirCrystal * dayW * (1.0f - cover * 0.55f) * 0.105f);
                     }
                 }
             }
@@ -381,21 +404,25 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 // Removed screen-space 12-tap radial sun-spoke hack (21.03.52.63.png): true 3D volumetric godrays
                 // belong exclusively in FroxelPass / VolumetricPass (zero screen-space radial spokes across overcast sky!).
             }
-            // Physical 42-deg primary + 51-deg secondary spectral atmospheric rainbow STRICTLY during genuine sunlit rain
-            // (requires active rainfall weather.w > 0.32 AND real cloud cover > 0.35 -> zero fake rainbows on dry sunny days!).
+            // Wave 29 Target-Frame Rain-Shaft Primary (42 deg) + Secondary (51 deg) Rainbow + Negative-Space Alexander's Dark Band:
+            // Between 42 deg (0.733 rad) and 51 deg (0.890 rad), Snell droplet optics forbids 1- or 2-bounce rays from emerging,
+            // creating the real physical dark sky arch (Alexander's Dark Band) while brightening the supernumerary interior (<41 deg)!
             if (weather.w > 0.32f && clouds.x > 0.35f && aElev > 0.05f && aElev < 0.52f && sDir.z > 0.02f) {
                 const float antiAng = acos(clamp(dot(sDir, -aSun), -1.0f, 1.0f));
-                // Primary bow at 42 deg (0.733 rad, red outside -> violet inside); secondary bow at 51 deg (0.890 rad, reversed).
                 const float pR = exp(-pow((antiAng - 0.742f) / 0.011f, 2.0f));
                 const float pG = exp(-pow((antiAng - 0.728f) / 0.011f, 2.0f));
                 const float pB = exp(-pow((antiAng - 0.714f) / 0.011f, 2.0f));
-                const float sR = exp(-pow((antiAng - 0.876f) / 0.014f, 2.0f)) * 0.25f;
-                const float sG = exp(-pow((antiAng - 0.892f) / 0.014f, 2.0f)) * 0.25f;
-                const float sB = exp(-pow((antiAng - 0.908f) / 0.014f, 2.0f)) * 0.25f;
+                const float sR = exp(-pow((antiAng - 0.876f) / 0.014f, 2.0f)) * 0.28f;
+                const float sG = exp(-pow((antiAng - 0.892f) / 0.014f, 2.0f)) * 0.28f;
+                const float sB = exp(-pow((antiAng - 0.908f) / 0.014f, 2.0f)) * 0.28f;
                 const float bowW = smoothstep(0.32f, 0.72f, weather.w) * smoothstep(0.35f, 0.65f, clouds.x)
                                  * smoothstep(0.05f, 0.14f, aElev) * (1.0f - smoothstep(0.36f, 0.52f, aElev))
-                                 * smoothstep(0.02f, 0.10f, sDir.z);
-                baseSky += float3(pR + sR, pG + sG, pB + sB) * (bowW * 0.11f * (1.0f - isExotic));
+                                 * smoothstep(0.02f, 0.10f, sDir.z) * (1.0f - isExotic);
+                // Negative-space Alexander's Dark Band (42.5..50.5 deg) & supernumerary interior brightness (<41.2 deg):
+                const float alexBand = smoothstep(0.735f, 0.768f, antiAng) * (1.0f - smoothstep(0.855f, 0.892f, antiAng));
+                const float superInner = (1.0f - smoothstep(0.680f, 0.725f, antiAng)) * smoothstep(0.520f, 0.650f, antiAng);
+                baseSky *= (1.0f - alexBand * bowW * 0.15f + superInner * bowW * 0.065f);
+                baseSky += float3(pR + sR, pG + sG, pB + sB) * (bowW * 0.12f);
             }
             // Sub-LSB Interleaved Gradient Noise dithering eliminates 8-bit/10-bit sky gradient banding lines cleanly.
             const float skyDith = (ign(px) - 0.5f) * (1.0f / 255.0f);
@@ -642,10 +669,39 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
         }
+        // Wave 29 Negative-Space Depth-Parity Silhouette Diffraction & Crepuscular Dark-Shaft Cavity Contrast:
+        // 1) Asymmetric silhouette edge diffraction: when a foreground occluder (curZ) borders a far bright sky/HDR void
+        //    (zQ > curZ * 2.5), warm 620..670nm diffracted light wraps subtly OVER the dark foreground edge (emulsion
+        //    halation + forward Mie edge diffraction). Dark foreground NEVER bleeds outward into bright sky!
+        // 2) Transverse crepuscular cavity contrast: shadowed fog columns bordering bright sunlit shafts keep cool indigo depth.
+        float3 silDiffAdd = 0.0f.xxx;
+        if (mapScale > 0.5f && curZ < 6000.0f) {
+            const int2 dMaxF = int2(dims.xy) - 1;
+            const int2 ipF = int2(px);
+            const float lFg = dot(lit.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+            static const int2 kSil4[4] = { int2(2, 0), int2(-2, 0), int2(0, 2), int2(0, -2) };
+            [unroll] for (int si = 0; si < 4; si++) {
+                const int2 qS = clamp(ipF + kSil4[si], int2(0, 0), dMaxF);
+                const float dS = Depth.Load(int3(qS, 0));
+                const float zS = dS >= 1.0f ? 1.0e6f : viewZOf(dS);
+                if (zS > curZ * 2.5f) {
+                    const float3 bgCol = dS >= 1.0f ? atmoCol : max(Lit.Load(int3(qS, 0)).rgb, 0.0f.xxx);
+                    const float lBg = dot(bgCol, float3(0.2126f, 0.7152f, 0.0722f));
+                    if (lBg > max(lFg * 2.2f, 0.35f)) {
+                        // Long-wavelength red-weighted edge diffraction wrap (Archive Cluster M emulsion halation):
+                        silDiffAdd += min(bgCol, 2.5f.xxx) * float3(1.18f, 0.82f, 0.52f) * (saturate((lBg - lFg) * 0.28f) * 0.032f);
+                    }
+                }
+            }
+        }
+        // Crepuscular dark-shaft cavity preservation: cool indigo-violet tint when local volumetric scatter dips beside sunlit air:
+        const float shaftL = dot(shaftScatter, float3(0.2126f, 0.7152f, 0.0722f));
+        const float shaftShear = abs(ddx(shaftL)) + abs(ddy(shaftL));
+        const float3 cavityTint = lerp(1.0f.xxx, float3(0.84f, 0.90f, 1.12f), saturate(shaftShear * 14.0f) * (1.0f - saturate(shaftL * 8.0f)) * (1.0f - nightF));
         // Exact front-to-back Beer-Lambert composition:
-        //   lit * (froxT * Tfar) + froxScat (0..42k 3D volume) + farInScat (42k..horizon, attenuated by froxT) + shafts + precip
+        //   lit * (froxT * Tfar) + froxScat (0..42k 3D volume) + farInScat (42k..horizon, attenuated by froxT) + shafts + precip + silDiff
         const float3 farInScat = atmoCol * (1.0f.xxx - Tfar) * froxT;
-        return float4(lit.rgb * T + froxScat * pdeMistBoost + farInScat + shaftScatter * saturate(T + 0.15f) * pdeMistBoost + precipAdd, lit.a);
+        return float4(lit.rgb * T + (froxScat * cavityTint) * pdeMistBoost + farInScat + shaftScatter * saturate(T + 0.15f) * pdeMistBoost + precipAdd + silDiffAdd, lit.a);
     }
     // Dungeons, Caves, Nordic Tombs, Dwemer Ruins, Blackreach & Interiors (sunColour.w < 0.5):
     // Crisp, deep-contrast interior air (eliminates milky grey Dragonsreach haze & Septimus ice-cave whiteout) + rising hearth embers.

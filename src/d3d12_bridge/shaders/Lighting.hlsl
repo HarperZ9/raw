@@ -971,11 +971,20 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             sunShadow = (!isActorFeat && !isActorCloth) ? rv.x : lerp(m4.x, rv.x, 0.72f);
         }
         if (!match && sunColour.w > 0.5f && (flags.x & FLAG_CLOUDS) != 0u) { sunShadow *= pow(saturate(cloudShadow(p + camPosW.xyz)), 1.25f); }   // SKY-02 rolling cloud-shadow contrast
-        // Skin: warm dermal penumbra + gentle wrap; World: subtle atmospheric penumbra warmth vs cool shadow core!
+        // Wave 29 Chromatic Shadow-Boundary Penumbra Splitting (neighbor-reactive quad derivative of sunShadow):
+        // Uses hardware ddx/ddy on sunShadow (uniform sunDir.w branch) to detect the active penumbra boundary:
+        // outer sunlit edge warms via solar limb darkening (~4200K) while inner shadow edge shifts cobalt Rayleigh (~12000K)!
+        // Strictly attenuated under heavy overcast and disabled in interiors.
         const float penumbraBand = saturate(sunShadow * (1.0f - sunShadow) * 4.0f);
+        const float shGrad = saturate((abs(ddx(sunShadow)) + abs(ddy(sunShadow))) * 5.5f);
+        const float clearPenW = (!match && sunColour.w > 0.5f) ? saturate(1.0f - clouds.x * 1.15f) : 0.0f;
+        const float outerLimb = smoothstep(0.45f, 0.88f, sunShadow) * max(penumbraBand, shGrad * 0.65f) * clearPenW;
+        const float innerRayleigh = smoothstep(0.55f, 0.08f, sunShadow) * max(penumbraBand, shGrad * 0.65f) * clearPenW;
+        const float3 spectralPenShift = float3(0.055f, 0.022f, -0.028f) * outerLimb
+                                      + float3(-0.022f, 0.008f, 0.048f) * innerRayleigh;
         const float3 sunSh = skin && !match
             ? pow(saturate(sunShadow).xxx, float3(0.72f, 0.92f, 1.04f))
-            : (sunShadow.xxx + float3(0.025f, 0.015f, -0.010f) * penumbraBand);
+            : max(sunShadow.xxx + float3(0.022f, 0.012f, -0.008f) * penumbraBand + spectralPenShift, 0.0f.xxx);
         // True engine-synchronized Sun vs Moon direct-lighting separation driven by Sky::currentGameHour (+0x1B0, astroSunElev):
         // Prevents ShadowSceneNode->sunLight's night-time Moon flip from ever receiving daytime D65 sunlight gain/color,
         // and drives authentic golden-coral sunrise/sunset direct warmth as astroSunElev crosses 0 deg!
@@ -1283,6 +1292,79 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                                        lerp(float3(1.04f, 1.05f, 1.08f), float3(1.18f, 0.92f, 0.72f), goldInt), dayInt);
         const float todIntGain = lerp(0.78f, 1.12f, dayInt);
         amb *= lerp(todIntTint, float3(0.88f, 0.95f, 1.06f), outCool * 0.35f) * todIntGain;
+    }
+    // Wave 29 Reciprocal Cross-Material Contact Empathy + Environmental Asymmetry Breaking:
+    // 1) 4-tap neighbor G-buffer inspection (strictly gated by 3D world distance so distant mountains never bleed):
+    //    - Skin bordering Hair/Cloth (<8u): warm 620..670nm hemoglobin subsurface seam replacing dead grey SSAO.
+    //    - Stone/Terrain/Wood bordering Water (<28u above water plane or neighbor base==9): capillary wet meniscus (VR-1).
+    //    - Opaque edges bordering Emissive flames/spells (<28u): directional warm spectral rim scatter.
+    // 2) Environmental asymmetry breaking on natural rock/terrain (base==1||4): windward frost/rime vs leeward bare stone,
+    //    plus north/shaded-side damp moss growth breaking 2011 UV tiling regularity!
+    if (!match && z < 3200.0f && !isEye && base != 3u) {
+        const int2 dMaxC = int2(dims.xy) - 1;
+        static const int2 kC4[4] = { int2(2, 0), int2(-2, 0), int2(0, 2), int2(0, -2) };
+        float skinContact = 0.0f;
+        float waterContact = 0.0f;
+        float3 emissiveRim = 0.0f.xxx;
+        [unroll] for (int ci = 0; ci < 4; ci++) {
+            const int2 qC = clamp(ip.xy + kC4[ci], int2(0, 0), dMaxC);
+            const float dQ = Depth.Load(int3(qC, 0));
+            if (dQ >= 1.0f) { continue; }
+            const float3 pQ = worldAt(float2(qC), dQ);
+            const float dist3 = length(pQ - p);
+            if (dist3 > 32.0f) { continue; }
+            const uint bQ = uint(Spec.Load(int3(qC, 0)).z * 255.0f + 0.5f) & 127u;
+            if (skin && (bQ == 11u || bQ == 1u || bQ == 2u) && dist3 < 8.5f) {
+                skinContact = max(skinContact, saturate(1.0f - dist3 / 8.5f));
+            }
+            if ((base == 1u || base == 4u) && bQ == 9u && dist3 < 28.0f) {
+                waterContact = max(waterContact, saturate(1.0f - dist3 / 28.0f));
+            }
+            if (bQ == 3u && dist3 < 28.0f) {
+                const float3 eCol = max(GameLit.Load(int3(qC, 0)).rgb, 0.0f.xxx);
+                const float eW = saturate(1.0f - dist3 / 28.0f) * 0.22f;
+                emissiveRim += min(eCol, 2.5f.xxx) * eW;
+            }
+        }
+        // Live capillary water-meniscus band right above engineWorld.x water plane (VR-1 shoreline wetness!):
+        if ((base == 1u || base == 4u) && engineWorld.z > 0.5f) {
+            const float aboveW = (p.z + camPosW.z) - engineWorld.x;
+            if (aboveW > -6.0f && aboveW < 34.0f) {
+                waterContact = max(waterContact, smoothstep(34.0f, 0.0f, max(aboveW, 0.0f)) * smoothstep(-6.0f, 1.0f, aboveW));
+            }
+        }
+        if (skin && skinContact > 0.02f) {
+            // Hemoglobin warm subsurface bleed under hairlines & collars (replaces dead grey SSAO crease):
+            amb += max(diff + amb, 0.04f.xxx) * float3(0.28f, 0.065f, 0.030f) * (skinContact * 0.45f);
+        }
+        if (waterContact > 0.02f) {
+            // Capillary pore-darkening + wet clearcoat meniscus reflection:
+            albedo *= lerp(1.0f, 0.62f, waterContact * 0.85f);
+            spec += max(amb, 0.04f.xxx) * (pow(1.0f - saturate(dot(s.n, s.v)), 4.0f) * waterContact * 0.42f);
+        }
+        if (dot(emissiveRim, float3(0.2126f, 0.7152f, 0.0722f)) > 0.005f) {
+            diff += emissiveRim * (0.25f + 0.75f * pow(1.0f - saturate(dot(s.n, s.v)), 2.0f));
+        }
+        // Environmental Asymmetry Breaking (Windward Rime / Shaded-Side Moss) strictly world-space anchored:
+        if (isExterior && (base == 1u || base == 4u)) {
+            const float3 wpAsym = p + camPosW.xyz;
+            const float2 windD = normalize(cloudWind.xy + float2(1.0f, 0.35f));
+            const float windward = saturate(dot(s.n.xy, -windD));
+            const float asymN = cNoise(wpAsym * 0.011f) * 0.62f + cNoise(wpAsym * 0.034f + 5.7f) * 0.38f;
+            // Windward hoarfrost/rime sheen in cold/snow conditions (leeward stays darker bare rock):
+            const float coldAsym = saturate(weather.z * 1.15f + smoothstep(2600.0f, 5200.0f, wpAsym.z) * 0.65f);
+            const float rimeW = windward * smoothstep(0.42f, 0.82f, asymN) * coldAsym * smoothstep(0.15f, 0.75f, s.n.z);
+            if (rimeW > 0.02f) {
+                albedo = lerp(albedo, float3(0.76f, 0.82f, 0.90f), rimeW * 0.32f);
+                spec += max(amb, 0.05f.xxx) * (pow(1.0f - saturate(dot(s.n, s.v)), 3.0f) * rimeW * 0.24f);
+            }
+            // Shaded-side damp lichen/moss on non-snowy damp rocks & ruins facing away from sun:
+            const float dampSide = saturate(dot(s.n, -sunDir.xyz)) * (1.0f - coldAsym * 0.85f) * saturate(0.35f + weather.w * 0.85f + waterContact * 0.95f);
+            const float mossW = dampSide * smoothstep(0.50f, 0.86f, asymN) * smoothstep(0.05f, 0.65f, s.n.z) * saturate(1.0f - skyVis * 0.35f);
+            if (mossW > 0.02f) {
+                albedo = lerp(albedo, float3(0.095f, 0.145f, 0.072f), mossW * 0.36f);
+            }
+        }
     }
     amb += bounce;
 

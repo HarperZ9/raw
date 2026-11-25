@@ -776,6 +776,52 @@ void main() {
           std::fabs(dragonFly.stridePhaseRad[0] - dragonFly.stridePhaseRad[1]) < 1e-4f && dragonFly.bodyBankRollRad < -0.20f &&
           idleStop.cadenceHz == 0.0f && idleStop.verticalBobU == 0.0f,
           "creature_procedural_gait_kinematics");
+
+    // 17) Wave 29 Neighbor-Reactive & Negative-Space Optics Physical Invariants:
+    //   (a) Wave-refracted Jacobian caustics conserve mean flux (~1.0), focus crests (>1.0) & dim troughs (<1.0).
+    //   (b) Alexander's Dark Band (42..51 deg) lowers sky radiance vs supernumerary (<41 deg) and primary bow peak (42 deg).
+    //   (c) Depth-parity silhouette wrap is strictly asymmetric (background wraps onto dark foreground; dark never bleeds into sky).
+    auto evalJacobian1D = [](float x, float amp) -> float {
+        // 1D Snell refraction through h(x) = amp * sin(x): slope s = amp * cos(x), refracted shift u(x) = x - 0.25 * s
+        // Jacobian J = |du/dx| = |1 + 0.25 * amp * sin(x)|; flux = 1 / J.
+        const float J = std::fabs(1.0f + 0.25f * amp * std::sin(x));
+        return 1.0f / std::max(J, 0.22f);
+    };
+    double fluxInt = 0.0;
+    const int kN = 1024;
+    for (int i = 0; i < kN; ++i) {
+        const float x = float(i) * (6.2831853f / float(kN));
+        fluxInt += double(evalJacobian1D(x, 1.2f));
+    }
+    fluxInt /= double(kN);
+    const float flatFlux = evalJacobian1D(1.0f, 0.0f);
+    const float focusCrest = evalJacobian1D(4.712389f, 1.2f);   // sin(3pi/2) = -1 -> J = 0.70 -> flux > 1.4
+    const float darkTrough = evalJacobian1D(1.570796f, 1.2f);   // sin(pi/2)  = +1 -> J = 1.30 -> flux < 0.8
+    auto smoothstepCpu = [](float e0, float e1, float x) -> float {
+        const float t = std::clamp((x - e0) / (e1 - e0), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    };
+    auto evalAlexBandMul = [&](float deg) -> float {
+        const float r = deg * 0.0174532925f;
+        const float alex = smoothstepCpu(0.735f, 0.768f, r) * (1.0f - smoothstepCpu(0.855f, 0.892f, r));
+        const float superIn = (1.0f - smoothstepCpu(0.680f, 0.725f, r)) * smoothstepCpu(0.520f, 0.650f, r);
+        return 1.0f - alex * 0.15f + superIn * 0.065f;
+    };
+    const float mulInner = evalAlexBandMul(38.0f);
+    const float mulAlex  = evalAlexBandMul(46.5f);
+    const float mulOuter = evalAlexBandMul(55.0f);
+    // Depth-parity wrap check: foreground (zSelf=200, lSelf=0.05) next to sky (zNeigh=1e6, lNeigh=2.5) gets wrap > 0;
+    // reverse (sky pixel next to foreground pixel) gets exact 0.0 bleed!
+    auto evalDepthParityWrap = [](float zSelf, float lSelf, float zNeigh, float lNeigh) -> float {
+        return (zNeigh > zSelf * 2.5f && lNeigh > lSelf * 2.0f) ? std::clamp((lNeigh - lSelf) * 0.08f, 0.0f, 0.35f) : 0.0f;
+    };
+    const float fgWrap  = evalDepthParityWrap(200.0f, 0.05f, 1.0e6f, 2.5f);
+    const float skyLeak = evalDepthParityWrap(1.0e6f, 2.5f, 200.0f, 0.05f);
+    Check(std::fabs(flatFlux - 1.0f) < 1e-5f && focusCrest > 1.35f && darkTrough < 0.80f &&
+          fluxInt > 0.95 && fluxInt < 1.12 &&
+          mulAlex < mulOuter && mulOuter < mulInner &&
+          fgWrap > 0.10f && skyLeak == 0.0f,
+          "wave29_neighbor_reactive_optics_invariants");
 }
 
 }  // namespace

@@ -43,6 +43,18 @@ float4 atrousStep(float4 at, int stepSize, bool finalPass) {
     // Exact SVGF variance-guided luminance edge-stopping (eliminates 3x3 local variance pre-loop, 35% fewer loads).
     const float invSigmaL = 1.0f / max(3.6f * cSigma + 0.035f, 0.035f);
     const float planeScale = 1.0f / max(z * 0.0085f * float(stepSize), 1.8f);
+    // Wave 29 Flux-Asymmetric Structure-Tensor Edge Orientation:
+    // Reads 1px quad neighbors to align the 5x5 wavelet along dominant geometric/lighting tangents and prevent
+    // bright GI fireflies from bleeding across a separatrix into dark shadow cavities!
+    const float lR1 = dot(clamp(GiIn.Load(int3(min(p.x + 1, dMax.x), p.y, 0)).rgb, 0.0f.xxx, 16.0f.xxx), float3(0.2126f, 0.7152f, 0.0722f));
+    const float lL1 = dot(clamp(GiIn.Load(int3(max(p.x - 1, 0),      p.y, 0)).rgb, 0.0f.xxx, 16.0f.xxx), float3(0.2126f, 0.7152f, 0.0722f));
+    const float lD1 = dot(clamp(GiIn.Load(int3(p.x, min(p.y + 1, dMax.y), 0)).rgb, 0.0f.xxx, 16.0f.xxx), float3(0.2126f, 0.7152f, 0.0722f));
+    const float lU1 = dot(clamp(GiIn.Load(int3(p.x, max(p.y - 1, 0),      0)).rgb, 0.0f.xxx, 16.0f.xxx), float3(0.2126f, 0.7152f, 0.0722f));
+    const float2 gradL = float2(lR1 - lL1, lD1 - lU1);
+    const float gradMag = length(gradL);
+    const float2 edgeN = gradMag > 1.0e-4f ? (gradL / gradMag) : float2(1.0f, 0.0f);
+    const float edgeCoh = saturate(gradMag / max(cLum + 0.08f, 0.08f));
+    const float darkBasin = 1.0f - smoothstep(0.04f, 0.24f, cLum);
 
     static const float16_t kB3[5] = { float16_t(0.0625h), float16_t(0.25h), float16_t(0.375h), float16_t(0.25h), float16_t(0.0625h) };
     const float16_t w0 = float16_t(0.375h * 0.375h);
@@ -65,11 +77,16 @@ float4 atrousStep(float4 at, int stepSize, bool finalPass) {
             if (any(isnan(tap.rgb)) || any(isinf(tap.rgb))) { continue; }
             tap.rgb = clamp(tap.rgb, 0.0f.xxx, 16.0f.xxx);
             const float tLum = dot(tap.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-            // Luminance + chromaticity edge-stopping: prevents warm torch/hearth GI from bleeding onto cold shadowed walls!
+            // Luminance + chromaticity edge-stopping + asymmetric dark-basin flux guard + structure-tensor anisotropy:
             const float3 cChr = center.rgb / max(cLum, 0.02f);
             const float3 tChr = tap.rgb / max(tLum, 0.02f);
             const float chrDiff = length(tChr - cChr);
-            const float wl = exp(-abs(tLum - cLum) * invSigmaL - chrDiff * 0.35f);
+            const float lumDelta = tLum - cLum;
+            const float asymPen = (lumDelta > 0.0f) ? (1.0f + darkBasin * 1.65f) : 1.0f;
+            const float2 offDir = normalize(float2(float(dx), float(dy)));
+            const float acrossEdge = abs(dot(offDir, edgeN));
+            const float wAniso = exp(-acrossEdge * acrossEdge * edgeCoh * 1.15f);
+            const float wl = exp(-abs(lumDelta) * invSigmaL * asymPen - chrDiff * 0.35f) * wAniso;
             const float16_t w = float16_t(float(kB3[dx + 2] * wy) * wz * wn * wl);
             const float qSig = unpackSigma(tap.a);
             sumRgb += float16_t3(tap.rgb) * w;

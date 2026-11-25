@@ -14,6 +14,7 @@
 #include "Weather.hlsli"
 #include "CloudCommon.hlsli"
 #include "StrataBRDF.hlsli"
+#include "SpectralTransport.hlsli"
 
 Texture2D<float>  Depth   : register(t0);
 Texture2D<float4> Normal  : register(t1);
@@ -118,12 +119,16 @@ void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, in
     // normalised so the lit side keeps its energy).
     const float3 nlD = any(s.wrap > 0.0f) ? saturate((x + s.wrap) / (1.0f + s.wrap)) / (1.0f + s.wrap) * (1.0f + s.wrap * 0.5f) : nl.xxx;
     if (any(s.soft > 0.0f)) {
-        // Physical backlit Beer-Lambert chlorophyll translucency for pine needles, ferns & leaves:
-        // forward-scattering lobe peaks when looking through sunlit foliage toward the light source!
+        // Physical backlit Beer-Lambert chlorophyll translucency + dual-sided epicuticular leaf wax specular glint:
+        // gives pine needles & grass blades crisp sunlit grazing sparkle and deep botanical translucency!
         const float backView = pow(saturate(dot(-s.v, l)), 3.2f);
         const float wrapTrans = saturate(smooth01(saturate((x + 1.0f) * 0.5f)) - smooth01(nl));
         const float3 chloroTint = float3(0.46f, 0.96f, 0.34f);
         diff += s.soft * (wrapTrans + chloroTint * (backView * 0.42f * (1.0f - nl * 0.5f))) * cFull;
+        const float3 hLeaf = normalize(s.v + l);
+        const float nhL = saturate(dot(s.n, hLeaf));
+        const float waxSpec = pow(nhL, 28.0f) * (0.04f + 0.96f * pow(1.0f - saturate(dot(s.v, hLeaf)), 5.0f)) * saturate(nl + 0.25f);
+        spec += c * (waxSpec * 0.28f);
     }
     const float3 h = normalize(s.v + l);
     const float nh = saturate(dot(s.n, h));
@@ -1055,14 +1060,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float gBroad = snowGlint(p + camPosW.xyz + 13.7f, s.n, s.v, sunDir.xyz, fp * 2.1f) * 0.45f;
             spec += sunColour.rgb * (sunShadow * wet.snow * 2.4f * (gFine + gBroad));
         }
-        // Forged metal micro-flake glint + restrained tempered-steel sheen STRICTLY on non-ice metal (never on EnvMap ice caves!):
+        // Forged metal Complex-IOR Conductor Fresnel (exact iron/steel & Dwemer gold/bronze optical constants n + ik):
         if (!match && sunShadow > 0.05f && z < 1800.0f && base == 2u && iceMask < 0.08f) {
             const float nvIr = saturate(dot(s.n, s.v));
-            const float filmOpd = 480.0f * sqrt(max(1.0f - (1.0f - nvIr * nvIr) * 0.56f, 0.1f));
-            const float3 airy = 0.78f + 0.22f * cos(6.2831853f * filmOpd / float3(615.0f, 540.0f, 465.0f));
-            const float irStr = 0.09f * pow(1.0f - nvIr, 2.6f) * saturate(1.0f - z / 1800.0f);
-            spec += dirCol * airy * (irStr * sunShadow);
-            // Crisp dual-lobe clearcoat highlight (roughness 0.06 mirror coat over underlying material lobe):
+            const bool isGoldBronze = (albedo.r > albedo.b * 1.35f && albedo.g > albedo.b * 1.15f);
+            // Physical refractive index (eta) and extinction (k) at Rec.709 wavelengths (615, 540, 465 nm):
+            const float3 mEta = isGoldBronze ? float3(0.22f, 0.42f, 1.35f) : float3(2.90f, 2.84f, 2.52f);
+            const float3 mK   = isGoldBronze ? float3(3.25f, 2.38f, 1.88f) : float3(3.04f, 2.93f, 2.76f);
+            const float3 condF = conductorFresnelRGB(nvIr, mEta, mK);
+            const float3 hMetal = normalize(s.v + sunDir.xyz);
+            const float nhM = saturate(dot(s.n, hMetal));
+            const float aM = max(s.alpha * s.alpha, 0.015f);
+            const float dM = aM / max(PI * pow(nhM * nhM * (aM - 1.0f) + 1.0f, 2.0f), 1.0e-4f);
+            spec += min(dirCol * condF * (dM * saturate(dot(s.n, sunDir.xyz)) * sunShadow * 0.16f), 2.4f.xxx) * saturate(1.0f - z / 1800.0f);
             if (!skin && s.alpha < 0.25f) {
                 const float3 hCoat = normalize(s.v + sunDir.xyz);
                 const float nhC = saturate(dot(s.n, hCoat));
@@ -1350,7 +1360,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float metallic = rawMetallic * (1.0f - iceMask);
     const float pbrBakedAo = isTruePbr ? lerp(0.32f, 1.0f, saturate(rmaosPbr.b)) : 1.0f;
     const float3 diffAlb = albedo * (1.0f - metallic * (isTruePbr ? 0.94f : 0.72f));
-    const float3 rawLit = (diffAlb + envRefl * (match ? 1.0f : 0.08f)) * (diff + amb * pbrBakedAo + effCharLight);
+    const float3 totalIrrad = diff + amb * pbrBakedAo + effCharLight;
+    const float warmRatio = saturate((totalIrrad.r - totalIrrad.b * 1.15f) / max(totalIrrad.r + totalIrrad.b + 0.05f, 0.05f));
+    const float effTempK = (!match && warmRatio > 0.12f) ? lerp(5800.0f, 2350.0f, saturate(warmRatio * 1.85f)) : 0.0f;
+    const float3 spectralDiff = match ? (diffAlb * totalIrrad)
+                                      : spectralSurfaceResponse(diffAlb, totalIrrad, effTempK, 0.72f);
+    const float3 rawLit = spectralDiff + envRefl * (match ? 1.0f : 0.08f) * totalIrrad;
     float3 lit = match ? knee3(rawLit) : rawLit;
     // Subtle alpine snowbank subsurface wrap (skipped on 3D World Map camPosW.z > 18000 -> kills cyan map peak glow!):
     if (!match && wet.snow > 0.05f && sunDir.w > 0.5f && timeEnv.w < 0.5f && camPosW.z < 18000.0f) {

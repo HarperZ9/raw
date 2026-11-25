@@ -722,6 +722,49 @@ void main() {
     const float nanOut = raw::rt::StepExtremumSeekingGovernor(es, std::numeric_limits<float>::quiet_NaN(), 1.0f / 60.0f);
     Check(std::fabs(es.xHat - unknownTarget) < 0.08f && std::fabs(nanOut - preNan) < 1e-6f,
           "extremum_seeking_oscillatory_governor");
+
+    // 15) Wave 27 Anatomical Body-Zone Damage / Injury / Dismemberment + 3D Voxel Destruction + Synoptic Storm Simulator
+    raw::rt::BodyDamageInput legHit{};
+    legHit.zone = raw::rt::BodyZone::LeftLeg; legHit.rawDamage = 35.0f; legHit.weaponMassKg = 2.5f;
+    legHit.swingSpeedMs = 11.0f; legHit.edgeSharpness = 0.85f; legHit.targetHpNow = 100.0f; legHit.targetHpMax = 100.0f;
+    const auto legRes = raw::rt::EvaluateBodyDamageAndInjury(legHit);
+    raw::rt::BodyDamageInput headKill = legHit;
+    headKill.zone = raw::rt::BodyZone::Head; headKill.rawDamage = 60.0f; headKill.targetHpNow = 50.0f;
+    const auto headRes = raw::rt::EvaluateBodyDamageAndInjury(headKill);
+    raw::rt::BodyDamageInput bluntKill = headKill;
+    bluntKill.edgeSharpness = 0.05f;
+    const auto bluntRes = raw::rt::EvaluateBodyDamageAndInjury(bluntKill);
+    Check(legRes.limbCrippled && legRes.moveSpeedMult < 0.70f && !legRes.dismembered &&
+          headRes.decapitated && headRes.dismembered && headRes.bleedDps > 5.0f && !bluntRes.decapitated,
+          "anatomical_body_damage_dismemberment");
+
+    raw::rt::RawVoxelDestructible crate{};
+    raw::rt::InitVoxelProp(crate, raw::rt::VoxelMaterial::Wood, false);
+    const uint32_t origSolids = crate.solidCount;
+    // Slice completely across the middle plane (x=4) so the 8x8x8 crate splits into two detached structural islands:
+    const float sliceDir[3] = {1.0f, 0.0f, 0.0f};
+    std::vector<raw::rt::VoxelFragment> totalFrags;
+    for (float y = 1.0f; y <= 7.0f; y += 2.0f) {
+        for (float z = 1.0f; z <= 7.0f; z += 2.0f) {
+            const float hitP[3] = {4.0f, y, z};
+            auto f = raw::rt::ApplyVoxelImpact(crate, hitP, sliceDir, 260.0f, 1.9f);
+            totalFrags.insert(totalFrags.end(), f.begin(), f.end());
+        }
+    }
+    Check(origSolids == 512u && crate.solidCount > 0u && crate.solidCount < 280u && totalFrags.size() >= 2u,
+          "voxel_structural_fracture_and_splitting");
+
+    const float northPeak[3] = {0.0f, 45000.0f, 4200.0f};
+    const float southLow[3]  = {0.0f, -20000.0f, 200.0f};
+    bool sawStorm = false, sawClear = false;
+    for (int t = 0; t < 24; ++t) {
+        const auto sN = raw::rt::StepSynopticWeatherSim(northPeak, float(t) * 280.0f, 14.0f);
+        if (sN.pressureHpa < 996.0f && sN.snowRate01 > 0.15f) sawStorm = true;
+        if (sN.pressureHpa > 1016.0f && sN.snowRate01 < 0.01f) sawClear = true;
+    }
+    const auto sLow = raw::rt::StepSynopticWeatherSim(southLow, 100.0f, 14.0f);
+    Check(sawStorm && sawClear && sLow.snowLineAltU > 1800.0f && wsWave21.synopticHpa >= 972.0f && wsWave21.synopticHpa <= 1034.0f,
+          "synoptic_barometric_storm_simulator");
 }
 
 }  // namespace

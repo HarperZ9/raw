@@ -47,6 +47,8 @@ struct RawWorldSimTelemetry {
     uint8_t  squadMstComps     = 0;
     uint8_t  squadMstRounds    = 0;
     float    squadSpanLengthU  = 0.0f;
+    float    synopticHpa       = 1013.25f;
+    float    adaptiveQuality   = 1.0f;
 };
 
 void WorldSimInit(const Image& img, const std::string& gameDir);

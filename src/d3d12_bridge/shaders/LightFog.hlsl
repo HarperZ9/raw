@@ -669,7 +669,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
         }
-        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.08f + intEmberAdd, lit.a);
+        // Unlock rich 3D Froxel volumetric torch/hearth cones in dungeons, ice caves & taverns (0.52x scatter)!
+        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.52f + intEmberAdd, lit.a);
     }
     const float T = (flags.x & FLAG_FOG_REPLACES) != 0u ? exp(-sigma * tEnd) : 1.0f;
     return float4(lit.rgb * T + scatter, lit.a);

@@ -229,16 +229,12 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"bTreesReceiveShadows:Display", "1"},
         {"bDrawLandShadows:Display", "1"},
         {"fDecalLifetime:Display", "900.0"},
-        // Binary-level Havok physics, 120Hz sub-stepped solver, anti-clutter-explosion & realistic ragdoll/IK overhaul:
-        {"fTimePerSubStep:HAVOK", "0.0083333"},
-        {"iMinNumSubSteps:HAVOK", "2"},
-        {"bFindContactPointsOnAdd:HAVOK", "1"},
+        // Safe Havok clutter/explosion impulse damping + IK (NOTE: do NOT override fTimePerSubStep/iMinNumSubSteps/
+        // bUseCharRBExtrapolation/bUseConstraintProjector/bRagdollFeedback: at 144-360 FPS they fight HavokFixOnPresent()
+        // and cause 2.7x substep dilation and ankle-height 1st-person camera sink as seen in 22.59.17.38.mp4!):
         {"fVisibleNavmeshMoveDist:Combat", "16000.0"},
         {"iNumberActorsInCombatPlayer:Combat", "32"},
         {"fActiveEffectConditionUpdateInterval:Gameplay", "0.25"},
-        {"bUseConstraintProjector:HAVOK", "1"},
-        {"bUseCharRBExtrapolation:HAVOK", "1"},
-        {"fInAirFallingCharGravityMult:Havok", "1.15"},
         {"fExplosionMaxImpulse", "240.0"},
         {"fGameplayImpulseMultBiped", "0.62"},
         {"fGameplayImpulseMultClutter", "0.55"},
@@ -265,14 +261,12 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"fStagger1WeapAR", "0.52"},
         {"fStagger2WeapAR", "0.85"},
         {"fStaggerBowAR", "0.42"},
-        {"bPoseMatching:RagdollAnim", "1"},
-        {"bRagdollFeedback:RagdollAnim", "1"},
         {"f1PArrowTiltUpAngle:Combat", "0.7"},
         {"f3PArrowTiltUpAngle:Combat", "0.7"},
         {"f1PBoltTiltUpAngle:Combat", "0.7"},
         {"fCollisionRecoverySpeed:Camera", "4.0"},
         {"fCollisionRecoveryMinDist:Camera", "10.0"},
-        // Modern 3rd-person, combat & horse over-the-shoulder camera (replaces SmoothCam / 3PCO / No Auto-Vanity):
+        // Modern 3rd-person, combat & horse over-the-shoulder camera (leaves 1st-person spring constants untouched!):
         {"fOverShoulderPosX:Camera", "24.0"},
         {"fOverShoulderPosZ:Camera", "-4.0"},
         {"fOverShoulderCombatPosX:Camera", "28.0"},
@@ -290,8 +284,6 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"bDisableAutoVanityMode:Camera", "1"},
         {"f1st3rdSwitchDelay:Camera", "0.05"},
         {"fActorFadeOutLimit:Camera", "28.0"},
-        {"f1stVertDampeningSpringConstant:Camera", "32.0"},
-        {"f1stHorzDampeningSpringConstant:Camera", "32.0"},
         // Realistic light-and-sound stealth detection (replaces RAID / Realistic AI Detection):
         {"fSneakLightMult", "0.42"},
         {"fSneakLightExteriorMult", "0.38"},

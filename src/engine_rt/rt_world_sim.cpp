@@ -38,6 +38,8 @@ uint64_t g_lastTickUs = 0;
 uint32_t g_saveCount = 0;
 float g_largestSaveMb = 0.0f;
 bool g_saveBloatWarn = false;
+ExtremumSeekingState g_gpuEsState{0.92f, 0.0f, 0.0f, false};
+float g_simClockSec = 0.0f;
 
 }  // namespace
 
@@ -164,6 +166,11 @@ RawWorldSimTelemetry StepWorldSimSnapshot(const float playerPos[3], float gameHo
         out.squadMstComps    = static_cast<uint8_t>(squad.size());
         out.squadMstRounds   = 0u;
     }
+
+    // 9. Wave 27 Synoptic Barometric Storm Simulator snapshot:
+    const auto syn = StepSynopticWeatherSim(playerPos, gameHour * 3600.0f, gameHour);
+    out.synopticHpa     = syn.pressureHpa;
+    out.adaptiveQuality = 1.0f;
     return out;
 }
 
@@ -261,6 +268,14 @@ void WorldSimOnPresent() {
     snap.totalSavesFound = g_saveCount;
     snap.largestSaveMb   = g_largestSaveMb;
     snap.saveBloatWarn   = g_saveBloatWarn ? 1u : 0u;
+    // Live Wave 27 Synoptic Barometric Weather + Oscillatory Extremum-Seeking GPU Budget Governor:
+    g_simClockSec += tickDtSec;
+    const auto synLive = StepSynopticWeatherSim(ev.playerPos, g_simClockSec, ev.gameHour);
+    snap.synopticHpa = synLive.pressureHpa;
+    const float targetFrameSec = 1.0f / 120.0f;
+    const float frameErr = (tickDtSec * 0.5f) - targetFrameSec;
+    const float esCost = frameErr * frameErr * 10000.0f + (1.0f - g_gpuEsState.xHat) * 0.25f;
+    snap.adaptiveQuality = StepExtremumSeekingGovernor(g_gpuEsState, esCost, tickDtSec, 0.75f, 1.0f, 0.015f, 8.0f, 0.35f);
     g_coreWarmth = snap.coreWarmth;
     g_shiverAtomic.store(snap.shiverIntensity, std::memory_order_relaxed);
     // Feed bounded live economy & thermal survival state back into Skyrim's live Setting singletons:

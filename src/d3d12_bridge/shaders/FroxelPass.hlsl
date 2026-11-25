@@ -64,6 +64,16 @@ float froxelHG(float cosT, float g) {
     return (1.0f - g2) / (4.0f * PI * pow(max(1.0f + g2 - 2.0f * g * cosT, 1.0e-4f), 1.5f));
 }
 
+// Jendersie & d'Eon (SIGGRAPH 2023) Unified HG + Draine Mie Phase Function:
+// Captures the sharp physical forward diffraction peak and atmospheric fog glory that single-lobe HG misses!
+float froxelDrainePhase(float cosT, float g, float alpha) {
+    const float g2 = g * g;
+    const float denom = max(1.0f + g2 - 2.0f * g * cosT, 1.0e-4f);
+    const float hg = (1.0f - g2) / (4.0f * PI * pow(denom, 1.5f));
+    const float draine = (1.0f + alpha * cosT * cosT) / (1.0f + alpha * (1.0f + 2.0f * g2) / 3.0f);
+    return hg * draine;
+}
+
 float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     const bool isWorldMap = (timeEnv.w > 0.5f) && (camPosW.z > 42000.0f);
     if ((flags.x & FLAG_FOG) == 0u || (flags.x & FLAG_MATCH) != 0u || isWorldMap) { return float4(0.0f, 0.0f, 0.0f, 0.0f); }
@@ -138,8 +148,8 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         const float3 beamDir = normalize(lerp(aSunF, sunDir.xyz, nightW));
         const float cosT = dot(farDir, beamDir);
         const float sunLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-        // Dual-lobe Henyey-Greenstein Mie phase (crisp forward sun-shaft glow + restrained backscatter):
-        const float ph = min(0.76f * froxelHG(cosT, lerp(0.70f, 0.76f, nightW)) + 0.24f * froxelHG(cosT, -0.22f), 2.8f);
+        // Jendersie & d'Eon (2023) Unified HG + Draine atmospheric droplet phase (sharp sun-shaft peak + crisp mist glory):
+        const float ph = min(0.72f * froxelDrainePhase(cosT, lerp(0.74f, 0.78f, nightW), 1.45f) + 0.28f * froxelHG(cosT, -0.22f), 3.2f);
         const float3 hTrans = froxelTransAt(clamp(aElevF, -0.10f, 1.0f));
         const float htLum = max(dot(hTrans, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
         const float3 physSun = lerp(lerp(sunColour.rgb, hTrans * (max(sunLum, 0.10f) / htLum), 0.58f), float3(0.24f, 0.36f, 0.66f) * 0.55f, nightW);
@@ -157,10 +167,10 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         float3 uSunFr, uSkyZFr, uSkyHFr, uAmbUpFr, uAmbDnFr;
         evalWorldAtmosphere(uSunFr, uSkyZFr, uSkyHFr, uAmbUpFr, uAmbDnFr);
         const float3 syncSunFr = lerp(physSun, uSunFr, 0.65f);
-        const float overcastFr = saturate(clouds.x * 0.85f - 0.12f + weather.w * 0.45f + weather.z * 0.42f);
+        const float overcastFr = saturate((clouds.x - 0.55f) * 1.95f + weather.w * 0.52f + weather.z * 0.45f);
         const float hLumFr = max(dot(hSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
-        const float3 skyDeSat = lerp(hSky, hLumFr.xxx * float3(0.92f, 0.96f, 1.02f), overcastFr * 0.72f);
-        const float3 syncSkyFr = lerp(skyDeSat, lerp(uSkyHFr, uSkyZFr, saturate(max(farDir.z, 0.0f) * 2.2f)), 0.45f) * 0.72f;
+        const float3 skyDeSat = lerp(hSky, hLumFr.xxx * float3(0.88f, 0.94f, 1.04f), overcastFr * 0.72f);
+        const float3 syncSkyFr = lerp(skyDeSat, lerp(uSkyHFr, uSkyZFr, saturate(max(farDir.z, 0.0f) * 2.2f)), 0.28f) * 0.88f;
         // Exact night horizon match so night mountain fogs stay deep indigo instead of bright grey-blue:
         const float3 ambSkyFr = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.025f.xxx);
         const float3 nightFogCol = lerp(float3(0.026f, 0.042f, 0.074f), ambSkyFr * float3(0.62f, 0.68f, 0.78f), saturate(clouds.x * 0.85f + weather.z * 0.50f) * 0.80f);

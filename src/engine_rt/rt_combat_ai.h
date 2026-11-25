@@ -254,4 +254,68 @@ float StepExtremumSeekingGovernor(ExtremumSeekingState& st, float measuredCost, 
                                   float xMin = 0.0f, float xMax = 1.0f,
                                   float ditherAmp = 0.04f, float omegaRadPerSec = 12.0f, float gain = 0.65f);
 
+// Wave 27 Anatomical Body-Zone Damage, Injury & Dismemberment Physics Engine:
+enum class BodyZone : uint8_t {
+    Head     = 0,
+    Torso    = 1,
+    LeftArm  = 2,
+    RightArm = 3,
+    LeftLeg  = 4,
+    RightLeg = 5,
+};
+struct BodyDamageInput {
+    BodyZone zone          = BodyZone::Torso;
+    float    rawDamage     = 25.0f;
+    float    weaponMassKg  = 2.2f;
+    float    swingSpeedMs  = 9.5f;
+    float    edgeSharpness = 0.80f;   // 0=blunt mace, 1=razor blade
+    float    armorRating   = 0.0f;
+    float    targetHpNow   = 100.0f;
+    float    targetHpMax   = 100.0f;
+};
+struct BodyDamageResult {
+    float    finalDamage     = 0.0f;
+    float    bleedDps        = 0.0f;
+    float    staggerSec      = 0.0f;
+    float    moveSpeedMult   = 1.0f;
+    float    attackSpeedMult = 1.0f;
+    bool     limbCrippled    = false;
+    bool     dismembered     = false;
+    bool     decapitated     = false;
+};
+BodyDamageResult EvaluateBodyDamageAndInjury(const BodyDamageInput& in);
+
+// Wave 27 3D Voxel-Based Structural Fracture & Destructible Prop Engine (8x8x8 = 512 voxels):
+enum class VoxelMaterial : uint8_t {
+    Wood    = 0,
+    Pottery = 1,
+    Ice     = 2,
+    Stone   = 3,
+};
+struct VoxelFragment {
+    float    centerLocal[3] = {};
+    float    impulseVel[3]  = {};
+    uint32_t voxelCount     = 0;
+};
+struct RawVoxelDestructible {
+    uint8_t       cells[8 * 8 * 8] = {};   // 0=empty, 1..255=structural integrity
+    VoxelMaterial material         = VoxelMaterial::Wood;
+    uint32_t      solidCount       = 0;
+};
+void InitVoxelProp(RawVoxelDestructible& prop, VoxelMaterial mat, bool hollowBox = false);
+std::vector<VoxelFragment> ApplyVoxelImpact(RawVoxelDestructible& prop, const float localHit[3],
+                                            const float impactDir[3], float impactForce, float blastRadiusCells);
+
+// Wave 27 Procedural Synoptic Barometric Storm & Weather Simulator:
+struct SynopticWeatherState {
+    float pressureHpa     = 1013.25f;   // 972 (cyclone) .. 1032 (clear high)
+    float cloudCover01    = 0.25f;
+    float rainRate01      = 0.0f;
+    float snowRate01      = 0.0f;
+    float windSpeedMs     = 4.0f;
+    float stormLightning  = 0.0f;
+    float snowLineAltU    = 2400.0f;
+};
+SynopticWeatherState StepSynopticWeatherSim(const float worldPos[3], float simTimeSec, float gameHour);
+
 }  // namespace raw::rt

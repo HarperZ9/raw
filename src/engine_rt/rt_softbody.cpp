@@ -115,17 +115,14 @@ bool ClassifySoftBone(const char* boneName, TissueKind* outKind) {
         *outKind = TissueKind::Pelvic; return true;
     }
     if (ContainsCI(boneName, "hair") || ContainsCI(boneName, "ponytail") || ContainsCI(boneName, "braid") ||
-        ContainsCI(boneName, "bangs") || ContainsCI(boneName, "strand") || ContainsCI(boneName, "lock") ||
-        ContainsCI(boneName, "tail")) {
+        ContainsCI(boneName, "bangs") || ContainsCI(boneName, "strand") || ContainsCI(boneName, "hairlock") ||
+        ContainsCI(boneName, "forelock") || ContainsCI(boneName, "tail")) {
         *outKind = TissueKind::Hair; return true;
     }
     if (ContainsCI(boneName, "cloak") || ContainsCI(boneName, "cape") || ContainsCI(boneName, "skirt") ||
         ContainsCI(boneName, "robe") || ContainsCI(boneName, "dress") || ContainsCI(boneName, "sash") ||
         ContainsCI(boneName, "cloth") || ContainsCI(boneName, "tassel") || ContainsCI(boneName, "pouch") ||
-        ContainsCI(boneName, "fur") || ContainsCI(boneName, "cowl") ||
-        ContainsCI(boneName, "quiver") || ContainsCI(boneName, "weaponsword") ||
-        ContainsCI(boneName, "weapondagger") || ContainsCI(boneName, "weaponaxe") ||
-        ContainsCI(boneName, "weaponmace")) {
+        ContainsCI(boneName, "fur") || ContainsCI(boneName, "cowl")) {
         *outKind = TissueKind::Cloak; return true;
     }
     return false;

@@ -55,16 +55,16 @@ float signedCoC(float curZ, float focusZ, float maxDist) {
     const float fM = clamp(focusZ, 42.0f, 14000.0f) / 70.0f;
     const float sensorW = clamp(camOptics[0].x, 20.0f, 80.0f) * 0.001f;   // 24mm APS-C .. 70mm 6x7 Medium Format
     const float F = clamp(camOptics[0].y, 20.0f, 220.0f) * 0.001f;        // focal length in meters
-    const float N = max(clamp(camOptics[0].z, 0.90f, 16.0f), 2.8f);       // refined gameplay f-stop floor (zero macro soup)
+    const float N = max(clamp(camOptics[0].z, 0.90f, 16.0f), 1.4f);       // unlock true f/1.4 cinema prime optical bokeh!
     const float cocSensorM = ((dM - fM) / max(dM, 0.25f)) * ((F * F) / (N * max(fM - F, 0.28f)));
-    const float cocPx = (cocSensorM / sensorW) * dims.x * clamp(maxDist / 420.0f, 0.20f, 2.2f) * 0.52f;
+    const float cocPx = (cocSensorM / sensorW) * dims.x * clamp(maxDist / 420.0f, 0.20f, 2.2f) * 0.68f;
     const float maxRadFull = max(clamp(dofParams.y, 2.0f, 18.0f) * 2.0f, 4.0f);
     const float absPx = abs(cocPx);
-    // Clean tack-sharp focal corridor (1.45px deadzone keeps NPC heads/shoulders/foreground props razor sharp):
-    if (absPx <= 1.45f) { return 0.0f; }
+    // Clean tack-sharp focal corridor (1.25px deadzone keeps NPC heads/shoulders/foreground props razor sharp):
+    if (absPx <= 1.25f) { return 0.0f; }
     const float nearSnowDamp = (cocPx < 0.0f) ? smoothstep(45.0f, 125.0f, curZ) * 0.55f : 1.0f;
     const float planeScale = (cocPx < 0.0f ? clamp(camOptics[1].x, 0.0f, 1.5f) * nearSnowDamp : clamp(camOptics[1].y, 0.0f, 1.5f));
-    const float norm = pow(saturate(((absPx - 1.45f) / maxRadFull) * planeScale), 1.15f);
+    const float norm = pow(saturate(((absPx - 1.25f) / maxRadFull) * planeScale), 1.12f);
     return cocPx < 0.0f ? -norm : norm;
 }
 
@@ -225,9 +225,10 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
                     const float bgOcc = smoothstep(centerCoc * 0.65f, centerCoc * 0.95f + 0.02f, tapCocF);
                     const float discW = smoothstep(rFrac * centerCoc - 0.05f, rFrac * centerCoc + 0.05f, tapCocF);
                     const float lumF = dot(tapF.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-                    const float saRingF = 0.65f + 0.70f * (rFrac * rFrac * rFrac);
-                    const float orbF = (1.0f + pow(saturate(lumF - 0.45f), 2.0f) * (dofParams.z * 2.4f)) * saRingF;
-                    const float3 locaFar = lerp(1.0f.xxx, float3(0.97f, 1.02f, 1.01f), rFrac * rFrac * 0.25f);
+                    // Physical spherical-aberration cinema bokeh rim + rear-bokeh green-cyan Longitudinal Chromatic Aberration (LoCA):
+                    const float saRingF = 0.62f + 0.85f * (rFrac * rFrac * rFrac);
+                    const float orbF = (1.0f + pow(saturate(lumF - 0.42f), 2.0f) * (dofParams.z * 2.8f)) * saRingF;
+                    const float3 locaFar = lerp(1.0f.xxx, float3(0.92f, 1.05f, 1.04f), rFrac * rFrac * 0.42f);
                     const float fw = bgOcc * discW * orbF;
                     farAcc += tapF.rgb * locaFar * fw;
                     farW += fw;
@@ -242,10 +243,12 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
                 const float covN = smoothstep(rFrac - 0.14f, rFrac + 0.08f, nRad);
                 if (covN > 0.001f) {
                     const float lumN = dot(tapN.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-                    const float saRingN = 0.65f + 0.70f * (rFrac * rFrac * rFrac);
-                    const float orbN = (1.0f + pow(saturate(lumN - 0.45f), 2.0f) * (dofParams.z * 2.0f)) * saRingN;
+                    const float saRingN = 0.62f + 0.82f * (rFrac * rFrac * rFrac);
+                    const float orbN = (1.0f + pow(saturate(lumN - 0.42f), 2.0f) * (dofParams.z * 2.2f)) * saRingN;
+                    // Front-bokeh warm magenta-amber Longitudinal Chromatic Aberration (Cooke/Leica prime signature):
+                    const float3 locaNear = lerp(1.0f.xxx, float3(1.06f, 0.94f, 1.02f), rFrac * rFrac * 0.36f);
                     const float nw = covN * orbN;
-                    nearAcc += tapN.rgb * nw;
+                    nearAcc += tapN.rgb * locaNear * nw;
                     nearW += nw;
                     nearCov += covN;
                 }

@@ -93,6 +93,7 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
         }
     }
     raw::rt::HavokFixOnPresent();
+    raw::rt::SoftBodyOnPresent();
     raw::rt::VTraceOnPresent();
     raw::rt::ControlOnPresent(ctx, sc);
     raw::rt::WorldSimOnPresent();

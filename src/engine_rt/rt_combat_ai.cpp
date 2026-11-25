@@ -656,4 +656,200 @@ float StepExtremumSeekingGovernor(ExtremumSeekingState& st, float measuredCost, 
     return std::clamp(st.xHat + amp * std::sin(st.phaseRad), lo, hi);
 }
 
+BodyDamageResult EvaluateBodyDamageAndInjury(const BodyDamageInput& in) {
+    BodyDamageResult r{};
+    const float mass = std::clamp(in.weaponMassKg, 0.2f, 25.0f);
+    const float spd  = std::clamp(in.swingSpeedMs, 0.5f, 35.0f);
+    const float sharp = std::clamp(in.edgeSharpness, 0.0f, 1.0f);
+    const float momentum = mass * spd;
+    // Blunt impact penetrates heavy plate via kinetic shock; edged blades cleave light/unarmored tissue:
+    const float effArmor = std::max(0.0f, in.armorRating) * (0.45f + 0.55f * sharp);
+    const float armorMit = std::clamp(effArmor / (effArmor + 140.0f), 0.0f, 0.80f);
+    float zoneMult = 1.0f;
+    if (in.zone == BodyZone::Head) zoneMult = 2.15f;
+    else if (in.zone == BodyZone::LeftArm || in.zone == BodyZone::RightArm) zoneMult = 0.82f;
+    else if (in.zone == BodyZone::LeftLeg || in.zone == BodyZone::RightLeg) zoneMult = 0.88f;
+
+    const float kineticScale = std::clamp(0.70f + momentum * 0.022f, 0.70f, 2.20f);
+    r.finalDamage = std::max(0.0f, in.rawDamage) * zoneMult * kineticScale * (1.0f - armorMit);
+    const float hpMax = std::max(in.targetHpMax, 1.0f);
+    const float dmgFrac = r.finalDamage / hpMax;
+    const float postHp = in.targetHpNow - r.finalDamage;
+
+    r.bleedDps = sharp * r.finalDamage * (in.zone == BodyZone::Head ? 0.22f : 0.14f) * (1.0f - armorMit * 0.6f);
+    r.staggerSec = std::clamp((momentum * 0.018f + dmgFrac * 1.4f) * (in.zone == BodyZone::Head ? 1.45f : 1.0f), 0.0f, 2.2f);
+    r.limbCrippled = (dmgFrac >= 0.28f) && (in.zone != BodyZone::Torso);
+    if (r.limbCrippled) {
+        if (in.zone == BodyZone::LeftLeg || in.zone == BodyZone::RightLeg) r.moveSpeedMult = 0.62f;
+        if (in.zone == BodyZone::LeftArm || in.zone == BodyZone::RightArm) r.attackSpeedMult = 0.70f;
+    }
+    // Physical lethal-threshold severing: requires sharp blade + sufficient cleave energy + lethal blow:
+    if (postHp <= 0.0f && sharp >= 0.55f && r.finalDamage >= hpMax * 0.35f) {
+        if (in.zone == BodyZone::Head) {
+            r.decapitated = true;
+            r.dismembered = true;
+        } else if (in.zone != BodyZone::Torso) {
+            r.dismembered = true;
+        }
+    }
+    return r;
+}
+
+void InitVoxelProp(RawVoxelDestructible& prop, VoxelMaterial mat, bool hollowBox) {
+    prop.material = mat;
+    prop.solidCount = 0;
+    const uint8_t strength = (mat == VoxelMaterial::Pottery) ? 65u
+                           : (mat == VoxelMaterial::Ice)     ? 110u
+                           : (mat == VoxelMaterial::Wood)    ? 145u : 235u;
+    for (int z = 0; z < 8; ++z) {
+        for (int y = 0; y < 8; ++y) {
+            for (int x = 0; x < 8; ++x) {
+                const bool wall = !hollowBox || x == 0 || x == 7 || y == 0 || y == 7 || z == 0 || z == 7;
+                const uint8_t v = wall ? strength : 0u;
+                prop.cells[(z * 8 + y) * 8 + x] = v;
+                if (v > 0u) ++prop.solidCount;
+            }
+        }
+    }
+}
+
+std::vector<VoxelFragment> ApplyVoxelImpact(RawVoxelDestructible& prop, const float localHit[3],
+                                            const float impactDir[3], float impactForce, float blastRadiusCells) {
+    std::vector<VoxelFragment> frags;
+    if (!localHit || !impactDir || prop.solidCount == 0u || impactForce <= 0.0f) return frags;
+    const float rad = std::clamp(blastRadiusCells, 0.5f, 8.0f);
+    const float dirLen = std::sqrt(impactDir[0] * impactDir[0] + impactDir[1] * impactDir[1] + impactDir[2] * impactDir[2]);
+    const float dxN = dirLen > 1e-4f ? impactDir[0] / dirLen : 0.0f;
+    const float dyN = dirLen > 1e-4f ? impactDir[1] / dirLen : 1.0f;
+    const float dzN = dirLen > 1e-4f ? impactDir[2] / dirLen : 0.0f;
+
+    // 1) Carve impact fracture cavity using material tensile strength + directional stress cone:
+    uint32_t shattered = 0;
+    float shCenter[3] = {};
+    for (int z = 0; z < 8; ++z) {
+        for (int y = 0; y < 8; ++y) {
+            for (int x = 0; x < 8; ++x) {
+                uint8_t& c = prop.cells[(z * 8 + y) * 8 + x];
+                if (c == 0u) continue;
+                const float vx = float(x) + 0.5f - localHit[0];
+                const float vy = float(y) + 0.5f - localHit[1];
+                const float vz = float(z) + 0.5f - localHit[2];
+                const float dist = std::sqrt(vx * vx + vy * vy + vz * vz);
+                if (dist > rad) continue;
+                const float falloff = 1.0f - dist / rad;
+                const float dmg = impactForce * (0.45f + 0.55f * falloff);
+                if (dmg >= float(c)) {
+                    c = 0u;
+                    --prop.solidCount;
+                    ++shattered;
+                    shCenter[0] += float(x) + 0.5f;
+                    shCenter[1] += float(y) + 0.5f;
+                    shCenter[2] += float(z) + 0.5f;
+                } else {
+                    c = static_cast<uint8_t>(std::max(1.0f, float(c) - dmg));
+                }
+            }
+        }
+    }
+    if (shattered > 0u) {
+        VoxelFragment dust{};
+        dust.voxelCount = shattered;
+        dust.centerLocal[0] = shCenter[0] / float(shattered);
+        dust.centerLocal[1] = shCenter[1] / float(shattered);
+        dust.centerLocal[2] = shCenter[2] / float(shattered);
+        const float vMag = std::clamp(impactForce * 0.06f, 2.0f, 35.0f);
+        dust.impulseVel[0] = dxN * vMag;
+        dust.impulseVel[1] = dyN * vMag;
+        dust.impulseVel[2] = dzN * vMag + 3.5f;
+        frags.push_back(dust);
+    }
+
+    // 2) 6-connected flood-fill to detect structurally detached islands (largest component stays anchored; smaller islands break free!):
+    int32_t compId[512];
+    std::fill(std::begin(compId), std::end(compId), -1);
+    struct CompInfo { uint32_t count = 0; float sum[3] = {}; };
+    std::vector<CompInfo> comps;
+    int stack[512];
+    static constexpr int kOff[6][3] = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
+    for (int idx = 0; idx < 512; ++idx) {
+        if (prop.cells[idx] == 0u || compId[idx] >= 0) continue;
+        const int32_t cid = static_cast<int32_t>(comps.size());
+        CompInfo ci{};
+        int sp = 0;
+        stack[sp++] = idx;
+        compId[idx] = cid;
+        while (sp > 0) {
+            const int cur = stack[--sp];
+            const int cz = cur >> 6, cy = (cur >> 3) & 7, cx = cur & 7;
+            ++ci.count;
+            ci.sum[0] += float(cx) + 0.5f;
+            ci.sum[1] += float(cy) + 0.5f;
+            ci.sum[2] += float(cz) + 0.5f;
+            for (const auto& o : kOff) {
+                const int nx = cx + o[0], ny = cy + o[1], nz = cz + o[2];
+                if (nx < 0 || nx > 7 || ny < 0 || ny > 7 || nz < 0 || nz > 7) continue;
+                const int nIdx = (nz << 6) | (ny << 3) | nx;
+                if (prop.cells[nIdx] > 0u && compId[nIdx] < 0) {
+                    compId[nIdx] = cid;
+                    stack[sp++] = nIdx;
+                }
+            }
+        }
+        comps.push_back(ci);
+    }
+    if (comps.size() > 1u) {
+        int32_t anchor = 0;
+        for (int32_t c = 1; c < static_cast<int32_t>(comps.size()); ++c) {
+            if (comps[size_t(c)].count > comps[size_t(anchor)].count) anchor = c;
+        }
+        for (int idx = 0; idx < 512; ++idx) {
+            if (compId[idx] >= 0 && compId[idx] != anchor) {
+                prop.cells[idx] = 0u;
+                if (prop.solidCount > 0u) --prop.solidCount;
+            }
+        }
+        for (int32_t c = 0; c < static_cast<int32_t>(comps.size()); ++c) {
+            if (c == anchor) continue;
+            const auto& ci = comps[size_t(c)];
+            VoxelFragment island{};
+            island.voxelCount = ci.count;
+            island.centerLocal[0] = ci.sum[0] / float(ci.count);
+            island.centerLocal[1] = ci.sum[1] / float(ci.count);
+            island.centerLocal[2] = ci.sum[2] / float(ci.count);
+            const float push = std::clamp(impactForce * 0.045f, 1.5f, 22.0f);
+            island.impulseVel[0] = dxN * push + (island.centerLocal[0] - localHit[0]) * 1.2f;
+            island.impulseVel[1] = dyN * push + (island.centerLocal[1] - localHit[1]) * 1.2f;
+            island.impulseVel[2] = dzN * push + 2.5f;
+            frags.push_back(island);
+        }
+    }
+    return frags;
+}
+
+SynopticWeatherState StepSynopticWeatherSim(const float worldPos[3], float simTimeSec, float gameHour) {
+    SynopticWeatherState w{};
+    const float px = worldPos ? worldPos[0] : 0.0f;
+    const float py = worldPos ? worldPos[1] : 0.0f;
+    const float pz = worldPos ? worldPos[2] : 0.0f;
+    // Continuous multi-scale synoptic pressure wave advecting across Skyrim's world coordinates:
+    const float advX = px * 0.000014f - simTimeSec * 0.0018f;
+    const float advY = py * 0.000011f + simTimeSec * 0.0012f;
+    const float baro = std::sin(advX + advY) * 0.50f + std::cos(advX * 2.13f - advY * 1.67f + 1.3f) * 0.32f
+                     + std::sin(simTimeSec * 0.0041f + 2.7f) * 0.18f;
+    w.pressureHpa = std::clamp(1006.0f + baro * 26.0f, 972.0f, 1034.0f);
+    // Low pressure trough (< 1002 hPa) generates deep fronts, gusting wind, precipitation & convective CAPE lightning:
+    const float trough = std::clamp((1008.0f - w.pressureHpa) / 32.0f, 0.0f, 1.0f);
+    w.cloudCover01 = std::clamp(0.18f + trough * 0.78f, 0.15f, 0.98f);
+    const float northCold = std::clamp((py - 12000.0f) / 38000.0f, 0.0f, 1.0f);
+    const float diurnalCool = (gameHour < 6.0f || gameHour > 20.0f) ? 450.0f : 0.0f;
+    w.snowLineAltU = std::clamp(3200.0f - northCold * 2800.0f - trough * 650.0f - diurnalCool, 0.0f, 4500.0f);
+    const float precip = std::clamp((trough - 0.38f) / 0.55f, 0.0f, 1.0f);
+    const float freezeFrac = std::clamp((pz - (w.snowLineAltU - 450.0f)) / 900.0f, 0.0f, 1.0f);
+    w.snowRate01 = precip * freezeFrac;
+    w.rainRate01 = precip * (1.0f - freezeFrac);
+    w.windSpeedMs = std::clamp(3.2f + trough * 22.0f + std::clamp(pz / 12000.0f, 0.0f, 1.0f) * 8.0f, 1.5f, 34.0f);
+    w.stormLightning = std::clamp((trough - 0.65f) / 0.30f, 0.0f, 1.0f) * (1.0f - freezeFrac * 0.4f);
+    return w;
+}
+
 }  // namespace raw::rt

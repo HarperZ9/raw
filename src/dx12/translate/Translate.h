@@ -115,6 +115,8 @@ void SetWaterWaveState(ID3D11Device* device, float simTimeSec, float gravityMps2
                        float beaufort, float swellDirX, float swellDirY);
 // Marks whether the next DrawIndexed on this raw::tx context is a Water surface draw (triggers 1->16/1->4 live 3D wave displacement).
 void SetDrawWaterHint(ID3D11DeviceContext* context, bool isWater);
+// Marks whether the next DrawIndexed must skip TxSubdiv (structurally excludes Landscape & DistantLod terrain chunks).
+void SetDrawSkipSubdivHint(ID3D11DeviceContext* context, bool skip);
 
 // Looks up the cached 4x curved/snowpack-lifted D3D12 buffers for the currently bound draw so DXR 1.2 BLAS
 // builds match the subdivided on-screen silhouette. Adds a COM reference to outVb and outIb when returning true.

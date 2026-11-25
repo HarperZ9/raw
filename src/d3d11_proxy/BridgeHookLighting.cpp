@@ -336,11 +336,9 @@ bool LightingAtOpaque(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr)
             if (sim.geomSubdivLevel > 0) {
                 const float curv = sim.geomCurvature;
                 const float disp = sim.geomDisplaceScale * 0.08f;
-                // Quantize live exterior snowpack depth to 0.75u steps (<= 4.5u) so 3D volumetric snow pillows
-                // build cleanly on roofs/rocks/terrain without triggering per-frame SubdivCache rebuilds!
-                const float rawSnowU = (!l.isInterior) ? std::clamp(Cfg().light.snow * 4.2f, 0.0f, 4.5f) : 0.0f;
-                const float snowU = std::floor(rawSnowU / 0.75f + 0.5f) * 0.75f;
-                raw::tx::SetSubdivParams(pi->device, curv, snowU, disp);
+                // Keep static vertex snow-lift at 0.0u so Z-prepass, Havok doors, and adjacent cell borders stay
+                // bit-exact (3D sastrugi snowdrift relief & overhang rims run in Lighting.hlsl without shifting mesh vertices).
+                raw::tx::SetSubdivParams(pi->device, curv, 0.0f, disp);
             }
             // Wave 35: Push live planetary time, gravity, Nirn dual-moon tides & Beaufort sea state into raw::tx
             // so Skyrim's water geometry physically tessellates (1->16 / 1->4) and rolls in real 3D!
@@ -370,17 +368,20 @@ bool LightingAtOpaque(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr)
             LARGE_INTEGER wNow{};
             QueryPerformanceCounter(&wNow);
             float wTime = (s_wFreq.QuadPart > 0) ? float(double(wNow.QuadPart - s_wStart.QuadPart) / double(s_wFreq.QuadPart)) : 0.0f;
-            float wGrav = 9.80665f, wTide = 0.0f, wBeauf = 2.2f, wSx = 0.866f, wSy = 0.500f;
+            const bool isCoastalSea = !l.isInterior && std::abs(l.waterHeight - (-14000.0f)) < 350.0f;
+            float wGrav = 9.80665f, wTide = 0.0f, wBeauf = isCoastalSea ? 2.2f : 0.45f, wSx = 0.866f, wSy = 0.500f;
             WorldSimWaterPod wp{};
             if (s_wFn && s_wFn(&wp) && wp.simTicks > 0u) {
                 if (wp.simClockSec > 0.0f) wTime = wp.simClockSec;
                 if (wp.gravityMps2 > 1.0f) wGrav = wp.gravityMps2;
-                wTide  = l.isInterior ? 0.0f : wp.tideHeightU;
-                wBeauf = l.isInterior ? 0.4f : wp.beaufortScale;
+                // Apply ocean tides & heavy Beaufort swell geometry strictly on coastal sea-level water (Z ~ -14000u).
+                // Inland Whiterun stone basins & Riverwood streams stay gently rippled so pools never empty or flood masonry!
+                wTide  = isCoastalSea ? std::clamp(wp.tideHeightU * 0.25f, -6.0f, 6.0f) : 0.0f;
+                wBeauf = l.isInterior ? 0.25f : (isCoastalSea ? wp.beaufortScale : std::min(wp.beaufortScale, 0.55f));
                 wSx    = wp.swellDirX;
                 wSy    = wp.swellDirY;
             } else if (l.isInterior) {
-                wBeauf = 0.4f;
+                wBeauf = 0.25f;
             }
             raw::tx::SetWaterWaveState(pi->device, wTime, wGrav, wTide, wBeauf, wSx, wSy);
         }

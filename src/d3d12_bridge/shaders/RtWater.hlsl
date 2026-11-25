@@ -139,10 +139,10 @@ float evalWaterWaveHeight(float2 xy, float wt, float2 flowDir, float2 flowPerp, 
     [unroll] for (int wi = 0; wi < 10; ++wi) {
         const float kRad = kFreq[wi];
         const float kM = kRad * 70.0f;
-        // Exact Airy finite-depth gravity-capillary dispersion (surface tension gamma/rho = 7.4e-5 m^3/s^2 for micro ripples):
-        const float kh = min(kM * depthM, 6.0f);
-        const float tanhKH = tanh(kh);
-        const float omega = sqrt(max((gPhys * kM + 7.4e-5f * kM * kM * kM) * tanhKH, 0.01f)) * 0.36f;
+        // Spatially invariant gravity-capillary angular frequency omega(k):
+        // NEVER multiply unbounded wt by a depth-dependent omega(depthM), which creates growing topographic
+        // contour zebra stripes around every rock, step, and bank! Shoaling modulates amplitude via shoalBoost only.
+        const float omega = sqrt(max(gPhys * kM + 7.4e-5f * kM * kM * kM, 0.01f)) * 0.36f;
         const float2 dirW = normalize(flowDir * cos(kAng[wi]) + flowPerp * sin(kAng[wi]));
         const float modeShoal = wi < 5 ? shoalBoost : 1.0f;
         const float ampH = kAmp[wi] * ampScale * modeShoal;
@@ -226,9 +226,7 @@ void water(uint3 id : SV_DispatchThreadID) {
             // quantization contour rings & fingerprint lines seen in 13.55.34!):
             const float3 eyePos = eyeAt();
             const float3 rayDir = normalize(worldAt(px, 0.5f) - eyePos);
-            const float liveSeaZ = rawLiveWaterZ(engineWorld, physWorld[0]);
-            const float planeZ = (engineWorld.z > 0.5f && abs((p.z + camPosW.z) - liveSeaZ) < 32.0f)
-                               ? (liveSeaZ - camPosW.z) : p.z;
+            const float planeZ = p.z;
             const float tPlane = (rayDir.z < -1.0e-4f) ? clamp((planeZ - eyePos.z) / rayDir.z, 1.0f, 48000.0f) : length(p);
             const float3 pSmooth = (rayDir.z < -1.0e-4f && abs(tPlane - length(p)) < max(length(p) * 0.15f, 32.0f))
                                  ? (eyePos + rayDir * tPlane) : p;
@@ -279,20 +277,24 @@ void water(uint3 id : SV_DispatchThreadID) {
                 eddyLee = saturate(-intoObs) * nearObs * 0.40f;
                 const float2 flowDir = wDir;
                 const float2 flowPerp = float2(-flowDir.y, flowDir.x);
-                // Live Beaufort sea-state + depth-coupled amplitude (calm clear streams -> towering EasyWaterscape ocean swells!):
+                // Live Beaufort sea-state + coastal vs inland amplitude separation:
+                // Inland Whiterun basins & Riverwood streams stay crystal clear with gentle ripples;
+                // open coastal seas (Sea of Ghosts around Z = -14000u) roll with rich Nordic swells!
+                const bool isCoastalSea = (isExtW0 && abs((p.z + camPosW.z) - (-14000.0f)) < 450.0f);
                 const float bNorm = saturate((beaufort - 1.0f) / 8.5f);
                 const float deepWaterW = smoothstep(14.0f, 130.0f, depthV0);
                 const float stormChop = saturate(weather.w * 0.85f + windAmp * 0.65f + bNorm * 0.75f);
-                const float ampScale = isExtW0 ? (lerp(0.42f, 0.92f, deepWaterW) + stormChop * lerp(0.55f, 1.45f, deepWaterW)) : 0.18f;
+                const float seaAmp = lerp(0.42f, 0.90f, deepWaterW) + stormChop * lerp(0.45f, 1.25f, deepWaterW);
+                const float inlandAmp = lerp(0.18f, 0.42f, deepWaterW) + stormChop * 0.16f;
+                const float ampScale = isExtW0 ? (isCoastalSea ? seaAmp : inlandAmp) : 0.14f;
 
-                // Wave 35 8-Step + 3-Step Binary-Refined 3D Wave Heightfield Self-Occlusion Ray-March:
-                // Gives genuine 3D sculptural wave crests & horizon-breaking swell parallax (EasyWaterscape / 24Ronin / GTA VI)!
-                const float2 tideDrift = flowDir * (tideVel * wt * 14.0f);
+                // Wave 36 8-Step + 3-Step Binary-Refined 3D Wave Heightfield Self-Occlusion Ray-March:
+                const float2 tideDrift = isCoastalSea ? (flowDir * (tideVel * wt * 14.0f)) : 0.0f.xx;
                 float2 evalXY = wpW.xy - tideDrift;
                 float2 waveG = 0.0f.xx;
                 jacobianFold = 0.0f;
-                const float parallaxFade = smoothstep(9500.0f, 320.0f, wDist) * (isExtW0 ? 1.0f : 0.25f);
-                const float maxWaveH = 20.0f * ampScale * parallaxFade;
+                const float parallaxFade = smoothstep(9500.0f, 320.0f, wDist) * (isCoastalSea ? 1.0f : (isExtW0 ? 0.35f : 0.20f));
+                const float maxWaveH = (isCoastalSea ? 16.0f : 4.5f) * ampScale * parallaxFade;
                 if (parallaxFade > 0.02f && v.z > 0.04f) {
                     const float2 rayStepXY = (-v.xy / max(v.z, 0.16f)) * (maxWaveH / 8.0f);
                     float rayZ = maxWaveH;
@@ -320,12 +322,13 @@ void water(uint3 id : SV_DispatchThreadID) {
                     }
                 }
                 waveHeight3D = evalWaterWaveHeight(evalXY, wt, flowDir, flowPerp, ampScale, depthV0, gPhys, waveG, jacobianFold);
-                // Airy Shallow-Water Wave Shoaling & Shoreline Refraction parallel to obsGrad:
+                // Constant-frequency shoreline lap waves (ZERO depth inside wt*omega -> zero contour stripes!):
                 if (shallowW > 0.02f && length(obsGrad) > 0.10f) {
-                    const float shoalPhase = depthV0 * 0.24f - wt * (sqrt(gPhys * max(depthV0 / 70.0f, 0.05f)) * 0.85f);
-                    const float shoalCrest = cos(shoalPhase) + 0.38f * cos(2.0f * shoalPhase);
-                    waveG += obsGrad * (shoalCrest * shallowW * (0.28f + stormChop * 0.34f));
-                    jacobianFold += saturate(sin(shoalPhase)) * shallowW * 0.52f;
+                    const float shoalPhase = depthV0 * 0.12f - wt * 1.45f;
+                    const float shoalCrest = cos(shoalPhase) + 0.25f * cos(2.0f * shoalPhase);
+                    const float lapStr = isCoastalSea ? (0.14f + stormChop * 0.18f) : 0.055f;
+                    waveG += obsGrad * (shoalCrest * shallowW * lapStr);
+                    jacobianFold += saturate(sin(shoalPhase)) * shallowW * (isCoastalSea ? 0.34f : 0.12f);
                 }
 
                 // Crisp multi-scale physical capillary ripples (advected calmly by tidal current + wind):
@@ -608,17 +611,18 @@ void water(uint3 id : SV_DispatchThreadID) {
                 // Wave 35 Cellular Open-Cell Lacy Foam Webs + Wind-Streaked Langmuir Foam Ribbons (24Ronin / EasyWaterscape / GTA VI):
                 // Sharp white aerated foam on breaking wave ridges, Langmuir windrows at Beaufort >= 3, and swimmer/rock collars!
                 const float wtF = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
+                const bool isSeaFoam = (isExtBody && abs((p.z + camPosW.z) - (-14000.0f)) < 450.0f);
                 const float2 foamFlow = normalize(cloudWind.xy + float2(1.0f, 0.35f));
                 const float2 foamPerp = float2(-foamFlow.y, foamFlow.x);
                 const float windSpeedW = saturate(length(cloudWind.xy) / 340.0f + weather.w * 0.45f + saturate((beaufort - 2.0f) / 7.0f) * 0.65f);
-                const float crestBreak = saturate((jacobianFold - lerp(0.54f, 0.26f, windSpeedW)) * 2.45f + (1.0f - n.z) * (2.6f + windSpeedW * 3.8f) - 0.26f);
+                const float crestBreak = isSeaFoam ? saturate((jacobianFold - lerp(0.62f, 0.34f, windSpeedW)) * 2.15f + (1.0f - n.z) * (2.0f + windSpeedW * 2.8f) - 0.32f) : 0.0f;
                 const float langmuirCoord = dot(wpW.xy, foamPerp) * 0.011f + sin(dot(wpW.xy, foamFlow) * 0.003f - wtF * 0.25f) * 1.35f;
-                const float langmuirStreak = pow(saturate(vNoise2D(float2(langmuirCoord, dot(wpW.xy, foamFlow) * 0.0016f - wtF * 0.04f))), 3.2f)
-                                           * saturate((beaufort - 3.0f) / 5.5f) * smoothstep(32.0f, 140.0f, depthV) * 0.46f;
-                const float contactCollar = (1.0f - smoothstep(0.0f, 7.5f + 2.5f * sin(wtF * 1.4f + (wpW.x + wpW.y) * 0.015f), depthV)) * smoothstep(0.0f, 0.25f, depthV);
-                const float foamEnergy = saturate(max(max(max(crestBreak, langmuirStreak), contactCollar * 0.85f), max(bowHit * 0.92f, eddyLee * 0.55f)));
+                const float langmuirStreak = isSeaFoam ? (pow(saturate(vNoise2D(float2(langmuirCoord, dot(wpW.xy, foamFlow) * 0.0016f - wtF * 0.04f))), 3.2f)
+                                           * saturate((beaufort - 3.5f) / 5.5f) * smoothstep(32.0f, 140.0f, depthV) * 0.38f) : 0.0f;
+                const float contactCollar = (1.0f - smoothstep(0.0f, (isSeaFoam ? 7.5f : 3.2f) + 1.4f * sin(wtF * 1.2f + (wpW.x + wpW.y) * 0.015f), depthV)) * smoothstep(0.0f, 0.35f, depthV);
+                const float foamEnergy = saturate(max(max(max(crestBreak, langmuirStreak), contactCollar * (isSeaFoam ? 0.68f : 0.38f)), max(bowHit * 0.65f, eddyLee * 0.38f)));
                 const float foamLace = foamEnergy > 0.02f ? cellularFoamLace(wpW.xy - foamFlow * (wtF * 10.0f), wtF, foamEnergy) : 0.0f;
-                const float foamMask = saturate(foamLace * smoothstep(0.04f, 0.55f, foamEnergy)) * nearW;
+                const float foamMask = saturate(foamLace * smoothstep(0.06f, 0.58f, foamEnergy)) * nearW;
                 // True Underwater Volumetric Sunbeam Shafts (EXTERIORS ONLY — never fire cyan sunbeams inside underground sewers!).
                 float3 uwShaft = 0.0f.xxx;
                 if (isExtBody && sunDir.w > 0.5f && sunDir.z > 0.08f && depthV > 6.0f && wDist < 4200.0f) {

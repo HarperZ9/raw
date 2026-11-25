@@ -202,11 +202,13 @@ void evalPhysicalWaterVertex(float3 pIn, out float3 pOut, out float3 nOut) {
     float2 sPerp = float2(-sDir.y, sDir.x);
 
     float2 xm = pIn.xy * 0.0142857f; // Skyrim units -> meters
-    float ampScale = clamp(0.18f + waterBeaufort * 0.14f, 0.12f, 2.20f);
+    // Calm inland pools/rivers (waterBeaufort <= 0.7) get subtle <= 0.9u surface motion so shallow stone basins
+    // never empty or flood dry masonry; open coastal seas roll smoothly up to +-4.5u + gentle +-6u tidal offset.
+    float ampScale = clamp(waterBeaufort * 0.11f, 0.0f, 1.15f);
     float t = waterTimeSec;
 
     static const float kWaves[5] = { 0.224f, 0.370f, 0.571f, 1.083f, 1.963f };
-    static const float aWaves[5] = { 0.145f, 0.092f, 0.058f, 0.032f, 0.018f };
+    static const float aWaves[5] = { 0.115f, 0.072f, 0.045f, 0.024f, 0.014f };
     static const float cAng[5]   = { 1.000f, 0.899f, 0.829f, 0.530f, 0.438f };
     static const float sAng[5]   = { 0.000f, 0.438f, -0.559f, 0.848f, -0.899f };
 
@@ -222,12 +224,13 @@ void evalPhysicalWaterVertex(float3 pIn, out float3 pOut, out float3 nOut) {
         float sp, cp;
         sincos(phase, sp, cp);
         hMeters  += a * sp;
-        xyMeters -= d * (a * 0.26f * cp);
+        xyMeters -= d * (a * 0.14f * cp);
         dh       += d * (a * k * cp);
     }
 
-    float zLiftU = clamp(hMeters * 70.0f, -22.0f, 22.0f) + clamp(waterTideU, -24.0f, 24.0f);
-    float2 xyLiftU = clamp(xyMeters * 70.0f, -12.0f.xx, 12.0f.xx);
+    float maxWaveZ = (waterBeaufort <= 0.75f) ? 0.95f : 4.5f;
+    float zLiftU = clamp(hMeters * 32.0f, -maxWaveZ, maxWaveZ) + clamp(waterTideU, -6.0f, 6.0f);
+    float2 xyLiftU = clamp(xyMeters * 18.0f, -1.5f.xx, 1.5f.xx);
     pOut = float3(pIn.xy + xyLiftU, pIn.z + zLiftU);
     nOut = safeNorm(float3(-dh.x, -dh.y, 1.0f));
 }

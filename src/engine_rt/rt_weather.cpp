@@ -191,16 +191,22 @@ void Blend(State* s) {
     const float afternoonConv = float(std::exp(-std::pow((s->gameHour - 15.0f) / 2.6f, 2.0f))) * 0.16f;
     s->humidity = Sat(0.42f + lowPres * 0.48f + morningMist * 0.28f + (s->rain > 0.05f ? 0.30f : 0.0f));
 
-    // Blend synoptic cloud/precip/fog with scripted TESWeather (scripted storms always take priority):
-    const float synCloud = Sat(0.18f + lowPres * 0.72f + afternoonConv + arcticW * 0.14f);
+    // Blend synoptic cloud/fog/wind with live TESWeather, while keeping rain & snow strictly faithful to active
+    // TESWeather precipitation flags (flags & 4 = Rainy, flags & 8 = Snow) and mutually exclusive!
+    // Previously synPrecip invented fake snow=0.10 & rain=0.20 during dry cloudy weather (flags=2), which integrated
+    // wetness=1.0 AND snow=1.0 simultaneously and painted chalk-white snow onto sunny green Riverwood pine trees!
+    const float synCloud = Sat(0.18f + lowPres * 0.68f + afternoonConv + arcticW * 0.14f);
     const float synPrecip = Sat((lowPres - 0.58f) / 0.36f);
     const float freezeW = Sat((1.5f - s->tempC) / 4.5f);
-    const float synRain = synPrecip * (1.0f - freezeW);
-    const float synSnow = synPrecip * freezeW;
-    const float synFog = Sat(0.12f + morningMist * 0.42f + lowPres * 0.28f + alpineW * 0.18f);
+    const float synRain = (s->rain > 0.05f) ? (synPrecip * (1.0f - freezeW)) : 0.0f;
+    const float synSnow = (s->snow > 0.05f) ? (synPrecip * freezeW) : 0.0f;
+    const float synFog = Sat(0.10f + morningMist * 0.40f + lowPres * 0.26f + alpineW * 0.18f);
 
-    s->rain  = std::max(s->rain,  synRain  * 0.85f);
-    s->snow  = std::max(s->snow,  synSnow  * 0.85f);
+    if (s->rain >= s->snow) {
+        s->snow = 0.0f;
+    } else {
+        s->rain = 0.0f;
+    }
     s->cloud = Sat(std::max(vanCloud, synCloud));
     s->fog   = Sat(vanFog * 0.55f + synFog * 0.45f);
 

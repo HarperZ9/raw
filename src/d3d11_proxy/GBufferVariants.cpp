@@ -10,11 +10,11 @@ namespace SB::Proxy
 namespace gbuffer
 {
 
-ID3D11PixelShader* VariantFor(State& s, ID3D11PixelShader* game, bool firstPerson, raw::dxbc::ShaderKind* kind)
+ID3D11PixelShader* VariantFor(State& s, ID3D11PixelShader* game, bool firstPerson, raw::dxbc::ShaderKind* kind, uint8_t* matClass)
 {
     std::lock_guard<std::mutex> lock(s.mutex);
     const auto it = s.shaders.find(game);
-    if (it == s.shaders.end()) { *kind = raw::dxbc::ShaderKind::Unknown; return nullptr; }
+    if (it == s.shaders.end()) { *kind = raw::dxbc::ShaderKind::Unknown; if (matClass) *matClass = 0; return nullptr; }
     PsEntry& e = it->second;
     const int k = firstPerson ? 1 : 0;
     if (!e.tried[k]) {
@@ -42,6 +42,7 @@ ID3D11PixelShader* VariantFor(State& s, ID3D11PixelShader* game, bool firstPerso
         e.materialClass = info.materialClass;
     }
     *kind = e.kind;
+    if (matClass) *matClass = e.materialClass;
     return e.variant[k];
 }
 
@@ -136,19 +137,31 @@ void GBuffer_BeforeDraw(ID3D11DeviceContext* real)
             s.lastDrawWater = false;
             raw::tx::SetDrawWaterHint(real, false);
         }
+        if (s.lastDrawSkipSubdiv) {
+            s.lastDrawSkipSubdiv = false;
+            raw::tx::SetDrawSkipSubdivHint(real, false);
+        }
         return;
     }
     if (!s.dirty) {
         if (s.lastDrawWater) raw::tx::SetDrawWaterHint(real, true);
+        if (s.lastDrawSkipSubdiv) raw::tx::SetDrawSkipSubdivHint(real, true);
         return;
     }
     s.dirty = false;
     raw::dxbc::ShaderKind kind{};
-    ID3D11PixelShader* v = s.gamePs ? VariantFor(s, s.gamePs, s.span == Span::FirstPerson, &kind) : nullptr;
+    uint8_t matClass = 0;
+    ID3D11PixelShader* v = s.gamePs ? VariantFor(s, s.gamePs, s.span == Span::FirstPerson, &kind, &matClass) : nullptr;
     const bool material = kind == raw::dxbc::ShaderKind::Lighting || kind == raw::dxbc::ShaderKind::DistantLod;
     const bool isWater = (s.span == Span::Water) || (kind == raw::dxbc::ShaderKind::Water);
+    // Structurally exclude Landscape terrain and DistantLod quadtree chunks from TxSubdiv so cell edges stay 100% watertight.
+    const bool skipSubdiv = !isWater && (kind == raw::dxbc::ShaderKind::DistantLod ||
+                                         matClass == raw::dxbc::material::Landscape ||
+                                         matClass == raw::dxbc::material::DistantLod);
     s.lastDrawWater = isWater;
+    s.lastDrawSkipSubdiv = skipSubdiv;
     raw::tx::SetDrawWaterHint(real, isWater);
+    raw::tx::SetDrawSkipSubdivHint(real, skipSubdiv);
     const int blendMode = !v ? 2 : (kind == raw::dxbc::ShaderKind::Water ? 3 : (material ? 0 : 1));
     ID3D11BlendState* blend = BlendVariant(s, s.gameBlend, blendMode);
     if (v) real->PSSetShader(v, nullptr, 0);

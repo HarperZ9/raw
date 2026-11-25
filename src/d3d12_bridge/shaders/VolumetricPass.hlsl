@@ -32,13 +32,13 @@ float phaseHG(float cosT, float g) {
     return (1.0f - g2) / (4.0f * PI * pow(max(1.0f + g2 - 2.0f * g * cosT, 1.0e-4f), 1.5f));
 }
 
-float windowIntegral(float3 w, float3 lp, float r, float tEnd) {
+float windowIntegral(float3 w, float3 lp, float r, float tMinStart, float tEnd) {
     const float b = dot(lp, w);
     const float h2 = dot(lp, lp) - b * b;
     const float d2 = r * r - h2;
     if (d2 <= 0.0f) { return 0.0f; }
     const float halfLen = sqrt(d2);
-    const float u0 = max(0.0f, b - halfLen) - b, u1 = min(tEnd, b + halfLen) - b;
+    const float u0 = max(tMinStart, b - halfLen) - b, u1 = min(tEnd, b + halfLen) - b;
     if (u1 <= u0) { return 0.0f; }
     return (1.0f - h2 / (r * r)) * (u1 - u0) - (u1 * u1 * u1 - u0 * u0 * u0) / (3.0f * r * r);
 }
@@ -131,14 +131,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // with crisp anisotropic Mie forward scattering (g=0.65) + rising 3D hearth smoke/dust motes + night city haze.
         const float3 midWp = camPosW.xyz + eye + w * min(tEnd * 0.45f, 1800.0f);
         const float dustMote = isInt ? (0.78f + 0.44f * cNoise(midWp * 0.011f - float3(0.0f, 0.0f, camPosW.w * 0.16f))) : 1.0f;
-        // Disciplined interior volumetric gain (0.18 vs old 0.38/1.55) keeps halls & ice caves crisp with deep contrast:
-        const float intGain = isInt ? (0.18f * dustMote) : (weatherMistGain * (1.0f + nightV * 1.25f));
+        // Crisp clear-foreground interior volumetric gain (0.042 vs old 0.18) eliminates milky beige haze over candles,
+        // Dragonsreach hearth, and nearby faces while keeping gentle distant shaft atmosphere!
+        const float intGain = isInt ? (0.042f * dustMote) : (weatherMistGain * (1.0f + nightV * 1.10f));
+        const float tMinLocal = isInt ? 220.0f : 130.0f;
         const float jitL = ign(lo + float2(13.0f, 29.0f));
         uint shadowedDone = 0u;
         [loop] for (uint li = 0u; li < flags.y; li++) {
             const float rL = lightPosR[li].w * (1.0f + nightV * 0.55f);
             const float3 lpRel = lightPosR[li].xyz - eye;
-            const float wi = windowIntegral(w, lpRel, rL, tEnd);
+            const float wi = windowIntegral(w, lpRel, rL, tMinLocal, tEnd);
             if (wi > 0.0f) {
                 const bool isFire = lightColS[li].r > lightColS[li].b * 1.25f;
                 const float3 fCol = isFire ? lightColS[li].rgb * float3(1.18f, 0.86f, 0.52f) * 1.05f : lightColS[li].rgb;
@@ -148,7 +150,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     const float b = dot(lpRel, w);
                     const float h2 = dot(lpRel, lpRel) - b * b;
                     const float halfL = sqrt(max(rL * rL - h2, 0.0f));
-                    const float tA = max(0.0f, b - halfL);
+                    const float tA = max(tMinLocal, b - halfL);
                     const float tB = min(tEnd, b + halfL);
                     if (tB > tA + 4.0f) {
                         shadowedDone++;

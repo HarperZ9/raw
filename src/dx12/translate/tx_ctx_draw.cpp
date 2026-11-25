@@ -274,6 +274,7 @@ std::shared_ptr<const SubdivEntry> Context::TrySubdivideDraw(UINT n, UINT start,
     if (!dev_->geometrySubdiv || !dev_->subdiv.Ready()) return nullptr;
     if (s_.topo != D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST) return nullptr;
     const bool isWater = drawWaterHint_;
+    if (!isWater && drawSkipSubdivHint_) return nullptr;
     const bool isDepthOnly = (s_.rtCount == 0u || !s_.rtv[0]);
     const bool isDepthEqual = (s_.ds && dev_->DepthDesc(s_.ds->id).DepthFunc == D3D11_COMPARISON_EQUAL);
     if (!isWater) {
@@ -356,15 +357,19 @@ std::shared_ptr<const SubdivEntry> Context::TrySubdivideDraw(UINT n, UINT start,
             return hit;
         }
         if (isDepthOnly) {
-            hit->lastDepthRes.store(dsvRes, std::memory_order_relaxed);
-            hit->lastDepthFrame.store(curFrame, std::memory_order_release);
+            // Separate non-square main screen DSV (slot 0) from square shadow-map / env-cube DSVs (slot 1)
+            // so bDrawLandShadows=1 shadow passes can NEVER overwrite mainDepth and cause DEPTH_EQUAL map holes!
+            const uint32_t dSlot = (s_.vpCount > 0u && s_.vp[0].Width > 0.0f && s_.vp[0].Width == s_.vp[0].Height) ? 1u : 0u;
+            hit->lastDepthRes[dSlot].store(dsvRes, std::memory_order_relaxed);
+            hit->lastDepthFrame[dSlot].store(curFrame, std::memory_order_release);
             return hit;
         }
         if (!isDepthEqual) return hit;
-        // On DEPTH_EQUAL color passes, emit 4x curved geometry ONLY when the Z-prepass emitted this exact 4x mesh
-        // into this EXACT depth buffer resource on this frame (immune to shadow-map depth passes!).
-        return (hit->lastDepthFrame.load(std::memory_order_acquire) == curFrame &&
-                hit->lastDepthRes.load(std::memory_order_relaxed) == dsvRes) ? hit : nullptr;
+        const bool match0 = (hit->lastDepthFrame[0].load(std::memory_order_acquire) == curFrame &&
+                             hit->lastDepthRes[0].load(std::memory_order_relaxed) == dsvRes);
+        const bool match1 = (hit->lastDepthFrame[1].load(std::memory_order_acquire) == curFrame &&
+                             hit->lastDepthRes[1].load(std::memory_order_relaxed) == dsvRes);
+        return (match0 || match1) ? hit : nullptr;
     }
     if (isDepthOnly || replay_) return nullptr;   // only color draws build new entries on the immediate context
 
@@ -400,7 +405,8 @@ STDMETHODIMP_(void) Context::DrawIndexed(UINT n, UINT start, INT base)
     const bool isDepthEqual = (s_.ds && dev_->DepthDesc(s_.ds->id).DepthFunc == D3D11_COMPARISON_EQUAL);
     const bool allowDsv = isWater || (s_.dsv && (((s_.dsv->desc.Flags & D3D11_DSV_READ_ONLY_DEPTH) == 0) || isDepthEqual));
     const uint32_t minIdx = isWater ? 6u : 12u;
-    const bool needBuild = dev_->geometrySubdiv && !replay_ && !isDepthOnly && s_.topo == D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST &&
+    const bool needBuild = dev_->geometrySubdiv && !replay_ && !isDepthOnly && (isWater || !drawSkipSubdivHint_) &&
+                           s_.topo == D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST &&
                            allowDsv &&
                            n >= minIdx && n <= 120000u && (n % 3u) == 0u &&
                            s_.vb[0].buf && s_.ib.buf && s_.vb[0].buf->core.store == Store::Committed &&

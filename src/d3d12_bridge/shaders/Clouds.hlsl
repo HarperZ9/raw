@@ -88,23 +88,25 @@ float cloudDensityVol(float3 pa, bool detail) {
     const float hGrad = saturate(baseGrad * topGrad + anvilSpread + virgaCurtain);
     if (hGrad <= 0.001f) { return 0.0f; }
 
-    // Sculptural 64^3 Periodic 3D Perlin-Worley Cumulus (isotropic 30k cauliflower towers + crisp 5.4k billow erosion):
+    // Sculptural 64^3 Periodic 3D Perlin-Worley Cumulus (crisp 26k cauliflower towers + razor-sculpted 5.2k billow erosion):
     const float tEvo = camPosW.w * 0.0030f;
-    const float3 baseUvw = float3(sheared.x / 30000.0f, sheared.y / 30000.0f, (alt - clouds.y) / 18000.0f - tEvo * 0.12f);
+    const float3 baseUvw = float3(sheared.x / 26000.0f, sheared.y / 26000.0f, (alt - clouds.y) / 16000.0f - tEvo * 0.12f);
     const float4 vol0 = sampleCloudVol(baseUvw);
     const float lowWorley = vol0.g * 0.625f + vol0.b * 0.25f + vol0.a * 0.125f;
-    const float baseShape = cRemap(vol0.r, -(1.0f - lowWorley) * 0.55f, 1.0f, 0.0f, 1.0f);
+    const float baseShape = cRemap(vol0.r, -(1.0f - lowWorley) * 0.62f, 1.0f, 0.0f, 1.0f);
     const float localCov = saturate(cover * lerp(0.40f, 1.32f, smoothstep(0.24f, 0.78f, wCov)));
     const float thresh = lerp(0.62f, lerp(0.40f, 0.32f, stormType), localCov);
-    float dens = saturate((baseShape * hGrad - thresh) / max(1.0f - thresh, 0.22f));
-    dens *= lerp(0.60f, 1.55f, smoothstep(0.04f, 0.42f, h));
+    float dens = saturate((baseShape * hGrad - thresh) / max(1.0f - thresh, 0.20f));
+    dens *= lerp(0.65f, 1.65f, smoothstep(0.04f, 0.40f, h));
     if (detail && dens > 0.002f) {
-        const float3 detUvw = float3((sheared.x + wind.x * 0.25f) / 6800.0f, (sheared.y + wind.y * 0.25f) / 6800.0f, (alt - clouds.y) / 6200.0f + tEvo * 0.22f);
+        const float3 detUvw = float3((sheared.x + wind.x * 0.25f) / 5200.0f, (sheared.y + wind.y * 0.25f) / 5200.0f, (alt - clouds.y) / 4800.0f + tEvo * 0.22f);
         const float4 volD = sampleCloudVol(detUvw);
         const float hiWorley = volD.g * 0.625f + volD.b * 0.25f + volD.a * 0.125f;
-        const float detailMod = lerp(hiWorley, 1.0f - hiWorley, saturate(h * 1.35f));
-        const float erode = detailMod * lerp(0.52f, 0.80f, h) * (1.0f - dens * 0.20f);
+        const float detailMod = lerp(hiWorley, 1.0f - hiWorley, saturate(h * 1.45f));
+        const float erode = detailMod * lerp(0.60f, 0.88f, h) * (1.0f - dens * 0.18f);
         dens = cRemap(dens, erode, 1.0f, 0.0f, 1.0f);
+        // Second crisp high-frequency cauliflower wisp edge sharpen (eliminates blurry soft cumulus blobs!):
+        dens = saturate(smoothstep(0.06f, 0.84f, dens) * 1.08f);
     }
     return dens * cloudWind.z;
 }

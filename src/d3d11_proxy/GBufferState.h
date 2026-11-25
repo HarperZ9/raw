@@ -43,7 +43,7 @@ struct State
     bool opaqueSeen = false;                        // this frame
 
     Span span = Span::None;
-    bool dirty = false, substituted = false, lastDrawWater = false;
+    bool dirty = false, substituted = false, lastDrawWater = false, lastDrawSkipSubdiv = false;
     ID3D11PixelShader* gamePs = nullptr;
     ID3D11BlendState* gameBlend = nullptr;
     float factor[4] = {1, 1, 1, 1};
@@ -62,8 +62,8 @@ struct State
 State& S();
 
 // The patched form of the game's bound shader for the open span, or null.
-// kind receives the shader's kind.
-ID3D11PixelShader* VariantFor(State& s, ID3D11PixelShader* game, bool firstPerson, raw::dxbc::ShaderKind* kind);
+// kind receives the shader's kind; matClass (optional) receives the material class.
+ID3D11PixelShader* VariantFor(State& s, ID3D11PixelShader* game, bool firstPerson, raw::dxbc::ShaderKind* kind, uint8_t* matClass = nullptr);
 // mode 0: the shader writes the material targets; 1: it writes the layer only; 2: it writes none of RAW's targets.
 ID3D11BlendState* BlendVariant(State& s, ID3D11BlendState* game, int mode);
 

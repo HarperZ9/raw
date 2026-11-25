@@ -241,8 +241,10 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                 const float dL = length(toL);
                 const float rL = lightPosR[li].w;
                 if (dL >= rL) { continue; }
-                // Clear near-camera & flame core (55..220u from eye) so holding a torch never creates a milky fog cloud:
-                const float coreClear = smoothstep(48.0f, 165.0f, dL) * smoothstep(55.0f, 220.0f, rayDist);
+                // Clear near-camera & flame core so hearths, candles & torches never wrap faces/rooms in milky fog:
+                const float coreClear = isInt
+                    ? (smoothstep(65.0f, 210.0f, dL) * smoothstep(120.0f, 340.0f, rayDist))
+                    : (smoothstep(48.0f, 165.0f, dL) * smoothstep(55.0f, 220.0f, rayDist));
                 const float att = pow(saturate(1.0f - dL / rL), 2.2f) * coreClear;
                 const float cosL = dot(farDir, toL / max(dL, 1.0e-3f));
                 const float phL = min(froxelHG(cosL, isInt ? 0.50f : 0.46f) * (isInt ? 1.8f : 1.6f) + 0.20f, 1.5f);
@@ -288,9 +290,9 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                     }
                     localVis = max(occF, 0.08f);
                 }
-                // Ensure nearby exterior local lights scatter visibly even when extNearRamp keeps daylight air clear:
-                sigma = max(sigma, (isInt ? 0.000012f : 0.000020f) * att * intSmoke * lampWeather * steamBoost * lerp(0.35f, 1.0f, localVis));
-                inScat += min(lightColS[li].rgb * (att * phL * localVis * tune2.y * intSmoke * lampWeather * steamBoost * fireFlicker * (isInt ? 0.11f : 0.28f)), (isInt ? 0.075f : 0.35f).xxx);
+                // Ensure nearby exterior local lights scatter visibly while keeping interior rooms crystal-crisp:
+                sigma = max(sigma, (isInt ? 0.000007f : 0.000020f) * att * intSmoke * lampWeather * steamBoost * lerp(0.35f, 1.0f, localVis));
+                inScat += min(lightColS[li].rgb * (att * phL * localVis * tune2.y * intSmoke * lampWeather * steamBoost * fireFlicker * (isInt ? 0.042f : 0.26f)), (isInt ? 0.032f : 0.32f).xxx);
             }
         }
     }

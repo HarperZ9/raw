@@ -223,9 +223,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float z = viewZOf(d), jit = ign(px);
     Surface s;
     s.n = worldNormal(Normal.Load(ip));
-    // GPU-Native PN-Triangle / Cross-Bilateral Mesh & Terrain Normal Rounding (eliminates sharp-angled 2011 low-poly
-    // facets on rocks, pillars, terrain ridges, arches, and NPC shoulders while preserving crisp silhouette edges!):
-    if (!match && (base == 1u || base == 4u || skin) && z < 3600.0f) {
+    // GPU-Native PN-Triangle / Cross-Bilateral Mesh & Terrain Normal Rounding (strictly excludes skin so facial pores,
+    // brow ridges, wrinkles, and scars keep 100% native normal-map sharpness under firelight!):
+    if (!match && (base == 1u || base == 4u) && z < 3600.0f) {
         const int2 dMaxN = int2(dims.xy) - 1;
         const float zPlaneTol = max(z * 0.015f, 2.5f);
         float3 nAcc = s.n * 1.4f;
@@ -266,16 +266,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // against the game's brown.
     s.wrap = skin && !match ? float3(0.32f, 0.13f, 0.06f) : (isHair && !match ? float3(0.16f, 0.12f, 0.08f) : 0.0f.xxx);
     if (skin && !match) {
-        s.f0 = 0.028f;
-        s.alpha = max(s.alpha, 0.42f);
-        // Subtle 3D world-space micro-pore normal breakup on close-up skin (rescues flat 2011 NPC faces without noise!):
-        if (z < 420.0f) {
-            const float3 wpSk = p + camPosW.xyz;
-            const float poreFade = smoothstep(420.0f, 65.0f, z) * 0.055f;
-            const float p1 = cNoise(wpSk * 2.4f) - 0.5f;
-            const float p2 = cNoise(wpSk * 2.4f + float3(7.3f, 11.1f, 3.7f)) - 0.5f;
-            s.n = normalize(s.n + float3(p1, p2, 0.0f) * poreFade);
-        }
+        // Preserve 100% native facial normal-map pores/creases (no synthetic cNoise breakup) with physiological roughness floor:
+        s.f0 = 0.026f;
+        s.alpha = max(s.alpha, 0.48f);
     } else if (isEye && !match) {
         s.f0 = 0.045f;
         s.alpha = 0.055f;   // wet physical corneal mirror gloss
@@ -399,10 +392,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         s.f0 = lerp(s.f0, 0.02f, max(wet.wet, wet.puddle));
         s.mask = max(s.mask, max(wet.wet * 0.6f, wet.puddle));
         lobe = lobe || max(wet.wet, wet.puddle) > 0.2f;
+        // Detect living green pine/shrub foliage even when Skyrim renders it under base==1u alpha-test:
+        const bool isGreenPine = (base == 1u && albedo.g > max(albedo.r, albedo.b) * 1.07f && albedo.g > 0.025f);
         if (wet.snow > 0.0f) {
+            // Never paint living green pine branches solid white chalk; cap pine-needle snow dusting to delicate frost tips!
+            const float snowEff = isGreenPine ? (wet.snow * 0.22f) : wet.snow;
             // SKY-09 Volumetric 3D Sastrugi Snowdrift Relief + Glacial Subsurface Scattering:
-            // Wind-sculpted multi-octave 3D snowdrift dunes with deep drift-trough self-shadowing, icy blue-turquoise
-            // snow subsurface scattering in shadowed troughs, and matte high-roughness powder crests.
             const float3 wpS = p + camPosW.xyz;
             const float2 wFlowS = normalize(cloudWind.xy + float2(1.0f, 0.35f));
             const float2 sCoord = float2(dot(wpS.xy, wFlowS) * 0.0045f, dot(wpS.xy, float2(-wFlowS.y, wFlowS.x)) * 0.014f);
@@ -412,14 +407,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 snowCrest = float3(0.76f, 0.80f, 0.86f);
             const float3 snowTroughSSS = float3(0.42f, 0.56f, 0.72f);   // glacial ice-blue subsurface scatter in drift troughs
             const float3 snowCol = lerp(snowTroughSSS, snowCrest, smoothstep(0.22f, 0.78f, sastrugi));
-            albedo = lerp(albedo, snowCol, wet.snow);
-            s.alpha = lerp(s.alpha, 0.86f, wet.snow);
-            s.shin = lerp(s.shin, 2.0f / (0.86f * 0.86f) - 2.0f, wet.snow);
-            s.n = normalize(lerp(s.n, normalize(ng + float3(-driftDx * 0.92f, -driftDy * 0.92f, 0.22f)), wet.snow * 0.78f));
-            s.f0 = lerp(s.f0, 0.018f, wet.snow);
-            s.mask = lerp(s.mask, 0.03f, wet.snow);
-            wet.puddle *= 1.0f - wet.snow;
-            wet.wet *= 1.0f - wet.snow;
+            albedo = lerp(albedo, snowCol, snowEff);
+            s.alpha = lerp(s.alpha, 0.86f, snowEff);
+            s.shin = lerp(s.shin, 2.0f / (0.86f * 0.86f) - 2.0f, snowEff);
+            if (!isGreenPine) {
+                s.n = normalize(lerp(s.n, normalize(ng + float3(-driftDx * 0.92f, -driftDy * 0.92f, 0.22f)), snowEff * 0.78f));
+            }
+            s.f0 = lerp(s.f0, 0.018f, snowEff);
+            s.mask = lerp(s.mask, 0.03f, snowEff);
+            wet.puddle *= 1.0f - snowEff;
+            wet.wet *= 1.0f - snowEff;
+            wet.snow = snowEff;
         }
         // Real-Time Thermal Campfire / Hearth / Torch Snow Melt (COMPETITIVE-2026.md #192402 Dynamic Terrain Deformation):
         // Warm fire lights physically melt surrounding snowdrifts into damp bare earth + glistening icy slush rim!
@@ -570,8 +568,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             }
         }
     }
-    // Seasonal foliage palette transformation (base == 5u: Spring emerald, Autumn golden-amber/crimson, Winter frost).
-    if (!match && base == 5u) {
+    // Seasonal & 3D Botanical Canopy Volume Transport for BOTH soft-lit (base==5u) AND alpha-tested pine/shrub cards (base==1u green):
+    const bool isBotanicalCard = (!match && (base == 5u || (base == 1u && sunColour.w > 0.5f && albedo.g > max(albedo.r, albedo.b) * 1.08f && albedo.g > 0.025f && z < 6000.0f)));
+    if (isBotanicalCard) {
         const uint seasonF = uint(waterB.w + 0.5f);
         if (seasonF == 1u) {
             albedo *= float3(0.94f, 1.12f, 0.92f);
@@ -582,38 +581,37 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float snowLeaf = saturate((s.n.z - 0.25f) * 2.0f);
             albedo = lerp(albedo * float3(0.86f, 0.92f, 1.04f), float3(0.56f, 0.60f, 0.66f), snowLeaf * 0.55f);
         }
-        // Engine-level 3D Botanical Canopy Volume Transport (base == 5u):
-        // Replaces Skyrim's harsh flat 2011 crossed-card normals with a sculpted 3D spherical + world-space bough-cluster
-        // macro-normal, vertical crown-to-underside depth occlusion, and restrained alpine snow-tip albedo.
+        // Wave 36 Old-Growth 3D Conifer Canopy Volume:
+        // Rich deep Nordic spruce/fir chlorophyll albedo (eliminates chalky bleached white-green pine needles!),
+        // 3-step view-tangent bough parallax heightfield, and sculpted 3D crown-to-underside shading.
         if (z < 7200.0f) {
             const float3 wpF = p + camPosW.xyz;
             const float fFade = smoothstep(7200.0f, 240.0f, z);
-            // Wave 35 Old-Growth 3D Conifer Canopy Depth (NordicCanopy / Scionti / JustHoj):
-            // 3-step view-tangent bough parallax heightfield sculptures flat 2011 crossed pine cards into lush
-            // layered needle clusters with deep interior shadow cavities and warm sunlit crown tips!
             const float3 vTanF = -s.v / max(abs(dot(s.n, s.v)), 0.35f);
             float boughDepth = 0.0f;
             [unroll] for (int bp = 0; bp < 3; ++bp) {
                 const float hBp = (float(bp) + 1.0f) * 0.333f;
-                const float3 pBp = (wpF + vTanF * (hBp * 6.5f)) * 0.028f;
+                const float3 pBp = (wpF + vTanF * (hBp * 6.5f)) * 0.032f;
                 boughDepth += rawNoise3Grad(pBp).x * (0.50f - hBp * 0.16f);
             }
-            const float4 bGrad = rawNoise3Grad(wpF * 0.016f + float3(3.1f, 5.7f, 1.7f));
-            const float3 canopyMacroN = normalize(float3(s.n.xy * 0.76f + bGrad.yz * 0.38f,
-                                                         s.n.z * 0.66f + 0.26f + bGrad.w * 0.22f));
-            s.n = normalize(lerp(s.n, canopyMacroN, 0.42f * fFade));
-            const float leafVar = saturate(boughDepth * 1.15f);
+            const float4 bGrad = rawNoise3Grad(wpF * 0.018f + float3(3.1f, 5.7f, 1.7f));
+            const float3 canopyMacroN = normalize(float3(s.n.xy * 0.72f + bGrad.yz * 0.42f,
+                                                         s.n.z * 0.62f + 0.24f + bGrad.w * 0.24f));
+            s.n = normalize(lerp(s.n, canopyMacroN, 0.46f * fFade));
+            const float leafVar = saturate(boughDepth * 1.25f);
             s.f0 = 0.018f;
-            s.alpha = clamp(lerp(s.alpha, 0.80f, 0.72f * fFade), 0.64f, 0.94f);
+            s.alpha = clamp(lerp(s.alpha, 0.76f, 0.72f * fFade), 0.58f, 0.92f);
             const float speciesId = cNoise(wpF * 0.0045f + float3(17.3f, 9.1f, 3.7f));
-            // Physical linear chlorophyll albedo (0.04..0.32 linear: deep boreal spruce + moss-emerald fir):
+            // Deep saturated boreal spruce & mossy emerald fir reflectance (richer green chroma, zero pale grey wash):
             const float3 speciesTint = speciesId < 0.5f
-                ? lerp(float3(0.54f, 0.78f, 0.58f), float3(0.66f, 0.86f, 0.64f), speciesId * 2.0f)
-                : lerp(float3(0.66f, 0.86f, 0.64f), float3(0.74f, 0.84f, 0.60f), (speciesId - 0.5f) * 2.0f);
-            const float crownDepthAo = lerp(0.50f, 1.02f, saturate(s.n.z * 0.5f + 0.5f)) * lerp(0.76f, 1.12f, leafVar);
-            albedo *= lerp(1.0f.xxx, speciesTint * crownDepthAo, fFade * 0.80f);
-            // Cap washed-out chalky foliage albedo while preserving natural bright snow-laden branches in winter:
-            albedo = min(albedo, float3(0.32f, 0.38f, 0.32f));
+                ? lerp(float3(0.44f, 0.76f, 0.46f), float3(0.56f, 0.84f, 0.52f), speciesId * 2.0f)
+                : lerp(float3(0.56f, 0.84f, 0.52f), float3(0.64f, 0.82f, 0.48f), (speciesId - 0.5f) * 2.0f);
+            const float crownDepthAo = lerp(0.38f, 1.02f, saturate(s.n.z * 0.55f + 0.45f)) * lerp(0.66f, 1.12f, leafVar);
+            albedo *= lerp(1.0f.xxx, speciesTint * crownDepthAo, fFade * 0.85f);
+            // Boost living pine chlorophyll saturation while capping washed-out white-green needles:
+            const float fLuma = dot(albedo, float3(0.2126f, 0.7152f, 0.0722f));
+            albedo = saturate(lerp(fLuma.xxx, albedo, 1.24f));
+            albedo = min(albedo, float3(0.26f, 0.34f, 0.24f));
         }
     }
     const float3 nSmooth = s.n;
@@ -1168,15 +1166,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // Soft peak clamp (1.45) prevents close-range torches from blowing out walls, players & roads into neon yellow!
             if (!match && lightColS[li].r > lightColS[li].b * 1.25f) {
                 const bool isIntLight = (sunColour.w < 0.5f);
-                const float3 fireBoost = skin ? float3(1.04f, 0.92f, 0.82f)
+                const float3 fireBoost = skin ? float3(1.00f, 0.90f, 0.80f)
                                               : (isIntLight ? float3(1.16f, 0.86f, 0.56f) : float3(1.12f, 0.84f, 0.54f));
                 c *= fireBoost;
             } else if (!match && sunColour.w < 0.5f) {
                 c *= 1.08f;
             }
             if (!match) {
+                // Smooth physiological firelight knee on skin (0.85) preserves facial pores & form right beside hearths/torches!
                 const float cPeak = max(c.r, max(c.g, c.b));
-                if (cPeak > 1.35f) { c *= (1.35f + (cPeak - 1.35f) / (1.0f + (cPeak - 1.35f) * 1.25f)) / cPeak; }
+                const float cKnee = skin ? 0.85f : 1.35f;
+                if (cPeak > cKnee) { c *= (cKnee + (cPeak - cKnee) / (1.0f + (cPeak - cKnee) * (skin ? 1.55f : 1.25f))) / cPeak; }
             }
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;
             // When hardware RT is active, bypass vanilla's flickering 4-channel shadow-mask swaps completely:
@@ -1701,21 +1701,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
             const float nlRaw = dot(s.n, skKeyDir);
-            // Warm hemoglobin subsurface bleed strictly concentrated at the light-to-shadow terminator (gives noses, ears, cheeks life):
-            const float termSss = exp(-abs(nlRaw) * 4.2f);
-            lit += albedo * float3(0.85f, 0.24f, 0.12f) * skKeyCol * (termSss * 0.16f);
-            // Dual-lobe physical skin specular: tight oil/sebum micro-sheen (alpha=0.19) + broad dermal velvet lobe (alpha=0.46)
+            // Restrained warm hemoglobin terminator warmth + crisp dual-lobe sebum sheen (preserves pores under firelight!):
+            const float termSss = exp(-abs(nlRaw) * 4.5f);
+            lit += albedo * float3(0.82f, 0.24f, 0.12f) * min(skKeyCol, 0.90f.xxx) * (termSss * 0.085f);
             const float3 shv = normalize(s.v + skKeyDir);
             const float snh = saturate(dot(s.n, shv));
-            const float sa1 = 0.036f, sa2 = 0.210f;
+            const float sa1 = 0.048f, sa2 = 0.240f;
             const float sd1 = snh * snh * (sa1 - 1.0f) + 1.0f;
             const float sd2 = snh * snh * (sa2 - 1.0f) + 1.0f;
-            const float sD = (sa1 / (PI * sd1 * sd1)) * 0.35f + (sa2 / (PI * sd2 * sd2)) * 0.65f;
-            const float sF = 0.028f + 0.972f * pow(1.0f - saturate(dot(s.v, shv)), 5.0f);
-            lit += min(skKeyCol * (sD * sF * saturate(nlRaw) * 0.32f), 0.55f.xxx);
-            // Delicate peach-fuzz grazing rim from real scene key light (0.04x — never flat chalky rim):
-            const float fuzzRim = pow(1.0f - nvSkin, 3.8f) * saturate(nlRaw * 0.5f + 0.5f) * 0.055f;
-            lit += albedo * float3(1.04f, 0.92f, 0.86f) * (skKeyCol * fuzzRim);
+            const float sD = (sa1 / (PI * sd1 * sd1)) * 0.30f + (sa2 / (PI * sd2 * sd2)) * 0.70f;
+            const float sF = 0.026f + 0.974f * pow(1.0f - saturate(dot(s.v, shv)), 5.0f);
+            lit += min(skKeyCol * (sD * sF * saturate(nlRaw) * 0.14f), 0.24f.xxx);
+            const float fuzzRim = pow(1.0f - nvSkin, 4.0f) * saturate(nlRaw * 0.5f + 0.5f) * 0.032f;
+            lit += albedo * float3(1.04f, 0.92f, 0.86f) * (min(skKeyCol, 0.90f.xxx) * fuzzRim);
         } else if (base == 11u) {
             // 2) Hair (base==11): Dual-lobe Kajiya-Kay / Marschner anisotropic hair sheen (works in both exteriors & interiors).
             const float3 tHair = normalize(cross(s.n, float3(1.0f, 0.0f, 0.0f)) + float3(0.0f, 0.0f, 0.35f));

@@ -5514,3 +5514,7 @@ off:SkyrimVM::impl	offset	0x210	medium	CommonLibSSE-NG layout notes (1.7.x), not
 fn:BGSSaveLoadManager::Save_Impl	function	0x6227F0	al	Address Library v13 id 35727 (SKSE host save hook)
 fn:BGSSaveLoadManager::Load_Impl	function	0x622F30	al	Address Library v13 id 35728 (SKSE host load hook)
 off:UI::menuMap	offset	0x128	medium	CommonLibSSE-NG 1.7.x layout shows no change; not yet checked in game
+off:TESObjectCELL::waterHeight	offset	0x78	high	binary disassembly RVA 0x2BEE00 (SkyrimSE 1.7.104)
+off:TESWorldSpace::defaultWaterHeight	offset	0x214	high	binary disassembly RVA 0x30DE80 (SkyrimSE 1.7.104)
+off:TESWeather::data	offset	0x664	high	live verified 0x0010A235 flags/wind (SkyrimSE 1.7.104)
+off:TESWeather::fogData	offset	0x678	high	live verified 0x0010A235 fogFar=50000 (SkyrimSE 1.7.104)

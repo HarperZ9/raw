@@ -19,6 +19,7 @@ namespace {
 const uint8_t* g_base = nullptr;
 // from the version table at ViewInit; a part whose address is 0 reads as not available
 uint32_t kGraphicsState = 0, kPlayerCamera = 0, kPlayer = 0, kGetSky = 0, kCalendar = 0, kWorldSpace = 0, kUiSingleton = 0;
+uint32_t kCellWaterHeightOff = 0x78u, kWorldDefaultWaterOff = 0x214u;
 uint64_t g_frame = 0;
 EngineView g_view{};
 std::mutex g_m;
@@ -82,10 +83,10 @@ bool SehWriteCellWaterIfMatch(uintptr_t cellAddr, uint32_t expectedFormId, float
         // Binary-verified SkyrimSE 1.7.104 TESObjectCELL::GetExteriorWaterHeight (RVA 0x2BEE00):
         //   +0x70 = CELL_DATA* (EXTERIOR_DATA* pointer - NEVER touch!)
         //   +0x78 = float waterHeight (sentinel 2147483648.0f when inheriting worldspace default)
-        const float cur = At<float>(cell, 0x78);
+        const float cur = At<float>(cell, kCellWaterHeightOff);
         if (!std::isfinite(cur) || cur <= -50000.0f || cur >= 50000.0f) return false;
         if (std::fabs(cur - newWaterHeight) > 0.02f) {
-            std::memcpy(cell + 0x78, &newWaterHeight, sizeof(float));
+            std::memcpy(cell + kCellWaterHeightOff, &newWaterHeight, sizeof(float));
         }
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -109,7 +110,7 @@ bool ReadCell(EngineView* v, uintptr_t* outExtCellAddr, bool* outCellWhValid) {
         //   TESObjectCELL::waterHeight (+0x78, sentinel 2147483648.0f when inheriting worldspace)
         //   TESWorldSpace::defaultWaterHeight (+0x214, RVA 0x30DE80)
         v->waterHeight = -14000.0f;
-        const float cellWh = At<float>(cell, 0x78);
+        const float cellWh = At<float>(cell, kCellWaterHeightOff);
         const bool cellWhValid = hasWater && std::isfinite(cellWh) && cellWh > -50000.0f && cellWh < 50000.0f;
         if (cellWhValid) v->waterHeight = cellWh;
         if (!v->interior && cellWhValid && outExtCellAddr && outCellWhValid) {
@@ -124,7 +125,7 @@ bool ReadCell(EngineView* v, uintptr_t* outExtCellAddr, bool* outCellWhValid) {
             if (ws && ws[0x1A] == 71) {
                 v->worldspaceFormId = At<uint32_t>(ws, 0x14);
                 if (hasWater && !cellWhValid) {
-                    const float wsWh = At<float>(ws, 0x214);
+                    const float wsWh = At<float>(ws, kWorldDefaultWaterOff);
                     if (std::isfinite(wsWh) && wsWh > -50000.0f && wsWh < 50000.0f) v->waterHeight = wsWh;
                 }
                 break;
@@ -162,6 +163,8 @@ void ViewInit(const Image& img) {
     kGraphicsState = Addr("BSGraphics::State::GetSingleton"); kPlayerCamera = Addr("PlayerCamera::Singleton");
     kPlayer = Addr("PlayerCharacter::Singleton"); kGetSky = Addr("fn:Sky::GetSingleton"); kCalendar = Addr("Calendar::Singleton");
     kWorldSpace = Off("off:TESObjectCELL::worldSpace");
+    if (const uint32_t wh = Off("off:TESObjectCELL::waterHeight")) kCellWaterHeightOff = wh;
+    if (const uint32_t dw = Off("off:TESWorldSpace::defaultWaterHeight")) kWorldDefaultWaterOff = dw;
     kUiSingleton = Addr("UI::Singleton");
     if (HMODULE proxy = GetModuleHandleA("d3d11.dll")) {
         g_setCam = reinterpret_cast<SetCamFn>(GetProcAddress(proxy, "PG_SetEngineCamera"));
@@ -217,7 +220,10 @@ void ViewApplyLiveTide(float tideHeightU) {
         cellId = g_activeExtCellId;
         baseH = it->second.baseHeight;
     }
-    const float clampedTide = std::isfinite(tideHeightU) ? std::clamp(tideHeightU, -24.0f, 24.0f) : 0.0f;
+    // Strictly restrict live CE tidal cell writes to coastal sea-level cells (Z ~ -14000u) with gentle +-4u clamp
+    // so inland Whiterun pools and Riverwood rivers NEVER flood stairs or empty below their beds!
+    if (std::fabs(baseH - (-14000.0f)) > 350.0f) return;
+    const float clampedTide = std::isfinite(tideHeightU) ? std::clamp(tideHeightU * 0.25f, -4.0f, 4.0f) : 0.0f;
     SehWriteCellWaterIfMatch(cellAddr, cellId, baseH + clampedTide);
 }
 

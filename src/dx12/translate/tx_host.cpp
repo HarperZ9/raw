@@ -72,6 +72,11 @@ void SetDrawWaterHint(ID3D11DeviceContext* c, bool isWater)
     if (IsLayerContext(c)) Ctx(c)->SetDrawWaterHint(isWater);
 }
 
+void SetDrawSkipSubdivHint(ID3D11DeviceContext* c, bool skip)
+{
+    if (IsLayerContext(c)) Ctx(c)->SetDrawSkipSubdivHint(skip);
+}
+
 ID3D12Resource* NativeResource(ID3D11Resource* r)
 {
     ResCore* c = r ? CoreOf(r) : nullptr;

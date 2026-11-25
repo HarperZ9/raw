@@ -64,11 +64,10 @@ struct SubdivEntry {
     uint32_t                    outIndexCount = 0;
     uint64_t                    vramBytes = 0;
     uint32_t                    waterMode = 0; // 0=static PN 1->4, 1=water 1->4, 2=water 1->16
-    // Frame counter and exact depth-buffer resource pointer of the last writable depth-only (Z-prepass) draw that
-    // emitted this 4x curved mesh. Guarantees bit-exact DEPTH_EQUAL matching on the SAME depth buffer (ignoring
-    // shadow-map passes and supporting D3D11_DSV_READ_ONLY_DEPTH color passes cleanly with zero holes!).
-    mutable std::atomic<uint64_t> lastDepthFrame{0};
-    mutable std::atomic<const TrackedRes*> lastDepthRes{nullptr};
+    // 2-slot depth-pass history (slot 0 = non-square main screen DSV, slot 1 = square shadow/env DSV).
+    // Guarantees shadow-map passes (bDrawLandShadows=1) can NEVER clobber mainDepth and trigger DEPTH_EQUAL holes!
+    mutable std::atomic<uint64_t> lastDepthFrame[2]{{0}, {0}};
+    mutable std::atomic<const TrackedRes*> lastDepthRes[2]{{nullptr}, {nullptr}};
     mutable std::atomic<uint64_t> lastWaterFrame{0};
 };
 

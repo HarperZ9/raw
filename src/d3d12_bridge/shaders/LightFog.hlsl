@@ -74,6 +74,117 @@ float windowIntegral(float3 w, float3 c, float r, float tEnd) {
     return (1.0f - h2 / r2) * (sb - sa) - (sb * sb * sb - sa * sa * sa) / (3.0f * r2);
 }
 
+// Wave 36: True 3D Depth-Occluded Volumetric Planck-Blackbody Fire & Rising Ember Plumes.
+// Marches 14 jittered steps through upward-advected 3D curl turbulence around live warm fire emitters
+// (candles, sconces, braziers, campfires, Dragonsreach hearth) with authentic 1250K..3200K blackbody fire
+// and exact front-to-back optical transmittance, occluded cleanly by logs, iron bars, wax, and characters.
+float3 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float2 px, bool isInt) {
+    if (flags.y == 0u) { return 0.0f.xxx; }
+    float3 fireTotal = 0.0f.xxx;
+    const float jit = ign(px + float2(7.0f, 19.0f));
+    const float tClock = camPosW.w;
+    const float2 windXY = isInt ? float2(0.0f, 0.0f) : clamp(cloudWind.xy * 0.06f, -14.0f.xx, 14.0f.xx);
+    const uint nLights = min(flags.y, 16u);
+    [loop] for (uint li = 0u; li < nLights; ++li) {
+        const float3 lc = lightColS[li].rgb;
+        const float rL = lightPosR[li].w;
+        // Identify genuine combustion emitters (warm amber/orange ratio, excluding cold/ambient fill lights):
+        if (lc.r <= lc.b * 1.42f || lc.r < 0.14f || rL < 60.0f || rL > 1350.0f) { continue; }
+        const float3 lPos = lightPosR[li].xyz;
+        // Auto-size 3D combustion cone from Skyrim's emitter radius (candle -> brazier -> Dragonsreach hearth):
+        const float isCandle = (rL < 185.0f) ? 1.0f : 0.0f;
+        const float sizeT = saturate((rL - 160.0f) / 420.0f);
+        const float rad = lerp(lerp(13.0f, 34.0f, sizeT), 4.2f, isCandle);
+        const float hFlame = lerp(lerp(36.0f, 76.0f, sizeT), 13.0f, isCandle);
+        const float zDrop = lerp(lerp(22.0f, 36.0f, sizeT), 8.0f, isCandle);
+        const float3 basePos = lPos - float3(0.0f, 0.0f, zDrop);
+        const float3 centerPos = basePos + float3(0.0f, 0.0f, hFlame * 0.50f);
+        const float boundR = max(rad * 1.35f, hFlame * 0.62f);
+
+        // Quick ray-sphere cull & exact depth-clipped entry/exit interval:
+        const float3 oc = eye - centerPos;
+        const float b = dot(oc, w);
+        const float c = dot(oc, oc) - boundR * boundR;
+        const float disc = b * b - c;
+        if (disc <= 0.0f) { continue; }
+        const float sDisc = sqrt(disc);
+        const float tEnter = max(14.0f, -b - sDisc);
+        const float tExit = min(dist, -b + sDisc);
+        if (tExit <= tEnter + 0.5f || tEnter > 2200.0f) { continue; }
+
+        const float distFade = 1.0f - smoothstep(1400.0f, 2200.0f, tEnter);
+        const float ds = (tExit - tEnter) * (1.0f / 14.0f);
+        const float riseSpeed = lerp(58.0f, 34.0f, isCandle);
+        const float nFreq = 1.0f / max(rad * 0.82f, 3.2f);
+        const float seed = float(li) * 13.37f;
+
+        float3 accEmit = 0.0f.xxx;
+        float T = 1.0f;
+        [unroll] for (int si = 0; si < 14; ++si) {
+            const float t = tEnter + (float(si) + jit) * ds;
+            const float3 pRel = eye + w * t;
+            const float3 q = pRel - basePos;
+            const float u = q.z / hFlame;
+            if (u < -0.06f || u > 1.06f) { continue; }
+            const float uCl = saturate(u);
+            // Wind lean + upward-advected 3D fluid curl turbulence (anchored at base, curling licking tongues above):
+            const float3 wpQ = camPosW.xyz + pRel;
+            const float3 nP1 = float3(wpQ.xy * nFreq + seed, wpQ.z * nFreq * 0.72f - tClock * (riseSpeed * nFreq));
+            const float4 g1 = rawNoise3Grad(nP1);
+            const float4 g2 = rawNoise3Grad(nP1 * 2.15f + float3(5.3f, 11.7f, -tClock * 1.4f));
+            const float2 curlXY = float2(g1.z - g1.w, g1.w - g1.y) * 0.65f + float2(g2.z - g2.w, g2.w - g2.y) * 0.35f;
+            const float2 qWarped = q.xy - windXY * (uCl * uCl) + curlXY * (rad * lerp(0.16f, 0.72f, uCl));
+            const float rNorm = length(qWarped) / max(rad * (1.0f - uCl * 0.76f) * smoothstep(-0.06f, 0.14f, u), 0.5f);
+            if (rNorm >= 1.25f) { continue; }
+
+            const float turb = saturate(g1.x * 0.62f + g2.x * 0.38f);
+            // Multi-tongue combustion density: fuller near base, breaking into curling tongues near crest:
+            const float shape = saturate(1.0f - rNorm * rNorm) * smoothstep(1.04f, 0.18f, uCl);
+            const float tongue = smoothstep(lerp(0.18f, 0.52f, uCl), 0.88f, shape + (turb - 0.38f) * lerp(0.45f, 0.85f, uCl));
+            if (tongue > 0.01f) {
+                const float temp = saturate(tongue * (1.15f - uCl * 0.58f) + (1.0f - rNorm) * 0.25f * (1.0f - uCl));
+                // Physical Planck Blackbody Emission: 1250K crimson tips -> 2100K blazing amber -> 3200K incandescent core
+                const float3 bbLow  = float3(1.55f, 0.24f, 0.025f);
+                const float3 bbMid  = float3(2.85f, 1.05f, 0.16f);
+                const float3 bbHot  = float3(3.95f, 2.85f, 1.35f);
+                const float3 bbCol  = temp < 0.55f ? lerp(bbLow, bbMid, temp / 0.55f)
+                                                   : lerp(bbMid, bbHot, saturate((temp - 0.55f) / 0.45f));
+                const float sigmaF = tongue * (0.095f / max(rad * 0.08f, 0.45f));
+                const float stepT = exp(-sigmaF * ds);
+                accEmit += T * bbCol * (1.0f - stepT) * (0.65f + 0.55f * temp);
+                T *= stepT;
+                if (T < 0.04f) { break; }
+            }
+        }
+        // Subtle 3D rising glowing embers above non-candle braziers & hearths:
+        if (isCandle < 0.5f) {
+            const float tClosest = dot(lPos - eye, w);
+            if (tClosest > 24.0f && tClosest < dist && tClosest < 1400.0f) {
+                const float3 ptRay = eye + w * tClosest;
+                const float3 offL = ptRay - basePos;
+                if (offL.z > hFlame * 0.45f && offL.z < hFlame * 2.8f && dot(offL.xy, offL.xy) < (rad * rad * 6.5f)) {
+                    const float hE = saturate((offL.z - hFlame * 0.45f) / (hFlame * 2.35f));
+                    const float3 wpE = camPosW.xyz + ptRay;
+                    const float3 eGrid = float3((wpE.xy - windXY * hE + float2(sin(tClock * 2.2f + wpE.z * 0.08f), cos(tClock * 1.9f + wpE.z * 0.07f)) * 5.5f) * 0.15f,
+                                                wpE.z * 0.095f - tClock * 1.75f);
+                    const float eHash = cHash(floor(eGrid));
+                    if (eHash > 0.946f) {
+                        const float dSpark = length(frac(eGrid) - 0.5f);
+                        const float spark = smoothstep(0.946f, 0.998f, eHash) * exp(-dSpark * dSpark * 42.0f) * (1.0f - hE) * smoothstep(0.0f, 0.12f, hE);
+                        accEmit += lerp(float3(2.20f, 1.05f, 0.28f), float3(1.30f, 0.24f, 0.03f), hE) * (spark * 0.85f);
+                    }
+                }
+            }
+        }
+        const float lGain = saturate(dot(lc, float3(0.35f, 0.45f, 0.20f)) * 1.15f);
+        fireTotal += accEmit * (distFade * clamp(lGain, 0.45f, 1.15f));
+    }
+    // Smooth HDR fire shoulder so flames stay luminous & vivid without nuclear whiteout:
+    const float fPk = max(fireTotal.r, max(fireTotal.g, fireTotal.b));
+    if (fPk > 2.6f) { fireTotal *= (2.6f + (fPk - 2.6f) / (1.0f + (fPk - 2.6f) * 0.45f)) / fPk; }
+    return fireTotal;
+}
+
 float4 fs(float4 at : SV_Position) : SV_Target0 {
     const int3 ip = int3(at.xy, 0);
     float4 lit = Lit.Load(ip);
@@ -679,33 +790,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 pdeMistBoost = 1.0f + saturate(wf.b * 0.65f + wf.a * 0.35f) * 0.45f;
             }
         }
-        // True 3D World-Space Rising Blackbody Fire Embers around live hearths/campfires/braziers (strictly depth-occluded by dist!):
-        if (mapScale > 0.5f && flags.y > 0u) {
-            const uint nEmberL = min(flags.y, 12u);
-            const float2 windE = normalize(cloudWind.xy + float2(1.0f, 0.35f)) * 18.0f;
-            [loop] for (uint ei = 0u; ei < nEmberL; ++ei) {
-                const float3 lcE = lightColS[ei].rgb;
-                const float rE = lightPosR[ei].w;
-                if (lcE.r <= lcE.b * 1.35f || lcE.r < 0.16f || rE < 110.0f) { continue; }
-                const float3 lRel = lightPosR[ei].xyz;
-                const float tClosest = dot(lRel - eye, w);
-                if (tClosest <= 35.0f || tClosest >= dist || tClosest > 1600.0f) { continue; }
-                const float3 ptRay = eye + w * tClosest;
-                const float3 offL = ptRay - lRel;
-                if (offL.z < -10.0f || offL.z > 155.0f || dot(offL.xy, offL.xy) > 6400.0f) { continue; }
-                const float hNorm = saturate((offL.z + 10.0f) / 165.0f);
-                const float3 wpE = camPosW.xyz + ptRay;
-                const float3 eGrid = float3((wpE.xy - windE * hNorm + float2(sin(camPosW.w * 2.2f + wpE.z * 0.08f), cos(camPosW.w * 1.9f + wpE.z * 0.07f)) * 6.5f) * 0.14f,
-                                            wpE.z * 0.09f - camPosW.w * 1.65f);
-                const float eHash = cHash(floor(eGrid));
-                if (eHash > 0.945f) {
-                    const float dSpark = length(frac(eGrid) - 0.5f);
-                    const float spark = smoothstep(0.945f, 0.998f, eHash) * exp(-dSpark * dSpark * 42.0f) * (1.0f - hNorm) * smoothstep(0.0f, 0.12f, hNorm);
-                    // Blackbody cooling ramp: 2800K bright gold-white near flame -> 1500K deep crimson ember high up!
-                    const float3 bbCol = lerp(float3(1.85f, 0.92f, 0.28f), float3(1.15f, 0.22f, 0.04f), hNorm);
-                    precipAdd += bbCol * (spark * (1.0f - smoothstep(1000.0f, 1600.0f, tClosest)) * 0.85f);
-                }
-            }
+        // True 3D Depth-Occluded Volumetric Blackbody Fire & Rising Ember Plumes (exteriors: braziers, campfires, torches):
+        if (mapScale > 0.5f) {
+            precipAdd += evalVolumetricFirePlumes(eye, w, dist, px, false);
         }
         // Wave 29 Negative-Space Depth-Parity Silhouette Diffraction & Crepuscular Dark-Shaft Cavity Contrast:
         // 1) Asymmetric silhouette edge diffraction: when a foreground occluder (curZ) borders a far bright sky/HDR void
@@ -751,34 +838,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 cellAmb = max(float3(ambient[0].w, ambient[1].w, ambient[2].w), float3(0.008f, 0.010f, 0.012f));
         const float ambL = dot(cellAmb, float3(0.2126f, 0.7152f, 0.0722f));
         const float3 caveMist = min(lerp(ambL.xxx, cellAmb, 0.45f) * 0.16f, 0.024f.xxx);
-        float3 intEmberAdd = 0.0f;
-        if (flags.y > 0u) {
-            const uint nEmberI = min(flags.y, 16u);
-            [loop] for (uint ei = 0u; ei < nEmberI; ++ei) {
-                const float3 lcE = lightColS[ei].rgb;
-                const float rE = lightPosR[ei].w;
-                if (lcE.r <= lcE.b * 1.28f || lcE.r < 0.14f || rE < 95.0f) { continue; }
-                const float3 lRel = lightPosR[ei].xyz;
-                const float tClosest = dot(lRel - eye, w);
-                if (tClosest <= 28.0f || tClosest >= dist || tClosest > 1400.0f) { continue; }
-                const float3 ptRay = eye + w * tClosest;
-                const float3 offL = ptRay - lRel;
-                if (offL.z < -25.0f || offL.z > 165.0f || dot(offL.xy, offL.xy) > 7200.0f) { continue; }
-                const float hNorm = saturate((offL.z + 25.0f) / 190.0f);
-                const float3 wpE = camPosW.xyz + ptRay;
-                const float3 eGrid = float3((wpE.xy + float2(sin(camPosW.w * 2.1f + wpE.z * 0.085f), cos(camPosW.w * 1.8f + wpE.z * 0.075f)) * 7.0f) * 0.145f,
-                                            wpE.z * 0.092f - camPosW.w * 1.55f);
-                const float eHash = cHash(floor(eGrid));
-                if (eHash > 0.940f) {
-                    const float dSpark = length(frac(eGrid) - 0.5f);
-                    const float spark = smoothstep(0.940f, 0.998f, eHash) * exp(-dSpark * dSpark * 40.0f) * (1.0f - hNorm) * smoothstep(0.0f, 0.10f, hNorm);
-                    const float3 bbCol = lerp(float3(2.10f, 0.96f, 0.26f), float3(1.25f, 0.20f, 0.03f), hNorm);
-                    intEmberAdd += bbCol * (spark * (1.0f - smoothstep(900.0f, 1400.0f, tClosest)) * 0.95f);
-                }
-            }
-        }
-        // Unlock rich 3D Froxel volumetric torch/hearth cones in dungeons, ice caves & taverns (0.52x scatter)!
-        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.52f + intEmberAdd, lit.a);
+        // True 3D Depth-Occluded Volumetric Blackbody Fire & Rising Ember Plumes (interiors: Dragonsreach hearth, candles, braziers)
+        // paired with crisp clear-foreground interior scatter (0.34x, zero milky beige haze!):
+        const float3 intFireAdd = evalVolumetricFirePlumes(eye, w, dist, px, true);
+        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.34f + intFireAdd, lit.a);
     }
     const float T = (flags.x & FLAG_FOG_REPLACES) != 0u ? exp(-sigma * tEnd) : 1.0f;
     return float4(lit.rgb * T + scatter, lit.a);

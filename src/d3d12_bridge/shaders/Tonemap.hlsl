@@ -276,18 +276,26 @@ float4 main(In i) : SV_Target {
             hdr = rAcc / rW;
         }
     }
-    // OV11 (bit 10 = 1024): Subtle Inward-Only Sharp-Green Apochromatic Lens Dispersion
-    // (samples strictly INWARD toward screen center -> ZERO bottom-edge smear bar & ZERO garish rainbow grass!).
+    // OV11 (bit 10 = 1024): Edge-Stopped Apochromatic Lens Dispersion.
+    // Suppresses RGB separation across high-contrast depth/silhouette edges (pine needles vs sky, waterfalls vs dark stone)
+    // so purple/magenta pixel speckles are mathematically impossible while smooth corners keep subtle cinema optics!
     if ((ovInit & 1024u) != 0u) {
         const float2 caVec = baseUv - 0.5f.xx;
         const float caR = length(caVec);
-        const float caT = saturate((caR - 0.30f) / 0.44f);
-        const float caMag = (caT * caT) * 0.00095f * clamp(RQ.x, 0.0f, 2.0f);
-        if (caMag > 0.00003f) {
+        const float caT = saturate((caR - 0.34f) / 0.40f);
+        const float caMag = (caT * caT) * 0.00024f * clamp(RQ.x, 0.0f, 2.0f);
+        if (caMag > 0.00002f) {
             const float2 dirC = caVec / max(caR, 1.0e-4f);
             const float2 uvR = min(max((baseUv - dirC * (caMag * 0.45f)) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
             const float2 uvB = min(max((baseUv - dirC * caMag) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
-            hdr = float3(Scene.Sample(S1, uvR).r, hdr.g, Scene.Sample(S1, uvB).b);
+            const float3 tapR = Scene.Sample(S1, uvR).rgb;
+            const float3 tapB = Scene.Sample(S1, uvB).rgb;
+            const float lC = dot(hdr, W);
+            const float lR = dot(tapR, W);
+            const float lB = dot(tapB, W);
+            const float edgeJump = (abs(lR - lC) + abs(lB - lC)) / max(lC + 0.08f, 0.08f);
+            const float caGate = exp(-edgeJump * edgeJump * 28.0f);
+            hdr = lerp(hdr, float3(tapR.r, hdr.g, tapB.b), caGate);
         }
     }
     // Only apply legacy pre-tonemap highlight knee on older LDR curves (RB.x <= 3.5).

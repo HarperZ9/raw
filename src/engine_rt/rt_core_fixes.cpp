@@ -161,14 +161,12 @@ std::string CoreFixesApplyEngine(const Image& img, const std::vector<RefTarget>&
             if (SetSetting(img, refs, kv.k, kv.v)) ++applied;
         }
         if (!hasEngineFixes) {
+            // Keep TerrainManager LOD distances untouched so SkyrimPrefs.ini / modded LOD grids never shrink or pop holes!
             static const KV kCe1Lod[] = {
                 {"fTreesMidLODSwitchDist:Display", "10000000.0"},
                 {"uiMaxSkinnedTreesToRender:Trees", "200"},
                 {"fGrassStartFadeDistance:Grass", "9500.0"},
                 {"fGrassMaxStartFadeDistance:Grass", "11000.0"},
-                {"fBlockLevel0Distance:TerrainManager", "60000.0"},
-                {"fBlockLevel1Distance:TerrainManager", "110000.0"},
-                {"fSplitDistanceMult:TerrainManager", "1.5"},
             };
             for (const auto& kv : kCe1Lod) {
                 if (SetSetting(img, refs, kv.k, kv.v)) ++applied;

@@ -48,6 +48,7 @@ int RunWildlifeBoidsTests(void (*checkFn)(bool, const char*));
 int RunSettlementSimTests(void (*checkFn)(bool, const char*));
 int RunWorldEventDirectorTests(void (*checkFn)(bool, const char*));
 int RunFactionDiplomacyTests(void (*checkFn)(bool, const char*));
+int RunWorldSerializerTests(void (*checkFn)(bool, const char*));
 int RunBsaArchiveTests(void (*checkFn)(bool, const char*));
 int RunNifLoaderTests(void (*checkFn)(bool, const char*));
 int RunDdsDecoderTests(void (*checkFn)(bool, const char*));
@@ -86,6 +87,8 @@ int RunEngineHealthTests(void (*checkFn)(bool, const char*));
 int RunLocomotionMeleeGmstTests(void (*checkFn)(bool, const char*));
 int RunFrameGovernorTests(void (*checkFn)(bool, const char*));
 int RunAlchemyEnchantGmstTests(void (*checkFn)(bool, const char*));
+int RunSdkAbiTests(void (*checkFn)(bool, const char*));
+int RunCompanionHazardGmstTests(void (*checkFn)(bool, const char*));
 }
 namespace raw::core {
 int RunCoreRuntimeTests(void (*checkFn)(bool, const char*));
@@ -1069,6 +1072,8 @@ int main() {
     raw::rt::RunLocomotionMeleeGmstTests(Check);
     raw::rt::RunFrameGovernorTests(Check);
     raw::rt::RunAlchemyEnchantGmstTests(Check);
+    raw::rt::RunSdkAbiTests(Check);
+    raw::rt::RunCompanionHazardGmstTests(Check);
     raw::worldgen::RunEsmWorldLoaderTests(Check);
     raw::worldgen::RunEsmModelResolverTests(Check);
     raw::worldgen::RunEsmWorldMetaTests(Check);
@@ -1080,6 +1085,7 @@ int main() {
     raw::worldgen::RunSettlementSimTests(Check);
     raw::worldgen::RunWorldEventDirectorTests(Check);
     raw::worldgen::RunFactionDiplomacyTests(Check);
+    raw::worldgen::RunWorldSerializerTests(Check);
     raw::worldgen::RunBsaArchiveTests(Check);
     raw::worldgen::RunNifLoaderTests(Check);
     raw::worldgen::RunDdsDecoderTests(Check);

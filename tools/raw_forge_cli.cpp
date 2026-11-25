@@ -17,6 +17,7 @@
 #include "../src/worldgen/RawBsaArchive.h"
 #include "../src/worldgen/RawEsmModelResolver.h"
 #include "../src/worldgen/RawEsmNpcWeatherLoader.h"
+#include "../src/worldgen/RawFactionDiplomacy.h"
 #include "../src/worldgen/RawNavMeshAi.h"
 #include "../src/worldgen/RawSettlementSim.h"
 #include "../src/worldgen/RawTamrielWorldStreamer.h"
@@ -1194,6 +1195,102 @@ bool RunEventsSimAudit() {
     return ok;
 }
 
+bool RunDiplomacySimAudit() {
+    const auto t0 = std::chrono::steady_clock::now();
+
+    // 1. Imperial / Stormcloak Civil-War Spillover Symmetry & [-100..+100] Clamping
+    float impRep = 0.0f, stmRep = 0.0f, solRep = 0.0f, wndRep = 0.0f;
+    bool allClamped = true;
+    bool spilloverOk = false;
+    {
+        raw::worldgen::RawFactionDiplomacy dip;
+        dip.AdjustFactionReputation(raw::worldgen::FactionId::ImperialLegion, 60.0f);
+        impRep = dip.GetFactionStanding(raw::worldgen::FactionId::ImperialLegion)->reputation;
+        stmRep = dip.GetFactionStanding(raw::worldgen::FactionId::Stormcloaks)->reputation;
+        solRep = dip.GetHoldStanding(raw::worldgen::HoldId::Solitude)->reputation;
+        wndRep = dip.GetHoldStanding(raw::worldgen::HoldId::Windhelm)->reputation;
+
+        dip.AdjustFactionReputation(raw::worldgen::FactionId::ImperialLegion, 500.0f);
+        for (size_t i = 0u; i < raw::worldgen::kHoldCount; ++i) {
+            const float r = dip.GetHoldStanding(static_cast<raw::worldgen::HoldId>(i))->reputation;
+            if (!std::isfinite(r) || r < -100.0f || r > 100.0f) allClamped = false;
+        }
+        for (size_t i = 0u; i < raw::worldgen::kFactionCount; ++i) {
+            const float r = dip.GetFactionStanding(static_cast<raw::worldgen::FactionId>(i))->reputation;
+            if (!std::isfinite(r) || r < -100.0f || r > 100.0f) allClamped = false;
+        }
+        spilloverOk = (impRep == 60.0f) && (stmRep < -20.0f) && (solRep > 20.0f) && (wndRep < -15.0f) && allClamped;
+    }
+
+    // 2. Event Reward Merchant Discount (< 0.95)
+    float discRep = 0.0f, basePriceMult = 1.0f, discPriceMult = 1.0f;
+    bool discountOk = false;
+    {
+        raw::worldgen::RawFactionDiplomacy dip;
+        basePriceMult = dip.GetHoldStanding(raw::worldgen::HoldId::Whiterun)->merchantPriceMult;
+        const bool r1 = dip.ApplyEventReward(raw::worldgen::WorldEventKind::BlizzardCaravanRescue, raw::worldgen::HoldId::Whiterun);
+        const bool r2 = dip.ApplyEventReward(raw::worldgen::WorldEventKind::WildfireContainment, raw::worldgen::HoldId::Whiterun);
+        const auto* wr = dip.GetHoldStanding(raw::worldgen::HoldId::Whiterun);
+        discRep = wr->reputation;
+        discPriceMult = wr->merchantPriceMult;
+        discountOk = r1 && r2 && (discRep >= 25.0f) && (discPriceMult < 0.95f) && (discPriceMult >= 0.82f);
+    }
+
+    // 3. Witnessed Crime Escalation -> KillOnSight -> PayBounty Amnesty Reset + 45-Day Decay
+    float peakBounty = 0.0f, paidGold = 0.0f, hunterRisk = 0.0f;
+    float repAfterPay = 0.0f, repAfterDecay = 0.0f;
+    const char* kosName = "";
+    const char* amnestyName = "";
+    bool bountyOk = false;
+    {
+        raw::worldgen::RawFactionDiplomacy dip;
+        dip.RecordCrime(raw::worldgen::HoldId::Whiterun, raw::worldgen::CrimeSeverity::Assault, true);
+        const auto afterAssault = dip.GetHoldStanding(raw::worldgen::HoldId::Whiterun)->guardPosture;
+
+        dip.RecordCrime(raw::worldgen::HoldId::Whiterun, raw::worldgen::CrimeSeverity::Murder, true);
+        dip.RecordCrime(raw::worldgen::HoldId::Whiterun, raw::worldgen::CrimeSeverity::Murder, true);
+        const auto hostile = *dip.GetHoldStanding(raw::worldgen::HoldId::Whiterun);
+        peakBounty = hostile.bountyGold;
+        hunterRisk = hostile.bountyHunterRisk01;
+        kosName    = raw::worldgen::GetGuardPostureName(hostile.guardPosture);
+
+        const bool paid = dip.PayBounty(raw::worldgen::HoldId::Whiterun, 5000.0f, &paidGold);
+        const auto amnesty = *dip.GetHoldStanding(raw::worldgen::HoldId::Whiterun);
+        const auto telClean = dip.ComputeTelemetry();
+        amnestyName = raw::worldgen::GetGuardPostureName(amnesty.guardPosture);
+        repAfterPay = amnesty.reputation;
+
+        dip.StepDays(45.0f);
+        repAfterDecay = dip.GetHoldStanding(raw::worldgen::HoldId::Whiterun)->reputation;
+
+        bountyOk = (afterAssault == raw::worldgen::GuardPosture::ArrestOnSight) &&
+                   (hostile.guardPosture == raw::worldgen::GuardPosture::KillOnSight) &&
+                   (hunterRisk >= 0.80f) && paid && (paidGold == 3500.0f) &&
+                   (amnesty.bountyGold == 0.0f) &&
+                   (amnesty.guardPosture == raw::worldgen::GuardPosture::Peaceful ||
+                    amnesty.guardPosture == raw::worldgen::GuardPosture::Watchful) &&
+                   (telClean.hostileHoldCount == 0u) &&
+                   (std::fabs(repAfterDecay) < std::fabs(repAfterPay));
+    }
+
+    const double totalMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    const bool ok = spilloverOk && discountOk && bountyOk;
+
+    std::printf(
+        "[INFO] 9-Hold & 6-Faction Diplomacy & Bounty Audit (%.2f ms):\n"
+        "  1. Civil-War Spillover : Imperial=+%.1f Stormcloak=%.1f Solitude=+%.1f Windhelm=%.1f clamped=%s [%s]\n"
+        "  2. Event Reward Price  : Whiterun rep=+%.1f merchantPriceMult %.3f -> %.3f [%s]\n"
+        "  3. Bounty & Amnesty    : peak=%.0fg (%s, risk=%.2f) -> paid=%.0fg (%s) | 45d decay %.1f -> %.1f [%s]\n"
+        "[%s] diplomacy-sim: 9-hold & 6-faction diplomacy/bounty audit %s (%.2f ms)\n",
+        totalMs,
+        impRep, stmRep, solRep, wndRep, allClamped ? "yes" : "no", spilloverOk ? "PASS" : "FAIL",
+        discRep, basePriceMult, discPriceMult, discountOk ? "PASS" : "FAIL",
+        peakBounty, kosName, hunterRisk, paidGold, amnestyName, repAfterPay, repAfterDecay, bountyOk ? "PASS" : "FAIL",
+        ok ? "PASS" : "FAIL", ok ? "PASS" : "FAIL", totalMs);
+    return ok;
+}
+
 bool ParseCellXY(const std::string& s, int32_t* outX, int32_t* outY) {
     const size_t comma = s.find(',');
     if (comma == std::string::npos || comma == 0u || comma + 1u >= s.size()) return false;
@@ -1233,6 +1330,7 @@ void PrintUsage() {
         "  raw_forge_cli --wildlife-sim                            512-agent O(N) wildlife boids (hawk/crow/deer/salmon) audit\n"
         "  raw_forge_cli --settlement-sim                          9-hold living settlement, caravan & blizzard blockade audit\n"
         "  raw_forge_cli --events-sim                              Emergent 9-hold radiant world-event director 30-day audit\n"
+        "  raw_forge_cli --diplomacy-sim                           9-hold & 6-faction diplomacy, bounty & amnesty audit\n"
         "  raw_forge_cli --validate-all [dir]                      Run all 4 procedural pipelines + quality gates\n"
         "Options:\n"
         "  --seed <N>         Deterministic RNG seed (default: 202607)\n"
@@ -1292,6 +1390,7 @@ int main(int argc, char** argv) {
     bool runWildlifeSim     = false;
     bool runSettlementSim   = false;
     bool runEventsSim       = false;
+    bool runDiplomacySim    = false;
     bool writeGeometry      = true;
     uint32_t seed       = 202607u;
     float latitudeDeg   = 60.0f;
@@ -1448,6 +1547,8 @@ int main(int argc, char** argv) {
             runSettlementSim = true;
         } else if (arg == "--events-sim") {
             runEventsSim = true;
+        } else if (arg == "--diplomacy-sim") {
+            runDiplomacySim = true;
         } else if (arg == "--validate-all") {
             runValidateAll = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -1473,11 +1574,11 @@ int main(int argc, char** argv) {
     }
 
     if (!runValidateAll && !runEsmMeta && !runPhysicsProbe && !runTamrielStream && !runNavMeshAudit &&
-        !runEcosystemSim && !runWildlifeSim && !runSettlementSim && !runEventsSim &&
+        !runEcosystemSim && !runWildlifeSim && !runSettlementSim && !runEventsSim && !runDiplomacySim &&
         floraDir.empty() && dioramaDir.empty() && almanacDir.empty() &&
         materialsDir.empty() && texturesDir.empty() && esmPath.empty() && esmScenePath.empty() &&
         bsaListPath.empty() && nifPath.empty() && bsaNifArchive.empty() && ddsPath.empty() && bsaDdsArchive.empty()) {
-        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, --events-sim, or --validate-all).\n");
+        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, --events-sim, --diplomacy-sim, or --validate-all).\n");
         PrintUsage();
         return 2;
     }
@@ -1602,6 +1703,10 @@ int main(int argc, char** argv) {
 
     if (runEventsSim) {
         if (!RunEventsSimAudit()) allOk = false;
+    }
+
+    if (runDiplomacySim) {
+        if (!RunDiplomacySimAudit()) allOk = false;
     }
 
     if (runValidateAll) {

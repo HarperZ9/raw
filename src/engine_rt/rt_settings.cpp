@@ -8,6 +8,7 @@
 
 #include "rt_ai_packages.h"
 #include "rt_alchemy_enchant_gmst.h"
+#include "rt_companion_hazard_gmst.h"
 #include "rt_control.h"
 #include "rt_encounter_balance.h"
 #include "rt_locomotion_melee_gmst.h"
@@ -382,9 +383,10 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
     const std::string ssMsg   = InitStealthSocialGmst(img, refs);
     const std::string lmMsg   = InitLocomotionMeleeGmst(img, refs);
     const std::string aeMsg   = InitAlchemyEnchantGmst(img, refs);
-    char out[2176];
-    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s | %s | %s | %s | %s | %s | %s | %s",
-                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str(), progMsg.c_str(), aiMsg.c_str(), wrMsg.c_str(), pcMsg.c_str(), ssMsg.c_str(), lmMsg.c_str(), aeMsg.c_str());
+    const std::string chMsg   = InitCompanionHazardGmst(img, refs);
+    char out[2432];
+    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s",
+                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str(), progMsg.c_str(), aiMsg.c_str(), wrMsg.c_str(), pcMsg.c_str(), ssMsg.c_str(), lmMsg.c_str(), aeMsg.c_str(), chMsg.c_str());
     return out;
 }
 
@@ -456,6 +458,7 @@ void WorldSimApplyLivePlanetaryGravity(float gravityMps2) {
 }
 
 void WorldSimRestoreDynamicSettings() {
+    ShutdownCompanionHazardGmst();
     ShutdownAlchemyEnchantGmst();
     ShutdownLocomotionMeleeGmst();
     ShutdownStealthSocialGmst();

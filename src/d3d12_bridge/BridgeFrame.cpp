@@ -119,8 +119,11 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
     const float gtaoDenoiseMs = (gtaoHostReady && gtaoHost && gtaoHost->HasValidTiming() &&
                                  std::isfinite(gtaoHost->GetLastDenoiseMs()))
         ? gtaoHost->GetLastDenoiseMs() : 0.0f;
+    const float ssrTraceMs = (ssrHostReady && ssrHost && ssrHost->HasValidTiming() &&
+                              std::isfinite(ssrHost->GetLastSsrMs()))
+        ? ssrHost->GetLastSsrMs() : 0.0f;
 
-    char jsonBuf[2560]{};
+    char jsonBuf[3072]{};
     const int n = std::snprintf(
         jsonBuf, sizeof(jsonBuf),
         "{\n"
@@ -154,6 +157,7 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"shadowPcssMs\": %.4f,\n"
         "  \"gtaoMainMs\": %.4f,\n"
         "  \"gtaoDenoiseMs\": %.4f,\n"
+        "  \"ssrTraceMs\": %.4f,\n"
         "  \"seasonSnowM\": %.4f,\n"
         "  \"seasonIceM\": %.4f,\n"
         "  \"skinTempC\": %.3f,\n"
@@ -191,6 +195,7 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         shadowPcssMs,
         gtaoMainMs,
         gtaoDenoiseMs,
+        ssrTraceMs,
         seasonSnowM,
         seasonIceM,
         skinTempC,
@@ -1245,6 +1250,91 @@ bool D3D12Bridge::Impl::ExecuteGtaoOnQueue()
     return true;
 }
 
+bool D3D12Bridge::Impl::ExecuteSsrOnQueue()
+{
+    if (!ssrHostReady || !ssrHost || !ssrHost->Ready() ||
+        !queue || !ssrList || !ssrFence || !ssrEvent || !colorOut.res12 || !depthIn.res12) {
+        return false;
+    }
+
+    const uint32_t slot = ssrSlot;
+    if (ssrSlotVal[slot] > 0 && ssrFence->GetCompletedValue() < ssrSlotVal[slot]) {
+        ssrFence->SetEventOnCompletion(ssrSlotVal[slot], ssrEvent);
+        WaitForSingleObject(ssrEvent, 3000);
+    }
+    if (FAILED(ssrAlloc[slot]->Reset()) ||
+        FAILED(ssrList->Reset(ssrAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    // Derive vertical FOV directly from camera-relative clipToWorld top/bottom center rays.
+    float fovYDeg = 65.0f;
+    {
+        const float* inv = &lighting.clipToWorld[0][0];
+        auto rayDir = [&](float ndcY, float out[3]) -> bool {
+            const float wN = ndcY * inv[1 * 4 + 3] + inv[3 * 4 + 3];
+            const float wF = ndcY * inv[1 * 4 + 3] + inv[2 * 4 + 3] + inv[3 * 4 + 3];
+            if (std::fabs(wN) <= 1.0e-6f || std::fabs(wF) <= 1.0e-6f) return false;
+            const float nx = (ndcY * inv[1 * 4 + 0] + inv[3 * 4 + 0]) / wN;
+            const float ny = (ndcY * inv[1 * 4 + 1] + inv[3 * 4 + 1]) / wN;
+            const float nz = (ndcY * inv[1 * 4 + 2] + inv[3 * 4 + 2]) / wN;
+            const float fx = (ndcY * inv[1 * 4 + 0] + inv[2 * 4 + 0] + inv[3 * 4 + 0]) / wF;
+            const float fy = (ndcY * inv[1 * 4 + 1] + inv[2 * 4 + 1] + inv[3 * 4 + 1]) / wF;
+            const float fz = (ndcY * inv[1 * 4 + 2] + inv[2 * 4 + 2] + inv[3 * 4 + 2]) / wF;
+            const float dx = fx - nx, dy = fy - ny, dz = fz - nz;
+            const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (!std::isfinite(len) || len <= 1.0e-5f) return false;
+            out[0] = dx / len;
+            out[1] = dy / len;
+            out[2] = dz / len;
+            return true;
+        };
+        float topD[3]{}, botD[3]{};
+        if (rayDir(1.0f, topD) && rayDir(-1.0f, botD)) {
+            const float dotTB = std::clamp(topD[0] * botD[0] + topD[1] * botD[1] + topD[2] * botD[2], -1.0f, 1.0f);
+            const float deg = std::acos(dotTB) * 57.2957795f;
+            if (std::isfinite(deg) && deg >= 25.0f && deg <= 130.0f) {
+                fovYDeg = std::clamp(deg, 30.0f, 120.0f);
+            }
+        }
+    }
+
+    const uint32_t outW = std::max(cfg.width / 2u, 16u);
+    const uint32_t outH = std::max(cfg.height / 2u, 16u);
+    const float aspect  = static_cast<float>(outW) / static_cast<float>(outH);
+    const float fovYRad = fovYDeg * (3.14159265359f / 180.0f);
+
+    SsrParams sp{};
+    BuildSsrPerspectiveLH(fovYRad, aspect, 16.0f, 16384.0f, sp.proj, sp.invProj);
+    sp.maxRayDist        = 3072.0f;
+    sp.thicknessM        = 96.0f;
+    sp.nearZ             = 16.0f;
+    sp.startBias         = 2.0f;
+    sp.fallbackRoughness = 0.08f;
+    sp.maxRoughness      = 0.72f;
+    sp.edgeFadeWidth     = 0.07f;
+    sp.frameJitter       = static_cast<float>(ssrStepFrames & 63ull);
+    sp.maxSteps          = 40u;
+
+    ssrHost->Execute(ssrList.Get(), colorOut.res12.Get(), depthIn.res12.Get(), outW, outH, sp,
+                     D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COMMON);
+
+    if (FAILED(ssrList->Close())) return false;
+    ID3D12CommandList* lists[1] = {ssrList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(ssrFence.Get(), ++ssrFenceVal);
+    ssrSlotVal[slot] = ssrFenceVal;
+    ssrSlot = (slot + 1u) % kRing;
+
+    if ((ssrStepFrames++ % 180ull) == 0ull) {
+        log("[Ssr] live half-res %ux%u GGX SSR: traceMs=%.4f, fovY=%.1f",
+            outW, outH,
+            ssrHost->HasValidTiming() ? ssrHost->GetLastSsrMs() : 0.0f,
+            fovYDeg);
+    }
+    return true;
+}
+
 bool D3D12Bridge::Impl::CpuWait(uint64_t value, DWORD timeoutMs)
 {
     return WaitFence(fence12.Get(), value, cpuEvent, timeoutMs);
@@ -1478,8 +1568,10 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                                m->shadowPcss && m->shadowPcss->Ready() && m->depthIn.res12 != nullptr;
     const bool runGtao = m->cfg.lightingPass && m->lighting.valid && m->gtaoHostReady &&
                          m->gtaoHost && m->gtaoHost->Ready() && m->depthIn.res12 != nullptr;
+    const bool runSsr = m->cfg.lightingPass && m->lighting.valid && m->ssrHostReady &&
+                        m->ssrHost && m->ssrHost->Ready() && m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr;
     const bool runOverlay = m->overlayHudEnabled && m->overlayHostReady && m->overlayHost && m->overlayHost->Ready();
-    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runOverlay;
+    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runOverlay;
     auto runPostLightingPasses = [&]() -> bool {
         if (!hasPostWork) return true;
         if (runTerrain) {
@@ -1571,6 +1663,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         }
         if (runGtao) {
             m->ExecuteGtaoOnQueue();
+        }
+        if (runSsr) {
+            m->ExecuteSsrOnQueue();
         }
         if (runOverlay) {
             m->ExecuteOverlayHudOnQueue(isInterior);

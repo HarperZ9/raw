@@ -304,7 +304,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         const bool froxelOk = m->InitVolFroxels();
         const bool pcssOk = m->InitShadowPcss();
         const bool gtaoOk = m->InitGtaoHost();
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s, Gtao=%s",
+        const bool ssrOk = m->InitSsrHost();
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s, Gtao=%s, Ssr=%s",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
                terrainOk ? "READY" : "off",
                m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
@@ -319,7 +320,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                clusterOk ? "READY" : "off",
                froxelOk ? "READY" : "off",
                pcssOk ? "READY" : "off",
-               gtaoOk ? "READY" : "off");
+               gtaoOk ? "READY" : "off",
+               ssrOk ? "READY" : "off");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
         {
             const auto& matReg = raw::materials::DefaultMaterialRegistry();
@@ -1112,6 +1114,75 @@ void D3D12Bridge::Impl::ShutdownGtaoHost()
     gtaoHostReady = false;
 }
 
+bool D3D12Bridge::Impl::InitSsrHost()
+{
+    ShutdownSsrHost();
+    if (!dev12) return false;
+    ssrHost = std::make_unique<RawSsrHost>();
+    SsrDesc desc{};
+    desc.initialWidth  = std::max(cfg.width / 2u, 16u);
+    desc.initialHeight = std::max(cfg.height / 2u, 16u);
+    std::string ssrErr;
+    if (!ssrHost->Init(dev12.Get(), desc, &ssrErr)) {
+        log("[Ssr] off: %s", ssrErr.c_str());
+        ssrHost.reset();
+        return false;
+    }
+    UINT64 tsFreq = 0;
+    if (queue && SUCCEEDED(queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+        ssrHost->SetTimestampFrequency(tsFreq);
+    }
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&ssrAlloc[i])))) {
+            ShutdownSsrHost();
+            return false;
+        }
+    }
+    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, ssrAlloc[0].Get(), nullptr, IID_PPV_ARGS(&ssrList))) ||
+        FAILED(ssrList->Close()) ||
+        FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&ssrFence)))) {
+        ShutdownSsrHost();
+        return false;
+    }
+    ssrEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!ssrEvent) {
+        ShutdownSsrHost();
+        return false;
+    }
+    ssrHostReady = true;
+    log("[Ssr] GPU GGX Stochastic SSR ready (half-res %ux%u RGBA16F)",
+        desc.initialWidth, desc.initialHeight);
+    return true;
+}
+
+void D3D12Bridge::Impl::ShutdownSsrHost()
+{
+    if (ssrFence && ssrEvent && ssrFenceVal > 0) {
+        if (ssrFence->GetCompletedValue() < ssrFenceVal) {
+            ssrFence->SetEventOnCompletion(ssrFenceVal, ssrEvent);
+            WaitForSingleObject(ssrEvent, 3000);
+        }
+    }
+    ssrList.Reset();
+    for (UINT i = 0; i < kRing; ++i) {
+        ssrAlloc[i].Reset();
+        ssrSlotVal[i] = 0;
+    }
+    ssrFence.Reset();
+    if (ssrEvent) {
+        CloseHandle(ssrEvent);
+        ssrEvent = nullptr;
+    }
+    if (ssrHost) {
+        ssrHost->Shutdown();
+        ssrHost.reset();
+    }
+    ssrFenceVal = 0;
+    ssrSlot = 0;
+    ssrStepFrames = 0;
+    ssrHostReady = false;
+}
+
 void D3D12Bridge::Shutdown()
 {
     if (!m) return;
@@ -1120,6 +1191,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->ShutdownSsrHost();
     m->ShutdownGtaoHost();
     m->ShutdownShadowPcss();
     m->ShutdownVolFroxels();

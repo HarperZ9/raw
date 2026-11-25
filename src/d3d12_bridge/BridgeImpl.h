@@ -15,6 +15,7 @@
 #include "RawVolumetricFroxelHost.h"
 #include "RawShadowPcssHost.h"
 #include "RawGtaoHost.h"
+#include "RawSsrHost.h"
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
@@ -88,6 +89,7 @@ struct D3D12Bridge::Impl
     std::unique_ptr<RawVolumetricFroxelHost> volFroxels; // Live GPU 160x90x64 3D Volumetric Froxel Fog & Mie solver
     std::unique_ptr<RawShadowPcssHost> shadowPcss; // Live GPU Variable-Penumbra PCSS Contact-Hardening Shadow solver
     std::unique_ptr<RawGtaoHost> gtaoHost; // Live GPU Jimenez GTAO + Unoccluded Bent-Normal & Bilateral Denoise solver
+    std::unique_ptr<RawSsrHost> ssrHost; // Live GPU GGX Stochastic Screen-Space Reflections solver
     bool                     fluidReady = false;
     bool                     radianceReady = false;
     bool                     xpbdSimReady = false;
@@ -100,6 +102,7 @@ struct D3D12Bridge::Impl
     bool                     volFroxelsReady = false;
     bool                     shadowPcssReady = false;
     bool                     gtaoHostReady = false;
+    bool                     ssrHostReady = false;
     ComPtr<ID3D12CommandAllocator>    fluidAlloc[kRing];
     ComPtr<ID3D12GraphicsCommandList> fluidList;
     ComPtr<ID3D12Fence>               fluidFence;
@@ -195,6 +198,14 @@ struct D3D12Bridge::Impl
     uint64_t                          gtaoSlotVal[kRing] = {};
     uint32_t                          gtaoSlot = 0;
     uint64_t                          gtaoStepFrames = 0;
+    ComPtr<ID3D12CommandAllocator>    ssrAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList> ssrList;
+    ComPtr<ID3D12Fence>               ssrFence;
+    HANDLE                            ssrEvent = nullptr;
+    uint64_t                          ssrFenceVal = 0;
+    uint64_t                          ssrSlotVal[kRing] = {};
+    uint32_t                          ssrSlot = 0;
+    uint64_t                          ssrStepFrames = 0;
     std::string                       telemetryOutDir;
     bool InitFluidSim();
     void ShutdownFluidSim();
@@ -220,6 +231,9 @@ struct D3D12Bridge::Impl
     bool InitGtaoHost();
     void ShutdownGtaoHost();
     bool ExecuteGtaoOnQueue();
+    bool InitSsrHost();
+    void ShutdownSsrHost();
+    bool ExecuteSsrOnQueue();
     bool InitOverlayHost();
     void ShutdownOverlayHost();
     void PollOverlayHotkey();

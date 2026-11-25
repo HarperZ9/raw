@@ -20,23 +20,63 @@ RWTexture2D<float4>      Bounce  : register(u6);   // lighting pass input (rgb, 
 cbuffer F : register(b1) { uint hasMotion, reset, maxFrames, fPad; };
 
 // Raw alpha: sky (0 or 1), plus 4 + 2 q where the untraced lights' share was sampled, q its value in fifteenths
-// (RtShadow.hlsl).
-float4 decodeRaw(float4 v, out float rest, out float has) {
-    has = v.a >= 3.5f ? 1.0f : 0.0f;
-    const float t = v.a - 4.0f * has;
-    const float q = has > 0.5f ? floor(t * 0.5f) : 0.0f;
-    rest = q / 15.0f;
-    return float4(v.rgb, t - 2.0f * q);
+// (RtShadow.hlsl). Wave 55: NaN/Inf sanitization guarantees corrupt rays never poison temporal SVGF history.
+float sanitizeSkyScalar(float v, float fallback) {
+    return isfinite(v) ? v : fallback;
+}
+float3 sanitizeSkyRgb(float3 c) {
+    return all(isfinite(c)) ? max(c, 0.0f.xxx) : 0.0f.xxx;
 }
 
-// Fast screen-space depth-plane slope (mathematically equivalent to world plane-distance, 0 matrix multiplies).
-float2 depthPlaneSlope(int2 p, float z) {
+float4 decodeRaw(float4 vRaw, out float rest, out float has) {
+    const float3 rgb = sanitizeSkyRgb(vRaw.rgb);
+    const float aSafe = isfinite(vRaw.a) ? max(vRaw.a, 0.0f) : 1.0f;
+    has = aSafe >= 3.5f ? 1.0f : 0.0f;
+    const float t = aSafe - 4.0f * has;
+    const float q = has > 0.5f ? clamp(floor(t * 0.5f), 0.0f, 15.0f) : 0.0f;
+    rest = q / 15.0f;
+    return float4(rgb, saturate(t - 2.0f * q));
+}
+
+// Wave 55: Best-sided 3D geometric surface normal reconstruction from Depth (zero Normal SRV needed):
+// Picks the closer-in-depth finite difference on X and Y so silhouette corners (doorframes, overhangs, cliff ledges)
+// never straddle depth discontinuities, giving an accurate 3D tangent plane for geometric plane-distance stopping!
+float3 reconstructGeomNormal(int2 p, float3 wpC, float zC) {
     const int2 lim = int2(dims.xy) - 1;
-    const float zr = viewZOf(Depth.Load(int3(min(p.x + 1, lim.x), p.y, 0))) - z;
-    const float zl = z - viewZOf(Depth.Load(int3(max(p.x - 1, 0), p.y, 0)));
-    const float zd = viewZOf(Depth.Load(int3(p.x, min(p.y + 1, lim.y), 0))) - z;
-    const float zu = z - viewZOf(Depth.Load(int3(p.x, max(p.y - 1, 0), 0)));
-    return float2(abs(zr) < abs(zl) ? zr : zl, abs(zd) < abs(zu) ? zd : zu);
+    const int2 pR = int2(min(p.x + 1, lim.x), p.y);
+    const int2 pL = int2(max(p.x - 1, 0),     p.y);
+    const int2 pD = int2(p.x, min(p.y + 1, lim.y));
+    const int2 pU = int2(p.x, max(p.y - 1, 0));
+    const float dR = Depth.Load(int3(pR, 0));
+    const float dL = Depth.Load(int3(pL, 0));
+    const float dD = Depth.Load(int3(pD, 0));
+    const float dU = Depth.Load(int3(pU, 0));
+    const bool okR = (dR < 0.99998f);
+    const bool okL = (dL < 0.99998f);
+    const bool okD = (dD < 0.99998f);
+    const bool okU = (dU < 0.99998f);
+    const float zR = okR ? viewZOf(dR) : 1.0e9f;
+    const float zL = okL ? viewZOf(dL) : 1.0e9f;
+    const float zD = okD ? viewZOf(dD) : 1.0e9f;
+    const float zU = okU ? viewZOf(dU) : 1.0e9f;
+
+    const float3 ddx = (okR && (!okL || abs(zR - zC) <= abs(zL - zC)))
+        ? (worldAt(float2(pR), dR) - wpC)
+        : (okL ? (wpC - worldAt(float2(pL), dL)) : float3(1.0f, 0.0f, 0.0f));
+    const float3 ddy = (okD && (!okU || abs(zD - zC) <= abs(zU - zC)))
+        ? (worldAt(float2(pD), dD) - wpC)
+        : (okU ? (wpC - worldAt(float2(pU), dU)) : float3(0.0f, 1.0f, 0.0f));
+
+    float3 n = cross(ddx, ddy);
+    const float len2 = dot(n, n);
+    if (!isfinite(len2) || len2 < 1.0e-10f) {
+        const float3 toEye = eyeAt() - wpC;
+        const float e2 = dot(toEye, toEye);
+        return (isfinite(e2) && e2 > 1.0e-8f) ? (toEye * rsqrt(e2)) : float3(0.0f, 0.0f, 1.0f);
+    }
+    n *= rsqrt(len2);
+    if (dot(n, eyeAt() - wpC) < 0.0f) { n = -n; }
+    return n;
 }
 
 float3 skyRgbToYCoCg(float3 c) {
@@ -92,23 +132,29 @@ float3 evalNightAuroraSkyBounce(float skyVis) {
     return skyTint * saturate(skyVis);
 }
 
-float4 meanAround(int2 p, float z, float2 zSlope, int r, out float rest, out float4 stdDev, out float3 meanY, out float3 stdY) {
+// Wave 55: True 3D geometric plane-distance bilateral neighborhood mean + plane-consistent sky visibility bounds.
+// Prevents bright exterior sky-light from leaking under doorframes, overhangs, and cliff ledges!
+float4 meanAround(int2 p, float3 wpC, float3 nGeom, float z, int r, out float rest, out float4 stdDev, out float3 meanY, out float3 stdY, out float skyMin, out float skyMax) {
     float4 s = 0.0f, s2 = 0.0f;
     float3 sy1 = 0.0f.xxx, sy2 = 0.0f.xxx;
     float w = 0.0f, rs = 0.0f, rw = 0.0f, rv, rh;
     rest = 1.0f;
-    const float invPlane = 1.0f / max(z * 0.012f, 1.4f);
-    const float invAbsZ  = 1.0f / max(z * 0.030f, 3.0f);
+    skyMin = 1.0f;
+    skyMax = 0.0f;
+    const float invPlane = 1.0f / max(z * 0.0085f, 1.25f);
+    const float invAbsZ  = 1.0f / max(z * 0.032f, 3.0f);
     for (int y = -r; y <= r; y++) {
         for (int x = -r; x <= r; x++) {
             const int2 q = clamp(p + int2(x, y), int2(0, 0), int2(dims.xy) - 1);
             const float dq = Depth.Load(int3(q, 0));
-            if (dq >= 1.0f) { continue; }
-            const float zq = viewZOf(dq);
-            const float zPred = z + zSlope.x * float(x) + zSlope.y * float(y);
-            const float pd = abs(zq - zPred) * invPlane;
+            if (dq >= 0.99998f) { continue; }
+            const float zq = max(viewZOf(dq), 0.1f);
+            // True 3D signed perpendicular distance from neighbor world point to center tangent plane:
+            const float3 wpQ = worldAt(float2(q), dq);
+            const float planeDist = abs(dot(wpQ - wpC, nGeom));
+            const float pd = planeDist * invPlane;
             const float zd = abs(zq - z) * invAbsZ;
-            const float k = exp(-pd * pd - zd * zd * 0.45f);
+            const float k = exp(-pd * pd - zd * zd * 0.42f);
             float4 tap = decodeRaw(Raw[q], rv, rh);
             // Conservative energy-conserving firefly shoulder (knee 0.90, ceiling 1.72 <= 2.2x):
             // Preserves warm hearth/torch bounce while stopping hot emissive rays from blooming into history!
@@ -121,22 +167,29 @@ float4 meanAround(int2 p, float z, float2 zSlope, int r, out float rest, out flo
             s += k * tap; s2 += k * (tap * tap);
             sy1 += k * ty; sy2 += k * (ty * ty);
             w += k;
+            if (k > 0.14f) {
+                skyMin = min(skyMin, tap.a);
+                skyMax = max(skyMax, tap.a);
+            }
             rs += k * rh * rv; rw += k * rh;
         }
     }
-    if (rw > 1.0e-4f) { rest = rs / rw; }
+    if (rw > 1.0e-4f) { rest = saturate(rs / rw); }
     if (w > 1.0e-4f) {
         const float4 m1 = s / w;
         const float4 m2 = s2 / w;
         stdDev = sqrt(max(m2 - m1 * m1, 0.0f.xxxx));
         meanY = sy1 / w;
         stdY = sqrt(max(sy2 / w - meanY * meanY, 0.0f.xxx));
-        return m1;
+        if (skyMin > skyMax) { skyMin = m1.a; skyMax = m1.a; }
+        return float4(sanitizeSkyRgb(m1.rgb), saturate(m1.a));
     }
     const float4 c0 = decodeRaw(Raw[p], rv, rh);
     stdDev = 0.1f.xxxx;
     meanY = skyRgbToYCoCg(c0.rgb);
     stdY = 0.08f.xxx;
+    skyMin = c0.a;
+    skyMax = c0.a;
     return c0;
 }
 
@@ -145,24 +198,27 @@ void main(uint3 id : SV_DispatchThreadID) {
     if (id.x >= uint(dims.x) || id.y >= uint(dims.y)) { return; }
     const int2 p = int2(id.xy);
     const float d = Depth.Load(int3(p, 0));
-    const float4 L = Lights[p];
-    // Wave-coherent sky early-exit: pure-sky waves skip the entire bilateral GI/RTAO filter.
-    if (WaveActiveAllTrue(d >= 1.0f) || d >= 1.0f) {
+    const float4 Lraw = Lights[p];
+    const float3 Lxyz = all(isfinite(Lraw.xyz)) ? saturate(Lraw.xyz) : 0.0f.xxx;
+    // Wave 55 strict Standard-Z sky passthrough (d >= 0.99998): pure-sky waves skip the entire bilateral GI/RTAO filter.
+    if (WaveActiveAllTrue(d >= 0.99998f) || d >= 0.99998f) {
         HistOut[p] = float4(1.0f, -1.0f, 0.0f, 0.0f);
         BOut[p] = 0.0f;
         Bounce[p] = float4(0.0f, 0.0f, 0.0f, 1.0f);
-        Lights[p] = float4(L.xyz, 1.0f);
+        Lights[p] = float4(Lxyz, 1.0f);
         return;
     }
-    const float z = viewZOf(d);
+    const float z = max(sanitizeSkyScalar(viewZOf(d), 100.0f), 0.1f);
     const int2 lim = int2(dims.xy) - 1;
     float n = 0.0f, past = 0.0f, pastR = 1.0f, pastM2 = 0.0f;
     float3 pastB = 0.0f;
     bool have = false;
-    const float2 zSlope = depthPlaneSlope(p, z);
+    const float3 wpC = worldAt(float2(p), d);
+    const float3 nGeom = reconstructGeomNormal(p, wpC, z);
 
     // Measure pixel motion magnitude + 4-neighbor motion divergence (detects moving NPCs/weapons/torches instantly!):
-    const float2 mvC = hasMotion != 0u ? Motion.Load(int3(p, 0)) : float2(0.0f, 0.0f);
+    const float2 mvRaw = hasMotion != 0u ? Motion.Load(int3(p, 0)) : float2(0.0f, 0.0f);
+    const float2 mvC = all(isfinite(mvRaw)) ? mvRaw : float2(0.0f, 0.0f);
     const float pxVel = length(mvC * dims.xy);
     float mvDivPx = 0.0f;
     if (hasMotion != 0u) {
@@ -172,6 +228,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float2 mvU = Motion.Load(int3(p.x, max(p.y - 1, 0),      0));
         mvDivPx = max(max(length((mvR - mvC) * dims.xy), length((mvL - mvC) * dims.xy)),
                       max(length((mvD - mvC) * dims.xy), length((mvU - mvC) * dims.xy)));
+        if (!isfinite(mvDivPx)) { mvDivPx = 0.0f; }
     }
 
     if (reset == 0u) {
@@ -180,69 +237,84 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float2 pa = prev - float2(pb);
         float hs = 0.0f, hn = 0.0f, hw = 0.0f, hr = 0.0f, hm2 = 0.0f;
         float3 hb = 0.0f;
-        // Tighter depth reprojection gate (2.8% of viewZ) rejects foreground/background bleed cleanly!
-        const float zTol = max(0.028f * z, 2.5f);
+        // Tighter grazing-aware depth reprojection gate rejects foreground/background & doorframe bleed cleanly!
+        const float3 viewDirC = normalize(eyeAt() - wpC + float3(0.0f, 0.0f, 1.0e-5f));
+        const float grazing = saturate(abs(dot(nGeom, viewDirC)));
+        const float zTol = max((0.022f + 0.014f * (1.0f - grazing)) * z, 2.2f);
+        const float zClamped = min(z, 65000.0f);
         [unroll] for (int k = 0; k < 4; k++) {
             const int2 t = pb + int2(k & 1, k >> 1);
             if (any(t < 0) || t.x >= int(dims.x) || t.y >= int(dims.y)) { continue; }
             const float4 h = HistIn[t];
-            if (h.y <= 0.0f || abs(h.y - min(z, 65000.0f)) > zTol) { continue; }
+            if (!all(isfinite(h)) || h.y <= 0.0f || abs(h.y - zClamped) > zTol) { continue; }
             const float w = ((k & 1) ? pa.x : 1.0f - pa.x) * ((k >> 1) ? pa.y : 1.0f - pa.y);
-            const float4 bTap = BIn[t];
-            hs += w * h.x; hn += w * h.z; hw += w; hb += w * bTap.rgb; hm2 += w * bTap.a; hr += w * h.w;
+            const float4 bTapRaw = BIn[t];
+            const float3 bTapRgb = sanitizeSkyRgb(bTapRaw.rgb);
+            const float bTapM2 = isfinite(bTapRaw.a) ? max(bTapRaw.a, 0.0f) : 0.0f;
+            hs += w * saturate(h.x); hn += w * clamp(h.z, 0.0f, 64.0f); hw += w; hb += w * bTapRgb; hm2 += w * bTapM2; hr += w * saturate(h.w);
         }
         if (hw > 0.08f) {
-            past = hs / hw; n = hn / hw; pastB = hb / hw; pastM2 = hm2 / hw; pastR = hr / hw; have = true;
+            past = saturate(hs / hw); n = hn / hw; pastB = hb / hw; pastM2 = hm2 / hw; pastR = saturate(hr / hw); have = true;
         }
     }
 
-    float curR;
+    float curR, skyMin, skyMax;
     float4 curStd;
     float3 meanY, stdY;
-    const float4 cur = meanAround(p, z, zSlope, n < 5.0f ? 2 : 1, curR, curStd, meanY, stdY);
+    const float4 cur = meanAround(p, wpC, nGeom, z, n < 5.0f ? 2 : 1, curR, curStd, meanY, stdY, skyMin, skyMax);
 
-    // Fast reactive temporal clipping & light-change tracking (stops moving torches & NPCs from leaving bright ghosts!):
+    // Wave 55: Cloud-transition activity awareness (broken/moving exterior cloud cover tightens variance clamping
+    // and speeds temporal convergence so sweeping cloud shadows adapt cleanly with ZERO trailing smears!).
+    const float cloudCoverAct = saturate(clouds.x * (1.0f - clouds.x * 0.45f) * 2.2f) * saturate(clouds.w);
+    const float cloudSpeed01  = saturate(length(cloudWind.xy) / 60.0f);
+    const float cloudTransW   = (sunColour.w > 0.5f) ? saturate(cloudCoverAct * (0.35f + 0.65f * cloudSpeed01)) : 0.0f;
+
+    // Fast reactive temporal clipping & light-change tracking (stops moving torches, NPCs & cloud shadows from smearing!):
     const float curLum = dot(cur.rgb, float3(0.2126f, 0.7152f, 0.0722f));
     const float pastLum = dot(pastB, float3(0.2126f, 0.7152f, 0.0722f));
     const float motionTight = saturate(pxVel * 0.22f + mvDivPx * 0.35f);
-    const float gammaY = lerp(1.18f, 0.75f, motionTight);
-    const float skyPad = max(curStd.a * lerp(1.00f, 1.22f, saturate(n / 8.0f)) * lerp(1.0f, 0.68f, motionTight), 0.048f);
+    const float dynTight = max(motionTight, cloudTransW * 0.65f);
+    const float gammaY = lerp(1.18f, 0.72f, dynTight);
+    const float skyPad = max(curStd.a * lerp(1.00f, 1.20f, saturate(n / 8.0f)) * lerp(1.0f, 0.62f, dynTight), lerp(0.044f, 0.024f, cloudTransW));
+    const float skyLo = max(saturate(cur.a - skyPad), saturate(skyMin - 0.020f));
+    const float skyHi = min(saturate(cur.a + skyPad), saturate(skyMax + 0.020f));
 
     // Dual sky + GI luminance/chromaticity + motion-divergence disocclusion detector:
     const float skyDelta = have ? abs(cur.a - past) : 0.0f;
     const float giRelDelta = have ? (abs(curLum - pastLum) / max(max(curLum, pastLum), 0.045f)) : 0.0f;
     const float giChrDelta = have ? length(cur.rgb / max(curLum, 0.035f) - pastB / max(pastLum, 0.035f)) : 0.0f;
     if (have) {
-        past = clamp(past, saturate(cur.a - skyPad), saturate(cur.a + skyPad));
+        past = (skyLo <= skyHi) ? clamp(past, skyLo, skyHi) : clamp(past, saturate(cur.a - skyPad), saturate(cur.a + skyPad));
         pastB = skyYCoCgToRgb(skyClipYCoCg(meanY, stdY, gammaY, skyRgbToYCoCg(pastB)));
     }
 
     // Immediate reset on hard disocclusion, moving torch light swings, or silhouette velocity divergence:
     const bool hardDisocc = (giRelDelta > 0.38f || giChrDelta > 0.48f || skyDelta > 0.24f || mvDivPx > 1.35f);
-    // Smoothly decay effective history length when lighting or camera changes so moving torches converge in 1-2 frames!
-    const float nDecayed = n * lerp(1.0f, 0.45f, saturate(giRelDelta * 1.4f + motionTight * 0.65f));
+    // Smoothly decay effective history length when lighting, cloud shadows, or camera changes so convergence is crisp!
+    const float nDecayed = n * lerp(1.0f, 0.42f, saturate(giRelDelta * 1.4f + motionTight * 0.65f + skyDelta * cloudTransW * 2.2f));
     n = (have && !hardDisocc) ? min(nDecayed + 1.0f, min(float(maxFrames), 10.0f)) : 1.0f;
 
     const float trapSky = have ? rawTrappingSeparator(cur.a, past, curStd.a, pxVel, 0.5f) : 0.0f;
     const float trapGi  = have ? rawTrappingSeparator(curLum, pastLum, dot(curStd.rgb, float3(0.2126f, 0.7152f, 0.0722f)), pxVel, 0.5f) : 0.0f;
     const float giJumpBoost = max(smoothstep(0.14f, 0.42f, giRelDelta) * 0.82f, smoothstep(0.22f, 0.52f, giChrDelta) * 0.72f);
     const float mvDivBoost  = smoothstep(0.55f, 1.60f, mvDivPx) * 0.85f;
-    const float disoccBoost = max(max(smoothstep(0.06f, 0.22f, skyDelta) * 0.55f, giJumpBoost),
+    const float cloudBoost  = smoothstep(0.035f, 0.16f, skyDelta) * cloudTransW * 0.55f;
+    const float disoccBoost = max(max(max(smoothstep(0.06f, 0.22f, skyDelta) * 0.55f, cloudBoost), giJumpBoost),
                                   max(max(trapSky, trapGi) * 0.86f, mvDivBoost));
-    const float alphaT = saturate(max(max(1.0f / n, lerp(0.14f, 0.72f, motionTight)), disoccBoost));
+    const float alphaT = saturate(max(max(1.0f / max(n, 1.0f), lerp(0.14f, 0.72f, motionTight)), disoccBoost));
 
-    const float vis = have ? lerp(past, cur.a, alphaT) : cur.a;
-    const float3 bFiltered = have ? lerp(pastB, cur.rgb, alphaT) : cur.rgb;
-    const float m2Out = have ? lerp(pastM2, curLum * curLum, alphaT) : (curLum * curLum);
+    const float vis = saturate(sanitizeSkyScalar(have ? lerp(past, cur.a, alphaT) : cur.a, cur.a));
+    const float3 bFiltered = sanitizeSkyRgb(have ? lerp(pastB, cur.rgb, alphaT) : cur.rgb);
+    const float m2Out = max(sanitizeSkyScalar(have ? lerp(pastM2, curLum * curLum, alphaT) : (curLum * curLum), curLum * curLum), 0.0f);
     const float bLumOut = dot(bFiltered, float3(0.2126f, 0.7152f, 0.0722f));
     const float varOut = max(m2Out - bLumOut * bLumOut, 0.0f);
     // Boost initial variance on newly disoccluded pixels (n < 4) per Schied SVGF HPG 2017 so A-Trous widens cleanly.
     const float sigmaOut = clamp(sqrt(varOut) + (n < 4.0f ? (4.0f - n) * 0.12f : 0.0f), 0.0f, 1.25f);
-    const float rest = have ? lerp(pastR, curR, alphaT) : curR;
+    const float rest = saturate(sanitizeSkyScalar(have ? lerp(pastR, curR, alphaT) : curR, 1.0f));
 
     // Add restrained physical night aurora / twilight sky bounce ONLY to the output Bounce (NOT back into BOut history,
     // guaranteeing zero temporal feedback amplification!).
-    const float3 skyAuroraTint = evalNightAuroraSkyBounce(vis);
+    const float3 skyAuroraTint = sanitizeSkyRgb(evalNightAuroraSkyBounce(vis));
     const float3 bOutDisplay = min(bFiltered + skyAuroraTint, 1.85f.xxx);
 
     // Pack 16-level restVis + continuous temporal SVGF stdDev sigmaOut into RGBA16F Bounce.a (zero extra VRAM/textures).
@@ -250,5 +322,5 @@ void main(uint3 id : SV_DispatchThreadID) {
     HistOut[p] = float4(vis, min(z, 65000.0f), n, rest);
     BOut[p] = float4(bFiltered, m2Out);
     Bounce[p] = float4(bOutDisplay, packedRestVar);
-    Lights[p] = float4(L.xyz, vis);
+    Lights[p] = float4(Lxyz, vis);
 }

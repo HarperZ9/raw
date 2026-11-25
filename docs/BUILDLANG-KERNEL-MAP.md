@@ -1,6 +1,6 @@
-# RAW Engine BuildLang Core Kernel Map (8 Modules, 48 Verified Kernels)
+# RAW Engine BuildLang Core Kernel Map (9 Modules, 54 Verified Kernels)
 
-This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, regional economy, and GPU pipeline kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**8 modules, 48 verified kernels**):
+This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, regional economy, GPU pipeline, and world-systems kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**9 modules, 54 verified kernels**):
 
 1. [`native/bld/RawPhysicsKernels.bld`](../native/bld/RawPhysicsKernels.bld) (6 core scalar physics & anti-exploit kernels)
 2. [`native/bld/RawAtmoWeather.bld`](../native/bld/RawAtmoWeather.bld) (7 planetary atmosphere, orbital solar, snowpack ODE & black-ice kernels)
@@ -10,10 +10,11 @@ This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar 
 6. [`native/bld/RawCombatAi.bld`](../native/bld/RawCombatAi.bld) (6 timed-parry, arrow ballistics, ragdoll kinetic cap, block mitigation, stealth & 3D Octile A* kernels)
 7. [`native/bld/RawEconomySim.bld`](../native/bld/RawEconomySim.bld) (6 9-hold scarcity pricing, Rothermel wildfire, blizzard caravan speed, cold-water breath, wet-elemental & GTAO kernels)
 8. [`native/bld/RawGpuPipeline.bld`](../native/bld/RawGpuPipeline.bld) (6 froxel Z-slice, cascade texel-snap, SSR edge fade, PI frame governor, clustered sphere-AABB & event bounty kernels)
+9. [`native/bld/RawWorldSystems.bld`](../native/bld/RawWorldSystems.bld) (6 log-luminance histogram, eye adaptation, diplomacy pricing, guard posture, audio crossfade & Purkinje night-vision kernels)
 
 ## Toolchain Verification Receipts (`buildc 1.4.0`)
 
-Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **8/8 `check` PASS**, **8/8 `run` PASS**):
+Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **9/9 `check` PASS**, **9/9 `run` PASS**):
 
 ### Module 1: `native/bld/RawPhysicsKernels.bld`
 - `buildc check`: Exit Code `0` (`Lexing... OK (763 tokens)`, `Parsing... OK (9 items)`, `Type checking... OK`, `No errors found`)
@@ -110,7 +111,19 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
   event_scarcity_reward(150g, 1.8x, urg=0.75) = 349.08750000000003
   ```
 
-## Kernel-by-Kernel Mapping (48 Kernels)
+### Module 9: `native/bld/RawWorldSystems.bld`
+- `buildc check`: Exit Code `0` (`Lexing... OK (857 tokens)`, `Parsing... OK (10 items)`, `Type checking... OK`, `No errors found`)
+- `buildc run`: Exit Code `0`
+  ```text
+  log_lum_hist_bin(dark) = 0 | (0.18 mid) = 117
+  eye_adapt_step(to sun) = 0.551251774896036 | (to cave) = 0.8277942154240827
+  diplomacy_price_mult(hero) = 0.883 | (outlaw) = 1.35
+  bounty_guard_posture(clean) = 0 | (3500g) = 3
+  audio_crossfade_gain(0.5 in/out) = 0.7071067811865475 | 0.7071067811865476 | sumSq = 1
+  purkinje_night_weight(night 0.004) = 0.19223593964334704 | (day 0.25) = 0
+  ```
+
+## Kernel-by-Kernel Mapping (54 Kernels)
 
 ### 1. Core Physics Kernels (`native/bld/RawPhysicsKernels.bld`)
 
@@ -200,10 +213,21 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
 | 47 | `sphere_aabb_dist_sq(cx, cy, cz, min_x..max_z)` | `src/d3d12_bridge/shaders/RawLightClusterSim.hlsl` | Exact Arvo squared distance from clamped AABB point | Inside box = `0.0`; outside `(3,0,4)` = exact `25.0` (`5^2`) |
 | 48 | `event_scarcity_reward(base_gold, price_ratio, urgency01)` | `src/worldgen/RawWorldEventDirector.cpp` | `base * (0.75 + 0.55*price_ratio) * (1 + 0.45*urgency)` | `150g` base at `1.8x` scarcity & `0.75` urgency = `349.1g` |
 
-## Reproducing All 8 BuildLang Module Checks
+### 9. World Systems, Diplomacy, Audio and Auto-Exposure Kernels (`native/bld/RawWorldSystems.bld`)
+
+| # | BuildLang Function | Engine C++ / HLSL Counterpart | Governing Equation | Verified Invariant |
+| --- | --- | --- | --- | --- |
+| 49 | `log_lum_hist_bin(lum, min_log2, inv_log2_range)` | `src/d3d12_bridge/shaders/RawAutoExposureSim.hlsl` | Bin `0` if `lum <= 1e-5`, else `[1..255]` from normalized `log2(lum)` | Near-black -> bin `0`; mid-grey `0.18` -> bin `117` |
+| 50 | `eye_adapt_step(cur_lum, target_lum, dt_sec, speed_up, speed_down)` | `src/d3d12_bridge/shaders/RawAutoExposureSim.hlsl` | Asymmetric EMA `cur + (tgt - cur) * (1 - exp(-rate * dt))` | Faster bright-sun adaptation (`0.05 -> 0.551`) vs slower cave entry (`1.0 -> 0.828`) |
+| 51 | `diplomacy_price_mult(reputation, bounty_gold)` | `src/worldgen/RawFactionDiplomacy.cpp` | `clamp(1 - 0.18*(rep/100) + min(bounty/4000, 0.25), 0.82, 1.35)` | Hero (`+65`) gets `0.883x` discount; outlaw (`-60, 2500g`) capped at `1.35x` |
+| 52 | `bounty_guard_posture(bounty_gold, reputation)` | `src/worldgen/RawFactionDiplomacy.cpp` | Thresholds: `0` Peaceful, `1` Watchful, `2` Arrest (`>=250g`), `3` KillOnSight (`>=2000g`) | Clean -> `0` (Peaceful); `3500g` -> `3` (KillOnSight) |
+| 53 | `audio_crossfade_gain(t01, is_incoming)` | `src/engine_rt/rt_adaptive_audio_director.cpp` | Equal-power `sin(t * pi/2)` incoming / `cos(t * pi/2)` outgoing | At `t=0.5`: `0.7071^2 + 0.7071^2 == 1.0000` exact power preservation |
+| 54 | `purkinje_night_weight(scene_lum, max_weight)` | `src/d3d12_bridge/shaders/Tonemap.hlsl` | Smooth scotopic shift strictly below `scene_lum < 0.018`, `0.0` above | Dim night `0.004` = `0.1922`; daylight `0.25` = exact `0.0` |
+
+## Reproducing All 9 BuildLang Module Checks
 
 ```powershell
-foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim','RawGpuPipeline')) {
+foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim','RawGpuPipeline','RawWorldSystems')) {
     buildc check "E:\wt\raw-rt9\native\bld\$m.bld"
     buildc run   "E:\wt\raw-rt9\native\bld\$m.bld"
 }

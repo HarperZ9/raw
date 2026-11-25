@@ -1,5 +1,5 @@
 // tools/raw_bench_suite.cpp: Studio-Grade Automated GPU/CPU Benchmark & Visual Invariant Suite for RAW.
-// Benchmarks all 13 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
+// Benchmarks all 14 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
 //   1. GPU 64^3 Navier-Stokes Fire/Smoke + 256^2 SWE Water (RawFluidSimHost)
 //   2. GPU 4-Cascade Radiance Cascades GI (RawRadianceHost)
 //   3. Procedural PBR Texture Forge (RawTextureForge, all 8 seamless PBR sets)
@@ -13,6 +13,7 @@
 //  11. GPU 160x90x64 3D Volumetric Froxel Fog, Mie Scattering & Temporal Reprojection (RawVolumetricFroxelHost)
 //  12. GPU Variable-Penumbra PCSS Contact-Hardening Shadows & Texel-Snapped Cascade (RawShadowPcssHost)
 //  13. GPU Jimenez GTAO + Unoccluded Bent Normals & Bilateral Denoise (RawGtaoHost)
+//  14. GPU GGX Stochastic Screen-Space Reflections (RawSsrHost)
 //
 // CLI:
 //   raw_bench_suite [--warp] [--quick] [--frames N] [--json <path>] [--esm <path>] [--bsa <path>] [--no-debug-layer]
@@ -38,6 +39,7 @@
 #include "../src/d3d12_bridge/RawVolumetricFroxelHost.h"
 #include "../src/d3d12_bridge/RawShadowPcssHost.h"
 #include "../src/d3d12_bridge/RawGtaoHost.h"
+#include "../src/d3d12_bridge/RawSsrHost.h"
 #include "../src/materials/RawTextureForge.h"
 #include "../src/audio/RawAudioDsp.h"
 #include "../src/worldgen/RawDestructionEngine.h"
@@ -606,6 +608,79 @@ struct BenchDx12Rig {
         return true;
     }
 
+    bool UploadRgba16Tex2DWH(ComPtr<ID3D12Resource>& tex, uint32_t w, uint32_t h, const std::vector<float>& rgbaFloat)
+    {
+        D3D12_HEAP_PROPERTIES hpDef{};
+        hpDef.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC rd{};
+        rd.Dimension        = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        rd.Width            = w;
+        rd.Height           = h;
+        rd.DepthOrArraySize = 1u;
+        rd.MipLevels        = 1u;
+        rd.Format           = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        rd.SampleDesc.Count = 1u;
+        if (FAILED(dev->CreateCommittedResource(&hpDef, D3D12_HEAP_FLAG_NONE, &rd,
+                                                D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&tex)))) {
+            return false;
+        }
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+        UINT numRows = 0u;
+        UINT64 rowBytes = 0ull, totalBytes = 0ull;
+        dev->GetCopyableFootprints(&rd, 0u, 1u, 0ull, &fp, &numRows, &rowBytes, &totalBytes);
+
+        D3D12_HEAP_PROPERTIES hpUp{};
+        hpUp.Type = D3D12_HEAP_TYPE_UPLOAD;
+        D3D12_RESOURCE_DESC ubd{};
+        ubd.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+        ubd.Width            = totalBytes;
+        ubd.Height           = 1u;
+        ubd.DepthOrArraySize = 1u;
+        ubd.MipLevels        = 1u;
+        ubd.SampleDesc.Count = 1u;
+        ubd.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        ComPtr<ID3D12Resource> upBuf;
+        if (FAILED(dev->CreateCommittedResource(&hpUp, D3D12_HEAP_FLAG_NONE, &ubd,
+                                                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upBuf)))) {
+            return false;
+        }
+        void* mapped = nullptr;
+        D3D12_RANGE rr{0u, 0u};
+        if (FAILED(upBuf->Map(0u, &rr, &mapped)) || !mapped) return false;
+        auto* dstBase = static_cast<uint8_t*>(mapped) + fp.Offset;
+        for (uint32_t y = 0u; y < h; ++y) {
+            auto* dstRow = reinterpret_cast<uint16_t*>(dstBase + static_cast<size_t>(y) * fp.Footprint.RowPitch);
+            for (uint32_t x = 0u; x < w; ++x) {
+                const size_t src = (static_cast<size_t>(y) * w + x) * 4u;
+                dstRow[x * 4u + 0u] = FloatToHalf(rgbaFloat[src + 0u]);
+                dstRow[x * 4u + 1u] = FloatToHalf(rgbaFloat[src + 1u]);
+                dstRow[x * 4u + 2u] = FloatToHalf(rgbaFloat[src + 2u]);
+                dstRow[x * 4u + 3u] = FloatToHalf(rgbaFloat[src + 3u]);
+            }
+        }
+        upBuf->Unmap(0u, nullptr);
+
+        if (!BeginFrame()) return false;
+        D3D12_TEXTURE_COPY_LOCATION dstLoc{};
+        dstLoc.pResource        = tex.Get();
+        dstLoc.Type             = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        dstLoc.SubresourceIndex = 0u;
+        D3D12_TEXTURE_COPY_LOCATION srcLoc{};
+        srcLoc.pResource       = upBuf.Get();
+        srcLoc.Type            = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        srcLoc.PlacedFootprint = fp;
+        cmd->CopyTextureRegion(&dstLoc, 0u, 0u, 0u, &srcLoc, nullptr);
+
+        D3D12_RESOURCE_BARRIER b{};
+        b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b.Transition.pResource   = tex.Get();
+        b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+        b.Transition.StateAfter  = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        cmd->ResourceBarrier(1u, &b);
+        return FlushAndWait();
+    }
+
     bool UploadR32Tex2D(ComPtr<ID3D12Resource>& tex, uint32_t w, uint32_t h, const std::vector<float>& data)
     {
         D3D12_HEAP_PROPERTIES hpDef{};
@@ -923,6 +998,26 @@ struct GtaoBenchResult {
     float       pitVis          = 1.0f;
     uint32_t    nanCount        = 0u;
     uint32_t    skyBadCount     = 0u;
+    std::string note;
+};
+
+struct SsrBenchResult {
+    bool        passed           = false;
+    Percentiles ssrGpuMs{};
+    Percentiles cpuRecordMs{};
+    uint32_t    width            = 960u;
+    uint32_t    height           = 540u;
+    float       hostSsrMs        = 0.0f;
+    uint32_t    targetPx         = 0u;
+    float       meanConf         = 0.0f;
+    float       meanR            = 0.0f;
+    float       meanB            = 0.0f;
+    float       rbRatio          = 0.0f;
+    float       maxSkyConf       = 1.0f;
+    float       maxOpenFloorConf = 1.0f;
+    uint32_t    mirrorSpanW      = 0u;
+    uint32_t    roughSpanW       = 0u;
+    uint32_t    nanInfCount      = 0u;
     std::string note;
 };
 
@@ -2876,6 +2971,273 @@ GtaoBenchResult RunGtaoBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames, uint3
 }
 
 // ----------------------------------------------------------------------------
+// 14. GPU GGX Stochastic Screen-Space Reflections (RawSsrHost)
+// ----------------------------------------------------------------------------
+SsrBenchResult RunSsrBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames, uint32_t measuredFrames)
+{
+    SsrBenchResult res{};
+    constexpr uint32_t kW = 960u;
+    constexpr uint32_t kH = 540u;
+    res.width  = kW;
+    res.height = kH;
+
+    raw::bridge::RawSsrHost host;
+    raw::bridge::SsrDesc desc{};
+    desc.initialWidth  = kW;
+    desc.initialHeight = kH;
+    std::string err;
+    if (!host.Init(rig.dev.Get(), desc, &err)) {
+        res.note = "RawSsrHost::Init failed: " + err;
+        return res;
+    }
+    host.SetTimestampFrequency(rig.tsFreqHz);
+
+    // Ray-traced synthetic 960x540 3D scene (LH view space: camera at origin looking +Z):
+    //   - Wet flat reflective floor at y = -1.8 m (extending to z = 120 m)
+    //   - Bright crimson-gold emissive pillar: x in [-1.8, +1.8], y in [-1.8, +5.2], z in [11.0, 14.0]
+    //     Color = (2.10, 0.52, 0.14) -> R > 0.70 and R/B = 15.0x > 3.0x
+    //   - Dark sky above horizon (depth = 1.0)
+    const float fovY   = 1.04719755f; // 60 deg
+    const float aspect = static_cast<float>(kW) / static_cast<float>(kH);
+    const float nearZ  = 0.25f;
+    const float farZ   = 150.0f;
+
+    raw::bridge::SsrParams sp{};
+    raw::bridge::BuildSsrPerspectiveLH(fovY, aspect, nearZ, farZ, sp.proj, sp.invProj);
+    sp.maxRayDist        = 45.0f;
+    sp.thicknessM        = 2.2f;
+    sp.nearZ             = nearZ;
+    sp.startBias         = 0.03f;
+    sp.fallbackRoughness = 0.01f;
+    sp.maxRoughness      = 0.72f;
+    sp.edgeFadeWidth     = 0.06f;
+    sp.maxSteps          = 40u;
+
+    const float tanHalfY = std::tan(fovY * 0.5f);
+    const float tanHalfX = tanHalfY * aspect;
+    const float q        = farZ / (farZ - nearZ);
+
+    std::vector<float>   sceneDepth(static_cast<size_t>(kW) * kH, 1.0f);
+    std::vector<float>   sceneColor(static_cast<size_t>(kW) * kH * 4u, 0.0f);
+    std::vector<uint8_t> isMirrorTarget(static_cast<size_t>(kW) * kH, 0u);
+    std::vector<uint8_t> isOpenSkyFloor(static_cast<size_t>(kW) * kH, 0u);
+
+    auto slabHit = [](float d, float bmin, float bmax, float& tMin, float& tMax) -> bool {
+        if (std::fabs(d) < 1.0e-7f) return (0.0f >= bmin && 0.0f <= bmax);
+        float t0 = bmin / d;
+        float t1 = bmax / d;
+        if (t0 > t1) std::swap(t0, t1);
+        tMin = std::max(tMin, t0);
+        tMax = std::min(tMax, t1);
+        return tMin <= tMax;
+    };
+
+    for (uint32_t y = 0u; y < kH; ++y) {
+        const float ndcY = 1.0f - (static_cast<float>(y) + 0.5f) / static_cast<float>(kH) * 2.0f;
+        const float dirY = ndcY * tanHalfY;
+        for (uint32_t x = 0u; x < kW; ++x) {
+            const float ndcX = (static_cast<float>(x) + 0.5f) / static_cast<float>(kW) * 2.0f - 1.0f;
+            const float dirX = ndcX * tanHalfX;
+            const float dirZ = 1.0f;
+
+            float bestZ = 1.0e9f;
+            float cr = 0.01f, cg = 0.02f, cb = 0.04f;
+            bool hitFloor = false;
+
+            if (dirY < -1.0e-5f) {
+                const float t = -1.8f / dirY;
+                if (t > nearZ && t < 120.0f) {
+                    bestZ = t;
+                    cr = 0.04f; cg = 0.05f; cb = 0.07f;
+                    hitFloor = true;
+                }
+            }
+
+            float tMin = nearZ, tMax = farZ;
+            if (slabHit(dirX, -1.8f, 1.8f, tMin, tMax) &&
+                slabHit(dirY, -1.8f, 5.2f, tMin, tMax) &&
+                slabHit(dirZ, 11.0f, 14.0f, tMin, tMax) &&
+                tMin < bestZ) {
+                bestZ = tMin;
+                cr = 2.10f; cg = 0.52f; cb = 0.14f;
+                hitFloor = false;
+            }
+
+            const size_t pxIdx = static_cast<size_t>(y) * kW + x;
+            if (bestZ < 1.0e8f) {
+                const float ndcZ = (bestZ * q - nearZ * q) / bestZ;
+                sceneDepth[pxIdx] = std::clamp(ndcZ, 0.0f, 0.99995f);
+
+                if (hitFloor && bestZ > 4.2f && bestZ < 10.2f) {
+                    const float hitX = dirX * bestZ;
+                    const float dt   = 11.0f - bestZ;
+                    const float rx   = hitX + dirX * dt;
+                    const float ry   = -1.8f + (-dirY) * dt;
+                    if (std::fabs(rx) < 1.2f && ry > -1.0f && ry < 4.2f) {
+                        isMirrorTarget[pxIdx] = 1u;
+                    } else if (std::fabs(hitX) > 4.2f && std::fabs(rx) > 5.0f) {
+                        isOpenSkyFloor[pxIdx] = 1u;
+                    }
+                }
+            }
+            const size_t cOff = pxIdx * 4u;
+            sceneColor[cOff + 0u] = cr;
+            sceneColor[cOff + 1u] = cg;
+            sceneColor[cOff + 2u] = cb;
+            sceneColor[cOff + 3u] = 1.0f;
+        }
+    }
+
+    ComPtr<ID3D12Resource> colorTex, depthTex;
+    if (!rig.UploadRgba16Tex2DWH(colorTex, kW, kH, sceneColor) ||
+        !rig.UploadR32Tex2D(depthTex, kW, kH, sceneDepth)) {
+        res.note = "Upload 960x540 SSR synthetic color/depth failed";
+        return res;
+    }
+
+    std::vector<double> gpuSamples, cpuSamples;
+    gpuSamples.reserve(measuredFrames);
+    cpuSamples.reserve(measuredFrames);
+    const uint32_t totalFrames = warmupFrames + measuredFrames;
+    for (uint32_t f = 0u; f < totalFrames; ++f) {
+        sp.frameJitter = static_cast<float>(f & 63u);
+        const auto c0 = Clock::now();
+        if (!rig.BeginFrame()) {
+            res.note = "BeginFrame failed";
+            return res;
+        }
+        rig.MarkTimestamp(0u);
+        host.Execute(rig.cmd.Get(), colorTex.Get(), depthTex.Get(), kW, kH, sp);
+        rig.MarkTimestamp(1u);
+        rig.ResolveTimestamps(0u, 2u);
+        const auto c1 = Clock::now();
+        if (!rig.FlushAndWait()) {
+            res.note = "FlushAndWait failed";
+            return res;
+        }
+        if (f >= warmupFrames) {
+            double gMs = 0.0;
+            rig.ReadTimestampRangeMs(0u, 1u, gMs);
+            gpuSamples.push_back(gMs);
+            cpuSamples.push_back(ElapsedMs(c0, c1));
+        }
+    }
+
+    res.ssrGpuMs    = ComputePercentiles(gpuSamples);
+    res.cpuRecordMs = ComputePercentiles(cpuSamples);
+    res.hostSsrMs   = host.HasValidTiming() ? host.GetLastSsrMs() : 0.0f;
+
+    // Readback mirror SSR pass and validate optical invariants
+    uint32_t rbW = 0u, rbH = 0u, rbD = 0u;
+    std::vector<float> mirrorRgba;
+    if (!rig.ReadbackRgba16Tex(host.GetOutputResource(), host.OutputResourceState(), rbW, rbH, rbD, mirrorRgba) ||
+        rbW != kW || rbH != kH) {
+        res.note = "Readback SSR mirror output failed";
+        return res;
+    }
+
+    double sumConf = 0.0, sumR = 0.0, sumB = 0.0;
+    uint32_t targetCount = 0u;
+    float maxSkyConf = 0.0f;
+    float maxOpenFloorConf = 0.0f;
+    uint32_t mirrorSpanMin = kW, mirrorSpanMax = 0u;
+
+    for (uint32_t y = 0u; y < kH; ++y) {
+        for (uint32_t x = 0u; x < kW; ++x) {
+            const size_t idx = static_cast<size_t>(y) * kW + x;
+            const float r = mirrorRgba[idx * 4u + 0u];
+            const float g = mirrorRgba[idx * 4u + 1u];
+            const float b = mirrorRgba[idx * 4u + 2u];
+            const float a = mirrorRgba[idx * 4u + 3u];
+            if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b) || !std::isfinite(a)) {
+                ++res.nanInfCount;
+                continue;
+            }
+            if (sceneDepth[idx] >= 0.99998f) {
+                maxSkyConf = std::max(maxSkyConf, a);
+            }
+            if (isMirrorTarget[idx]) {
+                sumConf += a;
+                sumR += r;
+                sumB += b;
+                ++targetCount;
+            }
+            if (isOpenSkyFloor[idx]) {
+                maxOpenFloorConf = std::max(maxOpenFloorConf, a);
+            }
+            if (y == 380u && a > 0.25f && r > 0.6f) {
+                mirrorSpanMin = std::min(mirrorSpanMin, x);
+                mirrorSpanMax = std::max(mirrorSpanMax, x);
+            }
+        }
+    }
+
+    res.targetPx         = targetCount;
+    res.meanConf         = (targetCount > 0u) ? static_cast<float>(sumConf / targetCount) : 0.0f;
+    res.meanR            = (targetCount > 0u) ? static_cast<float>(sumR / targetCount) : 0.0f;
+    res.meanB            = (targetCount > 0u) ? static_cast<float>(sumB / targetCount) : 0.0f;
+    res.rbRatio          = res.meanR / std::max(res.meanB, 1.0e-4f);
+    res.maxSkyConf       = maxSkyConf;
+    res.maxOpenFloorConf = maxOpenFloorConf;
+    res.mirrorSpanW      = (mirrorSpanMax >= mirrorSpanMin) ? (mirrorSpanMax - mirrorSpanMin) : 0u;
+
+    // GGX stochastic roughness lobe spread validation (outside steady-state timing loop)
+    raw::bridge::SsrParams roughSp = sp;
+    roughSp.fallbackRoughness = 0.28f;
+    roughSp.frameJitter       = 1.0f;
+    if (!rig.BeginFrame()) {
+        res.note = "BeginFrame (roughness probe) failed";
+        return res;
+    }
+    host.Execute(rig.cmd.Get(), colorTex.Get(), depthTex.Get(), kW, kH, roughSp);
+    if (!rig.FlushAndWait()) {
+        res.note = "FlushAndWait (roughness probe) failed";
+        return res;
+    }
+    std::vector<float> roughRgba;
+    if (!rig.ReadbackRgba16Tex(host.GetOutputResource(), host.OutputResourceState(), rbW, rbH, rbD, roughRgba) ||
+        rbW != kW || rbH != kH) {
+        res.note = "Readback SSR roughness probe failed";
+        return res;
+    }
+    uint32_t roughSpanMin = kW, roughSpanMax = 0u;
+    for (uint32_t y = 0u; y < kH; ++y) {
+        for (uint32_t x = 0u; x < kW; ++x) {
+            const size_t idx = static_cast<size_t>(y) * kW + x;
+            const float r = roughRgba[idx * 4u + 0u];
+            const float g = roughRgba[idx * 4u + 1u];
+            const float b = roughRgba[idx * 4u + 2u];
+            const float a = roughRgba[idx * 4u + 3u];
+            if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b) || !std::isfinite(a)) {
+                ++res.nanInfCount;
+                continue;
+            }
+            if (y == 380u && a > 0.15f && r > 0.45f) {
+                roughSpanMin = std::min(roughSpanMin, x);
+                roughSpanMax = std::max(roughSpanMax, x);
+            }
+        }
+    }
+    res.roughSpanW = (roughSpanMax >= roughSpanMin) ? (roughSpanMax - roughSpanMin) : 0u;
+
+    const bool optOk = (res.nanInfCount == 0u) && (res.targetPx > 500u) &&
+                       (res.meanConf > 0.80f) && (res.meanR > 0.70f) && (res.rbRatio > 3.0f) &&
+                       (res.maxSkyConf == 0.0f) && (res.maxOpenFloorConf == 0.0f) &&
+                       (res.roughSpanW > res.mirrorSpanW);
+    const bool budgetOk = rig.isWarp ? true : (res.ssrGpuMs.mean < 0.15);
+    res.passed = optOk && budgetOk;
+    if (!optOk) {
+        res.note = "SSR reflection/sky/roughness/NaN invariant failed";
+    } else if (!budgetOk) {
+        res.note = "HW GPU 960x540 SSR mean exceeded 0.15 ms budget";
+    } else {
+        res.note = rig.isWarp ? "WARP 960x540 GGX stochastic SSR PASS"
+                              : "HW GPU < 0.15 ms & GGX stochastic SSR PASS";
+    }
+    return res;
+}
+
+// ----------------------------------------------------------------------------
 // JSON Serializer & Console Scorecard Printer
 // ----------------------------------------------------------------------------
 void WriteBenchJson(const std::string& path,
@@ -2897,7 +3259,8 @@ void WriteBenchJson(const std::string& path,
                     const LightClusterBenchResult& lightClusters,
                     const VolumetricFroxelsBenchResult& volFroxels,
                     const ShadowPcssBenchResult& shadowPcss,
-                    const GtaoBenchResult& gtao)
+                    const GtaoBenchResult& gtao,
+                    const SsrBenchResult& ssr)
 {
     std::ostringstream os;
     os << std::fixed << std::setprecision(4);
@@ -3136,6 +3499,27 @@ void WriteBenchJson(const std::string& path,
     os << "      \"nanCount\": " << gtao.nanCount << ",\n";
     os << "      \"skyBadCount\": " << gtao.skyBadCount << ",\n";
     os << "      \"note\": \"" << JsonEscape(gtao.note) << "\"\n";
+    os << "    },\n";
+
+    // 14. GPU GGX Stochastic Screen-Space Reflections (SSR)
+    os << "    \"ssr\": {\n";
+    os << "      \"passed\": " << (ssr.passed ? "true" : "false") << ",\n";
+    os << "      \"width\": " << ssr.width << ",\n";
+    os << "      \"height\": " << ssr.height << ",\n";
+    os << "      \"ssrGpuMs\": "; pctObj(ssr.ssrGpuMs); os << ",\n";
+    os << "      \"cpuRecordMs\": "; pctObj(ssr.cpuRecordMs); os << ",\n";
+    os << "      \"hostSsrMs\": " << ssr.hostSsrMs << ",\n";
+    os << "      \"targetPx\": " << ssr.targetPx << ",\n";
+    os << "      \"meanConf\": " << ssr.meanConf << ",\n";
+    os << "      \"meanR\": " << ssr.meanR << ",\n";
+    os << "      \"meanB\": " << ssr.meanB << ",\n";
+    os << "      \"rbRatio\": " << ssr.rbRatio << ",\n";
+    os << "      \"maxSkyConf\": " << ssr.maxSkyConf << ",\n";
+    os << "      \"maxOpenFloorConf\": " << ssr.maxOpenFloorConf << ",\n";
+    os << "      \"mirrorSpanW\": " << ssr.mirrorSpanW << ",\n";
+    os << "      \"roughSpanW\": " << ssr.roughSpanW << ",\n";
+    os << "      \"nanInfCount\": " << ssr.nanInfCount << ",\n";
+    os << "      \"note\": \"" << JsonEscape(ssr.note) << "\"\n";
     os << "    }\n";
 
     os << "  }\n";
@@ -3165,7 +3549,8 @@ void PrintScorecard(const BenchDx12Rig& rig,
                     const LightClusterBenchResult& lightClusters,
                     const VolumetricFroxelsBenchResult& volFroxels,
                     const ShadowPcssBenchResult& shadowPcss,
-                    const GtaoBenchResult& gtao)
+                    const GtaoBenchResult& gtao,
+                    const SsrBenchResult& ssr)
 {
     std::printf("\n");
     std::printf("=====================================================================================================\n");
@@ -3266,6 +3651,12 @@ void PrintScorecard(const BenchDx12Rig& rig,
                   gtao.openFloorVis, gtao.creviceVis, gtao.creviceBentX, gtao.pitVis, gtao.nanCount);
     std::printf("  %-30s | %-6s | %-28s | %s\n", "13. GPU Jimenez GTAO (960x540)", gtao.passed ? "PASS" : "FAIL", metric, detail);
 
+    std::snprintf(metric, sizeof(metric), "SSR %.4f ms (p95 %.4f)", ssr.ssrGpuMs.mean, ssr.ssrGpuMs.p95);
+    std::snprintf(detail, sizeof(detail), "host=%.4f | conf=%.3f R/B=%.1fx sky=%.1f span=%u->%u | NaN=%u",
+                  ssr.hostSsrMs, ssr.meanConf, ssr.rbRatio, ssr.maxSkyConf,
+                  ssr.mirrorSpanW, ssr.roughSpanW, ssr.nanInfCount);
+    std::printf("  %-30s | %-6s | %-28s | %s\n", "14. GPU GGX Stochastic SSR", ssr.passed ? "PASS" : "FAIL", metric, detail);
+
     std::printf("=====================================================================================================\n");
 }
 
@@ -3329,19 +3720,20 @@ int main(int argc, char** argv)
     const VolumetricFroxelsBenchResult volFroxels    = RunVolumetricFroxelsBenchmark(rig, warmupFrames, measuredFrames);
     const ShadowPcssBenchResult        shadowPcss    = RunShadowPcssBenchmark(rig, warmupFrames, measuredFrames);
     const GtaoBenchResult              gtao          = RunGtaoBenchmark(rig, warmupFrames, measuredFrames);
+    const SsrBenchResult               ssr           = RunSsrBenchmark(rig, warmupFrames, measuredFrames);
 
     const uint32_t debugErrors = rig.DrainDebugErrors();
     const bool allPassed = fluid.passed && rc.passed && tex.passed && audio.passed &&
                            destr.passed && flora.passed && tamriel.passed && xpbd.passed &&
                            gpuCull.passed && lightClusters.passed && volFroxels.passed &&
-                           shadowPcss.passed && gtao.passed && (debugErrors == 0u);
+                           shadowPcss.passed && gtao.passed && ssr.passed && (debugErrors == 0u);
 
     PrintScorecard(rig, quickMode, warmupFrames, measuredFrames, debugErrors,
-                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao);
+                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr);
 
     if (!jsonPath.empty()) {
         WriteBenchJson(jsonPath, rig, quickMode, warmupFrames, measuredFrames, debugErrors, allPassed,
-                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao);
+                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr);
         std::printf("  JSON report written: %s\n", jsonPath.c_str());
     }
 

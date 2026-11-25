@@ -41,6 +41,7 @@
 #include "rt_movement_combat.h"
 #include "rt_npc_behavior.h"
 #include "rt_save_papyrus_guard.h"
+#include "rt_sdk_bridge.h"
 #include "rt_softbody.h"
 #include "rt_stealth_survival.h"
 #include "rt_telemetry_recorder.h"
@@ -397,6 +398,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     Log("%s", raw::rt::FrameGovernorInit().c_str());
     Log("%s", raw::rt::EngineHealthInit().c_str());
     Log("%s", raw::rt::AudioBridgeInit().c_str());
+    Log("%s", raw::rt::SdkBridgeInit(g_out).c_str());
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
     if (IniInt("CallGraph", 0)) {
@@ -424,6 +426,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         std::snprintf(why, n, "%d background thread(s) running (sample or call graph); ask again when they finish", t);
         return 0;
     }
+    raw::rt::SdkBridgeShutdown();
     raw::rt::AudioBridgeShutdown();
     raw::rt::EngineHealthShutdown();
     raw::rt::FrameGovernorShutdown();

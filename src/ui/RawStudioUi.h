@@ -18,14 +18,14 @@ namespace raw::ui {
 
 // Live runtime simulation & engine-upgrade tuning shared between Studio UI, DX12 bridge, and raw_engine.dll (zero SKSE).
 struct WorldSimTuning {
-    // Runtime GPU geometry uplift (never mutates Bethesda collision or stock NAVM)
-    int   geomSubdivLevel   = 2;      // 0=Off, 1=2x Curved PN-Tri (4x tris), 2=Adaptive 4x->16x
-    float geomCurvature     = 0.72f;  // Vlachos cubic Bezier normal projection strength (0..1.25)
-    float geomDisplaceScale = 1.00f;  // World-space rock/bark/cobble micro-displacement amplitude (0..2.0)
+    // Runtime GPU geometry uplift (opt-in; disabled by default on Z-prepass CE1 titles to preserve DEPTH_EQUAL invariance)
+    int   geomSubdivLevel   = 0;      // 0=Off (Stock), 1=2x Curved PN-Tri (4x tris), 2=Adaptive 4x->16x
+    float geomCurvature     = 0.50f;  // Vlachos cubic Bezier normal projection strength (0..1.25)
+    float geomDisplaceScale = 0.00f;  // Micro-displacement amplitude (0..2.0; 0 preserves exact collision manifold)
     bool  geomWireframe     = false;  // Live meshlet/subdivision wireframe inspection
 
-    // True 3D Volumetric Snowpack Buildup & Physics
-    bool  snowVolumetric    = true;   // 3D geometric snowpack lift + deep carved footprints/trenches
+    // 3D Snowpack Tuning (shader-side normal/albedo snow accumulation; never lifts collision vertices)
+    bool  snowVolumetric    = false;  // Disabled on vertex lift to prevent ground/collision detachment
     float snowAccumRate     = 1.00f;  // Storm buildup rate multiplier (0..3.0)
     float snowMaxDepthU     = 28.0f;  // Max volumetric snowpack buildup thickness in world units (4..48)
     float snowAvalancheAng  = 0.42f;  // Slope cosine threshold for snow shedding/cornices (0.20..0.75)

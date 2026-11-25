@@ -333,11 +333,11 @@ bool LightingAtOpaque(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr)
     if (TxMode_Get() == 1) {
         if (auto* pi = PG_GetProxyInterface(); pi && pi->device) {
             const auto& sim = raw::ui::GetWorldSimTuning();
-            const bool isExt = l.hasEngineCell ? !l.isInterior : l.hasCascades;
-            const float curv = (sim.geomSubdivLevel > 0) ? sim.geomCurvature : 0.0f;
-            const float snowU = (isExt && sim.snowVolumetric) ? (Cfg().light.snow * sim.snowMaxDepthU * 0.55f) : 0.0f;
-            const float disp = (sim.geomSubdivLevel > 0) ? (sim.geomDisplaceScale * 0.14f) : 0.0f;
-            raw::tx::SetSubdivParams(pi->device, curv, snowU, disp);
+            if (sim.geomSubdivLevel > 0) {
+                const float curv = sim.geomCurvature;
+                const float disp = sim.geomDisplaceScale * 0.08f;
+                raw::tx::SetSubdivParams(pi->device, curv, 0.0f, disp);
+            }
         }
     }
     b->SetRtDraws(SceneGeometry_Take());

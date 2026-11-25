@@ -293,52 +293,41 @@ float4 dof_post(float4 at : SV_Position) : SV_Target0 {
     return float4(acc / wSum, aAcc / wSum);
 }
 
-// Physical Wet-Lens Refractive Rain Beads & Waterline Droplets (zero extra VRAM, pure analytic teardrop Snell optics):
-float2 evalWetLensBead(float2 uv, float timeS, float scale, float seed, out float rimOut) {
-    const float2 grid = float2(scale * 1.45f, scale * 0.55f);
+// Subtle Physical Peripheral Rain Lens Refraction (strictly gated on active outdoor rain, zero rings on dry land):
+float2 evalWetLensBead(float2 uv, float timeS, float scale, float seed) {
+    const float2 grid = float2(scale * 1.45f, scale * 0.60f);
     float2 st = uv * grid;
     const float colId = floor(st.x);
     const float h0 = frac(sin(colId * 127.1f + seed * 311.7f) * 43758.5453f);
-    st.y += timeS * (0.28f + 0.34f * h0) + h0 * 11.3f;
+    st.y += timeS * (0.22f + 0.28f * h0) + h0 * 11.3f;
     const float2 cellId = floor(st);
     const float h1 = frac(sin(dot(cellId, float2(12.9898f, 78.233f)) + seed * 19.7f) * 43758.5453f);
+    if (h1 < 0.72f) { return 0.0f.xx; }
     const float2 gv = frac(st) - 0.5f;
-    // Wiggle horizontally along a sinusoidal track as the bead slides down the front glass element:
-    const float wobble = sin(uv.y * 18.0f + h1 * 6.28318f + sin(uv.y * 6.0f) * 1.5f) * 0.14f;
-    const float slideY = -sin(timeS * (0.55f + h0 * 0.6f) + h1 * 6.28318f) * 0.28f;
+    const float wobble = sin(uv.y * 14.0f + h1 * 6.28318f) * 0.12f;
+    const float slideY = -sin(timeS * (0.45f + h0 * 0.45f) + h1 * 6.28318f) * 0.26f;
     const float2 dropPos = float2(wobble * (0.5f - abs(gv.y)), slideY);
-    const float2 d = (gv - dropPos) * float2(1.0f, 1.45f);
+    const float2 d = (gv - dropPos) * float2(1.0f, 1.55f);
     const float r2 = dot(d, d);
-    const float beadMask = smoothstep(0.065f, 0.014f, r2) * step(0.42f, h1);
-    // Trailing micro-beads left behind above the sliding primary drop:
-    const float2 trailUv = float2(gv.x - wobble * 0.65f, frac(uv.y * grid.y * 3.5f + h1 * 5.0f) - 0.5f);
-    const float trailGate = smoothstep(dropPos.y - 0.05f, dropPos.y + 0.22f, gv.y) * smoothstep(0.5f, 0.15f, gv.y);
-    const float microMask = smoothstep(0.022f, 0.005f, dot(trailUv, trailUv)) * trailGate * step(0.42f, h1);
-    const float mask = saturate(beadMask + microMask * 0.55f);
-    rimOut = saturate(smoothstep(0.058f, 0.032f, r2) - smoothstep(0.032f, 0.012f, r2)) * step(0.42f, h1);
-    return (d * beadMask + trailUv * microMask * 0.45f) * mask;
+    const float beadMask = smoothstep(0.042f, 0.008f, r2);
+    return d * (beadMask * beadMask);
 }
 
 float3 applyWetLensOptics(float2 uv, float3 baseCol) {
-    if (dofParams.w <= 0.5f || sunColour.w <= 0.5f) { return baseCol; }
-    const float waterProx = (engineWorld.z > 0.5f) ? saturate(1.0f - abs(camPosW.z - engineWorld.x) / 95.0f) : 0.0f;
-    const float wetDrive = saturate(max(weather.w, waterProx * 0.85f));
-    if (wetDrive <= 0.06f) { return baseCol; }
-    float rimA = 0.0f, rimB = 0.0f;
-    const float2 offA = evalWetLensBead(uv, camPosW.w, 10.0f, 1.3f, rimA);
-    const float2 offB = evalWetLensBead(uv + float2(0.37f, 0.19f), camPosW.w * 0.82f, 16.0f, 4.7f, rimB);
-    const float2 refractUv = (offA * 0.055f + offB * 0.032f) * wetDrive;
+    // Strictly active ONLY during genuine outdoor rain (weather.w > 0.22); never triggers on dry land near rivers!
+    if (dofParams.w <= 0.5f || sunColour.w <= 0.5f || weather.w <= 0.22f) { return baseCol; }
+    const float rainDrive = saturate((weather.w - 0.22f) / 0.78f);
+    // Keep the center crosshair & subject crystal clear; subtle rain droplets appear only near the lens periphery:
+    const float edgeMask = smoothstep(0.30f, 0.74f, length(uv - 0.5f.xx));
+    const float wetDrive = rainDrive * edgeMask;
+    if (wetDrive <= 0.02f) { return baseCol; }
+    const float2 offA = evalWetLensBead(uv, camPosW.w, 9.0f, 1.3f);
+    const float2 offB = evalWetLensBead(uv + float2(0.37f, 0.19f), camPosW.w * 0.78f, 14.0f, 4.7f);
+    const float2 refractUv = (offA * 0.016f + offB * 0.010f) * wetDrive;
     const float mag = length(refractUv);
     if (mag <= 1.0e-5f) { return baseCol; }
-    // Subtle physical Snell dispersion across R/G/B inside the glass rain bead + grazing sky rim glint:
-    const float3 refracted = float3(
-        SrcA.SampleLevel(Lin, saturate(uv + refractUv * 1.12f), 0.0f).r,
-        SrcA.SampleLevel(Lin, saturate(uv + refractUv), 0.0f).g,
-        SrcA.SampleLevel(Lin, saturate(uv + refractUv * 0.88f), 0.0f).b
-    );
-    const float beadBlend = saturate(mag * 42.0f);
-    const float rimGlint = saturate(rimA + rimB * 0.7f) * wetDrive * 0.22f;
-    return lerp(baseCol, refracted, beadBlend) + (sunColour.rgb * 0.25f + float3(0.35f, 0.42f, 0.52f)) * rimGlint;
+    const float3 refracted = SrcA.SampleLevel(Lin, saturate(uv + refractUv), 0.0f).rgb;
+    return lerp(baseCol, refracted, saturate(mag * 45.0f));
 }
 
 float4 dof_comp(float4 at : SV_Position) : SV_Target0 {

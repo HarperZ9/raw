@@ -148,17 +148,12 @@ float subHash31(float3 p) {
     return frac((q.x + q.y) * q.z);
 }
 
-// Applies crack-free organic micro-relief + physical 3D volumetric snowpack lift above angle of repose:
+// Applies crack-free organic micro-relief (strictly bounded along surface normal; never lifts object-local Z off collision):
 float3 applyMicroAndSnow(float3 p, float3 n, bool isMidpoint) {
     float3 outP = p;
     if (isMidpoint && displaceAmp > 0.001f) {
         float h = (subHash31(floor(p * 4.0f) * 0.25f) - 0.5f) * 2.0f;
-        outP += n * (h * displaceAmp);
-    }
-    if (snowDepthU > 0.05f && n.z > 0.42f) {
-        float sMask = smoothstep(0.42f, 0.80f, n.z);
-        float drift = 0.72f + 0.45f * subHash31(floor(p * 0.15f));
-        outP.z += sMask * drift * snowDepthU * (isMidpoint ? 0.28f : 0.22f);
+        outP += n * (h * min(displaceAmp, 0.20f));
     }
     return outP;
 }

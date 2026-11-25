@@ -34,12 +34,13 @@ void resolve(uint3 id : SV_DispatchThreadID) {
             const float invCount = 1.0f / float(count);
             const float4 mean = float4(sum) * (invCount / CACHE_FIXED);
             const float4 old = asfloat(CacheValue.Load4(a));
-            // Fast-convergence variance reset: reacts 8x faster to sudden spells, torches, lightning, or opening doors
-            // while keeping full 32-frame temporal smoothness when lighting is steady.
+            // SIGGRAPH Advances 2026 ORCA (GI-18) zero-lag luminance + chromaticity jump reset:
+            // reacts in 1-2 frames to spells, torches, lightning, or opening doors even when luminance stays constant!
             const float oldLum = dot(old.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             const float newLum = dot(mean.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             const float relDelta = abs(newLum - oldLum) / max(oldLum, 0.05f);
-            if (relDelta > 0.35f) { meta.x = min(meta.x, 4u); }
+            const float chrDelta = length(mean.rgb / max(newLum, 0.05f) - old.rgb / max(oldLum, 0.05f));
+            if (relDelta > 0.35f || chrDelta > 0.42f) { meta.x = min(meta.x, 2u); }
             meta.x = min(meta.x + 1u, maxFrames);
             const float alpha = 1.0f / float(meta.x);
             const float4 v = meta.x <= 1u ? mean : lerp(old, mean, alpha);

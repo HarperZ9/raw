@@ -2,6 +2,7 @@
 // Original work, MIT.
 #include "rt_softbody.h"
 #include "rt_image.h"
+#include "rt_skeleton_ik.h"
 #include "rt_version.h"
 #include "rt_weather.h"
 
@@ -250,6 +251,63 @@ void TraverseSkeletonSEH(uint8_t* node, float dtSec, int depth, uint32_t& bonesO
     __try {
         const char* name = SafeAt<const char*>(node, 0x10);
         if (IsCanonicalStr(name)) {
+            // Live Zero-SKSE Procedural Skeletal Animation (Breathing, Storm Head-Brace & Volumetric Snow-Sink Pelvis):
+            // Mutates Skyrim's real NiAVObject::local.translate (+0x64) / local.rotate (+0x40) on core skeleton bones
+            // relative to captured bind pose (strictly bounded, SEH-protected, zero animation corruption).
+            const bool isSpine2 = (std::strstr(name, "Spine2") != nullptr);
+            const bool isHead   = (std::strstr(name, "NPC Head") != nullptr);
+            const bool isPelvis = (std::strstr(name, "NPC Pelvis") != nullptr);
+            if (isSpine2 || isHead || isPelvis) {
+                const uintptr_t pKey = reinterpret_cast<uintptr_t>(node);
+                LiveBoneEntry& pEnt = g_liveBones[pKey];
+                if (!pEnt.state.initialized) {
+                    std::memcpy(pEnt.state.restLocal, node + 0x64, 12);
+                    std::memcpy(pEnt.state.restRotate, node + 0x40, 36);
+                    float rSum = 0.0f;
+                    for (int ri = 0; ri < 9; ++ri) rSum += pEnt.state.restRotate[ri] * pEnt.state.restRotate[ri];
+                    pEnt.state.hasRestRotate = std::isfinite(rSum) && rSum > 2.5f && rSum < 3.5f;
+                    pEnt.state.initialized = true;
+                }
+                float wVx = 0.0f, wVy = 0.0f, wStorm = 0.0f;
+                WeatherGetWind(wVx, wVy, wStorm);
+                const float tSec = float(GetTickCount64() % 3600000ull) * 0.001f + float(pKey & 0xFFu) * 0.031f;
+                const auto upPose = ComputeSpineGaze(0.0f, 0.0f, 0.0f, tSec, wStorm * 0.45f);
+                if (isSpine2 && pEnt.state.hasRestRotate) {
+                    const float pitch = std::clamp(upPose.breathChestLift * 0.045f, -0.05f, 0.05f);
+                    const float cp = std::cos(pitch), sp = std::sin(pitch);
+                    const float* R = pEnt.state.restRotate;
+                    float outR[9] = {
+                        R[0], R[1] * cp + R[2] * sp, -R[1] * sp + R[2] * cp,
+                        R[3], R[4] * cp + R[5] * sp, -R[4] * sp + R[5] * cp,
+                        R[6], R[7] * cp + R[8] * sp, -R[7] * sp + R[8] * cp
+                    };
+                    std::memcpy(node + 0x40, outR, 36);
+                    ++bonesOut;
+                } else if (isHead && pEnt.state.hasRestRotate && wStorm > 0.15f) {
+                    const float bracePitch = std::clamp(wStorm * 0.10f, 0.0f, 0.12f);
+                    const float cp = std::cos(bracePitch), sp = std::sin(bracePitch);
+                    const float* R = pEnt.state.restRotate;
+                    float outR[9] = {
+                        R[0], R[1] * cp + R[2] * sp, -R[1] * sp + R[2] * cp,
+                        R[3], R[4] * cp + R[5] * sp, -R[4] * sp + R[5] * cp,
+                        R[6], R[7] * cp + R[8] * sp, -R[7] * sp + R[8] * cp
+                    };
+                    std::memcpy(node + 0x40, outR, 36);
+                    ++bonesOut;
+                } else if (isPelvis && wStorm > 0.20f) {
+                    FootPlantInput fpi{};
+                    fpi.snowDepthU = std::clamp(wStorm * 24.0f, 0.0f, 36.0f);
+                    const auto fpo = ComputeFootPlanting(fpi);
+                    float newLoc[3] = {
+                        pEnt.state.restLocal[0],
+                        pEnt.state.restLocal[1],
+                        pEnt.state.restLocal[2] + std::clamp(fpo.pelvisOffsetZ * 0.35f, -5.0f, 0.0f)
+                    };
+                    std::memcpy(node + 0x64, newLoc, 12);
+                    ++bonesOut;
+                }
+                pEnt.lastFrame = g_frameCounter;
+            }
             TissueKind kind{};
             if (ClassifySoftBone(name, &kind)) {
                 const uint8_t* parent = SafeAt<const uint8_t*>(node, 0x30);

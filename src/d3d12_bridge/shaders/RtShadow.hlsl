@@ -307,8 +307,15 @@ void main(uint3 id : SV_DispatchThreadID) {
             const bool hasOracle = ((giFlags & GI_CACHE) != 0u) && cacheReadOracle(p, n, 0.0f.xxx, oracleVal, oracleFree, oracleEnt, oracleFrames);
             const bool calmCorridor = hasOracle && oracleFrames >= 6u && oracleEnt < 0.14f && oracleFree > 40.0f;
             const bool highEntropy = hasOracle && oracleFrames >= 2u && oracleEnt > 0.36f;
+            // SIGGRAPH Advances 2026 LGT-16 Variable-Rate Ray Tracing + Negative-Space Entropy Oracle:
+            // Couples per-pixel motion/disocclusion gradient with world-space cache entropy so RT cores spend 1 spp
+            // in converged calm air and automatically escalate to 3-4 spp on dynamic/disoccluded/high-entropy edges!
+            const float2 giMv = Motion.Load(ip);
+            const float giSpeedPx = length(giMv * dims.xy);
+            const bool fastMotionOrDisocc = (giSpeedPx > 1.85f) || !hasOracle || (oracleFrames < 3u);
             const uint baseSpp = (rtTier <= 1u) ? 1u : (rtTier >= 4u ? 3u : 2u);
-            const uint giSpp = calmCorridor ? 1u : (highEntropy && rtTier >= 2u ? min(baseSpp + 1u, rtTier >= 4u ? 4u : 3u) : baseSpp);
+            const uint giSpp = (calmCorridor && !fastMotionOrDisocc) ? 1u
+                             : ((highEntropy || fastMotionOrDisocc) && rtTier >= 2u ? min(baseSpp + 1u, rtTier >= 4u ? 4u : 3u) : baseSpp);
             const float corridorSkip = (!isInterior && hasOracle && oracleFrames >= 8u && oracleEnt < 0.18f && oracleFree > 24.0f)
                 ? min(oracleFree * 0.35f, 24.0f) : 0.0f;
 
@@ -317,7 +324,8 @@ void main(uint3 id : SV_DispatchThreadID) {
             float minFreeHit = aoLen;
             const bool doCache2 = ((giFlags & GI_CACHE) != 0u) && skyTurn(id.xy);
             [loop] for (uint si = 0u; si < giSpp; si++) {
-                const float2 rs = frac(rs0 + float2(float(si) / float(giSpp), 0.618034f * float(si)));
+                const float4 qGi = stbnPrime4(px, frameIndex + 11.0f + float(si) * 17.0f);
+                const float2 rs = (si & 1u) == 0u ? qGi.xy : qGi.zw;
                 const float3 sd = cosineDir(n, rs);
                 float sSample = 1.0f;
                 float3 bSample = 0.0f;
@@ -429,16 +437,22 @@ void main(uint3 id : SV_DispatchThreadID) {
                     if (any(q < 0) || q.x >= int(dims.x) || q.y >= int(dims.y)) { continue; }
                     const float4 rq = ResIn[q];
                     if (rq.x < 0.5f || abs(rq.w - z) > 0.05f * z) { continue; }
-                    // Normal-similarity validation prevents light leakage across corners & thin walls:
+                    // HPG 2026 Best Paper (LGT-09) Compatibility-Guided Spatial ReSTIR Neighbor Selection:
+                    // Validates both tight geometric normal alignment (dot >= 0.84) and irradiance-ratio compatibility
+                    // so incompatible lit/shadowed neighbors never inject blotches across architectural corners!
+                    float compatW = 1.0f;
                     if (k > 0u) {
                         const float3 nq = worldNormal(Normal.Load(int3(q, 0)));
-                        if (dot(n, nq) < 0.72f) { continue; }
+                        const float ndCompat = dot(n, nq);
+                        if (ndCompat < 0.84f) { continue; }
+                        compatW = smoothstep(0.84f, 0.98f, ndCompat);
                     }
                     const uint yq = uint(rq.x + 0.5f) - 1u;
                     if (yq >= flags.y || yq == best[0] || yq == best[1] || yq == best[2]) { continue; }
-                    // Cap reservoir history at 8 samples so moving torches, spells & particle lights track immediately:
-                    const float mq = min(rq.z, 8.0f);
-                    const float wq = lightShare(yq, p, n) * rq.y * mq;
+                    // Cap reservoir history at 8 samples scaled by compatibility weight so moving lights track immediately:
+                    const float mq = min(rq.z, 8.0f) * compatW;
+                    const float pCompat = lightShare(yq, p, n);
+                    const float wq = pCompat * rq.y * mq;
                     M += mq;
                     if (wq <= 0.0f) { continue; }
                     wsum += wq;

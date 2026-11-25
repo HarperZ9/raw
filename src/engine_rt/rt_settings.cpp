@@ -6,6 +6,7 @@
 #include <cstring>
 #include <string>
 
+#include "rt_ai_packages.h"
 #include "rt_control.h"
 #include "rt_encounter_balance.h"
 #include "rt_magic_physics.h"
@@ -370,9 +371,10 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
     const std::string balMsg  = ApplyEncounterBalanceGmsts(img, refs);
     const std::string magMsg  = InitMagicPhysics(img, refs);
     const std::string progMsg = InitProgressionEconomy(img, refs);
-    char out[640];
-    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s | %s",
-                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str(), progMsg.c_str());
+    const std::string aiMsg   = InitAiPackages(img, refs);
+    char out[896];
+    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s | %s | %s",
+                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str(), progMsg.c_str(), aiMsg.c_str());
     return out;
 }
 
@@ -444,6 +446,7 @@ void WorldSimApplyLivePlanetaryGravity(float gravityMps2) {
 }
 
 void WorldSimRestoreDynamicSettings() {
+    ShutdownAiPackages();
     ShutdownProgressionEconomy();
     ShutdownMagicPhysics();
     RestoreEncounterBalanceGmsts();

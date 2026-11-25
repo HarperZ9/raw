@@ -87,6 +87,9 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
     const float xpbdStepMs = (xpbdSimReady && xpbdSim && xpbdSim->HasValidTiming() && std::isfinite(xpbdSim->GetLastStepMs()))
         ? xpbdSim->GetLastStepMs() : 0.0f;
     const uint32_t xpbdParticles = (xpbdSimReady && xpbdSim) ? xpbdSim->ParticleCount() : 0u;
+    const float overlayMs = (overlayHostReady && overlayHost && overlayHost->HasValidTiming() &&
+                             std::isfinite(overlayHost->GetLastOverlayMs()))
+        ? overlayHost->GetLastOverlayMs() : 0.0f;
 
     char jsonBuf[2048]{};
     const int n = std::snprintf(
@@ -109,6 +112,8 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"radianceGiMs\": %.4f,\n"
         "  \"xpbdStepMs\": %.4f,\n"
         "  \"xpbdParticles\": %u,\n"
+        "  \"overlayHudEnabled\": %s,\n"
+        "  \"overlayMs\": %.4f,\n"
         "  \"seasonSnowM\": %.4f,\n"
         "  \"seasonIceM\": %.4f,\n"
         "  \"skinTempC\": %.3f,\n"
@@ -133,6 +138,8 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         radianceGiMs,
         xpbdStepMs,
         xpbdParticles,
+        overlayHudEnabled ? "true" : "false",
+        overlayMs,
         seasonSnowM,
         seasonIceM,
         skinTempC,
@@ -452,6 +459,164 @@ bool D3D12Bridge::Impl::StepXpbdSimOnQueue(bool isInterior)
     return true;
 }
 
+void D3D12Bridge::Impl::RecordFrameTimingSample()
+{
+    if (qpcFreq == 0) {
+        LARGE_INTEGER f{};
+        QueryPerformanceFrequency(&f);
+        qpcFreq = f.QuadPart;
+    }
+    LARGE_INTEGER now{};
+    QueryPerformanceCounter(&now);
+    if (lastFrameQpc != 0 && qpcFreq > 0) {
+        const double dtMs = static_cast<double>(now.QuadPart - lastFrameQpc) * 1000.0 / static_cast<double>(qpcFreq);
+        const float clampedMs = std::clamp(static_cast<float>(dtMs), 0.1f, 250.0f);
+        lastFrameMs = clampedMs;
+        frameMsHistory[frameMsHistoryHead] = clampedMs;
+        frameMsHistoryHead = (frameMsHistoryHead + 1u) % 64u;
+        if (frameMsHistoryCount < 64u) {
+            ++frameMsHistoryCount;
+        }
+    }
+    lastFrameQpc = now.QuadPart;
+}
+
+void D3D12Bridge::Impl::PollOverlayHotkey()
+{
+    HWND fg = GetForegroundWindow();
+    DWORD fgPid = 0;
+    if (fg) {
+        GetWindowThreadProcessId(fg, &fgPid);
+    }
+    const bool appFocused = (fg != nullptr && fgPid == GetCurrentProcessId());
+    const bool f9Down = appFocused && ((GetAsyncKeyState(VK_F9) & 0x8000) != 0);
+    if (f9Down && !overlayPrevF9Down) {
+        overlayHudEnabled = !overlayHudEnabled;
+        log("[OverlayHud] F9 toggled GPU Telemetry HUD -> %s", overlayHudEnabled ? "ON" : "OFF");
+    }
+    overlayPrevF9Down = f9Down;
+}
+
+bool D3D12Bridge::Impl::ExecuteOverlayHudOnQueue(bool isInterior)
+{
+    // Strict zero-touch gate: when disabled, emit ZERO GPU commands and modify 0 pixels!
+    if (!overlayHudEnabled || !overlayHostReady || !overlayHost || !overlayHost->Ready() ||
+        !queue || !overlayList || !overlayFence || !overlayEvent ||
+        !colorOut.res12 || cfg.width == 0u || cfg.height == 0u) {
+        return false;
+    }
+    const D3D12_RESOURCE_DESC outDesc = colorOut.res12->GetDesc();
+    if ((outDesc.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) == 0) {
+        return false;
+    }
+
+    const uint32_t slot = overlaySlot;
+    if (overlaySlotVal[slot] > 0 && overlayFence->GetCompletedValue() < overlaySlotVal[slot]) {
+        overlayFence->SetEventOnCompletion(overlaySlotVal[slot], overlayEvent);
+        WaitForSingleObject(overlayEvent, 3000);
+    }
+    if (FAILED(overlayAlloc[slot]->Reset()) || FAILED(overlayList->Reset(overlayAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    LightingFluidInputs fi{};
+    if (pass) {
+        LightingPassFluidInputs(pass.get(), &fi);
+    }
+
+    float seasonSnowM = 0.0f;
+    float skinTempC = fi.ambientTempC;
+    float weatherSnow = 0.0f;
+    float cloudCover = 0.0f;
+    const void* uPtr = nullptr;
+    size_t uBytes = 0;
+    if (pass && LightingPassUniform(pass.get(), &uPtr, &uBytes) &&
+        uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+        const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+        if (std::isfinite(u->seasonThermal0[0])) seasonSnowM = std::max(0.0f, u->seasonThermal0[0]);
+        if (std::isfinite(u->seasonThermal0[3])) skinTempC = u->seasonThermal0[3];
+        if (std::isfinite(u->weather[1])) weatherSnow = u->weather[1];
+        if (std::isfinite(u->clouds[0])) cloudCover = u->clouds[0];
+    }
+
+    const FluidGpuTimings fluidTimings = fluidReady ? fluidSim.GetLastTimings() : FluidGpuTimings{};
+    const RadianceGpuTimings radTimings = radianceReady ? radianceHost.GetLastTimings() : RadianceGpuTimings{};
+
+    uint32_t gpuMeshlets = 0u;
+    for (const auto& kv : streamedTerrainGpu) {
+        gpuMeshlets += kv.second.meshletCount;
+    }
+
+    float orderedHist[64]{};
+    const uint32_t histCount = std::min(frameMsHistoryCount, 64u);
+    const uint32_t startIdx = (frameMsHistoryCount < 64u) ? 0u : frameMsHistoryHead;
+    for (uint32_t i = 0u; i < histCount; ++i) {
+        orderedHist[i] = frameMsHistory[(startIdx + i) % 64u];
+    }
+
+    const char* seasonName = "AUTUMN";
+    if (seasonSnowM > 0.05f || skinTempC < 0.0f) seasonName = "WINTER";
+    else if (skinTempC > 18.0f) seasonName = "SUMMER";
+    else if (skinTempC > 11.0f) seasonName = "SPRING";
+
+    const char* weatherName = "CLEAR";
+    if (isInterior) weatherName = "INDOOR";
+    else if (weatherSnow > 0.45f && fi.beaufortScale > 5.0f) weatherName = "BLIZZARD";
+    else if (weatherSnow > 0.15f) weatherName = "SNOW";
+    else if (fi.rainIntensity > 0.55f) weatherName = "STORM";
+    else if (fi.rainIntensity > 0.12f) weatherName = "RAIN";
+    else if (cloudCover > 0.65f) weatherName = "OVERCAST";
+
+    const char* landmark = isInterior ? "INTERIOR" : raw::worldgen::GetBiomeName(lastWorldStats.cameraBiome);
+    if (!landmark) landmark = "TAMRIEL";
+
+    OverlayTelemetrySnapshot snap{};
+    snap.fps            = (lastFrameMs > 0.05f) ? (1000.0f / lastFrameMs) : 0.0f;
+    snap.frameMs        = lastFrameMs;
+    snap.fireMs         = (fluidTimings.valid && std::isfinite(fluidTimings.fireStepMs)) ? fluidTimings.fireStepMs : 0.0f;
+    snap.waterMs        = (fluidTimings.valid && std::isfinite(fluidTimings.waterStepMs)) ? fluidTimings.waterStepMs : 0.0f;
+    snap.giMs           = (radTimings.valid && std::isfinite(radTimings.giPassMs)) ? radTimings.giPassMs : 0.0f;
+    snap.xpbdMs         = (xpbdSimReady && xpbdSim && xpbdSim->HasValidTiming()) ? xpbdSim->GetLastStepMs() : 0.0f;
+    snap.overlayMs      = overlayHost->HasValidTiming() ? overlayHost->GetLastOverlayMs() : 0.0f;
+    snap.seasonName     = seasonName;
+    snap.weatherName    = weatherName;
+    snap.tempC          = skinTempC;
+    snap.windMps        = isInterior ? 0.0f : std::clamp(0.6f + fi.beaufortScale * 2.2f, 0.0f, 35.0f);
+    snap.snowPackM      = isInterior ? 0.0f : seasonSnowM;
+    snap.cellX          = static_cast<int32_t>(std::floor(lighting.posAdjust[0] / 4096.0f));
+    snap.cellY          = static_cast<int32_t>(std::floor(lighting.posAdjust[1] / 4096.0f));
+    snap.landmarkName   = landmark;
+    snap.activeCells    = lastWorldStats.activeChunkCount;
+    snap.activeMeshlets = (gpuMeshlets > 0u) ? gpuMeshlets : lastWorldStats.totalMeshlets;
+    snap.lruHitRatePct  = 0.0f;
+    snap.giEnabled      = radianceReady && radianceHost.ScreenGIReady();
+    snap.fluidEnabled   = fluidReady && fluidSim.Ready();
+    snap.xpbdEnabled    = xpbdSimReady && xpbdSim && xpbdSim->Ready();
+    snap.historyFrameMs = orderedHist;
+    snap.historyCount   = histCount;
+
+    OverlayHudData hud{};
+    hud.enabled    = true;
+    hud.originX    = 16u;
+    hud.originY    = 16u;
+    hud.glyphScale = (cfg.height >= 1800u) ? 2u : 1u;
+    hud.opacity    = 0.86f;
+    hud.srgbOutput = (outDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
+                      outDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB);
+    FormatEngineTelemetryLines(snap, hud);
+
+    overlayHost->RecordOverlay(overlayList.Get(), colorOut.res12.Get(),
+                               D3D12_RESOURCE_STATE_COMMON, cfg.width, cfg.height, hud);
+
+    if (FAILED(overlayList->Close())) return false;
+    ID3D12CommandList* lists[1] = {overlayList.Get()};
+    queue->ExecuteCommandLists(1, lists);
+    queue->Signal(overlayFence.Get(), ++overlayFenceVal);
+    overlaySlotVal[slot] = overlayFenceVal;
+    overlaySlot = (slot + 1u) % kRing;
+    return true;
+}
+
 bool D3D12Bridge::Impl::CpuWait(uint64_t value, DWORD timeoutMs)
 {
     return WaitFence(fence12.Get(), value, cpuEvent, timeoutMs);
@@ -659,6 +824,10 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     m->HarvestPassTimings();   // recording may have retired the frame before
     m->nextValue = v2 + 1;
 
+    // Sample frame delta into 64-frame sparkline history and poll debounced opt-in F9 hotkey (default OFF).
+    m->RecordFrameTimingSample();
+    m->PollOverlayHotkey();
+
     // Determine whether live RawTerrainWorld.hlsl multi-biome rendering runs after LightingPass this frame.
     const bool isInterior = m->lighting.hasEngineCell
         ? m->lighting.isInterior
@@ -671,7 +840,8 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     const bool runFluid = m->cfg.lightingPass && m->lighting.valid && m->fluidReady && m->fluidSim.Ready();
     const bool runRadiance = m->cfg.lightingPass && m->lighting.valid && m->radianceReady && m->radianceHost.ScreenGIReady();
     const bool runXpbd = m->cfg.lightingPass && m->lighting.valid && m->xpbdSimReady && m->xpbdSim && m->xpbdSim->Ready();
-    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd;
+    const bool runOverlay = m->overlayHudEnabled && m->overlayHostReady && m->overlayHost && m->overlayHost->Ready();
+    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runOverlay;
     auto runPostLightingPasses = [&]() -> bool {
         if (!hasPostWork) return true;
         if (runTerrain) {
@@ -748,6 +918,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         }
         if (runXpbd) {
             m->StepXpbdSimOnQueue(isInterior);
+        }
+        if (runOverlay) {
+            m->ExecuteOverlayHudOnQueue(isInterior);
         }
         return SUCCEEDED(m->queue->Signal(m->fence12.Get(), v2));
     };

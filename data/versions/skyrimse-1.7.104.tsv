@@ -5733,3 +5733,8 @@ fn:Barter::ComputePriceFactor	function	0x420BD0	high	binary disassembly reads fB
 fn:Crafting::ComputeEnchantingSkillFactor	function	0x421850	high	binary disassembly reads fEnchantingSkillFactor(0x20AAA48=3.0) fEnchantingSkillCostScale(0x20AAA90=0.5) (SkyrimSE 1.7.104)
 fn:Crafting::ComputeSmithingCondition	function	0x421A00	high	binary disassembly reads fSmithingConditionFactor(0x20AAB50=0.5825) fSmithingWeaponMax(0x20AAB68=10) fSmithingArmorMax(0x20AAB80=10) (SkyrimSE 1.7.104)
 fn:Actor::ComputeFallDamage	function	0x6BD570	high	binary disassembly reads fJumpFallHeightMin(0x20A8870=600) fJumpFallHeightMult(0x20A88A0=0.1) fJumpFallHeightExponent(0x20A8888=1.65) (SkyrimSE 1.7.104)
+fn:CombatAI::FlankingAngleCalc	function	0x899E80	high	binary disassembly reads fCombatFlankingAngleOffset(0x20A2128=22.5) fCombatFlankingAngleOffsetMax(0x20A2140=30) fCombatFlankingMaxTurnAngle(0x20A2308=45) (SkyrimSE 1.7.104)
+fn:CombatAI::RangedAimDispersion	function	0x55D650	high	binary disassembly reads fCombatRangedAimVariance(0x20A1C00=0.9) at 0x55D818 (SkyrimSE 1.7.104)
+fn:CombatAI::SearchRadiusBounds	function	0x81E070	high	binary disassembly reads fCombatSearchInteriorRadiusMin(0x20A3A90=768) fCombatSearchExteriorRadiusMin(0x20A3A60=1280) at 0x81E638/0x81E64A (SkyrimSE 1.7.104)
+fn:AI::FollowerDoorSpacing	function	0x684740	high	binary disassembly reads fFollowerSpacingAtDoors(0x20A0DD8=200) at 0x684887 (SkyrimSE 1.7.104)
+fn:AI::DetectionViewConeEval	function	0x6A2830	high	binary disassembly reads fDetectionViewCone(0x209EE28=190) at 0x6A28CB (SkyrimSE 1.7.104)

@@ -42,6 +42,7 @@ int RunEsmModelResolverTests(void (*checkFn)(bool, const char*));
 int RunEsmWorldMetaTests(void (*checkFn)(bool, const char*));
 int RunTamrielStreamerTests(void (*checkFn)(bool, const char*));
 int RunWorldPhysicsTests(void (*checkFn)(bool, const char*));
+int RunNavMeshAiTests(void (*checkFn)(bool, const char*));
 int RunBsaArchiveTests(void (*checkFn)(bool, const char*));
 int RunNifLoaderTests(void (*checkFn)(bool, const char*));
 int RunDdsDecoderTests(void (*checkFn)(bool, const char*));
@@ -66,6 +67,8 @@ int RunLiveConfigTests(void (*checkFn)(bool, const char*));
 int RunEncounterBalanceTests(void (*checkFn)(bool, const char*));
 int RunMagicPhysicsTests(void (*checkFn)(bool, const char*));
 int RunProgressionEconomyTests(void (*checkFn)(bool, const char*));
+int RunAiPackagesTests(void (*checkFn)(bool, const char*));
+int RunNpcBehaviorTests(void (*checkFn)(bool, const char*));
 int RunCrashForensicsTests(void (*checkFn)(bool, const char*));
 int RunSavePapyrusGuardTests(void (*checkFn)(bool, const char*));
 }
@@ -1037,6 +1040,8 @@ int main() {
     raw::rt::RunEncounterBalanceTests(Check);
     raw::rt::RunMagicPhysicsTests(Check);
     raw::rt::RunProgressionEconomyTests(Check);
+    raw::rt::RunAiPackagesTests(Check);
+    raw::rt::RunNpcBehaviorTests(Check);
     raw::rt::RunCrashForensicsTests(Check);
     raw::rt::RunSavePapyrusGuardTests(Check);
     raw::worldgen::RunEsmWorldLoaderTests(Check);
@@ -1044,6 +1049,7 @@ int main() {
     raw::worldgen::RunEsmWorldMetaTests(Check);
     raw::worldgen::RunTamrielStreamerTests(Check);
     raw::worldgen::RunWorldPhysicsTests(Check);
+    raw::worldgen::RunNavMeshAiTests(Check);
     raw::worldgen::RunBsaArchiveTests(Check);
     raw::worldgen::RunNifLoaderTests(Check);
     raw::worldgen::RunDdsDecoderTests(Check);

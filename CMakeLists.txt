@@ -692,13 +692,25 @@ if(RAW_ENGINE_DIR)
         DEPENDS ${RAW_OVERLAY_HLSL}
         COMMENT "dxc: Zero-Dep GPU Compute Telemetry HUD & Sparkline Overlay SM${RAW_SHADER_MODEL} -> DXIL header"
         VERBATIM)
+    set(RAW_GPU_CULL_HLSL ${RAW_SHARE_HLSL}/RawGpuCull.hlsl)
+    set(RAW_GPU_CULL_HEADERS
+        ${RAW_ENGINE_GEN}/raw_hiz_reduce_cs.h
+        ${RAW_ENGINE_GEN}/raw_cull_instances_cs.h)
+    add_custom_command(
+        OUTPUT ${RAW_GPU_CULL_HEADERS}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_hiz_reduce ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_hiz_reduce_cs.h -Vn kDxil_raw_hiz_reduce ${RAW_GPU_CULL_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_cull_instances ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_cull_instances_cs.h -Vn kDxil_raw_cull_instances ${RAW_GPU_CULL_HLSL}
+        DEPENDS ${RAW_GPU_CULL_HLSL}
+        COMMENT "dxc: GPU-Driven Conservative Hi-Z Pyramid & 65k-Instance Culler SM${RAW_SHADER_MODEL} -> DXIL headers"
+        VERBATIM)
     target_sources(raw_d3d12_bridge PRIVATE ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h ${RAW_ENGINE_GEN}/raw_subdiv_cs.h
                    ${RAW_ENGINE_GEN}/raw_terrain_as.h ${RAW_ENGINE_GEN}/raw_terrain_ms.h ${RAW_ENGINE_GEN}/raw_terrain_vs.h ${RAW_ENGINE_GEN}/raw_terrain_ps.h
-                   ${RAW_FLUID_HEADERS} ${RAW_RC_HEADERS} ${RAW_XPBD_HEADERS} ${RAW_OVERLAY_HEADERS}
+                   ${RAW_FLUID_HEADERS} ${RAW_RC_HEADERS} ${RAW_XPBD_HEADERS} ${RAW_OVERLAY_HEADERS} ${RAW_GPU_CULL_HEADERS}
                    src/d3d12_bridge/RawAssetBridge.cpp src/d3d12_bridge/RawTextureBridge.cpp src/d3d12_bridge/RawProceduralLib.cpp
-                   src/d3d12_bridge/RawMeshHost.cpp src/d3d12_bridge/RawFluidSimHost.cpp src/d3d12_bridge/RawFluidCompositeHost.cpp src/d3d12_bridge/RawRadianceHost.cpp src/d3d12_bridge/RawXpbdSimHost.cpp src/d3d12_bridge/RawOverlayHost.cpp src/d3d12_bridge/RawOverrideRegistry.cpp src/d3d12_bridge/RawBindlessHeap.cpp
+                   src/d3d12_bridge/RawMeshHost.cpp src/d3d12_bridge/RawFluidSimHost.cpp src/d3d12_bridge/RawFluidCompositeHost.cpp src/d3d12_bridge/RawRadianceHost.cpp src/d3d12_bridge/RawXpbdSimHost.cpp src/d3d12_bridge/RawOverlayHost.cpp src/d3d12_bridge/RawGpuCullHost.cpp src/d3d12_bridge/RawOverrideRegistry.cpp src/d3d12_bridge/RawBindlessHeap.cpp
                    src/d3d12_bridge/RawAsyncCompute.cpp src/d3d12_bridge/RawIndirectBatch.cpp src/d3d12_bridge/RawAssetStream.cpp
-                   src/worldgen/RawTerrainGen.cpp src/worldgen/RawHydrologyGen.cpp src/worldgen/RawBiomeWorld.cpp src/worldgen/RawMeshPipeline.cpp src/worldgen/RawFloraEngine.cpp src/worldgen/RawWeatherSim.cpp src/worldgen/RawWorldShowcase.cpp src/worldgen/RawEsmWorldLoader.cpp src/worldgen/RawEsmModelResolver.cpp src/worldgen/RawEsmNpcWeatherLoader.cpp src/worldgen/RawTamrielWorldStreamer.cpp src/worldgen/RawWorldPhysics.cpp src/worldgen/RawBsaArchive.cpp src/worldgen/RawNifLoader.cpp src/worldgen/RawDdsDecoder.cpp src/worldgen/RawDestructionEngine.cpp
+                   src/worldgen/RawTerrainGen.cpp src/worldgen/RawHydrologyGen.cpp src/worldgen/RawBiomeWorld.cpp src/worldgen/RawMeshPipeline.cpp src/worldgen/RawFloraEngine.cpp src/worldgen/RawWeatherSim.cpp src/worldgen/RawWorldShowcase.cpp src/worldgen/RawEsmWorldLoader.cpp src/worldgen/RawEsmModelResolver.cpp src/worldgen/RawEsmNpcWeatherLoader.cpp src/worldgen/RawTamrielWorldStreamer.cpp src/worldgen/RawWorldPhysics.cpp src/worldgen/RawNavMeshAi.cpp src/worldgen/RawBsaArchive.cpp src/worldgen/RawNifLoader.cpp src/worldgen/RawDdsDecoder.cpp src/worldgen/RawDestructionEngine.cpp
                    src/engine_rt/raw_job_system.cpp
                    src/materials/RawMaterialLib.cpp src/materials/RawAssetForge.cpp src/materials/RawTextureForge.cpp
                    src/assets/RawOverrideRegistry.cpp src/assets/RawAssetScaffold.cpp)
@@ -747,6 +759,11 @@ if(RAW_ENGINE_DIR)
     target_compile_definitions(test_overlay_gpu PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_link_libraries(test_overlay_gpu PRIVATE d3d12 dxgi dxguid)
     set_target_properties(test_overlay_gpu PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
+    add_executable(test_gpu_cull tests/test_gpu_cull.cpp src/d3d12_bridge/RawGpuCullHost.cpp ${RAW_GPU_CULL_HEADERS})
+    target_include_directories(test_gpu_cull PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge)
+    target_compile_definitions(test_gpu_cull PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(test_gpu_cull PRIVATE d3d12 dxgi dxguid)
+    set_target_properties(test_gpu_cull PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
     add_executable(test_texture_atlas_gpu
         tests/test_texture_atlas_gpu.cpp
         src/d3d12_bridge/RawMeshHost.cpp
@@ -802,6 +819,7 @@ if(RAW_ENGINE_DIR)
         src/d3d12_bridge/RawFluidCompositeHost.cpp
         src/d3d12_bridge/RawRadianceHost.cpp
         src/d3d12_bridge/RawXpbdSimHost.cpp
+        src/d3d12_bridge/RawOverlayHost.cpp
         src/materials/RawTextureForge.cpp
         src/audio/RawAudioDsp.cpp
         src/audio/RawAudioOutput.cpp
@@ -815,6 +833,7 @@ if(RAW_ENGINE_DIR)
         src/worldgen/RawDestructionEngine.cpp
         src/worldgen/RawEsmWorldLoader.cpp
         src/worldgen/RawEsmModelResolver.cpp
+        src/worldgen/RawEsmNpcWeatherLoader.cpp
         src/worldgen/RawTamrielWorldStreamer.cpp
         src/worldgen/RawWorldPhysics.cpp
         src/worldgen/RawBsaArchive.cpp
@@ -825,6 +844,7 @@ if(RAW_ENGINE_DIR)
         ${RAW_FLUID_HEADERS}
         ${RAW_RC_HEADERS}
         ${RAW_XPBD_HEADERS}
+        ${RAW_OVERLAY_HEADERS}
         ${RAW_AGX_DISPLAY_HEADERS})
     target_include_directories(raw_engine_viewer PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge ${CMAKE_CURRENT_SOURCE_DIR}/src/materials ${CMAKE_CURRENT_SOURCE_DIR}/src/worldgen ${CMAKE_CURRENT_SOURCE_DIR}/src/audio ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_rt)
     target_compile_definitions(raw_engine_viewer PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -1063,6 +1083,8 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_encounter_balance.cpp
         src/engine_rt/rt_magic_physics.cpp
         src/engine_rt/rt_progression_economy.cpp
+        src/engine_rt/rt_ai_packages.cpp
+        src/engine_rt/rt_npc_behavior.cpp
         src/engine_rt/rt_crash_forensics.cpp
         src/engine_rt/rt_save_papyrus_guard.cpp
         src/audio/RawAudioDsp.cpp
@@ -1129,6 +1151,8 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_encounter_balance.cpp
         src/engine_rt/rt_magic_physics.cpp
         src/engine_rt/rt_progression_economy.cpp
+        src/engine_rt/rt_ai_packages.cpp
+        src/engine_rt/rt_npc_behavior.cpp
         src/engine_rt/rt_crash_forensics.cpp
         src/engine_rt/rt_save_papyrus_guard.cpp
         src/engine_rt/raw_slab_allocator.cpp
@@ -1148,6 +1172,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/worldgen/RawEsmNpcWeatherLoader.cpp
         src/worldgen/RawTamrielWorldStreamer.cpp
         src/worldgen/RawWorldPhysics.cpp
+        src/worldgen/RawNavMeshAi.cpp
         src/worldgen/RawBsaArchive.cpp
         src/worldgen/RawNifLoader.cpp
         src/worldgen/RawDdsDecoder.cpp
@@ -1174,6 +1199,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         tests/test_esm_world_meta.cpp
         tests/test_tamriel_streamer.cpp
         tests/test_world_physics.cpp
+        tests/test_navmesh_ai.cpp
         tests/test_combat_impact.cpp
         tests/test_bsa_archive.cpp
         tests/test_core_runtime.cpp
@@ -1187,6 +1213,8 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         tests/test_encounter_balance.cpp
         tests/test_magic_physics.cpp
         tests/test_progression_economy.cpp
+        tests/test_ai_packages.cpp
+        tests/test_npc_behavior.cpp
         tests/test_crash_forensics.cpp
         tests/test_save_papyrus_guard.cpp
         tests/test_audio_dsp.cpp
@@ -1196,7 +1224,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
     target_include_directories(ce_runtime_check PRIVATE src/engine_rt src/d3d12_bridge src/ce_runtime src/worldgen src/audio src/materials src/assets src/pipeline src/ui "${RAW_ZYDIS_ROOT}/include")
-    target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD RAW_SIM_PURE_TEST=1 RAW_WEATHER_SIM_NO_MAIN=1 RAW_GAMEPLAY_MECHANICS_NO_MAIN=1 RAW_STEALTH_SURVIVAL_NO_MAIN=1 RAW_COMBAT_IMPACT_NO_MAIN=1 RAW_ECONOMY_LEDGER_NO_MAIN=1 RAW_MOVEMENT_COMBAT_NO_MAIN=1 RAW_LIVE_CONFIG_NO_MAIN=1 RAW_ENCOUNTER_BALANCE_NO_MAIN=1 RAW_MAGIC_PHYSICS_NO_MAIN=1 RAW_PROGRESSION_ECONOMY_NO_MAIN=1)
+    target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD RAW_SIM_PURE_TEST=1 RAW_WEATHER_SIM_NO_MAIN=1 RAW_GAMEPLAY_MECHANICS_NO_MAIN=1 RAW_STEALTH_SURVIVAL_NO_MAIN=1 RAW_COMBAT_IMPACT_NO_MAIN=1 RAW_ECONOMY_LEDGER_NO_MAIN=1 RAW_MOVEMENT_COMBAT_NO_MAIN=1 RAW_LIVE_CONFIG_NO_MAIN=1 RAW_ENCOUNTER_BALANCE_NO_MAIN=1 RAW_MAGIC_PHYSICS_NO_MAIN=1 RAW_PROGRESSION_ECONOMY_NO_MAIN=1 RAW_AI_PACKAGES_NO_MAIN=1)
     target_link_libraries(ce_runtime_check PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB} windowscodecs ole32 dxgi)
 
     # raw_forge_cli: standalone C++23 first-principles authoring, batch baking & validation CLI
@@ -1213,6 +1241,9 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/worldgen/RawWorldShowcase.cpp
         src/worldgen/RawEsmWorldLoader.cpp
         src/worldgen/RawEsmModelResolver.cpp
+        src/worldgen/RawEsmNpcWeatherLoader.cpp
+        src/worldgen/RawTamrielWorldStreamer.cpp
+        src/worldgen/RawWorldPhysics.cpp
         src/worldgen/RawBsaArchive.cpp
         src/worldgen/RawNifLoader.cpp
         src/worldgen/RawDdsDecoder.cpp

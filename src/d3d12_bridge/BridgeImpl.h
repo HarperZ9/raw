@@ -9,6 +9,7 @@
 #include "RawFluidCompositeHost.h"
 #include "RawRadianceHost.h"
 #include "RawXpbdSimHost.h"
+#include "RawOverlayHost.h"
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
@@ -76,10 +77,14 @@ struct D3D12Bridge::Impl
     RawFluidCompositeHost    fluidComposite; // Live GPU 64^3 NS Fire/Smoke volumetric compositor onto colorOut
     RawRadianceHost          radianceHost; // Live GPU 4-cascade penumbra-exact Radiance Cascades Screen GI
     std::unique_ptr<RawXpbdSimHost> xpbdSim; // Live GPU XPBD soft-body/hair/cloth/bush-bone solver
+    std::unique_ptr<RawOverlayHost> overlayHost; // Opt-in F9 <0.02ms GPU Compute Telemetry & Sparkline HUD
     bool                     fluidReady = false;
     bool                     radianceReady = false;
     bool                     xpbdSimReady = false;
     bool                     xpbdChainsUploaded = false;
+    bool                     overlayHostReady = false;
+    bool                     overlayHudEnabled = false; // Strictly OFF by default (zero viewport clutter; F9 toggles)
+    bool                     overlayPrevF9Down = false;
     ComPtr<ID3D12CommandAllocator>    fluidAlloc[kRing];
     ComPtr<ID3D12GraphicsCommandList> fluidList;
     ComPtr<ID3D12Fence>               fluidFence;
@@ -109,6 +114,19 @@ struct D3D12Bridge::Impl
     uint32_t                          xpbdSlot = 0;
     uint64_t                          xpbdStepFrames = 0;
     uint64_t                          xpbdLastMs = 0;
+    ComPtr<ID3D12CommandAllocator>    overlayAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList> overlayList;
+    ComPtr<ID3D12Fence>               overlayFence;
+    HANDLE                            overlayEvent = nullptr;
+    uint64_t                          overlayFenceVal = 0;
+    uint64_t                          overlaySlotVal[kRing] = {};
+    uint32_t                          overlaySlot = 0;
+    float                             frameMsHistory[64] = {};
+    uint32_t                          frameMsHistoryHead = 0;
+    uint32_t                          frameMsHistoryCount = 0;
+    int64_t                           lastFrameQpc = 0;
+    int64_t                           qpcFreq = 0;
+    float                             lastFrameMs = 0.0f;
     std::string                       telemetryOutDir;
     bool InitFluidSim();
     void ShutdownFluidSim();
@@ -119,6 +137,11 @@ struct D3D12Bridge::Impl
     bool InitXpbdSim();
     void ShutdownXpbdSim();
     bool StepXpbdSimOnQueue(bool isInterior);
+    bool InitOverlayHost();
+    void ShutdownOverlayHost();
+    void PollOverlayHotkey();
+    void RecordFrameTimingSample();
+    bool ExecuteOverlayHudOnQueue(bool isInterior);
     void EmitLiveTelemetry(bool rtActive);
     std::vector<RawMeshGpuAsset> proceduralMeshes; // Zero-external-asset built-in procedural GPU meshlet library
     raw::worldgen::RawWorldShowcase worldShowcase; // Live beyond-Tamriel 6-biome procedural frontier streaming manager

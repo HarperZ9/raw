@@ -8,13 +8,14 @@
 //   Right-Mouse Drag    : Smooth Freelook Yaw / Pitch
 //   P                   : Toggle Playable Grounded Walk Mode <-> Free-Fly Camera (RawWorldPhysics!)
 //   C / Left-Click      : Fire Real Physics Raycast Against .NIF Buildings & Terrain (+ Destruction Burst!)
+//   F9 / H              : Toggle Live GPU Telemetry HUD & 64-Sample Frame-Time Sparkline (RawOverlayHost!)
 //   1 / 2 / 3 / 4       : Live Season Switch (Spring / Summer / Autumn / Winter)
 //   F                   : Toggle Live 64^3 3D Navier-Stokes Fire + Smoke
 //   G                   : Toggle Live 4-Cascade Radiance Cascades Screen GI
 //   B                   : Cycle/Teleport Across All 6 Procedural Frontier Biomes
 //   L                   : Teleport Across 4 Iconic Tamriel Landmarks (Riverwood / Whiterun / High Hrothgar / Solitude)
 //   T                   : Cycle Time-of-Day Presets (Dawn 6h / Noon 13h / Golden Hour 18.5h / Midnight Aurora 23.5h)
-//   W                   : Cycle Weather Presets (Clear / Overcast / Rainstorm / Blizzard)
+//   W                   : Cycle Weather Presets (Frontier: Clear/Overcast/Rain/Blizzard | Tamriel: Real Skyrim.esm WTHR!)
 //   A                   : Toggle Live 48kHz WASAPI Ambient Soundscape (Interactive Mode Only)
 //   R                   : Fracture Fresh 20-Shard NordicStonePillar (60Hz Rigid-Body Debris!)
 //   M                   : Toggle World Mode (Frontier Biomes <-> Multi-Cell Streaming Tamriel ESM+NIF)
@@ -54,12 +55,14 @@
 #include "RawFluidCompositeHost.h"
 #include "RawRadianceHost.h"
 #include "RawXpbdSimHost.h"
+#include "RawOverlayHost.h"
 #include "RawWeatherSim.h"
 #include "RawWorldShowcase.h"
 #include "RawDestructionEngine.h"
 #include "RawEsmWorldLoader.h"
 #include "RawEsmModelResolver.h"
 #include "RawTamrielWorldStreamer.h"
+#include "RawEsmNpcWeatherLoader.h"
 #include "RawWorldPhysics.h"
 #include "RawHydrologyGen.h"
 #include "RawAudioOutput.h"
@@ -388,11 +391,17 @@ public:
         if (!m_xpbdOk) {
             std::printf("[Viewer] RawXpbdSimHost warning: %s\n", err.c_str());
         }
+        err.clear();
+        m_overlayOk = m_overlayHost.Init(m_dev.Get(), &err);
+        if (!m_overlayOk) {
+            std::printf("[Viewer] RawOverlayHost warning: %s\n", err.c_str());
+        }
         UINT64 tsFreq = 0;
         if (SUCCEEDED(m_queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
-            if (m_fluidOk) m_fluidSim.SetTimestampFrequency(tsFreq);
-            if (m_radOk)   m_radianceHost.SetTimestampFrequency(tsFreq);
-            if (m_xpbdOk)  m_xpbdSim.SetTimestampFrequency(tsFreq);
+            if (m_fluidOk)   m_fluidSim.SetTimestampFrequency(tsFreq);
+            if (m_radOk)     m_radianceHost.SetTimestampFrequency(tsFreq);
+            if (m_xpbdOk)    m_xpbdSim.SetTimestampFrequency(tsFreq);
+            if (m_overlayOk) m_overlayHost.SetTimestampFrequency(tsFreq);
         }
 
         // Enable real hydraulic & thermal erosion + D8 rivers for procedural frontier terrain!
@@ -441,6 +450,7 @@ public:
         if (w == m_width && h == m_height) return;
         WaitGpuIdle();
         for (UINT i = 0; i < kBackBufferCount; ++i) m_backBuffers[i].Reset();
+        m_displayLdr.Reset();
         m_hdrColor.Reset();
         m_depthIn.Reset();
         if (SUCCEEDED(m_swapChain->ResizeBuffers(kBackBufferCount, w, h, DXGI_FORMAT_R8G8B8A8_UNORM, 0))) {
@@ -509,8 +519,25 @@ public:
 
     void CycleWeatherPreset()
     {
+        if (m_mode == WorldMode::RiverwoodEsm && !m_esmWeatherCycle.empty()) {
+            m_esmWeatherIdx = (m_esmWeatherIdx + 1u) % static_cast<uint32_t>(m_esmWeatherCycle.size());
+            ApplyActiveEsmWeather();
+            return;
+        }
         ApplyWeatherPreset(static_cast<WeatherPreset>((static_cast<uint8_t>(m_weatherPreset) + 1u) % 4u));
     }
+
+    void ToggleHud() { m_hudEnabled = !m_hudEnabled; }
+
+    const char* ActiveWeatherDisplayName() const
+    {
+        if (m_mode == WorldMode::RiverwoodEsm && !m_activeEsmWeatherEdid.empty()) {
+            return m_activeEsmWeatherEdid.c_str();
+        }
+        return WeatherPresetName(m_weatherPreset);
+    }
+
+    size_t LoadedEsmWeatherCount() const { return m_esmWorldMeta.weathers.size(); }
 
     bool TeleportToTamrielLandmark(uint32_t idx)
     {
@@ -787,6 +814,10 @@ public:
         if (!m_ready) return false;
         const float dtClamped = std::clamp(dtSec, 1.0e-4f, 0.05f);
         m_simTimeSec += dtClamped;
+        m_lastFrameMs = dtClamped * 1000.0f;
+        m_frameMsRing[m_frameMsRingPos % 64u] = m_lastFrameMs;
+        ++m_frameMsRingPos;
+        if (m_frameMsCount < 64u) ++m_frameMsCount;
 
         // 1. Step seasonal weather simulation (and push live acoustics/weather to optional WASAPI audio).
         m_weatherSim.Step(dtClamped, {m_camPos[0], m_camPos[1], m_camPos[2]});
@@ -955,7 +986,7 @@ public:
             }
         }
 
-        // 8. Execute Live 4-Cascade Radiance Cascades Screen GI + RawAgxDisplay.hlsl fullscreen pass!
+        // 8. Execute Live 4-Cascade Radiance Cascades Screen GI + RawAgxDisplay + RawOverlayHost HUD + Copy to SwapChain!
         const UINT dispSlot = static_cast<UINT>(m_frameCount % kRingFrames);
         WaitFenceVal(m_dispFenceVal[dispSlot]);
         if (FAILED(m_dispAlloc[dispSlot]->Reset()) || FAILED(m_dispCmd->Reset(m_dispAlloc[dispSlot].Get(), nullptr))) {
@@ -968,10 +999,6 @@ public:
         }
         m_dispCmd->SetPipelineState(m_agxPso.Get());
 
-        const UINT bbIdx = m_swapChain ? m_swapChain->GetCurrentBackBufferIndex() : 0u;
-        ID3D12Resource* dispTarget = m_swapChain ? m_backBuffers[bbIdx].Get() : m_headlessDisplay.Get();
-        const D3D12_RESOURCE_STATES dispRestState = m_swapChain ? D3D12_RESOURCE_STATE_PRESENT : D3D12_RESOURCE_STATE_COMMON;
-
         AgxDisplayCB dcb{};
         FillAgxSkyConstants(dcb);
         dcb.skyHorizonFrame[3] = float(m_frameCount & 1023ull);
@@ -979,7 +1006,7 @@ public:
 
         D3D12_RESOURCE_BARRIER bDispIn[2] = {
             MakeBarrier(m_hdrColor.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
-            MakeBarrier(dispTarget, dispRestState, D3D12_RESOURCE_STATE_RENDER_TARGET)
+            MakeBarrier(m_displayLdr.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_RENDER_TARGET)
         };
         m_dispCmd->ResourceBarrier(2, bDispIn);
 
@@ -987,7 +1014,7 @@ public:
         D3D12_RECT sc{0, 0, static_cast<LONG>(m_width), static_cast<LONG>(m_height)};
         m_dispCmd->RSSetViewports(1, &vp);
         m_dispCmd->RSSetScissorRects(1, &sc);
-        D3D12_CPU_DESCRIPTOR_HANDLE rtv = RtvHandle(bbIdx);
+        D3D12_CPU_DESCRIPTOR_HANDLE rtv = RtvHandle(kBackBufferCount + 1u);
         m_dispCmd->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
 
         ID3D12DescriptorHeap* heaps[1] = {m_srvHeap.Get()};
@@ -1000,9 +1027,36 @@ public:
 
         D3D12_RESOURCE_BARRIER bDispOut[2] = {
             MakeBarrier(m_hdrColor.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
-            MakeBarrier(dispTarget, D3D12_RESOURCE_STATE_RENDER_TARGET, dispRestState)
+            MakeBarrier(m_displayLdr.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COMMON)
         };
         m_dispCmd->ResourceBarrier(2, bDispOut);
+
+        // Live GPU Compute Telemetry & 64-Sample Sparkline HUD (RawOverlayHost, F9 / H toggleable)!
+        if (m_overlayOk && m_hudEnabled) {
+            OverlayHudData hud{};
+            BuildOverlayHud(wGpu, hud);
+            m_lastHudRect = ComputeOverlayPanelRect(hud, m_width, m_height);
+            m_overlayHost.RecordOverlay(m_dispCmd.Get(), m_displayLdr.Get(), D3D12_RESOURCE_STATE_COMMON,
+                                        m_width, m_height, hud);
+        }
+
+        // In interactive SwapChain mode, copy m_displayLdr -> current SwapChain backbuffer cleanly!
+        if (m_swapChain) {
+            const UINT bbIdx = m_swapChain->GetCurrentBackBufferIndex();
+            ID3D12Resource* bb = m_backBuffers[bbIdx].Get();
+            D3D12_RESOURCE_BARRIER bCopyIn[2] = {
+                MakeBarrier(m_displayLdr.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE),
+                MakeBarrier(bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST)
+            };
+            m_dispCmd->ResourceBarrier(2, bCopyIn);
+            m_dispCmd->CopyResource(bb, m_displayLdr.Get());
+            D3D12_RESOURCE_BARRIER bCopyOut[2] = {
+                MakeBarrier(m_displayLdr.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON),
+                MakeBarrier(bb, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT)
+            };
+            m_dispCmd->ResourceBarrier(2, bCopyOut);
+        }
+
         if (FAILED(m_dispCmd->Close())) return false;
 
         ID3D12CommandList* dispLists[1] = {m_dispCmd.Get()};
@@ -1036,12 +1090,15 @@ public:
         bool     xpbdActive       = false;
         float    xpbdStepMs       = 0.0f;
         uint32_t xpbdParticles    = 0u;
+        bool     overlayActive    = false;
+        float    overlayMs        = 0.0f;
+        uint32_t hudNonZeroPx     = 0u;
         uint32_t biomesFound      = 0u;
     };
 
     bool ReadbackHeadlessAudit(HeadlessAudit* out)
     {
-        if (!out || !m_headlessDisplay || !m_hdrColor) return false;
+        if (!out || !m_displayLdr || !m_hdrColor) return false;
         WaitGpuIdle();
         out->drawnMeshlets = m_lastDrawnMeshlets;
         out->activeShards = m_activeShards;
@@ -1056,6 +1113,8 @@ public:
         out->xpbdActive = m_xpbdOk && m_xpbdUploaded;
         out->xpbdStepMs = m_xpbdSim.HasValidTiming() ? m_xpbdSim.GetLastStepMs() : 0.0f;
         out->xpbdParticles = m_xpbdSim.ParticleCount();
+        out->overlayActive = m_overlayOk && m_hudEnabled;
+        out->overlayMs = m_overlayHost.HasValidTiming() ? m_overlayHost.GetLastOverlayMs() : 0.0f;
 
         const UINT hdrPitch  = (m_width * 8u + 255u) & ~255u;
         const UINT dispPitch = (m_width * 4u + 255u) & ~255u;
@@ -1077,7 +1136,7 @@ public:
         m_cmd->Reset(m_alloc[0].Get(), nullptr);
         D3D12_RESOURCE_BARRIER bIn[2] = {
             MakeBarrier(m_hdrColor.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE),
-            MakeBarrier(m_headlessDisplay.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE)
+            MakeBarrier(m_displayLdr.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE)
         };
         m_cmd->ResourceBarrier(2, bIn);
 
@@ -1088,12 +1147,12 @@ public:
 
         D3D12_TEXTURE_COPY_LOCATION dDst{}; dDst.pResource = rbDisp.Get(); dDst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
         dDst.PlacedFootprint.Footprint = {DXGI_FORMAT_R8G8B8A8_UNORM, m_width, m_height, 1, dispPitch};
-        D3D12_TEXTURE_COPY_LOCATION dSrc{}; dSrc.pResource = m_headlessDisplay.Get(); dSrc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        D3D12_TEXTURE_COPY_LOCATION dSrc{}; dSrc.pResource = m_displayLdr.Get(); dSrc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
         m_cmd->CopyTextureRegion(&dDst, 0, 0, 0, &dSrc, nullptr);
 
         D3D12_RESOURCE_BARRIER bOut[2] = {
             MakeBarrier(m_hdrColor.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON),
-            MakeBarrier(m_headlessDisplay.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON)
+            MakeBarrier(m_displayLdr.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON)
         };
         m_cmd->ResourceBarrier(2, bOut);
         m_cmd->Close();
@@ -1129,7 +1188,13 @@ public:
                 const float r = float(row[x * 4u + 0u]) / 255.0f;
                 const float g = float(row[x * 4u + 1u]) / 255.0f;
                 const float b = float(row[x * 4u + 2u]) / 255.0f;
-                if (row[x * 4u + 0u] || row[x * 4u + 1u] || row[x * 4u + 2u]) ++out->dispNonZeroPx;
+                if (row[x * 4u + 0u] || row[x * 4u + 1u] || row[x * 4u + 2u]) {
+                    ++out->dispNonZeroPx;
+                    if (x >= m_lastHudRect.x && x < m_lastHudRect.x + m_lastHudRect.w &&
+                        y >= m_lastHudRect.y && y < m_lastHudRect.y + m_lastHudRect.h) {
+                        ++out->hudNonZeroPx;
+                    }
+                }
                 const double l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
                 sumL += l;
                 sumL2 += l * l;
@@ -1182,6 +1247,7 @@ public:
 
         m_frontierChunks.clear();
         m_esmChunks.clear();
+        m_overlayHost.Shutdown();
         m_xpbdSim.Shutdown();
         m_fluidComposite.Shutdown();
         m_meshHost.Shutdown();
@@ -1197,7 +1263,7 @@ public:
         m_rtvHeap.Reset();
         m_hdrColor.Reset();
         m_depthIn.Reset();
-        m_headlessDisplay.Reset();
+        m_displayLdr.Reset();
         for (UINT i = 0; i < kBackBufferCount; ++i) m_backBuffers[i].Reset();
         m_swapChain.Reset();
         m_dispCmd.Reset();
@@ -1239,14 +1305,15 @@ public:
         }
         char buf[512]{};
         std::snprintf(buf, sizeof(buf),
-                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms%s | Shards:%u",
+                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms HUD:%.3fms%s | Shards:%u",
                       m_walkMode ? "WALK" : "FLY",
                       fps, m_lastDrawnMeshlets, m_meshHost.TerrainUsesMeshShaders() ? "AS+MS" : "VS+PS",
-                      locBuf, TimePresetName(m_timePreset), WeatherPresetName(m_weatherPreset),
+                      locBuf, TimePresetName(m_timePreset), ActiveWeatherDisplayName(),
                       ft.valid ? ft.fireStepMs : 0.0f,
                       ft.valid ? ft.waterStepMs : 0.0f,
                       rt.valid ? rt.giPassMs : 0.0f,
                       m_xpbdSim.HasValidTiming() ? m_xpbdSim.GetLastStepMs() : 0.0f,
+                      m_overlayHost.HasValidTiming() ? m_overlayHost.GetLastOverlayMs() : 0.0f,
                       hitBuf,
                       m_activeShards);
         return buf;
@@ -1332,8 +1399,8 @@ private:
         gpso.SampleDesc.Count = 1;
         if (FAILED(m_dev->CreateGraphicsPipelineState(&gpso, IID_PPV_ARGS(&m_agxPso)))) return false;
 
-        // RTV heap: 3 swapchain backbuffers (or 1 headless display) + 1 HDR colorOut clear RTV
-        D3D12_DESCRIPTOR_HEAP_DESC rtvD{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kBackBufferCount + 1u, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
+        // RTV heap: 3 swapchain backbuffers + 1 HDR colorOut clear RTV + 1 UAV-capable displayLdr RTV
+        D3D12_DESCRIPTOR_HEAP_DESC rtvD{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kBackBufferCount + 2u, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
         if (FAILED(m_dev->CreateDescriptorHeap(&rtvD, IID_PPV_ARGS(&m_rtvHeap)))) return false;
         m_rtvStep = m_dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
@@ -1375,18 +1442,18 @@ private:
                 if (FAILED(m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_backBuffers[i])))) return false;
                 m_dev->CreateRenderTargetView(m_backBuffers[i].Get(), nullptr, RtvHandle(i));
             }
-        } else {
-            D3D12_RESOURCE_DESC dispDesc{};
-            dispDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-            dispDesc.Width = w; dispDesc.Height = h; dispDesc.DepthOrArraySize = 1; dispDesc.MipLevels = 1;
-            dispDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-            dispDesc.SampleDesc.Count = 1;
-            dispDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
-            if (FAILED(m_dev->CreateCommittedResource(&defHp, D3D12_HEAP_FLAG_NONE, &dispDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&m_headlessDisplay)))) {
-                return false;
-            }
-            m_dev->CreateRenderTargetView(m_headlessDisplay.Get(), nullptr, RtvHandle(0));
         }
+        // UAV + RT capable R8G8B8A8_UNORM intermediate display target (receives RawAgxDisplay + RawOverlayHost HUD!)
+        D3D12_RESOURCE_DESC dispDesc{};
+        dispDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        dispDesc.Width = w; dispDesc.Height = h; dispDesc.DepthOrArraySize = 1; dispDesc.MipLevels = 1;
+        dispDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        dispDesc.SampleDesc.Count = 1;
+        dispDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        if (FAILED(m_dev->CreateCommittedResource(&defHp, D3D12_HEAP_FLAG_NONE, &dispDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&m_displayLdr)))) {
+            return false;
+        }
+        m_dev->CreateRenderTargetView(m_displayLdr.Get(), nullptr, RtvHandle(kBackBufferCount + 1u));
 
         // HDR RGBA16F scene buffer (RT + UAV + SRV)
         D3D12_RESOURCE_DESC hdrDesc{};
@@ -1567,7 +1634,103 @@ private:
         tcfg.modelCacheBudgetBytes  = 64ull * 1024ull * 1024ull;
         tcfg.bakeCellProps          = std::filesystem::exists(bsa);
         std::string err;
-        return m_tamrielStreamer.Init(m_opt.esmPath, std::filesystem::exists(bsa) ? bsa.string() : std::string(), tcfg, &err);
+        const bool ok = m_tamrielStreamer.Init(m_opt.esmPath, std::filesystem::exists(bsa) ? bsa.string() : std::string(), tcfg, &err);
+        if (ok && !m_esmMetaLoaded) {
+            std::string metaErr;
+            if (raw::worldgen::LoadEsmWorldMeta(m_opt.esmPath, &m_esmWorldMeta, &metaErr)) {
+                m_esmMetaLoaded = true;
+                m_esmWeatherCycle.clear();
+                static constexpr const char* kPreferredWeathers[5] = {
+                    "SkyrimClear", "SkyrimCloudy", "SkyrimFog", "SkyrimStormRain", "SkyrimStormSnow"
+                };
+                for (const char* edid : kPreferredWeathers) {
+                    if (const auto* w = m_esmWorldMeta.FindWeatherByEdid(edid)) {
+                        m_esmWeatherCycle.push_back(w);
+                    }
+                }
+                if (m_esmWeatherCycle.empty()) {
+                    const size_t lim = std::min<size_t>(m_esmWorldMeta.weathers.size(), 5u);
+                    for (size_t i = 0; i < lim; ++i) m_esmWeatherCycle.push_back(&m_esmWorldMeta.weathers[i]);
+                }
+                if (!m_esmWeatherCycle.empty()) {
+                    m_esmWeatherIdx = 0u;
+                    ApplyActiveEsmWeather();
+                }
+            }
+        }
+        return ok;
+    }
+
+    void ApplyActiveEsmWeather()
+    {
+        if (m_esmWeatherCycle.empty()) return;
+        const auto* w = m_esmWeatherCycle[m_esmWeatherIdx % m_esmWeatherCycle.size()];
+        if (!w) return;
+        m_activeEsmWeatherEdid = w->editorId;
+        m_activeEsmWeatherParams = raw::worldgen::ApplyEsmWeatherToSim(*w, m_weatherSim, TimePresetHours(m_timePreset), true);
+        for (int i = 0; i < 8; ++i) {
+            m_weatherSim.Step(1.0f, {m_camPos[0], m_camPos[1], m_camPos[2]});
+        }
+        if (m_audioEnabled && m_audio.IsRunning()) {
+            PushAudioSceneState(m_weatherSim.GetGpuUniforms());
+        }
+    }
+
+    void BuildOverlayHud(const raw::worldgen::WeatherGpuUniforms& wGpu, OverlayHudData& outHud) const
+    {
+        float histLinear[64]{};
+        const uint32_t count = m_frameMsCount;
+        const uint32_t start = (m_frameMsRingPos >= count) ? (m_frameMsRingPos - count) : 0u;
+        for (uint32_t i = 0; i < count; ++i) {
+            histLinear[i] = m_frameMsRing[(start + i) % 64u];
+        }
+
+        const auto ft = m_fluidOk ? m_fluidSim.GetLastTimings() : FluidGpuTimings{};
+        const auto rt = m_radOk ? m_radianceHost.GetLastTimings() : RadianceGpuTimings{};
+
+        char locLabel[64]{};
+        if (m_mode == WorldMode::RiverwoodEsm) {
+            std::snprintf(locLabel, sizeof(locLabel), "%s [%s]",
+                          kTamrielLandmarks[m_landmarkIdx % 4u].name, m_walkMode ? "WALK" : "FLY");
+        } else {
+            std::snprintf(locLabel, sizeof(locLabel), "%s [%s]",
+                          raw::worldgen::GetBiomeName(static_cast<raw::worldgen::BiomeId>(m_biomeIdx)),
+                          m_walkMode ? "WALK" : "FLY");
+        }
+
+        const uint64_t totalCacheLookups = m_lastTamrielStats.cacheHits + m_lastTamrielStats.cacheMisses;
+        const float lruPct = (totalCacheLookups > 0ull)
+                           ? (100.0f * float(m_lastTamrielStats.cacheHits) / float(totalCacheLookups))
+                           : 0.0f;
+
+        OverlayTelemetrySnapshot snap{};
+        snap.frameMs        = m_lastFrameMs;
+        snap.fps            = (m_lastFrameMs > 0.01f) ? (1000.0f / m_lastFrameMs) : 0.0f;
+        snap.fireMs         = ft.valid ? ft.fireStepMs : 0.0f;
+        snap.waterMs        = ft.valid ? ft.waterStepMs : 0.0f;
+        snap.giMs           = rt.valid ? rt.giPassMs : 0.0f;
+        snap.xpbdMs         = m_xpbdSim.HasValidTiming() ? m_xpbdSim.GetLastStepMs() : 0.0f;
+        snap.overlayMs      = m_overlayHost.HasValidTiming() ? m_overlayHost.GetLastOverlayMs() : 0.0f;
+        snap.seasonName     = SeasonName(m_season);
+        snap.weatherName    = ActiveWeatherDisplayName();
+        snap.tempC          = wGpu.seasonThermal0.w;
+        snap.windMps        = wGpu.beaufortScale * 2.2f;
+        snap.snowPackM      = wGpu.seasonThermal0.x;
+        snap.cellX          = (m_mode == WorldMode::RiverwoodEsm) ? m_lastTamrielStats.camCellX : static_cast<int32_t>(std::floor(m_camPos[0] / 4096.0f));
+        snap.cellY          = (m_mode == WorldMode::RiverwoodEsm) ? m_lastTamrielStats.camCellY : static_cast<int32_t>(std::floor(m_camPos[1] / 4096.0f));
+        snap.landmarkName   = locLabel;
+        snap.activeCells    = (m_mode == WorldMode::RiverwoodEsm) ? m_lastTamrielStats.activeCells : static_cast<uint32_t>(m_frontierChunks.size());
+        snap.activeMeshlets = m_lastDrawnMeshlets;
+        snap.lruHitRatePct  = lruPct;
+        snap.giEnabled      = m_radOk && m_giEnabled;
+        snap.fluidEnabled   = m_fluidOk && m_fireEnabled;
+        snap.xpbdEnabled    = m_xpbdOk && m_xpbdUploaded;
+        snap.historyFrameMs = histLinear;
+        snap.historyCount   = count;
+
+        FormatEngineTelemetryLines(snap, outHud);
+        outHud.enabled    = m_hudEnabled;
+        outHud.srgbOutput = true; // m_displayLdr holds sRGB-encoded AgX output in R8G8B8A8_UNORM
     }
 
     void PumpTamrielStreamer(bool fullRing)
@@ -1791,6 +1954,7 @@ private:
     bool          m_radOk = false;
     bool          m_xpbdOk = false;
     bool          m_xpbdUploaded = false;
+    bool          m_overlayOk = false;
     std::string   m_adapterName;
 
     ComPtr<IDXGIFactory4>              m_factory;
@@ -1799,7 +1963,7 @@ private:
     ComPtr<ID3D12CommandQueue>         m_queue;
     ComPtr<IDXGISwapChain3>            m_swapChain;
     ComPtr<ID3D12Resource>             m_backBuffers[kBackBufferCount];
-    ComPtr<ID3D12Resource>             m_headlessDisplay;
+    ComPtr<ID3D12Resource>             m_displayLdr;
     ComPtr<ID3D12Resource>             m_hdrColor;
     ComPtr<ID3D12Resource>             m_depthIn;
     ComPtr<ID3D12DescriptorHeap>       m_rtvHeap;
@@ -1826,10 +1990,17 @@ private:
     RawFluidCompositeHost              m_fluidComposite;
     RawRadianceHost                    m_radianceHost;
     RawXpbdSimHost                     m_xpbdSim;
+    RawOverlayHost                     m_overlayHost;
     raw::audio::RawAudioOutput         m_audio;
     raw::worldgen::RawWeatherSim          m_weatherSim;
     raw::worldgen::RawWorldShowcase       m_showcase;
     raw::worldgen::RawTamrielWorldStreamer m_tamrielStreamer;
+    raw::worldgen::EsmWorldMetaIndex      m_esmWorldMeta;
+    bool                                  m_esmMetaLoaded = false;
+    std::vector<const raw::worldgen::EsmWeatherRecord*> m_esmWeatherCycle;
+    uint32_t                              m_esmWeatherIdx = 0u;
+    std::string                           m_activeEsmWeatherEdid;
+    raw::worldgen::EsmPhysicalWeatherParams m_activeEsmWeatherParams{};
     raw::worldgen::RawWorldPhysics        m_worldPhysics;
     raw::worldgen::CharacterBody          m_playerBody{};
     raw::worldgen::RayHit                 m_lastRayHit{};
@@ -1860,6 +2031,12 @@ private:
     bool                               m_giEnabled = true;
     bool                               m_audioEnabled = false;
     bool                               m_walkMode = false;
+    bool                               m_hudEnabled = true;
+    OverlayPanelRect                   m_lastHudRect{};
+    float                              m_frameMsRing[64] = {};
+    uint32_t                           m_frameMsRingPos = 0u;
+    uint32_t                           m_frameMsCount = 0u;
+    float                              m_lastFrameMs = 16.667f;
     uint32_t                           m_fractureCounter = 0u;
     uint32_t                           m_activeShards = 0u;
     bool                               m_destructionDirty = false;
@@ -1930,6 +2107,8 @@ LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     case '4': st->viewer->ApplySeason(SeasonChoice::Winter); break;
                     case 'P': st->viewer->ToggleWalkMode(); break;
                     case 'C': st->viewer->FireRaycastStrike(); break;
+                    case 'H':
+                    case VK_F9: st->viewer->ToggleHud(); break;
                     case 'F': st->viewer->ToggleFire(); break;
                     case 'G': st->viewer->ToggleGI(); break;
                     case 'B': st->viewer->CycleBiome(); break;
@@ -2002,7 +2181,7 @@ int main(int argc, char** argv)
     if (opt.showHelp) {
         std::printf(
             "RAW Interactive Real-Time Win32/DX12 Standalone Engine Viewer\n"
-            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
+            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, F9/H HUD, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
             "CLI: [--headless-frames N] [--warp] [--debug] [--width W] [--height H] [--esm <Skyrim.esm>]\n");
         return 0;
     }
@@ -2036,7 +2215,7 @@ int main(int argc, char** argv)
                 if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {
                     teleportedToWhiterun = viewer.TeleportToTamrielLandmark(1u); // Riverwood (4,-12) -> Whiterun (5,-3)!
                     viewer.ApplyTimePreset(TimePreset::GoldenHour);
-                    viewer.ApplyWeatherPreset(WeatherPreset::Clear);
+                    viewer.CycleWeatherPreset(); // Cycle authentic Skyrim.esm WTHR record!
                 } else {
                     viewer.ApplySeason(SeasonChoice::Autumn);
                     viewer.CycleTimePreset();
@@ -2053,30 +2232,36 @@ int main(int argc, char** argv)
 
         RawEngineViewer::HeadlessAudit audit{};
         const bool rbOk = viewer.ReadbackHeadlessAudit(&audit);
-        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
+        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
                     audit.usedMeshShaders ? "AS+MS+PS" : "VS+PS",
                     audit.drawnMeshlets, audit.activeShards, audit.biomesFound,
                     audit.radianceActive ? "ON" : "off", audit.radianceGiMs,
                     audit.fireStepMs, audit.waterStepMs,
                     audit.xpbdActive ? "ON" : "off", audit.xpbdParticles, audit.xpbdStepMs,
+                    audit.overlayActive ? "ON" : "off", audit.overlayMs, audit.hudNonZeroPx,
                     audit.hdrLitPixels, audit.hdrNanInf,
                     audit.dispNonZeroPx, audit.dispMeanLuma, audit.dispStdDevLuma);
         check(audit.xpbdActive && audit.xpbdParticles == 4096u && std::isfinite(audit.xpbdStepMs) && audit.xpbdStepMs >= 0.0f,
               "Live GPU XPBD soft-body/hair/bush solver (4,096 particles / 256 chains) stepped cleanly");
+        check(audit.overlayActive && std::isfinite(audit.overlayMs) && audit.overlayMs >= 0.0f && audit.hudNonZeroPx > 500u,
+              "Live GPU Telemetry & Sparkline HUD (RawOverlayHost) rendered cleanly onto LDR display buffer");
         if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {
             const auto whStats = viewer.GetTamrielStats();
-            std::printf("       Tamriel Streaming: Riverwood(cells=%u, nifCache=%u, hits=%llu) -> %s(cells=%u, nifCache=%u, hits=%llu, evictions=%u, meshlets=%u)\n",
+            std::printf("       Tamriel Streaming: Riverwood(cells=%u, nifCache=%u, hits=%llu) -> %s(cells=%u, nifCache=%u, hits=%llu, evictions=%u, meshlets=%u) | ESM WTHR=%zu (active=%s)\n",
                         riverwoodStats.activeCells, riverwoodStats.cachedNifModels,
                         static_cast<unsigned long long>(riverwoodStats.cacheHits),
                         viewer.ActiveLandmarkName(), whStats.activeCells, whStats.cachedNifModels,
                         static_cast<unsigned long long>(whStats.cacheHits),
-                        viewer.TotalTamrielEvictions(), audit.drawnMeshlets);
+                        viewer.TotalTamrielEvictions(), audit.drawnMeshlets,
+                        viewer.LoadedEsmWeatherCount(), viewer.ActiveWeatherDisplayName());
             std::printf("       Riverwood Walk Physics: hfs=%u, bvhTris=%u, rayHit=%d (dist=%.1fu), walkGrounded=%d, feetZ=%.1f, finite=%d\n",
                         riverwoodPhys.hfCount, riverwoodPhys.bvhTriangles, int(riverwoodPhys.rayHit), riverwoodPhys.rayDist,
                         int(riverwoodPhys.walkGrounded), riverwoodPhys.finalFeetZ, int(riverwoodPhys.walkAllFinite));
             check(riverwoodStats.activeCells >= 1u && teleportedToWhiterun && whStats.activeCells >= 1u &&
                   viewer.TotalTamrielEvictions() > 0u && audit.drawnMeshlets > 500u,
                   "RawTamrielWorldStreamer streamed Riverwood 3x3 ring, evicted & reloaded Whiterun 3x3 ring live on GPU");
+            check(viewer.LoadedEsmWeatherCount() >= 50u,
+                  "RawEsmNpcWeatherLoader loaded >= 50 authentic Skyrim.esm WTHR records and cycled live");
             check(riverwoodPhys.rayHit && riverwoodPhys.walkGrounded && riverwoodPhys.walkAllFinite,
                   "RawWorldPhysics RayCast + 24-step grounded capsule walk succeeded over real Riverwood terrain & NIF BVH");
         }

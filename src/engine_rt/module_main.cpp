@@ -35,6 +35,7 @@
 #include "rt_live_config.h"
 #include "rt_memory_guards.h"
 #include "rt_movement_combat.h"
+#include "rt_npc_behavior.h"
 #include "rt_save_papyrus_guard.h"
 #include "rt_softbody.h"
 #include "rt_stealth_survival.h"
@@ -136,6 +137,7 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     raw::rt::LiveConfigOnPresent([](const char* msg) { Log("%s", msg); });
     raw::rt::AudioBridgeOnPresent();
     raw::rt::CrashForensicsOnPresent();
+    raw::rt::NpcBehaviorOnPresent();
     {
         static LARGE_INTEGER s_qpcFreq{};
         static LARGE_INTEGER s_prevQpc{};
@@ -217,6 +219,14 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
                     raw::rt::SaveHealthLevelName(static_cast<raw::rt::SaveHealthLevel>(sph.worstSaveHealth)),
                     sph.worstStringCount, sph.worstSaveSizeMb,
                     sph.hitchCount, sph.hitchesLast60Sec, sph.worstHitchMs, sph.p95FrameMs);
+            }
+            raw::rt::RawNpcBehaviorState nbs{};
+            if (RAW_GetNpcBehaviorState(&nbs) && nbs.behaviorEnabled) {
+                Log("[NpcBehavior] season=%u shelter=%.2f torches=%.2f guardAlert=%.2fx market=%.2f wildlife=%.2f banditElem=%s mageElem=%s",
+                    nbs.season, nbs.shelterPressure01, nbs.torchDeploymentRatio,
+                    nbs.guardAlertnessMult, nbs.marketActivity01, nbs.wildlifeActivity01,
+                    raw::rt::PreferredElementName(static_cast<raw::rt::PreferredElement>(nbs.preferredBanditElement)),
+                    raw::rt::PreferredElementName(static_cast<raw::rt::PreferredElement>(nbs.preferredMageElement)));
             }
         }
     }
@@ -371,6 +381,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     Log("%s", raw::rt::LiveConfigInit(g_dir + "raw_engine.ini", g_out + "\\live_status_dump.txt").c_str());
     Log("%s", raw::rt::CrashForensicsInit(g_img, g_dir, g_out).c_str());
     Log("%s", raw::rt::SavePapyrusGuardInit().c_str());
+    Log("%s", raw::rt::NpcBehaviorInit().c_str());
     Log("%s", raw::rt::AudioBridgeInit().c_str());
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
@@ -400,6 +411,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         return 0;
     }
     raw::rt::AudioBridgeShutdown();
+    raw::rt::NpcBehaviorShutdown();
     raw::rt::SavePapyrusGuardShutdown();
     raw::rt::CrashForensicsShutdown();
     raw::rt::LiveConfigShutdown();

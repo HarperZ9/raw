@@ -39,6 +39,9 @@ struct LiveEngineConfig {
     // [Stability]
     bool  savePapyrusGuardEnabled = true;   // .ESS save-file health auditor & Papyrus frame-hitch watchdog (0/1, default 1)
 
+    // [WorldAI]
+    bool  dynamicNpcBehaviorEnabled = true; // Weather/season/economy-driven NPC daily behavior & ecology (0/1, default 1)
+
     // [Diagnostics]
     uint32_t statusDumpHotkeyVK      = 121u;  // VK_F10 (0x79)
     uint32_t hotReloadIntervalFrames = 60u;   // [10 .. 600] frames
@@ -151,6 +154,14 @@ struct LiveStatusDumpData {
     uint32_t hitchesLast60Sec = 0u;
     float    worstHitchMs     = 0.0f;
     float    p95FrameMs       = 0.0f;
+
+    // NPC Behavior Ecology
+    float    npcShelterPressure01   = 0.0f;
+    float    npcTorchDeployRatio    = 0.0f;
+    float    npcGuardAlertnessMult  = 1.0f;
+    float    npcMarketActivity01    = 1.0f;
+    uint8_t  npcPreferredBanditElem = 0u;
+    uint8_t  npcPreferredMageElem   = 1u;
 };
 
 std::string FormatLiveStatusDump(const LiveStatusDumpData& d);

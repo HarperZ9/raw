@@ -298,7 +298,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         const bool fluidOk = m->InitFluidSim();
         const bool radOk = m->InitRadianceCascades();
         const bool xpbdOk = m->InitXpbdSim();
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s",
+        const bool overlayOk = m->InitOverlayHost();
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
                terrainOk ? "READY" : "off",
                m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
@@ -307,7 +308,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                m->indirect.SupportsIndirectMesh() ? "YES" : "no",
                fluidOk ? "READY" : "off",
                radOk ? "READY" : "off",
-               xpbdOk ? "READY" : "off");
+               xpbdOk ? "READY" : "off",
+               overlayOk ? "READY(OFF)" : "off");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
         {
             const auto& matReg = raw::materials::DefaultMaterialRegistry();
@@ -610,6 +612,74 @@ void D3D12Bridge::Impl::ShutdownXpbdSim()
     xpbdSimReady = false;
 }
 
+bool D3D12Bridge::Impl::InitOverlayHost()
+{
+    ShutdownOverlayHost();
+    if (!dev12) return false;
+    overlayHost = std::make_unique<RawOverlayHost>();
+    std::string overlayErr;
+    if (!overlayHost->Init(dev12.Get(), &overlayErr)) {
+        log("[OverlayHud] off: %s", overlayErr.c_str());
+        overlayHost.reset();
+        return false;
+    }
+    UINT64 tsFreq = 0;
+    if (queue && SUCCEEDED(queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+        overlayHost->SetTimestampFrequency(tsFreq);
+    }
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&overlayAlloc[i])))) {
+            ShutdownOverlayHost();
+            return false;
+        }
+    }
+    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, overlayAlloc[0].Get(), nullptr, IID_PPV_ARGS(&overlayList))) ||
+        FAILED(overlayList->Close()) ||
+        FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&overlayFence)))) {
+        ShutdownOverlayHost();
+        return false;
+    }
+    overlayEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!overlayEvent) {
+        ShutdownOverlayHost();
+        return false;
+    }
+    overlayHudEnabled = false; // Strictly opt-in (zero viewport clutter by default; F9 toggles)
+    overlayPrevF9Down = false;
+    overlayHostReady = true;
+    log("[OverlayHud] GPU Compute Telemetry & Sparkline HUD ready (default=OFF; press F9 in-game to toggle)");
+    return true;
+}
+
+void D3D12Bridge::Impl::ShutdownOverlayHost()
+{
+    if (overlayFence && overlayEvent && overlayFenceVal > 0) {
+        if (overlayFence->GetCompletedValue() < overlayFenceVal) {
+            overlayFence->SetEventOnCompletion(overlayFenceVal, overlayEvent);
+            WaitForSingleObject(overlayEvent, 3000);
+        }
+    }
+    overlayList.Reset();
+    for (UINT i = 0; i < kRing; ++i) {
+        overlayAlloc[i].Reset();
+        overlaySlotVal[i] = 0;
+    }
+    overlayFence.Reset();
+    if (overlayEvent) {
+        CloseHandle(overlayEvent);
+        overlayEvent = nullptr;
+    }
+    if (overlayHost) {
+        overlayHost->Shutdown();
+        overlayHost.reset();
+    }
+    overlayFenceVal = 0;
+    overlaySlot = 0;
+    overlayHudEnabled = false;
+    overlayPrevF9Down = false;
+    overlayHostReady = false;
+}
+
 void D3D12Bridge::Shutdown()
 {
     if (!m) return;
@@ -618,6 +688,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->ShutdownOverlayHost();
     m->ShutdownXpbdSim();
     m->ShutdownRadianceCascades();
     m->ShutdownFluidSim();

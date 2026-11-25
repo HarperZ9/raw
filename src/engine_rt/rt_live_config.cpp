@@ -22,6 +22,7 @@
 #include "rt_combat_impact.h"
 #include "rt_economy_ledger.h"
 #include "rt_movement_combat.h"
+#include "rt_npc_behavior.h"
 #include "rt_save_papyrus_guard.h"
 #include "rt_softbody.h"
 #include "rt_stealth_survival.h"
@@ -194,6 +195,9 @@ std::string FormatDefaultLiveConfigIni(const LiveEngineConfig& inCfg) {
        << "[Stability]\n"
        << "; Enable/disable .ESS save-file health auditor & Papyrus frame-hitch watchdog (0/1, default 1)\n"
        << "SavePapyrusGuard=" << (c.savePapyrusGuardEnabled ? 1 : 0) << "\n\n"
+       << "[WorldAI]\n"
+       << "; Enable/disable weather/season/economy-driven NPC daily behavior & crowd ecology (0/1, default 1)\n"
+       << "DynamicNpcBehavior=" << (c.dynamicNpcBehaviorEnabled ? 1 : 0) << "\n\n"
        << "[Diagnostics]\n"
        << "; Virtual-key code for live status dump (default 121 = VK_F10; 0 disables)\n"
        << "StatusDumpHotkeyVK=" << c.statusDumpHotkeyVK << "\n"
@@ -270,6 +274,9 @@ bool ParseLiveConfigIni(const std::string& iniText, LiveEngineConfig& outCfg) {
         }
         if (section.empty() || section == "stability") {
             if (key == "savepapyrusguard" && ParseBoolVal(val, b))        cfg.savePapyrusGuardEnabled = b;
+        }
+        if (section.empty() || section == "worldai") {
+            if (key == "dynamicnpcbehavior" && ParseBoolVal(val, b))      cfg.dynamicNpcBehaviorEnabled = b;
         }
         if (section.empty() || section == "diagnostics") {
             if (key == "statusdumphotkeyvk" && ParseUintVal(val, u))      cfg.statusDumpHotkeyVK = u;
@@ -393,9 +400,10 @@ std::string FormatLiveStatusDump(const LiveStatusDumpData& d) {
                   d.config.weatherStealthEnabled ? 1u : 0u, d.config.thermalSurvivalEnabled ? 1u : 0u);
     os << buf;
     std::snprintf(buf, sizeof buf,
-                  "  Audio   : LiveAmbience=%u LiveGain=%.2f | Stability: SavePapyrusGuard=%u\n\n",
+                  "  Audio   : LiveAmbience=%u LiveGain=%.2f | Stability: SaveGuard=%u | WorldAI: DynamicNpc=%u\n\n",
                   d.config.liveAudioAmbience ? 1u : 0u, d.config.liveAudioGain,
-                  d.config.savePapyrusGuardEnabled ? 1u : 0u);
+                  d.config.savePapyrusGuardEnabled ? 1u : 0u,
+                  d.config.dynamicNpcBehaviorEnabled ? 1u : 0u);
     os << buf;
 
     os << "[Skeleton IK & 240Hz XPBD Soft-Body]\n";
@@ -450,10 +458,18 @@ std::string FormatLiveStatusDump(const LiveStatusDumpData& d) {
 
     os << "[Save-File Health & Papyrus Frame Hitch Watchdog]\n";
     std::snprintf(buf, sizeof buf,
-                  "  Guard=%u SavesAudited=%u WorstHealth=%u MaxStrings=%u/65535 MaxSize=%.2fMB | Hitches(>50ms)=%u (60s=%u) Worst=%.1fms P95=%.1fms\n",
+                  "  Guard=%u SavesAudited=%u WorstHealth=%u MaxStrings=%u/65535 MaxSize=%.2fMB | Hitches(>50ms)=%u (60s=%u) Worst=%.1fms P95=%.1fms\n\n",
                   d.config.savePapyrusGuardEnabled ? 1u : 0u, d.savesAudited, d.worstSaveHealth,
                   d.worstSaveStrings, d.worstSaveSizeMb, d.hitchCount, d.hitchesLast60Sec,
                   d.worstHitchMs, d.p95FrameMs);
+    os << buf;
+
+    os << "[NPC Behavior Ecology]\n";
+    std::snprintf(buf, sizeof buf,
+                  "  DynamicNpc=%u ShelterPressure=%.2f TorchRatio=%.2f GuardAlert=%.2fx MarketAct=%.2f BanditElem=%u MageElem=%u\n",
+                  d.config.dynamicNpcBehaviorEnabled ? 1u : 0u,
+                  d.npcShelterPressure01, d.npcTorchDeployRatio, d.npcGuardAlertnessMult,
+                  d.npcMarketActivity01, d.npcPreferredBanditElem, d.npcPreferredMageElem);
     os << buf;
     return os.str();
 }
@@ -663,6 +679,16 @@ bool LiveConfigWriteStatusDump(std::string* outPathWritten) {
         d.hitchesLast60Sec = sph.hitchesLast60Sec;
         d.worstHitchMs     = sph.worstHitchMs;
         d.p95FrameMs       = sph.p95FrameMs;
+    }
+
+    RawNpcBehaviorState nbs{};
+    if (RAW_GetNpcBehaviorState(&nbs)) {
+        d.npcShelterPressure01   = nbs.shelterPressure01;
+        d.npcTorchDeployRatio    = nbs.torchDeploymentRatio;
+        d.npcGuardAlertnessMult  = nbs.guardAlertnessMult;
+        d.npcMarketActivity01    = nbs.marketActivity01;
+        d.npcPreferredBanditElem = nbs.preferredBanditElement;
+        d.npcPreferredMageElem   = nbs.preferredMageElement;
     }
 
     const bool ok = WriteLiveStatusDumpToFile(outPath, d);

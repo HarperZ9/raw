@@ -496,6 +496,17 @@ bool VerifyStartupBinaryOffsets(const Image& img, std::string* reportOut) {
         {"PlayerCamera::currentState",        Addr("fn:BGSTerrainManager::Update"),             Off("off:PlayerCamera::currentState"),        8, false},
         {"BGSTerrainChunk::landMesh",         Addr("fn:BGSTerrainChunk::Hide"),                 Off("off:BGSTerrainChunk::landMesh"),         8, false},
         {"BGSTerrainChunk::waterMesh",        Addr("fn:BGSTerrainChunk::Hide"),                 Off("off:BGSTerrainChunk::waterMesh"),        8, false},
+        {"Calendar::gameYear",                Addr("fn:Calendar::GetYear"),                     Off("off:Calendar::gameYear"),                8, false},
+        {"Calendar::gameMonth",               Addr("fn:Calendar::GetMonth"),                    Off("off:Calendar::gameMonth"),               8, false},
+        {"Calendar::gameDay",                 Addr("fn:Calendar::GetDay"),                      Off("off:Calendar::gameDay"),                 8, false},
+        {"Calendar::gameHour",                Addr("fn:Calendar::GetHour"),                     Off("off:Calendar::gameHour"),                8, false},
+        {"Calendar::gameDaysPassed",          Addr("fn:Calendar::GetDaysPassed"),               Off("off:Calendar::gameDaysPassed"),          8, false},
+        {"Calendar::timeScale",               Addr("fn:Calendar::GetTimeScale"),                Off("off:Calendar::timeScale"),               8, false},
+        {"TESGlobal::value",                  Addr("fn:Calendar::GetHour"),                     Off("off:TESGlobal::value"),                  4, true},
+        {"HitData::weapon",                   Addr("fn:HitData::Populate"),                     Off("off:HitData::weapon"),                   8, false},
+        {"HitData::totalDamage",              Addr("fn:HitData::Populate"),                     Off("off:HitData::totalDamage"),              4, true},
+        {"HitData::flags",                    Addr("fn:HitData::PopulateMelee"),                Off("off:HitData::flags"),                    4, false},
+        {"TESObjectREFR::loadedData",         Addr("fn:TESObjectREFR::Get3D2"),                 Off("off:TESObjectREFR::loadedData"),         8, false},
     };
     g_lastVerify = VerifyCriticalOffsets(img, kRules, sizeof(kRules) / sizeof(kRules[0]));
     // Fail-closed: if ANY rule failed, lock out all struct mutations!

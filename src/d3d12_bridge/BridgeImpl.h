@@ -5,6 +5,7 @@
 #include "RtScene.h"
 #include "RawBindlessHeap.h"
 #include "RawMeshHost.h"
+#include "RawFluidSimHost.h"
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
@@ -67,7 +68,21 @@ struct D3D12Bridge::Impl
     bool HandToHost(const std::vector<ID3D11Resource*>& extra);
     std::unique_ptr<RtScene> rt;           // attached only
     RawBindlessHeap          bindless;     // RAW-LUMEN 65K SM 6.6 ResourceDescriptorHeap[] pool
-    RawMeshHost              meshHost;     // RAW-MESH Hardware DX12 AS+MS PN-Triangle subdivision host
+    RawMeshHost              meshHost;     // RAW-MESH Hardware DX12 AS+MS PN-Triangle subdivision & terrain host
+    RawFluidSimHost          fluidSim;     // Live GPU 64^3 3D Navier-Stokes Fire/Smoke + 256^2 SWE Water solver
+    bool                     fluidReady = false;
+    ComPtr<ID3D12CommandAllocator>    fluidAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList> fluidList;
+    ComPtr<ID3D12Fence>               fluidFence;
+    HANDLE                            fluidEvent = nullptr;
+    uint64_t                          fluidFenceVal = 0;
+    uint64_t                          fluidSlotVal[kRing] = {};
+    uint32_t                          fluidSlot = 0;
+    uint64_t                          fluidStepFrames = 0;
+    uint64_t                          fluidLastMs = 0;
+    bool InitFluidSim();
+    void ShutdownFluidSim();
+    bool StepFluidSimOnQueue(bool isInterior);
     std::vector<RawMeshGpuAsset> proceduralMeshes; // Zero-external-asset built-in procedural GPU meshlet library
     raw::worldgen::RawWorldShowcase worldShowcase; // Live beyond-Tamriel 6-biome procedural frontier streaming manager
     raw::worldgen::StreamUpdateStats lastWorldStats{};

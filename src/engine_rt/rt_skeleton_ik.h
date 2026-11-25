@@ -1,6 +1,6 @@
 #pragma once
 // rt_skeleton_ik.h: Procedural Full-Body Skeletal Kinematics, 2-Bone Foot/Arm IK & Gaze/Slope Lean (Zero SKSE).
-// Runs natively inside raw_engine.dll alongside the 240 Hz XPBD soft-body solver (rt_softbody.h).
+// Runs natively inside raw_engine.dll pre-Main::Draw alongside the 240 Hz XPBD soft-body solver (rt_softbody.h).
 // Original work, MIT.
 
 #include <cstdint>
@@ -48,6 +48,50 @@ struct SpineGazeOutput {
     float breathChestLift  = 0.0f; // subtle rhythmic breathing expansion
 };
 
+// Live humanoid skeleton bone classification (vanilla Skyrim & XPMSSE compatible).
+enum class HumanoidBoneRole : uint8_t {
+    None       = 0,
+    Pelvis     = 1,
+    Spine0     = 2,
+    Spine1     = 3,
+    Spine2     = 4,
+    Neck       = 5,
+    Head       = 6,
+    LeftThigh  = 7,
+    LeftCalf   = 8,
+    LeftFoot   = 9,
+    RightThigh = 10,
+    RightCalf  = 11,
+    RightFoot  = 12,
+};
+
+struct ActorIkMotionState {
+    float    prevRootPos[3]   = {};
+    float    prevYawRad       = 0.0f;
+    float    smoothTurnVel    = 0.0f;
+    float    smoothSpeedU     = 0.0f;
+    float    smoothPelvisZ    = 0.0f;
+    float    smoothFootDeltaZ = 0.0f;
+    bool     initialized      = false;
+};
+
+struct ActorIkPoseDelta {
+    float pelvisDeltaZ      = 0.0f;
+    float spinePitchRad[4]  = {};  // Spine0, Spine1, Spine2/Neck, Head
+    float spineYawRad[4]    = {};
+    float spineBankRollRad  = 0.0f;
+    float chestBreathLiftZ  = 0.0f;
+    float leftThighPitchRad = 0.0f;
+    float leftCalfPitchRad  = 0.0f;
+    float leftAnklePitchRad = 0.0f;
+    float leftAnkleRollRad  = 0.0f;
+    float rightThighPitchRad = 0.0f;
+    float rightCalfPitchRad  = 0.0f;
+    float rightAnklePitchRad = 0.0f;
+    float rightAnkleRollRad  = 0.0f;
+    bool  valid             = false;
+};
+
 // Exact analytical 2-bone Law-of-Cosines IK solver with pole-vector plane lock and soft-stretch hyperextension guard.
 TwoBoneIkResult SolveTwoBoneIK(Vec3 root, Vec3 target, Vec3 poleDir, float lenUpper, float lenLower);
 
@@ -57,5 +101,23 @@ FootPlantOutput ComputeFootPlanting(const FootPlantInput& in);
 // Distributes target gaze yaw/pitch across 4 upper-body bones plus velocity-banked turn lean & breathing.
 SpineGazeOutput ComputeSpineGaze(float targetYawRad, float targetPitchRad,
                                  float lateralTurnVelRadS, float timeSec, float fatigue01);
+
+// Classifies vanilla Skyrim / XPMSSE skeleton bone names into live IK roles.
+HumanoidBoneRole ClassifyHumanoidBone(const char* boneName);
+
+// Advances per-actor humanoid IK (2-bone leg/ankle adaptation, spine/head gaze, breathing & turn banking).
+ActorIkPoseDelta StepActorHumanoidIk(ActorIkMotionState& state,
+                                     const float rootWorldPos[3],
+                                     const float rootForwardXY[2],
+                                     float leftFootWorldZ,
+                                     float rightFootWorldZ,
+                                     float pelvisWorldZ,
+                                     float snowDepthU,
+                                     float dtSec,
+                                     float timeSec);
+
+// Composes an additive local Euler delta (R_out = R_in * Rz(yaw) * Rx(pitch) * Ry(roll)) onto a 3x3 row-major matrix.
+// Preserves Havok's current-frame animation pose without overwriting bind poses.
+void ComposeAdditiveLocalRotation(float inOutRotate3x3[9], float pitchRad, float rollRad, float yawRad);
 
 }  // namespace raw::rt

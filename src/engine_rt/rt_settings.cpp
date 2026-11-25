@@ -257,10 +257,25 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"fCombatBlockTimeMax", "1.85"},
         {"fCombatAttackAnimationDrivenDelayTime", "0.08"},
         {"fCombatAttackPlayerAnticipateMult", "1.35"},
-        {"fStaggerDaggerAR", "0.28"},
-        {"fStagger1WeapAR", "0.52"},
-        {"fStagger2WeapAR", "0.85"},
-        {"fStaggerBowAR", "0.42"},
+        // Binary-verified SkyrimSE 1.7.104.0 weapon stagger AR thresholds (0x28C140; defaults 5/10/15/5):
+        {"fStaggerDaggerAR", "5.5"},
+        {"fStagger1WeapAR", "11.5"},
+        {"fStagger2WeapAR", "17.5"},
+        {"fStaggerBowAR", "6.0"},
+        // Non-spongy lethal difficulty curves (verified 0x20AA578..0x20AA680): both player and enemies stay decisive
+        // on Expert/Master/Legendary instead of vanilla 0.25x bullet-sponge player damage!
+        {"fDiffMultHPToPCVE", "0.50"},
+        {"fDiffMultHPToPCE",  "0.75"},
+        {"fDiffMultHPToPCN",  "1.00"},
+        {"fDiffMultHPToPCH",  "1.35"},
+        {"fDiffMultHPToPCVH", "1.75"},
+        {"fDiffMultHPToPCL",  "2.25"},
+        {"fDiffMultHPByPCVE", "1.50"},
+        {"fDiffMultHPByPCE",  "1.25"},
+        {"fDiffMultHPByPCN",  "1.00"},
+        {"fDiffMultHPByPCH",  "1.15"},
+        {"fDiffMultHPByPCVH", "1.35"},
+        {"fDiffMultHPByPCL",  "1.60"},
         {"f1PArrowTiltUpAngle:Combat", "0.7"},
         {"f3PArrowTiltUpAngle:Combat", "0.7"},
         {"f1PBoltTiltUpAngle:Combat", "0.7"},
@@ -291,7 +306,8 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"fSneakSoundLosMult", "0.45"},
         {"fSneakRunningMult", "1.35"},
         {"fSneakDistanceAttenuationExponent", "1.55"},
-        {"fSneakCombatMod", "18.0"},
+        // Binary-verified 0x41CEE6: xmm10 += inCombat * fSneakCombatMod (default -0.4; negative = harder to re-hide)
+        {"fSneakCombatMod", "-0.55"},
         // True ballistic archery & zero magnetic auto-aim (replaces Archery Gameplay Overhaul / Proper Aiming):
         {"fArrowSpeedMult", "1.38"},
         {"fArrowGravityMult", "0.85"},
@@ -311,9 +327,12 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"fCombatFallbackChanceMin", "0.18"},
         {"fCombatFallbackChanceMax", "0.48"},
         {"fPowerAttackCoolDownTime", "0.35"},
-        {"fBlockMax", "88.0"},
+        // Binary-verified 0x7F0E08: HitData::Populate clamps percentBlocked vs fPlayerMaxResistance (0x20A9AE8, def 85.0);
+        // legacy fBlockMax (0x20A71A0) has 0 .text readers.
+        {"fPlayerMaxResistance", "85.0"},
         {"fBlockWeaponBase", "0.32"},
-        {"fSprintStaminaDrainMult", "0.82"},
+        // Binary-verified 0x4214C0: sprint drain = dt * (w*mult+base) * fSprintStaminaDrainMult (default 15.0/sec)
+        {"fSprintStaminaDrainMult", "14.5"},
         // Grounded economy progression & snappy interface transitions (replaces Trade & Barter / Faster Fade):
         {"fBarterMin", "1.35"},
         {"fBarterMax", "3.60"},
@@ -363,7 +382,7 @@ struct DynamicGmstBindings {
     float* fJumpFallHeightMult = nullptr;
     float baseBarterMin = 1.35f;
     float baseBarterMax = 3.60f;
-    float baseSprintDrain = 0.82f;
+    float baseSprintDrain = 14.5f;
     float baseArrowGravity = 0.85f;
     float baseJumpFall = 1.0f;
 } g_dynGmsts;

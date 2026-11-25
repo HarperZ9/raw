@@ -38,6 +38,13 @@ namespace raw::worldgen {
 int RunFloraEngineTests(void (*checkFn)(bool, const char*));
 int RunWeatherSimTests();
 }
+namespace raw::rt {
+int RunSkeletonPhysicsTests(void (*checkFn)(bool, const char*));
+int RunGameplayMechanicsTests(void (*checkFn)(bool, const char*));
+}
+namespace raw::pipeline {
+int RunPipelineForgeTests(void (*checkFn)(bool, const char*));
+}
 #include "../../src/assets/RawAssetsTests.h"
 #include "../../src/ui/RawDesignTokens.h"
 #include "../../src/ui/RawInputEngine.h"
@@ -719,7 +726,8 @@ void main() {
     const auto gmBlizz = raw::rt::ComputeDynamicGameplayGmsts(1.38f, 0.65f);
     Check(gmBlizz.barterMin > gmCalm.barterMin + 0.30f && gmBlizz.barterMax > gmCalm.barterMax + 0.30f &&
           gmBlizz.sprintStaminaDrainMult > gmCalm.sprintStaminaDrainMult + 0.30f &&
-          gmBlizz.barterMin <= 1.85f && gmBlizz.barterMax <= 4.40f && gmBlizz.sprintStaminaDrainMult <= 1.35f,
+          gmBlizz.barterMin <= 1.85f && gmBlizz.barterMax <= 4.40f &&
+          gmCalm.sprintStaminaDrainMult >= 12.0f && gmBlizz.sprintStaminaDrainMult <= 18.0f,
           "dynamic_gameplay_gmst_feedback");
 
     // 14) Wave 26 Oscillatory-Feedback Extremum Seeking GPU Governor (converges to unknown minimum + rejects NaN)
@@ -987,6 +995,9 @@ int main() {
     }
     raw::materials::RunRawMaterialsTests(Check);
     raw::assets::RunRawAssetsTests(Check);
+    raw::rt::RunSkeletonPhysicsTests(Check);
+    raw::rt::RunGameplayMechanicsTests(Check);
+    raw::pipeline::RunPipelineForgeTests(Check);
     std::printf("ce_runtime_check: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

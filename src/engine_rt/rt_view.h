@@ -35,6 +35,11 @@ struct EngineView {
     float    waterHeight;  // TESObjectCELL::waterHeight (or TESWorldSpace::defaultWaterHeight)
     uint32_t camStateId;   // PlayerCamera::currentState->id (0=1stP, 3=Free, 9=3rdP, etc.)
     uint32_t menuPaused;   // UI::Singleton->numPausesGame > 0 (MapMenu/Inventory/Pause active)
+    // Wave 39: Full binary-verified Calendar::Singleton (0x21A05D0) TESGlobal (+0x34) state:
+    float    gameYear;     // Calendar+0x08 -> +0x34 (e.g. 201.0f = 4E 201)
+    float    gameMonth;    // Calendar+0x10 -> +0x34 (0..11, 7 = Last Seed)
+    float    gameDay;      // Calendar+0x18 -> +0x34 (1..31)
+    float    timeScale;    // Calendar+0x30 -> +0x34 (default 20.0f)
 };
 
 void ViewInit(const Image& img);
@@ -50,3 +55,6 @@ std::string ViewJson();
 
 // For the ray-tracing and weather workers: copies the last present's view into *out and returns its present.
 extern "C" __declspec(dllexport) uint64_t RAW_EngineView(raw::rt::EngineView* out);
+// Wave 39 C ABI for D3D12Bridge / RawWeatherSim / RawSeasonsThermals:
+// fills out6 with [year, month, day, hour, daysPassed, timeScale] and returns 1 if valid, 0 otherwise.
+extern "C" __declspec(dllexport) int RAW_GetCalendarState(float* out6);

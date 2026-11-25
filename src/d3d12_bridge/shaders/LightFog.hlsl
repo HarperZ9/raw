@@ -90,28 +90,34 @@ float rawDetectSceneFlameCore(float3 rgb) {
     return lumW * lerp(0.55f, 1.0f, warmRG * warmRB);
 }
 
-// Wave 38: Scene-Anchored 3D Volumetric Fire, Self-Shadowed Dark Soot Smoke & Rising Embers.
-// Completely removes blind point-light floating spheres! Anchors strictly to real scene-rendered flame pixels
-// in `Lit` + `Depth`, projecting upward along world +Z buoyancy with 3-octave curl-advected FBM turbulence:
-//   - Lower core  : turbulent Planck blackbody (1400K..3400K) licking flame tongues (never a smooth sphere!)
-//   - Upper plume : genuine Beer-Lambert dark carbon soot smoke absorbing background light + internal warm
-//                   fire-bounce radiance coupling (glowing orange undersides, cool dark billowing tops!)
-//   - Embers      : sparse world-locked buoyant 3D sparks drifting through the rising smoke column.
+// Wave 39: Wind-Advected & Eddy-Dispersion-Coupled 3D Volumetric Fire, Self-Shadowed Dark Soot Smoke & Embers.
+// Strictly anchored to verified real scene-rendered flame pixels in `Lit` + `Depth` (ZERO blind point-light spheres!).
+// Couples buoyant 3D curl-advected flames, dark carbon soot billows, and ember spark streaks directly to:
+//   - Live exterior wind `cloudWind.xy` (tilts & stretches smoke plumes + spark trails downwind; calm interiors rise straight with mushroom eddies!)
+//   - Atmospheric eddy dispersion (`phenology1.w` + wind speed + cold inversion `phenology1.z`): disperses faster in windy storms, hangs thicker in still cold air!
+//   - Multi-band internal fire-to-smoke radiance scatter (`janvlietinck` / `benharkervfx` / `mytinodev`): glowing burnt-orange undersides -> cool charcoal tops!
 // Returns float4(emissionRGB, backgroundTransmittance).
 float4 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float curZ, float2 px, bool isInt) {
     const float jit = ign(px + float2(7.0f, 19.0f));
     const float tClock = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
-    const float2 windXY = isInt ? float2(0.0f, 0.0f) : clamp(cloudWind.xy * 0.045f, -12.0f.xx, 12.0f.xx);
+    const float2 rawWindXY = isInt ? float2(0.0f, 0.0f) : cloudWind.xy;
+    const float windSpd = length(rawWindXY);
+    const float windNorm = saturate(windSpd / 280.0f);
+    // Physical horizontal plume deflection in world units per unit rise (zero indoors, strong downwind tilt in storms):
+    const float2 windTiltXY = isInt ? float2(0.0f, 0.0f) : clamp(rawWindXY * 0.085f, -38.0f.xx, 38.0f.xx);
+    // Atmospheric eddy diffusivity dispersion (phenology1.w = evap/eddy mixing, phenology1.z = calm nocturnal inversion):
+    const float eddyDisp = isInt ? 0.22f
+                                 : saturate(phenology1.w * 0.85f + windNorm * 0.72f + weather.w * 0.28f - phenology1.z * 0.35f);
 
-    // Project world -Z (down toward real flame bases) into screen pixel space analytically for any camera pitch/roll:
+    // Project wind-tilted world -Z (upwind + down toward verified flame bases) into screen space analytically:
     const float4 sRef0  = screenOf(eye + w * 200.0f);
-    const float4 sRefDn = screenOf(eye + w * 200.0f - float3(0.0f, 0.0f, 20.0f));
+    const float4 sRefDn = screenOf(eye + w * 200.0f - float3(windTiltXY * 0.38f, 20.0f));
     float2 downPxDir = sRefDn.xy - sRef0.xy;
     const float downLen = length(downPxDir);
     downPxDir = (downLen > 1.0e-3f) ? (downPxDir / downLen) : float2(0.0f, 1.0f);
     const float2 sidePxDir = float2(-downPxDir.y, downPxDir.x);
 
-    // Search a buoyant inverted cone below current pixel for verified real scene-rendered flame cores
+    // Search a wind-tilted buoyant inverted cone below current pixel for verified real scene-rendered flame cores
     // (1 center tap + 8 exponentially-spaced downward tiers x 2 lateral chevron probes = 17 taps).
     static const float kTierFrac[8] = { 0.010f, 0.022f, 0.042f, 0.072f, 0.112f, 0.162f, 0.220f, 0.285f };
     const float maxConePx = dims.y;
@@ -134,10 +140,10 @@ float4 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float curZ, fl
         }
     }
 
-    // Inverted buoyant cone search downward along world -Z:
+    // Wind-tilted inverted buoyant cone search downward toward flame bases:
     [unroll] for (int ti = 0; ti < 8; ++ti) {
         const float dPx = kTierFrac[ti] * maxConePx * (0.86f + 0.28f * jit);
-        const float spreadPx = dPx * 0.26f;
+        const float spreadPx = dPx * lerp(0.25f, 0.38f, eddyDisp);
         [unroll] for (int sideI = 0; sideI < 2; ++sideI) {
             const float sSign = (sideI == 0) ? -1.0f : 1.0f;
             const float latOff = sSign * spreadPx * ((ti & 1) == 0 ? 0.35f : 0.85f);
@@ -150,7 +156,6 @@ float4 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float curZ, fl
             if (zTap < 14.0f || zTap > 2400.0f || zTap > curZ * 1.04f + 10.0f) { continue; }
             const float fTap = rawDetectSceneFlameCore(Lit.SampleLevel(Lin, qUv, 0.0f).rgb);
             if (fTap > 0.01f) {
-                // Favor closest verified flame anchor vertically below current pixel:
                 const float score = fTap * (1.0f - float(ti) * 0.055f);
                 if (score > bestFlame) {
                     bestFlame = score;
@@ -179,15 +184,18 @@ float4 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float curZ, fl
     // sizeT: 0.0 = tiny wall candle, 0.35 = torch/sconce, 0.75..1.0 = brazier / campfire / Dragonsreach hearth
     const float sizeT = saturate((footHits - 1.0f) * 0.25f);
     const float rad = lerp(4.2f, 26.0f, sizeT);
-    const float hPlume = lerp(22.0f, 145.0f, sizeT);
-    const float smokeScale = smoothstep(0.10f, 0.55f, sizeT) * lerp(0.85f, 1.0f, isInt ? 0.65f : 1.0f);
+    // Windy storms shear plumes lower & wider; still cold air lets plumes tower higher & denser:
+    const float hPlume = lerp(22.0f, 152.0f, sizeT) * lerp(1.08f, 0.78f, eddyDisp);
+    const float coldHang = isInt ? 1.0f : lerp(1.18f, 0.85f, saturate((seasonThermal0.w + 5.0f) / 22.0f));
+    const float smokeScale = smoothstep(0.10f, 0.55f, sizeT) * lerp(0.88f, 1.0f, isInt ? 0.70f : 1.0f)
+                           * coldHang * lerp(1.12f, 0.72f, eddyDisp);
 
     // Reconstruct exact 3D world-space flame base and intersect camera ray with the vertical plume slab:
     const float3 pBase = worldAt(bestPx, bestD);
     const float tMid = dot(pBase - eye, w);
     if (tMid < 14.0f || tMid > 2400.0f) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
 
-    const float slabHalf = rad * 1.85f;
+    const float slabHalf = rad * lerp(1.95f, 2.55f, eddyDisp);
     const float tEnter = max(14.0f, tMid - slabHalf);
     const float tExit  = min(dist + 2.0f, tMid + slabHalf);
     if (tExit <= tEnter + 0.4f) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
@@ -195,13 +203,13 @@ float4 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float curZ, fl
     const float distFade = (1.0f - smoothstep(1400.0f, 2400.0f, tMid)) * saturate(bestFlame * 1.15f);
     const int kSteps = 10;
     const float ds = (tExit - tEnter) * (1.0f / float(kSteps));
-    const float riseSpeed = lerp(34.0f, 64.0f, sizeT);
-    const float nFreq = 1.0f / max(rad * 0.92f, 3.8f);
+    const float riseSpeed = lerp(34.0f, 66.0f, sizeT);
+    const float nFreq = 1.0f / max(rad * 0.90f, 3.8f);
 
-    // Ambient illumination for cool dark soot tops (matches local room or outdoor sky smoothly):
+    // Cool dark charcoal soot ambient illumination for upper billows:
     const float3 ambTop = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w),
                               isInt ? float3(0.014f, 0.014f, 0.018f) : float3(0.025f, 0.032f, 0.048f));
-    const float3 sootAlbedo = float3(0.055f, 0.050f, 0.048f);
+    const float3 sootAlbedo = float3(0.042f, 0.038f, 0.038f);
 
     float3 accEmit = 0.0f.xxx;
     float T = 1.0f;
@@ -214,17 +222,20 @@ float4 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float curZ, fl
         if (u < -0.04f || u > 1.05f) { continue; }
         const float uCl = saturate(u);
 
-        // 3-Octave curl-advected domain-warped FBM turbulence (world-locked, buoyant along +Z):
+        // 3-Octave curl-advected domain-warped FBM turbulence (coupled to live wind advection + calm mushroom eddies!):
         const float3 wpQ = camPosW.xyz + pRel;
-        const float3 nP1 = float3(wpQ.xy * nFreq, wpQ.z * nFreq * 0.70f - tClock * (riseSpeed * nFreq));
+        const float3 windAdv = float3(windTiltXY * (tClock * 1.35f), tClock * riseSpeed);
+        const float3 nP1 = (wpQ - windAdv) * float3(nFreq, nFreq, nFreq * 0.70f);
         const float4 g1 = rawNoise3Grad(nP1);
         const float3 curl1 = float3(g1.z - g1.w, g1.w - g1.y, g1.y - g1.z);
-        const float4 g2 = rawNoise3Grad(nP1 * 2.15f + curl1 * 0.42f + float3(5.3f, 11.7f, -tClock * 1.45f));
-        const float4 g3 = rawNoise3Grad(nP1 * 4.35f - curl1 * 0.24f + float3(13.1f, -7.9f, -tClock * 2.55f));
-        const float turb = saturate(g1.x * 0.52f + g2.x * 0.32f + g3.x * 0.16f);
+        const float4 g2 = rawNoise3Grad(nP1 * 2.15f + curl1 * 0.45f + float3(5.3f, 11.7f, -tClock * 1.45f));
+        const float4 g3 = rawNoise3Grad(nP1 * 4.35f - curl1 * 0.25f + float3(13.1f, -7.9f, -tClock * 2.55f));
+        const float turb = saturate(g1.x * 0.50f + g2.x * 0.34f + g3.x * 0.16f);
 
-        const float2 curlXY = curl1.xy * 0.58f + float2(g2.z - g2.w, g2.w - g2.y) * 0.32f;
-        const float2 qWarped = q.xy - windXY * (uCl * uCl * 2.2f) + curlXY * (rad * lerp(0.18f, 0.95f, uCl));
+        // Calm interiors / still air develop buoyant toroidal mushroom-cap curls near the plume crest:
+        const float mushroomRoll = (1.0f - windNorm) * smoothstep(0.45f, 0.92f, uCl) * 0.42f;
+        const float2 curlXY = curl1.xy * (0.58f + mushroomRoll) + float2(g2.z - g2.w, g2.w - g2.y) * 0.34f;
+        const float2 qWarped = q.xy - windTiltXY * (uCl * uCl * 2.45f) + curlXY * (rad * lerp(0.18f, 1.15f, uCl));
         const float rXY = length(qWarped);
 
         // 1) Lower Hot Core: crisp turbulent Planck blackbody (1400K..3400K) licking flame tongues (u in 0..0.48):
@@ -239,73 +250,83 @@ float4 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float curZ, fl
                 flameDens = smoothstep(lerp(0.22f, 0.58f, uf), 0.90f, fShape + (turb - 0.42f) * lerp(0.55f, 1.05f, uf));
                 if (flameDens > 0.01f) {
                     const float temp01 = saturate(flameDens * (1.12f - uf * 0.65f) + (1.0f - saturate(rFNorm)) * 0.28f * (1.0f - uf));
-                    const float tempK = lerp(1400.0f, 3380.0f, temp01);
+                    const float tempK = lerp(1400.0f, 3400.0f, temp01);
                     float hdrRad = 0.0f;
                     const float3 bbRgb = rawPlanckBlackbodyRGB(tempK, hdrRad);
-                    flameCol = bbRgb * min(hdrRad * 0.52f, 4.2f);
+                    flameCol = bbRgb * min(hdrRad * 0.54f, 4.4f);
                 }
             }
         }
 
-        // 2) Upper Rising Plume: billowing dark soot smoke lit from WITHIN by warm orange fire scatter!
+        // 2) Upper Rising Plume: billowing dark charcoal soot smoke lit from WITHIN by burnt-orange fire scatter!
         float smokeDens = 0.0f;
         float3 smokeScatter = 0.0f.xxx;
-        if (smokeScale > 0.02f && u > 0.12f) {
-            const float rSmoke = max(rad * lerp(0.82f, 2.35f, pow(uCl, 0.72f)), 1.5f);
+        if (smokeScale > 0.02f && u > 0.10f) {
+            const float spreadMult = lerp(2.25f, 3.35f, eddyDisp) + mushroomRoll * 0.65f;
+            const float rSmoke = max(rad * lerp(0.82f, spreadMult, pow(uCl, 0.72f)), 1.5f);
             const float rSNorm = rXY / rSmoke;
-            if (rSNorm < 1.20f) {
+            if (rSNorm < 1.22f) {
                 const float billow = 1.0f - abs(g2.x * 2.0f - 1.0f);
-                const float sShape = saturate(1.0f - rSNorm * rSNorm) * smoothstep(0.12f, 0.32f, uCl) * smoothstep(1.04f, 0.56f, uCl);
-                smokeDens = smoothstep(0.26f, 0.84f, sShape + (turb * 0.65f + billow * 0.35f - 0.40f) * 0.82f) * smokeScale;
+                const float dispFade = exp(-uCl * lerp(0.25f, 1.35f, eddyDisp));
+                const float sShape = saturate(1.0f - rSNorm * rSNorm) * smoothstep(0.10f, 0.30f, uCl) * smoothstep(1.04f, 0.52f, uCl);
+                smokeDens = smoothstep(0.24f, 0.84f, sShape + (turb * 0.62f + billow * 0.38f - 0.39f) * 0.85f) * smokeScale * dispFade;
                 if (smokeDens > 0.01f) {
-                    // Radiance-coupled internal fire illumination (Jan Vlietinck / MytinoDev):
-                    // Vertical & radial irradiance falloff from flame core + analytical gradient underside normal (-g1.w)
-                    // creates bright glowing orange undersides and cool self-shadowed dark billowing soot tops!
-                    const float fireIrrad = exp(-max(uCl - 0.15f, 0.0f) * 4.2f) * exp(-rSNorm * rSNorm * 1.35f);
-                    const float downFace  = saturate(-g1.w * 0.85f + 0.52f);
-                    const float upFace    = saturate( g1.w * 0.65f + 0.55f);
-                    const float selfAtten = exp(-smokeDens * 0.70f);
-                    const float3 fireBounce = float3(2.90f, 0.90f, 0.16f) * (fireIrrad * lerp(0.20f, 1.35f, downFace) * selfAtten);
-                    const float3 ambLit     = sootAlbedo * ambTop * lerp(0.45f, 1.20f, upFace);
-                    smokeScatter = ambLit + fireBounce * (0.24f + 0.34f * (1.0f - smokeDens));
+                    // Multi-band internal fire-to-smoke radiance scatter (janvlietinck / benharkervfx / mytinodev):
+                    // Rich incandescent burnt-orange illuminated undersides + deep crimson subsurface scatter
+                    // transitioning sharply into cool self-shadowed dark charcoal billow tops!
+                    const float fireIrradHot  = exp(-max(uCl - 0.14f, 0.0f) * 3.85f) * exp(-rSNorm * rSNorm * 1.35f);
+                    const float fireIrradDeep = exp(-max(uCl - 0.14f, 0.0f) * 2.05f) * exp(-rSNorm * rSNorm * 1.10f);
+                    const float downFace = saturate(-g1.w * 0.95f + 0.48f);
+                    const float upFace   = saturate( g1.w * 0.72f + 0.52f);
+                    const float selfAtten = exp(-smokeDens * 0.62f);
+                    const float3 orangeUnder = float3(3.35f, 0.96f, 0.14f) * (fireIrradHot * lerp(0.18f, 1.42f, downFace) * selfAtten);
+                    const float3 crimsonCore = float3(1.65f, 0.26f, 0.03f) * (fireIrradDeep * lerp(0.25f, 0.95f, downFace) * 0.38f);
+                    const float3 ambCharcoal = sootAlbedo * ambTop * lerp(0.38f, 1.25f, upFace);
+                    smokeScatter = ambCharcoal + (orangeUnder + crimsonCore) * (0.26f + 0.36f * (1.0f - smokeDens));
                 }
             }
         }
 
         const float sigmaF = flameDens * (0.072f / max(rad * 0.08f, 0.45f));
-        const float sigmaS = smokeDens * (0.038f / max(rad * 0.07f, 0.55f));
+        const float sigmaS = smokeDens * (0.044f / max(rad * 0.07f, 0.55f));
         const float sigmaTot = sigmaF + sigmaS;
         if (sigmaTot > 1.0e-4f) {
             const float stepT = exp(-sigmaTot * ds);
             const float3 stepRadiance = (flameCol * sigmaF + smokeScatter * sigmaS) / sigmaTot;
             accEmit += T * stepRadiance * (1.0f - stepT);
             T *= stepT;
-            if (T < 0.08f) { break; }
+            if (T < 0.06f) { break; }
         }
     }
 
-    // 3) Rising Sparkling World-Locked 3D Embers drifting through the smoke column (braziers/campfires/hearths):
-    if (smokeScale > 0.20f && tMid > 20.0f && tMid < dist && tMid < 1500.0f) {
+    // 3) Wind-Stretched Rising World-Locked 3D Embers drifting along buoyant + downwind trajectories:
+    if (smokeScale > 0.18f && tMid > 20.0f && tMid < dist && tMid < 1500.0f) {
         const float3 ptRay = eye + w * tMid;
         const float3 offL = ptRay - pBase;
-        if (offL.z > hPlume * 0.14f && offL.z < hPlume * 1.30f) {
-            const float hE = saturate((offL.z - hPlume * 0.14f) / (hPlume * 1.16f));
-            const float maxER = rad * lerp(1.1f, 3.0f, hE);
-            const float2 offWind = offL.xy - windXY * (hE * hE * 2.2f);
+        if (offL.z > hPlume * 0.12f && offL.z < hPlume * 1.35f) {
+            const float hE = saturate((offL.z - hPlume * 0.12f) / (hPlume * 1.23f));
+            const float maxER = rad * lerp(1.15f, 3.45f, hE);
+            const float2 offWind = offL.xy - windTiltXY * (hE * hE * 2.45f);
             if (dot(offWind, offWind) < maxER * maxER) {
                 const float3 wpE = camPosW.xyz + ptRay;
                 const float2 swirlE = float2(sin(tClock * 2.4f + wpE.z * 0.075f), cos(tClock * 2.0f - wpE.z * 0.065f)) * 5.2f;
-                const float3 eGrid = float3((wpE.xy - windXY * hE + swirlE) * 0.16f, wpE.z * 0.10f - tClock * 2.15f);
+                const float3 eGrid = float3((wpE.xy - windTiltXY * (tClock * 1.45f) + swirlE) * 0.16f,
+                                            wpE.z * 0.10f - tClock * 2.30f);
                 const float3 eCell = floor(eGrid);
                 const float3 eJitter = rawHash33(eCell);
-                if (eJitter.x > 0.942f) {
-                    const float3 ePos = (eJitter - 0.5f) * 0.55f;
-                    const float dSpark = length((frac(eGrid) - 0.5f) - ePos);
+                if (eJitter.x > 0.940f) {
+                    const float3 relE = (frac(eGrid) - 0.5f) - (eJitter - 0.5f) * 0.55f;
+                    // Stretch spark slightly along local buoyant + wind trajectory so windy embers read as glowing streaks:
+                    const float3 sparkVel = normalize(float3(windTiltXY * 0.04f, 1.0f));
+                    const float alongV = dot(relE, sparkVel);
+                    const float3 perpV = relE - sparkVel * alongV;
+                    const float streakScale = lerp(1.0f, 0.48f, windNorm);
+                    const float dSpark2 = dot(perpV, perpV) + (alongV * streakScale) * (alongV * streakScale);
                     const float flicker = 0.65f + 0.35f * sin(tClock * 18.0f + eJitter.y * 42.0f);
-                    const float spark = smoothstep(0.942f, 0.998f, eJitter.x) * exp(-dSpark * dSpark * 62.0f)
+                    const float spark = smoothstep(0.940f, 0.998f, eJitter.x) * exp(-dSpark2 * 64.0f)
                                       * (1.0f - hE) * smoothstep(0.0f, 0.10f, hE) * flicker;
-                    const float3 sparkCol = lerp(float3(3.10f, 1.55f, 0.38f), float3(1.65f, 0.28f, 0.03f), hE);
-                    accEmit += sparkCol * (spark * 1.10f);
+                    const float3 sparkCol = lerp(float3(3.25f, 1.62f, 0.38f), float3(1.65f, 0.26f, 0.03f), hE);
+                    accEmit += sparkCol * (spark * 1.15f);
                 }
             }
         }
@@ -846,16 +867,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Scene-Anchored 3D Volumetric Fire, Self-Shadowed Dark Soot Smoke & Rising Embers + Scene-Anchored 3D Volumetric Spells:
         // Strictly anchored to real HDR scene flame/spell cores (ZERO floating spheres around empty-air point lights!).
         float4 extFireVol = float4(0.0f, 0.0f, 0.0f, 1.0f);
+        float4 extSpellVol = float4(0.0f, 0.0f, 0.0f, 1.0f);
         if (mapScale > 0.5f) {
             extFireVol = evalVolumetricFirePlumes(eye, w, dist, curZ, px, false);
             float2 spellLensPx = 0.0f.xx;
-            const float3 spellAddExt = evalVolumetricSpells3D(Lit, Depth, Lin, eye, w, dist, curZ, px, spellLensPx);
+            extSpellVol = evalVolumetricSpells3D(Lit, Depth, Lin, eye, w, dist, curZ, px, false, spellLensPx);
             if (dot(spellLensPx, spellLensPx) > 0.002f) {
                 const float2 lensUv = clamp(uv + spellLensPx * dims.zw, 0.002f.xx, 0.998f.xx);
                 const float dLens = Depth.SampleLevel(Lin, lensUv, 0.0f);
                 if (dLens >= d - 0.002f) { lit.rgb = lerp(lit.rgb, Lit.SampleLevel(Lin, lensUv, 0.0f).rgb, 0.65f); }
             }
-            precipAdd += spellAddExt;
         }
         // Wave 29 Negative-Space Depth-Parity Silhouette Diffraction & Crepuscular Dark-Shaft Cavity Contrast:
         // 1) Asymmetric silhouette edge diffraction: when a foreground occluder (curZ) borders a far bright sky/HDR void
@@ -912,7 +933,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float dynT = lerp(1.0f, dynFog.transmittance, dynW);
         const float3 dynScat = dynFog.inscatter * (dynW * lerp(0.55f, 1.0f, froxT));
         const float3 extBase = lit.rgb * T + (froxScat * cavityTint) * pdeMistBoost + farInScat + shaftScatter * saturate(T + 0.15f) * pdeMistBoost;
-        const float3 extScene = extBase * dynT + dynScat + precipAdd + silDiffAdd;
+        const float3 extScene = (extBase * dynT + dynScat + precipAdd + silDiffAdd) * extSpellVol.a + extSpellVol.rgb;
         return float4(extScene * extFireVol.a + extFireVol.rgb, lit.a);
     }
     // Dungeons, Caves, Nordic Tombs, Dwemer Ruins, Blackreach & Interiors (sunColour.w < 0.5):
@@ -928,13 +949,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Scene-Anchored 3D Volumetric Fire/Smoke/Embers + Scene-Anchored 3D Volumetric Spells (interiors):
         const float4 intFireVol = evalVolumetricFirePlumes(eye, w, dist, curZ, px, true);
         float2 intSpellLensPx = 0.0f.xx;
-        const float3 intSpellAdd = evalVolumetricSpells3D(Lit, Depth, Lin, eye, w, dist, curZ, px, intSpellLensPx);
+        const float4 intSpellVol = evalVolumetricSpells3D(Lit, Depth, Lin, eye, w, dist, curZ, px, true, intSpellLensPx);
         if (dot(intSpellLensPx, intSpellLensPx) > 0.002f) {
             const float2 lensUvI = clamp(uv + intSpellLensPx * dims.zw, 0.002f.xx, 0.998f.xx);
             const float dLensI = Depth.SampleLevel(Lin, lensUvI, 0.0f);
             if (dLensI >= d - 0.002f) { lit.rgb = lerp(lit.rgb, Lit.SampleLevel(Lin, lensUvI, 0.0f).rgb, 0.65f); }
         }
-        const float3 intScene = lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.34f + intSpellAdd;
+        const float3 intScene = (lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.34f) * intSpellVol.a + intSpellVol.rgb;
         return float4(intScene * intFireVol.a + intFireVol.rgb, lit.a);
     }
     const float T = (flags.x & FLAG_FOG_REPLACES) != 0u ? exp(-sigma * tEnd) : 1.0f;

@@ -622,7 +622,7 @@ if(RAW_ENGINE_DIR)
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawMesh.hlsl ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawSubdiv.hlsl
                 ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawTerrainWorld.hlsl ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawMaterials3D.hlsli
                 ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawProceduralNoise.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
-                ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawFloraWind.hlsli
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawFloraWind.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawSeasonsThermals.hlsli
         COMMENT "dxc: RAW-MESH 2.0 & RawTerrainWorld SM${RAW_SHADER_MODEL} Amplification, Mesh, Vertex, Pixel & PN-Triangle subdivision -> DXIL headers"
         VERBATIM)
     set(RAW_FLUID_FIRE_HLSL ${RAW_SHARE_HLSL}/RawFluidFireSim.hlsl)
@@ -696,7 +696,7 @@ if(RAW_ENGINE_DIR)
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
         COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E water ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_water.h -Vn kDxil_rt_water ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtWater.hlsl
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtWater.hlsl ${RAW_RTSHADOW_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
-                ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Weather.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawProceduralNoise.hlsli
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Weather.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawProceduralNoise.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawSeasonsThermals.hlsli
         COMMENT "dxc: ray-traced water -> DXIL header"
         VERBATIM)
     add_custom_command(
@@ -914,6 +914,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_depth_topology.cpp
         src/engine_rt/rt_memory_guards.cpp
         src/engine_rt/ce_rebuild_arch.cpp
+        src/engine_rt/rt_softbody.cpp
         src/engine_rt/rt_skeleton_ik.cpp
         src/engine_rt/rt_combat_ai.cpp
         src/engine_rt/rt_world_sim.cpp
@@ -927,15 +928,38 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/materials/RawAssetForge.cpp
         src/assets/RawOverrideRegistry.cpp
         src/assets/RawAssetScaffold.cpp
+        src/pipeline/RawAssetValidator.cpp
+        src/pipeline/RawForgePipeline.cpp
         src/ui/RawInputEngine.cpp
         tests/test_flora_engine.cpp
-        tests/test_weather_sim.cpp)
+        tests/test_weather_sim.cpp
+        tests/test_skeleton_physics.cpp
+        tests/test_gameplay_mechanics.cpp
+        tests/test_pipeline_forge.cpp)
     set_target_properties(ce_runtime_check PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
-    target_include_directories(ce_runtime_check PRIVATE src/engine_rt src/d3d12_bridge src/ce_runtime src/worldgen src/materials src/assets src/ui "${RAW_ZYDIS_ROOT}/include")
-    target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD RAW_SIM_PURE_TEST=1 RAW_WEATHER_SIM_NO_MAIN=1)
+    target_include_directories(ce_runtime_check PRIVATE src/engine_rt src/d3d12_bridge src/ce_runtime src/worldgen src/materials src/assets src/pipeline src/ui "${RAW_ZYDIS_ROOT}/include")
+    target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD RAW_SIM_PURE_TEST=1 RAW_WEATHER_SIM_NO_MAIN=1 RAW_GAMEPLAY_MECHANICS_NO_MAIN=1)
     target_link_libraries(ce_runtime_check PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB} windowscodecs ole32 dxgi)
+
+    # raw_forge_cli: standalone C++23 first-principles authoring, batch baking & validation CLI
+    add_executable(raw_forge_cli
+        tools/raw_forge_cli.cpp
+        src/pipeline/RawAssetValidator.cpp
+        src/pipeline/RawForgePipeline.cpp
+        src/worldgen/RawTerrainGen.cpp
+        src/worldgen/RawBiomeWorld.cpp
+        src/worldgen/RawMeshPipeline.cpp
+        src/worldgen/RawFloraEngine.cpp
+        src/worldgen/RawWeatherSim.cpp
+        src/worldgen/RawWorldShowcase.cpp
+        src/materials/RawMaterialLib.cpp)
+    set_target_properties(raw_forge_cli PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tools)
+    target_include_directories(raw_forge_cli PRIVATE src/pipeline src/worldgen src/materials)
+    target_compile_definitions(raw_forge_cli PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 else()
     message(STATUS "raw_engine: Zydis not found under ${RAW_ZYDIS_ROOT}; module not built")
 endif()

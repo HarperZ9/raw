@@ -302,7 +302,6 @@ void ControlOnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     DrawStatsOnPresent();
     WeatherOnPresent();
     ForensicsOnPresent();
-    SoftBodyOnPresent();
     LiveStateOnPresent();
     ProxyCountersOnPresent();
     if (!g_busy) {

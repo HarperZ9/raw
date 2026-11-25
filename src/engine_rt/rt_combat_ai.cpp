@@ -3,10 +3,24 @@
 #include "rt_combat_ai.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <string>
+#include <unordered_map>
+
+#ifndef RAW_SIM_PURE_TEST
+#include "rt_detour.h"
+#include "rt_image.h"
+#include "rt_version.h"
+#include "rt_view.h"
+#include "rt_weather.h"
+#include <windows.h>
+#endif
 
 namespace raw::rt {
 
@@ -620,10 +634,11 @@ std::string ResolveSkyrimSavesDir(const char* docsSkyrimDir) {
 DynamicGameplayGmsts ComputeDynamicGameplayGmsts(float economyBuyMult, float staminaRegenMult) {
     DynamicGameplayGmsts g{};
     const float econ = std::clamp(economyBuyMult, 0.85f, 1.45f);
-    const float stam = std::clamp(staminaRegenMult, 0.55f, 1.10f);
+    const float stam = std::clamp(staminaRegenMult, 0.70f, 1.30f);
     g.barterMin = std::clamp(1.35f * econ, 1.15f, 1.85f);
     g.barterMax = std::clamp(3.60f * (0.65f + 0.35f * econ), 3.10f, 4.40f);
-    g.sprintStaminaDrainMult = std::clamp(0.82f / stam, 0.78f, 1.35f);
+    // Binary-verified 0x4214C0: Skyrim sprint stamina drain baseline is 15.0/sec; scale cleanly around 14.5/sec in [12, 18].
+    g.sprintStaminaDrainMult = std::clamp(14.5f / stam, 12.0f, 18.0f);
     return g;
 }
 
@@ -954,5 +969,654 @@ PlanetaryPhysicsState EvaluatePlanetaryPhysics(float daysPassed, float gameHour,
     p.swellDirY = static_cast<float>(std::sin(swellAng));
     return p;
 }
+
+// =================================================================================================
+// Wave 39 Pure Deterministic Gameplay Resolvers (compiled in raw_engine.dll AND ce_runtime_check)
+// =================================================================================================
+
+const DifficultyTierPair* NonSpongyDifficultyTable(size_t* outCount) {
+    static constexpr DifficultyTierPair kTiers[6] = {
+        {"Novice",     0.50f, 1.50f},
+        {"Apprentice", 0.75f, 1.25f},
+        {"Adept",      1.00f, 1.00f},
+        {"Expert",     1.35f, 1.15f},
+        {"Master",     1.75f, 1.35f},
+        {"Legendary",  2.25f, 1.60f},
+    };
+    if (outCount) *outCount = 6;
+    return kTiers;
+}
+
+LiveHitOutcome EvaluateLiveHitModifier(const LiveHitContext& ctx) {
+    LiveHitOutcome out{};
+    const float baseDmg = std::isfinite(ctx.totalDamage) ? std::max(ctx.totalDamage, 0.0f) : 0.0f;
+    const float basePhys = std::isfinite(ctx.physicalDamage) ? std::max(ctx.physicalDamage, 0.0f) : baseDmg;
+    const float baseBlk = std::isfinite(ctx.percentBlocked) ? std::clamp(ctx.percentBlocked, 0.0f, 1.0f) : 0.0f;
+
+    out.outTotalDamage    = baseDmg;
+    out.outPhysicalDamage = basePhys;
+    out.outPercentBlocked = baseBlk;
+
+    const bool blocked = (ctx.flags & 1u) != 0u;
+
+    // 1. Timed Directional Parry / Deflect (220 ms precision guard window):
+    if (blocked && ctx.blockElapsedMs >= 0.0f && ctx.blockElapsedMs <= 220.0f && ctx.defenderStamina > 5.0f) {
+        out.timedParry              = true;
+        out.outPercentBlocked       = 1.0f;
+        out.outTotalDamage          = 0.0f;
+        out.outPhysicalDamage       = 0.0f;
+        out.outStaminaRestoreDef    = 18.0f;
+        out.outAggressorPoiseBroken = true;
+        out.outDefenderPoiseDelta   = +10.0f;
+        return out;
+    }
+
+    // 2. Guard Break on heavy/power attack against exhausted defender stamina:
+    if (blocked && ctx.isPowerAttack && ctx.defenderStamina <= 12.0f) {
+        out.guardBroken       = true;
+        out.outPercentBlocked = std::clamp(baseBlk * 0.35f, 0.0f, 0.45f);
+        const float origPass  = std::max(1.0f - baseBlk, 0.15f);
+        const float newPass   = 1.0f - out.outPercentBlocked;
+        const float ratio     = std::clamp(newPass / origPass, 1.0f, 2.5f);
+        out.outTotalDamage    = baseDmg * ratio;
+        out.outPhysicalDamage = basePhys * ratio;
+        out.outDefenderPoiseDelta = -45.0f;
+    } else {
+        out.outDefenderPoiseDelta = blocked ? -(ctx.isPowerAttack ? 22.0f : 10.0f)
+                                            : -(ctx.isPowerAttack ? 38.0f : 18.0f);
+    }
+
+    // 3. Posture-Broken Counter-Hit Lethal Multiplier (1.45x):
+    if (ctx.targetPoiseBroken && out.outTotalDamage > 0.0f) {
+        out.counterHit        = true;
+        out.outTotalDamage    *= 1.45f;
+        out.outPhysicalDamage *= 1.45f;
+    }
+    return out;
+}
+
+float EvaluateTacticalAiAttackChance(const TacticalAiChanceInput& in) {
+    float c = std::isfinite(in.baseChance) ? std::clamp(in.baseChance, 0.0f, 1.0f) : 0.35f;
+    const float hp = std::clamp(in.hpFrac, 0.0f, 1.0f);
+    const float st = std::clamp(in.staminaFrac, 0.0f, 1.0f);
+    // Eliminate 2011 passive wait-in-line AI: active squad token & flankers press decisively.
+    if (in.hasAttackToken) {
+        c = std::max(c * 1.35f, 0.42f);
+    }
+    if (in.role == TacticalRole::FlankerLeft || in.role == TacticalRole::FlankerRight) {
+        c *= 1.20f;
+    } else if (in.role == TacticalRole::SupportCaster) {
+        c *= 0.85f;
+    }
+    if (hp < 0.25f || st < 0.15f) {
+        c *= 0.60f;
+    }
+    if (in.selfPoisePressured) {
+        c *= 0.72f;
+    }
+    return std::clamp(c, 0.04f, 0.96f);
+}
+
+float EvaluateTacticalAiBlockChance(const TacticalAiChanceInput& in) {
+    float c = std::isfinite(in.baseChance) ? std::clamp(in.baseChance, 0.0f, 1.0f) : 0.25f;
+    const float hp = std::clamp(in.hpFrac, 0.0f, 1.0f);
+    const float st = std::clamp(in.staminaFrac, 0.0f, 1.0f);
+    if (hp < 0.45f) c += 0.24f;
+    if (in.selfPoisePressured) c += 0.22f;
+    if (in.targetPowerAttacking && st > 0.25f) c += 0.18f;
+    if (st < 0.12f) c *= 0.45f;   // don't turtle into guard-break when exhausted
+    return std::clamp(c, 0.0f, 0.92f);
+}
+
+float EvaluateTacticalAiBashChance(const TacticalAiChanceInput& in) {
+    float c = std::isfinite(in.baseChance) ? std::clamp(in.baseChance, 0.0f, 1.0f) : 0.15f;
+    const float st = std::clamp(in.staminaFrac, 0.0f, 1.0f);
+    if (st < 0.20f) return std::clamp(c * 0.35f, 0.0f, 0.25f);
+    if (in.targetPowerAttacking) c += 0.35f;   // interrupt enemy windup!
+    if (in.targetBlocking)       c += 0.25f;   // crack enemy turtle guard!
+    return std::clamp(c, 0.0f, 0.88f);
+}
+
+BarterEconomyGmsts EvaluateRegionalBarterEconomy(const BarterEconomyInput& in) {
+    BarterEconomyGmsts out{};
+    const int month = std::clamp(static_cast<int>(std::floor(in.gameMonth0_11)), 0, 11);
+    const float storm = std::clamp(in.storm01, 0.0f, 1.0f);
+    const float snow  = std::clamp(in.snowDepthU / 32.0f, 0.0f, 1.0f);
+    const float northHold = std::clamp((in.worldY - 12000.0f) / 36000.0f, 0.0f, 1.0f);
+
+    // Tamriel calendar seasonal supply cycle:
+    //   Months 9..11, 0..1 (Frostfall..Sun's Dawn) = winter scarcity (+0.15..+0.28)
+    //   Months 7..8 (Last Seed / Hearthfire) = harvest surplus (-0.10)
+    float seasonBias = 0.0f;
+    if (month == 10 || month == 11 || month == 0)      seasonBias = +0.24f;
+    else if (month == 9 || month == 1)                 seasonBias = +0.14f;
+    else if (month == 7 || month == 8)                 seasonBias = -0.10f;
+    else if (month == 5 || month == 6)                 seasonBias = -0.04f;
+
+    const float tradeSat = std::min(float(in.recentTradeCount) * 0.015f, 0.12f);
+    const float scarcity = std::clamp(0.12f + seasonBias + storm * 0.26f + snow * 0.16f + northHold * 0.14f - tradeSat * 0.5f,
+                                      0.0f, 1.0f);
+    out.scarcity01    = scarcity;
+    out.seasonalMult  = std::clamp(1.0f + seasonBias + storm * 0.18f + northHold * 0.10f, 0.85f, 1.48f);
+    // Scarcity raises merchant buy prices (fBarterMin/Max up) and slightly lowers sell return when flooding market:
+    const float priceScale = std::clamp(0.92f + scarcity * 0.44f, 0.88f, 1.40f);
+    out.barterMin     = std::clamp(1.35f * priceScale, 1.15f, 1.95f);
+    out.barterMax     = std::clamp(3.30f * (0.72f + 0.28f * priceScale), 2.85f, 4.35f);
+    out.barterBuyMin  = std::clamp(1.05f + scarcity * 0.08f, 1.05f, 1.20f);
+    out.barterSellMax = std::clamp(0.95f - tradeSat * 0.45f, 0.78f, 0.95f);
+    return out;
+}
+
+#ifndef RAW_SIM_PURE_TEST
+// =================================================================================================
+// Wave 39 Live Creation Engine 1.7.104.0 Detours (Zydis-verified, Fail-Closed, SEH-guarded)
+// =================================================================================================
+namespace {
+
+using HitDataPopulateFn = void (*)(uint8_t* hitData, uint8_t ignoreBlock);
+using GetActorValueFn   = float (*)(void* avOwner, int32_t av);
+using RestoreAvThunkFn  = void (*)(void* avOwner, int32_t mod, int32_t av, float val);
+using AiAttackChanceFn  = float (*)(void* actor, void* target);
+using AiBlockChanceFn   = float (*)(void* actor);
+using AiBashChanceFn    = float (*)(void* actor, void* target);
+using BarterProcMsgFn   = uint32_t (*)(void* menu, uint8_t* uiMsg);
+
+struct ActorCombatRecord {
+    uint64_t blockStartMs      = 0;
+    uint64_t lastBlockedHitMs  = 0;
+    uint64_t poiseBrokenUntil  = 0;
+    float    poise             = 100.0f;
+};
+
+struct SavedBarterGmsts {
+    bool   saved = false;
+    float* pMin = nullptr;
+    float* pMax = nullptr;
+    float* pBuyMin = nullptr;
+    float* pSellMax = nullptr;
+    float  vMin = 1.4f, vMax = 2.4f, vBuyMin = 1.05f, vSellMax = 0.95f;
+};
+
+struct LiveGameplayRuntime {
+    const uint8_t*     base = nullptr;
+    uint32_t           rvaHandleEntries = 0;
+    uint32_t           rvaPlayer = 0;
+    GetActorValueFn    fnGetAv = nullptr;
+    GetActorValueFn    fnGetPermAv = nullptr;
+    RestoreAvThunkFn   fnRestoreAv = nullptr;
+
+    HitDataPopulateFn  origHitPopulate = nullptr;
+    AiAttackChanceFn   origAttackChance = nullptr;
+    AiBlockChanceFn    origBlockChance = nullptr;
+    AiBashChanceFn     origBashChance = nullptr;
+    BarterProcMsgFn    origBarterProcMsg = nullptr;
+
+    std::atomic<bool>  active{false};
+    std::atomic<uint8_t>  hooksMask{0};
+    std::atomic<uint32_t> hitsProcessed{0};
+    std::atomic<uint32_t> timedParries{0};
+    std::atomic<uint32_t> guardBreaks{0};
+    std::atomic<uint32_t> counterHits{0};
+    std::atomic<uint32_t> aiAttackEvals{0};
+    std::atomic<uint32_t> aiBlockEvals{0};
+    std::atomic<uint32_t> aiBashEvals{0};
+    std::atomic<uint32_t> barterOpens{0};
+
+    // Squad & weather snapshot published by WorldSimOnPresent:
+    std::atomic<uint32_t> squadActors{0};
+    std::atomic<uint8_t>  squadTokens{2};
+    std::atomic<uint8_t>  squadAction{1};
+    std::atomic<float>    storm01{0.0f};
+    std::atomic<float>    snowDepthU{0.0f};
+    std::atomic<float>    lastBarterMin{1.35f};
+    std::atomic<float>    lastBarterMax{3.60f};
+
+    std::mutex mu;
+    std::unordered_map<uint32_t, ActorCombatRecord> records;
+    SavedBarterGmsts barterSaved{};
+    uint32_t recentTrades = 0;
+} g_gp;
+
+static uint64_t NowMonotonicMs() {
+    LARGE_INTEGER f{}, c{};
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&c);
+    return f.QuadPart > 0 ? uint64_t((c.QuadPart * 1000ll) / f.QuadPart) : GetTickCount64();
+}
+
+// Pure POD SEH helper: validated BSPointerHandleManager::Entry (0x21A4280) lookup (bit26=inUse, bits20..25=age).
+static uint8_t* SehResolveActorHandle(uint32_t handle) {
+    if (!handle || !g_gp.base || !g_gp.rvaHandleEntries) return nullptr;
+    __try {
+        const uint32_t idx = handle & 0x000FFFFFu;
+        if (idx == 0u || idx >= 0x00100000u) return nullptr;
+        const uint8_t* entry = g_gp.base + g_gp.rvaHandleEntries + static_cast<size_t>(idx) * 0x10u;
+        const uint32_t bits = *reinterpret_cast<const uint32_t*>(entry + 0x00);
+        if ((bits & 0x04000000u) == 0u) return nullptr;                       // inUse bit 26
+        if ((bits & 0x03F00000u) != (handle & 0x03F00000u)) return nullptr;   // age bits 20..25
+        const uint8_t* refObj = *reinterpret_cast<const uint8_t* const*>(entry + 0x08);
+        if (!refObj || reinterpret_cast<uintptr_t>(refObj) < 0x10000ull) return nullptr;
+        auto* refr = const_cast<uint8_t*>(refObj - 0x20);
+        // Verify FormType == 0x3E (Actor / kACHR = 62) at TESForm+0x1A:
+        if (refr[0x1A] != 0x3Eu) return nullptr;
+        return refr;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
+static uint8_t* SehGetPlayerPtr() {
+    if (!g_gp.base || !g_gp.rvaPlayer) return nullptr;
+    __try {
+        return *reinterpret_cast<uint8_t* const*>(g_gp.base + g_gp.rvaPlayer);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
+static bool SehReadActorAv(uint8_t* actor, int32_t av, float* outCur, float* outPerm) {
+    if (!actor || !g_gp.fnGetAv) return false;
+    __try {
+        void* avOwner = actor + 0xB8;
+        if (outCur)  *outCur  = g_gp.fnGetAv(avOwner, av);
+        if (outPerm) *outPerm = g_gp.fnGetPermAv ? g_gp.fnGetPermAv(avOwner, av) : 100.0f;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static void SehRestoreActorStamina(uint8_t* actor, float amount) {
+    if (!actor || !g_gp.fnRestoreAv || !(amount > 0.0f)) return;
+    __try {
+        // ActorValueOwner::RestoreActorValueThunk (0x6C51F0): (avOwner=actor+0xB8, mod=2 kDamage, av=26 kStamina, val=+amount)
+        g_gp.fnRestoreAv(actor + 0xB8, 2, 26, amount);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+struct HitDataPod {
+    uint32_t aggressorHandle;
+    uint32_t targetHandle;
+    float    totalDamage;
+    float    physicalDamage;
+    float    percentBlocked;
+    uint32_t flags;
+    uint8_t  flags2;
+};
+
+static bool SehReadHitData(const uint8_t* hitData, HitDataPod* out) {
+    if (!hitData || !out) return false;
+    __try {
+        out->aggressorHandle = *reinterpret_cast<const uint32_t*>(hitData + 0x18);
+        out->targetHandle    = *reinterpret_cast<const uint32_t*>(hitData + 0x1C);
+        out->totalDamage     = *reinterpret_cast<const float*>(hitData + 0x50);
+        out->physicalDamage  = *reinterpret_cast<const float*>(hitData + 0x54);
+        out->percentBlocked  = *reinterpret_cast<const float*>(hitData + 0x5C);
+        out->flags           = *reinterpret_cast<const uint32_t*>(hitData + 0x80);
+        out->flags2          = *(hitData + 0x82);
+        return std::isfinite(out->totalDamage) && std::isfinite(out->percentBlocked);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static void SehWriteHitData(uint8_t* hitData, float totalDmg, float physDmg, float pctBlocked) {
+    if (!hitData) return;
+    __try {
+        *reinterpret_cast<float*>(hitData + 0x50) = totalDmg;
+        *reinterpret_cast<float*>(hitData + 0x54) = physDmg;
+        *reinterpret_cast<float*>(hitData + 0x5C) = pctBlocked;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+static bool SehReadUiMsgType(const uint8_t* uiMsg, uint32_t* outType) {
+    if (!uiMsg || !outType) return false;
+    __try {
+        *outType = *reinterpret_cast<const uint32_t*>(uiMsg + 0x08);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static void SehWriteFloatPtr(float* p, float v) {
+    if (!p || !std::isfinite(v)) return;
+    __try {
+        *p = v;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+static bool SehReadFloatPtr(const float* p, float* out) {
+    if (!p || !out) return false;
+    __try {
+        *out = *p;
+        return std::isfinite(*out);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static bool SehIsActorAttacking(const uint8_t* actor) {
+    if (!actor) return false;
+    __try {
+        // ActorState::attackState sits in bits 28..31 of actor+0xC8 (verified in 0x8F2783)
+        const uint32_t st = (*reinterpret_cast<const uint32_t*>(actor + 0xC8)) >> 28;
+        return st >= 1u && st <= 4u;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static bool SehIsActorBlocking(const uint8_t* actor) {
+    if (!actor) return false;
+    __try {
+        // ActorState::weaponState / block bit at actor+0xCC (verified in 0x7F0CF7)
+        const uint32_t st = *reinterpret_cast<const uint32_t*>(actor + 0xCC);
+        return (st & 0x00000100u) != 0u;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static void HookHitDataPopulate(uint8_t* hitData, uint8_t ignoreBlock) {
+    if (g_gp.origHitPopulate) {
+        g_gp.origHitPopulate(hitData, ignoreBlock);
+    }
+    if (!g_gp.active.load(std::memory_order_acquire) || !hitData) return;
+
+    HitDataPod pod{};
+    if (!SehReadHitData(hitData, &pod)) return;
+    g_gp.hitsProcessed.fetch_add(1u, std::memory_order_relaxed);
+
+    uint8_t* targetActor = SehResolveActorHandle(pod.targetHandle);
+    uint8_t* playerPtr   = SehGetPlayerPtr();
+    float defStam = 100.0f, defStamMax = 100.0f;
+    if (targetActor) {
+        SehReadActorAv(targetActor, 26 /*kStamina*/, &defStam, &defStamMax);
+        defStamMax = std::max(defStamMax, 1.0f);
+    }
+
+    const uint64_t nowMs = NowMonotonicMs();
+    float blockElapsedMs = 999.0f;
+    float defPoise = 100.0f;
+    bool targetPoiseBroken = false;
+    {
+        std::lock_guard<std::mutex> lk(g_gp.mu);
+        if (g_gp.records.size() > 128u) g_gp.records.clear();
+        auto& rec = g_gp.records[pod.targetHandle];
+        if ((pod.flags & 1u) != 0u) {
+            if (rec.blockStartMs == 0 || (nowMs - rec.lastBlockedHitMs) > 450ull) {
+                rec.blockStartMs = nowMs;
+            }
+            blockElapsedMs = static_cast<float>(nowMs - rec.blockStartMs);
+            rec.lastBlockedHitMs = nowMs;
+        } else {
+            rec.blockStartMs = 0;
+        }
+        defPoise = rec.poise;
+        targetPoiseBroken = (rec.poiseBrokenUntil > nowMs);
+    }
+
+    LiveHitContext ctx{};
+    ctx.totalDamage        = pod.totalDamage;
+    ctx.physicalDamage     = pod.physicalDamage;
+    ctx.percentBlocked     = pod.percentBlocked;
+    ctx.flags              = pod.flags;
+    ctx.isPowerAttack      = (pod.flags2 & 1u) != 0u;
+    ctx.defenderStamina    = defStam;
+    ctx.defenderStaminaMax = defStamMax;
+    ctx.blockElapsedMs     = blockElapsedMs;
+    ctx.defenderPoise      = defPoise;
+    ctx.targetPoiseBroken  = targetPoiseBroken;
+    ctx.isTargetPlayer     = (targetActor != nullptr && targetActor == playerPtr);
+
+    const LiveHitOutcome res = EvaluateLiveHitModifier(ctx);
+
+    {
+        std::lock_guard<std::mutex> lk(g_gp.mu);
+        auto& tRec = g_gp.records[pod.targetHandle];
+        tRec.poise = std::clamp(tRec.poise + res.outDefenderPoiseDelta, 0.0f, 100.0f);
+        if (res.guardBroken || tRec.poise <= 0.0f) {
+            tRec.poiseBrokenUntil = nowMs + 2200ull;
+            tRec.poise = 100.0f;
+        } else if (res.counterHit) {
+            tRec.poiseBrokenUntil = 0;
+        }
+        if (res.outAggressorPoiseBroken && pod.aggressorHandle != 0u) {
+            auto& aRec = g_gp.records[pod.aggressorHandle];
+            aRec.poiseBrokenUntil = nowMs + 2500ull;
+            aRec.poise = 0.0f;
+        }
+    }
+
+    if (res.timedParry) {
+        g_gp.timedParries.fetch_add(1u, std::memory_order_relaxed);
+        SehWriteHitData(hitData, res.outTotalDamage, res.outPhysicalDamage, res.outPercentBlocked);
+        if (targetActor && res.outStaminaRestoreDef > 0.0f) {
+            SehRestoreActorStamina(targetActor, res.outStaminaRestoreDef);
+        }
+    } else if (res.guardBroken || res.counterHit) {
+        if (res.guardBroken) g_gp.guardBreaks.fetch_add(1u, std::memory_order_relaxed);
+        if (res.counterHit)  g_gp.counterHits.fetch_add(1u, std::memory_order_relaxed);
+        SehWriteHitData(hitData, res.outTotalDamage, res.outPhysicalDamage, res.outPercentBlocked);
+    }
+}
+
+static float HookCombatAttackChance(void* actor, void* target) {
+    const float base = g_gp.origAttackChance ? g_gp.origAttackChance(actor, target) : 0.35f;
+    if (!g_gp.active.load(std::memory_order_acquire) || !actor) return base;
+    g_gp.aiAttackEvals.fetch_add(1u, std::memory_order_relaxed);
+
+    float hp = 100.0f, hpMax = 100.0f, stam = 100.0f, stamMax = 100.0f;
+    SehReadActorAv(static_cast<uint8_t*>(actor), 24 /*kHealth*/, &hp, &hpMax);
+    SehReadActorAv(static_cast<uint8_t*>(actor), 26 /*kStamina*/, &stam, &stamMax);
+
+    TacticalAiChanceInput in{};
+    in.baseChance     = base;
+    in.hpFrac         = hp / std::max(hpMax, 1.0f);
+    in.staminaFrac    = stam / std::max(stamMax, 1.0f);
+    in.hasAttackToken = (g_gp.squadTokens.load(std::memory_order_relaxed) > 0u);
+    const uintptr_t hash = (reinterpret_cast<uintptr_t>(actor) >> 4) % 3u;
+    in.role = (hash == 0u) ? TacticalRole::Vanguard : (hash == 1u ? TacticalRole::FlankerLeft : TacticalRole::FlankerRight);
+    in.selfPoisePressured = (g_gp.squadAction.load(std::memory_order_relaxed) == static_cast<uint8_t>(TacticalAction::GuardParry));
+    return EvaluateTacticalAiAttackChance(in);
+}
+
+static float HookCombatBlockChance(void* actor) {
+    const float base = g_gp.origBlockChance ? g_gp.origBlockChance(actor) : 0.25f;
+    if (!g_gp.active.load(std::memory_order_acquire) || !actor) return base;
+    g_gp.aiBlockEvals.fetch_add(1u, std::memory_order_relaxed);
+
+    float hp = 100.0f, hpMax = 100.0f, stam = 100.0f, stamMax = 100.0f;
+    SehReadActorAv(static_cast<uint8_t*>(actor), 24, &hp, &hpMax);
+    SehReadActorAv(static_cast<uint8_t*>(actor), 26, &stam, &stamMax);
+
+    TacticalAiChanceInput in{};
+    in.baseChance         = base;
+    in.hpFrac             = hp / std::max(hpMax, 1.0f);
+    in.staminaFrac        = stam / std::max(stamMax, 1.0f);
+    in.selfPoisePressured = (g_gp.squadAction.load(std::memory_order_relaxed) == static_cast<uint8_t>(TacticalAction::GuardParry));
+    return EvaluateTacticalAiBlockChance(in);
+}
+
+static float HookCombatBashChance(void* actor, void* target) {
+    const float base = g_gp.origBashChance ? g_gp.origBashChance(actor, target) : 0.15f;
+    if (!g_gp.active.load(std::memory_order_acquire) || !actor) return base;
+    g_gp.aiBashEvals.fetch_add(1u, std::memory_order_relaxed);
+
+    float stam = 100.0f, stamMax = 100.0f;
+    SehReadActorAv(static_cast<uint8_t*>(actor), 26, &stam, &stamMax);
+
+    TacticalAiChanceInput in{};
+    in.baseChance           = base;
+    in.staminaFrac          = stam / std::max(stamMax, 1.0f);
+    in.targetPowerAttacking = target ? SehIsActorAttacking(static_cast<const uint8_t*>(target)) : false;
+    in.targetBlocking       = target ? SehIsActorBlocking(static_cast<const uint8_t*>(target)) : false;
+    return EvaluateTacticalAiBashChance(in);
+}
+
+static uint32_t HookBarterProcessMessage(void* menu, uint8_t* uiMsg) {
+    uint32_t msgType = 0;
+    const bool gotType = g_gp.active.load(std::memory_order_acquire) && SehReadUiMsgType(uiMsg, &msgType);
+
+    if (gotType && (msgType == 1u /*kShow*/ || msgType == 4u /*kUpdate*/)) {
+        EngineView ev{};
+        RAW_EngineView(&ev);
+        float cal6[6] = {201.0f, 7.0f, 17.0f, 12.0f, 0.0f, 20.0f};
+        RAW_GetCalendarState(cal6);
+
+        BarterEconomyInput econIn{};
+        econIn.gameMonth0_11 = cal6[1];
+        econIn.gameDay1_31   = cal6[2];
+        econIn.storm01       = g_gp.storm01.load(std::memory_order_relaxed);
+        econIn.snowDepthU    = g_gp.snowDepthU.load(std::memory_order_relaxed);
+        econIn.worldY        = (ev.ok & 2u) ? ev.playerPos[1] : 0.0f;
+        {
+            std::lock_guard<std::mutex> lk(g_gp.mu);
+            econIn.recentTradeCount = g_gp.recentTrades;
+            if (!g_gp.barterSaved.saved && g_gp.barterSaved.pMin) {
+                SehReadFloatPtr(g_gp.barterSaved.pMin, &g_gp.barterSaved.vMin);
+                SehReadFloatPtr(g_gp.barterSaved.pMax, &g_gp.barterSaved.vMax);
+                SehReadFloatPtr(g_gp.barterSaved.pBuyMin, &g_gp.barterSaved.vBuyMin);
+                SehReadFloatPtr(g_gp.barterSaved.pSellMax, &g_gp.barterSaved.vSellMax);
+                g_gp.barterSaved.saved = true;
+            }
+        }
+        const BarterEconomyGmsts gm = EvaluateRegionalBarterEconomy(econIn);
+        SehWriteFloatPtr(g_gp.barterSaved.pMin, gm.barterMin);
+        SehWriteFloatPtr(g_gp.barterSaved.pMax, gm.barterMax);
+        SehWriteFloatPtr(g_gp.barterSaved.pBuyMin, gm.barterBuyMin);
+        SehWriteFloatPtr(g_gp.barterSaved.pSellMax, gm.barterSellMax);
+        g_gp.lastBarterMin.store(gm.barterMin, std::memory_order_relaxed);
+        g_gp.lastBarterMax.store(gm.barterMax, std::memory_order_relaxed);
+        if (msgType == 1u) g_gp.barterOpens.fetch_add(1u, std::memory_order_relaxed);
+    }
+
+    const uint32_t res = g_gp.origBarterProcMsg ? g_gp.origBarterProcMsg(menu, uiMsg) : 0u;
+
+    if (gotType && msgType == 3u /*kHide*/) {
+        std::lock_guard<std::mutex> lk(g_gp.mu);
+        if (g_gp.barterSaved.saved) {
+            SehWriteFloatPtr(g_gp.barterSaved.pMin, g_gp.barterSaved.vMin);
+            SehWriteFloatPtr(g_gp.barterSaved.pMax, g_gp.barterSaved.vMax);
+            SehWriteFloatPtr(g_gp.barterSaved.pBuyMin, g_gp.barterSaved.vBuyMin);
+            SehWriteFloatPtr(g_gp.barterSaved.pSellMax, g_gp.barterSaved.vSellMax);
+        }
+        g_gp.recentTrades = std::min(g_gp.recentTrades + 1u, 20u);
+    }
+    return res;
+}
+
+}  // namespace
+
+std::string GameplayHooksInit(const Image& img) {
+    if (!AreBinaryOffsetsVerified()) {
+        return "gameplay-hooks: REFUSED (fail-closed: startup Zydis binary offset verification did not pass)";
+    }
+    if (ActiveProfile().isMultiplayerOnline || ActiveProfile().gen != raw::versions::EngineGen::CE1_DX11) {
+        return "gameplay-hooks: skipped (non-CE1 or online profile)";
+    }
+    g_gp.base             = img.base;
+    g_gp.rvaHandleEntries = Addr("BSPointerHandleManager::Entry::GetHandleEntries");
+    g_gp.rvaPlayer        = Addr("PlayerCharacter::Singleton");
+
+    const uint32_t rvaGetAv     = Addr("fn:ActorValueOwner::GetActorValue");
+    const uint32_t rvaGetPermAv = Addr("fn:ActorValueOwner::GetPermanentActorValue");
+    const uint32_t rvaRestoreAv = Addr("fn:ActorValueOwner::RestoreActorValueThunk");
+    g_gp.fnGetAv     = rvaGetAv     ? reinterpret_cast<GetActorValueFn>(const_cast<uint8_t*>(img.base) + rvaGetAv) : nullptr;
+    g_gp.fnGetPermAv = rvaGetPermAv ? reinterpret_cast<GetActorValueFn>(const_cast<uint8_t*>(img.base) + rvaGetPermAv) : nullptr;
+    g_gp.fnRestoreAv = rvaRestoreAv ? reinterpret_cast<RestoreAvThunkFn>(const_cast<uint8_t*>(img.base) + rvaRestoreAv) : nullptr;
+
+    auto settingFloat = [&](const char* name) -> float* {
+        const uint32_t r = Addr(name);
+        return r ? reinterpret_cast<float*>(const_cast<uint8_t*>(img.base) + r + 8u) : nullptr;
+    };
+    g_gp.barterSaved.pMin     = settingFloat("fBarterMin");
+    g_gp.barterSaved.pMax     = settingFloat("fBarterMax");
+    g_gp.barterSaved.pBuyMin  = settingFloat("fBarterBuyMin");
+    g_gp.barterSaved.pSellMax = settingFloat("fBarterSellMax");
+
+    uint8_t mask = 0;
+    auto tryHook = [&](const char* key, void* hook, void** orig, uint8_t bit) -> bool {
+        const uint32_t rva = Addr(key);
+        if (!rva) return false;
+        const std::string r = InstallDetour(img, rva, hook, orig);
+        if (r.rfind("ok:", 0) == 0) {
+            mask |= bit;
+            return true;
+        }
+        return false;
+    };
+
+    tryHook("fn:HitData::Populate",       reinterpret_cast<void*>(&HookHitDataPopulate),      reinterpret_cast<void**>(&g_gp.origHitPopulate),   1u << 0);
+    tryHook("fn:CombatAI::GetAttackChance", reinterpret_cast<void*>(&HookCombatAttackChance), reinterpret_cast<void**>(&g_gp.origAttackChance),  1u << 1);
+    tryHook("fn:CombatAI::GetBlockChance",  reinterpret_cast<void*>(&HookCombatBlockChance),  reinterpret_cast<void**>(&g_gp.origBlockChance),   1u << 2);
+    tryHook("fn:CombatAI::GetBashChance",   reinterpret_cast<void*>(&HookCombatBashChance),   reinterpret_cast<void**>(&g_gp.origBashChance),    1u << 3);
+    tryHook("fn:BarterMenu::ProcessMessage",reinterpret_cast<void*>(&HookBarterProcessMessage),reinterpret_cast<void**>(&g_gp.origBarterProcMsg),1u << 4);
+
+    g_gp.hooksMask.store(mask, std::memory_order_release);
+    g_gp.active.store(mask != 0u, std::memory_order_release);
+
+    char buf[256];
+    std::snprintf(buf, sizeof buf,
+                  "[GameplayHooks] live detours active mask=0x%02X (HitData=%u AttackAI=%u BlockAI=%u BashAI=%u Barter=%u)",
+                  mask, (mask & 1u) ? 1u : 0u, (mask & 2u) ? 1u : 0u, (mask & 4u) ? 1u : 0u,
+                  (mask & 8u) ? 1u : 0u, (mask & 16u) ? 1u : 0u);
+    return buf;
+}
+
+void GameplayHooksShutdown() {
+    g_gp.active.store(false, std::memory_order_release);
+    std::lock_guard<std::mutex> lk(g_gp.mu);
+    if (g_gp.barterSaved.saved) {
+        SehWriteFloatPtr(g_gp.barterSaved.pMin, g_gp.barterSaved.vMin);
+        SehWriteFloatPtr(g_gp.barterSaved.pMax, g_gp.barterSaved.vMax);
+        SehWriteFloatPtr(g_gp.barterSaved.pBuyMin, g_gp.barterSaved.vBuyMin);
+        SehWriteFloatPtr(g_gp.barterSaved.pSellMax, g_gp.barterSaved.vSellMax);
+        g_gp.barterSaved.saved = false;
+    }
+    g_gp.records.clear();
+}
+
+void GameplayHooksUpdateSquadSnapshot(uint32_t activeActors, uint8_t attackTokens, uint8_t tacticalAction,
+                                      float storm01, float snowDepthU) {
+    g_gp.squadActors.store(activeActors, std::memory_order_relaxed);
+    g_gp.squadTokens.store(attackTokens, std::memory_order_relaxed);
+    g_gp.squadAction.store(tacticalAction, std::memory_order_relaxed);
+    g_gp.storm01.store(std::clamp(storm01, 0.0f, 1.0f), std::memory_order_relaxed);
+    g_gp.snowDepthU.store(std::clamp(snowDepthU, 0.0f, 64.0f), std::memory_order_relaxed);
+}
+
+bool GameplayHooksGetStats(GameplayHookTelemetry* out) {
+    if (!out) return false;
+    out->hooksActive   = g_gp.hooksMask.load(std::memory_order_relaxed);
+    out->hitsProcessed = g_gp.hitsProcessed.load(std::memory_order_relaxed);
+    out->timedParries  = g_gp.timedParries.load(std::memory_order_relaxed);
+    out->guardBreaks   = g_gp.guardBreaks.load(std::memory_order_relaxed);
+    out->counterHits   = g_gp.counterHits.load(std::memory_order_relaxed);
+    out->aiAttackEvals = g_gp.aiAttackEvals.load(std::memory_order_relaxed);
+    out->aiBlockEvals  = g_gp.aiBlockEvals.load(std::memory_order_relaxed);
+    out->aiBashEvals   = g_gp.aiBashEvals.load(std::memory_order_relaxed);
+    out->barterOpens   = g_gp.barterOpens.load(std::memory_order_relaxed);
+    out->lastBarterMin = g_gp.lastBarterMin.load(std::memory_order_relaxed);
+    out->lastBarterMax = g_gp.lastBarterMax.load(std::memory_order_relaxed);
+    return true;
+}
+
+std::string GameplayHooksStatsJson() {
+    GameplayHookTelemetry t{};
+    GameplayHooksGetStats(&t);
+    char b[320];
+    std::snprintf(b, sizeof b,
+                  "\"hooks_mask\":%u,\"hits\":%u,\"parries\":%u,\"guard_breaks\":%u,\"counter_hits\":%u,"
+                  "\"ai_atk\":%u,\"ai_blk\":%u,\"ai_bash\":%u,\"barter_opens\":%u,\"barter_min\":%.2f,\"barter_max\":%.2f",
+                  t.hooksActive, t.hitsProcessed, t.timedParries, t.guardBreaks, t.counterHits,
+                  t.aiAttackEvals, t.aiBlockEvals, t.aiBashEvals, t.barterOpens, t.lastBarterMin, t.lastBarterMax);
+    return b;
+}
+#endif
 
 }  // namespace raw::rt

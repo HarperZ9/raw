@@ -292,13 +292,15 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         const bool terrainOk = m->meshHost.TerrainReady();
         const bool asyncOk = m->asyncCompute.Init(m->dev12.Get());
         const bool indOk = m->indirect.Init(m->dev12.Get(), meshOk);
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s)",
+        const bool fluidOk = m->InitFluidSim();
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
                terrainOk ? "READY" : "off",
                m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
                (!meshInitOk && !meshErr.empty()) ? (" (" + meshErr + ")").c_str() : "",
                asyncOk ? "READY" : "off", indOk ? "READY" : "off",
-               m->indirect.SupportsIndirectMesh() ? "YES" : "no");
+               m->indirect.SupportsIndirectMesh() ? "YES" : "no",
+               fluidOk ? "READY" : "off");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
         {
             const auto& matReg = raw::materials::DefaultMaterialRegistry();
@@ -402,6 +404,62 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
     return true;
 }
 
+bool D3D12Bridge::Impl::InitFluidSim()
+{
+    ShutdownFluidSim();
+    if (!dev12) return false;
+    std::string fluidErr;
+    if (!fluidSim.Init(dev12.Get(), &fluidErr)) {
+        log("[FluidSim] off: %s", fluidErr.c_str());
+        return false;
+    }
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&fluidAlloc[i])))) {
+            ShutdownFluidSim();
+            return false;
+        }
+    }
+    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, fluidAlloc[0].Get(), nullptr, IID_PPV_ARGS(&fluidList))) ||
+        FAILED(fluidList->Close()) ||
+        FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fluidFence)))) {
+        ShutdownFluidSim();
+        return false;
+    }
+    fluidEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!fluidEvent) {
+        ShutdownFluidSim();
+        return false;
+    }
+    fluidReady = true;
+    log("[FluidSim] live GPU 64^3 NS Fire + 256^2 SWE Water ready");
+    return true;
+}
+
+void D3D12Bridge::Impl::ShutdownFluidSim()
+{
+    if (fluidFence && fluidEvent && fluidFenceVal > 0) {
+        if (fluidFence->GetCompletedValue() < fluidFenceVal) {
+            fluidFence->SetEventOnCompletion(fluidFenceVal, fluidEvent);
+            WaitForSingleObject(fluidEvent, 3000);
+        }
+    }
+    fluidList.Reset();
+    for (UINT i = 0; i < kRing; ++i) {
+        fluidAlloc[i].Reset();
+        fluidSlotVal[i] = 0;
+    }
+    fluidFence.Reset();
+    if (fluidEvent) {
+        CloseHandle(fluidEvent);
+        fluidEvent = nullptr;
+    }
+    fluidFenceVal = 0;
+    fluidSlot = 0;
+    fluidStepFrames = 0;
+    fluidLastMs = 0;
+    fluidReady = false;
+}
+
 void D3D12Bridge::Shutdown()
 {
     if (!m) return;
@@ -410,6 +468,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->ShutdownFluidSim();
     m->streamedTerrainGpu.clear();
     m->meshHost.Shutdown();
     m->pass.reset();   // before the device and the textures it borrows

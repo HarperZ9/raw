@@ -40,6 +40,10 @@ cbuffer P : register(b0) {
     float4 engineWorld;             // x: cell/worldspace waterHeight, y: camStateId, z: hasEngineCell (0/1), w: cameraMode
     float4 camOptics[2];            // [0]: sensorWidthMm, focalLengthMm, apertureFStop, bokehShape; [1]: nearScale, farScale, nearBleed, focusSpeed
     float4 physWorld[2];            // [0]: simTimeSec (pause-aware, wrap-free), gravityMps2, tideHeightU, tideVelocityMs; [1]: beaufortScale, swellDirX, swellDirY, springTide01
+    float4 seasonThermal0;          // x: snowDepthM, y: snowAlbedo, z: snowCompaction01, w: surfaceTempC (RawWeatherSim)
+    float4 seasonThermal1;          // x: iceThicknessM, y: blackIce01, z: frostRime01, w: iceFracture01 (RawWeatherSim)
+    float4 phenology0;              // x: budBreak01, y: chlorophyll01, z: autumnCarotenoid01, w: autumnAnthocyanin01 (RawWeatherSim)
+    float4 phenology1;              // x: leafAbscission01, y: canopySnowLoadKgM2, z: inversionStrength01, w: puddleEvapRate (RawWeatherSim)
 };
 
 static const uint FLAG_MATCH = 1u, FLAG_SOFT = 2u, FLAG_GGX = 4u, FLAG_FOG = 8u, FLAG_CONTACT = 16u, FLAG_AO = 32u,

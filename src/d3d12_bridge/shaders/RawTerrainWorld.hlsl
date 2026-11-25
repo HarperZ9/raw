@@ -14,6 +14,8 @@
 #include "LightingCommon.hlsli"
 #include "RawProceduralNoise.hlsli"
 #include "RawMaterials3D.hlsli"
+#include "RawFloraWind.hlsli"
+#include "RawSeasonsThermals.hlsli"
 
 // Matches raw::worldgen::MeshletDesc (48 bytes)
 struct TerrainMeshletDesc {
@@ -82,6 +84,36 @@ float4 projectCameraRelative(float3 relP) {
                   dot(worldToClip[2], q), dot(worldToClip[3], q));
 }
 
+// Applies 4-tier Euler-Bernoulli cantilever wind sway & winter snow-load sag to baked 3D flora vertices.
+void applyTerrainFloraWind(inout float3 absP, inout float3 worldN, TerrainVertex tv) {
+    if (tv.meta.w < 9.5f) {
+        return;
+    }
+    const bool isBark = (tv.meta.w < 10.5f);
+    const float hFrac = saturate(1.0f - tv.uv.y);
+    const float bendFlex = isBark ? (hFrac * 0.32f) : saturate(0.24f + 0.76f * hFrac);
+    if (bendFlex <= 1.0e-4f) {
+        return;
+    }
+    const float3 rootPos = absP - float3(0.0f, 0.0f, max(hFrac * 340.0f, 4.0f));
+    const float phaseHash = frac(dot(floor(absP * 0.03f), float3(0.371f, 0.719f, 0.193f)));
+    const float speciesId = (tv.meta.w >= 11.5f) ? 2.0f : 0.0f; // 0=evergreen conifer, 2=deciduous
+    const float2 windXY = clamp(cloudWind.xy * 0.0045f, -2.5f.xx, 2.5f.xx);
+    const float simTime = (physWorld[0].x > 1.0e-4f) ? physWorld[0].x : camPosW.w;
+
+    FloraSeasonalParams fSeason;
+    fSeason.chlorophyll01       = phenology0.y;
+    fSeason.autumnCarotenoid01  = phenology0.z;
+    fSeason.autumnAnthocyanin01 = phenology0.w;
+    fSeason.leafAbscission01    = phenology1.x;
+    fSeason.canopySnowLoad01    = saturate(phenology1.y / 18.0f);
+
+    const FloraWindResult wr = evalFloraSeasonalWind(
+        absP, rootPos, bendFlex, phaseHash, speciesId, windXY, simTime, worldN, fSeason);
+    absP += wr.displacement;
+    worldN = wr.bentNormal;
+}
+
 // ============================================================================
 // Stage 1: Amplification Shader (32 meshlets/group, wave-size-independent cull)
 // ============================================================================
@@ -133,14 +165,16 @@ void ms_terrain_main(uint gtid : SV_GroupThreadID, uint gid : SV_GroupID,
 
     if (gtid < vCount) {
         const TerrainVertex tv = TerrainVertices[m.vertexOffset + gtid];
-        const float3 absP = tv.pos + chunkOriginAndScale.xyz;
+        float3 absP = tv.pos + chunkOriginAndScale.xyz;
+        float3 worldN = normalize(tv.normal);
+        applyTerrainFloraWind(absP, worldN, tv);
         const float3 relP = absP - camPosW.xyz;
 
         TerrainOutVert ov;
         ov.clipPos     = projectCameraRelative(relP);
         ov.relWorldPos = relP;
         ov.absWorldPos = absP;
-        ov.worldNormal = normalize(tv.normal);
+        ov.worldNormal = worldN;
         ov.uv          = tv.uv;
         ov.splat0      = tv.splat0;
         ov.splat1      = tv.splat1;
@@ -161,14 +195,16 @@ void ms_terrain_main(uint gtid : SV_GroupThreadID, uint gid : SV_GroupID,
 // ============================================================================
 TerrainOutVert vs_terrain_main(uint vid : SV_VertexID) {
     const TerrainVertex tv = TerrainVertices[vid];
-    const float3 absP = tv.pos + chunkOriginAndScale.xyz;
+    float3 absP = tv.pos + chunkOriginAndScale.xyz;
+    float3 worldN = normalize(tv.normal);
+    applyTerrainFloraWind(absP, worldN, tv);
     const float3 relP = absP - camPosW.xyz;
 
     TerrainOutVert ov;
     ov.clipPos     = projectCameraRelative(relP);
     ov.relWorldPos = relP;
     ov.absWorldPos = absP;
-    ov.worldNormal = normalize(tv.normal);
+    ov.worldNormal = worldN;
     ov.uv          = tv.uv;
     ov.splat0      = tv.splat0;
     ov.splat1      = tv.splat1;
@@ -315,6 +351,20 @@ float4 ps_terrain_main(TerrainOutVert inp, bool isFrontFace : SV_IsFrontFace) : 
         F0     = float3(0.028f, 0.032f, 0.026f);
         N      = normalize(nGeo + needleN.yzw * 0.36f + twigN.yzw * 0.18f);
         foliageMask = 1.0f - snowW * 0.8f;
+
+        // Live orbital seasonal phenology (conifer deep boreal evergreen + winter bough snow load & rime;
+        // deciduous golden carotenoid -> crimson anthocyanin -> winter abscission):
+        const bool isEvergreen = (matTag < 11.5f);
+        const SeasonalFoliageEval sf = evalSeasonalFoliagePhenology(
+            inp.absWorldPos, nGeo, albedo, phenology0, phenology1, seasonThermal0, seasonThermal1, isEvergreen);
+        if (!isEvergreen && sf.alphaDiscard01 > 0.78f) {
+            discard;
+        }
+        albedo *= sf.albedoTint;
+        albedo  = lerp(albedo, float3(0.76f, 0.83f, 0.91f), sf.canopySnowCov01 * 0.72f);
+        albedo  = lerp(albedo, float3(0.82f, 0.89f, 0.96f), sf.frostRim01 * 0.35f);
+        rough   = lerp(rough, 0.56f, sf.canopySnowCov01 * 0.65f);
+        foliageMask *= (1.0f - sf.canopySnowCov01 * 0.75f);
     } else {
         // Standard 8-channel multi-biome terrain & geological hero props
         float4 s0 = max(inp.splat0, 0.0f.xxxx); // Rock, Snow, Ice, Basalt
@@ -420,12 +470,43 @@ float4 ps_terrain_main(TerrainOutVert inp, bool isFrontFace : SV_IsFrontFace) : 
         }
     }
 
-    // 3. Analytical Curvature & Wetness Physical Modulation
+    // 3. Analytical Curvature, Live Orbital Seasons/Thermals & Wetness Physical Modulation
+    float effWetness = wetness;
+    if (matTag < 9.5f) {
+        // Accumulate active warm fire heat + volcanic magma self-heat for thermal snow/ice melt rings:
+        float fireHeat01 = inp.splat1.x * 1.5f;
+        const uint nFireL = min(flags.y, 16u);
+        [loop] for (uint li = 0u; li < nFireL; ++li) {
+            const float3 lc = lightColS[li].rgb;
+            if (lc.r > lc.b * 1.35f && lc.r > 0.12f) {
+                fireHeat01 = max(fireHeat01, evalFireThermalMeltMask(
+                    inp.relWorldPos, lightPosR[li].xyz, lightPosR[li].w, saturate(lc.r * 1.25f)));
+            }
+        }
+        const SurfaceThermalEval st = evalSeasonalSurfaceThermals(
+            inp.absWorldPos, nGeo, L, cloudWind.xy, seasonThermal0, seasonThermal1,
+            fireHeat01, wetness, weather.y, phenology1.w);
+        if (st.snowCov01 > 0.005f) {
+            albedo = lerp(albedo, st.snowAlbedo, st.snowCov01 * 0.88f);
+            rough  = lerp(rough, st.snowRoughness, st.snowCov01 * 0.85f);
+            F0     = lerp(F0, float3(0.020f, 0.020f, 0.022f), st.snowCov01 * 0.85f);
+        }
+        if (st.frostRime01 > 0.01f) {
+            albedo = lerp(albedo, float3(0.76f, 0.85f, 0.94f), st.frostRime01 * 0.38f);
+            rough  = lerp(rough, 0.42f, st.frostRime01 * 0.35f);
+        }
+        if (st.iceGlaze01 > 0.01f) {
+            albedo = lerp(albedo, albedo * float3(0.68f, 0.78f, 0.88f), st.iceGlaze01 * 0.55f);
+            rough  = lerp(rough, 0.09f, st.iceGlaze01 * 0.85f);
+            F0     = lerp(F0, float3(0.020f, 0.022f, 0.024f), st.iceGlaze01 * 0.75f);
+        }
+        effWetness = saturate(max(effWetness, max(st.wetBoost01, st.slushRim01 * 0.85f)));
+    }
     const float curvAo = saturate(1.0f + curvature * 0.24f);
     const float ridgeHighlight = saturate(curvature) * 0.12f;
-    albedo *= lerp(1.0f, 0.62f, wetness * (1.0f - inp.splat0.y * 0.8f) * (1.0f - foliageMask * 0.65f));
+    albedo *= lerp(1.0f, 0.62f, effWetness * (1.0f - inp.splat0.y * 0.8f) * (1.0f - foliageMask * 0.65f));
     albedo *= lerp(0.76f, 1.08f, curvAo);
-    rough   = clamp(lerp(rough, 0.14f, wetness * 0.65f * (1.0f - foliageMask * 0.7f)), 0.05f, 0.96f);
+    rough   = clamp(lerp(rough, 0.14f, effWetness * 0.65f * (1.0f - foliageMask * 0.7f)), 0.05f, 0.96f);
 
     // 4. Direct Sun GGX + Shadowed Foliage Rim Translucency + Hemisphere Ambient + Dynamic Environment Reflection
     const float nv = max(dot(N, V), 1.0e-4f);

@@ -233,11 +233,11 @@ float EvaluateTrappingSeparator(float curVal, float prevVal, float sigma, float 
 // Wave 25 Mod-Manager-Aware Skyrim.ini sLocalSavePath resolver (finds __MO_Saves or custom profile save dirs):
 std::string ResolveSkyrimSavesDir(const char* docsSkyrimDir);
 
-// Wave 25 Bounded Live Dynamic Economy + Thermal Stamina GMST feedback (feeds Skyrim's live Setting singletons):
+// Wave 25/39 Bounded Live Dynamic Economy + Thermal Stamina GMST feedback (feeds Skyrim's live Setting singletons):
 struct DynamicGameplayGmsts {
     float barterMin              = 1.35f;
     float barterMax              = 3.60f;
-    float sprintStaminaDrainMult = 0.82f;
+    float sprintStaminaDrainMult = 14.5f;   // Skyrim 0x4214C0 baseline is 15.0 stamina/sec (clamped 12..18)
 };
 DynamicGameplayGmsts ComputeDynamicGameplayGmsts(float economyBuyMult, float staminaRegenMult);
 
@@ -351,5 +351,101 @@ struct PlanetaryPhysicsState {
 };
 PlanetaryPhysicsState EvaluatePlanetaryPhysics(float daysPassed, float gameHour, const float worldPos[3],
                                                float windSpeedMs, float pressureHpa);
+
+// =================================================================================================
+// Wave 39 Live Creation Engine 1.7.104.0 Combat / Tactical AI / Living Economy Runtime & Resolvers
+// =================================================================================================
+struct Image;
+
+struct DifficultyTierPair {
+    const char* name;
+    float       toPcMult;
+    float       byPcMult;
+};
+// Returns the 6 non-spongy lethal difficulty tiers (Novice..Legendary) applied to fDiffMultHP{To,By}PC*.
+const DifficultyTierPair* NonSpongyDifficultyTable(size_t* outCount = nullptr);
+
+struct LiveHitContext {
+    float    totalDamage         = 0.0f;
+    float    physicalDamage      = 0.0f;
+    float    percentBlocked      = 0.0f;
+    uint32_t flags               = 0;      // HitData::flags (+0x80): bit0=Blocked, bit1=BlockWithWeapon
+    bool     isPowerAttack       = false;  // HitData+0x82 bit0
+    float    defenderStamina     = 100.0f;
+    float    defenderStaminaMax  = 100.0f;
+    float    blockElapsedMs      = 999.0f; // ms since defender raised guard
+    float    defenderPoise       = 100.0f;
+    bool     targetPoiseBroken   = false;  // target is currently staggered/posture-broken
+    bool     isTargetPlayer      = false;
+    bool     isAggressorPlayer   = false;
+};
+
+struct LiveHitOutcome {
+    float outTotalDamage          = 0.0f;
+    float outPhysicalDamage       = 0.0f;
+    float outPercentBlocked       = 0.0f;
+    float outStaminaRestoreDef    = 0.0f;
+    float outDefenderPoiseDelta   = 0.0f;
+    bool  outAggressorPoiseBroken = false;
+    bool  timedParry              = false;
+    bool  guardBroken             = false;
+    bool  counterHit              = false;
+};
+LiveHitOutcome EvaluateLiveHitModifier(const LiveHitContext& ctx);
+
+struct TacticalAiChanceInput {
+    float        baseChance           = 0.5f;
+    TacticalRole role                 = TacticalRole::Vanguard;
+    bool         hasAttackToken       = true;
+    float        hpFrac               = 1.0f;
+    float        staminaFrac          = 1.0f;
+    bool         targetPowerAttacking = false;
+    bool         targetBlocking       = false;
+    bool         selfPoisePressured   = false;
+};
+float EvaluateTacticalAiAttackChance(const TacticalAiChanceInput& in);
+float EvaluateTacticalAiBlockChance(const TacticalAiChanceInput& in);
+float EvaluateTacticalAiBashChance(const TacticalAiChanceInput& in);
+
+struct BarterEconomyInput {
+    float    gameMonth0_11      = 7.0f;    // Calendar+0x10 (0=Morning Star .. 11=Evening Star)
+    float    gameDay1_31        = 17.0f;
+    float    storm01            = 0.0f;
+    float    snowDepthU         = 0.0f;
+    float    worldY             = 0.0f;    // Hold latitude (>18000 = northern arctic holds)
+    uint32_t recentTradeCount   = 0;
+};
+struct BarterEconomyGmsts {
+    float barterMin     = 1.35f;
+    float barterMax     = 3.60f;
+    float barterBuyMin  = 1.05f;
+    float barterSellMax = 0.95f;
+    float scarcity01    = 0.0f;
+    float seasonalMult  = 1.0f;
+};
+BarterEconomyGmsts EvaluateRegionalBarterEconomy(const BarterEconomyInput& in);
+
+struct GameplayHookTelemetry {
+    uint8_t  hooksActive         = 0;   // bitmask: 0=HitData, 1=AttackAI, 2=BlockAI, 3=BashAI, 4=BarterMenu
+    uint32_t hitsProcessed       = 0;
+    uint32_t timedParries        = 0;
+    uint32_t guardBreaks         = 0;
+    uint32_t counterHits         = 0;
+    uint32_t aiAttackEvals       = 0;
+    uint32_t aiBlockEvals        = 0;
+    uint32_t aiBashEvals         = 0;
+    uint32_t barterOpens         = 0;
+    float    lastBarterMin       = 1.35f;
+    float    lastBarterMax       = 3.60f;
+};
+
+#ifndef RAW_SIM_PURE_TEST
+// Live Wave 39 Zydis-verified, fail-closed, SEH-guarded gameplay hooks (called from module_main.cpp).
+std::string GameplayHooksInit(const Image& img);
+void        GameplayHooksShutdown();
+void        GameplayHooksUpdateSquadSnapshot(uint32_t activeActors, uint8_t attackTokens, uint8_t tacticalAction, float storm01, float snowDepthU);
+std::string GameplayHooksStatsJson();
+bool        GameplayHooksGetStats(GameplayHookTelemetry* out);
+#endif
 
 }  // namespace raw::rt

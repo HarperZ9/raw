@@ -123,6 +123,17 @@ void BuildClusters(const SceneLighting& s, float nearZ, float farZ, uint32_t (*o
 std::unique_ptr<IBridgePass> MakeLightingPass();
 bool LightingPassTune(IBridgePass* pass, const LightingTuning& t);
 bool LightingPassUniform(IBridgePass* pass, const void** data, size_t* bytes);   // cbuffer P as filled for this frame
+struct LightingFluidInputs {
+    float simTimeSec = 0.0f;
+    float windXY[2] = {};
+    float ambientTempC = 6.0f;
+    float rainIntensity = 0.0f;
+    float beaufortScale = 1.0f;
+    float swellDirXY[2] = {0.866f, 0.5f};
+    float waterPlaneZ = 0.0f;
+    float footTrail[32][4] = {};
+};
+bool LightingPassFluidInputs(IBridgePass* pass, LightingFluidInputs* out);
 struct ExtraShaders {
     std::vector<uint8_t> clouds, volumetric, bloomPre, bloomDown, bloomUp, bloomComp, reflFilter, rawlss5;
     std::vector<uint8_t> dofFocus, dofCoc, dofGather, dofPost, dofComp;

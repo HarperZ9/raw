@@ -6,8 +6,127 @@
 #include "LightingPass.h"
 #include "RtScene.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace raw::bridge
 {
+
+bool D3D12Bridge::Impl::StepFluidSimOnQueue(bool isInterior)
+{
+    if (!fluidReady || !fluidSim.Ready() || !queue || !fluidList || !fluidFence || !fluidEvent) return false;
+
+    const uint32_t slot = fluidSlot;
+    if (fluidSlotVal[slot] > 0 && fluidFence->GetCompletedValue() < fluidSlotVal[slot]) {
+        fluidFence->SetEventOnCompletion(fluidSlotVal[slot], fluidEvent);
+        WaitForSingleObject(fluidEvent, 3000);
+    }
+    if (FAILED(fluidAlloc[slot]->Reset()) || FAILED(fluidList->Reset(fluidAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    const uint64_t nowMs = GetTickCount64();
+    float dtSec = 1.0f / 60.0f;
+    if (fluidLastMs != 0) {
+        dtSec = std::clamp(float(double(nowMs - fluidLastMs) * 0.001), 1.0e-4f, 0.05f);
+    }
+    fluidLastMs = nowMs;
+    if (lighting.menuPaused) dtSec = 1.0e-4f;
+
+    LightingFluidInputs fi{};
+    LightingPassFluidInputs(pass.get(), &fi);
+
+    // 1. Build 64^3 3D Eulerian Navier-Stokes Fire/Smoke params from verified warm lights + live wind:
+    FluidFireParams fp{};
+    fp.cellSize = 4.0f; // 64 * 4 = 256u domain cube
+    fp.dt = dtSec;
+    fp.timeSec = fi.simTimeSec;
+    fp.windVelW[0] = isInterior ? 0.0f : std::clamp(fi.windXY[0] * 0.12f, -36.0f, 36.0f);
+    fp.windVelW[1] = isInterior ? 0.0f : std::clamp(fi.windXY[1] * 0.12f, -36.0f, 36.0f);
+    fp.windVelW[2] = 0.0f;
+    fp.ambientTempK = std::clamp(fi.ambientTempC + 273.15f, 220.0f, 330.0f);
+    fp.enableCeiling = isInterior;
+    fp.jacobiIterations = 8u;
+
+    // Anchor domain around closest warm fire emitter within 1400u (falls back to camera pos):
+    float anchorW[3] = {lighting.posAdjust[0], lighting.posAdjust[1], lighting.posAdjust[2]};
+    float bestFireD2 = 1400.0f * 1400.0f;
+    uint32_t emitCount = 0u;
+    for (uint32_t i = 0; i < lighting.lightCount && emitCount < 16u; ++i) {
+        const SceneLight& l = lighting.lights[i];
+        if (l.colour[0] > l.colour[2] * 1.38f && l.colour[0] > 0.14f && l.radius >= 50.0f && l.radius <= 1500.0f) {
+            const float wx = lighting.posAdjust[0] + l.position[0];
+            const float wy = lighting.posAdjust[1] + l.position[1];
+            const float wz = lighting.posAdjust[2] + l.position[2];
+            const float d2 = l.position[0] * l.position[0] + l.position[1] * l.position[1] + l.position[2] * l.position[2];
+            if (d2 < bestFireD2) {
+                bestFireD2 = d2;
+                anchorW[0] = wx; anchorW[1] = wy; anchorW[2] = wz - 32.0f;
+            }
+            FluidFireEmitter& em = fp.emitters[emitCount++];
+            em.posW[0] = wx;
+            em.posW[1] = wy;
+            em.posW[2] = wz - 20.0f;
+            em.radius = std::clamp(l.radius * 0.08f, 6.0f, 28.0f);
+            em.ignitionTempK = std::clamp(1900.0f + l.colour[0] * 950.0f, 1900.0f, 3300.0f);
+            em.fuelRate = 2.4f;
+            em.jetSpeed = 30.0f;
+            em.curlStrength = 14.0f;
+            em.jetDir[0] = 0.0f; em.jetDir[1] = 0.0f; em.jetDir[2] = 1.0f;
+            em.sootSeedRate = 0.35f;
+        }
+    }
+    fp.emitterCount = emitCount;
+    const float halfDomain = 0.5f * float(RawFluidSimHost::kFireGridRes) * fp.cellSize;
+    fp.domainOriginW[0] = anchorW[0] - halfDomain;
+    fp.domainOriginW[1] = anchorW[1] - halfDomain;
+    fp.domainOriginW[2] = anchorW[2] - halfDomain * 0.35f;
+
+    // 2. Build 256^2 Toroidal Shallow-Water Hydrodynamics params from camPos, footTrail[0..31], rain & Beaufort swell:
+    FluidWaterParams wp{};
+    wp.camPosXY[0] = lighting.posAdjust[0];
+    wp.camPosXY[1] = lighting.posAdjust[1];
+    wp.cellSize = 8.0f; // 256 * 8 = 2048u toroidal span
+    wp.dt = dtSec;
+    wp.timeSec = fi.simTimeSec;
+    wp.windDirXY[0] = fi.swellDirXY[0];
+    wp.windDirXY[1] = fi.swellDirXY[1];
+    wp.swellAmp = isInterior ? 0.15f : std::clamp(0.45f + fi.beaufortScale * 0.42f, 0.25f, 4.5f);
+    wp.rainIntensity = isInterior ? 0.0f : std::clamp(fi.rainIntensity, 0.0f, 1.0f);
+    wp.waterPlaneZ = fi.waterPlaneZ;
+    uint32_t wakeCount = 0u;
+    for (uint32_t i = 0; i < 32u; ++i) {
+        if (fi.footTrail[i][3] > 0.01f) {
+            FluidWaterTrail& tr = wp.trails[wakeCount++];
+            tr.posW[0] = fi.footTrail[i][0];
+            tr.posW[1] = fi.footTrail[i][1];
+            tr.posW[2] = fi.footTrail[i][2];
+            tr.strength = fi.footTrail[i][3];
+            tr.velW[0] = 0.0f;
+            tr.velW[1] = 0.0f;
+            tr.radius = 20.0f;
+            tr.splashScale = 1.0f;
+        }
+    }
+    wp.trailCount = wakeCount;
+
+    if (emitCount > 0u || fluidStepFrames == 0ull) {
+        fluidSim.StepFire(fluidList.Get(), fp);
+    }
+    fluidSim.StepWater(fluidList.Get(), wp);
+
+    if (FAILED(fluidList->Close())) return false;
+    ID3D12CommandList* lists[1] = {fluidList.Get()};
+    queue->ExecuteCommandLists(1, lists);
+    queue->Signal(fluidFence.Get(), ++fluidFenceVal);
+    fluidSlotVal[slot] = fluidFenceVal;
+    fluidSlot = (slot + 1u) % kRing;
+
+    if ((fluidStepFrames++ % 180ull) == 0ull) {
+        log("[FluidSim] live GPU step: fireEmitters=%u, waterWakes=%u", emitCount, wakeCount);
+    }
+    return true;
+}
 
 bool D3D12Bridge::Impl::CpuWait(uint64_t value, DWORD timeoutMs)
 {
@@ -225,23 +344,30 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     const bool runTerrain = m->cfg.lightingPass && m->lighting.valid && !isInterior &&
                             !m->streamedTerrainGpu.empty() && m->meshHost.TerrainReady() &&
                             LightingPassUniform(m->pass.get(), &terrainU, &terrainUb);
-    auto runLiveTerrainPass = [&]() -> bool {
-        if (!runTerrain) return true;
-        uint32_t drawnChunks = 0u, drawnMeshlets = 0u;
-        const float timeSec = float(double(GetTickCount64() % 3600000ull) / 1000.0);
-        ID3D12Resource* atlasRes = s.hasShadows ? m->shared[static_cast<UINT>(Shared::ShadowAtlas)].res12.Get() : nullptr;
-        const bool okT = m->meshHost.ExecuteTerrainPass(
-            m->queue.Get(), m->colorOut.res12.Get(), m->depthIn.res12.Get(), atlasRes,
-            m->cfg.width, m->cfg.height, terrainU, terrainUb,
-            &m->lighting.worldToClip[0][0], m->lighting.posAdjust, timeSec,
-            m->streamedTerrainGpu, &drawnChunks, &drawnMeshlets);
-        if (okT) {
-            if ((m->terrainRenderFrames++ % 180ull) == 0ull) {
-                m->log("[WorldGen] LIVE render: %u chunks (%u meshlets) at cam (%.0f, %.0f, %.0f) biome=%s",
-                       drawnChunks, drawnMeshlets,
-                       m->lighting.posAdjust[0], m->lighting.posAdjust[1], m->lighting.posAdjust[2],
-                       raw::worldgen::GetBiomeName(m->lastWorldStats.cameraBiome));
+    const bool runFluid = m->cfg.lightingPass && m->lighting.valid && m->fluidReady && m->fluidSim.Ready();
+    const bool hasPostWork = runTerrain || runFluid;
+    auto runPostLightingPasses = [&]() -> bool {
+        if (!hasPostWork) return true;
+        if (runTerrain) {
+            uint32_t drawnChunks = 0u, drawnMeshlets = 0u;
+            const float timeSec = float(double(GetTickCount64() % 3600000ull) / 1000.0);
+            ID3D12Resource* atlasRes = s.hasShadows ? m->shared[static_cast<UINT>(Shared::ShadowAtlas)].res12.Get() : nullptr;
+            const bool okT = m->meshHost.ExecuteTerrainPass(
+                m->queue.Get(), m->colorOut.res12.Get(), m->depthIn.res12.Get(), atlasRes,
+                m->cfg.width, m->cfg.height, terrainU, terrainUb,
+                &m->lighting.worldToClip[0][0], m->lighting.posAdjust, timeSec,
+                m->streamedTerrainGpu, &drawnChunks, &drawnMeshlets);
+            if (okT) {
+                if ((m->terrainRenderFrames++ % 180ull) == 0ull) {
+                    m->log("[WorldGen] LIVE render: %u chunks (%u meshlets) at cam (%.0f, %.0f, %.0f) biome=%s",
+                           drawnChunks, drawnMeshlets,
+                           m->lighting.posAdjust[0], m->lighting.posAdjust[1], m->lighting.posAdjust[2],
+                           raw::worldgen::GetBiomeName(m->lastWorldStats.cameraBiome));
+                }
             }
+        }
+        if (runFluid) {
+            m->StepFluidSimOnQueue(isInterior);
         }
         return SUCCEEDED(m->queue->Signal(m->fence12.Get(), v2));
     };
@@ -282,7 +408,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                                      fc.hasMotion ? m->motionIn.res12.Get() : nullptr, m->colorIn.res12.Get());
         }
         if (!m->HandToHost(hand) || (rtOk && !m->rt->Submit(m->queue.Get())) ||
-            !m->pass->Submit(0, runTerrain ? 0 : v2) || !runLiveTerrainPass()) {
+            !m->pass->Submit(0, hasPostWork ? 0 : v2) || !runPostLightingPasses()) {
             m->log("[D3D12Bridge] attached hand-over failed; bridge off");
             c->End(s.disjoint.Get());
             s.open = false;
@@ -315,7 +441,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         return false;
     }
     m->ProbeHead(frame, waitValue);
-    if (!m->pass->Submit(waitValue, runTerrain ? 0 : v2) || !runLiveTerrainPass()) {
+    if (!m->pass->Submit(waitValue, hasPostWork ? 0 : v2) || !runPostLightingPasses()) {
         // Nothing will signal v2 now, so D3D11 must not wait for it.
         m->log("[D3D12Bridge] pass '%s' failed to submit; bridge off", m->pass->Name());
         c->End(s.disjoint.Get());

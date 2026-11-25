@@ -4,6 +4,7 @@
 // Original work, MIT.
 #include "LightingPass.h"
 #include "HardwareProfile.h"
+#include "../worldgen/RawWeatherSim.h"
 #include <algorithm>
 
 #include "raw/renderer/ao_realtime.hpp"
@@ -71,8 +72,12 @@ struct LightUniform
     float engineWorld[4];     // x: cell/worldspace waterHeight, y: camStateId, z: hasEngineCell (0/1), w: cameraMode
     float camOptics[2][4];    // [0]: sensorWidthMm, focalLengthMm, apertureFStop, bokehShape; [1]: nearScale, farScale, nearBleed, focusSpeed
     float physWorld[2][4];    // [0]: simTimeSec (pause-aware, wrap-free), gravityMps2, tideHeightU, tideVelocityMs; [1]: beaufortScale, swellDirX, swellDirY, springTide01
+    float seasonThermal0[4];  // x: snowDepthM, y: snowAlbedo, z: snowCompaction01, w: surfaceTempC
+    float seasonThermal1[4];  // x: iceThicknessM, y: blackIce01, z: frostRime01, w: iceFracture01
+    float phenology0[4];      // x: budBreak01, y: chlorophyll01, z: autumnCarotenoid01, w: autumnAnthocyanin01
+    float phenology1[4];      // x: leafAbscission01, y: canopySnowLoadKgM2, z: inversionStrength01, w: puddleEvapRate
 };
-static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16 + 112, "layout of cbuffer P");
+static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16 + 176, "layout of cbuffer P");
 static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
 constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536, kDistantLod = 131072, kEnvMap = 262144, kCharLight = 524288, kUnderwater = 1048576;
@@ -451,6 +456,20 @@ public:
 
     void Tune(const LightingTuning& t) { m_tune = t; }
     void Uniform(const void** d, size_t* n) const { *d = &m_u; *n = sizeof m_u; }
+    void FluidInputs(LightingFluidInputs* out) const
+    {
+        if (!out) return;
+        out->simTimeSec = m_u.physWorld[0][0];
+        out->windXY[0] = m_u.cloudWind[0];
+        out->windXY[1] = m_u.cloudWind[1];
+        out->ambientTempC = m_u.seasonThermal0[3];
+        out->rainIntensity = m_u.weather[3];
+        out->beaufortScale = m_u.physWorld[1][0];
+        out->swellDirXY[0] = m_u.physWorld[1][1];
+        out->swellDirXY[1] = m_u.physWorld[1][2];
+        out->waterPlaneZ = m_u.engineWorld[0];
+        std::memcpy(out->footTrail, m_u.footTrail, sizeof out->footTrail);
+    }
 
     // Hot reload: new DXIL for the lighting and fog pipelines. Both are made before either is
     // swapped in, so a failure keeps the frame on the old pair. The old pipelines stay alive
@@ -621,8 +640,9 @@ private:
         const bool hasSynTel = (s_synFn != nullptr && s_synFn(&synTel) != 0);
         // Wave 34 Pause-Aware, Wrap-Free Monotonic Simulation Clock (replaces wrapping GetTickCount64() % 3600000):
         const uint64_t nowMs = GetTickCount64();
+        double frameDt = 0.0;
         if (m_lastClockMs != 0 && !s.menuPaused) {
-            const double frameDt = std::clamp(double(nowMs - m_lastClockMs) * 0.001, 0.0, 0.05);
+            frameDt = std::clamp(double(nowMs - m_lastClockMs) * 0.001, 0.0, 0.05);
             m_simTimeSec += frameDt;
         }
         m_lastClockMs = nowMs;
@@ -755,7 +775,93 @@ private:
         std::memcpy(m_prevWorldToClip, s.worldToClip, 64);
         m_prevCamPos[0] = s.posAdjust[0]; m_prevCamPos[1] = s.posAdjust[1]; m_prevCamPos[2] = s.posAdjust[2];
         m_hasPrevCam = true;
-        u.camPos[3] = float(double(GetTickCount64() % 3600000ull) / 1000.0);   // seconds, for the rain's rings and the snow's glints
+        // Keep u.camPos[3] strictly locked to the pause-aware monotonic simulation clock (m_simTimeSec).
+        u.camPos[3] = float(m_simTimeSec);
+
+        // Wave 39: Step RawWeatherSim LIVE every frame (orbital seasons, thermal snow/ice, fire melt rings, phenology):
+        {
+            using CalFn = int (*)(float*);
+            static HMODULE s_calMod = nullptr;
+            static CalFn s_calFn = nullptr;
+            if (!s_calFn) {
+                if (!s_calMod) s_calMod = GetModuleHandleA("raw_engine.dll");
+                if (s_calMod) s_calFn = reinterpret_cast<CalFn>(GetProcAddress(s_calMod, "RAW_GetCalendarState"));
+            }
+            float cal6[6] = {};
+            const bool hasCal = (s_calFn != nullptr && s_calFn(cal6) != 0);
+            if (!m_weatherSimInit) {
+                raw::worldgen::WeatherSimConfig wcfg{};
+                wcfg.seaLevelZ = s.hasEngineCell ? s.waterHeight : -14000.0f;
+                wcfg.timeOfDayHours = std::clamp(hasCal ? cal6[3] : t.gameHour, 0.0f, 24.0f);
+                wcfg.initialDayOfYear = 229.0f; // 17th of Last Seed (late summer default)
+                wcfg.timeScale = (hasCal && cal6[5] > 0.01f) ? cal6[5] : 20.0f;
+                m_weatherSim.Reset(wcfg);
+                m_weatherSimInit = true;
+            }
+            const float curHour = std::clamp(hasCal ? cal6[3] : t.gameHour, 0.0f, 24.0f);
+            const float curTimeScale = (hasCal && cal6[5] >= 0.0f) ? std::clamp(cal6[5], 0.0f, 5000.0f) : 20.0f;
+            float gameDays = -1.0f;
+            if (t.season >= 1 && t.season <= 4) {
+                static constexpr float kSeasonMidDay[4] = {105.0f, 196.0f, 288.0f, 15.0f};
+                gameDays = kSeasonMidDay[t.season - 1] + curHour / 24.0f;
+            } else if (hasCal) {
+                static constexpr float kMonthDays[12] = {0.0f, 31.0f, 59.0f, 90.0f, 120.0f, 151.0f, 181.0f, 212.0f, 243.0f, 273.0f, 304.0f, 334.0f};
+                const int mi = std::clamp(int(std::floor(cal6[1])), 0, 11);
+                const float dayOfYear = kMonthDays[mi] + std::clamp(cal6[2] - 1.0f, 0.0f, 30.0f) + curHour / 24.0f;
+                gameDays = std::max(0.0f, std::floor(cal6[0])) * 365.0f + dayOfYear;
+            } else {
+                m_weatherSim.SetTimeOfDay(curHour);
+            }
+
+            // Couple Skyrim TESWeather cloud/rain/snow/lightning cleanly into RawWeatherSim regime:
+            raw::worldgen::WeatherRegime reg = raw::worldgen::WeatherRegime::ClearAlpine;
+            if (effSnow > 0.45f && t.weatherCloud > 0.65f) reg = raw::worldgen::WeatherRegime::Blizzard;
+            else if (u.timeEnv[2] > 0.15f || (effRain > 0.55f && t.weatherCloud > 0.80f)) reg = raw::worldgen::WeatherRegime::Thunderstorm;
+            else if (effRain > 0.25f) reg = raw::worldgen::WeatherRegime::Rainstorm;
+            else if (t.weatherCloud > 0.72f) reg = raw::worldgen::WeatherRegime::Overcast;
+            else if (!interior && s.posAdjust[1] > 95000.0f && t.weatherCloud > 0.35f) reg = raw::worldgen::WeatherRegime::CoastalSeaFog;
+            else if (!interior && curHour >= 4.5f && curHour <= 8.0f && effRain < 0.15f) reg = raw::worldgen::WeatherRegime::DawnValleyMist;
+            else if (!interior && s.posAdjust[1] > 105000.0f && (curHour < 5.0f || curHour > 20.5f)) reg = raw::worldgen::WeatherRegime::ArcticClearAurora;
+            m_weatherSim.SetRegime(reg, false);
+
+            // Feed active warm fire lights as live point ThermalSources (absolute world space):
+            raw::worldgen::ThermalSource fireSrc[16]{};
+            uint32_t fireCount = 0u;
+            for (uint32_t i = 0; i < s.lightCount && fireCount < 16u; ++i) {
+                const SceneLight& l = s.lights[i];
+                if (l.colour[0] > l.colour[2] * 1.35f && l.colour[0] > 0.12f && l.radius >= 40.0f && l.radius <= 1800.0f) {
+                    fireSrc[fireCount].position = {
+                        s.posAdjust[0] + l.position[0],
+                        s.posAdjust[1] + l.position[1],
+                        s.posAdjust[2] + l.position[2]
+                    };
+                    fireSrc[fireCount].radiusU = l.radius;
+                    fireSrc[fireCount].powerWm2 = std::clamp(l.colour[0] * 2200.0f, 400.0f, 4200.0f);
+                    ++fireCount;
+                }
+            }
+            m_weatherSim.SetThermalSources(fireSrc, fireCount);
+            m_weatherSim.Step(float(frameDt), curTimeScale, gameDays, {s.posAdjust[0], s.posAdjust[1], s.posAdjust[2]});
+
+            const auto& wg = m_weatherSim.GetGpuUniforms();
+            u.seasonThermal0[0] = wg.seasonThermal0.x;
+            u.seasonThermal0[1] = wg.seasonThermal0.y;
+            u.seasonThermal0[2] = wg.seasonThermal0.z;
+            u.seasonThermal0[3] = wg.seasonThermal0.w;
+            u.seasonThermal1[0] = wg.seasonThermal1.x;
+            u.seasonThermal1[1] = wg.seasonThermal1.y;
+            u.seasonThermal1[2] = wg.seasonThermal1.z;
+            u.seasonThermal1[3] = wg.seasonThermal1.w;
+            u.phenology0[0] = wg.phenology0.x;
+            u.phenology0[1] = wg.phenology0.y;
+            u.phenology0[2] = wg.phenology0.z;
+            u.phenology0[3] = wg.phenology0.w;
+            u.phenology1[0] = wg.phenology1.x;
+            u.phenology1[1] = wg.phenology1.y;
+            u.phenology1[2] = wg.phenology1.z;
+            u.phenology1[3] = wg.phenology1.w;
+        }
+
         for (uint32_t i = 0; i < s.lightCount; ++i) {
             const SceneLight& l = s.lights[i];
             for (int k = 0; k < 3; ++k) { u.lightPosR[i][k] = l.position[k]; u.lightColS[i][k] = l.colour[k]; }
@@ -812,6 +918,8 @@ private:
     uint64_t m_frame = 0, m_submissions = 0, m_pendingSubmission = 0;
     double m_simTimeSec = 0.0;
     uint64_t m_lastClockMs = 0;
+    raw::worldgen::RawWeatherSim m_weatherSim;
+    bool m_weatherSimInit = false;
     bool m_havePending = false, m_haveTimings = false;
     int m_skipLogs = 0;
     PassTimings m_timings;
@@ -825,6 +933,14 @@ bool LightingPassUniform(IBridgePass* pass, const void** data, size_t* bytes)
     auto* p = dynamic_cast<LightingPass*>(pass);
     if (!p) return false;
     p->Uniform(data, bytes);
+    return true;
+}
+
+bool LightingPassFluidInputs(IBridgePass* pass, LightingFluidInputs* out)
+{
+    auto* p = dynamic_cast<LightingPass*>(pass);
+    if (!p || !out) return false;
+    p->FluidInputs(out);
     return true;
 }
 

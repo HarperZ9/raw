@@ -23,6 +23,7 @@
 
 #include "ProxyAPI.h"
 #include "rt_callgraph.h"
+#include "rt_combat_ai.h"
 #include "rt_control.h"
 #include "rt_core_fixes.h"
 #include "rt_depth_topology.h"
@@ -96,7 +97,8 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
         }
     }
     raw::rt::HavokFixOnPresent();
-    raw::rt::SoftBodyOnPresent();
+    // Wave 39: Skeleton/IK/XPBD physics now runs strictly post-Havok / pre-skinning in Main::Draw (0x6565B0);
+    // SoftBodyOnPresent() is intentionally removed from OnPresent() to prevent double-stepping or post-draw drift.
     raw::rt::VTraceOnPresent();
     raw::rt::ControlOnPresent(ctx, sc);
     raw::rt::MemoryGuardsOnPresent();
@@ -117,6 +119,23 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     }
     raw::rt::DepthTopologyOnPresent();
     raw::rt::WorldSimOnPresent();
+    {
+        static uint32_t s_liveLogTick = 0;
+        if ((++s_liveLogTick % 300u) == 150u) {
+            const auto sk = raw::rt::GetSkeletonPhysicsStats();
+            if (sk.mainDrawHookActive) {
+                Log("[SkeletonPhysics] Main::Draw hook active; actors=%u, ikBones=%u, xpbdBones=%u, updatedNodes=%u, runs=%llu",
+                    sk.activeActors, sk.lastFrameIkBones, sk.lastFrameXpbdBones, sk.lastFrameUpdated,
+                    (unsigned long long)sk.totalHooksRun);
+            }
+            raw::rt::GameplayHookTelemetry gp{};
+            if (raw::rt::GameplayHooksGetStats(&gp) && gp.hooksActive) {
+                Log("[GameplayHooks] mask=0x%02X hits=%u parries=%u guardBreaks=%u counterHits=%u ai(atk=%u blk=%u bash=%u) barter=%u",
+                    gp.hooksActive, gp.hitsProcessed, gp.timedParries, gp.guardBreaks, gp.counterHits,
+                    gp.aiAttackEvals, gp.aiBlockEvals, gp.aiBashEvals, gp.barterOpens);
+            }
+        }
+    }
 }
 
 }  // namespace
@@ -244,10 +263,15 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     Log("engine-remaster: %s", raw::rt::MemoryGuardsStatsJson().c_str());
     if (IniInt("SoftBody", 1)) {
         raw::rt::SoftBodyInit(g_img);
-        Log("softbody: %s", raw::rt::SoftBodyStatsJson().c_str());
+        const bool skOk = raw::rt::SkeletonPhysicsInstallHooks(reinterpret_cast<uintptr_t>(g_img.base));
+        Log("[SkeletonPhysics] Main::Draw (0x6565B0) hook: %s | %s",
+            skOk ? "ACTIVE" : "inactive (fail-closed)", raw::rt::SoftBodyStatsJson().c_str());
     }
     raw::rt::WorldSimInit(g_img, g_dir);
     Log("worldsim: live zero-SKSE world simulation & Skyrim.esm compressed NAVM loader started");
+    if (IniInt("GameplayHooks", 1)) {
+        Log("%s", raw::rt::GameplayHooksInit(g_img).c_str());
+    }
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
     if (IniInt("CallGraph", 0)) {
@@ -275,10 +299,12 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         std::snprintf(why, n, "%d background thread(s) running (sample or call graph); ask again when they finish", t);
         return 0;
     }
+    raw::rt::GameplayHooksShutdown();
     raw::rt::WorldSimShutdown();
     raw::rt::DepthTopologyShutdown();
     raw::rt::TerrainLodShutdown();
     raw::rt::MemoryGuardsShutdown();
+    raw::rt::SkeletonPhysicsShutdown();
     raw::rt::SoftBodyShutdown();
     raw::rt::ForensicsShutdown();
     raw::rt::CoreFixesShutdown();

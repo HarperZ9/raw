@@ -319,6 +319,7 @@ void WorldSimOnPresent() {
     WorldSimApplyLiveGmsts(liveGm.barterMin, liveGm.barterMax, liveGm.sprintStaminaDrainMult);
     WorldSimApplyLivePlanetaryGravity(snap.gravityMps2);
     ViewApplyLiveTide(snap.tideHeightU);
+    GameplayHooksUpdateSquadSnapshot(snap.actorsTracked, snap.attackTokensUsed, snap.tacticalAction, storm, snap.snowDepthU);
 
     std::lock_guard<std::mutex> lk(g_simMu);
     g_tel = snap;

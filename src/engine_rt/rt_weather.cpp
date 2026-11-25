@@ -1,5 +1,6 @@
 // Weather state for the ray-tracing worker's dynamic weather (RAW engine runtime). Original work, MIT. See rt_weather.h.
 #include "rt_weather.h"
+#include "rt_softbody.h"
 #include "rt_version.h"
 #include "rt_view.h"
 
@@ -285,6 +286,10 @@ void WeatherOnPresent() {
     if (s.ok) Blend(&s);
     if (s.ok && g_set) { g_set(s.smoothRain, s.smoothSnow, s.smoothCloud, s.smoothFog); ++s.calls; }
     if (s.ok && g_setExt) { g_setExt(s.windX, s.windY, s.lightning, s.gameHour); }
+    if (s.ok) {
+        const float gust01 = std::clamp(std::max(s.smoothRain, s.smoothSnow) + s.lightning * 0.5f, 0.0f, 1.0f);
+        SkeletonPhysicsSetWind(s.windX, s.windY, 0.0f, gust01);
+    }
     g_state = s;
 }
 

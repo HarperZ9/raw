@@ -17,6 +17,7 @@
 #define RT_NO_MAIN 1
 #include "RtShadow.hlsl"
 #include "RawProceduralNoise.hlsli"
+#include "RawSeasonsThermals.hlsli"
 
 #define Layer Normal
 #define BedAlbedo Spec
@@ -669,6 +670,53 @@ void water(uint3 id : SV_DispatchThreadID) {
             // so rivers & lakes NEVER draw a hard cell-boundary seam against `game.rgb`!
             const float3 nearCol = lerp(body, refl, effF) + (refr ? 0.0f.xxx : caus * (1.0f - effF));
             col = lerp(farOcean, nearCol, cellFeather) + glint * shoreFeather;
+            // Wave 39 Live Freezing-Degree-Day Winter Shoreline & Shallow-Lake Ice Crust (RawSeasonsThermals.hlsli):
+            // Forms crisp static IOR 1.31 crystalline ice shelves along frozen shores/lakes with organic spring fracture
+            // leads and open thawed water near active dock fires/braziers (ZERO Voronoi polygons, ZERO pulsing!).
+            if (sunColour.w > 0.5f && seasonThermal1.x > 0.02f && wDist < 16000.0f) {
+                float fireHeatW = 0.0f;
+                if (wDist < 3600.0f && flags.y > 0u) {
+                    const uint maxWFire = min(flags.y, 16u);
+                    [loop] for (uint wfi = 0u; wfi < maxWFire; ++wfi) {
+                        const float3 flc = lightColS[wfi].rgb;
+                        if (flc.r > flc.b * 1.25f && flc.r > 0.18f) {
+                            const float rF = min(lightPosR[wfi].w * 0.50f, 280.0f);
+                            fireHeatW = max(fireHeatW, evalFireThermalMeltMask(p, lightPosR[wfi].xyz, rF, saturate(flc.r * 0.85f)));
+                        }
+                    }
+                }
+                const float calmIceGate = 1.0f - smoothstep(5.0f, 10.0f, beaufort) * smoothstep(20.0f, 110.0f, depthV0);
+                const float freezeMask = evalWaterFreezeMask(wpW, depthV0, seasonThermal0, seasonThermal1, fireHeatW)
+                                       * calmIceGate * smoothstep(16000.0f, 900.0f, wDist);
+                if (freezeMask > 0.01f) {
+                    // 100% static world-locked glacial ice micro-relief & strata (zero time modulation, zero Voronoi!):
+                    const float4 iceG = rawNoise3Grad(wpW * 0.065f + float3(5.3f, 11.7f, 2.9f));
+                    const float  iceStrata = rawNoise3Grad(wpW * 0.014f + float3(19.1f, 3.7f, 8.3f)).x;
+                    const float3 nCrust = normalize(float3(-iceG.y * 0.075f, -iceG.z * 0.075f, 1.0f));
+                    const float  nvIce = saturate(dot(nCrust, v));
+                    const float  fIce = 0.018f + 0.982f * pow(1.0f - nvIce, 5.0f);
+                    // Deep Beer-Lambert cobalt-turquoise translucent ice crust tinted over underwater body + frost rime:
+                    const float3 ambIce = max(ambientAt(float3(0.0f, 0.0f, 1.0f)), float3(0.06f, 0.08f, 0.11f));
+                    const float3 sunIce = (sunDir.w > 0.5f) ? (sunColour.rgb * saturate(dot(nCrust, sunDir.xyz) * 0.65f + 0.35f) * 0.52f) : 0.0f.xxx;
+                    const float3 crustBase = lerp(float3(0.24f, 0.44f, 0.58f), float3(0.54f, 0.72f, 0.84f), iceStrata)
+                                           * (ambIce * 0.85f + sunIce);
+                    const float  rimeCov = saturate(seasonThermal1.z * (0.45f + 0.55f * iceG.x) * 0.55f);
+                    const float3 crustBody = lerp(lerp(body * 0.55f + crustBase * 0.65f, crustBase, 0.68f),
+                                                  float3(0.76f, 0.84f, 0.92f) * (ambIce + sunIce), rimeCov);
+                    // Crisp IOR 1.31 Fresnel sky reflection + tight sun glaze:
+                    float3 iceSpec = 0.0f.xxx;
+                    if (sunDir.w > 0.5f && dot(nCrust, sunDir.xyz) > 0.0f) {
+                        const float3 hIce = normalize(v + sunDir.xyz);
+                        const float  nhIce = saturate(dot(nCrust, hIce));
+                        const float  aIce = lerp(0.016f, 0.085f, rimeCov);
+                        const float  ddIce = nhIce * nhIce * (aIce - 1.0f) + 1.0f;
+                        const float  dIce = aIce / (PI * ddIce * ddIce);
+                        iceSpec = min(sunColour.rgb * (dIce * fIce * saturate(dot(nCrust, sunDir.xyz)) * 0.14f), 2.5f.xxx);
+                    }
+                    const float3 iceCol = lerp(crustBody, refl, saturate(fIce * lerp(0.88f, 0.35f, rimeCov))) + iceSpec;
+                    col = lerp(col, iceCol, saturate(freezeMask * 0.92f));
+                }
+            }
             // 3x3 Sub-Pixel Water-Silhouette Coverage Anti-Aliasing + Wet-Shoreline Feather:
             // Eliminates razor-jagged 1-pixel stairstep edges where floating Windhelm ice floes & piers jut out of deep water!
             float edgeCov = 1.0f;

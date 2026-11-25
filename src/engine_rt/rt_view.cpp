@@ -157,13 +157,46 @@ bool ReadCell(EngineView* v, uintptr_t* outExtCellAddr, bool* outCellWhValid) {
 bool ReadTime(EngineView* v) {
     __try {
         using GetSky = const uint8_t* (*)();
-        if (!kGetSky || !kCalendar) return false;
-        const uint8_t* sky = reinterpret_cast<GetSky>(g_base + kGetSky)();
-        if (!sky) return false;
-        v->gameHour = At<float>(sky, 0x1B0);
-        const uint8_t* days = At<const uint8_t*>(g_base + kCalendar, 0x28);
-        v->daysPassed = days ? At<float>(days, 0x34) : 0.0f;
-        return v->gameHour >= 0.0f && v->gameHour <= 24.0f;
+        v->gameYear   = 201.0f;
+        v->gameMonth  = 7.0f;
+        v->gameDay    = 17.0f;
+        v->gameHour   = 12.0f;
+        v->daysPassed = 0.0f;
+        v->timeScale  = 20.0f;
+        bool hasHour = false;
+        if (kGetSky) {
+            if (const uint8_t* sky = reinterpret_cast<GetSky>(g_base + kGetSky)()) {
+                const float gh = At<float>(sky, 0x1B0);
+                if (std::isfinite(gh) && gh >= 0.0f && gh <= 24.0f) {
+                    v->gameHour = gh;
+                    hasHour = true;
+                }
+            }
+        }
+        // Binary-verified SkyrimSE 1.7.104.0 Calendar::Singleton (0x21A05D0) is a Calendar* POINTER:
+        //   +0x08 gameYear, +0x10 gameMonth, +0x18 gameDay, +0x20 gameHour, +0x28 gameDaysPassed, +0x30 timeScale
+        //   Each points to a TESGlobal whose float value sits at +0x34 (proven in 0x645C80, 0x645EF0..0x646160).
+        if (kCalendar) {
+            if (const uint8_t* cal = At<const uint8_t*>(g_base, kCalendar)) {
+                auto readGlobal = [](const uint8_t* c, uint32_t off, float fallback) -> float {
+                    const uint8_t* g = At<const uint8_t*>(c, off);
+                    if (!g) return fallback;
+                    const float val = At<float>(g, 0x34);
+                    return std::isfinite(val) ? val : fallback;
+                };
+                v->gameYear   = readGlobal(cal, 0x08, v->gameYear);
+                v->gameMonth  = std::clamp(readGlobal(cal, 0x10, v->gameMonth), 0.0f, 11.0f);
+                v->gameDay    = std::clamp(readGlobal(cal, 0x18, v->gameDay), 1.0f, 31.0f);
+                const float calHour = readGlobal(cal, 0x20, v->gameHour);
+                if (!hasHour && calHour >= 0.0f && calHour <= 24.0f) {
+                    v->gameHour = calHour;
+                    hasHour = true;
+                }
+                v->daysPassed = std::max(readGlobal(cal, 0x28, 0.0f), 0.0f);
+                v->timeScale  = std::clamp(readGlobal(cal, 0x30, 20.0f), 0.0f, 1000.0f);
+            }
+        }
+        return hasHour && v->gameHour >= 0.0f && v->gameHour <= 24.0f;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
@@ -254,16 +287,18 @@ void ViewRestoreAllTides() {
 std::string ViewJson() {
     EngineView v;
     { std::lock_guard<std::mutex> g(g_m); v = g_view; }
-    char b[896];
+    char b[1024];
     std::snprintf(b, sizeof b,
                   "\"view_ok\":%u,\"screen\":[%u,%u],\"fb_viewport\":[%u,%u],\"cam_pos\":[%.1f,%.1f,%.1f],"
                   "\"cam_fwd\":[%.3f,%.3f,%.3f],\"fov\":%.2f,\"fov_1st\":%.2f,\"player_pos\":[%.1f,%.1f,%.1f],"
                   "\"cell\":\"0x%08X\",\"worldspace\":\"0x%08X\",\"cell_interior\":%u,\"water_height\":%.1f,"
-                  "\"cam_state\":%u,\"menu_paused\":%u,\"game_hour\":%.3f,\"days_passed\":%.3f",
+                  "\"cam_state\":%u,\"menu_paused\":%u,\"game_year\":%.0f,\"game_month\":%.0f,\"game_day\":%.0f,"
+                  "\"game_hour\":%.3f,\"days_passed\":%.3f,\"time_scale\":%.2f",
                   v.ok, v.screen[0], v.screen[1], v.viewport[0], v.viewport[1], v.camPos[0], v.camPos[1], v.camPos[2],
                   v.camRot[1], v.camRot[4], v.camRot[7], v.fov, v.fovFirstPerson, v.playerPos[0], v.playerPos[1],
                   v.playerPos[2], v.cellFormId, v.worldspaceFormId, v.interior, v.waterHeight,
-                  v.camStateId, v.menuPaused, v.gameHour, v.daysPassed);
+                  v.camStateId, v.menuPaused, v.gameYear, v.gameMonth, v.gameDay,
+                  v.gameHour, v.daysPassed, v.timeScale);
     return b;
 }
 
@@ -273,4 +308,21 @@ extern "C" __declspec(dllexport) uint64_t RAW_EngineView(raw::rt::EngineView* ou
     std::lock_guard<std::mutex> g(raw::rt::g_m);
     if (out) *out = raw::rt::g_view;
     return raw::rt::g_frame;
+}
+
+extern "C" __declspec(dllexport) int RAW_GetCalendarState(float* out6) {
+    if (!out6) return 0;
+    raw::rt::EngineView v;
+    {
+        std::lock_guard<std::mutex> g(raw::rt::g_m);
+        v = raw::rt::g_view;
+    }
+    if ((v.ok & 8u) == 0u) return 0;
+    out6[0] = v.gameYear;
+    out6[1] = v.gameMonth;
+    out6[2] = v.gameDay;
+    out6[3] = v.gameHour;
+    out6[4] = v.daysPassed;
+    out6[5] = v.timeScale;
+    return 1;
 }

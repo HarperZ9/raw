@@ -18,6 +18,7 @@
 #include "RawProceduralNoise.hlsli"
 #include "RawMaterials3D.hlsli"
 #include "RawDecals3D.hlsli"
+#include "RawSeasonsThermals.hlsli"
 
 Texture2D<float>  Depth   : register(t0);
 Texture2D<float4> Normal  : register(t1);
@@ -425,33 +426,91 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             wet.wet *= 1.0f - snowEff;
             wet.snow = snowEff;
         }
-        // Real-Time Thermal Campfire / Hearth / Torch Snow Melt (COMPETITIVE-2026.md #192402 Dynamic Terrain Deformation):
-        // Warm fire lights physically melt surrounding snowdrifts into damp bare earth + glistening icy slush rim!
-        if ((wet.snow > 0.05f || base == 4u) && z < 2600.0f && s.n.z > 0.35f && flags.y > 0u) {
-            float meltHeat = 0.0f;
-            const uint maxMeltL = min(flags.y, 16u);
-            [loop] for (uint mi = 0u; mi < maxMeltL; ++mi) {
-                const float3 lc = lightColS[mi].rgb;
-                if (lc.r > lc.b * 1.25f && lc.r > 0.18f) {
-                    const float3 ld = p - lightPosR[mi].xyz;
-                    const float rMelt = min(lightPosR[mi].w * 0.42f, 260.0f);
-                    const float d2 = dot(ld, ld);
-                    if (d2 < rMelt * rMelt) {
-                        const float att = 1.0f - sqrt(d2) / max(rMelt, 1.0f);
-                        meltHeat = max(meltHeat, saturate(att * att * 1.45f));
+        // Wave 39 Unified Live Seasonal & Surface Thermal Energy Balance (RawSeasonsThermals.hlsli):
+        // Evaluates real orbital-season snowpack accumulation/compaction/albedo aging, directional slope/aspect melt,
+        // active campfire/hearth/forge/torch heat-radius melt rings, static freeze-thaw black ice & windward frost rime,
+        // and solar/wind puddle evaporation across all exterior non-actor terrain, architecture, roofs & rocks!
+        const bool isNonActorExt = (!skin && !isHair && !isEye && base != 5u);
+        if (isNonActorExt && z < 8000.0f) {
+            // Compute local fire/hearth/forge thermal heat flux over active cluster warm lights via evalFireThermalMeltMask:
+            float fireHeat01 = 0.0f;
+            if (z < 2600.0f && flags.y > 0u) {
+                const uint4 cBitsT = clusters[clusterOf(px, z)];
+                uint warmChecked = 0u;
+                [loop] for (uint tw = 0u; tw < 4u && warmChecked < 16u; ++tw) {
+                    uint tb = cBitsT[tw];
+                    [loop] while (tb != 0u && warmChecked < 16u) {
+                        const uint tli = tw * 32u + firstbitlow(tb);
+                        tb &= tb - 1u;
+                        if (tli >= flags.y) { continue; }
+                        const float3 tlc = lightColS[tli].rgb;
+                        if (tlc.r > tlc.b * 1.25f && tlc.r > 0.18f) {
+                            const float rMelt = min(lightPosR[tli].w * 0.45f, 280.0f);
+                            const float hStr  = saturate(tlc.r * 0.85f);
+                            fireHeat01 = max(fireHeat01, evalFireThermalMeltMask(p, lightPosR[tli].xyz, rMelt, hStr));
+                            ++warmChecked;
+                        }
                     }
                 }
             }
-            if (meltHeat > 0.02f) {
-                const float meltMask = smoothstep(0.08f, 0.72f, meltHeat);
-                const float slushRing = smoothstep(0.02f, 0.25f, meltHeat) * (1.0f - smoothstep(0.45f, 0.85f, meltHeat));
-                wet.snow *= (1.0f - meltMask);
-                wet.wet = max(wet.wet, max(meltMask * 0.82f, slushRing * 0.75f));
-                // Darken thawed snow into wet Nordic loam/stone inside the melt core + glossy blue-grey slush rim:
+            const bool hasSeasonState = (seasonThermal0.x > 0.005f || seasonThermal1.x > 0.005f
+                                      || seasonThermal1.y > 0.01f  || seasonThermal1.z > 0.01f
+                                      || phenology1.w > 0.001f);
+            if (hasSeasonState) {
+                const SurfaceThermalEval st = evalSeasonalSurfaceThermals(
+                    p + camPosW.xyz, s.n, sunDir.xyz, cloudWind.xy,
+                    seasonThermal0, seasonThermal1, fireHeat01,
+                    wet.wet, wet.puddle, phenology1.w);
+                // 1) Seasonal snowpack accumulation with metamorphic albedo/roughness aging (0 when seasonThermal0.x <= 0.005!):
+                if (seasonThermal0.x > 0.005f && st.snowCov01 > 0.01f && !isGreenPine) {
+                    const float sMix = st.snowCov01 * smoothstep(8000.0f, 300.0f, z);
+                    albedo  = lerp(albedo, st.snowAlbedo, sMix * 0.88f);
+                    s.alpha = lerp(s.alpha, st.snowRoughness, sMix * 0.85f);
+                    s.f0    = lerp(s.f0, 0.018f, sMix * 0.80f);
+                    wet.snow = max(wet.snow, sMix);
+                }
+                // 2) Fire/hearth/forge thermal melt rings: melts snowpack & natural snow into wet dark earth + glossy slush rim!
+                if (st.fireMeltRing01 > 0.01f || st.slushRim01 > 0.01f) {
+                    const float natSnowMelt = (base == 4u || base == 1u)
+                        ? saturate((min(albedo.r, min(albedo.g, albedo.b)) - 0.30f) * 4.5f) : 0.0f;
+                    const float snowHere = max(natSnowMelt, wet.snow);
+                    wet.snow *= (1.0f - st.fireMeltRing01);
+                    wet.wet   = max(wet.wet, max(st.fireMeltRing01 * 0.82f, st.slushRim01 * 0.78f) * max(snowHere, 0.35f));
+                    albedo    = lerp(albedo, float3(0.13f, 0.11f, 0.095f), st.fireMeltRing01 * snowHere * 0.78f);
+                    albedo    = lerp(albedo, float3(0.42f, 0.52f, 0.62f),  st.slushRim01 * snowHere * 0.48f);
+                    s.alpha   = lerp(s.alpha, 0.14f, max(st.fireMeltRing01, st.slushRim01) * snowHere * 0.78f);
+                    lobe      = lobe || (max(st.fireMeltRing01, st.slushRim01) * snowHere > 0.15f);
+                }
+                // 3) Static freeze-thaw black ice glaze & windward hoarfrost rime when cold (zero pulsing!):
+                if (seasonThermal0.w < 0.5f && (st.iceGlaze01 > 0.02f || st.frostRime01 > 0.02f)) {
+                    const float coldFade = smoothstep(5500.0f, 180.0f, z);
+                    const float gIce  = st.iceGlaze01 * coldFade;
+                    const float gRime = st.frostRime01 * coldFade;
+                    if (gIce > 0.02f) {
+                        albedo  *= lerp(1.0f, 0.74f, gIce * 0.75f);
+                        s.alpha  = lerp(s.alpha, 0.085f, gIce * 0.85f);
+                        s.f0     = lerp(s.f0, 0.018f, gIce * 0.85f);
+                        s.mask   = max(s.mask, gIce * 0.80f);
+                        lobe     = true;
+                    }
+                    if (gRime > 0.02f && !isGreenPine) {
+                        albedo  = lerp(albedo, float3(0.74f, 0.82f, 0.90f), gRime * 0.42f);
+                        s.alpha = lerp(s.alpha, 0.52f, gRime * 0.45f);
+                    }
+                }
+                // 4) Puddle evaporation & snowmelt runoff balance:
+                wet.puddle = lerp(wet.puddle, st.puddleMask01, 0.60f);
+                wet.wet    = max(wet.wet * saturate(1.0f - phenology1.w * 0.45f), st.wetBoost01 * 0.72f);
+            } else if (fireHeat01 > 0.02f && (wet.snow > 0.05f || base == 4u) && s.n.z > 0.35f) {
+                // Fallback when RawWeatherSim uniforms are zeroed (e.g. legacy synthetic WARP tests):
+                const float meltMask  = smoothstep(0.10f, 0.70f, fireHeat01);
+                const float slushRing = smoothstep(0.02f, 0.25f, fireHeat01) * (1.0f - smoothstep(0.45f, 0.85f, fireHeat01));
                 const float natSnowMelt = (base == 4u) ? saturate((min(albedo.r, min(albedo.g, albedo.b)) - 0.34f) * 4.5f) : 0.0f;
-                albedo = lerp(albedo, float3(0.14f, 0.12f, 0.10f), meltMask * natSnowMelt * 0.78f);
-                albedo = lerp(albedo, float3(0.44f, 0.54f, 0.64f), slushRing * natSnowMelt * 0.45f);
-                s.alpha = lerp(s.alpha, 0.15f, max(meltMask, slushRing) * max(natSnowMelt, wet.snow) * 0.75f);
+                wet.snow *= (1.0f - meltMask);
+                wet.wet   = max(wet.wet, max(meltMask * 0.82f, slushRing * 0.75f));
+                albedo    = lerp(albedo, float3(0.14f, 0.12f, 0.10f), meltMask * natSnowMelt * 0.78f);
+                albedo    = lerp(albedo, float3(0.44f, 0.54f, 0.64f), slushRing * natSnowMelt * 0.45f);
+                s.alpha   = lerp(s.alpha, 0.15f, max(meltMask, slushRing) * max(natSnowMelt, wet.snow) * 0.75f);
             }
         }
         // Persistent 512x512 Toroidal World-Locked GPU PDE WorldField (exact frac(worldXY/2048) matches WorldFieldSim.hlsl!):
@@ -599,7 +658,27 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // Boost living pine chlorophyll saturation while capping washed-out white-green needles:
             const float fLuma = dot(albedo, float3(0.2126f, 0.7152f, 0.0722f));
             albedo = saturate(lerp(fLuma.xxx, albedo, 1.28f));
-            albedo = min(albedo, float3(0.22f, 0.31f, 0.19f));
+            // Wave 39 Live Seasonal Botanical Phenology (RawSeasonsThermals.hlsli):
+            // Boreal pines/spruces stay deep saturated evergreen with restrained winter bough frost/snow dusting,
+            // while deciduous aspens, birches & shrubs shift smoothly through spring bud-break, summer green,
+            // autumn golden carotenoid & crimson anthocyanin, and winter frost — NEVER bleached pale white!
+            const bool hasLivePhen = (sunColour.w > 0.5f)
+                && ((phenology0.x + phenology0.y + phenology0.z + phenology0.w + phenology1.x + phenology1.y) > 0.01f);
+            if (hasLivePhen) {
+                const bool isEvergreenConifer = (base == 1u) || (albedo.g < 0.22f && albedo.b >= albedo.r * 0.70f);
+                const SeasonalFoliageEval sf = evalSeasonalFoliagePhenology(
+                    wpF, s.n, albedo, phenology0, phenology1, seasonThermal0, seasonThermal1, isEvergreenConifer);
+                albedo = saturate(albedo * sf.albedoTint);
+                // Restrained winter bough snow dusting & sub-zero frost rim (never chalky white wash!):
+                const float boughSnow = sf.canopySnowCov01 * (isEvergreenConifer ? 0.24f : 0.30f) * fFade;
+                const float frostEdge = sf.frostRim01 * 0.14f * fFade;
+                albedo = lerp(albedo, float3(0.58f, 0.65f, 0.72f), saturate(boughSnow + frostEdge));
+                albedo = isEvergreenConifer
+                    ? min(albedo, lerp(float3(0.22f, 0.31f, 0.19f), float3(0.42f, 0.48f, 0.46f), boughSnow))
+                    : min(albedo, float3(0.46f, 0.36f, 0.24f));
+            } else {
+                albedo = min(albedo, float3(0.22f, 0.31f, 0.19f));
+            }
         }
     }
     const float3 nSmooth = s.n;
@@ -1743,7 +1822,6 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // and 3D crown-to-underside canopy self-occlusion so vanilla pine/deciduous cards read as lush 3D volumes!
             const float3 wpCan = p + camPosW.xyz;
             const float back = pow(saturate(dot(-s.v, sunDir.xyz)), 3.6f);
-            const float wrapL = saturate(dot(s.n, sunDir.xyz) * 0.45f + 0.55f);
             const float cloudClear = 1.0f - saturate(clouds.x * 0.82f);
             const float dayGate = smoothstep(0.02f, 0.14f, astroSunElev());
             const float foliageThickness = lerp(0.45f, 1.0f, cNoise(wpCan * 0.024f + 5.1f));

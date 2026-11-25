@@ -427,8 +427,8 @@ public:
     {
         FenceSync sync;
         sync.fence = m_host.fence;
-        sync.wait = true; sync.waitValue = waitValue;
-        sync.signal = true; sync.signalValue = signalValue;
+        sync.wait = (waitValue != 0); sync.waitValue = waitValue;
+        sync.signal = (signalValue != 0); sync.signalValue = signalValue;
         if (!m_dev->submit(sync, m_err)) return Fail("submit");
         m_pendingSubmission = m_submissions++;
         m_havePending = true;

@@ -172,8 +172,8 @@ void AppendConiferBough(std::vector<TerrainVertex>& verts, std::vector<uint32_t>
         const Vec3 nR = Normalize(right * 0.55f + Vec3{0.0f, 0.0f, 0.83f});
 
         auto makeNeedleVert = [&](Vec3 p, Vec3 n, float u) {
-            TerrainVertex v = MakeVertex(p, n, {u, uvY}, TerrainMaterialId::MossMeadow, 0.15f, 0.0f, 0.0f, 2u);
-            v.splat0[1] = Clamp01(snowLoad * 0.75f * n.z);
+            TerrainVertex v = MakeVertex(p, n, {u, uvY}, TerrainMaterialId::MossMeadow, 0.15f, 0.0f, 0.0f, 11u);
+            v.splat0[1] = Clamp01(snowLoad * 0.72f * std::max(n.z, 0.0f));
             v.splat1[1] = 1.0f - v.splat0[1];
             return v;
         };
@@ -417,26 +417,33 @@ bool BuildMultiTierConifer(uint32_t seed, float heightU, float crownRadiusU, flo
     std::vector<TerrainVertex> verts;
     std::vector<uint32_t> idx;
 
-    // 1. Buttressed fluted conifer trunk (8 sides x 10 rings)
+    // 1. Gnarled buttressed fluted conifer trunk (8 sides x 11 rings, rooted -24u below origin so slopes never float)
     constexpr int kSides = 8;
-    constexpr int kRings = 10;
-    const float baseRad = Clamp(crownRadiusU * 0.14f, 4.0f, 38.0f);
-    const float leanX = rng.Range(-heightU * 0.024f, heightU * 0.024f);
-    const float leanY = rng.Range(-heightU * 0.024f, heightU * 0.024f);
+    constexpr int kRings = 11;
+    const float baseRad = Clamp(crownRadiusU * 0.15f, 4.5f, 38.0f);
+    const float leanX = rng.Range(-heightU * 0.032f, heightU * 0.032f);
+    const float leanY = rng.Range(-heightU * 0.032f, heightU * 0.032f);
+    const float sWaveX = rng.Range(-heightU * 0.018f, heightU * 0.018f);
+    const float sWaveY = rng.Range(-heightU * 0.018f, heightU * 0.018f);
+    const float twistRate = rng.Range(-0.9f, 0.9f);
     for (int r = 0; r < kRings; ++r) {
         const float t = float(r) / float(kRings - 1);
-        const float z = t * heightU;
-        const float buttress = 1.0f + 0.58f * std::exp(-t * 9.0f);
-        const float rad = std::max(baseRad * (1.0f - 0.88f * t) * buttress, 1.2f);
-        const float cx = leanX * t * t;
-        const float cy = leanY * t * t;
+        const float z = Lerp(-24.0f, heightU, t);
+        const float hNorm = Clamp01(z / heightU);
+        const float buttress = 1.0f + 0.72f * std::exp(-hNorm * 8.5f);
+        const float rad = std::max(baseRad * (1.0f - 0.89f * hNorm) * buttress, 1.3f);
+        const float cx = leanX * hNorm * hNorm + sWaveX * std::sin(hNorm * kPi);
+        const float cy = leanY * hNorm * hNorm + sWaveY * std::sin(hNorm * kPi);
         for (int s = 0; s < kSides; ++s) {
-            const float ang = (float(s) / float(kSides)) * kTwoPi;
-            const float flute = 1.0f + 0.13f * std::exp(-t * 7.0f) * std::cos(ang * 4.0f + float(seed & 15u));
+            const float ang = (float(s) / float(kSides)) * kTwoPi + twistRate * hNorm;
+            const float flute = 1.0f + 0.16f * std::exp(-hNorm * 6.0f) * std::cos(ang * 5.0f + float(seed & 15u));
             const Vec3 p{cx + std::cos(ang) * rad * flute, cy + std::sin(ang) * rad * flute, z};
             const Vec3 n = Normalize({std::cos(ang), std::sin(ang), 0.14f});
-            verts.push_back(MakeVertex(p, n, {float(s) / float(kSides), 1.0f - t},
-                                       TerrainMaterialId::RockGranite, 0.0f, 0.0f, 0.0f, 2u));
+            TerrainVertex tv = MakeVertex(p, n, {float(s) / float(kSides), 1.0f - hNorm},
+                                          TerrainMaterialId::RockGranite, -0.10f, 0.0f, 0.0f, 10u);
+            // Subtle mossy root-collar blend near base
+            tv.splat1[1] = Clamp01((1.0f - hNorm * 3.5f) * 0.65f);
+            verts.push_back(tv);
         }
     }
     for (int r = 0; r < kRings - 1; ++r) {
@@ -451,36 +458,72 @@ bool BuildMultiTierConifer(uint32_t seed, float heightU, float crownRadiusU, flo
         }
     }
 
-    // 2. Primary golden-angle boughs + lateral secondary 3D needle sub-boughs
-    constexpr int kBoughs = 20;
+    // 1b. 5 Gnarled Flared Surface Roots radiating outward & curving into the ground
+    constexpr int kRoots = 5;
+    for (int ri = 0; ri < kRoots; ++ri) {
+        const float rAng = (float(ri) / float(kRoots)) * kTwoPi + rng.Range(-0.28f, 0.28f);
+        const float rLen = baseRad * rng.Range(2.4f, 3.6f);
+        const float rThick = baseRad * rng.Range(0.42f, 0.56f);
+        const Vec3 dir{std::cos(rAng), std::sin(rAng), 0.0f};
+        const Vec3 side{-dir.y, dir.x, 0.0f};
+        const uint32_t rBase = static_cast<uint32_t>(verts.size());
+        constexpr int kRootSegs = 4;
+        for (int rs = 0; rs < kRootSegs; ++rs) {
+            const float u = float(rs) / float(kRootSegs - 1);
+            const float rad = rThick * (1.0f - 0.65f * u);
+            const float zArch = Lerp(baseRad * 0.95f, -20.0f, u * u) + std::sin(u * kPi) * (baseRad * 0.22f);
+            const Vec3 spine = dir * (baseRad * 0.6f + rLen * u) + Vec3{0.0f, 0.0f, zArch};
+            const Vec3 pL = spine - side * rad + Vec3{0.0f, 0.0f, -rad * 0.45f};
+            const Vec3 pT = spine + Vec3{0.0f, 0.0f, rad * 0.65f};
+            const Vec3 pR = spine + side * rad + Vec3{0.0f, 0.0f, -rad * 0.45f};
+            TerrainVertex vL = MakeVertex(pL, Normalize(side * -0.8f + Vec3{0, 0, 0.5f}), {0.0f, 1.0f}, TerrainMaterialId::RockGranite, 0.1f, 0.0f, 0.0f, 10u);
+            TerrainVertex vT = MakeVertex(pT, Normalize(dir * 0.2f + Vec3{0, 0, 0.96f}), {0.5f, 1.0f}, TerrainMaterialId::RockGranite, 0.2f, 0.0f, 0.0f, 10u);
+            TerrainVertex vR = MakeVertex(pR, Normalize(side * 0.8f + Vec3{0, 0, 0.5f}), {1.0f, 1.0f}, TerrainMaterialId::RockGranite, 0.1f, 0.0f, 0.0f, 10u);
+            vT.splat1[1] = 0.55f;
+            verts.push_back(vL); verts.push_back(vT); verts.push_back(vR);
+        }
+        for (int rs = 0; rs < kRootSegs - 1; ++rs) {
+            const uint32_t a = rBase + uint32_t(rs * 3);
+            const uint32_t b = rBase + uint32_t((rs + 1) * 3);
+            idx.push_back(a + 0); idx.push_back(a + 1); idx.push_back(b + 1);
+            idx.push_back(a + 0); idx.push_back(b + 1); idx.push_back(b + 0);
+            idx.push_back(a + 1); idx.push_back(a + 2); idx.push_back(b + 2);
+            idx.push_back(a + 1); idx.push_back(b + 2); idx.push_back(b + 1);
+        }
+    }
+
+    // 2. Irregular Multi-Tier Branching Pine Boughs + Lateral 3D Needle Sub-Boughs
+    constexpr int kBoughs = 24;
     for (int bi = 0; bi < kBoughs; ++bi) {
         const float u = float(bi) / float(kBoughs - 1);
-        const float tH = 0.20f + 0.77f * u;
+        const float tH = 0.18f + 0.80f * u;
         const float z = tH * heightU;
-        const float cx = leanX * tH * tH;
-        const float cy = leanY * tH * tH;
-        const float ang = float(bi) * kGoldenAngle + rng.Range(-0.16f, 0.16f);
-        const float envelope = std::pow(std::max(1.0f - u * 0.92f, 0.08f), 0.78f);
-        const float len = crownRadiusU * (0.28f + 0.80f * envelope) * rng.Range(0.88f, 1.12f);
-        const float wid = len * 0.40f;
-        const float pitch = (-0.20f + 0.34f * u) - 0.18f * snow;
-        const float droop = len * (0.16f + 0.15f * snow);
+        const float cx = leanX * tH * tH + sWaveX * std::sin(tH * kPi);
+        const float cy = leanY * tH * tH + sWaveY * std::sin(tH * kPi);
+        const float ang = float(bi) * kGoldenAngle + rng.Range(-0.24f, 0.24f);
+        // Irregular layered silhouette (not a sterile geometric cone!)
+        const float tierWave = 0.84f + 0.28f * std::sin(u * kPi * 5.0f + float(seed & 7u));
+        const float envelope = std::pow(std::max(1.0f - u * 0.90f, 0.10f), 0.74f) * tierWave;
+        const float len = crownRadiusU * (0.30f + 0.86f * envelope) * rng.Range(0.82f, 1.18f);
+        const float wid = len * rng.Range(0.38f, 0.50f);
+        const float pitch = (-0.24f + 0.42f * u) - 0.16f * snow + rng.Range(-0.07f, 0.07f);
+        const float droop = len * (0.18f + 0.16f * snow);
         const Vec3 dir = Normalize({std::cos(ang), std::sin(ang), pitch});
-        const float trunkR = std::max(baseRad * (1.0f - 0.88f * tH), 1.5f);
-        const Vec3 root{cx + dir.x * trunkR * 0.7f, cy + dir.y * trunkR * 0.7f, z};
-        const float flexBase = Clamp(1.0f - tH * 0.65f, 0.15f, 0.95f);
+        const float trunkR = std::max(baseRad * (1.0f - 0.89f * tH), 1.5f);
+        const Vec3 root{cx + dir.x * trunkR * 0.65f, cy + dir.y * trunkR * 0.65f, z};
+        const float flexBase = Clamp(1.0f - tH * 0.60f, 0.15f, 0.95f);
 
         AppendConiferBough(verts, idx, root, dir, len, wid, droop, flexBase, snow);
 
-        // Secondary lateral sub-bough forks on lower/mid tiers for lush 3D silhouette volume
-        if (bi < 12) {
-            const Vec3 midAnchor = root + Normalize({dir.x, dir.y, 0.0f}) * (len * 0.45f) +
-                                   Vec3{0.0f, 0.0f, dir.z * len * 0.45f - droop * 0.20f};
+        // Secondary lateral sub-bough forks on lower/mid tiers for lush multi-tier volume
+        if (bi < 14) {
+            const Vec3 midAnchor = root + Normalize({dir.x, dir.y, 0.0f}) * (len * 0.42f) +
+                                   Vec3{0.0f, 0.0f, dir.z * len * 0.42f - droop * 0.18f};
             for (int side : {-1, 1}) {
-                const float subAng = ang + float(side) * 0.58f;
-                const Vec3 subDir = Normalize({std::cos(subAng), std::sin(subAng), pitch - 0.06f});
-                AppendConiferBough(verts, idx, midAnchor, subDir, len * 0.54f, wid * 0.68f,
-                                   droop * 0.65f, flexBase * 0.75f, snow);
+                const float subAng = ang + float(side) * rng.Range(0.48f, 0.72f);
+                const Vec3 subDir = Normalize({std::cos(subAng), std::sin(subAng), pitch - 0.05f});
+                AppendConiferBough(verts, idx, midAnchor, subDir, len * 0.58f, wid * 0.72f,
+                                   droop * 0.62f, flexBase * 0.75f, snow);
             }
         }
     }

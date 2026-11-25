@@ -25,11 +25,19 @@
 #include "../../src/d3d12_bridge/ShaderCompiler.h"
 #include "../../src/engine_rt/rt_zydis_offsets.h"
 #include "../../src/engine_rt/rt_engine_remaster_tests.h"
+#include "../../src/engine_rt/ce_rebuild_arch.h"
 #include "../../src/engine_rt/rt_skeleton_ik.h"
 #include "../../src/engine_rt/rt_combat_ai.h"
 #include "../../src/engine_rt/rt_world_sim.h"
 #include "../../src/worldgen/RawWorldGenTests.h"
+#include "../../src/worldgen/RawFloraEngine.h"
+#include "../../src/worldgen/RawWeatherSim.h"
 #include "../../src/materials/RawMaterialsTests.h"
+
+namespace raw::worldgen {
+int RunFloraEngineTests(void (*checkFn)(bool, const char*));
+int RunWeatherSimTests();
+}
 #include "../../src/assets/RawAssetsTests.h"
 #include "../../src/ui/RawDesignTokens.h"
 #include "../../src/ui/RawInputEngine.h"
@@ -964,6 +972,19 @@ int main() {
     TestCustomNavMeshAndWorldSim();
     raw::rt::RunEngineRemasterTests(Check);
     raw::worldgen::RunWorldGenSelfTests(Check);
+    raw::worldgen::RunFloraEngineTests(Check);
+    {
+        const int weatherFails = raw::worldgen::RunWeatherSimTests();
+        Check(weatherFails == 0, "wave38_weather_seasons_thermals_suite_28_tests");
+    }
+    {
+        const auto manifest = raw::ce_rebuild::GetRebuildManifest();
+        const auto contracts = raw::ce_rebuild::GetCanonical17104Contracts();
+        const auto badRes = raw::ce_rebuild::VerifyClassVtable(0x1000ull, contracts.front());
+        Check(manifest.subsystems.size() == 10u && contracts.size() >= 25u &&
+              manifest.totalExtractedRttiClasses == 7376u && !badRes.passed && !badRes.memoryReadable,
+              "wave38_ce_rebuild_arch_manifest_and_seh_fail_closed");
+    }
     raw::materials::RunRawMaterialsTests(Check);
     raw::assets::RunRawAssetsTests(Check);
     std::printf("ce_runtime_check: %d passed, %d failed\n", g_pass, g_fail);

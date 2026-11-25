@@ -101,6 +101,20 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     raw::rt::ControlOnPresent(ctx, sc);
     raw::rt::MemoryGuardsOnPresent();
     raw::rt::TerrainLodOnPresent();
+    {
+        static uint8_t s_lastTfc = 0;
+        static uint32_t s_tfcLogFrames = 0;
+        raw::rt::RawTerrainLodTelemetry tl{};
+        if (RAW_GetTerrainLodTelemetry(&tl)) {
+            if (tl.tfcActive != s_lastTfc || (tl.tfcActive && (++s_tfcLogFrames % 300u) == 1u)) {
+                s_lastTfc = tl.tfcActive;
+                if (!tl.tfcActive) s_tfcLogFrames = 0;
+                Log("[TerrainLOD] tfc=%u bypass_tvdt=%u full_refreshes=%u grid=[%d,%d] lod_bands=[%.0f,%.0f,%.0f,%.0f]",
+                    tl.tfcActive, tl.bypassTvdtLive, tl.tfcFullRefreshes, tl.gridCenterX, tl.gridCenterY,
+                    tl.lodBandStarts[0], tl.lodBandStarts[1], tl.lodBandStarts[2], tl.lodBandStarts[3]);
+            }
+        }
+    }
     raw::rt::DepthTopologyOnPresent();
     raw::rt::WorldSimOnPresent();
 }
@@ -148,12 +162,14 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
                 Log("%s", raw::rt::ResizeShadowAtlas(g_img, g_refs, uint32_t(atlas)).c_str());
             // Pre-TES::Init Engine-Level Full-Detail Mesh, 3D Skinned Trees, Zero-Pop-In LOD & Dense Flora Overhaul:
             // Directly mutates Skyrim SE's live Setting singletons before TES::Init (never hot-mutated mid-session).
-            raw::rt::SetSetting(g_img, g_refs, "fSplitDistanceMult:TerrainManager", "1.75");
-            raw::rt::SetSetting(g_img, g_refs, "fBlockLevel0Distance:TerrainManager", "75000.0");
-            raw::rt::SetSetting(g_img, g_refs, "fBlockLevel1Distance:TerrainManager", "140000.0");
-            raw::rt::SetSetting(g_img, g_refs, "fBlockMaximumDistance:TerrainManager", "250000.0");
-            raw::rt::SetSetting(g_img, g_refs, "fTreeLoadDistance:TerrainManager", "150000.0");
-            raw::rt::SetSetting(g_img, g_refs, "bKeepLowDetailTerrain:TerrainManager", "0");
+            raw::rt::SetSetting(g_img, g_refs, "fSplitDistanceMult:TerrainManager", "2.0");
+            raw::rt::SetSetting(g_img, g_refs, "fBlockLevel0Distance:TerrainManager", "95000.0");
+            raw::rt::SetSetting(g_img, g_refs, "fBlockLevel1Distance:TerrainManager", "180000.0");
+            raw::rt::SetSetting(g_img, g_refs, "fBlockMaximumDistance:TerrainManager", "450000.0");
+            raw::rt::SetSetting(g_img, g_refs, "fTreeLoadDistance:TerrainManager", "220000.0");
+            raw::rt::SetSetting(g_img, g_refs, "bKeepLowDetailTerrain:TerrainManager", "1");
+            raw::rt::SetSetting(g_img, g_refs, "fSkyCellRefFadeDistance", "350000.0");
+            raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutMultSkyCell:LOD", "2.5");
             raw::rt::SetSetting(g_img, g_refs, "bForceFullDetail:Trees", "1");
             raw::rt::SetSetting(g_img, g_refs, "bRenderSkinnedTrees:Trees", "1");
             raw::rt::SetSetting(g_img, g_refs, "uiMaxSkinnedTreesToRender:Trees", "256");
@@ -223,6 +239,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     raw::rt::ForensicsInit(g_out);
     raw::rt::MemoryGuardsInit(g_img);
     raw::rt::TerrainLodInit(g_img);
+    Log("%s", raw::rt::TerrainLodInitStatus().c_str());
     raw::rt::DepthTopologyInit(g_img, g_refs);
     Log("engine-remaster: %s", raw::rt::MemoryGuardsStatsJson().c_str());
     if (IniInt("SoftBody", 1)) {

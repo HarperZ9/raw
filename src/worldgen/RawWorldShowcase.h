@@ -42,7 +42,13 @@ struct StreamConfig {
     uint32_t      maxLoadsPerFrame     = 4u;
     uint32_t      maxMeshletTris       = 64u;   // 64 for RawMeshHost AS+MS; up to 126 for RawTerrainWorld.hlsl
     bool          showcaseMode         = false; // true = stream everywhere; false = activate near/beyond Tamriel edge
-    float         frontierActivationMarginU = 16384.0f; // wake streaming 4 cells before Tamriel border
+    float         frontierActivationMarginU = 16384.0f; // wake streaming before Tamriel border
+    // Optional asymmetric Tamriel exclusion box (when true, skips all chunks strictly inside [minX,maxX]x[minY,maxY]):
+    bool          useCustomBorderBox   = false;
+    float         borderMinX           = -148000.0f;
+    float         borderMaxX           =  148000.0f;
+    float         borderMinY           = -118000.0f;
+    float         borderMaxY           =  132000.0f;
 };
 
 struct StreamedChunkEntry {
@@ -127,5 +133,11 @@ struct OfflineShowcaseSummary {
 // Generates 6 representative frontier biome chunks (one per showcase biome) + 6 hero props.
 // If optionalExportDir is non-empty, exports .glb and .obj files there for general gamedev reuse.
 OfflineShowcaseSummary GenerateOfflineShowcaseDiorama(uint32_t seed, const std::string& optionalExportDir = "");
+
+// Bakes a streamed chunk's 3D procedural hero props (conifers, ice arches, basalt columns, vents,
+// crystal monoliths, boulders, snow drifts) into world-space meshlets merged with the chunk terrain mesh,
+// ready for single-call hardware AS+MS (or VS fallback) rendering via RawTerrainWorld.hlsl.
+bool BuildChunkMergedGpuMesh(const StreamedChunkEntry& entry, uint32_t maxMeshletTris,
+                             uint32_t worldSeed, float seaLevelZ, ProceduralMesh* outMerged);
 
 }  // namespace raw::worldgen

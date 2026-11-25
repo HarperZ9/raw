@@ -70,8 +70,10 @@ struct D3D12Bridge::Impl
     RawMeshHost              meshHost;     // RAW-MESH Hardware DX12 AS+MS PN-Triangle subdivision host
     std::vector<RawMeshGpuAsset> proceduralMeshes; // Zero-external-asset built-in procedural GPU meshlet library
     raw::worldgen::RawWorldShowcase worldShowcase; // Live beyond-Tamriel 6-biome procedural frontier streaming manager
-    std::unordered_map<uint64_t, RawMeshGpuAsset> streamedTerrainGpu;
+    raw::worldgen::StreamUpdateStats lastWorldStats{};
+    std::unordered_map<uint64_t, TerrainGpuChunk> streamedTerrainGpu;
     uint64_t nextTerrainHandle = 1;
+    uint64_t terrainRenderFrames = 0;
     std::vector<raw::materials::GpuMaterialRecord> materialGpuRecords; // Canonical 64-byte physical material SRV buffer
     raw::assets::OverrideRegistry customOverrides; // Non-NIF/Non-DDS handcrafted override + hot-reload registry
     RawOverrideRegistry      overrides;    // Creator hot-swap .glb/.obj override registry (raw_assets/overrides/)

@@ -491,6 +491,11 @@ bool VerifyStartupBinaryOffsets(const Image& img, std::string* reportOut) {
         {"NiCamera::frustumFar",              Addr("fn:NiCamera::UpdateWorldData"),             Off("off:NiCamera::frustumFar"),              4, true},
         {"ScrapHeap::baseAddress",            Addr("fn:ScrapHeap::ContainsBlock"),              Off("off:ScrapHeap::baseAddress"),            8, false},
         {"ScrapHeap::endAddress",             Addr("fn:ScrapHeap::ContainsBlock"),              Off("off:ScrapHeap::endAddress"),             8, false},
+        {"TES::interiorCell",                 Addr("fn:BGSTerrainManager::Update"),             Off("off:TES::interiorCell"),                 8, false},
+        {"PlayerCamera::freeState",           Addr("fn:BGSTerrainManager::Update"),             Off("off:PlayerCamera::freeState"),           8, false},
+        {"PlayerCamera::currentState",        Addr("fn:BGSTerrainManager::Update"),             Off("off:PlayerCamera::currentState"),        8, false},
+        {"BGSTerrainChunk::landMesh",         Addr("fn:BGSTerrainChunk::Hide"),                 Off("off:BGSTerrainChunk::landMesh"),         8, false},
+        {"BGSTerrainChunk::waterMesh",        Addr("fn:BGSTerrainChunk::Hide"),                 Off("off:BGSTerrainChunk::waterMesh"),        8, false},
     };
     g_lastVerify = VerifyCriticalOffsets(img, kRules, sizeof(kRules) / sizeof(kRules[0]));
     // Fail-closed: if ANY rule failed, lock out all struct mutations!

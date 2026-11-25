@@ -1,13 +1,17 @@
-// EnvCubePass.hlsl: Real-Time Dual-Band Prefiltered Dynamic Environment Cubemap (SM 6.9).
+// EnvCubePass.hlsl: Real-Time Dual-Band Prefiltered Dynamic Environment Cubemap (SM 6.6 / 6.10).
 // Runs every frame into a 256x256 RGBA16F equirectangular atlas (< 0.08 ms):
-//   Top half    (y = 0..127):   Sharp glossy environment (roughness ~ 0.05) — live Hillaire 2020 AtmoSkyView,
-//                               live 64^3 Perlin-Worley Clouds, crisp sun/moon disc, ground/snow bounce,
-//                               and up to 32 live dynamic point lights (hearths, torches, braziers, spells).
-//   Bottom half (y = 128..255): Prefiltered rough/convolved environment (roughness ~ 0.75) — broad GGX lobe
-//                               convolution for rough stone, brushed metal, leather, and interior vaults.
-// Lighting.hlsl samples both bands with Karis 2013 Split-Sum BRDF + Fdez-Aguera multi-scattering IBL.
+//   Top half    (y = 0..127):   Sharp glossy environment (roughness ~ 0.05) — live Hillaire 2020 Chappuis-Ozone
+//                               AtmoSkyView, live 3D Volumetric Curtain Auroras & Milky Way / Aetherius galaxy +
+//                               O/B/A/F/G/K/M stars (RawCosmosSky.hlsli), live 64^3 Perlin-Worley Clouds, crisp
+//                               sun/moon specular lobes, ground/snow bounce, screen-space scene projection, and
+//                               up to 64 live dynamic point lights (hearths, torches, braziers, spells).
+//   Bottom half (y = 128..255): Prefiltered rough/convolved environment (roughness ~ 0.75) — 5-tap hemisphere
+//                               convolution carrying live aurora, galaxy, and twilight ozone bounce smoothly onto
+//                               rough stone, glacial snow, brushed metal, leather, and interior vaults.
+// Lighting.hlsl & RtWater.hlsl sample this cubemap so water, ice, wet stone & armor reflect live aurora & galaxy!
 // Original work, MIT.
 #include "LightingCommon.hlsli"
+#include "RawCosmosSky.hlsli"
 
 Texture2D<float4> AtmoSkyView : register(t0);
 Texture2D<float4> CloudNoise  : register(t1);
@@ -31,23 +35,63 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
     if (isExt) {
         const float3 aSun = astroSunDir();
         const float aElev = astroSunElev();
-        const float dayW = smoothstep(-0.08f, 0.14f, aElev);
-        const float3 hSky = sampleAtmo(float3(rd.xy, max(rd.z, 0.005f)));
-        const float3 nightSky = max(ambDir * float3(0.65f, 0.82f, 1.20f), float3(0.012f, 0.020f, 0.048f));
-        float3 upper = lerp(nightSky, hSky, dayW);
-        // Project live cloud-deck luminance onto upper hemisphere using the 64^3 periodic cloud LUT.
-        if (rd.z > 0.04f && clouds.x > 0.05f) {
-            const float2 cUv = frac((camPosW.xy + rd.xy * (18000.0f / max(rd.z, 0.12f)) + cloudWind.xy * camPosW.w) / 36000.0f);
+        const float simTime = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
+        const float gameHour = timeEnv.x;
+
+        // Smooth transition across day, Chappuis-ozone twilight (Belt of Venus + Earth Shadow), and starry aurora night:
+        const float dayW     = smoothstep(-0.08f, 0.14f, aElev);
+        const float atmoDayW = smoothstep(-0.11f, 0.05f, aElev);
+        const float nightW   = smoothstep(0.05f, -0.08f, aElev);
+        const float twilightW = smoothstep(-0.12f, -0.01f, aElev) * (1.0f - smoothstep(0.04f, 0.14f, aElev));
+
+        const float3 upRd = normalize(float3(rd.xy, max(rd.z, 0.005f)));
+        const float3 hSky = sampleAtmo(upRd);
+
+        // Deep nocturnal sky floor + live animated Milky Way / Aetherius galaxy, dark dust rifts,
+        // H-II nebulae, 3D volumetric O/N2+ curtain auroras & spectral stars directly in the reflection cubemap!
+        // Sharp glossy band includes crisp stars so calm water/ice/steel reflects live stars + aurora curtains;
+        // rough band disables pinpoint stars so rough stone/snow gets smooth, flicker-free aurora & twilight IBL.
+        const float3 nightBase = max(
+            lerp(ambDir * float3(0.42f, 0.56f, 0.88f), float3(0.007f, 0.014f, 0.034f), smoothstep(0.05f, 0.65f, upRd.z)),
+            float3(0.006f, 0.011f, 0.028f));
+        float3 liveCosmos = 0.0f.xxx;
+        if (rd.z > -0.02f && (nightW > 0.01f || weather.z > 0.10f)) {
+            liveCosmos = evalCosmosAndAuroraEx(
+                upRd, aSun, gameHour, simTime, clouds.x, weather.z, camPosW.y,
+                !roughBand,  // pinpoint stars & meteors in sharp band only; smooth aurora+galaxy in rough band
+                true         // apply Kasten-Young airmass extinction near horizon
+            );
+        }
+        // Avoid double-counting aurora already baked into AtmoSkyView during deep night:
+        // At day/twilight, AtmoSkyView carries full Chappuis ozone sky + Belt of Venus + Earth Shadow;
+        // at night, AtmoSkyView yields seamlessly to higher-angular-res nightBase + liveCosmos!
+        // Boost aurora/galaxy reflection clarity subtly in sharp band so water & ice reflections shimmer vividly.
+        const float reflCosmGain = roughBand ? 1.05f : 1.32f;
+        const float3 nightSkyFull = nightBase + liveCosmos * reflCosmGain;
+        float3 upper = lerp(nightSkyFull, hSky, atmoDayW);
+        // During twilight transition, preserve sharp stars/aurora emerging cleanly above the twilight ozone arch:
+        upper += liveCosmos * (twilightW * (1.0f - dayW) * (roughBand ? 0.25f : 0.42f));
+
+        // Project live upgraded 64^3 Perlin-Worley convective cloud-deck onto upper hemisphere:
+        if (rd.z > 0.03f && clouds.x > 0.05f) {
+            const float2 cUv = frac((camPosW.xy + rd.xy * (18000.0f / max(rd.z, 0.12f)) + cloudWind.xy * (simTime * 0.28f)) / 36000.0f);
             const float2 tileUv = clamp(cUv, (0.5f / 64.0f).xx, (63.5f / 64.0f).xx) * 0.125f;
             const float cSample = CloudNoise.SampleLevel(Lin, tileUv, 0.0f).r;
-            const float cCov = saturate((cSample - lerp(0.62f, 0.34f, saturate(clouds.x))) * 3.0f) * smoothstep(0.04f, 0.25f, rd.z);
-            const float3 cCol = lerp(ambDir * 0.95f, max(sunColour.rgb, 0.55f.xxx) * 0.90f, dayW * 0.65f);
-            upper = lerp(upper, cCol, cCov * (roughBand ? 0.45f : 0.72f));
+            const float cCov = saturate((cSample - lerp(0.64f, 0.34f, saturate(clouds.x))) * 3.1f) * smoothstep(0.03f, 0.24f, rd.z);
+            const float3 dayCloud = max(sunColour.rgb, 0.55f.xxx) * 0.90f;
+            const float3 twCloud  = float3(0.95f, 0.48f, 0.32f) * (0.35f + 0.65f * saturate(dot(upRd, aSun)));
+            // Subtle nocturnal cloud under-bounce picking up night ambient + slight aurora tint in northern skies:
+            const float3 nightCloud = ambDir * float3(0.55f, 0.68f, 0.88f) + float3(0.012f, 0.042f, 0.032f) * smoothstep(-20000.0f, 80000.0f, camPosW.y);
+            float3 cCol = lerp(nightCloud, dayCloud, dayW * 0.72f);
+            cCol = lerp(cCol, twCloud, twilightW * 0.58f);
+            upper = lerp(upper, cCol, cCov * (roughBand ? 0.48f : 0.74f));
         }
+
         // Lower hemisphere: physical terrain/snow/valley bounce + dark horizon mountain silhouette.
-        const float3 groundBounce = ambDir * lerp(float3(0.38f, 0.36f, 0.32f), float3(0.62f, 0.68f, 0.76f), saturate(weather.z));
-        const float horBand = smoothstep(-0.18f, 0.06f, rd.z);
+        const float3 groundBounce = ambDir * lerp(float3(0.36f, 0.34f, 0.30f), float3(0.60f, 0.66f, 0.76f), saturate(weather.z));
+        const float horBand = smoothstep(-0.18f, 0.05f, rd.z);
         col = lerp(groundBounce, upper, horBand);
+
         // Sun/moon specular lobe (tight in sharp band, wide GGX convolution in rough band).
         const float cosS = saturate(dot(rd, sunDir.xyz));
         const float expS = roughBand ? 10.0f : 180.0f;
@@ -61,6 +105,7 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
         const float3 floorCol = ambDir * float3(0.22f, 0.19f, 0.16f);
         col = lerp(floorCol, ceilCol, smoothstep(-0.22f, 0.38f, rd.z));
     }
+
     // Feature 1: Live Screen-Space Scene Radiance Projection into the 256x256 Dynamic Cubemap:
     // Reflects real nearby buildings, trees, firepits, and tavern walls onto metallic armor, wet floors, and eyes.
     const float4 scEnv = screenOf(eyeAt() + rd * 2400.0f);
@@ -75,13 +120,14 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
             }
         }
     }
+
     // Feature 2: 64-Light Dynamic Point-Light Cubemap Injection (hearths, torches, braziers, forge fires, spells)
     // with boosted interior specular reflection energy so metal armor, wet floors & eyes reflect real nearby fires.
     const uint nLights = min(flags.y, 64u);
     const float lExp = roughBand ? 5.0f : 42.0f;
     const float lGain = (isExt ? 1.0f : 1.55f) * (roughBand ? 0.20f : 0.92f);
     [loop] for (uint li = 0u; li < nLights; li++) {
-        const float3 toL = lightPosR[li].xyz;   // camera-relative light position
+        const float3 toL = lightPosR[li].xyz; // camera-relative light position
         const float dist = length(toL);
         const float rad = max(lightPosR[li].w * 2.0f, 1.0f);
         if (dist >= rad || dist < 1.0e-3f) { continue; }
@@ -89,6 +135,7 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
         const float cosL = saturate(dot(rd, toL / dist));
         col += lightColS[li].rgb * (pow(cosL, lExp) * att * lGain);
     }
+
     // Project real live scene geometry (pine trees, mountains, stone arches, tavern beams, hearths)
     // onto the dynamic environment cubemap wherever the ray falls inside the camera frustum.
     const float4 sc = screenOf(rd * 4000.0f);

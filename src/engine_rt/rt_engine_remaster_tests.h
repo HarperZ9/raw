@@ -138,12 +138,40 @@ inline void RunEngineRemasterTests(CheckFn&& Check) {
                             {"NiCamera::frustumFar",              0xEF1310u, 0x164u,  4, true},
                             {"ScrapHeap::baseAddress",            0xCDF4C0u, 0x48u,   8, false},
                             {"ScrapHeap::endAddress",             0xCDF4C0u, 0x50u,   8, false},
+                            {"TES::interiorCell",                 0x5160C0u, 0xC0u,   8, false},
+                            {"PlayerCamera::freeState",           0x5160C0u, 0xD0u,   8, false},
+                            {"PlayerCamera::currentState",        0x5160C0u, 0x28u,   8, false},
+                            {"BGSTerrainChunk::landMesh",         0x5117B0u, 0x08u,   8, false},
+                            {"BGSTerrainChunk::waterMesh",        0x5117B0u, 0x10u,   8, false},
                         };
                         const auto res = VerifyCriticalOffsets(liveImg, liveRules, sizeof(liveRules) / sizeof(liveRules[0]));
                         std::printf("INFO real SkyrimSE.exe 1.7.104 Zydis verify: passed=%u/%u failClosed=%d\n",
                                     res.passed, res.checked, int(res.failClosed));
-                        Check(res.checked == 20 && res.passed == 20 && !res.failClosed,
-                              "real_skyrim17104_zydis_20_offsets_verified");
+                        Check(res.checked == 25 && res.passed == 25 && !res.failClosed,
+                              "real_skyrim17104_zydis_25_offsets_verified");
+
+                        // Verify Wave 38 tfc LOD4 TVDT branch site (0x516201 -> 0x516246) & BGSTerrainManager::Update prologue
+                        const uint32_t winStart = 0x5161F0u;
+                        const uint32_t winLen   = 0x80u;
+                        const auto tfcChk = VerifyTfcTvdtBranchSite(
+                            mapped.data() + winStart, winLen, 0x516201u - winStart, 0x516246u - winStart);
+                        static constexpr uint8_t kExpectedUpdatePrologue[14] = {
+                            0x40, 0x53, 0x55, 0x57, 0x48, 0x83, 0xEC, 0x50,
+                            0x80, 0x39, 0x00, 0x49, 0x8B, 0xD8
+                        };
+                        const bool prologueOk = std::memcmp(mapped.data() + 0x5160C0u, kExpectedUpdatePrologue, 14) == 0;
+                        std::printf("INFO real SkyrimSE.exe 1.7.104 tfc TVDT site: valid=%d orig=74 %02X patch=74 %02X prologue=%d\n",
+                                    int(tfcChk.valid), tfcChk.origRel8, tfcChk.patchedRel8, int(prologueOk));
+                        Check(tfcChk.valid && tfcChk.origRel8 == 0x4Au && tfcChk.patchedRel8 == 0x43u &&
+                              prologueOk,
+                              "real_skyrim17104_tfc_tvdt_branch_and_prologue_verified");
+
+                        // Planted mismatch: corrupting the je displacement MUST fail closed!
+                        std::vector<uint8_t> tampered(mapped.data() + winStart, mapped.data() + winStart + winLen);
+                        tampered[0x516202u - winStart] = 0x48u;
+                        const auto tfcBad = VerifyTfcTvdtBranchSite(
+                            tampered.data(), tampered.size(), 0x516201u - winStart, 0x516246u - winStart);
+                        Check(!tfcBad.valid, "real_skyrim17104_tfc_tvdt_planted_corrupt_fail_closed");
 
                         // Planted mismatch against real SkyrimSE.exe: claiming waterHeight is +0x70 MUST fail closed!
                         const OffsetVerifyRule plantedLive[] = {
@@ -339,6 +367,61 @@ inline void RunEngineRemasterTests(CheckFn&& Check) {
         Check(shOk.valid && !shBad.valid && shBad.zWriteWithoutZTest && shBad.nullMaterialWithPasses &&
               scOk.valid && scOk.ptrContained && !scBad.valid,
               "mem_guard_shader_flags_and_scrapheap_bounds");
+    }
+
+    // 8. Wave 38 tfc Free-Camera LOD4 Void-Guard: Synthetic Zydis Site Verifier + Refresh Policy State Machine
+    {
+        // Build exact synthetic 0x5161F6..0x51624D machine code buffer (offset 0 = 0x5161F6, branch=11, bypassSet=80):
+        //   +0x00: 48 8B 81 D0 00 00 00    mov rax, [rcx + 0xD0]
+        //   +0x07: 48 39 41 28             cmp [rcx + 0x28], rax
+        //   +0x0B: 74 4A                   je  +0x57 (0x0D + 0x4A = 0x57 = bypassSet + 7)
+        //   +0x50: C6 05 F4 D0 CE 02 01    mov byte ptr [rip + 0x2CED0F4], 1
+        std::vector<uint8_t> synth(0x60, 0x90);
+        const uint8_t head[] = {0x48, 0x8B, 0x81, 0xD0, 0x00, 0x00, 0x00, 0x48, 0x39, 0x41, 0x28, 0x74, 0x4A};
+        const uint8_t set1[] = {0xC6, 0x05, 0xF4, 0xD0, 0xCE, 0x02, 0x01};
+        std::memcpy(synth.data(), head, sizeof head);
+        std::memcpy(synth.data() + 0x50, set1, sizeof set1);
+        const auto okSite = VerifyTfcTvdtBranchSite(synth.data(), synth.size(), 0x0Bu, 0x50u);
+        Check(okSite.valid && okSite.origRel8 == 0x4Au && okSite.patchedRel8 == 0x43u &&
+              okSite.origTargetOff == 0x57u && okSite.patchTargetOff == 0x50u,
+              "tfc_tvdt_branch_zydis_synthetic_pass");
+
+        // Planted failure: wrong freeState displacement (0xC8 instead of 0xD0) MUST reject fail-closed!
+        auto badDisp = synth;
+        badDisp[3] = 0xC8u;
+        // Planted failure: bypassSet immediate 0 instead of 1 MUST reject fail-closed!
+        auto badImm = synth;
+        badImm[0x56] = 0x00u;
+        Check(!VerifyTfcTvdtBranchSite(badDisp.data(), badDisp.size(), 0x0Bu, 0x50u).valid &&
+              !VerifyTfcTvdtBranchSite(badImm.data(), badImm.size(), 0x0Bu, 0x50u).valid,
+              "tfc_tvdt_branch_zydis_planted_rejects");
+
+        // Refresh policy state machine: entry, stationary no-op, travel throttle, menu/interior gate, exit, NaN safety
+        TfcLodRefreshState st{};
+        const float p0[3] = {10000.0f, 20000.0f, 500.0f};
+        const float pNear[3] = {11000.0f, 20500.0f, 600.0f};
+        const float pFar[3] = {16000.0f, 20000.0f, 800.0f};
+        const float pNan[3] = {std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f};
+
+        const auto dNormal = EvaluateTfcLodRefreshPolicy(false, true, false, p0, st, 4096.0f, 8u);
+        const auto dEnter  = EvaluateTfcLodRefreshPolicy(true,  true, false, p0, st, 4096.0f, 8u);
+        const auto dNear   = EvaluateTfcLodRefreshPolicy(true,  true, false, pNear, st, 4096.0f, 8u);
+        const auto dEarly  = EvaluateTfcLodRefreshPolicy(true,  true, false, pFar, st, 4096.0f, 8u);  // only 2 frames since entry (<8)
+        for (int i = 0; i < 6; ++i) EvaluateTfcLodRefreshPolicy(true, true, false, pNear, st, 4096.0f, 8u);
+        const auto dTravel = EvaluateTfcLodRefreshPolicy(true,  true, false, pFar, st, 4096.0f, 8u);  // >=8 frames & >4096u -> refresh!
+        const auto dMenu   = EvaluateTfcLodRefreshPolicy(true,  true, true,  p0, st, 4096.0f, 8u);    // paused menu -> never force
+        const auto dInt    = EvaluateTfcLodRefreshPolicy(true,  false, false, p0, st, 4096.0f, 8u);   // interior -> never force
+        const auto dNan    = EvaluateTfcLodRefreshPolicy(true,  true, false, pNan, st, 4096.0f, 8u);  // NaN pos -> safe no-op
+        const auto dExit   = EvaluateTfcLodRefreshPolicy(false, true, false, p0, st, 4096.0f, 8u);    // exit -> restore refresh
+
+        Check(!dNormal.forceFullUpdate &&
+              dEnter.forceFullUpdate && dEnter.isEntry &&
+              !dNear.forceFullUpdate && !dEarly.forceFullUpdate &&
+              dTravel.forceFullUpdate && dTravel.isTravel &&
+              !dMenu.forceFullUpdate && !dInt.forceFullUpdate && !dNan.forceFullUpdate &&
+              dExit.forceFullUpdate && dExit.isExit &&
+              st.entryRefreshes == 1u && st.travelRefreshes == 1u && st.exitRefreshes == 1u,
+              "tfc_lod_refresh_policy_state_machine");
     }
 }
 

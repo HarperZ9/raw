@@ -440,34 +440,36 @@ uint32_t GenerateChunkProps(const TerrainChunkData& chunk, uint32_t seed, float 
         const float roll = rng.Next01();
         switch (localB.primary) {
             case BiomeId::GlacialFjordSpires:
-                if (roll < 0.28f) { inst.kind = PropKind::GlacialIceArch; inst.material = TerrainMaterialId::GlacialIce; inst.scale = rng.Range(0.85f, 1.45f); }
-                else if (roll < 0.68f) { inst.kind = PropKind::SnowDrift; inst.material = TerrainMaterialId::SnowPack; inst.scale = rng.Range(0.75f, 1.35f); }
-                else { inst.kind = PropKind::AlpineBoulder; inst.material = TerrainMaterialId::RockGranite; inst.scale = rng.Range(0.70f, 1.30f); }
+                if (roll < 0.24f) { inst.kind = PropKind::GlacialIceArch; inst.material = TerrainMaterialId::GlacialIce; inst.scale = rng.Range(0.95f, 1.65f); }
+                else if (roll < 0.62f) { inst.kind = PropKind::ConiferTree; inst.material = TerrainMaterialId::MossMeadow; inst.scale = rng.Range(0.85f, 1.55f); }
+                else if (roll < 0.84f) { inst.kind = PropKind::SnowDrift; inst.material = TerrainMaterialId::SnowPack; inst.scale = rng.Range(0.80f, 1.35f); }
+                else { inst.kind = PropKind::AlpineBoulder; inst.material = TerrainMaterialId::RockGranite; inst.scale = rng.Range(0.75f, 1.40f); }
                 break;
             case BiomeId::GeothermalVolcanicCaldera:
-                if (roll < 0.38f) { inst.kind = PropKind::VolcanicSteamVent; inst.material = TerrainMaterialId::MagmaFissure; inst.scale = rng.Range(0.80f, 1.35f); }
-                else if (roll < 0.78f) { inst.kind = PropKind::BasaltColumnCluster; inst.material = TerrainMaterialId::BasaltColumn; inst.scale = rng.Range(0.75f, 1.40f); }
+                if (roll < 0.38f) { inst.kind = PropKind::VolcanicSteamVent; inst.material = TerrainMaterialId::MagmaFissure; inst.scale = rng.Range(0.85f, 1.45f); }
+                else if (roll < 0.78f) { inst.kind = PropKind::BasaltColumnCluster; inst.material = TerrainMaterialId::BasaltColumn; inst.scale = rng.Range(0.85f, 1.50f); }
                 else { inst.kind = PropKind::AlpineBoulder; inst.material = TerrainMaterialId::BasaltColumn; inst.scale = rng.Range(0.80f, 1.45f); }
                 break;
             case BiomeId::OldGrowthConiferHighlands:
-                if (roll < 0.58f) { inst.kind = PropKind::ConiferTree; inst.material = TerrainMaterialId::MossMeadow; inst.scale = rng.Range(0.78f, 1.42f); }
-                else if (roll < 0.82f) { inst.kind = PropKind::AlpineGrassClump; inst.material = TerrainMaterialId::MossMeadow; inst.scale = rng.Range(0.80f, 1.35f); }
-                else { inst.kind = PropKind::AlpineBoulder; inst.material = TerrainMaterialId::RockGranite; inst.scale = rng.Range(0.70f, 1.30f); }
+                if (roll < 0.74f) { inst.kind = PropKind::ConiferTree; inst.material = TerrainMaterialId::MossMeadow; inst.scale = rng.Range(0.85f, 1.65f); }
+                else if (roll < 0.88f) { inst.kind = PropKind::AlpineBoulder; inst.material = TerrainMaterialId::RockGranite; inst.scale = rng.Range(0.75f, 1.35f); }
+                else { inst.kind = PropKind::AlpineGrassClump; inst.material = TerrainMaterialId::MossMeadow; inst.scale = rng.Range(0.85f, 1.40f); }
                 break;
             case BiomeId::ObsidianBasaltCanyons:
-                if (roll < 0.64f) { inst.kind = PropKind::BasaltColumnCluster; inst.material = TerrainMaterialId::BasaltColumn; inst.scale = rng.Range(0.85f, 1.50f); }
+                if (roll < 0.64f) { inst.kind = PropKind::BasaltColumnCluster; inst.material = TerrainMaterialId::BasaltColumn; inst.scale = rng.Range(0.85f, 1.55f); }
                 else { inst.kind = PropKind::AlpineBoulder; inst.material = TerrainMaterialId::BasaltColumn; inst.scale = rng.Range(0.75f, 1.35f); }
                 break;
             case BiomeId::BioluminescentCrystalTundra:
-                if (roll < 0.52f) { inst.kind = PropKind::CrystalMonolith; inst.material = TerrainMaterialId::ArcaneCrystal; inst.scale = rng.Range(0.80f, 1.55f); }
-                else if (roll < 0.84f) { inst.kind = PropKind::SnowDrift; inst.material = TerrainMaterialId::SnowPack; inst.scale = rng.Range(0.80f, 1.30f); }
-                else { inst.kind = PropKind::GlacialIceArch; inst.material = TerrainMaterialId::GlacialIce; inst.scale = rng.Range(0.70f, 1.15f); }
+                if (roll < 0.44f) { inst.kind = PropKind::CrystalMonolith; inst.material = TerrainMaterialId::ArcaneCrystal; inst.scale = rng.Range(0.90f, 1.65f); }
+                else if (roll < 0.76f) { inst.kind = PropKind::ConiferTree; inst.material = TerrainMaterialId::MossMeadow; inst.scale = rng.Range(0.80f, 1.45f); }
+                else if (roll < 0.90f) { inst.kind = PropKind::SnowDrift; inst.material = TerrainMaterialId::SnowPack; inst.scale = rng.Range(0.80f, 1.30f); }
+                else { inst.kind = PropKind::GlacialIceArch; inst.material = TerrainMaterialId::GlacialIce; inst.scale = rng.Range(0.75f, 1.25f); }
                 break;
             case BiomeId::AlpineMeltwaterDeltas:
             default:
-                if (roll < 0.50f) { inst.kind = PropKind::AlpineGrassClump; inst.material = TerrainMaterialId::MossMeadow; inst.scale = rng.Range(0.85f, 1.45f); }
-                else if (roll < 0.78f) { inst.kind = PropKind::AlpineBoulder; inst.material = TerrainMaterialId::RiverPebbleSand; inst.scale = rng.Range(0.55f, 1.15f); }
-                else { inst.kind = PropKind::ConiferTree; inst.material = TerrainMaterialId::MossMeadow; inst.scale = rng.Range(0.75f, 1.25f); }
+                if (roll < 0.45f) { inst.kind = PropKind::ConiferTree; inst.material = TerrainMaterialId::MossMeadow; inst.scale = rng.Range(0.80f, 1.45f); }
+                else if (roll < 0.75f) { inst.kind = PropKind::AlpineGrassClump; inst.material = TerrainMaterialId::MossMeadow; inst.scale = rng.Range(0.85f, 1.45f); }
+                else { inst.kind = PropKind::AlpineBoulder; inst.material = TerrainMaterialId::RiverPebbleSand; inst.scale = rng.Range(0.55f, 1.15f); }
                 break;
         }
         outProps->push_back(inst);

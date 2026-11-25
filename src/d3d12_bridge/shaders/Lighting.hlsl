@@ -122,16 +122,20 @@ void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, in
     // normalised so the lit side keeps its energy).
     const float3 nlD = any(s.wrap > 0.0f) ? saturate((x + s.wrap) / (1.0f + s.wrap)) / (1.0f + s.wrap) * (1.0f + s.wrap * 0.5f) : nl.xxx;
     if (any(s.soft > 0.0f)) {
-        // Physical backlit Beer-Lambert chlorophyll translucency + dual-sided epicuticular leaf wax specular glint:
-        // gives pine needles & grass blades crisp sunlit grazing sparkle and deep botanical translucency!
-        const float backView = pow(saturate(dot(-s.v, l)), 3.2f);
         const float wrapTrans = saturate(smooth01(saturate((x + 1.0f) * 0.5f)) - smooth01(nl));
-        const float3 chloroTint = float3(0.46f, 0.96f, 0.34f);
-        diff += s.soft * (wrapTrans + chloroTint * (backView * 0.42f * (1.0f - nl * 0.5f))) * cFull;
-        const float3 hLeaf = normalize(s.v + l);
-        const float nhL = saturate(dot(s.n, hLeaf));
-        const float waxSpec = pow(nhL, 28.0f) * (0.04f + 0.96f * pow(1.0f - saturate(dot(s.v, hLeaf)), 5.0f)) * saturate(nl + 0.25f);
-        spec += c * (waxSpec * 0.28f);
+        if ((flags.x & FLAG_GGX) == 0u) {
+            diff += s.soft * wrapTrans * cFull;
+        } else if (!any(s.wrap > 0.0f)) {
+            // Foliage (base==5u): strictly SHADOWED `c` (never unshadowed cFull!), restrained rich boreal
+            // chlorophyll transmission (<= 0.22x) with ZERO white waxSpec wash so sunlit pines stay lush green!
+            const float backView = pow(saturate(dot(-s.v, l)), 3.6f);
+            const float3 chloroTint = float3(0.46f, 0.82f, 0.24f);
+            const float3 softClamped = min(s.soft, 0.45f.xxx);
+            diff += softClamped * (wrapTrans * 0.16f + chloroTint * (backView * 0.20f * (1.0f - nl * 0.65f))) * c;
+        } else {
+            // Skin soft-map wrap: keeps arms/hands matched to shadowed direct light with zero foliage tint/wax!
+            diff += min(s.soft, 0.35f.xxx) * (wrapTrans * 0.35f) * c;
+        }
     }
     const float3 h = normalize(s.v + l);
     const float nh = saturate(dot(s.n, h));
@@ -482,39 +486,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             }
             if (weather.w > 0.05f) { wet.wet = max(wet.wet, simWet * (1.0f - wet.snow) * 0.55f); }
         }
-        // World-Space Micro-Displacement + Directional Sun-Ray Micro-Self-Shadowing (SSDM 1.1 ref4 + toreler ref1/ref3, < 1,200u):
-        // Turns flat 2011 terrain/cobblestone/rock quads into sculptural micro-shadowed relief with zero navmesh/collision impact!
+        // Wave 38 Smooth Analytical World-Space Micro-Normal Relief (ZERO coarse 4-step parallax staircase bands!):
+        // Uses analytical 2-octave rawNoise3Grad tangent normals + continuous micro-cavity shading on terrain & stone.
         if ((base == 1u || base == 4u) && z < 1200.0f) {
             const float3 wpM = p + camPosW.xyz;
-            const float mFade = saturate(1.0f - z / 1200.0f);
-            float3 wpDispl = wpM;
-            float microH0 = 0.5f;
-            if (base == 4u && z < 850.0f && s.v.z > 0.12f) {
-                const float rScale = lerp(3.8f, 6.5f, wet.snow);
-                const float2 stepXY = (-s.v.xy / max(s.v.z, 0.20f)) * (rScale * 0.25f);
-                float hCur = 1.0f;
-                [unroll] for (int rp = 0; rp < 4; ++rp) {
-                    const float hSamp = cNoise(wpDispl * 0.085f) * 0.55f + cNoise(wpDispl * 0.24f + 5.1f) * 0.30f + cNoise(wpDispl * 0.58f + 11.7f) * 0.15f;
-                    microH0 = hSamp;
-                    if (hSamp >= hCur) { break; }
-                    wpDispl.xy += stepXY;
-                    hCur -= 0.25f;
-                }
-                // 2-step directional sun-ray micro-shadowing along sunDir.xy (SSDM-style pebble/cobble self-shadowing):
-                float microSunOcc = 1.0f;
-                if (sunDir.w > 0.5f && sunDir.z > 0.06f && sunColour.w > 0.5f) {
-                    const float2 sunStep = (sunDir.xy / max(sunDir.z, 0.28f)) * 2.4f;
-                    const float hS1 = cNoise((wpDispl + float3(sunStep, 0.0f)) * 0.085f) * 0.55f + cNoise((wpDispl + float3(sunStep, 0.0f)) * 0.24f + 5.1f) * 0.30f + 0.075f;
-                    const float hS2 = cNoise((wpDispl + float3(sunStep * 2.2f, 0.0f)) * 0.085f) * 0.55f + cNoise((wpDispl + float3(sunStep * 2.2f, 0.0f)) * 0.24f + 5.1f) * 0.30f + 0.075f;
-                    const float occ = saturate(max(hS1 - microH0 - 0.04f, (hS2 - microH0 - 0.09f) * 0.7f) * 4.2f);
-                    microSunOcc = 1.0f - occ * (1.0f - saturate(clouds.x * 0.85f)) * 0.42f;
-                }
-                const float reliefOcc = lerp(0.76f, 1.08f, saturate(hCur)) * microSunOcc;
-                albedo *= lerp(1.0f, reliefOcc, saturate(1.0f - z / 850.0f) * 0.72f);
+            const float mFade = smoothstep(1200.0f, 120.0f, z);
+            const float4 gLo = rawNoise3Grad(wpM * 0.16f + float3(3.7f, 11.3f, 5.1f));
+            const float4 gHi = rawNoise3Grad(wpM * 0.48f + float3(19.1f, 7.3f, 23.9f));
+            const float3 microGrad = gLo.yzw * 0.14f + gHi.yzw * 0.075f;
+            const float3 tangGrad = microGrad - s.n * dot(microGrad, s.n);
+            s.n = normalize(s.n + tangGrad * mFade);
+            if (base == 4u && z < 850.0f) {
+                const float microVal = gLo.x * 0.65f + gHi.x * 0.35f;
+                const float smoothCav = lerp(0.92f, 1.05f, microVal);
+                albedo *= lerp(1.0f, smoothCav, smoothstep(850.0f, 120.0f, z) * 0.65f);
             }
-            const float mx = (cNoise(wpDispl * 0.22f) - 0.5f) * 0.22f + (cNoise(wpDispl * 0.68f + 7.1f) - 0.5f) * 0.12f;
-            const float my = (cNoise(wpDispl * 0.22f + 13.4f) - 0.5f) * 0.22f + (cNoise(wpDispl * 0.68f + 19.3f) - 0.5f) * 0.12f;
-            s.n = normalize(s.n + float3(mx, my, 0.0f) * mFade);
         }
         // Wind-swept glacial sastrugi snowdrift relief + Wave 34 alexandre196/karynatrychyk Volumetric Snow Overhang Rim & Blue SSS:
         // Linear-RGB snow detection (permSnowGround) works on ALL Skyrim snow biomes even in clear dry weather!
@@ -604,16 +590,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             s.f0 = 0.018f;
             s.alpha = clamp(lerp(s.alpha, 0.76f, 0.72f * fFade), 0.58f, 0.92f);
             const float speciesId = cNoise(wpF * 0.0045f + float3(17.3f, 9.1f, 3.7f));
-            // Deep saturated boreal spruce & mossy emerald fir reflectance (richer green chroma, zero pale grey wash):
+            // Deep saturated boreal spruce & old-growth redwood/fir reflectance (Crimson Desert / NordicCanopy palette):
             const float3 speciesTint = speciesId < 0.5f
-                ? lerp(float3(0.44f, 0.76f, 0.46f), float3(0.56f, 0.84f, 0.52f), speciesId * 2.0f)
-                : lerp(float3(0.56f, 0.84f, 0.52f), float3(0.64f, 0.82f, 0.48f), (speciesId - 0.5f) * 2.0f);
-            const float crownDepthAo = lerp(0.38f, 1.02f, saturate(s.n.z * 0.55f + 0.45f)) * lerp(0.66f, 1.12f, leafVar);
-            albedo *= lerp(1.0f.xxx, speciesTint * crownDepthAo, fFade * 0.85f);
+                ? lerp(float3(0.38f, 0.70f, 0.38f), float3(0.48f, 0.78f, 0.44f), speciesId * 2.0f)
+                : lerp(float3(0.48f, 0.78f, 0.44f), float3(0.56f, 0.76f, 0.40f), (speciesId - 0.5f) * 2.0f);
+            const float crownDepthAo = lerp(0.36f, 0.98f, saturate(s.n.z * 0.55f + 0.45f)) * lerp(0.64f, 1.08f, leafVar);
+            albedo *= lerp(1.0f.xxx, speciesTint * crownDepthAo, fFade * 0.86f);
             // Boost living pine chlorophyll saturation while capping washed-out white-green needles:
             const float fLuma = dot(albedo, float3(0.2126f, 0.7152f, 0.0722f));
-            albedo = saturate(lerp(fLuma.xxx, albedo, 1.24f));
-            albedo = min(albedo, float3(0.26f, 0.34f, 0.24f));
+            albedo = saturate(lerp(fLuma.xxx, albedo, 1.28f));
+            albedo = min(albedo, float3(0.22f, 0.31f, 0.19f));
         }
     }
     const float3 nSmooth = s.n;
@@ -929,8 +915,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (iceNear > 0.02f) {
                 const RawMaterialEvalResult glac = evalFrostGlacier3D(
                     wpAbsI, s.n, s.v, iceLDir, iceLCol, albedo, lerp(14.0f, 44.0f, iceNear), saturate(wet.snow * 0.65f));
-                s.n     = normalize(lerp(s.n, glac.normal, iceMask * iceNear * 0.72f));
-                albedo  = lerp(albedo, glac.albedo, iceMask * (0.42f + 0.34f * iceNear));
+                // Preserve 75%+ of Skyrim's authored glacial ice wall relief and shading while layering static Beer-Lambert depth:
+                s.n     = normalize(lerp(s.n, glac.normal, iceMask * iceNear * 0.45f));
+                albedo  = lerp(albedo, glac.albedo, iceMask * (0.34f + 0.28f * iceNear));
                 s.alpha = lerp(s.alpha, glac.roughness, iceMask * 0.85f);
             } else {
                 // Distant glacial ice (z >= 2200u): cheap static Warren & Brandt sapphire-turquoise optical body.
@@ -1180,10 +1167,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // top-3 lights use their exact RT shadow vis (rv[slot]); secondary lights (4..128) use stable ReSTIR visibility.
             // On skinned actor clothing/skin, soften BLAS self-shadow to eliminate coarse low-poly triangle acne on backs/shoulders.
             if (rt) {
-                // Unified flicker-free RT point-light shadows: allow genuine sculptural cheek/jaw/brow contrast
-                // on characters (0.24 floor instead of flat 0.55) while keeping soft penumbrae.
+                // Unified flicker-free RT point-light shadows: lift skin/face RT BLAS self-shadow floor to 0.62
+                // to eliminate sharp low-poly triangle terminator stripes across NPC foreheads & upper lips while
+                // preserving smooth sculptural N·L, wrap, and ambient contact shading.
                 const float rtSh = slot != 0u ? lerp(0.14f, 1.0f, rv[slot]) : lerp(0.42f, 1.0f, restVis);
-                sh = (isActorCloth || isActorFeat) ? lerp(0.24f, 1.0f, rtSh) : rtSh;
+                sh = isActorFeat ? lerp(0.62f, 1.0f, rtSh) : (isActorCloth ? lerp(0.42f, 1.0f, rtSh) : rtSh);
             }
             else if (slot != 0u) { sh = rv[slot]; }
             if (!match && !rt && sunColour.w > 0.5f && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
@@ -1759,15 +1747,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float cloudClear = 1.0f - saturate(clouds.x * 0.82f);
             const float dayGate = smoothstep(0.02f, 0.14f, astroSunElev());
             const float foliageThickness = lerp(0.45f, 1.0f, cNoise(wpCan * 0.024f + 5.1f));
-            // Backlit golden-emerald chlorophyll transmission (NordicCanopy / Scionti backlit sun-through-boughs glow
-            // without bleaching front-lit pine needles!):
+            // Backlit warm golden-emerald chlorophyll rim translucency (Crimson Desert / NordicCanopy):
+            // Strictly gated away from front-lit sun-facing needles so pine trees NEVER double-bleach pale white!
+            const float frontSun = saturate(dot(s.n, sunDir.xyz));
             const float backTight = pow(saturate(dot(-s.v, sunDir.xyz)), 5.0f);
-            const float3 sssCol = albedo * float3(0.96f, 1.24f, 0.36f);
-            lit += sssCol * sunColour.rgb * ((back * 0.16f + backTight * 0.42f + wrapL * 0.025f) * foliageThickness * sunShadow * cloudClear * dayGate);
+            const float backEdgeGate = 1.0f - frontSun * 0.72f;
+            const float3 sssCol = albedo * float3(0.92f, 1.14f, 0.28f);
+            lit += sssCol * sunColour.rgb * ((back * 0.09f + backTight * 0.18f) * backEdgeGate * foliageThickness * sunShadow * cloudClear * dayGate);
             // Deep 3D vertical crown-to-underside & interior pine self-shadowing (carves lush 3D volume out of crossed boughs!):
             const float crownUp = saturate(s.n.z * 0.55f + 0.50f);
             const float canopyOcc = saturate(skyVis * 0.68f + sunShadow * 0.24f + crownUp * 0.20f);
-            lit *= lerp(float3(0.36f, 0.46f, 0.36f), 1.0f.xxx, canopyOcc);
+            lit *= lerp(float3(0.32f, 0.42f, 0.30f), 1.0f.xxx, canopyOcc);
         }
         // Grazing micro-Fresnel environmental wrap (amb already includes bounce from line ~1430 — zero bounce double-counting!):
         const float nvWrap = saturate(dot(s.n, s.v));

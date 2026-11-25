@@ -121,6 +121,43 @@ struct RawTerrainLodTelemetry {
     uint8_t  gridsCacheDesync     = 0;
     uint8_t  landPoolOverflowRisk = 0;
     uint8_t  writesEnabled        = 0;             // 1 only when Zydis binary offset verification passed
+    uint8_t  tfcTvdtPatchActive   = 0;             // 1 when 0x516201 (74 4A -> 74 43) verified & patched
+    uint8_t  tfcUpdateDetourActive = 0;            // 1 when BGSTerrainManager::Update (0x5160C0) detour active
+    uint8_t  tfcActive            = 0;             // 1 while PlayerCamera::currentState == freeState (camStateId == 3)
+    uint8_t  bypassTvdtLive       = 0;             // live value of global:TerrainBypassTVDT (0x3203341)
+    uint32_t tfcFullRefreshes     = 0;             // total immediate full-quadtree refreshes triggered for tfc
+};
+
+// Wave 38: Pure deterministic state & Zydis verification kernels for the SkyrimSE 1.7.104 tfc LOD4 void fix.
+// Root cause (binary-verified @ BGSTerrainManager::Update RVA 0x5161EF..0x51624D):
+//   When PlayerCamera->currentState == cameraStates[3] (FreeCameraState / tfc), `0x516201 je 0x51624D` jumps
+//   OVER `0x516246 mov byte ptr [0x3203341], 1`, forcing TerrainBypassTVDT=0 during tfc. CheckTVDT (0x519E30)
+//   then evaluates PlayerCharacter->parentCell's precomputed TVDT visibility mask instead of the free camera,
+//   culling/unloading LOD4 terrain chunks into blue void holes while leaving 3x3-TVDT trees and LOD water floating.
+struct TfcTvdtPatchCheck {
+    bool     valid          = false;
+    uint8_t  origRel8       = 0;
+    uint8_t  patchedRel8    = 0;
+    uint32_t origTargetOff  = 0;
+    uint32_t patchTargetOff = 0;
+};
+
+struct TfcLodRefreshState {
+    bool     wasFreeCam         = false;
+    bool     hasAnchor          = false;
+    float    lastRefreshPos[3]  = {0.0f, 0.0f, 0.0f};
+    uint32_t framesSinceRefresh = 0;
+    uint32_t entryRefreshes     = 0;
+    uint32_t travelRefreshes    = 0;
+    uint32_t exitRefreshes      = 0;
+    uint32_t framesInTfc        = 0;
+};
+
+struct TfcLodRefreshDecision {
+    bool forceFullUpdate = false;
+    bool isEntry         = false;
+    bool isTravel        = false;
+    bool isExit          = false;
 };
 
 // Pure deterministic kernels (directly unit-tested in ce_runtime_check and executed live in raw_engine.dll):
@@ -130,9 +167,24 @@ LodTransitionBands ComputeSeamlessLodBands(const LodTransitionInput& in);
 TerrainBorderAudit AuditAndRepairCellGrid(std::vector<CellTerrainSample>& cells,
                                           float defaultLandHeight, float defaultWaterHeight,
                                           float seamToleranceU = 64.0f, bool allowRepair = true);
+// Zydis-verifies the exact x86-64 machine instructions around BGSTerrainManager::Update's tfc TVDT branch:
+//   [branchOff - 11]: mov rax, qword ptr [rcx + 0xD0]   (cameraStates[kFree])
+//   [branchOff -  4]: cmp qword ptr [rcx + 0x28], rax   (currentState == freeState)
+//   [branchOff     ]: je  <bypassSetOff + 7>            (skips setting TerrainBypassTVDT=1!)
+//   [bypassSetOff  ]: mov byte ptr [rip + disp32], 1    (sets TerrainBypassTVDT=1)
+// Returns valid=true and patchedRel8 (redirecting je directly onto bypassSetOff) ONLY if every instruction matches.
+TfcTvdtPatchCheck VerifyTfcTvdtBranchSite(const uint8_t* code, size_t maxBytes,
+                                          uint32_t branchOff, uint32_t bypassSetOff);
+// Decides whether BGSTerrainManager::Update should elevate incremental 1-node/frame update to immediate full-tree
+// refresh (flags |= 1) on tfc entry, exit, or rapid free-camera travel across cell boundaries.
+TfcLodRefreshDecision EvaluateTfcLodRefreshPolicy(bool isFreeCam, bool isExterior, bool inMenu,
+                                                  const float camPos[3], TfcLodRefreshState& state,
+                                                  float travelThresholdU = 4096.0f,
+                                                  uint32_t minFrameInterval = 8u);
 
 // Live runtime hooks:
 void TerrainLodInit(const Image& img);
+std::string TerrainLodInitStatus();
 void TerrainLodOnPresent();
 void TerrainLodShutdown();
 std::string TerrainLodStatsJson();

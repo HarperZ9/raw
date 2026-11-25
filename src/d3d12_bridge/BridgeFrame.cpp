@@ -166,26 +166,35 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         fc.lighting = &m->lighting;
         fc.hasSurface = s.hasSurface;
         fc.hasShadows = s.hasShadows;
-        // Live beyond-Tamriel 6-biome frontier chunk streaming (O(1) no-op inside Tamriel borders):
-        if (m->lighting.valid && m->meshHost.Ready()) {
+        // Live beyond-Tamriel 6-biome frontier chunk + 3D procedural hero prop streaming (O(1) no-op inside Tamriel):
+        if (m->lighting.valid && m->meshHost.TerrainReady()) {
             struct BridgeChunkSink final : raw::worldgen::IGpuChunkSink {
                 D3D12Bridge::Impl* impl = nullptr;
                 uint64_t OnChunkLoaded(const raw::worldgen::StreamedChunkEntry& entry) override {
-                    RawMeshAsset asset{};
-                    if (!ConvertWorldGenMeshToRawMeshAsset(entry.mesh, &asset)) return 0u;
-                    RawMeshGpuAsset gpu{};
-                    if (!impl->meshHost.UploadAsset(asset, &gpu)) return 0u;
+                    raw::worldgen::ProceduralMesh merged{};
+                    const auto& wcfg = impl->worldShowcase.Config();
+                    if (!raw::worldgen::BuildChunkMergedGpuMesh(entry, wcfg.maxMeshletTris, wcfg.terrain.seed,
+                                                                wcfg.terrain.seaLevelZ, &merged)) {
+                        return 0u;
+                    }
+                    TerrainGpuChunk gpu{};
+                    if (!impl->meshHost.UploadTerrainChunk(merged, &gpu)) return 0u;
                     const uint64_t h = impl->nextTerrainHandle++;
                     impl->streamedTerrainGpu.emplace(h, std::move(gpu));
                     return h;
                 }
                 void OnChunkEvicted(raw::worldgen::ChunkKey, uint64_t gpuHandle) override {
-                    if (gpuHandle != 0u) impl->streamedTerrainGpu.erase(gpuHandle);
+                    if (gpuHandle == 0u) return;
+                    auto it = impl->streamedTerrainGpu.find(gpuHandle);
+                    if (it != impl->streamedTerrainGpu.end()) {
+                        impl->meshHost.DeferRelease(std::move(it->second));
+                        impl->streamedTerrainGpu.erase(it);
+                    }
                 }
             };
             BridgeChunkSink sink;
             sink.impl = m.get();
-            m->worldShowcase.Update(
+            m->lastWorldStats = m->worldShowcase.Update(
                 {m->lighting.posAdjust[0], m->lighting.posAdjust[1], m->lighting.posAdjust[2]}, &sink);
         }
     }
@@ -206,6 +215,36 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     }
     m->HarvestPassTimings();   // recording may have retired the frame before
     m->nextValue = v2 + 1;
+
+    // Determine whether live RawTerrainWorld.hlsl multi-biome rendering runs after LightingPass this frame.
+    const bool isInterior = m->lighting.hasEngineCell
+        ? m->lighting.isInterior
+        : !(s.hasShadows && m->lighting.hasCascades);
+    const void* terrainU = nullptr;
+    size_t terrainUb = 0;
+    const bool runTerrain = m->cfg.lightingPass && m->lighting.valid && !isInterior &&
+                            !m->streamedTerrainGpu.empty() && m->meshHost.TerrainReady() &&
+                            LightingPassUniform(m->pass.get(), &terrainU, &terrainUb);
+    auto runLiveTerrainPass = [&]() -> bool {
+        if (!runTerrain) return true;
+        uint32_t drawnChunks = 0u, drawnMeshlets = 0u;
+        const float timeSec = float(double(GetTickCount64() % 3600000ull) / 1000.0);
+        ID3D12Resource* atlasRes = s.hasShadows ? m->shared[static_cast<UINT>(Shared::ShadowAtlas)].res12.Get() : nullptr;
+        const bool okT = m->meshHost.ExecuteTerrainPass(
+            m->queue.Get(), m->colorOut.res12.Get(), m->depthIn.res12.Get(), atlasRes,
+            m->cfg.width, m->cfg.height, terrainU, terrainUb,
+            &m->lighting.worldToClip[0][0], m->lighting.posAdjust, timeSec,
+            m->streamedTerrainGpu, &drawnChunks, &drawnMeshlets);
+        if (okT) {
+            if ((m->terrainRenderFrames++ % 180ull) == 0ull) {
+                m->log("[WorldGen] LIVE render: %u chunks (%u meshlets) at cam (%.0f, %.0f, %.0f) biome=%s",
+                       drawnChunks, drawnMeshlets,
+                       m->lighting.posAdjust[0], m->lighting.posAdjust[1], m->lighting.posAdjust[2],
+                       raw::worldgen::GetBiomeName(m->lastWorldStats.cameraBiome));
+            }
+        }
+        return SUCCEEDED(m->queue->Signal(m->fence12.Get(), v2));
+    };
 
     // D3D11: copy in, hand over, take back, copy out.
     auto* c = m->ctx11.Get();
@@ -242,7 +281,8 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                                      m->shared[static_cast<UINT>(Shared::Specular)].res12.Get(),
                                      fc.hasMotion ? m->motionIn.res12.Get() : nullptr, m->colorIn.res12.Get());
         }
-        if (!m->HandToHost(hand) || (rtOk && !m->rt->Submit(m->queue.Get())) || !m->pass->Submit(0, v2)) {
+        if (!m->HandToHost(hand) || (rtOk && !m->rt->Submit(m->queue.Get())) ||
+            !m->pass->Submit(0, runTerrain ? 0 : v2) || !runLiveTerrainPass()) {
             m->log("[D3D12Bridge] attached hand-over failed; bridge off");
             c->End(s.disjoint.Get());
             s.open = false;
@@ -275,7 +315,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         return false;
     }
     m->ProbeHead(frame, waitValue);
-    if (!m->pass->Submit(waitValue, v2)) {
+    if (!m->pass->Submit(waitValue, runTerrain ? 0 : v2) || !runLiveTerrainPass()) {
         // Nothing will signal v2 now, so D3D11 must not wait for it.
         m->log("[D3D12Bridge] pass '%s' failed to submit; bridge off", m->pass->Name());
         c->End(s.disjoint.Get());

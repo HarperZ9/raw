@@ -529,6 +529,7 @@ if(RAW_ENGINE_DIR)
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E fs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/world_field_sim_fs.h -Vn kDxil_world_field_sim_fs ${RAW_WORLDSIM_HLSL}
         DEPENDS ${RAW_LIGHT_HLSL} ${RAW_LIGHTFOG_HLSL} ${RAW_CLOUDS_HLSL} ${RAW_VOLUMETRIC_HLSL} ${RAW_BLOOM_HLSL} ${RAW_ATMO_HLSL} ${RAW_REFL_FILT_HLSL} ${RAW_DOF_HLSL} ${RAW_RAWLSS5_HLSL} ${RAW_GI_ATROUS_HLSL} ${RAW_CLOUD_NOISE_HLSL} ${RAW_ENV_CUBE_HLSL} ${RAW_FROXEL_HLSL} ${RAW_WORLDSIM_HLSL} ${RAW_SHARE_HLSL}/LightingCommon.hlsli ${RAW_SHARE_HLSL}/Weather.hlsli
                 ${RAW_SHARE_HLSL}/CloudCommon.hlsli ${RAW_SHARE_HLSL}/DistantLod.hlsli ${RAW_SHARE_HLSL}/ElderOptics.hlsli ${RAW_SHARE_HLSL}/StrataBRDF.hlsli ${RAW_SHARE_HLSL}/SpectralTransport.hlsli ${RAW_SHARE_HLSL}/RawTensorMath.hlsli ${RAW_SHARE_HLSL}/RawProceduralNoise.hlsli ${RAW_SHARE_HLSL}/RawMaterials3D.hlsli ${RAW_SHARE_HLSL}/RawDecals3D.hlsli ${RAW_SHARE_HLSL}/RawSpells3D.hlsli
+                ${RAW_SHARE_HLSL}/RawWeatherAtmo.hlsli ${RAW_SHARE_HLSL}/RawCosmosSky.hlsli ${RAW_SHARE_HLSL}/RawSeasonsThermals.hlsli
         COMMENT "dxc: SM${RAW_SHADER_MODEL} lighting, cloud, volumetric, bloom, atmosphere, refl denoiser, 3-pass DoF & 3-pass A-Trous GI -> DXIL headers"
         VERBATIM)
     target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/LightingPass.cpp ${RAW_LIGHT_HEADERS})
@@ -609,27 +610,64 @@ target_sources(d3d11_proxy PRIVATE src/d3d11_proxy/SceneGeometry.cpp src/d3d11_p
 if(RAW_ENGINE_DIR)
     add_custom_command(
         OUTPUT ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h ${RAW_ENGINE_GEN}/raw_subdiv_cs.h
-               ${RAW_ENGINE_GEN}/raw_terrain_as.h ${RAW_ENGINE_GEN}/raw_terrain_ms.h ${RAW_ENGINE_GEN}/raw_terrain_ps.h
+               ${RAW_ENGINE_GEN}/raw_terrain_as.h ${RAW_ENGINE_GEN}/raw_terrain_ms.h ${RAW_ENGINE_GEN}/raw_terrain_vs.h ${RAW_ENGINE_GEN}/raw_terrain_ps.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
         COMMAND ${RAW_DXC} -T as_${RAW_SHADER_MODEL} -E as_main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_mesh_as.h -Vn kDxil_raw_mesh_as ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawMesh.hlsl
         COMMAND ${RAW_DXC} -T ms_${RAW_SHADER_MODEL} -E ms_main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_mesh_ms.h -Vn kDxil_raw_mesh_ms ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawMesh.hlsl
         COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E subdiv_main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_subdiv_cs.h -Vn kDxil_raw_subdiv_cs ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawSubdiv.hlsl
         COMMAND ${RAW_DXC} -T as_${RAW_SHADER_MODEL} -E as_terrain_main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_terrain_as.h -Vn kDxil_raw_terrain_as ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawTerrainWorld.hlsl
         COMMAND ${RAW_DXC} -T ms_${RAW_SHADER_MODEL} -E ms_terrain_main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_terrain_ms.h -Vn kDxil_raw_terrain_ms ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawTerrainWorld.hlsl
+        COMMAND ${RAW_DXC} -T vs_${RAW_SHADER_MODEL} -E vs_terrain_main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_terrain_vs.h -Vn kDxil_raw_terrain_vs ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawTerrainWorld.hlsl
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E ps_terrain_main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_terrain_ps.h -Vn kDxil_raw_terrain_ps ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawTerrainWorld.hlsl
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawMesh.hlsl ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawSubdiv.hlsl
                 ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawTerrainWorld.hlsl ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawMaterials3D.hlsli
                 ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawProceduralNoise.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
-        COMMENT "dxc: RAW-MESH 2.0 & RawTerrainWorld SM${RAW_SHADER_MODEL} Amplification, Mesh, Pixel & PN-Triangle subdivision -> DXIL headers"
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawFloraWind.hlsli
+        COMMENT "dxc: RAW-MESH 2.0 & RawTerrainWorld SM${RAW_SHADER_MODEL} Amplification, Mesh, Vertex, Pixel & PN-Triangle subdivision -> DXIL headers"
+        VERBATIM)
+    set(RAW_FLUID_FIRE_HLSL ${RAW_SHARE_HLSL}/RawFluidFireSim.hlsl)
+    set(RAW_FLUID_WATER_HLSL ${RAW_SHARE_HLSL}/RawFluidWaterSim.hlsl)
+    set(RAW_FLUID_HEADERS
+        ${RAW_ENGINE_GEN}/raw_fluid_fire_inject_cs.h
+        ${RAW_ENGINE_GEN}/raw_fluid_fire_advect_cs.h
+        ${RAW_ENGINE_GEN}/raw_fluid_fire_forces_cs.h
+        ${RAW_ENGINE_GEN}/raw_fluid_fire_div_cs.h
+        ${RAW_ENGINE_GEN}/raw_fluid_fire_press_cs.h
+        ${RAW_ENGINE_GEN}/raw_fluid_fire_proj_cs.h
+        ${RAW_ENGINE_GEN}/raw_fluid_fire_rad_cs.h
+        ${RAW_ENGINE_GEN}/raw_fluid_water_inject_cs.h
+        ${RAW_ENGINE_GEN}/raw_fluid_water_step_cs.h
+        ${RAW_ENGINE_GEN}/raw_fluid_water_normals_cs.h)
+    add_custom_command(
+        OUTPUT ${RAW_FLUID_HEADERS}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_fire_inject ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_fluid_fire_inject_cs.h -Vn kDxil_raw_fluid_fire_inject ${RAW_FLUID_FIRE_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_fire_advect ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_fluid_fire_advect_cs.h -Vn kDxil_raw_fluid_fire_advect ${RAW_FLUID_FIRE_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_fire_forces_combust ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_fluid_fire_forces_cs.h -Vn kDxil_raw_fluid_fire_forces ${RAW_FLUID_FIRE_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_fire_divergence ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_fluid_fire_div_cs.h -Vn kDxil_raw_fluid_fire_div ${RAW_FLUID_FIRE_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_fire_pressure ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_fluid_fire_press_cs.h -Vn kDxil_raw_fluid_fire_press ${RAW_FLUID_FIRE_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_fire_project ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_fluid_fire_proj_cs.h -Vn kDxil_raw_fluid_fire_proj ${RAW_FLUID_FIRE_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_fire_radiance ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_fluid_fire_rad_cs.h -Vn kDxil_raw_fluid_fire_rad ${RAW_FLUID_FIRE_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_water_inject ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_fluid_water_inject_cs.h -Vn kDxil_raw_fluid_water_inject ${RAW_FLUID_WATER_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_water_step ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_fluid_water_step_cs.h -Vn kDxil_raw_fluid_water_step ${RAW_FLUID_WATER_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_water_normals ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_fluid_water_normals_cs.h -Vn kDxil_raw_fluid_water_normals ${RAW_FLUID_WATER_HLSL}
+        DEPENDS ${RAW_FLUID_FIRE_HLSL} ${RAW_FLUID_WATER_HLSL}
+        COMMENT "dxc: GPU 3D Navier-Stokes Fire/Smoke & 2D Shallow-Water Fluid Solvers SM${RAW_SHADER_MODEL} -> DXIL headers"
         VERBATIM)
     target_sources(raw_d3d12_bridge PRIVATE ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h ${RAW_ENGINE_GEN}/raw_subdiv_cs.h
-                   ${RAW_ENGINE_GEN}/raw_terrain_as.h ${RAW_ENGINE_GEN}/raw_terrain_ms.h ${RAW_ENGINE_GEN}/raw_terrain_ps.h
+                   ${RAW_ENGINE_GEN}/raw_terrain_as.h ${RAW_ENGINE_GEN}/raw_terrain_ms.h ${RAW_ENGINE_GEN}/raw_terrain_vs.h ${RAW_ENGINE_GEN}/raw_terrain_ps.h
+                   ${RAW_FLUID_HEADERS}
                    src/d3d12_bridge/RawAssetBridge.cpp src/d3d12_bridge/RawTextureBridge.cpp src/d3d12_bridge/RawProceduralLib.cpp
-                   src/d3d12_bridge/RawMeshHost.cpp src/d3d12_bridge/RawOverrideRegistry.cpp src/d3d12_bridge/RawBindlessHeap.cpp
+                   src/d3d12_bridge/RawMeshHost.cpp src/d3d12_bridge/RawFluidSimHost.cpp src/d3d12_bridge/RawOverrideRegistry.cpp src/d3d12_bridge/RawBindlessHeap.cpp
                    src/d3d12_bridge/RawAsyncCompute.cpp src/d3d12_bridge/RawIndirectBatch.cpp src/d3d12_bridge/RawAssetStream.cpp
-                   src/worldgen/RawTerrainGen.cpp src/worldgen/RawBiomeWorld.cpp src/worldgen/RawMeshPipeline.cpp src/worldgen/RawWorldShowcase.cpp
+                   src/worldgen/RawTerrainGen.cpp src/worldgen/RawBiomeWorld.cpp src/worldgen/RawMeshPipeline.cpp src/worldgen/RawFloraEngine.cpp src/worldgen/RawWeatherSim.cpp src/worldgen/RawWorldShowcase.cpp
                    src/materials/RawMaterialLib.cpp src/materials/RawAssetForge.cpp
                    src/assets/RawOverrideRegistry.cpp src/assets/RawAssetScaffold.cpp)
+    add_executable(test_fluid_sim tests/test_fluid_sim.cpp src/d3d12_bridge/RawFluidSimHost.cpp ${RAW_FLUID_HEADERS})
+    target_include_directories(test_fluid_sim PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge)
+    target_compile_definitions(test_fluid_sim PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(test_fluid_sim PRIVATE d3d12 dxgi dxguid)
+    set_target_properties(test_fluid_sim PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
     target_include_directories(raw_d3d12_bridge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/worldgen ${CMAKE_CURRENT_SOURCE_DIR}/src/materials ${CMAKE_CURRENT_SOURCE_DIR}/src/assets)
     set(RAW_RTSHADOW_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtShadow.hlsl)
     add_custom_command(
@@ -824,6 +862,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_terrain_lod.cpp
         src/engine_rt/rt_depth_topology.cpp
         src/engine_rt/rt_memory_guards.cpp
+        src/engine_rt/ce_rebuild_arch.cpp
         src/engine_rt/rt_patch.cpp)
     set_target_properties(raw_engine PROPERTIES
         CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
@@ -874,23 +913,28 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_terrain_lod.cpp
         src/engine_rt/rt_depth_topology.cpp
         src/engine_rt/rt_memory_guards.cpp
+        src/engine_rt/ce_rebuild_arch.cpp
         src/engine_rt/rt_skeleton_ik.cpp
         src/engine_rt/rt_combat_ai.cpp
         src/engine_rt/rt_world_sim.cpp
         src/worldgen/RawTerrainGen.cpp
         src/worldgen/RawBiomeWorld.cpp
         src/worldgen/RawMeshPipeline.cpp
+        src/worldgen/RawFloraEngine.cpp
+        src/worldgen/RawWeatherSim.cpp
         src/worldgen/RawWorldShowcase.cpp
         src/materials/RawMaterialLib.cpp
         src/materials/RawAssetForge.cpp
         src/assets/RawOverrideRegistry.cpp
         src/assets/RawAssetScaffold.cpp
-        src/ui/RawInputEngine.cpp)
+        src/ui/RawInputEngine.cpp
+        tests/test_flora_engine.cpp
+        tests/test_weather_sim.cpp)
     set_target_properties(ce_runtime_check PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
     target_include_directories(ce_runtime_check PRIVATE src/engine_rt src/d3d12_bridge src/ce_runtime src/worldgen src/materials src/assets src/ui "${RAW_ZYDIS_ROOT}/include")
-    target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD RAW_SIM_PURE_TEST=1)
+    target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD RAW_SIM_PURE_TEST=1 RAW_WEATHER_SIM_NO_MAIN=1)
     target_link_libraries(ce_runtime_check PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB} windowscodecs ole32 dxgi)
 else()
     message(STATUS "raw_engine: Zydis not found under ${RAW_ZYDIS_ROOT}; module not built")

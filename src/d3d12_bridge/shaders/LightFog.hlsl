@@ -12,6 +12,8 @@
 #include "CloudCommon.hlsli"
 #include "ElderOptics.hlsli"
 #include "RawProceduralNoise.hlsli"
+#include "RawWeatherAtmo.hlsli"
+#include "RawCosmosSky.hlsli"
 #include "RawSpells3D.hlsli"
 
 Texture2D<float4> Lit         : register(t0);
@@ -75,115 +77,246 @@ float windowIntegral(float3 w, float3 c, float r, float tEnd) {
     return (1.0f - h2 / r2) * (sb - sa) - (sb * sb * sb - sa * sa * sa) / (3.0f * r2);
 }
 
-// Wave 36: True 3D Depth-Occluded Volumetric Planck-Blackbody Fire & Rising Ember Plumes.
-// Marches 14 jittered steps through upward-advected 3D curl turbulence around live warm fire emitters
-// (candles, sconces, braziers, campfires, Dragonsreach hearth) with authentic 1250K..3200K blackbody fire
-// and exact front-to-back optical transmittance, occluded cleanly by logs, iron bars, wax, and characters.
-float3 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float2 px, bool isInt) {
-    if (flags.y == 0u) { return 0.0f.xxx; }
-    float3 fireTotal = 0.0f.xxx;
+// Verified HDR scene-rendered combustion core detector:
+// Requires high HDR luminance (luma > 1.25) AND strong warm orange-red flame chromaticity
+// (R > G * 1.18 && R > B * 2.20), rejecting skin, walls, snow, sunlight bounce, and empty-air point lights.
+float rawDetectSceneFlameCore(float3 rgb) {
+    const float luma = dot(rgb, float3(0.2126f, 0.7152f, 0.0722f));
+    if (luma <= 1.25f || rgb.r <= 1.50f) { return 0.0f; }
+    if (rgb.r <= rgb.g * 1.18f || rgb.r <= rgb.b * 2.20f) { return 0.0f; }
+    const float warmRG = smoothstep(1.18f, 1.48f, rgb.r / max(rgb.g, 0.05f));
+    const float warmRB = smoothstep(2.20f, 3.60f, rgb.r / max(rgb.b, 0.02f));
+    const float lumW   = smoothstep(1.25f, 2.85f, luma);
+    return lumW * lerp(0.55f, 1.0f, warmRG * warmRB);
+}
+
+// Wave 38: Scene-Anchored 3D Volumetric Fire, Self-Shadowed Dark Soot Smoke & Rising Embers.
+// Completely removes blind point-light floating spheres! Anchors strictly to real scene-rendered flame pixels
+// in `Lit` + `Depth`, projecting upward along world +Z buoyancy with 3-octave curl-advected FBM turbulence:
+//   - Lower core  : turbulent Planck blackbody (1400K..3400K) licking flame tongues (never a smooth sphere!)
+//   - Upper plume : genuine Beer-Lambert dark carbon soot smoke absorbing background light + internal warm
+//                   fire-bounce radiance coupling (glowing orange undersides, cool dark billowing tops!)
+//   - Embers      : sparse world-locked buoyant 3D sparks drifting through the rising smoke column.
+// Returns float4(emissionRGB, backgroundTransmittance).
+float4 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float curZ, float2 px, bool isInt) {
     const float jit = ign(px + float2(7.0f, 19.0f));
-    const float tClock = camPosW.w;
-    const float2 windXY = isInt ? float2(0.0f, 0.0f) : clamp(cloudWind.xy * 0.06f, -14.0f.xx, 14.0f.xx);
-    const uint nLights = min(flags.y, 16u);
-    [loop] for (uint li = 0u; li < nLights; ++li) {
-        const float3 lc = lightColS[li].rgb;
-        const float rL = lightPosR[li].w;
-        // Identify genuine combustion emitters (warm amber/orange ratio, excluding cold/ambient fill lights):
-        if (lc.r <= lc.b * 1.42f || lc.r < 0.14f || rL < 60.0f || rL > 1350.0f) { continue; }
-        const float3 lPos = lightPosR[li].xyz;
-        // Auto-size 3D combustion cone from Skyrim's emitter radius (candle -> brazier -> Dragonsreach hearth):
-        const float isCandle = (rL < 185.0f) ? 1.0f : 0.0f;
-        const float sizeT = saturate((rL - 160.0f) / 420.0f);
-        const float rad = lerp(lerp(13.0f, 34.0f, sizeT), 4.2f, isCandle);
-        const float hFlame = lerp(lerp(36.0f, 76.0f, sizeT), 13.0f, isCandle);
-        const float zDrop = lerp(lerp(22.0f, 36.0f, sizeT), 8.0f, isCandle);
-        const float3 basePos = lPos - float3(0.0f, 0.0f, zDrop);
-        const float3 centerPos = basePos + float3(0.0f, 0.0f, hFlame * 0.50f);
-        const float boundR = max(rad * 1.35f, hFlame * 0.62f);
+    const float tClock = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
+    const float2 windXY = isInt ? float2(0.0f, 0.0f) : clamp(cloudWind.xy * 0.045f, -12.0f.xx, 12.0f.xx);
 
-        // Quick ray-sphere cull & exact depth-clipped entry/exit interval:
-        const float3 oc = eye - centerPos;
-        const float b = dot(oc, w);
-        const float c = dot(oc, oc) - boundR * boundR;
-        const float disc = b * b - c;
-        if (disc <= 0.0f) { continue; }
-        const float sDisc = sqrt(disc);
-        const float tEnter = max(14.0f, -b - sDisc);
-        const float tExit = min(dist, -b + sDisc);
-        if (tExit <= tEnter + 0.5f || tEnter > 2200.0f) { continue; }
+    // Project world -Z (down toward real flame bases) into screen pixel space analytically for any camera pitch/roll:
+    const float4 sRef0  = screenOf(eye + w * 200.0f);
+    const float4 sRefDn = screenOf(eye + w * 200.0f - float3(0.0f, 0.0f, 20.0f));
+    float2 downPxDir = sRefDn.xy - sRef0.xy;
+    const float downLen = length(downPxDir);
+    downPxDir = (downLen > 1.0e-3f) ? (downPxDir / downLen) : float2(0.0f, 1.0f);
+    const float2 sidePxDir = float2(-downPxDir.y, downPxDir.x);
 
-        const float distFade = 1.0f - smoothstep(1400.0f, 2200.0f, tEnter);
-        const float ds = (tExit - tEnter) * (1.0f / 14.0f);
-        const float riseSpeed = lerp(58.0f, 34.0f, isCandle);
-        const float nFreq = 1.0f / max(rad * 0.82f, 3.2f);
-        const float seed = float(li) * 13.37f;
+    // Search a buoyant inverted cone below current pixel for verified real scene-rendered flame cores
+    // (1 center tap + 8 exponentially-spaced downward tiers x 2 lateral chevron probes = 17 taps).
+    static const float kTierFrac[8] = { 0.010f, 0.022f, 0.042f, 0.072f, 0.112f, 0.162f, 0.220f, 0.285f };
+    const float maxConePx = dims.y;
 
-        float3 accEmit = 0.0f.xxx;
-        float T = 1.0f;
-        [unroll] for (int si = 0; si < 14; ++si) {
-            const float t = tEnter + (float(si) + jit) * ds;
-            const float3 pRel = eye + w * t;
-            const float3 q = pRel - basePos;
-            const float u = q.z / hFlame;
-            if (u < -0.06f || u > 1.06f) { continue; }
-            const float uCl = saturate(u);
-            // Wind lean + upward-advected 3D fluid curl turbulence (anchored at base, curling licking tongues above):
-            const float3 wpQ = camPosW.xyz + pRel;
-            const float3 nP1 = float3(wpQ.xy * nFreq + seed, wpQ.z * nFreq * 0.72f - tClock * (riseSpeed * nFreq));
-            const float4 g1 = rawNoise3Grad(nP1);
-            const float4 g2 = rawNoise3Grad(nP1 * 2.15f + float3(5.3f, 11.7f, -tClock * 1.4f));
-            const float2 curlXY = float2(g1.z - g1.w, g1.w - g1.y) * 0.65f + float2(g2.z - g2.w, g2.w - g2.y) * 0.35f;
-            const float2 qWarped = q.xy - windXY * (uCl * uCl) + curlXY * (rad * lerp(0.16f, 0.72f, uCl));
-            const float rNorm = length(qWarped) / max(rad * (1.0f - uCl * 0.76f) * smoothstep(-0.06f, 0.14f, u), 0.5f);
-            if (rNorm >= 1.25f) { continue; }
+    float bestFlame = 0.0f;
+    float2 bestPx   = px;
+    float bestD     = 1.0f;
+    float bestZ     = 1.0e6f;
 
-            const float turb = saturate(g1.x * 0.62f + g2.x * 0.38f);
-            // Multi-tongue combustion density: fuller near base, breaking into curling tongues near crest:
-            const float shape = saturate(1.0f - rNorm * rNorm) * smoothstep(1.04f, 0.18f, uCl);
-            const float tongue = smoothstep(lerp(0.18f, 0.52f, uCl), 0.88f, shape + (turb - 0.38f) * lerp(0.45f, 0.85f, uCl));
-            if (tongue > 0.01f) {
-                const float temp = saturate(tongue * (1.15f - uCl * 0.58f) + (1.0f - rNorm) * 0.25f * (1.0f - uCl));
-                // Physical Planck Blackbody Emission: 1250K crimson tips -> 2100K blazing amber -> 3200K incandescent core
-                const float3 bbLow  = float3(1.55f, 0.24f, 0.025f);
-                const float3 bbMid  = float3(2.85f, 1.05f, 0.16f);
-                const float3 bbHot  = float3(3.95f, 2.85f, 1.35f);
-                const float3 bbCol  = temp < 0.55f ? lerp(bbLow, bbMid, temp / 0.55f)
-                                                   : lerp(bbMid, bbHot, saturate((temp - 0.55f) / 0.45f));
-                const float sigmaF = tongue * (0.095f / max(rad * 0.08f, 0.45f));
-                const float stepT = exp(-sigmaF * ds);
-                accEmit += T * bbCol * (1.0f - stepT) * (0.65f + 0.55f * temp);
-                T *= stepT;
-                if (T < 0.04f) { break; }
+    // Center tap (pixel directly on/near a real flame core):
+    {
+        const float2 cUv = (px + 0.5f) * dims.zw;
+        const float d0 = Depth.SampleLevel(Lin, cUv, 0.0f);
+        if (d0 < 0.9990f) {
+            const float z0 = viewZOf(d0);
+            if (z0 > 14.0f && z0 < 2400.0f && z0 <= curZ * 1.04f + 10.0f) {
+                const float f0 = rawDetectSceneFlameCore(Lit.SampleLevel(Lin, cUv, 0.0f).rgb);
+                if (f0 > bestFlame) { bestFlame = f0; bestPx = px; bestD = d0; bestZ = z0; }
             }
         }
-        // Subtle 3D rising glowing embers above non-candle braziers & hearths:
-        if (isCandle < 0.5f) {
-            const float tClosest = dot(lPos - eye, w);
-            if (tClosest > 24.0f && tClosest < dist && tClosest < 1400.0f) {
-                const float3 ptRay = eye + w * tClosest;
-                const float3 offL = ptRay - basePos;
-                if (offL.z > hFlame * 0.45f && offL.z < hFlame * 2.8f && dot(offL.xy, offL.xy) < (rad * rad * 6.5f)) {
-                    const float hE = saturate((offL.z - hFlame * 0.45f) / (hFlame * 2.35f));
-                    const float3 wpE = camPosW.xyz + ptRay;
-                    const float3 eGrid = float3((wpE.xy - windXY * hE + float2(sin(tClock * 2.2f + wpE.z * 0.08f), cos(tClock * 1.9f + wpE.z * 0.07f)) * 5.5f) * 0.15f,
-                                                wpE.z * 0.095f - tClock * 1.75f);
-                    const float eHash = cHash(floor(eGrid));
-                    if (eHash > 0.946f) {
-                        const float dSpark = length(frac(eGrid) - 0.5f);
-                        const float spark = smoothstep(0.946f, 0.998f, eHash) * exp(-dSpark * dSpark * 42.0f) * (1.0f - hE) * smoothstep(0.0f, 0.12f, hE);
-                        accEmit += lerp(float3(2.20f, 1.05f, 0.28f), float3(1.30f, 0.24f, 0.03f), hE) * (spark * 0.85f);
-                    }
+    }
+
+    // Inverted buoyant cone search downward along world -Z:
+    [unroll] for (int ti = 0; ti < 8; ++ti) {
+        const float dPx = kTierFrac[ti] * maxConePx * (0.86f + 0.28f * jit);
+        const float spreadPx = dPx * 0.26f;
+        [unroll] for (int sideI = 0; sideI < 2; ++sideI) {
+            const float sSign = (sideI == 0) ? -1.0f : 1.0f;
+            const float latOff = sSign * spreadPx * ((ti & 1) == 0 ? 0.35f : 0.85f);
+            const float2 qPx = clamp(px + downPxDir * dPx + sidePxDir * latOff, float2(1.0f, 1.0f), dims.xy - 2.0f);
+            const float2 qUv = (qPx + 0.5f) * dims.zw;
+            const float dTap = Depth.SampleLevel(Lin, qUv, 0.0f);
+            if (dTap >= 0.9990f) { continue; }
+            const float zTap = viewZOf(dTap);
+            // Strictly reject sky, far horizon, near-clip, and flames occluded behind foreground geometry:
+            if (zTap < 14.0f || zTap > 2400.0f || zTap > curZ * 1.04f + 10.0f) { continue; }
+            const float fTap = rawDetectSceneFlameCore(Lit.SampleLevel(Lin, qUv, 0.0f).rgb);
+            if (fTap > 0.01f) {
+                // Favor closest verified flame anchor vertically below current pixel:
+                const float score = fTap * (1.0f - float(ti) * 0.055f);
+                if (score > bestFlame) {
+                    bestFlame = score;
+                    bestPx    = qPx;
+                    bestD     = dTap;
+                    bestZ     = zTap;
                 }
             }
         }
-        const float lGain = saturate(dot(lc, float3(0.35f, 0.45f, 0.20f)) * 1.15f);
-        fireTotal += accEmit * (distFade * clamp(lGain, 0.45f, 1.15f));
     }
+
+    // Immediate early-out on ~95% of pixels with zero verified real flame core below them!
+    if (bestFlame <= 0.02f) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
+
+    // Measure local flame footprint around verified anchor (auto-scales candle -> torch -> brazier -> hearth):
+    const float footStepPx = clamp(180.0f / max(bestZ, 36.0f) * (dims.y * 0.009f), 3.0f, 18.0f);
+    float footHits = 1.0f;
+    static const float2 kFootDir[4] = { float2(1.0f, 0.0f), float2(-1.0f, 0.0f), float2(0.0f, 1.0f), float2(0.0f, -1.0f) };
+    [unroll] for (int fi = 0; fi < 4; ++fi) {
+        const float2 fUv = clamp((bestPx + kFootDir[fi] * footStepPx + 0.5f) * dims.zw, 0.001f.xx, 0.999f.xx);
+        const float dF = Depth.SampleLevel(Lin, fUv, 0.0f);
+        if (dF < 0.9990f && abs(viewZOf(dF) - bestZ) < max(bestZ * 0.16f, 28.0f)) {
+            footHits += step(0.05f, rawDetectSceneFlameCore(Lit.SampleLevel(Lin, fUv, 0.0f).rgb));
+        }
+    }
+    // sizeT: 0.0 = tiny wall candle, 0.35 = torch/sconce, 0.75..1.0 = brazier / campfire / Dragonsreach hearth
+    const float sizeT = saturate((footHits - 1.0f) * 0.25f);
+    const float rad = lerp(4.2f, 26.0f, sizeT);
+    const float hPlume = lerp(22.0f, 145.0f, sizeT);
+    const float smokeScale = smoothstep(0.10f, 0.55f, sizeT) * lerp(0.85f, 1.0f, isInt ? 0.65f : 1.0f);
+
+    // Reconstruct exact 3D world-space flame base and intersect camera ray with the vertical plume slab:
+    const float3 pBase = worldAt(bestPx, bestD);
+    const float tMid = dot(pBase - eye, w);
+    if (tMid < 14.0f || tMid > 2400.0f) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
+
+    const float slabHalf = rad * 1.85f;
+    const float tEnter = max(14.0f, tMid - slabHalf);
+    const float tExit  = min(dist + 2.0f, tMid + slabHalf);
+    if (tExit <= tEnter + 0.4f) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
+
+    const float distFade = (1.0f - smoothstep(1400.0f, 2400.0f, tMid)) * saturate(bestFlame * 1.15f);
+    const int kSteps = 10;
+    const float ds = (tExit - tEnter) * (1.0f / float(kSteps));
+    const float riseSpeed = lerp(34.0f, 64.0f, sizeT);
+    const float nFreq = 1.0f / max(rad * 0.92f, 3.8f);
+
+    // Ambient illumination for cool dark soot tops (matches local room or outdoor sky smoothly):
+    const float3 ambTop = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w),
+                              isInt ? float3(0.014f, 0.014f, 0.018f) : float3(0.025f, 0.032f, 0.048f));
+    const float3 sootAlbedo = float3(0.055f, 0.050f, 0.048f);
+
+    float3 accEmit = 0.0f.xxx;
+    float T = 1.0f;
+
+    [unroll] for (int si = 0; si < kSteps; ++si) {
+        const float t = tEnter + (float(si) + jit) * ds;
+        const float3 pRel = eye + w * t;
+        const float3 q = pRel - pBase;
+        const float u = q.z / hPlume;
+        if (u < -0.04f || u > 1.05f) { continue; }
+        const float uCl = saturate(u);
+
+        // 3-Octave curl-advected domain-warped FBM turbulence (world-locked, buoyant along +Z):
+        const float3 wpQ = camPosW.xyz + pRel;
+        const float3 nP1 = float3(wpQ.xy * nFreq, wpQ.z * nFreq * 0.70f - tClock * (riseSpeed * nFreq));
+        const float4 g1 = rawNoise3Grad(nP1);
+        const float3 curl1 = float3(g1.z - g1.w, g1.w - g1.y, g1.y - g1.z);
+        const float4 g2 = rawNoise3Grad(nP1 * 2.15f + curl1 * 0.42f + float3(5.3f, 11.7f, -tClock * 1.45f));
+        const float4 g3 = rawNoise3Grad(nP1 * 4.35f - curl1 * 0.24f + float3(13.1f, -7.9f, -tClock * 2.55f));
+        const float turb = saturate(g1.x * 0.52f + g2.x * 0.32f + g3.x * 0.16f);
+
+        const float2 curlXY = curl1.xy * 0.58f + float2(g2.z - g2.w, g2.w - g2.y) * 0.32f;
+        const float2 qWarped = q.xy - windXY * (uCl * uCl * 2.2f) + curlXY * (rad * lerp(0.18f, 0.95f, uCl));
+        const float rXY = length(qWarped);
+
+        // 1) Lower Hot Core: crisp turbulent Planck blackbody (1400K..3400K) licking flame tongues (u in 0..0.48):
+        float flameDens = 0.0f;
+        float3 flameCol = 0.0f.xxx;
+        if (u < 0.52f) {
+            const float uf = saturate(u / 0.48f);
+            const float rFlame = max(rad * lerp(1.02f, 0.34f, uf) * smoothstep(-0.04f, 0.08f, u), 0.6f);
+            const float rFNorm = rXY / rFlame;
+            if (rFNorm < 1.25f) {
+                const float fShape = saturate(1.0f - rFNorm * rFNorm) * smoothstep(1.05f, 0.10f, uf);
+                flameDens = smoothstep(lerp(0.22f, 0.58f, uf), 0.90f, fShape + (turb - 0.42f) * lerp(0.55f, 1.05f, uf));
+                if (flameDens > 0.01f) {
+                    const float temp01 = saturate(flameDens * (1.12f - uf * 0.65f) + (1.0f - saturate(rFNorm)) * 0.28f * (1.0f - uf));
+                    const float tempK = lerp(1400.0f, 3380.0f, temp01);
+                    float hdrRad = 0.0f;
+                    const float3 bbRgb = rawPlanckBlackbodyRGB(tempK, hdrRad);
+                    flameCol = bbRgb * min(hdrRad * 0.52f, 4.2f);
+                }
+            }
+        }
+
+        // 2) Upper Rising Plume: billowing dark soot smoke lit from WITHIN by warm orange fire scatter!
+        float smokeDens = 0.0f;
+        float3 smokeScatter = 0.0f.xxx;
+        if (smokeScale > 0.02f && u > 0.12f) {
+            const float rSmoke = max(rad * lerp(0.82f, 2.35f, pow(uCl, 0.72f)), 1.5f);
+            const float rSNorm = rXY / rSmoke;
+            if (rSNorm < 1.20f) {
+                const float billow = 1.0f - abs(g2.x * 2.0f - 1.0f);
+                const float sShape = saturate(1.0f - rSNorm * rSNorm) * smoothstep(0.12f, 0.32f, uCl) * smoothstep(1.04f, 0.56f, uCl);
+                smokeDens = smoothstep(0.26f, 0.84f, sShape + (turb * 0.65f + billow * 0.35f - 0.40f) * 0.82f) * smokeScale;
+                if (smokeDens > 0.01f) {
+                    // Radiance-coupled internal fire illumination (Jan Vlietinck / MytinoDev):
+                    // Vertical & radial irradiance falloff from flame core + analytical gradient underside normal (-g1.w)
+                    // creates bright glowing orange undersides and cool self-shadowed dark billowing soot tops!
+                    const float fireIrrad = exp(-max(uCl - 0.15f, 0.0f) * 4.2f) * exp(-rSNorm * rSNorm * 1.35f);
+                    const float downFace  = saturate(-g1.w * 0.85f + 0.52f);
+                    const float upFace    = saturate( g1.w * 0.65f + 0.55f);
+                    const float selfAtten = exp(-smokeDens * 0.70f);
+                    const float3 fireBounce = float3(2.90f, 0.90f, 0.16f) * (fireIrrad * lerp(0.20f, 1.35f, downFace) * selfAtten);
+                    const float3 ambLit     = sootAlbedo * ambTop * lerp(0.45f, 1.20f, upFace);
+                    smokeScatter = ambLit + fireBounce * (0.24f + 0.34f * (1.0f - smokeDens));
+                }
+            }
+        }
+
+        const float sigmaF = flameDens * (0.072f / max(rad * 0.08f, 0.45f));
+        const float sigmaS = smokeDens * (0.038f / max(rad * 0.07f, 0.55f));
+        const float sigmaTot = sigmaF + sigmaS;
+        if (sigmaTot > 1.0e-4f) {
+            const float stepT = exp(-sigmaTot * ds);
+            const float3 stepRadiance = (flameCol * sigmaF + smokeScatter * sigmaS) / sigmaTot;
+            accEmit += T * stepRadiance * (1.0f - stepT);
+            T *= stepT;
+            if (T < 0.08f) { break; }
+        }
+    }
+
+    // 3) Rising Sparkling World-Locked 3D Embers drifting through the smoke column (braziers/campfires/hearths):
+    if (smokeScale > 0.20f && tMid > 20.0f && tMid < dist && tMid < 1500.0f) {
+        const float3 ptRay = eye + w * tMid;
+        const float3 offL = ptRay - pBase;
+        if (offL.z > hPlume * 0.14f && offL.z < hPlume * 1.30f) {
+            const float hE = saturate((offL.z - hPlume * 0.14f) / (hPlume * 1.16f));
+            const float maxER = rad * lerp(1.1f, 3.0f, hE);
+            const float2 offWind = offL.xy - windXY * (hE * hE * 2.2f);
+            if (dot(offWind, offWind) < maxER * maxER) {
+                const float3 wpE = camPosW.xyz + ptRay;
+                const float2 swirlE = float2(sin(tClock * 2.4f + wpE.z * 0.075f), cos(tClock * 2.0f - wpE.z * 0.065f)) * 5.2f;
+                const float3 eGrid = float3((wpE.xy - windXY * hE + swirlE) * 0.16f, wpE.z * 0.10f - tClock * 2.15f);
+                const float3 eCell = floor(eGrid);
+                const float3 eJitter = rawHash33(eCell);
+                if (eJitter.x > 0.942f) {
+                    const float3 ePos = (eJitter - 0.5f) * 0.55f;
+                    const float dSpark = length((frac(eGrid) - 0.5f) - ePos);
+                    const float flicker = 0.65f + 0.35f * sin(tClock * 18.0f + eJitter.y * 42.0f);
+                    const float spark = smoothstep(0.942f, 0.998f, eJitter.x) * exp(-dSpark * dSpark * 62.0f)
+                                      * (1.0f - hE) * smoothstep(0.0f, 0.10f, hE) * flicker;
+                    const float3 sparkCol = lerp(float3(3.10f, 1.55f, 0.38f), float3(1.65f, 0.28f, 0.03f), hE);
+                    accEmit += sparkCol * (spark * 1.10f);
+                }
+            }
+        }
+    }
+
+    accEmit *= distFade;
+    const float finalT = lerp(1.0f, T, distFade);
     // Smooth HDR fire shoulder so flames stay luminous & vivid without nuclear whiteout:
-    const float fPk = max(fireTotal.r, max(fireTotal.g, fireTotal.b));
-    if (fPk > 2.6f) { fireTotal *= (2.6f + (fPk - 2.6f) / (1.0f + (fPk - 2.6f) * 0.45f)) / fPk; }
-    return fireTotal;
+    const float fPk = max(accEmit.r, max(accEmit.g, accEmit.b));
+    if (fPk > 2.6f) { accEmit *= (2.6f + (fPk - 2.6f) / (1.0f + (fPk - 2.6f) * 0.45f)) / fPk; }
+    return float4(accEmit, finalT);
 }
 
 float4 fs(float4 at : SV_Position) : SV_Target0 {
@@ -203,10 +336,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (dofParams.w > 0.5f && (weather.w >= 0.12f || weather.z >= 0.25f)) {
         lit.rgb = elderWeatherLensPrepass(Lit, px, dims.xy, dims.zw, weather.w, weather.z, camPosW.w);
     }
-    // Wave 33 Distant Mountain Aerial Perspective Fix (00.10.37.77.png Throat of the World cutout):
-    // Tamriel's farthest DistantLOD peaks sit at 220k..340k units; only true sky-dome celestial geometry
-    // (Masser/Secunda at far clip d > 0.99982 and curZ > 380,000u) should bypass atmospheric aerial perspective!
-    const bool isCelestial = (d < 1.0f && d > 0.99982f && curZ > 380000.0f);
+    // Wave 38 Masser & Secunda Celestial Sky-Dome Fix:
+    // Skyrim's moons sit at ~150k..350k units (below 380k!). Route sky-dome celestial bodies properly
+    // into the sky pass while keeping distant low-horizon mountain peaks (celWorldZ < 28,500u, sDir.z <= 0.05)
+    // in the terrestrial aerial-perspective pass so neither Masser's craters nor distant peaks ever break!
+    const float3 eyeCel = eyeAt();
+    const float3 sDirCel = normalize(worldAt(px, d < 1.0f ? min(d, 0.9995f) : 0.995f) - eyeCel);
+    const float celWorldZ = camPosW.z + sDirCel.z * curZ;
+    const float celLuma = dot(lit.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+    const bool isMoonDisc = (celWorldZ > 28500.0f) || (sDirCel.z > 0.05f && (celLuma > 0.035f || curZ > 260000.0f));
+    const bool isCelestial = (d < 1.0f) && (
+        (d > 0.99945f && curZ > 120000.0f && isMoonDisc) ||
+        (d > 0.9985f && curZ > 75000.0f && sDirCel.z > 0.10f && isMoonDisc));
     if (d >= 1.0f || isCelestial) {
         // Unified Hillaire SIGGRAPH 2020 Physical HDR Sky + Solar Disc + Masser/Secunda Celestial Pass + Wrenninge 4-Octave HDR Cloud Composite:
         // Routing celestial sky-dome geometry (curZ > 220k: Masser & Secunda) here prevents terrestrial horizonMelt from
@@ -316,119 +457,25 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float subFade = smoothstep(-0.001f, -0.048f, sDir.z);
                 fullSky = lerp(fullSky, lerp(fullSky, oceanCol, hazeSea), subFade);
             }
-            // Night sky celestial layer: subtle oxygen-557nm horizon airglow + dual-scale crisp procedural starfield
-            // (magnitude 1-3 Planck stars + dense faint-magnitude deep field, zero DXT1) + Milky Way + dual-curtain Nordic Auroras!
+            // Wave 38 First-Principles Cosmos, Sidereal Milky Way/Aetherius, O/B/A/F/G/K/M Starfield & 3D Curtain Auroras
+            // (RawCosmosSky.hlsli — unified with AtmosphereLut.hlsl & EnvCubePass.hlsl so water/ice reflect the exact same sky!):
+            // Blended strictly on unobstructed sky pixels (d >= 0.99999 && !isCelestial) BEHIND Masser/Secunda and BEHIND clouds!
             const float nightSkyW = saturate(1.0f - dayW * 1.35f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
-            if (nightSkyW > 0.02f && sDir.z > 0.0f) {
-                // Wave 30 Van Rhijn Curved-Mesopause Airglow Layer (90 km O(1S) 557.7nm + OH Meinel, Kiruna AB1120):
-                // Exact spherical shell path-length brightening V(theta) = 1 / sqrt(1 - (R/(R+90))^2 * cos^2(theta))
-                // attenuated by lower-troposphere extinction near 0 deg, peaking naturally at 6..10 deg above horizon!
-                const float vrRatio = 6360.0f / (6360.0f + 90.0f);
-                const float cos2El = max(1.0f - sDir.z * sDir.z, 0.0f);
-                const float vanRhijn = rsqrt(max(1.0f - vrRatio * vrRatio * cos2El, 0.025f));
-                const float lowExt = exp(-0.085f / max(sDir.z, 0.032f));
-                const float airglow = clamp(vanRhijn * lowExt * 0.34f, 0.0f, 1.35f);
-                const float3 airCol = lerp(float3(0.012f, 0.024f, 0.018f), float3(0.005f, 0.015f, 0.017f), saturate(sDir.z * 3.0f));
-                fullSky += airCol * (airglow * nightSkyW * (1.0f - cover * 0.68f));
-                const float3 sc1 = floor(sDir * 290.0f);
-                const float3 sf1 = frac(sDir * 290.0f) - 0.5f;
-                const float h1 = cHash(sc1);
-                if (h1 > 0.952f) {
-                    const float3 off1 = float3(cHash(sc1 + 11.3f), cHash(sc1 + 27.1f), cHash(sc1 + 43.7f)) - 0.5f;
-                    const float d1 = length(sf1 - off1 * 0.52f);
-                    const float core1 = exp(-d1 * d1 * 58.0f) * smoothstep(0.952f, 0.998f, h1);
-                    // Altitude-dependent atmospheric scintillation (stronger twinkling near horizon air mass) + Planck O/B/A/G/K/M star colors.
-                    const float scintAmp = lerp(0.42f, 0.14f, saturate(sDir.z * 2.5f));
-                    const float twk1 = (1.0f - scintAmp) + scintAmp * sin(camPosW.w * (2.6f + h1 * 5.8f) + h1 * 62.8f);
-                    const float spT = cHash(sc1 + 71.9f);
-                    const float3 col1 = spT < 0.35f ? lerp(float3(0.62f, 0.78f, 1.0f), float3(0.94f, 0.96f, 1.0f), spT / 0.35f)
-                                                    : lerp(float3(0.94f, 0.96f, 1.0f), float3(1.0f, 0.72f, 0.44f), (spT - 0.35f) / 0.65f);
-                    fullSky += col1 * (core1 * twk1 * nightSkyW * saturate(sDir.z * 5.0f) * 1.65f);
-                }
-                // Second high-density faint-magnitude pinpoint starfield (replaces blurry 512px DXT1 sky stars at 1080p/4K/8K):
-                const float3 sc2 = floor(sDir * 620.0f);
-                const float3 sf2 = frac(sDir * 620.0f) - 0.5f;
-                const float h2 = cHash(sc2 + 19.7f);
-                if (h2 > 0.945f) {
-                    const float3 off2 = float3(cHash(sc2 + 5.1f), cHash(sc2 + 33.7f), cHash(sc2 + 61.3f)) - 0.5f;
-                    const float d2 = length(sf2 - off2 * 0.48f);
-                    const float core2 = exp(-d2 * d2 * 78.0f) * smoothstep(0.945f, 0.999f, h2);
-                    fullSky += float3(0.84f, 0.90f, 1.0f) * (core2 * nightSkyW * saturate(sDir.z * 4.5f) * 0.62f);
-                }
-                // Multi-band physical Galactic Nebula + H-alpha/O-III emission filaments + dark molecular Bok dust lanes:
-                const float mwPlane = abs(dot(sDir, normalize(float3(0.52f, -0.36f, 0.77f))));
-                const float mwBand = exp(-mwPlane * mwPlane * 16.0f) * smoothstep(0.05f, 0.28f, sDir.z);
-                if (mwBand > 0.01f) {
-                    const float mwWarp = cNoise(sDir * 3.8f + 1.9f) * 0.65f;
-                    const float mwDust = cNoise(sDir * 6.5f + mwWarp) * 0.62f + cNoise(sDir * 15.0f - mwWarp + 4.3f) * 0.38f;
-                    const float darkRift = smoothstep(0.44f, 0.66f, cNoise(sDir * 9.5f + float3(7.1f, 2.3f, 5.7f)));
-                    const float hAlpha = smoothstep(0.62f, 0.88f, cNoise(sDir * 8.2f + float3(13.4f, 4.9f, 9.1f)));
-                    const float oIII   = smoothstep(0.64f, 0.90f, cNoise(sDir * 10.5f + float3(2.7f, 17.3f, 3.3f)));
-                    const float3 nebCol = lerp(float3(0.04f, 0.07f, 0.16f), float3(0.16f, 0.14f, 0.24f), smoothstep(0.28f, 0.76f, mwDust))
-                                        + float3(0.28f, 0.07f, 0.14f) * (hAlpha * 0.55f)
-                                        + float3(0.06f, 0.22f, 0.26f) * (oIII * 0.45f);
-                    fullSky += nebCol * (mwBand * (1.0f - darkRift * 0.68f) * nightSkyW * 0.72f);
-                }
-                // Wave 28 Curved-Ionosphere Geomagnetic-Latitude Aurora (u/Hazmadd r/GraphicsProgramming physical geometry):
-                // Intersects each pixel ray with a curved 3D spherical ionosphere shell (R=6360 km, curtain 105..285 km)
-                // and places the auroral oval by the geomagnetic latitude of the 3D CURTAIN POINT each pixel hits (NOT the camera)!
-                // Automatically curves along the northern horizon from Whiterun and sweeps overhead near Winterhold/Dawnstar!
-                const float auroraVis = nightSkyW * (1.0f - saturate(clouds.x * 1.05f)) * smoothstep(0.02f, 0.16f, sDir.z);
-                if (auroraVis > 0.02f) {
-                    const float rEarthKm = 6360.0f;
-                    const float camLatDeg = 60.5f + clamp(camPosW.y / 65000.0f, -2.5f, 3.5f);   // Whiterun ~60.5N -> Winterhold ~63.5N
-                    float3 aurSum = 0.0f.xxx;
-                    [unroll] for (int ai = 0; ai < 10; ai++) {
-                        const float hT = float(ai) / 9.0f;
-                        const float altKm = lerp(105.0f, 285.0f, hT);
-                        const float rShell = rEarthKm + altKm;
-                        const float bS = rEarthKm * sDir.z;
-                        const float tKm = sqrt(max(bS * bS + rShell * rShell - rEarthKm * rEarthKm, 0.0f)) - bS;
-                        // 3D hit point on the curved ionosphere shell in km (Y = North, X = East):
-                        const float2 hitKm = sDir.xy * tKm;
-                        const float curtainLat = camLatDeg + hitKm.y * (1.0f / 111.32f);
-                        const float curtainLon = hitKm.x * (1.0f / 55.0f);
-                        const float nWarp = cNoise(float3(curtainLon * 0.24f, curtainLat * 0.35f, camPosW.w * 0.024f));
-                        const float ovalLat1 = 66.2f + sin(curtainLon * 0.42f + camPosW.w * 0.055f + nWarp * 3.4f) * 1.85f;
-                        const float ovalLat2 = 68.8f + sin(curtainLon * 0.31f - camPosW.w * 0.042f + nWarp * 2.6f + 1.9f) * 1.45f;
-                        const float band1 = exp(-abs(curtainLat - ovalLat1) * 1.45f);
-                        const float band2 = exp(-abs(curtainLat - ovalLat2) * 1.15f) * 0.65f;
-                        // Vertical geomagnetic field-line striations (aligned with 3D shell longitude, crisp lower edge at 105 km!):
-                        const float rays = 0.38f + 0.62f * cNoise(float3(curtainLon * 3.2f, curtainLat * 0.65f, camPosW.w * 0.11f + hT * 2.2f));
-                        const float vertEnv = smoothstep(0.0f, 0.12f, hT) * (1.0f - hT * 0.62f);
-                        const float distFadeA = exp(-tKm * 0.00055f);
-                        const float3 aCol = hT < 0.56f
-                            ? lerp(float3(0.05f, 1.02f, 0.52f), float3(0.18f, 0.58f, 0.98f), hT / 0.56f)
-                            : lerp(float3(0.18f, 0.58f, 0.98f), float3(0.86f, 0.14f, 0.48f), (hT - 0.56f) / 0.44f);
-                        aurSum += aCol * ((band1 + band2) * rays * vertEnv * distFadeA);
-                    }
-                    fullSky += aurSum * (auroraVis * 0.145f);
-                }
-                // Natural shooting-star meteor streaks across clear dark northern skies (1 streak every ~9 sec):
-                const float metBucket = floor(camPosW.w * 0.11f);
-                const float metPhase = frac(camPosW.w * 0.11f);
-                if (metPhase < 0.085f && cover < 0.45f) {
-                    const float mRand = cHash(float3(metBucket, 17.3f, 3.1f));
-                    if (mRand > 0.35f) {
-                        const float3 mStart = normalize(float3(cHash(float3(metBucket, 1.1f, 2.2f)) * 2.0f - 1.0f,
-                                                               cHash(float3(metBucket, 5.7f, 8.3f)) * 2.0f - 1.0f,
-                                                               0.32f + 0.52f * cHash(float3(metBucket, 9.1f, 4.4f))));
-                        const float3 mDir = normalize(cross(mStart, float3(0.2f, 0.3f, 0.9f)) - float3(0.0f, 0.0f, 0.45f));
-                        const float mT = metPhase / 0.085f;
-                        const float3 mHead = normalize(mStart + mDir * (mT * 0.22f));
-                        const float3 mRel = sDir - mHead;
-                        const float along = dot(mRel, -mDir);
-                        const float perp = length(mRel + mDir * clamp(along, 0.0f, 0.065f));
-                        const float tail = saturate(1.0f - along / 0.065f) * step(0.0f, along);
-                        const float streak = exp(-perp * perp * 220000.0f) * tail * sin(mT * 3.14159265f);
-                        fullSky += float3(0.92f, 0.96f, 1.0f) * (streak * nightSkyW * (1.0f - cover) * 2.4f);
-                    }
-                }
+            if (d >= 0.99999f && !isCelestial && sDir.z > -0.01f && (nightSkyW > 0.01f || twilightBell > 0.02f || weather.z > 0.10f)) {
+                const float simT = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
+                const float3 cosmosAdd = evalCosmosAndAurora(sDir, aSun, timeEnv.x, simT, cover, weather.z, camPosW.y);
+                fullSky += cosmosAdd * ((1.0f - isExotic) * lerp(1.0f, 0.55f, twilightBell));
             }
             // Preserve Masser & Secunda twin moons cleanly on top of our procedural night/twilight sky.
+            // Never flatten craters with distant grey fog — apply only subtle realistic low-horizon atmospheric extinction (sDir.z < 0.08).
             float3 baseSky = lerp(lit.rgb, fullSky, (1.0f - isExotic) * (1.0f - moonKeep * 0.96f));
             if (moonKeep > 0.04f && nightSkyW > 0.04f) {
-                baseSky += lit.rgb * float3(1.06f, 0.98f, 0.88f) * (moonKeep * nightSkyW * 0.38f);
+                baseSky += lit.rgb * float3(1.06f, 0.98f, 0.88f) * (moonKeep * nightSkyW * 0.34f);
+            }
+            if (isCelestial && sDir.z < 0.08f) {
+                const float lowHorExt = 1.0f - smoothstep(0.01f, 0.08f, sDir.z);
+                const float3 horWarmTint = lerp(1.0f.xxx, float3(0.94f, 0.80f, 0.64f), lowHorExt * 0.50f);
+                baseSky = lerp(baseSky * horWarmTint, fullSky, lowHorExt * 0.28f);
             }
             // Wave 29 Target-Frame Cirrus-Gated 22-Degree Hexagonal Ice-Crystal Halo & Sundogs (own-08..11):
             // Intersects each sky ray with the curved 10 km cirrus ice-crystal shell (R=6360+10 km) and modulates the
@@ -551,6 +598,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float superInner = (1.0f - smoothstep(0.680f, 0.725f, antiAng)) * smoothstep(0.520f, 0.650f, antiAng);
                 baseSky *= (1.0f - alexBand * bowW * 0.15f + superInner * bowW * 0.065f);
                 baseSky += float3(pR + sR, pG + sG, pB + sB) * (bowW * 0.12f);
+            }
+            // Allow verified outdoor fire smoke & embers to billow cleanly in front of lower sky pixels:
+            if (!isCelestial && (1.0f - isExotic) > 0.2f && sDir.z > -0.10f && sDir.z < 0.52f) {
+                const float4 skyFireVol = evalVolumetricFirePlumes(eyeCel, sDir, 2400.0f, 100000.0f, px, false);
+                baseSky = baseSky * skyFireVol.a + skyFireVol.rgb;
             }
             // Sub-LSB Interleaved Gradient Noise dithering eliminates 8-bit/10-bit sky gradient banding lines cleanly.
             const float skyDith = (ign(px) - 0.5f) * (1.0f / 255.0f);
@@ -791,12 +843,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 pdeMistBoost = 1.0f + saturate(wf.b * 0.65f + wf.a * 0.35f) * 0.45f;
             }
         }
-        // True 3D Depth-Occluded Volumetric Blackbody Fire Plumes + All-Archetype 3D Volumetric Spells
-        // (Fire Plasma + Frost Ice-Shard Storm + Shock Lichtenberg Arcs + Arcane/Ward Runic Shells & Heat Lensing):
+        // Scene-Anchored 3D Volumetric Fire, Self-Shadowed Dark Soot Smoke & Rising Embers + Scene-Anchored 3D Volumetric Spells:
+        // Strictly anchored to real HDR scene flame/spell cores (ZERO floating spheres around empty-air point lights!).
+        float4 extFireVol = float4(0.0f, 0.0f, 0.0f, 1.0f);
         if (mapScale > 0.5f) {
-            precipAdd += evalVolumetricFirePlumes(eye, w, dist, px, false);
+            extFireVol = evalVolumetricFirePlumes(eye, w, dist, curZ, px, false);
             float2 spellLensPx = 0.0f.xx;
-            const float3 spellAddExt = evalVolumetricSpells3D(eye, w, dist, px, spellLensPx);
+            const float3 spellAddExt = evalVolumetricSpells3D(Lit, Depth, Lin, eye, w, dist, curZ, px, spellLensPx);
             if (dot(spellLensPx, spellLensPx) > 0.002f) {
                 const float2 lensUv = clamp(uv + spellLensPx * dims.zw, 0.002f.xx, 0.998f.xx);
                 const float dLens = Depth.SampleLevel(Lin, lensUv, 0.0f);
@@ -833,13 +886,37 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float shaftL = dot(shaftScatter, float3(0.2126f, 0.7152f, 0.0722f));
         const float shaftShear = abs(ddx(shaftL)) + abs(ddy(shaftL));
         const float3 cavityTint = lerp(1.0f.xxx, float3(0.84f, 0.90f, 1.12f), saturate(shaftShear * 14.0f) * (1.0f - saturate(shaftL * 8.0f)) * (1.0f - nightF));
+        // Wave 38 Dynamic Mountain Fog, Valley Inversion Mist, Coastal Sea-Fog & Weather Curtains (RawWeatherAtmo.hlsli):
+        // Runs strictly on exterior terrestrial geometry (Masser, Secunda & stars already returned cleanly in isCelestial!).
+        DynamicFogSample dynFog;
+        dynFog.inscatter     = 0.0f.xxx;
+        dynFog.transmittance = 1.0f;
+        dynFog.mountainFog01 = 0.0f;
+        dynFog.valleyMist01  = 0.0f;
+        if (mapScale > 0.5f && dist > 64.0f) {
+            const float3 camAbsF = camPosW.xyz + eye;
+            const float3 hitAbsF = camPosW.xyz + p;
+            const float liveSeaF = rawLiveWaterZ(engineWorld, physWorld[0]);
+            const float wxTempF  = lerp(8.0f, -6.0f, saturate(weather.z + smoothstep(55000.0f, 125000.0f, camAbsF.y) * 0.65f));
+            dynFog = evalDynamicMountainAndValleyFog(
+                camAbsF, hitAbsF, w, dist, aSunFg, uSunF, atmoCol,
+                weather, float4(timeEnv.x, aElevFg, timeEnv.z, timeEnv.w),
+                float4(cloudWind.xy, saturate(clouds.x), cloudWind.w),
+                float2(liveSeaF, wxTempF));
+        }
         // Exact front-to-back Beer-Lambert composition:
-        //   lit * (froxT * Tfar) + froxScat (0..42k 3D volume) + farInScat (42k..horizon, attenuated by froxT) + shafts + precip + silDiff
+        //   lit * (froxT * Tfar) + froxScat (0..42k 3D volume) + farInScat (42k..horizon, attenuated by froxT) + shafts
+        //   composed with dynamic mountain/valley weather fog, then scene-anchored 3D fire & self-shadowed soot smoke!
         const float3 farInScat = atmoCol * (1.0f.xxx - Tfar) * froxT;
-        return float4(lit.rgb * T + (froxScat * cavityTint) * pdeMistBoost + farInScat + shaftScatter * saturate(T + 0.15f) * pdeMistBoost + precipAdd + silDiffAdd, lit.a);
+        const float dynW = 0.52f * smoothstep(260.0f, 1800.0f, dist);
+        const float dynT = lerp(1.0f, dynFog.transmittance, dynW);
+        const float3 dynScat = dynFog.inscatter * (dynW * lerp(0.55f, 1.0f, froxT));
+        const float3 extBase = lit.rgb * T + (froxScat * cavityTint) * pdeMistBoost + farInScat + shaftScatter * saturate(T + 0.15f) * pdeMistBoost;
+        const float3 extScene = extBase * dynT + dynScat + precipAdd + silDiffAdd;
+        return float4(extScene * extFireVol.a + extFireVol.rgb, lit.a);
     }
     // Dungeons, Caves, Nordic Tombs, Dwemer Ruins, Blackreach & Interiors (sunColour.w < 0.5):
-    // Crisp, deep-contrast interior air (eliminates milky grey Dragonsreach haze & Septimus ice-cave whiteout) + rising hearth embers.
+    // Crisp, deep-contrast interior air (eliminates milky grey Dragonsreach haze & Septimus ice-cave whiteout) + scene-anchored fire/smoke.
     if (sunColour.w < 0.5f && (flags.x & FLAG_FOG) != 0u) {
         const float3 wpInt = camPosW.xyz + eye + w * min(dist * 0.5f, 3200.0f);
         const float caveNoise = 0.78f + 0.44f * cNoise(wpInt * 0.00048f + float3(0.0f, 0.0f, camPosW.w * 0.015f));
@@ -848,16 +925,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 cellAmb = max(float3(ambient[0].w, ambient[1].w, ambient[2].w), float3(0.008f, 0.010f, 0.012f));
         const float ambL = dot(cellAmb, float3(0.2126f, 0.7152f, 0.0722f));
         const float3 caveMist = min(lerp(ambL.xxx, cellAmb, 0.45f) * 0.16f, 0.024f.xxx);
-        // True 3D Depth-Occluded Volumetric Blackbody Fire Plumes + All-Archetype 3D Volumetric Spells (interiors):
-        const float3 intFireAdd = evalVolumetricFirePlumes(eye, w, dist, px, true);
+        // Scene-Anchored 3D Volumetric Fire/Smoke/Embers + Scene-Anchored 3D Volumetric Spells (interiors):
+        const float4 intFireVol = evalVolumetricFirePlumes(eye, w, dist, curZ, px, true);
         float2 intSpellLensPx = 0.0f.xx;
-        const float3 intSpellAdd = evalVolumetricSpells3D(eye, w, dist, px, intSpellLensPx);
+        const float3 intSpellAdd = evalVolumetricSpells3D(Lit, Depth, Lin, eye, w, dist, curZ, px, intSpellLensPx);
         if (dot(intSpellLensPx, intSpellLensPx) > 0.002f) {
             const float2 lensUvI = clamp(uv + intSpellLensPx * dims.zw, 0.002f.xx, 0.998f.xx);
             const float dLensI = Depth.SampleLevel(Lin, lensUvI, 0.0f);
             if (dLensI >= d - 0.002f) { lit.rgb = lerp(lit.rgb, Lit.SampleLevel(Lin, lensUvI, 0.0f).rgb, 0.65f); }
         }
-        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.34f + intFireAdd + intSpellAdd, lit.a);
+        const float3 intScene = lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.34f + intSpellAdd;
+        return float4(intScene * intFireVol.a + intFireVol.rgb, lit.a);
     }
     const float T = (flags.x & FLAG_FOG_REPLACES) != 0u ? exp(-sigma * tEnd) : 1.0f;
     return float4(lit.rgb * T + scatter, lit.a);

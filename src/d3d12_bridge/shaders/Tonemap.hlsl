@@ -431,20 +431,26 @@ float4 main(In i) : SV_Target {
         const float3 halation = float3(1.12f, 0.36f, 0.08f) * (warmMask * (saturate((bloomLum - 1.55f) * 0.35f) * 0.08f + saturate((hLumIn - 1.55f) * 0.30f) * 0.055f))
                               + float3(1.00f, 0.14f, 0.04f) * (warmMask * saturate((hLumOut - 1.75f) * 0.28f) * 0.045f);
         float3 anaAcc = 0.0f.xxx;
-        [unroll] for (int ai = 1; ai <= 6; ai++) {
-            const float dx = float(ai) * 3.2f * bpx.x;
-            const float aw = 1.0f / float(ai + 1);
-            const float3 bL = max(Bloom.Sample(S0, saturate(suv - float2(dx, 0.0f))).rgb - 2.35f.xxx, 0.0f.xxx);
-            const float3 bR = max(Bloom.Sample(S0, saturate(suv + float2(dx, 0.0f))).rgb - 2.35f.xxx, 0.0f.xxx);
-            anaAcc += (bL + bR) * (0.5f * aw);
+        // Suppress horizontal anamorphic lens bar smoothly on indoor scenes (zero glare bars across tavern wall candles!)
+        // and raise threshold to >4.2 so only genuine intense outdoor sun glints / explosions streak:
+        const float anaOutdoorGate = isIntExp ? 0.0f : smoothstep(0.11f, 0.24f, avg);
+        if (anaOutdoorGate > 0.01f) {
+            [unroll] for (int ai = 1; ai <= 6; ai++) {
+                const float dx = float(ai) * 3.2f * bpx.x;
+                const float aw = 1.0f / float(ai + 1);
+                const float3 bL = max(Bloom.Sample(S0, saturate(suv - float2(dx, 0.0f))).rgb - 4.25f.xxx, 0.0f.xxx);
+                const float3 bR = max(Bloom.Sample(S0, saturate(suv + float2(dx, 0.0f))).rgb - 4.25f.xxx, 0.0f.xxx);
+                anaAcc += (bL + bR) * (0.5f * aw);
+            }
         }
-        // Subtle neutral-warm cinema anamorphic streak ONLY on true >2.35 HDR peaks (eliminates bright ice/snow streaking!).
-        const float3 anamorphic = anaAcc * float3(0.88f, 0.92f, 1.00f) * 0.022f;
+        // Subtle neutral-warm cinema anamorphic streak ONLY on intense >4.25 outdoor HDR peaks:
+        const float3 anamorphic = anaAcc * float3(0.88f, 0.92f, 1.00f) * (0.022f * anaOutdoorGate);
         ovAdd += (halation + anamorphic) * clamp(RQ.w, 0.0f, 2.5f);
     }
     if ((ovMask & 4u) != 0u) {
         // Layer 3: Optical Lens Transport Ghosts + Aperture Starburst strictly on genuine >2.45 HDR peaks
         // (sun disc, roaring fireballs, spells — eliminates prismatic blue/orange ring halos inside bright ice caves!).
+        const float starOutdoorGate = isIntExp ? 0.0f : smoothstep(0.11f, 0.24f, avg);
         const float2 cVec = suv - 0.5f.xx;
         const float cDist = length(cVec);
         const float centerClear = smoothstep(0.10f, 0.28f, cDist);
@@ -467,15 +473,17 @@ float4 main(In i) : SV_Target {
         const float2 haloDir = cDist > 1.0e-4f ? cVec / cDist : float2(0.0f, 1.0f);
         const float3 haloCol = max(Bloom.Sample(S0, saturate(0.5f.xx - haloDir * 0.22f)).rgb - 2.65f.xxx, 0.0f.xxx);
         float3 starAcc = 0.0f.xxx;
-        static const float2 kStarDir[3] = { float2(1.0f, 0.0f), float2(0.5f, 0.866025f), float2(-0.5f, 0.866025f) };
-        [unroll] for (int si = 0; si < 3; ++si) {
-            [unroll] for (int st = 1; st <= 3; ++st) {
-                const float2 sOff = kStarDir[si] * (bTex * float(st) * 3.8f);
-                const float wS = 1.0f / float(st + 1);
-                const float3 sA = max(Bloom.Sample(S0, saturate(suv + sOff)).rgb - 2.50f.xxx, 0.0f.xxx);
-                const float3 sB = max(Bloom.Sample(S0, saturate(suv - sOff)).rgb - 2.50f.xxx, 0.0f.xxx);
-                const float3 sTint = si == 0 ? float3(1.03f, 0.99f, 0.96f) : (si == 1 ? float3(0.97f, 1.01f, 1.03f) : float3(1.01f, 0.98f, 1.01f));
-                starAcc += (sA + sB) * sTint * (wS * 0.055f);
+        if (starOutdoorGate > 0.01f) {
+            static const float2 kStarDir[3] = { float2(1.0f, 0.0f), float2(0.5f, 0.866025f), float2(-0.5f, 0.866025f) };
+            [unroll] for (int si = 0; si < 3; ++si) {
+                [unroll] for (int st = 1; st <= 3; ++st) {
+                    const float2 sOff = kStarDir[si] * (bTex * float(st) * 3.8f);
+                    const float wS = 1.0f / float(st + 1);
+                    const float3 sA = max(Bloom.Sample(S0, saturate(suv + sOff)).rgb - 3.85f.xxx, 0.0f.xxx);
+                    const float3 sB = max(Bloom.Sample(S0, saturate(suv - sOff)).rgb - 3.85f.xxx, 0.0f.xxx);
+                    const float3 sTint = si == 0 ? float3(1.03f, 0.99f, 0.96f) : (si == 1 ? float3(0.97f, 1.01f, 1.03f) : float3(1.01f, 0.98f, 1.01f));
+                    starAcc += (sA + sB) * sTint * (wS * 0.055f * starOutdoorGate);
+                }
             }
         }
         ovAdd += min((lensAcc * 0.022f + haloCol * 0.010f * centerClear * saturate(1.0f - cDist * 1.35f) + starAcc) * clamp(RQ.w, 0.0f, 2.5f), 0.16f.xxx);

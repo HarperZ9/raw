@@ -287,12 +287,16 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         // Initialize RAW-LUMEN Bindless Heap, RAW-MESH AS+MS Host, Split-Submit Async Compute & ExecuteIndirect Batcher:
         const bool bindOk = m->bindless.Init(m->dev12.Get());
         std::string meshErr;
-        const bool meshOk = m->meshHost.Init(m->dev12.Get(), &meshErr);
+        const bool meshInitOk = m->meshHost.Init(m->dev12.Get(), &meshErr);
+        const bool meshOk = m->meshHost.Ready();
+        const bool terrainOk = m->meshHost.TerrainReady();
         const bool asyncOk = m->asyncCompute.Init(m->dev12.Get());
         const bool indOk = m->indirect.Init(m->dev12.Get(), meshOk);
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s)",
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s)",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
-               (!meshOk && !meshErr.empty()) ? (" (" + meshErr + ")").c_str() : "",
+               terrainOk ? "READY" : "off",
+               m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
+               (!meshInitOk && !meshErr.empty()) ? (" (" + meshErr + ")").c_str() : "",
                asyncOk ? "READY" : "off", indOk ? "READY" : "off",
                m->indirect.SupportsIndirectMesh() ? "YES" : "no");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
@@ -301,10 +305,26 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
             m->materialGpuRecords = matReg.BuildGpuBuffer();
             raw::worldgen::StreamConfig wcfg{};
             wcfg.vramBudgetBytes = 128ull * 1024ull * 1024ull;
-            wcfg.maxMeshletTris = 64u;
-            wcfg.showcaseMode = false; // auto-activates near/beyond Tamriel borders (|x|>185k or |y|>145k)
+            wcfg.lod0RadiusChunks = 2;
+            wcfg.lod1RadiusChunks = 3;
+            wcfg.lod2RadiusChunks = 4;
+            wcfg.lod3RadiusChunks = 6;
+            wcfg.maxLoadsPerFrame = 4u;
+            wcfg.maxMeshletTris = 126u; // Native RawTerrainWorld.hlsl 64v/126t meshlets
+            wcfg.showcaseMode = false;  // auto-activates near/beyond Tamriel borders
+            wcfg.frontierActivationMarginU = 24576.0f;
+            wcfg.terrain.border.enabled = true;
+            wcfg.terrain.border.halfExtentX = 148000.0f;
+            wcfg.terrain.border.halfExtentY = 132000.0f;
+            wcfg.terrain.border.blendApronU = 16384.0f;
+            wcfg.terrain.border.tamrielEdgeBaseZ = -1800.0f;
+            wcfg.useCustomBorderBox = true;
+            wcfg.borderMinX = -148000.0f;
+            wcfg.borderMaxX =  148000.0f;
+            wcfg.borderMinY = -118000.0f;
+            wcfg.borderMaxY =  132000.0f;
             const bool worldOk = m->worldShowcase.Init(wcfg);
-            m->log("[D3D12Bridge] Physical Materials & Frontier WorldGen: %zu measured 64B GPU materials (8 families), WorldShowcase=%s (128MB cap)",
+            m->log("[D3D12Bridge] Physical Materials & Frontier WorldGen: %zu measured 64B GPU materials (8 families), WorldShowcase=%s (128MB cap, Tamriel box [-148k..148k]x[-118k..132k], margin 24.5k)",
                    m->materialGpuRecords.size(), worldOk ? "READY" : "off");
         }
         if (meshOk) {
@@ -390,6 +410,8 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->streamedTerrainGpu.clear();
+    m->meshHost.Shutdown();
     m->pass.reset();   // before the device and the textures it borrows
     m->rt.reset();
     LogFn log = m->log;

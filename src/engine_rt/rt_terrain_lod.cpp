@@ -2,15 +2,20 @@
 // Original work, MIT.
 #include "rt_terrain_lod.h"
 
+#include <Zydis/Zydis.h>
+
 #ifndef RAW_SIM_PURE_TEST
+#include "rt_detour.h"
 #include "rt_forensics.h"
 #include "rt_memory_guards.h"
+#include "rt_patch.h"
 #include "rt_version.h"
 #include "rt_view.h"
 #include <windows.h>
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -214,6 +219,132 @@ TerrainBorderAudit AuditAndRepairCellGrid(std::vector<CellTerrainSample>& cells,
     return audit;
 }
 
+TfcTvdtPatchCheck VerifyTfcTvdtBranchSite(const uint8_t* code, size_t maxBytes,
+                                          uint32_t branchOff, uint32_t bypassSetOff) {
+    TfcTvdtPatchCheck out{};
+    if (!code || branchOff < 11u || bypassSetOff <= branchOff + 2u) return out;
+    if (static_cast<size_t>(bypassSetOff) + 7u > maxBytes) return out;
+    const int32_t patchDelta = static_cast<int32_t>(bypassSetOff) - static_cast<int32_t>(branchOff + 2u);
+    if (patchDelta <= 0 || patchDelta > 127) return out;
+
+    ZydisDecoder dec;
+    ZydisDecoderInit(&dec, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
+    ZydisDecodedInstruction insn{};
+    ZydisDecodedOperand ops[ZYDIS_MAX_OPERAND_COUNT]{};
+
+    // 1) [branchOff - 11]: mov rax, qword ptr [rcx + 0xD0] (loads PlayerCamera::cameraStates[3] == FreeCameraState)
+    if (!ZYAN_SUCCESS(ZydisDecoderDecodeFull(&dec, code + branchOff - 11u, maxBytes - (branchOff - 11u), &insn, ops))) {
+        return out;
+    }
+    if (insn.length != 7u || insn.mnemonic != ZYDIS_MNEMONIC_MOV || insn.operand_count_visible < 2u) return out;
+    if (ops[0].type != ZYDIS_OPERAND_TYPE_REGISTER || ops[0].reg.value != ZYDIS_REGISTER_RAX) return out;
+    if (ops[1].type != ZYDIS_OPERAND_TYPE_MEMORY || ops[1].mem.base != ZYDIS_REGISTER_RCX ||
+        ops[1].mem.index != ZYDIS_REGISTER_NONE || ops[1].size != 64u ||
+        !ops[1].mem.disp.has_displacement || ops[1].mem.disp.value != 0xD0) {
+        return out;
+    }
+
+    // 2) [branchOff - 4]: cmp qword ptr [rcx + 0x28], rax (compares PlayerCamera::currentState == freeState)
+    if (!ZYAN_SUCCESS(ZydisDecoderDecodeFull(&dec, code + branchOff - 4u, maxBytes - (branchOff - 4u), &insn, ops))) {
+        return out;
+    }
+    if (insn.length != 4u || insn.mnemonic != ZYDIS_MNEMONIC_CMP || insn.operand_count_visible < 2u) return out;
+    if (ops[0].type != ZYDIS_OPERAND_TYPE_MEMORY || ops[0].mem.base != ZYDIS_REGISTER_RCX ||
+        ops[0].mem.index != ZYDIS_REGISTER_NONE || ops[0].size != 64u ||
+        !ops[0].mem.disp.has_displacement || ops[0].mem.disp.value != 0x28) {
+        return out;
+    }
+    if (ops[1].type != ZYDIS_OPERAND_TYPE_REGISTER || ops[1].reg.value != ZYDIS_REGISTER_RAX) return out;
+
+    // 3) [branchOff]: je rel8 (74 XX) skipping past bypassSetOff (+7) instead of jumping into it
+    if (!ZYAN_SUCCESS(ZydisDecoderDecodeFull(&dec, code + branchOff, maxBytes - branchOff, &insn, ops))) {
+        return out;
+    }
+    if (insn.length != 2u || insn.mnemonic != ZYDIS_MNEMONIC_JZ || code[branchOff] != 0x74u) return out;
+    const uint8_t origRel8 = code[branchOff + 1u];
+    const int32_t origTarget = static_cast<int32_t>(branchOff + 2u) + static_cast<int32_t>(static_cast<int8_t>(origRel8));
+    if (origTarget != static_cast<int32_t>(bypassSetOff + 7u)) return out;
+
+    // 4) [bypassSetOff]: mov byte ptr [rip + disp32], 1 (sets global:TerrainBypassTVDT = 1)
+    if (!ZYAN_SUCCESS(ZydisDecoderDecodeFull(&dec, code + bypassSetOff, maxBytes - bypassSetOff, &insn, ops))) {
+        return out;
+    }
+    if (insn.length != 7u || insn.mnemonic != ZYDIS_MNEMONIC_MOV || insn.operand_count_visible < 2u) return out;
+    if (ops[0].type != ZYDIS_OPERAND_TYPE_MEMORY || ops[0].mem.base != ZYDIS_REGISTER_RIP || ops[0].size != 8u) return out;
+    if (ops[1].type != ZYDIS_OPERAND_TYPE_IMMEDIATE || ops[1].imm.value.u != 1ull) return out;
+
+    out.valid = true;
+    out.origRel8 = origRel8;
+    out.patchedRel8 = static_cast<uint8_t>(patchDelta);
+    out.origTargetOff = static_cast<uint32_t>(origTarget);
+    out.patchTargetOff = bypassSetOff;
+    return out;
+}
+
+TfcLodRefreshDecision EvaluateTfcLodRefreshPolicy(bool isFreeCam, bool isExterior, bool inMenu,
+                                                  const float camPos[3], TfcLodRefreshState& state,
+                                                  float travelThresholdU, uint32_t minFrameInterval) {
+    TfcLodRefreshDecision dec{};
+    const bool posOk = camPos != nullptr &&
+                       std::isfinite(camPos[0]) && std::isfinite(camPos[1]) && std::isfinite(camPos[2]);
+    const float thresh = std::max(512.0f, travelThresholdU);
+    const uint32_t minGap = std::max(1u, minFrameInterval);
+
+    if (!isExterior || inMenu) {
+        state.wasFreeCam = isFreeCam;
+        return dec;
+    }
+
+    if (isFreeCam) {
+        ++state.framesInTfc;
+        ++state.framesSinceRefresh;
+        if (!state.wasFreeCam) {
+            // Immediate full-tree refresh on tfc entry: instantly un-culls every LOD4/8 chunk that was TVDT-culled!
+            dec.forceFullUpdate = true;
+            dec.isEntry = true;
+            ++state.entryRefreshes;
+            state.framesSinceRefresh = 0u;
+            if (posOk) {
+                state.lastRefreshPos[0] = camPos[0];
+                state.lastRefreshPos[1] = camPos[1];
+                state.lastRefreshPos[2] = camPos[2];
+                state.hasAnchor = true;
+            }
+        } else if (posOk && state.framesSinceRefresh >= minGap) {
+            if (!state.hasAnchor) {
+                state.lastRefreshPos[0] = camPos[0];
+                state.lastRefreshPos[1] = camPos[1];
+                state.lastRefreshPos[2] = camPos[2];
+                state.hasAnchor = true;
+            } else {
+                const float dx = camPos[0] - state.lastRefreshPos[0];
+                const float dy = camPos[1] - state.lastRefreshPos[1];
+                const float dz = camPos[2] - state.lastRefreshPos[2];
+                const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+                if (dist >= thresh) {
+                    dec.forceFullUpdate = true;
+                    dec.isTravel = true;
+                    ++state.travelRefreshes;
+                    state.framesSinceRefresh = 0u;
+                    state.lastRefreshPos[0] = camPos[0];
+                    state.lastRefreshPos[1] = camPos[1];
+                    state.lastRefreshPos[2] = camPos[2];
+                }
+            }
+        }
+    } else if (state.wasFreeCam) {
+        // Immediate single full-tree refresh on tfc exit to restore normal player-cell LOD state cleanly.
+        dec.forceFullUpdate = true;
+        dec.isExit = true;
+        ++state.exitRefreshes;
+        state.framesSinceRefresh = 0u;
+        state.hasAnchor = false;
+    }
+
+    state.wasFreeCam = isFreeCam;
+    return dec;
+}
+
 #ifndef RAW_SIM_PURE_TEST
 namespace {
 
@@ -255,6 +386,27 @@ uint32_t kGlobCachedGrids = 0;
 uint32_t kGlobLandPoolFree = 0;
 uint32_t kGlobLandPoolActive = 0;
 
+// Wave 38 binary-verified tfc LOD4 void-guard RVAs & state:
+uint32_t kPlayerCameraSingleton = 0;
+uint32_t kUiSingleton = 0;
+uint32_t kFnTerrainMgrUpdate = 0;
+uint32_t kSiteTfcTvdtBranch = 0;
+uint32_t kSiteTfcTvdtBypassSet = 0;
+uint32_t kGlobBypassTvdt = 0;
+uint32_t kOffTesInteriorCell = 0xC0u;
+uint32_t kOffCamCurrentState = 0x28u;
+uint32_t kOffCamFreeState = 0xD0u;
+
+using TerrainMgrUpdateFn = uint64_t (*)(void* mgr, const float* pos, uint32_t* flags);
+TerrainMgrUpdateFn g_origTerrainMgrUpdate = nullptr;
+bool g_tfcTvdtPatchActive = false;
+bool g_tfcUpdateDetourActive = false;
+std::string g_initStatus;
+TfcLodRefreshState g_tfcRefreshState{};
+std::atomic<uint32_t> g_tfcFullRefreshCount{0};
+std::atomic<uint8_t> g_tfcLiveActive{0};
+std::atomic<uint8_t> g_tfcBypassLive{0};
+
 template <class T>
 T ReadAt(const uint8_t* p, uint32_t off) {
     T v{};
@@ -265,6 +417,108 @@ T ReadAt(const uint8_t* p, uint32_t off) {
 bool ValidHeapPtr(const void* p) {
     const uintptr_t a = reinterpret_cast<uintptr_t>(p);
     return a >= 0x10000ull && a < 0x00007FFFFFFFFFFFull && (a & 0x7ull) == 0;
+}
+
+bool VerifyTfcBranchSeh(const uint8_t* base, uint32_t branchRva, uint32_t bypassSetRva, TfcTvdtPatchCheck* out) {
+    __try {
+        if (!base || branchRva < 16u || bypassSetRva <= branchRva + 2u) return false;
+        const uint32_t winStart = branchRva - 16u;
+        const uint32_t winEnd = bypassSetRva + 16u;
+        const size_t winLen = static_cast<size_t>(winEnd - winStart);
+        volatile uint8_t p0 = base[winStart];
+        volatile uint8_t p1 = base[winEnd - 1u];
+        (void)p0; (void)p1;
+        *out = VerifyTfcTvdtBranchSite(base + winStart, winLen, branchRva - winStart, bypassSetRva - winStart);
+        return out->valid;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+bool VerifyUpdatePrologueSeh(const uint8_t* base, uint32_t fnRva) {
+    // Verified SkyrimSE 1.7.104 BGSTerrainManager::Update (0x5160C0) exact 14-byte clean prologue:
+    //   push rbx; push rbp; push rdi; sub rsp, 0x50; cmp byte ptr [rcx], 0; mov rbx, r8
+    static constexpr uint8_t kExpected[14] = {
+        0x40, 0x53, 0x55, 0x57, 0x48, 0x83, 0xEC, 0x50, 0x80, 0x39, 0x00, 0x49, 0x8B, 0xD8
+    };
+    __try {
+        if (!base || !fnRva) return false;
+        return std::memcmp(base + fnRva, kExpected, sizeof kExpected) == 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+void ProbeTfcHookContextSeh(const float* pos, bool* outFreeCam, bool* outExterior, bool* outMenu, float outPos[3]) {
+    *outFreeCam = false;
+    *outExterior = false;
+    *outMenu = false;
+    outPos[0] = outPos[1] = outPos[2] = 0.0f;
+    __try {
+        if (!g_base) return;
+        if (kTesSingleton) {
+            const uint8_t* tes = ReadAt<const uint8_t*>(g_base, kTesSingleton);
+            if (ValidHeapPtr(tes)) {
+                const uint8_t* interiorCell = ReadAt<const uint8_t*>(tes, kOffTesInteriorCell);
+                *outExterior = (interiorCell == nullptr);
+            }
+        }
+        if (kPlayerCameraSingleton) {
+            const uint8_t* pcam = ReadAt<const uint8_t*>(g_base, kPlayerCameraSingleton);
+            if (ValidHeapPtr(pcam)) {
+                const uint8_t* curState = ReadAt<const uint8_t*>(pcam, kOffCamCurrentState);
+                const uint8_t* freeState = ReadAt<const uint8_t*>(pcam, kOffCamFreeState);
+                *outFreeCam = (curState != nullptr && freeState != nullptr && curState == freeState);
+            }
+        }
+        if (kUiSingleton) {
+            const uint8_t* ui = ReadAt<const uint8_t*>(g_base, kUiSingleton);
+            if (ValidHeapPtr(ui)) {
+                const uint32_t numPauses = ReadAt<uint32_t>(ui, 0x160u);
+                *outMenu = (numPauses > 0u && numPauses < 64u);
+            }
+        }
+        if (pos) {
+            outPos[0] = pos[0];
+            outPos[1] = pos[1];
+            outPos[2] = pos[2];
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        *outFreeCam = false;
+        *outExterior = false;
+    }
+}
+
+uint8_t ReadBypassTvdtByteSeh() {
+    __try {
+        if (!g_base || !kGlobBypassTvdt) return 0u;
+        return g_base[kGlobBypassTvdt];
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0u;
+    }
+}
+
+uint64_t HookTerrainManagerUpdate(void* mgr, const float* pos, uint32_t* flags) {
+    if (!g_origTerrainMgrUpdate) return 0ull;
+    bool isFreeCam = false, isExterior = false, inMenu = false;
+    float camPos[3] = {0.0f, 0.0f, 0.0f};
+    ProbeTfcHookContextSeh(pos, &isFreeCam, &isExterior, &inMenu, camPos);
+    g_tfcLiveActive.store(isFreeCam ? 1u : 0u, std::memory_order_relaxed);
+
+    const TfcLodRefreshDecision dec = EvaluateTfcLodRefreshPolicy(
+        isFreeCam, isExterior, inMenu, pos ? camPos : nullptr, g_tfcRefreshState, 4096.0f, 8u);
+
+    uint64_t ret = 0ull;
+    if (dec.forceFullUpdate && flags != nullptr && ((*flags) & 1u) == 0u) {
+        uint32_t boostedFlags = (*flags) | 1u;
+        g_tfcFullRefreshCount.fetch_add(1u, std::memory_order_relaxed);
+        ret = g_origTerrainMgrUpdate(mgr, pos, &boostedFlags);
+    } else {
+        ret = g_origTerrainMgrUpdate(mgr, pos, flags);
+    }
+
+    g_tfcBypassLive.store(ReadBypassTvdtByteSeh(), std::memory_order_relaxed);
+    return ret;
 }
 
 float ResolveWorldDefaultFloat(const uint8_t* ws, uint32_t fieldOff, float fallback) {
@@ -474,10 +728,91 @@ void TerrainLodInit(const Image& img) {
     kGlobLandPoolFree   = Addr("global:LoadedLandPoolCount");
     kGlobLandPoolActive = Addr("global:LoadedLandPoolActive");
 
+    kPlayerCameraSingleton = Addr("PlayerCamera::Singleton");
+    kUiSingleton           = Addr("UI::Singleton");
+    kFnTerrainMgrUpdate    = Addr("fn:BGSTerrainManager::Update");
+    kSiteTfcTvdtBranch     = Addr("site:TerrainManager::TfcTvdtBranch");
+    kSiteTfcTvdtBypassSet  = Addr("site:TerrainManager::TfcTvdtBypassSet");
+    kGlobBypassTvdt        = Addr("global:TerrainBypassTVDT");
+    if (uint32_t v = Off("off:TES::interiorCell"))        kOffTesInteriorCell = v;
+    if (uint32_t v = Off("off:PlayerCamera::currentState")) kOffCamCurrentState = v;
+    if (uint32_t v = Off("off:PlayerCamera::freeState"))  kOffCamFreeState = v;
+
+    g_tfcTvdtPatchActive = false;
+    g_tfcUpdateDetourActive = false;
+    g_origTerrainMgrUpdate = nullptr;
+    g_tfcRefreshState = {};
+    g_tfcFullRefreshCount.store(0u, std::memory_order_relaxed);
+    g_tfcLiveActive.store(0u, std::memory_order_relaxed);
+    g_tfcBypassLive.store(0u, std::memory_order_relaxed);
+
+    // Wave 38: Fail-closed binary-verified tfc LOD4 void-guard installation:
+    //   1) Redirects 0x516201 (je 0x51624D -> je 0x516246) so FreeCameraState sets global:TerrainBypassTVDT=1
+    //      instead of skipping it and culling LOD4 terrain via PlayerCharacter->parentCell's TVDT bitmask.
+    //   2) Installs Zydis-checked detour on BGSTerrainManager::Update (0x5160C0) to promote incremental
+    //      1-node/frame updates to immediate full-quadtree refresh (flags |= 1) on tfc entry, exit, and travel.
+    std::string branchDiag = "disabled(fail-closed)";
+    std::string detourDiag = "disabled(fail-closed)";
+    if (AreBinaryOffsetsVerified() && MemoryGuardAllowLiveStructWrites() && img.base) {
+        if (kSiteTfcTvdtBranch && kSiteTfcTvdtBypassSet &&
+            img.InText(kSiteTfcTvdtBranch) && img.InText(kSiteTfcTvdtBypassSet)) {
+            TfcTvdtPatchCheck chk{};
+            if (VerifyTfcBranchSeh(img.base, kSiteTfcTvdtBranch, kSiteTfcTvdtBypassSet, &chk)) {
+                const uint8_t patchBytes[2] = {0x74u, chk.patchedRel8};
+                uint8_t* patchAddr = const_cast<uint8_t*>(img.base) + kSiteTfcTvdtBranch;
+                if (PatchWrite(patchAddr, patchBytes, sizeof patchBytes)) {
+                    g_tfcTvdtPatchActive = true;
+                    char b[96];
+                    std::snprintf(b, sizeof b, "0x%X(74 %02X->74 %02X)",
+                                  kSiteTfcTvdtBranch, chk.origRel8, chk.patchedRel8);
+                    branchDiag = b;
+                } else {
+                    branchDiag = "refused(PatchWrite failed)";
+                }
+            } else {
+                branchDiag = "refused(Zydis/byte mismatch - fail-closed)";
+            }
+        } else {
+            branchDiag = "skipped(site absent in version table)";
+        }
+
+        if (kFnTerrainMgrUpdate && img.InText(kFnTerrainMgrUpdate)) {
+            if (VerifyUpdatePrologueSeh(img.base, kFnTerrainMgrUpdate)) {
+                const std::string res = InstallDetour(
+                    img, kFnTerrainMgrUpdate,
+                    reinterpret_cast<void*>(&HookTerrainManagerUpdate),
+                    reinterpret_cast<void**>(&g_origTerrainMgrUpdate));
+                if (res.rfind("ok", 0) == 0 && g_origTerrainMgrUpdate != nullptr) {
+                    g_tfcUpdateDetourActive = true;
+                }
+                detourDiag = res;
+            } else {
+                detourDiag = "refused(prologue bytes mismatch - fail-closed)";
+            }
+        } else {
+            detourDiag = "skipped(fn absent in version table)";
+        }
+    }
+
+    {
+        char msg[320];
+        std::snprintf(msg, sizeof msg,
+                      "[TerrainLOD] tfc LOD4 void-guard %s: tvdt_branch_patch=%s update_detour=%s",
+                      (g_tfcTvdtPatchActive || g_tfcUpdateDetourActive) ? "active" : "inactive",
+                      branchDiag.c_str(), detourDiag.c_str());
+        g_initStatus = msg;
+    }
+
     std::lock_guard<std::mutex> lk(g_mu);
     g_tel = {};
     g_origin = {};
     g_tel.writesEnabled = AreBinaryOffsetsVerified() ? 1u : 0u;
+    g_tel.tfcTvdtPatchActive = g_tfcTvdtPatchActive ? 1u : 0u;
+    g_tel.tfcUpdateDetourActive = g_tfcUpdateDetourActive ? 1u : 0u;
+}
+
+std::string TerrainLodInitStatus() {
+    return g_initStatus;
 }
 
 void TerrainLodOnPresent() {
@@ -501,6 +836,9 @@ void TerrainLodOnPresent() {
         g_tel.rawWorldUlpU = locOrigin.rawWorldUlpU;
         g_tel.stabilizedUlpU = locOrigin.stabilizedUlpU;
         g_tel.precisionGain = locOrigin.precisionGain;
+        g_tel.tfcActive = g_tfcLiveActive.load(std::memory_order_relaxed);
+        g_tel.bypassTvdtLive = g_tfcBypassLive.load(std::memory_order_relaxed);
+        g_tel.tfcFullRefreshes = g_tfcFullRefreshCount.load(std::memory_order_relaxed);
         return;
     }
 
@@ -511,6 +849,11 @@ void TerrainLodOnPresent() {
     RawTerrainLodTelemetry next{};
     next.tickCount = tick;
     next.writesEnabled = writesAllowed ? 1u : 0u;
+    next.tfcTvdtPatchActive = g_tfcTvdtPatchActive ? 1u : 0u;
+    next.tfcUpdateDetourActive = g_tfcUpdateDetourActive ? 1u : 0u;
+    next.tfcActive = g_tfcLiveActive.load(std::memory_order_relaxed);
+    next.bypassTvdtLive = g_tfcBypassLive.load(std::memory_order_relaxed);
+    next.tfcFullRefreshes = g_tfcFullRefreshCount.load(std::memory_order_relaxed);
     std::memcpy(next.originWorld, locOrigin.originWorld, sizeof(next.originWorld));
     std::memcpy(next.localCamPos, locOrigin.localCamPos, sizeof(next.localCamPos));
     next.rawWorldUlpU = locOrigin.rawWorldUlpU;
@@ -553,6 +896,9 @@ void TerrainLodOnPresent() {
 }
 
 void TerrainLodShutdown() {
+    g_tfcTvdtPatchActive = false;
+    g_tfcUpdateDetourActive = false;
+    g_origTerrainMgrUpdate = nullptr;
     g_base = nullptr;
 }
 
@@ -562,7 +908,7 @@ std::string TerrainLodStatsJson() {
         std::lock_guard<std::mutex> lk(g_mu);
         t = g_tel;
     }
-    char buf[1024];
+    char buf[1280];
     std::snprintf(buf, sizeof buf,
                   "{\"cmd\":\"terrain_lod\",\"grid_length\":%u,\"grid_center\":[%d,%d],\"cells_loaded\":%u,"
                   "\"attached_cells\":%u,\"land_loaded\":%u,\"land_pool\":[%u,%u,37],"
@@ -572,7 +918,9 @@ std::string TerrainLodStatsJson() {
                   "\"origin_world\":[%.0f,%.0f,%.0f],\"local_cam\":[%.2f,%.2f,%.2f],"
                   "\"raw_ulp_u\":%.6f,\"stabilized_ulp_u\":%.6f,\"precision_gain\":%.1f,"
                   "\"lod_bands\":[%.0f,%.0f,%.0f,%.0f],\"band_anomaly\":%s,\"grids_desync\":%s,"
-                  "\"pool_overflow_risk\":%s,\"writes_enabled\":%s}",
+                  "\"pool_overflow_risk\":%s,\"writes_enabled\":%s,"
+                  "\"tfc_tvdt_patch\":%s,\"tfc_update_detour\":%s,\"tfc_active\":%s,"
+                  "\"bypass_tvdt_live\":%u,\"tfc_full_refreshes\":%u}",
                   t.gridLength, t.gridCenterX, t.gridCenterY, t.cellsLoaded,
                   t.attachedCells, t.landLoadedCells, t.landPoolFree, t.landPoolActive,
                   t.defaultLandHeight, t.defaultWaterHeight,
@@ -583,12 +931,15 @@ std::string TerrainLodStatsJson() {
                   t.rawWorldUlpU, t.stabilizedUlpU, t.precisionGain,
                   t.lodBandStarts[0], t.lodBandStarts[1], t.lodBandStarts[2], t.lodBandStarts[3],
                   t.hasBandAnomaly ? "true" : "false", t.gridsCacheDesync ? "true" : "false",
-                  t.landPoolOverflowRisk ? "true" : "false", t.writesEnabled ? "true" : "false");
+                  t.landPoolOverflowRisk ? "true" : "false", t.writesEnabled ? "true" : "false",
+                  t.tfcTvdtPatchActive ? "true" : "false", t.tfcUpdateDetourActive ? "true" : "false",
+                  t.tfcActive ? "true" : "false", t.bypassTvdtLive, t.tfcFullRefreshes);
     return buf;
 }
 
 #else
 void TerrainLodInit(const Image&) {}
+std::string TerrainLodInitStatus() { return "[TerrainLOD] pure_test"; }
 void TerrainLodOnPresent() {}
 void TerrainLodShutdown() {}
 std::string TerrainLodStatsJson() { return "{\"cmd\":\"terrain_lod\",\"mode\":\"pure_test\"}"; }

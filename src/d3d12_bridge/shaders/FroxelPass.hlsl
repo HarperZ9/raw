@@ -20,6 +20,7 @@ Texture2D<float4> FroxelIn     : register(t0);
 #include "LightingCommon.hlsli"
 #include "CloudCommon.hlsli"
 #include "RawProceduralNoise.hlsli"
+#include "RawWeatherAtmo.hlsli"
 Texture2D<float4> TransLut    : register(t1);
 Texture2D<float4> AtmoSkyView : register(t2);
 Texture2D<float4> FroxelPrev  : register(t3);
@@ -193,6 +194,22 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         // Dynamically lit 3D solar in-scattering: sunlit cloud gaps glow warm while shadowed ridges stay deep cool slate!
         const float sunInGain = tune2.z * lerp(0.36f, 0.16f, twilightW) * (1.0f - nightW * 0.78f) * (1.0f - overcastFr * 0.55f);
         inScat += ambInScat + syncSunFr * (sh * ph * sunInGain * moteBoost);
+        // Wave 38 Dynamic Mountain Fog, Valley Inversion Mist, Coastal Sea-Fog & Weather Curtains (RawWeatherAtmo.hlsli):
+        // Energy-conserving optical-depth-weighted injection into the 160x90x64 3D froxel grid!
+        const float wxTempC = lerp(8.0f, -6.0f, saturate(weather.z + smoothstep(55000.0f, 125000.0f, wp.y) * 0.65f));
+        const float4 dynWx = evalDynamicWeatherFroxelSample(
+            wp, farDir, beamDir, syncSunFr, ambInScat,
+            weather, float4(timeEnv.x, aElevF, timeEnv.z, timeEnv.w),
+            float4(cloudWind.xy, saturate(clouds.x), cloudWind.w),
+            float2(liveWaterZ, wxTempC),
+            physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w);
+        const float dynSig = dynWx.w * (0.38f * extNearRamp);
+        if (dynSig > 1.0e-7f) {
+            const float3 dynInScat = dynWx.rgb / max(dynWx.w, 1.0e-6f);
+            const float newSig = sigma + dynSig;
+            inScat = (inScat * sigma + dynInScat * (dynSig * lerp(0.55f, 1.0f, sh))) / max(newSig, 1.0e-7f);
+            sigma = newSig;
+        }
         // Blown Alpine Snow Spindrift Plumes (Daylight 2026-11-24 snow-smoke reference):
         // Wind-sheared ground-hugging snow wisps that curl off ridges in blizzards/high peaks and part around the player.
         const float snowForce = saturate(weather.z * 1.15f + smoothstep(3200.0f, 9500.0f, wp.z) * 0.45f);
@@ -228,14 +245,14 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                 const float dL = length(toL);
                 const float rL = lightPosR[li].w;
                 if (dL >= rL) { continue; }
-                // Clear near-camera & flame core so hearths, candles & torches never wrap faces/rooms in milky fog:
-                const float coreClear = isInt
-                    ? (smoothstep(65.0f, 210.0f, dL) * smoothstep(120.0f, 340.0f, rayDist))
-                    : (smoothstep(48.0f, 165.0f, dL) * smoothstep(55.0f, 220.0f, rayDist));
-                const float att = pow(saturate(1.0f - dL / rL), 2.2f) * coreClear;
+                // Soft, wide atmospheric local-light scatter (zero sharp sphere/donut halo around empty room-fill lights!):
+                const float rNorm = saturate(dL / max(rL, 1.0f));
+                const float softCore = 1.0f / (1.0f + pow(dL / max(rL * 0.32f, 52.0f), 2.0f));
+                const float nearRamp = isInt ? smoothstep(140.0f, 420.0f, rayDist) : smoothstep(75.0f, 260.0f, rayDist);
+                const float att = (1.0f - rNorm) * (1.0f - rNorm) * lerp(0.55f, 1.0f, softCore) * nearRamp;
                 const float cosL = dot(farDir, toL / max(dL, 1.0e-3f));
-                const float phL = min(froxelHG(cosL, isInt ? 0.50f : 0.46f) * (isInt ? 1.8f : 1.6f) + 0.20f, 1.5f);
-                const float intSmoke = isInt ? (0.78f + 0.44f * cNoise(wp * 0.0095f - float3(0.0f, 0.0f, camPosW.w * 0.16f))) : 1.0f;
+                const float phL = min(froxelHG(cosL, isInt ? 0.34f : 0.42f) * (isInt ? 1.15f : 1.45f) + 0.22f, 1.25f);
+                const float intSmoke = isInt ? (0.82f + 0.36f * cNoise(wp * 0.0085f - float3(0.0f, 0.0f, camPosW.w * 0.14f))) : 1.0f;
                 // Daylight Video Rule VL-1 ("light the weather at the lamp"): wind-slanted rain/snow flakes resolve
                 // inside warm lamp cones + Quake-style subtle procedural firelight flicker (25:Z7)!
                 float lampWeather = 1.0f;
@@ -257,7 +274,7 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                     const float3 sCoord = wp * 0.022f - float3(cloudWind.xy * camPosW.w * 0.002f, camPosW.w * 0.42f);
                     const float sWisp = smoothstep(0.45f, 0.88f, cNoise(sCoord) * 0.65f + cNoise(sCoord * 2.2f + 5.1f) * 0.35f);
                     const float coldS = saturate(weather.z * 1.25f + smoothstep(2400.0f, 4800.0f, wp.z) * 0.65f);
-                    steamBoost += sWisp * (1.0f - hSteam) * smoothstep(0.0f, 0.18f, hSteam) * coldS * 1.25f;
+                    steamBoost += sWisp * (1.0f - hSteam) * smoothstep(0.0f, 0.18f, hSteam) * coldS * 1.15f;
                 }
                 // Wave 35 GTA VI (@redorav) 4-Step Shadowed 3D Local-Light Froxels:
                 // Marches 4 depth-buffer shadow probes from froxel center toward the light so indoor torches/braziers
@@ -277,9 +294,13 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                     }
                     localVis = max(occF, 0.08f);
                 }
-                // Ensure nearby exterior local lights scatter visibly while keeping interior rooms crystal-crisp:
-                sigma = max(sigma, (isInt ? 0.000007f : 0.000020f) * att * intSmoke * lampWeather * steamBoost * lerp(0.35f, 1.0f, localVis));
-                inScat += min(lightColS[li].rgb * (att * phL * localVis * tune2.y * intSmoke * lampWeather * steamBoost * fireFlicker * (isInt ? 0.042f : 0.26f)), (isInt ? 0.032f : 0.32f).xxx);
+                // Never conjure artificial spherical fog blobs around empty interior room-fill lights;
+                // only boost exterior atmospheric density gently when weather/steam is actually present.
+                if (!isInt && (lampWeather > 1.02f || steamBoost > 1.02f)) {
+                    sigma = max(sigma, 0.000014f * att * lampWeather * steamBoost * lerp(0.35f, 1.0f, localVis));
+                }
+                const float fillRestraint = isInt ? (isWarmFire ? 0.022f : 0.011f) : (isWarmFire ? 0.16f : 0.10f);
+                inScat += min(lightColS[li].rgb * (att * phL * localVis * tune2.y * intSmoke * lampWeather * steamBoost * fireFlicker * fillRestraint), (isInt ? 0.018f : 0.20f).xxx);
             }
         }
     }

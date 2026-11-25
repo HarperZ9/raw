@@ -192,9 +192,18 @@ void copyRawVert(uint srcByte, uint dstByte) {
     }
 }
 
-// Wave 35: Deterministic, seam-free 5-mode gravity-coupled Airy/JONSWAP trochoidal 3D ocean surface
-// evaluated strictly from vertex XY so adjacent water cells stay 100% watertight while rolling in real 3D.
+// Wave 38: Deterministic, seam-free ocean/water vertex evaluator.
+// Inland/calm water (waterBeaufort <= 0.75) receives ZERO vertex displacement (zLiftU = 0, xyLiftU = 0)
+// so shallow creeks (e.g. Riverwood) never drop below the riverbed or sweep across rocks.
+// Coastal/ocean seas receive strictly gentle, upward-clamped (0..+2.4u, <= +-2.5u) rolling swells
+// that never plunge below the local bed level while keeping adjacent cells 100% watertight.
 void evalPhysicalWaterVertex(float3 pIn, out float3 pOut, out float3 nOut) {
+    if (waterBeaufort <= 0.75f) {
+        pOut = pIn;
+        nOut = float3(0.0f, 0.0f, 1.0f);
+        return;
+    }
+
     float gPhys = clamp(waterGravity, 1.0f, 30.0f);
     float2 sDir = float2(waterSwellX, waterSwellY);
     float sLen = length(sDir);
@@ -202,13 +211,14 @@ void evalPhysicalWaterVertex(float3 pIn, out float3 pOut, out float3 nOut) {
     float2 sPerp = float2(-sDir.y, sDir.x);
 
     float2 xm = pIn.xy * 0.0142857f; // Skyrim units -> meters
-    // Calm inland pools/rivers (waterBeaufort <= 0.7) get subtle <= 0.9u surface motion so shallow stone basins
-    // never empty or flood dry masonry; open coastal seas roll smoothly up to +-4.5u + gentle +-6u tidal offset.
-    float ampScale = clamp(waterBeaufort * 0.11f, 0.0f, 1.15f);
+    float coastalFade = smoothstep(0.75f, 2.25f, waterBeaufort);
+    float stormFade   = smoothstep(4.5f, 6.8f, waterBeaufort);
+    float ampScale = lerp(clamp((waterBeaufort - 0.75f) * 0.08f, 0.0f, 0.75f),
+                          clamp((waterBeaufort - 1.0f) * 0.48f, 0.5f, 4.0f), stormFade) * coastalFade;
     float t = waterTimeSec;
 
     static const float kWaves[5] = { 0.224f, 0.370f, 0.571f, 1.083f, 1.963f };
-    static const float aWaves[5] = { 0.115f, 0.072f, 0.045f, 0.024f, 0.014f };
+    static const float aWaves[5] = { 0.068f, 0.044f, 0.028f, 0.015f, 0.009f };
     static const float cAng[5]   = { 1.000f, 0.899f, 0.829f, 0.530f, 0.438f };
     static const float sAng[5]   = { 0.000f, 0.438f, -0.559f, 0.848f, -0.899f };
 
@@ -223,14 +233,20 @@ void evalPhysicalWaterVertex(float3 pIn, out float3 pOut, out float3 nOut) {
         float phase = dot(d, xm) * k - omega * t + float(i) * 1.37f;
         float sp, cp;
         sincos(phase, sp, cp);
-        hMeters  += a * sp;
-        xyMeters -= d * (a * 0.14f * cp);
-        dh       += d * (a * k * cp);
+        // Calm/moderate coastal water uses strictly non-negative swell (never drops below bed level);
+        // open-ocean near-gale/storm seas (Beaufort >= 5.5) unlock full zero-mean trochoidal ocean swells.
+        hMeters  += a * lerp(0.5f * (sp + 1.0f), sp, stormFade);
+        xyMeters -= d * (a * lerp(0.10f, 0.35f, stormFade) * cp);
+        dh       += d * (a * lerp(0.5f, 1.0f, stormFade) * k * cp);
     }
 
-    float maxWaveZ = (waterBeaufort <= 0.75f) ? 0.95f : 4.5f;
-    float zLiftU = clamp(hMeters * 32.0f, -maxWaveZ, maxWaveZ) + clamp(waterTideU, -6.0f, 6.0f);
-    float2 xyLiftU = clamp(xyMeters * 18.0f, -1.5f.xx, 1.5f.xx);
+    float calmTideU  = clamp(waterTideU, 0.0f, 1.0f) * coastalFade;
+    float stormTideU = clamp(waterTideU, -16.0f, 16.0f) * coastalFade;
+    float zLiftCalm  = clamp(hMeters * 14.0f + calmTideU, 0.0f, 2.4f);
+    float zLiftStorm = clamp(hMeters * 32.0f + stormTideU, -22.0f, 24.0f);
+    float zLiftU     = lerp(zLiftCalm, zLiftStorm, stormFade);
+    float xyLim      = lerp(0.75f, 4.0f, stormFade);
+    float2 xyLiftU   = clamp(xyMeters * lerp(8.0f, 20.0f, stormFade), -xyLim.xx, xyLim.xx);
     pOut = float3(pIn.xy + xyLiftU, pIn.z + zLiftU);
     nOut = safeNorm(float3(-dh.x, -dh.y, 1.0f));
 }

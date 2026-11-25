@@ -16,6 +16,7 @@
 //   K                   : Cycle 9-Hold & 6-Faction Reputation / Bounty / Guard Posture Readout (RawFactionDiplomacy!)
 //   D                   : Cycle Procedural 3D Dungeon Explorer (Nordic Barrow -> Ice Cavern -> Dwemer Ruin -> Overworld)
 //   X                   : Toggle/Cycle Live Combat Skirmish Arena (220ms Timed-Parry, Melee, Shout, Arrows!)
+//   Q                   : Radiant Quest/Dialogue Journal (Generate, Persuade/Bribe/Intimidate & Advance!)
 //   F5 / F8             : CRC-32 Persistent World Quicksave (.bin + .json) / Quickload (RawWorldSerializer!)
 //   F9 / H              : Toggle Live GPU Telemetry HUD & 64-Sample Frame-Time Sparkline (RawOverlayHost!)
 //   F12                 : Capture Instant 24-Bit .bmp Screenshot (raw_viewer_shot_<N>.bmp)
@@ -76,6 +77,7 @@
 #include "RawCloudRaymarchHost.h"
 #include "RawPostCinematicHost.h"
 #include "RawGpuParticlesHost.h"
+#include "RawTsrUpscaleHost.h"
 #include "RawWeatherSim.h"
 #include "RawWorldShowcase.h"
 #include "RawDestructionEngine.h"
@@ -94,6 +96,7 @@
 #include "RawDungeonGen.h"
 #include "RawSkeletonAnimEngine.h"
 #include "RawCombatSandboxEngine.h"
+#include "RawQuestStoryEngine.h"
 #include "RawHydrologyGen.h"
 #include "RawAudioOutput.h"
 
@@ -496,6 +499,16 @@ public:
         if (!m_gpuParticlesOk) {
             std::printf("[Viewer] RawGpuParticlesHost warning: %s\n", err.c_str());
         }
+        err.clear();
+        TsrUpscaleDesc tsrD{};
+        tsrD.initialInputWidth   = m_width;
+        tsrD.initialInputHeight  = m_height;
+        tsrD.initialOutputWidth  = std::min(m_width * 2u, 1920u);
+        tsrD.initialOutputHeight = std::min(m_height * 2u, 1080u);
+        m_tsrUpscaleOk = m_tsrUpscale.Init(m_dev.Get(), tsrD, &err);
+        if (!m_tsrUpscaleOk) {
+            std::printf("[Viewer] RawTsrUpscaleHost warning: %s\n", err.c_str());
+        }
         UINT64 tsFreq = 0;
         if (SUCCEEDED(m_queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
             if (m_fluidOk)         m_fluidSim.SetTimestampFrequency(tsFreq);
@@ -512,6 +525,7 @@ public:
             if (m_cloudRaymarchOk) m_cloudRaymarch.SetTimestampFrequency(tsFreq);
             if (m_postCinematicOk) m_postCinematic.SetTimestampFrequency(tsFreq);
             if (m_gpuParticlesOk)  m_gpuParticles.SetTimestampFrequency(tsFreq);
+            if (m_tsrUpscaleOk)    m_tsrUpscale.SetTimestampFrequency(tsFreq);
         }
         m_settlementSim.Reset(202653u);
         m_settlementTelemetry   = m_settlementSim.ComputeWorldTelemetry();
@@ -693,6 +707,7 @@ public:
             m_navMeshDirty = true;
             m_hasPrevFroxelView = false;
             m_volFroxels.ResetHistory();
+            m_tsrUpscale.ResetHistory();
             BakeLocalNavMesh(float(lm.cellX) * raw::worldgen::kEsmCellSizeU,
                              float(lm.cellY) * raw::worldgen::kEsmCellSizeU,
                              true);
@@ -1713,6 +1728,7 @@ public:
         m_hasPrevFroxelView = false;
         m_volFroxels.ResetHistory();
         m_cloudRaymarch.ResetHistory();
+        m_tsrUpscale.ResetHistory();
 
         // Bake interior 3D NavMesh strictly below vaulted ceilings & above dungeon floors
         raw::worldgen::NavBakeConfig ncfg{};
@@ -1763,6 +1779,14 @@ public:
         m_hasPrevFroxelView = false;
         m_volFroxels.ResetHistory();
         m_cloudRaymarch.ResetHistory();
+        m_tsrUpscale.ResetHistory();
+        for (const auto& q : m_questStory.Quests()) {
+            if (q.lifecycle == raw::worldgen::QuestLifecycle::Active &&
+                q.archetype == raw::worldgen::QuestArchetype::ClearDungeon) {
+                (void)AdvanceQuestHappyPath(q.id);
+                break;
+            }
+        }
         std::printf("[Dungeon] Returned to Overworld (%s)\n",
                     m_mode == WorldMode::RiverwoodEsm ? ActiveLandmarkName() : "Frontier");
     }
@@ -2136,6 +2160,148 @@ public:
         return p;
     }
 
+    bool AdvanceQuestHappyPath(uint32_t questId)
+    {
+        const auto* q = m_questStory.FindQuest(questId);
+        if (!q || q->lifecycle != raw::worldgen::QuestLifecycle::Active) return false;
+        for (const auto& node : q->stages) {
+            if (node.stageId == q->currentStageId) {
+                for (uint32_t nextId : node.allowedNextStages) {
+                    bool isFail = false;
+                    for (const auto& cand : q->stages) {
+                        if (cand.stageId == nextId && cand.isTerminalFailure) {
+                            isFail = true;
+                            break;
+                        }
+                    }
+                    if (!isFail) {
+                        const bool ok = m_questStory.AdvanceQuestStage(questId, nextId, &m_diplomacy);
+                        if (ok) {
+                            m_questTelemetry     = m_questStory.ComputeTelemetry();
+                            m_diplomacyTelemetry = m_diplomacy.ComputeTelemetry();
+                        }
+                        return ok;
+                    }
+                }
+                break;
+            }
+        }
+        return false;
+    }
+
+    uint32_t GenerateLiveRadiantQuests(uint32_t maxNew = 3u)
+    {
+        raw::worldgen::RadiantQuestInputs in{};
+        in.settlement = &m_settlementSim;
+        in.diplomacy  = &m_diplomacy;
+        in.events     = &m_eventDirector;
+        in.dungeonOpt = !m_activeDungeon.rooms.empty() ? &m_activeDungeon : nullptr;
+        in.seed       = 202660u + m_questSeedCounter++;
+        const uint32_t added = m_questStory.GenerateRadiantQuests(in, maxNew);
+        m_questTelemetry     = m_questStory.ComputeTelemetry();
+        return added;
+    }
+
+    void CycleRadiantQuestJournal()
+    {
+        uint32_t activeId = 0u;
+        for (const auto& q : m_questStory.Quests()) {
+            if (q.lifecycle == raw::worldgen::QuestLifecycle::Active) {
+                activeId = q.id;
+                break;
+            }
+        }
+        if (activeId == 0u) {
+            const uint32_t added = GenerateLiveRadiantQuests(3u);
+            std::printf("[Quest] Generated %u radiant quests (active=%u completed=%u gold=%.0fg)\n",
+                        added, m_questTelemetry.activeCount, m_questTelemetry.completedCount,
+                        m_questTelemetry.totalGoldAwarded);
+            return;
+        }
+        static constexpr raw::worldgen::DialogueApproach kApproaches[3] = {
+            raw::worldgen::DialogueApproach::Persuade,
+            raw::worldgen::DialogueApproach::Bribe,
+            raw::worldgen::DialogueApproach::Intimidate,
+        };
+        const auto app = kApproaches[m_questDialogueCycle++ % 3u];
+        raw::worldgen::DialogueCheckInput dIn{};
+        dIn.approach          = app;
+        dIn.speechSkill       = 78.0f;
+        dIn.intimidationLevel = 42.0f;
+        dIn.availableGold     = 1200.0f;
+        dIn.difficultyDC      = 45.0f;
+        if (const auto* q = m_questStory.FindQuest(activeId)) {
+            if (const auto* st = m_diplomacy.GetHoldStanding(q->holdId)) {
+                dIn.holdReputation = st->reputation;
+            }
+        }
+        const auto dRes = m_questStory.EvaluateDialogueBranch(activeId, dIn, &m_diplomacy);
+        const bool adv  = AdvanceQuestHappyPath(activeId);
+        m_questTelemetry     = m_questStory.ComputeTelemetry();
+        m_diplomacyTelemetry = m_diplomacy.ComputeTelemetry();
+        std::printf("[Quest] #%u %s=%d (p=%.2f, +%.0fg) adv=%d | active=%u completed=%u totalGold=%.0fg\n",
+                    activeId, raw::worldgen::GetDialogueApproachName(app), int(dRes.succeeded),
+                    static_cast<double>(dRes.passProbability), static_cast<double>(dRes.bonusRewardGold),
+                    int(adv), m_questTelemetry.activeCount, m_questTelemetry.completedCount,
+                    m_questTelemetry.totalGoldAwarded);
+    }
+
+    struct QuestStoryProbe {
+        uint32_t generatedCount   = 0u;
+        uint32_t activeCount      = 0u;
+        uint32_t completedCount   = 0u;
+        bool     dialoguePassed   = false;
+        bool     stageCompleted   = false;
+        bool     journalJsonValid = false;
+        double   totalGoldAwarded = 0.0;
+    };
+
+    QuestStoryProbe RunQuestStorySelfTest()
+    {
+        QuestStoryProbe p{};
+        m_questStory.Clear();
+        p.generatedCount = GenerateLiveRadiantQuests(3u);
+        uint32_t qid = 0u;
+        for (const auto& q : m_questStory.Quests()) {
+            if (q.lifecycle == raw::worldgen::QuestLifecycle::Active) {
+                qid = q.id;
+                break;
+            }
+        }
+        if (qid != 0u) {
+            raw::worldgen::DialogueCheckInput dIn{};
+            dIn.approach          = raw::worldgen::DialogueApproach::Persuade;
+            dIn.speechSkill       = 82.0f;
+            dIn.intimidationLevel = 45.0f;
+            dIn.availableGold     = 1000.0f;
+            dIn.holdReputation    = 20.0f;
+            dIn.difficultyDC      = 40.0f;
+            const auto dRes = m_questStory.EvaluateDialogueBranch(qid, dIn, &m_diplomacy);
+            p.dialoguePassed = dRes.succeeded && std::isfinite(dRes.passProbability);
+
+            // Step quest cleanly through its verified DAG stages until terminal completion
+            for (int step = 0; step < 6; ++step) {
+                const auto* q = m_questStory.FindQuest(qid);
+                if (!q || q->lifecycle == raw::worldgen::QuestLifecycle::Completed) break;
+                if (!AdvanceQuestHappyPath(qid)) break;
+            }
+            if (const auto* q = m_questStory.FindQuest(qid)) {
+                p.stageCompleted = (q->lifecycle == raw::worldgen::QuestLifecycle::Completed);
+            }
+        }
+        m_questTelemetry     = m_questStory.ComputeTelemetry();
+        m_diplomacyTelemetry = m_diplomacy.ComputeTelemetry();
+        p.activeCount        = m_questTelemetry.activeCount;
+        p.completedCount     = m_questTelemetry.completedCount;
+        p.totalGoldAwarded   = m_questTelemetry.totalGoldAwarded;
+
+        const std::string j = m_questStory.ExportJournalJson();
+        p.journalJsonValid = (j.find("\"quests\"") != std::string::npos &&
+                              j.find("\"activeCount\"") != std::string::npos &&
+                              j.find("\xE2\x80\x94") == std::string::npos);
+        return p;
+    }
+
     struct SkeletonFootIkProbe {
         uint32_t evaluatedRigs     = 0u;
         float    maxQuatNormErr    = 0.0f;
@@ -2400,6 +2566,16 @@ public:
             m_combatTelemetry = m_combatSandbox.Step(
                 dtClamped, BuildCombatWeatherInput(wGpu, m_weatherPreset), physOpt,
                 m_navMesh.IsBaked() ? &m_navMesh : nullptr);
+            if (m_combatTelemetry.aliveHostiles == 0u && m_combatTelemetry.aliveAllies > 0u) {
+                for (const auto& q : m_questStory.Quests()) {
+                    if (q.lifecycle == raw::worldgen::QuestLifecycle::Active &&
+                        (q.archetype == raw::worldgen::QuestArchetype::BountyHunt ||
+                         q.archetype == raw::worldgen::QuestArchetype::EscortCaravan)) {
+                        (void)AdvanceQuestHappyPath(q.id);
+                        break;
+                    }
+                }
+            }
         }
         UpdateSkeletonRigsAndFootIk(dtClamped);
 
@@ -3028,6 +3204,24 @@ public:
             m_gpuParticlesRan = m_gpuParticles.Execute(m_dispCmd.Get(), gpp);
         }
 
+        // Live GPU RAW-TSR Temporal Super-Resolution + RCAS Sharpening (RawTsrUpscaleHost - 16th Live GPU Solver!)
+        if (m_tsrUpscaleOk) {
+            TsrUpscaleParams tp{};
+            ComputeHaltonJitter(static_cast<uint32_t>(m_frameCount & 0xFFFFFFFFull), tp.jitterX, tp.jitterY);
+            tp.nearZ         = nearZ;
+            tp.farZ          = farZ;
+            tp.historyWeight = 0.88f;
+            tp.varianceGamma = 1.15f;
+            tp.rcasSharpness = 0.65f;
+            tp.resetHistory  = (m_frameCount == 0ull);
+            const uint32_t tsrOutW = std::min(m_width * 2u, 1920u);
+            const uint32_t tsrOutH = std::min(m_height * 2u, 1080u);
+            m_tsrUpscaleRan = m_tsrUpscale.Execute(
+                m_dispCmd.Get(), m_hdrColor.Get(), m_depthIn.Get(), nullptr, nullptr,
+                m_width, m_height, tsrOutW, tsrOutH, tp,
+                D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COMMON);
+        }
+
         if (m_radOk && m_giEnabled) {
             m_radianceHost.ExecuteScreenGI(m_dispCmd.Get(), m_hdrColor.Get(), m_depthIn.Get(),
                                            m_width, m_height, 0.16f);
@@ -3157,6 +3351,10 @@ public:
         bool     gpuParticlesActive   = false;
         float    gpuParticlesMs       = 0.0f;
         uint32_t gpuParticleCount     = 0u;
+        bool     tsrUpscaleActive     = false;
+        float    tsrUpscaleMs         = 0.0f;
+        uint32_t tsrOutWidth          = 0u;
+        uint32_t tsrOutHeight         = 0u;
         uint32_t biomesFound          = 0u;
     };
 
@@ -3208,6 +3406,10 @@ public:
         out->gpuParticlesActive = m_gpuParticlesOk && m_gpuParticles.Ready() && m_gpuParticlesRan;
         out->gpuParticlesMs = m_gpuParticles.HasValidTiming() ? m_gpuParticles.GetLastTotalMs() : 0.0f;
         out->gpuParticleCount = m_gpuParticles.ParticleCount();
+        out->tsrUpscaleActive = m_tsrUpscaleOk && m_tsrUpscale.Ready() && m_tsrUpscaleRan;
+        out->tsrUpscaleMs = m_tsrUpscale.HasValidTiming() ? m_tsrUpscale.GetLastTotalMs() : 0.0f;
+        out->tsrOutWidth = m_tsrUpscale.OutputWidth();
+        out->tsrOutHeight = m_tsrUpscale.OutputHeight();
 
         const UINT hdrPitch  = (m_width * 8u + 255u) & ~255u;
         const UINT dispPitch = (m_width * 4u + 255u) & ~255u;
@@ -3351,6 +3553,8 @@ public:
         }
         m_cullInstUpload.Reset();
         m_cullInstBuf.Reset();
+        m_tsrUpscale.Shutdown();
+        m_questStory.Clear();
         m_gpuParticles.Shutdown();
         m_combatSandbox.Clear();
         m_combatActive = false;
@@ -3453,6 +3657,7 @@ public:
         const float cloudMs       = m_cloudRaymarch.HasValidTiming() ? m_cloudRaymarch.GetLastCloudMs() : 0.0f;
         const float postMs        = m_postCinematic.HasValidTiming() ? m_postCinematic.GetLastTotalMs() : 0.0f;
         const float prtMs         = m_gpuParticles.HasValidTiming() ? m_gpuParticles.GetLastTotalMs() : 0.0f;
+        const float tsrMs         = m_tsrUpscale.HasValidTiming() ? m_tsrUpscale.GetLastTotalMs() : 0.0f;
         const auto activeHid      = static_cast<raw::worldgen::HoldId>(m_activeHoldIdx % static_cast<uint32_t>(raw::worldgen::kHoldCount));
         const auto* activeHold    = m_settlementSim.GetHold(activeHid);
         const float holdGrain     = activeHold ? activeHold->price[static_cast<size_t>(raw::worldgen::CommodityKind::Grain)] : 0.0f;
@@ -3481,7 +3686,7 @@ public:
         }
         char buf[1536]{};
         std::snprintf(buf, sizeof(buf),
-                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms PCSS:%.3fms GTAO:%.3fms SSR:%.3fms AE:%.3fms Cloud:%.3fms POST:%.3fms PRT:%.3fms HUD:%.3fms | IK:%.1fu Cbt:%u/%u(P:%u) | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u | %s:%.1fg Car:%u(Snw:%u) Scarce:%s%s%s%s%s%s | Shards:%u",
+                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms PCSS:%.3fms GTAO:%.3fms SSR:%.3fms AE:%.3fms Cloud:%.3fms POST:%.3fms PRT:%.3fms TSR:%.3fms HUD:%.3fms | IK:%.1fu Cbt:%u/%u(P:%u) Qst:%uA/%uC(%.0fg) | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u | %s:%.1fg Car:%u(Snw:%u) Scarce:%s%s%s%s%s%s | Shards:%u",
                       m_walkMode ? "WALK" : "FLY",
                       fps, m_lastDrawnMeshlets, m_meshHost.TerrainUsesMeshShaders() ? "AS+MS" : "VS+PS",
                       locBuf, TimePresetName(m_timePreset), ActiveWeatherDisplayName(),
@@ -3499,11 +3704,15 @@ public:
                       cloudMs,
                       postMs,
                       prtMs,
+                      tsrMs,
                       m_overlayHost.HasValidTiming() ? m_overlayHost.GetLastOverlayMs() : 0.0f,
                       static_cast<double>(m_playerPose.pelvisDropZ),
                       m_combatTelemetry.aliveAllies,
                       m_combatTelemetry.aliveHostiles,
                       m_combatTelemetry.totalParries,
+                      m_questTelemetry.activeCount,
+                      m_questTelemetry.completedCount,
+                      m_questTelemetry.totalGoldAwarded,
                       m_ecoTelemetry.activeFireCells,
                       static_cast<double>(m_ecoTelemetry.totalSnowVolumeM3),
                       m_ecoTelemetry.blackIceCells,
@@ -3982,18 +4191,19 @@ private:
         const float cloudMs  = m_cloudRaymarch.HasValidTiming() ? m_cloudRaymarch.GetLastCloudMs() : 0.0f;
         const float postMs   = m_postCinematic.HasValidTiming() ? m_postCinematic.GetLastTotalMs() : 0.0f;
         const float prtMs    = m_gpuParticles.HasValidTiming() ? m_gpuParticles.GetLastTotalMs() : 0.0f;
+        const float tsrMs    = m_tsrUpscale.HasValidTiming() ? m_tsrUpscale.GetLastTotalMs() : 0.0f;
         std::memset(outHud.lines[2], 0, sizeof(outHud.lines[2]));
         std::snprintf(outHud.lines[2], sizeof(outHud.lines[2]), "GPU F:%.2f W:%.2f GI:%.2f XP:%.2f FX:%.2f PS:%.2f",
                       static_cast<double>(snap.fireMs), static_cast<double>(snap.waterMs),
                       static_cast<double>(snap.giMs), static_cast<double>(snap.xpbdMs),
                       static_cast<double>(froxMs), static_cast<double>(pcssMs));
         std::memset(outHud.lines[3], 0, sizeof(outHud.lines[3]));
-        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "AO:%.2f SR:%.2f CD:%.2f POST:%.2f PRT:%.3f LC:%.2f",
-                      static_cast<double>(gtaoMs),
-                      static_cast<double>(ssrMs + aeMs),
+        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "AO:%.2f CD:%.2f PS:%.2f PT:%.2f TSR:%.3f LC:%.2f",
+                      static_cast<double>(gtaoMs + ssrMs + aeMs),
                       static_cast<double>(cloudMs),
                       static_cast<double>(postMs),
                       static_cast<double>(prtMs),
+                      static_cast<double>(tsrMs),
                       static_cast<double>(lclustMs + hizMs + cullMs));
 
         const char* topEvName = m_eventDirector.ActiveEvents().empty()
@@ -4011,12 +4221,26 @@ private:
 
         const auto dipHid    = static_cast<raw::worldgen::HoldId>(m_diplomacyHoldIdx % static_cast<uint32_t>(raw::worldgen::kHoldCount));
         const auto* dipSt    = m_diplomacy.GetHoldStanding(dipHid);
+        const raw::worldgen::QuestInstance* activeQ = nullptr;
+        for (const auto& q : m_questStory.Quests()) {
+            if (q.lifecycle == raw::worldgen::QuestLifecycle::Active) { activeQ = &q; break; }
+        }
         std::memset(outHud.lines[7], 0, sizeof(outHud.lines[7]));
-        std::snprintf(outHud.lines[7], sizeof(outHud.lines[7]), "DIP %s %+.0f X%.2f | %s",
-                      raw::worldgen::GetHoldName(dipHid),
-                      dipSt ? static_cast<double>(dipSt->reputation) : 0.0,
-                      dipSt ? static_cast<double>(dipSt->merchantPriceMult) : 1.0,
-                      m_lastSaveStatus.empty() ? "F5=SAVE F8=LOAD" : m_lastSaveStatus.c_str());
+        if (activeQ) {
+            std::snprintf(outHud.lines[7], sizeof(outHud.lines[7]), "QST %uA/%uC %.18s S%u | %.0fg",
+                          m_questTelemetry.activeCount,
+                          m_questTelemetry.completedCount,
+                          activeQ->title.c_str(),
+                          activeQ->currentStageId,
+                          m_questTelemetry.totalGoldAwarded);
+        } else {
+            std::snprintf(outHud.lines[7], sizeof(outHud.lines[7]), "DIP %s %+.0f X%.2f | Q:%uC %.0fg",
+                          raw::worldgen::GetHoldName(dipHid),
+                          dipSt ? static_cast<double>(dipSt->reputation) : 0.0,
+                          dipSt ? static_cast<double>(dipSt->merchantPriceMult) : 1.0,
+                          m_questTelemetry.completedCount,
+                          m_questTelemetry.totalGoldAwarded);
+        }
         outHud.lineColorTag[7] = kOverlayColorCyan;
         outHud.lineCount       = 8u;
         outHud.enabled    = m_hudEnabled;
@@ -4423,6 +4647,8 @@ private:
     bool          m_postCinematicRan = false;
     bool          m_gpuParticlesOk = false;
     bool          m_gpuParticlesRan = false;
+    bool          m_tsrUpscaleOk = false;
+    bool          m_tsrUpscaleRan = false;
     std::string   m_adapterName;
 
     ComPtr<IDXGIFactory4>              m_factory;
@@ -4470,6 +4696,11 @@ private:
     RawCloudRaymarchHost               m_cloudRaymarch;
     RawPostCinematicHost               m_postCinematic;
     RawGpuParticlesHost                m_gpuParticles;
+    RawTsrUpscaleHost                  m_tsrUpscale;
+    raw::worldgen::RawQuestStoryEngine m_questStory;
+    raw::worldgen::QuestDirectorTelemetry m_questTelemetry{};
+    uint32_t                           m_questSeedCounter = 0u;
+    uint32_t                           m_questDialogueCycle = 0u;
     raw::worldgen::RawCombatSandboxEngine m_combatSandbox;
     raw::worldgen::CombatSandboxTelemetry m_combatTelemetry{};
     bool                               m_combatActive = false;
@@ -4649,6 +4880,7 @@ LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     case 'K': st->viewer->CycleDiplomacyInspect(); break;
                     case 'D': st->viewer->CycleDungeonExplorer(); break;
                     case 'X': st->viewer->ToggleOrTriggerCombatSkirmish(); break;
+                    case 'Q': st->viewer->CycleRadiantQuestJournal(); break;
                     case VK_F5: st->viewer->QuicksaveWorld(); break;
                     case VK_F8: st->viewer->QuickloadWorld(); break;
                     case 'H':
@@ -4726,7 +4958,7 @@ int main(int argc, char** argv)
     if (opt.showHelp) {
         std::printf(
             "RAW Interactive Real-Time Win32/DX12 Standalone Engine Viewer\n"
-            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, V startle wildlife, E economy +6h/cycle hold, O resolve/poll world event, K cycle hold/faction diplomacy, D cycle 3D dungeon explorer, X toggle/cycle combat skirmish+parry, F5/F8 quicksave/quickload, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
+            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, V startle wildlife, E economy +6h/cycle hold, O resolve/poll world event, K cycle hold/faction diplomacy, D cycle 3D dungeon explorer, X toggle/cycle combat skirmish+parry, Q radiant quest/dialogue journal, F5/F8 quicksave/quickload, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
             "CLI: [--headless-frames N] [--warp] [--debug] [--width W] [--height H] [--esm <Skyrim.esm>]\n");
         return 0;
     }
@@ -4760,6 +4992,7 @@ int main(int argc, char** argv)
         RawEngineViewer::DungeonExplorerProbe dungeonProbe{};
         RawEngineViewer::SkeletonFootIkProbe skelProbe{};
         RawEngineViewer::CombatSkirmishProbe combatProbe{};
+        RawEngineViewer::QuestStoryProbe questProbe{};
         bool teleportedToWhiterun = false;
         for (uint32_t f = 0; f < opt.headlessFrames; ++f) {
             if (f == 0u) {
@@ -4777,6 +5010,7 @@ int main(int argc, char** argv)
                 dungeonProbe    = viewer.RunDungeonExplorerSelfTest();
                 skelProbe       = viewer.RunSkeletonFootIkSelfTest();
                 combatProbe     = viewer.RunCombatSkirmishSelfTest();
+                questProbe      = viewer.RunQuestStorySelfTest();
             }
             if (f == opt.headlessFrames / 2u) {
                 if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {
@@ -4799,7 +5033,7 @@ int main(int argc, char** argv)
 
         RawEngineViewer::HeadlessAudit audit{};
         const bool rbOk = viewer.ReadbackHeadlessAudit(&audit);
-        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), pcss=%s (%.4fms), gtao=%s (main=%.4fms, den=%.4fms), ssr=%s (%.4fms), ae=%s (hist=%.4fms, adapt=%.4fms), cloud=%s (%.4fms), post=%s (%.4fms), prt=%s (%u p, %.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
+        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), pcss=%s (%.4fms), gtao=%s (main=%.4fms, den=%.4fms), ssr=%s (%.4fms), ae=%s (hist=%.4fms, adapt=%.4fms), cloud=%s (%.4fms), post=%s (%.4fms), prt=%s (%u p, %.4fms), tsr=%s (%ux%u, %.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
                     audit.usedMeshShaders ? "AS+MS+PS" : "VS+PS",
                     audit.drawnMeshlets, audit.activeShards, audit.biomesFound,
                     audit.radianceActive ? "ON" : "off", audit.radianceGiMs,
@@ -4815,6 +5049,7 @@ int main(int argc, char** argv)
                     audit.cloudRaymarchActive ? "ON" : "off", audit.cloudRaymarchMs,
                     audit.postCinematicActive ? "ON" : "off", audit.postCinematicMs,
                     audit.gpuParticlesActive ? "ON" : "off", audit.gpuParticleCount, audit.gpuParticlesMs,
+                    audit.tsrUpscaleActive ? "ON" : "off", audit.tsrOutWidth, audit.tsrOutHeight, audit.tsrUpscaleMs,
                     audit.overlayActive ? "ON" : "off", audit.overlayMs, audit.hudNonZeroPx,
                     audit.hdrLitPixels, audit.hdrNanInf,
                     audit.dispNonZeroPx, audit.dispMeanLuma, audit.dispStdDevLuma);
@@ -4826,6 +5061,10 @@ int main(int argc, char** argv)
                     combatProbe.aliveAllies, combatProbe.aliveHostiles, combatProbe.hitsLanded,
                     combatProbe.parries, combatProbe.poiseBreaks, combatProbe.arrowsFired,
                     int(combatProbe.timedParryTriggered), int(combatProbe.skeletonCoupled), int(combatProbe.allFinite));
+        std::printf("       Quest Story: generated=%u active=%u completed=%u dialogue=%d stageDone=%d gold=%.0fg jsonValid=%d\n",
+                    questProbe.generatedCount, questProbe.activeCount, questProbe.completedCount,
+                    int(questProbe.dialoguePassed), int(questProbe.stageCompleted),
+                    questProbe.totalGoldAwarded, int(questProbe.journalJsonValid));
         std::printf("       Ecosystem: ignited=%u activeFire=%u burned=%.1fm2 snow=%.1fm3 runoff=%.2fm3 ice=%u peakTemp=%.1fC finite=%d\n",
                     ecoProbe.ignitedCells, ecoProbe.activeFireCells, ecoProbe.burnedAreaM2,
                     ecoProbe.snowVolumeM3, ecoProbe.meltRunoffM3, ecoProbe.blackIceCells,
@@ -4883,12 +5122,18 @@ int main(int argc, char** argv)
         check(audit.gpuParticlesActive && audit.gpuParticleCount == 16384u &&
               std::isfinite(audit.gpuParticlesMs) && audit.gpuParticlesMs >= 0.0f,
               "Live GPU 16,384-Particle 3D Physics & Splat Engine (RawGpuParticlesHost - 15th GPU Solver) executed cleanly");
+        check(audit.tsrUpscaleActive && audit.tsrOutWidth >= opt.width && audit.tsrOutHeight >= opt.height &&
+              std::isfinite(audit.tsrUpscaleMs) && audit.tsrUpscaleMs >= 0.0f,
+              "Live GPU RAW-TSR Temporal Super-Resolution + RCAS (RawTsrUpscaleHost - 16th GPU Solver) executed cleanly");
         check(skelProbe.evaluatedRigs >= 1u && skelProbe.maxQuatNormErr < 1.0e-4f &&
               skelProbe.footPlanted && skelProbe.xpbdAnchorsFinite && skelProbe.coupledToXpbd,
               "Live 24-Bone Procedural Skeleton Animation + Terrain Foot-IK + XPBD Anchor Coupling passed cleanly");
         check(combatProbe.timedParryTriggered && combatProbe.arrowsFired > 0u &&
               combatProbe.hitsLanded > 0u && combatProbe.skeletonCoupled && combatProbe.allFinite,
               "Live Combat Skirmish Arena (RawCombatSandboxEngine) 220ms Timed-Parry + Ballistic Arrows + Skeleton->XPBD coupling passed");
+        check(questProbe.generatedCount >= 1u && questProbe.dialoguePassed && questProbe.stageCompleted &&
+              questProbe.completedCount >= 1u && questProbe.totalGoldAwarded > 0.0 && questProbe.journalJsonValid,
+              "Live Radiant Quest & Branching Dialogue Engine (RawQuestStoryEngine) generated, persuaded, completed & exported JSON");
         check(dungeonProbe.barrowOk && dungeonProbe.iceCavernOk && dungeonProbe.dwemerRuinOk && dungeonProbe.returnedOk &&
               dungeonProbe.navWalkable > 100u && dungeonProbe.astarWaypoints >= 2u && dungeonProbe.walkGrounded,
               "Interactive Procedural 3D Dungeon Explorer cycled all 3 archetypes + interior NavMesh A* + Walk Mode & returned cleanly");

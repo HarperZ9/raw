@@ -1,5 +1,5 @@
 // tools/raw_bench_suite.cpp: Studio-Grade Automated GPU/CPU Benchmark & Visual Invariant Suite for RAW.
-// Benchmarks all 18 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
+// Benchmarks all 19 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
 //   1. GPU 64^3 Navier-Stokes Fire/Smoke + 256^2 SWE Water (RawFluidSimHost)
 //   2. GPU 4-Cascade Radiance Cascades GI (RawRadianceHost)
 //   3. Procedural PBR Texture Forge (RawTextureForge, all 8 seamless PBR sets)
@@ -18,6 +18,7 @@
 //  16. GPU 3D Volumetric Cloud Raymarching + Beer-Powder Silver-Lining & Temporal Reprojection (RawCloudRaymarchHost)
 //  17. GPU Cinematic Post-Process: Tile-Max Motion Blur + Depth-Aware Hexagonal Bokeh DoF (RawPostCinematicHost)
 //  18. GPU 16,384-Particle 3D Physics & Screen-Space Additive Splat Engine (RawGpuParticlesHost)
+//  19. GPU RAW-TSR Temporal Super-Resolution (2x 640x360 -> 1280x720) & RCAS Sharpening (RawTsrUpscaleHost)
 //
 // CLI:
 //   raw_bench_suite [--warp] [--quick] [--frames N] [--json <path>] [--esm <path>] [--bsa <path>] [--no-debug-layer]
@@ -48,6 +49,7 @@
 #include "../src/d3d12_bridge/RawCloudRaymarchHost.h"
 #include "../src/d3d12_bridge/RawPostCinematicHost.h"
 #include "../src/d3d12_bridge/RawGpuParticlesHost.h"
+#include "../src/d3d12_bridge/RawTsrUpscaleHost.h"
 #include "../src/materials/RawTextureForge.h"
 #include "../src/audio/RawAudioDsp.h"
 #include "../src/worldgen/RawDestructionEngine.h"
@@ -1105,6 +1107,26 @@ struct GpuParticlesBenchResult {
     uint32_t    splattedCount  = 0u;
     uint32_t    nonZeroSplatPx = 0u;
     uint32_t    nanInfCount    = 0u;
+    std::string note;
+};
+
+struct TsrUpscaleBenchResult {
+    bool        passed           = false;
+    Percentiles totalGpuMs{};
+    Percentiles cpuRecordMs{};
+    uint32_t    inWidth          = 640u;
+    uint32_t    inHeight         = 360u;
+    uint32_t    outWidth         = 1280u;
+    uint32_t    outHeight        = 720u;
+    float       hostResolveMs    = 0.0f;
+    float       hostRcasMs       = 0.0f;
+    float       rmse1Frame       = 0.0f;
+    float       rmse16Frames     = 0.0f;
+    float       rmseReductionPct = 0.0f;
+    float       disoccSkyR       = 1.0f;
+    float       reactiveSparkR   = 0.0f;
+    float       rcasGradBoostPct = 0.0f;
+    uint32_t    nanInfCount      = 0u;
     std::string note;
 };
 
@@ -4337,6 +4359,391 @@ GpuParticlesBenchResult RunGpuParticlesBenchmark(BenchDx12Rig& rig, uint32_t war
 }
 
 // ----------------------------------------------------------------------------
+// 19. GPU RAW-TSR 2x Temporal Super-Resolution + RCAS Sharpening (RawTsrUpscaleHost)
+// ----------------------------------------------------------------------------
+TsrUpscaleBenchResult RunTsrUpscaleBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames, uint32_t measuredFrames)
+{
+    TsrUpscaleBenchResult res{};
+    constexpr uint32_t kInW  = 640u;
+    constexpr uint32_t kInH  = 360u;
+    constexpr uint32_t kOutW = 1280u;
+    constexpr uint32_t kOutH = 720u;
+    res.inWidth   = kInW;
+    res.inHeight  = kInH;
+    res.outWidth  = kOutW;
+    res.outHeight = kOutH;
+
+    raw::bridge::RawTsrUpscaleHost host;
+    raw::bridge::TsrUpscaleDesc desc{};
+    desc.initialInputWidth   = kInW;
+    desc.initialInputHeight  = kInH;
+    desc.initialOutputWidth  = kOutW;
+    desc.initialOutputHeight = kOutH;
+    std::string err;
+    if (!host.Init(rig.dev.Get(), desc, &err)) {
+        res.note = "RawTsrUpscaleHost::Init failed: " + err;
+        return res;
+    }
+    host.SetTimestampFrequency(rig.tsFreqHz);
+
+    auto uploadFloatTex2D = [&](ComPtr<ID3D12Resource>& tex, uint32_t w, uint32_t h,
+                                DXGI_FORMAT fmt, uint32_t comps, const std::vector<float>& data) -> bool {
+        D3D12_HEAP_PROPERTIES hpDef{};
+        hpDef.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC rd{};
+        rd.Dimension        = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        rd.Width            = w;
+        rd.Height           = h;
+        rd.DepthOrArraySize = 1u;
+        rd.MipLevels        = 1u;
+        rd.Format           = fmt;
+        rd.SampleDesc.Count = 1u;
+        if (!tex) {
+            if (FAILED(rig.dev->CreateCommittedResource(&hpDef, D3D12_HEAP_FLAG_NONE, &rd,
+                                                        D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&tex)))) {
+                return false;
+            }
+        } else {
+            if (!rig.BeginFrame()) return false;
+            D3D12_RESOURCE_BARRIER b{};
+            b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            b.Transition.pResource   = tex.Get();
+            b.Transition.StateBefore = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            b.Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_DEST;
+            b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            rig.cmd->ResourceBarrier(1u, &b);
+            if (!rig.FlushAndWait()) return false;
+        }
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+        UINT numRows = 0u;
+        UINT64 rowBytes = 0ull, totalBytes = 0ull;
+        rig.dev->GetCopyableFootprints(&rd, 0u, 1u, 0ull, &fp, &numRows, &rowBytes, &totalBytes);
+
+        D3D12_HEAP_PROPERTIES hpUp{};
+        hpUp.Type = D3D12_HEAP_TYPE_UPLOAD;
+        D3D12_RESOURCE_DESC ubd{};
+        ubd.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+        ubd.Width            = totalBytes;
+        ubd.Height           = 1u;
+        ubd.DepthOrArraySize = 1u;
+        ubd.MipLevels        = 1u;
+        ubd.SampleDesc.Count = 1u;
+        ubd.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        ComPtr<ID3D12Resource> upBuf;
+        if (FAILED(rig.dev->CreateCommittedResource(&hpUp, D3D12_HEAP_FLAG_NONE, &ubd,
+                                                    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upBuf)))) {
+            return false;
+        }
+        void* mapped = nullptr;
+        const D3D12_RANGE rr{0u, 0u};
+        if (FAILED(upBuf->Map(0u, &rr, &mapped)) || !mapped) return false;
+        auto* base = static_cast<uint8_t*>(mapped) + fp.Offset;
+        const size_t srcRowBytes = static_cast<size_t>(w) * comps * sizeof(float);
+        for (uint32_t y = 0u; y < h; ++y) {
+            std::memcpy(base + static_cast<size_t>(y) * fp.Footprint.RowPitch,
+                        data.data() + static_cast<size_t>(y) * w * comps,
+                        srcRowBytes);
+        }
+        upBuf->Unmap(0u, nullptr);
+
+        if (!rig.BeginFrame()) return false;
+        D3D12_TEXTURE_COPY_LOCATION dstLoc{};
+        dstLoc.pResource        = tex.Get();
+        dstLoc.Type             = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        dstLoc.SubresourceIndex = 0u;
+        D3D12_TEXTURE_COPY_LOCATION srcLoc{};
+        srcLoc.pResource       = upBuf.Get();
+        srcLoc.Type            = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        srcLoc.PlacedFootprint = fp;
+        rig.cmd->CopyTextureRegion(&dstLoc, 0u, 0u, 0u, &srcLoc, nullptr);
+
+        D3D12_RESOURCE_BARRIER b{};
+        b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b.Transition.pResource   = tex.Get();
+        b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+        b.Transition.StateAfter  = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        rig.cmd->ResourceBarrier(1u, &b);
+        return rig.FlushAndWait();
+    };
+
+    auto evalAnalyticScene = [](float u, float v, float& outR, float& outG, float& outB) {
+        const float diagWave = std::sin((u * 190.0f + v * 110.0f) * 3.14159265f);
+        const float bar = (diagWave > 0.0f) ? 0.90f : 0.12f;
+        const float dx = u - 0.5f;
+        const float dy = (v - 0.5f) * (720.0f / 1280.0f);
+        const float r  = std::sqrt(dx * dx + dy * dy);
+        const float ring = (std::sin(r * 210.0f * 3.14159265f) > 0.0f) ? 0.85f : 0.15f;
+        const bool inBox = (u > 0.25f && u < 0.75f && v > 0.20f && v < 0.80f);
+        const float pat  = inBox ? ring : bar;
+        outR = 0.08f + 0.84f * pat;
+        outG = 0.10f + 0.72f * pat;
+        outB = 0.14f + 0.68f * (1.0f - 0.65f * pat);
+    };
+
+    std::vector<float> gtRgba(static_cast<size_t>(kOutW) * kOutH * 4u, 0.0f);
+    for (uint32_t y = 0u; y < kOutH; ++y) {
+        for (uint32_t x = 0u; x < kOutW; ++x) {
+            const float u = (static_cast<float>(x) + 0.5f) / static_cast<float>(kOutW);
+            const float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(kOutH);
+            const size_t i = (static_cast<size_t>(y) * kOutW + x) * 4u;
+            evalAnalyticScene(u, v, gtRgba[i + 0u], gtRgba[i + 1u], gtRgba[i + 2u]);
+            gtRgba[i + 3u] = 1.0f;
+        }
+    }
+    auto computeInteriorRmse = [&](const std::vector<float>& img) -> float {
+        double sumSq = 0.0;
+        uint64_t cnt = 0ull;
+        for (uint32_t y = 32u; y < kOutH - 32u; ++y) {
+            for (uint32_t x = 32u; x < kOutW - 32u; ++x) {
+                const size_t i = (static_cast<size_t>(y) * kOutW + x) * 4u;
+                for (int c = 0; c < 3; ++c) {
+                    const double d = static_cast<double>(img[i + c]) - static_cast<double>(gtRgba[i + c]);
+                    sumSq += d * d;
+                    ++cnt;
+                }
+            }
+        }
+        return static_cast<float>(std::sqrt(sumSq / static_cast<double>(cnt)));
+    };
+
+    std::vector<float> flatDepth(static_cast<size_t>(kInW) * kInH, 0.5f);
+    std::vector<float> zeroVel(static_cast<size_t>(kInW) * kInH * 2u, 0.0f);
+    ComPtr<ID3D12Resource> flatDepthTex, zeroVelTex, lowColorTex;
+    if (!rig.UploadR32Tex2D(flatDepthTex, kInW, kInH, flatDepth) ||
+        !uploadFloatTex2D(zeroVelTex, kInW, kInH, DXGI_FORMAT_R32G32_FLOAT, 2u, zeroVel)) {
+        res.note = "Failed to upload TSR depth/velocity fixtures";
+        return res;
+    }
+
+    // 1) Static 16-frame Halton (2,3) jitter convergence probe
+    std::vector<float> lowColor(static_cast<size_t>(kInW) * kInH * 4u, 0.0f);
+    std::vector<float> outRgba;
+    uint32_t rw = 0u, rh = 0u, rdOut = 0u;
+    for (uint32_t f = 0u; f < 16u; ++f) {
+        float jx = 0.0f, jy = 0.0f;
+        raw::bridge::ComputeHaltonJitter(f, jx, jy);
+        for (uint32_t y = 0u; y < kInH; ++y) {
+            for (uint32_t x = 0u; x < kInW; ++x) {
+                const float u = (static_cast<float>(x) + 0.5f + jx) / static_cast<float>(kInW);
+                const float v = (static_cast<float>(y) + 0.5f + jy) / static_cast<float>(kInH);
+                const size_t i = (static_cast<size_t>(y) * kInW + x) * 4u;
+                evalAnalyticScene(u, v, lowColor[i + 0u], lowColor[i + 1u], lowColor[i + 2u]);
+                lowColor[i + 3u] = 1.0f;
+            }
+        }
+        if (!uploadFloatTex2D(lowColorTex, kInW, kInH, DXGI_FORMAT_R32G32B32A32_FLOAT, 4u, lowColor)) {
+            res.note = "Failed to upload TSR jitter frame";
+            return res;
+        }
+        raw::bridge::TsrUpscaleParams tp{};
+        tp.jitterX       = jx;
+        tp.jitterY       = jy;
+        tp.historyWeight = 0.88f;
+        tp.varianceGamma = 1.15f;
+        tp.rcasSharpness = 0.0f;
+        tp.resetHistory  = (f == 0u);
+        if (!rig.BeginFrame() ||
+            !host.Execute(rig.cmd.Get(), lowColorTex.Get(), flatDepthTex.Get(), zeroVelTex.Get(), nullptr,
+                          kInW, kInH, kOutW, kOutH, tp) ||
+            !rig.FlushAndWait()) {
+            res.note = "TSR convergence frame Execute failed";
+            return res;
+        }
+        if (f == 0u) {
+            if (!rig.ReadbackRgba16Tex(host.GetOutputResource(), host.OutputResourceState(), rw, rh, rdOut, outRgba)) {
+                res.note = "TSR 1-frame readback failed";
+                return res;
+            }
+            res.rmse1Frame = computeInteriorRmse(outRgba);
+        }
+    }
+    if (!rig.ReadbackRgba16Tex(host.GetOutputResource(), host.OutputResourceState(), rw, rh, rdOut, outRgba)) {
+        res.note = "TSR 16-frame readback failed";
+        return res;
+    }
+    res.rmse16Frames     = computeInteriorRmse(outRgba);
+    res.rmseReductionPct = (1.0f - res.rmse16Frames / std::max(res.rmse1Frame, 1.0e-5f)) * 100.0f;
+
+    // 2) Fast pan disocclusion anti-ghosting probe
+    std::vector<float> colA(static_cast<size_t>(kInW) * kInH * 4u, 0.0f);
+    std::vector<float> colB(static_cast<size_t>(kInW) * kInH * 4u, 0.0f);
+    std::vector<float> depA(static_cast<size_t>(kInW) * kInH, 0.95f);
+    std::vector<float> depB(static_cast<size_t>(kInW) * kInH, 0.95f);
+    std::vector<float> velB(static_cast<size_t>(kInW) * kInH * 2u, 0.0f);
+    for (uint32_t y = 0u; y < kInH; ++y) {
+        for (uint32_t x = 0u; x < kInW; ++x) {
+            const size_t idx  = static_cast<size_t>(y) * kInW + x;
+            const size_t idx4 = idx * 4u;
+            const bool inTowerA = (x >= 260u && x < 300u && y >= 120u && y < 240u);
+            const bool inTowerB = (x >= 272u && x < 312u && y >= 120u && y < 240u);
+            colA[idx4 + 0u] = inTowerA ? 3.00f : 0.02f;
+            colA[idx4 + 1u] = inTowerA ? 0.85f : 0.04f;
+            colA[idx4 + 2u] = inTowerA ? 0.10f : 0.12f;
+            colA[idx4 + 3u] = 1.0f;
+            depA[idx]       = inTowerA ? 0.20f : 0.95f;
+
+            colB[idx4 + 0u] = inTowerB ? 3.00f : 0.02f;
+            colB[idx4 + 1u] = inTowerB ? 0.85f : 0.04f;
+            colB[idx4 + 2u] = inTowerB ? 0.10f : 0.12f;
+            colB[idx4 + 3u] = 1.0f;
+            depB[idx]       = inTowerB ? 0.20f : 0.95f;
+            if (inTowerB) {
+                velB[idx * 2u + 0u] = 12.0f / static_cast<float>(kInW);
+            }
+        }
+    }
+    ComPtr<ID3D12Resource> colATex, colBTex, depATex, depBTex, velBTex;
+    uploadFloatTex2D(colATex, kInW, kInH, DXGI_FORMAT_R32G32B32A32_FLOAT, 4u, colA);
+    uploadFloatTex2D(colBTex, kInW, kInH, DXGI_FORMAT_R32G32B32A32_FLOAT, 4u, colB);
+    rig.UploadR32Tex2D(depATex, kInW, kInH, depA);
+    rig.UploadR32Tex2D(depBTex, kInW, kInH, depB);
+    uploadFloatTex2D(velBTex, kInW, kInH, DXGI_FORMAT_R32G32_FLOAT, 2u, velB);
+
+    raw::bridge::TsrUpscaleParams pGhost{};
+    pGhost.historyWeight = 0.92f;
+    pGhost.varianceGamma = 1.15f;
+    pGhost.rcasSharpness = 0.0f;
+    pGhost.resetHistory  = true;
+    rig.BeginFrame(); host.Execute(rig.cmd.Get(), colATex.Get(), depATex.Get(), zeroVelTex.Get(), nullptr, kInW, kInH, kOutW, kOutH, pGhost); rig.FlushAndWait();
+    pGhost.resetHistory  = false;
+    rig.BeginFrame(); host.Execute(rig.cmd.Get(), colBTex.Get(), depBTex.Get(), velBTex.Get(), nullptr, kInW, kInH, kOutW, kOutH, pGhost); rig.FlushAndWait();
+    rig.ReadbackRgba16Tex(host.GetOutputResource(), host.OutputResourceState(), rw, rh, rdOut, outRgba);
+    res.disoccSkyR = outRgba[(static_cast<size_t>(360u) * kOutW + 528u) * 4u + 0u];
+
+    // 3) Reactive mask pass-through probe
+    std::vector<float> darkBg(static_cast<size_t>(kInW) * kInH * 4u, 0.05f);
+    std::vector<float> sparkCol = darkBg;
+    std::vector<float> sparkReact(static_cast<size_t>(kInW) * kInH, 0.0f);
+    for (uint32_t y = 176u; y < 184u; ++y) {
+        for (uint32_t x = 316u; x < 324u; ++x) {
+            const size_t idx = static_cast<size_t>(y) * kInW + x;
+            sparkCol[idx * 4u + 0u] = 4.0f;
+            sparkCol[idx * 4u + 1u] = 1.8f;
+            sparkCol[idx * 4u + 2u] = 0.2f;
+            sparkReact[idx]         = 1.0f;
+        }
+    }
+    ComPtr<ID3D12Resource> darkBgTex, sparkColTex, sparkReactTex;
+    uploadFloatTex2D(darkBgTex, kInW, kInH, DXGI_FORMAT_R32G32B32A32_FLOAT, 4u, darkBg);
+    uploadFloatTex2D(sparkColTex, kInW, kInH, DXGI_FORMAT_R32G32B32A32_FLOAT, 4u, sparkCol);
+    rig.UploadR32Tex2D(sparkReactTex, kInW, kInH, sparkReact);
+
+    raw::bridge::TsrUpscaleParams pReact{};
+    pReact.historyWeight = 0.94f;
+    pReact.varianceGamma = 1.15f;
+    pReact.rcasSharpness = 0.0f;
+    pReact.resetHistory  = true;
+    rig.BeginFrame(); host.Execute(rig.cmd.Get(), darkBgTex.Get(), flatDepthTex.Get(), zeroVelTex.Get(), nullptr, kInW, kInH, kOutW, kOutH, pReact); rig.FlushAndWait();
+    pReact.resetHistory  = false;
+    rig.BeginFrame(); host.Execute(rig.cmd.Get(), sparkColTex.Get(), flatDepthTex.Get(), zeroVelTex.Get(), sparkReactTex.Get(), kInW, kInH, kOutW, kOutH, pReact); rig.FlushAndWait();
+    rig.ReadbackRgba16Tex(host.GetOutputResource(), host.OutputResourceState(), rw, rh, rdOut, outRgba);
+    res.reactiveSparkR = outRgba[(static_cast<size_t>(360u) * kOutW + 640u) * 4u + 0u];
+
+    // 4) RCAS contrast-adaptive sharpening + NaN/Inf resilience probe
+    std::vector<float> edgeImg(static_cast<size_t>(kInW) * kInH * 4u, 0.1f);
+    for (uint32_t y = 0u; y < kInH; ++y) {
+        for (uint32_t x = 0u; x < kInW; ++x) {
+            const float t = std::clamp((static_cast<float>(x) - 318.0f) / 4.0f, 0.0f, 1.0f);
+            const float v = 0.1f + 0.8f * t;
+            const size_t i = (static_cast<size_t>(y) * kInW + x) * 4u;
+            edgeImg[i + 0u] = v; edgeImg[i + 1u] = v; edgeImg[i + 2u] = v; edgeImg[i + 3u] = 1.0f;
+        }
+    }
+    edgeImg[0] = std::numeric_limits<float>::quiet_NaN();
+    edgeImg[4] = std::numeric_limits<float>::infinity();
+    ComPtr<ID3D12Resource> edgeTex;
+    uploadFloatTex2D(edgeTex, kInW, kInH, DXGI_FORMAT_R32G32B32A32_FLOAT, 4u, edgeImg);
+
+    auto measureEdgeGrad = [&](float sharp, float& outMin, float& outMax, uint32_t& outNans) -> float {
+        raw::bridge::TsrUpscaleParams tp{};
+        tp.rcasSharpness = sharp;
+        tp.resetHistory  = true;
+        rig.BeginFrame(); host.Execute(rig.cmd.Get(), edgeTex.Get(), flatDepthTex.Get(), nullptr, nullptr, kInW, kInH, kOutW, kOutH, tp); rig.FlushAndWait();
+        std::vector<float> buf;
+        rig.ReadbackRgba16Tex(host.GetOutputResource(), host.OutputResourceState(), rw, rh, rdOut, buf);
+        outNans = 0u;
+        for (float f : buf) if (!std::isfinite(f)) ++outNans;
+        outMin = 10.0f; outMax = -10.0f;
+        float maxGrad = 0.0f;
+        for (uint32_t x = 620u; x < 660u; ++x) {
+            const float v0 = buf[(static_cast<size_t>(360u) * kOutW + x) * 4u + 0u];
+            const float v1 = buf[(static_cast<size_t>(360u) * kOutW + (x + 1u)) * 4u + 0u];
+            outMin  = std::min(outMin, v0);
+            outMax  = std::max(outMax, v0);
+            maxGrad = std::max(maxGrad, std::fabs(v1 - v0));
+        }
+        return maxGrad;
+    };
+    float mn0 = 0.0f, mx0 = 0.0f, mn1 = 0.0f, mx1 = 0.0f;
+    uint32_t nan0 = 0u, nan1 = 0u;
+    const float gradNoSharp = measureEdgeGrad(0.0f, mn0, mx0, nan0);
+    const float gradRcas    = measureEdgeGrad(0.85f, mn1, mx1, nan1);
+    res.rcasGradBoostPct    = (gradRcas / std::max(gradNoSharp, 1.0e-5f) - 1.0f) * 100.0f;
+    res.nanInfCount         = nan0 + nan1;
+
+    // 5) Steady-state GPU timing benchmark (640x360 -> 1280x720 2x TSR Resolve + RCAS)
+    std::vector<double> gpuSamples;
+    std::vector<double> cpuSamples;
+    gpuSamples.reserve(measuredFrames);
+    cpuSamples.reserve(measuredFrames);
+
+    for (uint32_t f = 0u; f < warmupFrames + measuredFrames; ++f) {
+        raw::bridge::TsrUpscaleParams tp{};
+        raw::bridge::ComputeHaltonJitter(f, tp.jitterX, tp.jitterY);
+        tp.historyWeight = 0.88f;
+        tp.varianceGamma = 1.15f;
+        tp.rcasSharpness = 0.65f;
+        tp.resetHistory  = (f == 0u);
+
+        if (!rig.BeginFrame()) {
+            res.note = "BeginFrame failed in TSR timing loop";
+            return res;
+        }
+        const auto c0 = Clock::now();
+        rig.MarkTimestamp(0u);
+        host.Execute(rig.cmd.Get(), lowColorTex.Get(), flatDepthTex.Get(), zeroVelTex.Get(), nullptr,
+                     kInW, kInH, kOutW, kOutH, tp);
+        rig.MarkTimestamp(1u);
+        rig.ResolveTimestamps(0u, 2u);
+        const auto c1 = Clock::now();
+        if (!rig.FlushAndWait()) {
+            res.note = "FlushAndWait failed in TSR timing loop";
+            return res;
+        }
+        if (f >= warmupFrames) {
+            double gMs = 0.0;
+            rig.ReadTimestampRangeMs(0u, 1u, gMs);
+            gpuSamples.push_back(gMs);
+            cpuSamples.push_back(ElapsedMs(c0, c1));
+        }
+    }
+
+    res.totalGpuMs    = ComputePercentiles(gpuSamples);
+    res.cpuRecordMs   = ComputePercentiles(cpuSamples);
+    res.hostResolveMs = host.HasValidTiming() ? host.GetLastResolveMs() : 0.0f;
+    res.hostRcasMs    = host.HasValidTiming() ? host.GetLastRcasMs() : 0.0f;
+
+    const bool optOk = (res.nanInfCount == 0u) &&
+                       (res.rmseReductionPct > 20.0f) &&
+                       (res.disoccSkyR < 0.06f) &&
+                       (res.reactiveSparkR > 3.6f) &&
+                       (res.rcasGradBoostPct > 8.0f) &&
+                       (mn1 >= 0.098f && mx1 <= 0.902f);
+    const bool budgetOk = rig.isWarp ? true : (res.totalGpuMs.mean < 0.08);
+    res.passed = optOk && budgetOk;
+    if (!optOk) {
+        res.note = "RAW-TSR convergence/anti-ghost/reactive/RCAS/NaN invariant failed";
+    } else if (!budgetOk) {
+        res.note = "HW GPU RAW-TSR 2x upscale mean exceeded 0.08 ms budget";
+    } else {
+        res.note = rig.isWarp ? "WARP RAW-TSR 2x convergence, anti-ghost, reactive & RCAS PASS"
+                              : "HW GPU < 0.08 ms & RAW-TSR 2x convergence/anti-ghost/RCAS PASS";
+    }
+    return res;
+}
+
+// ----------------------------------------------------------------------------
 // JSON Serializer & Console Scorecard Printer
 // ----------------------------------------------------------------------------
 void WriteBenchJson(const std::string& path,
@@ -4363,7 +4770,8 @@ void WriteBenchJson(const std::string& path,
                     const AutoExposureBenchResult& autoExposure,
                     const CloudRaymarchBenchResult& cloudRaymarch,
                     const PostCinematicBenchResult& postCinematic,
-                    const GpuParticlesBenchResult& gpuParticles)
+                    const GpuParticlesBenchResult& gpuParticles,
+                    const TsrUpscaleBenchResult& tsrUpscale)
 {
     std::ostringstream os;
     os << std::fixed << std::setprecision(4);
@@ -4705,6 +5113,27 @@ void WriteBenchJson(const std::string& path,
     os << "      \"nonZeroSplatPx\": " << gpuParticles.nonZeroSplatPx << ",\n";
     os << "      \"nanInfCount\": " << gpuParticles.nanInfCount << ",\n";
     os << "      \"note\": \"" << JsonEscape(gpuParticles.note) << "\"\n";
+    os << "    },\n";
+
+    // 19. GPU RAW-TSR 2x Temporal Super-Resolution + RCAS Sharpening
+    os << "    \"tsrUpscale\": {\n";
+    os << "      \"passed\": " << (tsrUpscale.passed ? "true" : "false") << ",\n";
+    os << "      \"inWidth\": " << tsrUpscale.inWidth << ",\n";
+    os << "      \"inHeight\": " << tsrUpscale.inHeight << ",\n";
+    os << "      \"outWidth\": " << tsrUpscale.outWidth << ",\n";
+    os << "      \"outHeight\": " << tsrUpscale.outHeight << ",\n";
+    os << "      \"totalGpuMs\": "; pctObj(tsrUpscale.totalGpuMs); os << ",\n";
+    os << "      \"cpuRecordMs\": "; pctObj(tsrUpscale.cpuRecordMs); os << ",\n";
+    os << "      \"hostResolveMs\": " << tsrUpscale.hostResolveMs << ",\n";
+    os << "      \"hostRcasMs\": " << tsrUpscale.hostRcasMs << ",\n";
+    os << "      \"rmse1Frame\": " << tsrUpscale.rmse1Frame << ",\n";
+    os << "      \"rmse16Frames\": " << tsrUpscale.rmse16Frames << ",\n";
+    os << "      \"rmseReductionPct\": " << tsrUpscale.rmseReductionPct << ",\n";
+    os << "      \"disoccSkyR\": " << tsrUpscale.disoccSkyR << ",\n";
+    os << "      \"reactiveSparkR\": " << tsrUpscale.reactiveSparkR << ",\n";
+    os << "      \"rcasGradBoostPct\": " << tsrUpscale.rcasGradBoostPct << ",\n";
+    os << "      \"nanInfCount\": " << tsrUpscale.nanInfCount << ",\n";
+    os << "      \"note\": \"" << JsonEscape(tsrUpscale.note) << "\"\n";
     os << "    }\n";
 
     os << "  }\n";
@@ -4739,7 +5168,8 @@ void PrintScorecard(const BenchDx12Rig& rig,
                     const AutoExposureBenchResult& autoExposure,
                     const CloudRaymarchBenchResult& cloudRaymarch,
                     const PostCinematicBenchResult& postCinematic,
-                    const GpuParticlesBenchResult& gpuParticles)
+                    const GpuParticlesBenchResult& gpuParticles,
+                    const TsrUpscaleBenchResult& tsrUpscale)
 {
     std::printf("\n");
     std::printf("=====================================================================================================\n");
@@ -4873,6 +5303,13 @@ void PrintScorecard(const BenchDx12Rig& rig,
                   gpuParticles.nonZeroSplatPx, gpuParticles.windMeanX, gpuParticles.nanInfCount);
     std::printf("  %-30s | %-6s | %-28s | %s\n", "18. GPU 16K 3D Particles", gpuParticles.passed ? "PASS" : "FAIL", metric, detail);
 
+    std::snprintf(metric, sizeof(metric), "TSR %.4f ms (p95 %.4f)", tsrUpscale.totalGpuMs.mean, tsrUpscale.totalGpuMs.p95);
+    std::snprintf(detail, sizeof(detail), "R=%.4f C=%.4f | rmse-%.1f%% sky=%.2f spk=%.2f rcas+%.1f%% | NaN=%u",
+                  tsrUpscale.hostResolveMs, tsrUpscale.hostRcasMs,
+                  tsrUpscale.rmseReductionPct, tsrUpscale.disoccSkyR,
+                  tsrUpscale.reactiveSparkR, tsrUpscale.rcasGradBoostPct, tsrUpscale.nanInfCount);
+    std::printf("  %-30s | %-6s | %-28s | %s\n", "19. GPU RAW-TSR 2x + RCAS", tsrUpscale.passed ? "PASS" : "FAIL", metric, detail);
+
     std::printf("=====================================================================================================\n");
 }
 
@@ -4941,6 +5378,7 @@ int main(int argc, char** argv)
     const CloudRaymarchBenchResult     cloudRaymarch = RunCloudRaymarchBenchmark(rig, warmupFrames, measuredFrames);
     const PostCinematicBenchResult     postCinematic = RunPostCinematicBenchmark(rig, warmupFrames, measuredFrames);
     const GpuParticlesBenchResult      gpuParticles  = RunGpuParticlesBenchmark(rig, warmupFrames, measuredFrames);
+    const TsrUpscaleBenchResult        tsrUpscale    = RunTsrUpscaleBenchmark(rig, warmupFrames, measuredFrames);
 
     const uint32_t debugErrors = rig.DrainDebugErrors();
     const bool allPassed = fluid.passed && rc.passed && tex.passed && audio.passed &&
@@ -4948,14 +5386,15 @@ int main(int argc, char** argv)
                            gpuCull.passed && lightClusters.passed && volFroxels.passed &&
                            shadowPcss.passed && gtao.passed && ssr.passed &&
                            autoExposure.passed && cloudRaymarch.passed &&
-                           postCinematic.passed && gpuParticles.passed && (debugErrors == 0u);
+                           postCinematic.passed && gpuParticles.passed &&
+                           tsrUpscale.passed && (debugErrors == 0u);
 
     PrintScorecard(rig, quickMode, warmupFrames, measuredFrames, debugErrors,
-                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles);
+                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles, tsrUpscale);
 
     if (!jsonPath.empty()) {
         WriteBenchJson(jsonPath, rig, quickMode, warmupFrames, measuredFrames, debugErrors, allPassed,
-                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles);
+                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles, tsrUpscale);
         std::printf("  JSON report written: %s\n", jsonPath.c_str());
     }
 

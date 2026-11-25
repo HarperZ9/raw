@@ -137,6 +137,9 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
     const float gpuParticlesMs = (gpuParticlesReady && gpuParticles && gpuParticles->HasValidTiming() &&
                                   std::isfinite(gpuParticles->GetLastTotalMs()))
         ? gpuParticles->GetLastTotalMs() : 0.0f;
+    const float tsrUpscaleMs = (tsrUpscaleReady && tsrUpscale && tsrUpscale->HasValidTiming() &&
+                                std::isfinite(tsrUpscale->GetLastTotalMs()))
+        ? tsrUpscale->GetLastTotalMs() : 0.0f;
 
     char jsonBuf[3584]{};
     const int n = std::snprintf(
@@ -178,6 +181,7 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"cloudRaymarchMs\": %.4f,\n"
         "  \"postCinematicMs\": %.4f,\n"
         "  \"gpuParticlesMs\": %.4f,\n"
+        "  \"tsrUpscaleMs\": %.4f,\n"
         "  \"seasonSnowM\": %.4f,\n"
         "  \"seasonIceM\": %.4f,\n"
         "  \"skinTempC\": %.3f,\n"
@@ -221,6 +225,7 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         cloudRaymarchMs,
         postCinematicMs,
         gpuParticlesMs,
+        tsrUpscaleMs,
         seasonSnowM,
         seasonIceM,
         skinTempC,
@@ -1726,6 +1731,70 @@ bool D3D12Bridge::Impl::ExecuteGpuParticlesOnQueue(bool isInterior)
     return true;
 }
 
+bool D3D12Bridge::Impl::ExecuteTsrUpscaleOnQueue(bool hasMotion, bool isInterior)
+{
+    if (!tsrUpscaleReady || !tsrUpscale || !tsrUpscale->Ready() ||
+        !queue || !tsrUpscaleList || !tsrUpscaleFence || !tsrUpscaleEvent ||
+        !colorOut.res12 || !depthIn.res12) {
+        return false;
+    }
+
+    const uint32_t slot = tsrUpscaleSlot;
+    if (tsrUpscaleSlotVal[slot] > 0 && tsrUpscaleFence->GetCompletedValue() < tsrUpscaleSlotVal[slot]) {
+        tsrUpscaleFence->SetEventOnCompletion(tsrUpscaleSlotVal[slot], tsrUpscaleEvent);
+        WaitForSingleObject(tsrUpscaleEvent, 3000);
+    }
+    if (FAILED(tsrUpscaleAlloc[slot]->Reset()) ||
+        FAILED(tsrUpscaleList->Reset(tsrUpscaleAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    float jx = 0.0f, jy = 0.0f;
+    ComputeHaltonJitter(static_cast<uint32_t>(tsrUpscaleStepFrames & 0xFFFFu), jx, jy);
+    tsrLastJitterX = jx;
+    tsrLastJitterY = jy;
+
+    const bool resetNow = (tsrUpscaleStepFrames == 0ull) || (isInterior != tsrPrevInterior);
+    tsrPrevInterior = isInterior;
+
+    ID3D12Resource* velRes = (hasMotion && motionIn.res12) ? motionIn.res12.Get() : nullptr;
+
+    TsrUpscaleParams tp{};
+    tp.jitterX       = jx;
+    tp.jitterY       = jy;
+    tp.nearZ         = 16.0f;
+    tp.farZ          = 16384.0f;
+    tp.historyWeight = 0.88f;
+    tp.varianceGamma = 1.15f;
+    tp.rcasSharpness = 0.65f;
+    tp.resetHistory  = resetNow;
+
+    tsrUpscale->Execute(tsrUpscaleList.Get(),
+                        colorOut.res12.Get(), depthIn.res12.Get(), velRes, nullptr,
+                        cfg.width, cfg.height, cfg.width, cfg.height, tp,
+                        D3D12_RESOURCE_STATE_COMMON,
+                        D3D12_RESOURCE_STATE_COMMON,
+                        D3D12_RESOURCE_STATE_COMMON,
+                        D3D12_RESOURCE_STATE_COMMON);
+
+    if (FAILED(tsrUpscaleList->Close())) return false;
+    ID3D12CommandList* lists[1] = {tsrUpscaleList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(tsrUpscaleFence.Get(), ++tsrUpscaleFenceVal);
+    tsrUpscaleSlotVal[slot] = tsrUpscaleFenceVal;
+    tsrUpscaleSlot = (slot + 1u) % kRing;
+
+    if ((tsrUpscaleStepFrames++ % 180ull) == 0ull) {
+        log("[TsrUpscale] live %ux%u RAW-TSR+RCAS: resolveMs=%.4f, rcasMs=%.4f, totalMs=%.4f, jitter=(%+.3f,%+.3f), motion=%s",
+            cfg.width, cfg.height,
+            tsrUpscale->HasValidTiming() ? tsrUpscale->GetLastResolveMs() : 0.0f,
+            tsrUpscale->HasValidTiming() ? tsrUpscale->GetLastRcasMs() : 0.0f,
+            tsrUpscale->HasValidTiming() ? tsrUpscale->GetLastTotalMs() : 0.0f,
+            jx, jy, velRes ? "on" : "off");
+    }
+    return true;
+}
+
 bool D3D12Bridge::Impl::CpuWait(uint64_t value, DWORD timeoutMs)
 {
     return WaitFence(fence12.Get(), value, cpuEvent, timeoutMs);
@@ -1970,8 +2039,11 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                                   m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr;
     const bool runGpuParticles = m->cfg.lightingPass && m->lighting.valid && m->gpuParticlesReady &&
                                  m->gpuParticles && m->gpuParticles->Ready();
+    const bool runTsrUpscale = m->cfg.lightingPass && m->lighting.valid && m->tsrUpscaleReady &&
+                               m->tsrUpscale && m->tsrUpscale->Ready() &&
+                               m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr;
     const bool runOverlay = m->overlayHudEnabled && m->overlayHostReady && m->overlayHost && m->overlayHost->Ready();
-    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runAutoExposure || runCloudRaymarch || runPostCinematic || runGpuParticles || runOverlay;
+    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runAutoExposure || runCloudRaymarch || runPostCinematic || runGpuParticles || runTsrUpscale || runOverlay;
     auto runPostLightingPasses = [&]() -> bool {
         if (!hasPostWork) return true;
         if (runTerrain) {
@@ -2078,6 +2150,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         }
         if (runGpuParticles) {
             m->ExecuteGpuParticlesOnQueue(isInterior);
+        }
+        if (runTsrUpscale) {
+            m->ExecuteTsrUpscaleOnQueue(s.hasMotion, isInterior);
         }
         if (runOverlay) {
             m->ExecuteOverlayHudOnQueue(isInterior);

@@ -1,6 +1,6 @@
 # RAW Engine Automated GPU/CPU Benchmarks and Visual Invariants
 
-This document records live, reproducible measurements produced by [`tools/raw_bench_suite.cpp`](../tools/raw_bench_suite.cpp) across RAW Engine's eighteen core GPU and CPU subsystems. Every GPU timing is measured directly on the Direct3D 12 command queue via `ID3D12QueryHeap` (`D3D12_QUERY_HEAP_TYPE_TIMESTAMP`) normalized by `GetTimestampFrequency()`, with the D3D12 Debug Layer enabled (`0` validation errors required). Every CPU timing is measured with `std::chrono::steady_clock` and summarized with `mean`, `p50`, `p95`, and `p99` percentiles.
+This document records live, reproducible measurements produced by [`tools/raw_bench_suite.cpp`](../tools/raw_bench_suite.cpp) across RAW Engine's nineteen core GPU and CPU subsystems. Every GPU timing is measured directly on the Direct3D 12 command queue via `ID3D12QueryHeap` (`D3D12_QUERY_HEAP_TYPE_TIMESTAMP`) normalized by `GetTimestampFrequency()`, with the D3D12 Debug Layer enabled (`0` validation errors required). Every CPU timing is measured with `std::chrono::steady_clock` and summarized with `mean`, `p50`, `p95`, and `p99` percentiles.
 
 No numbers in this document are estimated or synthetic. All figures below come verbatim from live runs of `raw_bench_suite.exe`.
 
@@ -23,28 +23,29 @@ No numbers in this document are estimated or synthetic. All figures below come v
 
 Command: `raw_bench_suite.exe --json bench_rtx4090_full.json`
 Exit Code: `0` | D3D12 Debug Errors: `0` | GPU Timestamp Clock: `1,000,000,000 Hz`
-Combined All 13 GPU Solvers Mean: **`0.848 ms`** on RTX 4090
+Combined All 14 GPU Solvers Mean: **`0.901 ms`** on RTX 4090
 
 | # | Subsystem | Status | Primary Measured Result | Percentiles / Invariants | Budget / Target |
 | --- | --- | --- | --- | --- | --- |
-| 1 | GPU Fluid (`64^3` NS Fire + `256^2` SWE Water) | PASS | Fire `0.223 ms` + Water `0.019 ms` = **`0.242 ms`** | Combined `p50=0.243`, `p95=0.244`, `p99=0.246 ms`; `Tmax=2550 K`; `NaN=0` | `< 0.50 ms` HW GPU (`2.06x` headroom) |
-| 2 | GPU 4-Cascade Radiance Cascades GI | PASS | **`0.107 ms`** mean GPU time | `p50=0.108`, `p95=0.108`, `p99=0.109 ms`; `2xRatio=2.000`; `Umbra=0.0%`; `NaN=0` | `< 0.35 ms` HW GPU (`3.26x` headroom) |
-| 3 | Procedural PBR Texture Forge (`RawTextureForge`) | PASS | **`8.96 MPix/s`** (`175.6 ms` total) | 8 seamless sets @ `256x256` (3 PBR maps/set); per-set `p50=21.49`, `p95=30.42 ms`; max edge diff `11.61` | 8/8 sets valid |
-| 4 | 48 kHz FDN-8 Hadamard + HRTF Audio DSP | PASS | Ratio **`0.0069`** (**`145.3x`** real-time) | `13.80 ms` CPU to render `2,005.3 ms` stereo (188x512 blocks); `p95=0.077 ms`; `RMS=0.027`, `Peak=0.212`, `NaN=0` | Ratio `< 0.15` (`> 6.5x` RT) |
-| 5 | 3D Voronoi CSG Destruction Physics | PASS | Fracture **`0.41 ms`**; Rigid step **`4.3 us/step`** | 5 archetypes, 90 shards, 180 60 Hz steps (`p95=10.0 us`); volume error **`0.000000%`** | Vol err `< 1e-4%`, finite |
-| 6 | Biomechanical 3D Flora & Hydraulic Hydrology | PASS | **`616.9 trees/s`**; **`144.5 cells/s`** | 10 trees (`904` meshlets, `0` errors); 4 eroded cells (`368` meshlets, `0` errors) | Strict validator `0` errors |
-| 7 | Multi-Cell Tamriel ESM Streamer | PASS | Riverwood 3x3 **`217.9 ms`**; Warm LRU **`72.1%`** | `11,186` cells + `12,990` models indexed (`367.1 ms`); `5,401` meshlets; Whiterun `147.8 ms` (`604` hits / `234` misses) | Clean ring load & LRU reuse |
-| 8 | GPU XPBD Soft-Body / Hair / Bush-Bones (`4,096p`) | PASS | **`0.0579 ms`** mean GPU time | `256` chains / `4,096` particles, 4 substeps; `p50=0.0573`, `p95=0.0584`, `p99=0.0588 ms`; `stretch=1.0003`, `minSD=+0.0050`, `drift=0.0`, `NaN=0` | `< 0.25 ms` HW GPU (`4.32x` headroom) |
-| 9 | GPU Hi-Z Pyramid (`512^2`) + 16k Instance Cull | PASS | Hi-Z `0.0211 ms` + Cull `0.0079 ms` = **`0.0290 ms`** | Combined `p50=0.0287`, `p95=0.0297`, `p99=0.0297 ms`; `vis=5120`, `fr=4096`, `dist=1024`, `hiz=6144`, `falseOcc=0` | `< 0.15 ms` HW GPU (`5.17x` headroom) |
-| 10 | GPU 16x9x24 3D Clustered 1,024-Light Grid | PASS | **`0.0979 ms`** (`Bld 0.0035 + Asn 0.0859 ms`) | Combined `p50=0.0983`, `p95=0.0983`, `p99=0.0983 ms`; `lit=3410/3456`, `links=116168`, `ovf=0`, `NaN=0` | `< 0.15 ms` HW GPU (`1.53x` headroom) |
-| 11 | GPU `160x90x64` 3D Volumetric Froxels (`921.6k`) | PASS | **`0.0447 ms`** (`Inj 0.0297 + Int 0.0113 ms`) | Total `p50=0.0451`, `p95=0.0451`, `p99=0.0451 ms`; `Mie=74.5x`, `tau=5.46/0.31`, `nonMono=0`, `NaN=0` | `< 0.25 ms` HW GPU (`5.59x` headroom) |
-| 12 | GPU Variable-Penumbra PCSS Shadows (`960x540`) | PASS | **`0.0281 ms`** mean GPU time (`host=0.0246 ms`) | `p50=0.0282`, `p95=0.0297`, `p99=0.0297 ms`; `ratio=32.0x`, `open=1.0`, `umb=0.0`, `sky=1.0`, `NaN=0` | `< 0.15 ms` HW GPU (`5.34x` headroom) |
-| 13 | GPU Jimenez GTAO + Bent Normals (`960x540`) | PASS | **`0.0484 ms`** (`Main 0.0379 + Den 0.0072 ms`) | Total `p50=0.0481`, `p95=0.0492`, `p99=0.0492 ms`; `flr=0.966`, `crv=0.615`, `bx=-0.174`, `pit=0.680`, `NaN=0` | `< 0.15 ms` HW GPU (`3.10x` headroom) |
-| 14 | GPU GGX Stochastic SSR (`960x540`) | PASS | **`0.0343 ms`** mean GPU time (`host=0.0297 ms`) | `p50=0.0348`, `p95=0.0348`, `p99=0.0358 ms`; `conf=1.000`, `R/B=15.0x`, `sky=0.0`, `span=153->281`, `NaN=0` | `< 0.15 ms` HW GPU (`4.37x` headroom) |
-| 15 | GPU 256-Bin Auto-Exposure (`960x540`) | PASS | **`0.0127 ms`** (`H 0.0072 + A 0.0020 ms`) | Total `p50=0.0123`, `p95=0.0133`, `p99=0.0133 ms`; `drk=8.87x`, `glc=0.022x`, `ffErr=0.81%`, `asym=3.12x`, `NaN=0` | `< 0.08 ms` HW GPU (`6.30x` headroom) |
-| 16 | GPU 3D Volumetric Clouds (`480x270`) | PASS | **`0.0833 ms`** mean GPU time (`host=0.0778 ms`) | `p50=0.0829`, `p95=0.0840`, `p99=0.0850 ms`; `minT=0.000`, `px=63626`, `silver=4.73x`, `horBad=0`, `NaN=0` | `< 0.15 ms` HW GPU (`1.80x` headroom) |
-| 17 | GPU Cinematic MB + Bokeh DoF (`960x540`) | PASS | **`0.0459 ms`** (`T 0.0082 + C 0.0338 ms`) | Total `p50=0.0461`, `p95=0.0461`, `p99=0.0465 ms`; `strk=0.80`, `dof=0.50->0.08`, `bld=0.0000`, `vig=20.7%`, `NaN=0` | `< 0.08 ms` HW GPU (`1.74x` headroom) |
-| 18 | GPU 16K 3D Particles + Splat (`480x270`) | PASS | **`0.0162 ms`** (`S 0.0061 + P 0.0020 ms`) | Total `p50=0.0164`, `p95=0.0174`, `p99=0.0174 ms`; `act=16384`, `bnc=16384`, `px=2126`, `wX=+5.90`, `NaN=0` | `< 0.08 ms` HW GPU (`4.94x` headroom) |
+| 1 | GPU Fluid (`64^3` NS Fire + `256^2` SWE Water) | PASS | Fire `0.223 ms` + Water `0.019 ms` = **`0.242 ms`** | Combined `p50=0.243`, `p95=0.246`, `p99=0.247 ms`; `Tmax=2550 K`; `NaN=0` | `< 0.50 ms` HW GPU (`2.06x` headroom) |
+| 2 | GPU 4-Cascade Radiance Cascades GI | PASS | **`0.107 ms`** mean GPU time | `p50=0.108`, `p95=0.109`, `p99=0.109 ms`; `2xRatio=2.000`; `Umbra=0.0%`; `NaN=0` | `< 0.35 ms` HW GPU (`3.26x` headroom) |
+| 3 | Procedural PBR Texture Forge (`RawTextureForge`) | PASS | **`8.95 MPix/s`** (`175.7 ms` total) | 8 seamless sets @ `256x256` (3 PBR maps/set); per-set `p50=21.54`, `p95=30.17 ms`; max edge diff `11.61` | 8/8 sets valid |
+| 4 | 48 kHz FDN-8 Hadamard + HRTF Audio DSP | PASS | Ratio **`0.0069`** (**`146.0x`** real-time) | `13.74 ms` CPU to render `2,005.3 ms` stereo (188x512 blocks); `p95=0.076 ms`; `RMS=0.027`, `Peak=0.212`, `NaN=0` | Ratio `< 0.15` (`> 6.5x` RT) |
+| 5 | 3D Voronoi CSG Destruction Physics | PASS | Fracture **`0.39 ms`**; Rigid step **`4.3 us/step`** | 5 archetypes, 90 shards, 180 60 Hz steps (`p95=9.9 us`); volume error **`0.000000%`** | Vol err `< 1e-4%`, finite |
+| 6 | Biomechanical 3D Flora & Hydraulic Hydrology | PASS | **`620.7 trees/s`**; **`143.9 cells/s`** | 10 trees (`904` meshlets, `0` errors); 4 eroded cells (`368` meshlets, `0` errors) | Strict validator `0` errors |
+| 7 | Multi-Cell Tamriel ESM Streamer | PASS | Riverwood 3x3 **`214.1 ms`**; Warm LRU **`72.1%`** | `11,186` cells + `12,990` models indexed (`361.0 ms`); `5,401` meshlets; Whiterun `145.4 ms` (`604` hits / `234` misses) | Clean ring load & LRU reuse |
+| 8 | GPU XPBD Soft-Body / Hair / Bush-Bones (`4,096p`) | PASS | **`0.0578 ms`** mean GPU time | `256` chains / `4,096` particles, 4 substeps; `p50=0.0573`, `p95=0.0584`, `p99=0.0584 ms`; `stretch=1.0003`, `minSD=+0.0050`, `drift=0.0`, `NaN=0` | `< 0.25 ms` HW GPU (`4.33x` headroom) |
+| 9 | GPU Hi-Z Pyramid (`512^2`) + 16k Instance Cull | PASS | Hi-Z `0.0209 ms` + Cull `0.0080 ms` = **`0.0289 ms`** | Combined `p50=0.0287`, `p95=0.0297`, `p99=0.0297 ms`; `vis=5120`, `fr=4096`, `dist=1024`, `hiz=6144`, `falseOcc=0` | `< 0.15 ms` HW GPU (`5.19x` headroom) |
+| 10 | GPU 16x9x24 3D Clustered 1,024-Light Grid | PASS | **`0.0977 ms`** (`Bld 0.0035 + Asn 0.0859 ms`) | Combined `p50=0.0973`, `p95=0.0983`, `p99=0.0983 ms`; `lit=3410/3456`, `links=116168`, `ovf=0`, `NaN=0` | `< 0.15 ms` HW GPU (`1.54x` headroom) |
+| 11 | GPU `160x90x64` 3D Volumetric Froxels (`921.6k`) | PASS | **`0.0446 ms`** (`Inj 0.0297 + Int 0.0113 ms`) | Total `p50=0.0451`, `p95=0.0451`, `p99=0.0451 ms`; `Mie=74.5x`, `tau=5.46/0.31`, `nonMono=0`, `NaN=0` | `< 0.25 ms` HW GPU (`5.61x` headroom) |
+| 12 | GPU Variable-Penumbra PCSS Shadows (`960x540`) | PASS | **`0.0280 ms`** mean GPU time (`host=0.0246 ms`) | `p50=0.0276`, `p95=0.0287`, `p99=0.0295 ms`; `ratio=32.0x`, `open=1.0`, `umb=0.0`, `sky=1.0`, `NaN=0` | `< 0.15 ms` HW GPU (`5.36x` headroom) |
+| 13 | GPU Jimenez GTAO + Bent Normals (`960x540`) | PASS | **`0.0536 ms`** (`Main 0.0430 + Den 0.0082 ms`) | Total `p50=0.0532`, `p95=0.0543`, `p99=0.0543 ms`; `flr=0.966`, `crv=0.615`, `bx=-0.174`, `pit=0.680`, `NaN=0` | `< 0.15 ms` HW GPU (`2.80x` headroom) |
+| 14 | GPU GGX Stochastic SSR (`960x540`) | PASS | **`0.0349 ms`** mean GPU time (`host=0.0307 ms`) | `p50=0.0348`, `p95=0.0358`, `p99=0.0363 ms`; `conf=1.000`, `R/B=15.0x`, `sky=0.0`, `span=153->281`, `NaN=0` | `< 0.15 ms` HW GPU (`4.30x` headroom) |
+| 15 | GPU 256-Bin Auto-Exposure (`960x540`) | PASS | **`0.0131 ms`** (`H 0.0072 + A 0.0020 ms`) | Total `p50=0.0133`, `p95=0.0133`, `p99=0.0137 ms`; `drk=8.87x`, `glc=0.022x`, `ffErr=0.81%`, `asym=3.12x`, `NaN=0` | `< 0.08 ms` HW GPU (`6.11x` headroom) |
+| 16 | GPU 3D Volumetric Clouds (`480x270`) | PASS | **`0.0833 ms`** mean GPU time (`host=0.0788 ms`) | `p50=0.0840`, `p95=0.0850`, `p99=0.0850 ms`; `minT=0.000`, `px=63626`, `silver=4.73x`, `horBad=0`, `NaN=0` | `< 0.15 ms` HW GPU (`1.80x` headroom) |
+| 17 | GPU Cinematic MB + Bokeh DoF (`960x540`) | PASS | **`0.0459 ms`** (`T 0.0082 + C 0.0348 ms`) | Total `p50=0.0461`, `p95=0.0461`, `p99=0.0471 ms`; `strk=0.80`, `dof=0.50->0.08`, `bld=0.0000`, `vig=20.7%`, `NaN=0` | `< 0.08 ms` HW GPU (`1.74x` headroom) |
+| 18 | GPU 16K 3D Particles + Splat (`480x270`) | PASS | **`0.0164 ms`** (`S 0.0061 + P 0.0020 ms`) | Total `p50=0.0164`, `p95=0.0164`, `p99=0.0174 ms`; `act=16384`, `bnc=16384`, `px=2126`, `wX=+5.90`, `NaN=0` | `< 0.08 ms` HW GPU (`4.88x` headroom) |
+| 19 | GPU RAW-TSR 2x Upscaler + RCAS (`640x360 -> 1280x720`) | PASS | **`0.0468 ms`** (`R 0.0338 + C 0.0092 ms`) | Total `p50=0.0471`, `p95=0.0471`, `p99=0.0481 ms`; `rmse-32.8%`, `sky=0.02`, `spk=4.00`, `rcas+36.1%`, `NaN=0` | `< 0.08 ms` HW GPU (`1.71x` headroom) |
 
 ### 2. Quick CI Run Comparison: RTX 4090 vs. DX12 WARP (`--quick`)
 
@@ -73,11 +74,12 @@ Both runs exited with code `0`, `allPassed: true`, and `d3d12DebugErrors: 0`.
 | 15 | GPU 256-Bin Auto-Exposure (`960x540`) | `0.0131 ms` (`H 0.0072 + A 0.0020 ms`, `p95=0.0139 ms`) | `0.9115 ms` (`H 0.9305 + A 0.0208 ms`, `p95=0.9512 ms`) | Bit-identical `drk=8.8741x`, `glc=0.0220x`, `ffErr=0.8121%`, `asym=3.1214x`, `nanFinite=true` |
 | 16 | GPU 3D Volumetric Clouds (`480x270`) | `0.0837 ms` (`host=0.0809 ms`, `p95=0.0845 ms`) | `11.0680 ms` (`host=11.4670 ms`, `p95=11.1582 ms`) | Matching `minT=0.000`, `px=63626`, `silver=4.73x`/`4.74x`, `clearMaxRad=0.0`, `horBad=0`, `NaN=0` |
 | 17 | GPU Cinematic MB + Bokeh DoF (`960x540`) | `0.0463 ms` (`T 0.0082 + C 0.0338 ms`, `p95=0.0471 ms`) | `14.0214 ms` (`T 0.9518 + C 12.8278 ms`, `p95=14.3636 ms`) | Bit-identical `idDiff=0.0010`, `strk=0.7998`, `vert=0.0`, `dof=0.5000->0.0844`, `bld=0.0`, `vig=20.7%`, `NaN=0` |
-| 18 | GPU 16K 3D Particles + Splat (`480x270`) | `0.0169 ms` (`S 0.0051 + P 0.0031 ms`, `p95=0.0174 ms`) | `0.7625 ms` (`S 0.4727 + P 0.1730 ms`, `p95=0.8482 ms`) | Bit-identical `act=16384`, `exp=0`, `embY=2.3533`, `snwY=7.1440`, `wX=+5.9004`, `bnc=16384`, `px=2126`, `NaN=0` |
+| 18 | GPU 16K 3D Particles + Splat (`480x270`) | `0.0179 ms` (`S 0.0061 + P 0.0041 ms`, `p95=0.0184 ms`) | `0.8940 ms` (`S 0.6272 + P 0.2159 ms`, `p95=0.9645 ms`) | Bit-identical `act=16384`, `exp=0`, `embY=2.3533`, `snwY=7.1440`, `wX=+5.9004`, `bnc=16384`, `px=2126`, `NaN=0` |
+| 19 | GPU RAW-TSR 2x Upscaler + RCAS (`640x360 -> 1280x720`) | `0.0467 ms` (`R 0.0338 + C 0.0102 ms`, `p95=0.0471 ms`) | `20.0451 ms` (`R 17.1856 + C 3.8000 ms`, `p95=20.3727 ms`) | Bit-identical `rmse=0.1320->0.0888` (`-32.8%`), `sky=0.0200`, `spk=3.9980`, `rcas=+36.12%`, `NaN=0` |
 
 ### 3. Graceful Missing-Data Verification
 
-Running `raw_bench_suite.exe --quick --esm "C:\nonexistent\Skyrim.esm" --json bench_skip_esm.json` passes all 17 engine-native benchmarks, marks `tamrielStreamer.skipped = true` (`SKIP`), reports `d3d12DebugErrors = 0`, and exits with code `0` so headless CI runners without Skyrim data stay green.
+Running `raw_bench_suite.exe --quick --esm "C:\nonexistent\Skyrim.esm" --json bench_skip_esm.json` passes all 18 engine-native benchmarks, marks `tamrielStreamer.skipped = true` (`SKIP`), reports `d3d12DebugErrors = 0`, and exits with code `0` so headless CI runners without Skyrim data stay green.
 
 ## Detailed Subsystem Breakdown and Invariants
 
@@ -227,6 +229,15 @@ Running `raw_bench_suite.exe --quick --esm "C:\nonexistent\Skyrim.esm" --json be
   - Readback invariants (bit-identical on RTX 4090 and WARP): `activeCount=16384`, `expiredActive=0`, `emberMeanY=2.3533 m`, `snowMeanY=7.1440 m`, `windMeanX=+5.9004 m`, `bouncedCount=16384`, `minBounceY=0.5643 m`, `splattedCount=16384`, `nonZeroSplatPx=2126`, `nanInfCount=0`
 - **Invariants**: Exact `16,384/16,384` active particle conservation with `expiredActive == 0`, upward ember buoyancy (`emberMeanY > 1.2 m`) vs downward snow fall (`snowMeanY < 8.5 m`), strong `+X` wind drift (`windMeanX > 1.0 m`), ground-plane bounce floor respected (`bouncedCount > 8000`, `minBounceY >= 0.45 m`), active additive splat coverage (`splattedCount > 1000`, `nonZeroSplatPx > 64`), `nanInfCount == 0`, and HW GPU total mean `< 0.08 ms`.
 
+### 19. GPU RAW-TSR 2x Temporal Super-Resolution and RCAS Sharpening Upscaler
+- **Implementation**: `RawTsrUpscaleHost` (`src/d3d12_bridge/RawTsrUpscaleHost.h/.cpp`) driving SM 6.6/6.10 compute shaders `RawTsrUpscaleSim.hlsl` (`raw_tsr_resolve_cs.h` + `raw_tsr_rcas_cs.h`) executing 16-phase Halton `(2,3)` sub-pixel un-jittering, 5-tap Catmull-Rom bicubic history reprojection, YCoCg variance-clipping anti-ghosting (`gamma=1.15`), closest-depth velocity dilation, sub-pixel hit-gated temporal accumulation, reactive mask pass-through, and clean-room RCAS contrast-adaptive sharpening with a strict 5-tap cross non-ringing clamp into `RGBA16F`.
+- **Measured Workload**: Evaluates `640x360 -> 1280x720` (2x upscale) across 16-frame static Halton `(2,3)` sub-pixel convergence vs 1-frame RMSE against analytic 1280x720 ground truth, `+24 px` fast-pan orange tower disocclusion anti-ghosting (`0.02` sky behind stale `3.0` history), `4.0` moving fire-spark reactive pass-through, RCAS contrast-adaptive edge gradient boost on a soft `0.10 -> 0.90` ramp with poisoned NaN/+Inf corners, and steady-state 2-pass GPU profiling.
+- **Full RTX 4090 Breakdown (60 frames)**:
+  - Total GPU pass (`TSR Resolve + RCAS Sharpen`): `mean=0.0468 ms`, `p50=0.0471 ms`, `p95=0.0471 ms`, `p99=0.0481 ms` (`hostResolveMs=0.0338 ms`, `hostRcasMs=0.0092 ms`)
+  - CPU command recording overhead: `mean=0.0155 ms`, `p50=0.0144 ms`, `p95=0.0236 ms`
+  - Readback invariants (bit-identical on RTX 4090 and WARP): `rmse1Frame=0.1320 -> rmse16Frames=0.0888` (`rmseReductionPct=32.75%`), `disoccSkyR=0.0200` (true `0.02`, stale history `3.00`), `reactiveSparkR=3.9980` (true `4.000`), `rcasGradBoostPct=+36.12%` (zero ringing `[0.0999..0.8999]`), `nanInfCount=0`
+- **Invariants**: 16-frame Halton `(2,3)` RMSE reduction `> 20%`, disoccluded sky `< 0.06`, reactive fire spark `> 3.6`, RCAS edge gradient boost `> 8%` with zero overshoot outside `[0.098..0.902]`, `nanInfCount == 0`, and HW GPU total mean `< 0.08 ms`.
+
 ## Reproducing Benchmarks
 
 ### CLI Options
@@ -260,4 +271,4 @@ raw_bench_suite.exe [options]
 
 - **Exit Code `0`**: Every executed subsystem passed its numerical, visual, memory, and performance invariants AND `d3d12DebugErrors == 0`.
 - **Exit Code `1`**: Any invariant failed, any hardware GPU budget was exceeded, or any D3D12 Debug Layer error occurred.
-- **JSON Schema**: Top-level fields include `suite`, `mode`, `adapter`, `isWarp`, `vramMB`, `debugLayer`, `d3d12DebugErrors`, `timestampFreqHz`, `gpuWarmupFrames`, `gpuMeasuredFrames`, `allPassed`, and `subsystems.{fluidSim, radianceCascades, textureForge, audioDsp, destruction, floraAndHydrology, tamrielStreamer, xpbdSim, gpuCull, lightClusters, volumetricFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles}` with nested `{mean, p50, p95, p99, min, max}` latency objects for every timed stage.
+- **JSON Schema**: Top-level fields include `suite`, `mode`, `adapter`, `isWarp`, `vramMB`, `debugLayer`, `d3d12DebugErrors`, `timestampFreqHz`, `gpuWarmupFrames`, `gpuMeasuredFrames`, `allPassed`, and `subsystems.{fluidSim, radianceCascades, textureForge, audioDsp, destruction, floraAndHydrology, tamrielStreamer, xpbdSim, gpuCull, lightClusters, volumetricFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles, tsrUpscale}` with nested `{mean, p50, p95, p99, min, max}` latency objects for every timed stage.

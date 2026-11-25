@@ -24,6 +24,7 @@
 #include "ProxyAPI.h"
 #include "rt_adaptive_audio_director.h"
 #include "rt_audio_bridge.h"
+#include "rt_boot_selfcheck.h"
 #include "rt_callgraph.h"
 #include "rt_combat_ai.h"
 #include "rt_combat_impact.h"
@@ -411,6 +412,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     Log("%s", raw::rt::ShaderHotReloadInit(g_dir + "raw_shaders").c_str());
     Log("%s", raw::rt::LiveDashboardInit(g_out).c_str());
     Log("%s", raw::rt::ConsoleDiagInit(g_out).c_str());
+    Log("%s", raw::rt::BootSelfCheckInit(g_dir, g_out).c_str());
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
     if (IniInt("CallGraph", 0)) {
@@ -438,6 +440,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         std::snprintf(why, n, "%d background thread(s) running (sample or call graph); ask again when they finish", t);
         return 0;
     }
+    raw::rt::BootSelfCheckShutdown();
     raw::rt::ConsoleDiagShutdown();
     raw::rt::LiveDashboardShutdown();
     raw::rt::ShaderHotReloadShutdown();

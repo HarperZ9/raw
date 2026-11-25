@@ -1,6 +1,6 @@
-# RAW Engine BuildLang Core Kernel Map (13 Modules, 78 Verified Kernels)
+# RAW Engine BuildLang Core Kernel Map (14 Modules, 84 Verified Kernels)
 
-This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, regional economy, GPU pipeline, world-systems, volumetric clouds, archery, dungeon, animation IK, cinematic post-FX, profile-tiering, GPU particle dynamics, combat-mechanics, TSR upscaling, quest persuasion, and crafting/encumbrance kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**13 modules, 78 verified kernels**):
+This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, regional economy, GPU pipeline, world-systems, volumetric clouds, archery, dungeon, animation IK, cinematic post-FX, profile-tiering, GPU particle dynamics, combat-mechanics, TSR upscaling, quest persuasion, water caustics, crafting, and spellcraft kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**14 modules, 84 verified kernels**):
 
 1. [`native/bld/RawPhysicsKernels.bld`](../native/bld/RawPhysicsKernels.bld) (6 core scalar physics & anti-exploit kernels)
 2. [`native/bld/RawAtmoWeather.bld`](../native/bld/RawAtmoWeather.bld) (7 planetary atmosphere, orbital solar, snowpack ODE & black-ice kernels)
@@ -15,10 +15,11 @@ This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar 
 11. [`native/bld/RawAnimKinematics.bld`](../native/bld/RawAnimKinematics.bld) (6 2-bone IK knee angle, critically damped spring-damper, CoC bokeh radius, motion-blur clamp, VRAM budget tier & shout cooldown kernels)
 12. [`native/bld/RawParticlesCombat.bld`](../native/bld/RawParticlesCombat.bld) (6 particle bounce, curl-wind drag, timed-parry stagger, wet/frost elemental damage, armor mitigation & poise recovery kernels)
 13. [`native/bld/RawTsrQuests.bld`](../native/bld/RawTsrQuests.bld) (6 Halton-2/3 jitter, YCoCg variance clamp, RCAS sharpening lobe, quest persuasion, smithing temper & encumbrance speed kernels)
+14. [`native/bld/RawCausticsCrafting.bld`](../native/bld/RawCausticsCrafting.bld) (6 Snell refraction, underwater Beer-Lambert transmittance, caustic Jacobian clamp, anti-loop crafting cap, soul-gem budget & dual-cast efficiency kernels)
 
 ## Toolchain Verification Receipts (`buildc 1.4.0`)
 
-Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **13/13 `check` PASS**, **13/13 `run` PASS**):
+Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **14/14 `check` PASS**, **14/14 `run` PASS**):
 
 ### Module 1: `native/bld/RawPhysicsKernels.bld`
 - `buildc check`: Exit Code `0` (`Lexing... OK (763 tokens)`, `Parsing... OK (9 items)`, `Type checking... OK`, `No errors found`)
@@ -175,7 +176,19 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
   encumbrance_speed_mult(light) = 1 | (heavy) = 0.88 | (over) = 0.42000000000000004
   ```
 
-## Kernel-by-Kernel Mapping (78 Kernels)
+### Module 14: `native/bld/RawCausticsCrafting.bld`
+- `buildc check`: Exit Code `0` (`Lexing... OK (743 tokens)`, `Parsing... OK (9 items)`, `Type checking... OK`, `No errors found`)
+- `buildc run`: Exit Code `0`
+  ```text
+  snell_refract_cos(air->water 60deg) = 0.7602065399429697 | (water->air TIR) = 0
+  water_spectral_trans(3m red) = 0.2175122735348992 | (3m blue) = 0.8971968385743043
+  caustic_jacobian_clamp(focus 4x) = 4 | (singularity cap) = 6
+  crafting_anti_loop_mult(legit) = 1.8572613277863683 | (restoration-loop cap) = 2.25
+  soul_gem_cast_charges(grand nov) = 54.495912806539515 | (grand master) = 111.11111111111113
+  dual_cast_eff_ratio(2.2x / 2.8x) = 0.7857142857142857
+  ```
+
+## Kernel-by-Kernel Mapping (84 Kernels)
 
 ### 1. Core Physics Kernels (`native/bld/RawPhysicsKernels.bld`)
 
@@ -320,10 +333,21 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
 | 77 | `smithing_temper_bonus(smithing_skill, perk_mult, max_bonus)` | `src/engine_rt/rt_crafting_inventory_gmst.cpp` | `cap * tanh(raw / cap)` smooth diminishing-returns ceiling | Skill 50 = `7.12`; Skill 100 + 2x perk = `26.78` (bounded `< 40`) |
 | 78 | `encumbrance_speed_mult(carry_wt, max_carry_wt)` | `src/engine_rt/rt_crafting_inventory_gmst.cpp` | `1.0` (`<=75%`), smooth `1.0 -> 0.85` (`75..100%`), walk lock `<=0.45` (`>100%`) | Light `1.0`, heavy (`95%`) `0.88`, over-encumbered (`120%`) `0.42` |
 
-## Reproducing All 13 BuildLang Module Checks
+### 14. Water Caustics Optics and Crafting/Spellcraft Kernels (`native/bld/RawCausticsCrafting.bld`)
+
+| # | BuildLang Function | Engine C++ / HLSL Counterpart | Governing Equation | Verified Invariant |
+| --- | --- | --- | --- | --- |
+| 79 | `snell_refract_cos(cos_i, eta_ratio)` | `src/d3d12_bridge/shaders/RawWaterCausticsSim.hlsl`, `RtWater.hlsl` | `sqrt(1 - eta^2*(1 - cos_i^2))`, returning `0.0` on Total Internal Reflection | Air->water `60 deg` steepens to `cos=0.7602`; water->air TIR = exact `0.0` |
+| 80 | `water_spectral_trans(depth_m, sigma_ch, turbidity)` | `src/d3d12_bridge/shaders/RtWater.hlsl`, `RawWaterCausticsSim.hlsl` | `exp(-sigma_ch * (1 + 0.65*turbidity) * depth_m)` | `3 m` depth: red drops to `0.2175` while glacial blue stays `0.8972` |
+| 81 | `caustic_jacobian_clamp(area_in, area_out, max_gain)` | `src/d3d12_bridge/shaders/RawWaterCausticsSim.hlsl` | `clamp(area_in / max(area_out, 1e-4), 0, clamp(max_gain, 1, 8))` | `4x` focal convergence = `4.0`; focal singularity clamped cleanly to `6.0` |
+| 82 | `crafting_anti_loop_mult(alchemy_skill, fortify_stack, hard_cap)` | `src/engine_rt/rt_crafting_inventory_gmst.cpp` | `1 + span * tanh(raw / span)`, strictly bounded `< min(hard_cap, 2.50)` | Legit master `1.857x`; infinite restoration-loop capped at `2.25x` |
+| 83 | `soul_gem_cast_charges(gem_capacity, base_cost, skill_0_100)` | `src/engine_rt/rt_spellcraft_gmst.cpp` | `capacity / max(base_cost * (1 - 0.55*skill01), 1.0)` | Grand gem (`3000`): novice `54.5` casts vs master `111.1` casts (`2.04x`) |
+| 84 | `dual_cast_eff_ratio(base_magicka, base_magnitude, cost_mult, mag_mult)` | `src/engine_rt/rt_spellcraft_gmst.cpp` | `(mag_mult / cost_mult)` efficiency relative to single-cast baseline | Canonical 1.7.104 `2.2x / 2.8x` = `0.7857` efficiency per magicka |
+
+## Reproducing All 14 BuildLang Module Checks
 
 ```powershell
-foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim','RawGpuPipeline','RawWorldSystems','RawCloudsDungeon','RawAnimKinematics','RawParticlesCombat','RawTsrQuests')) {
+foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim','RawGpuPipeline','RawWorldSystems','RawCloudsDungeon','RawAnimKinematics','RawParticlesCombat','RawTsrQuests','RawCausticsCrafting')) {
     buildc check "E:\wt\raw-rt9\native\bld\$m.bld"
     buildc run   "E:\wt\raw-rt9\native\bld\$m.bld"
 }

@@ -309,7 +309,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         const bool cloudOk = m->InitCloudRaymarch();
         const bool postCinOk = m->InitPostCinematic();
         const bool particlesOk = m->InitGpuParticles();
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s, Gtao=%s, Ssr=%s, AutoExposure=%s, CloudRaymarch=%s, PostCinematic=%s, GpuParticles(16K)=%s",
+        const bool tsrOk = m->InitTsrUpscale();
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s, Gtao=%s, Ssr=%s, AutoExposure=%s, CloudRaymarch=%s, PostCinematic=%s, GpuParticles(16K)=%s, TsrUpscale=%s",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
                terrainOk ? "READY" : "off",
                m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
@@ -329,7 +330,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                autoExpOk ? "READY" : "off",
                cloudOk ? "READY" : "off",
                postCinOk ? "READY" : "off",
-               particlesOk ? "READY" : "off");
+               particlesOk ? "READY" : "off",
+               tsrOk ? "READY" : "off");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
         {
             const auto& matReg = raw::materials::DefaultMaterialRegistry();
@@ -1472,6 +1474,84 @@ void D3D12Bridge::Impl::ShutdownGpuParticles()
     gpuParticlesReady      = false;
 }
 
+bool D3D12Bridge::Impl::InitTsrUpscale()
+{
+    ShutdownTsrUpscale();
+    if (!dev12) return false;
+    tsrUpscale = std::make_unique<RawTsrUpscaleHost>();
+    TsrUpscaleDesc desc{};
+    desc.initialInputWidth   = std::max(cfg.width, 64u);
+    desc.initialInputHeight  = std::max(cfg.height, 36u);
+    desc.initialOutputWidth  = std::max(cfg.width, 64u);
+    desc.initialOutputHeight = std::max(cfg.height, 36u);
+    std::string tsrErr;
+    if (!tsrUpscale->Init(dev12.Get(), desc, &tsrErr)) {
+        log("[TsrUpscale] off: %s", tsrErr.c_str());
+        tsrUpscale.reset();
+        return false;
+    }
+    UINT64 tsFreq = 0;
+    if (queue && SUCCEEDED(queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+        tsrUpscale->SetTimestampFrequency(tsFreq);
+    }
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tsrUpscaleAlloc[i])))) {
+            ShutdownTsrUpscale();
+            return false;
+        }
+    }
+    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tsrUpscaleAlloc[0].Get(), nullptr, IID_PPV_ARGS(&tsrUpscaleList))) ||
+        FAILED(tsrUpscaleList->Close()) ||
+        FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&tsrUpscaleFence)))) {
+        ShutdownTsrUpscale();
+        return false;
+    }
+    tsrUpscaleEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!tsrUpscaleEvent) {
+        ShutdownTsrUpscale();
+        return false;
+    }
+    tsrLastJitterX  = 0.0f;
+    tsrLastJitterY  = 0.0f;
+    tsrPrevInterior = false;
+    tsrUpscaleReady = true;
+    log("[TsrUpscale] GPU RAW-TSR Temporal Super-Resolution + RCAS ready (%ux%u -> %ux%u RGBA16F)",
+        desc.initialInputWidth, desc.initialInputHeight,
+        desc.initialOutputWidth, desc.initialOutputHeight);
+    return true;
+}
+
+void D3D12Bridge::Impl::ShutdownTsrUpscale()
+{
+    if (tsrUpscaleFence && tsrUpscaleEvent && tsrUpscaleFenceVal > 0) {
+        if (tsrUpscaleFence->GetCompletedValue() < tsrUpscaleFenceVal) {
+            tsrUpscaleFence->SetEventOnCompletion(tsrUpscaleFenceVal, tsrUpscaleEvent);
+            WaitForSingleObject(tsrUpscaleEvent, 3000);
+        }
+    }
+    tsrUpscaleList.Reset();
+    for (UINT i = 0; i < kRing; ++i) {
+        tsrUpscaleAlloc[i].Reset();
+        tsrUpscaleSlotVal[i] = 0;
+    }
+    tsrUpscaleFence.Reset();
+    if (tsrUpscaleEvent) {
+        CloseHandle(tsrUpscaleEvent);
+        tsrUpscaleEvent = nullptr;
+    }
+    if (tsrUpscale) {
+        tsrUpscale->Shutdown();
+        tsrUpscale.reset();
+    }
+    tsrUpscaleFenceVal   = 0;
+    tsrUpscaleSlot       = 0;
+    tsrUpscaleStepFrames = 0;
+    tsrLastJitterX       = 0.0f;
+    tsrLastJitterY       = 0.0f;
+    tsrPrevInterior      = false;
+    tsrUpscaleReady      = false;
+}
+
 void D3D12Bridge::Shutdown()
 {
     if (!m) return;
@@ -1480,6 +1560,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->ShutdownTsrUpscale();
     m->ShutdownGpuParticles();
     m->ShutdownPostCinematic();
     m->ShutdownCloudRaymarch();

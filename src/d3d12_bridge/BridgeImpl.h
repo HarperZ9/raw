@@ -20,6 +20,7 @@
 #include "RawCloudRaymarchHost.h"
 #include "RawPostCinematicHost.h"
 #include "RawGpuParticlesHost.h"
+#include "RawTsrUpscaleHost.h"
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
@@ -98,6 +99,7 @@ struct D3D12Bridge::Impl
     std::unique_ptr<RawCloudRaymarchHost> cloudRaymarch; // Live GPU 3D Volumetric Cloud Raymarching + Beer-Powder Silver-Lining solver
     std::unique_ptr<RawPostCinematicHost> postCinematic; // Live GPU Tile-Max Motion Blur + Depth-Aware Hexagonal Bokeh DoF solver
     std::unique_ptr<RawGpuParticlesHost> gpuParticles; // Live GPU 16,384-Particle 3D Physics & Additive Splat solver
+    std::unique_ptr<RawTsrUpscaleHost> tsrUpscale; // Live GPU RAW-TSR Temporal Super-Resolution + RCAS upscaler
     bool                     fluidReady = false;
     bool                     radianceReady = false;
     bool                     xpbdSimReady = false;
@@ -115,6 +117,7 @@ struct D3D12Bridge::Impl
     bool                     cloudRaymarchReady = false;
     bool                     postCinematicReady = false;
     bool                     gpuParticlesReady = false;
+    bool                     tsrUpscaleReady = false;
     ComPtr<ID3D12CommandAllocator>    fluidAlloc[kRing];
     ComPtr<ID3D12GraphicsCommandList> fluidList;
     ComPtr<ID3D12Fence>               fluidFence;
@@ -254,6 +257,17 @@ struct D3D12Bridge::Impl
     uint64_t                          gpuParticlesStepFrames = 0;
     uint64_t                          gpuParticlesLastMs = 0;
     ParticleMode                      gpuParticlesLastMode = ParticleMode::Embers;
+    ComPtr<ID3D12CommandAllocator>    tsrUpscaleAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList> tsrUpscaleList;
+    ComPtr<ID3D12Fence>               tsrUpscaleFence;
+    HANDLE                            tsrUpscaleEvent = nullptr;
+    uint64_t                          tsrUpscaleFenceVal = 0;
+    uint64_t                          tsrUpscaleSlotVal[kRing] = {};
+    uint32_t                          tsrUpscaleSlot = 0;
+    uint64_t                          tsrUpscaleStepFrames = 0;
+    float                             tsrLastJitterX = 0.0f;
+    float                             tsrLastJitterY = 0.0f;
+    bool                              tsrPrevInterior = false;
     std::string                       telemetryOutDir;
     bool InitFluidSim();
     void ShutdownFluidSim();
@@ -294,6 +308,9 @@ struct D3D12Bridge::Impl
     bool InitGpuParticles();
     void ShutdownGpuParticles();
     bool ExecuteGpuParticlesOnQueue(bool isInterior);
+    bool InitTsrUpscale();
+    void ShutdownTsrUpscale();
+    bool ExecuteTsrUpscaleOnQueue(bool hasMotion, bool isInterior);
     bool InitOverlayHost();
     void ShutdownOverlayHost();
     void PollOverlayHotkey();

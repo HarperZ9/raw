@@ -22,6 +22,7 @@
 #include "../src/worldgen/RawEsmNpcWeatherLoader.h"
 #include "../src/worldgen/RawFactionDiplomacy.h"
 #include "../src/worldgen/RawNavMeshAi.h"
+#include "../src/worldgen/RawQuestStoryEngine.h"
 #include "../src/worldgen/RawSettlementSim.h"
 #include "../src/worldgen/RawSkeletonAnimEngine.h"
 #include "../src/worldgen/RawTamrielWorldStreamer.h"
@@ -2022,6 +2023,175 @@ bool RunCombatSimAudit() {
     return ok;
 }
 
+bool RunQuestSimAudit() {
+    using namespace raw::worldgen;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    // 1. Planted DAG cycle, dangling edge & invalid stage-jump rejection
+    bool dagOk = false;
+    uint32_t rejectedCount = 0u;
+    {
+        RawQuestStoryEngine eng;
+        std::string err;
+
+        QuestInstance cyclic{};
+        cyclic.title          = "Broken Cyclic Quest";
+        cyclic.currentStageId = 10u;
+        cyclic.stages = {
+            {10u, "Loop A", {20u}, false, false},
+            {20u, "Loop B", {10u, 100u}, false, false},
+            {100u, "End", {}, true, false},
+        };
+        const uint32_t cyclicId = eng.RegisterCustomQuest(cyclic, &err);
+
+        QuestInstance dangling{};
+        dangling.currentStageId = 10u;
+        dangling.stages = {
+            {10u, "Start", {777u}, false, false},
+            {100u, "End", {}, true, false},
+        };
+        const uint32_t danglingId = eng.RegisterCustomQuest(dangling, &err);
+
+        const uint32_t qId = eng.CreateArchetypeQuest(QuestArchetype::ClearDungeon, HoldId::Whiterun,
+                                                      FactionId::Companions);
+        const bool badJumpRejected   = !eng.AdvanceQuestStage(qId, 100u);
+        const bool unknownIdRejected = !eng.AdvanceQuestStage(9999u, 20u);
+        const bool stayedAt10        = (eng.FindQuest(qId)->currentStageId == 10u);
+        rejectedCount                = eng.ComputeTelemetry().rejectedTransitions;
+        dagOk = (cyclicId == 0u) && (danglingId == 0u) && badJumpRejected &&
+                unknownIdRejected && stayedAt10 && (rejectedCount >= 3u);
+    }
+
+    // 2. Branching Dialogue (Persuade / Bribe / Intimidate) monotonicity & rewards
+    bool dialogueOk = false;
+    float pLow = 0.0f, pHigh = 0.0f, bribeSpent = 0.0f;
+    bool intimPass = false;
+    {
+        RawQuestStoryEngine eng;
+        RawFactionDiplomacy dip;
+        const uint32_t qId = eng.CreateArchetypeQuest(QuestArchetype::BrokerTruce, HoldId::Whiterun,
+                                                      FactionId::ImperialLegion, CommodityKind::Mead,
+                                                      DungeonArchetype::NordicBarrow, {}, 300.0f);
+        const float initialReward = eng.FindQuest(qId)->rewardGold;
+
+        DialogueCheckInput lowSpeech{};
+        lowSpeech.approach     = DialogueApproach::Persuade;
+        lowSpeech.speechSkill  = 15.0f;
+        lowSpeech.difficultyDC = 60.0f;
+        const DialogueCheckResult rLow = eng.EvaluateDialogueBranch(qId, lowSpeech, &dip);
+
+        DialogueCheckInput highSpeech = lowSpeech;
+        highSpeech.speechSkill = 85.0f;
+        const DialogueCheckResult rHigh = eng.EvaluateDialogueBranch(qId, highSpeech, &dip);
+
+        DialogueCheckInput cheapBribe{};
+        cheapBribe.approach      = DialogueApproach::Bribe;
+        cheapBribe.availableGold = 50.0f;
+        cheapBribe.difficultyDC  = 50.0f;
+        const DialogueCheckResult rCheap = eng.EvaluateDialogueBranch(qId, cheapBribe);
+
+        DialogueCheckInput richBribe = cheapBribe;
+        richBribe.availableGold = 300.0f;
+        const DialogueCheckResult rRich = eng.EvaluateDialogueBranch(qId, richBribe);
+
+        DialogueCheckInput intim{};
+        intim.approach          = DialogueApproach::Intimidate;
+        intim.intimidationLevel = 55.0f;
+        intim.speechSkill       = 40.0f;
+        intim.difficultyDC      = 55.0f;
+        const DialogueCheckResult rIntim = eng.EvaluateDialogueBranch(qId, intim);
+
+        pLow       = rLow.passProbability;
+        pHigh      = rHigh.passProbability;
+        bribeSpent = rRich.goldSpent;
+        intimPass  = rIntim.succeeded;
+
+        dialogueOk = !rLow.succeeded && rHigh.succeeded && (rHigh.passProbability > rLow.passProbability) &&
+                     (eng.FindQuest(qId)->rewardGold > initialReward) &&
+                     !rCheap.succeeded && rRich.succeeded && (rRich.goldSpent == 200.0f) &&
+                     rIntim.succeeded && (rIntim.holdRepDelta < 0.0f);
+    }
+
+    // 3. Coupled 4-System Radiant Quest Generation, Completion & JSON Journal Export
+    RawSettlementSim settle(6001u);
+    SettlementWeatherMap blizWx{};
+    blizWx.byHold[static_cast<size_t>(HoldId::Windhelm)].blizzard01   = 0.92f;
+    blizWx.byHold[static_cast<size_t>(HoldId::Winterhold)].blizzard01 = 0.95f;
+    settle.StepHours(24.0f, blizWx);
+
+    RawFactionDiplomacy dip;
+    dip.AdjustFactionReputation(FactionId::ImperialLegion, 45.0f);
+    dip.RecordCrime(HoldId::Riften, CrimeSeverity::GrandTheft, true);
+
+    RawWorldEventDirector events;
+    WorldEventInputs evIn{};
+    evIn.settlement = &settle;
+    evIn.blizzard01 = 0.92f;
+    events.StepHours(1.0f, evIn);
+
+    GeneratedDungeon barrow{};
+    DungeonGenConfig dcfg{};
+    dcfg.archetype = DungeonArchetype::NordicBarrow;
+    dcfg.seed      = 6060u;
+    dcfg.roomCount = 7u;
+    const bool okDungeon = RawDungeonGen::GenerateDungeon(dcfg, barrow);
+
+    RawQuestStoryEngine story;
+    RadiantQuestInputs rqIn{};
+    rqIn.settlement = &settle;
+    rqIn.diplomacy  = &dip;
+    rqIn.events     = &events;
+    rqIn.dungeonOpt = &barrow;
+    const uint32_t generated = story.GenerateRadiantQuests(rqIn, 5u);
+
+    uint32_t dungeonQuestId = 0u;
+    HoldId   dungeonHold    = HoldId::Whiterun;
+    for (const QuestInstance& q : story.Quests()) {
+        if (q.archetype == QuestArchetype::ClearDungeon) {
+            dungeonQuestId = q.id;
+            dungeonHold    = q.holdId;
+            break;
+        }
+    }
+    const float repBefore = dip.GetHoldStanding(dungeonHold)->reputation;
+    const bool s1 = story.AdvanceQuestStage(dungeonQuestId, 20u, &dip);
+    const bool s2 = story.AdvanceQuestStage(dungeonQuestId, 30u, &dip);
+    const bool s3 = story.AdvanceQuestStage(dungeonQuestId, 100u, &dip);
+    const bool postTermRejected = !story.AdvanceQuestStage(dungeonQuestId, 90u, &dip);
+    const float repAfter  = dip.GetHoldStanding(dungeonHold)->reputation;
+
+    const QuestDirectorTelemetry tel = story.ComputeTelemetry();
+    const std::string journalJson    = story.ExportJournalJson();
+    const bool journalOk =
+        (journalJson.find("\"format\": \"RAW_QUEST_JOURNAL\"") != std::string::npos) &&
+        (journalJson.find("\"ClearDungeon\"") != std::string::npos) &&
+        (journalJson.find("\"Completed\"") != std::string::npos) &&
+        (journalJson.find("nan") == std::string::npos);
+
+    const bool radiantOk = okDungeon && (generated >= 4u) && (dungeonQuestId != 0u) &&
+                           s1 && s2 && s3 && postTermRejected &&
+                           (repAfter > repBefore + 8.0f) &&
+                           (tel.completedCount == 1u) && (tel.totalGoldAwarded > 300.0) && journalOk;
+
+    const double totalMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    const bool ok = dagOk && dialogueOk && radiantOk;
+
+    std::printf(
+        "[INFO] Procedural RPG Quest DAG, Branching Dialogue & Radiant Story Audit (%.2f ms):\n"
+        "  1. DAG & Transition Guard : cycle+dangling+jump rejected (count=%u) [%s]\n"
+        "  2. Branching Dialogue     : persuade=%.2f->%.2f bribeSpent=%.0fg intim=%s [%s]\n"
+        "  3. 4-System Radiant & JSON: generated=%u completed=%u gold=%.0fg rep %.1f->%.1f jsonBytes=%zu [%s]\n"
+        "[%s] quest-sim: DAG/dialogue/4-system radiant quest & journal audit %s (%.2f ms)\n",
+        totalMs,
+        rejectedCount, dagOk ? "PASS" : "FAIL",
+        pLow, pHigh, bribeSpent, intimPass ? "yes" : "no", dialogueOk ? "PASS" : "FAIL",
+        generated, tel.completedCount, tel.totalGoldAwarded, repBefore, repAfter, journalJson.size(),
+        radiantOk ? "PASS" : "FAIL",
+        ok ? "PASS" : "FAIL", ok ? "PASS" : "FAIL", totalMs);
+    return ok;
+}
+
 bool ParseCellXY(const std::string& s, int32_t* outX, int32_t* outY) {
     const size_t comma = s.find(',');
     if (comma == std::string::npos || comma == 0u || comma + 1u >= s.size()) return false;
@@ -2066,6 +2236,7 @@ void PrintUsage() {
         "  raw_forge_cli --dungeon-gen                             3-archetype 3D dungeon meshlet + Entrance->Boss A* audit\n"
         "  raw_forge_cli --skeleton-ik                             24-bone humanoid FK/IK/slope-FootIK/XPBD/64-rig audit\n"
         "  raw_forge_cli --combat-sim                              8v8 parry/poise/weather-synergy/ballistic-LOS combat audit\n"
+        "  raw_forge_cli --quest-sim                               Quest DAG, branching dialogue & 4-system radiant story audit\n"
         "  raw_forge_cli --validate-all [dir]                      Run all 4 procedural pipelines + quality gates\n"
         "Options:\n"
         "  --seed <N>         Deterministic RNG seed (default: 202607)\n"
@@ -2130,6 +2301,7 @@ int main(int argc, char** argv) {
     bool runDungeonGen      = false;
     bool runSkeletonIk      = false;
     bool runCombatSim       = false;
+    bool runQuestSim        = false;
     bool writeGeometry      = true;
     uint32_t seed       = 202607u;
     float latitudeDeg   = 60.0f;
@@ -2296,6 +2468,8 @@ int main(int argc, char** argv) {
             runSkeletonIk = true;
         } else if (arg == "--combat-sim") {
             runCombatSim = true;
+        } else if (arg == "--quest-sim") {
+            runQuestSim = true;
         } else if (arg == "--validate-all") {
             runValidateAll = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -2322,11 +2496,11 @@ int main(int argc, char** argv) {
 
     if (!runValidateAll && !runEsmMeta && !runPhysicsProbe && !runTamrielStream && !runNavMeshAudit &&
         !runEcosystemSim && !runWildlifeSim && !runSettlementSim && !runEventsSim && !runDiplomacySim &&
-        !runWorldSnapshot && !runDungeonGen && !runSkeletonIk && !runCombatSim &&
+        !runWorldSnapshot && !runDungeonGen && !runSkeletonIk && !runCombatSim && !runQuestSim &&
         floraDir.empty() && dioramaDir.empty() && almanacDir.empty() &&
         materialsDir.empty() && texturesDir.empty() && esmPath.empty() && esmScenePath.empty() &&
         bsaListPath.empty() && nifPath.empty() && bsaNifArchive.empty() && ddsPath.empty() && bsaDdsArchive.empty()) {
-        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, --events-sim, --diplomacy-sim, --world-snapshot, --dungeon-gen, --skeleton-ik, --combat-sim, or --validate-all).\n");
+        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, --events-sim, --diplomacy-sim, --world-snapshot, --dungeon-gen, --skeleton-ik, --combat-sim, --quest-sim, or --validate-all).\n");
         PrintUsage();
         return 2;
     }
@@ -2471,6 +2645,10 @@ int main(int argc, char** argv) {
 
     if (runCombatSim) {
         if (!RunCombatSimAudit()) allOk = false;
+    }
+
+    if (runQuestSim) {
+        if (!RunQuestSimAudit()) allOk = false;
     }
 
     if (runValidateAll) {

@@ -92,17 +92,22 @@ float4 projectCameraRelative(float3 relP) {
 }
 
 // Applies 4-tier Euler-Bernoulli cantilever wind sway & winter snow-load sag to baked 3D flora vertices.
+// Wave 60: strict zero-displacement root pinning when height01 (hFrac) == 0.
 void applyTerrainFloraWind(inout float3 absP, inout float3 worldN, TerrainVertex tv) {
     if (tv.meta.w < 9.5f) {
         return;
     }
     const bool isBark = (tv.meta.w < 10.5f);
     const float hFrac = saturate(1.0f - tv.uv.y);
-    const float bendFlex = isBark ? (hFrac * 0.32f) : saturate(0.24f + 0.76f * hFrac);
+    if (hFrac <= 1.0e-4f) {
+        return;
+    }
+    const float rootPinW = smoothstep(0.0f, 0.05f, hFrac);
+    const float bendFlex = (isBark ? (hFrac * 0.32f) : saturate(0.24f + 0.76f * hFrac)) * rootPinW;
     if (bendFlex <= 1.0e-4f) {
         return;
     }
-    const float3 rootPos = absP - float3(0.0f, 0.0f, max(hFrac * 340.0f, 4.0f));
+    const float3 rootPos = absP - float3(0.0f, 0.0f, hFrac * 340.0f);
     const float phaseHash = frac(dot(floor(absP * 0.03f), float3(0.371f, 0.719f, 0.193f)));
     const float speciesId = (tv.meta.w >= 11.5f) ? 2.0f : 0.0f; // 0=evergreen conifer, 2=deciduous
     const float2 windXY = clamp(cloudWind.xy * 0.0045f, -2.5f.xx, 2.5f.xx);
@@ -653,6 +658,48 @@ float4 ps_terrain_main(TerrainOutVert inp, bool isFrontFace : SV_IsFrontFace) : 
 
         N = atlasN;
         atlasAo = clamp(aoAcc, 0.35f, 1.0f);
+
+        // Wave 60: Alpine Scree Talus Micro-Roughness Variation (on rocky granite/basalt/cobble talus aprons):
+        // Breaks up broad rock/cliff expanses with granular loose scree pebbles & micro-roughness contrast.
+        const float rockShare = saturate(s0.x + s0.w + s1.z);
+        const float screeSlope = smoothstep(0.26f, 0.54f, nGeo.z) * (1.0f - smoothstep(0.74f, 0.94f, nGeo.z));
+        const float screeConcave = smoothstep(0.22f, -0.35f, curvature);
+        const float screeMask = saturate(rockShare * screeSlope * (0.45f + 0.55f * screeConcave)) * smoothstep(9500.0f, 350.0f, viewDist);
+        if (screeMask > 0.015f) {
+            const float4 scCoarse = rawNoise3Grad(inp.absWorldPos * (0.16f * detailSc) + float3(7.1f, 19.3f, 3.7f));
+            const float4 scFine   = rawNoise3Grad(inp.absWorldPos * (0.48f * detailSc) + float3(23.9f, 5.1f, 14.7f));
+            const float pebbleVar = saturate(scCoarse.x * 0.58f + scFine.x * 0.42f);
+            const float3 talusTint = lerp(float3(0.86f, 0.85f, 0.84f), float3(1.12f, 1.10f, 1.06f), pebbleVar);
+            albedo *= lerp(1.0f.xxx, talusTint, screeMask * 0.45f);
+            rough = clamp(rough + (pebbleVar - 0.48f) * (0.28f * screeMask), 0.06f, 0.96f);
+            const float3 scGrad = scFine.yzw * 0.14f + scCoarse.yzw * 0.10f;
+            const float3 scTang = scGrad - N * dot(scGrad, N);
+            N = safeNormalizeFlora(N + scTang * screeMask, N);
+        }
+
+        // Wave 60: Slope-Aware Strata Snow-Drift Overhang Blending:
+        // Wind-sculpted alpine snow settles thickly on horizontal strata ledges and curls into leeward
+        // snow-drift overhang lips while shedding cleanly off steep bare rock faces!
+        const float snowAvail = saturate(max(s0.y * 1.15f, max(seasonThermal0.x * 1.35f, weather.z * 0.90f)));
+        if (snowAvail > 0.04f) {
+            const float2 wRawT = cloudWind.xy + float2(1.0f, 0.35f);
+            const float2 wDirT = wRawT * rsqrt(max(dot(wRawT, wRawT), 1.0e-6f));
+            const float leewardDrift = saturate(dot(nGeo.xy, wDirT) * 0.5f + 0.5f);
+            const float shelfBias = (strata.bandVal - 0.5f) * 0.24f + (leewardDrift - 0.5f) * 0.14f;
+            const float shelfSnow = smoothstep(0.42f, 0.78f, nGeo.z + shelfBias) * snowAvail;
+            const float overhangLip = smoothstep(0.30f, 0.58f, nGeo.z + shelfBias)
+                                    * (1.0f - smoothstep(0.58f, 0.82f, nGeo.z + shelfBias))
+                                    * smoothstep(0.42f, 0.80f, strata.bandVal) * snowAvail;
+            const float driftBlend = saturate(max(shelfSnow * 0.62f, overhangLip * 0.72f)) * (1.0f - s1.x);
+            if (driftBlend > 0.015f) {
+                const float3 corniceUnder = float3(0.56f, 0.68f, 0.84f);
+                const float3 driftTop     = lerp(float3(0.72f, 0.79f, 0.88f), float3(0.84f, 0.89f, 0.95f), strata.grainVal);
+                const float3 driftCol     = lerp(driftTop, corniceUnder, saturate(overhangLip * 0.65f));
+                albedo = lerp(albedo, driftCol, driftBlend * 0.76f);
+                rough  = lerp(rough, lerp(0.54f, 0.42f, overhangLip), driftBlend * 0.70f);
+                F0     = lerp(F0, float3(0.020f, 0.021f, 0.024f), driftBlend * 0.70f);
+            }
+        }
     }
 
     // 3. Analytical Curvature, Live Orbital Seasons/Thermals & Wetness Physical Modulation
@@ -716,19 +763,39 @@ float4 ps_terrain_main(TerrainOutVert inp, bool isFrontFace : SV_IsFrontFace) : 
 
     float3 hdrColor = diffuseDirect + albedo * hemiAmb + specDirect + foliageRim + iblSpec + emissive;
 
-    // 5. Seamless Atmospheric Perspective & Height-Stratified Aerial Fog (fused with LightingCommon.hlsli)
+    // 5. Wave 60 Unified Horizon Aerial Perspective & Valley-Mist Cohesion
+    // (synchronized with LightingCommon.hlsli, DistantLod.hlsli & AtmosphereLut.hlsl civil-twilight Belt of Venus!)
     const float hFall = fogHeightFalloff > 1.0e-6f ? fogHeightFalloff : 0.00028f;
     const float baseDens = max(tune.x, 0.000032f);
-    const float altFactor = exp(-max(inp.absWorldPos.z + 1200.0f, 0.0f) * hFall);
-    const float optDepth = viewDist * baseDens * lerp(0.45f, 1.30f, altFactor);
+    const float altFactor = exp(-min(max(inp.absWorldPos.z + 1200.0f, 0.0f) * hFall, 24.0f));
+    const float optDepth = min(viewDist * baseDens * lerp(0.45f, 1.30f, altFactor), 24.0f);
     const float trans = exp(-optDepth);
 
-    const float cosSun = dot(-V, L);
+    // Altitude-stratified river-valley mist cohesion matching DistantLod.hlsli & FroxelPass.hlsl:
+    const float valleyFloorT = (engineWorld.z > 0.5f && engineWorld.x > -13000.0f)
+        ? engineWorld.x : min(camPosW.z - 260.0f, -120.0f);
+    const float hAboveVal = max(inp.absWorldPos.z - valleyFloorT, 0.0f);
+    const float invMistStr = saturate(phenology1.z * 0.65f + weather.x * 0.40f + weather.w * 0.55f);
+    const float valleyPoolT = exp(-min(hAboveVal / lerp(900.0f, 1650.0f, invMistStr), 24.0f));
+    const float valleyMistW = saturate(valleyPoolT * smoothstep(1800.0f, 17500.0f, viewDist) * lerp(0.12f, 0.36f, invMistStr));
+
+    const float cosSun = clamp(dot(-V, L), -1.0f, 1.0f);
     const float miePhase = rawMultiScatterPhase(cosSun, clamp(tune.y, 0.25f, 0.78f), optDepth);
     const float viewElev = saturate(-V.z * 0.5f + 0.5f);
-    const float3 fogCol = lerp(skyH, skyZ, saturate(viewElev * 0.72f))
-                        + sunColFog * (miePhase * saturate(astroSunElev() * 4.0f + 0.15f) * 0.62f);
+    const float aElevT = astroSunElev();
+    // Synchronize civil-twilight anti-solar Belt-of-Venus rose haze & solar golden glow with AtmosphereLut.hlsl:
+    const float twiEnvT = smoothstep(-0.12f, -0.015f, aElevT) * (1.0f - smoothstep(0.025f, 0.14f, aElevT)) * (1.0f - saturate(clouds.x * 0.85f));
+    const float2 vHorT = (-V.xy) * rsqrt(max(dot(V.xy, V.xy), 1.0e-6f));
+    const float2 sHorT = L.xy * rsqrt(max(dot(L.xy, L.xy), 1.0e-6f));
+    const float antiAzT = saturate(dot(vHorT, -sHorT));
+    const float3 venusFogTint = float3(0.56f, 0.28f, 0.44f) * (antiAzT * twiEnvT * 0.28f * (1.0f - viewElev));
 
-    hdrColor = hdrColor * trans + fogCol * (1.0f - trans);
-    return float4(max(hdrColor, 0.0f.xxx), 1.0f);
+    const float3 fogCol = lerp(skyH, skyZ, saturate(viewElev * 0.72f)) * lerp(0.74f, 1.0f, cloudSh)
+                        + sunColFog * (miePhase * saturate(aElevT * 4.0f + 0.15f) * 0.62f)
+                        + venusFogTint;
+    const float effTrans = saturate(trans * (1.0f - valleyMistW));
+
+    hdrColor = hdrColor * effTrans + fogCol * (1.0f - effTrans);
+    const float3 safeOut = all(isfinite(hdrColor)) ? max(hdrColor, 0.0f.xxx) : 0.0f.xxx;
+    return float4(safeOut, 1.0f);
 }

@@ -4,6 +4,7 @@
 #include "rt_console_diag.h"
 
 #include "rt_adaptive_audio_director.h"
+#include "rt_boot_selfcheck.h"
 #include "rt_engine_health.h"
 #include "rt_frame_governor.h"
 #include "rt_live_dashboard.h"
@@ -188,7 +189,15 @@ bool DispatchDiagnosticCommand(const char* cmdLine, std::string& outResponse) no
                 "  status - Concise unified snapshot (health, governor, audio mood, weather & GMST modules)\n"
                 "  preset <ultra|balanced|competitive|safemode> - Query or apply a validated 4-tier quality preset\n"
                 "  reload_shaders - Run atomic pre-validation & trigger raw_shaders\\ hot-reload generation\n"
-                "  dashboard - Atomically export raw_live_dashboard.json & self-contained raw_live_dashboard.html";
+                "  dashboard - Atomically export raw_live_dashboard.json & self-contained raw_live_dashboard.html\n"
+                "  selfcheck - Run 12-point boot & runtime integrity verifier and write boot_selfcheck.txt";
+            return true;
+        }
+
+        if (verb == "selfcheck") {
+            std::string summary;
+            (void)BootSelfCheckRunAndWrite(nullptr, &summary);
+            outResponse = summary;
             return true;
         }
 
@@ -363,7 +372,7 @@ std::string ConsoleDiagInit(const std::string& outDir) {
     }
     char buf[224];
     std::snprintf(buf, sizeof(buf),
-                  "[ConsoleDiag] initialized (10 commands: help/health/sdk/flight/mods/saves/status/preset/reload_shaders/dashboard | poll=%uf -> %s\\raw_cmd.txt)",
+                  "[ConsoleDiag] initialized (11 commands: help/health/sdk/flight/mods/saves/status/preset/reload_shaders/dashboard/selfcheck | poll=%uf -> %s\\raw_cmd.txt)",
                   kPollCadenceFrames, outDir.empty() ? "raw_engine_out" : outDir.c_str());
     return buf;
 }

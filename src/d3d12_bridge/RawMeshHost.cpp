@@ -3,6 +3,7 @@
 #include "RawMeshHost.h"
 #include "raw_mesh_as.h"   // kDxil_raw_mesh_as (dxc, as_6_6)
 #include "raw_mesh_ms.h"   // kDxil_raw_mesh_ms (dxc, ms_6_6)
+#include "raw_subdiv_cs.h" // kDxil_raw_subdiv_cs (dxc, cs_6_6)
 
 #include <cstring>
 
@@ -106,6 +107,26 @@ bool RawMeshHost::Init(ID3D12Device* dev, std::string* outErr)
     }
     D3D12_RANGE r{0, 0};
     if (FAILED(m_cbBuf->Map(0, &r, &m_cbMapped))) return false;
+
+    // Optional RawSubdiv.hlsl (cs_6_6) 1->4 curved PN-Triangle compute pipeline (works on ALL DX12 SM 6.6 GPUs):
+    D3D12_ROOT_PARAMETER sp[5]{};
+    sp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; sp[0].Descriptor = {0, 0}; sp[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    sp[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; sp[1].Descriptor = {0, 0}; sp[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    sp[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; sp[2].Descriptor = {1, 0}; sp[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    sp[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV; sp[3].Descriptor = {0, 0}; sp[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    sp[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV; sp[4].Descriptor = {1, 0}; sp[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    D3D12_ROOT_SIGNATURE_DESC srsd{5, sp, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    ComPtr<ID3DBlob> sSig, sErr;
+    if (SUCCEEDED(D3D12SerializeRootSignature(&srsd, D3D_ROOT_SIGNATURE_VERSION_1, &sSig, &sErr)) &&
+        SUCCEEDED(m_dev2->CreateRootSignature(0, sSig->GetBufferPointer(), sSig->GetBufferSize(), IID_PPV_ARGS(&m_subdivRoot)))) {
+        D3D12_COMPUTE_PIPELINE_STATE_DESC cpd{};
+        cpd.pRootSignature = m_subdivRoot.Get();
+        cpd.CS = {kDxil_raw_subdiv_cs, sizeof kDxil_raw_subdiv_cs};
+        if (SUCCEEDED(m_dev2->CreateComputePipelineState(&cpd, IID_PPV_ARGS(&m_subdivPso))) &&
+            CreateUploadBuffer(dev, nullptr, sizeof(RawSubdivCB), m_subdivCbBuf)) {
+            m_subdivCbBuf->Map(0, &r, &m_subdivCbMapped);
+        }
+    }
     m_ready = true;
     return true;
 }
@@ -140,6 +161,23 @@ void RawMeshHost::Dispatch(ID3D12GraphicsCommandList* cmd, const RawMeshGpuAsset
     cmd6->SetGraphicsRootShaderResourceView(2, asset.vertexBuf->GetGPUVirtualAddress());
     cmd6->SetGraphicsRootShaderResourceView(3, asset.indexBuf->GetGPUVirtualAddress());
     cmd6->DispatchMesh((asset.meshletCount + 31u) / 32u, 1u, 1u);
+}
+
+void RawMeshHost::SubdivideMesh(ID3D12GraphicsCommandList* cmd,
+                                D3D12_GPU_VIRTUAL_ADDRESS inVertsSrv, D3D12_GPU_VIRTUAL_ADDRESS inIdxSrv,
+                                D3D12_GPU_VIRTUAL_ADDRESS outVertsUav, D3D12_GPU_VIRTUAL_ADDRESS outIdxUav,
+                                const RawSubdivCB& cb)
+{
+    if (!cmd || !m_subdivPso || !m_subdivRoot || !m_subdivCbMapped || cb.inTriangleCount == 0) return;
+    std::memcpy(m_subdivCbMapped, &cb, sizeof cb);
+    cmd->SetComputeRootSignature(m_subdivRoot.Get());
+    cmd->SetPipelineState(m_subdivPso.Get());
+    cmd->SetComputeRootConstantBufferView(0, m_subdivCbBuf->GetGPUVirtualAddress());
+    cmd->SetComputeRootShaderResourceView(1, inVertsSrv);
+    cmd->SetComputeRootShaderResourceView(2, inIdxSrv);
+    cmd->SetComputeRootUnorderedAccessView(3, outVertsUav);
+    cmd->SetComputeRootUnorderedAccessView(4, outIdxUav);
+    cmd->Dispatch((cb.inTriangleCount + 63u) / 64u, 1u, 1u);
 }
 
 } // namespace raw::bridge

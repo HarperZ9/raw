@@ -3,6 +3,7 @@
 // shadow mask and lit HDR colour, RAW's albedo and specular targets, and the cascade atlas.
 // Original work, MIT.
 #include "LightingPass.h"
+#include "HardwareProfile.h"
 #include <algorithm>
 
 #include "raw/renderer/ao_realtime.hpp"
@@ -534,7 +535,16 @@ private:
         // shadow-cascade draws drop during free-cam/fast turns; falls back to !kShadows only if engine_rt is absent).
         const bool interior = s.hasEngineCell ? s.isInterior : ((f & kShadows) == 0u);
         if (interior && (f & kBounce) && t.rtBounceInterior > 0.0f) f |= kBounceIn;
-        f |= (static_cast<uint32_t>(std::clamp(t.hwTier, 0, 4)) << 24u);
+        const int clampedTier = std::clamp(t.hwTier, 0, 4);
+        f |= (static_cast<uint32_t>(clampedTier) << 24u);
+        // Live 2-segment piecewise-linear concave LP GPU frame-budget allocation (packs optimal cloudSteps into flags.x[27..31]):
+        HardwareProfile lpProf{};
+        lpProf.tier = clampedTier;
+        const float targetFrameMs = (clampedTier >= 3) ? 11.11f : 16.67f;
+        const auto lpAlloc = SolveFrameBudgetLP(lpProf, targetFrameMs, interior);
+        const uint32_t lpCloudCode = lpAlloc.cloudSteps >= 16u
+            ? static_cast<uint32_t>(std::clamp<int>(int((lpAlloc.cloudSteps - 16u) / 2u), 1, 31)) : 0u;
+        f |= (lpCloudCode << 27u);
         u.flags[0] = f; u.flags[1] = s.lightCount; u.flags[2] = s.cascades; u.flags[3] = uint32_t(t.view);
         u.dofParams[0] = t.dof ? t.dofMaxDist : 0.0f;
         u.dofParams[1] = t.dofRadius;

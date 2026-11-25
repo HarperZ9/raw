@@ -61,6 +61,13 @@ float froxelZToSlice(float z) {
 
 // GPU architectural hardware tier packed into flags.x bits 24..26 (0=Fallback, 1=RTX 3060, 2=4070, 3=4090, 4=5090).
 uint hwTier() { return (flags.x >> 24u) & 7u; }
+// Linear-program GPU frame-budget allocated cloud march steps packed in flags.x bits 27..31 (0=use tier default, else 16 + v*2).
+uint lpCloudSteps() {
+    const uint code = (flags.x >> 27u) & 31u;
+    if (code > 0u) { return clamp(16u + code * 2u, 16u, 64u); }
+    const uint t = hwTier();
+    return (t <= 1u) ? 24u : (t == 2u ? 36u : (t == 3u ? 48u : 56u));
+}
 
 float4 vs(uint i : SV_VertexID) : SV_Position {
     return float4(i == 1u ? 3.0f : -1.0f, i == 2u ? -3.0f : 1.0f, 0.0f, 1.0f);

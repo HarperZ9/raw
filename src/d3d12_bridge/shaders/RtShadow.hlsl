@@ -66,9 +66,15 @@ float3 jitterDir(float3 d, float spread, float2 r) {
     return normalize(d + (t * cos(a) + b * sin(a)) * s);
 }
 
-// Spectral Korobov-Weyl Quasi-Monte-Carlo (QMC) Spatiotemporal Blue-Noise Samplers:
-// Replaces sin()-based hash aliasing with algebraic plastic/golden-ratio Kronecker lattices + Korobov rank-1
-// primitive generators rotated spatially by Cranley-Patterson IGN (lower star-discrepancy D_N* at 1-2 spp).
+// Spectral Korobov-Weyl & 4D Prime-Root Quasi-Monte-Carlo (QMC) Spatiotemporal Blue-Noise Samplers:
+// Replaces sin()-based hash aliasing with algebraic plastic/golden-ratio Kronecker lattices, 4D irrational prime roots
+// (sqrt(2), sqrt(3), sqrt(5), sqrt(7)), and Korobov rank-1 generators rotated by Cranley-Patterson IGN.
+float4 stbnPrime4(float2 px, float frameOff) {
+    const float4 kRoots = float4(0.4142135624f, 0.7320508076f, 0.2360679775f, 0.6457513111f);
+    const float4 base = float4(ign(px), ign(px.yx + 13.7f), ign(px + float2(29.3f, 7.1f)), ign(px.yx + float2(5.9f, 41.3f)));
+    return frac(base + kRoots * fmod(frameOff, 512.0f));
+}
+
 float2 stbnR2(float2 px, float frameOff) {
     const float2 r2Step = float2(0.7548776662f, 0.5698402910f);
     const float2 ignBase = float2(ign(px), ign(px.yx + 19.37f));
@@ -269,9 +275,10 @@ void main(uint3 id : SV_DispatchThreadID) {
         const bool isSkinnedMesh = (base == 10u || base == 11u || base == 12u);
         const float oScale = isSkinnedMesh ? (2.25f + 0.008f * z) : (0.85f + 0.005f * z);
         const float3 o = p + ng * oScale;
-        const float2 r = stbnR2(px, frameIndex);
+        const float4 q4 = stbnPrime4(px, frameIndex);
+        const float2 r = q4.xy;
         if (sunDir.w > 0.5f && sunColour.w > 0.5f && dot(n, sunDir.xyz) > 0.0f) {
-            // Fast 2-spp Blocker-Distance PCSS Hardware DXR Sun Shadows (3x faster than 6-spp, crisp contact -> soft penumbra!):
+            // Fast 2-spp Blocker-Distance PCSS Hardware DXR Sun Shadows driven by decorrelated 4D Prime-Root QMC strata:
             const float turn = saturate(1.0f - dot(ng, sunDir.xyz) / 0.40f);
             const float tMinS = max(termDist, 1.8f) * turn * turn;
             Hit hBlocker;
@@ -282,8 +289,7 @@ void main(uint3 id : SV_DispatchThreadID) {
             } else {
                 vSum += 1.0f;
             }
-            const float2 r1 = frac(r + float2(0.500000f, 0.618034f));
-            vSum += visible(o, jitterDir(sunDir.xyz, effCone, r1), tMinS, sunLength);
+            vSum += visible(o, jitterDir(sunDir.xyz, effCone, q4.zw), tMinS, sunLength);
             vis.x = vSum * 0.5f;
         }
         // Hardware-tier adaptive DXR ray budget (RTX 3060=Tier 1 -> 1 spp, 4070/4090=Tier 2-3 -> 2 spp, 5090=Tier 4 -> 3 spp GI):

@@ -32,14 +32,30 @@ struct alignas(256) RawMeshFrameCB {
     float    curvatureGain;      // Vlachos cubic Bezier normal projection gain (default 0.72)
     float    displaceAmp;        // world-space micro-displacement scale
     float    snowDepthU;         // live 3D volumetric snowpack buildup thickness (0..48 world units)
+    float    windAndTime[4];     // xy = synoptic wind, z = timeSec, w = foliageWindMask (0=rigid, 1=vegetation)
+};
+
+struct alignas(256) RawSubdivCB {
+    uint32_t inTriangleCount = 0;
+    float    curvatureGain   = 0.72f;
+    float    displaceAmp     = 0.35f;
+    float    snowDepthU      = 0.0f;
+    float    snowAvalancheCos = 0.42f;
+    float    camPosW[3]      = {};
 };
 
 class RawMeshHost {
 public:
     bool Init(ID3D12Device* dev, std::string* outErr = nullptr);
     bool Ready() const { return m_ready; }
+    bool SubdivReady() const { return m_subdivPso != nullptr; }
     bool UploadAsset(const RawMeshAsset& src, RawMeshGpuAsset* outGpu, std::string* outErr = nullptr);
     void Dispatch(ID3D12GraphicsCommandList* cmd, const RawMeshGpuAsset& asset, const RawMeshFrameCB& cb);
+    // Dispatches RawSubdiv.hlsl (cs_6_6) 1->4 curved PN-Triangle GPU subdivision into UAV output vertex/index buffers.
+    void SubdivideMesh(ID3D12GraphicsCommandList* cmd,
+                       D3D12_GPU_VIRTUAL_ADDRESS inVertsSrv, D3D12_GPU_VIRTUAL_ADDRESS inIdxSrv,
+                       D3D12_GPU_VIRTUAL_ADDRESS outVertsUav, D3D12_GPU_VIRTUAL_ADDRESS outIdxUav,
+                       const RawSubdivCB& cb);
 
 private:
     bool                                    m_ready = false;
@@ -48,6 +64,10 @@ private:
     Microsoft::WRL::ComPtr<ID3D12PipelineState> m_pso;
     Microsoft::WRL::ComPtr<ID3D12Resource>  m_cbBuf;
     void*                                   m_cbMapped = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12RootSignature> m_subdivRoot;
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> m_subdivPso;
+    Microsoft::WRL::ComPtr<ID3D12Resource>  m_subdivCbBuf;
+    void*                                   m_subdivCbMapped = nullptr;
 };
 
 } // namespace raw::bridge

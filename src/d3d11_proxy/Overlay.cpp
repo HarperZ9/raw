@@ -328,7 +328,30 @@ std::vector<raw::ui::StudioRow> BuildRows(int tab)
         AddSlider(rows, "Melee Impact Hit-Stop", sim.hitStopMs, 0.0f, 90.0f, "%.0f ms");
         AddSlider(rows, "Actor Poise / Stagger", sim.poiseScale, 0.5f, 2.0f, "%.2fx");
         AddToggle(rows, "Weather-Reactive World AI", sim.livingWorldAi);
-        AddCycle(rows, "Runtime Autonomy", "Zero SKSE / Native raw_engine.dll", true);
+        // Live zero-SKSE World Simulation telemetry queried directly from raw_engine.dll!
+        struct WorldSimTelPod {
+            uint32_t simTicks, actorsTracked, navMeshesLoaded, navVertsLoaded, navTrisLoaded;
+            uint8_t  activeDirective, tacticalAction, attackTokensUsed, navReady;
+            float    expectedPayoff, strideDampMult, snowDepthU, windSpeed;
+        };
+        using SimTelFn = int(*)(WorldSimTelPod*);
+        static SimTelFn s_simTel = nullptr;
+        static bool s_simProbed = false;
+        if (!s_simProbed) {
+            s_simProbed = true;
+            if (HMODULE eng = GetModuleHandleA("raw_engine.dll"))
+                s_simTel = reinterpret_cast<SimTelFn>(GetProcAddress(eng, "RAW_GetWorldSimTelemetry"));
+        }
+        WorldSimTelPod wtel{};
+        if (s_simTel && s_simTel(&wtel)) {
+            static const char* kDirs[5] = {"Routine", "SeekShelter", "WarmBrazier", "EquipTorch", "AlertPatrol"};
+            static const char* kActs[4] = {"PressAttack", "FlankCircle", "GuardParry", "Retreat"};
+            AddCycle(rows, "Live NavMesh Cache", FmtI("%d cells / ", int(wtel.navMeshesLoaded)) + FmtI("%d tris", int(wtel.navTrisLoaded)), wtel.navReady != 0);
+            AddCycle(rows, "Live Squad & Policy", FmtI("%d actors | ", int(wtel.actorsTracked)) + std::string(kActs[wtel.tacticalAction & 3u]), wtel.actorsTracked > 0);
+            AddCycle(rows, "World Ecosystem", std::string(kDirs[std::min<int>(wtel.activeDirective, 4)]) + Fmt(" | Stride %.2fx", wtel.strideDampMult), true);
+        } else {
+            AddCycle(rows, "Runtime Autonomy", "Zero SKSE / Native raw_engine.dll", true);
+        }
     } else if (tab == 7) {
         static const char* kCurves[9] = {"Game", "ACES Fitted", "ReinhardW", "RAW Hybrid", "AgX WideGamut", "GranTurismo", "Lottes", "Hable", "ACES 2.0 CAM"};
         static const char* kLuts[16] = {"Neutral", "Nordic Film", "Kodak 2383", "Cinema", "Vision3 500T", "Fuji Velvia", "Tarkovsky", "LomoChrome", "Oil Impasto", "Ink Hatch", "Pixel Bayer", "Watercolor", "Sony PVM", "NTSC VHS", "Aerochrome IR", "Trichrome Plate"};

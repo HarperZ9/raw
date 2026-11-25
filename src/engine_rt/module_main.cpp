@@ -27,6 +27,7 @@
 #include "rt_core_fixes.h"
 #include "rt_forensics.h"
 #include "rt_softbody.h"
+#include "rt_world_sim.h"
 #include "rt_papyrus.h"
 #include "rt_passes.h"
 #include "rt_vtrace.h"
@@ -94,6 +95,7 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     raw::rt::HavokFixOnPresent();
     raw::rt::VTraceOnPresent();
     raw::rt::ControlOnPresent(ctx, sc);
+    raw::rt::WorldSimOnPresent();
 }
 
 }  // namespace
@@ -203,6 +205,8 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
         raw::rt::SoftBodyInit(g_img);
         Log("softbody: %s", raw::rt::SoftBodyStatsJson().c_str());
     }
+    raw::rt::WorldSimInit(g_img, g_dir);
+    Log("worldsim: live zero-SKSE world simulation & Skyrim.esm compressed NAVM loader started");
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
     if (IniInt("CallGraph", 0)) {
@@ -230,6 +234,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         std::snprintf(why, n, "%d background thread(s) running (sample or call graph); ask again when they finish", t);
         return 0;
     }
+    raw::rt::WorldSimShutdown();
     raw::rt::SoftBodyShutdown();
     raw::rt::ForensicsShutdown();
     raw::rt::CoreFixesShutdown();

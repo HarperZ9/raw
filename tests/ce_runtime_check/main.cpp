@@ -22,6 +22,7 @@
 #include "../../src/engine_rt/rt_zydis_offsets.h"
 #include "../../src/engine_rt/rt_skeleton_ik.h"
 #include "../../src/engine_rt/rt_combat_ai.h"
+#include "../../src/engine_rt/rt_world_sim.h"
 #include "../../src/ui/RawDesignTokens.h"
 #include "../../src/ui/RawInputEngine.h"
 
@@ -511,6 +512,17 @@ void TestCustomNavMeshAndWorldSim() {
           allocInt.cloudMarchMs == 0.0f && allocInt.cloudSteps == 0 && allocInt.giBounceMs >= allocExt.giBounceMs &&
           allocTight.totalMs <= 8.33f * 0.52f + 1e-3f && allocTight.dxrShadowMs > 0.30f,
           "lp_gpu_frame_budget_allocator");
+
+    // 6) Wave 16 Live Zero-SKSE World Simulation Snapshot Integration
+    const float pPos[3] = {100.0f, 200.0f, 0.0f};
+    const float npcs[12] = {180.0f, 200.0f, 0.0f, 1.0f,  240.0f, 260.0f, 0.0f, 1.0f,  40.0f, 340.0f, 0.0f, 1.0f};
+    const auto wsBlizz = raw::rt::StepWorldSimSnapshot(pPos, 14.0f, 0.0f, 0.85f, 140.0f, false, npcs, 3, 8, 2072, 2219);
+    const auto wsInt   = raw::rt::StepWorldSimSnapshot(pPos, 22.0f, 0.0f, 0.85f,   0.0f, true,  nullptr, 0, 8, 2072, 2219);
+    Check(wsBlizz.actorsTracked == 3 && wsBlizz.navReady == 1 && wsBlizz.navTrisLoaded == 2219 &&
+          wsBlizz.activeDirective == uint8_t(raw::rt::WorldNpcDirective::SeekShelter) &&
+          wsBlizz.attackTokensUsed == 2 && wsBlizz.strideDampMult < 0.88f && wsBlizz.expectedPayoff > 0.0f &&
+          wsInt.snowDepthU == 0.0f && wsInt.activeDirective == uint8_t(raw::rt::WorldNpcDirective::WarmAtBrazier),
+          "world_sim_live_snapshot");
 }
 
 }  // namespace

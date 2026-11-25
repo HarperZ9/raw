@@ -117,7 +117,14 @@ void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, in
     // Skin: light that enters the skin comes out past the terminator, red farthest (a per-channel wrap,
     // normalised so the lit side keeps its energy).
     const float3 nlD = any(s.wrap > 0.0f) ? saturate((x + s.wrap) / (1.0f + s.wrap)) / (1.0f + s.wrap) * (1.0f + s.wrap * 0.5f) : nl.xxx;
-    if (any(s.soft > 0.0f)) { diff += s.soft * saturate(smooth01(saturate((x + 1.0f) * 0.5f)) - smooth01(nl)) * cFull; }
+    if (any(s.soft > 0.0f)) {
+        // Physical backlit Beer-Lambert chlorophyll translucency for pine needles, ferns & leaves:
+        // forward-scattering lobe peaks when looking through sunlit foliage toward the light source!
+        const float backView = pow(saturate(dot(-s.v, l)), 3.2f);
+        const float wrapTrans = saturate(smooth01(saturate((x + 1.0f) * 0.5f)) - smooth01(nl));
+        const float3 chloroTint = float3(0.82f, 1.18f, 0.36f);
+        diff += s.soft * (wrapTrans + chloroTint * (backView * 0.48f * (1.0f - nl * 0.5f))) * cFull;
+    }
     const float3 h = normalize(s.v + l);
     const float nh = saturate(dot(s.n, h));
     if ((flags.x & FLAG_GGX) == 0u) {

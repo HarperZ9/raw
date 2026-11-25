@@ -9,11 +9,13 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
 #include "../../src/ce_runtime/CeFormatReader.h"
 #include "../../src/d3d12_bridge/RawAssetBridge.h"
+#include "../../src/d3d12_bridge/RawTextureBridge.h"
 #include "../../src/engine_rt/rt_zydis_offsets.h"
 
 namespace {
@@ -216,12 +218,61 @@ void TestCeFormats() {
     Check(!raw::ce::ParseBa2HeaderBytes(ba2.data(), ba2.size(), &b2, &err), "ce_ba2_planted_bad_magic_reject");
 }
 
+void TestWicMemoryAndRealSkyrimData() {
+    // 1. WIC in-memory decode test (1x1 24-bit BMP -> RGBA8, verifies embedded .glb image path):
+    std::vector<uint8_t> bmp(58, 0);
+    bmp[0] = 'B'; bmp[1] = 'M';
+    uint32_t fsz = 58, pixOff = 54, dibSz = 40, w = 1, h = 1;
+    uint16_t planes = 1, bpp = 24;
+    std::memcpy(bmp.data() + 2, &fsz, 4);
+    std::memcpy(bmp.data() + 10, &pixOff, 4);
+    std::memcpy(bmp.data() + 14, &dibSz, 4);
+    std::memcpy(bmp.data() + 18, &w, 4);
+    std::memcpy(bmp.data() + 22, &h, 4);
+    std::memcpy(bmp.data() + 26, &planes, 2);
+    std::memcpy(bmp.data() + 28, &bpp, 2);
+    bmp[54] = 0x20; bmp[55] = 0x80; bmp[56] = 0xE0;  // BGR -> RGB(0xE0, 0x80, 0x20)
+    raw::bridge::RawTextureAsset tex;
+    std::string err;
+    const bool tok = raw::bridge::LoadModernTextureFromMemory(bmp.data(), bmp.size(), "mem.bmp", &tex, &err);
+    Check(tok && tex.width == 1 && tex.height == 1 && tex.rgba8.size() == 4 &&
+          tex.rgba8[0] == 0xE0 && tex.rgba8[1] == 0x80 && tex.rgba8[2] == 0x20 && tex.rgba8[3] == 0xFF,
+          "wic_memory_decode_rgba8");
+
+    // Planted failing control: garbage bytes must fail cleanly
+    const uint8_t badImg[16] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    raw::bridge::RawTextureAsset badTex;
+    Check(!raw::bridge::LoadModernTextureFromMemory(badImg, sizeof badImg, "bad.img", &badTex, &err), "wic_memory_planted_bad_reject");
+
+    // 2. Real-world production archive & plugin validation against local Skyrim SE install (if present):
+    const std::string skyData = "H:\\SteamLibrary\\steamapps\\common\\Skyrim Special Edition\\Data\\";
+    const std::string esmPath = skyData + "Skyrim.esm";
+    const std::string bsaPath = skyData + "Skyrim - Meshes0.bsa";
+    if (std::filesystem::exists(esmPath)) {
+        raw::ce::WorldPluginIndex wi;
+        const bool ok = raw::ce::IndexPluginWorldFile(esmPath, &wi, &err);
+        std::printf("INFO Skyrim.esm: formVer=%u totalRecords=%u compressed=%u lights=%zu statics=%zu cells=%zu weathers=%zu\n",
+                    wi.formVersion, wi.totalRecords, wi.compressedRecords, wi.lights.size(), wi.statics.size(), wi.cells.size(), wi.weathers.size());
+        Check(ok && wi.totalRecords > 500000 && wi.lights.size() > 200 && wi.statics.size() > 1000 && wi.cells.size() > 500,
+              "real_skyrim_esm_world_index");
+    }
+    if (std::filesystem::exists(bsaPath)) {
+        raw::ce::BsaArchiveIndex bi;
+        const bool ok = raw::ce::IndexBsaArchiveFile(bsaPath, &bi, &err);
+        std::printf("INFO Skyrim - Meshes0.bsa: ver=%u folders=%u files=%zu indexedPaths=%zu\n",
+                    bi.header.version, bi.header.folderCount, bi.files.size(), bi.byPath.size());
+        Check(ok && bi.header.version == 105 && bi.files.size() > 5000 && bi.byPath.size() == bi.files.size(),
+              "real_skyrim_meshes0_bsa_index");
+    }
+}
+
 }  // namespace
 
 int main() {
     TestZydisGetters();
     TestGlbImporter();
     TestCeFormats();
+    TestWicMemoryAndRealSkyrimData();
     std::printf("ce_runtime_check: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

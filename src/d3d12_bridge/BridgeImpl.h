@@ -5,6 +5,7 @@
 #include "RtScene.h"
 #include "RawBindlessHeap.h"
 #include "RawMeshHost.h"
+#include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
 #include <wrl/client.h>
@@ -63,6 +64,7 @@ struct D3D12Bridge::Impl
     std::unique_ptr<RtScene> rt;           // attached only
     RawBindlessHeap          bindless;     // RAW-LUMEN 65K SM 6.6 ResourceDescriptorHeap[] pool
     RawMeshHost              meshHost;     // RAW-MESH Hardware DX12 AS+MS PN-Triangle subdivision host
+    RawOverrideRegistry      overrides;    // Creator hot-swap .glb/.obj override registry (raw_assets/overrides/)
     RawAsyncCompute          asyncCompute; // Split-Submit Hardware DX12 Async Compute queue
     RawIndirectBatch         indirect;     // GPU-Driven ExecuteIndirect DrawIndexed + DispatchMesh signatures
     std::vector<RtDraw> pendingDraws;

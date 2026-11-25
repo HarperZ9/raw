@@ -20,6 +20,10 @@ struct RawTextureAsset {
 // Decodes .png, .jpg, .jpeg, .tif, .bmp (Windows WIC) or .tga (24/32-bit uncompressed/RLE) into RGBA8.
 bool LoadModernTextureAsset(const std::string& path, RawTextureAsset* outTex, std::string* outErr = nullptr);
 
+// Decodes an in-memory PNG/JPEG/BMP/TIFF blob (e.g. embedded texture inside a Blender .glb) directly to RGBA8 via WIC.
+bool LoadModernTextureFromMemory(const uint8_t* bytes, size_t size, const std::string& label,
+                                 RawTextureAsset* outTex, std::string* outErr = nullptr);
+
 // Scans <gameDir>raw_assets\ for .glb/.obj meshes and .png/.jpg/.tga textures, returning counts loaded.
 struct RawAssetScanSummary {
     uint32_t meshFiles = 0;

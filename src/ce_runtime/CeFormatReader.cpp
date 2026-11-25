@@ -214,4 +214,263 @@ bool ParseBa2HeaderBytes(const uint8_t* bytes, size_t size, Ba2Header* out, std:
     return true;
 }
 
+namespace {
+
+std::string NormalizeVirtualPath(std::string s) {
+    for (char& c : s) {
+        if (c == '\\') c = '/';
+        else if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + 32);
+    }
+    return s;
+}
+
+std::string ReadZSpan(const uint8_t* p, size_t len) {
+    while (len > 0 && p[len - 1] == 0) --len;
+    return std::string(reinterpret_cast<const char*>(p), len);
+}
+
+void IndexOneRecord(const char tag[4], uint32_t formId, const uint8_t* payload, size_t sz, WorldPluginIndex& out) {
+    const bool isLight = (std::memcmp(tag, "LIGH", 4) == 0);
+    const bool isStat  = (std::memcmp(tag, "STAT", 4) == 0);
+    const bool isCell  = (std::memcmp(tag, "CELL", 4) == 0);
+    const bool isWthr  = (std::memcmp(tag, "WTHR", 4) == 0);
+    if (!isLight && !isStat && !isCell && !isWthr) return;
+
+    std::string edid, modl;
+    CeLightDef ldef{}; ldef.formId = formId;
+    CeCellDef  cdef{}; cdef.formId = formId;
+    bool gotLightData = false;
+
+    size_t off = 0;
+    uint32_t extSize = 0;
+    while (off + 6 <= sz) {
+        const char* st = reinterpret_cast<const char*>(payload + off);
+        uint16_t sl = 0;
+        std::memcpy(&sl, payload + off + 4, 2);
+        off += 6;
+        uint32_t actual = sl;
+        if (std::memcmp(st, "XXXX", 4) == 0 && sl == 4 && off + 4 <= sz) {
+            std::memcpy(&extSize, payload + off, 4);
+            off += 4;
+            continue;
+        }
+        if (sl == 0 && extSize > 0) { actual = extSize; extSize = 0; }
+        if (off + actual > sz) break;
+        const uint8_t* sp = payload + off;
+        off += actual;
+
+        if (std::memcmp(st, "EDID", 4) == 0 && edid.empty()) {
+            edid = ReadZSpan(sp, actual);
+        } else if (isStat && std::memcmp(st, "MODL", 4) == 0 && modl.empty()) {
+            modl = NormalizeVirtualPath(ReadZSpan(sp, actual));
+        } else if (isLight && std::memcmp(st, "DATA", 4) == 0 && actual >= 20) {
+            std::memcpy(&ldef.radius, sp + 4, 4);
+            ldef.color[0] = sp[8]; ldef.color[1] = sp[9]; ldef.color[2] = sp[10];
+            std::memcpy(&ldef.flags, sp + 12, 4);
+            gotLightData = true;
+        } else if (isLight && std::memcmp(st, "FNAM", 4) == 0 && actual >= 4) {
+            std::memcpy(&ldef.fade, sp, 4);
+        } else if (isCell && std::memcmp(st, "DATA", 4) == 0 && actual >= 1) {
+            const uint8_t cf = sp[0];
+            cdef.isInterior = (cf & 0x01u) != 0;
+            cdef.hasWater   = (cf & 0x02u) != 0;
+        } else if (isCell && std::memcmp(st, "XCLW", 4) == 0 && actual >= 4) {
+            std::memcpy(&cdef.waterHeight, sp, 4);
+        }
+    }
+
+    if (isLight && gotLightData) {
+        ldef.edid = std::move(edid);
+        out.lights.push_back(std::move(ldef));
+    } else if (isStat && !modl.empty()) {
+        out.statics.push_back({formId, std::move(edid), std::move(modl)});
+    } else if (isCell) {
+        cdef.edid = std::move(edid);
+        out.cells.push_back(std::move(cdef));
+    } else if (isWthr && !edid.empty()) {
+        out.weathers.push_back(std::move(edid));
+    }
+}
+
+bool IndexPluginStream(const uint8_t* bytes, size_t endOff, size_t& off, WorldPluginIndex& out, int depth) {
+    if (depth > 10) return false;
+    while (off + 24 <= endOff) {
+        char tag[5]{};
+        std::memcpy(tag, bytes + off, 4);
+        uint32_t sz = 0;
+        std::memcpy(&sz, bytes + off + 4, 4);
+        if (std::memcmp(tag, "GRUP", 4) == 0) {
+            if (sz < 24 || off + sz > endOff) return false;
+            const size_t gEnd = off + sz;
+            off += 24;
+            if (!IndexPluginStream(bytes, gEnd, off, out, depth + 1)) return false;
+            off = gEnd;
+            continue;
+        }
+        uint32_t flags = 0, formId = 0;
+        std::memcpy(&flags, bytes + off + 8, 4);
+        std::memcpy(&formId, bytes + off + 12, 4);
+        off += 24;
+        if (off + sz > endOff) return false;
+        ++out.totalRecords;
+        ++out.recordCounts[std::string(tag, 4)];
+        if ((flags & 0x00040000u) != 0) {
+            ++out.compressedRecords;
+        } else {
+            IndexOneRecord(tag, formId, bytes + off, sz, out);
+        }
+        off += sz;
+    }
+    return true;
+}
+
+}  // namespace
+
+bool IndexPluginWorldFile(const std::string& path, WorldPluginIndex* out, std::string* outErr) {
+    if (!out) return false;
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f) { if (outErr) *outErr = "failed to open plugin: " + path; return false; }
+    const std::streamsize fsz = f.tellg();
+    if (fsz < 24) { if (outErr) *outErr = "plugin too small"; return false; }
+    std::vector<uint8_t> bytes(static_cast<size_t>(fsz));
+    f.seekg(0);
+    if (!f.read(reinterpret_cast<char*>(bytes.data()), fsz)) {
+        if (outErr) *outErr = "failed to read plugin bytes";
+        return false;
+    }
+    if (std::memcmp(bytes.data(), "TES4", 4) != 0) {
+        if (outErr) *outErr = "missing TES4 magic";
+        return false;
+    }
+    *out = {};
+    uint32_t hdrSz = 0;
+    std::memcpy(&hdrSz, bytes.data() + 4, 4);
+    std::memcpy(&out->formVersion, bytes.data() + 20, 2);
+    if (24ull + hdrSz > bytes.size()) { if (outErr) *outErr = "truncated TES4 header"; return false; }
+    PluginRecord tes4{};
+    if (ParseSubrecords(bytes.data() + 24, hdrSz, tes4)) {
+        for (const auto& s : tes4.subrecords) {
+            if (std::memcmp(s.type, "HEDR", 4) == 0 && s.data.size() >= 4) std::memcpy(&out->headerVersion, s.data.data(), 4);
+            else if (std::memcmp(s.type, "MAST", 4) == 0) out->masters.push_back(ReadZString(s.data));
+        }
+    }
+    size_t off = 24u + hdrSz;
+    if (!IndexPluginStream(bytes.data(), bytes.size(), off, *out, 0)) {
+        if (outErr) *outErr = "error indexing GRUP/record stream";
+        return false;
+    }
+    return true;
+}
+
+bool IndexBsaArchiveFile(const std::string& path, BsaArchiveIndex* out, std::string* outErr) {
+    if (!out) return false;
+    std::ifstream f(path, std::ios::binary);
+    if (!f) { if (outErr) *outErr = "failed to open BSA: " + path; return false; }
+    uint8_t hdrBytes[36]{};
+    if (!f.read(reinterpret_cast<char*>(hdrBytes), 36)) { if (outErr) *outErr = "truncated BSA header"; return false; }
+    *out = {};
+    if (!ParseBsaHeaderBytes(hdrBytes, 36, &out->header, outErr)) return false;
+    const auto& h = out->header;
+    const bool hasDirNames  = (h.archiveFlags & 0x1u) != 0;
+    const bool hasFileNames = (h.archiveFlags & 0x2u) != 0;
+    const bool defaultComp  = (h.archiveFlags & 0x4u) != 0;
+
+    // Folder records: 16 bytes in v103/v104, 24 bytes in v105 (Skyrim SE/AE).
+    const size_t folderRecBytes = (h.version >= 105u) ? 24u : 16u;
+    const size_t dirTableBytes  = size_t(h.folderCount) * folderRecBytes;
+    const size_t fileBlockBytes = (hasDirNames ? (size_t(h.folderCount) + size_t(h.totalFolderNameLength)) : 0u)
+                                + size_t(h.fileCount) * 16u;
+    const size_t metaBytes = dirTableBytes + fileBlockBytes + (hasFileNames ? size_t(h.totalFileNameLength) : 0u);
+    if (metaBytes > (512ull << 20)) { if (outErr) *outErr = "BSA metadata exceeds safety bound"; return false; }
+
+    f.seekg(static_cast<std::streamoff>(h.folderOffset));
+    std::vector<uint8_t> meta(metaBytes);
+    if (!f.read(reinterpret_cast<char*>(meta.data()), static_cast<std::streamsize>(metaBytes))) {
+        if (outErr) *outErr = "truncated BSA directory tables";
+        return false;
+    }
+
+    std::vector<uint32_t> folderCounts(h.folderCount);
+    for (uint32_t i = 0; i < h.folderCount; ++i) {
+        std::memcpy(&folderCounts[i], meta.data() + size_t(i) * folderRecBytes + 8u, 4);
+    }
+
+    size_t fOff = dirTableBytes;
+    size_t nameOff = dirTableBytes + fileBlockBytes;
+    out->files.reserve(h.fileCount);
+    out->byPath.reserve(h.fileCount);
+
+    for (uint32_t fi = 0; fi < h.folderCount; ++fi) {
+        std::string dirName;
+        if (hasDirNames) {
+            if (fOff >= dirTableBytes + fileBlockBytes) { if (outErr) *outErr = "BSA folder name overrun"; return false; }
+            const uint8_t dLen = meta[fOff++];
+            if (fOff + dLen > dirTableBytes + fileBlockBytes) { if (outErr) *outErr = "BSA folder name truncated"; return false; }
+            dirName = ReadZSpan(meta.data() + fOff, dLen);
+            fOff += dLen;
+        }
+        for (uint32_t k = 0; k < folderCounts[fi]; ++k) {
+            if (fOff + 16u > dirTableBytes + fileBlockBytes) { if (outErr) *outErr = "BSA file record overrun"; return false; }
+            uint32_t rawSize = 0, rawOffset = 0;
+            std::memcpy(&rawSize,   meta.data() + fOff + 8u,  4);
+            std::memcpy(&rawOffset, meta.data() + fOff + 12u, 4);
+            fOff += 16u;
+
+            std::string fileName;
+            if (hasFileNames) {
+                const size_t start = nameOff;
+                while (nameOff < meta.size() && meta[nameOff] != 0) ++nameOff;
+                fileName.assign(reinterpret_cast<const char*>(meta.data() + start), nameOff - start);
+                if (nameOff < meta.size()) ++nameOff;
+            }
+            ArchiveFileEntry e{};
+            e.virtualPath = NormalizeVirtualPath(dirName.empty() ? fileName : (dirName + "/" + fileName));
+            e.offset = rawOffset;
+            e.size = rawSize & 0x3FFFFFFFu;
+            const bool invertComp = (rawSize & 0x40000000u) != 0;
+            e.compressed = invertComp ? !defaultComp : defaultComp;
+            const size_t idx = out->files.size();
+            if (!e.virtualPath.empty()) out->byPath.emplace(e.virtualPath, idx);
+            out->files.push_back(std::move(e));
+        }
+    }
+    return true;
+}
+
+bool IndexBa2ArchiveFile(const std::string& path, Ba2ArchiveIndex* out, std::string* outErr) {
+    if (!out) return false;
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f) { if (outErr) *outErr = "failed to open BA2: " + path; return false; }
+    const uint64_t fsz = static_cast<uint64_t>(f.tellg());
+    if (fsz < 24) { if (outErr) *outErr = "BA2 too small"; return false; }
+    f.seekg(0);
+    uint8_t hdrBytes[24]{};
+    if (!f.read(reinterpret_cast<char*>(hdrBytes), 24)) return false;
+    *out = {};
+    if (!ParseBa2HeaderBytes(hdrBytes, 24, &out->header, outErr)) return false;
+    if (out->header.nameTableOffset > 0 && out->header.nameTableOffset < fsz) {
+        const uint64_t rem = fsz - out->header.nameTableOffset;
+        if (rem <= (256ull << 20)) {
+            f.seekg(static_cast<std::streamoff>(out->header.nameTableOffset));
+            std::vector<uint8_t> names(static_cast<size_t>(rem));
+            if (f.read(reinterpret_cast<char*>(names.data()), static_cast<std::streamsize>(rem))) {
+                size_t p = 0;
+                out->names.reserve(out->header.fileCount);
+                for (uint32_t i = 0; i < out->header.fileCount && p + 2 <= names.size(); ++i) {
+                    uint16_t len = 0;
+                    std::memcpy(&len, names.data() + p, 2);
+                    p += 2;
+                    if (p + len > names.size()) break;
+                    std::string vp = NormalizeVirtualPath(std::string(reinterpret_cast<const char*>(names.data() + p), len));
+                    p += len;
+                    const size_t idx = out->names.size();
+                    out->byPath.emplace(vp, idx);
+                    out->names.push_back(std::move(vp));
+                }
+            }
+        }
+    }
+    return true;
+}
+
 }  // namespace raw::ce

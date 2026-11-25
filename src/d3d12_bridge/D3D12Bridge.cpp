@@ -301,6 +301,10 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
             std::string assetLog;
             const auto summary = ScanRawAssetsFolder(gDir, &assetLog);
             if (!assetLog.empty() && (summary.meshFiles || summary.textureFiles)) m->log("%s", assetLog.c_str());
+            std::string ovLog;
+            if (m->overrides.ScanDirectory(gDir + "raw_assets\\overrides", meshOk ? &m->meshHost : nullptr, &ovLog) > 0 && !ovLog.empty()) {
+                m->log("%s", ovLog.c_str());
+            }
         }
     }
     if (!ok) { m->log("[D3D12Bridge] initialisation failed at %s; bridge stays off", failed); Shutdown(); return false; }

@@ -244,14 +244,15 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     // Per-class artistic intent: eyes/emissives untouched; glaciers/ice silk-smooth; stone/wood/metal get clean 3D micro-relief!
     const float rawClassGain = isEye || isEmissive ? 0.0f
         : (isSkin ? 0.16f : (isWater ? 0.18f : (isLod ? 0.25f : (isHair ? 0.42f : (isFoliage ? 0.48f : 1.0f)))));
-    const float classGain = rawClassGain * (1.0f - isIceLike * 0.85f);
+    // Preserve crisp crystalline glacial ice fractures & crevices instead of blurring ice caves into flat blue clay!
+    const float classGain = rawClassGain * (1.0f - isIceLike * 0.22f);
     const float distFade = smoothstep(5200.0f, 260.0f, z);
 
-    // World-space locked micro-photogrammetry grain: strictly DISABLED on glaciers/ice, faces, water, emissives, and highlights!
+    // World-space locked micro-photogrammetry grain: strictly DISABLED on faces, water, emissives, and blown highlights!
     float worldMicro = 0.0f;
-    if (!isFace && !isWater && !isEmissive && !isLod && isIceLike < 0.12f && hlGuard > 0.08f && z < 1400.0f) {
+    if (!isFace && !isWater && !isEmissive && !isLod && hlGuard > 0.08f && z < 1400.0f) {
         const float3 pAbs = pW + camPosW.xyz;
-        const float microFade = smoothstep(1400.0f, 120.0f, z) * edgeGate * hlGuard * (1.0f - isIceLike);
+        const float microFade = smoothstep(1400.0f, 120.0f, z) * edgeGate * hlGuard * (1.0f - isIceLike * 0.45f);
         const float freq = isMetal ? 1.85f : (isFoliage ? 1.35f : 0.72f);
         const float g1 = vNoise3(pAbs * freq) - 0.5f;
         const float g2 = vNoise3(pAbs * (freq * 2.7f) + 17.3f) - 0.5f;
@@ -266,11 +267,7 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const float3 detailDelta = (curRgb - rgbBlur) * (saturate(mlpOut.x * 0.5f + 0.5f) * 0.34f * classGain * edgeGate * distFade * hlGuard);
     const float3 sheenAdd = curRgb * ((max(mlpOut.y, 0.0f) * fresnel * (isMetal ? 0.12f : (isSkin ? 0.02f : 0.065f)) + bevelLift) * distFade * hlGuard);
     const float3 bounceHarm = rgbBlur * (max(mlpOut.z, 0.0f) * (1.0f - midKey) * 0.055f * classGain * distFade * hlGuard);
-    // For frosted outdoor glaciers/ice, apply gentle bilateral anti-aliasing blend toward 3x3 Karis neighborhood to erase subpixel stairsteps:
     float3 recon = max(curRgb * (cavityScale + worldMicro) + detailDelta + sheenAdd + bounceHarm, 0.0f.xxx);
-    if (isIceLike > 0.15f) {
-        recon = lerp(recon, rgbBlur, isIceLike * edgeGate * 0.28f);
-    }
 
     // Perceptual Karis-Tonemapped 5-Tap Catmull-Rom + Ray-to-Mean clipAABB + Zero-Lag Disocclusion Prior:
     const float2 uv = (floor(at.xy) + 0.5f) * dims.zw;

@@ -622,9 +622,11 @@ private:
         if (t.charLight) f |= kCharLight;   // both modes: the game's own character light
         if (s.inWater) f |= kUnderwater;    // engine-native camera_in_water flag from raw_engine.dll
         u.flags[0] = f;
-        const float procCover = std::clamp(0.18f + stormFront * 0.76f, 0.15f, 0.95f);
-        const float baseCover = std::fmax(t.cloudCover, 0.22f);
-        const float blendedCover = std::fmin(1.0f, std::fmax(baseCover * 0.45f + procCover * 0.55f, baseCover + (0.92f - baseCover) * t.weatherCloud));
+        // Keep procedural sky fronts sculpted with blue-sky windows (0.18..0.54) on clear days;
+        // only push into heavy overcast (0.72..0.95) when Skyrim's actual weather is overcast or stormy.
+        const float procCover = std::clamp(0.18f + stormFront * 0.36f, 0.16f, 0.56f);
+        const float baseCover = std::fmax(t.cloudCover, 0.20f);
+        const float blendedCover = std::fmin(1.0f, std::fmax(baseCover * 0.55f + procCover * 0.45f, baseCover + (0.90f - baseCover) * t.weatherCloud));
         u.clouds[0] = blendedCover;
         u.clouds[1] = t.cloudBase; u.clouds[2] = t.cloudThickness;
         u.clouds[3] = t.cloudShadow * (1.0f - 0.42f * std::fmax(t.weatherCloud, stormFront * 0.75f));

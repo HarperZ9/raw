@@ -171,10 +171,11 @@ void skyPalette(out float3 zenith, out float3 mid, out float3 horiz) {
 void evalWorldAtmosphere(out float3 outSun, out float3 outSkyZ, out float3 outSkyH, out float3 outAmbUp, out float3 outAmbDown) {
     const float elev = astroSunElev();
     const float nightW = smoothstep(0.03f, -0.07f, elev);
-    const float goldenW = smoothstep(-0.04f, 0.04f, elev) * (1.0f - smoothstep(0.14f, 0.34f, elev));
-    const float highSun = smoothstep(0.20f, 0.48f, elev);
+    const float goldenW = smoothstep(-0.04f, 0.03f, elev) * (1.0f - smoothstep(0.08f, 0.18f, elev));
+    const float highSun = smoothstep(0.16f, 0.42f, elev);
     const float cover = saturate(clouds.x);
-    const float overcastW = saturate(cover * 0.82f - 0.10f + weather.w * 0.45f + weather.z * 0.42f);
+    // Keep partly-cloudy Nordic skies crisp blue-silver; only push full overcast desaturation above 0.58 cover or real storms:
+    const float overcastW = saturate((cover - 0.52f) * 1.9f + weather.w * 0.55f + weather.z * 0.48f);
 
     // Unified Physical Radiative-Transfer Sun & Hemisphere (replaces Skyrim's 40 inconsistent 2011 TESWeather color tables!):
     // Solar irradiance & spectrum derive directly from astronomical elevation (Kasten-Young air mass + Rayleigh/Mie extinction)

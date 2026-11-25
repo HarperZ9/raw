@@ -135,25 +135,24 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float hElev = max(sDir.z, 0.008f);
                 const float3 hSky = sampleHillaireSky(normalize(float3(sDir.xy, hElev)));
                 const float hLum = max(dot(hSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
-                // Physical overcast multiple-scattering deck attenuation (desaturates toward Mie-scattered cloud-base luminance):
-                const float overcastW = saturate(cover * 0.85f - 0.12f + weather.w * 0.45f + weather.z * 0.42f);
-                const float3 overcastScatter = lerp(hSky, hLum.xxx * float3(0.92f, 0.96f, 1.02f), 0.78f);
-                float3 physSky = lerp(hSky, overcastScatter, overcastW * 0.82f);
-                // Exact 1:1 sync with evalWorldAtmosphere() (same 0.42 blend as mountain aerial perspective & clouds
-                // so the sky dome, horizon fog, mountains, water & ambient share one continuous color field!):
+                // Preserve crisp Nordic Rayleigh sapphire sky on clear/partly-cloudy days; desaturate only under genuine heavy overcast!
+                const float overcastW = saturate((cover - 0.55f) * 1.95f + weather.w * 0.52f + weather.z * 0.45f);
+                const float3 overcastScatter = lerp(hSky, hLum.xxx * float3(0.88f, 0.94f, 1.04f), 0.72f);
+                float3 physSky = lerp(hSky, overcastScatter, overcastW * 0.78f);
                 float3 uSunS, uSkyZS, uSkyHS, uAmbUpS, uAmbDnS;
                 evalWorldAtmosphere(uSunS, uSkyZS, uSkyHS, uAmbUpS, uAmbDnS);
-                physSky = lerp(physSky, lerp(uSkyHS, uSkyZS, saturate(max(sDir.z, 0.0f) * 2.2f)), 0.42f) * 0.76f;
-                // True 0.53-deg physical solar disc + wide smooth Mie atmospheric forward scattering (eliminates giant sticker-like orange ball in 13.16.34/48!):
+                physSky = lerp(physSky, lerp(uSkyHS, uSkyZS, saturate(max(sDir.z, 0.0f) * 2.2f)), 0.28f) * 0.92f;
+                // Luminous physical solar disc + smooth multi-scale Mie atmospheric corona (eliminates flat white paper sticker sun!):
                 if (sunDiscGate > 0.01f) {
-                    const float rDisc = saturate(sunAng / 0.0062f);
+                    const float rDisc = saturate(sunAng / 0.0068f);
                     const float muLimb = sqrt(max(1.0f - rDisc * rDisc, 0.0f));
-                    const float3 eddLimb = float3(1.0f - 0.35f * (1.0f - muLimb), 1.0f - 0.50f * (1.0f - muLimb), 1.0f - 0.68f * (1.0f - muLimb));
-                    const float3 sunCoreCol = lerp(float3(1.0f, 0.98f, 0.93f), float3(1.0f, 0.62f, 0.24f), lowS) * eddLimb;
-                    const float3 mieCol = lerp(float3(1.0f, 0.94f, 0.84f), float3(1.0f, 0.54f, 0.22f), lowS);
-                    const float solarCore = smoothstep(0.99982f, 0.99996f, cosS) * 20.0f;
-                    const float wideMie = (pow(cosS, 6.0f) * 0.14f + pow(cosS, 48.0f) * 0.24f) * (1.0f - cover * 0.45f);
-                    physSky += (sunCoreCol * solarCore + mieCol * wideMie) * sunDiscGate;
+                    const float3 eddLimb = float3(1.0f - 0.28f * (1.0f - muLimb), 1.0f - 0.42f * (1.0f - muLimb), 1.0f - 0.58f * (1.0f - muLimb));
+                    const float3 sunCoreCol = lerp(float3(1.05f, 1.00f, 0.92f), float3(1.15f, 0.62f, 0.24f), lowS) * eddLimb;
+                    const float3 mieCol = lerp(float3(1.00f, 0.95f, 0.86f), float3(1.05f, 0.56f, 0.22f), lowS);
+                    const float solarCore = smoothstep(0.99976f, 0.99996f, cosS) * 26.0f;
+                    const float innerAureole = pow(cosS, 240.0f) * 1.65f + pow(cosS, 42.0f) * 0.42f;
+                    const float wideMie = pow(cosS, 6.0f) * 0.16f * (1.0f - cover * 0.45f);
+                    physSky += (sunCoreCol * solarCore + mieCol * (innerAureole + wideMie)) * sunDiscGate;
                 }
                 fullSky = lerp(fullSky, physSky, max(dayW, twilightBell * 0.96f));
             }
@@ -431,10 +430,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 froxScat = frox.rgb * mapScale;
     const float3 shaftScatter = vol2D * (0.14f * mapScale * fgClear);
     const float3 scatter = froxScat + shaftScatter;
-    // Engine-native underwater medium (FLAG_UNDERWATER from raw_engine.dll camera_in_water): physical Beer-Lambert absorption.
-    if ((flags.x & FLAG_UNDERWATER) != 0u) {
-        const float3 uw = elderUnderwaterMedium(lit.rgb, dist, 0.0022f);
-        return float4(uw + scatter * float3(0.25f, 0.72f, 0.85f) * 1.4f, lit.a);
+    // Engine-native underwater medium: gate strictly on pixels below the live water plane so half-submerged cameras
+    // NEVER tint above-water mountains or sky into harsh underwater cyan!
+    if ((flags.x & FLAG_UNDERWATER) != 0u && (engineWorld.z < 0.5f || (p.z + camPosW.z) <= engineWorld.x + 10.0f)) {
+        const float3 uw = elderUnderwaterMedium(lit.rgb, dist, 0.0016f);
+        return float4(uw + scatter * float3(0.22f, 0.68f, 0.82f) * 1.15f, lit.a);
     }
     // Engine-level unified 3D froxel (0..42,000u) + Hillaire far-mountain aerial perspective (beyond kFroxFar=42,000u):
     if ((flags.x & FLAG_FOG_REPLACES) != 0u && sunColour.w > 0.5f) {
@@ -467,11 +467,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         evalWorldAtmosphere(uSunF, uSkyZF, uSkyHF, uAmbUpF, uAmbDnF);
         const float3 hillaireSky = sampleHillaireSky(normalize(float3(w.xy, max(w.z, 0.008f))));
         const float hLumF = max(dot(hillaireSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
-        const float overcastWF = saturate(cloudCov * 0.85f - 0.12f + weather.w * 0.45f + weather.z * 0.42f);
-        const float3 overcastScatterF = lerp(hillaireSky, hLumF.xxx * float3(0.92f, 0.96f, 1.02f), 0.78f);
-        float3 atmoCol = lerp(hillaireSky, overcastScatterF, overcastWF * 0.82f);
-        // Exact 1:1 sync with sky dome (d >= 1.0f) + twilight luminance discipline so dawn/dusk mountains stay moody & grounded:
-        atmoCol = lerp(atmoCol, lerp(uSkyHF, uSkyZF, saturate(max(w.z, 0.0f) * 2.2f)), 0.42f) * (0.76f * lerp(1.0f, 0.74f, twilightF * (1.0f - horizonMelt)));
+        const float overcastWF = saturate((cloudCov - 0.55f) * 1.95f + weather.w * 0.52f + weather.z * 0.45f);
+        const float3 overcastScatterF = lerp(hillaireSky, hLumF.xxx * float3(0.88f, 0.94f, 1.04f), 0.72f);
+        float3 atmoCol = lerp(hillaireSky, overcastScatterF, overcastWF * 0.78f);
+        atmoCol = lerp(atmoCol, lerp(uSkyHF, uSkyZF, saturate(max(w.z, 0.0f) * 2.2f)), 0.28f) * (0.92f * lerp(1.0f, 0.78f, twilightF * (1.0f - horizonMelt)));
         if ((flags.x & FLAG_CLOUDS) != 0u) {
             const float4 clF = Clouds.SampleLevel(Lin, uv, 0.0f);
             const float clMerge = smoothstep(28000.0f, 75000.0f, dist);

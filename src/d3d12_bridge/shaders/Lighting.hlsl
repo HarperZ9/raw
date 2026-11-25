@@ -122,8 +122,8 @@ void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, in
         // forward-scattering lobe peaks when looking through sunlit foliage toward the light source!
         const float backView = pow(saturate(dot(-s.v, l)), 3.2f);
         const float wrapTrans = saturate(smooth01(saturate((x + 1.0f) * 0.5f)) - smooth01(nl));
-        const float3 chloroTint = float3(0.82f, 1.18f, 0.36f);
-        diff += s.soft * (wrapTrans + chloroTint * (backView * 0.48f * (1.0f - nl * 0.5f))) * cFull;
+        const float3 chloroTint = float3(0.46f, 0.96f, 0.34f);
+        diff += s.soft * (wrapTrans + chloroTint * (backView * 0.42f * (1.0f - nl * 0.5f))) * cFull;
     }
     const float3 h = normalize(s.v + l);
     const float nh = saturate(dot(s.n, h));
@@ -572,12 +572,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             s.f0 = 0.020f;
             s.alpha = clamp(lerp(s.alpha, 0.76f, 0.72f * fFade), 0.62f, 0.92f);
             const float speciesId = cNoise(wpF * 0.0045f + float3(17.3f, 9.1f, 3.7f));
-            const float3 speciesTint = speciesId < 0.35f
-                ? lerp(float3(0.84f, 0.96f, 0.86f), float3(0.92f, 1.02f, 0.90f), speciesId / 0.35f)
-                : lerp(float3(0.92f, 1.02f, 0.90f), float3(1.02f, 0.97f, 0.84f), (speciesId - 0.35f) / 0.65f);
-            albedo *= lerp(1.0f.xxx, speciesTint * lerp(0.88f, 1.04f, leafVar), fFade * 0.52f);
+            // Rich deep Nordic spruce/pine viridian palette (fixes washed-out yellow-blonde pine silhouettes in 22.43.52.31.png!):
+            const float3 speciesTint = speciesId < 0.5f
+                ? lerp(float3(0.74f, 0.94f, 0.80f), float3(0.82f, 0.98f, 0.84f), speciesId * 2.0f)
+                : lerp(float3(0.82f, 0.98f, 0.84f), float3(0.88f, 0.96f, 0.82f), (speciesId - 0.5f) * 2.0f);
+            const float crownDepthAo = lerp(0.72f, 1.04f, saturate(s.n.z * 0.5f + 0.5f));
+            albedo *= lerp(1.0f.xxx, speciesTint * lerp(0.86f, 1.04f, leafVar) * crownDepthAo, fFade * 0.62f);
             // Tame chalky vanilla snow-dusted pine tips so trees integrate naturally into shadowed alpine forests:
-            albedo = min(albedo, float3(0.56f, 0.60f, 0.58f));
+            albedo = min(albedo, float3(0.54f, 0.60f, 0.56f));
         }
     }
     const float3 nSmooth = s.n;
@@ -872,24 +874,41 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 albedo *= lerp(1.0f.xxx, float3(0.88f, 0.78f, 0.78f), bloodMask * 0.5f);
             }
         }
-        // Detect both exterior glaciers (base==1/2/4) and interior ice cave walls (Septimus Signus's Outpost, base==2 EnvMap!):
-        const float blueIce = saturate((albedo.b - albedo.r * 1.06f) * 4.5f) * smoothstep(0.18f, 0.46f, albedo.b);
-        const float caveIce = (sunColour.w < 0.5f && base == 2u)
-            ? smoothstep(0.28f, 0.58f, albedo.b) * saturate((albedo.b - albedo.r * 0.90f) * 3.8f) : 0.0f;
-        iceMask = max(blueIce, caveIce) * (1.0f - wet.snow * 0.82f) * saturate(1.0f - z / 12000.0f);
+        // True 3-Layer Parallax Snell-Refracted Crystalline Glacial Ice & Ice-Cave Optical Transport (IOR 1.31):
+        // Replaces flat matte baby-blue plastic in Septimus Signus's Outpost & coastal glaciers with deep internal cracks,
+        // volumetric Beer-Lambert sapphire-turquoise subsurface depth, crystalline facet normals, and glassy melt glaze!
+        const float blueIce = saturate((albedo.b - albedo.r * 1.04f) * 4.8f) * smoothstep(0.16f, 0.44f, albedo.b);
+        const float caveIce = (sunColour.w < 0.5f && (base == 2u || base == 1u))
+            ? smoothstep(0.24f, 0.52f, albedo.b) * saturate((albedo.b - albedo.r * 0.88f) * 4.0f) : 0.0f;
+        iceMask = max(blueIce, caveIce) * (1.0f - wet.snow * 0.78f) * saturate(1.0f - z / 12000.0f);
         if (iceMask > 0.04f) {
-            const float iceNear = smoothstep(1100.0f, 120.0f, z);
-            const float3 wpIce = (p + camPosW.xyz) - s.v * (8.0f * iceNear);
-            const float depthScatter = cNoise(wpIce * 0.0085f) * 0.65f + cNoise(wpIce * 0.019f + 4.7f) * 0.35f;
-            const float3 beerIce = exp(-float3(0.56f, 0.28f, 0.16f) * (0.72f + 0.55f * depthScatter));
-            const float3 glacialTint = lerp(float3(0.18f, 0.30f, 0.40f), float3(0.30f, 0.44f, 0.54f), depthScatter) * beerIce;
-            albedo = lerp(albedo, lerp(albedo * float3(0.84f, 0.90f, 0.96f), glacialTint, 0.24f + 0.14f * iceNear), iceMask * 0.46f);
-            const float3 iceCap = (sunColour.w > 0.5f) ? float3(0.58f, 0.65f, 0.72f) : float3(0.34f, 0.44f, 0.54f);
-            albedo = min(albedo, iceCap);
-            // Frosted glacier/cave dielectric coat (IOR 1.31 -> F0 ~ 0.018..0.022, smooth frost roughness 0.34..0.50):
-            const float frostSlope = saturate(s.n.z * 0.65f + 0.35f);
-            s.alpha = max(lerp(s.alpha, lerp(0.34f, 0.50f, frostSlope), iceMask * 0.78f), lerp(s.alpha, 0.36f, iceMask));
-            s.f0 = lerp(s.f0, 0.020f, iceMask * 0.85f);
+            const float iceNear = smoothstep(2200.0f, 110.0f, z);
+            const float3 wpAbsI = p + camPosW.xyz;
+            const float3 refrV = refract(-s.v, s.n, 1.0f / 1.31f);
+            // 3 parallax-offset internal depths along the refracted ray sample internal fracture sheets & trapped air bubbles:
+            const float3 pL1 = wpAbsI + refrV * (5.5f * iceNear);
+            const float3 pL2 = wpAbsI + refrV * (14.0f * iceNear);
+            const float3 pL3 = wpAbsI + refrV * (26.0f * iceNear);
+            const float f1 = 1.0f - smoothstep(0.01f, 0.14f, abs(cNoise(pL1 * 0.055f) * 2.0f - 1.0f));
+            const float f2 = 1.0f - smoothstep(0.01f, 0.16f, abs(cNoise(pL2 * 0.032f + float3(9.3f, 4.1f, 7.7f)) * 2.0f - 1.0f));
+            const float deepCavity = cNoise(pL3 * 0.014f + 3.1f) * 0.60f + cNoise(pL2 * 0.042f + 11.7f) * 0.40f;
+            const float crackVeins = saturate(f1 * 0.65f + f2 * 0.50f);
+            // Crystalline chipped-ice micro-facet normal relief:
+            const float icX = cNoise(wpAbsI * 0.09f + float3(0.45f, 0.0f, 0.0f)) - cNoise(wpAbsI * 0.09f - float3(0.45f, 0.0f, 0.0f));
+            const float icY = cNoise(wpAbsI * 0.09f + float3(0.0f, 0.45f, 0.0f)) - cNoise(wpAbsI * 0.09f - float3(0.0f, 0.45f, 0.0f));
+            const float icZ = cNoise(wpAbsI * 0.09f + float3(0.0f, 0.0f, 0.45f)) - cNoise(wpAbsI * 0.09f - float3(0.0f, 0.0f, 0.45f));
+            s.n = normalize(s.n + float3(icX, icY, icZ) * (0.48f * iceMask * iceNear));
+            // Beer-Lambert glacial transmittance: deep translucent turquoise-sapphire core + bright white-cyan fracture veins!
+            const float3 deepGlacier = float3(0.06f, 0.24f, 0.36f) * (0.75f + 0.55f * deepCavity);
+            const float3 veinFrost   = float3(0.62f, 0.78f, 0.88f);
+            const float3 iceOptic = lerp(deepGlacier, veinFrost, saturate(crackVeins * 0.68f + (1.0f - deepCavity) * 0.22f));
+            albedo = lerp(albedo, iceOptic, iceMask * (0.42f + 0.30f * iceNear));
+            // Spatially varying glossy melt-ice (0.09) vs frosted rime veins (0.42) with exact ice IOR 1.31 (F0 = 0.018):
+            const float glazeRough = lerp(0.09f, 0.42f, saturate(crackVeins * 0.75f + (1.0f - deepCavity) * 0.35f));
+            s.alpha = lerp(s.alpha, glazeRough, iceMask * 0.85f);
+            s.f0 = lerp(s.f0, 0.024f, iceMask * 0.88f);
+            s.mask = max(s.mask, iceMask * 0.72f);
+            lobe = true;
         }
     }
     // Tokuyoshi-Kaplanyan geometric specular anti-aliasing: filters sub-pixel normal variance to kill GGX sparkle in motion.

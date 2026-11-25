@@ -144,6 +144,8 @@ private:
         D3D12_RAYTRACING_INSTANCE_DESC desc{};
         double absT[3] = {};
         uint32_t tris = 0;
+        uint32_t meshIdx = 0;
+        uint16_t stableFrames = 0;
         uint64_t lastSeen = 0;
     };
     std::unordered_map<uint64_t, PersistInst> m_persistInst;

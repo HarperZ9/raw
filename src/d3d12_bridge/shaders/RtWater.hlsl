@@ -599,9 +599,9 @@ void water(uint3 id : SV_DispatchThreadID) {
             else if (view == 6u) { col = body; }   // the water's body alone: the bent bed, dimmed and filled in
             else if (view == 5u) { col = F > 0.25f ? float3(1.0f, 0.0f, 0.0f) : F > 0.06f ? float3(0.0f, 1.0f, 0.0f) : float3(0.0f, 0.0f, 1.0f); }
         } else {
-            // Underwater looking UP at the water surface (p.z >= 0):
-            // Physical Snell's Window (48.6 deg critical cone) + Total Internal Reflection outside the cone
-            // (eliminates the solid grey opaque underwater curtain caught in pain_2045_g1.jpg 015..020!).
+            // Underwater looking UP at the water surface (p.z >= eyeW.z + 6.0f):
+            // Luminous Snell's Window (48.6 deg critical cone) + realistic sunlit Nordic sea-teal Total Internal Reflection
+            // (eliminates the pitch-black horizontal waterline stripe seen when swimming half-submerged!).
             const float3 vUp = normalize(p - eyeAt());
             const float3 wpU = camPosW.xyz + p;
             const float2 uwRipple = float2(
@@ -610,13 +610,18 @@ void water(uint3 id : SV_DispatchThreadID) {
             ) * 0.16f;
             const float3 nDown = normalize(float3(uwRipple.x, uwRipple.y, -1.0f));
             const float cosInc = saturate(dot(-vUp, nDown));
-            // Critical angle sin(theta_c) = 1 / 1.333 = 0.75 => cos(theta_c) = 0.661.
-            const float snellWin = smoothstep(0.60f, 0.76f, cosInc);
-            const float3 refrSky = waterSky(normalize(float3(vUp.xy * 1.333f, max(vUp.z, 0.12f))));
-            const float3 tirCol = float3(0.014f, 0.036f, 0.044f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.08f.xxx) * 1.8f;
-            const float uwAtt = exp(-length(p - eyeAt()) * 0.0022f);
-            const float3 uwFogCol = float3(0.018f, 0.052f, 0.064f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.06f.xxx);
-            col = lerp(uwFogCol, lerp(tirCol, refrSky, snellWin), uwAtt);
+            const float snellWin = smoothstep(0.46f, 0.72f, cosInc);
+            const float3 refrSky = waterSky(normalize(float3(vUp.xy * 1.333f, max(vUp.z, 0.14f))));
+            const float3 uwAmb = max(ambientAt(float3(0.0f, 0.0f, 1.0f)), float3(0.14f, 0.18f, 0.22f));
+            const float3 sunFill = (sunDir.w > 0.5f) ? (sunColour.rgb * 0.28f) : 0.0f.xxx;
+            const float uwCaust = causticNet(wpU.xy, camPosW.w * 0.45f, 38.0f) * snellWin * 0.35f;
+            const float3 tirCol = float3(0.045f, 0.125f, 0.155f) * (uwAmb * 2.4f + sunFill);
+            const float uwAtt = exp(-length(p - eyeAt()) * 0.0014f);
+            const float3 uwFogCol = float3(0.032f, 0.098f, 0.122f) * (uwAmb * 1.9f + sunFill * 0.5f);
+            const float3 uwSurf = lerp(uwFogCol, lerp(tirCol, refrSky + sunFill * uwCaust, snellWin), uwAtt);
+            // Smoothly bridge grazing waterline pixels (abs(p.z - eyeW.z) < 22u) so half-submerged cameras have zero hard bar!
+            const float grazingFade = smoothstep(4.0f, 24.0f, abs(p.z - eyeW.z));
+            col = lerp(lerp(refrSky * 0.65f, uwFogCol, 0.45f), uwSurf, grazingFade);
         }
     }
     WaterOut[id.xy] = float4(col, game.a);

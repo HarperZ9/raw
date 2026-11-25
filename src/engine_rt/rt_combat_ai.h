@@ -241,4 +241,17 @@ struct DynamicGameplayGmsts {
 };
 DynamicGameplayGmsts ComputeDynamicGameplayGmsts(float economyBuyMult, float staminaRegenMult);
 
+// Wave 26 Oscillatory-Feedback Extremum Seeking Controller (zero-model real-time GPU budget / exposure optimizer):
+// Probes an unknown live cost surface l(x) via x = xHat + amp * sin(phase), high-pass filters l(x), demodulates
+// against sin(phase), and integrates xHat down the estimated gradient without any hand-tuned analytic cost model.
+struct ExtremumSeekingState {
+    float xHat      = 0.5f;   // estimated optimal parameter in [xMin, xMax]
+    float costLp    = 0.0f;   // low-pass baseline for washout high-pass filter
+    float phaseRad  = 0.0f;
+    bool  init      = false;
+};
+float StepExtremumSeekingGovernor(ExtremumSeekingState& st, float measuredCost, float dtSec,
+                                  float xMin = 0.0f, float xMax = 1.0f,
+                                  float ditherAmp = 0.04f, float omegaRadPerSec = 12.0f, float gain = 0.65f);
+
 }  // namespace raw::rt

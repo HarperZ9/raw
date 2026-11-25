@@ -627,4 +627,33 @@ DynamicGameplayGmsts ComputeDynamicGameplayGmsts(float economyBuyMult, float sta
     return g;
 }
 
+float StepExtremumSeekingGovernor(ExtremumSeekingState& st, float measuredCost, float dtSec,
+                                  float xMin, float xMax, float ditherAmp, float omegaRadPerSec, float gain) {
+    const float lo = std::min(xMin, xMax);
+    const float hi = std::max(xMin, xMax);
+    const float dt = std::clamp(dtSec, 1.0e-4f, 0.05f);
+    const float amp = std::clamp(ditherAmp, 1.0e-4f, std::max((hi - lo) * 0.25f, 1.0e-4f));
+    const float w = std::clamp(omegaRadPerSec, 1.0f, 80.0f);
+    const float k = std::clamp(gain, 0.01f, 5.0f);
+    st.xHat = std::clamp(st.xHat, lo, hi);
+    if (!std::isfinite(measuredCost)) {
+        return st.xHat;
+    }
+    const float safeCost = std::clamp(measuredCost, -1.0e4f, 1.0e4f);
+    if (!st.init) {
+        st.costLp = safeCost;
+        st.init = true;
+    }
+    // Washout high-pass filter isolates oscillatory sensitivity d(cost)/dx * amp * sin(phase):
+    const float lpAlpha = std::clamp(1.0f - std::exp(-(w * 0.35f) * dt), 0.01f, 0.65f);
+    const float hpCost = safeCost - st.costLp;
+    st.costLp += lpAlpha * hpCost;
+    const float demod = hpCost * std::sin(st.phaseRad);
+    // Gradient descent on unknown live cost surface:
+    const float step = std::clamp(-k * demod * dt / amp, -(hi - lo) * 0.08f, (hi - lo) * 0.08f);
+    st.xHat = std::clamp(st.xHat + step, lo, hi);
+    st.phaseRad = std::fmod(st.phaseRad + w * dt, 6.28318530718f);
+    return std::clamp(st.xHat + amp * std::sin(st.phaseRad), lo, hi);
+}
+
 }  // namespace raw::rt

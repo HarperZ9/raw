@@ -11,6 +11,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -707,6 +708,20 @@ void main() {
           gmBlizz.sprintStaminaDrainMult > gmCalm.sprintStaminaDrainMult + 0.30f &&
           gmBlizz.barterMin <= 1.85f && gmBlizz.barterMax <= 4.40f && gmBlizz.sprintStaminaDrainMult <= 1.35f,
           "dynamic_gameplay_gmst_feedback");
+
+    // 14) Wave 26 Oscillatory-Feedback Extremum Seeking GPU Governor (converges to unknown minimum + rejects NaN)
+    raw::rt::ExtremumSeekingState es{};
+    es.xHat = 0.15f;
+    float xProbe = es.xHat;
+    const float unknownTarget = 0.72f;
+    for (int step = 0; step < 600; ++step) {
+        const float cost = (xProbe - unknownTarget) * (xProbe - unknownTarget) + 0.25f;
+        xProbe = raw::rt::StepExtremumSeekingGovernor(es, cost, 1.0f / 60.0f, 0.0f, 1.0f, 0.03f, 18.0f, 1.2f);
+    }
+    const float preNan = es.xHat;
+    const float nanOut = raw::rt::StepExtremumSeekingGovernor(es, std::numeric_limits<float>::quiet_NaN(), 1.0f / 60.0f);
+    Check(std::fabs(es.xHat - unknownTarget) < 0.08f && std::fabs(nanOut - preNan) < 1e-6f,
+          "extremum_seeking_oscillatory_governor");
 }
 
 }  // namespace

@@ -1,6 +1,6 @@
 # RAW Engine Automated GPU/CPU Benchmarks and Visual Invariants
 
-This document records live, reproducible measurements produced by [`tools/raw_bench_suite.cpp`](../tools/raw_bench_suite.cpp) across RAW Engine's twenty core GPU and CPU subsystems. Every GPU timing is measured directly on the Direct3D 12 command queue via `ID3D12QueryHeap` (`D3D12_QUERY_HEAP_TYPE_TIMESTAMP`) normalized by `GetTimestampFrequency()`, with the D3D12 Debug Layer enabled (`0` validation errors required). Every CPU timing is measured with `std::chrono::steady_clock` and summarized with `mean`, `p50`, `p95`, and `p99` percentiles.
+This document records live, reproducible measurements produced by [`tools/raw_bench_suite.cpp`](../tools/raw_bench_suite.cpp) across RAW Engine's twenty-one core GPU and CPU subsystems. Every GPU timing is measured directly on the Direct3D 12 command queue via `ID3D12QueryHeap` (`D3D12_QUERY_HEAP_TYPE_TIMESTAMP`) normalized by `GetTimestampFrequency()`, with the D3D12 Debug Layer enabled (`0` validation errors required). Every CPU timing is measured with `std::chrono::steady_clock` and summarized with `mean`, `p50`, `p95`, and `p99` percentiles.
 
 No numbers in this document are estimated or synthetic. All figures below come verbatim from live runs of `raw_bench_suite.exe`.
 
@@ -23,30 +23,31 @@ No numbers in this document are estimated or synthetic. All figures below come v
 
 Command: `raw_bench_suite.exe --json bench_rtx4090_full.json`
 Exit Code: `0` | D3D12 Debug Errors: `0` | GPU Timestamp Clock: `1,000,000,000 Hz`
-Combined All 15 GPU Solvers Mean: **`0.940 ms`** on RTX 4090
+Combined All 16 GPU Solvers Mean: **`0.968 ms`** on RTX 4090
 
 | # | Subsystem | Status | Primary Measured Result | Percentiles / Invariants | Budget / Target |
 | --- | --- | --- | --- | --- | --- |
-| 1 | GPU Fluid (`64^3` NS Fire + `256^2` SWE Water) | PASS | Fire `0.222 ms` + Water `0.019 ms` = **`0.241 ms`** | Combined `p50=0.241`, `p95=0.244`, `p99=0.249 ms`; `Tmax=2550 K`; `NaN=0` | `< 0.50 ms` HW GPU (`2.07x` headroom) |
-| 2 | GPU 4-Cascade Radiance Cascades GI | PASS | **`0.107 ms`** mean GPU time | `p50=0.108`, `p95=0.108`, `p99=0.108 ms`; `2xRatio=2.000`; `Umbra=0.0%`; `NaN=0` | `< 0.35 ms` HW GPU (`3.26x` headroom) |
-| 3 | Procedural PBR Texture Forge (`RawTextureForge`) | PASS | **`8.90 MPix/s`** (`176.7 ms` total) | 8 seamless sets @ `256x256` (3 PBR maps/set); per-set `p50=21.59`, `p95=30.32 ms`; max edge diff `11.61` | 8/8 sets valid |
-| 4 | 48 kHz FDN-8 Hadamard + HRTF Audio DSP | PASS | Ratio **`0.0068`** (**`147.3x`** real-time) | `13.62 ms` CPU to render `2,005.3 ms` stereo (188x512 blocks); `p95=0.075 ms`; `RMS=0.027`, `Peak=0.212`, `NaN=0` | Ratio `< 0.15` (`> 6.5x` RT) |
-| 5 | 3D Voronoi CSG Destruction Physics | PASS | Fracture **`0.45 ms`**; Rigid step **`4.4 us/step`** | 5 archetypes, 90 shards, 180 60 Hz steps (`p95=10.1 us`); volume error **`0.000000%`** | Vol err `< 1e-4%`, finite |
-| 6 | Biomechanical 3D Flora & Hydraulic Hydrology | PASS | **`640.4 trees/s`**; **`146.1 cells/s`** | 10 trees (`904` meshlets, `0` errors); 4 eroded cells (`368` meshlets, `0` errors) | Strict validator `0` errors |
-| 7 | Multi-Cell Tamriel ESM Streamer | PASS | Riverwood 3x3 **`220.9 ms`**; Warm LRU **`72.1%`** | `11,186` cells + `12,990` models indexed (`361.7 ms`); `5,401` meshlets; Whiterun `143.6 ms` (`604` hits / `234` misses) | Clean ring load & LRU reuse |
-| 8 | GPU XPBD Soft-Body / Hair / Bush-Bones (`4,096p`) | PASS | **`0.0579 ms`** mean GPU time | `256` chains / `4,096` particles, 4 substeps; `p50=0.0584`, `p95=0.0584`, `p99=0.0588 ms`; `stretch=1.0003`, `minSD=+0.0050`, `drift=0.0`, `NaN=0` | `< 0.25 ms` HW GPU (`4.32x` headroom) |
+| 1 | GPU Fluid (`64^3` NS Fire + `256^2` SWE Water) | PASS | Fire `0.218 ms` + Water `0.019 ms` = **`0.237 ms`** | Combined `p50=0.239`, `p95=0.243`, `p99=0.244 ms`; `Tmax=2550 K`; `NaN=0` | `< 0.50 ms` HW GPU (`2.11x` headroom) |
+| 2 | GPU 4-Cascade Radiance Cascades GI | PASS | **`0.110 ms`** mean GPU time | `p50=0.111`, `p95=0.111`, `p99=0.112 ms`; `2xRatio=2.000`; `Umbra=0.0%`; `NaN=0` | `< 0.35 ms` HW GPU (`3.17x` headroom) |
+| 3 | Procedural PBR Texture Forge (`RawTextureForge`) | PASS | **`8.85 MPix/s`** (`177.8 ms` total) | 8 seamless sets @ `256x256` (3 PBR maps/set); per-set `p50=21.46`, `p95=30.42 ms`; max edge diff `11.61` | 8/8 sets valid |
+| 4 | 48 kHz FDN-8 Hadamard + HRTF Audio DSP | PASS | Ratio **`0.0069`** (**`145.6x`** real-time) | `13.77 ms` CPU to render `2,005.3 ms` stereo (188x512 blocks); `p95=0.076 ms`; `RMS=0.027`, `Peak=0.212`, `NaN=0` | Ratio `< 0.15` (`> 6.5x` RT) |
+| 5 | 3D Voronoi CSG Destruction Physics | PASS | Fracture **`0.39 ms`**; Rigid step **`4.5 us/step`** | 5 archetypes, 90 shards, 180 60 Hz steps (`p95=10.2 us`); volume error **`0.000000%`** | Vol err `< 1e-4%`, finite |
+| 6 | Biomechanical 3D Flora & Hydraulic Hydrology | PASS | **`647.0 trees/s`**; **`149.5 cells/s`** | 10 trees (`904` meshlets, `0` errors); 4 eroded cells (`368` meshlets, `0` errors) | Strict validator `0` errors |
+| 7 | Multi-Cell Tamriel ESM Streamer | PASS | Riverwood 3x3 **`211.7 ms`**; Warm LRU **`72.1%`** | `11,186` cells + `12,990` models indexed (`359.7 ms`); `5,401` meshlets; Whiterun `143.8 ms` (`604` hits / `234` misses) | Clean ring load & LRU reuse |
+| 8 | GPU XPBD Soft-Body / Hair / Bush-Bones (`4,096p`) | PASS | **`0.0580 ms`** mean GPU time | `256` chains / `4,096` particles, 4 substeps; `p50=0.0584`, `p95=0.0584`, `p99=0.0594 ms`; `stretch=1.0003`, `minSD=+0.0050`, `drift=0.0`, `NaN=0` | `< 0.25 ms` HW GPU (`4.31x` headroom) |
 | 9 | GPU Hi-Z Pyramid (`512^2`) + 16k Instance Cull | PASS | Hi-Z `0.0210 ms` + Cull `0.0081 ms` = **`0.0291 ms`** | Combined `p50=0.0287`, `p95=0.0297`, `p99=0.0297 ms`; `vis=5120`, `fr=4096`, `dist=1024`, `hiz=6144`, `falseOcc=0` | `< 0.15 ms` HW GPU (`5.15x` headroom) |
 | 10 | GPU 16x9x24 3D Clustered 1,024-Light Grid | PASS | **`0.0977 ms`** (`Bld 0.0035 + Asn 0.0859 ms`) | Combined `p50=0.0973`, `p95=0.0983`, `p99=0.0983 ms`; `lit=3410/3456`, `links=116168`, `ovf=0`, `NaN=0` | `< 0.15 ms` HW GPU (`1.54x` headroom) |
-| 11 | GPU `160x90x64` 3D Volumetric Froxels (`921.6k`) | PASS | **`0.0447 ms`** (`Inj 0.0287 + Int 0.0123 ms`) | Total `p50=0.0451`, `p95=0.0451`, `p99=0.0451 ms`; `Mie=74.5x`, `tau=5.46/0.31`, `nonMono=0`, `NaN=0` | `< 0.25 ms` HW GPU (`5.59x` headroom) |
-| 12 | GPU Variable-Penumbra PCSS Shadows (`960x540`) | PASS | **`0.0279 ms`** mean GPU time (`host=0.0246 ms`) | `p50=0.0276`, `p95=0.0287`, `p99=0.0287 ms`; `ratio=32.0x`, `open=1.0`, `umb=0.0`, `sky=1.0`, `NaN=0` | `< 0.15 ms` HW GPU (`5.38x` headroom) |
-| 13 | GPU Jimenez GTAO + Bent Normals (`960x540`) | PASS | **`0.0484 ms`** (`Main 0.0369 + Den 0.0072 ms`) | Total `p50=0.0481`, `p95=0.0492`, `p99=0.0492 ms`; `flr=0.966`, `crv=0.615`, `bx=-0.174`, `pit=0.680`, `NaN=0` | `< 0.15 ms` HW GPU (`3.10x` headroom) |
-| 14 | GPU GGX Stochastic SSR (`960x540`) | PASS | **`0.0341 ms`** mean GPU time (`host=0.0297 ms`) | `p50=0.0338`, `p95=0.0348`, `p99=0.0352 ms`; `conf=1.000`, `R/B=15.0x`, `sky=0.0`, `span=153->281`, `NaN=0` | `< 0.15 ms` HW GPU (`4.40x` headroom) |
-| 15 | GPU 256-Bin Auto-Exposure (`960x540`) | PASS | **`0.0127 ms`** (`H 0.0061 + A 0.0031 ms`) | Total `p50=0.0123`, `p95=0.0133`, `p99=0.0137 ms`; `drk=8.87x`, `glc=0.022x`, `ffErr=0.81%`, `asym=3.12x`, `NaN=0` | `< 0.08 ms` HW GPU (`6.30x` headroom) |
-| 16 | GPU 3D Volumetric Clouds (`480x270`) | PASS | **`0.0831 ms`** mean GPU time (`host=0.0778 ms`) | `p50=0.0829`, `p95=0.0850`, `p99=0.0850 ms`; `minT=0.000`, `px=63626`, `silver=4.73x`, `horBad=0`, `NaN=0` | `< 0.15 ms` HW GPU (`1.81x` headroom) |
-| 17 | GPU Cinematic MB + Bokeh DoF (`960x540`) | PASS | **`0.0459 ms`** (`T 0.0082 + C 0.0348 ms`) | Total `p50=0.0461`, `p95=0.0461`, `p99=0.0465 ms`; `strk=0.80`, `dof=0.50->0.08`, `bld=0.0000`, `vig=20.7%`, `NaN=0` | `< 0.08 ms` HW GPU (`1.74x` headroom) |
-| 18 | GPU 16K 3D Particles + Splat (`480x270`) | PASS | **`0.0164 ms`** (`S 0.0051 + P 0.0031 ms`) | Total `p50=0.0164`, `p95=0.0174`, `p99=0.0174 ms`; `act=16384`, `bnc=16384`, `px=2126`, `wX=+5.90`, `NaN=0` | `< 0.08 ms` HW GPU (`4.88x` headroom) |
-| 19 | GPU RAW-TSR 2x Upscaler + RCAS (`640x360 -> 1280x720`) | PASS | **`0.0467 ms`** (`R 0.0338 + C 0.0092 ms`) | Total `p50=0.0471`, `p95=0.0471`, `p99=0.0471 ms`; `rmse-32.8%`, `sky=0.02`, `spk=4.00`, `rcas+36.1%`, `NaN=0` | `< 0.08 ms` HW GPU (`1.71x` headroom) |
-| 20 | GPU Physical Water Caustics + God-Rays (`512x512`) | PASS | **`0.0468 ms`** (`C 0.0164 + R 0.0256 ms`) | Total `p50=0.0471`, `p95=0.0471`, `p99=0.0481 ms`; `pk=2.82x`, `E=1.000`, `RB=0.031`, `sun=19.7x`, `NaN=0` | `< 0.06 ms` HW GPU (`1.28x` headroom) |
+| 11 | GPU `160x90x64` 3D Volumetric Froxels (`921.6k`) | PASS | **`0.0447 ms`** (`Inj 0.0297 + Int 0.0123 ms`) | Total `p50=0.0451`, `p95=0.0451`, `p99=0.0461 ms`; `Mie=74.5x`, `tau=5.46/0.31`, `nonMono=0`, `NaN=0` | `< 0.25 ms` HW GPU (`5.59x` headroom) |
+| 12 | GPU Variable-Penumbra PCSS Shadows (`960x540`) | PASS | **`0.0280 ms`** mean GPU time (`host=0.0246 ms`) | `p50=0.0276`, `p95=0.0297`, `p99=0.0297 ms`; `ratio=32.0x`, `open=1.0`, `umb=0.0`, `sky=1.0`, `NaN=0` | `< 0.15 ms` HW GPU (`5.36x` headroom) |
+| 13 | GPU Jimenez GTAO + Bent Normals (`960x540`) | PASS | **`0.0536 ms`** (`Main 0.0430 + Den 0.0082 ms`) | Total `p50=0.0532`, `p95=0.0543`, `p99=0.0547 ms`; `flr=0.966`, `crv=0.615`, `bx=-0.174`, `pit=0.680`, `NaN=0` | `< 0.15 ms` HW GPU (`2.80x` headroom) |
+| 14 | GPU GGX Stochastic SSR (`960x540`) | PASS | **`0.0342 ms`** mean GPU time (`host=0.0297 ms`) | `p50=0.0338`, `p95=0.0348`, `p99=0.0358 ms`; `conf=1.000`, `R/B=15.0x`, `sky=0.0`, `span=153->281`, `NaN=0` | `< 0.15 ms` HW GPU (`4.39x` headroom) |
+| 15 | GPU 256-Bin Auto-Exposure (`960x540`) | PASS | **`0.0132 ms`** (`H 0.0072 + A 0.0020 ms`) | Total `p50=0.0133`, `p95=0.0133`, `p99=0.0143 ms`; `drk=8.87x`, `glc=0.022x`, `ffErr=0.81%`, `asym=3.12x`, `NaN=0` | `< 0.08 ms` HW GPU (`6.06x` headroom) |
+| 16 | GPU 3D Volumetric Clouds (`480x270`) | PASS | **`0.0832 ms`** mean GPU time (`host=0.0778 ms`) | `p50=0.0829`, `p95=0.0850`, `p99=0.0850 ms`; `minT=0.000`, `px=63626`, `silver=4.73x`, `horBad=0`, `NaN=0` | `< 0.15 ms` HW GPU (`1.80x` headroom) |
+| 17 | GPU Cinematic MB + Bokeh DoF (`960x540`) | PASS | **`0.0460 ms`** (`T 0.0082 + C 0.0338 ms`) | Total `p50=0.0461`, `p95=0.0471`, `p99=0.0471 ms`; `strk=0.80`, `dof=0.50->0.08`, `bld=0.0000`, `vig=20.7%`, `NaN=0` | `< 0.08 ms` HW GPU (`1.74x` headroom) |
+| 18 | GPU 16K 3D Particles + Splat (`480x270`) | PASS | **`0.0163 ms`** (`S 0.0051 + P 0.0031 ms`) | Total `p50=0.0164`, `p95=0.0174`, `p99=0.0174 ms`; `act=16384`, `bnc=16384`, `px=2126`, `wX=+5.90`, `NaN=0` | `< 0.08 ms` HW GPU (`4.91x` headroom) |
+| 19 | GPU RAW-TSR 2x Upscaler + RCAS (`640x360 -> 1280x720`) | PASS | **`0.0468 ms`** (`R 0.0328 + C 0.0102 ms`) | Total `p50=0.0471`, `p95=0.0471`, `p99=0.0481 ms`; `rmse-32.8%`, `sky=0.02`, `spk=4.00`, `rcas+36.1%`, `NaN=0` | `< 0.08 ms` HW GPU (`1.71x` headroom) |
+| 20 | GPU Physical Water Caustics + God-Rays (`512x512`) | PASS | **`0.0462 ms`** (`C 0.0174 + R 0.0256 ms`) | Total `p50=0.0461`, `p95=0.0471`, `p99=0.0471 ms`; `pk=2.82x`, `E=1.000`, `RB=0.031`, `sun=19.7x`, `NaN=0` | `< 0.06 ms` HW GPU (`1.30x` headroom) |
+| 21 | GPU 512x512 Snow, Melt & Footprints (`64 m`) | PASS | **`0.0238 ms`** (`S 0.0164 + N 0.0041 ms`) | Total `p50=0.0236`, `p95=0.0246`, `p99=0.0246 ms`; `tr=0.16`, `rim=0.49`, `mErr=0.03%`, `ice=1.00`, `NaN=0` | `< 0.05 ms` HW GPU (`2.10x` headroom) |
 
 ### 2. Quick CI Run Comparison: RTX 4090 vs. DX12 WARP (`--quick`)
 
@@ -77,11 +78,12 @@ Both runs exited with code `0`, `allPassed: true`, and `d3d12DebugErrors: 0`.
 | 17 | GPU Cinematic MB + Bokeh DoF (`960x540`) | `0.0459 ms` (`T 0.0082 + C 0.0338 ms`, `p95=0.0466 ms`) | `13.7816 ms` (`T 0.8747 + C 12.5526 ms`, `p95=14.1568 ms`) | Bit-identical `idDiff=0.0010`, `strk=0.7998`, `vert=0.0`, `dof=0.5000->0.0844`, `bld=0.0`, `vig=20.7%`, `NaN=0` |
 | 18 | GPU 16K 3D Particles + Splat (`480x270`) | `0.0167 ms` (`S 0.0061 + P 0.0031 ms`, `p95=0.0174 ms`) | `0.8548 ms` (`S 0.5922 + P 0.1983 ms`, `p95=0.9000 ms`) | Bit-identical `act=16384`, `exp=0`, `embY=2.3533`, `snwY=7.1440`, `wX=+5.9004`, `bnc=16384`, `px=2126`, `NaN=0` |
 | 19 | GPU RAW-TSR 2x Upscaler + RCAS (`640x360 -> 1280x720`) | `0.0466 ms` (`R 0.0338 + C 0.0102 ms`, `p95=0.0471 ms`) | `22.4459 ms` (`R 17.0138 + C 4.4006 ms`, `p95=23.5556 ms`) | Bit-identical `rmse=0.1320->0.0888` (`-32.8%`), `sky=0.0200`, `spk=3.9980`, `rcas=+36.12%`, `NaN=0` |
-| 20 | GPU Physical Water Caustics + God-Rays (`512x512`) | `0.0459 ms` (`C 0.0164 + R 0.0256 ms`, `p95=0.0461 ms`) | `6.9683 ms` (`C 3.5535 + R 3.3160 ms`, `p95=7.0112 ms`) | Bit-identical `flatErr=0.0`, `pk=2.818x`, `E=0.9996`, `RB=0.0307`/`0.3223`, `R/B_ret=0.118/0.852`, `sun=19.67x`, `NaN=0` |
+| 20 | GPU Physical Water Caustics + God-Rays (`512x512`) | `0.0466 ms` (`C 0.0164 + R 0.0256 ms`, `p95=0.0471 ms`) | `7.3903 ms` (`C 3.7878 + R 3.8080 ms`, `p95=7.6154 ms`) | Bit-identical `flatErr=0.0`, `pk=2.818x`, `E=0.9996`, `RB=0.0307`/`0.3223`, `R/B_ret=0.118/0.852`, `sun=19.67x`, `NaN=0` |
+| 21 | GPU 512x512 Snow, Melt & Footprints (`64 m`) | `0.0234 ms` (`S 0.0164 + N 0.0031 ms`, `p95=0.0236 ms`) | `6.4383 ms` (`S 5.2785 + N 1.1625 ms`, `p95=6.7432 ms`) | Bit-identical `tr=0.1636`, `rim=0.4924`, `mErr=0.030%`, `wallNx=+0.3335`, `fireH=0.0`, `ice=1.000`, `fall=+0.1982 m`, `NaN=0` |
 
 ### 3. Graceful Missing-Data Verification
 
-Running `raw_bench_suite.exe --quick --esm "C:\nonexistent\Skyrim.esm" --json bench_skip_esm.json` passes all 19 engine-native benchmarks, marks `tamrielStreamer.skipped = true` (`SKIP`), reports `d3d12DebugErrors = 0`, and exits with code `0` so headless CI runners without Skyrim data stay green.
+Running `raw_bench_suite.exe --quick --esm "C:\nonexistent\Skyrim.esm" --json bench_skip_esm.json` passes all 20 engine-native benchmarks, marks `tamrielStreamer.skipped = true` (`SKIP`), reports `d3d12DebugErrors = 0`, and exits with code `0` so headless CI runners without Skyrim data stay green.
 
 ## Detailed Subsystem Breakdown and Invariants
 
@@ -249,6 +251,15 @@ Running `raw_bench_suite.exe --quick --esm "C:\nonexistent\Skyrim.esm" --json be
   - Readback invariants (bit-identical on RTX 4090 and WARP): `flatMaxErr=0.0000`, `peakFocus=2.8184x`, `meanEnergy=0.9996`, `rbMeanDiff=0.0307` (`rbMaxDiff=0.3223`), `redRetention=0.1184` vs `blueRetention=0.8523`, `sunwardRatio=19.67x`, `aboveSkyMax=0.0000`, `nanInfCount=0`
 - **Invariants**: Flat-water unit error `< 2e-3`, wavy peak focusing `> 2.0x`, mean energy within `15%` of `1.0`, Cauchy chromatic separation `rbMeanDiff > 0.025` & `rbMaxDiff > 0.20`, Beer-Lambert red retention `< 0.35 * blueRetention`, sunward volumetric shaft ratio `> 2.5x`, above-water scatter `< 1e-5`, `nanInfCount == 0`, and HW GPU total mean `< 0.06 ms`.
 
+### 21. GPU 512x512 Snow Accumulation, Campfire/Solar Melt and Mass-Conserving Footprint Deformation
+- **Implementation**: `RawSnowDeformHost` (`src/d3d12_bridge/RawSnowDeformHost.h/.cpp`) driving SM 6.6/6.10 compute shaders `RawSnowDeformSim.hlsl` (`raw_snow_deform_step_cs.h` + `raw_snow_normal_height_cs.h`) over a `512x512` (`64 m` world span, `0.125 m/texel`) world-anchored toroidal `RGBA16F` snow state field `(depth, compaction, slushWetness, blackIceMask)` with up to 32 elliptical actor/horse/cart footprint stamps (analytically balanced mass-conserving rim displacement), up to 16 circular campfire/lava thermal heat sources, ambient/solar melt to slush, sub-zero slush-to-black-ice refreeze, seasonal snowfall replenishment, compaction-aware wind-drift smoothing, and 3x3 Sobel normal + sparkle/glint output.
+- **Measured Workload**: Verifies mass-conserving footprint depression & raised compacted rim (`massErrPct < 1.0%`), 3x3 Sobel wall normal alignment (`leftNx > 0.12`, `rightNx < -0.12`, flat snow `(0, 1, 0)`), campfire melt (`fireMeltedH < 0.05 m`) to wet slush followed by `-18 C` sub-zero refreeze to glossy black ice (`frozenBlackIce > 0.40`), seasonal snowfall replenishment (`+0.20 m`), zero NaN/Inf across all state and normal texels, and steady-state GPU profiling with all 32 simultaneous stamps and 16 heat sources active.
+- **Full RTX 4090 Breakdown (60 frames)**:
+  - Total GPU pass (`SnowDeform Step + Sobel Normal`): `mean=0.0238 ms`, `p50=0.0236 ms`, `p95=0.0246 ms`, `p99=0.0246 ms` (`hostStepMs=0.0164 ms`, `hostNormalMs=0.0041 ms`)
+  - CPU command recording overhead: `mean=0.0163 ms`, `p50=0.0137 ms`, `p95=0.0290 ms`
+  - Readback invariants (bit-identical on RTX 4090 and WARP): `trenchDepthM=0.1636 m`, `rimHeightM=0.4924 m`, `massErrPct=0.0300%`, `wallNormalNx=+0.3335`, `fireMeltedH=0.0000 m`, `frozenBlackIce=1.0000`, `snowfallGainM=+0.1982 m`, `nanInfCount=0`
+- **Invariants**: Footprint trench `< 0.20 m` & raised rim `> 0.45 m` with `< 1.0%` mass error, Sobel wall normals aligned (`leftNx > 0.12`, `rightNx < -0.12`, flat `ny ~ 1.0`), campfire melts core `< 0.05 m` & refreezes slush into black ice `> 0.40`, snowfall replenishment `+0.18..0.22 m`, `nanInfCount == 0`, and HW GPU total mean `< 0.05 ms`.
+
 ## Reproducing Benchmarks
 
 ### CLI Options
@@ -282,4 +293,4 @@ raw_bench_suite.exe [options]
 
 - **Exit Code `0`**: Every executed subsystem passed its numerical, visual, memory, and performance invariants AND `d3d12DebugErrors == 0`.
 - **Exit Code `1`**: Any invariant failed, any hardware GPU budget was exceeded, or any D3D12 Debug Layer error occurred.
-- **JSON Schema**: Top-level fields include `suite`, `mode`, `adapter`, `isWarp`, `vramMB`, `debugLayer`, `d3d12DebugErrors`, `timestampFreqHz`, `gpuWarmupFrames`, `gpuMeasuredFrames`, `allPassed`, and `subsystems.{fluidSim, radianceCascades, textureForge, audioDsp, destruction, floraAndHydrology, tamrielStreamer, xpbdSim, gpuCull, lightClusters, volumetricFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles, tsrUpscale, waterCaustics}` with nested `{mean, p50, p95, p99, min, max}` latency objects for every timed stage.
+- **JSON Schema**: Top-level fields include `suite`, `mode`, `adapter`, `isWarp`, `vramMB`, `debugLayer`, `d3d12DebugErrors`, `timestampFreqHz`, `gpuWarmupFrames`, `gpuMeasuredFrames`, `allPassed`, and `subsystems.{fluidSim, radianceCascades, textureForge, audioDsp, destruction, floraAndHydrology, tamrielStreamer, xpbdSim, gpuCull, lightClusters, volumetricFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles, tsrUpscale, waterCaustics, snowDeform}` with nested `{mean, p50, p95, p99, min, max}` latency objects for every timed stage.

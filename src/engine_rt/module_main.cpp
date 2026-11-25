@@ -45,6 +45,7 @@
 #include "rt_movement_combat.h"
 #include "rt_npc_behavior.h"
 #include "rt_profile_presets.h"
+#include "rt_safe_recovery.h"
 #include "rt_save_papyrus_guard.h"
 #include "rt_sdk_bridge.h"
 #include "rt_shader_hotreload.h"
@@ -411,6 +412,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     Log("%s", raw::rt::AudioBridgeInit().c_str());
     Log("%s", raw::rt::SdkBridgeInit(g_out).c_str());
     Log("%s", raw::rt::ProfilePresetsInit().c_str());
+    Log("%s", raw::rt::SafeRecoveryInit(g_out).c_str());
     Log("%s", raw::rt::ShaderHotReloadInit(g_dir + "raw_shaders").c_str());
     Log("%s", raw::rt::LiveDashboardInit(g_out).c_str());
     Log("%s", raw::rt::HotkeyRouterInit().c_str());
@@ -448,6 +450,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
     raw::rt::HotkeyRouterShutdown();
     raw::rt::LiveDashboardShutdown();
     raw::rt::ShaderHotReloadShutdown();
+    raw::rt::SafeRecoveryShutdown();
     raw::rt::ProfilePresetsShutdown();
     raw::rt::SdkBridgeShutdown();
     raw::rt::AudioBridgeShutdown();

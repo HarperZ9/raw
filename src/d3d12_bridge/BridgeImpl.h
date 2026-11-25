@@ -22,6 +22,7 @@
 #include "RawGpuParticlesHost.h"
 #include "RawTsrUpscaleHost.h"
 #include "RawWaterCausticsHost.h"
+#include "RawSnowDeformHost.h"
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
@@ -102,6 +103,7 @@ struct D3D12Bridge::Impl
     std::unique_ptr<RawGpuParticlesHost> gpuParticles; // Live GPU 16,384-Particle 3D Physics & Additive Splat solver
     std::unique_ptr<RawTsrUpscaleHost> tsrUpscale; // Live GPU RAW-TSR Temporal Super-Resolution + RCAS upscaler
     std::unique_ptr<RawWaterCausticsHost> waterCaustics; // Live GPU Physical Water Caustics & Underwater God-Ray solver
+    std::unique_ptr<RawSnowDeformHost> snowDeform; // Live GPU 512x512 Snow Accumulation, Melt & Footprint Deformation solver
     bool                     fluidReady = false;
     bool                     radianceReady = false;
     bool                     xpbdSimReady = false;
@@ -121,6 +123,7 @@ struct D3D12Bridge::Impl
     bool                     gpuParticlesReady = false;
     bool                     tsrUpscaleReady = false;
     bool                     waterCausticsReady = false;
+    bool                     snowDeformReady = false;
     ComPtr<ID3D12CommandAllocator>    fluidAlloc[kRing];
     ComPtr<ID3D12GraphicsCommandList> fluidList;
     ComPtr<ID3D12Fence>               fluidFence;
@@ -279,6 +282,16 @@ struct D3D12Bridge::Impl
     uint64_t                          waterCausticsSlotVal[kRing] = {};
     uint32_t                          waterCausticsSlot = 0;
     uint64_t                          waterCausticsStepFrames = 0;
+    ComPtr<ID3D12CommandAllocator>    snowDeformAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList> snowDeformList;
+    ComPtr<ID3D12Fence>               snowDeformFence;
+    HANDLE                            snowDeformEvent = nullptr;
+    uint64_t                          snowDeformFenceVal = 0;
+    uint64_t                          snowDeformSlotVal[kRing] = {};
+    uint32_t                          snowDeformSlot = 0;
+    uint64_t                          snowDeformStepFrames = 0;
+    uint64_t                          snowDeformLastMs = 0;
+    bool                              snowDeformPrevInterior = false;
     std::string                       telemetryOutDir;
     bool InitFluidSim();
     void ShutdownFluidSim();
@@ -325,6 +338,9 @@ struct D3D12Bridge::Impl
     bool InitWaterCaustics();
     void ShutdownWaterCaustics();
     bool ExecuteWaterCausticsOnQueue(bool isInterior);
+    bool InitSnowDeform();
+    void ShutdownSnowDeform();
+    bool ExecuteSnowDeformOnQueue(bool isInterior);
     bool InitOverlayHost();
     void ShutdownOverlayHost();
     void PollOverlayHotkey();

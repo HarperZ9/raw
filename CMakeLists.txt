@@ -841,13 +841,22 @@ if(RAW_ENGINE_DIR)
         DEPENDS ${RAW_SNOW_DEFORM_HLSL}
         COMMENT "dxc: GPU 512x512 Snow Accumulation, Thermal Melt & Footprint Deformation SM${RAW_SHADER_MODEL} -> DXIL headers"
         VERBATIM)
+    set(RAW_GRASS_WIND_HLSL ${RAW_SHARE_HLSL}/RawGrassWindSim.hlsl)
+    set(RAW_GRASS_WIND_HEADERS ${RAW_ENGINE_GEN}/raw_grass_wind_step_cs.h)
+    add_custom_command(
+        OUTPUT ${RAW_GRASS_WIND_HEADERS}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_grass_wind_step ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_grass_wind_step_cs.h -Vn kDxil_raw_grass_wind_step ${RAW_GRASS_WIND_HLSL}
+        DEPENDS ${RAW_GRASS_WIND_HLSL}
+        COMMENT "dxc: GPU 65536-Blade Dynamic Grass Wind, Snow Droop & Trample SM${RAW_SHADER_MODEL} -> DXIL header"
+        VERBATIM)
     target_sources(raw_d3d12_bridge PRIVATE ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h ${RAW_ENGINE_GEN}/raw_subdiv_cs.h
                    ${RAW_ENGINE_GEN}/raw_terrain_as.h ${RAW_ENGINE_GEN}/raw_terrain_ms.h ${RAW_ENGINE_GEN}/raw_terrain_vs.h ${RAW_ENGINE_GEN}/raw_terrain_ps.h
-                   ${RAW_FLUID_HEADERS} ${RAW_RC_HEADERS} ${RAW_XPBD_HEADERS} ${RAW_OVERLAY_HEADERS} ${RAW_GPU_CULL_HEADERS} ${RAW_LIGHT_CLUSTER_HEADERS} ${RAW_FROXEL_HEADERS} ${RAW_SHADOW_PCSS_HEADERS} ${RAW_GTAO_HEADERS} ${RAW_SSR_HEADERS} ${RAW_AUTO_EXPOSURE_HEADERS} ${RAW_CLOUD_RAYMARCH_HEADERS} ${RAW_POST_CINEMATIC_HEADERS} ${RAW_GPU_PARTICLES_HEADERS} ${RAW_TSR_UPSCALE_HEADERS} ${RAW_WATER_CAUSTICS_HEADERS} ${RAW_SNOW_DEFORM_HEADERS}
+                   ${RAW_FLUID_HEADERS} ${RAW_RC_HEADERS} ${RAW_XPBD_HEADERS} ${RAW_OVERLAY_HEADERS} ${RAW_GPU_CULL_HEADERS} ${RAW_LIGHT_CLUSTER_HEADERS} ${RAW_FROXEL_HEADERS} ${RAW_SHADOW_PCSS_HEADERS} ${RAW_GTAO_HEADERS} ${RAW_SSR_HEADERS} ${RAW_AUTO_EXPOSURE_HEADERS} ${RAW_CLOUD_RAYMARCH_HEADERS} ${RAW_POST_CINEMATIC_HEADERS} ${RAW_GPU_PARTICLES_HEADERS} ${RAW_TSR_UPSCALE_HEADERS} ${RAW_WATER_CAUSTICS_HEADERS} ${RAW_SNOW_DEFORM_HEADERS} ${RAW_GRASS_WIND_HEADERS}
                    src/d3d12_bridge/RawAssetBridge.cpp src/d3d12_bridge/RawTextureBridge.cpp src/d3d12_bridge/RawProceduralLib.cpp
-                   src/d3d12_bridge/RawMeshHost.cpp src/d3d12_bridge/RawFluidSimHost.cpp src/d3d12_bridge/RawFluidCompositeHost.cpp src/d3d12_bridge/RawRadianceHost.cpp src/d3d12_bridge/RawXpbdSimHost.cpp src/d3d12_bridge/RawOverlayHost.cpp src/d3d12_bridge/RawGpuCullHost.cpp src/d3d12_bridge/RawLightClusterHost.cpp src/d3d12_bridge/RawVolumetricFroxelHost.cpp src/d3d12_bridge/RawShadowPcssHost.cpp src/d3d12_bridge/RawGtaoHost.cpp src/d3d12_bridge/RawSsrHost.cpp src/d3d12_bridge/RawAutoExposureHost.cpp src/d3d12_bridge/RawCloudRaymarchHost.cpp src/d3d12_bridge/RawPostCinematicHost.cpp src/d3d12_bridge/RawGpuParticlesHost.cpp src/d3d12_bridge/RawTsrUpscaleHost.cpp src/d3d12_bridge/RawWaterCausticsHost.cpp src/d3d12_bridge/RawSnowDeformHost.cpp src/d3d12_bridge/RawOverrideRegistry.cpp src/d3d12_bridge/RawBindlessHeap.cpp
+                   src/d3d12_bridge/RawMeshHost.cpp src/d3d12_bridge/RawFluidSimHost.cpp src/d3d12_bridge/RawFluidCompositeHost.cpp src/d3d12_bridge/RawRadianceHost.cpp src/d3d12_bridge/RawXpbdSimHost.cpp src/d3d12_bridge/RawOverlayHost.cpp src/d3d12_bridge/RawGpuCullHost.cpp src/d3d12_bridge/RawLightClusterHost.cpp src/d3d12_bridge/RawVolumetricFroxelHost.cpp src/d3d12_bridge/RawShadowPcssHost.cpp src/d3d12_bridge/RawGtaoHost.cpp src/d3d12_bridge/RawSsrHost.cpp src/d3d12_bridge/RawAutoExposureHost.cpp src/d3d12_bridge/RawCloudRaymarchHost.cpp src/d3d12_bridge/RawPostCinematicHost.cpp src/d3d12_bridge/RawGpuParticlesHost.cpp src/d3d12_bridge/RawTsrUpscaleHost.cpp src/d3d12_bridge/RawWaterCausticsHost.cpp src/d3d12_bridge/RawSnowDeformHost.cpp src/d3d12_bridge/RawGrassWindHost.cpp src/d3d12_bridge/RawOverrideRegistry.cpp src/d3d12_bridge/RawBindlessHeap.cpp
                    src/d3d12_bridge/RawAsyncCompute.cpp src/d3d12_bridge/RawIndirectBatch.cpp src/d3d12_bridge/RawAssetStream.cpp
-                   src/worldgen/RawTerrainGen.cpp src/worldgen/RawHydrologyGen.cpp src/worldgen/RawBiomeWorld.cpp src/worldgen/RawMeshPipeline.cpp src/worldgen/RawFloraEngine.cpp src/worldgen/RawWeatherSim.cpp src/worldgen/RawWorldShowcase.cpp src/worldgen/RawEsmWorldLoader.cpp src/worldgen/RawEsmModelResolver.cpp src/worldgen/RawEsmNpcWeatherLoader.cpp src/worldgen/RawTamrielWorldStreamer.cpp src/worldgen/RawWorldPhysics.cpp src/worldgen/RawNavMeshAi.cpp src/worldgen/RawWorldEcosystem.cpp src/worldgen/RawWildlifeBoids.cpp src/worldgen/RawSettlementSim.cpp src/worldgen/RawWorldEventDirector.cpp src/worldgen/RawFactionDiplomacy.cpp src/worldgen/RawWorldSerializer.cpp src/worldgen/RawDungeonGen.cpp src/worldgen/RawSkeletonAnimEngine.cpp src/worldgen/RawCombatSandboxEngine.cpp src/worldgen/RawQuestStoryEngine.cpp src/worldgen/RawCraftingInventoryEngine.cpp src/worldgen/RawLivingWorldSchedule.cpp src/worldgen/RawBsaArchive.cpp src/worldgen/RawNifLoader.cpp src/worldgen/RawDdsDecoder.cpp src/worldgen/RawDestructionEngine.cpp
+                   src/worldgen/RawTerrainGen.cpp src/worldgen/RawHydrologyGen.cpp src/worldgen/RawBiomeWorld.cpp src/worldgen/RawMeshPipeline.cpp src/worldgen/RawFloraEngine.cpp src/worldgen/RawWeatherSim.cpp src/worldgen/RawWorldShowcase.cpp src/worldgen/RawEsmWorldLoader.cpp src/worldgen/RawEsmModelResolver.cpp src/worldgen/RawEsmNpcWeatherLoader.cpp src/worldgen/RawTamrielWorldStreamer.cpp src/worldgen/RawWorldPhysics.cpp src/worldgen/RawNavMeshAi.cpp src/worldgen/RawWorldEcosystem.cpp src/worldgen/RawWildlifeBoids.cpp src/worldgen/RawSettlementSim.cpp src/worldgen/RawWorldEventDirector.cpp src/worldgen/RawFactionDiplomacy.cpp src/worldgen/RawWorldSerializer.cpp src/worldgen/RawDungeonGen.cpp src/worldgen/RawSkeletonAnimEngine.cpp src/worldgen/RawCombatSandboxEngine.cpp src/worldgen/RawQuestStoryEngine.cpp src/worldgen/RawCraftingInventoryEngine.cpp src/worldgen/RawLivingWorldSchedule.cpp src/worldgen/RawGameTheoryAi.cpp src/worldgen/RawBsaArchive.cpp src/worldgen/RawNifLoader.cpp src/worldgen/RawDdsDecoder.cpp src/worldgen/RawDestructionEngine.cpp
                    src/engine_rt/raw_job_system.cpp
                    src/materials/RawMaterialLib.cpp src/materials/RawAssetForge.cpp src/materials/RawTextureForge.cpp
                    src/assets/RawOverrideRegistry.cpp src/assets/RawAssetScaffold.cpp)
@@ -961,6 +970,11 @@ if(RAW_ENGINE_DIR)
     target_compile_definitions(test_snow_deform_gpu PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_link_libraries(test_snow_deform_gpu PRIVATE d3d12 dxgi dxguid)
     set_target_properties(test_snow_deform_gpu PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
+    add_executable(test_grass_wind_gpu tests/test_grass_wind_gpu.cpp src/d3d12_bridge/RawGrassWindHost.cpp ${RAW_GRASS_WIND_HEADERS})
+    target_include_directories(test_grass_wind_gpu PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge)
+    target_compile_definitions(test_grass_wind_gpu PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(test_grass_wind_gpu PRIVATE d3d12 dxgi dxguid)
+    set_target_properties(test_grass_wind_gpu PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
     add_executable(test_texture_atlas_gpu
         tests/test_texture_atlas_gpu.cpp
         src/d3d12_bridge/RawMeshHost.cpp
@@ -1029,6 +1043,7 @@ if(RAW_ENGINE_DIR)
         src/d3d12_bridge/RawGpuParticlesHost.cpp
         src/d3d12_bridge/RawTsrUpscaleHost.cpp
         src/d3d12_bridge/RawWaterCausticsHost.cpp
+        src/d3d12_bridge/RawSnowDeformHost.cpp
         src/materials/RawTextureForge.cpp
         src/audio/RawAudioDsp.cpp
         src/audio/RawAudioOutput.cpp
@@ -1057,6 +1072,7 @@ if(RAW_ENGINE_DIR)
         src/worldgen/RawCombatSandboxEngine.cpp
         src/worldgen/RawQuestStoryEngine.cpp
         src/worldgen/RawCraftingInventoryEngine.cpp
+        src/worldgen/RawLivingWorldSchedule.cpp
         src/worldgen/RawBsaArchive.cpp
         src/worldgen/RawNifLoader.cpp
         src/engine_rt/raw_job_system.cpp
@@ -1078,6 +1094,7 @@ if(RAW_ENGINE_DIR)
         ${RAW_GPU_PARTICLES_HEADERS}
         ${RAW_TSR_UPSCALE_HEADERS}
         ${RAW_WATER_CAUSTICS_HEADERS}
+        ${RAW_SNOW_DEFORM_HEADERS}
         ${RAW_AGX_DISPLAY_HEADERS})
     target_include_directories(raw_engine_viewer PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge ${CMAKE_CURRENT_SOURCE_DIR}/src/materials ${CMAKE_CURRENT_SOURCE_DIR}/src/worldgen ${CMAKE_CURRENT_SOURCE_DIR}/src/audio ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_rt)
     target_compile_definitions(raw_engine_viewer PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -1100,6 +1117,7 @@ if(RAW_ENGINE_DIR)
         src/d3d12_bridge/RawGpuParticlesHost.cpp
         src/d3d12_bridge/RawTsrUpscaleHost.cpp
         src/d3d12_bridge/RawWaterCausticsHost.cpp
+        src/d3d12_bridge/RawSnowDeformHost.cpp
         src/materials/RawTextureForge.cpp
         src/audio/RawAudioDsp.cpp
         src/worldgen/RawDestructionEngine.cpp
@@ -1131,7 +1149,8 @@ if(RAW_ENGINE_DIR)
         ${RAW_POST_CINEMATIC_HEADERS}
         ${RAW_GPU_PARTICLES_HEADERS}
         ${RAW_TSR_UPSCALE_HEADERS}
-        ${RAW_WATER_CAUSTICS_HEADERS})
+        ${RAW_WATER_CAUSTICS_HEADERS}
+        ${RAW_SNOW_DEFORM_HEADERS})
     target_include_directories(raw_bench_suite PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge ${CMAKE_CURRENT_SOURCE_DIR}/src/materials ${CMAKE_CURRENT_SOURCE_DIR}/src/audio ${CMAKE_CURRENT_SOURCE_DIR}/src/worldgen ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_definitions(raw_bench_suite PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_link_libraries(raw_bench_suite PRIVATE d3d12 dxgi dxguid)
@@ -1368,6 +1387,8 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_spellcraft_gmst.cpp
         src/engine_rt/rt_hotkey_router.cpp
         src/engine_rt/rt_camera_world_gmst.cpp
+        src/engine_rt/rt_safe_recovery.cpp
+        src/engine_rt/rt_ai_ballistics_gmst.cpp
         src/audio/RawAudioDsp.cpp
         src/audio/RawAudioOutput.cpp
         src/engine_rt/raw_slab_allocator.cpp
@@ -1460,6 +1481,8 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_spellcraft_gmst.cpp
         src/engine_rt/rt_hotkey_router.cpp
         src/engine_rt/rt_camera_world_gmst.cpp
+        src/engine_rt/rt_safe_recovery.cpp
+        src/engine_rt/rt_ai_ballistics_gmst.cpp
         src/engine_rt/raw_slab_allocator.cpp
         src/engine_rt/raw_job_system.cpp
         src/engine_rt/rt_softbody.cpp
@@ -1490,6 +1513,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/worldgen/RawQuestStoryEngine.cpp
         src/worldgen/RawCraftingInventoryEngine.cpp
         src/worldgen/RawLivingWorldSchedule.cpp
+        src/worldgen/RawGameTheoryAi.cpp
         src/worldgen/RawBsaArchive.cpp
         src/worldgen/RawNifLoader.cpp
         src/worldgen/RawDdsDecoder.cpp
@@ -1558,6 +1582,8 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         tests/test_spellcraft_gmst.cpp
         tests/test_hotkey_router.cpp
         tests/test_camera_world_gmst.cpp
+        tests/test_safe_recovery.cpp
+        tests/test_ai_ballistics_gmst.cpp
         tests/test_world_ecosystem.cpp
         tests/test_wildlife_boids.cpp
         tests/test_settlement_sim.cpp
@@ -1570,6 +1596,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         tests/test_quest_story_engine.cpp
         tests/test_crafting_inventory_engine.cpp
         tests/test_living_world_schedule.cpp
+        tests/test_game_theory_ai.cpp
         tests/test_audio_dsp.cpp
         tests/test_audio_output.cpp
         tests/test_texture_forge.cpp)
@@ -1577,7 +1604,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
     target_include_directories(ce_runtime_check PRIVATE include src/engine_rt src/d3d12_bridge src/ce_runtime src/worldgen src/audio src/materials src/assets src/pipeline src/ui "${RAW_ZYDIS_ROOT}/include")
-    target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD RAW_SIM_PURE_TEST=1 RAW_WEATHER_SIM_NO_MAIN=1 RAW_GAMEPLAY_MECHANICS_NO_MAIN=1 RAW_STEALTH_SURVIVAL_NO_MAIN=1 RAW_COMBAT_IMPACT_NO_MAIN=1 RAW_ECONOMY_LEDGER_NO_MAIN=1 RAW_MOVEMENT_COMBAT_NO_MAIN=1 RAW_LIVE_CONFIG_NO_MAIN=1 RAW_ENCOUNTER_BALANCE_NO_MAIN=1 RAW_MAGIC_PHYSICS_NO_MAIN=1 RAW_PROGRESSION_ECONOMY_NO_MAIN=1 RAW_AI_PACKAGES_NO_MAIN=1 RAW_WORLD_RULES_GMST_NO_MAIN=1 RAW_PHYSICS_CAMERA_GMST_NO_MAIN=1 RAW_STEALTH_SOCIAL_GMST_NO_MAIN=1 RAW_LOCOMOTION_MELEE_GMST_NO_MAIN=1 RAW_ALCHEMY_ENCHANT_GMST_NO_MAIN=1 RAW_COMPANION_HAZARD_GMST_NO_MAIN=1 RAW_ARCHERY_MOUNT_GMST_NO_MAIN=1 RAW_SHOUTS_SURVIVAL_GMST_NO_MAIN=1 RAW_CRIME_MOUNT_GMST_NO_MAIN=1 RAW_CRAFTING_INVENTORY_GMST_NO_MAIN=1 RAW_SPELLCRAFT_GMST_NO_MAIN=1 RAW_CAMERA_WORLD_GMST_NO_MAIN=1)
+    target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD RAW_SIM_PURE_TEST=1 RAW_WEATHER_SIM_NO_MAIN=1 RAW_GAMEPLAY_MECHANICS_NO_MAIN=1 RAW_STEALTH_SURVIVAL_NO_MAIN=1 RAW_COMBAT_IMPACT_NO_MAIN=1 RAW_ECONOMY_LEDGER_NO_MAIN=1 RAW_MOVEMENT_COMBAT_NO_MAIN=1 RAW_LIVE_CONFIG_NO_MAIN=1 RAW_ENCOUNTER_BALANCE_NO_MAIN=1 RAW_MAGIC_PHYSICS_NO_MAIN=1 RAW_PROGRESSION_ECONOMY_NO_MAIN=1 RAW_AI_PACKAGES_NO_MAIN=1 RAW_WORLD_RULES_GMST_NO_MAIN=1 RAW_PHYSICS_CAMERA_GMST_NO_MAIN=1 RAW_STEALTH_SOCIAL_GMST_NO_MAIN=1 RAW_LOCOMOTION_MELEE_GMST_NO_MAIN=1 RAW_ALCHEMY_ENCHANT_GMST_NO_MAIN=1 RAW_COMPANION_HAZARD_GMST_NO_MAIN=1 RAW_ARCHERY_MOUNT_GMST_NO_MAIN=1 RAW_SHOUTS_SURVIVAL_GMST_NO_MAIN=1 RAW_CRIME_MOUNT_GMST_NO_MAIN=1 RAW_CRAFTING_INVENTORY_GMST_NO_MAIN=1 RAW_SPELLCRAFT_GMST_NO_MAIN=1 RAW_CAMERA_WORLD_GMST_NO_MAIN=1 RAW_AI_BALLISTICS_GMST_NO_MAIN=1)
     target_link_libraries(ce_runtime_check PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB} windowscodecs ole32 dxgi)
 
     # raw_forge_cli: standalone C++23 first-principles authoring, batch baking & validation CLI
@@ -1609,6 +1636,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/worldgen/RawCombatSandboxEngine.cpp
         src/worldgen/RawQuestStoryEngine.cpp
         src/worldgen/RawCraftingInventoryEngine.cpp
+        src/worldgen/RawLivingWorldSchedule.cpp
         src/worldgen/RawBsaArchive.cpp
         src/worldgen/RawNifLoader.cpp
         src/worldgen/RawDdsDecoder.cpp

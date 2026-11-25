@@ -143,6 +143,9 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
     const float waterCausticsMs = (waterCausticsReady && waterCaustics && waterCaustics->HasValidTiming() &&
                                    std::isfinite(waterCaustics->GetLastTotalMs()))
         ? waterCaustics->GetLastTotalMs() : 0.0f;
+    const float snowDeformMs = (snowDeformReady && snowDeform && snowDeform->HasValidTiming() &&
+                                std::isfinite(snowDeform->GetLastTotalMs()))
+        ? snowDeform->GetLastTotalMs() : 0.0f;
 
     char jsonBuf[4096]{};
     const int n = std::snprintf(
@@ -186,6 +189,7 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"gpuParticlesMs\": %.4f,\n"
         "  \"tsrUpscaleMs\": %.4f,\n"
         "  \"waterCausticsMs\": %.4f,\n"
+        "  \"snowDeformMs\": %.4f,\n"
         "  \"seasonSnowM\": %.4f,\n"
         "  \"seasonIceM\": %.4f,\n"
         "  \"skinTempC\": %.3f,\n"
@@ -231,6 +235,7 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         gpuParticlesMs,
         tsrUpscaleMs,
         waterCausticsMs,
+        snowDeformMs,
         seasonSnowM,
         seasonIceM,
         skinTempC,
@@ -1878,6 +1883,122 @@ bool D3D12Bridge::Impl::ExecuteWaterCausticsOnQueue(bool isInterior)
     return true;
 }
 
+bool D3D12Bridge::Impl::ExecuteSnowDeformOnQueue(bool isInterior)
+{
+    if (!snowDeformReady || !snowDeform || !snowDeform->Ready() ||
+        !queue || !snowDeformList || !snowDeformFence || !snowDeformEvent) {
+        return false;
+    }
+
+    const uint32_t slot = snowDeformSlot;
+    if (snowDeformSlotVal[slot] > 0 && snowDeformFence->GetCompletedValue() < snowDeformSlotVal[slot]) {
+        snowDeformFence->SetEventOnCompletion(snowDeformSlotVal[slot], snowDeformEvent);
+        WaitForSingleObject(snowDeformEvent, 3000);
+    }
+    if (FAILED(snowDeformAlloc[slot]->Reset()) ||
+        FAILED(snowDeformList->Reset(snowDeformAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    const uint64_t nowMs = GetTickCount64();
+    float dtSec = 1.0f / 60.0f;
+    if (snowDeformLastMs > 0ull && nowMs >= snowDeformLastMs) {
+        dtSec = std::clamp(static_cast<float>(nowMs - snowDeformLastMs) * 0.001f, 0.001f, 0.05f);
+    }
+    snowDeformLastMs = nowMs;
+    if (lighting.menuPaused) dtSec = 0.0f;
+
+    LightingFluidInputs fi{};
+    LightingPassFluidInputs(pass.get(), &fi);
+
+    float weatherSnow = 0.0f;
+    const void* uPtr = nullptr;
+    size_t uBytes = 0;
+    if (pass && LightingPassUniform(pass.get(), &uPtr, &uBytes) &&
+        uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+        const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+        if (std::isfinite(u->weather[1])) weatherSnow = std::clamp(u->weather[1], 0.0f, 1.0f);
+    }
+
+    constexpr float kInvUnitsPerMeter = 1.0f / 70.0f;
+    SnowStamp stamps[RawSnowDeformHost::kMaxStamps]{};
+    uint32_t stampCount = 0u;
+    for (uint32_t i = 0u; i < 32u && stampCount < RawSnowDeformHost::kMaxStamps; ++i) {
+        if (fi.footTrail[i][3] > 0.01f &&
+            std::isfinite(fi.footTrail[i][0]) && std::isfinite(fi.footTrail[i][1])) {
+            SnowStamp& st = stamps[stampCount++];
+            st.worldX         = fi.footTrail[i][0] * kInvUnitsPerMeter;
+            st.worldZ         = fi.footTrail[i][1] * kInvUnitsPerMeter;
+            st.radiusM        = 0.34f;
+            st.compressDepthM = std::clamp(fi.footTrail[i][3] * 0.20f, 0.05f, 0.26f);
+            st.rimRatio       = 0.88f;
+            st.headingRad     = 0.0f;
+            st.aspectRatio    = 1.25f;
+        }
+    }
+
+    SnowHeatSource heats[RawSnowDeformHost::kMaxHeatSources]{};
+    uint32_t heatCount = 0u;
+    for (uint32_t i = 0u; i < lighting.lightCount && heatCount < RawSnowDeformHost::kMaxHeatSources; ++i) {
+        const SceneLight& l = lighting.lights[i];
+        if (l.colour[0] > l.colour[1] * 1.25f && l.colour[0] > l.colour[2] * 2.2f &&
+            l.colour[0] > 0.45f && l.radius >= 50.0f && l.radius <= 900.0f) {
+            SnowHeatSource& hs = heats[heatCount++];
+            hs.worldX     = (lighting.posAdjust[0] + l.position[0]) * kInvUnitsPerMeter;
+            hs.worldZ     = (lighting.posAdjust[1] + l.position[1]) * kInvUnitsPerMeter;
+            hs.radiusM    = std::clamp(l.radius * kInvUnitsPerMeter * 0.75f, 1.5f, 8.0f);
+            hs.heatPowerC = std::clamp(35.0f + l.colour[0] * 30.0f, 35.0f, 95.0f);
+        }
+    }
+
+    const bool resetNow = (snowDeformStepFrames == 0ull) || (isInterior != snowDeformPrevInterior);
+    snowDeformPrevInterior = isInterior;
+
+    const float windSpeedMs = isInterior
+        ? 0.0f
+        : std::clamp(std::hypot(fi.windXY[0], fi.windXY[1]) * 0.05f, 0.0f, 20.0f);
+    const float wLen = std::hypot(fi.windXY[0], fi.windXY[1]);
+
+    SnowDeformParams sp{};
+    sp.camWorldX       = lighting.posAdjust[0] * kInvUnitsPerMeter;
+    sp.camWorldZ       = lighting.posAdjust[1] * kInvUnitsPerMeter;
+    sp.dtSec           = dtSec;
+    sp.snowfallRateMps = isInterior ? 0.0f : (weatherSnow * 0.006f);
+    sp.ambientTempC    = isInterior ? 16.0f : (std::isfinite(fi.ambientTempC) ? fi.ambientTempC : -4.0f);
+    sp.solarWarmthC    = (!isInterior && lighting.hasSun && lighting.sunDirection[2] > 0.05f)
+                             ? (lighting.sunDirection[2] * 5.0f) : 0.0f;
+    sp.baselineDepthM  = isInterior ? 0.0f : std::clamp(0.12f + weatherSnow * 0.42f, 0.12f, 0.55f);
+    sp.maxDepthM       = 1.50f;
+    sp.windSpeedMps    = windSpeedMs;
+    sp.windDirX        = (wLen > 1e-4f) ? (fi.windXY[0] / wLen) : 1.0f;
+    sp.windDirZ        = (wLen > 1e-4f) ? (fi.windXY[1] / wLen) : 0.0f;
+    sp.meltCoeff       = 0.008f;
+    sp.normalStrength  = 1.0f;
+    sp.resetField      = resetNow;
+    sp.stamps          = (stampCount > 0u) ? stamps : nullptr;
+    sp.stampCount      = stampCount;
+    sp.heatSources     = (heatCount > 0u) ? heats : nullptr;
+    sp.heatCount       = heatCount;
+
+    snowDeform->Execute(snowDeformList.Get(), sp);
+
+    if (FAILED(snowDeformList->Close())) return false;
+    ID3D12CommandList* lists[1] = {snowDeformList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(snowDeformFence.Get(), ++snowDeformFenceVal);
+    snowDeformSlotVal[slot] = snowDeformFenceVal;
+    snowDeformSlot = (slot + 1u) % kRing;
+
+    if ((snowDeformStepFrames++ % 180ull) == 0ull) {
+        log("[SnowDeform] live 512x512 snow/melt/footprints: stepMs=%.4f, normalMs=%.4f, totalMs=%.4f, stamps=%u, heats=%u, snow=%.2f",
+            snowDeform->HasValidTiming() ? snowDeform->GetLastStepMs() : 0.0f,
+            snowDeform->HasValidTiming() ? snowDeform->GetLastNormalMs() : 0.0f,
+            snowDeform->HasValidTiming() ? snowDeform->GetLastTotalMs() : 0.0f,
+            stampCount, heatCount, weatherSnow);
+    }
+    return true;
+}
+
 bool D3D12Bridge::Impl::CpuWait(uint64_t value, DWORD timeoutMs)
 {
     return WaitFence(fence12.Get(), value, cpuEvent, timeoutMs);
@@ -2127,8 +2248,10 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                                m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr;
     const bool runWaterCaustics = m->cfg.lightingPass && m->lighting.valid && m->waterCausticsReady &&
                                   m->waterCaustics && m->waterCaustics->Ready();
+    const bool runSnowDeform = m->cfg.lightingPass && m->lighting.valid && m->snowDeformReady &&
+                               m->snowDeform && m->snowDeform->Ready();
     const bool runOverlay = m->overlayHudEnabled && m->overlayHostReady && m->overlayHost && m->overlayHost->Ready();
-    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runAutoExposure || runCloudRaymarch || runPostCinematic || runGpuParticles || runTsrUpscale || runWaterCaustics || runOverlay;
+    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runAutoExposure || runCloudRaymarch || runPostCinematic || runGpuParticles || runTsrUpscale || runWaterCaustics || runSnowDeform || runOverlay;
     auto runPostLightingPasses = [&]() -> bool {
         if (!hasPostWork) return true;
         if (runTerrain) {
@@ -2241,6 +2364,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         }
         if (runWaterCaustics) {
             m->ExecuteWaterCausticsOnQueue(isInterior);
+        }
+        if (runSnowDeform) {
+            m->ExecuteSnowDeformOnQueue(isInterior);
         }
         if (runOverlay) {
             m->ExecuteOverlayHudOnQueue(isInterior);

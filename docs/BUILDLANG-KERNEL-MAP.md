@@ -1,6 +1,6 @@
-# RAW Engine BuildLang Core Kernel Map (15 Modules, 90 Verified Kernels)
+# RAW Engine BuildLang Core Kernel Map (16 Modules, 96 Verified Kernels)
 
-This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, regional economy, GPU pipeline, world-systems, volumetric clouds, archery, dungeon, animation IK, cinematic post-FX, profile-tiering, GPU particle dynamics, combat-mechanics, TSR upscaling, quest persuasion, water caustics, crafting, spellcraft, snow deformation, and seasonal ecology kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**15 modules, 90 verified kernels**):
+This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, regional economy, GPU pipeline, world-systems, volumetric clouds, archery, dungeon, animation IK, cinematic post-FX, profile-tiering, GPU particle dynamics, combat-mechanics, TSR upscaling, quest persuasion, water caustics, crafting, spellcraft, snow deformation, seasonal ecology, and algorithmic game-theory / information-theory kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**16 modules, 96 verified kernels**):
 
 1. [`native/bld/RawPhysicsKernels.bld`](../native/bld/RawPhysicsKernels.bld) (6 core scalar physics & anti-exploit kernels)
 2. [`native/bld/RawAtmoWeather.bld`](../native/bld/RawAtmoWeather.bld) (7 planetary atmosphere, orbital solar, snowpack ODE & black-ice kernels)
@@ -17,10 +17,11 @@ This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar 
 13. [`native/bld/RawTsrQuests.bld`](../native/bld/RawTsrQuests.bld) (6 Halton-2/3 jitter, YCoCg variance clamp, RCAS sharpening lobe, quest persuasion, smithing temper & encumbrance speed kernels)
 14. [`native/bld/RawCausticsCrafting.bld`](../native/bld/RawCausticsCrafting.bld) (6 Snell refraction, underwater Beer-Lambert transmittance, caustic Jacobian clamp, anti-loop crafting cap, soul-gem budget & dual-cast efficiency kernels)
 15. [`native/bld/RawSnowEcology.bld`](../native/bld/RawSnowEcology.bld) (6 snow footprint rim displacement, campfire snow melt, slush-to-black-ice freeze, storm shelter probability, camera spring zoom & seasonal photoperiod kernels)
+16. [`native/bld/RawGameTheoryMath.bld`](../native/bld/RawGameTheoryMath.bld) (6 2x2 unilateral Nash regret, closed-form mixed equilibrium, fictitious-play EMA, subadditive prophet threshold, truncated discrete Laplace & binary KL-divergence stability kernels)
 
 ## Toolchain Verification Receipts (`buildc 1.4.0`)
 
-Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **15/15 `check` PASS**, **15/15 `run` PASS**):
+Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **16/16 `check` PASS**, **16/16 `run` PASS**):
 
 ### Module 1: `native/bld/RawPhysicsKernels.bld`
 - `buildc check`: Exit Code `0` (`Lexing... OK (763 tokens)`, `Parsing... OK (9 items)`, `Type checking... OK`, `No errors found`)
@@ -201,7 +202,19 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
   seasonal_photoperiod_hr(60N sum/eq/win) = 18.488845693795454 | 11.99948413328645 | 5.511154306204544
   ```
 
-## Kernel-by-Kernel Mapping (90 Kernels)
+### Module 16: `native/bld/RawGameTheoryMath.bld`
+- `buildc check`: Exit Code `0` (`Lexing... OK (997 tokens)`, `Parsing... OK (10 items)`, `Type checking... OK`, `No errors found`)
+- `buildc run`: Exit Code `0`
+  ```text
+  bimatrix_unilateral_regret(NE 0.5,0.5) = 0 | (0.7,0.5 eps) = 0.19999999999999996
+  nash_2x2_mixed_prob(pennies) = 0.5 | (feint) = 0.5833333333333333
+  fictitious_play_ema_step(n=4) = 0.6 | (n=50 floor) = 0.525
+  prophet_reservation_threshold(add) = 200 | (subadd) = 164.8
+  truncated_discrete_laplace_w(k=2) = 0.36787944117144233 | (k=7 trunc) = 0
+  kl_binary_stability_nats(0.5||0.5) = 0 | (0.75||0.50) = 0.13081203594113697
+  ```
+
+## Kernel-by-Kernel Mapping (96 Kernels)
 
 ### 1. Core Physics Kernels (`native/bld/RawPhysicsKernels.bld`)
 
@@ -368,10 +381,21 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
 | 89 | `camera_spring_zoom(cur_dist, target_dist, stiffness, dt_sec)` | `src/engine_rt/rt_camera_world_gmst.cpp` | Overshoot-free exponential `cur + (target - cur) * (1 - exp(-k*dt))` | `220 -> 420` @ `k=6, 0.1 s` steps smoothly to `310.24` (zero overshoot) |
 | 90 | `seasonal_photoperiod_hr(lat_deg, decl_rad)` | `src/worldgen/RawWeatherSim.cpp`, `RawSeasonsThermals.hlsli` | `(24 / pi) * acos(-tan(lat) * tan(decl))` clamped `[0, 24]` | `60 deg N`: summer `18.49 h`, equinox `12.00 h`, winter `5.51 h` |
 
-## Reproducing All 15 BuildLang Module Checks
+### 16. Algorithmic Game Theory, Prophet Inequalities and Information Stability Kernels (`native/bld/RawGameTheoryMath.bld`)
+
+| # | BuildLang Function | Engine C++ / Research Counterpart | Governing Equation | Verified Invariant |
+| --- | --- | --- | --- | --- |
+| 91 | `bimatrix_unilateral_regret(p, q, a00..a11, b00..b11)` | MaximinKiteNE / Adaptive Combat AI (`RawStrategicAiEngine`) | `max(max(u_r0, u_r1) - u_row, max(u_c0, u_c1) - u_col)` | Matching Pennies `(0.5,0.5)` = exact `0.0`; `(0.7,0.5)` = exact `0.20` (`1/5`-NE) |
+| 92 | `nash_2x2_mixed_prob(a00, a01, a10, a11)` | Adaptive Combat AI (`RawStrategicAiEngine`) | `clamp((a11 - a01) / (a00 - a01 - a10 + a11), 0, 1)` | Matching Pennies = `0.5`; asymmetric feint = `0.5833` |
+| 93 | `fictitious_play_ema_step(emp_freq, best_resp, step_n, decay_floor)` | Lexicographic Fictitious Play AI (`RawStrategicAiEngine`) | `cur + max(1/(n+1), floor) * (br - cur)` in `[0, 1]` | `n=4` harmonic step `0.5 -> 0.6`; `n=50` floor step `0.5 -> 0.525` |
+| 94 | `prophet_reservation_threshold(expected_opt, subadd_alpha, risk_aversion)` | Subadditive Prophet Inequality (`RawSettlementSim`, Merchant Bidding) | `(E[OPT] / (2 * alpha)) * (1 + 0.15 * risk)` | Additive (`alpha=1`) = exact `200.0` (`E[OPT]/2`); subadditive = `164.8` |
+| 95 | `truncated_discrete_laplace_w(k_abs, scale_s, bound_b)` | Truncated Discrete Laplace Sampler (`L_N[1/3]` Lattice Formulation) | `exp(-|k| / s)` for `|k| <= b`, exact `0.0` outside | `k=2, s=2` = `1/e = 0.3679`; `k=7 > 6` = exact `0.0` |
+| 96 | `kl_binary_stability_nats(p_raw, q_raw)` | Log-Rank KL-Stable Rounding (`RawStrategicAiEngine`) | `p*ln(p/q) + (1-p)*ln((1-p)/(1-q))` clamped `>= 0` | Identical `(0.5||0.5)` = exact `0.0`; `(0.75||0.50)` = `0.1308` nats |
+
+## Reproducing All 16 BuildLang Module Checks
 
 ```powershell
-foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim','RawGpuPipeline','RawWorldSystems','RawCloudsDungeon','RawAnimKinematics','RawParticlesCombat','RawTsrQuests','RawCausticsCrafting','RawSnowEcology')) {
+foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim','RawGpuPipeline','RawWorldSystems','RawCloudsDungeon','RawAnimKinematics','RawParticlesCombat','RawTsrQuests','RawCausticsCrafting','RawSnowEcology','RawGameTheoryMath')) {
     buildc check "E:\wt\raw-rt9\native\bld\$m.bld"
     buildc run   "E:\wt\raw-rt9\native\bld\$m.bld"
 }

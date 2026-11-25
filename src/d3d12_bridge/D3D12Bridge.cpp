@@ -311,7 +311,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         const bool particlesOk = m->InitGpuParticles();
         const bool tsrOk = m->InitTsrUpscale();
         const bool causticsOk = m->InitWaterCaustics();
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s, Gtao=%s, Ssr=%s, AutoExposure=%s, CloudRaymarch=%s, PostCinematic=%s, GpuParticles(16K)=%s, TsrUpscale=%s, WaterCaustics=%s",
+        const bool snowDefOk = m->InitSnowDeform();
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s, Gtao=%s, Ssr=%s, AutoExposure=%s, CloudRaymarch=%s, PostCinematic=%s, GpuParticles(16K)=%s, TsrUpscale=%s, WaterCaustics=%s, SnowDeform=%s",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
                terrainOk ? "READY" : "off",
                m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
@@ -333,7 +334,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                postCinOk ? "READY" : "off",
                particlesOk ? "READY" : "off",
                tsrOk ? "READY" : "off",
-               causticsOk ? "READY" : "off");
+               causticsOk ? "READY" : "off",
+               snowDefOk ? "READY" : "off");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
         {
             const auto& matReg = raw::materials::DefaultMaterialRegistry();
@@ -1623,6 +1625,80 @@ void D3D12Bridge::Impl::ShutdownWaterCaustics()
     waterCausticsReady      = false;
 }
 
+bool D3D12Bridge::Impl::InitSnowDeform()
+{
+    ShutdownSnowDeform();
+    if (!dev12) return false;
+    snowDeform = std::make_unique<RawSnowDeformHost>();
+    SnowDeformDesc desc{};
+    desc.gridWidth  = 512u;
+    desc.gridHeight = 512u;
+    desc.worldSpanM = 64.0f;
+    std::string snwErr;
+    if (!snowDeform->Init(dev12.Get(), desc, &snwErr)) {
+        log("[SnowDeform] off: %s", snwErr.c_str());
+        snowDeform.reset();
+        return false;
+    }
+    UINT64 tsFreq = 0;
+    if (queue && SUCCEEDED(queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+        snowDeform->SetTimestampFrequency(tsFreq);
+    }
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&snowDeformAlloc[i])))) {
+            ShutdownSnowDeform();
+            return false;
+        }
+    }
+    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, snowDeformAlloc[0].Get(), nullptr, IID_PPV_ARGS(&snowDeformList))) ||
+        FAILED(snowDeformList->Close()) ||
+        FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&snowDeformFence)))) {
+        ShutdownSnowDeform();
+        return false;
+    }
+    snowDeformEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!snowDeformEvent) {
+        ShutdownSnowDeform();
+        return false;
+    }
+    snowDeformLastMs       = GetTickCount64();
+    snowDeformPrevInterior = false;
+    snowDeformReady        = true;
+    log("[SnowDeform] GPU 512x512 Snow Accumulation, Melt & Footprint Deformation ready (%.0fm span RGBA16F)",
+        desc.worldSpanM);
+    return true;
+}
+
+void D3D12Bridge::Impl::ShutdownSnowDeform()
+{
+    if (snowDeformFence && snowDeformEvent && snowDeformFenceVal > 0) {
+        if (snowDeformFence->GetCompletedValue() < snowDeformFenceVal) {
+            snowDeformFence->SetEventOnCompletion(snowDeformFenceVal, snowDeformEvent);
+            WaitForSingleObject(snowDeformEvent, 3000);
+        }
+    }
+    snowDeformList.Reset();
+    for (UINT i = 0; i < kRing; ++i) {
+        snowDeformAlloc[i].Reset();
+        snowDeformSlotVal[i] = 0;
+    }
+    snowDeformFence.Reset();
+    if (snowDeformEvent) {
+        CloseHandle(snowDeformEvent);
+        snowDeformEvent = nullptr;
+    }
+    if (snowDeform) {
+        snowDeform->Shutdown();
+        snowDeform.reset();
+    }
+    snowDeformFenceVal     = 0;
+    snowDeformSlot         = 0;
+    snowDeformStepFrames   = 0;
+    snowDeformLastMs       = 0;
+    snowDeformPrevInterior = false;
+    snowDeformReady        = false;
+}
+
 void D3D12Bridge::Shutdown()
 {
     if (!m) return;
@@ -1631,6 +1707,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->ShutdownSnowDeform();
     m->ShutdownWaterCaustics();
     m->ShutdownTsrUpscale();
     m->ShutdownGpuParticles();

@@ -55,6 +55,7 @@ int RunCombatSandboxTests(void (*checkFn)(bool, const char*));
 int RunQuestStoryTests(void (*checkFn)(bool, const char*));
 int RunCraftingInventoryTests(void (*checkFn)(bool, const char*));
 int RunLivingWorldScheduleTests(void (*checkFn)(bool, const char*));
+int RunGameTheoryAiTests(void (*checkFn)(bool, const char*));
 int RunBsaArchiveTests(void (*checkFn)(bool, const char*));
 int RunNifLoaderTests(void (*checkFn)(bool, const char*));
 int RunDdsDecoderTests(void (*checkFn)(bool, const char*));
@@ -107,6 +108,8 @@ int RunBootSelfCheckTests(void (*checkFn)(bool, const char*));
 int RunSpellcraftGmstTests(void (*checkFn)(bool, const char*));
 int RunHotkeyRouterTests(void (*checkFn)(bool, const char*));
 int RunCameraWorldGmstTests(void (*checkFn)(bool, const char*));
+int RunSafeRecoveryTests(void (*checkFn)(bool, const char*));
+int RunAiBallisticsGmstTests(void (*checkFn)(bool, const char*));
 }
 namespace raw::core {
 int RunCoreRuntimeTests(void (*checkFn)(bool, const char*));
@@ -1104,6 +1107,8 @@ int main() {
     raw::rt::RunSpellcraftGmstTests(Check);
     raw::rt::RunHotkeyRouterTests(Check);
     raw::rt::RunCameraWorldGmstTests(Check);
+    raw::rt::RunSafeRecoveryTests(Check);
+    raw::rt::RunAiBallisticsGmstTests(Check);
     raw::worldgen::RunEsmWorldLoaderTests(Check);
     raw::worldgen::RunEsmModelResolverTests(Check);
     raw::worldgen::RunEsmWorldMetaTests(Check);
@@ -1122,6 +1127,7 @@ int main() {
     raw::worldgen::RunQuestStoryTests(Check);
     raw::worldgen::RunCraftingInventoryTests(Check);
     raw::worldgen::RunLivingWorldScheduleTests(Check);
+    raw::worldgen::RunGameTheoryAiTests(Check);
     raw::worldgen::RunBsaArchiveTests(Check);
     raw::worldgen::RunNifLoaderTests(Check);
     raw::worldgen::RunDdsDecoderTests(Check);

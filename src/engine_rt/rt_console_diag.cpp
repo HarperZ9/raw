@@ -11,6 +11,7 @@
 #include "rt_live_dashboard.h"
 #include "rt_mod_load_audit.h"
 #include "rt_profile_presets.h"
+#include "rt_safe_recovery.h"
 #include "rt_save_papyrus_guard.h"
 #include "rt_sdk_bridge.h"
 #include "rt_shader_hotreload.h"
@@ -192,8 +193,26 @@ bool DispatchDiagnosticCommand(const char* cmdLine, std::string& outResponse) no
                 "  reload_shaders - Run atomic pre-validation & trigger raw_shaders\\ hot-reload generation\n"
                 "  dashboard - Atomically export raw_live_dashboard.json & self-contained raw_live_dashboard.html\n"
                 "  selfcheck - Run 12-point boot & runtime integrity verifier and write boot_selfcheck.txt\n"
-                "  hotkeys - Report foreground-safe debounced live hotkey bindings and trigger counters";
+                "  hotkeys - Report foreground-safe debounced live hotkey bindings and trigger counters\n"
+                "  recovery [status|reset] - Query or reset crash-loop SafeMode rollover guard state";
             return true;
+        }
+
+        if (verb == "recovery") {
+            const std::string sub = ToLowerAscii(arg);
+            if (sub.empty() || sub == "status") {
+                outResponse = SafeRecoveryFormatStatus();
+                return true;
+            }
+            if (sub == "reset") {
+                std::string summary;
+                (void)SafeRecoveryResetCounter(&summary);
+                outResponse = summary;
+                return true;
+            }
+            outResponse = "Error: unknown recovery argument '" + arg +
+                          "'. Usage: recovery [status|reset] (type 'help' for commands).";
+            return false;
         }
 
         if (verb == "hotkeys") {
@@ -379,7 +398,7 @@ std::string ConsoleDiagInit(const std::string& outDir) {
     }
     char buf[224];
     std::snprintf(buf, sizeof(buf),
-                  "[ConsoleDiag] initialized (12 commands: help/health/sdk/flight/mods/saves/status/preset/reload_shaders/dashboard/selfcheck/hotkeys | poll=%uf -> %s\\raw_cmd.txt)",
+                  "[ConsoleDiag] initialized (13 commands: help/health/sdk/flight/mods/saves/status/preset/reload_shaders/dashboard/selfcheck/hotkeys/recovery | poll=%uf -> %s\\raw_cmd.txt)",
                   kPollCadenceFrames, outDir.empty() ? "raw_engine_out" : outDir.c_str());
     return buf;
 }

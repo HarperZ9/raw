@@ -17,6 +17,7 @@
 //   D                   : Cycle Procedural 3D Dungeon Explorer (Nordic Barrow -> Ice Cavern -> Dwemer Ruin -> Overworld)
 //   X                   : Toggle/Cycle Live Combat Skirmish Arena (220ms Timed-Parry, Melee, Shout, Arrows!)
 //   Q                   : Radiant Quest/Dialogue Journal (Generate, Persuade/Bribe/Intimidate & Advance!)
+//   J                   : Step/Cycle 24-Hour 36-Citizen Living World Schedule (RawLivingWorldSchedule!)
 //   F5 / F8             : CRC-32 Persistent World Quicksave (.bin + .json) / Quickload (RawWorldSerializer!)
 //   F9 / H              : Toggle Live GPU Telemetry HUD & 64-Sample Frame-Time Sparkline (RawOverlayHost!)
 //   F12                 : Capture Instant 24-Bit .bmp Screenshot (raw_viewer_shot_<N>.bmp)
@@ -80,6 +81,7 @@
 #include "RawGpuParticlesHost.h"
 #include "RawTsrUpscaleHost.h"
 #include "RawWaterCausticsHost.h"
+#include "RawSnowDeformHost.h"
 #include "RawWeatherSim.h"
 #include "RawWorldShowcase.h"
 #include "RawDestructionEngine.h"
@@ -100,6 +102,7 @@
 #include "RawCombatSandboxEngine.h"
 #include "RawQuestStoryEngine.h"
 #include "RawCraftingInventoryEngine.h"
+#include "RawLivingWorldSchedule.h"
 #include "RawHydrologyGen.h"
 #include "RawAudioOutput.h"
 
@@ -520,6 +523,15 @@ public:
         if (!m_waterCausticsOk) {
             std::printf("[Viewer] RawWaterCausticsHost warning: %s\n", err.c_str());
         }
+        err.clear();
+        SnowDeformDesc sdd{};
+        sdd.gridWidth  = 512u;
+        sdd.gridHeight = 512u;
+        sdd.worldSpanM = 64.0f;
+        m_snowDeformOk = m_snowDeform.Init(m_dev.Get(), sdd, &err);
+        if (!m_snowDeformOk) {
+            std::printf("[Viewer] RawSnowDeformHost warning: %s\n", err.c_str());
+        }
         UINT64 tsFreq = 0;
         if (SUCCEEDED(m_queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
             if (m_fluidOk)         m_fluidSim.SetTimestampFrequency(tsFreq);
@@ -538,8 +550,12 @@ public:
             if (m_gpuParticlesOk)  m_gpuParticles.SetTimestampFrequency(tsFreq);
             if (m_tsrUpscaleOk)    m_tsrUpscale.SetTimestampFrequency(tsFreq);
             if (m_waterCausticsOk) m_waterCaustics.SetTimestampFrequency(tsFreq);
+            if (m_snowDeformOk)    m_snowDeform.SetTimestampFrequency(tsFreq);
         }
         InitStarterCraftingLoadout();
+        m_livingWorld.Reset(202662u);
+        (void)m_livingWorld.PopulateDefaultHold(raw::worldgen::HoldId::Whiterun, 36u);
+        m_livingTelemetry = m_livingWorld.ComputeTelemetry();
         m_settlementSim.Reset(202653u);
         m_settlementTelemetry   = m_settlementSim.ComputeWorldTelemetry();
         m_initialSettlementGold = m_settlementTelemetry.totalGold;
@@ -721,6 +737,7 @@ public:
             m_hasPrevFroxelView = false;
             m_volFroxels.ResetHistory();
             m_tsrUpscale.ResetHistory();
+            m_snowDeform.ResetField();
             BakeLocalNavMesh(float(lm.cellX) * raw::worldgen::kEsmCellSizeU,
                              float(lm.cellY) * raw::worldgen::kEsmCellSizeU,
                              true);
@@ -1742,6 +1759,7 @@ public:
         m_volFroxels.ResetHistory();
         m_cloudRaymarch.ResetHistory();
         m_tsrUpscale.ResetHistory();
+        m_snowDeform.ResetField();
 
         // Bake interior 3D NavMesh strictly below vaulted ceilings & above dungeon floors
         raw::worldgen::NavBakeConfig ncfg{};
@@ -1793,6 +1811,7 @@ public:
         m_volFroxels.ResetHistory();
         m_cloudRaymarch.ResetHistory();
         m_tsrUpscale.ResetHistory();
+        m_snowDeform.ResetField();
         for (const auto& q : m_questStory.Quests()) {
             if (q.lifecycle == raw::worldgen::QuestLifecycle::Active &&
                 q.archetype == raw::worldgen::QuestArchetype::ClearDungeon) {
@@ -2512,6 +2531,113 @@ public:
         return p;
     }
 
+    void StepOrCycleLivingWorld()
+    {
+        const auto hid = static_cast<raw::worldgen::HoldId>(m_activeHoldIdx % static_cast<uint32_t>(raw::worldgen::kHoldCount));
+        m_livingCurfewToggle = ((++m_livingPressCount % 4u) == 0u);
+        m_livingWorld.StepFromSystems(3.0f, hid, &m_settlementSim, &m_weatherSim, &m_diplomacy, &m_ecosystem,
+                                      m_livingCurfewToggle);
+        m_livingTelemetry = m_livingWorld.ComputeTelemetry();
+        std::printf("[LivingWorld] +3h @ %s (t=%.1fh, curfew=%d): work=%u shlt=%u ptr=%u evac=%u brzr=%d noctPred=%.2f\n",
+                    raw::worldgen::GetHoldName(hid),
+                    static_cast<double>(m_livingTelemetry.timeOfDayHours),
+                    int(m_livingTelemetry.wartimeCurfewActive),
+                    m_livingTelemetry.workingCount,
+                    m_livingTelemetry.shelteringWeatherCount,
+                    m_livingTelemetry.patrollingCount,
+                    m_livingTelemetry.evacuatingCount,
+                    int(m_livingTelemetry.braziersLit),
+                    static_cast<double>(m_livingTelemetry.nocturnalPredatorAct01));
+    }
+
+    struct LivingWorldProbe {
+        uint32_t totalCitizens      = 0u;
+        uint32_t dayPeakWorkers     = 0u;
+        uint32_t blizzardSheltered  = 0u;
+        bool     blizzardBraziers   = false;
+        uint32_t wildfireEvacuees   = 0u;
+        bool     wildlifeFledFire   = false;
+        float    dayPredActivity    = 0.0f;
+        float    nightPredActivity  = 0.0f;
+        float    totalWorkOutput    = 0.0f;
+        bool     allFinite          = true;
+    };
+
+    LivingWorldProbe RunLivingWorldSelfTest()
+    {
+        LivingWorldProbe p{};
+        raw::worldgen::RawLivingWorldSchedule sim(202662u);
+        p.totalCitizens = sim.PopulateDefaultHold(raw::worldgen::HoldId::Whiterun, 36u);
+
+        // 1. Calm 24-hour diurnal/nocturnal cycle verifying work shift + nocturnal wildlife predator rise
+        for (int h = 0; h < 24; ++h) {
+            raw::worldgen::LivingWorldContext ctx{};
+            ctx.hold            = raw::worldgen::HoldId::Whiterun;
+            ctx.timeOfDayHours  = static_cast<float>(h);
+            ctx.dayLengthHours  = 13.0f;
+            ctx.solarElevation  = std::sin(((static_cast<float>(h) - 6.0f) / 24.0f) * 6.2831853f);
+            ctx.season          = raw::worldgen::SeasonId::Summer;
+            ctx.weatherRegime   = raw::worldgen::WeatherRegime::ClearAlpine;
+            ctx.ambientTempC    = 14.0f;
+            ctx.windSpeedMps    = 3.0f;
+            sim.StepHours(1.0f, ctx);
+            const auto t = sim.ComputeTelemetry();
+            if (h >= 9 && h <= 16) {
+                p.dayPeakWorkers  = std::max(p.dayPeakWorkers, t.workingCount);
+                p.dayPredActivity = t.nocturnalPredatorAct01;
+            }
+            if (h == 23 || h == 1) {
+                p.nightPredActivity = std::max(p.nightPredActivity, t.nocturnalPredatorAct01);
+            }
+            if (!std::isfinite(t.totalWorkOutput) || !std::isfinite(t.meanEnergy01) || !std::isfinite(t.meanMorale01)) {
+                p.allFinite = false;
+            }
+        }
+        p.totalWorkOutput = sim.ComputeTelemetry().totalWorkOutput;
+
+        // 2. Severe Blizzard sheltering + town brazier ignition test
+        {
+            raw::worldgen::LivingWorldContext bctx{};
+            bctx.hold               = raw::worldgen::HoldId::Whiterun;
+            bctx.timeOfDayHours     = 13.0f;
+            bctx.solarElevation     = 0.45f;
+            bctx.season             = raw::worldgen::SeasonId::Winter;
+            bctx.weatherRegime      = raw::worldgen::WeatherRegime::Blizzard;
+            bctx.ambientTempC       = -18.0f;
+            bctx.windSpeedMps       = 26.0f;
+            bctx.snow01             = 1.0f;
+            bctx.blizzardSeverity01 = 1.0f;
+            bctx.stormSeverity01    = 1.0f;
+            sim.StepHours(1.0f, bctx);
+            const auto bt = sim.ComputeTelemetry();
+            p.blizzardSheltered = bt.shelteringWeatherCount;
+            p.blizzardBraziers  = bt.braziersLit;
+        }
+
+        // 3. Active Wildfire immediate civilian evacuation & wildlife flight test
+        {
+            raw::worldgen::LivingWorldContext fctx{};
+            fctx.hold               = raw::worldgen::HoldId::Whiterun;
+            fctx.timeOfDayHours     = 14.0f;
+            fctx.solarElevation     = 0.55f;
+            fctx.season             = raw::worldgen::SeasonId::Summer;
+            fctx.ambientTempC       = 24.0f;
+            fctx.activeFireCells    = 64u;
+            fctx.ecosystemPeakTempC = 820.0f;
+            fctx.wildfireActive     = true;
+            sim.StepHours(1.0f, fctx);
+            const auto ft = sim.ComputeTelemetry();
+            p.wildfireEvacuees = ft.evacuatingCount;
+            p.wildlifeFledFire = ft.wildlifeFleeingFire;
+        }
+
+        // Sync viewer's live schedule once with current world systems
+        m_livingWorld.StepFromSystems(0.5f, raw::worldgen::HoldId::Whiterun,
+                                      &m_settlementSim, &m_weatherSim, &m_diplomacy, &m_ecosystem, false);
+        m_livingTelemetry = m_livingWorld.ComputeTelemetry();
+        return p;
+    }
+
     struct SkeletonFootIkProbe {
         uint32_t evaluatedRigs     = 0u;
         float    maxQuatNormErr    = 0.0f;
@@ -2723,6 +2849,13 @@ public:
         m_settlementTelemetry = m_settlementSim.ComputeWorldTelemetry();
         m_eventDirector.StepHours(dtClamped * (90.0f / 3600.0f), BuildWorldEventInputs(wGpu));
         m_eventTelemetry = m_eventDirector.ComputeTelemetry();
+        {
+            const auto lwHold = static_cast<raw::worldgen::HoldId>(m_activeHoldIdx % static_cast<uint32_t>(raw::worldgen::kHoldCount));
+            m_livingWorld.StepFromSystems(dtClamped * (90.0f / 3600.0f), lwHold,
+                                          &m_settlementSim, &m_weatherSim, &m_diplomacy, &m_ecosystem,
+                                          m_livingCurfewToggle);
+            m_livingTelemetry = m_livingWorld.ComputeTelemetry();
+        }
         if (m_audioEnabled && m_audio.IsRunning()) {
             PushAudioSceneState(wGpu);
         }
@@ -3463,6 +3596,107 @@ public:
             m_waterCausticsRan  = m_waterCaustics.Execute(m_dispCmd.Get(), 512u, 512u, wcp);
         }
 
+        // Live GPU 512x512 Snow Accumulation, Campfire/Solar Melt & Footprint Deformation (RawSnowDeformHost - 18th Live GPU Solver!)
+        if (m_snowDeformOk) {
+            SnowStamp stamps[RawSnowDeformHost::kMaxStamps]{};
+            uint32_t stampCount = 0u;
+            auto pushFootStamp = [&](float wxU, float wyU, float yawRad, float radM, float depthM) {
+                if (stampCount >= RawSnowDeformHost::kMaxStamps) return;
+                auto& s = stamps[stampCount++];
+                s.worldX         = wxU / 70.0f;
+                s.worldZ         = wyU / 70.0f;
+                s.radiusM        = radM;
+                s.compressDepthM = depthM;
+                s.rimRatio       = 0.88f;
+                s.headingRad     = yawRad;
+                s.aspectRatio    = 1.25f;
+            };
+            // Feed live player Walk Mode / Skeleton Foot-IK boots into snow deformation stamps
+            if (m_playerRigEvaluated) {
+                const auto& fl = m_playerPose.world[static_cast<size_t>(raw::worldgen::BoneId::FootL)].pos;
+                const auto& fr = m_playerPose.world[static_cast<size_t>(raw::worldgen::BoneId::FootR)].pos;
+                pushFootStamp(fl.x, fl.y, m_camYaw, 0.32f, 0.18f);
+                pushFootStamp(fr.x, fr.y, m_camYaw, 0.32f, 0.18f);
+            } else {
+                const float px = m_walkMode ? m_playerBody.position.x : m_camPos[0];
+                const float py = m_walkMode ? m_playerBody.position.y : m_camPos[1];
+                pushFootStamp(px, py, m_camYaw, 0.38f, 0.18f);
+            }
+            // Feed all 4 NavMesh Squad footsteps live into SnowStamp entries!
+            for (size_t i = 0u; i < m_tacticalSquad.size(); ++i) {
+                const auto& ag = m_tacticalSquad[i];
+                const float yaw = std::atan2(ag.facing.x, ag.facing.y);
+                if (i < m_squadPoses.size()) {
+                    const auto& fl = m_squadPoses[i].world[static_cast<size_t>(raw::worldgen::BoneId::FootL)].pos;
+                    const auto& fr = m_squadPoses[i].world[static_cast<size_t>(raw::worldgen::BoneId::FootR)].pos;
+                    pushFootStamp(fl.x, fl.y, yaw, 0.30f, 0.16f);
+                    pushFootStamp(fr.x, fr.y, yaw, 0.30f, 0.16f);
+                } else {
+                    pushFootStamp(ag.position.x, ag.position.y, yaw, 0.35f, 0.16f);
+                }
+            }
+
+            SnowHeatSource heats[RawSnowDeformHost::kMaxHeatSources]{};
+            uint32_t heatCount = 0u;
+            auto pushHeat = [&](float wxU, float wyU, float radM, float powerC) {
+                if (heatCount >= RawSnowDeformHost::kMaxHeatSources) return;
+                auto& h = heats[heatCount++];
+                h.worldX     = wxU / 70.0f;
+                h.worldZ     = wyU / 70.0f;
+                h.radiusM    = radM;
+                h.heatPowerC = powerC;
+            };
+            // Live 64^3 Navier-Stokes campfire emitter thermal melt source
+            if (m_fireEnabled) {
+                pushHeat(m_camPos[0] + cam.fwd[0] * 300.0f + cam.right[0] * 48.0f,
+                         m_camPos[1] + cam.fwd[1] * 300.0f + cam.right[1] * 48.0f,
+                         4.5f, 52.0f);
+            }
+            // Live squad torches & spellcaster radiant heat
+            for (const auto& ag : m_tacticalSquad) {
+                pushHeat(ag.position.x, ag.position.y, 2.8f, 28.0f);
+            }
+            // Active cellular wildfire cells from RawWorldEcosystem
+            if (m_ecoTelemetry.activeFireCells > 0u) {
+                const uint32_t ew = m_ecosystem.Width();
+                const uint32_t eh = m_ecosystem.Height();
+                for (uint32_t gy = 0u; gy < eh && heatCount < RawSnowDeformHost::kMaxHeatSources; gy += 6u) {
+                    for (uint32_t gx = 0u; gx < ew && heatCount < RawSnowDeformHost::kMaxHeatSources; gx += 6u) {
+                        const auto* cell = m_ecosystem.CellAt(gx, gy);
+                        if (cell && cell->fireIntensity01 > 0.25f) {
+                            const auto cc = m_ecosystem.CellCenterWorldM(gx, gy);
+                            pushHeat(cc.x * 70.0f, cc.y * 70.0f, 5.5f, 65.0f * cell->fireIntensity01);
+                        }
+                    }
+                }
+            }
+
+            SnowDeformParams sdp{};
+            sdp.camWorldX       = m_camPos[0] / 70.0f;
+            sdp.camWorldZ       = m_camPos[1] / 70.0f;
+            sdp.dtSec           = dtClamped;
+            sdp.snowfallRateMps = (m_weatherPreset == WeatherPreset::Blizzard || u.weather[2] > 0.25f)
+                                ? (0.008f + 0.020f * std::clamp(u.weather[2], 0.0f, 1.0f)) : 0.0f;
+            sdp.ambientTempC    = wGpu.seasonThermal0.w;
+            sdp.solarWarmthC    = (m_timePreset == TimePreset::MidnightAurora) ? 0.0f : std::max(0.0f, u.sunDir[2] * 6.5f);
+            sdp.baselineDepthM  = (m_season == SeasonChoice::Winter || m_weatherPreset == WeatherPreset::Blizzard) ? 0.42f : 0.18f;
+            sdp.maxDepthM       = 1.50f;
+            sdp.windSpeedMps    = std::clamp(wGpu.beaufortScale * 2.2f, 0.0f, 30.0f);
+            const float wl      = std::hypot(wGpu.cloudWind.x, wGpu.cloudWind.y);
+            sdp.windDirX        = (wl > 1.0e-4f) ? (wGpu.cloudWind.x / wl) : 1.0f;
+            sdp.windDirZ        = (wl > 1.0e-4f) ? (wGpu.cloudWind.y / wl) : 0.0f;
+            sdp.meltCoeff       = 0.008f;
+            sdp.normalStrength  = 1.0f;
+            sdp.resetField      = (m_frameCount == 0ull);
+            sdp.stamps          = stamps;
+            sdp.stampCount      = stampCount;
+            sdp.heatSources     = heats;
+            sdp.heatCount       = heatCount;
+            m_snowDeformRan     = m_snowDeform.Execute(m_dispCmd.Get(), sdp);
+            m_lastSnowStampCount = stampCount;
+            m_lastSnowHeatCount  = heatCount;
+        }
+
         if (m_radOk && m_giEnabled) {
             m_radianceHost.ExecuteScreenGI(m_dispCmd.Get(), m_hdrColor.Get(), m_depthIn.Get(),
                                            m_width, m_height, 0.16f);
@@ -3598,6 +3832,10 @@ public:
         uint32_t tsrOutHeight         = 0u;
         bool     waterCausticsActive  = false;
         float    waterCausticsMs      = 0.0f;
+        bool     snowDeformActive     = false;
+        float    snowDeformMs         = 0.0f;
+        uint32_t snowStampCount       = 0u;
+        uint32_t snowHeatCount        = 0u;
         uint32_t biomesFound          = 0u;
     };
 
@@ -3655,6 +3893,10 @@ public:
         out->tsrOutHeight = m_tsrUpscale.OutputHeight();
         out->waterCausticsActive = m_waterCausticsOk && m_waterCaustics.Ready() && m_waterCausticsRan;
         out->waterCausticsMs = m_waterCaustics.HasValidTiming() ? m_waterCaustics.GetLastTotalMs() : 0.0f;
+        out->snowDeformActive = m_snowDeformOk && m_snowDeform.Ready() && m_snowDeformRan;
+        out->snowDeformMs = m_snowDeform.HasValidTiming() ? m_snowDeform.GetLastTotalMs() : 0.0f;
+        out->snowStampCount = m_lastSnowStampCount;
+        out->snowHeatCount = m_lastSnowHeatCount;
 
         const UINT hdrPitch  = (m_width * 8u + 255u) & ~255u;
         const UINT dispPitch = (m_width * 4u + 255u) & ~255u;
@@ -3798,6 +4040,8 @@ public:
         }
         m_cullInstUpload.Reset();
         m_cullInstBuf.Reset();
+        m_snowDeform.Shutdown();
+        m_livingWorld.Reset();
         m_waterCaustics.Shutdown();
         m_craftingEngine.Clear();
         m_tsrUpscale.Shutdown();
@@ -3906,6 +4150,7 @@ public:
         const float prtMs         = m_gpuParticles.HasValidTiming() ? m_gpuParticles.GetLastTotalMs() : 0.0f;
         const float tsrMs         = m_tsrUpscale.HasValidTiming() ? m_tsrUpscale.GetLastTotalMs() : 0.0f;
         const float cauMs         = m_waterCaustics.HasValidTiming() ? m_waterCaustics.GetLastTotalMs() : 0.0f;
+        const float snwMs         = m_snowDeform.HasValidTiming() ? m_snowDeform.GetLastTotalMs() : 0.0f;
         const auto activeHid      = static_cast<raw::worldgen::HoldId>(m_activeHoldIdx % static_cast<uint32_t>(raw::worldgen::kHoldCount));
         const auto* activeHold    = m_settlementSim.GetHold(activeHid);
         const float holdGrain     = activeHold ? activeHold->price[static_cast<size_t>(raw::worldgen::CommodityKind::Grain)] : 0.0f;
@@ -3934,7 +4179,7 @@ public:
         }
         char buf[1536]{};
         std::snprintf(buf, sizeof(buf),
-                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms PCSS:%.3fms GTAO:%.3fms SSR:%.3fms AE:%.3fms Cloud:%.3fms POST:%.3fms PRT:%.3fms TSR:%.3fms CAU:%.3fms HUD:%.3fms | IK:%.1fu Cbt:%u/%u(P:%u) Qst:%uA/%uC(%.0fg) Frg:%.0f/%.0f | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u | %s:%.1fg Car:%u(Snw:%u) Scarce:%s%s%s%s%s%s | Shards:%u",
+                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms PCSS:%.3fms GTAO:%.3fms SSR:%.3fms AE:%.3fms Cloud:%.3fms POST:%.3fms PRT:%.3fms TSR:%.3fms CAU:%.3fms SNW:%.3fms HUD:%.3fms | IK:%.1fu Cbt:%u/%u(P:%u) Qst:%uA/%uC(%.0fg) Frg:%.0f/%.0f LW:w=%u/s=%u/p=%u/e=%u | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u | %s:%.1fg Car:%u(Snw:%u) Scarce:%s%s%s%s%s%s | Shards:%u",
                       m_walkMode ? "WALK" : "FLY",
                       fps, m_lastDrawnMeshlets, m_meshHost.TerrainUsesMeshShaders() ? "AS+MS" : "VS+PS",
                       locBuf, TimePresetName(m_timePreset), ActiveWeatherDisplayName(),
@@ -3954,6 +4199,7 @@ public:
                       prtMs,
                       tsrMs,
                       cauMs,
+                      snwMs,
                       m_overlayHost.HasValidTiming() ? m_overlayHost.GetLastOverlayMs() : 0.0f,
                       static_cast<double>(m_playerPose.pelvisDropZ),
                       m_combatTelemetry.aliveAllies,
@@ -3964,6 +4210,10 @@ public:
                       m_questTelemetry.totalGoldAwarded,
                       static_cast<double>(m_equippedStats.weaponDamage),
                       static_cast<double>(m_equippedStats.totalArmorRating),
+                      m_livingTelemetry.workingCount,
+                      m_livingTelemetry.shelteringWeatherCount,
+                      m_livingTelemetry.patrollingCount,
+                      m_livingTelemetry.evacuatingCount,
                       m_ecoTelemetry.activeFireCells,
                       static_cast<double>(m_ecoTelemetry.totalSnowVolumeM3),
                       m_ecoTelemetry.blackIceCells,
@@ -4444,28 +4694,30 @@ private:
         const float prtMs    = m_gpuParticles.HasValidTiming() ? m_gpuParticles.GetLastTotalMs() : 0.0f;
         const float tsrMs    = m_tsrUpscale.HasValidTiming() ? m_tsrUpscale.GetLastTotalMs() : 0.0f;
         const float cauMs    = m_waterCaustics.HasValidTiming() ? m_waterCaustics.GetLastTotalMs() : 0.0f;
+        const float snwMs    = m_snowDeform.HasValidTiming() ? m_snowDeform.GetLastTotalMs() : 0.0f;
         std::memset(outHud.lines[2], 0, sizeof(outHud.lines[2]));
         std::snprintf(outHud.lines[2], sizeof(outHud.lines[2]), "GPU F:%.2f W:%.2f GI:%.2f XP:%.2f FX:%.2f PS:%.2f",
                       static_cast<double>(snap.fireMs), static_cast<double>(snap.waterMs),
                       static_cast<double>(snap.giMs), static_cast<double>(snap.xpbdMs),
                       static_cast<double>(froxMs), static_cast<double>(pcssMs));
         std::memset(outHud.lines[3], 0, sizeof(outHud.lines[3]));
-        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "CD:%.2f PS:%.2f PT:%.2f TS:%.2f CAU:%.3f LC:%.2f",
-                      static_cast<double>(cloudMs),
-                      static_cast<double>(postMs),
-                      static_cast<double>(prtMs),
+        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "CD:%.2f TS:%.2f CA:%.2f SNW:%.3f PT:%.2f LC:%.2f",
+                      static_cast<double>(cloudMs + postMs),
                       static_cast<double>(tsrMs),
                       static_cast<double>(cauMs),
+                      static_cast<double>(snwMs),
+                      static_cast<double>(prtMs),
                       static_cast<double>(lclustMs + hizMs + cullMs + gtaoMs + ssrMs + aeMs));
 
         std::memset(outHud.lines[6], 0, sizeof(outHud.lines[6]));
-        std::snprintf(outHud.lines[6], sizeof(outHud.lines[6]), "FRG D:%.0f A:%.0f E:%.2fx AL:%.0f%% | EV:%u F:%u",
+        std::snprintf(outHud.lines[6], sizeof(outHud.lines[6]), "LW W:%u S:%u P:%u E:%u N:%.2f | D:%.0f A:%.0f",
+                      m_livingTelemetry.workingCount,
+                      m_livingTelemetry.shelteringWeatherCount,
+                      m_livingTelemetry.patrollingCount,
+                      m_livingTelemetry.evacuatingCount,
+                      static_cast<double>(m_livingTelemetry.nocturnalPredatorAct01),
                       static_cast<double>(m_equippedStats.weaponDamage),
-                      static_cast<double>(m_equippedStats.totalArmorRating),
-                      static_cast<double>(m_encumbrance.moveSpeedMult),
-                      static_cast<double>(m_equippedStats.fortifyAlchemyPct),
-                      m_eventTelemetry.activeCount,
-                      m_ecoTelemetry.activeFireCells);
+                      static_cast<double>(m_equippedStats.totalArmorRating));
         outHud.lineColorTag[6] = (m_ecoTelemetry.activeFireCells > 0u || m_eventTelemetry.activeCount > 0u)
                                ? kOverlayColorAmber : kOverlayColorMuted;
 
@@ -4901,6 +5153,10 @@ private:
     bool          m_tsrUpscaleRan = false;
     bool          m_waterCausticsOk = false;
     bool          m_waterCausticsRan = false;
+    bool          m_snowDeformOk = false;
+    bool          m_snowDeformRan = false;
+    uint32_t      m_lastSnowStampCount = 0u;
+    uint32_t      m_lastSnowHeatCount = 0u;
     std::string   m_adapterName;
 
     ComPtr<IDXGIFactory4>              m_factory;
@@ -4950,6 +5206,11 @@ private:
     RawGpuParticlesHost                m_gpuParticles;
     RawTsrUpscaleHost                  m_tsrUpscale;
     RawWaterCausticsHost               m_waterCaustics;
+    RawSnowDeformHost                  m_snowDeform;
+    raw::worldgen::RawLivingWorldSchedule m_livingWorld;
+    raw::worldgen::LivingWorldTelemetry m_livingTelemetry{};
+    uint32_t                           m_livingPressCount = 0u;
+    bool                               m_livingCurfewToggle = false;
     raw::worldgen::RawCraftingInventoryEngine m_craftingEngine;
     raw::worldgen::EquippedCombatStats m_equippedStats{};
     raw::worldgen::EncumbranceReport   m_encumbrance{};
@@ -5143,6 +5404,7 @@ LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     case 'D': st->viewer->CycleDungeonExplorer(); break;
                     case 'X': st->viewer->ToggleOrTriggerCombatSkirmish(); break;
                     case 'Q': st->viewer->CycleRadiantQuestJournal(); break;
+                    case 'J': st->viewer->StepOrCycleLivingWorld(); break;
                     case VK_F5: st->viewer->QuicksaveWorld(); break;
                     case VK_F8: st->viewer->QuickloadWorld(); break;
                     case 'H':
@@ -5221,7 +5483,7 @@ int main(int argc, char** argv)
     if (opt.showHelp) {
         std::printf(
             "RAW Interactive Real-Time Win32/DX12 Standalone Engine Viewer\n"
-            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, V startle wildlife, E economy +6h/cycle hold, O resolve/poll world event, K cycle hold/faction diplomacy, D cycle 3D dungeon explorer, X toggle/cycle combat skirmish+parry, Q radiant quest/dialogue journal, F forge/alchemy/enchant, F5/F8 quicksave/quickload, F9/H HUD, F12 BMP screenshot, 1-4 seasons, U fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
+            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, V startle wildlife, E economy +6h/cycle hold, O resolve/poll world event, K cycle hold/faction diplomacy, D cycle 3D dungeon explorer, X toggle/cycle combat skirmish+parry, Q radiant quest/dialogue journal, J 24h living world schedule, F forge/alchemy/enchant, F5/F8 quicksave/quickload, F9/H HUD, F12 BMP screenshot, 1-4 seasons, U fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
             "CLI: [--headless-frames N] [--warp] [--debug] [--width W] [--height H] [--esm <Skyrim.esm>]\n");
         return 0;
     }
@@ -5257,6 +5519,7 @@ int main(int argc, char** argv)
         RawEngineViewer::CombatSkirmishProbe combatProbe{};
         RawEngineViewer::QuestStoryProbe questProbe{};
         RawEngineViewer::CraftingForgeProbe forgeProbe{};
+        RawEngineViewer::LivingWorldProbe livingProbe{};
         bool teleportedToWhiterun = false;
         for (uint32_t f = 0; f < opt.headlessFrames; ++f) {
             if (f == 0u) {
@@ -5276,6 +5539,7 @@ int main(int argc, char** argv)
                 combatProbe     = viewer.RunCombatSkirmishSelfTest();
                 questProbe      = viewer.RunQuestStorySelfTest();
                 forgeProbe      = viewer.RunCraftingForgeSelfTest();
+                livingProbe     = viewer.RunLivingWorldSelfTest();
             }
             if (f == opt.headlessFrames / 2u) {
                 if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {
@@ -5298,7 +5562,7 @@ int main(int argc, char** argv)
 
         RawEngineViewer::HeadlessAudit audit{};
         const bool rbOk = viewer.ReadbackHeadlessAudit(&audit);
-        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), pcss=%s (%.4fms), gtao=%s (main=%.4fms, den=%.4fms), ssr=%s (%.4fms), ae=%s (hist=%.4fms, adapt=%.4fms), cloud=%s (%.4fms), post=%s (%.4fms), prt=%s (%u p, %.4fms), tsr=%s (%ux%u, %.4fms), cau=%s (%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
+        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), pcss=%s (%.4fms), gtao=%s (main=%.4fms, den=%.4fms), ssr=%s (%.4fms), ae=%s (hist=%.4fms, adapt=%.4fms), cloud=%s (%.4fms), post=%s (%.4fms), prt=%s (%u p, %.4fms), tsr=%s (%ux%u, %.4fms), cau=%s (%.4fms), snw=%s (%u st, %u ht, %.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
                     audit.usedMeshShaders ? "AS+MS+PS" : "VS+PS",
                     audit.drawnMeshlets, audit.activeShards, audit.biomesFound,
                     audit.radianceActive ? "ON" : "off", audit.radianceGiMs,
@@ -5316,6 +5580,7 @@ int main(int argc, char** argv)
                     audit.gpuParticlesActive ? "ON" : "off", audit.gpuParticleCount, audit.gpuParticlesMs,
                     audit.tsrUpscaleActive ? "ON" : "off", audit.tsrOutWidth, audit.tsrOutHeight, audit.tsrUpscaleMs,
                     audit.waterCausticsActive ? "ON" : "off", audit.waterCausticsMs,
+                    audit.snowDeformActive ? "ON" : "off", audit.snowStampCount, audit.snowHeatCount, audit.snowDeformMs,
                     audit.overlayActive ? "ON" : "off", audit.overlayMs, audit.hudNonZeroPx,
                     audit.hdrLitPixels, audit.hdrNanInf,
                     audit.dispNonZeroPx, audit.dispMeanLuma, audit.dispStdDevLuma);
@@ -5337,6 +5602,12 @@ int main(int argc, char** argv)
                     static_cast<double>(forgeProbe.convergedEnchPct), int(forgeProbe.heroCoupled),
                     static_cast<double>(forgeProbe.finalWeaponDmg), static_cast<double>(forgeProbe.finalArmorRating),
                     int(forgeProbe.barterSpreadValid), int(forgeProbe.allFinite));
+        std::printf("       Living World (24h): citizens=%u dayWork=%u blizzShlt=%u(brzr=%d) fireEvac=%u(wildFlee=%d) pred=%.2f->%.2f work=%.1f finite=%d\n",
+                    livingProbe.totalCitizens, livingProbe.dayPeakWorkers,
+                    livingProbe.blizzardSheltered, int(livingProbe.blizzardBraziers),
+                    livingProbe.wildfireEvacuees, int(livingProbe.wildlifeFledFire),
+                    static_cast<double>(livingProbe.dayPredActivity), static_cast<double>(livingProbe.nightPredActivity),
+                    static_cast<double>(livingProbe.totalWorkOutput), int(livingProbe.allFinite));
         std::printf("       Ecosystem: ignited=%u activeFire=%u burned=%.1fm2 snow=%.1fm3 runoff=%.2fm3 ice=%u peakTemp=%.1fC finite=%d\n",
                     ecoProbe.ignitedCells, ecoProbe.activeFireCells, ecoProbe.burnedAreaM2,
                     ecoProbe.snowVolumeM3, ecoProbe.meltRunoffM3, ecoProbe.blackIceCells,
@@ -5399,6 +5670,9 @@ int main(int argc, char** argv)
               "Live GPU RAW-TSR Temporal Super-Resolution + RCAS (RawTsrUpscaleHost - 16th GPU Solver) executed cleanly");
         check(audit.waterCausticsActive && std::isfinite(audit.waterCausticsMs) && audit.waterCausticsMs >= 0.0f,
               "Live GPU Physical Water Caustics & Underwater God-Rays (RawWaterCausticsHost - 17th GPU Solver) executed cleanly");
+        check(audit.snowDeformActive && audit.snowStampCount >= 2u && audit.snowHeatCount >= 1u &&
+              std::isfinite(audit.snowDeformMs) && audit.snowDeformMs >= 0.0f,
+              "Live GPU 512x512 Snow Melt & Footprint Deformation (RawSnowDeformHost - 18th GPU Solver) executed cleanly");
         check(skelProbe.evaluatedRigs >= 1u && skelProbe.maxQuatNormErr < 1.0e-4f &&
               skelProbe.footPlanted && skelProbe.xpbdAnchorsFinite && skelProbe.coupledToXpbd,
               "Live 24-Bone Procedural Skeleton Animation + Terrain Foot-IK + XPBD Anchor Coupling passed cleanly");
@@ -5411,6 +5685,11 @@ int main(int argc, char** argv)
         check(forgeProbe.temperOk && forgeProbe.brewOk && forgeProbe.enchantOk &&
               forgeProbe.antiExploitBounded && forgeProbe.heroCoupled && forgeProbe.barterSpreadValid && forgeProbe.allFinite,
               "Live Anti-Exploit Crafting/Alchemy/Enchanting Forge (RawCraftingInventoryEngine) converged & coupled to Combat Hero");
+        check(livingProbe.totalCitizens == 36u && livingProbe.dayPeakWorkers > 0u &&
+              livingProbe.blizzardSheltered > 0u && livingProbe.blizzardBraziers &&
+              livingProbe.wildfireEvacuees > 0u && livingProbe.wildlifeFledFire &&
+              livingProbe.nightPredActivity > livingProbe.dayPredActivity && livingProbe.allFinite,
+              "Live 24-Hour Living World Schedule (RawLivingWorldSchedule) passed 36-citizen diurnal/blizzard/wildfire cycle");
         check(dungeonProbe.barrowOk && dungeonProbe.iceCavernOk && dungeonProbe.dwemerRuinOk && dungeonProbe.returnedOk &&
               dungeonProbe.navWalkable > 100u && dungeonProbe.astarWaypoints >= 2u && dungeonProbe.walkGrounded,
               "Interactive Procedural 3D Dungeon Explorer cycled all 3 archetypes + interior NavMesh A* + Walk Mode & returned cleanly");

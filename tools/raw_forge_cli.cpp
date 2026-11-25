@@ -22,6 +22,7 @@
 #include "../src/worldgen/RawEsmModelResolver.h"
 #include "../src/worldgen/RawEsmNpcWeatherLoader.h"
 #include "../src/worldgen/RawFactionDiplomacy.h"
+#include "../src/worldgen/RawLivingWorldSchedule.h"
 #include "../src/worldgen/RawNavMeshAi.h"
 #include "../src/worldgen/RawQuestStoryEngine.h"
 #include "../src/worldgen/RawSettlementSim.h"
@@ -2353,6 +2354,153 @@ bool RunCraftingSimAudit() {
     return ok;
 }
 
+bool RunLivingWorldAudit() {
+    using namespace raw::worldgen;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    // 1. 24-Hour 36-Citizen 8-Archetype Work / Tavern / Sleep + Nocturnal Wildlife Cycle
+    RawLivingWorldSchedule sched(6201u);
+    const uint32_t citizenCount = sched.PopulateDefaultHold(HoldId::Whiterun, 36u);
+    std::array<uint32_t, kCitizenArchetypeCount> archCounts{};
+    for (const auto& c : sched.Citizens()) {
+        ++archCounts[static_cast<size_t>(c.archetype)];
+    }
+    bool allEightPresent = (citizenCount == 36u);
+    for (uint32_t cnt : archCounts) {
+        if (cnt == 0u) allEightPresent = false;
+    }
+
+    LivingWorldContext noonCtx{};
+    noonCtx.hold                 = HoldId::Whiterun;
+    noonCtx.timeOfDayHours       = 11.0f;
+    noonCtx.dayLengthHours       = 16.0f;
+    noonCtx.solarElevation       = 0.72f;
+    noonCtx.ambientTempC         = 16.0f;
+    noonCtx.windSpeedMps         = 2.5f;
+    noonCtx.settlementMarketOpen = true;
+    sched.StepHours(2.0f, noonCtx);
+    const LivingWorldTelemetry tNoon = sched.ComputeTelemetry();
+
+    LivingWorldContext eveCtx = noonCtx;
+    eveCtx.timeOfDayHours     = 19.5f;
+    eveCtx.solarElevation     = -0.05f;
+    eveCtx.ambientTempC       = 11.0f;
+    sched.StepHours(2.0f, eveCtx);
+    const LivingWorldTelemetry tEve = sched.ComputeTelemetry();
+
+    LivingWorldContext nightCtx = noonCtx;
+    nightCtx.timeOfDayHours     = 23.5f;
+    nightCtx.solarElevation     = -0.55f;
+    nightCtx.ambientTempC       = 5.0f;
+    sched.StepHours(3.0f, nightCtx);
+    const LivingWorldTelemetry tNight = sched.ComputeTelemetry();
+
+    const WorkShiftLedger& led = sched.WorkLedger();
+    const bool cycleOk = allEightPresent &&
+                         tNoon.marketOpen && (tNoon.workingCount >= 18u) &&
+                         (led.totalWorkOutput > 25.0f) &&
+                         (tEve.tavernCount >= 10u) && (tEve.meanMorale01 > tNoon.meanMorale01) &&
+                         (tNight.sleepingCount >= 20u) && (tNight.meanEnergy01 > tEve.meanEnergy01) &&
+                         tNight.braziersLit && !tNoon.braziersLit &&
+                         (tNoon.diurnalPreyActivity01 > 0.70f) && (tNoon.nocturnalPredatorAct01 < 0.25f) &&
+                         (tNight.nocturnalPredatorAct01 > 0.75f) && (tNight.diurnalPreyActivity01 < 0.25f);
+
+    // 2. Blizzard 100% Indoor Sheltering + Town Braziers + Cancelled Patrols
+    RawSettlementSim    settlement(6202u);
+    RawWeatherSim       weather{};
+    RawFactionDiplomacy diplomacy{};
+    RawWorldEcosystem   eco{};
+
+    WeatherSimConfig blizCfg{};
+    blizCfg.initialDayOfYear = 15.0f;
+    blizCfg.timeOfDayHours   = 11.0f;
+    blizCfg.initialRegime    = WeatherRegime::Blizzard;
+    weather.Reset(blizCfg);
+    weather.SetRegime(WeatherRegime::Blizzard, true);
+    weather.Step(1.0f, Vec3{0.0f, 0.0f, 0.0f});
+
+    RawLivingWorldSchedule blizSched(6203u);
+    blizSched.PopulateDefaultHold(HoldId::Winterhold, 36u);
+    blizSched.StepFromSystems(1.0f, HoldId::Winterhold, &settlement, &weather, &diplomacy, &eco);
+    const LivingWorldTelemetry tBliz = blizSched.ComputeTelemetry();
+    const bool blizzardOk = tBliz.braziersLit && tBliz.outdoorPatrolsCancelled &&
+                            (tBliz.shelteringWeatherCount >= 20u) &&
+                            (tBliz.indoorsCount == tBliz.totalCitizens) &&
+                            (tBliz.patrollingCount == 0u) && !tBliz.marketOpen;
+
+    // 3. Wartime Curfew Guard Surge vs Peacetime Dusk
+    WeatherSimConfig clearCfg{};
+    clearCfg.initialDayOfYear = 172.0f;
+    clearCfg.timeOfDayHours   = 20.0f;
+    clearCfg.initialRegime    = WeatherRegime::ClearAlpine;
+    weather.Reset(clearCfg);
+    weather.SetRegime(WeatherRegime::ClearAlpine, true);
+    weather.Step(0.5f, Vec3{0.0f, 0.0f, 0.0f});
+
+    RawLivingWorldSchedule peaceSched(6204u);
+    peaceSched.PopulateDefaultHold(HoldId::Whiterun, 36u);
+    peaceSched.StepFromSystems(1.0f, HoldId::Whiterun, &settlement, &weather, &diplomacy, &eco);
+    const LivingWorldTelemetry tPeaceDusk = peaceSched.ComputeTelemetry();
+
+    diplomacy.AdjustFactionReputation(FactionId::ImperialLegion, 75.0f);
+    diplomacy.RecordCrime(HoldId::Whiterun, CrimeSeverity::Murder, true);
+
+    RawLivingWorldSchedule warSched(6204u);
+    warSched.PopulateDefaultHold(HoldId::Whiterun, 36u);
+    warSched.StepFromSystems(1.0f, HoldId::Whiterun, &settlement, &weather, &diplomacy, &eco);
+    const LivingWorldTelemetry tWarDusk = warSched.ComputeTelemetry();
+    const bool warOk = tWarDusk.wartimeCurfewActive &&
+                       (tWarDusk.patrollingCount > tPeaceDusk.patrollingCount) &&
+                       (tWarDusk.curfewCount >= 20u);
+
+    // 4. Wildfire Civilian Evacuation & Wildlife Flight
+    EcoGridConfig ecfg{};
+    ecfg.gridW     = 32u;
+    ecfg.gridH     = 32u;
+    ecfg.cellSizeM = 2.0f;
+    eco.Reset(ecfg);
+    const uint32_t ignited = eco.IgniteAt(32.0f, 32.0f, 8.0f, 520.0f);
+    EcoWeatherInput ewx{};
+    ewx.ambientTempC = 24.0f;
+    ewx.windBeaufort = 5.0f;
+    eco.Step(2.0f, ewx);
+
+    RawLivingWorldSchedule fireSched(6205u);
+    fireSched.PopulateDefaultHold(HoldId::Falkreath, 36u);
+    fireSched.StepFromSystems(1.0f, HoldId::Falkreath, &settlement, &weather, &diplomacy, &eco);
+    const LivingWorldTelemetry tFire = fireSched.ComputeTelemetry();
+    HoldState* falkHold = settlement.GetHoldMutable(HoldId::Falkreath);
+    if (falkHold) {
+        fireSched.ApplyToHoldState(*falkHold);
+    }
+    const bool fireOk = (ignited >= 4u) && tFire.wildfireEvacuationActive &&
+                        (tFire.evacuatingCount >= 28u) && tFire.wildlifeFleeingFire &&
+                        !tFire.marketOpen && (falkHold != nullptr && !falkHold->marketOpen);
+
+    const double totalMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    const bool ok = cycleOk && blizzardOk && warOk && fireOk;
+
+    std::printf(
+        "[INFO] 24-Hour Living World 36-Citizen & Wildlife Schedule Audit (%.2f ms):\n"
+        "  1. 24h Work/Tavern/Night : work=%u(%.1f) tavern=%u sleep=%u | prey %.2f->%.2f pred %.2f->%.2f [%s]\n"
+        "  2. Blizzard Sheltering   : indoors=%u/%u braziers=%s patrols=%u marketOpen=%s [%s]\n"
+        "  3. Wartime Curfew Surge  : patrols %u->%u curfewLockdown=%u [%s]\n"
+        "  4. Wildfire Evacuation   : ignited=%u evacuating=%u wildlifeFlee=%s [%s]\n"
+        "[%s] living-world: 24h 36-citizen/wildlife/blizzard/curfew/wildfire audit %s (%.2f ms)\n",
+        totalMs,
+        tNoon.workingCount, led.totalWorkOutput, tEve.tavernCount, tNight.sleepingCount,
+        tNoon.diurnalPreyActivity01, tNight.diurnalPreyActivity01,
+        tNoon.nocturnalPredatorAct01, tNight.nocturnalPredatorAct01,
+        cycleOk ? "PASS" : "FAIL",
+        tBliz.indoorsCount, tBliz.totalCitizens, tBliz.braziersLit ? "lit" : "off",
+        tBliz.patrollingCount, tBliz.marketOpen ? "yes" : "no", blizzardOk ? "PASS" : "FAIL",
+        tPeaceDusk.patrollingCount, tWarDusk.patrollingCount, tWarDusk.curfewCount, warOk ? "PASS" : "FAIL",
+        ignited, tFire.evacuatingCount, tFire.wildlifeFleeingFire ? "yes" : "no", fireOk ? "PASS" : "FAIL",
+        ok ? "PASS" : "FAIL", ok ? "PASS" : "FAIL", totalMs);
+    return ok;
+}
+
 bool ParseCellXY(const std::string& s, int32_t* outX, int32_t* outY) {
     const size_t comma = s.find(',');
     if (comma == std::string::npos || comma == 0u || comma + 1u >= s.size()) return false;
@@ -2399,6 +2547,7 @@ void PrintUsage() {
         "  raw_forge_cli --combat-sim                              8v8 parry/poise/weather-synergy/ballistic-LOS combat audit\n"
         "  raw_forge_cli --quest-sim                               Quest DAG, branching dialogue & 4-system radiant story audit\n"
         "  raw_forge_cli --crafting-sim                            Anti-exploit crafting, alchemy, enchanting & barter audit\n"
+        "  raw_forge_cli --living-world                            24h 36-citizen/wildlife/blizzard/curfew/wildfire audit\n"
         "  raw_forge_cli --validate-all [dir]                      Run all 4 procedural pipelines + quality gates\n"
         "Options:\n"
         "  --seed <N>         Deterministic RNG seed (default: 202607)\n"
@@ -2465,6 +2614,7 @@ int main(int argc, char** argv) {
     bool runCombatSim       = false;
     bool runQuestSim        = false;
     bool runCraftingSim     = false;
+    bool runLivingWorld     = false;
     bool writeGeometry      = true;
     uint32_t seed       = 202607u;
     float latitudeDeg   = 60.0f;
@@ -2635,6 +2785,8 @@ int main(int argc, char** argv) {
             runQuestSim = true;
         } else if (arg == "--crafting-sim") {
             runCraftingSim = true;
+        } else if (arg == "--living-world") {
+            runLivingWorld = true;
         } else if (arg == "--validate-all") {
             runValidateAll = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -2662,11 +2814,11 @@ int main(int argc, char** argv) {
     if (!runValidateAll && !runEsmMeta && !runPhysicsProbe && !runTamrielStream && !runNavMeshAudit &&
         !runEcosystemSim && !runWildlifeSim && !runSettlementSim && !runEventsSim && !runDiplomacySim &&
         !runWorldSnapshot && !runDungeonGen && !runSkeletonIk && !runCombatSim && !runQuestSim &&
-        !runCraftingSim &&
+        !runCraftingSim && !runLivingWorld &&
         floraDir.empty() && dioramaDir.empty() && almanacDir.empty() &&
         materialsDir.empty() && texturesDir.empty() && esmPath.empty() && esmScenePath.empty() &&
         bsaListPath.empty() && nifPath.empty() && bsaNifArchive.empty() && ddsPath.empty() && bsaDdsArchive.empty()) {
-        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, --events-sim, --diplomacy-sim, --world-snapshot, --dungeon-gen, --skeleton-ik, --combat-sim, --quest-sim, --crafting-sim, or --validate-all).\n");
+        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, --events-sim, --diplomacy-sim, --world-snapshot, --dungeon-gen, --skeleton-ik, --combat-sim, --quest-sim, --crafting-sim, --living-world, or --validate-all).\n");
         PrintUsage();
         return 2;
     }
@@ -2819,6 +2971,10 @@ int main(int argc, char** argv) {
 
     if (runCraftingSim) {
         if (!RunCraftingSimAudit()) allOk = false;
+    }
+
+    if (runLivingWorld) {
+        if (!RunLivingWorldAudit()) allOk = false;
     }
 
     if (runValidateAll) {

@@ -28,6 +28,14 @@ Texture2D<float>  Depth       : register(t4);
 SamplerState      Lin         : register(s0);
 #endif
 
+// Wave 62: Strict finite sanitization helpers shared across all 3 froxel passes (zero NaN/Inf propagation).
+float3 sanitizeFroxel3(float3 c) {
+    return all(isfinite(c)) ? clamp(c, 0.0f.xxx, 16.0f.xxx) : 0.0f.xxx;
+}
+float4 sanitizeFroxel4(float4 v) {
+    return float4(sanitizeFroxel3(v.rgb), isfinite(v.a) ? max(v.a, 0.0f) : 0.0f);
+}
+
 #if !defined(FROXEL_INT) && !defined(FROXEL_BLOCK)
 float4 samplePrevFroxel(float2 uv, float z) {
     const float sF = froxelZToSlice(z);
@@ -37,26 +45,27 @@ float4 samplePrevFroxel(float2 uv, float z) {
     const float2 tileUv = clamp(uv, float2(0.5f / 160.0f, 0.5f / 90.0f), float2(159.5f / 160.0f, 89.5f / 90.0f));
     const float2 uv0 = (float2(float(s0 & 7u), float(s0 >> 3u)) + tileUv) * 0.125f;
     const float2 uv1 = (float2(float(s1 & 7u), float(s1 >> 3u)) + tileUv) * 0.125f;
-    return lerp(FroxelPrev.SampleLevel(Lin, uv0, 0.0f), FroxelPrev.SampleLevel(Lin, uv1, 0.0f), sT);
+    return sanitizeFroxel4(lerp(FroxelPrev.SampleLevel(Lin, uv0, 0.0f), FroxelPrev.SampleLevel(Lin, uv1, 0.0f), sT));
 }
 
 float3 froxelTransAt(float mu) {
     const float r = 6360.0f + 0.5f;
     const float H = sqrt(6460.0f * 6460.0f - 6360.0f * 6360.0f);
     const float rho = sqrt(r * r - 6360.0f * 6360.0f);
-    const float d = max(0.0f, -r * mu + sqrt(max(r * r * (mu * mu - 1.0f) + 6460.0f * 6460.0f, 0.0f)));
-    return TransLut.SampleLevel(Lin, float2(saturate((d - (6460.0f - r)) / max(rho + H - (6460.0f - r), 1.0e-4f)), saturate(rho / H)), 0.0f).rgb;
+    const float muCl = clamp(isfinite(mu) ? mu : 0.0f, -1.0f, 1.0f);
+    const float d = max(0.0f, -r * muCl + sqrt(max(r * r * (muCl * muCl - 1.0f) + 6460.0f * 6460.0f, 0.0f)));
+    return sanitizeFroxel3(TransLut.SampleLevel(Lin, float2(saturate((d - (6460.0f - r)) / max(rho + H - (6460.0f - r), 1.0e-4f)), saturate(rho / H)), 0.0f).rgb);
 }
 
 float3 froxelSkyAt(float3 rd) {
-    const float az = atan2(rd.y, rd.x);
+    const float az = (abs(rd.x) + abs(rd.y) > 1.0e-5f) ? atan2(rd.y, rd.x) : 0.0f;
     const float elev = asin(clamp(rd.z, -1.0f, 1.0f));
     const float vNonLin = 0.5f + 0.5f * (elev >= 0.0f ? sqrt(elev / (0.5f * PI)) : -sqrt(-elev / (0.5f * PI)));
-    const float3 c0 = AtmoSkyView.SampleLevel(Lin, float2(az / (2.0f * PI) + 0.5f, saturate(vNonLin)), 0.0f).rgb;
+    const float3 c0 = sanitizeFroxel3(AtmoSkyView.SampleLevel(Lin, float2(az / (2.0f * PI) + 0.5f, saturate(vNonLin)), 0.0f).rgb);
     const float poleW = smoothstep(0.94f, 0.995f, rd.z);
     if (poleW > 0.001f) {
-        const float3 zAvg = (AtmoSkyView.SampleLevel(Lin, float2(0.25f, 0.99f), 0.0f).rgb +
-                             AtmoSkyView.SampleLevel(Lin, float2(0.75f, 0.99f), 0.0f).rgb) * 0.5f;
+        const float3 zAvg = (sanitizeFroxel3(AtmoSkyView.SampleLevel(Lin, float2(0.25f, 0.99f), 0.0f).rgb) +
+                             sanitizeFroxel3(AtmoSkyView.SampleLevel(Lin, float2(0.75f, 0.99f), 0.0f).rgb)) * 0.5f;
         return lerp(c0, zAvg, poleW);
     }
     return c0;
@@ -135,25 +144,38 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     const float forestCanopyBelt = isInt ? 0.0f : exp(-max(wp.z - (camPosW.z - 220.0f), 0.0f) * 0.0014f) * smoothstep(550.0f, 3400.0f, rayDist) * (0.45f + 0.55f * cNoise(wp * 0.00062f - float3(cloudWind.xy * simTime * 0.00009f, 0.0f))) * (0.38f + 0.62f * dawnDuskFog + weather.w * 0.55f + saturate(clouds.x - 0.25f) * 0.35f) * fogWakeClear;
     // True 3D alpine ridge collar clouds hugging mountain flanks (3,800u..7,800u world altitude):
     const float peakCollar = isInt ? 0.0f : exp(-pow((wp.z - 5000.0f) / 2600.0f, 2.0f)) * smoothstep(3600.0f, 11000.0f, zMid) * (0.55f + 0.65f * cNoise(wp * 0.00022f - float3(cloudWind.xy * simTime * 0.00007f, 0.0f)));
-    // Wave 51 Altitude-Stratified Valley Mist exp(-max(0, wp.z - valleyZ) / scaleH) + Pause-Aware 3D Curl Wisps (outdoor only!):
+    // Wave 51 + Wave 62 Altitude-Stratified Valley Mist & Mountain Cloud-Deck Temperature-Inversion Mist Bands:
+    // Traps a crisp horizontal sea-of-clouds inversion deck in mountain valleys & below cloud-deck altitude (outdoor only!).
     float valleyStratMist = 0.0f;
+    float inversionBandMist = 0.0f;
     if (!isInt) {
         const float valleyZ = liveWaterZ;
+        const float invDrive = saturate(phenology1.z * 0.85f + dawnDuskFog * 0.45f + saturate(clouds.x - 0.20f) * 0.35f);
         const float scaleH = lerp(680.0f, 1180.0f, saturate(clouds.x * 0.50f + weather.w * 0.65f + dawnDuskFog * 0.45f));
-        const float altExp = exp(-max(0.0f, wp.z - valleyZ) / scaleH);
+        const float altExp = exp(-min(max(0.0f, wp.z - valleyZ) / max(scaleH, 100.0f), 24.0f));
         const float3 curlP = (wp - float3(cloudWind.xy * (simTime * 0.18f), simTime * 2.6f)) * float3(0.00072f, 0.00072f, 0.00145f);
         const float4 cg0 = rawNoise3Grad(curlP);
         const float3 curlV = float3(cg0.z - cg0.w, cg0.w - cg0.y, cg0.y - cg0.z);
         const float4 cg1 = rawNoise3Grad(curlP * 2.15f + curlV * 0.42f + float3(7.3f, -5.1f, 3.7f));
         const float curlWisp = lerp(0.55f, 1.48f, saturate(cg0.x * 0.60f + cg1.x * 0.40f));
         valleyStratMist = altExp * curlWisp * (0.48f + 0.72f * dawnDuskFog + 0.55f * weather.w + 0.35f * saturate(clouds.x)) * fogWakeClear;
+
+        // Sharp temperature-inversion mist deck pooling cleanly at valley-pass altitude & mountain cloud-base collar:
+        const float invCapZ = valleyZ + lerp(920.0f, 2350.0f, saturate(phenology1.z * 0.55f + clouds.x * 0.45f));
+        const float invDz = wp.z - invCapZ;
+        const float invSigmaZ = (invDz > 0.0f) ? 260.0f : 620.0f; // crisp capped top, softer misty underside
+        const float valleyDeck = exp(-min((invDz * invDz) / (invSigmaZ * invSigmaZ), 24.0f)) * smoothstep(600.0f, 3200.0f, rayDist);
+        const float cloudDeckZ = (clouds.y > 1000.0f) ? (clouds.y - 480.0f) : 5600.0f;
+        const float hiDz = (wp.z - cloudDeckZ) / 950.0f;
+        const float mountainDeck = exp(-min(hiDz * hiDz, 24.0f)) * saturate(clouds.x * 1.15f) * smoothstep(2200.0f, 8500.0f, rayDist);
+        inversionBandMist = saturate(valleyDeck * invDrive * 0.85f + mountainDeck * 0.65f) * curlWisp * fogWakeClear;
     }
     // True world-space altitude falloff anchored to live sea/river level (100% world-locked, zero camera-height drift!):
     const float worldElevF = max(wp.z - liveWaterZ, 0.0f);
-    const float valleyFogF = exp(-worldElevF * 0.00034f) * (1.0f + 0.35f * saturate(clouds.x + weather.w));
+    const float valleyFogF = exp(-min(worldElevF * 0.00034f, 24.0f)) * (1.0f + 0.35f * saturate(clouds.x + weather.w));
     // Smooth near-camera exterior ramp so foreground (<650u) stays crystal crisp while valleys/forests/mountains gain full 3D depth:
     const float extNearRamp = isInt ? 1.0f : lerp(smoothstep(220.0f, 1500.0f, rayDist), 1.0f, saturate(weather.w * 0.65f + weather.z * 0.75f));
-    const float heightFalloff = isInt ? 1.0f : (0.22f + 0.52f * valleyFogF + valleyStratMist * 0.68f + peakCollar * 1.48f + groundBank * 1.15f + forestCanopyBelt * 0.88f);
+    const float heightFalloff = isInt ? 1.0f : (0.22f + 0.52f * valleyFogF + valleyStratMist * 0.68f + inversionBandMist * 0.92f + peakCollar * 1.48f + groundBank * 1.15f + forestCanopyBelt * 0.88f);
     const float baseExt = isInt ? clamp(tune.x * 0.14f, 0.000006f, 0.000016f)
                                 : clamp(tune.x * 0.145f, 0.000011f, 0.000024f);
     float sigma = baseExt * weatherDens * mist3D * heightFalloff * extNearRamp;
@@ -212,6 +234,21 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         // Dynamically lit 3D solar in-scattering: sunlit cloud gaps glow warm while shadowed ridges stay deep cool slate!
         const float sunInGain = tune2.z * lerp(0.38f, 0.18f, twilightW) * (1.0f - nightW * 0.78f) * (1.0f - overcastFr * 0.55f);
         inScat += ambInScat + syncSunFr * (sh * ph * sunInGain * moteBoost);
+
+        // Wave 62: Moonlight Rayleigh + Mie Night-Halo Scattering (moonlit mist corona + 22-deg lunar ice-mist ring):
+        // Strictly active at night (nightW > 0.02); carves silver-indigo lunar shafts through mountain passes & canopies!
+        if (nightW > 0.02f) {
+            const float3 moonDir = (dot(sunDir.xyz, sunDir.xyz) > 1.0e-6f) ? normalize(sunDir.xyz) : float3(0.0f, 0.0f, 1.0f);
+            const float cosMoon = clamp(dot(farDir, moonDir), -1.0f, 1.0f);
+            const float moonRayleigh = (3.0f / (16.0f * PI)) * (1.0f + cosMoon * cosMoon);
+            const float moonMieHalo = min(froxelHG(cosMoon, 0.76f), 2.4f);
+            const float moonAng = acos(cosMoon);
+            const float moonRing22 = exp(-min(pow((moonAng - 0.384f) / 0.090f, 2.0f), 24.0f)) * saturate(0.32f + weather.z * 0.68f);
+            const float moonClear = (1.0f - overcastFr * 0.68f) * smoothstep(-0.02f, 0.12f, moonDir.z);
+            const float3 moonTint = float3(0.30f, 0.42f, 0.70f);
+            inScat += moonTint * (nightW * moonClear * sh * tune2.z * (moonRayleigh * 0.24f + moonMieHalo * 0.14f + moonRing22 * 0.10f));
+        }
+
         // Wave 38 Dynamic Mountain Fog, Valley Inversion Mist, Coastal Sea-Fog & Weather Curtains (RawWeatherAtmo.hlsli):
         // Energy-conserving optical-depth-weighted injection into the 160x90x64 3D froxel grid!
         const float wxTempC = lerp(8.0f, -6.0f, saturate(weather.z + smoothstep(55000.0f, 125000.0f, wp.y) * 0.65f));
@@ -227,6 +264,21 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
             const float newSig = sigma + dynSig;
             inScat = (inScat * sigma + dynInScat * (dynSig * lerp(0.48f, 1.0f, sh))) / max(newSig, 1.0e-7f);
             sigma = newSig;
+        }
+        // Wave 62: Dynamic Snow-Squall Visibility Extinction (gust-driven whiteout extinction sheets during heavy snowstorms):
+        // Keeps foreground <140u readable while gusting snow-squall walls organically cut mid/far alpine visibility!
+        if (weather.z > 0.16f && rayDist > 110.0f) {
+            const float squallAmt = smoothstep(0.16f, 0.82f, weather.z);
+            const float3 sqCoord = (wp - float3(cloudWind.xy * (simTime * 0.42f), -simTime * 28.0f)) * float3(0.00095f, 0.00095f, 0.00185f);
+            const float4 sqN = rawNoise3Grad(sqCoord);
+            const float sqGust = smoothstep(0.34f, 0.86f, sqN.x) * smoothstep(110.0f, 750.0f, rayDist) * fogWakeClear;
+            const float sqExt = squallAmt * sqGust * 0.00042f;
+            if (sqExt > 1.0e-7f) {
+                const float3 sqCol = lerp(ambInScat * float3(0.92f, 0.98f, 1.08f), max(ambInScat * 1.15f, syncSunFr * 0.42f), sh * (1.0f - nightW * 0.7f));
+                const float totSig = sigma + sqExt;
+                inScat = (inScat * sigma + sqCol * sqExt) / max(totSig, 1.0e-7f);
+                sigma = totSig;
+            }
         }
         // Blown Alpine Snow Spindrift Plumes (Daylight 2026-11-24 snow-smoke reference):
         // Wind-sheared ground-hugging snow wisps that curl off ridges in blizzards/high peaks and part around the player.
@@ -322,14 +374,14 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
             }
         }
     }
-    float4 curVoxel = float4(inScat * sigma, sigma);
+    float4 curVoxel = sanitizeFroxel4(float4(inScat * sigma, sigma));
     // Hillaire (SIGGRAPH 2015) Temporal 3D Froxel Reprojection: reprojects 3D froxel center through prevWorldToClip
     // into last frame's 160x90x64 volume for silky, flicker-free 3D participating media (5x effective sample density).
     const float4 pClip = float4(dot(prevWorldToClip[0], float4(pRel, 1.0f)),
                                 dot(prevWorldToClip[1], float4(pRel, 1.0f)),
                                 dot(prevWorldToClip[2], float4(pRel, 1.0f)),
                                 dot(prevWorldToClip[3], float4(pRel, 1.0f)));
-    if (pClip.w > 1.0f && proj.z > 0.5f) {
+    if (pClip.w > 1.0f && proj.z > 0.5f && resScale.x > 1.0e-4f && resScale.y > 1.0e-4f) {
         const float2 pUv = float2(pClip.x / pClip.w * 0.5f + 0.5f, 0.5f - pClip.y / pClip.w * 0.5f) / resScale.xy;
         if (all(pUv > 0.005f) && all(pUv < 0.995f)) {
             const float4 prevVoxel = samplePrevFroxel(pUv, pClip.w);
@@ -338,7 +390,7 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
             curVoxel = lerp(prevVoxel, curVoxel, lerp(0.22f, 0.72f, motMag));
         }
     }
-    return curVoxel;
+    return sanitizeFroxel4(curVoxel);
 }
 #elif defined(FROXEL_BLOCK)
 // Pass 1 of Blelloch Associative Monoid Scan (640x180 = 4x2 tiles of 160x90, 8 blocks x 8 slices = 64 slices):

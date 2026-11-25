@@ -1,5 +1,5 @@
 // tools/raw_bench_suite.cpp: Studio-Grade Automated GPU/CPU Benchmark & Visual Invariant Suite for RAW.
-// Benchmarks all 20 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
+// Benchmarks all 21 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
 //   1. GPU 64^3 Navier-Stokes Fire/Smoke + 256^2 SWE Water (RawFluidSimHost)
 //   2. GPU 4-Cascade Radiance Cascades GI (RawRadianceHost)
 //   3. Procedural PBR Texture Forge (RawTextureForge, all 8 seamless PBR sets)
@@ -20,6 +20,7 @@
 //  18. GPU 16,384-Particle 3D Physics & Screen-Space Additive Splat Engine (RawGpuParticlesHost)
 //  19. GPU RAW-TSR Temporal Super-Resolution (2x 640x360 -> 1280x720) & RCAS Sharpening (RawTsrUpscaleHost)
 //  20. GPU Physical Water Caustics & 16-Step Henyey-Greenstein Underwater God-Rays (RawWaterCausticsHost)
+//  21. GPU 512x512 Snow Accumulation, Campfire/Solar Melt & Footprint Deformation Field (RawSnowDeformHost)
 //
 // CLI:
 //   raw_bench_suite [--warp] [--quick] [--frames N] [--json <path>] [--esm <path>] [--bsa <path>] [--no-debug-layer]
@@ -52,6 +53,7 @@
 #include "../src/d3d12_bridge/RawGpuParticlesHost.h"
 #include "../src/d3d12_bridge/RawTsrUpscaleHost.h"
 #include "../src/d3d12_bridge/RawWaterCausticsHost.h"
+#include "../src/d3d12_bridge/RawSnowDeformHost.h"
 #include "../src/materials/RawTextureForge.h"
 #include "../src/audio/RawAudioDsp.h"
 #include "../src/worldgen/RawDestructionEngine.h"
@@ -1150,6 +1152,25 @@ struct WaterCausticsBenchResult {
     float       sunwardRatio   = 0.0f;
     float       aboveSkyMax    = 1.0f;
     uint32_t    nanInfCount    = 0u;
+    std::string note;
+};
+
+struct SnowDeformBenchResult {
+    bool        passed           = false;
+    Percentiles totalGpuMs{};
+    Percentiles cpuRecordMs{};
+    uint32_t    width            = 512u;
+    uint32_t    height           = 512u;
+    float       hostStepMs       = 0.0f;
+    float       hostNormalMs     = 0.0f;
+    float       trenchDepthM     = 1.0f;
+    float       rimHeightM       = 0.0f;
+    float       massErrPct       = 100.0f;
+    float       wallNormalNx     = 0.0f;
+    float       fireMeltedH      = 1.0f;
+    float       frozenBlackIce   = 0.0f;
+    float       snowfallGainM    = 0.0f;
+    uint32_t    nanInfCount      = 0u;
     std::string note;
 };
 
@@ -5011,6 +5032,222 @@ WaterCausticsBenchResult RunWaterCausticsBenchmark(BenchDx12Rig& rig, uint32_t w
 }
 
 // ----------------------------------------------------------------------------
+// 21. GPU 512x512 Snow Accumulation, Melt & Footprint Deformation (RawSnowDeformHost)
+// ----------------------------------------------------------------------------
+SnowDeformBenchResult RunSnowDeformBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames, uint32_t measuredFrames)
+{
+    SnowDeformBenchResult res{};
+    constexpr uint32_t kDim = 512u;
+    res.width  = kDim;
+    res.height = kDim;
+
+    raw::bridge::RawSnowDeformHost host;
+    raw::bridge::SnowDeformDesc desc{};
+    desc.gridWidth  = kDim;
+    desc.gridHeight = kDim;
+    desc.worldSpanM = 64.0f;
+    std::string err;
+    if (!host.Init(rig.dev.Get(), desc, &err)) {
+        res.note = "RawSnowDeformHost::Init failed: " + err;
+        return res;
+    }
+    host.SetTimestampFrequency(rig.tsFreqHz);
+
+    auto stepOnce = [&](const raw::bridge::SnowDeformParams& p) -> bool {
+        return rig.BeginFrame() && host.Execute(rig.cmd.Get(), p) && rig.FlushAndWait();
+    };
+
+    uint32_t rw = 0u, rh = 0u, rdOut = 0u;
+    std::vector<float> stateBuf;
+    std::vector<float> normBuf;
+    auto at = [&](const std::vector<float>& buf, uint32_t x, uint32_t y, uint32_t c) -> float {
+        return buf[(static_cast<size_t>(y) * rw + x) * 4u + c];
+    };
+
+    // 1) Baseline 0.40 m snowpack + mass-conserving boot stamp (rimRatio = 1.0)
+    raw::bridge::SnowDeformParams pBase{};
+    pBase.camWorldX      = 0.0f;
+    pBase.camWorldZ      = 0.0f;
+    pBase.dtSec          = 0.0f;
+    pBase.ambientTempC   = -8.0f;
+    pBase.baselineDepthM = 0.40f;
+    pBase.windSpeedMps   = 0.0f;
+    pBase.resetField     = true;
+    if (!stepOnce(pBase)) {
+        res.note = "SnowDeform baseline reset failed";
+        return res;
+    }
+
+    raw::bridge::SnowStamp boot{};
+    boot.worldX         = 0.0f;
+    boot.worldZ         = 0.0f;
+    boot.radiusM        = 1.0f;
+    boot.compressDepthM = 0.24f;
+    boot.rimRatio       = 1.0f;
+    boot.headingRad     = 0.0f;
+    boot.aspectRatio    = 1.0f;
+
+    raw::bridge::SnowDeformParams pStamp = pBase;
+    pStamp.resetField = false;
+    pStamp.stamps     = &boot;
+    pStamp.stampCount = 1u;
+    if (!stepOnce(pStamp) ||
+        !rig.ReadbackRgba16Tex(host.GetStateResource(), host.StateResourceState(), rw, rh, rdOut, stateBuf) ||
+        !rig.ReadbackRgba16Tex(host.GetNormalResource(), host.NormalResourceState(), rw, rh, rdOut, normBuf)) {
+        res.note = "SnowDeform stamp probe failed";
+        return res;
+    }
+
+    res.trenchDepthM = at(stateBuf, 256u, 256u, 0u);
+    res.rimHeightM   = at(stateBuf, 266u, 256u, 0u);
+    const float flatH = at(stateBuf, 64u, 64u, 0u);
+    double volBefore = 0.0, volAfter = 0.0;
+    for (uint32_t y = 232u; y <= 280u; ++y) {
+        for (uint32_t x = 232u; x <= 280u; ++x) {
+            volBefore += 0.40;
+            volAfter  += static_cast<double>(at(stateBuf, x, y, 0u));
+        }
+    }
+    res.massErrPct = static_cast<float>(std::fabs(volAfter - volBefore) / volBefore * 100.0);
+
+    // 2) Sobel normal wall alignment
+    const float leftNx  = at(normBuf, 251u, 256u, 0u);
+    const float rightNx = at(normBuf, 261u, 256u, 0u);
+    const float flatNy  = at(normBuf, 64u, 64u, 1u);
+    res.wallNormalNx = leftNx;
+
+    // 3) Campfire melt -> wet slush -> sub-zero black-ice refreeze
+    raw::bridge::SnowHeatSource fire{};
+    fire.worldX     = 8.0f;
+    fire.worldZ     = 0.0f;
+    fire.radiusM    = 3.5f;
+    fire.heatPowerC = 65.0f;
+    raw::bridge::SnowDeformParams pMelt = pBase;
+    pMelt.resetField   = false;
+    pMelt.dtSec        = 0.20f;
+    pMelt.ambientTempC = -4.0f;
+    pMelt.meltCoeff    = 0.015f;
+    pMelt.heatSources  = &fire;
+    pMelt.heatCount    = 1u;
+    for (uint32_t i = 0u; i < 6u; ++i) stepOnce(pMelt);
+    rig.ReadbackRgba16Tex(host.GetStateResource(), host.StateResourceState(), rw, rh, rdOut, stateBuf);
+    res.fireMeltedH = at(stateBuf, 320u, 256u, 0u);
+    const float ringSlush = at(stateBuf, 336u, 256u, 2u);
+
+    raw::bridge::SnowDeformParams pFreeze = pBase;
+    pFreeze.resetField   = false;
+    pFreeze.dtSec        = 0.25f;
+    pFreeze.ambientTempC = -18.0f;
+    for (uint32_t i = 0u; i < 8u; ++i) stepOnce(pFreeze);
+    rig.ReadbackRgba16Tex(host.GetStateResource(), host.StateResourceState(), rw, rh, rdOut, stateBuf);
+    res.frozenBlackIce = at(stateBuf, 336u, 256u, 3u);
+
+    // 4) Seasonal snowfall replenishment (+0.20 m over 10 steps)
+    const float preFallH = at(stateBuf, 256u, 256u, 0u);
+    raw::bridge::SnowDeformParams pFall = pBase;
+    pFall.resetField      = false;
+    pFall.dtSec           = 0.25f;
+    pFall.ambientTempC    = -10.0f;
+    pFall.snowfallRateMps = 0.08f;
+    for (uint32_t i = 0u; i < 10u; ++i) stepOnce(pFall);
+    rig.ReadbackRgba16Tex(host.GetStateResource(), host.StateResourceState(), rw, rh, rdOut, stateBuf);
+    rig.ReadbackRgba16Tex(host.GetNormalResource(), host.NormalResourceState(), rw, rh, rdOut, normBuf);
+    res.snowfallGainM = at(stateBuf, 256u, 256u, 0u) - preFallH;
+
+    uint32_t nanCnt = 0u;
+    for (float f : stateBuf) if (!std::isfinite(f)) ++nanCnt;
+    for (float f : normBuf)  if (!std::isfinite(f)) ++nanCnt;
+    res.nanInfCount = nanCnt;
+
+    // 5) Steady-state GPU timing (512x512, 32 stamps + 16 heat sources)
+    std::vector<raw::bridge::SnowStamp> benchStamps(32u);
+    for (uint32_t i = 0u; i < 32u; ++i) {
+        const float a = static_cast<float>(i) * 0.19634954f;
+        benchStamps[i].worldX         = std::cos(a) * 14.0f;
+        benchStamps[i].worldZ         = std::sin(a) * 14.0f;
+        benchStamps[i].radiusM        = 0.35f;
+        benchStamps[i].compressDepthM = 0.12f;
+        benchStamps[i].rimRatio       = 0.88f;
+        benchStamps[i].headingRad     = a;
+        benchStamps[i].aspectRatio    = 1.4f;
+    }
+    std::vector<raw::bridge::SnowHeatSource> benchHeats(16u);
+    for (uint32_t i = 0u; i < 16u; ++i) {
+        const float a = static_cast<float>(i) * 0.39269908f;
+        benchHeats[i].worldX     = std::cos(a) * 20.0f;
+        benchHeats[i].worldZ     = std::sin(a) * 20.0f;
+        benchHeats[i].radiusM    = 3.5f;
+        benchHeats[i].heatPowerC = 45.0f;
+    }
+
+    std::vector<double> gpuSamples;
+    std::vector<double> cpuSamples;
+    gpuSamples.reserve(measuredFrames);
+    cpuSamples.reserve(measuredFrames);
+
+    for (uint32_t f = 0u; f < warmupFrames + measuredFrames; ++f) {
+        raw::bridge::SnowDeformParams tp{};
+        tp.camWorldX       = 0.0f;
+        tp.camWorldZ       = 0.0f;
+        tp.dtSec           = 1.0f / 60.0f;
+        tp.snowfallRateMps = 0.002f;
+        tp.ambientTempC    = -6.0f;
+        tp.solarWarmthC    = 1.0f;
+        tp.baselineDepthM  = 0.40f;
+        tp.windSpeedMps    = 2.5f;
+        tp.resetField      = (f == 0u);
+        tp.stamps          = benchStamps.data();
+        tp.stampCount      = 32u;
+        tp.heatSources     = benchHeats.data();
+        tp.heatCount       = 16u;
+
+        if (!rig.BeginFrame()) {
+            res.note = "BeginFrame failed in SnowDeform timing loop";
+            return res;
+        }
+        const auto c0 = Clock::now();
+        rig.MarkTimestamp(0u);
+        host.Execute(rig.cmd.Get(), tp);
+        rig.MarkTimestamp(1u);
+        rig.ResolveTimestamps(0u, 2u);
+        const auto c1 = Clock::now();
+        if (!rig.FlushAndWait()) {
+            res.note = "FlushAndWait failed in SnowDeform timing loop";
+            return res;
+        }
+        if (f >= warmupFrames) {
+            double gMs = 0.0;
+            rig.ReadTimestampRangeMs(0u, 1u, gMs);
+            gpuSamples.push_back(gMs);
+            cpuSamples.push_back(ElapsedMs(c0, c1));
+        }
+    }
+
+    res.totalGpuMs   = ComputePercentiles(gpuSamples);
+    res.cpuRecordMs  = ComputePercentiles(cpuSamples);
+    res.hostStepMs   = host.HasValidTiming() ? host.GetLastStepMs() : 0.0f;
+    res.hostNormalMs = host.HasValidTiming() ? host.GetLastNormalMs() : 0.0f;
+
+    const bool optOk = (res.nanInfCount == 0u) &&
+                       (res.trenchDepthM < 0.20f) && (res.rimHeightM > 0.45f) &&
+                       (std::fabs(flatH - 0.40f) < 0.005f) && (res.massErrPct < 1.0f) &&
+                       (leftNx > 0.12f) && (rightNx < -0.12f) && (std::fabs(flatNy - 1.0f) < 0.005f) &&
+                       (res.fireMeltedH < 0.05f) && (ringSlush > 0.35f) && (res.frozenBlackIce > 0.40f) &&
+                       (res.snowfallGainM > 0.18f && res.snowfallGainM < 0.22f);
+    const bool budgetOk = rig.isWarp ? true : (res.totalGpuMs.mean < 0.05);
+    res.passed = optOk && budgetOk;
+    if (!optOk) {
+        res.note = "SnowDeform stamp/mass/normal/melt/black-ice/snowfall/NaN invariant failed";
+    } else if (!budgetOk) {
+        res.note = "HW GPU 512x512 SnowDeform mean exceeded 0.05 ms budget";
+    } else {
+        res.note = rig.isWarp ? "WARP 512x512 snow footprints, melt, black-ice & normals PASS"
+                              : "HW GPU < 0.05 ms & 512x512 snow/melt/footprints PASS";
+    }
+    return res;
+}
+
+// ----------------------------------------------------------------------------
 // JSON Serializer & Console Scorecard Printer
 // ----------------------------------------------------------------------------
 void WriteBenchJson(const std::string& path,
@@ -5039,7 +5276,8 @@ void WriteBenchJson(const std::string& path,
                     const PostCinematicBenchResult& postCinematic,
                     const GpuParticlesBenchResult& gpuParticles,
                     const TsrUpscaleBenchResult& tsrUpscale,
-                    const WaterCausticsBenchResult& waterCaustics)
+                    const WaterCausticsBenchResult& waterCaustics,
+                    const SnowDeformBenchResult& snowDeform)
 {
     std::ostringstream os;
     os << std::fixed << std::setprecision(4);
@@ -5424,6 +5662,26 @@ void WriteBenchJson(const std::string& path,
     os << "      \"aboveSkyMax\": " << waterCaustics.aboveSkyMax << ",\n";
     os << "      \"nanInfCount\": " << waterCaustics.nanInfCount << ",\n";
     os << "      \"note\": \"" << JsonEscape(waterCaustics.note) << "\"\n";
+    os << "    },\n";
+
+    // 21. GPU 512x512 Snow Accumulation, Melt & Footprint Deformation
+    os << "    \"snowDeform\": {\n";
+    os << "      \"passed\": " << (snowDeform.passed ? "true" : "false") << ",\n";
+    os << "      \"width\": " << snowDeform.width << ",\n";
+    os << "      \"height\": " << snowDeform.height << ",\n";
+    os << "      \"totalGpuMs\": "; pctObj(snowDeform.totalGpuMs); os << ",\n";
+    os << "      \"cpuRecordMs\": "; pctObj(snowDeform.cpuRecordMs); os << ",\n";
+    os << "      \"hostStepMs\": " << snowDeform.hostStepMs << ",\n";
+    os << "      \"hostNormalMs\": " << snowDeform.hostNormalMs << ",\n";
+    os << "      \"trenchDepthM\": " << snowDeform.trenchDepthM << ",\n";
+    os << "      \"rimHeightM\": " << snowDeform.rimHeightM << ",\n";
+    os << "      \"massErrPct\": " << snowDeform.massErrPct << ",\n";
+    os << "      \"wallNormalNx\": " << snowDeform.wallNormalNx << ",\n";
+    os << "      \"fireMeltedH\": " << snowDeform.fireMeltedH << ",\n";
+    os << "      \"frozenBlackIce\": " << snowDeform.frozenBlackIce << ",\n";
+    os << "      \"snowfallGainM\": " << snowDeform.snowfallGainM << ",\n";
+    os << "      \"nanInfCount\": " << snowDeform.nanInfCount << ",\n";
+    os << "      \"note\": \"" << JsonEscape(snowDeform.note) << "\"\n";
     os << "    }\n";
 
     os << "  }\n";
@@ -5460,7 +5718,8 @@ void PrintScorecard(const BenchDx12Rig& rig,
                     const PostCinematicBenchResult& postCinematic,
                     const GpuParticlesBenchResult& gpuParticles,
                     const TsrUpscaleBenchResult& tsrUpscale,
-                    const WaterCausticsBenchResult& waterCaustics)
+                    const WaterCausticsBenchResult& waterCaustics,
+                    const SnowDeformBenchResult& snowDeform)
 {
     std::printf("\n");
     std::printf("=====================================================================================================\n");
@@ -5608,6 +5867,13 @@ void PrintScorecard(const BenchDx12Rig& rig,
                   waterCaustics.rbMeanDiff, waterCaustics.sunwardRatio, waterCaustics.nanInfCount);
     std::printf("  %-30s | %-6s | %-28s | %s\n", "20. GPU Water Caustics+Rays", waterCaustics.passed ? "PASS" : "FAIL", metric, detail);
 
+    std::snprintf(metric, sizeof(metric), "Snw %.4f ms (p95 %.4f)", snowDeform.totalGpuMs.mean, snowDeform.totalGpuMs.p95);
+    std::snprintf(detail, sizeof(detail), "S=%.4f N=%.4f | tr=%.2f rim=%.2f mErr=%.2f%% ice=%.2f | NaN=%u",
+                  snowDeform.hostStepMs, snowDeform.hostNormalMs,
+                  snowDeform.trenchDepthM, snowDeform.rimHeightM,
+                  snowDeform.massErrPct, snowDeform.frozenBlackIce, snowDeform.nanInfCount);
+    std::printf("  %-30s | %-6s | %-28s | %s\n", "21. GPU 512^2 Snow/Footprint", snowDeform.passed ? "PASS" : "FAIL", metric, detail);
+
     std::printf("=====================================================================================================\n");
 }
 
@@ -5678,6 +5944,7 @@ int main(int argc, char** argv)
     const GpuParticlesBenchResult      gpuParticles  = RunGpuParticlesBenchmark(rig, warmupFrames, measuredFrames);
     const TsrUpscaleBenchResult        tsrUpscale    = RunTsrUpscaleBenchmark(rig, warmupFrames, measuredFrames);
     const WaterCausticsBenchResult     waterCaustics = RunWaterCausticsBenchmark(rig, warmupFrames, measuredFrames);
+    const SnowDeformBenchResult        snowDeform    = RunSnowDeformBenchmark(rig, warmupFrames, measuredFrames);
 
     const uint32_t debugErrors = rig.DrainDebugErrors();
     const bool allPassed = fluid.passed && rc.passed && tex.passed && audio.passed &&
@@ -5686,14 +5953,15 @@ int main(int argc, char** argv)
                            shadowPcss.passed && gtao.passed && ssr.passed &&
                            autoExposure.passed && cloudRaymarch.passed &&
                            postCinematic.passed && gpuParticles.passed &&
-                           tsrUpscale.passed && waterCaustics.passed && (debugErrors == 0u);
+                           tsrUpscale.passed && waterCaustics.passed &&
+                           snowDeform.passed && (debugErrors == 0u);
 
     PrintScorecard(rig, quickMode, warmupFrames, measuredFrames, debugErrors,
-                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles, tsrUpscale, waterCaustics);
+                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles, tsrUpscale, waterCaustics, snowDeform);
 
     if (!jsonPath.empty()) {
         WriteBenchJson(jsonPath, rig, quickMode, warmupFrames, measuredFrames, debugErrors, allPassed,
-                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles, tsrUpscale, waterCaustics);
+                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles, tsrUpscale, waterCaustics, snowDeform);
         std::printf("  JSON report written: %s\n", jsonPath.c_str());
     }
 

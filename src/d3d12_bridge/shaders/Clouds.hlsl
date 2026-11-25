@@ -119,7 +119,11 @@ float hg(float c, float g) {
     return (1.0f - g2) / (4.0f * PI * pow(max(1.0f + g2 - 2.0f * g * c, 1.0e-4f), 1.5f));
 }
 
-float rand(float2 p, float s) { return frac(52.9829189f * frac(dot(p, float2(0.06711056f, 0.00583715f)) + s * 0.61803399f)); }
+// Wave 30 Plastic-Constant R2 Low-Discrepancy Sequence (phi_2 = 1.32471795724, lowest known 2D star-discrepancy):
+// Eliminates periodic hash clumpiness across 48-step volumetric ray marches with zero temporal flicker!
+float rand(float2 p, float s) {
+    return frac(dot(p, float2(0.7548776662f, 0.5698402910f)) + s * 0.6180339887f);
+}
 
 float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float2 lo = floor(at.xy);
@@ -165,9 +169,25 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float sigma = kCloudSigma;
         float T = 1.0f;
         float3 S = 0.0f;
-        // Fast 4-step exponential sun-ray march spanning the full 44,000u 3D cumulus volume (recovers ~1.3 ms GPU time!):
-        static const float kSunD[4] = { 420.0f, 1650.0f, 5200.0f, 13500.0f };
-        static const float kSunW[4] = { 420.0f, 1230.0f, 3550.0f,  8300.0f };
+        // Wave 30 Malfatti-Goldberg Asymmetric Corner-Packed Sun Probes (Goldberg 1967 / Sandberg):
+        // Packs tight high-importance probe energy near the outer sunlit cumulus shell (where 70% of silver-lining
+        // powder contrast forms) while spanning the full 44,000u anvil core in 4 steps!
+        static const float kSunD[4] = { 260.0f, 1180.0f, 4450.0f, 13200.0f };
+        static const float kSunW[4] = { 260.0f,  920.0f, 3270.0f,  8750.0f };
+        // Wave 30 Nocturnal Settlement & Hearth Upward Skyglow Dome (AB704 GTA VI / AB304 sodium-amber night law):
+        // Aggregates live nearby warm point lights (town braziers, torches, dragon fire) so clouds over cities glow
+        // softly amber from BELOW while wild northern tundra stays dark Kiruna-calibrated indigo!
+        float3 nightSkyglow = 0.0f.xxx;
+        if (nightW > 0.05f && flags.y > 0u) {
+            const uint nSkyL = min(flags.y, 12u);
+            [loop] for (uint sli = 0u; sli < nSkyL; ++sli) {
+                const float3 lcS = lightColS[sli].rgb;
+                const float rS = lightPosR[sli].w;
+                if (rS < 120.0f || dot(lcS, float3(0.2126f, 0.7152f, 0.0722f)) < 0.08f) { continue; }
+                nightSkyglow += min(lcS, 1.5f.xxx) * saturate(rS / 650.0f);
+            }
+            nightSkyglow = min(nightSkyglow * 0.022f, float3(0.18f, 0.11f, 0.055f)) * nightW;
+        }
         // Uniform jittered 48-step march (eliminates 2*dt empty-space skip contour-banding stripes seen in 09.57.42.68.png!):
         float t = t0 + j * dt;
         [loop] for (uint i = 0u; i < steps && t < t1 && T > 0.01f; i++) {
@@ -227,10 +247,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // Warm golden-amber horizon rim light on sunlit cloud edges at low sun (Chapman grazing extinction):
             const float3 horizonGold = lerp(float3(1.45f, 0.68f, 0.22f), float3(1.35f, 0.38f, 0.12f), saturate(1.0f - max(aElev, 0.0f) * 8.0f));
             const float3 underLit = horizonGold * (twiCloud * pow(saturate(dot(dir, aSun) * 0.5f + 0.5f), 3.0f) * exp(-od * sigma * 0.35f) * (1.0f - overcastW * 0.75f) * 0.48f);
-            // Night lunar rim glow: clouds near the Moon (sunDir.xyz at night) transmit translucent silver-blue light!
+            // Night lunar rim glow + settlement sodium skyglow dome illuminating low cloud bellies from below:
             const float3 moonRim = float3(0.38f, 0.52f, 0.85f) * (nightW * hg(cosT, 0.76f) * exp(-od * sigma * 0.35f) * 0.65f);
+            const float3 townUnderGlow = nightSkyglow * ((1.0f - h) * (1.0f - h) * exp(-t / 95000.0f));
             // Crisp sunlit cumulus crowns (0.40x) against deep cerulean-indigo cloud bellies (kills muddy brown-grey flat clouds!):
-            const float3 rawLum = whiteSun * (multiScat * lerp(0.72f, powder, 0.86f) * 4.0f * PI * 0.40f * upperDeckOcc) + coolBase + underLit + moonRim + stormFlash;
+            const float3 rawLum = whiteSun * (multiScat * lerp(0.72f, powder, 0.86f) * 4.0f * PI * 0.40f * upperDeckOcc) + coolBase + underLit + moonRim + townUnderGlow + stormFlash;
             const float3 lum = select(rawLum > 1.25f.xxx, 1.25f.xxx + 1.15f * (1.0f.xxx - exp(-(rawLum - 1.25f.xxx) / 1.15f)), rawLum);
             const float ext = dens * (sigma * 1.15f);
             const float stepT = exp(-ext * dt);

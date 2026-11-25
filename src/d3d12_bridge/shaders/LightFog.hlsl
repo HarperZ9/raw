@@ -199,9 +199,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // (magnitude 1-3 Planck stars + dense faint-magnitude deep field, zero DXT1) + Milky Way + dual-curtain Nordic Auroras!
             const float nightSkyW = saturate(1.0f - dayW * 1.35f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
             if (nightSkyW > 0.02f && sDir.z > 0.0f) {
-                // Faint upper-atmosphere nocturnal airglow limb just above the horizon (Commons Cluster B astrophotography).
-                const float airglow = exp(-pow((sDir.z - 0.055f) / 0.048f, 2.0f));
-                fullSky += float3(0.008f, 0.022f, 0.019f) * (airglow * nightSkyW * (1.0f - cover * 0.70f));
+                // Wave 30 Van Rhijn Curved-Mesopause Airglow Layer (90 km O(1S) 557.7nm + OH Meinel, Kiruna AB1120):
+                // Exact spherical shell path-length brightening V(theta) = 1 / sqrt(1 - (R/(R+90))^2 * cos^2(theta))
+                // attenuated by lower-troposphere extinction near 0 deg, peaking naturally at 6..10 deg above horizon!
+                const float vrRatio = 6360.0f / (6360.0f + 90.0f);
+                const float cos2El = max(1.0f - sDir.z * sDir.z, 0.0f);
+                const float vanRhijn = rsqrt(max(1.0f - vrRatio * vrRatio * cos2El, 0.025f));
+                const float lowExt = exp(-0.085f / max(sDir.z, 0.032f));
+                const float airglow = clamp(vanRhijn * lowExt * 0.34f, 0.0f, 1.35f);
+                const float3 airCol = lerp(float3(0.012f, 0.024f, 0.018f), float3(0.005f, 0.015f, 0.017f), saturate(sDir.z * 3.0f));
+                fullSky += airCol * (airglow * nightSkyW * (1.0f - cover * 0.68f));
                 const float3 sc1 = floor(sDir * 290.0f);
                 const float3 sf1 = frac(sDir * 290.0f) - 0.5f;
                 const float h1 = cHash(sc1);

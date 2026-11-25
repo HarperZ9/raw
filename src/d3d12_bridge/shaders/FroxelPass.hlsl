@@ -92,7 +92,9 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     const float3 farDir = normalize(worldAt(fullPx, 0.995f) - eye);
     const float z0 = froxelSliceZ(float(slice));
     const float z1 = froxelSliceZ(float(slice + 1u));
-    const float jit = ign(float2(px.x % 160u, px.y % 90u) + float2(float(slice) * 3.7f, proj.z * 7.1f));
+    // Wave 30 Plastic-Constant R2 Low-Discrepancy Slice Jitter (phi_2 = 1.32471795724, minimal 2D star-discrepancy):
+    const float jit = frac(dot(float2(px.x % 160u, px.y % 90u), float2(0.7548776662f, 0.5698402910f))
+                         + float(slice) * 0.3819660113f + proj.z * 0.6180339887f);
     const float zMid = lerp(z0, z1, 0.35f + 0.30f * jit);
     const float rayDist = zMid / max(dot(farDir, camFwd), 0.25f);
     const float3 pRel = eye + farDir * rayDist;
@@ -247,9 +249,19 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                 const float fireFlicker = isWarmFire
                     ? (0.94f + 0.06f * sin(camPosW.w * 7.3f + float(li) * 2.1f) * cos(camPosW.w * 11.7f + float(li) * 1.3f))
                     : 1.0f;
+                // Wave 30 Thermal Hearth-Melt Rising Steam Plumes: when cold snow/alpine air meets a warm campfire or
+                // brazier, drifting condensation wisps curl upward inside the light cone (AB124 + VL-1 weather-light coupling):
+                float steamBoost = 1.0f;
+                if (!isInt && isWarmFire && (weather.z > 0.12f || wp.z > 2400.0f) && dL < rL * 0.52f && pRel.z > lightPosR[li].z - 12.0f) {
+                    const float hSteam = saturate((pRel.z - lightPosR[li].z + 12.0f) / 140.0f);
+                    const float3 sCoord = wp * 0.022f - float3(cloudWind.xy * camPosW.w * 0.002f, camPosW.w * 0.42f);
+                    const float sWisp = smoothstep(0.45f, 0.88f, cNoise(sCoord) * 0.65f + cNoise(sCoord * 2.2f + 5.1f) * 0.35f);
+                    const float coldS = saturate(weather.z * 1.25f + smoothstep(2400.0f, 4800.0f, wp.z) * 0.65f);
+                    steamBoost += sWisp * (1.0f - hSteam) * smoothstep(0.0f, 0.18f, hSteam) * coldS * 1.25f;
+                }
                 // Ensure nearby exterior local lights scatter visibly even when extNearRamp keeps daylight air clear:
-                sigma = max(sigma, (isInt ? 0.000012f : 0.000020f) * att * intSmoke * lampWeather);
-                inScat += min(lightColS[li].rgb * (att * phL * tune2.y * intSmoke * lampWeather * fireFlicker * (isInt ? 0.09f : 0.28f)), (isInt ? 0.065f : 0.35f).xxx);
+                sigma = max(sigma, (isInt ? 0.000012f : 0.000020f) * att * intSmoke * lampWeather * steamBoost);
+                inScat += min(lightColS[li].rgb * (att * phL * tune2.y * intSmoke * lampWeather * steamBoost * fireFlicker * (isInt ? 0.09f : 0.28f)), (isInt ? 0.065f : 0.35f).xxx);
             }
         }
     }

@@ -822,6 +822,43 @@ void main() {
           mulAlex < mulOuter && mulOuter < mulInner &&
           fgWrap > 0.10f && skyLeak == 0.0f,
           "wave29_neighbor_reactive_optics_invariants");
+
+    // 18) Wave 30 Pioneer Commons Optics & Geometry Invariants:
+    //   (a) Van Rhijn 90 km curved-mesopause airglow peaks at 6..10 deg above horizon (> zenith) & dims cleanly near 0 deg.
+    //   (b) Hypergraph 4-party quad-cut separates isolated RT fireflies (radiance 1v3, geo 4v0) from real bevel glints (both 1v3).
+    //   (c) Plastic-constant R2 quasi-random 2D sequence has strictly lower 4x4 bin clumping variance than coarse periodic hash.
+    auto evalVanRhijn = [](float elevDeg) -> float {
+        const float s = std::sin(elevDeg * 0.0174532925f);
+        const float r = 6360.0f / (6360.0f + 90.0f);
+        const float vr = 1.0f / std::sqrt(std::max(1.0f - r * r * std::max(1.0f - s * s, 0.0f), 0.025f));
+        const float ext = std::exp(-0.085f / std::max(s, 0.032f));
+        return vr * ext;
+    };
+    const float vrZenith  = evalVanRhijn(90.0f);
+    const float vrPeak    = evalVanRhijn(8.0f);
+    const float vrHorizon = evalVanRhijn(0.5f);
+    auto evalHyperFirefly = [](float cL, float qMax, float geoSplit) -> bool {
+        return (cL > std::max(qMax * 2.85f, 0.45f)) && (geoSplit < 0.22f);
+    };
+    const bool ffCaught   = evalHyperFirefly(3.2f, 0.4f, 0.02f);
+    const bool glintKept  = !evalHyperFirefly(3.2f, 0.4f, 0.78f);
+    int binsR2[16] = {}, binsPer[16] = {};
+    for (int i = 0; i < 64; ++i) {
+        const float uR = std::fmod(float(i) * 0.7548776662f, 1.0f);
+        const float vR = std::fmod(float(i) * 0.5698402910f, 1.0f);
+        binsR2[std::min(int(uR * 4.0f), 3) + std::min(int(vR * 4.0f), 3) * 4]++;
+        const float uP = std::fmod(float(i) * 0.25f, 1.0f);
+        const float vP = std::fmod(float(i) * 0.50f, 1.0f);
+        binsPer[std::min(int(uP * 4.0f), 3) + std::min(int(vP * 4.0f), 3) * 4]++;
+    }
+    double varR2 = 0.0, varPer = 0.0;
+    for (int b = 0; b < 16; ++b) {
+        varR2  += double(binsR2[b] - 4) * double(binsR2[b] - 4);
+        varPer += double(binsPer[b] - 4) * double(binsPer[b] - 4);
+    }
+    Check(std::isfinite(vrHorizon) && vrPeak > vrZenith * 1.45f && vrPeak > vrHorizon * 1.30f &&
+          ffCaught && glintKept && varR2 < varPer * 0.15,
+          "wave30_pioneer_commons_optics_invariants");
 }
 
 }  // namespace

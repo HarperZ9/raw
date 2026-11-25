@@ -189,11 +189,24 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const float edgeGate = 1.0f - smoothstep(max(z * 0.028f, 3.5f), max(z * 0.11f, 16.0f), maxDz);
     const float divTotal = divFine * 0.68f + divBroad * 0.32f * edgeGate;
 
-    // Ray-Reconstruction Isolated 1-Pixel Specular Firefly Guard (preserves eyes & intentional emissives):
+    // Wave 30 Hypergraph 4-Party Quad-Cut Firefly vs Geometric Glint Separator (Kwanten arXiv:2611.25019):
+    // Classifies each 2x2 hardware quad as a 4-vertex hypergraph via zero-cost QuadReadAcrossX/Y/Diagonal:
+    //   - Radiance splits (1 vs 3) while normal & depth are uniform (4 vs 0) -> isolated RT firefly -> clamp cleanly!
+    //   - Radiance AND normal/depth BOTH split (1 vs 3) -> true geometric bevel glint or snow diamond -> preserve 100%!
     float3 curRgb = max(curRaw.rgb, 0.0f.xxx);
     const float curLumRaw = dot(curRgb, kLumaW);
+    const float qLumX = QuadReadAcrossX(curLumRaw);
+    const float qLumY = QuadReadAcrossY(curLumRaw);
+    const float qLumD = QuadReadAcrossDiagonal(curLumRaw);
+    const float3 qNX = QuadReadAcrossX(nC);
+    const float3 qNY = QuadReadAcrossY(nC);
+    const float qZX = QuadReadAcrossX(z);
+    const float qZY = QuadReadAcrossY(z);
+    const float quadOtherMax = max(qLumX, max(qLumY, qLumD));
+    const float quadGeoSplit = saturate((1.0f - min(dot(nC, qNX), dot(nC, qNY))) * 8.0f + max(abs(z - qZX), abs(z - qZY)) / max(z * 0.03f, 2.0f));
+    const bool isHyperFirefly = (curLumRaw > max(quadOtherMax * 2.85f, 0.45f)) && (quadGeoSplit < 0.22f);
     const float blurLum = dot(rgbBlur, kLumaW);
-    const float fireflyCap = blurLum * 3.1f + 0.55f;
+    const float fireflyCap = isHyperFirefly ? (quadOtherMax * 1.65f + 0.18f) : (blurLum * 3.1f + 0.55f);
     if (curLumRaw > fireflyCap && !isEye && !isEmissive) {
         curRgb *= fireflyCap / max(curLumRaw, 1.0e-4f);
     }

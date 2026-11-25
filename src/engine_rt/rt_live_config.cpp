@@ -194,7 +194,9 @@ std::string FormatDefaultLiveConfigIni(const LiveEngineConfig& inCfg) {
        << "; Virtual-key code for live status dump (default 121 = VK_F10; 0 disables)\n"
        << "StatusDumpHotkeyVK=" << c.statusDumpHotkeyVK << "\n"
        << "; Frame cadence for live raw_engine.ini mtime hot-reload check (10..600, default 60)\n"
-       << "HotReloadIntervalFrames=" << c.hotReloadIntervalFrames << "\n";
+       << "HotReloadIntervalFrames=" << c.hotReloadIntervalFrames << "\n"
+       << "; Enable/disable VEH fatal crash forensics & 7,376-class RTTI symbolizer (0/1, default 1)\n"
+       << "CrashForensics=" << (c.crashForensicsEnabled ? 1 : 0) << "\n";
     return os.str();
 }
 
@@ -265,6 +267,7 @@ bool ParseLiveConfigIni(const std::string& iniText, LiveEngineConfig& outCfg) {
         if (section.empty() || section == "diagnostics") {
             if (key == "statusdumphotkeyvk" && ParseUintVal(val, u))      cfg.statusDumpHotkeyVK = u;
             else if (key == "hotreloadintervalframes" && ParseUintVal(val, u)) cfg.hotReloadIntervalFrames = u;
+            else if (key == "crashforensics" && ParseBoolVal(val, b))     cfg.crashForensicsEnabled = b;
         }
     }
 
@@ -358,9 +361,10 @@ std::string FormatLiveStatusDump(const LiveStatusDumpData& d) {
                   d.runtimeVersion.c_str(), d.zydisPassed, d.zydisChecked,
                   d.zydisOk ? "OK - VERIFIED" : "FAIL-CLOSED");
     os << buf;
-    std::snprintf(buf, sizeof buf, "Config: %s | HotReloads: %u | HotkeyVK: %u | PollInterval: %u frames\n\n",
+    std::snprintf(buf, sizeof buf, "Config: %s | HotReloads: %u | HotkeyVK: %u | PollInterval: %u frames | CrashForensics: %u\n\n",
                   d.iniPath.empty() ? "raw_engine.ini" : d.iniPath.c_str(),
-                  d.configReloads, d.config.statusDumpHotkeyVK, d.config.hotReloadIntervalFrames);
+                  d.configReloads, d.config.statusDumpHotkeyVK, d.config.hotReloadIntervalFrames,
+                  d.config.crashForensicsEnabled ? 1u : 0u);
     os << buf;
 
     os << "[Active Configuration]\n";

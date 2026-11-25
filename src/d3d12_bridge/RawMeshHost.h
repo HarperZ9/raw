@@ -81,6 +81,10 @@ public:
     bool SubdivReady() const { return m_subdivPso != nullptr; }
     bool TerrainReady() const { return m_terrainReady; }
     bool TerrainUsesMeshShaders() const { return m_terrainMsPso != nullptr; }
+    bool PbrAtlasReady() const { return m_pbrAtlasUploaded; }
+    uint32_t PbrAtlasSliceCount() const { return kPbrAtlasSlices; }
+    uint32_t PbrAtlasResolution() const { return kPbrAtlasRes; }
+    uint32_t PbrAtlasMipLevels() const { return kPbrAtlasMips; }
 
     bool UploadAsset(const RawMeshAsset& src, RawMeshGpuAsset* outGpu, std::string* outErr = nullptr);
     bool UploadTerrainChunk(const raw::worldgen::ProceduralMesh& src, TerrainGpuChunk* outGpu, std::string* outErr = nullptr);
@@ -111,8 +115,15 @@ public:
 private:
     static constexpr uint32_t kTerrainRing = 3u;
     static constexpr uint32_t kMaxTerrainDrawsPerFrame = 256u;
+    static constexpr uint32_t kPbrAtlasSlices = 8u;
+    static constexpr uint32_t kPbrAtlasRes = 128u;
+    static constexpr uint32_t kPbrAtlasMips = 8u; // 128, 64, 32, 16, 8, 4, 2, 1
+    static constexpr uint32_t kPbrAtlasSubresources = kPbrAtlasSlices * kPbrAtlasMips;
+    static constexpr uint32_t kPbrSrvBase = kTerrainRing * 2u;
 
     bool EnsureTerrainDepth(UINT width, UINT height);
+    bool CreatePbrAtlasResources();
+    void RecordPbrAtlasUpload(ID3D12GraphicsCommandList* cmd);
     void CollectRetiredChunks();
 
     bool                                        m_ready = false;
@@ -154,6 +165,18 @@ private:
     UINT                                               m_depthW = 0;
     UINT                                               m_depthH = 0;
     Microsoft::WRL::ComPtr<ID3D12Resource>             m_dummyAtlas;
+
+    // Wave 47: GPU Procedural PBR Texture2DArray Atlas (8 RawTextureForge materials x 8 mips, 128x128)
+    Microsoft::WRL::ComPtr<ID3D12Resource>             m_pbrAlbedoArray;
+    Microsoft::WRL::ComPtr<ID3D12Resource>             m_pbrNormalArray;
+    Microsoft::WRL::ComPtr<ID3D12Resource>             m_pbrOrmhArray;
+    Microsoft::WRL::ComPtr<ID3D12Resource>             m_pbrUploadAlbedo;
+    Microsoft::WRL::ComPtr<ID3D12Resource>             m_pbrUploadNormal;
+    Microsoft::WRL::ComPtr<ID3D12Resource>             m_pbrUploadOrmh;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT                 m_pbrFootprints[kPbrAtlasSubresources] = {};
+    bool                                               m_pbrAtlasPendingUpload = false;
+    bool                                               m_pbrAtlasUploaded = false;
+    uint64_t                                           m_pbrUploadDoneFence = 0;
 
     std::vector<std::pair<uint64_t, TerrainGpuChunk>>  m_retiredChunks;
 };

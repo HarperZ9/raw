@@ -28,6 +28,7 @@
 #include "rt_combat_impact.h"
 #include "rt_control.h"
 #include "rt_core_fixes.h"
+#include "rt_crash_forensics.h"
 #include "rt_depth_topology.h"
 #include "rt_economy_ledger.h"
 #include "rt_forensics.h"
@@ -133,6 +134,7 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     raw::rt::MovementCombatOnTick();
     raw::rt::LiveConfigOnPresent([](const char* msg) { Log("%s", msg); });
     raw::rt::AudioBridgeOnPresent();
+    raw::rt::CrashForensicsOnPresent();
     {
         static uint32_t s_liveLogTick = 0;
         if ((++s_liveLogTick % 300u) == 150u) {
@@ -346,6 +348,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
         Log("%s", raw::rt::MovementCombatInit(g_img).c_str());
     }
     Log("%s", raw::rt::LiveConfigInit(g_dir + "raw_engine.ini", g_out + "\\live_status_dump.txt").c_str());
+    Log("%s", raw::rt::CrashForensicsInit(g_img, g_dir, g_out).c_str());
     Log("%s", raw::rt::AudioBridgeInit().c_str());
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
@@ -375,6 +378,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         return 0;
     }
     raw::rt::AudioBridgeShutdown();
+    raw::rt::CrashForensicsShutdown();
     raw::rt::LiveConfigShutdown();
     raw::rt::MovementCombatShutdown();
     raw::rt::CombatImpactShutdown();

@@ -10,9 +10,12 @@
 //   F                   : Toggle Live 64^3 3D Navier-Stokes Fire + Smoke
 //   G                   : Toggle Live 4-Cascade Radiance Cascades Screen GI
 //   B                   : Cycle/Teleport Across All 6 Procedural Frontier Biomes
+//   L                   : Teleport Across 4 Iconic Tamriel Landmarks (Riverwood / Whiterun / High Hrothgar / Solitude)
+//   T                   : Cycle Time-of-Day Presets (Dawn 6h / Noon 13h / Golden Hour 18.5h / Midnight Aurora 23.5h)
+//   W                   : Cycle Weather Presets (Clear / Overcast / Rainstorm / Blizzard)
 //   A                   : Toggle Live 48kHz WASAPI Ambient Soundscape (Interactive Mode Only)
 //   R                   : Fracture Fresh 20-Shard NordicStonePillar (60Hz Rigid-Body Debris!)
-//   M                   : Toggle World Mode (Frontier Biomes <-> Real Riverwood ESM+NIF)
+//   M                   : Toggle World Mode (Frontier Biomes <-> Multi-Cell Streaming Tamriel ESM+NIF)
 //   ESC                 : Clean Exit
 //
 // Headless CI / Automated Verification Mode:
@@ -53,6 +56,7 @@
 #include "RawDestructionEngine.h"
 #include "RawEsmWorldLoader.h"
 #include "RawEsmModelResolver.h"
+#include "RawTamrielWorldStreamer.h"
 #include "RawHydrologyGen.h"
 #include "RawAudioOutput.h"
 
@@ -104,6 +108,65 @@ static_assert(sizeof(AgxDisplayCB) == 256u, "AgxDisplayCB must be 256 bytes");
 
 enum class WorldMode { Frontier, RiverwoodEsm };
 enum class SeasonChoice { Spring = 0, Summer = 1, Autumn = 2, Winter = 3 };
+enum class TimePreset : uint8_t { Dawn = 0, Noon = 1, GoldenHour = 2, MidnightAurora = 3 };
+enum class WeatherPreset : uint8_t { Clear = 0, Overcast = 1, Rainstorm = 2, Blizzard = 3 };
+
+struct TamrielLandmark {
+    const char* name;
+    int32_t     cellX;
+    int32_t     cellY;
+};
+
+constexpr TamrielLandmark kTamrielLandmarks[4] = {
+    {"Riverwood",      4, -12},
+    {"Whiterun",       5,  -3},
+    {"High Hrothgar", 14, -14},
+    {"Solitude",     -16,  25},
+};
+
+const char* TimePresetName(TimePreset t)
+{
+    switch (t) {
+        case TimePreset::Dawn:           return "Dawn 06:00";
+        case TimePreset::Noon:           return "Noon 13:00";
+        case TimePreset::GoldenHour:     return "Golden 18:30";
+        case TimePreset::MidnightAurora: return "Aurora 23:30";
+    }
+    return "Noon 13:00";
+}
+
+float TimePresetHours(TimePreset t)
+{
+    switch (t) {
+        case TimePreset::Dawn:           return 6.0f;
+        case TimePreset::Noon:           return 13.0f;
+        case TimePreset::GoldenHour:     return 18.5f;
+        case TimePreset::MidnightAurora: return 23.5f;
+    }
+    return 13.0f;
+}
+
+const char* WeatherPresetName(WeatherPreset w)
+{
+    switch (w) {
+        case WeatherPreset::Clear:     return "Clear";
+        case WeatherPreset::Overcast:  return "Overcast";
+        case WeatherPreset::Rainstorm: return "Rainstorm";
+        case WeatherPreset::Blizzard:  return "Blizzard";
+    }
+    return "Clear";
+}
+
+raw::worldgen::WeatherRegime WeatherPresetToRegime(WeatherPreset w)
+{
+    switch (w) {
+        case WeatherPreset::Clear:     return raw::worldgen::WeatherRegime::ClearAlpine;
+        case WeatherPreset::Overcast:  return raw::worldgen::WeatherRegime::Overcast;
+        case WeatherPreset::Rainstorm: return raw::worldgen::WeatherRegime::Rainstorm;
+        case WeatherPreset::Blizzard:  return raw::worldgen::WeatherRegime::Blizzard;
+    }
+    return raw::worldgen::WeatherRegime::ClearAlpine;
+}
 
 struct ViewerOptions {
     UINT         width          = 1280u;
@@ -401,11 +464,89 @@ public:
         }
         wcfg.initialRegime = reg;
         m_weatherSim.Reset(wcfg);
-        m_weatherSim.SetRegime(reg, true);
+        m_weatherSim.SetTimeOfDay(TimePresetHours(m_timePreset));
+        m_weatherSim.SetRegime(WeatherPresetToRegime(m_weatherPreset), true);
         for (int i = 0; i < 16; ++i) {
             m_weatherSim.Step(1.0f, {m_camPos[0], m_camPos[1], m_camPos[2]});
         }
     }
+
+    void ApplyTimePreset(TimePreset t)
+    {
+        m_timePreset = t;
+        m_weatherSim.SetTimeOfDay(TimePresetHours(t));
+        for (int i = 0; i < 4; ++i) {
+            m_weatherSim.Step(0.5f, {m_camPos[0], m_camPos[1], m_camPos[2]});
+        }
+    }
+
+    void CycleTimePreset()
+    {
+        ApplyTimePreset(static_cast<TimePreset>((static_cast<uint8_t>(m_timePreset) + 1u) % 4u));
+    }
+
+    void ApplyWeatherPreset(WeatherPreset w)
+    {
+        m_weatherPreset = w;
+        m_weatherSim.SetRegime(WeatherPresetToRegime(w), true);
+        for (int i = 0; i < 12; ++i) {
+            m_weatherSim.Step(1.0f, {m_camPos[0], m_camPos[1], m_camPos[2]});
+        }
+        if (m_audioEnabled && m_audio.IsRunning()) {
+            PushAudioSceneState(m_weatherSim.GetGpuUniforms());
+        }
+    }
+
+    void CycleWeatherPreset()
+    {
+        ApplyWeatherPreset(static_cast<WeatherPreset>((static_cast<uint8_t>(m_weatherPreset) + 1u) % 4u));
+    }
+
+    bool TeleportToTamrielLandmark(uint32_t idx)
+    {
+        if (!EnsureTamrielStreamerInit()) return false;
+        m_landmarkIdx = idx % 4u;
+        m_mode = WorldMode::RiverwoodEsm;
+        const auto& lm = kTamrielLandmarks[m_landmarkIdx];
+        const raw::worldgen::Vec3 anchor{
+            float(lm.cellX) * raw::worldgen::kEsmCellSizeU + raw::worldgen::kEsmCellSizeU * 0.5f,
+            float(lm.cellY) * raw::worldgen::kEsmCellSizeU + raw::worldgen::kEsmCellSizeU * 0.5f,
+            0.0f
+        };
+        TamrielViewerSink sink;
+        sink.v = this;
+        const auto st = m_tamrielStreamer.StreamRingComplete(anchor, &sink);
+        m_lastTamrielStats = st;
+
+        float midX = anchor.x;
+        float midY = anchor.y;
+        float maxZ = 0.0f;
+        float zSpan = 512.0f;
+        if (const auto* cell = m_tamrielStreamer.FindCell(lm.cellX, lm.cellY)) {
+            midX  = 0.5f * (cell->terrainMesh.aabbMin.x + cell->terrainMesh.aabbMax.x);
+            midY  = 0.5f * (cell->terrainMesh.aabbMin.y + cell->terrainMesh.aabbMax.y);
+            maxZ  = cell->terrainMesh.aabbMax.z;
+            zSpan = std::max(cell->terrainMesh.aabbMax.z - cell->terrainMesh.aabbMin.z, 256.0f);
+        }
+        m_camPos[0] = midX - 520.0f;
+        m_camPos[1] = midY - 1950.0f;
+        m_camPos[2] = maxZ + std::clamp(zSpan * 0.40f, 420.0f, 1250.0f);
+        m_camYaw    = 0.24f;
+        m_camPitch  = -0.34f;
+        m_esmLoaded = (st.activeCells > 0u);
+        return m_esmLoaded;
+    }
+
+    void CycleTamrielLandmark()
+    {
+        if (!std::filesystem::exists(m_opt.esmPath)) return;
+        const uint32_t nextIdx = (m_mode == WorldMode::RiverwoodEsm) ? ((m_landmarkIdx + 1u) % 4u) : m_landmarkIdx;
+        TeleportToTamrielLandmark(nextIdx);
+    }
+
+    raw::worldgen::TamrielStreamStats GetTamrielStats() const { return m_lastTamrielStats; }
+    uint32_t TotalTamrielEvictions() const { return m_totalTamrielEvictions; }
+    const char* ActiveLandmarkName() const { return kTamrielLandmarks[m_landmarkIdx % 4u].name; }
 
     void ToggleFire() { m_fireEnabled = !m_fireEnabled; }
     void ToggleGI() { m_giEnabled = !m_giEnabled; }
@@ -528,9 +669,11 @@ public:
             PushAudioSceneState(wGpu);
         }
 
-        // 2. Stream async Frontier chunks if in Frontier mode.
+        // 2. Stream async Frontier chunks OR live multi-cell Tamriel (Skyrim.esm + .NIF) ring around camera!
         if (m_mode == WorldMode::Frontier) {
             PumpFrontierShowcase(false);
+        } else if (m_tamrielStreamer.IsInitialized()) {
+            PumpTamrielStreamer(false);
         }
 
         // 3. Step live 60Hz rigid-body 3D Voronoi destruction debris!
@@ -671,19 +814,8 @@ public:
         const D3D12_RESOURCE_STATES dispRestState = m_swapChain ? D3D12_RESOURCE_STATE_PRESENT : D3D12_RESOURCE_STATE_COMMON;
 
         AgxDisplayCB dcb{};
-        const bool golden = (m_season == SeasonChoice::Autumn || m_season == SeasonChoice::Spring);
-        dcb.skyZenithExposure[0] = golden ? 0.16f : 0.12f;
-        dcb.skyZenithExposure[1] = golden ? 0.24f : 0.25f;
-        dcb.skyZenithExposure[2] = golden ? 0.44f : 0.56f;
-        dcb.skyZenithExposure[3] = 1.05f;
-        dcb.skyHorizonFrame[0]   = golden ? 0.78f : 0.54f;
-        dcb.skyHorizonFrame[1]   = golden ? 0.56f : 0.68f;
-        dcb.skyHorizonFrame[2]   = golden ? 0.42f : 0.84f;
-        dcb.skyHorizonFrame[3]   = float(m_frameCount & 1023ull);
-        dcb.sunTintAndGlow[0]    = golden ? 0.85f : 0.35f;
-        dcb.sunTintAndGlow[1]    = golden ? 0.45f : 0.32f;
-        dcb.sunTintAndGlow[2]    = golden ? 0.18f : 0.28f;
-        dcb.sunTintAndGlow[3]    = golden ? 0.55f : 0.25f;
+        FillAgxSkyConstants(dcb);
+        dcb.skyHorizonFrame[3] = float(m_frameCount & 1023ull);
         std::memcpy(m_agxCbMapped + size_t(dispSlot) * 256u, &dcb, sizeof(dcb));
 
         D3D12_RESOURCE_BARRIER bDispIn[2] = {
@@ -875,6 +1007,12 @@ public:
         m_showcase.WaitForAsyncIdle();
         m_showcase.Reset();
         m_showcase.SetAsyncEnabled(false);
+        if (m_tamrielStreamer.IsInitialized()) {
+            TamrielViewerSink sink;
+            sink.v = this;
+            m_tamrielStreamer.Shutdown(&sink);
+        }
+        m_tamrielCellHandles.clear();
 
         m_frontierChunks.clear();
         m_esmChunks.clear();
@@ -917,14 +1055,21 @@ public:
     {
         const auto ft = m_fluidOk ? m_fluidSim.GetLastTimings() : FluidGpuTimings{};
         const auto rt = m_radOk ? m_radianceHost.GetLastTimings() : RadianceGpuTimings{};
-        char buf[384]{};
+        char locBuf[128]{};
+        if (m_mode == WorldMode::Frontier) {
+            std::snprintf(locBuf, sizeof(locBuf), "%s",
+                          raw::worldgen::GetBiomeName(static_cast<raw::worldgen::BiomeId>(m_biomeIdx)));
+        } else {
+            std::snprintf(locBuf, sizeof(locBuf), "%s (%u cells, %llu LRU hits)",
+                          kTamrielLandmarks[m_landmarkIdx % 4u].name,
+                          m_lastTamrielStats.activeCells,
+                          static_cast<unsigned long long>(m_lastTamrielStats.cacheHits));
+        }
+        char buf[512]{};
         std::snprintf(buf, sizeof(buf),
-                      "RAW Engine | %.1f FPS | %u Meshlets (%s) | %s | %s | Fire:%s(%.2fms) Water:%.2fms GI:%s(%.2fms) | Audio:%s | Shards:%u",
+                      "RAW Engine | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | %s | Fire:%s(%.2fms) Water:%.2fms GI:%s(%.2fms) | Audio:%s | Shards:%u",
                       fps, m_lastDrawnMeshlets, m_meshHost.TerrainUsesMeshShaders() ? "AS+MS" : "VS+PS",
-                      m_mode == WorldMode::Frontier
-                          ? raw::worldgen::GetBiomeName(static_cast<raw::worldgen::BiomeId>(m_biomeIdx))
-                          : "Riverwood (ESM+NIF)",
-                      SeasonName(m_season),
+                      locBuf, TimePresetName(m_timePreset), WeatherPresetName(m_weatherPreset), SeasonName(m_season),
                       m_fireEnabled ? "ON" : "OFF", ft.valid ? ft.fireStepMs : 0.0f,
                       ft.valid ? ft.waterStepMs : 0.0f,
                       (m_radOk && m_giEnabled) ? "ON" : "OFF", rt.valid ? rt.giPassMs : 0.0f,
@@ -1173,6 +1318,81 @@ private:
         }
     }
 
+    struct TamrielViewerSink final : raw::worldgen::ITamrielChunkSink {
+        RawEngineViewer* v = nullptr;
+        uint64_t OnTamrielCellLoaded(const raw::worldgen::StreamedTamrielCell& cell) override {
+            uint64_t terrainKey = 0u, propKey = 0u;
+            if (!cell.terrainMesh.meshlets.empty()) {
+                TerrainGpuChunk tGpu{};
+                if (v->m_meshHost.UploadTerrainChunk(cell.terrainMesh, &tGpu)) {
+                    terrainKey = v->m_nextChunkHandle++;
+                    v->m_esmChunks.emplace(terrainKey, std::move(tGpu));
+                }
+            }
+            if (!cell.propsMesh.meshlets.empty()) {
+                TerrainGpuChunk pGpu{};
+                if (v->m_meshHost.UploadTerrainChunk(cell.propsMesh, &pGpu)) {
+                    propKey = v->m_nextChunkHandle++;
+                    v->m_esmChunks.emplace(propKey, std::move(pGpu));
+                }
+            }
+            if (terrainKey == 0u && propKey == 0u) return 0u;
+            const uint64_t cellHandle = v->m_nextChunkHandle++;
+            v->m_tamrielCellHandles.emplace(cellHandle, std::make_pair(terrainKey, propKey));
+            return cellHandle;
+        }
+        void OnTamrielCellEvicted(raw::worldgen::ChunkKey, uint64_t gpuHandle) override {
+            auto it = v->m_tamrielCellHandles.find(gpuHandle);
+            if (it == v->m_tamrielCellHandles.end()) return;
+            const uint64_t tKey = it->second.first;
+            const uint64_t pKey = it->second.second;
+            v->m_tamrielCellHandles.erase(it);
+            ++v->m_totalTamrielEvictions;
+            if (tKey != 0u) {
+                auto ct = v->m_esmChunks.find(tKey);
+                if (ct != v->m_esmChunks.end()) {
+                    v->m_meshHost.DeferRelease(std::move(ct->second));
+                    v->m_esmChunks.erase(ct);
+                }
+            }
+            if (pKey != 0u) {
+                auto cp = v->m_esmChunks.find(pKey);
+                if (cp != v->m_esmChunks.end()) {
+                    v->m_meshHost.DeferRelease(std::move(cp->second));
+                    v->m_esmChunks.erase(cp);
+                }
+            }
+        }
+    };
+
+    bool EnsureTamrielStreamerInit()
+    {
+        if (m_tamrielStreamer.IsInitialized()) return true;
+        if (!std::filesystem::exists(m_opt.esmPath)) return false;
+        const std::filesystem::path bsa = std::filesystem::path(m_opt.esmPath).parent_path() / "Skyrim - Meshes0.bsa";
+        raw::worldgen::TamrielStreamConfig tcfg{};
+        tcfg.radiusCells            = 1; // 3x3 = 9 cells around viewer camera
+        tcfg.maxCellsPerUpdate      = 3u;
+        tcfg.maxUniqueModelsPerCell = 32u;
+        tcfg.maxMeshletTris         = 126u;
+        tcfg.vramBudgetBytes        = 128ull * 1024ull * 1024ull;
+        tcfg.modelCacheBudgetBytes  = 64ull * 1024ull * 1024ull;
+        tcfg.bakeCellProps          = std::filesystem::exists(bsa);
+        std::string err;
+        return m_tamrielStreamer.Init(m_opt.esmPath, std::filesystem::exists(bsa) ? bsa.string() : std::string(), tcfg, &err);
+    }
+
+    void PumpTamrielStreamer(bool fullRing)
+    {
+        if (!m_tamrielStreamer.IsInitialized()) return;
+        TamrielViewerSink sink;
+        sink.v = this;
+        const raw::worldgen::Vec3 cam{m_camPos[0], m_camPos[1], m_camPos[2]};
+        const auto st = fullRing ? m_tamrielStreamer.StreamRingComplete(cam, &sink)
+                                 : m_tamrielStreamer.Update(cam, &sink);
+        m_lastTamrielStats = st;
+    }
+
     void SwitchWorldMode(WorldMode newMode)
     {
         m_mode = newMode;
@@ -1186,87 +1406,41 @@ private:
             m_camYaw    = 0.0f;
             m_camPitch  = -0.50f;
         } else {
-            if (!m_esmLoaded) {
-                LoadRiverwoodEsmScene();
-            }
-            if (m_esmLoaded) {
-                m_camPos[0] = m_esmCenter[0] - 550.0f;
-                m_camPos[1] = m_esmCenter[1] - 2200.0f;
-                m_camPos[2] = m_esmMaxZ + 520.0f;
-                m_camYaw    = 0.22f;
-                m_camPitch  = -0.32f;
-            } else {
+            if (!TeleportToTamrielLandmark(m_landmarkIdx)) {
                 m_mode = WorldMode::Frontier;
             }
         }
     }
 
-    void LoadRiverwoodEsmScene()
+    void FillAgxSkyConstants(AgxDisplayCB& dcb) const
     {
-        if (!std::filesystem::exists(m_opt.esmPath)) return;
-        std::string err;
-        raw::worldgen::EsmWorldIndex wIdx{};
-        if (!raw::worldgen::IndexEsmWorldspace(m_opt.esmPath, raw::worldgen::kTamrielWorldFormId, &wIdx, &err)) return;
-
-        const int32_t cx = 4, cy = -12; // Riverwood
-        std::filesystem::path bsa = std::filesystem::path(m_opt.esmPath).parent_path() / "Skyrim - Meshes0.bsa";
-        raw::worldgen::ProceduralMesh centerMesh{};
-
-        if (std::filesystem::exists(bsa)) {
-            raw::worldgen::EsmModelIndex mIdx{};
-            raw::worldgen::ReconstructedCellScene scene{};
-            if (raw::worldgen::IndexEsmModels(m_opt.esmPath, &mIdx, &err) &&
-                raw::worldgen::ReconstructTamrielCellSceneWithIndices(wIdx, mIdx, bsa.string(), cx, cy, 64u, &scene, &err)) {
-                centerMesh = scene.terrainMesh;
-                TerrainGpuChunk gpu{};
-                if (m_meshHost.UploadTerrainChunk(centerMesh, &gpu)) {
-                    m_esmChunks.emplace(m_nextChunkHandle++, std::move(gpu));
-                }
-                raw::worldgen::ProceduralMesh propsMesh{};
-                if (!scene.instances.empty() &&
-                    raw::worldgen::BakeReconstructedCellPropsToWorldMesh(scene, 126u, &propsMesh) &&
-                    !propsMesh.meshlets.empty()) {
-                    TerrainGpuChunk pGpu{};
-                    if (m_meshHost.UploadTerrainChunk(propsMesh, &pGpu)) {
-                        m_esmChunks.emplace(m_nextChunkHandle++, std::move(pGpu));
-                    }
-                }
-            }
-        } else {
-            raw::worldgen::EsmLoadedCell cell{};
-            if (raw::worldgen::LoadEsmExteriorCell(wIdx, cx, cy, &cell) &&
-                raw::worldgen::BuildMeshFromEsmCell(cell, wIdx.selectedWorld.defaultWaterHeight, 126u, &centerMesh)) {
-                TerrainGpuChunk gpu{};
-                if (m_meshHost.UploadTerrainChunk(centerMesh, &gpu)) {
-                    m_esmChunks.emplace(m_nextChunkHandle++, std::move(gpu));
-                }
-            }
+        switch (m_timePreset) {
+            case TimePreset::Dawn:
+                dcb.skyZenithExposure[0] = 0.14f; dcb.skyZenithExposure[1] = 0.20f; dcb.skyZenithExposure[2] = 0.44f; dcb.skyZenithExposure[3] = 1.08f;
+                dcb.skyHorizonFrame[0]   = 0.88f; dcb.skyHorizonFrame[1]   = 0.52f; dcb.skyHorizonFrame[2]   = 0.40f;
+                dcb.sunTintAndGlow[0]    = 0.95f; dcb.sunTintAndGlow[1]    = 0.50f; dcb.sunTintAndGlow[2]    = 0.24f; dcb.sunTintAndGlow[3] = 0.65f;
+                break;
+            case TimePreset::GoldenHour:
+                dcb.skyZenithExposure[0] = 0.16f; dcb.skyZenithExposure[1] = 0.22f; dcb.skyZenithExposure[2] = 0.42f; dcb.skyZenithExposure[3] = 1.05f;
+                dcb.skyHorizonFrame[0]   = 0.96f; dcb.skyHorizonFrame[1]   = 0.46f; dcb.skyHorizonFrame[2]   = 0.24f;
+                dcb.sunTintAndGlow[0]    = 1.05f; dcb.sunTintAndGlow[1]    = 0.48f; dcb.sunTintAndGlow[2]    = 0.16f; dcb.sunTintAndGlow[3] = 0.72f;
+                break;
+            case TimePreset::MidnightAurora:
+                dcb.skyZenithExposure[0] = 0.015f; dcb.skyZenithExposure[1] = 0.032f; dcb.skyZenithExposure[2] = 0.075f; dcb.skyZenithExposure[3] = 1.35f;
+                dcb.skyHorizonFrame[0]   = 0.045f; dcb.skyHorizonFrame[1]   = 0.140f; dcb.skyHorizonFrame[2]   = 0.165f; // Aurora emerald-teal horizon glow
+                dcb.sunTintAndGlow[0]    = 0.14f;  dcb.sunTintAndGlow[1]    = 0.65f;  dcb.sunTintAndGlow[2]    = 0.52f; dcb.sunTintAndGlow[3] = 0.45f;
+                break;
+            case TimePreset::Noon:
+            default:
+                dcb.skyZenithExposure[0] = 0.12f; dcb.skyZenithExposure[1] = 0.26f; dcb.skyZenithExposure[2] = 0.58f; dcb.skyZenithExposure[3] = 1.05f;
+                dcb.skyHorizonFrame[0]   = 0.54f; dcb.skyHorizonFrame[1]   = 0.68f; dcb.skyHorizonFrame[2]   = 0.85f;
+                dcb.sunTintAndGlow[0]    = 0.40f; dcb.sunTintAndGlow[1]    = 0.36f; dcb.sunTintAndGlow[2]    = 0.30f; dcb.sunTintAndGlow[3] = 0.25f;
+                break;
         }
-
-        if (m_esmChunks.empty()) return;
-
-        // Neighbor 3x3 Riverwood valley hills
-        for (int32_t dy = -1; dy <= 1; ++dy) {
-            for (int32_t dx = -1; dx <= 1; ++dx) {
-                if (dx == 0 && dy == 0) continue;
-                if (!wIdx.FindCell(cx + dx, cy + dy)) continue;
-                raw::worldgen::EsmLoadedCell nc{};
-                raw::worldgen::ProceduralMesh nm{};
-                if (raw::worldgen::LoadEsmExteriorCell(wIdx, cx + dx, cy + dy, &nc) &&
-                    raw::worldgen::BuildMeshFromEsmCell(nc, wIdx.selectedWorld.defaultWaterHeight, 126u, &nm)) {
-                    TerrainGpuChunk ng{};
-                    if (m_meshHost.UploadTerrainChunk(nm, &ng)) {
-                        m_esmChunks.emplace(m_nextChunkHandle++, std::move(ng));
-                    }
-                }
-            }
+        if (m_weatherPreset == WeatherPreset::Overcast || m_weatherPreset == WeatherPreset::Rainstorm || m_weatherPreset == WeatherPreset::Blizzard) {
+            dcb.skyZenithExposure[0] *= 0.65f; dcb.skyZenithExposure[1] *= 0.68f; dcb.skyZenithExposure[2] *= 0.72f;
+            dcb.sunTintAndGlow[3] *= 0.35f;
         }
-
-        m_esmCenter[0] = 0.5f * (centerMesh.aabbMin.x + centerMesh.aabbMax.x);
-        m_esmCenter[1] = 0.5f * (centerMesh.aabbMin.y + centerMesh.aabbMax.y);
-        m_esmCenter[2] = 0.5f * (centerMesh.aabbMin.z + centerMesh.aabbMax.z);
-        m_esmMaxZ      = centerMesh.aabbMax.z;
-        m_esmLoaded    = true;
     }
 
     void UploadDebrisChunk()
@@ -1295,27 +1469,50 @@ private:
         u.resScale[0] = 1.0f; u.resScale[1] = 1.0f; u.resScale[2] = 0.5f; u.resScale[3] = 1.0f;
         u.camPos[0] = m_camPos[0]; u.camPos[1] = m_camPos[1]; u.camPos[2] = m_camPos[2]; u.camPos[3] = m_simTimeSec;
 
-        const bool golden = (m_season == SeasonChoice::Autumn || m_season == SeasonChoice::Spring);
-        u.sunDir[0] = golden ? -0.74f : 0.68f;
-        u.sunDir[1] = 0.32f;
-        u.sunDir[2] = golden ? 0.58f : 0.66f;
-        const float sl = std::sqrt(u.sunDir[0] * u.sunDir[0] + u.sunDir[1] * u.sunDir[1] + u.sunDir[2] * u.sunDir[2]);
-        u.sunDir[0] /= sl; u.sunDir[1] /= sl; u.sunDir[2] /= sl; u.sunDir[3] = 1.0f;
-
-        u.sunColour[0] = golden ? 1.55f : 1.35f;
-        u.sunColour[1] = golden ? 1.18f : 1.28f;
-        u.sunColour[2] = golden ? 0.84f : 1.18f;
-        u.sunColour[3] = 1.0f;
+        // Time-of-day presets drive exact solar azimuth/elevation/irradiance & aurora night lighting:
+        float sunX = 0.68f, sunY = 0.32f, sunZ = 0.66f;
+        float sunR = 1.35f, sunG = 1.28f, sunB = 1.18f;
+        float gameHour = 13.0f;
+        float astroElev = 0.66f;
+        switch (m_timePreset) {
+            case TimePreset::Dawn:
+                sunX = 0.92f; sunY = 0.25f; sunZ = 0.28f;
+                sunR = 1.48f; sunG = 0.96f; sunB = 0.68f;
+                gameHour = 6.0f; astroElev = 0.14f;
+                break;
+            case TimePreset::GoldenHour:
+                sunX = -0.88f; sunY = 0.30f; sunZ = 0.34f;
+                sunR = 1.62f; sunG = 1.02f; sunB = 0.62f;
+                gameHour = 18.5f; astroElev = 0.16f;
+                break;
+            case TimePreset::MidnightAurora:
+                sunX = -0.45f; sunY = 0.40f; sunZ = 0.78f; // Moon light vector above horizon
+                sunR = 0.26f; sunG = 0.38f; sunB = 0.62f;
+                gameHour = 23.5f; astroElev = -0.38f;
+                break;
+            case TimePreset::Noon:
+            default:
+                sunX = 0.68f; sunY = 0.32f; sunZ = 0.66f;
+                sunR = 1.35f; sunG = 1.28f; sunB = 1.18f;
+                gameHour = 10.5f; astroElev = 0.66f;
+                break;
+        }
+        const float sl = std::sqrt(sunX * sunX + sunY * sunY + sunZ * sunZ);
+        u.sunDir[0] = sunX / sl; u.sunDir[1] = sunY / sl; u.sunDir[2] = sunZ / sl; u.sunDir[3] = 1.0f;
+        u.sunColour[0] = sunR; u.sunColour[1] = sunG; u.sunColour[2] = sunB; u.sunColour[3] = 1.0f;
 
         u.weather[0] = wGpu.weather.x;
         u.weather[1] = wGpu.weather.y;
-        u.weather[2] = (m_season == SeasonChoice::Winter) ? std::max(wGpu.weather.z, 0.55f) : wGpu.weather.z;
-        u.weather[3] = wGpu.weather.w;
-        u.timeEnv[0] = golden ? 15.8f : 10.5f;
-        u.timeEnv[1] = u.sunDir[2];
+        u.weather[2] = (m_season == SeasonChoice::Winter || m_weatherPreset == WeatherPreset::Blizzard)
+                     ? std::max(wGpu.weather.z, 0.55f) : wGpu.weather.z;
+        u.weather[3] = (m_weatherPreset == WeatherPreset::Rainstorm) ? std::max(wGpu.weather.w, 0.75f) : wGpu.weather.w;
+        u.timeEnv[0] = gameHour;
+        u.timeEnv[1] = astroElev;
         u.timeEnv[2] = wGpu.timeEnv.z;
         u.tune[0] = 0.000028f; u.tune[1] = 0.45f;
-        u.clouds[0] = std::min(wGpu.cloudWind.z, 0.35f);
+        u.clouds[0] = (m_weatherPreset == WeatherPreset::Clear) ? std::min(wGpu.cloudWind.z, 0.28f)
+                    : (m_weatherPreset == WeatherPreset::Overcast ? 0.68f : std::min(wGpu.cloudWind.z, 0.85f));
+        u.clouds[1] = 46000.0f; u.clouds[2] = 44000.0f; u.clouds[3] = 0.68f;
         u.cloudWind[0] = wGpu.cloudWind.x; u.cloudWind[1] = wGpu.cloudWind.y;
         u.physWorld[0][0] = m_simTimeSec; u.physWorld[0][1] = 9.81f;
         u.physWorld[1][0] = wGpu.beaufortScale; u.physWorld[1][1] = 0.866f; u.physWorld[1][2] = 0.5f;
@@ -1439,27 +1636,32 @@ private:
     RawFluidCompositeHost              m_fluidComposite;
     RawRadianceHost                    m_radianceHost;
     raw::audio::RawAudioOutput         m_audio;
-    raw::worldgen::RawWeatherSim       m_weatherSim;
-    raw::worldgen::RawWorldShowcase    m_showcase;
-    raw::worldgen::DestructionSimulation m_destSim;
+    raw::worldgen::RawWeatherSim          m_weatherSim;
+    raw::worldgen::RawWorldShowcase       m_showcase;
+    raw::worldgen::RawTamrielWorldStreamer m_tamrielStreamer;
+    raw::worldgen::DestructionSimulation  m_destSim;
 
     struct BiomeAnchor { float x = 75776.0f, y = 157696.0f; };
-    std::array<BiomeAnchor, 6>         m_biomeAnchors{};
-    uint32_t                           m_discoveredBiomeCount = 0u;
-    uint32_t                           m_biomeIdx = 0u;
+    std::array<BiomeAnchor, 6>            m_biomeAnchors{};
+    uint32_t                              m_discoveredBiomeCount = 0u;
+    uint32_t                              m_biomeIdx = 0u;
 
     std::unordered_map<uint64_t, TerrainGpuChunk> m_frontierChunks;
     std::unordered_map<uint64_t, TerrainGpuChunk> m_esmChunks;
-    uint64_t                           m_nextChunkHandle = 1u;
-    bool                               m_hasFrontierCenter = false;
-    float                              m_frontierCenter[3] = {75776.0f, 157696.0f, 1200.0f};
-    float                              m_frontierGroundZ = 0.0f;
-    bool                               m_esmLoaded = false;
-    float                              m_esmCenter[3] = {};
-    float                              m_esmMaxZ = 0.0f;
+    std::unordered_map<uint64_t, std::pair<uint64_t, uint64_t>> m_tamrielCellHandles;
+    raw::worldgen::TamrielStreamStats     m_lastTamrielStats{};
+    uint32_t                              m_totalTamrielEvictions = 0u;
+    uint32_t                              m_landmarkIdx = 0u;
+    uint64_t                              m_nextChunkHandle = 1u;
+    bool                                  m_hasFrontierCenter = false;
+    float                                 m_frontierCenter[3] = {75776.0f, 157696.0f, 1200.0f};
+    float                                 m_frontierGroundZ = 0.0f;
+    bool                                  m_esmLoaded = false;
 
-    WorldMode                          m_mode = WorldMode::Frontier;
-    SeasonChoice                       m_season = SeasonChoice::Winter;
+    WorldMode                             m_mode = WorldMode::Frontier;
+    SeasonChoice                          m_season = SeasonChoice::Winter;
+    TimePreset                            m_timePreset = TimePreset::Noon;
+    WeatherPreset                         m_weatherPreset = WeatherPreset::Clear;
     bool                               m_fireEnabled = true;
     bool                               m_giEnabled = true;
     bool                               m_audioEnabled = false;
@@ -1529,6 +1731,9 @@ LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     case 'F': st->viewer->ToggleFire(); break;
                     case 'G': st->viewer->ToggleGI(); break;
                     case 'B': st->viewer->CycleBiome(); break;
+                    case 'L': st->viewer->CycleTamrielLandmark(); break;
+                    case 'T': st->viewer->CycleTimePreset(); break;
+                    case 'W': st->viewer->CycleWeatherPreset(); break;
                     case 'A': st->viewer->ToggleAudio(); break;
                     case 'R': st->viewer->TriggerFreshFracture(); break;
                     case 'M': st->viewer->ToggleWorldMode(); break;
@@ -1595,7 +1800,7 @@ int main(int argc, char** argv)
     if (opt.showHelp) {
         std::printf(
             "RAW Interactive Real-Time Win32/DX12 Standalone Engine Viewer\n"
-            "Controls: WASD/QE flight, Shift boost, RMB freelook, 1-4 seasons, F fire, G GI, B biomes, A audio, R fracture, M frontier/Riverwood, ESC exit\n"
+            "Controls: WASD/QE flight, Shift boost, RMB freelook, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time-of-day, W weather, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
             "CLI: [--headless-frames N] [--warp] [--debug] [--width W] [--height H] [--esm <Skyrim.esm>]\n");
         return 0;
     }
@@ -1617,16 +1822,30 @@ int main(int argc, char** argv)
         std::printf("       Adapter: %s | Res: %ux%u\n", viewer.AdapterName().c_str(), opt.width, opt.height);
 
         bool allFramesOk = true;
+        raw::worldgen::TamrielStreamStats riverwoodStats{};
+        bool teleportedToWhiterun = false;
         for (uint32_t f = 0; f < opt.headlessFrames; ++f) {
+            if (f == 0u && opt.startEsm) {
+                riverwoodStats = viewer.GetTamrielStats();
+            }
             if (f == opt.headlessFrames / 2u) {
-                viewer.ApplySeason(SeasonChoice::Autumn);
+                if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {
+                    teleportedToWhiterun = viewer.TeleportToTamrielLandmark(1u); // Riverwood (4,-12) -> Whiterun (5,-3)!
+                    viewer.ApplyTimePreset(TimePreset::GoldenHour);
+                    viewer.ApplyWeatherPreset(WeatherPreset::Clear);
+                } else {
+                    viewer.ApplySeason(SeasonChoice::Autumn);
+                    viewer.CycleTimePreset();
+                }
             }
             if (!viewer.RenderFrame(1.0f / 60.0f, false)) {
                 allFramesOk = false;
                 break;
             }
         }
-        check(allFramesOk, "Executed all back-to-back multi-pass frames with live mid-run season switch");
+        check(allFramesOk, opt.startEsm
+              ? "Executed multi-frame live Tamriel streaming with Riverwood -> Whiterun landmark teleport"
+              : "Executed all back-to-back multi-pass frames with live mid-run season & time switch");
 
         RawEngineViewer::HeadlessAudit audit{};
         const bool rbOk = viewer.ReadbackHeadlessAudit(&audit);
@@ -1637,6 +1856,18 @@ int main(int argc, char** argv)
                     audit.fireStepMs, audit.waterStepMs,
                     audit.hdrLitPixels, audit.hdrNanInf,
                     audit.dispNonZeroPx, audit.dispMeanLuma, audit.dispStdDevLuma);
+        if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {
+            const auto whStats = viewer.GetTamrielStats();
+            std::printf("       Tamriel Streaming: Riverwood(cells=%u, nifCache=%u, hits=%llu) -> %s(cells=%u, nifCache=%u, hits=%llu, evictions=%u, meshlets=%u)\n",
+                        riverwoodStats.activeCells, riverwoodStats.cachedNifModels,
+                        static_cast<unsigned long long>(riverwoodStats.cacheHits),
+                        viewer.ActiveLandmarkName(), whStats.activeCells, whStats.cachedNifModels,
+                        static_cast<unsigned long long>(whStats.cacheHits),
+                        viewer.TotalTamrielEvictions(), audit.drawnMeshlets);
+            check(riverwoodStats.activeCells >= 1u && teleportedToWhiterun && whStats.activeCells >= 1u &&
+                  viewer.TotalTamrielEvictions() > 0u && audit.drawnMeshlets > 500u,
+                  "RawTamrielWorldStreamer streamed Riverwood 3x3 ring, evicted & reloaded Whiterun 3x3 ring live on GPU");
+        }
         check(rbOk && audit.drawnMeshlets > 0u && audit.activeShards >= 10u && audit.radianceActive && audit.biomesFound == 6u,
               "Rendered terrain + flora + 20-shard destruction + 64^3 NS fire + 4-cascade Radiance GI (6/6 biomes discovered)");
         check(audit.hdrNanInf == 0u, "HDR RGBA16F scene buffer contains 0 NaN/Inf pixels");

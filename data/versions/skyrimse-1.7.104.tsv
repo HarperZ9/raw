@@ -5725,3 +5725,7 @@ fn:Arrow::ComputeGravity	function	0x41FAA0	high	binary disassembly reads fArrowG
 fn:Arrow::ComputeDrawPower	function	0x41FAF0	high	binary disassembly reads fArrowBowMinTime(0x20A73D0=0.8) fBowDrawTime(0x20A7418=1.6667) fArrowMinPower(0x20A7430=0.35) (SkyrimSE 1.7.104)
 fn:Combat::ComputePowerAttackStamina	function	0x41F7E0	high	binary disassembly reads fStaminaAttackWeaponMult(0x20A7EF8=0.1) fStaminaAttackWeaponBase(0x20A7EE0=7.0) fPowerAttackStaminaPenalty(0x20A7F10=5.0) (SkyrimSE 1.7.104)
 fn:Armor::ComputePlayerRatingScale	function	0x41F460	high	binary disassembly reads fArmorRatingPCMax(0x20A7DC0=2.5) fArmorRatingPCBase(0x20A7DD8=1.0) (SkyrimSE 1.7.104)
+fn:Magic::ComputeDualCastTime	function	0x422180	high	binary disassembly reads fMagicDualCastingTimeMult(0x20ABB88=1.5) + fMagicDualCastingTimeBase(0x20ABB70=0.0) (SkyrimSE 1.7.104)
+fn:Magic::ComputeDualCastEffectiveness	function	0x4221A0	high	binary disassembly reads fMagicDualCastingEffectivenessMult(0x20ABBB8=0.0) + fMagicDualCastingEffectivenessBase(0x20ABBA0=2.0) (SkyrimSE 1.7.104)
+fn:Magic::ComputeDualCastCost	function	0x4221C0	high	binary disassembly reads fMagicDualCastingCostMult(0x20ABBE8=1.5) + fMagicDualCastingCostBase(0x20ABBD0=0.0) (SkyrimSE 1.7.104)
+fn:Magic::GetProjectileRangeThresholds	function	0x1535F0	high	binary disassembly reads fMagicBallMaximumDistance(0x2076B58=2000) fMagicBoltMaximumDistance(0x2076B88=2000) fMagicSprayMaximumDistance(0x2076BB8=1000) (SkyrimSE 1.7.104)

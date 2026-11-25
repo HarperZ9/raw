@@ -8,6 +8,7 @@
 
 #include "rt_control.h"
 #include "rt_encounter_balance.h"
+#include "rt_magic_physics.h"
 #include "rt_version.h"
 
 namespace raw::rt {
@@ -366,9 +367,10 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         if (SetSetting(img, refs, kv.k, kv.v)) ++applied;
     }
     const std::string balMsg = ApplyEncounterBalanceGmsts(img, refs);
-    char out[320];
-    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s",
-                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str());
+    const std::string magMsg = InitMagicPhysics(img, refs);
+    char out[512];
+    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s",
+                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str());
     return out;
 }
 
@@ -440,6 +442,7 @@ void WorldSimApplyLivePlanetaryGravity(float gravityMps2) {
 }
 
 void WorldSimRestoreDynamicSettings() {
+    ShutdownMagicPhysics();
     RestoreEncounterBalanceGmsts();
     if (!g_dynGmsts.bound) return;
     if (g_dynGmsts.fBarterMin) *g_dynGmsts.fBarterMin = g_dynGmsts.baseBarterMin;

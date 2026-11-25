@@ -2,6 +2,7 @@
 // RawSubdiv PN-Triangle compute host, and live RawTerrainWorld.hlsl multi-biome graphics renderer.
 // Original work, MIT.
 #include "RawMeshHost.h"
+#include "../materials/RawTextureForge.h"
 #include "raw_mesh_as.h"     // kDxil_raw_mesh_as (dxc, as_6_6)
 #include "raw_mesh_ms.h"     // kDxil_raw_mesh_ms (dxc, ms_6_6)
 #include "raw_subdiv_cs.h"   // kDxil_raw_subdiv_cs (dxc, cs_6_6)
@@ -171,6 +172,15 @@ void RawMeshHost::Shutdown()
         }
     }
     m_retiredChunks.clear();
+    m_pbrUploadAlbedo.Reset();
+    m_pbrUploadNormal.Reset();
+    m_pbrUploadOrmh.Reset();
+    m_pbrAlbedoArray.Reset();
+    m_pbrNormalArray.Reset();
+    m_pbrOrmhArray.Reset();
+    m_pbrAtlasPendingUpload = false;
+    m_pbrAtlasUploaded = false;
+    m_pbrUploadDoneFence = 0;
     m_terrainDepth.Reset();
     m_dummyAtlas.Reset();
     m_terrainRtvHeap.Reset();
@@ -283,7 +293,9 @@ bool RawMeshHost::Init(ID3D12Device* dev, std::string* outErr)
     // 3. Live RawTerrainWorld.hlsl Graphics Renderer:
     //    Root signature: b0 (LightUniform CBV), b1 (TerrainDrawCB CBV),
     //                    t0 (TerrainMeshlets SRV), t1 (TerrainVertices SRV), t2 (TerrainIndices SRV),
-    //                    DescriptorTable(t3 SceneDepth + t4 ShadowAtlas, PS visibility).
+    //                    DescriptorTable[5](t3 SceneDepth + t4 ShadowAtlas, PS visibility),
+    //                    DescriptorTable[6](t5 g_pbrAlbedo + t6 g_pbrNormal + t7 g_pbrOrmh, PS visibility),
+    //                    StaticSampler s0 (Anisotropic Wrap, PS visibility).
     {
         D3D12_DESCRIPTOR_RANGE texRange{};
         texRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -292,7 +304,14 @@ bool RawMeshHost::Init(ID3D12Device* dev, std::string* outErr)
         texRange.RegisterSpace = 0;
         texRange.OffsetInDescriptorsFromTableStart = 0;
 
-        D3D12_ROOT_PARAMETER tp[6]{};
+        D3D12_DESCRIPTOR_RANGE pbrRange{};
+        pbrRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        pbrRange.NumDescriptors = 3; // t5 = g_pbrAlbedo, t6 = g_pbrNormal, t7 = g_pbrOrmh
+        pbrRange.BaseShaderRegister = 5;
+        pbrRange.RegisterSpace = 0;
+        pbrRange.OffsetInDescriptorsFromTableStart = 0;
+
+        D3D12_ROOT_PARAMETER tp[7]{};
         tp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; tp[0].Descriptor = {0, 0}; tp[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         tp[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; tp[1].Descriptor = {1, 0}; tp[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         tp[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; tp[2].Descriptor = {0, 0}; tp[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -301,8 +320,26 @@ bool RawMeshHost::Init(ID3D12Device* dev, std::string* outErr)
         tp[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         tp[5].DescriptorTable = {1, &texRange};
         tp[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        tp[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        tp[6].DescriptorTable = {1, &pbrRange};
+        tp[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-        D3D12_ROOT_SIGNATURE_DESC trsd{6, tp, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+        D3D12_STATIC_SAMPLER_DESC pbrSamp{};
+        pbrSamp.Filter = D3D12_FILTER_ANISOTROPIC;
+        pbrSamp.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        pbrSamp.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        pbrSamp.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        pbrSamp.MipLODBias = 0.0f;
+        pbrSamp.MaxAnisotropy = 8;
+        pbrSamp.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+        pbrSamp.BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+        pbrSamp.MinLOD = 0.0f;
+        pbrSamp.MaxLOD = D3D12_FLOAT32_MAX;
+        pbrSamp.ShaderRegister = 0;
+        pbrSamp.RegisterSpace = 0;
+        pbrSamp.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+        D3D12_ROOT_SIGNATURE_DESC trsd{7, tp, 1, &pbrSamp, D3D12_ROOT_SIGNATURE_FLAG_NONE};
         ComPtr<ID3DBlob> tSig, tErr;
         if (SUCCEEDED(D3D12SerializeRootSignature(&trsd, D3D_ROOT_SIGNATURE_VERSION_1, &tSig, &tErr)) &&
             SUCCEEDED(dev->CreateRootSignature(0, tSig->GetBufferPointer(), tSig->GetBufferSize(), IID_PPV_ARGS(&m_terrainRoot)))) {
@@ -361,7 +398,7 @@ bool RawMeshHost::Init(ID3D12Device* dev, std::string* outErr)
                 m_terrainEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
                 D3D12_DESCRIPTOR_HEAP_DESC rtvD{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
                 D3D12_DESCRIPTOR_HEAP_DESC dsvD{D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
-                D3D12_DESCRIPTOR_HEAP_DESC srvD{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kTerrainRing * 2u, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+                D3D12_DESCRIPTOR_HEAP_DESC srvD{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kTerrainRing * 2u + 3u, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
                 infraOk = (m_terrainEvent != nullptr)
                        && SUCCEEDED(dev->CreateDescriptorHeap(&rtvD, IID_PPV_ARGS(&m_terrainRtvHeap)))
                        && SUCCEEDED(dev->CreateDescriptorHeap(&dsvD, IID_PPV_ARGS(&m_terrainDsvHeap)))
@@ -379,6 +416,10 @@ bool RawMeshHost::Init(ID3D12Device* dev, std::string* outErr)
                 infraOk = SUCCEEDED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &td,
                                                                  D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
                                                                  nullptr, IID_PPV_ARGS(&m_dummyAtlas)));
+            }
+            // Wave 47: Generate & stage 8-slice 128x128 mip-mapped Procedural PBR Texture2DArray Atlas
+            if (infraOk) {
+                infraOk = CreatePbrAtlasResources();
             }
             m_terrainReady = infraOk;
         }
@@ -433,10 +474,176 @@ bool RawMeshHost::EnsureTerrainDepth(UINT width, UINT height)
     return true;
 }
 
+bool RawMeshHost::CreatePbrAtlasResources()
+{
+    if (!m_dev || !m_terrainSrvHeap) return false;
+
+    D3D12_RESOURCE_DESC arrDesc{};
+    arrDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    arrDesc.Width = kPbrAtlasRes;
+    arrDesc.Height = kPbrAtlasRes;
+    arrDesc.DepthOrArraySize = static_cast<UINT16>(kPbrAtlasSlices);
+    arrDesc.MipLevels = static_cast<UINT16>(kPbrAtlasMips);
+    arrDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    arrDesc.SampleDesc.Count = 1;
+    arrDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    arrDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+    D3D12_HEAP_PROPERTIES defaultHeap{D3D12_HEAP_TYPE_DEFAULT};
+    if (FAILED(m_dev->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &arrDesc,
+                                              D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&m_pbrAlbedoArray))) ||
+        FAILED(m_dev->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &arrDesc,
+                                              D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&m_pbrNormalArray))) ||
+        FAILED(m_dev->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &arrDesc,
+                                              D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&m_pbrOrmhArray)))) {
+        return false;
+    }
+
+    UINT numRows[kPbrAtlasSubresources]{};
+    UINT64 rowSizes[kPbrAtlasSubresources]{};
+    UINT64 totalBytes = 0u;
+    m_dev->GetCopyableFootprints(&arrDesc, 0u, kPbrAtlasSubresources, 0u,
+                                 m_pbrFootprints, numRows, rowSizes, &totalBytes);
+    if (totalBytes == 0u) return false;
+
+    if (!CreateUploadBuffer(m_dev.Get(), nullptr, static_cast<size_t>(totalBytes), m_pbrUploadAlbedo) ||
+        !CreateUploadBuffer(m_dev.Get(), nullptr, static_cast<size_t>(totalBytes), m_pbrUploadNormal) ||
+        !CreateUploadBuffer(m_dev.Get(), nullptr, static_cast<size_t>(totalBytes), m_pbrUploadOrmh)) {
+        return false;
+    }
+
+    D3D12_RANGE zeroRange{0, 0};
+    uint8_t* dstAlb = nullptr;
+    uint8_t* dstNrm = nullptr;
+    uint8_t* dstOrm = nullptr;
+    if (FAILED(m_pbrUploadAlbedo->Map(0, &zeroRange, reinterpret_cast<void**>(&dstAlb))) ||
+        FAILED(m_pbrUploadNormal->Map(0, &zeroRange, reinterpret_cast<void**>(&dstNrm))) ||
+        FAILED(m_pbrUploadOrmh->Map(0, &zeroRange, reinterpret_cast<void**>(&dstOrm)))) {
+        return false;
+    }
+
+    bool genOk = true;
+    for (uint32_t slice = 0u; slice < kPbrAtlasSlices && genOk; ++slice) {
+        raw::materials::ProceduralPbrTextureSet set;
+        const auto kind = static_cast<raw::materials::ProceduralTextureKind>(slice);
+        if (!raw::materials::GenerateProceduralPbrTextureSet(kind, kPbrAtlasRes, 202647u + slice * 131u, &set) ||
+            set.albedo.MipCount() < kPbrAtlasMips ||
+            set.normal.MipCount() < kPbrAtlasMips ||
+            set.ormh.MipCount() < kPbrAtlasMips) {
+            genOk = false;
+            break;
+        }
+        for (uint32_t mip = 0u; mip < kPbrAtlasMips; ++mip) {
+            const uint32_t subIdx = slice * kPbrAtlasMips + mip;
+            const auto& fp = m_pbrFootprints[subIdx];
+            const uint32_t w = set.albedo.mips[mip].width;
+            const uint32_t h = set.albedo.mips[mip].height;
+            const size_t srcRowBytes = size_t(w) * 4u;
+            const uint8_t* sAlb = set.albedo.mips[mip].rgba8.data();
+            const uint8_t* sNrm = set.normal.mips[mip].rgba8.data();
+            const uint8_t* sOrm = set.ormh.mips[mip].rgba8.data();
+            uint8_t* dAlb = dstAlb + fp.Offset;
+            uint8_t* dNrm = dstNrm + fp.Offset;
+            uint8_t* dOrm = dstOrm + fp.Offset;
+            for (uint32_t y = 0u; y < h; ++y) {
+                const size_t dstOff = size_t(y) * fp.Footprint.RowPitch;
+                const size_t srcOff = size_t(y) * srcRowBytes;
+                std::memcpy(dAlb + dstOff, sAlb + srcOff, srcRowBytes);
+                std::memcpy(dNrm + dstOff, sNrm + srcOff, srcRowBytes);
+                // Swizzle RawTextureForge (R=Rough, G=AO, B=Height, A=Metallic/Extra)
+                // -> GPU ORMH standard layout (R=AO, G=Roughness, B=Metallic/Extra, A=Height):
+                const uint8_t* rowIn = sOrm + srcOff;
+                uint8_t* rowOut = dOrm + dstOff;
+                for (uint32_t x = 0u; x < w; ++x) {
+                    const size_t p = size_t(x) * 4u;
+                    rowOut[p + 0u] = rowIn[p + 1u]; // R = AO
+                    rowOut[p + 1u] = rowIn[p + 0u]; // G = Roughness
+                    rowOut[p + 2u] = rowIn[p + 3u]; // B = Metallic / Extra
+                    rowOut[p + 3u] = rowIn[p + 2u]; // A = Height
+                }
+            }
+        }
+    }
+
+    m_pbrUploadAlbedo->Unmap(0, nullptr);
+    m_pbrUploadNormal->Unmap(0, nullptr);
+    m_pbrUploadOrmh->Unmap(0, nullptr);
+    if (!genOk) return false;
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+    srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Texture2DArray.MostDetailedMip = 0;
+    srvDesc.Texture2DArray.MipLevels = kPbrAtlasMips;
+    srvDesc.Texture2DArray.FirstArraySlice = 0;
+    srvDesc.Texture2DArray.ArraySize = kPbrAtlasSlices;
+    srvDesc.Texture2DArray.PlaneSlice = 0;
+    srvDesc.Texture2DArray.ResourceMinLODClamp = 0.0f;
+
+    D3D12_CPU_DESCRIPTOR_HANDLE pbrCpu = m_terrainSrvHeap->GetCPUDescriptorHandleForHeapStart();
+    pbrCpu.ptr += SIZE_T(kPbrSrvBase) * m_srvStep;
+    m_dev->CreateShaderResourceView(m_pbrAlbedoArray.Get(), &srvDesc, pbrCpu);
+    pbrCpu.ptr += m_srvStep;
+    m_dev->CreateShaderResourceView(m_pbrNormalArray.Get(), &srvDesc, pbrCpu);
+    pbrCpu.ptr += m_srvStep;
+    m_dev->CreateShaderResourceView(m_pbrOrmhArray.Get(), &srvDesc, pbrCpu);
+
+    m_pbrAtlasPendingUpload = true;
+    m_pbrAtlasUploaded = false;
+    m_pbrUploadDoneFence = 0;
+    return true;
+}
+
+void RawMeshHost::RecordPbrAtlasUpload(ID3D12GraphicsCommandList* cmd)
+{
+    if (!m_pbrAtlasPendingUpload || !cmd || !m_pbrAlbedoArray || !m_pbrNormalArray || !m_pbrOrmhArray ||
+        !m_pbrUploadAlbedo || !m_pbrUploadNormal || !m_pbrUploadOrmh) {
+        return;
+    }
+
+    auto copyArray = [&](ID3D12Resource* dstTex, ID3D12Resource* srcBuf) {
+        for (uint32_t sub = 0u; sub < kPbrAtlasSubresources; ++sub) {
+            D3D12_TEXTURE_COPY_LOCATION dstLoc{};
+            dstLoc.pResource = dstTex;
+            dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            dstLoc.SubresourceIndex = sub;
+
+            D3D12_TEXTURE_COPY_LOCATION srcLoc{};
+            srcLoc.pResource = srcBuf;
+            srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            srcLoc.PlacedFootprint = m_pbrFootprints[sub];
+
+            cmd->CopyTextureRegion(&dstLoc, 0u, 0u, 0u, &srcLoc, nullptr);
+        }
+    };
+
+    copyArray(m_pbrAlbedoArray.Get(), m_pbrUploadAlbedo.Get());
+    copyArray(m_pbrNormalArray.Get(), m_pbrUploadNormal.Get());
+    copyArray(m_pbrOrmhArray.Get(), m_pbrUploadOrmh.Get());
+
+    D3D12_RESOURCE_BARRIER barriers[3]{};
+    barriers[0] = TransitionBarrier(m_pbrAlbedoArray.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    barriers[1] = TransitionBarrier(m_pbrNormalArray.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    barriers[2] = TransitionBarrier(m_pbrOrmhArray.Get(),   D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    cmd->ResourceBarrier(3, barriers);
+
+    m_pbrAtlasPendingUpload = false;
+    m_pbrAtlasUploaded = true;
+    m_pbrUploadDoneFence = m_terrainFenceVal + 1u;
+}
+
 void RawMeshHost::CollectRetiredChunks()
 {
-    if (m_retiredChunks.empty() || !m_terrainFence) return;
+    if (!m_terrainFence) return;
     const uint64_t done = m_terrainFence->GetCompletedValue();
+    if (m_pbrUploadDoneFence > 0u && done >= m_pbrUploadDoneFence) {
+        m_pbrUploadAlbedo.Reset();
+        m_pbrUploadNormal.Reset();
+        m_pbrUploadOrmh.Reset();
+        m_pbrUploadDoneFence = 0u;
+    }
+    if (m_retiredChunks.empty()) return;
     m_retiredChunks.erase(
         std::remove_if(m_retiredChunks.begin(), m_retiredChunks.end(),
                        [done](const auto& item) { return item.first <= done; }),
@@ -553,6 +760,9 @@ bool RawMeshHost::ExecuteTerrainPass(ID3D12CommandQueue* queue,
         return false;
     }
 
+    // Upload the 8-slice 128x128 mip-mapped Procedural PBR Texture2DArray atlas on the first pass (COPY_DEST -> PS_SRV).
+    RecordPbrAtlasUpload(m_terrainList.Get());
+
     // Upload LightUniform (cbuffer P at b0) into this ring slot.
     std::memcpy(m_terrainLightCbMap[slot], lightUniformData, lightUniformBytes);
 
@@ -602,8 +812,12 @@ bool RawMeshHost::ExecuteTerrainPass(ID3D12CommandQueue* queue,
     ComPtr<ID3D12GraphicsCommandList6> cmd6;
     const bool useMs = (m_terrainMsPso != nullptr) && SUCCEEDED(m_terrainList.As(&cmd6));
     m_terrainList->SetPipelineState(useMs ? m_terrainMsPso.Get() : m_terrainVsPso.Get());
+    D3D12_GPU_DESCRIPTOR_HANDLE pbrSrvGpu = m_terrainSrvHeap->GetGPUDescriptorHandleForHeapStart();
+    pbrSrvGpu.ptr += UINT64(kPbrSrvBase) * m_srvStep;
+
     m_terrainList->SetGraphicsRootConstantBufferView(0, m_terrainLightCb[slot]->GetGPUVirtualAddress());
     m_terrainList->SetGraphicsRootDescriptorTable(5, srvGpu);
+    m_terrainList->SetGraphicsRootDescriptorTable(6, pbrSrvGpu);
     if (!useMs) {
         m_terrainList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     }

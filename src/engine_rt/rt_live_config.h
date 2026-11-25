@@ -39,6 +39,7 @@ struct LiveEngineConfig {
     // [Diagnostics]
     uint32_t statusDumpHotkeyVK      = 121u;  // VK_F10 (0x79)
     uint32_t hotReloadIntervalFrames = 60u;   // [10 .. 600] frames
+    bool     crashForensicsEnabled   = true;  // VEH fatal crash dump & 7,376-class RTTI symbolizer (0/1, default 1)
 };
 
 LiveEngineConfig DefaultLiveEngineConfig();

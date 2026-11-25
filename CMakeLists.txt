@@ -674,13 +674,22 @@ if(RAW_ENGINE_DIR)
         DEPENDS ${RAW_RC_HLSL} ${RAW_RC_SCREEN_HLSL}
         COMMENT "dxc: GPU 4-Cascade Penumbra-Exact Radiance Cascades GI + Screen Prep/Apply SM${RAW_SHADER_MODEL} -> DXIL headers"
         VERBATIM)
+    set(RAW_XPBD_HLSL ${RAW_SHARE_HLSL}/RawXpbdClothSim.hlsl)
+    set(RAW_XPBD_HEADERS ${RAW_ENGINE_GEN}/raw_xpbd_cloth_cs.h)
+    add_custom_command(
+        OUTPUT ${RAW_XPBD_HEADERS}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_xpbd_step ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_xpbd_cloth_cs.h -Vn kDxil_raw_xpbd_cloth ${RAW_XPBD_HLSL}
+        DEPENDS ${RAW_XPBD_HLSL}
+        COMMENT "dxc: GPU XPBD Multi-Chain Soft-Body/Hair/Bush-Bone Solver SM${RAW_SHADER_MODEL} -> DXIL header"
+        VERBATIM)
     target_sources(raw_d3d12_bridge PRIVATE ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h ${RAW_ENGINE_GEN}/raw_subdiv_cs.h
                    ${RAW_ENGINE_GEN}/raw_terrain_as.h ${RAW_ENGINE_GEN}/raw_terrain_ms.h ${RAW_ENGINE_GEN}/raw_terrain_vs.h ${RAW_ENGINE_GEN}/raw_terrain_ps.h
-                   ${RAW_FLUID_HEADERS} ${RAW_RC_HEADERS}
+                   ${RAW_FLUID_HEADERS} ${RAW_RC_HEADERS} ${RAW_XPBD_HEADERS}
                    src/d3d12_bridge/RawAssetBridge.cpp src/d3d12_bridge/RawTextureBridge.cpp src/d3d12_bridge/RawProceduralLib.cpp
-                   src/d3d12_bridge/RawMeshHost.cpp src/d3d12_bridge/RawFluidSimHost.cpp src/d3d12_bridge/RawFluidCompositeHost.cpp src/d3d12_bridge/RawRadianceHost.cpp src/d3d12_bridge/RawOverrideRegistry.cpp src/d3d12_bridge/RawBindlessHeap.cpp
+                   src/d3d12_bridge/RawMeshHost.cpp src/d3d12_bridge/RawFluidSimHost.cpp src/d3d12_bridge/RawFluidCompositeHost.cpp src/d3d12_bridge/RawRadianceHost.cpp src/d3d12_bridge/RawXpbdSimHost.cpp src/d3d12_bridge/RawOverrideRegistry.cpp src/d3d12_bridge/RawBindlessHeap.cpp
                    src/d3d12_bridge/RawAsyncCompute.cpp src/d3d12_bridge/RawIndirectBatch.cpp src/d3d12_bridge/RawAssetStream.cpp
-                   src/worldgen/RawTerrainGen.cpp src/worldgen/RawHydrologyGen.cpp src/worldgen/RawBiomeWorld.cpp src/worldgen/RawMeshPipeline.cpp src/worldgen/RawFloraEngine.cpp src/worldgen/RawWeatherSim.cpp src/worldgen/RawWorldShowcase.cpp src/worldgen/RawEsmWorldLoader.cpp src/worldgen/RawEsmModelResolver.cpp src/worldgen/RawTamrielWorldStreamer.cpp src/worldgen/RawBsaArchive.cpp src/worldgen/RawNifLoader.cpp src/worldgen/RawDdsDecoder.cpp src/worldgen/RawDestructionEngine.cpp
+                   src/worldgen/RawTerrainGen.cpp src/worldgen/RawHydrologyGen.cpp src/worldgen/RawBiomeWorld.cpp src/worldgen/RawMeshPipeline.cpp src/worldgen/RawFloraEngine.cpp src/worldgen/RawWeatherSim.cpp src/worldgen/RawWorldShowcase.cpp src/worldgen/RawEsmWorldLoader.cpp src/worldgen/RawEsmModelResolver.cpp src/worldgen/RawTamrielWorldStreamer.cpp src/worldgen/RawWorldPhysics.cpp src/worldgen/RawBsaArchive.cpp src/worldgen/RawNifLoader.cpp src/worldgen/RawDdsDecoder.cpp src/worldgen/RawDestructionEngine.cpp
                    src/engine_rt/raw_job_system.cpp
                    src/materials/RawMaterialLib.cpp src/materials/RawAssetForge.cpp src/materials/RawTextureForge.cpp
                    src/assets/RawOverrideRegistry.cpp src/assets/RawAssetScaffold.cpp)
@@ -699,6 +708,7 @@ if(RAW_ENGINE_DIR)
         src/d3d12_bridge/RawMeshHost.cpp
         src/d3d12_bridge/RawFluidSimHost.cpp
         src/d3d12_bridge/RawFluidCompositeHost.cpp
+        src/materials/RawTextureForge.cpp
         src/worldgen/RawTerrainGen.cpp
         src/worldgen/RawBiomeWorld.cpp
         src/worldgen/RawMeshPipeline.cpp
@@ -709,7 +719,7 @@ if(RAW_ENGINE_DIR)
         ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h ${RAW_ENGINE_GEN}/raw_subdiv_cs.h
         ${RAW_ENGINE_GEN}/raw_terrain_as.h ${RAW_ENGINE_GEN}/raw_terrain_ms.h ${RAW_ENGINE_GEN}/raw_terrain_vs.h ${RAW_ENGINE_GEN}/raw_terrain_ps.h
         ${RAW_FLUID_HEADERS})
-    target_include_directories(test_full_frame_warp PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge ${CMAKE_CURRENT_SOURCE_DIR}/src/worldgen ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_rt)
+    target_include_directories(test_full_frame_warp PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge ${CMAKE_CURRENT_SOURCE_DIR}/src/materials ${CMAKE_CURRENT_SOURCE_DIR}/src/worldgen ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_rt)
     target_compile_definitions(test_full_frame_warp PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_link_libraries(test_full_frame_warp PRIVATE d3d12 dxgi dxguid)
     set_target_properties(test_full_frame_warp PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
@@ -718,11 +728,27 @@ if(RAW_ENGINE_DIR)
     target_compile_definitions(test_radiance_cascades PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_link_libraries(test_radiance_cascades PRIVATE d3d12 dxgi dxguid)
     set_target_properties(test_radiance_cascades PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
+    add_executable(test_xpbd_gpu tests/test_xpbd_gpu.cpp src/d3d12_bridge/RawXpbdSimHost.cpp ${RAW_XPBD_HEADERS})
+    target_include_directories(test_xpbd_gpu PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge)
+    target_compile_definitions(test_xpbd_gpu PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(test_xpbd_gpu PRIVATE d3d12 dxgi dxguid)
+    set_target_properties(test_xpbd_gpu PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
+    add_executable(test_texture_atlas_gpu
+        tests/test_texture_atlas_gpu.cpp
+        src/d3d12_bridge/RawMeshHost.cpp
+        src/materials/RawTextureForge.cpp
+        ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h ${RAW_ENGINE_GEN}/raw_subdiv_cs.h
+        ${RAW_ENGINE_GEN}/raw_terrain_as.h ${RAW_ENGINE_GEN}/raw_terrain_ms.h ${RAW_ENGINE_GEN}/raw_terrain_vs.h ${RAW_ENGINE_GEN}/raw_terrain_ps.h)
+    target_include_directories(test_texture_atlas_gpu PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge ${CMAKE_CURRENT_SOURCE_DIR}/src/materials ${CMAKE_CURRENT_SOURCE_DIR}/src/worldgen)
+    target_compile_definitions(test_texture_atlas_gpu PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(test_texture_atlas_gpu PRIVATE d3d12 dxgi dxguid)
+    set_target_properties(test_texture_atlas_gpu PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
     add_executable(raw_sandbox_render
         tools/raw_sandbox_render.cpp
         src/d3d12_bridge/RawMeshHost.cpp
         src/d3d12_bridge/RawFluidSimHost.cpp
         src/d3d12_bridge/RawFluidCompositeHost.cpp
+        src/materials/RawTextureForge.cpp
         src/worldgen/RawTerrainGen.cpp
         src/worldgen/RawHydrologyGen.cpp
         src/worldgen/RawBiomeWorld.cpp
@@ -739,7 +765,7 @@ if(RAW_ENGINE_DIR)
         ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h ${RAW_ENGINE_GEN}/raw_subdiv_cs.h
         ${RAW_ENGINE_GEN}/raw_terrain_as.h ${RAW_ENGINE_GEN}/raw_terrain_ms.h ${RAW_ENGINE_GEN}/raw_terrain_vs.h ${RAW_ENGINE_GEN}/raw_terrain_ps.h
         ${RAW_FLUID_HEADERS})
-    target_include_directories(raw_sandbox_render PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge ${CMAKE_CURRENT_SOURCE_DIR}/src/worldgen ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_rt)
+    target_include_directories(raw_sandbox_render PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge ${CMAKE_CURRENT_SOURCE_DIR}/src/materials ${CMAKE_CURRENT_SOURCE_DIR}/src/worldgen ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_rt)
     target_compile_definitions(raw_sandbox_render PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_link_libraries(raw_sandbox_render PRIVATE d3d12 dxgi dxguid)
     set_target_properties(raw_sandbox_render PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tools)
@@ -761,6 +787,7 @@ if(RAW_ENGINE_DIR)
         src/d3d12_bridge/RawFluidSimHost.cpp
         src/d3d12_bridge/RawFluidCompositeHost.cpp
         src/d3d12_bridge/RawRadianceHost.cpp
+        src/materials/RawTextureForge.cpp
         src/audio/RawAudioDsp.cpp
         src/audio/RawAudioOutput.cpp
         src/worldgen/RawTerrainGen.cpp
@@ -773,6 +800,7 @@ if(RAW_ENGINE_DIR)
         src/worldgen/RawDestructionEngine.cpp
         src/worldgen/RawEsmWorldLoader.cpp
         src/worldgen/RawEsmModelResolver.cpp
+        src/worldgen/RawTamrielWorldStreamer.cpp
         src/worldgen/RawBsaArchive.cpp
         src/worldgen/RawNifLoader.cpp
         src/engine_rt/raw_job_system.cpp
@@ -781,10 +809,37 @@ if(RAW_ENGINE_DIR)
         ${RAW_FLUID_HEADERS}
         ${RAW_RC_HEADERS}
         ${RAW_AGX_DISPLAY_HEADERS})
-    target_include_directories(raw_engine_viewer PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge ${CMAKE_CURRENT_SOURCE_DIR}/src/worldgen ${CMAKE_CURRENT_SOURCE_DIR}/src/audio ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_rt)
+    target_include_directories(raw_engine_viewer PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge ${CMAKE_CURRENT_SOURCE_DIR}/src/materials ${CMAKE_CURRENT_SOURCE_DIR}/src/worldgen ${CMAKE_CURRENT_SOURCE_DIR}/src/audio ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_rt)
     target_compile_definitions(raw_engine_viewer PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_link_libraries(raw_engine_viewer PRIVATE d3d12 dxgi dxguid user32)
     set_target_properties(raw_engine_viewer PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tools)
+    add_executable(raw_bench_suite
+        tools/raw_bench_suite.cpp
+        src/d3d12_bridge/RawFluidSimHost.cpp
+        src/d3d12_bridge/RawRadianceHost.cpp
+        src/materials/RawTextureForge.cpp
+        src/audio/RawAudioDsp.cpp
+        src/worldgen/RawDestructionEngine.cpp
+        src/worldgen/RawFloraEngine.cpp
+        src/worldgen/RawHydrologyGen.cpp
+        src/worldgen/RawTerrainGen.cpp
+        src/worldgen/RawBiomeWorld.cpp
+        src/worldgen/RawMeshPipeline.cpp
+        src/worldgen/RawWeatherSim.cpp
+        src/worldgen/RawWorldShowcase.cpp
+        src/worldgen/RawEsmWorldLoader.cpp
+        src/worldgen/RawEsmModelResolver.cpp
+        src/worldgen/RawTamrielWorldStreamer.cpp
+        src/worldgen/RawBsaArchive.cpp
+        src/worldgen/RawNifLoader.cpp
+        src/pipeline/RawAssetValidator.cpp
+        src/engine_rt/raw_job_system.cpp
+        ${RAW_FLUID_HEADERS}
+        ${RAW_RC_HEADERS})
+    target_include_directories(raw_bench_suite PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge ${CMAKE_CURRENT_SOURCE_DIR}/src/materials ${CMAKE_CURRENT_SOURCE_DIR}/src/audio ${CMAKE_CURRENT_SOURCE_DIR}/src/worldgen ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(raw_bench_suite PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(raw_bench_suite PRIVATE d3d12 dxgi dxguid)
+    set_target_properties(raw_bench_suite PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tools)
     target_include_directories(raw_d3d12_bridge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/worldgen ${CMAKE_CURRENT_SOURCE_DIR}/src/materials ${CMAKE_CURRENT_SOURCE_DIR}/src/assets)
     set(RAW_RTSHADOW_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtShadow.hlsl)
     add_custom_command(
@@ -987,6 +1042,8 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_live_config.cpp
         src/engine_rt/rt_audio_bridge.cpp
         src/engine_rt/rt_encounter_balance.cpp
+        src/engine_rt/rt_magic_physics.cpp
+        src/engine_rt/rt_crash_forensics.cpp
         src/audio/RawAudioDsp.cpp
         src/audio/RawAudioOutput.cpp
         src/engine_rt/raw_slab_allocator.cpp
@@ -1049,6 +1106,8 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_live_config.cpp
         src/engine_rt/rt_audio_bridge.cpp
         src/engine_rt/rt_encounter_balance.cpp
+        src/engine_rt/rt_magic_physics.cpp
+        src/engine_rt/rt_crash_forensics.cpp
         src/engine_rt/raw_slab_allocator.cpp
         src/engine_rt/raw_job_system.cpp
         src/engine_rt/rt_softbody.cpp
@@ -1064,6 +1123,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/worldgen/RawEsmWorldLoader.cpp
         src/worldgen/RawEsmModelResolver.cpp
         src/worldgen/RawTamrielWorldStreamer.cpp
+        src/worldgen/RawWorldPhysics.cpp
         src/worldgen/RawBsaArchive.cpp
         src/worldgen/RawNifLoader.cpp
         src/worldgen/RawDdsDecoder.cpp
@@ -1088,6 +1148,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         tests/test_esm_world_loader.cpp
         tests/test_esm_model_resolver.cpp
         tests/test_tamriel_streamer.cpp
+        tests/test_world_physics.cpp
         tests/test_combat_impact.cpp
         tests/test_bsa_archive.cpp
         tests/test_core_runtime.cpp
@@ -1099,6 +1160,8 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         tests/test_movement_combat.cpp
         tests/test_live_config.cpp
         tests/test_encounter_balance.cpp
+        tests/test_magic_physics.cpp
+        tests/test_crash_forensics.cpp
         tests/test_audio_dsp.cpp
         tests/test_audio_output.cpp
         tests/test_texture_forge.cpp)
@@ -1106,7 +1169,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
     target_include_directories(ce_runtime_check PRIVATE src/engine_rt src/d3d12_bridge src/ce_runtime src/worldgen src/audio src/materials src/assets src/pipeline src/ui "${RAW_ZYDIS_ROOT}/include")
-    target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD RAW_SIM_PURE_TEST=1 RAW_WEATHER_SIM_NO_MAIN=1 RAW_GAMEPLAY_MECHANICS_NO_MAIN=1 RAW_STEALTH_SURVIVAL_NO_MAIN=1 RAW_COMBAT_IMPACT_NO_MAIN=1 RAW_ECONOMY_LEDGER_NO_MAIN=1 RAW_MOVEMENT_COMBAT_NO_MAIN=1 RAW_LIVE_CONFIG_NO_MAIN=1 RAW_ENCOUNTER_BALANCE_NO_MAIN=1)
+    target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD RAW_SIM_PURE_TEST=1 RAW_WEATHER_SIM_NO_MAIN=1 RAW_GAMEPLAY_MECHANICS_NO_MAIN=1 RAW_STEALTH_SURVIVAL_NO_MAIN=1 RAW_COMBAT_IMPACT_NO_MAIN=1 RAW_ECONOMY_LEDGER_NO_MAIN=1 RAW_MOVEMENT_COMBAT_NO_MAIN=1 RAW_LIVE_CONFIG_NO_MAIN=1 RAW_ENCOUNTER_BALANCE_NO_MAIN=1 RAW_MAGIC_PHYSICS_NO_MAIN=1)
     target_link_libraries(ce_runtime_check PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB} windowscodecs ole32 dxgi)
 
     # raw_forge_cli: standalone C++23 first-principles authoring, batch baking & validation CLI

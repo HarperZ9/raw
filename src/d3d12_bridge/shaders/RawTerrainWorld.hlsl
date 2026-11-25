@@ -50,6 +50,13 @@ StructuredBuffer<TerrainMeshletDesc> TerrainMeshlets : register(t0);
 StructuredBuffer<TerrainVertex>      TerrainVertices : register(t1);
 ByteAddressBuffer                    TerrainIndices  : register(t2);
 Texture2D<float>                     SceneDepth      : register(t3);
+// Wave 47: GPU Procedural PBR Texture2DArray Atlas (8 RawTextureForge materials x 8 mips, 128x128):
+//   Slice 0 = NordicGraniteStrata, 1 = GlacialStratifiedIce, 2 = ForgedBrushedSteel, 3 = BorealPineBark,
+//   4 = HexagonalBasalt, 5 = VolcanicMagmaCrust, 6 = AlpineMossMeadow, 7 = BraidedRiverPebbles.
+Texture2DArray<float4>               g_pbrAlbedo     : register(t5);
+Texture2DArray<float4>               g_pbrNormal     : register(t6);
+Texture2DArray<float4>               g_pbrOrmh       : register(t7);
+SamplerState                         g_pbrSampler    : register(s0);
 
 struct TerrainPayload {
     uint meshletIndices[32];
@@ -213,6 +220,66 @@ TerrainOutVert vs_terrain_main(uint vid : SV_VertexID) {
 }
 
 // ============================================================================
+// Wave 47: Mip-Mapped Tri-Planar GPU Procedural PBR Atlas Sampling (t5..t7, s0)
+// Uses precomputed world-space ddx/ddy derivatives via SampleGrad so anisotropic
+// mipmap selection stays 100% exact inside divergent biome splat branches!
+// ============================================================================
+struct TriPlanarPbrSample {
+    float3 albedoLin;
+    float3 worldNormal;
+    float  ao;
+    float  roughness;
+    float  metallic;
+    float  height;
+};
+
+float3 rawSrgbToLinear(float3 s) {
+    return s * (s * (s * 0.305306011f + 0.682171111f) + 0.012522878f);
+}
+
+TriPlanarPbrSample evalTriPlanarPbrAtlas(float3 absPos, float3 dPosX, float3 dPosY, float3 nUnit,
+                                         float sliceIdx, float tileFreq) {
+    float3 triW = pow(abs(nUnit), 4.0f);
+    triW /= max(triW.x + triW.y + triW.z, 1.0e-5f);
+
+    const float2 uvX = absPos.yz * tileFreq;
+    const float2 uvY = absPos.xz * tileFreq;
+    const float2 uvZ = absPos.xy * tileFreq;
+
+    const float2 dXdx = dPosX.yz * tileFreq, dXdy = dPosY.yz * tileFreq;
+    const float2 dYdx = dPosX.xz * tileFreq, dYdy = dPosY.xz * tileFreq;
+    const float2 dZdx = dPosX.xy * tileFreq, dZdy = dPosY.xy * tileFreq;
+
+    const float3 albX = rawSrgbToLinear(g_pbrAlbedo.SampleGrad(g_pbrSampler, float3(uvX, sliceIdx), dXdx, dXdy).rgb);
+    const float3 albY = rawSrgbToLinear(g_pbrAlbedo.SampleGrad(g_pbrSampler, float3(uvY, sliceIdx), dYdx, dYdy).rgb);
+    const float3 albZ = rawSrgbToLinear(g_pbrAlbedo.SampleGrad(g_pbrSampler, float3(uvZ, sliceIdx), dZdx, dZdy).rgb);
+
+    const float3 tnX = g_pbrNormal.SampleGrad(g_pbrSampler, float3(uvX, sliceIdx), dXdx, dXdy).xyz * 2.0f - 1.0f;
+    const float3 tnY = g_pbrNormal.SampleGrad(g_pbrSampler, float3(uvY, sliceIdx), dYdx, dYdy).xyz * 2.0f - 1.0f;
+    const float3 tnZ = g_pbrNormal.SampleGrad(g_pbrSampler, float3(uvZ, sliceIdx), dZdx, dZdy).xyz * 2.0f - 1.0f;
+
+    // ORMH layout uploaded by RawMeshHost: R=AO, G=Roughness, B=Metallic/Extra, A=Height
+    const float4 ormX = g_pbrOrmh.SampleGrad(g_pbrSampler, float3(uvX, sliceIdx), dXdx, dXdy);
+    const float4 ormY = g_pbrOrmh.SampleGrad(g_pbrSampler, float3(uvY, sliceIdx), dYdx, dYdy);
+    const float4 ormZ = g_pbrOrmh.SampleGrad(g_pbrSampler, float3(uvZ, sliceIdx), dZdx, dZdy);
+    const float4 orm  = ormX * triW.x + ormY * triW.y + ormZ * triW.z;
+
+    // Whiteout tri-planar world normal blend (seam-free across all signed axis faces):
+    const float3 wNx = float3(abs(tnX.z) * nUnit.x, tnX.x + nUnit.y, tnX.y + nUnit.z);
+    const float3 wNy = float3(tnY.x + nUnit.x, abs(tnY.z) * nUnit.y, tnY.y + nUnit.z);
+    const float3 wNz = float3(tnZ.x + nUnit.x, tnZ.y + nUnit.y, abs(tnZ.z) * nUnit.z);
+
+    TriPlanarPbrSample res;
+    res.albedoLin   = albX * triW.x + albY * triW.y + albZ * triW.z;
+    res.worldNormal = normalize(wNx * triW.x + wNy * triW.y + wNz * triW.z);
+    res.ao          = orm.r;
+    res.roughness   = orm.g;
+    res.metallic    = orm.b;
+    res.height      = orm.a;
+    return res;
+}
+
+// ============================================================================
 // Tri-Planar Geological Strata & Detail Relief (Zero UV Cliff Stretching!)
 // ============================================================================
 struct TriPlanarStrata {
@@ -314,6 +381,13 @@ float4 ps_terrain_main(TerrainOutVert inp, bool isFrontFace : SV_IsFrontFace) : 
     const float detailSc  = chunkOriginAndScale.w > 0.001f ? chunkOriginAndScale.w : 1.0f;
     const float matTag    = inp.meta.w;
 
+    // Precompute screen-space world position derivatives OUTSIDE divergent branches so SampleGrad
+    // selects exact hardware anisotropic mip levels across every biome splat and prop class!
+    const float3 dPosX = ddx(inp.absWorldPos);
+    const float3 dPosY = ddy(inp.absWorldPos);
+    const float  pbrDistW = 1.0f - smoothstep(2600.0f, 11000.0f, viewDist);
+    const float  pbrFreq  = 0.0068f * detailSc; // ~147 world units (~2.1m) per seamless tile repeat
+
     const TriPlanarStrata strata = evalTriPlanarStrata(inp.absWorldPos, nGeo, detailSc);
     float3 N = normalize(nGeo + strata.normalPerturb * 0.65f);
 
@@ -323,10 +397,11 @@ float4 ps_terrain_main(TerrainOutVert inp, bool isFrontFace : SV_IsFrontFace) : 
     float3 specAdd = 0.0f.xxx;
     float3 emissive = 0.0f.xxx;
     float  foliageMask = 0.0f;
+    float  atlasAo = 1.0f;
 
     // Dedicated Procedural 3D Conifer Bark (meta.w ~ 10.0) & Deep Boreal Pine Needles (meta.w ~ 11.0)
     if (matTag > 9.5f && matTag < 10.5f) {
-        // Gnarled furrowed Nordic spruce/cedar trunk & flared roots
+        // Gnarled furrowed Nordic spruce/cedar trunk & flared roots -> Slice 3 (BorealPineBark)
         const float4 barkF = rawNoise3Grad(float3(inp.absWorldPos.xy * 0.065f, inp.absWorldPos.z * 0.014f));
         const float4 barkD = rawNoise3Grad(inp.absWorldPos * 0.22f);
         const float furrow = smoothstep(0.22f, 0.78f, barkF.x * 0.65f + barkD.x * 0.35f);
@@ -338,6 +413,13 @@ float4 ps_terrain_main(TerrainOutVert inp, bool isFrontFace : SV_IsFrontFace) : 
         rough  = lerp(0.92f, 0.78f, furrow);
         F0     = float3(0.032f, 0.030f, 0.028f);
         N      = normalize(nGeo + barkF.yzw * 0.32f + barkD.yzw * 0.16f);
+        if (pbrDistW > 0.01f) {
+            const TriPlanarPbrSample barkTex = evalTriPlanarPbrAtlas(inp.absWorldPos, dPosX, dPosY, nGeo, 3.0f, pbrFreq * 1.95f);
+            albedo  = lerp(albedo, lerp(albedo * 0.55f + barkTex.albedoLin * 0.45f, barkTex.albedoLin, 0.38f), pbrDistW * 0.78f);
+            rough   = lerp(rough, barkTex.roughness, pbrDistW * 0.55f);
+            N       = normalize(lerp(N, barkTex.worldNormal, pbrDistW * 0.58f));
+            atlasAo = lerp(1.0f, barkTex.ao, pbrDistW * 0.55f);
+        }
     } else if (matTag >= 10.5f) {
         // Deep saturated boreal conifer pine needle clusters (Crimson Desert / redwood target: rich evergreen, NEVER pale white!)
         const float4 needleN = rawNoise3Grad(inp.absWorldPos * 0.14f);
@@ -356,6 +438,14 @@ float4 ps_terrain_main(TerrainOutVert inp, bool isFrontFace : SV_IsFrontFace) : 
         F0     = float3(0.028f, 0.032f, 0.026f);
         N      = normalize(nGeo + needleN.yzw * 0.36f + twigN.yzw * 0.18f);
         foliageMask = 1.0f - snowW * 0.8f;
+        if (pbrDistW > 0.01f) {
+            // Slice 6 (AlpineMossMeadow) adds tactile organic needle/foliage micro-roughness & AO without lightening evergreen hue!
+            const TriPlanarPbrSample folTex = evalTriPlanarPbrAtlas(inp.absWorldPos, dPosX, dPosY, nGeo, 6.0f, pbrFreq * 2.4f);
+            albedo  = lerp(albedo, albedo * lerp(0.76f, 1.24f, folTex.height), pbrDistW * 0.52f);
+            rough   = lerp(rough, folTex.roughness, pbrDistW * 0.40f);
+            N       = normalize(lerp(N, folTex.worldNormal, pbrDistW * 0.35f));
+            atlasAo = lerp(1.0f, folTex.ao, pbrDistW * 0.45f);
+        }
 
         // Live orbital seasonal phenology (conifer deep boreal evergreen + winter bough snow load & rime;
         // deciduous golden carotenoid -> crimson anthocyanin -> winter abscission):
@@ -371,7 +461,7 @@ float4 ps_terrain_main(TerrainOutVert inp, bool isFrontFace : SV_IsFrontFace) : 
         rough   = lerp(rough, 0.56f, sf.canopySnowCov01 * 0.65f);
         foliageMask *= (1.0f - sf.canopySnowCov01 * 0.75f);
     } else {
-        // Standard 8-channel multi-biome terrain & geological hero props
+        // Standard 8-channel multi-biome terrain, geological hero props & streamed ESM architecture
         float4 s0 = max(inp.splat0, 0.0f.xxxx); // Rock, Snow, Ice, Basalt
         float4 s1 = max(inp.splat1, 0.0f.xxxx); // Magma, Moss, PebbleSand, Crystal
         const float sSum = max(dot(s0, 1.0f.xxxx) + dot(s1, 1.0f.xxxx), 1.0e-5f);
@@ -381,19 +471,40 @@ float4 ps_terrain_main(TerrainOutVert inp, bool isFrontFace : SV_IsFrontFace) : 
         N = normalize(nGeo + strata.normalPerturb * (1.0f - s0.y * 0.55f));
         rough = 0.0f;
         F0 = 0.0f.xxx;
+        float aoAcc = 0.0f;
+        float3 atlasN = N;
 
-        // Ch0: RockGranite (tri-planar sedimentary cliff strata + mineral grain)
+        // Ch0: RockGranite (tri-planar sedimentary cliff strata + Slice 0 NordicGraniteStrata PBR micro-detail)
         if (s0.x > 0.001f) {
-            const float3 rockCol = lerp(float3(0.11f, 0.12f, 0.14f), float3(0.28f, 0.27f, 0.26f), strata.bandVal)
-                                 * (0.84f + 0.32f * strata.grainVal);
+            float3 rockCol = lerp(float3(0.11f, 0.12f, 0.14f), float3(0.28f, 0.27f, 0.26f), strata.bandVal)
+                           * (0.84f + 0.32f * strata.grainVal);
+            float rockRough = lerp(0.84f, 0.66f, strata.grainVal);
+            float rockAo = 1.0f;
+            if (pbrDistW > 0.01f) {
+                const TriPlanarPbrSample tex0 = evalTriPlanarPbrAtlas(inp.absWorldPos, dPosX, dPosY, nGeo, 0.0f, pbrFreq);
+                rockCol   = lerp(rockCol, lerp(rockCol, tex0.albedoLin, 0.58f), pbrDistW);
+                rockRough = lerp(rockRough, tex0.roughness, pbrDistW * 0.65f);
+                rockAo    = lerp(1.0f, tex0.ao, pbrDistW * 0.55f);
+                atlasN    = normalize(lerp(atlasN, tex0.worldNormal, s0.x * pbrDistW * 0.52f));
+            }
             albedo += rockCol * s0.x;
-            rough  += lerp(0.84f, 0.66f, strata.grainVal) * s0.x;
+            rough  += rockRough * s0.x;
             F0     += float3(0.042f, 0.042f, 0.044f) * s0.x;
+            aoAcc  += rockAo * s0.x;
         }
 
-        // Ch1: SnowPack (wind-sculpted sastrugi + static crystalline glints, zero pulse!)
+        // Ch1: SnowPack (wind-sculpted sastrugi + Slice 1 crystalline micro-grain + static sparkle)
         if (s0.y > 0.001f) {
-            const float3 snowCol = lerp(float3(0.64f, 0.72f, 0.82f), float3(0.82f, 0.86f, 0.92f), strata.grainVal);
+            float3 snowCol = lerp(float3(0.64f, 0.72f, 0.82f), float3(0.82f, 0.86f, 0.92f), strata.grainVal);
+            float snowRough = 0.58f;
+            float snowAo = 1.0f;
+            if (pbrDistW > 0.01f) {
+                const TriPlanarPbrSample tex1 = evalTriPlanarPbrAtlas(inp.absWorldPos, dPosX, dPosY, nGeo, 1.0f, pbrFreq * 1.45f);
+                snowCol   *= lerp(1.0f, lerp(0.92f, 1.08f, tex1.height), pbrDistW * 0.50f);
+                snowRough  = lerp(snowRough, lerp(0.46f, 0.68f, tex1.roughness), pbrDistW * 0.45f);
+                snowAo     = lerp(1.0f, lerp(0.88f, 1.04f, tex1.ao), pbrDistW * 0.40f);
+                atlasN     = normalize(lerp(atlasN, tex1.worldNormal, s0.y * pbrDistW * 0.28f));
+            }
             const float3 flakeCell = floor(inp.absWorldPos * 0.42f);
             const float3 fh = rawHash33(flakeCell);
             const float3 flakeN = normalize(N + (fh - 0.5f) * 1.05f);
@@ -401,78 +512,147 @@ float4 ps_terrain_main(TerrainOutVert inp, bool isFrontFace : SV_IsFrontFace) : 
             const float glint = (fh.x > 0.80f) ? pow(saturate(dot(flakeN, H)), 140.0f) * 0.65f : 0.0f;
             const float backSss = pow(saturate(dot(-V, L)), 3.0f) * 0.14f;
             albedo  += snowCol * s0.y;
-            rough   += 0.58f * s0.y;
+            rough   += snowRough * s0.y;
             F0      += float3(0.020f, 0.020f, 0.022f) * s0.y;
             specAdd += sunCol * (glint.xxx + float3(0.34f, 0.58f, 0.84f) * backSss) * s0.y;
+            aoAcc   += snowAo * s0.y;
         }
 
-        // Ch2: GlacialIce (clean stratified IOR 1.31 Snell parallax ice, zero Voronoi honeycomb!)
+        // Ch2: GlacialIce (clean stratified IOR 1.31 Snell parallax ice + Slice 1 GlacialStratifiedIce micro-glaze)
         if (s0.z > 0.001f) {
             float3 iceAlb, iceF0, iceN, iceSpec;
             float  iceRough;
             evalCleanGlacialIce(inp.absWorldPos, nGeo, V, L, sunCol, envCol, s0.y * 0.45f,
                                 iceAlb, iceRough, iceF0, iceN, iceSpec);
+            float iceAo = 1.0f;
+            if (pbrDistW > 0.01f) {
+                const TriPlanarPbrSample texIce = evalTriPlanarPbrAtlas(inp.absWorldPos, dPosX, dPosY, nGeo, 1.0f, pbrFreq * 1.15f);
+                iceAlb   = lerp(iceAlb, lerp(iceAlb, texIce.albedoLin * 1.08f, 0.36f), pbrDistW);
+                iceRough = lerp(iceRough, texIce.roughness, pbrDistW * 0.55f);
+                iceN     = normalize(lerp(iceN, texIce.worldNormal, pbrDistW * 0.42f));
+                iceAo    = lerp(1.0f, lerp(0.88f, 1.06f, texIce.ao), pbrDistW * 0.40f);
+            }
             albedo  += iceAlb * s0.z;
             rough   += iceRough * s0.z;
             F0      += iceF0 * s0.z;
-            N        = normalize(lerp(N, iceN, s0.z * 0.78f));
+            atlasN   = normalize(lerp(atlasN, iceN, s0.z * 0.78f));
             specAdd += iceSpec * s0.z;
+            aoAcc   += iceAo * s0.z;
         }
 
-        // Ch3: BasaltColumn (obsidian-basalt fractured cliffs & dark volcanic shelves)
+        // Ch3: BasaltColumn (obsidian-basalt fractured cliffs + Slice 4 HexagonalBasalt PBR micro-detail)
         if (s0.w > 0.001f) {
             const float4 bGrad = rawNoise3Grad(float3(inp.absWorldPos.xy * 0.016f, inp.absWorldPos.z * 0.004f));
             const float ridge = smoothstep(0.35f, 0.82f, bGrad.x);
-            const float3 basCol = lerp(float3(0.055f, 0.060f, 0.072f), float3(0.135f, 0.142f, 0.162f), ridge * 0.65f + strata.grainVal * 0.35f);
+            float3 basCol = lerp(float3(0.055f, 0.060f, 0.072f), float3(0.135f, 0.142f, 0.162f), ridge * 0.65f + strata.grainVal * 0.35f);
+            float basRough = lerp(0.34f, 0.54f, strata.grainVal);
+            float basAo = 1.0f;
+            if (pbrDistW > 0.01f) {
+                const TriPlanarPbrSample tex4 = evalTriPlanarPbrAtlas(inp.absWorldPos, dPosX, dPosY, nGeo, 4.0f, pbrFreq * 1.10f);
+                basCol   = lerp(basCol, lerp(basCol, tex4.albedoLin, 0.55f), pbrDistW);
+                basRough = lerp(basRough, tex4.roughness, pbrDistW * 0.65f);
+                basAo    = lerp(1.0f, tex4.ao, pbrDistW * 0.55f);
+                atlasN   = normalize(lerp(atlasN, tex4.worldNormal, s0.w * pbrDistW * 0.55f));
+            }
             albedo += basCol * s0.w;
-            rough  += lerp(0.34f, 0.54f, strata.grainVal) * s0.w;
+            rough  += basRough * s0.w;
             F0     += float3(0.052f, 0.054f, 0.058f) * s0.w;
+            aoAcc  += basAo * s0.w;
         }
 
-        // Ch4: MagmaFissure (1000K..3400K Planck blackbody glowing magma fissures)
+        // Ch4: MagmaFissure (1000K..3400K Planck blackbody magma + Slice 5 VolcanicMagmaCrust vesicular crust)
         if (s1.x > 0.001f) {
             const float crustAmt = saturate(0.72f - inp.meta.z * 0.48f);
             const RawMaterialEvalResult magma = evalHeatMagma3D(
                 inp.absWorldPos, nGeo, V, L, sunCol, 2450.0f, crustAmt, magmaFlowPhase);
-            albedo   += magma.albedo * s1.x;
-            rough    += magma.roughness * s1.x;
+            float3 magAlb = magma.albedo;
+            float  magRough = magma.roughness;
+            float3 magN = magma.normal;
+            float  magAo = 1.0f;
+            if (pbrDistW > 0.01f) {
+                const TriPlanarPbrSample tex5 = evalTriPlanarPbrAtlas(inp.absWorldPos, dPosX, dPosY, nGeo, 5.0f, pbrFreq * 1.25f);
+                magAlb   = lerp(magAlb, lerp(magAlb, tex5.albedoLin, 0.45f), pbrDistW);
+                magRough = lerp(magRough, tex5.roughness, pbrDistW * 0.55f);
+                magN     = normalize(lerp(magN, tex5.worldNormal, pbrDistW * 0.45f));
+                magAo    = lerp(1.0f, tex5.ao, pbrDistW * 0.50f);
+            }
+            albedo   += magAlb * s1.x;
+            rough    += magRough * s1.x;
             F0       += magma.F0 * s1.x;
-            N         = normalize(lerp(N, magma.normal, s1.x * 0.65f));
+            atlasN    = normalize(lerp(atlasN, magN, s1.x * 0.65f));
             specAdd  += magma.specularAdd * s1.x;
             emissive += magma.emissive * s1.x;
+            aoAcc    += magAo * s1.x;
         }
 
-        // Ch5: MossMeadow (old-growth conifer floor, rich dark boreal moss & highland heather)
+        // Ch5: MossMeadow (old-growth conifer floor + Slice 6 AlpineMossMeadow humus & lichen weave)
         if (s1.y > 0.001f) {
-            const float3 mossCol = lerp(float3(0.042f, 0.098f, 0.032f), float3(0.105f, 0.185f, 0.058f), strata.grainVal);
+            float3 mossCol = lerp(float3(0.042f, 0.098f, 0.032f), float3(0.105f, 0.185f, 0.058f), strata.grainVal);
+            float mossRough = 0.86f;
+            float mossAo = 1.0f;
+            if (pbrDistW > 0.01f) {
+                const TriPlanarPbrSample tex6 = evalTriPlanarPbrAtlas(inp.absWorldPos, dPosX, dPosY, nGeo, 6.0f, pbrFreq * 1.35f);
+                mossCol   = lerp(mossCol, lerp(mossCol, tex6.albedoLin, 0.55f), pbrDistW);
+                mossRough = lerp(mossRough, tex6.roughness, pbrDistW * 0.60f);
+                mossAo    = lerp(1.0f, tex6.ao, pbrDistW * 0.52f);
+                atlasN    = normalize(lerp(atlasN, tex6.worldNormal, s1.y * pbrDistW * 0.48f));
+            }
             albedo  += mossCol * s1.y;
-            rough   += 0.86f * s1.y;
+            rough   += mossRough * s1.y;
             F0      += float3(0.030f, 0.032f, 0.028f) * s1.y;
+            aoAcc   += mossAo * s1.y;
         }
 
-        // Ch6: RiverPebbleSand (alpine meltwater braided shoals & riverbanks, smooth analytical relief)
+        // Ch6: RiverPebbleSand (alpine meltwater braided shoals + Slice 7 BraidedRiverPebbles cobble detail)
         if (s1.z > 0.001f) {
             const float4 pGrad = rawNoise3Grad(inp.absWorldPos * 0.055f);
-            const float3 cobCol = lerp(float3(0.12f, 0.11f, 0.10f), float3(0.28f, 0.26f, 0.23f), pGrad.x * 0.65f + strata.grainVal * 0.35f);
+            float3 cobCol = lerp(float3(0.12f, 0.11f, 0.10f), float3(0.28f, 0.26f, 0.23f), pGrad.x * 0.65f + strata.grainVal * 0.35f);
+            float cobRough = lerp(0.58f, 0.22f, wetness);
+            float cobAo = 1.0f;
+            if (pbrDistW > 0.01f) {
+                const TriPlanarPbrSample tex7 = evalTriPlanarPbrAtlas(inp.absWorldPos, dPosX, dPosY, nGeo, 7.0f, pbrFreq * 1.55f);
+                cobCol   = lerp(cobCol, lerp(cobCol, tex7.albedoLin, 0.62f), pbrDistW);
+                cobRough = lerp(cobRough, lerp(tex7.roughness, 0.18f, wetness * 0.65f), pbrDistW * 0.65f);
+                cobAo    = lerp(1.0f, tex7.ao, pbrDistW * 0.58f);
+                atlasN   = normalize(lerp(atlasN, tex7.worldNormal, s1.z * pbrDistW * 0.58f));
+            }
             albedo += cobCol * s1.z;
-            rough  += lerp(0.58f, 0.22f, wetness) * s1.z;
+            rough  += cobRough * s1.z;
             F0     += float3(0.040f, 0.040f, 0.040f) * s1.z;
+            aoAcc  += cobAo * s1.z;
         }
 
-        // Ch7: ArcaneCrystal (Cauchy RGB refractive quartz + Airy thin-film bioluminescent resonance, static!)
+        // Ch7: ArcaneCrystal / Forged Metal Trim (Cauchy quartz + Slice 2 ForgedBrushedSteel anisotropic micro-sheen)
         if (s1.w > 0.001f) {
             const RawMaterialEvalResult gem = evalRefractiveGlassGem3D(
                 inp.absWorldPos, nGeo, V, L, sunCol, envCol, 1.544f, 0.0085f,
                 float3(0.38f, 0.24f, 0.06f), 18.0f, 0.065f);
             const RawMaterialEvalResult arc = evalArcaneMagic3D(
                 inp.absWorldPos, nGeo, V, L, sunCol, float3(0.46f, 0.34f, 0.96f), 460.0f, 16.0f, 0.0f);
-            albedo   += lerp(gem.albedo, arc.albedo, 0.45f) * s1.w;
-            rough    += min(gem.roughness, arc.roughness) * s1.w;
-            F0       += lerp(gem.F0, arc.F0, 0.50f) * s1.w;
-            N         = normalize(lerp(N, gem.normal, s1.w * 0.80f));
+            float3 cryAlb = lerp(gem.albedo, arc.albedo, 0.45f);
+            float  cryRough = min(gem.roughness, arc.roughness);
+            float3 cryF0 = lerp(gem.F0, arc.F0, 0.50f);
+            float3 cryN = gem.normal;
+            float  cryAo = 1.0f;
+            if (pbrDistW > 0.01f) {
+                const TriPlanarPbrSample tex2 = evalTriPlanarPbrAtlas(inp.absWorldPos, dPosX, dPosY, nGeo, 2.0f, pbrFreq * 1.75f);
+                cryAlb   = lerp(cryAlb, lerp(cryAlb, tex2.albedoLin, 0.32f), pbrDistW);
+                cryRough = lerp(cryRough, tex2.roughness, pbrDistW * 0.42f);
+                cryF0    = lerp(cryF0, lerp(cryF0, float3(0.56f, 0.58f, 0.62f), tex2.metallic * 0.45f), pbrDistW);
+                cryN     = normalize(lerp(cryN, tex2.worldNormal, pbrDistW * 0.36f));
+                cryAo    = lerp(1.0f, tex2.ao, pbrDistW * 0.40f);
+            }
+            albedo   += cryAlb * s1.w;
+            rough    += cryRough * s1.w;
+            F0       += cryF0 * s1.w;
+            atlasN    = normalize(lerp(atlasN, cryN, s1.w * 0.80f));
             specAdd  += (gem.specularAdd * 0.65f + arc.specularAdd * 0.35f) * s1.w;
             emissive += arc.emissive * (0.55f + 0.45f * inp.meta.z) * s1.w;
+            aoAcc    += cryAo * s1.w;
         }
+
+        N = atlasN;
+        atlasAo = clamp(aoAcc, 0.35f, 1.0f);
     }
 
     // 3. Analytical Curvature, Live Orbital Seasons/Thermals & Wetness Physical Modulation
@@ -507,7 +687,7 @@ float4 ps_terrain_main(TerrainOutVert inp, bool isFrontFace : SV_IsFrontFace) : 
         }
         effWetness = saturate(max(effWetness, max(st.wetBoost01, st.slushRim01 * 0.85f)));
     }
-    const float curvAo = saturate(1.0f + curvature * 0.24f);
+    const float curvAo = saturate(1.0f + curvature * 0.24f) * lerp(0.88f, 1.06f, saturate(atlasAo));
     const float ridgeHighlight = saturate(curvature) * 0.12f;
     albedo *= lerp(1.0f, 0.62f, effWetness * (1.0f - inp.splat0.y * 0.8f) * (1.0f - foliageMask * 0.65f));
     albedo *= lerp(0.76f, 1.08f, curvAo);

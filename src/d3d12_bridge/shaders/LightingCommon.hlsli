@@ -59,6 +59,9 @@ float froxelZToSlice(float z) {
     return saturate(log(zCl / kFroxNear) / log(kFroxFar / kFroxNear)) * 63.0f;
 }
 
+// GPU architectural hardware tier packed into flags.x bits 24..26 (0=Fallback, 1=RTX 3060, 2=4070, 3=4090, 4=5090).
+uint hwTier() { return (flags.x >> 24u) & 7u; }
+
 float4 vs(uint i : SV_VertexID) : SV_Position {
     return float4(i == 1u ? 3.0f : -1.0f, i == 2u ? -3.0f : 1.0f, 0.0f, 1.0f);
 }

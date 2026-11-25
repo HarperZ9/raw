@@ -284,12 +284,13 @@ void main(uint3 id : SV_DispatchThreadID) {
             vSum += visible(o, jitterDir(sunDir.xyz, effCone, r1), tMinS, sunLength);
             vis.x = vSum * 0.5f;
         }
-        // Fast 2-spp Pure Hardware DXR 3D Contact RTAO & Multi-Bounce GI (2x faster, denoised by RtSkyFilter!):
+        // Hardware-tier adaptive DXR ray budget (RTX 3060=Tier 1 -> 1 spp, 4070/4090=Tier 2-3 -> 2 spp, 5090=Tier 4 -> 3 spp GI):
+        const uint rtTier = (giFlags >> 8u) & 7u;
         const bool isInterior = (sunColour.w <= 0.5f);
         const float aoLen = isInterior ? (skyLength > 0.0f ? min(skyLength, 220.0f) : 180.0f) : skyLength;
         if (aoLen > 0.0f) {
             const float2 rs0 = stbnR2(px, frameIndex + 11.0f);
-            const uint giSpp = 2u;
+            const uint giSpp = (rtTier <= 1u) ? 1u : (rtTier >= 4u ? 3u : 2u);
             float skySum = 0.0f;
             float3 bounceSum = 0.0f;
             const bool doCache2 = ((giFlags & GI_CACHE) != 0u) && skyTurn(id.xy);
@@ -353,7 +354,7 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float radK = clamp(sourceRadius * 0.42f + distC * 0.012f, 4.5f, 18.0f);
             const float ang0 = ign(px + float2(17.0f * float(k), 31.0f)) * 6.2831853f;
             float vAcc = 0.0f;
-            const uint nSpp = 2u;   // Fast 2-spp static pixel-locked Vogel-Disk Area RT shadows (3x faster, denoised in Lighting.hlsl!)
+            const uint nSpp = (rtTier <= 1u) ? 1u : 2u;   // Adaptive Vogel-Disk Area RT shadows (1-spp on 3060, 2-spp on 4070-5090)
             [loop] for (uint si = 0u; si < nSpp; si++) {
                 const float rv = sqrt((float(si) + 0.5f) / float(nSpp));
                 const float av = float(si) * 2.3999632f + ang0;
@@ -391,7 +392,8 @@ void main(uint3 id : SV_DispatchThreadID) {
                 const float2 mv = Motion.Load(ip);
                 const float2 prev = px + mv * dims.xy;
                 const float angBase = stbnR2(px, frameIndex + 53.0f).x * 6.2831853f;
-                [unroll] for (uint k = 0u; k < 5u; k++) {
+                const uint restNeighbors = (rtTier <= 1u) ? 3u : (rtTier == 2u ? 4u : 5u);
+                [loop] for (uint k = 0u; k < restNeighbors; k++) {
                     const float a = angBase + float(k) * 2.39996323f;
                     const float rad = (k == 0u) ? 0.0f : (3.5f + 3.2f * float(k));
                     const int2 q = int2(prev + float2(cos(a), sin(a)) * rad);
@@ -485,8 +487,9 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float2 rr0 = stbnR2(px, frameIndex + 37.0f);
             const float3 ng = geometricNormal(px, p, n);
             const float3 o = p + ng * (0.5f + 0.003f * viewZOf(d));
-            // Overdrive 2-spp Stratified Bounded-VNDF Glossy RT Reflections on forged metals, TruePBR & wet surfaces:
-            const uint reflSpp = (base == 2u || base == 13u || wetGloss) ? 2u : 1u;
+            // Adaptive Stratified Bounded-VNDF Glossy RT Reflections (1-spp on RTX 3060-4070, 2-spp on RTX 4080/4090/5090):
+            const uint rtTierR = (giFlags >> 8u) & 7u;
+            const uint reflSpp = (rtTierR >= 3u && (base == 2u || base == 13u || wetGloss)) ? 2u : 1u;
             float3 reflSum = 0.0f.xxx;
             float reflHitW = 0.0f;
             reflTraced = true;
@@ -498,12 +501,12 @@ void main(uint3 id : SV_DispatchThreadID) {
                 float3 c = 0.0f.xxx, hn = float3(0.0f, 0.0f, 1.0f);
                 if (traceHit(o, rd, reflectLength, h)) {
                     const float3 hitP = o + rd * h.t;
-                    // Pure 3D Hardware DXR World-Space Glossy Reflections (ZERO screen-space onScreen() SSR popping!):
+                    // Pure 3D Hardware DXR World-Space Glossy Reflections with fixed world radiance-cache lookup:
                     if ((giFlags & GI_MATERIALS) != 0u) {
                         float3 offRad = radianceAt(h, o, rd, rr, true, hn);
                         if ((giFlags & GI_CACHE) != 0u) {
-                            float3 cB = 0.0f.xxx; float cS = 0.0f;
-                            if (cacheRead(hitP, hn, cB, cS)) { offRad = max(offRad, cB * 0.85f); }
+                            float4 cacheVal = 0.0f.xxxx;
+                            if (cacheRead(hitP, hn, 0.0f.xxx, cacheVal)) { offRad = max(offRad, cacheVal.rgb * 0.85f); }
                         }
                         reflSum += offRad; reflHitW += 1.0f;
                     }

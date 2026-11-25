@@ -130,10 +130,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 o = camPosW.xyz;
     const float maxDist = 650000.0f;
     if (cloudsOn() && cloudSpan(o, dir, maxDist, t0, t1)) {
-        // Tight 48-step march (eliminates diagonal step-banding streaks seen in 14.06.14 while keeping horizon coverage):
+        // Hardware-tier adaptive volumetric cloud march (RTX 3060=24, 4070=36, 4090=48, 5090=56 steps):
         const float maxSpan = lerp(165000.0f, 105000.0f, smoothstep(0.02f, 0.32f, dir.z));
         t1 = min(t1, t0 + maxSpan);
-        const uint steps = 48u;
+        const uint tierC = hwTier();
+        const uint steps = (tierC <= 1u) ? 24u : (tierC == 2u ? 36u : (tierC == 3u ? 48u : 56u));
         const float dt = (t1 - t0) / float(steps);
         const float j = rand(lo, 0.0f);   // pixel-locked static dither (eliminates frame-to-frame sky flickering across pine trees!)
         const float3 aSun = astroSunDir();

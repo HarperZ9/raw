@@ -25,6 +25,7 @@
 #include "OcclusionCuller.h"
 #include "WeatherDrive.h"
 #include "Tonemap.h"
+#include "../d3d12_bridge/HardwareProfile.h"
 
 #include <algorithm>
 #include <cmath>
@@ -106,6 +107,7 @@ void LightingApplyTuning()
         rt.skinCull = t.rtSkinCull; rt.skinRatio = t.rtSkinRatio; rt.skinMin = t.rtSkinMin;
         rt.incremental = t.rtIncremental;
         rt.camSteps = t.rtCamSteps;
+        rt.hwTier = t.hwTier;
         Bridge()->TuneRt(rt);
     }
     g_sceneGeometryActive = Cfg().enabled && t.rtShadows && TxMode_Get() == 1;
@@ -129,25 +131,17 @@ void LoadLightingConfig(const std::string& ini)
         GetPrivateProfileStringA("Lighting", k, "", buf, sizeof(buf), ini.c_str());
         return buf[0] ? std::strtof(buf, nullptr) : d;
     };
-    // Quality presets (0=Performance, 1=Balanced, 2=High, 3=Ultra, 4=Overdrive; -1=Auto-detect from GPU VRAM).
+    // Architectural Hardware Profiler (RTX 3060-5090, RDNA2-4, Arc):
+    // Quality=-1 auto-detects from GPU architecture/VRAM; HwTier=-1 auto-selects adaptive ray/cloud tier (0..4).
+    const raw::bridge::HardwareProfile hw = raw::bridge::DetectHardwareProfile();
     int quality = i("Quality", -1);
     if (quality < 0) {
-        size_t vramGB = 16;
-        IDXGIFactory1* fac = nullptr;
-        if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&fac))) && fac) {
-            IDXGIAdapter1* ad = nullptr;
-            if (SUCCEEDED(fac->EnumAdapters1(0, &ad)) && ad) {
-                DXGI_ADAPTER_DESC1 desc{};
-                if (SUCCEEDED(ad->GetDesc1(&desc))) {
-                    vramGB = static_cast<size_t>(desc.DedicatedVideoMemory / (1024ULL * 1024ULL * 1024ULL));
-                }
-                ad->Release();
-            }
-            fac->Release();
-        }
-        quality = (vramGB >= 16) ? 4 : (vramGB >= 10) ? 3 : (vramGB >= 7) ? 2 : (vramGB >= 5) ? 1 : 0;
-        Log("[Lighting] Auto GPU tier: %zu GB VRAM -> Quality=%d", vramGB, quality);
+        quality = hw.recommendedQuality;
     }
+    const int hwTierIni = i("HwTier", -1);
+    t.hwTier = (hwTierIni >= 0 && hwTierIni <= 4) ? hwTierIni : hw.tier;
+    Log("[Lighting] GPU profile: '%s' (%u MB VRAM, %u cores) -> HwTier=%d, Quality=%d (recommended tx Workers=%u)",
+        hw.gpuName.empty() ? "unknown" : hw.gpuName.c_str(), hw.vramMB, hw.logicalCores, t.hwTier, quality, hw.recommendedTxWorkers);
     int defRt = 1, defRtSky = 1, defRtRefl = 1, defRtFar = 1, defRtSkin = 1, defClouds = 1, defFog = 1;
     if (quality == 0) {
         defRt = 0; defRtSky = 0; defRtRefl = 0; defRtFar = 0; defRtSkin = 0; defClouds = 0; defFog = 0;

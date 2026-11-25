@@ -229,6 +229,7 @@ struct RtTuning
     bool     cache = true;           // the world-space radiance cache
     float    cacheCell = 16.0f;      // game units: the finest cell, doubling with distance
     int      debugView = 0;          // 1 the primary ray (RtDebug=1), 2 the cache at each pixel, 3 the hit's colour copy
+    int      hwTier = 3;             // 0..4 hardware GPU tier (RTX 3060=1 .. 4090=3 .. 5090=4) for adaptive ray budgets
     float    cameraPos[3] = {};      // the camera in a world frame that stays put (SceneLighting::cameraStep summed)
 };
 

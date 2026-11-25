@@ -7,9 +7,14 @@
 //   froxel_integrate : front-to-back Beer-Lambert analytical scattering & transmittance integration along z = 0..63.
 // Original work, MIT.
 #ifdef FROXEL_INT
+#define ATLAS_SLOT t2
+#include "LightingCommon.hlsli"
+Texture2D<float4> FroxelIn     : register(t0);
+Texture2D<float4> FroxelBlocks : register(t1);
+#elif defined(FROXEL_BLOCK)
 #define ATLAS_SLOT t1
 #include "LightingCommon.hlsli"
-Texture2D<float4> FroxelIn : register(t0);
+Texture2D<float4> FroxelIn     : register(t0);
 #else
 #define ATLAS_SLOT t0
 #include "LightingCommon.hlsli"
@@ -20,7 +25,7 @@ Texture2D<float4> FroxelPrev  : register(t3);
 SamplerState      Lin         : register(s0);
 #endif
 
-#ifndef FROXEL_INT
+#if !defined(FROXEL_INT) && !defined(FROXEL_BLOCK)
 float4 samplePrevFroxel(float2 uv, float z) {
     const float sF = froxelZToSlice(z);
     const uint s0 = min(uint(floor(sF)), 63u);
@@ -216,18 +221,57 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     }
     return curVoxel;
 }
+#elif defined(FROXEL_BLOCK)
+// Pass 1 of Blelloch Associative Monoid Scan (640x180 = 4x2 tiles of 160x90, 8 blocks x 8 slices = 64 slices):
+// Integrates 8 consecutive slices per block into (S_block, T_block) using exact Beer-Lambert transport.
+float4 froxel_block_scan(float4 at : SV_Position) : SV_Target0 {
+    if ((flags.x & FLAG_FOG) == 0u || (flags.x & FLAG_MATCH) != 0u) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
+    const uint2 px = uint2(at.xy);
+    const uint blk = (px.y / 90u) * 4u + (px.x / 160u);   // 0..7
+    const uint lx = px.x % 160u;
+    const uint ly = px.y % 90u;
+    const uint sStart = blk * 8u;
+
+    float3 accScat = 0.0f.xxx;
+    float  accTrans = 1.0f;
+    [unroll] for (uint r = 0u; r < 8u; r++) {
+        const uint s = sStart + r;
+        const uint sx = (s & 7u) * 160u + lx;
+        const uint sy = (s >> 3u) * 90u + ly;
+        const float4 voxel = FroxelIn.Load(int3(sx, sy, 0));
+        const float dz = max(froxelSliceZ(float(s + 1u)) - froxelSliceZ(float(s)), 1.0f);
+        const float ext = max(voxel.a, 0.0f);
+        const float stepT = exp(-ext * dz);
+        const float3 stepS = ext > 1.0e-6f ? (voxel.rgb * ((1.0f - stepT) / ext)) : (voxel.rgb * dz);
+        accScat += accTrans * stepS;
+        accTrans *= stepT;
+    }
+    return float4(min(accScat, 3.5f.xxx), accTrans);
+}
 #else
-// Front-to-back Beer-Lambert integration across z = 0..63 slices in the 8x8 froxel atlas.
+// Pass 2 of Blelloch Associative Monoid Scan (1280x720):
+// Composes preceding 8-slice blocks (0..blk-1) via exact Beer-Lambert monoid (S_a + T_a * S_b, T_a * T_b)
+// and integrates only the remaining 1..8 slices inside the target block (4.33x fewer texture loads than O(N^2)!).
 float4 froxel_integrate(float4 at : SV_Position) : SV_Target0 {
     if ((flags.x & FLAG_FOG) == 0u || (flags.x & FLAG_MATCH) != 0u) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
     const uint2 px = uint2(at.xy);
     const uint targetSlice = (px.y / 90u) * 8u + (px.x / 160u);
     const uint lx = px.x % 160u;
     const uint ly = px.y % 90u;
+    const uint targetBlk = targetSlice >> 3u;
+    const uint sStart = targetBlk * 8u;
 
     float3 accScat = 0.0f.xxx;
     float  accTrans = 1.0f;
-    [loop] for (uint s = 0u; s <= targetSlice; s++) {
+    [loop] for (uint b = 0u; b < targetBlk; b++) {
+        const uint bx = (b & 3u) * 160u + lx;
+        const uint by = (b >> 2u) * 90u + ly;
+        const float4 blk = FroxelBlocks.Load(int3(bx, by, 0));
+        accScat += accTrans * blk.rgb;
+        accTrans *= blk.a;
+        if (accTrans < 0.02f) { return float4(min(accScat, 3.5f.xxx), accTrans); }
+    }
+    [loop] for (uint s = sStart; s <= targetSlice; s++) {
         const uint sx = (s & 7u) * 160u + lx;
         const uint sy = (s >> 3u) * 90u + ly;
         const float4 voxel = FroxelIn.Load(int3(sx, sy, 0));

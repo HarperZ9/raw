@@ -114,6 +114,7 @@ struct LightingTuning
     float sss = 0.75f;              // Sss: screen-space scattering on skin (Sss.hlsl), 0 off to 1
     float sssWidth = 0.5f;          // SssWidth: the red's scattering width, game units (green 0.42, blue 0.22 of it); 1.0 washed out the pores
     int   season = 0;               // Season: 0 Auto, 1 Spring, 2 Summer, 3 Autumn, 4 Winter
+    int   hwTier = 3;               // HwTier: 0..4 GPU architectural tier (3060=1, 4070=2, 4090=3, 5090=4)
 };
 
 // Lights into clusters: out[cluster] holds one bit per light index.
@@ -125,7 +126,7 @@ bool LightingPassUniform(IBridgePass* pass, const void** data, size_t* bytes);  
 struct ExtraShaders {
     std::vector<uint8_t> clouds, volumetric, bloomPre, bloomDown, bloomUp, bloomComp, reflFilter, rawlss5;
     std::vector<uint8_t> dofFocus, dofCoc, dofGather, dofPost, dofComp;
-    std::vector<uint8_t> froxelInject, froxelInt;
+    std::vector<uint8_t> froxelInject, froxelBlock, froxelInt;
 };
 bool LightingPassReload(IBridgePass* pass, const std::vector<uint8_t>& vs, const std::vector<uint8_t>& fs,
                         const std::vector<uint8_t>& fogFs, std::string& err, const ExtraShaders* extra = nullptr);

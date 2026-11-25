@@ -3,6 +3,7 @@
 #include "ProxyAPI.h"
 #include "ProxyLog.h"
 #include "Translate.h"
+#include "../d3d12_bridge/HardwareProfile.h"
 
 #include <psapi.h>
 #include <string>
@@ -44,13 +45,13 @@ void Load()
     // [Translate] RenameRing (default 1) and RingWriteBack (default 0): how buffer renames get their memory.
     C().renameRing = GetPrivateProfileIntA("Translate", "RenameRing", 1, ini.c_str()) != 0;
     C().ringWriteBack = GetPrivateProfileIntA("Translate", "RingWriteBack", 0, ini.c_str()) != 0;
-    // [Translate] Workers (default 0): threads that turn the game's draws into D3D12 command lists in parallel;
-    // SegmentDraws (default 256): the draws each worker's list takes.
-    C().workers = GetPrivateProfileIntA("Translate", "Workers", 0, ini.c_str());
+    // [Translate] Workers (0=single-threaded, -1=auto from CPU core count, >0=explicit worker threads).
+    const int rawWorkers = GetPrivateProfileIntA("Translate", "Workers", 0, ini.c_str());
+    C().workers = (rawWorkers < 0) ? raw::bridge::RecommendTxWorkers() : static_cast<UINT>(rawWorkers);
     C().segmentDraws = GetPrivateProfileIntA("Translate", "SegmentDraws", 256, ini.c_str());
     C().segmentMin = GetPrivateProfileIntA("Translate", "SegmentMin", 64, ini.c_str());   // shorter runs stay on the game's thread
-    if (C().mode) Log("[Tx] translate mode %s%s", C().mode == 1 ? "on: the game runs on raw::tx (D3D12)" : "native: system D3D11 behind the harness wrapper",
-                      C().debugLayer ? ", D3D12 debug layer on" : "");
+    if (C().mode) Log("[Tx] translate mode %s%s (workers=%u%s)", C().mode == 1 ? "on: the game runs on raw::tx (D3D12)" : "native: system D3D11 behind the harness wrapper",
+                      C().debugLayer ? ", D3D12 debug layer on" : "", C().workers, rawWorkers < 0 ? " auto" : "");
 }
 
 void TxLog(const char* line) { Log("[tx] %s", line); }

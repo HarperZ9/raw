@@ -245,6 +245,7 @@ add_custom_command(
 
 add_library(raw_d3d12_bridge STATIC
     src/d3d12_bridge/D3D12Bridge.cpp
+    src/d3d12_bridge/HardwareProfile.cpp
     src/d3d12_bridge/StreamlineHost.cpp
     src/d3d12_bridge/BridgeFrame.cpp
     src/d3d12_bridge/BridgeReadback.cpp
@@ -464,7 +465,7 @@ if(RAW_ENGINE_DIR)
         ${RAW_ENGINE_GEN}/dof_focus_fs.h ${RAW_ENGINE_GEN}/dof_coc_fs.h ${RAW_ENGINE_GEN}/dof_gather_fs.h ${RAW_ENGINE_GEN}/dof_post_fs.h ${RAW_ENGINE_GEN}/dof_comp_fs.h
         ${RAW_ENGINE_GEN}/rawlss5_fs.h
         ${RAW_ENGINE_GEN}/gi_at1_fs.h ${RAW_ENGINE_GEN}/gi_at2_fs.h ${RAW_ENGINE_GEN}/gi_at4_fs.h ${RAW_ENGINE_GEN}/cloud_noise_fs.h ${RAW_ENGINE_GEN}/env_cube_fs.h
-        ${RAW_ENGINE_GEN}/froxel_inject_fs.h ${RAW_ENGINE_GEN}/froxel_int_fs.h ${RAW_ENGINE_GEN}/world_field_sim_fs.h)
+        ${RAW_ENGINE_GEN}/froxel_inject_fs.h ${RAW_ENGINE_GEN}/froxel_block_fs.h ${RAW_ENGINE_GEN}/froxel_int_fs.h ${RAW_ENGINE_GEN}/world_field_sim_fs.h)
     add_custom_command(
         OUTPUT ${RAW_LIGHT_HEADERS}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
@@ -493,6 +494,7 @@ if(RAW_ENGINE_DIR)
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E bake ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/cloud_noise_fs.h -Vn kDxil_cloud_noise_fs ${RAW_CLOUD_NOISE_HLSL}
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E bake ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/env_cube_fs.h -Vn kDxil_env_cube_fs ${RAW_ENV_CUBE_HLSL}
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E froxel_inject ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/froxel_inject_fs.h -Vn kDxil_froxel_inject_fs ${RAW_FROXEL_HLSL}
+        COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E froxel_block_scan -DFROXEL_BLOCK=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/froxel_block_fs.h -Vn kDxil_froxel_block_fs ${RAW_FROXEL_HLSL}
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E froxel_integrate -DFROXEL_INT=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/froxel_int_fs.h -Vn kDxil_froxel_int_fs ${RAW_FROXEL_HLSL}
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E fs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/world_field_sim_fs.h -Vn kDxil_world_field_sim_fs ${RAW_WORLDSIM_HLSL}
         DEPENDS ${RAW_LIGHT_HLSL} ${RAW_LIGHTFOG_HLSL} ${RAW_CLOUDS_HLSL} ${RAW_VOLUMETRIC_HLSL} ${RAW_BLOOM_HLSL} ${RAW_ATMO_HLSL} ${RAW_REFL_FILT_HLSL} ${RAW_DOF_HLSL} ${RAW_RAWLSS5_HLSL} ${RAW_GI_ATROUS_HLSL} ${RAW_CLOUD_NOISE_HLSL} ${RAW_ENV_CUBE_HLSL} ${RAW_FROXEL_HLSL} ${RAW_WORLDSIM_HLSL} ${RAW_SHARE_HLSL}/LightingCommon.hlsli ${RAW_SHARE_HLSL}/Weather.hlsli

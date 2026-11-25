@@ -329,6 +329,13 @@ bool LightingAtOpaque(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr)
     if (!mask)
         for (uint32_t k = 0; k < l.lightCount; ++k) l.lights[k].shadowChannel = -1;
     b->SetLighting(l);
+    if (TxMode_Get() == 1) {
+        if (auto* pi = PG_GetProxyInterface(); pi && pi->device) {
+            const bool isExt = l.hasEngineCell ? !l.isInterior : l.hasCascades;
+            const float snowU = isExt ? (Cfg().light.snow * 12.0f) : 0.0f;
+            raw::tx::SetSubdivParams(pi->device, 0.62f, snowU, 0.08f);
+        }
+    }
     b->SetRtDraws(SceneGeometry_Take());
     raw::bridge::PassConstants k = Cfg().k;
     return b->Execute(sceneHdr, sceneHdr, k);

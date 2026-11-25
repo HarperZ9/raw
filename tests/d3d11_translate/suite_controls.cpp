@@ -114,6 +114,10 @@ void RunControls(const Opts& o, Tally& t)
         ctx->PSSetShader(ps.Get(), nullptr, 0);
         ctx->DrawIndexed(12, 0, 0);   // cache miss -> computes 4x curved mesh
         ctx->DrawIndexed(12, 0, 0);   // cache hit  -> reuses cached 4x curved mesh
+        if (enableSubdiv) {
+            raw::tx::SetSubdivParams(dev.Get(), 0.62f, 4.0f, 0.08f); // live 3D snowpack epoch rebuild
+            ctx->DrawIndexed(12, 0, 0);
+        }
         SceneCtx sc;
         sc.dev = dev.Get(); sc.ctx = ctx.Get();
         bool ok = Readback(sc, rt.Get(), outImg);
@@ -129,7 +133,7 @@ void RunControls(const Opts& o, Tally& t)
     for (size_t i = 0; i + 3 < flatImg.rgba.size(); i += 4) flatLit += (flatImg.rgba[i] | flatImg.rgba[i+1] | flatImg.rgba[i+2]) != 0;
     for (size_t i = 0; i + 3 < curvedImg.rgba.size(); i += 4) curvedLit += (curvedImg.rgba[i] | curvedImg.rgba[i+1] | curvedImg.rgba[i+2]) != 0;
     const bool subOk = r0 && r1 && flatSt.debugErrors == 0 && curvedSt.debugErrors == 0 &&
-                       flatSt.subdivMeshes == 0 && curvedSt.subdivMeshes == 1 && curvedSt.subdivDraws == 2 &&
+                       flatSt.subdivMeshes == 0 && curvedSt.subdivMeshes == 1 && curvedSt.subdivDraws == 3 &&
                        curvedLit > flatLit;   // curved PN-Triangle dome silhouette strictly expands beyond flat chord!
     char sd[256];
     snprintf(sd, sizeof(sd), "flatPx=%d curvedPx=%d meshes=%llu draws=%llu debugErr=%llu",

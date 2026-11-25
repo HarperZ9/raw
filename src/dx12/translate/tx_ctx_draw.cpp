@@ -297,6 +297,7 @@ std::shared_ptr<const SubdivEntry> Context::TrySubdivideDraw(UINT n, UINT start,
     key.layoutId = s_.layout->id;
     key.stride = vb.stride;
     key.ibFmt = static_cast<uint32_t>(s_.ibFmt);
+    key.epoch = dev_->subdivEpoch.load(std::memory_order_relaxed);
 
     if (auto hit = dev_->subdiv.Find(key)) return hit;
     if (replay_) return nullptr;   // workers only consume cached entries; misses build once on the immediate context
@@ -313,7 +314,9 @@ std::shared_ptr<const SubdivEntry> Context::TrySubdivideDraw(UINT n, UINT start,
     req.inIdx = ib.buf->core.Res();
     req.inVertsBytes = vb.buf->core.bytes;
     req.inIdxBytes = ib.buf->core.bytes;
-    req.curvatureGain = 0.62f;
+    req.curvatureGain = dev_->subdivCurvature.load(std::memory_order_relaxed);
+    req.snowDepthU = dev_->subdivSnowDepth.load(std::memory_order_relaxed);
+    req.displaceAmp = dev_->subdivDisplace.load(std::memory_order_relaxed);
 
     bool dispatched = false;
     auto built = dev_->subdiv.Build(dev_->d3d.Get(), cl, req, dispatched);
@@ -336,7 +339,7 @@ STDMETHODIMP_(void) Context::DrawIndexed(UINT n, UINT start, INT base)
                            s_.ib.buf->core.store == Store::Committed && s_.layout && s_.layout->id &&
                            !dev_->subdiv.Find({s_.vb[0].buf->core.tr.get(), s_.ib.buf->core.tr.get(), s_.vb[0].offset,
                                                s_.ib.offset, start, n, base, s_.layout->id, s_.vb[0].stride,
-                                               static_cast<uint32_t>(s_.ibFmt)});
+                                               static_cast<uint32_t>(s_.ibFmt), dev_->subdivEpoch.load(std::memory_order_relaxed)});
     if (!needBuild && pool_ && !replay_ && StreamDraw()) { SHead(SO_DrawIndexed, 0, 0, n); seg_->words.push_back(uint64_t(start) | uint64_t(uint32_t(base)) << 32); return SegDrawn(); }
     if (seg_ || stale_) EndStream(__func__);
     auto sub = TrySubdivideDraw(n, start, base);

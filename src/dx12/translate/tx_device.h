@@ -152,6 +152,10 @@ public:
     std::atomic<uint64_t> nDebugErrors{0}, nPso{0}, nRootSig{0}, nSubmit{0}, nBarriers{0}, nDraws{0}, nUnsupported{0}, nSubdivDraws{0};
     bool geometrySubdiv = false;
     SubdivCache subdiv;
+    std::atomic<float>    subdivCurvature{0.62f};
+    std::atomic<float>    subdivSnowDepth{0.0f};
+    std::atomic<float>    subdivDisplace{0.0f};
+    std::atomic<uint32_t> subdivEpoch{0};
     const SubdivLayoutInfo* GetSubdivLayout(uint32_t layoutId);
     void DrainInfoQueue();
 

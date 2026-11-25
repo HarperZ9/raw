@@ -851,6 +851,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/d3d12_bridge/RawAssetBridge.cpp
         src/d3d12_bridge/RawTextureBridge.cpp
         src/d3d12_bridge/HardwareProfile.cpp
+        src/d3d12_bridge/ShaderCompiler.cpp
         src/engine_rt/rt_zydis_offsets.cpp
         src/engine_rt/rt_skeleton_ik.cpp
         src/engine_rt/rt_combat_ai.cpp

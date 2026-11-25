@@ -19,8 +19,8 @@ cbuffer SubdivCB : register(b0) {
     float curvatureGain; // Vlachos Bezier projection weight (default 0.62)
     uint  maxVertIdx;    // inclusive max valid vertex index in InVerts
     float maxOffsetFrac; // safety clamp on PN curvature offset as fraction of edge length (0.18)
-    uint  pad0;
-    uint  pad1;
+    float snowDepthU;    // live 3D volumetric snowpack buildup thickness (0..18 world units)
+    float displaceAmp;   // subtle crack-free symmetric midpoint micro-relief amplitude (0..0.35)
 };
 
 ByteAddressBuffer   InVerts  : register(t0);
@@ -141,6 +141,28 @@ float3 safeNorm(float3 v) {
     return l2 > 1.0e-10f ? v * rsqrt(l2) : float3(0.0f, 0.0f, 1.0f);
 }
 
+// Deterministic symmetric position hash (evaluates identically on shared edges -> zero seam cracks):
+float subHash31(float3 p) {
+    float3 q = frac(p * 0.1031f);
+    q += dot(q, q.yzx + 33.33f);
+    return frac((q.x + q.y) * q.z);
+}
+
+// Applies crack-free organic micro-relief + physical 3D volumetric snowpack lift above angle of repose:
+float3 applyMicroAndSnow(float3 p, float3 n, bool isMidpoint) {
+    float3 outP = p;
+    if (isMidpoint && displaceAmp > 0.001f) {
+        float h = (subHash31(floor(p * 4.0f) * 0.25f) - 0.5f) * 2.0f;
+        outP += n * (h * displaceAmp);
+    }
+    if (snowDepthU > 0.05f && n.z > 0.42f) {
+        float sMask = smoothstep(0.42f, 0.80f, n.z);
+        float drift = 0.72f + 0.45f * subHash31(floor(p * 0.15f));
+        outP.z += sMask * drift * snowDepthU * (isMidpoint ? 0.28f : 0.22f);
+    }
+    return outP;
+}
+
 // Symmetric crease-preserving Vlachos PN-Triangle cubic Bezier control point (bit-exact across shared edges):
 float3 pnCtrl(float3 p, float3 n, float3 q, float creaseW) {
     float3 d = q - p;
@@ -208,24 +230,32 @@ void CSMain(uint3 tid3 : SV_DispatchThreadID) {
     uint dst4 = (vBase + 4u) * strideBytes; // midpoint 1-2
     uint dst5 = (vBase + 5u) * strideBytes; // midpoint 2-0
 
-    // Corners 0, 1, 2: exact byte-identical copies of original vertices (zero seam drift!).
+    // Corners 0, 1, 2: exact byte-identical copies of original vertices (plus symmetric snowpack lift when snowing).
     copyRawVert(b0, dst0);
     copyRawVert(b1, dst1);
     copyRawVert(b2, dst2);
+    if (snowDepthU > 0.05f) {
+        storeAttr4(dst0, posOffFmt, float4(applyMicroAndSnow(p0.xyz, n0, false), p0.w), false);
+        storeAttr4(dst1, posOffFmt, float4(applyMicroAndSnow(p1.xyz, n1, false), p1.w), false);
+        storeAttr4(dst2, posOffFmt, float4(applyMicroAndSnow(p2.xyz, n2, false), p2.w), false);
+    }
 
     // Midpoints 3 (0-1), 4 (1-2), 5 (2-0): copy base bytes from first corner then write curved/interpolated attributes.
     copyRawVert(b0, dst3);
     copyRawVert(b1, dst4);
     copyRawVert(b2, dst5);
 
-    storeAttr4(dst3, posOffFmt, float4(m01, 0.5f * (p0.w + p1.w)), false);
-    storeAttr4(dst4, posOffFmt, float4(m12, 0.5f * (p1.w + p2.w)), false);
-    storeAttr4(dst5, posOffFmt, float4(m20, 0.5f * (p2.w + p0.w)), false);
+    float3 nm01 = safeNorm(n0 + n1);
+    float3 nm12 = safeNorm(n1 + n2);
+    float3 nm20 = safeNorm(n2 + n0);
+    storeAttr4(dst3, posOffFmt, float4(applyMicroAndSnow(m01, nm01, true), 0.5f * (p0.w + p1.w)), false);
+    storeAttr4(dst4, posOffFmt, float4(applyMicroAndSnow(m12, nm12, true), 0.5f * (p1.w + p2.w)), false);
+    storeAttr4(dst5, posOffFmt, float4(applyMicroAndSnow(m20, nm20, true), 0.5f * (p2.w + p0.w)), false);
 
     if ((normOffFmt >> 16u) != 0u) {
-        storeAttr4(dst3, normOffFmt, float4(safeNorm(n0 + n1), 0.5f * (n0Raw.w + n1Raw.w)), true);
-        storeAttr4(dst4, normOffFmt, float4(safeNorm(n1 + n2), 0.5f * (n1Raw.w + n2Raw.w)), true);
-        storeAttr4(dst5, normOffFmt, float4(safeNorm(n2 + n0), 0.5f * (n2Raw.w + n0Raw.w)), true);
+        storeAttr4(dst3, normOffFmt, float4(nm01, 0.5f * (n0Raw.w + n1Raw.w)), true);
+        storeAttr4(dst4, normOffFmt, float4(nm12, 0.5f * (n1Raw.w + n2Raw.w)), true);
+        storeAttr4(dst5, normOffFmt, float4(nm20, 0.5f * (n2Raw.w + n0Raw.w)), true);
     }
     if ((tangOffFmt >> 16u) != 0u) {
         float4 t0 = loadAttr4(b0, tangOffFmt, true);

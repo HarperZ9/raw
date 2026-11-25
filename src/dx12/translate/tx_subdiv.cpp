@@ -44,8 +44,8 @@ struct SubdivCB {
     float    curvatureGain;
     uint32_t maxVertIdx;
     float    maxOffsetFrac;
-    uint32_t pad0;
-    uint32_t pad1;
+    float    snowDepthU;
+    float    displaceAmp;
 };
 static_assert(sizeof(SubdivCB) == 64, "SubdivCB must be 16 DWORDs");
 
@@ -232,6 +232,8 @@ std::shared_ptr<const SubdivEntry> SubdivCache::Build(ID3D12Device* dev, ID3D12G
     cb.curvatureGain = req.curvatureGain;
     cb.maxVertIdx = static_cast<uint32_t>(availVerts - 1ull);
     cb.maxOffsetFrac = 0.18f;
+    cb.snowDepthU = req.snowDepthU;
+    cb.displaceAmp = req.displaceAmp;
 
     // Newly created buffers start in COMMON and implicitly promote to UNORDERED_ACCESS on first compute write.
     cl->SetComputeRootSignature(root_.Get());
@@ -278,6 +280,19 @@ void SubdivCache::InvalidateSource(const TrackedRes* tr, Retire& retire)
             ++it;
         }
     }
+}
+
+void SubdivCache::ClearAll(Retire& retire)
+{
+    std::unique_lock<std::shared_mutex> lk(m_);
+    for (auto& [k, v] : cache_) {
+        if (!v) continue;
+        if (v->vbTr) retire.keep.push_back(std::move(v->vbTr));
+        if (v->ibTr) retire.keep.push_back(std::move(v->ibTr));
+    }
+    cache_.clear();
+    meshCount_.store(0, std::memory_order_relaxed);
+    vramBytes_.store(0, std::memory_order_relaxed);
 }
 
 }  // namespace raw::tx

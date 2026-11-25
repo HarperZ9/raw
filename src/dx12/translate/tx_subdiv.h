@@ -39,10 +39,11 @@ struct SubdivKey {
     uint32_t layoutId = 0;
     uint32_t stride = 0;
     uint32_t ibFmt = 0;
+    uint32_t epoch = 0;
     bool operator==(const SubdivKey& o) const {
         return vbTr == o.vbTr && ibTr == o.ibTr && vbOffset == o.vbOffset && ibOffset == o.ibOffset &&
                startIndex == o.startIndex && indexCount == o.indexCount && baseVertex == o.baseVertex &&
-               layoutId == o.layoutId && stride == o.stride && ibFmt == o.ibFmt;
+               layoutId == o.layoutId && stride == o.stride && ibFmt == o.ibFmt && epoch == o.epoch;
     }
 };
 
@@ -69,6 +70,8 @@ struct SubdivBuildReq {
     uint64_t                    inVertsBytes = 0;
     uint64_t                    inIdxBytes = 0;
     float                       curvatureGain = 0.62f;
+    float                       snowDepthU = 0.0f;
+    float                       displaceAmp = 0.0f;
 };
 
 class SubdivCache {
@@ -90,6 +93,8 @@ public:
 
     // Removes any cached entries referencing a destroyed source buffer and moves their TrackedRes into `retire`.
     void InvalidateSource(const TrackedRes* tr, Retire& retire);
+    // Retires all cached meshes cleanly (e.g. when live snowpack depth or curvature changes substantially).
+    void ClearAll(Retire& retire);
 
     uint64_t MeshCount() const { return meshCount_.load(std::memory_order_relaxed); }
     uint64_t TotalVramBytes() const { return vramBytes_.load(std::memory_order_relaxed); }

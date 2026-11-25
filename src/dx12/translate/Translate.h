@@ -107,4 +107,7 @@ void HoldView(ID3D11ShaderResourceView* view, int delta);
 // (superframe native/raw/rhi/host.hpp, HostDevice). No reference is added.
 void GetNative(ID3D11Device* device, void** d3d12Device, void** d3d12Queue);
 
+// Live runtime control of TxSubdiv curved PN-Triangle curvature, 3D volumetric snowpack buildup, and micro-relief.
+void SetSubdivParams(ID3D11Device* device, float curvatureGain, float snowDepthU, float displaceAmp);
+
 }  // namespace raw::tx

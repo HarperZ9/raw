@@ -19,6 +19,7 @@
 #include "../../src/d3d12_bridge/RawAssetBridge.h"
 #include "../../src/d3d12_bridge/RawTextureBridge.h"
 #include "../../src/d3d12_bridge/HardwareProfile.h"
+#include "../../src/d3d12_bridge/ShaderCompiler.h"
 #include "../../src/engine_rt/rt_zydis_offsets.h"
 #include "../../src/engine_rt/rt_skeleton_ik.h"
 #include "../../src/engine_rt/rt_combat_ai.h"
@@ -534,6 +535,49 @@ void TestCustomNavMeshAndWorldSim() {
           qpTight.totalMs <= 8.33f * 0.52f + 1e-3f && qpTight.dxrShadowMs >= 0.35f &&
           qpTiny.totalMs <= 1.501f && qpTiny.dxrShadowMs > 0.0f,
           "qp_convex_gpu_frame_budget_allocator");
+
+    // 8) Wave 19 Dual HLSL + GLSL + SPIR-V Live Shader Compiler Verification
+    static const char* kGlslComp = R"GLSL(
+#version 450
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+layout(std430, binding = 0) buffer OutBuf { vec4 outVal[]; };
+void main() {
+    uint idx = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * 8u;
+    vec3 a = vec3(float(gl_GlobalInvocationID.x) * 0.125, float(gl_GlobalInvocationID.y) * 0.125, 0.5);
+    vec3 b = mix(a, fract(a * 3.0), 0.35) * inversesqrt(dot(a, a) + 1.0);
+    outVal[idx] = vec4(b, 1.0);
+}
+)GLSL";
+    auto hasMagic = [](const std::vector<uint8_t>& b, uint32_t magic) {
+        if (b.size() < 4) return false;
+        uint32_t m = 0;
+        std::memcpy(&m, b.data(), 4);
+        return m == magic;
+    };
+    const auto rBuiltinDxil = raw::bridge::CompileGlslFromMemory(
+        kGlslComp, L"test_wave19.glsl", L"main", L"cs_6_6", L"", nullptr, raw::bridge::ShaderOutput::Dxil, true);
+    const auto rSpirv = raw::bridge::CompileGlslFromMemory(
+        kGlslComp, L"test_wave19.glsl", L"main", L"cs_6_6", L"", nullptr, raw::bridge::ShaderOutput::Spirv, false);
+    const bool dxilMagicOk = hasMagic(rBuiltinDxil.dxil, 0x43425844u); // 'DXBC'
+    const bool spvMagicOk  = hasMagic(rSpirv.dxil, 0x07230203u);       // SPIR-V magic
+    std::printf("INFO Dual GLSL/HLSL compiler: builtin_dxil=%d(%zuB, %.1fms, %s) spirv=%d(%zuB, %.1fms, %s)\n",
+                int(rBuiltinDxil.ok), rBuiltinDxil.dxil.size(), rBuiltinDxil.ms, rBuiltinDxil.backend.c_str(),
+                int(rSpirv.ok), rSpirv.dxil.size(), rSpirv.ms, rSpirv.backend.c_str());
+    Check(rBuiltinDxil.ok && dxilMagicOk && rSpirv.ok && spvMagicOk, "glsl_builtin_transpile_dxil_and_spirv");
+
+    if (raw::bridge::HasVulkanGlslToolchain()) {
+        const auto rKhronosDxil = raw::bridge::CompileGlslFromMemory(
+            kGlslComp, L"test_khronos.glsl", L"main", L"cs_6_6", L"", nullptr, raw::bridge::ShaderOutput::Dxil, false);
+        std::printf("INFO Khronos GLSL->SPIR-V->HLSL->DXIL: ok=%d(%zuB, %.1fms, %s)\n",
+                    int(rKhronosDxil.ok), rKhronosDxil.dxil.size(), rKhronosDxil.ms, rKhronosDxil.backend.c_str());
+        Check(rKhronosDxil.ok && hasMagic(rKhronosDxil.dxil, 0x43425844u), "glsl_khronos_spirv_cross_dxil");
+    }
+
+    // Planted-failure control: malformed GLSL must fail cleanly with diagnostic text.
+    const auto rBad = raw::bridge::CompileGlslFromMemory(
+        "#version 450\nvoid main() { vec3 x = nonexistent_fn(1.0, ); }\n",
+        L"bad.glsl", L"main", L"cs_6_6", L"", nullptr, raw::bridge::ShaderOutput::Dxil, true);
+    Check(!rBad.ok && !rBad.errors.empty(), "glsl_planted_syntax_error_reject");
 }
 
 }  // namespace

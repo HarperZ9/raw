@@ -157,15 +157,17 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const float3 vDir = (toEyeLen2 > 1.0e-8f) ? (toEyeC * rsqrt(toEyeLen2)) : float3(0.0f, 0.0f, 1.0f);
     const float4 specTap = Layer.Load(ip);
     const uint base = uint(specTap.z * 255.0f + 0.5f) & 127u;
-    const bool isEye      = (base == 12u);
-    const bool isSkin     = (base == 10u);
-    const bool isHair     = (base == 11u);
-    const bool isFace     = (isSkin || isEye);
-    const bool isMetal    = (base == 2u);
-    const bool isEmissive = (base == 3u);
-    const bool isFoliage  = (base == 5u);
-    const bool isLod      = (base == 7u);
-    const bool isWater    = (base == 9u);
+    const bool isEye          = (base == 12u);
+    const bool isSkin         = (base == 10u);
+    const bool isHair         = (base == 11u);
+    const bool isSkinnedActor = (base == 14u);
+    const bool isFace         = (isSkin || isEye);
+    const bool isActor        = (isSkin || isHair || isEye || isSkinnedActor);
+    const bool isMetal        = (base == 2u);
+    const bool isEmissive     = (base == 3u);
+    const bool isFoliage      = (base == 5u);
+    const bool isLod          = (base == 7u);
+    const bool isWater        = (base == 9u);
 
     const float2 mvCenterRaw = Motion.Load(ip);
     const float2 mvCenter = (any(isnan(mvCenterRaw)) || any(isinf(mvCenterRaw))) ? 0.0f.xx : mvCenterRaw;
@@ -280,7 +282,15 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const float3 giTap = max(GiBounce.Load(ip).rgb, 0.0f.xxx);
     const float giLum = dot(giTap, kLumaW);
 
-    const float2 mv = Motion.Load(int3(bestVelPx, 0));
+    const float2 mvBestRaw = Motion.Load(int3(bestVelPx, 0));
+    const float2 mvBest = (any(isnan(mvBestRaw)) || any(isinf(mvBestRaw))) ? mvCenter : mvBestRaw;
+    // Wave 63 Anti-Halo Silhouette Velocity Guard:
+    // If bestVelPx belongs to a closer foreground object across a depth silhouette, do NOT smear
+    // the foreground actor's velocity vector onto the background pixel (that pulled dark foreground
+    // actor body pixels into HistPrev and painted a dark cel-shading outline around moving NPCs!).
+    const float bestZ = bestD < 0.99998f ? viewZOf(bestD) : z;
+    const bool fgSilhouetteNeighbor = (bestD < d) && ((z - bestZ) > max(z * 0.025f, 2.5f));
+    const float2 mv = fgSilhouetteNeighbor ? mvCenter : mvBest;
     const float speedPx = max(length(mv * dims.xy), length(mvCenter * dims.xy));
 
     // RAWLSS 7.0 12->16->4 Split-Manifold Neural Ray Reconstructor (native 16-wide SM 6.9 Long Vectors on DXIL 1.9!)
@@ -297,35 +307,36 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     );
 
     const float rawClassGain = isEye || isEmissive ? 0.0f
-        : (isSkin ? 0.16f : (isWater ? 0.18f : (isLod ? 0.25f : (isHair ? 0.42f : (isFoliage ? 0.48f : 1.0f)))));
+        : (isSkin ? 0.14f : (isSkinnedActor ? 0.24f : (isWater ? 0.18f : (isLod ? 0.25f : (isHair ? 0.32f : (isFoliage ? 0.48f : 1.0f))))));
     const float classGain = rawClassGain * (1.0f - isIceLike * 0.22f);
-    const float distFade = smoothstep(5200.0f, 260.0f, z);
+    const float distFade = 1.0f - smoothstep(260.0f, 5200.0f, z);
 
-    // World-space locked micro-photogrammetry grain: strictly DISABLED on faces, water, emissives, and blown highlights!
+    // World-space locked micro-photogrammetry grain: strictly DISABLED on actors, faces, water, emissives, and blown highlights!
     float worldMicro = 0.0f;
-    if (!isFace && !isWater && !isEmissive && !isLod && hlGuard > 0.08f && z < 1400.0f) {
+    if (!isActor && !isWater && !isEmissive && !isLod && hlGuard > 0.08f && z < 1400.0f) {
         const float3 pAbs = pW + camPosW.xyz;
-        const float microFade = smoothstep(1400.0f, 120.0f, z) * edgeGate * hlGuard * (1.0f - isIceLike * 0.45f);
+        const float microFade = (1.0f - smoothstep(120.0f, 1400.0f, z)) * edgeGate * hlGuard * (1.0f - isIceLike * 0.45f);
         const float freq = isMetal ? 1.85f : (isFoliage ? 1.35f : 0.72f);
         const float g1 = vNoise3(pAbs * freq) - 0.5f;
         const float g2 = vNoise3(pAbs * (freq * 2.7f) + 17.3f) - 0.5f;
         worldMicro = (g1 * 0.65f + g2 * 0.35f) * (isMetal ? 0.055f : (isFoliage ? 0.055f : 0.085f)) * microFade;
     }
 
-    // Highlight-guarded dual-scale cavity deepening + bevel catchlights (restrained bounceHarm kills dark-edge glow!):
+    // Highlight-guarded dual-scale cavity deepening + bevel catchlights (Wave 63: strictly zero cavity darkening
+    // on ALL characters/actors/creatures AND smoothly faded off silhouette edges so moving NPCs never get dark rims!):
     const float cavNeg = min(divTotal, 0.0f);
     const float bevPos = max(divTotal, 0.0f);
-    const float cavityScale = 1.0f + clamp(cavNeg * 0.20f, -0.22f, 0.0f) * classGain * edgeGate * distFade;
+    const float cavSilGuard = isActor ? 0.0f : smoothstep(0.82f, 0.99f, edgeGate);
+    const float cavityScale = 1.0f + clamp(cavNeg * 0.18f, -0.18f, 0.0f) * classGain * edgeGate * cavSilGuard * distFade;
     const float bevelLift = clamp(bevPos * 0.13f, 0.0f, 0.14f) * (0.45f + 0.55f * fresnel) * classGain * edgeGate * distFade * hlGuard;
     const float3 detailDelta = (curRgb - rgbBlur) * (saturate(mlpOut.x * 0.5f + 0.5f) * 0.32f * classGain * edgeGate * distFade * hlGuard);
     const float3 sheenAdd = curRgb * ((max(mlpOut.y, 0.0f) * fresnel * (isMetal ? 0.10f : (isSkin ? 0.02f : 0.055f)) + bevelLift) * distFade * hlGuard);
     const float3 bounceHarm = rgbBlur * (max(mlpOut.z, 0.0f) * (1.0f - midKey) * 0.020f * classGain * edgeGate * edgeGate * distFade * hlGuard);
     float3 recon = max(curRgb * (cavityScale + worldMicro) + detailDelta + sheenAdd + bounceHarm, 0.0f.xxx);
 
-    // Wave 52 Razor-Crisp Reactive-Mask YCoCg Ellipsoid Temporal Reconstruction:
+    // Wave 52 + Wave 63 Razor-Crisp Reactive-Mask YCoCg Ellipsoid Temporal Reconstruction:
     // Detects intense fire/ember spikes, specular water glints, falling snow/rain streaks & fast-moving foreground
-    // silhouettes (3x3 luminance variance + motion-vector divergence) so dynamic FX NEVER ghost while distant pines
-    // and mountain ridges stay silky-smooth & shimmer-free!
+    // silhouettes (3x3 luminance variance + motion-vector divergence) so dynamic FX & moving actors NEVER ghost!
     const float2 uv = (floor(at.xy) + 0.5f) * dims.zw;
     const float2 mvSafe = (any(isnan(mv)) || any(isinf(mv))) ? 0.0f.xx : mv;
     const float2 puv = uv + mvSafe;
@@ -342,12 +353,13 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
             ? saturate(0.64f + smoothstep(0.18f, 0.80f, localContrast) * 0.34f) : 0.0f;
         const float precipReact = ((weather.z > 0.06f || weather.w > 0.06f) && curLum > blurLum * 1.24f && curLum > 0.18f)
             ? saturate((curLum - blurLum) * 1.85f) * 0.88f : 0.0f;
-        const float fgSwingReact = smoothstep(0.45f, 3.20f, speedPx) * smoothstep(260.0f, 45.0f, z) * 0.96f;
+        const float fgSwingReact = smoothstep(0.45f, 3.20f, speedPx) * (1.0f - smoothstep(45.0f, 260.0f, z)) * 0.96f;
+        const float silRimReact = fgSilhouetteNeighbor ? saturate(0.55f + mvDivDisocc * 0.45f + speedRamp * 0.35f) : 0.0f;
         const float varMotionReact = smoothstep(0.20f, 0.72f, relLumVar) * saturate(speedPx * 0.42f + mvDivPx * 0.78f);
         const float spikeContrastReact = smoothstep(0.65f, 2.20f, (lumMax3 - lumMean3) / max(lumMean3 + 0.15f, 0.15f))
             * saturate(mvDivDisocc + speedRamp * 0.65f);
         const float reactiveMask = saturate(max(
-            max(max(fireEmberReact, waterGlintReact), max(precipReact, fgSwingReact)),
+            max(max(fireEmberReact, waterGlintReact), max(precipReact, max(fgSwingReact, silRimReact))),
             max(max(varMotionReact, spikeContrastReact), max(mvDivDisocc * 0.98f, isEmissive ? 0.90f : 0.0f))));
 
         // Catmull-Rom 5-tap sharpening history sample (sharper when static, neutral under high reactivity):
@@ -370,14 +382,15 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
         const float gammaClip  = lerp(1.28f, 0.62f, tightDrive);
         const float3 clippedY  = clipYCoCgEllipse(nMinY, nMaxY, m1, stdDev, gammaClip, prevY);
 
-        // Material-aware & reactive history flush (zero trails on moving actors/weapons/sparks/snow/water!):
-        const float actorReact = (isSkin || isHair) ? (0.48f + speedRamp * 0.48f) : 0.0f;
+        // Material-aware & reactive history flush (zero dark outline/trails on moving actors, creatures, dogs & weapons!):
+        const float actorReact = isActor ? (0.52f + speedRamp * 0.44f) : 0.0f;
         const float reactiveFinal = saturate(max(reactiveMask, max(actorReact, disocc * 0.96f)));
         const float baseAlpha = isFace ? lerp(0.54f, 0.96f, speedRamp)
-                                       : (isWater ? lerp(0.52f, 0.96f, speedRamp)
-                                                  : (isFoliage ? lerp(0.22f, 0.86f, speedRamp)
-                                                               : (isIceLike > 0.25f ? lerp(0.24f, 0.84f, speedRamp)
-                                                                                    : lerp(0.26f, 0.88f, speedRamp))));
+                                       : (isSkinnedActor ? lerp(0.50f, 0.96f, speedRamp)
+                                                         : (isWater ? lerp(0.52f, 0.96f, speedRamp)
+                                                                    : (isFoliage ? lerp(0.22f, 0.86f, speedRamp)
+                                                                                 : (isIceLike > 0.25f ? lerp(0.24f, 0.84f, speedRamp)
+                                                                                                      : lerp(0.26f, 0.88f, speedRamp)))));
         const float alpha = saturate(max(baseAlpha, reactiveFinal));
         const float3 blendedY = lerp(clippedY, curY, alpha);
         recon = sanitizeFiniteRgb(invTonemapKaris(max(yCoCgToRgb(blendedY), 0.0f.xxx)));
@@ -397,5 +410,6 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
             }
         }
     }
-    return float4(sanitizeFiniteRgb(recon), curRaw.a);
+    const float safeAlpha = isfinite(curRaw.a) ? saturate(curRaw.a) : 1.0f;
+    return float4(sanitizeFiniteRgb(recon), safeAlpha);
 }

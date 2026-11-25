@@ -24,10 +24,10 @@ struct Target
 struct PsEntry
 {
     std::vector<uint8_t> code;
-    ID3D11PixelShader* variant[2] = {};      // [1]: with the first-person flag
-    bool tried[2] = {};
+    ID3D11PixelShader* variant[4] = {};      // bit 0: first-person flag, bit 1: skinned actor/creature (base 1 -> 14)
+    bool tried[4] = {};
     raw::dxbc::ShaderKind kind = raw::dxbc::ShaderKind::Unknown;
-    uint8_t materialClass = 0;
+    uint8_t materialClass = 0;               // base analysed class (0..13)
 };
 
 struct State
@@ -44,6 +44,7 @@ struct State
 
     Span span = Span::None;
     bool dirty = false, substituted = false, lastDrawWater = false, lastDrawSkipSubdiv = false;
+    bool lastDrawSkinnedActor = false;
     ID3D11PixelShader* gamePs = nullptr;
     ID3D11BlendState* gameBlend = nullptr;
     float factor[4] = {1, 1, 1, 1};
@@ -55,15 +56,16 @@ struct State
 
     // Counters, logged every 600 frames.
     uint64_t frame = 0;
-    uint32_t spans[5] = {}, patched = 0, refused = 0, createFailed = 0, swaps = 0;
+    uint32_t spans[5] = {}, patched = 0, refused = 0, createFailed = 0, swaps = 0, skinnedActorDraws = 0;
     uint32_t kindDraws[5][6] = {};                  // per span, draws by shader kind (0: not patched)
 };
 
 State& S();
 
 // The patched form of the game's bound shader for the open span, or null.
-// kind receives the shader's kind; matClass (optional) receives the material class.
-ID3D11PixelShader* VariantFor(State& s, ID3D11PixelShader* game, bool firstPerson, raw::dxbc::ShaderKind* kind, uint8_t* matClass = nullptr);
+// kind receives the shader's kind; matClass (optional) receives the resolved material class (incl. 14 for skinned actors).
+ID3D11PixelShader* VariantFor(State& s, ID3D11PixelShader* game, bool firstPerson, raw::dxbc::ShaderKind* kind,
+                              uint8_t* matClass = nullptr, bool skinnedActor = false);
 // mode 0: the shader writes the material targets; 1: it writes the layer only; 2: it writes none of RAW's targets.
 ID3D11BlendState* BlendVariant(State& s, ID3D11BlendState* game, int mode);
 

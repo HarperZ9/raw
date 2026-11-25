@@ -39,25 +39,31 @@ float4 sampleFroxel3D(float2 uv, float z) {
 }
 
 float3 sampleHillaireSky(float3 rd) {
-    const float az = atan2(rd.y, rd.x);
-    const float elev = asin(clamp(rd.z, -1.0f, 1.0f));
+    const float rdLen2 = dot(rd, rd);
+    const float3 d = (isfinite(rdLen2) && rdLen2 > 1.0e-8f) ? (rd * rsqrt(rdLen2)) : float3(0.0f, 0.0f, 1.0f);
+    const float az = atan2(d.y, d.x);
+    const float elev = asin(clamp(d.z, -1.0f, 1.0f));
     const float vNonLin = saturate(0.5f + 0.5f * (elev >= 0.0f ? sqrt(elev / (0.5f * PI)) : -sqrt(-elev / (0.5f * PI))));
-    const float uAz = clamp(az / (2.0f * PI) + 0.5f, 0.004f, 0.996f);
-    float3 c0 = AtmoSkyView.SampleLevel(Lin, float2(uAz, vNonLin), 0.0f).rgb;
-    // Seamless azimuth wrap across +-PI seam (eliminates the straight diagonal sky seam seen in 01.29.15.22.png!):
-    const float edgeD = min(uAz, 1.0f - uAz);
-    if (edgeD < 0.025f) {
-        const float3 cWrap = AtmoSkyView.SampleLevel(Lin, float2(uAz < 0.5f ? 0.996f : 0.004f, vNonLin), 0.0f).rgb;
-        c0 = lerp(0.5f * (c0 + cWrap), c0, smoothstep(0.004f, 0.025f, edgeD));
+    // Exact texel-center inverse of AtmosphereLut.hlsl::skyview (texel 0 == -PI, texel 191 == +PI -> zero seam!):
+    const float uRaw = frac(az / (2.0f * PI) + 0.5f);
+    const float uLut = (uRaw * 191.0f + 0.5f) / 192.0f;
+    const float vLut = (vNonLin * 107.0f + 0.5f) / 108.0f;
+    float3 c0 = AtmoSkyView.SampleLevel(Lin, float2(uLut, vLut), 0.0f).rgb;
+    // Symmetric periodic wrap reinforcement right across the +-PI meridian:
+    const float edgeD = min(uRaw, 1.0f - uRaw);
+    if (edgeD < 0.020f) {
+        const float uOpp = (uRaw < 0.5f) ? (191.5f / 192.0f) : (0.5f / 192.0f);
+        const float3 cWrap = AtmoSkyView.SampleLevel(Lin, float2(uOpp, vLut), 0.0f).rgb;
+        c0 = lerp(0.5f * (c0 + cWrap), c0, smoothstep(0.0f, 0.020f, edgeD));
     }
-    // Eliminate zenith-pole azimuth pinch when looking straight up (rd.z > 0.94).
-    const float poleW = smoothstep(0.94f, 0.995f, rd.z);
+    // Eliminate zenith-pole azimuth pinch when looking straight up (d.z > 0.94).
+    const float poleW = smoothstep(0.94f, 0.995f, d.z);
     if (poleW > 0.001f) {
-        const float3 zAvg = (AtmoSkyView.SampleLevel(Lin, float2(0.25f, 0.99f), 0.0f).rgb +
-                             AtmoSkyView.SampleLevel(Lin, float2(0.75f, 0.99f), 0.0f).rgb) * 0.5f;
-        return lerp(c0, zAvg, poleW);
+        const float3 zAvg = (AtmoSkyView.SampleLevel(Lin, float2(0.25f, 107.5f / 108.0f), 0.0f).rgb +
+                             AtmoSkyView.SampleLevel(Lin, float2(0.75f, 107.5f / 108.0f), 0.0f).rgb) * 0.5f;
+        c0 = lerp(c0, zAvg, poleW);
     }
-    return c0;
+    return all(isfinite(c0)) ? max(c0, 0.0f.xxx) : 0.0f.xxx;
 }
 
 float phaseHG(float cosT, float g) {
@@ -78,15 +84,16 @@ float windowIntegral(float3 w, float3 c, float r, float tEnd) {
 }
 
 // Verified HDR scene-rendered combustion core detector:
-// Requires high HDR luminance (luma > 1.25) AND strong warm orange-red flame chromaticity
-// (R > G * 1.18 && R > B * 2.20), rejecting skin, walls, snow, sunlight bounce, and empty-air point lights.
+// Requires high incandescent HDR luminance (luma > 2.10) AND strong flame chromaticity
+// (R > G * 1.28 && R > B * 3.00), rejecting warm walls, sunlit roofs, snow, banners, and empty-air point lights.
 float rawDetectSceneFlameCore(float3 rgb) {
+    if (!all(isfinite(rgb))) { return 0.0f; }
     const float luma = dot(rgb, float3(0.2126f, 0.7152f, 0.0722f));
-    if (luma <= 1.25f || rgb.r <= 1.50f) { return 0.0f; }
-    if (rgb.r <= rgb.g * 1.18f || rgb.r <= rgb.b * 2.20f) { return 0.0f; }
-    const float warmRG = smoothstep(1.18f, 1.48f, rgb.r / max(rgb.g, 0.05f));
-    const float warmRB = smoothstep(2.20f, 3.60f, rgb.r / max(rgb.b, 0.02f));
-    const float lumW   = smoothstep(1.25f, 2.85f, luma);
+    if (luma <= 2.10f || rgb.r <= 2.40f) { return 0.0f; }
+    if (rgb.r <= rgb.g * 1.28f || rgb.r <= rgb.b * 3.00f) { return 0.0f; }
+    const float warmRG = smoothstep(1.28f, 1.62f, rgb.r / max(rgb.g, 0.05f));
+    const float warmRB = smoothstep(3.00f, 4.50f, rgb.r / max(rgb.b, 0.02f));
+    const float lumW   = smoothstep(2.10f, 4.20f, luma);
     return lumW * lerp(0.55f, 1.0f, warmRG * warmRB);
 }
 
@@ -117,10 +124,10 @@ float4 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float curZ, fl
     downPxDir = (downLen > 1.0e-3f) ? (downPxDir / downLen) : float2(0.0f, 1.0f);
     const float2 sidePxDir = float2(-downPxDir.y, downPxDir.x);
 
-    // Search a wind-tilted buoyant inverted cone below current pixel for verified real scene-rendered flame cores
-    // (1 center tap + 8 exponentially-spaced downward tiers x 2 lateral chevron probes = 17 taps).
-    static const float kTierFrac[8] = { 0.010f, 0.022f, 0.042f, 0.072f, 0.112f, 0.162f, 0.220f, 0.285f };
-    const float maxConePx = dims.y;
+    // Search a compact wind-tilted buoyant inverted cone below current pixel for verified real scene-rendered flame cores
+    // (tight local plume footprint so secondary LightFog smoke never double-stacks over 3D Navier-Stokes fire!).
+    static const float kTierFrac[8] = { 0.008f, 0.016f, 0.028f, 0.044f, 0.064f, 0.088f, 0.115f, 0.145f };
+    const float maxConePx = min(dims.y, 1440.0f) * 0.78f;
 
     float bestFlame = 0.0f;
     float2 bestPx   = px;
@@ -133,7 +140,7 @@ float4 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float curZ, fl
         const float d0 = Depth.SampleLevel(Lin, cUv, 0.0f);
         if (d0 < 0.9990f) {
             const float z0 = viewZOf(d0);
-            if (z0 > 14.0f && z0 < 2400.0f && z0 <= curZ * 1.04f + 10.0f) {
+            if (z0 > 14.0f && z0 < 1400.0f && z0 <= curZ * 1.04f + 10.0f) {
                 const float f0 = rawDetectSceneFlameCore(Lit.SampleLevel(Lin, cUv, 0.0f).rgb);
                 if (f0 > bestFlame) { bestFlame = f0; bestPx = px; bestD = d0; bestZ = z0; }
             }
@@ -143,7 +150,7 @@ float4 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float curZ, fl
     // Wind-tilted inverted buoyant cone search downward toward flame bases:
     [unroll] for (int ti = 0; ti < 8; ++ti) {
         const float dPx = kTierFrac[ti] * maxConePx * (0.86f + 0.28f * jit);
-        const float spreadPx = dPx * lerp(0.25f, 0.38f, eddyDisp);
+        const float spreadPx = dPx * lerp(0.22f, 0.32f, eddyDisp);
         [unroll] for (int sideI = 0; sideI < 2; ++sideI) {
             const float sSign = (sideI == 0) ? -1.0f : 1.0f;
             const float latOff = sSign * spreadPx * ((ti & 1) == 0 ? 0.35f : 0.85f);
@@ -153,7 +160,7 @@ float4 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float curZ, fl
             if (dTap >= 0.9990f) { continue; }
             const float zTap = viewZOf(dTap);
             // Strictly reject sky, far horizon, near-clip, and flames occluded behind foreground geometry:
-            if (zTap < 14.0f || zTap > 2400.0f || zTap > curZ * 1.04f + 10.0f) { continue; }
+            if (zTap < 14.0f || zTap > 1400.0f || zTap > curZ * 1.04f + 10.0f) { continue; }
             const float fTap = rawDetectSceneFlameCore(Lit.SampleLevel(Lin, qUv, 0.0f).rgb);
             if (fTap > 0.01f) {
                 const float score = fTap * (1.0f - float(ti) * 0.055f);
@@ -193,14 +200,14 @@ float4 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float curZ, fl
     // Reconstruct exact 3D world-space flame base and intersect camera ray with the vertical plume slab:
     const float3 pBase = worldAt(bestPx, bestD);
     const float tMid = dot(pBase - eye, w);
-    if (tMid < 14.0f || tMid > 2400.0f) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
+    if (tMid < 14.0f || tMid > 1400.0f) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
 
-    const float slabHalf = rad * lerp(1.95f, 2.55f, eddyDisp);
+    const float slabHalf = rad * lerp(1.75f, 2.25f, eddyDisp);
     const float tEnter = max(14.0f, tMid - slabHalf);
     const float tExit  = min(dist + 2.0f, tMid + slabHalf);
     if (tExit <= tEnter + 0.4f) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
 
-    const float distFade = (1.0f - smoothstep(1400.0f, 2400.0f, tMid)) * saturate(bestFlame * 1.15f);
+    const float distFade = (1.0f - smoothstep(850.0f, 1400.0f, tMid)) * saturate(bestFlame * 1.05f);
     const int kSteps = 10;
     const float ds = (tExit - tEnter) * (1.0f / float(kSteps));
     const float riseSpeed = lerp(34.0f, 66.0f, sizeT);
@@ -332,12 +339,13 @@ float4 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float curZ, fl
         }
     }
 
-    accEmit *= distFade;
-    const float finalT = lerp(1.0f, T, distFade);
+    accEmit *= distFade * 0.62f;
+    // Clamp transmittance floor so secondary LightFog smoke never creates dark soot blotches over walls or 3D fire:
+    const float finalT = max(lerp(1.0f, T, distFade), isInt ? 0.84f : 0.76f);
     // Smooth HDR fire shoulder so flames stay luminous & vivid without nuclear whiteout:
     const float fPk = max(accEmit.r, max(accEmit.g, accEmit.b));
-    if (fPk > 2.6f) { accEmit *= (2.6f + (fPk - 2.6f) / (1.0f + (fPk - 2.6f) * 0.45f)) / fPk; }
-    return float4(accEmit, finalT);
+    if (fPk > 2.2f) { accEmit *= (2.2f + (fPk - 2.2f) / (1.0f + (fPk - 2.2f) * 0.55f)) / fPk; }
+    return all(isfinite(accEmit)) ? float4(max(accEmit, 0.0f.xxx), saturate(finalT)) : float4(0.0f, 0.0f, 0.0f, 1.0f);
 }
 
 // Wave 42: Physical Underwater Volumetric Sun-Shafts, Pope & Fry Beer-Lambert Marine Absorption & Glacial Silt Motes.
@@ -464,7 +472,7 @@ float3 evalUnderwaterVolumetrics(float3 litCol, float3 eye, float3 w, float dist
 // Wave 45: Sub-Zero Thermal Steam Wisps ("Arctic Sea Smoke" over cold open water + Freezing Hearth Condensation Rim).
 // Strictly gated on freezing exterior air (seasonThermal0.w < -1.0C, !interior, !underwater, !celestial, d < 0.99995)
 // and strictly anchored to verified water-plane surface depth (`liveWaterZ`) or verified scene-anchored flame plumes
-// (`fireVol`) — ZERO standalone floating spheres, ZERO activation in warm weather!
+// (`fireVol`) - ZERO standalone floating spheres, ZERO activation in warm weather!
 // Returns float4(steamEmitRGB, steamTransmittance).
 float4 evalSubZeroThermalSteam(
     float3 eye, float3 w, float dist, float d, float3 pAbs,
@@ -525,7 +533,7 @@ float4 evalSubZeroThermalSteam(
     }
 
     // 2) Freezing Exterior Forge / Hearth Condensation Steam Rim:
-    // Strictly coupled to verified real scene-anchored fire plumes (`fireVol`) — NEVER spawns without a real fire!
+    // Strictly coupled to verified real scene-anchored fire plumes (`fireVol`) - NEVER spawns without a real fire!
     const float firePlumePresence = saturate((1.0f - fireVol.a) * 2.2f + max(fireVol.r, fireVol.g) * 0.45f);
     if (firePlumePresence > 0.02f && freeze01 > 0.01f) {
         const float outerHalo = smoothstep(0.02f, 0.28f, firePlumePresence)
@@ -736,22 +744,26 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (dofParams.w > 0.5f && (weather.w >= 0.12f || weather.z >= 0.25f)) {
         lit.rgb = elderWeatherLensPrepass(Lit, px, dims.xy, dims.zw, weather.w, weather.z, camPosW.w);
     }
-    // Wave 38 Masser & Secunda Celestial Sky-Dome Fix:
-    // Skyrim's moons sit at ~150k..350k units (below 380k!). Route sky-dome celestial bodies properly
-    // into the sky pass while keeping distant low-horizon mountain peaks (celWorldZ < 28,500u, sDir.z <= 0.05)
-    // in the terrestrial aerial-perspective pass so neither Masser's craters nor distant peaks ever break!
+    // Wave 63 Celestial & Vanilla Sky-Card Separation:
+    // Separate true night/twilight Masser & Secunda moons (aElev < 0.06, curZ > 110k, celWorldZ > 28.5k) from
+    // daytime vanilla Skyrim sky-dome / beige cloud-polygon cards (which MUST be 100% replaced by RAW's physical
+    // Hillaire sky + 3D Clouds, never preserved via moonKeep!). Distant mountains stay in the terrestrial fog pass.
     const float3 eyeCel = eyeAt();
-    const float3 sDirCel = normalize(worldAt(px, d < 1.0f ? min(d, 0.9995f) : 0.995f) - eyeCel);
+    const float3 celRayRaw = worldAt(px, d < 1.0f ? min(d, 0.9995f) : 0.995f) - eyeCel;
+    const float celRayLen2 = dot(celRayRaw, celRayRaw);
+    const float3 sDirCel = (isfinite(celRayLen2) && celRayLen2 > 1.0e-8f) ? (celRayRaw * rsqrt(celRayLen2)) : float3(0.0f, 0.0f, 1.0f);
     const float celWorldZ = camPosW.z + sDirCel.z * curZ;
-    const float celLuma = dot(lit.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-    const bool isMoonDisc = (celWorldZ > 28500.0f) || (sDirCel.z > 0.05f && (celLuma > 0.035f || curZ > 260000.0f));
-    const bool isCelestial = (d < 1.0f) && (
-        (d > 0.99945f && curZ > 120000.0f && isMoonDisc) ||
-        (d > 0.9985f && curZ > 75000.0f && sDirCel.z > 0.10f && isMoonDisc));
-    if (d >= 1.0f || isCelestial) {
+    const float aElevPre = astroSunElev();
+    const bool isNightOrTwilPre = (aElevPre < 0.06f);
+    const bool isMoonGeom = isNightOrTwilPre && (d < 1.0f) && (curZ > 110000.0f) && (celWorldZ > 28500.0f) && (sDirCel.z > 0.05f);
+    const bool isSkyCard = (d < 1.0f) && (
+        (curZ > 165000.0f && sDirCel.z > 0.03f) ||
+        (d > 0.99965f && curZ > 95000.0f && sDirCel.z > 0.06f && celWorldZ > 24000.0f));
+    const bool isCelestial = isMoonGeom;
+    if (d >= 1.0f || isMoonGeom || isSkyCard) {
         // Unified Hillaire SIGGRAPH 2020 Physical HDR Sky + Solar Disc + Masser/Secunda Celestial Pass + Wrenninge 4-Octave HDR Cloud Composite:
-        // Routing celestial sky-dome geometry (curZ > 220k: Masser & Secunda) here prevents terrestrial horizonMelt from
-        // painting flat blue over the moon and ensures 3D volumetric clouds drift naturally in front of both moons!
+        // Routing celestial sky-dome geometry (curZ > 110k: Masser & Secunda) and vanilla cloud cards here replaces
+        // flat beige vanilla polygons with RAW Hillaire sky + 3D volumetric clouds while preserving night moons cleanly!
         if (sunColour.w > 0.5f && flags.w != 10u) {
             const float3 sDir = normalize(worldAt(px, 0.995f) - eyeAt());
             const float sunLumS = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
@@ -764,18 +776,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float twilightBell = smoothstep(-0.10f, 0.00f, aElev) * (1.0f - smoothstep(0.06f, 0.28f, aElev));
             const float duskSide = smoothstep(12.5f, 15.0f, timeEnv.x);
             const float cover = saturate(clouds.x);
-            // Preserve exotic DLC skies (Apocrypha emerald, Soul Cairn violet, Solstheim ash).
-            const float isExotic = saturate(max((lit.g - max(lit.r, lit.b) * 1.08f) * 6.0f,
-                                                (min(lit.r, lit.b) - lit.g * 1.15f) * 6.0f));
+            // Preserve ONLY extreme exotic DLC skies (Apocrypha neon-emerald, Soul Cairn deep-violet) so Nordic
+            // sunset/cloud hues never accidentally bypass RAW's Hillaire sky & 3D volumetric clouds:
+            const float exoticApoc = smoothstep(0.18f, 0.36f, lit.g - max(lit.r, lit.b) * 1.22f);
+            const float exoticCairn = smoothstep(0.20f, 0.38f, min(lit.r, lit.b) - lit.g * 1.32f);
+            const float isExotic = saturate(max(exoticApoc, exoticCairn));
             const float cosS = saturate(dot(sDir, aSun));
             const float sunAng = acos(clamp(cosS, -1.0f, 1.0f));
             const float lowS = saturate(1.0f - max(aElev, 0.0f) * 3.2f);
-            // Preserve authored Masser (crimson-ochre) & Secunda (silver-grey) moon crater textures across night,
-            // twilight & partial phases (0.035..0.18 threshold rescues dim moon craters that 0.16..0.48 wiped out!):
+            // Gate Masser & Secunda crater preservation strictly to night & civil twilight (aElev < 0.06) so
+            // daytime vanilla Skyrim beige cloud polygons and sky-dome strips NEVER leak through moonKeep!
+            const float moonElevGate = 1.0f - smoothstep(-0.04f, 0.06f, aElev);
             const float moonLumF = dot(lit.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             const float masserWarm = saturate((lit.r - lit.b) * 6.5f) * smoothstep(0.015f, 0.06f, moonLumF);
             const float moonMask = max(smoothstep(0.035f, 0.18f, moonLumF), masserWarm);
-            const float moonKeep = isCelestial ? 1.0f : (moonMask * (1.0f - smoothstep(0.985f, 0.996f, cosS)) * (1.0f - smoothstep(0.18f, 0.42f, aElev)));
+            const float moonKeep = moonElevGate * (isMoonGeom ? 1.0f : (moonMask * (1.0f - smoothstep(0.985f, 0.996f, cosS))));
             // Full 24-Hour Dynamic Skybox matched continuously to cloud-deck horizon luminance (eliminates black horizon band
             // seen in 01.33.15.97.png & 01.31.56.65.png when overcast/snow clouds sit above the horizon!):
             const float hUp = saturate(sDir.z);
@@ -788,7 +803,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // skybox texture position, which created a floating blue spotlight in empty night sky (21.03.04.78.png).
             if (dayW > 0.01f || twilightBell > 0.02f) {
                 // 100% Physically Grounded Hillaire SIGGRAPH 2020 Radiative-Transfer Sky (Rayleigh + Mie + Chappuis Ozone +
-                // Infinite-Order Multi-Scattering + Planetary Earth Shadow) — ZERO hardcoded fake 3-stop twilight gradients!
+                // Infinite-Order Multi-Scattering + Planetary Earth Shadow) - ZERO hardcoded fake 3-stop twilight gradients!
                 const float hElev = max(sDir.z, 0.008f);
                 const float3 hSky = sampleHillaireSky(normalize(float3(sDir.xy, hElev)));
                 const float hLum = max(dot(hSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
@@ -858,16 +873,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 fullSky = lerp(fullSky, lerp(fullSky, oceanCol, hazeSea), subFade);
             }
             // Wave 38 First-Principles Cosmos, Sidereal Milky Way/Aetherius, O/B/A/F/G/K/M Starfield & 3D Curtain Auroras
-            // (RawCosmosSky.hlsli — unified with AtmosphereLut.hlsl & EnvCubePass.hlsl so water/ice reflect the exact same sky!):
-            // Blended strictly on unobstructed sky pixels (d >= 0.99999 && !isCelestial) BEHIND Masser/Secunda and BEHIND clouds!
+            // (RawCosmosSky.hlsli - unified with AtmosphereLut.hlsl & EnvCubePass.hlsl so water/ice reflect the exact same sky!):
+            // Blended strictly on unobstructed sky / replaced sky-card pixels BEHIND Masser/Secunda and BEHIND clouds!
             const float nightSkyW = saturate(1.0f - dayW * 1.35f) * (sunDir.w > 0.5f ? 1.0f : 0.0f);
-            if (d >= 0.99999f && !isCelestial && sDir.z > -0.01f && (nightSkyW > 0.01f || twilightBell > 0.02f || weather.z > 0.10f)) {
+            if ((d >= 0.99999f || isSkyCard) && !isMoonGeom && sDir.z > -0.01f && (nightSkyW > 0.01f || twilightBell > 0.02f || weather.z > 0.10f)) {
                 const float simT = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
                 const float3 cosmosAdd = evalCosmosAndAurora(sDir, aSun, timeEnv.x, simT, cover, weather.z, camPosW.y);
                 fullSky += cosmosAdd * ((1.0f - isExotic) * lerp(1.0f, 0.55f, twilightBell));
             }
             // Preserve Masser & Secunda twin moons cleanly on top of our procedural night/twilight sky.
-            // Never flatten craters with distant grey fog — apply only subtle realistic low-horizon atmospheric extinction (sDir.z < 0.08).
+            // Never flatten craters with distant grey fog - apply only subtle realistic low-horizon atmospheric extinction (sDir.z < 0.08).
             float3 baseSky = lerp(lit.rgb, fullSky, (1.0f - isExotic) * (1.0f - moonKeep * 0.96f));
             if (moonKeep > 0.04f && nightSkyW > 0.04f) {
                 baseSky += lit.rgb * float3(1.06f, 0.98f, 0.88f) * (moonKeep * nightSkyW * 0.34f);
@@ -999,14 +1014,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 baseSky *= (1.0f - alexBand * bowW * 0.15f + superInner * bowW * 0.065f);
                 baseSky += float3(pR + sR, pG + sG, pB + sB) * (bowW * 0.12f);
             }
-            // When camera is submerged, apply physical underwater Snell's Window + volumetric sun-shafts to sky pixels:
+            // When camera is submerged, apply physical underwater Snell's Window + volumetric sun-shafts to sky pixels.
+            // Do NOT run screen-space downward flame cones on empty sky pixels (prevents diffuse red smudges across the sky;
+            // true world-space volumetric fire & smoke in front of sky are rendered by RawFluidFireComposite.hlsl).
             if ((flags.x & FLAG_UNDERWATER) != 0u) {
                 const float liveSeaUw = rawLiveWaterZ(engineWorld, physWorld[0]);
                 baseSky = evalUnderwaterVolumetrics(baseSky, eyeCel, sDir, 2600.0f, px, liveSeaUw, true);
-            } else if (!isCelestial && (1.0f - isExotic) > 0.2f && sDir.z > -0.10f && sDir.z < 0.52f) {
-                // Allow verified outdoor fire smoke & embers to billow cleanly in front of lower sky pixels:
-                const float4 skyFireVol = evalVolumetricFirePlumes(eyeCel, sDir, 2400.0f, 100000.0f, px, false);
-                baseSky = baseSky * skyFireVol.a + skyFireVol.rgb;
             }
             // Wave 48 Seamless sky-layer continuation of outdoor 3m/7m/14m parallax rain & snow streaks:
             if ((flags.x & FLAG_UNDERWATER) == 0u && !isCelestial && (weather.w > 0.05f || weather.z > 0.05f)) {
@@ -1107,9 +1120,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                                   + uSunF * (rawMultiScatterPhase(cosSunF, clamp(tune.y, 0.25f, 0.78f), odFar) * saturate(aElevFg * 4.0f + 0.15f) * 0.42f);
         atmoCol = lerp(atmoCol, lerp(uSkyHF, uSkyZF, saturate(max(w.z, 0.0f) * 2.2f)), 0.28f) * (0.92f * lerp(1.0f, 0.78f, twilightF * (1.0f - horizonMelt)));
         atmoCol = lerp(atmoCol, worldAtmoRef, frontierFuse * 0.38f * (1.0f - nightF));
-        if ((flags.x & FLAG_CLOUDS) != 0u) {
+        if ((flags.x & FLAG_CLOUDS) != 0u && horizonMelt > 0.002f) {
             const float4 clF = Clouds.SampleLevel(Lin, uv, 0.0f);
-            const float clMerge = smoothstep(28000.0f, 75000.0f, dist);
+            // Only fuse sky clouds into the extreme distant horizon melt (>115k..190k u), NEVER onto mid-distance mountains!
+            const float clMerge = smoothstep(115000.0f, 190000.0f, dist) * horizonMelt;
             atmoCol = lerp(atmoCol, atmoCol * clF.a + clF.rgb, clMerge);
         }
         // Dynamically lit far mountain aerial perspective: cloud-shadowed directional solar in-scattering vs shadowed ridges!

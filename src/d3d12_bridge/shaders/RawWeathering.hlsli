@@ -79,10 +79,25 @@ RawWeatheringResult evalSurfaceWeathering3D(
     o.hoarfrost01      = 0.0f;
     o.hoarfrostGlint01 = 0.0f;
 
-    const float distFade = smoothstep(3200.0f, 180.0f, max(zDist, 0.0f));
+    // Strictly exclude ALL skinned actors, creatures, fur, clothing (14), skin (10), hair (11), eyes (12),
+    // foliage (5), water (9), and TruePBR (13) from terrain/stone weathering, chipping, moss, and soot!
+    if (matBase == 0u || matBase == 5u || matBase == 9u || matBase == 10u || matBase == 11u || matBase == 12u || matBase == 14u) {
+        return o;
+    }
+
+    const float zSafe     = isfinite(zDist) ? max(zDist, 0.0f) : 1.0e6f;
+    const float distFade  = 1.0f - smoothstep(180.0f, 3200.0f, zSafe);
     if (distFade <= 0.005f) { return o; }
 
-    const float nonSnowIce = (1.0f - saturate(snow01 * 1.45f)) * (1.0f - saturate(iceMask01 * 2.0f));
+    const float wetSafe       = isfinite(wet01) ? saturate(wet01) : 0.0f;
+    const float snowSafe      = isfinite(snow01) ? saturate(snow01) : 0.0f;
+    const float iceSafe       = isfinite(iceMask01) ? saturate(iceMask01) : 0.0f;
+    const float waterProxSafe = isfinite(waterProx01) ? saturate(waterProx01) : 0.0f;
+    const float sootSafe      = isfinite(sootHeat01) ? saturate(sootHeat01) : 0.0f;
+    const float convSafe      = isfinite(curvConvex) ? saturate(curvConvex) : 0.0f;
+    const float concSafe      = isfinite(curvConcave) ? saturate(curvConcave) : 0.0f;
+
+    const float nonSnowIce = (1.0f - saturate(snowSafe * 1.45f)) * (1.0f - saturate(iceSafe * 2.0f));
     const float surfTempC = isfinite(seasonThermal0.w) ? seasonThermal0.w : 0.0f;
     const bool hasTherm = (seasonThermal0.y > 0.05f || abs(surfTempC) > 0.01f);
 
@@ -95,11 +110,11 @@ RawWeatheringResult evalSurfaceWeathering3D(
     // 1) Curvature-Driven Edge Chipping & Masonry Mortar Erosion / Micro-Fractures
     // -------------------------------------------------------------------------
     const bool isMetal = (matBase == 2u);
-    const float chipMask = saturate(curvConvex * smoothstep(0.28f, 0.78f, chipNoise)) * distFade * nonSnowIce;
+    const float chipMask = saturate(convSafe * smoothstep(0.28f, 0.78f, chipNoise)) * distFade * nonSnowIce;
     // Sparse organic hairline stone micro-fractures (domain-warped ridge noise gated by macro patch, NEVER honeycomb):
     const float fracRegion = smoothstep(0.56f, 0.84f, nMacro.x);
     const float fracRidge  = pow(saturate(1.0f - abs(nFine.x * 2.0f - 1.0f)), 6.0f) * fracRegion;
-    const float mortarMask = saturate((curvConcave * (0.55f + 0.45f * nMacro.x) + fracRidge * (isMetal ? 0.18f : 0.48f)))
+    const float mortarMask = saturate((concSafe * (0.55f + 0.45f * nMacro.x) + fracRidge * (isMetal ? 0.18f : 0.48f)))
                            * distFade * nonSnowIce;
 
     // Subtle chipped bevel brightening + freshly exposed micro-roughness shift:
@@ -124,7 +139,7 @@ RawWeatheringResult evalSurfaceWeathering3D(
     // 2) Wave 58: Multi-Scale Rainwater Puddle Porosity Darkening (Porous Stone/Soil/Wood)
     // -------------------------------------------------------------------------
     const float liquidGate = hasTherm ? smoothstep(-2.0f, 1.5f, surfTempC) : 1.0f;
-    const float wetDrive = saturate(wet01 * 0.95f + waterProx01 * 0.78f) * liquidGate * nonSnowIce;
+    const float wetDrive = saturate(wetSafe * 0.95f + waterProxSafe * 0.78f) * liquidGate * nonSnowIce;
     if (!isMetal && wetDrive > 0.02f) {
         // Multi-scale puddle basins (macro depression + fine stone pore absorption + concave mortar pooling):
         const float4 pBasin = rawNoise3Grad(worldPosAbs * 0.0085f + float3(41.3f, 17.9f, 3.1f));
@@ -148,44 +163,51 @@ RawWeatheringResult evalSurfaceWeathering3D(
     }
 
     // -------------------------------------------------------------------------
-    // 3) Seasonal North-Facing Slope Moss & Lichen Moisture Accumulation (Exterior Stone/Rock/Bark)
+    // 3) Single Consolidated Exterior Stone/Terrain Moss & Lichen Pass (Wave 63)
+    //    Strictly restricted to exterior stone (1) & terrain (4) with warm fur/leather hue guard
+    //    so animals, wooden furniture, and NPC gloves NEVER turn green!
     // -------------------------------------------------------------------------
-    if (isExterior && !isMetal && nonSnowIce > 0.05f) {
+    if (isExterior && (matBase == 1u || matBase == 4u) && nonSnowIce > 0.05f) {
+        // Guard against warm fur/hide/skin/red-timber hues ever picking up moss if untagged:
+        const float warmHueExcess = saturate((o.albedo.r - o.albedo.b * 1.38f) * 6.0f)
+                                  * saturate((o.albedo.r - o.albedo.g * 1.12f) * 8.0f);
+        const float stoneHueGate = 1.0f - warmHueExcess * 0.92f;
         // Suppressed in deep sub-zero blizzard zones unless thermal uniforms are uninitialized (0):
         const float tempGate = hasTherm ? smoothstep(-7.5f, 2.5f, surfTempC) : 1.0f;
-        // Altitude transition: lush damp moss in valleys/foothills -> hardy pale-sage alpine lichen on mid-high crags:
+        // Altitude transition: damp moss in valleys/foothills -> hardy pale-sage alpine lichen on mid-high crags:
         const float altLichen = smoothstep(2200.0f, 5400.0f, worldPosAbs.z);
         const float altCap    = 1.0f - smoothstep(5600.0f, 8200.0f, worldPosAbs.z);
         // North-facing (+Y) slope moisture retention + upward shelf pooling + damp mortar crevices & riverbanks:
-        const float northFace = smoothstep(0.12f, 0.72f, nUnit.y);
-        const float upShelf   = smoothstep(0.04f, 0.68f, nUnit.z);
-        const float northMoisture = saturate(northFace * (0.55f + 0.45f * saturate(wet01 + waterProx01)));
-        const float dampBoost = saturate(0.32f + wet01 * 0.56f + waterProx01 * 0.68f + mortarMask * 0.55f + northMoisture * 0.35f);
+        const float northFace = smoothstep(0.14f, 0.74f, nUnit.y);
+        const float upShelf   = smoothstep(0.18f, 0.76f, nUnit.z);
+        const float northMoisture = saturate(northFace * (0.55f + 0.45f * saturate(wetSafe + waterProxSafe)));
+        const float dampBoost = saturate(0.26f + wetSafe * 0.52f + waterProxSafe * 0.62f + mortarMask * 0.48f + northMoisture * 0.30f);
         const float4 mPatch   = rawNoise3Grad(worldPosAbs * 0.012f + float3(31.7f, 7.3f, 17.9f));
         const float4 mTuft    = rawNoise3Grad(worldPosAbs * 0.165f + float3(8.1f, 23.4f, 4.7f));
-        const float colony    = smoothstep(0.44f, 0.80f, mPatch.x * 0.68f + mTuft.x * 0.32f);
-        const float mossCov   = saturate(colony * max(northFace * 0.90f, upShelf * 0.55f) * upShelf * dampBoost * tempGate * altCap * nonSnowIce)
-                              * smoothstep(2800.0f, 180.0f, max(zDist, 0.0f)) * 0.60f;
+        const float colony    = smoothstep(0.50f, 0.84f, mPatch.x * 0.68f + mTuft.x * 0.32f);
+        const float mossDist  = 1.0f - smoothstep(180.0f, 2600.0f, zSafe);
+        const float mossCov   = saturate(colony * max(northFace * 0.86f, upShelf * 0.50f) * upShelf * dampBoost * tempGate * altCap * nonSnowIce * stoneHueGate)
+                              * mossDist * 0.42f;
         if (mossCov > 0.015f) {
             // Subtle damp substrate moisture rim hugging the outer fringe of north-facing moss colonies:
-            const float dampRim = smoothstep(0.015f, 0.18f, mossCov) * (1.0f - smoothstep(0.18f, 0.45f, mossCov));
-            o.albedo *= (1.0f - dampRim * 0.14f);
-            // React smoothly to live seasonal phenology + altitude lichen transition:
+            const float dampRim = smoothstep(0.015f, 0.16f, mossCov) * (1.0f - smoothstep(0.16f, 0.38f, mossCov));
+            o.albedo *= (1.0f - dampRim * 0.12f);
+            // Restrained, earthy Nordic olive-moss palette reacting to live seasonal phenology + altitude lichen:
             const float budW    = saturate(phenology0.x);
             const float autumnW = saturate(phenology0.z * 0.75f + phenology0.w * 0.45f);
-            const float winterW = hasTherm ? smoothstep(2.5f, -3.5f, surfTempC) : 0.0f;
-            const float3 springMoss = lerp(float3(0.080f, 0.182f, 0.056f), float3(0.172f, 0.288f, 0.090f), saturate(mTuft.x + budW * 0.25f));
-            const float3 autumnMoss = lerp(float3(0.145f, 0.140f, 0.058f), float3(0.220f, 0.185f, 0.075f), mTuft.x);
-            const float3 winterMoss = lerp(float3(0.075f, 0.115f, 0.078f), float3(0.460f, 0.540f, 0.600f), smoothstep(0.55f, 0.90f, mTuft.x) * 0.55f);
-            const float3 alpineLich = lerp(float3(0.220f, 0.265f, 0.215f), float3(0.360f, 0.405f, 0.340f), mTuft.x);
+            const float winterW = hasTherm ? (1.0f - smoothstep(-3.5f, 2.5f, surfTempC)) : 0.0f;
+            const float3 springMoss = lerp(float3(0.082f, 0.142f, 0.058f), float3(0.148f, 0.218f, 0.084f), saturate(mTuft.x + budW * 0.22f));
+            const float3 autumnMoss = lerp(float3(0.135f, 0.130f, 0.056f), float3(0.205f, 0.172f, 0.072f), mTuft.x);
+            const float3 winterMoss = lerp(float3(0.075f, 0.112f, 0.076f), float3(0.440f, 0.515f, 0.575f), smoothstep(0.55f, 0.90f, mTuft.x) * 0.50f);
+            const float3 alpineLich = lerp(float3(0.220f, 0.258f, 0.210f), float3(0.345f, 0.385f, 0.325f), mTuft.x);
             float3 mossCol = lerp(springMoss, autumnMoss, autumnW * 0.78f);
             mossCol = lerp(mossCol, winterMoss, winterW * 0.72f);
             mossCol = lerp(mossCol, alpineLich, altLichen * 0.65f);
 
             o.albedo    = lerp(o.albedo, mossCol, mossCov);
-            o.roughness = lerp(o.roughness, 0.89f, mossCov * 0.85f);
+            o.roughness = lerp(o.roughness, 0.89f, mossCov * 0.82f);
             const float3 mGrad = mTuft.yzw - nUnit * dot(mTuft.yzw, nUnit);
-            const float3 nMoss = o.normal + mGrad * (0.26f * mossCov);
+            const float3 nMoss = o.normal + mGrad * (0.24f * mossCov);
             const float nMoss2 = dot(nMoss, nMoss);
             o.normal    = (isfinite(nMoss2) && nMoss2 > 1.0e-8f) ? (nMoss * rsqrt(nMoss2)) : o.normal;
             o.mossCov01 = mossCov;
@@ -196,16 +218,16 @@ RawWeatheringResult evalSurfaceWeathering3D(
     // 4) Wave 58: Sub-Zero Hoarfrost & Rime Micro-Sparkle (Temperature + Altitude + Exposure)
     // -------------------------------------------------------------------------
     if (isExterior) {
-        const float thermFreeze = hasTherm ? smoothstep(1.2f, -4.8f, surfTempC) : 0.0f;
+        const float thermFreeze = hasTherm ? (1.0f - smoothstep(-4.8f, 1.2f, surfTempC)) : 0.0f;
         const float altFreeze   = smoothstep(2600.0f, 5200.0f, worldPosAbs.z) * 0.65f;
-        const float snowFreeze  = saturate(snow01 * 0.95f + seasonThermal0.x * 1.25f);
+        const float snowFreeze  = saturate(snowSafe * 0.95f + max(seasonThermal0.x, 0.0f) * 1.25f);
         const float coldDrive   = saturate(max(thermFreeze, max(altFreeze, snowFreeze * 0.72f)));
         if (coldDrive > 0.03f) {
-            const float frostNear = smoothstep(2200.0f, 120.0f, max(zDist, 0.0f));
+            const float frostNear = 1.0f - smoothstep(120.0f, 2200.0f, zSafe);
             const float4 fFeather = rawNoise3Grad(worldPosAbs * 0.24f + float3(29.3f, 13.7f, 41.9f));
             // Hoarfrost nucleates along upward shelves, chipped stone edges, north/shaded faces, and damp rime margins:
             const float nucleate = saturate(smoothstep(0.08f, 0.74f, nUnit.z) * 0.65f + chipMask * 0.55f + smoothstep(0.15f, 0.75f, nUnit.y) * 0.25f);
-            const float frostCov = saturate(coldDrive * nucleate * smoothstep(0.32f, 0.78f, fFeather.x * 0.65f + nFine.x * 0.35f) * (1.0f - iceMask01 * 0.85f))
+            const float frostCov = saturate(coldDrive * nucleate * smoothstep(0.32f, 0.78f, fFeather.x * 0.65f + nFine.x * 0.35f) * (1.0f - iceSafe * 0.85f))
                                  * frostNear * 0.52f;
             if (frostCov > 0.015f) {
                 const float3 frostCol = float3(0.76f, 0.83f, 0.91f);
@@ -214,7 +236,7 @@ RawWeatheringResult evalSurfaceWeathering3D(
                 // World-locked high-frequency ice-needle crystal facet sparkle (aperiodic hash, zero Voronoi tiling):
                 const float3 crystalCell = floor(worldPosAbs * 0.65f);
                 const float3 hSpark = rawHash33(crystalCell + float3(17.1f, 3.7f, 29.3f));
-                const float microSparkle = smoothstep(0.86f, 0.995f, hSpark.x) * smoothstep(950.0f, 90.0f, max(zDist, 0.0f));
+                const float microSparkle = smoothstep(0.86f, 0.995f, hSpark.x) * (1.0f - smoothstep(90.0f, 950.0f, zSafe));
                 o.hoarfrost01      = frostCov;
                 o.hoarfrostGlint01 = saturate(microSparkle * frostCov * 2.4f);
             }
@@ -224,10 +246,10 @@ RawWeatheringResult evalSurfaceWeathering3D(
     // -------------------------------------------------------------------------
     // 5) Thermal Soot & Smoke Stain Accumulation Above Active Hearths / Forges / Sconces
     // -------------------------------------------------------------------------
-    if (sootHeat01 > 0.015f && nonSnowIce > 0.10f) {
+    if (sootSafe > 0.015f && nonSnowIce > 0.10f) {
         // Vertically stretched smoke-wisp pattern staining stone chimneys, arches & timber rafters:
         const float sootN = rawNoise3Grad(float3(worldPosAbs.xy * 0.068f, worldPosAbs.z * 0.022f) + float3(13.1f, 27.3f, 6.7f)).x;
-        const float sootMask = saturate(sootHeat01 * (0.58f + 0.68f * sootN)) * distFade * nonSnowIce;
+        const float sootMask = saturate(sootSafe * (0.58f + 0.68f * sootN)) * distFade * nonSnowIce;
         const float3 sootCol = o.albedo * float3(0.32f, 0.30f, 0.29f);
         o.albedo     = lerp(o.albedo, sootCol, sootMask * 0.74f);
         o.roughness  = lerp(o.roughness, 0.94f, sootMask * 0.80f);

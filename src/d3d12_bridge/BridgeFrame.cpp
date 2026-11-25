@@ -2,17 +2,22 @@
 // timestamps on both queues. Original work, MIT.
 #include "BridgeImpl.h"
 #include "RawProceduralLib.h"
+#include "RawGrassWindHost.h"
+#include "RawLiveWorldHost.h"
 #include "StreamlineHost.h"
 #include "LightingPass.h"
 #include "RtScene.h"
 #include "../worldgen/RawHydrologyGen.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 
 namespace raw::bridge
 {
@@ -44,11 +49,192 @@ struct TelemetryLightUniformView
 static_assert(sizeof(TelemetryLightUniformView) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16 + 176 + 512,
               "TelemetryLightUniformView must match LightingPass cbuffer P");
 
+constexpr std::array<uint32_t, 10> kDebugViewCycle = {0u, 28u, 29u, 30u, 31u, 32u, 33u, 1u, 2u, 8u};
+
+const char* DebugViewLabel(uint32_t v)
+{
+    switch (v) {
+        case 0u:  return "0 FINAL LIVE WORLD";
+        case 28u: return "28 CLASS+ACTOR14 MAP";
+        case 29u: return "29 DEPTH+SILHOUETTE";
+        case 30u: return "30 SHADOW+LIVE DOMAINS";
+        case 31u: return "31 MOSS/SNOW/ICE MASK";
+        case 32u: return "32 ACTOR SKIN/SSS/14";
+        case 33u: return "33 NAN/INF/HDR HEATMAP";
+        case 1u:  return "1 WORLD NORMALS";
+        case 2u:  return "2 GPU SNOW/GRASS/CAUST";
+        case 8u:  return "8 RAW ALBEDO";
+        default:  return "CUSTOM DEBUG VIEW";
+    }
+}
+
+const char* DebugViewLegend(uint32_t v)
+{
+    switch (v) {
+        case 28u: return "CYAN=ACTOR14 PEACH=SKIN GOLD=HAIR GRN=TREE OCH=TERR BLU=ICE";
+        case 29u: return "BLUE->WHITE=LOG DEPTH | AMBER=SILHOUETTE DISCONTINUITY";
+        case 30u: return "GREY=NDOTL | CYAN=SNOW64M GRN=GRASS64M BLUE=SUBMERGED";
+        case 31u: return "RED=PROTECTED ACTOR | CYAN=SNOW GRN=GRASS BLU=CAUST WHT=ICE";
+        case 32u: return "BRIGHT=ACTORS (10/11/12/14) | DIM=WORLD ENVIRONMENT";
+        case 33u: return "MAGENTA=NAN/INF OR >32 HDR OVERFLOW | BLUE->RED=LUMA";
+        case 1u:  return "RGB = 0.5 + 0.5 * WORLD NORMAL (Z-UP)";
+        case 2u:  return "R=SNOW DEPTH | G=GRASS WIND BEND | B=WATER CAUSTICS";
+        case 8u:  return "UNLIT G-BUFFER ALBEDO (BASE COLOR)";
+        default:  return "LIVE SNOW TRACKS + CAUSTICS + 65K GRASS + GLACIER/CONIFER";
+    }
+}
+
+struct LiveWorldBridgeRuntime
+{
+    ID3D12Device*                              boundDev = nullptr;
+    std::unique_ptr<RawGrassWindHost>          grassWind;
+    bool                                       grassReady = false;
+    bool                                       grassInitAttempted = false;
+    ComPtr<ID3D12CommandAllocator>             grassAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList>          grassList;
+    ComPtr<ID3D12Fence>                        grassFence;
+    HANDLE                                     grassEvent = nullptr;
+    uint64_t                                   grassFenceVal = 0ull;
+    uint64_t                                   grassSlotVal[kRing] = {};
+    uint32_t                                   grassSlot = 0u;
+    uint64_t                                   grassStepFrames = 0ull;
+    uint64_t                                   grassLastMs = 0ull;
+    bool                                       grassPrevInterior = false;
+
+    std::unique_ptr<RawLiveWorldHost>          liveWorld;
+    bool                                       liveWorldReady = false;
+    bool                                       liveWorldInitAttempted = false;
+    uint64_t                                   liveWorldFrames = 0ull;
+
+    bool                                       debugDrawerEnabled = false;
+    uint32_t                                   debugViewIndex = 0u;
+    uint32_t                                   activeDebugView = 0u;
+    bool                                       prevF10Down = false;
+    bool                                       prevF11Down = false;
+    bool                                       telemetryDirty = false;
+
+    ~LiveWorldBridgeRuntime() { Shutdown(); }
+
+    void Shutdown()
+    {
+        if (grassFence && grassEvent && grassFenceVal > 0ull) {
+            if (grassFence->GetCompletedValue() < grassFenceVal) {
+                grassFence->SetEventOnCompletion(grassFenceVal, grassEvent);
+                WaitForSingleObject(grassEvent, 3000);
+            }
+        }
+        grassList.Reset();
+        for (uint32_t i = 0u; i < kRing; ++i) {
+            grassAlloc[i].Reset();
+            grassSlotVal[i] = 0ull;
+        }
+        grassFence.Reset();
+        if (grassEvent) {
+            CloseHandle(grassEvent);
+            grassEvent = nullptr;
+        }
+        if (grassWind) {
+            grassWind->Shutdown();
+            grassWind.reset();
+        }
+        if (liveWorld) {
+            liveWorld->Shutdown();
+            liveWorld.reset();
+        }
+        boundDev = nullptr;
+        grassReady = false;
+        grassInitAttempted = false;
+        liveWorldReady = false;
+        liveWorldInitAttempted = false;
+        grassFenceVal = 0ull;
+        grassSlot = 0u;
+    }
+
+    void EnsureInit(ID3D12Device* dev, ID3D12CommandQueue* q, LogFn logFn)
+    {
+        if (!dev || !q) return;
+        if (boundDev != nullptr && boundDev != dev) {
+            Shutdown();
+        }
+        boundDev = dev;
+
+        UINT64 tsFreq = 0ull;
+        q->GetTimestampFrequency(&tsFreq);
+
+        if (!grassInitAttempted) {
+            grassInitAttempted = true;
+            auto gw = std::make_unique<RawGrassWindHost>();
+            std::string err;
+            GrassWindDesc gd{};
+            gd.gridWidth = 256u;
+            gd.gridHeight = 256u;
+            gd.worldSpanM = 64.0f;
+            bool ok = gw->Init(dev, gd, &err);
+            if (ok) {
+                if (tsFreq > 0ull) gw->SetTimestampFrequency(tsFreq);
+                for (uint32_t i = 0u; i < kRing && ok; ++i) {
+                    ok = SUCCEEDED(dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&grassAlloc[i])));
+                }
+                if (ok) {
+                    ok = SUCCEEDED(dev->CreateCommandList(0u, D3D12_COMMAND_LIST_TYPE_DIRECT, grassAlloc[0].Get(), nullptr, IID_PPV_ARGS(&grassList))) &&
+                         SUCCEEDED(grassList->Close()) &&
+                         SUCCEEDED(dev->CreateFence(0ull, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&grassFence)));
+                }
+                if (ok) {
+                    grassEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+                    ok = (grassEvent != nullptr);
+                }
+            }
+            if (ok) {
+                grassWind = std::move(gw);
+                grassReady = true;
+                if (logFn) logFn("[GrassWind] live 256x256 (65,536-blade) GPU wind/trample solver ready");
+            } else {
+                grassList.Reset();
+                for (uint32_t i = 0u; i < kRing; ++i) grassAlloc[i].Reset();
+                grassFence.Reset();
+                if (grassEvent) { CloseHandle(grassEvent); grassEvent = nullptr; }
+                if (logFn && !err.empty()) logFn("[GrassWind] disabled: %s", err.c_str());
+            }
+        }
+
+        if (!liveWorldInitAttempted) {
+            liveWorldInitAttempted = true;
+            auto lw = std::make_unique<RawLiveWorldHost>();
+            std::string err;
+            if (lw->Init(dev, &err)) {
+                if (tsFreq > 0ull) lw->SetTimestampFrequency(tsFreq);
+                liveWorld = std::move(lw);
+                liveWorldReady = true;
+                if (logFn) logFn("[LiveWorld] world-space snow/caustics/grass/debug compositor ready");
+            } else if (logFn && !err.empty()) {
+                logFn("[LiveWorld] disabled: %s", err.c_str());
+            }
+        }
+    }
+};
+
+std::mutex g_liveWorldMu;
+std::unordered_map<const D3D12Bridge::Impl*, std::unique_ptr<LiveWorldBridgeRuntime>> g_liveWorldMap;
+
+LiveWorldBridgeRuntime& GetLiveWorldRuntime(const D3D12Bridge::Impl* impl)
+{
+    std::lock_guard<std::mutex> lock(g_liveWorldMu);
+    auto& ptr = g_liveWorldMap[impl];
+    if (!ptr) {
+        ptr = std::make_unique<LiveWorldBridgeRuntime>();
+    }
+    return *ptr;
+}
+
 } // namespace
 
 void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
 {
-    if (frames != 1ull && (frames % 180ull) != 0ull) return;
+    LiveWorldBridgeRuntime& lwRt = GetLiveWorldRuntime(this);
+    const bool forceFlush = lwRt.telemetryDirty;
+    if (!forceFlush && frames != 1ull && (frames % 180ull) != 0ull) return;
+    lwRt.telemetryDirty = false;
 
     float seasonSnowM = 0.0f;
     float seasonIceM = 0.0f;
@@ -146,6 +332,12 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
     const float snowDeformMs = (snowDeformReady && snowDeform && snowDeform->HasValidTiming() &&
                                 std::isfinite(snowDeform->GetLastTotalMs()))
         ? snowDeform->GetLastTotalMs() : 0.0f;
+    const float grassWindMs = (lwRt.grassReady && lwRt.grassWind && lwRt.grassWind->HasValidTiming() &&
+                               std::isfinite(lwRt.grassWind->GetLastStepMs()))
+        ? lwRt.grassWind->GetLastStepMs() : 0.0f;
+    const float liveWorldCompositeMs = (lwRt.liveWorldReady && lwRt.liveWorld && lwRt.liveWorld->HasValidTiming() &&
+                                        std::isfinite(lwRt.liveWorld->GetLastCompositeMs()))
+        ? lwRt.liveWorld->GetLastCompositeMs() : 0.0f;
 
     char jsonBuf[4096]{};
     const int n = std::snprintf(
@@ -169,6 +361,8 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"xpbdStepMs\": %.4f,\n"
         "  \"xpbdParticles\": %u,\n"
         "  \"overlayHudEnabled\": %s,\n"
+        "  \"debugDrawerEnabled\": %s,\n"
+        "  \"activeDebugView\": %u,\n"
         "  \"overlayMs\": %.4f,\n"
         "  \"gpuCullHiZMs\": %.4f,\n"
         "  \"gpuCullMs\": %.4f,\n"
@@ -190,6 +384,8 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"tsrUpscaleMs\": %.4f,\n"
         "  \"waterCausticsMs\": %.4f,\n"
         "  \"snowDeformMs\": %.4f,\n"
+        "  \"grassWindMs\": %.4f,\n"
+        "  \"liveWorldCompositeMs\": %.4f,\n"
         "  \"seasonSnowM\": %.4f,\n"
         "  \"seasonIceM\": %.4f,\n"
         "  \"skinTempC\": %.3f,\n"
@@ -215,6 +411,8 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         xpbdStepMs,
         xpbdParticles,
         overlayHudEnabled ? "true" : "false",
+        lwRt.debugDrawerEnabled ? "true" : "false",
+        static_cast<unsigned>(lwRt.activeDebugView),
         overlayMs,
         gpuCullHiZMs,
         gpuCullMs,
@@ -236,6 +434,8 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         tsrUpscaleMs,
         waterCausticsMs,
         snowDeformMs,
+        grassWindMs,
+        liveWorldCompositeMs,
         seasonSnowM,
         seasonIceM,
         skinTempC,
@@ -307,30 +507,31 @@ bool D3D12Bridge::Impl::StepFluidSimOnQueue(bool isInterior)
     uint32_t emitCount = 0u;
     for (uint32_t i = 0; i < lighting.lightCount && emitCount < 16u; ++i) {
         const SceneLight& l = lighting.lights[i];
-        // Strict fire-core chromaticity + physical hearth/torch/brazier radius gate (never wide neutral room-fill lights!):
-        if (l.colour[0] > l.colour[1] * 1.25f && l.colour[0] > l.colour[2] * 2.2f &&
-            l.colour[0] > 0.45f && l.radius >= 50.0f && l.radius <= 900.0f) {
+        // Strict hearth/forge/torch chromaticity & radius gate:
+        // Rejects wide neutral room-fill lights (> 460u or weak chroma) and grounds emitters onto the fuel bed!
+        if (l.colour[0] > l.colour[1] * 1.32f && l.colour[0] > l.colour[2] * 2.40f &&
+            l.colour[0] > 0.50f && l.radius >= 50.0f && l.radius <= 460.0f) {
             const float wx = lighting.posAdjust[0] + l.position[0];
             const float wy = lighting.posAdjust[1] + l.position[1];
             const float wz = lighting.posAdjust[2] + l.position[2];
             const float d2 = l.position[0] * l.position[0] + l.position[1] * l.position[1] + l.position[2] * l.position[2];
+            const float emitZ = wz - (isInterior ? 32.0f : 42.0f);
             if (d2 < bestFireD2) {
                 bestFireD2 = d2;
-                anchorW[0] = wx; anchorW[1] = wy; anchorW[2] = wz - 32.0f;
+                anchorW[0] = wx; anchorW[1] = wy; anchorW[2] = emitZ;
             }
-            const float emitZ = wz - 20.0f;
             minEmitterZ = (emitCount == 0u) ? emitZ : std::min(minEmitterZ, emitZ);
             FluidFireEmitter& em = fp.emitters[emitCount++];
             em.posW[0] = wx;
             em.posW[1] = wy;
             em.posW[2] = emitZ;
-            em.radius = std::clamp(l.radius * 0.08f, 6.0f, 26.0f);
-            em.ignitionTempK = std::clamp(1950.0f + l.colour[0] * 900.0f, 1950.0f, 3300.0f);
-            em.fuelRate = 2.4f;
-            em.jetSpeed = 30.0f;
-            em.curlStrength = 14.0f;
+            em.radius = std::clamp(l.radius * 0.045f, 4.0f, 14.0f);
+            em.ignitionTempK = std::clamp(1950.0f + l.colour[0] * 850.0f, 1950.0f, 3200.0f);
+            em.fuelRate = isInterior ? 1.65f : 2.15f;
+            em.jetSpeed = isInterior ? 26.0f : 32.0f;
+            em.curlStrength = 16.0f;
             em.jetDir[0] = 0.0f; em.jetDir[1] = 0.0f; em.jetDir[2] = 1.0f;
-            em.sootSeedRate = 0.35f;
+            em.sootSeedRate = isInterior ? 0.04f : 0.22f;
         }
     }
     fp.emitterCount = emitCount;
@@ -591,12 +792,37 @@ void D3D12Bridge::Impl::PollOverlayHotkey()
         log("[OverlayHud] F9 toggled GPU Telemetry HUD -> %s", overlayHudEnabled ? "ON" : "OFF");
     }
     overlayPrevF9Down = f9Down;
+
+    LiveWorldBridgeRuntime& lwRt = GetLiveWorldRuntime(this);
+    const bool f10Down = appFocused && ((GetAsyncKeyState(VK_F10) & 0x8000) != 0);
+    if (f10Down && !lwRt.prevF10Down) {
+        lwRt.debugDrawerEnabled = !lwRt.debugDrawerEnabled;
+        lwRt.telemetryDirty = true;
+        log("[DebugLayers] F10 toggled Debug Drawer -> %s (activeDebugView=%u: %s)",
+            lwRt.debugDrawerEnabled ? "ON" : "OFF",
+            static_cast<unsigned>(lwRt.activeDebugView),
+            DebugViewLabel(lwRt.activeDebugView));
+    }
+    lwRt.prevF10Down = f10Down;
+
+    const bool f11Down = appFocused && ((GetAsyncKeyState(VK_F11) & 0x8000) != 0);
+    if (f11Down && !lwRt.prevF11Down) {
+        lwRt.debugViewIndex = (lwRt.debugViewIndex + 1u) % static_cast<uint32_t>(kDebugViewCycle.size());
+        lwRt.activeDebugView = kDebugViewCycle[lwRt.debugViewIndex];
+        lwRt.telemetryDirty = true;
+        log("[DebugLayers] F11 cycled activeDebugView -> %u (%s)",
+            static_cast<unsigned>(lwRt.activeDebugView),
+            DebugViewLabel(lwRt.activeDebugView));
+    }
+    lwRt.prevF11Down = f11Down;
 }
 
 bool D3D12Bridge::Impl::ExecuteOverlayHudOnQueue(bool isInterior)
 {
-    // Strict zero-touch gate: when disabled, emit ZERO GPU commands and modify 0 pixels!
-    if (!overlayHudEnabled || !overlayHostReady || !overlayHost || !overlayHost->Ready() ||
+    LiveWorldBridgeRuntime& lwRt = GetLiveWorldRuntime(this);
+    const bool showDebugDrawer = lwRt.debugDrawerEnabled || (lwRt.activeDebugView != 0u);
+    // Strict zero-touch gate: when both F9 HUD and F10/F11 Debug Drawer are off, emit ZERO GPU commands!
+    if ((!overlayHudEnabled && !showDebugDrawer) || !overlayHostReady || !overlayHost || !overlayHost->Ready() ||
         !queue || !overlayList || !overlayFence || !overlayEvent ||
         !colorOut.res12 || cfg.width == 0u || cfg.height == 0u) {
         return false;
@@ -700,6 +926,26 @@ bool D3D12Bridge::Impl::ExecuteOverlayHudOnQueue(bool isInterior)
     hud.srgbOutput = (outDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
                       outDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB);
     FormatEngineTelemetryLines(snap, hud);
+    if (showDebugDrawer) {
+        const float snwMs = (snowDeformReady && snowDeform && snowDeform->HasValidTiming()) ? snowDeform->GetLastTotalMs() : 0.0f;
+        const float cauMs = (waterCausticsReady && waterCaustics && waterCaustics->HasValidTiming()) ? waterCaustics->GetLastTotalMs() : 0.0f;
+        const float grsMs = (lwRt.grassReady && lwRt.grassWind && lwRt.grassWind->HasValidTiming()) ? lwRt.grassWind->GetLastStepMs() : 0.0f;
+        const float cmpMs = (lwRt.liveWorldReady && lwRt.liveWorld && lwRt.liveWorld->HasValidTiming()) ? lwRt.liveWorld->GetLastCompositeMs() : 0.0f;
+        std::snprintf(hud.lines[0], OverlayHudData::kMaxCols + 1u,
+                      "RAW DEBUG DRAWER [F10 DRAWER | F11 CYCLE | F9 HUD]");
+        hud.lineColorTag[0] = kOverlayColorCyan;
+        std::snprintf(hud.lines[1], OverlayHudData::kMaxCols + 1u,
+                      "LAYER: %s", DebugViewLabel(lwRt.activeDebugView));
+        hud.lineColorTag[1] = (lwRt.activeDebugView == 0u) ? kOverlayColorGreen : kOverlayColorAmber;
+        std::snprintf(hud.lines[2], OverlayHudData::kMaxCols + 1u,
+                      "%s", DebugViewLegend(lwRt.activeDebugView));
+        hud.lineColorTag[2] = kOverlayColorDefault;
+        std::snprintf(hud.lines[3], OverlayHudData::kMaxCols + 1u,
+                      "LIVE WORLD: SNW %.2f | CAU %.2f | GRS %.2f | CMP %.2f MS",
+                      snwMs, cauMs, grsMs, cmpMs);
+        hud.lineColorTag[3] = kOverlayColorGreen;
+        if (hud.lineCount < 4u) hud.lineCount = 4u;
+    }
 
     overlayHost->RecordOverlay(overlayList.Get(), colorOut.res12.Get(),
                                D3D12_RESOURCE_STATE_COMMON, cfg.width, cfg.height, hud);
@@ -2250,8 +2496,16 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                                   m->waterCaustics && m->waterCaustics->Ready();
     const bool runSnowDeform = m->cfg.lightingPass && m->lighting.valid && m->snowDeformReady &&
                                m->snowDeform && m->snowDeform->Ready();
-    const bool runOverlay = m->overlayHudEnabled && m->overlayHostReady && m->overlayHost && m->overlayHost->Ready();
-    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runAutoExposure || runCloudRaymarch || runPostCinematic || runGpuParticles || runTsrUpscale || runWaterCaustics || runSnowDeform || runOverlay;
+    LiveWorldBridgeRuntime& lwRt = GetLiveWorldRuntime(m.get());
+    if (m->cfg.lightingPass && m->lighting.valid && m->dev12 && m->queue) {
+        lwRt.EnsureInit(m->dev12.Get(), m->queue.Get(), m->log);
+    }
+    const bool runGrassWind = m->cfg.lightingPass && m->lighting.valid && lwRt.grassReady && lwRt.grassWind && lwRt.grassWind->Ready();
+    const bool runLiveWorld = m->cfg.lightingPass && m->lighting.valid && lwRt.liveWorldReady && lwRt.liveWorld &&
+                              lwRt.liveWorld->Ready() && m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr;
+    const bool runOverlay = (m->overlayHudEnabled || lwRt.debugDrawerEnabled || lwRt.activeDebugView != 0u) &&
+                            m->overlayHostReady && m->overlayHost && m->overlayHost->Ready();
+    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runAutoExposure || runCloudRaymarch || runPostCinematic || runGpuParticles || runTsrUpscale || runWaterCaustics || runSnowDeform || runGrassWind || runLiveWorld || runOverlay;
     auto runPostLightingPasses = [&]() -> bool {
         if (!hasPostWork) return true;
         if (runTerrain) {
@@ -2367,6 +2621,186 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         }
         if (runSnowDeform) {
             m->ExecuteSnowDeformOnQueue(isInterior);
+        }
+        if (runGrassWind) {
+            const uint32_t gSlot = lwRt.grassSlot;
+            if (lwRt.grassSlotVal[gSlot] > 0ull && lwRt.grassFence->GetCompletedValue() < lwRt.grassSlotVal[gSlot]) {
+                lwRt.grassFence->SetEventOnCompletion(lwRt.grassSlotVal[gSlot], lwRt.grassEvent);
+                WaitForSingleObject(lwRt.grassEvent, 3000);
+            }
+            if (SUCCEEDED(lwRt.grassAlloc[gSlot]->Reset()) &&
+                SUCCEEDED(lwRt.grassList->Reset(lwRt.grassAlloc[gSlot].Get(), nullptr))) {
+                const uint64_t nowMs = GetTickCount64();
+                float gDt = 1.0f / 60.0f;
+                if (lwRt.grassLastMs > 0ull && nowMs >= lwRt.grassLastMs) {
+                    gDt = std::clamp(static_cast<float>(nowMs - lwRt.grassLastMs) * 0.001f, 0.001f, 0.05f);
+                }
+                lwRt.grassLastMs = nowMs;
+                if (m->lighting.menuPaused) gDt = 0.0f;
+
+                LightingFluidInputs fi{};
+                LightingPassFluidInputs(m->pass.get(), &fi);
+
+                float weatherSnow = 0.0f;
+                const void* uPtr = nullptr;
+                size_t uBytes = 0u;
+                if (m->pass && LightingPassUniform(m->pass.get(), &uPtr, &uBytes) &&
+                    uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+                    const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+                    if (std::isfinite(u->weather[1])) weatherSnow = std::clamp(u->weather[1], 0.0f, 1.0f);
+                }
+
+                constexpr float kInvUpm = 1.0f / 70.0f;
+                GrassTrampleCapsule caps[RawGrassWindHost::kMaxCapsules]{};
+                uint32_t capCount = 0u;
+                for (uint32_t i = 0u; i < 32u && capCount < RawGrassWindHost::kMaxCapsules; ++i) {
+                    if (fi.footTrail[i][3] > 0.01f &&
+                        std::isfinite(fi.footTrail[i][0]) && std::isfinite(fi.footTrail[i][1])) {
+                        GrassTrampleCapsule& c = caps[capCount++];
+                        c.startX          = fi.footTrail[i][0] * kInvUpm;
+                        c.startZ          = fi.footTrail[i][1] * kInvUpm;
+                        c.endX            = c.startX;
+                        c.endZ            = c.startZ;
+                        c.velX            = 0.0f;
+                        c.velZ            = 0.0f;
+                        c.radiusM         = 0.85f;
+                        c.flattenAngleRad = std::clamp(fi.footTrail[i][3] * 1.15f, 0.25f, 1.25f);
+                    }
+                }
+
+                GrassHeatSource gHeats[RawGrassWindHost::kMaxHeatSources]{};
+                uint32_t gHeatCount = 0u;
+                for (uint32_t i = 0u; i < m->lighting.lightCount && gHeatCount < RawGrassWindHost::kMaxHeatSources; ++i) {
+                    const SceneLight& l = m->lighting.lights[i];
+                    if (l.colour[0] > l.colour[1] * 1.32f && l.colour[0] > l.colour[2] * 2.40f &&
+                        l.colour[0] > 0.50f && l.radius >= 50.0f && l.radius <= 460.0f) {
+                        GrassHeatSource& h = gHeats[gHeatCount++];
+                        h.worldX    = (m->lighting.posAdjust[0] + l.position[0]) * kInvUpm;
+                        h.worldZ    = (m->lighting.posAdjust[1] + l.position[1]) * kInvUpm;
+                        h.radiusM   = std::clamp(l.radius * kInvUpm * 0.45f, 0.8f, 3.5f);
+                        h.heatPower = 1.4f;
+                    }
+                }
+
+                const bool gReset = (lwRt.grassStepFrames == 0ull) || (isInterior != lwRt.grassPrevInterior);
+                lwRt.grassPrevInterior = isInterior;
+                const float wLen = std::hypot(fi.windXY[0], fi.windXY[1]);
+
+                GrassWindParams gp{};
+                gp.camWorldX     = m->lighting.posAdjust[0] * kInvUpm;
+                gp.camWorldZ     = m->lighting.posAdjust[1] * kInvUpm;
+                gp.dtSec         = gDt;
+                gp.timeSec       = std::isfinite(fi.simTimeSec) ? fi.simTimeSec : 0.0f;
+                gp.windSpeedMps  = isInterior ? 0.0f : std::clamp(1.2f + wLen * 0.05f, 0.8f, 18.0f);
+                gp.windDirX      = (wLen > 1e-4f) ? (fi.windXY[0] / wLen) : 0.92f;
+                gp.windDirZ      = (wLen > 1e-4f) ? (fi.windXY[1] / wLen) : 0.39f;
+                gp.gustStrength  = isInterior ? 0.0f : 0.78f;
+                gp.springOmega   = 2.6f;
+                gp.snowLoad01    = isInterior ? 0.0f : weatherSnow;
+                gp.charRateScale = 0.50f;
+                gp.resetField    = gReset;
+                gp.capsules      = (capCount > 0u) ? caps : nullptr;
+                gp.capsuleCount  = capCount;
+                gp.heatSources   = (gHeatCount > 0u) ? gHeats : nullptr;
+                gp.heatCount     = gHeatCount;
+
+                lwRt.grassWind->Execute(lwRt.grassList.Get(), gp);
+                if (SUCCEEDED(lwRt.grassList->Close())) {
+                    ID3D12CommandList* gLists[1] = {lwRt.grassList.Get()};
+                    m->queue->ExecuteCommandLists(1u, gLists);
+                    m->queue->Signal(lwRt.grassFence.Get(), ++lwRt.grassFenceVal);
+                    lwRt.grassSlotVal[gSlot] = lwRt.grassFenceVal;
+                    lwRt.grassSlot = (gSlot + 1u) % kRing;
+                    ++lwRt.grassStepFrames;
+                }
+            }
+        }
+        if (runLiveWorld) {
+            LightingFluidInputs fi{};
+            LightingPassFluidInputs(m->pass.get(), &fi);
+
+            LiveWorldCompositeParams lwp{};
+            std::memcpy(lwp.clipToWorld, &m->lighting.clipToWorld[0][0], 64u);
+            lwp.camPosW[0] = m->lighting.posAdjust[0];
+            lwp.camPosW[1] = m->lighting.posAdjust[1];
+            lwp.camPosW[2] = m->lighting.posAdjust[2];
+            lwp.simTimeSec = std::isfinite(fi.simTimeSec) ? fi.simTimeSec : 0.0f;
+            lwp.resScale[0] = m->lighting.resolutionScale[0];
+            lwp.resScale[1] = m->lighting.resolutionScale[1];
+            lwp.waterPlaneZ_u = std::isfinite(fi.waterPlaneZ) ? fi.waterPlaneZ : -14000.0f;
+            lwp.sunDir[0] = m->lighting.sunDirection[0];
+            lwp.sunDir[1] = m->lighting.sunDirection[1];
+            lwp.sunDir[2] = m->lighting.sunDirection[2];
+            lwp.sunIntensity = m->lighting.hasSun ? 1.0f : 0.25f;
+            lwp.sunCol[0] = m->lighting.sunColour[0];
+            lwp.sunCol[1] = m->lighting.sunColour[1];
+            lwp.sunCol[2] = m->lighting.sunColour[2];
+            lwp.windXY[0] = fi.windXY[0];
+            lwp.windXY[1] = fi.windXY[1];
+            lwp.rain01 = std::clamp(fi.rainIntensity, 0.0f, 1.0f);
+            lwp.width = m->cfg.width;
+            lwp.height = m->cfg.height;
+            lwp.activeDebugView = lwRt.activeDebugView;
+            lwp.isInterior = isInterior;
+            lwp.menuPaused = m->lighting.menuPaused;
+
+            const void* uPtr = nullptr;
+            size_t uBytes = 0u;
+            if (m->pass && LightingPassUniform(m->pass.get(), &uPtr, &uBytes) &&
+                uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+                const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+                std::memcpy(lwp.viewToWorld, u->viewToWorld, sizeof(lwp.viewToWorld));
+                if (std::isfinite(u->seasonThermal0[0])) lwp.seasonSnowDepthM = std::max(0.0f, u->seasonThermal0[0]);
+                const float wSnow = std::isfinite(u->weather[1]) ? std::clamp(u->weather[1], 0.0f, 1.0f) : 0.0f;
+                lwp.snowBaselineDepthM = std::clamp(0.12f + wSnow * 0.42f, 0.12f, 0.55f);
+                lwp.lightingDebugActive = (u->flags[3] != 0u);
+            }
+
+            LiveWorldInputResources lwr{};
+            lwr.colorOut       = m->colorOut.res12.Get();
+            lwr.colorOutState  = D3D12_RESOURCE_STATE_COMMON;
+            lwr.depthIn        = m->depthIn.res12.Get();
+            lwr.depthInState   = D3D12_RESOURCE_STATE_COMMON;
+            lwr.normalIn       = s.hasNormal ? m->normalIn.res12.Get() : nullptr;
+            lwr.normalInState  = D3D12_RESOURCE_STATE_COMMON;
+            lwr.albedoIn       = s.hasSurface ? m->shared[static_cast<UINT>(Shared::Albedo)].res12.Get() : nullptr;
+            lwr.albedoInState  = D3D12_RESOURCE_STATE_COMMON;
+            lwr.specularIn     = s.hasSurface ? m->shared[static_cast<UINT>(Shared::Specular)].res12.Get() : nullptr;
+            lwr.specularInState = D3D12_RESOURCE_STATE_COMMON;
+
+            if (runSnowDeform && m->snowDeform && m->snowDeform->GetStateResource() && m->snowDeform->GetNormalResource()) {
+                lwr.snowState          = m->snowDeform->GetStateResource();
+                lwr.snowStateState     = m->snowDeform->StateResourceState();
+                lwr.snowNormal         = m->snowDeform->GetNormalResource();
+                lwr.snowNormalState    = m->snowDeform->NormalResourceState();
+                lwp.snowOriginWorldX_m = m->snowDeform->OriginWorldX();
+                lwp.snowOriginWorldZ_m = m->snowDeform->OriginWorldZ();
+                lwp.snowSpanM          = m->snowDeform->WorldSpanM();
+                lwp.snowStrength       = isInterior ? 0.0f : 0.90f;
+            }
+            if (runWaterCaustics && m->waterCaustics && m->waterCaustics->GetCausticsResource()) {
+                lwr.waterCaustics      = m->waterCaustics->GetCausticsResource();
+                lwr.waterCausticsState = m->waterCaustics->CausticsResourceState();
+                lwp.causticsDomainM    = 8.0f;
+                lwp.causticsStrength   = 0.85f;
+            }
+            if (runGrassWind && lwRt.grassWind && lwRt.grassWind->GetBendFieldResource()) {
+                lwr.grassBend           = lwRt.grassWind->GetBendFieldResource();
+                lwr.grassBendState      = lwRt.grassWind->BendFieldResourceState();
+                lwp.grassOriginWorldX_m = lwRt.grassWind->OriginWorldX();
+                lwp.grassOriginWorldZ_m = lwRt.grassWind->OriginWorldZ();
+                lwp.grassSpanM          = lwRt.grassWind->WorldSpanM();
+                lwp.grassStrength       = isInterior ? 0.0f : 0.78f;
+            }
+
+            if (lwRt.liveWorld->Composite(m->queue.Get(), lwr, lwp)) {
+                if ((lwRt.liveWorldFrames++ % 180ull) == 0ull) {
+                    m->log("[LiveWorld] composited world-space snow/caustics/grass: cmpMs=%.4f, grsMs=%.4f, dbgView=%u",
+                           lwRt.liveWorld->HasValidTiming() ? lwRt.liveWorld->GetLastCompositeMs() : 0.0f,
+                           (lwRt.grassReady && lwRt.grassWind && lwRt.grassWind->HasValidTiming()) ? lwRt.grassWind->GetLastStepMs() : 0.0f,
+                           static_cast<unsigned>(lwRt.activeDebugView));
+                }
+            }
         }
         if (runOverlay) {
             m->ExecuteOverlayHudOnQueue(isInterior);

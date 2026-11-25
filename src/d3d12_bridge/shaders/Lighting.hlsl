@@ -227,6 +227,43 @@ void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, in
 
 #include "DistantLod.hlsli"   // distantLit: distant LOD lit in improved mode (FOL-04)
 
+// Wave 63 Live Visual Debug View 28: Distinct Material, Actor/Creature/Fur/Cloth (14), Foliage & Glacier Class ID Palette
+float3 debugClassColor(uint base, bool isActorCloth, float iceMask) {
+    float3 c = float3(0.50f, 0.50f, 0.54f);
+    if      (base == 0u)  { c = float3(0.08f, 0.08f, 0.11f); }
+    else if (base == 14u) { c = float3(1.00f, 0.32f, 0.06f); }   // Skinned Actor / Creature / Fur / Clothing (vivid orange-vermilion)
+    else if (isActorCloth){ c = float3(0.95f, 0.44f, 0.14f); }   // Legacy SoftMap<0 actor cloth fallback
+    else if (base == 1u)  { c = float3(0.58f, 0.60f, 0.64f); }   // Static Stone / Wood / Architecture
+    else if (base == 2u)  { c = float3(0.95f, 0.78f, 0.18f); }   // Metal / EnvMap Armor
+    else if (base == 3u)  { c = float3(1.00f, 0.96f, 0.65f); }   // Emissive
+    else if (base == 4u)  { c = float3(0.56f, 0.38f, 0.18f); }   // Terrain / Landscape
+    else if (base == 5u)  { c = float3(0.12f, 0.82f, 0.24f); }   // Foliage / Flora
+    else if (base == 6u)  { c = float3(0.18f, 0.42f, 0.96f); }   // Parallax / Masonry
+    else if (base == 7u)  { c = float3(0.12f, 0.88f, 0.92f); }   // Distant LOD
+    else if (base == 9u)  { c = float3(0.06f, 0.56f, 0.98f); }   // Water
+    else if (base == 10u) { c = float3(1.00f, 0.26f, 0.24f); }   // Actor Skin
+    else if (base == 11u) { c = float3(0.76f, 0.28f, 0.96f); }   // Actor Hair
+    else if (base == 12u) { c = float3(0.18f, 1.00f, 1.00f); }   // Actor Eye
+    else if (base == 13u) { c = float3(0.62f, 0.96f, 0.20f); }   // TruePBR
+    if (iceMask > 0.22f && base != 10u && base != 11u && base != 12u && base != 14u && !isActorCloth) {
+        c = lerp(c, float3(0.62f, 0.94f, 1.00f), saturate(iceMask * 1.4f));   // Glacier / Ice highlight
+    }
+    return c;
+}
+
+// Wave 63 Live Visual Debug View 33: NaN / Inf / Negative / HDR > 32.0 Overflow Heatmap
+float3 debugHdrEnergyHeatmap(float3 rawLit) {
+    if (!all(isfinite(rawLit)) || any(rawLit < -1.0e-3f) || max(rawLit.r, max(rawLit.g, rawLit.b)) > 32.0f) {
+        return float3(1.0f, 0.0f, 1.0f);   // Electric magenta alarm on NaN / Inf / negative / >32 HDR overflow!
+    }
+    const float l = dot(max(rawLit, 0.0f.xxx), float3(0.2126f, 0.7152f, 0.0722f));
+    const float t = saturate(log2(1.0f + l * 4.0f) / 4.2f);
+    if (t < 0.25f) return lerp(float3(0.03f, 0.06f, 0.24f), float3(0.04f, 0.48f, 0.85f), t * 4.0f);
+    if (t < 0.50f) return lerp(float3(0.04f, 0.48f, 0.85f), float3(0.10f, 0.84f, 0.36f), (t - 0.25f) * 4.0f);
+    if (t < 0.75f) return lerp(float3(0.10f, 0.84f, 0.36f), float3(0.98f, 0.86f, 0.14f), (t - 0.50f) * 4.0f);
+    return lerp(float3(0.98f, 0.86f, 0.14f), float3(1.00f, 0.14f, 0.06f), (t - 0.75f) * 4.0f);
+}
+
 float4 fs(float4 at : SV_Position) : SV_Target0 {
     const int3 ip = int3(at.xy, 0);
     const float4 game = GameLit.Load(ip);
@@ -241,6 +278,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // which owns 100% of the 24h physical Hillaire skybox, single isRealSun() solar disc, lunar halo, stars, aurora & clouds.
         // (Removes duplicate sunDisc in Lighting.hlsl that previously leaked onto the Moon via moonKeep!)
         if (flags.w == 10u) { return float4(1.0f, 0.0f, 1.0f, game.a); }
+        if (flags.w == 28u) { return float4(0.04f, 0.06f, 0.12f, game.a); }
+        if (flags.w == 29u) { return float4(0.02f, 0.04f, 0.10f, game.a); }
+        if (flags.w == 30u || flags.w == 31u || flags.w == 32u) { return float4(0.03f, 0.04f, 0.06f, game.a); }
+        if (flags.w == 33u) { return float4(debugHdrEnergyHeatmap(game.rgb), game.a); }
         return float4(game.rgb, game.a);
     }
     // View 9, a test control: the pass reaches only the top-left quarter, as a half-size viewport
@@ -250,7 +291,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const uint cls = uint(sp.z * 255.0f + 0.5f), base = cls & 127u;
     // Effects, water, first person and distant LOD (lit per vertex by the game): the game's own.
     if (flags.w == 12u) {   // view 12: the material class (skin red, foliage green, landscape brown, parallax blue, the rest grey)
-        const float3 cc = base == 10u ? float3(1, 0.1, 0.1) : base == 5u ? float3(0.1, 0.8, 0.1) : base == 4u ? float3(0.5, 0.35, 0.1) :
+        const float3 cc = base == 10u ? float3(1, 0.1, 0.1) : base == 14u ? float3(1.0, 0.35, 0.06) : base == 5u ? float3(0.1, 0.8, 0.1) : base == 4u ? float3(0.5, 0.35, 0.1) :
                           base == 6u ? float3(0.1, 0.3, 1) : base == 7u ? float3(0.1, 0.9, 0.9) : base == 0u ? 0.0f.xxx : 0.5f.xxx;
         return float4(cc * (0.35f + 0.65f * dot(GameLit.Load(ip).rgb, 0.333f)), game.a);
     }
@@ -258,22 +299,54 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // FOL-04: in improved mode it gets the same sun, shadows, ambient and sky the near surfaces get. Views 14 and 15
     // show its G-buffer normal and base colour, the rest of the frame dimmed.
     if (base == 7u && (cls & 128u) == 0u) {
+        if (flags.w == 28u) {
+            const float lodL = saturate(dot(Albedo.Load(ip).rgb, float3(0.2126f, 0.7152f, 0.0722f)));
+            return float4(debugClassColor(7u, false, 0.0f) * (0.45f + 0.55f * lodL), game.a);
+        }
+        if (flags.w == 29u) {
+            const float zLod = max(viewZOf(d), 1.0f);
+            const float zRamp = saturate(log2(zLod) / 15.0f);
+            const float zDisc = smoothstep(0.03f, 0.12f, (abs(ddx(zLod)) + abs(ddy(zLod))) / max(zLod, 1.0f));
+            return float4(lerp(float3(zRamp * 0.85f, zRamp * 0.55f, 1.0f - zRamp * 0.65f), float3(0.15f, 1.0f, 0.95f), zDisc), game.a);
+        }
+        if (flags.w == 30u) { return float4(saturate(RtVis.Load(ip).x), 0.0f, 1.0f, game.a); }
+        if (flags.w == 31u) { return float4(0.08f, 0.0f, 0.08f, game.a); }
+        if (flags.w == 32u) { return float4(Albedo.Load(ip).rgb * 0.18f, game.a); }
         if (flags.w == 14u) { return float4(worldNormal(Normal.Load(ip)) * 0.5f + 0.5f, game.a); }
         if (flags.w == 15u) { return float4(Albedo.Load(ip).rgb, game.a); }
         // Views 2, 4 and 5 on distant LOD: the sun, sky and bounce of the march through the depth (RtShadow.hlsl, RtFar).
         if (flags.w == 2u) { return float4(RtVis.Load(ip).xxx, game.a); }
         if (flags.w == 4u) { return float4(RtIdx.Load(ip).www, game.a); }
         if (flags.w == 5u) { return float4(RtBounce.Load(ip).rgb * proj.w, game.a); }
-        if ((flags.x & FLAG_MATCH) != 0u || (flags.x & FLAG_LOD) == 0u || sunDir.w < 0.5f) { return game; }
-        return float4(distantLit(ip, at.xy, d), game.a);
+        if ((flags.x & FLAG_MATCH) != 0u || (flags.x & FLAG_LOD) == 0u || sunDir.w < 0.5f) {
+            return flags.w == 33u ? float4(debugHdrEnergyHeatmap(game.rgb), game.a) : game;
+        }
+        const float3 dLit = distantLit(ip, at.xy, d);
+        if (flags.w == 33u) { return float4(debugHdrEnergyHeatmap(dLit), game.a); }
+        return float4(dLit, game.a);
     }
     if (flags.w == 14u || flags.w == 15u) { return float4(game.rgb * 0.2f, game.a); }
     const bool skin = base == 10u;
     const bool isHair = base == 11u;
     const bool isEye = base == 12u;
-    // Unlock full physically-based PBR shading for Hair (base==11) & Eyes (base==12) alongside Skin (base==10)!
-    // (Previously base >= 7u && !skin early-returned vanilla 2011 lighting on every hair & eye pixel!)
-    if (base == 0u || (base >= 7u && !skin && !isHair && !isEye) || (cls & 128u) != 0u) { return game; }
+    const bool isSkinnedActor = base == 14u;   // Wave 63 Contract: Skinned Actor / Creature / Fur / Clothing
+    // Unlock full physically-based PBR shading for Skin (10), Hair (11), Eyes (12), and Skinned Actor/Creature/Cloth (14)!
+    if (base == 0u || (base >= 7u && !skin && !isHair && !isEye && !isSkinnedActor) || (cls & 128u) != 0u) {
+        if (flags.w == 28u) { return float4(debugClassColor(base, false, 0.0f) * (0.45f + 0.55f * saturate(dot(game.rgb, 0.333f))), game.a); }
+        if (flags.w == 29u) {
+            const float zEarly = max(viewZOf(d), 1.0f);
+            const float zRamp = saturate(log2(zEarly) / 15.0f);
+            const float zDisc = smoothstep(0.03f, 0.12f, (abs(ddx(zEarly)) + abs(ddy(zEarly))) / max(zEarly, 1.0f));
+            return float4(lerp(float3(zRamp * 0.85f, zRamp * 0.55f, 1.0f - zRamp * 0.65f), float3(0.15f, 1.0f, 0.95f), zDisc), game.a);
+        }
+        if (flags.w == 33u) { return float4(debugHdrEnergyHeatmap(game.rgb), game.a); }
+        return game;
+    }
+
+    // Wave 63: Define actor/creature flags BEFORE all terrain smoothing, bark, strata, snow & weathering passes
+    // so animals (Stump the dog), NPC gloves/hands (Frodnar), and skinned clothes NEVER receive moss/rock/terrain passes!
+    const bool isActorFeat  = (skin || isHair || isEye);
+    const bool isActorCloth = (isSkinnedActor || (!isActorFeat && base != 2u && base != 5u && base != 13u && SoftMap.Load(ip).r < 0.0f));
 
     const bool match = (flags.x & FLAG_MATCH) != 0u;
     const float2 px = floor(at.xy);
@@ -289,9 +362,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float z = viewZOf(d), jit = ign(px);
     Surface s;
     s.n = worldNormal(Normal.Load(ip));
-    // GPU-Native PN-Triangle / Cross-Bilateral Mesh & Terrain Normal Rounding (strictly excludes skin so facial pores,
-    // brow ridges, wrinkles, and scars keep 100% native normal-map sharpness under firelight!):
-    if (!match && (base == 1u || base == 4u) && z < 3600.0f) {
+    // GPU-Native PN-Triangle / Cross-Bilateral Mesh & Terrain Normal Rounding (strictly excludes skin & actors!):
+    if (!match && !isActorCloth && (base == 1u || base == 4u) && z < 3600.0f) {
         const int2 dMaxN = int2(dims.xy) - 1;
         const float zPlaneTol = max(z * 0.015f, 2.5f);
         float3 nAcc = s.n * 1.4f;
@@ -330,7 +402,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     s.soft = base == 5u || skin ? max(SoftMap.Load(ip).rgb, 0.0f.xxx) : 0.0f.xxx;   // negative: the character light (below)
     // Softer since the hands and bodies joined the class (rt6-wat-3): at 0.55 / 0.22 / 0.12 the arms read orange
     // against the game's brown.
-    s.wrap = skin && !match ? float3(0.32f, 0.13f, 0.06f) : (isHair && !match ? float3(0.16f, 0.12f, 0.08f) : 0.0f.xxx);
+    s.wrap = skin && !match ? float3(0.36f, 0.16f, 0.08f) : (isHair && !match ? float3(0.16f, 0.12f, 0.08f) : 0.0f.xxx);
     if (skin && !match) {
         // Preserve 100% native facial normal-map pores/creases (no synthetic cNoise breakup) with physiological roughness floor:
         s.f0 = 0.026f;
@@ -341,11 +413,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     } else if (isHair && !match) {
         s.f0 = 0.046f;
         s.alpha = clamp(s.alpha, 0.28f, 0.55f);
-    } else if (!match && base == 1u && z < 2600.0f) {
+    } else if (isSkinnedActor && !match) {
+        // Wave 63 Class-14 Skinned Actor / Creature / Fur / Clothing PBR defaults (strictly excludes moss/strata/bark):
+        s.f0 = 0.036f;
+        s.alpha = clamp(s.alpha, 0.34f, 0.88f);
+    } else if (!match && base == 1u && !isActorCloth && z < 2600.0f) {
         // Dynamic 2026 Real-Material Micro-Relief on 2011 Tree Bark, Timber, Masonry & Nordic Rocks:
         const float3 wpMat = (p + camPosW.xyz) * 0.032f;
         const float wear = cNoise(wpMat) * 0.65f + cNoise(wpMat * 2.7f + 5.1f) * 0.35f;
-        const float wearFade = smoothstep(2600.0f, 180.0f, z);
+        const float wearFade = 1.0f - smoothstep(180.0f, 2600.0f, z);
         s.alpha = clamp(s.alpha * lerp(1.0f, lerp(0.74f, 1.26f, wear), wearFade * 0.68f), 0.06f, 0.96f);
         // 1) Procedural 4K-grade anisotropic tree bark & wood-grain furrows on vertical warm-brown surfaces:
         const bool isWoodBark = (abs(s.n.z) < 0.72f && albedo.r > albedo.b * 1.15f && albedo.r > 0.05f && z < 1400.0f);
@@ -354,40 +430,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float b0 = cNoise(bP);
             const float b1 = cNoise(bP + float3(0.18f, 0.0f, 0.0f));
             const float b2 = cNoise(bP + float3(0.0f, 0.18f, 0.0f));
-            const float barkFade = smoothstep(1400.0f, 140.0f, z);
+            const float barkFade = 1.0f - smoothstep(140.0f, 1400.0f, z);
             s.n = normalize(s.n + float3((b0 - b1) * 0.65f, (b0 - b2) * 0.65f, 0.0f) * barkFade);
             albedo *= lerp(1.0f, 0.84f + 0.30f * b0, barkFade * 0.55f);
         }
-        // 2) Procedural 3D Multi-Layer Parallax Shell Moss (3-shell virtual thickness + velvet fuzz rim) +
-        //    Alpine Lichen Decals & Rain-Runoff Weathering Streaks on exterior stone, cliffs & bark!
+        // 2) Sculpted Tri-Planar Rock-Cliff Sedimentary Strata, Fracture Fissures & Rain-Runoff Decals
+        //    (Wave 63: removed redundant stacked parallax moss pass #1; moss is unified cleanly in RawWeathering.hlsli!):
         if (sunColour.w > 0.5f && z < 2600.0f) {
             const float3 wpAbs = p + camPosW.xyz;
-            // (a) 3-Layer Parallax Shell Moss on upward/north-facing damp stone & bark:
-            if (s.n.z > 0.30f && z < 2200.0f) {
-                const float mossPatch = smoothstep(0.54f, 0.80f, cNoise(wpMat * 0.55f + float3(13.7f, 4.3f, 2.1f)))
-                                      * smoothstep(0.30f, 0.74f, s.n.z) * (0.45f + 0.55f * saturate(s.n.y * 0.5f + 0.5f));
-                const float mossW = mossPatch * smoothstep(2200.0f, 220.0f, z) * (1.0f - saturate(weather.z * 1.6f)) * 0.62f;
-                if (mossW > 0.02f) {
-                    const float3 vTang = -s.v / max(dot(s.n, s.v), 0.35f);
-                    float shellCov = 0.0f;
-                    float shellShade = 0.45f;
-                    [unroll] for (int sh = 0; sh < 3; ++sh) {
-                        const float hSh = (float(sh) + 1.0f) * 0.333f;
-                        const float3 spM = (wpAbs + vTang * (hSh * 1.65f)) * 0.58f;
-                        const float tuft = smoothstep(0.38f + hSh * 0.20f, 0.78f, cNoise(spM));
-                        shellCov = max(shellCov, tuft);
-                        shellShade = lerp(shellShade, 0.52f + 0.62f * hSh, tuft);
-                    }
-                    const float fuzzRim = pow(1.0f - saturate(dot(s.n, s.v)), 2.8f) * 0.26f;
-                    const float3 mossCol = float3(0.13f, 0.22f, 0.08f) * shellShade + float3(0.16f, 0.24f, 0.09f) * fuzzRim;
-                    albedo = lerp(albedo, mossCol, mossW * (0.55f + 0.45f * shellCov));
-                    s.alpha = lerp(s.alpha, 0.90f, mossW);
-                }
-            }
-            // (b) Sculpted Tri-Planar Rock-Cliff Sedimentary Strata, Fracture Fissures & Rain-Runoff Decals:
             const bool isRockCliff = (!isWoodBark && abs(s.n.z) < 0.76f && abs(albedo.r - albedo.b) < 0.14f);
             if (isRockCliff) {
-                const float cliffFade = smoothstep(2600.0f, 220.0f, z);
+                const float cliffFade = 1.0f - smoothstep(220.0f, 2600.0f, z);
                 // Sedimentary horizontal strata ledges + sharp vertical basalt fracture cracks:
                 const float strataWarp = cNoise(wpAbs * 0.014f) * 28.0f;
                 const float strataH = sin((wpAbs.z + strataWarp) * 0.16f) * 0.5f + 0.5f;
@@ -401,7 +454,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 s.n = normalize(s.n + cliffGrad * (0.42f * cliffFade));
                 albedo *= lerp(1.0f, (0.86f + 0.22f * strataH) * (1.0f - fissure * 0.16f) * (1.0f - streak * 0.10f), cliffFade * 0.62f);
                 s.alpha = lerp(s.alpha, max(s.alpha * 0.82f, 0.30f), streak * cliffFade * 0.40f);
-                // Pale silver-green alpine lichen crust decals on exposed rock above 1200u:
+                // Pale silver-green alpine lichen crust decals on exposed high-altitude rock above 1200u:
                 if (wpAbs.z > 1200.0f) {
                     const float lichen = smoothstep(0.68f, 0.88f, cNoise(wpAbs * 0.09f + 29.3f)) * smoothstep(1200.0f, 2600.0f, wpAbs.z);
                     albedo = lerp(albedo, float3(0.48f, 0.52f, 0.44f), lichen * cliffFade * 0.35f);
@@ -411,10 +464,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     }
     if (base == 5u && !any(s.soft > 0.0f)) { s.soft = 0.15f.xxx; }   // a soft-lit shader the patch found no map in
     // Rain (Weather.hlsli), exteriors in improved mode: darker, glossier, puddles flat and mirror-like.
+    // Wave 63: Strictly exclude actors/creatures (isActorFeat || isActorCloth) from terrain snow-crust & puddle overlays!
     Wet wet;
     wet.wet = 0.0f; wet.puddle = 0.0f; wet.snow = 0.0f;
     float2 rings = 0.0f;   // rain on the puddles: the water's slope, which also bends the reflection
-    if (!match && sunColour.w > 0.5f && base != 5u) {
+    if (!match && sunColour.w > 0.5f && base != 5u && !isActorFeat && !isActorCloth) {
         const float sv = (flags.x & FLAG_RT) != 0u && (flags.x & FLAG_SKY) != 0u ? RtIdx.Load(ip).w : 1.0f;
         // The geometric normal from the depth buffer's neighbours (shorter step on each axis).
         const float2 lim = dims.xy - 1.0f;
@@ -752,8 +806,6 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
     }
     const float3 nSmooth = s.n;
-    const bool isActorFeat = (base >= 10u && base <= 12u);   // skin, hair, eye
-    const bool isActorCloth = (!isActorFeat && base != 2u && base != 5u && SoftMap.Load(ip).r < 0.0f);   // skinned actor clothing
     // Physically grounded rain-wetness on characters (roughness 0.38..0.48 avoids polygonal specular facets along low-poly mesh edges!):
     if (!match && sunColour.w > 0.5f && weather.w > 0.08f && (isActorFeat || isActorCloth || base == 2u) && z < 2600.0f) {
         const float actorWet = saturate(weather.w * 1.15f) * saturate(s.n.z * 0.50f + 0.50f) * (1.0f - weather.z * 0.75f);
@@ -772,17 +824,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float microN = cNoise(wp * 0.024f + 5.3f);
         const float antiTile = lerp(0.89f, 1.11f, macroN) * lerp(0.95f, 1.05f, microN);
         const float slope = saturate(s.n.z);
-        // Natural slope transitions + Commons Cluster 9 ("Nature retaking structures"): subtle moisture-driven
-        // velvet moss & lichen growth on upward-facing stone/ruin crevices & ledges, plus crisp cool-slate cliffs.
-        const float3 slopeTint = lerp(float3(0.96f, 0.98f, 1.03f), float3(1.02f, 1.01f, 0.97f), smoothstep(0.55f, 0.88f, slope));
+        // Natural slope transitions: crisp cool-slate highland cliffs transitioning smoothly into warm valley loam.
+        const float3 slopeTint = lerp(float3(0.96f, 0.99f, 1.05f), float3(1.02f, 1.01f, 0.97f), smoothstep(0.55f, 0.88f, slope));
         const float tileFade = saturate(1.0f - z / 16000.0f);
         albedo *= lerp(1.0f.xxx, antiTile * slopeTint, tileFade * (base == 4u ? 0.85f : 0.45f));
-        if (base == 1u && sunColour.w > 0.5f && z < 4200.0f && wet.snow < 0.25f && slope > 0.58f) {
-            const float mossPatch = smoothstep(0.56f, 0.82f, cNoise(wp * 0.0085f + 4.1f) * 0.65f + microN * 0.35f);
-            const float mossW = mossPatch * smoothstep(0.58f, 0.86f, slope) * (0.28f + 0.42f * saturate(weather.x)) * saturate(1.0f - z / 4200.0f) * (1.0f - wet.snow * 3.5f);
-            albedo = lerp(albedo, float3(0.10f, 0.17f, 0.07f) * (0.75f + 0.50f * microN), mossW * 0.52f);
-            s.alpha = lerp(s.alpha, 0.88f, mossW * 0.45f);
-        }
+        // (Wave 63: removed redundant moss pass #2; exterior stone/terrain moss runs once in RawWeathering.hlsli!)
         // Native Ground-Up Terrain System Replacement (replaces Terrain Helper for ENB + 2011 smeared quad blends, MAT-09):
         // 1) Wronski Laplacian Band-Preserving Micro-Contrast: sharpens blurry 6-layer linear terrain quad transitions
         //    into crisp height-blended pebble/gravel/loam/rock boundaries with slope-adaptive tactile roughness!
@@ -796,13 +842,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float heightGloss = smoothstep(0.54f, 0.82f, pebbleH) * tFade;
             s.alpha = clamp(lerp(s.alpha, max(s.alpha * 0.68f, 0.28f), heightGloss * 0.55f), 0.06f, 0.96f);
         }
-        // 2) Steep-cliff tri-planar geological strata synthesis on terrain (base == 4u, slope < 0.68):
-        // breaks up Skyrim's stretched 2011 vertical cliff UV smears with crisp horizontal basalt/granite strata!
-        if (base == 4u && slope < 0.68f && z < 8500.0f) {
-            const float cliffW = smoothstep(0.68f, 0.35f, slope) * saturate(1.0f - z / 8500.0f);
-            const float strata = cNoise(float3(wp.xy * 0.0045f, wp.z * 0.028f)) * 0.65f + cNoise(float3(wp.xy * 0.016f, wp.z * 0.075f)) * 0.35f;
-            albedo *= lerp(1.0f, lerp(0.74f, 1.24f, strata), cliffW * 0.78f);
-            s.n = normalize(s.n + float3(0.0f, 0.0f, (strata - 0.5f) * 0.42f * cliffW));
+        // 2) Steep-cliff & hillside tri-planar geological strata synthesis on terrain (base == 4u, slope < 0.74):
+        //    Wave 63: Prevents flat dark-brown hillsides by injecting cool-granite mineral ledges + 3D ridge normal relief!
+        if (base == 4u && slope < 0.74f && z < 11000.0f) {
+            const float cliffW = (1.0f - smoothstep(0.32f, 0.74f, slope)) * saturate(1.0f - z / 11000.0f);
+            const float strata = cNoise(float3(wp.xy * 0.0045f, wp.z * 0.028f)) * 0.60f
+                               + cNoise(float3(wp.xy * 0.016f, wp.z * 0.075f)) * 0.40f;
+            const float screeMask = smoothstep(0.45f, 0.82f, macroN * 0.60f + strata * 0.40f) * cliffW;
+            const float3 graniteLedge = lerp(float3(0.22f, 0.23f, 0.24f), float3(0.38f, 0.39f, 0.38f), strata);
+            albedo = lerp(albedo, lerp(albedo, graniteLedge, 0.36f), screeMask * (1.0f - wet.snow * 0.85f));
+            albedo *= lerp(1.0f, lerp(0.84f, 1.24f, strata), cliffW * 0.74f);
+            const float sx = cNoise(float3(wp.xy * 0.014f + float2(0.8f, 0.0f), wp.z * 0.045f))
+                           - cNoise(float3(wp.xy * 0.014f - float2(0.8f, 0.0f), wp.z * 0.045f));
+            const float sy = cNoise(float3(wp.xy * 0.014f + float2(0.0f, 0.8f), wp.z * 0.045f))
+                           - cNoise(float3(wp.xy * 0.014f - float2(0.0f, 0.8f), wp.z * 0.045f));
+            s.n = normalize(s.n + float3(sx * 0.34f, sy * 0.34f, (strata - 0.5f) * 0.46f) * cliffW);
         }
         // Procedural sub-centimeter world-space micro-normal & grazing roughness synthesis on vanilla terrain/rock/bark:
         // gives 2011 meshes crisp sunlit micro-grain and tactile roughness variation without requiring 4K texture mods.
@@ -823,29 +877,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float cz = cNoise(float3(wp.xy * 0.012f, wp.z * 0.042f)) * 2.0f - 1.0f;
             s.n = normalize(s.n + float3(cx * 0.32f, cy * 0.32f, cz * 0.16f) * cragFade);
         }
-        // Physical microclimate-driven 3D procedural Nordic moss, alpine crustose lichen & damp water-edge patina
-        // (100% world-space wp = p + camPosW.xyz, zero static texture mods, zero camera dependency):
-        // moss grows on shaded/damp upward stone ledges; pale lichen colonizes dry exposed granite; damp rot darkens near-ground bases.
-        if (base == 1u && sunColour.w > 0.5f && z < 5000.0f && wet.snow < 0.35f) {
-            const float mossFade = saturate(1.0f - z / 5000.0f) * (1.0f - wet.snow * 2.5f);
-            const float shadeHumid = lerp(0.55f, 1.35f, saturate(wet.wet * 0.85f + (1.0f - saturate(s.n.y * 0.5f + 0.5f)) * 0.45f));
-            const float mMacro = cNoise(wp * 0.0075f + float3(4.1f, 9.7f, 2.3f));
-            const float mTuft  = cNoise(wp * 0.085f + float3(13.3f, 2.7f, 6.1f));
-            const float mossPatch = smoothstep(0.50f, 0.78f, mMacro * shadeHumid) * smoothstep(0.46f, 0.84f, slope);
-            const float3 mossCol = lerp(float3(0.08f, 0.16f, 0.05f), float3(0.18f, 0.29f, 0.10f), mTuft);
-            const float mossW = mossPatch * mossFade * 0.48f;
-            albedo = lerp(albedo, mossCol, mossW);
-            s.alpha = lerp(s.alpha, 0.90f, mossW);
-            // Tufted 3D moss micro-normal perturbation so moss reads as velvety raised growth, not flat green paint.
-            const float mDx = cNoise(wp * 0.14f + float3(0.4f, 0.0f, 0.0f)) - cNoise(wp * 0.14f - float3(0.4f, 0.0f, 0.0f));
-            const float mDy = cNoise(wp * 0.14f + float3(0.0f, 0.4f, 0.0f)) - cNoise(wp * 0.14f - float3(0.0f, 0.4f, 0.0f));
-            s.n = normalize(s.n + float3(mDx, mDy, 0.0f) * (0.45f * mossW));
-            // Dry exposed alpine crustose lichen on steep/mid granite faces.
-            const float lichenMask = smoothstep(0.68f, 0.88f, cNoise(wp * 0.022f + float3(21.7f, 5.1f, 17.3f)))
-                                   * smoothstep(0.18f, 0.55f, slope) * (1.0f - mossPatch);
-            const float3 lichenCol = float3(0.42f, 0.46f, 0.36f) * lerp(0.85f, 1.15f, microN);
-            albedo = lerp(albedo, lichenCol, lichenMask * mossFade * 0.24f);
-        }
+        // (Wave 63: removed redundant stacked moss/lichen pass #3; single exterior moss pass lives in RawWeathering.hlsli!)
         // Triplanar world-space micro-porosity & pebble/slate relief on close terrain & stone ruins (zero texture mods).
         if (z < 1800.0f && (base == 4u || base == 1u)) {
             const float poreFade = saturate(1.0f - z / 1800.0f) * (base == 4u ? 0.85f : 0.55f);
@@ -1026,6 +1058,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 wDnx = ddx(s.n), wDny = ddy(s.n);
     float porosityWetW = 0.0f;
     float hoarfrostGlintW = 0.0f;
+    float weatherMossMask = 0.0f;
     if (!match && !isActorFeat && !isActorCloth && (base == 1u || base == 2u || base == 4u) && z < 3200.0f) {
         const float pxScaleW = max(length(wDpx) + length(wDpy), 0.25f);
         const float curvW = clamp((dot(wDnx, wDpx) + dot(wDny, wDpy)) / max(pxScaleW * pxScaleW * 0.25f, 0.15f), -1.0f, 1.0f);
@@ -1055,7 +1088,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         float waterProxW = 0.0f;
         if (sunColour.w > 0.5f && engineWorld.z > 0.5f && engineWorld.x > -13000.0f) {
             const float abW = (p.z + camPosW.z) - engineWorld.x;
-            waterProxW = smoothstep(260.0f, 12.0f, max(abW, 0.0f)) * smoothstep(-10.0f, 4.0f, abW);
+            waterProxW = (1.0f - smoothstep(12.0f, 260.0f, max(abW, 0.0f))) * smoothstep(-10.0f, 4.0f, abW);
         }
         const float iceQuick = saturate((albedo.b - albedo.r * 1.04f) * 4.5f) * smoothstep(0.18f, 0.44f, albedo.b);
         const RawWeatheringResult wRes = evalSurfaceWeathering3D(
@@ -1068,6 +1101,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         s.alpha = wRes.roughness;
         porosityWetW    = wRes.porosityWet01;
         hoarfrostGlintW = wRes.hoarfrostGlint01;
+        weatherMossMask = wRes.mossCov01;
         if (porosityWetW > 0.15f) {
             s.mask = max(s.mask, porosityWetW * 0.55f);
             lobe = true;
@@ -1181,9 +1215,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const bool rt = !match && (flags.x & FLAG_RT) != 0u;
     float4 rv = rt ? RtVis.Load(ip) : 1.0f.xxxx;
     const uint3 rIdx = rt ? uint3(RtIdx.Load(ip).xyz * 255.0f + 0.5f) : uint3(0u, 0u, 0u);
-    // Light-ID-matched depth-aware 3x3 bilateral filter on RT sun shadow (rv.x) and point-light RT shadows (rv.yzw):
-    // prevents cross-light shadow blending when adjacent pixels rank point lights in different slot orders.
+    // Wave 63 Cross-Slot Light-ID-Matched Depth+Normal 3x3 Bilateral RT Shadow Filter:
+    // Matches each center top-3 light ID (rIdx.x/y/z) against ALL 3 neighbor slots (nIdx.x/y/z), so even when
+    // adjacent pixels rank two overlapping torches/hearths in swapped slot order, shadows stay silky-smooth & flicker-free!
     if (rt) {
+        rv = all(isfinite(rv)) ? saturate(rv) : 1.0f.xxxx;
         float4 pvSum = rv * 2.0f;
         float4 pvW = 2.0f.xxxx;
         const int2 dMaxS = int2(dims.xy) - 1;
@@ -1191,17 +1227,32 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             [unroll] for (int sx = -1; sx <= 1; sx++) {
                 if (sx == 0 && sy == 0) continue;
                 const int3 spS = int3(clamp(ip.xy + int2(sx, sy), int2(0, 0), dMaxS), 0);
-                if (abs(viewZOf(Depth.Load(spS)) - z) < max(z * 0.04f, 3.0f)) {
-                    const float4 nRv = RtVis.Load(spS);
+                if (abs(viewZOf(Depth.Load(spS)) - z) < max(z * 0.035f, 2.8f)) {
+                    const float nwS = smoothstep(0.68f, 0.96f, dot(nSmooth, worldNormal(Normal.Load(spS))));
+                    if (nwS <= 0.01f) continue;
+                    const float4 nRvRaw = RtVis.Load(spS);
+                    const float4 nRv = all(isfinite(nRvRaw)) ? saturate(nRvRaw) : 1.0f.xxxx;
                     const uint3 nIdx = uint3(RtIdx.Load(spS).xyz * 255.0f + 0.5f);
-                    pvSum.x += nRv.x; pvW.x += 1.0f;
-                    if (nIdx.x == rIdx.x) { pvSum.y += nRv.y; pvW.y += 1.0f; }
-                    if (nIdx.y == rIdx.y) { pvSum.z += nRv.z; pvW.z += 1.0f; }
-                    if (nIdx.z == rIdx.z) { pvSum.w += nRv.w; pvW.w += 1.0f; }
+                    pvSum.x += nRv.x * nwS; pvW.x += nwS;
+                    if (rIdx.x != 0u) {
+                        if      (nIdx.x == rIdx.x) { pvSum.y += nRv.y * nwS; pvW.y += nwS; }
+                        else if (nIdx.y == rIdx.x) { pvSum.y += nRv.z * nwS; pvW.y += nwS; }
+                        else if (nIdx.z == rIdx.x) { pvSum.y += nRv.w * nwS; pvW.y += nwS; }
+                    }
+                    if (rIdx.y != 0u) {
+                        if      (nIdx.y == rIdx.y) { pvSum.z += nRv.z * nwS; pvW.z += nwS; }
+                        else if (nIdx.x == rIdx.y) { pvSum.z += nRv.y * nwS; pvW.z += nwS; }
+                        else if (nIdx.z == rIdx.y) { pvSum.z += nRv.w * nwS; pvW.z += nwS; }
+                    }
+                    if (rIdx.z != 0u) {
+                        if      (nIdx.z == rIdx.z) { pvSum.w += nRv.w * nwS; pvW.w += nwS; }
+                        else if (nIdx.x == rIdx.z) { pvSum.w += nRv.y * nwS; pvW.w += nwS; }
+                        else if (nIdx.y == rIdx.z) { pvSum.w += nRv.z * nwS; pvW.w += nwS; }
+                    }
                 }
             }
         }
-        rv = pvSum / pvW;
+        rv = saturate(pvSum / max(pvW, 1.0e-4f.xxxx));
     }
     // Every light past the three traced ones: the share of their light that reaches the pixel, from one ray a
     // pixel to a light picked by its share, filtered with the sky rays (RtShadow.hlsl, RtSkyFilter.hlsl).
@@ -1327,11 +1378,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             spec += dirCol * hair3Lobe * lerp(0.18f, 1.0f, sunShadow);
         }
         if (skin && !match) {
-            // Dual-lobe character skin shading (Callisto Protocol / SKN-09): terminator-peaked warm dermal SSS +
-            // secondary sebum/pore micro-sheen lobe (alpha=0.22) for lifelike sculptural faces (never waxy or flat).
+            // Dual-lobe character skin shading (Callisto Protocol / SKN-09 + Wave 63 smooth Gaussian terminator):
+            // C-infinity Gaussian terminator SSS eliminates sharp blotchy cheek/nose cusp bands on NPC faces!
             const float nlSk = dot(s.n, sunDir.xyz);
-            const float termBand = exp(-abs(nlSk) * 3.6f) * (0.25f + 0.75f * sunShadow);
-            diff += dirCol * float3(0.18f, 0.072f, 0.042f) * termBand;
+            const float termBand = exp(-nlSk * nlSk * 4.5f) * (0.28f + 0.72f * sunShadow);
+            diff += dirCol * float3(0.18f, 0.078f, 0.046f) * termBand;
             const float3 hSkin = rawSafeHalfVec(s.v, sunDir.xyz, s.n);
             const float nhSk = saturate(dot(s.n, hSkin));
             const float ddSk = max(nhSk * nhSk * (0.0484f - 1.0f) + 1.0f, 1.0e-4f);
@@ -1443,15 +1494,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 if (cPeak > cKnee) { c *= (cKnee + (cPeak - cKnee) / (1.0f + (cPeak - cKnee) * (skin ? 1.55f : 1.25f))) / cPeak; }
             }
             const uint slot = li + 1u == rIdx.x ? 1u : li + 1u == rIdx.y ? 2u : li + 1u == rIdx.z ? 3u : 0u;
-            // When hardware RT is active, bypass vanilla's flickering 4-channel shadow-mask swaps completely:
-            // top-3 lights use their exact RT shadow vis (rv[slot]); secondary lights (4..128) use stable ReSTIR visibility.
-            // On skinned actor clothing/skin, soften BLAS self-shadow to eliminate coarse low-poly triangle acne on backs/shoulders.
+            // Wave 63 Flicker-Free RT Point-Light Shadow Handoff:
+            // Harmonizes top-3 slot floor (0.22) with ReSTIR secondary floor (0.28) and crossfades smoothly near
+            // outer attenuation radius so turning the camera never causes a room-wide brightness pop on slot swap!
+            // Lifts actor BLAS self-shadow floor cleanly (0.68 face/skin, 0.50 skinned fur/cloth) to prevent blocky blotches.
             if (rt) {
-                // Unified flicker-free RT point-light shadows: lift skin/face RT BLAS self-shadow floor to 0.62
-                // to eliminate sharp low-poly triangle terminator stripes across NPC foreheads & upper lips while
-                // preserving smooth sculptural N·L, wrap, and ambient contact shading.
-                const float rtSh = slot != 0u ? lerp(0.14f, 1.0f, rv[slot]) : lerp(0.42f, 1.0f, restVis);
-                sh = isActorFeat ? lerp(0.62f, 1.0f, rtSh) : (isActorCloth ? lerp(0.42f, 1.0f, rtSh) : rtSh);
+                const float slotVisVal = slot != 0u ? lerp(0.22f, 1.0f, rv[slot]) : lerp(0.28f, 1.0f, restVis);
+                const float restVisVal = lerp(0.28f, 1.0f, restVis);
+                const float slotWeight = slot != 0u ? smoothstep(0.015f, 0.14f, att) : 0.0f;
+                const float rtSh = lerp(restVisVal, slotVisVal, slotWeight);
+                sh = isActorFeat ? lerp(0.68f, 1.0f, rtSh) : (isActorCloth ? lerp(0.50f, 1.0f, rtSh) : rtSh);
             }
             else if (slot != 0u) { sh = rv[slot]; }
             if (!match && !rt && sunColour.w > 0.5f && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
@@ -1532,17 +1584,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     }
     // 100% Pure Hardware DXR 3D Contact RTAO & Skylighting (ZERO screen-space GTAO/SSAO when RT is active!):
     const float ssaoMix = (rt && (flags.x & FLAG_SKY) != 0u) ? 0.0f : 1.0f;
-    const float aoWeight = (base == 5u ? 0.82f : (isActorFeat ? 0.35f : 1.0f)) * ssaoMix;
+    const float aoWeight = (base == 5u ? 0.82f : (isActorFeat ? 0.30f : (isActorCloth ? 0.45f : 1.0f))) * ssaoMix;
     const float aoRaw = (flags.x & FLAG_AO) != 0u ? lerp(1.0f, AoHist.Load(ip).x, tune2.x * aoWeight) : 1.0f;
     const float aoTerm = !match ? pow(saturate(aoRaw), 1.25f) : aoRaw;
     // Exteriors: ray-traced sky visibility (RtSky.cpp). Interiors (!match): local SM6.9 RayQuery RTAO from RtShadow.hlsl.
     const bool isExterior = sunColour.w > 0.5f;
     const float rawSkyVis = rt && (flags.x & FLAG_SKY) != 0u && (isExterior || !match) ? RtIdx.Load(ip).w : 1.0f;
-    const float skyVis = isActorFeat ? lerp(0.22f, 1.0f, rawSkyVis) : rawSkyVis;
+    const float skyVis = isActorFeat ? lerp(0.28f, 1.0f, rawSkyVis) : (isActorCloth ? lerp(0.26f, 1.0f, rawSkyVis) : rawSkyVis);
     // Physical directional skylighting falloff: roofs, covered walkways, arches & dense foliage cores drop to deep rich shade
     // (0.10..1.0 exteriors, 0.16..1.0 velvety interior shadow drama) while open surfaces keep crisp skylighting.
     const float skyVisShaped = !match ? pow(saturate(skyVis), base == 5u ? 1.65f : 1.85f) : skyVis;
-    const float rtOcc = isExterior ? lerp(1.0f, lerp(0.06f, 1.0f, skyVisShaped), max(cluster.w, 0.88f)) : lerp(0.11f, 1.0f, skyVisShaped);
+    const float rtOcc = isExterior ? lerp(1.0f, lerp(0.08f, 1.0f, skyVisShaped), max(cluster.w, 0.88f)) : lerp(0.12f, 1.0f, skyVisShaped);
     // Smooth physical irradiance soft-shoulder on close-range point lights (prevents bright plaster walls like
     // Farengar's study 15.00.26 and snow floes under torches from clipping into flat white!):
     if (!match) {
@@ -1553,29 +1605,31 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
     }
     // Feature 18: Contact-hardening near-field micro-AO grounding under foliage, rocks, furniture & NPC feet.
-    // Strengthen near-field chair/table/jug contact grounding (<650u) on BOTH ambient and direct local light so
-    // furniture legs, throne crevices, and tableware sit with crisp physical contact shadows instead of floating!
+    // Wave 63: Strictly exclude faces/skin/hair/eyes (isActorFeat) and keep skinned cloth/fur gentle (0.90 floor)
+    // so characters & dogs NEVER develop dark blotchy contact-AO rings!
     const float nearGroundAo = !match ? pow(saturate(aoTerm), lerp(1.0f, 1.45f, saturate(1.0f - z / 900.0f))) : aoTerm;
-    if (!match && !skin && base != 12u && z < 650.0f) {
-        const float microDiffOcc = lerp(1.0f, lerp(0.66f, 1.0f, nearGroundAo), saturate(1.0f - z / 650.0f));
+    if (!match && !isActorFeat && z < 650.0f) {
+        const float microFloor = isActorCloth ? 0.90f : 0.68f;
+        const float microDiffOcc = lerp(1.0f, lerp(microFloor, 1.0f, nearGroundAo), saturate(1.0f - z / 650.0f));
         diff *= microDiffOcc;
     }
     float combinedOcc = min(nearGroundAo, rtOcc);
     // Lifelike Vanilla NPCs: lift recessed eye-socket AO (base==12) so eyes never read as dim dark holes,
-    // while preserving sculptural brow/cheek/jaw contour modeling on skin (base==10; 0.06 instead of flat 0.20).
+    // and gently cushion facial skin (10) & skinned fur/cloth (14) against dark blotchy shadow crushing!
     if (!match) {
-        if (base == 12u) combinedOcc = lerp(combinedOcc, 1.0f, 0.80f);
-        else if (skin)   combinedOcc = lerp(combinedOcc, 1.0f, 0.06f);
+        if (base == 12u)       combinedOcc = lerp(combinedOcc, 1.0f, 0.82f);
+        else if (skin)         combinedOcc = lerp(combinedOcc, 1.0f, 0.14f);
+        else if (isActorCloth) combinedOcc = lerp(combinedOcc, 1.0f, 0.10f);
     }
     // SIGGRAPH GI-12 Visibility-Aware Bent-Normal Hemisphere Skylighting (exteriors) &
     // Directional Vault/Hearth Ambient Shaping (interiors: deepens recessed corners & highlights upper masonry/beams).
     const float3 bentN = normalize(lerp(s.n, float3(0.0f, 0.0f, 1.0f), (1.0f - combinedOcc) * 0.38f * skyVis));
-    const float hemiSky = !match ? (isExterior ? lerp(0.54f, 1.18f, saturate(bentN.z * 0.5f + 0.5f))
-                                               : lerp(0.52f, 1.20f, saturate(bentN.z * 0.5f + 0.5f))) : 1.0f;
+    const float hemiSky = !match ? (isExterior ? lerp(0.60f, 1.18f, saturate(bentN.z * 0.5f + 0.5f))
+                                               : lerp(0.54f, 1.20f, saturate(bentN.z * 0.5f + 0.5f))) : 1.0f;
     // Keep multi-bounce AO subtle so deep crevices stay genuinely grounded instead of lifting back to muddy grey.
     const float3 mbOcc = lerp(combinedOcc.xxx, gtaoMultiBounce(combinedOcc, saturate(albedo)), 0.38f);
-    // Rich sunlight-to-shadow dynamic range (0.46..0.70x exterior ambient matches forest & sunlit room references):
-    const float ambHdrScale = (!match && isExterior) ? lerp(0.46f, 0.70f, saturate(clouds.x)) : 1.0f;
+    // Rich sunlight-to-shadow dynamic range (0.54..0.74x exterior ambient preserves hillside slope readability):
+    const float ambHdrScale = (!match && isExterior) ? lerp(0.54f, 0.74f, saturate(clouds.x)) : 1.0f;
     amb *= match ? combinedOcc.xxx : mbOcc * hemiSky * ambHdrScale;
     // Multi-bounce hardware RayQuery GI: physically energy-conserving gain + smooth Reinhard shoulder + contact-AO grounding
     // (eliminates runaway GI glow on walls, snow, ice, and interiors while keeping rich natural color bleed!).
@@ -1699,8 +1753,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (dot(emissiveRim, float3(0.2126f, 0.7152f, 0.0722f)) > 0.005f) {
             diff += emissiveRim * (0.25f + 0.75f * pow(1.0f - saturate(dot(s.n, s.v)), 2.0f));
         }
-        // Environmental Asymmetry Breaking (Windward Rime / Shaded-Side Moss) strictly world-space anchored:
-        if (isExterior && (base == 1u || base == 4u)) {
+        // Environmental Asymmetry Breaking (Windward Rime on exterior stone/terrain, strictly excluding actors!):
+        // (Wave 63: removed redundant shaded-side moss pass #4; moss lives strictly once in RawWeathering.hlsli!)
+        if (isExterior && !isActorFeat && !isActorCloth && (base == 1u || base == 4u)) {
             const float3 wpAsym = p + camPosW.xyz;
             const float2 windD = normalize(cloudWind.xy + float2(1.0f, 0.35f));
             const float windward = saturate(dot(s.n.xy, -windD));
@@ -1711,12 +1766,6 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (rimeW > 0.02f) {
                 albedo = lerp(albedo, float3(0.76f, 0.82f, 0.90f), rimeW * 0.32f);
                 spec += max(amb, 0.05f.xxx) * (pow(1.0f - saturate(dot(s.n, s.v)), 3.0f) * rimeW * 0.24f);
-            }
-            // Shaded-side damp lichen/moss on non-snowy damp rocks & ruins facing away from sun:
-            const float dampSide = saturate(dot(s.n, -sunDir.xyz)) * (1.0f - coldAsym * 0.85f) * saturate(0.35f + weather.w * 0.85f + waterContact * 0.95f);
-            const float mossW = dampSide * smoothstep(0.50f, 0.86f, asymN) * smoothstep(0.05f, 0.65f, s.n.z) * saturate(1.0f - skyVis * 0.35f);
-            if (mossW > 0.02f) {
-                albedo = lerp(albedo, float3(0.095f, 0.145f, 0.072f), mossW * 0.36f);
             }
         }
     }
@@ -1907,12 +1956,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         } else if (base == 12u) {
             // Class-12 Eye corneal wet catchlight: sharp corneal reflection from live dynamic cubemap (reflects nearby fires & sky).
             lit += evalMultiScatterIBL(float3(0.028f, 0.028f, 0.028f), 0.04f, nv, sampleLiveEnvCube(rDir, 0.04f), 0.45f + 0.55f * skyVis);
-        } else if (base == 4u || base == 6u || base == 1u) {
-            // Full-world physical dielectric Split-Sum IBL on terrain, cobblestones, stone & timber (excluded on foliage).
+        } else if (base == 4u || base == 6u || base == 1u || isSkinnedActor) {
+            // Full-world physical dielectric Split-Sum IBL on terrain, cobblestones, stone, timber & skinned actor cloth/fur (excluded on foliage).
             const float3 dieF0 = lerp(0.028f, 0.042f, saturate(wet.wet + wet.puddle)).xxx;
             const float dieRough = clamp(s.alpha, 0.16f, 0.82f);
             const float3 dieEnv = sampleLiveEnvCube(rDir, dieRough) * (0.28f + 0.72f * skyVisShaped);
-            lit += evalMultiScatterIBL(dieF0, dieRough, nv, dieEnv, specOcc) * lerp(0.55f, 1.0f, saturate(wet.wet + wet.puddle));
+            lit += evalMultiScatterIBL(dieF0, dieRough, nv, dieEnv, specOcc) * lerp(isSkinnedActor ? 0.45f : 0.55f, 1.0f, saturate(wet.wet + wet.puddle));
         }
         // Wave 58: Marmoset/Lagarde Horizon Specular Occlusion prevents micro-normal reflection rays pointing
         // behind the macro surface normal nSmooth from leaking bright sky/cubemap glow across grazing creases.
@@ -2045,9 +2094,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
             const float nlRaw = dot(s.n, skKeyDir);
-            // Restrained warm hemoglobin terminator warmth + crisp dual-lobe sebum sheen (preserves pores under firelight!):
-            const float termSss = exp(-abs(nlRaw) * 4.5f);
-            lit += albedo * float3(0.82f, 0.24f, 0.12f) * min(skKeyCol, 0.90f.xxx) * (termSss * 0.085f);
+            // Wave 63: Smooth Gaussian hemoglobin terminator warmth + crisp dual-lobe sebum sheen (zero blotchy cusp!):
+            const float termSss = exp(-nlRaw * nlRaw * 5.2f);
+            lit += albedo * float3(0.82f, 0.26f, 0.14f) * min(skKeyCol, 0.90f.xxx) * (termSss * 0.085f);
             const float3 shv = rawSafeHalfVec(s.v, skKeyDir, s.n);
             const float snh = saturate(dot(s.n, shv));
             const float sa1 = 0.048f, sa2 = 0.240f;
@@ -2142,6 +2191,52 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Note: removed redundant 3rd Mie scatter wash in Lighting.hlsl; FroxelPass.hlsl (0..42,000u) + LightFog.hlsl
         // now own unified engine-level 3D volumetric transmittance and Hillaire aerial perspective with zero double-fogging.
     }
+    // Wave 63 Live Visual Debug Layers (flags.w = 28..33):
+    // 28: Material & Actor/Creature/Fur/Cloth (14) / Foliage / Glacier Class ID Map
+    // 29: Linear Depth & Silhouette Discontinuity Inspector
+    // 30: Shadow Stability & RT Point-Light Slot Map (R=sunShadow, G=RT top-3 slot vis/occupancy, B=ReSTIR vis)
+    // 31: Moss / Weathering / Snow / Glacier Mask Inspector (R=snow, G=moss, B=ice/glacier; magenta alarm if moss hits actor!)
+    // 32: Actor Skin / SSS / Specular & Contact-AO Inspector (bright actor highlight, dimmed world)
+    // 33: NaN / Inf / Negative / HDR > 32.0 Energy Overflow Heatmap (checked BEFORE sanitizeLit3!)
+    if (flags.w == 28u) {
+        const float shadeL = saturate(dot(albedo, float3(0.2126f, 0.7152f, 0.0722f)));
+        return float4(debugClassColor(base, isActorCloth, iceMask) * (0.42f + 0.58f * shadeL), game.a);
+    }
+    if (flags.w == 29u) {
+        const float zSafeD = max(z, 1.0f);
+        const float zRamp = saturate(log2(zSafeD) / 15.0f);
+        const float zDisc = smoothstep(0.03f, 0.12f, (abs(ddx(zSafeD)) + abs(ddy(zSafeD))) / zSafeD);
+        const float3 depthCol = float3(zRamp * 0.85f, zRamp * 0.55f, 1.0f - zRamp * 0.65f);
+        return float4(lerp(depthCol, float3(0.15f, 1.0f, 0.95f), zDisc), game.a);
+    }
+    if (flags.w == 30u) {
+        const float activeSlots = (rIdx.x != 0u ? 1.0f : 0.0f) + (rIdx.y != 0u ? 1.0f : 0.0f) + (rIdx.z != 0u ? 1.0f : 0.0f);
+        const float slotVisSum  = (rIdx.x != 0u ? rv.y : 0.0f) + (rIdx.y != 0u ? rv.z : 0.0f) + (rIdx.z != 0u ? rv.w : 0.0f);
+        const float slotVisAvg  = activeSlots > 0.5f ? (slotVisSum / activeSlots) : 0.0f;
+        const float slotG = saturate((activeSlots / 3.0f) * (0.30f + 0.70f * slotVisAvg));
+        return float4(saturate(sunShadow), slotG, saturate(restVis), game.a);
+    }
+    if (flags.w == 31u) {
+        if ((isActorFeat || isActorCloth) && weatherMossMask > 0.001f) {
+            return float4(1.0f, 0.0f, 1.0f, game.a);   // Alarm: moss leaked onto actor/creature!
+        }
+        const float3 mCol = (isActorFeat || isActorCloth)
+            ? float3(0.06f, 0.06f, 0.14f)
+            : float3(saturate(wet.snow), saturate(weatherMossMask * 2.2f), saturate(iceMask));
+        return float4(mCol, game.a);
+    }
+    if (flags.w == 32u) {
+        if (isActorFeat || isActorCloth) {
+            const float specL = saturate(dot(max(spec, 0.0f.xxx), float3(0.2126f, 0.7152f, 0.0722f)) * 2.5f);
+            return float4(isActorFeat ? 0.92f : 0.48f, saturate(combinedOcc), specL, game.a);
+        }
+        const float wL = dot(albedo, float3(0.2126f, 0.7152f, 0.0722f)) * 0.18f;
+        return float4(wL.xxx, game.a);
+    }
+    if (flags.w == 33u) {
+        return float4(debugHdrEnergyHeatmap(lit), game.a);
+    }
+
     // Clean Physical HDR Shoulder in native DX12 mode (!match): preserves full 1:1 linear HDR punch up to 1.20
     // then rolls off smoothly up to ~2.75 so ice caves, snowbanks & bright surfaces stay strictly below BloomPass (2.25),
     // while true HDR flames/sun/emissives stay crisp through BloomPass and Tonemap.hlsl (AgX / ACES 2.0)!

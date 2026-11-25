@@ -464,6 +464,218 @@ int main()
           smokeSunSum > smokeDarkSum * 1.04 && meanSmokeLift > 0.05,
           "Daytime directional sun self-shadowing + Beer-Powder Mie scatter illuminates sunlit smoke billows cleanly");
 
+    // Pass 3 (Wave 63): Indoor No-Black-Orb Proof + Strict Emitter Hygiene Proof
+    // Verifies that:
+    //   (a) Oversized neutral room-fill lights (radius=160u) and cool bounce lights (900K) are rejected by StepFire.
+    //   (b) Even with ceiling enabled and heavy soot seeding indoors, transmittance stays >= 0.78f (zero black orbs!).
+    {
+        fluidSim.Reset();
+        FluidFireParams fpInt = fp;
+        fpInt.enableCeiling = true;
+        fpInt.ceilingZLocal = 46.0f;
+        fpInt.sootYield = 1.40f;
+        fpInt.sootDamping = 0.05f;
+        fpInt.emitterCount = 4u;
+        fpInt.emitters[0].sootSeedRate = 1.50f;
+        fpInt.emitters[1].sootSeedRate = 1.50f;
+        // Slot 2: oversized neutral room-fill light (must be rejected)
+        fpInt.emitters[2] = fpInt.emitters[1];
+        fpInt.emitters[2].radius = 160.0f;
+        // Slot 3: cool bounce light < 1400K (must be rejected)
+        fpInt.emitters[3] = fpInt.emitters[1];
+        fpInt.emitters[3].ignitionTempK = 900.0f;
+
+        // Step in batches of <= 4 frames (matching RawFluidSimHost::kCbRingCount) so Reset() on step 0 is never overwritten.
+        for (int batch = 0; batch < 12; batch += 4) {
+            ca->Reset();
+            cl->Reset(ca.Get(), nullptr);
+            for (int s = 0; s < 4 && (batch + s) < 12; ++s) {
+                fpInt.timeSec = float(batch + s) * fpInt.dt;
+                fluidSim.StepFire(cl.Get(), fpInt);
+            }
+            cl->Close();
+            ID3D12CommandList* intStepL[1] = {cl.Get()};
+            queue->ExecuteCommandLists(1, intStepL);
+            flushQueue();
+        }
+
+        const auto intDom = fluidSim.GetFireDomainInfo();
+        Check(intDom.active && intDom.emitterCount == 2u,
+              "RawFluidSimHost emitter hygiene rejected oversized (160u) & cool (900K) room-fill lights");
+
+        ca->Reset();
+        cl->Reset(ca.Get(), nullptr);
+        D3D12_RESOURCE_BARRIER bClrInt{};
+        bClrInt.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        bClrInt.Transition = {colorOut.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET};
+        cl->ResourceBarrier(1, &bClrInt);
+        cl->ClearRenderTargetView(rtvHeap->GetCPUDescriptorHandleForHeapStart(), bgCol, 0, nullptr);
+        bClrInt.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        bClrInt.Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
+        cl->ResourceBarrier(1, &bClrInt);
+        cl->Close();
+        ID3D12CommandList* clrIntL[1] = {cl.Get()};
+        queue->ExecuteCommandLists(1, clrIntL);
+        flushQueue();
+
+        FluidCompositeParams cpInt = cp;
+        cpInt.isInterior = true;
+        cpInt.sunIntensity = 0.0f;
+        cpInt.activeEmitters = intDom.emitterCount;
+        const bool intCompOk = compHost.Composite(
+            queue.Get(), colorOut.Get(), depthIn.Get(),
+            fluidSim.FireThermoResource(), fluidSim.FireRadianceResource(), cpInt);
+        flushQueue();
+
+        ca->Reset();
+        cl->Reset(ca.Get(), nullptr);
+        bClrInt.Transition = {colorOut.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE};
+        cl->ResourceBarrier(1, &bClrInt);
+        cl->CopyTextureRegion(&rbDst, 0, 0, 0, &rbSrc, nullptr);
+        cl->Close();
+        ID3D12CommandList* rbIntL[1] = {cl.Get()};
+        queue->ExecuteCommandLists(1, rbIntL);
+        flushQueue();
+
+        void* pInt = nullptr;
+        rb->Map(0, nullptr, &pInt);
+        uint32_t intNanInf = 0u;
+        uint32_t intLeftMod = 0u;
+        uint32_t intFlamePx = 0u;
+        uint32_t intBlackOrbPx = 0u;
+        float minIntB = 1.0f;
+        float maxIntR = 0.0f;
+        for (UINT y = 0; y < H; ++y) {
+            const uint16_t* row = reinterpret_cast<const uint16_t*>(static_cast<const uint8_t*>(pInt) + size_t(y) * colorPitch);
+            for (UINT x = 0; x < W; ++x) {
+                const float r = HalfToFloat(row[x * 4u + 0u]);
+                const float g = HalfToFloat(row[x * 4u + 1u]);
+                const float b = HalfToFloat(row[x * 4u + 2u]);
+                const float a = HalfToFloat(row[x * 4u + 3u]);
+                if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b) || !std::isfinite(a)) {
+                    ++intNanInf;
+                    continue;
+                }
+                if (x < W / 2u) {
+                    if (std::fabs(r - kBgR) + std::fabs(g - kBgG) + std::fabs(b - kBgB) > 0.01f) ++intLeftMod;
+                } else {
+                    maxIntR = std::max(maxIntR, r);
+                    if (r > 1.20f && r > b * 1.45f) {
+                        ++intFlamePx;
+                    } else {
+                        minIntB = std::min(minIntB, b);
+                        if (b < kBgB * 0.76f) {
+                            ++intBlackOrbPx;
+                        }
+                    }
+                }
+            }
+        }
+        rb->Unmap(0, nullptr);
+        std::printf("       Indoor Proof: flamePx=%u (maxR=%.2f), minNonFlameB=%.3f (trans>=%.2f), blackOrbPx=%u, leftMod=%u, nanInf=%u\n",
+                    intFlamePx, maxIntR, minIntB, minIntB / kBgB, intBlackOrbPx, intLeftMod, intNanInf);
+        Check(intCompOk && intNanInf == 0u && intLeftMod == 0u && intBlackOrbPx == 0u && minIntB >= kBgB * 0.76f,
+              "Indoor composite preserves background transmittance >= 0.78 (0 black concentric orbs)");
+        Check(intFlamePx >= 10u && maxIntR > 1.20f,
+              "Indoor active flame core still renders crisp turbulent Planck blackbody flames");
+    }
+
+    // Pass 4 (Wave 63): No Red Low-Temp Sky Bleed Proof
+    // Cool active volume below 1180K (emitterCount=0 for 28 frames) and composite onto sky (sceneD=1.0):
+    // must produce ZERO neon-red fringe pixels on the sky!
+    {
+        FluidFireParams fpCool = fp;
+        fpCool.enableCeiling = false;
+        fpCool.emitterCount = 0u;
+        for (int batch = 0; batch < 28; batch += 4) {
+            ca->Reset();
+            cl->Reset(ca.Get(), nullptr);
+            for (int s = 0; s < 4 && (batch + s) < 28; ++s) {
+                fpCool.timeSec = float(batch + s + 20) * fpCool.dt;
+                fluidSim.StepFire(cl.Get(), fpCool);
+            }
+            cl->Close();
+            ID3D12CommandList* coolL[1] = {cl.Get()};
+            queue->ExecuteCommandLists(1, coolL);
+            flushQueue();
+        }
+
+        ca->Reset();
+        cl->Reset(ca.Get(), nullptr);
+        D3D12_RESOURCE_BARRIER bClrSky{};
+        bClrSky.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        bClrSky.Transition = {colorOut.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET};
+        cl->ResourceBarrier(1, &bClrSky);
+        cl->ClearRenderTargetView(rtvHeap->GetCPUDescriptorHandleForHeapStart(), bgCol, 0, nullptr);
+        bClrSky.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        bClrSky.Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
+        cl->ResourceBarrier(1, &bClrSky);
+        cl->Close();
+        ID3D12CommandList* clrSkyL[1] = {cl.Get()};
+        queue->ExecuteCommandLists(1, clrSkyL);
+        flushQueue();
+
+        FluidCompositeParams cpSky = cp;
+        cpSky.isInterior = false;
+        cpSky.activeEmitters = 1u; // force raymarch over cooled residual volume
+        cpSky.sunIntensity = 0.0f;
+        const bool skyCompOk = compHost.Composite(
+            queue.Get(), colorOut.Get(), depthIn.Get(),
+            fluidSim.FireThermoResource(), fluidSim.FireRadianceResource(), cpSky);
+        flushQueue();
+
+        ca->Reset();
+        cl->Reset(ca.Get(), nullptr);
+        bClrSky.Transition = {colorOut.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE};
+        cl->ResourceBarrier(1, &bClrSky);
+        cl->CopyTextureRegion(&rbDst, 0, 0, 0, &rbSrc, nullptr);
+        cl->Close();
+        ID3D12CommandList* rbSkyL[1] = {cl.Get()};
+        queue->ExecuteCommandLists(1, rbSkyL);
+        flushQueue();
+
+        void* pSky = nullptr;
+        rb->Map(0, nullptr, &pSky);
+        uint32_t redSkyBleedPx = 0u;
+        uint32_t skyNanInf = 0u;
+        for (UINT y = 0; y < H; ++y) {
+            const uint16_t* row = reinterpret_cast<const uint16_t*>(static_cast<const uint8_t*>(pSky) + size_t(y) * colorPitch);
+            for (UINT x = W / 2u; x < W; ++x) {
+                const float r = HalfToFloat(row[x * 4u + 0u]);
+                const float g = HalfToFloat(row[x * 4u + 1u]);
+                const float b = HalfToFloat(row[x * 4u + 2u]);
+                if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b)) {
+                    ++skyNanInf;
+                    continue;
+                }
+                if (r > kBgR + 0.06f && r > g * 1.20f) {
+                    ++redSkyBleedPx;
+                }
+            }
+        }
+        rb->Unmap(0, nullptr);
+        std::printf("       Cool Sky Bleed Proof: redSkyBleedPx=%u, nanInf=%u\n", redSkyBleedPx, skyNanInf);
+        Check(skyCompOk && skyNanInf == 0u && redSkyBleedPx == 0u,
+              "Cooled plume (<1180K) produces 0 neon-red bleed pixels onto sky (sceneD=1.0)");
+    }
+
+    uint32_t finalD3dErrors = 0u;
+    if (iq) {
+        const UINT64 nMsgFinal = iq->GetNumStoredMessages();
+        for (UINT64 i = 0; i < nMsgFinal; ++i) {
+            SIZE_T len = 0;
+            iq->GetMessage(i, nullptr, &len);
+            std::vector<uint8_t> buf(len);
+            auto* msg = reinterpret_cast<D3D12_MESSAGE*>(buf.data());
+            if (SUCCEEDED(iq->GetMessage(i, msg, &len)) &&
+                (msg->Severity == D3D12_MESSAGE_SEVERITY_ERROR || msg->Severity == D3D12_MESSAGE_SEVERITY_CORRUPTION)) {
+                std::printf("  D3D12_DEBUG_ERR: %s\n", msg->pDescription);
+                ++finalD3dErrors;
+            }
+        }
+    }
+    Check(finalD3dErrors == 0u, "D3D12 Debug Layer reported 0 errors/corruptions across all 4 passes");
+
     compHost.Shutdown();
     CloseHandle(ev);
     std::printf("=== Summary: %d passed, %d failed ===\n", g_pass, g_fail);

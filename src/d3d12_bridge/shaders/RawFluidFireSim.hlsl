@@ -147,6 +147,26 @@ bool isSolidVoxel(int3 id)
     return false;
 }
 
+bool isFinite1(float v)
+{
+    return !isnan(v) && !isinf(v);
+}
+
+float sanitizeFinite1(float v, float fallback)
+{
+    return isFinite1(v) ? v : fallback;
+}
+
+float3 sanitizeFinite3(float3 v, float3 fallback)
+{
+    return (any(isnan(v)) || any(isinf(v))) ? fallback : v;
+}
+
+float4 sanitizeFinite4(float4 v, float4 fallback)
+{
+    return (any(isnan(v)) || any(isinf(v))) ? fallback : v;
+}
+
 int3 clampCoord(int3 id)
 {
     return clamp(id, int3(0, 0, 0), int3(int(kGridRes) - 1, int(kGridRes) - 1, int(kGridRes) - 1));
@@ -160,7 +180,7 @@ float3 loadVelSolidAware(int3 id)
     if (isSolidVoxel(id)) {
         return float3(0.0f, 0.0f, 0.0f);
     }
-    return VelIn.Load(int4(id, 0)).xyz;
+    return sanitizeFinite3(VelIn.Load(int4(id, 0)).xyz, float3(0.0f, 0.0f, 0.0f));
 }
 
 // ----------------------------------------------------------------------------
@@ -206,13 +226,19 @@ void cs_fire_inject(uint3 tid : SV_DispatchThreadID)
         return;
     }
     const int3 id = int3(tid);
-    const float dt = clamp(dtAndTime.x, 1.0e-4f, 0.05f);
-    const float timeSec = dtAndTime.y;
-    const float tAmb = max(windAndAmbient.w, 200.0f);
+    const float dt = clamp(sanitizeFinite1(dtAndTime.x, 1.0f / 60.0f), 1.0e-4f, 0.05f);
+    const float timeSec = sanitizeFinite1(dtAndTime.y, 0.0f);
+    const float tAmb = clamp(sanitizeFinite1(windAndAmbient.w, 293.15f), 200.0f, 400.0f);
+    const bool isInterior = hasCeilingBit();
 
-    float4 vel = hasResetBit() ? float4(0.0f, 0.0f, 0.0f, 0.0f) : VelIn.Load(int4(id, 0));
-    float4 thermo = hasResetBit() ? float4(tAmb, 0.0f, 0.0f, 0.0f) : ThermoIn.Load(int4(id, 0));
-    thermo.x = max(thermo.x, tAmb);
+    float4 vel = hasResetBit() ? float4(0.0f, 0.0f, 0.0f, 0.0f)
+                               : sanitizeFinite4(VelIn.Load(int4(id, 0)), float4(0.0f, 0.0f, 0.0f, 0.0f));
+    float4 thermo = hasResetBit() ? float4(tAmb, 0.0f, 0.0f, 0.0f)
+                                  : sanitizeFinite4(ThermoIn.Load(int4(id, 0)), float4(tAmb, 0.0f, 0.0f, 0.0f));
+    thermo.x = clamp(thermo.x, tAmb, 6500.0f);
+    thermo.y = clamp(thermo.y, 0.0f, 2.5f);
+    thermo.z = clamp(thermo.z, 0.0f, isInterior ? 0.85f : 4.0f);
+    thermo.w = max(thermo.w, 0.0f);
 
     if (isSolidVoxel(id)) {
         VelOut[id] = float4(0.0f, 0.0f, 0.0f, 0.0f);
@@ -223,48 +249,89 @@ void cs_fire_inject(uint3 tid : SV_DispatchThreadID)
     const float3 wp = voxelToWorld(id);
     const uint emCount = min(counts.x, 16u);
     [loop] for (uint ei = 0u; ei < emCount; ++ei) {
-        const float radius = emitterPosRadius[ei].w;
+        const float radius = clamp(sanitizeFinite1(emitterPosRadius[ei].w, 0.0f), 0.0f, 14.0f);
         if (radius <= 0.001f) {
             continue;
         }
         const float3 delta = wp - emitterPosRadius[ei].xyz;
         const float dist2 = dot(delta, delta);
         const float r2 = radius * radius;
-        if (dist2 >= r2 * 2.25f) {
-            continue;
-        }
-        const float w = exp(-dist2 / max(r2 * 0.45f, 1.0e-4f)) * saturate(1.0f - sqrt(dist2) / (radius * 1.5f));
-        if (w <= 1.0e-4f) {
+        // Exterior billowing smoke collar extends slightly higher above the tight flame core; indoors stays tightly bounded.
+        const float cullMult = isInterior ? 2.89f : 6.25f;
+        if (dist2 >= r2 * cullMult) {
             continue;
         }
 
-        const float ignTempK = clamp(emitterThermoJet[ei].x, 1200.0f, 4000.0f);
-        const float fuelRate = max(emitterThermoJet[ei].y, 0.0f);
-        const float jetSpeed = emitterThermoJet[ei].z;
-        const float curlAmp  = emitterThermoJet[ei].w;
-        const float3 rawDir  = emitterDirSoot[ei].xyz;
+        const float ignTempK = clamp(sanitizeFinite1(emitterThermoJet[ei].x, 0.0f), 0.0f, 4000.0f);
+        const float fuelRate = max(sanitizeFinite1(emitterThermoJet[ei].y, 0.0f), 0.0f);
+        if (ignTempK < 1200.0f || fuelRate <= 1.0e-4f) {
+            continue;
+        }
+        const float jetSpeed = clamp(sanitizeFinite1(emitterThermoJet[ei].z, 0.0f), 0.0f, 120.0f);
+        const float curlAmp  = clamp(sanitizeFinite1(emitterThermoJet[ei].w, 0.0f), 0.0f, 40.0f);
+        const float3 rawDir  = sanitizeFinite3(emitterDirSoot[ei].xyz, float3(0.0f, 0.0f, 1.0f));
         const float dirLen   = length(rawDir);
         const float3 jetDir  = (dirLen > 1.0e-3f) ? (rawDir / dirLen) : float3(0.0f, 0.0f, 1.0f);
-        const float sootSeed = max(emitterDirSoot[ei].w, 0.0f);
+        const float rawSoot  = max(sanitizeFinite1(emitterDirSoot[ei].w, 0.0f), 0.0f);
+        const float sootSeed = isInterior ? min(rawSoot, 0.12f) : min(rawSoot, 1.5f);
 
-        // Animated 3D curl-noise lick perturbation in emitter local frame
-        const float3 noiseCoord = wp * (0.35f / max(radius, 1.0f)) - float3(0.0f, 0.0f, timeSec * 2.4f) + float3(float(ei) * 7.3f, 0.0f, 0.0f);
-        const float3 curl = fireCurlNoise3D(noiseCoord);
-        const float flicker = 0.82f + 0.36f * fireNoise3Grad(float3(float(ei) * 5.1f, timeSec * 4.7f, wp.z * 0.08f)).x;
+        // Multi-octave analytical curl-noise warp: replaces smooth spherical blob with sharp upward-licking flame tongues.
+        const float invR = 1.0f / max(radius, 1.0f);
+        const float3 curlLo = fireCurlNoise3D(wp * (0.28f * invR) - jetDir * (timeSec * 2.8f) + float3(float(ei) * 7.3f, 0.0f, 0.0f));
+        const float3 curlHi = fireCurlNoise3D(wp * (0.68f * invR) - jetDir * (timeSec * 5.1f) + float3(0.0f, float(ei) * 11.1f, 3.7f));
+        const float3 curl = curlLo * 0.68f + curlHi * 0.32f;
 
-        // Soft temperature injection toward ignition target (1800K..3400K)
-        const float targetT = lerp(thermo.x, ignTempK * flicker, saturate(w * (1.0f - exp(-14.0f * dt))));
-        thermo.x = max(thermo.x, targetT);
-        // Fuel & direct ember soot injection
-        thermo.y = min(thermo.y + fuelRate * w * dt * flicker, 2.5f);
-        thermo.z = min(thermo.z + sootSeed * w * dt, 4.0f);
+        const float hAlong = dot(delta, jetDir);
+        const float hNorm = hAlong * invR;
+        const float3 radialVec = delta - jetDir * hAlong;
+        const float3 curlPerp = curl - jetDir * dot(curl, jetDir);
+        const float heightRise = saturate((hNorm + 0.35f) / 1.85f);
+        // Tapered flame cone/teardrop (crisp anchored base, sharp upward-licking tongues, never a smooth round sphere)
+        const float coneTaper = lerp(1.14f, 0.42f, heightRise);
+        const float3 warpedRad = radialVec + curlPerp * (radius * (0.12f + 0.28f * heightRise));
+        const float rNorm = length(warpedRad) / max(radius * coneTaper, 0.5f);
+        const float vNorm = (hAlong >= 0.0f) ? (hNorm / 1.65f) : (-hNorm / 0.80f);
+        const float dEff = sqrt(rNorm * rNorm + vNorm * vNorm);
+        const float tongueNoise = 0.80f + 0.48f * fireNoise3Grad(
+            wp * (0.52f * invR) - jetDir * (timeSec * 4.2f) + float3(float(ei) * 3.1f, 1.7f, 0.0f)).x;
+        const float wRaw = saturate(1.0f - dEff / max(tongueNoise, 0.35f));
+        const float w = wRaw * wRaw * (3.0f - 2.0f * wRaw);
+
+        // Exterior billowing smoke entrainment collar above the tight flame core (strictly exterior only; indoors stays tight)
+        float sootCollarW = w;
+        if (!isInterior && hAlong >= -0.15f * radius) {
+            const float smokeTaper = lerp(1.10f, 1.85f, heightRise);
+            const float rSmoke = length(warpedRad) / max(radius * smokeTaper, 0.5f);
+            const float vSmoke = abs(hNorm - 1.25f) / 1.45f;
+            const float dSmoke = sqrt(rSmoke * rSmoke + vSmoke * vSmoke);
+            const float sRaw = saturate(1.0f - dSmoke / max(tongueNoise, 0.42f));
+            sootCollarW = max(w, sRaw * sRaw * (3.0f - 2.0f * sRaw) * 1.35f);
+        }
+
+        if (w <= 1.0e-4f && sootCollarW <= 1.0e-4f) {
+            continue;
+        }
+
+        const float flicker = 0.86f + 0.28f * fireNoise3Grad(float3(float(ei) * 5.1f, timeSec * 4.7f, wp.z * 0.08f)).x;
+
+        // Sharp flame-tongue temperature injection toward ignition target (1400K..3600K)
+        if (w > 1.0e-4f) {
+            const float targetT = lerp(thermo.x, ignTempK * flicker, saturate(w * (1.0f - exp(-22.0f * dt))));
+            thermo.x = max(thermo.x, targetT);
+            thermo.y = min(thermo.y + fuelRate * w * dt * flicker, 2.5f);
+        }
+        // Bounded soot injection (strongly throttled indoors to prevent black smoke pooling under ceilings;
+        // outdoors builds a rich billowing dark charcoal smoke column rising above the flame core)
+        const float sootGain = isInterior ? 1.0f : 2.65f;
+        thermo.z = min(thermo.z + sootSeed * sootGain * sootCollarW * dt, isInterior ? 0.85f : 4.0f);
         // Velocity jet + divergence-free curl perturbation
+        const float velW = max(w, sootCollarW * 0.65f);
         const float3 jetVel = jetDir * (jetSpeed * flicker) + curl * curlAmp;
-        vel.xyz = lerp(vel.xyz, jetVel, saturate(w * (1.0f - exp(-10.0f * dt))));
+        vel.xyz = lerp(vel.xyz, jetVel, saturate(velW * (1.0f - exp(-10.0f * dt))));
     }
 
-    VelOut[id] = vel;
-    ThermoOut[id] = thermo;
+    VelOut[id] = sanitizeFinite4(vel, float4(0.0f, 0.0f, 0.0f, 0.0f));
+    ThermoOut[id] = sanitizeFinite4(thermo, float4(tAmb, 0.0f, 0.0f, 0.0f));
 }
 
 // ----------------------------------------------------------------------------
@@ -346,14 +413,14 @@ void cs_fire_advect(uint3 tid : SV_DispatchThreadID)
     advThermo.w = max(advThermo.w, 0.0f);
 
     // Clamp max velocity magnitude for unconditional numeric safety
-    const float maxSpeed = 48.0f * domainOriginAndCell.w / max(dt, 0.008f);
+    const float maxSpeed = 48.0f * max(domainOriginAndCell.w, 0.05f) / max(dt, 0.008f);
     const float spd = length(advVel.xyz);
-    if (spd > maxSpeed) {
+    if (spd > maxSpeed && spd > 1.0e-5f) {
         advVel.xyz *= (maxSpeed / spd);
     }
 
-    VelOut[id] = float4(advVel.xyz, 0.0f);
-    ThermoOut[id] = advThermo;
+    VelOut[id] = float4(sanitizeFinite3(advVel.xyz, float3(0.0f, 0.0f, 0.0f)), 0.0f);
+    ThermoOut[id] = sanitizeFinite4(advThermo, float4(tAmb, 0.0f, 0.0f, 0.0f));
 }
 
 // ----------------------------------------------------------------------------
@@ -441,10 +508,12 @@ void cs_fire_forces_combust(uint3 tid : SV_DispatchThreadID)
     const float rateK = arrA * exp(-min(actTa / max(T, 1.0f), 60.0f)) * ignGate;
     const float burnFrac = 1.0f - exp(-rateK * dt);
     const float burnedFuel = fuel * burnFrac;
+    const bool isInterior = hasCeilingBit();
 
     fuel = max(0.0f, fuel - burnedFuel);
-    T += heatQ * burnedFuel;
-    soot = min(soot + sootYield * burnedFuel, 4.0f);
+    T = min(T + heatQ * burnedFuel, 6500.0f);
+    const float effSootYield = isInterior ? (sootYield * 0.28f) : sootYield;
+    soot = min(soot + effSootYield * burnedFuel, isInterior ? 0.85f : 4.0f);
     const float burnRate = burnedFuel / max(dt, 1.0e-4f);
 
     // 5) Semi-implicit Stefan-Boltzmann Radiative Cooling: dT/dt = -sigma * (T^4 - T_amb^4)
@@ -456,11 +525,17 @@ void cs_fire_forces_combust(uint3 tid : SV_DispatchThreadID)
     const float coolDenom = 1.0f + dt * sigmaRad * (t2 + ta2) * (T + tAmb);
     T = tAmb + tExcess / max(coolDenom, 1.0f);
 
-    // Soot dissipation
-    soot *= exp(-max(physicsC.z, 0.0f) * dt);
+    // Soot dissipation: rapidly ventilate cool/inactive indoor soot so interiors never pool into pitch-black orbs,
+    // while keeping rich outdoor campfire smoke plumes intact.
+    const float coolMask = 1.0f - smoothstep(820.0f, 1350.0f, T);
+    const float idleBurn = 1.0f - smoothstep(0.02f, 0.35f, burnRate);
+    const float extraCoolDamp = isInterior
+        ? (0.55f + 1.95f * coolMask * idleBurn)
+        : (0.14f * (1.0f - smoothstep(320.0f, 480.0f, T)) * idleBurn);
+    soot *= exp(-(max(physicsC.z, 0.0f) + extraCoolDamp) * dt);
 
-    VelOut[id] = float4(u, 0.0f);
-    ThermoOut[id] = float4(T, fuel, soot, burnRate);
+    VelOut[id] = float4(sanitizeFinite3(u, float3(0.0f, 0.0f, 0.0f)), 0.0f);
+    ThermoOut[id] = sanitizeFinite4(float4(T, fuel, soot, burnRate), float4(tAmb, 0.0f, 0.0f, 0.0f));
 }
 
 // ----------------------------------------------------------------------------
@@ -546,7 +621,7 @@ void cs_fire_pressure(uint3 tid : SV_DispatchThreadID)
     }
 
     const float pNew = (denom > 0.5f) ? ((pSum - h * h * divEff) / denom) : pC;
-    PressOut[id] = clamp(pNew, -1.0e5f, 1.0e5f);
+    PressOut[id] = clamp(sanitizeFinite1(pNew, 0.0f), -1.0e5f, 1.0e5f);
 }
 
 // ----------------------------------------------------------------------------
@@ -586,7 +661,7 @@ void cs_fire_project(uint3 tid : SV_DispatchThreadID)
     if (id.z > 0 && isSolidVoxel(id + int3( 0, 0,-1))) u.z = max(u.z, 0.0f);
     if (id.z < int(kGridRes) - 1 && isSolidVoxel(id + int3( 0, 0, 1))) u.z = min(u.z, 0.0f);
 
-    VelOut[id] = float4(u, VelIn.Load(int4(id, 0)).w);
+    VelOut[id] = float4(sanitizeFinite3(u, float3(0.0f, 0.0f, 0.0f)), sanitizeFinite1(VelIn.Load(int4(id, 0)).w, 0.0f));
 }
 
 // ----------------------------------------------------------------------------
@@ -675,10 +750,11 @@ void cs_fire_radiance(uint3 tid : SV_DispatchThreadID)
         gatheredRad += rayRad * invDirCount;
     }
 
-    // Smoke single-scattering albedo (~0.62 warm charcoal-amber) + direct flame self-emission
-    const float3 sootAlbedo = float3(0.76f, 0.56f, 0.40f);
+    // Smoke single-scattering albedo (warm charcoal-amber) + direct flame self-emission.
+    // Coupled radiance cascade lifts surrounding smoke undersides with rich burnt-orange bounce from within.
+    const float3 sootAlbedo = float3(0.82f, 0.58f, 0.38f);
     const float sootScatterWeight = 1.0f - exp(-sigmaExt * localSoot);
-    const float3 finalRad = selfEmit + gatheredRad * sootAlbedo * (0.25f + 0.75f * sootScatterWeight);
+    const float3 finalRad = selfEmit + gatheredRad * sootAlbedo * (0.42f + 0.90f * sootScatterWeight) * 1.25f;
 
     // 4-tap directional sunlight self-shadow march through the 64^3 soot density volume toward exterior sun key dir.
     // Stored in FireRadiance.a [0..1]: 1.0 = sunlit upper smoke curls/open air, -> 0.0 = deep self-shadowed undersides.
@@ -696,5 +772,7 @@ void cs_fire_radiance(uint3 tid : SV_DispatchThreadID)
     }
     const float sunShadowT = exp(-sunOptDepth);
 
-    RadianceOut[id] = float4(min(finalRad, float3(256.0f, 256.0f, 256.0f)), saturate(sunShadowT));
+    RadianceOut[id] = sanitizeFinite4(
+        float4(min(max(finalRad, 0.0f.xxx), float3(256.0f, 256.0f, 256.0f)), saturate(sunShadowT)),
+        float4(0.0f, 0.0f, 0.0f, 1.0f));
 }

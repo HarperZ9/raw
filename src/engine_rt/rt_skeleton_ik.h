@@ -11,6 +11,17 @@ struct Vec3 {
     float x = 0.0f, y = 0.0f, z = 0.0f;
 };
 
+struct Quat4 {
+    float x = 0.0f, y = 0.0f, z = 0.0f, w = 1.0f;
+};
+
+// Hardened unit-quaternion operations: strict finite checks, shortest-path antipodal SLERP
+// (dot < 0 -> negate q1), near-zero sin(theta) normalized NLERP fallback, and exponential temporal damping.
+Quat4 NormalizeQuat(Quat4 q) noexcept;
+Quat4 SlerpQuat(Quat4 q0, Quat4 q1, float t) noexcept;
+Quat4 DampQuat(Quat4 current, Quat4 target, float lambdaPerSec, float dtSec) noexcept;
+void  QuatToMat3(Quat4 q, float outRowMajor3x3[9]) noexcept;
+
 struct TwoBoneIkResult {
     bool  solved = false;
     Vec3  midPos{};      // solved knee / elbow joint world position

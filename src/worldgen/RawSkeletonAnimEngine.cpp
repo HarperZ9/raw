@@ -90,11 +90,12 @@ void ApplySolvedLegToPose(SkeletonPose& pose, uint32_t thighIdx, uint32_t calfId
     pose.world[calfIdx].pos      = ik.midPos;
     pose.world[calfIdx].rot      = QuatNormalize(QuatMul(dqCalf, QuatMul(dqThigh, pose.world[calfIdx].rot)));
 
-    // Align ankle pitch/roll to terrain slope normal (clamped safely to <= 45 deg):
+    // Align ankle pitch/roll to terrain slope normal (sanitized & clamped safely to <= 45 deg):
+    const Vec3 safeN = SafeVec3(groundNormal, {0.0f, 0.0f, 1.0f});
     const Vec3 clampedN = Normalize(Vec3{
-        Clamp(groundNormal.x, -0.707f, 0.707f),
-        Clamp(groundNormal.y, -0.707f, 0.707f),
-        std::max(0.707f, groundNormal.z)
+        Clamp(safeN.x, -0.707f, 0.707f),
+        Clamp(safeN.y, -0.707f, 0.707f),
+        (std::max)(0.707f, safeN.z)
     });
     const Quat slopeAlign = QuatFromToRotation({0.0f, 0.0f, 1.0f}, clampedN);
     pose.world[footIdx].pos = ik.endPos;
@@ -137,6 +138,10 @@ Quat QuatConjugate(Quat q) noexcept {
 }
 
 Quat QuatMul(Quat a, Quat b) noexcept {
+    if (!std::isfinite(a.x) || !std::isfinite(a.y) || !std::isfinite(a.z) || !std::isfinite(a.w) ||
+        !std::isfinite(b.x) || !std::isfinite(b.y) || !std::isfinite(b.z) || !std::isfinite(b.w)) {
+        return QuatIdentity();
+    }
     return {
         a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
         a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
@@ -146,9 +151,14 @@ Quat QuatMul(Quat a, Quat b) noexcept {
 }
 
 Vec3 QuatRotateVec(Quat q, Vec3 v) noexcept {
-    const Vec3 u{q.x, q.y, q.z};
+    if (!IsFinite3(v)) {
+        return {};
+    }
+    const float n2 = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
+    const Quat uq = (std::isfinite(n2) && std::fabs(n2 - 1.0f) <= 1.0e-3f) ? q : QuatNormalize(q);
+    const Vec3 u{uq.x, uq.y, uq.z};
     const Vec3 t = Cross(u, v) * 2.0f;
-    return v + t * q.w + Cross(u, t);
+    return v + t * uq.w + Cross(u, t);
 }
 
 Quat QuatFromAxisAngle(Vec3 axis, float rad) noexcept {
@@ -172,18 +182,23 @@ Quat QuatFromEulerXYZ(float rx, float ry, float rz) noexcept {
     const float cx = std::cos(hx), sx = std::sin(hx);
     const float cy = std::cos(hy), sy = std::sin(hy);
     const float cz = std::cos(hz), sz = std::sin(hz);
-    // Exact qz * qy * qx in one shot (unit norm by trigonometric identity):
-    return {
+    // Exact qz * qy * qx renormalized to unit length:
+    return QuatNormalize({
         sx * cy * cz - cx * sy * sz,
         cx * sy * cz + sx * cy * sz,
         cx * cy * sz - sx * sy * cz,
         cx * cy * cz + sx * sy * sz
-    };
+    });
 }
 
 Quat QuatFromToRotation(Vec3 fromDir, Vec3 toDir) noexcept {
-    const Vec3 f = Normalize(SafeVec3(fromDir, {0.0f, 0.0f, 1.0f}));
-    const Vec3 t = Normalize(SafeVec3(toDir,   {0.0f, 0.0f, 1.0f}));
+    const Vec3 sf = SafeVec3(fromDir, {0.0f, 0.0f, 1.0f});
+    const Vec3 st = SafeVec3(toDir,   {0.0f, 0.0f, 1.0f});
+    if (Length(sf) < 1.0e-6f || Length(st) < 1.0e-6f) {
+        return QuatIdentity();
+    }
+    const Vec3 f = Normalize(sf);
+    const Vec3 t = Normalize(st);
     const float d = Clamp(Dot(f, t), -1.0f, 1.0f);
     if (d > 0.99999f) {
         return QuatIdentity();
@@ -201,33 +216,50 @@ Quat QuatFromToRotation(Vec3 fromDir, Vec3 toDir) noexcept {
 
 Quat QuatSlerp(Quat a, Quat b, float t) noexcept {
     const float u = Clamp01(SafeFloat(t, 0.0f));
-    float dot = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
-    if (dot > 0.99995f && dot < 1.00005f) {
-        return a; // Identical unit quaternions (fast-path for untouched bones)
-    }
-    Quat qa = QuatNormalize(a);
-    Quat qb = QuatNormalize(b);
-    dot = qa.x * qb.x + qa.y * qb.y + qa.z * qb.z + qa.w * qb.w;
+    const float n2a = a.x * a.x + a.y * a.y + a.z * a.z + a.w * a.w;
+    const float n2b = b.x * b.x + b.y * b.y + b.z * b.z + b.w * b.w;
+    const Quat qa = (std::isfinite(n2a) && std::fabs(n2a - 1.0f) <= 1.0e-4f) ? a : QuatNormalize(a);
+    Quat qb       = (std::isfinite(n2b) && std::fabs(n2b - 1.0f) <= 1.0e-4f) ? b : QuatNormalize(b);
+    float dot = qa.x * qb.x + qa.y * qb.y + qa.z * qb.z + qa.w * qb.w;
+    // Enforce shortest-path antipodal continuity so limbs/heads never snap 360 degrees:
     if (dot < 0.0f) {
         qb = {-qb.x, -qb.y, -qb.z, -qb.w};
         dot = -dot;
     }
+    dot = Clamp(dot, 0.0f, 1.0f);
+    // Near-zero angle NLERP fallback (guards sin(theta0) -> 0 without step discontinuity):
     if (dot > 0.9995f) {
         return QuatNormalize({
             Lerp(qa.x, qb.x, u), Lerp(qa.y, qb.y, u),
             Lerp(qa.z, qb.z, u), Lerp(qa.w, qb.w, u)
         });
     }
-    const float theta0 = std::acos(Clamp(dot, -1.0f, 1.0f));
+    const float theta0 = std::acos(dot);
     const float sin0   = std::sin(theta0);
-    const float s0     = std::sin((1.0f - u) * theta0) / sin0;
-    const float s1     = std::sin(u * theta0) / sin0;
+    if (!std::isfinite(sin0) || sin0 < 1.0e-5f) {
+        return QuatNormalize({
+            Lerp(qa.x, qb.x, u), Lerp(qa.y, qb.y, u),
+            Lerp(qa.z, qb.z, u), Lerp(qa.w, qb.w, u)
+        });
+    }
+    const float s0 = std::sin((1.0f - u) * theta0) / sin0;
+    const float s1 = std::sin(u * theta0) / sin0;
     return QuatNormalize({
         s0 * qa.x + s1 * qb.x,
         s0 * qa.y + s1 * qb.y,
         s0 * qa.z + s1 * qb.z,
         s0 * qa.w + s1 * qb.w
     });
+}
+
+Quat QuatDamp(Quat current, Quat target, float lambdaPerSec, float dtSec) noexcept {
+    const float lam = Clamp(SafeFloat(lambdaPerSec, 0.0f), 0.0f, 120.0f);
+    const float dt  = Clamp(SafeFloat(dtSec, 0.0f), 0.0f, 0.25f);
+    if (lam <= 0.0f || dt <= 0.0f) {
+        return QuatNormalize(current);
+    }
+    const float alpha = 1.0f - std::exp(-lam * dt);
+    return QuatSlerp(current, target, alpha);
 }
 
 // ============================================================================
@@ -482,39 +514,51 @@ float RawSkeletonAnimEngine::SolveFabrikChain(std::vector<Vec3>& joints, Vec3 ta
         return 0.0f;
     }
     const size_t n = joints.size();
+    for (size_t i = 0u; i < n; ++i) {
+        if (!IsFinite3(joints[i])) {
+            return 0.0f;
+        }
+    }
+    const uint32_t safeMaxIters = (std::min)(maxIterations, 64u);
+    const float safeTol = (std::max)(SafeFloat(tolerance, 1.0e-4f), 1.0e-6f);
     std::vector<float> lengths(n - 1u, 0.0f);
     float totalLen = 0.0f;
     for (size_t i = 0u; i + 1u < n; ++i) {
-        lengths[i] = std::max(1.0e-4f, Length(joints[i + 1u] - joints[i]));
+        lengths[i] = (std::max)(1.0e-4f, Length(joints[i + 1u] - joints[i]));
         totalLen  += lengths[i];
     }
+
+    auto safeDir = [](Vec3 delta, Vec3 fallback) noexcept -> Vec3 {
+        const float len = Length(delta);
+        return (std::isfinite(len) && len > 1.0e-6f) ? (delta / len) : fallback;
+    };
 
     const Vec3 rootAnchor = joints[0];
     const float distToTarget = Length(targetPos - rootAnchor);
 
     // Unreachable target: stretch straight along root->target preserving exact bone lengths:
     if (distToTarget >= totalLen * 0.9995f) {
-        const Vec3 dir = Normalize(targetPos - rootAnchor);
+        const Vec3 dir = safeDir(targetPos - rootAnchor, {0.0f, 0.0f, -1.0f});
         for (size_t i = 0u; i + 1u < n; ++i) {
             joints[i + 1u] = joints[i] + dir * lengths[i];
         }
         return Length(joints.back() - targetPos);
     }
 
-    for (uint32_t iter = 0u; iter < maxIterations; ++iter) {
-        if (Length(joints.back() - targetPos) <= tolerance) {
+    for (uint32_t iter = 0u; iter < safeMaxIters; ++iter) {
+        if (Length(joints.back() - targetPos) <= safeTol) {
             break;
         }
         // Backward pass (end -> root):
         joints.back() = targetPos;
         for (size_t i = n - 1u; i-- > 0u; ) {
-            const Vec3 dir = Normalize(joints[i] - joints[i + 1u]);
+            const Vec3 dir = safeDir(joints[i] - joints[i + 1u], {0.0f, 0.0f, 1.0f});
             joints[i] = joints[i + 1u] + dir * lengths[i];
         }
         // Forward pass (root pinned -> end):
         joints[0] = rootAnchor;
         for (size_t i = 0u; i + 1u < n; ++i) {
-            const Vec3 dir = Normalize(joints[i + 1u] - joints[i]);
+            const Vec3 dir = safeDir(joints[i + 1u] - joints[i], {0.0f, 0.0f, -1.0f});
             joints[i + 1u] = joints[i] + dir * lengths[i];
         }
     }

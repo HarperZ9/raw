@@ -64,6 +64,32 @@ float waterValueNoise(float2 p)
     return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
 }
 
+// Analytical C2-smooth quintic value noise returning float3(value, dVal/dx, dVal/dy)
+// for curl-free aperiodic gravity-wave swells (zero parallel plane-wave zebra stripes).
+float3 waterValueNoiseGrad(float2 p)
+{
+    const float2 i = floor(p);
+    const float2 f = frac(p);
+    const float2 u = f * f * f * (f * (f * 6.0f - 15.0f) + 10.0f);
+    const float2 du = 30.0f * f * f * (f * (f - 2.0f) + 1.0f);
+    const float a = waterHash21(i + float2(0.0f, 0.0f));
+    const float b = waterHash21(i + float2(1.0f, 0.0f));
+    const float c = waterHash21(i + float2(0.0f, 1.0f));
+    const float d = waterHash21(i + float2(1.0f, 1.0f));
+    const float k0 = a;
+    const float k1 = b - a;
+    const float k2 = c - a;
+    const float k3 = a - b - c + d;
+    const float val = k0 + k1 * u.x + k2 * u.y + k3 * u.x * u.y;
+    const float2 grad = du * float2(k1 + k3 * u.y, k2 + k3 * u.x);
+    return float3(val, grad.x, grad.y);
+}
+
+float4 sanitizeWaterState4(float4 v)
+{
+    return all(isfinite(v)) ? v : float4(0.0f, 0.0f, 0.0f, 0.0f);
+}
+
 // Voronoi cell edge distance (F2 - F1): 0 along bubble filament walls, >0 inside open water pockets.
 float waterCellWalls(float2 q, float t)
 {
@@ -87,22 +113,23 @@ float waterCellWalls(float2 q, float t)
     return f2 - f1;
 }
 
-// Organic domain-warped lacy cellular foam web (stretches along flow, tears into open-cell foam lace).
+// Organic domain-warped lacy cellular foam web (Wave 63: ~0.25x weighty Nordic drift speed).
 float evalLacyFoamWeb(float2 worldXY, float2 flowVel, float timeSec, float density01)
 {
-    const float2 advPos = worldXY - flowVel * (timeSec * 0.12f);
+    const float tSlow = timeSec * 0.26f;
+    const float2 advPos = worldXY - flowVel * (tSlow * 0.10f);
     const float2 q = advPos * 0.032f;
     const float wx = (waterValueNoise(q * 0.75f + float2(4.1f, 9.2f)) - 0.5f) * 1.85f;
     const float wy = (waterValueNoise(q * 0.75f + float2(13.7f, 2.8f)) - 0.5f) * 1.85f;
     const float2 qw = q + float2(wx, wy);
 
-    const float w1 = waterCellWalls(qw * 1.10f, timeSec * 0.25f);
-    const float w2 = waterCellWalls(qw * 2.45f + float2(11.3f, -7.1f), timeSec * 0.42f);
+    const float w1 = waterCellWalls(qw * 1.10f, tSlow * 0.24f);
+    const float w2 = waterCellWalls(qw * 2.45f + float2(11.3f, -7.1f), tSlow * 0.40f);
     const float lace1 = 1.0f - smoothstep(0.015f, lerp(0.14f, 0.40f, density01), w1);
     const float lace2 = 1.0f - smoothstep(0.012f, lerp(0.12f, 0.34f, density01), w2);
-    const float micro = smoothstep(0.38f, 0.85f, waterValueNoise(qw * 6.5f + float2(timeSec * 0.18f, -timeSec * 0.14f)));
-    const float core  = smoothstep(0.62f, 0.94f, density01) * (0.68f + 0.32f * micro);
-    return saturate(max(core, max(lace1 * 0.90f, lace2 * 0.68f) * (0.42f + 0.58f * micro)));
+    const float micro = smoothstep(0.38f, 0.85f, waterValueNoise(qw * 6.5f + float2(tSlow * 0.18f, -tSlow * 0.14f)));
+    const float core  = smoothstep(0.64f, 0.95f, density01) * (0.64f + 0.36f * micro);
+    return saturate(max(core, max(lace1 * 0.88f, lace2 * 0.64f) * (0.42f + 0.58f * micro)));
 }
 
 // ----------------------------------------------------------------------------
@@ -137,9 +164,11 @@ float evalBoundarySponge(float2 worldXY)
 }
 
 // ----------------------------------------------------------------------------
-// 6-Component Directional JONSWAP Spectral Gravity-Wave Swell
-// Returns float4(height, dH/dx, dH/dy, crestSteepness) using exact deep/finite
-// water dispersion omega = sqrt(g * k * tanh(k * H0)) with irrational wave angles.
+// Wave 63: 4-Octave Domain-Warped Aperiodic Gravity-Wave Swell
+// Replaces coherent directional plane-wave trains (which produced intersecting
+// diagonal zebra-stripe bands on shallow water) with incommensurately rotated
+// C2 quintic gradient-noise swells rolling at weighty ~0.25x gravity speed.
+// Returns float4(height, dH/dx, dH/dy, aperiodicPatchCrest).
 // ----------------------------------------------------------------------------
 float4 evalJonswapSwell(float2 worldXY, float timeSec)
 {
@@ -152,38 +181,56 @@ float4 evalJonswapSwell(float2 worldXY, float timeSec)
     const float2 wPerp = float2(-wDir.y, wDir.x);
     const float g = max(swePhysics.x, 1.0f);
     const float H0 = max(swePhysics.y, 2.0f);
+    const float gScale = sqrt(clamp(g * min(H0, 120.0f) / (9.81f * 40.0f), 0.25f, 2.25f));
+    const float tSlow = timeSec * 0.25f * gScale;
 
-    // Irrational wavenumbers & directional spread angles (zero periodic tiling)
-    static const float kK[6]     = { 0.0113f, 0.0197f, 0.0341f, 0.0589f, 0.0973f, 0.1619f };
-    static const float kWeight[6]= { 0.42f,   0.36f,   0.22f,   0.14f,   0.085f,  0.048f  };
-    static const float kAng[6]   = { 0.00f,   0.37f,  -0.46f,   0.79f,  -0.88f,   1.19f   };
-    static const float kPhase[6] = { 0.00f,   1.618f,  3.141f,  4.669f,  0.732f,  2.414f  };
+    // Project gently into wind basis and apply low-frequency aperiodic domain warp
+    // so crests roll as organic heavy swells with zero parallel stripes:
+    const float2 pFlow = float2(dot(worldXY, wDir), dot(worldXY, wPerp));
+    const float wA = waterValueNoise(pFlow * 0.0024f - float2(tSlow * 0.14f, -tSlow * 0.05f));
+    const float wB = waterValueNoise(pFlow * 0.0053f + float2(11.7f - tSlow * 0.18f, 4.3f + tSlow * 0.07f));
+    const float2 pWarp = pFlow + float2((wA - 0.5f) * 92.0f + (wB - 0.5f) * 28.0f,
+                                        (wB - 0.5f) * 86.0f - (wA - 0.5f) * 24.0f);
+
+    static const float kFreq[4]   = { 0.0046f, 0.0109f, 0.0247f, 0.0541f };
+    static const float kWeight[4] = { 0.54f,   0.28f,   0.13f,   0.05f   };
+    static const float kSpd[4]    = { 0.30f,   0.46f,   0.68f,   0.94f   };
+    static const float kCosR[4]   = {  1.0000f,  0.7660f, -0.4540f, -0.3584f };
+    static const float kSinR[4]   = {  0.0000f,  0.6428f,  0.8910f, -0.9336f };
+    static const float2 kOff[4]   = {
+        float2( 0.0f,  0.0f),
+        float2(17.3f,  9.1f),
+        float2(31.7f, 23.4f),
+        float2(53.1f, 41.8f)
+    };
 
     float h = 0.0f;
-    float2 grad = float2(0.0f, 0.0f);
-    float steep = 0.0f;
+    float2 gFlow = float2(0.0f, 0.0f);
+    float crestPeak = 0.0f;
 
-    [unroll] for (int i = 0; i < 6; ++i) {
-        const float c = cos(kAng[i]);
-        const float s = sin(kAng[i]);
-        const float2 dir = wDir * c + wPerp * s;
-        const float k = kK[i];
-        const float omega = sqrt(g * k * tanh(min(k * H0, 12.0f)));
-        const float a = swellAmp * kWeight[i];
-        const float ph = dot(worldXY, dir) * k - omega * timeSec + kPhase[i];
-        // Second-order Stokes trochoidal sharpening: sharper crests, broader troughs
-        const float sinP = sin(ph);
-        const float cosP = cos(ph);
-        const float sin2P = 2.0f * sinP * cosP;
-        const float cos2P = 2.0f * cosP * cosP - 1.0f;
-
-        h += a * (sinP + 0.18f * sin2P);
-        const float dH = a * k * (cosP + 0.36f * cos2P);
-        grad += dir * dH;
-        // Negative second derivative peaks on crests -> feeds Jacobian crest folding
-        steep += max(0.0f, a * k * k * (sinP + 0.72f * sin2P));
+    [unroll] for (int i = 0; i < 4; ++i) {
+        const float c = kCosR[i];
+        const float s = kSinR[i];
+        const float2 qRot = float2(pWarp.x * c - pWarp.y * s, pWarp.x * s + pWarp.y * c);
+        const float2 adv  = float2(-tSlow * kSpd[i], tSlow * kSpd[i] * 0.22f);
+        const float3 ng   = waterValueNoiseGrad(qRot * kFreq[i] + adv + kOff[i]);
+        const float a     = swellAmp * kWeight[i];
+        const float vC    = ng.x - 0.5f;
+        const float vShaped = vC + 0.22f * (ng.x * ng.x - 0.333f);
+        const float dShaped = 1.0f + 0.44f * ng.x;
+        h += a * vShaped;
+        const float gxRot = ng.y * kFreq[i] * a * dShaped;
+        const float gyRot = ng.z * kFreq[i] * a * dShaped;
+        gFlow += float2(gxRot * c + gyRot * s, -gxRot * s + gyRot * c);
+        if (i < 2) {
+            crestPeak += smoothstep(0.66f, 0.94f, ng.x) * (i == 0 ? 0.65f : 0.35f);
+        }
     }
-    return float4(h, grad.x, grad.y, steep);
+
+    const float2 gradW = wDir * gFlow.x + wPerp * gFlow.y;
+    const float patchMask = smoothstep(0.55f, 0.88f, waterValueNoise(pFlow * 0.0034f + float2(-tSlow * 0.09f, 27.3f)));
+    const float steep = saturate(crestPeak * saturate(length(gradW) * 1.4f) * patchMask) * 0.08f;
+    return float4(h, gradW.x, gradW.y, steep);
 }
 
 // ----------------------------------------------------------------------------
@@ -254,7 +301,7 @@ void cs_water_inject(uint3 tid : SV_DispatchThreadID)
     if (rain > 0.02f) {
         const float dropCell = max(dx * 2.0f, 4.0f);
         const float2 cellIdx = floor(worldXY / dropCell);
-        const float timeSlot = floor(timeSec * 16.0f);
+        const float timeSlot = floor(timeSec * 6.5f);
         const float hDrop = waterHash21(cellIdx + float2(timeSlot * 13.7f, timeSlot * 29.3f));
         const float dropThresh = 1.0f - rain * 0.045f;
         if (hDrop > dropThresh) {
@@ -270,16 +317,16 @@ void cs_water_inject(uint3 tid : SV_DispatchThreadID)
         }
     }
 
-    // 3) Shoreline wave-break & whitecap surf energy
+    // 3) Shoreline wave-break & sparse patch-masked surf energy (zero periodic stripes)
     const float shoreBreak = max(foamAndRain.w, 0.0f);
     if (shoreBreak > 0.01f) {
         const float4 swell = evalJonswapSwell(worldXY, timeSec);
-        const float crestMask = smoothstep(0.015f, 0.085f, swell.w);
+        const float crestMask = smoothstep(0.035f, 0.080f, swell.w);
         if (crestMask > 0.001f) {
             const float2 wDir = (length(swellAndWind.xy) > 1.0e-3f) ? normalize(swellAndWind.xy) : float2(1.0f, 0.0f);
-            const float web = evalLacyFoamWeb(worldXY, wDir * swellAndWind.w, timeSec, crestMask);
-            state.yz += wDir * (crestMask * shoreBreak * dt * 6.0f);
-            state.w = saturate(state.w + crestMask * shoreBreak * web * dt * 1.8f);
+            const float web = evalLacyFoamWeb(worldXY, wDir * (swellAndWind.w * 0.35f), timeSec, crestMask);
+            state.yz += wDir * (crestMask * shoreBreak * dt * 3.5f);
+            state.w = saturate(state.w + crestMask * shoreBreak * web * dt * 1.1f);
         }
     }
 
@@ -289,7 +336,7 @@ void cs_water_inject(uint3 tid : SV_DispatchThreadID)
     state.yz *= sponge;
     state.w = saturate(state.w) * sponge;
 
-    StateOut[ip] = state;
+    StateOut[ip] = sanitizeWaterState4(state);
 }
 
 // ----------------------------------------------------------------------------
@@ -356,10 +403,10 @@ void cs_water_step(uint3 tid : SV_DispatchThreadID)
     const float4 cD = StateIn.Load(int3(ip.x, iyD, 0));
     const float4 cU = StateIn.Load(int3(ip.x, iyU, 0));
 
-    // Background river / wind drift velocity
+    // Background river / wind drift velocity (Wave 63: weighty unhurried Nordic current advection)
     const float rawLen = length(swellAndWind.xy);
     const float2 windDir = (rawLen > 1.0e-3f) ? (swellAndWind.xy / rawLen) : float2(1.0f, 0.0f);
-    const float2 bgFlow = windDir * swellAndWind.w;
+    const float2 bgFlow = windDir * (swellAndWind.w * 0.35f);
     const float2 totalVel = cC.yz + bgFlow;
 
     // 1) MacCormack semi-Lagrangian advection of velocity (u . grad)u and foam
@@ -389,18 +436,18 @@ void cs_water_step(uint3 tid : SV_DispatchThreadID)
     const float lapH = (cL.x + cR.x + cD.x + cU.x) * 0.25f - cC.x;
     float hNew = cC.x - dt * fluxDiv + 0.04f * lapH;
 
-    // 4) Lacy cellular foam advection, convergence/crest generation & exponential decay
+    // 4) Lacy cellular foam advection strictly from genuine wake convergence & splash energy
+    // (Wave 63: zero plane-wave swell stripe triggers!)
     const float2 worldXY = texelToToroidalWorld(ip);
     const float sponge = evalBoundarySponge(worldXY);
     const float conv = max(0.0f, -((cR.y - cL.y) + (cU.z - cD.z)) * inv2dx);
     const float crestCurv = max(0.0f, -lapH / max(dx, 0.25f));
-    const float4 swell = evalJonswapSwell(worldXY, timeSec);
 
-    const float foamGenRaw = saturate(conv * 0.45f + crestCurv * 2.4f + max(0.0f, swell.w - foamAndRain.y) * 4.5f);
+    const float foamGenRaw = saturate(conv * 0.40f + max(0.0f, crestCurv - 0.035f) * 1.45f);
     const float lacyWeb = evalLacyFoamWeb(worldXY, totalVel, timeSec, max(advState.w, foamGenRaw));
     const float foamDecay = exp(-max(foamAndRain.x, 0.02f) * rawDt);
     float foamNew = advState.w * foamDecay;
-    foamNew = saturate(foamNew + foamGenRaw * lacyWeb * rawDt * 2.2f);
+    foamNew = saturate(foamNew + foamGenRaw * lacyWeb * rawDt * 1.85f);
     // Subtle cellular tearing as foam ages so trailing wakes dissolve into delicate webs
     foamNew *= lerp(0.86f + 0.14f * lacyWeb, 1.0f, saturate(foamNew * 1.4f));
 
@@ -409,13 +456,13 @@ void cs_water_step(uint3 tid : SV_DispatchThreadID)
     uNew *= sponge;
     foamNew = saturate(foamNew) * sponge;
 
-    StateOut[ip] = float4(hNew, uNew.x, uNew.y, foamNew);
+    StateOut[ip] = sanitizeWaterState4(float4(hNew, uNew.x, uNew.y, foamNew));
 }
 
 // ----------------------------------------------------------------------------
 // Pass 3: cs_water_normals
-// Computes analytical curl-free Z-up surface normal + 2x2 Jacobian crest-folding
-// foam mask ready for direct binding in RtWater.hlsl.
+// Computes analytical curl-free Z-up surface normal + 2x2 Jacobian wake-compression
+// lacy foam mask ready for direct binding in RtWater.hlsl.
 // ----------------------------------------------------------------------------
 [numthreads(8, 8, 1)]
 void cs_water_normals(uint3 tid : SV_DispatchThreadID)
@@ -440,28 +487,29 @@ void cs_water_normals(uint3 tid : SV_DispatchThreadID)
     const float4 cD = StateIn.Load(int3(ip.x, iyD, 0));
     const float4 cU = StateIn.Load(int3(ip.x, iyU, 0));
 
-    // Analytical JONSWAP swell height gradient
+    // Analytical aperiodic gravity-wave swell height gradient
     const float4 swell = evalJonswapSwell(worldXY, timeSec);
 
     // Total curl-free height gradient: grad(h_swe + h_swell)
     const float2 gradSwe = float2(cR.x - cL.x, cU.x - cD.x) * inv2dx;
     const float2 totalGrad = gradSwe + swell.yz;
-    const float3 normalZUp = normalize(float3(-totalGrad.x, -totalGrad.y, 1.0f));
+    const float3 rawN = float3(-totalGrad.x, -totalGrad.y, 1.0f);
+    const float3 normalZUp = all(isfinite(rawN)) ? normalize(rawN) : float3(0.0f, 0.0f, 1.0f);
 
-    // 2x2 Jacobian crest-folding determinant from horizontal flow strain + swell steepness:
-    // J = det(I + tau * grad(u)) - swellSteepness; J < 1 indicates surface compression / wave crest folding.
+    // 2x2 Jacobian surface-compression determinant purely from SWE wake/flow velocity strain
+    // (Wave 63: removed swell.w plane-wave foam injection that painted zebra stripes on shallow water!)
     const float tau = 0.35f;
     const float du_dx = (cR.y - cL.y) * inv2dx;
     const float du_dy = (cU.y - cD.y) * inv2dx;
     const float dv_dx = (cR.z - cL.z) * inv2dx;
     const float dv_dy = (cU.z - cD.z) * inv2dx;
     const float jacDet = (1.0f + tau * du_dx) * (1.0f + tau * dv_dy) - (tau * du_dy) * (tau * dv_dx);
-    const float foldStrength = saturate((1.0f - jacDet) * 1.45f + max(0.0f, swell.w - foamAndRain.y) * 5.0f);
+    const float foldStrength = saturate((1.0f - jacDet - 0.06f) * 1.15f);
 
     const float rawLen = length(swellAndWind.xy);
-    const float2 bgFlow = ((rawLen > 1.0e-3f) ? (swellAndWind.xy / rawLen) : float2(1.0f, 0.0f)) * swellAndWind.w;
+    const float2 bgFlow = ((rawLen > 1.0e-3f) ? (swellAndWind.xy / rawLen) : float2(1.0f, 0.0f)) * (swellAndWind.w * 0.35f);
     const float lacyFold = evalLacyFoamWeb(worldXY, cC.yz + bgFlow, timeSec, max(cC.w, foldStrength));
     const float finalFoamMask = saturate(max(cC.w, foldStrength * lacyFold));
 
-    NormalOut[ip] = float4(normalZUp, finalFoamMask);
+    NormalOut[ip] = float4(normalZUp, isfinite(finalFoamMask) ? finalFoamMask : 0.0f);
 }

@@ -1,4 +1,4 @@
-// DofPass.hlsl: Physical 35mm Full-Frame Thin-Lens Cinema Depth of Field (SM 6.9 — Silent Horizons / ADOF Parity).
+// DofPass.hlsl: Physical 35mm Full-Frame Thin-Lens Cinema Depth of Field (SM 6.9 - Silent Horizons / ADOF Parity).
 //   dof_coc    : 1/2-res exact physical 35mm Full-Frame Thin-Lens CoC (meters, 50mm prime, 9-point median autofocus)
 //   dof_gather : 1/2-res 91-tap 5-ring concentric aperture disc gather (zero noise/zero stipple, Jimenez/McGuire
 //                near/far separation, HDR specular bokeh orb weighting, cat's-eye corner squeeze & LoCA)
@@ -31,8 +31,9 @@ float sampleFocusZoneZ() {
     float zVals[13];
     [unroll] for (int k = 0; k < 13; k++) {
         const float dk = Depth.Load(int3(clamp(c + o[k], int2(0, 0), dMax), 0));
-        const float zk = dk < 1.0f ? viewZOf(dk) : 12000.0f;
-        zVals[k] = zk < 42.0f ? 12000.0f : zk;
+        const float zkRaw = (dk < 1.0f && !isnan(dk) && !isinf(dk)) ? viewZOf(dk) : 12000.0f;
+        const float zk = (isnan(zkRaw) || isinf(zkRaw)) ? 12000.0f : zkRaw;
+        zVals[k] = zk < 42.0f ? 12000.0f : clamp(zk, 42.0f, 14000.0f);
     }
     [unroll] for (int i = 1; i < 13; i++) {
         const float key = zVals[i];
@@ -50,20 +51,24 @@ float sampleFocusZoneZ() {
 // Driven live by camOptics[0] (sensorWidthMm 24/36/44/70mm, focalLengthMm 24..200mm, apertureFStop f/0.95..f/16)
 // and camOptics[1] (nearBlurScale, farBlurScale, nearBleed, focusSpeed)!
 float signedCoC(float curZ, float focusZ, float maxDist) {
-    if (maxDist <= 1.0f) { return 0.0f; }
+    if (maxDist <= 1.0f || isnan(curZ) || isinf(curZ) || isnan(focusZ) || isinf(focusZ)) { return 0.0f; }
     const float dM = max(curZ, 24.0f) / 70.0f;
     const float fM = clamp(focusZ, 42.0f, 14000.0f) / 70.0f;
     const float sensorW = clamp(camOptics[0].x, 20.0f, 80.0f) * 0.001f;   // 24mm APS-C .. 70mm 6x7 Medium Format
     const float F = clamp(camOptics[0].y, 20.0f, 220.0f) * 0.001f;        // focal length in meters
     const float N = max(clamp(camOptics[0].z, 0.90f, 16.0f), 1.4f);       // unlock true f/1.4 cinema prime optical bokeh!
     const float cocSensorM = ((dM - fM) / max(dM, 0.25f)) * ((F * F) / (N * max(fM - F, 0.28f)));
-    const float cocPx = (cocSensorM / sensorW) * dims.x * clamp(maxDist / 420.0f, 0.20f, 2.2f) * 0.68f;
+    const float cocPx = (cocSensorM / max(sensorW, 0.01f)) * max(dims.x, 1.0f) * clamp(maxDist / 420.0f, 0.20f, 2.2f) * 0.68f;
     const float maxRadFull = max(clamp(dofParams.y, 2.0f, 18.0f) * 2.0f, 4.0f);
     const float absPx = abs(cocPx);
     // Clean tack-sharp focal corridor (1.25px deadzone keeps NPC heads/shoulders/foreground props razor sharp):
     if (absPx <= 1.25f) { return 0.0f; }
-    const float nearSnowDamp = (cocPx < 0.0f) ? smoothstep(45.0f, 125.0f, curZ) * 0.55f : 1.0f;
-    const float planeScale = (cocPx < 0.0f ? clamp(camOptics[1].x, 0.0f, 1.5f) * nearSnowDamp : clamp(camOptics[1].y, 0.0f, 1.5f));
+    // Interiors (sunColour.w < 0.5): strongly suppress near-field CoC so close cave icicles/lanterns never project concentric rings.
+    const bool isInt = (sunColour.w < 0.5f);
+    const float nearSnowDamp = (cocPx < 0.0f)
+        ? (isInt ? (smoothstep(95.0f, 240.0f, curZ) * 0.18f) : (smoothstep(45.0f, 125.0f, curZ) * 0.55f))
+        : (isInt ? 0.72f : 1.0f);
+    const float planeScale = (cocPx < 0.0f ? clamp(camOptics[1].x, 0.0f, 1.5f) : clamp(camOptics[1].y, 0.0f, 1.5f)) * nearSnowDamp;
     const float norm = pow(saturate(((absPx - 1.25f) / maxRadFull) * planeScale), 1.12f);
     return cocPx < 0.0f ? -norm : norm;
 }
@@ -104,9 +109,10 @@ float perspectiveCoC(float2 uv, float curZ, float focusZ, float maxDist) {
 // 1x1 GPU-Native Cinema Follow-Focus Motor: smoothly integrates focus distance in diopter (1/z) space
 // driven by camOptics[1].w (dofFocusSpeed 0.02..0.30)!
 float4 dof_focus(float4 at : SV_Position) : SV_Target0 {
-    const float targetZ = clamp(sampleFocusZoneZ(), 42.0f, 14000.0f);
+    const float rawTargetZ = sampleFocusZoneZ();
+    const float targetZ = (isnan(rawTargetZ) || isinf(rawTargetZ)) ? 500.0f : clamp(rawTargetZ, 42.0f, 14000.0f);
     const float prevZ = SrcA.Load(int3(0, 0, 0)).x;
-    if (prevZ < 20.0f || prevZ > 20000.0f) { return float4(targetZ, 0.0f, 0.0f, 1.0f); }
+    if (isnan(prevZ) || isinf(prevZ) || prevZ < 20.0f || prevZ > 20000.0f) { return float4(targetZ, 0.0f, 0.0f, 1.0f); }
     const float prevD = 1.0f / prevZ;
     const float targD = 1.0f / targetZ;
     const float diffD = abs(targD - prevD);
@@ -193,8 +199,10 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
     const float kCosHalf = cos(3.14159265f / blades);
     const float orbBoost = clamp(dofParams.z, 0.0f, 3.0f);
 
+    const float isInt = (sunColour.w < 0.5f) ? 1.0f : 0.0f;
     const float farGatherRad = max(centerCoc > 0.02f ? centerCoc * maxRad : 0.0f, 0.0f);
-    const float nearGatherRad = min(maxRad * 0.65f, 10.0f);
+    const float nearGatherRad = min(maxRad * lerp(0.65f, 0.32f, isInt), lerp(10.0f, 4.5f, isInt));
+    const float nearCocGate = lerp(-0.10f, -0.22f, isInt);
 
     // Karis-stabilized center seed weight (prevents harsh center spike or firefly dominance):
     const float centerLum = dot(centerRgb, float3(0.2126f, 0.7152f, 0.0722f));
@@ -246,42 +254,45 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
                 const float skyGuardF = exp(-cocDeltaF * cocDeltaF * 5.5f);
                 const float discW = smoothstep(rFrac * centerCoc - 0.045f, rFrac * centerCoc + 0.055f, tapCocF);
                 const float lumF = dot(tapRgbF, float3(0.2126f, 0.7152f, 0.0722f));
-                // Karis-stabilized HDR highlight preservation + subtle optical spherical-aberration bokeh rim:
+                // Karis-stabilized HDR highlight preservation + smooth disc profile (zero hollow concentric rings):
                 const float karisF = 1.0f / (1.0f + max(lumF, 0.0f) * 0.16f);
-                const float saRingF = 0.74f + 0.48f * (rFrac * rFrac);
-                const float orbF = (1.0f + smoothstep(0.45f, 3.2f, lumF) * (orbBoost * 2.15f)) * karisF * saRingF;
-                const float3 locaFar = lerp(1.0f.xxx, float3(0.93f, 1.04f, 1.04f), rFrac * rFrac * 0.38f);
+                const float saRingF = lerp(0.90f + 0.14f * (rFrac * rFrac), 1.0f - 0.25f * (rFrac * rFrac), isInt);
+                const float orbF = (1.0f + smoothstep(0.45f, 3.2f, lumF) * (orbBoost * lerp(2.15f, 1.15f, isInt))) * karisF * saRingF;
+                const float3 locaFar = lerp(1.0f.xxx, float3(0.93f, 1.04f, 1.04f), rFrac * rFrac * lerp(0.38f, 0.08f, isInt));
                 const float fw = bgOcc * lerp(0.35f, 1.0f, skyGuardF) * discW * orbF;
                 farAcc += tapRgbF * locaFar * fw;
                 farW += fw;
             }
         }
 
-        // 2) Depth-Aware Near-Field Gather (strictly gated on genuinely out-of-focus foreground tapN.a < -0.10f):
-        const int2 tapNPx = clamp(int2(round(px + unitOff * nearGatherRad)), int2(0, 0), dimMax);
-        const float4 tapNRaw = SrcA.Load(int3(tapNPx, 0));
-        const float tapCocN = (isnan(tapNRaw.a) || isinf(tapNRaw.a)) ? 0.0f : clamp(tapNRaw.a, -1.0f, 1.0f);
-        if (tapCocN < -0.10f) {
-            const float nRad = -tapCocN;
-            const float covN = smoothstep(rFrac - 0.14f, rFrac + 0.08f, nRad);
-            if (covN > 0.001f) {
-                const float3 tapRgbN = dofSanitizeRgb(tapNRaw.rgb);
-                const float lumN = dot(tapRgbN, float3(0.2126f, 0.7152f, 0.0722f));
-                const float karisN = 1.0f / (1.0f + max(lumN, 0.0f) * 0.16f);
-                const float saRingN = 0.74f + 0.44f * (rFrac * rFrac);
-                const float orbN = (1.0f + smoothstep(0.45f, 3.2f, lumN) * (orbBoost * 1.85f)) * karisN * saRingN;
-                const float3 locaNear = lerp(1.0f.xxx, float3(1.05f, 0.95f, 1.02f), rFrac * rFrac * 0.34f);
-                const float nw = covN * orbN;
-                nearAcc += tapRgbN * locaNear * nw;
-                nearW += nw;
-                nearCov += covN;
+        // 2) Depth-Aware Near-Field Gather (center-weighted soft disc; kills dark/pale-blue concentric rings indoors):
+        if (nearGatherRad > 0.35f) {
+            const int2 tapNPx = clamp(int2(round(px + unitOff * nearGatherRad)), int2(0, 0), dimMax);
+            const float4 tapNRaw = SrcA.Load(int3(tapNPx, 0));
+            const float tapCocN = (isnan(tapNRaw.a) || isinf(tapNRaw.a)) ? 0.0f : clamp(tapNRaw.a, -1.0f, 1.0f);
+            if (tapCocN < nearCocGate) {
+                const float nRad = -tapCocN;
+                const float covN = smoothstep(rFrac - 0.14f, rFrac + 0.08f, nRad);
+                if (covN > 0.001f) {
+                    const float3 tapRgbN = dofSanitizeRgb(tapNRaw.rgb);
+                    const float lumN = dot(tapRgbN, float3(0.2126f, 0.7152f, 0.0722f));
+                    const float karisN = 1.0f / (1.0f + max(lumN, 0.0f) * 0.16f);
+                    // Smooth center-weighted disc (never outer-ring peaking!) so foreground icicles/lanterns never draw hollow rings.
+                    const float softDiscN = 1.0f - 0.35f * (rFrac * rFrac);
+                    const float orbN = (1.0f + smoothstep(0.45f, 3.2f, lumN) * (orbBoost * lerp(1.65f, 0.55f, isInt))) * karisN * softDiscN;
+                    const float3 locaNear = lerp(1.0f.xxx, float3(1.05f, 0.95f, 1.02f), rFrac * rFrac * lerp(0.30f, 0.0f, isInt));
+                    const float nw = covN * orbN;
+                    nearAcc += tapRgbN * locaNear * nw;
+                    nearW += nw;
+                    nearCov += covN;
+                }
             }
         }
     }
 
     const float3 farCol = farW > 1.0e-5f ? (farAcc / farW) : centerRgb;
     const float3 nearCol = nearW > 1.0e-5f ? (nearAcc / nearW) : centerRgb;
-    const float nearAlpha = saturate(nearCov * (1.0f / 30.0f)) * 0.55f;
+    const float nearAlpha = saturate(nearCov * (1.0f / 30.0f)) * lerp(0.55f, 0.12f, isInt);
     const float3 outCol = dofSanitizeRgb(lerp(farCol, nearCol, nearAlpha));
     return float4(outCol, nearAlpha > 0.04f ? -nearAlpha : saturate(centerCoc));
 }
@@ -293,9 +304,11 @@ float4 dof_post(float4 at : SV_Position) : SV_Target0 {
     SrcA.GetDimensions(w, h);
     const float2 invDim = 1.0f / max(float2(w, h), float2(1.0f, 1.0f));
     const float2 uv = (floor(at.xy) + 0.5f) * invDim;
-    const float4 c0 = SrcA.SampleLevel(Lin, uv, 0.0f);
-    const float coc0 = abs(c0.a);
-    if (coc0 < 0.015f) { return c0; }
+    const float4 c0Raw = SrcA.SampleLevel(Lin, uv, 0.0f);
+    const float3 c0Rgb = dofSanitizeRgb(c0Raw.rgb);
+    const float c0A = (isnan(c0Raw.a) || isinf(c0Raw.a)) ? 0.0f : clamp(c0Raw.a, -1.0f, 1.0f);
+    const float coc0 = abs(c0A);
+    if (coc0 < 0.015f) { return float4(c0Rgb, c0A); }
     // 9-tap circular tent + highlight-preserving flood-fill (keeps luminous bokeh discs crisp & creamy):
     static const float2 kOff[8] = {
         float2(-1.0f, -1.0f), float2( 0.0f, -1.0f), float2( 1.0f, -1.0f),
@@ -304,19 +317,22 @@ float4 dof_post(float4 at : SV_Position) : SV_Target0 {
     };
     static const float kW[8] = { 0.5f, 1.0f, 0.5f, 1.0f, 1.0f, 0.5f, 1.0f, 0.5f };
     const float spread = lerp(0.55f, 1.15f, saturate(coc0));
-    float3 acc = c0.rgb * 2.0f;
+    float3 acc = c0Rgb * 2.0f;
     float wSum = 2.0f;
-    float aAcc = c0.a * 2.0f;
+    float aAcc = c0A * 2.0f;
     [unroll] for (int i = 0; i < 8; i++) {
-        const float4 t = SrcA.SampleLevel(Lin, saturate(uv + kOff[i] * invDim * spread), 0.0f);
+        const float4 tRaw = SrcA.SampleLevel(Lin, saturate(uv + kOff[i] * invDim * spread), 0.0f);
+        const float3 tRgb = dofSanitizeRgb(tRaw.rgb);
+        const float tA = (isnan(tRaw.a) || isinf(tRaw.a)) ? 0.0f : clamp(tRaw.a, -1.0f, 1.0f);
         // Prevent sharp background/foreground contamination across depth edges:
-        const float sameSign = (c0.a * t.a >= 0.0f) ? 1.0f : 0.15f;
-        const float wi = kW[i] * sameSign * (0.35f + 0.65f * smoothstep(0.0f, 0.20f, abs(t.a)));
-        acc += t.rgb * wi;
-        aAcc += t.a * wi;
+        const float sameSign = (c0A * tA >= 0.0f) ? 1.0f : 0.15f;
+        const float wi = kW[i] * sameSign * (0.35f + 0.65f * smoothstep(0.0f, 0.20f, abs(tA)));
+        acc += tRgb * wi;
+        aAcc += tA * wi;
         wSum += wi;
     }
-    return float4(acc / wSum, aAcc / wSum);
+    const float invW = 1.0f / max(wSum, 1.0e-5f);
+    return float4(dofSanitizeRgb(acc * invW), clamp(aAcc * invW, -1.0f, 1.0f));
 }
 
 // Subtle Physical Peripheral Rain Lens Refraction (strictly gated on active outdoor rain, zero rings on dry land):
@@ -352,7 +368,7 @@ float3 applyWetLensOptics(float2 uv, float3 baseCol) {
     const float2 refractUv = (offA * 0.016f + offB * 0.010f) * wetDrive;
     const float mag = length(refractUv);
     if (mag <= 1.0e-5f) { return baseCol; }
-    const float3 refracted = SrcA.SampleLevel(Lin, saturate(uv + refractUv), 0.0f).rgb;
+    const float3 refracted = dofSanitizeRgb(SrcA.SampleLevel(Lin, saturate(uv + refractUv), 0.0f).rgb);
     return lerp(baseCol, refracted, saturate(mag * 45.0f));
 }
 
@@ -365,7 +381,8 @@ float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
     const float fGpu = FocusTex.Load(int3(0, 0, 0)).x;
     const float focusZ = (fGpu >= 40.0f && fGpu <= 15000.0f) ? fGpu : sampleFocusZoneZ();
     const float d = Depth.Load(int3(ip, 0));
-    const float curZ = d < 1.0f ? viewZOf(d) : 100000.0f;
+    const float curZRaw = (d < 1.0f && !isnan(d) && !isinf(d)) ? viewZOf(d) : 100000.0f;
+    const float curZ = (isnan(curZRaw) || isinf(curZRaw)) ? 100000.0f : curZRaw;
     const uint camModeC = uint(engineWorld.w + 0.5f);
     if (camModeC == 3u && (uv.y < 0.122f || uv.y > 0.878f)) { return float4(0.0f, 0.0f, 0.0f, sharp.a); }   // True 2.39:1 Cinemascope framing
     // Keep 1st-person hands/weapons/torches (< 45u) razor-sharp:
@@ -406,7 +423,9 @@ float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
     const float cocPx = absCoc * maxRadFull;
     const float farBlend = coc > 0.04f ? smoothstep(1.0f, 3.6f, cocPx) : 0.0f;
     const float nearSelf = coc < -0.04f ? smoothstep(1.0f, 3.6f, cocPx) : 0.0f;
-    const float nearBleed = (d < 0.99998f && bokeh.a < -0.12f) ? smoothstep(0.14f, 0.85f, -bokeh.a) * 0.45f * clamp(camOptics[1].z, 0.0f, 1.0f) : 0.0f;
+    // Suppress indoor near-field bokeh bleed completely so close foreground icicles/beams never draw halos over caves.
+    const float nearBleed = (sunColour.w >= 0.5f && d < 0.99998f && bokeh.a < -0.12f)
+        ? smoothstep(0.14f, 0.85f, -bokeh.a) * 0.45f * clamp(camOptics[1].z, 0.0f, 1.0f) : 0.0f;
     const float blend = saturate(max(farBlend, max(nearSelf, nearBleed)));
     const float3 composed = dofSanitizeRgb(lerp(dofSanitizeRgb(sharp.rgb), bokeh.rgb, blend));
     return float4(applyWetLensOptics(uv, composed), sharp.a);

@@ -49,8 +49,35 @@ enum class ShaderKind : uint8_t
 namespace material
 {
 constexpr uint8_t None = 0, Lit = 1, EnvironmentMapped = 2, GlowMapped = 3, Landscape = 4, SoftLit = 5,
-                  Parallax = 6, DistantLod = 7, Effect = 8, Water = 9, Skin = 10, Hair = 11, Eye = 12, TruePBR = 13;
+                  Parallax = 6, DistantLod = 7, Effect = 8, Water = 9, Skin = 10, Hair = 11, Eye = 12,
+                  TruePBR = 13, SkinnedActor = 14;
 constexpr uint8_t FirstPersonFlag = 128;   // added for draws of the first-person model
+
+// Resolves final SV_Target5.b class byte. A non-zero classOverride promotes generic Lighting+Lit (base==1)
+// draws (e.g., skinned creatures, horses, dogs, NPC clothing/gloves) to SkinnedActor (base==14) while
+// strictly preserving specialized classes (Skin=10, Hair=11, Eye=12, SoftLit/Foliage=5, Landscape=4, etc.).
+constexpr uint8_t ResolveMaterialClass(uint8_t analysedClass, uint8_t classOverride, uint8_t classFlags) noexcept
+{
+    const uint8_t base = (classOverride != None && analysedClass == Lit) ? classOverride : analysedClass;
+    return static_cast<uint8_t>((base & 127u) | (classFlags & FirstPersonFlag));
+}
+
+constexpr float EncodeMaterialClassUnorm(uint8_t classByte) noexcept
+{
+    return static_cast<float>(classByte) / 255.0f;
+}
+
+constexpr uint8_t DecodeMaterialClassUnorm(float specZ) noexcept
+{
+    const float clamped = specZ < 0.0f ? 0.0f : (specZ > 1.0f ? 1.0f : specZ);
+    return static_cast<uint8_t>(clamped * 255.0f + 0.5f);
+}
+
+constexpr bool IsActorMaterialClass(uint8_t classByte) noexcept
+{
+    const uint8_t base = static_cast<uint8_t>(classByte & 127u);
+    return base == Skin || base == Hair || base == Eye || base == SkinnedActor;
+}
 }
 
 struct PatchInfo
@@ -77,6 +104,7 @@ struct PatchInfo
 struct PatchOptions
 {
     uint8_t classFlags = 0;             // or-ed into the material class (material::FirstPersonFlag)
+    uint8_t classOverride = 0;          // non-zero promotes Lighting+Lit (1) draws (e.g. material::SkinnedActor = 14)
     bool    alphaDiscard = false;       // emit discard_z (alpha < 0.35) on foliage/LOD color passes for safe D32_FLOAT
 };
 

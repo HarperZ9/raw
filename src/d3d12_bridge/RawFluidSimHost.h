@@ -138,10 +138,13 @@ struct FluidShaderBlobs {
 
 class RawFluidSimHost {
 public:
-    static constexpr uint32_t kFireGridRes     = 64u;
-    static constexpr uint32_t kWaterGridRes    = 256u;
-    static constexpr uint32_t kFireJacobiIters = 8u;
-    static constexpr uint32_t kCbRingCount     = 4u;
+    static constexpr uint32_t kFireGridRes            = 64u;
+    static constexpr uint32_t kWaterGridRes           = 256u;
+    static constexpr uint32_t kFireJacobiIters        = 8u;
+    static constexpr uint32_t kCbRingCount            = 4u;
+    static constexpr float    kMaxEmitterRadiusU      = 14.0f;
+    static constexpr float    kRejectOversizedRadiusU = 96.0f;
+    static constexpr float    kMinEmitterIgnitionK    = 1400.0f;
 
     RawFluidSimHost() = default;
     ~RawFluidSimHost();

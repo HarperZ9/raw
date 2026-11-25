@@ -3,6 +3,8 @@
 #include "GBufferState.h"
 #include "ProxyLog.h"
 #include "SceneGeometry.h"
+#include "SceneGeometryDetail.h"
+#include "SceneLights.h"
 #include "../dx12/translate/Translate.h"
 
 namespace SB::Proxy
@@ -10,39 +12,86 @@ namespace SB::Proxy
 namespace gbuffer
 {
 
-ID3D11PixelShader* VariantFor(State& s, ID3D11PixelShader* game, bool firstPerson, raw::dxbc::ShaderKind* kind, uint8_t* matClass)
+namespace
+{
+// Identifies skinned character/creature/fur/clothing draws (dogs, horses, wolves, NPCs, first-person arms)
+// using Skyrim's BLENDINDICES + BLENDWEIGHT input layout and per-draw actor world block (excluding wind-skinned
+// trees which carry no actor world block in SceneLights, matching SceneSkin.cpp).
+bool IsSkinnedActorDraw(ID3D11DeviceContext* real, Span span)
+{
+    if (!real || (span != Span::Opaque && span != Span::FirstPerson)) return false;
+    const geom::Layout* bound = geom::LayoutOf(geom::BoundLayout(real));
+    if (!bound || !bound->blendIdx.set || !bound->blendW.set) return false;
+    if (span == Span::FirstPerson) return true;
+    if (g_sceneLightsActive) {
+        return SceneLights_DrawWorld() != nullptr;
+    }
+    // Fallback when SceneLights is inactive: Skyrim binds its 80-bone actor skinning palette (>= 3840 bytes) on VS CB10.
+    ID3D11Buffer* bb[1] = {};
+    real->VSGetConstantBuffers(10, 1, bb);
+    bool hasBones = false;
+    if (bb[0]) {
+        D3D11_BUFFER_DESC bd{};
+        bb[0]->GetDesc(&bd);
+        hasBones = (bd.ByteWidth >= 3840u);
+        bb[0]->Release();
+    }
+    return hasBones;
+}
+} // namespace
+
+ID3D11PixelShader* VariantFor(State& s, ID3D11PixelShader* game, bool firstPerson, raw::dxbc::ShaderKind* kind,
+                              uint8_t* matClass, bool skinnedActor)
 {
     std::lock_guard<std::mutex> lock(s.mutex);
     const auto it = s.shaders.find(game);
     if (it == s.shaders.end()) { *kind = raw::dxbc::ShaderKind::Unknown; if (matClass) *matClass = 0; return nullptr; }
     PsEntry& e = it->second;
-    const int k = firstPerson ? 1 : 0;
-    if (!e.tried[k]) {
-        e.tried[k] = true;
+    const int baseSlot = firstPerson ? 1 : 0;
+    auto compileSlot = [&](int slot, uint8_t classOverride) {
+        if (e.tried[slot]) return;
+        e.tried[slot] = true;
         raw::dxbc::PatchOptions opt;
         opt.classFlags = firstPerson ? raw::dxbc::material::FirstPersonFlag : 0;
+        opt.classOverride = classOverride;
         opt.alphaDiscard = false;
         raw::dxbc::PatchInfo info;
         std::vector<uint8_t> out;
         if (raw::dxbc::PatchForGBuffer(e.code.data(), e.code.size(), opt, &out, &info)) {
-            const HRESULT hr = s.device->CreatePixelShader(out.data(), out.size(), nullptr, &e.variant[k]);
+            const HRESULT hr = s.device->CreatePixelShader(out.data(), out.size(), nullptr, &e.variant[slot]);
             if (FAILED(hr)) {
-                e.variant[k] = nullptr;
+                e.variant[slot] = nullptr;
                 if (s.createFailed++ < 8) Log("[GBuffer] the device refused a patched shader (0x%08X, %zu bytes)", hr, out.size());
             } else {
                 ++s.patched;
                 // The variant stays bound for the game's next draws with the same shader, so the
                 // ray-tracing capture sees it: it gets the original's alpha classification.
-                SceneGeometry_OnPixelShader(e.variant[k], e.code.data(), e.code.size());
+                SceneGeometry_OnPixelShader(e.variant[slot], e.code.data(), e.code.size());
             }
         } else if (s.refused++ < 8) {
             Log("[GBuffer] shader left alone: %s", info.refused ? info.refused : "?");
         }
-        e.kind = info.kind;
-        e.materialClass = info.materialClass;
+        if (slot == baseSlot || e.kind == raw::dxbc::ShaderKind::Unknown) {
+            e.kind = info.kind;
+            e.materialClass = info.materialClass;
+        }
+    };
+
+    // Always inspect/compile the base slot first so e.kind and e.materialClass are known cleanly.
+    compileSlot(baseSlot, 0);
+
+    // Promote ONLY generic Lighting+Lit (base==1) skinned actor/creature/clothing draws to SkinnedActor (base==14).
+    // Specialized classes (Skin=10, Hair=11, Eye=12, SoftLit/Foliage=5, EnvMap=2, TruePBR=13, Landscape=4) keep baseSlot!
+    const bool promoteSkinned = skinnedActor &&
+                                e.kind == raw::dxbc::ShaderKind::Lighting &&
+                                e.materialClass == raw::dxbc::material::Lit;
+    const int k = promoteSkinned ? (baseSlot | 2) : baseSlot;
+    if (promoteSkinned) {
+        compileSlot(k, raw::dxbc::material::SkinnedActor);
     }
+
     *kind = e.kind;
-    if (matClass) *matClass = e.materialClass;
+    if (matClass) *matClass = promoteSkinned ? raw::dxbc::material::SkinnedActor : e.materialClass;
     return e.variant[k];
 }
 
@@ -133,6 +182,7 @@ void GBuffer_BeforeDraw(ID3D11DeviceContext* real)
 {
     State& s = S();
     if (s.span == Span::None) {
+        s.lastDrawSkinnedActor = false;
         if (s.lastDrawWater) {
             s.lastDrawWater = false;
             raw::tx::SetDrawWaterHint(real, false);
@@ -143,28 +193,40 @@ void GBuffer_BeforeDraw(ID3D11DeviceContext* real)
         }
         return;
     }
-    if (!s.dirty) {
+    // Check skinned-actor status every draw even when PS/blend did not change: Skyrim shares generic
+    // BSLightingShader (Lit=1) between static stone/wood props and skinned creatures/dogs/NPC clothing.
+    const bool skinnedActor = IsSkinnedActorDraw(real, s.span);
+    if (!s.dirty && skinnedActor == s.lastDrawSkinnedActor) {
         if (s.lastDrawWater) raw::tx::SetDrawWaterHint(real, true);
         if (s.lastDrawSkipSubdiv) raw::tx::SetDrawSkipSubdivHint(real, true);
         return;
     }
     s.dirty = false;
+    s.lastDrawSkinnedActor = skinnedActor;
     raw::dxbc::ShaderKind kind{};
     uint8_t matClass = 0;
-    ID3D11PixelShader* v = s.gamePs ? VariantFor(s, s.gamePs, s.span == Span::FirstPerson, &kind, &matClass) : nullptr;
+    ID3D11PixelShader* v = s.gamePs
+        ? VariantFor(s, s.gamePs, s.span == Span::FirstPerson, &kind, &matClass, skinnedActor)
+        : nullptr;
+    if (matClass == raw::dxbc::material::SkinnedActor) ++s.skinnedActorDraws;
     const bool material = kind == raw::dxbc::ShaderKind::Lighting || kind == raw::dxbc::ShaderKind::DistantLod;
     const bool isWater = (s.span == Span::Water) || (kind == raw::dxbc::ShaderKind::Water);
-    // Structurally exclude Landscape terrain and DistantLod quadtree chunks from TxSubdiv so cell edges stay 100% watertight.
+    // Structurally exclude Landscape terrain, DistantLod quadtree chunks, and skinned actors from TxSubdiv so
+    // cell edges stay watertight and animated character silhouettes never suffer seam splits.
     const bool skipSubdiv = !isWater && (kind == raw::dxbc::ShaderKind::DistantLod ||
                                          matClass == raw::dxbc::material::Landscape ||
-                                         matClass == raw::dxbc::material::DistantLod);
+                                         matClass == raw::dxbc::material::DistantLod ||
+                                         matClass == raw::dxbc::material::SkinnedActor ||
+                                         skinnedActor);
     s.lastDrawWater = isWater;
     s.lastDrawSkipSubdiv = skipSubdiv;
     raw::tx::SetDrawWaterHint(real, isWater);
     raw::tx::SetDrawSkipSubdivHint(real, skipSubdiv);
     const int blendMode = !v ? 2 : (kind == raw::dxbc::ShaderKind::Water ? 3 : (material ? 0 : 1));
     ID3D11BlendState* blend = BlendVariant(s, s.gameBlend, blendMode);
+    // Preserve depth/stencil state 100% untouched (never call OMSetDepthStencilState); restore original PS on refused draws.
     if (v) real->PSSetShader(v, nullptr, 0);
+    else if (s.gamePs && s.substituted) real->PSSetShader(s.gamePs, nullptr, 0);
     if (blend) real->OMSetBlendState(blend, s.factor, s.sampleMask);
     s.substituted = true;
     ++s.swaps;
@@ -174,16 +236,20 @@ void GBuffer_BeforeDraw(ID3D11DeviceContext* real)
 bool GBuffer_CurrentDrawIsCullableProp()
 {
     State& s = S();
-    if (s.span != Span::Opaque || !s.gamePs) return false;
+    if (s.span != Span::Opaque || !s.gamePs || s.lastDrawSkinnedActor) return false;
     std::lock_guard<std::mutex> lock(s.mutex);
     const auto it = s.shaders.find(s.gamePs);
     if (it == s.shaders.end()) return false;
     const PsEntry& e = it->second;
-    // Structurally exclude Landscape terrain, DistantLod quadtree chunks, Water, and Effects at the DXBC shader level.
+    // Structurally exclude Landscape terrain, DistantLod quadtree chunks, Water, Effects, and Actor shaders at the DXBC level.
     return e.kind == raw::dxbc::ShaderKind::Lighting &&
            e.materialClass != raw::dxbc::material::Landscape &&
            e.materialClass != raw::dxbc::material::DistantLod &&
-           e.materialClass != raw::dxbc::material::Water;
+           e.materialClass != raw::dxbc::material::Water &&
+           e.materialClass != raw::dxbc::material::Skin &&
+           e.materialClass != raw::dxbc::material::Hair &&
+           e.materialClass != raw::dxbc::material::Eye &&
+           e.materialClass != raw::dxbc::material::SkinnedActor;
 }
 
 } // namespace SB::Proxy

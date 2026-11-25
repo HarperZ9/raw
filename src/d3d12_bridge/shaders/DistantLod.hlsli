@@ -74,8 +74,20 @@ float3 distantLit(int3 ip, float2 at, float d) {
         const float bough2 = cNoise(wpTree * 0.052f + 7.3f) * 2.0f - 1.0f;
         const float3 nTree = n + (right * (bough * 0.36f) + float3(0.0f, 0.0f, bough2 * 0.30f)) * cw;
         n = (dot(nTree, nTree) > 1.0e-10f) ? normalize(nTree) : n;
+        // Restore boreal chlorophyll richness on bleached pale-beige/white conifer LOD cards (non-snowy climates)
+        // and lift crushed pitch-black lower-card bark pixels so trunks retain readable wood detail:
+        const float albLuma = dot(albedo, float3(0.2126f, 0.7152f, 0.0722f));
+        const float albMax = max(albedo.r, max(albedo.g, albedo.b));
+        const float albMin = min(albedo.r, min(albedo.g, albedo.b));
+        const float albSat = (albMax - albMin) / max(albLuma, 0.05f);
+        const float nonSnowTree = (1.0f - saturate(weather.z * 2.4f)) * (seasonL == 4u ? 0.0f : 1.0f);
+        const float bleachedW = smoothstep(0.32f, 0.62f, albLuma) * (1.0f - smoothstep(0.22f, 0.56f, albSat)) * nonSnowTree * cw;
+        const float3 borealPine = float3(0.11f, 0.19f, 0.09f) * lerp(0.85f, 1.35f, saturate(albLuma));
+        albedo = lerp(albedo, borealPine, bleachedW * 0.78f);
+        const float darkTrunkW = (1.0f - smoothstep(0.03f, 0.15f, albLuma)) * cw;
+        albedo = max(albedo, float3(0.058f, 0.046f, 0.036f) * darkTrunkW);
         // Tame chalky snow-pine billboards to match Lighting.hlsl near-field canopy ceiling:
-        albedo = min(albedo, float3(0.58f, 0.62f, 0.60f));
+        albedo = min(albedo, float3(0.50f, 0.54f, 0.52f));
     } else if (zDist > 2200.0f) {
         // Wave 35 + Wave 56 Seamless Grand Alpine Mountains & Continuous Seasonal Snowline Elevation Blend:
         // Analytical-derivative tri-planar granite cliff strata + snowpack-coupled snowline (seasonThermal0.x)
@@ -123,9 +135,9 @@ float3 distantLit(int3 ip, float2 at, float d) {
     const bool nearGrass = (zDist < 4200.0f) && (l + r < 44);
     const bool farTreeCard = (!nearGrass && cw > 0.05f);
     const float nl = nearGrass ? saturate((dot(n, sunDir.xyz) + 0.15f) / 1.15f)
-                   : farTreeCard ? saturate((dot(n, sunDir.xyz) + 0.12f) / 1.12f)
+                   : farTreeCard ? saturate((dot(n, sunDir.xyz) + 0.28f) / 1.28f)
                    : saturate((dot(n, sunDir.xyz) + 0.25f) / 1.25f);
-    float3 amb = float3(dot(ambient[0].xyz, n) + ambient[0].w, dot(ambient[1].xyz, n) + ambient[1].w, dot(ambient[2].xyz, n) + ambient[2].w);
+    float3 amb = max(float3(dot(ambient[0].xyz, n) + ambient[0].w, dot(ambient[1].xyz, n) + ambient[1].w, dot(ambient[2].xyz, n) + ambient[2].w), 0.0f.xxx);
     const float skyVis = rt && (flags.x & FLAG_SKY) != 0u && sunColour.w > 0.5f ? RtIdx.Load(ip).w : 1.0f;
     // Physical sun-to-ambient HDR ratio matched to Lighting.hlsl so near terrain and distant mountains share one disciplined HDR scale.
     const float cloudC = saturate(clouds.x);
@@ -140,18 +152,25 @@ float3 distantLit(int3 ip, float2 at, float d) {
     const float3 effSunCol = lerp(lodSunCol, lodMoonCol, nightLod);
     const float sunBoostL = lerp(1.20f, 1.00f, saturate(cloudC * 1.15f)) * lerp(1.0f, 0.78f, nightLod);
     const float ambScaleL = lerp(0.84f, 0.94f, cloudC) * lerp(0.88f, 1.0f, cloudVisLod);
-    // Dynamic near-field grass lighting & distant tree-LOD crown self-shadowing (grounds bright snow pines against alpine ridges).
+    // Physically grounded sky + warm ground hemisphere bounce floor prevents crushed pitch-black pine trunks in shadow:
+    float3 uSunL, uSkyZL, uSkyHL, uAmbUpL, uAmbDnL;
+    evalWorldAtmosphere(uSunL, uSkyZL, uSkyHL, uAmbUpL, uAmbDnL);
+    const float3 hemiFloor = lerp(uAmbDnL * float3(1.15f, 1.02f, 0.88f), uAmbUpL, saturate(n.z * 0.5f + 0.5f));
+    amb = max(amb, hemiFloor * (farTreeCard ? 0.62f : 0.34f));
+    // Dynamic near-field grass lighting & gentle distant tree-LOD crown AO (prevents pitch-black lower trunks):
     const float grassAo = nearGrass && (flags.x & FLAG_AO) != 0u ? lerp(1.0f, AoHist.Load(ip).x, 0.80f) : 1.0f;
-    const float occ = min(lerp(1.0f, pow(saturate(skyVis), 1.38f), max(cluster.w, 0.80f)), grassAo);
-    const float crownAo = farTreeCard ? lerp(0.38f, 0.88f, saturate(v * 0.5f + 0.5f)) : 1.0f;
+    const float skyPow = farTreeCard ? pow(saturate(skyVis), 1.05f) : pow(saturate(skyVis), 1.38f);
+    const float occBase = lerp(1.0f, skyPow, max(cluster.w, 0.80f));
+    const float occ = min(farTreeCard ? max(occBase, 0.38f) : occBase, grassAo);
+    const float crownAo = farTreeCard ? lerp(0.58f, 0.94f, saturate(v * 0.5f + 0.5f)) : 1.0f;
     amb *= (nearGrass ? lerp(occ.xxx, gtaoMultiBounce(occ, saturate(albedo)), 0.45f) * lerp(0.52f, 1.0f, saturate(v * 0.5f + 0.65f)) : (occ * crownAo).xxx) * ambScaleL;
     // What the ridges that block the sky send back (RtShadow.hlsl, farOccluded; [Lighting] RtFar), as the near bounce is.
-    if (rt && (flags.x & FLAG_BOUNCE) != 0u && sunColour.w > 0.5f) { amb += RtBounce.Load(ip).rgb * proj.w * (farTreeCard ? 0.65f : 1.25f); }
-    float3 direct = effSunCol * (nl * sh * sunBoostL * (farTreeCard ? 0.84f : 1.0f));
-    // Warm sunrise/sunset canopy rim transmission on distant tree billboards (FOL-04 relit impostors).
+    if (rt && (flags.x & FLAG_BOUNCE) != 0u && sunColour.w > 0.5f) { amb += RtBounce.Load(ip).rgb * proj.w * (farTreeCard ? 0.82f : 1.25f); }
+    float3 direct = effSunCol * (nl * sh * sunBoostL * (farTreeCard ? 0.86f : 1.0f));
+    // Warm sunrise/sunset canopy rim & chlorophyll subsurface transmission on distant tree billboards (FOL-04 relit impostors).
     if (farTreeCard && sunColour.w > 0.5f && nightLod < 0.85f) {
-        const float backTree = pow(saturate(dot(-toCam, sunDir.xyz)), 3.0f);
-        direct += effSunCol * float3(0.52f, 0.82f, 0.34f) * (backTree * sh * 0.16f * (1.0f - nightLod));
+        const float backTree = pow(saturate(dot(-toCam, sunDir.xyz)), 2.6f);
+        direct += effSunCol * float3(0.46f, 0.78f, 0.28f) * (backTree * sh * 0.22f * (1.0f - nightLod));
     }
     if (nearGrass && sunColour.w > 0.5f) {
         // Pillar 7(a): Real-time GPU Grass Bending around player footsteps (footTrail[0..7]) + rolling wind-gust meadow waves!

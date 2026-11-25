@@ -153,8 +153,10 @@ float4 multiscat(float4 at : SV_Position) : SV_Target0 {
 }
 
 // 192x108 Sky-View LUT (non-linear elevation parameterization around horizon for crisp twilight & horizon gradients).
+// Endpoint-locked texel mapping (texel 0 == -PI, texel 191 == +PI) guarantees 100% periodic seam-free wrap under CLAMP sampling.
 float4 skyview(float4 at : SV_Position) : SV_Target0 {
-    const float2 uv = saturate(at.xy / float2(192.0f, 108.0f));
+    const float2 texIdx = floor(at.xy);
+    const float2 uv = float2(saturate(texIdx.x / 191.0f), saturate(texIdx.y / 107.0f));
     const float az = (uv.x - 0.5f) * 2.0f * PI;
     // Hillaire non-linear elevation mapping concentrates texels near the horizon (v = 0.5).
     const float vAdj = uv.y < 0.5f ? -pow(max(1.0f - 2.0f * uv.y, 0.0f), 2.0f) : pow(max(2.0f * uv.y - 1.0f, 0.0f), 2.0f);

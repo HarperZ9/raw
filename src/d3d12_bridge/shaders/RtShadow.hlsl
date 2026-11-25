@@ -282,20 +282,19 @@ void main(uint3 id : SV_DispatchThreadID) {
         Vis[id.xy] = 1.0f; Lights[id.xy] = 0.0f; SkyRaw[id.xy] = float4(0.0f, 0.0f, 0.0f, 1.0f); Refl[id.xy] = 0.0f;
         return;
     }
-    if (d < 0.99998f && base != 0u && (base < 7u || base == 10u || base == 11u || base == 12u)) {   // 10: skin, 11: hair, 12: eyes
+    if (d < 0.99998f && base != 0u && (base < 7u || base == 10u || base == 11u || base == 12u || base == 14u)) {   // 10: skin, 11: hair, 12: eyes, 14: skinned actor/creature/cloth
         const float2 px = float2(id.xy);
         const float3 p = worldAt(px, d);
         const float3 nRawS = worldNormal(Normal.Load(ip));
         const float3 n = (dot(nRawS, nRawS) > 1.0e-8f) ? normalize(nRawS) : float3(0.0f, 0.0f, 1.0f);
         const float z = max(viewZOf(d), 0.25f);
         const float3 ng = geometricNormal(px, p, n);
-        // Wave 54 Adaptive World-Space Normal-Offset Anti-Acne Bias (0.015 + 0.002 * viewZ, floored cleanly for Skyrim BLAS):
-        // Eliminates grazing-angle shadow acne on stone/snow/NPC faces while keeping contact shadows razor-tight!
-        const float viewDist = max(length(p - eyeAt()), z);
-        const float adaptiveNormalBias = max(0.015f + 0.002f * z, clamp(viewDist * 0.0018f, 0.30f, 4.0f));
-        const bool isSkinnedMesh = (base == 10u || base == 11u || base == 12u);
-        const float3 biasN = isSkinnedMesh ? normalize(lerp(ng, n, 0.28f)) : ng;
-        const float oScale = isSkinnedMesh ? clamp(adaptiveNormalBias * 1.45f, 0.45f, 4.2f) : clamp(adaptiveNormalBias, 0.30f, 4.0f);
+        // Wave 54 + Wave 63 Pure World-Space Normal-Offset Anti-Acne Bias (zero view-axis component!):
+        // Scales strictly with viewZ and world geometric normal so turning the camera never causes shadow acne flicker.
+        const float adaptiveNormalBias = clamp(max(0.015f + 0.002f * z, 0.30f), 0.30f, 4.0f);
+        const bool isSkinnedMesh = (base == 10u || base == 11u || base == 12u || base == 14u);
+        const float3 biasN = isSkinnedMesh ? normalize(lerp(ng, n, 0.30f)) : ng;
+        const float oScale = isSkinnedMesh ? clamp(adaptiveNormalBias * 1.50f, 0.48f, 4.2f) : adaptiveNormalBias;
         const float3 o = p + biasN * oScale;
         const float4 q4 = stbnPrime4(px, frameIndex);
         const float2 rDisk = stbnR2(px, frameIndex + 3.0f);
@@ -339,7 +338,8 @@ void main(uint3 id : SV_DispatchThreadID) {
             // SIGGRAPH Advances 2026 LGT-16 Variable-Rate Ray Tracing + Negative-Space Entropy Oracle:
             // Couples per-pixel motion/disocclusion gradient with world-space cache entropy so RT cores spend 1 spp
             // in converged calm air and automatically escalate to 3-4 spp on dynamic/disoccluded/high-entropy edges!
-            const float2 giMv = Motion.Load(ip);
+            const float2 giMvRaw = Motion.Load(ip);
+            const float2 giMv = all(isfinite(giMvRaw)) ? giMvRaw : 0.0f.xx;
             const float giSpeedPx = length(giMv * dims.xy);
             const bool fastMotionOrDisocc = (giSpeedPx > 1.85f) || !hasOracle || (oracleFrames < 3u);
             const uint baseSpp = (rtTier <= 1u) ? 1u : (rtTier >= 4u ? 3u : 2u);
@@ -409,8 +409,13 @@ void main(uint3 id : SV_DispatchThreadID) {
                 if (li >= flags.y) { continue; }
                 const float3 toL = lightPosR[li].xyz - p;
                 const float dist = length(toL);
-                const float x = saturate(dist / lightPosR[li].w);
-                const float sc = dot(lightColS[li].rgb, float3(0.2126f, 0.7152f, 0.0722f)) * (1.0f - x * x) * saturate(dot(n, toL / max(dist, 1.0e-4f)));
+                const float invR = 1.0f / max(lightPosR[li].w, 1.0f);
+                const float x = saturate(dist * invR);
+                const float nlScore = dot(n, toL / max(dist, 1.0e-4f));
+                if (nlScore <= 0.0f) { continue; }
+                // Wave 63: Gently floor front-facing N.L factor (0.20..1.0) so grazing key hearths/torches
+                // stay locked in top-3 RT shadow slots cleanly across camera turns without slot-order flicker!
+                const float sc = dot(lightColS[li].rgb, float3(0.2126f, 0.7152f, 0.0722f)) * (1.0f - x * x) * (0.20f + 0.80f * nlScore);
                 if (sc <= score[2]) { continue; }
                 if (sc > score[0]) { best[2] = best[1]; score[2] = score[1]; best[1] = best[0]; score[1] = score[0]; best[0] = li; score[0] = sc; }
                 else if (sc > score[1]) { best[2] = best[1]; score[2] = score[1]; best[1] = li; score[1] = sc; }
@@ -468,7 +473,8 @@ void main(uint3 id : SV_DispatchThreadID) {
             }
             float wsum = total, M = pick != ~0u ? 1.0f : 0.0f;
             if ((giFlags & GI_REUSE) != 0u && total > 0.0f) {
-                const float2 mv = Motion.Load(ip);
+                const float2 mvRawR = Motion.Load(ip);
+                const float2 mv = all(isfinite(mvRawR)) ? mvRawR : 0.0f.xx;
                 const float2 prev = px + mv * dims.xy;
                 const float angBase = stbnR2(px, frameIndex + 53.0f).x * 6.2831853f;
                 const uint restNeighbors = (rtTier <= 1u) ? 3u : (rtTier == 2u ? 4u : 5u);

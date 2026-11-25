@@ -112,7 +112,7 @@ float3 evalNightAuroraSkyBounce(float skyVis) {
     float3 skyTint = 0.0f.xxx;
 
     // 1) Clear-night aurora + galactic hemisphere irradiance (modulated smoothly by camPosW.y northern latitude):
-    const float nightW = smoothstep(0.03f, -0.09f, aElev);
+    const float nightW = 1.0f - smoothstep(-0.09f, 0.03f, aElev);
     if (nightW > 0.01f && clearSky > 0.02f) {
         // Sample representative northern upper-hemisphere aurora curtain direction at zero-texture cost:
         const float3 aurDirN = normalize(float3(0.08f, 0.52f, 0.85f));
@@ -288,20 +288,22 @@ void main(uint3 id : SV_DispatchThreadID) {
         pastB = skyYCoCgToRgb(skyClipYCoCg(meanY, stdY, gammaY, skyRgbToYCoCg(pastB)));
     }
 
-    // Immediate reset on hard disocclusion, moving torch light swings, or silhouette velocity divergence:
-    const bool hardDisocc = (giRelDelta > 0.38f || giChrDelta > 0.48f || skyDelta > 0.24f || mvDivPx > 1.35f);
-    // Smoothly decay effective history length when lighting, cloud shadows, or camera changes so convergence is crisp!
-    const float nDecayed = n * lerp(1.0f, 0.42f, saturate(giRelDelta * 1.4f + motionTight * 0.65f + skyDelta * cloudTransW * 2.2f));
+    // Wave 63 Camera-Rotation-Stable Disocclusion & Temporal Decay:
+    // Pure rigid camera yaw/pitch has tiny motion divergence (mvDivPx < 0.85): decay history smoothly instead
+    // of binary hard-resetting on 1-spp ray variance (kills shadow/GI flicker during camera turns!), while
+    // moving NPCs/torches/silhouettes (mvDivPx > 1.35) still reset immediately with zero ghosting!
+    const bool hardDisocc = (mvDivPx > 1.45f) || (giRelDelta > 0.62f && skyDelta > 0.32f) || (giChrDelta > 0.68f && mvDivPx > 0.55f);
+    const float nDecayed = max(n * lerp(1.0f, 0.48f, saturate(giRelDelta * 1.15f + motionTight * 0.45f + skyDelta * (0.45f + cloudTransW * 1.65f))), 1.0f);
     n = (have && !hardDisocc) ? min(nDecayed + 1.0f, min(float(maxFrames), 10.0f)) : 1.0f;
 
     const float trapSky = have ? rawTrappingSeparator(cur.a, past, curStd.a, pxVel, 0.5f) : 0.0f;
     const float trapGi  = have ? rawTrappingSeparator(curLum, pastLum, dot(curStd.rgb, float3(0.2126f, 0.7152f, 0.0722f)), pxVel, 0.5f) : 0.0f;
-    const float giJumpBoost = max(smoothstep(0.14f, 0.42f, giRelDelta) * 0.82f, smoothstep(0.22f, 0.52f, giChrDelta) * 0.72f);
+    const float giJumpBoost = max(smoothstep(0.20f, 0.52f, giRelDelta) * 0.74f, smoothstep(0.26f, 0.58f, giChrDelta) * 0.66f);
     const float mvDivBoost  = smoothstep(0.55f, 1.60f, mvDivPx) * 0.85f;
     const float cloudBoost  = smoothstep(0.035f, 0.16f, skyDelta) * cloudTransW * 0.55f;
-    const float disoccBoost = max(max(max(smoothstep(0.06f, 0.22f, skyDelta) * 0.55f, cloudBoost), giJumpBoost),
-                                  max(max(trapSky, trapGi) * 0.86f, mvDivBoost));
-    const float alphaT = saturate(max(max(1.0f / max(n, 1.0f), lerp(0.14f, 0.72f, motionTight)), disoccBoost));
+    const float disoccBoost = max(max(max(smoothstep(0.10f, 0.28f, skyDelta) * 0.48f, cloudBoost), giJumpBoost),
+                                  max(max(trapSky, trapGi) * 0.78f, mvDivBoost));
+    const float alphaT = saturate(max(max(1.0f / max(n, 1.0f), lerp(0.12f, 0.54f, motionTight)), disoccBoost));
 
     const float vis = saturate(sanitizeSkyScalar(have ? lerp(past, cur.a, alphaT) : cur.a, cur.a));
     const float3 bFiltered = sanitizeSkyRgb(have ? lerp(pastB, cur.rgb, alphaT) : cur.rgb);

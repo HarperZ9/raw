@@ -122,7 +122,7 @@ struct XpbdAttachmentAnchors {
     Vec3 headCenter{};
 };
 
-// Unit quaternion helpers (strict unit norm, shortest-arc SLERP):
+// Unit quaternion helpers (strict unit norm, shortest-arc SLERP & temporal damping):
 Quat  QuatIdentity() noexcept;
 float QuatNorm(Quat q) noexcept;
 Quat  QuatNormalize(Quat q) noexcept;
@@ -133,6 +133,7 @@ Quat  QuatFromAxisAngle(Vec3 axis, float rad) noexcept;
 Quat  QuatFromEulerXYZ(float rx, float ry, float rz) noexcept;
 Quat  QuatFromToRotation(Vec3 fromDir, Vec3 toDir) noexcept;
 Quat  QuatSlerp(Quat a, Quat b, float t) noexcept;
+Quat  QuatDamp(Quat current, Quat target, float lambdaPerSec, float dtSec) noexcept;
 
 class RawSkeletonAnimEngine {
 public:

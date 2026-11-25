@@ -286,49 +286,96 @@ float3 evalDynamicEnvCube(float3 rd, float roughness) {
     return min(env, 4.0f.xxx);
 }
 
-float cascadeSample(float3 p, uint k, bool filtered) {
-    const float4 q = float4(p, 1.0f);
-    const float3 sc = float3(dot(cascade[3 * k], q), dot(cascade[3 * k + 1], q), dot(cascade[3 * k + 2], q));
-    if (any(sc.xy <= 0.0f) || any(sc.xy >= 1.0f)) { return 1.0f; }
+// True 2x2 bilinear hardware-equivalent PCF tap on the R32F shadow atlas (eliminates 1-texel staircase boiling).
+float cascadeTapBilinear(int baseX, float2 texF, float side, float z) {
+    const float maxC = max(side - 1.0f, 0.0f);
+    const float2 pF = clamp(texF - 0.5f.xx, 0.0f.xx, maxC.xx);
+    const int2 i0 = int2(floor(pF));
+    const int2 i1 = min(i0 + int2(1, 1), int2(int(maxC), int(maxC)));
+    const float2 f = frac(pF);
+    const float s00 = z <= Atlas.Load(int3(baseX + i0.x, i0.y, 0)) ? 1.0f : 0.0f;
+    const float s10 = z <= Atlas.Load(int3(baseX + i1.x, i0.y, 0)) ? 1.0f : 0.0f;
+    const float s01 = z <= Atlas.Load(int3(baseX + i0.x, i1.y, 0)) ? 1.0f : 0.0f;
+    const float s11 = z <= Atlas.Load(int3(baseX + i1.x, i1.y, 0)) ? 1.0f : 0.0f;
+    return lerp(lerp(s00, s10, f.x), lerp(s01, s11, f.x), f.y);
+}
+
+// World-space stabilized cascade shadow evaluator returning both visibility and smooth UV-border coverage weight.
+// Uses world-locked Vogel-disk rotation + 2x2 bilinear PCF + sun-aligned bias to stop camera-axis shadow flickering.
+float cascadeSampleWithEdge(float3 p, uint k, bool filtered, out float edgeFade) {
     const float side = cascadeInfo.w;
+    if (!all(isfinite(p)) || !isfinite(side) || side < 1.0f) {
+        edgeFade = 0.0f;
+        return 1.0f;
+    }
+    const float3 sunU = all(isfinite(sunDir.xyz)) ? sunDir.xyz : float3(0.0f, 0.0f, 1.0f);
+    const float3 pBias = p + sunU * (k == 0u ? 1.15f : 2.85f);
+    const float4 q = float4(pBias, 1.0f);
+    const float3 sc = float3(dot(cascade[3 * k], q), dot(cascade[3 * k + 1], q), dot(cascade[3 * k + 2], q));
+    if (!all(isfinite(sc)) || any(sc.xy <= 0.0f) || any(sc.xy >= 1.0f)) {
+        edgeFade = 0.0f;
+        return 1.0f;
+    }
+    const float edgeDist = min(min(sc.x, 1.0f - sc.x), min(sc.y, 1.0f - sc.y));
+    edgeFade = smoothstep(0.0f, 0.055f, edgeDist);
     const float z = sc.z - (k == 0u ? cascadeInfo.x : cascadeInfo.y);
     const float2 tF = sc.xy * side;
-    const int2 t = int2(tF);
-    if (!filtered) { return z <= Atlas.Load(int3(t.x + int(k * side), t.y, 0)) ? 1.0f : 0.0f; }
-    // 2027 16-Tap IGN-Rotated Vogel-Disk PCSS Cascade Shadows (blocker-distance variable penumbra, replaces 3x3 box PCF):
-    const float ang0 = ign(tF) * 6.2831853f;
+    const int baseX = int(k * side);
+    if (!filtered) { return cascadeTapBilinear(baseX, tF, side, z); }
+    // World-locked Vogel-disk rotation (invariant to camera yaw/pitch/translation -> zero shadow-edge boiling!):
+    const float3 wpQ = floor((p + camPosW.xyz) * 0.25f);
+    const float ang0 = frac(sin(dot(wpQ, float3(12.9898f, 78.233f, 37.719f))) * 43758.5453f) * 6.2831853f;
+    const int2 t = clamp(int2(tF), int2(0, 0), int2(int(side - 1.0f), int(side - 1.0f)));
     float blockerSum = 0.0f;
     float blockerCnt = 0.0f;
     [unroll] for (int bi = 0; bi < 6; ++bi) {
-        const float rB = sqrt((float(bi) + 0.5f) / 6.0f) * 3.5f;
+        const float rB = sqrt((float(bi) + 0.5f) / 6.0f) * 3.25f;
         const float aB = float(bi) * 2.39996323f + ang0;
-        const int2 cB = clamp(t + int2(round(float2(cos(aB), sin(aB)) * rB)), int2(0, 0), int2(side - 1.0f, side - 1.0f));
-        const float dB = Atlas.Load(int3(cB.x + int(k * side), cB.y, 0));
+        const int2 cB = clamp(t + int2(round(float2(cos(aB), sin(aB)) * rB)), int2(0, 0), int2(int(side - 1.0f), int(side - 1.0f)));
+        const float dB = Atlas.Load(int3(baseX + cB.x, cB.y, 0));
         if (dB < z) { blockerSum += (z - dB); blockerCnt += 1.0f; }
     }
     if (blockerCnt < 0.5f) { return 1.0f; }
     const float avgDelta = blockerSum / blockerCnt;
-    const float penRad = clamp(1.15f + avgDelta * 180.0f, 1.15f, 4.5f);
+    const float penRad = clamp(1.10f + avgDelta * 170.0f, 1.10f, 4.25f);
     float lit = 0.0f;
-    [unroll] for (int si = 0; si < 16; ++si) {
-        const float rS = sqrt((float(si) + 0.5f) / 16.0f) * penRad;
+    [unroll] for (int si = 0; si < 12; ++si) {
+        const float rS = sqrt((float(si) + 0.5f) / 12.0f) * penRad;
         const float aS = float(si) * 2.39996323f + ang0;
-        const int2 cS = clamp(t + int2(round(float2(cos(aS), sin(aS)) * rS)), int2(0, 0), int2(side - 1.0f, side - 1.0f));
-        lit += z <= Atlas.Load(int3(cS.x + int(k * side), cS.y, 0)) ? 1.0f : 0.0f;
+        const float2 tapF = tF + float2(cos(aS), sin(aS)) * rS;
+        lit += cascadeTapBilinear(baseX, tapF, side, z);
     }
-    return lit * (1.0f / 16.0f);
+    return lit * (1.0f / 12.0f);
 }
 
-// Sun visibility from the game's cascades with smooth cascade-transition blending (eliminates hard split seams).
+float cascadeSample(float3 p, uint k, bool filtered) {
+    float edgeFade = 0.0f;
+    const float vis = cascadeSampleWithEdge(p, k, filtered, edgeFade);
+    return lerp(1.0f, vis, edgeFade);
+}
+
+// Sun visibility from the game's cascades with linear-Z split blending and spatial UV-border fallback
+// (eliminates hard cascade-split pops and camera-rotation frustum-edge shadow flickering).
 float cascadeShadow(float3 p, float d, bool filtered) {
     if ((flags.x & FLAG_SHADOWS) == 0u || sunColour.w < 0.5f) { return 1.0f; }
     if (flags.z <= 1u) { return cascadeSample(p, 0u, filtered); }
-    const float split = cascadeInfo.z;
-    const float band = split * 0.90f;
-    if (d <= band) { return cascadeSample(p, 0u, filtered); }
-    if (d >= split) { return cascadeSample(p, 1u, filtered); }
-    const float w = smoothstep(band, split, d);
-    return lerp(cascadeSample(p, 0u, filtered), cascadeSample(p, 1u, filtered), w);
+    const float splitD = cascadeInfo.z;
+    float wZ = 0.0f;
+    if (isfinite(splitD) && splitD > 0.0f && splitD < proj.x) {
+        const float zCur = viewZOf(d);
+        const float zSplit = viewZOf(splitD);
+        wZ = smoothstep(zSplit * 0.78f, zSplit, zCur);
+    } else {
+        wZ = smoothstep(splitD * 0.90f, splitD, d);
+    }
+    if (wZ >= 0.999f) { return cascadeSample(p, 1u, filtered); }
+    float edge0 = 0.0f;
+    const float s0 = cascadeSampleWithEdge(p, 0u, filtered, edge0);
+    // Cross-fade into cascade 1 whenever approaching either the linear-Z split or cascade 0's rotating UV edge:
+    const float w = saturate(max(wZ, 1.0f - edge0));
+    if (w <= 0.001f) { return s0; }
+    const float s1 = cascadeSample(p, 1u, filtered);
+    return lerp(s0, s1, w);
 }
 
 // Wave 25 First-Step Trapping-Region Disocclusion Separator:

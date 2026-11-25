@@ -58,8 +58,12 @@ float cloudDensityVol(float3 pa, bool detail) {
     // wraps clouds organically all the way down to the horizon with ZERO ceiling slice or horizon cutoff!
     const float R = 3600000.0f;
     const float2 dxy = pa.xy - camPosW.xy;
-    const float alt = length(float3(dxy.x, dxy.y, R + pa.z)) - R;
-    const float h = (alt - clouds.y) / clouds.z;
+    // Synchronize observer altitude floor with CloudCommon.hlsli::cloudSpan (max(o.z, 0.0f)) so low-elevation
+    // exterior cells (Windhelm Stables, rivers, Sea of Ghosts where camPosW.z < 0) stay 1:1 aligned with cloudSpan.
+    const float oZSafe = max(camPosW.z, 0.0f);
+    const float paZEff = oZSafe + (pa.z - camPosW.z);
+    const float alt = length(float3(dxy.x, dxy.y, R + paZEff)) - R;
+    const float h = (alt - clouds.y) / max(clouds.z, 1.0f);
     if (h <= 0.0f || h >= 1.0f) { return 0.0f; }
     // Wave 46 Pause-Aware Bulk Wind Advection + Shared Convective Weather Field (1:1 synced with LightingCommon::cloudShadowN!):
     const float simTimeV = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
@@ -164,15 +168,17 @@ float cloudIGN(float2 px, uint frameIdx) {
 float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float2 lo = floor(at.xy);
     const float2 full = lo + 0.5f;   // Full native-resolution volumetric clouds (4x sharper than 1/2-res!)
-    const float3 far = worldAt(full - 0.5f, 0.995f) - eyeAt();
-    const float3 dir = normalize(far);
+    const float3 eye = eyeAt();
+    const float3 far = worldAt(full - 0.5f, 0.995f) - eye;
+    const float farLen2 = dot(far, far);
+    const float3 dir = (isfinite(farLen2) && farLen2 > 1.0e-8f) ? (far * rsqrt(farLen2)) : float3(0.0f, 0.0f, 1.0f);
     // March clouds all the way to the physical horizon (eliminates the 10-deg empty cutoff band above mountains!):
     if (WaveActiveAllTrue(dir.z <= -0.005f)) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
     float4 res = float4(0.0f, 0.0f, 0.0f, 1.0f);
     float t0, t1;
     const float3 o = camPosW.xyz;
     const float maxDist = 650000.0f;
-    if (cloudsOn() && cloudSpan(o, dir, maxDist, t0, t1)) {
+    if (dir.z > -0.005f && cloudsOn() && cloudSpan(o, dir, maxDist, t0, t1)) {
         // Wave 38: Meticulous 64+ adaptive volumetric steps with empty-air coarse skip, backstep, and fine in-cloud rim sub-stepping:
         const float maxSpan = lerp(165000.0f, 105000.0f, smoothstep(0.02f, 0.32f, dir.z));
         t1 = min(t1, t0 + maxSpan);
@@ -431,19 +437,31 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
         res = float4(aerialS + cirrusAdd, lerp(1.0f, T, effFade));
     }
-    // Last frame's value along the same direction with motion-adaptive spatiotemporal rejection (zero ghosting on fast turns).
-    const float4 c = float4(far, 1.0f);
+    // Last frame's value along the same far sky ray with motion- & disocclusion-adaptive rejection
+    // (eliminates stale cutout notches, diagonal strips, and fast-turn ghosting in History).
+    const float4 curS = sanitizeCloud4(res);
+    const float4 c = float4(eye + dir * 200000.0f, 1.0f);
     const float4 pc = float4(dot(prevWorldToClip[0], c), dot(prevWorldToClip[1], c), dot(prevWorldToClip[2], c), dot(prevWorldToClip[3], c));
-    if (pc.w > 0.0f && proj.z > 0.5f) {
-        const float2 uv = float2(pc.x / pc.w * 0.5f + 0.5f, 0.5f - pc.y / pc.w * 0.5f) / resScale.xy;
-        if (all(uv > 0.0f) && all(uv < 1.0f)) {
-            const float edgeFade = smoothstep(0.0f, 0.045f, min(min(uv.x, 1.0f - uv.x), min(uv.y, 1.0f - uv.y)));
+    if (pc.w > 1.0e-4f && proj.z > 0.5f && timeEnv.w < 0.5f) {
+        const float2 safeScale = max(resScale.xy, 1.0e-4f.xx);
+        const float2 uv = float2(pc.x / pc.w * 0.5f + 0.5f, 0.5f - pc.y / pc.w * 0.5f) / safeScale;
+        if (all(isfinite(uv)) && all(uv > 0.002f) && all(uv < 0.998f)) {
+            const float edgeFade = smoothstep(0.010f, 0.060f, min(min(uv.x, 1.0f - uv.x), min(uv.y, 1.0f - uv.y)));
             const float2 curUv = full * dims.zw;
-            const float turnReject = 1.0f - saturate(length(uv - curUv) * 16.0f) * 0.78f;
+            const float turnReject = 1.0f - saturate(length(uv - curUv) * 18.0f) * 0.85f;
             const float4 h = sanitizeCloud4(History.SampleLevel(Lin, uv, 0.0f));
-            // Smooth golden-ratio IGN temporal convergence (silky noise-free night/day clouds, instant rejection on fast camera turns):
-            res = lerp(sanitizeCloud4(res), h, clamp(max(cloudWind.w, 0.52f), 0.35f, 0.66f) * edgeFade * turnReject);
+            const float aDiff = abs(h.a - curS.a);
+            const float curL = dot(curS.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+            const float hL   = dot(h.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+            const float lDiff = abs(hL - curL) / max(max(curL, hL), 0.15f);
+            const float disoccReject = (1.0f - smoothstep(0.14f, 0.42f, aDiff)) * (1.0f - smoothstep(0.45f, 1.15f, lDiff));
+            const float histW = clamp(max(cloudWind.w, 0.50f), 0.30f, 0.64f) * edgeFade * turnReject * disoccReject;
+            res = lerp(curS, h, histW);
+        } else {
+            res = curS;
         }
+    } else {
+        res = curS;
     }
     return sanitizeCloud4(res);
 }

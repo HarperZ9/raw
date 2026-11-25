@@ -249,6 +249,8 @@ RawOverlayHost::~RawOverlayHost()
 
 void RawOverlayHost::Shutdown()
 {
+    m_uiLib.Shutdown();
+    m_debugDrawList.Clear();
     if (m_cbBuf && m_cbMapped) {
         m_cbBuf->Unmap(0, nullptr);
         m_cbMapped = nullptr;
@@ -362,8 +364,40 @@ bool RawOverlayHost::Init(ID3D12Device* dev, std::string* outErr, D3D12_SHADER_B
         }
     }
 
+    // Initialize embedded RawUiLibHost for Debug-Layer Control & Legend HUD (optional if DXIL absent)
+    std::string uiErr;
+    if (m_uiLib.Init(dev, &uiErr) && m_tsFreqHz > 0u) {
+        m_uiLib.SetTimestampFrequency(m_tsFreqHz);
+    }
+
     m_ready = true;
     return true;
+}
+
+void RawOverlayHost::RecordUiDrawList(ID3D12GraphicsCommandList* cmd,
+                                      ID3D12Resource* targetTex,
+                                      D3D12_RESOURCE_STATES currentState,
+                                      uint32_t width,
+                                      uint32_t height,
+                                      const raw::ui::UiDrawList& drawList,
+                                      bool srgbOutput)
+{
+    if (!m_uiLib.Ready()) return;
+    m_uiLib.RecordDrawList(cmd, targetTex, currentState, width, height, drawList, srgbOutput);
+}
+
+void RawOverlayHost::RecordDebugLayerHud(ID3D12GraphicsCommandList* cmd,
+                                         ID3D12Resource* targetTex,
+                                         D3D12_RESOURCE_STATES currentState,
+                                         uint32_t width,
+                                         uint32_t height,
+                                         const raw::ui::DebugLayerHudSnapshot& snap,
+                                         bool srgbOutput)
+{
+    if (!m_uiLib.Ready()) return;
+    raw::ui::FormatDebugLayerHud(snap, m_debugDrawList);
+    if (m_debugDrawList.Empty()) return;
+    m_uiLib.RecordDrawList(cmd, targetTex, currentState, width, height, m_debugDrawList, srgbOutput);
 }
 
 bool RawOverlayHost::HarvestTimestampPair(uint32_t queryStartIdx, float& outMs) const

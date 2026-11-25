@@ -90,12 +90,16 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         abs(gxR) <= abs(gxL) ? gxR : gxL,
         abs(gyD) <= abs(gyU) ? gyD : gyU);
 
-    // Continuity gate: only de-quantize smooth R16_UNORM receiver planes; keep silhouette edges bit-exact!
+    // Smooth continuous continuity gate (Wave 63): eliminates binary branch pop across camera turns
+    // while keeping steep silhouette edges bit-exact and de-quantizing smooth R16_UNORM receiver planes!
     const float maxJump = max(max(abs(gxR), abs(gxL)), max(abs(gyD), abs(gyU)));
     const float slopeMag = abs(slope.x) + abs(slope.y);
+    const float jumpW  = 1.0f - smoothstep(0.0007f, 0.0016f, maxJump);
+    const float slopeW = 1.0f - smoothstep(0.00045f, 0.0010f, slopeMag);
+    const float dequantW = jumpW * slopeW;
     float outDepth = dC;
 
-    if (maxJump < 0.0014f && slopeMag < 0.0009f)
+    if (dequantW > 0.005f)
     {
         // Rotated 8-tap Vogel-disk coplanar R16->R32 depth de-quantization (eliminates 16-bit depth staircases
         // on gently sloped hills/roofs while preserving sharp silhouettes via tight plane-distance rejection).
@@ -121,13 +125,14 @@ void CSMain(uint3 id : SV_DispatchThreadID)
             dSum += (dTap - (slope.x * float(offI.x) + slope.y * float(offI.y))) * wTap;
             wSum += wTap;
         }
-        outDepth = dSum / max(wSum, 1.0e-4f);
+        float filtDepth = dSum / max(wSum, 1.0e-4f);
 
         // Apply tiny texel-snapped receiver-slope micro-bias attenuated near cascade edges for seamless cascade handoff.
         const float2 uvCascade = (float2(localPx) + 0.5f.xx) / float2(float(cw), float(ch));
         const float edgeFade = cascadeEdgeBlendWeight(uvCascade, 0.04f);
         const float cascadeScale = (slice == 0u) ? 1.0f : 1.35f;
-        outDepth = saturate(outDepth + computeReceiverSlopeBias(slope, cascadeScale) * edgeFade);
+        filtDepth = saturate(filtDepth + computeReceiverSlopeBias(slope, cascadeScale) * edgeFade);
+        outDepth = lerp(dC, filtDepth, dequantW);
     }
 
     gAtlas[id.xy] = sanitizeDepth01(outDepth);

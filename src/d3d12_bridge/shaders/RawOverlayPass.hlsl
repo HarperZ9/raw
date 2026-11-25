@@ -239,7 +239,7 @@ void cs_overlay_draw(uint3 dtid : SV_DispatchThreadID) {
         return;
     }
 
-    // Rounded glass card SDF (r = 6px) — pixels strictly outside rounded corners stay untouched
+    // Rounded glass card SDF (r = 6px) - pixels strictly outside rounded corners stay untouched
     const float2 halfSz = float2(panelW, panelH) * 0.5f;
     const float2 centered = (float2(localPx) + 0.5f) - halfSz;
     const float  sdf = roundedBoxSdf(centered, halfSz - 0.5f, 6.0f);
@@ -248,8 +248,9 @@ void cs_overlay_draw(uint3 dtid : SV_DispatchThreadID) {
     }
 
     const float4 bgSample = g_target[dstPx];
+    const float3 safeBg   = (isfinite(bgSample.x) && isfinite(bgSample.y) && isfinite(bgSample.z)) ? max(bgSample.rgb, 0.0f.xxx) : 0.0f.xxx;
     const bool   isSrgb   = (sparkLayout.w & 1u) != 0u;
-    const float3 sceneCol = isSrgb ? srgbToLinear(bgSample.rgb) : max(bgSample.rgb, 0.0f.xxx);
+    const float3 sceneCol = isSrgb ? srgbToLinear(safeBg) : safeBg;
 
     // 1) Dark-slate frosted glass panel background + crisp 1px border + top accent stripe
     const float  edgeCov    = saturate(0.5f - sdf);
@@ -369,6 +370,7 @@ void cs_overlay_draw(uint3 dtid : SV_DispatchThreadID) {
         }
     }
 
-    const float3 finalRgb = isSrgb ? linearToSrgb(outCol) : saturate(outCol);
-    g_target[dstPx] = float4(finalRgb, bgSample.a);
+    const float3 safeOut  = (isfinite(outCol.x) && isfinite(outCol.y) && isfinite(outCol.z)) ? max(outCol, 0.0f.xxx) : 0.0f.xxx;
+    const float3 finalRgb = isSrgb ? linearToSrgb(safeOut) : saturate(safeOut);
+    g_target[dstPx] = float4(finalRgb, isfinite(bgSample.a) ? bgSample.a : 1.0f);
 }

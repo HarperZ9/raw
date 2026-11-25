@@ -49,22 +49,63 @@ float3 fireCompWorldAt(float2 px, float d)
     return (abs(w.w) > 1.0e-9f) ? (w.xyz / w.w) : float3(0.0f, 0.0f, 0.0f);
 }
 
-// Physically calibrated Planck blackbody emission spectrum at Rec.709 wavelengths (650nm, 550nm, 450nm).
+// Physically calibrated Planck blackbody emission spectrum at Rec.709 wavelengths (635nm, 535nm, 460nm),
+// matched to RawFluidFireSim::evalPlanckBlackbody with Stefan-Boltzmann T^4 scaling.
+// Cutoff raised to 1180K so cool outer gas never bleeds a fuzzy neon-red halo onto sky or ceilings.
 float3 evalPlanckFlameRGB(float tempK)
 {
-    if (tempK < 850.0f) {
+    if (isnan(tempK) || isinf(tempK) || tempK < 1180.0f) {
         return float3(0.0f, 0.0f, 0.0f);
     }
-    const float T = clamp(tempK, 850.0f, 3800.0f);
-    // Wien / Planck spectral radiance proportionality: 1 / (lam^5 * (exp(c2 / (lam * T)) - 1)), c2 = 1.438777e7 nm*K
-    const float3 lamNm = float3(650.0f, 550.0f, 450.0f);
-    const float3 lamUm = lamNm * 0.001f;
-    const float3 lam5  = lamUm * lamUm * lamUm * lamUm * lamUm;
-    const float3 x     = min(14387770.0f / (lamNm * T), 60.0f.xxx);
-    const float3 spec  = 1.0f / (lam5 * max(exp(x) - 1.0f, 1.0e-5f));
-    // Calibrate so 2200K core produces rich HDR (~5.5..8.0) and 1100K ember produces warm crimson (~0.25)
-    const float gate = smoothstep(850.0f, 1240.0f, T);
-    return min(spec * (0.0038f * gate), float3(28.0f, 22.0f, 16.0f));
+    const float T = clamp(tempK, 1180.0f, 4500.0f);
+    const float3 c2OverLambda = float3(22657.9f, 26893.0f, 31277.8f);
+    const float3 invLambda5   = float3(0.415f,   1.000f,   2.148f);
+    const float3 expoShift = min((c2OverLambda - c2OverLambda.x) / T, 60.0f.xxx);
+    const float3 chromaRaw = invLambda5 * exp(-expoShift);
+    const float  maxCh = max(chromaRaw.x, max(chromaRaw.y, chromaRaw.z));
+    const float3 chroma = chromaRaw / max(maxCh, 1.0e-6f);
+
+    const float gate = smoothstep(1260.0f, 1850.0f, T);
+    const float tNorm = T / 1800.0f;
+    const float t4 = (tNorm * tNorm) * (tNorm * tNorm);
+    // Calibrated linear HDR flame luminance: crisp golden-orange flame tongues above 1260K transitioning cleanly into dark soot
+    return min(chroma * (gate * 1.15f * t4), float3(28.0f, 22.0f, 16.0f));
+}
+
+float fireCompHash31(float3 p)
+{
+    p = frac(p * 0.3183099f + 0.1f);
+    p *= 17.0f;
+    return frac(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+
+float fireCompNoise3(float3 x)
+{
+    const float3 i = floor(x);
+    const float3 f = frac(x);
+    const float3 u = f * f * (3.0f - 2.0f * f);
+    const float n000 = fireCompHash31(i + float3(0.0f, 0.0f, 0.0f));
+    const float n100 = fireCompHash31(i + float3(1.0f, 0.0f, 0.0f));
+    const float n010 = fireCompHash31(i + float3(0.0f, 1.0f, 0.0f));
+    const float n110 = fireCompHash31(i + float3(1.0f, 1.0f, 0.0f));
+    const float n001 = fireCompHash31(i + float3(0.0f, 0.0f, 1.0f));
+    const float n101 = fireCompHash31(i + float3(1.0f, 0.0f, 1.0f));
+    const float n011 = fireCompHash31(i + float3(0.0f, 1.0f, 1.0f));
+    const float n111 = fireCompHash31(i + float3(1.0f, 1.0f, 1.0f));
+    const float nx00 = lerp(n000, n100, u.x);
+    const float nx10 = lerp(n010, n110, u.x);
+    const float nx01 = lerp(n001, n101, u.x);
+    const float nx11 = lerp(n011, n111, u.x);
+    return lerp(lerp(nx00, nx10, u.y), lerp(nx01, nx11, u.y), u.z);
+}
+
+// High-frequency upward-advected turbulent flame-tongue detail mask [0..1]
+float fireCompTongueDetail(float3 pAbs, float timeSec)
+{
+    const float3 q = pAbs * 0.14f - float3(0.0f, 0.0f, timeSec * 5.2f);
+    const float n0 = fireCompNoise3(q);
+    const float n1 = fireCompNoise3(q * 2.15f + float3(7.3f, 3.1f, -timeSec * 3.4f));
+    return saturate(n0 * 0.65f + n1 * 0.35f);
 }
 
 float evalPhaseHG(float cosT, float g)
@@ -107,13 +148,18 @@ void cs_fire_composite(uint3 dtid : SV_DispatchThreadID)
     }
 
     // Strict occlusion against Skyrim's standard-Z SceneDepth (0 = near, 1 = far; sky >= 0.99998).
-    const float sceneD = SceneDepth.Load(int3(dtid.xy, 0));
+    const float sceneDRaw = SceneDepth.Load(int3(dtid.xy, 0));
+    const float sceneD = (isnan(sceneDRaw) || isinf(sceneDRaw)) ? 1.0f : saturate(sceneDRaw);
+    const bool isSkyPixel = (sceneD >= 0.99998f);
     float sceneDist = 1.0e7f;
-    if (sceneD > 0.0f && sceneD < 0.99998f) {
+    if (!isSkyPixel && sceneD > 0.0f) {
         const float3 hitRel = fireCompWorldAt(px, sceneD);
-        sceneDist = length(hitRel - eyeRel);
+        const float dLen = length(hitRel - eyeRel);
+        sceneDist = (isnan(dLen) || isinf(dLen)) ? 1.0e7f : dLen;
     }
-    const float tMax = min(tExit, sceneDist);
+    // On sky pixels, tighten raymarch extent to active near-field fire range so distant smudges never bleed onto sky.
+    const float skyCapT = isSkyPixel ? min(tEnter + domainMinW.w * 1.15f, 1200.0f) : tExit;
+    const float tMax = min(min(tExit, skyCapT), sceneDist);
     if (tMax <= tEnter + 0.25f) {
         return;
     }
@@ -130,13 +176,15 @@ void cs_fire_composite(uint3 dtid : SV_DispatchThreadID)
     const float  hgFwd  = evalPhaseHG(cosSun, 0.62f);
     const float  hgBack = evalPhaseHG(cosSun, -0.22f);
     const float  hgDual = lerp(hgFwd, hgBack, 0.35f);
-    const float  isInt  = resScaleAndFlags.w;
-    const float  extSunMask = sunDir.w * (1.0f - isInt * 0.88f);
-    const float3 sunKeyCol  = sunCol.rgb * (extSunMask * (0.45f + 5.2f * hgDual));
-    const float3 ambSkyFill = lerp(float3(0.020f, 0.023f, 0.028f), float3(0.014f, 0.012f, 0.010f), isInt) * max(sunCol.w, 0.35f);
-    // Physical ash/wood-smoke single-scattering albedo: deep dark charcoal where self-shadowed (sunShadowT -> 0.03),
+    const float  isInt  = saturate(resScaleAndFlags.w);
+    const float  extSunMask = max(sunDir.w, 0.0f) * (1.0f - isInt * 0.88f);
+    const float3 sunKeyCol  = max(sunCol.rgb, 0.0f.xxx) * (extSunMask * (0.45f + 5.2f * hgDual));
+    const float3 ambSkyFill = lerp(float3(0.020f, 0.023f, 0.028f), float3(0.018f, 0.015f, 0.012f), isInt) * max(sunCol.w, 0.35f);
+    // Physical ash/wood-smoke single-scattering albedo: authentic dark carbon charcoal where self-shadowed (sunShadowT -> 0.03),
     // luminous warm sunlit curls on upper sunward billows (sunShadowT -> 1.0) via Beer-Powder multi-scattering.
-    const float3 sootAlbedo = float3(0.20f, 0.185f, 0.165f);
+    const float3 sootAlbedo = float3(0.130f, 0.115f, 0.098f);
+    // Hard indoor transmittance floor (>= 0.78f): mathematically prevents pitch-black indoor orbs!
+    const float  minTransFloor = lerp(0.015f, 0.78f, isInt);
 
     float3 accumRgb = float3(0.0f, 0.0f, 0.0f);
     float  trans = 1.0f;
@@ -154,52 +202,74 @@ void cs_fire_composite(uint3 dtid : SV_DispatchThreadID)
             continue;
         }
 
-        const float4 thermo = FireThermo.SampleLevel(LinClamp, uvw, 0.0f);
-        const float4 rad    = FireRadiance.SampleLevel(LinClamp, uvw, 0.0f);
+        const float4 thermoRaw = FireThermo.SampleLevel(LinClamp, uvw, 0.0f);
+        const float4 radRaw    = FireRadiance.SampleLevel(LinClamp, uvw, 0.0f);
+        const float4 thermo = (any(isnan(thermoRaw)) || any(isinf(thermoRaw))) ? float4(293.15f, 0.0f, 0.0f, 0.0f) : thermoRaw;
+        const float4 rad    = (any(isnan(radRaw)) || any(isinf(radRaw))) ? float4(0.0f, 0.0f, 0.0f, 1.0f) : radRaw;
 
         const float tempK = thermo.x;
-        const float soot  = max(thermo.z, 0.0f) * edgeFade;
+        const float rawSoot = max(thermo.z, 0.0f) * edgeFade;
         const float burn  = max(thermo.w, 0.0f) * edgeFade;
 
-        if (tempK < 850.0f && soot < 0.004f) {
+        if (tempK < 1180.0f && rawSoot < 0.004f) {
             continue;
         }
 
-        // 1. Planck blackbody turbulent flame core emission
+        // 1. Planck blackbody turbulent flame-tongue core emission (cutoff 1180K, crisp turbulent edge erosion, zero sky fringe)
         float3 flameEmit = float3(0.0f, 0.0f, 0.0f);
-        if (tempK >= 850.0f) {
-            const float flameWeight = edgeFade * (0.42f + 0.58f * saturate(burn * 1.6f + smoothstep(1350.0f, 2250.0f, tempK)));
+        if (tempK >= 1180.0f) {
+            const float tongueNoise = fireCompTongueDetail(pAbs, camPosW.w);
+            const float coreHeat = smoothstep(1180.0f, 1780.0f, tempK);
+            const float tongueAlpha = lerp(smoothstep(0.30f, 0.72f, tongueNoise + burn * 0.55f), 1.0f, smoothstep(1900.0f, 2450.0f, tempK));
+            const float skyGuard = isSkyPixel
+                ? (smoothstep(1340.0f, 1780.0f, tempK) * (1.0f - smoothstep(650.0f, 1150.0f, t)))
+                : 1.0f;
+            const float flameWeight = edgeFade * coreHeat * tongueAlpha * skyGuard * (0.48f + 0.52f * saturate(burn * 1.6f + coreHeat));
             flameEmit = evalPlanckFlameRGB(tempK) * flameWeight;
         }
 
-        // 2. Beer-Lambert dark soot extinction + directional sun self-shadowing + Beer-Powder multi-scattering
-        const float sigmaSoot = soot * 0.036f;
+        // 2. Beer-Lambert dark soot extinction + directional sun self-shadowing + Beer-Powder multi-scattering.
+        // Indoors: attenuate cool soot away from active hot combustion AND strictly clamp transmittance >= 0.78f.
+        const float radLuma = dot(max(rad.rgb, 0.0f.xxx), float3(0.333f, 0.333f, 0.333f));
+        const float indoorHotGate = saturate(smoothstep(860.0f, 1380.0f, tempK) + burn * 1.25f + smoothstep(0.12f, 0.65f, radLuma) * 0.65f);
+        const float soot = rawSoot * lerp(1.0f, 0.22f * indoorHotGate, isInt);
+
+        const float sigmaSoot = soot * lerp(0.058f, 0.036f, isInt);
         const float stepOpt = sigmaSoot * ds;
         const float stepTrans = exp(-stepOpt);
+        const float nextTrans = max(trans * stepTrans, minTransFloor);
+        const float effSootAlpha = max(trans - nextTrans, 0.0f);
         accumSootOpt += stepOpt;
 
         const float sunShadowT = saturate(rad.a);
         // Beer-Powder multi-scattering (1 - exp(-2 * opticalDepth)): luminous sunlit upper curls, deep dark shadowed undersides
         const float beerPowder = 1.0f - exp(-2.0f * (accumSootOpt + soot * 0.85f));
-        const float sunDirect  = pow(sunShadowT, 1.75f) * (0.55f + 1.85f * beerPowder);
-        const float sunMulti   = pow(sunShadowT, 1.45f) * 0.24f * beerPowder;
+        const float sunDirect  = pow(max(sunShadowT, 1.0e-5f), 2.05f) * (0.42f + 2.05f * beerPowder);
+        const float sunMulti   = pow(max(sunShadowT, 1.0e-5f), 1.65f) * 0.22f * beerPowder;
         const float3 sunLight  = sunKeyCol * (sunDirect + sunMulti) + ambSkyFill * (0.20f + 0.80f * sunShadowT);
 
         // Glowing burnt-orange smoke undersides from internal 3D Radiance Cascade transitioning to sunlit/charcoal tops
-        const float3 internalBounce = max(rad.rgb, 0.0f.xxx) * float3(1.18f, 0.56f, 0.18f) * (0.62f * edgeFade);
+        const float3 internalBounce = max(rad.rgb, 0.0f.xxx) * float3(1.18f, 0.56f, 0.18f) * (0.38f * edgeFade);
         const float3 sootScatter = sootAlbedo * sunLight + internalBounce * smoothstep(0.01f, 0.22f, soot);
 
-        accumRgb += trans * (flameEmit * (ds * 0.060f) + sootScatter * (1.0f - stepTrans));
-        trans *= stepTrans;
+        const float3 stepRgb = trans * (flameEmit * (ds * 0.062f)) + sootScatter * effSootAlpha;
+        if (!any(isnan(stepRgb)) && !any(isinf(stepRgb))) {
+            accumRgb += max(stepRgb, 0.0f.xxx);
+        }
+        trans = nextTrans;
 
-        if (trans < 0.015f) {
+        if (isInt < 0.5f && trans < 0.015f) {
             break;
         }
     }
 
+    trans = clamp((isnan(trans) || isinf(trans)) ? 1.0f : trans, minTransFloor, 1.0f);
+    accumRgb = (any(isnan(accumRgb)) || any(isinf(accumRgb))) ? 0.0f.xxx : clamp(accumRgb, 0.0f.xxx, 64.0f.xxx);
+
     if (trans < 0.9995f || any(accumRgb > 1.0e-4f)) {
-        const float4 bg = ColorOut[dtid.xy];
-        const float3 outRgb = max(bg.rgb * trans + accumRgb, 0.0f.xxx);
-        ColorOut[dtid.xy] = float4(outRgb, bg.a);
+        const float4 bgRaw = ColorOut[dtid.xy];
+        const float3 bgRgb = (any(isnan(bgRaw.rgb)) || any(isinf(bgRaw.rgb))) ? 0.0f.xxx : max(bgRaw.rgb, 0.0f.xxx);
+        const float3 outRgb = max(bgRgb * trans + accumRgb, 0.0f.xxx);
+        ColorOut[dtid.xy] = float4(outRgb, bgRaw.a);
     }
 }

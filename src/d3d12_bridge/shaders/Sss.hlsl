@@ -31,6 +31,8 @@ float3 sssSanitizeRgb(float3 rgb) {
 // Classify pixel subsurface diffusion family from G-buffer material class + linear RGB optics:
 uint classifySssKind(int2 q, float3 rgb, float viewZ) {
     const uint m = rawMatClassAt(q);
+    // Strictly exclude Skinned Actor / Creature / Fur / Clothing (class 14):
+    if (m == 14u) { return SSS_KIND_NONE; }
     if (m == 10u) { return SSS_KIND_SKIN; }
     if (m == 5u && viewZ < 1400.0f) { return SSS_KIND_FOLIAGE; }
     if ((m == 1u || m == 2u || m == 4u) && viewZ < 1400.0f) {
@@ -79,19 +81,21 @@ void main(uint3 id : SV_DispatchThreadID) {
     const int2 p = int2(id.xy);
     const float4 cRaw = Colour.Load(int3(p, 0));
     const float3 cRgb = sssSanitizeRgb(cRaw.rgb);
+    const float safeAlpha = isfinite(cRaw.a) ? saturate(cRaw.a) : 1.0f;
+    const float safeStr = isfinite(strength) ? saturate(strength) : 0.0f;
     const float d = Depth.Load(int3(p, 0));
     // Standard-Z sky guard (d >= 0.99998 untouched!) + wave-coherent early exit:
-    const bool validDepth = (d > 0.0f && d < 0.99998f && strength > 0.0f);
-    const float z = validDepth ? viewZOf(d) : 1.0e6f;
+    const bool validDepth = (isfinite(d) && d > 0.0f && d < 0.99998f && safeStr > 0.0f);
+    const float z = validDepth ? max(viewZOf(d), 0.1f) : 1.0e6f;
     const uint kind = validDepth ? classifySssKind(p, cRgb, z) : SSS_KIND_NONE;
     const bool activeSss = (kind != SSS_KIND_NONE);
-    if (!WaveActiveAnyTrue(activeSss) || !activeSss) { Out[p] = cRaw; return; }
+    if (!WaveActiveAnyTrue(activeSss) || !activeSss) { Out[p] = float4(cRgb, safeAlpha); return; }
 
     const int2 dimMax = max(int2(dims.xy) - 1, int2(0, 0));
     const float3 wp = worldAt(float2(p), d);
     const float4 s1 = screenOf(wp + float3(0.0f, 0.0f, 1.0f));
     const float pxPerUnit = max(length(s1.xy - (float2(p) + 0.5f)), 1.0e-3f);
-    const float effWidth = clamp(width, 0.08f, 6.0f);
+    const float effWidth = isfinite(width) ? clamp(width, 0.08f, 6.0f) : 1.0f;
 
     // Physically distinct Christensen-Burley RGB mean-free-path radii d_rgb per material family:
     const float3 dRgb = (kind == SSS_KIND_SKIN)    ? (float3(1.00f, 0.37f, 0.22f) * (effWidth * 0.58f))
@@ -166,10 +170,14 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float3 cq = sssSanitizeRgb(Colour.Load(int3(q, 0)).rgb);
         const float lq = max(dot(cq, lumaW), 1.0e-4f);
         const float relL = abs(lq - cLum0) / max(max(lq, cLum0), 0.07f);
-        const float lStop = exp(-relL * relL * lerp(5.5f, 11.5f, detailProtect));
+        // Wave 63: Allow dermal hemoglobin scatter to bridge facial shadow terminators smoothly on SKIN
+        // while 3D tangent-plane normalStop + depthTol + class boundary keep nostrils, eyelids & hairlines razor-sharp!
+        const float lDecay = (kind == SSS_KIND_SKIN) ? lerp(2.4f, 7.5f, detailProtect) : lerp(5.5f, 11.5f, detailProtect);
+        const float cDecay = (kind == SSS_KIND_SKIN) ? lerp(12.0f, 28.0f, detailProtect) : lerp(18.0f, 36.0f, detailProtect);
+        const float lStop = exp(-relL * relL * lDecay);
         const float3 qChroma = cq / max(lq, 0.03f);
         const float3 dChroma = qChroma - cChroma0;
-        const float cStop = exp(-dot(dChroma, dChroma) * lerp(18.0f, 36.0f, detailProtect));
+        const float cStop = exp(-dot(dChroma, dChroma) * cDecay);
 
         const float rWorld = max(rPx / pxPerUnit, 0.04f);
         const float3 wCB = evalChristensenBurleyR(rWorld, dRgb) * (normalStop * lStop * cStop);
@@ -179,6 +187,7 @@ void main(uint3 id : SV_DispatchThreadID) {
 
     const float3 scattered = sum / max(wsum, 1.0e-5f.xxx);
     const float sLum = max(dot(scattered, lumaW), 1.0e-4f);
+    const float lumRatioSafe = clamp(cLum0 / sLum, 0.72f, 1.38f);
     const float distFade = 1.0f - smoothstep(750.0f, 1400.0f, z);
 
     if (kind == SSS_KIND_SKIN) {
@@ -195,25 +204,25 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float3 dermalGlow = scattered * (1.0f.xxx - reflDeficit * 0.08f) * lerp(1.0f.xxx, bioTint, bioWeight * saturate(sLum * 0.75f))
                                 + cRgb * thinTransmit;
 
-        // Preserve 95%+ of high-frequency luminance micro-detail (pores, freckles, stubble, eyelashes)
-        // and damp intense torch/campfire highlights while keeping warm hemoglobin terminator diffusion!
-        const float3 poreKept = dermalGlow * lerp(1.0f, cLum0 / sLum, lerp(0.94f, 0.985f, detailProtect));
+        // Preserve high-frequency facial micro-detail (pores, freckles, stubble, eyelashes) while letting
+        // bounded subsurface luminance soften blotchy low-poly facial shadow terminators cleanly!
+        const float3 poreKept = dermalGlow * lerp(1.0f, lumRatioSafe, lerp(0.84f, 0.96f, detailProtect));
         const float hlDamp = 1.0f - smoothstep(0.34f, 1.05f, cLum0) * 0.80f;
-        const float varDamp = 1.0f - detailProtect * 0.42f;
-        const float effStr = min(saturate(strength), 0.45f) * hlDamp * varDamp;
-        Out[p] = float4(sssSanitizeRgb(lerp(cRgb, poreKept, effStr)), cRaw.a);
+        const float varDamp = 1.0f - detailProtect * 0.38f;
+        const float effStr = min(safeStr, 0.48f) * hlDamp * varDamp;
+        Out[p] = float4(sssSanitizeRgb(lerp(cRgb, poreKept, effStr)), safeAlpha);
     } else if (kind == SSS_KIND_SNOWICE) {
         // Cool sapphire-cyan subsurface transmission on snowbanks & glacial ice (preserves sharp ridge detail!):
         const float3 iceTint = lerp(1.0f.xxx, float3(0.92f, 0.99f, 1.06f), saturate(sLum * 0.65f));
-        const float3 snowKept = (scattered * iceTint) * lerp(1.0f, cLum0 / sLum, 0.88f);
-        const float effStr = min(saturate(strength), 0.32f) * (1.0f - detailProtect * 0.55f) * distFade;
-        Out[p] = float4(sssSanitizeRgb(lerp(cRgb, snowKept, effStr)), cRaw.a);
+        const float3 snowKept = (scattered * iceTint) * lerp(1.0f, lumRatioSafe, 0.88f);
+        const float effStr = min(safeStr, 0.32f) * (1.0f - detailProtect * 0.55f) * distFade;
+        Out[p] = float4(sssSanitizeRgb(lerp(cRgb, snowKept, effStr)), safeAlpha);
     } else {
         // Restrained warm chartreuse-emerald foliage transmission (never bleaches sunlit conifer needles!):
         const float3 leafTint = float3(0.96f, 1.05f, 0.88f);
-        const float3 leafKept = (scattered * leafTint) * lerp(1.0f, cLum0 / sLum, 0.92f);
+        const float3 leafKept = (scattered * leafTint) * lerp(1.0f, lumRatioSafe, 0.92f);
         const float hlLeafDamp = 1.0f - smoothstep(0.22f, 0.75f, cLum0) * 0.85f;
-        const float effStr = min(saturate(strength), 0.22f) * hlLeafDamp * (1.0f - detailProtect * 0.50f) * distFade;
-        Out[p] = float4(sssSanitizeRgb(lerp(cRgb, leafKept, effStr)), cRaw.a);
+        const float effStr = min(safeStr, 0.22f) * hlLeafDamp * (1.0f - detailProtect * 0.50f) * distFade;
+        Out[p] = float4(sssSanitizeRgb(lerp(cRgb, leafKept, effStr)), safeAlpha);
     }
 }

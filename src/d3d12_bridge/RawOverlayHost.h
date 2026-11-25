@@ -5,6 +5,8 @@
 // Draws a crisp dark-slate translucent telemetry card with embedded 5x7 ASCII glyphs (up to 8 lines x 64 chars)
 // and a 64-sample color-coded GPU frame-time sparkline directly onto a target texture via RawOverlayPass.hlsl.
 
+#include "RawUiLib.h"
+
 #include <d3d12.h>
 #include <wrl/client.h>
 
@@ -107,7 +109,26 @@ public:
                        uint32_t height,
                        const OverlayHudData& hud);
 
-    void  SetTimestampFrequency(uint64_t hz) { m_tsFreqHz = hz; }
+    // Modern GPU-native RawUiLib integration: renders any UiDrawList or Debug-Layer Control & Legend HUD.
+    bool UiLibReady() const { return m_uiLib.Ready(); }
+    void RecordUiDrawList(ID3D12GraphicsCommandList* cmd,
+                          ID3D12Resource* targetTex,
+                          D3D12_RESOURCE_STATES currentState,
+                          uint32_t width,
+                          uint32_t height,
+                          const raw::ui::UiDrawList& drawList,
+                          bool srgbOutput = false);
+    void RecordDebugLayerHud(ID3D12GraphicsCommandList* cmd,
+                             ID3D12Resource* targetTex,
+                             D3D12_RESOURCE_STATES currentState,
+                             uint32_t width,
+                             uint32_t height,
+                             const raw::ui::DebugLayerHudSnapshot& snap,
+                             bool srgbOutput = false);
+    float GetLastUiLibMs() const { return m_uiLib.GetLastUiMs(); }
+    bool  HasValidUiLibTiming() const { return m_uiLib.HasValidTiming(); }
+
+    void  SetTimestampFrequency(uint64_t hz) { m_tsFreqHz = hz; m_uiLib.SetTimestampFrequency(hz); }
     float GetLastOverlayMs() const { return m_lastOverlayMs; }
     bool  HasValidTiming() const { return m_hasValidTiming; }
 
@@ -120,6 +141,8 @@ private:
 
     bool                                         m_ready = false;
     ID3D12Device*                                m_dev = nullptr;
+    raw::ui::RawUiLibHost                        m_uiLib;
+    raw::ui::UiDrawList                          m_debugDrawList;
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> m_heap;
     uint32_t                                     m_descInc = 0u;
     Microsoft::WRL::ComPtr<ID3D12RootSignature>  m_root;

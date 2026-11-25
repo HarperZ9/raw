@@ -67,22 +67,25 @@ float4 fs(float4 at : SV_Position) : SV_Target0
     const float v = (isnan(rawV) || isinf(rawV)) ? 1.0f : saturate(rawV);
     if (mode == 2u) { return float4(v, v, v, 1.0f); }
 
-    const float str = saturate(strength);
+    const float str = isfinite(strength) ? saturate(strength) : 0.0f;
+    const float safeAlpha = isfinite(c.a) ? saturate(c.a) : 1.0f;
     // Exact sky / unoccluded & zero-strength protection (untouched passthrough!):
-    if (str <= 1.0e-5f || v >= 0.9995f) { return c; }
+    if (str <= 1.0e-5f || v >= 0.9995f) { return float4(c.rgb, safeAlpha); }
 
     const float3 safeRgb = (any(isnan(c.rgb)) || any(isinf(c.rgb))) ? 0.0f.xxx : saturate(c.rgb);
     const float3 linCol = ToLinear(safeRgb);
 
     // Chromatic surface reflectance proxy for Jimenez 2016 colored multi-bounce AO:
     // Preserves rich crimson banners, warm timber/skin, and luminous glacial snow in occluded corners,
-    // while keeping very dark true-black shadows anchored safely without grey floor washout!
+    // and enforces a physical multi-bounce floor (0.18) so screen-space AO never paints dark cel-shading
+    // outlines around moving characters or foreground silhouettes!
     const float luma = dot(linCol, float3(0.2126f, 0.7152f, 0.0722f));
     const float3 chromaAlbedo = saturate(pow(max(linCol, 0.0f.xxx), 0.55f));
     const float blackFloorGate = smoothstep(0.002f, 0.025f, luma);
     const float3 effAlbedo = chromaAlbedo * blackFloorGate;
-    const float3 mbVis = multiBounceAO(v, effAlbedo);
+    const float vBounded = lerp(0.18f, 1.0f, v);
+    const float3 mbVis = multiBounceAO(vBounded, effAlbedo);
     const float3 k = lerp(1.0f.xxx, mbVis, str);
 
-    return float4(ToSrgb(linCol * k), c.a);
+    return float4(ToSrgb(linCol * k), safeAlpha);
 }

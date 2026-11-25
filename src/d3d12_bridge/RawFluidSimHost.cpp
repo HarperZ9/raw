@@ -640,75 +640,135 @@ void RawFluidSimHost::StepFire(ID3D12GraphicsCommandList* cmd, const FluidFirePa
         ? std::clamp(m_activePressureIters, 4u, 8u)
         : reqEven;
     m_timings.activePressureIters = jacobiCount;
-    const float cellSize = std::max(params.cellSize, 0.05f);
+    auto sanitizeFinite = [](float v, float fallback) -> float {
+        return std::isfinite(v) ? v : fallback;
+    };
+
+    const float cellSize = std::clamp(sanitizeFinite(params.cellSize, 4.0f), 0.05f, 64.0f);
+    const float domainSpan = static_cast<float>(kFireGridRes) * cellSize;
+    const float originX = sanitizeFinite(params.domainOriginW[0], 0.0f);
+    const float originY = sanitizeFinite(params.domainOriginW[1], 0.0f);
+    const float originZ = sanitizeFinite(params.domainOriginW[2], 0.0f);
+    const float floorZLocal = std::clamp(sanitizeFinite(params.floorZLocal, 1.0f), 0.0f, static_cast<float>(kFireGridRes - 2u));
+    const float ceilingZLocal = std::clamp(sanitizeFinite(params.ceilingZLocal, 63.0f), floorZLocal + 4.0f, static_cast<float>(kFireGridRes));
 
     GpuFireSimCB cb{};
-    cb.domainOriginAndCell[0] = params.domainOriginW[0];
-    cb.domainOriginAndCell[1] = params.domainOriginW[1];
-    cb.domainOriginAndCell[2] = params.domainOriginW[2];
+    cb.domainOriginAndCell[0] = originX;
+    cb.domainOriginAndCell[1] = originY;
+    cb.domainOriginAndCell[2] = originZ;
     cb.domainOriginAndCell[3] = cellSize;
 
-    cb.dtAndTime[0] = std::clamp(params.dt, 1.0e-4f, 0.05f);
-    cb.dtAndTime[1] = params.timeSec;
+    cb.dtAndTime[0] = std::clamp(sanitizeFinite(params.dt, 1.0f / 60.0f), 1.0e-4f, 0.05f);
+    cb.dtAndTime[1] = sanitizeFinite(params.timeSec, 0.0f);
     cb.dtAndTime[2] = static_cast<float>(m_fireFrameIdx);
     cb.dtAndTime[3] = 1.0f / cellSize;
 
-    cb.windAndAmbient[0] = params.windVelW[0];
-    cb.windAndAmbient[1] = params.windVelW[1];
-    cb.windAndAmbient[2] = params.windVelW[2];
-    cb.windAndAmbient[3] = std::max(params.ambientTempK, 200.0f);
+    cb.windAndAmbient[0] = std::clamp(sanitizeFinite(params.windVelW[0], 0.0f), -250.0f, 250.0f);
+    cb.windAndAmbient[1] = std::clamp(sanitizeFinite(params.windVelW[1], 0.0f), -250.0f, 250.0f);
+    cb.windAndAmbient[2] = std::clamp(sanitizeFinite(params.windVelW[2], 0.0f), -250.0f, 250.0f);
+    cb.windAndAmbient[3] = std::clamp(sanitizeFinite(params.ambientTempK, 293.15f), 200.0f, 400.0f);
 
-    cb.physicsA[0] = params.vorticityEps;
-    cb.physicsA[1] = params.buoyancyAlpha;
-    cb.physicsA[2] = params.sootWeightBeta;
-    cb.physicsA[3] = params.windDrag;
+    cb.physicsA[0] = std::clamp(sanitizeFinite(params.vorticityEps, 1.85f), 0.0f, 12.0f);
+    cb.physicsA[1] = std::clamp(sanitizeFinite(params.buoyancyAlpha, 0.045f), 0.0f, 1.0f);
+    cb.physicsA[2] = std::clamp(sanitizeFinite(params.sootWeightBeta, 6.5f), 0.0f, 64.0f);
+    cb.physicsA[3] = std::clamp(sanitizeFinite(params.windDrag, 0.85f), 0.0f, 12.0f);
 
-    cb.physicsB[0] = params.arrheniusRateA;
-    cb.physicsB[1] = params.activationTempTa;
-    cb.physicsB[2] = params.heatReleaseQ;
-    cb.physicsB[3] = params.sootYield;
+    cb.physicsB[0] = std::clamp(sanitizeFinite(params.arrheniusRateA, 18.0f), 0.0f, 120.0f);
+    cb.physicsB[1] = std::clamp(sanitizeFinite(params.activationTempTa, 1600.0f), 100.0f, 12000.0f);
+    cb.physicsB[2] = std::clamp(sanitizeFinite(params.heatReleaseQ, 2200.0f), 0.0f, 12000.0f);
+    const float rawSootYield = std::clamp(sanitizeFinite(params.sootYield, 0.85f), 0.0f, 4.0f);
+    cb.physicsB[3] = params.enableCeiling ? std::min(rawSootYield, 0.25f) : rawSootYield;
 
-    cb.physicsC[0] = params.radiativeCoolSig;
-    cb.physicsC[1] = params.velDamping;
-    cb.physicsC[2] = params.sootDamping;
-    cb.physicsC[3] = params.thermalExpansion;
+    cb.physicsC[0] = std::clamp(sanitizeFinite(params.radiativeCoolSig, 1.6e-10f), 0.0f, 1.0e-7f);
+    cb.physicsC[1] = std::clamp(sanitizeFinite(params.velDamping, 0.25f), 0.0f, 10.0f);
+    const float rawSootDamping = std::clamp(sanitizeFinite(params.sootDamping, 0.22f), 0.0f, 10.0f);
+    cb.physicsC[2] = params.enableCeiling ? std::max(rawSootDamping, 1.65f) : rawSootDamping;
+    cb.physicsC[3] = std::clamp(sanitizeFinite(params.thermalExpansion, 1.65f), 0.0f, 12.0f);
 
     const uint32_t flagBits = (m_fireResetNext ? 1u : 0u) | (params.enableCeiling ? 2u : 0u);
-    cb.boundsAndFlags[0] = params.floorZLocal;
-    cb.boundsAndFlags[1] = params.ceilingZLocal;
-    cb.boundsAndFlags[2] = params.scatterExtinction;
+    cb.boundsAndFlags[0] = floorZLocal;
+    cb.boundsAndFlags[1] = ceilingZLocal;
+    cb.boundsAndFlags[2] = std::clamp(sanitizeFinite(params.scatterExtinction, 1.65f), 0.25f, 8.0f);
     cb.boundsAndFlags[3] = static_cast<float>(flagBits);
 
-    cb.counts[0] = std::min(params.emitterCount, 16u);
+    // Strict emitter hygiene: reject non-finite, oversized neutral room-fill lights, cool non-flame lights, and
+    // off-domain points; clamp active fire emitters tightly (radius <= 14u) and keep Z grounded inside [floor, ceiling].
+    const uint32_t rawEmCount = std::min(params.emitterCount, 16u);
+    const float floorWorldZ = originZ + floorZLocal * cellSize;
+    const float ceilingWorldZ = originZ + ceilingZLocal * cellSize;
+    uint32_t validEmCount = 0u;
+    for (uint32_t i = 0; i < rawEmCount; ++i) {
+        const auto& em = params.emitters[i];
+        if (!std::isfinite(em.posW[0]) || !std::isfinite(em.posW[1]) || !std::isfinite(em.posW[2]) ||
+            !std::isfinite(em.radius) || !std::isfinite(em.ignitionTempK) || !std::isfinite(em.fuelRate)) {
+            continue;
+        }
+        if (em.radius <= 0.05f || em.radius > kRejectOversizedRadiusU ||
+            em.ignitionTempK < kMinEmitterIgnitionK || em.fuelRate <= 0.01f) {
+            continue;
+        }
+        const float clampedRadius = std::clamp(em.radius, 2.0f, kMaxEmitterRadiusU);
+        const float margin = clampedRadius * 1.5f;
+        if (em.posW[0] < originX - margin || em.posW[0] > originX + domainSpan + margin ||
+            em.posW[1] < originY - margin || em.posW[1] > originY + domainSpan + margin ||
+            em.posW[2] < originZ - margin || em.posW[2] > originZ + domainSpan + margin) {
+            continue;
+        }
+
+        float posZ = std::max(em.posW[2], floorWorldZ + clampedRadius * 0.35f);
+        if (params.enableCeiling) {
+            posZ = std::min(posZ, std::max(floorWorldZ + clampedRadius * 0.35f, ceilingWorldZ - clampedRadius * 1.25f));
+        }
+
+        float dx = sanitizeFinite(em.jetDir[0], 0.0f);
+        float dy = sanitizeFinite(em.jetDir[1], 0.0f);
+        float dz = sanitizeFinite(em.jetDir[2], 1.0f);
+        const float dLen = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (dLen > 1.0e-3f) {
+            dx /= dLen;
+            dy /= dLen;
+            dz /= dLen;
+        } else {
+            dx = 0.0f;
+            dy = 0.0f;
+            dz = 1.0f;
+        }
+
+        const float rawSootSeed = std::clamp(sanitizeFinite(em.sootSeedRate, 0.35f), 0.0f, 1.5f);
+        const float clampedSootSeed = params.enableCeiling ? std::min(rawSootSeed, 0.12f) : rawSootSeed;
+
+        cb.emitterPosRadius[validEmCount][0] = em.posW[0];
+        cb.emitterPosRadius[validEmCount][1] = em.posW[1];
+        cb.emitterPosRadius[validEmCount][2] = posZ;
+        cb.emitterPosRadius[validEmCount][3] = clampedRadius;
+        cb.emitterThermoJet[validEmCount][0] = std::clamp(em.ignitionTempK, kMinEmitterIgnitionK, 3600.0f);
+        cb.emitterThermoJet[validEmCount][1] = std::clamp(em.fuelRate, 0.05f, 6.0f);
+        cb.emitterThermoJet[validEmCount][2] = std::clamp(sanitizeFinite(em.jetSpeed, 32.0f), 0.0f, 120.0f);
+        cb.emitterThermoJet[validEmCount][3] = std::clamp(sanitizeFinite(em.curlStrength, 14.0f), 0.0f, 40.0f);
+        cb.emitterDirSoot[validEmCount][0]   = dx;
+        cb.emitterDirSoot[validEmCount][1]   = dy;
+        cb.emitterDirSoot[validEmCount][2]   = dz;
+        cb.emitterDirSoot[validEmCount][3]   = clampedSootSeed;
+        ++validEmCount;
+    }
+
+    cb.counts[0] = validEmCount;
     cb.counts[1] = std::min(params.obstacleCount, 8u);
     cb.counts[2] = kFireGridRes;
     cb.counts[3] = jacobiCount;
 
-    for (uint32_t i = 0; i < cb.counts[0]; ++i) {
-        const auto& em = params.emitters[i];
-        cb.emitterPosRadius[i][0] = em.posW[0];
-        cb.emitterPosRadius[i][1] = em.posW[1];
-        cb.emitterPosRadius[i][2] = em.posW[2];
-        cb.emitterPosRadius[i][3] = em.radius;
-        cb.emitterThermoJet[i][0] = em.ignitionTempK;
-        cb.emitterThermoJet[i][1] = em.fuelRate;
-        cb.emitterThermoJet[i][2] = em.jetSpeed;
-        cb.emitterThermoJet[i][3] = em.curlStrength;
-        cb.emitterDirSoot[i][0]   = em.jetDir[0];
-        cb.emitterDirSoot[i][1]   = em.jetDir[1];
-        cb.emitterDirSoot[i][2]   = em.jetDir[2];
-        cb.emitterDirSoot[i][3]   = em.sootSeedRate;
-    }
     for (uint32_t i = 0; i < cb.counts[1]; ++i) {
         const auto& ob = params.obstacles[i];
-        cb.obstacleBoxMin[i][0] = ob.minW[0];
-        cb.obstacleBoxMin[i][1] = ob.minW[1];
-        cb.obstacleBoxMin[i][2] = ob.minW[2];
-        cb.obstacleBoxMin[i][3] = ob.active ? 1.0f : 0.0f;
-        cb.obstacleBoxMax[i][0] = ob.maxW[0];
-        cb.obstacleBoxMax[i][1] = ob.maxW[1];
-        cb.obstacleBoxMax[i][2] = ob.maxW[2];
-        cb.obstacleBoxMax[i][3] = ob.roughness;
+        const bool obFinite = std::isfinite(ob.minW[0]) && std::isfinite(ob.minW[1]) && std::isfinite(ob.minW[2]) &&
+                              std::isfinite(ob.maxW[0]) && std::isfinite(ob.maxW[1]) && std::isfinite(ob.maxW[2]);
+        cb.obstacleBoxMin[i][0] = obFinite ? ob.minW[0] : 0.0f;
+        cb.obstacleBoxMin[i][1] = obFinite ? ob.minW[1] : 0.0f;
+        cb.obstacleBoxMin[i][2] = obFinite ? ob.minW[2] : 0.0f;
+        cb.obstacleBoxMin[i][3] = (ob.active && obFinite) ? 1.0f : 0.0f;
+        cb.obstacleBoxMax[i][0] = obFinite ? ob.maxW[0] : 0.0f;
+        cb.obstacleBoxMax[i][1] = obFinite ? ob.maxW[1] : 0.0f;
+        cb.obstacleBoxMax[i][2] = obFinite ? ob.maxW[2] : 0.0f;
+        cb.obstacleBoxMax[i][3] = std::clamp(sanitizeFinite(ob.roughness, 0.5f), 0.0f, 1.0f);
     }
 
     const uint32_t ringIdx = m_fireFrameIdx % kCbRingCount;

@@ -18,6 +18,7 @@
 #include "rt_detour.h"
 #include "rt_economy_ledger.h"
 #include "rt_image.h"
+#include "rt_movement_combat.h"
 #include "rt_version.h"
 #include "rt_view.h"
 #include "rt_weather.h"
@@ -1351,6 +1352,18 @@ static void HookHitDataPopulate(uint8_t* hitData, uint8_t ignoreBlock) {
 
     uint8_t* targetActor = SehResolveActorHandle(pod.targetHandle);
     uint8_t* playerPtr   = SehGetPlayerPtr();
+
+    // Wave 43: Tactile 260ms dodge-step i-frame evasion — cleanly zeroes incoming damage on the player!
+    if (targetActor != nullptr && targetActor == playerPtr && MovementCombatIsPlayerEvading()) {
+        float evTotal = pod.totalDamage;
+        float evPhys  = pod.physicalDamage;
+        float evBlk   = pod.percentBlocked;
+        if (MovementCombatTryEvadePlayerHit(&evTotal, &evPhys, &evBlk)) {
+            SehWriteHitData(hitData, evTotal, evPhys, evBlk);
+            return;
+        }
+    }
+
     float defStam = 100.0f, defStamMax = 100.0f;
     if (targetActor) {
         SehReadActorAv(targetActor, 26 /*kStamina*/, &defStam, &defStamMax);

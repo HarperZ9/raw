@@ -79,6 +79,17 @@ BakeResult BakeBsaNifAsset(const std::string& bsaPath,
                            const ValidatorPolicy& policy = {},
                            bool writeGeometryFiles = true);
 
+// Extracts a `.dds` texture from a `.bsa` archive (or reads from disk), decodes BC1..BC7/RGBA8 mip 0 via
+// RawDdsDecoder, runs PBR/Toksvig material analysis, and writes a JSON report + optional BMP preview image.
+BakeResult InspectDdsFileAsset(const std::string& ddsPath,
+                               const std::string& outDir,
+                               bool exportPreviewBmp = true);
+
+BakeResult InspectBsaDdsAsset(const std::string& bsaPath,
+                              const std::string& virtualDdsPath,
+                              const std::string& outDir,
+                              bool exportPreviewBmp = true);
+
 // Runs all 4 studio baking & quality-gate validation pipelines and emits pipeline_validation_report.json.
 BakeResult RunFullPipelineValidation(const std::string& outDir,
                                      uint32_t seed = 202607u,

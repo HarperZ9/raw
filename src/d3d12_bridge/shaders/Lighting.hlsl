@@ -656,29 +656,26 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             s.n = normalize(s.n + float3(wDirS * sDx + wPerpS * sDy, 0.0f) * driftFade);
             s.alpha = max(s.alpha, lerp(0.58f, 0.74f, driftFade));
         }
-        if ((snowAmt > 0.15f || mudAmt > 0.30f) && z < 1800.0f && s.n.z > 0.45f) {
-            const float3 wpAbs = p + camPosW.xyz;
-            float maxDep = 0.0f, maxRim = 0.0f;
-            float2 bestRad = 0.0f.xx;
-            [loop] for (uint fi = 0u; fi < 32u; fi++) {
-                const float4 ft = footTrail[fi];
-                if (ft.w <= 0.01f) { continue; }
-                const float3 fd = wpAbs - ft.xyz;
-                const float r2 = dot(fd.xy, fd.xy);
-                if (r2 < 256.0f && abs(fd.z) < 160.0f) {
-                    const float rr = sqrt(r2);
-                    const float dep = exp(-r2 / 64.0f) * ft.w;
-                    const float rim = exp(-pow(rr - 10.5f, 2.0f) / 18.0f) * ft.w;
-                    if (dep > maxDep) { maxDep = dep; bestRad = fd.xy / max(rr, 0.5f); }
-                    maxRim = max(maxRim, rim);
+        // Wave 43 Real 3D Volumetric Snowpack Boot-Print & NPC Trail Carving + Mud Impressions (RawSeasonsThermals.hlsli):
+        // Carves deep shaded elliptical boot trenches + raised rim snowbanks across player & 16 live ProcessLists NPC trails!
+        const float effWetTrail = max(mudAmt, max(wet.wet, wet.puddle) * (1.0f - snowAmt));
+        if (!skin && !isHair && !isEye && base != 5u && s.n.z > 0.65f && z < 2600.0f && (snowAmt > 0.15f || effWetTrail > 0.25f)) {
+            const float trailFade = smoothstep(2600.0f, 180.0f, z) * smoothstep(0.65f, 0.82f, s.n.z);
+            const FootTrailResult ftRes = evalSnowAndMudFootTrail(p + camPosW.xyz, s.n, footTrail, snowAmt, effWetTrail);
+            if (ftRes.cavityDepth01 > 0.01f || ftRes.rimHeight01 > 0.01f) {
+                s.n = normalize(s.n + ftRes.normalPerturb * trailFade);
+                if (snowAmt > 0.15f) {
+                    // Compressed icy-blue subsurface snow trench + sunlit raised rim snowbank:
+                    const float3 trenchBlue = float3(0.76f, 0.88f, 1.08f) * ftRes.aoFactor;
+                    albedo = lerp(albedo, albedo * trenchBlue, saturate(ftRes.cavityDepth01 * trailFade * 0.92f));
+                    albedo = min(albedo * (1.0f + ftRes.rimHeight01 * trailFade * 0.14f), 0.92f.xxx);
+                } else {
+                    // Darkened wet muddy boot depression pooling glossy rainwater:
+                    albedo *= lerp(1.0f, ftRes.aoFactor, trailFade);
+                    s.mask = max(s.mask, ftRes.cavityDepth01 * trailFade * 0.72f);
+                    lobe = lobe || (ftRes.cavityDepth01 * trailFade > 0.15f);
                 }
-            }
-            if (maxDep > 0.03f || maxRim > 0.03f) {
-                const float deformStr = max(snowAmt, mudAmt * 0.75f);
-                s.n = normalize(s.n + float3(bestRad * (maxDep * 0.68f - maxRim * 0.42f), 0.0f) * deformStr);
-                const float3 trackTint = snowAmt >= mudAmt ? float3(0.58f, 0.70f, 0.88f) : float3(0.62f, 0.56f, 0.50f);
-                albedo = lerp(albedo, albedo * trackTint, saturate(maxDep * deformStr * 0.85f));
-                albedo = min(albedo * (1.0f + saturate(maxRim * deformStr * 0.16f)), 0.90f.xxx);
+                s.alpha = clamp(s.alpha + ftRes.roughDelta * trailFade, 0.08f, 0.96f);
             }
         }
     }

@@ -40,6 +40,8 @@ int RunWeatherSimTests();
 int RunEsmWorldLoaderTests(void (*checkFn)(bool, const char*));
 int RunBsaArchiveTests(void (*checkFn)(bool, const char*));
 int RunNifLoaderTests(void (*checkFn)(bool, const char*));
+int RunDdsDecoderTests(void (*checkFn)(bool, const char*));
+int RunHydrologyGenTests(void (*checkFn)(bool, const char*));
 int RunDestructionEngineTests(void (*checkFn)(bool, const char*));
 }
 namespace raw::rt {
@@ -48,6 +50,7 @@ int RunGameplayMechanicsTests(void (*checkFn)(bool, const char*));
 int RunStealthSurvivalTests(void (*checkFn)(bool, const char*));
 int RunCombatImpactTests(void (*checkFn)(bool, const char*));
 int RunEconomyLedgerTests(void (*checkFn)(bool, const char*));
+int RunMovementCombatTests(void (*checkFn)(bool, const char*));
 }
 namespace raw::core {
 int RunCoreRuntimeTests(void (*checkFn)(bool, const char*));
@@ -1011,9 +1014,12 @@ int main() {
     raw::rt::RunStealthSurvivalTests(Check);
     raw::rt::RunCombatImpactTests(Check);
     raw::rt::RunEconomyLedgerTests(Check);
+    raw::rt::RunMovementCombatTests(Check);
     raw::worldgen::RunEsmWorldLoaderTests(Check);
     raw::worldgen::RunBsaArchiveTests(Check);
     raw::worldgen::RunNifLoaderTests(Check);
+    raw::worldgen::RunDdsDecoderTests(Check);
+    raw::worldgen::RunHydrologyGenTests(Check);
     raw::worldgen::RunDestructionEngineTests(Check);
     raw::core::RunCoreRuntimeTests(Check);
     raw::pipeline::RunPipelineForgeTests(Check);

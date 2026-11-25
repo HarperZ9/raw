@@ -222,4 +222,121 @@ float evalWaterFreezeMask(
     return saturate((shoreReach * (0.72f + 0.56f * edgeN) - springLead * 0.85f) * (1.0f - fireOpen));
 }
 
+// ============================================================================
+// Wave 43 Real 3D Volumetric Snowpack Boot-Print & NPC Trail Carving + Mud Impressions
+// Drives deep shaded 3D footprints with raised displaced rim snowbanks for the player
+// and all live NPCs in footTrail[0..31], plus glossy water-pooling mud prints!
+// ============================================================================
+struct FootTrailResult {
+    float  cavityDepth01;
+    float  rimHeight01;
+    float3 normalPerturb;
+    float  aoFactor;
+    float  roughDelta;
+};
+
+FootTrailResult evalSnowAndMudFootTrail(
+    float3 worldPosAbs,
+    float3 normalW,
+    float4 footTrail[32],
+    float  snowMask,
+    float  wetMask)
+{
+    FootTrailResult r;
+    r.cavityDepth01 = 0.0f;
+    r.rimHeight01   = 0.0f;
+    r.normalPerturb = 0.0f.xxx;
+    r.aoFactor      = 1.0f;
+    r.roughDelta    = 0.0f;
+
+    const bool inSnow = (snowMask > 0.15f);
+    const bool inMud  = (!inSnow && wetMask > 0.25f);
+    if (!inSnow && !inMud) { return r; }
+
+    const float3 nUnit = normalize(normalW);
+    const float nCrumb = rawNoise3Grad(worldPosAbs * 0.22f + float3(3.1f, 7.7f, 1.9f)).x;
+
+    float maxDep = 0.0f;
+    float maxRim = 0.0f;
+    float2 slopeAccum = 0.0f.xx;
+    float  slopeW     = 0.0f;
+
+    [loop] for (uint fi = 0u; fi < 32u; ++fi) {
+        const float4 ft = footTrail[fi];
+        if (ft.w <= 0.01f) { continue; }
+        const float3 fd = worldPosAbs - ft.xyz;
+        if (abs(fd.z) >= 96.0f) { continue; }
+        const float r2 = dot(fd.xy, fd.xy);
+        if (r2 >= 676.0f) { continue; } // 26u cutoff covers r~13u cavity + r~14..22u displaced rim
+
+        // Estimate directional boot stride axis from adjacent trail slot (or deterministic fallback heading):
+        const float4 ftNext = footTrail[(fi + 1u) & 31u];
+        float2 strideDir = float2(1.0f, 0.0f);
+        if (ftNext.w > 0.01f) {
+            const float2 seg = ftNext.xy - ft.xy;
+            const float segL = length(seg);
+            if (segL > 2.0f && segL < 180.0f) {
+                strideDir = seg / segL;
+            } else {
+                const float ang = rawHash33(float3(ft.xy * 0.05f, float(fi))).x * 6.2831853f;
+                strideDir = float2(cos(ang), sin(ang));
+            }
+        } else {
+            const float ang = rawHash33(float3(ft.xy * 0.05f, float(fi))).x * 6.2831853f;
+            strideDir = float2(cos(ang), sin(ang));
+        }
+        const float2 stridePerp = float2(-strideDir.y, strideDir.x);
+
+        // Directional elliptical boot footprint (r ~ 13u average: ~15u length x ~11u width):
+        const float along  = dot(fd.xy, strideDir);
+        const float across = dot(fd.xy, stridePerp);
+        const float2 eVec  = float2(along * (1.0f / 1.18f), across * (1.0f / 0.84f));
+        const float eDist  = length(eVec);
+
+        const float jitter = (nCrumb - 0.5f) * 2.2f;
+        const float dep = (1.0f - smoothstep(4.5f, 13.5f + jitter, eDist)) * saturate(ft.w);
+        const float rim = smoothstep(10.5f, 15.2f, eDist) * (1.0f - smoothstep(16.8f, 22.8f + jitter, eDist)) * saturate(ft.w);
+
+        if (dep > 0.01f || rim > 0.01f) {
+            const float rr = max(sqrt(r2), 0.5f);
+            const float2 radXY = fd.xy / rr;
+            // Inward-sloping cavity wall normal (points toward boot center: -radXY) on cavity edge,
+            // outward-sloping displaced rim snowbank normal (+radXY) on outer rim flank:
+            const float cavWall = smoothstep(2.5f, 11.5f, eDist) * (1.0f - smoothstep(11.5f, 14.5f, eDist)) * saturate(ft.w);
+            const float rimOut  = smoothstep(14.5f, 20.5f, eDist) * (1.0f - smoothstep(19.5f, 23.0f, eDist)) * saturate(ft.w);
+            const float wTap = max(dep, rim);
+            slopeAccum += radXY * (-cavWall * 0.72f + rimOut * 0.44f);
+            slopeW     += wTap;
+            maxDep = max(maxDep, dep);
+            maxRim = max(maxRim, rim);
+        }
+    }
+
+    if (maxDep <= 0.005f && maxRim <= 0.005f) { return r; }
+
+    // Overlapping footsteps suppress inner rims where a deeper trench carves through:
+    const float effCav = saturate(maxDep);
+    const float effRim = saturate(maxRim * (1.0f - effCav * 0.85f));
+    const float2 avgSlope = (slopeW > 1.0e-4f) ? (slopeAccum / max(slopeW, 1.0f)) : 0.0f.xx;
+
+    if (inSnow) {
+        const float snowW = smoothstep(0.15f, 0.55f, snowMask);
+        r.cavityDepth01 = effCav * snowW;
+        r.rimHeight01   = effRim * snowW;
+        const float3 rawPert = float3(avgSlope * (0.85f * snowW), 0.0f);
+        r.normalPerturb = rawPert - nUnit * dot(rawPert, nUnit);
+        r.aoFactor      = lerp(1.0f, 0.62f, r.cavityDepth01);
+        r.roughDelta    = -0.18f * r.cavityDepth01 + 0.05f * r.rimHeight01;
+    } else {
+        const float mudW = smoothstep(0.25f, 0.65f, wetMask) * (1.0f - smoothstep(0.05f, 0.15f, snowMask));
+        r.cavityDepth01 = effCav * mudW;
+        r.rimHeight01   = effRim * mudW * 0.55f;
+        const float3 rawPert = float3(avgSlope * (0.55f * mudW), 0.0f);
+        r.normalPerturb = rawPert - nUnit * dot(rawPert, nUnit);
+        r.aoFactor      = lerp(1.0f, 0.72f, r.cavityDepth01);
+        r.roughDelta    = -0.22f * r.cavityDepth01;
+    }
+    return r;
+}
+
 #endif

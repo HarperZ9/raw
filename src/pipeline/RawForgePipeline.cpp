@@ -7,6 +7,7 @@
 
 #include "../materials/RawMaterialLib.h"
 #include "../worldgen/RawBsaArchive.h"
+#include "../worldgen/RawDdsDecoder.h"
 #include "../worldgen/RawEsmWorldLoader.h"
 #include "../worldgen/RawFloraEngine.h"
 #include "../worldgen/RawNifLoader.h"
@@ -811,6 +812,124 @@ BakeResult BakeBsaNifAsset(const std::string& bsaPath,
         return res;
     }
     return BakeParsedNifScene(scene, virtualNifPath, outDir, policy, writeGeometryFiles);
+}
+
+namespace {
+
+BakeResult FinishDdsInspection(const raw::worldgen::DdsHeaderInfo& hdr,
+                               const raw::worldgen::DdsImage& img,
+                               const std::string& sourceLabel,
+                               const std::string& outDir,
+                               bool exportPreviewBmp) {
+    using namespace raw::worldgen;
+    BakeResult res{};
+    if (!EnsureDir(outDir)) {
+        res.summaryMessage = "Failed to create DDS output directory: " + outDir;
+        return res;
+    }
+
+    std::string lowerSrc = sourceLabel;
+    for (char& c : lowerSrc) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    const bool isNrm = (hdr.format == DdsFormat::BC5_UNORM) ||
+                       (lowerSrc.find("_n.dds") != std::string::npos) ||
+                       (lowerSrc.find("_msn.dds") != std::string::npos);
+
+    const DdsPbrAnalysis stats = AnalyzeDecodedTexture(img, isNrm);
+    const std::filesystem::path stemPath(sourceLabel);
+    const std::string baseName = "dds_" + SanitizeId(stemPath.stem().string().empty() ? "tex" : stemPath.stem().string());
+
+    const std::string bmpRel = baseName + ".bmp";
+    if (exportPreviewBmp) {
+        if (ExportDdsImageToBmp(img, outDir + "/" + bmpRel)) ++res.filesWritten;
+        else ++res.validationFailures;
+    }
+
+    std::ostringstream js;
+    js << std::fixed << std::setprecision(5);
+    js << "{\n  \"pipeline\": \"RAW Clean-Room DDS Decoder & PBR Material Inspector\",\n"
+       << "  \"source\": \"" << JsonEscape(sourceLabel) << "\",\n"
+       << "  \"format\": \"" << GetDdsFormatName(hdr.format) << "\",\n"
+       << "  \"isDx10\": " << (hdr.isDx10 ? "true" : "false") << ",\n"
+       << "  \"dxgiFormat\": " << hdr.dxgiFormat << ",\n"
+       << "  \"isSrgb\": " << (hdr.isSrgb ? "true" : "false") << ",\n"
+       << "  \"width\": " << img.width << ",\n"
+       << "  \"height\": " << img.height << ",\n"
+       << "  \"mipCount\": " << hdr.mipCount << ",\n"
+       << "  \"previewBmp\": \"" << (exportPreviewBmp ? bmpRel : "") << "\",\n"
+       << "  \"pbr\": {\n"
+       << "    \"nonZeroPixels\": " << stats.nonZeroPixels << ",\n"
+       << "    \"meanAlbedoSrgb\": [" << stats.meanAlbedoSrgb[0] << "," << stats.meanAlbedoSrgb[1] << "," << stats.meanAlbedoSrgb[2] << "],\n"
+       << "    \"meanAlbedoLinear\": [" << stats.meanAlbedoLin[0] << "," << stats.meanAlbedoLin[1] << "," << stats.meanAlbedoLin[2] << "],\n"
+       << "    \"meanAlpha01\": " << stats.meanAlpha01 << ",\n"
+       << "    \"alphaCoverage01\": " << stats.alphaCoverage01 << ",\n"
+       << "    \"meanLuminance\": " << stats.meanLuminance << ",\n"
+       << "    \"luminanceVariance\": " << stats.luminanceVariance << ",\n"
+       << "    \"isNormalMap\": " << (stats.isNormalMap ? "true" : "false") << ",\n"
+       << "    \"meanTangentNormal\": [" << stats.meanTangentNrm[0] << "," << stats.meanTangentNrm[1] << "," << stats.meanTangentNrm[2] << "],\n"
+       << "    \"meanNormalLength\": " << stats.meanNormalLength << ",\n"
+       << "    \"toksvigRoughness\": " << stats.toksvigRoughness << "\n"
+       << "  }\n}\n";
+
+    res.manifestPath = outDir + "/" + baseName + "_pbr_stats.json";
+    if (WriteTextFile(res.manifestPath, js.str())) ++res.filesWritten;
+    else ++res.validationFailures;
+
+    res.assetsGenerated = 1u;
+    res.assetsValidated = 1u;
+    res.totalGpuBytes   = uint64_t(img.rgba8.size());
+    res.ok = (img.width > 0u && img.height > 0u && res.validationFailures == 0u);
+    res.summaryMessage = "DdsAsset(" + baseName + ", " + GetDdsFormatName(hdr.format) + ", " +
+                         std::to_string(img.width) + "x" + std::to_string(img.height) +
+                         ", mips=" + std::to_string(hdr.mipCount) +
+                         ", toksvigR=" + std::to_string(stats.toksvigRoughness) + ")";
+    return res;
+}
+
+}  // namespace
+
+BakeResult InspectDdsFileAsset(const std::string& ddsPath,
+                               const std::string& outDir,
+                               bool exportPreviewBmp) {
+    raw::worldgen::DdsImage img{};
+    raw::worldgen::DdsHeaderInfo hdr{};
+    std::string err;
+    if (!raw::worldgen::DecodeDdsFile(ddsPath, 0u, &img, &hdr, &err)) {
+        BakeResult res{};
+        res.validationFailures = 1u;
+        res.summaryMessage = "DDS decode failed: " + err;
+        return res;
+    }
+    return FinishDdsInspection(hdr, img, ddsPath, outDir, exportPreviewBmp);
+}
+
+BakeResult InspectBsaDdsAsset(const std::string& bsaPath,
+                              const std::string& virtualDdsPath,
+                              const std::string& outDir,
+                              bool exportPreviewBmp) {
+    raw::worldgen::RawBsaArchive bsa;
+    std::string err;
+    if (!bsa.Open(bsaPath, &err)) {
+        BakeResult res{};
+        res.validationFailures = 1u;
+        res.summaryMessage = "BSA open failed: " + err;
+        return res;
+    }
+    std::vector<uint8_t> ddsBytes;
+    if (!bsa.ExtractFile(virtualDdsPath, &ddsBytes, &err)) {
+        BakeResult res{};
+        res.validationFailures = 1u;
+        res.summaryMessage = "BSA extract failed: " + err;
+        return res;
+    }
+    raw::worldgen::DdsImage img{};
+    raw::worldgen::DdsHeaderInfo hdr{};
+    if (!raw::worldgen::DecodeDdsBytes(ddsBytes.data(), ddsBytes.size(), 0u, &img, &hdr, &err)) {
+        BakeResult res{};
+        res.validationFailures = 1u;
+        res.summaryMessage = "DDS decode failed: " + err;
+        return res;
+    }
+    return FinishDdsInspection(hdr, img, virtualDdsPath, outDir, exportPreviewBmp);
 }
 
 BakeResult RunFullPipelineValidation(const std::string& outDir,

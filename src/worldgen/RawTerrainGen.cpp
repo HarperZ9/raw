@@ -3,10 +3,17 @@
 #include "RawTerrainGen.h"
 
 #include <algorithm>
+#include <atomic>
 #include <limits>
 
 namespace raw::worldgen {
+
+using TerrainHydrologyHookFn = void (*)(TerrainChunkData& chunk, const TerrainConfig& cfg);
+
 namespace {
+
+std::atomic<TerrainHydrologyHookFn> g_terrainHydrologyHook{nullptr};
+std::atomic<bool>                   g_enableHydrologyErosion{false};
 
 constexpr float kTwoPi = 6.28318530717958647692f;
 
@@ -759,9 +766,27 @@ bool GenerateTerrainChunk(int32_t chunkX, int32_t chunkY, uint32_t lodLevel, con
         }
     }
 
+    // 4b. Optional geomorphological hydrology erosion & D8 watershed river carving hook
+    //     (off by default so all existing deterministic terrain tests remain 100% bit-exact).
+    if (g_enableHydrologyErosion.load(std::memory_order_acquire)) {
+        if (const TerrainHydrologyHookFn hook = g_terrainHydrologyHook.load(std::memory_order_acquire)) {
+            hook(*outChunk, cfg);
+        }
+    }
+
     // 5. Enforce exact watertight skirtless LOD edge stitching on any coarser neighbor edge.
     ApplySkirtlessLodStitch(*outChunk, neighborCoarserMask);
     return true;
+}
+
+void RegisterTerrainGenHydrologyHook(TerrainHydrologyHookFn hook, bool enabled) noexcept {
+    g_terrainHydrologyHook.store(hook, std::memory_order_release);
+    g_enableHydrologyErosion.store(enabled && (hook != nullptr), std::memory_order_release);
+}
+
+bool QueryTerrainGenHydrologyHookEnabled() noexcept {
+    return g_enableHydrologyErosion.load(std::memory_order_acquire) &&
+           (g_terrainHydrologyHook.load(std::memory_order_acquire) != nullptr);
 }
 
 }  // namespace raw::worldgen

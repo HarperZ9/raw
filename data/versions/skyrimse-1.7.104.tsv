@@ -5716,3 +5716,8 @@ global:GlobalTimeMultiplier	global	0x20CCAC8	high	binary disassembly 0xCE3985 / 
 global:GlobalTimeMultiplierTarget	global	0x20CCACC	high	binary disassembly 0xCE3974 float default=1.0 (SkyrimSE 1.7.104)
 off:BSTimer::delta	offset	0x18	high	binary disassembly 0xCE399B movss xmm0, [rcx+0x18] (SkyrimSE 1.7.104)
 off:BSTimer::useGlobalTimeTarget	offset	0x3A	high	binary disassembly 0xCE3970 movzx eax, byte ptr [rcx+0x3A] (SkyrimSE 1.7.104)
+fn:PlayerCamera::Ctor	function	0x8F79F0	high	binary disassembly stores PlayerCamera::Singleton 0x31A5478 + worldFOV +0x13C + firstPersonFOV +0x140 (SkyrimSE 1.7.104)
+fn:PlayerCamera::SetCameraFOV_Cmd	function	0x3757C0	high	binary disassembly console fov cmd writes worldFOV +0x13C and firstPersonFOV +0x140 (SkyrimSE 1.7.104)
+fn:ActorState::HasMovementFlag	function	0x6E1530	high	binary disassembly tests ActorState::actorState1 [rcx+0x08] mask 0x100 sprinting (SkyrimSE 1.7.104)
+off:PlayerCamera::worldFOV	offset	0x13C	high	binary disassembly 0x8F7AA8 movss [rbx+0x13C], xmm0 from fDefaultWorldFOV:Display 0x20CF9E0 (SkyrimSE 1.7.104)
+off:PlayerCamera::firstPersonFOV	offset	0x140	high	binary disassembly 0x8F7AB8 movss [rbx+0x140], xmm1 from fDefault1stPersonFOV:Display 0x20CF9F8 (SkyrimSE 1.7.104)

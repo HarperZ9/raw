@@ -31,6 +31,7 @@
 #include "rt_economy_ledger.h"
 #include "rt_forensics.h"
 #include "rt_memory_guards.h"
+#include "rt_movement_combat.h"
 #include "rt_softbody.h"
 #include "rt_stealth_survival.h"
 #include "rt_terrain_lod.h"
@@ -127,6 +128,7 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
         RAW_EngineView(&evImpact);
         raw::rt::CombatImpactOnPresent(evImpact.menuPaused != 0u);
     }
+    raw::rt::MovementCombatOnTick();
     {
         static uint32_t s_liveLogTick = 0;
         if ((++s_liveLogTick % 300u) == 150u) {
@@ -162,6 +164,12 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
                     ec.marketTier, ec.daysSimulated, ec.dayOfYear, ec.buyPriceMult, ec.sellPriceMult,
                     ec.scarcity01, ec.caravanDisruption01, ec.totalPlayerTrades, ec.barterQueries, ec.jsonSaves,
                     ec.npcDirective, ec.npcShelterUrgency01, ec.npcTorchNeed01, ec.npcAlertness01);
+            }
+            raw::rt::MovementCombatTelemetry mc{};
+            if (raw::rt::MovementCombatGetTelemetry(&mc) && mc.verified) {
+                Log("[MovementCombat] dodges=%u evaded=%u lowStam=%u sprint=%u drawn=%u baseFov=%.1f fovOff=+%.2f resyncs=%u",
+                    mc.dodgesTriggered, mc.evadedHits, mc.dodgesRejectedStam, mc.sprintingNow,
+                    mc.weaponDrawnNow, mc.baselineFovDeg, mc.appliedFovOffset, mc.fovBaselineResyncs);
             }
         }
     }
@@ -310,6 +318,9 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     if (IniInt("CombatImpact", 1)) {
         Log("%s", raw::rt::CombatImpactInit(g_img).c_str());
     }
+    if (IniInt("MovementCombat", 1)) {
+        Log("%s", raw::rt::MovementCombatInit(g_img).c_str());
+    }
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
     if (IniInt("CallGraph", 0)) {
@@ -337,6 +348,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         std::snprintf(why, n, "%d background thread(s) running (sample or call graph); ask again when they finish", t);
         return 0;
     }
+    raw::rt::MovementCombatShutdown();
     raw::rt::CombatImpactShutdown();
     raw::rt::StealthSurvivalShutdown();
     raw::rt::GameplayHooksShutdown();

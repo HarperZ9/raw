@@ -47,17 +47,26 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
         const float3 upRd = normalize(float3(rd.xy, max(rd.z, 0.005f)));
         const float3 hSky = sampleAtmo(upRd);
 
-        // Deep nocturnal sky floor + live animated Milky Way / Aetherius galaxy, dark dust rifts,
+        // Wave 43 Orbital Dual-Moon Phase Illumination (Masser 24-day rose-silver & Secunda 16-day pale-cyan-silver):
+        // Shifts night IBL reflections smoothly between luminous moonlit snowscapes & dark new-moon aurora/Milky-Way nights!
+        const float seasonProg = rawCosmosSeasonProgress01(phenology0, phenology1, physWorld[1].w, waterB.w, simTime);
+        const DualMoonLight dualMoon = evalDualMoonPhaseIllum(seasonProg, gameHour);
+        const float moonAmbScale = lerp(0.44f, 1.38f, dualMoon.totalPhase01);
+        const float moonSpecScale = lerp(0.14f, 1.35f, dualMoon.totalPhase01);
+
+        // Deep nocturnal sky floor + phase-coupled Milky Way / Aetherius galaxy, dark dust rifts,
         // H-II nebulae, 3D volumetric O/N2+ curtain auroras & spectral stars directly in the reflection cubemap!
         // Sharp glossy band includes crisp stars so calm water/ice/steel reflects live stars + aurora curtains;
         // rough band disables pinpoint stars so rough stone/snow gets smooth, flicker-free aurora & twilight IBL.
         const float3 nightBase = max(
-            lerp(ambDir * float3(0.42f, 0.56f, 0.88f), float3(0.007f, 0.014f, 0.034f), smoothstep(0.05f, 0.65f, upRd.z)),
-            float3(0.006f, 0.011f, 0.028f));
+            lerp(ambDir * dualMoon.moonTintRGB * (float3(0.46f, 0.58f, 0.86f) * moonAmbScale),
+                 float3(0.006f, 0.012f, 0.030f) * lerp(0.70f, 1.55f, dualMoon.totalPhase01),
+                 smoothstep(0.05f, 0.65f, upRd.z)),
+            float3(0.005f, 0.009f, 0.024f));
         float3 liveCosmos = 0.0f.xxx;
         if (rd.z > -0.02f && (nightW > 0.01f || weather.z > 0.10f)) {
-            liveCosmos = evalCosmosAndAuroraEx(
-                upRd, aSun, gameHour, simTime, clouds.x, weather.z, camPosW.y,
+            liveCosmos = evalCosmosAndAuroraPhased(
+                upRd, aSun, gameHour, simTime, clouds.x, weather.z, camPosW.y, seasonProg,
                 !roughBand,  // pinpoint stars & meteors in sharp band only; smooth aurora+galaxy in rough band
                 true         // apply Kasten-Young airmass extinction near horizon
             );
@@ -65,7 +74,6 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
         // Avoid double-counting aurora already baked into AtmoSkyView during deep night:
         // At day/twilight, AtmoSkyView carries full Chappuis ozone sky + Belt of Venus + Earth Shadow;
         // at night, AtmoSkyView yields seamlessly to higher-angular-res nightBase + liveCosmos!
-        // Boost aurora/galaxy reflection clarity subtly in sharp band so water & ice reflections shimmer vividly.
         const float reflCosmGain = roughBand ? 1.05f : 1.32f;
         const float3 nightSkyFull = nightBase + liveCosmos * reflCosmGain;
         float3 upper = lerp(nightSkyFull, hSky, atmoDayW);
@@ -80,24 +88,27 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
             const float cCov = saturate((cSample - lerp(0.64f, 0.34f, saturate(clouds.x))) * 3.1f) * smoothstep(0.03f, 0.24f, rd.z);
             const float3 dayCloud = max(sunColour.rgb, 0.55f.xxx) * 0.90f;
             const float3 twCloud  = float3(0.95f, 0.48f, 0.32f) * (0.35f + 0.65f * saturate(dot(upRd, aSun)));
-            // Subtle nocturnal cloud under-bounce picking up night ambient + slight aurora tint in northern skies:
-            const float3 nightCloud = ambDir * float3(0.55f, 0.68f, 0.88f) + float3(0.012f, 0.042f, 0.032f) * smoothstep(-20000.0f, 80000.0f, camPosW.y);
+            // Nocturnal cloud reflections respond directly to waxing/full/waning dual-moon phase + northern aurora under-bounce:
+            const float3 nightCloud = ambDir * dualMoon.moonTintRGB * (float3(0.55f, 0.68f, 0.88f) * moonAmbScale)
+                                    + float3(0.012f, 0.042f, 0.032f) * (smoothstep(-20000.0f, 80000.0f, camPosW.y) * lerp(1.15f, 0.72f, dualMoon.totalPhase01));
             float3 cCol = lerp(nightCloud, dayCloud, dayW * 0.72f);
             cCol = lerp(cCol, twCloud, twilightW * 0.58f);
             upper = lerp(upper, cCol, cCov * (roughBand ? 0.48f : 0.74f));
         }
 
         // Lower hemisphere: physical terrain/snow/valley bounce + dark horizon mountain silhouette.
-        const float3 groundBounce = ambDir * lerp(float3(0.36f, 0.34f, 0.30f), float3(0.60f, 0.66f, 0.76f), saturate(weather.z));
+        const float3 groundBounce = ambDir * lerp(float3(0.36f, 0.34f, 0.30f), float3(0.60f, 0.66f, 0.76f), saturate(weather.z))
+                                  * lerp(1.0f.xxx, dualMoon.moonTintRGB * moonAmbScale, nightW * 0.65f);
         const float horBand = smoothstep(-0.18f, 0.05f, rd.z);
         col = lerp(groundBounce, upper, horBand);
 
-        // Sun/moon specular lobe (tight in sharp band, wide GGX convolution in rough band).
+        // Sun/dual-moon specular lobe (tight in sharp band, wide GGX convolution in rough band; modulated by lunar phase at night!):
         const float cosS = saturate(dot(rd, sunDir.xyz));
         const float expS = roughBand ? 10.0f : 180.0f;
         const float gainS = roughBand ? 0.22f : 2.10f;
         const float cAtt = 1.0f - saturate(clouds.x * 0.72f);
-        col += sunColour.rgb * (pow(cosS, expS) * gainS * cAtt * step(0.0f, rd.z));
+        const float3 specLightCol = lerp(sunColour.rgb, sunColour.rgb * dualMoon.moonTintRGB * moonSpecScale, nightW);
+        col += specLightCol * (pow(cosS, expS) * gainS * cAtt * step(0.0f, rd.z));
     } else {
         // Interiors, taverns, dungeons, Dwemer ruins: high-contrast directional stone-vault gradient
         // (cool-neutral high vault ceiling vs rich dark floor bounce so metallic jugs, goblets & armor read crisp, not muddy brown!).

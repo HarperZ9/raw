@@ -50,6 +50,8 @@ void PrintUsage() {
         "  raw_forge_cli --bsa-list <path> [--filter <substr>]     Inspect & list files in a v104/v105 .bsa archive\n"
         "  raw_forge_cli --nif <path> --out <dir>                  Parse, validate & export a Skyrim SE .nif mesh\n"
         "  raw_forge_cli --bsa-nif <bsa> --entry <vpath> --out <d> Extract .nif from .bsa, validate & export .glb/.obj\n"
+        "  raw_forge_cli --dds <path> --out <dir>                  Decode .dds (BC1..BC7) & run PBR/Toksvig analysis\n"
+        "  raw_forge_cli --bsa-dds <bsa> --entry <vpath> --out <d> Extract .dds from .bsa, decode & export PBR JSON/BMP\n"
         "  raw_forge_cli --validate-all [dir]                      Run all 4 procedural pipelines + quality gates\n"
         "Options:\n"
         "  --seed <N>         Deterministic RNG seed (default: 202607)\n"
@@ -79,6 +81,8 @@ int main(int argc, char** argv) {
     std::string nifPath;
     std::string bsaNifArchive;
     std::string bsaNifEntry;
+    std::string ddsPath;
+    std::string bsaDdsArchive;
     bool hasEsmCell     = false;
     int32_t esmCellX    = 0;
     int32_t esmCellY    = 0;
@@ -144,6 +148,14 @@ int main(int argc, char** argv) {
             const char* v = needNext("--bsa-nif");
             if (!v) return 2;
             bsaNifArchive = v;
+        } else if (arg == "--dds") {
+            const char* v = needNext("--dds");
+            if (!v) return 2;
+            ddsPath = v;
+        } else if (arg == "--bsa-dds") {
+            const char* v = needNext("--bsa-dds");
+            if (!v) return 2;
+            bsaDdsArchive = v;
         } else if (arg == "--entry") {
             const char* v = needNext("--entry");
             if (!v) return 2;
@@ -182,8 +194,8 @@ int main(int argc, char** argv) {
 
     if (!runValidateAll && floraDir.empty() && dioramaDir.empty() && almanacDir.empty() &&
         materialsDir.empty() && esmPath.empty() && bsaListPath.empty() &&
-        nifPath.empty() && bsaNifArchive.empty()) {
-        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --esm, --bsa-list, --nif, --bsa-nif, or --validate-all).\n");
+        nifPath.empty() && bsaNifArchive.empty() && ddsPath.empty() && bsaDdsArchive.empty()) {
+        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --esm, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, or --validate-all).\n");
         PrintUsage();
         return 2;
     }
@@ -248,6 +260,20 @@ int main(int argc, char** argv) {
         }
         const std::string outDir = esmOutDir.empty() ? "raw_forge_nif_out" : esmOutDir;
         runStep("bsa-nif", raw::pipeline::BakeBsaNifAsset(bsaNifArchive, bsaNifEntry, outDir, policy, writeGeometry));
+    }
+
+    if (!ddsPath.empty()) {
+        const std::string outDir = esmOutDir.empty() ? "raw_forge_dds_out" : esmOutDir;
+        runStep("dds", raw::pipeline::InspectDdsFileAsset(ddsPath, outDir, writeGeometry));
+    }
+
+    if (!bsaDdsArchive.empty()) {
+        if (bsaNifEntry.empty()) {
+            std::fprintf(stderr, "Error: --bsa-dds requires --entry <virtualPath>.\n");
+            return 2;
+        }
+        const std::string outDir = esmOutDir.empty() ? "raw_forge_dds_out" : esmOutDir;
+        runStep("bsa-dds", raw::pipeline::InspectBsaDdsAsset(bsaDdsArchive, bsaNifEntry, outDir, writeGeometry));
     }
 
     if (runValidateAll) {

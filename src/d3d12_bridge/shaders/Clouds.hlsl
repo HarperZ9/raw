@@ -10,6 +10,7 @@
 #include "LightingCommon.hlsli"
 #include "CloudCommon.hlsli"
 #include "RawProceduralNoise.hlsli"
+#include "RawCosmosSky.hlsli"
 
 Texture2D<float4> History    : register(t0);
 Texture2D<float4> TransLut   : register(t1);
@@ -184,12 +185,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float twiCloud = smoothstep(-0.10f, 0.00f, aElev) * (1.0f - smoothstep(0.06f, 0.26f, aElev)) * (1.0f - saturate(clouds.x * 0.85f - 0.25f));
         const float3 twiCoral = float3(1.25f, 0.54f, 0.28f) * max(sLum, 0.45f);
         const float3 physDaySun = lerp(lerp(rawSunC, hTrans * (max(sLum, 0.14f) / htLum), 0.65f), twiCoral, twiCloud * 0.48f);
-        // Unified World-Space Atmosphere sync: lock cloud sun, shadow ambient, and horizon haze directly to evalWorldAtmosphere()
-        // so volumetric clouds fuse seamlessly into the sky dome, mountain aerial perspective, and terrain lighting!
+        // Unified World-Space Atmosphere sync + Wave 43 Orbital Dual-Moon Phase Illumination (Masser 24d & Secunda 16d):
+        // Dynamically shifts night clouds between luminous rose/silver-cyan full-moon silver linings, half-moon
+        // alpine clarity, and deep brooding new-moon silhouettes against blazing auroras & Milky Way!
         float3 uSunC, uSkyZ, uSkyH, uAmbUp, uAmbDn;
         evalWorldAtmosphere(uSunC, uSkyZ, uSkyH, uAmbUp, uAmbDn);
-        const float3 sunC = lerp(uSunC, physDaySun, 0.25f * (1.0f - nightW));
-        const float3 skyC = lerp(uSkyH, uSkyZ, saturate(dir.z * 1.4f));
+        const float simTimeC = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
+        const float seasonProgC = rawCosmosSeasonProgress01(phenology0, phenology1, physWorld[1].w, waterB.w, simTimeC);
+        const DualMoonLight dualMoon = evalDualMoonPhaseIllum(seasonProgC, timeEnv.x);
+        const float moonPhaseGain = lerp(0.18f, 1.42f, pow(dualMoon.totalPhase01, 1.15f));
+        const float3 nightMoonSun = uSunC * dualMoon.moonTintRGB * moonPhaseGain;
+        const float3 sunC = lerp(lerp(uSunC, physDaySun, 0.25f), nightMoonSun, nightW);
+        const float3 skyC = lerp(uSkyH, uSkyZ, saturate(dir.z * 1.4f)) * lerp(1.0f.xxx, dualMoon.moonTintRGB * lerp(0.52f, 1.28f, dualMoon.totalPhase01), nightW);
         const float sigma = kCloudSigma;
         float T = 1.0f;
         float3 S = 0.0f;
@@ -291,13 +298,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float upperDeckOcc = (clouds.x > 0.25f)
                 ? (1.0f - smoothstep(0.54f, 0.86f, cNoise(float3((pa.xy + cloudLightDir.xy * 18000.0f) * 0.000022f, 4.3f + camPosW.w * 0.002f))) * saturate(clouds.x) * 0.42f)
                 : 1.0f;
-            const float3 coolBase = lerp(lerp(uSkyZ * 0.54f, float3(0.18f, 0.26f, 0.40f), overcastW * 0.52f), lerp(uSkyH * 0.68f, float3(0.32f, 0.40f, 0.52f), overcastW * 0.52f), overcastW * 0.58f + (1.0f - h) * 0.42f) * cloudAo;
+            const float3 coolBase = lerp(lerp(uSkyZ * 0.54f, float3(0.18f, 0.26f, 0.40f), overcastW * 0.52f), lerp(uSkyH * 0.68f, float3(0.32f, 0.40f, 0.52f), overcastW * 0.52f), overcastW * 0.58f + (1.0f - h) * 0.42f)
+                                  * lerp(1.0f.xxx, dualMoon.moonTintRGB * lerp(0.42f, 1.32f, dualMoon.totalPhase01), nightW) * cloudAo;
             // Warm golden-amber horizon rim light on sunlit cloud edges at low sun (Chapman grazing extinction):
             const float3 horizonGold = lerp(float3(1.45f, 0.68f, 0.22f), float3(1.35f, 0.38f, 0.12f), saturate(1.0f - max(aElev, 0.0f) * 8.0f));
             const float3 underLit = horizonGold * (twiCloud * pow(saturate(dot(dir, aSun) * 0.5f + 0.5f), 3.0f) * exp(-od * sigma * 0.35f) * (1.0f - overcastW * 0.75f) * 0.48f);
-            // Soft natural moonlight silver-lining along thin edges & crowns + subtle dark underbellies + settlement skyglow:
+            // Orbital dual-moon phase-coupled silver-lining along thin cloud edges & crowns (warm rose Masser / cool cyan Secunda / dark new-moon):
             const float moonEdge = exp(-od * sigma * 0.40f) * lerp(0.45f, 1.0f, powder);
-            const float3 moonRim = float3(0.42f, 0.55f, 0.82f) * (nightW * (hg(cosT, 0.76f) * 0.58f + 0.07f * pow(h, 1.25f)) * moonEdge);
+            const float3 moonRimCol = dualMoon.moonTintRGB * float3(0.56f, 0.62f, 0.84f) * moonPhaseGain;
+            const float3 moonRim = moonRimCol * (nightW * (hg(cosT, 0.76f) * 0.62f + 0.08f * pow(h, 1.25f)) * moonEdge);
             const float3 townUnderGlow = nightSkyglow * ((1.0f - h) * (1.0f - h) * exp(-t / 95000.0f));
             // Crisp sunlit cumulus crowns (0.40x) against deep convective LCL bellies (kills muddy brown-grey flat clouds!):
             const float3 rawLum = whiteSun * (multiScat * lerp(0.68f, powder, 0.88f) * 4.0f * PI * 0.40f * upperDeckOcc) + coolBase + underLit + moonRim + townUnderGlow + stormFlash;

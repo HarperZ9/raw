@@ -510,6 +510,8 @@ bool VerifyStartupBinaryOffsets(const Image& img, std::string* reportOut) {
         {"Actor::actorStateFlags",            Addr("fn:SneakDetectionCalc"),                    Off("off:Actor::actorStateFlags"),            4, false},
         {"BSTimer::delta",                    Addr("fn:BSTimer::SetGlobalTimeMultiplier"),      Off("off:BSTimer::delta"),                    4, true},
         {"BSTimer::useGlobalTimeTarget",      Addr("fn:BSTimer::SetGlobalTimeMultiplier"),      Off("off:BSTimer::useGlobalTimeTarget"),      1, false},
+        {"PlayerCamera::worldFOV",            Addr("fn:PlayerCamera::Ctor"),                    Off("off:PlayerCamera::worldFOV"),            4, true},
+        {"PlayerCamera::firstPersonFOV",      Addr("fn:PlayerCamera::Ctor"),                    Off("off:PlayerCamera::firstPersonFOV"),      4, true},
     };
     g_lastVerify = VerifyCriticalOffsets(img, kRules, sizeof(kRules) / sizeof(kRules[0]));
     // Fail-closed: if ANY rule failed, lock out all struct mutations!

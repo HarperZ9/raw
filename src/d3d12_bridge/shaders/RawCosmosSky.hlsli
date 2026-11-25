@@ -486,9 +486,87 @@ float3 rawCosmosMeteors(float3 rayDir, float simTime, float nightVis, float clou
     return (wakeCol * streak + float3(0.95f, 0.98f, 1.00f) * headCore) * (env * vis * 2.25f);
 }
 
-// Solar/Lunar Atmospheric Corona, Dual-Moon Limb Glow & 22-Degree Hexagonal Ice-Crystal Halo (when cold/snowy):
-float3 rawCosmosSolarLunarHalo(float3 rayDir, float3 sunDir, float gameHour, float simTime,
-                               float cloudCover, float snow01) {
+// ----------------------------------------------------------------------------
+// 4b. Orbital Dual-Moon Phase Illumination (Masser 24-day & Secunda 16-day cycles)
+//     Smooth Lambertian sphere phase curves (1 - cos(phi)) / 2 driving dynamic
+//     moonlit snowscapes, waxing/waning half-moons, and dark new-moon aurora nights!
+// ----------------------------------------------------------------------------
+struct DualMoonLight {
+    float3 moonTintRGB;
+    float  totalPhase01;
+    float  masserPhase01;
+    float  secundaPhase01;
+};
+
+// Reconstructs continuous orbital year progress [0, 1) from RawWeatherSim phenology + tidal phase uniforms
+// (with exact support for explicit season override 1=Spring, 2=Summer, 3=Autumn, 4=Winter).
+float rawCosmosSeasonProgress01(float4 phenology0, float4 phenology1, float springTide01, float seasonOverride, float simTimeSec) {
+    // Slow continuous lunar drift in real-time play (~1 game day per 72 real minutes at 20x timescale):
+    const float liveDayDrift = (simTimeSec * (20.0f / 86400.0f)) * (1.0f / 365.0f);
+    const float tidePhaseOff = saturate(springTide01) * (12.0f / 365.0f);
+    if (seasonOverride >= 0.5f && seasonOverride <= 4.5f) {
+        const float baseDay = (seasonOverride < 1.5f) ? 105.0f
+                            : ((seasonOverride < 2.5f) ? 196.0f
+                            : ((seasonOverride < 3.5f) ? 288.0f : 15.0f));
+        return frac((baseDay / 365.0f) + tidePhaseOff + liveDayDrift);
+    }
+    const float bud  = saturate(phenology0.x);
+    const float chl  = saturate(phenology0.y);
+    const float car  = saturate(phenology0.z);
+    const float ant  = saturate(phenology0.w);
+    const float absL = saturate(phenology1.x);
+    const float autW = saturate(car * 0.65f + ant * 0.85f);
+    float yearFrac = 0.04f; // Winter baseline (~mid-Jan)
+    if (autW > 0.08f) {
+        yearFrac = lerp(0.65f, 0.86f, autW);
+    } else if (chl > 0.45f) {
+        yearFrac = lerp(0.38f, 0.60f, saturate((chl - 0.45f) / 0.55f));
+    } else if (bud > 0.05f && absL < 0.55f) {
+        yearFrac = lerp(0.18f, 0.38f, bud);
+    } else {
+        yearFrac = lerp(0.03f, 0.14f, 1.0f - absL);
+    }
+    return frac(yearFrac + tidePhaseOff + liveDayDrift);
+}
+
+// Evaluates continuous orbital illumination for Masser (24-day period, warm rose-silver)
+// and Secunda (16-day period, cool pale-cyan-silver) from seasonProgress01 and gameHour.
+DualMoonLight evalDualMoonPhaseIllum(float seasonProgress01, float gameHour) {
+    const float dayContinuous = max(seasonProgress01, 0.0f) * 365.0f + clamp(gameHour, 0.0f, 24.0f) * (1.0f / 24.0f);
+
+    // Exact 24-day Masser & 16-day Secunda synodic orbital phase angles (48-day dual resonance):
+    const float masserPhi  = (dayContinuous * (1.0f / 24.0f)) * kCosmosTwoPi + 0.42f;
+    const float secundaPhi = (dayContinuous * (1.0f / 16.0f)) * kCosmosTwoPi + 2.15f;
+
+    // Realistic Lambertian illuminated sphere phase curve: (1 - cos(phi)) / 2 in [0, 1]
+    const float masserPhase01  = saturate(0.5f * (1.0f - cos(masserPhi)));
+    const float secundaPhase01 = saturate(0.5f * (1.0f - cos(secundaPhi)));
+
+    // Masser dominates (~68% solid-angle irradiance, warm rose-silver albedo);
+    // Secunda contributes (~32%, cool pale-cyan-silver albedo).
+    const float wM = masserPhase01 * 0.68f;
+    const float wS = secundaPhase01 * 0.32f;
+    const float totalPhase01 = saturate(wM + wS);
+
+    static const float3 kMasserTint  = float3(0.98f, 0.78f, 0.74f); // warm rose-silver Masser
+    static const float3 kSecundaTint = float3(0.72f, 0.90f, 1.00f); // cool pale-cyan-silver Secunda
+    static const float3 kNewMoonTint = float3(0.56f, 0.68f, 0.92f); // deep starlight-indigo floor
+
+    const float3 weightedTint = (totalPhase01 > 1.0e-4f)
+        ? ((kMasserTint * wM + kSecundaTint * wS) / totalPhase01)
+        : kNewMoonTint;
+
+    DualMoonLight res;
+    res.moonTintRGB    = lerp(kNewMoonTint, weightedTint, smoothstep(0.02f, 0.25f, totalPhase01));
+    res.totalPhase01   = totalPhase01;
+    res.masserPhase01  = masserPhase01;
+    res.secundaPhase01 = secundaPhase01;
+    return res;
+}
+
+// Solar/Lunar Atmospheric Corona, Phase-Coupled Dual-Moon Limb Glow & 22-Degree Hexagonal Ice-Crystal Halo:
+float3 rawCosmosSolarLunarHaloPhased(float3 rayDir, float3 sunDir, float gameHour, float simTime,
+                                     float cloudCover, float snow01, DualMoonLight moon) {
     if (rayDir.z <= 0.005f) { return 0.0f.xxx; }
     float3 outHalo = 0.0f.xxx;
 
@@ -505,22 +583,21 @@ float3 rawCosmosSolarLunarHalo(float3 rayDir, float3 sunDir, float gameHour, flo
         outHalo += aureoleCol * (mieFwd * dayW * clearFactor * smoothstep(0.0f, 0.08f, rayDir.z));
     }
 
-    // 2) Subtle dual-moon orbital atmospheric limb glow (Masser warm russet + Secunda cool silver-cyan):
-    //    Gently illuminates thin high-altitude haze around dual lunar arcs without creating fake hard discs.
-    if (nightW > 0.02f) {
+    // 2) Phase-coupled dual-moon orbital atmospheric limb glow (vanishes on New Moon, glows on Full Masser/Secunda):
+    if (nightW > 0.02f && moon.totalPhase01 > 0.03f) {
         const float moonPhase1 = gameHour * (kCosmosTwoPi / 24.0f) + 2.35f;
         const float moonPhase2 = gameHour * (kCosmosTwoPi / 24.0f) + 2.72f;
         const float3 masserDir = normalize(float3(-sin(moonPhase1) * 0.72f, 0.42f, max(cos(moonPhase1) * 0.65f + 0.18f, -0.3f)));
         const float3 secundaDir = normalize(float3(-sin(moonPhase2) * 0.80f, 0.52f, max(cos(moonPhase2) * 0.58f + 0.24f, -0.3f)));
-        if (masserDir.z > 0.04f) {
+        if (masserDir.z > 0.04f && moon.masserPhase01 > 0.03f) {
             const float cM = saturate(dot(rayDir, masserDir));
-            const float mGlow = (pow(cM, 28.0f) * 0.028f + pow(cM, 7.0f) * 0.010f) * smoothstep(0.04f, 0.18f, masserDir.z);
-            outHalo += float3(0.86f, 0.62f, 0.46f) * (mGlow * nightW * (0.45f + 0.55f * saturate(cloudCover)));
+            const float mGlow = (pow(cM, 28.0f) * 0.032f + pow(cM, 7.0f) * 0.012f) * smoothstep(0.04f, 0.18f, masserDir.z);
+            outHalo += float3(0.92f, 0.66f, 0.54f) * (mGlow * moon.masserPhase01 * nightW * (0.45f + 0.55f * saturate(cloudCover)));
         }
-        if (secundaDir.z > 0.04f) {
+        if (secundaDir.z > 0.04f && moon.secundaPhase01 > 0.03f) {
             const float cS2 = saturate(dot(rayDir, secundaDir));
-            const float sGlow = (pow(cS2, 36.0f) * 0.022f + pow(cS2, 9.0f) * 0.008f) * smoothstep(0.04f, 0.18f, secundaDir.z);
-            outHalo += float3(0.56f, 0.72f, 0.96f) * (sGlow * nightW * (0.45f + 0.55f * saturate(cloudCover)));
+            const float sGlow = (pow(cS2, 36.0f) * 0.025f + pow(cS2, 9.0f) * 0.009f) * smoothstep(0.04f, 0.18f, secundaDir.z);
+            outHalo += float3(0.58f, 0.78f, 0.98f) * (sGlow * moon.secundaPhase01 * nightW * (0.45f + 0.55f * saturate(cloudCover)));
         }
     }
 
@@ -531,7 +608,6 @@ float3 rawCosmosSolarLunarHalo(float3 rayDir, float3 sunDir, float gameHour, flo
     //      Blue (460 nm, n=1.316) -> 22.48 deg (0.3924 rad)
     if (snow01 > 0.10f) {
         const float iceW = smoothstep(0.10f, 0.58f, snow01) * (1.0f - saturate(cloudCover) * 0.58f) * smoothstep(0.02f, 0.12f, rayDir.z);
-        // Subtle cirrus crystal sheet modulation at 10 km curved shell:
         const float bC = kCosmosEarthKm * rayDir.z;
         const float tCir = sqrt(max(bC * bC + (kCosmosEarthKm + 10.0f) * (kCosmosEarthKm + 10.0f) - kCosmosEarthKm * kCosmosEarthKm, 0.0f)) - bC;
         const float2 cirP = rayDir.xy * (tCir * 0.042f) + float2(simTime * 0.006f, simTime * 0.003f);
@@ -544,12 +620,11 @@ float3 rawCosmosSolarLunarHalo(float3 rayDir, float3 sunDir, float gameHour, flo
                 exp(-pow((ang - 0.3787f) / 0.013f, 2.0f)),
                 exp(-pow((ang - 0.3848f) / 0.015f, 2.0f)),
                 exp(-pow((ang - 0.3924f) / 0.017f, 2.0f))) * innerCut;
-            // Parhelia (sundogs) intensify at matching solar elevation when sun is low (< 28 deg):
             const float parhelia = exp(-pow((rayDir.z - sunDir.z) / 0.045f, 2.0f)) * (1.0f - smoothstep(0.20f, 0.48f, sunDir.z));
             const float3 haloTint = lerp(float3(0.96f, 0.97f, 1.00f), float3(1.08f, 0.84f, 0.58f), 1.0f - smoothstep(0.04f, 0.25f, sunDir.z));
             outHalo += disp * haloTint * (iceW * cirCrystal * dayW * (0.045f + 0.075f * parhelia));
-        } else if (nightW > 0.10f) {
-            // Subtle lunar 22-deg ice-ring around the primary high moon direction on frigid snowy nights:
+        } else if (nightW > 0.10f && moon.totalPhase01 > 0.15f) {
+            // Subtle lunar 22-deg ice-ring around primary moon on bright moonlit frigid nights (fades on new moons):
             const float moonPhase1 = gameHour * (kCosmosTwoPi / 24.0f) + 2.35f;
             const float3 lunarDir = normalize(float3(-sin(moonPhase1) * 0.72f, 0.42f, max(cos(moonPhase1) * 0.65f + 0.18f, 0.08f)));
             const float ang = acos(clamp(dot(rayDir, lunarDir), -1.0f, 1.0f));
@@ -558,17 +633,98 @@ float3 rawCosmosSolarLunarHalo(float3 rayDir, float3 sunDir, float gameHour, flo
                 exp(-pow((ang - 0.3787f) / 0.016f, 2.0f)),
                 exp(-pow((ang - 0.3848f) / 0.018f, 2.0f)),
                 exp(-pow((ang - 0.3924f) / 0.021f, 2.0f))) * innerCut;
-            outHalo += disp * float3(0.88f, 0.90f, 0.98f) * (iceW * cirCrystal * nightW * 0.026f);
+            outHalo += disp * moon.moonTintRGB * (iceW * cirCrystal * nightW * moon.totalPhase01 * 0.030f);
         }
     }
 
     return outHalo;
 }
 
+// Backwards-compatible halo helper:
+float3 rawCosmosSolarLunarHalo(float3 rayDir, float3 sunDir, float gameHour, float simTime,
+                               float cloudCover, float snow01) {
+    const DualMoonLight defMoon = evalDualMoonPhaseIllum(frac(simTime * (20.0f / (86400.0f * 365.0f)) + 0.12f), gameHour);
+    return rawCosmosSolarLunarHaloPhased(rayDir, sunDir, gameHour, simTime, cloudCover, snow01, defMoon);
+}
+
 // ----------------------------------------------------------------------------
-// Extended Configurable Evaluator (allows LUT passes like 192x108 AtmoSkyView
-// or rough EnvCubePass bands to suppress sub-pixel pinpoint stars / meteors,
-// or supply exact raymarched top-of-atmosphere transmittance externally).
+// Orbital-Phase-Coupled Evaluator (Full Dual-Moon Star/Galaxy/Aurora Contrast!)
+// ----------------------------------------------------------------------------
+float3 evalCosmosAndAuroraPhased(
+    float3 rayDir,
+    float3 sunDir,
+    float gameHour,
+    float simTime,
+    float cloudCover,
+    float snow01,
+    float camNorthY,
+    float seasonProgress01,
+    bool includePinpointStars,
+    bool applyInternalExtinction)
+{
+    const float3 rd = normalize(rayDir);
+    const float3 sd = normalize(sunDir);
+    if (rd.z <= -0.015f) { return 0.0f.xxx; }
+
+    const float starNightW   = smoothstep(0.01f, -0.12f, sd.z);
+    const float auroraNightW = smoothstep(0.05f, -0.09f, sd.z);
+    const float clearSky     = 1.0f - saturate(cloudCover) * 0.88f;
+
+    // Evaluate live Masser (24d) & Secunda (16d) orbital phase illumination:
+    // - On bright full-moon nights: gentle lunar Rayleigh skyglow softens faint stars/Milky Way naturally.
+    // - On dark new-moon nights: Milky Way, dark dust rifts, stars & 3D curtain auroras blaze at peak contrast!
+    const DualMoonLight moon = evalDualMoonPhaseIllum(seasonProgress01, gameHour);
+    const float starPhaseMod   = lerp(1.22f, 0.68f, moon.totalPhase01);
+    const float galPhaseMod    = lerp(1.28f, 0.58f, moon.totalPhase01);
+    const float auroraPhaseMod = lerp(1.22f, 0.82f, moon.totalPhase01);
+
+    float3 extraAtmo = 0.0f.xxx;
+
+    // Space-originating light (Galactic plane + Nebulae + Spectral Starfield):
+    if (starNightW > 0.005f && clearSky > 0.01f) {
+        const float3 celDir = rawCosmosToCelestial(rd, gameHour);
+        const float3 galDir = rawCosmosToGalactic(celDir);
+        float3 dustTrans = 1.0f.xxx;
+        float discWide = 0.0f;
+        float3 galCol = rawCosmosGalacticPlane(galDir, dustTrans, discWide);
+
+        float3 starCol = 0.0f.xxx;
+        if (includePinpointStars) {
+            starCol = rawCosmosStarfield(celDir, rd.z, simTime, discWide, dustTrans);
+        }
+        extraAtmo += (galCol * (0.92f * galPhaseMod) + starCol * starPhaseMod) * (starNightW * clearSky);
+    }
+
+    // Upper-atmosphere light (95..260 km 3D Volumetric Curtain Auroras + 90 km Airglow + Meteors):
+    if (auroraNightW > 0.005f) {
+        extraAtmo += rawCosmosVolumetricAurora(rd, simTime, camNorthY, auroraNightW, cloudCover) * auroraPhaseMod;
+        extraAtmo += rawCosmosAirglow(rd.z, starNightW, cloudCover) * lerp(1.15f, 0.72f, moon.totalPhase01);
+        if (includePinpointStars) {
+            extraAtmo += rawCosmosMeteors(rd, simTime, starNightW, cloudCover) * lerp(1.15f, 0.75f, moon.totalPhase01);
+        }
+    }
+
+    // Apply physical Kasten-Young airmass extinction when caller does not supply exact raymarched T:
+    if (applyInternalExtinction) {
+        const float3 T_atmo = rawCosmosAtmosphericTransmittance(rd.z, cloudCover, snow01);
+        extraAtmo *= T_atmo;
+    }
+
+    // Subtle full-moon Rayleigh atmospheric skyglow (rises gently near horizon & fades toward zenith):
+    if (starNightW > 0.01f && moon.totalPhase01 > 0.05f && rd.z > 0.0f) {
+        const float raySkyGrad = lerp(1.25f, 0.55f, pow(saturate(rd.z), 0.55f));
+        const float moonGlow = moon.totalPhase01 * moon.totalPhase01 * starNightW * (1.0f - saturate(cloudCover) * 0.45f);
+        extraAtmo += moon.moonTintRGB * (0.015f * moonGlow * raySkyGrad);
+    }
+
+    // Tropospheric optical phenomena (Solar Mie aureole, 22-deg cirrus ice halo, phase-coupled dual-moon limb glow):
+    extraAtmo += rawCosmosSolarLunarHaloPhased(rd, sd, gameHour, simTime, cloudCover, snow01, moon);
+
+    return max(extraAtmo, 0.0f.xxx);
+}
+
+// ----------------------------------------------------------------------------
+// Extended Configurable Evaluator (100% backwards-compatible with Wave 38/40 callers)
 // ----------------------------------------------------------------------------
 float3 evalCosmosAndAuroraEx(
     float3 rayDir,
@@ -581,55 +737,9 @@ float3 evalCosmosAndAuroraEx(
     bool includePinpointStars,
     bool applyInternalExtinction)
 {
-    const float3 rd = normalize(rayDir);
-    const float3 sd = normalize(sunDir);
-    if (rd.z <= -0.015f) { return 0.0f.xxx; }
-
-    // Smooth astronomical twilight -> deep night visibility curve:
-    // Stars & galaxy emerge gracefully during nautical twilight (sunElev ~ -0.04..-0.14);
-    // bright auroras become subtly visible during late civil/nautical twilight and blaze at full night.
-    const float starNightW   = smoothstep(0.01f, -0.12f, sd.z);
-    const float auroraNightW = smoothstep(0.05f, -0.09f, sd.z);
-    const float clearSky     = 1.0f - saturate(cloudCover) * 0.88f;
-
-    float3 extraAtmo = 0.0f.xxx;
-
-    // Space-originating light (Galactic plane + Nebulae + Spectral Starfield):
-    // Subject to full top-of-atmosphere Rayleigh + Ozone + Aerosol transmittance!
-    if (starNightW > 0.005f && clearSky > 0.01f) {
-        const float3 celDir = rawCosmosToCelestial(rd, gameHour);
-        const float3 galDir = rawCosmosToGalactic(celDir);
-        float3 dustTrans = 1.0f.xxx;
-        float discWide = 0.0f;
-        float3 galCol = rawCosmosGalacticPlane(galDir, dustTrans, discWide);
-
-        float3 starCol = 0.0f.xxx;
-        if (includePinpointStars) {
-            starCol = rawCosmosStarfield(celDir, rd.z, simTime, discWide, dustTrans);
-        }
-        extraAtmo += (galCol * 0.92f + starCol) * (starNightW * clearSky);
-    }
-
-    // Upper-atmosphere light (95..260 km 3D Volumetric Curtain Auroras + 90 km Airglow + Meteors):
-    // Also attenuated cleanly by lower-troposphere/stratosphere transmittance!
-    if (auroraNightW > 0.005f) {
-        extraAtmo += rawCosmosVolumetricAurora(rd, simTime, camNorthY, auroraNightW, cloudCover);
-        extraAtmo += rawCosmosAirglow(rd.z, starNightW, cloudCover);
-        if (includePinpointStars) {
-            extraAtmo += rawCosmosMeteors(rd, simTime, starNightW, cloudCover);
-        }
-    }
-
-    // Apply physical Kasten-Young airmass extinction when caller does not supply exact raymarched T:
-    if (applyInternalExtinction) {
-        const float3 T_atmo = rawCosmosAtmosphericTransmittance(rd.z, cloudCover, snow01);
-        extraAtmo *= T_atmo;
-    }
-
-    // Tropospheric optical phenomena (Solar Mie aureole, 22-deg cirrus ice halo, dual-moon limb glow):
-    extraAtmo += rawCosmosSolarLunarHalo(rd, sd, gameHour, simTime, cloudCover, snow01);
-
-    return max(extraAtmo, 0.0f.xxx);
+    const float autoSeasonProg = frac(simTime * (20.0f / (86400.0f * 365.0f)) + 0.12f);
+    return evalCosmosAndAuroraPhased(rayDir, sunDir, gameHour, simTime, cloudCover, snow01, camNorthY,
+                                     autoSeasonProg, includePinpointStars, applyInternalExtinction);
 }
 
 // ----------------------------------------------------------------------------

@@ -49,6 +49,10 @@ struct RawWorldSimTelemetry {
     float    squadSpanLengthU  = 0.0f;
     float    synopticHpa       = 1013.25f;
     float    adaptiveQuality   = 1.0f;
+    float    synopticCloud     = 0.25f;
+    float    synopticRain      = 0.0f;
+    float    synopticSnow      = 0.0f;
+    float    synopticLightning = 0.0f;
 };
 
 void WorldSimInit(const Image& img, const std::string& gameDir);

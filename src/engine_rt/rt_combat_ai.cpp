@@ -852,4 +852,55 @@ SynopticWeatherState StepSynopticWeatherSim(const float worldPos[3], float simTi
     return w;
 }
 
+CreatureGaitOutput EvaluateCreatureGaitKinematics(CreatureGaitKind kind, float moveSpeedU, float turnRateRadPerSec,
+                                                  float terrainSlopeRad, float simTimeSec) {
+    CreatureGaitOutput g{};
+    const float spd = std::clamp(moveSpeedU, 0.0f, 1200.0f);
+    const float turn = std::clamp(turnRateRadPerSec, -6.0f, 6.0f);
+    const float slope = std::clamp(terrainSlopeRad, -0.75f, 0.75f);
+    const float kTwoPi = 6.28318530718f;
+
+    float baseStrideU = 135.0f;
+    float maxBank = 0.24f;
+    float bobAmp = 2.8f;
+    if (kind == CreatureGaitKind::Quadruped) { baseStrideU = 175.0f; maxBank = 0.34f; bobAmp = 3.8f; }
+    else if (kind == CreatureGaitKind::Mammoth) { baseStrideU = 260.0f; maxBank = 0.12f; bobAmp = 4.6f; }
+    else if (kind == CreatureGaitKind::Dragon) { baseStrideU = 340.0f; maxBank = 0.58f; bobAmp = 9.5f; }
+
+    g.cadenceHz = (kind == CreatureGaitKind::Dragon)
+        ? std::clamp(0.45f + spd / 900.0f, 0.45f, 1.85f)
+        : (spd > 5.0f ? std::clamp(spd / baseStrideU, 0.35f, 3.8f) : 0.0f);
+    const float basePh = std::fmod(std::max(simTimeSec, 0.0f) * g.cadenceHz * kTwoPi, kTwoPi);
+    if (kind == CreatureGaitKind::Biped) {
+        g.stridePhaseRad[0] = basePh;
+        g.stridePhaseRad[1] = std::fmod(basePh + 3.14159265f, kTwoPi);
+        g.stridePhaseRad[2] = g.stridePhaseRad[1];
+        g.stridePhaseRad[3] = basePh;
+    } else if (kind == CreatureGaitKind::Quadruped) {
+        // Trot-to-gallop phase transition above 320u/s:
+        const bool gallop = (spd > 320.0f);
+        g.stridePhaseRad[0] = basePh;
+        g.stridePhaseRad[1] = std::fmod(basePh + (gallop ? 0.65f : 3.14159265f), kTwoPi);
+        g.stridePhaseRad[2] = std::fmod(basePh + (gallop ? 3.14159265f : 3.14159265f), kTwoPi);
+        g.stridePhaseRad[3] = std::fmod(basePh + (gallop ? 3.80f : 0.0f), kTwoPi);
+    } else if (kind == CreatureGaitKind::Mammoth) {
+        // Heavy 4-beat amble (always 3 feet on ground for massive weight feel):
+        g.stridePhaseRad[0] = basePh;
+        g.stridePhaseRad[1] = std::fmod(basePh + 1.5707963f, kTwoPi);
+        g.stridePhaseRad[2] = std::fmod(basePh + 3.14159265f, kTwoPi);
+        g.stridePhaseRad[3] = std::fmod(basePh + 4.71238898f, kTwoPi);
+    } else {
+        // Dragon: synchronized wings [0,1] + counter-phase tail/hind balance [2,3]:
+        g.stridePhaseRad[0] = basePh;
+        g.stridePhaseRad[1] = basePh;
+        g.stridePhaseRad[2] = std::fmod(basePh + 2.3561945f, kTwoPi);
+        g.stridePhaseRad[3] = std::fmod(basePh + 3.9269908f, kTwoPi);
+    }
+    const float spdNorm = std::clamp(spd / 420.0f, 0.0f, 1.0f);
+    g.bodyBankRollRad = std::clamp(turn * spdNorm * 0.18f, -maxBank, maxBank);
+    g.spinePitchRad   = std::clamp(slope * 0.65f + (spd > 280.0f ? 0.11f : 0.0f), -0.55f, 0.55f);
+    g.verticalBobU    = (g.cadenceHz > 0.0f) ? (std::sin(basePh * 2.0f) * bobAmp * std::max(spdNorm, 0.25f)) : 0.0f;
+    return g;
+}
+
 }  // namespace raw::rt

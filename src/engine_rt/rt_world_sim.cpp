@@ -167,10 +167,14 @@ RawWorldSimTelemetry StepWorldSimSnapshot(const float playerPos[3], float gameHo
         out.squadMstRounds   = 0u;
     }
 
-    // 9. Wave 27 Synoptic Barometric Storm Simulator snapshot:
+    // 9. Wave 27/28 Synoptic Barometric Storm Simulator snapshot:
     const auto syn = StepSynopticWeatherSim(playerPos, gameHour * 3600.0f, gameHour);
-    out.synopticHpa     = syn.pressureHpa;
-    out.adaptiveQuality = 1.0f;
+    out.synopticHpa       = syn.pressureHpa;
+    out.adaptiveQuality   = 1.0f;
+    out.synopticCloud     = syn.cloudCover01;
+    out.synopticRain      = syn.rainRate01;
+    out.synopticSnow      = syn.snowRate01;
+    out.synopticLightning = syn.stormLightning;
     return out;
 }
 
@@ -271,7 +275,11 @@ void WorldSimOnPresent() {
     // Live Wave 27 Synoptic Barometric Weather + Oscillatory Extremum-Seeking GPU Budget Governor:
     g_simClockSec += tickDtSec;
     const auto synLive = StepSynopticWeatherSim(ev.playerPos, g_simClockSec, ev.gameHour);
-    snap.synopticHpa = synLive.pressureHpa;
+    snap.synopticHpa       = synLive.pressureHpa;
+    snap.synopticCloud     = synLive.cloudCover01;
+    snap.synopticRain      = synLive.rainRate01;
+    snap.synopticSnow      = synLive.snowRate01;
+    snap.synopticLightning = synLive.stormLightning;
     const float targetFrameSec = 1.0f / 120.0f;
     const float frameErr = (tickDtSec * 0.5f) - targetFrameSec;
     const float esCost = frameErr * frameErr * 10000.0f + (1.0f - g_gpuEsState.xHat) * 0.25f;

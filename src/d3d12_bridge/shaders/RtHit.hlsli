@@ -251,7 +251,12 @@ float3 shadeHit(float3 hp, float3 n, float3 albedo, float2 r, bool traceSun) {
     } else if (sunColour.w > 0.5f) {
         amb *= 0.6f;   // no cell yet: a typical sky share
     }
-    return albedo * (light + amb);
+    // Wave 28 6-Band Hero-Wavelength Spectral Secondary-Bounce GI Radiance:
+    // Off-screen walls, pine forests, red banners, timber & stone bounce physically saturated spectral color!
+    const float3 hitIrrad = light + amb;
+    const float warmH = saturate((hitIrrad.r - hitIrrad.b * 1.15f) / max(hitIrrad.r + hitIrrad.b + 0.05f, 0.05f));
+    const float hitTempK = (warmH > 0.12f) ? lerp(5800.0f, 2350.0f, saturate(warmH * 1.85f)) : 0.0f;
+    return spectralSurfaceResponse(albedo, hitIrrad, hitTempK, 0.78f);
 }
 
 // The light a hit sends back: the game's frame where the hit is on screen and not hidden; otherwise

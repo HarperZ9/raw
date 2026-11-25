@@ -228,26 +228,40 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                                         + float3(0.06f, 0.22f, 0.26f) * (oIII * 0.45f);
                     fullSky += nebCol * (mwBand * (1.0f - darkRift * 0.68f) * nightSkyW * 0.72f);
                 }
-                // Dual-Curtain Analytic 10-Layer Volumetric Nordic Aurora Borealis (557.7nm O-I green -> 427.8nm N2+ blue -> 630nm O-I crimson):
-                const float auroraVis = nightSkyW * (1.0f - saturate(clouds.x * 1.05f)) * smoothstep(0.05f, 0.28f, sDir.z) * smoothstep(-0.35f, 0.35f, sDir.y);
+                // Wave 28 Curved-Ionosphere Geomagnetic-Latitude Aurora (u/Hazmadd r/GraphicsProgramming physical geometry):
+                // Intersects each pixel ray with a curved 3D spherical ionosphere shell (R=6360 km, curtain 105..285 km)
+                // and places the auroral oval by the geomagnetic latitude of the 3D CURTAIN POINT each pixel hits (NOT the camera)!
+                // Automatically curves along the northern horizon from Whiterun and sweeps overhead near Winterhold/Dawnstar!
+                const float auroraVis = nightSkyW * (1.0f - saturate(clouds.x * 1.05f)) * smoothstep(0.02f, 0.16f, sDir.z);
                 if (auroraVis > 0.02f) {
+                    const float rEarthKm = 6360.0f;
+                    const float camLatDeg = 60.5f + clamp(camPosW.y / 65000.0f, -2.5f, 3.5f);   // Whiterun ~60.5N -> Winterhold ~63.5N
                     float3 aurSum = 0.0f.xxx;
                     [unroll] for (int ai = 0; ai < 10; ai++) {
-                        const float ah = 0.14f + float(ai) * 0.095f;
-                        const float2 ap = sDir.xy / max(sDir.z, 0.12f) * (1.30f + ah * 0.68f);
-                        const float nWarp = cNoise(float3(ap * 1.15f, camPosW.w * 0.032f));
-                        const float wave1 = sin(ap.x * 2.0f + camPosW.w * 0.072f + nWarp * 3.6f);
-                        const float band1 = exp(-abs(ap.y - 0.58f - wave1 * 0.46f) * 5.2f);
-                        const float wave2 = sin(ap.x * 1.45f - camPosW.w * 0.054f + nWarp * 2.8f + 1.9f);
-                        const float band2 = exp(-abs(ap.y - 1.12f - wave2 * 0.38f) * 4.4f) * 0.65f;
-                        const float rays = 0.42f + 0.58f * cNoise(float3(ap.x * 11.5f, ap.y * 2.0f, camPosW.w * 0.12f + ah * 2.6f));
-                        const float hT = saturate((ah - 0.14f) * 1.18f);
-                        const float3 aCol = hT < 0.58f
-                            ? lerp(float3(0.06f, 0.98f, 0.54f), float3(0.22f, 0.54f, 0.96f), hT / 0.58f)
-                            : lerp(float3(0.22f, 0.54f, 0.96f), float3(0.84f, 0.16f, 0.52f), (hT - 0.58f) / 0.42f);
-                        aurSum += aCol * ((band1 + band2) * rays * (1.0f - ah * 0.52f));
+                        const float hT = float(ai) / 9.0f;
+                        const float altKm = lerp(105.0f, 285.0f, hT);
+                        const float rShell = rEarthKm + altKm;
+                        const float bS = rEarthKm * sDir.z;
+                        const float tKm = sqrt(max(bS * bS + rShell * rShell - rEarthKm * rEarthKm, 0.0f)) - bS;
+                        // 3D hit point on the curved ionosphere shell in km (Y = North, X = East):
+                        const float2 hitKm = sDir.xy * tKm;
+                        const float curtainLat = camLatDeg + hitKm.y * (1.0f / 111.32f);
+                        const float curtainLon = hitKm.x * (1.0f / 55.0f);
+                        const float nWarp = cNoise(float3(curtainLon * 0.24f, curtainLat * 0.35f, camPosW.w * 0.024f));
+                        const float ovalLat1 = 66.2f + sin(curtainLon * 0.42f + camPosW.w * 0.055f + nWarp * 3.4f) * 1.85f;
+                        const float ovalLat2 = 68.8f + sin(curtainLon * 0.31f - camPosW.w * 0.042f + nWarp * 2.6f + 1.9f) * 1.45f;
+                        const float band1 = exp(-abs(curtainLat - ovalLat1) * 1.45f);
+                        const float band2 = exp(-abs(curtainLat - ovalLat2) * 1.15f) * 0.65f;
+                        // Vertical geomagnetic field-line striations (aligned with 3D shell longitude, crisp lower edge at 105 km!):
+                        const float rays = 0.38f + 0.62f * cNoise(float3(curtainLon * 3.2f, curtainLat * 0.65f, camPosW.w * 0.11f + hT * 2.2f));
+                        const float vertEnv = smoothstep(0.0f, 0.12f, hT) * (1.0f - hT * 0.62f);
+                        const float distFadeA = exp(-tKm * 0.00055f);
+                        const float3 aCol = hT < 0.56f
+                            ? lerp(float3(0.05f, 1.02f, 0.52f), float3(0.18f, 0.58f, 0.98f), hT / 0.56f)
+                            : lerp(float3(0.18f, 0.58f, 0.98f), float3(0.86f, 0.14f, 0.48f), (hT - 0.56f) / 0.44f);
+                        aurSum += aCol * ((band1 + band2) * rays * vertEnv * distFadeA);
                     }
-                    fullSky += aurSum * (auroraVis * 0.115f);
+                    fullSky += aurSum * (auroraVis * 0.145f);
                 }
                 // Natural shooting-star meteor streaks across clear dark northern skies (1 streak every ~9 sec):
                 const float metBucket = floor(camPosW.w * 0.11f);

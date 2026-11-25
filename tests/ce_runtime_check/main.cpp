@@ -765,6 +765,17 @@ void main() {
     const auto sLow = raw::rt::StepSynopticWeatherSim(southLow, 100.0f, 14.0f);
     Check(sawStorm && sawClear && sLow.snowLineAltU > 1800.0f && wsWave21.synopticHpa >= 972.0f && wsWave21.synopticHpa <= 1034.0f,
           "synoptic_barometric_storm_simulator");
+
+    // 16) Wave 28 Procedural Creature & Bipedal/Quadrupedal/Dragon Gait Kinematics
+    const auto bipedWalk = raw::rt::EvaluateCreatureGaitKinematics(raw::rt::CreatureGaitKind::Biped, 180.0f, 1.5f, 0.25f, 1.2f);
+    const auto horseGal  = raw::rt::EvaluateCreatureGaitKinematics(raw::rt::CreatureGaitKind::Quadruped, 480.0f, 2.2f, 0.15f, 1.2f);
+    const auto dragonFly = raw::rt::EvaluateCreatureGaitKinematics(raw::rt::CreatureGaitKind::Dragon, 520.0f, -2.5f, 0.0f, 1.2f);
+    const auto idleStop  = raw::rt::EvaluateCreatureGaitKinematics(raw::rt::CreatureGaitKind::Biped, 0.0f, 0.0f, 0.0f, 1.2f);
+    Check(bipedWalk.cadenceHz > 1.0f && bipedWalk.bodyBankRollRad > 0.02f && bipedWalk.spinePitchRad > 0.10f &&
+          horseGal.bodyBankRollRad > bipedWalk.bodyBankRollRad &&
+          std::fabs(dragonFly.stridePhaseRad[0] - dragonFly.stridePhaseRad[1]) < 1e-4f && dragonFly.bodyBankRollRad < -0.20f &&
+          idleStop.cadenceHz == 0.0f && idleStop.verticalBobU == 0.0f,
+          "creature_procedural_gait_kinematics");
 }
 
 }  // namespace

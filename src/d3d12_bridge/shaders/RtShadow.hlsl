@@ -19,6 +19,7 @@
 #define ATLAS_SLOT t9
 #include "LightingCommon.hlsli"
 #include "Weather.hlsli"
+#include "SpectralTransport.hlsli"
 
 Texture2D<float>  Depth  : register(t0);
 Texture2D<float4> Normal : register(t1);

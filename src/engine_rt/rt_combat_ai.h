@@ -318,4 +318,22 @@ struct SynopticWeatherState {
 };
 SynopticWeatherState StepSynopticWeatherSim(const float worldPos[3], float simTimeSec, float gameHour);
 
+// Wave 28 Procedural Creature & Character Locomotion / Gait Kinematics Engine:
+// Drives smooth biomechanical stride phase, turn-banking roll, slope-matched spine pitch & dragon wing-vortex timing.
+enum class CreatureGaitKind : uint8_t {
+    Biped     = 0,
+    Quadruped = 1,
+    Mammoth   = 2,
+    Dragon    = 3,
+};
+struct CreatureGaitOutput {
+    float stridePhaseRad[4] = {};   // FL, FR, RL, RR (or L/R legs + arms for Biped; wings/legs for Dragon)
+    float bodyBankRollRad   = 0.0f;
+    float spinePitchRad     = 0.0f;
+    float verticalBobU      = 0.0f;
+    float cadenceHz         = 0.0f;
+};
+CreatureGaitOutput EvaluateCreatureGaitKinematics(CreatureGaitKind kind, float moveSpeedU, float turnRateRadPerSec,
+                                                  float terrainSlopeRad, float simTimeSec);
+
 }  // namespace raw::rt

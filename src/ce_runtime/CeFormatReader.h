@@ -123,6 +123,13 @@ bool IndexPluginWorldFile(const std::string& path, WorldPluginIndex* out, std::s
 bool ParseBsaHeaderBytes(const uint8_t* bytes, size_t size, BsaHeader* out, std::string* outErr = nullptr);
 bool IndexBsaArchiveFile(const std::string& path, BsaArchiveIndex* out, std::string* outErr = nullptr);
 
+// Extracts and decompresses (zero-dependency LZ4 frame for BSA v105) a virtual file from an indexed BSA archive.
+bool ExtractBsaFile(const std::string& archivePath, const BsaArchiveIndex& index, const std::string& virtualPath,
+                    std::vector<uint8_t>* outBytes, std::string* outErr = nullptr);
+
+// Zero-dependency LZ4 frame decompressor (used by Skyrim SE/AE BSA v105 and BA2 compressed chunks).
+bool DecompressLz4Frame(const uint8_t* src, size_t srcSize, std::vector<uint8_t>* out, std::string* outErr = nullptr);
+
 // Parses a Fallout 4 / Fallout 76 / Starfield BA2 archive header (magic "BTDX") or indexes its name table.
 bool ParseBa2HeaderBytes(const uint8_t* bytes, size_t size, Ba2Header* out, std::string* outErr = nullptr);
 bool IndexBa2ArchiveFile(const std::string& path, Ba2ArchiveIndex* out, std::string* outErr = nullptr);

@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "../../src/ce_runtime/CeFormatReader.h"
+#include "../../src/ce_runtime/CeNifReader.h"
 #include "../../src/d3d12_bridge/RawAssetBridge.h"
 #include "../../src/d3d12_bridge/RawTextureBridge.h"
 #include "../../src/engine_rt/rt_zydis_offsets.h"
@@ -263,6 +264,32 @@ void TestWicMemoryAndRealSkyrimData() {
                     bi.header.version, bi.header.folderCount, bi.files.size(), bi.byPath.size());
         Check(ok && bi.header.version == 105 && bi.files.size() > 5000 && bi.byPath.size() == bi.files.size(),
               "real_skyrim_meshes0_bsa_index");
+        if (ok) {
+            // Find real .nif meshes inside Skyrim - Meshes0.bsa, decompress via zero-dep LZ4, decode BSTriShape -> RAW-MESH meshlets!
+            uint32_t nifTested = 0, nifPassed = 0, totalMeshlets = 0, totalTris = 0;
+            for (const auto& entry : bi.files) {
+                if (entry.virtualPath.size() < 5 || entry.virtualPath.compare(entry.virtualPath.size() - 4, 4, ".nif") != 0) continue;
+                if (entry.virtualPath.find("clutter/") == std::string::npos && entry.virtualPath.find("architecture/") == std::string::npos) continue;
+                std::vector<uint8_t> nifBytes;
+                if (!raw::ce::ExtractBsaFile(bsaPath, bi, entry.virtualPath, &nifBytes, &err)) continue;
+                raw::bridge::RawMeshAsset mesh;
+                raw::ce::NifSummary ns{};
+                ++nifTested;
+                if (raw::ce::LoadNifMeshBytes(nifBytes.data(), nifBytes.size(), entry.virtualPath, &mesh, &ns, &err)) {
+                    ++nifPassed;
+                    totalMeshlets += static_cast<uint32_t>(mesh.meshlets.size());
+                    totalTris += ns.totalTriangles;
+                }
+                if (nifPassed >= 12) break;
+            }
+            std::printf("INFO real BSA->LZ4->NIF->RAW-MESH: tested=%u decoded=%u totalTris=%u totalMeshlets=%u\n",
+                        nifTested, nifPassed, totalTris, totalMeshlets);
+            Check(nifPassed >= 10 && totalMeshlets >= 10 && totalTris > 100, "real_bsa_lz4_nif_to_raw_meshlets");
+            // Planted failing control: corrupt NIF bytes must fail cleanly
+            const uint8_t badNif[64] = {'B', 'A', 'D', 'N', 'I', 'F'};
+            raw::bridge::RawMeshAsset badMesh;
+            Check(!raw::ce::LoadNifMeshBytes(badNif, sizeof badNif, "bad.nif", &badMesh, nullptr, &err), "nif_planted_corrupt_reject");
+        }
     }
 }
 

@@ -836,6 +836,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
     add_executable(ce_runtime_check
         tests/ce_runtime_check/main.cpp
         src/ce_runtime/CeFormatReader.cpp
+        src/ce_runtime/CeNifReader.cpp
         src/d3d12_bridge/RawAssetBridge.cpp
         src/d3d12_bridge/RawTextureBridge.cpp
         src/engine_rt/rt_zydis_offsets.cpp)

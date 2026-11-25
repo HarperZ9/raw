@@ -12,6 +12,7 @@
 //   I                   : Ignite Live Directional Wildfire / Snowmelt / Black-Ice Field (RawWorldEcosystem!)
 //   V                   : Emit Loud Acoustic Shockwave Startling Wildlife Boids Skyward (RawWildlifeBoids!)
 //   E                   : Advance 9-Hold Economy +6h & Cycle Active Hold Market Readout (RawSettlementSim!)
+//   O                   : Resolve Highest-Urgency Emergent World Event or Poll +4h (RawWorldEventDirector!)
 //   F9 / H              : Toggle Live GPU Telemetry HUD & 64-Sample Frame-Time Sparkline (RawOverlayHost!)
 //   F12                 : Capture Instant 24-Bit .bmp Screenshot (raw_viewer_shot_<N>.bmp)
 //   1 / 2 / 3 / 4       : Live Season Switch (Spring / Summer / Autumn / Winter)
@@ -65,6 +66,7 @@
 #include "RawLightClusterHost.h"
 #include "RawVolumetricFroxelHost.h"
 #include "RawShadowPcssHost.h"
+#include "RawGtaoHost.h"
 #include "RawWeatherSim.h"
 #include "RawWorldShowcase.h"
 #include "RawDestructionEngine.h"
@@ -77,6 +79,7 @@
 #include "RawWorldEcosystem.h"
 #include "RawWildlifeBoids.h"
 #include "RawSettlementSim.h"
+#include "RawWorldEventDirector.h"
 #include "RawHydrologyGen.h"
 #include "RawAudioOutput.h"
 
@@ -433,6 +436,14 @@ public:
         if (!m_shadowPcssOk) {
             std::printf("[Viewer] RawShadowPcssHost warning: %s\n", err.c_str());
         }
+        err.clear();
+        GtaoDesc gtd{};
+        gtd.initialWidth  = std::max(1u, m_width / 2u);
+        gtd.initialHeight = std::max(1u, m_height / 2u);
+        m_gtaoOk = m_gtao.Init(m_dev.Get(), gtd, &err);
+        if (!m_gtaoOk) {
+            std::printf("[Viewer] RawGtaoHost warning: %s\n", err.c_str());
+        }
         UINT64 tsFreq = 0;
         if (SUCCEEDED(m_queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
             if (m_fluidOk)         m_fluidSim.SetTimestampFrequency(tsFreq);
@@ -443,10 +454,13 @@ public:
             if (m_lightClustersOk) m_lightClusters.SetTimestampFrequency(tsFreq);
             if (m_volFroxelsOk)    m_volFroxels.SetTimestampFrequency(tsFreq);
             if (m_shadowPcssOk)    m_shadowPcss.SetTimestampFrequency(tsFreq);
+            if (m_gtaoOk)          m_gtao.SetTimestampFrequency(tsFreq);
         }
         m_settlementSim.Reset(202653u);
         m_settlementTelemetry   = m_settlementSim.ComputeWorldTelemetry();
         m_initialSettlementGold = m_settlementTelemetry.totalGold;
+        m_eventDirector.Reset();
+        m_eventTelemetry        = m_eventDirector.ComputeTelemetry();
 
         // Enable real hydraulic & thermal erosion + D8 rivers for procedural frontier terrain!
         raw::worldgen::SetTerrainGenHydrologyErosionEnabled(true);
@@ -1323,6 +1337,101 @@ public:
         return p;
     }
 
+    raw::worldgen::WorldEventInputs BuildWorldEventInputs(const raw::worldgen::WeatherGpuUniforms& wGpu) const
+    {
+        raw::worldgen::WorldEventInputs ei{};
+        ei.settlement         = &m_settlementSim;
+        ei.ecosystem          = &m_ecosystem;
+        ei.wildlife           = &m_wildlife;
+        ei.weatherSim         = &m_weatherSim;
+        ei.timeOfDayHours     = TimePresetHours(m_timePreset);
+        ei.season             = static_cast<raw::worldgen::SeasonId>(static_cast<uint8_t>(m_season));
+        ei.auroraKp           = (m_timePreset == TimePreset::MidnightAurora) ? 6.5f : 2.5f;
+        ei.cloudCover01       = std::clamp(wGpu.cloudWind.z, 0.0f, 1.0f);
+        ei.blizzard01         = (m_weatherPreset == WeatherPreset::Blizzard) ? 0.85f : wGpu.weather.z;
+        ei.ecosystemHoldId    = raw::worldgen::HoldId::Falkreath;
+        ei.wildlifeHoldId     = raw::worldgen::HoldId::Whiterun;
+        ei.useWeatherSimClock = false;
+        return ei;
+    }
+
+    void ResolveOrPollWorldEvent()
+    {
+        const auto wGpu = m_weatherSim.GetGpuUniforms();
+        const auto& active = m_eventDirector.ActiveEvents();
+        if (!active.empty()) {
+            const raw::worldgen::WorldEvent* top = &active[0];
+            for (const auto& ev : active) {
+                if (ev.urgency01 > top->urgency01) top = &ev;
+            }
+            const uint32_t id = top->id;
+            const char* kindName = raw::worldgen::GetWorldEventKindName(top->kind);
+            const char* holdName = raw::worldgen::GetHoldName(top->holdId);
+            m_eventDirector.ResolveEvent(id);
+            m_eventTelemetry = m_eventDirector.ComputeTelemetry();
+            std::printf("[WorldEvent] Resolved #%u %s (%s) | active=%u spawned=%u resolved=%u expired=%u\n",
+                        id, kindName, holdName, m_eventTelemetry.activeCount,
+                        m_eventTelemetry.totalSpawned, m_eventTelemetry.totalResolved, m_eventTelemetry.totalExpired);
+        } else {
+            m_eventDirector.StepHours(4.0f, BuildWorldEventInputs(wGpu));
+            m_eventTelemetry = m_eventDirector.ComputeTelemetry();
+            const char* topName = m_eventDirector.ActiveEvents().empty()
+                                ? "None"
+                                : raw::worldgen::GetWorldEventKindName(m_eventDirector.ActiveEvents()[0].kind);
+            std::printf("[WorldEvent] Polled +4h | active=%u top=%s spawned=%u resolved=%u expired=%u\n",
+                        m_eventTelemetry.activeCount, topName, m_eventTelemetry.totalSpawned,
+                        m_eventTelemetry.totalResolved, m_eventTelemetry.totalExpired);
+        }
+    }
+
+    struct WorldEventProbe {
+        uint32_t activeCount       = 0u;
+        uint32_t totalSpawned      = 0u;
+        uint32_t totalResolved     = 0u;
+        uint32_t totalExpired      = 0u;
+        const char* topKindName    = "None";
+        const char* topHoldName    = "Whiterun";
+        bool     accountingExact   = false;
+        bool     allFinite         = true;
+    };
+
+    WorldEventProbe RunWorldEventSelfTest()
+    {
+        WorldEventProbe p{};
+        const auto wGpu = m_weatherSim.GetGpuUniforms();
+        const auto ei   = BuildWorldEventInputs(wGpu);
+        m_eventDirector.StepHours(2.0f, ei);
+        // Resolve the highest-urgency active event once to exercise full Spawn -> Resolve lifecycle
+        if (!m_eventDirector.ActiveEvents().empty()) {
+            const raw::worldgen::WorldEvent* top = &m_eventDirector.ActiveEvents()[0];
+            for (const auto& ev : m_eventDirector.ActiveEvents()) {
+                if (ev.urgency01 > top->urgency01) top = &ev;
+            }
+            m_eventDirector.ResolveEvent(top->id);
+        }
+        m_eventDirector.StepHours(1.0f, ei);
+        const auto tel = m_eventDirector.ComputeTelemetry();
+        m_eventTelemetry  = tel;
+        p.activeCount     = tel.activeCount;
+        p.totalSpawned    = tel.totalSpawned;
+        p.totalResolved   = tel.totalResolved;
+        p.totalExpired    = tel.totalExpired;
+        p.accountingExact = (tel.totalSpawned == (tel.activeCount + tel.totalResolved + tel.totalExpired));
+        p.allFinite       = std::isfinite(tel.highestUrgency);
+        if (!m_eventDirector.ActiveEvents().empty()) {
+            const raw::worldgen::WorldEvent* top = &m_eventDirector.ActiveEvents()[0];
+            for (const auto& ev : m_eventDirector.ActiveEvents()) {
+                if (ev.urgency01 > top->urgency01) top = &ev;
+                if (!std::isfinite(ev.urgency01) || !std::isfinite(ev.rewardGold) || !std::isfinite(ev.ageHours)) {
+                    p.allFinite = false;
+                }
+            }
+            p.topKindName = raw::worldgen::GetWorldEventKindName(top->kind);
+            p.topHoldName = raw::worldgen::GetHoldName(top->holdId);
+        }
+        return p;
+    }
+
     void ToggleAudio()
     {
         if (m_opt.headlessFrames > 0u) return; // Strictly OFF in headless CI mode
@@ -1490,6 +1599,8 @@ public:
         m_settlementSim.StepHours(dtClamped * (90.0f / 3600.0f),
                                   BuildSettlementWeatherMap(wGpu, m_season, m_weatherPreset));
         m_settlementTelemetry = m_settlementSim.ComputeWorldTelemetry();
+        m_eventDirector.StepHours(dtClamped * (90.0f / 3600.0f), BuildWorldEventInputs(wGpu));
+        m_eventTelemetry = m_eventDirector.ComputeTelemetry();
         if (m_audioEnabled && m_audio.IsRunning()) {
             PushAudioSceneState(wGpu);
         }
@@ -1978,6 +2089,26 @@ public:
                 D3D12_RESOURCE_STATE_COMMON);
         }
 
+        // Live GPU Jimenez GTAO + Bent Normals + Bilateral Denoise (RawGtaoHost — 10th Live GPU Solver!)
+        if (m_gtaoOk) {
+            GtaoParams gp{};
+            gp.fovYDeg           = 1.12f * (180.0f / 3.14159265f);
+            gp.nearZ             = nearZ;
+            gp.farZ              = farZ;
+            gp.effectRadius      = 120.0f;
+            gp.falloffStart      = 0.65f;
+            gp.aoPower           = 1.0f;
+            gp.maxScreenRadiusPx = 48.0f;
+            gp.depthEdgeScale    = 0.025f;
+            gp.numSlices         = 2u;
+            gp.numSteps          = 6u;
+            gp.temporalJitter    = static_cast<float>(m_frameCount & 63ull);
+            const uint32_t halfW = std::max(1u, m_width / 2u);
+            const uint32_t halfH = std::max(1u, m_height / 2u);
+            m_gtaoRan = m_gtao.Execute(m_dispCmd.Get(), m_depthIn.Get(), halfW, halfH, gp,
+                                       D3D12_RESOURCE_STATE_COMMON);
+        }
+
         if (m_radOk && m_giEnabled) {
             m_radianceHost.ExecuteScreenGI(m_dispCmd.Get(), m_hdrColor.Get(), m_depthIn.Get(),
                                            m_width, m_height, 0.16f);
@@ -2092,6 +2223,9 @@ public:
         float    froxelIntegrateMs    = 0.0f;
         bool     shadowPcssActive     = false;
         float    shadowPcssMs         = 0.0f;
+        bool     gtaoActive           = false;
+        float    gtaoMainMs           = 0.0f;
+        float    gtaoDenoiseMs        = 0.0f;
         uint32_t biomesFound          = 0u;
     };
 
@@ -2128,6 +2262,9 @@ public:
         out->froxelIntegrateMs = m_volFroxels.HasValidTiming() ? m_volFroxels.GetLastIntegrateMs() : 0.0f;
         out->shadowPcssActive = m_shadowPcssOk && m_shadowPcss.Ready() && m_shadowPcssRan;
         out->shadowPcssMs = m_shadowPcss.HasValidTiming() ? m_shadowPcss.GetLastPcssMs() : 0.0f;
+        out->gtaoActive = m_gtaoOk && m_gtao.Ready() && m_gtaoRan;
+        out->gtaoMainMs = m_gtao.HasValidTiming() ? m_gtao.GetLastMainMs() : 0.0f;
+        out->gtaoDenoiseMs = m_gtao.HasValidTiming() ? m_gtao.GetLastDenoiseMs() : 0.0f;
 
         const UINT hdrPitch  = (m_width * 8u + 255u) & ~255u;
         const UINT dispPitch = (m_width * 4u + 255u) & ~255u;
@@ -2269,6 +2406,7 @@ public:
         }
         m_cullInstUpload.Reset();
         m_cullInstBuf.Reset();
+        m_gtao.Shutdown();
         m_shadowPcss.Shutdown();
         m_shadowOutTex.Reset();
         m_shadowMapProxy.Reset();
@@ -2276,6 +2414,7 @@ public:
         m_lightClusters.Shutdown();
         m_gpuCull.Shutdown();
         m_wildlife.Clear();
+        m_eventDirector.Reset();
         m_overlayHost.Shutdown();
         m_xpbdSim.Shutdown();
         m_fluidComposite.Shutdown();
@@ -2348,12 +2487,23 @@ public:
                                   ? (m_volFroxels.GetLastInjectMs() + m_volFroxels.GetLastIntegrateMs())
                                   : 0.0f;
         const float pcssMs        = m_shadowPcss.HasValidTiming() ? m_shadowPcss.GetLastPcssMs() : 0.0f;
+        const float gtaoMs        = m_gtao.HasValidTiming() ? (m_gtao.GetLastMainMs() + m_gtao.GetLastDenoiseMs()) : 0.0f;
         const auto activeHid      = static_cast<raw::worldgen::HoldId>(m_activeHoldIdx % static_cast<uint32_t>(raw::worldgen::kHoldCount));
         const auto* activeHold    = m_settlementSim.GetHold(activeHid);
         const float holdGrain     = activeHold ? activeHold->price[static_cast<size_t>(raw::worldgen::CommodityKind::Grain)] : 0.0f;
-        char buf[1024]{};
+        char evBuf[96]{};
+        if (!m_eventDirector.ActiveEvents().empty()) {
+            const auto& ev0 = m_eventDirector.ActiveEvents()[0];
+            std::snprintf(evBuf, sizeof(evBuf), " | Ev:%u(%s@%s)",
+                          m_eventTelemetry.activeCount,
+                          raw::worldgen::GetWorldEventKindName(ev0.kind),
+                          raw::worldgen::GetHoldName(ev0.holdId));
+        } else {
+            std::snprintf(evBuf, sizeof(evBuf), " | Ev:0");
+        }
+        char buf[1152]{};
         std::snprintf(buf, sizeof(buf),
-                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms PCSS:%.3fms HUD:%.3fms | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u | %s:%.1fg Car:%u(Snw:%u) Scarce:%s%s%s | Shards:%u",
+                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms PCSS:%.3fms GTAO:%.3fms HUD:%.3fms | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u | %s:%.1fg Car:%u(Snw:%u) Scarce:%s%s%s%s | Shards:%u",
                       m_walkMode ? "WALK" : "FLY",
                       fps, m_lastDrawnMeshlets, m_meshHost.TerrainUsesMeshShaders() ? "AS+MS" : "VS+PS",
                       locBuf, TimePresetName(m_timePreset), ActiveWeatherDisplayName(),
@@ -2365,6 +2515,7 @@ public:
                       lclustTotalMs,
                       froxTotalMs,
                       pcssMs,
+                      gtaoMs,
                       m_overlayHost.HasValidTiming() ? m_overlayHost.GetLastOverlayMs() : 0.0f,
                       m_ecoTelemetry.activeFireCells,
                       static_cast<double>(m_ecoTelemetry.totalSnowVolumeM3),
@@ -2377,7 +2528,7 @@ public:
                       m_settlementTelemetry.totalCaravansActive,
                       m_settlementTelemetry.snowboundCaravans,
                       raw::worldgen::GetHoldName(m_settlementTelemetry.mostScarceHold),
-                      hitBuf, navBuf,
+                      evBuf, hitBuf, navBuf,
                       m_activeShards);
         return buf;
     }
@@ -2827,35 +2978,38 @@ private:
                              ? (m_volFroxels.GetLastInjectMs() + m_volFroxels.GetLastIntegrateMs())
                              : 0.0f;
         const float pcssMs   = m_shadowPcss.HasValidTiming() ? m_shadowPcss.GetLastPcssMs() : 0.0f;
+        const float gtaoMs   = m_gtao.HasValidTiming() ? (m_gtao.GetLastMainMs() + m_gtao.GetLastDenoiseMs()) : 0.0f;
         std::memset(outHud.lines[2], 0, sizeof(outHud.lines[2]));
         std::snprintf(outHud.lines[2], sizeof(outHud.lines[2]), "GPU F:%.2f W:%.2f GI:%.2f XP:%.2f FX:%.2f PS:%.2f",
                       static_cast<double>(snap.fireMs), static_cast<double>(snap.waterMs),
                       static_cast<double>(snap.giMs), static_cast<double>(snap.xpbdMs),
                       static_cast<double>(froxMs), static_cast<double>(pcssMs));
         std::memset(outHud.lines[3], 0, sizeof(outHud.lines[3]));
-        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "CL:%.3f LC:%.3f(%uL) HUD:%.3fMS | GI:%s",
+        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "GTAO:%.3f CL:%.3f LC:%.3f(%uL) HUD:%.3f",
+                      static_cast<double>(gtaoMs),
                       static_cast<double>(hizMs + cullMs),
                       static_cast<double>(lclustMs),
                       m_lastClusterLightCount,
-                      static_cast<double>(snap.overlayMs),
-                      snap.giEnabled ? "ON" : "OFF");
+                      static_cast<double>(snap.overlayMs));
 
+        const char* topEvName = m_eventDirector.ActiveEvents().empty()
+                              ? "NONE"
+                              : raw::worldgen::GetWorldEventKindName(m_eventDirector.ActiveEvents()[0].kind);
         std::memset(outHud.lines[6], 0, sizeof(outHud.lines[6]));
-        std::snprintf(outHud.lines[6], sizeof(outHud.lines[6]), "ECO F:%u SN:%.0f ICE:%u | FAUNA:%u R:%u S:%u",
+        std::snprintf(outHud.lines[6], sizeof(outHud.lines[6]), "ECO F:%u FAUNA:%u S:%u | EV:%u %.14s",
                       m_ecoTelemetry.activeFireCells,
-                      static_cast<double>(m_ecoTelemetry.totalSnowVolumeM3),
-                      m_ecoTelemetry.blackIceCells,
                       m_wildlifeTelemetry.activeAgents,
-                      m_wildlifeTelemetry.roostingCount,
-                      m_wildlifeTelemetry.startledCount);
-        outHud.lineColorTag[6] = (m_ecoTelemetry.activeFireCells > 0u || m_wildlifeTelemetry.startledCount > 0u)
+                      m_wildlifeTelemetry.startledCount,
+                      m_eventTelemetry.activeCount,
+                      topEvName);
+        outHud.lineColorTag[6] = (m_ecoTelemetry.activeFireCells > 0u || m_eventTelemetry.activeCount > 0u)
                                ? kOverlayColorAmber : kOverlayColorMuted;
 
         const auto activeHid = static_cast<raw::worldgen::HoldId>(m_activeHoldIdx % static_cast<uint32_t>(raw::worldgen::kHoldCount));
         const auto* activeH  = m_settlementSim.GetHold(activeHid);
         const float hGrain   = activeH ? activeH->price[static_cast<size_t>(raw::worldgen::CommodityKind::Grain)] : 0.0f;
         std::memset(outHud.lines[7], 0, sizeof(outHud.lines[7]));
-        std::snprintf(outHud.lines[7], sizeof(outHud.lines[7]), "ECON %s %.0fG | CAR:%u(S:%u) SC:%s | N I V E",
+        std::snprintf(outHud.lines[7], sizeof(outHud.lines[7]), "ECON %s %.0fG | CAR:%u(S:%u) SC:%s | O=EV",
                       raw::worldgen::GetHoldName(activeHid),
                       static_cast<double>(hGrain),
                       m_settlementTelemetry.totalCaravansActive,
@@ -3255,6 +3409,8 @@ private:
     bool          m_volFroxelsOk = false;
     bool          m_shadowPcssOk = false;
     bool          m_shadowPcssRan = false;
+    bool          m_gtaoOk = false;
+    bool          m_gtaoRan = false;
     std::string   m_adapterName;
 
     ComPtr<IDXGIFactory4>              m_factory;
@@ -3296,6 +3452,7 @@ private:
     uint32_t                           m_lastClusterLightCount = 0u;
     RawVolumetricFroxelHost            m_volFroxels;
     RawShadowPcssHost                  m_shadowPcss;
+    RawGtaoHost                        m_gtao;
     ComPtr<ID3D12Resource>             m_shadowOutTex;
     ComPtr<ID3D12Resource>             m_shadowMapProxy;
     float                              m_prevWorldToClip[16] = {};
@@ -3329,6 +3486,8 @@ private:
     raw::worldgen::SettlementTelemetry    m_settlementTelemetry{};
     double                                m_initialSettlementGold = 0.0;
     uint32_t                              m_activeHoldIdx = 0u;
+    raw::worldgen::RawWorldEventDirector  m_eventDirector;
+    raw::worldgen::EventDirectorTelemetry m_eventTelemetry{};
     std::vector<raw::worldgen::SquadAgent> m_tacticalSquad;
     std::vector<raw::worldgen::TacticalSteeringOutput> m_lastSquadOut;
     raw::worldgen::NavPathResult          m_lastNavPath{};
@@ -3445,6 +3604,7 @@ LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     case 'I': st->viewer->IgniteWildfireAtLookHit(); break;
                     case 'V': st->viewer->TriggerWildlifeStartle(); break;
                     case 'E': st->viewer->AdvanceEconomyAndCycleHold(); break;
+                    case 'O': st->viewer->ResolveOrPollWorldEvent(); break;
                     case 'H':
                     case VK_F9: st->viewer->ToggleHud(); break;
                     case VK_F12: st->viewer->CaptureScreenshotBmp(); break;
@@ -3520,7 +3680,7 @@ int main(int argc, char** argv)
     if (opt.showHelp) {
         std::printf(
             "RAW Interactive Real-Time Win32/DX12 Standalone Engine Viewer\n"
-            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, V startle wildlife, E economy +6h/cycle hold, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
+            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, V startle wildlife, E economy +6h/cycle hold, O resolve/poll world event, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
             "CLI: [--headless-frames N] [--warp] [--debug] [--width W] [--height H] [--esm <Skyrim.esm>]\n");
         return 0;
     }
@@ -3548,12 +3708,14 @@ int main(int argc, char** argv)
         RawEngineViewer::EcosystemProbe ecoProbe{};
         RawEngineViewer::WildlifeProbe wildlifeProbe{};
         RawEngineViewer::SettlementProbe settlementProbe{};
+        RawEngineViewer::WorldEventProbe eventProbe{};
         bool teleportedToWhiterun = false;
         for (uint32_t f = 0; f < opt.headlessFrames; ++f) {
             if (f == 0u) {
                 ecoProbe        = viewer.RunEcosystemSelfTest();
                 wildlifeProbe   = viewer.RunWildlifeSelfTest();
                 settlementProbe = viewer.RunSettlementSelfTest();
+                eventProbe      = viewer.RunWorldEventSelfTest();
                 if (opt.startEsm) {
                     riverwoodStats = viewer.GetTamrielStats();
                     riverwoodPhys = viewer.RunPhysicsWalkSelfTest();
@@ -3581,7 +3743,7 @@ int main(int argc, char** argv)
 
         RawEngineViewer::HeadlessAudit audit{};
         const bool rbOk = viewer.ReadbackHeadlessAudit(&audit);
-        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), pcss=%s (%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
+        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), pcss=%s (%.4fms), gtao=%s (main=%.4fms, den=%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
                     audit.usedMeshShaders ? "AS+MS+PS" : "VS+PS",
                     audit.drawnMeshlets, audit.activeShards, audit.biomesFound,
                     audit.radianceActive ? "ON" : "off", audit.radianceGiMs,
@@ -3591,6 +3753,7 @@ int main(int argc, char** argv)
                     audit.lightClustersActive ? "ON" : "off", audit.lightClusterCount, audit.lightClusterBuildMs, audit.lightClusterAssignMs,
                     audit.volFroxelsActive ? "ON" : "off", audit.froxelInjectMs, audit.froxelIntegrateMs,
                     audit.shadowPcssActive ? "ON" : "off", audit.shadowPcssMs,
+                    audit.gtaoActive ? "ON" : "off", audit.gtaoMainMs, audit.gtaoDenoiseMs,
                     audit.overlayActive ? "ON" : "off", audit.overlayMs, audit.hudNonZeroPx,
                     audit.hdrLitPixels, audit.hdrNanInf,
                     audit.dispNonZeroPx, audit.dispMeanLuma, audit.dispStdDevLuma);
@@ -3605,6 +3768,9 @@ int main(int argc, char** argv)
                     settlementProbe.initialGold, settlementProbe.finalGold, int(settlementProbe.goldConserved),
                     settlementProbe.activeCaravans, settlementProbe.snowboundCaravans, settlementProbe.deliveriesCompleted,
                     settlementProbe.meanPriceIndex, settlementProbe.scarceHoldName, int(settlementProbe.allFinite));
+        std::printf("       World Events: active=%u spawned=%u resolved=%u expired=%u top=%s@%s exact=%d finite=%d\n",
+                    eventProbe.activeCount, eventProbe.totalSpawned, eventProbe.totalResolved, eventProbe.totalExpired,
+                    eventProbe.topKindName, eventProbe.topHoldName, int(eventProbe.accountingExact), int(eventProbe.allFinite));
         check(audit.xpbdActive && audit.xpbdParticles == 4096u && std::isfinite(audit.xpbdStepMs) && audit.xpbdStepMs >= 0.0f,
               "Live GPU XPBD soft-body/hair/bush solver (4,096 particles / 256 chains) stepped cleanly");
         check(audit.gpuCullActive && audit.gpuHiZMips > 1u &&
@@ -3621,12 +3787,17 @@ int main(int argc, char** argv)
               "Live GPU 160x90x64 3D Volumetric Froxels (RawVolumetricFroxelHost) executed cleanly with finite timings");
         check(audit.shadowPcssActive && std::isfinite(audit.shadowPcssMs) && audit.shadowPcssMs >= 0.0f,
               "Live GPU Variable-Penumbra PCSS Contact-Hardening Shadows (RawShadowPcssHost) executed cleanly");
+        check(audit.gtaoActive && std::isfinite(audit.gtaoMainMs) && audit.gtaoMainMs >= 0.0f &&
+              std::isfinite(audit.gtaoDenoiseMs) && audit.gtaoDenoiseMs >= 0.0f,
+              "Live GPU Jimenez GTAO + Bent Normals (RawGtaoHost — 10th GPU Solver) executed cleanly");
         check(ecoProbe.ignitedCells > 0u && ecoProbe.activeFireCells > 0u && ecoProbe.allFinite,
               "Live Cellular Ecosystem (RawWorldEcosystem) ignited wildfire, stepped 10x with active fire & finite telemetry");
         check(wildlifeProbe.activeAgents == 128u && wildlifeProbe.startledCount > 0u && wildlifeProbe.allFinite,
               "Live 3D Wildlife Boids (RawWildlifeBoids, 128 agents) flushed skyward on LoudNoise stimulus with zero NaNs");
         check(settlementProbe.goldConserved && settlementProbe.activeCaravans > 0u && settlementProbe.allFinite,
               "Live 9-Hold Caravan & Economy Sim (RawSettlementSim) stepped 24h with exact gold conservation & zero NaNs");
+        check(eventProbe.totalSpawned > 0u && eventProbe.accountingExact && eventProbe.allFinite,
+              "Live Emergent World-Event Director (RawWorldEventDirector) spawned/resolved events with exact lifecycle accounting");
         check(audit.overlayActive && std::isfinite(audit.overlayMs) && audit.overlayMs >= 0.0f && audit.hudNonZeroPx > 500u,
               "Live GPU Telemetry & Sparkline HUD (RawOverlayHost) rendered cleanly onto LDR display buffer");
         if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {

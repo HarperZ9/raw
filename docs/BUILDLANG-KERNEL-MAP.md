@@ -1,6 +1,6 @@
-# RAW Engine BuildLang Core Kernel Map (7 Modules, 42 Verified Kernels)
+# RAW Engine BuildLang Core Kernel Map (8 Modules, 48 Verified Kernels)
 
-This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, and regional economy kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**7 modules, 42 verified kernels**):
+This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, regional economy, and GPU pipeline kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**8 modules, 48 verified kernels**):
 
 1. [`native/bld/RawPhysicsKernels.bld`](../native/bld/RawPhysicsKernels.bld) (6 core scalar physics & anti-exploit kernels)
 2. [`native/bld/RawAtmoWeather.bld`](../native/bld/RawAtmoWeather.bld) (7 planetary atmosphere, orbital solar, snowpack ODE & black-ice kernels)
@@ -9,10 +9,11 @@ This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar 
 5. [`native/bld/RawFluidDynamics.bld`](../native/bld/RawFluidDynamics.bld) (6 buoyancy, shallow-water, CFL, froxel scattering, Sabine-Eyring RT60 & PCSS kernels)
 6. [`native/bld/RawCombatAi.bld`](../native/bld/RawCombatAi.bld) (6 timed-parry, arrow ballistics, ragdoll kinetic cap, block mitigation, stealth & 3D Octile A* kernels)
 7. [`native/bld/RawEconomySim.bld`](../native/bld/RawEconomySim.bld) (6 9-hold scarcity pricing, Rothermel wildfire, blizzard caravan speed, cold-water breath, wet-elemental & GTAO kernels)
+8. [`native/bld/RawGpuPipeline.bld`](../native/bld/RawGpuPipeline.bld) (6 froxel Z-slice, cascade texel-snap, SSR edge fade, PI frame governor, clustered sphere-AABB & event bounty kernels)
 
 ## Toolchain Verification Receipts (`buildc 1.4.0`)
 
-Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **7/7 `check` PASS**, **7/7 `run` PASS**):
+Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **8/8 `check` PASS**, **8/8 `run` PASS**):
 
 ### Module 1: `native/bld/RawPhysicsKernels.bld`
 - `buildc check`: Exit Code `0` (`Lexing... OK (763 tokens)`, `Parsing... OK (9 items)`, `Type checking... OK`, `No errors found`)
@@ -97,7 +98,19 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
   gtao_slice_vis(open hemi) = 1 | (occluded corner) = 0.22984884706593012
   ```
 
-## Kernel-by-Kernel Mapping (42 Kernels)
+### Module 8: `native/bld/RawGpuPipeline.bld`
+- `buildc check`: Exit Code `0` (`Lexing... OK (983 tokens)`, `Parsing... OK (12 items)`, `Type checking... OK`, `No errors found`)
+- `buildc run`: Exit Code `0`
+  ```text
+  froxel_log_slice(24) = 0 | (1000) = 31.466387455277125
+  cascade_texel_snap(+12.37, 0.25) = 12.25 | (-12.37, 0.25) = -12.5
+  ssr_edge_fade(center) = 1 | (edge 0.03) = 0.15625
+  frame_governor_step(22ms over) = 0.92000065999868 | (11ms under) = 0.8656000791998416
+  sphere_aabb_dist_sq(inside) = 0 | (outside 3,0,4) = 25
+  event_scarcity_reward(150g, 1.8x, urg=0.75) = 349.08750000000003
+  ```
+
+## Kernel-by-Kernel Mapping (48 Kernels)
 
 ### 1. Core Physics Kernels (`native/bld/RawPhysicsKernels.bld`)
 
@@ -176,10 +189,21 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
 | 41 | `elemental_wet_mult(base_dmg, wetness01, elem_kind)` | `rt_magic_physics.cpp`, `RawSpells3D.hlsli` | Shock `1+0.45*w`, Frost `1+0.30*w`, Fire `1-0.25*w` | Soaked `50` dmg -> Shock `72.5`, Fire `37.5` |
 | 42 | `gtao_slice_vis(h1_rad, h2_rad, n_rad)` | `src/d3d12_bridge/shaders/RawGtaoSim.hlsl` | `0.25 * sum(-cos(2*h_i - n) + cos(n) + 2*h_i*sin(n))` | Open hemisphere `1.000`; occluded corner `[-0.5, 0.5]` = `0.2298` |
 
-## Reproducing All 7 BuildLang Module Checks
+### 8. GPU Pipeline and Frame-Pacing Kernels (`native/bld/RawGpuPipeline.bld`)
+
+| # | BuildLang Function | Engine C++ / HLSL Counterpart | Governing Equation | Verified Invariant |
+| --- | --- | --- | --- | --- |
+| 43 | `froxel_log_slice(view_z, z_near, z_far, num_slices)` | `LightingCommon.hlsli` (L64-L67), `RawVolumetricFroxelSim.hlsl` | `clamp(log(z / z_near) / log(z_far / z_near), 0, 1) * (N - 1)` | Exact `0.0` at `z_near=24`; logarithmic mid-slice `31.47` at `z=1000` |
+| 44 | `cascade_texel_snap(coord_ls, texel_size_ls)` | `src/d3d12_bridge/RawShadowPcssHost.cpp` | `floor(coord / texel_size) * texel_size` | Exact texel snapping: `+12.37 -> +12.25`, `-12.37 -> -12.50` (`0.25` step) |
+| 45 | `ssr_edge_fade(u, v, margin)` | `RawSsrSim.hlsl`, `EnvCubePass.hlsl` | `smoothstep(0, margin, min(min(u,1-u), min(v,1-v)))` | Center `(0.5,0.5)` = `1.0`; border `(0.03,0.5)` fades smoothly to `0.1563` |
+| 46 | `frame_governor_step(cur_scale, frame_ms, target_ms, kp_down, kp_up)` | `src/engine_rt/rt_frame_governor.cpp` | Asymmetric PI step clamped `[0.50, 1.00]` (`kp_down > kp_up`) | `22 ms` drops `1.00 -> 0.920`; `11 ms` gently lifts `0.85 -> 0.866` |
+| 47 | `sphere_aabb_dist_sq(cx, cy, cz, min_x..max_z)` | `src/d3d12_bridge/shaders/RawLightClusterSim.hlsl` | Exact Arvo squared distance from clamped AABB point | Inside box = `0.0`; outside `(3,0,4)` = exact `25.0` (`5^2`) |
+| 48 | `event_scarcity_reward(base_gold, price_ratio, urgency01)` | `src/worldgen/RawWorldEventDirector.cpp` | `base * (0.75 + 0.55*price_ratio) * (1 + 0.45*urgency)` | `150g` base at `1.8x` scarcity & `0.75` urgency = `349.1g` |
+
+## Reproducing All 8 BuildLang Module Checks
 
 ```powershell
-foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim')) {
+foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim','RawGpuPipeline')) {
     buildc check "E:\wt\raw-rt9\native\bld\$m.bld"
     buildc run   "E:\wt\raw-rt9\native\bld\$m.bld"
 }

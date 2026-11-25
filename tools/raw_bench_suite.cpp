@@ -1,5 +1,5 @@
 // tools/raw_bench_suite.cpp: Studio-Grade Automated GPU/CPU Benchmark & Visual Invariant Suite for RAW.
-// Benchmarks all 12 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
+// Benchmarks all 13 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
 //   1. GPU 64^3 Navier-Stokes Fire/Smoke + 256^2 SWE Water (RawFluidSimHost)
 //   2. GPU 4-Cascade Radiance Cascades GI (RawRadianceHost)
 //   3. Procedural PBR Texture Forge (RawTextureForge, all 8 seamless PBR sets)
@@ -12,6 +12,7 @@
 //  10. GPU 16x9x24 3D Clustered 1,024-Light Grid Assignment (RawLightClusterHost)
 //  11. GPU 160x90x64 3D Volumetric Froxel Fog, Mie Scattering & Temporal Reprojection (RawVolumetricFroxelHost)
 //  12. GPU Variable-Penumbra PCSS Contact-Hardening Shadows & Texel-Snapped Cascade (RawShadowPcssHost)
+//  13. GPU Jimenez GTAO + Unoccluded Bent Normals & Bilateral Denoise (RawGtaoHost)
 //
 // CLI:
 //   raw_bench_suite [--warp] [--quick] [--frames N] [--json <path>] [--esm <path>] [--bsa <path>] [--no-debug-layer]
@@ -36,6 +37,7 @@
 #include "../src/d3d12_bridge/RawLightClusterHost.h"
 #include "../src/d3d12_bridge/RawVolumetricFroxelHost.h"
 #include "../src/d3d12_bridge/RawShadowPcssHost.h"
+#include "../src/d3d12_bridge/RawGtaoHost.h"
 #include "../src/materials/RawTextureForge.h"
 #include "../src/audio/RawAudioDsp.h"
 #include "../src/worldgen/RawDestructionEngine.h"
@@ -903,6 +905,24 @@ struct ShadowPcssBenchResult {
     uint32_t    softBandPx      = 0u;
     uint32_t    nanInfCount     = 0u;
     float       hostPcssMs      = 0.0f;
+    std::string note;
+};
+
+struct GtaoBenchResult {
+    bool        passed          = false;
+    Percentiles totalGpuMs{};
+    Percentiles cpuRecordMs{};
+    uint32_t    width           = 960u;
+    uint32_t    height          = 540u;
+    float       hostMainMs      = 0.0f;
+    float       hostDenoiseMs   = 0.0f;
+    float       openFloorVis    = 0.0f;
+    float       openFloorBentY  = 0.0f;
+    float       creviceVis      = 1.0f;
+    float       creviceBentX    = 0.0f;
+    float       pitVis          = 1.0f;
+    uint32_t    nanCount        = 0u;
+    uint32_t    skyBadCount     = 0u;
     std::string note;
 };
 
@@ -2547,6 +2567,315 @@ ShadowPcssBenchResult RunShadowPcssBenchmark(BenchDx12Rig& rig, uint32_t warmupF
 }
 
 // ----------------------------------------------------------------------------
+// 13. GPU Jimenez GTAO + Unoccluded Bent Normals & Bilateral Denoise (RawGtaoHost)
+// ----------------------------------------------------------------------------
+GtaoBenchResult RunGtaoBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames, uint32_t measuredFrames)
+{
+    GtaoBenchResult res{};
+    constexpr uint32_t kW = 960u;
+    constexpr uint32_t kH = 540u;
+    res.width  = kW;
+    res.height = kH;
+
+    raw::bridge::RawGtaoHost host;
+    raw::bridge::GtaoDesc desc{};
+    desc.initialWidth  = kW;
+    desc.initialHeight = kH;
+    std::string err;
+    if (!host.Init(rig.dev.Get(), desc, &err)) {
+        res.note = "RawGtaoHost::Init failed: " + err;
+        return res;
+    }
+    host.SetTimestampFrequency(rig.tsFreqHz);
+
+    raw::bridge::GtaoParams gp{};
+    gp.fovYDeg           = 60.0f;
+    gp.nearZ             = 0.5f;
+    gp.farZ              = 500.0f;
+    gp.effectRadius      = 1.6f;
+    gp.falloffStart      = 0.65f;
+    gp.aoPower           = 1.0f;
+    gp.maxScreenRadiusPx = 128.0f;
+    gp.depthEdgeScale    = 0.025f;
+    gp.numSlices         = 2u;
+    gp.numSteps          = 6u;
+    gp.temporalJitter    = 0.0f;
+
+    // Build ray-traced exact 3D view-space synthetic depth buffer (Standard-Z 0=near, 1=far):
+    // open floor Y=-2.0, 90-deg +X wall X>=1.0, recessed pit at (-1.2, 4.7) r=0.90 bottom Y=-2.55 with 3-sided stone rim, sky top 64 rows.
+    std::vector<float> depthImg(static_cast<size_t>(kW) * kH, 1.0f);
+    const float aspect = static_cast<float>(kW) / static_cast<float>(kH);
+    const float tanY   = std::tan(0.5f * gp.fovYDeg * 3.14159265359f / 180.0f);
+    const float tanX   = tanY * aspect;
+    const float q      = gp.farZ / (gp.farZ - gp.nearZ);
+    auto linearToStdZ = [&](float vz) -> float {
+        return std::clamp(q * (1.0f - gp.nearZ / vz), 0.0f, 0.99997f);
+    };
+    auto slabHit = [](float dir, float bmin, float bmax, float& tMin, float& tMax) -> bool {
+        if (std::fabs(dir) < 1.0e-7f) return (0.0f >= bmin && 0.0f <= bmax);
+        float t0 = bmin / dir;
+        float t1 = bmax / dir;
+        if (t0 > t1) std::swap(t0, t1);
+        tMin = std::max(tMin, t0);
+        tMax = std::min(tMax, t1);
+        return tMin <= tMax;
+    };
+
+    constexpr float kFloorY  = -2.0f;
+    constexpr float kPitX    = -1.2f;
+    constexpr float kPitZ    =  4.7f;
+    constexpr float kPitR    =  0.90f;
+    constexpr float kPitBotY = -2.55f;
+
+    for (uint32_t y = 0u; y < kH; ++y) {
+        for (uint32_t x = 0u; x < kW; ++x) {
+            const float uvX  = (static_cast<float>(x) + 0.5f) / static_cast<float>(kW);
+            const float uvY  = (static_cast<float>(y) + 0.5f) / static_cast<float>(kH);
+            const float rx   = (uvX * 2.0f - 1.0f) * tanX;
+            const float ry   = (1.0f - uvY * 2.0f) * tanY;
+            const float rz   = 1.0f;
+            float bestT = 1.0e9f;
+
+            if (ry < -1.0e-5f) {
+                const float tFloor = kFloorY / ry;
+                if (tFloor > gp.nearZ && tFloor < 45.0f) {
+                    const float fx = rx * tFloor;
+                    const float fz = rz * tFloor;
+                    const float dx = fx - kPitX;
+                    const float dz = fz - kPitZ;
+                    if ((dx * dx + dz * dz) >= (kPitR * kPitR)) {
+                        bestT = std::min(bestT, tFloor);
+                    } else {
+                        const float tBot = kPitBotY / ry;
+                        if (tBot > tFloor) {
+                            const float bx = rx * tBot - kPitX;
+                            const float bz = rz * tBot - kPitZ;
+                            if (bx * bx + bz * bz <= kPitR * kPitR) bestT = std::min(bestT, tBot);
+                        }
+                        const float a = rx * rx + 1.0f;
+                        const float b = -2.0f * (rx * kPitX + kPitZ);
+                        const float c = kPitX * kPitX + kPitZ * kPitZ - kPitR * kPitR;
+                        const float disc = b * b - 4.0f * a * c;
+                        if (disc >= 0.0f) {
+                            const float tCyl = (-b + std::sqrt(disc)) / (2.0f * a);
+                            if (tCyl > tFloor) {
+                                const float cy = ry * tCyl;
+                                if (cy <= kFloorY && cy >= kPitBotY) bestT = std::min(bestT, tCyl);
+                            }
+                        }
+                    }
+                }
+            }
+
+            {
+                float t0 = gp.nearZ, t1 = 1.0e6f;
+                if (slabHit(rx, 1.0f, 5.0f, t0, t1) && slabHit(ry, kFloorY, 1.2f, t0, t1) &&
+                    slabHit(rz, 3.0f, 14.0f, t0, t1) && t0 > gp.nearZ) {
+                    bestT = std::min(bestT, t0);
+                }
+            }
+            {
+                float t0 = gp.nearZ, t1 = 1.0e6f;
+                if (slabHit(rx, -2.2f, -0.2f, t0, t1) && slabHit(ry, kPitBotY, -1.35f, t0, t1) &&
+                    slabHit(rz, 5.55f, 5.95f, t0, t1) && t0 > gp.nearZ) {
+                    bestT = std::min(bestT, t0);
+                }
+                t0 = gp.nearZ; t1 = 1.0e6f;
+                if (slabHit(rx, -2.2f, -1.75f, t0, t1) && slabHit(ry, kPitBotY, -1.35f, t0, t1) &&
+                    slabHit(rz, 4.2f, 5.95f, t0, t1) && t0 > gp.nearZ) {
+                    bestT = std::min(bestT, t0);
+                }
+                t0 = gp.nearZ; t1 = 1.0e6f;
+                if (slabHit(rx, -0.65f, -0.2f, t0, t1) && slabHit(ry, kPitBotY, -1.35f, t0, t1) &&
+                    slabHit(rz, 4.2f, 5.95f, t0, t1) && t0 > gp.nearZ) {
+                    bestT = std::min(bestT, t0);
+                }
+            }
+
+            if (y < 64u) bestT = 1.0e9f;
+            depthImg[static_cast<size_t>(y) * kW + x] = (bestT < 1.0e8f) ? linearToStdZ(bestT) : 1.0f;
+        }
+    }
+
+    ComPtr<ID3D12Resource> depthTex;
+    if (!rig.UploadR32Tex2D(depthTex, kW, kH, depthImg)) {
+        res.note = "Upload 960x540 GTAO synthetic depth failed";
+        return res;
+    }
+
+    std::vector<double> gpuSamples, cpuSamples;
+    gpuSamples.reserve(measuredFrames);
+    cpuSamples.reserve(measuredFrames);
+    const uint32_t totalFrames = warmupFrames + measuredFrames;
+    for (uint32_t f = 0u; f < totalFrames; ++f) {
+        gp.temporalJitter = 0.0f;
+        const auto c0 = Clock::now();
+        if (!rig.BeginFrame()) {
+            res.note = "BeginFrame failed";
+            return res;
+        }
+        rig.MarkTimestamp(0u);
+        host.Execute(rig.cmd.Get(), depthTex.Get(), kW, kH, gp);
+        rig.MarkTimestamp(1u);
+        rig.ResolveTimestamps(0u, 2u);
+        const auto c1 = Clock::now();
+        if (!rig.FlushAndWait()) {
+            res.note = "FlushAndWait failed";
+            return res;
+        }
+        if (f >= warmupFrames) {
+            double gMs = 0.0;
+            rig.ReadTimestampRangeMs(0u, 1u, gMs);
+            gpuSamples.push_back(gMs);
+            cpuSamples.push_back(ElapsedMs(c0, c1));
+        }
+    }
+
+    res.totalGpuMs    = ComputePercentiles(gpuSamples);
+    res.cpuRecordMs   = ComputePercentiles(cpuSamples);
+    res.hostMainMs    = host.HasValidTiming() ? host.GetLastMainMs() : 0.0f;
+    res.hostDenoiseMs = host.HasValidTiming() ? host.GetLastDenoiseMs() : 0.0f;
+
+    // Readback RGBA16F GtaoFilteredOut
+    ID3D12Resource* outTex = host.GetFilteredOutputResource();
+    if (!outTex) {
+        res.note = "RawGtaoHost filtered output resource null";
+        return res;
+    }
+    const D3D12_RESOURCE_DESC outRd = outTex->GetDesc();
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT outFp{};
+    UINT outRows = 0u;
+    UINT64 outRowB = 0ull, outTotB = 0ull;
+    rig.dev->GetCopyableFootprints(&outRd, 0u, 1u, 0ull, &outFp, &outRows, &outRowB, &outTotB);
+    D3D12_HEAP_PROPERTIES hpRb{D3D12_HEAP_TYPE_READBACK};
+    D3D12_RESOURCE_DESC rbRd{};
+    rbRd.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+    rbRd.Width            = outTotB;
+    rbRd.Height           = 1u;
+    rbRd.DepthOrArraySize = 1u;
+    rbRd.MipLevels        = 1u;
+    rbRd.SampleDesc.Count = 1u;
+    rbRd.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    ComPtr<ID3D12Resource> rbBuf;
+    if (FAILED(rig.dev->CreateCommittedResource(&hpRb, D3D12_HEAP_FLAG_NONE, &rbRd,
+                                                D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&rbBuf)))) {
+        res.note = "Create GTAO readback buffer failed";
+        return res;
+    }
+    if (!rig.BeginFrame()) {
+        res.note = "BeginFrame (readback) failed";
+        return res;
+    }
+    D3D12_RESOURCE_BARRIER toSrc{};
+    toSrc.Type       = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    toSrc.Transition = {outTex, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+                        host.FilteredOutputResourceState(), D3D12_RESOURCE_STATE_COPY_SOURCE};
+    rig.cmd->ResourceBarrier(1u, &toSrc);
+    D3D12_TEXTURE_COPY_LOCATION dLoc{rbBuf.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {}};
+    dLoc.PlacedFootprint = outFp;
+    D3D12_TEXTURE_COPY_LOCATION sLoc{outTex, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
+    sLoc.SubresourceIndex = 0u;
+    rig.cmd->CopyTextureRegion(&dLoc, 0u, 0u, 0u, &sLoc, nullptr);
+    D3D12_RESOURCE_BARRIER toBack = toSrc;
+    std::swap(toBack.Transition.StateBefore, toBack.Transition.StateAfter);
+    rig.cmd->ResourceBarrier(1u, &toBack);
+    if (!rig.FlushAndWait()) {
+        res.note = "FlushAndWait (readback) failed";
+        return res;
+    }
+
+    std::vector<float> outRgba(static_cast<size_t>(kW) * kH * 4u, 0.0f);
+    {
+        void* p = nullptr;
+        D3D12_RANGE rr{0u, static_cast<SIZE_T>(outTotB)};
+        if (FAILED(rbBuf->Map(0u, &rr, &p)) || !p) {
+            res.note = "Map GTAO readback failed";
+            return res;
+        }
+        const auto* base = static_cast<const uint8_t*>(p) + outFp.Offset;
+        for (uint32_t y = 0u; y < kH; ++y) {
+            const auto* row = reinterpret_cast<const uint16_t*>(base + static_cast<size_t>(y) * outFp.Footprint.RowPitch);
+            for (uint32_t x = 0u; x < kW; ++x) {
+                const size_t i = (static_cast<size_t>(y) * kW + x) * 4u;
+                const float bx = HalfToFloat(row[x * 4u + 0u]);
+                const float by = HalfToFloat(row[x * 4u + 1u]);
+                const float bz = HalfToFloat(row[x * 4u + 2u]);
+                const float vis = HalfToFloat(row[x * 4u + 3u]);
+                outRgba[i + 0u] = bx;
+                outRgba[i + 1u] = by;
+                outRgba[i + 2u] = bz;
+                outRgba[i + 3u] = vis;
+                if (!std::isfinite(bx) || !std::isfinite(by) || !std::isfinite(bz) || !std::isfinite(vis)) {
+                    ++res.nanCount;
+                    continue;
+                }
+                if (depthImg[static_cast<size_t>(y) * kW + x] >= 0.99998f) {
+                    if (std::fabs(vis - 1.0f) > 1.0e-3f || std::fabs(bz + 1.0f) > 2.0e-3f) {
+                        ++res.skyBadCount;
+                    }
+                }
+            }
+        }
+        D3D12_RANGE wr{0u, 0u};
+        rbBuf->Unmap(0u, &wr);
+    }
+
+    auto sampleAvg5x5 = [&](float vx, float vy, float vz, float out4[4]) {
+        const float ndcX = vx / (vz * tanX);
+        const float ndcY = vy / (vz * tanY);
+        const float u    = std::clamp(ndcX * 0.5f + 0.5f, 0.0f, 0.9999f);
+        const float v    = std::clamp(0.5f - ndcY * 0.5f, 0.0f, 0.9999f);
+        const int cx     = static_cast<int>(u * static_cast<float>(kW));
+        const int cy     = static_cast<int>(v * static_cast<float>(kH));
+        double s0 = 0.0, s1 = 0.0, s2 = 0.0, s3 = 0.0;
+        int cnt = 0;
+        for (int dy = -2; dy <= 2; ++dy) {
+            for (int dxp = -2; dxp <= 2; ++dxp) {
+                const int px = std::clamp(cx + dxp, 0, static_cast<int>(kW) - 1);
+                const int py = std::clamp(cy + dy, 0, static_cast<int>(kH) - 1);
+                const size_t idx = (static_cast<size_t>(py) * kW + static_cast<size_t>(px)) * 4u;
+                s0 += outRgba[idx + 0u];
+                s1 += outRgba[idx + 1u];
+                s2 += outRgba[idx + 2u];
+                s3 += outRgba[idx + 3u];
+                ++cnt;
+            }
+        }
+        out4[0] = static_cast<float>(s0 / cnt);
+        out4[1] = static_cast<float>(s1 / cnt);
+        out4[2] = static_cast<float>(s2 / cnt);
+        out4[3] = static_cast<float>(s3 / cnt);
+    };
+
+    float openProbe[4]{}, creviceProbe[4]{}, pitProbe[4]{};
+    sampleAvg5x5(-3.2f, -2.0f, 6.5f, openProbe);
+    sampleAvg5x5( 0.82f, -2.0f, 6.0f, creviceProbe);
+    sampleAvg5x5(-1.2f, -2.55f, 5.15f, pitProbe);
+
+    res.openFloorVis   = openProbe[3];
+    res.openFloorBentY = openProbe[1];
+    res.creviceVis     = creviceProbe[3];
+    res.creviceBentX   = creviceProbe[0];
+    res.pitVis         = pitProbe[3];
+
+    const bool optOk = (res.nanCount == 0u) && (res.skyBadCount == 0u) &&
+                       (res.openFloorVis > 0.90f) && (res.openFloorBentY > 0.92f) &&
+                       (res.creviceVis < 0.65f) && (res.creviceBentX < -0.15f) &&
+                       (res.pitVis < res.openFloorVis - 0.25f);
+    const bool budgetOk = rig.isWarp ? true : (res.totalGpuMs.mean < 0.15);
+    res.passed = optOk && budgetOk;
+    if (!optOk) {
+        res.note = "GTAO floor/crevice/bent-normal/pit/sky/NaN invariant failed";
+    } else if (!budgetOk) {
+        res.note = "HW GPU 960x540 GTAO total mean exceeded 0.15 ms budget";
+    } else {
+        res.note = rig.isWarp ? "WARP 960x540 Jimenez GTAO + bent normals PASS"
+                              : "HW GPU < 0.15 ms & Jimenez GTAO + bent normals PASS";
+    }
+    return res;
+}
+
+// ----------------------------------------------------------------------------
 // JSON Serializer & Console Scorecard Printer
 // ----------------------------------------------------------------------------
 void WriteBenchJson(const std::string& path,
@@ -2567,7 +2896,8 @@ void WriteBenchJson(const std::string& path,
                     const GpuCullBenchResult& gpuCull,
                     const LightClusterBenchResult& lightClusters,
                     const VolumetricFroxelsBenchResult& volFroxels,
-                    const ShadowPcssBenchResult& shadowPcss)
+                    const ShadowPcssBenchResult& shadowPcss,
+                    const GtaoBenchResult& gtao)
 {
     std::ostringstream os;
     os << std::fixed << std::setprecision(4);
@@ -2787,6 +3117,25 @@ void WriteBenchJson(const std::string& path,
     os << "      \"softBandPx\": " << shadowPcss.softBandPx << ",\n";
     os << "      \"nanInfCount\": " << shadowPcss.nanInfCount << ",\n";
     os << "      \"note\": \"" << JsonEscape(shadowPcss.note) << "\"\n";
+    os << "    },\n";
+
+    // 13. GPU Jimenez GTAO + Unoccluded Bent Normals
+    os << "    \"gtao\": {\n";
+    os << "      \"passed\": " << (gtao.passed ? "true" : "false") << ",\n";
+    os << "      \"width\": " << gtao.width << ",\n";
+    os << "      \"height\": " << gtao.height << ",\n";
+    os << "      \"totalGpuMs\": "; pctObj(gtao.totalGpuMs); os << ",\n";
+    os << "      \"cpuRecordMs\": "; pctObj(gtao.cpuRecordMs); os << ",\n";
+    os << "      \"hostMainMs\": " << gtao.hostMainMs << ",\n";
+    os << "      \"hostDenoiseMs\": " << gtao.hostDenoiseMs << ",\n";
+    os << "      \"openFloorVis\": " << gtao.openFloorVis << ",\n";
+    os << "      \"openFloorBentY\": " << gtao.openFloorBentY << ",\n";
+    os << "      \"creviceVis\": " << gtao.creviceVis << ",\n";
+    os << "      \"creviceBentX\": " << gtao.creviceBentX << ",\n";
+    os << "      \"pitVis\": " << gtao.pitVis << ",\n";
+    os << "      \"nanCount\": " << gtao.nanCount << ",\n";
+    os << "      \"skyBadCount\": " << gtao.skyBadCount << ",\n";
+    os << "      \"note\": \"" << JsonEscape(gtao.note) << "\"\n";
     os << "    }\n";
 
     os << "  }\n";
@@ -2815,7 +3164,8 @@ void PrintScorecard(const BenchDx12Rig& rig,
                     const GpuCullBenchResult& gpuCull,
                     const LightClusterBenchResult& lightClusters,
                     const VolumetricFroxelsBenchResult& volFroxels,
-                    const ShadowPcssBenchResult& shadowPcss)
+                    const ShadowPcssBenchResult& shadowPcss,
+                    const GtaoBenchResult& gtao)
 {
     std::printf("\n");
     std::printf("=====================================================================================================\n");
@@ -2910,6 +3260,12 @@ void PrintScorecard(const BenchDx12Rig& rig,
                   shadowPcss.openVis, shadowPcss.nearUmbraVis, shadowPcss.skyMinVis, shadowPcss.nanInfCount);
     std::printf("  %-30s | %-6s | %-28s | %s\n", "12. GPU Variable-Pen PCSS", shadowPcss.passed ? "PASS" : "FAIL", metric, detail);
 
+    std::snprintf(metric, sizeof(metric), "GTAO %.4f ms (p95 %.4f)", gtao.totalGpuMs.mean, gtao.totalGpuMs.p95);
+    std::snprintf(detail, sizeof(detail), "Main=%.4f Den=%.4f | flr=%.3f crv=%.3f bx=%+.3f pit=%.3f | NaN=%u",
+                  gtao.hostMainMs, gtao.hostDenoiseMs,
+                  gtao.openFloorVis, gtao.creviceVis, gtao.creviceBentX, gtao.pitVis, gtao.nanCount);
+    std::printf("  %-30s | %-6s | %-28s | %s\n", "13. GPU Jimenez GTAO (960x540)", gtao.passed ? "PASS" : "FAIL", metric, detail);
+
     std::printf("=====================================================================================================\n");
 }
 
@@ -2972,19 +3328,20 @@ int main(int argc, char** argv)
     const LightClusterBenchResult      lightClusters = RunLightClusterBenchmark(rig, warmupFrames, measuredFrames);
     const VolumetricFroxelsBenchResult volFroxels    = RunVolumetricFroxelsBenchmark(rig, warmupFrames, measuredFrames);
     const ShadowPcssBenchResult        shadowPcss    = RunShadowPcssBenchmark(rig, warmupFrames, measuredFrames);
+    const GtaoBenchResult              gtao          = RunGtaoBenchmark(rig, warmupFrames, measuredFrames);
 
     const uint32_t debugErrors = rig.DrainDebugErrors();
     const bool allPassed = fluid.passed && rc.passed && tex.passed && audio.passed &&
                            destr.passed && flora.passed && tamriel.passed && xpbd.passed &&
                            gpuCull.passed && lightClusters.passed && volFroxels.passed &&
-                           shadowPcss.passed && (debugErrors == 0u);
+                           shadowPcss.passed && gtao.passed && (debugErrors == 0u);
 
     PrintScorecard(rig, quickMode, warmupFrames, measuredFrames, debugErrors,
-                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss);
+                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao);
 
     if (!jsonPath.empty()) {
         WriteBenchJson(jsonPath, rig, quickMode, warmupFrames, measuredFrames, debugErrors, allPassed,
-                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss);
+                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao);
         std::printf("  JSON report written: %s\n", jsonPath.c_str());
     }
 

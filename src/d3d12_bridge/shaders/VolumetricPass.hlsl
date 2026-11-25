@@ -107,10 +107,14 @@ float3 evalPhysicalMieRainbow(float3 rayDir, float3 sunD, float rain01, float cl
     return (priSpec + secSpec) * sunTint * (bowGate * 0.165f);
 }
 
+float3 sanitizeVolRgb(float3 c) {
+    return (any(isnan(c)) || any(isinf(c))) ? 0.0f.xxx : clamp(c, 0.0f.xxx, 16.0f.xxx);
+}
+
 float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float2 lo = floor(at.xy);
     const float2 fullPx = (lo + 0.5f) * 2.0f;
-    const int2 fullIp = clamp(int2(fullPx), int2(0, 0), int2(dims.xy) - 1);
+    const int2 fullIp = clamp(int2(fullPx), int2(0, 0), max(int2(dims.xy) - 1, int2(0, 0)));
     const bool isWorldMap = (timeEnv.w > 0.5f) && (camPosW.z > 42000.0f);
     if ((flags.x & FLAG_FOG) == 0u || (flags.x & FLAG_MATCH) != 0u || isWorldMap) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
     const float d = Depth.Load(int3(fullIp, 0));
@@ -123,7 +127,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float tEnd = min(dist, min(tune2.w, 12000.0f));
     const float weatherDens = 1.0f + weather.w * 1.15f + weather.z * 1.35f + saturate(clouds.x - 0.25f) * 0.55f;
     const float sigma = max(tune.x, 0.00014f) * weatherDens;
-    const float zCur = d < 1.0f ? viewZOf(d) : 65000.0f;
+    const float zCur = d < 0.99998f ? viewZOf(d) : 65000.0f;
     const float simTime = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
     const float liveWaterZV = rawLiveWaterZ(engineWorld, physWorld[0]);
     const float estSeaTempC = lerp(8.5f, -4.5f, saturate(weather.z * 0.85f + smoothstep(20000.0f, 110000.0f, camPosW.y) * 0.55f));
@@ -131,7 +135,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
 
     float3 scatter = 0.0f.xxx;
     const bool isExterior = (sunColour.w > 0.5f);
-    if (sunDir.w > 0.5f && tune2.z > 0.0f) {
+    if (isExterior && sunDir.w > 0.5f && tune2.z > 0.0f) {
         const float jit = ign(lo);
         const float3 aSunV = astroSunDir();
         const float aElevV = astroSunElev();
@@ -152,7 +156,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float windSpeedV = length(cloudWind.xy);
         const float invPersist = evalInversionBurnOffFactor(timeEnv.x, aElevV, windSpeedV, clouds.x);
 
-        // 28 quadratic-clustered temporally-reprojected depth slices coupled with RawWeatherAtmo mountain fog & valley mist:
+        // 28 quadratic-clustered temporally-reprojected depth slices coupled with unified cloudShadowN mountain shafts:
         const uint kSteps = 28u;
         float sumSun = 0.0f, sumSky = 0.0f, cs = 1.0f;
         float weatherCouple = 0.0f;
@@ -166,14 +170,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 ptT = eye + w * t;
             const float4 c = screenOf(ptT);
             const float3 wpFog = ptT + camPosW.xyz;
-            // Cloud-shadow occlusion & RawWeatherAtmo mountain fog / valley inversion mist density (evaluated every 2nd step):
+            // Wave 54 Unified Cloud-Shadow Mountain Shafts (2-tap convective cloudShadowN from LightingCommon.hlsli)
+            // + RawWeatherAtmo mountain fog / valley inversion mist density (evaluated every 2nd step):
             if ((i & 1u) == 0u) {
-                if ((flags.x & FLAG_CLOUDS) != 0u) { cs = cloudShadowN(wpFog, 1u); }
-                if (isExterior) {
-                    const float4 ext4 = evalDynamicWeatherExtinction4(wpFog, weather, timeEnv, cloudWind, seaLevelAndTemp, simTime);
-                    // Mountain LCL cloud bands + valley thermal inversion mist catch crepuscular alpine god-rays!
-                    weatherCouple = saturate((ext4.x * 1.45f + ext4.y * 1.15f + ext4.z * 0.85f + ext4.w * 0.70f) * 3400.0f);
+                if (clouds.x > 0.005f) {
+                    const float csRaw = cloudShadowN(wpFog, 2u);
+                    cs = ((flags.x & FLAG_CLOUDS) != 0u) ? pow(saturate(csRaw), 1.35f) : saturate(csRaw);
+                } else {
+                    cs = 1.0f;
                 }
+                const float4 ext4 = evalDynamicWeatherExtinction4(wpFog, weather, timeEnv, cloudWind, seaLevelAndTemp, simTime);
+                // Mountain LCL cloud bands + valley thermal inversion mist catch crepuscular alpine god-rays!
+                weatherCouple = saturate((ext4.x * 1.45f + ext4.y * 1.15f + ext4.z * 0.85f + ext4.w * 0.70f) * 3400.0f);
             }
             const float3 fogFlow = wpFog * 0.00050f + float3(cloudWind.xy * (simTime * 0.00018f), 0.0f);
             const float mist3d = 0.50f + 0.66f * cNoise(fogFlow) + 0.28f * cNoise(fogFlow * 2.4f + 7.3f);
@@ -190,18 +198,34 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Unified World-Space Atmosphere + TransLut solar spectral attenuation sync:
         float3 uSunV, uSkyZV, uSkyHV, uAmbUpV, uAmbDnV;
         evalWorldAtmosphere(uSunV, uSkyZV, uSkyHV, uAmbUpV, uAmbDnV);
-        const float3 transSunV = isExterior ? max(volTransAt(max(beamDirV.z, 0.02f)), float3(0.22f, 0.16f, 0.12f)) : 1.0f.xxx;
-        const float3 hSkyV = volSkyAt(float3(w.xy, max(w.z, 0.01f)));
+        const float3 transSunV = max(sanitizeVolRgb(volTransAt(max(beamDirV.z, 0.02f))), float3(0.22f, 0.16f, 0.12f));
+        const float3 hSkyV = sanitizeVolRgb(volSkyAt(float3(w.xy, max(w.z, 0.01f))));
         const float3 unifiedSky = lerp(lerp(uSkyHV, uSkyZV, saturate(max(w.z, 0.0f) * 2.0f)), hSkyV, (1.0f - nightW) * (1.0f - saturate(clouds.x * 0.70f)) * 0.45f);
         const float3 dayShaftCol = lerp(uSunV * lerp(1.0f.xxx, transSunV, 0.42f), unifiedSky, 0.20f);
         const float3 shaftCol = lerp(dayShaftCol, max(uSkyHV, float3(0.18f, 0.26f, 0.42f)), nightW * 0.72f);
         scatter += shaftCol * (sigma * ph * sumSun * tune2.z * shaftBoost * 0.92f * twilightGate);
+
+        // Wave 54 Dawn/Dusk Chappuis-Reddened Golden-Hour Solar Aureole Glow (strictly when sunElev in [0.0..0.28];
+        // strictly 0.0 at midday so midday skies stay crisp & clean!):
+        const float sunElevA = max(aElevV, sunDir.z * isRealSun());
+        const float goldenBell = smoothstep(0.00f, 0.055f, sunElevA) * (1.0f - smoothstep(0.14f, 0.28f, sunElevA)) * (1.0f - nightW);
+        if (goldenBell > 0.005f && cosT > 0.35f) {
+            const float aureoleLobe = pow(saturate(cosT), 8.0f) * 0.38f + pow(saturate(cosT), 36.0f) * 0.62f;
+            const float chappuisWarmT = smoothstep(0.01f, 0.22f, sunElevA);
+            const float3 chappuisCol = lerp(float3(1.22f, 0.44f, 0.15f), float3(1.12f, 0.78f, 0.42f), chappuisWarmT)
+                                     * lerp(1.0f.xxx, transSunV, 0.35f);
+            const float shaftRatio = saturate(sumSun / max(sumSky, 1.0e-3f));
+            const float spanGate = smoothstep(180.0f, 3800.0f, tEnd) * smoothstep(-0.08f, 0.14f, w.z) * (1.0f - smoothstep(0.32f, 0.65f, w.z));
+            const float cloudBreakA = (1.0f - saturate(clouds.x * 0.65f)) * (0.35f + 0.65f * shaftRatio);
+            scatter += chappuisCol * (aureoleLobe * goldenBell * spanGate * cloudBreakA * 0.28f);
+        }
+
         // Gentle isotropic sky multi-scattering inside volumetric mist (strictly bounded to prevent whiteout).
         scatter += unifiedSky * (sigma * sumSky * 0.015f * (1.0f - nightW * 0.65f));
 
         // Physical 42-deg / 51-deg Mie Rainbow Arc + Alexander's Dark Band:
         // Strictly gated on active exterior rain + real visible sun behind camera (ZERO dry-day phantom rainbows!):
-        if (isExterior && weather.w > 0.15f && aSunV.z > 0.04f && isRealSun() > 0.25f) {
+        if (weather.w > 0.15f && aSunV.z > 0.04f && isRealSun() > 0.25f) {
             float alexDarken = 1.0f;
             const float3 rainbowRgb = evalPhysicalMieRainbow(w, aSunV, weather.w, clouds.x, tEnd, alexDarken);
             scatter = scatter * alexDarken + rainbowRgb;
@@ -267,7 +291,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float flashEnv = max(pow(1.0f - frac(simTime * 1.4f), 5.0f) * stormTrigger, saturate(timeEnv.z));
         scatter += float3(0.45f, 0.62f, 1.05f) * (flashEnv * saturate(tEnd / 6000.0f) * 0.22f);
     }
-    // Physical energy-bounded highlight shoulder (prevents volumetric fog from pushing coastal skies/snow into nuclear bloom).
+    // Physical energy-bounded highlight shoulder + NaN/Inf sanitization (prevents volumetric fog from pushing coastal skies/snow into nuclear bloom).
+    scatter = sanitizeVolRgb(scatter);
     const float scMax = max(scatter.r, max(scatter.g, scatter.b));
     scatter = (scatter / (1.0f + scMax * 1.45f)) * 0.36f;
 
@@ -275,16 +300,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float4 cp = float4(p, 1.0f);
     const float4 pc = float4(dot(prevWorldToClip[0], cp), dot(prevWorldToClip[1], cp), dot(prevWorldToClip[2], cp), dot(prevWorldToClip[3], cp));
     if (pc.w > 0.0f && proj.z > 0.5f) {
-        const float2 puv = float2(pc.x / pc.w * 0.5f + 0.5f, 0.5f - pc.y / pc.w * 0.5f) / resScale.xy;
+        const float2 puv = float2(pc.x / pc.w * 0.5f + 0.5f, 0.5f - pc.y / pc.w * 0.5f) / max(resScale.xy, float2(1.0e-4f, 1.0e-4f));
         if (all(puv > 0.01f) && all(puv < 0.99f)) {
             const float4 prev = VolPrev.SampleLevel(Lin, puv, 0.0f);
-            const float zRel = abs(prev.a - min(zCur, 65000.0f)) / max(min(zCur, 65000.0f), 1.0f);
-            if (zRel < 0.08f) {
+            const float prevZ = (isnan(prev.a) || isinf(prev.a)) ? -1.0f : prev.a;
+            const float zRel = abs(prevZ - min(zCur, 65000.0f)) / max(min(zCur, 65000.0f), 1.0f);
+            if (prevZ > 0.0f && zRel < 0.08f) {
                 const float2 curUvV = fullPx * dims.zw;
                 const float histW = lerp(0.78f, 0.28f, saturate(length(puv - curUvV) * 14.0f));
-                scatter = lerp(scatter, prev.rgb, histW);
+                scatter = lerp(scatter, sanitizeVolRgb(prev.rgb), histW);
             }
         }
     }
-    return float4(scatter, min(zCur, 65000.0f));
+    return float4(sanitizeVolRgb(scatter), min(zCur, 65000.0f));
 }

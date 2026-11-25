@@ -22,6 +22,7 @@
 #include "../src/worldgen/RawTamrielWorldStreamer.h"
 #include "../src/worldgen/RawWildlifeBoids.h"
 #include "../src/worldgen/RawWorldEcosystem.h"
+#include "../src/worldgen/RawWorldEventDirector.h"
 #include "../src/worldgen/RawWorldPhysics.h"
 
 #include <chrono>
@@ -1031,6 +1032,168 @@ bool RunSettlementSimAudit() {
     return ok;
 }
 
+bool RunEventsSimAudit() {
+    const auto t0 = std::chrono::steady_clock::now();
+
+    // 1. Blizzard Caravan Rescue Spawn & Cooldown Anti-Spam (0 duplicates while active or in cooldown)
+    uint32_t rescueSpawnsActive = 0u;
+    uint32_t rescueSpawnsCooldown = 0u;
+    float    rescueRewardGold = 0.0f;
+    float    cooldownLeftH = 0.0f;
+    bool     rescueOk = false;
+    {
+        raw::worldgen::RawSettlementSim settle(202u);
+        raw::worldgen::SettlementWeatherMap blizWx{};
+        blizWx.byHold[static_cast<size_t>(raw::worldgen::HoldId::Windhelm)].blizzard01   = 0.92f;
+        blizWx.byHold[static_cast<size_t>(raw::worldgen::HoldId::Winterhold)].blizzard01 = 0.95f;
+        blizWx.byHold[static_cast<size_t>(raw::worldgen::HoldId::Dawnstar)].blizzard01   = 0.90f;
+        settle.StepHours(12.0f, blizWx);
+
+        raw::worldgen::RawWorldEventDirector dir{};
+        raw::worldgen::WorldEventInputs in{};
+        in.settlement     = &settle;
+        in.timeOfDayHours = 12.0f;
+        in.blizzard01     = 0.90f;
+
+        dir.StepHours(1.0f, in);
+        const auto* rescueEv = dir.FindActiveByKind(raw::worldgen::WorldEventKind::BlizzardCaravanRescue);
+        const bool spawned   = (rescueEv != nullptr) && (rescueEv->rewardGold > 100.0f);
+        const uint32_t rid   = rescueEv ? rescueEv->id : 0u;
+        rescueRewardGold     = rescueEv ? rescueEv->rewardGold : 0.0f;
+
+        for (int h = 0; h < 6; ++h) {
+            settle.StepHours(1.0f, blizWx);
+            dir.StepHours(1.0f, in);
+        }
+        rescueSpawnsActive = dir.ComputeTelemetry().spawnedByKind[static_cast<size_t>(raw::worldgen::WorldEventKind::BlizzardCaravanRescue)];
+
+        const bool resolved = dir.ResolveEvent(rid);
+        for (int h = 0; h < 6; ++h) {
+            dir.StepHours(1.0f, in);
+        }
+        rescueSpawnsCooldown = dir.ComputeTelemetry().spawnedByKind[static_cast<size_t>(raw::worldgen::WorldEventKind::BlizzardCaravanRescue)];
+        cooldownLeftH        = dir.CooldownRemainingHours(raw::worldgen::WorldEventKind::BlizzardCaravanRescue);
+        rescueOk = spawned && resolved && (rescueSpawnsActive == 1u) && (rescueSpawnsCooldown == 1u);
+    }
+
+    // 2. Wildfire Containment Spawn & Heavy-Rain Auto-Resolution
+    uint32_t fireAfterRain = 999u;
+    uint32_t fireResolved  = 0u;
+    bool     wildfireOk    = false;
+    {
+        raw::worldgen::EcoGridConfig ecfg{};
+        ecfg.gridW = 32u; ecfg.gridH = 32u; ecfg.cellSizeM = 2.0f;
+        raw::worldgen::RawWorldEcosystem eco(ecfg);
+        const auto ctr = eco.CellCenterWorldM(16u, 16u);
+        eco.IgniteAt(ctr.x, ctr.y, 7.0f, 650.0f);
+
+        raw::worldgen::RawWorldEventDirector dir{};
+        raw::worldgen::WorldEventInputs in{};
+        in.ecosystem       = &eco;
+        in.ecosystemHoldId = raw::worldgen::HoldId::Falkreath;
+        in.timeOfDayHours  = 14.0f;
+
+        dir.StepHours(1.0f, in);
+        const auto* fireEv   = dir.FindActiveByKind(raw::worldgen::WorldEventKind::WildfireContainment);
+        const bool spawned   = (fireEv != nullptr) && (fireEv->holdId == raw::worldgen::HoldId::Falkreath);
+
+        raw::worldgen::EcoWeatherInput storm{};
+        storm.ambientTempC = 8.0f;
+        storm.rainRate01   = 0.95f;
+        for (int s = 0; s < 50; ++s) eco.Step(0.25f, storm);
+
+        dir.StepHours(1.0f, in);
+        fireAfterRain = eco.ComputeTelemetry().activeFireCells;
+        fireResolved  = dir.ComputeTelemetry().totalResolved;
+        wildfireOk = spawned && (fireAfterRain == 0u) &&
+                     (dir.FindActiveByKind(raw::worldgen::WorldEventKind::WildfireContainment) == nullptr) &&
+                     (fireResolved >= 1u);
+    }
+
+    // 3. 720-Hour (30-Day) Coupled 9-Hold Emergent Event Run (exact lifecycle accounting & >= 4 distinct kinds)
+    uint32_t totalSpawned  = 0u;
+    uint32_t activeCount   = 0u;
+    uint32_t totalResolved = 0u;
+    uint32_t totalExpired  = 0u;
+    uint32_t distinctKinds = 0u;
+    bool     acctExact     = true;
+    bool     coupled30Ok   = false;
+    {
+        raw::worldgen::RawSettlementSim settle(404u);
+        raw::worldgen::RawWildlifeBoids boids;
+        boids.SpawnGuild(raw::worldgen::FaunaGuild::PineCrowFlock, 24u, {0.0f, 0.0f, 300.0f}, 120.0f, 55u);
+        boids.EmitStimulus({0.0f, 0.0f, 260.0f}, 1200.0f, raw::worldgen::StimulusKind::LoudNoise, 1.0f, 3.0f);
+        raw::worldgen::WildlifeEnvInput wEnv{};
+        boids.Step(0.05f, wEnv);
+
+        raw::worldgen::RawWorldEventDirector dir{};
+        raw::worldgen::SettlementWeatherMap wx{};
+        bool allFinite = true;
+        bool auroraHit = false;
+        bool harvestHit = false;
+
+        for (int h = 0; h < 720; ++h) {
+            const int day = h / 24;
+            const float tod = static_cast<float>(h % 24);
+            const bool stormDay = (day % 6 == 2);
+            wx.byHold[static_cast<size_t>(raw::worldgen::HoldId::Windhelm)].blizzard01   = stormDay ? 0.88f : 0.05f;
+            wx.byHold[static_cast<size_t>(raw::worldgen::HoldId::Winterhold)].blizzard01 = stormDay ? 0.92f : 0.05f;
+            settle.StepHours(1.0f, wx);
+
+            raw::worldgen::WorldEventInputs in{};
+            in.settlement     = &settle;
+            in.wildlife       = (day == 0) ? &boids : nullptr;
+            in.timeOfDayHours = tod;
+            in.season         = (day < 15) ? raw::worldgen::SeasonId::Autumn : raw::worldgen::SeasonId::Winter;
+            in.auroraKp       = (!stormDay && (day % 4 == 0)) ? 7.2f : 2.0f;
+            in.cloudCover01   = stormDay ? 0.90f : 0.12f;
+            in.blizzard01     = stormDay ? 0.85f : 0.05f;
+            dir.StepHours(1.0f, in);
+
+            if (dir.FindActiveByKind(raw::worldgen::WorldEventKind::AuroraCelestialGathering) != nullptr) auroraHit = true;
+            if (dir.FindActiveByKind(raw::worldgen::WorldEventKind::SeasonalHarvestMarket) != nullptr) harvestHit = true;
+
+            const auto tel = dir.ComputeTelemetry();
+            if (tel.totalSpawned != tel.activeCount + tel.totalResolved + tel.totalExpired ||
+                tel.activeCount > dir.Config().maxConcurrentEvents ||
+                !std::isfinite(tel.highestUrgency)) {
+                acctExact = false;
+            }
+            for (const auto& e : dir.ActiveEvents()) {
+                if (!std::isfinite(e.urgency01) || !std::isfinite(e.rewardGold) || !std::isfinite(e.ageHours)) {
+                    allFinite = false;
+                }
+            }
+        }
+        const auto finalTel = dir.ComputeTelemetry();
+        totalSpawned  = finalTel.totalSpawned;
+        activeCount   = finalTel.activeCount;
+        totalResolved = finalTel.totalResolved;
+        totalExpired  = finalTel.totalExpired;
+        for (size_t k = 0u; k < raw::worldgen::kWorldEventKindCount; ++k) {
+            if (finalTel.spawnedByKind[k] > 0u) ++distinctKinds;
+        }
+        coupled30Ok = acctExact && allFinite && auroraHit && harvestHit && (distinctKinds >= 4u) && (totalSpawned >= 15u);
+    }
+
+    const double totalMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    const bool ok = rescueOk && wildfireOk && coupled30Ok;
+
+    std::printf(
+        "[INFO] Emergent Radiant World-Event Director Audit (%.2f ms):\n"
+        "  1. Blizzard Rescue Anti-Spam : reward=%.0fg | spawnsActive=%u spawnsCooldown=%u (cdLeft=%.1fh) [%s]\n"
+        "  2. Wildfire Rain Auto-Resolve: fireAfterRain=%u | totalResolved=%u [%s]\n"
+        "  3. 30-Day Coupled 9-Hold Run : spawned=%u (act=%u + res=%u + exp=%u) | kinds=%u/6 | exactAcct=%s [%s]\n"
+        "[%s] events-sim: coupled radiant world-event director audit %s (%.2f ms)\n",
+        totalMs,
+        rescueRewardGold, rescueSpawnsActive, rescueSpawnsCooldown, cooldownLeftH, rescueOk ? "PASS" : "FAIL",
+        fireAfterRain, fireResolved, wildfireOk ? "PASS" : "FAIL",
+        totalSpawned, activeCount, totalResolved, totalExpired, distinctKinds, acctExact ? "yes" : "no", coupled30Ok ? "PASS" : "FAIL",
+        ok ? "PASS" : "FAIL", ok ? "PASS" : "FAIL", totalMs);
+    return ok;
+}
+
 bool ParseCellXY(const std::string& s, int32_t* outX, int32_t* outY) {
     const size_t comma = s.find(',');
     if (comma == std::string::npos || comma == 0u || comma + 1u >= s.size()) return false;
@@ -1069,6 +1232,7 @@ void PrintUsage() {
         "  raw_forge_cli --ecosystem-sim                           Coupled wildfire/rain/snowmelt-D8/black-ice/regrowth audit\n"
         "  raw_forge_cli --wildlife-sim                            512-agent O(N) wildlife boids (hawk/crow/deer/salmon) audit\n"
         "  raw_forge_cli --settlement-sim                          9-hold living settlement, caravan & blizzard blockade audit\n"
+        "  raw_forge_cli --events-sim                              Emergent 9-hold radiant world-event director 30-day audit\n"
         "  raw_forge_cli --validate-all [dir]                      Run all 4 procedural pipelines + quality gates\n"
         "Options:\n"
         "  --seed <N>         Deterministic RNG seed (default: 202607)\n"
@@ -1127,6 +1291,7 @@ int main(int argc, char** argv) {
     bool runEcosystemSim    = false;
     bool runWildlifeSim     = false;
     bool runSettlementSim   = false;
+    bool runEventsSim       = false;
     bool writeGeometry      = true;
     uint32_t seed       = 202607u;
     float latitudeDeg   = 60.0f;
@@ -1281,6 +1446,8 @@ int main(int argc, char** argv) {
             runWildlifeSim = true;
         } else if (arg == "--settlement-sim") {
             runSettlementSim = true;
+        } else if (arg == "--events-sim") {
+            runEventsSim = true;
         } else if (arg == "--validate-all") {
             runValidateAll = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -1306,11 +1473,11 @@ int main(int argc, char** argv) {
     }
 
     if (!runValidateAll && !runEsmMeta && !runPhysicsProbe && !runTamrielStream && !runNavMeshAudit &&
-        !runEcosystemSim && !runWildlifeSim && !runSettlementSim &&
+        !runEcosystemSim && !runWildlifeSim && !runSettlementSim && !runEventsSim &&
         floraDir.empty() && dioramaDir.empty() && almanacDir.empty() &&
         materialsDir.empty() && texturesDir.empty() && esmPath.empty() && esmScenePath.empty() &&
         bsaListPath.empty() && nifPath.empty() && bsaNifArchive.empty() && ddsPath.empty() && bsaDdsArchive.empty()) {
-        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, or --validate-all).\n");
+        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, --events-sim, or --validate-all).\n");
         PrintUsage();
         return 2;
     }
@@ -1431,6 +1598,10 @@ int main(int argc, char** argv) {
 
     if (runSettlementSim) {
         if (!RunSettlementSimAudit()) allOk = false;
+    }
+
+    if (runEventsSim) {
+        if (!RunEventsSimAudit()) allOk = false;
     }
 
     if (runValidateAll) {

@@ -44,6 +44,10 @@ struct LiveEngineConfig {
     // [WorldAI]
     bool  dynamicNpcBehaviorEnabled = true; // Weather/season/economy-driven NPC daily behavior & ecology (0/1, default 1)
 
+    // [Performance]
+    bool  dynamicGovernorEnabled    = true; // Hysteresis-damped PI frame-pacing & quality scaling governor (0/1, default 1)
+    float targetFps                 = 60.0f;// [30 .. 240] target frame rate for dynamic governor (default 60)
+
     // [Diagnostics]
     uint32_t statusDumpHotkeyVK      = 121u;  // VK_F10 (0x79)
     uint32_t hotReloadIntervalFrames = 60u;   // [10 .. 600] frames
@@ -200,6 +204,15 @@ struct LiveStatusDumpData {
     uint8_t     healthGrade         = 0u; // 0=Optimal, 1=Healthy, 2=Degraded, 3=Critical
     uint8_t     healthAdvisoryCount = 0u;
     std::string healthAdvisories[4];
+
+    // Frame Pacing Governor
+    uint8_t     govRegime           = 0u;
+    float       govEmaMs            = 16.67f;
+    float       govRenderScale      = 1.0f;
+    float       govVolumetric01     = 1.0f;
+    float       govShadowScale      = 1.0f;
+    float       govFloraScale       = 1.0f;
+    float       govGiBudget01       = 1.0f;
 };
 
 std::string FormatLiveStatusDump(const LiveStatusDumpData& d);

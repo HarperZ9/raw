@@ -59,12 +59,13 @@ float3 cosineDir(float3 n, float2 r) {
     return normalize(t * (cos(a) * s) + b * (sin(a) * s) + n * sqrt(max(1.0f - r.y, 0.0f)));
 }
 
-// A unit vector spread around d by up to `spread` radians (a disc of directions).
+// A unit vector spread around d by up to `spread` radians (a disc of directions), NaN-safe.
 float3 jitterDir(float3 d, float spread, float2 r) {
-    const float3 t = normalize(abs(d.y) < 0.99f ? cross(d, float3(0, 1, 0)) : cross(d, float3(1, 0, 0)));
-    const float3 b = cross(d, t);
-    const float a = 6.2831853f * r.x, s = spread * sqrt(r.y);
-    return normalize(d + (t * cos(a) + b * sin(a)) * s);
+    const float3 dUnit = (dot(d, d) > 1.0e-8f) ? normalize(d) : float3(0.0f, 0.0f, 1.0f);
+    const float3 t = normalize(abs(dUnit.y) < 0.99f ? cross(dUnit, float3(0, 1, 0)) : cross(dUnit, float3(1, 0, 0)));
+    const float3 b = cross(dUnit, t);
+    const float a = 6.2831853f * r.x, s = max(spread, 0.0f) * sqrt(saturate(r.y));
+    return normalize(dUnit + (t * cos(a) + b * sin(a)) * s);
 }
 
 // Spectral Korobov-Weyl & 4D Prime-Root Quasi-Monte-Carlo (QMC) Spatiotemporal Blue-Noise Samplers:
@@ -276,41 +277,49 @@ void main(uint3 id : SV_DispatchThreadID) {
     float restCode = 0.0f;   // 4 + 2 x the untraced lights' share in fifteenths, when one was sampled (RtSkyFilter decodes it)
     const float d = Depth.Load(ip);
     const uint base = uint(Spec.Load(ip).z * 255.0f + 0.5f) & 127u;
-    // SM6.9 Wave-coherent sky early exit: pure sky waves skip all RayQuery and cluster setup cleanly.
-    if (WaveActiveAllTrue(d >= 1.0f || base == 0u)) {
+    // Strict Standard-Z sky early exit (d >= 0.99998): pure sky waves skip all RayQuery and cluster setup cleanly.
+    if (WaveActiveAllTrue(d >= 0.99998f || base == 0u)) {
         Vis[id.xy] = 1.0f; Lights[id.xy] = 0.0f; SkyRaw[id.xy] = float4(0.0f, 0.0f, 0.0f, 1.0f); Refl[id.xy] = 0.0f;
         return;
     }
-    if (d < 1.0f && base != 0u && (base < 7u || base == 10u || base == 11u || base == 12u)) {   // 10: skin, 11: hair, 12: eyes
+    if (d < 0.99998f && base != 0u && (base < 7u || base == 10u || base == 11u || base == 12u)) {   // 10: skin, 11: hair, 12: eyes
         const float2 px = float2(id.xy);
         const float3 p = worldAt(px, d);
-        const float3 n = worldNormal(Normal.Load(ip));
-        const float z = viewZOf(d);
+        const float3 nRawS = worldNormal(Normal.Load(ip));
+        const float3 n = (dot(nRawS, nRawS) > 1.0e-8f) ? normalize(nRawS) : float3(0.0f, 0.0f, 1.0f);
+        const float z = max(viewZOf(d), 0.25f);
         const float3 ng = geometricNormal(px, p, n);
-        // Clean geometric-normal + view-distance adaptive ray origin bias (clamp(viewDist * 0.0018, 0.30, 4.0)):
-        // Eliminates low-poly 2011 NPC face & curved-stonework BLAS triangle self-intersection acne without floating shadows!
-        const float viewDist = length(p - eyeAt());
-        const float baseBias = clamp(viewDist * 0.0018f, 0.30f, 4.0f);
+        // Wave 54 Adaptive World-Space Normal-Offset Anti-Acne Bias (0.015 + 0.002 * viewZ, floored cleanly for Skyrim BLAS):
+        // Eliminates grazing-angle shadow acne on stone/snow/NPC faces while keeping contact shadows razor-tight!
+        const float viewDist = max(length(p - eyeAt()), z);
+        const float adaptiveNormalBias = max(0.015f + 0.002f * z, clamp(viewDist * 0.0018f, 0.30f, 4.0f));
         const bool isSkinnedMesh = (base == 10u || base == 11u || base == 12u);
         const float3 biasN = isSkinnedMesh ? normalize(lerp(ng, n, 0.28f)) : ng;
-        const float oScale = isSkinnedMesh ? clamp(baseBias * 1.45f, 0.45f, 4.0f) : baseBias;
+        const float oScale = isSkinnedMesh ? clamp(adaptiveNormalBias * 1.45f, 0.45f, 4.2f) : clamp(adaptiveNormalBias, 0.30f, 4.0f);
         const float3 o = p + biasN * oScale;
         const float4 q4 = stbnPrime4(px, frameIndex);
-        const float2 r = q4.xy;
-        if (sunDir.w > 0.5f && sunColour.w > 0.5f && dot(n, sunDir.xyz) > 0.0f) {
-            // Fast 2-spp Blocker-Distance PCSS Hardware DXR Sun Shadows driven by decorrelated 4D Prime-Root QMC strata:
-            const float turn = saturate(1.0f - dot(ng, sunDir.xyz) / 0.45f);
-            const float tMinS = max(max(termDist, 1.8f) * turn * turn, baseBias * 0.25f * turn);
+        const float2 rDisk = stbnR2(px, frameIndex + 3.0f);
+        const float3 sunDirUnit = (dot(sunDir.xyz, sunDir.xyz) > 1.0e-8f) ? normalize(sunDir.xyz) : float3(0.0f, 0.0f, 1.0f);
+        if (sunDir.w > 0.5f && sunColour.w > 0.5f && dot(n, sunDirUnit) > 0.0f) {
+            // Wave 54 Physical 0.53-deg Solar-Disk Angular-Cone Soft Shadows (tan(0.265 deg) = 0.0046251):
+            // Widens smoothly under overcast cloud cover + scales penumbra with blocker distance for physical soft shadows!
+            static const float kSolarDiskTan = 0.0046251f;
+            const float overcastWiden = lerp(1.0f, 1.85f, saturate(clouds.x * 0.85f + weather.w * 0.35f));
+            const float solarCone = max(sunCone, kSolarDiskTan) * overcastWiden;
+            const float grazingSun = saturate(1.0f - saturate(dot(biasN, sunDirUnit)));
+            const float3 oSun = p + biasN * clamp((0.015f + 0.002f * z) * (1.0f + grazingSun * 1.35f) + (isSkinnedMesh ? 0.42f : 0.28f), 0.30f, 4.5f);
+            const float turn = saturate(1.0f - dot(ng, sunDirUnit) / 0.45f);
+            const float tMinS = max(max(termDist, 1.8f) * turn * turn, oScale * 0.25f * turn);
             Hit hBlocker;
-            float effCone = sunCone;
+            float effCone = solarCone;
             float vSum = 0.0f;
-            if (traceHit(o + sunDir.xyz * tMinS, jitterDir(sunDir.xyz, sunCone * 0.42f, r), sunLength, hBlocker)) {
-                effCone = clamp(sunCone * (0.20f + 1.70f * saturate(hBlocker.t / 190.0f)), sunCone * 0.20f, sunCone * 1.90f);
+            if (traceHit(oSun + sunDirUnit * tMinS, jitterDir(sunDirUnit, solarCone * 0.55f, rDisk), sunLength, hBlocker)) {
+                effCone = clamp(solarCone * (0.35f + 1.55f * saturate(hBlocker.t / 190.0f)), kSolarDiskTan * 0.50f, solarCone * 2.0f);
             } else {
                 vSum += 1.0f;
             }
-            vSum += visible(o, jitterDir(sunDir.xyz, effCone, q4.zw), tMinS, sunLength);
-            vis.x = vSum * 0.5f;
+            vSum += visible(oSun, jitterDir(sunDirUnit, effCone, q4.zw), tMinS, sunLength);
+            vis.x = saturate(vSum * 0.5f);
         }
         // Hardware-tier adaptive DXR ray budget (RTX 3060=Tier 1 -> 1 spp, 4070/4090=Tier 2-3 -> 2 spp, 5090=Tier 4 -> 3 spp GI):
         const uint rtTier = (giFlags >> 8u) & 7u;
@@ -424,7 +433,7 @@ void main(uint3 id : SV_DispatchThreadID) {
             float vAcc = 0.0f;
             const uint nSpp = (rtTier <= 1u) ? 1u : 2u;   // Adaptive Vogel-Disk Area RT shadows (1-spp on 3060, 2-spp on 4070-5090)
             const float turnP = saturate(1.0f - dot(ng, lDir) / 0.38f);
-            const float tMinP = (isSkinnedMesh ? 0.55f : 0.28f) * baseBias * turnP * turnP;
+            const float tMinP = (isSkinnedMesh ? 0.55f : 0.28f) * adaptiveNormalBias * turnP * turnP;
             [loop] for (uint si = 0u; si < nSpp; si++) {
                 const float rv = sqrt((float(si) + 0.5f) / float(nSpp));
                 const float av = float(si) * 2.3999632f + ang0;
@@ -514,7 +523,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     }
     // Reflection: glossy lit surfaces (the game's lobe, not foliage), one ray around the mirror
     // direction spread by the roughness.
-    if (d < 1.0f && base == 7u && (giFlags & GI_FAR) != 0u) {
+    if (d < 0.99998f && base == 7u && (giFlags & GI_FAR) != 0u) {
         const float2 px = float2(id.xy);
         const float3 p = worldAt(px, d);
         const float3 n = worldNormal(Normal.Load(ip));
@@ -532,7 +541,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     // Wet pixels (Weather.hlsli) reflect too: rain makes the ground glossy and puddles mirrors.
     Wet rain;
     rain.wet = 0.0f; rain.puddle = 0.0f; rain.snow = 0.0f;
-    if (d < 1.0f && base >= 1u && base <= 4u && sunColour.w > 0.5f) {
+    if (d < 0.99998f && base >= 1u && base <= 4u && sunColour.w > 0.5f) {
         const float3 wp = worldAt(float2(id.xy), d), wn = worldNormal(Normal.Load(ip));
         rain = wetAt(wp, wn, geometricNormal(float2(id.xy), wp, wn), 1.0f);
         // Match Lighting.hlsl engine-native capillary wet-shoreline wicking from TESObjectCELL::waterHeight (engineWorld.x)
@@ -546,7 +555,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
     }
     const bool wetGloss = max(rain.wet, rain.puddle) * (1.0f - rain.snow) > 0.2f;   // snow covers the water
-    const bool wantRefl = (reflectLength > 0.0f && d < 1.0f && ((base >= 1u && base <= 4u) || base == 13u));
+    const bool wantRefl = (reflectLength > 0.0f && d < 0.99998f && ((base >= 1u && base <= 4u) || base == 13u));
     if (WaveActiveAnyTrue(wantRefl) && wantRefl) {
         const float4 sp = Spec.Load(ip);
         // Wave-Coherent Reflection Gate: skips matte terrain/snow/frosted-ice warps cleanly (saves RT rays for glossy/wet/metal):
@@ -729,11 +738,17 @@ void main(uint3 id : SV_DispatchThreadID) {
     }
 #endif
     // Always write Refl[id.xy] unconditionally (fixes stale previous-frame ghosting on pixels between glossy thresholds!).
-    Refl[id.xy] = refl;
-    Vis[id.xy] = vis;
-    Lights[id.xy] = float4(idx.xyz, sky);
+    // Wave 54: sanitize all UAV outputs against NaN/Inf before write.
+    const float4 reflOut = all(isfinite(refl)) ? float4(max(refl.rgb, 0.0f.xxx), saturate(refl.a)) : float4(0.0f.xxx, 0.0f);
+    const float4 visOut = all(isfinite(vis)) ? saturate(vis) : float4(1.0f, 1.0f, 1.0f, 1.0f);
+    const float skyOut = isfinite(sky) ? saturate(sky) : 1.0f;
+    const float3 bounceOut = all(isfinite(bounce)) ? max(bounce, 0.0f.xxx) : 0.0f.xxx;
+    const float restOut = isfinite(restCode) ? restCode : 0.0f;
+    Refl[id.xy] = reflOut;
+    Vis[id.xy] = visOut;
+    Lights[id.xy] = float4(idx.xyz, skyOut);
     // Always write fresh SkyRaw for every traced non-LOD pixel (eliminates 3/4 stale unreprojected SkyRaw pixels
     // that previously caused RtSkyFilter::meanAround to smear ghosted GI & shadow trails across moving objects!).
-    if (skyLength > 0.0f && (base != 7u || skyTurn(id.xy))) { SkyRaw[id.xy] = float4(bounce, sky + restCode); }
+    if (skyLength > 0.0f && (base != 7u || skyTurn(id.xy))) { SkyRaw[id.xy] = float4(bounceOut, skyOut + restOut); }
 }
 #endif

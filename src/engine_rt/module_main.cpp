@@ -34,6 +34,7 @@
 #include "rt_economy_ledger.h"
 #include "rt_engine_health.h"
 #include "rt_forensics.h"
+#include "rt_frame_governor.h"
 #include "rt_live_config.h"
 #include "rt_memory_guards.h"
 #include "rt_mod_load_audit.h"
@@ -154,6 +155,7 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             raw::rt::SavePapyrusGuardOnPresent(frameMs);
             raw::rt::AudioDirectorOnPresent(static_cast<float>(frameMs * 0.001));
             raw::rt::FlightRecorderOnPresent(frameMs);
+            raw::rt::FrameGovernorOnPresent(frameMs);
         }
         s_prevQpc = nowQpc;
     }
@@ -392,6 +394,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     Log("%s", raw::rt::NpcBehaviorInit().c_str());
     Log("%s", raw::rt::AudioDirectorInit().c_str());
     Log("%s", raw::rt::FlightRecorderInit(g_out).c_str());
+    Log("%s", raw::rt::FrameGovernorInit().c_str());
     Log("%s", raw::rt::EngineHealthInit().c_str());
     Log("%s", raw::rt::AudioBridgeInit().c_str());
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
@@ -423,6 +426,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
     }
     raw::rt::AudioBridgeShutdown();
     raw::rt::EngineHealthShutdown();
+    raw::rt::FrameGovernorShutdown();
     raw::rt::FlightRecorderShutdown();
     raw::rt::AudioDirectorShutdown();
     raw::rt::NpcBehaviorShutdown();

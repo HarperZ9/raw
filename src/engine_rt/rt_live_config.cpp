@@ -23,6 +23,7 @@
 #include "rt_combat_impact.h"
 #include "rt_economy_ledger.h"
 #include "rt_engine_health.h"
+#include "rt_frame_governor.h"
 #include "rt_mod_load_audit.h"
 #include "rt_movement_combat.h"
 #include "rt_npc_behavior.h"
@@ -138,6 +139,7 @@ void ClampLiveEngineConfig(LiveEngineConfig& cfg) {
     cfg.xpbdWindScale          = ClampFinite(cfg.xpbdWindScale,     0.0f,   3.0f, def.xpbdWindScale);
     cfg.fovBreathScale         = ClampFinite(cfg.fovBreathScale,    0.0f,   2.5f, def.fovBreathScale);
     cfg.liveAudioGain          = ClampFinite(cfg.liveAudioGain,     0.0f,   0.50f, def.liveAudioGain);
+    cfg.targetFps              = ClampFinite(cfg.targetFps,        30.0f, 240.0f,  def.targetFps);
     if (cfg.statusDumpHotkeyVK != 0u) {
         cfg.statusDumpHotkeyVK = std::clamp(cfg.statusDumpHotkeyVK, 0x08u, 0xFEu);
     }
@@ -206,6 +208,11 @@ std::string FormatDefaultLiveConfigIni(const LiveEngineConfig& inCfg) {
        << "[WorldAI]\n"
        << "; Enable/disable weather/season/economy-driven NPC daily behavior & crowd ecology (0/1, default 1)\n"
        << "DynamicNpcBehavior=" << (c.dynamicNpcBehaviorEnabled ? 1 : 0) << "\n\n"
+       << "[Performance]\n"
+       << "; Enable/disable hysteresis-damped PI frame-pacing & quality scaling governor (0/1, default 1)\n"
+       << "DynamicGovernor=" << (c.dynamicGovernorEnabled ? 1 : 0) << "\n"
+       << "; Target frame rate for PI quality scaling governor (30..240, default 60)\n"
+       << "TargetFps=" << fmtF(c.targetFps, 0) << "\n\n"
        << "[Diagnostics]\n"
        << "; Virtual-key code for live status dump (default 121 = VK_F10; 0 disables)\n"
        << "StatusDumpHotkeyVK=" << c.statusDumpHotkeyVK << "\n"
@@ -291,6 +298,10 @@ bool ParseLiveConfigIni(const std::string& iniText, LiveEngineConfig& outCfg) {
         }
         if (section.empty() || section == "worldai") {
             if (key == "dynamicnpcbehavior" && ParseBoolVal(val, b))      cfg.dynamicNpcBehaviorEnabled = b;
+        }
+        if (section.empty() || section == "performance") {
+            if (key == "dynamicgovernor" && ParseBoolVal(val, b))         cfg.dynamicGovernorEnabled = b;
+            else if (key == "targetfps" && ParseFloatVal(val, f))         cfg.targetFps = f;
         }
         if (section.empty() || section == "diagnostics") {
             if (key == "statusdumphotkeyvk" && ParseUintVal(val, u))      cfg.statusDumpHotkeyVK = u;
@@ -525,11 +536,19 @@ std::string FormatLiveStatusDump(const LiveStatusDumpData& d) {
 
     os << "[Flight Recorder]\n";
     std::snprintf(buf, sizeof buf,
-                  "  Recorder=%u Recorded=%llu Ring=%u/300 Mean=%.2fms P50=%.2fms P95=%.2fms P99=%.2fms Max=%.2fms Hitches(>50ms)=%u Flushes=%u\n",
+                  "  Recorder=%u Recorded=%llu Ring=%u/300 Mean=%.2fms P50=%.2fms P95=%.2fms P99=%.2fms Max=%.2fms Hitches(>50ms)=%u Flushes=%u\n\n",
                   d.config.flightRecorderEnabled ? 1u : 0u,
                   static_cast<unsigned long long>(d.flightTotalFrames), d.flightRingFill,
                   d.flightMeanMs, d.flightP50Ms, d.flightP95Ms, d.flightP99Ms, d.flightMaxMs,
                   d.flightHitches50ms, d.flightFlushes);
+    os << buf;
+
+    os << "[Frame Pacing Governor]\n";
+    std::snprintf(buf, sizeof buf,
+                  "  Governor=%u TargetFps=%.0f Regime=%u Ema=%.2fms | Scale(render=%.2f vol=%.2f shadow=%.2f flora=%.2f gi=%.2f)\n",
+                  d.config.dynamicGovernorEnabled ? 1u : 0u, d.config.targetFps,
+                  static_cast<unsigned>(d.govRegime), d.govEmaMs,
+                  d.govRenderScale, d.govVolumetric01, d.govShadowScale, d.govFloraScale, d.govGiBudget01);
     os << buf;
     return os.str();
 }
@@ -799,6 +818,17 @@ bool LiveConfigWriteStatusDump(std::string* outPathWritten) {
         for (uint8_t i = 0u; i < ehr.advisoryCount && i < 4u; ++i) {
             d.healthAdvisories[i] = ehr.advisories[i];
         }
+    }
+
+    RawFrameGovernorState fgs{};
+    if (RAW_GetFrameGovernorState(&fgs)) {
+        d.govRegime       = fgs.regime;
+        d.govEmaMs        = fgs.emaFrameMs;
+        d.govRenderScale  = fgs.renderScale;
+        d.govVolumetric01 = fgs.volumetricQuality01;
+        d.govShadowScale  = fgs.shadowDistanceScale;
+        d.govFloraScale   = fgs.floraLodScale;
+        d.govGiBudget01   = fgs.giRayBudget01;
     }
 
     const bool ok = WriteLiveStatusDumpToFile(outPath, d);

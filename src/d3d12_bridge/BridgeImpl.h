@@ -14,6 +14,7 @@
 #include "RawLightClusterHost.h"
 #include "RawVolumetricFroxelHost.h"
 #include "RawShadowPcssHost.h"
+#include "RawGtaoHost.h"
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
@@ -86,6 +87,7 @@ struct D3D12Bridge::Impl
     std::unique_ptr<RawLightClusterHost> lightClusters; // Live GPU 16x9x24 (3,456-cluster) 1,024-light grid
     std::unique_ptr<RawVolumetricFroxelHost> volFroxels; // Live GPU 160x90x64 3D Volumetric Froxel Fog & Mie solver
     std::unique_ptr<RawShadowPcssHost> shadowPcss; // Live GPU Variable-Penumbra PCSS Contact-Hardening Shadow solver
+    std::unique_ptr<RawGtaoHost> gtaoHost; // Live GPU Jimenez GTAO + Unoccluded Bent-Normal & Bilateral Denoise solver
     bool                     fluidReady = false;
     bool                     radianceReady = false;
     bool                     xpbdSimReady = false;
@@ -97,6 +99,7 @@ struct D3D12Bridge::Impl
     bool                     lightClustersReady = false;
     bool                     volFroxelsReady = false;
     bool                     shadowPcssReady = false;
+    bool                     gtaoHostReady = false;
     ComPtr<ID3D12CommandAllocator>    fluidAlloc[kRing];
     ComPtr<ID3D12GraphicsCommandList> fluidList;
     ComPtr<ID3D12Fence>               fluidFence;
@@ -184,6 +187,14 @@ struct D3D12Bridge::Impl
     uint32_t                          shadowPcssOutW = 0;
     uint32_t                          shadowPcssOutH = 0;
     ComPtr<ID3D12Resource>            shadowPcssFallbackMap;
+    ComPtr<ID3D12CommandAllocator>    gtaoAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList> gtaoList;
+    ComPtr<ID3D12Fence>               gtaoFence;
+    HANDLE                            gtaoEvent = nullptr;
+    uint64_t                          gtaoFenceVal = 0;
+    uint64_t                          gtaoSlotVal[kRing] = {};
+    uint32_t                          gtaoSlot = 0;
+    uint64_t                          gtaoStepFrames = 0;
     std::string                       telemetryOutDir;
     bool InitFluidSim();
     void ShutdownFluidSim();
@@ -206,6 +217,9 @@ struct D3D12Bridge::Impl
     bool InitShadowPcss();
     void ShutdownShadowPcss();
     bool ExecuteShadowPcssOnQueue(bool hasShadows);
+    bool InitGtaoHost();
+    void ShutdownGtaoHost();
+    bool ExecuteGtaoOnQueue();
     bool InitOverlayHost();
     void ShutdownOverlayHost();
     void PollOverlayHotkey();

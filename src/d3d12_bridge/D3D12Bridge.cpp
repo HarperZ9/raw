@@ -303,7 +303,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         const bool clusterOk = m->InitLightClusters();
         const bool froxelOk = m->InitVolFroxels();
         const bool pcssOk = m->InitShadowPcss();
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s",
+        const bool gtaoOk = m->InitGtaoHost();
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s, Gtao=%s",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
                terrainOk ? "READY" : "off",
                m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
@@ -317,7 +318,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                cullOk ? "READY" : "off",
                clusterOk ? "READY" : "off",
                froxelOk ? "READY" : "off",
-               pcssOk ? "READY" : "off");
+               pcssOk ? "READY" : "off",
+               gtaoOk ? "READY" : "off");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
         {
             const auto& matReg = raw::materials::DefaultMaterialRegistry();
@@ -1041,6 +1043,75 @@ void D3D12Bridge::Impl::ShutdownShadowPcss()
     shadowPcssReady = false;
 }
 
+bool D3D12Bridge::Impl::InitGtaoHost()
+{
+    ShutdownGtaoHost();
+    if (!dev12) return false;
+    gtaoHost = std::make_unique<RawGtaoHost>();
+    GtaoDesc desc{};
+    desc.initialWidth  = std::max(cfg.width / 2u, 16u);
+    desc.initialHeight = std::max(cfg.height / 2u, 16u);
+    std::string gtaoErr;
+    if (!gtaoHost->Init(dev12.Get(), desc, &gtaoErr)) {
+        log("[Gtao] off: %s", gtaoErr.c_str());
+        gtaoHost.reset();
+        return false;
+    }
+    UINT64 tsFreq = 0;
+    if (queue && SUCCEEDED(queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+        gtaoHost->SetTimestampFrequency(tsFreq);
+    }
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&gtaoAlloc[i])))) {
+            ShutdownGtaoHost();
+            return false;
+        }
+    }
+    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, gtaoAlloc[0].Get(), nullptr, IID_PPV_ARGS(&gtaoList))) ||
+        FAILED(gtaoList->Close()) ||
+        FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&gtaoFence)))) {
+        ShutdownGtaoHost();
+        return false;
+    }
+    gtaoEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!gtaoEvent) {
+        ShutdownGtaoHost();
+        return false;
+    }
+    gtaoHostReady = true;
+    log("[Gtao] GPU Jimenez GTAO + Bent-Normal ready (half-res %ux%u RGBA16F)",
+        desc.initialWidth, desc.initialHeight);
+    return true;
+}
+
+void D3D12Bridge::Impl::ShutdownGtaoHost()
+{
+    if (gtaoFence && gtaoEvent && gtaoFenceVal > 0) {
+        if (gtaoFence->GetCompletedValue() < gtaoFenceVal) {
+            gtaoFence->SetEventOnCompletion(gtaoFenceVal, gtaoEvent);
+            WaitForSingleObject(gtaoEvent, 3000);
+        }
+    }
+    gtaoList.Reset();
+    for (UINT i = 0; i < kRing; ++i) {
+        gtaoAlloc[i].Reset();
+        gtaoSlotVal[i] = 0;
+    }
+    gtaoFence.Reset();
+    if (gtaoEvent) {
+        CloseHandle(gtaoEvent);
+        gtaoEvent = nullptr;
+    }
+    if (gtaoHost) {
+        gtaoHost->Shutdown();
+        gtaoHost.reset();
+    }
+    gtaoFenceVal = 0;
+    gtaoSlot = 0;
+    gtaoStepFrames = 0;
+    gtaoHostReady = false;
+}
+
 void D3D12Bridge::Shutdown()
 {
     if (!m) return;
@@ -1049,6 +1120,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->ShutdownGtaoHost();
     m->ShutdownShadowPcss();
     m->ShutdownVolFroxels();
     m->ShutdownLightClusters();

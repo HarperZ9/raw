@@ -50,9 +50,9 @@ void Load()
     C().workers = (rawWorkers < 0) ? raw::bridge::RecommendTxWorkers() : static_cast<UINT>(rawWorkers);
     C().segmentDraws = GetPrivateProfileIntA("Translate", "SegmentDraws", 256, ini.c_str());
     C().segmentMin = GetPrivateProfileIntA("Translate", "SegmentMin", 64, ini.c_str());   // shorter runs stay on the game's thread
-    // Opt-in only (default 0): Skyrim SE's position-only Depth Prepass does not match NORMAL-bearing Opaque layouts,
-    // so enabling vertex subdivision on Skyrim SE causes DEPTH_EQUAL rejection holes across terrain, roofs, and weapons.
-    C().geometrySubdiv = GetPrivateProfileIntA("Translate", "GeometrySubdiv", 0, ini.c_str()) != 0;
+    // Wave 32 Paired Depth-Prepass + Color-Pass 4x Curved PN-Triangle GPU Subdivision (default ON):
+    // Layout-independent SubdivKey + lastDepthFrame lockstep guarantees bit-exact DEPTH_EQUAL matching with ZERO holes!
+    C().geometrySubdiv = GetPrivateProfileIntA("Translate", "GeometrySubdiv", 1, ini.c_str()) != 0;
     if (C().mode) Log("[Tx] translate mode %s%s (workers=%u%s, subdiv=%d)", C().mode == 1 ? "on: the game runs on raw::tx (D3D12)" : "native: system D3D11 behind the harness wrapper",
                       C().debugLayer ? ", D3D12 debug layer on" : "", C().workers, rawWorkers < 0 ? " auto" : "", int(C().geometrySubdiv));
 }

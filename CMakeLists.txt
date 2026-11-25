@@ -528,7 +528,7 @@ if(RAW_ENGINE_DIR)
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E froxel_integrate -DFROXEL_INT=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/froxel_int_fs.h -Vn kDxil_froxel_int_fs ${RAW_FROXEL_HLSL}
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E fs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/world_field_sim_fs.h -Vn kDxil_world_field_sim_fs ${RAW_WORLDSIM_HLSL}
         DEPENDS ${RAW_LIGHT_HLSL} ${RAW_LIGHTFOG_HLSL} ${RAW_CLOUDS_HLSL} ${RAW_VOLUMETRIC_HLSL} ${RAW_BLOOM_HLSL} ${RAW_ATMO_HLSL} ${RAW_REFL_FILT_HLSL} ${RAW_DOF_HLSL} ${RAW_RAWLSS5_HLSL} ${RAW_GI_ATROUS_HLSL} ${RAW_CLOUD_NOISE_HLSL} ${RAW_ENV_CUBE_HLSL} ${RAW_FROXEL_HLSL} ${RAW_WORLDSIM_HLSL} ${RAW_SHARE_HLSL}/LightingCommon.hlsli ${RAW_SHARE_HLSL}/Weather.hlsli
-                ${RAW_SHARE_HLSL}/CloudCommon.hlsli ${RAW_SHARE_HLSL}/DistantLod.hlsli ${RAW_SHARE_HLSL}/ElderOptics.hlsli ${RAW_SHARE_HLSL}/StrataBRDF.hlsli ${RAW_SHARE_HLSL}/RawTensorMath.hlsli
+                ${RAW_SHARE_HLSL}/CloudCommon.hlsli ${RAW_SHARE_HLSL}/DistantLod.hlsli ${RAW_SHARE_HLSL}/ElderOptics.hlsli ${RAW_SHARE_HLSL}/StrataBRDF.hlsli ${RAW_SHARE_HLSL}/SpectralTransport.hlsli ${RAW_SHARE_HLSL}/RawTensorMath.hlsli
         COMMENT "dxc: SM${RAW_SHADER_MODEL} lighting, cloud, volumetric, bloom, atmosphere, refl denoiser, 3-pass DoF & 3-pass A-Trous GI -> DXIL headers"
         VERBATIM)
     target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/LightingPass.cpp ${RAW_LIGHT_HEADERS})
@@ -623,7 +623,7 @@ if(RAW_ENGINE_DIR)
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
         COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow.h -Vn kDxil_rt_shadow ${RAW_RTSHADOW_HLSL}
         COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E main -DRT_DEBUG=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow_debug.h -Vn kDxil_rt_shadow_debug ${RAW_RTSHADOW_HLSL}
-        DEPENDS ${RAW_RTSHADOW_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
+        DEPENDS ${RAW_RTSHADOW_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/SpectralTransport.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli
                 ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Weather.hlsli
         COMMENT "dxc: ray-traced shadows -> DXIL header"
         VERBATIM)
@@ -633,7 +633,7 @@ if(RAW_ENGINE_DIR)
             COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
             COMMAND ${RAW_DXC_NEXT} -T cs_6_9 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow_69.h -Vn kDxil_rt_shadow_69 ${RAW_RTSHADOW_HLSL}
             COMMAND ${RAW_DXC_NEXT} -T cs_6_9 -E main -DRT_DEBUG=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow_debug_69.h -Vn kDxil_rt_shadow_debug_69 ${RAW_RTSHADOW_HLSL}
-            DEPENDS ${RAW_RTSHADOW_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
+            DEPENDS ${RAW_RTSHADOW_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/SpectralTransport.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli
                     ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Weather.hlsli
             COMMENT "dxc 1.9+: native SM 6.9 DXIL 1.9 ray-traced shadows -> DXIL headers"
             VERBATIM)

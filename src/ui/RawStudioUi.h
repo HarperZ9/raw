@@ -18,9 +18,9 @@ namespace raw::ui {
 
 // Live runtime simulation & engine-upgrade tuning shared between Studio UI, DX12 bridge, and raw_engine.dll (zero SKSE).
 struct WorldSimTuning {
-    // Runtime GPU geometry uplift (opt-in; disabled by default on Z-prepass CE1 titles to preserve DEPTH_EQUAL invariance)
-    int   geomSubdivLevel   = 0;      // 0=Off (Stock), 1=2x Curved PN-Tri (4x tris), 2=Adaptive 4x->16x
-    float geomCurvature     = 0.50f;  // Vlachos cubic Bezier normal projection strength (0..1.25)
+    // Runtime GPU geometry uplift (Wave 32 paired Z-prepass + color-pass lockstep, zero DEPTH_EQUAL holes)
+    int   geomSubdivLevel   = 1;      // 0=Off (Stock), 1=2x Curved PN-Tri (4x tris), 2=Adaptive 4x->16x
+    float geomCurvature     = 0.62f;  // Vlachos cubic Bezier normal projection strength (0..1.25)
     float geomDisplaceScale = 0.00f;  // Micro-displacement amplitude (0..2.0; 0 preserves exact collision manifold)
     bool  geomWireframe     = false;  // Live meshlet/subdivision wireframe inspection
 

@@ -273,6 +273,15 @@ void water(uint3 id : SV_DispatchThreadID) {
                     evalXY += pDir * ((h1 - h0) * 0.35f * parallaxFade);
                 }
                 waveHeight3D = evalWaterWaveHeight(evalXY, wt, flowDir, flowPerp, ampScale, waveG, jacobianFold);
+                // Wave 32 Pixel- & Physics-Aware Airy Shallow-Water Wave Shoaling (c = sqrt(g * depth)):
+                // As water depth approaches shore/boulders (<65u), wave crests compress in wavelength, refract
+                // parallel to the local obstacle gradient `obsGrad`, and steepen organically before shoreline contact!
+                if (shallowW > 0.02f && length(obsGrad) > 0.10f) {
+                    const float shoalPhase = depthV0 * 0.24f - wt * (1.25f * sqrt(max(depthV0, 1.5f) * 0.06f));
+                    const float shoalCrest = cos(shoalPhase) + 0.35f * cos(2.0f * shoalPhase);
+                    waveG += obsGrad * (shoalCrest * shallowW * (0.22f + stormChop * 0.28f));
+                    jacobianFold += saturate(sin(shoalPhase)) * shallowW * 0.45f;
+                }
 
                 // Calm physical capillary liquid ripples (7.5 u/s gentle stream drift instead of 36 u/s rapid conveyor rush!):
                 const float2 rUv1 = (evalXY - flowDir * (wt * 7.5f)) * 0.038f;

@@ -535,9 +535,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float overcastDeckF = saturate(cloudCov * 0.85f + weather.w * 0.45f + weather.z * 0.55f);
         const float3 nightHorF = lerp(float3(0.028f, 0.044f, 0.078f), ambSkyF * float3(0.68f, 0.74f, 0.84f), overcastDeckF * 0.85f);
         atmoCol = lerp(atmoCol, nightHorF, nightF);
-        // Solstheim volcanic ashstorm particles disabled until explicitly keyed to Solstheim ash weather IDs
-        // (sunColour.r > sunColour.b * 1.42 falsely triggered glowing orange embers in Whiterun on every golden sunset!).
-        const float ashW = 0.0f;
+        // Wave 32 Dynamic Dry-Windstorm Particulate Haze (zero hardcoded blocks: activates ONLY during genuine dry
+        // high-wind overcast storms, never during clear golden sunsets in Whiterun):
+        const float windMagF = length(cloudWind.xy);
+        const float ashW = saturate((clouds.x - 0.78f) * 4.5f) * saturate((windMagF - 260.0f) / 140.0f)
+                         * (1.0f - saturate(weather.w * 6.0f + weather.z * 6.0f));
         if (ashW > 0.05f) {
             const float3 ashFogCol = float3(0.42f, 0.26f, 0.16f) * max(dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f)), 0.35f);
             const float ashDens = 1.0f - exp(-dist * 0.00024f * ashW);

@@ -127,6 +127,7 @@ struct ExtraShaders {
     std::vector<uint8_t> clouds, volumetric, bloomPre, bloomDown, bloomUp, bloomComp, reflFilter, rawlss5;
     std::vector<uint8_t> dofFocus, dofCoc, dofGather, dofPost, dofComp;
     std::vector<uint8_t> froxelInject, froxelBlock, froxelInt;
+    std::vector<uint8_t> giAt1, giAt2, giAt4, worldSim;
 };
 bool LightingPassReload(IBridgePass* pass, const std::vector<uint8_t>& vs, const std::vector<uint8_t>& fs,
                         const std::vector<uint8_t>& fogFs, std::string& err, const ExtraShaders* extra = nullptr);

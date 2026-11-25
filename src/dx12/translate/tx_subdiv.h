@@ -36,14 +36,13 @@ struct SubdivKey {
     uint32_t startIndex = 0;
     uint32_t indexCount = 0;
     int32_t  baseVertex = 0;
-    uint32_t layoutId = 0;
     uint32_t stride = 0;
     uint32_t ibFmt = 0;
     uint32_t epoch = 0;
     bool operator==(const SubdivKey& o) const {
         return vbTr == o.vbTr && ibTr == o.ibTr && vbOffset == o.vbOffset && ibOffset == o.ibOffset &&
                startIndex == o.startIndex && indexCount == o.indexCount && baseVertex == o.baseVertex &&
-               layoutId == o.layoutId && stride == o.stride && ibFmt == o.ibFmt && epoch == o.epoch;
+               stride == o.stride && ibFmt == o.ibFmt && epoch == o.epoch;
     }
 };
 
@@ -60,6 +59,9 @@ struct SubdivEntry {
     D3D12_INDEX_BUFFER_VIEW     ibView{};
     uint32_t                    outIndexCount = 0;
     uint64_t                    vramBytes = 0;
+    // Frame counter of the last depth-only (Z-prepass) draw that emitted this 4x curved mesh.
+    // Guarantees bit-exact DEPTH_EQUAL matching between Skyrim's position-only Z-prepass and opaque color pass!
+    mutable std::atomic<uint64_t> lastDepthFrame{0};
 };
 
 struct SubdivBuildReq {

@@ -156,6 +156,7 @@ public:
     std::atomic<float>    subdivSnowDepth{0.0f};
     std::atomic<float>    subdivDisplace{0.0f};
     std::atomic<uint32_t> subdivEpoch{0};
+    std::atomic<uint64_t> frameSeq{1};
     const SubdivLayoutInfo* GetSubdivLayout(uint32_t layoutId);
     void DrainInfoQueue();
 

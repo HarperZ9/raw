@@ -498,6 +498,10 @@ public:
             if (!trySwap(extra->froxelInject, "froxel inj (reloaded)",    kFroxelInjectLayout, m_froxelInjectPipe)) return false;
             if (!trySwap(extra->froxelBlock,  "froxel blk (reloaded)",    kFroxelBlockLayout,  m_froxelBlockPipe))  return false;
             if (!trySwap(extra->froxelInt,    "froxel int (reloaded)",    kFroxelIntLayout,    m_froxelIntPipe))    return false;
+            if (!trySwap(extra->giAt1,        "gi atrous 1 (reloaded)",   kGiAtrousLayout,     m_giAt1Pipe))        return false;
+            if (!trySwap(extra->giAt2,        "gi atrous 2 (reloaded)",   kGiAtrousLayout,     m_giAt2Pipe))        return false;
+            if (!trySwap(extra->giAt4,        "gi atrous 4 (reloaded)",   kGiAtrousLayout,     m_giAt4Pipe))        return false;
+            if (!trySwap(extra->worldSim,     "world sim (reloaded)",     kWorldSimLayout,     m_worldSimPipe))     return false;
         }
         m_lightPipe = light;
         m_fogPipe = fog;

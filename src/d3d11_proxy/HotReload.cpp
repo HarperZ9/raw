@@ -35,8 +35,10 @@ struct Compiled {
     raw::bridge::CompileResult clouds, volumetric, bloomPre, bloomDown, bloomUp, bloomComp, reflFilter, rawlss5;
     raw::bridge::CompileResult dofFocus, dofCoc, dofGather, dofPost, dofComp;
     raw::bridge::CompileResult froxelInject, froxelBlock, froxelInt;
+    raw::bridge::CompileResult giAt1, giAt2, giAt4, worldSim;
     bool hasLight = false, hasFog = false, hasRt = false, hasSky = false, hasWater = false, hasSss = false;
     bool hasClouds = false, hasVol = false, hasBloom = false, hasReflFilt = false, hasRawlss5 = false, hasDof = false, hasFroxel = false;
+    bool hasGiAtrous = false, hasWorldSim = false;
     Clock::time_point seen;
 };
 
@@ -157,6 +159,14 @@ void Start(State& s, std::unordered_set<std::wstring> changed, bool allShaders)
             c.froxelBlock  = raw::bridge::CompileHlsl(dir + L"\\FroxelPass.hlsl", L"froxel_block_scan", L"ps_6_6", dxc, L"FROXEL_BLOCK=1");
             c.froxelInt    = raw::bridge::CompileHlsl(dir + L"\\FroxelPass.hlsl", L"froxel_integrate",  L"ps_6_6", dxc, L"FROXEL_INT=1");
         }
+        c.hasGiAtrous = want(L"GiAtrousPass.hlsl");
+        if (c.hasGiAtrous) {
+            c.giAt1 = comp(dir + L"\\GiAtrousPass.hlsl", L"step1", L"ps_6_6");
+            c.giAt2 = comp(dir + L"\\GiAtrousPass.hlsl", L"step2", L"ps_6_6");
+            c.giAt4 = comp(dir + L"\\GiAtrousPass.hlsl", L"step4", L"ps_6_6");
+        }
+        c.hasWorldSim = want(L"WorldFieldSim.hlsl");
+        if (c.hasWorldSim) c.worldSim = comp(dir + L"\\WorldFieldSim.hlsl", L"fs", L"ps_6_6");
         return c;
     });
 }
@@ -180,6 +190,8 @@ void Finish(State& s)
     checkRes(c.dofFocus, c.hasDof); checkRes(c.dofCoc, c.hasDof);
     checkRes(c.dofGather, c.hasDof); checkRes(c.dofPost, c.hasDof); checkRes(c.dofComp, c.hasDof);
     checkRes(c.froxelInject, c.hasFroxel); checkRes(c.froxelBlock, c.hasFroxel); checkRes(c.froxelInt, c.hasFroxel);
+    checkRes(c.giAt1, c.hasGiAtrous); checkRes(c.giAt2, c.hasGiAtrous); checkRes(c.giAt4, c.hasGiAtrous);
+    checkRes(c.worldSim, c.hasWorldSim);
     bool ok = err.empty();
     if (ok) {
         raw::bridge::ExtraShaders ex;
@@ -190,8 +202,10 @@ void Finish(State& s)
         if (c.hasRawlss5)  ex.rawlss5 = c.rawlss5.dxil;
         if (c.hasDof)      { ex.dofFocus = c.dofFocus.dxil; ex.dofCoc = c.dofCoc.dxil; ex.dofGather = c.dofGather.dxil; ex.dofPost = c.dofPost.dxil; ex.dofComp = c.dofComp.dxil; }
         if (c.hasFroxel)   { ex.froxelInject = c.froxelInject.dxil; ex.froxelBlock = c.froxelBlock.dxil; ex.froxelInt = c.froxelInt.dxil; }
+        if (c.hasGiAtrous) { ex.giAt1 = c.giAt1.dxil; ex.giAt2 = c.giAt2.dxil; ex.giAt4 = c.giAt4.dxil; }
+        if (c.hasWorldSim) ex.worldSim = c.worldSim.dxil;
         raw::bridge::D3D12Bridge* b = hook::Bridge();
-        const bool anyRaster = c.hasLight || c.hasFog || c.hasClouds || c.hasVol || c.hasBloom || c.hasReflFilt || c.hasRawlss5 || c.hasDof || c.hasFroxel;
+        const bool anyRaster = c.hasLight || c.hasFog || c.hasClouds || c.hasVol || c.hasBloom || c.hasReflFilt || c.hasRawlss5 || c.hasDof || c.hasFroxel || c.hasGiAtrous || c.hasWorldSim;
         if (anyRaster) {
             ok = b && b->Ready() && raw::bridge::LightingPassReload(b->ActivePass(), c.vs.dxil, c.fs.dxil, c.fog.dxil, err, &ex);
             if (!ok && err.empty()) err = "the bridge is not running the lighting pass";
@@ -347,6 +361,14 @@ bool HotReload_SubmitLiveShader(const std::string& passName, const std::string& 
             c.froxelInject = compMem(L"froxel_inject", L"ps_6_6");
             c.froxelBlock  = compMem(L"froxel_block_scan", L"ps_6_6", L"FROXEL_BLOCK=1");
             c.froxelInt    = compMem(L"froxel_integrate", L"ps_6_6", L"FROXEL_INT=1");
+        } else if (passName == "GiAtrousPass") {
+            c.hasGiAtrous = true;
+            c.giAt1 = compMem(L"step1", L"ps_6_6");
+            c.giAt2 = compMem(L"step2", L"ps_6_6");
+            c.giAt4 = compMem(L"step4", L"ps_6_6");
+        } else if (passName == "WorldFieldSim") {
+            c.hasWorldSim = true;
+            c.worldSim = compMem(L"fs", L"ps_6_6");
         }
         return c;
     });

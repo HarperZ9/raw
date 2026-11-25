@@ -118,7 +118,6 @@ bool PeekSubdivMesh(ID3D11DeviceContext* context, UINT indexCount, UINT startInd
     key.startIndex = startIndex;
     key.indexCount = indexCount;
     key.baseVertex = baseVertex;
-    key.layoutId = s.layout->id;
     key.stride = s.vb[0].stride;
     key.ibFmt = static_cast<uint32_t>(s.ibFmt);
     key.epoch = epoch;

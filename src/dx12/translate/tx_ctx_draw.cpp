@@ -283,9 +283,8 @@ std::shared_ptr<const SubdivEntry> Context::TrySubdivideDraw(UINT n, UINT start,
     if (vb.stride < 16u || vb.stride > 128u || (vb.stride & 3u) != 0u) return nullptr;
     if (s_.ibFmt != DXGI_FORMAT_R16_UINT && s_.ibFmt != DXGI_FORMAT_R32_UINT) return nullptr;
 
-    const SubdivLayoutInfo* li = dev_->GetSubdivLayout(s_.layout->id);
-    if (!li || !li->eligible) return nullptr;
-
+    // Layout-independent key so Skyrim's position-only Z-prepass and NORMAL-bearing Opaque color pass
+    // hit the EXACT same 4x curved PN-Triangle VB/IB (zero DEPTH_EQUAL rejection holes!).
     SubdivKey key{};
     key.vbTr = vb.buf->core.tr.get();
     key.ibTr = ib.buf->core.tr.get();
@@ -294,13 +293,27 @@ std::shared_ptr<const SubdivEntry> Context::TrySubdivideDraw(UINT n, UINT start,
     key.startIndex = start;
     key.indexCount = n;
     key.baseVertex = base;
-    key.layoutId = s_.layout->id;
     key.stride = vb.stride;
     key.ibFmt = static_cast<uint32_t>(s_.ibFmt);
     key.epoch = dev_->subdivEpoch.load(std::memory_order_relaxed);
 
-    if (auto hit = dev_->subdiv.Find(key)) return hit;
-    if (replay_) return nullptr;   // workers only consume cached entries; misses build once on the immediate context
+    const bool isDepthOnly = (s_.rtCount == 0u || !s_.rtv[0]);
+    const bool isDepthEqual = (s_.ds && dev_->DepthDesc(s_.ds->id).DepthFunc == D3D11_COMPARISON_EQUAL);
+    const uint64_t curFrame = dev_->frameSeq.load(std::memory_order_relaxed);
+
+    if (auto hit = dev_->subdiv.Find(key)) {
+        if (isDepthOnly) {
+            hit->lastDepthFrame.store(curFrame, std::memory_order_relaxed);
+            return hit;
+        }
+        if (!isDepthEqual) return hit;
+        // On DEPTH_EQUAL color passes, emit 4x curved geometry ONLY when the Z-prepass emitted this exact 4x mesh this frame!
+        return (hit->lastDepthFrame.load(std::memory_order_relaxed) == curFrame) ? hit : nullptr;
+    }
+    if (isDepthOnly || replay_) return nullptr;   // only full NORMAL-bearing color draws build new 4x entries on the immediate context
+
+    const SubdivLayoutInfo* li = dev_->GetSubdivLayout(s_.layout->id);
+    if (!li || !li->eligible) return nullptr;
 
     ID3D12GraphicsCommandList* cl = Cl();
     rec_.tracker.Require(vb.buf->core.tr, 0, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -325,20 +338,23 @@ std::shared_ptr<const SubdivEntry> Context::TrySubdivideDraw(UINT n, UINT start,
         croot_ = nullptr;
         dirty_ |= D_SCAN_IA | D_VB | D_IB;
     }
-    return built;
+    // On a DEPTH_EQUAL color pass's single build frame, draw flat once so it matches this frame's flat Z-prepass;
+    // starting on frame + 1, both Z-prepass and color pass consume the cached 4x curved mesh in bit-exact lockstep!
+    return isDepthEqual ? nullptr : built;
 }
 
 STDMETHODIMP_(void) Context::DrawIndexed(UINT n, UINT start, INT base)
 {
     TX_TRACE("Context::DrawIndexed");
     // On an uncached eligible static mesh draw, break streaming once so immediate context builds & caches the 4x mesh.
-    const bool needBuild = dev_->geometrySubdiv && !replay_ && s_.topo == D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST &&
+    const bool isDepthOnly = (s_.rtCount == 0u || !s_.rtv[0]);
+    const bool needBuild = dev_->geometrySubdiv && !replay_ && !isDepthOnly && s_.topo == D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST &&
                            s_.dsv && (s_.dsv->desc.Flags & D3D11_DSV_READ_ONLY_DEPTH) == 0 &&
                            n >= 12u && n <= 36000u && (n % 3u) == 0u &&
                            s_.vb[0].buf && s_.ib.buf && s_.vb[0].buf->core.store == Store::Committed &&
                            s_.ib.buf->core.store == Store::Committed && s_.layout && s_.layout->id &&
                            !dev_->subdiv.Find({s_.vb[0].buf->core.tr.get(), s_.ib.buf->core.tr.get(), s_.vb[0].offset,
-                                               s_.ib.offset, start, n, base, s_.layout->id, s_.vb[0].stride,
+                                               s_.ib.offset, start, n, base, s_.vb[0].stride,
                                                static_cast<uint32_t>(s_.ibFmt), dev_->subdivEpoch.load(std::memory_order_relaxed)});
     if (!needBuild && pool_ && !replay_ && StreamDraw()) { SHead(SO_DrawIndexed, 0, 0, n); seg_->words.push_back(uint64_t(start) | uint64_t(uint32_t(base)) << 32); return SegDrawn(); }
     if (seg_ || stale_) EndStream(__func__);

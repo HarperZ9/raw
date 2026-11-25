@@ -159,6 +159,7 @@ private:
     bool m_evictPending = false;
     RtSkin m_skin;
     bool m_skinReady = false;
+    bool m_useSm69 = false;
     bool m_ommOn = false;
     UINT m_psoFlags = 0;
     // Water (RtWater.cpp).

@@ -1,12 +1,13 @@
-// Rawlss5Pass.hlsl: RAWLSS 6.0 Ultra — Native SM 6.6+ Perceptual HDR Temporal Super-Resolution & Ray-Reconstruction Kernel.
-// Upgrades over RAWLSS 5.5:
-//   1) Karis-Tonemapped Perceptual YCoCg Space for 5-Tap Jimenez Catmull-Rom & 3x3 Moments (zero HDR highlight ringing/glow!)
-//   2) Ray-to-Mean YCoCg AABB Intersection Clipping (clipAABB) instead of naive box clamp (preserves exact chroma in motion)
-//   3) Material-Aware Reactive Mask + Highlight-Ceiling Guard (zero synthetic noise or sharpen overshoot on glaciers/ice/highlights!)
-//   4) 3x3 Depth-Dilated Closest-Velocity Anti-Ghosting + Isolated Specular Firefly Ray-Reconstruction Filter
-//   5) Dual-Scale 3D Weingarten Curvature + Bounded FP16 Residual Material-Light Harmonizer (6 -> 8 -> 3)
+// Rawlss5Pass.hlsl: RAWLSS 6.5 Metal — SM 6.6-6.10 Wave-Quad & FP16 Tensor Perceptual Super-Resolution & Ray-Reconstruction.
+// Upgrades over RAWLSS 6.0:
+//   1) Wave-Quad Register-Shuffle Fine Curvature (QuadReadAcrossX/Y via RawTensorMath.hlsli -> 4 fewer Normal L1 loads/pixel!)
+//   2) Native Packed FP16 / SM 6.9 Long-Vector Residual Harmonizer (rawEvalMaterialMlp6x8x3, fast rational tanh)
+//   3) Karis-Tonemapped Perceptual YCoCg Space for 5-Tap Jimenez Catmull-Rom & 3x3 Moments (zero HDR highlight ringing/glow!)
+//   4) Ray-to-Mean YCoCg AABB Intersection Clipping (clipAABB) + Material-Aware Reactive Mask + Highlight-Ceiling Guard
+//   5) 3x3 Depth-Dilated Closest-Velocity Anti-Ghosting + Isolated Specular Firefly Ray-Reconstruction Filter
 // Original work, MIT.
 #include "LightingCommon.hlsli"
+#include "RawTensorMath.hlsli"
 
 Texture2D<float4> CurHdr   : register(t0);
 Texture2D<float>  Depth    : register(t1);
@@ -107,28 +108,9 @@ float vNoise3(float3 p) {
                 lerp(lerp(n001, n101, u.x), lerp(n011, n111, u.x), u.y), u.z);
 }
 
-// Compact deterministic FP16 2-layer 3D-guided residual material-light harmonizer (6 -> 8 -> 3):
-// Inputs: (normalCurvature, signedDivergence, localLumContrast, grazingFresnel, midtoneKey, surfaceUpZ)
-// Outputs: (microReliefGain, bevelSheenGain, indirectBounceWarmth) — strictly highlight-guarded!
+// Delegates neural material-light harmonizer to RawTensorMath.hlsli (packed FP16 / SM 6.9 Long-Vector fast tanh):
 float3 rawlss5Mlp(float4 f0, float2 f1) {
-    const float16_t4 x0 = float16_t4(f0);
-    const float16_t2 x1 = float16_t2(f1);
-    const float16_t4 h0 = tanh(float16_t4(
-        dot(x0, float16_t4( 1.42h,  0.65h,  0.92h,  0.28h)) + dot(x1, float16_t2( 0.32h,  0.22h)) - 0.18h,
-        dot(x0, float16_t4( 0.60h, -0.45h, -0.68h,  1.28h)) + dot(x1, float16_t2( 0.42h, -0.15h)) - 0.32h,
-        dot(x0, float16_t4(-0.35h,  0.88h,  1.22h,  0.62h)) + dot(x1, float16_t2( 0.58h,  0.30h)) - 0.16h,
-        dot(x0, float16_t4( 0.95h, -0.52h,  0.38h, -0.48h)) + dot(x1, float16_t2( 0.84h,  0.40h)) - 0.24h
-    ));
-    const float16_t4 h1 = tanh(float16_t4(
-        dot(x0, float16_t4( 0.48h,  1.10h, -0.25h,  0.75h)) + dot(x1, float16_t2(-0.30h,  0.65h)) - 0.14h,
-        dot(x0, float16_t4(-0.62h,  0.34h,  0.80h,  0.52h)) + dot(x1, float16_t2( 0.46h, -0.58h)) - 0.22h,
-        dot(x0, float16_t4( 0.72h, -0.82h,  0.44h,  0.36h)) + dot(x1, float16_t2( 0.62h,  0.48h)) - 0.20h,
-        dot(x0, float16_t4( 0.30h,  0.56h,  0.68h, -0.40h)) + dot(x1, float16_t2(-0.22h,  0.85h)) - 0.18h
-    ));
-    const float16_t relief = tanh(dot(h0, float16_t4(0.58h, -0.14h, 0.46h, 0.34h)) + dot(h1, float16_t4(0.24h, 0.18h, -0.12h, 0.20h)));
-    const float16_t sheen  = tanh(dot(h0, float16_t4(0.16h,  0.68h, 0.24h, 0.26h)) + dot(h1, float16_t4(0.32h, -0.16h, 0.14h, 0.22h)));
-    const float16_t bounce = tanh(dot(h0, float16_t4(-0.12h, 0.28h, 0.34h, 0.42h)) + dot(h1, float16_t4(0.18h, 0.44h, 0.26h, -0.18h)));
-    return float3(float(relief), float(sheen), float(bounce));
+    return rawEvalMaterialMlp6x8x3(f0, f1);
 }
 
 float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
@@ -189,20 +171,17 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     rgbBlur /= max(wSum, 1.0e-4f);
     const float3 stdDev = sqrt(max(m2 - m1 * m1, 0.0f.xxx));
 
-    // Dual-Scale 3D Weingarten Curvature (1px micro-crevices + 3px architectural chamfers & bevels):
-    const float3 nR1 = worldNormal(Normal.Load(int3(min(p.x + 1, dMax.x), p.y, 0)));
-    const float3 nL1 = worldNormal(Normal.Load(int3(max(p.x - 1, 0), p.y, 0)));
-    const float3 nD1 = worldNormal(Normal.Load(int3(p.x, min(p.y + 1, dMax.y), 0)));
-    const float3 nU1 = worldNormal(Normal.Load(int3(p.x, max(p.y - 1, 0), 0)));
+    // Metal-Level Dual-Scale 3D Weingarten Curvature:
+    // Fine 1px differential runs via hardware QuadReadAcrossX/Y register shuffles (ZERO extra Normal L1 loads!),
+    // paired with 3px architectural chamfer/bevel taps:
+    const float3 tX = normalize(cross(nC, abs(nC.z) < 0.9f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f)));
+    const float3 tY = cross(nC, tX);
+    float curv = 0.0f, divFine = 0.0f;
+    rawQuadSurfaceDiff(nC, tX, tY, p, curv, divFine);
     const float3 nR3 = worldNormal(Normal.Load(int3(min(p.x + 3, dMax.x), p.y, 0)));
     const float3 nL3 = worldNormal(Normal.Load(int3(max(p.x - 3, 0), p.y, 0)));
     const float3 nD3 = worldNormal(Normal.Load(int3(p.x, min(p.y + 3, dMax.y), 0)));
     const float3 nU3 = worldNormal(Normal.Load(int3(p.x, max(p.y - 3, 0), 0)));
-
-    const float curv = saturate((length(nR1 - nL1) + length(nD1 - nU1)) * 0.65f);
-    const float3 tX = normalize(cross(nC, abs(nC.z) < 0.9f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f)));
-    const float3 tY = cross(nC, tX);
-    const float divFine = clamp(dot(nR1 - nL1, tX) + dot(nD1 - nU1, tY), -1.5f, 1.5f);
     const float divBroad = clamp(dot(nR3 - nL3, tX) + dot(nD3 - nU3, tY), -1.5f, 1.5f);
     const float edgeGate = 1.0f - smoothstep(max(z * 0.028f, 3.5f), max(z * 0.11f, 16.0f), maxDz);
     const float divTotal = divFine * 0.68f + divBroad * 0.32f * edgeGate;

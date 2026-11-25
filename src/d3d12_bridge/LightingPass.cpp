@@ -32,6 +32,9 @@
 #include "dof_post_fs.h"
 #include "dof_comp_fs.h"
 #include "rawlss5_fs.h"
+#ifdef RAW_HAS_SM69_DXIL
+#include "rawlss5_69_fs.h"
+#endif
 #include "gi_at1_fs.h"
 #include "gi_at2_fs.h"
 #include "gi_at4_fs.h"
@@ -228,8 +231,28 @@ public:
         m_dofPostPipe = m_dev->createRasterPipeline(d, m_err);
         d.label = "dof comp"; d.fragment = dxil(kDxil_dof_comp_fs, sizeof kDxil_dof_comp_fs); d.layout = kDofCompLayout;
         m_dofCompPipe = m_dev->createRasterPipeline(d, m_err);
-        d.label = "rawlss5 3d-guided"; d.fragment = dxil(kDxil_rawlss5_fs, sizeof kDxil_rawlss5_fs); d.layout = kRawlss5Layout;
-        m_rawlss5Pipe = m_dev->createRasterPipeline(d, m_err);
+#ifdef RAW_HAS_SM69_DXIL
+        if (host.device) {
+            D3D12_FEATURE_DATA_SHADER_MODEL sm{};
+            sm.HighestShaderModel = static_cast<D3D_SHADER_MODEL>(0x69);
+            if (SUCCEEDED(host.device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof sm)) &&
+                static_cast<unsigned>(sm.HighestShaderModel) >= 0x69u) {
+                d.label = "rawlss6.5 sm6.9 long-vector";
+                d.fragment = dxil(kDxil_rawlss5_69_fs, sizeof kDxil_rawlss5_69_fs);
+                d.layout = kRawlss5Layout;
+                std::string sm69Err;
+                m_rawlss5Pipe = m_dev->createRasterPipeline(d, sm69Err);
+                if (m_rawlss5Pipe.valid())
+                    host.log("[Lighting] RAWLSS 6.5 native SM 6.9 DXIL 1.9 Long-Vector pipeline active");
+                else
+                    host.log("[Lighting] RAWLSS 6.5 SM 6.9 fallback to SM 6.6: %s", sm69Err.c_str());
+            }
+        }
+#endif
+        if (!m_rawlss5Pipe.valid()) {
+            d.label = "rawlss6.5 3d-guided"; d.fragment = dxil(kDxil_rawlss5_fs, sizeof kDxil_rawlss5_fs); d.layout = kRawlss5Layout;
+            m_rawlss5Pipe = m_dev->createRasterPipeline(d, m_err);
+        }
         if (!m_dofFocusPipe.valid() || !m_dofCocPipe.valid() || !m_dofGatherPipe.valid() || !m_dofPostPipe.valid() || !m_dofCompPipe.valid() || !m_rawlss5Pipe.valid()) return Fail("dof/rawlss5 pipelines");
         d.label = "gi atrous 1"; d.fragment = dxil(kDxil_gi_at1_fs, sizeof kDxil_gi_at1_fs); d.layout = kGiAtrousLayout;
         m_giAt1Pipe = m_dev->createRasterPipeline(d, m_err);

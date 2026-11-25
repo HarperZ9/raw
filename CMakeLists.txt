@@ -298,6 +298,22 @@ if(RAW_ENGINE_DIR)
     if(NOT RAW_DXC)
         message(FATAL_ERROR "dxc.exe not found; the engine's passes are DXIL")
     endif()
+    # Optional next-gen DXC (1.9+ / SM 6.9 & SM 6.10, e.g. Vulkan SDK or DirectXShaderCompiler release)
+    # to emit dual native SM 6.9 DXIL 1.9 bytecode alongside universal SM 6.6 fallbacks.
+    file(GLOB _RAW_VK_DXC_DIRS "C:/VulkanSDK/*/Bin")
+    find_program(RAW_DXC_NEXT dxc
+        HINTS "$ENV{VULKAN_SDK}/Bin" ${_RAW_VK_DXC_DIRS}
+        NO_DEFAULT_PATH)
+    set(RAW_HAS_SM69_DXIL OFF)
+    if(RAW_DXC_NEXT)
+        execute_process(COMMAND "${RAW_DXC_NEXT}" --version
+            OUTPUT_VARIABLE _RAW_DXC_NEXT_VER ERROR_VARIABLE _RAW_DXC_NEXT_ERR
+            OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if("${_RAW_DXC_NEXT_VER} ${_RAW_DXC_NEXT_ERR}" MATCHES "dxcompiler\\.dll: 1\\.(9|1[0-9])")
+            set(RAW_HAS_SM69_DXIL ON)
+            message(STATUS "RAW: next-gen DXC detected (${RAW_DXC_NEXT}) -> dual SM 6.6 + native SM 6.9 DXIL 1.9 enabled")
+        endif()
+    endif()
     set(E ${RAW_ENGINE_DIR})
     add_library(raw_engine_rhi STATIC
         ${E}/src/rhi/d3d12/d3d12_device.cpp ${E}/src/rhi/d3d12/d3d12_timestamps.cpp
@@ -498,10 +514,21 @@ if(RAW_ENGINE_DIR)
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E froxel_integrate -DFROXEL_INT=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/froxel_int_fs.h -Vn kDxil_froxel_int_fs ${RAW_FROXEL_HLSL}
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E fs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/world_field_sim_fs.h -Vn kDxil_world_field_sim_fs ${RAW_WORLDSIM_HLSL}
         DEPENDS ${RAW_LIGHT_HLSL} ${RAW_LIGHTFOG_HLSL} ${RAW_CLOUDS_HLSL} ${RAW_VOLUMETRIC_HLSL} ${RAW_BLOOM_HLSL} ${RAW_ATMO_HLSL} ${RAW_REFL_FILT_HLSL} ${RAW_DOF_HLSL} ${RAW_RAWLSS5_HLSL} ${RAW_GI_ATROUS_HLSL} ${RAW_CLOUD_NOISE_HLSL} ${RAW_ENV_CUBE_HLSL} ${RAW_FROXEL_HLSL} ${RAW_WORLDSIM_HLSL} ${RAW_SHARE_HLSL}/LightingCommon.hlsli ${RAW_SHARE_HLSL}/Weather.hlsli
-                ${RAW_SHARE_HLSL}/CloudCommon.hlsli ${RAW_SHARE_HLSL}/DistantLod.hlsli ${RAW_SHARE_HLSL}/ElderOptics.hlsli ${RAW_SHARE_HLSL}/StrataBRDF.hlsli
+                ${RAW_SHARE_HLSL}/CloudCommon.hlsli ${RAW_SHARE_HLSL}/DistantLod.hlsli ${RAW_SHARE_HLSL}/ElderOptics.hlsli ${RAW_SHARE_HLSL}/StrataBRDF.hlsli ${RAW_SHARE_HLSL}/RawTensorMath.hlsli
         COMMENT "dxc: SM${RAW_SHADER_MODEL} lighting, cloud, volumetric, bloom, atmosphere, refl denoiser, 3-pass DoF & 3-pass A-Trous GI -> DXIL headers"
         VERBATIM)
     target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/LightingPass.cpp ${RAW_LIGHT_HEADERS})
+    if(RAW_HAS_SM69_DXIL)
+        add_custom_command(
+            OUTPUT ${RAW_ENGINE_GEN}/rawlss5_69_fs.h
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+            COMMAND ${RAW_DXC_NEXT} -T ps_6_9 -E rawlss5_fs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rawlss5_69_fs.h -Vn kDxil_rawlss5_69_fs ${RAW_RAWLSS5_HLSL}
+            DEPENDS ${RAW_RAWLSS5_HLSL} ${RAW_SHARE_HLSL}/LightingCommon.hlsli ${RAW_SHARE_HLSL}/RawTensorMath.hlsli
+            COMMENT "dxc 1.9+: native SM 6.9 DXIL 1.9 RAWLSS 6.5 (Long Vectors + wave-quad) -> DXIL header"
+            VERBATIM)
+        target_sources(raw_d3d12_bridge PRIVATE ${RAW_ENGINE_GEN}/rawlss5_69_fs.h)
+        target_compile_definitions(raw_d3d12_bridge PRIVATE RAW_HAS_SM69_DXIL=1)
+    endif()
 endif()
 
 # ============================================================================
@@ -580,6 +607,18 @@ if(RAW_ENGINE_DIR)
                 ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Weather.hlsli
         COMMENT "dxc: ray-traced shadows -> DXIL header"
         VERBATIM)
+    if(RAW_HAS_SM69_DXIL)
+        add_custom_command(
+            OUTPUT ${RAW_ENGINE_GEN}/rt_shadow_69.h ${RAW_ENGINE_GEN}/rt_shadow_debug_69.h
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
+            COMMAND ${RAW_DXC_NEXT} -T cs_6_9 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow_69.h -Vn kDxil_rt_shadow_69 ${RAW_RTSHADOW_HLSL}
+            COMMAND ${RAW_DXC_NEXT} -T cs_6_9 -E main -DRT_DEBUG=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow_debug_69.h -Vn kDxil_rt_shadow_debug_69 ${RAW_RTSHADOW_HLSL}
+            DEPENDS ${RAW_RTSHADOW_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
+                    ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Weather.hlsli
+            COMMENT "dxc 1.9+: native SM 6.9 DXIL 1.9 ray-traced shadows -> DXIL headers"
+            VERBATIM)
+        target_sources(raw_d3d12_bridge PRIVATE ${RAW_ENGINE_GEN}/rt_shadow_69.h ${RAW_ENGINE_GEN}/rt_shadow_debug_69.h)
+    endif()
     add_custom_command(
         OUTPUT ${RAW_ENGINE_GEN}/rt_water.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}

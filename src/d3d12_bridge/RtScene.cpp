@@ -3,6 +3,10 @@
 #include "RtSceneDetail.h"
 #include "rt_shadow.h"   // kDxil_rt_shadow (dxc, cs_6_6)
 #include "rt_shadow_debug.h"   // kDxil_rt_shadow_debug: the same with the debug views (RtDebug)
+#ifdef RAW_HAS_SM69_DXIL
+#include "rt_shadow_69.h"        // kDxil_rt_shadow_69 (dxc 1.9+, native cs_6_9 DXIL 1.9)
+#include "rt_shadow_debug_69.h"  // kDxil_rt_shadow_debug_69 (dxc 1.9+, native cs_6_9)
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -91,6 +95,23 @@ bool RtScene::Pipeline(std::string& err)
     if (FAILED(m_dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&m_root)))) { err = "CreateRootSignature"; return false; }
     D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
     pd.pRootSignature = m_root.Get();
+#ifdef RAW_HAS_SM69_DXIL
+    if (m_useSm69) {
+        pd.CS = {kDxil_rt_shadow_69, sizeof kDxil_rt_shadow_69};
+        ComPtr<ID3D12PipelineState> pso69, psoDbg69;
+        if (SUCCEEDED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso69)))) {
+            pd.CS = {kDxil_rt_shadow_debug_69, sizeof kDxil_rt_shadow_debug_69};
+            if (SUCCEEDED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&psoDbg69)))) {
+                m_pso = pso69;
+                m_psoDebug = psoDbg69;
+                if (m_log) m_log("[RT] native SM 6.9 DXIL 1.9 trace pipeline active (RtShadow cs_6_9)");
+                return true;
+            }
+        }
+        m_useSm69 = false;
+        if (m_log) m_log("[RT] SM 6.9 trace pipeline refused by runtime; falling back to SM 6.6");
+    }
+#endif
     pd.CS = {kDxil_rt_shadow, sizeof kDxil_rt_shadow};
     if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&m_pso)))) { err = "CreateComputePipelineState (rt_shadow)"; return false; }
     pd.CS = {kDxil_rt_shadow_debug, sizeof kDxil_rt_shadow_debug};
@@ -127,6 +148,9 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
               int(sm.HighestShaderModel) & 15, int(o5.RaytracingTier) / 10, int(o5.RaytracingTier) % 10, int(o7.MeshShaderTier), int(o7.SamplerFeedbackTier));
     if (o5.RaytracingTier < D3D12_RAYTRACING_TIER_1_1) { err = "DXR tier 1.1 (inline ray queries) not supported"; return false; }
     if (sm.HighestShaderModel < D3D_SHADER_MODEL_6_6) { err = "shader model 6.6 not supported"; return false; }
+#ifdef RAW_HAS_SM69_DXIL
+    m_useSm69 = (static_cast<unsigned>(sm.HighestShaderModel) >= 0x69u);
+#endif
     const auto AS = D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, UA = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     bool ok = Buffer(m_blasHeap, kBlasHeap, D3D12_HEAP_TYPE_DEFAULT, AS, true, L"rt blas heap") &&
               Buffer(m_scratch, kScratch, D3D12_HEAP_TYPE_DEFAULT, UA, true, L"rt scratch") &&
@@ -187,27 +211,33 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
     m_skinReady = m_skin.Create(m_dev.Get(), m_heap.Get(), skinAt, skinErr);
     if (!m_skinReady && m_log) m_log("[RT] skinned actors off: %s", skinErr.c_str());
 #ifdef RAW_HAS_OMM
-    // Opacity micromaps: DXR 1.2, and a trace pipeline that lets its ray queries use them (the shader is
-    // below shader model 6.9, so the pipeline flag does it). Either missing: the candidate loop alone.
+    // Opacity micromaps: DXR 1.2. Native SM 6.9 shaders support OMM directly without the PRE_SM69 flag;
+    // SM 6.6 shaders require D3D12_PIPELINE_STATE_FLAG_RAYQUERY_ALLOW_OPACITY_MICROMAPS_ON_PRE_SM69_SHADERS.
     if (o5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_2) {
         std::string ommErr;
-        const UINT flags = D3D12_PIPELINE_STATE_FLAG_RAYQUERY_ALLOW_OPACITY_MICROMAPS_ON_PRE_SM69_SHADERS;
-        D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
-        pd.pRootSignature = m_root.Get();
-        pd.CS = {kDxil_rt_shadow, sizeof kDxil_rt_shadow};
-        pd.Flags = D3D12_PIPELINE_STATE_FLAGS(flags);
-        ComPtr<ID3D12PipelineState> pso;
         if (!m_omm.Create(m_dev.Get(), m_heap.Get(), 5 + RtAlpha::Descriptors() + RtSky::Descriptors() + 1, 5, 6, ommErr)) {
             if (m_log) m_log("[RT] opacity micromaps off: %s", ommErr.c_str());
-        } else if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) {
-            if (m_log) m_log("[RT] opacity micromaps off: the runtime refused the pipeline flag (the system runtime, not the Agility SDK?)");
-        } else {
-            m_pso = pso;
-            pd.CS = {kDxil_rt_shadow_debug, sizeof kDxil_rt_shadow_debug};
-            if (SUCCEEDED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) m_psoDebug = pso;
-            m_psoFlags = flags;
+        } else if (m_useSm69) {
+            m_psoFlags = 0;
             m_ommOn = true;
-            if (m_log) m_log("[RT] opacity micromaps on: level %u, 4-state, baked from the alpha masks", RtOmm::kLevel);
+            if (m_log) m_log("[RT] opacity micromaps on (native SM 6.9 DXR 1.2): level %u, 4-state, baked from the alpha masks", RtOmm::kLevel);
+        } else {
+            const UINT flags = D3D12_PIPELINE_STATE_FLAG_RAYQUERY_ALLOW_OPACITY_MICROMAPS_ON_PRE_SM69_SHADERS;
+            D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
+            pd.pRootSignature = m_root.Get();
+            pd.CS = {kDxil_rt_shadow, sizeof kDxil_rt_shadow};
+            pd.Flags = D3D12_PIPELINE_STATE_FLAGS(flags);
+            ComPtr<ID3D12PipelineState> pso;
+            if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) {
+                if (m_log) m_log("[RT] opacity micromaps off: the runtime refused the pipeline flag (the system runtime, not the Agility SDK?)");
+            } else {
+                m_pso = pso;
+                pd.CS = {kDxil_rt_shadow_debug, sizeof kDxil_rt_shadow_debug};
+                if (SUCCEEDED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) m_psoDebug = pso;
+                m_psoFlags = flags;
+                m_ommOn = true;
+                if (m_log) m_log("[RT] opacity micromaps on: level %u, 4-state, baked from the alpha masks", RtOmm::kLevel);
+            }
         }
     }
 #endif
@@ -454,7 +484,16 @@ bool RtScene::Reload(const std::vector<uint8_t>& shadow, const std::vector<uint8
         pd.pRootSignature = m_root.Get();
         pd.CS = {shadow.data(), shadow.size()};
         pd.Flags = D3D12_PIPELINE_STATE_FLAGS(m_psoFlags);
-        if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) { err = "the device refused the reloaded RtShadow.hlsl"; return false; }
+        if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) {
+#ifdef RAW_HAS_OMM
+            if (m_ommOn) {
+                pd.Flags = m_psoFlags ? D3D12_PIPELINE_STATE_FLAG_NONE
+                                      : D3D12_PIPELINE_STATE_FLAGS(D3D12_PIPELINE_STATE_FLAG_RAYQUERY_ALLOW_OPACITY_MICROMAPS_ON_PRE_SM69_SHADERS);
+                if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) { err = "the device refused the reloaded RtShadow.hlsl"; return false; }
+            } else
+#endif
+            { err = "the device refused the reloaded RtShadow.hlsl"; return false; }
+        }
     }
     if (m_fence->GetCompletedValue() < m_fenceValue) {
         HANDLE e = CreateEventW(nullptr, FALSE, FALSE, nullptr);

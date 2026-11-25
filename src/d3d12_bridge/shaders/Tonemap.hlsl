@@ -771,14 +771,13 @@ float4 main(In i) : SV_Target {
     if ((ovMask & 128u) != 0u) {
         if (i.uv.y < 0.115f || i.uv.y > 0.885f) { c.rgb = 0.0f.xxx; }
     }
-    // Always-on Triangular-PDF (TPDF) Temporal Blue-Noise Dithering before 8-bit SDR write (eliminates sky/fog banding).
-    if (RB.w < 2.5f) {
-        const float2 dPos = i.pos.xy + (5.588238f * RO.z).xx;
-        const float d1 = frac(52.9829189f * frac(dot(dPos, float2(0.06711056f, 0.00583715f))));
-        const float d2 = frac(52.9829189f * frac(dot(dPos + float2(23.0f, 59.0f), float2(0.06711056f, 0.00583715f))));
-        c.rgb = saturate(c.rgb + ((d1 + d2 - 1.0f) / 255.0f).xxx);
-    }
-    // Optional PQ ST.2084 HDR10 transfer output (TonemapView >= 3, ported from superframe present_hdr.cpp).
+    // Zero-Banding Triangular-PDF Interleaved Gradient Noise (TPDF IGN) coordinates (vendor-invariant, zero sin() drift):
+    const float2 dPos = floor(i.pos.xy) + (5.588238f * RO.z).xx;
+    const float ign1 = frac(52.9829189f * frac(dot(dPos, float2(0.06711056f, 0.00583715f))));
+    const float ign2 = frac(52.9829189f * frac(dot(dPos + float2(23.0f, 59.0f), float2(0.06711056f, 0.00583715f))));
+    const float tpdfIgn = ign1 + ign2 - 1.0f;
+
+    // Optional PQ ST.2084 10-bit HDR10 transfer output (TonemapView >= 3) with subtle 10-bit TPDF IGN dither:
     if (RB.w >= 2.5f) {
         const float3 lin2020 = saturate(float3(
             0.6274f * c.r + 0.3293f * c.g + 0.0433f * c.b,
@@ -786,15 +785,14 @@ float4 main(In i) : SV_Target {
             0.0164f * c.r + 0.0880f * c.g + 0.8956f * c.b));
         const float3 ym = pow(lin2020 * 0.04f, 0.1593017578f);
         c.rgb = pow((0.8359375f + 18.8515625f * ym) / (1.0f + 18.6875f * ym), 78.84375f);
+        c.rgb = saturate(c.rgb + (tpdfIgn * (0.50f / 1023.0f)).xxx);
         return c;
     }
+    // Final sRGB / display gamma encoding followed immediately by post-gamma TPDF IGN dithering:
+    // Eliminates ALL 8-bit color banding across twilight skies, night auroras, valley fog & underwater gradients!
     c.rgb = pow(saturate(c.rgb), F[42].x);
-    // Elder-inspired filmic finish: subtle optical vignette + terminal triangular dithering (eliminates 8-bit sky/fog banding).
     const float2 vc = i.uv - 0.5f;
     c.rgb *= lerp(1.0f, saturate(1.0f - dot(vc, vc) * 0.22f), 0.35f);
-    const float2 dp = floor(i.pos.xy);
-    const float h1 = frac(sin(dot(dp, float2(12.9898f, 78.233f))) * 43758.5453f);
-    const float h2 = frac(sin(dot(dp + float2(17.0f, 53.0f), float2(12.9898f, 78.233f))) * 43758.5453f);
-    c.rgb = saturate(c.rgb + ((h1 - h2) / 255.0f).xxx);
+    c.rgb = saturate(c.rgb + (tpdfIgn * (0.75f / 255.0f)).xxx);
     return c;
 }

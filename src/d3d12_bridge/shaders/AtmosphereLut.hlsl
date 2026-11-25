@@ -150,13 +150,16 @@ float4 skyview(float4 at : SV_Position) : SV_Target0 {
     const float3 rd = float3(cosE * cos(az), cosE * sin(az), sinE);
 
     const float altKm = max(camPosW.z * 0.0000143f, 0.0f) + 0.25f;
-    const float3 ro = float3(0.0f, 0.0f, kPlanetR + altKm);
+    const float rObs = kPlanetR + altKm;
+    const float3 ro = float3(0.0f, 0.0f, rObs);
     const float2 hitAtmo = raySphere(ro, rd, kAtmoR);
     const float2 hitGround = raySphere(ro, rd, kPlanetR);
     const bool hitsGround = (hitGround.x > 0.0f);
-    float tMax = hitAtmo.y;
-    if (hitsGround) { tMax = min(tMax, hitGround.x); }
-    tMax = max(tMax, 0.0f);
+    // Smooth C1 horizon grazing transition across the planetary limb (eliminates sharp texel step at elev = 0 deg!):
+    const float horSin = -sqrt(max(1.0f - (kPlanetR * kPlanetR) / (rObs * rObs), 0.0f));
+    const float horSkyW = smoothstep(horSin - 0.028f, horSin + 0.016f, sinE);
+    const float tGround = hitsGround ? min(hitAtmo.y, hitGround.x) : hitAtmo.y;
+    const float tMax = max(lerp(tGround, hitAtmo.y, horSkyW), 0.0f);
 
     const float3 sunD = astroSunDir();
     const float cosT = dot(rd, sunD);
@@ -199,9 +202,9 @@ float4 skyview(float4 at : SV_Position) : SV_Target0 {
         float3 sR, sT; float sM;
         atmoExtinction(h, turbidity, mieScaleH, sR, sM, sT);
         const float muS = dot(p / r, sunD);
-        // Smooth planetary shadow cutoff across the limb so Earth's shadow rises naturally at twilight:
-        const float2 pEarthHit = raySphere(p, sunD, kPlanetR - 0.5f);
-        const float planetVis = (pEarthHit.x > 0.0f) ? 0.0f : 1.0f;
+        // C1-smooth planetary limb penumbra (eliminates hard binary shadow band right across elev = 0 deg!):
+        const float muLimb = -sqrt(max(1.0f - (kPlanetR * kPlanetR) / max(r * r, kPlanetR * kPlanetR), 0.0f));
+        const float planetVis = smoothstep(muLimb - 0.012f, muLimb + 0.012f, muS);
         const float3 transSun = TransLut.SampleLevel(Lin, transUv(r, muS), 0.0f).rgb * planetVis;
         const float2 msUv = float2(saturate(muS * 0.5f + 0.5f), saturate(h / (kAtmoR - kPlanetR)));
         const float3 psiMs = MultiScatLut.SampleLevel(Lin, msUv, 0.0f).rgb;
@@ -218,15 +221,12 @@ float4 skyview(float4 at : SV_Position) : SV_Target0 {
     const float3 solarIrr = float3(0.96f, 1.00f, 1.07f) * (9.4f * sunVisDay);
     float3 outSky = L * solarIrr;
 
-    // Clear alpine cobalt zenith refinement (recedes smoothly with humidity/overcast):
+    // Clear alpine cobalt zenith refinement (recedes smoothly with humidity/overcast, C1-continuous across horizon):
     const float clearAlpine = (1.0f - humidity * 0.72f) * smoothstep(0.06f, 0.26f, sunD.z);
-    outSky += float3(0.028f, 0.120f, 0.345f) * (clearAlpine * smoothstep(0.04f, 0.65f, rd.z));
+    outSky += float3(0.028f, 0.120f, 0.345f) * (clearAlpine * smoothstep(0.02f, 0.65f, rd.z));
 
     // Physical Chappuis-Ozone Twilight Architecture (strictly gated to real sunset/sunrise: -0.13 < sunD.z < +0.14):
-    //   1) Solar horizon ember/amber forward scatter glow
-    //   2) Deep Chappuis indigo zenith tint
-    //   3) Rose-pink Belt of Venus antitwilight arch opposite the sun (above rising Earth Shadow)
-    //   4) Blue-slate Earth Shadow band rising from the anti-solar horizon below Belt of Venus!
+    // All elevation envelopes are C1-continuous across elev = 0 deg (zero horizon derivative kink!).
     const float twilightW = smoothstep(-0.13f, -0.01f, sunD.z) * (1.0f - smoothstep(0.04f, 0.14f, sunD.z));
     if (twilightW > 0.005f) {
         const float clearTw = twilightW * (1.0f - saturate(clouds.x - 0.45f) * 1.15f);
@@ -235,15 +235,19 @@ float4 skyview(float4 at : SV_Position) : SV_Target0 {
         const float solarAz = saturate(dot(rdHor, sunHor));
         const float antiAz  = saturate(dot(rdHor, -sunHor));
 
-        // Earth shadow rises in the anti-solar sky as the sun sinks below +0.05 rad:
+        // C1-smooth positive elevation above horizon (smoothly rounds the derivative at rd.z = 0):
+        const float posElevSmooth = 0.5f * (rd.z + sqrt(rd.z * rd.z + 0.0009f));
+        const float horSoftGate   = smoothstep(-0.045f, 0.025f, rd.z);
+
+        // Earth shadow rises smoothly in the anti-solar sky as the sun sinks below +0.05 rad:
         const float shadowElev = clamp(0.036f - sunD.z * 1.18f, 0.010f, 0.26f);
-        const float earthShadow = (1.0f - smoothstep(shadowElev - 0.032f, shadowElev + 0.046f, rd.z))
-                                * pow(antiAz, 1.45f) * smoothstep(-0.02f, 0.015f, rd.z);
-        const float beltOfVenus = exp(-pow((rd.z - (shadowElev + 0.048f)) / 0.058f, 2.0f))
-                                * pow(antiAz, 1.65f) * smoothstep(0.0f, 0.03f, rd.z);
-        const float solarHorGlow = exp(-max(rd.z, 0.0f) * lerp(7.4f, 5.2f, humidity))
-                                 * pow(solarAz, 2.3f) * smoothstep(-0.02f, 0.01f, rd.z);
-        const float ozoneZenith = smoothstep(0.28f, 0.88f, rd.z) * smoothstep(-0.13f, -0.02f, sunD.z);
+        const float earthShadow = (1.0f - smoothstep(shadowElev - 0.036f, shadowElev + 0.048f, rd.z))
+                                * pow(antiAz, 1.45f) * horSoftGate;
+        const float beltOfVenus = exp(-pow((rd.z - (shadowElev + 0.048f)) / 0.060f, 2.0f))
+                                * pow(antiAz, 1.65f) * smoothstep(-0.020f, 0.035f, rd.z);
+        const float solarHorGlow = exp(-posElevSmooth * lerp(7.2f, 5.0f, humidity))
+                                 * pow(solarAz, 2.25f) * horSoftGate;
+        const float ozoneZenith = smoothstep(0.24f, 0.88f, rd.z) * smoothstep(-0.13f, -0.02f, sunD.z);
 
         outSky += float3(1.12f, 0.42f, 0.13f) * (solarHorGlow * clearTw * 0.78f);
         outSky += float3(0.48f, 0.185f, 0.34f) * (beltOfVenus * clearTw * 0.54f);
@@ -251,27 +255,26 @@ float4 skyview(float4 at : SV_Position) : SV_Target0 {
         outSky = lerp(outSky, outSky * float3(0.76f, 0.82f, 1.18f) + float3(0.008f, 0.014f, 0.042f), ozoneZenith * clearTw * 0.42f);
     }
 
-    // Subtle deep-night Rayleigh moonlight/starlight scattering floor so night sky never collapses to black void:
+    // Subtle deep-night Rayleigh moonlight/starlight scattering floor (C1-smooth across elev = 0 deg):
     const float nightFloorW = smoothstep(0.02f, -0.10f, sunD.z);
     if (nightFloorW > 0.005f) {
-        const float hUp = saturate(rd.z);
-        const float3 nightBase = lerp(float3(0.018f, 0.029f, 0.058f), float3(0.006f, 0.012f, 0.030f), pow(hUp, 0.55f));
+        const float hUp = smoothstep(-0.04f, 0.96f, rd.z);
+        const float3 nightBase = lerp(float3(0.018f, 0.029f, 0.058f), float3(0.006f, 0.012f, 0.030f), pow(hUp, 0.62f));
         outSky += nightBase * nightFloorW;
     }
 
     // Composite RawCosmosSky (Galactic Plane, Dark Dust Rifts, H-II Nebulae, 3D Volumetric Curtain Auroras,
     // Van Rhijn Airglow & 22-deg Ice Halo) seamlessly ABOVE our exact raymarched atmospheric transmittance T!
-    // (Pinpoint stars are disabled in this 192x108 LUT to prevent sub-pixel texel aliasing; full-res LightFog
-    //  and sharp EnvCubePass evaluate pinpoint O/B/A/F/G/K/M stars & meteors cleanly at native angular resolution.)
-    if (!hitsGround && rd.z > -0.015f) {
+    if (horSkyW > 0.005f && rd.z > -0.020f) {
         const float simTime = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
         const float gameHour = timeEnv.x;
-        const float3 cosmosRaw = evalCosmosAndAuroraEx(
-            rd, sunD, gameHour, simTime, clouds.x, weather.z, camPosW.y,
+        const float seasonProg = rawCosmosSeasonProgress01(phenology0, phenology1, physWorld[1].w, waterB.w, simTime);
+        const float3 cosmosRaw = evalCosmosAndAuroraPhased(
+            rd, sunD, gameHour, simTime, clouds.x, weather.z, camPosW.y, seasonProg,
             false,  // no aliased single-pixel stars inside 192x108 LUT
             false   // apply exact raymarched top-of-atmosphere transmittance T below!
         );
-        const float horSoft = smoothstep(-0.008f, 0.045f, rd.z);
+        const float horSoft = smoothstep(-0.012f, 0.052f, rd.z) * horSkyW;
         outSky += cosmosRaw * T * horSoft;
     }
 

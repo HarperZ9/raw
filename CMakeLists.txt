@@ -658,16 +658,21 @@ if(RAW_ENGINE_DIR)
         COMMENT "dxc: GPU 3D Navier-Stokes Fire/Smoke, Composite & 2D Shallow-Water Fluid Solvers SM${RAW_SHADER_MODEL} -> DXIL headers"
         VERBATIM)
     set(RAW_RC_HLSL ${RAW_SHARE_HLSL}/RawRadianceCascades.hlsl)
+    set(RAW_RC_SCREEN_HLSL ${RAW_SHARE_HLSL}/RawRadianceScreenPrep.hlsl)
     set(RAW_RC_HEADERS
         ${RAW_ENGINE_GEN}/raw_rc_trace_merge_cs.h
-        ${RAW_ENGINE_GEN}/raw_rc_resolve_cs.h)
+        ${RAW_ENGINE_GEN}/raw_rc_resolve_cs.h
+        ${RAW_ENGINE_GEN}/raw_rc_screen_prep_cs.h
+        ${RAW_ENGINE_GEN}/raw_rc_screen_apply_cs.h)
     add_custom_command(
         OUTPUT ${RAW_RC_HEADERS}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
         COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_rc_trace_merge ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_rc_trace_merge_cs.h -Vn kDxil_raw_rc_trace_merge ${RAW_RC_HLSL}
         COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_rc_resolve ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_rc_resolve_cs.h -Vn kDxil_raw_rc_resolve ${RAW_RC_HLSL}
-        DEPENDS ${RAW_RC_HLSL}
-        COMMENT "dxc: GPU 4-Cascade Penumbra-Exact Radiance Cascades GI SM${RAW_SHADER_MODEL} -> DXIL headers"
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_rc_screen_prep ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_rc_screen_prep_cs.h -Vn kDxil_raw_rc_screen_prep ${RAW_RC_SCREEN_HLSL}
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_rc_screen_apply ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_rc_screen_apply_cs.h -Vn kDxil_raw_rc_screen_apply ${RAW_RC_SCREEN_HLSL}
+        DEPENDS ${RAW_RC_HLSL} ${RAW_RC_SCREEN_HLSL}
+        COMMENT "dxc: GPU 4-Cascade Penumbra-Exact Radiance Cascades GI + Screen Prep/Apply SM${RAW_SHADER_MODEL} -> DXIL headers"
         VERBATIM)
     target_sources(raw_d3d12_bridge PRIVATE ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h ${RAW_ENGINE_GEN}/raw_subdiv_cs.h
                    ${RAW_ENGINE_GEN}/raw_terrain_as.h ${RAW_ENGINE_GEN}/raw_terrain_ms.h ${RAW_ENGINE_GEN}/raw_terrain_vs.h ${RAW_ENGINE_GEN}/raw_terrain_ps.h
@@ -675,7 +680,7 @@ if(RAW_ENGINE_DIR)
                    src/d3d12_bridge/RawAssetBridge.cpp src/d3d12_bridge/RawTextureBridge.cpp src/d3d12_bridge/RawProceduralLib.cpp
                    src/d3d12_bridge/RawMeshHost.cpp src/d3d12_bridge/RawFluidSimHost.cpp src/d3d12_bridge/RawFluidCompositeHost.cpp src/d3d12_bridge/RawRadianceHost.cpp src/d3d12_bridge/RawOverrideRegistry.cpp src/d3d12_bridge/RawBindlessHeap.cpp
                    src/d3d12_bridge/RawAsyncCompute.cpp src/d3d12_bridge/RawIndirectBatch.cpp src/d3d12_bridge/RawAssetStream.cpp
-                   src/worldgen/RawTerrainGen.cpp src/worldgen/RawHydrologyGen.cpp src/worldgen/RawBiomeWorld.cpp src/worldgen/RawMeshPipeline.cpp src/worldgen/RawFloraEngine.cpp src/worldgen/RawWeatherSim.cpp src/worldgen/RawWorldShowcase.cpp src/worldgen/RawEsmWorldLoader.cpp src/worldgen/RawBsaArchive.cpp src/worldgen/RawNifLoader.cpp src/worldgen/RawDdsDecoder.cpp src/worldgen/RawDestructionEngine.cpp
+                   src/worldgen/RawTerrainGen.cpp src/worldgen/RawHydrologyGen.cpp src/worldgen/RawBiomeWorld.cpp src/worldgen/RawMeshPipeline.cpp src/worldgen/RawFloraEngine.cpp src/worldgen/RawWeatherSim.cpp src/worldgen/RawWorldShowcase.cpp src/worldgen/RawEsmWorldLoader.cpp src/worldgen/RawEsmModelResolver.cpp src/worldgen/RawBsaArchive.cpp src/worldgen/RawNifLoader.cpp src/worldgen/RawDdsDecoder.cpp src/worldgen/RawDestructionEngine.cpp
                    src/engine_rt/raw_job_system.cpp
                    src/materials/RawMaterialLib.cpp src/materials/RawAssetForge.cpp
                    src/assets/RawOverrideRegistry.cpp src/assets/RawAssetScaffold.cpp)
@@ -727,6 +732,9 @@ if(RAW_ENGINE_DIR)
         src/worldgen/RawWorldShowcase.cpp
         src/worldgen/RawDestructionEngine.cpp
         src/worldgen/RawEsmWorldLoader.cpp
+        src/worldgen/RawEsmModelResolver.cpp
+        src/worldgen/RawBsaArchive.cpp
+        src/worldgen/RawNifLoader.cpp
         src/engine_rt/raw_job_system.cpp
         ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h ${RAW_ENGINE_GEN}/raw_subdiv_cs.h
         ${RAW_ENGINE_GEN}/raw_terrain_as.h ${RAW_ENGINE_GEN}/raw_terrain_ms.h ${RAW_ENGINE_GEN}/raw_terrain_vs.h ${RAW_ENGINE_GEN}/raw_terrain_ps.h
@@ -934,6 +942,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_combat_impact.cpp
         src/engine_rt/rt_economy_ledger.cpp
         src/engine_rt/rt_movement_combat.cpp
+        src/engine_rt/rt_live_config.cpp
         src/engine_rt/raw_slab_allocator.cpp
         src/engine_rt/raw_job_system.cpp
         src/engine_rt/rt_patch.cpp)
@@ -991,6 +1000,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_combat_impact.cpp
         src/engine_rt/rt_economy_ledger.cpp
         src/engine_rt/rt_movement_combat.cpp
+        src/engine_rt/rt_live_config.cpp
         src/engine_rt/raw_slab_allocator.cpp
         src/engine_rt/raw_job_system.cpp
         src/engine_rt/rt_softbody.cpp
@@ -1004,11 +1014,13 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/worldgen/RawWeatherSim.cpp
         src/worldgen/RawWorldShowcase.cpp
         src/worldgen/RawEsmWorldLoader.cpp
+        src/worldgen/RawEsmModelResolver.cpp
         src/worldgen/RawBsaArchive.cpp
         src/worldgen/RawNifLoader.cpp
         src/worldgen/RawDdsDecoder.cpp
         src/worldgen/RawHydrologyGen.cpp
         src/worldgen/RawDestructionEngine.cpp
+        src/audio/RawAudioDsp.cpp
         src/materials/RawMaterialLib.cpp
         src/materials/RawAssetForge.cpp
         src/assets/RawOverrideRegistry.cpp
@@ -1023,6 +1035,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         tests/test_pipeline_forge.cpp
         tests/test_stealth_survival.cpp
         tests/test_esm_world_loader.cpp
+        tests/test_esm_model_resolver.cpp
         tests/test_combat_impact.cpp
         tests/test_bsa_archive.cpp
         tests/test_core_runtime.cpp
@@ -1031,12 +1044,14 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         tests/test_economy_ledger.cpp
         tests/test_dds_decoder.cpp
         tests/test_hydrology_gen.cpp
-        tests/test_movement_combat.cpp)
+        tests/test_movement_combat.cpp
+        tests/test_live_config.cpp
+        tests/test_audio_dsp.cpp)
     set_target_properties(ce_runtime_check PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
-    target_include_directories(ce_runtime_check PRIVATE src/engine_rt src/d3d12_bridge src/ce_runtime src/worldgen src/materials src/assets src/pipeline src/ui "${RAW_ZYDIS_ROOT}/include")
-    target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD RAW_SIM_PURE_TEST=1 RAW_WEATHER_SIM_NO_MAIN=1 RAW_GAMEPLAY_MECHANICS_NO_MAIN=1 RAW_STEALTH_SURVIVAL_NO_MAIN=1 RAW_COMBAT_IMPACT_NO_MAIN=1 RAW_ECONOMY_LEDGER_NO_MAIN=1 RAW_MOVEMENT_COMBAT_NO_MAIN=1)
+    target_include_directories(ce_runtime_check PRIVATE src/engine_rt src/d3d12_bridge src/ce_runtime src/worldgen src/audio src/materials src/assets src/pipeline src/ui "${RAW_ZYDIS_ROOT}/include")
+    target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD RAW_SIM_PURE_TEST=1 RAW_WEATHER_SIM_NO_MAIN=1 RAW_GAMEPLAY_MECHANICS_NO_MAIN=1 RAW_STEALTH_SURVIVAL_NO_MAIN=1 RAW_COMBAT_IMPACT_NO_MAIN=1 RAW_ECONOMY_LEDGER_NO_MAIN=1 RAW_MOVEMENT_COMBAT_NO_MAIN=1 RAW_LIVE_CONFIG_NO_MAIN=1)
     target_link_libraries(ce_runtime_check PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB} windowscodecs ole32 dxgi)
 
     # raw_forge_cli: standalone C++23 first-principles authoring, batch baking & validation CLI
@@ -1052,6 +1067,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/worldgen/RawWeatherSim.cpp
         src/worldgen/RawWorldShowcase.cpp
         src/worldgen/RawEsmWorldLoader.cpp
+        src/worldgen/RawEsmModelResolver.cpp
         src/worldgen/RawBsaArchive.cpp
         src/worldgen/RawNifLoader.cpp
         src/worldgen/RawDdsDecoder.cpp

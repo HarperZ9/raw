@@ -42,6 +42,8 @@
 #include "RawWorldShowcase.h"
 #include "RawDestructionEngine.h"
 #include "RawEsmWorldLoader.h"
+#include "RawEsmModelResolver.h"
+#include "RawHydrologyGen.h"
 
 using Microsoft::WRL::ComPtr;
 using namespace raw::bridge;
@@ -79,18 +81,20 @@ enum class RenderMode { Frontier, Esm };
 enum class SeasonChoice { Winter, Autumn, Summer, Spring };
 
 struct SandboxOptions {
-    RenderMode   mode     = RenderMode::Frontier;
-    SeasonChoice season   = SeasonChoice::Winter;
-    std::string  esmPath  = kDefaultSkyrimEsm;
-    int32_t      cellX    = 14;
-    int32_t      cellY    = -14; // High Hrothgar / Throat of the World
-    UINT         width    = 640u;
-    UINT         height   = 360u;
+    RenderMode   mode          = RenderMode::Frontier;
+    SeasonChoice season        = SeasonChoice::Winter;
+    std::string  esmPath       = kDefaultSkyrimEsm;
+    std::string  bsaPath;      // Optional Skyrim - Meshes0.bsa (auto-discovered beside --esm if empty)
+    int32_t      cellX         = 4;
+    int32_t      cellY         = -12; // Riverwood (or 14,-14 High Hrothgar)
+    bool         cellExplicit  = false;
+    UINT         width         = 640u;
+    UINT         height        = 360u;
     std::string  outPath;
-    bool         useWarp  = false;
-    bool         debug    = false;
-    bool         selfTest = false;
-    bool         showHelp = false;
+    bool         useWarp       = false;
+    bool         debug         = false;
+    bool         selfTest      = false;
+    bool         showHelp      = false;
 };
 
 struct CameraBasis {
@@ -100,18 +104,21 @@ struct CameraBasis {
 };
 
 struct RenderMetrics {
-    bool     ok               = false;
-    uint32_t drawnChunks      = 0u;
-    uint32_t drawnMeshlets    = 0u;
-    uint32_t litPixels        = 0u;
-    uint32_t fireBoostPixels  = 0u;
-    uint32_t nanInfPixels     = 0u;
-    uint32_t d3d12DebugErrors = 0u;
-    double   meanLuma         = 0.0;
-    double   stdDevLuma       = 0.0;
-    float    maxHdrR          = 0.0f;
-    bool     usedMeshShaders  = false;
-    bool     bmpValid         = false;
+    bool     ok                 = false;
+    uint32_t drawnChunks        = 0u;
+    uint32_t drawnMeshlets      = 0u;
+    uint32_t nifModelsLoaded    = 0u;
+    uint32_t nifInstancesPlaced = 0u;
+    uint32_t nifPropMeshlets    = 0u;
+    uint32_t litPixels          = 0u;
+    uint32_t fireBoostPixels    = 0u;
+    uint32_t nanInfPixels       = 0u;
+    uint32_t d3d12DebugErrors   = 0u;
+    double   meanLuma           = 0.0;
+    double   stdDevLuma         = 0.0;
+    float    maxHdrR            = 0.0f;
+    bool     usedMeshShaders    = false;
+    bool     bmpValid           = false;
     std::string outPath;
     std::string errMsg;
 };
@@ -505,6 +512,7 @@ RenderMetrics RunSingleRender(const SandboxOptions& opt)
         std::unique_ptr<RawFluidCompositeHost> compHost;
 
         if (opt.mode == RenderMode::Frontier) {
+            raw::worldgen::SetTerrainGenHydrologyErosionEnabled(true);
             const raw::worldgen::Vec3 frontierAnchor{75776.0f, 157696.0f, 1200.0f};
             for (int i = 0; i < 24; ++i) weatherSim.Step(1.0f, frontierAnchor);
 
@@ -628,30 +636,77 @@ RenderMetrics RunSingleRender(const SandboxOptions& opt)
             std::printf("[Sandbox] Frontier biome=%s | props=%zu | fracturedShards=%zu | gpuChunks=%zu\n",
                         raw::worldgen::GetBiomeName(st.cameraBiome), sink.propsBaked, fRes.shards.size(), chunks.size());
         } else {
-            // REAL Skyrim.esm Tamriel mode!
+            // REAL Skyrim.esm Tamriel mode (+ optional/auto-discovered Skyrim - Meshes0.bsa .NIF buildings & props!)
+            std::string bsaPath = opt.bsaPath;
+            if (bsaPath.empty()) {
+                std::filesystem::path autoBsa = std::filesystem::path(opt.esmPath).parent_path() / "Skyrim - Meshes0.bsa";
+                if (std::filesystem::exists(autoBsa)) {
+                    bsaPath = autoBsa.string();
+                }
+            }
+
             raw::worldgen::EsmWorldIndex esmIdx{};
             if (!raw::worldgen::IndexEsmWorldspace(opt.esmPath, raw::worldgen::kTamrielWorldFormId, &esmIdx, &err)) {
                 res.errMsg = "IndexEsmWorldspace failed: " + err;
                 return res;
             }
-            raw::worldgen::EsmLoadedCell centerCell{};
-            if (!raw::worldgen::LoadEsmExteriorCell(esmIdx, opt.cellX, opt.cellY, &centerCell, &err)) {
-                res.errMsg = "LoadEsmExteriorCell failed: " + err;
-                return res;
-            }
+
             raw::worldgen::ProceduralMesh centerMesh{};
-            raw::worldgen::TerrainChunkData centerChunk{};
-            if (!raw::worldgen::BuildMeshFromEsmCell(centerCell, esmIdx.selectedWorld.defaultWaterHeight, 126u,
-                                                     &centerMesh, &centerChunk, &err)) {
-                res.errMsg = "BuildMeshFromEsmCell failed: " + err;
-                return res;
+            std::string cellEdid = "Wilderness";
+
+            if (!bsaPath.empty() && std::filesystem::exists(bsaPath)) {
+                raw::worldgen::EsmModelIndex modelIdx{};
+                raw::worldgen::ReconstructedCellScene scene{};
+                if (raw::worldgen::IndexEsmModels(opt.esmPath, &modelIdx, &err) &&
+                    raw::worldgen::ReconstructTamrielCellSceneWithIndices(esmIdx, modelIdx, bsaPath,
+                                                                          opt.cellX, opt.cellY, 64u, &scene, &err)) {
+                    centerMesh = scene.terrainMesh;
+                    if (!scene.cellEdid.empty()) cellEdid = scene.cellEdid;
+                    TerrainGpuChunk centerGpu{};
+                    if (!meshHost.UploadTerrainChunk(centerMesh, &centerGpu, &err)) {
+                        res.errMsg = "UploadTerrainChunk (ESM scene terrain) failed: " + err;
+                        return res;
+                    }
+                    chunks.emplace(nextHandle++, std::move(centerGpu));
+
+                    res.nifModelsLoaded    = static_cast<uint32_t>(scene.uniqueModels.size());
+                    res.nifInstancesPlaced = static_cast<uint32_t>(scene.instances.size());
+
+                    raw::worldgen::ProceduralMesh mergedProps{};
+                    std::string propErr;
+                    if (!scene.instances.empty() &&
+                        raw::worldgen::BakeReconstructedCellPropsToWorldMesh(scene, 126u, &mergedProps, &propErr) &&
+                        !mergedProps.meshlets.empty()) {
+                        res.nifPropMeshlets = static_cast<uint32_t>(mergedProps.meshlets.size());
+                        TerrainGpuChunk propGpu{};
+                        if (meshHost.UploadTerrainChunk(mergedProps, &propGpu, &propErr)) {
+                            chunks.emplace(nextHandle++, std::move(propGpu));
+                        }
+                    }
+                } else {
+                    res.errMsg = "ReconstructTamrielCellScene failed: " + err;
+                    return res;
+                }
+            } else {
+                raw::worldgen::EsmLoadedCell centerCell{};
+                if (!raw::worldgen::LoadEsmExteriorCell(esmIdx, opt.cellX, opt.cellY, &centerCell, &err)) {
+                    res.errMsg = "LoadEsmExteriorCell failed: " + err;
+                    return res;
+                }
+                if (!centerCell.meta.edid.empty()) cellEdid = centerCell.meta.edid;
+                raw::worldgen::TerrainChunkData centerChunk{};
+                if (!raw::worldgen::BuildMeshFromEsmCell(centerCell, esmIdx.selectedWorld.defaultWaterHeight, 126u,
+                                                         &centerMesh, &centerChunk, &err)) {
+                    res.errMsg = "BuildMeshFromEsmCell failed: " + err;
+                    return res;
+                }
+                TerrainGpuChunk centerGpu{};
+                if (!meshHost.UploadTerrainChunk(centerMesh, &centerGpu, &err)) {
+                    res.errMsg = "UploadTerrainChunk (ESM) failed: " + err;
+                    return res;
+                }
+                chunks.emplace(nextHandle++, std::move(centerGpu));
             }
-            TerrainGpuChunk centerGpu{};
-            if (!meshHost.UploadTerrainChunk(centerMesh, &centerGpu, &err)) {
-                res.errMsg = "UploadTerrainChunk (ESM) failed: " + err;
-                return res;
-            }
-            chunks.emplace(nextHandle++, std::move(centerGpu));
 
             // Load immediate 3x3 neighboring Tamriel cells if present in Skyrim.esm for a seamless mountain horizon!
             uint32_t neighborLoaded = 0u;
@@ -678,18 +733,18 @@ RenderMetrics RunSingleRender(const SandboxOptions& opt)
             const float midY = 0.5f * (centerMesh.aabbMin.y + centerMesh.aabbMax.y);
             const float midZ = 0.5f * (centerMesh.aabbMin.z + centerMesh.aabbMax.z);
             const float zSpan = std::max(centerMesh.aabbMax.z - centerMesh.aabbMin.z, 256.0f);
-            camPos[0] = midX;
-            camPos[1] = midY - 2850.0f;
-            camPos[2] = centerMesh.aabbMax.z + std::clamp(zSpan * 0.45f, 450.0f, 1600.0f);
+            camPos[0] = midX - 550.0f;
+            camPos[1] = midY - 2400.0f;
+            camPos[2] = centerMesh.aabbMax.z + std::clamp(zSpan * 0.42f, 420.0f, 1450.0f);
             target[0] = midX;
-            target[1] = midY + 400.0f;
+            target[1] = midY + 250.0f;
             target[2] = midZ;
 
             for (int i = 0; i < 16; ++i) weatherSim.Step(1.0f, {midX, midY, midZ});
-            std::printf("[Sandbox] Skyrim.esm Tamriel cell (%d,%d) '%s' | Z=[%.0f..%.0f] | cellsLoaded=%u (1+%u neighbors)\n",
-                        opt.cellX, opt.cellY,
-                        centerCell.meta.edid.empty() ? "Wilderness" : centerCell.meta.edid.c_str(),
-                        centerMesh.aabbMin.z, centerMesh.aabbMax.z, 1u + neighborLoaded, neighborLoaded);
+            std::printf("[Sandbox] Skyrim.esm Tamriel cell (%d,%d) '%s' | Z=[%.0f..%.0f] | cellsLoaded=%u (1+%u neighbors) | nifModels=%u | nifInstances=%u | propMeshlets=%u\n",
+                        opt.cellX, opt.cellY, cellEdid.c_str(),
+                        centerMesh.aabbMin.z, centerMesh.aabbMax.z, 1u + neighborLoaded, neighborLoaded,
+                        res.nifModelsLoaded, res.nifInstancesPlaced, res.nifPropMeshlets);
         }
 
         const auto wGpu = weatherSim.GetGpuUniforms();
@@ -986,7 +1041,8 @@ void PrintUsage()
         "  --mode frontier|esm         Render procedural frontier world (default) or real Skyrim.esm cell\n"
         "  --season winter|autumn|summer|spring  Seasonal thermals & weather (default: winter)\n"
         "  --esm <path>                Path to Skyrim.esm (default: Steam SE Data\\Skyrim.esm)\n"
-        "  --cell <x,y>                Tamriel exterior cell coordinates (default: 14,-14 High Hrothgar)\n"
+        "  --bsa <path>                Path to Skyrim - Meshes0.bsa (auto-discovered beside --esm if omitted)\n"
+        "  --cell <x,y>                Tamriel exterior cell coordinates (default: 4,-12 Riverwood; e.g. 14,-14 High Hrothgar)\n"
         "  --width <W> --height <H>    Output resolution (default: 640x360)\n"
         "  --out <path.bmp>            Output 24-bit AgX-tonemapped BMP file\n"
         "  --warp                      Use WARP software DX12 rasterizer + D3D12 Debug Layer\n"
@@ -1026,6 +1082,10 @@ bool ParseArgs(int argc, char** argv, SandboxOptions* opt)
             const char* v = needVal("--esm");
             if (!v) return false;
             opt->esmPath = v;
+        } else if (a == "--bsa") {
+            const char* v = needVal("--bsa");
+            if (!v) return false;
+            opt->bsaPath = v;
         } else if (a == "--cell") {
             const char* v = needVal("--cell");
             if (!v) return false;
@@ -1043,6 +1103,7 @@ bool ParseArgs(int argc, char** argv, SandboxOptions* opt)
             }
             opt->cellX = static_cast<int32_t>(cx);
             opt->cellY = static_cast<int32_t>(cy);
+            opt->cellExplicit = true;
         } else if (a == "--width") {
             const char* v = needVal("--width");
             if (!v) return false;
@@ -1115,26 +1176,37 @@ int main(int argc, char** argv)
               "Frontier render composited live 64^3 3D Navier-Stokes fire onto HDR scene");
         check(fRes.bmpValid, "Frontier AgX-tonemapped 24-bit BMP header & size verified");
 
-        // 2. Real Skyrim.esm Tamriel Cell (High Hrothgar 14,-14 by default, if Skyrim.esm exists)
+        // 2. Real Skyrim.esm + Skyrim - Meshes0.bsa Tamriel Cell (Riverwood 4,-12 by default, if Skyrim.esm exists)
         if (std::filesystem::exists(opt.esmPath)) {
             SandboxOptions eOpt = opt;
             eOpt.mode = RenderMode::Esm;
             eOpt.debug = true;
+            if (!opt.cellExplicit) {
+                eOpt.cellX = 4;
+                eOpt.cellY = -12; // Riverwood: real Tamriel terrain + .NIF farmhouses, trees, rocks!
+                eOpt.season = SeasonChoice::Autumn;
+            }
             eOpt.outPath = outBase + "_esm.bmp";
             const RenderMetrics eRes = RunSingleRender(eOpt);
-            std::printf("  ESM Metrics: path=%s, chunks=%u, meshlets=%u, litPx=%u, meanLuma=%.3f, stdDev=%.3f, nanInf=%u, d3dErr=%u, bmp=%s\n",
+            std::printf("  ESM Metrics: path=%s, chunks=%u, meshlets=%u, nifModels=%u, nifInstances=%u, propMeshlets=%u, litPx=%u, meanLuma=%.3f, stdDev=%.3f, nanInf=%u, d3dErr=%u, bmp=%s\n",
                         eRes.usedMeshShaders ? "AS+MS+PS" : "VS+PS",
-                        eRes.drawnChunks, eRes.drawnMeshlets, eRes.litPixels,
-                        eRes.meanLuma, eRes.stdDevLuma, eRes.nanInfPixels, eRes.d3d12DebugErrors,
+                        eRes.drawnChunks, eRes.drawnMeshlets,
+                        eRes.nifModelsLoaded, eRes.nifInstancesPlaced, eRes.nifPropMeshlets,
+                        eRes.litPixels, eRes.meanLuma, eRes.stdDevLuma, eRes.nanInfPixels, eRes.d3d12DebugErrors,
                         eRes.bmpValid ? "VALID" : "INVALID");
             if (!eRes.errMsg.empty()) std::printf("  ESM Err: %s\n", eRes.errMsg.c_str());
 
-            check(eRes.ok, "Real Skyrim.esm Tamriel standalone render completed cleanly");
-            check(eRes.d3d12DebugErrors == 0u, "Skyrim.esm render reported 0 D3D12 Debug Layer errors");
-            check(eRes.nanInfPixels == 0u, "Skyrim.esm HDR render produced 0 NaN/Inf pixels");
+            check(eRes.ok, "Real Skyrim.esm + BSA/NIF Tamriel standalone render completed cleanly");
+            check(eRes.d3d12DebugErrors == 0u, "Skyrim.esm + NIF render reported 0 D3D12 Debug Layer errors");
+            check(eRes.nanInfPixels == 0u, "Skyrim.esm + NIF HDR render produced 0 NaN/Inf pixels");
             check(eRes.litPixels > (eOpt.width * eOpt.height) / 5u && eRes.stdDevLuma > 0.012,
-                  "Skyrim.esm Tamriel terrain rendered with non-trivial elevation/lighting contrast");
-            check(eRes.bmpValid, "Skyrim.esm AgX-tonemapped 24-bit BMP header & size verified");
+                  "Skyrim.esm Tamriel terrain + NIF structures rendered with non-trivial contrast");
+            const std::filesystem::path sibBsa = std::filesystem::path(opt.esmPath).parent_path() / "Skyrim - Meshes0.bsa";
+            if (!opt.bsaPath.empty() || std::filesystem::exists(sibBsa)) {
+                check(eRes.nifModelsLoaded > 0u && eRes.nifInstancesPlaced > 0u && eRes.nifPropMeshlets > 0u,
+                      "Real .NIF buildings/props resolved from Skyrim.esm + Meshes0.bsa and rendered live on GPU");
+            }
+            check(eRes.bmpValid, "Skyrim.esm + NIF AgX-tonemapped 24-bit BMP header & size verified");
         } else {
             std::printf("[INFO] Skyrim.esm not present at '%s'; skipping live ESM self-test leg.\n", opt.esmPath.c_str());
         }

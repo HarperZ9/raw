@@ -287,7 +287,7 @@ struct RcGpuRig {
         return FlushAndWait();
     }
 
-    bool ReadbackRgba16(ID3D12Resource* tex, D3D12_RESOURCE_STATES curState, uint32_t dim, std::vector<float>& outRgba)
+    bool ReadbackRgba16Rect(ID3D12Resource* tex, D3D12_RESOURCE_STATES curState, uint32_t w, uint32_t h, std::vector<float>& outRgba)
     {
         const D3D12_RESOURCE_DESC rd = tex->GetDesc();
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
@@ -341,11 +341,11 @@ struct RcGpuRig {
         D3D12_RANGE rr{0, static_cast<SIZE_T>(totalBytes)};
         if (FAILED(rbBuf->Map(0, &rr, &mapped))) return false;
         const auto* base = static_cast<const uint8_t*>(mapped) + fp.Offset;
-        outRgba.resize(static_cast<size_t>(dim) * dim * 4u);
-        for (uint32_t y = 0; y < dim; ++y) {
+        outRgba.resize(static_cast<size_t>(w) * h * 4u);
+        for (uint32_t y = 0; y < h; ++y) {
             const auto* row = reinterpret_cast<const uint16_t*>(base + static_cast<size_t>(y) * fp.Footprint.RowPitch);
-            for (uint32_t x = 0; x < dim; ++x) {
-                const size_t dst = (static_cast<size_t>(y) * dim + x) * 4u;
+            for (uint32_t x = 0; x < w; ++x) {
+                const size_t dst = (static_cast<size_t>(y) * w + x) * 4u;
                 outRgba[dst + 0] = HalfToFloat(row[x * 4 + 0]);
                 outRgba[dst + 1] = HalfToFloat(row[x * 4 + 1]);
                 outRgba[dst + 2] = HalfToFloat(row[x * 4 + 2]);
@@ -355,6 +355,108 @@ struct RcGpuRig {
         D3D12_RANGE wr{0, 0};
         rbBuf->Unmap(0, &wr);
         return true;
+    }
+
+    bool ReadbackRgba16(ID3D12Resource* tex, D3D12_RESOURCE_STATES curState, uint32_t dim, std::vector<float>& outRgba)
+    {
+        return ReadbackRgba16Rect(tex, curState, dim, dim, outRgba);
+    }
+
+    bool CreateAndUploadScreenTargets(uint32_t w, uint32_t h,
+                                      const std::vector<float>& rgbaFloat,
+                                      const std::vector<float>& depthFloat,
+                                      ComPtr<ID3D12Resource>& outColor,
+                                      ComPtr<ID3D12Resource>& outDepth)
+    {
+        D3D12_HEAP_PROPERTIES hpDef{};
+        hpDef.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_HEAP_PROPERTIES hpUp{};
+        hpUp.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+        D3D12_RESOURCE_DESC cRd{};
+        cRd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        cRd.Width = w; cRd.Height = h; cRd.DepthOrArraySize = 1; cRd.MipLevels = 1;
+        cRd.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        cRd.SampleDesc.Count = 1;
+        cRd.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+
+        D3D12_RESOURCE_DESC dRd{};
+        dRd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        dRd.Width = w; dRd.Height = h; dRd.DepthOrArraySize = 1; dRd.MipLevels = 1;
+        dRd.Format = DXGI_FORMAT_R32_FLOAT;
+        dRd.SampleDesc.Count = 1;
+
+        if (FAILED(dev->CreateCommittedResource(&hpDef, D3D12_HEAP_FLAG_NONE, &cRd,
+                                                D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&outColor))) ||
+            FAILED(dev->CreateCommittedResource(&hpDef, D3D12_HEAP_FLAG_NONE, &dRd,
+                                                D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&outDepth)))) {
+            return false;
+        }
+
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT cFp{}, dFp{};
+        UINT cRows = 0, dRows = 0;
+        UINT64 cRowB = 0, cTot = 0, dRowB = 0, dTot = 0;
+        dev->GetCopyableFootprints(&cRd, 0, 1, 0, &cFp, &cRows, &cRowB, &cTot);
+        dev->GetCopyableFootprints(&dRd, 0, 1, 0, &dFp, &dRows, &dRowB, &dTot);
+
+        D3D12_RESOURCE_DESC uRd{};
+        uRd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        uRd.Height = 1; uRd.DepthOrArraySize = 1; uRd.MipLevels = 1; uRd.SampleDesc.Count = 1;
+        uRd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        ComPtr<ID3D12Resource> cUp, dUp;
+        uRd.Width = cTot;
+        if (FAILED(dev->CreateCommittedResource(&hpUp, D3D12_HEAP_FLAG_NONE, &uRd,
+                                                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&cUp)))) return false;
+        uRd.Width = dTot;
+        if (FAILED(dev->CreateCommittedResource(&hpUp, D3D12_HEAP_FLAG_NONE, &uRd,
+                                                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&dUp)))) return false;
+
+        D3D12_RANGE rr{0, 0};
+        void* cp = nullptr;
+        if (FAILED(cUp->Map(0, &rr, &cp))) return false;
+        auto* cDstBase = static_cast<uint8_t*>(cp) + cFp.Offset;
+        for (uint32_t y = 0; y < h; ++y) {
+            auto* row = reinterpret_cast<uint16_t*>(cDstBase + static_cast<size_t>(y) * cFp.Footprint.RowPitch);
+            for (uint32_t x = 0; x < w; ++x) {
+                const size_t s = (static_cast<size_t>(y) * w + x) * 4u;
+                row[x * 4 + 0] = FloatToHalf(rgbaFloat[s + 0]);
+                row[x * 4 + 1] = FloatToHalf(rgbaFloat[s + 1]);
+                row[x * 4 + 2] = FloatToHalf(rgbaFloat[s + 2]);
+                row[x * 4 + 3] = FloatToHalf(rgbaFloat[s + 3]);
+            }
+        }
+        cUp->Unmap(0, nullptr);
+
+        void* dp = nullptr;
+        if (FAILED(dUp->Map(0, &rr, &dp))) return false;
+        auto* dDstBase = static_cast<uint8_t*>(dp) + dFp.Offset;
+        for (uint32_t y = 0; y < h; ++y) {
+            std::memcpy(dDstBase + static_cast<size_t>(y) * dFp.Footprint.RowPitch,
+                        depthFloat.data() + static_cast<size_t>(y) * w,
+                        static_cast<size_t>(w) * sizeof(float));
+        }
+        dUp->Unmap(0, nullptr);
+
+        if (!BeginFrame()) return false;
+        D3D12_TEXTURE_COPY_LOCATION srcC{cUp.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {}};
+        srcC.PlacedFootprint = cFp;
+        D3D12_TEXTURE_COPY_LOCATION dstC{outColor.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
+        cmd->CopyTextureRegion(&dstC, 0, 0, 0, &srcC, nullptr);
+
+        D3D12_TEXTURE_COPY_LOCATION srcD{dUp.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {}};
+        srcD.PlacedFootprint = dFp;
+        D3D12_TEXTURE_COPY_LOCATION dstD{outDepth.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
+        cmd->CopyTextureRegion(&dstD, 0, 0, 0, &srcD, nullptr);
+
+        // Leave both colorInOut and sceneDepth in COMMON (exact contract of ExecuteScreenGI)
+        D3D12_RESOURCE_BARRIER b[2]{};
+        b[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b[0].Transition = {outColor.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON};
+        b[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b[1].Transition = {outDepth.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON};
+        cmd->ResourceBarrier(2, b);
+        return FlushAndWait();
     }
 };
 
@@ -526,7 +628,109 @@ void RunRadianceCascadesSuite(bool preferWarp)
     Check(std::fabs(ratioOpen - 2.0f) < 0.03f && std::fabs(ratioFar - 2.0f) < 0.03f,
           "Strict linear energy scaling when emitter radiance doubles (2.00 +- 0.03)");
 
-    // --- Pass C: D3D12 Debug Layer Error Count ---
+    // --- Pass C: Full-Screen ExecuteScreenGI (512x288 HDR + Standard-Z Depth) ---
+    Check(host.ScreenGIReady(), "RawRadianceHost::ScreenGIReady() reports true (prep + apply PSOs loaded)");
+    if (host.ScreenGIReady()) {
+        constexpr uint32_t kSW = 512u, kSH = 288u;
+        std::vector<float> scrColor(static_cast<size_t>(kSW) * kSH * 4u, 0.0f);
+        std::vector<float> scrDepth(static_cast<size_t>(kSW) * kSH, 0.75f);
+
+        for (uint32_t y = 0; y < kSH; ++y) {
+            for (uint32_t x = 0; x < kSW; ++x) {
+                const size_t o = (static_cast<size_t>(y) * kSW + x) * 4u;
+                const size_t di = static_cast<size_t>(y) * kSW + x;
+                if (y < 76u) {
+                    // Sky band (depth >= 0.99998 -> MUST stay 100% untouched)
+                    scrDepth[di] = 1.0f;
+                    scrColor[o + 0] = 0.18f;
+                    scrColor[o + 1] = 0.34f;
+                    scrColor[o + 2] = 0.72f;
+                    scrColor[o + 3] = 1.0f;
+                } else {
+                    // Dark stone room wall
+                    scrDepth[di] = 0.75f;
+                    scrColor[o + 0] = 0.04f;
+                    scrColor[o + 1] = 0.04f;
+                    scrColor[o + 2] = 0.05f;
+                    scrColor[o + 3] = 1.0f;
+
+                    // Bright hearth fire on left: center (128, 190), radius 30 px
+                    const float dist = std::hypot(static_cast<float>(x) - 128.0f, static_cast<float>(y) - 190.0f);
+                    if (dist <= 30.0f) {
+                        const float k = 1.0f - (dist / 30.0f) * 0.3f;
+                        scrColor[o + 0] = 16.0f * k;
+                        scrColor[o + 1] =  6.0f * k;
+                        scrColor[o + 2] =  1.4f * k;
+                    }
+
+                    // Foreground opaque dark stone pillar in center: x in [232..276], y in [104..272]
+                    if (x >= 232u && x <= 276u && y >= 104u && y <= 272u) {
+                        scrDepth[di] = 0.22f;
+                        scrColor[o + 0] = 0.05f;
+                        scrColor[o + 1] = 0.05f;
+                        scrColor[o + 2] = 0.06f;
+                    }
+                }
+            }
+        }
+
+        ComPtr<ID3D12Resource> colorTex, depthTex;
+        Check(rig.CreateAndUploadScreenTargets(kSW, kSH, scrColor, scrDepth, colorTex, depthTex),
+              "Uploaded 512x288 HDR color + standard-Z depth targets in COMMON state");
+
+        bool scrExecOk = rig.BeginFrame();
+        if (scrExecOk) {
+            host.ExecuteScreenGI(rig.cmd.Get(), colorTex.Get(), depthTex.Get(), kSW, kSH, 0.18f);
+            scrExecOk = rig.FlushAndWait();
+        }
+        std::vector<float> scrOut;
+        Check(scrExecOk && rig.ReadbackRgba16Rect(colorTex.Get(), D3D12_RESOURCE_STATE_COMMON, kSW, kSH, scrOut),
+              "ExecuteScreenGI ran prep->4-cascade->bilateral apply and restored COMMON cleanly");
+
+        bool scrFinite = true;
+        float maxSkyDiff = 0.0f;
+        for (uint32_t y = 0; y < kSH; ++y) {
+            for (uint32_t x = 0; x < kSW; ++x) {
+                const size_t o = (static_cast<size_t>(y) * kSW + x) * 4u;
+                for (int c = 0; c < 4; ++c) {
+                    if (!std::isfinite(scrOut[o + c])) scrFinite = false;
+                }
+                if (y < 76u) {
+                    maxSkyDiff = std::max(maxSkyDiff, std::fabs(scrOut[o + 0] - 0.18f));
+                    maxSkyDiff = std::max(maxSkyDiff, std::fabs(scrOut[o + 1] - 0.34f));
+                    maxSkyDiff = std::max(maxSkyDiff, std::fabs(scrOut[o + 2] - 0.72f));
+                }
+            }
+        }
+
+        auto deltaAt = [&](uint32_t x, uint32_t y, float& dR, float& dG, float& dB) {
+            const size_t o = (static_cast<size_t>(y) * kSW + x) * 4u;
+            dR = scrOut[o + 0] - scrColor[o + 0];
+            dG = scrOut[o + 1] - scrColor[o + 1];
+            dB = scrOut[o + 2] - scrColor[o + 2];
+        };
+        float openDR = 0, openDG = 0, openDB = 0;
+        float shadDR = 0, shadDG = 0, shadDB = 0;
+        float fireDR = 0, fireDG = 0, fireDB = 0;
+        deltaAt(190u, 190u, openDR, openDG, openDB); // dark wall near fire (open side)
+        deltaAt(320u, 190u, shadDR, shadDG, shadDB); // dark wall shadowed behind foreground pillar
+        deltaAt(128u, 190u, fireDR, fireDG, fireDB); // bright fire core (shoulder-clamped)
+
+        const float openBounceLum = 0.2126f * openDR + 0.7152f * openDG + 0.0722f * openDB;
+        const float shadBounceLum = 0.2126f * shadDR + 0.7152f * shadDG + 0.0722f * shadDB;
+        std::printf("       ExecuteScreenGI 512x288: maxSkyDiff=%.5f | openWallBounce=(%.3f,%.3f,%.3f) | pillarShadowBounce=(%.4f,%.4f,%.4f) | fireCoreDeltaR=%.4f\n",
+                    maxSkyDiff, openDR, openDG, openDB, shadDR, shadDG, shadDB, fireDR);
+        Check(scrFinite, "ExecuteScreenGI 512x288 output contains zero NaN/Inf");
+        Check(maxSkyDiff < 0.002f, "ExecuteScreenGI strictly preserves sky pixels (depth >= 0.99998 untouched)");
+        Check(openDR > 0.03f && openDR > openDG && openDG > openDB,
+              "ExecuteScreenGI casts warm orange diffuse fire bounce onto dark wall near fire");
+        Check(shadBounceLum < openBounceLum * 0.45f,
+              "ExecuteScreenGI foreground stone pillar casts clear penumbra bounce shadow onto far wall");
+        Check(std::fabs(fireDR) < 0.08f,
+              "ExecuteScreenGI luminance-shoulder suppresses bright emitter self-amplification");
+    }
+
+    // --- Pass D: D3D12 Debug Layer Error Count ---
     const uint32_t d3d12Errors = rig.CountDebugErrors();
     std::printf("       D3D12 Debug Layer errors: %u\n", d3d12Errors);
     Check(d3d12Errors == 0u, "D3D12 Debug Layer reported 0 errors/corruptions");

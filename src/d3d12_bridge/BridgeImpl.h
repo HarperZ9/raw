@@ -7,6 +7,7 @@
 #include "RawMeshHost.h"
 #include "RawFluidSimHost.h"
 #include "RawFluidCompositeHost.h"
+#include "RawRadianceHost.h"
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
@@ -72,7 +73,9 @@ struct D3D12Bridge::Impl
     RawMeshHost              meshHost;     // RAW-MESH Hardware DX12 AS+MS PN-Triangle subdivision & terrain host
     RawFluidSimHost          fluidSim;     // Live GPU 64^3 3D Navier-Stokes Fire/Smoke + 256^2 SWE Water solver
     RawFluidCompositeHost    fluidComposite; // Live GPU 64^3 NS Fire/Smoke volumetric compositor onto colorOut
+    RawRadianceHost          radianceHost; // Live GPU 4-cascade penumbra-exact Radiance Cascades Screen GI
     bool                     fluidReady = false;
+    bool                     radianceReady = false;
     ComPtr<ID3D12CommandAllocator>    fluidAlloc[kRing];
     ComPtr<ID3D12GraphicsCommandList> fluidList;
     ComPtr<ID3D12Fence>               fluidFence;
@@ -85,10 +88,21 @@ struct D3D12Bridge::Impl
     uint64_t                          fluidLastMs = 0;
     uint32_t                          lastFluidFireEmitters = 0;
     uint32_t                          lastFluidWaterWakes = 0;
+    ComPtr<ID3D12CommandAllocator>    radAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList> radList;
+    ComPtr<ID3D12Fence>               radFence;
+    HANDLE                            radEvent = nullptr;
+    uint64_t                          radFenceVal = 0;
+    uint64_t                          radSlotVal[kRing] = {};
+    uint32_t                          radSlot = 0;
+    uint64_t                          radStepFrames = 0;
     std::string                       telemetryOutDir;
     bool InitFluidSim();
     void ShutdownFluidSim();
     bool StepFluidSimOnQueue(bool isInterior);
+    bool InitRadianceCascades();
+    void ShutdownRadianceCascades();
+    bool ExecuteRadianceScreenGiOnQueue();
     void EmitLiveTelemetry(bool rtActive);
     std::vector<RawMeshGpuAsset> proceduralMeshes; // Zero-external-asset built-in procedural GPU meshlet library
     raw::worldgen::RawWorldShowcase worldShowcase; // Live beyond-Tamriel 6-biome procedural frontier streaming manager

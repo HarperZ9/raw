@@ -47,6 +47,7 @@ void PrintUsage() {
         "  raw_forge_cli --almanac <dir>                           Bake 365-day orbital climate & phenology almanac\n"
         "  raw_forge_cli --materials <dir>                         Validate & export physical optical material catalog\n"
         "  raw_forge_cli --esm <path> --cell <x,y> --out <dir>     Extract, validate & export real Tamriel ESM cell\n"
+        "  raw_forge_cli --esm-scene <esm> --bsa <bsa> --cell <x,y> --out <d> Reconstruct full cell (terrain + NIF props)\n"
         "  raw_forge_cli --bsa-list <path> [--filter <substr>]     Inspect & list files in a v104/v105 .bsa archive\n"
         "  raw_forge_cli --nif <path> --out <dir>                  Parse, validate & export a Skyrim SE .nif mesh\n"
         "  raw_forge_cli --bsa-nif <bsa> --entry <vpath> --out <d> Extract .nif from .bsa, validate & export .glb/.obj\n"
@@ -75,6 +76,9 @@ int main(int argc, char** argv) {
     std::string materialsDir;
     std::string validateAllDir;
     std::string esmPath;
+    std::string esmScenePath;
+    std::string esmSceneBsa;
+    uint32_t    maxModels = 64u;
     std::string esmOutDir;
     std::string bsaListPath;
     std::string bsaFilter;
@@ -125,6 +129,18 @@ int main(int argc, char** argv) {
             const char* v = needNext("--esm");
             if (!v) return 2;
             esmPath = v;
+        } else if (arg == "--esm-scene") {
+            const char* v = needNext("--esm-scene");
+            if (!v) return 2;
+            esmScenePath = v;
+        } else if (arg == "--bsa") {
+            const char* v = needNext("--bsa");
+            if (!v) return 2;
+            esmSceneBsa = v;
+        } else if (arg == "--max-models") {
+            const char* v = needNext("--max-models");
+            if (!v) return 2;
+            maxModels = static_cast<uint32_t>(std::strtoul(v, nullptr, 10));
         } else if (arg == "--cell") {
             const char* v = needNext("--cell");
             if (!v || !ParseCellXY(v, &esmCellX, &esmCellY)) {
@@ -193,9 +209,9 @@ int main(int argc, char** argv) {
     }
 
     if (!runValidateAll && floraDir.empty() && dioramaDir.empty() && almanacDir.empty() &&
-        materialsDir.empty() && esmPath.empty() && bsaListPath.empty() &&
+        materialsDir.empty() && esmPath.empty() && esmScenePath.empty() && bsaListPath.empty() &&
         nifPath.empty() && bsaNifArchive.empty() && ddsPath.empty() && bsaDdsArchive.empty()) {
-        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --esm, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, or --validate-all).\n");
+        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, or --validate-all).\n");
         PrintUsage();
         return 2;
     }
@@ -246,6 +262,16 @@ int main(int argc, char** argv) {
         const std::string outDir = esmOutDir.empty() ? "raw_forge_esm_out" : esmOutDir;
         runStep("esm-cell", raw::pipeline::BakeEsmCellAsset(
             esmPath, esmCellX, esmCellY, outDir, 0x0000003Cu, policy, writeGeometry));
+    }
+
+    if (!esmScenePath.empty()) {
+        if (!hasEsmCell || esmSceneBsa.empty()) {
+            std::fprintf(stderr, "Error: --esm-scene requires --bsa <Meshes0.bsa> and --cell <x,y>.\n");
+            return 2;
+        }
+        const std::string outDir = esmOutDir.empty() ? "raw_forge_scene_out" : esmOutDir;
+        runStep("esm-scene", raw::pipeline::BakeTamrielCellSceneBundle(
+            esmScenePath, esmSceneBsa, esmCellX, esmCellY, outDir, maxModels, policy, writeGeometry));
     }
 
     if (!nifPath.empty()) {

@@ -60,9 +60,18 @@ struct RawMaterialEvalResult {
 // ============================================================================
 
 void rawBuildOrthonormalBasis(float3 N, out float3 T, out float3 B) {
-    const float3 upRef = (abs(N.z) < 0.92f) ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
-    T = normalize(cross(upRef, N));
-    B = cross(N, T);
+    const float3 nUnit = (dot(N, N) > 1.0e-8f) ? normalize(N) : float3(0.0f, 0.0f, 1.0f);
+    const float3 upRef = (abs(nUnit.z) < 0.92f) ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
+    T = normalize(cross(upRef, nUnit));
+    B = cross(nUnit, T);
+}
+
+// NaN-safe half-vector helper: falls back to surface normal N when V and L are diametrically opposed (V == -L).
+float3 rawSafeHalfVec(float3 V, float3 L, float3 N) {
+    const float3 sumVL = V + L;
+    const float len2 = dot(sumVL, sumVL);
+    if (len2 > 1.0e-6f) { return sumVL * rsqrt(len2); }
+    return (dot(N, N) > 1.0e-8f) ? normalize(N) : float3(0.0f, 0.0f, 1.0f);
 }
 
 // Cauchy 3-band dispersion anchored at green 540 nm: n(lambda) = A + B / lambda_um^2.
@@ -86,16 +95,87 @@ float3 rawAiryThinFilmRGB(float cosTheta, float opdNm) {
 
 // Isotropic GGX + height-correlated Smith visibility + Kulla-Conty energy compensation.
 float rawGgxSpecTerm(float nh, float nv, float nl, float alpha, float f0Scalar) {
+    const float nlSafe = max(nl, 0.0f);
+    if (nlSafe <= 1.0e-5f) { return 0.0f; }
+    const float nvSafe = max(nv, 1.0e-4f);
     const float a = clamp(alpha, 0.02f, 0.98f);
     const float a2 = a * a;
-    const float dDen = nh * nh * (a2 - 1.0f) + 1.0f;
+    const float dDen = max(nh * nh * (a2 - 1.0f) + 1.0f, 1.0e-4f);
     const float D = a2 / max(RAW_MAT_PI * dDen * dDen, 1.0e-5f);
-    const float visV = nl * sqrt(nv * nv * (1.0f - a2) + a2);
-    const float visL = nv * sqrt(nl * nl * (1.0f - a2) + a2);
+    const float visV = nlSafe * sqrt(nvSafe * nvSafe * (1.0f - a2) + a2);
+    const float visL = nvSafe * sqrt(nlSafe * nlSafe * (1.0f - a2) + a2);
     const float V = 0.5f / max(visV + visL, 1.0e-5f);
-    const float ess = saturate(1.0f - a * (0.42f * (1.0f - nv) + 0.14f));
+    const float ess = saturate(1.0f - a * (0.42f * (1.0f - nvSafe) + 0.14f));
     const float kulla = 1.0f + f0Scalar * ((1.0f - ess) / max(ess, 0.25f));
-    return min(D * V * kulla * nl * RAW_MAT_PI, 8.0f);
+    return min(D * V * kulla * nlSafe * RAW_MAT_PI, 8.0f);
+}
+
+// Wave 44 Physical Brushed-Metal Anisotropic GGX Specular BRDF (Burley/Heitz correlated Smith V_aniso
+// + world-locked micro-brushing grain along reconstructed tangent T + Kulla-Conty energy compensation).
+// Returns energy-conserving specular reflectance * NdotL (irradiance-over-pi convention matching Lighting.hlsl).
+float3 evalBrushedMetalAniso(
+    float3 worldPosAbs,
+    float3 N,
+    float3 V,
+    float3 L,
+    float3 F0,
+    float  roughness,
+    float  anisotropy)
+{
+    const float3 nUnit = (dot(N, N) > 1.0e-8f) ? normalize(N) : float3(0.0f, 0.0f, 1.0f);
+    const float3 vUnit = (dot(V, V) > 1.0e-8f) ? normalize(V) : nUnit;
+    const float3 lUnit = (dot(L, L) > 1.0e-8f) ? normalize(L) : nUnit;
+    if (dot(nUnit, lUnit) <= 1.0e-5f) { return 0.0f.xxx; }
+
+    float3 T, B;
+    rawBuildOrthonormalBasis(nUnit, T, B);
+
+    // World-locked forged brushed-steel micro-grooves along reconstructed armor/blade tangent (100% static):
+    const float uBrush = dot(worldPosAbs, T) * 0.20f;
+    const float vBrush = dot(worldPosAbs, B) * 1.55f;
+    const float wBrush = dot(worldPosAbs, nUnit) * 0.25f;
+    const float4 grainG = rawNoise3Grad(float3(uBrush, vBrush, wBrush) + float3(3.7f, 11.3f, 5.9f));
+    const float3 nBrushed = normalize(nUnit + T * (grainG.y * 0.045f) + B * (grainG.z * 0.095f));
+    // Re-orthogonalize tangent basis around perturbed brushed normal:
+    const float3 tB = normalize(T - nBrushed * dot(T, nBrushed));
+    const float3 bB = cross(nBrushed, tB);
+
+    const float nv = max(dot(nBrushed, vUnit), 1.0e-4f);
+    const float nl = max(dot(nBrushed, lUnit), 0.0f);
+    if (nl <= 1.0e-5f) { return 0.0f.xxx; }
+
+    const float3 H = rawSafeHalfVec(vUnit, lUnit, nBrushed);
+    const float nh = saturate(dot(nBrushed, H));
+    const float vh = saturate(dot(vUnit, H));
+
+    // Burley / Heitz anisotropic GGX aspect mapping (authentic elongated highlights along brushed curves):
+    const float r = clamp(roughness, 0.05f, 0.96f);
+    const float aniso = clamp(anisotropy, -0.85f, 0.85f);
+    const float aspect = sqrt(max(1.0f - abs(aniso) * 0.90f, 0.12f));
+    const float aBase = r * r;
+    const float ax = max((aniso >= 0.0f) ? (aBase / aspect) : (aBase * aspect), 0.012f);
+    const float ay = max((aniso >= 0.0f) ? (aBase * aspect) : (aBase / aspect), 0.012f);
+
+    const float th = dot(tB, H);
+    const float bh = dot(bB, H);
+    const float dDen = max((th * th) / (ax * ax) + (bh * bh) / (ay * ay) + nh * nh, 1.0e-5f);
+    const float D = 1.0f / max(RAW_MAT_PI * ax * ay * dDen * dDen, 1.0e-5f);
+
+    // Height-correlated anisotropic Smith masking-shadowing visibility V_aniso (Heitz 2014):
+    const float tv = dot(tB, vUnit), bv = dot(bB, vUnit);
+    const float tl = dot(tB, lUnit), bl = dot(bB, lUnit);
+    const float lamV = nl * sqrt(ax * ax * tv * tv + ay * ay * bv * bv + nv * nv);
+    const float lamL = nv * sqrt(ax * ax * tl * tl + ay * ay * bl * bl + nl * nl);
+    const float visAniso = 0.5f / max(lamV + lamL, 1.0e-5f);
+
+    // Schlick-Gulbrandsen F82-tint conductor Fresnel + Kulla-Conty multi-scattering compensation:
+    const float f1 = pow(1.0f - vh, 5.0f);
+    const float3 F0s = saturate(F0);
+    const float3 F = saturate(lerp(F0s, 1.0f.xxx, f1) - F0s * (0.12f * vh * f1 * (1.0f - vh)));
+    const float ess = saturate(1.0f - r * (0.40f * (1.0f - nv) + 0.12f));
+    const float3 kulla = 1.0f + F0s * ((1.0f - ess) / max(ess, 0.25f));
+
+    return min(F * kulla * (RAW_MAT_PI * D * visAniso * nl), 8.0f.xxx);
 }
 
 // EON Energy-Preserving Oren-Nayar Rough Diffuse BRDF (Portsmouth, Kutz, Hill 2025, JCGT — MIT clean-room).
@@ -182,7 +262,7 @@ RawMaterialEvalResult evalFrostGlacier3D(
 
     // Subtle static hoarfrost crystal micro-glints on dusted shelves (100% static world-locked, zero flicker):
     const float dust = saturate(snowDust);
-    const float3 H = normalize(vUnit + lUnit);
+    const float3 H = rawSafeHalfVec(vUnit, lUnit, nIce);
     float flakeGlint = 0.0f;
     if (dust > 0.04f) {
         const float3 frostCell = floor(worldPos * 0.65f);
@@ -255,8 +335,8 @@ RawMaterialEvalResult evalRefractiveGlassGem3D(
     }
 
     const float nv = max(dot(nGem, vUnit), 1.0e-4f);
-    const float nl = saturate(dot(nGem, lUnit));
-    const float3 H = normalize(vUnit + lUnit);
+    const float nl = max(dot(nGem, lUnit), 0.0f);
+    const float3 H = rawSafeHalfVec(vUnit, lUnit, nGem);
     const float vh = saturate(dot(vUnit, H));
     const float nh = saturate(dot(nGem, H));
 
@@ -352,8 +432,8 @@ RawMaterialEvalResult evalForgedMetal3D(
     const float3 nMetal = normalize(nUnit + (T * (brushGrad.y * 0.06f) + B * (brushGrad.z * 0.12f) + hammerGrad.yzw * 0.05f));
 
     const float nv = max(dot(nMetal, vUnit), 1.0e-4f);
-    const float nl = saturate(dot(nMetal, lUnit));
-    const float3 H = normalize(vUnit + lUnit);
+    const float nl = max(dot(nMetal, lUnit), 0.0f);
+    const float3 H = rawSafeHalfVec(vUnit, lUnit, nMetal);
     const float nh = saturate(dot(nMetal, H));
     const float vh = saturate(dot(vUnit, H));
 
@@ -460,8 +540,8 @@ RawMaterialEvalResult evalHeatMagma3D(
     // Crisp cooling basalt plate normal with sunken glowing seams + vesicular basalt micro-roughness:
     const float3 nMagma = normalize(nUnit + vesic.yzw * (0.28f * (1.0f - heatMask * 0.75f)));
     const float nv = max(dot(nMagma, vUnit), 1.0e-4f);
-    const float nl = saturate(dot(nMagma, lUnit));
-    const float3 H = normalize(vUnit + lUnit);
+    const float nl = max(dot(nMagma, lUnit), 0.0f);
+    const float3 H = rawSafeHalfVec(vUnit, lUnit, nMagma);
     const float nh = saturate(dot(nMagma, H));
     const float vh = saturate(dot(vUnit, H));
 
@@ -531,8 +611,8 @@ RawMaterialEvalResult evalArcaneMagic3D(
     const float4 surfGrad = rawNoise3Grad(worldPos * 0.14f);
     const float3 nArc = normalize(nUnit + surfGrad.yzw * 0.14f);
     const float nvArc = max(dot(nArc, vUnit), 1.0e-4f);
-    const float nlArc = saturate(dot(nArc, lUnit));
-    const float3 H = normalize(vUnit + lUnit);
+    const float nlArc = max(dot(nArc, lUnit), 0.0f);
+    const float3 H = rawSafeHalfVec(vUnit, lUnit, nArc);
     const float nh = saturate(dot(nArc, H));
     const float vh = saturate(dot(vUnit, H));
 
@@ -618,8 +698,8 @@ RawMaterialEvalResult evalMaterialFromRecord3D(
     const float4 microG = rawFbm3Grad(worldPos * ((familyId == RAW_MAT_FAMILY_WOOD_LEATHER) ? 0.18f : 0.11f), 3);
     const float3 nPert = normalize(nUnit + microG.yzw * 0.16f);
     const float nv = max(dot(nPert, vUnit), 1.0e-4f);
-    const float nl = saturate(dot(nPert, lUnit));
-    const float3 H = normalize(vUnit + lUnit);
+    const float nl = max(dot(nPert, lUnit), 0.0f);
+    const float3 H = rawSafeHalfVec(vUnit, lUnit, nPert);
     const float nh = saturate(dot(nPert, H));
     const float vh = saturate(dot(vUnit, H));
 

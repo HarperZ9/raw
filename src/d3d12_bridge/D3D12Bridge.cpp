@@ -5,6 +5,7 @@
 #include "StreamlineHost.h"
 #include "RawTextureBridge.h"
 #include "../materials/RawAssetForge.h"
+#include "../worldgen/RawHydrologyGen.h"
 #include "DepthCopy_CS.h"   // g_DepthCopyCS (fxc, cs_5_0)
 
 namespace raw::bridge
@@ -295,14 +296,16 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         const bool asyncOk = m->asyncCompute.Init(m->dev12.Get());
         const bool indOk = m->indirect.Init(m->dev12.Get(), meshOk);
         const bool fluidOk = m->InitFluidSim();
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s",
+        const bool radOk = m->InitRadianceCascades();
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
                terrainOk ? "READY" : "off",
                m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
                (!meshInitOk && !meshErr.empty()) ? (" (" + meshErr + ")").c_str() : "",
                asyncOk ? "READY" : "off", indOk ? "READY" : "off",
                m->indirect.SupportsIndirectMesh() ? "YES" : "no",
-               fluidOk ? "READY" : "off");
+               fluidOk ? "READY" : "off",
+               radOk ? "READY" : "off");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
         {
             const auto& matReg = raw::materials::DefaultMaterialRegistry();
@@ -328,9 +331,11 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
             wcfg.borderMinY = -118000.0f;
             wcfg.borderMaxY =  132000.0f;
             wcfg.asyncStreaming = true;
+            raw::worldgen::SetTerrainGenHydrologyErosionEnabled(true);
             const bool worldOk = m->worldShowcase.Init(wcfg);
-            m->log("[D3D12Bridge] Physical Materials & Frontier WorldGen: %zu measured 64B GPU materials (8 families), WorldShowcase=%s (128MB cap, async=ON, Tamriel box [-148k..148k]x[-118k..132k], margin 24.5k)",
-                   m->materialGpuRecords.size(), worldOk ? "READY" : "off");
+            m->log("[D3D12Bridge] Physical Materials & Frontier WorldGen: %zu measured 64B GPU materials (8 families), WorldShowcase=%s (128MB cap, async=ON, hydrology=%s, Tamriel box [-148k..148k]x[-118k..132k], margin 24.5k)",
+                   m->materialGpuRecords.size(), worldOk ? "READY" : "off",
+                   raw::worldgen::IsTerrainGenHydrologyErosionEnabled() ? "ON" : "off");
         }
         if (meshOk) {
             RawMeshAsset builtIn[9]{};
@@ -468,6 +473,62 @@ void D3D12Bridge::Impl::ShutdownFluidSim()
     fluidReady = false;
 }
 
+bool D3D12Bridge::Impl::InitRadianceCascades()
+{
+    ShutdownRadianceCascades();
+    if (!dev12) return false;
+    std::string radErr;
+    if (!radianceHost.Init(dev12.Get(), &radErr)) {
+        log("[RadianceCascades] off: %s", radErr.c_str());
+        return false;
+    }
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&radAlloc[i])))) {
+            ShutdownRadianceCascades();
+            return false;
+        }
+    }
+    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, radAlloc[0].Get(), nullptr, IID_PPV_ARGS(&radList))) ||
+        FAILED(radList->Close()) ||
+        FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&radFence)))) {
+        ShutdownRadianceCascades();
+        return false;
+    }
+    radEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!radEvent) {
+        ShutdownRadianceCascades();
+        return false;
+    }
+    radianceReady = true;
+    log("[RadianceCascades] 4-cascade penumbra-exact GPU GI ready (ScreenGI=%s)",
+        radianceHost.ScreenGIReady() ? "READY" : "off");
+    return true;
+}
+
+void D3D12Bridge::Impl::ShutdownRadianceCascades()
+{
+    if (radFence && radEvent && radFenceVal > 0) {
+        if (radFence->GetCompletedValue() < radFenceVal) {
+            radFence->SetEventOnCompletion(radFenceVal, radEvent);
+            WaitForSingleObject(radEvent, 3000);
+        }
+    }
+    radList.Reset();
+    for (UINT i = 0; i < kRing; ++i) {
+        radAlloc[i].Reset();
+        radSlotVal[i] = 0;
+    }
+    radFence.Reset();
+    if (radEvent) {
+        CloseHandle(radEvent);
+        radEvent = nullptr;
+    }
+    radFenceVal = 0;
+    radSlot = 0;
+    radStepFrames = 0;
+    radianceReady = false;
+}
+
 void D3D12Bridge::Shutdown()
 {
     if (!m) return;
@@ -476,6 +537,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->ShutdownRadianceCascades();
     m->ShutdownFluidSim();
     m->worldShowcase.WaitForAsyncIdle();
     m->worldShowcase.Reset();

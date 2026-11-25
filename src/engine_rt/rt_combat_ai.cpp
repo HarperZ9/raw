@@ -18,6 +18,7 @@
 #include "rt_detour.h"
 #include "rt_economy_ledger.h"
 #include "rt_image.h"
+#include "rt_live_config.h"
 #include "rt_movement_combat.h"
 #include "rt_version.h"
 #include "rt_view.h"
@@ -1352,9 +1353,10 @@ static void HookHitDataPopulate(uint8_t* hitData, uint8_t ignoreBlock) {
 
     uint8_t* targetActor = SehResolveActorHandle(pod.targetHandle);
     uint8_t* playerPtr   = SehGetPlayerPtr();
+    const LiveEngineConfig liveCfg = GetLiveConfig();
 
-    // Wave 43: Tactile 260ms dodge-step i-frame evasion — cleanly zeroes incoming damage on the player!
-    if (targetActor != nullptr && targetActor == playerPtr && MovementCombatIsPlayerEvading()) {
+    // Wave 43/44: Tactile 260ms dodge-step i-frame evasion (live-configurable via raw_engine.ini)
+    if (liveCfg.dodgeIFramesEnabled && targetActor != nullptr && targetActor == playerPtr && MovementCombatIsPlayerEvading()) {
         float evTotal = pod.totalDamage;
         float evPhys  = pod.physicalDamage;
         float evBlk   = pod.percentBlocked;
@@ -1399,9 +1401,12 @@ static void HookHitDataPopulate(uint8_t* hitData, uint8_t ignoreBlock) {
     ctx.isPowerAttack      = (pod.flags2 & 1u) != 0u;
     ctx.defenderStamina    = defStam;
     ctx.defenderStaminaMax = defStamMax;
-    ctx.blockElapsedMs     = blockElapsedMs;
+    // Scale elapsed block time against live-configured ParryWindowMs (baseline 220 ms)
+    ctx.blockElapsedMs     = (liveCfg.parryWindowMs > 1.0f)
+        ? (blockElapsedMs * (220.0f / liveCfg.parryWindowMs))
+        : 9999.0f;
     ctx.defenderPoise      = defPoise;
-    ctx.targetPoiseBroken  = targetPoiseBroken;
+    ctx.targetPoiseBroken  = liveCfg.nonSpongyDifficulty && targetPoiseBroken;
     ctx.isTargetPlayer     = (targetActor != nullptr && targetActor == playerPtr);
 
     const LiveHitOutcome res = EvaluateLiveHitModifier(ctx);
@@ -1457,9 +1462,11 @@ static void HookHitDataPopulate(uint8_t* hitData, uint8_t ignoreBlock) {
         }
 
         HitstopEventKind hsKind = HitstopEventKind::None;
-        if (res.timedParry)       hsKind = HitstopEventKind::TimedParry;
-        else if (res.guardBroken) hsKind = HitstopEventKind::HeavyGuardBreak;
-        else if (isLethal)        hsKind = HitstopEventKind::LethalKillBlow;
+        if (liveCfg.hitstopEnabled && liveCfg.hitstopScale > 0.05f) {
+            if (res.timedParry)       hsKind = HitstopEventKind::TimedParry;
+            else if (res.guardBroken) hsKind = HitstopEventKind::HeavyGuardBreak;
+            else if (isLethal)        hsKind = HitstopEventKind::LethalKillBlow;
+        }
 
         ImpactDecalKind decKind = ImpactDecalKind::BloodSplatter;
         float decRadius = std::clamp(32.0f + finalDmg * 0.45f, 28.0f, 72.0f);
@@ -1477,7 +1484,7 @@ static void HookHitDataPopulate(uint8_t* hitData, uint8_t ignoreBlock) {
 
 static float HookCombatAttackChance(void* actor, void* target) {
     const float base = g_gp.origAttackChance ? g_gp.origAttackChance(actor, target) : 0.35f;
-    if (!g_gp.active.load(std::memory_order_acquire) || !actor) return base;
+    if (!g_gp.active.load(std::memory_order_acquire) || !actor || !GetLiveConfig().tacticalSquadAi) return base;
     g_gp.aiAttackEvals.fetch_add(1u, std::memory_order_relaxed);
 
     float hp = 100.0f, hpMax = 100.0f, stam = 100.0f, stamMax = 100.0f;
@@ -1497,7 +1504,7 @@ static float HookCombatAttackChance(void* actor, void* target) {
 
 static float HookCombatBlockChance(void* actor) {
     const float base = g_gp.origBlockChance ? g_gp.origBlockChance(actor) : 0.25f;
-    if (!g_gp.active.load(std::memory_order_acquire) || !actor) return base;
+    if (!g_gp.active.load(std::memory_order_acquire) || !actor || !GetLiveConfig().tacticalSquadAi) return base;
     g_gp.aiBlockEvals.fetch_add(1u, std::memory_order_relaxed);
 
     float hp = 100.0f, hpMax = 100.0f, stam = 100.0f, stamMax = 100.0f;
@@ -1514,7 +1521,7 @@ static float HookCombatBlockChance(void* actor) {
 
 static float HookCombatBashChance(void* actor, void* target) {
     const float base = g_gp.origBashChance ? g_gp.origBashChance(actor, target) : 0.15f;
-    if (!g_gp.active.load(std::memory_order_acquire) || !actor) return base;
+    if (!g_gp.active.load(std::memory_order_acquire) || !actor || !GetLiveConfig().tacticalSquadAi) return base;
     g_gp.aiBashEvals.fetch_add(1u, std::memory_order_relaxed);
 
     float stam = 100.0f, stamMax = 100.0f;
@@ -1529,8 +1536,9 @@ static float HookCombatBashChance(void* actor, void* target) {
 }
 
 static uint32_t HookBarterProcessMessage(void* menu, uint8_t* uiMsg) {
+    const bool econOn = GetLiveConfig().livingEconomyEnabled;
     uint32_t msgType = 0;
-    const bool gotType = g_gp.active.load(std::memory_order_acquire) && SehReadUiMsgType(uiMsg, &msgType);
+    const bool gotType = econOn && g_gp.active.load(std::memory_order_acquire) && SehReadUiMsgType(uiMsg, &msgType);
 
     if (gotType && (msgType == 1u /*kShow*/ || msgType == 4u /*kUpdate*/)) {
         EngineView ev{};

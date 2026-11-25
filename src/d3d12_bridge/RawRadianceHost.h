@@ -25,13 +25,21 @@ struct RadianceCascadeParams {
 
 // Optional explicit DXIL shader bytecode bundle (for runtime loading or standalone test harnesses).
 struct RadianceShaderBlobs {
-    D3D12_SHADER_BYTECODE traceMerge = {};
-    D3D12_SHADER_BYTECODE resolve    = {};
+    D3D12_SHADER_BYTECODE traceMerge  = {};
+    D3D12_SHADER_BYTECODE resolve     = {};
+    D3D12_SHADER_BYTECODE screenPrep  = {}; // optional: required for ExecuteScreenGI()
+    D3D12_SHADER_BYTECODE screenApply = {}; // optional: required for ExecuteScreenGI()
 
     bool Complete() const
     {
         return traceMerge.pShaderBytecode && traceMerge.BytecodeLength > 0 &&
                resolve.pShaderBytecode && resolve.BytecodeLength > 0;
+    }
+
+    bool ScreenComplete() const
+    {
+        return screenPrep.pShaderBytecode && screenPrep.BytecodeLength > 0 &&
+               screenApply.pShaderBytecode && screenApply.BytecodeLength > 0;
     }
 };
 
@@ -54,6 +62,7 @@ public:
     bool InitWithBlobs(ID3D12Device* dev, const RadianceShaderBlobs& blobs, std::string* outErr = nullptr);
 
     bool Ready() const { return m_ready; }
+    bool ScreenGIReady() const { return m_ready && m_psoScreenPrep != nullptr && m_psoScreenApply != nullptr; }
 
     // Runs full top-down 4-cascade GI solve: c=3 -> c=2 -> c=1 -> c=0 -> Resolve.
     // sceneEmissiveAlpha must be a 2D RGBA16F/RGBA32F/RGBA8 texture (rgb = HDR emission, a = occluder opacity).
@@ -62,6 +71,19 @@ public:
                    ID3D12Resource* sceneEmissiveAlpha,
                    const RadianceCascadeParams& params,
                    D3D12_RESOURCE_STATES sceneState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+    // Full live screen-space Radiance Cascades GI pass for D3D12Bridge:
+    //   1) cs_rc_screen_prep  : downsamples colorInOut + sceneDepth -> internal 256x256 m_emissiveAlpha
+    //   2) ComputeGI          : 4-cascade c=3 -> 2 -> 1 -> 0 -> Resolve -> 256x256 m_irradiance
+    //   3) cs_rc_screen_apply : depth-aware bilateral upsample & energy-conserving bounce onto colorInOut
+    // Expects colorInOut & sceneDepth in COMMON; transitions colorInOut (COMMON -> SRV -> UAV -> COMMON)
+    // and sceneDepth (COMMON -> NON_PIXEL_SHADER_RESOURCE -> COMMON).
+    void ExecuteScreenGI(ID3D12GraphicsCommandList* cmd,
+                         ID3D12Resource* colorInOut,
+                         ID3D12Resource* sceneDepth,
+                         uint32_t width,
+                         uint32_t height,
+                         float giStrength = 0.16f);
 
     ID3D12DescriptorHeap*       DescriptorHeap() const { return m_heap.Get(); }
     D3D12_GPU_DESCRIPTOR_HANDLE IrradianceSrv() const;
@@ -86,16 +108,20 @@ private:
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> m_heap;
     uint32_t                                    m_descInc = 0;
 
-    TrackedTex m_atlas[2];    // 256x256 RGBA16F ping-pong cascade atlases
-    TrackedTex m_irradiance;  // 256x256 RGBA16F resolved diffuse GI irradiance
+    TrackedTex m_atlas[2];      // 256x256 RGBA16F ping-pong cascade atlases
+    TrackedTex m_irradiance;    // 256x256 RGBA16F resolved diffuse GI irradiance
+    TrackedTex m_emissiveAlpha; // 256x256 RGBA16F screen-prep extracted emitters + depth occluders
 
     Microsoft::WRL::ComPtr<ID3D12RootSignature> m_root;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoTraceMerge;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoResolve;
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoScreenPrep;
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoScreenApply;
 
     Microsoft::WRL::ComPtr<ID3D12Resource> m_cbBuf;
     uint8_t*                               m_cbMapped = nullptr;
     uint32_t                               m_frameIdx = 0u;
+    uint32_t                               m_screenFrameIdx = 0u;
 };
 
 } // namespace raw::bridge

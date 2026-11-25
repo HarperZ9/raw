@@ -8,6 +8,7 @@
 #include "../materials/RawMaterialLib.h"
 #include "../worldgen/RawBsaArchive.h"
 #include "../worldgen/RawDdsDecoder.h"
+#include "../worldgen/RawEsmModelResolver.h"
 #include "../worldgen/RawEsmWorldLoader.h"
 #include "../worldgen/RawFloraEngine.h"
 #include "../worldgen/RawNifLoader.h"
@@ -930,6 +931,111 @@ BakeResult InspectBsaDdsAsset(const std::string& bsaPath,
         return res;
     }
     return FinishDdsInspection(hdr, img, virtualDdsPath, outDir, exportPreviewBmp);
+}
+
+BakeResult BakeTamrielCellSceneBundle(const std::string& esmPath,
+                                      const std::string& meshesBsaPath,
+                                      int32_t cellX,
+                                      int32_t cellY,
+                                      const std::string& outDir,
+                                      uint32_t maxUniqueModels,
+                                      const ValidatorPolicy& policy,
+                                      bool writeGeometryFiles) {
+    using namespace raw::worldgen;
+    BakeResult res{};
+    if (!EnsureDir(outDir)) {
+        res.summaryMessage = "Failed to create ESM scene output directory: " + outDir;
+        return res;
+    }
+
+    ReconstructedCellScene scene{};
+    std::string err;
+    if (!ReconstructTamrielCellScene(esmPath, meshesBsaPath, cellX, cellY, maxUniqueModels, &scene, &err)) {
+        res.validationFailures = 1u;
+        res.summaryMessage = "Tamriel cell scene reconstruction failed: " + err;
+        return res;
+    }
+
+    const std::string prefix = "tamriel_cell_" + std::to_string(cellX) + "_" + std::to_string(cellY);
+    scene.terrainMesh.name = prefix + "_terrain";
+    ++res.assetsGenerated;
+    const ValidationReport terrainRep = ValidateProceduralMesh(scene.terrainMesh, policy);
+    AccumulateReport(terrainRep, res);
+
+    if (writeGeometryFiles && terrainRep.passed) {
+        if (ExportMeshToGlbFile(scene.terrainMesh, outDir + "/" + scene.terrainMesh.name + ".glb", true)) ++res.filesWritten;
+        else ++res.validationFailures;
+        if (ExportMeshToObjFile(scene.terrainMesh, outDir + "/" + scene.terrainMesh.name + ".obj")) ++res.filesWritten;
+        else ++res.validationFailures;
+    }
+
+    // Validate every unique decoded NIF prop model
+    for (const auto& pm : scene.uniqueModels) {
+        ++res.assetsGenerated;
+        const ValidationReport pmRep = ValidateProceduralMesh(pm.mesh, policy);
+        AccumulateReport(pmRep, res);
+    }
+
+    // Bake world-space merged props mesh when instances exist
+    ProceduralMesh mergedProps{};
+    ValidationReport propsRep{};
+    bool hasMergedProps = false;
+    if (!scene.instances.empty() && BakeReconstructedCellPropsToWorldMesh(scene, 126u, &mergedProps, nullptr)) {
+        mergedProps.name = prefix + "_props";
+        ++res.assetsGenerated;
+        propsRep = ValidateProceduralMesh(mergedProps, policy);
+        AccumulateReport(propsRep, res);
+        hasMergedProps = true;
+        if (writeGeometryFiles && propsRep.passed) {
+            if (ExportMeshToGlbFile(mergedProps, outDir + "/" + mergedProps.name + ".glb", true)) ++res.filesWritten;
+            else ++res.validationFailures;
+            if (ExportMeshToObjFile(mergedProps, outDir + "/" + mergedProps.name + ".obj")) ++res.filesWritten;
+            else ++res.validationFailures;
+        }
+    }
+
+    std::ostringstream js;
+    js << std::fixed << std::setprecision(4);
+    js << "{\n  \"pipeline\": \"RAW Clean-Room Tamriel Cell Scene Bundle\",\n"
+       << "  \"esmPath\": \"" << JsonEscape(esmPath) << "\",\n"
+       << "  \"meshesBsaPath\": \"" << JsonEscape(meshesBsaPath) << "\",\n"
+       << "  \"cell\": [" << cellX << ", " << cellY << "],\n"
+       << "  \"cellEdid\": \"" << JsonEscape(scene.cellEdid) << "\",\n"
+       << "  \"cellFormId\": " << scene.cellFormId << ",\n"
+       << "  \"totalCellRefrs\": " << scene.totalCellRefrs << ",\n"
+       << "  \"resolvedModelRefrs\": " << scene.resolvedModelRefrs << ",\n"
+       << "  \"uniqueDecodedModels\": " << scene.uniqueModels.size() << ",\n"
+       << "  \"placedInstances\": " << scene.instances.size() << ",\n"
+       << "  \"extractedFromPrimaryBsa\": " << scene.extractedFromPrimary << ",\n"
+       << "  \"extractedFromSiblingBsa\": " << scene.extractedFromSibling << ",\n"
+       << "  \"terrainPassed\": " << (terrainRep.passed ? "true" : "false") << ",\n"
+       << "  \"mergedPropsPassed\": " << ((!hasMergedProps || propsRep.passed) ? "true" : "false") << ",\n"
+       << "  \"models\": [\n";
+    for (size_t i = 0u; i < scene.uniqueModels.size(); ++i) {
+        const auto& m = scene.uniqueModels[i];
+        if (i > 0u) js << ",\n";
+        js << "    {"
+           << "\"baseFormId\":" << m.baseFormId << ","
+           << "\"type\":\"" << JsonEscape(m.recordType) << "\","
+           << "\"edid\":\"" << JsonEscape(m.editorId) << "\","
+           << "\"nif\":\"" << JsonEscape(m.bsaVirtualPath) << "\","
+           << "\"diffuse\":\"" << JsonEscape(m.primaryDiffuseDds) << "\","
+           << "\"meshlets\":" << m.mesh.meshlets.size()
+           << "}";
+    }
+    js << "\n  ]\n}\n";
+
+    res.manifestPath = outDir + "/" + prefix + "_scene.json";
+    if (WriteTextFile(res.manifestPath, js.str())) ++res.filesWritten;
+    else ++res.validationFailures;
+
+    res.ok = terrainRep.passed && (res.validationFailures == 0u);
+    res.summaryMessage = "TamrielScene(" + std::to_string(cellX) + "," + std::to_string(cellY) +
+                         ", edid=" + (scene.cellEdid.empty() ? "Wilderness" : scene.cellEdid) +
+                         "): " + std::to_string(scene.uniqueModels.size()) + " unique NIFs, " +
+                         std::to_string(scene.instances.size()) + " instances, " +
+                         std::to_string(res.totalMeshlets) + " meshlets";
+    return res;
 }
 
 BakeResult RunFullPipelineValidation(const std::string& outDir,

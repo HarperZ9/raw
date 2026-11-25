@@ -171,7 +171,7 @@ float3 gtaoMultiBounce(float vis, float3 alb) {
 }
 
 void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, inout float3 spec) {
-    const float x = dot(s.n, l), nl = saturate(x);
+    const float x = dot(s.n, l), nl = max(x, 0.0f);
     // Skin: light that enters the skin comes out past the terminator, red farthest (a per-channel wrap,
     // normalised so the lit side keeps its energy).
     const float3 nlD = any(s.wrap > 0.0f) ? saturate((x + s.wrap) / (1.0f + s.wrap)) / (1.0f + s.wrap) * (1.0f + s.wrap * 0.5f) : nl.xxx;
@@ -191,19 +191,19 @@ void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, in
             diff += min(s.soft, 0.35f.xxx) * (wrapTrans * 0.35f) * c;
         }
     }
-    const float3 h = normalize(s.v + l);
+    const float3 h = rawSafeHalfVec(s.v, l, s.n);
     const float nh = saturate(dot(s.n, h));
     if ((flags.x & FLAG_GGX) == 0u) {
         diff += nlD * c;
-        spec += pow(nh, s.shin) * c;   // the game's lobe: no cosine, no normalisation
+        spec += pow(nh, max(s.shin, 1.0f)) * c;   // the game's lobe: no cosine, no normalisation
         return;
     }
-    const float nv = max(dot(s.n, s.v), 1.0e-4f), a2 = s.alpha * s.alpha;
-    const float dd = nh * nh * (a2 - 1.0f) + 1.0f;
+    const float nv = max(dot(s.n, s.v), 1.0e-4f), a2 = max(s.alpha * s.alpha, 1.0e-4f);
+    const float dd = max(nh * nh * (a2 - 1.0f) + 1.0f, 1.0e-4f);
     const float D = a2 / (PI * dd * dd);
-    const float V = 0.5f / (nl * sqrt(nv * nv * (1.0f - a2) + a2) + nv * sqrt(nl * nl * (1.0f - a2) + a2) + 1.0e-6f);
+    const float V = 0.5f / (nl * sqrt(nv * nv * (1.0f - a2) + a2) + nv * sqrt(nl * nl * (1.0f - a2) + a2) + 1.0e-5f);
     const float lh = saturate(dot(l, h));
-    const float F = s.f0 + (1.0f - s.f0) * pow(1.0f - lh, 5.0f);
+    const float F = saturate(s.f0 + (1.0f - s.f0) * pow(1.0f - lh, 5.0f));
     // EON Energy-Preserving Rough Diffuse BRDF (Portsmouth/Kutz/Hill 2025, MAT-03) blended with Burley retro-reflection:
     // gives rough stone masonry, bark, plaster, and snowdrifts authentic micro-rough depth while strictly conserving energy.
     const float rEon = saturate(s.alpha);
@@ -216,7 +216,7 @@ void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, in
     const float ess = saturate(1.0f - s.alpha * (0.42f * (1.0f - nv) + 0.14f));
     const float kulla = 1.0f + s.f0 * ((1.0f - ess) / max(ess, 0.25f));
     diff += nlD * c * (1.0f - F) * eonDiff;
-    spec += PI * D * V * F * kulla * nl * c;   // the game's light colour is irradiance over pi
+    spec += min(PI * D * V * F * kulla * nl, 8.0f) * c;   // energy-conserving bounded direct GGX
 }
 
 #include "DistantLod.hlsli"   // distantLit: distant LOD lit in improved mode (FOL-04)
@@ -1167,6 +1167,26 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float restVis = rt && (flags.x & FLAG_REST) != 0u ? (rawRestA > 1.5f ? saturate(floor(rawRestA * 0.5f) / 15.0f) : rawRestA) : 1.0f;
     float3 diff = 0.0f, spec = 0.0f;
     float sunShadow = 1.0f;
+    // Wave 44 Unified Early Conductor / Brushed-Metal Classification (steel, Nordic iron, Dwemer bronze, silver, gold):
+    // Evaluated once before sun + clustered point-light loops so both sunlight and torches/forges drive exact
+    // Burley/Heitz anisotropic GGX highlights with strict energy conservation (kD = (1 - F) * (1 - metallic))!
+    const float3 envReflEarly = (base == 2u && (flags.x & FLAG_ENV) != 0u) ? max(SoftMap.Load(ip).rgb, 0.0f.xxx) : 0.0f.xxx;
+    const float envLumEarly = dot(envReflEarly, float3(0.2126f, 0.7152f, 0.0722f));
+    const bool isEnbMetalEarly = (!match && base == 2u && iceMask < 0.08f && (envReflEarly.g > envReflEarly.r * 1.15f || envReflEarly.b > envReflEarly.r * 1.15f));
+    const float base1Metal = (!match && base == 1u && !isActorCloth && !isBotanicalCard && iceMask < 0.08f && wet.wet < 0.20f && wet.puddle < 0.10f && wet.snow < 0.15f)
+        ? smoothstep(0.58f, 0.88f, saturate(s.mask * resScale.w)) * smoothstep(0.45f, 0.22f, s.alpha) * 0.72f : 0.0f;
+    const float rawMetallicEarly = isTruePbr ? saturate(rmaosPbr.g)
+                                 : (isEnbMetalEarly ? saturate(envReflEarly.g)
+                                 : ((!match && base == 2u) ? saturate((max(saturate(s.mask * resScale.w), envLumEarly * 1.35f) - 0.22f) * 1.95f) : base1Metal));
+    const float earlyMetallic = rawMetallicEarly * (1.0f - iceMask);
+    const bool isGoldBronzeAlloy = (albedo.r > albedo.b * 1.35f && albedo.g > albedo.b * 1.12f);
+    const float albLumMetal = dot(albedo, float3(0.2126f, 0.7152f, 0.0722f));
+    const float3 metalF0 = isGoldBronzeAlloy
+        ? lerp(float3(0.84f, 0.62f, 0.28f), float3(1.00f, 0.78f, 0.34f), saturate(albLumMetal * 2.2f))
+        : (albLumMetal > 0.38f ? float3(0.92f, 0.91f, 0.89f)
+                               : lerp(float3(0.56f, 0.58f, 0.61f), saturate(albedo * 1.35f + 0.20f), 0.55f));
+    const float metalAniso = isGoldBronzeAlloy ? 0.56f : (albLumMetal > 0.38f ? 0.66f : 0.48f);
+    const bool useAnisoMetal = (!match && earlyMetallic > 0.22f && !isActorFeat && base != 5u && iceMask < 0.08f);
     if (sunDir.w > 0.5f) {
         // Interiors (sunColour.w < 0.5): NEVER read m4.x (that is vanilla's flickering point-light shadow channel 0!).
         // Keep interior directional fill unshadowed and calm so turning the camera never flickers the whole room!
@@ -1235,7 +1255,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 gCell = floor(wpGl);
             const float3 gRand = float3(cHash(gCell), cHash(gCell + 19.3f), cHash(gCell + 47.1f)) - 0.5f;
             const float3 microN = normalize(s.n + gRand * 0.72f);
-            const float3 hGl = normalize(s.v + sunDir.xyz);
+            const float3 hGl = rawSafeHalfVec(s.v, sunDir.xyz, s.n);
             const float nhGl = saturate(dot(microN, hGl));
             const float fIce = 0.018f + 0.982f * pow(1.0f - saturate(dot(s.v, hGl)), 5.0f);
             const float diamond = pow(nhGl, 220.0f) * step(0.84f, cHash(gCell + 83.7f)) * 4.5f;
@@ -1262,18 +1282,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float nlSk = dot(s.n, sunDir.xyz);
             const float termBand = exp(-abs(nlSk) * 3.6f) * (0.25f + 0.75f * sunShadow);
             diff += dirCol * float3(0.18f, 0.072f, 0.042f) * termBand;
-            const float3 hSkin = normalize(s.v + sunDir.xyz);
+            const float3 hSkin = rawSafeHalfVec(s.v, sunDir.xyz, s.n);
             const float nhSk = saturate(dot(s.n, hSkin));
-            const float ddSk = nhSk * nhSk * (0.0484f - 1.0f) + 1.0f;
+            const float ddSk = max(nhSk * nhSk * (0.0484f - 1.0f) + 1.0f, 1.0e-4f);
             const float dSk = 0.0484f / (PI * ddSk * ddSk);
             const float fSk = 0.028f + 0.972f * pow(1.0f - saturate(dot(s.v, hSkin)), 5.0f);
-            spec += dirCol * (min(dSk * fSk * 0.16f, 1.3f) * sunShadow * saturate(nlSk));
+            spec += dirCol * (min(dSk * fSk * 0.16f, 1.3f) * sunShadow * max(nlSk, 0.0f));
         }
         // Physical Character Eye Cornea Wetness + Iris Caustic Catchlight (base == 12u, SKN-09):
         if (base == 12u && !match) {
-            const float3 hEye = normalize(s.v + sunDir.xyz);
+            const float3 hEye = rawSafeHalfVec(s.v, sunDir.xyz, s.n);
             const float nhE = saturate(dot(s.n, hEye));
-            const float ddE = nhE * nhE * (0.0012f - 1.0f) + 1.0f;
+            const float ddE = max(nhE * nhE * (0.0012f - 1.0f) + 1.0f, 1.0e-4f);
             const float cornea = min(0.0012f / (PI * ddE * ddE), 18.0f) * (0.04f + 0.96f * pow(1.0f - saturate(dot(s.v, hEye)), 5.0f));
             spec += dirCol * (cornea * 0.28f * (0.35f + 0.65f * sunShadow));
             diff += dirCol * float3(0.14f, 0.08f, 0.07f) * (0.25f * saturate(dot(s.n, sunDir.xyz) + 0.4f));
@@ -1286,30 +1306,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float gBroad = snowGlint(p + camPosW.xyz + 13.7f, s.n, s.v, sunDir.xyz, fp * 2.1f) * 0.45f;
             spec += sunColour.rgb * (sunShadow * wet.snow * 2.4f * (gFine + gBroad));
         }
-        // Forged metal Complex-IOR Conductor Fresnel (exact iron/steel & Dwemer gold/bronze optical constants n + ik):
-        if (!match && sunShadow > 0.05f && z < 1800.0f && base == 2u && iceMask < 0.08f) {
-            const float nvIr = saturate(dot(s.n, s.v));
-            const bool isGoldBronze = (albedo.r > albedo.b * 1.35f && albedo.g > albedo.b * 1.15f);
-            // Physical refractive index (eta) and extinction (k) at Rec.709 wavelengths (615, 540, 465 nm):
-            const float3 mEta = isGoldBronze ? float3(0.22f, 0.42f, 1.35f) : float3(2.90f, 2.84f, 2.52f);
-            const float3 mK   = isGoldBronze ? float3(3.25f, 2.38f, 1.88f) : float3(3.04f, 2.93f, 2.76f);
-            const float3 condF = conductorFresnelRGB(nvIr, mEta, mK);
-            const float3 hMetal = normalize(s.v + sunDir.xyz);
-            const float nhM = saturate(dot(s.n, hMetal));
-            const float aM = max(s.alpha * s.alpha, 0.015f);
-            const float dM = aM / max(PI * pow(nhM * nhM * (aM - 1.0f) + 1.0f, 2.0f), 1.0e-4f);
-            spec += min(dirCol * condF * (dM * saturate(dot(s.n, sunDir.xyz)) * sunShadow * 0.16f), 2.4f.xxx) * saturate(1.0f - z / 1800.0f);
-            if (!skin && s.alpha < 0.25f) {
-                const float3 hCoat = normalize(s.v + sunDir.xyz);
-                const float nhC = saturate(dot(s.n, hCoat));
-                const float ddC = nhC * nhC * (0.0036f - 1.0f) + 1.0f;
-                const float fCoat = 0.04f + 0.96f * pow(1.0f - saturate(dot(s.v, hCoat)), 5.0f);
-                const float dCoat = 0.0036f / (PI * ddC * ddC);
-                spec += dirCol * (min(dCoat * fCoat * 0.14f, 2.0f) * sunShadow * saturate(dot(s.n, sunDir.xyz)));
-            }
-            if (z < 1600.0f) {
+        // Wave 44 Physical Brushed-Metal Anisotropic GGX + Complex-IOR Conductor Fresnel (forged steel, iron, Dwemer bronze, silver, gold):
+        // Replaces flat circular highlights on armor/weapons with elongated anisotropic brushed-steel curves!
+        if (useAnisoMetal && sunShadow > 0.02f && z < 2600.0f) {
+            const float3 anisoSun = evalBrushedMetalAniso(p + camPosW.xyz, s.n, s.v, sunDir.xyz, metalF0, s.alpha, metalAniso);
+            const float3 sunLightEff = dirCol * (sunSh * lerp(0.50f, 1.0f, microSh) * sunPunch);
+            spec = lerp(spec, min(sunLightEff * anisoSun, 4.5f.xxx), earlyMetallic * smoothstep(2600.0f, 180.0f, z));
+            if (z < 1600.0f && base == 2u) {
                 const float mGlint = snowGlint(p + camPosW.xyz, s.n, s.v, sunDir.xyz, max(0.8f, z * 0.0018f));
-                spec += sunColour.rgb * (sunShadow * mGlint * 0.55f * saturate(1.0f - z / 1600.0f));
+                spec += sunColour.rgb * (sunShadow * mGlint * 0.42f * earlyMetallic * saturate(1.0f - z / 1600.0f));
             }
         }
         // Wave 42 Dual-Layer Snell-Refracted RGB Underwater Caustics (strictly gated on truly submerged exterior surfaces):
@@ -1417,6 +1422,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     float3 tStrP = gDownP - s.n * dot(gDownP, s.n);
                     tStrP = (dot(tStrP, tStrP) > 1.0e-4f) ? normalize(tStrP) : normalize(cross(s.n, float3(1.0f, 0.0f, 0.0f)));
                     spec += c * evalMarschnerHair3Lobe(tStrP, s.n, s.v, l, albedo, clamp(s.alpha, 0.24f, 0.52f)) * lerp(0.22f, 1.0f, sh) * 0.65f;
+                } else if (useAnisoMetal && z < 2600.0f) {
+                    // Torches, forges & hearths cast elongated brushed-steel anisotropic GGX reflections on armor & weapons!
+                    const float3 anisoPt = evalBrushedMetalAniso(p + camPosW.xyz, s.n, s.v, l, metalF0, sArea.alpha, metalAniso);
+                    spec += lerp(specTmp * (normE * normE), min(c * sh * anisoPt * (normE * normE), 3.6f.xxx), earlyMetallic);
                 } else {
                     spec += specTmp * (normE * normE);
                 }
@@ -1707,7 +1716,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Environment-mapped (class 2: armour, leather, metal): the game adds its cube map's colour times the env mask
     // times the light the surface receives, before the knee (ps 955d1a31636cbbe4). The patched shader writes that
     // colour times mask to RAW's emissive target, and RAW lights it with its own received light, in both modes.
-    const float3 envRefl = base == 2u && (flags.x & FLAG_ENV) != 0u ? max(SoftMap.Load(ip).rgb, 0.0f.xxx) : 0.0f.xxx;
+    const float3 envRefl = envReflEarly;
     if (flags.w == 18u) { return float4(envRefl, game.a); }   // view 18: the environment map's reflection (class 2)
     // The character light: a white fill the game's actor (and many object) shaders add to the light sum, from two fixed
     // directions and a scale read from slot 11 (GBufferAnalyse.cpp, FindCharLight). Outside classes 2 and 5 the patch
@@ -1721,20 +1730,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float effCharLight = (!match && skin)
         ? charLight * (isExterior ? lerp(0.32f, 0.10f, saturate(dot(diff, float3(0.33f, 0.33f, 0.34f)))) : 0.18f)
         : charLight;
-    // True Complex PBR Material Diffuse & Specular IBL:
-    // - TruePBR / PGPatcher (base==13, _rmaos.dds): exact authored Roughness (R), Metallic (G) & Baked AO (B)!
-    // - Class-2 metals (steel, iron, silver, gold, Dwemer brass): physical conductor metallicity attenuates diffuse
-    //   energy (1 - 0.72*m) and drives chromatic conductor F0 into Karis Split-Sum + Fdez-Aguera Multi-Scattering IBL.
-    // Unified ENB Complex Material (_m.dds on base==2) + CS TruePBR / PGPatcher (_rmaos.dds on base==13):
-    // Hijacks BOTH competing material pipelines directly into RAW-STRATA + Hardware DXR 1.2 + Dynamic Cubemap IBL!
-    const float envLumM = dot(envRefl, float3(0.2126f, 0.7152f, 0.0722f));
-    const bool isEnbComplexMat = (!match && base == 2u && iceMask < 0.08f && (envRefl.g > envRefl.r * 1.15f || envRefl.b > envRefl.r * 1.15f));
-    const float rawMetallic = isTruePbr ? saturate(rmaosPbr.g)
-                            : (isEnbComplexMat ? saturate(envRefl.g)
-                            : ((!match && base == 2u) ? saturate((max(saturate(s.mask * resScale.w), envLumM * 1.35f) - 0.22f) * 1.95f) : 0.0f));
-    const float metallic = rawMetallic * (1.0f - iceMask);
+    // Wave 44 Strict Fresnel Energy Conservation (kD = (1 - F) * (1 - metallic)):
+    // Conductors suppress diffuse energy proportionally to metallic weight and channel reflectance into chromatic
+    // anisotropic direct GGX + Karis Split-Sum / Fdez-Aguera Multi-Scattering Conductor IBL.
+    const float metallic = earlyMetallic;
     const float pbrBakedAo = isTruePbr ? lerp(0.32f, 1.0f, saturate(rmaosPbr.b)) : 1.0f;
-    const float3 diffAlb = albedo * (1.0f - metallic * (isTruePbr ? 0.94f : 0.72f));
+    const float nvSafeDiff = max(dot(s.n, s.v), 1.0e-4f);
+    const float3 kFView = saturate(lerp(s.f0.xxx, metalF0, metallic) + (1.0f - lerp(s.f0.xxx, metalF0, metallic)) * pow(1.0f - nvSafeDiff, 5.0f));
+    const float3 kD = match ? 1.0f.xxx : saturate((1.0f.xxx - kFView * 0.45f) * (1.0f - metallic * (isTruePbr ? 0.96f : 0.86f)));
+    const float3 diffAlb = albedo * kD;
     const float3 totalIrrad = diff + amb * pbrBakedAo + effCharLight;
     const float warmRatio = saturate((totalIrrad.r - totalIrrad.b * 1.15f) / max(totalIrrad.r + totalIrrad.b + 0.05f, 0.05f));
     const float effTempK = (!match && warmRatio > 0.12f) ? lerp(5800.0f, 2350.0f, saturate(warmRatio * 1.85f)) : 0.0f;
@@ -1782,31 +1786,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Ray-traced reflection on glossy surfaces with live dynamic-cubemap IBL fallback on RT misses,
     // plus dynamic cubemap enhancement for class-2 metal/armor and clearcoat GGX on wet surfaces.
     if (!match) {
-        const float nv = saturate(dot(nSmooth, s.v));
+        const float nv = max(dot(nSmooth, s.v), 1.0e-4f);
         // Frostbite (Lagarde 2014) specular occlusion: prevents fake sky/cubemap gloss inside deep occluded rock/timber crevices.
-        const float specOcc = saturate(pow(nv + combinedOcc, exp2(-16.0f * s.alpha - 1.0f)) - 1.0f + combinedOcc);
+        const float specOcc = saturate(pow(max(nv + combinedOcc, 1.0e-4f), exp2(-16.0f * s.alpha - 1.0f)) - 1.0f + combinedOcc);
         const float3 rDir = reflect(-s.v, nSmooth);
         const float envRough = max(s.alpha, base == 2u ? 0.14f : 0.08f);
         // Live 256x256 Dual-Band Prefiltered Dynamic Environment Cubemap (live sky + clouds + 32 dynamic lights + ground bounce).
         const float3 dynEnv = sampleLiveEnvCube(rDir, envRough);
-        const float3 F0mat = lerp(s.f0.xxx, saturate(albedo * 1.15f + 0.12f), metallic);
+        const float3 F0mat = lerp(s.f0.xxx, metalF0, metallic);
         const float reflMask = max(saturate(s.mask * resScale.w), max(wet.puddle, 0.5f * wet.wet));
-        // Feature 5: Anisotropic Brushed-Metal GGX + Gulbrandsen F82-Tint Conductor Fresnel on forged steel/armor/Dwemer brass (base==2).
-        if (base == 2u && metallic > 0.15f) {
-            const float3 tAniso = normalize(cross(nSmooth, abs(nSmooth.z) < 0.95f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f)));
-            const float3 bAniso = cross(nSmooth, tAniso);
-            const float3 keyL = isExterior && sunDir.w > 0.5f ? sunDir.xyz : normalize(s.v + float3(0.15f, 0.10f, 0.55f));
-            const float3 hA = normalize(s.v + keyL);
-            const float nhA = saturate(dot(nSmooth, hA));
-            const float thA = dot(tAniso, hA), bhA = dot(bAniso, hA);
-            const float ax = max(s.alpha * 1.45f, 0.08f), ay = max(s.alpha * 0.65f, 0.04f);
-            const float denomA = (thA * thA) / (ax * ax) + (bhA * bhA) / (ay * ay) + nhA * nhA;
-            const float dAniso = 1.0f / max(PI * ax * ay * denomA * denomA, 1.0e-4f);
-            const float vhA = saturate(dot(s.v, hA));
-            const float3 f82 = lerp(F0mat, 1.0f.xxx, pow(1.0f - vhA, 5.0f)) - F0mat * (0.14f * vhA * pow(1.0f - vhA, 6.0f));
-            const float3 keyColA = isExterior ? (sunColour.rgb * sunShadow) : max(amb * 1.4f, 0.08f.xxx);
-            lit += min(keyColA * f82 * (dAniso * saturate(dot(nSmooth, keyL)) * 0.065f * metallic * specOcc), 2.2f.xxx);
-        }
+        // Note: Direct brushed-metal anisotropic GGX (evalBrushedMetalAniso) runs cleanly across both sun and clustered
+        // torches/forges above (no duplicate unshadowed ad-hoc anisotropy lobe here!).
         // RAW-STRATA Unified 4-Slab Energy-Conserving Optical Transport (excluded on skin, eyes & foliage; thin-film strictly on metal):
         if (!skin && !isEye && base != 5u) {
             StrataSlab st;
@@ -1901,9 +1891,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
         // Physical clearcoat GGX on wet water films (neutral physical water dielectric — zero rainbow oil-slick stripes!).
         if (max(wet.wet, wet.puddle) > 0.08f && isExterior && sunShadow > 0.0f) {
-            const float3 ch = normalize(s.v + sunDir.xyz);
+            const float3 ch = rawSafeHalfVec(s.v, sunDir.xyz, s.n);
             const float cnh = saturate(dot(s.n, ch)), ca2 = 0.0036f;
-            const float cdd = cnh * cnh * (ca2 - 1.0f) + 1.0f;
+            const float cdd = max(cnh * cnh * (ca2 - 1.0f) + 1.0f, 1.0e-4f);
             const float cD = ca2 / (PI * cdd * cdd);
             const float vh = saturate(dot(s.v, ch));
             const float cF = 0.02f + 0.98f * pow(1.0f - vh, 5.0f);
@@ -1940,11 +1930,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // Restrained warm hemoglobin terminator warmth + crisp dual-lobe sebum sheen (preserves pores under firelight!):
             const float termSss = exp(-abs(nlRaw) * 4.5f);
             lit += albedo * float3(0.82f, 0.24f, 0.12f) * min(skKeyCol, 0.90f.xxx) * (termSss * 0.085f);
-            const float3 shv = normalize(s.v + skKeyDir);
+            const float3 shv = rawSafeHalfVec(s.v, skKeyDir, s.n);
             const float snh = saturate(dot(s.n, shv));
             const float sa1 = 0.048f, sa2 = 0.240f;
-            const float sd1 = snh * snh * (sa1 - 1.0f) + 1.0f;
-            const float sd2 = snh * snh * (sa2 - 1.0f) + 1.0f;
+            const float sd1 = max(snh * snh * (sa1 - 1.0f) + 1.0f, 1.0e-4f);
+            const float sd2 = max(snh * snh * (sa2 - 1.0f) + 1.0f, 1.0e-4f);
             const float sD = (sa1 / (PI * sd1 * sd1)) * 0.30f + (sa2 / (PI * sd2 * sd2)) * 0.70f;
             const float sF = 0.026f + 0.974f * pow(1.0f - saturate(dot(s.v, shv)), 5.0f);
             lit += min(skKeyCol * (sD * sF * saturate(nlRaw) * 0.14f), 0.24f.xxx);
@@ -1992,8 +1982,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 keyDir1 = isExterior ? normalize(lerp(sunDir.xyz, normalize(s.v + float3(0.26f, 0.22f, 0.48f)), 0.45f))
                                               : normalize(s.v + float3(0.28f, 0.20f, 0.46f));
             const float3 keyDir2 = normalize(s.v + float3(-0.32f, -0.14f, 0.28f));
-            const float nh1 = saturate(dot(s.n, normalize(s.v + keyDir1)));
-            const float nh2 = saturate(dot(s.n, normalize(s.v + keyDir2)));
+            const float nh1 = saturate(dot(s.n, rawSafeHalfVec(s.v, keyDir1, s.n)));
+            const float nh2 = saturate(dot(s.n, rawSafeHalfVec(s.v, keyDir2, s.n)));
             const float glint1 = pow(nh1, 180.0f) * 1.35f + pow(nh1, 32.0f) * 0.18f;
             const float glint2 = pow(nh2, 120.0f) * 0.42f;
             const float3 eyeEnv = evalDynamicEnvCube(reflect(-s.v, s.n), 0.04f);

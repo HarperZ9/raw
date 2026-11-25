@@ -90,6 +90,18 @@ BakeResult InspectBsaDdsAsset(const std::string& bsaPath,
                               const std::string& outDir,
                               bool exportPreviewBmp = true);
 
+// Reconstructs a full Tamriel exterior cell scene (terrain + resolved STAT/TREE/ACTI .nif models from .bsa
+// + exact 6-DOF placements), validates every mesh through RawAssetValidator, and exports terrain + merged props
+// .glb/.obj + complete scene JSON manifest!
+BakeResult BakeTamrielCellSceneBundle(const std::string& esmPath,
+                                      const std::string& meshesBsaPath,
+                                      int32_t cellX,
+                                      int32_t cellY,
+                                      const std::string& outDir,
+                                      uint32_t maxUniqueModels = 64u,
+                                      const ValidatorPolicy& policy = {},
+                                      bool writeGeometryFiles = true);
+
 // Runs all 4 studio baking & quality-gate validation pipelines and emits pipeline_validation_report.json.
 BakeResult RunFullPipelineValidation(const std::string& outDir,
                                      uint32_t seed = 202607u,

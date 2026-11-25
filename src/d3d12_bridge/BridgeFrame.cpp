@@ -5,6 +5,7 @@
 #include "StreamlineHost.h"
 #include "LightingPass.h"
 #include "RtScene.h"
+#include "../worldgen/RawHydrologyGen.h"
 
 #include <algorithm>
 #include <cmath>
@@ -95,7 +96,9 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"seasonSnowM\": %.4f,\n"
         "  \"seasonIceM\": %.4f,\n"
         "  \"skinTempC\": %.3f,\n"
-        "  \"activeImpactDecals\": %u\n"
+        "  \"activeImpactDecals\": %u,\n"
+        "  \"radianceCascadesActive\": %s,\n"
+        "  \"hydrologyErosionActive\": %s\n"
         "}\n",
         static_cast<unsigned long long>(frames),
         static_cast<unsigned>(cfg.width),
@@ -111,7 +114,9 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         seasonSnowM,
         seasonIceM,
         skinTempC,
-        activeImpactDecals);
+        activeImpactDecals,
+        (radianceReady && radianceHost.ScreenGIReady()) ? "true" : "false",
+        raw::worldgen::IsTerrainGenHydrologyErosionEnabled() ? "true" : "false");
     if (n <= 0) return;
 
     try {
@@ -281,6 +286,42 @@ bool D3D12Bridge::Impl::StepFluidSimOnQueue(bool isInterior)
 
     if ((fluidStepFrames++ % 180ull) == 0ull) {
         log("[FluidSim] live GPU step: fireEmitters=%u, waterWakes=%u", emitCount, wakeCount);
+    }
+    return true;
+}
+
+bool D3D12Bridge::Impl::ExecuteRadianceScreenGiOnQueue()
+{
+    if (!radianceReady || !radianceHost.ScreenGIReady() || !queue || !radList || !radFence || !radEvent ||
+        !colorOut.res12 || !depthIn.res12 || cfg.width == 0u || cfg.height == 0u) {
+        return false;
+    }
+    if ((colorOut.res12->GetDesc().Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) == 0) {
+        return false;
+    }
+
+    const uint32_t slot = radSlot;
+    if (radSlotVal[slot] > 0 && radFence->GetCompletedValue() < radSlotVal[slot]) {
+        radFence->SetEventOnCompletion(radSlotVal[slot], radEvent);
+        WaitForSingleObject(radEvent, 3000);
+    }
+    if (FAILED(radAlloc[slot]->Reset()) || FAILED(radList->Reset(radAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    radianceHost.ExecuteScreenGI(radList.Get(), colorOut.res12.Get(), depthIn.res12.Get(),
+                                 cfg.width, cfg.height, 0.16f);
+
+    if (FAILED(radList->Close())) return false;
+    ID3D12CommandList* lists[1] = {radList.Get()};
+    queue->ExecuteCommandLists(1, lists);
+    queue->Signal(radFence.Get(), ++radFenceVal);
+    radSlotVal[slot] = radFenceVal;
+    radSlot = (slot + 1u) % kRing;
+
+    if ((radStepFrames++ % 180ull) == 0ull) {
+        log("[RadianceCascades] live 4-cascade ScreenGI active (%ux%u, strength=0.16)",
+            static_cast<unsigned>(cfg.width), static_cast<unsigned>(cfg.height));
     }
     return true;
 }
@@ -502,7 +543,8 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                             !m->streamedTerrainGpu.empty() && m->meshHost.TerrainReady() &&
                             LightingPassUniform(m->pass.get(), &terrainU, &terrainUb);
     const bool runFluid = m->cfg.lightingPass && m->lighting.valid && m->fluidReady && m->fluidSim.Ready();
-    const bool hasPostWork = runTerrain || runFluid;
+    const bool runRadiance = m->cfg.lightingPass && m->lighting.valid && m->radianceReady && m->radianceHost.ScreenGIReady();
+    const bool hasPostWork = runTerrain || runFluid || runRadiance;
     auto runPostLightingPasses = [&]() -> bool {
         if (!hasPostWork) return true;
         if (runTerrain) {
@@ -573,6 +615,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                     }
                 }
             }
+        }
+        if (runRadiance) {
+            m->ExecuteRadianceScreenGiOnQueue();
         }
         return SUCCEEDED(m->queue->Signal(m->fence12.Get(), v2));
     };

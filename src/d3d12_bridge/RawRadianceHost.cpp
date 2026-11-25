@@ -22,6 +22,14 @@
 #define RAW_RC_HAS_EMBEDDED_DXIL 0
 #endif
 
+#if __has_include("raw_rc_screen_prep_cs.h") && __has_include("raw_rc_screen_apply_cs.h")
+#define RAW_RC_HAS_SCREEN_DXIL 1
+#include "raw_rc_screen_prep_cs.h"
+#include "raw_rc_screen_apply_cs.h"
+#else
+#define RAW_RC_HAS_SCREEN_DXIL 0
+#endif
+
 namespace raw::bridge
 {
 namespace
@@ -37,26 +45,64 @@ struct alignas(256) GpuRadianceCascadeCB {
 };
 static_assert(sizeof(GpuRadianceCascadeCB) == 256u, "GpuRadianceCascadeCB must be 256 bytes");
 
-// 5 dispatches per frame: c=3, c=2, c=1, c=0, resolve
-constexpr uint32_t kPassesPerFrame = 5u;
-constexpr uint32_t kTotalCbSlots   = RawRadianceHost::kCbRingCount * kPassesPerFrame;
+struct alignas(256) GpuScreenPrepCB {
+    uint32_t dims[4];            // x = fullW, y = fullH, z = atlasRes (256), w = flags
+    float    invDims[4];         // x = 1/fullW, y = 1/fullH, z = 1/256, w = giStrength
+    float    extractParams[4];   // x = emissiveThresh, y = emissiveCap, z = depthEdgeScale, w = skyDepthThresh
+    float    bilateralParams[4]; // x = bilateralDepthSigma, y = lumaShoulder, z = maxBounceLuma, w = 0
+    uint32_t _pad[48];
+};
+static_assert(sizeof(GpuScreenPrepCB) == 256u, "GpuScreenPrepCB must be 256 bytes");
 
-// Descriptor heap layout (48 slots total, zero runtime hazards across 4 frames in flight):
-//   Slot 0 : External Irradiance SRV
-//   Slots 2..4 : Static UAV tables (1 UAV each: Atlas0, Atlas1, Irradiance)
-//   Per ring frame r in [0..3], 3 consecutive 2-SRV tables (6 slots per ring frame, starting at slot 8):
-//     Table (Scene, null)   at 8 + r*6 + 0  (for c == 3)
-//     Table (Scene, Atlas0) at 8 + r*6 + 2  (for c == 2, c == 0)
-//     Table (Scene, Atlas1) at 8 + r*6 + 4  (for c == 1, Resolve)
-constexpr uint32_t kTotalDescCount   = 48u;
-constexpr uint32_t kSlotExtIrradSrv  = 0u;
-constexpr uint32_t kSlotUavAtlas0    = 2u;
-constexpr uint32_t kSlotUavAtlas1    = 3u;
-constexpr uint32_t kSlotUavIrrad     = 4u;
+// 5 dispatches per ComputeGI frame + 2 dispatches per ExecuteScreenGI frame (4 frames in flight)
+constexpr uint32_t kPassesPerFrame       = 5u;
+constexpr uint32_t kCascadeCbSlots       = RawRadianceHost::kCbRingCount * kPassesPerFrame; // 0..19
+constexpr uint32_t kScreenPassesPerFrame = 2u;
+constexpr uint32_t kTotalCbSlots         = kCascadeCbSlots + RawRadianceHost::kCbRingCount * kScreenPassesPerFrame; // 28
 
-inline constexpr uint32_t RingSrvNull(uint32_t r)   { return 8u + r * 6u + 0u; }
-inline constexpr uint32_t RingSrvAtlas0(uint32_t r) { return 8u + r * 6u + 2u; }
-inline constexpr uint32_t RingSrvAtlas1(uint32_t r) { return 8u + r * 6u + 4u; }
+// Descriptor heap layout (64 slots total, zero runtime hazards across 4 frames in flight):
+//   Slot 0     : External Irradiance SRV
+//   Slots 2..5 : Static UAV tables (1 UAV each: Atlas0, Atlas1, Irradiance, EmissiveAlpha)
+//   Slots 8..31: ComputeGI 4-frame ring (6 SRVs/frame: [Scene,null], [Scene,Atlas0], [Scene,Atlas1])
+//   Slots 36..55: ExecuteScreenGI 4-frame ring (5 descriptors/frame: [ColorSrv,DepthSrv], [IrradSrv,DepthSrv], [ColorUav])
+constexpr uint32_t kTotalDescCount     = 64u;
+constexpr uint32_t kSlotExtIrradSrv    = 0u;
+constexpr uint32_t kSlotUavAtlas0      = 2u;
+constexpr uint32_t kSlotUavAtlas1      = 3u;
+constexpr uint32_t kSlotUavIrrad       = 4u;
+constexpr uint32_t kSlotUavEmissive    = 5u;
+
+inline constexpr uint32_t RingSrvNull(uint32_t r)    { return 8u + r * 6u + 0u; }
+inline constexpr uint32_t RingSrvAtlas0(uint32_t r)  { return 8u + r * 6u + 2u; }
+inline constexpr uint32_t RingSrvAtlas1(uint32_t r)  { return 8u + r * 6u + 4u; }
+
+inline constexpr uint32_t ScreenPrepSrv(uint32_t r)  { return 36u + r * 5u + 0u; } // (colorInOut, sceneDepth)
+inline constexpr uint32_t ScreenApplySrv(uint32_t r) { return 36u + r * 5u + 2u; } // (m_irradiance, sceneDepth)
+inline constexpr uint32_t ScreenApplyUav(uint32_t r) { return 36u + r * 5u + 4u; } // (colorInOut)
+
+DXGI_FORMAT DepthSrvFormat(DXGI_FORMAT fmt)
+{
+    switch (fmt) {
+    case DXGI_FORMAT_D32_FLOAT:
+    case DXGI_FORMAT_R32_TYPELESS:
+    case DXGI_FORMAT_R32_FLOAT:
+        return DXGI_FORMAT_R32_FLOAT;
+    case DXGI_FORMAT_D24_UNORM_S8_UINT:
+    case DXGI_FORMAT_R24G8_TYPELESS:
+    case DXGI_FORMAT_R24_UNORM_X8_TYPELESS:
+        return DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
+    case DXGI_FORMAT_R32G8X24_TYPELESS:
+    case DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS:
+        return DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+    case DXGI_FORMAT_D16_UNORM:
+    case DXGI_FORMAT_R16_TYPELESS:
+    case DXGI_FORMAT_R16_UNORM:
+        return DXGI_FORMAT_R16_UNORM;
+    default:
+        return DXGI_FORMAT_R32_FLOAT;
+    }
+}
 
 bool CreateTex2D(ID3D12Device* dev, uint32_t dim, DXGI_FORMAT fmt, ComPtr<ID3D12Resource>& out)
 {
@@ -136,6 +182,10 @@ bool RawRadianceHost::Init(ID3D12Device* dev, std::string* outErr)
     RadianceShaderBlobs blobs{};
     blobs.traceMerge = {kDxil_raw_rc_trace_merge, sizeof kDxil_raw_rc_trace_merge};
     blobs.resolve    = {kDxil_raw_rc_resolve,    sizeof kDxil_raw_rc_resolve};
+#if RAW_RC_HAS_SCREEN_DXIL
+    blobs.screenPrep  = {kDxil_raw_rc_screen_prep,  sizeof kDxil_raw_rc_screen_prep};
+    blobs.screenApply = {kDxil_raw_rc_screen_apply, sizeof kDxil_raw_rc_screen_apply};
+#endif
     return InitWithBlobs(dev, blobs, outErr);
 #else
     (void)dev;
@@ -172,13 +222,15 @@ bool RawRadianceHost::InitWithBlobs(ID3D12Device* dev, const RadianceShaderBlobs
     constexpr DXGI_FORMAT kFmt = DXGI_FORMAT_R16G16B16A16_FLOAT;
     if (!CreateTex2D(dev, kAtlasRes, kFmt, m_atlas[0].res) ||
         !CreateTex2D(dev, kAtlasRes, kFmt, m_atlas[1].res) ||
-        !CreateTex2D(dev, kAtlasRes, kFmt, m_irradiance.res)) {
+        !CreateTex2D(dev, kAtlasRes, kFmt, m_irradiance.res) ||
+        !CreateTex2D(dev, kAtlasRes, kFmt, m_emissiveAlpha.res)) {
         if (outErr) *outErr = "RawRadianceHost: failed to allocate 256x256 RGBA16F textures";
         return false;
     }
-    m_atlas[0].state = D3D12_RESOURCE_STATE_COMMON;
-    m_atlas[1].state = D3D12_RESOURCE_STATE_COMMON;
-    m_irradiance.state = D3D12_RESOURCE_STATE_COMMON;
+    m_atlas[0].state      = D3D12_RESOURCE_STATE_COMMON;
+    m_atlas[1].state      = D3D12_RESOURCE_STATE_COMMON;
+    m_irradiance.state    = D3D12_RESOURCE_STATE_COMMON;
+    m_emissiveAlpha.state = D3D12_RESOURCE_STATE_COMMON;
 
     // Root signature: b0 (CBV), t0..t1 (2 SRVs), u0 (1 UAV), s0 (LinearClamp)
     {
@@ -235,6 +287,20 @@ bool RawRadianceHost::InitWithBlobs(ID3D12Device* dev, const RadianceShaderBlobs
         if (outErr) *outErr = "RawRadianceHost: cs_rc_resolve PSO creation failed";
         return false;
     }
+    m_psoScreenPrep.Reset();
+    m_psoScreenApply.Reset();
+    if (blobs.ScreenComplete()) {
+        pd.CS = blobs.screenPrep;
+        if (FAILED(dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&m_psoScreenPrep)))) {
+            if (outErr) *outErr = "RawRadianceHost: cs_rc_screen_prep PSO creation failed";
+            return false;
+        }
+        pd.CS = blobs.screenApply;
+        if (FAILED(dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&m_psoScreenApply)))) {
+            if (outErr) *outErr = "RawRadianceHost: cs_rc_screen_apply PSO creation failed";
+            return false;
+        }
+    }
 
     if (!CreateUploadCb(dev, sizeof(GpuRadianceCascadeCB) * kTotalCbSlots, m_cbBuf, &m_cbMapped)) {
         if (outErr) *outErr = "RawRadianceHost: CBV upload buffer creation failed";
@@ -242,18 +308,25 @@ bool RawRadianceHost::InitWithBlobs(ID3D12Device* dev, const RadianceShaderBlobs
     }
 
     // Populate static descriptors
-    WriteSrv2D(dev, m_irradiance.Get(), kFmt, CpuAt(kSlotExtIrradSrv));
-    WriteUav2D(dev, m_atlas[0].Get(),   kFmt, CpuAt(kSlotUavAtlas0));
-    WriteUav2D(dev, m_atlas[1].Get(),   kFmt, CpuAt(kSlotUavAtlas1));
-    WriteUav2D(dev, m_irradiance.Get(), kFmt, CpuAt(kSlotUavIrrad));
+    WriteSrv2D(dev, m_irradiance.Get(),    kFmt, CpuAt(kSlotExtIrradSrv));
+    WriteUav2D(dev, m_atlas[0].Get(),      kFmt, CpuAt(kSlotUavAtlas0));
+    WriteUav2D(dev, m_atlas[1].Get(),      kFmt, CpuAt(kSlotUavAtlas1));
+    WriteUav2D(dev, m_irradiance.Get(),    kFmt, CpuAt(kSlotUavIrrad));
+    WriteUav2D(dev, m_emissiveAlpha.Get(), kFmt, CpuAt(kSlotUavEmissive));
 
     for (uint32_t r = 0; r < kCbRingCount; ++r) {
-        WriteSrv2D(dev, nullptr,          kFmt, CpuAt(RingSrvNull(r) + 0));
-        WriteSrv2D(dev, nullptr,          kFmt, CpuAt(RingSrvNull(r) + 1));
-        WriteSrv2D(dev, nullptr,          kFmt, CpuAt(RingSrvAtlas0(r) + 0));
-        WriteSrv2D(dev, m_atlas[0].Get(), kFmt, CpuAt(RingSrvAtlas0(r) + 1));
-        WriteSrv2D(dev, nullptr,          kFmt, CpuAt(RingSrvAtlas1(r) + 0));
-        WriteSrv2D(dev, m_atlas[1].Get(), kFmt, CpuAt(RingSrvAtlas1(r) + 1));
+        WriteSrv2D(dev, nullptr,            kFmt, CpuAt(RingSrvNull(r) + 0));
+        WriteSrv2D(dev, nullptr,            kFmt, CpuAt(RingSrvNull(r) + 1));
+        WriteSrv2D(dev, nullptr,            kFmt, CpuAt(RingSrvAtlas0(r) + 0));
+        WriteSrv2D(dev, m_atlas[0].Get(),   kFmt, CpuAt(RingSrvAtlas0(r) + 1));
+        WriteSrv2D(dev, nullptr,            kFmt, CpuAt(RingSrvAtlas1(r) + 0));
+        WriteSrv2D(dev, m_atlas[1].Get(),   kFmt, CpuAt(RingSrvAtlas1(r) + 1));
+
+        WriteSrv2D(dev, nullptr,            kFmt, CpuAt(ScreenPrepSrv(r) + 0));
+        WriteSrv2D(dev, nullptr,            DXGI_FORMAT_R32_FLOAT, CpuAt(ScreenPrepSrv(r) + 1));
+        WriteSrv2D(dev, m_irradiance.Get(), kFmt, CpuAt(ScreenApplySrv(r) + 0));
+        WriteSrv2D(dev, nullptr,            DXGI_FORMAT_R32_FLOAT, CpuAt(ScreenApplySrv(r) + 1));
+        WriteUav2D(dev, nullptr,            kFmt, CpuAt(ScreenApplyUav(r)));
     }
 
     m_ready = true;
@@ -422,6 +495,114 @@ void RawRadianceHost::ComputeGI(ID3D12GraphicsCommandList* cmd,
     }
 
     ++m_frameIdx;
+}
+
+void RawRadianceHost::ExecuteScreenGI(ID3D12GraphicsCommandList* cmd,
+                                      ID3D12Resource* colorInOut,
+                                      ID3D12Resource* sceneDepth,
+                                      uint32_t width,
+                                      uint32_t height,
+                                      float giStrength)
+{
+    if (!ScreenGIReady() || !cmd || !colorInOut || !sceneDepth || width == 0u || height == 0u || !m_cbMapped) {
+        return;
+    }
+
+    const D3D12_RESOURCE_DESC cDesc = colorInOut->GetDesc();
+    const D3D12_RESOURCE_DESC dDesc = sceneDepth->GetDesc();
+    const DXGI_FORMAT colorFmt = (cDesc.Format != DXGI_FORMAT_UNKNOWN) ? cDesc.Format : DXGI_FORMAT_R16G16B16A16_FLOAT;
+    const DXGI_FORMAT depthFmt = DepthSrvFormat(dDesc.Format);
+
+    const uint32_t sRing = m_screenFrameIdx % kCbRingCount;
+    WriteSrv2D(m_dev, colorInOut, colorFmt, CpuAt(ScreenPrepSrv(sRing) + 0));
+    WriteSrv2D(m_dev, sceneDepth, depthFmt, CpuAt(ScreenPrepSrv(sRing) + 1));
+    WriteSrv2D(m_dev, sceneDepth, depthFmt, CpuAt(ScreenApplySrv(sRing) + 1));
+    WriteUav2D(m_dev, colorInOut, colorFmt, CpuAt(ScreenApplyUav(sRing)));
+
+    GpuScreenPrepCB cb{};
+    cb.dims[0] = width;
+    cb.dims[1] = height;
+    cb.dims[2] = kAtlasRes;
+    cb.dims[3] = 0u;
+    cb.invDims[0] = 1.0f / static_cast<float>(width);
+    cb.invDims[1] = 1.0f / static_cast<float>(height);
+    cb.invDims[2] = 1.0f / static_cast<float>(kAtlasRes);
+    cb.invDims[3] = std::clamp(giStrength, 0.0f, 1.0f);
+    cb.extractParams[0] = 1.35f;    // emissive luma threshold
+    cb.extractParams[1] = 6.0f;     // energy-conserving emitter soft-cap
+    cb.extractParams[2] = 45.0f;    // depth-edge gradient gain
+    cb.extractParams[3] = 0.99998f; // standard-Z sky threshold
+    cb.bilateralParams[0] = 0.015f; // depth-aware bilateral sigma
+    cb.bilateralParams[1] = 2.5f;   // luminance shoulder preventing emitter self-amplification
+    cb.bilateralParams[2] = 1.25f;  // maximum soft-capped bounce luminance
+    cb.bilateralParams[3] = 0.0f;
+
+    const size_t prepCbSlot = static_cast<size_t>(kCascadeCbSlots) + static_cast<size_t>(sRing) * kScreenPassesPerFrame;
+    const size_t prepByteOff = prepCbSlot * sizeof(GpuScreenPrepCB);
+    std::memcpy(m_cbMapped + prepByteOff, &cb, sizeof(cb));
+    const D3D12_GPU_VIRTUAL_ADDRESS screenCbGpu = m_cbBuf->GetGPUVirtualAddress() + prepByteOff;
+
+    constexpr D3D12_RESOURCE_STATES kCommon = D3D12_RESOURCE_STATE_COMMON;
+    constexpr D3D12_RESOURCE_STATES kCsSrv  = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    constexpr D3D12_RESOURCE_STATES kUav    = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+
+    auto makeBarrier = [](ID3D12Resource* r, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
+        D3D12_RESOURCE_BARRIER b{};
+        b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b.Transition.pResource = r;
+        b.Transition.StateBefore = before;
+        b.Transition.StateAfter = after;
+        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        return b;
+    };
+
+    // 1) Transition inputs: ColorOut COMMON -> SRV, SceneDepth COMMON -> NON_PIXEL_SRV, EmissiveAlpha -> UAV
+    D3D12_RESOURCE_BARRIER preB[2] = {
+        makeBarrier(colorInOut, kCommon, kCsSrv),
+        makeBarrier(sceneDepth, kCommon, kCsSrv)
+    };
+    cmd->ResourceBarrier(2, preB);
+    Transition(cmd, m_emissiveAlpha, kUav);
+
+    ID3D12DescriptorHeap* heaps[1] = {m_heap.Get()};
+    cmd->SetDescriptorHeaps(1, heaps);
+    cmd->SetComputeRootSignature(m_root.Get());
+    cmd->SetPipelineState(m_psoScreenPrep.Get());
+    cmd->SetComputeRootConstantBufferView(0, screenCbGpu);
+    cmd->SetComputeRootDescriptorTable(1, GpuAt(ScreenPrepSrv(sRing)));
+    cmd->SetComputeRootDescriptorTable(2, GpuAt(kSlotUavEmissive));
+    cmd->Dispatch(kAtlasRes / 8u, kAtlasRes / 8u, 1u);
+
+    // 2) Run 4-cascade penumbra-exact Radiance Cascades GI on extracted 256x256 EmissiveAlpha
+    Transition(cmd, m_emissiveAlpha, kCsSrv);
+    RadianceCascadeParams rcParams{};
+    rcParams.baseIntervalTexels = 3.5f;
+    rcParams.maxTraceTexels     = 300.0f;
+    rcParams.opacityScale       = 2.2f;
+    rcParams.emissiveScale      = 0.15f;
+    rcParams.irradianceScale    = 1.0f;
+    ComputeGI(cmd, m_emissiveAlpha.Get(), rcParams, kCsSrv);
+
+    // 3) Bilateral depth-aware upsample & energy-conserving diffuse GI bounce onto ColorOut
+    D3D12_RESOURCE_BARRIER colToUav = makeBarrier(colorInOut, kCsSrv, kUav);
+    cmd->ResourceBarrier(1, &colToUav);
+
+    cmd->SetDescriptorHeaps(1, heaps);
+    cmd->SetComputeRootSignature(m_root.Get());
+    cmd->SetPipelineState(m_psoScreenApply.Get());
+    cmd->SetComputeRootConstantBufferView(0, screenCbGpu);
+    cmd->SetComputeRootDescriptorTable(1, GpuAt(ScreenApplySrv(sRing)));
+    cmd->SetComputeRootDescriptorTable(2, GpuAt(ScreenApplyUav(sRing)));
+    cmd->Dispatch((width + 7u) / 8u, (height + 7u) / 8u, 1u);
+
+    // 4) Restore external resources cleanly back to COMMON
+    D3D12_RESOURCE_BARRIER postB[2] = {
+        makeBarrier(colorInOut, kUav, kCommon),
+        makeBarrier(sceneDepth, kCsSrv, kCommon)
+    };
+    cmd->ResourceBarrier(2, postB);
+
+    ++m_screenFrameIdx;
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE RawRadianceHost::IrradianceSrv() const

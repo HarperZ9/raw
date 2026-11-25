@@ -298,11 +298,26 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float upperDeckOcc = (clouds.x > 0.25f)
                 ? (1.0f - smoothstep(0.54f, 0.86f, cNoise(float3((pa.xy + cloudLightDir.xy * 18000.0f) * 0.000022f, 4.3f + camPosW.w * 0.002f))) * saturate(clouds.x) * 0.42f)
                 : 1.0f;
-            const float3 coolBase = lerp(lerp(uSkyZ * 0.54f, float3(0.18f, 0.26f, 0.40f), overcastW * 0.52f), lerp(uSkyH * 0.68f, float3(0.32f, 0.40f, 0.52f), overcastW * 0.52f), overcastW * 0.58f + (1.0f - h) * 0.42f)
-                                  * lerp(1.0f.xxx, dualMoon.moonTintRGB * lerp(0.42f, 1.32f, dualMoon.totalPhase01), nightW) * cloudAo;
-            // Warm golden-amber horizon rim light on sunlit cloud edges at low sun (Chapman grazing extinction):
-            const float3 horizonGold = lerp(float3(1.45f, 0.68f, 0.22f), float3(1.35f, 0.38f, 0.12f), saturate(1.0f - max(aElev, 0.0f) * 8.0f));
-            const float3 underLit = horizonGold * (twiCloud * pow(saturate(dot(dir, aSun) * 0.5f + 0.5f), 3.0f) * exp(-od * sigma * 0.35f) * (1.0f - overcastW * 0.75f) * 0.48f);
+            // Wave 44 Golden-Hour Alpenglow vs Cool Slate-Violet Cumulus Bellies (sunElev in [-0.06..0.22]):
+            // Sunlit rims & cloud undersides catch rich golden-amber -> rose-crimson alpenglow forward scatter
+            // while deep optically-thick cumulus bases remain authentically cool slate-violet!
+            const float goldenW = smoothstep(-0.06f, 0.02f, aElev) * (1.0f - smoothstep(0.14f, 0.22f, aElev)) * (1.0f - nightW);
+            const float deepSunsetW = smoothstep(-0.08f, -0.01f, aElev) * (1.0f - smoothstep(0.05f, 0.14f, aElev));
+            const float3 baseSlateViolet = float3(0.16f, 0.17f, 0.30f) * lerp(0.55f, 1.15f, cloudAo);
+            float3 coolBase = lerp(lerp(uSkyZ * 0.54f, float3(0.18f, 0.26f, 0.40f), overcastW * 0.52f),
+                                   lerp(uSkyH * 0.68f, float3(0.32f, 0.40f, 0.52f), overcastW * 0.52f),
+                                   overcastW * 0.58f + (1.0f - h) * 0.42f) * cloudAo;
+            const float bellyCoolMask = saturate((1.0f - h) * 1.15f) * (1.0f - exp(-od * sigma * 0.65f - dens * 0.35f));
+            coolBase = lerp(coolBase, baseSlateViolet, goldenW * bellyCoolMask * (1.0f - overcastW * 0.55f) * 0.62f);
+            coolBase *= lerp(1.0f.xxx, dualMoon.moonTintRGB * lerp(0.42f, 1.32f, dualMoon.totalPhase01), nightW);
+
+            // Golden-amber -> rose-crimson alpenglow rim & underside forward scattering at dawn/sunset:
+            const float3 alpenglowCol = lerp(float3(1.56f, 0.78f, 0.24f), float3(1.52f, 0.40f, 0.32f), deepSunsetW);
+            const float sunSideFwd = pow(saturate(dot(dir, aSun) * 0.5f + 0.5f), 2.4f);
+            const float rimTrans = exp(-od * sigma * 0.32f) * lerp(0.45f, 1.0f, powder);
+            const float undersideMask = lerp(1.0f, 0.42f, smoothstep(0.18f, 0.85f, h));
+            const float alpenglowEnv = max(twiCloud, goldenW * 0.85f) * (1.0f - overcastW * 0.72f);
+            const float3 underLit = alpenglowCol * (alpenglowEnv * rimTrans * (sunSideFwd * 0.52f + hg(cosT, 0.72f) * 0.38f) * undersideMask);
             // Orbital dual-moon phase-coupled silver-lining along thin cloud edges & crowns (warm rose Masser / cool cyan Secunda / dark new-moon):
             const float moonEdge = exp(-od * sigma * 0.40f) * lerp(0.45f, 1.0f, powder);
             const float3 moonRimCol = dualMoon.moonTintRGB * float3(0.56f, 0.62f, 0.84f) * moonPhaseGain;
@@ -316,11 +331,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             S += T * lum * (1.0f - stepT);   // the step's in-scatter, integrated over its length
             T *= stepT;
         }
-        // Seamless curved-planet horizon merge (zero 10-deg cutoff band!): distant clouds smoothly recede into atmospheric haze all the way to dir.z = 0.
+        // Wave 44 Seamless Far-Horizon Atmospheric Perspective Extinction (dir.z < 0.06):
+        // Smooth C1 cubic horizon dissolve eliminates ANY hard horizon clip line as clouds recede into distant haze!
         const float3 softS = min(S, 1.18f.xxx);
-        const float fade = exp(-max(t0, 0.0f) / 480000.0f);
-        const float horFade = smoothstep(-0.002f, 0.028f, dir.z);
-        const float distCut = 1.0f - smoothstep(maxDist * 0.68f, maxDist * 0.98f, t0);
+        const float fade = exp(-max(t0, 0.0f) / 420000.0f);
+        const float horLin = smoothstep(0.000f, 0.062f, dir.z);
+        const float horFade = horLin * horLin * (3.0f - 2.0f * horLin);
+        const float distCut = 1.0f - smoothstep(maxDist * 0.62f, maxDist * 0.96f, t0);
         const float effFade = saturate(fade) * horFade * distCut;
         const float3 aerialS = softS * effFade;
         // 3-Layer Physical Atmospheric Cloud Architecture:

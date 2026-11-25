@@ -30,6 +30,7 @@
 #include "rt_depth_topology.h"
 #include "rt_economy_ledger.h"
 #include "rt_forensics.h"
+#include "rt_live_config.h"
 #include "rt_memory_guards.h"
 #include "rt_movement_combat.h"
 #include "rt_softbody.h"
@@ -129,6 +130,7 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
         raw::rt::CombatImpactOnPresent(evImpact.menuPaused != 0u);
     }
     raw::rt::MovementCombatOnTick();
+    raw::rt::LiveConfigOnPresent([](const char* msg) { Log("%s", msg); });
     {
         static uint32_t s_liveLogTick = 0;
         if ((++s_liveLogTick % 300u) == 150u) {
@@ -321,6 +323,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     if (IniInt("MovementCombat", 1)) {
         Log("%s", raw::rt::MovementCombatInit(g_img).c_str());
     }
+    Log("%s", raw::rt::LiveConfigInit(g_dir + "raw_engine.ini", g_out + "\\live_status_dump.txt").c_str());
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
     if (IniInt("CallGraph", 0)) {
@@ -348,6 +351,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         std::snprintf(why, n, "%d background thread(s) running (sample or call graph); ask again when they finish", t);
         return 0;
     }
+    raw::rt::LiveConfigShutdown();
     raw::rt::MovementCombatShutdown();
     raw::rt::CombatImpactShutdown();
     raw::rt::StealthSurvivalShutdown();

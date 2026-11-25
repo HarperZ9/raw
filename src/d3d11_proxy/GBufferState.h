@@ -43,7 +43,7 @@ struct State
     bool opaqueSeen = false;                        // this frame
 
     Span span = Span::None;
-    bool dirty = false, substituted = false;
+    bool dirty = false, substituted = false, lastDrawWater = false;
     ID3D11PixelShader* gamePs = nullptr;
     ID3D11BlendState* gameBlend = nullptr;
     float factor[4] = {1, 1, 1, 1};

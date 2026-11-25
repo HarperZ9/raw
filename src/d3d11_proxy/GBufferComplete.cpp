@@ -146,6 +146,7 @@ bool GBuffer_OnTargets(ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetView
     s.span = Classify(s, real, n, rtvs, dsv);
     s.dirty = true;
     if (s.span == Span::None) {
+        s.lastDrawWater = false;
         if (wasOpen && s.substituted) {
             // Back to the game's own shader and blend state.
             real->PSSetShader(s.gamePs, nullptr, 0);

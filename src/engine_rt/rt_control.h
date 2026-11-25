@@ -44,9 +44,10 @@ void HavokFixOnPresent();
 // +47% near-plane Z precision, preemptive cell unload). Applied before [EngineSet] so user overrides win.
 std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& refs);
 
-// Wave 25 Live Dynamic WorldSim GMST feedback (barter scarcity & thermal sprint stamina, restored on shutdown):
+// Wave 25/35 Live Dynamic WorldSim GMST & planetary gravity feedback (restored cleanly on shutdown):
 std::string WorldSimBindDynamicSettings(const Image& img, const std::vector<RefTarget>& refs);
 void WorldSimApplyLiveGmsts(float barterMin, float barterMax, float sprintStaminaDrainMult);
+void WorldSimApplyLivePlanetaryGravity(float gravityMps2);
 void WorldSimRestoreDynamicSettings();
 
 }  // namespace raw::rt

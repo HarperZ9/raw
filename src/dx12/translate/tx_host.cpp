@@ -67,6 +67,11 @@ static void Hold(T* o, int delta)
 void HoldBuffer(ID3D11Buffer* b, int delta) { Hold(static_cast<TBuffer*>(b), delta); }
 void HoldView(ID3D11ShaderResourceView* v, int delta) { Hold(static_cast<TSRV*>(v), delta); }
 
+void SetDrawWaterHint(ID3D11DeviceContext* c, bool isWater)
+{
+    if (IsLayerContext(c)) Ctx(c)->SetDrawWaterHint(isWater);
+}
+
 ID3D12Resource* NativeResource(ID3D11Resource* r)
 {
     ResCore* c = r ? CoreOf(r) : nullptr;

@@ -47,6 +47,15 @@ float WorldSimGetShiverIntensity() {
     return g_shiverAtomic.load(std::memory_order_relaxed);
 }
 
+float ComputeBoundedTidalCellHeight(float baseWaterHeight, float tideHeightU, bool isInterior) {
+    if (isInterior || !std::isfinite(baseWaterHeight) ||
+        baseWaterHeight <= -13999.0f || baseWaterHeight >= 50000.0f || baseWaterHeight == 0.0f) {
+        return baseWaterHeight;
+    }
+    const float clampedTide = std::isfinite(tideHeightU) ? std::clamp(tideHeightU, -24.0f, 24.0f) : 0.0f;
+    return baseWaterHeight + clampedTide;
+}
+
 RawWorldSimTelemetry StepWorldSimSnapshot(const float playerPos[3], float gameHour,
                                           float rain01, float snow01, float windSpeed,
                                           bool inInterior, const float* actorXyzw, uint32_t actorCount,
@@ -305,9 +314,11 @@ void WorldSimOnPresent() {
     snap.adaptiveQuality = StepExtremumSeekingGovernor(g_gpuEsState, esCost, tickDtSec, 0.75f, 1.0f, 0.015f, 8.0f, 0.35f);
     g_coreWarmth = snap.coreWarmth;
     g_shiverAtomic.store(snap.shiverIntensity, std::memory_order_relaxed);
-    // Feed bounded live economy & thermal survival state back into Skyrim's live Setting singletons:
+    // Feed bounded live economy, thermal survival, tidal water buoyancy & planetary gravity into Skyrim's live engine memory:
     const auto liveGm = ComputeDynamicGameplayGmsts(snap.economyBuyMult, snap.staminaRegenMult);
     WorldSimApplyLiveGmsts(liveGm.barterMin, liveGm.barterMax, liveGm.sprintStaminaDrainMult);
+    WorldSimApplyLivePlanetaryGravity(snap.gravityMps2);
+    ViewApplyLiveTide(snap.tideHeightU);
 
     std::lock_guard<std::mutex> lk(g_simMu);
     g_tel = snap;
@@ -315,6 +326,7 @@ void WorldSimOnPresent() {
 
 void WorldSimShutdown() {
     g_shutdown.store(true, std::memory_order_release);
+    ViewRestoreAllTides();
     WorldSimRestoreDynamicSettings();
 }
 #endif

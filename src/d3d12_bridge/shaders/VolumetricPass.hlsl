@@ -4,6 +4,7 @@
 #define ATLAS_SLOT t1
 #include "LightingCommon.hlsli"
 #include "CloudCommon.hlsli"
+#include "RawProceduralNoise.hlsli"
 
 Texture2D<float>  Depth       : register(t0);
 Texture2D<float4> VolPrev     : register(t2);
@@ -98,11 +99,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if ((flags.x & FLAG_CLOUDS) != 0u && (i & 1u) == 0u) { cs = cloudShadowN(wpFog, 1u); }
             const float3 fogFlow = wpFog * 0.00052f + float3(cloudWind.xy * camPosW.w * 0.00018f, 0.0f);
             const float mist3d = 0.52f + 0.68f * cNoise(fogFlow) + 0.28f * cNoise(fogFlow * 2.4f + 7.3f);
-            // Layered world-space valley-floor mist bank + high alpine mountain-collar cloud wisp:
-            const float worldElevV = max(wpFog.z - waterA.w, 0.0f);
-            const float valleyBank = exp(-worldElevV * 0.00046f);
-            const float alpineCollar = exp(-pow((wpFog.z - 4600.0f) / 2400.0f, 2.0f)) * 0.55f;
-            const float hDens = (0.28f + 0.76f * valleyBank + alpineCollar) * mist3d;
+            // Layered world-space valley-floor mist bank anchored to LIVE tidal water height + alpine ridge cloud collar
+            // (Wave 35 fix: replaces waterA.w glint-strength bug with exact rawLiveWaterZ(engineWorld, physWorld[0])!):
+            const float liveWaterZV = rawLiveWaterZ(engineWorld, physWorld[0]);
+            const float worldElevV = max(wpFog.z - liveWaterZV, 0.0f);
+            const float valleyBank = exp(-worldElevV * 0.00038f);
+            const float alpineCollar = exp(-pow((wpFog.z - 4600.0f) / 2400.0f, 2.0f)) * 0.62f;
+            const float hDens = (0.28f + 0.78f * valleyBank + alpineCollar) * mist3d;
             const float tr = exp(-sigma * t * 0.85f);
             const float vis = cascadeShadow(ptT, c.z, false) * cs;
             sumSun += vis * hDens * tr * dt;

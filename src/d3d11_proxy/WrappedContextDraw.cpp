@@ -1,4 +1,5 @@
 #include "ContextHooksShared.h"
+#include "../dx12/translate/Translate.h"
 
 namespace SB::Proxy
 {
@@ -162,6 +163,7 @@ void STDMETHODCALLTYPE WrappedContext::DrawIndexed(UINT IndexCount, UINT StartIn
     if (g_sceneLightsActive) GameComposite_BeforeDraw(m_real, IndexCount);
     if (IndexCount <= 6) Tonemap_BeforeDraw(m_real);   // a full-screen quad at most
     m_real->DrawIndexed(IndexCount, StartIndexLocation, BaseVertexLocation);
+    if (g_gbufferActive) raw::tx::SetDrawWaterHint(m_real, false);
     if (g_sceneLightsActive) GameComposite_AfterDraw(m_real);
     Tonemap_AfterDraw(m_real);
 }

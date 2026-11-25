@@ -19,9 +19,11 @@ Texture2D<float4> FroxelIn     : register(t0);
 #define ATLAS_SLOT t0
 #include "LightingCommon.hlsli"
 #include "CloudCommon.hlsli"
+#include "RawProceduralNoise.hlsli"
 Texture2D<float4> TransLut    : register(t1);
 Texture2D<float4> AtmoSkyView : register(t2);
 Texture2D<float4> FroxelPrev  : register(t3);
+Texture2D<float>  Depth       : register(t4);
 SamplerState      Lin         : register(s0);
 #endif
 
@@ -108,11 +110,13 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     const float3 drift = wp * 0.00032f + float3(cloudWind.xy * camPosW.w * 0.00012f, 0.0f);
     const float curlWarp = (cNoise(drift * 1.35f + 3.1f) - 0.5f) * 0.48f;
     const float mist3D = 0.42f + 0.92f * (cNoise(drift + curlWarp) * 0.56f + cNoise(drift * 2.4f + 7.1f) * 0.29f + cNoise(drift * 5.0f - 4.3f) * 0.15f);
-    // Low-lying rolling 3D ground & river-basin fog banks (thickest near water level, dawn/dusk, and wet weather)
-    // with Daylight Video Rule VW-1: interactive actor-wake fog clearing that parts around moving bodies and heals!
+    // Low-lying rolling 3D ground & river-basin fog banks anchored to LIVE engine tidal water height
+    // (Wave 35 fix: replaces waterA.w glint-strength bug with exact rawLiveWaterZ(engineWorld, physWorld[0])!)
+    // + Daylight Video Rule VW-1: interactive actor-wake fog clearing that parts around moving bodies and heals!
+    const float liveWaterZ = rawLiveWaterZ(engineWorld, physWorld[0]);
     const float aElevFog = astroSunElev();
     const float dawnDuskFog = exp(-pow((aElevFog - 0.03f) / 0.16f, 2.0f));
-    const float basinH = max(wp.z - (waterA.w + 45.0f), 0.0f);
+    const float basinH = max(wp.z - (liveWaterZ + 45.0f), 0.0f);
     float fogWakeClear = 1.0f;
     if (!isInt && rayDist < 1200.0f) {
         [unroll] for (uint fi = 0u; fi < 6u; ++fi) {
@@ -123,15 +127,18 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
             fogWakeClear *= (1.0f - exp(-d2 / 5600.0f) * ft.w * 0.62f);
         }
     }
-    const float groundBank = isInt ? 0.0f : exp(-basinH * 0.0024f) * (0.42f + 0.58f * cNoise(wp * 0.0011f + float3(cloudWind.xy * camPosW.w * 0.00008f, 0.0f))) * (0.48f + 0.85f * dawnDuskFog + weather.w * 0.78f) * fogWakeClear;
+    const float groundBank = isInt ? 0.0f : exp(-basinH * 0.0018f) * (0.42f + 0.58f * cNoise(wp * 0.0011f + float3(cloudWind.xy * camPosW.w * 0.00008f, 0.0f))) * (0.52f + 0.90f * dawnDuskFog + weather.w * 0.85f) * fogWakeClear;
+    // Wave 35 Lush Forest & Valley Humidity Layer (NordicCanopy / Scionti / JustHoj cool misty forest depth):
+    // Pools softly 120..1,400u above local terrain/water level in wooded valleys while keeping snow peaks crisp!
+    const float forestCanopyBelt = isInt ? 0.0f : exp(-max(wp.z - (camPosW.z - 220.0f), 0.0f) * 0.0014f) * smoothstep(550.0f, 3400.0f, rayDist) * (0.45f + 0.55f * cNoise(wp * 0.00062f - float3(cloudWind.xy * camPosW.w * 0.00009f, 0.0f))) * (0.38f + 0.62f * dawnDuskFog + weather.w * 0.55f + saturate(clouds.x - 0.25f) * 0.35f) * fogWakeClear;
     // True 3D alpine ridge collar clouds hugging mountain flanks (3,800u..7,800u world altitude):
     const float peakCollar = isInt ? 0.0f : exp(-pow((wp.z - 5000.0f) / 2600.0f, 2.0f)) * smoothstep(3600.0f, 11000.0f, zMid) * (0.55f + 0.65f * cNoise(wp * 0.00022f - float3(cloudWind.xy * camPosW.w * 0.00007f, 0.0f)));
-    // True world-space altitude falloff (100% world-locked, zero camera-height drift!):
-    const float worldElevF = max(wp.z - waterA.w, 0.0f);
-    const float valleyFogF = exp(-worldElevF * 0.00042f) * (1.0f + 0.35f * saturate(clouds.x + weather.w));
-    // Smooth near-camera exterior ramp so foreground (<650u) stays crystal crisp while valleys/mountains gain full 3D depth:
-    const float extNearRamp = isInt ? 1.0f : lerp(smoothstep(220.0f, 1600.0f, rayDist), 1.0f, saturate(weather.w * 0.65f + weather.z * 0.75f));
-    const float heightFalloff = isInt ? 1.0f : (0.24f + 0.66f * valleyFogF + peakCollar * 1.45f + groundBank * 1.25f);
+    // True world-space altitude falloff anchored to live sea/river level (100% world-locked, zero camera-height drift!):
+    const float worldElevF = max(wp.z - liveWaterZ, 0.0f);
+    const float valleyFogF = exp(-worldElevF * 0.00034f) * (1.0f + 0.35f * saturate(clouds.x + weather.w));
+    // Smooth near-camera exterior ramp so foreground (<650u) stays crystal crisp while valleys/forests/mountains gain full 3D depth:
+    const float extNearRamp = isInt ? 1.0f : lerp(smoothstep(220.0f, 1500.0f, rayDist), 1.0f, saturate(weather.w * 0.65f + weather.z * 0.75f));
+    const float heightFalloff = isInt ? 1.0f : (0.24f + 0.66f * valleyFogF + peakCollar * 1.48f + groundBank * 1.28f + forestCanopyBelt * 0.92f);
     const float baseExt = isInt ? clamp(tune.x * 0.14f, 0.000006f, 0.000016f)
                                 : clamp(tune.x * 0.145f, 0.000011f, 0.000024f);
     float sigma = baseExt * weatherDens * mist3D * heightFalloff * extNearRamp;
@@ -150,8 +157,12 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         const float3 beamDir = normalize(lerp(aSunF, sunDir.xyz, nightW));
         const float cosT = dot(farDir, beamDir);
         const float sunLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-        // Jendersie & d'Eon (2023) Unified HG + Draine atmospheric droplet phase (sharp sun-shaft peak + crisp mist glory):
-        const float ph = min(0.72f * froxelDrainePhase(cosT, lerp(0.74f, 0.78f, nightW), 1.45f) + 0.28f * froxelHG(cosT, -0.22f), 3.2f);
+        // Jendersie & d'Eon (2023) Unified HG + Draine Mie phase blended with 3-octave Wrenninge/Hillaire
+        // multi-scattering phase (gives creamy sunlit forest godrays and soft aerial volume without single-scatter harshness):
+        const float localOd = saturate(sigma * rayDist * 0.65f);
+        const float phSingle = 0.72f * froxelDrainePhase(cosT, lerp(0.74f, 0.78f, nightW), 1.45f) + 0.28f * froxelHG(cosT, -0.22f);
+        const float phMulti  = rawMultiScatterPhase(cosT, lerp(0.72f, 0.76f, nightW), localOd);
+        const float ph = min(lerp(phSingle, phMulti * 1.85f, 0.45f), 3.2f);
         const float3 hTrans = froxelTransAt(clamp(aElevF, -0.10f, 1.0f));
         const float htLum = max(dot(hTrans, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
         const float3 physSun = lerp(lerp(sunColour.rgb, hTrans * (max(sunLum, 0.10f) / htLum), 0.58f), float3(0.24f, 0.36f, 0.66f) * 0.55f, nightW);
@@ -259,9 +270,27 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                     const float coldS = saturate(weather.z * 1.25f + smoothstep(2400.0f, 4800.0f, wp.z) * 0.65f);
                     steamBoost += sWisp * (1.0f - hSteam) * smoothstep(0.0f, 0.18f, hSteam) * coldS * 1.25f;
                 }
+                // Wave 35 GTA VI (@redorav) 4-Step Shadowed 3D Local-Light Froxels:
+                // Marches 4 depth-buffer shadow probes from froxel center toward the light so indoor torches/braziers
+                // carve crisp volumetric shafts through doorways & pillars instead of bleeding milky fog through stone walls!
+                float localVis = 1.0f;
+                if (dL > 32.0f && rayDist < 4800.0f) {
+                    float occF = 1.0f;
+                    [unroll] for (int si = 1; si <= 4; ++si) {
+                        const float tS = (float(si) - 0.35f) * 0.22f;
+                        const float4 sm = screenOf(pRel + toL * tS);
+                        if (sm.w > 1.0f && all(sm.xy >= 0.0f) && sm.x < dims.x && sm.y < dims.y) {
+                            const float zHit = viewZOf(Depth.Load(int3(sm.xy, 0)));
+                            if (zHit < sm.w * 0.94f && (sm.w - zHit) < max(sm.w * 0.38f, 180.0f)) {
+                                occF *= 0.28f;
+                            }
+                        }
+                    }
+                    localVis = max(occF, 0.08f);
+                }
                 // Ensure nearby exterior local lights scatter visibly even when extNearRamp keeps daylight air clear:
-                sigma = max(sigma, (isInt ? 0.000012f : 0.000020f) * att * intSmoke * lampWeather * steamBoost);
-                inScat += min(lightColS[li].rgb * (att * phL * tune2.y * intSmoke * lampWeather * steamBoost * fireFlicker * (isInt ? 0.09f : 0.28f)), (isInt ? 0.065f : 0.35f).xxx);
+                sigma = max(sigma, (isInt ? 0.000012f : 0.000020f) * att * intSmoke * lampWeather * steamBoost * lerp(0.35f, 1.0f, localVis));
+                inScat += min(lightColS[li].rgb * (att * phL * localVis * tune2.y * intSmoke * lampWeather * steamBoost * fireFlicker * (isInt ? 0.11f : 0.28f)), (isInt ? 0.075f : 0.35f).xxx);
             }
         }
     }

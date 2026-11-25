@@ -21,6 +21,15 @@ cbuffer SubdivCB : register(b0) {
     float maxOffsetFrac; // safety clamp on PN curvature offset as fraction of edge length (0.18)
     float snowDepthU;    // live 3D volumetric snowpack buildup thickness (0..18 world units)
     float displaceAmp;   // subtle crack-free symmetric midpoint micro-relief amplitude (0..0.35)
+    // Wave 35: Live 3D physical ocean/water tessellation & gravity-coupled Airy/JONSWAP wave displacement:
+    uint  waterMode;     // 0=static PN 1->4, 1=water 1->4, 2=water 1->16, (+4 = VB-only per-frame update)
+    float waterTimeSec;  // live unified engine simulation clock (seconds)
+    float waterGravity;  // planetary gravity g(h) in m/s^2 (default 9.80665)
+    float waterTideU;    // live Nirn dual-moon tidal elevation offset (world units)
+    float waterBeaufort; // live Beaufort sea state (0..12)
+    float waterSwellX;   // unit primary swell direction X
+    float waterSwellY;   // unit primary swell direction Y
+    float waterPad;
 };
 
 ByteAddressBuffer   InVerts  : register(t0);
@@ -148,12 +157,20 @@ float subHash31(float3 p) {
     return frac((q.x + q.y) * q.z);
 }
 
-// Applies crack-free organic micro-relief (strictly bounded along surface normal; never lifts object-local Z off collision):
+// Wave 35: Crack-free organic micro-relief + true 3D volumetric snow-blanket pillow displacement
+// (alexandre196 / karynatrychyk / GhislainGir). Evaluated strictly from quantized position & normal so shared
+// triangle edges remain 100% watertight, and clamped safely (<= 4.5u) so doorways & Havok collision stay clean!
 float3 applyMicroAndSnow(float3 p, float3 n, bool isMidpoint) {
     float3 outP = p;
     if (isMidpoint && displaceAmp > 0.001f) {
         float h = (subHash31(floor(p * 4.0f) * 0.25f) - 0.5f) * 2.0f;
         outP += n * (h * min(displaceAmp, 0.20f));
+    }
+    if (snowDepthU > 0.05f && n.z > 0.35f) {
+        float upMask = smoothstep(0.35f, 0.82f, n.z);
+        float drift = 0.72f + 0.42f * subHash31(floor(p * 0.5f) * 2.0f);
+        float lift = min(snowDepthU, 4.5f) * upMask * drift * (isMidpoint ? 1.08f : 1.0f);
+        outP += safeNorm(float3(n.xy * 0.28f, 1.0f)) * lift;
     }
     return outP;
 }
@@ -175,7 +192,75 @@ void copyRawVert(uint srcByte, uint dstByte) {
     }
 }
 
-// 1 thread per input triangle -> emits 6 vertices and 4 curved micro-triangles (12 R32_UINT indices).
+// Wave 35: Deterministic, seam-free 5-mode gravity-coupled Airy/JONSWAP trochoidal 3D ocean surface
+// evaluated strictly from vertex XY so adjacent water cells stay 100% watertight while rolling in real 3D.
+void evalPhysicalWaterVertex(float3 pIn, out float3 pOut, out float3 nOut) {
+    float gPhys = clamp(waterGravity, 1.0f, 30.0f);
+    float2 sDir = float2(waterSwellX, waterSwellY);
+    float sLen = length(sDir);
+    sDir = (sLen > 1.0e-4f) ? (sDir / sLen) : float2(0.866f, 0.5f);
+    float2 sPerp = float2(-sDir.y, sDir.x);
+
+    float2 xm = pIn.xy * 0.0142857f; // Skyrim units -> meters
+    float ampScale = clamp(0.18f + waterBeaufort * 0.14f, 0.12f, 2.20f);
+    float t = waterTimeSec;
+
+    static const float kWaves[5] = { 0.224f, 0.370f, 0.571f, 1.083f, 1.963f };
+    static const float aWaves[5] = { 0.145f, 0.092f, 0.058f, 0.032f, 0.018f };
+    static const float cAng[5]   = { 1.000f, 0.899f, 0.829f, 0.530f, 0.438f };
+    static const float sAng[5]   = { 0.000f, 0.438f, -0.559f, 0.848f, -0.899f };
+
+    float hMeters = 0.0f;
+    float2 xyMeters = float2(0.0f, 0.0f);
+    float2 dh = float2(0.0f, 0.0f);
+    [unroll] for (int i = 0; i < 5; ++i) {
+        float2 d = sDir * cAng[i] + sPerp * sAng[i];
+        float k = kWaves[i];
+        float a = aWaves[i] * ampScale;
+        float omega = sqrt(gPhys * k);
+        float phase = dot(d, xm) * k - omega * t + float(i) * 1.37f;
+        float sp, cp;
+        sincos(phase, sp, cp);
+        hMeters  += a * sp;
+        xyMeters -= d * (a * 0.26f * cp);
+        dh       += d * (a * k * cp);
+    }
+
+    float zLiftU = clamp(hMeters * 70.0f, -22.0f, 22.0f) + clamp(waterTideU, -24.0f, 24.0f);
+    float2 xyLiftU = clamp(xyMeters * 70.0f, -12.0f.xx, 12.0f.xx);
+    pOut = float3(pIn.xy + xyLiftU, pIn.z + zLiftU);
+    nOut = safeNorm(float3(-dh.x, -dh.y, 1.0f));
+}
+
+void writeWaterGridVertex(uint dstByte, uint b0, float4 p0, float4 p1, float4 p2,
+                          float2 uv0, float2 uv1, float2 uv2, float4 c0, float4 c1, float4 c2,
+                          float w0, float w1, float w2) {
+    copyRawVert(b0, dstByte);
+    float3 pInterp = w0 * p0.xyz + w1 * p1.xyz + w2 * p2.xyz;
+    float pW = w0 * p0.w + w1 * p1.w + w2 * p2.w;
+    float3 pWave, nWave;
+    evalPhysicalWaterVertex(pInterp, pWave, nWave);
+    storeAttr4(dstByte, posOffFmt, float4(pWave, pW), false);
+    if ((normOffFmt >> 16u) != 0u) {
+        storeAttr4(dstByte, normOffFmt, float4(nWave, 1.0f), true);
+    }
+    if ((uvOffFmt >> 16u) != 0u) {
+        storeUv(dstByte, uvOffFmt, w0 * uv0 + w1 * uv1 + w2 * uv2);
+    }
+    if ((colOffFmt >> 16u) == 1u) {
+        uint off = colOffFmt & 0xFFFFu;
+        OutVerts.Store(dstByte + off, packUnorm8x4(w0 * c0 + w1 * c1 + w2 * c2));
+    }
+}
+
+uint waterRowOff4(uint r) {
+    return r * 5u - ((r * (r - 1u)) >> 1u);
+}
+
+// 1 thread per input triangle:
+//   waterMode == 0: 1->4 Vlachos curved PN-Triangle + snowpack (6v, 12i)
+//   waterMode == 1/5: live 3D water wave 1->4 (6v, 12i; mode>=4 skips OutIdx)
+//   waterMode == 2/6: live 3D water wave 1->16 coarse-quad tessellation (15v, 48i; mode>=4 skips OutIdx)
 [numthreads(64, 1, 1)]
 void CSMain(uint3 tid3 : SV_DispatchThreadID) {
     uint tid = tid3.x;
@@ -192,6 +277,68 @@ void CSMain(uint3 tid3 : SV_DispatchThreadID) {
     float4 p0 = loadAttr4(b0, posOffFmt, false);
     float4 p1 = loadAttr4(b1, posOffFmt, false);
     float4 p2 = loadAttr4(b2, posOffFmt, false);
+
+    uint wKind = waterMode & 3u;
+    if (wKind != 0u) {
+        float2 uv0 = ((uvOffFmt >> 16u) != 0u) ? loadUv(b0, uvOffFmt) : float2(0.0f, 0.0f);
+        float2 uv1 = ((uvOffFmt >> 16u) != 0u) ? loadUv(b1, uvOffFmt) : float2(0.0f, 0.0f);
+        float2 uv2 = ((uvOffFmt >> 16u) != 0u) ? loadUv(b2, uvOffFmt) : float2(0.0f, 0.0f);
+        float4 c0 = float4(1.0f, 1.0f, 1.0f, 1.0f);
+        float4 c1 = c0, c2 = c0;
+        if ((colOffFmt >> 16u) == 1u) {
+            uint off = colOffFmt & 0xFFFFu;
+            c0 = unpackUnorm8x4(InVerts.Load(b0 + off));
+            c1 = unpackUnorm8x4(InVerts.Load(b1 + off));
+            c2 = unpackUnorm8x4(InVerts.Load(b2 + off));
+        }
+        bool writeIdx = (waterMode < 4u);
+        if (wKind == 2u) {
+            // 1->16 barycentric subdivision (N=4: 15 vertices, 16 micro-triangles = 48 R32_UINT indices)
+            uint vBase = tid * 15u;
+            uint vCur = 0u;
+            [unroll] for (uint r = 0u; r <= 4u; ++r) {
+                float w2 = float(r) * 0.25f;
+                for (uint c = 0u; c <= (4u - r); ++c) {
+                    float w1 = float(c) * 0.25f;
+                    float w0 = 1.0f - w1 - w2;
+                    writeWaterGridVertex((vBase + vCur) * strideBytes, b0, p0, p1, p2, uv0, uv1, uv2, c0, c1, c2, w0, w1, w2);
+                    ++vCur;
+                }
+            }
+            if (writeIdx) {
+                uint iByte = tid * 192u; // 48 * 4 bytes
+                uint outK = 0u;
+                [unroll] for (uint r = 0u; r < 4u; ++r) {
+                    uint r0 = vBase + waterRowOff4(r);
+                    uint r1 = vBase + waterRowOff4(r + 1u);
+                    for (uint c = 0u; c < (4u - r); ++c) {
+                        OutIdx.Store3(iByte + outK * 12u, uint3(r0 + c, r0 + c + 1u, r1 + c));
+                        ++outK;
+                        if (c + 1u < (4u - r)) {
+                            OutIdx.Store3(iByte + outK * 12u, uint3(r0 + c + 1u, r1 + c + 1u, r1 + c));
+                            ++outK;
+                        }
+                    }
+                }
+            }
+        } else {
+            // 1->4 barycentric water wave subdivision (6 vertices, 4 micro-triangles = 12 R32_UINT indices)
+            uint vBase = tid * 6u;
+            writeWaterGridVertex((vBase + 0u) * strideBytes, b0, p0, p1, p2, uv0, uv1, uv2, c0, c1, c2, 1.0f, 0.0f, 0.0f);
+            writeWaterGridVertex((vBase + 1u) * strideBytes, b1, p0, p1, p2, uv0, uv1, uv2, c0, c1, c2, 0.0f, 1.0f, 0.0f);
+            writeWaterGridVertex((vBase + 2u) * strideBytes, b2, p0, p1, p2, uv0, uv1, uv2, c0, c1, c2, 0.0f, 0.0f, 1.0f);
+            writeWaterGridVertex((vBase + 3u) * strideBytes, b0, p0, p1, p2, uv0, uv1, uv2, c0, c1, c2, 0.5f, 0.5f, 0.0f);
+            writeWaterGridVertex((vBase + 4u) * strideBytes, b1, p0, p1, p2, uv0, uv1, uv2, c0, c1, c2, 0.0f, 0.5f, 0.5f);
+            writeWaterGridVertex((vBase + 5u) * strideBytes, b2, p0, p1, p2, uv0, uv1, uv2, c0, c1, c2, 0.5f, 0.0f, 0.5f);
+            if (writeIdx) {
+                uint iBase = tid * 48u;
+                OutIdx.Store4(iBase +  0u, uint4(vBase + 0u, vBase + 3u, vBase + 5u, vBase + 3u));
+                OutIdx.Store4(iBase + 16u, uint4(vBase + 1u, vBase + 4u, vBase + 5u, vBase + 4u));
+                OutIdx.Store4(iBase + 32u, uint4(vBase + 2u, vBase + 3u, vBase + 4u, vBase + 5u));
+            }
+        }
+        return;
+    }
 
     float4 n0Raw = loadAttr4(b0, normOffFmt, true);
     float4 n1Raw = loadAttr4(b1, normOffFmt, true);

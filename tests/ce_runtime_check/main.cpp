@@ -19,6 +19,7 @@
 #include "../../src/ce_runtime/CeNifReader.h"
 #include "../../src/ce_runtime/CeNavMesh.h"
 #include "../../src/d3d12_bridge/RawAssetBridge.h"
+#include "../../src/d3d12_bridge/RawProceduralLib.h"
 #include "../../src/d3d12_bridge/RawTextureBridge.h"
 #include "../../src/d3d12_bridge/HardwareProfile.h"
 #include "../../src/d3d12_bridge/ShaderCompiler.h"
@@ -881,6 +882,71 @@ void main() {
           pCyc.beaufortScale > pHigh.beaufortScale + 4.0f &&
           (maxTide - minTide) > 25.0f && maxVel > 0.20f && minVel < -0.20f,
           "wave34_planetary_gravity_tides_invariants");
+
+    // Wave 35: Zero-external-asset procedural geometry & PBR texture library + CE tidal buoyancy guard
+    raw::bridge::RawMeshAsset spruceDry{}, spruceSnow{}, boulder{}, grass{}, ocean{};
+    const bool procMeshOk =
+        raw::bridge::GenerateNordicSpruceTree(1337u, 220.0f, 36.0f, 0.0f, &spruceDry) &&
+        raw::bridge::GenerateNordicSpruceTree(1337u, 220.0f, 36.0f, 1.0f, &spruceSnow) &&
+        raw::bridge::GenerateNordicBoulder(2026u, 84.0f, 0.28f, 10u, &boulder) &&
+        raw::bridge::GenerateAlpineGrassClump(4096u, 12u, 42.0f, &grass) &&
+        raw::bridge::GenerateOceanTileMesh(16u, 1200.0f, &ocean);
+    float dryMinZ = 1e9f, snowMinZ = 1e9f;
+    for (const auto& v : spruceDry.vertices)  dryMinZ  = std::min(dryMinZ,  v.pos[2]);
+    for (const auto& v : spruceSnow.vertices) snowMinZ = std::min(snowMinZ, v.pos[2]);
+    bool normsUnit = true;
+    for (const auto& v : boulder.vertices) {
+        const float l2 = v.normal[0]*v.normal[0] + v.normal[1]*v.normal[1] + v.normal[2]*v.normal[2];
+        if (std::fabs(l2 - 1.0f) > 0.05f) { normsUnit = false; break; }
+    }
+    raw::bridge::RawMeshAsset badTree{};
+    const bool badTreeRejected = !raw::bridge::GenerateNordicSpruceTree(1u, 1.0f, 1.0f, 0.0f, &badTree);
+    Check(procMeshOk && !spruceDry.meshlets.empty() && !boulder.meshlets.empty() &&
+          !grass.meshlets.empty() && !ocean.meshlets.empty() &&
+          ocean.indices.size() == 16u * 16u * 6u && normsUnit &&
+          snowMinZ < dryMinZ + 0.01f && badTreeRejected,
+          "wave35_procedural_geometry_library_and_control");
+
+    bool allTexOk = true;
+    const raw::bridge::ProceduralTexKind texKinds[5] = {
+        raw::bridge::ProceduralTexKind::BarkFurrow,
+        raw::bridge::ProceduralTexKind::PineNeedles,
+        raw::bridge::ProceduralTexKind::GraniteStrata,
+        raw::bridge::ProceduralTexKind::SnowSastrugi,
+        raw::bridge::ProceduralTexKind::CellularFoam,
+    };
+    for (auto tk : texKinds) {
+        raw::bridge::RawTextureAsset tx{};
+        if (!raw::bridge::SynthesizeProceduralPbrTexture(tk, 64u, 64u, 99u, &tx) || tx.rgba8.size() != 64u * 64u * 4u) {
+            allTexOk = false;
+            break;
+        }
+        uint8_t mn[4] = {255, 255, 255, 255}, mx[4] = {0, 0, 0, 0};
+        for (size_t i = 0; i < tx.rgba8.size(); i += 4) {
+            for (int c = 0; c < 4; ++c) {
+                mn[c] = std::min(mn[c], tx.rgba8[i + c]);
+                mx[c] = std::max(mx[c], tx.rgba8[i + c]);
+            }
+        }
+        const uint8_t bestSpan = std::max({uint8_t(mx[0] - mn[0]), uint8_t(mx[1] - mn[1]),
+                                           uint8_t(mx[2] - mn[2]), uint8_t(mx[3] - mn[3])});
+        if (bestSpan < 18u) allTexOk = false;
+    }
+    raw::bridge::RawTextureAsset badTex{};
+    const bool badTexRejected = !raw::bridge::SynthesizeProceduralPbrTexture(
+        raw::bridge::ProceduralTexKind::CellularFoam, 2u, 2u, 1u, &badTex);
+    Check(allTexOk && badTexRejected, "wave35_procedural_pbr_texture_library_and_control");
+
+    // Wave 35: Live CE TESObjectCELL::waterHeight tidal buoyancy bounds & interior/sentinel guards
+    const float hExtHigh = raw::rt::ComputeBoundedTidalCellHeight(-1200.0f, 18.0f, false);
+    const float hExtClamp = raw::rt::ComputeBoundedTidalCellHeight(-1200.0f, 95.0f, false);
+    const float hIntGuard = raw::rt::ComputeBoundedTidalCellHeight(-1200.0f, 18.0f, true);
+    const float hSentGuard = raw::rt::ComputeBoundedTidalCellHeight(-14000.0f, 18.0f, false);
+    Check(std::fabs(hExtHigh - (-1182.0f)) < 1e-3f &&
+          std::fabs(hExtClamp - (-1176.0f)) < 1e-3f &&
+          std::fabs(hIntGuard - (-1200.0f)) < 1e-3f &&
+          std::fabs(hSentGuard - (-14000.0f)) < 1e-3f,
+          "wave35_ce_tidal_cell_water_height_guards");
 }
 
 }  // namespace

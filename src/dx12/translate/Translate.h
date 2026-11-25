@@ -110,6 +110,12 @@ void GetNative(ID3D11Device* device, void** d3d12Device, void** d3d12Queue);
 // Live runtime control of TxSubdiv curved PN-Triangle curvature, 3D volumetric snowpack buildup, and micro-relief.
 void SetSubdivParams(ID3D11Device* device, float curvatureGain, float snowDepthU, float displaceAmp);
 
+// Wave 35: Live runtime planetary ocean wave & dual-moon tidal state for 3D geometric water vertex displacement inside raw::tx.
+void SetWaterWaveState(ID3D11Device* device, float simTimeSec, float gravityMps2, float tideHeightU,
+                       float beaufort, float swellDirX, float swellDirY);
+// Marks whether the next DrawIndexed on this raw::tx context is a Water surface draw (triggers 1->16/1->4 live 3D wave displacement).
+void SetDrawWaterHint(ID3D11DeviceContext* context, bool isWater);
+
 // Looks up the cached 4x curved/snowpack-lifted D3D12 buffers for the currently bound draw so DXR 1.2 BLAS
 // builds match the subdivided on-screen silhouette. Adds a COM reference to outVb and outIb when returning true.
 bool PeekSubdivMesh(ID3D11DeviceContext* context, UINT indexCount, UINT startIndex, INT baseVertex,

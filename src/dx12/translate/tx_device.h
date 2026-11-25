@@ -157,6 +157,14 @@ public:
     std::atomic<float>    subdivDisplace{0.0f};
     std::atomic<uint32_t> subdivEpoch{0};
     std::atomic<uint64_t> frameSeq{1};
+    // Wave 35: Live 3D geometric water wave & Nirn dual-moon tidal parameters (updated every frame):
+    std::atomic<float>    waterTimeSec{0.0f};
+    std::atomic<float>    waterGravity{9.80665f};
+    std::atomic<float>    waterTideU{0.0f};
+    std::atomic<float>    waterBeaufort{2.0f};
+    std::atomic<float>    waterSwellX{0.866f};
+    std::atomic<float>    waterSwellY{0.500f};
+    std::atomic<uint64_t> waterStateGen{1};
     const SubdivLayoutInfo* GetSubdivLayout(uint32_t layoutId);
     void DrainInfoQueue();
 

@@ -82,7 +82,7 @@ constexpr RasterBinding kWorldSimLayout[3] = {U, T, Sm};
 constexpr RasterBinding kCloudLayout[5] = {U, T, T, T, Sm};
 constexpr RasterBinding kVolLayout[7] = {U, T, T, T, T, T, Sm};
 constexpr RasterBinding kFogLayout[10] = {U, T, T, T, T, T, T, T, T, Sm};
-constexpr RasterBinding kFroxelInjectLayout[6] = {U, T, T, T, T, Sm};
+constexpr RasterBinding kFroxelInjectLayout[7] = {U, T, T, T, T, T, Sm};
 constexpr RasterBinding kFroxelBlockLayout[2] = {U, T};
 constexpr RasterBinding kFroxelIntLayout[3] = {U, T, T};
 constexpr RasterBinding kBloom1Layout[2] = {T, Sm};
@@ -361,7 +361,7 @@ public:
             // Inject -> 8-slice Blelloch Associative Monoid Block Scan -> Fast Prefix-Sum Integrate (4.3x fewer texture loads!).
             if ((m_u.flags[0] & kMatch) == 0u) {
                 const TextureHandle froxNow = m_froxelRaw[m_frame & 1], froxPrev = m_froxelRaw[(m_frame + 1) & 1];
-                const RasterBind fi[6] = {{m_uniform, {}, {}}, {{}, m_atlas, {}}, {{}, m_atmoTrans, {}}, {{}, m_atmoSkyView, {}}, {{}, froxPrev, {}}, {{}, {}, m_lin}};
+                const RasterBind fi[7] = {{m_uniform, {}, {}}, {{}, m_atlas, {}}, {{}, m_atmoTrans, {}}, {{}, m_atmoSkyView, {}}, {{}, froxPrev, {}}, {{}, m_depth, {}}, {{}, {}, m_lin}};
                 Draw(*c, froxNow, m_froxelInjectPipe, fi);
                 const RasterBind fb[2] = {{m_uniform, {}, {}}, {{}, froxNow, {}}};
                 Draw(*c, m_froxelBlock, m_froxelBlockPipe, fb);

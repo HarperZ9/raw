@@ -272,6 +272,116 @@ void RunControls(const Opts& o, Tally& t)
                  (unsigned long long)stPair.subdivDraws, (unsigned long long)stPair.debugErrors);
         t.Add(pairPass, "geometry_subdiv_paired_depth_equal", pd);
     }
+
+    // Wave 35 live 3D physical water tessellation & tidal displacement control:
+    // A flat position-only (stride 12, NO normal!) 2-triangle water quad (6 indices) must be 1->16 subdivided
+    // and dynamically displaced in real 3D across frames with 0 D3D12 debug errors, spatial wave curvature, and live tidal lift!
+    {
+        raw::tx::CreateParams wp{};
+        wp.warp = !o.hardware;
+        wp.debugLayer = !o.noDebug;
+        wp.geometrySubdiv = true;
+        ComPtr<ID3D11Device> dev;
+        ComPtr<ID3D11DeviceContext> ctx;
+        bool okW = SUCCEEDED(raw::tx::CreateDevice(wp, &dev, &ctx));
+        raw::tx::Stats stW{};
+        double meanLow = 0.0, meanHigh = 0.0;
+        int distinctLow = 0;
+        if (okW) {
+            static const char* kWaterVs =
+                "struct Out { float4 p : SV_Position; float z : TEXCOORD0; };\n"
+                "Out main(float3 p : POSITION) {\n"
+                "  Out o; o.p = float4(p.x / 1400.0f, p.y / 1400.0f, 0.5f, 1.0f); o.z = p.z; return o;\n"
+                "}\n";
+            static const char* kWaterPs =
+                "float4 main(float4 p : SV_Position, float z : TEXCOORD0) : SV_Target {\n"
+                "  float h = saturate(z * 0.015f + 0.5f);\n"
+                "  return float4(h, h, 1.0f, 1.0f);\n"
+                "}\n";
+            ComPtr<ID3DBlob> vbBlob, pbBlob;
+            okW = SUCCEEDED(D3DCompile(kWaterVs, strlen(kWaterVs), nullptr, nullptr, nullptr, "main", "vs_5_0", 0, 0, &vbBlob, nullptr)) &&
+                  SUCCEEDED(D3DCompile(kWaterPs, strlen(kWaterPs), nullptr, nullptr, nullptr, "main", "ps_5_0", 0, 0, &pbBlob, nullptr));
+            if (okW) {
+                ComPtr<ID3D11VertexShader> vs;
+                ComPtr<ID3D11PixelShader> ps;
+                dev->CreateVertexShader(vbBlob->GetBufferPointer(), vbBlob->GetBufferSize(), nullptr, &vs);
+                dev->CreatePixelShader(pbBlob->GetBufferPointer(), pbBlob->GetBufferSize(), nullptr, &ps);
+                D3D11_INPUT_ELEMENT_DESC ied[1] = {
+                    {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+                };
+                ComPtr<ID3D11InputLayout> il;
+                dev->CreateInputLayout(ied, 1, vbBlob->GetBufferPointer(), vbBlob->GetBufferSize(), &il);
+                struct WVert { float x, y, z; };
+                const WVert verts[4] = {
+                    {-1200.0f, -1200.0f, 0.0f},
+                    { 1200.0f, -1200.0f, 0.0f},
+                    { 1200.0f,  1200.0f, 0.0f},
+                    {-1200.0f,  1200.0f, 0.0f},
+                };
+                const uint16_t idx[6] = { 0, 2, 1, 0, 3, 2 };
+                D3D11_BUFFER_DESC vbd{sizeof(verts), D3D11_USAGE_IMMUTABLE, D3D11_BIND_VERTEX_BUFFER, 0, 0, 0};
+                D3D11_BUFFER_DESC ibd{sizeof(idx),   D3D11_USAGE_IMMUTABLE, D3D11_BIND_INDEX_BUFFER,  0, 0, 0};
+                D3D11_SUBRESOURCE_DATA vsd{verts, 0, 0}, isd{idx, 0, 0};
+                ComPtr<ID3D11Buffer> vb, ib;
+                dev->CreateBuffer(&vbd, &vsd, &vb);
+                dev->CreateBuffer(&ibd, &isd, &ib);
+                D3D11_TEXTURE2D_DESC td{64, 64, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET, 0, 0};
+                ComPtr<ID3D11Texture2D> rt;
+                dev->CreateTexture2D(&td, nullptr, &rt);
+                ComPtr<ID3D11RenderTargetView> rtv = MakeRTV(dev.Get(), rt.Get());
+
+                auto renderWave = [&](float tSec, float tideU, Image& outImg) -> bool {
+                    raw::tx::SetWaterWaveState(dev.Get(), tSec, 9.80665f, tideU, 7.0f, 0.866f, 0.5f);
+                    const float zero[4] = {0, 0, 0, 1};
+                    ctx->ClearRenderTargetView(rtv.Get(), zero);
+                    ID3D11RenderTargetView* rtvs[1] = {rtv.Get()};
+                    ctx->OMSetRenderTargets(1, rtvs, nullptr);
+                    D3D11_VIEWPORT vp{0, 0, 64, 64, 0, 1};
+                    ctx->RSSetViewports(1, &vp);
+                    ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                    ctx->IASetInputLayout(il.Get());
+                    UINT stride = sizeof(WVert), off = 0;
+                    ID3D11Buffer* vbs[1] = {vb.Get()};
+                    ctx->IASetVertexBuffers(0, 1, vbs, &stride, &off);
+                    ctx->IASetIndexBuffer(ib.Get(), DXGI_FORMAT_R16_UINT, 0);
+                    ctx->VSSetShader(vs.Get(), nullptr, 0);
+                    ctx->PSSetShader(ps.Get(), nullptr, 0);
+                    raw::tx::SetDrawWaterHint(ctx.Get(), true);
+                    ctx->DrawIndexed(6, 0, 0);
+                    raw::tx::SetDrawWaterHint(ctx.Get(), false);
+                    SceneCtx sc{dev.Get(), ctx.Get()};
+                    return Readback(sc, rt.Get(), outImg);
+                };
+                Image imgLow, imgHigh;
+                okW = renderWave(0.5f, -12.0f, imgLow) && renderWave(2.25f, +14.0f, imgHigh);
+                int seen[256] = {};
+                uint64_t sumLow = 0, sumHigh = 0, cntLow = 0, cntHigh = 0;
+                for (size_t i = 0; i + 3 < imgLow.rgba.size(); i += 4) {
+                    if (imgLow.rgba[i + 2] > 200) {
+                        sumLow += imgLow.rgba[i];
+                        ++cntLow;
+                        seen[imgLow.rgba[i]] = 1;
+                    }
+                    if (imgHigh.rgba[i + 2] > 200) {
+                        sumHigh += imgHigh.rgba[i];
+                        ++cntHigh;
+                    }
+                }
+                for (int k = 0; k < 256; ++k) distinctLow += seen[k];
+                if (cntLow) meanLow = double(sumLow) / double(cntLow);
+                if (cntHigh) meanHigh = double(sumHigh) / double(cntHigh);
+                ctx->ClearState(); ctx->Flush();
+                stW = raw::tx::GetStats(dev.Get());
+            }
+        }
+        const bool waterPass = okW && stW.debugErrors == 0 && stW.subdivMeshes == 1 && stW.subdivDraws == 2 &&
+                               distinctLow >= 12 && (meanHigh > meanLow + 35.0);
+        char wd[256];
+        snprintf(wd, sizeof(wd), "meanLow=%.1f meanHigh=%.1f distinctWaveLevels=%d meshes=%llu draws=%llu debugErr=%llu",
+                 meanLow, meanHigh, distinctLow, (unsigned long long)stW.subdivMeshes,
+                 (unsigned long long)stW.subdivDraws, (unsigned long long)stW.debugErrors);
+        t.Add(waterPass, "geometry_subdiv_live_3d_water_waves", wd);
+    }
 }
 
 // ---- bytecode readers ----

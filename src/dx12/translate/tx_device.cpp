@@ -355,4 +355,18 @@ void SetSubdivParams(ID3D11Device* device, float curvatureGain, float snowDepthU
     }
 }
 
+void SetWaterWaveState(ID3D11Device* device, float simTimeSec, float gravityMps2, float tideHeightU,
+                       float beaufort, float swellDirX, float swellDirY)
+{
+    if (!device) return;
+    Device* d = Dev(device);
+    d->waterTimeSec.store(simTimeSec, std::memory_order_relaxed);
+    d->waterGravity.store(std::clamp(gravityMps2, 1.0f, 30.0f), std::memory_order_relaxed);
+    d->waterTideU.store(std::clamp(tideHeightU, -24.0f, 24.0f), std::memory_order_relaxed);
+    d->waterBeaufort.store(std::clamp(beaufort, 0.0f, 12.0f), std::memory_order_relaxed);
+    d->waterSwellX.store(swellDirX, std::memory_order_relaxed);
+    d->waterSwellY.store(swellDirY, std::memory_order_relaxed);
+    d->waterStateGen.fetch_add(1u, std::memory_order_release);
+}
+
 }  // namespace raw::tx

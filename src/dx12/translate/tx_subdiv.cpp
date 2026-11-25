@@ -46,8 +46,16 @@ struct SubdivCB {
     float    maxOffsetFrac;
     float    snowDepthU;
     float    displaceAmp;
+    uint32_t waterMode;
+    float    waterTimeSec;
+    float    waterGravity;
+    float    waterTideU;
+    float    waterBeaufort;
+    float    waterSwellX;
+    float    waterSwellY;
+    float    waterPad;
 };
-static_assert(sizeof(SubdivCB) == 64, "SubdivCB must be 16 DWORDs");
+static_assert(sizeof(SubdivCB) == 96, "SubdivCB must be 24 DWORDs");
 
 bool CreateDefaultBuf(ID3D12Device* dev, uint64_t bytes, ComPtr<ID3D12Resource>& out)
 {
@@ -71,7 +79,7 @@ bool SubdivCache::Init(ID3D12Device* dev)
     if (!dev) return false;
     D3D12_ROOT_PARAMETER rp[5]{};
     rp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    rp[0].Constants = {0, 0, 16};
+    rp[0].Constants = {0, 0, 24};
     rp[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; rp[1].Descriptor = {0, 0};
     rp[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; rp[2].Descriptor = {1, 0};
     rp[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV; rp[3].Descriptor = {0, 0};
@@ -144,8 +152,10 @@ SubdivLayoutInfo SubdivCache::AnalyzeLayout(const LayoutData& data) const
             if (e.Format == DXGI_FORMAT_R8G8B8A8_UNORM)          info.colOffFmt = PackOffFmt(off, 1u);
         }
     }
-    // Require single-slot rigid geometry with both POSITION and NORMAL so curved PN-Triangle tangents are physically valid.
-    info.eligible = !hasSkin && !hasMultiSlot && (info.posOffFmt >> 16u) != 0u && (info.normOffFmt >> 16u) != 0u;
+    // Require single-slot rigid geometry with POSITION+NORMAL for curved PN-Triangles,
+    // and POSITION-only (single-slot, unskinned) for live 3D geometric water wave tessellation!
+    info.waterEligible = !hasSkin && !hasMultiSlot && (info.posOffFmt >> 16u) != 0u;
+    info.eligible = info.waterEligible && (info.normOffFmt >> 16u) != 0u;
     return info;
 }
 
@@ -174,9 +184,12 @@ std::shared_ptr<const SubdivEntry> SubdivCache::Build(ID3D12Device* dev, ID3D12G
                                                       const SubdivBuildReq& req, bool& outDispatched)
 {
     outDispatched = false;
-    if (!Ready() || !dev || !cl || !req.layout || !req.layout->eligible || !req.inVerts || !req.inIdx) return nullptr;
-    if (req.key.indexCount < 12u || req.key.indexCount > 36000u || (req.key.indexCount % 3u) != 0u) return nullptr;
-    if (req.key.stride < 16u || req.key.stride > 128u || (req.key.stride & 3u) != 0u) return nullptr;
+    if (!Ready() || !dev || !cl || !req.layout || !req.inVerts || !req.inIdx) return nullptr;
+    if (req.isWater ? !req.layout->waterEligible : !req.layout->eligible) return nullptr;
+    const uint32_t minIdx = req.isWater ? 6u : 12u;
+    if (req.key.indexCount < minIdx || req.key.indexCount > 120000u || (req.key.indexCount % 3u) != 0u) return nullptr;
+    const uint32_t minStride = req.isWater ? 12u : 16u;
+    if (req.key.stride < minStride || req.key.stride > 128u || (req.key.stride & 3u) != 0u) return nullptr;
     if (req.inVertsBytes <= req.key.vbOffset + req.key.stride) return nullptr;
 
     const bool is32 = (req.key.ibFmt == DXGI_FORMAT_R32_UINT);
@@ -190,8 +203,11 @@ std::shared_ptr<const SubdivEntry> SubdivCache::Build(ID3D12Device* dev, ID3D12G
     }
 
     const uint32_t triCount = req.key.indexCount / 3u;
-    const uint64_t outVertBytes = uint64_t(triCount) * 6ull * uint64_t(req.key.stride);
-    const uint64_t outIdxBytes = uint64_t(triCount) * 12ull * 4ull;
+    const uint32_t wMode = !req.isWater ? 0u : (triCount <= 1024u ? 2u : 1u);
+    const uint64_t vertsPerTri = (wMode == 2u) ? 15ull : 6ull;
+    const uint64_t idxPerTri   = (wMode == 2u) ? 48ull : 12ull;
+    const uint64_t outVertBytes = uint64_t(triCount) * vertsPerTri * uint64_t(req.key.stride);
+    const uint64_t outIdxBytes  = uint64_t(triCount) * idxPerTri * 4ull;
     const uint64_t totalNeed = outVertBytes + outIdxBytes;
     if (vramBytes_.load(std::memory_order_relaxed) + totalNeed > kMaxVramBytes ||
         meshCount_.load(std::memory_order_relaxed) >= kMaxMeshes) {
@@ -211,8 +227,10 @@ std::shared_ptr<const SubdivEntry> SubdivCache::Build(ID3D12Device* dev, ID3D12G
     entry->ibTr->global.assign(1, D3D12_RESOURCE_STATE_INDEX_BUFFER);
     entry->vbView = {entry->vbTr->res->GetGPUVirtualAddress(), UINT(outVertBytes), req.key.stride};
     entry->ibView = {entry->ibTr->res->GetGPUVirtualAddress(), UINT(outIdxBytes), DXGI_FORMAT_R32_UINT};
-    entry->outIndexCount = triCount * 12u;
+    entry->outIndexCount = triCount * static_cast<uint32_t>(idxPerTri);
     entry->vramBytes = totalNeed;
+    entry->waterMode = wMode;
+    entry->lastWaterFrame.store(req.frameSeq, std::memory_order_relaxed);
 
     const uint64_t availVerts = (req.inVertsBytes - req.key.vbOffset) / req.key.stride;
     if (availVerts == 0) return nullptr;
@@ -234,11 +252,18 @@ std::shared_ptr<const SubdivEntry> SubdivCache::Build(ID3D12Device* dev, ID3D12G
     cb.maxOffsetFrac = 0.18f;
     cb.snowDepthU = req.snowDepthU;
     cb.displaceAmp = req.displaceAmp;
+    cb.waterMode = wMode;
+    cb.waterTimeSec = req.waterTimeSec;
+    cb.waterGravity = req.waterGravity;
+    cb.waterTideU = req.waterTideU;
+    cb.waterBeaufort = req.waterBeaufort;
+    cb.waterSwellX = req.waterSwellX;
+    cb.waterSwellY = req.waterSwellY;
 
     // Newly created buffers start in COMMON and implicitly promote to UNORDERED_ACCESS on first compute write.
     cl->SetComputeRootSignature(root_.Get());
     cl->SetPipelineState(pso_.Get());
-    cl->SetComputeRoot32BitConstants(0, 16, &cb, 0);
+    cl->SetComputeRoot32BitConstants(0, 24, &cb, 0);
     cl->SetComputeRootShaderResourceView(1, req.inVerts->GetGPUVirtualAddress());
     cl->SetComputeRootShaderResourceView(2, req.inIdx->GetGPUVirtualAddress());
     cl->SetComputeRootUnorderedAccessView(3, entry->vbTr->res->GetGPUVirtualAddress());
@@ -263,6 +288,67 @@ std::shared_ptr<const SubdivEntry> SubdivCache::Build(ID3D12Device* dev, ID3D12G
         return entry;
     }
     return it->second;
+}
+
+bool SubdivCache::UpdateWater(ID3D12GraphicsCommandList* cl, const SubdivEntry& entry, const SubdivBuildReq& req)
+{
+    if (!Ready() || !cl || !req.layout || !req.layout->waterEligible || !req.inVerts || !req.inIdx) return false;
+    if (entry.waterMode == 0u || !entry.vbTr || !entry.vbTr->res) return false;
+    const uint64_t availVerts = (req.inVertsBytes > req.key.vbOffset) ? ((req.inVertsBytes - req.key.vbOffset) / req.key.stride) : 0ull;
+    if (availVerts == 0) return false;
+
+    const bool is32 = (req.key.ibFmt == DXGI_FORMAT_R32_UINT);
+    const uint32_t triCount = req.key.indexCount / 3u;
+
+    SubdivCB cb{};
+    cb.triCount = triCount;
+    cb.strideBytes = req.key.stride;
+    cb.vbByteOffset = req.key.vbOffset;
+    cb.ibByteOffset = req.key.ibOffset + req.key.startIndex * (is32 ? 4u : 2u);
+    cb.baseVertex = req.key.baseVertex;
+    cb.idxIs32Bit = is32 ? 1u : 0u;
+    cb.posOffFmt = req.layout->posOffFmt;
+    cb.normOffFmt = req.layout->normOffFmt;
+    cb.tangOffFmt = req.layout->tangOffFmt;
+    cb.uvOffFmt = req.layout->uvOffFmt;
+    cb.colOffFmt = req.layout->colOffFmt;
+    cb.curvatureGain = req.curvatureGain;
+    cb.maxVertIdx = static_cast<uint32_t>(availVerts - 1ull);
+    cb.maxOffsetFrac = 0.18f;
+    cb.snowDepthU = 0.0f;
+    cb.displaceAmp = 0.0f;
+    cb.waterMode = entry.waterMode | 4u; // VB-only live wave update; indices stay intact with zero IB barrier!
+    cb.waterTimeSec = req.waterTimeSec;
+    cb.waterGravity = req.waterGravity;
+    cb.waterTideU = req.waterTideU;
+    cb.waterBeaufort = req.waterBeaufort;
+    cb.waterSwellX = req.waterSwellX;
+    cb.waterSwellY = req.waterSwellY;
+
+    D3D12_RESOURCE_BARRIER toUav{};
+    toUav.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    toUav.Transition = {entry.vbTr->res.Get(), 0,
+                        D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS};
+    cl->ResourceBarrier(1, &toUav);
+
+    cl->SetComputeRootSignature(root_.Get());
+    cl->SetPipelineState(pso_.Get());
+    cl->SetComputeRoot32BitConstants(0, 24, &cb, 0);
+    cl->SetComputeRootShaderResourceView(1, req.inVerts->GetGPUVirtualAddress());
+    cl->SetComputeRootShaderResourceView(2, req.inIdx->GetGPUVirtualAddress());
+    cl->SetComputeRootUnorderedAccessView(3, entry.vbTr->res->GetGPUVirtualAddress());
+    cl->SetComputeRootUnorderedAccessView(4, entry.vbTr->res->GetGPUVirtualAddress()); // unused in mode|4, valid UAV state
+    cl->Dispatch((triCount + 63u) / 64u, 1u, 1u);
+
+    D3D12_RESOURCE_BARRIER toVb{};
+    toVb.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    toVb.Transition = {entry.vbTr->res.Get(), 0,
+                       D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                       D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
+    cl->ResourceBarrier(1, &toVb);
+    entry.lastWaterFrame.store(req.frameSeq, std::memory_order_release);
+    return true;
 }
 
 void SubdivCache::InvalidateSource(const TrackedRes* tr, Retire& retire)

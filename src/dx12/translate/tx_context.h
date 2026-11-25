@@ -256,7 +256,9 @@ private:
     std::vector<Segment*> freeSegs_;           // reused: no allocation per segment
   public:
     void FrameRuns() { RunBreak("Present"); runIndex_ = 0; }   // the swap chain, at every Present
+    void SetDrawWaterHint(bool isWater) { drawWaterHint_ = isWater; }
   private:
+    bool drawWaterHint_ = false;
     Segment* seg_ = nullptr;                   // being recorded
     bool stale_ = false;                       // the open list's D3D12 state is not the shadow's (segments ran)
     struct Pending { std::unique_ptr<Recording> rec; Segment* seg = nullptr; };

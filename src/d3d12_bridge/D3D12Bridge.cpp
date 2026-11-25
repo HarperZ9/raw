@@ -1,6 +1,7 @@
 // D3D12Bridge setup: device on the game's adapter, shared textures, shared
 // fence, descriptor heaps and timestamp queries. Original work, MIT.
 #include "BridgeImpl.h"
+#include "RawProceduralLib.h"
 #include "StreamlineHost.h"
 #include "RawTextureBridge.h"
 #include "DepthCopy_CS.h"   // g_DepthCopyCS (fxc, cs_5_0)
@@ -293,6 +294,42 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                (!meshOk && !meshErr.empty()) ? (" (" + meshErr + ")").c_str() : "",
                asyncOk ? "READY" : "off", indOk ? "READY" : "off",
                m->indirect.SupportsIndirectMesh() ? "YES" : "no");
+        // Wave 35: Zero-external-asset built-in procedural geometry & PBR material library uploaded directly to RAW-MESH:
+        if (meshOk) {
+            RawMeshAsset builtIn[4]{};
+            const bool genOk[4] = {
+                GenerateNordicSpruceTree(1337u, 220.0f, 36.0f, 0.25f, &builtIn[0]),
+                GenerateNordicBoulder(2026u, 84.0f, 0.28f, 10u, &builtIn[1]),
+                GenerateAlpineGrassClump(4096u, 12u, 42.0f, &builtIn[2]),
+                GenerateOceanTileMesh(16u, 1200.0f, &builtIn[3]),
+            };
+            uint32_t totalMeshlets = 0;
+            for (int k = 0; k < 4; ++k) {
+                if (!genOk[k]) continue;
+                RawMeshGpuAsset gpu{};
+                if (m->meshHost.UploadAsset(builtIn[k], &gpu)) {
+                    totalMeshlets += gpu.meshletCount;
+                    m->proceduralMeshes.push_back(std::move(gpu));
+                }
+            }
+            uint32_t texCount = 0;
+            uint64_t texBytes = 0;
+            const ProceduralTexKind kinds[5] = {
+                ProceduralTexKind::BarkFurrow, ProceduralTexKind::PineNeedles,
+                ProceduralTexKind::GraniteStrata, ProceduralTexKind::SnowSastrugi,
+                ProceduralTexKind::CellularFoam,
+            };
+            for (ProceduralTexKind tk : kinds) {
+                RawTextureAsset tx{};
+                if (SynthesizeProceduralPbrTexture(tk, 128u, 128u, 777u, &tx)) {
+                    ++texCount;
+                    texBytes += tx.rgba8.size();
+                }
+            }
+            m->log("[D3D12Bridge] RAW Procedural Library (0 external assets): %zu GPU AS+MS assets (%u meshlets), %u synthesized PBR textures (%llu KB)",
+                   m->proceduralMeshes.size(), totalMeshlets, texCount,
+                   static_cast<unsigned long long>(texBytes / 1024ull));
+        }
         char exeBuf[MAX_PATH]{};
         if (GetModuleFileNameA(nullptr, exeBuf, MAX_PATH) > 0) {
             std::string gDir(exeBuf);

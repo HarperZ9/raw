@@ -69,6 +69,9 @@ void WorldSimOnPresent();
 void WorldSimShutdown();
 float WorldSimGetShiverIntensity();
 
+// Wave 35: Pure deterministic guard for live Creation Engine TESObjectCELL::waterHeight tidal buoyancy coupling.
+float ComputeBoundedTidalCellHeight(float baseWaterHeight, float tideHeightU, bool isInterior);
+
 // Deterministic single-step helper (also directly unit-testable outside SkyrimSE.exe).
 RawWorldSimTelemetry StepWorldSimSnapshot(const float playerPos[3], float gameHour,
                                           float rain01, float snow01, float windSpeed,

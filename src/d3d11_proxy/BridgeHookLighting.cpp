@@ -336,8 +336,53 @@ bool LightingAtOpaque(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr)
             if (sim.geomSubdivLevel > 0) {
                 const float curv = sim.geomCurvature;
                 const float disp = sim.geomDisplaceScale * 0.08f;
-                raw::tx::SetSubdivParams(pi->device, curv, 0.0f, disp);
+                // Quantize live exterior snowpack depth to 0.75u steps (<= 4.5u) so 3D volumetric snow pillows
+                // build cleanly on roofs/rocks/terrain without triggering per-frame SubdivCache rebuilds!
+                const float rawSnowU = (!l.isInterior) ? std::clamp(Cfg().light.snow * 4.2f, 0.0f, 4.5f) : 0.0f;
+                const float snowU = std::floor(rawSnowU / 0.75f + 0.5f) * 0.75f;
+                raw::tx::SetSubdivParams(pi->device, curv, snowU, disp);
             }
+            // Wave 35: Push live planetary time, gravity, Nirn dual-moon tides & Beaufort sea state into raw::tx
+            // so Skyrim's water geometry physically tessellates (1->16 / 1->4) and rolls in real 3D!
+            struct WorldSimWaterPod {
+                uint32_t simTicks, actorsTracked, navMeshesLoaded, navVertsLoaded, navTrisLoaded;
+                uint8_t  activeDirective, tacticalAction, attackTokensUsed, navReady;
+                float    expectedPayoff, strideDampMult, snowDepthU, windSpeed;
+                float    ambientTempC, coreWarmth, shiverIntensity, staminaRegenMult;
+                float    physicsSubstepMs, acousticRt60Sec, acousticLowPassHz;
+                uint8_t  physicsSubsteps, acousticEnvClass, freezingRisk, marketTier;
+                float    economyBuyMult, lockOnFovDeg, largestSaveMb;
+                uint32_t totalSavesFound;
+                uint8_t  camLockedOn, saveBloatWarn, squadMstComps, squadMstRounds;
+                float    squadSpanLengthU;
+                float    synopticHpa, adaptiveQuality, synopticCloud, synopticRain, synopticSnow, synopticLightning;
+                float    gravityMps2, tideHeightU, tideVelocityMs, springTide01, beaufortScale, swellDirX, swellDirY, simClockSec;
+            };
+            using WaterTelFn = int (*)(WorldSimWaterPod*);
+            static HMODULE s_wMod = nullptr;
+            static WaterTelFn s_wFn = nullptr;
+            if (!s_wFn) {
+                if (!s_wMod) s_wMod = GetModuleHandleA("raw_engine.dll");
+                if (s_wMod) s_wFn = reinterpret_cast<WaterTelFn>(GetProcAddress(s_wMod, "RAW_GetWorldSimTelemetry"));
+            }
+            static LARGE_INTEGER s_wFreq{}, s_wStart{};
+            if (!s_wFreq.QuadPart) { QueryPerformanceFrequency(&s_wFreq); QueryPerformanceCounter(&s_wStart); }
+            LARGE_INTEGER wNow{};
+            QueryPerformanceCounter(&wNow);
+            float wTime = (s_wFreq.QuadPart > 0) ? float(double(wNow.QuadPart - s_wStart.QuadPart) / double(s_wFreq.QuadPart)) : 0.0f;
+            float wGrav = 9.80665f, wTide = 0.0f, wBeauf = 2.2f, wSx = 0.866f, wSy = 0.500f;
+            WorldSimWaterPod wp{};
+            if (s_wFn && s_wFn(&wp) && wp.simTicks > 0u) {
+                if (wp.simClockSec > 0.0f) wTime = wp.simClockSec;
+                if (wp.gravityMps2 > 1.0f) wGrav = wp.gravityMps2;
+                wTide  = l.isInterior ? 0.0f : wp.tideHeightU;
+                wBeauf = l.isInterior ? 0.4f : wp.beaufortScale;
+                wSx    = wp.swellDirX;
+                wSy    = wp.swellDirY;
+            } else if (l.isInterior) {
+                wBeauf = 0.4f;
+            }
+            raw::tx::SetWaterWaveState(pi->device, wTime, wGrav, wTide, wBeauf, wSx, wSy);
         }
     }
     b->SetRtDraws(SceneGeometry_Take());

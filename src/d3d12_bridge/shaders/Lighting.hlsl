@@ -15,6 +15,7 @@
 #include "CloudCommon.hlsli"
 #include "StrataBRDF.hlsli"
 #include "SpectralTransport.hlsli"
+#include "RawProceduralNoise.hlsli"
 
 Texture2D<float>  Depth   : register(t0);
 Texture2D<float4> Normal  : register(t1);
@@ -587,25 +588,30 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (z < 7200.0f) {
             const float3 wpF = p + camPosW.xyz;
             const float fFade = smoothstep(7200.0f, 240.0f, z);
-            // Wave 33 Botanical Canopy Macro-Volume (fixes chalky bleached pine needles in 00.06.54 / 00.06.47):
-            // Keep natural 3D bough orientation (gentle upward bias 0.26 instead of 0.62!) so pine sides keep deep
-            // directional shadow modeling instead of facing straight into the noon sun.
-            const float boughX = cNoise(wpF * 0.015f + float3(3.1f, 0.0f, 1.7f)) * 2.0f - 1.0f;
-            const float boughY = cNoise(wpF * 0.015f + float3(0.0f, 5.7f, 2.9f)) * 2.0f - 1.0f;
-            const float boughZ = (cNoise(wpF * 0.022f + float3(7.3f, 2.1f, 4.3f)) - 0.5f) * 0.35f;
-            const float3 canopyMacroN = normalize(float3(s.n.xy * 0.78f + float2(boughX, boughY) * 0.32f,
-                                                         s.n.z * 0.68f + 0.26f + boughZ));
-            s.n = normalize(lerp(s.n, canopyMacroN, 0.38f * fFade));
-            const float leafVar = cNoise(wpF * 0.018f);
+            // Wave 35 Old-Growth 3D Conifer Canopy Depth (NordicCanopy / Scionti / JustHoj):
+            // 3-step view-tangent bough parallax heightfield sculptures flat 2011 crossed pine cards into lush
+            // layered needle clusters with deep interior shadow cavities and warm sunlit crown tips!
+            const float3 vTanF = -s.v / max(abs(dot(s.n, s.v)), 0.35f);
+            float boughDepth = 0.0f;
+            [unroll] for (int bp = 0; bp < 3; ++bp) {
+                const float hBp = (float(bp) + 1.0f) * 0.333f;
+                const float3 pBp = (wpF + vTanF * (hBp * 6.5f)) * 0.028f;
+                boughDepth += rawNoise3Grad(pBp).x * (0.50f - hBp * 0.16f);
+            }
+            const float4 bGrad = rawNoise3Grad(wpF * 0.016f + float3(3.1f, 5.7f, 1.7f));
+            const float3 canopyMacroN = normalize(float3(s.n.xy * 0.76f + bGrad.yz * 0.38f,
+                                                         s.n.z * 0.66f + 0.26f + bGrad.w * 0.22f));
+            s.n = normalize(lerp(s.n, canopyMacroN, 0.42f * fFade));
+            const float leafVar = saturate(boughDepth * 1.15f);
             s.f0 = 0.018f;
-            s.alpha = clamp(lerp(s.alpha, 0.82f, 0.72f * fFade), 0.68f, 0.94f);
+            s.alpha = clamp(lerp(s.alpha, 0.80f, 0.72f * fFade), 0.64f, 0.94f);
             const float speciesId = cNoise(wpF * 0.0045f + float3(17.3f, 9.1f, 3.7f));
-            // Physical linear chlorophyll albedo (0.04..0.28 linear instead of bleached 0.55 chalky beige):
+            // Physical linear chlorophyll albedo (0.04..0.32 linear: deep boreal spruce + moss-emerald fir):
             const float3 speciesTint = speciesId < 0.5f
-                ? lerp(float3(0.58f, 0.80f, 0.62f), float3(0.68f, 0.86f, 0.66f), speciesId * 2.0f)
-                : lerp(float3(0.68f, 0.86f, 0.66f), float3(0.74f, 0.84f, 0.64f), (speciesId - 0.5f) * 2.0f);
-            const float crownDepthAo = lerp(0.56f, 0.98f, saturate(s.n.z * 0.5f + 0.5f));
-            albedo *= lerp(1.0f.xxx, speciesTint * lerp(0.80f, 1.02f, leafVar) * crownDepthAo, fFade * 0.78f);
+                ? lerp(float3(0.54f, 0.78f, 0.58f), float3(0.66f, 0.86f, 0.64f), speciesId * 2.0f)
+                : lerp(float3(0.66f, 0.86f, 0.64f), float3(0.74f, 0.84f, 0.60f), (speciesId - 0.5f) * 2.0f);
+            const float crownDepthAo = lerp(0.50f, 1.02f, saturate(s.n.z * 0.5f + 0.5f)) * lerp(0.76f, 1.12f, leafVar);
+            albedo *= lerp(1.0f.xxx, speciesTint * crownDepthAo, fFade * 0.80f);
             // Cap washed-out chalky foliage albedo while preserving natural bright snow-laden branches in winter:
             albedo = min(albedo, float3(0.32f, 0.38f, 0.32f));
         }
@@ -1359,14 +1365,28 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 emissiveRim += min(eCol, 2.5f.xxx) * eW;
             }
         }
-        // Wave 34 Live Tidal Capillary Shoreline Meniscus (anchored to engineWorld.x + live Nirn harmonic tide physWorld[0].z!):
-        // At spring high tide the dark glistening wet shoreline climbs higher up coastal rocks & piers; at low tide it exposes wet stone!
+        // Wave 34/35 Live Tidal Capillary Shoreline Meniscus + GTA VI (@OtarieBambelle) Above-Surface Reflected Water Caustics:
+        // At spring high tide the dark glistening wet shoreline climbs higher up coastal rocks & piers;
+        // downward/side-facing bridge arches, ship hulls, piers & rock overhangs within 0..260u above sunlit water
+        // receive shimmering reflected water caustics dancing upward from the moving surface!
         if ((base == 1u || base == 4u) && engineWorld.z > 0.5f) {
-            const float liveTideWaterZ = engineWorld.x + physWorld[0].z;
+            const float liveTideWaterZ = rawLiveWaterZ(engineWorld, physWorld[0]);
             const float highTideMarkU  = 34.0f + physWorld[1].w * 18.0f;
             const float aboveW = (p.z + camPosW.z) - liveTideWaterZ;
             if (aboveW > -8.0f && aboveW < highTideMarkU) {
                 waterContact = max(waterContact, smoothstep(highTideMarkU, 0.0f, max(aboveW, 0.0f)) * smoothstep(-8.0f, 1.0f, aboveW));
+            }
+            if (isExterior && sunDir.w > 0.5f && sunDir.z > 0.10f && aboveW > 4.0f && aboveW < 260.0f && s.n.z < 0.45f && z < 2800.0f) {
+                const float clearSunC = (1.0f - saturate(clouds.x * 0.80f)) * smoothstep(0.10f, 0.28f, sunDir.z);
+                if (clearSunC > 0.05f) {
+                    const float downFace = saturate((0.45f - s.n.z) * 1.65f);
+                    const float heightAtt = (1.0f - smoothstep(18.0f, 260.0f, aboveW)) * smoothstep(4.0f, 18.0f, aboveW);
+                    const float wtC = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
+                    const float2 caustXY = (p.xy + camPosW.xy) - sunDir.xy * (aboveW / max(sunDir.z, 0.25f)) * 0.45f;
+                    const float cNet = rawReflectedCausticNet(caustXY, wtC, 54.0f);
+                    const float distC = smoothstep(2800.0f, 350.0f, z);
+                    diff += sunColour.rgb * float3(0.42f, 0.86f, 0.96f) * (cNet * downFace * heightAtt * clearSunC * distC * 0.48f);
+                }
             }
         }
         // Removed orange-blotch skinContact ambient dump on neck/collar seams (23.50.29.60.png Hilde neck artifact!).

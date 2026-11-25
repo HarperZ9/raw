@@ -67,13 +67,21 @@ float3 distantLit(int3 ip, float2 at, float d) {
         // Tame chalky snow-pine billboards to match Lighting.hlsl near-field canopy ceiling:
         albedo = min(albedo, float3(0.58f, 0.62f, 0.60f));
     } else if (viewZOf(d) > 3800.0f) {
-        // Seamless Near-to-Far Terrain Continuity: tri-planar geological rock-strata + alpine scree contrast on distant mountain LODs!
+        // Wave 35 Seamless Grand Alpine Mountains (Scionti / kimmokaunela):
+        // Analytical-derivative tri-planar granite cliff strata + wind-scoured high-altitude snow-crest ridges!
         const float3 wpM = p + camPosW.xyz;
-        const float strata = cNoise(float3(wpM.xy * 0.00085f, wpM.z * 0.0038f)) * 2.0f - 1.0f;
-        const float crag = cNoise(wpM * 0.0026f + 11.7f) * 2.0f - 1.0f;
-        n = normalize(n + float3(crag * 0.24f, strata * 0.26f, strata * 0.16f));
-        const float lodCliff = smoothstep(0.72f, 0.35f, rawNz);
-        albedo *= lerp(1.0f, lerp(0.80f, 1.18f, strata * 0.5f + 0.5f), lodCliff * 0.55f);
+        const float4 sGrad = rawNoise3Grad(float3(wpM.xy * 0.00085f, wpM.z * 0.0038f));
+        const float4 cGrad = rawNoise3Grad(wpM * 0.0026f + 11.7f);
+        const float strata = sGrad.x * 2.0f - 1.0f;
+        n = normalize(n + cGrad.yzw * 0.30f + float3(sGrad.y * 0.18f, sGrad.z * 0.18f, strata * 0.18f));
+        const float lodCliff = smoothstep(0.74f, 0.32f, rawNz);
+        albedo *= lerp(1.0f, lerp(0.76f, 1.22f, sGrad.x), lodCliff * 0.62f);
+        // Wind-scoured alpine snow ridges on high mountain crests (wpM.z > 2800u) while steep crags stay chiseled granite:
+        const float peakSnow = smoothstep(2800.0f, 6400.0f, wpM.z) * smoothstep(0.46f, 0.80f, n.z)
+                             * smoothstep(0.32f, 0.72f, cGrad.x);
+        if (peakSnow > 0.02f) {
+            albedo = lerp(albedo, float3(0.64f, 0.70f, 0.78f), peakSnow * 0.58f);
+        }
     }
     const bool rt = (flags.x & FLAG_RT) != 0u;
     float sh = (flags.x & FLAG_SHADOWS) == 0u ? 1.0f : (flags.x & FLAG_CASCADES) != 0u ? cascadeShadow(p, d, true) : Mask.Load(ip).x;
@@ -132,7 +140,16 @@ float3 distantLit(int3 ip, float2 at, float d) {
                 trampleOcc = min(trampleOcc, lerp(1.0f, 0.62f, push));
             }
         }
-        n = normalize(n + float3(trampleBend + windG * (gustG * 0.24f), 0.0f));
+        // Wave 35 Interactive Camera-Body & Actor Grass Parting (Vidar / nintendobu) + Traveling Wind Gust Waves:
+        const float2 fromEyeG = p.xy - eyeAt().xy;
+        const float eyeD2 = dot(fromEyeG, fromEyeG);
+        if (eyeD2 > 1.0f && eyeD2 < 9025.0f && abs(p.z - eyeAt().z) < 140.0f) {
+            const float eDist = sqrt(eyeD2);
+            const float ePush = saturate(1.0f - eDist / 95.0f);
+            trampleBend += (fromEyeG / eDist) * (ePush * ePush * 0.85f);
+            trampleOcc = min(trampleOcc, lerp(1.0f, 0.74f, ePush));
+        }
+        n = normalize(n + float3(trampleBend + windG * (gustG * 0.28f), 0.0f));
         // Per-blade directional micro-shadow march (grounds grass tufts cleanly inside terrain, rock & tree shadows).
         const float grassMicroSh = (!rt && zDist < 2600.0f) ? screenShadow(p + n * 0.6f, sunDir.xyz, 18.0f, 0.02f, ign(px), 6u) : 1.0f;
         const float gSh = sh * lerp(1.0f, grassMicroSh, saturate(1.0f - zDist / 2600.0f) * 0.82f) * trampleOcc;

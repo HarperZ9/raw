@@ -359,9 +359,13 @@ struct DynamicGmstBindings {
     float* fBarterMin = nullptr;
     float* fBarterMax = nullptr;
     float* fSprintStaminaDrainMult = nullptr;
+    float* fArrowGravityMult = nullptr;
+    float* fJumpFallHeightMult = nullptr;
     float baseBarterMin = 1.35f;
     float baseBarterMax = 3.60f;
     float baseSprintDrain = 0.82f;
+    float baseArrowGravity = 0.85f;
+    float baseJumpFall = 1.0f;
 } g_dynGmsts;
 }  // namespace
 
@@ -374,13 +378,19 @@ std::string WorldSimBindDynamicSettings(const Image& img, const std::vector<RefT
     g_dynGmsts.fBarterMin = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fBarterMin"));
     g_dynGmsts.fBarterMax = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fBarterMax"));
     g_dynGmsts.fSprintStaminaDrainMult = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fSprintStaminaDrainMult"));
+    g_dynGmsts.fArrowGravityMult = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fArrowGravityMult"));
+    g_dynGmsts.fJumpFallHeightMult = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fJumpFallHeightMult"));
     if (g_dynGmsts.fBarterMin) g_dynGmsts.baseBarterMin = *g_dynGmsts.fBarterMin;
     if (g_dynGmsts.fBarterMax) g_dynGmsts.baseBarterMax = *g_dynGmsts.fBarterMax;
     if (g_dynGmsts.fSprintStaminaDrainMult) g_dynGmsts.baseSprintDrain = *g_dynGmsts.fSprintStaminaDrainMult;
-    g_dynGmsts.bound = (g_dynGmsts.fBarterMin || g_dynGmsts.fBarterMax || g_dynGmsts.fSprintStaminaDrainMult);
-    char out[192];
-    std::snprintf(out, sizeof out, "worldsim gmst feedback: bound=%d (barterMin=%p barterMax=%p sprintDrain=%p)",
-                  g_dynGmsts.bound ? 1 : 0, g_dynGmsts.fBarterMin, g_dynGmsts.fBarterMax, g_dynGmsts.fSprintStaminaDrainMult);
+    if (g_dynGmsts.fArrowGravityMult) g_dynGmsts.baseArrowGravity = *g_dynGmsts.fArrowGravityMult;
+    if (g_dynGmsts.fJumpFallHeightMult) g_dynGmsts.baseJumpFall = *g_dynGmsts.fJumpFallHeightMult;
+    g_dynGmsts.bound = (g_dynGmsts.fBarterMin || g_dynGmsts.fBarterMax ||
+                        g_dynGmsts.fSprintStaminaDrainMult || g_dynGmsts.fArrowGravityMult || g_dynGmsts.fJumpFallHeightMult);
+    char out[224];
+    std::snprintf(out, sizeof out, "worldsim gmst feedback: bound=%d (barterMin=%p barterMax=%p sprint=%p arrowGrav=%p)",
+                  g_dynGmsts.bound ? 1 : 0, g_dynGmsts.fBarterMin, g_dynGmsts.fBarterMax,
+                  g_dynGmsts.fSprintStaminaDrainMult, g_dynGmsts.fArrowGravityMult);
     return out;
 }
 
@@ -397,11 +407,26 @@ void WorldSimApplyLiveGmsts(float barterMin, float barterMax, float sprintStamin
     }
 }
 
+void WorldSimApplyLivePlanetaryGravity(float gravityMps2) {
+    if (!g_dynGmsts.bound || !std::isfinite(gravityMps2)) return;
+    const float gRatio = std::clamp(gravityMps2 / 9.80665f, 0.75f, 1.25f);
+    if (g_dynGmsts.fArrowGravityMult) {
+        const float target = g_dynGmsts.baseArrowGravity * gRatio;
+        if (std::fabs(*g_dynGmsts.fArrowGravityMult - target) > 0.002f) *g_dynGmsts.fArrowGravityMult = target;
+    }
+    if (g_dynGmsts.fJumpFallHeightMult) {
+        const float target = g_dynGmsts.baseJumpFall * gRatio;
+        if (std::fabs(*g_dynGmsts.fJumpFallHeightMult - target) > 0.002f) *g_dynGmsts.fJumpFallHeightMult = target;
+    }
+}
+
 void WorldSimRestoreDynamicSettings() {
     if (!g_dynGmsts.bound) return;
     if (g_dynGmsts.fBarterMin) *g_dynGmsts.fBarterMin = g_dynGmsts.baseBarterMin;
     if (g_dynGmsts.fBarterMax) *g_dynGmsts.fBarterMax = g_dynGmsts.baseBarterMax;
     if (g_dynGmsts.fSprintStaminaDrainMult) *g_dynGmsts.fSprintStaminaDrainMult = g_dynGmsts.baseSprintDrain;
+    if (g_dynGmsts.fArrowGravityMult) *g_dynGmsts.fArrowGravityMult = g_dynGmsts.baseArrowGravity;
+    if (g_dynGmsts.fJumpFallHeightMult) *g_dynGmsts.fJumpFallHeightMult = g_dynGmsts.baseJumpFall;
     g_dynGmsts.bound = false;
 }
 

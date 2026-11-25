@@ -39,6 +39,10 @@ struct EngineView {
 
 void ViewInit(const Image& img);
 void ViewOnPresent();
+// Wave 35: Live memory-level Creation Engine tidal water-height coupling (modulates exterior TESObjectCELL::waterHeight
+// cleanly around each cell's saved baseline for live swimming/buoyancy/splash alignment, restored on shutdown).
+void ViewApplyLiveTide(float tideHeightU);
+void ViewRestoreAllTides();
 // the last present's view as JSON fields (no braces), for live_state.jsonl and `view`
 std::string ViewJson();
 

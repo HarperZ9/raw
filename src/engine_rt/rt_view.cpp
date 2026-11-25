@@ -4,10 +4,12 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <unordered_map>
 
 namespace raw::rt {
 namespace {
@@ -20,6 +22,14 @@ uint32_t kGraphicsState = 0, kPlayerCamera = 0, kPlayer = 0, kGetSky = 0, kCalen
 uint64_t g_frame = 0;
 EngineView g_view{};
 std::mutex g_m;
+struct SavedCellWater {
+    uintptr_t cellAddr = 0;
+    float     baseHeight = -14000.0f;
+};
+std::mutex g_tideMu;
+std::unordered_map<uint32_t, SavedCellWater> g_baseCellWater;
+uintptr_t g_activeExtCellAddr = 0;
+uint32_t  g_activeExtCellId = 0;
 using SetCamFn = void (*)(const float*, const float*, float, uint32_t, uint32_t, uint32_t);
 using SetWorldFn = void (*)(float, uint32_t, uint32_t);
 SetCamFn g_setCam = nullptr;
@@ -62,8 +72,25 @@ bool ReadCamera(EngineView* v) {
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
-bool ReadCell(EngineView* v) {
+bool SehWriteCellWaterIfMatch(uintptr_t cellAddr, uint32_t expectedFormId, float newWaterHeight) {
     __try {
+        if (!cellAddr || !expectedFormId || !std::isfinite(newWaterHeight)) return false;
+        auto* cell = reinterpret_cast<uint8_t*>(cellAddr);
+        if (At<uint32_t>(cell, 0x14) != expectedFormId) return false;
+        if ((At<uint16_t>(cell, 0x40) & 1u) != 0u) return false;
+        const float cur = At<float>(cell, 0x70);
+        if (!std::isfinite(cur) || cur <= -13999.0f || cur >= 50000.0f || cur == 0.0f) return false;
+        if (std::fabs(cur - newWaterHeight) > 0.02f) {
+            std::memcpy(cell + 0x70, &newWaterHeight, sizeof(float));
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+bool ReadCell(EngineView* v, uintptr_t* outExtCellAddr, bool* outCellWhValid) {
+    __try {
+        if (outExtCellAddr) *outExtCellAddr = 0;
+        if (outCellWhValid) *outCellWhValid = false;
         if (!kPlayer) return false;
         const uint8_t* pc = At<const uint8_t*>(g_base, kPlayer);
         if (!pc) return false;
@@ -75,8 +102,12 @@ bool ReadCell(EngineView* v) {
         // TESObjectCELL::waterHeight (+0x70 on 1.6.1170/1.7.104) with TESWorldSpace::defaultWaterHeight (+0x150) fallback.
         v->waterHeight = -14000.0f;
         const float cellWh = At<float>(cell, 0x70);
-        const bool cellWhValid = std::isfinite(cellWh) && cellWh > -50000.0f && cellWh < 50000.0f && cellWh != 0.0f;
+        const bool cellWhValid = std::isfinite(cellWh) && cellWh > -13999.0f && cellWh < 50000.0f && cellWh != 0.0f;
         if (cellWhValid) v->waterHeight = cellWh;
+        if (!v->interior && cellWhValid && outExtCellAddr && outCellWhValid) {
+            *outExtCellAddr = reinterpret_cast<uintptr_t>(cell);
+            *outCellWhValid = true;
+        }
         // the worldspace: off:TESObjectCELL::worldSpace (+0x128 on 1.6.1170, a cell dump in game, ec7-2; CommonLib's
         // +0x120 held zero), checked by its form type (TESWorldSpace, 71)
         v->worldspaceFormId = 0;
@@ -134,7 +165,27 @@ void ViewInit(const Image& img) {
 void ViewOnPresent() {
     if (!g_base) return;
     EngineView v{};
-    v.ok = (ReadScreen(&v) ? 1u : 0u) | (ReadCamera(&v) ? 2u : 0u) | (ReadCell(&v) ? 4u : 0u) | (ReadTime(&v) ? 8u : 0u);
+    uintptr_t extCellAddr = 0;
+    bool extCellWhValid = false;
+    v.ok = (ReadScreen(&v) ? 1u : 0u) | (ReadCamera(&v) ? 2u : 0u) |
+           (ReadCell(&v, &extCellAddr, &extCellWhValid) ? 4u : 0u) | (ReadTime(&v) ? 8u : 0u);
+    {
+        std::lock_guard<std::mutex> tl(g_tideMu);
+        if ((v.ok & 4u) && !v.interior && extCellWhValid && extCellAddr && v.cellFormId != 0u) {
+            auto it = g_baseCellWater.find(v.cellFormId);
+            if (it == g_baseCellWater.end() || it->second.cellAddr != extCellAddr) {
+                g_baseCellWater[v.cellFormId] = {extCellAddr, v.waterHeight};
+            } else {
+                // Report the clean baseline height so GPU shaders add tide once without recursive feedback drift.
+                v.waterHeight = it->second.baseHeight;
+            }
+            g_activeExtCellAddr = extCellAddr;
+            g_activeExtCellId = v.cellFormId;
+        } else {
+            g_activeExtCellAddr = 0;
+            g_activeExtCellId = 0;
+        }
+    }
     if (g_setCam && (v.ok & 6u)) {
         g_setCam(v.camPos, v.camRot, v.fov, v.interior, v.cellFormId, v.worldspaceFormId);
     }
@@ -144,6 +195,36 @@ void ViewOnPresent() {
     std::lock_guard<std::mutex> g(g_m);
     g_view = v;
     ++g_frame;
+}
+
+void ViewApplyLiveTide(float tideHeightU) {
+    uintptr_t cellAddr = 0;
+    uint32_t cellId = 0;
+    float baseH = -14000.0f;
+    {
+        std::lock_guard<std::mutex> tl(g_tideMu);
+        if (!g_activeExtCellAddr || !g_activeExtCellId) return;
+        auto it = g_baseCellWater.find(g_activeExtCellId);
+        if (it == g_baseCellWater.end() || it->second.cellAddr != g_activeExtCellAddr) return;
+        cellAddr = it->second.cellAddr;
+        cellId = g_activeExtCellId;
+        baseH = it->second.baseHeight;
+    }
+    const float clampedTide = std::isfinite(tideHeightU) ? std::clamp(tideHeightU, -24.0f, 24.0f) : 0.0f;
+    SehWriteCellWaterIfMatch(cellAddr, cellId, baseH + clampedTide);
+}
+
+void ViewRestoreAllTides() {
+    std::unordered_map<uint32_t, SavedCellWater> snap;
+    {
+        std::lock_guard<std::mutex> tl(g_tideMu);
+        snap.swap(g_baseCellWater);
+        g_activeExtCellAddr = 0;
+        g_activeExtCellId = 0;
+    }
+    for (const auto& [formId, saved] : snap) {
+        SehWriteCellWaterIfMatch(saved.cellAddr, formId, saved.baseHeight);
+    }
 }
 
 std::string ViewJson() {

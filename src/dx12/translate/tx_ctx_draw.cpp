@@ -273,20 +273,27 @@ std::shared_ptr<const SubdivEntry> Context::TrySubdivideDraw(UINT n, UINT start,
 {
     if (!dev_->geometrySubdiv || !dev_->subdiv.Ready()) return nullptr;
     if (s_.topo != D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST) return nullptr;
-    if (!s_.dsv || !s_.dsv->core || !s_.dsv->core->tr) return nullptr;
+    const bool isWater = drawWaterHint_;
     const bool isDepthOnly = (s_.rtCount == 0u || !s_.rtv[0]);
     const bool isDepthEqual = (s_.ds && dev_->DepthDesc(s_.ds->id).DepthFunc == D3D11_COMPARISON_EQUAL);
-    const bool isReadOnlyDepth = (s_.dsv->desc.Flags & D3D11_DSV_READ_ONLY_DEPTH) != 0;
-    // Allow READ_ONLY_DEPTH DSVs on DEPTH_EQUAL color passes (common in Skyrim's opaque pass), while requiring
-    // writable depth on Z-prepasses and non-EQUAL draws!
-    if (isReadOnlyDepth && !isDepthEqual) return nullptr;
+    if (!isWater) {
+        if (!s_.dsv || !s_.dsv->core || !s_.dsv->core->tr) return nullptr;
+        const bool isReadOnlyDepth = (s_.dsv->desc.Flags & D3D11_DSV_READ_ONLY_DEPTH) != 0;
+        // Allow READ_ONLY_DEPTH DSVs on DEPTH_EQUAL color passes (common in Skyrim's opaque pass), while requiring
+        // writable depth on Z-prepasses and non-EQUAL draws!
+        if (isReadOnlyDepth && !isDepthEqual) return nullptr;
+    } else if (isDepthOnly) {
+        return nullptr;
+    }
     if (s_.st[S_HS].sh.sd || s_.st[S_GS].sh.sd || !s_.layout || !s_.layout->id) return nullptr;
-    if (n < 12u || n > 36000u || (n % 3u) != 0u) return nullptr;
+    const uint32_t minIdx = isWater ? 6u : 12u;
+    if (n < minIdx || n > 120000u || (n % 3u) != 0u) return nullptr;
     const BufSlot& vb = s_.vb[0];
     const BufSlot& ib = s_.ib;
     if (!vb.buf || !ib.buf || vb.buf->core.store != Store::Committed || ib.buf->core.store != Store::Committed) return nullptr;
     if (!vb.buf->core.tr || !ib.buf->core.tr) return nullptr;
-    if (vb.stride < 16u || vb.stride > 128u || (vb.stride & 3u) != 0u) return nullptr;
+    const uint32_t minStride = isWater ? 12u : 16u;
+    if (vb.stride < minStride || vb.stride > 128u || (vb.stride & 3u) != 0u) return nullptr;
     if (s_.ibFmt != DXGI_FORMAT_R16_UINT && s_.ibFmt != DXGI_FORMAT_R32_UINT) return nullptr;
 
     // Layout-independent key so Skyrim's position-only Z-prepass and NORMAL-bearing Opaque color pass
@@ -302,11 +309,52 @@ std::shared_ptr<const SubdivEntry> Context::TrySubdivideDraw(UINT n, UINT start,
     key.stride = vb.stride;
     key.ibFmt = static_cast<uint32_t>(s_.ibFmt);
     key.epoch = dev_->subdivEpoch.load(std::memory_order_relaxed);
+    key.isWater = isWater ? 1u : 0u;
 
     const uint64_t curFrame = dev_->frameSeq.load(std::memory_order_relaxed);
-    const TrackedRes* dsvRes = s_.dsv->core->tr.get();
+    const uint64_t waterGen = dev_->waterStateGen.load(std::memory_order_acquire);
+    const TrackedRes* dsvRes = (s_.dsv && s_.dsv->core) ? s_.dsv->core->tr.get() : nullptr;
+
+    auto fillWaterReq = [&](SubdivBuildReq& req, const SubdivLayoutInfo* li) {
+        req.key = key;
+        req.layout = li;
+        req.inVerts = vb.buf->core.Res();
+        req.inIdx = ib.buf->core.Res();
+        req.inVertsBytes = vb.buf->core.bytes;
+        req.inIdxBytes = ib.buf->core.bytes;
+        req.curvatureGain = dev_->subdivCurvature.load(std::memory_order_relaxed);
+        req.snowDepthU = dev_->subdivSnowDepth.load(std::memory_order_relaxed);
+        req.displaceAmp = dev_->subdivDisplace.load(std::memory_order_relaxed);
+        req.isWater = isWater;
+        req.waterTimeSec = dev_->waterTimeSec.load(std::memory_order_relaxed);
+        req.waterGravity = dev_->waterGravity.load(std::memory_order_relaxed);
+        req.waterTideU = dev_->waterTideU.load(std::memory_order_relaxed);
+        req.waterBeaufort = dev_->waterBeaufort.load(std::memory_order_relaxed);
+        req.waterSwellX = dev_->waterSwellX.load(std::memory_order_relaxed);
+        req.waterSwellY = dev_->waterSwellY.load(std::memory_order_relaxed);
+        req.frameSeq = isWater ? waterGen : curFrame;
+    };
 
     if (auto hit = dev_->subdiv.Find(key)) {
+        if (isWater) {
+            if (!replay_ && hit->lastWaterFrame.load(std::memory_order_acquire) != waterGen) {
+                const SubdivLayoutInfo* li = dev_->GetSubdivLayout(s_.layout->id);
+                if (li && li->waterEligible) {
+                    ID3D12GraphicsCommandList* cl = Cl();
+                    rec_.tracker.Require(vb.buf->core.tr, 0, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                    rec_.tracker.Require(ib.buf->core.tr, 0, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                    rec_.tracker.Flush(cl);
+                    SubdivBuildReq req{};
+                    fillWaterReq(req, li);
+                    if (dev_->subdiv.UpdateWater(cl, *hit, req)) {
+                        pso_ = nullptr;
+                        croot_ = nullptr;
+                        dirty_ |= D_SCAN_IA | D_VB | D_IB;
+                    }
+                }
+            }
+            return hit;
+        }
         if (isDepthOnly) {
             hit->lastDepthRes.store(dsvRes, std::memory_order_relaxed);
             hit->lastDepthFrame.store(curFrame, std::memory_order_release);
@@ -318,10 +366,10 @@ std::shared_ptr<const SubdivEntry> Context::TrySubdivideDraw(UINT n, UINT start,
         return (hit->lastDepthFrame.load(std::memory_order_acquire) == curFrame &&
                 hit->lastDepthRes.load(std::memory_order_relaxed) == dsvRes) ? hit : nullptr;
     }
-    if (isDepthOnly || replay_) return nullptr;   // only full NORMAL-bearing color draws build new 4x entries on the immediate context
+    if (isDepthOnly || replay_) return nullptr;   // only color draws build new entries on the immediate context
 
     const SubdivLayoutInfo* li = dev_->GetSubdivLayout(s_.layout->id);
-    if (!li || !li->eligible) return nullptr;
+    if (!li || (isWater ? !li->waterEligible : !li->eligible)) return nullptr;
 
     ID3D12GraphicsCommandList* cl = Cl();
     rec_.tracker.Require(vb.buf->core.tr, 0, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -329,15 +377,7 @@ std::shared_ptr<const SubdivEntry> Context::TrySubdivideDraw(UINT n, UINT start,
     rec_.tracker.Flush(cl);
 
     SubdivBuildReq req{};
-    req.key = key;
-    req.layout = li;
-    req.inVerts = vb.buf->core.Res();
-    req.inIdx = ib.buf->core.Res();
-    req.inVertsBytes = vb.buf->core.bytes;
-    req.inIdxBytes = ib.buf->core.bytes;
-    req.curvatureGain = dev_->subdivCurvature.load(std::memory_order_relaxed);
-    req.snowDepthU = dev_->subdivSnowDepth.load(std::memory_order_relaxed);
-    req.displaceAmp = dev_->subdivDisplace.load(std::memory_order_relaxed);
+    fillWaterReq(req, li);
 
     bool dispatched = false;
     auto built = dev_->subdiv.Build(dev_->d3d.Get(), cl, req, dispatched);
@@ -346,26 +386,29 @@ std::shared_ptr<const SubdivEntry> Context::TrySubdivideDraw(UINT n, UINT start,
         croot_ = nullptr;
         dirty_ |= D_SCAN_IA | D_VB | D_IB;
     }
-    // On a DEPTH_EQUAL color pass's single build frame, draw flat once so it matches this frame's flat Z-prepass;
-    // starting on frame + 1, both Z-prepass and color pass consume the cached 4x curved mesh in bit-exact lockstep!
-    return isDepthEqual ? nullptr : built;
+    // On a static DEPTH_EQUAL color pass's single build frame, draw flat once so it matches this frame's flat Z-prepass;
+    // water draws displace immediately on frame 1!
+    return (!isWater && isDepthEqual) ? nullptr : built;
 }
 
 STDMETHODIMP_(void) Context::DrawIndexed(UINT n, UINT start, INT base)
 {
     TX_TRACE("Context::DrawIndexed");
-    // On an uncached eligible static mesh draw, break streaming once so immediate context builds & caches the 4x mesh.
+    // On an uncached eligible mesh or live 3D water draw, break streaming so immediate context executes TxSubdiv.
+    const bool isWater = drawWaterHint_;
     const bool isDepthOnly = (s_.rtCount == 0u || !s_.rtv[0]);
     const bool isDepthEqual = (s_.ds && dev_->DepthDesc(s_.ds->id).DepthFunc == D3D11_COMPARISON_EQUAL);
-    const bool allowDsv = s_.dsv && (((s_.dsv->desc.Flags & D3D11_DSV_READ_ONLY_DEPTH) == 0) || isDepthEqual);
+    const bool allowDsv = isWater || (s_.dsv && (((s_.dsv->desc.Flags & D3D11_DSV_READ_ONLY_DEPTH) == 0) || isDepthEqual));
+    const uint32_t minIdx = isWater ? 6u : 12u;
     const bool needBuild = dev_->geometrySubdiv && !replay_ && !isDepthOnly && s_.topo == D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST &&
                            allowDsv &&
-                           n >= 12u && n <= 36000u && (n % 3u) == 0u &&
+                           n >= minIdx && n <= 120000u && (n % 3u) == 0u &&
                            s_.vb[0].buf && s_.ib.buf && s_.vb[0].buf->core.store == Store::Committed &&
                            s_.ib.buf->core.store == Store::Committed && s_.layout && s_.layout->id &&
-                           !dev_->subdiv.Find({s_.vb[0].buf->core.tr.get(), s_.ib.buf->core.tr.get(), s_.vb[0].offset,
-                                               s_.ib.offset, start, n, base, s_.vb[0].stride,
-                                               static_cast<uint32_t>(s_.ibFmt), dev_->subdivEpoch.load(std::memory_order_relaxed)});
+                           (isWater || !dev_->subdiv.Find({s_.vb[0].buf->core.tr.get(), s_.ib.buf->core.tr.get(), s_.vb[0].offset,
+                                                           s_.ib.offset, start, n, base, s_.vb[0].stride,
+                                                           static_cast<uint32_t>(s_.ibFmt),
+                                                           dev_->subdivEpoch.load(std::memory_order_relaxed), 0u}));
     if (!needBuild && pool_ && !replay_ && StreamDraw()) { SHead(SO_DrawIndexed, 0, 0, n); seg_->words.push_back(uint64_t(start) | uint64_t(uint32_t(base)) << 32); return SegDrawn(); }
     if (seg_ || stale_) EndStream(__func__);
     auto sub = TrySubdivideDraw(n, start, base);

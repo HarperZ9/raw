@@ -3,6 +3,7 @@
 #include "GBufferState.h"
 #include "ProxyLog.h"
 #include "SceneGeometry.h"
+#include "../dx12/translate/Translate.h"
 
 namespace SB::Proxy
 {
@@ -130,11 +131,24 @@ void GBuffer_OnBlendState(ID3D11BlendState* state, const float factor[4], UINT s
 void GBuffer_BeforeDraw(ID3D11DeviceContext* real)
 {
     State& s = S();
-    if (s.span == Span::None || !s.dirty) return;
+    if (s.span == Span::None) {
+        if (s.lastDrawWater) {
+            s.lastDrawWater = false;
+            raw::tx::SetDrawWaterHint(real, false);
+        }
+        return;
+    }
+    if (!s.dirty) {
+        if (s.lastDrawWater) raw::tx::SetDrawWaterHint(real, true);
+        return;
+    }
     s.dirty = false;
     raw::dxbc::ShaderKind kind{};
     ID3D11PixelShader* v = s.gamePs ? VariantFor(s, s.gamePs, s.span == Span::FirstPerson, &kind) : nullptr;
     const bool material = kind == raw::dxbc::ShaderKind::Lighting || kind == raw::dxbc::ShaderKind::DistantLod;
+    const bool isWater = (s.span == Span::Water) || (kind == raw::dxbc::ShaderKind::Water);
+    s.lastDrawWater = isWater;
+    raw::tx::SetDrawWaterHint(real, isWater);
     const int blendMode = !v ? 2 : (kind == raw::dxbc::ShaderKind::Water ? 3 : (material ? 0 : 1));
     ID3D11BlendState* blend = BlendVariant(s, s.gameBlend, blendMode);
     if (v) real->PSSetShader(v, nullptr, 0);

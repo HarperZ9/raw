@@ -21,6 +21,7 @@ class Device;
 
 struct SubdivLayoutInfo {
     bool     eligible = false;
+    bool     waterEligible = false; // single-slot rigid geometry with POSITION (no NORMAL required for water quads)
     uint32_t posOffFmt = 0;
     uint32_t normOffFmt = 0;
     uint32_t tangOffFmt = 0;
@@ -39,12 +40,15 @@ struct SubdivKey {
     uint32_t stride = 0;
     uint32_t ibFmt = 0;
     uint32_t epoch = 0;
+    uint32_t isWater = 0;
+    uint32_t pad = 0;
     bool operator==(const SubdivKey& o) const {
         return vbTr == o.vbTr && ibTr == o.ibTr && vbOffset == o.vbOffset && ibOffset == o.ibOffset &&
                startIndex == o.startIndex && indexCount == o.indexCount && baseVertex == o.baseVertex &&
-               stride == o.stride && ibFmt == o.ibFmt && epoch == o.epoch;
+               stride == o.stride && ibFmt == o.ibFmt && epoch == o.epoch && isWater == o.isWater;
     }
 };
+static_assert(sizeof(SubdivKey) == 56, "SubdivKey must have zero implicit padding for HashBytes");
 
 struct SubdivKeyHash {
     size_t operator()(const SubdivKey& k) const {
@@ -59,11 +63,13 @@ struct SubdivEntry {
     D3D12_INDEX_BUFFER_VIEW     ibView{};
     uint32_t                    outIndexCount = 0;
     uint64_t                    vramBytes = 0;
+    uint32_t                    waterMode = 0; // 0=static PN 1->4, 1=water 1->4, 2=water 1->16
     // Frame counter and exact depth-buffer resource pointer of the last writable depth-only (Z-prepass) draw that
     // emitted this 4x curved mesh. Guarantees bit-exact DEPTH_EQUAL matching on the SAME depth buffer (ignoring
     // shadow-map passes and supporting D3D11_DSV_READ_ONLY_DEPTH color passes cleanly with zero holes!).
     mutable std::atomic<uint64_t> lastDepthFrame{0};
     mutable std::atomic<const TrackedRes*> lastDepthRes{nullptr};
+    mutable std::atomic<uint64_t> lastWaterFrame{0};
 };
 
 struct SubdivBuildReq {
@@ -76,6 +82,14 @@ struct SubdivBuildReq {
     float                       curvatureGain = 0.62f;
     float                       snowDepthU = 0.0f;
     float                       displaceAmp = 0.0f;
+    bool                        isWater = false;
+    float                       waterTimeSec = 0.0f;
+    float                       waterGravity = 9.80665f;
+    float                       waterTideU = 0.0f;
+    float                       waterBeaufort = 2.0f;
+    float                       waterSwellX = 0.866f;
+    float                       waterSwellY = 0.500f;
+    uint64_t                    frameSeq = 0;
 };
 
 class SubdivCache {
@@ -90,10 +104,13 @@ public:
     // Fast shared-lock lookup for steady-state frames (safe from parallel worker threads).
     std::shared_ptr<const SubdivEntry> Find(const SubdivKey& key) const;
 
-    // Allocates cached 4x GPU buffers and records the TxSubdiv compute dispatch + UAV->VB/IB barriers on `cl`.
+    // Allocates cached 4x (or 16x coarse-water) GPU buffers and records the TxSubdiv compute dispatch + barriers on `cl`.
     // Caller must ensure inVerts and inIdx are in NON_PIXEL_SHADER_RESOURCE state before calling.
     std::shared_ptr<const SubdivEntry> Build(ID3D12Device* dev, ID3D12GraphicsCommandList* cl,
                                              const SubdivBuildReq& req, bool& outDispatched);
+
+    // Re-dispatches live 3D ocean-wave & tidal vertex displacement in place on a cached water SubdivEntry once per frame.
+    bool UpdateWater(ID3D12GraphicsCommandList* cl, const SubdivEntry& entry, const SubdivBuildReq& req);
 
     // Removes any cached entries referencing a destroyed source buffer and moves their TrackedRes into `retire`.
     void InvalidateSource(const TrackedRes* tr, Retire& retire);
@@ -104,8 +121,8 @@ public:
     uint64_t TotalVramBytes() const { return vramBytes_.load(std::memory_order_relaxed); }
 
 private:
-    static constexpr uint64_t kMaxVramBytes = 256ull * 1024ull * 1024ull; // 256 MB VRAM cap
-    static constexpr size_t   kMaxMeshes = 2048;
+    static constexpr uint64_t kMaxVramBytes = 512ull * 1024ull * 1024ull; // 512 MB VRAM cap (modern 16-32 GB GPUs)
+    static constexpr size_t   kMaxMeshes = 6144;
 
     ComPtr<ID3D12RootSignature> root_;
     ComPtr<ID3D12PipelineState> pso_;

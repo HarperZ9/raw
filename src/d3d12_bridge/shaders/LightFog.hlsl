@@ -11,6 +11,7 @@
 #include "LightingCommon.hlsli"
 #include "CloudCommon.hlsli"
 #include "ElderOptics.hlsli"
+#include "RawProceduralNoise.hlsli"
 
 Texture2D<float4> Lit         : register(t0);
 Texture2D<float>  Depth       : register(t1);
@@ -172,23 +173,28 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
                 fullSky = lerp(fullSky, physSky, max(dayW, twilightBell * 0.96f));
             }
-            // Infinite Distant Horizon Ocean Plane (Horizon Fix replacement, COMPETITIVE-2026.md):
-            // Beyond Skyrim's map grid edge (sDir.z < 0 on sky pixels), analytically intersect sea level with
-            // Fresnel sky reflection, rippling sun/moon glitter path, and C2 aerial-perspective horizon melt.
+            // Infinite Distant Horizon Ocean Plane (Wave 35: anchored to live engine tidal water height via rawLiveWaterZ
+            // instead of waterA.w glint strength, with Beaufort-coupled multi-swell normals & continuous aerial horizon melt!):
             if (sDir.z < 0.0f) {
-                const float seaElev = max((eyeAt().z + camPosW.z) - waterA.w, 120.0f);
+                const float liveSeaZ = rawLiveWaterZ(engineWorld, physWorld[0]);
+                const float seaElev = max((eyeAt().z + camPosW.z) - liveSeaZ, 120.0f);
                 const float tSea = min(seaElev / max(-sDir.z, 0.002f), 260000.0f);
+                const float wtSea = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
+                const float beauSea = clamp(physWorld[1].x, 0.5f, 12.0f);
+                const float2 swellD = length(physWorld[1].yz) > 0.1f ? normalize(physWorld[1].yz) : normalize(cloudWind.xy + float2(1.0f, 0.35f));
+                const float swellAmp = lerp(0.025f, 0.085f, saturate((beauSea - 1.0f) / 8.0f));
                 const float2 seaP = (camPosW.xy + sDir.xy * tSea) * 0.00045f;
-                const float w1 = cNoise(float3(seaP * 2.2f + cloudWind.xy * camPosW.w * 0.0008f, camPosW.w * 0.12f)) * 2.0f - 1.0f;
-                const float w2 = cNoise(float3(seaP * 5.6f - cloudWind.yx * camPosW.w * 0.0014f, camPosW.w * 0.21f)) * 2.0f - 1.0f;
-                const float3 seaN = normalize(float3((w1 * 0.035f + w2 * 0.020f), (w2 * 0.035f - w1 * 0.020f), 1.0f));
+                const float4 g1 = rawNoise3Grad(float3(seaP * 2.2f - swellD * wtSea * 0.045f, wtSea * 0.12f));
+                const float4 g2 = rawNoise3Grad(float3(seaP * 5.6f + float2(-swellD.y, swellD.x) * wtSea * 0.065f, wtSea * 0.21f));
+                const float3 seaN = normalize(float3(-(g1.y * 0.65f + g2.y * 0.35f) * swellAmp,
+                                                     -(g1.z * 0.65f + g2.z * 0.35f) * swellAmp, 1.0f));
                 const float ndv = saturate(dot(seaN, -sDir));
                 const float fres = 0.02f + 0.98f * pow(1.0f - ndv, 5.0f);
                 const float3 reflDir = reflect(sDir, seaN);
                 float3 ocZ, ocM, ocH;
                 skyPalette(ocZ, ocM, ocH);
                 const float3 seaSky = lerp(ocH, ocM, smoothstep(0.0f, 0.35f, max(reflDir.z, 0.0f)));
-                const float3 deepSea = lerp(float3(0.008f, 0.024f, 0.044f), float3(0.014f, 0.048f, 0.072f), dayW) * (0.28f + 0.72f * dayW);
+                const float3 deepSea = lerp(float3(0.008f, 0.024f, 0.044f), float3(0.014f, 0.052f, 0.078f), dayW) * (0.28f + 0.72f * dayW);
                 const float3 glDir = normalize(lerp(aSun, sunDir.xyz, smoothstep(0.04f, -0.06f, aElev)));
                 const float3 glH = normalize(glDir - sDir);
                 const float glint = pow(saturate(dot(seaN, glH)), 140.0f) * (1.0f - cover * 0.75f);

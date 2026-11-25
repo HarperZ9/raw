@@ -46,7 +46,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float2 lo = floor(at.xy);
     const float2 fullPx = (lo + 0.5f) * 2.0f;
     const int2 fullIp = clamp(int2(fullPx), int2(0, 0), int2(dims.xy) - 1);
-    const bool isWorldMap = (camPosW.z > 12500.0f) || (timeEnv.w > 0.5f && camPosW.z > 7500.0f);
+    const bool isWorldMap = (timeEnv.w > 0.5f) && (camPosW.z > 42000.0f);
     if ((flags.x & FLAG_FOG) == 0u || (flags.x & FLAG_MATCH) != 0u || isWorldMap) { return float4(0.0f, 0.0f, 0.0f, 1.0f); }
     const float d = Depth.Load(int3(fullIp, 0));
     const float3 eye = eyeAt();

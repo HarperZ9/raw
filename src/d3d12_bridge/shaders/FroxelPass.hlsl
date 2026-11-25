@@ -65,7 +65,7 @@ float froxelHG(float cosT, float g) {
 }
 
 float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
-    const bool isWorldMap = (camPosW.z > 12500.0f) || (timeEnv.w > 0.5f && camPosW.z > 7500.0f);
+    const bool isWorldMap = (timeEnv.w > 0.5f) && (camPosW.z > 42000.0f);
     if ((flags.x & FLAG_FOG) == 0u || (flags.x & FLAG_MATCH) != 0u || isWorldMap) { return float4(0.0f, 0.0f, 0.0f, 0.0f); }
     const uint2 px = uint2(at.xy);
     const uint tileX = px.x / 160u;

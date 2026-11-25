@@ -77,8 +77,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const int3 ip = int3(at.xy, 0);
     float4 lit = Lit.Load(ip);
     if ((flags.x & FLAG_FOG) == 0u || (flags.x & FLAG_MATCH) != 0u) { return lit; }
-    // Clean 3D World Map isolation: never paint volumetric fog, skybox, clouds, aurora, or weather droplets onto the MapMenu!
-    const bool isWorldMap = (camPosW.z > 12500.0f) || (timeEnv.w > 0.5f && camPosW.z > 7500.0f);
+    // Clean 3D World Map isolation: ONLY bypass when paused MapMenu camera sits above 42,000u (never bypass High Hrothgar / mountains!).
+    const bool isWorldMap = (timeEnv.w > 0.5f) && (camPosW.z > 42000.0f);
     if (isWorldMap) { return lit; }
     const float d = Depth.Load(ip);
     const float2 px = floor(at.xy);
@@ -402,7 +402,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Live 3D World-Map Depth Isolation + True 3D Froxel Transmittance & In-Scatter Composition:
     // Within 24u..42,000u (kFroxFar), FroxelVol supplies genuine 3D Beer-Lambert transmittance (frox.a) and
     // dynamically lit 3D in-scattering (frox.rgb); VolFog adds fine crepuscular shafts without double-fogging.
-    const float mapScale = (timeEnv.w > 0.5f || camPosW.z > 18000.0f) ? 0.18f : 1.0f;
+    const float mapScale = (timeEnv.w > 0.5f && camPosW.z > 42000.0f) ? 0.18f : 1.0f;
     const float sunLumFg = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
     const float dayFg = (sunColour.w > 0.5f) ? saturate((sunLumFg - 0.18f) * 3.0f) : 0.0f;
     const float fgClear = lerp(1.0f, smoothstep(260.0f, 1500.0f, dist), dayFg * (1.0f - saturate(weather.w * 0.65f + weather.z * 0.75f)));

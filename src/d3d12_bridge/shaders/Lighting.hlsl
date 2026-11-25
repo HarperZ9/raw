@@ -160,8 +160,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float4 game = GameLit.Load(ip);
     const float d = Depth.Load(ip);
     if ((flags.x & FLAG_SURFACE) == 0u) { return game; }
-    // Clean 3D World Map isolation: bypass deferred relighting, LOD relighting, and RT bounce on the overhead MapMenu camera.
-    const bool isWorldMap = (camPosW.z > 12500.0f) || (timeEnv.w > 0.5f && camPosW.z > 7500.0f);
+    // Clean 3D World Map isolation: ONLY bypass when MapMenu pauses the game (timeEnv.w > 0.5) AND camera is at
+    // overhead map altitude (> 42,000u). Never bypass walkable mountains (High Hrothgar Z~15,800, Throat of the World Z~38,600)!
+    const bool isWorldMap = (timeEnv.w > 0.5f) && (camPosW.z > 42000.0f);
     if (isWorldMap) { return game; }
     if (d >= 1.0f) {
         // Pass raw sky/celestial buffer (Masser, Secunda, exotic DLC realms) cleanly straight to LightFog.hlsl

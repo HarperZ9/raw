@@ -118,7 +118,7 @@ float4 dof_focus(float4 at : SV_Position) : SV_Target0 {
 
 float4 dof_coc(float4 at : SV_Position) : SV_Target0 {
     // Live 3D World-Map & UI Depth Isolation: exact UI::Singleton menuPaused (timeEnv.w) + aerial world-map altitude.
-    if (timeEnv.w > 0.5f || camPosW.z > 12500.0f) {
+    if (timeEnv.w > 0.5f) {
         const float2 fullPx0 = (floor(at.xy) + 0.5f) * 2.0f;
         return float4(SrcA.SampleLevel(Lin, fullPx0 * dims.zw, 0.0f).rgb, 0.0f);
     }
@@ -296,7 +296,7 @@ float4 dof_post(float4 at : SV_Position) : SV_Target0 {
 float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
     const int2 ip = int2(at.xy);
     const float4 sharp = SrcA.Load(int3(ip, 0));
-    if (dofParams.x <= 1.0f || timeEnv.w > 0.5f || camPosW.z > 12500.0f) { return sharp; }
+    if (dofParams.x <= 1.0f || timeEnv.w > 0.5f) { return sharp; }
     const float2 uv = (floor(at.xy) + 0.5f) * dims.zw;
     const float fGpu = FocusTex.Load(int3(0, 0, 0)).x;
     const float focusZ = (fGpu >= 40.0f && fGpu <= 15000.0f) ? fGpu : sampleFocusZoneZ();

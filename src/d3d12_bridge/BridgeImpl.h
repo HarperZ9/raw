@@ -16,6 +16,7 @@
 #include "RawShadowPcssHost.h"
 #include "RawGtaoHost.h"
 #include "RawSsrHost.h"
+#include "RawAutoExposureHost.h"
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
@@ -90,6 +91,7 @@ struct D3D12Bridge::Impl
     std::unique_ptr<RawShadowPcssHost> shadowPcss; // Live GPU Variable-Penumbra PCSS Contact-Hardening Shadow solver
     std::unique_ptr<RawGtaoHost> gtaoHost; // Live GPU Jimenez GTAO + Unoccluded Bent-Normal & Bilateral Denoise solver
     std::unique_ptr<RawSsrHost> ssrHost; // Live GPU GGX Stochastic Screen-Space Reflections solver
+    std::unique_ptr<RawAutoExposureHost> autoExposure; // Live GPU 256-Bin Log-Luminance Histogram & Eye-Adaptation Auto-Exposure
     bool                     fluidReady = false;
     bool                     radianceReady = false;
     bool                     xpbdSimReady = false;
@@ -103,6 +105,7 @@ struct D3D12Bridge::Impl
     bool                     shadowPcssReady = false;
     bool                     gtaoHostReady = false;
     bool                     ssrHostReady = false;
+    bool                     autoExposureReady = false;
     ComPtr<ID3D12CommandAllocator>    fluidAlloc[kRing];
     ComPtr<ID3D12GraphicsCommandList> fluidList;
     ComPtr<ID3D12Fence>               fluidFence;
@@ -206,6 +209,15 @@ struct D3D12Bridge::Impl
     uint64_t                          ssrSlotVal[kRing] = {};
     uint32_t                          ssrSlot = 0;
     uint64_t                          ssrStepFrames = 0;
+    ComPtr<ID3D12CommandAllocator>    autoExposureAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList> autoExposureList;
+    ComPtr<ID3D12Fence>               autoExposureFence;
+    HANDLE                            autoExposureEvent = nullptr;
+    uint64_t                          autoExposureFenceVal = 0;
+    uint64_t                          autoExposureSlotVal[kRing] = {};
+    uint32_t                          autoExposureSlot = 0;
+    uint64_t                          autoExposureStepFrames = 0;
+    uint64_t                          autoExposureLastMs = 0;
     std::string                       telemetryOutDir;
     bool InitFluidSim();
     void ShutdownFluidSim();
@@ -234,6 +246,9 @@ struct D3D12Bridge::Impl
     bool InitSsrHost();
     void ShutdownSsrHost();
     bool ExecuteSsrOnQueue();
+    bool InitAutoExposure();
+    void ShutdownAutoExposure();
+    bool ExecuteAutoExposureOnQueue();
     bool InitOverlayHost();
     void ShutdownOverlayHost();
     void PollOverlayHotkey();

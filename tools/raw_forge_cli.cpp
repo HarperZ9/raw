@@ -25,12 +25,14 @@
 #include "../src/worldgen/RawWorldEcosystem.h"
 #include "../src/worldgen/RawWorldEventDirector.h"
 #include "../src/worldgen/RawWorldPhysics.h"
+#include "../src/worldgen/RawWorldSerializer.h"
 
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <string>
 
@@ -1291,6 +1293,244 @@ bool RunDiplomacySimAudit() {
     return ok;
 }
 
+bool FloatBitEqualCli(float a, float b) noexcept {
+    uint32_t ua = 0u, ub = 0u;
+    std::memcpy(&ua, &a, sizeof(ua));
+    std::memcpy(&ub, &b, sizeof(ub));
+    return ua == ub;
+}
+
+bool WorldSnapshotsBitExactCli(const raw::worldgen::WorldSnapshotState& a,
+                               const raw::worldgen::WorldSnapshotState& b) {
+    using namespace raw::worldgen;
+    if (!FloatBitEqualCli(a.weather.dayOfYear, b.weather.dayOfYear) ||
+        !FloatBitEqualCli(a.weather.timeOfDayHours, b.weather.timeOfDayHours) ||
+        !FloatBitEqualCli(a.weather.timeScale, b.weather.timeScale) ||
+        !FloatBitEqualCli(a.weather.snowDepthM, b.weather.snowDepthM) ||
+        !FloatBitEqualCli(a.weather.surfaceTempC, b.weather.surfaceTempC) ||
+        !FloatBitEqualCli(a.weather.iceThicknessM, b.weather.iceThicknessM) ||
+        !FloatBitEqualCli(a.weather.beaufortWind, b.weather.beaufortWind) ||
+        !FloatBitEqualCli(a.weather.cloudCover01, b.weather.cloudCover01) ||
+        !FloatBitEqualCli(a.weather.barometricPressureHpa, b.weather.barometricPressureHpa) ||
+        a.weather.activeRegime != b.weather.activeRegime ||
+        a.weather.season != b.weather.season) {
+        return false;
+    }
+    if (!FloatBitEqualCli(a.settlement.simHoursElapsed, b.settlement.simHoursElapsed) ||
+        !FloatBitEqualCli(a.settlement.timeOfDayHours, b.settlement.timeOfDayHours) ||
+        a.settlement.deliveriesCompleted != b.settlement.deliveriesCompleted ||
+        a.settlement.caravans.size() != b.settlement.caravans.size()) {
+        return false;
+    }
+    for (size_t i = 0u; i < kHoldCount; ++i) {
+        if (!FloatBitEqualCli(a.settlement.holds[i].treasuryGold, b.settlement.holds[i].treasuryGold) ||
+            a.settlement.holds[i].marketOpen != b.settlement.holds[i].marketOpen ||
+            a.settlement.holds[i].activeGuards != b.settlement.holds[i].activeGuards ||
+            !FloatBitEqualCli(a.settlement.holds[i].tavernOccupancy01, b.settlement.holds[i].tavernOccupancy01)) {
+            return false;
+        }
+        for (size_t c = 0u; c < kCommodityCount; ++c) {
+            if (!FloatBitEqualCli(a.settlement.holds[i].stock[c], b.settlement.holds[i].stock[c]) ||
+                !FloatBitEqualCli(a.settlement.holds[i].price[c], b.settlement.holds[i].price[c])) {
+                return false;
+            }
+        }
+    }
+    for (size_t i = 0u; i < a.settlement.caravans.size(); ++i) {
+        const auto& ca = a.settlement.caravans[i];
+        const auto& cb = b.settlement.caravans[i];
+        if (ca.id != cb.id || ca.originHold != cb.originHold || ca.destHold != cb.destHold ||
+            ca.commodity != cb.commodity || !FloatBitEqualCli(ca.cargoUnits, cb.cargoUnits) ||
+            !FloatBitEqualCli(ca.traveledKm, cb.traveledKm) || ca.snowbound != cb.snowbound) {
+            return false;
+        }
+    }
+    if (a.events.totalSpawned != b.events.totalSpawned ||
+        a.events.totalResolved != b.events.totalResolved ||
+        a.events.totalExpired != b.events.totalExpired ||
+        a.events.activeEvents.size() != b.events.activeEvents.size()) {
+        return false;
+    }
+    for (size_t k = 0u; k < kWorldEventKindCount; ++k) {
+        if (!FloatBitEqualCli(a.events.cooldownRemaining[k], b.events.cooldownRemaining[k]) ||
+            a.events.spawnedByKind[k] != b.events.spawnedByKind[k]) {
+            return false;
+        }
+    }
+    for (size_t i = 0u; i < a.events.activeEvents.size(); ++i) {
+        const auto& ea = a.events.activeEvents[i];
+        const auto& eb = b.events.activeEvents[i];
+        if (ea.id != eb.id || ea.kind != eb.kind || ea.holdId != eb.holdId ||
+            !FloatBitEqualCli(ea.urgency01, eb.urgency01) ||
+            !FloatBitEqualCli(ea.rewardGold, eb.rewardGold) ||
+            !FloatBitEqualCli(ea.ageHours, eb.ageHours)) {
+            return false;
+        }
+    }
+    for (size_t i = 0u; i < kHoldCount; ++i) {
+        const auto& ha = a.diplomacy.holds[i];
+        const auto& hb = b.diplomacy.holds[i];
+        if (!FloatBitEqualCli(ha.reputation, hb.reputation) ||
+            !FloatBitEqualCli(ha.bountyGold, hb.bountyGold) ||
+            ha.guardPosture != hb.guardPosture ||
+            !FloatBitEqualCli(ha.merchantPriceMult, hb.merchantPriceMult) ||
+            !FloatBitEqualCli(ha.bountyHunterRisk01, hb.bountyHunterRisk01)) {
+            return false;
+        }
+    }
+    for (size_t i = 0u; i < kFactionCount; ++i) {
+        if (!FloatBitEqualCli(a.diplomacy.factions[i].reputation, b.diplomacy.factions[i].reputation)) {
+            return false;
+        }
+    }
+    if (a.ecosystem.activeFireCells != b.ecosystem.activeFireCells ||
+        a.ecosystem.blackIceCells != b.ecosystem.blackIceCells ||
+        !FloatBitEqualCli(a.ecosystem.burnedAreaM2, b.ecosystem.burnedAreaM2) ||
+        !FloatBitEqualCli(a.ecosystem.totalSnowVolumeM3, b.ecosystem.totalSnowVolumeM3) ||
+        !FloatBitEqualCli(a.ecosystem.totalMeltRunoffM3, b.ecosystem.totalMeltRunoffM3) ||
+        !FloatBitEqualCli(a.ecosystem.totalWaterMassM3, b.ecosystem.totalWaterMassM3) ||
+        !FloatBitEqualCli(a.ecosystem.peakTempC, b.ecosystem.peakTempC) ||
+        !FloatBitEqualCli(a.ecosystem.steamFlux, b.ecosystem.steamFlux)) {
+        return false;
+    }
+    return true;
+}
+
+bool RunWorldSnapshotAudit() {
+    using namespace raw::worldgen;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    // 1. Step a rich coupled 5-pillar Tamriel world
+    RawWeatherSim weather;
+    weather.SetDayOfYear(340.0f);
+    weather.SetTimeOfDay(22.5f);
+    weather.SetRegime(WeatherRegime::Blizzard, true);
+    weather.Step(2.0f, 20.0f, -1.0f, {0.0f, 0.0f, 1200.0f});
+
+    RawSettlementSim settle(5601u);
+    SettlementWeatherMap wx{};
+    wx.byHold[static_cast<size_t>(HoldId::Windhelm)].blizzard01   = 0.90f;
+    wx.byHold[static_cast<size_t>(HoldId::Winterhold)].blizzard01 = 0.95f;
+    settle.StepHours(36.0f, wx);
+
+    RawWorldEcosystem eco{};
+    const Vec2 firePos = eco.CellCenterWorldM(32u, 32u);
+    eco.IgniteAt(firePos.x, firePos.y, 8.0f, 650.0f);
+    EcoWeatherInput ecoWx{};
+    ecoWx.ambientTempC = 18.0f;
+    ecoWx.windBeaufort = 5.0f;
+    eco.Step(1.5f, ecoWx);
+
+    RawWorldEventDirector director{};
+    WorldEventInputs evIn{};
+    evIn.settlement     = &settle;
+    evIn.ecosystem      = &eco;
+    evIn.weatherSim     = &weather;
+    evIn.timeOfDayHours = 22.5f;
+    evIn.auroraKp       = 7.0f;
+    evIn.cloudCover01   = 0.10f;
+    evIn.blizzard01     = 0.15f;
+    director.StepHours(1.0f, evIn);
+
+    RawFactionDiplomacy diplomacy{};
+    diplomacy.AdjustFactionReputation(FactionId::ImperialLegion, 42.0f);
+    diplomacy.ApplyEventReward(WorldEventKind::BlizzardCaravanRescue, HoldId::Whiterun);
+    diplomacy.RecordCrime(HoldId::Riften, CrimeSeverity::GrandTheft, true);
+
+    const WorldSnapshotState original =
+        RawWorldSerializer::CaptureFromSystems(&weather, &settle, &director, &diplomacy, &eco);
+
+    // 2. Serialize binary RAWWORLD v1 container + IEEE 802.3 CRC-32
+    std::vector<uint8_t> binBytes;
+    const bool serialized = RawWorldSerializer::SerializeWorldBinary(original, binBytes);
+    uint32_t payloadCrc = 0u;
+    if (binBytes.size() >= 20u) {
+        payloadCrc = RawWorldSerializer::ComputeCrc32(binBytes.data() + 20u, binBytes.size() - 20u);
+    }
+
+    // 3. Planted 1-bit tamper rejection + bad magic / truncated container checks
+    WorldSnapshotState dummy{};
+    std::string err;
+    std::vector<uint8_t> bitFlipped = binBytes;
+    bool tamperRejected = false;
+    if (bitFlipped.size() > 24u) {
+        bitFlipped[bitFlipped.size() / 2u] ^= 0x01u;
+        tamperRejected = !RawWorldSerializer::DeserializeWorldBinary(
+            bitFlipped.data(), bitFlipped.size(), dummy, &err) && !err.empty();
+    }
+    std::vector<uint8_t> badMagic = binBytes;
+    if (badMagic.size() >= 4u) {
+        badMagic[0] = 'B'; badMagic[1] = 'A'; badMagic[2] = 'D';
+    }
+    const bool badMagicRejected = !RawWorldSerializer::DeserializeWorldBinary(
+        badMagic.data(), badMagic.size(), dummy, &err);
+    const bool truncRejected = (binBytes.size() > 8u) && !RawWorldSerializer::DeserializeWorldBinary(
+        binBytes.data(), binBytes.size() - 5u, dummy, &err);
+    const bool tamperOk = serialized && tamperRejected && badMagicRejected && truncRejected;
+
+    // 4. Bit-exact round-trip + live restore + JSON snapshot export
+    WorldSnapshotState restored{};
+    err.clear();
+    const bool deserialized = RawWorldSerializer::DeserializeWorldBinary(
+        binBytes.data(), binBytes.size(), restored, &err);
+    const bool bitExact = deserialized && WorldSnapshotsBitExactCli(original, restored);
+
+    RawWeatherSim weather2;
+    RawSettlementSim settle2(9999u);
+    RawWorldEventDirector dir2;
+    RawFactionDiplomacy dip2;
+    RawWorldSerializer::RestoreIntoSystems(restored, &weather2, &settle2, &dir2, &dip2);
+
+    const bool liveRestoreOk =
+        (std::fabs(weather2.GetCalendarState().dayOfYear - original.weather.dayOfYear) < 1.0e-3f) &&
+        FloatBitEqualCli(weather2.GetCalendarState().timeOfDayHours, original.weather.timeOfDayHours) &&
+        (weather2.GetActiveRegime() == original.weather.activeRegime) &&
+        FloatBitEqualCli(settle2.GetHold(HoldId::Whiterun)->treasuryGold,
+                         original.settlement.holds[static_cast<size_t>(HoldId::Whiterun)].treasuryGold) &&
+        FloatBitEqualCli(dip2.GetHoldStanding(HoldId::Whiterun)->reputation,
+                         original.diplomacy.holds[static_cast<size_t>(HoldId::Whiterun)].reputation) &&
+        FloatBitEqualCli(dip2.GetHoldStanding(HoldId::Riften)->reputation,
+                         original.diplomacy.holds[static_cast<size_t>(HoldId::Riften)].reputation);
+
+    const std::string json = RawWorldSerializer::SerializeWorldJson(restored);
+    const bool jsonOk =
+        (json.find("\"format\": \"RAWWORLD\"") != std::string::npos) &&
+        (json.find("\"weather\":") != std::string::npos) &&
+        (json.find("\"settlement\":") != std::string::npos) &&
+        (json.find("\"events\":") != std::string::npos) &&
+        (json.find("\"diplomacy\":") != std::string::npos) &&
+        (json.find("\"ecosystem\":") != std::string::npos) &&
+        (json.find("nan") == std::string::npos) &&
+        (json.find("NaN") == std::string::npos) &&
+        (json.find("inf") == std::string::npos);
+
+    const double totalMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    const bool ok = tamperOk && bitExact && liveRestoreOk && jsonOk && !restored.events.activeEvents.empty();
+
+    std::printf(
+        "[INFO] 5-Pillar Persistent World Snapshot & CRC-32 Audit (%.2f ms):\n"
+        "  1. Binary Container    : RAWWORLD v%u bytes=%zu crc32=0x%08X caravans=%zu events=%zu fireCells=%u [%s]\n"
+        "  2. Tamper Controls     : 1bitFlip=%s badMagic=%s truncated=%s [%s]\n"
+        "  3. Round-Trip & JSON   : bitExact=%s liveRestore=%s jsonBytes=%zu schemaOk=%s [%s]\n"
+        "[%s] world-snapshot: 5-pillar RAWWORLD v1 CRC-32 snapshot audit %s (%.2f ms)\n",
+        totalMs,
+        kRawWorldBinaryVersion, binBytes.size(), payloadCrc,
+        restored.settlement.caravans.size(), restored.events.activeEvents.size(), restored.ecosystem.activeFireCells,
+        serialized ? "PASS" : "FAIL",
+        tamperRejected ? "rejected" : "MISSED",
+        badMagicRejected ? "rejected" : "MISSED",
+        truncRejected ? "rejected" : "MISSED",
+        tamperOk ? "PASS" : "FAIL",
+        bitExact ? "yes" : "no",
+        liveRestoreOk ? "yes" : "no",
+        json.size(),
+        jsonOk ? "yes" : "no",
+        (bitExact && liveRestoreOk && jsonOk) ? "PASS" : "FAIL",
+        ok ? "PASS" : "FAIL", ok ? "PASS" : "FAIL", totalMs);
+    return ok;
+}
+
 bool ParseCellXY(const std::string& s, int32_t* outX, int32_t* outY) {
     const size_t comma = s.find(',');
     if (comma == std::string::npos || comma == 0u || comma + 1u >= s.size()) return false;
@@ -1331,6 +1571,7 @@ void PrintUsage() {
         "  raw_forge_cli --settlement-sim                          9-hold living settlement, caravan & blizzard blockade audit\n"
         "  raw_forge_cli --events-sim                              Emergent 9-hold radiant world-event director 30-day audit\n"
         "  raw_forge_cli --diplomacy-sim                           9-hold & 6-faction diplomacy, bounty & amnesty audit\n"
+        "  raw_forge_cli --world-snapshot                          5-pillar RAWWORLD v1 CRC-32 binary + JSON snapshot audit\n"
         "  raw_forge_cli --validate-all [dir]                      Run all 4 procedural pipelines + quality gates\n"
         "Options:\n"
         "  --seed <N>         Deterministic RNG seed (default: 202607)\n"
@@ -1391,6 +1632,7 @@ int main(int argc, char** argv) {
     bool runSettlementSim   = false;
     bool runEventsSim       = false;
     bool runDiplomacySim    = false;
+    bool runWorldSnapshot   = false;
     bool writeGeometry      = true;
     uint32_t seed       = 202607u;
     float latitudeDeg   = 60.0f;
@@ -1549,6 +1791,8 @@ int main(int argc, char** argv) {
             runEventsSim = true;
         } else if (arg == "--diplomacy-sim") {
             runDiplomacySim = true;
+        } else if (arg == "--world-snapshot") {
+            runWorldSnapshot = true;
         } else if (arg == "--validate-all") {
             runValidateAll = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -1575,10 +1819,11 @@ int main(int argc, char** argv) {
 
     if (!runValidateAll && !runEsmMeta && !runPhysicsProbe && !runTamrielStream && !runNavMeshAudit &&
         !runEcosystemSim && !runWildlifeSim && !runSettlementSim && !runEventsSim && !runDiplomacySim &&
+        !runWorldSnapshot &&
         floraDir.empty() && dioramaDir.empty() && almanacDir.empty() &&
         materialsDir.empty() && texturesDir.empty() && esmPath.empty() && esmScenePath.empty() &&
         bsaListPath.empty() && nifPath.empty() && bsaNifArchive.empty() && ddsPath.empty() && bsaDdsArchive.empty()) {
-        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, --events-sim, --diplomacy-sim, or --validate-all).\n");
+        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, --events-sim, --diplomacy-sim, --world-snapshot, or --validate-all).\n");
         PrintUsage();
         return 2;
     }
@@ -1707,6 +1952,10 @@ int main(int argc, char** argv) {
 
     if (runDiplomacySim) {
         if (!RunDiplomacySimAudit()) allOk = false;
+    }
+
+    if (runWorldSnapshot) {
+        if (!RunWorldSnapshotAudit()) allOk = false;
     }
 
     if (runValidateAll) {

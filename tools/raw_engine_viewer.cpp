@@ -14,6 +14,7 @@
 //   E                   : Advance 9-Hold Economy +6h & Cycle Active Hold Market Readout (RawSettlementSim!)
 //   O                   : Resolve Highest-Urgency Emergent World Event or Poll +4h (RawWorldEventDirector!)
 //   K                   : Cycle 9-Hold & 6-Faction Reputation / Bounty / Guard Posture Readout (RawFactionDiplomacy!)
+//   F5 / F8             : CRC-32 Persistent World Quicksave (.bin + .json) / Quickload (RawWorldSerializer!)
 //   F9 / H              : Toggle Live GPU Telemetry HUD & 64-Sample Frame-Time Sparkline (RawOverlayHost!)
 //   F12                 : Capture Instant 24-Bit .bmp Screenshot (raw_viewer_shot_<N>.bmp)
 //   1 / 2 / 3 / 4       : Live Season Switch (Spring / Summer / Autumn / Winter)
@@ -69,6 +70,7 @@
 #include "RawShadowPcssHost.h"
 #include "RawGtaoHost.h"
 #include "RawSsrHost.h"
+#include "RawAutoExposureHost.h"
 #include "RawWeatherSim.h"
 #include "RawWorldShowcase.h"
 #include "RawDestructionEngine.h"
@@ -83,6 +85,7 @@
 #include "RawSettlementSim.h"
 #include "RawWorldEventDirector.h"
 #include "RawFactionDiplomacy.h"
+#include "RawWorldSerializer.h"
 #include "RawHydrologyGen.h"
 #include "RawAudioOutput.h"
 
@@ -455,6 +458,11 @@ public:
         if (!m_ssrOk) {
             std::printf("[Viewer] RawSsrHost warning: %s\n", err.c_str());
         }
+        err.clear();
+        m_autoExposureOk = m_autoExposure.Init(m_dev.Get(), {}, &err);
+        if (!m_autoExposureOk) {
+            std::printf("[Viewer] RawAutoExposureHost warning: %s\n", err.c_str());
+        }
         UINT64 tsFreq = 0;
         if (SUCCEEDED(m_queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
             if (m_fluidOk)         m_fluidSim.SetTimestampFrequency(tsFreq);
@@ -467,6 +475,7 @@ public:
             if (m_shadowPcssOk)    m_shadowPcss.SetTimestampFrequency(tsFreq);
             if (m_gtaoOk)          m_gtao.SetTimestampFrequency(tsFreq);
             if (m_ssrOk)           m_ssr.SetTimestampFrequency(tsFreq);
+            if (m_autoExposureOk)  m_autoExposure.SetTimestampFrequency(tsFreq);
         }
         m_settlementSim.Reset(202653u);
         m_settlementTelemetry   = m_settlementSim.ComputeWorldTelemetry();
@@ -1513,6 +1522,105 @@ public:
         return p;
     }
 
+    bool QuicksaveWorld()
+    {
+        const auto snap = raw::worldgen::RawWorldSerializer::CaptureFromSystems(
+            &m_weatherSim, &m_settlementSim, &m_eventDirector, &m_diplomacy, &m_ecosystem);
+        std::string err;
+        const bool binOk = raw::worldgen::RawWorldSerializer::SaveWorldToFile(snap, "raw_world_quicksave.bin", &err);
+        const std::string json = raw::worldgen::RawWorldSerializer::SerializeWorldJson(snap);
+        bool jsonOk = false;
+        FILE* fp = nullptr;
+        if (fopen_s(&fp, "raw_world_quicksave.json", "wb") == 0 && fp) {
+            jsonOk = (std::fwrite(json.data(), 1u, json.size(), fp) == json.size());
+            std::fclose(fp);
+        }
+        if (binOk && jsonOk) {
+            m_lastSaveStatus = "F5 SAVED";
+            std::printf("[Serializer] F5 Quicksave OK: raw_world_quicksave.bin + raw_world_quicksave.json (%zu B json)\n", json.size());
+            return true;
+        }
+        m_lastSaveStatus = "F5 ERR";
+        std::printf("[Serializer] F5 Quicksave failed: %s\n", err.c_str());
+        return false;
+    }
+
+    bool QuickloadWorld()
+    {
+        raw::worldgen::WorldSnapshotState snap{};
+        std::string err;
+        if (!raw::worldgen::RawWorldSerializer::LoadWorldFromFile("raw_world_quicksave.bin", snap, &err)) {
+            m_lastSaveStatus = "F8 ERR";
+            std::printf("[Serializer] F8 Quickload failed: %s\n", err.c_str());
+            return false;
+        }
+        raw::worldgen::RawWorldSerializer::RestoreIntoSystems(
+            snap, &m_weatherSim, &m_settlementSim, &m_eventDirector, &m_diplomacy);
+        m_settlementTelemetry = m_settlementSim.ComputeWorldTelemetry();
+        m_eventTelemetry      = m_eventDirector.ComputeTelemetry();
+        m_diplomacyTelemetry  = m_diplomacy.ComputeTelemetry();
+        m_lastSaveStatus = "F8 LOADED";
+        std::printf("[Serializer] F8 Quickload OK (CRC-32 verified): caravans=%u events=%u meanRep=%+.1f\n",
+                    m_settlementTelemetry.totalCaravansActive, m_eventTelemetry.activeCount,
+                    m_diplomacyTelemetry.meanHoldReputation);
+        return true;
+    }
+
+    struct SerializerProbe {
+        size_t binaryBytes     = 0u;
+        size_t jsonBytes       = 0u;
+        bool   roundTripOk     = false;
+        bool   bitExact        = false;
+        bool   tamperRejected  = false;
+        bool   jsonValid       = false;
+    };
+
+    SerializerProbe RunWorldSerializerSelfTest()
+    {
+        SerializerProbe p{};
+        const auto snap1 = raw::worldgen::RawWorldSerializer::CaptureFromSystems(
+            &m_weatherSim, &m_settlementSim, &m_eventDirector, &m_diplomacy, &m_ecosystem);
+        std::vector<uint8_t> bin1;
+        if (!raw::worldgen::RawWorldSerializer::SerializeWorldBinary(snap1, bin1)) {
+            return p;
+        }
+        p.binaryBytes = bin1.size();
+
+        // Planted 1-bit CRC-32 tamper control
+        std::vector<uint8_t> tampered = bin1;
+        if (!tampered.empty()) {
+            tampered.back() ^= 0x01u;
+            raw::worldgen::WorldSnapshotState badSnap{};
+            p.tamperRejected = !raw::worldgen::RawWorldSerializer::DeserializeWorldBinary(
+                tampered.data(), tampered.size(), badSnap);
+        }
+
+        // Exact round-trip + re-serialization bit-exact check + live restore check
+        raw::worldgen::WorldSnapshotState snap2{};
+        std::string err;
+        p.roundTripOk = raw::worldgen::RawWorldSerializer::DeserializeWorldBinary(
+            bin1.data(), bin1.size(), snap2, &err);
+        if (p.roundTripOk) {
+            std::vector<uint8_t> bin2;
+            if (raw::worldgen::RawWorldSerializer::SerializeWorldBinary(snap2, bin2)) {
+                p.bitExact = (bin1.size() == bin2.size() && std::memcmp(bin1.data(), bin2.data(), bin1.size()) == 0);
+            }
+            raw::worldgen::RawWorldSerializer::RestoreIntoSystems(
+                snap2, &m_weatherSim, &m_settlementSim, &m_eventDirector, &m_diplomacy);
+            m_settlementTelemetry = m_settlementSim.ComputeWorldTelemetry();
+            m_eventTelemetry      = m_eventDirector.ComputeTelemetry();
+            m_diplomacyTelemetry  = m_diplomacy.ComputeTelemetry();
+        }
+
+        const std::string json = raw::worldgen::RawWorldSerializer::SerializeWorldJson(snap2);
+        p.jsonBytes = json.size();
+        p.jsonValid = (json.find("\"weather\"") != std::string::npos &&
+                       json.find("\"settlement\"") != std::string::npos &&
+                       json.find("\"diplomacy\"") != std::string::npos &&
+                       json.find("\"ecosystem\"") != std::string::npos);
+        return p;
+    }
+
     void ToggleAudio()
     {
         if (m_opt.headlessFrames > 0u) return; // Strictly OFF in headless CI mode
@@ -2209,6 +2317,22 @@ public:
                                      D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COMMON);
         }
 
+        // Live GPU 256-Bin Log-Luminance Histogram & Eye Adaptation (RawAutoExposureHost — 12th Live GPU Solver!)
+        if (m_autoExposureOk) {
+            AutoExposureParams aep{};
+            aep.dtSec          = dtClamped;
+            aep.minLogLum      = -10.0f;
+            aep.maxLogLum      =  14.0f;
+            aep.keyValue       =   0.18f;
+            aep.tauBrightSec   =   0.35f;
+            aep.tauDarkSec     =   1.40f;
+            aep.lowPercentile  =   0.15f;
+            aep.highPercentile =   0.95f;
+            aep.resetAdapt     = (m_frameCount == 0ull);
+            m_autoExposureRan  = m_autoExposure.Execute(m_dispCmd.Get(), m_hdrColor.Get(), m_width, m_height, aep,
+                                                        D3D12_RESOURCE_STATE_COMMON);
+        }
+
         if (m_radOk && m_giEnabled) {
             m_radianceHost.ExecuteScreenGI(m_dispCmd.Get(), m_hdrColor.Get(), m_depthIn.Get(),
                                            m_width, m_height, 0.16f);
@@ -2328,6 +2452,9 @@ public:
         float    gtaoDenoiseMs        = 0.0f;
         bool     ssrActive            = false;
         float    ssrMs                = 0.0f;
+        bool     autoExposureActive   = false;
+        float    autoExpHistMs        = 0.0f;
+        float    autoExpAdaptMs       = 0.0f;
         uint32_t biomesFound          = 0u;
     };
 
@@ -2369,6 +2496,9 @@ public:
         out->gtaoDenoiseMs = m_gtao.HasValidTiming() ? m_gtao.GetLastDenoiseMs() : 0.0f;
         out->ssrActive = m_ssrOk && m_ssr.Ready() && m_ssrRan;
         out->ssrMs = m_ssr.HasValidTiming() ? m_ssr.GetLastSsrMs() : 0.0f;
+        out->autoExposureActive = m_autoExposureOk && m_autoExposure.Ready() && m_autoExposureRan;
+        out->autoExpHistMs = m_autoExposure.HasValidTiming() ? m_autoExposure.GetLastHistMs() : 0.0f;
+        out->autoExpAdaptMs = m_autoExposure.HasValidTiming() ? m_autoExposure.GetLastAdaptMs() : 0.0f;
 
         const UINT hdrPitch  = (m_width * 8u + 255u) & ~255u;
         const UINT dispPitch = (m_width * 4u + 255u) & ~255u;
@@ -2510,6 +2640,7 @@ public:
         }
         m_cullInstUpload.Reset();
         m_cullInstBuf.Reset();
+        m_autoExposure.Shutdown();
         m_ssr.Shutdown();
         m_gtao.Shutdown();
         m_shadowPcss.Shutdown();
@@ -2595,6 +2726,7 @@ public:
         const float pcssMs        = m_shadowPcss.HasValidTiming() ? m_shadowPcss.GetLastPcssMs() : 0.0f;
         const float gtaoMs        = m_gtao.HasValidTiming() ? (m_gtao.GetLastMainMs() + m_gtao.GetLastDenoiseMs()) : 0.0f;
         const float ssrMs         = m_ssr.HasValidTiming() ? m_ssr.GetLastSsrMs() : 0.0f;
+        const float aeMs          = m_autoExposure.HasValidTiming() ? (m_autoExposure.GetLastHistMs() + m_autoExposure.GetLastAdaptMs()) : 0.0f;
         const auto activeHid      = static_cast<raw::worldgen::HoldId>(m_activeHoldIdx % static_cast<uint32_t>(raw::worldgen::kHoldCount));
         const auto* activeHold    = m_settlementSim.GetHold(activeHid);
         const float holdGrain     = activeHold ? activeHold->price[static_cast<size_t>(raw::worldgen::CommodityKind::Grain)] : 0.0f;
@@ -2607,6 +2739,10 @@ public:
                       dipStand ? static_cast<double>(dipStand->bountyGold) : 0.0,
                       dipStand ? raw::worldgen::GetGuardPostureName(dipStand->guardPosture) : "Peaceful",
                       dipStand ? static_cast<double>(dipStand->merchantPriceMult) : 1.0);
+        char saveBuf[32]{};
+        if (!m_lastSaveStatus.empty()) {
+            std::snprintf(saveBuf, sizeof(saveBuf), " | [%s]", m_lastSaveStatus.c_str());
+        }
         char evBuf[96]{};
         if (!m_eventDirector.ActiveEvents().empty()) {
             const auto& ev0 = m_eventDirector.ActiveEvents()[0];
@@ -2617,9 +2753,9 @@ public:
         } else {
             std::snprintf(evBuf, sizeof(evBuf), " | Ev:0");
         }
-        char buf[1280]{};
+        char buf[1408]{};
         std::snprintf(buf, sizeof(buf),
-                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms PCSS:%.3fms GTAO:%.3fms SSR:%.3fms HUD:%.3fms | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u | %s:%.1fg Car:%u(Snw:%u) Scarce:%s%s%s%s%s | Shards:%u",
+                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms PCSS:%.3fms GTAO:%.3fms SSR:%.3fms AE:%.3fms HUD:%.3fms | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u | %s:%.1fg Car:%u(Snw:%u) Scarce:%s%s%s%s%s%s | Shards:%u",
                       m_walkMode ? "WALK" : "FLY",
                       fps, m_lastDrawnMeshlets, m_meshHost.TerrainUsesMeshShaders() ? "AS+MS" : "VS+PS",
                       locBuf, TimePresetName(m_timePreset), ActiveWeatherDisplayName(),
@@ -2633,6 +2769,7 @@ public:
                       pcssMs,
                       gtaoMs,
                       ssrMs,
+                      aeMs,
                       m_overlayHost.HasValidTiming() ? m_overlayHost.GetLastOverlayMs() : 0.0f,
                       m_ecoTelemetry.activeFireCells,
                       static_cast<double>(m_ecoTelemetry.totalSnowVolumeM3),
@@ -2645,7 +2782,7 @@ public:
                       m_settlementTelemetry.totalCaravansActive,
                       m_settlementTelemetry.snowboundCaravans,
                       raw::worldgen::GetHoldName(m_settlementTelemetry.mostScarceHold),
-                      dipBuf, evBuf, hitBuf, navBuf,
+                      dipBuf, evBuf, saveBuf, hitBuf, navBuf,
                       m_activeShards);
         return buf;
     }
@@ -3097,18 +3234,19 @@ private:
         const float pcssMs   = m_shadowPcss.HasValidTiming() ? m_shadowPcss.GetLastPcssMs() : 0.0f;
         const float gtaoMs   = m_gtao.HasValidTiming() ? (m_gtao.GetLastMainMs() + m_gtao.GetLastDenoiseMs()) : 0.0f;
         const float ssrMs    = m_ssr.HasValidTiming() ? m_ssr.GetLastSsrMs() : 0.0f;
+        const float aeMs     = m_autoExposure.HasValidTiming() ? (m_autoExposure.GetLastHistMs() + m_autoExposure.GetLastAdaptMs()) : 0.0f;
         std::memset(outHud.lines[2], 0, sizeof(outHud.lines[2]));
         std::snprintf(outHud.lines[2], sizeof(outHud.lines[2]), "GPU F:%.2f W:%.2f GI:%.2f XP:%.2f FX:%.2f PS:%.2f",
                       static_cast<double>(snap.fireMs), static_cast<double>(snap.waterMs),
                       static_cast<double>(snap.giMs), static_cast<double>(snap.xpbdMs),
                       static_cast<double>(froxMs), static_cast<double>(pcssMs));
         std::memset(outHud.lines[3], 0, sizeof(outHud.lines[3]));
-        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "AO:%.3f SSR:%.3f CL:%.3f LC:%.3f HUD:%.3f",
+        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "AO:%.3f SSR:%.3f AE:%.3f CL:%.3f LC:%.3f",
                       static_cast<double>(gtaoMs),
                       static_cast<double>(ssrMs),
+                      static_cast<double>(aeMs),
                       static_cast<double>(hizMs + cullMs),
-                      static_cast<double>(lclustMs),
-                      static_cast<double>(snap.overlayMs));
+                      static_cast<double>(lclustMs));
 
         const char* topEvName = m_eventDirector.ActiveEvents().empty()
                               ? "NONE"
@@ -3126,12 +3264,11 @@ private:
         const auto dipHid    = static_cast<raw::worldgen::HoldId>(m_diplomacyHoldIdx % static_cast<uint32_t>(raw::worldgen::kHoldCount));
         const auto* dipSt    = m_diplomacy.GetHoldStanding(dipHid);
         std::memset(outHud.lines[7], 0, sizeof(outHud.lines[7]));
-        std::snprintf(outHud.lines[7], sizeof(outHud.lines[7]), "DIP %s %+.0f B:%.0fG %.8s X%.2f | K O E",
+        std::snprintf(outHud.lines[7], sizeof(outHud.lines[7]), "DIP %s %+.0f X%.2f | %s",
                       raw::worldgen::GetHoldName(dipHid),
                       dipSt ? static_cast<double>(dipSt->reputation) : 0.0,
-                      dipSt ? static_cast<double>(dipSt->bountyGold) : 0.0,
-                      dipSt ? raw::worldgen::GetGuardPostureName(dipSt->guardPosture) : "PEACEFUL",
-                      dipSt ? static_cast<double>(dipSt->merchantPriceMult) : 1.0);
+                      dipSt ? static_cast<double>(dipSt->merchantPriceMult) : 1.0,
+                      m_lastSaveStatus.empty() ? "F5=SAVE F8=LOAD" : m_lastSaveStatus.c_str());
         outHud.lineColorTag[7] = kOverlayColorCyan;
         outHud.lineCount       = 8u;
         outHud.enabled    = m_hudEnabled;
@@ -3530,6 +3667,8 @@ private:
     bool          m_gtaoRan = false;
     bool          m_ssrOk = false;
     bool          m_ssrRan = false;
+    bool          m_autoExposureOk = false;
+    bool          m_autoExposureRan = false;
     std::string   m_adapterName;
 
     ComPtr<IDXGIFactory4>              m_factory;
@@ -3573,6 +3712,7 @@ private:
     RawShadowPcssHost                  m_shadowPcss;
     RawGtaoHost                        m_gtao;
     RawSsrHost                         m_ssr;
+    RawAutoExposureHost                m_autoExposure;
     ComPtr<ID3D12Resource>             m_shadowOutTex;
     ComPtr<ID3D12Resource>             m_shadowMapProxy;
     float                              m_prevWorldToClip[16] = {};
@@ -3612,6 +3752,7 @@ private:
     raw::worldgen::DiplomacyTelemetry     m_diplomacyTelemetry{};
     uint32_t                              m_diplomacyHoldIdx = 0u;
     uint32_t                              m_diplomacyFactionIdx = 0u;
+    std::string                           m_lastSaveStatus;
     std::vector<raw::worldgen::SquadAgent> m_tacticalSquad;
     std::vector<raw::worldgen::TacticalSteeringOutput> m_lastSquadOut;
     raw::worldgen::NavPathResult          m_lastNavPath{};
@@ -3730,6 +3871,8 @@ LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     case 'E': st->viewer->AdvanceEconomyAndCycleHold(); break;
                     case 'O': st->viewer->ResolveOrPollWorldEvent(); break;
                     case 'K': st->viewer->CycleDiplomacyInspect(); break;
+                    case VK_F5: st->viewer->QuicksaveWorld(); break;
+                    case VK_F8: st->viewer->QuickloadWorld(); break;
                     case 'H':
                     case VK_F9: st->viewer->ToggleHud(); break;
                     case VK_F12: st->viewer->CaptureScreenshotBmp(); break;
@@ -3805,7 +3948,7 @@ int main(int argc, char** argv)
     if (opt.showHelp) {
         std::printf(
             "RAW Interactive Real-Time Win32/DX12 Standalone Engine Viewer\n"
-            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, V startle wildlife, E economy +6h/cycle hold, O resolve/poll world event, K cycle hold/faction diplomacy, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
+            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, V startle wildlife, E economy +6h/cycle hold, O resolve/poll world event, K cycle hold/faction diplomacy, F5/F8 quicksave/quickload, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
             "CLI: [--headless-frames N] [--warp] [--debug] [--width W] [--height H] [--esm <Skyrim.esm>]\n");
         return 0;
     }
@@ -3835,6 +3978,7 @@ int main(int argc, char** argv)
         RawEngineViewer::SettlementProbe settlementProbe{};
         RawEngineViewer::WorldEventProbe eventProbe{};
         RawEngineViewer::DiplomacyProbe diplomacyProbe{};
+        RawEngineViewer::SerializerProbe serializerProbe{};
         bool teleportedToWhiterun = false;
         for (uint32_t f = 0; f < opt.headlessFrames; ++f) {
             if (f == 0u) {
@@ -3843,6 +3987,7 @@ int main(int argc, char** argv)
                 settlementProbe = viewer.RunSettlementSelfTest();
                 eventProbe      = viewer.RunWorldEventSelfTest();
                 diplomacyProbe  = viewer.RunDiplomacySelfTest();
+                serializerProbe = viewer.RunWorldSerializerSelfTest();
                 if (opt.startEsm) {
                     riverwoodStats = viewer.GetTamrielStats();
                     riverwoodPhys = viewer.RunPhysicsWalkSelfTest();
@@ -3870,7 +4015,7 @@ int main(int argc, char** argv)
 
         RawEngineViewer::HeadlessAudit audit{};
         const bool rbOk = viewer.ReadbackHeadlessAudit(&audit);
-        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), pcss=%s (%.4fms), gtao=%s (main=%.4fms, den=%.4fms), ssr=%s (%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
+        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), pcss=%s (%.4fms), gtao=%s (main=%.4fms, den=%.4fms), ssr=%s (%.4fms), ae=%s (hist=%.4fms, adapt=%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
                     audit.usedMeshShaders ? "AS+MS+PS" : "VS+PS",
                     audit.drawnMeshlets, audit.activeShards, audit.biomesFound,
                     audit.radianceActive ? "ON" : "off", audit.radianceGiMs,
@@ -3882,6 +4027,7 @@ int main(int argc, char** argv)
                     audit.shadowPcssActive ? "ON" : "off", audit.shadowPcssMs,
                     audit.gtaoActive ? "ON" : "off", audit.gtaoMainMs, audit.gtaoDenoiseMs,
                     audit.ssrActive ? "ON" : "off", audit.ssrMs,
+                    audit.autoExposureActive ? "ON" : "off", audit.autoExpHistMs, audit.autoExpAdaptMs,
                     audit.overlayActive ? "ON" : "off", audit.overlayMs, audit.hudNonZeroPx,
                     audit.hdrLitPixels, audit.hdrNanInf,
                     audit.dispNonZeroPx, audit.dispMeanLuma, audit.dispStdDevLuma);
@@ -3903,6 +4049,10 @@ int main(int argc, char** argv)
                     diplomacyProbe.holdRepAfterReward, diplomacyProbe.merchantPriceMult,
                     diplomacyProbe.imperialRep, diplomacyProbe.stormcloakRep,
                     int(diplomacyProbe.allBounded), int(diplomacyProbe.allFinite));
+        std::printf("       World Serializer: bin=%zuB json=%zuB roundTrip=%d bitExact=%d crcTamperRejected=%d jsonValid=%d\n",
+                    serializerProbe.binaryBytes, serializerProbe.jsonBytes,
+                    int(serializerProbe.roundTripOk), int(serializerProbe.bitExact),
+                    int(serializerProbe.tamperRejected), int(serializerProbe.jsonValid));
         check(audit.xpbdActive && audit.xpbdParticles == 4096u && std::isfinite(audit.xpbdStepMs) && audit.xpbdStepMs >= 0.0f,
               "Live GPU XPBD soft-body/hair/bush solver (4,096 particles / 256 chains) stepped cleanly");
         check(audit.gpuCullActive && audit.gpuHiZMips > 1u &&
@@ -3924,6 +4074,9 @@ int main(int argc, char** argv)
               "Live GPU Jimenez GTAO + Bent Normals (RawGtaoHost — 10th GPU Solver) executed cleanly");
         check(audit.ssrActive && std::isfinite(audit.ssrMs) && audit.ssrMs >= 0.0f,
               "Live GPU GGX Stochastic SSR (RawSsrHost — 11th GPU Solver) executed cleanly");
+        check(audit.autoExposureActive && std::isfinite(audit.autoExpHistMs) && audit.autoExpHistMs >= 0.0f &&
+              std::isfinite(audit.autoExpAdaptMs) && audit.autoExpAdaptMs >= 0.0f,
+              "Live GPU 256-Bin Auto-Exposure (RawAutoExposureHost — 12th GPU Solver) executed cleanly");
         check(ecoProbe.ignitedCells > 0u && ecoProbe.activeFireCells > 0u && ecoProbe.allFinite,
               "Live Cellular Ecosystem (RawWorldEcosystem) ignited wildfire, stepped 10x with active fire & finite telemetry");
         check(wildlifeProbe.activeAgents == 128u && wildlifeProbe.startledCount > 0u && wildlifeProbe.allFinite,
@@ -3935,6 +4088,9 @@ int main(int argc, char** argv)
         check(diplomacyProbe.merchantPriceMult < 1.0f && diplomacyProbe.imperialRep > 0.0f &&
               diplomacyProbe.stormcloakRep < 0.0f && diplomacyProbe.allBounded && diplomacyProbe.allFinite,
               "Live 9-Hold & 6-Faction Diplomacy (RawFactionDiplomacy) rewarded events, discounted prices & clamped spillover");
+        check(serializerProbe.roundTripOk && serializerProbe.bitExact &&
+              serializerProbe.tamperRejected && serializerProbe.jsonValid,
+              "CRC-32 Persistent World Serializer (RawWorldSerializer) passed bit-exact 5-pillar round-trip & tamper rejection");
         check(audit.overlayActive && std::isfinite(audit.overlayMs) && audit.overlayMs >= 0.0f && audit.hudNonZeroPx > 500u,
               "Live GPU Telemetry & Sparkline HUD (RawOverlayHost) rendered cleanly onto LDR display buffer");
         if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {

@@ -1,6 +1,6 @@
-# RAW Engine BuildLang Core Kernel Map (9 Modules, 54 Verified Kernels)
+# RAW Engine BuildLang Core Kernel Map (10 Modules, 60 Verified Kernels)
 
-This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, regional economy, GPU pipeline, and world-systems kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**9 modules, 54 verified kernels**):
+This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, regional economy, GPU pipeline, world-systems, volumetric clouds, archery, and dungeon kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**10 modules, 60 verified kernels**):
 
 1. [`native/bld/RawPhysicsKernels.bld`](../native/bld/RawPhysicsKernels.bld) (6 core scalar physics & anti-exploit kernels)
 2. [`native/bld/RawAtmoWeather.bld`](../native/bld/RawAtmoWeather.bld) (7 planetary atmosphere, orbital solar, snowpack ODE & black-ice kernels)
@@ -11,10 +11,11 @@ This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar 
 7. [`native/bld/RawEconomySim.bld`](../native/bld/RawEconomySim.bld) (6 9-hold scarcity pricing, Rothermel wildfire, blizzard caravan speed, cold-water breath, wet-elemental & GTAO kernels)
 8. [`native/bld/RawGpuPipeline.bld`](../native/bld/RawGpuPipeline.bld) (6 froxel Z-slice, cascade texel-snap, SSR edge fade, PI frame governor, clustered sphere-AABB & event bounty kernels)
 9. [`native/bld/RawWorldSystems.bld`](../native/bld/RawWorldSystems.bld) (6 log-luminance histogram, eye adaptation, diplomacy pricing, guard posture, audio crossfade & Purkinje night-vision kernels)
+10. [`native/bld/RawCloudsDungeon.bld`](../native/bld/RawCloudsDungeon.bld) (6 dual-lobe HG clouds, Beer-Powder scattering, spherical cloud shell, bow draw power, dungeon connectivity & compass marker kernels)
 
 ## Toolchain Verification Receipts (`buildc 1.4.0`)
 
-Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **9/9 `check` PASS**, **9/9 `run` PASS**):
+Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **10/10 `check` PASS**, **10/10 `run` PASS**):
 
 ### Module 1: `native/bld/RawPhysicsKernels.bld`
 - `buildc check`: Exit Code `0` (`Lexing... OK (763 tokens)`, `Parsing... OK (9 items)`, `Type checking... OK`, `No errors found`)
@@ -123,7 +124,19 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
   purkinje_night_weight(night 0.004) = 0.19223593964334704 | (day 0.25) = 0
   ```
 
-## Kernel-by-Kernel Mapping (54 Kernels)
+### Module 10: `native/bld/RawCloudsDungeon.bld`
+- `buildc check`: Exit Code `0` (`Lexing... OK (1198 tokens)`, `Parsing... OK (11 items)`, `Type checking... OK`, `No errors found`)
+- `buildc run`: Exit Code `0`
+  ```text
+  cloud_dual_hg(fwd 0.95) = 0.4971514897291038 | (back -0.75) = 0.04397230100970019
+  beer_powder_scatter(sun tau=0.60) = 0.5542669825852977 | (edge tau=0.15) = 0.45652335777703124
+  cloud_shell_hit_dist(zenith 1.5km) = 1.5 | (horizon 0) = 138.13851743811355
+  bow_draw_power(half) = 0.604989831816444 | (full) = 1
+  dungeon_conn_ratio(mst) = 1 | (loop) = 1.3333333333333333 | (broken) = 0.4666666666666666
+  compass_marker_scale(220m clear) = 0.798027875783642 | (220m fog 0.85) = 0.4165139923901944
+  ```
+
+## Kernel-by-Kernel Mapping (60 Kernels)
 
 ### 1. Core Physics Kernels (`native/bld/RawPhysicsKernels.bld`)
 
@@ -224,10 +237,21 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
 | 53 | `audio_crossfade_gain(t01, is_incoming)` | `src/engine_rt/rt_adaptive_audio_director.cpp` | Equal-power `sin(t * pi/2)` incoming / `cos(t * pi/2)` outgoing | At `t=0.5`: `0.7071^2 + 0.7071^2 == 1.0000` exact power preservation |
 | 54 | `purkinje_night_weight(scene_lum, max_weight)` | `src/d3d12_bridge/shaders/Tonemap.hlsl` | Smooth scotopic shift strictly below `scene_lum < 0.018`, `0.0` above | Dim night `0.004` = `0.1922`; daylight `0.25` = exact `0.0` |
 
-## Reproducing All 9 BuildLang Module Checks
+### 10. Volumetric Clouds, Archery, Dungeon and HUD Kernels (`native/bld/RawCloudsDungeon.bld`)
+
+| # | BuildLang Function | Engine C++ / HLSL Counterpart | Governing Equation | Verified Invariant |
+| --- | --- | --- | --- | --- |
+| 55 | `cloud_dual_hg(cos_theta, g_fwd, g_back, blend)` | `src/d3d12_bridge/shaders/RawCloudRaymarchSim.hlsl`, `Clouds.hlsl` | `w * HG(mu, g_fwd) + (1 - w) * HG(mu, g_back)` | Forward silver-lining (`0.4972`) vs back lobe (`0.0440`, `11.3x` contrast) |
+| 56 | `beer_powder_scatter(optical_depth, cos_theta, powder_gain)` | `src/d3d12_bridge/shaders/RawCloudRaymarchSim.hlsl`, `Clouds.hlsl` | `exp(-tau) * (1 + pw * (2*(1 - exp(-2*tau)) - 1))` | Bright sunward silver lining (`0.5543`) vs thin dark-edge powder (`0.4565`) |
+| 57 | `cloud_shell_hit_dist(planet_r, obs_alt, shell_alt, ray_y)` | `src/d3d12_bridge/shaders/RawCloudRaymarchSim.hlsl` | Quadratic ray-sphere shell hit `-r0*mu +/- sqrt((r0*mu)^2 - (r0^2 - R^2))` | Zenith `1.5 km` shell = exact `1.5 km`; horizon ray = `138.14 km` |
+| 58 | `bow_draw_power(draw_time_s, min_draw_s, full_draw_s, min_power)` | `src/engine_rt/rt_archery_mount_gmst.cpp` | `p_min + (1 - p_min) * clamp((t - t_min)/(t_full - t_min), 0, 1)^1.35` | Half draw = `0.6050`; full draw = exact `1.0` |
+| 59 | `dungeon_conn_ratio(room_count, corridor_count, reachable_rooms)` | `src/worldgen/RawDungeonGen.cpp` | `(reachable / N) * clamp(corridors / (N - 1), 0, 2)` | Spanning tree = `1.0`, braided loop = `1.333`, disconnected = `0.467` |
+| 60 | `compass_marker_scale(dist_m, near_m, far_m, fog_density01, min_s, max_s)` | `src/engine_rt/rt_archery_mount_gmst.cpp` | Fog-shrunk range + smoothstep proximity scale * weather attenuation | `220 m` clear = `0.7980` vs heavy blizzard (`fog=0.85`) = `0.4165` |
+
+## Reproducing All 10 BuildLang Module Checks
 
 ```powershell
-foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim','RawGpuPipeline','RawWorldSystems')) {
+foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim','RawGpuPipeline','RawWorldSystems','RawCloudsDungeon')) {
     buildc check "E:\wt\raw-rt9\native\bld\$m.bld"
     buildc run   "E:\wt\raw-rt9\native\bld\$m.bld"
 }

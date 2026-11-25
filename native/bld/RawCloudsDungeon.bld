@@ -1,0 +1,149 @@
+// RawCloudsDungeon.bld: RAW Engine Deterministic Volumetric Cloud, Archery, Dungeon & HUD Kernels in BuildLang 1.4.0.
+// Counterparts to RawCloudRaymarchSim.hlsl, Clouds.hlsl, rt_archery_mount_gmst.cpp, and RawDungeonGen.cpp:
+//   1. cloud_dual_hg         - Dual-lobe Henyey-Greenstein cloud silver-lining phase function
+//   2. beer_powder_scatter   - Beer-Powder dark-edge cloud multi-scattering transmittance
+//   3. cloud_shell_hit_dist  - Exact spherical atmospheric cloud-shell ray intersection distance
+//   4. bow_draw_power        - Non-linear bow draw-time kinetic power curve
+//   5. dungeon_conn_ratio    - Procedural dungeon spanning-tree connectivity & loop ratio
+//   6. compass_marker_scale  - Weather- and distance-attenuated HUD compass marker scale
+// Original work, MIT.
+
+fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
+}
+
+fn max_f64(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+fn smoothstep_01(x: f64) -> f64 {
+    let t: f64 = clamp_f64(x, 0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn hg_single(cos_theta: f64, g_raw: f64) -> f64 {
+    let pi: f64 = 3.141592653589793;
+    let mu: f64 = clamp_f64(cos_theta, -1.0, 1.0);
+    let g: f64 = clamp_f64(g_raw, -0.95, 0.95);
+    let g2: f64 = g * g;
+    let denom: f64 = max_f64(1.0 + g2 - 2.0 * g * mu, 1.0e-5);
+    (1.0 - g2) / (4.0 * pi * pow(denom, 1.5))
+}
+
+// 1. Dual-lobe Henyey-Greenstein volumetric cloud silver-lining phase function.
+// Matches src/d3d12_bridge/shaders/RawCloudRaymarchSim.hlsl and Clouds.hlsl.
+fn cloud_dual_hg(cos_theta: f64, g_fwd: f64, g_back: f64, blend: f64) -> f64 {
+    let w: f64 = clamp_f64(blend, 0.0, 1.0);
+    let fwd: f64 = hg_single(cos_theta, g_fwd);
+    let back: f64 = hg_single(cos_theta, g_back);
+    w * fwd + (1.0 - w) * back
+}
+
+// 2. Schneider Beer-Powder dark-edge cloud multi-scattering transmittance.
+//    Produces crisp silver-lining forward scattering (cos_theta -> +1) and dark-edge powder relief away from sun.
+// Matches src/d3d12_bridge/shaders/RawCloudRaymarchSim.hlsl and Clouds.hlsl.
+fn beer_powder_scatter(optical_depth: f64, cos_theta: f64, powder_gain: f64) -> f64 {
+    let tau: f64 = max_f64(optical_depth, 0.0);
+    let beer: f64 = exp(-tau);
+    let powder: f64 = 1.0 - exp(-2.0 * tau);
+    let mu01: f64 = clamp_f64(0.5 * (cos_theta + 1.0), 0.0, 1.0);
+    let pw: f64 = clamp_f64(powder_gain, 0.0, 1.0) * (1.0 - mu01);
+    beer * (1.0 + pw * (2.0 * powder - 1.0))
+}
+
+// 3. Exact spherical atmospheric cloud-shell ray intersection distance (km) from observer altitude to shell altitude.
+//    Returns positive ray distance along ray elevation ray_y, or -1.0 on miss.
+// Matches src/d3d12_bridge/shaders/RawCloudRaymarchSim.hlsl spherical cloud layer bounds.
+fn cloud_shell_hit_dist(planet_r: f64, obs_alt: f64, shell_alt: f64, ray_y: f64) -> f64 {
+    let r0: f64 = max_f64(planet_r + obs_alt, 1.0);
+    let r_shell: f64 = max_f64(planet_r + shell_alt, 1.0);
+    let mu: f64 = clamp_f64(ray_y, -1.0, 1.0);
+    let b: f64 = r0 * mu;
+    let c: f64 = r0 * r0 - r_shell * r_shell;
+    let disc: f64 = b * b - c;
+    if disc < 0.0 {
+        -1.0
+    } else {
+        let s: f64 = sqrt(disc);
+        let t_near: f64 = -b - s;
+        let t_far: f64 = -b + s;
+        if t_near > 0.0 {
+            t_near
+        } else if t_far > 0.0 {
+            t_far
+        } else {
+            -1.0
+        }
+    }
+}
+
+// 4. Non-linear bow draw-time kinetic power curve in [min_power..1.0].
+// Matches src/engine_rt/rt_archery_mount_gmst.cpp (fBowDrawTime / fArrowMinPower elastic limb curve).
+fn bow_draw_power(draw_time_s: f64, min_draw_s: f64, full_draw_s: f64, min_power: f64) -> f64 {
+    let p_min: f64 = clamp_f64(min_power, 0.05, 0.95);
+    let span: f64 = max_f64(full_draw_s - min_draw_s, 1.0e-4);
+    let t: f64 = clamp_f64((draw_time_s - min_draw_s) / span, 0.0, 1.0);
+    let curve: f64 = pow(t, 1.35);
+    p_min + (1.0 - p_min) * curve
+}
+
+// 5. Procedural dungeon room spanning-tree connectivity & braided loop ratio.
+//    Returns < 1.0 if disconnected, 1.0 for exact spanning tree, and (1.0..2.0] for braided multi-loop layouts.
+// Matches src/worldgen/RawDungeonGen.cpp MST + loop-corridor connectivity verification.
+fn dungeon_conn_ratio(room_count: i32, corridor_count: i32, reachable_rooms: i32) -> f64 {
+    if room_count <= 0 {
+        0.0
+    } else if room_count == 1 {
+        if reachable_rooms >= 1 { 1.0 } else { 0.0 }
+    } else {
+        let rooms_f: f64 = room_count as f64;
+        let reach_f: f64 = clamp_f64(reachable_rooms as f64, 0.0, rooms_f);
+        let corr_f: f64 = max_f64(corridor_count as f64, 0.0);
+        let reach_frac: f64 = reach_f / rooms_f;
+        let edge_ratio: f64 = clamp_f64(corr_f / (rooms_f - 1.0), 0.0, 2.0);
+        reach_frac * edge_ratio
+    }
+}
+
+// 6. Weather- and distance-attenuated HUD compass marker scale.
+//    Smoothly shrinks distant markers and further compresses visibility range in fog/blizzard conditions.
+// Matches src/engine_rt/rt_archery_mount_gmst.cpp HUD compass marker GMST curve.
+fn compass_marker_scale(dist_m: f64, near_m: f64, far_m: f64, fog_density01: f64, min_scale: f64, max_scale: f64) -> f64 {
+    let lo_s: f64 = max_f64(min_scale, 0.1);
+    let hi_s: f64 = max_f64(max_scale, lo_s);
+    let fog: f64 = clamp_f64(fog_density01, 0.0, 1.0);
+    let eff_far: f64 = max_f64(near_m + 1.0, far_m * (1.0 - 0.55 * fog));
+    let u: f64 = 1.0 - clamp_f64((dist_m - near_m) / (eff_far - near_m), 0.0, 1.0);
+    let base_s: f64 = lo_s + (hi_s - lo_s) * smoothstep_01(u);
+    let wx_att: f64 = 1.0 - 0.25 * fog * (1.0 - u);
+    clamp_f64(base_s * wx_att, lo_s * 0.75, hi_s)
+}
+
+fn main() ~ Console {
+    let hg_fwd: f64 = cloud_dual_hg(0.95, 0.78, -0.25, 0.70);
+    let hg_back: f64 = cloud_dual_hg(-0.75, 0.78, -0.25, 0.70);
+    let bp_sun: f64 = beer_powder_scatter(0.60, 0.95, 1.0);
+    let bp_edge: f64 = beer_powder_scatter(0.15, -0.95, 1.0);
+    let hit_zenith: f64 = cloud_shell_hit_dist(6360.0, 0.0, 1.5, 1.0);
+    let hit_horiz: f64 = cloud_shell_hit_dist(6360.0, 0.0, 1.5, 0.0);
+    let bow_half: f64 = bow_draw_power(0.60, 0.10, 1.10, 0.35);
+    let bow_full: f64 = bow_draw_power(1.10, 0.10, 1.10, 0.35);
+    let dng_mst: f64 = dungeon_conn_ratio(10, 9, 10);
+    let dng_loop: f64 = dungeon_conn_ratio(10, 12, 10);
+    let dng_broken: f64 = dungeon_conn_ratio(10, 6, 7);
+    let cmp_clear: f64 = compass_marker_scale(220.0, 25.0, 500.0, 0.0, 0.45, 1.0);
+    let cmp_fog: f64 = compass_marker_scale(220.0, 25.0, 500.0, 0.85, 0.45, 1.0);
+
+    println!("cloud_dual_hg(fwd 0.95) = {} | (back -0.75) = {}", hg_fwd, hg_back);
+    println!("beer_powder_scatter(sun tau=0.60) = {} | (edge tau=0.15) = {}", bp_sun, bp_edge);
+    println!("cloud_shell_hit_dist(zenith 1.5km) = {} | (horizon 0) = {}", hit_zenith, hit_horiz);
+    println!("bow_draw_power(half) = {} | (full) = {}", bow_half, bow_full);
+    println!("dungeon_conn_ratio(mst) = {} | (loop) = {} | (broken) = {}", dng_mst, dng_loop, dng_broken);
+    println!("compass_marker_scale(220m clear) = {} | (220m fog 0.85) = {}", cmp_clear, cmp_fog);
+}

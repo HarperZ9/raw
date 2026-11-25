@@ -305,7 +305,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         const bool pcssOk = m->InitShadowPcss();
         const bool gtaoOk = m->InitGtaoHost();
         const bool ssrOk = m->InitSsrHost();
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s, Gtao=%s, Ssr=%s",
+        const bool autoExpOk = m->InitAutoExposure();
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s, Gtao=%s, Ssr=%s, AutoExposure=%s",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
                terrainOk ? "READY" : "off",
                m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
@@ -321,7 +322,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                froxelOk ? "READY" : "off",
                pcssOk ? "READY" : "off",
                gtaoOk ? "READY" : "off",
-               ssrOk ? "READY" : "off");
+               ssrOk ? "READY" : "off",
+               autoExpOk ? "READY" : "off");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
         {
             const auto& matReg = raw::materials::DefaultMaterialRegistry();
@@ -1183,6 +1185,74 @@ void D3D12Bridge::Impl::ShutdownSsrHost()
     ssrHostReady = false;
 }
 
+bool D3D12Bridge::Impl::InitAutoExposure()
+{
+    ShutdownAutoExposure();
+    if (!dev12) return false;
+    autoExposure = std::make_unique<RawAutoExposureHost>();
+    std::string aeErr;
+    if (!autoExposure->Init(dev12.Get(), {}, &aeErr)) {
+        log("[AutoExposure] off: %s", aeErr.c_str());
+        autoExposure.reset();
+        return false;
+    }
+    UINT64 tsFreq = 0;
+    if (queue && SUCCEEDED(queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+        autoExposure->SetTimestampFrequency(tsFreq);
+    }
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&autoExposureAlloc[i])))) {
+            ShutdownAutoExposure();
+            return false;
+        }
+    }
+    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, autoExposureAlloc[0].Get(), nullptr, IID_PPV_ARGS(&autoExposureList))) ||
+        FAILED(autoExposureList->Close()) ||
+        FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&autoExposureFence)))) {
+        ShutdownAutoExposure();
+        return false;
+    }
+    autoExposureEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!autoExposureEvent) {
+        ShutdownAutoExposure();
+        return false;
+    }
+    autoExposureLastMs = GetTickCount64();
+    autoExposureReady = true;
+    log("[AutoExposure] GPU 256-Bin Log-Luminance Histogram + Eye-Adapt ready (%ux%u)",
+        static_cast<unsigned>(cfg.width), static_cast<unsigned>(cfg.height));
+    return true;
+}
+
+void D3D12Bridge::Impl::ShutdownAutoExposure()
+{
+    if (autoExposureFence && autoExposureEvent && autoExposureFenceVal > 0) {
+        if (autoExposureFence->GetCompletedValue() < autoExposureFenceVal) {
+            autoExposureFence->SetEventOnCompletion(autoExposureFenceVal, autoExposureEvent);
+            WaitForSingleObject(autoExposureEvent, 3000);
+        }
+    }
+    autoExposureList.Reset();
+    for (UINT i = 0; i < kRing; ++i) {
+        autoExposureAlloc[i].Reset();
+        autoExposureSlotVal[i] = 0;
+    }
+    autoExposureFence.Reset();
+    if (autoExposureEvent) {
+        CloseHandle(autoExposureEvent);
+        autoExposureEvent = nullptr;
+    }
+    if (autoExposure) {
+        autoExposure->Shutdown();
+        autoExposure.reset();
+    }
+    autoExposureFenceVal = 0;
+    autoExposureSlot = 0;
+    autoExposureStepFrames = 0;
+    autoExposureLastMs = 0;
+    autoExposureReady = false;
+}
+
 void D3D12Bridge::Shutdown()
 {
     if (!m) return;
@@ -1191,6 +1261,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->ShutdownAutoExposure();
     m->ShutdownSsrHost();
     m->ShutdownGtaoHost();
     m->ShutdownShadowPcss();

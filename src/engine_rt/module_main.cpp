@@ -27,6 +27,7 @@
 #include "rt_callgraph.h"
 #include "rt_combat_ai.h"
 #include "rt_combat_impact.h"
+#include "rt_console_diag.h"
 #include "rt_control.h"
 #include "rt_core_fixes.h"
 #include "rt_crash_forensics.h"
@@ -145,6 +146,7 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     raw::rt::CrashForensicsOnPresent();
     raw::rt::NpcBehaviorOnPresent();
     raw::rt::EngineHealthOnPresent();
+    raw::rt::ConsoleDiagOnPresent();
     {
         static LARGE_INTEGER s_qpcFreq{};
         static LARGE_INTEGER s_prevQpc{};
@@ -399,6 +401,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     Log("%s", raw::rt::EngineHealthInit().c_str());
     Log("%s", raw::rt::AudioBridgeInit().c_str());
     Log("%s", raw::rt::SdkBridgeInit(g_out).c_str());
+    Log("%s", raw::rt::ConsoleDiagInit(g_out).c_str());
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
     if (IniInt("CallGraph", 0)) {
@@ -426,6 +429,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         std::snprintf(why, n, "%d background thread(s) running (sample or call graph); ask again when they finish", t);
         return 0;
     }
+    raw::rt::ConsoleDiagShutdown();
     raw::rt::SdkBridgeShutdown();
     raw::rt::AudioBridgeShutdown();
     raw::rt::EngineHealthShutdown();

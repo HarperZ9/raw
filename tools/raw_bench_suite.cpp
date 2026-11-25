@@ -1,5 +1,5 @@
 // tools/raw_bench_suite.cpp: Studio-Grade Automated GPU/CPU Benchmark & Visual Invariant Suite for RAW.
-// Benchmarks all 14 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
+// Benchmarks all 15 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
 //   1. GPU 64^3 Navier-Stokes Fire/Smoke + 256^2 SWE Water (RawFluidSimHost)
 //   2. GPU 4-Cascade Radiance Cascades GI (RawRadianceHost)
 //   3. Procedural PBR Texture Forge (RawTextureForge, all 8 seamless PBR sets)
@@ -14,6 +14,7 @@
 //  12. GPU Variable-Penumbra PCSS Contact-Hardening Shadows & Texel-Snapped Cascade (RawShadowPcssHost)
 //  13. GPU Jimenez GTAO + Unoccluded Bent Normals & Bilateral Denoise (RawGtaoHost)
 //  14. GPU GGX Stochastic Screen-Space Reflections (RawSsrHost)
+//  15. GPU 256-Bin Log-Luminance Histogram & Asymmetric Human Eye-Adaptation Auto-Exposure (RawAutoExposureHost)
 //
 // CLI:
 //   raw_bench_suite [--warp] [--quick] [--frames N] [--json <path>] [--esm <path>] [--bsa <path>] [--no-debug-layer]
@@ -40,6 +41,7 @@
 #include "../src/d3d12_bridge/RawShadowPcssHost.h"
 #include "../src/d3d12_bridge/RawGtaoHost.h"
 #include "../src/d3d12_bridge/RawSsrHost.h"
+#include "../src/d3d12_bridge/RawAutoExposureHost.h"
 #include "../src/materials/RawTextureForge.h"
 #include "../src/audio/RawAudioDsp.h"
 #include "../src/worldgen/RawDestructionEngine.h"
@@ -58,6 +60,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <fstream>
 #include <iomanip>
 #include <numeric>
@@ -1018,6 +1021,25 @@ struct SsrBenchResult {
     uint32_t    mirrorSpanW      = 0u;
     uint32_t    roughSpanW       = 0u;
     uint32_t    nanInfCount      = 0u;
+    std::string note;
+};
+
+struct AutoExposureBenchResult {
+    bool        passed           = false;
+    Percentiles totalGpuMs{};
+    Percentiles cpuRecordMs{};
+    uint32_t    width            = 960u;
+    uint32_t    height           = 540u;
+    float       hostHistMs       = 0.0f;
+    float       hostAdaptMs      = 0.0f;
+    float       darkExposure     = 0.0f;
+    float       glacierExposure  = 0.0f;
+    float       fireflyTargetLum = 0.0f;
+    float       fireflyErrPct    = 100.0f;
+    float       asymBrightFrac   = 0.0f;
+    float       asymDarkFrac     = 0.0f;
+    float       asymRatio        = 0.0f;
+    bool        nanFinite        = false;
     std::string note;
 };
 
@@ -3238,6 +3260,248 @@ SsrBenchResult RunSsrBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames, uint32_
 }
 
 // ----------------------------------------------------------------------------
+// 15. GPU 256-Bin Log-Luminance Histogram & Eye-Adaptation Auto-Exposure (RawAutoExposureHost)
+// ----------------------------------------------------------------------------
+AutoExposureBenchResult RunAutoExposureBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames, uint32_t measuredFrames)
+{
+    AutoExposureBenchResult res{};
+    constexpr uint32_t kW = 960u;
+    constexpr uint32_t kH = 540u;
+    res.width  = kW;
+    res.height = kH;
+
+    raw::bridge::RawAutoExposureHost host;
+    std::string err;
+    if (!host.Init(rig.dev.Get(), {}, &err)) {
+        res.note = "RawAutoExposureHost::Init failed: " + err;
+        return res;
+    }
+    host.SetTimestampFrequency(rig.tsFreqHz);
+
+    auto uploadRgba32FTex = [&](ComPtr<ID3D12Resource>& tex, const std::vector<float>& rgba) -> bool {
+        D3D12_HEAP_PROPERTIES hpDef{D3D12_HEAP_TYPE_DEFAULT};
+        D3D12_RESOURCE_DESC rd{};
+        rd.Dimension        = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        rd.Width            = kW;
+        rd.Height           = kH;
+        rd.DepthOrArraySize = 1u;
+        rd.MipLevels        = 1u;
+        rd.Format           = DXGI_FORMAT_R32G32B32A32_FLOAT;
+        rd.SampleDesc.Count = 1u;
+        if (FAILED(rig.dev->CreateCommittedResource(&hpDef, D3D12_HEAP_FLAG_NONE, &rd,
+                                                    D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&tex)))) {
+            return false;
+        }
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+        UINT numRows = 0u;
+        UINT64 rowBytes = 0ull, totalBytes = 0ull;
+        rig.dev->GetCopyableFootprints(&rd, 0u, 1u, 0ull, &fp, &numRows, &rowBytes, &totalBytes);
+
+        D3D12_HEAP_PROPERTIES hpUp{D3D12_HEAP_TYPE_UPLOAD};
+        D3D12_RESOURCE_DESC ubd{};
+        ubd.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+        ubd.Width            = totalBytes;
+        ubd.Height           = 1u;
+        ubd.DepthOrArraySize = 1u;
+        ubd.MipLevels        = 1u;
+        ubd.SampleDesc.Count = 1u;
+        ubd.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        ComPtr<ID3D12Resource> up;
+        if (FAILED(rig.dev->CreateCommittedResource(&hpUp, D3D12_HEAP_FLAG_NONE, &ubd,
+                                                    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&up)))) {
+            return false;
+        }
+        void* mapped = nullptr;
+        const D3D12_RANGE rr{0u, 0u};
+        if (FAILED(up->Map(0u, &rr, &mapped)) || !mapped) return false;
+        auto* base = static_cast<uint8_t*>(mapped) + fp.Offset;
+        for (uint32_t y = 0u; y < kH; ++y) {
+            std::memcpy(base + static_cast<size_t>(y) * fp.Footprint.RowPitch,
+                        rgba.data() + static_cast<size_t>(y) * kW * 4u,
+                        static_cast<size_t>(kW) * 4u * sizeof(float));
+        }
+        up->Unmap(0u, nullptr);
+
+        if (!rig.BeginFrame()) return false;
+        D3D12_TEXTURE_COPY_LOCATION dst{tex.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
+        dst.SubresourceIndex = 0u;
+        D3D12_TEXTURE_COPY_LOCATION src{up.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {}};
+        src.PlacedFootprint = fp;
+        rig.cmd->CopyTextureRegion(&dst, 0u, 0u, 0u, &src, nullptr);
+
+        D3D12_RESOURCE_BARRIER b{};
+        b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b.Transition.pResource   = tex.Get();
+        b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+        b.Transition.StateAfter  = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        rig.cmd->ResourceBarrier(1u, &b);
+        return rig.FlushAndWait();
+    };
+
+    auto makeUniformHdr = [&](float lum) -> std::vector<float> {
+        std::vector<float> img(static_cast<size_t>(kW) * kH * 4u);
+        for (size_t i = 0u; i < static_cast<size_t>(kW) * kH; ++i) {
+            img[i * 4u + 0u] = lum;
+            img[i * 4u + 1u] = lum;
+            img[i * 4u + 2u] = lum;
+            img[i * 4u + 3u] = 1.0f;
+        }
+        return img;
+    };
+
+    const size_t totalPx = static_cast<size_t>(kW) * kH;
+    auto darkImg    = makeUniformHdr(0.02f);
+    auto glacierImg = makeUniformHdr(8.0f);
+    auto fireflyImg = makeUniformHdr(0.50f);
+    auto nanImg     = makeUniformHdr(0.50f);
+    for (size_t i = 0u; i < totalPx; i += 50u) {
+        fireflyImg[i * 4u + 0u] = 10000.0f;
+        fireflyImg[i * 4u + 1u] = 10000.0f;
+        fireflyImg[i * 4u + 2u] = 10000.0f;
+    }
+    const float qNaN = std::numeric_limits<float>::quiet_NaN();
+    const float pInf = std::numeric_limits<float>::infinity();
+    const float nInf = -std::numeric_limits<float>::infinity();
+    for (size_t i = 0u; i < totalPx; i += 20u) {
+        const uint32_t kind = static_cast<uint32_t>((i / 20u) % 3u);
+        const float bad = (kind == 0u) ? qNaN : ((kind == 1u) ? pInf : nInf);
+        nanImg[i * 4u + 0u] = bad;
+        nanImg[i * 4u + 1u] = bad;
+        nanImg[i * 4u + 2u] = bad;
+    }
+
+    ComPtr<ID3D12Resource> darkTex, glacierTex, fireflyTex, nanTex;
+    if (!uploadRgba32FTex(darkTex, darkImg) ||
+        !uploadRgba32FTex(glacierTex, glacierImg) ||
+        !uploadRgba32FTex(fireflyTex, fireflyImg) ||
+        !uploadRgba32FTex(nanTex, nanImg)) {
+        res.note = "Upload 960x540 Auto-Exposure HDR test textures failed";
+        return res;
+    }
+
+    auto readState = [&](raw::bridge::AutoExposureGpuState& st) -> bool {
+        std::vector<uint8_t> rawBytes;
+        if (!rig.ReadbackBuffer(host.GetExposureBufferResource(), host.ExposureBufferResourceState(),
+                                sizeof(raw::bridge::AutoExposureGpuState), rawBytes) ||
+            rawBytes.size() < sizeof(raw::bridge::AutoExposureGpuState)) {
+            return false;
+        }
+        std::memcpy(&st, rawBytes.data(), sizeof(st));
+        return true;
+    };
+
+    auto runStep = [&](ID3D12Resource* tex, const raw::bridge::AutoExposureParams& p,
+                       raw::bridge::AutoExposureGpuState& st) -> bool {
+        if (!rig.BeginFrame()) return false;
+        if (!host.Execute(rig.cmd.Get(), tex, kW, kH, p)) return false;
+        if (!rig.FlushAndWait()) return false;
+        return readState(st);
+    };
+
+    // 1. Dark dungeon (lum=0.02)
+    raw::bridge::AutoExposureParams pReset{};
+    pReset.resetAdapt = true;
+    raw::bridge::AutoExposureGpuState stDark{}, stGlacier{}, stFirefly{}, stNan{};
+    if (!runStep(darkTex.Get(), pReset, stDark) ||
+        !runStep(glacierTex.Get(), pReset, stGlacier) ||
+        !runStep(fireflyTex.Get(), pReset, stFirefly) ||
+        !runStep(nanTex.Get(), pReset, stNan)) {
+        res.note = "Auto-Exposure scene invariant probe execution failed";
+        return res;
+    }
+
+    res.darkExposure     = stDark.adaptedExposure;
+    res.glacierExposure  = stGlacier.adaptedExposure;
+    res.fireflyTargetLum = stFirefly.targetLum;
+    res.fireflyErrPct    = std::fabs(stFirefly.targetLum - 0.50f) / 0.50f * 100.0f;
+    res.nanFinite        = std::isfinite(stNan.adaptedLum) && std::isfinite(stNan.adaptedExposure) &&
+                           std::isfinite(stNan.targetLum) && std::isfinite(stNan.targetEv100) &&
+                           (std::fabs(stNan.targetLum - 0.50f) / 0.50f < 0.10f);
+
+    // 2. Asymmetric eye-adaptation proof (0.25s dark->bright vs bright->dark)
+    raw::bridge::AutoExposureParams pStep{};
+    pStep.dtSec        = 0.25f;
+    pStep.tauBrightSec = 0.35f;
+    pStep.tauDarkSec   = 1.40f;
+    pStep.resetAdapt   = false;
+
+    raw::bridge::AutoExposureGpuState stBaseDark{}, stAfterBright{}, stBaseBright{}, stAfterDark{};
+    if (!rig.BeginFrame()) { res.note = "BeginFrame reset1 failed"; return res; }
+    host.ResetAdaptation(rig.cmd.Get());
+    if (!rig.FlushAndWait()) { res.note = "Flush reset1 failed"; return res; }
+    if (!runStep(darkTex.Get(), pStep, stBaseDark) || !runStep(glacierTex.Get(), pStep, stAfterBright)) {
+        res.note = "Auto-Exposure dark->bright step failed";
+        return res;
+    }
+
+    if (!rig.BeginFrame()) { res.note = "BeginFrame reset2 failed"; return res; }
+    host.ResetAdaptation(rig.cmd.Get());
+    if (!rig.FlushAndWait()) { res.note = "Flush reset2 failed"; return res; }
+    if (!runStep(glacierTex.Get(), pStep, stBaseBright) || !runStep(darkTex.Get(), pStep, stAfterDark)) {
+        res.note = "Auto-Exposure bright->dark step failed";
+        return res;
+    }
+
+    const float logDark   = std::log2(std::max(stBaseDark.adaptedLum, 1.0e-6f));
+    const float logBright = std::log2(std::max(stBaseBright.adaptedLum, 1.0e-6f));
+    const float logSpan   = std::max(std::fabs(logBright - logDark), 1.0e-5f);
+    res.asymBrightFrac    = (std::log2(std::max(stAfterBright.adaptedLum, 1.0e-6f)) - logDark) / logSpan;
+    res.asymDarkFrac      = (logBright - std::log2(std::max(stAfterDark.adaptedLum, 1.0e-6f))) / logSpan;
+    res.asymRatio         = (res.asymDarkFrac > 1.0e-5f) ? (res.asymBrightFrac / res.asymDarkFrac) : 0.0f;
+
+    // 3. Steady-state GPU timing benchmark
+    raw::bridge::AutoExposureParams pBench{};
+    pBench.dtSec      = 1.0f / 60.0f;
+    pBench.resetAdapt = false;
+    std::vector<double> gpuSamples, cpuSamples;
+    gpuSamples.reserve(measuredFrames);
+    cpuSamples.reserve(measuredFrames);
+    const uint32_t totalFrames = warmupFrames + measuredFrames;
+    for (uint32_t f = 0u; f < totalFrames; ++f) {
+        const auto c0 = Clock::now();
+        if (!rig.BeginFrame()) {
+            res.note = "BeginFrame (timing) failed";
+            return res;
+        }
+        rig.MarkTimestamp(0u);
+        host.Execute(rig.cmd.Get(), fireflyTex.Get(), kW, kH, pBench);
+        rig.MarkTimestamp(1u);
+        rig.ResolveTimestamps(0u, 2u);
+        const auto c1 = Clock::now();
+        if (!rig.FlushAndWait()) {
+            res.note = "FlushAndWait (timing) failed";
+            return res;
+        }
+        if (f >= warmupFrames) {
+            double gMs = 0.0;
+            rig.ReadTimestampRangeMs(0u, 1u, gMs);
+            gpuSamples.push_back(gMs);
+            cpuSamples.push_back(ElapsedMs(c0, c1));
+        }
+    }
+
+    res.totalGpuMs  = ComputePercentiles(gpuSamples);
+    res.cpuRecordMs = ComputePercentiles(cpuSamples);
+    res.hostHistMs  = host.HasValidTiming() ? host.GetLastHistMs() : 0.0f;
+    res.hostAdaptMs = host.HasValidTiming() ? host.GetLastAdaptMs() : 0.0f;
+
+    const bool optOk = (res.darkExposure > 4.0f) && (res.glacierExposure < 0.15f) &&
+                       (res.fireflyErrPct < 10.0f) && (res.asymRatio > 1.8f) && res.nanFinite;
+    const bool budgetOk = rig.isWarp ? true : (res.totalGpuMs.mean < 0.08);
+    res.passed = optOk && budgetOk;
+    if (!optOk) {
+        res.note = "Auto-Exposure dark/glacier/firefly/asymmetric/NaN invariant failed";
+    } else if (!budgetOk) {
+        res.note = "HW GPU 960x540 Auto-Exposure mean exceeded 0.08 ms budget";
+    } else {
+        res.note = rig.isWarp ? "WARP 960x540 256-bin histogram & asymmetric eye-adapt PASS"
+                              : "HW GPU < 0.08 ms & 256-bin histogram/firefly/eye-adapt PASS";
+    }
+    return res;
+}
+
+// ----------------------------------------------------------------------------
 // JSON Serializer & Console Scorecard Printer
 // ----------------------------------------------------------------------------
 void WriteBenchJson(const std::string& path,
@@ -3260,7 +3524,8 @@ void WriteBenchJson(const std::string& path,
                     const VolumetricFroxelsBenchResult& volFroxels,
                     const ShadowPcssBenchResult& shadowPcss,
                     const GtaoBenchResult& gtao,
-                    const SsrBenchResult& ssr)
+                    const SsrBenchResult& ssr,
+                    const AutoExposureBenchResult& autoExposure)
 {
     std::ostringstream os;
     os << std::fixed << std::setprecision(4);
@@ -3520,6 +3785,26 @@ void WriteBenchJson(const std::string& path,
     os << "      \"roughSpanW\": " << ssr.roughSpanW << ",\n";
     os << "      \"nanInfCount\": " << ssr.nanInfCount << ",\n";
     os << "      \"note\": \"" << JsonEscape(ssr.note) << "\"\n";
+    os << "    },\n";
+
+    // 15. GPU 256-Bin Log-Luminance Auto-Exposure
+    os << "    \"autoExposure\": {\n";
+    os << "      \"passed\": " << (autoExposure.passed ? "true" : "false") << ",\n";
+    os << "      \"width\": " << autoExposure.width << ",\n";
+    os << "      \"height\": " << autoExposure.height << ",\n";
+    os << "      \"totalGpuMs\": "; pctObj(autoExposure.totalGpuMs); os << ",\n";
+    os << "      \"cpuRecordMs\": "; pctObj(autoExposure.cpuRecordMs); os << ",\n";
+    os << "      \"hostHistMs\": " << autoExposure.hostHistMs << ",\n";
+    os << "      \"hostAdaptMs\": " << autoExposure.hostAdaptMs << ",\n";
+    os << "      \"darkExposure\": " << autoExposure.darkExposure << ",\n";
+    os << "      \"glacierExposure\": " << autoExposure.glacierExposure << ",\n";
+    os << "      \"fireflyTargetLum\": " << autoExposure.fireflyTargetLum << ",\n";
+    os << "      \"fireflyErrPct\": " << autoExposure.fireflyErrPct << ",\n";
+    os << "      \"asymBrightFrac\": " << autoExposure.asymBrightFrac << ",\n";
+    os << "      \"asymDarkFrac\": " << autoExposure.asymDarkFrac << ",\n";
+    os << "      \"asymRatio\": " << autoExposure.asymRatio << ",\n";
+    os << "      \"nanFinite\": " << (autoExposure.nanFinite ? "true" : "false") << ",\n";
+    os << "      \"note\": \"" << JsonEscape(autoExposure.note) << "\"\n";
     os << "    }\n";
 
     os << "  }\n";
@@ -3550,7 +3835,8 @@ void PrintScorecard(const BenchDx12Rig& rig,
                     const VolumetricFroxelsBenchResult& volFroxels,
                     const ShadowPcssBenchResult& shadowPcss,
                     const GtaoBenchResult& gtao,
-                    const SsrBenchResult& ssr)
+                    const SsrBenchResult& ssr,
+                    const AutoExposureBenchResult& autoExposure)
 {
     std::printf("\n");
     std::printf("=====================================================================================================\n");
@@ -3657,6 +3943,13 @@ void PrintScorecard(const BenchDx12Rig& rig,
                   ssr.mirrorSpanW, ssr.roughSpanW, ssr.nanInfCount);
     std::printf("  %-30s | %-6s | %-28s | %s\n", "14. GPU GGX Stochastic SSR", ssr.passed ? "PASS" : "FAIL", metric, detail);
 
+    std::snprintf(metric, sizeof(metric), "AutoExp %.4f ms (p95 %.4f)", autoExposure.totalGpuMs.mean, autoExposure.totalGpuMs.p95);
+    std::snprintf(detail, sizeof(detail), "H=%.4f A=%.4f | drk=%.2fx glc=%.3fx ffErr=%.2f%% asym=%.2fx",
+                  autoExposure.hostHistMs, autoExposure.hostAdaptMs,
+                  autoExposure.darkExposure, autoExposure.glacierExposure,
+                  autoExposure.fireflyErrPct, autoExposure.asymRatio);
+    std::printf("  %-30s | %-6s | %-28s | %s\n", "15. GPU 256-Bin Auto-Exposure", autoExposure.passed ? "PASS" : "FAIL", metric, detail);
+
     std::printf("=====================================================================================================\n");
 }
 
@@ -3721,19 +4014,21 @@ int main(int argc, char** argv)
     const ShadowPcssBenchResult        shadowPcss    = RunShadowPcssBenchmark(rig, warmupFrames, measuredFrames);
     const GtaoBenchResult              gtao          = RunGtaoBenchmark(rig, warmupFrames, measuredFrames);
     const SsrBenchResult               ssr           = RunSsrBenchmark(rig, warmupFrames, measuredFrames);
+    const AutoExposureBenchResult      autoExposure  = RunAutoExposureBenchmark(rig, warmupFrames, measuredFrames);
 
     const uint32_t debugErrors = rig.DrainDebugErrors();
     const bool allPassed = fluid.passed && rc.passed && tex.passed && audio.passed &&
                            destr.passed && flora.passed && tamriel.passed && xpbd.passed &&
                            gpuCull.passed && lightClusters.passed && volFroxels.passed &&
-                           shadowPcss.passed && gtao.passed && ssr.passed && (debugErrors == 0u);
+                           shadowPcss.passed && gtao.passed && ssr.passed &&
+                           autoExposure.passed && (debugErrors == 0u);
 
     PrintScorecard(rig, quickMode, warmupFrames, measuredFrames, debugErrors,
-                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr);
+                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure);
 
     if (!jsonPath.empty()) {
         WriteBenchJson(jsonPath, rig, quickMode, warmupFrames, measuredFrames, debugErrors, allPassed,
-                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr);
+                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure);
         std::printf("  JSON report written: %s\n", jsonPath.c_str());
     }
 

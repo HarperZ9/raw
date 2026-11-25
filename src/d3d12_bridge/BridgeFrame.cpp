@@ -122,6 +122,12 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
     const float ssrTraceMs = (ssrHostReady && ssrHost && ssrHost->HasValidTiming() &&
                               std::isfinite(ssrHost->GetLastSsrMs()))
         ? ssrHost->GetLastSsrMs() : 0.0f;
+    const float autoExposureHistMs = (autoExposureReady && autoExposure && autoExposure->HasValidTiming() &&
+                                      std::isfinite(autoExposure->GetLastHistMs()))
+        ? autoExposure->GetLastHistMs() : 0.0f;
+    const float autoExposureAdaptMs = (autoExposureReady && autoExposure && autoExposure->HasValidTiming() &&
+                                       std::isfinite(autoExposure->GetLastAdaptMs()))
+        ? autoExposure->GetLastAdaptMs() : 0.0f;
 
     char jsonBuf[3072]{};
     const int n = std::snprintf(
@@ -158,6 +164,8 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"gtaoMainMs\": %.4f,\n"
         "  \"gtaoDenoiseMs\": %.4f,\n"
         "  \"ssrTraceMs\": %.4f,\n"
+        "  \"autoExposureHistMs\": %.4f,\n"
+        "  \"autoExposureAdaptMs\": %.4f,\n"
         "  \"seasonSnowM\": %.4f,\n"
         "  \"seasonIceM\": %.4f,\n"
         "  \"skinTempC\": %.3f,\n"
@@ -196,6 +204,8 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         gtaoMainMs,
         gtaoDenoiseMs,
         ssrTraceMs,
+        autoExposureHistMs,
+        autoExposureAdaptMs,
         seasonSnowM,
         seasonIceM,
         skinTempC,
@@ -1335,6 +1345,54 @@ bool D3D12Bridge::Impl::ExecuteSsrOnQueue()
     return true;
 }
 
+bool D3D12Bridge::Impl::ExecuteAutoExposureOnQueue()
+{
+    if (!autoExposureReady || !autoExposure || !autoExposure->Ready() ||
+        !queue || !autoExposureList || !autoExposureFence || !autoExposureEvent || !colorOut.res12) {
+        return false;
+    }
+
+    const uint32_t slot = autoExposureSlot;
+    if (autoExposureSlotVal[slot] > 0 && autoExposureFence->GetCompletedValue() < autoExposureSlotVal[slot]) {
+        autoExposureFence->SetEventOnCompletion(autoExposureSlotVal[slot], autoExposureEvent);
+        WaitForSingleObject(autoExposureEvent, 3000);
+    }
+    if (FAILED(autoExposureAlloc[slot]->Reset()) ||
+        FAILED(autoExposureList->Reset(autoExposureAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    const uint64_t nowMs = GetTickCount64();
+    float dtSec = 1.0f / 60.0f;
+    if (autoExposureLastMs > 0ull && nowMs >= autoExposureLastMs) {
+        dtSec = std::clamp(static_cast<float>(nowMs - autoExposureLastMs) * 0.001f, 0.001f, 0.1f);
+    }
+    autoExposureLastMs = nowMs;
+
+    AutoExposureParams ap{};
+    ap.dtSec      = dtSec;
+    ap.resetAdapt = (autoExposureStepFrames == 0ull);
+
+    autoExposure->Execute(autoExposureList.Get(), colorOut.res12.Get(), cfg.width, cfg.height, ap,
+                          D3D12_RESOURCE_STATE_COMMON);
+
+    if (FAILED(autoExposureList->Close())) return false;
+    ID3D12CommandList* lists[1] = {autoExposureList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(autoExposureFence.Get(), ++autoExposureFenceVal);
+    autoExposureSlotVal[slot] = autoExposureFenceVal;
+    autoExposureSlot = (slot + 1u) % kRing;
+
+    if ((autoExposureStepFrames++ % 180ull) == 0ull) {
+        log("[AutoExposure] live %ux%u 256-bin histogram+adapt: histMs=%.4f, adaptMs=%.4f, dt=%.3fs",
+            static_cast<unsigned>(cfg.width), static_cast<unsigned>(cfg.height),
+            autoExposure->HasValidTiming() ? autoExposure->GetLastHistMs() : 0.0f,
+            autoExposure->HasValidTiming() ? autoExposure->GetLastAdaptMs() : 0.0f,
+            dtSec);
+    }
+    return true;
+}
+
 bool D3D12Bridge::Impl::CpuWait(uint64_t value, DWORD timeoutMs)
 {
     return WaitFence(fence12.Get(), value, cpuEvent, timeoutMs);
@@ -1570,8 +1628,10 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                          m->gtaoHost && m->gtaoHost->Ready() && m->depthIn.res12 != nullptr;
     const bool runSsr = m->cfg.lightingPass && m->lighting.valid && m->ssrHostReady &&
                         m->ssrHost && m->ssrHost->Ready() && m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr;
+    const bool runAutoExposure = m->cfg.lightingPass && m->lighting.valid && m->autoExposureReady &&
+                                 m->autoExposure && m->autoExposure->Ready() && m->colorOut.res12 != nullptr;
     const bool runOverlay = m->overlayHudEnabled && m->overlayHostReady && m->overlayHost && m->overlayHost->Ready();
-    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runOverlay;
+    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runAutoExposure || runOverlay;
     auto runPostLightingPasses = [&]() -> bool {
         if (!hasPostWork) return true;
         if (runTerrain) {
@@ -1666,6 +1726,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         }
         if (runSsr) {
             m->ExecuteSsrOnQueue();
+        }
+        if (runAutoExposure) {
+            m->ExecuteAutoExposureOnQueue();
         }
         if (runOverlay) {
             m->ExecuteOverlayHudOnQueue(isInterior);

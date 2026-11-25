@@ -4,8 +4,10 @@
 // AND Real Riverwood (Skyrim.esm + Skyrim - Meshes0.bsa .NIF buildings) completely WITHOUT SkyrimSE.exe!
 //
 // Controls (Interactive Mode):
-//   WASD / Q / E        : 6-DOF Flight Camera (Shift = 3.5x boost)
+//   WASD / Q / E        : 6-DOF Flight Camera (Walk Mode: WASD move, Space jump, Shift sprint)
 //   Right-Mouse Drag    : Smooth Freelook Yaw / Pitch
+//   P                   : Toggle Playable Grounded Walk Mode <-> Free-Fly Camera (RawWorldPhysics!)
+//   C / Left-Click      : Fire Real Physics Raycast Against .NIF Buildings & Terrain (+ Destruction Burst!)
 //   1 / 2 / 3 / 4       : Live Season Switch (Spring / Summer / Autumn / Winter)
 //   F                   : Toggle Live 64^3 3D Navier-Stokes Fire + Smoke
 //   G                   : Toggle Live 4-Cascade Radiance Cascades Screen GI
@@ -51,12 +53,14 @@
 #include "RawFluidSimHost.h"
 #include "RawFluidCompositeHost.h"
 #include "RawRadianceHost.h"
+#include "RawXpbdSimHost.h"
 #include "RawWeatherSim.h"
 #include "RawWorldShowcase.h"
 #include "RawDestructionEngine.h"
 #include "RawEsmWorldLoader.h"
 #include "RawEsmModelResolver.h"
 #include "RawTamrielWorldStreamer.h"
+#include "RawWorldPhysics.h"
 #include "RawHydrologyGen.h"
 #include "RawAudioOutput.h"
 
@@ -379,10 +383,16 @@ public:
         if (!m_radOk) {
             std::printf("[Viewer] RadianceCascades warning: %s\n", err.c_str());
         }
+        err.clear();
+        m_xpbdOk = m_xpbdSim.Init(m_dev.Get(), {}, &err);
+        if (!m_xpbdOk) {
+            std::printf("[Viewer] RawXpbdSimHost warning: %s\n", err.c_str());
+        }
         UINT64 tsFreq = 0;
         if (SUCCEEDED(m_queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
             if (m_fluidOk) m_fluidSim.SetTimestampFrequency(tsFreq);
             if (m_radOk)   m_radianceHost.SetTimestampFrequency(tsFreq);
+            if (m_xpbdOk)  m_xpbdSim.SetTimestampFrequency(tsFreq);
         }
 
         // Enable real hydraulic & thermal erosion + D8 rivers for procedural frontier terrain!
@@ -551,6 +561,88 @@ public:
     void ToggleFire() { m_fireEnabled = !m_fireEnabled; }
     void ToggleGI() { m_giEnabled = !m_giEnabled; }
 
+    void ToggleWalkMode()
+    {
+        m_walkMode = !m_walkMode;
+        if (m_walkMode) {
+            float groundZ = m_camPos[2] - 120.0f;
+            const auto downHit = m_worldPhysics.RayCast({m_camPos[0], m_camPos[1], m_camPos[2] + 64.0f},
+                                                        {0.0f, 0.0f, -1.0f}, 6000.0f);
+            if (downHit.hit) {
+                groundZ = downHit.point[2];
+            } else {
+                float hz = 0.0f;
+                if (m_worldPhysics.SampleTerrainHeight(m_camPos[0], m_camPos[1], &hz)) {
+                    groundZ = hz;
+                }
+            }
+            m_playerBody = raw::worldgen::CharacterBody{};
+            m_playerBody.position = {m_camPos[0], m_camPos[1], groundZ + 6.0f};
+            m_playerBody.velocity = {0.0f, 0.0f, 0.0f};
+            m_camPos[2] = m_playerBody.position.z + 120.0f;
+        }
+    }
+
+    void FireRaycastStrike()
+    {
+        const float cp = std::cos(m_camPitch), sp = std::sin(m_camPitch);
+        const float cy = std::cos(m_camYaw),   sy = std::sin(m_camYaw);
+        const raw::worldgen::Vec3 origin{m_camPos[0], m_camPos[1], m_camPos[2]};
+        const raw::worldgen::Vec3 dir{sy * cp, cy * cp, sp};
+        const auto hit = m_worldPhysics.RayCast(origin, dir, 8000.0f);
+        m_lastRayHit = hit;
+        if (hit.hit) {
+            std::printf("[Physics] RayCast HIT: dist=%.1fu mat=%u (%s) at (%.0f, %.0f, %.0f)\n",
+                        hit.distance, hit.materialTag, hit.hitTerrain ? "terrain" : "NIF/BVH",
+                        hit.point[0], hit.point[1], hit.point[2]);
+            TriggerFractureAt(hit.point[0], hit.point[1], hit.point[2]);
+        } else {
+            std::printf("[Physics] RayCast MISS (8000u)\n");
+        }
+    }
+
+    struct PhysicsWalkProbe {
+        bool  rayHit          = false;
+        float rayDist         = 0.0f;
+        bool  walkGrounded    = false;
+        bool  walkAllFinite   = true;
+        float finalFeetZ      = 0.0f;
+        uint32_t hfCount      = 0u;
+        uint32_t bvhTriangles = 0u;
+    };
+
+    PhysicsWalkProbe RunPhysicsWalkSelfTest()
+    {
+        PhysicsWalkProbe p{};
+        const auto st = m_worldPhysics.GetStats();
+        p.hfCount = st.heightfieldCount;
+        p.bvhTriangles = st.totalTriangles;
+
+        const auto& lm = kTamrielLandmarks[m_landmarkIdx % 4u];
+        const float testX = float(lm.cellX) * raw::worldgen::kEsmCellSizeU + raw::worldgen::kEsmCellSizeU * 0.5f;
+        const float testY = float(lm.cellY) * raw::worldgen::kEsmCellSizeU + raw::worldgen::kEsmCellSizeU * 0.5f;
+        const auto downHit = m_worldPhysics.RayCast({testX, testY, 8000.0f}, {0.0f, 0.0f, -1.0f}, 20000.0f);
+        p.rayHit = downHit.hit;
+        p.rayDist = downHit.distance;
+
+        raw::worldgen::CharacterBody body{};
+        const float startZ = downHit.hit ? (downHit.point[2] + 32.0f) : 200.0f;
+        body.position = {testX, testY, startZ};
+        raw::worldgen::CharacterInput cin{};
+        cin.wishDirXY = {0.707f, 0.707f};
+        cin.maxSpeed = 280.0f;
+        for (int s = 0; s < 24; ++s) {
+            m_worldPhysics.StepCharacterCapsule(body, cin, 1.0f / 60.0f);
+            if (!std::isfinite(body.position.x) || !std::isfinite(body.position.y) || !std::isfinite(body.position.z) ||
+                !std::isfinite(body.velocity.x) || !std::isfinite(body.velocity.y) || !std::isfinite(body.velocity.z)) {
+                p.walkAllFinite = false;
+            }
+        }
+        p.walkGrounded = body.grounded;
+        p.finalFeetZ = body.position.z;
+        return p;
+    }
+
     void ToggleAudio()
     {
         if (m_opt.headlessFrames > 0u) return; // Strictly OFF in headless CI mode
@@ -594,16 +686,11 @@ public:
         }
     }
 
-    void TriggerFreshFracture()
+    void TriggerFractureAt(float px, float py, float groundZ)
     {
-        const float cp = std::cos(m_camPitch), sp = std::sin(m_camPitch);
-        const float cy = std::cos(m_camYaw),   sy = std::sin(m_camYaw);
-        const float fx = sy * cp, fy = cy * cp, fz = sp;
-        const float px = m_camPos[0] + fx * 620.0f;
-        const float py = m_camPos[1] + fy * 620.0f;
-        const float groundZ = (m_mode == WorldMode::Frontier && m_hasFrontierCenter)
-                            ? m_frontierGroundZ
-                            : (m_camPos[2] + fz * 620.0f - 180.0f);
+        const float cp = std::cos(m_camPitch);
+        const float cy = std::cos(m_camYaw), sy = std::sin(m_camYaw);
+        const float fx = sy * cp, fy = cy * cp;
 
         raw::worldgen::DestructionSimConfig dcfg{};
         dcfg.groundZ = groundZ;
@@ -629,6 +716,23 @@ public:
         }
     }
 
+    void TriggerFreshFracture()
+    {
+        const float cp = std::cos(m_camPitch), sp = std::sin(m_camPitch);
+        const float cy = std::cos(m_camYaw),   sy = std::sin(m_camYaw);
+        const float fx = sy * cp, fy = cy * cp, fz = sp;
+        const float px = m_camPos[0] + fx * 620.0f;
+        const float py = m_camPos[1] + fy * 620.0f;
+        float groundZ = (m_mode == WorldMode::Frontier && m_hasFrontierCenter)
+                      ? m_frontierGroundZ
+                      : (m_camPos[2] + fz * 620.0f - 180.0f);
+        float sampledZ = 0.0f;
+        if (m_worldPhysics.SampleTerrainHeight(px, py, &sampledZ)) {
+            groundZ = sampledZ;
+        }
+        TriggerFractureAt(px, py, groundZ);
+    }
+
     void UpdateInput(float dt)
     {
         if (!m_hwnd || GetForegroundWindow() != m_hwnd) return;
@@ -640,14 +744,36 @@ public:
         rx /= rl; ry /= rl;
 
         const bool fast = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-        const float speed = (fast ? 2600.0f : 720.0f) * dt;
         auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
-        if (down('W')) { m_camPos[0] += fx * speed; m_camPos[1] += fy * speed; m_camPos[2] += fz * speed; }
-        if (down('S')) { m_camPos[0] -= fx * speed; m_camPos[1] -= fy * speed; m_camPos[2] -= fz * speed; }
-        if (down('D')) { m_camPos[0] += rx * speed; m_camPos[1] += ry * speed; }
-        if (down('A')) { m_camPos[0] -= rx * speed; m_camPos[1] -= ry * speed; }
-        if (down('E')) { m_camPos[2] += speed; }
-        if (down('Q')) { m_camPos[2] -= speed; }
+
+        if (m_walkMode) {
+            // Playable Grounded Capsule Character Controller (RawWorldPhysics)!
+            float wx = 0.0f, wy = 0.0f;
+            if (down('W')) { wx += sy; wy += cy; }
+            if (down('S')) { wx -= sy; wy -= cy; }
+            if (down('D')) { wx += rx; wy += ry; }
+            if (down('A')) { wx -= rx; wy -= ry; }
+            const float wl = std::hypot(wx, wy);
+            if (wl > 1.0e-4f) { wx /= wl; wy /= wl; }
+
+            raw::worldgen::CharacterInput cin{};
+            cin.wishDirXY    = {wx, wy};
+            cin.maxSpeed     = fast ? 540.0f : 280.0f;
+            cin.jumpPressed  = down(VK_SPACE);
+            cin.swimVertical = (down('E') ? 1.0f : 0.0f) - (down('Q') ? 1.0f : 0.0f);
+            m_worldPhysics.StepCharacterCapsule(m_playerBody, cin, dt);
+            m_camPos[0] = m_playerBody.position.x;
+            m_camPos[1] = m_playerBody.position.y;
+            m_camPos[2] = m_playerBody.position.z + 120.0f; // Eye height +120u above capsule feet
+        } else {
+            const float speed = (fast ? 2600.0f : 720.0f) * dt;
+            if (down('W')) { m_camPos[0] += fx * speed; m_camPos[1] += fy * speed; m_camPos[2] += fz * speed; }
+            if (down('S')) { m_camPos[0] -= fx * speed; m_camPos[1] -= fy * speed; m_camPos[2] -= fz * speed; }
+            if (down('D')) { m_camPos[0] += rx * speed; m_camPos[1] += ry * speed; }
+            if (down('A')) { m_camPos[0] -= rx * speed; m_camPos[1] -= ry * speed; }
+            if (down('E')) { m_camPos[2] += speed; }
+            if (down('Q')) { m_camPos[2] -= speed; }
+        }
     }
 
     void OnMouseDrag(int dx, int dy)
@@ -755,6 +881,39 @@ public:
                 wp.timeSec = fp.timeSec;
                 m_fluidSim.StepFire(m_cmd.Get(), fp);
                 m_fluidSim.StepWater(m_cmd.Get(), wp);
+            }
+        }
+
+        // Step live GPU XPBD Soft-Body / Hair / Bush-Bone solver (256 chains / 4,096 particles) driven by Beaufort wind & player wake sphere!
+        if (m_xpbdOk) {
+            if (!m_xpbdUploaded) {
+                std::vector<XpbdParticle> parts;
+                std::vector<XpbdChainMeta> chains;
+                BuildHairAndFoliageDemoChains(parts, chains, 256u);
+                m_xpbdUploaded = m_xpbdSim.UploadChains(m_cmd.Get(), parts, chains);
+            }
+            if (m_xpbdUploaded) {
+                XpbdStepParams xp{};
+                xp.dt = dtClamped;
+                xp.timeSec = m_simTimeSec;
+                xp.substeps = 4u;
+                const float wLen = std::hypot(wGpu.cloudWind.x, wGpu.cloudWind.y);
+                if (wLen > 1.0e-3f) {
+                    xp.windDir[0] = wGpu.cloudWind.x / wLen;
+                    xp.windDir[1] = wGpu.cloudWind.y / wLen;
+                    xp.windDir[2] = 0.0f;
+                }
+                xp.windSpeedMps = std::clamp(wGpu.beaufortScale * 2.2f, 0.5f, 28.0f);
+                xp.gustPhase = m_simTimeSec * 1.4f;
+                xp.snowLoad01 = std::clamp(wGpu.seasonThermal0.x, 0.0f, 1.0f);
+                // Player world position wake sphere for interactive bush parting (scaled cleanly to meters)
+                xp.colliderCount = 1u;
+                xp.colliders[0].p0[0] = std::fmod(m_camPos[0] / 70.0f, 8.0f);
+                xp.colliders[0].p0[1] = std::fmod(m_camPos[1] / 70.0f, 8.0f);
+                xp.colliders[0].p0[2] = 0.85f;
+                xp.colliders[0].radius = 0.65f;
+                xp.colliders[0].flags = 0.0f; // sphere
+                m_xpbdSim.Step(m_cmd.Get(), xp);
             }
         }
 
@@ -874,6 +1033,9 @@ public:
         float    fireStepMs       = 0.0f;
         float    waterStepMs      = 0.0f;
         float    radianceGiMs     = 0.0f;
+        bool     xpbdActive       = false;
+        float    xpbdStepMs       = 0.0f;
+        uint32_t xpbdParticles    = 0u;
         uint32_t biomesFound      = 0u;
     };
 
@@ -891,6 +1053,9 @@ public:
         out->fireStepMs = ft.valid ? ft.fireStepMs : 0.0f;
         out->waterStepMs = ft.valid ? ft.waterStepMs : 0.0f;
         out->radianceGiMs = rt.valid ? rt.giPassMs : 0.0f;
+        out->xpbdActive = m_xpbdOk && m_xpbdUploaded;
+        out->xpbdStepMs = m_xpbdSim.HasValidTiming() ? m_xpbdSim.GetLastStepMs() : 0.0f;
+        out->xpbdParticles = m_xpbdSim.ParticleCount();
 
         const UINT hdrPitch  = (m_width * 8u + 255u) & ~255u;
         const UINT dispPitch = (m_width * 4u + 255u) & ~255u;
@@ -1013,9 +1178,11 @@ public:
             m_tamrielStreamer.Shutdown(&sink);
         }
         m_tamrielCellHandles.clear();
+        m_worldPhysics.Clear();
 
         m_frontierChunks.clear();
         m_esmChunks.clear();
+        m_xpbdSim.Shutdown();
         m_fluidComposite.Shutdown();
         m_meshHost.Shutdown();
 
@@ -1065,15 +1232,22 @@ public:
                           m_lastTamrielStats.activeCells,
                           static_cast<unsigned long long>(m_lastTamrielStats.cacheHits));
         }
+        char hitBuf[64]{};
+        if (m_lastRayHit.hit) {
+            std::snprintf(hitBuf, sizeof(hitBuf), " | Hit:%.0fu(%s)",
+                          m_lastRayHit.distance, m_lastRayHit.hitTerrain ? "Terrain" : "NIF");
+        }
         char buf[512]{};
         std::snprintf(buf, sizeof(buf),
-                      "RAW Engine | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | %s | Fire:%s(%.2fms) Water:%.2fms GI:%s(%.2fms) | Audio:%s | Shards:%u",
+                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms%s | Shards:%u",
+                      m_walkMode ? "WALK" : "FLY",
                       fps, m_lastDrawnMeshlets, m_meshHost.TerrainUsesMeshShaders() ? "AS+MS" : "VS+PS",
-                      locBuf, TimePresetName(m_timePreset), WeatherPresetName(m_weatherPreset), SeasonName(m_season),
-                      m_fireEnabled ? "ON" : "OFF", ft.valid ? ft.fireStepMs : 0.0f,
+                      locBuf, TimePresetName(m_timePreset), WeatherPresetName(m_weatherPreset),
+                      ft.valid ? ft.fireStepMs : 0.0f,
                       ft.valid ? ft.waterStepMs : 0.0f,
-                      (m_radOk && m_giEnabled) ? "ON" : "OFF", rt.valid ? rt.giPassMs : 0.0f,
-                      m_audioEnabled ? "ON" : "OFF",
+                      rt.valid ? rt.giPassMs : 0.0f,
+                      m_xpbdSim.HasValidTiming() ? m_xpbdSim.GetLastStepMs() : 0.0f,
+                      hitBuf,
                       m_activeShards);
         return buf;
     }
@@ -1296,9 +1470,13 @@ private:
                 }
                 const uint64_t h = v->m_nextChunkHandle++;
                 v->m_frontierChunks.emplace(h, std::move(gpu));
+                auto hf = raw::worldgen::MakeHeightfieldFromTerrainChunk(entry.terrain, sc.terrain.seaLevelZ, 3u);
+                hf.cellKey = raw::worldgen::PackCellKey(entry.key.x, entry.key.y);
+                v->m_worldPhysics.AddTerrainHeightfield(hf);
                 return h;
             }
-            void OnChunkEvicted(raw::worldgen::ChunkKey, uint64_t h) override {
+            void OnChunkEvicted(raw::worldgen::ChunkKey key, uint64_t h) override {
+                v->m_worldPhysics.RemoveCellCollider(raw::worldgen::PackCellKey(key.x, key.y));
                 auto it = v->m_frontierChunks.find(h);
                 if (it != v->m_frontierChunks.end()) {
                     v->m_meshHost.DeferRelease(std::move(it->second));
@@ -1339,9 +1517,19 @@ private:
             if (terrainKey == 0u && propKey == 0u) return 0u;
             const uint64_t cellHandle = v->m_nextChunkHandle++;
             v->m_tamrielCellHandles.emplace(cellHandle, std::make_pair(terrainKey, propKey));
+
+            // Register streamed Tamriel terrain heightfield + baked .NIF prop BVH into RawWorldPhysics!
+            const uint64_t physKey = raw::worldgen::PackCellKey(cell.key.x, cell.key.y);
+            auto hf = raw::worldgen::MakeHeightfieldFromTerrainChunk(cell.terrainChunk, cell.waterHeightZ, 1u);
+            hf.cellKey = physKey;
+            v->m_worldPhysics.AddTerrainHeightfield(hf);
+            if (!cell.propsMesh.meshlets.empty()) {
+                v->m_worldPhysics.AddCellCollider(physKey, cell.propsMesh, cell.cellFormId, 2u);
+            }
             return cellHandle;
         }
-        void OnTamrielCellEvicted(raw::worldgen::ChunkKey, uint64_t gpuHandle) override {
+        void OnTamrielCellEvicted(raw::worldgen::ChunkKey key, uint64_t gpuHandle) override {
+            v->m_worldPhysics.RemoveCellCollider(raw::worldgen::PackCellKey(key.x, key.y));
             auto it = v->m_tamrielCellHandles.find(gpuHandle);
             if (it == v->m_tamrielCellHandles.end()) return;
             const uint64_t tKey = it->second.first;
@@ -1601,6 +1789,8 @@ private:
     bool          m_isWarp = false;
     bool          m_fluidOk = false;
     bool          m_radOk = false;
+    bool          m_xpbdOk = false;
+    bool          m_xpbdUploaded = false;
     std::string   m_adapterName;
 
     ComPtr<IDXGIFactory4>              m_factory;
@@ -1635,10 +1825,14 @@ private:
     RawFluidSimHost                    m_fluidSim;
     RawFluidCompositeHost              m_fluidComposite;
     RawRadianceHost                    m_radianceHost;
+    RawXpbdSimHost                     m_xpbdSim;
     raw::audio::RawAudioOutput         m_audio;
     raw::worldgen::RawWeatherSim          m_weatherSim;
     raw::worldgen::RawWorldShowcase       m_showcase;
     raw::worldgen::RawTamrielWorldStreamer m_tamrielStreamer;
+    raw::worldgen::RawWorldPhysics        m_worldPhysics;
+    raw::worldgen::CharacterBody          m_playerBody{};
+    raw::worldgen::RayHit                 m_lastRayHit{};
     raw::worldgen::DestructionSimulation  m_destSim;
 
     struct BiomeAnchor { float x = 75776.0f, y = 157696.0f; };
@@ -1665,6 +1859,7 @@ private:
     bool                               m_fireEnabled = true;
     bool                               m_giEnabled = true;
     bool                               m_audioEnabled = false;
+    bool                               m_walkMode = false;
     uint32_t                           m_fractureCounter = 0u;
     uint32_t                           m_activeShards = 0u;
     bool                               m_destructionDirty = false;
@@ -1720,6 +1915,11 @@ LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 st->lastMouse = p;
             }
             return 0;
+        case WM_LBUTTONDOWN:
+            if (st && st->viewer) {
+                st->viewer->FireRaycastStrike();
+            }
+            return 0;
         case WM_KEYDOWN:
             if (st && st->viewer && ((lp & 0x40000000L) == 0)) {
                 switch (wp) {
@@ -1728,6 +1928,8 @@ LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     case '2': st->viewer->ApplySeason(SeasonChoice::Summer); break;
                     case '3': st->viewer->ApplySeason(SeasonChoice::Autumn); break;
                     case '4': st->viewer->ApplySeason(SeasonChoice::Winter); break;
+                    case 'P': st->viewer->ToggleWalkMode(); break;
+                    case 'C': st->viewer->FireRaycastStrike(); break;
                     case 'F': st->viewer->ToggleFire(); break;
                     case 'G': st->viewer->ToggleGI(); break;
                     case 'B': st->viewer->CycleBiome(); break;
@@ -1800,7 +2002,7 @@ int main(int argc, char** argv)
     if (opt.showHelp) {
         std::printf(
             "RAW Interactive Real-Time Win32/DX12 Standalone Engine Viewer\n"
-            "Controls: WASD/QE flight, Shift boost, RMB freelook, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time-of-day, W weather, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
+            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
             "CLI: [--headless-frames N] [--warp] [--debug] [--width W] [--height H] [--esm <Skyrim.esm>]\n");
         return 0;
     }
@@ -1823,10 +2025,12 @@ int main(int argc, char** argv)
 
         bool allFramesOk = true;
         raw::worldgen::TamrielStreamStats riverwoodStats{};
+        RawEngineViewer::PhysicsWalkProbe riverwoodPhys{};
         bool teleportedToWhiterun = false;
         for (uint32_t f = 0; f < opt.headlessFrames; ++f) {
             if (f == 0u && opt.startEsm) {
                 riverwoodStats = viewer.GetTamrielStats();
+                riverwoodPhys = viewer.RunPhysicsWalkSelfTest();
             }
             if (f == opt.headlessFrames / 2u) {
                 if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {
@@ -1849,13 +2053,16 @@ int main(int argc, char** argv)
 
         RawEngineViewer::HeadlessAudit audit{};
         const bool rbOk = viewer.ReadbackHeadlessAudit(&audit);
-        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
+        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
                     audit.usedMeshShaders ? "AS+MS+PS" : "VS+PS",
                     audit.drawnMeshlets, audit.activeShards, audit.biomesFound,
                     audit.radianceActive ? "ON" : "off", audit.radianceGiMs,
                     audit.fireStepMs, audit.waterStepMs,
+                    audit.xpbdActive ? "ON" : "off", audit.xpbdParticles, audit.xpbdStepMs,
                     audit.hdrLitPixels, audit.hdrNanInf,
                     audit.dispNonZeroPx, audit.dispMeanLuma, audit.dispStdDevLuma);
+        check(audit.xpbdActive && audit.xpbdParticles == 4096u && std::isfinite(audit.xpbdStepMs) && audit.xpbdStepMs >= 0.0f,
+              "Live GPU XPBD soft-body/hair/bush solver (4,096 particles / 256 chains) stepped cleanly");
         if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {
             const auto whStats = viewer.GetTamrielStats();
             std::printf("       Tamriel Streaming: Riverwood(cells=%u, nifCache=%u, hits=%llu) -> %s(cells=%u, nifCache=%u, hits=%llu, evictions=%u, meshlets=%u)\n",
@@ -1864,9 +2071,14 @@ int main(int argc, char** argv)
                         viewer.ActiveLandmarkName(), whStats.activeCells, whStats.cachedNifModels,
                         static_cast<unsigned long long>(whStats.cacheHits),
                         viewer.TotalTamrielEvictions(), audit.drawnMeshlets);
+            std::printf("       Riverwood Walk Physics: hfs=%u, bvhTris=%u, rayHit=%d (dist=%.1fu), walkGrounded=%d, feetZ=%.1f, finite=%d\n",
+                        riverwoodPhys.hfCount, riverwoodPhys.bvhTriangles, int(riverwoodPhys.rayHit), riverwoodPhys.rayDist,
+                        int(riverwoodPhys.walkGrounded), riverwoodPhys.finalFeetZ, int(riverwoodPhys.walkAllFinite));
             check(riverwoodStats.activeCells >= 1u && teleportedToWhiterun && whStats.activeCells >= 1u &&
                   viewer.TotalTamrielEvictions() > 0u && audit.drawnMeshlets > 500u,
                   "RawTamrielWorldStreamer streamed Riverwood 3x3 ring, evicted & reloaded Whiterun 3x3 ring live on GPU");
+            check(riverwoodPhys.rayHit && riverwoodPhys.walkGrounded && riverwoodPhys.walkAllFinite,
+                  "RawWorldPhysics RayCast + 24-step grounded capsule walk succeeded over real Riverwood terrain & NIF BVH");
         }
         check(rbOk && audit.drawnMeshlets > 0u && audit.activeShards >= 10u && audit.radianceActive && audit.biomesFound == 6u,
               "Rendered terrain + flora + 20-shard destruction + 64^3 NS fire + 4-cascade Radiance GI (6/6 biomes discovered)");

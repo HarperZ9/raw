@@ -22,6 +22,7 @@
 #include "rt_combat_impact.h"
 #include "rt_economy_ledger.h"
 #include "rt_movement_combat.h"
+#include "rt_save_papyrus_guard.h"
 #include "rt_softbody.h"
 #include "rt_stealth_survival.h"
 #include "rt_version.h"
@@ -190,6 +191,9 @@ std::string FormatDefaultLiveConfigIni(const LiveEngineConfig& inCfg) {
        << "LiveAudioAmbience=" << (c.liveAudioAmbience ? 1 : 0) << "\n"
        << "; Master gain for live procedural ambience (0.00..0.50, default 0.22)\n"
        << "LiveAudioGain=" << fmtF(c.liveAudioGain, 2) << "\n\n"
+       << "[Stability]\n"
+       << "; Enable/disable .ESS save-file health auditor & Papyrus frame-hitch watchdog (0/1, default 1)\n"
+       << "SavePapyrusGuard=" << (c.savePapyrusGuardEnabled ? 1 : 0) << "\n\n"
        << "[Diagnostics]\n"
        << "; Virtual-key code for live status dump (default 121 = VK_F10; 0 disables)\n"
        << "StatusDumpHotkeyVK=" << c.statusDumpHotkeyVK << "\n"
@@ -263,6 +267,9 @@ bool ParseLiveConfigIni(const std::string& iniText, LiveEngineConfig& outCfg) {
         if (section.empty() || section == "audio") {
             if (key == "liveaudioambience" && ParseBoolVal(val, b))       cfg.liveAudioAmbience = b;
             else if (key == "liveaudiogain" && ParseFloatVal(val, f))     cfg.liveAudioGain = f;
+        }
+        if (section.empty() || section == "stability") {
+            if (key == "savepapyrusguard" && ParseBoolVal(val, b))        cfg.savePapyrusGuardEnabled = b;
         }
         if (section.empty() || section == "diagnostics") {
             if (key == "statusdumphotkeyvk" && ParseUintVal(val, u))      cfg.statusDumpHotkeyVK = u;
@@ -386,8 +393,9 @@ std::string FormatLiveStatusDump(const LiveStatusDumpData& d) {
                   d.config.weatherStealthEnabled ? 1u : 0u, d.config.thermalSurvivalEnabled ? 1u : 0u);
     os << buf;
     std::snprintf(buf, sizeof buf,
-                  "  Audio   : LiveAmbience=%u LiveGain=%.2f\n\n",
-                  d.config.liveAudioAmbience ? 1u : 0u, d.config.liveAudioGain);
+                  "  Audio   : LiveAmbience=%u LiveGain=%.2f | Stability: SavePapyrusGuard=%u\n\n",
+                  d.config.liveAudioAmbience ? 1u : 0u, d.config.liveAudioGain,
+                  d.config.savePapyrusGuardEnabled ? 1u : 0u);
     os << buf;
 
     os << "[Skeleton IK & 240Hz XPBD Soft-Body]\n";
@@ -436,8 +444,16 @@ std::string FormatLiveStatusDump(const LiveStatusDumpData& d) {
 
     os << "[Live Skyrim Calendar]\n";
     std::snprintf(buf, sizeof buf,
-                  "  4E %.0f | Month=%.0f Day=%.0f Hour=%.2f | DaysPassed=%.2f | TimeScale=%.1f\n",
+                  "  4E %.0f | Month=%.0f Day=%.0f Hour=%.2f | DaysPassed=%.2f | TimeScale=%.1f\n\n",
                   d.calYear, d.calMonth, d.calDay, d.calHour, d.calDaysPassed, d.calTimeScale);
+    os << buf;
+
+    os << "[Save-File Health & Papyrus Frame Hitch Watchdog]\n";
+    std::snprintf(buf, sizeof buf,
+                  "  Guard=%u SavesAudited=%u WorstHealth=%u MaxStrings=%u/65535 MaxSize=%.2fMB | Hitches(>50ms)=%u (60s=%u) Worst=%.1fms P95=%.1fms\n",
+                  d.config.savePapyrusGuardEnabled ? 1u : 0u, d.savesAudited, d.worstSaveHealth,
+                  d.worstSaveStrings, d.worstSaveSizeMb, d.hitchCount, d.hitchesLast60Sec,
+                  d.worstHitchMs, d.p95FrameMs);
     os << buf;
     return os.str();
 }
@@ -635,6 +651,18 @@ bool LiveConfigWriteStatusDump(std::string* outPathWritten) {
         d.calHour       = cal6[3];
         d.calDaysPassed = cal6[4];
         d.calTimeScale  = cal6[5];
+    }
+
+    RawSavePapyrusHealth sph{};
+    if (RAW_GetSavePapyrusHealth(&sph)) {
+        d.savesAudited     = sph.savesAudited;
+        d.worstSaveHealth  = sph.worstSaveHealth;
+        d.worstSaveStrings = sph.worstStringCount;
+        d.worstSaveSizeMb  = sph.worstSaveSizeMb;
+        d.hitchCount       = sph.hitchCount;
+        d.hitchesLast60Sec = sph.hitchesLast60Sec;
+        d.worstHitchMs     = sph.worstHitchMs;
+        d.p95FrameMs       = sph.p95FrameMs;
     }
 
     const bool ok = WriteLiveStatusDumpToFile(outPath, d);

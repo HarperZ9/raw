@@ -297,7 +297,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         const bool indOk = m->indirect.Init(m->dev12.Get(), meshOk);
         const bool fluidOk = m->InitFluidSim();
         const bool radOk = m->InitRadianceCascades();
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s",
+        const bool xpbdOk = m->InitXpbdSim();
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
                terrainOk ? "READY" : "off",
                m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
@@ -305,7 +306,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                asyncOk ? "READY" : "off", indOk ? "READY" : "off",
                m->indirect.SupportsIndirectMesh() ? "YES" : "no",
                fluidOk ? "READY" : "off",
-               radOk ? "READY" : "off");
+               radOk ? "READY" : "off",
+               xpbdOk ? "READY" : "off");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
         {
             const auto& matReg = raw::materials::DefaultMaterialRegistry();
@@ -537,6 +539,77 @@ void D3D12Bridge::Impl::ShutdownRadianceCascades()
     radianceReady = false;
 }
 
+bool D3D12Bridge::Impl::InitXpbdSim()
+{
+    ShutdownXpbdSim();
+    if (!dev12) return false;
+    xpbdSim = std::make_unique<RawXpbdSimHost>();
+    XpbdSimDesc desc{};
+    desc.maxChains = 256u;
+    desc.maxParticles = 4096u;
+    std::string xpbdErr;
+    if (!xpbdSim->Init(dev12.Get(), desc, &xpbdErr)) {
+        log("[XpbdSim] off: %s", xpbdErr.c_str());
+        xpbdSim.reset();
+        return false;
+    }
+    UINT64 tsFreq = 0;
+    if (queue && SUCCEEDED(queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+        xpbdSim->SetTimestampFrequency(tsFreq);
+    }
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&xpbdAlloc[i])))) {
+            ShutdownXpbdSim();
+            return false;
+        }
+    }
+    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, xpbdAlloc[0].Get(), nullptr, IID_PPV_ARGS(&xpbdList))) ||
+        FAILED(xpbdList->Close()) ||
+        FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&xpbdFence)))) {
+        ShutdownXpbdSim();
+        return false;
+    }
+    xpbdEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!xpbdEvent) {
+        ShutdownXpbdSim();
+        return false;
+    }
+    xpbdChainsUploaded = false;
+    xpbdSimReady = true;
+    log("[XpbdSim] GPU XPBD soft-body/hair/foliage ready (256 chains / 4096 particles)");
+    return true;
+}
+
+void D3D12Bridge::Impl::ShutdownXpbdSim()
+{
+    if (xpbdFence && xpbdEvent && xpbdFenceVal > 0) {
+        if (xpbdFence->GetCompletedValue() < xpbdFenceVal) {
+            xpbdFence->SetEventOnCompletion(xpbdFenceVal, xpbdEvent);
+            WaitForSingleObject(xpbdEvent, 3000);
+        }
+    }
+    xpbdList.Reset();
+    for (UINT i = 0; i < kRing; ++i) {
+        xpbdAlloc[i].Reset();
+        xpbdSlotVal[i] = 0;
+    }
+    xpbdFence.Reset();
+    if (xpbdEvent) {
+        CloseHandle(xpbdEvent);
+        xpbdEvent = nullptr;
+    }
+    if (xpbdSim) {
+        xpbdSim->Shutdown();
+        xpbdSim.reset();
+    }
+    xpbdFenceVal = 0;
+    xpbdSlot = 0;
+    xpbdStepFrames = 0;
+    xpbdLastMs = 0;
+    xpbdChainsUploaded = false;
+    xpbdSimReady = false;
+}
+
 void D3D12Bridge::Shutdown()
 {
     if (!m) return;
@@ -545,6 +618,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->ShutdownXpbdSim();
     m->ShutdownRadianceCascades();
     m->ShutdownFluidSim();
     m->worldShowcase.WaitForAsyncIdle();

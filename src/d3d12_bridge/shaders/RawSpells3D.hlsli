@@ -95,7 +95,18 @@ float4 evalVolumetricSpells3D(Texture2D<float4> litTex, Texture2D<float> depthTe
     outRefractPx = 0.0f.xx;
     const float jit = ign(px + float2(23.0f, 41.0f));
     const float tClock = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
-    const float2 windXY = isInt ? float2(0.0f, 0.0f) : clamp(cloudWind.xy * 0.055f, -24.0f.xx, 24.0f.xx);
+    // Wave 48 Weather-Coupled Elemental Magic Optics (reads live weather, seasonThermal0 & physWorld wind from cbuffer P):
+    const float extWeatherGate = isInt ? 0.0f : 1.0f;
+    const float rainNowW = saturate(weather.w) * extWeatherGate;
+    const float snowNowW = saturate(weather.z) * extWeatherGate;
+    const float wetAirW  = saturate(max(weather.w, max(weather.x * 0.65f, weather.y * 0.80f))) * extWeatherGate;
+    const float coldAirW = (extWeatherGate > 0.5f && (seasonThermal0.w < -0.5f || weather.z > 0.05f))
+                         ? saturate((-seasonThermal0.w + 0.5f) / 14.0f) : 0.0f;
+    const float steamFactor = saturate(rainNowW + snowNowW + saturate(weather.y) * 0.45f * extWeatherGate
+                                     + saturate(seasonThermal0.z) * 0.40f * snowNowW + coldAirW * 0.50f);
+    const float beaufortW = clamp(physWorld[1].x, 0.5f, 12.0f);
+    const float windScaleW = 0.055f + saturate((beaufortW - 2.0f) / 8.0f) * 0.035f;
+    const float2 windXY = isInt ? float2(0.0f, 0.0f) : clamp(cloudWind.xy * windScaleW, -32.0f.xx, 32.0f.xx);
 
     // Project world +Z (up) into screen space so we can also catch Frost spell cores ABOVE sinking cold cryo-mist!
     const float4 sRef0 = screenOf(eye + w * 200.0f);
@@ -251,11 +262,29 @@ float4 evalVolumetricSpells3D(Texture2D<float4> litTex, Texture2D<float> depthTe
                 }
             }
 
+            // Wave 48 Fire-in-Rain/Snow Condensation Steam-Vapor Halo:
+            // Surrounds hot blackbody flame cores with a soft swirling translucent steam vapor envelope when wet/snowy!
+            float sigSteam = 0.0f;
+            float3 steamCol = 0.0f.xxx;
+            if (steamFactor > 0.02f && rn > 0.20f && rn < 1.20f) {
+                const float haloShell = exp(-pow((rn - 0.72f) / 0.34f, 2.0f)) * smoothstep(0.20f, 0.48f, rn);
+                const float3 steamP = float3((wpQ.xy - windXY * (tClock * 0.40f)) * 0.055f, wpQ.z * 0.048f - tClock * 2.6f);
+                const float4 gSt = rawNoise3Grad(steamP + curlF * 0.35f);
+                const float steamDens = smoothstep(0.32f, 0.84f, haloShell + (gSt.x - 0.42f) * 0.75f) * steamFactor;
+                if (steamDens > 0.01f) {
+                    sigSteam = steamDens * 0.030f;
+                    const float coreWarmProx = exp(-max(rn - 0.35f, 0.0f) * 2.8f);
+                    const float3 coolVapor = float3(0.76f, 0.84f, 0.94f) * (ambSpell * 1.95f + lightColS0 * 0.24f);
+                    const float3 warmVapor = float3(1.85f, 0.94f, 0.46f) * (0.45f + 0.55f * saturate(-gSt.w * 0.7f + 0.5f));
+                    steamCol = lerp(coolVapor, warmVapor, coreWarmProx * 0.52f);
+                }
+            }
+
             const float sigP = plasmaDens * 0.068f;
             const float sigS = sootDens * 0.044f;
-            sigmaStep = sigP + sigS + sparkE * 0.09f;
+            sigmaStep = sigP + sigS + sigSteam + sparkE * 0.09f;
             if (sigmaStep > 1.0e-4f) {
-                emitStep = (plasmaCol * sigP + sootCol * sigS + float3(3.60f, 1.85f, 0.42f) * (sparkE * 0.14f)) / sigmaStep;
+                emitStep = (plasmaCol * sigP + sootCol * sigS + steamCol * sigSteam + float3(3.60f, 1.85f, 0.42f) * (sparkE * 0.14f)) / sigmaStep;
             }
         } else if (bestKind == RAW_SPELL_FROST) {
             // 2) Frost Spells: Cold cyan-white volumetric cryo-mist SINKING DOWNWARD (negative thermal buoyancy!)
@@ -274,7 +303,7 @@ float4 evalVolumetricSpells3D(Texture2D<float4> litTex, Texture2D<float> depthTe
 
             const float rSink = length(qSinkXY + curlM.xy * (volR * 0.22f)) / max(volR * lerp(0.65f, 1.45f, sinkU), 1.0f);
             const float sinkEnv = saturate(1.0f - rSink * rSink) * smoothstep(-0.04f, 0.14f, sinkU) * smoothstep(1.04f, 0.55f, sinkU);
-            const float cryoMist = smoothstep(0.28f, 0.86f, sinkEnv + (mistTurb - 0.42f) * 0.78f);
+            const float cryoMist = smoothstep(0.28f, 0.86f, sinkEnv + (mistTurb - 0.42f) * 0.78f) * (1.0f + wetAirW * 0.24f);
 
             // Sparkling anisotropic diamond-dust hexagonal ice crystals catching sun/moon & view glint:
             const float3 dGrid = (camPosW.xyz + pCore + qSwirl + float3(0.0f, 0.0f, tClock * 18.0f)) * 0.24f;
@@ -293,6 +322,24 @@ float4 evalVolumetricSpells3D(Texture2D<float4> litTex, Texture2D<float> depthTe
                 const float twinkle   = 0.55f + 0.45f * sin(tClock * 9.5f + dRnd.y * 50.0f);
                 diamondGlint = (1.0f - smoothstep(0.10f, 0.28f, plateD)) * smoothstep(0.76f, 0.98f, dRnd.x)
                              * (0.35f + 2.85f * anisoSpec + 0.65f * rimSpec) * twinkle * saturate(sinkEnv * 1.4f + env);
+            }
+            // Wave 48 Frost-in-Rain/Wet-Air Flash-Freeze Diamond-Dust Micro-Crystal Sparkles along plume envelope:
+            if (wetAirW > 0.02f) {
+                const float3 fGrid = (camPosW.xyz + pCore + qSwirl * 1.18f + float3(windXY * (tClock * 0.25f), tClock * 24.0f)) * 0.42f;
+                const float3 fCell = floor(fGrid);
+                const float3 fFrac = frac(fGrid) - 0.5f;
+                const float3 fRnd  = rawHash33(fCell + float3(19.7f, 3.1f, 41.3f));
+                if (fRnd.x > 0.72f) {
+                    const float3 fCryN = normalize(rawHash33(fCell + float3(29.1f, 11.3f, 7.9f)) - 0.5f + 1.0e-4f);
+                    const float dF = length(fFrac - (fRnd - 0.5f) * 0.48f);
+                    const float3 fHalf = normalize(lightDirS - w);
+                    const float flashSpec = pow(saturate(abs(dot(fCryN, fHalf))), 26.0f) * 3.2f
+                                          + pow(saturate(abs(dot(fCryN, -w))), 12.0f) * 1.1f;
+                    const float flashTw = 0.50f + 0.50f * sin(tClock * 15.0f + fRnd.z * 62.8f);
+                    const float plumeEnv = saturate(sinkEnv * 1.5f + env * 0.85f);
+                    diamondGlint += exp(-dF * dF * 48.0f) * smoothstep(0.72f, 0.98f, fRnd.x)
+                                  * (0.45f + flashSpec) * flashTw * plumeEnv * wetAirW * 1.35f;
+                }
             }
 
             const float3 mistBase = lerp(float3(0.18f, 0.62f, 1.15f), float3(0.68f, 0.94f, 1.25f), saturate(1.0f - sinkU * 0.75f))
@@ -323,11 +370,22 @@ float4 evalVolumetricSpells3D(Texture2D<float4> litTex, Texture2D<float> depthTe
             const float forkBranch = exp(-f2 * 18.0f) * exp(-f3 * 14.0f) * env * smoothstep(0.10f, 0.85f, rn);
             const float ozoneHalo  = exp(-f1 * 5.5f) * env * env * (0.35f + 0.65f * gA1.x);
 
-            const float3 ionizedCore = float3(3.40f, 3.15f, 4.85f) * (leaderBolt * 3.60f + forkBranch * 1.65f);
-            const float3 violetArc   = float3(1.15f, 0.36f, 2.95f) * (leaderBolt * 1.15f + forkBranch * 1.35f);
-            const float3 cyanOzone   = float3(0.16f, 0.82f, 1.85f) * (ozoneHalo * 0.58f);
+            // Wave 48 Shock-in-Rain/Wet-Air Secondary Conductive Branch-Arc Filaments + Cyan-Violet Ozone Halo:
+            float wetArcBranch = 0.0f;
+            float wetOzoneHalo = 0.0f;
+            if (wetAirW > 0.02f) {
+                const float4 gA4 = rawNoise3Grad(arcP1 * 9.40f + gA3.yzw * 0.65f + float3(arcTick * 1.13f, -4.7f, 8.9f));
+                const float f4 = abs(gA4.x * 2.0f - 1.0f);
+                wetArcBranch = exp(-f3 * 18.0f) * exp(-f4 * 15.0f) * env * smoothstep(0.08f, 0.92f, rn) * wetAirW;
+                wetOzoneHalo = exp(-f2 * 4.2f) * env * smoothstep(0.12f, 0.92f, rn) * (0.45f + 0.55f * gA2.x) * wetAirW;
+            }
+
+            const float3 ionizedCore = float3(3.40f, 3.15f, 4.85f) * (leaderBolt * 3.60f + forkBranch * 1.65f + wetArcBranch * 2.35f);
+            const float3 violetArc   = float3(1.15f, 0.36f, 2.95f) * (leaderBolt * 1.15f + forkBranch * 1.35f + wetArcBranch * 1.85f);
+            const float3 cyanOzone   = float3(0.16f, 0.82f, 1.85f) * (ozoneHalo * 0.58f)
+                                     + float3(0.42f, 0.88f, 2.35f) * (wetOzoneHalo * 0.82f);
             emitStep = (ionizedCore + violetArc + cyanOzone) * microFlk;
-            sigmaStep = (leaderBolt * 0.14f + forkBranch * 0.065f + ozoneHalo * 0.024f);
+            sigmaStep = (leaderBolt * 0.14f + forkBranch * 0.065f + wetArcBranch * 0.075f + ozoneHalo * 0.024f + wetOzoneHalo * 0.028f);
         } else {
             // 4) Arcane / Ward / Restoration Spells: Iridescent thin-film caustic energy rings + shimmering volumetric wisps:
             if (rn >= 1.05f) { continue; }

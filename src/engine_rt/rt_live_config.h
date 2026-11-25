@@ -36,6 +36,9 @@ struct LiveEngineConfig {
     bool  liveAudioAmbience      = false;   // Opt-in live 48kHz WASAPI FDN-8 ambient soundscape (0/1, default 0)
     float liveAudioGain          = 0.22f;   // [0.0 .. 0.50] master ambient gain
 
+    // [Stability]
+    bool  savePapyrusGuardEnabled = true;   // .ESS save-file health auditor & Papyrus frame-hitch watchdog (0/1, default 1)
+
     // [Diagnostics]
     uint32_t statusDumpHotkeyVK      = 121u;  // VK_F10 (0x79)
     uint32_t hotReloadIntervalFrames = 60u;   // [10 .. 600] frames
@@ -138,6 +141,16 @@ struct LiveStatusDumpData {
     float    calHour       = 12.0f;
     float    calDaysPassed = 0.0f;
     float    calTimeScale  = 20.0f;
+
+    // Save Health & Papyrus Hitch Watchdog
+    uint16_t savesAudited     = 0u;
+    uint8_t  worstSaveHealth  = 0u;
+    uint32_t worstSaveStrings = 0u;
+    float    worstSaveSizeMb  = 0.0f;
+    uint32_t hitchCount       = 0u;
+    uint32_t hitchesLast60Sec = 0u;
+    float    worstHitchMs     = 0.0f;
+    float    p95FrameMs       = 0.0f;
 };
 
 std::string FormatLiveStatusDump(const LiveStatusDumpData& d);

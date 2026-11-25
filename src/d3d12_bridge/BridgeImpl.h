@@ -8,6 +8,7 @@
 #include "RawFluidSimHost.h"
 #include "RawFluidCompositeHost.h"
 #include "RawRadianceHost.h"
+#include "RawXpbdSimHost.h"
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
@@ -74,8 +75,11 @@ struct D3D12Bridge::Impl
     RawFluidSimHost          fluidSim;     // Live GPU 64^3 3D Navier-Stokes Fire/Smoke + 256^2 SWE Water solver
     RawFluidCompositeHost    fluidComposite; // Live GPU 64^3 NS Fire/Smoke volumetric compositor onto colorOut
     RawRadianceHost          radianceHost; // Live GPU 4-cascade penumbra-exact Radiance Cascades Screen GI
+    std::unique_ptr<RawXpbdSimHost> xpbdSim; // Live GPU XPBD soft-body/hair/cloth/bush-bone solver
     bool                     fluidReady = false;
     bool                     radianceReady = false;
+    bool                     xpbdSimReady = false;
+    bool                     xpbdChainsUploaded = false;
     ComPtr<ID3D12CommandAllocator>    fluidAlloc[kRing];
     ComPtr<ID3D12GraphicsCommandList> fluidList;
     ComPtr<ID3D12Fence>               fluidFence;
@@ -96,6 +100,15 @@ struct D3D12Bridge::Impl
     uint64_t                          radSlotVal[kRing] = {};
     uint32_t                          radSlot = 0;
     uint64_t                          radStepFrames = 0;
+    ComPtr<ID3D12CommandAllocator>    xpbdAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList> xpbdList;
+    ComPtr<ID3D12Fence>               xpbdFence;
+    HANDLE                            xpbdEvent = nullptr;
+    uint64_t                          xpbdFenceVal = 0;
+    uint64_t                          xpbdSlotVal[kRing] = {};
+    uint32_t                          xpbdSlot = 0;
+    uint64_t                          xpbdStepFrames = 0;
+    uint64_t                          xpbdLastMs = 0;
     std::string                       telemetryOutDir;
     bool InitFluidSim();
     void ShutdownFluidSim();
@@ -103,6 +116,9 @@ struct D3D12Bridge::Impl
     bool InitRadianceCascades();
     void ShutdownRadianceCascades();
     bool ExecuteRadianceScreenGiOnQueue();
+    bool InitXpbdSim();
+    void ShutdownXpbdSim();
+    bool StepXpbdSimOnQueue(bool isInterior);
     void EmitLiveTelemetry(bool rtActive);
     std::vector<RawMeshGpuAsset> proceduralMeshes; // Zero-external-asset built-in procedural GPU meshlet library
     raw::worldgen::RawWorldShowcase worldShowcase; // Live beyond-Tamriel 6-biome procedural frontier streaming manager

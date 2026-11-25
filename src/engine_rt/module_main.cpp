@@ -35,6 +35,7 @@
 #include "rt_live_config.h"
 #include "rt_memory_guards.h"
 #include "rt_movement_combat.h"
+#include "rt_save_papyrus_guard.h"
 #include "rt_softbody.h"
 #include "rt_stealth_survival.h"
 #include "rt_terrain_lod.h"
@@ -136,6 +137,18 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     raw::rt::AudioBridgeOnPresent();
     raw::rt::CrashForensicsOnPresent();
     {
+        static LARGE_INTEGER s_qpcFreq{};
+        static LARGE_INTEGER s_prevQpc{};
+        LARGE_INTEGER nowQpc{};
+        if (s_qpcFreq.QuadPart == 0) QueryPerformanceFrequency(&s_qpcFreq);
+        QueryPerformanceCounter(&nowQpc);
+        if (s_prevQpc.QuadPart != 0 && s_qpcFreq.QuadPart > 0) {
+            const double frameMs = double(nowQpc.QuadPart - s_prevQpc.QuadPart) * 1000.0 / double(s_qpcFreq.QuadPart);
+            raw::rt::SavePapyrusGuardOnPresent(frameMs);
+        }
+        s_prevQpc = nowQpc;
+    }
+    {
         static uint32_t s_liveLogTick = 0;
         if ((++s_liveLogTick % 300u) == 150u) {
             const auto sk = raw::rt::GetSkeletonPhysicsStats();
@@ -196,6 +209,14 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
                     ab.mappedDspEnv, ab.appliedGain, ab.muted ? 1u : 0u,
                     ab.toggleStarts, ab.toggleStops,
                     static_cast<unsigned long long>(ab.framesRendered), ab.lastRms);
+            }
+            raw::rt::RawSavePapyrusHealth sph{};
+            if (RAW_GetSavePapyrusHealth(&sph) && sph.guardEnabled) {
+                Log("[SaveGuard] saves=%u worst=%s maxStr=%u/65535 maxMB=%.2f | hitches(>50ms)=%u (60s=%u) worst=%.1fms p95=%.1fms",
+                    sph.savesAudited,
+                    raw::rt::SaveHealthLevelName(static_cast<raw::rt::SaveHealthLevel>(sph.worstSaveHealth)),
+                    sph.worstStringCount, sph.worstSaveSizeMb,
+                    sph.hitchCount, sph.hitchesLast60Sec, sph.worstHitchMs, sph.p95FrameMs);
             }
         }
     }
@@ -349,6 +370,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     }
     Log("%s", raw::rt::LiveConfigInit(g_dir + "raw_engine.ini", g_out + "\\live_status_dump.txt").c_str());
     Log("%s", raw::rt::CrashForensicsInit(g_img, g_dir, g_out).c_str());
+    Log("%s", raw::rt::SavePapyrusGuardInit().c_str());
     Log("%s", raw::rt::AudioBridgeInit().c_str());
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
@@ -378,6 +400,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         return 0;
     }
     raw::rt::AudioBridgeShutdown();
+    raw::rt::SavePapyrusGuardShutdown();
     raw::rt::CrashForensicsShutdown();
     raw::rt::LiveConfigShutdown();
     raw::rt::MovementCombatShutdown();

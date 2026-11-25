@@ -84,8 +84,11 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
     const float fluidWaterMs = (fluidTimings.valid && std::isfinite(fluidTimings.waterStepMs)) ? fluidTimings.waterStepMs : 0.0f;
     const uint32_t fluidPressureIters = fluidTimings.activePressureIters;
     const float radianceGiMs = (radTimings.valid && std::isfinite(radTimings.giPassMs)) ? radTimings.giPassMs : 0.0f;
+    const float xpbdStepMs = (xpbdSimReady && xpbdSim && xpbdSim->HasValidTiming() && std::isfinite(xpbdSim->GetLastStepMs()))
+        ? xpbdSim->GetLastStepMs() : 0.0f;
+    const uint32_t xpbdParticles = (xpbdSimReady && xpbdSim) ? xpbdSim->ParticleCount() : 0u;
 
-    char jsonBuf[1536]{};
+    char jsonBuf[2048]{};
     const int n = std::snprintf(
         jsonBuf, sizeof(jsonBuf),
         "{\n"
@@ -104,6 +107,8 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"fluidWaterMs\": %.4f,\n"
         "  \"fluidPressureIters\": %u,\n"
         "  \"radianceGiMs\": %.4f,\n"
+        "  \"xpbdStepMs\": %.4f,\n"
+        "  \"xpbdParticles\": %u,\n"
         "  \"seasonSnowM\": %.4f,\n"
         "  \"seasonIceM\": %.4f,\n"
         "  \"skinTempC\": %.3f,\n"
@@ -126,6 +131,8 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         fluidWaterMs,
         fluidPressureIters,
         radianceGiMs,
+        xpbdStepMs,
+        xpbdParticles,
         seasonSnowM,
         seasonIceM,
         skinTempC,
@@ -337,6 +344,110 @@ bool D3D12Bridge::Impl::ExecuteRadianceScreenGiOnQueue()
     if ((radStepFrames++ % 180ull) == 0ull) {
         log("[RadianceCascades] live 4-cascade ScreenGI active (%ux%u, strength=0.16)",
             static_cast<unsigned>(cfg.width), static_cast<unsigned>(cfg.height));
+    }
+    return true;
+}
+
+bool D3D12Bridge::Impl::StepXpbdSimOnQueue(bool isInterior)
+{
+    if (!xpbdSimReady || !xpbdSim || !xpbdSim->Ready() || !queue || !xpbdList || !xpbdFence || !xpbdEvent) {
+        return false;
+    }
+
+    const uint32_t slot = xpbdSlot;
+    if (xpbdSlotVal[slot] > 0 && xpbdFence->GetCompletedValue() < xpbdSlotVal[slot]) {
+        xpbdFence->SetEventOnCompletion(xpbdSlotVal[slot], xpbdEvent);
+        WaitForSingleObject(xpbdEvent, 3000);
+    }
+    if (FAILED(xpbdAlloc[slot]->Reset()) || FAILED(xpbdList->Reset(xpbdAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    if (!xpbdChainsUploaded) {
+        std::vector<XpbdParticle> particles;
+        std::vector<XpbdChainMeta> chains;
+        BuildHairAndFoliageDemoChains(particles, chains, 256u);
+        if (!xpbdSim->UploadChains(xpbdList.Get(), particles, chains)) {
+            xpbdList->Close();
+            return false;
+        }
+        xpbdChainsUploaded = true;
+    }
+
+    const uint64_t nowMs = GetTickCount64();
+    float dtSec = 1.0f / 60.0f;
+    if (xpbdLastMs != 0) {
+        dtSec = std::clamp(float(double(nowMs - xpbdLastMs) * 0.001), 1.0e-4f, 0.05f);
+    }
+    xpbdLastMs = nowMs;
+    if (lighting.menuPaused) dtSec = 1.0e-4f;
+
+    LightingFluidInputs fi{};
+    LightingPassFluidInputs(pass.get(), &fi);
+
+    float seasonSnowM = 0.0f;
+    const void* uPtr = nullptr;
+    size_t uBytes = 0;
+    if (pass && LightingPassUniform(pass.get(), &uPtr, &uBytes) &&
+        uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+        const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+        if (std::isfinite(u->seasonThermal0[0])) {
+            seasonSnowM = std::max(0.0f, u->seasonThermal0[0]);
+        }
+    }
+
+    XpbdStepParams xp{};
+    xp.dt              = dtSec;
+    xp.timeSec         = fi.simTimeSec;
+    xp.substeps        = 4u;
+    xp.gravityZ        = -9.80665f;
+    const float wLen   = std::sqrt(fi.windXY[0] * fi.windXY[0] + fi.windXY[1] * fi.windXY[1]);
+    if (wLen > 1.0e-4f) {
+        xp.windDir[0] = fi.windXY[0] / wLen;
+        xp.windDir[1] = fi.windXY[1] / wLen;
+        xp.windDir[2] = 0.0f;
+    } else {
+        xp.windDir[0] = 0.92f;
+        xp.windDir[1] = 0.39f;
+        xp.windDir[2] = 0.0f;
+    }
+    xp.windSpeedMps    = isInterior ? 0.35f : std::clamp(0.6f + fi.beaufortScale * 2.2f, 0.5f, 24.0f);
+    xp.gustPhase       = fi.simTimeSec * 0.85f;
+    xp.snowLoad01      = isInterior ? 0.0f : std::clamp(seasonSnowM * 1.5f, 0.0f, 1.0f);
+    xp.maxSpeed        = 35.0f;
+    xp.collisionMargin = 0.005f;
+
+    // Head sphere + torso capsule + animated bush push-aside wake sphere:
+    xp.colliders[0].p0[0]  = 0.0f; xp.colliders[0].p0[1] = 0.0f; xp.colliders[0].p0[2] = 1.62f;
+    xp.colliders[0].radius = 0.14f;
+    xp.colliders[0].flags  = 0.0f;
+
+    xp.colliders[1].p0[0]  = 0.0f; xp.colliders[1].p0[1] = 0.0f; xp.colliders[1].p0[2] = 1.48f;
+    xp.colliders[1].p1[0]  = 0.0f; xp.colliders[1].p1[1] = 0.0f; xp.colliders[1].p1[2] = 0.88f;
+    xp.colliders[1].radius = 0.22f;
+    xp.colliders[1].flags  = 1.0f;
+
+    xp.colliders[2].p0[0]  = 3.0f + std::sin(fi.simTimeSec * 0.7f) * 0.35f;
+    xp.colliders[2].p0[1]  = std::cos(fi.simTimeSec * 0.5f) * 0.35f;
+    xp.colliders[2].p0[2]  = 0.65f;
+    xp.colliders[2].radius = 0.32f;
+    xp.colliders[2].flags  = 0.0f;
+    xp.colliderCount       = 3u;
+
+    xpbdSim->Step(xpbdList.Get(), xp);
+
+    if (FAILED(xpbdList->Close())) return false;
+    ID3D12CommandList* lists[1] = {xpbdList.Get()};
+    queue->ExecuteCommandLists(1, lists);
+    queue->Signal(xpbdFence.Get(), ++xpbdFenceVal);
+    xpbdSlotVal[slot] = xpbdFenceVal;
+    xpbdSlot = (slot + 1u) % kRing;
+
+    if ((xpbdStepFrames++ % 180ull) == 0ull) {
+        log("[XpbdSim] live GPU step: chains=%u, particles=%u, stepMs=%.4f, wind=%.1f m/s, snowLoad=%.2f",
+            xpbdSim->ChainCount(), xpbdSim->ParticleCount(),
+            xpbdSim->HasValidTiming() ? xpbdSim->GetLastStepMs() : 0.0f,
+            xp.windSpeedMps, xp.snowLoad01);
     }
     return true;
 }
@@ -559,7 +670,8 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                             LightingPassUniform(m->pass.get(), &terrainU, &terrainUb);
     const bool runFluid = m->cfg.lightingPass && m->lighting.valid && m->fluidReady && m->fluidSim.Ready();
     const bool runRadiance = m->cfg.lightingPass && m->lighting.valid && m->radianceReady && m->radianceHost.ScreenGIReady();
-    const bool hasPostWork = runTerrain || runFluid || runRadiance;
+    const bool runXpbd = m->cfg.lightingPass && m->lighting.valid && m->xpbdSimReady && m->xpbdSim && m->xpbdSim->Ready();
+    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd;
     auto runPostLightingPasses = [&]() -> bool {
         if (!hasPostWork) return true;
         if (runTerrain) {
@@ -633,6 +745,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         }
         if (runRadiance) {
             m->ExecuteRadianceScreenGiOnQueue();
+        }
+        if (runXpbd) {
+            m->StepXpbdSimOnQueue(isInterior);
         }
         return SUCCEEDED(m->queue->Signal(m->fence12.Get(), v2));
     };

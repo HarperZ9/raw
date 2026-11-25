@@ -5729,3 +5729,7 @@ fn:Magic::ComputeDualCastTime	function	0x422180	high	binary disassembly reads fM
 fn:Magic::ComputeDualCastEffectiveness	function	0x4221A0	high	binary disassembly reads fMagicDualCastingEffectivenessMult(0x20ABBB8=0.0) + fMagicDualCastingEffectivenessBase(0x20ABBA0=2.0) (SkyrimSE 1.7.104)
 fn:Magic::ComputeDualCastCost	function	0x4221C0	high	binary disassembly reads fMagicDualCastingCostMult(0x20ABBE8=1.5) + fMagicDualCastingCostBase(0x20ABBD0=0.0) (SkyrimSE 1.7.104)
 fn:Magic::GetProjectileRangeThresholds	function	0x1535F0	high	binary disassembly reads fMagicBallMaximumDistance(0x2076B58=2000) fMagicBoltMaximumDistance(0x2076B88=2000) fMagicSprayMaximumDistance(0x2076BB8=1000) (SkyrimSE 1.7.104)
+fn:Barter::ComputePriceFactor	function	0x420BD0	high	binary disassembly reads fBarterMin(0x20A8C48=1.4) fBarterMax(0x20A8C60=2.4) fBarterBuyMin(0x20A8C78=1.05) fBarterSellMax(0x20A8C90=0.95) (SkyrimSE 1.7.104)
+fn:Crafting::ComputeEnchantingSkillFactor	function	0x421850	high	binary disassembly reads fEnchantingSkillFactor(0x20AAA48=3.0) fEnchantingSkillCostScale(0x20AAA90=0.5) (SkyrimSE 1.7.104)
+fn:Crafting::ComputeSmithingCondition	function	0x421A00	high	binary disassembly reads fSmithingConditionFactor(0x20AAB50=0.5825) fSmithingWeaponMax(0x20AAB68=10) fSmithingArmorMax(0x20AAB80=10) (SkyrimSE 1.7.104)
+fn:Actor::ComputeFallDamage	function	0x6BD570	high	binary disassembly reads fJumpFallHeightMin(0x20A8870=600) fJumpFallHeightMult(0x20A88A0=0.1) fJumpFallHeightExponent(0x20A8888=1.65) (SkyrimSE 1.7.104)

@@ -1,5 +1,5 @@
 // tools/raw_bench_suite.cpp: Studio-Grade Automated GPU/CPU Benchmark & Visual Invariant Suite for RAW.
-// Benchmarks all 7 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
+// Benchmarks all 8 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
 //   1. GPU 64^3 Navier-Stokes Fire/Smoke + 256^2 SWE Water (RawFluidSimHost)
 //   2. GPU 4-Cascade Radiance Cascades GI (RawRadianceHost)
 //   3. Procedural PBR Texture Forge (RawTextureForge, all 8 seamless PBR sets)
@@ -7,6 +7,7 @@
 //   5. 3D Voronoi CSG Destruction Physics (RawDestructionEngine)
 //   6. Biomechanical 3D Flora & Hydraulic Terrain Erosion (RawFloraEngine + RawHydrologyGen + RawAssetValidator)
 //   7. Multi-Cell Tamriel Streaming (RawTamrielWorldStreamer, graceful skip if Skyrim.esm absent)
+//   8. GPU XPBD Soft-Body / Hair / Cloth / Bush-Bone Solver (RawXpbdSimHost, 256 chains / 4,096 particles)
 //
 // CLI:
 //   raw_bench_suite [--warp] [--quick] [--frames N] [--json <path>] [--esm <path>] [--bsa <path>] [--no-debug-layer]
@@ -26,6 +27,7 @@
 
 #include "../src/d3d12_bridge/RawFluidSimHost.h"
 #include "../src/d3d12_bridge/RawRadianceHost.h"
+#include "../src/d3d12_bridge/RawXpbdSimHost.h"
 #include "../src/materials/RawTextureForge.h"
 #include "../src/audio/RawAudioDsp.h"
 #include "../src/worldgen/RawDestructionEngine.h"
@@ -538,6 +540,61 @@ struct BenchDx12Rig {
         rbBuf->Unmap(0, &wr);
         return true;
     }
+
+    bool ReadbackBuffer(ID3D12Resource* buf, D3D12_RESOURCE_STATES curState,
+                        uint64_t byteSize, std::vector<uint8_t>& outBytes)
+    {
+        if (!buf || byteSize == 0ull) return false;
+        D3D12_HEAP_PROPERTIES hpRb{};
+        hpRb.Type = D3D12_HEAP_TYPE_READBACK;
+        D3D12_RESOURCE_DESC rbd{};
+        rbd.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+        rbd.Width            = byteSize;
+        rbd.Height           = 1u;
+        rbd.DepthOrArraySize = 1u;
+        rbd.MipLevels        = 1u;
+        rbd.SampleDesc.Count = 1u;
+        rbd.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        ComPtr<ID3D12Resource> rbBuf;
+        if (FAILED(dev->CreateCommittedResource(&hpRb, D3D12_HEAP_FLAG_NONE, &rbd,
+                                                D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&rbBuf)))) {
+            return false;
+        }
+
+        if (!BeginFrame()) return false;
+        if (curState != D3D12_RESOURCE_STATE_COPY_SOURCE) {
+            D3D12_RESOURCE_BARRIER b{};
+            b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            b.Transition.pResource   = buf;
+            b.Transition.StateBefore = curState;
+            b.Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_SOURCE;
+            b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            cmd->ResourceBarrier(1, &b);
+        }
+
+        cmd->CopyBufferRegion(rbBuf.Get(), 0ull, buf, 0ull, byteSize);
+
+        if (curState != D3D12_RESOURCE_STATE_COPY_SOURCE) {
+            D3D12_RESOURCE_BARRIER b{};
+            b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            b.Transition.pResource   = buf;
+            b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+            b.Transition.StateAfter  = curState;
+            b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            cmd->ResourceBarrier(1, &b);
+        }
+        if (!FlushAndWait()) return false;
+
+        void* mapped = nullptr;
+        D3D12_RANGE rr{0, static_cast<SIZE_T>(byteSize)};
+        if (FAILED(rbBuf->Map(0, &rr, &mapped))) return false;
+        outBytes.resize(static_cast<size_t>(byteSize));
+        std::memcpy(outBytes.data(), mapped, static_cast<size_t>(byteSize));
+        D3D12_RANGE wr{0, 0};
+        rbBuf->Unmap(0, &wr);
+        return true;
+    }
 };
 
 // ----------------------------------------------------------------------------
@@ -637,6 +694,21 @@ struct TamrielBenchResult {
     double      whiterunWarmHitRate  = 0.0;
     uint64_t    cacheHits            = 0ull;
     uint64_t    cacheMisses          = 0ull;
+    std::string note;
+};
+
+struct XpbdBenchResult {
+    bool        passed          = false;
+    Percentiles stepGpuMs{};
+    Percentiles cpuRecordMs{};
+    uint32_t    chainCount      = 0u;
+    uint32_t    particleCount   = 0u;
+    uint32_t    substeps        = 4u;
+    uint32_t    nanCount        = 0u;
+    float       maxRootDrift    = 0.0f;
+    float       maxStretchRatio = 0.0f;
+    float       minColliderSD   = 0.0f;
+    float       hostStepMs      = 0.0f;
     std::string note;
 };
 
@@ -1256,6 +1328,199 @@ TamrielBenchResult RunTamrielStreamerBenchmark(const std::string& esmPath, const
 }
 
 // ----------------------------------------------------------------------------
+// 8. GPU XPBD Soft-Body / Hair / Cloth / Bush-Bone Solver (RawXpbdSimHost)
+// ----------------------------------------------------------------------------
+XpbdBenchResult RunXpbdBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames, uint32_t measuredFrames)
+{
+    XpbdBenchResult res{};
+    raw::bridge::RawXpbdSimHost host;
+    raw::bridge::XpbdSimDesc desc{};
+    desc.maxChains    = 256u;
+    desc.maxParticles = 4096u;
+    std::string err;
+    if (!host.Init(rig.dev.Get(), desc, &err)) {
+        res.note = "RawXpbdSimHost::Init failed: " + err;
+        return res;
+    }
+    host.SetTimestampFrequency(rig.tsFreqHz);
+
+    std::vector<raw::bridge::XpbdParticle>  initParticles;
+    std::vector<raw::bridge::XpbdChainMeta> initChains;
+    raw::bridge::BuildHairAndFoliageDemoChains(initParticles, initChains, 256u);
+
+    if (!rig.BeginFrame()) {
+        res.note = "BeginFrame (upload) failed";
+        return res;
+    }
+    if (!host.UploadChains(rig.cmd.Get(), initParticles, initChains)) {
+        res.note = "RawXpbdSimHost::UploadChains failed";
+        return res;
+    }
+    if (!rig.FlushAndWait()) {
+        res.note = "FlushAndWait (upload) failed";
+        return res;
+    }
+
+    res.chainCount    = host.ChainCount();
+    res.particleCount = host.ParticleCount();
+    res.substeps      = 4u;
+
+    raw::bridge::XpbdStepParams xp{};
+    xp.dt              = 1.0f / 60.0f;
+    xp.substeps        = res.substeps;
+    xp.gravityZ        = -9.80665f;
+    xp.windDir[0]      = 0.92f;
+    xp.windDir[1]      = 0.39f;
+    xp.windDir[2]      = 0.0f;
+    xp.windSpeedMps    = 8.5f;
+    xp.snowLoad01      = 0.25f;
+    xp.maxSpeed        = 35.0f;
+    xp.collisionMargin = 0.005f;
+
+    // 3 analytic colliders: character head sphere, torso capsule, bush push sphere
+    xp.colliders[0].p0[0]  = 0.0f; xp.colliders[0].p0[1] = 0.0f; xp.colliders[0].p0[2] = 1.62f;
+    xp.colliders[0].radius = 0.14f;
+    xp.colliders[0].flags  = 0.0f;
+
+    xp.colliders[1].p0[0]  = 0.0f; xp.colliders[1].p0[1] = 0.0f; xp.colliders[1].p0[2] = 1.48f;
+    xp.colliders[1].p1[0]  = 0.0f; xp.colliders[1].p1[1] = 0.0f; xp.colliders[1].p1[2] = 0.88f;
+    xp.colliders[1].radius = 0.22f;
+    xp.colliders[1].flags  = 1.0f;
+
+    xp.colliders[2].p0[0]  = 3.0f; xp.colliders[2].p0[1] = 0.0f; xp.colliders[2].p0[2] = 0.65f;
+    xp.colliders[2].radius = 0.32f;
+    xp.colliders[2].flags  = 0.0f;
+    xp.colliderCount       = 3u;
+
+    std::vector<double> gpuSamples, cpuSamples;
+    gpuSamples.reserve(measuredFrames);
+    cpuSamples.reserve(measuredFrames);
+
+    const uint32_t totalFrames = warmupFrames + measuredFrames;
+    for (uint32_t f = 0u; f < totalFrames; ++f) {
+        const float tSec = static_cast<float>(f) * xp.dt;
+        xp.timeSec   = tSec;
+        xp.gustPhase = tSec * 1.3f;
+
+        const auto c0 = Clock::now();
+        if (!rig.BeginFrame()) {
+            res.note = "BeginFrame failed";
+            return res;
+        }
+        rig.MarkTimestamp(0u);
+        host.Step(rig.cmd.Get(), xp);
+        rig.MarkTimestamp(1u);
+        rig.ResolveTimestamps(0u, 2u);
+        const auto c1 = Clock::now();
+
+        if (!rig.FlushAndWait()) {
+            res.note = "FlushAndWait failed";
+            return res;
+        }
+        if (f >= warmupFrames) {
+            double gMs = 0.0;
+            rig.ReadTimestampRangeMs(0u, 1u, gMs);
+            gpuSamples.push_back(gMs);
+            cpuSamples.push_back(ElapsedMs(c0, c1));
+        }
+    }
+
+    res.stepGpuMs   = ComputePercentiles(gpuSamples);
+    res.cpuRecordMs = ComputePercentiles(cpuSamples);
+    res.hostStepMs  = host.HasValidTiming() ? host.GetLastStepMs() : 0.0f;
+
+    // GPU readback physics invariant verification (zero NaN, pinned roots, stretch ratio, collider clearance)
+    std::vector<uint8_t> rawBytes;
+    const uint64_t byteSize = static_cast<uint64_t>(initParticles.size()) * sizeof(raw::bridge::XpbdParticle);
+    if (!rig.ReadbackBuffer(host.ParticleResource(), host.ParticleResourceState(), byteSize, rawBytes) ||
+        rawBytes.size() < byteSize) {
+        res.note = "GPU XPBD particle readback failed";
+        return res;
+    }
+
+    std::vector<raw::bridge::XpbdParticle> outParticles(initParticles.size());
+    std::memcpy(outParticles.data(), rawBytes.data(), static_cast<size_t>(byteSize));
+
+    auto evalColliderSD = [](const float p[3], const raw::bridge::XpbdCollider& c) -> float {
+        if (c.flags > 0.5f) {
+            const float abx = c.p1[0] - c.p0[0];
+            const float aby = c.p1[1] - c.p0[1];
+            const float abz = c.p1[2] - c.p0[2];
+            const float abLenSq = abx * abx + aby * aby + abz * abz;
+            float t = 0.0f;
+            if (abLenSq > 1.0e-12f) {
+                t = ((p[0] - c.p0[0]) * abx + (p[1] - c.p0[1]) * aby + (p[2] - c.p0[2]) * abz) / abLenSq;
+                t = std::clamp(t, 0.0f, 1.0f);
+            }
+            const float dx = p[0] - (c.p0[0] + abx * t);
+            const float dy = p[1] - (c.p0[1] + aby * t);
+            const float dz = p[2] - (c.p0[2] + abz * t);
+            return std::sqrt(dx * dx + dy * dy + dz * dz) - c.radius;
+        }
+        const float dx = p[0] - c.p0[0];
+        const float dy = p[1] - c.p0[1];
+        const float dz = p[2] - c.p0[2];
+        return std::sqrt(dx * dx + dy * dy + dz * dz) - c.radius;
+    };
+
+    res.minColliderSD   = 1.0e9f;
+    res.maxRootDrift    = 0.0f;
+    res.maxStretchRatio = 1.0f;
+
+    for (size_t i = 0u; i < outParticles.size(); ++i) {
+        const auto& pt = outParticles[i];
+        const bool finite = std::isfinite(pt.pos[0]) && std::isfinite(pt.pos[1]) && std::isfinite(pt.pos[2]) &&
+                            std::isfinite(pt.prevPos[0]) && std::isfinite(pt.prevPos[1]) && std::isfinite(pt.prevPos[2]) &&
+                            std::isfinite(pt.vel[0]) && std::isfinite(pt.vel[1]) && std::isfinite(pt.vel[2]);
+        if (!finite) {
+            ++res.nanCount;
+            continue;
+        }
+        if (initParticles[i].invMass == 0.0f) {
+            const float dx = pt.pos[0] - initParticles[i].pos[0];
+            const float dy = pt.pos[1] - initParticles[i].pos[1];
+            const float dz = pt.pos[2] - initParticles[i].pos[2];
+            res.maxRootDrift = std::max(res.maxRootDrift, std::sqrt(dx * dx + dy * dy + dz * dz));
+        } else {
+            for (uint32_t k = 0u; k < xp.colliderCount; ++k) {
+                const float sd = evalColliderSD(pt.pos, xp.colliders[k]);
+                if (sd < res.minColliderSD) res.minColliderSD = sd;
+            }
+        }
+    }
+
+    for (const auto& ch : initChains) {
+        for (uint32_t n = 1u; n < ch.nodeCount; ++n) {
+            const uint32_t i0 = ch.startParticle + n - 1u;
+            const uint32_t i1 = ch.startParticle + n;
+            const auto& a = outParticles[i0];
+            const auto& b = outParticles[i1];
+            const float dx = b.pos[0] - a.pos[0];
+            const float dy = b.pos[1] - a.pos[1];
+            const float dz = b.pos[2] - a.pos[2];
+            const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (b.restLen > 1.0e-6f && std::isfinite(len)) {
+                res.maxStretchRatio = std::max(res.maxStretchRatio, len / b.restLen);
+            }
+        }
+    }
+
+    const bool budgetOk = rig.isWarp ? true : (res.stepGpuMs.mean < 0.25);
+    const bool physOk   = (res.nanCount == 0u) && (res.maxRootDrift < 1.0e-5f) &&
+                          (res.maxStretchRatio < 1.03f) && (res.minColliderSD >= -1.0e-2f);
+    res.passed = budgetOk && physOk;
+    if (!physOk) {
+        res.note = "XPBD constraint/collider/NaN invariant failed";
+    } else if (!budgetOk) {
+        res.note = "HW GPU XPBD step mean exceeded 0.25 ms budget";
+    } else {
+        res.note = rig.isWarp ? "WARP 4096p XPBD constraints & colliders PASS"
+                              : "HW GPU < 0.25 ms & 4096p XPBD invariants PASS";
+    }
+    return res;
+}
+
+// ----------------------------------------------------------------------------
 // JSON Serializer & Console Scorecard Printer
 // ----------------------------------------------------------------------------
 void WriteBenchJson(const std::string& path,
@@ -1271,7 +1536,8 @@ void WriteBenchJson(const std::string& path,
                     const AudioBenchResult& audio,
                     const DestructionBenchResult& destr,
                     const FloraHydroBenchResult& flora,
-                    const TamrielBenchResult& tamriel)
+                    const TamrielBenchResult& tamriel,
+                    const XpbdBenchResult& xpbd)
 {
     std::ostringstream os;
     os << std::fixed << std::setprecision(4);
@@ -1395,6 +1661,22 @@ void WriteBenchJson(const std::string& path,
     os << "      \"cacheHits\": " << tamriel.cacheHits << ",\n";
     os << "      \"cacheMisses\": " << tamriel.cacheMisses << ",\n";
     os << "      \"note\": \"" << JsonEscape(tamriel.note) << "\"\n";
+    os << "    },\n";
+
+    // 8. GPU XPBD Soft-Body / Hair / Cloth / Bush-Bone Solver
+    os << "    \"xpbdSim\": {\n";
+    os << "      \"passed\": " << (xpbd.passed ? "true" : "false") << ",\n";
+    os << "      \"chainCount\": " << xpbd.chainCount << ",\n";
+    os << "      \"particleCount\": " << xpbd.particleCount << ",\n";
+    os << "      \"substeps\": " << xpbd.substeps << ",\n";
+    os << "      \"stepGpuMs\": "; pctObj(xpbd.stepGpuMs); os << ",\n";
+    os << "      \"cpuRecordMs\": "; pctObj(xpbd.cpuRecordMs); os << ",\n";
+    os << "      \"hostStepMs\": " << xpbd.hostStepMs << ",\n";
+    os << "      \"maxRootDrift\": " << std::setprecision(7) << xpbd.maxRootDrift << std::setprecision(4) << ",\n";
+    os << "      \"maxStretchRatio\": " << xpbd.maxStretchRatio << ",\n";
+    os << "      \"minColliderSD\": " << xpbd.minColliderSD << ",\n";
+    os << "      \"nanCount\": " << xpbd.nanCount << ",\n";
+    os << "      \"note\": \"" << JsonEscape(xpbd.note) << "\"\n";
     os << "    }\n";
 
     os << "  }\n";
@@ -1418,7 +1700,8 @@ void PrintScorecard(const BenchDx12Rig& rig,
                     const AudioBenchResult& audio,
                     const DestructionBenchResult& destr,
                     const FloraHydroBenchResult& flora,
-                    const TamrielBenchResult& tamriel)
+                    const TamrielBenchResult& tamriel,
+                    const XpbdBenchResult& xpbd)
 {
     std::printf("\n");
     std::printf("=====================================================================================================\n");
@@ -1482,6 +1765,12 @@ void PrintScorecard(const BenchDx12Rig& rig,
         std::printf("  %-30s | %-6s | %-28s | %s\n", "7. Tamriel ESM Streamer", tamriel.passed ? "PASS" : "FAIL", metric, detail);
     }
 
+    std::snprintf(metric, sizeof(metric), "XPBD %.4f ms (p95 %.4f)", xpbd.stepGpuMs.mean, xpbd.stepGpuMs.p95);
+    std::snprintf(detail, sizeof(detail), "%uc/%up | stretch=%.4f | minSD=%+.4f | drift=%.1e | NaN=%u",
+                  xpbd.chainCount, xpbd.particleCount, xpbd.maxStretchRatio,
+                  xpbd.minColliderSD, xpbd.maxRootDrift, xpbd.nanCount);
+    std::printf("  %-30s | %-6s | %-28s | %s\n", "8. GPU XPBD Soft-Body (4096p)", xpbd.passed ? "PASS" : "FAIL", metric, detail);
+
     std::printf("=====================================================================================================\n");
 }
 
@@ -1539,17 +1828,18 @@ int main(int argc, char** argv)
     const DestructionBenchResult destr   = RunDestructionBenchmark(quickMode);
     const FloraHydroBenchResult  flora   = RunFloraAndHydrologyBenchmark(quickMode);
     const TamrielBenchResult     tamriel = RunTamrielStreamerBenchmark(esmPath, bsaPath);
+    const XpbdBenchResult        xpbd    = RunXpbdBenchmark(rig, warmupFrames, measuredFrames);
 
     const uint32_t debugErrors = rig.DrainDebugErrors();
     const bool allPassed = fluid.passed && rc.passed && tex.passed && audio.passed &&
-                           destr.passed && flora.passed && tamriel.passed && (debugErrors == 0u);
+                           destr.passed && flora.passed && tamriel.passed && xpbd.passed && (debugErrors == 0u);
 
     PrintScorecard(rig, quickMode, warmupFrames, measuredFrames, debugErrors,
-                   fluid, rc, tex, audio, destr, flora, tamriel);
+                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd);
 
     if (!jsonPath.empty()) {
         WriteBenchJson(jsonPath, rig, quickMode, warmupFrames, measuredFrames, debugErrors, allPassed,
-                       fluid, rc, tex, audio, destr, flora, tamriel);
+                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd);
         std::printf("  JSON report written: %s\n", jsonPath.c_str());
     }
 

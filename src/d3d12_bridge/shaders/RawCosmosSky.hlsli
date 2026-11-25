@@ -7,12 +7,13 @@
 //      glowing core bulge, spiral arm star-cloud density, domain-warped FBM dark carbon-dust absorption rifts
 //      with wavelength-selective extinction/reddening, and localized H-II (656nm magenta) / O-III (501nm teal) nebulae.
 //   2. Physically blackbody-colored 3-tier starfield (O/B/A/F/G/K/M) on equal-area cube-sphere cells with
-//      Kasten-Young airmass-driven atmospheric scintillation (steady zenith, chromatic twinkling near horizon).
+//      Kolmogorov seeing scintillation & R/G/B chromatic dispersion (rock-steady zenith >= 0.45, airmass-scaled horizon).
 //   3. 3D Volumetric Raymarched Curtain Auroras (95..260 km curved ionosphere shells) along tilted magnetic field lines
 //      with exact atomic emission spectra: N2+ 427.8nm violet-magenta lower fringe (~100 km), O 557.7nm luminous
 //      emerald-cyan core veil (~115..160 km), and O 630.0nm deep crimson-ruby upper canopy (~180..260 km).
-//   4. Van Rhijn 90 km mesopause airglow, occasional crisp shooting meteors, Mie solar aureole, 22-degree hexagonal
-//      ice-crystal halo with Snell dispersion (when cold/snowy), and subtle warm/cool dual-moon atmospheric limb glow.
+//   4. Van Rhijn 90 km mesopause airglow, ecliptic zodiacal dust light (dark low-moon nights), shooting meteors,
+//      Eddington solar limb darkening + inverse-power Mie corona, exact 22-deg hexagonal ice-crystal solar/lunar halos
+//      + horizontal parhelia (sundogs/moondogs) driven by sub-zero temperature / cirrus, and dual-moon limb glow.
 //
 // Primary entry point:
 //   float3 evalCosmosAndAurora(float3 rayDir, float3 sunDir, float gameHour, float simTime,
@@ -188,14 +189,20 @@ float3 rawCosmosGalacticPlane(float3 galDir, out float3 outDustTrans, out float 
 
     // Stellar population colors:
     // - Spiral arm OB star-clouds: cool luminous sapphire-silver
-    // - Old core bulge stars: warm golden-ivory
+    // - Old core bulge stars: richer warm-amber/golden-ochre K/M-giant scatter behind dark Rift dust lanes
     // - Unresolved faint Milky Way disc mist: soft indigo-periwinkle
     const float cloudMod = smoothstep(0.22f, 0.82f, starClouds * 0.68f + fineFilaments * 0.32f);
     const float3 haloCol = float3(0.022f, 0.034f, 0.072f) * (0.55f + 0.45f * (1.0f - antiCore * 0.4f));
     const float3 armCol  = lerp(float3(0.055f, 0.088f, 0.175f), float3(0.145f, 0.165f, 0.245f), cloudMod);
-    const float3 coreCol = float3(0.32f, 0.23f, 0.145f) * (0.55f + 0.75f * cloudMod);
+    const float3 coreCol = float3(0.38f, 0.245f, 0.125f) * (0.60f + 0.80f * cloudMod);
+    // Warm-amber forward-scattered bulge glow peeking through reddened edges of the dark Great Rift lanes:
+    const float bulgeEnvelope = pow(coreAlign, 3.0f) * exp(-galLat * galLat * 10.5f);
+    const float riftEdgeRedden = saturate(dustTrans.r - dustTrans.b) * 1.45f;
+    const float3 coreWarmGlow = float3(0.30f, 0.155f, 0.058f) * (bulgeEnvelope * (0.28f + 0.72f * cloudMod) * (0.45f * dustTrans.r + 0.85f * riftEdgeRedden));
 
-    float3 galCol = haloCol * discWide + (armCol * discNarrow * (0.42f + 1.15f * cloudMod) + coreCol * coreBulge) * dustTrans;
+    float3 galCol = haloCol * discWide
+                  + (armCol * discNarrow * (0.42f + 1.15f * cloudMod) + coreCol * coreBulge) * dustTrans
+                  + coreWarmGlow;
 
     // Subtle localized H-II (656.3 nm H-alpha magenta-rose) & O-III (500.7 nm teal-cyan) emission nebulae knots:
     const float h2Field = rawCosmos_fbm3(galDir * 8.8f + warpVec * 0.65f + float3(19.4f, 4.7f, 12.1f));
@@ -287,38 +294,50 @@ float3 rawCosmosStarTier(float3 cubeCoord, float gridRes, float seedOff, float o
         psf += crossGlint * (0.08f * beacon);
     }
 
-    // Physically blackbody-colored star + low-horizon Kolmogorov chromatic scintillation:
-    // Steady crisp stars near zenith (scintAmp ~ 0.03), realistic chromatic twinkling near horizon (scintAmp ~ 0.55)!
+    // Physically blackbody-colored star + Kolmogorov atmospheric seeing scintillation & chromatic dispersion:
+    // High-zenith stars (dir.z >= 0.45, scintAmp ~ 0) remain rock-steady; low-elevation stars (dir.z < 0.45)
+    // exhibit airmass-scaled R/G/B micro-phase scintillation and subtle prismatic twinkling!
     float3 starCol = rawCosmosStarBlackbodyRGB(rnd.z);
-    if (scintAmp > 0.01f) {
-        const float freq = 2.4f + rnd.x * 5.2f + rnd.y * 2.1f;
-        const float ph = simTime * freq + h * 113.0f;
-        const float twL = (1.0f - scintAmp * 0.55f) + scintAmp * 0.55f * (0.65f * sin(ph) + 0.35f * sin(ph * 1.73f + 1.1f));
-        // Subtle atmospheric dispersion color-shift during strong low-horizon scintillation:
-        const float chrom = scintAmp * 0.32f * sin(ph * 1.37f + 2.4f);
-        starCol *= float3(1.0f + chrom, 1.0f, 1.0f - chrom) * max(twL, 0.25f);
+    if (scintAmp > 0.005f) {
+        const float freq = 2.6f + rnd.x * 5.4f + rnd.y * 2.3f;
+        const float ph   = simTime * freq + h * 113.0f;
+        // Kolmogorov chromatic phase separation across R (~650nm), G (~540nm), B (~450nm) refracted air parcels:
+        const float dPhi = (0.42f + 0.72f * saturate(scintAmp)) * (0.85f + 0.30f * rnd.z);
+        const float3 phRGB = float3(ph - dPhi, ph, ph + dPhi * 1.24f);
+        // Multi-scale Kolmogorov inertial-range turbulence spectrum (primary + 1.73x + 2.81x eddy harmonics):
+        const float3 turbWave = 0.56f * sin(phRGB)
+                              + 0.28f * sin(phRGB * 1.73f + 1.17f + rnd.x * 3.1f)
+                              + 0.16f * cos(phRGB * 2.81f - 0.64f + rnd.y * 4.7f);
+        // Brighter stars show slightly crisper chromatic scintillation contrast without dropping below physical floor:
+        const float magScint = brightHalo ? lerp(0.85f, 1.20f, magT) : 0.85f;
+        const float amp = saturate(scintAmp * magScint) * 0.62f;
+        const float3 scintRGB = max((1.0f - amp * 0.28f) + amp * turbWave, 0.22f.xxx);
+        starCol *= scintRGB;
     }
     return starCol * (psf * lum);
 }
 
 float3 rawCosmosStarfield(float3 celDir, float sinElev, float simTime, float discWide, float3 dustTrans) {
     if (sinElev <= 0.002f) { return 0.0f.xxx; }
-    const float am = rawCosmosAirmass(sinElev);
-    // Scintillation rises steeply with optical airmass (steady near zenith, sparkling near horizon!):
-    const float scintAmp = 0.03f + smoothstep(1.35f, 6.2f, am) * 0.56f;
+    // Physical Kolmogorov seeing scintillation driven by secant airmass 1 / max(dir.z, 0.08):
+    // Rock-steady at zenith (sinElev >= 0.45 -> scintAmp == 0.0), intensifying smoothly toward horizon!
+    const float airmassSec  = 1.0f / max(sinElev, 0.08f);
+    const float lowElevGate = 1.0f - smoothstep(0.16f, 0.45f, sinElev);
+    const float kolmScale   = saturate(pow(max(airmassSec - 1.95f, 0.0f) * 0.115f, 0.92f));
+    const float scintAmp    = lowElevGate * kolmScale * 0.92f;
     const float3 cubeC = rawCosmosCubeSphere(celDir);
 
-    // Tier 1: Bright O/B/A/G/K/M navigation stars & supergiants
+    // Tier 1: Bright O/B/A/G/K/M navigation stars & supergiants (strongest chromatic scintillation near horizon)
     float3 stars = rawCosmosStarTier(cubeC, 92.0f, 3.1f, 0.915f, 210.0f, 1.85f, 2.35f, simTime, scintAmp, true);
 
     // Tier 2: Crisp medium-magnitude field stars (golden K/G & ivory F/A constellations)
-    stars += rawCosmosStarTier(cubeC, 215.0f, 17.9f, 0.895f, 240.0f, 1.55f, 0.92f, simTime, scintAmp * 0.78f, false);
+    stars += rawCosmosStarTier(cubeC, 215.0f, 17.9f, 0.895f, 240.0f, 1.55f, 0.92f, simTime, scintAmp * 0.72f, false);
 
     // Tier 3: Dense faint galactic dust stars (boosted along Milky Way ribbon & carved by dark carbon dust lanes!)
     const float galBoost = lerp(0.45f, 1.95f, discWide);
     const float tier3Gate = lerp(0.905f, 0.785f, discWide);
     const float3 dustStars = rawCosmosStarTier(cubeC, 420.0f, 53.7f, tier3Gate, 270.0f, 1.35f, 0.44f * galBoost,
-                                               simTime, scintAmp * 0.45f, false);
+                                               simTime, scintAmp * 0.38f, false);
     stars += dustStars * lerp(1.0f.xxx, dustTrans, discWide * 0.88f);
     return stars;
 }
@@ -564,31 +583,163 @@ DualMoonLight evalDualMoonPhaseIllum(float seasonProgress01, float gameHour) {
     return res;
 }
 
-// Solar/Lunar Atmospheric Corona, Phase-Coupled Dual-Moon Limb Glow & 22-Degree Hexagonal Ice-Crystal Halo:
-float3 rawCosmosSolarLunarHaloPhased(float3 rayDir, float3 sunDir, float gameHour, float simTime,
-                                     float cloudCover, float snow01, DualMoonLight moon) {
-    if (rayDir.z <= 0.005f) { return 0.0f.xxx; }
-    float3 outHalo = 0.0f.xxx;
+// ----------------------------------------------------------------------------
+// 4c. Ecliptic Zodiacal Light (Interplanetary Dust Band on Dark Low-Moon Nights)
+//     Delicate pyramidal glow tilted along the 23.44-deg obliquity ecliptic plane,
+//     rising above the post-sunset / pre-dawn horizon with subtle Gegenschein glow.
+// ----------------------------------------------------------------------------
+float3 rawCosmosZodiacalLight(float3 rayDir, float3 celDir, float3 sunDir,
+                              float starNightW, float clearSky, DualMoonLight moon) {
+    if (rayDir.z <= 0.01f || starNightW <= 0.02f || clearSky <= 0.05f) { return 0.0f.xxx; }
+    // Strictly gated to dark, clear, low-moonlight nights (bright moonlight washes out zodiacal dust):
+    const float darkMoonGate = 1.0f - smoothstep(0.08f, 0.52f, moon.totalPhase01);
+    if (darkMoonGate <= 0.01f) { return 0.0f.xxx; }
 
-    const float clearFactor = 1.0f - saturate(cloudCover) * 0.72f;
-    const float dayW = smoothstep(-0.06f, 0.10f, sunDir.z);
-    const float nightW = smoothstep(0.04f, -0.08f, sunDir.z);
+    // Equatorial -> Ecliptic normal (23.44 deg obliquity tilted around vernal equinox X axis):
+    static const float3 kEclipticPole = float3(0.0f, -0.3977772f, 0.9174821f);
+    const float eclLat = abs(dot(celDir, kEclipticPole));
 
-    // 1) Mie forward solar aureole (tight warm inner glow + soft atmospheric corona):
-    if (dayW > 0.01f && sunDir.z > -0.04f) {
-        const float cosS = saturate(dot(rayDir, sunDir));
-        const float lowSun = 1.0f - smoothstep(0.02f, 0.34f, sunDir.z);
-        const float3 aureoleCol = lerp(float3(1.00f, 0.96f, 0.90f), float3(1.08f, 0.56f, 0.24f), lowSun);
-        const float mieFwd = pow(cosS, 96.0f) * 0.24f + pow(cosS, 14.0f) * 0.055f;
-        outHalo += aureoleCol * (mieFwd * dayW * clearFactor * smoothstep(0.0f, 0.08f, rayDir.z));
+    // Solar elongation: pyramidal cone broadens near the horizon toward the sun's ecliptic longitude
+    // and tapers smoothly toward higher elongations, plus a very faint anti-solar Gegenschein spot:
+    const float cosElong = dot(rayDir, sunDir);
+    const float elongProx = saturate(cosElong * 0.5f + 0.5f); // 1 near sun, 0 anti-solar
+    // Cone width narrows gracefully as elevation rises above the ecliptic horizon:
+    const float latSigma = lerp(0.16f, 0.34f, pow(elongProx, 1.35f));
+    const float bandProfile = exp(-pow(eclLat / latSigma, 1.85f));
+    const float pyramidCone = (0.20f + 0.80f * pow(elongProx, 2.4f)) * exp(-rayDir.z * 1.65f);
+    const float gegenschein = exp(-eclLat * eclLat * 34.0f) * pow(saturate(-cosElong), 12.0f) * 0.24f;
+
+    const float horFade = smoothstep(0.01f, 0.14f, rayDir.z);
+    const float zodIntensity = (bandProfile * pyramidCone + gegenschein) * horFade * darkMoonGate * starNightW * pow(clearSky, 1.35f);
+    // Warm pearlescent-ivory sunlight back/forward-scattered by interplanetary silicate dust:
+    return float3(0.038f, 0.035f, 0.029f) * zodIntensity;
+}
+
+// ----------------------------------------------------------------------------
+// 4d. Solar Eddington Limb Darkening & Soft Inverse-Power Chromospheric/Mie Corona
+// ----------------------------------------------------------------------------
+float3 rawCosmosSolarDiskAndCorona(float3 rayDir, float3 sunDir, float cloudCover,
+                                   float snow01, bool includeSharpDisk) {
+    if (rayDir.z <= -0.01f || sunDir.z <= -0.05f) { return 0.0f.xxx; }
+    const float dayW = smoothstep(-0.045f, 0.08f, sunDir.z);
+    if (dayW <= 0.005f) { return 0.0f.xxx; }
+
+    const float clearFactor = 1.0f - saturate(cloudCover) * 0.74f;
+    const float horSoft = smoothstep(-0.005f, 0.065f, rayDir.z);
+    const float cosS = clamp(dot(rayDir, sunDir), -1.0f, 1.0f);
+    const float ang  = acos(cosS);
+    const float lowSun = 1.0f - smoothstep(0.02f, 0.34f, sunDir.z);
+
+    // Photospheric tint warms organically near sunset/sunrise via Rayleigh extinction:
+    const float3 coreTint = lerp(float3(1.04f, 0.99f, 0.92f), float3(1.14f, 0.64f, 0.28f), lowSun);
+    const float3 limbTint = lerp(float3(1.00f, 0.80f, 0.52f), float3(1.08f, 0.36f, 0.11f), lowSun);
+    const float3 coronaTint = lerp(float3(1.00f, 0.95f, 0.88f), float3(1.10f, 0.56f, 0.22f), lowSun);
+
+    float3 outSun = 0.0f.xxx;
+
+    // 1) Physical Eddington Limb Darkening: I(mu) = 1 - 0.6 * (1 - mu), mu = sqrt(1 - (r/R_sun)^2)
+    //    Antialiased angular disk radius (~0.62 deg so EnvCube & full-res sky render crisp without popping):
+    if (includeSharpDisk) {
+        static const float kDiskRad = 0.0108f;
+        const float rNorm = ang / kDiskRad;
+        if (rNorm < 1.35f) {
+            const float mu = sqrt(max(1.0f - min(rNorm * rNorm, 1.0f), 0.0f));
+            const float eddingtonLimb = 1.0f - 0.60f * (1.0f - mu);
+            const float diskEdge = 1.0f - smoothstep(0.92f, 1.18f, rNorm);
+            // Soft chromospheric rose-gold inner rim right at rNorm ~ 1.0:
+            const float chromoRim = exp(-pow((rNorm - 1.02f) / 0.18f, 2.0f)) * 0.22f;
+            const float3 diskCol = lerp(limbTint, coreTint, pow(mu, 0.65f)) * eddingtonLimb;
+            outSun += (diskCol * (2.65f * diskEdge) + float3(1.12f, 0.58f, 0.34f) * chromoRim)
+                    * (dayW * (1.0f - saturate(cloudCover) * 0.88f) * horSoft);
+        }
     }
 
+    // 2) Smooth C1 Inverse-Power Chromospheric & Atmospheric Mie Corona Glow:
+    //    Transitions seamlessly outward from the solar limb with zero hard ring discontinuity!
+    const float rInner = 0.022f;
+    const float rOuter = lerp(0.145f, 0.215f, saturate(cloudCover * 0.65f + snow01 * 0.35f));
+    const float innerCorona = pow(1.0f + (ang * ang) / (rInner * rInner), -1.85f) * 0.28f;
+    const float mieAureole  = pow(1.0f + (ang * ang) / (rOuter * rOuter), -1.25f) * 0.068f;
+    outSun += coronaTint * ((innerCorona + mieAureole) * dayW * clearFactor * horSoft);
+
+    return outSun;
+}
+
+// ----------------------------------------------------------------------------
+// 4e. Exact 22-Degree Hexagonal Ice-Crystal Halo & Horizontal Parhelia (Sundogs/Moondogs)
+//     cos(22 deg) = 0.92718385; driven by sub-zero cold air (surfaceTempC < -2C),
+//     falling snow/diamond dust, or thin high-altitude ice cirrus. Zero hard circles!
+// ----------------------------------------------------------------------------
+float3 rawCosmosIceHaloRingAndDogs(float3 rayDir, float3 bodyDir, float3 bodyTint,
+                                   float iceWeight, float cirCrystal, float bodyElevScale,
+                                   float strengthScale) {
+    if (iceWeight <= 0.004f || bodyDir.z <= 0.02f) { return 0.0f.xxx; }
+    const float cosT = clamp(dot(rayDir, bodyDir), -1.0f, 1.0f);
+    // Exact cosine band around cos(22.0 deg) = 0.92718385f (early-out outside ~15..32 deg):
+    if (cosT < 0.848f || cosT > 0.966f) { return 0.0f.xxx; }
+
+    // Exact hexagonal prism minimum deviation cosines (Snell dispersion, n_R=1.307, n_G=1.311, n_B=1.316):
+    //   Warm red inner rim : 21.70 deg -> cos = 0.92913f
+    //   Ice-white core     : 22.00 deg -> cos = 0.92718f
+    //   Faint cyan outer   : 22.48 deg -> cos = 0.92401f
+    // Forbidden dark interior (cosT > 0.931) fades smoothly to zero; outer tail spreads softly past 22 deg:
+    const float innerCut = 1.0f - smoothstep(0.9288f, 0.9365f, cosT);
+    const float outerTail = exp(-max(0.92718f - cosT, 0.0f) * 34.0f) * innerCut;
+
+    const float dR = cosT - 0.92913f;
+    const float dG = cosT - 0.92718f;
+    const float dB = cosT - 0.92401f;
+    const float3 spectralRing = float3(
+        exp(-(dR * dR) / (0.0056f * 0.0056f)),
+        exp(-(dG * dG) / (0.0066f * 0.0066f)),
+        exp(-(dB * dB) / (0.0080f * 0.0080f))) * innerCut;
+
+    // Warm red inner rim -> luminous ice-white -> faint cyan outer edge (soft natural glow):
+    const float3 haloCol = spectralRing * float3(1.06f, 0.98f, 1.04f)
+                         + float3(0.76f, 0.90f, 1.04f) * (outerTail * 0.22f);
+
+    // Horizontal Parhelia (Sundogs / Moondogs) at dir.z ~= bodyDir.z and +-22 deg azimuth:
+    // Formed by horizontally-aligned hexagonal plate crystals; strongest at low-to-moderate body elevations!
+    const float2 rdHor = normalize(rayDir.xy + float2(1.0e-5f, 0.0f));
+    const float2 bdHor = normalize(bodyDir.xy + float2(1.0e-5f, 0.0f));
+    const float cosAz  = clamp(dot(rdHor, bdHor), -1.0f, 1.0f);
+    const float dElev  = rayDir.z - bodyDir.z;
+    const float elevMatch = exp(-(dElev * dElev) / (0.036f * 0.036f));
+    const float dogElevGate = (1.0f - smoothstep(0.28f, 0.64f, bodyDir.z)) * smoothstep(0.02f, 0.12f, bodyDir.z);
+    // Parhelia sit at +-22 deg azimuth (shifting slightly outward with elevation) + faint horizontal parhelic tail:
+    const float dogCosTarget = clamp(0.92718f - bodyDir.z * 0.018f, 0.895f, 0.928f);
+    const float dogInnerCut  = 1.0f - smoothstep(dogCosTarget + 0.002f, dogCosTarget + 0.012f, cosAz);
+    const float dogCoreR = exp(-pow((cosAz - (dogCosTarget + 0.0018f)) / 0.0075f, 2.0f));
+    const float dogCoreG = exp(-pow((cosAz -  dogCosTarget)            / 0.0095f, 2.0f));
+    const float dogCoreB = exp(-pow((cosAz - (dogCosTarget - 0.0038f)) / 0.0125f, 2.0f));
+    const float dogTail  = exp(-max(dogCosTarget - cosAz, 0.0f) * 19.0f) * dogInnerCut * 0.35f;
+    const float3 dogCol  = (float3(dogCoreR * 1.15f, dogCoreG * 0.98f, dogCoreB * 1.05f) * dogInnerCut
+                          + float3(0.84f, 0.94f, 1.05f) * dogTail) * (elevMatch * dogElevGate * bodyElevScale);
+
+    return (haloCol * 0.052f + dogCol * 0.115f) * bodyTint * (iceWeight * cirCrystal * strengthScale);
+}
+
+// Solar/Lunar Atmospheric Corona, Phase-Coupled Dual-Moon Limb Glow & 22-Degree Ice Halo + Parhelia
+// driven by live surfaceTempC (< -2C), snow01, and thin high-altitude cirrus presence!
+float3 rawCosmosSolarLunarHaloThermal(float3 rayDir, float3 sunDir, float gameHour, float simTime,
+                                      float cloudCover, float snow01, float surfaceTempC,
+                                      DualMoonLight moon, bool includeSharpSolarDisk) {
+    if (rayDir.z <= -0.005f) { return 0.0f.xxx; }
+    float3 outHalo = 0.0f.xxx;
+
+    const float dayW   = smoothstep(-0.06f, 0.10f, sunDir.z);
+    const float nightW = smoothstep(0.04f, -0.08f, sunDir.z);
+
+    // 1) Physical Eddington limb-darkened solar disk + inverse-power chromospheric/Mie corona glow:
+    outHalo += rawCosmosSolarDiskAndCorona(rayDir, sunDir, cloudCover, snow01, includeSharpSolarDisk);
+
     // 2) Phase-coupled dual-moon orbital atmospheric limb glow (vanishes on New Moon, glows on Full Masser/Secunda):
-    if (nightW > 0.02f && moon.totalPhase01 > 0.03f) {
-        const float moonPhase1 = gameHour * (kCosmosTwoPi / 24.0f) + 2.35f;
-        const float moonPhase2 = gameHour * (kCosmosTwoPi / 24.0f) + 2.72f;
-        const float3 masserDir = normalize(float3(-sin(moonPhase1) * 0.72f, 0.42f, max(cos(moonPhase1) * 0.65f + 0.18f, -0.3f)));
-        const float3 secundaDir = normalize(float3(-sin(moonPhase2) * 0.80f, 0.52f, max(cos(moonPhase2) * 0.58f + 0.24f, -0.3f)));
+    const float moonPhase1 = gameHour * (kCosmosTwoPi / 24.0f) + 2.35f;
+    const float moonPhase2 = gameHour * (kCosmosTwoPi / 24.0f) + 2.72f;
+    const float3 masserDir  = normalize(float3(-sin(moonPhase1) * 0.72f, 0.42f, max(cos(moonPhase1) * 0.65f + 0.18f, -0.3f)));
+    const float3 secundaDir = normalize(float3(-sin(moonPhase2) * 0.80f, 0.52f, max(cos(moonPhase2) * 0.58f + 0.24f, -0.3f)));
+
+    if (nightW > 0.02f && moon.totalPhase01 > 0.03f && rayDir.z > 0.005f) {
         if (masserDir.z > 0.04f && moon.masserPhase01 > 0.03f) {
             const float cM = saturate(dot(rayDir, masserDir));
             const float mGlow = (pow(cM, 28.0f) * 0.032f + pow(cM, 7.0f) * 0.012f) * smoothstep(0.04f, 0.18f, masserDir.z);
@@ -601,43 +752,40 @@ float3 rawCosmosSolarLunarHaloPhased(float3 rayDir, float3 sunDir, float gameHou
         }
     }
 
-    // 3) Physical 22-Degree Hexagonal Ice-Crystal Halo & Parhelia (activates subtly when cold/snowy: snow01 > 0.1):
-    //    Snell minimum-deviation angle through 60-deg hexagonal ice prisms:
-    //      Red (656 nm, n=1.307) -> 21.70 deg (0.3787 rad)
-    //      Green (546 nm, n=1.311) -> 22.05 deg (0.3848 rad)
-    //      Blue (460 nm, n=1.316) -> 22.48 deg (0.3924 rad)
-    if (snow01 > 0.10f) {
-        const float iceW = smoothstep(0.10f, 0.58f, snow01) * (1.0f - saturate(cloudCover) * 0.58f) * smoothstep(0.02f, 0.12f, rayDir.z);
+    // 3) 22-Degree Hexagonal Ice-Crystal Halo & Parhelia (Sundogs & Moondogs):
+    //    Activated by sub-zero cold air (surfaceTempC < -2C), falling snow/diamond dust, or thin ice cirrus:
+    const float coldAirW = smoothstep(-2.0f, -10.5f, surfaceTempC);
+    const float snowIceW = smoothstep(0.08f, 0.56f, snow01);
+    const float cirrusW  = smoothstep(0.14f, 0.50f, cloudCover) * (1.0f - smoothstep(0.68f, 0.94f, cloudCover)) * 0.44f;
+    const float icePresence = max(max(coldAirW * 0.92f, snowIceW), cirrusW);
+
+    if (icePresence > 0.01f && rayDir.z > 0.015f) {
+        const float iceW = icePresence * (1.0f - saturate(cloudCover - 0.45f) * 0.85f) * smoothstep(0.015f, 0.11f, rayDir.z);
         const float bC = kCosmosEarthKm * rayDir.z;
         const float tCir = sqrt(max(bC * bC + (kCosmosEarthKm + 10.0f) * (kCosmosEarthKm + 10.0f) - kCosmosEarthKm * kCosmosEarthKm, 0.0f)) - bC;
-        const float2 cirP = rayDir.xy * (tCir * 0.042f) + float2(simTime * 0.006f, simTime * 0.003f);
-        const float cirCrystal = lerp(0.38f, 1.0f, smoothstep(0.26f, 0.78f, rawCosmos_noise3(float3(cirP, 3.1f))));
+        const float2 cirP = rayDir.xy * (tCir * 0.038f) + float2(simTime * 0.005f, simTime * 0.0025f);
+        // Wispy natural high-altitude ice-cirrus modulation (eliminates hard geometric rings!):
+        const float cirNoise = rawCosmos_fbm3(float3(cirP, 3.1f));
+        const float cirCrystal = lerp(0.36f, 1.0f, smoothstep(0.24f, 0.78f, cirNoise));
 
-        if (dayW > 0.05f && sunDir.z > 0.03f) {
-            const float ang = acos(clamp(dot(rayDir, sunDir), -1.0f, 1.0f));
-            const float innerCut = smoothstep(0.352f, 0.377f, ang); // forbidden dark interior < 21.6 deg
-            const float3 disp = float3(
-                exp(-pow((ang - 0.3787f) / 0.013f, 2.0f)),
-                exp(-pow((ang - 0.3848f) / 0.015f, 2.0f)),
-                exp(-pow((ang - 0.3924f) / 0.017f, 2.0f))) * innerCut;
-            const float parhelia = exp(-pow((rayDir.z - sunDir.z) / 0.045f, 2.0f)) * (1.0f - smoothstep(0.20f, 0.48f, sunDir.z));
-            const float3 haloTint = lerp(float3(0.96f, 0.97f, 1.00f), float3(1.08f, 0.84f, 0.58f), 1.0f - smoothstep(0.04f, 0.25f, sunDir.z));
-            outHalo += disp * haloTint * (iceW * cirCrystal * dayW * (0.045f + 0.075f * parhelia));
-        } else if (nightW > 0.10f && moon.totalPhase01 > 0.15f) {
-            // Subtle lunar 22-deg ice-ring around primary moon on bright moonlit frigid nights (fades on new moons):
-            const float moonPhase1 = gameHour * (kCosmosTwoPi / 24.0f) + 2.35f;
-            const float3 lunarDir = normalize(float3(-sin(moonPhase1) * 0.72f, 0.42f, max(cos(moonPhase1) * 0.65f + 0.18f, 0.08f)));
-            const float ang = acos(clamp(dot(rayDir, lunarDir), -1.0f, 1.0f));
-            const float innerCut = smoothstep(0.352f, 0.377f, ang);
-            const float3 disp = float3(
-                exp(-pow((ang - 0.3787f) / 0.016f, 2.0f)),
-                exp(-pow((ang - 0.3848f) / 0.018f, 2.0f)),
-                exp(-pow((ang - 0.3924f) / 0.021f, 2.0f))) * innerCut;
-            outHalo += disp * moon.moonTintRGB * (iceW * cirCrystal * nightW * moon.totalPhase01 * 0.030f);
+        if (dayW > 0.04f && sunDir.z > 0.02f) {
+            const float3 sunHaloTint = lerp(float3(0.96f, 0.98f, 1.00f), float3(1.08f, 0.82f, 0.54f), 1.0f - smoothstep(0.04f, 0.26f, sunDir.z));
+            outHalo += rawCosmosIceHaloRingAndDogs(rayDir, sunDir, sunHaloTint, iceW * dayW, cirCrystal, 1.0f, 1.0f);
+        } else if (nightW > 0.08f && moon.totalPhase01 > 0.22f && masserDir.z > 0.05f) {
+            // Lunar 22-deg ice halo + subtle moondogs around bright waxing/full Moon on frigid/cirrus nights:
+            const float lunarBoost = smoothstep(0.22f, 0.88f, moon.totalPhase01);
+            outHalo += rawCosmosIceHaloRingAndDogs(rayDir, masserDir, moon.moonTintRGB, iceW * nightW * lunarBoost, cirCrystal, 0.55f, 0.62f);
         }
     }
 
     return outHalo;
+}
+
+// Backwards-compatible phased halo helper (infers sub-zero thermal cue from snow01 when temp is omitted):
+float3 rawCosmosSolarLunarHaloPhased(float3 rayDir, float3 sunDir, float gameHour, float simTime,
+                                     float cloudCover, float snow01, DualMoonLight moon) {
+    const float inferredTempC = lerp(4.0f, -9.0f, saturate(snow01));
+    return rawCosmosSolarLunarHaloThermal(rayDir, sunDir, gameHour, simTime, cloudCover, snow01, inferredTempC, moon, false);
 }
 
 // Backwards-compatible halo helper:
@@ -648,9 +796,10 @@ float3 rawCosmosSolarLunarHalo(float3 rayDir, float3 sunDir, float gameHour, flo
 }
 
 // ----------------------------------------------------------------------------
-// Orbital-Phase-Coupled Evaluator (Full Dual-Moon Star/Galaxy/Aurora Contrast!)
+// Wave 48 Thermal + Observatory-Grade Full Celestial Evaluator
+// (Supports live surfaceTempC for sub-zero 22-deg ice halos/sundogs & Eddington solar disk/corona)
 // ----------------------------------------------------------------------------
-float3 evalCosmosAndAuroraPhased(
+float3 evalCosmosAndAuroraThermal(
     float3 rayDir,
     float3 sunDir,
     float gameHour,
@@ -659,7 +808,9 @@ float3 evalCosmosAndAuroraPhased(
     float snow01,
     float camNorthY,
     float seasonProgress01,
+    float surfaceTempC,
     bool includePinpointStars,
+    bool includeSharpSolarDisk,
     bool applyInternalExtinction)
 {
     const float3 rd = normalize(rayDir);
@@ -672,7 +823,7 @@ float3 evalCosmosAndAuroraPhased(
 
     // Evaluate live Masser (24d) & Secunda (16d) orbital phase illumination:
     // - On bright full-moon nights: gentle lunar Rayleigh skyglow softens faint stars/Milky Way naturally.
-    // - On dark new-moon nights: Milky Way, dark dust rifts, stars & 3D curtain auroras blaze at peak contrast!
+    // - On dark new-moon nights: Milky Way, dark dust rifts, zodiacal light, stars & 3D auroras blaze at peak contrast!
     const DualMoonLight moon = evalDualMoonPhaseIllum(seasonProgress01, gameHour);
     const float starPhaseMod   = lerp(1.22f, 0.68f, moon.totalPhase01);
     const float galPhaseMod    = lerp(1.28f, 0.58f, moon.totalPhase01);
@@ -680,19 +831,20 @@ float3 evalCosmosAndAuroraPhased(
 
     float3 extraAtmo = 0.0f.xxx;
 
-    // Space-originating light (Galactic plane + Nebulae + Spectral Starfield):
+    // Space-originating light (Galactic plane + Core Warmth + Nebulae + Ecliptic Zodiacal Light + Kolmogorov Stars):
     if (starNightW > 0.005f && clearSky > 0.01f) {
         const float3 celDir = rawCosmosToCelestial(rd, gameHour);
         const float3 galDir = rawCosmosToGalactic(celDir);
         float3 dustTrans = 1.0f.xxx;
         float discWide = 0.0f;
-        float3 galCol = rawCosmosGalacticPlane(galDir, dustTrans, discWide);
+        const float3 galCol = rawCosmosGalacticPlane(galDir, dustTrans, discWide);
+        const float3 zodCol = rawCosmosZodiacalLight(rd, celDir, sd, starNightW, clearSky, moon);
 
         float3 starCol = 0.0f.xxx;
         if (includePinpointStars) {
             starCol = rawCosmosStarfield(celDir, rd.z, simTime, discWide, dustTrans);
         }
-        extraAtmo += (galCol * (0.92f * galPhaseMod) + starCol * starPhaseMod) * (starNightW * clearSky);
+        extraAtmo += (galCol * (0.92f * galPhaseMod) + starCol * starPhaseMod) * (starNightW * clearSky) + zodCol;
     }
 
     // Upper-atmosphere light (95..260 km 3D Volumetric Curtain Auroras + 90 km Airglow + Meteors):
@@ -717,10 +869,30 @@ float3 evalCosmosAndAuroraPhased(
         extraAtmo += moon.moonTintRGB * (0.015f * moonGlow * raySkyGrad);
     }
 
-    // Tropospheric optical phenomena (Solar Mie aureole, 22-deg cirrus ice halo, phase-coupled dual-moon limb glow):
-    extraAtmo += rawCosmosSolarLunarHaloPhased(rd, sd, gameHour, simTime, cloudCover, snow01, moon);
+    // Tropospheric optical phenomena (Eddington solar disk/corona, 22-deg ice halo + sundogs/moondogs, dual-moon limb):
+    extraAtmo += rawCosmosSolarLunarHaloThermal(rd, sd, gameHour, simTime, cloudCover, snow01, surfaceTempC, moon, includeSharpSolarDisk);
 
     return max(extraAtmo, 0.0f.xxx);
+}
+
+// ----------------------------------------------------------------------------
+// Orbital-Phase-Coupled Evaluator (100% backwards-compatible with Wave 43 callers)
+// ----------------------------------------------------------------------------
+float3 evalCosmosAndAuroraPhased(
+    float3 rayDir,
+    float3 sunDir,
+    float gameHour,
+    float simTime,
+    float cloudCover,
+    float snow01,
+    float camNorthY,
+    float seasonProgress01,
+    bool includePinpointStars,
+    bool applyInternalExtinction)
+{
+    const float inferredTempC = lerp(4.0f, -9.0f, saturate(snow01));
+    return evalCosmosAndAuroraThermal(rayDir, sunDir, gameHour, simTime, cloudCover, snow01, camNorthY,
+                                      seasonProgress01, inferredTempC, includePinpointStars, false, applyInternalExtinction);
 }
 
 // ----------------------------------------------------------------------------

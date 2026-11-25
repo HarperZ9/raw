@@ -547,6 +547,178 @@ float4 evalSubZeroThermalSteam(
     return float4(min(accEmit, 0.65f.xxx), clamp(T, 0.70f, 1.0f));
 }
 
+// Wave 48: Local-Light Illuminated 3-Layer Depth-Sliced Parallax Precipitation Volume (3m / 7m / 14m)
+// + Scene-Depth-Verified Near-Emitter Fire-Ember Sparks (< 2.5m).
+// Outdoor only (sunColour.w > 0.5), strictly depth-occluded against SceneDepth (sliceDist < sceneViewDist),
+// pause-aware (simTime), with Henyey-Greenstein (g = 0.65) forward Mie scatter on rain streaks & torch-lit snow!
+float3 evalVolumetricParallaxPrecip(
+    float3 eye, float3 w, float sceneViewDist, float sceneD, float3 atmoCol,
+    float3 sunDirW, float nightF, float ashW, bool allowEmbers)
+{
+    if (sunColour.w <= 0.5f) { return 0.0f.xxx; }
+    const bool hasRain = (weather.w > 0.05f);
+    const bool hasSnow = (weather.z > 0.05f);
+    const bool hasAsh  = (ashW > 0.10f);
+    const float simTime = (physWorld[0].x > 1.0e-4f) ? physWorld[0].x : camPosW.w;
+    const float beauP = clamp(physWorld[1].x, 0.5f, 12.0f);
+    const float2 windP = cloudWind.xy * (0.0032f + saturate((beauP - 2.0f) / 8.0f) * 0.0018f);
+    const uint nLocalLights = min(flags.y, 16u);
+    const float3 moonSkyCool = lerp(max(atmoCol * 1.15f + 0.08f, 0.18f.xxx),
+                                    float3(0.24f, 0.34f, 0.52f) * max(dot(atmoCol, float3(0.2126f, 0.7152f, 0.0722f)) * 2.5f + 0.45f, 0.35f),
+                                    nightF);
+    const float sunMieRain = min(phaseHG(dot(w, sunDirW), 0.65f) * 2.6f + 0.20f, 3.0f) * (1.0f - saturate(clouds.x * 0.70f));
+
+    float3 outPrecip = 0.0f.xxx;
+
+    // 1) 3-Layer Depth-Sliced Parallax Precipitation Volume at exact 3m (210u), 7m (490u), 14m (980u) camera slices:
+    // Strictly depth-tested against SceneDepth so streaks NEVER penetrate roofs, overhangs, or walls!
+    if (hasRain || hasSnow || hasAsh) {
+        static const float kSliceDistU[3] = { 210.0f, 490.0f, 980.0f };
+        static const float kRainScale[3]  = { 0.30f,  0.22f,  0.15f  };
+        static const float kSnowScale[3]  = { 0.115f, 0.078f, 0.048f };
+        static const float kSliceGain[3]  = { 1.00f,  0.74f,  0.50f  };
+
+        [unroll] for (int sl = 0; sl < 3; ++sl) {
+            const float sliceDist = kSliceDistU[sl];
+            if (sceneViewDist <= sliceDist + 4.0f) { continue; }
+            // Smooth depth-occlusion fade right before solid geometry (roofs/walls/pillars):
+            const float occFade = (sceneD < 0.99998f) ? smoothstep(4.0f, 44.0f, sceneViewDist - sliceDist) : 1.0f;
+            const float3 pRelS = eye + w * sliceDist;
+            const float3 wpS = camPosW.xyz + pRelS;
+
+            // Evaluate live local torch/campfire/lantern irradiance with Henyey-Greenstein g = 0.65 forward Mie scatter:
+            float3 localSnowLit = 0.0f.xxx;
+            float3 localRainMie = 0.0f.xxx;
+            [loop] for (uint li = 0u; li < nLocalLights; ++li) {
+                const float3 toL = lightPosR[li].xyz - pRelS;
+                const float rL = max(lightPosR[li].w * 1.25f, 1.0f);
+                const float d2 = dot(toL, toL);
+                if (d2 < rL * rL) {
+                    const float dLen = sqrt(max(d2, 1.0f));
+                    const float att = saturate(1.0f - dLen / rL);
+                    const float att2 = att * att;
+                    const float3 lDir = toL / dLen;
+                    const float hgRain = min(phaseHG(dot(w, lDir), 0.65f) * 3.8f + 0.22f, 3.6f);
+                    const float hgSnow = min(phaseHG(dot(w, lDir), 0.38f) * 1.9f + 0.55f, 2.2f);
+                    localSnowLit += lightColS[li].rgb * (att2 * hgSnow * 1.65f);
+                    localRainMie += lightColS[li].rgb * (att2 * hgRain * 1.25f);
+                }
+            }
+
+            if (hasRain) {
+                const float rainAmt = smoothstep(0.05f, 0.75f, weather.w);
+                const float gust = 1.0f + 0.48f * sin(simTime * 1.55f + wpS.x * 0.0024f)
+                                        + 0.22f * cos(simTime * 2.70f - wpS.y * 0.0018f);
+                // Wind-slanted downward-falling specular rain streak coordinates (pause-aware simTime):
+                const float3 rCoord = float3(
+                    (wpS.xy - windP * (wpS.z * 0.28f * gust)) * kRainScale[sl],
+                    wpS.z * 0.0072f + simTime * (22.0f + float(sl) * 6.5f));
+                const float rCell = cHash(floor(rCoord));
+                const float rGate = lerp(0.946f, 0.908f, rainAmt);
+                if (rCell > rGate) {
+                    const float2 rF = frac(rCoord.xy) - 0.5f;
+                    const float rThin = exp(-rF.x * rF.x * 240.0f) * exp(-rF.y * rF.y * 10.0f);
+                    const float rMask = smoothstep(rGate, 0.998f, rCell) * rThin;
+                    const float3 rLit = max(atmoCol * (0.90f + 0.25f * sunMieRain) + 0.05f, 0.10f.xxx)
+                                      + sunColour.rgb * (sunMieRain * 0.22f * (1.0f - nightF))
+                                      + localRainMie;
+                    outPrecip += rLit * (rMask * rainAmt * kSliceGain[sl] * occFade * 0.28f);
+                }
+                // Sweeping storm wind-squall mist veil on mid/far slices during heavy downpours:
+                if (sl >= 1 && weather.w > 0.35f) {
+                    const float sqN = cNoise(float3((wpS.xy - windP * (simTime * 46.0f)) * 0.0018f, wpS.z * 0.0012f));
+                    const float sqSheet = smoothstep(0.54f, 0.88f, sqN) * saturate((weather.w - 0.35f) * 1.8f);
+                    outPrecip += (atmoCol * 0.70f + localRainMie * 0.28f) * (sqSheet * kSliceGain[sl] * occFade * 0.14f);
+                }
+            }
+
+            if (hasSnow) {
+                const float snowAmt = smoothstep(0.05f, 0.72f, weather.z);
+                const float swirlPh = simTime * (0.48f + float(sl) * 0.14f);
+                const float swayX = sin(swirlPh + wpS.z * 0.015f + wpS.y * 0.005f) * 22.0f;
+                const float swayY = cos(swirlPh * 0.82f + wpS.x * 0.013f - wpS.z * 0.008f) * 22.0f;
+                const float fSc = kSnowScale[sl];
+                const float3 sCoord = float3(
+                    (wpS.xy - windP * (wpS.z * 0.18f + simTime * 14.0f) + float2(swayX, swayY)) * fSc,
+                    wpS.z * fSc + simTime * (1.35f + float(sl) * 0.34f));
+                const float sCell = cHash(floor(sCoord));
+                const float sGate = lerp(0.942f, 0.918f, snowAmt);
+                if (sCell > sGate) {
+                    const float dFlake = length(frac(sCoord) - 0.5f);
+                    const float flakeSharp = (sl == 0) ? 10.5f : ((sl == 1) ? 16.5f : 23.0f);
+                    const float sMask = smoothstep(sGate, 0.998f, sCell) * exp(-dFlake * dFlake * flakeSharp);
+                    // Catch warm orange glow from nearby torches/campfires + cool blue-silver from moon/sky:
+                    const float3 sLit = moonSkyCool + localSnowLit * float3(1.12f, 0.96f, 0.82f);
+                    outPrecip += sLit * (sMask * snowAmt * kSliceGain[sl] * occFade * 0.48f);
+                }
+            }
+
+            if (hasAsh) {
+                const float aTurb = sin(simTime * 1.6f + wpS.z * 0.02f) * 18.0f;
+                const float3 aCoord = float3(
+                    (wpS.xy - windP * (simTime * 34.0f) + float2(aTurb, -aTurb * 0.7f)) * lerp(0.13f, 0.075f, float(sl) * 0.5f),
+                    wpS.z * 0.10f + simTime * (2.2f + float(sl) * 0.65f));
+                const float aCell = cHash(floor(aCoord));
+                if (aCell > 0.928f) {
+                    const float aMask = smoothstep(0.928f, 0.996f, aCell) * saturate(1.0f - length(frac(aCoord) - 0.5f) * 2.4f);
+                    const bool isEmberA = aCell > 0.985f;
+                    const float3 aCol = isEmberA ? float3(3.20f, 0.78f, 0.16f) : (float3(0.32f, 0.25f, 0.20f) + localSnowLit * 0.55f);
+                    outPrecip += aCol * (aMask * ashW * kSliceGain[sl] * occFade * (isEmberA ? 1.15f : 0.48f));
+                }
+            }
+        }
+    }
+
+    // 2) Subtle Upward-Drifting Fire-Ember Sparks strictly anchored within < 2.5m (175u) of verified real hot
+    //    firelight emitters (scene-depth verified so embers NEVER spawn behind walls or as floating orbs!):
+    if (allowEmbers && sceneD < 0.99998f && nLocalLights > 0u) {
+        const float2 emberWindXY = clamp(cloudWind.xy * 0.045f, -18.0f.xx, 18.0f.xx);
+        const int2 dimMaxE = max(int2(dims.xy) - int2(1, 1), int2(0, 0));
+        [loop] for (uint ei = 0u; ei < nLocalLights; ++ei) {
+            const float3 lc = lightColS[ei].rgb;
+            // Strict hot-fire chromaticity gate (rejects cool/white ambient fill lights & spell lights):
+            if (lc.r < 0.42f || lc.r < lc.g * 1.20f || lc.r < lc.b * 2.10f) { continue; }
+            const float3 lPos = lightPosR[ei].xyz;
+            const float tClose = dot(lPos - eye, w);
+            if (tClose < 22.0f || tClose > min(sceneViewDist - 6.0f, 1650.0f)) { continue; }
+            const float3 pClose = eye + w * tClose;
+            const float3 dRel = pClose - lPos;
+            // Strict < 2.5m (175u) radial + upward drift envelope above emitter (never below ground!):
+            if (dRel.z < -8.0f || dRel.z > 175.0f || dot(dRel.xy, dRel.xy) > (175.0f * 175.0f)) { continue; }
+            // Verify emitter is NOT occluded behind a wall/roof via standard-Z SceneDepth check:
+            const float4 sEm = screenOf(lPos);
+            if (sEm.w > 1.0f) {
+                const int2 emPx = clamp(int2(sEm.xy), int2(0, 0), dimMaxE);
+                const float dEm = Depth.Load(int3(emPx, 0));
+                if (dEm < 0.99998f && viewZOf(dEm) < sEm.w * 0.82f - 28.0f) { continue; }
+            }
+            const float hFrac = saturate((dRel.z + 8.0f) / 183.0f);
+            const float radMax = lerp(42.0f, 155.0f, hFrac);
+            const float2 driftXY = dRel.xy - emberWindXY * (hFrac * hFrac * 2.2f);
+            const float rNorm = length(driftXY) / radMax;
+            if (rNorm >= 1.0f) { continue; }
+            const float3 wpEm = camPosW.xyz + pClose;
+            const float2 swE = float2(sin(simTime * 2.1f + wpEm.z * 0.06f), cos(simTime * 1.8f - wpEm.z * 0.05f)) * 4.2f;
+            const float3 eGrid = float3((wpEm.xy - emberWindXY * (simTime * 1.25f) + swE) * 0.165f,
+                                        wpEm.z * 0.105f - simTime * 2.45f);
+            const float3 eCell = floor(eGrid);
+            const float3 eRnd = rawHash33(eCell + float3(float(ei) * 7.3f, 13.1f, 3.7f));
+            if (eRnd.x > 0.955f) {
+                const float3 eRel = (frac(eGrid) - 0.5f) - (eRnd - 0.5f) * 0.56f;
+                const float dE2 = dot(eRel, eRel);
+                const float flkE = 0.65f + 0.35f * sin(simTime * 16.0f + eRnd.y * 42.0f);
+                const float spE = smoothstep(0.955f, 0.998f, eRnd.x) * exp(-dE2 * 76.0f)
+                                * (1.0f - rNorm * rNorm) * (1.0f - hFrac) * smoothstep(0.0f, 0.12f, hFrac) * flkE
+                                * (1.0f - smoothstep(900.0f, 1650.0f, tClose));
+                const float3 emCol = lerp(float3(3.10f, 1.48f, 0.32f), float3(1.55f, 0.24f, 0.03f), hFrac);
+                outPrecip += emCol * (spE * 0.82f);
+            }
+        }
+    }
+
+    return min(outPrecip, 2.4f.xxx);
+}
+
 float4 fs(float4 at : SV_Position) : SV_Target0 {
     const int3 ip = int3(at.xy, 0);
     float4 lit = Lit.Load(ip);
@@ -836,6 +1008,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float4 skyFireVol = evalVolumetricFirePlumes(eyeCel, sDir, 2400.0f, 100000.0f, px, false);
                 baseSky = baseSky * skyFireVol.a + skyFireVol.rgb;
             }
+            // Wave 48 Seamless sky-layer continuation of outdoor 3m/7m/14m parallax rain & snow streaks:
+            if ((flags.x & FLAG_UNDERWATER) == 0u && !isCelestial && (weather.w > 0.05f || weather.z > 0.05f)) {
+                baseSky += evalVolumetricParallaxPrecip(eyeCel, sDir, 100000.0f, 1.0f, baseSky, aSun, nightSkyW, 0.0f, false);
+            }
             // Sub-LSB Interleaved Gradient Noise dithering eliminates 8-bit/10-bit sky gradient banding lines cleanly.
             const float skyDith = (ign(px) - 0.5f) * (1.0f / 255.0f);
             return float4(max(baseSky + skyDith, 0.0f.xxx), lit.a);
@@ -974,84 +1150,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Re-lock distant snowy/overcast twilight & night horizon color to exact sky-dome nightHorF so Winterhold cliffs never cut out!
         atmoCol = lerp(atmoCol, nightHorF, nightF * 0.85f);
         atmoCol = min(atmoCol, 3.5f.xxx);
-        // GTA6-Surpassing 6-Layer Native DX12 3D World-Space Volumetric Precipitation (depth-occluded in 3D space):
-        // Real Rain (wind-slanted specular streaks catching local torch/lantern light!), Real Snow (helical 3D vortex
-        // snowflakes with foreground bokeh flakes & distant blizzard sheets), and Real Volcanic Ashstorms (swirling ash + embers)!
-        float3 precipAdd = 0.0f.xxx;
-        if ((weather.w > 0.08f || weather.z > 0.08f || ashW > 0.10f) && mapScale > 0.5f) {
-            const float2 windP = cloudWind.xy * 0.0032f;
-            const uint nPrecipLights = min(flags.y, 12u);
-            [unroll] for (int pl = 0; pl < 6; ++pl) {
-                const float pDist = 145.0f + float(pl) * 135.0f;
-                if (dist <= pDist) { continue; }
-                const float3 pRelP = eye + w * pDist;
-                const float3 wpP = camPosW.xyz + pRelP;
-                // Local point-light illumination on nearby rain/snow/ash particles (torches, braziers, lanterns, forges!):
-                float3 localLightP = 0.0f.xxx;
-                if (pl < 3) {
-                    [loop] for (uint li = 0u; li < nPrecipLights; ++li) {
-                        const float3 dL = lightPosR[li].xyz - pRelP;
-                        const float rL = max(lightPosR[li].w * 1.15f, 1.0f);
-                        const float d2 = dot(dL, dL);
-                        if (d2 < rL * rL) {
-                            const float attP = 1.0f - sqrt(d2) / rL;
-                            localLightP += lightColS[li].rgb * (attP * attP * 1.45f);
-                        }
-                    }
-                }
-                if (weather.w > 0.06f) {
-                    // Intense wind-driven diagonal torrential rain + dramatic storm squall sheets + backlit torch/lightning glint:
-                    const float stormBoost = saturate(weather.w * 1.45f);
-                    const float gust = 1.0f + 0.55f * sin(camPosW.w * 1.65f + wpP.x * 0.0024f) + 0.25f * cos(camPosW.w * 2.9f - wpP.y * 0.0018f);
-                    const float3 rCoord = float3((wpP.xy - windP * (wpP.z * 0.24f * gust)) * lerp(0.32f, 0.20f, float(pl) / 5.0f),
-                                                 wpP.z * 0.0075f + camPosW.w * (20.0f + float(pl) * 4.8f));
-                    const float rCell = cHash(floor(rCoord));
-                    const float rGate = lerp(0.948f, 0.916f, stormBoost);
-                    if (rCell > rGate) {
-                        // Delicate Gaussian thin-filament rain streaks (kills giant white paper confetti rectangles in v1418_a.png!):
-                        const float2 rF = frac(rCoord.xy) - 0.5f;
-                        const float rThin = exp(-rF.x * rF.x * 260.0f) * exp(-rF.y * rF.y * 10.0f);
-                        const float rMask = smoothstep(rGate, 0.998f, rCell) * rThin;
-                        const float3 rLit = max(atmoCol * 0.95f + 0.06f, 0.12f.xxx) + localLightP * 0.72f;
-                        precipAdd += rLit * (rMask * stormBoost * 0.24f / (1.0f + float(pl) * 0.40f));
-                    }
-                    // Sweeping 3D storm wind-squall mist curtains during heavy downpours (pl >= 2):
-                    if (pl >= 2 && weather.w > 0.35f) {
-                        const float sqN = cNoise(float3((wpP.xy - windP * (camPosW.w * 48.0f)) * 0.0018f, wpP.z * 0.0012f));
-                        const float sqSheet = smoothstep(0.54f, 0.88f, sqN) * saturate((weather.w - 0.35f) * 1.8f);
-                        precipAdd += (atmoCol * 0.72f + localLightP * 0.35f) * (sqSheet * 0.14f / float(pl));
-                    }
-                }
-                if (weather.z > 0.08f) {
-                    const float swirlPh = camPosW.w * (0.42f + float(pl) * 0.10f);
-                    const float swayX = sin(swirlPh + wpP.z * 0.014f + wpP.y * 0.005f) * 20.0f;
-                    const float swayY = cos(swirlPh * 0.82f + wpP.x * 0.012f - wpP.z * 0.008f) * 20.0f;
-                    const float fScale = lerp(0.125f, 0.055f, float(pl) / 5.0f);
-                    const float3 sCoord = float3((wpP.xy - windP * (wpP.z * 0.12f) + float2(swayX, swayY)) * fScale,
-                                                 wpP.z * fScale + camPosW.w * (1.25f + float(pl) * 0.28f));
-                    const float sCell = cHash(floor(sCoord));
-                    if (sCell > 0.936f) {
-                        const float dFlake = length(frac(sCoord) - 0.5f);
-                        const float flakeSharp = pl < 2 ? 12.0f : 22.0f;   // larger soft foreground bokeh flakes!
-                        const float sMask = smoothstep(0.936f, 0.998f, sCell) * exp(-dFlake * dFlake * flakeSharp);
-                        const float3 sLit = max(atmoCol * 1.30f + 0.14f, 0.28f.xxx) + localLightP * 1.65f;
-                        precipAdd += sLit * (sMask * weather.z * 0.46f / (1.0f + float(pl) * 0.32f));
-                    }
-                }
-                if (ashW > 0.10f) {
-                    const float aTurb = sin(camPosW.w * 1.6f + wpP.z * 0.02f) * 18.0f;
-                    const float3 aCoord = float3((wpP.xy - windP * (camPosW.w * 34.0f) + float2(aTurb, -aTurb * 0.7f)) * lerp(0.13f, 0.075f, float(pl) / 5.0f),
-                                                 wpP.z * 0.10f + camPosW.w * (2.2f + float(pl) * 0.55f));
-                    const float aCell = cHash(floor(aCoord));
-                    if (aCell > 0.928f) {
-                        const float aMask = smoothstep(0.928f, 0.996f, aCell) * saturate(1.0f - length(frac(aCoord) - 0.5f) * 2.4f);
-                        const bool isEmber = aCell > 0.985f;
-                        const float3 aCol = isEmber ? float3(3.20f, 0.78f, 0.16f) : (float3(0.32f, 0.25f, 0.20f) + localLightP * 0.65f);
-                        precipAdd += aCol * (aMask * ashW * (isEmber ? 1.15f : 0.48f) / (1.0f + float(pl) * 0.38f));
-                    }
-                }
-            }
-        }
+        // Wave 48 Local-Light Illuminated 3-Layer Depth-Sliced Parallax Precipitation Volume (3m / 7m / 14m)
+        // + Scene-Depth-Verified Near-Emitter Fire-Ember Sparks (< 2.5m), strictly outdoor & depth-occluded:
+        const float3 precipAdd = (mapScale > 0.5f)
+            ? evalVolumetricParallaxPrecip(eye, w, dist, d, atmoCol, aSunFg, nightF, ashW, true)
+            : 0.0f.xxx;
         // Cross-shader PDE coupling: sample WorldFieldSim (t7) so freshly wet ground & campfire-melted snow
         // physically boost low-lying ground evaporation mist in LightFog.hlsl (zero siloed passes!):
         float pdeMistBoost = 1.0f;

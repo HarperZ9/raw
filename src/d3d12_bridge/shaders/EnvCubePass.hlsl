@@ -54,20 +54,25 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
         const float moonAmbScale = lerp(0.44f, 1.38f, dualMoon.totalPhase01);
         const float moonSpecScale = lerp(0.14f, 1.35f, dualMoon.totalPhase01);
 
-        // Deep nocturnal sky floor + phase-coupled Milky Way / Aetherius galaxy, dark dust rifts,
-        // H-II nebulae, 3D volumetric O/N2+ curtain auroras & spectral stars directly in the reflection cubemap!
-        // Sharp glossy band includes crisp stars so calm water/ice/steel reflects live stars + aurora curtains;
-        // rough band disables pinpoint stars so rough stone/snow gets smooth, flicker-free aurora & twilight IBL.
+        // Deep nocturnal sky floor + phase-coupled Milky Way / Aetherius galaxy, warm bulge scatter,
+        // dark dust rifts, ecliptic zodiacal light, H-II nebulae, 3D volumetric O/N2+ curtain auroras,
+        // Kolmogorov-scintillating spectral stars & 22-deg lunar/solar ice halos + sundogs directly in the cubemap!
+        // Sharp glossy band includes crisp stars & Eddington limb-darkened sun so calm water/ice/steel mirrors the sky;
+        // rough band disables pinpoint stars so rough stone/snow gets smooth, flicker-free aurora, halo & corona IBL.
+        const bool hasTherm = (seasonThermal0.y > 0.05f || abs(seasonThermal0.w) > 0.01f);
+        const float surfaceTempC = hasTherm ? seasonThermal0.w : lerp(4.0f, -9.0f, saturate(weather.z));
+
         const float3 nightBase = max(
             lerp(ambDir * dualMoon.moonTintRGB * (float3(0.46f, 0.58f, 0.86f) * moonAmbScale),
                  float3(0.006f, 0.012f, 0.030f) * lerp(0.70f, 1.55f, dualMoon.totalPhase01),
                  smoothstep(0.05f, 0.65f, upRd.z)),
             float3(0.005f, 0.009f, 0.024f));
         float3 liveCosmos = 0.0f.xxx;
-        if (rd.z > -0.02f && (nightW > 0.01f || weather.z > 0.10f)) {
-            liveCosmos = evalCosmosAndAuroraPhased(
-                upRd, aSun, gameHour, simTime, clouds.x, weather.z, camPosW.y, seasonProg,
-                !roughBand,  // pinpoint stars & meteors in sharp band only; smooth aurora+galaxy in rough band
+        if (rd.z > -0.02f && (nightW > 0.01f || twilightW > 0.01f)) {
+            liveCosmos = evalCosmosAndAuroraThermal(
+                upRd, aSun, gameHour, simTime, clouds.x, weather.z, camPosW.y, seasonProg, surfaceTempC,
+                !roughBand,  // pinpoint Kolmogorov stars & meteors in sharp band only; smooth aurora+galaxy in rough band
+                !roughBand,  // Eddington solar disk in sharp band, smooth corona in both
                 true         // apply Kasten-Young airmass extinction near horizon
             );
         }
@@ -77,8 +82,16 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
         const float reflCosmGain = roughBand ? 1.05f : 1.32f;
         const float3 nightSkyFull = nightBase + liveCosmos * reflCosmGain;
         float3 upper = lerp(nightSkyFull, hSky, atmoDayW);
-        // During twilight transition, preserve sharp stars/aurora emerging cleanly above the twilight ozone arch:
+        // During twilight transition, preserve sharp stars/zodiacal light/aurora emerging cleanly above the ozone arch:
         upper += liveCosmos * (twilightW * (1.0f - dayW) * (roughBand ? 0.25f : 0.42f));
+
+        // Daytime & twilight live 22-deg glacial ice halo + horizontal parhelia (sundogs) + Eddington solar corona
+        // reflected faithfully into glacial ice, rivers, puddles, and brushed steel armor (zero night double-count!):
+        if (rd.z > -0.01f && atmoDayW > 0.01f) {
+            const float3 dayOptics = rawCosmosSolarLunarHaloThermal(
+                upRd, aSun, gameHour, simTime, clouds.x, weather.z, surfaceTempC, dualMoon, !roughBand);
+            upper += dayOptics * (atmoDayW * (roughBand ? 0.58f : 1.10f));
+        }
 
         // Project live upgraded 64^3 Perlin-Worley convective cloud-deck onto upper hemisphere:
         if (rd.z > 0.03f && clouds.x > 0.05f) {
@@ -103,9 +116,10 @@ float3 evalEnvDir(float3 rd, bool roughBand) {
         col = lerp(groundBounce, upper, horBand);
 
         // Sun/dual-moon specular lobe (tight in sharp band, wide GGX convolution in rough band; modulated by lunar phase at night!):
+        // Daytime sharp-band gain yields cleanly to the Eddington limb-darkened solar disk + Mie corona already in `upper`.
         const float cosS = saturate(dot(rd, sunDir.xyz));
         const float expS = roughBand ? 10.0f : 180.0f;
-        const float gainS = roughBand ? 0.22f : 2.10f;
+        const float gainS = roughBand ? 0.22f : lerp(2.10f, 1.15f, dayW);
         const float cAtt = 1.0f - saturate(clouds.x * 0.72f);
         const float3 specLightCol = lerp(sunColour.rgb, sunColour.rgb * dualMoon.moonTintRGB * moonSpecScale, nightW);
         col += specLightCol * (pow(cosS, expS) * gainS * cAtt * step(0.0f, rd.z));

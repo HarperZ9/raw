@@ -9,6 +9,7 @@
 #include "rt_control.h"
 #include "rt_encounter_balance.h"
 #include "rt_magic_physics.h"
+#include "rt_progression_economy.h"
 #include "rt_version.h"
 
 namespace raw::rt {
@@ -366,11 +367,12 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         }
         if (SetSetting(img, refs, kv.k, kv.v)) ++applied;
     }
-    const std::string balMsg = ApplyEncounterBalanceGmsts(img, refs);
-    const std::string magMsg = InitMagicPhysics(img, refs);
-    char out[512];
-    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s",
-                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str());
+    const std::string balMsg  = ApplyEncounterBalanceGmsts(img, refs);
+    const std::string magMsg  = InitMagicPhysics(img, refs);
+    const std::string progMsg = InitProgressionEconomy(img, refs);
+    char out[640];
+    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s | %s",
+                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str(), progMsg.c_str());
     return out;
 }
 
@@ -386,7 +388,7 @@ struct DynamicGmstBindings {
     float baseBarterMax = 3.60f;
     float baseSprintDrain = 14.5f;
     float baseArrowGravity = 0.0016f;
-    float baseJumpFall = 1.0f;
+    float baseJumpFall = 0.085f;
 } g_dynGmsts;
 }  // namespace
 
@@ -442,6 +444,7 @@ void WorldSimApplyLivePlanetaryGravity(float gravityMps2) {
 }
 
 void WorldSimRestoreDynamicSettings() {
+    ShutdownProgressionEconomy();
     ShutdownMagicPhysics();
     RestoreEncounterBalanceGmsts();
     if (!g_dynGmsts.bound) return;

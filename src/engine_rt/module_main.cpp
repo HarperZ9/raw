@@ -22,6 +22,7 @@
 #include <thread>
 
 #include "ProxyAPI.h"
+#include "rt_adaptive_audio_director.h"
 #include "rt_audio_bridge.h"
 #include "rt_callgraph.h"
 #include "rt_combat_ai.h"
@@ -148,6 +149,7 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
         if (s_prevQpc.QuadPart != 0 && s_qpcFreq.QuadPart > 0) {
             const double frameMs = double(nowQpc.QuadPart - s_prevQpc.QuadPart) * 1000.0 / double(s_qpcFreq.QuadPart);
             raw::rt::SavePapyrusGuardOnPresent(frameMs);
+            raw::rt::AudioDirectorOnPresent(static_cast<float>(frameMs * 0.001));
         }
         s_prevQpc = nowQpc;
     }
@@ -384,6 +386,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     Log("%s", raw::rt::SavePapyrusGuardInit().c_str());
     Log("%s", raw::rt::ModLoadAuditInit(g_dir).c_str());
     Log("%s", raw::rt::NpcBehaviorInit().c_str());
+    Log("%s", raw::rt::AudioDirectorInit().c_str());
     Log("%s", raw::rt::AudioBridgeInit().c_str());
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
@@ -413,6 +416,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         return 0;
     }
     raw::rt::AudioBridgeShutdown();
+    raw::rt::AudioDirectorShutdown();
     raw::rt::NpcBehaviorShutdown();
     raw::rt::ModLoadAuditShutdown();
     raw::rt::SavePapyrusGuardShutdown();

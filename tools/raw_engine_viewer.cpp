@@ -9,6 +9,7 @@
 //   P                   : Toggle Playable Grounded Walk Mode <-> Free-Fly Camera (RawWorldPhysics!)
 //   C / Left-Click      : Fire Real Physics Raycast Against .NIF Buildings & Terrain (+ Destruction Burst!)
 //   N                   : Compute Live 3D NavMesh Octile A* Funnel-Smoothed Path (RawNavMeshAi!)
+//   I                   : Ignite Live Directional Wildfire / Snowmelt / Black-Ice Field (RawWorldEcosystem!)
 //   F9 / H              : Toggle Live GPU Telemetry HUD & 64-Sample Frame-Time Sparkline (RawOverlayHost!)
 //   F12                 : Capture Instant 24-Bit .bmp Screenshot (raw_viewer_shot_<N>.bmp)
 //   1 / 2 / 3 / 4       : Live Season Switch (Spring / Summer / Autumn / Winter)
@@ -59,6 +60,7 @@
 #include "RawXpbdSimHost.h"
 #include "RawOverlayHost.h"
 #include "RawGpuCullHost.h"
+#include "RawLightClusterHost.h"
 #include "RawWeatherSim.h"
 #include "RawWorldShowcase.h"
 #include "RawDestructionEngine.h"
@@ -68,6 +70,7 @@
 #include "RawEsmNpcWeatherLoader.h"
 #include "RawWorldPhysics.h"
 #include "RawNavMeshAi.h"
+#include "RawWorldEcosystem.h"
 #include "RawHydrologyGen.h"
 #include "RawAudioOutput.h"
 
@@ -409,13 +412,19 @@ public:
         if (!m_gpuCullOk) {
             std::printf("[Viewer] RawGpuCullHost warning: %s\n", err.c_str());
         }
+        err.clear();
+        m_lightClustersOk = m_lightClusters.Init(m_dev.Get(), {}, &err);
+        if (!m_lightClustersOk) {
+            std::printf("[Viewer] RawLightClusterHost warning: %s\n", err.c_str());
+        }
         UINT64 tsFreq = 0;
         if (SUCCEEDED(m_queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
-            if (m_fluidOk)   m_fluidSim.SetTimestampFrequency(tsFreq);
-            if (m_radOk)     m_radianceHost.SetTimestampFrequency(tsFreq);
-            if (m_xpbdOk)    m_xpbdSim.SetTimestampFrequency(tsFreq);
-            if (m_overlayOk) m_overlayHost.SetTimestampFrequency(tsFreq);
-            if (m_gpuCullOk) m_gpuCull.SetTimestampFrequency(tsFreq);
+            if (m_fluidOk)         m_fluidSim.SetTimestampFrequency(tsFreq);
+            if (m_radOk)           m_radianceHost.SetTimestampFrequency(tsFreq);
+            if (m_xpbdOk)          m_xpbdSim.SetTimestampFrequency(tsFreq);
+            if (m_overlayOk)       m_overlayHost.SetTimestampFrequency(tsFreq);
+            if (m_gpuCullOk)       m_gpuCull.SetTimestampFrequency(tsFreq);
+            if (m_lightClustersOk) m_lightClusters.SetTimestampFrequency(tsFreq);
         }
 
         // Enable real hydraulic & thermal erosion + D8 rivers for procedural frontier terrain!
@@ -590,6 +599,11 @@ public:
             BakeLocalNavMesh(float(lm.cellX) * raw::worldgen::kEsmCellSizeU,
                              float(lm.cellY) * raw::worldgen::kEsmCellSizeU,
                              true);
+            if (const auto* cell = m_tamrielStreamer.FindCell(lm.cellX, lm.cellY)) {
+                m_ecosystem.InitFromTerrainChunk(cell->terrainChunk, 70.0f, cell->waterHeightZ);
+                m_ecoInitialized = true;
+                m_ecoTelemetry   = m_ecosystem.ComputeTelemetry();
+            }
         }
         return m_esmLoaded;
     }
@@ -957,6 +971,139 @@ public:
         return ok;
     }
 
+    static raw::worldgen::EcoWeatherInput BuildEcoWeatherInput(const raw::worldgen::WeatherGpuUniforms& wGpu,
+                                                               SeasonChoice season, WeatherPreset weather)
+    {
+        raw::worldgen::EcoWeatherInput ew{};
+        ew.ambientTempC      = wGpu.seasonThermal0.w;
+        ew.windDirX          = wGpu.cloudWind.x;
+        ew.windDirY          = wGpu.cloudWind.y;
+        ew.windBeaufort      = std::clamp(wGpu.beaufortScale, 0.0f, 12.0f);
+        ew.rainRate01        = (weather == WeatherPreset::Rainstorm) ? std::max(wGpu.weather.w, 0.75f) : wGpu.weather.w;
+        ew.snowRate01        = (season == SeasonChoice::Winter || weather == WeatherPreset::Blizzard)
+                             ? std::max(wGpu.weather.z, 0.35f) : wGpu.weather.z;
+        ew.solarInsolation01 = std::clamp(0.45f + 0.45f * (1.0f - std::min(wGpu.cloudWind.z, 1.0f)), 0.05f, 1.0f);
+        return ew;
+    }
+
+    uint32_t IgniteWildfireAtLookHit()
+    {
+        const float cp = std::cos(m_camPitch), sp = std::sin(m_camPitch);
+        const float cy = std::cos(m_camYaw),   sy = std::sin(m_camYaw);
+        const raw::worldgen::Vec3 origin{m_camPos[0], m_camPos[1], m_camPos[2]};
+        const raw::worldgen::Vec3 dir{sy * cp, cy * cp, sp};
+        const auto hit = m_worldPhysics.RayCast(origin, dir, 8000.0f);
+        const float targetXu = hit.hit ? hit.point[0] : (m_camPos[0] + dir.x * 650.0f);
+        const float targetYu = hit.hit ? hit.point[1] : (m_camPos[1] + dir.y * 650.0f);
+
+        const auto& cfg = m_ecosystem.Config();
+        const float spanX = static_cast<float>(cfg.gridW) * cfg.cellSizeM;
+        const float spanY = static_cast<float>(cfg.gridH) * cfg.cellSizeM;
+        const float wxM = std::clamp(targetXu / 70.0f, cfg.originX + cfg.cellSizeM * 3.0f,
+                                     cfg.originX + spanX - cfg.cellSizeM * 3.0f);
+        const float wyM = std::clamp(targetYu / 70.0f, cfg.originY + cfg.cellSizeM * 3.0f,
+                                     cfg.originY + spanY - cfg.cellSizeM * 3.0f);
+
+        uint32_t ignited = m_ecosystem.IgniteAt(wxM, wyM, 8.0f, 680.0f);
+        if (ignited == 0u) {
+            // If exact look-hit is under deep snow/moisture, flash-dry a compact 4m ignition patch (dragon-fire/spell impact)
+            uint32_t gx0 = cfg.gridW / 2u, gy0 = cfg.gridH / 2u;
+            (void)m_ecosystem.WorldToCell(wxM, wyM, &gx0, &gy0);
+            for (int32_t dy = -3; dy <= 3; ++dy) {
+                for (int32_t dx = -3; dx <= 3; ++dx) {
+                    const int32_t cx = std::clamp(static_cast<int32_t>(gx0) + dx, 0, static_cast<int32_t>(cfg.gridW) - 1);
+                    const int32_t cy_ = std::clamp(static_cast<int32_t>(gy0) + dy, 0, static_cast<int32_t>(cfg.gridH) - 1);
+                    if (auto* cell = m_ecosystem.CellAt(static_cast<uint32_t>(cx), static_cast<uint32_t>(cy_))) {
+                        if (!cell->isRiverWater) {
+                            cell->snowDepthM = std::min(cell->snowDepthM, 0.05f);
+                            cell->moisture01 = std::min(cell->moisture01, 0.25f);
+                            cell->fuelLoad01 = std::max(cell->fuelLoad01, 0.65f);
+                        }
+                    }
+                }
+            }
+            ignited = m_ecosystem.IgniteAt(wxM, wyM, 8.0f, 680.0f);
+        }
+        m_ecoTelemetry = m_ecosystem.ComputeTelemetry();
+        std::printf("[Ecosystem] Wildfire ignited at (%.1fm, %.1fm): +%u cells | activeFire=%u snow=%.1fm3 ice=%u\n",
+                    wxM, wyM, ignited, m_ecoTelemetry.activeFireCells,
+                    m_ecoTelemetry.totalSnowVolumeM3, m_ecoTelemetry.blackIceCells);
+        return ignited;
+    }
+
+    struct EcosystemProbe {
+        uint32_t ignitedCells    = 0u;
+        uint32_t activeFireCells = 0u;
+        float    burnedAreaM2    = 0.0f;
+        float    snowVolumeM3    = 0.0f;
+        float    meltRunoffM3    = 0.0f;
+        uint32_t blackIceCells   = 0u;
+        float    peakTempC       = 0.0f;
+        bool     allFinite       = true;
+    };
+
+    EcosystemProbe RunEcosystemSelfTest()
+    {
+        EcosystemProbe p{};
+        const auto& cfg = m_ecosystem.Config();
+        const float cxM = cfg.originX + static_cast<float>(cfg.gridW) * cfg.cellSizeM * 0.5f;
+        const float cyM = cfg.originY + static_cast<float>(cfg.gridH) * cfg.cellSizeM * 0.5f;
+
+        // Pick a non-river dry patch near center so ignition is guaranteed deterministic across biomes/cells
+        uint32_t gx = cfg.gridW / 2u, gy = cfg.gridH / 2u;
+        bool foundDry = false;
+        for (uint32_t y = 8u; y + 8u < cfg.gridH && !foundDry; ++y) {
+            for (uint32_t x = 8u; x + 8u < cfg.gridW && !foundDry; ++x) {
+                const auto* c = m_ecosystem.CellAt(x, y);
+                if (c && !c->isRiverWater && c->fuelLoad01 > 0.15f && c->moisture01 < 0.60f && c->snowDepthM <= 0.12f) {
+                    gx = x; gy = y; foundDry = true;
+                }
+            }
+        }
+        if (!foundDry) {
+            for (int32_t dy = -3; dy <= 3; ++dy) {
+                for (int32_t dx = -3; dx <= 3; ++dx) {
+                    const uint32_t x = static_cast<uint32_t>(std::clamp(static_cast<int32_t>(gx) + dx, 1, static_cast<int32_t>(cfg.gridW) - 2));
+                    const uint32_t y = static_cast<uint32_t>(std::clamp(static_cast<int32_t>(gy) + dy, 1, static_cast<int32_t>(cfg.gridH) - 2));
+                    if (auto* c = m_ecosystem.CellAt(x, y)) {
+                        c->isRiverWater = false;
+                        c->snowDepthM   = 0.02f;
+                        c->moisture01   = 0.18f;
+                        c->fuelLoad01   = 0.78f;
+                    }
+                }
+            }
+        }
+        const auto cc = m_ecosystem.CellCenterWorldM(gx, gy);
+        const float ixM = foundDry ? cc.x : cxM;
+        const float iyM = foundDry ? cc.y : cyM;
+        p.ignitedCells = m_ecosystem.IgniteAt(ixM, iyM, 6.0f, 650.0f);
+
+        raw::worldgen::EcoWeatherInput ew{};
+        ew.ambientTempC      = 12.0f;
+        ew.windDirX          = 0.866f;
+        ew.windDirY          = 0.5f;
+        ew.windBeaufort      = 5.0f;
+        ew.rainRate01        = 0.0f;
+        ew.snowRate01        = 0.0f;
+        ew.solarInsolation01 = 0.75f;
+        for (int s = 0; s < 10; ++s) {
+            m_ecosystem.Step(0.4f, ew);
+        }
+        const auto t = m_ecosystem.ComputeTelemetry();
+        m_ecoTelemetry    = t;
+        p.activeFireCells = t.activeFireCells;
+        p.burnedAreaM2    = t.burnedAreaM2;
+        p.snowVolumeM3    = t.totalSnowVolumeM3;
+        p.meltRunoffM3    = t.totalMeltRunoffM3;
+        p.blackIceCells   = t.blackIceCells;
+        p.peakTempC       = t.peakTempC;
+        p.allFinite       = std::isfinite(t.burnedAreaM2) && std::isfinite(t.totalSnowVolumeM3) &&
+                            std::isfinite(t.totalMeltRunoffM3) && std::isfinite(t.totalWaterMassM3) &&
+                            std::isfinite(t.peakTempC) && std::isfinite(t.steamFlux);
+        return p;
+    }
+
     void ToggleAudio()
     {
         if (m_opt.headlessFrames > 0u) return; // Strictly OFF in headless CI mode
@@ -986,7 +1133,8 @@ public:
         m_camPos[2] = m_frontierCenter[2] + 1150.0f;
         m_camYaw    = 0.0f;
         m_camPitch  = -0.50f;
-        m_navMeshDirty = true;
+        m_navMeshDirty   = true;
+        m_ecoInitialized = false;
         TriggerFreshFracture();
     }
 
@@ -1107,9 +1255,11 @@ public:
         ++m_frameMsRingPos;
         if (m_frameMsCount < 64u) ++m_frameMsCount;
 
-        // 1. Step seasonal weather simulation (and push live acoustics/weather to optional WASAPI audio).
+        // 1. Step seasonal weather simulation & coupled cellular ecosystem field (wildfire/snowmelt/black-ice)!
         m_weatherSim.Step(dtClamped, {m_camPos[0], m_camPos[1], m_camPos[2]});
         const auto wGpu = m_weatherSim.GetGpuUniforms();
+        m_ecosystem.Step(dtClamped, BuildEcoWeatherInput(wGpu, m_season, m_weatherPreset));
+        m_ecoTelemetry = m_ecosystem.ComputeTelemetry();
         if (m_audioEnabled && m_audio.IsRunning()) {
             PushAudioSceneState(wGpu);
         }
@@ -1370,6 +1520,111 @@ public:
             }
         }
 
+        // Live 16x9x24 (3,456-Cluster) 3D Froxel Dynamic Point/Spot/Fire/Spell Light Assignment (RawLightClusterHost)!
+        if (m_lightClustersOk) {
+            std::vector<GpuClusterLight> clusterLights;
+            clusterLights.reserve(128u);
+            auto worldToView = [&](float wx, float wy, float wz, float outV[3]) {
+                const float dx = wx - m_camPos[0];
+                const float dy = wy - m_camPos[1];
+                const float dz = wz - m_camPos[2];
+                outV[0] = dx * cam.right[0] + dy * cam.right[1] + dz * cam.right[2];
+                outV[1] = dx * cam.up[0]    + dy * cam.up[1]    + dz * cam.up[2];
+                outV[2] = dx * cam.fwd[0]   + dy * cam.fwd[1]   + dz * cam.fwd[2];
+            };
+
+            // 1. Player forward lantern spotlight
+            {
+                GpuClusterLight spot{};
+                spot.posView[0]   = 0.0f;
+                spot.posView[1]   = -12.0f;
+                spot.posView[2]   = 24.0f;
+                spot.radius       = 1400.0f;
+                spot.dirView[0]   = 0.0f;
+                spot.dirView[1]   = 0.0f;
+                spot.dirView[2]   = 1.0f;
+                spot.cosOuterCone = 0.78f;
+                spot.colorRgb[0]  = 2.6f; spot.colorRgb[1] = 2.1f; spot.colorRgb[2] = 1.4f;
+                spot.typeFlags    = kClusterLightSpotBit | kClusterLightFire;
+                clusterLights.push_back(spot);
+            }
+            // 2. Live 64^3 Navier-Stokes fire emitter dynamic point light
+            if (m_fireEnabled) {
+                const float flicker = 0.88f + 0.12f * std::sin(m_simTimeSec * 14.0f);
+                GpuClusterLight fl{};
+                worldToView(m_camPos[0] + cam.fwd[0] * 300.0f + cam.right[0] * 48.0f - cam.up[0] * 48.0f,
+                            m_camPos[1] + cam.fwd[1] * 300.0f + cam.right[1] * 48.0f - cam.up[1] * 48.0f,
+                            m_camPos[2] + cam.fwd[2] * 300.0f + cam.right[2] * 48.0f - cam.up[2] * 48.0f,
+                            fl.posView);
+                fl.radius      = 720.0f;
+                fl.colorRgb[0] = 4.2f * flicker; fl.colorRgb[1] = 1.85f * flicker; fl.colorRgb[2] = 0.55f * flicker;
+                fl.typeFlags   = kClusterLightFire;
+                clusterLights.push_back(fl);
+            }
+            // 3. Tactical squad torches & spellcaster arcane orbs
+            for (const auto& ag : m_tacticalSquad) {
+                GpuClusterLight sl{};
+                worldToView(ag.position.x, ag.position.y, ag.position.z + 96.0f, sl.posView);
+                sl.radius = 520.0f;
+                if (ag.archetype == raw::worldgen::TacticalArchetype::Spellcaster) {
+                    sl.colorRgb[0] = 0.7f; sl.colorRgb[1] = 1.9f; sl.colorRgb[2] = 3.8f;
+                    sl.typeFlags   = kClusterLightSpell;
+                } else {
+                    sl.colorRgb[0] = 2.4f; sl.colorRgb[1] = 1.3f; sl.colorRgb[2] = 0.5f;
+                    sl.typeFlags   = kClusterLightFire;
+                }
+                clusterLights.push_back(sl);
+            }
+            // 4. Village/Frontier ambient hearth & braziers ring (24 deterministic local lights)
+            for (uint32_t li = 0u; li < 24u; ++li) {
+                const float ang = static_cast<float>(li) * (6.2831853f / 24.0f) + m_simTimeSec * 0.04f;
+                const float rad = 380.0f + static_cast<float>(li % 4u) * 320.0f;
+                const float wx  = m_camPos[0] + std::cos(ang) * rad;
+                const float wy  = m_camPos[1] + std::sin(ang) * rad;
+                float wz = m_camPos[2] - 120.0f;
+                (void)m_worldPhysics.SampleTerrainHeight(wx, wy, &wz);
+                GpuClusterLight bl{};
+                worldToView(wx, wy, wz + 90.0f, bl.posView);
+                bl.radius      = 420.0f;
+                bl.colorRgb[0] = (li % 3u == 0u) ? 0.9f : 2.8f;
+                bl.colorRgb[1] = (li % 3u == 0u) ? 2.1f : 1.5f;
+                bl.colorRgb[2] = (li % 3u == 0u) ? 3.2f : 0.6f;
+                bl.typeFlags   = (li % 3u == 0u) ? kClusterLightSpell : kClusterLightFire;
+                clusterLights.push_back(bl);
+            }
+            // 5. Active cellular wildfire lights directly from RawWorldEcosystem (up to 64 burning cells!)
+            if (m_ecoTelemetry.activeFireCells > 0u) {
+                uint32_t ecoAdded = 0u;
+                const uint32_t ew = m_ecosystem.Width();
+                const uint32_t eh = m_ecosystem.Height();
+                for (uint32_t gy = 0u; gy < eh && ecoAdded < 64u; gy += 2u) {
+                    for (uint32_t gx = 0u; gx < ew && ecoAdded < 64u; gx += 2u) {
+                        const auto* cell = m_ecosystem.CellAt(gx, gy);
+                        if (cell && cell->fireIntensity01 > 0.15f) {
+                            const auto cc = m_ecosystem.CellCenterWorldM(gx, gy);
+                            GpuClusterLight el{};
+                            worldToView(cc.x * 70.0f, cc.y * 70.0f, cell->elevationM * 70.0f + 48.0f, el.posView);
+                            el.radius      = 340.0f + 220.0f * cell->fireIntensity01;
+                            el.colorRgb[0] = 4.5f * cell->fireIntensity01;
+                            el.colorRgb[1] = 1.6f * cell->fireIntensity01;
+                            el.colorRgb[2] = 0.35f * cell->fireIntensity01;
+                            el.typeFlags   = kClusterLightFire;
+                            clusterLights.push_back(el);
+                            ++ecoAdded;
+                        }
+                    }
+                }
+            }
+
+            LightClusterViewParams lcView{};
+            lcView.nearZ = nearZ;
+            lcView.farZ  = 16000.0f;
+            BuildPerspectiveInvProjLH(1.12f, float(m_width) / float(m_height), lcView.nearZ, lcView.farZ, lcView.invProj);
+            m_lightClusters.BuildAndAssign(m_dispCmd.Get(), clusterLights.data(),
+                                           static_cast<uint32_t>(clusterLights.size()), lcView);
+            m_lastClusterLightCount = static_cast<uint32_t>(clusterLights.size());
+        }
+
         if (m_radOk && m_giEnabled) {
             m_radianceHost.ExecuteScreenGI(m_dispCmd.Get(), m_hdrColor.Get(), m_depthIn.Get(),
                                            m_width, m_height, 0.16f);
@@ -1470,12 +1725,16 @@ public:
         bool     overlayActive    = false;
         float    overlayMs        = 0.0f;
         uint32_t hudNonZeroPx     = 0u;
-        bool     gpuCullActive    = false;
-        float    gpuHiZMs         = 0.0f;
-        float    gpuCullMs        = 0.0f;
-        uint32_t gpuHiZMips       = 0u;
-        uint32_t gpuCullInstances = 0u;
-        uint32_t biomesFound      = 0u;
+        bool     gpuCullActive        = false;
+        float    gpuHiZMs             = 0.0f;
+        float    gpuCullMs            = 0.0f;
+        uint32_t gpuHiZMips           = 0u;
+        uint32_t gpuCullInstances     = 0u;
+        bool     lightClustersActive  = false;
+        float    lightClusterBuildMs  = 0.0f;
+        float    lightClusterAssignMs = 0.0f;
+        uint32_t lightClusterCount    = 0u;
+        uint32_t biomesFound          = 0u;
     };
 
     bool ReadbackHeadlessAudit(HeadlessAudit* out)
@@ -1502,6 +1761,10 @@ public:
         out->gpuCullMs = m_gpuCull.HasValidCullTiming() ? m_gpuCull.GetLastCullMs() : 0.0f;
         out->gpuHiZMips = m_gpuCull.HiZMipCount();
         out->gpuCullInstances = m_lastCullInstCount;
+        out->lightClustersActive = m_lightClustersOk && m_lightClusters.Ready() && m_lastClusterLightCount > 0u;
+        out->lightClusterBuildMs = m_lightClusters.HasValidTiming() ? m_lightClusters.GetLastBuildMs() : 0.0f;
+        out->lightClusterAssignMs = m_lightClusters.HasValidTiming() ? m_lightClusters.GetLastAssignMs() : 0.0f;
+        out->lightClusterCount = m_lastClusterLightCount;
 
         const UINT hdrPitch  = (m_width * 8u + 255u) & ~255u;
         const UINT dispPitch = (m_width * 4u + 255u) & ~255u;
@@ -1643,6 +1906,7 @@ public:
         }
         m_cullInstUpload.Reset();
         m_cullInstBuf.Reset();
+        m_lightClusters.Shutdown();
         m_gpuCull.Shutdown();
         m_overlayHost.Shutdown();
         m_xpbdSim.Shutdown();
@@ -1709,9 +1973,12 @@ public:
         }
         const float cullTotalMs = (m_gpuCull.HasValidHiZTiming() ? m_gpuCull.GetLastHiZMs() : 0.0f) +
                                   (m_gpuCull.HasValidCullTiming() ? m_gpuCull.GetLastCullMs() : 0.0f);
-        char buf[640]{};
+        const float lclustTotalMs = m_lightClusters.HasValidTiming()
+                                  ? (m_lightClusters.GetLastBuildMs() + m_lightClusters.GetLastAssignMs())
+                                  : 0.0f;
+        char buf[768]{};
         std::snprintf(buf, sizeof(buf),
-                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms HUD:%.3fms%s%s | Shards:%u",
+                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms HUD:%.3fms | Eco:fire=%u snow=%.0fm3 ice=%u%s%s | Shards:%u",
                       m_walkMode ? "WALK" : "FLY",
                       fps, m_lastDrawnMeshlets, m_meshHost.TerrainUsesMeshShaders() ? "AS+MS" : "VS+PS",
                       locBuf, TimePresetName(m_timePreset), ActiveWeatherDisplayName(),
@@ -1720,7 +1987,11 @@ public:
                       rt.valid ? rt.giPassMs : 0.0f,
                       m_xpbdSim.HasValidTiming() ? m_xpbdSim.GetLastStepMs() : 0.0f,
                       cullTotalMs,
+                      lclustTotalMs,
                       m_overlayHost.HasValidTiming() ? m_overlayHost.GetLastOverlayMs() : 0.0f,
+                      m_ecoTelemetry.activeFireCells,
+                      static_cast<double>(m_ecoTelemetry.totalSnowVolumeM3),
+                      m_ecoTelemetry.blackIceCells,
                       hitBuf, navBuf,
                       m_activeShards);
         return buf;
@@ -1948,6 +2219,11 @@ private:
                 hf.cellKey = raw::worldgen::PackCellKey(entry.key.x, entry.key.y);
                 v->m_worldPhysics.AddTerrainHeightfield(hf);
                 if (!v->m_navMesh.IsBaked()) v->m_navMeshDirty = true;
+                if (!v->m_ecoInitialized) {
+                    v->m_ecosystem.InitFromTerrainChunk(entry.terrain, 70.0f, sc.terrain.seaLevelZ);
+                    v->m_ecoInitialized = true;
+                    v->m_ecoTelemetry   = v->m_ecosystem.ComputeTelemetry();
+                }
                 return h;
             }
             void OnChunkEvicted(raw::worldgen::ChunkKey key, uint64_t h) override {
@@ -2137,15 +2413,26 @@ private:
         snap.historyCount   = count;
 
         FormatEngineTelemetryLines(snap, outHud);
-        // Append Wave 50 live GPU Hi-Z Cull timing on line 3 and NavMesh / Squad AI telemetry on line 7!
-        const float hizMs  = m_gpuCull.HasValidHiZTiming() ? m_gpuCull.GetLastHiZMs() : 0.0f;
-        const float cullMs = m_gpuCull.HasValidCullTiming() ? m_gpuCull.GetLastCullMs() : 0.0f;
+        // Append Wave 50-51 live GPU Hi-Z Cull + 3D Light Clusters on line 3, Ecosystem on line 6, and NavMesh/Squad on line 7!
+        const float hizMs    = m_gpuCull.HasValidHiZTiming() ? m_gpuCull.GetLastHiZMs() : 0.0f;
+        const float cullMs   = m_gpuCull.HasValidCullTiming() ? m_gpuCull.GetLastCullMs() : 0.0f;
+        const float lclustMs = m_lightClusters.HasValidTiming()
+                             ? (m_lightClusters.GetLastBuildMs() + m_lightClusters.GetLastAssignMs())
+                             : 0.0f;
         std::memset(outHud.lines[3], 0, sizeof(outHud.lines[3]));
-        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "SOLVERS GI:%s FL:%s XPBD:%s | CULL %.3fMS",
+        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "CULL %.3fMS | LCLUST %.3fMS (%uL) | GI:%s XP:%s",
+                      static_cast<double>(hizMs + cullMs),
+                      static_cast<double>(lclustMs),
+                      m_lastClusterLightCount,
                       snap.giEnabled ? "ON" : "OFF",
-                      snap.fluidEnabled ? "ON" : "OFF",
-                      snap.xpbdEnabled ? "ON" : "OFF",
-                      static_cast<double>(hizMs + cullMs));
+                      snap.xpbdEnabled ? "ON" : "OFF");
+
+        std::memset(outHud.lines[6], 0, sizeof(outHud.lines[6]));
+        std::snprintf(outHud.lines[6], sizeof(outHud.lines[6]), "ECO FIRE:%u SNOW:%.0fM3 ICE:%u | I=IGNITE F12=BMP",
+                      m_ecoTelemetry.activeFireCells,
+                      static_cast<double>(m_ecoTelemetry.totalSnowVolumeM3),
+                      m_ecoTelemetry.blackIceCells);
+        outHud.lineColorTag[6] = (m_ecoTelemetry.activeFireCells > 0u) ? kOverlayColorAmber : kOverlayColorMuted;
 
         const auto nst = m_navMesh.GetStats();
         std::memset(outHud.lines[7], 0, sizeof(outHud.lines[7]));
@@ -2155,7 +2442,7 @@ private:
                           static_cast<double>(m_lastNavPath.totalLengthU),
                           m_lastNavPath.searchTimeMs, m_tacticalSquad.size());
         } else {
-            std::snprintf(outHud.lines[7], sizeof(outHud.lines[7]), "NAV W:%u BAKE:%.1fMS | SQ:%zu | N=PATH F12=BMP",
+            std::snprintf(outHud.lines[7], sizeof(outHud.lines[7]), "NAV W:%u BAKE:%.1fMS | SQ:%zu | N=PATH",
                           nst.walkableCells, nst.bakeTimeMs, m_tacticalSquad.size());
         }
         outHud.lineColorTag[7] = kOverlayColorCyan;
@@ -2469,6 +2756,7 @@ private:
     bool          m_xpbdUploaded = false;
     bool          m_overlayOk = false;
     bool          m_gpuCullOk = false;
+    bool          m_lightClustersOk = false;
     std::string   m_adapterName;
 
     ComPtr<IDXGIFactory4>              m_factory;
@@ -2506,6 +2794,8 @@ private:
     RawXpbdSimHost                     m_xpbdSim;
     RawOverlayHost                     m_overlayHost;
     RawGpuCullHost                     m_gpuCull;
+    RawLightClusterHost                m_lightClusters;
+    uint32_t                           m_lastClusterLightCount = 0u;
     ComPtr<ID3D12Resource>             m_cullInstBuf;
     ComPtr<ID3D12Resource>             m_cullInstUpload;
     uint8_t*                           m_cullInstMapped = nullptr;
@@ -2522,6 +2812,9 @@ private:
     raw::worldgen::EsmPhysicalWeatherParams m_activeEsmWeatherParams{};
     raw::worldgen::RawWorldPhysics        m_worldPhysics;
     raw::worldgen::RawNavMesh             m_navMesh;
+    raw::worldgen::RawWorldEcosystem      m_ecosystem;
+    raw::worldgen::EcoFieldTelemetry      m_ecoTelemetry{};
+    bool                                  m_ecoInitialized = false;
     std::vector<raw::worldgen::SquadAgent> m_tacticalSquad;
     std::vector<raw::worldgen::TacticalSteeringOutput> m_lastSquadOut;
     raw::worldgen::NavPathResult          m_lastNavPath{};
@@ -2635,6 +2928,7 @@ LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     case 'P': st->viewer->ToggleWalkMode(); break;
                     case 'C': st->viewer->FireRaycastStrike(); break;
                     case 'N': st->viewer->ComputeLiveNavPath(); break;
+                    case 'I': st->viewer->IgniteWildfireAtLookHit(); break;
                     case 'H':
                     case VK_F9: st->viewer->ToggleHud(); break;
                     case VK_F12: st->viewer->CaptureScreenshotBmp(); break;
@@ -2710,7 +3004,7 @@ int main(int argc, char** argv)
     if (opt.showHelp) {
         std::printf(
             "RAW Interactive Real-Time Win32/DX12 Standalone Engine Viewer\n"
-            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
+            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
             "CLI: [--headless-frames N] [--warp] [--debug] [--width W] [--height H] [--esm <Skyrim.esm>]\n");
         return 0;
     }
@@ -2735,12 +3029,16 @@ int main(int argc, char** argv)
         raw::worldgen::TamrielStreamStats riverwoodStats{};
         RawEngineViewer::PhysicsWalkProbe riverwoodPhys{};
         RawEngineViewer::NavMeshSquadProbe riverwoodNav{};
+        RawEngineViewer::EcosystemProbe ecoProbe{};
         bool teleportedToWhiterun = false;
         for (uint32_t f = 0; f < opt.headlessFrames; ++f) {
-            if (f == 0u && opt.startEsm) {
-                riverwoodStats = viewer.GetTamrielStats();
-                riverwoodPhys = viewer.RunPhysicsWalkSelfTest();
-                riverwoodNav  = viewer.RunNavMeshSquadSelfTest();
+            if (f == 0u) {
+                ecoProbe = viewer.RunEcosystemSelfTest();
+                if (opt.startEsm) {
+                    riverwoodStats = viewer.GetTamrielStats();
+                    riverwoodPhys = viewer.RunPhysicsWalkSelfTest();
+                    riverwoodNav  = viewer.RunNavMeshSquadSelfTest();
+                }
             }
             if (f == opt.headlessFrames / 2u) {
                 if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {
@@ -2763,22 +3061,33 @@ int main(int argc, char** argv)
 
         RawEngineViewer::HeadlessAudit audit{};
         const bool rbOk = viewer.ReadbackHeadlessAudit(&audit);
-        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
+        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
                     audit.usedMeshShaders ? "AS+MS+PS" : "VS+PS",
                     audit.drawnMeshlets, audit.activeShards, audit.biomesFound,
                     audit.radianceActive ? "ON" : "off", audit.radianceGiMs,
                     audit.fireStepMs, audit.waterStepMs,
                     audit.xpbdActive ? "ON" : "off", audit.xpbdParticles, audit.xpbdStepMs,
                     audit.gpuCullActive ? "ON" : "off", audit.gpuCullInstances, audit.gpuHiZMips, audit.gpuHiZMs, audit.gpuCullMs,
+                    audit.lightClustersActive ? "ON" : "off", audit.lightClusterCount, audit.lightClusterBuildMs, audit.lightClusterAssignMs,
                     audit.overlayActive ? "ON" : "off", audit.overlayMs, audit.hudNonZeroPx,
                     audit.hdrLitPixels, audit.hdrNanInf,
                     audit.dispNonZeroPx, audit.dispMeanLuma, audit.dispStdDevLuma);
+        std::printf("       Ecosystem: ignited=%u activeFire=%u burned=%.1fm2 snow=%.1fm3 runoff=%.2fm3 ice=%u peakTemp=%.1fC finite=%d\n",
+                    ecoProbe.ignitedCells, ecoProbe.activeFireCells, ecoProbe.burnedAreaM2,
+                    ecoProbe.snowVolumeM3, ecoProbe.meltRunoffM3, ecoProbe.blackIceCells,
+                    ecoProbe.peakTempC, int(ecoProbe.allFinite));
         check(audit.xpbdActive && audit.xpbdParticles == 4096u && std::isfinite(audit.xpbdStepMs) && audit.xpbdStepMs >= 0.0f,
               "Live GPU XPBD soft-body/hair/bush solver (4,096 particles / 256 chains) stepped cleanly");
         check(audit.gpuCullActive && audit.gpuHiZMips > 1u &&
               std::isfinite(audit.gpuHiZMs) && audit.gpuHiZMs >= 0.0f &&
               std::isfinite(audit.gpuCullMs) && audit.gpuCullMs >= 0.0f,
               "Live GPU Hi-Z Pyramid + Instance Culler (RawGpuCullHost) ran cleanly with finite timings");
+        check(audit.lightClustersActive && audit.lightClusterCount > 0u &&
+              std::isfinite(audit.lightClusterBuildMs) && audit.lightClusterBuildMs >= 0.0f &&
+              std::isfinite(audit.lightClusterAssignMs) && audit.lightClusterAssignMs >= 0.0f,
+              "Live GPU 16x9x24 3D Clustered Light Grid (RawLightClusterHost) built & assigned cleanly");
+        check(ecoProbe.ignitedCells > 0u && ecoProbe.activeFireCells > 0u && ecoProbe.allFinite,
+              "Live Cellular Ecosystem (RawWorldEcosystem) ignited wildfire, stepped 10x with active fire & finite telemetry");
         check(audit.overlayActive && std::isfinite(audit.overlayMs) && audit.overlayMs >= 0.0f && audit.hudNonZeroPx > 500u,
               "Live GPU Telemetry & Sparkline HUD (RawOverlayHost) rendered cleanly onto LDR display buffer");
         if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {

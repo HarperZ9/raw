@@ -97,6 +97,13 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
                              std::isfinite(gpuCull->GetLastCullMs()))
         ? gpuCull->GetLastCullMs() : 0.0f;
     const uint32_t gpuCullInstances = gpuCullReady ? lastGpuCullInstances : 0u;
+    const float lightClusterBuildMs = (lightClustersReady && lightClusters && lightClusters->HasValidTiming() &&
+                                       std::isfinite(lightClusters->GetLastBuildMs()))
+        ? lightClusters->GetLastBuildMs() : 0.0f;
+    const float lightClusterAssignMs = (lightClustersReady && lightClusters && lightClusters->HasValidTiming() &&
+                                        std::isfinite(lightClusters->GetLastAssignMs()))
+        ? lightClusters->GetLastAssignMs() : 0.0f;
+    const uint32_t lightClusterLights = lightClustersReady ? lastClusterLightCount : 0u;
 
     char jsonBuf[2048]{};
     const int n = std::snprintf(
@@ -124,6 +131,9 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"gpuCullHiZMs\": %.4f,\n"
         "  \"gpuCullMs\": %.4f,\n"
         "  \"gpuCullInstances\": %u,\n"
+        "  \"lightClusterBuildMs\": %.4f,\n"
+        "  \"lightClusterAssignMs\": %.4f,\n"
+        "  \"lightClusterLights\": %u,\n"
         "  \"seasonSnowM\": %.4f,\n"
         "  \"seasonIceM\": %.4f,\n"
         "  \"skinTempC\": %.3f,\n"
@@ -153,6 +163,9 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         gpuCullHiZMs,
         gpuCullMs,
         gpuCullInstances,
+        lightClusterBuildMs,
+        lightClusterAssignMs,
+        lightClusterLights,
         seasonSnowM,
         seasonIceM,
         skinTempC,
@@ -630,6 +643,105 @@ bool D3D12Bridge::Impl::ExecuteOverlayHudOnQueue(bool isInterior)
     return true;
 }
 
+bool D3D12Bridge::Impl::ExecuteLightClustersOnQueue()
+{
+    if (!lightClustersReady || !lightClusters || !lightClusters->Ready() ||
+        !queue || !lightClusterList || !lightClusterFence || !lightClusterEvent) {
+        return false;
+    }
+
+    const uint32_t slot = lightClusterSlot;
+    if (lightClusterSlotVal[slot] > 0 && lightClusterFence->GetCompletedValue() < lightClusterSlotVal[slot]) {
+        lightClusterFence->SetEventOnCompletion(lightClusterSlotVal[slot], lightClusterEvent);
+        WaitForSingleObject(lightClusterEvent, 3000);
+    }
+    if (FAILED(lightClusterAlloc[slot]->Reset()) ||
+        FAILED(lightClusterList->Reset(lightClusterAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    // Build LH view-space projection parameters from live camera constants
+    const float aspect = (camera.valid && camera.aspect > 0.1f && std::isfinite(camera.aspect))
+        ? camera.aspect
+        : (static_cast<float>(std::max(cfg.width, 1u)) / static_cast<float>(std::max(cfg.height, 1u)));
+    const float fovY = (camera.valid && camera.tanHalfFovY > 0.05f && std::isfinite(camera.tanHalfFovY))
+        ? (2.0f * std::atan(camera.tanHalfFovY))
+        : 1.134464f; // 65 deg fallback
+    const float nearZ = (camera.valid && camera.nearZ > 0.1f && std::isfinite(camera.nearZ)) ? camera.nearZ : 15.0f;
+    const float farZ  = (camera.valid && camera.farZ > nearZ + 10.0f && std::isfinite(camera.farZ))
+        ? std::min(camera.farZ, 40000.0f) : 40000.0f;
+    const float zSign = (camera.valid && camera.proj[14] < 0.0f) ? -1.0f : 1.0f;
+
+    LightClusterViewParams vp{};
+    vp.nearZ = nearZ;
+    vp.farZ  = farZ;
+    BuildPerspectiveInvProjLH(fovY, aspect, nearZ, farZ, vp.invProj);
+
+    std::vector<GpuClusterLight> gpuLights;
+    const uint32_t srcCount = std::min(lighting.lightCount, std::min(kMaxSceneLights, RawLightClusterHost::kMaxLights));
+    gpuLights.reserve(srcCount);
+
+    for (uint32_t i = 0u; i < srcCount; ++i) {
+        const SceneLight& l = lighting.lights[i];
+        if (!std::isfinite(l.radius) || l.radius <= 1.0e-3f) continue;
+
+        float vx = l.position[0];
+        float vy = l.position[1];
+        float vz = l.position[2];
+        if (lighting.hasCamera) {
+            vx = lighting.worldToView[0][0] * l.position[0] + lighting.worldToView[0][1] * l.position[1] +
+                 lighting.worldToView[0][2] * l.position[2] + lighting.worldToView[0][3];
+            vy = lighting.worldToView[1][0] * l.position[0] + lighting.worldToView[1][1] * l.position[1] +
+                 lighting.worldToView[1][2] * l.position[2] + lighting.worldToView[1][3];
+            vz = (lighting.worldToView[2][0] * l.position[0] + lighting.worldToView[2][1] * l.position[1] +
+                  lighting.worldToView[2][2] * l.position[2] + lighting.worldToView[2][3]) * zSign;
+        }
+        if (!std::isfinite(vx) || !std::isfinite(vy) || !std::isfinite(vz)) continue;
+
+        GpuClusterLight gl{};
+        gl.posView[0]   = vx;
+        gl.posView[1]   = vy;
+        gl.posView[2]   = vz;
+        gl.radius       = l.radius;
+        gl.dirView[0]   = 0.0f;
+        gl.dirView[1]   = 0.0f;
+        gl.dirView[2]   = 1.0f;
+        gl.cosOuterCone = -1.0f;
+        gl.colorRgb[0]  = std::isfinite(l.colour[0]) ? std::max(0.0f, l.colour[0]) : 0.0f;
+        gl.colorRgb[1]  = std::isfinite(l.colour[1]) ? std::max(0.0f, l.colour[1]) : 0.0f;
+        gl.colorRgb[2]  = std::isfinite(l.colour[2]) ? std::max(0.0f, l.colour[2]) : 0.0f;
+
+        if (gl.colorRgb[0] > gl.colorRgb[1] * 1.25f && gl.colorRgb[0] > gl.colorRgb[2] * 2.0f) {
+            gl.typeFlags = kClusterLightFire;
+        } else if (gl.colorRgb[2] > gl.colorRgb[0] * 1.35f && gl.colorRgb[2] > 0.35f) {
+            gl.typeFlags = kClusterLightSpell;
+        } else {
+            gl.typeFlags = kClusterLightPoint;
+        }
+        gpuLights.push_back(gl);
+    }
+
+    lastClusterLightCount = static_cast<uint32_t>(gpuLights.size());
+    lightClusters->BuildAndAssign(lightClusterList.Get(),
+                                  gpuLights.empty() ? nullptr : gpuLights.data(),
+                                  lastClusterLightCount, vp);
+
+    if (FAILED(lightClusterList->Close())) return false;
+    ID3D12CommandList* lists[1] = {lightClusterList.Get()};
+    queue->ExecuteCommandLists(1, lists);
+    queue->Signal(lightClusterFence.Get(), ++lightClusterFenceVal);
+    lightClusterSlotVal[slot] = lightClusterFenceVal;
+    lightClusterSlot = (slot + 1u) % kRing;
+
+    if ((lightClusterFrames++ % 180ull) == 0ull) {
+        log("[LightClusters] live 16x9x24 grid: lights=%u, buildMs=%.4f, assignMs=%.4f",
+            lastClusterLightCount,
+            lightClusters->HasValidTiming() ? lightClusters->GetLastBuildMs() : 0.0f,
+            lightClusters->HasValidTiming() ? lightClusters->GetLastAssignMs() : 0.0f);
+    }
+    return true;
+}
+
 bool D3D12Bridge::Impl::ExecuteGpuCullOnQueue()
 {
     if (!gpuCullReady || !gpuCull || !gpuCull->Ready() || !queue || !cullList || !cullFence || !cullEvent ||
@@ -1023,8 +1135,10 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     const bool runXpbd = m->cfg.lightingPass && m->lighting.valid && m->xpbdSimReady && m->xpbdSim && m->xpbdSim->Ready();
     const bool runGpuCull = m->cfg.lightingPass && m->lighting.valid && m->gpuCullReady && m->gpuCull &&
                             m->gpuCull->Ready() && m->depthIn.res12 != nullptr;
+    const bool runLightClusters = m->cfg.lightingPass && m->lighting.valid && m->lightClustersReady &&
+                                  m->lightClusters && m->lightClusters->Ready();
     const bool runOverlay = m->overlayHudEnabled && m->overlayHostReady && m->overlayHost && m->overlayHost->Ready();
-    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runOverlay;
+    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runOverlay;
     auto runPostLightingPasses = [&]() -> bool {
         if (!hasPostWork) return true;
         if (runTerrain) {
@@ -1104,6 +1218,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         }
         if (runGpuCull) {
             m->ExecuteGpuCullOnQueue();
+        }
+        if (runLightClusters) {
+            m->ExecuteLightClustersOnQueue();
         }
         if (runOverlay) {
             m->ExecuteOverlayHudOnQueue(isInterior);

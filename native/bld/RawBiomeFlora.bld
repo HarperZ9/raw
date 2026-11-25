@@ -1,0 +1,127 @@
+// RawBiomeFlora.bld: RAW Engine Deterministic Biomechanics, Hydrology & Phenology Kernels in BuildLang 1.4.0.
+// Counterparts to RawFloraEngine.cpp, RawHydrologyGen.cpp, and RawWeatherSim.cpp:
+//   1. wind_deflection_m      - 4-tier Euler-Bernoulli cantilever wind tip deflection (meters)
+//   2. snow_branch_sag_m      - Winter canopy snow-load Euler-Bernoulli branch cantilever sag (meters)
+//   3. stream_power_erosion   - Hydraulic stream-power erosion rate E = K * Q^m * S^n
+//   4. autumn_phenology_blend - Seasonal chlorophyll-to-carotenoid/anthocyanin autumn foliage blend [0..1]
+//   5. phototropism_weight    - Botanical crown light-seeking phototropism weight [0..1]
+// Original work, MIT.
+
+fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
+}
+
+fn max_f64(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+fn smoothstep_01(x: f64) -> f64 {
+    let t: f64 = clamp_f64(x, 0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+// 1. 4-tier Euler-Bernoulli cantilever wind tip deflection (meters):
+//    delta = (q_wind * L^4) / (8 * E * I), where q_wind = 0.5 * rho_air * Cd * (2*r) * v^2, I = pi/4 * r^4.
+//    Tier compliance scales from trunk (tier 0) -> primary bough (1) -> secondary limb (2) -> twig (3).
+// Matches src/worldgen/RawFloraEngine.cpp cantilever wind-shear biomechanics.
+fn wind_deflection_m(wind_mps: f64, length_m: f64, radius_m: f64, young_gpa: f64, tier_0_to_3: i32) -> f64 {
+    let pi_val: f64 = 3.14159265358979323846;
+    let v: f64 = max_f64(wind_mps, 0.0);
+    let len: f64 = max_f64(length_m, 0.05);
+    let r: f64 = max_f64(radius_m, 0.005);
+    let e_pa: f64 = max_f64(young_gpa, 1.0) * 1.0e9;
+    let rho_air: f64 = 1.225;
+    let cd: f64 = 1.15;
+    // Distributed aerodynamic load per unit length (N/m):
+    let q_wind: f64 = 0.5 * rho_air * cd * (2.0 * r) * v * v;
+    let r2: f64 = r * r;
+    let inertia: f64 = 0.25 * pi_val * r2 * r2;
+    let l2: f64 = len * len;
+    let base_delta: f64 = (q_wind * l2 * l2) / max_f64(8.0 * e_pa * inertia, 1.0e-6);
+    let tier_scale: f64 = if tier_0_to_3 <= 0 {
+        1.0
+    } else if tier_0_to_3 == 1 {
+        1.35
+    } else if tier_0_to_3 == 2 {
+        1.75
+    } else {
+        2.20
+    };
+    clamp_f64(base_delta * tier_scale, 0.0, len * 0.45)
+}
+
+// 2. Winter snow-load branch cantilever sag (meters):
+//    delta_snow = (w_snow * L^4) / (8 * E * I), where w_snow = snow_kg_m2 * g * foliage_width_m.
+// Matches src/worldgen/RawFloraEngine.cpp winter canopy snow-load droop.
+fn snow_branch_sag_m(snow_load_kg_m2: f64, branch_len_m: f64, radius_m: f64, young_gpa: f64, foliage_width_m: f64) -> f64 {
+    let pi_val: f64 = 3.14159265358979323846;
+    let load: f64 = max_f64(snow_load_kg_m2, 0.0);
+    let len: f64 = max_f64(branch_len_m, 0.05);
+    let r: f64 = max_f64(radius_m, 0.005);
+    let width: f64 = max_f64(foliage_width_m, 0.05);
+    let e_pa: f64 = max_f64(young_gpa, 1.0) * 1.0e9;
+    let w_n_per_m: f64 = load * 9.80665 * width;
+    let r2: f64 = r * r;
+    let inertia: f64 = 0.25 * pi_val * r2 * r2;
+    let l2: f64 = len * len;
+    let sag: f64 = (w_n_per_m * l2 * l2) / max_f64(8.0 * e_pa * inertia, 1.0e-6);
+    clamp_f64(sag, 0.0, len * 0.50)
+}
+
+// 3. Hydraulic stream-power erosion rate (Whipple & Tucker law): E = K * Q^m * S^n.
+//    Standard alpine exponents: m = 0.5 (discharge), n = 1.0 (local terrain slope).
+// Matches src/worldgen/RawHydrologyGen.cpp hydraulic fluvial incision dynamics.
+fn stream_power_erosion(erodibility_k: f64, discharge_q: f64, slope_s: f64, m_exp: f64, n_exp: f64) -> f64 {
+    let k: f64 = max_f64(erodibility_k, 0.0);
+    let q: f64 = max_f64(discharge_q, 0.0);
+    let s: f64 = max_f64(slope_s, 0.0);
+    if q <= 1.0e-12 || s <= 1.0e-12 {
+        0.0
+    } else {
+        k * pow(q, clamp_f64(m_exp, 0.1, 2.0)) * pow(s, clamp_f64(n_exp, 0.1, 2.5))
+    }
+}
+
+// 4. Seasonal chlorophyll-to-carotenoid/anthocyanin autumn foliage blend [0..1].
+//    Returns 0.0 in deep summer (high chlorophyll), rising smoothly toward 1.0 in peak autumn
+//    as photoperiod shortens (< 11.5 hrs) and night temperatures drop toward freezing (< 9 C).
+// Matches src/worldgen/RawWeatherSim.cpp phenology0 carotenoid/anthocyanin senescence kinetics.
+fn autumn_phenology_blend(day_of_year: f64, day_length_hr: f64, temp_c: f64) -> f64 {
+    let doy_gate: f64 = smoothstep_01((day_of_year - 235.0) / 38.0) * (1.0 - smoothstep_01((day_of_year - 325.0) / 28.0));
+    let photo_trigger: f64 = smoothstep_01((12.2 - day_length_hr) / 3.8);
+    let chill_trigger: f64 = smoothstep_01((11.0 - temp_c) / 10.0);
+    clamp_f64(doy_gate * (0.58 * photo_trigger + 0.42 * chill_trigger), 0.0, 1.0)
+}
+
+// 5. Botanical phototropism crown light-seeking weight [0..1]:
+//    Suppresses shaded lower limbs while prioritizing sunlit upper canopy tips aligned with solar sky.
+// Matches src/worldgen/RawFloraEngine.cpp Runions/Prusinkiewicz phototropism growth bias.
+fn phototropism_weight(height_frac01: f64, canopy_occlusion01: f64, sun_dot: f64) -> f64 {
+    let h: f64 = clamp_f64(height_frac01, 0.0, 1.0);
+    let sunlit: f64 = 1.0 - clamp_f64(canopy_occlusion01, 0.0, 1.0);
+    let align: f64 = clamp_f64(0.35 + 0.65 * clamp_f64(sun_dot, 0.0, 1.0), 0.0, 1.0);
+    clamp_f64((0.25 + 0.75 * smoothstep_01(h)) * sunlit * align, 0.0, 1.0)
+}
+
+fn main() ~ Console {
+    let wd_trunk: f64 = wind_deflection_m(18.0, 12.0, 0.25, 11.0, 0);
+    let wd_bough: f64 = wind_deflection_m(18.0, 3.2, 0.055, 9.5, 1);
+    let sag_snow: f64 = snow_branch_sag_m(32.0, 2.8, 0.048, 9.0, 0.65);
+    let erode: f64 = stream_power_erosion(0.015, 4.0, 0.35, 0.5, 1.0);
+    let aut_summer: f64 = autumn_phenology_blend(185.0, 17.5, 19.0);
+    let aut_oct: f64 = autumn_phenology_blend(288.0, 9.8, 3.5);
+    let photo_top: f64 = phototropism_weight(0.92, 0.10, 0.88);
+    let photo_shade: f64 = phototropism_weight(0.18, 0.85, 0.20);
+
+    println!("wind_deflection_m(trunk 18m/s) = {} | (bough 18m/s) = {}", wd_trunk, wd_bough);
+    println!("snow_branch_sag_m(32kg/m2, 2.8m) = {}", sag_snow);
+    println!("stream_power_erosion(K=0.015, Q=4, S=0.35) = {}", erode);
+    println!("autumn_phenology_blend(summer) = {} | (october) = {}", aut_summer, aut_oct);
+    println!("phototropism_weight(top) = {} | (shaded) = {}", photo_top, photo_shade);
+}

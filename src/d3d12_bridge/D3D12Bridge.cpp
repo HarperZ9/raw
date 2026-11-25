@@ -300,7 +300,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         const bool xpbdOk = m->InitXpbdSim();
         const bool overlayOk = m->InitOverlayHost();
         const bool cullOk = m->InitGpuCull();
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s",
+        const bool clusterOk = m->InitLightClusters();
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
                terrainOk ? "READY" : "off",
                m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
@@ -311,7 +312,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                radOk ? "READY" : "off",
                xpbdOk ? "READY" : "off",
                overlayOk ? "READY(OFF)" : "off",
-               cullOk ? "READY" : "off");
+               cullOk ? "READY" : "off",
+               clusterOk ? "READY" : "off");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
         {
             const auto& matReg = raw::materials::DefaultMaterialRegistry();
@@ -794,6 +796,74 @@ void D3D12Bridge::Impl::ShutdownGpuCull()
     gpuCullReady         = false;
 }
 
+bool D3D12Bridge::Impl::InitLightClusters()
+{
+    ShutdownLightClusters();
+    if (!dev12) return false;
+    lightClusters = std::make_unique<RawLightClusterHost>();
+    LightClusterDesc desc{};
+    desc.maxLights = RawLightClusterHost::kMaxLights;
+    std::string lcErr;
+    if (!lightClusters->Init(dev12.Get(), desc, &lcErr)) {
+        log("[LightClusters] off: %s", lcErr.c_str());
+        lightClusters.reset();
+        return false;
+    }
+    UINT64 tsFreq = 0;
+    if (queue && SUCCEEDED(queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+        lightClusters->SetTimestampFrequency(tsFreq);
+    }
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&lightClusterAlloc[i])))) {
+            ShutdownLightClusters();
+            return false;
+        }
+    }
+    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, lightClusterAlloc[0].Get(), nullptr, IID_PPV_ARGS(&lightClusterList))) ||
+        FAILED(lightClusterList->Close()) ||
+        FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&lightClusterFence)))) {
+        ShutdownLightClusters();
+        return false;
+    }
+    lightClusterEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!lightClusterEvent) {
+        ShutdownLightClusters();
+        return false;
+    }
+    lightClustersReady = true;
+    log("[LightClusters] GPU 16x9x24 (3,456-cluster) 1,024-light grid ready");
+    return true;
+}
+
+void D3D12Bridge::Impl::ShutdownLightClusters()
+{
+    if (lightClusterFence && lightClusterEvent && lightClusterFenceVal > 0) {
+        if (lightClusterFence->GetCompletedValue() < lightClusterFenceVal) {
+            lightClusterFence->SetEventOnCompletion(lightClusterFenceVal, lightClusterEvent);
+            WaitForSingleObject(lightClusterEvent, 3000);
+        }
+    }
+    lightClusterList.Reset();
+    for (UINT i = 0; i < kRing; ++i) {
+        lightClusterAlloc[i].Reset();
+        lightClusterSlotVal[i] = 0;
+    }
+    lightClusterFence.Reset();
+    if (lightClusterEvent) {
+        CloseHandle(lightClusterEvent);
+        lightClusterEvent = nullptr;
+    }
+    if (lightClusters) {
+        lightClusters->Shutdown();
+        lightClusters.reset();
+    }
+    lightClusterFenceVal = 0;
+    lightClusterSlot = 0;
+    lightClusterFrames = 0;
+    lastClusterLightCount = 0;
+    lightClustersReady = false;
+}
+
 void D3D12Bridge::Shutdown()
 {
     if (!m) return;
@@ -802,6 +872,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->ShutdownLightClusters();
     m->ShutdownGpuCull();
     m->ShutdownOverlayHost();
     m->ShutdownXpbdSim();

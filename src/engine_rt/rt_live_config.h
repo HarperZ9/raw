@@ -33,8 +33,9 @@ struct LiveEngineConfig {
     bool  thermalSurvivalEnabled = true;
 
     // [Audio]
-    bool  liveAudioAmbience      = false;   // Opt-in live 48kHz WASAPI FDN-8 ambient soundscape (0/1, default 0)
-    float liveAudioGain          = 0.22f;   // [0.0 .. 0.50] master ambient gain
+    bool  liveAudioAmbience       = false;  // Opt-in live 48kHz WASAPI FDN-8 ambient soundscape (0/1, default 0)
+    float liveAudioGain           = 0.22f;  // [0.0 .. 0.50] master ambient gain
+    bool  adaptiveAudioDirector   = true;   // Hysteresis-smoothed 8-mood acoustic & soundscape director (0/1, default 1)
 
     // [Stability]
     bool  savePapyrusGuardEnabled = true;   // .ESS save-file health auditor & Papyrus frame-hitch watchdog (0/1, default 1)
@@ -172,6 +173,14 @@ struct LiveStatusDumpData {
     uint16_t modOutOfOrderMasters   = 0u;
     uint16_t modCorruptHeaders      = 0u;
     uint16_t modOversizedEsls       = 0u;
+
+    // Adaptive Audio Director
+    uint8_t  audioDirectorMood      = 0u;
+    uint8_t  audioDirectorStinger   = 0u;
+    float    audioDirectorLpfHz     = 18000.0f;
+    float    audioDirectorReverbWet = 1.0f;
+    float    audioDirectorDuckGain  = 1.0f;
+    uint32_t audioDirectorSwitches  = 0u;
 };
 
 std::string FormatLiveStatusDump(const LiveStatusDumpData& d);

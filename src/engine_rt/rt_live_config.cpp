@@ -18,6 +18,7 @@
 #include <windows.h>
 
 #ifndef RAW_SIM_PURE_TEST
+#include "rt_adaptive_audio_director.h"
 #include "rt_combat_ai.h"
 #include "rt_combat_impact.h"
 #include "rt_economy_ledger.h"
@@ -192,7 +193,9 @@ std::string FormatDefaultLiveConfigIni(const LiveEngineConfig& inCfg) {
        << "; Opt-in live 48kHz WASAPI FDN-8 ambient weather/fire/water soundscape (0/1, default 0)\n"
        << "LiveAudioAmbience=" << (c.liveAudioAmbience ? 1 : 0) << "\n"
        << "; Master gain for live procedural ambience (0.00..0.50, default 0.22)\n"
-       << "LiveAudioGain=" << fmtF(c.liveAudioGain, 2) << "\n\n"
+       << "LiveAudioGain=" << fmtF(c.liveAudioGain, 2) << "\n"
+       << "; Enable/disable hysteresis-smoothed 8-mood adaptive acoustic director (0/1, default 1)\n"
+       << "AdaptiveAudioDirector=" << (c.adaptiveAudioDirector ? 1 : 0) << "\n\n"
        << "[Stability]\n"
        << "; Enable/disable .ESS save-file health auditor & Papyrus frame-hitch watchdog (0/1, default 1)\n"
        << "SavePapyrusGuard=" << (c.savePapyrusGuardEnabled ? 1 : 0) << "\n"
@@ -272,8 +275,9 @@ bool ParseLiveConfigIni(const std::string& iniText, LiveEngineConfig& outCfg) {
             else if (key == "thermalsurvivalenabled" && ParseBoolVal(val, b)) cfg.thermalSurvivalEnabled = b;
         }
         if (section.empty() || section == "audio") {
-            if (key == "liveaudioambience" && ParseBoolVal(val, b))       cfg.liveAudioAmbience = b;
-            else if (key == "liveaudiogain" && ParseFloatVal(val, f))     cfg.liveAudioGain = f;
+            if (key == "liveaudioambience" && ParseBoolVal(val, b))          cfg.liveAudioAmbience = b;
+            else if (key == "liveaudiogain" && ParseFloatVal(val, f))        cfg.liveAudioGain = f;
+            else if (key == "adaptiveaudiodirector" && ParseBoolVal(val, b)) cfg.adaptiveAudioDirector = b;
         }
         if (section.empty() || section == "stability") {
             if (key == "savepapyrusguard" && ParseBoolVal(val, b))        cfg.savePapyrusGuardEnabled = b;
@@ -404,8 +408,9 @@ std::string FormatLiveStatusDump(const LiveStatusDumpData& d) {
                   d.config.weatherStealthEnabled ? 1u : 0u, d.config.thermalSurvivalEnabled ? 1u : 0u);
     os << buf;
     std::snprintf(buf, sizeof buf,
-                  "  Audio   : LiveAmbience=%u LiveGain=%.2f | Stability: SaveGuard=%u ModAudit=%u | WorldAI: DynamicNpc=%u\n\n",
+                  "  Audio   : LiveAmbience=%u LiveGain=%.2f Director=%u | Stability: SaveGuard=%u ModAudit=%u | WorldAI: DynamicNpc=%u\n\n",
                   d.config.liveAudioAmbience ? 1u : 0u, d.config.liveAudioGain,
+                  d.config.adaptiveAudioDirector ? 1u : 0u,
                   d.config.savePapyrusGuardEnabled ? 1u : 0u,
                   d.config.modLoadAuditEnabled ? 1u : 0u,
                   d.config.dynamicNpcBehaviorEnabled ? 1u : 0u);
@@ -479,10 +484,18 @@ std::string FormatLiveStatusDump(const LiveStatusDumpData& d) {
 
     os << "[Mod Load-Order Integrity Audit]\n";
     std::snprintf(buf, sizeof buf,
-                  "  ModAudit=%u Severity=%u Full=%u/254 LightESL=%u/4096 MissingMast=%u OutOfOrder=%u Corrupt=%u OversizedESL=%u\n",
+                  "  ModAudit=%u Severity=%u Full=%u/254 LightESL=%u/4096 MissingMast=%u OutOfOrder=%u Corrupt=%u OversizedESL=%u\n\n",
                   d.config.modLoadAuditEnabled ? 1u : 0u, d.modAuditSeverity,
                   d.modFullPlugins, d.modLightEsls, d.modMissingMasters,
                   d.modOutOfOrderMasters, d.modCorruptHeaders, d.modOversizedEsls);
+    os << buf;
+
+    os << "[Adaptive Audio Director]\n";
+    std::snprintf(buf, sizeof buf,
+                  "  Director=%u Mood=%u Lpf=%.0fHz ReverbWet=%.2fx Duck=%.2f Stinger=%u Transitions=%u\n",
+                  d.config.adaptiveAudioDirector ? 1u : 0u, d.audioDirectorMood,
+                  d.audioDirectorLpfHz, d.audioDirectorReverbWet, d.audioDirectorDuckGain,
+                  d.audioDirectorStinger, d.audioDirectorSwitches);
     os << buf;
     return os.str();
 }
@@ -713,6 +726,16 @@ bool LiveConfigWriteStatusDump(std::string* outPathWritten) {
         d.modOutOfOrderMasters = mas.outOfOrderMasterCount;
         d.modCorruptHeaders    = mas.corruptHeaderCount;
         d.modOversizedEsls     = mas.oversizedEslCount;
+    }
+
+    RawAudioDirectorState ads{};
+    if (RAW_GetAudioDirectorState(&ads)) {
+        d.audioDirectorMood      = ads.activeMood;
+        d.audioDirectorStinger   = ads.stingerPending;
+        d.audioDirectorLpfHz     = ads.lpfCutoffHz;
+        d.audioDirectorReverbWet = ads.reverbWetMult;
+        d.audioDirectorDuckGain  = ads.dialogueDuckGain;
+        d.audioDirectorSwitches  = ads.transitionCount;
     }
 
     const bool ok = WriteLiveStatusDumpToFile(outPath, d);

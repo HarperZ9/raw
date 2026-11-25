@@ -11,6 +11,7 @@
 #include "RawXpbdSimHost.h"
 #include "RawOverlayHost.h"
 #include "RawGpuCullHost.h"
+#include "RawLightClusterHost.h"
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
@@ -80,6 +81,7 @@ struct D3D12Bridge::Impl
     std::unique_ptr<RawXpbdSimHost> xpbdSim; // Live GPU XPBD soft-body/hair/cloth/bush-bone solver
     std::unique_ptr<RawOverlayHost> overlayHost; // Opt-in F9 <0.02ms GPU Compute Telemetry & Sparkline HUD
     std::unique_ptr<RawGpuCullHost> gpuCull;     // Live GPU Hi-Z Pyramid + Frustum/Occlusion/Distance Culler
+    std::unique_ptr<RawLightClusterHost> lightClusters; // Live GPU 16x9x24 (3,456-cluster) 1,024-light grid
     bool                     fluidReady = false;
     bool                     radianceReady = false;
     bool                     xpbdSimReady = false;
@@ -88,6 +90,7 @@ struct D3D12Bridge::Impl
     bool                     overlayHudEnabled = false; // Strictly OFF by default (zero viewport clutter; F9 toggles)
     bool                     overlayPrevF9Down = false;
     bool                     gpuCullReady = false;
+    bool                     lightClustersReady = false;
     ComPtr<ID3D12CommandAllocator>    fluidAlloc[kRing];
     ComPtr<ID3D12GraphicsCommandList> fluidList;
     ComPtr<ID3D12Fence>               fluidFence;
@@ -143,6 +146,15 @@ struct D3D12Bridge::Impl
     int64_t                           lastFrameQpc = 0;
     int64_t                           qpcFreq = 0;
     float                             lastFrameMs = 0.0f;
+    ComPtr<ID3D12CommandAllocator>    lightClusterAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList> lightClusterList;
+    ComPtr<ID3D12Fence>               lightClusterFence;
+    HANDLE                            lightClusterEvent = nullptr;
+    uint64_t                          lightClusterFenceVal = 0;
+    uint64_t                          lightClusterSlotVal[kRing] = {};
+    uint32_t                          lightClusterSlot = 0;
+    uint64_t                          lightClusterFrames = 0;
+    uint32_t                          lastClusterLightCount = 0;
     std::string                       telemetryOutDir;
     bool InitFluidSim();
     void ShutdownFluidSim();
@@ -156,6 +168,9 @@ struct D3D12Bridge::Impl
     bool InitGpuCull();
     void ShutdownGpuCull();
     bool ExecuteGpuCullOnQueue();
+    bool InitLightClusters();
+    void ShutdownLightClusters();
+    bool ExecuteLightClustersOnQueue();
     bool InitOverlayHost();
     void ShutdownOverlayHost();
     void PollOverlayHotkey();

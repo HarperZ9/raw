@@ -19,6 +19,7 @@
 #include "../src/worldgen/RawEsmNpcWeatherLoader.h"
 #include "../src/worldgen/RawNavMeshAi.h"
 #include "../src/worldgen/RawTamrielWorldStreamer.h"
+#include "../src/worldgen/RawWorldEcosystem.h"
 #include "../src/worldgen/RawWorldPhysics.h"
 
 #include <chrono>
@@ -536,6 +537,204 @@ bool RunNavMeshAudit(const std::string& esmPath, const std::string& explicitBsa,
     return ok;
 }
 
+bool RunEcosystemSimAudit() {
+    const auto t0 = std::chrono::steady_clock::now();
+
+    // 1. Downwind & Upslope Wildfire Spread (eastReach > westReach)
+    int32_t maxEastReach = 0;
+    int32_t maxWestReach = 0;
+    float   fireBurnedM2 = 0.0f;
+    float   firePeakTempC = 0.0f;
+    bool    fireOk = false;
+    {
+        raw::worldgen::EcoGridConfig cfg{};
+        cfg.gridW     = 64u;
+        cfg.gridH     = 64u;
+        cfg.cellSizeM = 2.0f;
+        raw::worldgen::RawWorldEcosystem eco(cfg);
+        for (uint32_t y = 0u; y < 64u; ++y) {
+            for (uint32_t x = 0u; x < 64u; ++x) {
+                auto* c = eco.CellAt(x, y);
+                c->elevationM = static_cast<float>(x) * 0.45f;
+                c->fuelLoad01 = 0.85f;
+                c->moisture01 = 0.12f;
+            }
+        }
+        const uint32_t ox = 22u, oy = 32u;
+        const auto pos = eco.CellCenterWorldM(ox, oy);
+        const uint32_t ign = eco.IgniteAt(pos.x, pos.y, 3.0f, 550.0f);
+
+        raw::worldgen::EcoWeatherInput gale{};
+        gale.ambientTempC      = 24.0f;
+        gale.windDirX          = 1.0f;
+        gale.windDirY          = 0.0f;
+        gale.windBeaufort      = 7.0f;
+        gale.solarInsolation01 = 0.85f;
+        for (int s = 0; s < 60; ++s) {
+            eco.Step(0.25f, gale);
+        }
+        for (uint32_t y = 0u; y < 64u; ++y) {
+            for (uint32_t x = 0u; x < 64u; ++x) {
+                const auto* c = eco.CellAt(x, y);
+                if (c->char01 > 0.10f || c->fireIntensity01 > 0.10f) {
+                    const int32_t dx = static_cast<int32_t>(x) - static_cast<int32_t>(ox);
+                    if (dx > maxEastReach) maxEastReach = dx;
+                    if (-dx > maxWestReach) maxWestReach = -dx;
+                }
+            }
+        }
+        const auto tel = eco.ComputeTelemetry();
+        fireBurnedM2  = tel.burnedAreaM2;
+        firePeakTempC = tel.peakTempC;
+        fireOk = (ign >= 1u) && (maxEastReach > maxWestReach) && (maxEastReach >= 6) &&
+                 (fireBurnedM2 > 60.0f) && (firePeakTempC > 400.0f);
+    }
+
+    // 2. Heavy Rain Wildfire Suppression (activeFire -> 0, steamFlux > 0)
+    uint32_t rainFireBefore = 0u;
+    uint32_t rainFireAfter  = 0u;
+    float    rainPeakSteam  = 0.0f;
+    bool     rainOk         = false;
+    {
+        raw::worldgen::EcoGridConfig cfg{};
+        cfg.gridW     = 32u;
+        cfg.gridH     = 32u;
+        cfg.cellSizeM = 2.0f;
+        raw::worldgen::RawWorldEcosystem eco(cfg);
+        const auto ctr = eco.CellCenterWorldM(16u, 16u);
+        eco.IgniteAt(ctr.x, ctr.y, 5.0f, 600.0f);
+
+        raw::worldgen::EcoWeatherInput dry{};
+        dry.ambientTempC = 20.0f;
+        dry.windBeaufort = 3.0f;
+        for (int s = 0; s < 10; ++s) eco.Step(0.25f, dry);
+        rainFireBefore = eco.ComputeTelemetry().activeFireCells;
+
+        raw::worldgen::EcoWeatherInput storm{};
+        storm.ambientTempC      = 9.0f;
+        storm.windBeaufort      = 4.0f;
+        storm.rainRate01        = 0.90f;
+        storm.solarInsolation01 = 0.10f;
+        for (int s = 0; s < 40; ++s) {
+            eco.Step(0.25f, storm);
+            rainPeakSteam = std::max(rainPeakSteam, eco.ComputeTelemetry().steamFlux);
+        }
+        rainFireAfter = eco.ComputeTelemetry().activeFireCells;
+        rainOk = (rainFireBefore >= 4u) && (rainFireAfter == 0u) && (rainPeakSteam > 1.0f);
+    }
+
+    // 3. Snowmelt D8 Downhill Runoff (exact water mass conservation) + Sub-Zero -8 C Night Black-Ice Refreeze
+    float    snowVolBefore    = 0.0f;
+    float    snowVolAfter     = 0.0f;
+    float    downhillWaterM3  = 0.0f;
+    float    waterMassErrRel  = 1.0f;
+    float    peakBlackIce     = 0.0f;
+    uint32_t blackIceCells    = 0u;
+    bool     hydroIceOk       = false;
+    {
+        raw::worldgen::EcoGridConfig cfg{};
+        cfg.gridW     = 32u;
+        cfg.gridH     = 32u;
+        cfg.cellSizeM = 2.0f;
+        raw::worldgen::RawWorldEcosystem eco(cfg);
+        for (uint32_t y = 0u; y < 32u; ++y) {
+            for (uint32_t x = 0u; x < 32u; ++x) {
+                auto* c = eco.CellAt(x, y);
+                c->elevationM   = static_cast<float>(x) * 0.9f;
+                c->surfaceTempC = -1.0f;
+                c->fuelLoad01   = 0.70f;
+                c->moisture01   = 0.18f;
+                if (x >= 18u && x <= 26u && y >= 10u && y <= 22u) {
+                    c->snowDepthM = 0.35f;
+                }
+            }
+        }
+        const auto initTel = eco.ComputeTelemetry();
+        snowVolBefore = initTel.totalSnowVolumeM3;
+        const float initWaterMassM3 = initTel.totalWaterMassM3;
+
+        const auto brushPos = eco.CellCenterWorldM(28u, 16u);
+        eco.IgniteAt(brushPos.x, brushPos.y, 4.0f, 600.0f);
+
+        raw::worldgen::EcoWeatherInput springMelt{};
+        springMelt.ambientTempC      = 9.0f;
+        springMelt.windDirX          = -1.0f;
+        springMelt.windBeaufort      = 4.0f;
+        springMelt.solarInsolation01 = 0.80f;
+        for (int s = 0; s < 60; ++s) eco.Step(0.25f, springMelt);
+
+        const auto meltTel = eco.ComputeTelemetry();
+        snowVolAfter = meltTel.totalSnowVolumeM3;
+        waterMassErrRel = std::fabs(meltTel.totalWaterMassM3 - initWaterMassM3) /
+                          std::max(1.0e-4f, initWaterMassM3);
+        for (uint32_t y = 8u; y <= 24u; ++y) {
+            for (uint32_t x = 0u; x < 18u; ++x) {
+                downhillWaterM3 += eco.CellAt(x, y)->meltWaterM * (cfg.cellSizeM * cfg.cellSizeM);
+            }
+        }
+
+        raw::worldgen::EcoWeatherInput freezeNight{};
+        freezeNight.ambientTempC      = -8.0f;
+        freezeNight.windBeaufort      = 2.0f;
+        freezeNight.solarInsolation01 = 0.0f;
+        for (int s = 0; s < 120; ++s) eco.Step(0.25f, freezeNight);
+
+        for (uint32_t y = 8u; y <= 24u; ++y) {
+            for (uint32_t x = 0u; x < 18u; ++x) {
+                peakBlackIce = std::max(peakBlackIce, eco.CellAt(x, y)->blackIce01);
+            }
+        }
+        blackIceCells = eco.ComputeTelemetry().blackIceCells;
+        hydroIceOk = (snowVolAfter < snowVolBefore * 0.90f) && (downhillWaterM3 > 0.5f) &&
+                     (waterMassErrRel < 1.0e-4f) && (peakBlackIce > 0.50f) && (blackIceCells >= 10u);
+    }
+
+    // 4. 90-Day Spring Biomass Regrowth (fuel recovery & char decay)
+    float fuelBefore = 0.0f, fuelAfter = 0.0f;
+    float charBefore = 0.0f, charAfter = 0.0f;
+    bool  regrowthOk = false;
+    {
+        raw::worldgen::EcoGridConfig cfg{};
+        cfg.gridW     = 16u;
+        cfg.gridH     = 16u;
+        cfg.cellSizeM = 2.0f;
+        raw::worldgen::RawWorldEcosystem eco(cfg);
+        for (uint32_t y = 0u; y < 16u; ++y) {
+            for (uint32_t x = 0u; x < 16u; ++x) {
+                auto* c = eco.CellAt(x, y);
+                c->fuelLoad01 = 0.05f;
+                c->char01     = 0.95f;
+                c->moisture01 = 0.05f;
+            }
+        }
+        fuelBefore = eco.CellAt(8u, 8u)->fuelLoad01;
+        charBefore = eco.CellAt(8u, 8u)->char01;
+        eco.AdvanceSeasonDays(90.0f);
+        fuelAfter = eco.CellAt(8u, 8u)->fuelLoad01;
+        charAfter = eco.CellAt(8u, 8u)->char01;
+        regrowthOk = (fuelAfter > fuelBefore + 0.45f) && (charAfter < charBefore * 0.25f);
+    }
+
+    const double elapsedMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    const bool ok = fireOk && rainOk && hydroIceOk && regrowthOk;
+
+    std::printf(
+        "[INFO] Ecosystem Coupled Simulation Audit (%.2f ms):\n"
+        "  1. Wildfire Spread     : eastReach=%d > westReach=%d cells | burned=%.1f m2 | peakTemp=%.1f C [%s]\n"
+        "  2. Rain Suppression    : activeFire %u -> %u | peakSteamFlux=%.1f [%s]\n"
+        "  3. Snowmelt->BlackIce  : snow %.1f->%.1f m3 | downhill=%.2f m3 | massErr=%.2e | -8C blackIce=%.2f (%u cells) [%s]\n"
+        "  4. 90-Day Regrowth     : fuel %.2f -> %.2f | char %.2f -> %.2f [%s]\n"
+        "[%s] ecosystem-sim: wildfire/rain/snowmelt-D8/black-ice/regrowth audit %s (%.2f ms)\n",
+        elapsedMs,
+        maxEastReach, maxWestReach, fireBurnedM2, firePeakTempC, fireOk ? "PASS" : "FAIL",
+        rainFireBefore, rainFireAfter, rainPeakSteam, rainOk ? "PASS" : "FAIL",
+        snowVolBefore, snowVolAfter, downhillWaterM3, waterMassErrRel, peakBlackIce, blackIceCells, hydroIceOk ? "PASS" : "FAIL",
+        fuelBefore, fuelAfter, charBefore, charAfter, regrowthOk ? "PASS" : "FAIL",
+        ok ? "PASS" : "FAIL", ok ? "PASS" : "FAIL", elapsedMs);
+    return ok;
+}
+
 bool ParseCellXY(const std::string& s, int32_t* outX, int32_t* outY) {
     const size_t comma = s.find(',');
     if (comma == std::string::npos || comma == 0u || comma + 1u >= s.size()) return false;
@@ -571,6 +770,7 @@ void PrintUsage() {
         "  raw_forge_cli --physics-probe [Skyrim.esm] [cx cy]      SAH BVH + 64-ray scan + 60-step capsule walk audit\n"
         "  raw_forge_cli --tamriel-stream [Skyrim.esm]             3-landmark Tamriel multi-cell streaming & LRU audit\n"
         "  raw_forge_cli --navmesh-audit [Skyrim.esm] [cx cy]      NavMesh bake + A* funnel + 4-agent squad AI audit\n"
+        "  raw_forge_cli --ecosystem-sim                           Coupled wildfire/rain/snowmelt-D8/black-ice/regrowth audit\n"
         "  raw_forge_cli --validate-all [dir]                      Run all 4 procedural pipelines + quality gates\n"
         "Options:\n"
         "  --seed <N>         Deterministic RNG seed (default: 202607)\n"
@@ -626,6 +826,7 @@ int main(int argc, char** argv) {
     int32_t navCellX        = 4;
     int32_t navCellY        = -12;
     bool hasNavCellArg      = false;
+    bool runEcosystemSim    = false;
     bool writeGeometry      = true;
     uint32_t seed       = 202607u;
     float latitudeDeg   = 60.0f;
@@ -774,6 +975,8 @@ int main(int argc, char** argv) {
                     }
                 }
             }
+        } else if (arg == "--ecosystem-sim") {
+            runEcosystemSim = true;
         } else if (arg == "--validate-all") {
             runValidateAll = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -799,10 +1002,11 @@ int main(int argc, char** argv) {
     }
 
     if (!runValidateAll && !runEsmMeta && !runPhysicsProbe && !runTamrielStream && !runNavMeshAudit &&
+        !runEcosystemSim &&
         floraDir.empty() && dioramaDir.empty() && almanacDir.empty() &&
         materialsDir.empty() && texturesDir.empty() && esmPath.empty() && esmScenePath.empty() &&
         bsaListPath.empty() && nifPath.empty() && bsaNifArchive.empty() && ddsPath.empty() && bsaDdsArchive.empty()) {
-        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, or --validate-all).\n");
+        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, or --validate-all).\n");
         PrintUsage();
         return 2;
     }
@@ -911,6 +1115,10 @@ int main(int argc, char** argv) {
         const int32_t cx = (!hasNavCellArg && hasEsmCell) ? esmCellX : navCellX;
         const int32_t cy = (!hasNavCellArg && hasEsmCell) ? esmCellY : navCellY;
         if (!RunNavMeshAudit(navEsmPath, esmSceneBsa, cx, cy, maxModels)) allOk = false;
+    }
+
+    if (runEcosystemSim) {
+        if (!RunEcosystemSimAudit()) allOk = false;
     }
 
     if (runValidateAll) {

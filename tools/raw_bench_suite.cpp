@@ -1,5 +1,5 @@
 // tools/raw_bench_suite.cpp: Studio-Grade Automated GPU/CPU Benchmark & Visual Invariant Suite for RAW.
-// Benchmarks all 9 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
+// Benchmarks all 10 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
 //   1. GPU 64^3 Navier-Stokes Fire/Smoke + 256^2 SWE Water (RawFluidSimHost)
 //   2. GPU 4-Cascade Radiance Cascades GI (RawRadianceHost)
 //   3. Procedural PBR Texture Forge (RawTextureForge, all 8 seamless PBR sets)
@@ -9,6 +9,7 @@
 //   7. Multi-Cell Tamriel Streaming (RawTamrielWorldStreamer, graceful skip if Skyrim.esm absent)
 //   8. GPU XPBD Soft-Body / Hair / Cloth / Bush-Bone Solver (RawXpbdSimHost, 256 chains / 4,096 particles)
 //   9. GPU Conservative Hi-Z Pyramid + 16,384-Instance Frustum/Occlusion Culler (RawGpuCullHost)
+//  10. GPU 16x9x24 3D Clustered 1,024-Light Grid Assignment (RawLightClusterHost)
 //
 // CLI:
 //   raw_bench_suite [--warp] [--quick] [--frames N] [--json <path>] [--esm <path>] [--bsa <path>] [--no-debug-layer]
@@ -30,6 +31,7 @@
 #include "../src/d3d12_bridge/RawRadianceHost.h"
 #include "../src/d3d12_bridge/RawXpbdSimHost.h"
 #include "../src/d3d12_bridge/RawGpuCullHost.h"
+#include "../src/d3d12_bridge/RawLightClusterHost.h"
 #include "../src/materials/RawTextureForge.h"
 #include "../src/audio/RawAudioDsp.h"
 #include "../src/worldgen/RawDestructionEngine.h"
@@ -841,6 +843,24 @@ struct GpuCullBenchResult {
     uint32_t    falseOcclusionCount = 0u;
     float       hostHiZMs           = 0.0f;
     float       hostCullMs          = 0.0f;
+    std::string note;
+};
+
+struct LightClusterBenchResult {
+    bool        passed           = false;
+    Percentiles buildGpuMs{};
+    Percentiles assignGpuMs{};
+    Percentiles combinedGpuMs{};
+    Percentiles cpuRecordMs{};
+    uint32_t    clusterCount     = raw::bridge::RawLightClusterHost::kTotalClusters;
+    uint32_t    lightCount       = 1024u;
+    uint32_t    nonEmptyClusters = 0u;
+    uint32_t    maxLightsCluster = 0u;
+    uint32_t    totalLightLinks  = 0u;
+    uint32_t    overflowErrors   = 0u;
+    uint32_t    nanAabbCount     = 0u;
+    float       hostBuildMs      = 0.0f;
+    float       hostAssignMs     = 0.0f;
     std::string note;
 };
 
@@ -1891,6 +1911,156 @@ GpuCullBenchResult RunGpuCullBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames,
 }
 
 // ----------------------------------------------------------------------------
+// 10. GPU 16x9x24 3D Clustered 1,024-Light Grid (RawLightClusterHost)
+// ----------------------------------------------------------------------------
+LightClusterBenchResult RunLightClusterBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames, uint32_t measuredFrames)
+{
+    LightClusterBenchResult res{};
+    raw::bridge::RawLightClusterHost host;
+    raw::bridge::LightClusterDesc desc{};
+    desc.maxLights = 1024u;
+    std::string err;
+    if (!host.Init(rig.dev.Get(), desc, &err)) {
+        res.note = "RawLightClusterHost::Init failed: " + err;
+        return res;
+    }
+    host.SetTimestampFrequency(rig.tsFreqHz);
+
+    raw::bridge::LightClusterViewParams view{};
+    view.nearZ = 0.5f;
+    view.farZ  = 500.0f;
+    raw::bridge::BuildPerspectiveInvProjLH(1.04719755f, 16.0f / 9.0f, view.nearZ, view.farZ, view.invProj);
+
+    // Deterministic 1,024 dynamic point + spotlight mix spanning full 16x9x24 logarithmic frustum
+    std::vector<raw::bridge::GpuClusterLight> lights(res.lightCount);
+    uint32_t seed = 0x51A7C0DEu;
+    auto NextF = [&seed]() -> float {
+        seed = seed * 1664525u + 1013904223u;
+        return static_cast<float>((seed >> 8) & 0x00FFFFFFu) / static_cast<float>(0x01000000u);
+    };
+    for (uint32_t i = 0u; i < res.lightCount; ++i) {
+        const float z = 1.5f * std::pow(420.0f / 1.5f, NextF());
+        const float halfH = z * std::tan(1.04719755f * 0.5f);
+        const float halfW = halfH * (16.0f / 9.0f);
+        auto& l = lights[i];
+        l.posView[0]  = (NextF() * 2.0f - 1.0f) * halfW * 1.15f;
+        l.posView[1]  = (NextF() * 2.0f - 1.0f) * halfH * 1.15f;
+        l.posView[2]  = z;
+        l.radius      = 1.5f + NextF() * (0.08f * z + 6.0f);
+        l.colorRgb[0] = 0.5f + NextF() * 2.0f;
+        l.colorRgb[1] = 0.4f + NextF() * 1.6f;
+        l.colorRgb[2] = 0.3f + NextF() * 1.8f;
+        if ((i & 3u) == 0u) {
+            const float dx = NextF() * 2.0f - 1.0f;
+            const float dy = NextF() * 2.0f - 1.0f;
+            const float dz = NextF() * 2.0f - 1.0f;
+            const float invL = 1.0f / std::max(std::sqrt(dx * dx + dy * dy + dz * dz), 1.0e-5f);
+            l.dirView[0]   = dx * invL;
+            l.dirView[1]   = dy * invL;
+            l.dirView[2]   = dz * invL;
+            l.cosOuterCone = 0.5f + NextF() * 0.42f;
+            l.typeFlags    = raw::bridge::kClusterLightSpotBit | raw::bridge::kClusterLightSpell;
+        } else {
+            l.dirView[0]   = 0.0f;
+            l.dirView[1]   = 0.0f;
+            l.dirView[2]   = 1.0f;
+            l.cosOuterCone = -1.0f;
+            l.typeFlags    = ((i & 1u) == 0u) ? raw::bridge::kClusterLightFire : raw::bridge::kClusterLightPoint;
+        }
+    }
+
+    std::vector<double> buildSamples, assignSamples, combSamples, cpuSamples;
+    buildSamples.reserve(measuredFrames);
+    assignSamples.reserve(measuredFrames);
+    combSamples.reserve(measuredFrames);
+    cpuSamples.reserve(measuredFrames);
+
+    const uint32_t totalFrames = warmupFrames + measuredFrames;
+    for (uint32_t f = 0u; f < totalFrames; ++f) {
+        const auto c0 = Clock::now();
+        if (!rig.BeginFrame()) {
+            res.note = "BeginFrame failed";
+            return res;
+        }
+        rig.MarkTimestamp(0u);
+        host.BuildAndAssign(rig.cmd.Get(), lights.data(), res.lightCount, view);
+        rig.MarkTimestamp(1u);
+        rig.ResolveTimestamps(0u, 2u);
+        const auto c1 = Clock::now();
+        if (!rig.FlushAndWait()) {
+            res.note = "FlushAndWait failed";
+            return res;
+        }
+        if (f >= warmupFrames) {
+            double totMs = 0.0;
+            rig.ReadTimestampRangeMs(0u, 1u, totMs);
+            combSamples.push_back(totMs);
+            if (host.HasValidTiming()) {
+                buildSamples.push_back(static_cast<double>(host.GetLastBuildMs()));
+                assignSamples.push_back(static_cast<double>(host.GetLastAssignMs()));
+            }
+            cpuSamples.push_back(ElapsedMs(c0, c1));
+        }
+    }
+
+    res.combinedGpuMs = ComputePercentiles(combSamples);
+    res.buildGpuMs    = buildSamples.empty() ? Percentiles{} : ComputePercentiles(buildSamples);
+    res.assignGpuMs   = assignSamples.empty() ? Percentiles{} : ComputePercentiles(assignSamples);
+    res.cpuRecordMs   = ComputePercentiles(cpuSamples);
+    res.hostBuildMs   = host.HasValidTiming() ? host.GetLastBuildMs() : 0.0f;
+    res.hostAssignMs  = host.HasValidTiming() ? host.GetLastAssignMs() : 0.0f;
+
+    const uint64_t aabbBytes = static_cast<uint64_t>(res.clusterCount) * sizeof(raw::bridge::ClusterAabb);
+    const uint64_t gridBytes = static_cast<uint64_t>(res.clusterCount) * sizeof(raw::bridge::ClusterLightGridEntry);
+    const uint64_t idxBytes  = static_cast<uint64_t>(raw::bridge::RawLightClusterHost::kTotalIndexEntries) * sizeof(uint32_t);
+    std::vector<uint8_t> aabbRaw, gridRaw, idxRaw;
+    if (!rig.ReadbackBuffer(host.ClusterAabbResource(), host.ClusterAabbState(), aabbBytes, aabbRaw) ||
+        !rig.ReadbackBuffer(host.ClusterGridResource(), host.ClusterGridState(), gridBytes, gridRaw) ||
+        !rig.ReadbackBuffer(host.LightIndicesResource(), host.LightIndicesState(), idxBytes, idxRaw)) {
+        res.note = "GPU LightClusters readback failed";
+        return res;
+    }
+
+    const auto* aabbs = reinterpret_cast<const raw::bridge::ClusterAabb*>(aabbRaw.data());
+    const auto* grid  = reinterpret_cast<const raw::bridge::ClusterLightGridEntry*>(gridRaw.data());
+    const auto* idxs  = reinterpret_cast<const uint32_t*>(idxRaw.data());
+
+    for (uint32_t c = 0u; c < res.clusterCount; ++c) {
+        for (int k = 0; k < 3; ++k) {
+            if (!std::isfinite(aabbs[c].minBounds[k]) || !std::isfinite(aabbs[c].maxBounds[k]) ||
+                aabbs[c].minBounds[k] > aabbs[c].maxBounds[k]) {
+                ++res.nanAabbCount;
+            }
+        }
+        const auto& e = grid[c];
+        if (e.count > raw::bridge::RawLightClusterHost::kMaxLightsPerCluster ||
+            e.offset != c * raw::bridge::RawLightClusterHost::kMaxLightsPerCluster) {
+            ++res.overflowErrors;
+        }
+        if (e.count > 0u) ++res.nonEmptyClusters;
+        res.maxLightsCluster = std::max(res.maxLightsCluster, e.count);
+        res.totalLightLinks += e.count;
+        for (uint32_t k = 0u; k < std::min(e.count, raw::bridge::RawLightClusterHost::kMaxLightsPerCluster); ++k) {
+            if (idxs[e.offset + k] >= res.lightCount) ++res.overflowErrors;
+        }
+    }
+
+    const bool validOk  = (res.overflowErrors == 0u) && (res.nanAabbCount == 0u) &&
+                          (res.nonEmptyClusters > 500u) && (res.totalLightLinks > 1000u);
+    const bool budgetOk = rig.isWarp ? true : (res.combinedGpuMs.mean < 0.15);
+    res.passed = validOk && budgetOk;
+    if (!validOk) {
+        res.note = "3D clustered light overflow/NaN/coverage invariant failed";
+    } else if (!budgetOk) {
+        res.note = "HW GPU 1,024-light cluster grid mean exceeded 0.15 ms budget";
+    } else {
+        res.note = rig.isWarp ? "WARP 3456-cluster 1024-light assignment & 0 overflow PASS"
+                              : "HW GPU < 0.15 ms & 0 overflow/NaN PASS";
+    }
+    return res;
+}
+
+// ----------------------------------------------------------------------------
 // JSON Serializer & Console Scorecard Printer
 // ----------------------------------------------------------------------------
 void WriteBenchJson(const std::string& path,
@@ -1908,7 +2078,8 @@ void WriteBenchJson(const std::string& path,
                     const FloraHydroBenchResult& flora,
                     const TamrielBenchResult& tamriel,
                     const XpbdBenchResult& xpbd,
-                    const GpuCullBenchResult& gpuCull)
+                    const GpuCullBenchResult& gpuCull,
+                    const LightClusterBenchResult& lightClusters)
 {
     std::ostringstream os;
     os << std::fixed << std::setprecision(4);
@@ -2069,6 +2240,25 @@ void WriteBenchJson(const std::string& path,
     os << "      \"hizCulled\": " << gpuCull.hizCulled << ",\n";
     os << "      \"falseOcclusionCount\": " << gpuCull.falseOcclusionCount << ",\n";
     os << "      \"note\": \"" << JsonEscape(gpuCull.note) << "\"\n";
+    os << "    },\n";
+
+    // 10. GPU 16x9x24 3D Clustered 1,024-Light Grid
+    os << "    \"lightClusters\": {\n";
+    os << "      \"passed\": " << (lightClusters.passed ? "true" : "false") << ",\n";
+    os << "      \"clusterCount\": " << lightClusters.clusterCount << ",\n";
+    os << "      \"lightCount\": " << lightClusters.lightCount << ",\n";
+    os << "      \"buildGpuMs\": "; pctObj(lightClusters.buildGpuMs); os << ",\n";
+    os << "      \"assignGpuMs\": "; pctObj(lightClusters.assignGpuMs); os << ",\n";
+    os << "      \"combinedGpuMs\": "; pctObj(lightClusters.combinedGpuMs); os << ",\n";
+    os << "      \"cpuRecordMs\": "; pctObj(lightClusters.cpuRecordMs); os << ",\n";
+    os << "      \"hostBuildMs\": " << lightClusters.hostBuildMs << ",\n";
+    os << "      \"hostAssignMs\": " << lightClusters.hostAssignMs << ",\n";
+    os << "      \"nonEmptyClusters\": " << lightClusters.nonEmptyClusters << ",\n";
+    os << "      \"maxLightsCluster\": " << lightClusters.maxLightsCluster << ",\n";
+    os << "      \"totalLightLinks\": " << lightClusters.totalLightLinks << ",\n";
+    os << "      \"overflowErrors\": " << lightClusters.overflowErrors << ",\n";
+    os << "      \"nanAabbCount\": " << lightClusters.nanAabbCount << ",\n";
+    os << "      \"note\": \"" << JsonEscape(lightClusters.note) << "\"\n";
     os << "    }\n";
 
     os << "  }\n";
@@ -2094,7 +2284,8 @@ void PrintScorecard(const BenchDx12Rig& rig,
                     const FloraHydroBenchResult& flora,
                     const TamrielBenchResult& tamriel,
                     const XpbdBenchResult& xpbd,
-                    const GpuCullBenchResult& gpuCull)
+                    const GpuCullBenchResult& gpuCull,
+                    const LightClusterBenchResult& lightClusters)
 {
     std::printf("\n");
     std::printf("=====================================================================================================\n");
@@ -2170,6 +2361,13 @@ void PrintScorecard(const BenchDx12Rig& rig,
                   gpuCull.visibleCount, gpuCull.hizCulled, gpuCull.frustumCulled, gpuCull.falseOcclusionCount);
     std::printf("  %-30s | %-6s | %-28s | %s\n", "9. GPU Hi-Z + 16k Cull", gpuCull.passed ? "PASS" : "FAIL", metric, detail);
 
+    std::snprintf(metric, sizeof(metric), "Grid %.4f ms (p95 %.4f)", lightClusters.combinedGpuMs.mean, lightClusters.combinedGpuMs.p95);
+    std::snprintf(detail, sizeof(detail), "Bld=%.4f Asn=%.4f ms | lit=%u/%u links=%u | ovf=%u",
+                  lightClusters.buildGpuMs.mean, lightClusters.assignGpuMs.mean,
+                  lightClusters.nonEmptyClusters, lightClusters.clusterCount,
+                  lightClusters.totalLightLinks, lightClusters.overflowErrors);
+    std::printf("  %-30s | %-6s | %-28s | %s\n", "10. 3D Clustered 1024-Lights", lightClusters.passed ? "PASS" : "FAIL", metric, detail);
+
     std::printf("=====================================================================================================\n");
 }
 
@@ -2227,20 +2425,21 @@ int main(int argc, char** argv)
     const DestructionBenchResult destr   = RunDestructionBenchmark(quickMode);
     const FloraHydroBenchResult  flora   = RunFloraAndHydrologyBenchmark(quickMode);
     const TamrielBenchResult     tamriel = RunTamrielStreamerBenchmark(esmPath, bsaPath);
-    const XpbdBenchResult        xpbd    = RunXpbdBenchmark(rig, warmupFrames, measuredFrames);
-    const GpuCullBenchResult     gpuCull = RunGpuCullBenchmark(rig, warmupFrames, measuredFrames);
+    const XpbdBenchResult         xpbd          = RunXpbdBenchmark(rig, warmupFrames, measuredFrames);
+    const GpuCullBenchResult      gpuCull       = RunGpuCullBenchmark(rig, warmupFrames, measuredFrames);
+    const LightClusterBenchResult lightClusters = RunLightClusterBenchmark(rig, warmupFrames, measuredFrames);
 
     const uint32_t debugErrors = rig.DrainDebugErrors();
     const bool allPassed = fluid.passed && rc.passed && tex.passed && audio.passed &&
                            destr.passed && flora.passed && tamriel.passed && xpbd.passed &&
-                           gpuCull.passed && (debugErrors == 0u);
+                           gpuCull.passed && lightClusters.passed && (debugErrors == 0u);
 
     PrintScorecard(rig, quickMode, warmupFrames, measuredFrames, debugErrors,
-                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull);
+                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters);
 
     if (!jsonPath.empty()) {
         WriteBenchJson(jsonPath, rig, quickMode, warmupFrames, measuredFrames, debugErrors, allPassed,
-                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull);
+                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters);
         std::printf("  JSON report written: %s\n", jsonPath.c_str());
     }
 

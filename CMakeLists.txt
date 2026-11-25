@@ -298,11 +298,16 @@ if(RAW_ENGINE_DIR)
     if(NOT RAW_DXC)
         message(FATAL_ERROR "dxc.exe not found; the engine's passes are DXIL")
     endif()
-    # Optional next-gen DXC (1.9+ / SM 6.9 & SM 6.10, e.g. Vulkan SDK or DirectXShaderCompiler release)
-    # to emit dual native SM 6.9 DXIL 1.9 bytecode alongside universal SM 6.6 fallbacks.
+    # Optional next-gen DXC (1.9+ / SM 6.9 & SM 6.10): prefer official Microsoft DXC 1.9+ with retail-signed dxil.dll
+    # before Vulkan SDK DXC, so emitted SM 6.9 DXIL 1.9 binaries execute live on retail D3D12 hardware without Dev Mode.
+    file(GLOB _RAW_MS_DXC19_DIRS "H:/dxc-1.9*/bin/x64")
+    file(GLOB _RAW_MS_DXC110_DIRS "H:/dxc-1.10*/bin/x64")
     file(GLOB _RAW_VK_DXC_DIRS "C:/VulkanSDK/*/Bin")
     find_program(RAW_DXC_NEXT dxc
-        HINTS "$ENV{VULKAN_SDK}/Bin" ${_RAW_VK_DXC_DIRS}
+        HINTS ${_RAW_MS_DXC19_DIRS} "$ENV{VULKAN_SDK}/Bin" ${_RAW_VK_DXC_DIRS}
+        NO_DEFAULT_PATH)
+    find_program(RAW_DXC_610 dxc
+        HINTS ${_RAW_MS_DXC110_DIRS}
         NO_DEFAULT_PATH)
     set(RAW_HAS_SM69_DXIL OFF)
     if(RAW_DXC_NEXT)
@@ -311,8 +316,17 @@ if(RAW_ENGINE_DIR)
             OUTPUT_STRIP_TRAILING_WHITESPACE)
         if("${_RAW_DXC_NEXT_VER} ${_RAW_DXC_NEXT_ERR}" MATCHES "dxcompiler\\.dll: 1\\.(9|1[0-9])")
             set(RAW_HAS_SM69_DXIL ON)
-            message(STATUS "RAW: next-gen DXC detected (${RAW_DXC_NEXT}) -> dual SM 6.6 + native SM 6.9 DXIL 1.9 enabled")
+            get_filename_component(_RAW_DXC_NEXT_DIR "${RAW_DXC_NEXT}" DIRECTORY)
+            if(EXISTS "${_RAW_DXC_NEXT_DIR}/dxil.dll")
+                set(_RAW_DXIL_SIGN_NOTE "retail-signed dxil.dll")
+            else()
+                set(_RAW_DXIL_SIGN_NOTE "unsigned dxil")
+            endif()
+            message(STATUS "RAW: next-gen DXC detected (${RAW_DXC_NEXT}, ${_RAW_DXIL_SIGN_NOTE}) -> dual SM 6.6 + native SM 6.9 DXIL 1.9 enabled")
         endif()
+    endif()
+    if(RAW_DXC_610)
+        message(STATUS "RAW: SM 6.10 preview DXC detected (${RAW_DXC_610})")
     endif()
     set(E ${RAW_ENGINE_DIR})
     add_library(raw_engine_rhi STATIC

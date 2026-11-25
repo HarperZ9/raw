@@ -86,13 +86,33 @@ bool RtScene::Pipeline(std::string& err)
     p[13].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; p[13].Descriptor = {6, 0};
     p[14].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; p[14].Constants = {2, 0, 12};
     p[15].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[15].DescriptorTable = {2, resv};
-    D3D12_ROOT_SIGNATURE_DESC rs{16, p, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    D3D12_FEATURE_DATA_D3D12_OPTIONS o0{};
+    const bool tier3 = SUCCEEDED(m_dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &o0, sizeof o0)) &&
+                       o0.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_3;
+    D3D12_ROOT_SIGNATURE_DESC rs{16, p, 0, nullptr,
+                                 tier3 ? D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED
+                                       : D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ComPtr<ID3DBlob> blob, errs;
     if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errs))) {
-        err = errs ? static_cast<const char*>(errs->GetBufferPointer()) : "root signature";
-        return false;
+        rs.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+        blob.Reset(); errs.Reset();
+        if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errs))) {
+            err = errs ? static_cast<const char*>(errs->GetBufferPointer()) : "root signature";
+            return false;
+        }
     }
-    if (FAILED(m_dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&m_root)))) { err = "CreateRootSignature"; return false; }
+    if (FAILED(m_dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&m_root)))) {
+        if (rs.Flags != D3D12_ROOT_SIGNATURE_FLAG_NONE) {
+            rs.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+            blob.Reset(); errs.Reset();
+            if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errs)) ||
+                FAILED(m_dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&m_root)))) {
+                err = "CreateRootSignature"; return false;
+            }
+        } else { err = "CreateRootSignature"; return false; }
+    }
+    if (m_log && (rs.Flags & D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED))
+        m_log("[RT] SM 6.6+ ResourceDescriptorHeap[] direct bindless heap indexing enabled on trace root signature");
     D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
     pd.pRootSignature = m_root.Get();
 #ifdef RAW_HAS_SM69_DXIL

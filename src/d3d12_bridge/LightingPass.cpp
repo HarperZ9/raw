@@ -94,7 +94,7 @@ constexpr RasterBinding kDofFocusLayout[3] = {U, T, T};
 constexpr RasterBinding kDofCocLayout[5] = {U, T, T, T, Sm};
 constexpr RasterBinding kDofGatherLayout[3] = {U, T, Sm};
 constexpr RasterBinding kDofCompLayout[6] = {U, T, T, T, T, Sm};
-constexpr RasterBinding kRawlss5Layout[8] = {U, T, T, T, T, T, T, Sm};
+constexpr RasterBinding kRawlss5Layout[10] = {U, T, T, T, T, T, T, T, T, Sm};
 constexpr RasterBinding kGiAtrousLayout[4] = {U, T, T, T};
 
 class LightingPass final : public IBridgePass
@@ -237,20 +237,20 @@ public:
             sm.HighestShaderModel = static_cast<D3D_SHADER_MODEL>(0x69);
             if (SUCCEEDED(host.device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof sm)) &&
                 static_cast<unsigned>(sm.HighestShaderModel) >= 0x69u) {
-                d.label = "rawlss6.5 sm6.9 long-vector";
+                d.label = "rawlss7.0 sm6.9 long-vector";
                 d.fragment = dxil(kDxil_rawlss5_69_fs, sizeof kDxil_rawlss5_69_fs);
                 d.layout = kRawlss5Layout;
                 std::string sm69Err;
                 m_rawlss5Pipe = m_dev->createRasterPipeline(d, sm69Err);
                 if (m_rawlss5Pipe.valid())
-                    host.log("[Lighting] RAWLSS 6.5 native SM 6.9 DXIL 1.9 Long-Vector pipeline active");
+                    host.log("[Lighting] RAWLSS 7.0 Split-Manifold native SM 6.9 DXIL 1.9 16-wide Long-Vector pipeline active");
                 else
-                    host.log("[Lighting] RAWLSS 6.5 SM 6.9 fallback to SM 6.6: %s", sm69Err.c_str());
+                    host.log("[Lighting] RAWLSS 7.0 SM 6.9 fallback to SM 6.6: %s", sm69Err.c_str());
             }
         }
 #endif
         if (!m_rawlss5Pipe.valid()) {
-            d.label = "rawlss6.5 3d-guided"; d.fragment = dxil(kDxil_rawlss5_fs, sizeof kDxil_rawlss5_fs); d.layout = kRawlss5Layout;
+            d.label = "rawlss7.0 split-manifold"; d.fragment = dxil(kDxil_rawlss5_fs, sizeof kDxil_rawlss5_fs); d.layout = kRawlss5Layout;
             m_rawlss5Pipe = m_dev->createRasterPipeline(d, m_err);
         }
         if (!m_dofFocusPipe.valid() || !m_dofCocPipe.valid() || !m_dofGatherPipe.valid() || !m_dofPostPipe.valid() || !m_dofCompPipe.valid() || !m_rawlss5Pipe.valid()) return Fail("dof/rawlss5 pipelines");
@@ -388,12 +388,14 @@ public:
                 Draw(*c, m_lit, m_dofCompPipe, dp);
                 bloomSrc = m_lit;
             }
-            // RAWLSS 5.0 (RAW Custom DLSS 5): 3D-Guided SM 6.9 FP16 Neural & Physical Reconstruction Pass
-            // (reconstructs micro-relief, grazing sheen & YCoCg temporal clarity across RTX 4090/5090 and lower cards!).
+            // RAWLSS 7.0 Split-Manifold Neural Ray Reconstructor (albedo demodulation + 12->16->4 SM 6.9 Long-Vector net + world-GI prior):
             if (m_tune.rawlss5) {
                 const TextureHandle rPrev = m_rawlssHist[(m_frame + 1) & 1];
                 const TextureHandle rNow  = m_rawlssHist[m_frame & 1];
-                const RasterBind rb[8] = {{m_uniform, {}, {}}, {{}, bloomSrc, {}}, {{}, m_depth, {}}, {{}, m_normal, {}}, {{}, frame.hasMotion ? m_motion : m_game, {}}, {{}, m_spec, {}}, {{}, rPrev, {}}, {{}, {}, m_lin}};
+                const TextureHandle giSrc = giFilter ? m_giAtrous[0] : (m_rtBounce.valid() ? m_rtBounce : m_game);
+                const RasterBind rb[10] = {{m_uniform, {}, {}}, {{}, bloomSrc, {}}, {{}, m_depth, {}}, {{}, m_normal, {}},
+                                           {{}, frame.hasMotion ? m_motion : m_game, {}}, {{}, m_spec, {}}, {{}, rPrev, {}},
+                                           {{}, m_albedo, {}}, {{}, giSrc, {}}, {{}, {}, m_lin}};
                 Draw(*c, rNow, m_rawlss5Pipe, rb);
                 bloomSrc = rNow;
             }

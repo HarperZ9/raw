@@ -1,21 +1,24 @@
-// Rawlss5Pass.hlsl: RAWLSS 6.5 Metal — SM 6.6-6.10 Wave-Quad & FP16 Tensor Perceptual Super-Resolution & Ray-Reconstruction.
-// Upgrades over RAWLSS 6.0:
-//   1) Wave-Quad Register-Shuffle Fine Curvature (QuadReadAcrossX/Y via RawTensorMath.hlsli -> 4 fewer Normal L1 loads/pixel!)
-//   2) Native Packed FP16 / SM 6.9 Long-Vector Residual Harmonizer (rawEvalMaterialMlp6x8x3, fast rational tanh)
-//   3) Karis-Tonemapped Perceptual YCoCg Space for 5-Tap Jimenez Catmull-Rom & 3x3 Moments (zero HDR highlight ringing/glow!)
-//   4) Ray-to-Mean YCoCg AABB Intersection Clipping (clipAABB) + Material-Aware Reactive Mask + Highlight-Ceiling Guard
-//   5) 3x3 Depth-Dilated Closest-Velocity Anti-Ghosting + Isolated Specular Firefly Ray-Reconstruction Filter
+// Rawlss5Pass.hlsl: RAWLSS 7.0 Split-Manifold Metal — SM 6.6-6.10 Wave-Quad & 16-Wide Long-Vector Ray Reconstructor.
+// Upgrades over RAWLSS 6.5:
+//   1) Split-Manifold Albedo Demodulation (t6 AlbedoTex + t7 GiBounce): preserves razor-sharp native texture detail
+//      during camera motion via zero-fetch pixel-quad albedo high-frequency extraction!
+//   2) 12->16->4 Split-Manifold Neural Ray Reconstructor (rawEvalSplitManifoldNet12x16x4 -> SM 6.9 vector<float16_t, 16>!)
+//   3) Zero-Lag Disocclusion World-GI Prior: newly exposed pixels seed from quad-bilateral irradiance + world GI manifold
+//   4) Wave-Quad Register-Shuffle Fine Curvature & Irradiance Variance (QuadReadAcrossX/Y/Diagonal -> 0 extra L1 loads!)
+//   5) Karis-Tonemapped Perceptual YCoCg 5-Tap Jimenez Catmull-Rom + Ray-to-Mean clipAABB + Highlight-Ceiling Guard
 // Original work, MIT.
 #include "LightingCommon.hlsli"
 #include "RawTensorMath.hlsli"
 
-Texture2D<float4> CurHdr   : register(t0);
-Texture2D<float>  Depth    : register(t1);
-Texture2D<float4> Normal   : register(t2);
-Texture2D<float2> Motion   : register(t3);
-Texture2D<float4> Layer    : register(t4);
-Texture2D<float4> HistPrev : register(t5);
-SamplerState      Lin      : register(s0);
+Texture2D<float4> CurHdr    : register(t0);
+Texture2D<float>  Depth     : register(t1);
+Texture2D<float4> Normal    : register(t2);
+Texture2D<float2> Motion    : register(t3);
+Texture2D<float4> Layer     : register(t4);
+Texture2D<float4> HistPrev  : register(t5);
+Texture2D<float4> AlbedoTex : register(t6);
+Texture2D<float4> GiBounce  : register(t7);
+SamplerState      Lin       : register(s0);
 
 static const float3 kLumaW = float3(0.2126f, 0.7152f, 0.0722f);
 
@@ -206,7 +209,29 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const float nv = saturate(dot(nC, vDir));
     const float fresnel = pow(1.0f - nv, 3.0f);
     const float midKey = saturate(curLum * rcp(1.0f + curLum));
-    const float3 mlpOut = rawlss5Mlp(float4(curv, divTotal * 0.5f, localContrast, fresnel), float2(midKey, nC.z * 0.5f + 0.5f));
+
+    // Split-Manifold Albedo & World-GI Decomposition (zero-fetch 2x2 quad stats for irradiance variance & native albedo sharpness):
+    const float3 albedoRaw = max(AlbedoTex.Load(ip).rgb, 0.0f.xxx);
+    const float albedoPeak = max(albedoRaw.r, max(albedoRaw.g, albedoRaw.b));
+    const bool useDemod = (!isEye && !isEmissive && !isWater && !isLod && albedoPeak > 0.045f);
+    const float3 albedoBase = max(albedoRaw, 0.06f.xxx);
+    const float3 irradCur = useDemod ? (curRgb / albedoBase) : curRgb;
+    float3 quadIrradMean = irradCur, quadAlbMean = albedoRaw;
+    float quadIrradStd = 0.0f, quadAlbStd = 0.0f;
+    rawQuadVec3Stats(irradCur, quadIrradMean, quadIrradStd);
+    rawQuadVec3Stats(albedoRaw, quadAlbMean, quadAlbStd);
+    const float3 giTap = max(GiBounce.Load(ip).rgb, 0.0f.xxx);
+    const float giLum = dot(giTap, kLumaW);
+
+    const float2 mv = Motion.Load(int3(bestVelPx, 0));
+    const float speedPx = length(mv * dims.xy);
+
+    // RAWLSS 7.0 12->16->4 Split-Manifold Neural Ray Reconstructor (native 16-wide SM 6.9 Long Vectors on DXIL 1.9!):
+    const float4 mlpOut = rawEvalSplitManifoldNet12x16x4(
+        float4(curv, divTotal * 0.5f, localContrast, fresnel),
+        float4(midKey, nC.z * 0.5f + 0.5f, saturate(quadIrradStd * 0.65f), saturate(giLum * 0.8f)),
+        float4(saturate(specTap.x), saturate(specTap.y), saturate(speedPx * 0.12f), 1.0f - edgeGate)
+    );
 
     // Per-class artistic intent: eyes/emissives untouched; glaciers/ice silk-smooth; stone/wood/metal get clean 3D micro-relief!
     const float rawClassGain = isEye || isEmissive ? 0.0f
@@ -239,9 +264,8 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
         recon = lerp(recon, rgbBlur, isIceLike * edgeGate * 0.28f);
     }
 
-    // Perceptual Karis-Tonemapped 5-Tap Catmull-Rom + Ray-to-Mean clipAABB Temporal Super-Resolution:
+    // Perceptual Karis-Tonemapped 5-Tap Catmull-Rom + Ray-to-Mean clipAABB + Zero-Lag Disocclusion Prior:
     const float2 uv = (floor(at.xy) + 0.5f) * dims.zw;
-    const float2 mv = Motion.Load(int3(bestVelPx, 0));
     const float2 puv = uv + mv;
     if (all(puv > 0.004f) && all(puv < 0.996f)) {
         const float3 prevTm = sampleCatmullRom5Perceptual(HistPrev, puv);
@@ -249,7 +273,6 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
         const float3 curTm = tonemapKaris(recon);
         const float3 curY = rgbToYCoCg(curTm);
 
-        const float speedPx = length(mv * dims.xy);
         const float lumDelta = abs(prevY.x - curY.x) / max(curY.x + 0.08f, 0.08f);
         const float disocc = saturate((lumDelta - 0.38f) * 1.8f) * (1.0f - edgeGate * 0.45f);
         // Material-aware reactive mask (high responsiveness on water, emissives, disoccluded edges & fast specular glints):
@@ -269,6 +292,22 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
         const float alpha = saturate(max(baseAlpha, reactive));
         const float3 blendedY = lerp(clippedY, curY, alpha);
         recon = invTonemapKaris(max(yCoCgToRgb(blendedY), 0.0f.xxx));
+
+        // Zero-Lag Disocclusion Split-Manifold Prior + Native-Resolution Albedo Sharpness Preservation:
+        // 1) On disoccluded pixels with noisy irradiance, stabilize frame-1 with quad-bilateral demodulated irradiance * crisp albedo.
+        // 2) Under camera pan, re-inject bounded native-resolution albedo micro-contrast so stone/runes/fabric never smear!
+        if (useDemod && edgeGate > 0.25f) {
+            const float priorW = saturate(disocc * mlpOut.w * 0.32f * (1.0f - isIceLike * 0.5f));
+            if (priorW > 0.01f) {
+                const float3 priorRgb = max(quadIrradMean * albedoBase, giTap * albedoBase * 0.65f);
+                recon = lerp(recon, priorRgb, priorW);
+            }
+            const float panBlurGuard = saturate(speedPx * 0.14f) * (1.0f - alpha) * classGain * edgeGate * hlGuard * (1.0f - isIceLike);
+            if (panBlurGuard > 0.01f && quadAlbStd > 0.012f) {
+                const float3 albRatio = clamp(albedoBase / max(quadAlbMean, 0.06f.xxx), 0.86f.xxx, 1.16f.xxx);
+                recon = lerp(recon, recon * albRatio, panBlurGuard * 0.42f);
+            }
+        }
     }
     return float4(recon, curRaw.a);
 }

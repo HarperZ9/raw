@@ -20,11 +20,11 @@ struct Hit { float t; uint id, prim; float2 bary; float3x4 o2w; };
 static const uint LOD_LAND = 0x800000u, RECORD_BITS = 0x7FFFFFu;
 bool lodHidden(uint id, float3 hp) { return (id & LOD_LAND) != 0u && all(abs(hp.xy - lodRect.xy) < lodRect.zw); }
 
-// The first hit along a ray, alpha-tested like visible(); false when the ray leaves the scene.
-bool traceHit(float3 o, float3 d, float tMax, out Hit h) {
+// The first hit along a ray with explicit TMin (supports negative-space empty-corridor skipping).
+bool traceHitTMin(float3 o, float3 d, float tMin, float tMax, out Hit h) {
     RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q;
     RayDesc r;
-    r.Origin = o; r.Direction = d; r.TMin = 0.0f; r.TMax = tMax;
+    r.Origin = o; r.Direction = d; r.TMin = tMin; r.TMax = max(tMax, tMin);
     q.TraceRayInline(Scene, 0, 0xFF, r);
     [loop] while (q.Proceed()) {
         if (q.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
@@ -44,6 +44,10 @@ bool traceHit(float3 o, float3 d, float tMax, out Hit h) {
     h.t = q.CommittedRayT(); h.id = q.CommittedInstanceID() & RECORD_BITS; h.prim = q.CommittedPrimitiveIndex();
     h.bary = q.CommittedTriangleBarycentrics(); h.o2w = q.CommittedObjectToWorld3x4();
     return true;
+}
+
+bool traceHit(float3 o, float3 d, float tMax, out Hit h) {
+    return traceHitTMin(o, d, 0.0f, tMax, h);
 }
 
 float3 unpackOct(uint w) {
@@ -115,16 +119,20 @@ void cellOf(float3 p, float3 n, float3 jitter, out uint slot, out uint check) {
     check = clamp(pcg(uint(c.x) * 73856093u ^ uint(c.y) * 19349663u ^ uint(c.z) * 83492791u ^ tag * 2654435761u), 1u, CACHE_TOMB - 1u);
 }
 
-// The cell's resolved value (bounce rgb, sky share); false when the cell has none yet.
-bool cacheRead(float3 p, float3 n, float3 jitter, out float4 v) {
-    v = 0.0f;
+// Full Negative-Space Oracle read: returns bounce+sky mean, conservative free-flight radius, entropy [0,1], and history frames.
+bool cacheReadOracle(float3 p, float3 n, float3 jitter, out float4 v, out float freeFlight, out float entropy, out uint frames) {
+    v = 0.0f; freeFlight = 0.0f; entropy = 1.0f; frames = 0u;
     uint s, check;
     cellOf(p, n, jitter, s, check);
     [loop] for (uint i = 0u; i < CACHE_PROBES; i++) {
         const uint k = CacheKeys.Load(s * 4u);
         if (k == check) {
-            if (CacheValue.Load(s * 32u + 16u) == 0u) { return false; }
+            const uint4 meta = CacheValue.Load4(s * 32u + 16u);
+            if (meta.x == 0u) { return false; }
             v = asfloat(CacheValue.Load4(s * 32u));
+            frames = meta.x;
+            freeFlight = asfloat(meta.z);
+            entropy = asfloat(meta.w);
             return true;
         }
         if (k == 0u) { return false; }
@@ -133,8 +141,14 @@ bool cacheRead(float3 p, float3 n, float3 jitter, out float4 v) {
     return false;
 }
 
-// Samples into a cell's slot (found or claimed along its probe run): bounce rgb and sky in fixed point.
-void cacheInsert(uint s, uint check, uint3 c, uint skyFixed, uint count) {
+// The cell's resolved value (bounce rgb, sky share); false when the cell has none yet.
+bool cacheRead(float3 p, float3 n, float3 jitter, out float4 v) {
+    float ff, ent; uint fr;
+    return cacheReadOracle(p, n, jitter, v, ff, ent, fr);
+}
+
+// Samples into a cell's slot (found or claimed along its probe run): bounce rgb, sky, free-flight distance, and squared moments.
+void cacheInsert(uint s, uint check, uint3 c, uint skyFixed, uint count, uint distFixed, uint lumSqFixed, uint skySqFixed) {
     uint tomb = ~0u;
     bool placed = false;
     [loop] for (uint i = 0u; i < CACHE_PROBES; i++) {
@@ -156,29 +170,45 @@ void cacheInsert(uint s, uint check, uint3 c, uint skyFixed, uint count) {
     CacheAccum.InterlockedAdd(a, c.r, o); CacheAccum.InterlockedAdd(a + 4u, c.g, o); CacheAccum.InterlockedAdd(a + 8u, c.b, o);
     CacheAccum.InterlockedAdd(a + 12u, skyFixed, o);
     CacheAccum.InterlockedAdd(a + 16u, count, o);
+    CacheAccum.InterlockedAdd(a + 20u, distFixed, o);
+    CacheAccum.InterlockedAdd(a + 24u, lumSqFixed, o);
+    CacheAccum.InterlockedAdd(a + 28u, skySqFixed, o);
 }
 
-// One sample for the cell: the bounce light a ray brought back and whether it saw the sky.
-void cacheAdd(float3 p, float3 n, float3 bounce, float sky) {
+// One sample for the cell: bounce light, sky visibility, and observed free-flight distance.
+void cacheAdd(float3 p, float3 n, float3 bounce, float sky, float freeDist = 0.0f) {
     uint s, check;
     cellOf(p, n, 0.0f.xxx, s, check);
-    cacheInsert(s, check, uint3(min(max(bounce, 0.0f), 4.0f) * CACHE_FIXED), uint(saturate(sky) * CACHE_FIXED), 1u);
+    const float3 bc = min(max(bounce, 0.0f), 4.0f);
+    const float sk = saturate(sky);
+    const float lum = dot(bc, float3(0.2126f, 0.7152f, 0.0722f));
+    cacheInsert(s, check, uint3(bc * CACHE_FIXED), uint(sk * CACHE_FIXED), 1u,
+                uint(clamp(freeDist, 0.0f, 4096.0f) * CACHE_DIST_FIXED),
+                uint(min(lum * lum, 16.0f) * CACHE_FIXED),
+                uint((sk * sk) * CACHE_FIXED));
 }
 
-// The same from every pixel of a wave at once: lanes in one cell (most of an 8 x 8 group near the camera)
-// sum their samples and one of them writes, so a cell takes one set of atomics a wave instead of one a
-// pixel. Before this, every sky-ray pixel hit the same few addresses five times a frame.
-void cacheAddWave(float3 p, float3 n, float3 bounce, float sky) {
+// Wave-coalesced oracle update: lanes sharing a cell reduce via WaveActiveSum so each cell takes 1 atomic batch per wave.
+void cacheAddWave(float3 p, float3 n, float3 bounce, float sky, float freeDist = 0.0f) {
     uint s, check;
     cellOf(p, n, 0.0f.xxx, s, check);
-    const uint3 c = uint3(min(max(bounce, 0.0f), 4.0f) * CACHE_FIXED);
-    const uint k = uint(saturate(sky) * CACHE_FIXED);
+    const float3 bc = min(max(bounce, 0.0f), 4.0f);
+    const float sk = saturate(sky);
+    const float lum = dot(bc, float3(0.2126f, 0.7152f, 0.0722f));
+    const uint3 c = uint3(bc * CACHE_FIXED);
+    const uint k = uint(sk * CACHE_FIXED);
+    const uint df = uint(clamp(freeDist, 0.0f, 4096.0f) * CACHE_DIST_FIXED);
+    const uint ls = uint(min(lum * lum, 16.0f) * CACHE_FIXED);
+    const uint ks2 = uint((sk * sk) * CACHE_FIXED);
     [loop] for (;;) {
         if (WaveReadLaneFirst(check) == check) {
             const uint3 cs = WaveActiveSum(c);
             const uint ks = WaveActiveSum(k);
+            const uint ds = WaveActiveSum(df);
+            const uint lss = WaveActiveSum(ls);
+            const uint kss = WaveActiveSum(ks2);
             const uint count = WaveActiveCountBits(true);
-            if (WaveIsFirstLane()) { cacheInsert(s, check, cs, ks, count); }
+            if (WaveIsFirstLane()) { cacheInsert(s, check, cs, ks, count, ds, lss, kss); }
             break;
         }
     }

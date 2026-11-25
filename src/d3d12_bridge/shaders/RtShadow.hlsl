@@ -228,17 +228,19 @@ void cacheFromHit(float3 hp, float3 n, float2 r, bool isInterior) {
     const float3 d = cosineDir(n, r);
     float3 bounce = 0.0f;
     float sky = 1.0f;
+    const float bLen = isInterior ? min(skyLength, 240.0f) : skyLength;
+    float freeHit = bLen;
     if (isInterior || d.z > 0.0f) {
         const float3 o = hp + n * (0.65f + 0.0025f * length(hp));
-        const float bLen = isInterior ? min(skyLength, 240.0f) : skyLength;
         Hit h;
         if (traceHit(o, d, bLen, h)) {
             float3 n2;
+            freeHit = h.t;
             sky = isInterior ? saturate(h.t / max(bLen, 1.0f)) : 0.0f;
             bounce = radianceAt(h, o, d, r.yx, false, n2);
         }
     }
-    cacheAdd(hp, n, bounce, sky);
+    cacheAdd(hp, n, bounce, sky, freeHit);
 }
 
 #ifndef RT_NO_MAIN   // RtWater.hlsl includes the bindings and helpers above, not this kernel
@@ -290,9 +292,23 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float aoLen = isInterior ? (skyLength > 0.0f ? min(skyLength, 220.0f) : 180.0f) : skyLength;
         if (aoLen > 0.0f) {
             const float2 rs0 = stbnR2(px, frameIndex + 11.0f);
-            const uint giSpp = (rtTier <= 1u) ? 1u : (rtTier >= 4u ? 3u : 2u);
+            // Negative-Space Visibility & Entropy Radiance Oracle query:
+            // Concentrates RT-core rays into high-entropy penumbra/contact/dynamic regions while skipping verified
+            // empty near-field corridors and reusing converged world-space priors in smooth open air.
+            float4 oracleVal = 0.0f.xxxx;
+            float oracleFree = 0.0f, oracleEnt = 1.0f;
+            uint oracleFrames = 0u;
+            const bool hasOracle = ((giFlags & GI_CACHE) != 0u) && cacheReadOracle(p, n, 0.0f.xxx, oracleVal, oracleFree, oracleEnt, oracleFrames);
+            const bool calmCorridor = hasOracle && oracleFrames >= 6u && oracleEnt < 0.14f && oracleFree > 40.0f;
+            const bool highEntropy = hasOracle && oracleFrames >= 2u && oracleEnt > 0.36f;
+            const uint baseSpp = (rtTier <= 1u) ? 1u : (rtTier >= 4u ? 3u : 2u);
+            const uint giSpp = calmCorridor ? 1u : (highEntropy && rtTier >= 2u ? min(baseSpp + 1u, rtTier >= 4u ? 4u : 3u) : baseSpp);
+            const float corridorSkip = (!isInterior && hasOracle && oracleFrames >= 8u && oracleEnt < 0.18f && oracleFree > 24.0f)
+                ? min(oracleFree * 0.35f, 24.0f) : 0.0f;
+
             float skySum = 0.0f;
             float3 bounceSum = 0.0f;
+            float minFreeHit = aoLen;
             const bool doCache2 = ((giFlags & GI_CACHE) != 0u) && skyTurn(id.xy);
             [loop] for (uint si = 0u; si < giSpp; si++) {
                 const float2 rs = frac(rs0 + float2(float(si) / float(giSpp), 0.618034f * float(si)));
@@ -300,9 +316,11 @@ void main(uint3 id : SV_DispatchThreadID) {
                 float sSample = 1.0f;
                 float3 bSample = 0.0f;
                 if (isInterior || sd.z > 0.0f) {
+                    const float rayTMin = (sd.z > 0.18f) ? corridorSkip : 0.0f;
                     Hit h;
-                    if (traceHit(o, sd, aoLen, h)) {
+                    if (traceHitTMin(o, sd, rayTMin, aoLen, h)) {
                         float3 hn;
+                        minFreeHit = min(minFreeHit, h.t);
                         // True 3D Hardware DXR near-field contact occlusion (grounds bottles, rocks, furniture & feet with zero SSAO halos!):
                         sSample = isInterior ? pow(saturate(h.t / aoLen), 1.35f)
                                              : saturate(h.t / 110.0f) * 0.42f;
@@ -318,7 +336,12 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float invSpp = 1.0f / float(giSpp);
             sky = invSpp * skySum;
             bounce = invSpp * bounceSum;
-            if ((giFlags & GI_CACHE) != 0u) { cacheAddWave(p, n, bounce, sky); }
+            // In converged low-entropy corridors, stabilize 1-spp trace with 28% converged world oracle prior:
+            if (calmCorridor) {
+                bounce = lerp(bounce, oracleVal.rgb, 0.28f);
+                sky = lerp(sky, oracleVal.a, 0.28f);
+            }
+            if ((giFlags & GI_CACHE) != 0u) { cacheAddWave(p, n, bounce, sky, minFreeHit); }
         }
         // The three lights that would light this pixel most (colour luminance x window x n.l).
         uint best[3] = {~0u, ~0u, ~0u};

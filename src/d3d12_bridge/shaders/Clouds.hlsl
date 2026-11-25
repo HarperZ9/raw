@@ -59,10 +59,13 @@ float cloudDensityVol(float3 pa, bool detail) {
     const float alt = length(float3(dxy.x, dxy.y, R + pa.z)) - R;
     const float h = (alt - clouds.y) / clouds.z;
     if (h <= 0.0f || h >= 1.0f) { return 0.0f; }
-    // Gentle physical anvil tilt (kills the 4,900u diagonal zebra-stripe shear seen in 23.49.30.10.png!):
-    const float2 wLayer = ekmanWind(h * 0.28f);
-    const float2 wUnit = normalize(wLayer + float2(1.0e-3f, 0.0f));
-    const float3 wind = float3(wLayer * (camPosW.w * 0.35f), 0.0f);
+    // Wave 33 Time-Invariant Bulk Wind Advection + Bounded Static Anvil Tilt:
+    // Previously multiplying altitude-dependent ekmanWind(h) by unbounded camPosW.w grew dv/dh * t to 45,000u+
+    // over a 20-minute play session, stretching every cumulus cloud into razor-parallel zebra stripes (00.10.37.77)!
+    // Advecting the entire cumulus deck by uniform cloudWind.xy while keeping anvil tilt strictly static fixes it permanently.
+    const float2 wBulk = cloudWind.xy;
+    const float2 wUnit = normalize(wBulk + float2(1.0e-3f, 0.0f));
+    const float3 wind = float3(wBulk * (camPosW.w * 0.28f), 0.0f);
     const float3 sheared = pa + wind + float3(wUnit, 0.0f) * (h * h * 650.0f);
     const float cover = saturate(clouds.x);
     const float stormType = saturate(weather.w * 1.4f + max(cover - 0.78f, 0.0f) * 2.5f);

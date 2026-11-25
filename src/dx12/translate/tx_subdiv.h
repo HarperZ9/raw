@@ -59,9 +59,11 @@ struct SubdivEntry {
     D3D12_INDEX_BUFFER_VIEW     ibView{};
     uint32_t                    outIndexCount = 0;
     uint64_t                    vramBytes = 0;
-    // Frame counter of the last depth-only (Z-prepass) draw that emitted this 4x curved mesh.
-    // Guarantees bit-exact DEPTH_EQUAL matching between Skyrim's position-only Z-prepass and opaque color pass!
+    // Frame counter and exact depth-buffer resource pointer of the last writable depth-only (Z-prepass) draw that
+    // emitted this 4x curved mesh. Guarantees bit-exact DEPTH_EQUAL matching on the SAME depth buffer (ignoring
+    // shadow-map passes and supporting D3D11_DSV_READ_ONLY_DEPTH color passes cleanly with zero holes!).
     mutable std::atomic<uint64_t> lastDepthFrame{0};
+    mutable std::atomic<const TrackedRes*> lastDepthRes{nullptr};
 };
 
 struct SubdivBuildReq {

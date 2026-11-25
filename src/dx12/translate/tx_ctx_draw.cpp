@@ -273,7 +273,13 @@ std::shared_ptr<const SubdivEntry> Context::TrySubdivideDraw(UINT n, UINT start,
 {
     if (!dev_->geometrySubdiv || !dev_->subdiv.Ready()) return nullptr;
     if (s_.topo != D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST) return nullptr;
-    if (!s_.dsv || (s_.dsv->desc.Flags & D3D11_DSV_READ_ONLY_DEPTH) != 0) return nullptr;
+    if (!s_.dsv || !s_.dsv->core || !s_.dsv->core->tr) return nullptr;
+    const bool isDepthOnly = (s_.rtCount == 0u || !s_.rtv[0]);
+    const bool isDepthEqual = (s_.ds && dev_->DepthDesc(s_.ds->id).DepthFunc == D3D11_COMPARISON_EQUAL);
+    const bool isReadOnlyDepth = (s_.dsv->desc.Flags & D3D11_DSV_READ_ONLY_DEPTH) != 0;
+    // Allow READ_ONLY_DEPTH DSVs on DEPTH_EQUAL color passes (common in Skyrim's opaque pass), while requiring
+    // writable depth on Z-prepasses and non-EQUAL draws!
+    if (isReadOnlyDepth && !isDepthEqual) return nullptr;
     if (s_.st[S_HS].sh.sd || s_.st[S_GS].sh.sd || !s_.layout || !s_.layout->id) return nullptr;
     if (n < 12u || n > 36000u || (n % 3u) != 0u) return nullptr;
     const BufSlot& vb = s_.vb[0];
@@ -297,18 +303,20 @@ std::shared_ptr<const SubdivEntry> Context::TrySubdivideDraw(UINT n, UINT start,
     key.ibFmt = static_cast<uint32_t>(s_.ibFmt);
     key.epoch = dev_->subdivEpoch.load(std::memory_order_relaxed);
 
-    const bool isDepthOnly = (s_.rtCount == 0u || !s_.rtv[0]);
-    const bool isDepthEqual = (s_.ds && dev_->DepthDesc(s_.ds->id).DepthFunc == D3D11_COMPARISON_EQUAL);
     const uint64_t curFrame = dev_->frameSeq.load(std::memory_order_relaxed);
+    const TrackedRes* dsvRes = s_.dsv->core->tr.get();
 
     if (auto hit = dev_->subdiv.Find(key)) {
         if (isDepthOnly) {
-            hit->lastDepthFrame.store(curFrame, std::memory_order_relaxed);
+            hit->lastDepthRes.store(dsvRes, std::memory_order_relaxed);
+            hit->lastDepthFrame.store(curFrame, std::memory_order_release);
             return hit;
         }
         if (!isDepthEqual) return hit;
-        // On DEPTH_EQUAL color passes, emit 4x curved geometry ONLY when the Z-prepass emitted this exact 4x mesh this frame!
-        return (hit->lastDepthFrame.load(std::memory_order_relaxed) == curFrame) ? hit : nullptr;
+        // On DEPTH_EQUAL color passes, emit 4x curved geometry ONLY when the Z-prepass emitted this exact 4x mesh
+        // into this EXACT depth buffer resource on this frame (immune to shadow-map depth passes!).
+        return (hit->lastDepthFrame.load(std::memory_order_acquire) == curFrame &&
+                hit->lastDepthRes.load(std::memory_order_relaxed) == dsvRes) ? hit : nullptr;
     }
     if (isDepthOnly || replay_) return nullptr;   // only full NORMAL-bearing color draws build new 4x entries on the immediate context
 
@@ -348,8 +356,10 @@ STDMETHODIMP_(void) Context::DrawIndexed(UINT n, UINT start, INT base)
     TX_TRACE("Context::DrawIndexed");
     // On an uncached eligible static mesh draw, break streaming once so immediate context builds & caches the 4x mesh.
     const bool isDepthOnly = (s_.rtCount == 0u || !s_.rtv[0]);
+    const bool isDepthEqual = (s_.ds && dev_->DepthDesc(s_.ds->id).DepthFunc == D3D11_COMPARISON_EQUAL);
+    const bool allowDsv = s_.dsv && (((s_.dsv->desc.Flags & D3D11_DSV_READ_ONLY_DEPTH) == 0) || isDepthEqual);
     const bool needBuild = dev_->geometrySubdiv && !replay_ && !isDepthOnly && s_.topo == D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST &&
-                           s_.dsv && (s_.dsv->desc.Flags & D3D11_DSV_READ_ONLY_DEPTH) == 0 &&
+                           allowDsv &&
                            n >= 12u && n <= 36000u && (n % 3u) == 0u &&
                            s_.vb[0].buf && s_.ib.buf && s_.vb[0].buf->core.store == Store::Committed &&
                            s_.ib.buf->core.store == Store::Committed && s_.layout && s_.layout->id &&

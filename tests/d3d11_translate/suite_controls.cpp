@@ -140,6 +140,138 @@ void RunControls(const Opts& o, Tally& t)
              flatLit, curvedLit, (unsigned long long)curvedSt.subdivMeshes,
              (unsigned long long)curvedSt.subdivDraws, (unsigned long long)curvedSt.debugErrors);
     t.Add(subOk, "geometry_subdiv_pn_triangle", sd);
+
+    // Wave 33 Paired Position-Only Z-Prepass + READ_ONLY_DEPTH DEPTH_EQUAL Color-Pass Regression Test:
+    // Proves bit-exact zero-hole lockstep across Skyrim's exact 2-pass renderer:
+    //   Frame 1 (uncached): Z-prepass draws flat -> DEPTH_EQUAL color pass builds 4x cache AND draws flat (0 holes!).
+    //   Frame 2 (cached):   Z-prepass hits 4x curved VB/IB & stamps DSV -> READ_ONLY_DEPTH DEPTH_EQUAL color pass
+    //                       matches DSV+frame & draws 4x curved silhouette (strictly expanded, 0 holes, 0 debug errors!).
+    {
+        raw::tx::CreateParams cp{};
+        cp.warp = !o.hardware;
+        cp.debugLayer = !o.noDebug;
+        cp.geometrySubdiv = true;
+        ComPtr<ID3D11Device> dev;
+        ComPtr<ID3D11DeviceContext> ctx;
+        bool okPair = SUCCEEDED(raw::tx::CreateDevice(cp, &dev, &ctx));
+        int pxF1 = 0, pxF2 = 0;
+        raw::tx::Stats stPair{};
+        if (okPair) {
+            static const char* kZVs =
+                "struct V { float3 p : POSITION; };\n"
+                "float4 main(V v) : SV_Position { return float4(v.p, 1.0); }\n";
+            static const char* kColVs =
+                "struct V { float3 p : POSITION; float3 n : NORMAL; float2 uv : TEXCOORD0; };\n"
+                "struct O { float4 p : SV_Position; float3 n : TEXCOORD0; };\n"
+                "O main(V v) { O o; o.p = float4(v.p, 1.0); o.n = v.n; return o; }\n";
+            static const char* kColPs =
+                "float4 main(float4 p : SV_Position, float3 n : TEXCOORD0) : SV_Target {\n"
+                "  return float4(saturate(normalize(n) * 0.5 + 0.5), 1.0); }\n";
+            ComPtr<ID3DBlob> zvb, cvb, cpb;
+            okPair = SUCCEEDED(D3DCompile(kZVs, strlen(kZVs), nullptr, nullptr, nullptr, "main", "vs_5_0", 0, 0, &zvb, nullptr)) &&
+                     SUCCEEDED(D3DCompile(kColVs, strlen(kColVs), nullptr, nullptr, nullptr, "main", "vs_5_0", 0, 0, &cvb, nullptr)) &&
+                     SUCCEEDED(D3DCompile(kColPs, strlen(kColPs), nullptr, nullptr, nullptr, "main", "ps_5_0", 0, 0, &cpb, nullptr));
+            if (okPair) {
+                ComPtr<ID3D11VertexShader> zvs, cvs;
+                ComPtr<ID3D11PixelShader> cps;
+                dev->CreateVertexShader(zvb->GetBufferPointer(), zvb->GetBufferSize(), nullptr, &zvs);
+                dev->CreateVertexShader(cvb->GetBufferPointer(), cvb->GetBufferSize(), nullptr, &cvs);
+                dev->CreatePixelShader(cpb->GetBufferPointer(), cpb->GetBufferSize(), nullptr, &cps);
+                D3D11_INPUT_ELEMENT_DESC zIed[1] = {
+                    {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+                };
+                D3D11_INPUT_ELEMENT_DESC cIed[3] = {
+                    {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,  0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+                    {"NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+                    {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
+                };
+                ComPtr<ID3D11InputLayout> zIl, cIl;
+                dev->CreateInputLayout(zIed, 1, zvb->GetBufferPointer(), zvb->GetBufferSize(), &zIl);
+                dev->CreateInputLayout(cIed, 3, cvb->GetBufferPointer(), cvb->GetBufferSize(), &cIl);
+
+                struct Vtx { float p[3]; float n[3]; float uv[2]; };
+                const Vtx verts[5] = {
+                    {{ 0.0f,  0.0f, 0.25f}, { 0.0f,  0.0f, 1.0f}, {0.5f, 0.5f}},
+                    {{-0.5f,  0.0f, 0.65f}, {-0.75f, 0.0f, 0.66f}, {0.0f, 0.5f}},
+                    {{ 0.0f,  0.5f, 0.65f}, { 0.0f,  0.75f, 0.66f}, {0.5f, 1.0f}},
+                    {{ 0.5f,  0.0f, 0.65f}, { 0.75f, 0.0f, 0.66f}, {1.0f, 0.5f}},
+                    {{ 0.0f, -0.5f, 0.65f}, { 0.0f, -0.75f, 0.66f}, {0.5f, 0.0f}},
+                };
+                const uint16_t idx[12] = { 0,1,2, 0,2,3, 0,3,4, 0,4,1 };
+                D3D11_BUFFER_DESC vbd{sizeof(verts), D3D11_USAGE_IMMUTABLE, D3D11_BIND_VERTEX_BUFFER, 0, 0, 0};
+                D3D11_BUFFER_DESC ibd{sizeof(idx),   D3D11_USAGE_IMMUTABLE, D3D11_BIND_INDEX_BUFFER,  0, 0, 0};
+                D3D11_SUBRESOURCE_DATA vsd{verts, 0, 0}, isd{idx, 0, 0};
+                ComPtr<ID3D11Buffer> vb, ib;
+                dev->CreateBuffer(&vbd, &vsd, &vb);
+                dev->CreateBuffer(&ibd, &isd, &ib);
+
+                D3D11_TEXTURE2D_DESC td{64, 64, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET, 0, 0};
+                D3D11_TEXTURE2D_DESC dd{64, 64, 1, 1, DXGI_FORMAT_D32_FLOAT, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_DEPTH_STENCIL, 0, 0};
+                ComPtr<ID3D11Texture2D> rt, ds;
+                dev->CreateTexture2D(&td, nullptr, &rt);
+                dev->CreateTexture2D(&dd, nullptr, &ds);
+                ComPtr<ID3D11RenderTargetView> rtv = MakeRTV(dev.Get(), rt.Get());
+                D3D11_DEPTH_STENCIL_VIEW_DESC dsvWDesc{};
+                dsvWDesc.Format = DXGI_FORMAT_D32_FLOAT; dsvWDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+                D3D11_DEPTH_STENCIL_VIEW_DESC dsvRDesc = dsvWDesc;
+                dsvRDesc.Flags = D3D11_DSV_READ_ONLY_DEPTH;
+                ComPtr<ID3D11DepthStencilView> dsvWrite, dsvRead;
+                dev->CreateDepthStencilView(ds.Get(), &dsvWDesc, &dsvWrite);
+                dev->CreateDepthStencilView(ds.Get(), &dsvRDesc, &dsvRead);
+
+                D3D11_DEPTH_STENCIL_DESC dsZ{};
+                dsZ.DepthEnable = TRUE; dsZ.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL; dsZ.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+                D3D11_DEPTH_STENCIL_DESC dsEq{};
+                dsEq.DepthEnable = TRUE; dsEq.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO; dsEq.DepthFunc = D3D11_COMPARISON_EQUAL;
+                ComPtr<ID3D11DepthStencilState> dssZ, dssEq;
+                dev->CreateDepthStencilState(&dsZ, &dssZ);
+                dev->CreateDepthStencilState(&dsEq, &dssEq);
+
+                auto runPairedFrame = [&](Image& outImg) -> bool {
+                    const float zero[4] = {0, 0, 0, 1};
+                    ctx->ClearRenderTargetView(rtv.Get(), zero);
+                    ctx->ClearDepthStencilView(dsvWrite.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+                    D3D11_VIEWPORT vp{0, 0, 64, 64, 0, 1};
+                    ctx->RSSetViewports(1, &vp);
+                    ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                    UINT stride = sizeof(Vtx), off = 0;
+                    ID3D11Buffer* vbs[1] = {vb.Get()};
+                    ctx->IASetVertexBuffers(0, 1, vbs, &stride, &off);
+                    ctx->IASetIndexBuffer(ib.Get(), DXGI_FORMAT_R16_UINT, 0);
+                    // Pass 1: Position-only Z-prepass (writable DSV, 0 RTVs)
+                    ctx->OMSetRenderTargets(0, nullptr, dsvWrite.Get());
+                    ctx->OMSetDepthStencilState(dssZ.Get(), 0);
+                    ctx->IASetInputLayout(zIl.Get());
+                    ctx->VSSetShader(zvs.Get(), nullptr, 0);
+                    ctx->PSSetShader(nullptr, nullptr, 0);
+                    ctx->DrawIndexed(12, 0, 0);
+                    // Pass 2: NORMAL-bearing DEPTH_EQUAL color pass (READ_ONLY_DEPTH DSV of same texture!)
+                    ID3D11RenderTargetView* rtvs[1] = {rtv.Get()};
+                    ctx->OMSetRenderTargets(1, rtvs, dsvRead.Get());
+                    ctx->OMSetDepthStencilState(dssEq.Get(), 0);
+                    ctx->IASetInputLayout(cIl.Get());
+                    ctx->VSSetShader(cvs.Get(), nullptr, 0);
+                    ctx->PSSetShader(cps.Get(), nullptr, 0);
+                    ctx->DrawIndexed(12, 0, 0);
+                    SceneCtx sc{dev.Get(), ctx.Get()};
+                    return Readback(sc, rt.Get(), outImg);
+                };
+                Image img1, img2;
+                okPair = runPairedFrame(img1) && runPairedFrame(img2);
+                for (size_t i = 0; i + 3 < img1.rgba.size(); i += 4) pxF1 += (img1.rgba[i] | img1.rgba[i+1] | img1.rgba[i+2]) != 0;
+                for (size_t i = 0; i + 3 < img2.rgba.size(); i += 4) pxF2 += (img2.rgba[i] | img2.rgba[i+1] | img2.rgba[i+2]) != 0;
+                ctx->ClearState(); ctx->Flush();
+                stPair = raw::tx::GetStats(dev.Get());
+            }
+        }
+        const bool pairPass = okPair && stPair.debugErrors == 0 && stPair.subdivMeshes == 1 && stPair.subdivDraws == 2 &&
+                              pxF1 == flatLit && pxF2 > flatLit;
+        char pd[256];
+        snprintf(pd, sizeof(pd), "flatRef=%d f1BuildPx=%d f2CurvedEqPx=%d meshes=%llu draws=%llu debugErr=%llu",
+                 flatLit, pxF1, pxF2, (unsigned long long)stPair.subdivMeshes,
+                 (unsigned long long)stPair.subdivDraws, (unsigned long long)stPair.debugErrors);
+        t.Add(pairPass, "geometry_subdiv_paired_depth_equal", pd);
+    }
 }
 
 // ---- bytecode readers ----

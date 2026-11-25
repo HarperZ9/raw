@@ -90,7 +90,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     if (dofParams.w > 0.5f && (weather.w >= 0.12f || weather.z >= 0.25f)) {
         lit.rgb = elderWeatherLensPrepass(Lit, px, dims.xy, dims.zw, weather.w, weather.z, camPosW.w);
     }
-    const bool isCelestial = (d < 1.0f && curZ > 220000.0f);
+    // Wave 33 Distant Mountain Aerial Perspective Fix (00.10.37.77.png Throat of the World cutout):
+    // Tamriel's farthest DistantLOD peaks sit at 220k..340k units; only true sky-dome celestial geometry
+    // (Masser/Secunda at far clip d > 0.99982 and curZ > 380,000u) should bypass atmospheric aerial perspective!
+    const bool isCelestial = (d < 1.0f && d > 0.99982f && curZ > 380000.0f);
     if (d >= 1.0f || isCelestial) {
         // Unified Hillaire SIGGRAPH 2020 Physical HDR Sky + Solar Disc + Masser/Secunda Celestial Pass + Wrenninge 4-Octave HDR Cloud Composite:
         // Routing celestial sky-dome geometry (curZ > 220k: Masser & Secunda) here prevents terrestrial horizonMelt from

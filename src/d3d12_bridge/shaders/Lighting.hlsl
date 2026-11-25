@@ -575,25 +575,27 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (z < 7200.0f) {
             const float3 wpF = p + camPosW.xyz;
             const float fFade = smoothstep(7200.0f, 240.0f, z);
-            // Multi-scale 3D world-space bough-cluster lobes so crossed pine/leaf cards read as rounded 3D crowns:
+            // Wave 33 Botanical Canopy Macro-Volume (fixes chalky bleached pine needles in 00.06.54 / 00.06.47):
+            // Keep natural 3D bough orientation (gentle upward bias 0.26 instead of 0.62!) so pine sides keep deep
+            // directional shadow modeling instead of facing straight into the noon sun.
             const float boughX = cNoise(wpF * 0.015f + float3(3.1f, 0.0f, 1.7f)) * 2.0f - 1.0f;
             const float boughY = cNoise(wpF * 0.015f + float3(0.0f, 5.7f, 2.9f)) * 2.0f - 1.0f;
-            const float boughZ = cNoise(wpF * 0.022f + float3(7.3f, 2.1f, 4.3f)) * 0.45f;
-            const float3 canopyMacroN = normalize(float3(s.n.xy * 0.65f + float2(boughX, boughY) * 0.42f,
-                                                         max(s.n.z, -0.15f) * 0.50f + 0.62f + boughZ));
-            s.n = normalize(lerp(s.n, canopyMacroN, 0.70f * fFade));
+            const float boughZ = (cNoise(wpF * 0.022f + float3(7.3f, 2.1f, 4.3f)) - 0.5f) * 0.35f;
+            const float3 canopyMacroN = normalize(float3(s.n.xy * 0.78f + float2(boughX, boughY) * 0.32f,
+                                                         s.n.z * 0.68f + 0.26f + boughZ));
+            s.n = normalize(lerp(s.n, canopyMacroN, 0.38f * fFade));
             const float leafVar = cNoise(wpF * 0.018f);
-            s.f0 = 0.020f;
-            s.alpha = clamp(lerp(s.alpha, 0.76f, 0.72f * fFade), 0.62f, 0.92f);
+            s.f0 = 0.018f;
+            s.alpha = clamp(lerp(s.alpha, 0.82f, 0.72f * fFade), 0.68f, 0.94f);
             const float speciesId = cNoise(wpF * 0.0045f + float3(17.3f, 9.1f, 3.7f));
-            // Rich deep Nordic spruce/pine viridian palette (fixes washed-out yellow-blonde pine silhouettes in 22.43.52.31.png!):
+            // Physical linear chlorophyll albedo (0.04..0.28 linear instead of bleached 0.55 chalky beige):
             const float3 speciesTint = speciesId < 0.5f
-                ? lerp(float3(0.74f, 0.94f, 0.80f), float3(0.82f, 0.98f, 0.84f), speciesId * 2.0f)
-                : lerp(float3(0.82f, 0.98f, 0.84f), float3(0.88f, 0.96f, 0.82f), (speciesId - 0.5f) * 2.0f);
-            const float crownDepthAo = lerp(0.72f, 1.04f, saturate(s.n.z * 0.5f + 0.5f));
-            albedo *= lerp(1.0f.xxx, speciesTint * lerp(0.86f, 1.04f, leafVar) * crownDepthAo, fFade * 0.62f);
-            // Tame chalky vanilla snow-dusted pine tips so trees integrate naturally into shadowed alpine forests:
-            albedo = min(albedo, float3(0.54f, 0.60f, 0.56f));
+                ? lerp(float3(0.58f, 0.80f, 0.62f), float3(0.68f, 0.86f, 0.66f), speciesId * 2.0f)
+                : lerp(float3(0.68f, 0.86f, 0.66f), float3(0.74f, 0.84f, 0.64f), (speciesId - 0.5f) * 2.0f);
+            const float crownDepthAo = lerp(0.56f, 0.98f, saturate(s.n.z * 0.5f + 0.5f));
+            albedo *= lerp(1.0f.xxx, speciesTint * lerp(0.80f, 1.02f, leafVar) * crownDepthAo, fFade * 0.78f);
+            // Cap washed-out chalky foliage albedo while preserving natural bright snow-laden branches in winter:
+            albedo = min(albedo, float3(0.32f, 0.38f, 0.32f));
         }
     }
     const float3 nSmooth = s.n;
@@ -899,29 +901,33 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float iceNear = smoothstep(2200.0f, 110.0f, z);
             const float3 wpAbsI = p + camPosW.xyz;
             const float3 refrV = refract(-s.v, s.n, 1.0f / 1.31f);
-            // 3 parallax-offset internal depths along the refracted ray sample internal fracture sheets & trapped air bubbles:
-            const float3 pL1 = wpAbsI + refrV * (5.5f * iceNear);
-            const float3 pL2 = wpAbsI + refrV * (14.0f * iceNear);
-            const float3 pL3 = wpAbsI + refrV * (26.0f * iceNear);
-            const float f1 = 1.0f - smoothstep(0.01f, 0.14f, abs(cNoise(pL1 * 0.055f) * 2.0f - 1.0f));
-            const float f2 = 1.0f - smoothstep(0.01f, 0.16f, abs(cNoise(pL2 * 0.032f + float3(9.3f, 4.1f, 7.7f)) * 2.0f - 1.0f));
-            const float deepCavity = cNoise(pL3 * 0.014f + 3.1f) * 0.60f + cNoise(pL2 * 0.042f + 11.7f) * 0.40f;
-            const float crackVeins = saturate(f1 * 0.65f + f2 * 0.50f);
-            // Crystalline chipped-ice micro-facet normal relief:
-            const float icX = cNoise(wpAbsI * 0.09f + float3(0.45f, 0.0f, 0.0f)) - cNoise(wpAbsI * 0.09f - float3(0.45f, 0.0f, 0.0f));
-            const float icY = cNoise(wpAbsI * 0.09f + float3(0.0f, 0.45f, 0.0f)) - cNoise(wpAbsI * 0.09f - float3(0.0f, 0.45f, 0.0f));
-            const float icZ = cNoise(wpAbsI * 0.09f + float3(0.0f, 0.0f, 0.45f)) - cNoise(wpAbsI * 0.09f - float3(0.0f, 0.0f, 0.45f));
-            s.n = normalize(s.n + float3(icX, icY, icZ) * (0.48f * iceMask * iceNear));
-            // Beer-Lambert glacial transmittance: deep translucent turquoise-sapphire core + bright white-cyan fracture veins!
-            const float3 deepGlacier = float3(0.06f, 0.24f, 0.36f) * (0.75f + 0.55f * deepCavity);
-            const float3 veinFrost   = float3(0.62f, 0.78f, 0.88f);
-            const float3 iceOptic = lerp(deepGlacier, veinFrost, saturate(crackVeins * 0.68f + (1.0f - deepCavity) * 0.22f));
-            albedo = lerp(albedo, iceOptic, iceMask * (0.42f + 0.30f * iceNear));
-            // Spatially varying glossy melt-ice (0.09) vs frosted rime veins (0.42) with exact ice IOR 1.31 (F0 = 0.018):
-            const float glazeRough = lerp(0.09f, 0.42f, saturate(crackVeins * 0.75f + (1.0f - deepCavity) * 0.35f));
+            // Wave 33 Physical Crystalline Glacial Ice (kills the spaghetti contour-worm loops in 00.08.08 / 00.08.16!):
+            // Uses multi-scale stratified glacier compression bands, subtle internal parallax depth clouding,
+            // suspended micro-bubble pockets, and chipped crystal micro-facets instead of noise zero-level-set rings!
+            const float3 pL1 = wpAbsI + refrV * (8.0f * iceNear);
+            const float3 pL2 = wpAbsI + refrV * (22.0f * iceNear);
+            const float stratWarp = cNoise(pL1 * 0.018f) * 18.0f;
+            const float strata = cNoise(float3(pL1.x * 0.014f, pL1.y * 0.014f, (pL1.z + stratWarp) * 0.048f));
+            const float deepCloud = cNoise(pL2 * 0.016f + 3.1f) * 0.58f + cNoise(pL1 * 0.045f + 11.7f) * 0.42f;
+            const float microBubbles = smoothstep(0.68f, 0.92f, cNoise(pL1 * 0.24f + 5.3f) * 0.65f + cNoise(pL2 * 0.14f + 19.1f) * 0.35f);
+            const float frostVeil = saturate((strata - 0.52f) * 1.45f) * 0.38f + microBubbles * 0.34f;
+            // Subtle crystalline chipped-ice surface micro-facets (preserves authored Skyrim normal-map cracks cleanly):
+            const float icX = cNoise(wpAbsI * 0.12f + float3(0.45f, 0.0f, 0.0f)) - cNoise(wpAbsI * 0.12f - float3(0.45f, 0.0f, 0.0f));
+            const float icY = cNoise(wpAbsI * 0.12f + float3(0.0f, 0.45f, 0.0f)) - cNoise(wpAbsI * 0.12f - float3(0.0f, 0.45f, 0.0f));
+            const float icZ = cNoise(wpAbsI * 0.12f + float3(0.0f, 0.0f, 0.45f)) - cNoise(wpAbsI * 0.12f - float3(0.0f, 0.0f, 0.45f));
+            s.n = normalize(s.n + float3(icX, icY, icZ) * (0.26f * iceMask * iceNear));
+            // Beer-Lambert glacial transmittance: deep translucent Arctic cobalt-teal core with view-angle optical depth:
+            const float nvIce = saturate(dot(s.n, s.v));
+            const float3 deepGlacier = lerp(float3(0.045f, 0.165f, 0.285f), float3(0.085f, 0.275f, 0.405f), deepCloud)
+                                     * lerp(0.76f, 1.16f, nvIce);
+            const float3 frostCrystal = float3(0.52f, 0.68f, 0.80f);
+            const float3 iceOptic = lerp(deepGlacier, frostCrystal, saturate(frostVeil));
+            albedo = lerp(albedo, iceOptic, iceMask * (0.34f + 0.26f * iceNear));
+            // Spatially varying glossy melt-ice (0.08) vs frosted bubble strata (0.34) with exact ice IOR 1.31 (F0 = 0.018):
+            const float glazeRough = lerp(0.08f, 0.34f, saturate(frostVeil * 1.15f + (1.0f - deepCloud) * 0.25f));
             s.alpha = lerp(s.alpha, glazeRough, iceMask * 0.85f);
-            s.f0 = lerp(s.f0, 0.024f, iceMask * 0.88f);
-            s.mask = max(s.mask, iceMask * 0.72f);
+            s.f0 = lerp(s.f0, 0.022f, iceMask * 0.88f);
+            s.mask = max(s.mask, iceMask * 0.78f);
             lobe = true;
         }
     }
@@ -1155,10 +1161,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             // top-3 lights use their exact RT shadow vis (rv[slot]); secondary lights (4..128) use stable ReSTIR visibility.
             // On skinned actor clothing/skin, soften BLAS self-shadow to eliminate coarse low-poly triangle acne on backs/shoulders.
             if (rt) {
-                // Unified flicker-free RT point-light shadows: smooth matched floor between primary top-3 RT lights
-                // and secondary ReSTIR lights eliminates light-rank swap flicker indoors & outdoors!
-                const float rtSh = slot != 0u ? lerp(0.16f, 1.0f, rv[slot]) : lerp(0.45f, 1.0f, restVis);
-                sh = (isActorCloth || isActorFeat) ? lerp(0.55f, 1.0f, rtSh) : rtSh;
+                // Unified flicker-free RT point-light shadows: allow genuine sculptural cheek/jaw/brow contrast
+                // on characters (0.24 floor instead of flat 0.55) while keeping soft penumbrae.
+                const float rtSh = slot != 0u ? lerp(0.14f, 1.0f, rv[slot]) : lerp(0.42f, 1.0f, restVis);
+                sh = (isActorCloth || isActorFeat) ? lerp(0.24f, 1.0f, rtSh) : rtSh;
             }
             else if (slot != 0u) { sh = rv[slot]; }
             if (!match && !rt && sunColour.w > 0.5f && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
@@ -1217,7 +1223,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Exteriors: ray-traced sky visibility (RtSky.cpp). Interiors (!match): local SM6.9 RayQuery RTAO from RtShadow.hlsl.
     const bool isExterior = sunColour.w > 0.5f;
     const float rawSkyVis = rt && (flags.x & FLAG_SKY) != 0u && (isExterior || !match) ? RtIdx.Load(ip).w : 1.0f;
-    const float skyVis = isActorFeat ? lerp(0.55f, 1.0f, rawSkyVis) : rawSkyVis;
+    const float skyVis = isActorFeat ? lerp(0.22f, 1.0f, rawSkyVis) : rawSkyVis;
     // Physical directional skylighting falloff: roofs, covered walkways, arches & dense foliage cores drop to deep rich shade
     // (0.10..1.0 exteriors, 0.16..1.0 velvety interior shadow drama) while open surfaces keep crisp skylighting.
     const float skyVisShaped = !match ? pow(saturate(skyVis), base == 5u ? 1.65f : 1.85f) : skyVis;
@@ -1241,10 +1247,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     }
     float combinedOcc = min(nearGroundAo, rtOcc);
     // Lifelike Vanilla NPCs: lift recessed eye-socket AO (base==12) so eyes never read as dim dark holes,
-    // while preserving sculptural brow/cheek contour modeling on skin (base==10).
+    // while preserving sculptural brow/cheek/jaw contour modeling on skin (base==10; 0.06 instead of flat 0.20).
     if (!match) {
         if (base == 12u) combinedOcc = lerp(combinedOcc, 1.0f, 0.80f);
-        else if (skin)   combinedOcc = lerp(combinedOcc, 1.0f, 0.20f);
+        else if (skin)   combinedOcc = lerp(combinedOcc, 1.0f, 0.06f);
     }
     // SIGGRAPH GI-12 Visibility-Aware Bent-Normal Hemisphere Skylighting (exteriors) &
     // Directional Vault/Hearth Ambient Shaping (interiors: deepens recessed corners & highlights upper masonry/beams).
@@ -1435,8 +1441,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float ea = (base != 2u && base != 5u && base != 13u) ? SoftMap.Load(ip).r : 0.0f;
     const float charLight = (flags.x & FLAG_CHAR) != 0u && ea < 0.0f ? max(-ea - 1.0f / 1024.0f, 0.0f) : 0.0f;
     if (flags.w == 19u) { return float4(charLight.xxx, game.a); }   // view 19: the character light
-    // Attenuate vanilla's flat white character fill light on skin in direct sunlight so shoulders/faces never blow out.
-    const float effCharLight = (!match && skin) ? charLight * lerp(0.85f, 0.12f, saturate(dot(diff, float3(0.33f, 0.33f, 0.34f)))) : charLight;
+    // Wave 33 Physical Skin Lighting (kills flat unlit indoor mannequin look on Mralki 00.09.59.87!):
+    // Attenuate vanilla's flat camera-attached character fill light on skin (0.18 indoors, 0.12 in sun) so real
+    // tavern hearths, windows, and sunlight carve dimensional brow/cheek/nose shadows.
+    const float effCharLight = (!match && skin)
+        ? charLight * (isExterior ? lerp(0.32f, 0.10f, saturate(dot(diff, float3(0.33f, 0.33f, 0.34f)))) : 0.18f)
+        : charLight;
     // True Complex PBR Material Diffuse & Specular IBL:
     // - TruePBR / PGPatcher (base==13, _rmaos.dds): exact authored Roughness (R), Metallic (G) & Baked AO (B)!
     // - Class-2 metals (steel, iron, silver, gold, Dwemer brass): physical conductor metallicity attenuates diffuse
@@ -1592,8 +1602,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float3 ccEnv = sampleLiveEnvCube(rDir, ccRough) * (0.30f + 0.70f * skyVisShaped);
             lit += evalMultiScatterIBL(float3(0.022f, 0.022f, 0.022f), ccRough, nv, ccEnv, specOcc) * (clearcoat * 0.95f);
         }
-        // Estevez-Kulla grazing velvet/fuzz rim sheen on rough organic materials (fur, wool, moss, thatch, pine bark).
-        if (!skin && base != 2u && s.alpha > 0.52f && sunDir.w > 0.5f && sunShadow > 0.05f) {
+        // Estevez-Kulla grazing velvet/fuzz rim sheen on rough organic materials (excluded on foliage base==5 to avoid pale halo).
+        if (!skin && base != 2u && base != 5u && s.alpha > 0.52f && sunDir.w > 0.5f && sunShadow > 0.05f) {
             const float rimFuzz = pow(1.0f - nv, 4.0f) * saturate((s.alpha - 0.52f) * 2.5f) * specOcc;
             lit += albedo * sunColour.rgb * (rimFuzz * sunShadow * 0.28f);
         }
@@ -1627,22 +1637,46 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     }
     if (!match) {
         // Character Portrait & Eye-Candy Shading (Vanilla NPCs & PCs):
-        // 1) Skin (base==10): restrained dermal wrap + fine pore-oil micro-specular in BOTH exteriors & interiors (never flat wax!).
+        // 1) Skin (base==10): Wave 33 Physical Dual-Lobe Sebum/Pore Specular + Hemoglobin Terminator SSS
+        // Driven by the actual strongest live scene light indoors (hearths/candles/windows) or sun outdoors — never flat ambient fill!
         if (skin) {
             const float nvSkin = saturate(dot(s.n, s.v));
-            const float fuzzRim = pow(1.0f - nvSkin, 3.2f) * 0.10f;
-            const float3 portFill = isExterior ? (sunColour.rgb * (0.20f + 0.80f * sunShadow) * 0.06f + amb * 0.09f)
-                                               : (max(amb, float3(0.05f, 0.04f, 0.035f)) * 0.11f);
-            lit += albedo * float3(1.06f, 0.90f, 0.82f) * (portFill + fuzzRim * (isExterior ? sunColour.rgb * 0.35f + amb : max(amb, 0.10f.xxx)));
-            const float3 skKeyDir = isExterior ? sunDir.xyz : normalize(s.v + float3(0.18f, 0.12f, 0.58f));
-            const float3 skKeyCol = isExterior ? (sunColour.rgb * sunShadow) : max(diff * 0.65f + amb * 0.45f, 0.04f.xxx);
+            float3 skKeyDir = isExterior ? sunDir.xyz : normalize(float3(0.25f, 0.20f, 0.85f));
+            float3 skKeyCol = isExterior ? (sunColour.rgb * sunShadow) : 0.0f.xxx;
+            if (!isExterior && flags.y > 0u) {
+                float bestSk = 0.0f;
+                const uint nSkL = min(flags.y, 24u);
+                [loop] for (uint ski = 0u; ski < nSkL; ++ski) {
+                    const float3 dlS = lightPosR[ski].xyz - p;
+                    const float dS = length(dlS);
+                    const float rS = lightPosR[ski].w;
+                    if (dS < rS && dS > 1.0f) {
+                        const float winS = saturate(1.0f - (dS / rS) * (dS / rS));
+                        const float lumS = dot(lightColS[ski].rgb, float3(0.2126f, 0.7152f, 0.0722f)) * winS * winS;
+                        if (lumS > bestSk) {
+                            bestSk = lumS;
+                            skKeyDir = dlS / dS;
+                            skKeyCol = lightColS[ski].rgb * (winS * winS);
+                        }
+                    }
+                }
+            }
             const float nlRaw = dot(s.n, skKeyDir);
+            // Warm hemoglobin subsurface bleed strictly concentrated at the light-to-shadow terminator (gives noses, ears, cheeks life):
+            const float termSss = exp(-abs(nlRaw) * 4.2f);
+            lit += albedo * float3(0.85f, 0.24f, 0.12f) * skKeyCol * (termSss * 0.16f);
+            // Dual-lobe physical skin specular: tight oil/sebum micro-sheen (alpha=0.19) + broad dermal velvet lobe (alpha=0.46)
             const float3 shv = normalize(s.v + skKeyDir);
-            const float snh = saturate(dot(s.n, shv)), sa2 = 0.048f;
-            const float sdd = snh * snh * (sa2 - 1.0f) + 1.0f;
-            const float sD = sa2 / (PI * sdd * sdd);
+            const float snh = saturate(dot(s.n, shv));
+            const float sa1 = 0.036f, sa2 = 0.210f;
+            const float sd1 = snh * snh * (sa1 - 1.0f) + 1.0f;
+            const float sd2 = snh * snh * (sa2 - 1.0f) + 1.0f;
+            const float sD = (sa1 / (PI * sd1 * sd1)) * 0.35f + (sa2 / (PI * sd2 * sd2)) * 0.65f;
             const float sF = 0.028f + 0.972f * pow(1.0f - saturate(dot(s.v, shv)), 5.0f);
-            lit += min(skKeyCol * (sD * sF * saturate(nlRaw) * 0.24f), 0.48f.xxx);
+            lit += min(skKeyCol * (sD * sF * saturate(nlRaw) * 0.32f), 0.55f.xxx);
+            // Delicate peach-fuzz grazing rim from real scene key light (0.04x — never flat chalky rim):
+            const float fuzzRim = pow(1.0f - nvSkin, 3.8f) * saturate(nlRaw * 0.5f + 0.5f) * 0.055f;
+            lit += albedo * float3(1.04f, 0.92f, 0.86f) * (skKeyCol * fuzzRim);
         } else if (base == 11u) {
             // 2) Hair (base==11): Dual-lobe Kajiya-Kay / Marschner anisotropic hair sheen (works in both exteriors & interiors).
             const float3 tHair = normalize(cross(s.n, float3(1.0f, 0.0f, 0.0f)) + float3(0.0f, 0.0f, 0.35f));
@@ -1683,13 +1717,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float cloudClear = 1.0f - saturate(clouds.x * 0.82f);
             const float dayGate = smoothstep(0.02f, 0.14f, astroSunElev());
             const float foliageThickness = lerp(0.45f, 1.0f, cNoise(wpCan * 0.024f + 5.1f));
-            // Backlit chlorophyll transmission + thin-leaf warm-emerald side scatter (strictly shadow & day gated):
-            const float3 sssCol = albedo * float3(0.92f, 1.16f, 0.44f);
-            lit += sssCol * sunColour.rgb * ((back * 0.28f + wrapL * 0.06f) * foliageThickness * sunShadow * cloudClear * dayGate);
-            // Vertical crown-to-underside & interior pine self-shadowing (grounds dense canopies with deep Nordic volume):
-            const float crownUp = saturate(s.n.z * 0.55f + 0.52f);
-            const float canopyOcc = saturate(skyVis * 0.72f + sunShadow * 0.20f + crownUp * 0.24f);
-            lit *= lerp(float3(0.56f, 0.66f, 0.54f), 1.0f.xxx, canopyOcc);
+            // Backlit chlorophyll transmission + thin-leaf warm-emerald side scatter (disciplined 0.18x so sunlit pines stay rich green):
+            const float3 sssCol = albedo * float3(0.84f, 1.14f, 0.42f);
+            lit += sssCol * sunColour.rgb * ((back * 0.18f + wrapL * 0.03f) * foliageThickness * sunShadow * cloudClear * dayGate);
+            // Deep 3D vertical crown-to-underside & interior pine self-shadowing (carves lush 3D volume out of crossed boughs!):
+            const float crownUp = saturate(s.n.z * 0.55f + 0.50f);
+            const float canopyOcc = saturate(skyVis * 0.68f + sunShadow * 0.24f + crownUp * 0.20f);
+            lit *= lerp(float3(0.36f, 0.46f, 0.36f), 1.0f.xxx, canopyOcc);
         }
         // Grazing micro-Fresnel environmental wrap so vanilla surfaces gain physical material separation.
         const float nvWrap = saturate(dot(s.n, s.v));

@@ -547,6 +547,187 @@ void UiDrawList::AddDebugViewQuickGrid(float x, float y, float w,
     }
 }
 
+void UiDrawList::AddPipelineHealthMatrix(float x, float y, float w,
+                                         const PipelinePassStatus* passes, uint32_t passCount,
+                                         uint32_t columns, uint32_t scale)
+{
+    if (!passes || passCount == 0u || w <= 48.0f) return;
+    const uint32_t s = std::clamp(scale, 1u, 3u);
+    const float sf = static_cast<float>(s);
+    const uint32_t cols = std::clamp(columns, 1u, 4u);
+    const uint32_t count = std::min(passCount, 12u);
+    const float gap = 3.0f * sf;
+    const float cellW = (w - gap * static_cast<float>(cols - 1u)) / static_cast<float>(cols);
+    const float cellH = 18.0f * sf;
+    if (cellW < 40.0f * sf) return;
+
+    for (uint32_t i = 0u; i < count; ++i) {
+        const uint32_t colIdx = i % cols;
+        const uint32_t rowIdx = i / cols;
+        const float cx = x + static_cast<float>(colIdx) * (cellW + gap);
+        const float cy = y + static_cast<float>(rowIdx) * (cellH + gap);
+
+        const PipelinePassStatus& p = passes[i];
+        uint32_t stateCol = tokens::kAccentPass;
+        uint32_t borderCol = tokens::kBorder;
+        uint32_t topAccent = 0u;
+        switch (p.state) {
+        case PipelineHealthState::Pass:
+            stateCol = tokens::kAccentPass;
+            break;
+        case PipelineHealthState::Warn:
+            stateCol = tokens::kAccentLead;
+            borderCol = tokens::kAccentLead;
+            topAccent = tokens::kAccentLead;
+            break;
+        case PipelineHealthState::Fail:
+            stateCol = tokens::kAccentFail;
+            borderCol = tokens::kAccentFail;
+            topAccent = tokens::kAccentFail;
+            break;
+        case PipelineHealthState::Off:
+        default:
+            stateCol = tokens::kAccentNull;
+            break;
+        }
+
+        AddPanel(cx, cy, cellW, cellH, 3.0f * sf, tokens::kSurface, borderCol, topAccent, 1.0f);
+
+        const float dotD = 6.5f * sf;
+        AddVerdictDot(cx + 4.0f * sf, cy + (cellH - dotD) * 0.5f, dotD, stateCol, tokens::kBorderStrong);
+
+        char msBuf[20]{};
+        if (p.state == PipelineHealthState::Off) {
+            std::snprintf(msBuf, sizeof(msBuf), "OFF");
+        } else {
+            const float safeMs = (std::isfinite(p.gpuMs) && p.gpuMs >= 0.0f) ? p.gpuMs : 0.0f;
+            std::snprintf(msBuf, sizeof(msBuf), "%.2fms", static_cast<double>(safeMs));
+        }
+        const float msW = static_cast<float>(MeasureTextWidthPx(msBuf, s));
+        const float msX = cx + std::max(dotD + 8.0f * sf, cellW - msW - 4.0f * sf);
+        AddText(msX, cy + 4.5f * sf, msBuf,
+                (p.state == PipelineHealthState::Off) ? tokens::kInkMuted : stateCol, s, 0u);
+
+        const float nameX = cx + 13.0f * sf;
+        const float nameMaxW = std::max(4.0f, msX - nameX - 3.0f * sf);
+        const char* nm = (p.name && p.name[0] != '\0') ? p.name : "Pass";
+        PushClipRect(nameX, cy + 2.0f * sf, nameMaxW, cellH - 4.0f * sf);
+        AddText(nameX, cy + 4.5f * sf, nm,
+                (p.state == PipelineHealthState::Off) ? tokens::kInkMuted : tokens::kInkPrimary, s, 0u);
+        PopClipRect();
+    }
+}
+
+void UiDrawList::AddVectorCompass(float x, float y, float w,
+                                  const VectorCompassData& compass, uint32_t scale)
+{
+    if (w <= 120.0f) return;
+    const uint32_t s = std::clamp(scale, 1u, 3u);
+    const float sf = static_cast<float>(s);
+    const float h = 68.0f * sf;
+    const float pad = 6.0f * sf;
+
+    float safeYaw = std::isfinite(compass.yawDeg) ? std::fmod(compass.yawDeg, 360.0f) : 0.0f;
+    if (safeYaw < 0.0f) safeYaw += 360.0f;
+    const float safePitch = std::clamp(std::isfinite(compass.pitchDeg) ? compass.pitchDeg : 0.0f, -90.0f, 90.0f);
+    const float safeMvX   = std::isfinite(compass.mvX) ? std::clamp(compass.mvX, -64.0f, 64.0f) : 0.0f;
+    const float safeMvY   = std::isfinite(compass.mvY) ? std::clamp(compass.mvY, -64.0f, 64.0f) : 0.0f;
+    const float safeDiv   = (std::isfinite(compass.mvDivPx) && compass.mvDivPx >= 0.0f) ? compass.mvDivPx : 0.0f;
+
+    const uint32_t topAccent = compass.camSweepActive ? tokens::kAccentEmerald : tokens::kAccentPass;
+    AddPanel(x, y, w, h, 4.0f * sf, tokens::kSurface, tokens::kBorderStrong, topAccent, 1.0f);
+
+    // Left dial: SDF compass ring + pitch scale + yaw marker + live signed MV vector arrow
+    const float dialD = 54.0f * sf;
+    const float dialX = x + pad;
+    const float dialY = y + (h - dialD) * 0.5f;
+    const float dialR = dialD * 0.5f;
+    const float cx = dialX + dialR;
+    const float cy = dialY + dialR;
+
+    AddVerdictDot(dialX, dialY, dialD, tokens::kGraphWell, tokens::kBorderStrong);
+    AddVerdictDot(cx - dialR * 0.48f, cy - dialR * 0.48f, dialD * 0.48f, tokens::kSurface, tokens::kBorder);
+
+    // Crosshair hairlines inside dial
+    AddRect(cx - dialR + 4.0f * sf, cy - 0.5f, dialD - 8.0f * sf, 1.0f, tokens::kBorder);
+    AddRect(cx - 0.5f, dialY + 4.0f * sf, 1.0f, dialD - 8.0f * sf, tokens::kBorder);
+
+    // Yaw heading marker on outer bezel rim (0 deg = North/up, clockwise)
+    constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
+    const float yawRad = safeYaw * kDegToRad;
+    const float yawRimR = dialR - 3.5f * sf;
+    const float yawMx = cx + std::sin(yawRad) * yawRimR;
+    const float yawMy = cy - std::cos(yawRad) * yawRimR;
+    const float yawDotD = 6.5f * sf;
+    AddVerdictDot(yawMx - yawDotD * 0.5f, yawMy - yawDotD * 0.5f, yawDotD, tokens::kAccentLead, tokens::kInkPrimary);
+
+    // Live signed GPU motion-vector arrow from dial center (scaled to dial inner radius)
+    const float mvMag = std::sqrt(safeMvX * safeMvX + safeMvY * safeMvY);
+    if (mvMag > 0.05f) {
+        const float maxVecLen = dialR - 7.0f * sf;
+        const float len = std::min(maxVecLen, std::max(5.0f * sf, (mvMag / 16.0f) * maxVecLen));
+        const float dx = (safeMvX / mvMag) * len;
+        const float dy = (safeMvY / mvMag) * len;
+        for (uint32_t k = 1u; k <= 4u; ++k) {
+            const float t = static_cast<float>(k) * 0.22f;
+            const float dSeg = 4.0f * sf;
+            AddVerdictDot(cx + dx * t - dSeg * 0.5f, cy + dy * t - dSeg * 0.5f,
+                          dSeg, tokens::kAccentPass, 0u);
+        }
+        const float tipD = 6.5f * sf;
+        AddVerdictDot(cx + dx - tipD * 0.5f, cy + dy - tipD * 0.5f,
+                      tipD, tokens::kAccentPass, tokens::kInkPrimary);
+    } else {
+        const float ctrD = 4.5f * sf;
+        AddVerdictDot(cx - ctrD * 0.5f, cy - ctrD * 0.5f, ctrD, tokens::kAccentNull, 0u);
+    }
+
+    // Vertical pitch ladder beside dial [-90..+90]
+    const float pitX = dialX + dialD + 5.0f * sf;
+    const float pitY = dialY + 3.0f * sf;
+    const float pitH = dialD - 6.0f * sf;
+    AddRect(pitX, pitY, 4.0f * sf, pitH, tokens::kGraphWell);
+    AddRect(pitX - 1.0f, pitY + pitH * 0.5f, 6.0f * sf, 1.0f, tokens::kBorderStrong);
+    const float pitNorm = 0.5f - (safePitch / 180.0f);
+    const float pipY = pitY + std::clamp(pitNorm, 0.0f, 1.0f) * std::max(1.0f, pitH - 3.0f * sf);
+    AddRect(pitX - 1.0f, pipY, 6.0f * sf, 3.0f * sf, tokens::kAccentLead);
+
+    // Right readout column: Title + cam_sweep badge, Yaw/Pitch, MV(x,y), mvDivPx bar
+    const float rx = pitX + 10.0f * sf;
+    const float rw = std::max(40.0f, (x + w - pad) - rx);
+
+    AddText(rx, y + 6.0f * sf, "COMPASS / MV", tokens::kInkPrimary, s);
+    const char* sweepTxt = compass.camSweepActive ? "SWEEP" : "IDLE";
+    const float pillW = static_cast<float>(MeasureTextWidthPx(sweepTxt, s)) + 25.0f * sf;
+    if (pillW < rw - 76.0f * sf) {
+        AddPill(rx + rw - pillW, y + 3.0f * sf, sweepTxt,
+                compass.camSweepActive ? tokens::kPillOnBg : tokens::kPillOffBg,
+                tokens::kInkPrimary, tokens::kBorderStrong,
+                compass.camSweepActive ? tokens::kAccentEmerald : tokens::kAccentNull, s);
+    }
+
+    char ypBuf[48]{};
+    std::snprintf(ypBuf, sizeof(ypBuf), "YAW %5.1f | PIT %+5.1f",
+                  static_cast<double>(safeYaw), static_cast<double>(safePitch));
+    PushClipRect(rx, y + 20.0f * sf, rw, 11.0f * sf);
+    AddText(rx, y + 20.0f * sf, ypBuf, tokens::kInkSecondary, s);
+    PopClipRect();
+
+    char mvBuf[48]{};
+    std::snprintf(mvBuf, sizeof(mvBuf), "MV (%+4.1f,%+4.1f) px",
+                  static_cast<double>(safeMvX), static_cast<double>(safeMvY));
+    PushClipRect(rx, y + 32.0f * sf, rw, 11.0f * sf);
+    AddText(rx, y + 32.0f * sf, mvBuf, tokens::kAccentPass, s);
+    PopClipRect();
+
+    // mvDivPx divergence meter
+    const uint32_t divCol = (safeDiv <= 1.0f) ? tokens::kAccentPass
+                          : ((safeDiv <= 2.5f) ? tokens::kAccentLead : tokens::kAccentFail);
+    char divBuf[24]{};
+    std::snprintf(divBuf, sizeof(divBuf), "%.2f px", static_cast<double>(safeDiv));
+    AddSlider(rx, y + 43.0f * sf, rw, "mvDivPx", std::clamp(safeDiv / 4.0f, 0.0f, 1.0f), divBuf, divCol, s);
+}
+
 void UiDrawList::AddPill(float x, float y, const char* label,
                          uint32_t bgRgba, uint32_t textRgba,
                          uint32_t borderRgba, uint32_t dotRgba,

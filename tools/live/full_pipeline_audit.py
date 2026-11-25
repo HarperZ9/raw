@@ -190,6 +190,37 @@ def write_scene_init_bat(game_dir: Path, console_cmd: str) -> Path:
     return bat_path
 
 
+def parse_scene_gamehour(console_cmd: str) -> float | None:
+    """Extracts `<H>` from `set gamehour to <H>` inside a scene console command string."""
+    for raw_part in console_cmd.split(";"):
+        toks = raw_part.strip().lower().split()
+        if len(toks) >= 4 and toks[0] == "set" and toks[1] == "gamehour" and toks[2] == "to":
+            try:
+                return float(toks[3])
+            except ValueError:
+                return None
+    return None
+
+
+def emit_engine_commands(game_dir: Path, commands: Sequence[str]) -> Path:
+    """Writes one or more newline-separated directives to `game_dir/raw_engine_go.txt`."""
+    go_path = Path(game_dir) / "raw_engine_go.txt"
+    clean = [str(c).strip() for c in commands if str(c).strip()]
+    go_path.write_text("\n".join(clean) + "\n", encoding="utf-8")
+    return go_path
+
+
+def emit_set_time(game_dir: Path, hour: float) -> Path:
+    """Writes `set_time <hour>` to `game_dir/raw_engine_go.txt` for `rt_control.cpp`."""
+    clamped = max(0.0, min(23.99, float(hour)))
+    return emit_engine_commands(game_dir, [f"set_time {clamped:g}"])
+
+
+def emit_dismiss_modal(game_dir: Path) -> Path:
+    """Writes `dismiss_modal` to `game_dir/raw_engine_go.txt` to close Creation Club modals cleanly."""
+    return emit_engine_commands(game_dir, ["dismiss_modal"])
+
+
 def build_cam_sweep_command(
     yaw_rad_per_frame: float = DEFAULT_CAM_SWEEP_YAW,
     pitch_rad_per_frame: float = DEFAULT_CAM_SWEEP_PITCH,
@@ -209,9 +240,7 @@ def emit_cam_sweep(
 ) -> Path:
     """Writes a `cam_sweep` command into `game_dir/raw_engine_go.txt` for `rt_control.cpp`."""
     cmd = build_cam_sweep_command(yaw_rad_per_frame, pitch_rad_per_frame, fwd_units_per_frame, frames)
-    go_path = Path(game_dir) / "raw_engine_go.txt"
-    go_path.write_text(cmd + "\n", encoding="utf-8")
-    return go_path
+    return emit_engine_commands(game_dir, [cmd])
 
 
 def parse_harness_status(text: str) -> dict[str, int]:
@@ -426,6 +455,7 @@ def run_offline_audit(
     profile: str = "quick",
     steps: Sequence[str] = DEFAULT_AUDIT_STEPS,
     engine_out_dir: Path | None = None,
+    burst_stride: int = 3,
 ) -> dict[str, Any]:
     """Audits an existing multi-scene capture directory without launching Skyrim SE."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -454,6 +484,7 @@ def run_offline_audit(
             telemetry=telemetry,
             burst_sequences=burst_map,
             is_interior=spec.is_interior,
+            burst_stride=max(1, int(burst_stride)),
         )
         scene_reports.append(rep)
 
@@ -548,12 +579,27 @@ def run_live_audit(
                     )
 
                     if proc.poll() is None:
+                        # Wave 66: immediately apply exact gamehour (set_time) & dismiss Creation Club modals
+                        post_ready_cmds: list[str] = []
+                        scene_hour = parse_scene_gamehour(spec.console_cmd)
+                        if scene_hour is not None:
+                            post_ready_cmds.append(f"set_time {max(0.0, min(23.99, scene_hour)):g}")
+                        post_ready_cmds.append("dismiss_modal")
+                        emit_engine_commands(game_dir, post_ready_cmds)
+                        time.sleep(0.45)
+
                         sweep_sign = 1.0
                         last_sweep_emit = 0.0
+                        last_modal_poll = time.time()
+                        # Second dismiss_modal right before starting capture (+ cam_sweep if enabled)
+                        pre_cap_cmds: list[str] = ["dismiss_modal"]
                         if cam_sweep:
-                            emit_cam_sweep(game_dir, cam_sweep_yaw, cam_sweep_pitch, cam_sweep_fwd, cam_sweep_frames)
+                            pre_cap_cmds.append(
+                                build_cam_sweep_command(cam_sweep_yaw, cam_sweep_pitch, cam_sweep_fwd, cam_sweep_frames)
+                            )
                             last_sweep_emit = time.time()
-                            time.sleep(0.15)
+                        emit_engine_commands(game_dir, pre_cap_cmds)
+                        time.sleep(0.20)
 
                         go_lines = [
                             f"scene={spec.name}",
@@ -572,8 +618,16 @@ def run_live_audit(
                                 break
                             if proc.poll() is not None:
                                 break
+                            now_t = time.time()
+                            # Periodically check for delayed Survival Mode modal pauses and dismiss cleanly
+                            if (now_t - last_modal_poll) >= 5.0 and not engine_go.exists():
+                                last_modal_poll = now_t
+                                v_chk = query_engine_view_state(game_dir, engine_out, timeout_sec=1.2)
+                                if v_chk is not None and int(v_chk.get("menu_paused", 0)) != 0:
+                                    emit_dismiss_modal(game_dir)
+                                    time.sleep(0.25)
                             # Keep gentle camera sweep alive across long multi-step captures by alternating yaw/pitch
-                            if cam_sweep and (time.time() - last_sweep_emit) >= 3.5 and not engine_go.exists():
+                            if cam_sweep and (now_t - last_sweep_emit) >= 3.5 and not engine_go.exists():
                                 sweep_sign = -sweep_sign
                                 emit_cam_sweep(
                                     game_dir,
@@ -582,7 +636,7 @@ def run_live_audit(
                                     cam_sweep_fwd,
                                     cam_sweep_frames,
                                 )
-                                last_sweep_emit = time.time()
+                                last_sweep_emit = now_t
                             time.sleep(0.4)
                 finally:
                     _stop_skyrim(proc)
@@ -607,6 +661,7 @@ def run_live_audit(
                     telemetry=telemetry,
                     burst_sequences=burst_map,
                     is_interior=spec.is_interior,
+                    burst_stride=stride_n,
                 )
                 rep["readiness"] = readiness
                 rep["cam_sweep_enabled"] = bool(cam_sweep)
@@ -666,7 +721,14 @@ def _main(argv: Sequence[str] | None = None) -> int:
 
     if args.offline_dir:
         eout = Path(args.engine_out_dir) if args.engine_out_dir else None
-        rep = run_offline_audit(Path(args.offline_dir), out_dir, profile=args.profile, steps=steps, engine_out_dir=eout)
+        rep = run_offline_audit(
+            Path(args.offline_dir),
+            out_dir,
+            profile=args.profile,
+            steps=steps,
+            engine_out_dir=eout,
+            burst_stride=args.stride,
+        )
     else:
         rep = run_live_audit(
             Path(args.game_dir),

@@ -142,12 +142,18 @@ bool ReadCell(EngineView* v, uintptr_t* outExtCellAddr, bool* outCellWhValid) {
                 break;
             }
         }
-        // UI::Singleton->numPausesGame (+0x160): exact engine menu-pause state (MapMenu / Inventory / Journal / Pause).
+        // UI::Singleton->numPausesGame (+0x160) and menuStack._size (+0x120, binary-verified 1.7.104 at 0x760627):
         v->menuPaused = 0;
+        v->menuStackDepth = 0;
         if (kUiSingleton) {
             if (const uint8_t* ui = At<const uint8_t*>(g_base, kUiSingleton)) {
                 const uint32_t np = At<uint32_t>(ui, 0x160);
                 if (np > 0 && np < 64u) v->menuPaused = np;
+                const uint32_t stackCap = At<uint32_t>(ui, 0x118);
+                const uint32_t stackSz  = At<uint32_t>(ui, 0x120);
+                if (stackSz < 64u && stackCap < 256u && stackSz <= stackCap) {
+                    v->menuStackDepth = stackSz;
+                }
             }
         }
         return v->cellFormId != 0;
@@ -278,6 +284,39 @@ bool SehSetPlayerPose(float x, float y, float z, float pitchRad, float yawRad) {
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
+bool SehSetGameHour(float hour) {
+    __try {
+        float clampedHour = 0.0f;
+        if (!ComputeSetGameHour(clampedHour, hour)) return false;
+        if (!g_base) return false;
+        bool wroteAny = false;
+        // Write Calendar::Singleton (+0x20 gameHour TESGlobal* -> +0x34 float value):
+        if (kCalendar) {
+            if (const uint8_t* cal = At<const uint8_t*>(g_base, kCalendar)) {
+                if (uint8_t* gh = const_cast<uint8_t*>(At<const uint8_t*>(cal, 0x20))) {
+                    const float cur = At<float>(gh, 0x34);
+                    if (std::isfinite(cur) && cur >= 0.0f && cur <= 24.5f) {
+                        std::memcpy(gh + 0x34, &clampedHour, sizeof(float));
+                        wroteAny = true;
+                    }
+                }
+            }
+        }
+        // Synchronize live Sky::currentGameHour (+0x1B0) immediately for sun/moon/lighting continuity:
+        if (kGetSky) {
+            using GetSky = uint8_t* (*)();
+            if (uint8_t* sky = reinterpret_cast<GetSky>(const_cast<uint8_t*>(g_base) + kGetSky)()) {
+                const float cur = At<float>(sky, 0x1B0);
+                if (std::isfinite(cur) && cur >= 0.0f && cur <= 24.5f) {
+                    std::memcpy(sky + 0x1B0, &clampedHour, sizeof(float));
+                    wroteAny = true;
+                }
+            }
+        }
+        return wroteAny;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
 }  // namespace
 
 void ViewInit(const Image& img) {
@@ -370,6 +409,15 @@ bool SetPlayerPose(float x, float y, float z, float pitchRad, float yawRad) {
     return SehSetPlayerPose(x, y, z, pitchRad, yawRad);
 }
 
+bool SetGameHour(float hour) {
+    return SehSetGameHour(hour);
+}
+
+bool IsMenuPausedOrModal() noexcept {
+    std::lock_guard<std::mutex> g(g_m);
+    return (g_view.menuPaused > 0u);
+}
+
 bool IsCameraSweepActive() noexcept {
     return g_sweepActiveFlag.load(std::memory_order_acquire);
 }
@@ -382,18 +430,18 @@ std::string ViewJson() {
     EngineView v;
     { std::lock_guard<std::mutex> g(g_m); v = g_view; }
     const uint32_t sweepAct = IsCameraSweepActive() ? 1u : 0u;
-    char b[1152];
+    char b[1280];
     std::snprintf(b, sizeof b,
                   "\"view_ok\":%u,\"screen\":[%u,%u],\"fb_viewport\":[%u,%u],\"cam_pos\":[%.1f,%.1f,%.1f],"
                   "\"cam_fwd\":[%.3f,%.3f,%.3f],\"fov\":%.2f,\"fov_1st\":%.2f,\"player_pos\":[%.1f,%.1f,%.1f],"
                   "\"cell\":\"0x%08X\",\"cell_id\":%u,\"worldspace\":\"0x%08X\",\"cell_interior\":%u,\"interior\":%u,"
-                  "\"water_height\":%.1f,\"cam_state\":%u,\"menu_paused\":%u,\"sweep_active\":%u,"
+                  "\"water_height\":%.1f,\"cam_state\":%u,\"menu_paused\":%u,\"menu_stack_depth\":%u,\"sweep_active\":%u,"
                   "\"game_year\":%.0f,\"game_month\":%.0f,\"game_day\":%.0f,"
                   "\"game_hour\":%.3f,\"days_passed\":%.3f,\"time_scale\":%.2f",
                   v.ok, v.screen[0], v.screen[1], v.viewport[0], v.viewport[1], v.camPos[0], v.camPos[1], v.camPos[2],
                   v.camRot[1], v.camRot[4], v.camRot[7], v.fov, v.fovFirstPerson, v.playerPos[0], v.playerPos[1],
                   v.playerPos[2], v.cellFormId, v.cellFormId, v.worldspaceFormId, v.interior, v.interior,
-                  v.waterHeight, v.camStateId, v.menuPaused, sweepAct,
+                  v.waterHeight, v.camStateId, v.menuPaused, v.menuStackDepth, sweepAct,
                   v.gameYear, v.gameMonth, v.gameDay,
                   v.gameHour, v.daysPassed, v.timeScale);
     return b;

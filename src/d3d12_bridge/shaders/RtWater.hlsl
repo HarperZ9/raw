@@ -39,13 +39,13 @@ float3 sanitizeWater3(float3 c) {
 float3 evalSpectralWaterTransmittance(float pathU, float waterAbsorb, bool isExterior, bool isCoastalSea, float turbidity01) {
     const float safePath = clamp(isfinite(pathU) ? max(pathU, 0.0f) : 0.0f, 0.0f, 20000.0f);
     const float safeAbs  = clamp(isfinite(waterAbsorb) ? max(waterAbsorb, 0.0f) : 0.008f, 0.0f, 1.0f);
-    // Wave 63 Calibrated Nordic Emerald-Slate / Dark-Teal Optical Extinction:
-    // Warm mossy-stone shallows transition into deep muted Nordic emerald-teal rivers/lakes
+    // Wave 63 + Wave 66 Calibrated Nordic Emerald-Slate / Dark-Teal Optical Extinction:
+    // Warm mossy-stone shallows transition into rich deep Nordic emerald-teal rivers/lakes
     // and dark cold North-Atlantic slate-teal coastal seas (zero cartoon electric cobalt-blue!).
-    const float3 pureExt   = isCoastalSea ? float3(1.68f, 0.98f, 0.84f) : float3(1.42f, 0.92f, 0.88f);
-    const float3 turbidExt = float3(1.88f, 1.24f, 1.16f);
+    const float3 pureExt   = isCoastalSea ? float3(1.78f, 1.00f, 0.82f) : float3(1.52f, 0.94f, 0.86f);
+    const float3 turbidExt = float3(1.94f, 1.26f, 1.15f);
     const float3 extRGB    = isExterior ? lerp(pureExt, turbidExt, saturate(turbidity01) * 0.55f)
-                                        : float3(1.85f, 1.35f, 1.25f);
+                                        : float3(1.88f, 1.36f, 1.24f);
     const float3 od = clamp(extRGB * (safeAbs * safePath), 0.0f.xxx, 32.0f.xxx);
     return exp(-od);
 }
@@ -676,7 +676,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float3 refrRay = refract(-v, n, 1.0f / 1.333f);
                 const float tRefr = min(depthV / max(-refrRay.z, 0.30f), 48.0f);
                 const float3 pRefrBed = p + refrRay * tRefr;
-                const float4 s2 = screenOf(lerp(pb, pRefrBed, 0.62f));
+                const float4 s2 = screenOf(lerp(pb, pRefrBed, 0.68f));
                 float2 qOff = s2.w > 0.0f ? (s2.xy - float2(id.xy)) : 0.0f.xx;
                 const float qLen = length(qOff);
                 if (qLen > 14.0f) { qOff *= (14.0f / qLen); }
@@ -753,8 +753,8 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float collarReach = (isSeaFoam ? 6.8f : (2.6f + riverFlowSpeed * 2.2f)) * (0.55f + 0.90f * shoreJitter);
                 const float contactCollar = (1.0f - smoothstep(0.0f, collarReach, depthV)) * smoothstep(0.0f, 0.30f, depthV);
                 const float clingBreakup = smoothstep(0.28f, 0.80f, shoreFine * 0.54f + shoreJitter * 0.28f + windCapBreak * 0.18f + riverFlowSpeed * 0.18f);
-                const float microFoamCling = contactCollar * clingBreakup * (isSeaFoam ? 0.64f : lerp(0.24f, 0.52f, riverFlowSpeed));
-                const float foamEnergy = saturate(max(max(crestBreak, microFoamCling), max(max(bowHit * 0.60f, eddyLee * 0.36f), simFoamLive * 0.82f)));
+                const float microFoamCling = contactCollar * clingBreakup * (isSeaFoam ? 0.64f : lerp(0.24f, 0.54f, riverFlowSpeed));
+                const float foamEnergy = saturate(max(max(crestBreak, microFoamCling), max(max(bowHit * 0.66f, eddyLee * 0.42f), simFoamLive * 0.82f)));
                 const float2 foamAdvect = (isSeaFoam ? (foamFlow * (wtFSlow * 8.0f)) : (riverFlowDir * (wtFSlow * (7.2f + riverFlowSpeed * 9.0f))))
                                         + clamp(simFlowVel * 0.18f, -12.0f.xx, 12.0f.xx);
                 const float foamLace = foamEnergy > 0.02f ? cellularFoamLace(wpW.xy - foamAdvect, wtF, foamEnergy) : 0.0f;
@@ -865,15 +865,16 @@ void water(uint3 id : SV_DispatchThreadID) {
                     col = lerp(col, iceCol, saturate(freezeMask * 0.92f));
                 }
             }
-            // Wave 63 + Wave 65: Smooth Continuous Optical-Depth Shoreline Coverage & View-Space Silhouette AA:
-            // Compare neighbor water/bed depths in exact linear view-space (matches isWaterPx at ALL distances,
-            // fixing close-range nonlinear NDC depth rejection on shallow Riverwood creeks!).
+            // Wave 63 + Wave 66: Smooth Continuous Optical-Depth Shoreline Coverage & Occlusion-Aware Silhouette AA:
+            // Compare neighbor water/bed depths in exact linear view-space (matches isWaterPx at ALL distances)
+            // and distinguish foreground grass/rock occluders (zBn < zSurfW - 2.0f) from true water-plane dropouts!
             float edgeCov = 1.0f;
             bool scanlineGapAlarm = false;
             if (wDist < 9000.0f) {
                 const int2 limE = int2(dims.xy) - 1;
                 float wHits = 0.0f;
                 int hHits = 0, vHits = 0;
+                bool vFgOccluded = false;
                 [unroll] for (int ey = -1; ey <= 1; ++ey) {
                     [unroll] for (int ex = -1; ex <= 1; ++ex) {
                         if (ex == 0 && ey == 0) continue;
@@ -887,13 +888,16 @@ void water(uint3 id : SV_DispatchThreadID) {
                             wHits += 1.0f;
                             if (ey == 0) { hHits += 1; }
                             if (ex == 0) { vHits += 1; }
+                        } else if (ex == 0 && zBn < zSurfW - 2.0f) {
+                            // Foreground grass blade, branch, rock, or railing crossing in front of water: NOT a scanline hole!
+                            vFgOccluded = true;
                         }
                     }
                 }
                 edgeCov = smoothstep(0.5f, 7.0f, wHits);
-                // Detect true alternating-row scanline hole: horizontal neighbors present, vertical +-1 both missing,
-                // yet vertical +-2 has water (avoids false alarms on thin 1px slits under bridge railings/grass).
-                if (view == 7u && depthV0 > 1.5f && depthV0 < 24.0f && hHits == 2 && vHits == 0) {
+                // Detect true un-occluded alternating-row water-plane dropout ONLY when neither vertical neighbor
+                // is occluded by foreground geometry (zBn >= zSurfW - 2.0f) and vertical +-2 has water:
+                if (view == 7u && !vFgOccluded && depthV0 > 1.5f && depthV0 < 24.0f && hHits == 2 && vHits == 0) {
                     const float4 Lu2 = Layer.Load(int3(clamp(ip.xy + int2(0, -2), int2(0, 0), limE), 0));
                     const float4 Ld2 = Layer.Load(int3(clamp(ip.xy + int2(0,  2), int2(0, 0), limE), 0));
                     scanlineGapAlarm = (Lu2.a > 1.5f && Lu2.x < 1.0f) || (Ld2.a > 1.5f && Ld2.x < 1.0f);
@@ -905,7 +909,9 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float shoreAlpha = (dBed < 1.0f)
                 ? saturate(max(opticalCov, depthRamp * 0.90f) * smoothstep(0.0f, 1.2f, effShoreDepth + rawDepthDiff * 0.65f))
                 : 1.0f;
-            const float shoreBlend = saturate(shoreAlpha * lerp(0.65f, 1.0f, edgeCov));
+            const float shoreBlendRaw = saturate(shoreAlpha * lerp(0.65f, 1.0f, edgeCov));
+            // Guarantee solid mid-stream continuity (>= 0.18) whenever depthV0 > 2.5u (zero mid-stream dropouts!):
+            const float shoreBlend = (depthV0 > 2.5f) ? max(shoreBlendRaw, 0.18f) : shoreBlendRaw;
             col = lerp(edgeBg, col, shoreBlend);
             // Daylight Cluster D (img-003 68-77, BUILD-LIST #15): Physical Waterline Split-Surface Meniscus Band
             // when the camera lens grazes the exact water plane (abs(eyeW.z - p.z) < 14u and wDist < 220u):

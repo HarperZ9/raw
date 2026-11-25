@@ -344,6 +344,81 @@ void BuildOrthoClipToWorld(float spanX, float spanY, float zBase, float spanZ, f
     out[15] = 1.0f;
 }
 
+// Exact perspective camera basis & inverse clipToWorld for real cam_sweep yaw/pitch anti-swimming proof!
+struct PerspCamBasis {
+    float eye[3];
+    float R[3];
+    float U[3];
+    float F[3];
+    float tanHalfFov;
+    float aspect;
+    float zn;
+    float zf;
+};
+
+PerspCamBasis BuildPerspCam(float eyeX, float eyeY, float eyeZ, float yawRad, float pitchRad,
+                            float tanHalfFov, float aspect, float zn, float zf, float outClipToWorld[16])
+{
+    PerspCamBasis c{};
+    c.eye[0] = eyeX; c.eye[1] = eyeY; c.eye[2] = eyeZ;
+    c.tanHalfFov = tanHalfFov; c.aspect = aspect; c.zn = zn; c.zf = zf;
+
+    const float cy = std::cos(yawRad), sy = std::sin(yawRad);
+    const float cp = std::cos(pitchRad), sp = std::sin(pitchRad);
+    c.F[0] = sy * cp; c.F[1] = cy * cp; c.F[2] = sp;
+    c.R[0] = cy;      c.R[1] = -sy;     c.R[2] = 0.0f;
+    // U = cross(R, F)
+    c.U[0] = c.R[1] * c.F[2] - c.R[2] * c.F[1];
+    c.U[1] = c.R[2] * c.F[0] - c.R[0] * c.F[2];
+    c.U[2] = c.R[0] * c.F[1] - c.R[1] * c.F[0];
+
+    // w.xyz = ndcX*(tanHalfFov*aspect)*R + ndcY*tanHalfFov*U + F; w.w = (1/zn) - d*(1/zn - 1/zf)
+    const float sx = tanHalfFov * aspect;
+    const float syF = tanHalfFov;
+    std::memset(outClipToWorld, 0, 16u * sizeof(float));
+    outClipToWorld[0]  = sx * c.R[0]; outClipToWorld[1]  = syF * c.U[0]; outClipToWorld[3]  = c.F[0];
+    outClipToWorld[4]  = sx * c.R[1]; outClipToWorld[5]  = syF * c.U[1]; outClipToWorld[7]  = c.F[1];
+    outClipToWorld[8]  = sx * c.R[2]; outClipToWorld[9]  = syF * c.U[2]; outClipToWorld[11] = c.F[2];
+    outClipToWorld[14] = -((1.0f / zn) - (1.0f / zf));
+    outClipToWorld[15] = 1.0f / zn;
+    return c;
+}
+
+bool ProjectWorldPoint(const PerspCamBasis& c, float wx, float wy, float wz, uint32_t w, uint32_t h,
+                       float& outPx, float& outPy, float& outD)
+{
+    const float dx = wx - c.eye[0], dy = wy - c.eye[1], dz = wz - c.eye[2];
+    const float vx = dx * c.R[0] + dy * c.R[1] + dz * c.R[2];
+    const float vy = dx * c.U[0] + dy * c.U[1] + dz * c.U[2];
+    const float vz = dx * c.F[0] + dy * c.F[1] + dz * c.F[2];
+    if (vz <= c.zn + 1.0f || vz >= c.zf - 1.0f) return false;
+    const float ndcX = vx / (vz * c.tanHalfFov * c.aspect);
+    const float ndcY = vy / (vz * c.tanHalfFov);
+    if (std::fabs(ndcX) > 0.92f || std::fabs(ndcY) > 0.92f) return false;
+    outPx = (ndcX * 0.5f + 0.5f) * static_cast<float>(w) - 0.5f;
+    outPy = (0.5f - ndcY * 0.5f) * static_cast<float>(h) - 0.5f;
+    outD  = (c.zf / (c.zf - c.zn)) * (1.0f - c.zn / vz);
+    return true;
+}
+
+void FillPlaneDepthForPerspCam(const PerspCamBasis& c, float planeZ, uint32_t w, uint32_t h, std::vector<float>& depthOut)
+{
+    depthOut.assign(static_cast<size_t>(w) * h, 1.0f);
+    for (uint32_t y = 0u; y < h; ++y) {
+        const float ndcY = (1.0f - (static_cast<float>(y) + 0.5f) / static_cast<float>(h)) * 2.0f - 1.0f;
+        for (uint32_t x = 0u; x < w; ++x) {
+            const float ndcX = ((static_cast<float>(x) + 0.5f) / static_cast<float>(w)) * 2.0f - 1.0f;
+            const float rz = ndcX * c.tanHalfFov * c.aspect * c.R[2] + ndcY * c.tanHalfFov * c.U[2] + c.F[2];
+            if (rz >= -1.0e-4f) continue; // Above horizon -> sky
+            const float t = (planeZ - c.eye[2]) / rz;
+            if (t <= c.zn || t >= c.zf) continue;
+            // Note: dot(ray, F) = 1.0 by construction, so vz == t!
+            const float d = (c.zf / (c.zf - c.zn)) * (1.0f - c.zn / t);
+            depthOut[static_cast<size_t>(y) * w + x] = std::clamp(d, 0.0001f, 0.9999f);
+        }
+    }
+}
+
 int RunBackendSuite(bool useWarp, const char* label)
 {
     int failures = 0;
@@ -661,6 +736,94 @@ int RunBackendSuite(bool useWarp, const char* label)
     std::printf("  [%s] WorldAnchor: camA(64,180)=(%.4f,%.4f,%.4f) vs camB(48,180)=(%.4f,%.4f,%.4f) swimErr=%.5f\n",
                 label, aR, aG, aB, bR, bG, bB, swimErr);
     check(swimErr < 0.005f, "world_space_stability_zero_swimming");
+
+    // -------------------------------------------------------------------------
+    // Run 3b: Perspective cam_sweep Yaw/Pitch Anti-Swimming Proof!
+    // Rotates a true 3D perspective camera by yaw +0.08 rad & pitch +0.03 rad over a continuous
+    // grassy meadow plane (z=+50u) and proves projected 3D world points stay world-locked!
+    // -------------------------------------------------------------------------
+    {
+        std::vector<uint8_t> meadowAlb(W * H * 4u);
+        std::vector<uint8_t> meadowSpec(W * H * 4u);
+        for (uint32_t i = 0u; i < W * H; ++i) {
+            meadowAlb[i * 4u + 0u]  = 72u; meadowAlb[i * 4u + 1u]  = 135u; meadowAlb[i * 4u + 2u]  = 48u; meadowAlb[i * 4u + 3u]  = 255u;
+            meadowSpec[i * 4u + 0u] = 40u; meadowSpec[i * 4u + 1u] = 128u; meadowSpec[i * 4u + 2u] = 4u;  meadowSpec[i * 4u + 3u] = 255u;
+        }
+        UploadTex2D(ctx, albedoIn.Get(),   D3D12_RESOURCE_STATE_COMMON, meadowAlb.data(),  W * 4u, H);
+        UploadTex2D(ctx, specularIn.Get(), D3D12_RESOURCE_STATE_COMMON, meadowSpec.data(), W * 4u, H);
+
+        LiveWorldCompositeParams pA = lwp;
+        pA.camPosW[0] = 0.0f; pA.camPosW[1] = 0.0f; pA.camPosW[2] = 220.0f;
+        const PerspCamBasis camA = BuildPerspCam(0.0f, 0.0f, 220.0f, 0.0f, -0.58f, 0.55f, 1.0f, 16.0f, 16384.0f, pA.clipToWorld);
+        std::vector<float> depthA;
+        FillPlaneDepthForPerspCam(camA, 50.0f, W, H, depthA);
+        UploadTex2D(ctx, depthIn.Get(),  D3D12_RESOURCE_STATE_COMMON, depthA.data(),    W * 4u, H);
+        UploadTex2D(ctx, colorOut.Get(), D3D12_RESOURCE_STATE_COMMON, baseColor.data(), W * 8u, H);
+        host.Composite(ctx.queue.Get(), lwr, pA);
+        ctx.WaitIdle();
+        std::vector<float> imgA;
+        ReadbackRgba16f(ctx, colorOut.Get(), D3D12_RESOURCE_STATE_COMMON, W, H, imgA);
+
+        LiveWorldCompositeParams pB = pA;
+        const PerspCamBasis camB = BuildPerspCam(0.0f, 0.0f, 220.0f, 0.08f, -0.55f, 0.55f, 1.0f, 16.0f, 16384.0f, pB.clipToWorld);
+        std::vector<float> depthB;
+        FillPlaneDepthForPerspCam(camB, 50.0f, W, H, depthB);
+        UploadTex2D(ctx, depthIn.Get(),  D3D12_RESOURCE_STATE_COMMON, depthB.data(),    W * 4u, H);
+        UploadTex2D(ctx, colorOut.Get(), D3D12_RESOURCE_STATE_COMMON, baseColor.data(), W * 8u, H);
+        host.Composite(ctx.queue.Get(), lwr, pB);
+        ctx.WaitIdle();
+        std::vector<float> imgB;
+        ReadbackRgba16f(ctx, colorOut.Get(), D3D12_RESOURCE_STATE_COMMON, W, H, imgB);
+
+        auto sampleBilin = [&](const std::vector<float>& img, float fx, float fy, float& r, float& g, float& b) {
+            const int x0 = std::clamp(static_cast<int>(std::floor(fx)), 0, static_cast<int>(W) - 2);
+            const int y0 = std::clamp(static_cast<int>(std::floor(fy)), 0, static_cast<int>(H) - 2);
+            const float tx = std::clamp(fx - static_cast<float>(x0), 0.0f, 1.0f);
+            const float ty = std::clamp(fy - static_cast<float>(y0), 0.0f, 1.0f);
+            float r00, g00, b00, r10, g10, b10, r01, g01, b01, r11, g11, b11;
+            pxRgb(img, static_cast<uint32_t>(x0),     static_cast<uint32_t>(y0),     r00, g00, b00);
+            pxRgb(img, static_cast<uint32_t>(x0 + 1), static_cast<uint32_t>(y0),     r10, g10, b10);
+            pxRgb(img, static_cast<uint32_t>(x0),     static_cast<uint32_t>(y0 + 1), r01, g01, b01);
+            pxRgb(img, static_cast<uint32_t>(x0 + 1), static_cast<uint32_t>(y0 + 1), r11, g11, b11);
+            r = (r00 * (1 - tx) + r10 * tx) * (1 - ty) + (r01 * (1 - tx) + r11 * tx) * ty;
+            g = (g00 * (1 - tx) + g10 * tx) * (1 - ty) + (g01 * (1 - tx) + g11 * tx) * ty;
+            b = (b00 * (1 - tx) + b10 * tx) * (1 - ty) + (b01 * (1 - tx) + b11 * tx) * ty;
+        };
+
+        // Evaluate 25 world-locked meadow points across the camera yaw/pitch sweep (Nyquist-resolved ~3.8m range):
+        double trackedErr = 0.0, staticScreenErr = 0.0, meanPxShift = 0.0;
+        int validPts = 0;
+        for (int iy = -2; iy <= 2; ++iy) {
+            for (int ix = -2; ix <= 2; ++ix) {
+                const float wx = static_cast<float>(ix) * 26.0f;
+                const float wy = 260.0f + static_cast<float>(iy) * 26.0f;
+                float pxA, pyA, dA, pxB, pyB, dB;
+                if (ProjectWorldPoint(camA, wx, wy, 50.0f, W, H, pxA, pyA, dA) &&
+                    ProjectWorldPoint(camB, wx, wy, 50.0f, W, H, pxB, pyB, dB)) {
+                    float rA, gA, bA, rBt, gBt, bBt, rBs, gBs, bBs;
+                    sampleBilin(imgA, pxA, pyA, rA, gA, bA);
+                    sampleBilin(imgB, pxB, pyB, rBt, gBt, bBt);
+                    sampleBilin(imgB, pxA, pyA, rBs, gBs, bBs);
+                    trackedErr      += (std::fabs(rA - rBt) + std::fabs(gA - gBt) + std::fabs(bA - bBt)) / 3.0;
+                    staticScreenErr += (std::fabs(rA - rBs) + std::fabs(gA - gBs) + std::fabs(bA - bBs)) / 3.0;
+                    meanPxShift     += std::hypot(pxB - pxA, pyB - pyA);
+                    ++validPts;
+                }
+            }
+        }
+        const double avgTracked = (validPts > 0) ? (trackedErr / validPts) : 1.0;
+        const double avgStatic  = (validPts > 0) ? (staticScreenErr / validPts) : 0.0;
+        const double avgShift   = (validPts > 0) ? (meanPxShift / validPts) : 0.0;
+        std::printf("  [%s] CamSweepYawPitch: pts=%d pxShift=%.1fpx trackedErr=%.4f vs staticScreenErr=%.4f\n",
+                    label, validPts, avgShift, avgTracked, avgStatic);
+        check(validPts >= 20 && avgShift > 10.0 && avgTracked < 0.035 && avgTracked < avgStatic * 0.55,
+              "cam_sweep_yaw_pitch_world_lock_anti_swimming");
+
+        // Restore original 4-quadrant G-buffer for remaining Debug View & timing checks:
+        UploadTex2D(ctx, depthIn.Get(),    D3D12_RESOURCE_STATE_COMMON, depthBuf.data(), W * 4u, H);
+        UploadTex2D(ctx, albedoIn.Get(),   D3D12_RESOURCE_STATE_COMMON, albBuf.data(),   W * 4u, H);
+        UploadTex2D(ctx, specularIn.Get(), D3D12_RESOURCE_STATE_COMMON, specBuf.data(),  W * 4u, H);
+    }
 
     // -------------------------------------------------------------------------
     // Run 4: Debug Views 28 (Actor base=14 highlight) & 33 (Planted NaN/HDR Overflow!)

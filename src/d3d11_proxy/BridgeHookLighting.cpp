@@ -120,7 +120,11 @@ void LightingApplyTuning()
     SceneGeometry_SetSkinFilter(t.rtSkinFilter);
     SceneGeometry_SetAlphaFollow(t.rtAlphaFollow);
     SceneGeometry_SetSkinAlpha(t.rtSkinAlpha);
-    GameComposite_Set({t.mode == 2 && t.ao, t.mode == 2 && t.volumetricFog && t.fogReplacesGame});
+    const bool anyDebugView = (t.view != 0 || t.waterView != 0);
+    GameComposite_Set({
+        anyDebugView || (t.mode == 2 && t.ao),
+        anyDebugView || (t.mode == 2 && t.volumetricFog && t.fogReplacesGame)
+    });
 }
 
 void LoadLightingConfig(const std::string& ini)
@@ -409,13 +413,17 @@ bool LightingAtWater(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr, bool w
 {
     raw::bridge::D3D12Bridge* b = Bridge();
     const LightingTuning& t = Cfg().light;
+    // Never let RtWater overwrite Lighting Debug Views (1..36, e.g. view_motion_outline=35, view_normals=1)
+    // on streams/lakes; skip skin SSS on all Lighting/Water debug views as well.
+    if (t.view != 0 && t.waterView == 0) water = false;
     water = water && t.water;
-    if (!b || !b->Ready() || !sceneHdr || t.mode != 2 || !t.rtShadows || (!water && t.sss <= 0.0f)) return false;
+    const float sssAmt = (t.view != 0 || t.waterView != 0) ? 0.0f : t.sss;
+    if (!b || !b->Ready() || !sceneHdr || t.mode != 2 || !t.rtShadows || (!water && sssAmt <= 0.0f)) return false;
     ID3D11Texture2D* layer = GBuffer_Textures().layer;
     if (!layer) return false;
     // The composite's targets are still bound; the game binds its next ones right after this.
     real->OMSetRenderTargets(0, nullptr, nullptr);
-    const bool ran = b->ExecuteWater(sceneHdr, layer, water, t.sssWidth, t.sss);
+    const bool ran = b->ExecuteWater(sceneHdr, layer, water, t.sssWidth, sssAmt);
     static uint32_t runs = 0, misses = 0;
     (ran ? runs : misses)++;
     if ((runs + misses) % 600 == 1) Log("[RT] after water (water %d, skin scattering %.2f): ran %u frames, did not run %u", water ? 1 : 0, t.sss, runs, misses);

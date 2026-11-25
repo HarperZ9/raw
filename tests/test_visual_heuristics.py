@@ -140,7 +140,7 @@ def run_tests() -> int:
         if not cond:
             failures += 1
 
-    print("=== RAW Wave 65: 25-Heuristic Full-Pipeline Visual, Temporal & Harness Suite ===")
+    print("=== RAW Wave 66: 25-Heuristic Full-Pipeline Visual, Temporal & Harness Suite ===")
     check(len(vh.ALL_HEURISTIC_NAMES) == 25, f"ALL_HEURISTIC_NAMES has exact count 25 (got {len(vh.ALL_HEURISTIC_NAMES)})")
     check(all(k in vh.DEBUG_VIEW_NAMES for k in (0, 28, 33, 34, 35, 36)) and len(vh.WATER_DEBUG_VIEW_NAMES) == 7,
           "DEBUG_VIEW_NAMES (0..36) & WATER_DEBUG_VIEW_NAMES (1..7) registered")
@@ -403,6 +403,76 @@ def run_tests() -> int:
         f"Wave 65 WaterView=7 magenta continuity gate PASS (clean={r3_v7_ok.score:.6f} vs planted={r3_v7_bad.score:.5f})",
     )
 
+    # Wave 66 regression checks:
+    # (1) burst_stride=3 MV reprojection & world-lock proof (1-frame MV (-2, -1) * stride=3 matches shift (+6, +3))
+    frame_stride3 = np.roll(np.roll(base_tex, shift=6, axis=1), shift=3, axis=0)
+    mv_1f_s3 = _encode_mv35(th, tw, dx_px=-2.0, dy_px=-1.0)
+    r21_s3_ok = vh.analyze_motion_vector_reprojection(base_tex, frame_stride3, mv_1f_s3, burst_stride=3)
+    r25_s3_ok = vh.analyze_world_lock_anti_swimming([base_tex, frame_stride3], [mv_1f_s3, mv_1f_s3], burst_stride=3)
+    check(
+        (not r21_s3_ok.detected)
+        and r21_s3_ok.score < 0.015
+        and r21_s3_ok.details.get("burst_stride") == 3
+        and (not r25_s3_ok.detected)
+        and r25_s3_ok.score > 5.0,
+        f"Wave 66 stride=3 MV scaling PASS (reproj_rmse={r21_s3_ok.score:.5f}, world_lock_ratio={r25_s3_ok.score:.2f})",
+    )
+
+    # (2) HUD masking in #14 normals & #21 MV reprojection (corrupting top 10% compass bar & 18px crosshair must NOT fail)
+    dbg1_hud = dbg1_clean.copy()
+    dbg1_hud[: int(dbg1_hud.shape[0] * 0.10), :, :] = 0.0  # black compass bar
+    cy_n, cx_n = dbg1_hud.shape[0] // 2, dbg1_hud.shape[1] // 2
+    dbg1_hud[cy_n - 8 : cy_n + 8, cx_n - 8 : cx_n + 8, :] = 0.0  # black center crosshair
+    r14_hud = vh.detect_normal_map_integrity(dbg1_hud)
+    b_hud = frame_stride3.copy()
+    b_hud[: int(th * 0.10), :, :] = 1.0  # static white HUD compass bar
+    b_hud[th // 2 - 8 : th // 2 + 8, tw // 2 - 8 : tw // 2 + 8, :] = 1.0
+    r21_hud = vh.analyze_motion_vector_reprojection(base_tex, b_hud, mv_1f_s3, burst_stride=3)
+    check((not r14_hud.detected) and r14_hud.details.get("hud_masked") and (not r21_hud.detected) and r21_hud.score < 0.02,
+          f"Wave 66 HUD compass/crosshair masking PASS (#14 ok, #21 rmse={r21_hud.score:.5f})")
+
+    # (3) #2 red sky fire bleed filters warm torch-lit stone walls via view_depth_edge sky mask while catching real sky bleed
+    warm_wall_img = np.full((180, 320, 3), [0.54, 0.34, 0.18], dtype=np.float32)  # warm brown/orange Windhelm palace wall
+    d29_wall_geom = np.full((180, 320, 3), [0.45, 0.30, 0.55], dtype=np.float32)  # world geometry (non-sky) in DebugView 29
+    d29_true_sky = np.full((180, 320, 3), [0.10, 0.14, 0.28], dtype=np.float32)   # Lighting.hlsl flags.w==29 true sky navy
+    crimson_bleed_img = np.full((180, 320, 3), [0.82, 0.28, 0.12], dtype=np.float32)  # saturated fiery crimson
+    r2_wall_pass = vh.detect_red_sky_fire_bleed(warm_wall_img, debug29_image=d29_wall_geom)
+    r2_sky_fail = vh.detect_red_sky_fire_bleed(warm_wall_img, debug29_image=d29_true_sky)
+    r2_crim_fail = vh.detect_red_sky_fire_bleed(crimson_bleed_img, debug29_image=d29_wall_geom)
+    check((not r2_wall_pass.detected) and r2_sky_fail.detected and r2_crim_fail.detected,
+          "Wave 66 #2 red sky fire bleed PASS (warm stone wall filtered, true sky & fiery crimson flagged)")
+
+    # (4) #22 water temporal flow speed: skips interiors & dry WaterView=7, and subtracts cam_sweep pan!
+    r22_int_skip = vh.analyze_water_temporal_flow_speed(water_frozen, is_interior=True)
+    wv7_dry = np.full((180, 320, 3), 0.03, dtype=np.float32)
+    r22_dry_skip = vh.analyze_water_temporal_flow_speed(water_frozen, water_flow_diag_image=wv7_dry)
+    # Camera pans (+6, 0) per stride=3 step (mv_1f = (-2, 0)) while water ALSO flows (+3, 0) per stride=3 step (=1.0 px/f)
+    water_pan_plus_flow = [np.roll(w_base, shift=k * 9, axis=1) for k in range(4)]
+    mv_pan_1f = _encode_mv35(180, 320, dx_px=-2.0, dy_px=0.0)
+    r22_cam_sub = vh.analyze_water_temporal_flow_speed(
+        water_pan_plus_flow,
+        mv_seq_frames=[mv_pan_1f] * 4,
+        burst_stride=3,
+    )
+    check(
+        (not r22_int_skip.detected)
+        and r22_int_skip.details.get("skipped_interior_scene")
+        and (not r22_dry_skip.detected)
+        and r22_dry_skip.details.get("skipped_no_active_water_view7")
+        and (not r22_cam_sub.detected)
+        and r22_cam_sub.details.get("camera_motion_subtracted")
+        and (0.5 <= r22_cam_sub.score <= 1.6),
+        f"Wave 66 #22 water flow skip & cam_sweep subtraction PASS (residual_water={r22_cam_sub.score:.2f}px/f)",
+    )
+
+    # (5) #19 depth integrity interior threshold (0.025 for enclosed interiors vs 0.08 for exteriors)
+    d29_tight_int = np.zeros((180, 320, 3), dtype=np.float32)
+    d29_tight_int[:, :, :] = 0.20 + 0.055 * (xx_t / float(tw))[:, :, None]  # p95-p05 ~= 0.05 (valid interior, too tight for exterior)
+    r19_int_ok = vh.detect_depth_and_stencil_integrity(d29_tight_int, is_interior=True)
+    r19_ext_fail = vh.detect_depth_and_stencil_integrity(d29_tight_int, is_interior=False)
+    check((not r19_int_ok.detected) and r19_ext_fail.detected,
+          f"Wave 66 #19 interior depth threshold PASS (range={r19_int_ok.score:.4f}: interior PASS vs exterior FAIL)")
+
     # -------------------------------------------------------------------------
     # 4. Heuristic #20 + full_pipeline_audit.py + SkyrimCustomIniGuard + playtest_tour.py
     # -------------------------------------------------------------------------
@@ -429,12 +499,12 @@ def run_tests() -> int:
         _save(dbg32_clean, sc_dir / "riverwood_day_view_skin_sss.png")
         _save(dbg33_clean, sc_dir / "riverwood_day_view_nan_hdr.png")
         _save(dbg34_clean, sc_dir / "riverwood_day_view_flora_trees.png")
-        # Write 3-frame burst sequences (_f00.._f02) for temporal heuristics (#21..#25) in full_pipeline_audit
+        # Write 3-frame burst sequences (_f00.._f02) at stride=3 (1-frame MV (-2,-1) -> 3-frame shift (+6,+3))
         for fi in range(3):
-            sh_img = np.roll(np.roll(base_tex, shift=3 * fi, axis=1), shift=1 * fi, axis=0)
-            sh_dbg2 = np.roll(np.roll(dbg2_clean, shift=3 * fi, axis=1), shift=1 * fi, axis=0)
+            sh_img = np.roll(np.roll(base_tex, shift=6 * fi, axis=1), shift=3 * fi, axis=0)
+            sh_dbg2 = np.roll(np.roll(dbg2_clean, shift=6 * fi, axis=1), shift=3 * fi, axis=0)
             _save(sh_img, sc_dir / f"riverwood_day_audit_improved_f{fi:02d}.png")
-            _save(mv_true, sc_dir / f"riverwood_day_audit_view_motion_outline_f{fi:02d}.png")
+            _save(mv_1f_s3, sc_dir / f"riverwood_day_audit_view_motion_outline_f{fi:02d}.png")
             _save(sh_dbg2, sc_dir / f"riverwood_day_audit_view_sun_shadow_f{fi:02d}.png")
 
         (eng_out / "boot_selfcheck.txt").write_text("Run #1 | Overall: PASS | Pass=12/12 Warn=0 Fail=0\n", encoding="utf-8")
@@ -487,6 +557,14 @@ def run_tests() -> int:
         sweep_txt = sweep_p.read_text(encoding="utf-8").strip()
         check(sweep_txt == "cam_sweep 0.008 0.0012 0.0 240",
               f"Wave 65 emit_cam_sweep writes exact command ({sweep_txt})")
+
+        hr_val = fpa.parse_scene_gamehour("fw c8221; set gamehour to 14.5")
+        st_p = fpa.emit_set_time(cap_dir, hr_val if hr_val is not None else 12.0)
+        st_txt = st_p.read_text(encoding="utf-8").strip()
+        dm_p = fpa.emit_dismiss_modal(cap_dir)
+        dm_txt = dm_p.read_text(encoding="utf-8").strip()
+        check(hr_val == 14.5 and st_txt == "set_time 14.5" and dm_txt == "dismiss_modal",
+              f"Wave 66 set_time & dismiss_modal harness dispatch PASS ({st_txt}, {dm_txt})")
 
         (cap_dir / "raw_harness_status.txt").write_text("presents=300 world=240 loads=1 cell=1000042101 active=0\n", encoding="utf-8")
         (eng_out / "control_results.jsonl").write_text(

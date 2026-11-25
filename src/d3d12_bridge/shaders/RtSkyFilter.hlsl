@@ -308,7 +308,10 @@ void main(uint3 id : SV_DispatchThreadID) {
                                   max(max(trapSky, trapGi) * 0.70f, mvDivBoost));
     const float alphaT = saturate(max(max(1.0f / max(n, 1.0f), lerp(0.10f, 0.42f, motionTight)), disoccBoost));
 
-    const float vis = saturate(sanitizeSkyScalar(have ? lerp(past, cur.a, alphaT) : cur.a, cur.a));
+    // Wave 66: Guard silhouette edges from pulling darker occluded cross-depth skyVis onto foreground rims!
+    const float silBoost = smoothstep(0.90f, 2.20f, mvDivPx);
+    const float visRaw = saturate(sanitizeSkyScalar(have ? lerp(past, cur.a, alphaT) : cur.a, cur.a));
+    const float vis = saturate(lerp(visRaw, max(visRaw, cur.a), silBoost * 0.75f));
     const float3 bFiltered = sanitizeSkyRgb(have ? lerp(pastB, cur.rgb, alphaT) : cur.rgb);
     const float m2Out = max(sanitizeSkyScalar(have ? lerp(pastM2, curLum * curLum, alphaT) : (curLum * curLum), curLum * curLum), 0.0f);
     const float bLumOut = dot(bFiltered, float3(0.2126f, 0.7152f, 0.0722f));

@@ -313,19 +313,36 @@ RawMaterialEvalResult evalFrostGlacier3D(
                              + float3(0.32f, 0.74f, 0.90f) * (bubTrail1 * 0.30f) * exp(-sigmaIce * (0.20f * invNvOptical)))
                             * (1.0f - dust * 0.65f);
 
+    // Wave 66 Crisp Dual-Depth Crystalline Parallax Fracture Veins (0.11m shallow hairline + 0.38m deep turquoise shear):
+    // Refracted along rayDir through curved nSculpt so internal ice fractures shift cleanly with camera angle (zero Voronoi!).
+    const float3 pVein0 = worldPos + rayDir * (0.11f * 70.0f * thickScale) + warpOff * 0.55f;
+    const float3 pVein1 = worldPos + rayDir * (0.38f * 70.0f * thickScale) + warpOff * 1.10f;
+    const float4 nVein0 = rawNoise3Grad(float3(pVein0.x * 0.052f - pVein0.y * 0.024f, pVein0.y * 0.048f + pVein0.z * 0.031f, pVein0.z * 0.044f) + macroWarp.yzw * 0.45f + float3(61.3f, 19.7f, 43.1f));
+    const float4 nVein1 = rawNoise3Grad(float3(pVein1.x * 0.026f + pVein1.z * 0.034f, -pVein1.x * 0.019f + pVein1.y * 0.038f, pVein1.y * 0.022f + pVein1.z * 0.029f) + nVein0.yzw * 0.50f + float3(11.9f, 73.5f, 29.3f));
+    const float veinZone0 = smoothstep(0.48f, 0.84f, rawNoise3Grad(pVein0 * 0.0115f + float3(83.1f, 7.3f, 41.9f)).x);
+    const float veinZone1 = smoothstep(0.44f, 0.82f, rawNoise3Grad(pVein1 * 0.0085f + float3(27.7f, 59.3f, 13.1f)).x);
+    const float vein0 = pow(1.0f - smoothstep(0.0f, 0.072f, abs(nVein0.x * 2.0f - 1.0f)), 1.6f) * veinZone0;
+    const float vein1 = pow(1.0f - smoothstep(0.0f, 0.115f, abs(nVein1.x * 2.0f - 1.0f)), 1.4f) * veinZone1;
+    const float3 veinScatter = (float3(0.90f, 0.97f, 1.00f) * (vein0 * 0.34f) * exp(-sigmaIce * (0.11f * (1.0f + invNvOptical)))
+                              + float3(0.18f, 0.78f, 0.94f) * (vein1 * 0.32f) * exp(-sigmaIce * (0.38f * (1.0f + invNvOptical))))
+                             * (1.0f - dust * 0.60f);
+
     // Deep Warren & Brandt Beer-Lambert glacial volume + 4-layer sapphire-teal depth parallax gradient:
     const float pathMeters = (effThick * 0.017f) * invNvOptical * lerp(1.34f, 0.64f, bowlCrest);
     const float3 transDeep = exp(-sigmaIce * pathMeters);
-    const float3 deepCavCore = lerp(float3(0.010f, 0.068f, 0.165f), float3(0.032f, 0.185f, 0.320f), deepCav) * trans3;
-    const float3 deepArcticCore = lerp(float3(0.016f, 0.092f, 0.205f), float3(0.082f, 0.350f, 0.480f), strataBand) * transDeep
-                                + deepCavCore * 0.55f;
+    const float3 deepCavCore = lerp(float3(0.010f, 0.068f, 0.165f), float3(0.036f, 0.215f, 0.340f), deepCav) * trans3;
+    const float3 deepArcticCore = lerp(float3(0.016f, 0.105f, 0.220f), float3(0.088f, 0.390f, 0.510f), strataBand) * transDeep
+                                + deepCavCore * 0.60f;
     const float3 fractureScatter = float3(0.86f, 0.95f, 1.00f) * (crack0 * 0.28f) * trans0
                                  + float3(0.34f, 0.80f, 0.95f) * (crack1 * 0.28f) * trans1
-                                 + float3(0.11f, 0.50f, 0.80f) * (crack2 * 0.26f) * trans2;
+                                 + float3(0.11f, 0.50f, 0.80f) * (crack2 * 0.26f) * trans2
+                                 + veinScatter;
 
-    // Subsurface forward-transmitted glacial sapphire-turquoise glow when backlit by torches/sun:
-    const float backLit = pow(saturate(dot(-vUnit, lUnit)), 2.8f);
-    const float3 sssGlow = safeLight * float3(0.075f, 0.38f, 0.58f) * (backLit * (0.30f + 0.70f * transDeep.b) * 0.48f);
+    // Deeper translucent glacial turquoise subsurface scatter (forward backlit + internal ridge wrap):
+    const float backLit = pow(saturate(dot(-vUnit, lUnit)), 2.6f);
+    const float ridgeWrap = saturate(dot(nIce, lUnit) * 0.45f + 0.55f) * (0.35f + 0.65f * bowlCrest);
+    const float3 sssGlow = safeLight * float3(0.065f, 0.44f, 0.60f)
+                         * ((backLit * 0.56f + ridgeWrap * 0.16f) * (0.28f + 0.72f * transDeep.b));
 
     // Trapped Micro-Air-Bubble Specular Glints inside top 0.16m layer (100% static world-locked):
     const float3 H = rawSafeHalfVec(vUnit, lUnit, nIce);

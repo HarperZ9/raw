@@ -2538,20 +2538,20 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                                m->volFroxels && m->volFroxels->Ready();
     const bool runShadowPcss = m->cfg.lightingPass && m->lighting.valid && m->shadowPcssReady &&
                                m->shadowPcss && m->shadowPcss->Ready() && m->depthIn.res12 != nullptr;
-    const bool runGtao = m->cfg.lightingPass && m->lighting.valid && m->gtaoHostReady &&
+    const bool runGtao = !anyPipelineDebugView && m->cfg.lightingPass && m->lighting.valid && m->gtaoHostReady &&
                          m->gtaoHost && m->gtaoHost->Ready() && m->depthIn.res12 != nullptr;
-    const bool runSsr = m->cfg.lightingPass && m->lighting.valid && m->ssrHostReady &&
+    const bool runSsr = !anyPipelineDebugView && m->cfg.lightingPass && m->lighting.valid && m->ssrHostReady &&
                         m->ssrHost && m->ssrHost->Ready() && m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr;
-    const bool runAutoExposure = m->cfg.lightingPass && m->lighting.valid && m->autoExposureReady &&
+    const bool runAutoExposure = !anyPipelineDebugView && m->cfg.lightingPass && m->lighting.valid && m->autoExposureReady &&
                                  m->autoExposure && m->autoExposure->Ready() && m->colorOut.res12 != nullptr;
     const bool runCloudRaymarch = m->cfg.lightingPass && m->lighting.valid && m->cloudRaymarchReady &&
                                   m->cloudRaymarch && m->cloudRaymarch->Ready();
-    const bool runPostCinematic = m->cfg.lightingPass && m->lighting.valid && m->postCinematicReady &&
+    const bool runPostCinematic = !anyPipelineDebugView && m->cfg.lightingPass && m->lighting.valid && m->postCinematicReady &&
                                   m->postCinematic && m->postCinematic->Ready() &&
                                   m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr;
     const bool runGpuParticles = m->cfg.lightingPass && m->lighting.valid && m->gpuParticlesReady &&
                                  m->gpuParticles && m->gpuParticles->Ready();
-    const bool runTsrUpscale = m->cfg.lightingPass && m->lighting.valid && m->tsrUpscaleReady &&
+    const bool runTsrUpscale = !anyPipelineDebugView && m->cfg.lightingPass && m->lighting.valid && m->tsrUpscaleReady &&
                                m->tsrUpscale && m->tsrUpscale->Ready() &&
                                m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr;
     const bool runWaterCaustics = m->cfg.lightingPass && m->lighting.valid && m->waterCausticsReady &&

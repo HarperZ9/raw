@@ -201,9 +201,11 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const float2 mvCenterRaw = Motion.Load(ip);
     const float2 mvCenter = (any(isnan(mvCenterRaw)) || any(isinf(mvCenterRaw))) ? 0.0f.xx : mvCenterRaw;
 
-    // 3x3 Perceptual Karis-Tonemapped YCoCg neighborhood moments + luminance variance + depth/normal/motion-divergence scan:
+    // 3x3 Perceptual Karis-Tonemapped YCoCg neighborhood moments + coplanar same-depth bounds + luminance/motion-divergence scan:
     float3 m1 = 0.0f.xxx, m2 = 0.0f.xxx;
     float3 nMinY = 1.0e6f.xxx, nMaxY = -1.0e6f.xxx;
+    float3 copMinY = 1.0e6f.xxx, copMaxY = -1.0e6f.xxx, copSumY = 0.0f.xxx;
+    float copW = 0.0f;
     float3 rgbBlur = 0.0f.xxx;
     float wSum = 0.0f;
     float lumM1 = 0.0f, lumM2 = 0.0f, lumMax3 = 0.0f;
@@ -212,6 +214,7 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     float mvDivPx = 0.0f;
     float bestD = d;
     int2 bestVelPx = p;
+    const float zCopTol = max(z * 0.035f, 3.0f);
     [unroll] for (int dy = -1; dy <= 1; dy++) {
         [unroll] for (int dx = -1; dx <= 1; dx++) {
             const int2 q = clamp(p + int2(dx, dy), int2(0, 0), dMax);
@@ -219,7 +222,8 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
             const float dq = Depth.Load(iq);
             if (dq < bestD) { bestD = dq; bestVelPx = q; }
             const float zq = dq < 0.99998f ? viewZOf(dq) : 1.0e6f;
-            maxDz = max(maxDz, abs(zq - z));
+            const float dzq = abs(zq - z);
+            maxDz = max(maxDz, dzq);
             if (dx != 0 || dy != 0) {
                 const float3 nq = worldNormal(Normal.Load(iq));
                 minDotN = min(minDotN, dot(nC, nq));
@@ -240,6 +244,12 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
             m2 += (yq * yq) * kw;
             nMinY = min(nMinY, yq);
             nMaxY = max(nMaxY, yq);
+            if (dzq <= zCopTol) {
+                copMinY = min(copMinY, yq);
+                copMaxY = max(copMaxY, yq);
+                copSumY += yq * kw;
+                copW += kw;
+            }
             rgbBlur += cq * kw;
             wSum += kw;
         }
@@ -247,6 +257,8 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     m1 /= max(wSum, 1.0e-4f);
     m2 /= max(wSum, 1.0e-4f);
     rgbBlur /= max(wSum, 1.0e-4f);
+    const float3 copMeanY = (copW > 1.0e-4f) ? (copSumY / copW) : m1;
+    if (copW <= 1.0e-4f) { copMinY = m1; copMaxY = m1; }
     const float3 stdDev = sqrt(max(m2 - m1 * m1, 0.0f.xxx));
     const float lumMean3 = lumM1 * (1.0f / 9.0f);
     const float lumStd3 = sqrt(max(lumM2 * (1.0f / 9.0f) - lumMean3 * lumMean3, 0.0f));
@@ -411,11 +423,16 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
         const float geoDisocc = max(mvDivDisocc, max(depthDisocc * 0.92f, normalDisocc * 0.85f));
         const float disocc    = saturate(max(max(colDisocc, trapSep), geoDisocc));
 
-        // Tightened YCoCg Ellipsoid + Variance Clipping: gamma modulated inversely by reactiveMask & velocity!
-        // Static pine forests & ridges get silky gamma=1.28; embers, water glints & sword swings snap to gamma=0.62!
+        // Tightened YCoCg Ellipsoid + Variance Clipping (Wave 66 anti-outline silhouette guard):
+        // On high motion-divergence silhouettes (mvDivPx > 1.5), clamp neighborhood variance box cleanly toward
+        // coplanar local mean rather than darkest cross-depth outlier so moving silhouettes NEVER form dark rims!
         const float tightDrive = saturate(max(max(speedRamp, mvDivDisocc * 0.95f), reactiveMask));
         const float gammaClip  = lerp(1.28f, 0.62f, tightDrive);
-        const float3 clippedY  = clipYCoCgEllipse(nMinY, nMaxY, m1, stdDev, gammaClip, prevY);
+        const float silDivW    = smoothstep(1.20f, 2.50f, mvDivPx);
+        const float3 silMeanY  = lerp(m1, copMeanY, silDivW);
+        const float3 silMinY   = lerp(nMinY, max(copMinY, copMeanY - stdDev * 0.45f), silDivW);
+        const float3 silMaxY   = lerp(nMaxY, min(copMaxY, copMeanY + stdDev * 0.45f), silDivW);
+        const float3 clippedY  = clipYCoCgEllipse(min(silMinY, curY), max(silMaxY, curY), silMeanY, stdDev, gammaClip, prevY);
 
         // Material-aware & reactive history flush (zero dark outline/trails on moving actors, creatures, dogs & weapons!):
         const float actorReact = isActor ? (0.52f + speedRamp * 0.44f) : 0.0f;

@@ -117,6 +117,48 @@ int RunCamSweepControlTests(void (*checkFn)(bool, const char*) = nullptr) {
         check(ok, "multi_frame_sweep_lifecycle_and_early_stop");
     }
 
+    // 4. Wave 66: set_time clamping/parsing, auto_dismiss parsing & non-blocking modal dismiss state machine:
+    {
+        bool ok = true;
+        float h = 0.0f;
+        ok = ok && ParseSetTimeArg("13.5", h) && (std::fabs(h - 13.5f) < 1.0e-4f);
+        ok = ok && ParseSetTimeArg("-5.0", h) && (std::fabs(h - 0.0f) < 1.0e-4f);
+        ok = ok && ParseSetTimeArg("28.0", h) && (std::fabs(h - 23.99f) < 1.0e-4f);
+        ok = ok && !ParseSetTimeArg("not_a_number", h);
+        ok = ok && !ComputeSetGameHour(h, kNan) && !ComputeSetGameHour(h, kInf);
+
+        bool autoEn = false;
+        ok = ok && ParseAutoDismissArg("1", autoEn) && autoEn;
+        ok = ok && ParseAutoDismissArg("0", autoEn) && !autoEn;
+        ok = ok && !ParseAutoDismissArg("maybe", autoEn);
+
+        // Explicit dismiss_modal: frame 0 -> PostRight, frame 1 -> None, frame 2 -> PostReturn (exact 2-frame spacing):
+        ModalDismissState md{};
+        TriggerModalDismiss(md);
+        const ModalKeyAction a0 = StepModalDismissState(md, false, false);
+        const ModalKeyAction a1 = StepModalDismissState(md, false, false);
+        const ModalKeyAction a2 = StepModalDismissState(md, false, false);
+        const ModalKeyAction a3 = StepModalDismissState(md, false, false);
+        ok = ok && (a0 == ModalKeyAction::PostRight) && (a1 == ModalKeyAction::None) &&
+             (a2 == ModalKeyAction::PostReturn) && (a3 == ModalKeyAction::None) &&
+             (md.dismissedCount == 1u) && (md.phase == ModalDismissPhase::Idle);
+
+        // Auto-dismiss while cam_sweep active respects cooldown, then triggers automatically when paused:
+        ok = ok && (StepModalDismissState(md, true, true) == ModalKeyAction::None); // inside cooldown
+        for (int i = 0; i < 20; ++i) StepModalDismissState(md, false, false);       // drain cooldown
+        const ModalKeyAction autoRight = StepModalDismissState(md, true, true);
+        const ModalKeyAction autoWait  = StepModalDismissState(md, true, true);
+        const ModalKeyAction autoRet   = StepModalDismissState(md, true, true);
+        ok = ok && (autoRight == ModalKeyAction::PostRight) && (autoWait == ModalKeyAction::None) &&
+             (autoRet == ModalKeyAction::PostReturn) && (md.dismissedCount == 2u);
+
+        // Auto-dismiss disabled does not trigger on paused modal:
+        md.autoDismissEnabled = false;
+        md.cooldownFrames = 0u;
+        ok = ok && (StepModalDismissState(md, true, true) == ModalKeyAction::None);
+        check(ok, "set_time_and_modal_dismiss_state_machine");
+    }
+
     return fail;
 }
 

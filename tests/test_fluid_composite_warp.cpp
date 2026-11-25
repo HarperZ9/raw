@@ -317,6 +317,7 @@ int main()
     uint32_t nanInfCount = 0u;
     uint32_t leftModified = 0u;
     uint32_t rightFlamePixels = 0u;
+    uint32_t rightWarmPlanckPixels = 0u;
     uint32_t rightSootPixels = 0u;
     float maxRightR = 0.0f;
     float minRightB = 1.0f;
@@ -337,7 +338,10 @@ int main()
             } else {
                 maxRightR = std::max(maxRightR, r);
                 minRightB = std::min(minRightB, b);
-                if (r > 1.20f && r > b * 1.45f) ++rightFlamePixels;
+                if (r > 1.20f && r > b * 1.45f) {
+                    ++rightFlamePixels;
+                    if (r >= g && g >= b * 0.95f) ++rightWarmPlanckPixels;
+                }
                 if (b < kBgB - 0.08f && r <= 1.20f) ++rightSootPixels;
             }
         }
@@ -360,14 +364,14 @@ int main()
         }
     }
 
-    std::printf("       Readback: leftOccludedMod=%u, rightFlamePx=%u (maxR=%.2f), rightSootPx=%u (minB=%.3f), nanInf=%u, d3d12Errors=%u\n",
-                leftModified, rightFlamePixels, maxRightR, rightSootPixels, minRightB, nanInfCount, d3dErrors);
+    std::printf("       Readback: leftOccludedMod=%u, rightFlamePx=%u (warmPlanck=%u, maxR=%.2f), rightSootPx=%u (minB=%.3f), nanInf=%u, d3d12Errors=%u\n",
+                leftModified, rightFlamePixels, rightWarmPlanckPixels, maxRightR, rightSootPixels, minRightB, nanInfCount, d3dErrors);
 
     Check(d3dErrors == 0u, "D3D12 Debug Layer reported 0 errors/corruptions");
     Check(nanInfCount == 0u, "Composited HDR frame contains 0 NaN/Inf pixels");
     Check(leftModified == 0u, "SceneDepth foreground wall (left half) 100% occludes 3D fluid fire/smoke");
-    Check(rightFlamePixels >= 20u && maxRightR > 1.20f,
-          "Visible right half renders genuine bright incandescent Planck blackbody flame core");
+    Check(rightFlamePixels >= 20u && rightWarmPlanckPixels >= 20u && maxRightR > 1.20f,
+          "Visible right half renders genuine bright incandescent Planck blackbody flame core (monotonic R>=G>=B)");
     Check(rightSootPixels >= 20u && minRightB < kBgB - 0.08f,
           "Visible right half renders Beer-Lambert dark soot attenuation & internal fire scatter");
 

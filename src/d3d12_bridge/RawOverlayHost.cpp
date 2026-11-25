@@ -396,6 +396,88 @@ void RawOverlayHost::RecordDebugLayerHud(ID3D12GraphicsCommandList* cmd,
 {
     if (!m_uiLib.Ready()) return;
     raw::ui::FormatDebugLayerHud(snap, m_debugDrawList);
+
+    // Wave 66: Attach Pipeline Health Matrix & Vector Compass sidecar whenever
+    // the debug drawer is open or any Lighting/Water Debug View is active.
+    if ((snap.drawerOpen || snap.activeDebugView != 0u || snap.activeWaterDebugView != 0u) &&
+        (snap.hudEnabled || snap.drawerOpen)) {
+        const uint32_t s = std::clamp(snap.scale, 1u, 2u);
+        const float sf = static_cast<float>(s);
+        const float mainW = (snap.drawerOpen ? 344.0f : 268.0f) * sf;
+        const float sideW = 312.0f * sf;
+        const float sidePad = 8.0f * sf;
+        const float sideX = static_cast<float>(snap.originX) + mainW + 8.0f * sf;
+        const float sideY = static_cast<float>(snap.originY);
+
+        if (sideX + sideW <= static_cast<float>(width) + 2.0f) {
+            using raw::ui::PipelineHealthState;
+            using raw::ui::PipelinePassStatus;
+            using raw::ui::VectorCompassData;
+
+            const auto safeMs = [](float v) { return (std::isfinite(v) && v >= 0.0f) ? v : 0.0f; };
+            const auto healthFor = [](float ms, float warnMs, float failMs, bool enabled) {
+                if (!enabled) return PipelineHealthState::Off;
+                if (ms >= failMs) return PipelineHealthState::Fail;
+                if (ms >= warnMs) return PipelineHealthState::Warn;
+                return PipelineHealthState::Pass;
+            };
+
+            const float lightMs = safeMs(snap.lightingMs);
+            const float waterMs = safeMs(snap.waterMs);
+            const float fireMs  = safeMs(snap.fireMs);
+            const float giMs    = safeMs(snap.giMs);
+            const float postMs  = safeMs(snap.postMs);
+            const float uiMs    = safeMs(snap.uiMs);
+            const bool mvOk = (!snap.motionTelemetry) ||
+                              (snap.motionTelemetry->mvSignValid && snap.motionTelemetry->mvReprojRmse <= 0.085f);
+
+            const PipelinePassStatus defaultPasses[8] = {
+                {"GBuffer",     lightMs * 0.25f, healthFor(lightMs * 0.25f, 0.80f, 1.50f, true)},
+                {"RT Shadows",  lightMs * 0.75f, healthFor(lightMs * 0.75f, 1.20f, 2.20f, snap.rtActive)},
+                {"Water",       waterMs,         healthFor(waterMs,         0.60f, 1.20f, snap.fluidActive)},
+                {"Flora/Grass", giMs * 0.50f,    healthFor(giMs * 0.50f,    0.50f, 1.00f, snap.grassWindActive)},
+                {"Fire/Fluid",  fireMs,          healthFor(fireMs,          0.60f, 1.20f, snap.fluidActive)},
+                {"Motion Vec",  uiMs,            mvOk ? PipelineHealthState::Pass : PipelineHealthState::Fail},
+                {"Tonemap",     postMs,          healthFor(postMs,          0.40f, 0.90f, true)},
+                {"GameComp",    0.02f,           PipelineHealthState::Pass},
+            };
+            const PipelinePassStatus* passes = (snap.pipelinePasses && snap.pipelinePassCount > 0u)
+                                                   ? snap.pipelinePasses : defaultPasses;
+            const uint32_t passCount = (snap.pipelinePasses && snap.pipelinePassCount > 0u)
+                                           ? snap.pipelinePassCount : 8u;
+
+            VectorCompassData defaultCompass{};
+            if (snap.motionTelemetry) {
+                defaultCompass.yawDeg         = std::fmod(std::max(0.0f, snap.motionTelemetry->yawRateDegPerSec * 4.0f), 360.0f);
+                defaultCompass.pitchDeg       = 0.0f;
+                defaultCompass.mvX            = snap.motionTelemetry->yawRateDegPerSec * 0.35f;
+                defaultCompass.mvY            = snap.motionTelemetry->cameraSpeedUps * 0.02f;
+                defaultCompass.mvDivPx        = snap.motionTelemetry->mvReprojRmse * 18.0f;
+                defaultCompass.camSweepActive = snap.motionTelemetry->camSweepActive;
+            }
+            const VectorCompassData& compass = snap.vectorCompass ? *snap.vectorCompass : defaultCompass;
+
+            const uint32_t rows = (std::min(passCount, 12u) + 1u) / 2u;
+            const float matH = static_cast<float>(rows) * 18.0f * sf +
+                               static_cast<float>(rows > 0u ? rows - 1u : 0u) * 3.0f * sf;
+            const float sideH = sidePad * 2.0f + 16.0f * sf + matH + 8.0f * sf + 68.0f * sf;
+            const float innerW = sideW - sidePad * 2.0f;
+            const float sx = sideX + sidePad;
+            float sy = sideY + sidePad;
+
+            m_debugDrawList.AddPanel(sideX, sideY, sideW, sideH, 6.0f * sf,
+                                     raw::ui::tokens::kGround, raw::ui::tokens::kBorderStrong,
+                                     compass.camSweepActive ? raw::ui::tokens::kAccentEmerald
+                                                            : raw::ui::tokens::kAccentPass, 1.0f);
+            m_debugDrawList.AddSectionHeader(sx, sy, innerW, "Pipeline Health",
+                                             raw::ui::tokens::kAccentPass, s, true, true);
+            sy += 16.0f * sf;
+            m_debugDrawList.AddPipelineHealthMatrix(sx, sy, innerW, passes, passCount, 2u, s);
+            sy += matH + 8.0f * sf;
+            m_debugDrawList.AddVectorCompass(sx, sy, innerW, compass, s);
+        }
+    }
+
     if (m_debugDrawList.Empty()) return;
     m_uiLib.RecordDrawList(cmd, targetTex, currentState, width, height, m_debugDrawList, srgbOutput);
 }

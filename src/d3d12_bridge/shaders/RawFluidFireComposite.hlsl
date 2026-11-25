@@ -52,13 +52,13 @@ float3 fireCompWorldAt(float2 px, float d)
 
 // Physically calibrated Planck blackbody emission spectrum at Rec.709 wavelengths (635nm, 535nm, 460nm),
 // matched to RawFluidFireSim::evalPlanckBlackbody with Stefan-Boltzmann T^4 scaling.
-// Cutoff raised to 1180K so cool outer gas never bleeds a fuzzy neon-red halo onto sky or ceilings.
+// Spans deep hearth-ember crimson (1100K..1350K, gated off sky pixels) -> golden-orange (1500K..2100K) -> incandescent core (2300K..2800K+).
 float3 evalPlanckFlameRGB(float tempK)
 {
-    if (isnan(tempK) || isinf(tempK) || tempK < 1180.0f) {
+    if (isnan(tempK) || isinf(tempK) || tempK < 1100.0f) {
         return float3(0.0f, 0.0f, 0.0f);
     }
-    const float T = clamp(tempK, 1180.0f, 4500.0f);
+    const float T = clamp(tempK, 1100.0f, 4500.0f);
     const float3 c2OverLambda = float3(22657.9f, 26893.0f, 31277.8f);
     const float3 invLambda5   = float3(0.415f,   1.000f,   2.148f);
     const float3 expoShift = min((c2OverLambda - c2OverLambda.x) / T, 60.0f.xxx);
@@ -66,11 +66,15 @@ float3 evalPlanckFlameRGB(float tempK)
     const float  maxCh = max(chromaRaw.x, max(chromaRaw.y, chromaRaw.z));
     const float3 chroma = chromaRaw / max(maxCh, 1.0e-6f);
 
-    const float gate = smoothstep(1260.0f, 1850.0f, T);
+    const float emberGate = smoothstep(1100.0f, 1450.0f, T) * 0.22f;
+    const float coreGate  = smoothstep(1260.0f, 1850.0f, T);
+    const float gate = max(emberGate, coreGate);
     const float tNorm = T / 1800.0f;
     const float t4 = (tNorm * tNorm) * (tNorm * tNorm);
-    // Calibrated linear HDR flame luminance: crisp golden-orange flame tongues above 1260K transitioning cleanly into dark soot
-    return min(chroma * (gate * 1.15f * t4), float3(28.0f, 22.0f, 16.0f));
+    // Crisp incandescent white-gold core lift above 2250K while keeping 1100K..1900K rich amber-orange
+    const float incanMix = smoothstep(2250.0f, 2850.0f, T) * 0.28f;
+    const float3 heatedChroma = lerp(chroma, float3(1.0f, 0.90f, 0.68f), incanMix);
+    return min(heatedChroma * (gate * 1.18f * t4), float3(28.0f, 23.0f, 17.0f));
 }
 
 float fireCompHash31(float3 p)
@@ -105,8 +109,50 @@ float fireCompTongueDetail(float3 pAbs, float timeSec)
 {
     const float3 q = pAbs * 0.14f - float3(0.0f, 0.0f, timeSec * 5.2f);
     const float n0 = fireCompNoise3(q);
-    const float n1 = fireCompNoise3(q * 2.15f + float3(7.3f, 3.1f, -timeSec * 3.4f));
-    return saturate(n0 * 0.65f + n1 * 0.35f);
+    const float3 qWarp = q * 2.15f + float3(7.3f + (n0 - 0.5f) * 1.4f, 3.1f + (0.5f - n0) * 1.4f, -timeSec * 3.6f);
+    const float n1 = fireCompNoise3(qWarp);
+    return saturate(n0 * 0.60f + n1 * 0.40f);
+}
+
+// Soft world-locked 3D curl detail [0.68..1.18] for feathery translucent smoke wisps
+float fireCompSmokeCurl(float3 pAbs, float timeSec)
+{
+    const float3 q = pAbs * 0.085f - float3(0.0f, 0.0f, timeSec * 1.85f);
+    const float c0 = fireCompNoise3(q);
+    const float c1 = fireCompNoise3(q * 2.10f + float3(5.1f, 9.7f, -timeSec * 1.15f));
+    return lerp(0.72f, 1.16f, saturate(c0 * 0.65f + c1 * 0.35f));
+}
+
+// Subtle world-space-locked golden rising sparks/embers strictly anchored inside active thermal plumes
+// (zero stray floating sparks in empty air, zero sky bleed on cooled plumes).
+float3 evalRisingSparks(float3 pAbs, float timeSec, float radLuma, float rawSoot, float tempK, bool isSkyPixel, float tDist)
+{
+    // Require genuine hot plume presence so cooled volumes (<1180K) emit zero sparks on sky
+    const float activePlume = isSkyPixel
+        ? (smoothstep(1340.0f, 1750.0f, tempK) * (1.0f - smoothstep(650.0f, 1100.0f, tDist)))
+        : saturate(smoothstep(1120.0f, 1650.0f, tempK) + smoothstep(0.32f, 1.25f, radLuma) * smoothstep(0.04f, 0.35f, rawSoot));
+    if (activePlume <= 0.04f) {
+        return float3(0.0f, 0.0f, 0.0f);
+    }
+    const float swayX = sin(pAbs.z * 0.14f + timeSec * 3.1f) * 1.6f;
+    const float swayY = cos(pAbs.z * 0.11f - timeSec * 2.6f) * 1.6f;
+    const float3 sp = (pAbs + float3(swayX, swayY, -timeSec * 24.0f)) * 0.34f;
+    const float3 cell = floor(sp);
+    const float3 f = frac(sp);
+    const float h = fireCompHash31(cell);
+    // Sparse crisp pinpoints (~5% of active plume cells carry an ember)
+    if (h < 0.945f) {
+        return float3(0.0f, 0.0f, 0.0f);
+    }
+    const float3 ctr = float3(
+        fireCompHash31(cell + float3(13.1f, 4.7f, 1.9f)),
+        fireCompHash31(cell + float3(2.3f, 19.7f, 7.1f)),
+        fireCompHash31(cell + float3(8.9f, 3.3f, 23.5f)));
+    const float3 d = f - lerp(0.22f.xxx, 0.78f.xxx, ctr);
+    const float r2 = dot(d, d);
+    const float pinpoint = smoothstep(0.022f, 0.002f, r2);
+    const float twinkle = 0.55f + 0.45f * sin(timeSec * 13.0f + h * 180.0f);
+    return float3(1.0f, 0.62f, 0.16f) * (pinpoint * twinkle * activePlume * 5.2f);
 }
 
 float evalPhaseHG(float cosT, float g)
@@ -221,16 +267,16 @@ void cs_fire_composite(uint3 dtid : SV_DispatchThreadID)
         maxSeenTempK = max(maxSeenTempK, tempK);
         maxSeenSoot  = max(maxSeenSoot, rawSoot);
 
-        if (tempK < 1180.0f && rawSoot < 0.004f) {
+        if (tempK < 1100.0f && rawSoot < 0.004f) {
             continue;
         }
 
-        // 1. Planck blackbody turbulent flame-tongue core emission (cutoff 1180K, crisp turbulent edge erosion, zero sky fringe)
+        // 1. Planck blackbody turbulent flame-tongue core emission (1100K..2800K+, crisp turbulent edge erosion, zero sky fringe)
         float3 flameEmit = float3(0.0f, 0.0f, 0.0f);
-        if (tempK >= 1180.0f) {
+        if (tempK >= 1100.0f) {
             const float tongueNoise = fireCompTongueDetail(pAbs, camPosW.w);
-            const float coreHeat = smoothstep(1180.0f, 1780.0f, tempK);
-            const float tongueAlpha = lerp(smoothstep(0.30f, 0.72f, tongueNoise + burn * 0.55f), 1.0f, smoothstep(1900.0f, 2450.0f, tempK));
+            const float coreHeat = isSkyPixel ? smoothstep(1260.0f, 1780.0f, tempK) : smoothstep(1100.0f, 1740.0f, tempK);
+            const float tongueAlpha = lerp(smoothstep(0.28f, 0.72f, tongueNoise + burn * 0.58f), 1.0f, smoothstep(1880.0f, 2450.0f, tempK));
             const float skyGuard = isSkyPixel
                 ? (smoothstep(1340.0f, 1780.0f, tempK) * (1.0f - smoothstep(650.0f, 1150.0f, t)))
                 : 1.0f;
@@ -238,11 +284,15 @@ void cs_fire_composite(uint3 dtid : SV_DispatchThreadID)
             flameEmit = evalPlanckFlameRGB(tempK) * flameWeight;
         }
 
-        // 2. Beer-Lambert dark soot extinction + directional sun self-shadowing + Beer-Powder multi-scattering.
+        // 2. Beer-Lambert dark soot extinction + feathery translucent smoke curls + directional sun self-shadowing + Beer-Powder scatter.
         // Indoors: attenuate cool soot away from active hot combustion AND strictly clamp transmittance >= 0.78f.
         const float radLuma = dot(max(rad.rgb, 0.0f.xxx), float3(0.333f, 0.333f, 0.333f));
         const float indoorHotGate = saturate(smoothstep(860.0f, 1380.0f, tempK) + burn * 1.25f + smoothstep(0.12f, 0.65f, radLuma) * 0.65f);
-        const float soot = rawSoot * lerp(1.0f, 0.22f * indoorHotGate, isInt);
+        const float smokeCurl = (rawSoot > 0.006f) ? fireCompSmokeCurl(pAbs, camPosW.w) : 1.0f;
+        const float soot = rawSoot * smokeCurl * lerp(1.0f, 0.22f * indoorHotGate, isInt);
+
+        // Subtle golden rising sparks/embers strictly inside the active buoyant plume
+        const float3 sparkEmit = evalRisingSparks(pAbs, camPosW.w, radLuma, rawSoot, tempK, isSkyPixel, t) * edgeFade;
 
         const float sigmaSoot = soot * lerp(0.058f, 0.036f, isInt);
         const float stepOpt = sigmaSoot * ds;
@@ -262,7 +312,7 @@ void cs_fire_composite(uint3 dtid : SV_DispatchThreadID)
         const float3 internalBounce = max(rad.rgb, 0.0f.xxx) * float3(1.18f, 0.56f, 0.18f) * (0.38f * edgeFade);
         const float3 sootScatter = sootAlbedo * sunLight + internalBounce * smoothstep(0.01f, 0.22f, soot);
 
-        const float3 stepRgb = trans * (flameEmit * (ds * 0.062f)) + sootScatter * effSootAlpha;
+        const float3 stepRgb = trans * ((flameEmit + sparkEmit) * (ds * 0.062f)) + sootScatter * effSootAlpha;
         if (!any(isnan(stepRgb)) && !any(isinf(stepRgb))) {
             accumRgb += max(stepRgb, 0.0f.xxx);
         }

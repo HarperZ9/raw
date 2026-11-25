@@ -182,13 +182,17 @@ float4 dof_coc(float4 at : SV_Position) : SV_Target0 {
     const float2 uvFull = saturate(fullPx * dims.zw);
     const float cocNear = zNear < 45.0f ? 0.0f : perspectiveCoC(uvFull, zNear, focusZ, dofParams.x);
     const float cocFar  = zFar < 45.0f ? 0.0f : perspectiveCoC(uvFull, zFar, focusZ, dofParams.x);
-    const bool pickNear = (cocNear < -0.05f);
-    const float cocRaw = pickNear ? cocNear : cocFar;
+    // Motion-silhouette protection: when a 2x2 quad straddles a sharp foreground character/weapon silhouette
+    // whose near depth is tack-sharp (in-focus or 1st-person < 45u), keep CoC at 0 so moving edges never grow halos.
+    const float relQuadJump = abs(zFar - zNear) / max(zNear, 1.0f);
+    const bool sharpFgSilhouette = (relQuadJump > 0.06f) && (zNear < focusZ * 1.08f) && (abs(cocNear) < 0.06f);
+    const bool pickNear = !sharpFgSilhouette && (cocNear < -0.07f);
+    const float cocRaw = sharpFgSilhouette ? 0.0f : (pickNear ? cocNear : cocFar);
     const float coc = (isnan(cocRaw) || isinf(cocRaw)) ? 0.0f : clamp(cocRaw, -1.0f, 1.0f);
-    const int2 pCol = pickNear ? pNear : pFar;
+    const int2 pCol = (sharpFgSilhouette || pickNear) ? pNear : pFar;
     // Average matching-depth taps only when the 2x2 quad is continuous AND never straddles sky (d >= 0.99998)!
     const bool straddlesSky = (dFar >= 0.99998f && dNear < 0.99998f);
-    const bool quadSmooth = !straddlesSky && ((abs(zFar - zNear) / max(zNear, 1.0f)) < 0.04f);
+    const bool quadSmooth = !straddlesSky && (relQuadJump < 0.04f);
     float3 col = quadSmooth ? SrcA.SampleLevel(Lin, uvFull, 0.0f).rgb : SrcA.Load(int3(pCol, 0)).rgb;
     col = (any(isnan(col)) || any(isinf(col))) ? 0.0f.xxx : clamp(col, 0.0f.xxx, 32.0f.xxx);
     return float4(col, coc);
@@ -292,7 +296,7 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
             }
         }
 
-        // 2) Depth-Aware Near-Field Gather (center-weighted soft disc; kills dark/pale-blue concentric rings indoors):
+        // 2) Depth-Aware Near-Field Gather (center-weighted soft disc; kills dark near-field silhouette rings during cam_sweep):
         if (nearGatherRad > 0.35f) {
             const int2 tapNPx = clamp(int2(round(px + unitOff * nearGatherRad)), int2(0, 0), dimMax);
             const float4 tapNRaw = SrcA.Load(int3(tapNPx, 0));
@@ -303,15 +307,18 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
                 if (covN > 0.001f) {
                     const float3 tapRgbN = dofSanitizeRgb(tapNRaw.rgb);
                     const float lumN = dot(tapRgbN, float3(0.2126f, 0.7152f, 0.0722f));
+                    // Prevent dark moving cloak/weapon silhouettes from haloing onto brighter sharp edges during cam_sweep
+                    const float darkHaloGuard = (centerCoc >= -0.04f && lumN < centerLum * 0.72f)
+                        ? smoothstep(centerLum * 0.35f, centerLum * 0.72f, lumN) : 1.0f;
                     const float karisN = 1.0f / (1.0f + max(lumN, 0.0f) * 0.16f);
                     // Smooth center-weighted disc (never outer-ring peaking!) so foreground icicles/lanterns never draw hollow rings.
                     const float softDiscN = 1.0f - 0.35f * (rFrac * rFrac);
                     const float orbN = (1.0f + smoothstep(0.45f, 3.2f, lumN) * (orbBoost * lerp(1.65f, 0.55f, isInt))) * karisN * softDiscN;
                     const float3 locaNear = lerp(1.0f.xxx, float3(1.05f, 0.95f, 1.02f), rFrac * rFrac * lerp(0.30f, 0.0f, isInt));
-                    const float nw = covN * orbN;
+                    const float nw = covN * orbN * darkHaloGuard;
                     nearAcc += tapRgbN * locaNear * nw;
                     nearW += nw;
-                    nearCov += covN;
+                    nearCov += covN * darkHaloGuard;
                 }
             }
         }
@@ -319,7 +326,9 @@ float4 dof_gather(float4 at : SV_Position) : SV_Target0 {
 
     const float3 farCol = farW > 1.0e-5f ? (farAcc / farW) : centerRgb;
     const float3 nearCol = nearW > 1.0e-5f ? (nearAcc / nearW) : centerRgb;
-    const float nearAlpha = saturate(nearCov * (1.0f / 30.0f)) * lerp(0.55f, 0.12f, isInt);
+    // Suppress sparse near-field ring bleed onto tack-sharp in-focus subjects (prevents 1-3px dark edge rings on moving silhouettes)
+    const float sparseNearGate = (abs(centerCoc) < 0.045f) ? smoothstep(3.5f, 10.0f, nearCov) : 1.0f;
+    const float nearAlpha = saturate(nearCov * (1.0f / 30.0f)) * lerp(0.50f, 0.10f, isInt) * sparseNearGate;
     const float3 outCol = dofSanitizeRgb(lerp(farCol, nearCol, nearAlpha));
     return float4(outCol, nearAlpha > 0.04f ? -nearAlpha : saturate(centerCoc));
 }
@@ -355,9 +364,10 @@ float4 dof_post(float4 at : SV_Position) : SV_Target0 {
         const float4 tRaw = SrcA.SampleLevel(Lin, saturate(uv + kOff[i] * invDim * spread), 0.0f);
         const float3 tRgb = dofSanitizeRgb(tRaw.rgb);
         const float tA = (isnan(tRaw.a) || isinf(tRaw.a)) ? 0.0f : clamp(tRaw.a, -1.0f, 1.0f);
-        // Prevent sharp background/foreground contamination across depth edges:
-        const float sameSign = (c0A * tA >= 0.0f) ? 1.0f : 0.15f;
-        const float wi = kW[i] * sameSign * (0.35f + 0.65f * smoothstep(0.0f, 0.20f, abs(tA)));
+        // Strictly zero cross-sign bleed and bilateral CoC-delta protection across sharp depth silhouettes:
+        const float sameSign = (c0A * tA >= 0.0f) ? 1.0f : 0.0f;
+        const float cocCompat = exp(-pow(abs(tA - c0A) * 5.0f, 2.0f));
+        const float wi = kW[i] * sameSign * cocCompat * (0.35f + 0.65f * smoothstep(0.0f, 0.20f, abs(tA)));
         acc += tRgb * wi;
         aAcc += tA * wi;
         wSum += wi;
@@ -419,6 +429,20 @@ float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
     if (camModeC == 3u && (uv.y < 0.122f || uv.y > 0.878f)) { return float4(0.0f, 0.0f, 0.0f, sharp.a); }   // True 2.39:1 Cinemascope framing
     // Keep 1st-person hands/weapons/torches (< 45u) razor-sharp:
     if (curZ < 45.0f) { return float4(applyWetLensOptics(uv, sharp.rgb), sharp.a); }
+    // Local full-res silhouette discontinuity guard (protects moving character/weapon silhouettes from near-field ring haloing):
+    const int2 dFullMax = max(int2(dims.xy) - 1, int2(0, 0));
+    const float dL = Depth.Load(int3(clamp(ip + int2(-1, 0), int2(0, 0), dFullMax), 0));
+    const float dR = Depth.Load(int3(clamp(ip + int2( 1, 0), int2(0, 0), dFullMax), 0));
+    const float dU = Depth.Load(int3(clamp(ip + int2( 0,-1), int2(0, 0), dFullMax), 0));
+    const float dD = Depth.Load(int3(clamp(ip + int2( 0, 1), int2(0, 0), dFullMax), 0));
+    const float zL = (dL < 1.0f && !isnan(dL) && !isinf(dL)) ? viewZOf(dL) : 100000.0f;
+    const float zR = (dR < 1.0f && !isnan(dR) && !isinf(dR)) ? viewZOf(dR) : 100000.0f;
+    const float zU = (dU < 1.0f && !isnan(dU) && !isinf(dU)) ? viewZOf(dU) : 100000.0f;
+    const float zD = (dD < 1.0f && !isnan(dD) && !isinf(dD)) ? viewZOf(dD) : 100000.0f;
+    const float maxDz = max(max(abs(zL - curZ), abs(zR - curZ)), max(abs(zU - curZ), abs(zD - curZ)));
+    const float relZJump = maxDz / max(curZ, 1.0f);
+    const float silGuard = 1.0f - smoothstep(0.035f, 0.11f, relZJump);
+
     const float coc = perspectiveCoC(uv, curZ, focusZ, dofParams.x);
     const float absCoc = abs(coc);
     // True CoC-bilateral 4-tap upsample of 1/2-res bokeh buffer:
@@ -441,23 +465,25 @@ float4 dof_comp(float4 at : SV_Position) : SV_Target0 {
     [unroll] for (int bi = 0; bi < 4; ++bi) {
         const float tc = (isnan(bTaps[bi].a) || isinf(bTaps[bi].a)) ? 0.0f : clamp(bTaps[bi].a, -1.0f, 1.0f);
         const float3 tRgb = dofSanitizeRgb(bTaps[bi].rgb);
-        // Depth-aware bilateral upsample: strictly blocks bright sky / far bokeh from leaking onto sharp foreground silhouettes!
+        // Depth-aware bilateral upsample: strictly blocks bright sky / far bokeh & dark near halos from leaking onto sharp silhouettes!
         const float compat = (coc > 0.03f)
             ? (smoothstep(-0.02f, 0.05f, tc) * exp(-max(tc - coc, 0.0f) * max(tc - coc, 0.0f) * 8.0f))
-            : ((coc < -0.03f) ? smoothstep(0.02f, -0.05f, tc) : (tc < -0.10f ? 0.50f : 0.0f));
-        const float bwTap = bilW[bi] * (0.02f + 0.98f * compat);
+            : ((coc < -0.03f) ? smoothstep(0.02f, -0.05f, tc) : 0.0f);
+        const float bwTap = bilW[bi] * (0.001f + 0.999f * compat);
         bAcc += float4(tRgb, tc) * bwTap;
         bWSum += bwTap;
     }
     const float4 bokeh = bWSum > 1.0e-5f ? (bAcc / bWSum) : float4(sharp.rgb, 0.0f);
-    // Tack-sharp focal-plane & sky-silhouette protection: strictly zero far-field bokeh bleed when absCoc < 0.04!
+    // Tack-sharp focal-plane & moving character/weapon silhouette protection:
+    // Strictly zero far-field bokeh bleed when absCoc < 0.04, and zero near-field ring haloing onto in-focus subjects or silhouette edges!
     const float maxRadFull = max(clamp(dofParams.y, 2.0f, 18.0f) * 2.0f, 4.0f);
     const float cocPx = absCoc * maxRadFull;
-    const float farBlend = coc > 0.04f ? smoothstep(1.0f, 3.6f, cocPx) : 0.0f;
-    const float nearSelf = coc < -0.04f ? smoothstep(1.0f, 3.6f, cocPx) : 0.0f;
-    // Suppress indoor near-field bokeh bleed completely so close foreground icicles/beams never draw halos over caves.
-    const float nearBleed = (sunColour.w >= 0.5f && d < 0.99998f && bokeh.a < -0.12f)
-        ? smoothstep(0.14f, 0.85f, -bokeh.a) * 0.45f * clamp(camOptics[1].z, 0.0f, 1.0f) : 0.0f;
+    const float farBlend = coc > 0.04f ? smoothstep(1.0f, 3.6f, cocPx) * lerp(0.55f, 1.0f, silGuard) : 0.0f;
+    const float nearSelf = coc < -0.04f ? smoothstep(1.0f, 3.6f, cocPx) * silGuard : 0.0f;
+    // Never bleed near-field blur onto an in-focus or foreground character/weapon (curZ < focusZ * 1.06) or along sharp depth silhouettes!
+    const bool allowNearBleed = (sunColour.w >= 0.5f && d < 0.99998f && curZ > focusZ * 1.06f && bokeh.a < -0.14f);
+    const float nearBleed = allowNearBleed
+        ? smoothstep(0.16f, 0.85f, -bokeh.a) * 0.42f * clamp(camOptics[1].z, 0.0f, 1.0f) * silGuard : 0.0f;
     const float blend = saturate(max(farBlend, max(nearSelf, nearBleed)));
     const float3 composed = dofSanitizeRgb(lerp(dofSanitizeRgb(sharp.rgb), bokeh.rgb, blend));
     return float4(applyWetLensOptics(uv, composed), sharp.a);

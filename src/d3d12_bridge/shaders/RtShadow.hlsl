@@ -179,20 +179,35 @@ float visible(float3 o, float3 d, float tMin, float tMax) {
     return q.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0.0f : 1.0f;
 }
 
-// The surface's geometric normal from the depth buffer: the shorter-step neighbours on each axis.
+// Wave 66: Silhouette-safe geometric surface normal from local Depth neighbours (skips sky & depth jumps,
+// falling back cleanly to shading normal `fallback` so grazing stone walls & silhouettes never tilt inward!).
 float3 geometricNormal(float2 px, float3 p, float3 fallback) {
     const float2 lim = dims.xy - 1.0f;
     const float2 pxR = float2(min(px.x + 1.0f, lim.x), px.y), pxL = float2(max(px.x - 1.0f, 0.0f), px.y);
     const float2 pxD = float2(px.x, min(px.y + 1.0f, lim.y)), pxU = float2(px.x, max(px.y - 1.0f, 0.0f));
-    const float3 r = worldAt(pxR, Depth.Load(int3(pxR, 0))) - p, l = p - worldAt(pxL, Depth.Load(int3(pxL, 0)));
-    const float3 dn = worldAt(pxD, Depth.Load(int3(pxD, 0))) - p, u = p - worldAt(pxU, Depth.Load(int3(pxU, 0)));
-    const float3 dx = dot(r, r) < dot(l, l) ? r : l;
-    const float3 dy = dot(dn, dn) < dot(u, u) ? dn : u;
+    const float dR = Depth.Load(int3(pxR, 0)), dL = Depth.Load(int3(pxL, 0));
+    const float dD = Depth.Load(int3(pxD, 0)), dU = Depth.Load(int3(pxU, 0));
+    const float zC = max(viewZOf(Depth.Load(int3(px, 0))), 0.25f);
+    const float zTolG = max(zC * 0.035f, 4.0f);
+    const bool okR = (dR < 0.99998f) && (abs(viewZOf(dR) - zC) < zTolG);
+    const bool okL = (dL < 0.99998f) && (abs(viewZOf(dL) - zC) < zTolG);
+    const bool okD = (dD < 0.99998f) && (abs(viewZOf(dD) - zC) < zTolG);
+    const bool okU = (dU < 0.99998f) && (abs(viewZOf(dU) - zC) < zTolG);
+    if ((!okR && !okL) || (!okD && !okU)) { return fallback; }
+    const float3 r = okR ? (worldAt(pxR, dR) - p) : float3(1.0e5f, 0.0f, 0.0f);
+    const float3 l = okL ? (p - worldAt(pxL, dL)) : float3(1.0e5f, 0.0f, 0.0f);
+    const float3 dn = okD ? (worldAt(pxD, dD) - p) : float3(0.0f, 1.0e5f, 0.0f);
+    const float3 u = okU ? (p - worldAt(pxU, dU)) : float3(0.0f, 1.0e5f, 0.0f);
+    const float3 dx = (okR && (!okL || dot(r, r) < dot(l, l))) ? r : l;
+    const float3 dy = (okD && (!okU || dot(dn, dn) < dot(u, u))) ? dn : u;
     float3 n = cross(dy, dx);
-    const float len = length(n);
-    if (len < 1.0e-6f) { return fallback; }
-    n /= len;
-    return dot(n, fallback) < 0.0f ? -n : n;   // the side the shading normal is on
+    const float len2 = dot(n, n);
+    if (!isfinite(len2) || len2 < 1.0e-10f) { return fallback; }
+    n *= rsqrt(len2);
+    if (dot(n, fallback) < 0.0f) { n = -n; }   // orient to the shading normal's hemisphere
+    // Guard against extreme depth-quantization normal tilt at grazing silhouettes:
+    if (dot(n, fallback) < 0.25f) { return fallback; }
+    return n;
 }
 
 #include "RtHit.hlsli"
@@ -301,18 +316,23 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float3 sunDirUnit = (dot(sunDir.xyz, sunDir.xyz) > 1.0e-8f) ? normalize(sunDir.xyz) : float3(0.0f, 0.0f, 1.0f);
         const uint rtTier = (giFlags >> 8u) & 7u;
         if (sunDir.w > 0.5f && sunColour.w > 0.5f && dot(n, sunDirUnit) > 0.0f) {
-            // Wave 54 + Wave 65 Boil-Free World-Locked Multi-Tap PCSS Solar-Disk Shadows:
-            // Vis.x has no temporal history pass, so frameIndex-jittered rays caused exterior shadow boiling!
-            // Instead, trace 1 exact unjittered center blocker-search ray + N deterministic equilateral
-            // golden-angle solar-disk taps rotated by a smooth world-space hash (zero frameIndex jitter,
-            // zero screen-space crawl during cam_sweep, silky penumbras after Lighting.hlsl bilateral filter!).
+            // Wave 54 + Wave 65 + Wave 66 Anti-Acne World-Locked Multi-Tap PCSS Solar-Disk Shadows:
+            // Offsets ray origins strictly along smooth geometric normal `biasN` (ng on static stone walls!)
+            // with grazing-angle slope-scaled bias (`baseBias + slopeBias * (1 - ng.L)`) + hardened `tMinS`
+            // self-intersection rejection + upper-hemisphere ring ray clamp -> ZERO grazing masonry acne
+            // on sunlit Windhelm stone walls and ZERO temporal boiling!
             static const float kSolarDiskTan = 0.0046251f;
             const float overcastWiden = lerp(1.0f, 1.85f, saturate(clouds.x * 0.85f + weather.w * 0.35f));
             const float solarCone = max(sunCone, kSolarDiskTan) * overcastWiden;
-            const float grazingSun = saturate(1.0f - saturate(dot(biasN, sunDirUnit)));
-            const float3 oSun = p + biasN * clamp((0.015f + 0.002f * z) * (1.0f + grazingSun * 1.35f) + (isSkinnedMesh ? 0.42f : 0.28f), 0.30f, 4.5f);
-            const float turn = saturate(1.0f - dot(ng, sunDirUnit) / 0.45f);
-            const float tMinS = max(max(termDist, 1.8f) * turn * turn, oScale * 0.25f * turn);
+            const float ngSun = dot(biasN, sunDirUnit);
+            const float grazingSun = saturate(1.0f - saturate(ngSun));
+            const float baseBias = max(0.38f, 0.020f + 0.0024f * z);
+            const float slopeBias = max(0.65f, 0.0045f * z) * (grazingSun * grazingSun);
+            const float sunNormalOff = clamp(baseBias + slopeBias + (isSkinnedMesh ? 0.55f : 0.32f), 0.45f, 7.5f);
+            const float3 oSun = p + biasN * sunNormalOff;
+            const float turn = saturate(1.0f - max(ngSun, 0.0f) / 0.52f);
+            const float grazingTMin = max(max(termDist, 2.6f), sunNormalOff * 1.40f) * (turn * turn);
+            const float tMinS = clamp(max(grazingTMin, sunNormalOff * 0.38f), 0.38f, 18.0f);
 
             const float3 sTan = normalize(cross(sunDirUnit, abs(sunDirUnit.z) < 0.9f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f)));
             const float3 sBit = cross(sunDirUnit, sTan);
@@ -320,10 +340,16 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float3 wpSun = p + camPosW.xyz;
             const float worldPhase = frac(dot(floor(wpSun * 0.25f), float3(0.1031f, 0.11369f, 0.13787f))) * 6.2831853f;
 
+            // Keep center blocker ray strictly in the geometric upper hemisphere so bump-mapped grazing walls never self-hit:
+            float3 sunRayC = sunDirUnit;
+            const float cDot = dot(biasN, sunRayC);
+            if (cDot < 0.025f) {
+                sunRayC = normalize(sunRayC + biasN * (0.025f - cDot));
+            }
             Hit hBlocker;
             float effCone = solarCone * 0.65f;
             float vSum = 0.0f;
-            if (traceHit(oSun + sunDirUnit * tMinS, sunDirUnit, sunLength, hBlocker)) {
+            if (traceHit(oSun + sunRayC * tMinS, sunRayC, sunLength, hBlocker)) {
                 effCone = clamp(solarCone * (0.32f + 1.48f * saturate(hBlocker.t / 190.0f)), kSolarDiskTan * 0.45f, solarCone * 1.85f);
             } else {
                 vSum += 1.0f;
@@ -333,7 +359,12 @@ void main(uint3 id : SV_DispatchThreadID) {
             [loop] for (uint siS = 0u; siS < nSunRing; ++siS) {
                 const float angS = worldPhase + float(siS) * ringStep;
                 const float radS = effCone * (0.62f + 0.30f * (float(siS & 1u)));
-                const float3 dRing = normalize(sunDirUnit + (sTan * cos(angS) + sBit * sin(angS)) * radS);
+                float3 dRing = normalize(sunRayC + (sTan * cos(angS) + sBit * sin(angS)) * radS);
+                // Prevent solar-disk jitter ring from dipping into the geometric stone plane at grazing angles:
+                const float rDot = dot(biasN, dRing);
+                if (rDot < 0.025f) {
+                    dRing = normalize(dRing + biasN * (0.025f - rDot));
+                }
                 vSum += visible(oSun, dRing, tMinS, sunLength);
             }
             vis.x = saturate(vSum / float(nSunRing + 1u));

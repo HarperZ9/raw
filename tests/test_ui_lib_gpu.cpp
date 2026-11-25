@@ -1,12 +1,11 @@
-// test_ui_lib_gpu.cpp: Standalone DX12 GPU Verification Suite for Wave 65 RawUiLib + Debug-Layer HUD.
+// test_ui_lib_gpu.cpp: Standalone DX12 GPU Verification Suite for Wave 66 RawUiLib + Debug-Layer HUD.
 // Runs on BOTH WARP and Hardware GPU (RTX 4090) with D3D12 Debug Layer ENABLED:
 //   1. Pure CPU UiDrawList layout, proportional 7x9 ASCII metrics, ALL 37 Lighting DebugViews (0..36),
-//      ALL 7 Water DebugViews (1..7, incl. W7:FlowDiag), MotionTelemetryStrip & DebugViewQuickGrid.
+//      ALL 7 Water DebugViews (1..7, incl. W7:FlowDiag), MotionTelemetryStrip, DebugViewQuickGrid,
+//      PipelineHealthMatrix (PASS/WARN/FAIL/OFF) & VectorCompass (NaN-safe).
 //   2. Empty UiDrawList zero-touch invariance proof (0 modified pixels).
-//   3. Full UI widget gallery (Panel, TabBar, BudgetBar, Collapsible SectionHeader expanded/collapsed,
-//      EngineVarRow/Float/Bool verdict discs, MotionTelemetryStrip Pass/Fail, DebugViewQuickGrid Lighting/Water,
-//      Divider, Toggle ON/OFF, Slider, Pill, Swatch, Sparkline, 7x9 outline text) + PushClipRect scissor proof.
-//   4. Debug-Layer Control & Legend HUD rendered via RawOverlayHost::RecordDebugLayerHud (Views 34 & W7 + Motion/Grid).
+//   3. Full UI widget gallery + Wave 66 PipelineHealthMatrix & VectorCompass GPU pixel proof.
+//   4. Debug-Layer Control & Legend HUD rendered via RawOverlayHost::RecordDebugLayerHud (with Wave 66 sidecar).
 //   5. RGBA16F zero NaN/Inf check, 0 D3D12 Debug Layer errors, and HW GPU timing < 0.04 ms.
 // Original clean-room implementation, MIT License.
 
@@ -572,7 +571,69 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
         }
     }
 
-    // 4) RGBA16F float target NaN/Inf check
+    // 3b) Wave 66 Standalone PipelineHealthMatrix (8 passes) + VectorCompass (active cam_sweep + signed MV)
+    const PipelinePassStatus kW66Passes[8] = {
+        {"GBuffer",     0.18f, PipelineHealthState::Pass},
+        {"RT Shadows",  0.84f, PipelineHealthState::Warn},
+        {"Water",       0.22f, PipelineHealthState::Pass},
+        {"Flora/Grass", 0.14f, PipelineHealthState::Pass},
+        {"Fire/Fluid",  0.31f, PipelineHealthState::Pass},
+        {"Motion Vec",  1.95f, PipelineHealthState::Fail},
+        {"Tonemap",     0.06f, PipelineHealthState::Pass},
+        {"GameComp",    0.00f, PipelineHealthState::Off},
+    };
+    VectorCompassData kW66Compass{};
+    kW66Compass.yawDeg         = 45.0f;
+    kW66Compass.pitchDeg       = 18.0f;
+    kW66Compass.mvX            = 12.0f;
+    kW66Compass.mvY            = -6.0f;
+    kW66Compass.mvDivPx        = 1.85f;
+    kW66Compass.camSweepActive = true;
+
+    UiDrawList w66List;
+    w66List.AddPanel(24.0f, 24.0f, 328.0f, 196.0f, 6.0f, tokens::kGround, tokens::kBorderStrong, tokens::kAccentEmerald);
+    w66List.AddSectionHeader(36.0f, 36.0f, 304.0f, "Pipeline Health Matrix", tokens::kAccentPass, 1u, true, true);
+    w66List.AddPipelineHealthMatrix(36.0f, 54.0f, 304.0f, kW66Passes, 8u, 2u, 1u);
+    w66List.AddVectorCompass(36.0f, 142.0f, 304.0f, kW66Compass, 1u);
+
+    const UiPixelRect w66Dirty = w66List.ComputeDirtyRect(kW, kH);
+    std::vector<uint8_t> w66Rb;
+    const bool w66Ok = RunWithCallback([&](ID3D12GraphicsCommandList* cl, ID3D12Resource* tex) {
+        uiHost.RecordDrawList(cl, tex, D3D12_RESOURCE_STATE_RENDER_TARGET, kW, kH, w66List, true);
+    }, w66Rb);
+
+    uint32_t w66InMod = 0u, w66OutMod = 0u;
+    uint32_t w66MatPassBlue = 0u, w66MatWarnBrass = 0u, w66MatFailCoral = 0u;
+    uint32_t w66CompYawBrass = 0u, w66CompMvBlue = 0u, w66CompSweepEm = 0u;
+    for (uint32_t y = 0u; y < kH; ++y) {
+        for (uint32_t x = 0u; x < kW; ++x) {
+            const size_t off = (static_cast<size_t>(y) * kW + x) * 4u;
+            const uint8_t r = w66Rb[off + 0];
+            const uint8_t g = w66Rb[off + 1];
+            const uint8_t b = w66Rb[off + 2];
+            const bool mod = (r != basePx[off + 0] || g != basePx[off + 1] || b != basePx[off + 2]);
+            const bool inD = (x >= w66Dirty.x && x < w66Dirty.x + w66Dirty.w &&
+                              y >= w66Dirty.y && y < w66Dirty.y + w66Dirty.h);
+            if (mod) {
+                if (inD) ++w66InMod;
+                else ++w66OutMod;
+            }
+            // PipelineHealthMatrix [36..340, 54..136]
+            if (y >= 54u && y < 136u && x >= 36u && x < 340u) {
+                if (b > 185u && r < 140u) ++w66MatPassBlue;
+                else if (r > 185u && g > 130u && b < 110u) ++w66MatWarnBrass;
+                else if (r > 185u && g < 130u && b < 110u) ++w66MatFailCoral;
+            }
+            // VectorCompass [36..340, 142..210]
+            if (y >= 142u && y < 210u && x >= 36u && x < 340u) {
+                if (x < 108u && r > 185u && g > 130u && b < 110u) ++w66CompYawBrass;
+                if (x < 108u && b > 185u && r < 140u) ++w66CompMvBlue;
+                if (g > 175u && r < 110u && b < 160u) ++w66CompSweepEm;
+            }
+        }
+    }
+
+    // 4) RGBA16F float target NaN/Inf check (runs BOTH gallery and Wave 66 widgets on RGBA16F!)
     uint32_t nanInf = 0u;
     {
         D3D12_RESOURCE_DESC hdrDesc = texDesc;
@@ -594,6 +655,7 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
                 alloc->Reset();
                 cmd->Reset(alloc.Get(), nullptr);
                 uiHost.RecordDrawList(cmd.Get(), hdrTex.Get(), D3D12_RESOURCE_STATE_COMMON, 512u, 384u, gallery, false);
+                uiHost.RecordDrawList(cmd.Get(), hdrTex.Get(), D3D12_RESOURCE_STATE_COMMON, 512u, 384u, w66List, false);
                 D3D12_RESOURCE_BARRIER toSrc{};
                 toSrc.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
                 toSrc.Transition.pResource = hdrTex.Get();
@@ -642,6 +704,9 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
                 dbgModPx, w7ModPx, nanInf, static_cast<double>(meanMs), static_cast<double>(minMs), dbgErrs);
     std::printf("  [%s] w65: motPassBlue=%u motFailCoral=%u gridLight35Cyan=%u gridWater7Mag=%u\n",
                 tag, motPassBluePx, motFailCoralPx, gridLightActiveCyanPx, gridWaterActiveMagPx);
+    std::printf("  [%s] w66: inMod=%u outMod=%u mat(P=%u W=%u F=%u) comp(yawY=%u mvB=%u sweepG=%u)\n",
+                tag, w66InMod, w66OutMod, w66MatPassBlue, w66MatWarnBrass, w66MatFailCoral,
+                w66CompYawBrass, w66CompMvBlue, w66CompSweepEm);
 
     Check(galOk && insideDirtyMod > 180000u && outsideDirtyMod == 0u,
           useWarp ? "WARP: Widget gallery rendered strictly inside dirtyRect (0 out-of-bounds)"
@@ -665,9 +730,14 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
               gridLightActiveCyanPx >= 150u && gridWaterActiveMagPx >= 150u,
           useWarp ? "WARP: Wave 65 MotionTelemetryStrip (Pass/Fail) & DebugViewQuickGrid (View 35 & W7) verified"
                   : "HW: Wave 65 MotionTelemetryStrip (Pass/Fail) & DebugViewQuickGrid (View 35 & W7) verified");
-    Check(dbgOk && dbgModPx > 60000u && w7Ok && w7ModPx > 60000u,
-          useWarp ? "WARP: RecordDebugLayerHud rendered View 34 + W7 with Motion Strip & Quick-Grid"
-                  : "HW: RecordDebugLayerHud rendered View 34 + W7 with Motion Strip & Quick-Grid");
+    Check(w66Ok && w66InMod > 40000u && w66OutMod == 0u &&
+              w66MatPassBlue >= 180u && w66MatWarnBrass >= 200u && w66MatFailCoral >= 200u &&
+              w66CompYawBrass >= 20u && w66CompMvBlue >= 20u && w66CompSweepEm >= 200u,
+          useWarp ? "WARP: Wave 66 PipelineHealthMatrix (P/W/F/OFF) & VectorCompass (Yaw/MV/Sweep) verified"
+                  : "HW: Wave 66 PipelineHealthMatrix (P/W/F/OFF) & VectorCompass (Yaw/MV/Sweep) verified");
+    Check(dbgOk && dbgModPx > 140000u && w7Ok && w7ModPx > 140000u,
+          useWarp ? "WARP: RecordDebugLayerHud rendered View 34 + W7 with Wave 66 Sidecar (Health + Compass)"
+                  : "HW: RecordDebugLayerHud rendered View 34 + W7 with Wave 66 Sidecar (Health + Compass)");
     Check(nanInf == 0u,
           useWarp ? "WARP: 0 NaN/Inf pixels on RGBA16F HDR target"
                   : "HW: 0 NaN/Inf pixels on RGBA16F HDR target");
@@ -691,7 +761,7 @@ void RunAdapterSuite(IDXGIFactory6* factory, bool useWarp)
 
 int main()
 {
-    std::printf("=== Wave 65 GPU-Native UI Library (RawUiLib) + Motion Telemetry & Quick-Grid Proof ===\n");
+    std::printf("=== Wave 66 GPU-Native UI Library (RawUiLib) + Pipeline Health Matrix & Vector Compass Proof ===\n");
 
     // Pure CPU checks: proportional metrics, ALL 37 Lighting DebugViews (0..36) & ALL 7 Water Views (1..7)
     {
@@ -765,6 +835,27 @@ int main()
         const UiPixelRect r = w65Dl.ComputeDirtyRect(800u, 600u);
         Check(!w65Dl.Empty() && w65Dl.Commands().size() >= 18u && r.w > 280u && r.h > 60u,
               "CPU: Wave 65 MotionTelemetryStrip (NaN-safe) & DebugViewQuickGrid command generation valid");
+
+        // Wave 66 CPU checks: PipelineHealthMatrix & VectorCompass finite guards + bounds
+        UiDrawList w66Cpu;
+        const PipelinePassStatus badPasses[4] = {
+            {"GBuffer",    std::numeric_limits<float>::quiet_NaN(), PipelineHealthState::Pass},
+            {"RT Shadows", -3.0f,                                   PipelineHealthState::Warn},
+            {"Motion Vec", std::numeric_limits<float>::infinity(),  PipelineHealthState::Fail},
+            {"GameComp",   0.0f,                                    PipelineHealthState::Off},
+        };
+        VectorCompassData badCompass{};
+        badCompass.yawDeg         = std::numeric_limits<float>::quiet_NaN();
+        badCompass.pitchDeg       = 999.0f;
+        badCompass.mvX            = std::numeric_limits<float>::infinity();
+        badCompass.mvY            = -std::numeric_limits<float>::infinity();
+        badCompass.mvDivPx        = -5.0f;
+        badCompass.camSweepActive = true;
+        w66Cpu.AddPipelineHealthMatrix(16.0f, 16.0f, 300.0f, badPasses, 4u, 2u, 1u);
+        w66Cpu.AddVectorCompass(16.0f, 64.0f, 300.0f, badCompass, 1u);
+        const UiPixelRect r66 = w66Cpu.ComputeDirtyRect(800u, 600u);
+        Check(!w66Cpu.Empty() && w66Cpu.Commands().size() >= 25u && r66.w > 280u && r66.h > 100u,
+              "CPU: Wave 66 PipelineHealthMatrix & VectorCompass (NaN-safe) command generation valid");
     }
 
     ComPtr<ID3D12Debug> dbg;

@@ -185,7 +185,10 @@ void CaptureOpaque(ID3D11DeviceContext* real)
     const bool normalOk = s_bridge->CaptureNormal(static_cast<ID3D11Texture2D*>(s_f.normalTex));
     if (srv) srv->Release();
     if (depthOk && normalOk) ++s_captures;
-    if (Cfg().lighting && depthOk && normalOk) s_f.ran = LightingAtOpaque(real, s_f.sceneTex);
+    if (Cfg().lighting && depthOk && normalOk) {
+        if (s_f.sceneTex) GameComposite_SetScene(s_f.sceneTex);
+        s_f.ran = LightingAtOpaque(real, s_f.sceneTex);
+    }
     static int logged = 0;
     if (logged++ < 3)
         Log("[D3D12Bridge] opaque pass done at frame %llu: depth %d, normals %d, camera %d (tanHalfFovY %.5f, "
@@ -283,6 +286,7 @@ void BridgeHook_OnTargets(ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetV
     } else if (!s_f.captured && !s_f.normalBound && Cfg().lighting && s_lastScene && s_lastDepth && s_lastNormal &&
                rt[0] && s_f.backbuffer && rt[0] == s_f.backbuffer && s_bridge && s_bridge->Ready()) {
         s_f.sceneTex = s_lastScene; s_f.depthTex = s_lastDepth; s_f.normalTex = s_lastNormal; s_f.motionTex = s_lastMotion;
+        GameComposite_SetScene(s_lastScene);
         CaptureOpaque(real);
     }
     if (s_f.captured && s_f.sceneTex && rt[0] && s_f.backbuffer && Cfg().lighting) {
@@ -365,7 +369,7 @@ void BridgeHook_OnPresent()
         std::string out(path);
         CaptureBackbuffer(out.substr(0, out.rfind('\\') + 1) + "d3d12_bridge_capture.bmp");
     }
-    if (Cfg().lighting) { LightingOnPresent(s_f.captured); SceneLights_OnPresent(); }
+    if (Cfg().lighting) { LightingOnPresent(s_f.captured); SceneLights_OnPresent(); GameComposite_OnPresent(); }
     else if (s_f.ran && s_f.captured) CaptureStep(s_bridgeFrames);
     if (Cfg().lighting) {   // how often the game drew water, and whether its composite was found
         static uint32_t frames = 0, water = 0, composite = 0;

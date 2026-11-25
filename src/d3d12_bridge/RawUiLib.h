@@ -90,6 +90,28 @@ struct MotionTelemetrySnapshot {
     bool     mvSignValid       = true;  // True when +mv beats -mv / zero warp
 };
 
+enum class PipelineHealthState : uint8_t {
+    Pass = 0u,
+    Warn = 1u,
+    Fail = 2u,
+    Off  = 3u,
+};
+
+struct PipelinePassStatus {
+    const char*         name  = "";
+    float               gpuMs = 0.0f;
+    PipelineHealthState state = PipelineHealthState::Pass;
+};
+
+struct VectorCompassData {
+    float yawDeg         = 0.0f;   // Camera yaw in degrees [0..360)
+    float pitchDeg       = 0.0f;   // Camera pitch in degrees [-90..+90]
+    float mvX            = 0.0f;   // Live signed GPU motion-vector X (px/frame)
+    float mvY            = 0.0f;   // Live signed GPU motion-vector Y (px/frame)
+    float mvDivPx        = 0.0f;   // Motion-vector divergence in px
+    bool  camSweepActive = false;  // True while headless cam_sweep runs
+};
+
 // Exact 80-byte GPU command structure mirrored byte-for-byte in RawUiLibPass.hlsl.
 struct GpuUiCmd {
     float    rect[4]     = {};
@@ -183,6 +205,17 @@ public:
                                uint32_t columns = 4u,
                                uint32_t scale = 1u);
 
+    // Multi-column pipeline pass health matrix with PASS/WARN/FAIL/OFF dots & live GPU ms.
+    void AddPipelineHealthMatrix(float x, float y, float w,
+                                 const PipelinePassStatus* passes, uint32_t passCount,
+                                 uint32_t columns = 2u,
+                                 uint32_t scale = 1u);
+
+    // SDF camera yaw/pitch compass ring + signed GPU MV arrow + mvDivPx meter + cam_sweep badge.
+    void AddVectorCompass(float x, float y, float w,
+                          const VectorCompassData& compass,
+                          uint32_t scale = 1u);
+
     void AddPill(float x, float y, const char* label,
                  uint32_t bgRgba = tokens::kPillOnBg,
                  uint32_t textRgba = tokens::kInkPrimary,
@@ -265,6 +298,9 @@ struct DebugLayerHudSnapshot {
     uint32_t                       activeTabIndex       = 0u; // 0=Layers, 1=Perf, 2=Vars
     const MotionTelemetrySnapshot* motionTelemetry      = nullptr; // Optional Wave 65 temporal/MV strip
     bool                           showQuickGrid        = false;   // Optional Wave 65 quick-view grid
+    const PipelinePassStatus*      pipelinePasses       = nullptr; // Optional Wave 66 pass health matrix
+    uint32_t                       pipelinePassCount    = 0u;
+    const VectorCompassData*       vectorCompass        = nullptr; // Optional Wave 66 vector compass
 };
 
 // Returns full metadata & color legend swatches for ALL 37 Lighting DebugView IDs (0..36).

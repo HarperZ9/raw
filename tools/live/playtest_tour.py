@@ -247,9 +247,19 @@ def run_live_tour(
             proc = subprocess.Popen([str(exe)], cwd=str(game_dir), env=env)
             fpa.wait_for_world_ready(game_dir, engine_out, proc=proc, timeout_sec=min(90.0, boot_wait_sec * 0.55))
             if proc.poll() is None:
+                post_cmds: list[str] = []
+                scene_hr = fpa.parse_scene_gamehour(console_cmd)
+                if scene_hr is not None:
+                    post_cmds.append(f"set_time {max(0.0, min(23.99, scene_hr)):g}")
+                post_cmds.append("dismiss_modal")
+                fpa.emit_engine_commands(game_dir, post_cmds)
+                time.sleep(0.45)
+
+                pre_cmds: list[str] = ["dismiss_modal"]
                 if cam_sweep:
-                    fpa.emit_cam_sweep(game_dir)
-                    time.sleep(0.15)
+                    pre_cmds.append(fpa.build_cam_sweep_command())
+                fpa.emit_engine_commands(game_dir, pre_cmds)
+                time.sleep(0.20)
                 go_file.write_text(
                     "\n".join([
                         f"scene={starting_cell.lower()}",

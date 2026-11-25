@@ -51,6 +51,55 @@ uint64_t g_presents = 0;
 void (*g_invalidate)() = nullptr;
 bool g_emittersAtStart = false;
 CameraSweepState g_camSweep{};
+ModalDismissState g_modalDismiss{};
+
+struct FindWindowCtx {
+    DWORD pid = 0;
+    HWND  best = nullptr;
+    HWND  fallback = nullptr;
+    long  bestArea = 0;
+};
+
+BOOL CALLBACK EnumGameWindowsProc(HWND hwnd, LPARAM lp) {
+    auto* ctx = reinterpret_cast<FindWindowCtx*>(lp);
+    if (!ctx || !IsWindowVisible(hwnd)) return TRUE;
+    DWORD wpid = 0;
+    GetWindowThreadProcessId(hwnd, &wpid);
+    if (wpid != ctx->pid) return TRUE;
+    RECT rc{};
+    if (!GetClientRect(hwnd, &rc)) return TRUE;
+    const long area = (rc.right - rc.left) * (rc.bottom - rc.top);
+    if (area <= 0) return TRUE;
+    wchar_t title[128]{};
+    GetWindowTextW(hwnd, title, 128);
+    if (std::wcsstr(title, L"Skyrim") != nullptr) {
+        ctx->best = hwnd;
+        return FALSE;
+    }
+    if (area > ctx->bestArea) {
+        ctx->bestArea = area;
+        ctx->fallback = hwnd;
+    }
+    return TRUE;
+}
+
+HWND FindMainGameWindow() {
+    FindWindowCtx ctx{};
+    ctx.pid = GetCurrentProcessId();
+    EnumWindows(EnumGameWindowsProc, reinterpret_cast<LPARAM>(&ctx));
+    return ctx.best ? ctx.best : ctx.fallback;
+}
+
+bool PostBackgroundVirtualKey(HWND hwnd, UINT vk) {
+    if (!hwnd || !IsWindow(hwnd)) return false;
+    const UINT scan = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+    const LPARAM ext = (vk == VK_RIGHT || vk == VK_LEFT || vk == VK_UP || vk == VK_DOWN) ? (LPARAM(1) << 24) : 0;
+    const LPARAM lpDown = 1 | (LPARAM(scan & 0xFFu) << 16) | ext;
+    const LPARAM lpUp   = lpDown | (LPARAM(1) << 30) | (LPARAM(1) << 31);
+    const BOOL ok1 = PostMessageW(hwnd, WM_KEYDOWN, static_cast<WPARAM>(vk), lpDown);
+    const BOOL ok2 = PostMessageW(hwnd, WM_KEYUP,   static_cast<WPARAM>(vk), lpUp);
+    return ok1 != FALSE && ok2 != FALSE;
+}
 
 const RefTarget* Find(const std::string& name) {
     for (const auto& r : *g_refs)
@@ -251,6 +300,33 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
                           "{\"cmd\":\"set_pose\",\"ok\":%s,\"pos\":[%.2f,%.2f,%.2f],\"pitch\":%.4f,\"yaw\":%.4f}",
                           ok ? "true" : "false", x, y, z, ClampPitchRad(pitch), WrapYawTwoPi(yaw));
             Result(jb);
+        } else if (op == "dismiss_modal") {
+            const HWND hwnd = FindMainGameWindow();
+            TriggerModalDismiss(g_modalDismiss);
+            char jb[192];
+            std::snprintf(jb, sizeof jb,
+                          "{\"cmd\":\"dismiss_modal\",\"ok\":%s,\"hwnd_found\":%s,\"auto_dismiss\":%s}",
+                          hwnd ? "true" : "false", hwnd ? "true" : "false",
+                          g_modalDismiss.autoDismissEnabled ? "true" : "false");
+            Result(jb);
+        } else if (op == "auto_dismiss") {
+            bool en = g_modalDismiss.autoDismissEnabled;
+            const bool ok = ParseAutoDismissArg(a, en);
+            if (ok) g_modalDismiss.autoDismissEnabled = en;
+            char jb[160];
+            std::snprintf(jb, sizeof jb,
+                          "{\"cmd\":\"auto_dismiss\",\"ok\":%s,\"enabled\":%s}",
+                          ok ? "true" : "false", g_modalDismiss.autoDismissEnabled ? "true" : "false");
+            Result(jb);
+        } else if (op == "set_time") {
+            float hour = 12.0f;
+            const bool parsed = ParseSetTimeArg(a, hour);
+            const bool ok = parsed && SetGameHour(hour);
+            char jb[160];
+            std::snprintf(jb, sizeof jb,
+                          "{\"cmd\":\"set_time\",\"ok\":%s,\"hour\":%.3f}",
+                          ok ? "true" : "false", hour);
+            Result(jb);
         } else if (op == "weather") {
             Result(WeatherCommand());
         } else if (op == "audit") {
@@ -342,6 +418,22 @@ void ControlOnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
         if (++tick % 15 == 0) PollGoFile();
     }
     if (g_busy) Step(ctx, sc);
+    {
+        const ModalKeyAction act = StepModalDismissState(g_modalDismiss, IsMenuPausedOrModal(), g_camSweep.active);
+        if (act != ModalKeyAction::None) {
+            if (const HWND hwnd = FindMainGameWindow()) {
+                const UINT vk = (act == ModalKeyAction::PostRight) ? VK_RIGHT : VK_RETURN;
+                PostBackgroundVirtualKey(hwnd, vk);
+                if (act == ModalKeyAction::PostReturn) {
+                    char jb[160];
+                    std::snprintf(jb, sizeof jb,
+                                  "{\"cmd\":\"dismiss_modal\",\"event\":\"confirmed\",\"ok\":true,\"count\":%u}",
+                                  g_modalDismiss.dismissedCount);
+                    Result(jb);
+                }
+            }
+        }
+    }
     if (g_camSweep.active && g_camSweep.framesRemaining > 0u) {
         const bool applied = ApplyCameraSweepStep(g_camSweep.dYawRadPerFrame,
                                                   g_camSweep.dPitchRadPerFrame,

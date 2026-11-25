@@ -44,6 +44,74 @@ inline constexpr float kCamMaxPitchRad = 1.25f;
 inline constexpr float kCamMaxStepRad  = 0.50f;
 inline constexpr float kCamMaxStepFwd  = 256.0f;
 inline constexpr float kCamMaxCoordU   = 1.0e6f;
+inline constexpr float kMaxGameHour    = 23.99f;
+
+enum class ModalDismissPhase : uint8_t { Idle = 0, SendRight = 1, WaitReturn = 2 };
+enum class ModalKeyAction    : uint8_t { None = 0, PostRight = 1, PostReturn = 2 };
+
+struct ModalDismissState {
+    ModalDismissPhase phase              = ModalDismissPhase::Idle;
+    uint32_t          waitFrames         = 0u;
+    uint32_t          cooldownFrames     = 0u;
+    uint32_t          dismissedCount     = 0u;
+    bool              autoDismissEnabled = true;  // defaults ON while cam_sweep is active
+};
+
+inline bool ComputeSetGameHour(float& outHour, float inHour) noexcept {
+    if (!std::isfinite(inHour)) return false;
+    outHour = std::clamp(inHour, 0.0f, kMaxGameHour);
+    return true;
+}
+
+inline bool ParseSetTimeArg(const std::string& a, float& outHour) {
+    std::istringstream ss(a);
+    double h = 0.0;
+    if (!(ss >> h) || !std::isfinite(h)) return false;
+    return ComputeSetGameHour(outHour, static_cast<float>(h));
+}
+
+inline bool ParseAutoDismissArg(const std::string& a, bool& outEnabled) {
+    if (a == "1" || a == "true" || a == "on") { outEnabled = true; return true; }
+    if (a == "0" || a == "false" || a == "off") { outEnabled = false; return true; }
+    return false;
+}
+
+inline void TriggerModalDismiss(ModalDismissState& st) noexcept {
+    if (st.phase == ModalDismissPhase::Idle) {
+        st.phase      = ModalDismissPhase::SendRight;
+        st.waitFrames = 0u;
+    }
+}
+
+// Non-blocking modal dismiss state machine: posts VK_RIGHT (select "No"), waits 2 present frames,
+// then posts VK_RETURN (confirm) and enters a 20-frame cooldown.
+inline ModalKeyAction StepModalDismissState(ModalDismissState& st, bool isPausedOrModal,
+                                            bool autoTriggerAllowed) noexcept {
+    if (st.cooldownFrames > 0u) --st.cooldownFrames;
+    if (st.phase == ModalDismissPhase::Idle) {
+        if (autoTriggerAllowed && st.autoDismissEnabled && isPausedOrModal && st.cooldownFrames == 0u) {
+            st.phase      = ModalDismissPhase::SendRight;
+            st.waitFrames = 0u;
+        }
+    }
+    if (st.phase == ModalDismissPhase::SendRight) {
+        st.phase      = ModalDismissPhase::WaitReturn;
+        st.waitFrames = 2u;
+        return ModalKeyAction::PostRight;
+    }
+    if (st.phase == ModalDismissPhase::WaitReturn) {
+        if (st.waitFrames > 1u) {
+            --st.waitFrames;
+            return ModalKeyAction::None;
+        }
+        st.waitFrames     = 0u;
+        st.phase          = ModalDismissPhase::Idle;
+        st.cooldownFrames = 20u;
+        ++st.dismissedCount;
+        return ModalKeyAction::PostReturn;
+    }
+    return ModalKeyAction::None;
+}
 
 // Pure deterministic camera/player math helpers (shared by live raw_engine.dll and ce_runtime_check).
 inline float WrapYawTwoPi(float yawRad) noexcept {
@@ -188,6 +256,7 @@ struct EngineView {
     float    gameMonth;    // Calendar+0x10 -> +0x34 (0..11, 7 = Last Seed)
     float    gameDay;      // Calendar+0x18 -> +0x34 (1..31)
     float    timeScale;    // Calendar+0x30 -> +0x34 (default 20.0f)
+    uint32_t menuStackDepth; // UI::Singleton->menuStack._size (+0x120, binary-verified 1.7.104)
 };
 
 void ViewInit(const Image& img);
@@ -199,10 +268,12 @@ void ViewRestoreAllTides();
 // the last present's view as JSON fields (no braces), for live_state.jsonl and `view`
 std::string ViewJson();
 
-// Wave 65: SEH-guarded headless in-process camera/player motion on verified PlayerCharacter (+0x48 rot, +0x54 pos)
-// and PlayerCamera when loaded (cellFormId != 0 && menuPaused == 0).
+// Wave 65/66: SEH-guarded headless in-process camera/player motion and game-hour setter on verified
+// PlayerCharacter (+0x48 rot, +0x54 pos), PlayerCamera, Calendar (+0x20->+0x34), and Sky (+0x1B0).
 bool ApplyCameraSweepStep(float dYawRad, float dPitchRad, float dFwdUnits);
 bool SetPlayerPose(float x, float y, float z, float pitchRad, float yawRad);
+bool SetGameHour(float hour);
+bool IsMenuPausedOrModal() noexcept;
 bool IsCameraSweepActive() noexcept;
 void SetCameraSweepActiveFlag(bool active) noexcept;
 

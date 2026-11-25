@@ -20,6 +20,7 @@ struct GameCompositeSwitches { bool noGameAo = false, noGameFog = false; };
 
 void GameComposite_Set(const GameCompositeSwitches& s);
 void GameComposite_SetScene(ID3D11Resource* sceneHdr);    // the opaque set's HDR target this frame
+void GameComposite_OnPresent();                           // advances frame counter for missed-composite diagnostics
 void GameComposite_BeforeDraw(ID3D11DeviceContext* real, UINT vertexCount);
 void GameComposite_AfterDraw(ID3D11DeviceContext* real);
 }

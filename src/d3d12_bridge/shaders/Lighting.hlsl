@@ -1329,15 +1329,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         : 0.0f;
     const float mrStrength = mrDistFade * ((base == 4u || base == 6u) ? 0.85f : 0.72f);
     const float mrScale    = (base == 4u || base == 6u) ? 0.22f : 0.28f;
+    // Wave 66: Quad-safe relative depth silhouette jump detector (attenuates contact shadows & AO darkening
+    // across sharp depth silhouettes > 0.035 so characters, weapons & pine branches never form dark cel-shading rims!).
+    const float zJumpSil = (abs(ddx(z)) + abs(ddy(z))) / max(z, 1.0f);
+    const float silEdgeAtten = smoothstep(0.035f, 0.11f, zJumpSil);
+
     if (sunDir.w > 0.5f) {
         // Interiors (sunColour.w < 0.5): NEVER read m4.x (that is vanilla's flickering point-light shadow channel 0!).
         // Keep interior directional fill unshadowed and calm so turning the camera never flickers the whole room!
         sunShadow = (sunColour.w < 0.5f || (flags.x & FLAG_SHADOWS) == 0u) ? 1.0f
                   : ((flags.x & FLAG_CASCADES) != 0u ? cascadeShadow(p, d, true) : m4.x);
         // Pure Native Hardware DXR 1.2 Sun Shadows when RT is active (zero screen-space contact shadow hacks!).
-        // screenShadow runs ONLY as a fallback when hardware RT is explicitly disabled.
+        // screenShadow runs ONLY as a fallback when hardware RT is explicitly disabled (attenuated across silhouettes!).
         if (!match && !rt && (flags.x & FLAG_CONTACT) != 0u && base != 5u && !isActorFeat && !isActorCloth && sunShadow > 0.0f && dot(s.n, sunDir.xyz) > 0.0f) {
-            sunShadow *= screenShadow(p + lift, sunDir.xyz, tune.w, 0.02f, jit, 12u);
+            const float ssSun = screenShadow(p + lift, sunDir.xyz, tune.w, 0.02f, jit, 12u);
+            sunShadow *= lerp(ssSun, 1.0f, silEdgeAtten);
         }
         // Pure Native Hardware DXR 1.2 Sun Shadows on exterior world geometry (and 72% hardware DXR blend on skinned actors!):
         if (rt && sunColour.w > 0.5f) {
@@ -1554,7 +1560,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 localWarmIrradDbg += dot(c * sh, float3(0.2126f, 0.7152f, 0.0722f)) * saturate(dot(s.n, l) * 0.5f + 0.5f);
             }
             if (!match && !rt && sunColour.w > 0.5f && slot == 0u && (flags.x & FLAG_SOFT) != 0u && base != 5u && softLeft > 0u && dot(s.n, l) > 0.0f && max(c.r, max(c.g, c.b)) > 0.02f) {
-                sh *= screenShadow(p + lift, l, min(dist, tune.z), 4.0f / max(dist, 1.0f), jit, 10u);
+                const float ssPt = screenShadow(p + lift, l, min(dist, tune.z), 4.0f / max(dist, 1.0f), jit, 10u);
+                sh *= lerp(ssPt, 1.0f, silEdgeAtten);
                 --softLeft;
             }
             // Wave 45 analytical micro-relief crevice self-shadowing on the nearest/strongest key point light (torches/hearths):
@@ -1632,10 +1639,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
     }
     // 100% Pure Hardware DXR 3D Contact RTAO & Skylighting (ZERO screen-space GTAO/SSAO when RT is active!):
+    // Wave 66: Attenuate screen-space AO and micro-contact darkening smoothly across sharp depth silhouette jumps
+    // (silEdgeAtten from zJumpSil > 0.035) so moving characters, weapons & pine branches never form dark cel rims!
     const float ssaoMix = (rt && (flags.x & FLAG_SKY) != 0u) ? 0.0f : 1.0f;
-    const float aoWeight = (base == 5u ? 0.82f : (isActorFeat ? 0.30f : (isActorCloth ? 0.45f : 1.0f))) * ssaoMix;
+    const float aoWeight = (base == 5u ? 0.82f : (isActorFeat ? 0.30f : (isActorCloth ? 0.45f : 1.0f))) * ssaoMix * (1.0f - silEdgeAtten * 0.80f);
     const float aoRaw = (flags.x & FLAG_AO) != 0u ? lerp(1.0f, AoHist.Load(ip).x, tune2.x * aoWeight) : 1.0f;
-    const float aoTerm = !match ? pow(saturate(aoRaw), 1.25f) : aoRaw;
+    const float aoTerm = !match ? lerp(pow(saturate(aoRaw), 1.25f), 1.0f, silEdgeAtten * 0.72f) : aoRaw;
     // Exteriors: ray-traced sky visibility (RtSky.cpp). Interiors (!match): local SM6.9 RayQuery RTAO from RtShadow.hlsl.
     const bool isExterior = sunColour.w > 0.5f;
     const float rawSkyVis = rt && (flags.x & FLAG_SKY) != 0u && (isExterior || !match) ? RtIdx.Load(ip).w : 1.0f;
@@ -1659,22 +1668,22 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
     }
     // Feature 18: Contact-hardening near-field micro-AO grounding under foliage, rocks, furniture & NPC feet.
-    // Wave 63 + Wave 65: Strictly exclude faces/skin/hair/eyes (isActorFeat) and keep skinned cloth/fur (0.90)
-    // and tree trunks (isWoodBark, 0.94) gentle so actors & pine trunks NEVER crush into dark blotches!
+    // Wave 63 + Wave 65 + Wave 66: Strictly exclude faces/skin/hair/eyes (isActorFeat), keep skinned cloth/fur (0.90)
+    // and tree trunks (0.94) gentle, and fade out across depth silhouette edges (silEdgeAtten)!
     const float nearGroundAo = !match ? pow(saturate(aoTerm), lerp(1.0f, 1.45f, saturate(1.0f - z / 900.0f))) : aoTerm;
     if (!match && !isActorFeat && z < 650.0f) {
         const float microFloor = isWoodBark ? 0.94f : (isActorCloth ? 0.90f : 0.70f);
-        const float microDiffOcc = lerp(1.0f, lerp(microFloor, 1.0f, nearGroundAo), saturate(1.0f - z / 650.0f));
+        const float microDiffOcc = lerp(lerp(1.0f, lerp(microFloor, 1.0f, nearGroundAo), saturate(1.0f - z / 650.0f)), 1.0f, silEdgeAtten);
         diff *= microDiffOcc;
     }
     float combinedOcc = min(nearGroundAo, rtOcc);
-    // Lifelike Vanilla NPCs & Forest Trunks: lift recessed eye-socket AO (12), cushion facial skin (10) & cloth (14),
-    // and guarantee exterior tree trunks (isWoodBark) retain >= 0.38 ambient visibility under dense pine canopies!
+    // Lifelike Vanilla NPCs, Forest Trunks & Moving Silhouettes: prevent dark 1-2px cel-shading rims on depth silhouettes!
     if (!match) {
         if (base == 12u)       combinedOcc = lerp(combinedOcc, 1.0f, 0.82f);
         else if (skin)         combinedOcc = lerp(combinedOcc, 1.0f, 0.14f);
         else if (isActorCloth) combinedOcc = lerp(combinedOcc, 1.0f, 0.10f);
         else if (isWoodBark)   combinedOcc = max(combinedOcc, 0.38f);
+        combinedOcc = lerp(combinedOcc, max(combinedOcc, 0.72f), silEdgeAtten * 0.80f);
     }
     // SIGGRAPH GI-12 Visibility-Aware Bent-Normal Hemisphere Skylighting (exteriors) &
     // Directional Vault/Hearth Ambient Shaping (interiors: deepens recessed corners & highlights upper masonry/beams).

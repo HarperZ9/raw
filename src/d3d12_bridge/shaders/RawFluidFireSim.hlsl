@@ -291,14 +291,18 @@ void cs_fire_inject(uint3 tid : SV_DispatchThreadID)
         const float3 radialVec = delta - jetDir * hAlong;
         const float3 curlPerp = curl - jetDir * dot(curl, jetDir);
         const float heightRise = saturate((hNorm + 0.35f) / 1.85f);
-        // Tapered flame cone/teardrop (crisp anchored base, sharp upward-licking tongues, never a smooth round sphere)
-        const float coneTaper = lerp(1.14f, 0.42f, heightRise);
-        const float3 warpedRad = radialVec + curlPerp * (radius * (0.12f + 0.28f * heightRise));
+        // Tapered flame cone/teardrop (tightly anchored hearth/brazier base, crisp upward-licking tongues, never a floating sphere)
+        const float baseAnchor = smoothstep(-0.25f, 0.30f, hNorm);
+        const float coneTaper = lerp(1.04f, 0.38f, heightRise) * lerp(0.90f, 1.0f, baseAnchor);
+        const float3 warpedRad = radialVec + curlPerp * (radius * (0.10f + 0.30f * heightRise));
         const float rNorm = length(warpedRad) / max(radius * coneTaper, 0.5f);
-        const float vNorm = (hAlong >= 0.0f) ? (hNorm / 1.65f) : (-hNorm / 0.80f);
+        const float vNorm = (hAlong >= 0.0f) ? (hNorm / 1.65f) : (-hNorm / 0.72f);
         const float dEff = sqrt(rNorm * rNorm + vNorm * vNorm);
-        const float tongueNoise = 0.80f + 0.48f * fireNoise3Grad(
+        const float tongueLo = fireNoise3Grad(
             wp * (0.52f * invR) - jetDir * (timeSec * 4.2f) + float3(float(ei) * 3.1f, 1.7f, 0.0f)).x;
+        const float tongueHi = fireNoise3Grad(
+            wp * (1.12f * invR) - jetDir * (timeSec * 6.8f) + float3(1.9f, float(ei) * 4.3f, 2.7f)).x;
+        const float tongueNoise = 0.78f + 0.36f * tongueLo + 0.18f * tongueHi;
         const float wRaw = saturate(1.0f - dEff / max(tongueNoise, 0.35f));
         const float w = wRaw * wRaw * (3.0f - 2.0f * wRaw);
 
@@ -489,7 +493,12 @@ void cs_fire_forces_combust(uint3 tid : SV_DispatchThreadID)
     const float3 eta = float3(wR - wL, wU - wD, wT - wB) * inv2h;
     const float etaLen = length(eta);
     const float3 N = (etaLen > 1.0e-5f) ? (eta / etaLen) : float3(0.0f, 0.0f, 0.0f);
-    const float3 fVort = physicsA.x * h * cross(N, omegaC);
+    // Boost buoyant vortex confinement in the active combustion shear layer (900K..2800K) for crisp flickering flame tongues
+    const float shearBand = smoothstep(750.0f, 1350.0f, T) * (1.0f - 0.35f * smoothstep(2400.0f, 3400.0f, T));
+    const float3 wpForces = voxelToWorld(id);
+    const float3 microSwirl = fireCurlNoise3D(wpForces * (0.14f / max(h, 0.25f)) - float3(0.0f, 0.0f, dtAndTime.y * 3.4f));
+    const float3 fVort = (physicsA.x * (1.0f + 0.35f * shearBand)) * h * cross(N, omegaC)
+                       + microSwirl * (shearBand * min(physicsA.x, 3.0f) * 2.2f);
 
     // 2) Z-up Thermal Buoyancy: (alpha * (T - T_amb) - beta * soot) * z_hat
     const float fBuoyZ = physicsA.y * (T - tAmb) - physicsA.z * soot;

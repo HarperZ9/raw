@@ -154,6 +154,22 @@ def _match_shape(a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return a[:h, :w, :], b[:h, :w, :]
 
 
+def _hud_valid_mask(h: int, w: int) -> np.ndarray:
+    """Boolean mask excluding static Skyrim HUD pixels:
+    - Top compass bar (`y < 0.11 * h`)
+    - Center 18x18 crosshair box (`cy-9..cy+9, cx-9..cx+9`) on frames >= 64px.
+    """
+    mask = np.ones((h, w), dtype=bool)
+    top_cut = int(h * 0.11)
+    if top_cut > 0:
+        mask[:top_cut, :] = False
+    half = min(9, max(2, min(h, w) // 20)) if min(h, w) >= 64 else 0
+    if half > 0:
+        cy, cx = h // 2, w // 2
+        mask[max(0, cy - half) : min(h, cy + half), max(0, cx - half) : min(w, cx + half)] = False
+    return mask
+
+
 # -----------------------------------------------------------------------------
 # Heuristics 1..8: Baseline-Proven Live Defect Detectors
 # -----------------------------------------------------------------------------
@@ -217,15 +233,49 @@ def detect_indoor_black_orbs(
 def detect_red_sky_fire_bleed(
     image: str | Path | Image.Image | np.ndarray,
     area_threshold: float = 0.025,
+    debug29_image: str | Path | Image.Image | np.ndarray | None = None,
 ) -> HeuristicResult:
-    """#2: Detects anomalous high-red/low-blue fire halo blobs bleeding onto the upper sky region."""
+    """#2: Detects anomalous high-red/low-blue fire halo blobs bleeding onto the upper sky region.
+
+    When `debug29_image` (`view_depth_edge`) is provided, uses its exact far-sky mask
+    (`Lighting.hlsl` sky encoding: low R/G, blue-dominant navy) to filter out warm torch-lit
+    stone walls (e.g. Windhelm palace walls) while catching any red bleed on true sky pixels or
+    extreme saturated fiery crimson (`R > 0.65 && R-G > 0.25 && R-B > 0.35`).
+    """
     rgb = load_rgb_float(image)
     h, _, _ = rgb.shape
     y0, y1 = int(h * 0.06), int(h * 0.45)
     top = rgb[y0:y1, :, :]
     r, g, b = top[:, :, 0], top[:, :, 1], top[:, :, 2]
 
-    red_blob = (r > 0.42) & ((r - b) > 0.22) & (r > g * 1.18)
+    fiery_crimson = (r > 0.65) & ((r - g) > 0.25) & ((r - b) > 0.35)
+    red_halo = (r > 0.42) & ((r - b) > 0.22) & (r > g * 1.18)
+
+    sky_mask_used = False
+    sky_frac = 1.0
+    if debug29_image is not None:
+        d29 = load_rgb_float(debug29_image)
+        rgb_m, d29_m = _match_shape(rgb, d29)
+        hm = rgb_m.shape[0]
+        y0m, y1m = int(hm * 0.06), int(hm * 0.45)
+        top = rgb_m[y0m:y1m, :, :]
+        r, g, b = top[:, :, 0], top[:, :, 1], top[:, :, 2]
+        fiery_crimson = (r > 0.65) & ((r - g) > 0.25) & ((r - b) > 0.35)
+        red_halo = (r > 0.42) & ((r - b) > 0.22) & (r > g * 1.18)
+        d29_top = d29_m[y0m:y1m, :, :]
+        # Lighting.hlsl flags.w==29 sky encoding: linear (0.02, 0.04, 0.10) -> sRGB (~0.15, 0.22, 0.35)
+        sky_mask = (
+            (d29_top[:, :, 0] < 0.22)
+            & (d29_top[:, :, 1] < 0.30)
+            & (d29_top[:, :, 2] < 0.48)
+            & (d29_top[:, :, 2] > d29_top[:, :, 0] + 0.04)
+        )
+        sky_mask_used = True
+        sky_frac = float(np.mean(sky_mask))
+        red_blob = (sky_mask & red_halo) | fiery_crimson
+    else:
+        red_blob = red_halo | fiery_crimson
+
     frac = float(np.mean(red_blob))
     detected = frac >= area_threshold
     return HeuristicResult(
@@ -235,6 +285,8 @@ def detect_red_sky_fire_bleed(
         threshold=area_threshold,
         severity="fail" if detected else "pass",
         details={
+            "sky_mask_used": sky_mask_used,
+            "upper_sky_frac": round(sky_frac, 4),
             "red_sky_area_frac": round(frac, 5),
             "red_sky_pixels": int(red_blob.sum()),
             "upper_roi_pixels": int(red_blob.size),
@@ -884,11 +936,18 @@ def detect_normal_map_integrity(
     max_bad_len_frac: float = 0.12,
     max_zero_hole_frac: float = 0.08,
 ) -> HeuristicResult:
-    """#14: Audits DebugView 1 (`WorldNormals`, n*0.5+0.5) for unit-length norms, zero NaN holes & diversity."""
+    """#14: Audits DebugView 1 (`WorldNormals`, n*0.5+0.5) for unit-length norms, zero NaN holes & diversity.
+
+    Masks out static Skyrim HUD pixels (top 11% compass bar & 18px center crosshair box) so UI overlay
+    elements never corrupt world-normal unit-length checks.
+    """
     rgb = load_rgb_float(debug1_image)
-    zero_holes = (rgb[:, :, 0] < 0.01) & (rgb[:, :, 1] < 0.01) & (rgb[:, :, 2] < 0.01)
-    zero_frac = float(np.mean(zero_holes))
-    valid = ~zero_holes
+    h, w, _ = rgb.shape
+    hud_ok = _hud_valid_mask(h, w)
+    zero_holes = hud_ok & (rgb[:, :, 0] < 0.01) & (rgb[:, :, 1] < 0.01) & (rgb[:, :, 2] < 0.01)
+    hud_cnt = max(1, int(hud_ok.sum()))
+    zero_frac = float(zero_holes.sum()) / float(hud_cnt)
+    valid = hud_ok & (~zero_holes)
     if int(valid.sum()) < 64:
         return HeuristicResult(
             name="detect_normal_map_integrity",
@@ -914,6 +973,7 @@ def detect_normal_map_integrity(
         threshold=max_bad_len_frac,
         severity="fail" if detected else "pass",
         details={
+            "hud_masked": True,
             "zero_hole_frac": round(zero_frac, 5),
             "bad_unit_len_frac": round(bad_len_frac, 5),
             "mean_norm_length": round(float(lengths.mean()), 4),
@@ -1070,10 +1130,19 @@ def detect_exposure_and_tonemap_clipping(
 
 def detect_depth_and_stencil_integrity(
     debug29_image: str | Path | Image.Image | np.ndarray,
-    min_dynamic_range: float = 0.08,
+    min_dynamic_range: float | None = None,
     max_zero_frac: float = 0.85,
+    is_interior: bool | None = None,
 ) -> HeuristicResult:
-    """#19: Audits DebugView 29 (`LinearDepthSilhouette`) for smooth depth range & clean sky separation."""
+    """#19: Audits DebugView 29 (`LinearDepthSilhouette`) for smooth depth range & clean sky separation.
+
+    Uses `0.025` min dynamic range for enclosed interiors (`is_interior=True`) and `0.08` for exteriors.
+    """
+    eff_min_range = (
+        float(min_dynamic_range)
+        if min_dynamic_range is not None
+        else (0.025 if is_interior is True else 0.08)
+    )
     rgb = load_rgb_float(debug29_image)
     lum = _luminance(rgb)
     p05 = float(np.percentile(lum, 5))
@@ -1081,14 +1150,15 @@ def detect_depth_and_stencil_integrity(
     dyn_range = p95 - p05
     zero_frac = float(np.mean(lum < 0.005))
 
-    detected = (dyn_range < min_dynamic_range) or (zero_frac > max_zero_frac)
+    detected = (dyn_range < eff_min_range) or (zero_frac > max_zero_frac)
     return HeuristicResult(
         name="detect_depth_and_stencil_integrity",
         detected=detected,
         score=dyn_range,
-        threshold=min_dynamic_range,
+        threshold=eff_min_range,
         severity="fail" if detected else "pass",
         details={
+            "is_interior": bool(is_interior) if is_interior is not None else False,
             "depth_p05": round(p05, 4),
             "depth_p95": round(p95, 4),
             "depth_dynamic_range": round(dyn_range, 4),
@@ -1262,25 +1332,33 @@ def analyze_motion_vector_reprojection(
     frame_t1: str | Path | Image.Image | np.ndarray,
     mv_debug35_t1: str | Path | Image.Image | np.ndarray,
     max_reproj_rmse: float = 0.14,
+    burst_stride: int = 1,
 ) -> HeuristicResult:
-    """#21: Decodes signed GPU MVs from DebugView 35, warps frame_t -> frame_t1 testing +mv/-mv/0,
-    and flags sign inversion or severe camera-swimming reprojection residuals."""
+    """#21: Decodes signed GPU MVs from DebugView 35 (scaled by `burst_stride`), masks static HUD regions,
+    warps frame_t -> frame_t1 testing +mv/-mv/0, and flags sign inversion or severe reprojection residuals."""
+    stride_f = float(max(1, int(burst_stride)))
     a, b = _match_shape(load_rgb_float(frame_t), load_rgb_float(frame_t1))
     mv_rgb = load_rgb_float(mv_debug35_t1)
     a, mv_rgb = _match_shape(a, mv_rgb)
     b, mv_rgb = _match_shape(b, mv_rgb)
-    dx_px, dy_px, _ = decode_debug35_motion_vectors(mv_rgb)
+    dx_1f, dy_1f, _ = decode_debug35_motion_vectors(mv_rgb)
+    dx_px = dx_1f * stride_f
+    dy_px = dy_1f * stride_f
 
     h, w, _ = a.shape
+    hud_ok = _hud_valid_mask(h, w)
     mag_px = np.hypot(dx_px, dy_px)
-    mean_mv_px = float(mag_px.mean())
-    max_mv_px = float(np.percentile(mag_px, 95))
-    margin = int(min(max(4, math.ceil(max_mv_px) + 2), min(h, w) // 6))
+    mean_mv_px = float(mag_px[hud_ok].mean()) if int(hud_ok.sum()) > 0 else float(mag_px.mean())
+    max_mv_px = float(np.percentile(mag_px[hud_ok], 95)) if int(hud_ok.sum()) > 0 else float(np.percentile(mag_px, 95))
+    margin = int(min(max(4, math.ceil(max_mv_px) + 2), min(h, w) // 5))
 
     sl_y = slice(margin, h - margin)
     sl_x = slice(margin, w - margin)
+    valid_crop = hud_ok[sl_y, sl_x]
+    if int(valid_crop.sum()) < 16:
+        valid_crop = np.ones((h - 2 * margin, w - 2 * margin), dtype=bool)
     ref = b[sl_y, sl_x, :]
-    rmse_zero = float(np.sqrt(np.mean((ref - a[sl_y, sl_x, :]) ** 2)))
+    rmse_zero = float(np.sqrt(np.mean((ref[valid_crop] - a[sl_y, sl_x, :][valid_crop]) ** 2)))
 
     # Distinguish stationary bursts (mean_mv_px < 0.25) from moving cam_sweep bursts (>= 0.25)
     if mean_mv_px < 0.25:
@@ -1293,6 +1371,8 @@ def analyze_motion_vector_reprojection(
             severity="fail" if detected_static else "pass",
             details={
                 "motion_regime": "stationary",
+                "burst_stride": int(stride_f),
+                "hud_masked": True,
                 "rmse_plus_mv": round(rmse_zero, 5),
                 "rmse_minus_mv": round(rmse_zero, 5),
                 "rmse_zero_mv": round(rmse_zero, 5),
@@ -1306,8 +1386,8 @@ def analyze_motion_vector_reprojection(
 
     warp_plus = _warp_bilinear_rgb(a, dx_px, dy_px)
     warp_minus = _warp_bilinear_rgb(a, -dx_px, -dy_px)
-    rmse_plus = float(np.sqrt(np.mean((ref - warp_plus[sl_y, sl_x, :]) ** 2)))
-    rmse_minus = float(np.sqrt(np.mean((ref - warp_minus[sl_y, sl_x, :]) ** 2)))
+    rmse_plus = float(np.sqrt(np.mean((ref[valid_crop] - warp_plus[sl_y, sl_x, :][valid_crop]) ** 2)))
+    rmse_minus = float(np.sqrt(np.mean((ref[valid_crop] - warp_minus[sl_y, sl_x, :][valid_crop]) ** 2)))
 
     sign_inverted = (rmse_minus + 0.015) < rmse_plus
     no_improvement = (mean_mv_px >= 0.50) and (rmse_plus > rmse_zero * 1.05) and (rmse_plus > 0.03)
@@ -1323,6 +1403,8 @@ def analyze_motion_vector_reprojection(
         severity="fail" if detected else "pass",
         details={
             "motion_regime": "moving_cam_sweep",
+            "burst_stride": int(stride_f),
+            "hud_masked": True,
             "rmse_plus_mv": round(rmse_plus, 5),
             "rmse_minus_mv": round(rmse_minus, 5),
             "rmse_zero_mv": round(rmse_zero, 5),
@@ -1339,11 +1421,27 @@ def analyze_water_temporal_flow_speed(
     water_mask: str | Path | Image.Image | np.ndarray | None = None,
     min_speed_px: float = 0.15,
     max_speed_px: float = 4.50,
+    is_interior: bool | None = None,
+    water_flow_diag_image: str | Path | Image.Image | np.ndarray | None = None,
+    mv_seq_frames: Sequence[str | Path | Image.Image | np.ndarray] | None = None,
+    burst_stride: int = 1,
 ) -> HeuristicResult:
     """#22: Computes multi-frame FFT phase-correlation water flow speed across a burst sequence.
 
-    Verifies water is genuinely flowing (> 0.15 px/frame) and NOT frantically fast/jittery (< 4.5 px/frame).
+    Cleanly skips enclosed interiors (`is_interior=True`) and dry scenes where `water_flow_diag`
+    (`WaterView=7`) reports `< 0.5%` active water pixels. When `mv_seq_frames` is provided, subtracts
+    per-pixel camera motion (`burst_stride * mv`) before measuring water surface flow in px/frame.
     """
+    if is_interior is True:
+        return HeuristicResult(
+            name="analyze_water_temporal_flow_speed",
+            detected=False,
+            score=0.0,
+            threshold=max_speed_px,
+            severity="pass",
+            details={"is_interior": True, "skipped_interior_scene": True},
+        )
+
     if len(seq_frames) < 2:
         return HeuristicResult(
             name="analyze_water_temporal_flow_speed",
@@ -1354,15 +1452,40 @@ def analyze_water_temporal_flow_speed(
             details={"skipped_short_sequence": True, "frames": len(seq_frames)},
         )
 
+    stride_f = float(max(1, int(burst_stride)))
     imgs = [load_rgb_float(f) for f in seq_frames]
     h, w, _ = imgs[0].shape
     y0, y1 = int(h * 0.40), int(h * 0.90)
     x0, x1 = int(w * 0.10), int(w * 0.90)
 
+    if water_flow_diag_image is not None:
+        wf = load_rgb_float(water_flow_diag_image)
+        _, wf = _match_shape(imgs[0], wf)
+        # WaterView=7 dims non-water pixels cleanly; active water pixels carry R=flow, G=depth, B=shore
+        active_v7 = (wf.max(axis=2) > 0.22) & (_luminance(wf) > 0.08)
+        active_v7_frac = float(np.mean(active_v7))
+        if active_v7_frac < 0.005:
+            return HeuristicResult(
+                name="analyze_water_temporal_flow_speed",
+                detected=False,
+                score=0.0,
+                threshold=max_speed_px,
+                severity="pass",
+                details={
+                    "water_view7_active_frac": round(active_v7_frac, 5),
+                    "skipped_no_active_water_view7": True,
+                },
+            )
+
     if water_mask is not None:
         wm_arr = load_rgb_float(water_mask)
         _, wm_arr = _match_shape(imgs[0], wm_arr)
         wmask = _luminance(wm_arr[y0:y1, x0:x1, :]) > 0.04
+    elif water_flow_diag_image is not None:
+        wf = load_rgb_float(water_flow_diag_image)
+        _, wf = _match_shape(imgs[0], wf)
+        wf_roi = wf[y0:y1, x0:x1, :]
+        wmask = (wf_roi.max(axis=2) > 0.22) & (_luminance(wf_roi) > 0.08)
     else:
         r0, g0, b0 = imgs[0][y0:y1, x0:x1, 0], imgs[0][y0:y1, x0:x1, 1], imgs[0][y0:y1, x0:x1, 2]
         wmask = (b0 > r0 * 1.10) & (b0 > 0.14) & (((b0 + g0) * 0.5) > (r0 + 0.025))
@@ -1402,18 +1525,32 @@ def analyze_water_temporal_flow_speed(
             },
         )
 
+    mvs = [load_rgb_float(m) for m in mv_seq_frames] if mv_seq_frames else None
+    camera_compensated = False
     speeds: list[float] = []
     dxs: list[float] = []
     dys: list[float] = []
     py0, py1 = y0 + by, y0 + by + ph
     px0, px1 = x0 + bx, x0 + bx + pw
     for k in range(len(imgs) - 1):
-        la = _luminance(imgs[k][py0:py1, px0:px1, :])
-        lb = _luminance(imgs[k + 1][py0:py1, px0:px1, :])
+        img_a, img_b = _match_shape(imgs[k], imgs[k + 1])
+        if mvs is not None and (k + 1) < len(mvs):
+            mv_k = mvs[k + 1]
+            img_a, mv_k = _match_shape(img_a, mv_k)
+            img_b, mv_k = _match_shape(img_b, mv_k)
+            dx_cam, dy_cam, _ = decode_debug35_motion_vectors(mv_k)
+            img_a_comp = _warp_bilinear_rgb(img_a, dx_cam * stride_f, dy_cam * stride_f)
+            camera_compensated = True
+        else:
+            img_a_comp = img_a
+        la = _luminance(img_a_comp[py0:py1, px0:px1, :])
+        lb = _luminance(img_b[py0:py1, px0:px1, :])
         dx, dy, _ = _phase_correlation_shift(la, lb)
-        dxs.append(dx)
-        dys.append(dy)
-        speeds.append(math.hypot(dx, dy))
+        dx_per_frame = dx / stride_f
+        dy_per_frame = dy / stride_f
+        dxs.append(dx_per_frame)
+        dys.append(dy_per_frame)
+        speeds.append(math.hypot(dx_per_frame, dy_per_frame))
 
     mean_spd = float(np.mean(speeds))
     max_spd = float(np.max(speeds))
@@ -1428,6 +1565,8 @@ def analyze_water_temporal_flow_speed(
         severity="fail" if detected else "pass",
         details={
             "pairs_analyzed": len(speeds),
+            "burst_stride": int(stride_f),
+            "camera_motion_subtracted": camera_compensated,
             "water_frac": round(water_frac, 4),
             "mean_speed_px_per_frame": round(mean_spd, 4),
             "max_speed_px_per_frame": round(max_spd, 4),
@@ -1445,6 +1584,7 @@ def analyze_shadow_temporal_stability(
     max_boil_std: float = 0.055,
     max_global_jump: float = 0.14,
     max_flicker_frac: float = 0.08,
+    burst_stride: int = 1,
 ) -> HeuristicResult:
     """#23: Measures motion-compensated shadow-edge boiling & cascade-pop variance across burst frames."""
     if len(shadow_seq_frames) < 2:
@@ -1457,6 +1597,7 @@ def analyze_shadow_temporal_stability(
             details={"skipped_short_sequence": True, "frames": len(shadow_seq_frames)},
         )
 
+    stride_f = float(max(1, int(burst_stride)))
     imgs = [load_rgb_float(f) for f in shadow_seq_frames]
     mvs = [load_rgb_float(m) for m in mv_seq_frames] if mv_seq_frames else None
 
@@ -1466,11 +1607,15 @@ def analyze_shadow_temporal_stability(
 
     for k in range(len(imgs) - 1):
         a, b = _match_shape(imgs[k], imgs[k + 1])
+        max_mv_k = 0.0
         if mvs is not None and (k + 1) < len(mvs):
             mv_k = mvs[k + 1]
             a, mv_k = _match_shape(a, mv_k)
             b, mv_k = _match_shape(b, mv_k)
-            dx, dy, _ = decode_debug35_motion_vectors(mv_k)
+            dx_1f, dy_1f, _ = decode_debug35_motion_vectors(mv_k)
+            dx = dx_1f * stride_f
+            dy = dy_1f * stride_f
+            max_mv_k = float(np.percentile(np.hypot(dx, dy), 95))
             a_aligned = _warp_bilinear_rgb(a, dx, dy)
         else:
             a_aligned = a
@@ -1478,10 +1623,15 @@ def analyze_shadow_temporal_stability(
         lb = _luminance(b)
         diff = np.abs(lb - la)
         h, w = diff.shape
-        m = max(2, min(h, w) // 16)
-        inner = diff[m : h - m, m : w - m]
+        hud_ok = _hud_valid_mask(h, w)
+        m = int(min(max(2, min(h, w) // 16, math.ceil(max_mv_k) + 2), min(h, w) // 5))
+        crop_hud = hud_ok[m : h - m, m : w - m]
+        inner_2d = diff[m : h - m, m : w - m]
+        inner = inner_2d[crop_hud] if int(crop_hud.sum()) >= 16 else inner_2d.ravel()
+        la_valid = la[m : h - m, m : w - m][crop_hud] if int(crop_hud.sum()) >= 16 else la.ravel()
+        lb_valid = lb[m : h - m, m : w - m][crop_hud] if int(crop_hud.sum()) >= 16 else lb.ravel()
         pair_stds.append(float(inner.std()))
-        global_jumps.append(abs(float(lb.mean()) - float(la.mean())))
+        global_jumps.append(abs(float(lb_valid.mean()) - float(la_valid.mean())))
         flicker_fracs.append(float(np.mean(inner > 0.15)))
 
     boil_std = float(np.mean(pair_stds))
@@ -1496,6 +1646,8 @@ def analyze_shadow_temporal_stability(
         severity="fail" if detected else "pass",
         details={
             "pairs_analyzed": len(pair_stds),
+            "burst_stride": int(stride_f),
+            "hud_masked": True,
             "motion_compensated": mvs is not None,
             "mean_pair_boil_std": round(boil_std, 5),
             "max_global_shadow_jump": round(max_jump, 5),
@@ -1509,6 +1661,7 @@ def analyze_temporal_ghosting_and_motion_outline(
     mv_seq_frames: Sequence[str | Path | Image.Image | np.ndarray],
     max_outline_frac: float = 0.14,
     max_ghost_rmse: float = 0.12,
+    burst_stride: int = 1,
 ) -> HeuristicResult:
     """#24: Measures trailing ghosting streaks & dark cel-shading silhouette rims specifically along
     high-velocity / high-divergence (`B > 0.15` in DebugView 35) moving actor edges."""
@@ -1523,6 +1676,7 @@ def analyze_temporal_ghosting_and_motion_outline(
             details={"skipped_short_sequence": True, "frames": n},
         )
 
+    stride_f = float(max(1, int(burst_stride)))
     outline_fracs: list[float] = []
     ghost_rmses: list[float] = []
     active_edge_px_total = 0
@@ -1532,12 +1686,15 @@ def analyze_temporal_ghosting_and_motion_outline(
         mv_b = load_rgb_float(mv_seq_frames[k + 1])
         a, mv_b = _match_shape(a, mv_b)
         b, mv_b = _match_shape(b, mv_b)
-        dx, dy, mv_div = decode_debug35_motion_vectors(mv_b)
+        dx_1f, dy_1f, mv_div = decode_debug35_motion_vectors(mv_b)
+        dx = dx_1f * stride_f
+        dy = dy_1f * stride_f
 
         h, w, _ = b.shape
+        hud_ok = _hud_valid_mask(h, w)
         lb = _luminance(b)
-        # Moving silhouette pixels: high divergence B > 0.15 or strong motion > 1.5 px
-        moving_edge = (mv_div > 0.15)
+        # Moving silhouette pixels: high divergence B > 0.15 excluding static HUD overlay
+        moving_edge = (mv_div > 0.15) & hud_ok
         edge_inner = moving_edge[3:-3, 3:-3]
         edge_cnt = int(edge_inner.sum())
         active_edge_px_total += edge_cnt
@@ -1565,7 +1722,12 @@ def analyze_temporal_ghosting_and_motion_outline(
             score=0.0,
             threshold=max_ghost_rmse,
             severity="pass",
-            details={"active_moving_edge_pixels": active_edge_px_total, "skipped_static_scene": True},
+            details={
+                "burst_stride": int(stride_f),
+                "hud_masked": True,
+                "active_moving_edge_pixels": active_edge_px_total,
+                "skipped_static_scene": True,
+            },
         )
 
     max_outline = float(np.max(outline_fracs))
@@ -1578,6 +1740,8 @@ def analyze_temporal_ghosting_and_motion_outline(
         threshold=max_ghost_rmse,
         severity="fail" if detected else "pass",
         details={
+            "burst_stride": int(stride_f),
+            "hud_masked": True,
             "active_moving_edge_pixels": active_edge_px_total,
             "max_dark_rim_frac": round(max_outline, 5),
             "max_edge_ghost_rmse": round(max_ghost, 5),
@@ -1589,9 +1753,10 @@ def analyze_world_lock_anti_swimming(
     seq_frames: Sequence[str | Path | Image.Image | np.ndarray],
     mv_seq_frames: Sequence[str | Path | Image.Image | np.ndarray],
     max_screen_lock_ratio: float = 0.75,
+    burst_stride: int = 1,
 ) -> HeuristicResult:
-    """#25: Verifies world-space surfaces track true GPU motion vectors instead of staying screen-locked
-    (camera-swimming) during camera motion."""
+    """#25: Verifies world-space surfaces track true GPU motion vectors (scaled by `burst_stride`)
+    instead of staying screen-locked (camera-swimming) during camera motion."""
     n = min(len(seq_frames), len(mv_seq_frames))
     if n < 2:
         return HeuristicResult(
@@ -1603,6 +1768,7 @@ def analyze_world_lock_anti_swimming(
             details={"skipped_short_sequence": True, "frames": n},
         )
 
+    stride_f = float(max(1, int(burst_stride)))
     ratios: list[float] = []
     world_rmses: list[float] = []
     screen_rmses: list[float] = []
@@ -1613,22 +1779,29 @@ def analyze_world_lock_anti_swimming(
         mv_b = load_rgb_float(mv_seq_frames[k + 1])
         a, mv_b = _match_shape(a, mv_b)
         b, mv_b = _match_shape(b, mv_b)
-        dx, dy, _ = decode_debug35_motion_vectors(mv_b)
-        mag = np.hypot(dx, dy)
-        mean_mv = float(mag.mean())
-
+        dx_1f, dy_1f, _ = decode_debug35_motion_vectors(mv_b)
+        dx = dx_1f * stride_f
+        dy = dy_1f * stride_f
         h, w, _ = a.shape
-        margin = int(min(max(4, math.ceil(float(np.percentile(mag, 95))) + 2), min(h, w) // 6))
+        hud_ok = _hud_valid_mask(h, w)
+        mag = np.hypot(dx, dy)
+        mean_mv = float(mag[hud_ok].mean()) if int(hud_ok.sum()) > 0 else float(mag.mean())
+
+        p95_mv = float(np.percentile(mag[hud_ok], 95)) if int(hud_ok.sum()) > 0 else float(np.percentile(mag, 95))
+        margin = int(min(max(4, math.ceil(p95_mv) + 2), min(h, w) // 5))
         sl_y = slice(margin, h - margin)
         sl_x = slice(margin, w - margin)
-        rmse_screen = float(np.sqrt(np.mean((b[sl_y, sl_x] - a[sl_y, sl_x]) ** 2)))
+        valid_crop = hud_ok[sl_y, sl_x]
+        if int(valid_crop.sum()) < 16:
+            valid_crop = np.ones((h - 2 * margin, w - 2 * margin), dtype=bool)
+        rmse_screen = float(np.sqrt(np.mean((b[sl_y, sl_x][valid_crop] - a[sl_y, sl_x][valid_crop]) ** 2)))
 
         if mean_mv < 0.25:
             stationary_rmses.append(rmse_screen)
             continue
 
         warped = _warp_bilinear_rgb(a, dx, dy)
-        rmse_world = float(np.sqrt(np.mean((b[sl_y, sl_x] - warped[sl_y, sl_x]) ** 2)))
+        rmse_world = float(np.sqrt(np.mean((b[sl_y, sl_x][valid_crop] - warped[sl_y, sl_x][valid_crop]) ** 2)))
         world_rmses.append(rmse_world)
         screen_rmses.append(rmse_screen)
         # If image stays glued to screen coordinates during motion, rmse_screen << rmse_world!
@@ -1646,6 +1819,8 @@ def analyze_world_lock_anti_swimming(
             severity="fail" if detected_static else "pass",
             details={
                 "motion_regime": "stationary",
+                "burst_stride": int(stride_f),
+                "hud_masked": True,
                 "stationary_pairs_analyzed": len(stationary_rmses),
                 "max_static_temporal_rmse": round(max_static, 5),
                 "skipped_no_camera_motion": True,
@@ -1663,6 +1838,8 @@ def analyze_world_lock_anti_swimming(
         severity="fail" if detected else "pass",
         details={
             "motion_regime": "moving_cam_sweep",
+            "burst_stride": int(stride_f),
+            "hud_masked": True,
             "moving_pairs_analyzed": len(ratios),
             "min_screen_to_world_rmse_ratio": round(min_ratio, 4),
             "max_world_locked_rmse": round(max_world_rmse, 5),
@@ -1735,10 +1912,12 @@ def audit_scene_bundle(
     telemetry: Mapping[str, str | Path | None] | None = None,
     burst_sequences: Mapping[str, Sequence[str | Path | Image.Image | np.ndarray]] | None = None,
     is_interior: bool | None = None,
+    burst_stride: int = 3,
 ) -> dict[str, Any]:
     """Runs ALL applicable heuristics (up to 25!) across a scene's stills, debug layers, telemetry & bursts."""
     results: list[HeuristicResult] = []
     resolved_interior = _infer_is_interior(scene_name, is_interior)
+    stride_n = max(1, int(burst_stride))
     imp = step_images.get("improved")
     v1 = step_images.get("view_normals")
     v2 = step_images.get("view_sun_shadow")
@@ -1758,7 +1937,7 @@ def audit_scene_bundle(
         rgb = load_rgb_float(imp)
         results.extend([
             detect_indoor_black_orbs(rgb, is_interior=resolved_interior),
-            detect_red_sky_fire_bleed(rgb),
+            detect_red_sky_fire_bleed(rgb, debug29_image=v29),
             detect_water_scanline_holes(rgb, water_depth_image=w_depth, water_flow_diag_image=w_flow),
             detect_water_zebra_stripes(rgb),
             detect_sky_diagonal_cutout(rgb),
@@ -1781,7 +1960,7 @@ def audit_scene_bundle(
     if v32 is not None:
         results.append(detect_skin_sss_sanity(v32))
     if v29 is not None:
-        results.append(detect_depth_and_stencil_integrity(v29))
+        results.append(detect_depth_and_stencil_integrity(v29, is_interior=resolved_interior))
     if telemetry is not None:
         results.append(
             detect_live_world_compositor_activity(
@@ -1797,18 +1976,44 @@ def audit_scene_bundle(
         mv_seq = burst_sequences.get("view_motion_outline")
         sh_seq = burst_sequences.get("view_sun_shadow")
         if imp_seq and len(imp_seq) >= 2:
-            results.append(analyze_water_temporal_flow_speed(imp_seq, water_mask=w_depth))
+            results.append(
+                analyze_water_temporal_flow_speed(
+                    imp_seq,
+                    water_mask=w_depth,
+                    is_interior=resolved_interior,
+                    water_flow_diag_image=w_flow,
+                    mv_seq_frames=mv_seq,
+                    burst_stride=stride_n,
+                )
+            )
             if mv_seq and len(mv_seq) >= 2:
-                results.append(analyze_motion_vector_reprojection(imp_seq[0], imp_seq[1], mv_seq[1]))
-                results.append(analyze_temporal_ghosting_and_motion_outline(imp_seq, mv_seq))
-                results.append(analyze_world_lock_anti_swimming(imp_seq, mv_seq))
+                results.append(
+                    analyze_motion_vector_reprojection(
+                        imp_seq[0], imp_seq[1], mv_seq[1], burst_stride=stride_n
+                    )
+                )
+                results.append(
+                    analyze_temporal_ghosting_and_motion_outline(
+                        imp_seq, mv_seq, burst_stride=stride_n
+                    )
+                )
+                results.append(
+                    analyze_world_lock_anti_swimming(
+                        imp_seq, mv_seq, burst_stride=stride_n
+                    )
+                )
         if sh_seq and len(sh_seq) >= 2:
-            results.append(analyze_shadow_temporal_stability(sh_seq, mv_seq_frames=mv_seq))
+            results.append(
+                analyze_shadow_temporal_stability(
+                    sh_seq, mv_seq_frames=mv_seq, burst_stride=stride_n
+                )
+            )
 
     failed = [r.name for r in results if r.detected]
     return {
         "scene": scene_name,
         "is_interior": bool(resolved_interior) if resolved_interior is not None else False,
+        "burst_stride": stride_n,
         "steps_present": sorted(step_images.keys()),
         "burst_steps_present": sorted(k for k, v in (burst_sequences or {}).items() if len(v) >= 2),
         "heuristics_run": len(results),

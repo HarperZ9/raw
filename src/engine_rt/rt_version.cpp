@@ -1,6 +1,7 @@
 // The game version and its address table (RAW engine runtime). Original work, MIT. See rt_version.h; the reader is
 // the shared src/common/raw_versions.h.
 #include "rt_version.h"
+#include "rt_zydis_offsets.h"
 
 #include <algorithm>
 #include <cstring>
@@ -444,6 +445,21 @@ uint32_t ResolveDeferredSingletons(const Image& img) {
         if (SafeReadU64(baseAddr + ssnRva, ssnObj) && ssnObj > 0x10000ull) {
             probeFieldOffset(ssnObj, 0x380u, probeVtVa["vt_BSShadowDirLight"], "off:ShadowSceneNode::shadowDirLight");
             probeFieldOffset(ssnObj, 0x380u, probeVtVa["vt_NiDirLight"],      "off:ShadowSceneNode::sunLight");
+        }
+    }
+
+    // 4. Zydis virtual-getter scalar offset scan on RTTI-discovered vtables (records decoded scalar slots):
+    if (const uint64_t cellVt = probeVtVa["vt_TESObjectCELL"]; cellVt > baseAddr) {
+        std::vector<std::pair<uint32_t, DecodedFieldOffset>> getters;
+        const uint32_t cellVtRva = static_cast<uint32_t>(cellVt - baseAddr);
+        ScanVtableGetters(img, cellVtRva, 96u, &getters);
+        for (const auto& [slot, dec] : getters) {
+            char key[64];
+            std::snprintf(key, sizeof key, "zydis:TESObjectCELL::slot_%u", slot);
+            if (g_table.Get(key) == 0 && dec.offset > 0) {
+                g_table.entries[key] = {"offset", "runtime-zydis-getter", dec.offset};
+                ++resolved;
+            }
         }
     }
     return resolved;

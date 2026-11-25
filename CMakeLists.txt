@@ -796,6 +796,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_emitters.cpp
         src/engine_rt/rt_cascades.cpp
         src/engine_rt/rt_version.cpp
+        src/engine_rt/rt_zydis_offsets.cpp
         src/engine_rt/rt_patch.cpp)
     set_target_properties(raw_engine PROPERTIES
         CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
@@ -829,6 +830,20 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_include_directories(raw_skse_probe PRIVATE src/skse_host)
     target_compile_definitions(raw_skse_probe PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+
+    # ce_runtime_check: known-answer + planted-failure tests for Zydis getter offset extraction,
+    # full glTF 2.0 (.glb) multi-bufferView/PBR/meshlet import, and clean-room ESM/BSA/BA2 parsers.
+    add_executable(ce_runtime_check
+        tests/ce_runtime_check/main.cpp
+        src/ce_runtime/CeFormatReader.cpp
+        src/d3d12_bridge/RawAssetBridge.cpp
+        src/engine_rt/rt_zydis_offsets.cpp)
+    set_target_properties(ce_runtime_check PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
+    target_include_directories(ce_runtime_check PRIVATE src/engine_rt src/d3d12_bridge src/ce_runtime "${RAW_ZYDIS_ROOT}/include")
+    target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD)
+    target_link_libraries(ce_runtime_check PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB})
 else()
     message(STATUS "raw_engine: Zydis not found under ${RAW_ZYDIS_ROOT}; module not built")
 endif()

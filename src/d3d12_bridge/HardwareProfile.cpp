@@ -199,4 +199,70 @@ FrameBudgetAllocation SolveFrameBudgetLP(const HardwareProfile& prof, float targ
     return out;
 }
 
+FrameBudgetAllocation SolveFrameBudgetQP(const HardwareProfile& prof, float targetFrameMs, bool isInterior)
+{
+    // Family 380 Strongly Convex Quadratic Program solved via exact KKT Lagrange multiplier bisection
+    // (zero vertex-pivoting simplex -> immune to superpolynomial Hirsch polytope diameter):
+    //   min sum_i 0.5 * w_i * (x_i - target_i)^2   s.t. lo_i <= x_i <= hi_i, sum_i x_i <= fxBudget.
+    const float fxBudget = std::max(targetFrameMs * 0.52f, 1.5f);
+    const float tierScale = (prof.tier >= 4) ? 1.35f : (prof.tier == 3 ? 1.15f : (prof.tier == 2 ? 0.92f : 0.68f));
+
+    struct QpStage { float lo, hi, target, weight, alloc; };
+    // Order: 0=DXR Shadow, 1=GI Bounce, 2=Froxel Vol, 3=Cloud March, 4=Mesh Subdiv
+    QpStage st[5] = {
+        { 0.35f, 2.20f * tierScale, 1.65f * tierScale, isInterior ? 2.20f : 2.60f, 0.0f },
+        { 0.30f, 2.60f * tierScale, 1.90f * tierScale, isInterior ? 2.85f : 2.35f, 0.0f },
+        { 0.25f, 1.85f * tierScale, 1.25f * tierScale, isInterior ? 1.95f : 2.10f, 0.0f },
+        { isInterior ? 0.00f : 0.25f, isInterior ? 0.00f : 1.90f * tierScale,
+          isInterior ? 0.00f : 1.35f * tierScale, isInterior ? 0.00f : 2.05f, 0.0f },
+        { 0.20f, 1.75f * tierScale, 1.10f * tierScale, 1.85f, 0.0f }
+    };
+
+    float sumLo = 0.0f, sumTarget = 0.0f;
+    for (int i = 0; i < 5; ++i) {
+        st[i].target = std::clamp(st[i].target, st[i].lo, st[i].hi);
+        sumLo += st[i].lo;
+        sumTarget += st[i].target;
+    }
+
+    if (sumLo >= fxBudget) {
+        const float shrink = fxBudget / std::max(sumLo, 1.0e-4f);
+        for (int i = 0; i < 5; ++i) st[i].alloc = st[i].lo * shrink;
+    } else if (sumTarget <= fxBudget) {
+        for (int i = 0; i < 5; ++i) st[i].alloc = st[i].target;
+    } else {
+        // KKT stationarity: x_i(lam) = clamp(target_i - lam / w_i, lo_i, hi_i), monotonically decreasing in lam >= 0.
+        float lamLo = 0.0f, lamHi = 64.0f;
+        for (int iter = 0; iter < 28; ++iter) {
+            const float mid = 0.5f * (lamLo + lamHi);
+            float sum = 0.0f;
+            for (int i = 0; i < 5; ++i) {
+                const float x = (st[i].weight > 0.0f)
+                    ? std::clamp(st[i].target - mid / st[i].weight, st[i].lo, st[i].hi)
+                    : st[i].lo;
+                sum += x;
+            }
+            if (sum > fxBudget) lamLo = mid;
+            else lamHi = mid;
+        }
+        const float lam = 0.5f * (lamLo + lamHi);
+        for (int i = 0; i < 5; ++i) {
+            st[i].alloc = (st[i].weight > 0.0f)
+                ? std::clamp(st[i].target - lam / st[i].weight, st[i].lo, st[i].hi)
+                : st[i].lo;
+        }
+    }
+
+    FrameBudgetAllocation out{};
+    out.dxrShadowMs  = st[0].alloc;
+    out.giBounceMs   = st[1].alloc;
+    out.froxelVolMs  = st[2].alloc;
+    out.cloudMarchMs = st[3].alloc;
+    out.meshSubdivMs = st[4].alloc;
+    out.totalMs = out.dxrShadowMs + out.giBounceMs + out.froxelVolMs + out.cloudMarchMs + out.meshSubdivMs;
+    out.cloudSteps = isInterior ? 0u : static_cast<uint32_t>(std::clamp(int(16.0f + out.cloudMarchMs * 24.0f), 16, 64));
+    out.subdivTier = (out.meshSubdivMs >= 1.15f) ? 3u : ((out.meshSubdivMs >= 0.55f) ? 2u : 1u);
+    return out;
+}
+
 } // namespace raw::bridge

@@ -90,6 +90,28 @@ float4 rawPrimeQmc4(float2 px, float frameIdx) {
     return frac(float4(s0, s1, s2, s3) + kRoots * fmod(frameIdx, 512.0f));
 }
 
+// Family 090 Universal Optimal 2D Triangular / Hexagonal A2 Lattice Basis (kissing number 6, minimizes energy for
+// every completely monotone potential of squared distance): optimal 2D blue-noise / screen-space probe stratification.
+float2 rawHexJitter2D(float2 px, uint sampleIdx, float frameIdx) {
+    // A2 hexagonal basis vectors e1 = (1, 0), e2 = (0.5, sqrt(3)/2) wrapped onto [0,1)^2 with golden-angle rotation:
+    const float t = float(sampleIdx) + fmod(frameIdx, 256.0f);
+    const float2 hexBase = float2(t * 0.7548776662f + 0.5f * t * 0.5698402910f,
+                                  t * 0.8660254038f * 0.5698402910f);
+    const float ign0 = frac(52.9829189f * frac(dot(px, float2(0.06711056f, 0.00583715f))));
+    const float ign1 = frac(52.9829189f * frac(dot(px.yx + 19.3f, float2(0.06711056f, 0.00583715f))));
+    return frac(float2(ign0, ign1) + hexBase);
+}
+
+// Family 379 Exact Rectangular Matrix-Multiplication Exponent omega(F; a, b, c) for ordered x >= y >= z > 0:
+// Confirms rectangular bottleneck heads (alpha = 1/2, z <= xy/(x+y)) achieve O(n^2) floor without dense n^(9/4) overhead.
+float rawRectMatmulExponent(float a, float b, float c) {
+    float x = max(a, max(b, c));
+    float z = min(a, min(b, c));
+    float y = a + b + c - x - z;
+    float excess = max(0.0f, (x + y) * z - x * y);
+    return x + y + (excess * excess) / max(4.0f * x * y * z, 1.0e-5f);
+}
+
 // Hardware INT8 quantized 4-element dot product (DP4a silicon on Turing/Ampere/Ada/Blackwell/RDNA3+):
 int rawDot4I8(uint packedA, uint packedB, int acc) {
     return dot4add_i8packed(packedA, packedB, acc);

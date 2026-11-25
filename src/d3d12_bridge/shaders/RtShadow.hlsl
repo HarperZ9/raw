@@ -537,7 +537,9 @@ void main(uint3 id : SV_DispatchThreadID) {
             float reflHitW = 0.0f;
             reflTraced = true;
             [loop] for (uint rsi = 0u; rsi < reflSpp; ++rsi) {
-                const float2 rr = frac(rr0 + float2(float(rsi) * 0.5f, float(rsi) * 0.618034f));
+                // Family 090 Universal Optimal 2D Hexagonal A2 Lattice stratification for low-energy glossy ray samples:
+                const float2 hexOff = float2(float(rsi) * 0.5f + float(rsi) * 0.25f, float(rsi) * 0.8660254f * 0.5f);
+                const float2 rr = frac(rr0 + hexOff);
                 const float3 rd = sampleGGXVNDF(n, v, max(alpha, 0.02f), rr);
                 if (dot(rd, ng) <= 0.0f) { continue; }
                 Hit h;
@@ -553,7 +555,22 @@ void main(uint3 id : SV_DispatchThreadID) {
                         }
                         reflSum += offRad; reflHitW += 1.0f;
                     }
-                } else if (wetGloss || base == 2u) { reflSum += skyAt(rd); reflHitW += 1.0f; }
+                } else if (wetGloss || base == 2u) {
+                    // Vidar Finite-Room Box-Projected Parallax Fallback on interiors (eliminates infinite-skybox reflection drift):
+                    const bool isIntRefl = (sunColour.w <= 0.5f);
+                    float3 fallbackDir = rd;
+                    if (isIntRefl) {
+                        const float3 boxHalf = float3(420.0f, 420.0f, 220.0f);
+                        const float3 invRd = rcp(select(abs(rd) > 1.0e-4f, rd, 1.0e-4f.xxx));
+                        const float3 tPos = ( boxHalf - p) * invRd;
+                        const float3 tNeg = (-boxHalf - p) * invRd;
+                        const float3 tMax = max(tPos, tNeg);
+                        const float tBox = min(tMax.x, min(tMax.y, tMax.z));
+                        fallbackDir = normalize(p + rd * clamp(tBox, 16.0f, 900.0f));
+                    }
+                    reflSum += isIntRefl ? (ambientAt(fallbackDir) * 0.72f) : skyAt(fallbackDir);
+                    reflHitW += 1.0f;
+                }
             }
             if (reflHitW > 0.0f) { refl = float4(reflSum / reflHitW, 1.0f); }
         }

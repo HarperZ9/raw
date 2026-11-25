@@ -553,13 +553,15 @@ endif()
 set(RAW_TX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/dx12/translate)
 set(RAW_TX_GEN ${CMAKE_CURRENT_BINARY_DIR}/tx_shaders)
 set(RAW_MIPGEN_HLSL ${RAW_TX_DIR}/shaders/MipGen.hlsl)
+set(RAW_TXSUBDIV_HLSL ${RAW_TX_DIR}/shaders/TxSubdiv.hlsl)
 add_custom_command(
-    OUTPUT ${RAW_TX_GEN}/MipGen_VS.h ${RAW_TX_GEN}/MipGen_PS.h
+    OUTPUT ${RAW_TX_GEN}/MipGen_VS.h ${RAW_TX_GEN}/MipGen_PS.h ${RAW_TX_GEN}/TxSubdiv_CS.h
     COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_TX_GEN}
     COMMAND ${RAW_FXC} /nologo /T vs_5_0 /E VSMain /O3 /Vn g_MipGenVS /Fh ${RAW_TX_GEN}/MipGen_VS.h ${RAW_MIPGEN_HLSL}
     COMMAND ${RAW_FXC} /nologo /T ps_5_0 /E PSMain /O3 /Vn g_MipGenPS /Fh ${RAW_TX_GEN}/MipGen_PS.h ${RAW_MIPGEN_HLSL}
-    DEPENDS ${RAW_MIPGEN_HLSL}
-    COMMENT "fxc: translation layer shaders -> bytecode headers"
+    COMMAND ${RAW_FXC} /nologo /T cs_5_0 /E CSMain /O3 /Vn g_TxSubdivCS /Fh ${RAW_TX_GEN}/TxSubdiv_CS.h ${RAW_TXSUBDIV_HLSL}
+    DEPENDS ${RAW_MIPGEN_HLSL} ${RAW_TXSUBDIV_HLSL}
+    COMMENT "fxc: translation layer shaders (MipGen + TxSubdiv PN-Triangle uplift) -> bytecode headers"
     VERBATIM)
 
 add_library(raw_dx12_translate STATIC
@@ -575,6 +577,7 @@ add_library(raw_dx12_translate STATIC
     ${RAW_TX_DIR}/tx_reflect.cpp
     ${RAW_TX_DIR}/tx_state.cpp
     ${RAW_TX_DIR}/tx_pipeline.cpp
+    ${RAW_TX_DIR}/tx_subdiv.cpp
     ${RAW_TX_DIR}/tx_swapchain.cpp
     ${RAW_TX_DIR}/tx_stream.cpp
     ${RAW_TX_DIR}/tx_ctx_bind_om.cpp
@@ -591,6 +594,7 @@ add_library(raw_dx12_translate STATIC
     ${RAW_TX_DIR}/tx_ctx_misc.cpp
     ${RAW_TX_GEN}/MipGen_VS.h
     ${RAW_TX_GEN}/MipGen_PS.h
+    ${RAW_TX_GEN}/TxSubdiv_CS.h
 )
 target_include_directories(raw_dx12_translate PUBLIC ${RAW_TX_DIR} PRIVATE ${RAW_TX_GEN})
 target_compile_definitions(raw_dx12_translate PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)

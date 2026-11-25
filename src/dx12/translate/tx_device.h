@@ -1,6 +1,7 @@
 // The translated device: ID3D11Device on a D3D12 device and direct queue.
 #pragma once
 #include "tx_objects.h"
+#include "tx_subdiv.h"
 #include <deque>
 #include <shared_mutex>
 #include <string>
@@ -148,7 +149,10 @@ public:
     StreamPool* pool = nullptr;   // translation workers (tx_stream.h), when CreateParams::workers
 
     // ---- counters ----
-    std::atomic<uint64_t> nDebugErrors{0}, nPso{0}, nRootSig{0}, nSubmit{0}, nBarriers{0}, nDraws{0}, nUnsupported{0};
+    std::atomic<uint64_t> nDebugErrors{0}, nPso{0}, nRootSig{0}, nSubmit{0}, nBarriers{0}, nDraws{0}, nUnsupported{0}, nSubdivDraws{0};
+    bool geometrySubdiv = false;
+    SubdivCache subdiv;
+    const SubdivLayoutInfo* GetSubdivLayout(uint32_t layoutId);
     void DrainInfoQueue();
 
     // ---- allocators ----

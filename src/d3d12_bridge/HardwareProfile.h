@@ -56,4 +56,8 @@ struct FrameBudgetAllocation {
 
 FrameBudgetAllocation SolveFrameBudgetLP(const HardwareProfile& prof, float targetFrameMs, bool isInterior);
 
+// Family 380 Strongly Convex Quadratic Program (KKT Water-Filling, zero simplex vertex pivoting):
+// Minimizes sum(0.5 * w_i * (x_i - target_i)^2) subject to l_i <= x_i <= u_i and sum(x_i) <= budgetMs.
+FrameBudgetAllocation SolveFrameBudgetQP(const HardwareProfile& prof, float targetFrameMs, bool isInterior);
+
 } // namespace raw::bridge

@@ -523,6 +523,17 @@ void TestCustomNavMeshAndWorldSim() {
           wsBlizz.attackTokensUsed == 2 && wsBlizz.strideDampMult < 0.88f && wsBlizz.expectedPayoff > 0.0f &&
           wsInt.snowDepthU == 0.0f && wsInt.activeDirective == uint8_t(raw::rt::WorldNpcDirective::WarmAtBrazier),
           "world_sim_live_snapshot");
+
+    // 7) Wave 18 Family 380 Strongly Convex Quadratic Program (KKT water-filling, zero simplex vertex pivoting)
+    const auto qpExt = raw::bridge::SolveFrameBudgetQP(p5090, 11.11f, false);
+    const auto qpInt = raw::bridge::SolveFrameBudgetQP(p5090, 11.11f, true);
+    const auto qpTight = raw::bridge::SolveFrameBudgetQP(p3060, 8.33f, false);
+    const auto qpTiny = raw::bridge::SolveFrameBudgetQP(p3060, 0.0f, false);  // planted zero-budget edge control
+    Check(qpExt.totalMs <= 11.11f * 0.52f + 1e-3f && qpExt.cloudSteps >= 24 && qpExt.meshSubdivMs > 0.45f &&
+          qpInt.cloudMarchMs == 0.0f && qpInt.cloudSteps == 0 && qpInt.giBounceMs >= qpExt.giBounceMs &&
+          qpTight.totalMs <= 8.33f * 0.52f + 1e-3f && qpTight.dxrShadowMs >= 0.35f &&
+          qpTiny.totalMs <= 1.501f && qpTiny.dxrShadowMs > 0.0f,
+          "qp_convex_gpu_frame_budget_allocator");
 }
 
 }  // namespace

@@ -269,12 +269,89 @@ STDMETHODIMP_(void) Context::Draw(UINT n, UINT start)
     if (seg_ || stale_) EndStream(__func__);
     if (PrepareDraw(false)) Cl()->DrawInstanced(n, 1, start, 0);
 }
+std::shared_ptr<const SubdivEntry> Context::TrySubdivideDraw(UINT n, UINT start, INT base)
+{
+    if (!dev_->geometrySubdiv || !dev_->subdiv.Ready()) return nullptr;
+    if (s_.topo != D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST) return nullptr;
+    if (!s_.dsv || (s_.dsv->desc.Flags & D3D11_DSV_READ_ONLY_DEPTH) != 0) return nullptr;
+    if (s_.st[S_HS].sh.sd || s_.st[S_GS].sh.sd || !s_.layout || !s_.layout->id) return nullptr;
+    if (n < 12u || n > 36000u || (n % 3u) != 0u) return nullptr;
+    const BufSlot& vb = s_.vb[0];
+    const BufSlot& ib = s_.ib;
+    if (!vb.buf || !ib.buf || vb.buf->core.store != Store::Committed || ib.buf->core.store != Store::Committed) return nullptr;
+    if (!vb.buf->core.tr || !ib.buf->core.tr) return nullptr;
+    if (vb.stride < 16u || vb.stride > 128u || (vb.stride & 3u) != 0u) return nullptr;
+    if (s_.ibFmt != DXGI_FORMAT_R16_UINT && s_.ibFmt != DXGI_FORMAT_R32_UINT) return nullptr;
+
+    const SubdivLayoutInfo* li = dev_->GetSubdivLayout(s_.layout->id);
+    if (!li || !li->eligible) return nullptr;
+
+    SubdivKey key{};
+    key.vbTr = vb.buf->core.tr.get();
+    key.ibTr = ib.buf->core.tr.get();
+    key.vbOffset = vb.offset;
+    key.ibOffset = ib.offset;
+    key.startIndex = start;
+    key.indexCount = n;
+    key.baseVertex = base;
+    key.layoutId = s_.layout->id;
+    key.stride = vb.stride;
+    key.ibFmt = static_cast<uint32_t>(s_.ibFmt);
+
+    if (auto hit = dev_->subdiv.Find(key)) return hit;
+    if (replay_) return nullptr;   // workers only consume cached entries; misses build once on the immediate context
+
+    ID3D12GraphicsCommandList* cl = Cl();
+    rec_.tracker.Require(vb.buf->core.tr, 0, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    rec_.tracker.Require(ib.buf->core.tr, 0, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    rec_.tracker.Flush(cl);
+
+    SubdivBuildReq req{};
+    req.key = key;
+    req.layout = li;
+    req.inVerts = vb.buf->core.Res();
+    req.inIdx = ib.buf->core.Res();
+    req.inVertsBytes = vb.buf->core.bytes;
+    req.inIdxBytes = ib.buf->core.bytes;
+    req.curvatureGain = 0.62f;
+
+    bool dispatched = false;
+    auto built = dev_->subdiv.Build(dev_->d3d.Get(), cl, req, dispatched);
+    if (dispatched) {
+        pso_ = nullptr;
+        croot_ = nullptr;
+        dirty_ |= D_SCAN_IA | D_VB | D_IB;
+    }
+    return built;
+}
+
 STDMETHODIMP_(void) Context::DrawIndexed(UINT n, UINT start, INT base)
 {
     TX_TRACE("Context::DrawIndexed");
-    if (pool_ && !replay_ && StreamDraw()) { SHead(SO_DrawIndexed, 0, 0, n); seg_->words.push_back(uint64_t(start) | uint64_t(uint32_t(base)) << 32); return SegDrawn(); }
+    // On an uncached eligible static mesh draw, break streaming once so immediate context builds & caches the 4x mesh.
+    const bool needBuild = dev_->geometrySubdiv && !replay_ && s_.topo == D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST &&
+                           s_.dsv && (s_.dsv->desc.Flags & D3D11_DSV_READ_ONLY_DEPTH) == 0 &&
+                           n >= 12u && n <= 36000u && (n % 3u) == 0u &&
+                           s_.vb[0].buf && s_.ib.buf && s_.vb[0].buf->core.store == Store::Committed &&
+                           s_.ib.buf->core.store == Store::Committed && s_.layout && s_.layout->id &&
+                           !dev_->subdiv.Find({s_.vb[0].buf->core.tr.get(), s_.ib.buf->core.tr.get(), s_.vb[0].offset,
+                                               s_.ib.offset, start, n, base, s_.layout->id, s_.vb[0].stride,
+                                               static_cast<uint32_t>(s_.ibFmt)});
+    if (!needBuild && pool_ && !replay_ && StreamDraw()) { SHead(SO_DrawIndexed, 0, 0, n); seg_->words.push_back(uint64_t(start) | uint64_t(uint32_t(base)) << 32); return SegDrawn(); }
     if (seg_ || stale_) EndStream(__func__);
-    if (PrepareDraw(true)) Cl()->DrawIndexedInstanced(n, 1, start, base, 0);
+    auto sub = TrySubdivideDraw(n, start, base);
+    if (PrepareDraw(true)) {
+        if (sub) {
+            ID3D12GraphicsCommandList* cl = Cl();
+            cl->IASetVertexBuffers(0, 1, &sub->vbView);
+            cl->IASetIndexBuffer(&sub->ibView);
+            cl->DrawIndexedInstanced(sub->outIndexCount, 1, 0, 0, 0);
+            dirty_ |= D_VB | D_IB;
+            dev_->nSubdivDraws.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            Cl()->DrawIndexedInstanced(n, 1, start, base, 0);
+        }
+    }
 }
 STDMETHODIMP_(void) Context::DrawInstanced(UINT n, UINT inst, UINT start, UINT startInst)
 {

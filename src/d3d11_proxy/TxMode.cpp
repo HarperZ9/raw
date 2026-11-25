@@ -20,7 +20,7 @@ using PFN_CreateDevSc = HRESULT(WINAPI*)(IDXGIAdapter*, D3D_DRIVER_TYPE, HMODULE
 
 struct TxConfig {
     int mode = -1;
-    bool debugLayer = false, wrap = false, renameRing = true, ringWriteBack = false;
+    bool debugLayer = false, wrap = false, renameRing = true, ringWriteBack = false, geometrySubdiv = true;
     char agilityPath[MAX_PATH] = {};
     UINT agilityVersion = 0;
     UINT workers = 0, segmentDraws = 256, segmentMin = 64;
@@ -50,8 +50,9 @@ void Load()
     C().workers = (rawWorkers < 0) ? raw::bridge::RecommendTxWorkers() : static_cast<UINT>(rawWorkers);
     C().segmentDraws = GetPrivateProfileIntA("Translate", "SegmentDraws", 256, ini.c_str());
     C().segmentMin = GetPrivateProfileIntA("Translate", "SegmentMin", 64, ini.c_str());   // shorter runs stay on the game's thread
-    if (C().mode) Log("[Tx] translate mode %s%s (workers=%u%s)", C().mode == 1 ? "on: the game runs on raw::tx (D3D12)" : "native: system D3D11 behind the harness wrapper",
-                      C().debugLayer ? ", D3D12 debug layer on" : "", C().workers, rawWorkers < 0 ? " auto" : "");
+    C().geometrySubdiv = GetPrivateProfileIntA("Translate", "GeometrySubdiv", 1, ini.c_str()) != 0;
+    if (C().mode) Log("[Tx] translate mode %s%s (workers=%u%s, subdiv=%d)", C().mode == 1 ? "on: the game runs on raw::tx (D3D12)" : "native: system D3D11 behind the harness wrapper",
+                      C().debugLayer ? ", D3D12 debug layer on" : "", C().workers, rawWorkers < 0 ? " auto" : "", int(C().geometrySubdiv));
 }
 
 void TxLog(const char* line) { Log("[tx] %s", line); }
@@ -122,6 +123,7 @@ HRESULT MakeTx(IDXGIAdapter* adapter, ID3D11Device** dev, ID3D11DeviceContext** 
     p.workers = C().workers;
     p.segmentDraws = C().segmentDraws;
     p.segmentMin = C().segmentMin;
+    p.geometrySubdiv = C().geometrySubdiv;
     DXGI_ADAPTER_DESC ad{};
     if (adapter && SUCCEEDED(adapter->GetDesc(&ad))) p.adapter = &ad.AdapterLuid;
     ID3D11Device* d = nullptr;

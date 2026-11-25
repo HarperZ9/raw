@@ -185,6 +185,7 @@ private:
     void UnbindSrvsOf(const ResCore* core, const SubRange& range);
 
     bool PrepareDraw(bool indexed);
+    std::shared_ptr<const SubdivEntry> TrySubdivideDraw(UINT indexCount, UINT startIndex, INT baseVertex);
     bool ResolvePipeline();
     void ScanGraphics(const RootSig* root);
     void ApplyTables(const RootSig* root, int firstStage, int lastStage, bool compute);

@@ -170,6 +170,21 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         // Dynamically lit 3D solar in-scattering: sunlit cloud gaps glow warm while shadowed ridges stay deep cool slate!
         const float sunInGain = tune2.z * lerp(0.36f, 0.16f, twilightW) * (1.0f - nightW * 0.78f) * (1.0f - overcastFr * 0.55f);
         inScat += ambInScat + syncSunFr * (sh * ph * sunInGain * moteBoost);
+        // Blown Alpine Snow Spindrift Plumes (Daylight 2026-11-24 snow-smoke reference):
+        // Wind-sheared ground-hugging snow wisps that curl off ridges in blizzards/high peaks and part around the player.
+        const float snowForce = saturate(weather.z * 1.15f + smoothstep(3200.0f, 9500.0f, wp.z) * 0.45f);
+        if (snowForce > 0.18f && zMid > 60.0f && zMid < 2600.0f) {
+            const float2 sWind = cloudWind.xy * 0.042f + float2(12.0f, 5.5f);
+            const float3 spCoord = float3(wp.xy - sWind * camPosW.w, wp.z * 1.65f - camPosW.w * 1.8f) * 0.0048f;
+            const float spCurl = cNoise(spCoord) * 0.65f + cNoise(spCoord * 2.35f + 7.1f) * 0.35f;
+            const float spBelt = smoothstep(-280.0f, -20.0f, pRel.z) * (1.0f - smoothstep(110.0f, 380.0f, pRel.z));
+            const float spWake = smoothstep(55.0f, 220.0f, rayDist);
+            const float spindrift = smoothstep(0.56f, 0.88f, spCurl) * spBelt * spWake * snowForce * (1.0f - zMid / 2600.0f);
+            if (spindrift > 0.01f) {
+                sigma += spindrift * 0.00058f;
+                inScat += lerp(ambInScat * 1.15f, max(syncSunFr * 0.72f, ambInScat * 1.30f), sh) * (spindrift * 0.42f);
+            }
+        }
         // Pillar 7(b): RDR2-grade Cold-Weather Rhythmic Exhaled Breath Plume in 3D Froxel Space (snow/alpine/freezing nights):
         const float coldAmt = saturate(weather.z * 1.4f + smoothstep(2200.0f, 4500.0f, camPosW.z) * 0.75f + nightW * 0.35f);
         if (coldAmt > 0.25f && zMid > 24.0f && zMid < 105.0f) {

@@ -41,6 +41,7 @@ struct CreateParams {
     uint32_t segmentDraws = 256;   // draws a worker's segment takes
     uint32_t segmentMin = 64;      // a shorter run between other calls stays on the application's thread
     bool predictRuns = true;       // a run short in the last frame goes straight to the list (off: every run is recorded)
+    bool geometrySubdiv = false;   // live format-preserving 1->4 curved PN-Triangle GPU uplift for static 3D meshes
 };
 
 struct Stats {
@@ -51,6 +52,8 @@ struct Stats {
     uint64_t barriers = 0;
     uint64_t draws = 0;
     uint64_t unsupportedCalls = 0; // calls answered E_NOTIMPL or ignored
+    uint64_t subdivMeshes = 0;     // unique static meshes uplifted 4x via curved PN-Triangles
+    uint64_t subdivDraws = 0;      // total draw calls rendered with 4x subdivided geometry
 };
 
 HRESULT CreateDevice(const CreateParams& params, ID3D11Device** device,

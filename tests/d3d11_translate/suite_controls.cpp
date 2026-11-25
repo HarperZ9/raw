@@ -39,6 +39,103 @@ void RunControls(const Opts& o, Tally& t)
     FaultControl(o, t, "control_wrong_blend_mapping", "alpha_blend", raw::tx::FaultBlendSwap, false);
     FaultControl(o, t, "control_missing_barrier", "rtt_post", raw::tx::FaultSkipBarrier, true);
     FaultControl(o, t, "control_stale_constant_buffer", "many_draws", raw::tx::FaultStaleCB, false);
+
+    // Live format-preserving 1->4 curved PN-Triangle GPU subdivision test (runs TxSubdiv.hlsl on WARP/HW):
+    auto renderDome = [&](bool enableSubdiv, Image& outImg, raw::tx::Stats& outSt) -> bool {
+        raw::tx::CreateParams cp{};
+        cp.warp = !o.hardware;
+        cp.debugLayer = !o.noDebug;
+        cp.geometrySubdiv = enableSubdiv;
+        ComPtr<ID3D11Device> dev;
+        ComPtr<ID3D11DeviceContext> ctx;
+        if (FAILED(raw::tx::CreateDevice(cp, &dev, &ctx))) return false;
+        static const char* kSubVs =
+            "struct V { float3 p : POSITION; float3 n : NORMAL; float2 uv : TEXCOORD0; };\n"
+            "struct O { float4 p : SV_Position; float3 n : TEXCOORD0; };\n"
+            "O main(V v) { O o; o.p = float4(v.p, 1.0); o.n = v.n; return o; }\n";
+        static const char* kSubPs =
+            "float4 main(float4 p : SV_Position, float3 n : TEXCOORD0) : SV_Target {\n"
+            "  return float4(saturate(normalize(n) * 0.5 + 0.5), 1.0); }\n";
+        ComPtr<ID3DBlob> vbBlob, pbBlob;
+        if (FAILED(D3DCompile(kSubVs, strlen(kSubVs), nullptr, nullptr, nullptr, "main", "vs_5_0", 0, 0, &vbBlob, nullptr))) return false;
+        if (FAILED(D3DCompile(kSubPs, strlen(kSubPs), nullptr, nullptr, nullptr, "main", "ps_5_0", 0, 0, &pbBlob, nullptr))) return false;
+        ComPtr<ID3D11VertexShader> vs;
+        ComPtr<ID3D11PixelShader> ps;
+        dev->CreateVertexShader(vbBlob->GetBufferPointer(), vbBlob->GetBufferSize(), nullptr, &vs);
+        dev->CreatePixelShader(pbBlob->GetBufferPointer(), pbBlob->GetBufferSize(), nullptr, &ps);
+        D3D11_INPUT_ELEMENT_DESC ied[3] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,  0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        };
+        ComPtr<ID3D11InputLayout> il;
+        dev->CreateInputLayout(ied, 3, vbBlob->GetBufferPointer(), vbBlob->GetBufferSize(), &il);
+
+        struct Vtx { float p[3]; float n[3]; float uv[2]; };
+        // Coarse 4-triangle dome with tilted outward normals so curved PN-Triangle midpoints bulge visibly outward!
+        const Vtx verts[5] = {
+            {{ 0.0f,  0.0f, 0.25f}, { 0.0f,  0.0f, 1.0f}, {0.5f, 0.5f}},
+            {{-0.5f,  0.0f, 0.65f}, {-0.75f, 0.0f, 0.66f}, {0.0f, 0.5f}},
+            {{ 0.0f,  0.5f, 0.65f}, { 0.0f,  0.75f, 0.66f}, {0.5f, 1.0f}},
+            {{ 0.5f,  0.0f, 0.65f}, { 0.75f, 0.0f, 0.66f}, {1.0f, 0.5f}},
+            {{ 0.0f, -0.5f, 0.65f}, { 0.0f, -0.75f, 0.66f}, {0.5f, 0.0f}},
+        };
+        const uint16_t idx[12] = { 0,1,2, 0,2,3, 0,3,4, 0,4,1 };
+        D3D11_BUFFER_DESC vbd{sizeof(verts), D3D11_USAGE_IMMUTABLE, D3D11_BIND_VERTEX_BUFFER, 0, 0, 0};
+        D3D11_BUFFER_DESC ibd{sizeof(idx),   D3D11_USAGE_IMMUTABLE, D3D11_BIND_INDEX_BUFFER,  0, 0, 0};
+        D3D11_SUBRESOURCE_DATA vsd{verts, 0, 0}, isd{idx, 0, 0};
+        ComPtr<ID3D11Buffer> vb, ib;
+        dev->CreateBuffer(&vbd, &vsd, &vb);
+        dev->CreateBuffer(&ibd, &isd, &ib);
+
+        D3D11_TEXTURE2D_DESC td{64, 64, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET, 0, 0};
+        D3D11_TEXTURE2D_DESC dd{64, 64, 1, 1, DXGI_FORMAT_D32_FLOAT, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_DEPTH_STENCIL, 0, 0};
+        ComPtr<ID3D11Texture2D> rt, ds;
+        dev->CreateTexture2D(&td, nullptr, &rt);
+        dev->CreateTexture2D(&dd, nullptr, &ds);
+        ComPtr<ID3D11RenderTargetView> rtv = MakeRTV(dev.Get(), rt.Get());
+        ComPtr<ID3D11DepthStencilView> dsv;
+        dev->CreateDepthStencilView(ds.Get(), nullptr, &dsv);
+
+        const float zero[4] = {0, 0, 0, 1};
+        ctx->ClearRenderTargetView(rtv.Get(), zero);
+        ctx->ClearDepthStencilView(dsv.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+        ID3D11RenderTargetView* rtvs[1] = {rtv.Get()};
+        ctx->OMSetRenderTargets(1, rtvs, dsv.Get());
+        D3D11_VIEWPORT vp{0, 0, 64, 64, 0, 1};
+        ctx->RSSetViewports(1, &vp);
+        ctx->IASetInputLayout(il.Get());
+        ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        UINT stride = sizeof(Vtx), off = 0;
+        ID3D11Buffer* vbs[1] = {vb.Get()};
+        ctx->IASetVertexBuffers(0, 1, vbs, &stride, &off);
+        ctx->IASetIndexBuffer(ib.Get(), DXGI_FORMAT_R16_UINT, 0);
+        ctx->VSSetShader(vs.Get(), nullptr, 0);
+        ctx->PSSetShader(ps.Get(), nullptr, 0);
+        ctx->DrawIndexed(12, 0, 0);   // cache miss -> computes 4x curved mesh
+        ctx->DrawIndexed(12, 0, 0);   // cache hit  -> reuses cached 4x curved mesh
+        SceneCtx sc;
+        sc.dev = dev.Get(); sc.ctx = ctx.Get();
+        bool ok = Readback(sc, rt.Get(), outImg);
+        ctx->ClearState(); ctx->Flush();
+        outSt = raw::tx::GetStats(dev.Get());
+        return ok;
+    };
+    Image flatImg, curvedImg;
+    raw::tx::Stats flatSt{}, curvedSt{};
+    const bool r0 = renderDome(false, flatImg, flatSt);
+    const bool r1 = renderDome(true, curvedImg, curvedSt);
+    int flatLit = 0, curvedLit = 0;
+    for (size_t i = 0; i + 3 < flatImg.rgba.size(); i += 4) flatLit += (flatImg.rgba[i] | flatImg.rgba[i+1] | flatImg.rgba[i+2]) != 0;
+    for (size_t i = 0; i + 3 < curvedImg.rgba.size(); i += 4) curvedLit += (curvedImg.rgba[i] | curvedImg.rgba[i+1] | curvedImg.rgba[i+2]) != 0;
+    const bool subOk = r0 && r1 && flatSt.debugErrors == 0 && curvedSt.debugErrors == 0 &&
+                       flatSt.subdivMeshes == 0 && curvedSt.subdivMeshes == 1 && curvedSt.subdivDraws == 2 &&
+                       curvedLit > flatLit;   // curved PN-Triangle dome silhouette strictly expands beyond flat chord!
+    char sd[256];
+    snprintf(sd, sizeof(sd), "flatPx=%d curvedPx=%d meshes=%llu draws=%llu debugErr=%llu",
+             flatLit, curvedLit, (unsigned long long)curvedSt.subdivMeshes,
+             (unsigned long long)curvedSt.subdivDraws, (unsigned long long)curvedSt.debugErrors);
+    t.Add(subOk, "geometry_subdiv_pn_triangle", sd);
 }
 
 // ---- bytecode readers ----

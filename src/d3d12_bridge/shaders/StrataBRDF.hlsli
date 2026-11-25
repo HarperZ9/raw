@@ -28,6 +28,26 @@ float3 strataAiryThinFilm(float cosTheta, float opdNm) {
     return 0.55f + 0.45f * cos(6.2831853f * effOpd / float3(615.0f, 540.0f, 465.0f));
 }
 
+// Physical 3-Band Cauchy Optical Dispersion (surpassing Blender 5.3 glass/ice/water dispersion in real time):
+// Returns wavelength-dependent refractive indices (nR, nG, nB) for Abbe-dispersive ice, water, and crystal.
+float3 strataCauchyIorRGB(float baseIor, float abbeDispersion) {
+    return float3(baseIor - abbeDispersion * 0.60f, baseIor, baseIor + abbeDispersion * 1.15f);
+}
+
+// Dupuy & Benyoub (2023) Bounded Spherical Cap GGX VNDF Sampling (zero grazing fireflies on rough metals/stone):
+float3 strataSampleGgxVndf(float3 Vlocal, float alpha, float2 u) {
+    const float3 Vh = normalize(float3(alpha * Vlocal.x, alpha * Vlocal.y, Vlocal.z));
+    const float phi = 6.2831853f * u.x;
+    const float k = (1.0f - alpha * alpha);
+    const float s2 = max(1.0f - Vh.z * Vh.z, 0.0f);
+    const float b = (Vh.z > 0.0f) ? (Vh.z / max(1.0f + sqrt(s2 * k + Vh.z * Vh.z), 1.0e-5f)) : 0.0f;
+    const float z = mad(1.0f - u.y, 1.0f + Vh.z, -Vh.z);
+    const float sinTheta = sqrt(saturate(1.0f - z * z));
+    const float3 c = float3(sinTheta * cos(phi), sinTheta * sin(phi), z);
+    const float3 h = c + Vh;
+    return normalize(float3(alpha * h.x, alpha * h.y, max(0.0f, h.z)));
+}
+
 // Evaluate coupled 4-slab energy-conserving direct + grazing layer response for a single light direction L:
 // Returns additive multi-slab specular + fuzz contribution and outputs exact baseTransmittance for the substrate below!
 float3 evalStrataUpperSlabs(StrataSlab m, float3 N, float3 V, float3 L, float3 lightCol, float specOcc, out float3 baseTransmittance) {

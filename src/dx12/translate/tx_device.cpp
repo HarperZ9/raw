@@ -113,6 +113,11 @@ HRESULT Device::Init(const CreateParams& p)
 
     InitDefaults();
     InitPsoCache();
+    geometrySubdiv = p.geometrySubdiv;
+    if (geometrySubdiv) {
+        if (subdiv.Init(d3d.Get())) Log("tx_subdiv: live 1->4 curved PN-Triangle GPU geometry uplift active");
+        else geometrySubdiv = false;
+    }
 
     OpenRecording(init_);
     imm = new Context(this, false);
@@ -144,6 +149,7 @@ Device::~Device()
     initChunks_.ReturnAll();
     init_ = Recording{};
     SavePsoCache();
+    subdiv.Shutdown();
     psoLib_.Reset();
     psos_.clear(); csPsos_.clear(); mipPsos_.clear(); rootSigs_.clear();
     for (auto& h : qh) { h.readback.Reset(); h.heap.Reset(); }
@@ -295,6 +301,17 @@ HRESULT CreateDevice(const CreateParams& params, ID3D11Device** device, ID3D11De
     return S_OK;
 }
 
+const SubdivLayoutInfo* Device::GetSubdivLayout(uint32_t layoutId)
+{
+    if (!layoutId) return nullptr;
+    const LayoutData* ld = nullptr;
+    {
+        std::lock_guard<std::mutex> g(cacheM_);
+        if (layoutId < layouts_.size()) ld = layouts_[layoutId].get();
+    }
+    return subdiv.GetLayoutInfo(layoutId, ld);
+}
+
 Stats GetStats(ID3D11Device* device)
 {
     Device* d = Dev(device);
@@ -303,6 +320,8 @@ Stats GetStats(ID3D11Device* device)
     s.debugErrors = d->nDebugErrors; s.psoCreated = d->nPso; s.rootSignatures = d->nRootSig;
     s.submissions = d->nSubmit; s.barriers = d->nBarriers; s.draws = d->nDraws;
     s.unsupportedCalls = d->nUnsupported;
+    s.subdivMeshes = d->subdiv.MeshCount();
+    s.subdivDraws = d->nSubdivDraws;
     return s;
 }
 

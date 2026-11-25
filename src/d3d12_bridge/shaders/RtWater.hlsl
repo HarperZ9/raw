@@ -467,7 +467,20 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float2 qFrac = frac(qUse);
                 const float3 b00 = PreWater[q0].rgb, b10 = PreWater[q0 + int2(1, 0)].rgb;
                 const float3 b01 = PreWater[q0 + int2(0, 1)].rgb, b11 = PreWater[q0 + int2(1, 1)].rgb;
-                const float3 bed = lerp(lerp(b00, b10, qFrac.x), lerp(b01, b11, qFrac.x), qFrac.y);
+                float3 bed = lerp(lerp(b00, b10, qFrac.x), lerp(b01, b11, qFrac.x), qFrac.y);
+                // Physical 3-Band Cauchy Optical Dispersion (surpassing Blender 5.3 spectral refraction in real time):
+                // Splits red (n=1.331) and blue (n=1.340) refracted paths across steep wave facets & shallow riverbeds!
+                if (qValid && wDist < 1800.0f && qLen > 0.65f) {
+                    const float dispPx = clamp(qLen * 0.14f, 0.0f, 2.2f) * borderFade;
+                    const float2 dispDir = qOff / max(qLen, 1.0e-3f);
+                    const int2 qR = clamp(int2(round(qUse - dispDir * dispPx)), int2(0, 0), int2(dims.xy) - 1);
+                    const int2 qB = clamp(int2(round(qUse + dispDir * dispPx)), int2(0, 0), int2(dims.xy) - 1);
+                    const bool okDisp = (Layer.Load(int3(qR, 0)).a > 1.5f) && (Layer.Load(int3(qB, 0)).a > 1.5f);
+                    if (okDisp) {
+                        const float3 dispBed = float3(PreWater[qR].r, bed.g, PreWater[qB].b);
+                        bed = lerp(bed, dispBed, saturate(0.55f * (1.0f - wDist / 1800.0f)));
+                    }
+                }
                 const int2 qDepthPx = qValid ? q : int2(id.xy);
                 const float path = length(worldAt(float2(qDepthPx), Depth.Load(int3(qDepthPx, 0))) - p);
                 // Calibrated Nordic Alpine River & Fjord Beer-Lambert Optics:

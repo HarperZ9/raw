@@ -25,8 +25,11 @@
 #include "rt_callgraph.h"
 #include "rt_control.h"
 #include "rt_core_fixes.h"
+#include "rt_depth_topology.h"
 #include "rt_forensics.h"
+#include "rt_memory_guards.h"
 #include "rt_softbody.h"
+#include "rt_terrain_lod.h"
 #include "rt_world_sim.h"
 #include "rt_papyrus.h"
 #include "rt_passes.h"
@@ -96,6 +99,9 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     raw::rt::SoftBodyOnPresent();
     raw::rt::VTraceOnPresent();
     raw::rt::ControlOnPresent(ctx, sc);
+    raw::rt::MemoryGuardsOnPresent();
+    raw::rt::TerrainLodOnPresent();
+    raw::rt::DepthTopologyOnPresent();
     raw::rt::WorldSimOnPresent();
 }
 
@@ -115,6 +121,16 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     std::string why;
     if (!raw::rt::LoadVersionTable(g_img, g_dir, &why)) { Log("version: %s", why.c_str()); return; }
     Log("version: %s", why.c_str());
+    // Fail-closed Zydis binary verification of critical struct offsets directly against host machine code:
+    // if ANY offset mismatches the live executable, struct writes remain locked to prevent memory corruption.
+    {
+        std::string zydisReport;
+        const bool verified = raw::rt::VerifyStartupBinaryOffsets(g_img, &zydisReport);
+        Log("%s", zydisReport.c_str());
+        if (!verified) {
+            Log("SAFETY: binary offset verification failed closed - live struct writes disabled");
+        }
+    }
     const auto& prof = raw::rt::ActiveProfile();
     g_refs = raw::rt::VersionRefs();
     Log("refs: %zu settings and globals from the table", g_refs.size());
@@ -205,6 +221,10 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     // with the view (camera, cell, time, screen; RAW_EngineView) and the glowing emitters (rt_emitters.h)
     if (IniInt("LiveState", 1)) { raw::rt::LiveStateInit(g_img, g_out, IniInt("EmitterLights", 1) != 0); raw::rt::ViewInit(g_img); }
     raw::rt::ForensicsInit(g_out);
+    raw::rt::MemoryGuardsInit(g_img);
+    raw::rt::TerrainLodInit(g_img);
+    raw::rt::DepthTopologyInit(g_img, g_refs);
+    Log("engine-remaster: %s", raw::rt::MemoryGuardsStatsJson().c_str());
     if (IniInt("SoftBody", 1)) {
         raw::rt::SoftBodyInit(g_img);
         Log("softbody: %s", raw::rt::SoftBodyStatsJson().c_str());
@@ -239,6 +259,9 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         return 0;
     }
     raw::rt::WorldSimShutdown();
+    raw::rt::DepthTopologyShutdown();
+    raw::rt::TerrainLodShutdown();
+    raw::rt::MemoryGuardsShutdown();
     raw::rt::SoftBodyShutdown();
     raw::rt::ForensicsShutdown();
     raw::rt::CoreFixesShutdown();

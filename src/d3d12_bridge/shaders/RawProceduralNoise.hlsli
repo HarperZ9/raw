@@ -83,4 +83,132 @@ float rawReflectedCausticNet(float2 worldXY, float t, float scale) {
     return saturate(web1 * 0.72f + web2 * 0.55f + web1 * web2 * 0.95f);
 }
 
+// ============================================================================
+// Wave 37 Physical Material & Procedural Forge Extensions (100% backwards-compatible)
+// Pure polynomial/lattice kernels (zero sin() drift across GPU vendors, zero hidden time terms).
+// ============================================================================
+
+// Deterministic 3D-to-3D hash in [0, 1)^3 using pure rational/polynomial mixing (vendor-invariant).
+float3 rawHash33(float3 p) {
+    p = frac(p * float3(0.1031f, 0.1030f, 0.0973f));
+    p += dot(p, p.yxz + 33.33f);
+    return frac((p.xxy + p.yxx) * p.zyx);
+}
+
+// Analytical 3D Worley / Voronoi cellular noise:
+// Returns float4(F1, F2 - F1, cellId, F2) where:
+//   x = F1      (distance to nearest feature point)
+//   y = F2 - F1 (exact fracture/crack/facet border distance: 0 on Voronoi seam)
+//   z = cellId  (stable deterministic per-cell hash in [0, 1])
+//   w = F2      (distance to second-nearest feature point)
+float4 rawWorley3D(float3 p) {
+    const float3 n = floor(p);
+    const float3 f = frac(p);
+    float d1 = 8.0f;
+    float d2 = 8.0f;
+    float bestId = 0.0f;
+    [unroll] for (int k = -1; k <= 1; ++k) {
+        [unroll] for (int j = -1; j <= 1; ++j) {
+            [unroll] for (int i = -1; i <= 1; ++i) {
+                const float3 g = float3(float(i), float(j), float(k));
+                const float3 o = 0.12f + 0.76f * rawHash33(n + g);
+                const float3 r = g + o - f;
+                const float d = dot(r, r);
+                if (d < d1) {
+                    d2 = d1;
+                    d1 = d;
+                    bestId = o.x;
+                } else if (d < d2) {
+                    d2 = d;
+                }
+            }
+        }
+    }
+    const float f1 = sqrt(max(d1, 0.0f));
+    const float f2 = sqrt(max(d2, 0.0f));
+    return float4(f1, max(f2 - f1, 0.0f), bestId, f2);
+}
+
+// Multi-octave analytical fBm returning (value in [0,1], dF/dx, dF/dy, dF/dz) in a single pass.
+float4 rawFbm3Grad(float3 p, int octaves) {
+    float val = 0.0f;
+    float3 grad = 0.0f.xxx;
+    float amp = 0.5f;
+    float freq = 1.0f;
+    float norm = 0.0f;
+    const int nOct = clamp(octaves, 1, 5);
+    [loop] for (int i = 0; i < nOct; ++i) {
+        const float4 ng = rawNoise3Grad(p * freq + float3(17.1f, 31.7f, 11.3f) * float(i));
+        val += ng.x * amp;
+        grad += ng.yzw * (amp * freq);
+        norm += amp;
+        amp *= 0.5f;
+        freq *= 2.03f;
+    }
+    const float invN = 1.0f / max(norm, 1.0e-5f);
+    return float4(val * invN, grad * invN);
+}
+
+// Divergence-free 3D curl noise field using exact analytical gradients from rawNoise3Grad.
+float3 rawCurlNoise3D(float3 p) {
+    const float3 gX = rawNoise3Grad(p + float3( 0.0f,  0.0f,  0.0f)).yzw;
+    const float3 gY = rawNoise3Grad(p + float3(31.4f, 17.2f, 53.8f)).yzw;
+    const float3 gZ = rawNoise3Grad(p + float3(67.1f, 41.9f, 13.5f)).yzw;
+    return float3(gZ.y - gY.z, gX.z - gZ.x, gY.x - gX.y);
+}
+
+// Exact unpolarized dielectric Fresnel reflectance (Snell + Fresnel, returns 1.0 past TIR critical angle).
+float rawDielectricFresnel(float cosThetaI, float ior) {
+    const float ci = saturate(cosThetaI);
+    const float eta = max(ior, 1.0f);
+    const float sin2T = (1.0f - ci * ci) / (eta * eta);
+    if (sin2T >= 1.0f) { return 1.0f; }
+    const float ct = sqrt(max(1.0f - sin2T, 0.0f));
+    const float rs = (ci - eta * ct) / max(ci + eta * ct, 1.0e-5f);
+    const float rp = (eta * ci - ct) / max(eta * ci + ct, 1.0e-5f);
+    return saturate(0.5f * (rs * rs + rp * rp));
+}
+
+// Exact unpolarized complex-IOR conductor Fresnel F(cosTheta, eta + i*k) (OPT-003, Mitsuba-validated):
+float3 rawComplexConductorFresnel(float cosTheta, float3 eta, float3 k) {
+    const float c = saturate(cosTheta);
+    const float c2 = c * c;
+    const float s2 = max(1.0f - c2, 0.0f);
+    const float3 eta2 = eta * eta;
+    const float3 k2 = k * k;
+    const float3 t0 = eta2 - k2 - s2;
+    const float3 a2plusb2 = sqrt(max(t0 * t0 + 4.0f * eta2 * k2, 0.0f.xxx));
+    const float3 a = sqrt(max(0.5f * (a2plusb2 + t0), 0.0f.xxx));
+    const float3 t1 = a2plusb2 + c2;
+    const float3 t2 = 2.0f * a * c;
+    const float3 rs = (t1 - t2) / max(t1 + t2, 1.0e-6f.xxx);
+    const float3 t3 = c2 * a2plusb2 + s2 * s2;
+    const float3 t4 = t2 * s2;
+    const float3 rp = rs * (t3 - t4) / max(t3 + t4, 1.0e-6f.xxx);
+    return saturate(0.5f * (rs + rp));
+}
+
+// Exact Planck Blackbody emission for 700K..12000K (tuned for 1000K..3400K forge/magma/embers):
+// Uses Wien-shifted log-safe evaluation B(lambda, T) proportional to (550/lambda)^5 * exp(-(ex - exMin)) / (1 - exp(-ex))
+// at Rec.709 RGB (615, 540, 465 nm) — zero FP16/FP32 underflow even at 800K-1400K glowing coals!
+// Returns peak-normalized linear Rec.709 chromaticity RGB in [0, 1] and outputs monotonic HDR radiance scale.
+float3 rawPlanckBlackbodyRGB(float tempK, out float hdrRadiance) {
+    if (tempK < 700.0f) {
+        hdrRadiance = 0.0f;
+        return 0.0f.xxx;
+    }
+    const float T = clamp(tempK, 700.0f, 12000.0f);
+    const float3 lamNm = float3(615.0f, 540.0f, 465.0f);
+    const float3 w5 = pow(550.0f / lamNm, 5.0f);
+    const float3 ex = 1.4387768e7f / (lamNm * T);
+    const float exMin = min(ex.r, min(ex.g, ex.b));
+    const float3 rad = (w5 * exp(-min(ex - exMin, 60.0f.xxx))) / max(1.0f - exp(-min(ex, 60.0f.xxx)), 1.0e-6f.xxx);
+    const float peak = max(rad.r, max(rad.g, rad.b));
+    // Smooth Stefan-Boltzmann-anchored visible radiant ramp (0 below 750K, 1.0 at 2000K, bright HDR at 3400K):
+    const float visRamp = smoothstep(750.0f, 1150.0f, T);
+    const float tNorm = T / 2000.0f;
+    hdrRadiance = visRamp * min(tNorm * tNorm * tNorm * tNorm, 18.0f);
+    return (peak > 1.0e-7f) ? saturate(rad / peak) : 0.0f.xxx;
+}
+
 #endif

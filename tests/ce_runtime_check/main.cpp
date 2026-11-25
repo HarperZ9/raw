@@ -24,9 +24,13 @@
 #include "../../src/d3d12_bridge/HardwareProfile.h"
 #include "../../src/d3d12_bridge/ShaderCompiler.h"
 #include "../../src/engine_rt/rt_zydis_offsets.h"
+#include "../../src/engine_rt/rt_engine_remaster_tests.h"
 #include "../../src/engine_rt/rt_skeleton_ik.h"
 #include "../../src/engine_rt/rt_combat_ai.h"
 #include "../../src/engine_rt/rt_world_sim.h"
+#include "../../src/worldgen/RawWorldGenTests.h"
+#include "../../src/materials/RawMaterialsTests.h"
+#include "../../src/assets/RawAssetsTests.h"
 #include "../../src/ui/RawDesignTokens.h"
 #include "../../src/ui/RawInputEngine.h"
 
@@ -958,6 +962,10 @@ int main() {
     TestWicMemoryAndRealSkyrimData();
     TestDesignTokensAndUnifiedInput();
     TestCustomNavMeshAndWorldSim();
+    raw::rt::RunEngineRemasterTests(Check);
+    raw::worldgen::RunWorldGenSelfTests(Check);
+    raw::materials::RunRawMaterialsTests(Check);
+    raw::assets::RunRawAssetsTests(Check);
     std::printf("ce_runtime_check: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

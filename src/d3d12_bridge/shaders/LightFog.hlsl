@@ -12,6 +12,7 @@
 #include "CloudCommon.hlsli"
 #include "ElderOptics.hlsli"
 #include "RawProceduralNoise.hlsli"
+#include "RawSpells3D.hlsli"
 
 Texture2D<float4> Lit         : register(t0);
 Texture2D<float>  Depth       : register(t1);
@@ -790,9 +791,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 pdeMistBoost = 1.0f + saturate(wf.b * 0.65f + wf.a * 0.35f) * 0.45f;
             }
         }
-        // True 3D Depth-Occluded Volumetric Blackbody Fire & Rising Ember Plumes (exteriors: braziers, campfires, torches):
+        // True 3D Depth-Occluded Volumetric Blackbody Fire Plumes + All-Archetype 3D Volumetric Spells
+        // (Fire Plasma + Frost Ice-Shard Storm + Shock Lichtenberg Arcs + Arcane/Ward Runic Shells & Heat Lensing):
         if (mapScale > 0.5f) {
             precipAdd += evalVolumetricFirePlumes(eye, w, dist, px, false);
+            float2 spellLensPx = 0.0f.xx;
+            const float3 spellAddExt = evalVolumetricSpells3D(eye, w, dist, px, spellLensPx);
+            if (dot(spellLensPx, spellLensPx) > 0.002f) {
+                const float2 lensUv = clamp(uv + spellLensPx * dims.zw, 0.002f.xx, 0.998f.xx);
+                const float dLens = Depth.SampleLevel(Lin, lensUv, 0.0f);
+                if (dLens >= d - 0.002f) { lit.rgb = lerp(lit.rgb, Lit.SampleLevel(Lin, lensUv, 0.0f).rgb, 0.65f); }
+            }
+            precipAdd += spellAddExt;
         }
         // Wave 29 Negative-Space Depth-Parity Silhouette Diffraction & Crepuscular Dark-Shaft Cavity Contrast:
         // 1) Asymmetric silhouette edge diffraction: when a foreground occluder (curZ) borders a far bright sky/HDR void
@@ -838,10 +848,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 cellAmb = max(float3(ambient[0].w, ambient[1].w, ambient[2].w), float3(0.008f, 0.010f, 0.012f));
         const float ambL = dot(cellAmb, float3(0.2126f, 0.7152f, 0.0722f));
         const float3 caveMist = min(lerp(ambL.xxx, cellAmb, 0.45f) * 0.16f, 0.024f.xxx);
-        // True 3D Depth-Occluded Volumetric Blackbody Fire & Rising Ember Plumes (interiors: Dragonsreach hearth, candles, braziers)
-        // paired with crisp clear-foreground interior scatter (0.34x, zero milky beige haze!):
+        // True 3D Depth-Occluded Volumetric Blackbody Fire Plumes + All-Archetype 3D Volumetric Spells (interiors):
         const float3 intFireAdd = evalVolumetricFirePlumes(eye, w, dist, px, true);
-        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.34f + intFireAdd, lit.a);
+        float2 intSpellLensPx = 0.0f.xx;
+        const float3 intSpellAdd = evalVolumetricSpells3D(eye, w, dist, px, intSpellLensPx);
+        if (dot(intSpellLensPx, intSpellLensPx) > 0.002f) {
+            const float2 lensUvI = clamp(uv + intSpellLensPx * dims.zw, 0.002f.xx, 0.998f.xx);
+            const float dLensI = Depth.SampleLevel(Lin, lensUvI, 0.0f);
+            if (dLensI >= d - 0.002f) { lit.rgb = lerp(lit.rgb, Lit.SampleLevel(Lin, lensUvI, 0.0f).rgb, 0.65f); }
+        }
+        return float4(lit.rgb * intT + caveMist * (1.0f - intT) + scatter * 0.34f + intFireAdd + intSpellAdd, lit.a);
     }
     const float T = (flags.x & FLAG_FOG_REPLACES) != 0u ? exp(-sigma * tEnd) : 1.0f;
     return float4(lit.rgb * T + scatter, lit.a);

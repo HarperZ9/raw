@@ -42,5 +42,10 @@ std::string MissingEntries();
 // Deferred first-frame .data pointer-to-RTTI-vtable scan: resolves core singletons on pure vanilla
 // installs with neither a static .tsv nor Address Library installed. Returns number of newly resolved entries.
 uint32_t ResolveDeferredSingletons(const Image& img);
+// Fail-closed Zydis startup verification of all critical struct offsets against the live executable's machine code.
+// Returns true if verified (or no static offset rules apply to this title); returns false & latches fail-closed on ANY mismatch!
+bool VerifyStartupBinaryOffsets(const Image& img, std::string* reportOut = nullptr);
+bool AreBinaryOffsetsVerified();
+std::string BinaryOffsetVerificationJson();
 
 }  // namespace raw::rt

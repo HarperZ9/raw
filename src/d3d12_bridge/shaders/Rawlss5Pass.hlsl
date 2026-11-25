@@ -212,11 +212,11 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     }
     const float curLum = dot(curRgb, kLumaW);
 
-    // Highlight-ceiling & glacier/ice protection:
-    // Prevents RAWLSS from injecting micro-grain or sharpening bright snow/glaciers/highlights into bloom territory!
-    const float hlGuard = 1.0f - smoothstep(0.75f, 1.75f, curLum);
-    const float isIceLike = ((base == 1u || base == 4u) && curRgb.b > curRgb.r * 1.06f && curLum > 0.22f)
-        ? saturate((curRgb.b - curRgb.r * 1.06f) * 5.0f) : 0.0f;
+    // Highlight-ceiling & glacier/ice protection (covers BOTH base==1/4 outdoor glaciers AND base==2 EnvMap ice caves!):
+    // Prevents RAWLSS from injecting micro-grain, E8 chatter, or sharpening bright snow/glaciers/highlights into bloom territory!
+    const float hlGuard = 1.0f - smoothstep(0.72f, 1.65f, curLum);
+    const float isIceLike = ((base == 1u || base == 2u || base == 4u) && curRgb.b > curRgb.r * 1.05f && curLum > 0.18f)
+        ? saturate((curRgb.b - curRgb.r * 1.05f) * 5.0f) : 0.0f;
 
     const float localContrast = saturate(abs(curLum - blurLum) / max(blurLum + 0.05f, 0.05f));
     const float nv = saturate(dot(nC, vDir));
@@ -291,23 +291,24 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
         const float3 curTm = tonemapKaris(recon);
         const float3 curY = rgbToYCoCg(curTm);
 
-        const float lumDelta = abs(prevY.x - curY.x) / max(curY.x + 0.08f, 0.08f);
+        const float lumDelta = abs(prevY.x - curY.x) / max(curY.x + 0.06f, 0.06f);
+        const float chrDelta = length(prevY.yz - curY.yz) / max(curY.x + 0.08f, 0.08f);
         const float trapSep = rawTrappingSeparator(curY.x, prevY.x, stdDev.x, speedPx, edgeGate);
-        const float disocc = max(saturate((lumDelta - 0.38f) * 1.8f) * (1.0f - edgeGate * 0.45f), trapSep);
+        const float disocc = max(max(saturate((lumDelta - 0.22f) * 2.4f), saturate((chrDelta - 0.26f) * 2.2f)) * (1.0f - edgeGate * 0.25f), trapSep);
         // Material-aware reactive mask (high responsiveness on water, emissives, disoccluded edges & fast specular glints):
-        const float reactive = saturate(max(isWater ? 0.52f : (isEmissive ? 0.65f : 0.0f),
-                                            disocc * 0.85f + (1.0f - edgeGate) * 0.82f));
-        // Tighter perceptual variance AABB during motion/disocclusion, wider when still for sub-pixel convergence:
-        const float boxScale = lerp(1.30f, 0.72f, saturate(speedPx * 0.15f + reactive * 0.75f));
+        const float reactive = saturate(max(isWater ? 0.62f : (isEmissive ? 0.75f : 0.0f),
+                                            disocc * 0.92f + (1.0f - edgeGate) * 0.88f));
+        // Tighter perceptual variance AABB prevents double-temporal ghosting when paired with NVIDIA DLAA / DLSS-RR:
+        const float boxScale = lerp(1.05f, 0.58f, saturate(speedPx * 0.18f + reactive * 0.82f));
         const float3 boxMin = max(nMinY, m1 - stdDev * boxScale);
         const float3 boxMax = min(nMaxY, m1 + stdDev * boxScale);
         const float3 clippedY = clipAABB(boxMin, boxMax, m1, prevY);
 
-        // Adaptive accumulation weight: silky convergence on glaciers/foliage/stone when still, instant reset on silhouettes:
-        const float baseAlpha = isFace ? lerp(0.42f, 0.85f, saturate(speedPx * 0.14f))
-                                       : (isWater ? lerp(0.32f, 0.75f, saturate(speedPx * 0.12f))
-                                                  : (isIceLike > 0.25f ? lerp(0.11f, 0.52f, saturate(speedPx * 0.12f))
-                                                                       : lerp(0.14f, 0.56f, saturate(speedPx * 0.12f))));
+        // Disciplined accumulation weight (fast enough to eliminate ghost trails under DLAA/DLSS-RR while keeping glaciers silk-smooth):
+        const float baseAlpha = isFace ? lerp(0.50f, 0.92f, saturate(speedPx * 0.16f))
+                                       : (isWater ? lerp(0.45f, 0.88f, saturate(speedPx * 0.15f))
+                                                  : (isIceLike > 0.25f ? lerp(0.24f, 0.74f, saturate(speedPx * 0.15f))
+                                                                       : lerp(0.26f, 0.78f, saturate(speedPx * 0.15f))));
         const float alpha = saturate(max(baseAlpha, reactive));
         const float3 blendedY = lerp(clippedY, curY, alpha);
         recon = invTonemapKaris(max(yCoCgToRgb(blendedY), 0.0f.xxx));

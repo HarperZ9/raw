@@ -1,6 +1,7 @@
 // D3D12Bridge per-frame work: depth capture, the fence round trip, and GPU
 // timestamps on both queues. Original work, MIT.
 #include "BridgeImpl.h"
+#include "RawProceduralLib.h"
 #include "StreamlineHost.h"
 #include "LightingPass.h"
 #include "RtScene.h"
@@ -165,6 +166,28 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         fc.lighting = &m->lighting;
         fc.hasSurface = s.hasSurface;
         fc.hasShadows = s.hasShadows;
+        // Live beyond-Tamriel 6-biome frontier chunk streaming (O(1) no-op inside Tamriel borders):
+        if (m->lighting.valid && m->meshHost.Ready()) {
+            struct BridgeChunkSink final : raw::worldgen::IGpuChunkSink {
+                D3D12Bridge::Impl* impl = nullptr;
+                uint64_t OnChunkLoaded(const raw::worldgen::StreamedChunkEntry& entry) override {
+                    RawMeshAsset asset{};
+                    if (!ConvertWorldGenMeshToRawMeshAsset(entry.mesh, &asset)) return 0u;
+                    RawMeshGpuAsset gpu{};
+                    if (!impl->meshHost.UploadAsset(asset, &gpu)) return 0u;
+                    const uint64_t h = impl->nextTerrainHandle++;
+                    impl->streamedTerrainGpu.emplace(h, std::move(gpu));
+                    return h;
+                }
+                void OnChunkEvicted(raw::worldgen::ChunkKey, uint64_t gpuHandle) override {
+                    if (gpuHandle != 0u) impl->streamedTerrainGpu.erase(gpuHandle);
+                }
+            };
+            BridgeChunkSink sink;
+            sink.impl = m.get();
+            m->worldShowcase.Update(
+                {m->lighting.posAdjust[0], m->lighting.posAdjust[1], m->lighting.posAdjust[2]}, &sink);
+        }
     }
 
     // The pass records first, so recording time never shows up as a stall,

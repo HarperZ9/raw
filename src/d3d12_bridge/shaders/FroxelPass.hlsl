@@ -208,21 +208,8 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                 inScat += lerp(ambInScat * 1.15f, max(syncSunFr * 0.72f, ambInScat * 1.30f), sh) * (spindrift * 0.42f);
             }
         }
-        // Pillar 7(b): RDR2-grade Cold-Weather Rhythmic Exhaled Breath Plume in 3D Froxel Space (snow/alpine/freezing nights):
-        const float coldAmt = saturate(weather.z * 1.4f + smoothstep(2200.0f, 4500.0f, camPosW.z) * 0.75f + nightW * 0.35f);
-        if (coldAmt > 0.25f && zMid > 24.0f && zMid < 105.0f) {
-            const float breathPulse = pow(saturate(sin(camPosW.w * 1.65f)), 3.0f);
-            if (breathPulse > 0.04f) {
-                const float2 bUv = uv - float2(0.50f, 0.58f - breathPulse * 0.08f);
-                const float bRad = dot(bUv, bUv);
-                if (bRad < 0.032f) {
-                    const float bNoise = cNoise(wp * 0.09f - float3(0.0f, 0.0f, camPosW.w * 1.4f));
-                    const float bMask = exp(-bRad * 95.0f) * smoothstep(24.0f, 48.0f, zMid) * (1.0f - smoothstep(68.0f, 105.0f, zMid)) * bNoise * breathPulse * coldAmt;
-                    sigma += bMask * 0.0038f;
-                    inScat += lerp(ambInScat + 0.08f, syncSunFr * 0.65f + 0.12f, sh) * (bMask * 0.85f);
-                }
-            }
-        }
+        // Disabled 3.81s rhythmic cold-weather breathPulse (sin(camPosW.w * 1.65)):
+        // caused a periodic timed pulse across snow/glacier/ice scenes whenever coldAmt > 0.25!
     }
     // Clustered local lights in 3D froxel space (hearths, torches, braziers, 3D window portal lights, spells).
     if (tune2.y > 0.0f && flags.y > 0u) {

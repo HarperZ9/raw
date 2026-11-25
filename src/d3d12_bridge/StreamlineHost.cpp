@@ -10,12 +10,15 @@
 #include <sl_core_api.h>
 #include <sl_dlss.h>
 #include <sl_dlss_d.h>
+#include <sl_matrix_helpers.h>
 #include <sl_reflex.h>
 #include <sl_deepdvc.h>
 #endif
 
 #include "rt_normal_unpack.h"
 #include "rt_hiz_downsample.h"
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
@@ -50,6 +53,15 @@ struct SlApi
     ComPtr<ID3D12PipelineState> unpackPso;
     ComPtr<ID3D12DescriptorHeap> unpackHeap;
     ComPtr<ID3D12Resource> normalRough;
+    ComPtr<ID3D12Resource> specAlbedo;
+    ComPtr<ID3D12DescriptorHeap> specRtvHeap;
+    bool specCleared = false;
+    sl::float4x4 prevViewToWorld{};
+    sl::float4x4 prevViewToClip{};
+    float prevPos[3] = {};
+    float prevFwd[3] = {};
+    uint32_t prevFrameIdx = 0;
+    bool hasPrevCam = false;
     ComPtr<ID3D12RootSignature> hizRs;
     ComPtr<ID3D12PipelineState> hizPso;
     ComPtr<ID3D12DescriptorHeap> hizHeap;
@@ -312,11 +324,12 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
     if (!a.ready || m_mode <= 0 || !a.cl || !queue || !colorIn || !colorOut || !depth || !mvec)
         return false;
 
-    // True NVIDIA DLSS Ray Reconstruction (Preset F) with SM 6.9 linear world-space normal+roughness unpack:
-    // NormalUnpack.hlsl decodes Skyrim's octahedral R8G8B8A8 view-space normals + Spec.y gloss into RGBA16F
-    // (RGB = linear world-space normal, A = linear roughness) matching sl::DLSSDNormalRoughnessMode::ePacked.
-    if (m_mode == 2 && a.unpackPso && a.unpackHeap && (a.nrW != width || a.nrH != height || !a.normalRough)) {
+    // True NVIDIA DLSS Ray Reconstruction (Preset F) with SM 6.9 linear world-space normal+roughness unpack
+    // and clean linear dielectric F0 specular albedo (replaces corrupted Skyrim G-buffer Spec(mask, gloss, classID)!).
+    if (m_mode == 2 && a.unpackPso && a.unpackHeap && (a.nrW != width || a.nrH != height || !a.normalRough || !a.specAlbedo)) {
         a.normalRough.Reset();
+        a.specAlbedo.Reset();
+        a.specCleared = false;
         D3D12_HEAP_PROPERTIES hp{};
         hp.Type = D3D12_HEAP_TYPE_DEFAULT;
         D3D12_RESOURCE_DESC rd{};
@@ -329,48 +342,123 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
                                                        D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&a.normalRough)))) {
             a.nrW = width; a.nrH = height;
         }
+        D3D12_RESOURCE_DESC srd = rd;
+        srd.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+        D3D12_CLEAR_VALUE scv{};
+        scv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        scv.Color[0] = 0.04f; scv.Color[1] = 0.04f; scv.Color[2] = 0.04f; scv.Color[3] = 1.0f;
+        if (SUCCEEDED(a.dev12->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &srd,
+                                                       D3D12_RESOURCE_STATE_COMMON, &scv, IID_PPV_ARGS(&a.specAlbedo)))) {
+            if (!a.specRtvHeap) {
+                D3D12_DESCRIPTOR_HEAP_DESC rhd{};
+                rhd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+                rhd.NumDescriptors = 1;
+                a.dev12->CreateDescriptorHeap(&rhd, IID_PPV_ARGS(&a.specRtvHeap));
+            }
+            if (a.specRtvHeap) {
+                a.dev12->CreateRenderTargetView(a.specAlbedo.Get(), nullptr, a.specRtvHeap->GetCPUDescriptorHandleForHeapStart());
+            }
+        }
     }
     const bool useRR = (m_mode == 2 && m_caps.dlssRR && !a.dlssdFailed && a.dlssdSetOptions &&
-                        a.unpackPso && a.unpackHeap && a.normalRough && albedo && normal && spec && cam.valid);
+                        a.unpackPso && a.unpackHeap && a.normalRough && a.specAlbedo && a.specRtvHeap &&
+                        albedo && normal && spec && cam.valid);
     if (!useRR && (!m_caps.dlss || a.dlssFailed || !a.dlssSetOptions)) return false;
+
+    // Build exact row-vector Streamline camera matrices (transposed from Skyrim's column-vector proj, TAA jitter stripped!)
+    // and compute clipToCameraView / clipToPrevClip / prevClipToClip via Streamline's camera-centered precision method.
+    auto makeIdentity = []() {
+        sl::float4x4 m{};
+        m[0] = {1.0f, 0.0f, 0.0f, 0.0f};
+        m[1] = {0.0f, 1.0f, 0.0f, 0.0f};
+        m[2] = {0.0f, 0.0f, 1.0f, 0.0f};
+        m[3] = {0.0f, 0.0f, 0.0f, 1.0f};
+        return m;
+    };
+    auto norm3 = [](sl::float3 v, sl::float3 fb) {
+        const float l2 = v.x * v.x + v.y * v.y + v.z * v.z;
+        if (l2 > 1.0e-8f) {
+            const float inv = 1.0f / std::sqrt(l2);
+            return sl::float3{v.x * inv, v.y * inv, v.z * inv};
+        }
+        return fb;
+    };
+
+    sl::float4x4 viewToClip = makeIdentity();
+    sl::float4x4 clipToView = makeIdentity();
+    sl::float4x4 viewToWorld = makeIdentity();
+    sl::float4x4 worldToView = makeIdentity();
+    sl::float3 camRight{1.0f, 0.0f, 0.0f}, camUp{0.0f, 1.0f, 0.0f}, camFwd{0.0f, 0.0f, 1.0f};
+    bool cameraCut = (frameIdx <= 2u) || !a.hasPrevCam ||
+                     (frameIdx <= a.prevFrameIdx) || (frameIdx > a.prevFrameIdx + 3u);
+    if (cam.valid) {
+        camRight = norm3({cam.viewToWorld[0], cam.viewToWorld[4], cam.viewToWorld[8]},  {1.0f, 0.0f, 0.0f});
+        camUp    = norm3({cam.viewToWorld[1], cam.viewToWorld[5], cam.viewToWorld[9]},  {0.0f, 1.0f, 0.0f});
+        camFwd   = norm3({cam.viewToWorld[2], cam.viewToWorld[6], cam.viewToWorld[10]}, {0.0f, 0.0f, 1.0f});
+        viewToWorld[0] = {camRight.x, camRight.y, camRight.z, 0.0f};
+        viewToWorld[1] = {camUp.x,    camUp.y,    camUp.z,    0.0f};
+        viewToWorld[2] = {camFwd.x,   camFwd.y,   camFwd.z,   0.0f};
+        viewToWorld[3] = {cam.pos[0], cam.pos[1], cam.pos[2], 1.0f};
+        sl::matrixOrthoNormalInvert(worldToView, viewToWorld);
+
+        // Transpose Skyrim column-vector projection into Streamline row-vector layout and zero clip-space jitter offsets:
+        viewToClip[0] = {cam.proj[0],  cam.proj[4],  cam.proj[8],  cam.proj[12]};
+        viewToClip[1] = {cam.proj[1],  cam.proj[5],  cam.proj[9],  cam.proj[13]};
+        viewToClip[2] = {0.0f,         0.0f,         cam.proj[10], cam.proj[14]};
+        viewToClip[3] = {cam.proj[3],  cam.proj[7],  cam.proj[11], cam.proj[15]};
+        sl::matrixFullInvert(clipToView, viewToClip);
+
+        if (a.hasPrevCam) {
+            const float dx = cam.pos[0] - a.prevPos[0];
+            const float dy = cam.pos[1] - a.prevPos[1];
+            const float dz = cam.pos[2] - a.prevPos[2];
+            const float fwdDot = camFwd.x * a.prevFwd[0] + camFwd.y * a.prevFwd[1] + camFwd.z * a.prevFwd[2];
+            if (dx * dx + dy * dy + dz * dz > 400.0f * 400.0f || fwdDot < 0.55f) cameraCut = true;
+        }
+    }
 
     const sl::ViewportHandle vp(0);
     const int activeMode = useRR ? 2 : m_mode;
-    if (a.optW != width || a.optH != height || a.optMode != activeMode) {
-        if (useRR) {
-            sl::DLSSDOptions opt{};
-            opt.mode = sl::DLSSMode::eDLAA;
-            opt.outputWidth = width;
-            opt.outputHeight = height;
-            opt.colorBuffersHDR = sl::Boolean::eTrue;
-            opt.normalRoughnessMode = sl::DLSSDNormalRoughnessMode::ePacked;
-            opt.dlaaPreset = sl::DLSSDPreset::ePresetF;
-            opt.qualityPreset = sl::DLSSDPreset::ePresetF;
-            const sl::Result r = a.dlssdSetOptions(vp, opt);
-            if (r != sl::Result::eOk) {
-                a.dlssdFailed = true;
-                if (log) log("[Streamline] slDLSSDSetOptions(PresetF) failed: %d (falling back to DLAA)", static_cast<int>(r));
-                return false;
-            }
-        } else {
-            sl::DLSSOptions opt{};
-            opt.mode = (m_mode == 3) ? sl::DLSSMode::eMaxQuality
-                     : (m_mode == 4) ? sl::DLSSMode::eBalanced
-                     : (m_mode == 5) ? sl::DLSSMode::eMaxPerformance
-                                     : sl::DLSSMode::eDLAA;
-            opt.outputWidth = width;
-            opt.outputHeight = height;
-            opt.colorBuffersHDR = sl::Boolean::eTrue;
-            opt.dlaaPreset = sl::DLSSPreset::ePresetK;
-            opt.qualityPreset = sl::DLSSPreset::ePresetK;
-            opt.balancedPreset = sl::DLSSPreset::ePresetK;
-            opt.performancePreset = sl::DLSSPreset::ePresetM;
-            const sl::Result r = a.dlssSetOptions(vp, opt);
-            if (r != sl::Result::eOk) {
-                a.dlssFailed = true;
-                if (log) log("[Streamline] slDLSSSetOptions(mode %d) failed: %d", m_mode, static_cast<int>(r));
-                return false;
-            }
+    if (useRR) {
+        // DLSS-RR options include per-frame worldToCameraView & cameraViewToWorld matrices (sl_dlss_d.h):
+        sl::DLSSDOptions opt{};
+        opt.mode = sl::DLSSMode::eDLAA;
+        opt.outputWidth = width;
+        opt.outputHeight = height;
+        opt.colorBuffersHDR = sl::Boolean::eTrue;
+        opt.normalRoughnessMode = sl::DLSSDNormalRoughnessMode::ePacked;
+        opt.worldToCameraView = worldToView;
+        opt.cameraViewToWorld = viewToWorld;
+        opt.dlaaPreset = sl::DLSSDPreset::ePresetF;
+        opt.qualityPreset = sl::DLSSDPreset::ePresetF;
+        const sl::Result r = a.dlssdSetOptions(vp, opt);
+        if (r != sl::Result::eOk) {
+            a.dlssdFailed = true;
+            if (log) log("[Streamline] slDLSSDSetOptions(PresetF) failed: %d (falling back to DLAA)", static_cast<int>(r));
+            return false;
+        }
+        a.optW = width; a.optH = height; a.optMode = activeMode;
+    } else if (a.optW != width || a.optH != height || a.optMode != activeMode) {
+        sl::DLSSOptions opt{};
+        opt.mode = (m_mode == 3) ? sl::DLSSMode::eMaxQuality
+                 : (m_mode == 4) ? sl::DLSSMode::eBalanced
+                 : (m_mode == 5) ? sl::DLSSMode::eMaxPerformance
+                                 : sl::DLSSMode::eDLAA;
+        opt.outputWidth = width;
+        opt.outputHeight = height;
+        opt.colorBuffersHDR = sl::Boolean::eTrue;
+        // Enable DLSS internal auto-exposure since Skyrim's HDR range spans dark dungeons to sunlit snowpacks
+        // (without exposure, DLSS temporal clamp mismatches dark/bright scenes and creates ghost trails & glow!).
+        opt.useAutoExposure = sl::Boolean::eTrue;
+        opt.dlaaPreset = sl::DLSSPreset::ePresetK;
+        opt.qualityPreset = sl::DLSSPreset::ePresetK;
+        opt.balancedPreset = sl::DLSSPreset::ePresetK;
+        opt.performancePreset = sl::DLSSPreset::ePresetM;
+        const sl::Result r = a.dlssSetOptions(vp, opt);
+        if (r != sl::Result::eOk) {
+            a.dlssFailed = true;
+            if (log) log("[Streamline] slDLSSSetOptions(mode %d) failed: %d", m_mode, static_cast<int>(r));
+            return false;
         }
         a.optW = width; a.optH = height; a.optMode = activeMode;
     }
@@ -379,10 +467,23 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
     if (a.getNewFrameToken(tok, &frameIdx) != sl::Result::eOk || !tok) return false;
 
     sl::Constants c{};
+    c.cameraViewToClip = viewToClip;
+    c.clipToCameraView = clipToView;
+    if (cam.valid && !cameraCut && a.hasPrevCam) {
+        sl::float4x4 camToPrevCam{}, clipToPrevView{};
+        sl::calcCameraToPrevCamera(camToPrevCam, viewToWorld, a.prevViewToWorld);
+        sl::matrixMul(clipToPrevView, clipToView, camToPrevCam);
+        sl::matrixMul(c.clipToPrevClip, clipToPrevView, a.prevViewToClip);
+        sl::matrixFullInvert(c.prevClipToClip, c.clipToPrevClip);
+    } else {
+        c.clipToPrevClip = makeIdentity();
+        c.prevClipToClip = makeIdentity();
+    }
     c.jitterOffset = {
-        cam.jitterNdc[0] * float(width) * 0.5f,
-        -cam.jitterNdc[1] * float(height) * 0.5f
+        std::clamp(cam.jitterNdc[0] * float(width) * 0.5f, -0.5f, 0.5f),
+        std::clamp(-cam.jitterNdc[1] * float(height) * 0.5f, -0.5f, 0.5f)
     };
+    // Skyrim's Motion buffer stores UV-space (prev_uv - cur_uv) in [-1, 1], matching Streamline's normalized mvecScale {1, 1}.
     c.mvecScale = {1.0f, 1.0f};
     c.cameraAspectRatio = cam.valid && cam.aspect > 0.1f ? cam.aspect : (height ? float(width) / float(height) : 16.0f / 9.0f);
     c.cameraNear = cam.valid && cam.nearZ > 0.1f ? cam.nearZ : 15.0f;
@@ -392,25 +493,19 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
     c.cameraMotionIncluded = sl::Boolean::eTrue;
     c.motionVectors3D = sl::Boolean::eFalse;
     c.motionVectorsJittered = sl::Boolean::eFalse;
-    static float s_prevPos[3] = {};
-    static bool s_hasPrevPos = false;
-    bool cameraCut = (frameIdx <= 2u);
+    // Tighter linear depth separation heuristic for Skyrim's non-inverted 15..400000u depth buffer (improves disocclusion!).
+    c.minRelativeLinearDepthObjectSeparation = 12.0f;
     if (cam.valid) {
-        c.cameraPos = {cam.pos[0], cam.pos[1], cam.pos[2]};
-        c.cameraRight = {cam.viewToWorld[0], cam.viewToWorld[4], cam.viewToWorld[8]};
-        c.cameraUp    = {cam.viewToWorld[1], cam.viewToWorld[5], cam.viewToWorld[9]};
-        c.cameraFwd   = {cam.viewToWorld[2], cam.viewToWorld[6], cam.viewToWorld[10]};
-        for (int r = 0; r < 4; ++r) {
-            c.cameraViewToClip[r] = {cam.proj[r * 4 + 0], cam.proj[r * 4 + 1], cam.proj[r * 4 + 2], cam.proj[r * 4 + 3]};
-        }
-        if (s_hasPrevPos) {
-            const float dx = cam.pos[0] - s_prevPos[0];
-            const float dy = cam.pos[1] - s_prevPos[1];
-            const float dz = cam.pos[2] - s_prevPos[2];
-            if (dx * dx + dy * dy + dz * dz > 500.0f * 500.0f) cameraCut = true;
-        }
-        s_prevPos[0] = cam.pos[0]; s_prevPos[1] = cam.pos[1]; s_prevPos[2] = cam.pos[2];
-        s_hasPrevPos = true;
+        c.cameraPos   = {cam.pos[0], cam.pos[1], cam.pos[2]};
+        c.cameraRight = camRight;
+        c.cameraUp    = camUp;
+        c.cameraFwd   = camFwd;
+        a.prevViewToWorld = viewToWorld;
+        a.prevViewToClip  = viewToClip;
+        a.prevPos[0] = cam.pos[0]; a.prevPos[1] = cam.pos[1]; a.prevPos[2] = cam.pos[2];
+        a.prevFwd[0] = camFwd.x;   a.prevFwd[1] = camFwd.y;   a.prevFwd[2] = camFwd.z;
+        a.prevFrameIdx = frameIdx;
+        a.hasPrevCam = true;
     }
     c.reset = cameraCut ? sl::Boolean::eTrue : sl::Boolean::eFalse;
     a.setConstants(c, *tok, vp);
@@ -433,21 +528,33 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
     }
     if (FAILED(a.alloc[slot]->Reset()) || FAILED(a.cl->Reset(a.alloc[slot].Get(), nullptr))) return false;
 
-    D3D12_RESOURCE_BARRIER inB[8];
+    D3D12_RESOURCE_BARRIER inB[12];
     UINT nb = 0;
     inB[nb++] = Barrier(colorIn,  D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     inB[nb++] = Barrier(colorOut, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     inB[nb++] = Barrier(depth,    D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     inB[nb++] = Barrier(mvec,     D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    UINT specBarrierIdx = ~0u;
     if (useRR) {
         inB[nb++] = Barrier(albedo, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         inB[nb++] = Barrier(normal, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         inB[nb++] = Barrier(spec,   D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        specBarrierIdx = nb;
+        inB[nb++] = Barrier(a.specAlbedo.Get(), D3D12_RESOURCE_STATE_COMMON,
+                            a.specCleared ? D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE : D3D12_RESOURCE_STATE_RENDER_TARGET);
         inB[nb++] = Barrier(a.normalRough.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
     a.cl->ResourceBarrier(nb, inB);
 
     if (useRR) {
+        if (!a.specCleared) {
+            static const float kDielectricF0[4] = {0.04f, 0.04f, 0.04f, 1.0f};
+            a.cl->ClearRenderTargetView(a.specRtvHeap->GetCPUDescriptorHandleForHeapStart(), kDielectricF0, 0, nullptr);
+            D3D12_RESOURCE_BARRIER specToSrv = Barrier(a.specAlbedo.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            a.cl->ResourceBarrier(1, &specToSrv);
+            inB[specBarrierIdx].Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            a.specCleared = true;
+        }
         // Dispatch SM 6.9 NormalUnpack.hlsl -> linear RGBA16F world-space normal + roughness for DLSS-RR ePacked.
         D3D12_CPU_DESCRIPTOR_HANDLE h0 = a.unpackHeap->GetCPUDescriptorHandleForHeapStart();
         D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
@@ -546,7 +653,7 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
     sl::Resource rMvec(sl::ResourceType::eTex2d, mvec, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     sl::Resource rAlb(sl::ResourceType::eTex2d, albedo, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     sl::Resource rNrm(sl::ResourceType::eTex2d, useRR ? a.normalRough.Get() : normal, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    sl::Resource rSpec(sl::ResourceType::eTex2d, spec, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    sl::Resource rSpec(sl::ResourceType::eTex2d, useRR ? a.specAlbedo.Get() : spec, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     sl::ResourceTag tags[7] = {
         {&rIn,    sl::kBufferTypeScalingInputColor,  sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
         {&rOut,   sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &ext},
@@ -566,7 +673,7 @@ bool StreamlineHost::Evaluate(ID3D12CommandQueue* queue, ID3D12Resource* colorIn
     // 100% watermark-free GPU-native Oklab Neural Vibrance & Local Contrast pass in Tonemap.hlsl.
     (void)m_deepDvcOn;
 
-    D3D12_RESOURCE_BARRIER outB[8];
+    D3D12_RESOURCE_BARRIER outB[12];
     for (UINT i = 0; i < nb; ++i) {
         outB[i] = inB[i];
         std::swap(outB[i].Transition.StateBefore, outB[i].Transition.StateAfter);

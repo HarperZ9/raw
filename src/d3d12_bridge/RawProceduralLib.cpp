@@ -1,51 +1,17 @@
 // RawProceduralLib.cpp: Zero-External-Asset Procedural Geometry & PBR Material Synthesis Library.
+// Backed by `raw::worldgen` reusable mesh/terrain framework for live dogfooding inside RAW.
 // Original work, MIT.
 #include "RawProceduralLib.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <map>
-#include <utility>
+#include <cstring>
 
 namespace raw::bridge {
 namespace {
 
-constexpr float kPi = 3.14159265358979323846f;
 constexpr float kTwoPi = 6.28318530717958647692f;
-constexpr float kGoldenAngle = 2.39996322972865332223f;
-
-struct Vec3 {
-    float x = 0.0f, y = 0.0f, z = 0.0f;
-};
-
-inline Vec3 operator+(Vec3 a, Vec3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
-inline Vec3 operator-(Vec3 a, Vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
-inline Vec3 operator*(Vec3 a, float s) { return {a.x * s, a.y * s, a.z * s}; }
-inline float Dot(Vec3 a, Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-inline Vec3 Cross(Vec3 a, Vec3 b) {
-    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
-}
-inline float Len(Vec3 a) { return std::sqrt(Dot(a, a)); }
-inline Vec3 Norm(Vec3 a) {
-    const float l = Len(a);
-    return l > 1.0e-6f ? Vec3{a.x / l, a.y / l, a.z / l} : Vec3{0.0f, 0.0f, 1.0f};
-}
-
-struct Rng {
-    uint32_t s;
-    explicit Rng(uint32_t seed) : s(seed ? seed : 0x9E3779B9u) {}
-    uint32_t NextU32() {
-        uint32_t x = s;
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
-        s = x;
-        return x;
-    }
-    float Next01() { return float(NextU32() & 0x00FFFFFFu) * (1.0f / 16777216.0f); }
-    float Range(float lo, float hi) { return lo + (hi - lo) * Next01(); }
-};
 
 float HashTile2(int ix, int iy, int periodX, int periodY, uint32_t seed) {
     const int wx = ((ix % periodX) + periodX) % periodX;
@@ -106,305 +72,140 @@ float TileWorleyEdge(float u, float v, int cells, uint32_t seed) {
     return std::clamp(f2 - f1, 0.0f, 1.0f);
 }
 
-void RecomputeSmoothNormals(std::vector<RawMeshVertex>& verts, const std::vector<uint32_t>& idx) {
-    std::vector<Vec3> acc(verts.size());
-    for (size_t i = 0; i + 2 < idx.size(); i += 3) {
-        const uint32_t i0 = idx[i], i1 = idx[i + 1], i2 = idx[i + 2];
-        if (i0 >= verts.size() || i1 >= verts.size() || i2 >= verts.size()) continue;
-        const Vec3 p0{verts[i0].pos[0], verts[i0].pos[1], verts[i0].pos[2]};
-        const Vec3 p1{verts[i1].pos[0], verts[i1].pos[1], verts[i1].pos[2]};
-        const Vec3 p2{verts[i2].pos[0], verts[i2].pos[1], verts[i2].pos[2]};
-        const Vec3 fn = Cross(p1 - p0, p2 - p0);
-        acc[i0] = acc[i0] + fn;
-        acc[i1] = acc[i1] + fn;
-        acc[i2] = acc[i2] + fn;
-    }
-    for (size_t i = 0; i < verts.size(); ++i) {
-        const Vec3 n = Norm(acc[i]);
-        verts[i].normal[0] = n.x;
-        verts[i].normal[1] = n.y;
-        verts[i].normal[2] = n.z;
-    }
+uint8_t ToU8(float v) {
+    return static_cast<uint8_t>(std::clamp(v * 255.0f + 0.5f, 0.0f, 255.0f));
 }
 
-void FinalizeAsset(const std::string& name, const std::vector<RawMeshVertex>& srcVerts,
-                   const std::vector<uint32_t>& srcIdx, RawMeshAsset* outMesh) {
-    outMesh->name = name;
+RawPbrMaterial MakeDefaultMaterial(raw::worldgen::TerrainMaterialId id) {
+    RawPbrMaterial mat{};
+    mat.name = std::string("proc_") + raw::worldgen::GetMaterialName(id);
+    switch (id) {
+        case raw::worldgen::TerrainMaterialId::SnowPack:
+            mat.baseColorFactor[0] = 0.80f; mat.baseColorFactor[1] = 0.84f; mat.baseColorFactor[2] = 0.90f;
+            mat.roughnessFactor = 0.62f;
+            break;
+        case raw::worldgen::TerrainMaterialId::GlacialIce:
+            mat.baseColorFactor[0] = 0.34f; mat.baseColorFactor[1] = 0.72f; mat.baseColorFactor[2] = 0.86f;
+            mat.roughnessFactor = 0.14f;
+            break;
+        case raw::worldgen::TerrainMaterialId::BasaltColumn:
+            mat.baseColorFactor[0] = 0.14f; mat.baseColorFactor[1] = 0.15f; mat.baseColorFactor[2] = 0.18f;
+            mat.roughnessFactor = 0.38f;
+            break;
+        case raw::worldgen::TerrainMaterialId::MagmaFissure:
+            mat.baseColorFactor[0] = 0.16f; mat.baseColorFactor[1] = 0.12f; mat.baseColorFactor[2] = 0.11f;
+            mat.roughnessFactor = 0.30f;
+            mat.emissiveFactor[0] = 2.40f; mat.emissiveFactor[1] = 0.62f; mat.emissiveFactor[2] = 0.08f;
+            break;
+        case raw::worldgen::TerrainMaterialId::MossMeadow:
+            mat.baseColorFactor[0] = 0.14f; mat.baseColorFactor[1] = 0.28f; mat.baseColorFactor[2] = 0.12f;
+            mat.roughnessFactor = 0.78f;
+            break;
+        case raw::worldgen::TerrainMaterialId::RiverPebbleSand:
+            mat.baseColorFactor[0] = 0.34f; mat.baseColorFactor[1] = 0.32f; mat.baseColorFactor[2] = 0.29f;
+            mat.roughnessFactor = 0.48f;
+            break;
+        case raw::worldgen::TerrainMaterialId::ArcaneCrystal:
+            mat.baseColorFactor[0] = 0.46f; mat.baseColorFactor[1] = 0.36f; mat.baseColorFactor[2] = 0.92f;
+            mat.roughnessFactor = 0.10f;
+            mat.emissiveFactor[0] = 0.45f; mat.emissiveFactor[1] = 0.32f; mat.emissiveFactor[2] = 1.15f;
+            break;
+        case raw::worldgen::TerrainMaterialId::RockGranite:
+        default:
+            mat.baseColorFactor[0] = 0.28f; mat.baseColorFactor[1] = 0.29f; mat.baseColorFactor[2] = 0.31f;
+            mat.roughnessFactor = 0.78f;
+            break;
+    }
+    mat.baseColorFactor[3] = 1.0f;
+    return mat;
+}
+
+}  // namespace
+
+bool ConvertWorldGenMeshToRawMeshAsset(const raw::worldgen::ProceduralMesh& src, RawMeshAsset* outMesh) {
+    if (!outMesh || src.vertices.empty() || src.indices.empty() || src.meshlets.empty()) return false;
+
+    // Check whether src meshlets already fit RawMeshHost's 64v/64t limit; if so, copy directly!
+    bool fitsDirect = true;
+    for (const auto& ml : src.meshlets) {
+        if (ml.vertexCount > 64u || ml.triangleCount > 64u) {
+            fitsDirect = false;
+            break;
+        }
+    }
+
+    outMesh->name = src.name;
     outMesh->fromGlb = false;
     outMesh->vertices.clear();
     outMesh->indices.clear();
     outMesh->meshlets.clear();
     outMesh->materials.clear();
-    BuildRawMeshlets(srcVerts, srcIdx, &outMesh->vertices, &outMesh->indices, &outMesh->meshlets);
-}
+    outMesh->materials.push_back(MakeDefaultMaterial(src.primaryMaterial));
 
-void AppendBoughFrond(std::vector<RawMeshVertex>& verts, std::vector<uint32_t>& idx,
-                      Vec3 root, Vec3 dir, float lengthU, float widthU, float droopU, float flexBase) {
-    const Vec3 fwd = Norm({dir.x, dir.y, 0.0f});
-    const Vec3 right{-fwd.y, fwd.x, 0.0f};
-    const uint32_t base = static_cast<uint32_t>(verts.size());
-
-    // 4-ring tented 3D conifer bough volume (ridge spine + sloped needle aprons, zero flat billboard card)
-    constexpr int kRings = 4;
-    for (int r = 0; r < kRings; ++r) {
-        const float t = float(r) / float(kRings - 1);
-        const float taper = std::sin(t * kPi * 0.85f + 0.15f) * (1.0f - 0.55f * t);
-        const float hw = widthU * (0.45f + 0.75f * taper);
-        const float lift = widthU * 0.24f * (1.0f - 0.65f * t);
-        const float sag = -droopU * t * t;
-        const Vec3 spine = root + fwd * (lengthU * t) + Vec3{0.0f, 0.0f, dir.z * lengthU * t + sag};
-        const float uvY = std::clamp(flexBase * (1.0f - 0.65f * t), 0.0f, 1.0f);
-
-        const Vec3 pL = spine - right * hw;
-        const Vec3 pC = spine + Vec3{0.0f, 0.0f, lift};
-        const Vec3 pR = spine + right * hw;
-        const Vec3 nL = Norm((right * -0.55f) + Vec3{0.0f, 0.0f, 0.83f});
-        const Vec3 nC = Norm(fwd * 0.25f + Vec3{0.0f, 0.0f, 0.96f});
-        const Vec3 nR = Norm((right * 0.55f) + Vec3{0.0f, 0.0f, 0.83f});
-
-        verts.push_back({{pL.x, pL.y, pL.z}, {nL.x, nL.y, nL.z}, {0.0f, uvY}});
-        verts.push_back({{pC.x, pC.y, pC.z}, {nC.x, nC.y, nC.z}, {0.5f, uvY}});
-        verts.push_back({{pR.x, pR.y, pR.z}, {nR.x, nR.y, nR.z}, {1.0f, uvY}});
+    if (fitsDirect) {
+        outMesh->vertices.resize(src.vertices.size());
+        for (size_t i = 0; i < src.vertices.size(); ++i) {
+            std::memcpy(outMesh->vertices[i].pos, src.vertices[i].pos, 12u);
+            std::memcpy(outMesh->vertices[i].normal, src.vertices[i].normal, 12u);
+            std::memcpy(outMesh->vertices[i].uv, src.vertices[i].uv, 8u);
+        }
+        outMesh->indices = src.indices;
+        outMesh->meshlets.resize(src.meshlets.size());
+        for (size_t i = 0; i < src.meshlets.size(); ++i) {
+            outMesh->meshlets[i].vertexOffset = src.meshlets[i].vertexOffset;
+            outMesh->meshlets[i].triangleOffset = src.meshlets[i].triangleOffset;
+            outMesh->meshlets[i].vertexCount = src.meshlets[i].vertexCount;
+            outMesh->meshlets[i].triangleCount = src.meshlets[i].triangleCount;
+            std::memcpy(outMesh->meshlets[i].boundSphere, src.meshlets[i].boundSphere, 16u);
+            std::memcpy(outMesh->meshlets[i].normalCone, src.meshlets[i].normalCone, 16u);
+        }
+        return !outMesh->meshlets.empty();
     }
-    for (int r = 0; r < kRings - 1; ++r) {
-        const uint32_t a = base + uint32_t(r * 3);
-        const uint32_t b = base + uint32_t((r + 1) * 3);
-        // Left apron
-        idx.push_back(a + 0); idx.push_back(a + 1); idx.push_back(b + 1);
-        idx.push_back(a + 0); idx.push_back(b + 1); idx.push_back(b + 0);
-        // Right apron
-        idx.push_back(a + 1); idx.push_back(a + 2); idx.push_back(b + 2);
-        idx.push_back(a + 1); idx.push_back(b + 2); idx.push_back(b + 1);
+
+    // Re-meshletize from 64v/126t into 64v/64t for RawMeshHost compatibility.
+    std::vector<RawMeshVertex> flatV(src.vertices.size());
+    for (size_t i = 0; i < src.vertices.size(); ++i) {
+        std::memcpy(flatV[i].pos, src.vertices[i].pos, 12u);
+        std::memcpy(flatV[i].normal, src.vertices[i].normal, 12u);
+        std::memcpy(flatV[i].uv, src.vertices[i].uv, 8u);
     }
+    std::vector<uint32_t> flatI;
+    flatI.reserve(src.indices.size());
+    for (const auto& ml : src.meshlets) {
+        for (uint32_t t = 0; t < ml.triangleCount; ++t) {
+            const size_t base = size_t(ml.triangleOffset) + size_t(t) * 3u;
+            if (base + 2u >= src.indices.size()) break;
+            flatI.push_back(ml.vertexOffset + src.indices[base + 0u]);
+            flatI.push_back(ml.vertexOffset + src.indices[base + 1u]);
+            flatI.push_back(ml.vertexOffset + src.indices[base + 2u]);
+        }
+    }
+    BuildRawMeshlets(flatV, flatI, &outMesh->vertices, &outMesh->indices, &outMesh->meshlets);
+    return !outMesh->meshlets.empty();
 }
-
-uint8_t ToU8(float v) {
-    return static_cast<uint8_t>(std::clamp(v * 255.0f + 0.5f, 0.0f, 255.0f));
-}
-
-}  // namespace
 
 bool GenerateNordicSpruceTree(uint32_t seed, float heightU, float crownRadiusU, float snowLoad01,
                               RawMeshAsset* outMesh) {
-    if (!outMesh || heightU < 40.0f || crownRadiusU < 10.0f) return false;
-    Rng rng(seed ^ 0x51C0E11Au);
-    const float snow = std::clamp(snowLoad01, 0.0f, 1.0f);
-
-    std::vector<RawMeshVertex> verts;
-    std::vector<uint32_t> idx;
-
-    // 1. Organic curved & buttressed Nordic conifer trunk (8 radial sides x 9 vertical rings).
-    constexpr int kSides = 8;
-    constexpr int kRings = 9;
-    const float baseRad = std::clamp(crownRadiusU * 0.14f, 4.0f, 36.0f);
-    const float leanX = rng.Range(-heightU * 0.025f, heightU * 0.025f);
-    const float leanY = rng.Range(-heightU * 0.025f, heightU * 0.025f);
-    for (int r = 0; r < kRings; ++r) {
-        const float t = float(r) / float(kRings - 1);
-        const float z = t * heightU;
-        const float buttress = 1.0f + 0.55f * std::exp(-t * 9.0f);
-        const float rad = std::max(baseRad * (1.0f - 0.88f * t) * buttress, 1.2f);
-        const float cx = leanX * t * t;
-        const float cy = leanY * t * t;
-        for (int s = 0; s < kSides; ++s) {
-            const float ang = (float(s) / float(kSides)) * kTwoPi;
-            const float flute = 1.0f + 0.12f * std::exp(-t * 7.0f) * std::cos(ang * 4.0f + float(seed & 15u));
-            const float nx = std::cos(ang);
-            const float ny = std::sin(ang);
-            const Vec3 p{cx + nx * rad * flute, cy + ny * rad * flute, z};
-            const Vec3 n = Norm({nx, ny, 0.14f});
-            verts.push_back({{p.x, p.y, p.z}, {n.x, n.y, n.z}, {float(s) / float(kSides), 1.0f - t}});
-        }
-    }
-    for (int r = 0; r < kRings - 1; ++r) {
-        for (int s = 0; s < kSides; ++s) {
-            const int sNext = (s + 1) % kSides;
-            const uint32_t a = uint32_t(r * kSides + s);
-            const uint32_t b = uint32_t(r * kSides + sNext);
-            const uint32_t c = uint32_t((r + 1) * kSides + sNext);
-            const uint32_t d = uint32_t((r + 1) * kSides + s);
-            idx.push_back(a); idx.push_back(b); idx.push_back(c);
-            idx.push_back(a); idx.push_back(c); idx.push_back(d);
-        }
-    }
-
-    // 2. Golden-angle phyllotaxis conifer bough tiers (18 primary whorled boughs from 22%..96% height).
-    constexpr int kBoughs = 18;
-    for (int bi = 0; bi < kBoughs; ++bi) {
-        const float u = float(bi) / float(kBoughs - 1);
-        const float tH = 0.22f + 0.74f * u;
-        const float z = tH * heightU;
-        const float cx = leanX * tH * tH;
-        const float cy = leanY * tH * tH;
-        const float ang = float(bi) * kGoldenAngle + rng.Range(-0.18f, 0.18f);
-        const float envelope = std::pow(std::max(1.0f - u * 0.92f, 0.08f), 0.78f);
-        const float len = crownRadiusU * (0.28f + 0.78f * envelope) * rng.Range(0.88f, 1.12f);
-        const float wid = len * 0.42f;
-        const float pitch = (-0.20f + 0.34f * u) - 0.18f * snow;
-        const float droop = len * (0.16f + 0.14f * snow);
-        const Vec3 dir = Norm({std::cos(ang), std::sin(ang), pitch});
-        const float trunkR = std::max(baseRad * (1.0f - 0.88f * tH), 1.5f);
-        const Vec3 root{cx + dir.x * trunkR * 0.7f, cy + dir.y * trunkR * 0.7f, z};
-        const float flexBase = std::clamp(1.0f - tH * 0.65f, 0.15f, 0.95f);
-        AppendBoughFrond(verts, idx, root, dir, len, wid, droop, flexBase);
-    }
-
-    FinalizeAsset("proc_nordic_spruce", verts, idx, outMesh);
-    RawPbrMaterial mat{};
-    mat.name = "proc_nordic_spruce_mat";
-    mat.baseColorFactor[0] = 0.14f; mat.baseColorFactor[1] = 0.24f;
-    mat.baseColorFactor[2] = 0.12f; mat.baseColorFactor[3] = 1.0f;
-    mat.roughnessFactor = 0.82f;
-    outMesh->materials.push_back(mat);
-    return !outMesh->meshlets.empty();
+    raw::worldgen::ProceduralMesh pm{};
+    if (!raw::worldgen::BuildMultiTierConifer(seed, heightU, crownRadiusU, snowLoad01, 64u, &pm)) return false;
+    pm.name = "proc_nordic_spruce";
+    return ConvertWorldGenMeshToRawMeshAsset(pm, outMesh);
 }
 
 bool GenerateNordicBoulder(uint32_t seed, float radiusU, float strataTilt, uint32_t fracturePlanes,
                            RawMeshAsset* outMesh) {
-    if (!outMesh || radiusU < 4.0f) return false;
-    Rng rng(seed ^ 0xB01D3877u);
-    const uint32_t nPlanes = std::clamp(fracturePlanes, 4u, 24u);
-
-    // Base icosahedron (12 verts, 20 tris) subdivided twice -> 162 verts, 320 tris.
-    const float phi = (1.0f + std::sqrt(5.0f)) * 0.5f;
-    std::vector<Vec3> pos = {
-        Norm({-1, phi, 0}), Norm({1, phi, 0}), Norm({-1, -phi, 0}), Norm({1, -phi, 0}),
-        Norm({0, -1, phi}), Norm({0, 1, phi}), Norm({0, -1, -phi}), Norm({0, 1, -phi}),
-        Norm({phi, 0, -1}), Norm({phi, 0, 1}), Norm({-phi, 0, -1}), Norm({-phi, 0, 1}),
-    };
-    std::vector<uint32_t> idx = {
-        0,11,5, 0,5,1, 0,1,7, 0,7,10, 0,10,11,
-        1,5,9, 5,11,4, 11,10,2, 10,7,6, 7,1,8,
-        3,9,4, 3,4,2, 3,2,6, 3,6,8, 3,8,9,
-        4,9,5, 2,4,11, 6,2,10, 8,6,7, 9,8,1,
-    };
-
-    for (int sub = 0; sub < 2; ++sub) {
-        std::map<std::pair<uint32_t, uint32_t>, uint32_t> midCache;
-        auto getMid = [&](uint32_t a, uint32_t b) -> uint32_t {
-            const auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
-            if (auto it = midCache.find(key); it != midCache.end()) return it->second;
-            const Vec3 m = Norm((pos[a] + pos[b]) * 0.5f);
-            const uint32_t id = static_cast<uint32_t>(pos.size());
-            pos.push_back(m);
-            midCache.emplace(key, id);
-            return id;
-        };
-        std::vector<uint32_t> nextIdx;
-        nextIdx.reserve(idx.size() * 4);
-        for (size_t i = 0; i + 2 < idx.size(); i += 3) {
-            const uint32_t a = idx[i], b = idx[i + 1], c = idx[i + 2];
-            const uint32_t ab = getMid(a, b), bc = getMid(b, c), ca = getMid(c, a);
-            nextIdx.insert(nextIdx.end(), {a, ab, ca, b, bc, ab, c, ca, bc, ab, bc, ca});
-        }
-        idx = std::move(nextIdx);
-    }
-
-    // Generate deterministic Voronoi basalt fracture half-spaces.
-    struct Plane { Vec3 n; float d; };
-    std::vector<Plane> planes;
-    planes.reserve(nPlanes);
-    for (uint32_t i = 0; i < nPlanes; ++i) {
-        const float z = rng.Range(-0.92f, 0.92f);
-        const float a = rng.Range(0.0f, kTwoPi);
-        const float r = std::sqrt(std::max(1.0f - z * z, 0.0f));
-        planes.push_back({Norm({r * std::cos(a), r * std::sin(a), z}), rng.Range(0.68f, 0.96f)});
-    }
-
-    const Vec3 strataAxis = Norm({std::sin(strataTilt), 0.18f, std::cos(strataTilt)});
-    const float sx = rng.Range(0.85f, 1.35f), sy = rng.Range(0.85f, 1.30f), sz = rng.Range(0.62f, 0.95f);
-
-    std::vector<RawMeshVertex> verts(pos.size());
-    for (size_t i = 0; i < pos.size(); ++i) {
-        Vec3 p = pos[i];
-        float rScale = 1.0f;
-        for (const auto& pl : planes) {
-            const float proj = Dot(p, pl.n);
-            if (proj > pl.d) {
-                rScale = std::min(rScale, pl.d / std::max(proj, 0.1f));
-            }
-        }
-        const float sCoord = Dot(p, strataAxis);
-        const float ledge = 0.045f * std::sin(sCoord * 11.0f + 0.5f * std::cos(p.x * 5.0f));
-        p = {p.x * radiusU * rScale * sx * (1.0f + ledge),
-             p.y * radiusU * rScale * sy * (1.0f + ledge),
-             p.z * radiusU * rScale * sz};
-        // Flatten underside slightly so boulders seat firmly into Skyrim terrain.
-        if (p.z < -radiusU * 0.45f) p.z = -radiusU * 0.45f + (p.z + radiusU * 0.45f) * 0.25f;
-        verts[i].pos[0] = p.x; verts[i].pos[1] = p.y; verts[i].pos[2] = p.z;
-        verts[i].uv[0] = 0.5f + std::atan2(pos[i].y, pos[i].x) / kTwoPi;
-        verts[i].uv[1] = 0.5f - std::asin(std::clamp(pos[i].z, -1.0f, 1.0f)) / kPi;
-    }
-    RecomputeSmoothNormals(verts, idx);
-    FinalizeAsset("proc_nordic_boulder", verts, idx, outMesh);
-    RawPbrMaterial mat{};
-    mat.name = "proc_nordic_granite_mat";
-    mat.baseColorFactor[0] = 0.28f; mat.baseColorFactor[1] = 0.29f;
-    mat.baseColorFactor[2] = 0.31f; mat.baseColorFactor[3] = 1.0f;
-    mat.roughnessFactor = 0.78f;
-    outMesh->materials.push_back(mat);
-    return !outMesh->meshlets.empty();
+    raw::worldgen::ProceduralMesh pm{};
+    if (!raw::worldgen::BuildAlpineBoulder(seed, radiusU, strataTilt, fracturePlanes, 64u, &pm)) return false;
+    pm.name = "proc_nordic_boulder";
+    return ConvertWorldGenMeshToRawMeshAsset(pm, outMesh);
 }
 
 bool GenerateAlpineGrassClump(uint32_t seed, uint32_t bladeCount, float heightU,
                               RawMeshAsset* outMesh) {
-    if (!outMesh || bladeCount == 0u || heightU < 4.0f) return false;
-    Rng rng(seed ^ 0x6AA55C10u);
-    const uint32_t blades = std::clamp(bladeCount, 3u, 32u);
-    constexpr uint32_t kSegs = 4u;
-
-    std::vector<RawMeshVertex> verts;
-    std::vector<uint32_t> idx;
-    verts.reserve(size_t(blades) * (kSegs * 2 + 1));
-    idx.reserve(size_t(blades) * (kSegs * 6 - 3));
-
-    for (uint32_t b = 0; b < blades; ++b) {
-        const float ang = float(b) * kGoldenAngle + rng.Range(-0.22f, 0.22f);
-        const float radOff = rng.Range(0.0f, heightU * 0.45f);
-        const float h = heightU * rng.Range(0.65f, 1.18f);
-        const float baseW = std::max(heightU * 0.085f, 0.8f);
-        const float lean = rng.Range(0.28f, 0.78f) * h;
-        const Vec3 dir{std::cos(ang), std::sin(ang), 0.0f};
-        const Vec3 side{-dir.y, dir.x, 0.0f};
-        const Vec3 root{dir.x * radOff, dir.y * radOff, 0.0f};
-        const uint32_t v0 = static_cast<uint32_t>(verts.size());
-
-        for (uint32_t s = 0; s < kSegs; ++s) {
-            const float t = float(s) / float(kSegs);
-            const float w = baseW * (1.0f - t * 0.88f);
-            const Vec3 ctr = root + dir * (lean * t * t) + Vec3{0.0f, 0.0f, h * t};
-            const Vec3 tang = Norm(dir * (2.0f * lean * t) + Vec3{0.0f, 0.0f, h});
-            const Vec3 nrm = Norm(Cross(side, tang));
-            const float uvY = 1.0f - t;  // 1 at anchored root, 0 at flexible tip (RawMesh.hlsl convention)
-            const Vec3 pL = ctr - side * (0.5f * w);
-            const Vec3 pR = ctr + side * (0.5f * w);
-            verts.push_back({{pL.x, pL.y, pL.z}, {nrm.x, nrm.y, nrm.z}, {0.0f, uvY}});
-            verts.push_back({{pR.x, pR.y, pR.z}, {nrm.x, nrm.y, nrm.z}, {1.0f, uvY}});
-        }
-        // Tapered pointed blade tip
-        const Vec3 tip = root + dir * lean + Vec3{0.0f, 0.0f, h};
-        const Vec3 tipN = Norm(dir * 0.35f + Vec3{0.0f, 0.0f, 0.94f});
-        const uint32_t vTip = static_cast<uint32_t>(verts.size());
-        verts.push_back({{tip.x, tip.y, tip.z}, {tipN.x, tipN.y, tipN.z}, {0.5f, 0.0f}});
-
-        for (uint32_t s = 0; s + 1 < kSegs; ++s) {
-            const uint32_t a = v0 + s * 2u;
-            const uint32_t c = v0 + (s + 1u) * 2u;
-            idx.push_back(a + 0); idx.push_back(a + 1); idx.push_back(c + 1);
-            idx.push_back(a + 0); idx.push_back(c + 1); idx.push_back(c + 0);
-        }
-        const uint32_t topBase = v0 + (kSegs - 1u) * 2u;
-        idx.push_back(topBase + 0); idx.push_back(topBase + 1); idx.push_back(vTip);
-    }
-
-    FinalizeAsset("proc_alpine_grass", verts, idx, outMesh);
-    RawPbrMaterial mat{};
-    mat.name = "proc_alpine_grass_mat";
-    mat.baseColorFactor[0] = 0.16f; mat.baseColorFactor[1] = 0.30f;
-    mat.baseColorFactor[2] = 0.11f; mat.baseColorFactor[3] = 1.0f;
-    mat.roughnessFactor = 0.68f;
-    outMesh->materials.push_back(mat);
-    return !outMesh->meshlets.empty();
+    raw::worldgen::ProceduralMesh pm{};
+    if (!raw::worldgen::BuildAlpineGrassClump(seed, bladeCount, heightU, 64u, &pm)) return false;
+    pm.name = "proc_alpine_grass";
+    return ConvertWorldGenMeshToRawMeshAsset(pm, outMesh);
 }
 
 bool GenerateOceanTileMesh(uint32_t gridN, float spanU, RawMeshAsset* outMesh) {
@@ -434,8 +235,58 @@ bool GenerateOceanTileMesh(uint32_t gridN, float spanU, RawMeshAsset* outMesh) {
             idx.push_back(a); idx.push_back(d); idx.push_back(c);
         }
     }
-    FinalizeAsset("proc_ocean_tile", verts, idx, outMesh);
+    outMesh->name = "proc_ocean_tile";
+    outMesh->fromGlb = false;
+    outMesh->materials.clear();
+    BuildRawMeshlets(verts, idx, &outMesh->vertices, &outMesh->indices, &outMesh->meshlets);
     return !outMesh->meshlets.empty();
+}
+
+bool GenerateGlacialIceArch(uint32_t seed, float spanU, float heightU, float thicknessU,
+                            RawMeshAsset* outMesh) {
+    raw::worldgen::ProceduralMesh pm{};
+    if (!raw::worldgen::BuildGlacialIceArch(seed, spanU, heightU, thicknessU, 64u, &pm)) return false;
+    return ConvertWorldGenMeshToRawMeshAsset(pm, outMesh);
+}
+
+bool GenerateNordicSnowDrift(uint32_t seed, float lengthU, float widthU, float heightU,
+                             RawMeshAsset* outMesh) {
+    raw::worldgen::ProceduralMesh pm{};
+    if (!raw::worldgen::BuildNordicSnowDrift(seed, lengthU, widthU, heightU, 64u, &pm)) return false;
+    return ConvertWorldGenMeshToRawMeshAsset(pm, outMesh);
+}
+
+bool GenerateBasaltColumnCluster(uint32_t seed, uint32_t columnCount, float radiusU, float maxHeightU,
+                                 RawMeshAsset* outMesh) {
+    raw::worldgen::ProceduralMesh pm{};
+    if (!raw::worldgen::BuildHexagonalBasaltCluster(seed, columnCount, radiusU, maxHeightU, 64u, &pm)) return false;
+    return ConvertWorldGenMeshToRawMeshAsset(pm, outMesh);
+}
+
+bool GenerateVolcanicVent(uint32_t seed, float radiusU, float heightU, RawMeshAsset* outMesh) {
+    raw::worldgen::ProceduralMesh pm{};
+    if (!raw::worldgen::BuildVolcanicVent(seed, radiusU, heightU, 64u, &pm)) return false;
+    return ConvertWorldGenMeshToRawMeshAsset(pm, outMesh);
+}
+
+bool GenerateCrystalMonolith(uint32_t seed, float radiusU, float heightU, uint32_t shardCount,
+                             RawMeshAsset* outMesh) {
+    raw::worldgen::ProceduralMesh pm{};
+    if (!raw::worldgen::BuildCrystalMonolith(seed, radiusU, heightU, shardCount, 64u, &pm)) return false;
+    return ConvertWorldGenMeshToRawMeshAsset(pm, outMesh);
+}
+
+bool GenerateProceduralTerrainChunk(int32_t chunkX, int32_t chunkY, uint32_t lodLevel, uint32_t seed,
+                                    uint8_t neighborCoarserMask, RawMeshAsset* outMesh) {
+    raw::worldgen::TerrainConfig cfg{};
+    cfg.seed = seed;
+    raw::worldgen::TerrainChunkData chunk{};
+    if (!raw::worldgen::GenerateBiomeTerrainChunk(chunkX, chunkY, lodLevel, cfg, neighborCoarserMask, &chunk)) {
+        return false;
+    }
+    raw::worldgen::ProceduralMesh pm{};
+    if (!raw::worldgen::BuildTerrainChunkMesh(chunk, 64u, &pm)) return false;
+    return ConvertWorldGenMeshToRawMeshAsset(pm, outMesh);
 }
 
 bool SynthesizeProceduralPbrTexture(ProceduralTexKind kind, uint32_t width, uint32_t height,
@@ -444,11 +295,13 @@ bool SynthesizeProceduralPbrTexture(ProceduralTexKind kind, uint32_t width, uint
     outTex->width = width;
     outTex->height = height;
     outTex->rgba8.resize(size_t(width) * height * 4u);
-    static const char* kNames[5] = {
+    static const char* kNames[10] = {
         "proc_bark_furrow", "proc_pine_needles", "proc_granite_strata",
-        "proc_snow_sastrugi", "proc_cellular_foam"
+        "proc_snow_sastrugi", "proc_cellular_foam", "proc_glacial_ice_fracture",
+        "proc_volcanic_basalt_magma", "proc_hexagonal_basalt", "proc_crystal_quartz_facet",
+        "proc_mossy_granite_cobble"
     };
-    const uint32_t ki = std::min<uint32_t>(static_cast<uint32_t>(kind), 4u);
+    const uint32_t ki = std::min<uint32_t>(static_cast<uint32_t>(kind), 9u);
     outTex->name = kNames[ki];
 
     for (uint32_t y = 0; y < height; ++y) {
@@ -457,7 +310,6 @@ bool SynthesizeProceduralPbrTexture(ProceduralTexKind kind, uint32_t width, uint
             const float u = (float(x) + 0.5f) / float(width);
             float r = 0.5f, g = 0.5f, b = 0.5f, a = 0.5f;
             if (kind == ProceduralTexKind::BarkFurrow) {
-                // Anisotropic vertical conifer bark plates + dark fissure cracks
                 const float warp = (TileFbm(u, v, 4, 4, seed + 17u, 3) - 0.5f) * 0.08f;
                 const float ridge = TileFbm(u + warp, v, 24, 4, seed + 31u, 4);
                 const float crack = 1.0f - std::clamp(std::abs(ridge - 0.48f) * 7.5f, 0.0f, 1.0f);
@@ -467,7 +319,6 @@ bool SynthesizeProceduralPbrTexture(ProceduralTexKind kind, uint32_t width, uint
                 b = 0.11f * plate + 0.025f;
                 a = plate;
             } else if (kind == ProceduralTexKind::PineNeedles) {
-                // Layered boreal needle cluster micro-albedo + alpha/height density
                 const float n1 = TileFbm(u, v, 12, 12, seed + 53u, 4);
                 const float fine = TileValueNoise(u, v, 32, 8, seed + 71u);
                 const float dens = std::clamp(n1 * 0.65f + fine * 0.35f, 0.0f, 1.0f);
@@ -476,14 +327,12 @@ bool SynthesizeProceduralPbrTexture(ProceduralTexKind kind, uint32_t width, uint
                 b = 0.07f + 0.08f * dens;
                 a = dens;
             } else if (kind == ProceduralTexKind::GraniteStrata) {
-                // Sedimentary horizontal bands + crystalline mineral grain + fracture edge
                 const float band = 0.5f + 0.5f * std::sin((v + TileFbm(u, v, 4, 4, seed + 97u, 3) * 0.14f) * kTwoPi * 4.0f);
                 const float grain = TileFbm(u, v, 16, 16, seed + 131u, 4);
                 const float edge = TileWorleyEdge(u, v, 6, seed + 163u);
                 const float val = std::clamp(0.28f + 0.26f * band + 0.24f * grain - (1.0f - std::min(edge * 4.0f, 1.0f)) * 0.18f, 0.05f, 0.92f);
                 r = val * 0.96f; g = val * 0.98f; b = val * 1.03f; a = val;
             } else if (kind == ProceduralTexKind::SnowSastrugi) {
-                // Wind-sculpted sastrugi snow ripples + pinpoint crystalline sparkle mask in A
                 const float dune = TileFbm(u, v, 4, 12, seed + 211u, 4);
                 const float glint = TileValueNoise(u, v, 48, 48, seed + 257u);
                 const float h = std::clamp(0.65f + 0.32f * (dune - 0.5f), 0.25f, 0.98f);
@@ -491,14 +340,61 @@ bool SynthesizeProceduralPbrTexture(ProceduralTexKind kind, uint32_t width, uint
                 g = 0.78f + 0.16f * h;
                 b = 0.85f + 0.13f * h;
                 a = std::clamp(h * 0.7f + (glint > 0.88f ? 0.30f : 0.0f), 0.0f, 1.0f);
-            } else {
-                // Open-cell dual-scale Voronoi cellular foam web (24Ronin / EasyWaterscape)
+            } else if (kind == ProceduralTexKind::CellularFoam) {
                 const float w1 = TileWorleyEdge(u, v, 8, seed + 307u);
                 const float w2 = TileWorleyEdge(u + 0.37f, v + 0.19f, 16, seed + 349u);
                 const float lace1 = 1.0f - std::clamp((w1 - 0.02f) / 0.22f, 0.0f, 1.0f);
                 const float lace2 = 1.0f - std::clamp((w2 - 0.015f) / 0.18f, 0.0f, 1.0f);
                 const float foam = std::clamp(std::max(lace1, lace2 * 0.72f), 0.0f, 1.0f);
                 r = 0.92f * foam; g = 0.96f * foam; b = 1.00f * foam; a = foam;
+            } else if (kind == ProceduralTexKind::GlacialIceFracture) {
+                // Deep glacial turquoise absorption + crisp internal Voronoi fracture veins (zero pulse)
+                const float crack1 = 1.0f - std::clamp(TileWorleyEdge(u, v, 6, seed + 401u) * 6.5f, 0.0f, 1.0f);
+                const float crack2 = 1.0f - std::clamp(TileWorleyEdge(u + 0.23f, v + 0.41f, 12, seed + 433u) * 8.0f, 0.0f, 1.0f);
+                const float depth = TileFbm(u, v, 6, 6, seed + 457u, 4);
+                const float vein = std::clamp(crack1 * 0.85f + crack2 * 0.45f, 0.0f, 1.0f);
+                r = std::clamp(0.14f + 0.26f * depth + 0.56f * vein, 0.0f, 1.0f);
+                g = std::clamp(0.46f + 0.28f * depth + 0.34f * vein, 0.0f, 1.0f);
+                b = std::clamp(0.62f + 0.26f * depth + 0.24f * vein, 0.0f, 1.0f);
+                a = std::clamp(0.18f + 0.65f * vein, 0.08f, 0.95f);
+            } else if (kind == ProceduralTexKind::VolcanicBasaltMagma) {
+                // Cooling dark basalt plates with incandescent 2400K blackbody magma fissures
+                const float edge = TileWorleyEdge(u, v, 5, seed + 503u);
+                const float warp = TileFbm(u, v, 8, 8, seed + 541u, 3);
+                const float hot = 1.0f - std::clamp((edge + (warp - 0.5f) * 0.06f) * 5.2f, 0.0f, 1.0f);
+                const float crust = 0.09f + 0.11f * warp;
+                r = std::clamp(crust + hot * 0.92f, 0.0f, 1.0f);
+                g = std::clamp(crust * 0.92f + hot * hot * 0.58f, 0.0f, 1.0f);
+                b = std::clamp(crust * 0.95f + hot * hot * hot * 0.18f, 0.0f, 1.0f);
+                a = hot; // Emissive heat mask in alpha
+            } else if (kind == ProceduralTexKind::HexagonalBasalt) {
+                // Dark glassy volcanic obsidian-basalt column faces with crisp beveled joints
+                const float joint = TileWorleyEdge(u, v, 7, seed + 601u);
+                const float grain = TileFbm(u, v, 14, 14, seed + 641u, 4);
+                const float bevel = std::clamp(joint * 5.5f, 0.0f, 1.0f);
+                const float val = (0.11f + 0.14f * grain) * (0.45f + 0.55f * bevel);
+                r = val * 0.94f; g = val * 0.98f; b = val * 1.08f;
+                a = std::clamp(0.28f + 0.45f * (1.0f - bevel), 0.10f, 0.92f);
+            } else if (kind == ProceduralTexKind::CrystalQuartzFacet) {
+                // Sharp Voronoi crystal facet planes with amethyst/cyan refractive dispersion tint
+                const float fEdge = TileWorleyEdge(u, v, 6, seed + 701u);
+                const float sheen = TileFbm(u, v, 10, 10, seed + 739u, 3);
+                const float bevelGlint = 1.0f - std::clamp(fEdge * 7.5f, 0.0f, 1.0f);
+                r = std::clamp(0.32f + 0.34f * sheen + 0.36f * bevelGlint, 0.0f, 1.0f);
+                g = std::clamp(0.26f + 0.30f * (1.0f - sheen) + 0.40f * bevelGlint, 0.0f, 1.0f);
+                b = std::clamp(0.68f + 0.24f * sheen + 0.18f * bevelGlint, 0.0f, 1.0f);
+                a = std::clamp(0.12f + 0.72f * bevelGlint, 0.05f, 1.0f);
+            } else {
+                // MossyGraniteCobble: wet river cobblestone + boreal moss crevices
+                const float cobble = TileWorleyEdge(u, v, 9, seed + 809u);
+                const float moss = TileFbm(u, v, 10, 10, seed + 853u, 4);
+                const float crevice = 1.0f - std::clamp(cobble * 4.2f, 0.0f, 1.0f);
+                const float mossW = std::clamp(crevice * 0.85f + (moss - 0.42f) * 0.75f, 0.0f, 1.0f);
+                const float stone = 0.24f + 0.24f * moss;
+                r = stone * (1.0f - mossW) + (0.12f + 0.08f * moss) * mossW;
+                g = stone * 1.02f * (1.0f - mossW) + (0.26f + 0.14f * moss) * mossW;
+                b = stone * 1.04f * (1.0f - mossW) + (0.10f + 0.06f * moss) * mossW;
+                a = std::clamp(1.0f - crevice * 0.7f, 0.10f, 1.0f);
             }
             const size_t off = (size_t(y) * width + x) * 4u;
             outTex->rgba8[off + 0] = ToU8(r);

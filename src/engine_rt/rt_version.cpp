@@ -19,6 +19,8 @@ uint32_t g_packed = 0;
 raw::versions::EngineProfile g_profile{};
 std::set<std::string> g_missing;
 std::mutex g_missingM;
+bool g_offsetsVerified = false;
+StartupOffsetVerification g_lastVerify{};
 
 struct SecRange { uint32_t begin = 0, end = 0; };
 
@@ -463,6 +465,70 @@ uint32_t ResolveDeferredSingletons(const Image& img) {
         }
     }
     return resolved;
+}
+
+bool VerifyStartupBinaryOffsets(const Image& img, std::string* reportOut) {
+    // Build verification rules strictly from loaded table entries so every struct offset is cross-checked
+    // against real x86-64 machine code in the running executable before any live memory read/write.
+    const OffsetVerifyRule kRules[] = {
+        {"TESObjectCELL::cellFlags",          Addr("fn:TESObjectCELL::GetExteriorWaterHeight"), Off("off:TESObjectCELL::cellFlags"),          2, false},
+        {"TESObjectCELL::waterHeight",        Addr("fn:TESObjectCELL::GetExteriorWaterHeight"), Off("off:TESObjectCELL::waterHeight"),        4, true},
+        {"TESObjectCELL::worldSpace",         Addr("fn:TESObjectCELL::GetExteriorWaterHeight"), Off("off:TESObjectCELL::worldSpace"),         8, false},
+        {"TESObjectCELL::exteriorData",       Addr("fn:TESObjectCELL::GetGridX"),               Off("off:TESObjectCELL::exteriorData"),       8, false},
+        {"TESWorldSpace::parentWorld",        Addr("fn:TESWorldSpace::GetDefaultLandHeight"),   Off("off:TESWorldSpace::parentWorld"),        8, false},
+        {"TESWorldSpace::parentUseFlags",     Addr("fn:TESWorldSpace::GetDefaultLandHeight"),   Off("off:TESWorldSpace::parentUseFlags"),     1, false},
+        {"TESWorldSpace::defaultLandHeight",  Addr("fn:TESWorldSpace::GetDefaultLandHeight"),   Off("off:TESWorldSpace::defaultLandHeight"),  4, true},
+        {"TESWorldSpace::defaultWaterHeight", Addr("fn:TESWorldSpace::GetDefaultWaterHeight"),  Off("off:TESWorldSpace::defaultWaterHeight"), 4, true},
+        {"TESObjectLAND::loadedData",         Addr("fn:TESObjectLAND::GetWorldX"),              Off("off:TESObjectLAND::loadedData"),         8, false},
+        {"LoadedLandData::cellX",             Addr("fn:TESObjectLAND::GetWorldX"),              Off("off:LoadedLandData::cellX"),             4, false},
+        {"LoadedLandData::cellY",             Addr("fn:TESObjectLAND::GetWorldY"),              Off("off:LoadedLandData::cellY"),             4, false},
+        {"LoadedLandData::heights",           Addr("fn:TESObjectLAND::GetHeight"),              Off("off:LoadedLandData::heights"),           4, true},
+        {"LoadedLandData::baseHeight",        Addr("fn:TESObjectLAND::GetHeight"),              Off("off:LoadedLandData::baseHeight"),        4, true},
+        {"LoadedLandData::minHeight",         Addr("fn:TESObjectLAND::GetMinMaxHeight"),        Off("off:LoadedLandData::minHeight"),         4, true},
+        {"LoadedLandData::maxHeight",         Addr("fn:TESObjectLAND::GetMinMaxHeight"),        Off("off:LoadedLandData::maxHeight"),         4, true},
+        {"GridCellArray::length",             Addr("fn:GridArray::DetachAll"),                  Off("off:GridCellArray::length"),             4, false},
+        {"NiCamera::frustumNear",             Addr("fn:NiCamera::UpdateWorldData"),             Off("off:NiCamera::frustumNear"),             4, true},
+        {"NiCamera::frustumFar",              Addr("fn:NiCamera::UpdateWorldData"),             Off("off:NiCamera::frustumFar"),              4, true},
+        {"ScrapHeap::baseAddress",            Addr("fn:ScrapHeap::ContainsBlock"),              Off("off:ScrapHeap::baseAddress"),            8, false},
+        {"ScrapHeap::endAddress",             Addr("fn:ScrapHeap::ContainsBlock"),              Off("off:ScrapHeap::endAddress"),             8, false},
+    };
+    g_lastVerify = VerifyCriticalOffsets(img, kRules, sizeof(kRules) / sizeof(kRules[0]));
+    // Fail-closed: if ANY rule failed, lock out all struct mutations!
+    g_offsetsVerified = !g_lastVerify.failClosed && (g_lastVerify.checked == 0 || g_lastVerify.passed == g_lastVerify.checked);
+
+    if (reportOut) {
+        char buf[320];
+        std::snprintf(buf, sizeof buf,
+                      "zydis-verify: %u/%u binary struct offsets verified (%s)",
+                      g_lastVerify.passed, g_lastVerify.checked,
+                      g_lastVerify.failClosed ? "FAIL-CLOSED: WRITES LOCKED" : "OK");
+        std::string s(buf);
+        if (g_lastVerify.failClosed) {
+            s += " [mismatches:";
+            for (const auto& r : g_lastVerify.results) {
+                if (!r.matched) {
+                    char m[128];
+                    std::snprintf(m, sizeof m, " %s@fn=0x%X(want+0x%X)", r.name.c_str(), r.fnRva, r.expectedOffset);
+                    s += m;
+                }
+            }
+            s += "]";
+        }
+        *reportOut = std::move(s);
+    }
+    return g_offsetsVerified;
+}
+
+bool AreBinaryOffsetsVerified() { return g_offsetsVerified; }
+
+std::string BinaryOffsetVerificationJson() {
+    char buf[256];
+    std::snprintf(buf, sizeof buf,
+                  "{\"cmd\":\"verify_offsets\",\"checked\":%u,\"passed\":%u,\"failed\":%u,\"fail_closed\":%s,\"writes_allowed\":%s}",
+                  g_lastVerify.checked, g_lastVerify.passed, g_lastVerify.failed,
+                  g_lastVerify.failClosed ? "true" : "false",
+                  g_offsetsVerified ? "true" : "false");
+    return buf;
 }
 
 }  // namespace raw::rt

@@ -37,8 +37,29 @@ float2 depthPlaneSlope(int2 p, float z) {
     return float2(abs(zr) < abs(zl) ? zr : zl, abs(zd) < abs(zu) ? zd : zu);
 }
 
-float4 meanAround(int2 p, float z, float2 zSlope, int r, out float rest, out float4 stdDev) {
+float3 skyRgbToYCoCg(float3 c) {
+    return float3(0.25f * c.r + 0.5f * c.g + 0.25f * c.b,
+                  0.5f * c.r - 0.5f * c.b,
+                 -0.25f * c.r + 0.5f * c.g - 0.25f * c.b);
+}
+
+float3 skyYCoCgToRgb(float3 y) {
+    return max(float3(y.x + y.y - y.z, y.x + y.z, y.x - y.y - y.z), 0.0f.xxx);
+}
+
+// Ray-to-mean YCoCg variance clipping (Playdead/Karis/superframe): clips out-of-hull temporal GI history along
+// the ray toward neighborhood mean instead of corner clamping (kills chroma ghost trails cleanly!).
+float3 skyClipYCoCg(float3 meanY, float3 stdY, float gamma, float3 histY) {
+    const float3 eClip = max(stdY * gamma, float3(0.025f, 0.020f, 0.020f));
+    const float3 vClip = histY - meanY;
+    const float3 aUnit = abs(vClip / eClip);
+    const float ma = max(aUnit.x, max(aUnit.y, aUnit.z));
+    return ma > 1.0f ? (meanY + vClip / ma) : histY;
+}
+
+float4 meanAround(int2 p, float z, float2 zSlope, int r, out float rest, out float4 stdDev, out float3 meanY, out float3 stdY) {
     float4 s = 0.0f, s2 = 0.0f;
+    float3 sy1 = 0.0f.xxx, sy2 = 0.0f.xxx;
     float w = 0.0f, rs = 0.0f, rw = 0.0f, rv, rh;
     rest = 1.0f;
     const float invPlane = 1.0f / max(z * 0.015f, 1.8f);
@@ -51,10 +72,17 @@ float4 meanAround(int2 p, float z, float2 zSlope, int r, out float rest, out flo
             const float pd = abs(viewZOf(dq) - zPred) * invPlane;
             const float k = exp(-pd * pd);
             float4 tap = decodeRaw(Raw[q], rv, rh);
-            // Preserve rich sunlit grass/snow/hearth indirect bounce energy while rejecting extreme fireflies (>3.5 HDR).
+            // Smooth energy-conserving firefly shoulder (knee 0.95, ceiling 1.80): preserves rich sunlit grass/snow/hearth
+            // indirect color bleed while stopping single-ray emissive fireflies from injecting runaway GI glow into history!
             const float tapMax = max(tap.r, max(tap.g, tap.b));
-            if (tapMax > 3.50f) { tap.rgb *= 3.50f / tapMax; }
-            s += k * tap; s2 += k * (tap * tap); w += k;
+            if (tapMax > 0.95f) {
+                const float softMax = 0.95f + (tapMax - 0.95f) / (1.0f + (tapMax - 0.95f) * 1.15f);
+                tap.rgb *= min(softMax, 1.80f) / tapMax;
+            }
+            const float3 ty = skyRgbToYCoCg(tap.rgb);
+            s += k * tap; s2 += k * (tap * tap);
+            sy1 += k * ty; sy2 += k * (ty * ty);
+            w += k;
             rs += k * rh * rv; rw += k * rh;
         }
     }
@@ -63,10 +91,15 @@ float4 meanAround(int2 p, float z, float2 zSlope, int r, out float rest, out flo
         const float4 m1 = s / w;
         const float4 m2 = s2 / w;
         stdDev = sqrt(max(m2 - m1 * m1, 0.0f.xxxx));
+        meanY = sy1 / w;
+        stdY = sqrt(max(sy2 / w - meanY * meanY, 0.0f.xxx));
         return m1;
     }
+    const float4 c0 = decodeRaw(Raw[p], rv, rh);
     stdDev = 0.1f.xxxx;
-    return decodeRaw(Raw[p], rv, rh);
+    meanY = skyRgbToYCoCg(c0.rgb);
+    stdY = 0.08f.xxx;
+    return c0;
 }
 
 [numthreads(8, 8, 1)]
@@ -104,62 +137,40 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float4 bTap = BIn[t];
             hs += w * h.x; hn += w * h.z; hw += w; hb += w * bTap.rgb; hm2 += w * bTap.a; hr += w * h.w;
         }
-        // Spatiotemporal ReSTIR-style 4-neighbor indirect GI reservoir reuse (radius 5..14px, rotated per-frame):
-        // shares converged indirect bounce samples across depth-plane-coherent neighbors (48+ effective spp).
+        // Pure bilinear temporal reprojection ONLY into temporal history (BOut):
+        // Removed recursive spatial BIn[q] feedback into BOut (eliminates IIR GI glow diffusion & normal-blind ghosting;
+        // full Normal^64 + depth-plane + SVGF variance spatial filtering runs cleanly downstream in GiAtrousPass.hlsl!).
         if (hw > 0.05f) {
             past = hs / hw; n = hn / hw; pastB = hb / hw; pastM2 = hm2 / hw; pastR = hr / hw; have = true;
-            const float ang0 = ign(float2(p) + float2(proj.z * 7.3f, proj.z * 13.1f)) * 6.2831853f;
-            float spW = min(n, 16.0f);
-            float3 spB = pastB * spW;
-            float spS = past * spW;
-            float spM2 = pastM2 * spW;
-            const float invPlaneS = 1.0f / max(z * 0.022f, 2.5f);
-            [unroll] for (int si = 0; si < 4; si++) {
-                const float a = ang0 + 1.5707963f * float(si);
-                const float rad = 5.0f + 3.0f * float(si);
-                const int2 off = int2(round(float2(cos(a), sin(a)) * rad));
-                const int2 q = clamp(pb + off, int2(0, 0), int2(dims.xy) - 1);
-                const float4 hq = HistIn[q];
-                if (hq.y <= 0.0f) { continue; }
-                const float zPred = z + zSlope.x * float(off.x) + zSlope.y * float(off.y);
-                const float pd = abs(hq.y - min(zPred, 65000.0f)) * invPlaneS;
-                if (pd > 2.2f) { continue; }
-                const float wq = exp(-pd * pd) * min(hq.z, 8.0f) * 0.18f;
-                const float4 bq = BIn[q];
-                spB += bq.rgb * wq;
-                spS += hq.x * wq;
-                spM2 += bq.a * wq;
-                spW += wq;
-            }
-            pastB = spB / spW;
-            past = spS / spW;
-            pastM2 = spM2 / spW;
         }
     }
     float curR;
     float4 curStd;
-    const float4 cur = meanAround(p, z, zSlope, n < 10.0f ? 2 : 1, curR, curStd);
-    // True SVGF temporal variance (Var = max(0, E[L^2] - E[L]^2)) modulates history clamp cleanly:
-    // high temporal variance widens clamp responsiveness on dynamic lighting; converged surfaces stay rock-solid.
+    float3 meanY, stdY;
+    const float4 cur = meanAround(p, z, zSlope, n < 6.0f ? 2 : 1, curR, curStd, meanY, stdY);
+    // Superframe / Karis YCoCg ray-to-mean variance clipping (gamma 1.25 -> 0.85 under motion) + dual sky/GI disocclusion reset!
     const float curLum = dot(cur.rgb, float3(0.2126f, 0.7152f, 0.0722f));
     const float pastLum = dot(pastB, float3(0.2126f, 0.7152f, 0.0722f));
     const float tempVar = have ? max(pastM2 - pastLum * pastLum, 0.0f) : 0.0f;
-    const float sigScale = lerp(1.25f, 1.65f, saturate(n / 12.0f)) * (1.0f + saturate(sqrt(tempVar) * 1.2f) * 0.20f);
-    const float4 pad = max(curStd * sigScale, float4(0.05f, 0.05f, 0.05f, 0.08f));
-    // Dynamic shadow-trail killer: detect moving PC/NPC shadow disocclusion (cur.a jumping away from stale past)
-    // and boost temporal responsiveness immediately so walking characters NEVER drag a dark RTAO shadow trail!
-    const float skyDelta = have ? abs(cur.a - past) : 0.0f;
-    if (have) {
-        past = clamp(past, saturate(cur.a - pad.a), saturate(cur.a + pad.a));
-        pastB = clamp(pastB, max(cur.rgb - pad.rgb, 0.0f.xxx), cur.rgb + pad.rgb);
-    }
-    n = have ? min(n + 1.0f, min(float(maxFrames), 14.0f)) : 1.0f;
     const float2 mvSpeed = (have && hasMotion != 0u) ? Motion.Load(int3(p, 0)) * dims.xy : float2(0.0f, 0.0f);
     const float pxVel = length(mvSpeed);
+    const float gammaY = lerp(1.25f, 0.80f, saturate(pxVel * 0.18f));
+    const float skyPad = max(curStd.a * lerp(1.05f, 1.30f, saturate(n / 10.0f)) * lerp(1.0f, 0.72f, saturate(pxVel * 0.18f)), 0.055f);
+    // Dual sky + GI luminance/chromaticity disocclusion detector: immediately flushes stale shadows & stale GI color!
+    const float skyDelta = have ? abs(cur.a - past) : 0.0f;
+    const float giRelDelta = have ? (abs(curLum - pastLum) / max(max(curLum, pastLum), 0.06f)) : 0.0f;
+    const float giChrDelta = have ? length(cur.rgb / max(curLum, 0.04f) - pastB / max(pastLum, 0.04f)) : 0.0f;
+    if (have) {
+        past = clamp(past, saturate(cur.a - skyPad), saturate(cur.a + skyPad));
+        pastB = skyYCoCgToRgb(skyClipYCoCg(meanY, stdY, gammaY, skyRgbToYCoCg(pastB)));
+    }
+    const bool hardDisocc = (giRelDelta > 0.58f || giChrDelta > 0.70f || skyDelta > 0.32f);
+    n = (have && !hardDisocc) ? min(n + 1.0f, min(float(maxFrames), 12.0f)) : 1.0f;
     const float trapSky = have ? rawTrappingSeparator(cur.a, past, curStd.a, pxVel, 0.5f) : 0.0f;
     const float trapGi  = have ? rawTrappingSeparator(curLum, pastLum, dot(curStd.rgb, float3(0.2126f, 0.7152f, 0.0722f)), pxVel, 0.5f) : 0.0f;
-    const float disoccBoost = max(smoothstep(0.08f, 0.28f, skyDelta) * 0.36f, max(trapSky, trapGi) * 0.72f);
-    const float alphaT = max(max(1.0f / n, lerp(0.085f, 0.45f, saturate(pxVel * 0.075f))), disoccBoost);
+    const float giJumpBoost = max(smoothstep(0.20f, 0.58f, giRelDelta) * 0.72f, smoothstep(0.30f, 0.70f, giChrDelta) * 0.62f);
+    const float disoccBoost = max(max(smoothstep(0.08f, 0.26f, skyDelta) * 0.48f, giJumpBoost), max(trapSky, trapGi) * 0.82f);
+    const float alphaT = saturate(max(max(1.0f / n, lerp(0.12f, 0.60f, saturate(pxVel * 0.10f))), disoccBoost));
     const float vis = have ? lerp(past, cur.a, alphaT) : cur.a;
     const float3 b = have ? lerp(pastB, cur.rgb, alphaT) : cur.rgb;
     const float m2Out = have ? lerp(pastM2, curLum * curLum, alphaT) : (curLum * curLum);

@@ -1,5 +1,6 @@
 // The view: camera, cell, time and the screen (RAW engine runtime). Original work, MIT. See rt_view.h.
 #include "rt_view.h"
+#include "rt_memory_guards.h"
 #include "rt_version.h"
 
 #include <windows.h>
@@ -79,12 +80,22 @@ bool SehWriteCellWaterIfMatch(uintptr_t cellAddr, uint32_t expectedFormId, float
         auto* cell = reinterpret_cast<uint8_t*>(cellAddr);
         if (At<uint32_t>(cell, 0x14) != expectedFormId) return false;
         const uint16_t flags = At<uint16_t>(cell, 0x40);
-        if ((flags & 1u) != 0u || (flags & 2u) == 0u) return false; // exterior + HasWater required
+        const uint8_t cellState = At<uint8_t>(cell, 0x44);
+        const uint32_t spinLockCount = At<uint32_t>(cell, 0x124);
         // Binary-verified SkyrimSE 1.7.104 TESObjectCELL::GetExteriorWaterHeight (RVA 0x2BEE00):
-        //   +0x70 = CELL_DATA* (EXTERIOR_DATA* pointer - NEVER touch!)
+        //   +0x68 = CELL_DATA* (EXTERIOR_DATA*), +0x70 = TESObjectLAND* (NEVER touch!)
         //   +0x78 = float waterHeight (sentinel 2147483648.0f when inheriting worldspace default)
         const float cur = At<float>(cell, kCellWaterHeightOff);
-        if (!std::isfinite(cur) || cur <= -50000.0f || cur >= 50000.0f) return false;
+        CellWriteRequest req{};
+        req.cellFlags = flags;
+        req.proposedCellFlags = flags;
+        req.cellState = cellState;
+        req.spinLockCount = spinLockCount;
+        req.writeOffset = kCellWaterHeightOff;
+        req.currentWaterHeight = cur;
+        req.proposedWaterHeight = newWaterHeight;
+        req.binaryOffsetsVerified = true;
+        if (!MemoryGuardCheckCellWrite(req).allowed) return false;
         if (std::fabs(cur - newWaterHeight) > 0.02f) {
             std::memcpy(cell + kCellWaterHeightOff, &newWaterHeight, sizeof(float));
         }

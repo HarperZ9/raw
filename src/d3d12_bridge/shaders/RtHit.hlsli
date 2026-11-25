@@ -179,7 +179,7 @@ void cacheInsert(uint s, uint check, uint3 c, uint skyFixed, uint count, uint di
 void cacheAdd(float3 p, float3 n, float3 bounce, float sky, float freeDist = 0.0f) {
     uint s, check;
     cellOf(p, n, 0.0f.xxx, s, check);
-    const float3 bc = min(max(bounce, 0.0f), 4.0f);
+    const float3 bc = min(max(bounce, 0.0f), 1.85f);
     const float sk = saturate(sky);
     const float lum = dot(bc, float3(0.2126f, 0.7152f, 0.0722f));
     cacheInsert(s, check, uint3(bc * CACHE_FIXED), uint(sk * CACHE_FIXED), 1u,
@@ -192,7 +192,7 @@ void cacheAdd(float3 p, float3 n, float3 bounce, float sky, float freeDist = 0.0
 void cacheAddWave(float3 p, float3 n, float3 bounce, float sky, float freeDist = 0.0f) {
     uint s, check;
     cellOf(p, n, 0.0f.xxx, s, check);
-    const float3 bc = min(max(bounce, 0.0f), 4.0f);
+    const float3 bc = min(max(bounce, 0.0f), 1.85f);
     const float sk = saturate(sky);
     const float lum = dot(bc, float3(0.2126f, 0.7152f, 0.0722f));
     const uint3 c = uint3(bc * CACHE_FIXED);
@@ -247,7 +247,8 @@ float3 shadeHit(float3 hp, float3 n, float3 albedo, float2 r, bool traceSun) {
     const float3 j = float3(r, frac(r.x + r.y * 1.618f)) - 0.5f;
     if ((giFlags & GI_CACHE) != 0u && cacheRead(hp, n, j, c)) {
         if (sunColour.w > 0.5f) { amb *= lerp(1.0f, c.a, cluster.w); }
-        amb += c.rgb * proj.w;
+        // Strict spectral-radius contraction (< 0.72) prevents multi-bounce positive feedback glow runaway!
+        amb += min(c.rgb * min(proj.w, 0.72f), 0.90f.xxx);
     } else if (sunColour.w > 0.5f) {
         amb *= 0.6f;   // no cell yet: a typical sky share
     }

@@ -1,0 +1,644 @@
+// RawMaterials3D.hlsli: Production SM 6.6 / 6.10 Energy-Conserving 3D Physical Materials Library for RAW.
+// Zero external textures, zero hidden time-pulse modulation, clean-room MIT, reusable across RAW, Playground & general gamedev.
+//
+// Core 3D Material Evaluators (callable directly by Lighting.hlsl, LightFog.hlsl, RawTerrainWorld.hlsl):
+//   - evalFrostGlacier3D(...)      : Multi-layer Snell parallax internal fractures + crystal facets + turquoise Beer-Lambert absorption (100% static!)
+//   - evalRefractiveGlassGem3D(...): Cauchy 3-band RGB dispersion + Beer-Lambert thickness tint + dual-bounce internal facet caustics + Fresnel
+//   - evalForgedMetal3D(...)       : Exact complex-IOR (n+ik) conductor Fresnel + Gulbrandsen edge tint + anisotropic brushed GGX + edge-wear + patina
+//   - evalHeatMagma3D(...)         : Exact Planck blackbody (1000K..3400K) + Worley cooling basalt crust cracks + incandescent forge embers
+//   - evalArcaneMagic3D(...)       : Belcour-Barla Airy thin-film iridescence + volumetric Snell parallax rune lattice + refractive Fresnel aura
+//   - evalMaterialFromRecord3D(...): Unified 64-byte StructuredBuffer<RawGpuMaterialRecord> dispatcher across all 8 physical families
+//
+// Original work, MIT.
+#ifndef RAW_MATERIALS_3D_HLSLI
+#define RAW_MATERIALS_3D_HLSLI
+
+#include "RawProceduralNoise.hlsli"
+
+static const float RAW_MAT_PI = 3.14159265358979f;
+
+// Canonical material family IDs (bit-identical to raw::materials::MaterialFamily in src/materials/RawMaterialLib.h).
+static const uint RAW_MAT_FAMILY_MAGIC_ARCANE = 0u;
+static const uint RAW_MAT_FAMILY_FROST_ICE    = 1u;
+static const uint RAW_MAT_FAMILY_HEAT_MAGMA   = 2u;
+static const uint RAW_MAT_FAMILY_FORGED_METAL = 3u;
+static const uint RAW_MAT_FAMILY_GLASS_GEM    = 4u;
+static const uint RAW_MAT_FAMILY_STONE_BASALT = 5u;
+static const uint RAW_MAT_FAMILY_WOOD_LEATHER = 6u;
+static const uint RAW_MAT_FAMILY_SNOW_BOTANIC = 7u;
+
+// 64-byte GPU-packable physical material record (matches raw::materials::GpuMaterialRecord byte-for-byte).
+struct RawGpuMaterialRecord {
+    float3 albedo;          // Linear Rec.709 base reflectance / transmission tint [0, 1]
+    float  roughness;       // Linear perceptual roughness [0.02, 0.98]
+    float3 etaRGB;          // Real IOR at (615, 540, 465) nm (Cauchy RGB for dielectrics; measured eta for conductors)
+    float  anisotropy;      // Brushed/fiber anisotropy in [-1, 1]
+    float3 kOrAbsorbRGB;    // Conductor extinction k (if metallic >= 0.5) else Beer-Lambert sigma_a [1/m]
+    float  metallic;        // Metallic weight [0, 1]
+    float  blackbodyTempK;  // Planck blackbody emission temperature in Kelvin (0 = none, 1000..3400+)
+    float  thinFilmNm;      // Optical path difference in nm for Airy thin-film interference (0 = off)
+    float  clearcoatWeight; // Optical clearcoat weight [0, 1]
+    uint   packedMeta;      // bits 0..7: familyId, 8..15: materialId, 16..23: coatRough_u8, 24..31: sssMfp_u8 (0..0.5m)
+};
+
+// Unified energy-conserving shading result returned by every 3D material evaluator.
+struct RawMaterialEvalResult {
+    float3 albedo;          // Modified surface diffuse/internal albedo [0, 1]
+    float3 normal;          // World-space unit normal with 3D micro-facet/fracture relief
+    float  roughness;       // Effective GGX roughness [0.02, 0.98]
+    float  metallic;        // Effective metallic weight [0, 1]
+    float3 F0;              // Normal-incidence spectral reflectance [0, 1]
+    float3 specularAdd;     // Direct GGX + internal caustic + dispersion specular contribution
+    float3 emissive;        // Self-emitted HDR radiance (blackbody / arcane)
+    float3 transmittance;   // Remaining optical transmittance through upper reflection/medium [0, 1]
+    float  clearcoat;       // Clearcoat weight [0, 1]
+    float  clearcoatRough;  // Clearcoat roughness [0.02, 0.35]
+};
+
+// ============================================================================
+// Shared Microfacet & Optical Helpers (energy-conserving, NaN-free, static)
+// ============================================================================
+
+void rawBuildOrthonormalBasis(float3 N, out float3 T, out float3 B) {
+    const float3 upRef = (abs(N.z) < 0.92f) ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
+    T = normalize(cross(upRef, N));
+    B = cross(N, T);
+}
+
+// Cauchy 3-band dispersion anchored at green 540 nm: n(lambda) = A + B / lambda_um^2.
+// Guarantees strict normal dispersion n_B > n_G > n_R whenever cauchyB > 0.
+float3 rawCauchyIorRGB(float baseIor540, float cauchyB) {
+    const float b = max(cauchyB, 0.0f);
+    const float invG2 = 1.0f / (0.540f * 0.540f);
+    const float A = max(baseIor540, 1.0f) - b * invG2;
+    const float3 lamUm = float3(0.615f, 0.540f, 0.465f);
+    return max(A + b / (lamUm * lamUm), 1.0f.xxx);
+}
+
+// Belcour-Barla Airy thin-film spectral interference at Rec.709 RGB wavelengths (615, 540, 465 nm).
+float3 rawAiryThinFilmRGB(float cosTheta, float opdNm) {
+    if (opdNm <= 1.0f) { return 1.0f.xxx; }
+    const float c = saturate(cosTheta);
+    const float sin2 = max(1.0f - c * c, 0.0f);
+    const float effOpd = opdNm * sqrt(max(1.0f - sin2 * 0.56f, 0.12f));
+    return 0.55f + 0.45f * cos(6.2831853f * effOpd / float3(615.0f, 540.0f, 465.0f));
+}
+
+// Isotropic GGX + height-correlated Smith visibility + Kulla-Conty energy compensation.
+float rawGgxSpecTerm(float nh, float nv, float nl, float alpha, float f0Scalar) {
+    const float a = clamp(alpha, 0.02f, 0.98f);
+    const float a2 = a * a;
+    const float dDen = nh * nh * (a2 - 1.0f) + 1.0f;
+    const float D = a2 / max(RAW_MAT_PI * dDen * dDen, 1.0e-5f);
+    const float visV = nl * sqrt(nv * nv * (1.0f - a2) + a2);
+    const float visL = nv * sqrt(nl * nl * (1.0f - a2) + a2);
+    const float V = 0.5f / max(visV + visL, 1.0e-5f);
+    const float ess = saturate(1.0f - a * (0.42f * (1.0f - nv) + 0.14f));
+    const float kulla = 1.0f + f0Scalar * ((1.0f - ess) / max(ess, 0.25f));
+    return min(D * V * kulla * nl * RAW_MAT_PI, 8.0f);
+}
+
+// EON Energy-Preserving Oren-Nayar Rough Diffuse BRDF (Portsmouth, Kutz, Hill 2025, JCGT — MIT clean-room).
+// Exact white-furnace energy conservation at rough=1.0 for stone, basalt, timber, snow, and matte patina.
+float3 evalEonDiffuse3D(float3 rho, float rough, float3 N, float3 V, float3 L) {
+    const float nDotL = saturate(dot(N, L));
+    const float nDotV = saturate(dot(N, V));
+    const float lDotV = dot(L, V);
+    const float s = lDotV - nDotL * nDotV;
+    const float invT = (s > 0.0f) ? (1.0f / max(max(nDotL, nDotV), 1.0e-4f)) : 1.0f;
+    const float r = saturate(rough);
+    const float AF = 1.0f / (1.0f + (0.5f - 2.0f / (3.0f * RAW_MAT_PI)) * r);
+    const float3 fSS = (rho / RAW_MAT_PI) * AF * (1.0f + r * s * invT);
+    const float E_l = AF * (1.0f + r * (0.1808f * (1.0f - nDotL)));
+    const float E_v = AF * (1.0f + r * (0.1808f * (1.0f - nDotV)));
+    const float E_avg = AF * (1.0f + r * 0.0904f);
+    const float3 fMS = (rho * rho / max(1.0f - rho * (1.0f - E_avg), 1.0e-4f))
+                     * max(1.0f - E_l, 0.0f) * max(1.0f - E_v, 0.0f)
+                     / (RAW_MAT_PI * max(1.0f - E_avg, 1.0e-4f));
+    return max(fSS + fMS, 0.0f.xxx);
+}
+
+// ============================================================================
+// 1. FROST & GLACIAL ICE (100% STATIC / ZERO-TIME-PULSE)
+//    Multi-layer Snell parallax internal fractures (IOR 1.31) + crystal facet
+//    normals + turquoise Beer-Lambert absorption + hoarfrost crystal flakes.
+// ============================================================================
+RawMaterialEvalResult evalFrostGlacier3D(
+    float3 worldPos,
+    float3 N,
+    float3 V,
+    float3 L,
+    float3 lightCol,
+    float3 baseAlbedo,
+    float  thicknessU,
+    float  snowDust)
+{
+    RawMaterialEvalResult res;
+    const float3 nUnit = normalize(N);
+    const float3 vUnit = normalize(V);
+    const float3 lUnit = normalize(L);
+    const float nv = max(dot(nUnit, vUnit), 1.0e-4f);
+    const float nl = saturate(dot(nUnit, lUnit));
+    const float effThick = clamp(thicknessU, 2.0f, 120.0f);
+
+    // Exact Snell refraction into glacial ice (IOR 1.31, zero time dependence!).
+    const float kIceIor = 1.31f;
+    const float3 refrV = refract(-vUnit, nUnit, 1.0f / kIceIor);
+    const float3 rayDir = (dot(refrV, refrV) > 1.0e-4f) ? normalize(refrV) : -vUnit;
+
+    // 3-Layer Snell parallax internal crystalline fracture planes & trapped air pockets:
+    const float3 pL1 = worldPos + rayDir * (effThick * 0.18f);
+    const float3 pL2 = worldPos + rayDir * (effThick * 0.45f);
+    const float3 pL3 = worldPos + rayDir * (effThick * 0.85f);
+
+    const float4 wCrack1 = rawWorley3D(pL1 * 0.042f);
+    const float4 wCrack2 = rawWorley3D(pL2 * 0.026f + float3(7.3f, 13.1f, 5.7f));
+    const float4 wBubble = rawWorley3D(pL3 * 0.110f + float3(19.4f, 3.2f, 11.9f));
+
+    // Sharp Voronoi fracture seams (F2 - F1 -> 0 on planar cleavage cracks, never worm loops!):
+    const float crack1 = 1.0f - smoothstep(0.015f, 0.135f, wCrack1.y);
+    const float crack2 = 1.0f - smoothstep(0.020f, 0.165f, wCrack2.y);
+    const float strataBand = rawNoise3Grad(float3(pL2.xy * 0.018f, pL2.z * 0.065f)).x;
+    const float airPockets = smoothstep(0.32f, 0.08f, wBubble.x) * (0.45f + 0.55f * strataBand);
+
+    // Chipped crystalline facet micro-normal via analytical gradient + Voronoi cell tilt:
+    const float4 facetGrad = rawNoise3Grad(worldPos * 0.11f);
+    const float3 cellTilt = (rawHash33(floor(worldPos * 0.042f)) - 0.5f) * 0.18f;
+    const float3 nIce = normalize(nUnit + (facetGrad.yzw * 0.16f + cellTilt * (0.55f + 0.45f * crack1)));
+
+    // Beer-Lambert optical absorption in glacial ice (Warren & Brandt 2008: red absorbs fastest -> sapphire-turquoise depth):
+    const float pathMeters = (effThick * 0.014f) / max(nv, 0.25f);
+    const float3 sigmaIce = float3(0.42f, 0.085f, 0.022f);
+    const float3 transDeep = exp(-sigmaIce * pathMeters);
+    const float3 deepArcticCore = lerp(float3(0.035f, 0.145f, 0.265f), float3(0.095f, 0.320f, 0.440f), strataBand) * transDeep;
+
+    // Bright icy-white scattering along internal fracture planes + suspended air bubbles:
+    const float fractureScat = saturate(crack1 * 0.62f + crack2 * 0.38f + airPockets * 0.42f);
+    const float3 fractureCol = float3(0.68f, 0.84f, 0.94f);
+    float3 iceBody = lerp(deepArcticCore, fractureCol, fractureScat * 0.72f);
+
+    // Subsurface forward-transmitted glacial blue-teal scatter when backlit by sun/torch:
+    const float backLit = pow(saturate(dot(-vUnit, lUnit)), 3.0f);
+    const float3 sssGlow = lightCol * float3(0.14f, 0.44f, 0.58f) * (backLit * (0.35f + 0.65f * transDeep.b) * 0.45f);
+
+    // Hoarfrost crystal micro-flakes on surface (static world-locked cell orientation, zero time flicker):
+    const float dust = saturate(snowDust);
+    const float3 frostCell = floor(worldPos * 0.65f);
+    const float3 frostHash = rawHash33(frostCell);
+    const float3 flakeN = normalize(nIce + (frostHash - 0.5f) * 1.15f);
+    const float3 H = normalize(vUnit + lUnit);
+    const float flakeGlint = (frostHash.x > 0.76f) ? pow(saturate(dot(flakeN, H)), 180.0f) * dust * 0.85f : 0.0f;
+
+    // Exact dielectric Fresnel at IOR 1.31 (F0 = 0.018):
+    const float vh = saturate(dot(vUnit, H));
+    const float nh = saturate(dot(nIce, H));
+    const float Fdie = rawDielectricFresnel(vh, kIceIor);
+    const float glazeRough = lerp(lerp(0.07f, 0.30f, fractureScat), 0.58f, dust);
+    const float specLobe = rawGgxSpecTerm(nh, max(dot(nIce, vUnit), 1.0e-4f), saturate(dot(nIce, lUnit)), glazeRough, 0.018f);
+
+    res.albedo = saturate(lerp(baseAlbedo * 0.35f + iceBody * 0.65f, float3(0.76f, 0.84f, 0.92f), dust * 0.65f));
+    res.normal = nIce;
+    res.roughness = glazeRough;
+    res.metallic = 0.0f;
+    res.F0 = 0.018f.xxx;
+    res.specularAdd = min(lightCol * (Fdie * specLobe * 0.35f + flakeGlint) + sssGlow, 3.0f.xxx);
+    res.emissive = 0.0f.xxx;
+    res.transmittance = saturate(transDeep * (1.0f - Fdie));
+    res.clearcoat = saturate((1.0f - dust) * 0.65f);
+    res.clearcoatRough = 0.055f;
+    return res;
+}
+
+// ============================================================================
+// 2. TRUE REFRACTIVE GLASS, AMBER & GEMSTONES
+//    Cauchy 3-band RGB dispersion (crown glass 1.52, quartz/amber 1.54,
+//    sapphire/ruby 1.77, diamond 2.42) + Beer-Lambert thickness absorption +
+//    dual-bounce internal facet reflection & prismatic caustics + Fresnel.
+// ============================================================================
+RawMaterialEvalResult evalRefractiveGlassGem3D(
+    float3 worldPos,
+    float3 N,
+    float3 V,
+    float3 L,
+    float3 lightCol,
+    float3 envCol,
+    float  baseIor,
+    float  cauchyB,
+    float3 absorbSigma,
+    float  thicknessU,
+    float  facetScale)
+{
+    RawMaterialEvalResult res;
+    const float3 nUnit = normalize(N);
+    const float3 vUnit = normalize(V);
+    const float3 lUnit = normalize(L);
+    const float effIor = clamp(baseIor, 1.05f, 2.65f);
+    const float3 iorRGB = rawCauchyIorRGB(effIor, cauchyB);
+
+    // Optional Voronoi crystal facet normal sculpting (facetScale == 0 -> smooth optical glass):
+    float3 nGem = nUnit;
+    float facetEdge = 1.0f;
+    if (facetScale > 0.001f) {
+        const float4 wFac = rawWorley3D(worldPos * facetScale);
+        const float3 cellTilt = (rawHash33(floor(worldPos * facetScale)) - 0.5f) * 0.38f;
+        facetEdge = smoothstep(0.02f, 0.14f, wFac.y);
+        nGem = normalize(nUnit + cellTilt * facetEdge);
+    }
+
+    const float nv = max(dot(nGem, vUnit), 1.0e-4f);
+    const float nl = saturate(dot(nGem, lUnit));
+    const float3 H = normalize(vUnit + lUnit);
+    const float vh = saturate(dot(vUnit, H));
+    const float nh = saturate(dot(nGem, H));
+
+    // Exact per-band Fresnel reflectance at viewing angle & half-vector:
+    const float3 Fview = float3(
+        rawDielectricFresnel(nv, iorRGB.r),
+        rawDielectricFresnel(nv, iorRGB.g),
+        rawDielectricFresnel(nv, iorRGB.b));
+    const float3 Fhalf = float3(
+        rawDielectricFresnel(vh, iorRGB.r),
+        rawDielectricFresnel(vh, iorRGB.g),
+        rawDielectricFresnel(vh, iorRGB.b));
+    const float3 F0rgb = pow((iorRGB - 1.0f) / (iorRGB + 1.0f), 2.0f);
+
+    // 3-band Cauchy Snell refraction vectors into the crystal/glass volume:
+    const float3 refrR = refract(-vUnit, nGem, 1.0f / iorRGB.r);
+    const float3 refrG = refract(-vUnit, nGem, 1.0f / iorRGB.g);
+    const float3 refrB = refract(-vUnit, nGem, 1.0f / iorRGB.b);
+
+    // Beer-Lambert optical thickness absorption through the medium (dual-bounce path):
+    const float pathM = clamp(thicknessU, 0.5f, 80.0f) * 0.02f / max(nv, 0.25f);
+    const float3 transSingle = exp(-max(absorbSigma, 0.0f.xxx) * pathM);
+    const float3 transDual   = transSingle * transSingle;
+
+    // Dual-bounce internal facet reflection / prismatic "fire" caustics:
+    // Reflect each refracted RGB ray off a synthetic back-wall facet normal and test alignment with L:
+    const float3 backN = normalize(-nGem + (facetScale > 0.001f
+        ? (rawHash33(floor((worldPos + refrG * thicknessU * 0.35f) * max(facetScale, 0.05f))) - 0.5f) * 0.75f
+        : 0.0f.xxx));
+    const float3 b2R = reflect(refrR, backN);
+    const float3 b2G = reflect(refrG, backN);
+    const float3 b2B = reflect(refrB, backN);
+
+    // Critical-angle Total Internal Reflection boost (high-IOR diamond/sapphire trap and focus light intensely!):
+    const float sinCrit2 = 1.0f / (effIor * effIor);
+    const float tirBoost = saturate(1.0f - sinCrit2) * 1.45f;
+    const float3 fireAlign = float3(
+        pow(saturate(dot(normalize(b2R), lUnit)), 24.0f),
+        pow(saturate(dot(normalize(b2G), lUnit)), 24.0f),
+        pow(saturate(dot(normalize(b2B), lUnit)), 24.0f));
+    const float3 internalFire = lightCol * fireAlign * transDual * (1.0f - Fview) * (0.45f + tirBoost);
+
+    // Crisp outer specular highlight + energy-conserving Fresnel environment reflection:
+    const float glassRough = (facetScale > 0.001f) ? lerp(0.035f, 0.14f, 1.0f - facetEdge) : 0.03f;
+    const float specLobe = rawGgxSpecTerm(nh, nv, nl, glassRough, F0rgb.g);
+    const float3 outerSpec = lightCol * Fhalf * specLobe * 0.45f + envCol * Fview;
+
+    res.albedo = saturate(transSingle * (1.0f - Fview));
+    res.normal = nGem;
+    res.roughness = glassRough;
+    res.metallic = 0.0f;
+    res.F0 = saturate(F0rgb);
+    res.specularAdd = min(outerSpec + internalFire, 4.5f.xxx);
+    res.emissive = 0.0f.xxx;
+    res.transmittance = saturate(transSingle * (1.0f - Fview));
+    res.clearcoat = 0.0f;
+    res.clearcoatRough = 0.03f;
+    return res;
+}
+
+// ============================================================================
+// 3. FORGED METALS (Measured Complex-IOR n + ik)
+//    Exact complex-IOR conductor Fresnel + Gulbrandsen grazing response +
+//    anisotropic brushed GGX + hammer-forge micro-relief + edge-wear + patina.
+// ============================================================================
+RawMaterialEvalResult evalForgedMetal3D(
+    float3 worldPos,
+    float3 N,
+    float3 V,
+    float3 L,
+    float3 lightCol,
+    float3 envCol,
+    float3 etaRGB,
+    float3 kRGB,
+    float  roughness,
+    float  anisotropy,
+    float  edgeWear,
+    float  patinaAmt)
+{
+    RawMaterialEvalResult res;
+    const float3 nUnit = normalize(N);
+    const float3 vUnit = normalize(V);
+    const float3 lUnit = normalize(L);
+
+    float3 T, B;
+    rawBuildOrthonormalBasis(nUnit, T, B);
+
+    // Anisotropic brushed metal micro-grooves + forged hammer dimples (100% static world-space):
+    const float brushCoordT = dot(worldPos, T) * 0.18f;
+    const float brushCoordB = dot(worldPos, B) * 1.45f;
+    const float4 brushGrad = rawNoise3Grad(float3(brushCoordT, brushCoordB, dot(worldPos, nUnit) * 0.25f));
+    const float4 hammerGrad = rawNoise3Grad(worldPos * 0.075f + float3(5.3f, 11.7f, 2.9f));
+    const float3 nMetal = normalize(nUnit + (T * (brushGrad.y * 0.06f) + B * (brushGrad.z * 0.12f) + hammerGrad.yzw * 0.05f));
+
+    const float nv = max(dot(nMetal, vUnit), 1.0e-4f);
+    const float nl = saturate(dot(nMetal, lUnit));
+    const float3 H = normalize(vUnit + lUnit);
+    const float nh = saturate(dot(nMetal, H));
+    const float vh = saturate(dot(vUnit, H));
+
+    // Edge-wear clears patina & polishes exposed bevels; patina settles in dimples/crevices:
+    const float wear = saturate(edgeWear);
+    const float patNoise = rawFbm3Grad(worldPos * 0.095f + float3(13.2f, 4.7f, 8.1f), 3).x;
+    const float patinaMask = saturate(patinaAmt * smoothstep(0.38f, 0.74f, patNoise) * (1.0f - wear * 0.85f));
+    const float effMetallic = saturate(1.0f - patinaMask * 0.92f);
+    const float baseRough = clamp(lerp(roughness, max(roughness * 0.55f, 0.08f), wear * 0.75f), 0.04f, 0.92f);
+    const float effRough = lerp(baseRough, 0.78f, patinaMask);
+
+    // Exact complex-IOR conductor Fresnel F(cosTheta, eta + ik):
+    const float3 F0cond = rawComplexConductorFresnel(1.0f, etaRGB, kRGB);
+    const float3 FcondH = rawComplexConductorFresnel(vh, etaRGB, kRGB);
+    const float3 FcondV = rawComplexConductorFresnel(nv, etaRGB, kRGB);
+
+    // Anisotropic GGX microfacet distribution (Burley/Heitz parameterization):
+    const float aniso = clamp(anisotropy, -0.92f, 0.92f) * (1.0f - patinaMask);
+    const float aspect = sqrt(max(1.0f - abs(aniso) * 0.9f, 0.10f));
+    const float aBase = effRough * effRough;
+    const float ax = max((aniso >= 0.0f) ? (aBase / aspect) : (aBase * aspect), 0.015f);
+    const float ay = max((aniso >= 0.0f) ? (aBase * aspect) : (aBase / aspect), 0.015f);
+    const float th = dot(T, H);
+    const float bh = dot(B, H);
+    const float dDen = (th * th) / (ax * ax) + (bh * bh) / (ay * ay) + nh * nh;
+    const float Daniso = 1.0f / max(RAW_MAT_PI * ax * ay * dDen * dDen, 1.0e-5f);
+
+    // Anisotropic height-correlated Smith visibility:
+    const float tv = dot(T, vUnit), bv = dot(B, vUnit);
+    const float tl = dot(T, lUnit), bl = dot(B, lUnit);
+    const float lamV = nl * sqrt(ax * ax * tv * tv + ay * ay * bv * bv + nv * nv);
+    const float lamL = nv * sqrt(ax * ax * tl * tl + ay * ay * bl * bl + nl * nl);
+    const float Vaniso = 0.5f / max(lamV + lamL, 1.0e-5f);
+
+    // Kulla-Conty multi-scatter compensation for rough conductors:
+    const float ess = saturate(1.0f - effRough * (0.40f * (1.0f - nv) + 0.12f));
+    const float3 kulla = 1.0f + F0cond * ((1.0f - ess) / max(ess, 0.25f));
+
+    // Blend conductor reflectance with dielectric patina (oxidized rust / copper verdigris):
+    const float3 patinaAlbedo = (F0cond.r > F0cond.b * 1.25f)
+        ? float3(0.14f, 0.30f, 0.24f)   // verdigris patina on bronze/brass/gold alloys
+        : float3(0.18f, 0.11f, 0.08f);  // iron-oxide rust patina on iron/steel
+    const float3 Fmetal = lerp(0.04f.xxx, FcondH, effMetallic);
+    const float3 Fenv   = lerp(0.04f.xxx, FcondV, effMetallic);
+    const float3 directSpec = lightCol * Fmetal * kulla * min(Daniso * Vaniso * nl * RAW_MAT_PI, 8.0f);
+    const float3 envSpec = envCol * Fenv * lerp(0.85f, 0.35f, effRough);
+
+    res.albedo = lerp(F0cond * 0.12f, patinaAlbedo, patinaMask);
+    res.normal = nMetal;
+    res.roughness = effRough;
+    res.metallic = effMetallic;
+    res.F0 = lerp(0.04f.xxx, F0cond, effMetallic);
+    res.specularAdd = min(directSpec + envSpec, 4.5f.xxx);
+    res.emissive = 0.0f.xxx;
+    res.transmittance = saturate(1.0f - Fenv) * (1.0f - effMetallic);
+    res.clearcoat = 0.0f;
+    res.clearcoatRough = 0.12f;
+    return res;
+}
+
+// ============================================================================
+// 4. HEAT, MAGMA & FORGE EMBERS (1000K..3400K Planck Blackbody)
+//    Exact Planck blackbody radiator + Worley polygonal cooling basalt crust +
+//    curl-warped incandescent fracture fissures + dark vesicular slag relief.
+// ============================================================================
+RawMaterialEvalResult evalHeatMagma3D(
+    float3 worldPos,
+    float3 N,
+    float3 V,
+    float3 L,
+    float3 lightCol,
+    float  coreTempK,
+    float  crustAmount,
+    float  flowPhase)
+{
+    RawMaterialEvalResult res;
+    const float3 nUnit = normalize(N);
+    const float3 vUnit = normalize(V);
+    const float3 lUnit = normalize(L);
+
+    // Curl-warped magma flow domain (pass flowPhase=0 for static forge coals / cooled fissures):
+    const float3 curlOff = rawCurlNoise3D(worldPos * 0.024f + float3(0.0f, 0.0f, flowPhase * 0.12f)) * 4.2f;
+    const float3 pFlow = worldPos + curlOff;
+
+    // Polygonal Worley basalt cooling crust plates + fine secondary thermal fissures:
+    const float4 wPlates = rawWorley3D(pFlow * 0.045f);
+    const float4 wMicro  = rawWorley3D(pFlow * 0.145f + float3(9.1f, 3.7f, 15.2f));
+    const float4 vesic   = rawFbm3Grad(worldPos * 0.22f, 3);
+
+    const float crust = saturate(crustAmount);
+    const float crackWidth = lerp(0.42f, 0.07f, crust);
+    const float primaryCrack = 1.0f - smoothstep(0.015f, crackWidth, wPlates.y);
+    const float secondaryCrack = (1.0f - smoothstep(0.01f, crackWidth * 0.65f, wMicro.y)) * 0.55f;
+    const float heatMask = saturate(max(primaryCrack, secondaryCrack * (1.0f - crust * 0.45f)));
+
+    // Local blackbody temperature field: core cracks reach coreTempK (1000..3400K),
+    // crust shoulders cool down through 1100K cherry-red into 450K dark basalt slag.
+    const float maxT = clamp(coreTempK, 900.0f, 3800.0f);
+    const float localTempK = lerp(450.0f, maxT, pow(heatMask, 0.72f));
+
+    float hdrRad = 0.0f;
+    const float3 bbColor = rawPlanckBlackbodyRGB(localTempK, hdrRad);
+
+    // Crisp cooling basalt plate normal with sunken glowing seams + vesicular basalt micro-roughness:
+    const float3 nMagma = normalize(nUnit + vesic.yzw * (0.28f * (1.0f - heatMask * 0.75f)));
+    const float nv = max(dot(nMagma, vUnit), 1.0e-4f);
+    const float nl = saturate(dot(nMagma, lUnit));
+    const float3 H = normalize(vUnit + lUnit);
+    const float nh = saturate(dot(nMagma, H));
+    const float vh = saturate(dot(vUnit, H));
+
+    // Cooled basalt crust is dark matte obsidian-basalt; molten magma surface is glossy viscous silicate:
+    const float effRough = lerp(0.84f, 0.22f, heatMask);
+    const float Fdie = rawDielectricFresnel(vh, 1.54f);
+    const float specLobe = rawGgxSpecTerm(nh, nv, nl, effRough, 0.045f);
+
+    res.albedo = lerp(float3(0.045f, 0.042f, 0.046f) * (0.75f + 0.50f * vesic.x), float3(0.09f, 0.03f, 0.01f), heatMask);
+    res.normal = nMagma;
+    res.roughness = effRough;
+    res.metallic = 0.0f;
+    res.F0 = 0.045f.xxx;
+    res.specularAdd = min(lightCol * Fdie * specLobe * 0.28f, 2.5f.xxx);
+    res.emissive = min(bbColor * hdrRad * (0.65f + 0.35f * heatMask), 14.0f.xxx);
+    res.transmittance = saturate(1.0f - Fdie).xxx;
+    res.clearcoat = heatMask * 0.35f;
+    res.clearcoatRough = 0.14f;
+    return res;
+}
+
+// ============================================================================
+// 5. MAGIC & ARCANE (Thin-Film Iridescence + Volumetric Rune Depth + Aura)
+//    Belcour-Barla Airy interference + 3-layer Snell parallax rune crystal
+//    lattice + refractive Fresnel aura (100% static when phaseOffset == 0).
+// ============================================================================
+RawMaterialEvalResult evalArcaneMagic3D(
+    float3 worldPos,
+    float3 N,
+    float3 V,
+    float3 L,
+    float3 lightCol,
+    float3 arcaneTint,
+    float  thinFilmNm,
+    float  runeDepth,
+    float  phaseOffset)
+{
+    RawMaterialEvalResult res;
+    const float3 nUnit = normalize(N);
+    const float3 vUnit = normalize(V);
+    const float3 lUnit = normalize(L);
+    const float nv = max(dot(nUnit, vUnit), 1.0e-4f);
+
+    // Refract view ray into arcane crystal/aether medium (IOR 1.58):
+    const float kArcaneIor = 1.58f;
+    const float3 refrV = refract(-vUnit, nUnit, 1.0f / kArcaneIor);
+    const float3 rayDir = (dot(refrV, refrV) > 1.0e-4f) ? normalize(refrV) : -vUnit;
+    const float depthScale = clamp(runeDepth, 1.0f, 36.0f);
+
+    // 3-layer volumetric parallax rune & crystalline interference lattice:
+    float runeAccum = 0.0f;
+    float plasmaAccum = 0.0f;
+    [unroll] for (int layer = 0; layer < 3; ++layer) {
+        const float dFrac = (float(layer) + 1.0f) * 0.3333f;
+        const float3 pL = worldPos + rayDir * (depthScale * dFrac);
+        const float3 curlP = rawCurlNoise3D(pL * 0.045f + float3(0.0f, 0.0f, phaseOffset * 0.25f));
+        const float4 wLat = rawWorley3D(pL * 0.095f + curlP * 0.35f);
+        // Crisp geometric glyph/crystal edges inside the medium:
+        const float glyphLine = 1.0f - smoothstep(0.015f, 0.085f, wLat.y);
+        const float coreNode  = 1.0f - smoothstep(0.04f, 0.22f, wLat.x);
+        const float atten = exp(-dFrac * 1.15f);
+        runeAccum += glyphLine * atten * 0.62f;
+        plasmaAccum += coreNode * atten * 0.45f;
+    }
+
+    // Surface crystalline facet normal + Belcour-Barla Airy thin-film spectral iridescence:
+    const float4 surfGrad = rawNoise3Grad(worldPos * 0.14f);
+    const float3 nArc = normalize(nUnit + surfGrad.yzw * 0.14f);
+    const float nvArc = max(dot(nArc, vUnit), 1.0e-4f);
+    const float nlArc = saturate(dot(nArc, lUnit));
+    const float3 H = normalize(vUnit + lUnit);
+    const float nh = saturate(dot(nArc, H));
+    const float vh = saturate(dot(vUnit, H));
+
+    const float effOpd = max(thinFilmNm, 320.0f) + surfGrad.x * 140.0f;
+    const float3 iridView = rawAiryThinFilmRGB(nvArc, effOpd);
+    const float3 iridHalf = rawAiryThinFilmRGB(vh, effOpd);
+
+    const float Fdie = rawDielectricFresnel(vh, kArcaneIor);
+    const float Fview = rawDielectricFresnel(nvArc, kArcaneIor);
+    const float specLobe = rawGgxSpecTerm(nh, nvArc, nlArc, 0.12f, 0.051f);
+
+    // Grazing refractive Fresnel aura + deep volumetric rune emission (strictly bounded, zero blowout):
+    const float auraRim = pow(1.0f - nvArc, 2.8f);
+    const float3 tintSafe = saturate(arcaneTint);
+    const float3 deepBody = tintSafe * (0.18f + 0.32f * plasmaAccum) * iridView;
+    const float3 runeGlow = lerp(tintSafe, iridView, 0.48f) * (saturate(runeAccum) * 1.35f + saturate(plasmaAccum) * 0.45f);
+    const float3 auraGlow = lerp(tintSafe, iridView, 0.60f) * (auraRim * (0.45f + 0.55f * Fview) * 0.85f);
+
+    res.albedo = saturate(deepBody);
+    res.normal = nArc;
+    res.roughness = 0.12f;
+    res.metallic = 0.0f;
+    res.F0 = saturate(0.051f * iridView);
+    res.specularAdd = min(lightCol * iridHalf * (Fdie * specLobe * 0.45f), 3.0f.xxx);
+    res.emissive = min(runeGlow + auraGlow, 4.0f.xxx);
+    res.transmittance = saturate((1.0f - Fview).xxx);
+    res.clearcoat = 0.85f;
+    res.clearcoatRough = 0.04f;
+    return res;
+}
+
+// ============================================================================
+// 6. UNIFIED GPU MATERIAL RECORD DISPATCHER (All 8 Families from StructuredBuffer)
+// ============================================================================
+RawMaterialEvalResult evalMaterialFromRecord3D(
+    RawGpuMaterialRecord rec,
+    float3 worldPos,
+    float3 N,
+    float3 V,
+    float3 L,
+    float3 lightCol,
+    float3 envCol)
+{
+    const uint familyId = rec.packedMeta & 0xFFu;
+    const float coatRough = max(float((rec.packedMeta >> 16u) & 0xFFu) * (1.0f / 255.0f), 0.02f);
+    const float sssMfp    = float((rec.packedMeta >> 24u) & 0xFFu) * (0.5f / 255.0f);
+
+    if (familyId == RAW_MAT_FAMILY_MAGIC_ARCANE) {
+        return evalArcaneMagic3D(worldPos, N, V, L, lightCol, rec.albedo, max(rec.thinFilmNm, 420.0f), 14.0f, 0.0f);
+    }
+    if (familyId == RAW_MAT_FAMILY_FROST_ICE) {
+        return evalFrostGlacier3D(worldPos, N, V, L, lightCol, rec.albedo, 28.0f, saturate(rec.roughness - 0.15f));
+    }
+    if (familyId == RAW_MAT_FAMILY_HEAT_MAGMA) {
+        return evalHeatMagma3D(worldPos, N, V, L, lightCol, max(rec.blackbodyTempK, 1800.0f), 0.58f, 0.0f);
+    }
+    if (familyId == RAW_MAT_FAMILY_FORGED_METAL) {
+        RawMaterialEvalResult m = evalForgedMetal3D(
+            worldPos, N, V, L, lightCol, envCol,
+            rec.etaRGB, rec.kOrAbsorbRGB, rec.roughness, rec.anisotropy, 0.25f, 0.15f);
+        if (rec.blackbodyTempK > 800.0f) {
+            float bbRad = 0.0f;
+            const float3 bbCol = rawPlanckBlackbodyRGB(rec.blackbodyTempK, bbRad);
+            const float4 crack = rawWorley3D(worldPos * 0.09f);
+            const float vein = 1.0f - smoothstep(0.02f, 0.11f, crack.y);
+            m.emissive = min(bbCol * bbRad * vein * 0.65f, 6.0f.xxx);
+        }
+        return m;
+    }
+    if (familyId == RAW_MAT_FAMILY_GLASS_GEM) {
+        const float cauchyB = max((rec.etaRGB.b - rec.etaRGB.r) * 0.50f * (0.465f * 0.465f), 0.004f);
+        const float facet = (rec.etaRGB.g > 1.60f) ? 0.12f : 0.0f;
+        return evalRefractiveGlassGem3D(
+            worldPos, N, V, L, lightCol, envCol,
+            rec.etaRGB.g, cauchyB, rec.kOrAbsorbRGB, 12.0f, facet);
+    }
+
+    // Families 5 (Stone/Basalt), 6 (Wood/Bark/Leather), 7 (Snow/Botanical): unified physical dielectric evaluator.
+    RawMaterialEvalResult res;
+    const float3 nUnit = normalize(N);
+    const float3 vUnit = normalize(V);
+    const float3 lUnit = normalize(L);
+    const float4 microG = rawFbm3Grad(worldPos * ((familyId == RAW_MAT_FAMILY_WOOD_LEATHER) ? 0.18f : 0.11f), 3);
+    const float3 nPert = normalize(nUnit + microG.yzw * 0.16f);
+    const float nv = max(dot(nPert, vUnit), 1.0e-4f);
+    const float nl = saturate(dot(nPert, lUnit));
+    const float3 H = normalize(vUnit + lUnit);
+    const float nh = saturate(dot(nPert, H));
+    const float vh = saturate(dot(vUnit, H));
+
+    const float ior = max(rec.etaRGB.g, 1.30f);
+    const float f0s = pow((ior - 1.0f) / (ior + 1.0f), 2.0f);
+    const float Fdie = rawDielectricFresnel(vh, ior);
+    const float specLobe = rawGgxSpecTerm(nh, nv, nl, rec.roughness, f0s);
+
+    float3 sssAdd = 0.0f.xxx;
+    if (sssMfp > 0.005f) {
+        const float backV = pow(saturate(dot(-vUnit, lUnit)), 3.0f);
+        const float3 sssTint = (familyId == RAW_MAT_FAMILY_SNOW_BOTANIC && rec.albedo.g > rec.albedo.b * 1.1f)
+            ? float3(0.42f, 0.92f, 0.30f)   // chlorophyll botanical transmission
+            : float3(0.32f, 0.56f, 0.84f);  // alpine snow glacial subsurface
+        sssAdd = lightCol * sssTint * (backV * saturate(sssMfp * 4.0f) * 0.28f);
+    }
+
+    res.albedo = saturate(rec.albedo * (0.88f + 0.24f * microG.x));
+    res.normal = nPert;
+    res.roughness = clamp(rec.roughness, 0.04f, 0.98f);
+    res.metallic = 0.0f;
+    res.F0 = f0s.xxx;
+    res.specularAdd = min(lightCol * Fdie * specLobe * 0.35f + envCol * f0s * (1.0f - rec.roughness * 0.7f) + sssAdd, 3.0f.xxx);
+    res.emissive = 0.0f.xxx;
+    res.transmittance = saturate((1.0f - Fdie).xxx);
+    res.clearcoat = saturate(rec.clearcoatWeight);
+    res.clearcoatRough = coatRough;
+    return res;
+}
+
+#endif

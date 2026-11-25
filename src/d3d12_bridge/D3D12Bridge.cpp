@@ -4,6 +4,7 @@
 #include "RawProceduralLib.h"
 #include "StreamlineHost.h"
 #include "RawTextureBridge.h"
+#include "../materials/RawAssetForge.h"
 #include "DepthCopy_CS.h"   // g_DepthCopyCS (fxc, cs_5_0)
 
 namespace raw::bridge
@@ -294,17 +295,33 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                (!meshOk && !meshErr.empty()) ? (" (" + meshErr + ")").c_str() : "",
                asyncOk ? "READY" : "off", indOk ? "READY" : "off",
                m->indirect.SupportsIndirectMesh() ? "YES" : "no");
-        // Wave 35: Zero-external-asset built-in procedural geometry & PBR material library uploaded directly to RAW-MESH:
+        // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
+        {
+            const auto& matReg = raw::materials::DefaultMaterialRegistry();
+            m->materialGpuRecords = matReg.BuildGpuBuffer();
+            raw::worldgen::StreamConfig wcfg{};
+            wcfg.vramBudgetBytes = 128ull * 1024ull * 1024ull;
+            wcfg.maxMeshletTris = 64u;
+            wcfg.showcaseMode = false; // auto-activates near/beyond Tamriel borders (|x|>185k or |y|>145k)
+            const bool worldOk = m->worldShowcase.Init(wcfg);
+            m->log("[D3D12Bridge] Physical Materials & Frontier WorldGen: %zu measured 64B GPU materials (8 families), WorldShowcase=%s (128MB cap)",
+                   m->materialGpuRecords.size(), worldOk ? "READY" : "off");
+        }
         if (meshOk) {
-            RawMeshAsset builtIn[4]{};
-            const bool genOk[4] = {
+            RawMeshAsset builtIn[9]{};
+            const bool genOk[9] = {
                 GenerateNordicSpruceTree(1337u, 220.0f, 36.0f, 0.25f, &builtIn[0]),
                 GenerateNordicBoulder(2026u, 84.0f, 0.28f, 10u, &builtIn[1]),
                 GenerateAlpineGrassClump(4096u, 12u, 42.0f, &builtIn[2]),
                 GenerateOceanTileMesh(16u, 1200.0f, &builtIn[3]),
+                GenerateGlacialIceArch(7001u, 320.0f, 180.0f, 44.0f, &builtIn[4]),
+                GenerateNordicSnowDrift(7002u, 260.0f, 140.0f, 38.0f, &builtIn[5]),
+                GenerateBasaltColumnCluster(7003u, 7u, 22.0f, 150.0f, &builtIn[6]),
+                GenerateVolcanicVent(7004u, 95.0f, 65.0f, &builtIn[7]),
+                GenerateCrystalMonolith(7005u, 32.0f, 160.0f, 5u, &builtIn[8]),
             };
             uint32_t totalMeshlets = 0;
-            for (int k = 0; k < 4; ++k) {
+            for (int k = 0; k < 9; ++k) {
                 if (!genOk[k]) continue;
                 RawMeshGpuAsset gpu{};
                 if (m->meshHost.UploadAsset(builtIn[k], &gpu)) {
@@ -314,10 +331,12 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
             }
             uint32_t texCount = 0;
             uint64_t texBytes = 0;
-            const ProceduralTexKind kinds[5] = {
+            const ProceduralTexKind kinds[10] = {
                 ProceduralTexKind::BarkFurrow, ProceduralTexKind::PineNeedles,
                 ProceduralTexKind::GraniteStrata, ProceduralTexKind::SnowSastrugi,
-                ProceduralTexKind::CellularFoam,
+                ProceduralTexKind::CellularFoam, ProceduralTexKind::GlacialIceFracture,
+                ProceduralTexKind::VolcanicBasaltMagma, ProceduralTexKind::HexagonalBasalt,
+                ProceduralTexKind::CrystalQuartzFacet, ProceduralTexKind::MossyGraniteCobble,
             };
             for (ProceduralTexKind tk : kinds) {
                 RawTextureAsset tx{};
@@ -341,6 +360,13 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
             std::string ovLog;
             if (m->overrides.ScanDirectory(gDir + "raw_assets\\overrides", meshOk ? &m->meshHost : nullptr, &ovLog) > 0 && !ovLog.empty()) {
                 m->log("%s", ovLog.c_str());
+            }
+            std::string customErr;
+            const std::string customDir = gDir + "raw_assets\\overrides";
+            const uint32_t scannedCustom = m->customOverrides.ScanMirrorDirectory(customDir, &customErr);
+            m->customOverrides.LoadManifestFile(customDir + "\\manifest.json", nullptr);
+            if (scannedCustom > 0u) {
+                m->log("[D3D12Bridge] Non-NIF/Non-DDS Custom Asset Override Registry: %u handcrafted overrides active", scannedCustom);
             }
         }
     }

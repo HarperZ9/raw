@@ -24,9 +24,9 @@ float4 atrousStep(float4 at, int stepSize, bool finalPass) {
     const int3 ip = int3(p, 0);
     const float d = Depth.Load(ip);
     float4 center = GiIn.Load(ip);
-    // Sanitize NaN/Inf in center & taps so a single bad RT sample NEVER stamps a 15x15-29x29 black square (15.00.10.28.png)!
+    // Sanitize NaN/Inf and cap extreme GI spikes so a single hot RT sample NEVER blooms a 29x29 glow halo!
     if (any(isnan(center.rgb)) || any(isinf(center.rgb))) { center.rgb = 0.0f.xxx; }
-    center.rgb = clamp(center.rgb, 0.0f.xxx, 16.0f.xxx);
+    center.rgb = clamp(center.rgb, 0.0f.xxx, 2.6f.xxx);
     if (WaveActiveAllTrue(d >= 1.0f) || d >= 1.0f) {
         return float4(center.rgb, finalPass ? unpackRestVis(center.a) : center.a);
     }
@@ -40,21 +40,21 @@ float4 atrousStep(float4 at, int stepSize, bool finalPass) {
     const float restIdx2 = center.a > 1.5f ? (floor(center.a * 0.5f) * 2.0f) : (floor(saturate(center.a) * 15.0f + 0.5f) * 2.0f);
     const int2 dMax = int2(dims.xy) - 1;
 
-    // Exact SVGF variance-guided luminance edge-stopping (eliminates 3x3 local variance pre-loop, 35% fewer loads).
-    const float invSigmaL = 1.0f / max(3.6f * cSigma + 0.035f, 0.035f);
+    // Tightened SVGF variance-guided luminance edge-stopping (stops bright GI fireflies & sky bounce from haloing across shadow edges).
+    const float invSigmaL = 1.0f / max(2.45f * cSigma + 0.025f, 0.025f);
     const float planeScale = 1.0f / max(z * 0.0085f * float(stepSize), 1.8f);
     // Wave 29 Flux-Asymmetric Structure-Tensor Edge Orientation:
     // Reads 1px quad neighbors to align the 5x5 wavelet along dominant geometric/lighting tangents and prevent
     // bright GI fireflies from bleeding across a separatrix into dark shadow cavities!
-    const float lR1 = dot(clamp(GiIn.Load(int3(min(p.x + 1, dMax.x), p.y, 0)).rgb, 0.0f.xxx, 16.0f.xxx), float3(0.2126f, 0.7152f, 0.0722f));
-    const float lL1 = dot(clamp(GiIn.Load(int3(max(p.x - 1, 0),      p.y, 0)).rgb, 0.0f.xxx, 16.0f.xxx), float3(0.2126f, 0.7152f, 0.0722f));
-    const float lD1 = dot(clamp(GiIn.Load(int3(p.x, min(p.y + 1, dMax.y), 0)).rgb, 0.0f.xxx, 16.0f.xxx), float3(0.2126f, 0.7152f, 0.0722f));
-    const float lU1 = dot(clamp(GiIn.Load(int3(p.x, max(p.y - 1, 0),      0)).rgb, 0.0f.xxx, 16.0f.xxx), float3(0.2126f, 0.7152f, 0.0722f));
+    const float lR1 = dot(clamp(GiIn.Load(int3(min(p.x + 1, dMax.x), p.y, 0)).rgb, 0.0f.xxx, 2.6f.xxx), float3(0.2126f, 0.7152f, 0.0722f));
+    const float lL1 = dot(clamp(GiIn.Load(int3(max(p.x - 1, 0),      p.y, 0)).rgb, 0.0f.xxx, 2.6f.xxx), float3(0.2126f, 0.7152f, 0.0722f));
+    const float lD1 = dot(clamp(GiIn.Load(int3(p.x, min(p.y + 1, dMax.y), 0)).rgb, 0.0f.xxx, 2.6f.xxx), float3(0.2126f, 0.7152f, 0.0722f));
+    const float lU1 = dot(clamp(GiIn.Load(int3(p.x, max(p.y - 1, 0),      0)).rgb, 0.0f.xxx, 2.6f.xxx), float3(0.2126f, 0.7152f, 0.0722f));
     const float2 gradL = float2(lR1 - lL1, lD1 - lU1);
     const float gradMag = length(gradL);
     const float2 edgeN = gradMag > 1.0e-4f ? (gradL / gradMag) : float2(1.0f, 0.0f);
     const float edgeCoh = saturate(gradMag / max(cLum + 0.08f, 0.08f));
-    const float darkBasin = 1.0f - smoothstep(0.04f, 0.24f, cLum);
+    const float darkBasin = 1.0f - smoothstep(0.03f, 0.22f, cLum);
 
     static const float16_t kB3[5] = { float16_t(0.0625h), float16_t(0.25h), float16_t(0.375h), float16_t(0.25h), float16_t(0.0625h) };
     const float16_t w0 = float16_t(0.375h * 0.375h);
@@ -75,18 +75,18 @@ float4 atrousStep(float4 at, int stepSize, bool finalPass) {
             const float wn = pow(saturate(dot(n, nq)), 64.0f);
             float4 tap = GiIn.Load(int3(q, 0));
             if (any(isnan(tap.rgb)) || any(isinf(tap.rgb))) { continue; }
-            tap.rgb = clamp(tap.rgb, 0.0f.xxx, 16.0f.xxx);
+            tap.rgb = clamp(tap.rgb, 0.0f.xxx, 2.6f.xxx);
             const float tLum = dot(tap.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-            // Luminance + chromaticity edge-stopping + asymmetric dark-basin flux guard + structure-tensor anisotropy:
+            // Luminance + chromaticity edge-stopping + strong asymmetric dark-basin flux guard + structure-tensor anisotropy:
             const float3 cChr = center.rgb / max(cLum, 0.02f);
             const float3 tChr = tap.rgb / max(tLum, 0.02f);
             const float chrDiff = length(tChr - cChr);
             const float lumDelta = tLum - cLum;
-            const float asymPen = (lumDelta > 0.0f) ? (1.0f + darkBasin * 1.65f) : 1.0f;
+            const float asymPen = (lumDelta > 0.0f) ? (1.0f + darkBasin * 2.25f) : 1.0f;
             const float2 offDir = normalize(float2(float(dx), float(dy)));
             const float acrossEdge = abs(dot(offDir, edgeN));
-            const float wAniso = exp(-acrossEdge * acrossEdge * edgeCoh * 1.15f);
-            const float wl = exp(-abs(lumDelta) * invSigmaL * asymPen - chrDiff * 0.35f) * wAniso;
+            const float wAniso = exp(-acrossEdge * acrossEdge * edgeCoh * 1.25f);
+            const float wl = exp(-abs(lumDelta) * invSigmaL * asymPen - chrDiff * 0.45f) * wAniso;
             const float16_t w = float16_t(float(kB3[dx + 2] * wy) * wz * wn * wl);
             const float qSig = unpackSigma(tap.a);
             sumRgb += float16_t3(tap.rgb) * w;
@@ -97,11 +97,12 @@ float4 atrousStep(float4 at, int stepSize, bool finalPass) {
     const float invW = 1.0f / max(float(wSum), 1.0e-5f);
     const float3 outRgb = float3(sumRgb) * invW;
     if (finalPass) {
-        // Wave 23 LoopCD / Richardson iterative contrast: recovers crisp indirect crease detail on low-variance
-        // surfaces by contrasting the wide 29x29 refined pass against the tight step2 center (zero extra noise).
-        const float cleanGate = saturate(1.0f - cSigma * 3.2f);
-        const float3 crispGi = rawLoopCdContrast(outRgb, center.rgb, 0.22f * cleanGate);
-        return float4(lerp(outRgb, crispGi, cleanGate * 0.65f), unpackRestVis(center.a));
+        // Strictly energy-conserving local crease recovery: bounded strictly inside [min, max] of (outRgb, center.rgb)
+        // so GI never overshoots into glowing halos (removes additive +0.02 / +15% LoopCD glow lift!).
+        const float cleanGate = saturate(1.0f - cSigma * 3.6f);
+        const float3 detailClamp = clamp(outRgb + (center.rgb - outRgb) * (0.20f * cleanGate),
+                                         min(outRgb, center.rgb), max(outRgb, center.rgb));
+        return float4(max(detailClamp, 0.0f.xxx), unpackRestVis(center.a));
     }
     // Schied SVGF HPG 2017 Eq. 3 filtered variance propagation into next wavelet level.
     const float nextSigma = clamp(sqrt(max(varSum * (invW * invW), 0.0f)), 0.0f, 1.5f);

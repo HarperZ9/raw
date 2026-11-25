@@ -16,6 +16,8 @@
 #include "StrataBRDF.hlsli"
 #include "SpectralTransport.hlsli"
 #include "RawProceduralNoise.hlsli"
+#include "RawMaterials3D.hlsli"
+#include "RawDecals3D.hlsli"
 
 Texture2D<float>  Depth   : register(t0);
 Texture2D<float4> Normal  : register(t1);
@@ -895,55 +897,50 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         albedo *= (1.0f - cavity * 0.13f + bevel * 0.06f);
         s.alpha = clamp(s.alpha + cavity * 0.08f - bevel * 0.06f, 0.06f, 0.96f);
     }
-    // Physical Decal Grounding & Smooth Distance-Filtered Glacial Ice Optical Transport (includes base==2u EnvMap ice caves!):
+    // True 3D Physical Relief Decals (blood pools, static frost-creep, charred scorches & weapon cracks) +
+    // 100% Static, Non-Pulsing Crystalline Glacial Ice Optical Transport (includes base==2u EnvMap ice caves!):
     float iceMask = 0.0f;
-    if (!match && (base == 1u || base == 2u || base == 4u) && z < 12000.0f) {
-        if (z < 2400.0f && base != 2u) {
-            const float bloodMask = saturate((albedo.r - max(albedo.g, albedo.b) * 1.85f) * 6.0f) * smoothstep(0.06f, 0.22f, albedo.r) * (1.0f - smoothstep(0.38f, 0.55f, albedo.r));
-            if (bloodMask > 0.05f) {
-                s.alpha = lerp(s.alpha, 0.16f, bloodMask * 0.82f);
-                s.f0 = lerp(s.f0, 0.042f, bloodMask * 0.75f);
-                albedo *= lerp(1.0f.xxx, float3(0.88f, 0.78f, 0.78f), bloodMask * 0.5f);
-            }
+    float3 decalEmit = 0.0f.xxx;
+    if (!match) {
+        if ((base == 1u || base == 2u || base == 4u) && z < 12000.0f) {
+            const float blueIce = saturate((albedo.b - albedo.r * 1.04f) * 4.8f) * smoothstep(0.16f, 0.44f, albedo.b);
+            const float caveIce = (sunColour.w < 0.5f && (base == 2u || base == 1u))
+                ? smoothstep(0.24f, 0.52f, albedo.b) * saturate((albedo.b - albedo.r * 0.88f) * 4.0f) : 0.0f;
+            iceMask = max(blueIce, caveIce) * (1.0f - wet.snow * 0.78f) * saturate(1.0f - z / 12000.0f);
         }
-        // True 3-Layer Parallax Snell-Refracted Crystalline Glacial Ice & Ice-Cave Optical Transport (IOR 1.31):
-        // Replaces flat matte baby-blue plastic in Septimus Signus's Outpost & coastal glaciers with deep internal cracks,
-        // volumetric Beer-Lambert sapphire-turquoise subsurface depth, crystalline facet normals, and glassy melt glaze!
-        const float blueIce = saturate((albedo.b - albedo.r * 1.04f) * 4.8f) * smoothstep(0.16f, 0.44f, albedo.b);
-        const float caveIce = (sunColour.w < 0.5f && (base == 2u || base == 1u))
-            ? smoothstep(0.24f, 0.52f, albedo.b) * saturate((albedo.b - albedo.r * 0.88f) * 4.0f) : 0.0f;
-        iceMask = max(blueIce, caveIce) * (1.0f - wet.snow * 0.78f) * saturate(1.0f - z / 12000.0f);
+        // Uniform-flow 3D relief decal pass (quad-safe ddx/ddy for meniscus rims, frost veins, scorch fissures & impact cracks):
+        const float prevDecalMask = s.mask;
+        const RawDecalResult dec = evalDecals3D(albedo, s.n, s.v, p, z, s.alpha, s.f0, s.mask, base, iceMask, wet.snow);
+        albedo    = dec.albedo;
+        s.n       = dec.normal;
+        s.alpha   = dec.alpha;
+        s.f0      = dec.f0;
+        s.mask    = dec.mask;
+        decalEmit = dec.emissive;
+        if (dec.mask > prevDecalMask + 0.05f) { lobe = true; }
+        // True 3-Layer Static Parallax Snell-Refracted Crystalline Glacial Ice & Ice-Cave Optical Transport (IOR 1.31):
+        // Delegates directly to RawMaterials3D.hlsli::evalFrostGlacier3D (Warren & Brandt 2008 Beer-Lambert absorption +
+        // 3-layer Snell Voronoi cleavage fractures + crystal facet normals, 100% static / ZERO time-pulse modulation!).
         if (iceMask > 0.04f) {
             const float iceNear = smoothstep(2200.0f, 110.0f, z);
             const float3 wpAbsI = p + camPosW.xyz;
-            const float3 refrV = refract(-s.v, s.n, 1.0f / 1.31f);
-            // Wave 33 Physical Crystalline Glacial Ice (kills the spaghetti contour-worm loops in 00.08.08 / 00.08.16!):
-            // Uses multi-scale stratified glacier compression bands, subtle internal parallax depth clouding,
-            // suspended micro-bubble pockets, and chipped crystal micro-facets instead of noise zero-level-set rings!
-            const float3 pL1 = wpAbsI + refrV * (8.0f * iceNear);
-            const float3 pL2 = wpAbsI + refrV * (22.0f * iceNear);
-            const float stratWarp = cNoise(pL1 * 0.018f) * 18.0f;
-            const float strata = cNoise(float3(pL1.x * 0.014f, pL1.y * 0.014f, (pL1.z + stratWarp) * 0.048f));
-            const float deepCloud = cNoise(pL2 * 0.016f + 3.1f) * 0.58f + cNoise(pL1 * 0.045f + 11.7f) * 0.42f;
-            const float microBubbles = smoothstep(0.68f, 0.92f, cNoise(pL1 * 0.24f + 5.3f) * 0.65f + cNoise(pL2 * 0.14f + 19.1f) * 0.35f);
-            const float frostVeil = saturate((strata - 0.52f) * 1.45f) * 0.38f + microBubbles * 0.34f;
-            // Subtle crystalline chipped-ice surface micro-facets (preserves authored Skyrim normal-map cracks cleanly):
-            const float icX = cNoise(wpAbsI * 0.12f + float3(0.45f, 0.0f, 0.0f)) - cNoise(wpAbsI * 0.12f - float3(0.45f, 0.0f, 0.0f));
-            const float icY = cNoise(wpAbsI * 0.12f + float3(0.0f, 0.45f, 0.0f)) - cNoise(wpAbsI * 0.12f - float3(0.0f, 0.45f, 0.0f));
-            const float icZ = cNoise(wpAbsI * 0.12f + float3(0.0f, 0.0f, 0.45f)) - cNoise(wpAbsI * 0.12f - float3(0.0f, 0.0f, 0.45f));
-            s.n = normalize(s.n + float3(icX, icY, icZ) * (0.26f * iceMask * iceNear));
-            // Beer-Lambert glacial transmittance: deep translucent Arctic cobalt-teal core with view-angle optical depth:
-            const float nvIce = saturate(dot(s.n, s.v));
-            const float3 deepGlacier = lerp(float3(0.045f, 0.165f, 0.285f), float3(0.085f, 0.275f, 0.405f), deepCloud)
-                                     * lerp(0.76f, 1.16f, nvIce);
-            const float3 frostCrystal = float3(0.52f, 0.68f, 0.80f);
-            const float3 iceOptic = lerp(deepGlacier, frostCrystal, saturate(frostVeil));
-            albedo = lerp(albedo, iceOptic, iceMask * (0.34f + 0.26f * iceNear));
-            // Spatially varying glossy melt-ice (0.08) vs frosted bubble strata (0.34) with exact ice IOR 1.31 (F0 = 0.018):
-            const float glazeRough = lerp(0.08f, 0.34f, saturate(frostVeil * 1.15f + (1.0f - deepCloud) * 0.25f));
-            s.alpha = lerp(s.alpha, glazeRough, iceMask * 0.85f);
-            s.f0 = lerp(s.f0, 0.022f, iceMask * 0.88f);
-            s.mask = max(s.mask, iceMask * 0.78f);
+            const float3 iceLDir = (sunDir.w > 0.5f && sunColour.w > 0.5f) ? sunDir.xyz : normalize(float3(0.25f, 0.20f, 0.94f));
+            const float3 iceLCol = (sunColour.w > 0.5f) ? sunColour.rgb : max(float3(ambient[0].w, ambient[1].w, ambient[2].w) * 1.4f, 0.08f.xxx);
+            if (iceNear > 0.02f) {
+                const RawMaterialEvalResult glac = evalFrostGlacier3D(
+                    wpAbsI, s.n, s.v, iceLDir, iceLCol, albedo, lerp(14.0f, 44.0f, iceNear), saturate(wet.snow * 0.65f));
+                s.n     = normalize(lerp(s.n, glac.normal, iceMask * iceNear * 0.72f));
+                albedo  = lerp(albedo, glac.albedo, iceMask * (0.42f + 0.34f * iceNear));
+                s.alpha = lerp(s.alpha, glac.roughness, iceMask * 0.85f);
+            } else {
+                // Distant glacial ice (z >= 2200u): cheap static Warren & Brandt sapphire-turquoise optical body.
+                const float nvIce = saturate(dot(s.n, s.v));
+                const float3 farGlac = float3(0.055f, 0.215f, 0.345f) * lerp(0.78f, 1.14f, nvIce);
+                albedo  = lerp(albedo, farGlac, iceMask * 0.38f);
+                s.alpha = lerp(s.alpha, 0.22f, iceMask * 0.80f);
+            }
+            s.f0 = lerp(s.f0, 0.018f, iceMask * 0.88f);
+            s.mask = max(s.mask, iceMask * 0.76f);
             lobe = true;
         }
     }
@@ -1284,23 +1281,27 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Rich sunlight-to-shadow dynamic range (0.46..0.70x exterior ambient matches forest & sunlit room references):
     const float ambHdrScale = (!match && isExterior) ? lerp(0.46f, 0.70f, saturate(clouds.x)) : 1.0f;
     amb *= match ? combinedOcc.xxx : mbOcc * hemiSky * ambHdrScale;
-    // Multi-bounce hardware RayQuery GI: boosted indirect energy + color-bleed preservation + upward overhang bounce
-    // so sunlit grass, cobblestone, snow, water, and warm tavern hearths cast tangible colored indirect light.
+    // Multi-bounce hardware RayQuery GI: physically energy-conserving gain + smooth Reinhard shoulder + contact-AO grounding
+    // (eliminates runaway GI glow on walls, snow, ice, and interiors while keeping rich natural color bleed!).
     const bool bounceHere = sunColour.w > 0.5f || (flags.x & FLAG_BOUNCE_IN) != 0u;
     float3 bounce = 0.0f.xxx;
     if (rt && (flags.x & FLAG_BOUNCE) != 0u && bounceHere) {
-        const float3 rawB = RtBounce.Load(ip).rgb * proj.w;
+        const float3 rawB = max(RtBounce.Load(ip).rgb * proj.w, 0.0f.xxx);
         if (match) {
             bounce = rawB;
         } else {
-            const float bGain = isExterior ? (skin ? 1.45f : 2.15f) : (skin ? 1.25f : 1.75f);
-            const float overhangLift = 1.0f + saturate(-s.n.z) * 0.45f;
-            const float3 bScaled = rawB * (bGain * overhangLift);
+            const float bGain = isExterior ? (skin ? 0.88f : 1.08f) : (skin ? 0.80f : 0.98f);
+            const float overhangLift = 1.0f + saturate(-s.n.z) * 0.16f;
+            const float contactMod = lerp(0.55f, 1.0f, nearGroundAo);
+            const float3 bScaled = rawB * (bGain * overhangLift * contactMod);
             const float bLum = dot(bScaled, float3(0.2126f, 0.7152f, 0.0722f));
-            // Preserve physical indirect chroma bleed (green grass, warm timber, golden firelight) without clipping.
-            bounce = max(lerp(bLum.xxx, bScaled, 1.24f), 0.0f.xxx);
+            // Natural indirect chroma bleed (1.10x) with smooth energy-conserving Reinhard shoulder (knee 0.52, cap 0.85):
+            bounce = max(lerp(bLum.xxx, bScaled, 1.10f), 0.0f.xxx);
             const float bPeak = max(bounce.r, max(bounce.g, bounce.b));
-            if (bPeak > 1.25f) { bounce *= (1.25f / bPeak); }
+            if (bPeak > 0.52f) {
+                const float bSoft = 0.52f + (bPeak - 0.52f) / (1.0f + (bPeak - 0.52f) * 1.65f);
+                bounce *= min(bSoft, 0.85f) / bPeak;
+            }
         }
     }
     // Unified sky-coupled hemisphere ambient (!match exteriors): locks world shadow & sky ambient directly
@@ -1376,7 +1377,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (aboveW > -8.0f && aboveW < highTideMarkU) {
                 waterContact = max(waterContact, smoothstep(highTideMarkU, 0.0f, max(aboveW, 0.0f)) * smoothstep(-8.0f, 1.0f, aboveW));
             }
-            if (isExterior && sunDir.w > 0.5f && sunDir.z > 0.10f && aboveW > 4.0f && aboveW < 260.0f && s.n.z < 0.45f && z < 2800.0f) {
+            // Strictly exclude glaciers, icebergs, and snowbanks (iceMask / wet.snow) from animated reflected water caustics
+            // — eliminates the rhythmic cyan timed pulse across coastal ice!
+            const float nonIceCoast = (1.0f - saturate(iceMask * 4.0f)) * (1.0f - saturate(wet.snow * 2.5f));
+            if (nonIceCoast > 0.05f && isExterior && sunDir.w > 0.5f && sunDir.z > 0.10f && aboveW > 4.0f && aboveW < 260.0f && s.n.z < 0.45f && z < 2800.0f) {
                 const float clearSunC = (1.0f - saturate(clouds.x * 0.80f)) * smoothstep(0.10f, 0.28f, sunDir.z);
                 if (clearSunC > 0.05f) {
                     const float downFace = saturate((0.45f - s.n.z) * 1.65f);
@@ -1385,7 +1389,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                     const float2 caustXY = (p.xy + camPosW.xy) - sunDir.xy * (aboveW / max(sunDir.z, 0.25f)) * 0.45f;
                     const float cNet = rawReflectedCausticNet(caustXY, wtC, 54.0f);
                     const float distC = smoothstep(2800.0f, 350.0f, z);
-                    diff += sunColour.rgb * float3(0.42f, 0.86f, 0.96f) * (cNet * downFace * heightAtt * clearSunC * distC * 0.48f);
+                    diff += sunColour.rgb * float3(0.42f, 0.86f, 0.96f) * (cNet * downFace * heightAtt * clearSunC * distC * nonIceCoast * 0.48f);
                 }
             }
         }
@@ -1613,9 +1617,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
             const float4 rf = rfW > 0.0f ? (rfSum / rfW) : RtRefl.Load(int3(baseRefl, 0));
-            // Smoothly weight RT reflections by roughness AND damp noisy half-res RtRefl on frosted glaciers/ice
-            // so outdoor glaciers reflect the silky prefiltered dynamic cubemap instead of blocky half-res RT pixels:
-            const float rtReflW = saturate(rf.a) * lerp(0.82f, 0.22f, saturate(envRough * 2.4f)) * (1.0f - iceMask * 0.88f);
+            // Smoothly weight RT reflections by roughness AND cleanly zero out noisy RtRefl on glaciers/ice
+            // so outdoor glaciers & ice caves reflect the silky static prefiltered IBL with zero RT flicker/pulse:
+            const float rtReflW = saturate(rf.a) * lerp(0.82f, 0.22f, saturate(envRough * 2.4f)) * (1.0f - saturate(iceMask * 1.6f));
             const float3 envFinal = lerp(dynEnv * (0.30f + 0.70f * skyVisShaped), rf.rgb, rtReflW);
             lit += evalMultiScatterIBL(F0mat, envRough, nv, envFinal, specOcc) * max(reflMask, metallic);
             if (flags.w == 6u) { return float4(envFinal, game.a); }
@@ -1634,8 +1638,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             lit += evalMultiScatterIBL(dieF0, dieRough, nv, dieEnv, specOcc) * lerp(0.55f, 1.0f, saturate(wet.wet + wet.puddle));
         }
         // Dual-Lobe Clearcoat GGX water film (crisp mirror-like reflections on rain-soaked roads/puddles, GTA VI storm study)
-        // & oiled lacquer (low-metallic class-2 armor/leather).
-        const float clearcoat = max(saturate(wet.wet * 0.85f + wet.puddle * 1.15f), (base == 2u ? (1.0f - metallic) * 0.35f : 0.0f));
+        // & oiled lacquer (low-metallic class-2 armor/leather; strictly excluded on glacial ice so ice never double-counts EnvCube!).
+        const float clearcoat = max(saturate(wet.wet * 0.85f + wet.puddle * 1.15f), ((base == 2u && iceMask < 0.08f) ? (1.0f - metallic) * 0.35f : 0.0f)) * (1.0f - saturate(iceMask * 2.0f));
         if (clearcoat > 0.05f && !skin && base != 5u) {
             const float ccRough = lerp(0.08f, 0.03f, saturate(wet.puddle));
             const float3 ccEnv = sampleLiveEnvCube(rDir, ccRough) * (0.30f + 0.70f * skyVisShaped);
@@ -1646,8 +1650,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float rimFuzz = pow(1.0f - nv, 4.0f) * saturate((s.alpha - 0.52f) * 2.5f) * specOcc;
             lit += albedo * sunColour.rgb * (rimFuzz * sunShadow * 0.28f);
         }
-        // Synchronized thunderstorm lightning overhead flash on wet surfaces, puddles & open ground during heavy storms.
-        if (isExterior && weather.w > 0.45f && clouds.x > 0.65f) {
+        // Synchronized thunderstorm lightning overhead flash on wet surfaces & puddles during heavy rainstorms
+        // (strictly gated off on frozen glaciers/ice/snow so cold regions never pulse!).
+        if (isExterior && weather.w > 0.45f && weather.z < 0.15f && clouds.x > 0.65f && iceMask < 0.08f) {
             const float tSlot = floor(camPosW.w * 1.4f);
             const float stormTrigger = step(0.945f, frac(sin(tSlot * 127.1f) * 43758.5453f));
             const float flashEnv = pow(1.0f - frac(camPosW.w * 1.4f), 5.0f) * stormTrigger;
@@ -1764,10 +1769,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float canopyOcc = saturate(skyVis * 0.68f + sunShadow * 0.24f + crownUp * 0.20f);
             lit *= lerp(float3(0.36f, 0.46f, 0.36f), 1.0f.xxx, canopyOcc);
         }
-        // Grazing micro-Fresnel environmental wrap so vanilla surfaces gain physical material separation.
+        // Grazing micro-Fresnel environmental wrap (amb already includes bounce from line ~1430 — zero bounce double-counting!):
         const float nvWrap = saturate(dot(s.n, s.v));
-        const float graze = pow(1.0f - nvWrap, 4.5f) * (skin ? 0.14f : base == 5u ? 0.06f : 0.18f);
-        lit += (amb + bounce * 0.5f) * graze * (0.35f + 0.65f * skyVis);
+        const float graze = pow(1.0f - nvWrap, 4.5f) * (skin ? 0.10f : base == 5u ? 0.05f : 0.12f);
+        lit += amb * graze * (0.30f + 0.70f * skyVis) * (1.0f - iceMask * 0.55f) + decalEmit;
         // Note: removed redundant 3rd Mie scatter wash in Lighting.hlsl — FroxelPass.hlsl (0..42,000u) + LightFog.hlsl
         // now own unified engine-level 3D volumetric transmittance and Hillaire aerial perspective with zero double-fogging.
     }

@@ -8,7 +8,11 @@
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
+#include "../worldgen/RawWorldShowcase.h"
+#include "../materials/RawMaterialLib.h"
+#include "../assets/RawOverrideRegistry.h"
 #include <wrl/client.h>
+#include <unordered_map>
 
 namespace raw::bridge
 {
@@ -65,6 +69,11 @@ struct D3D12Bridge::Impl
     RawBindlessHeap          bindless;     // RAW-LUMEN 65K SM 6.6 ResourceDescriptorHeap[] pool
     RawMeshHost              meshHost;     // RAW-MESH Hardware DX12 AS+MS PN-Triangle subdivision host
     std::vector<RawMeshGpuAsset> proceduralMeshes; // Zero-external-asset built-in procedural GPU meshlet library
+    raw::worldgen::RawWorldShowcase worldShowcase; // Live beyond-Tamriel 6-biome procedural frontier streaming manager
+    std::unordered_map<uint64_t, RawMeshGpuAsset> streamedTerrainGpu;
+    uint64_t nextTerrainHandle = 1;
+    std::vector<raw::materials::GpuMaterialRecord> materialGpuRecords; // Canonical 64-byte physical material SRV buffer
+    raw::assets::OverrideRegistry customOverrides; // Non-NIF/Non-DDS handcrafted override + hot-reload registry
     RawOverrideRegistry      overrides;    // Creator hot-swap .glb/.obj override registry (raw_assets/overrides/)
     RawAsyncCompute          asyncCompute; // Split-Submit Hardware DX12 Async Compute queue
     RawIndirectBatch         indirect;     // GPU-Driven ExecuteIndirect DrawIndexed + DispatchMesh signatures

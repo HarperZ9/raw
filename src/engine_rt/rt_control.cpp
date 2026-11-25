@@ -17,8 +17,11 @@
 
 #include "rt_atlas.h"
 #include "rt_capture.h"
+#include "rt_depth_topology.h"
 #include "rt_forensics.h"
+#include "rt_memory_guards.h"
 #include "rt_softbody.h"
+#include "rt_terrain_lod.h"
 #include "rt_audit.h"
 #include "rt_cascades.h"
 #include "rt_emitters.h"
@@ -223,6 +226,14 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             Result(EngineOpticsCommand(*g_img));
         } else if (op == "forensics") {
             Result(ForensicsStatusJson());
+        } else if (op == "verify_offsets") {
+            Result(BinaryOffsetVerificationJson());
+        } else if (op == "terrain_lod") {
+            Result(TerrainLodStatsJson());
+        } else if (op == "depth_topology") {
+            Result(DepthTopologyStatsJson());
+        } else if (op == "memory_guards") {
+            Result(MemoryGuardsStatsJson());
         } else if (op == "softbody") {
             Result(SoftBodyStatsJson());
         } else if (op == "grids") {

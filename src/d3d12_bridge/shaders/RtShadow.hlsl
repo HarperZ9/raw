@@ -68,25 +68,35 @@ float3 jitterDir(float3 d, float spread, float2 r) {
 }
 
 // Spectral Korobov-Weyl & 4D Prime-Root Quasi-Monte-Carlo (QMC) Spatiotemporal Blue-Noise Samplers:
-// Replaces sin()-based hash aliasing with algebraic plastic/golden-ratio Kronecker lattices, 4D irrational prime roots
-// (sqrt(2), sqrt(3), sqrt(5), sqrt(7)), and Korobov rank-1 generators rotated by Cranley-Patterson IGN.
+// Uses wrap-free 32-bit integer Weyl/R2/Korobov arithmetic (zero fmod 256/512 periodic phase snaps!)
+// rotated spatially by Cranley-Patterson IGN so temporal noise never produces a timed pulse.
 float4 stbnPrime4(float2 px, float frameOff) {
+    const uint fi = uint(max(frameOff, 0.0f));
     const float4 kRoots = float4(0.4142135624f, 0.7320508076f, 0.2360679775f, 0.6457513111f);
     const float4 base = float4(ign(px), ign(px.yx + 13.7f), ign(px + float2(29.3f, 7.1f)), ign(px.yx + float2(5.9f, 41.3f)));
-    return frac(base + kRoots * fmod(frameOff, 512.0f));
+    const uint fLo = fi & 4095u;
+    const uint fHi = (fi >> 12u) & 4095u;
+    const float4 shift = frac(kRoots * float(fLo) + frac(kRoots * 4096.0f) * float(fHi));
+    return frac(base + shift);
 }
 
 float2 stbnR2(float2 px, float frameOff) {
+    const uint fi = uint(max(frameOff, 0.0f));
     const float2 r2Step = float2(0.7548776662f, 0.5698402910f);
     const float2 ignBase = float2(ign(px), ign(px.yx + 19.37f));
-    return frac(ignBase + r2Step * fmod(frameOff, 256.0f));
+    const uint fLo = fi & 4095u;
+    const uint fHi = (fi >> 12u) & 4095u;
+    const float2 shift = frac(r2Step * float(fLo) + frac(r2Step * 4096.0f) * float(fHi));
+    return frac(ignBase + shift);
 }
 
 float qmcKorobov1(float2 px, uint seqIdx, float frameOff) {
-    // Rank-1 Korobov lattice over Z_p (p=65521, primitive generator g=17364) + golden-ratio temporal Weyl shift:
+    // Rank-1 Korobov lattice over Z_p (p=65521, primitive generator g=17364) + wrap-free golden-ratio temporal Weyl shift:
+    const uint fi = uint(max(frameOff, 0.0f));
     const float base = ign(px + float2(float(seqIdx & 7u) * 11.3f, float(seqIdx >> 3u) * 17.7f));
     const float kLat = float((seqIdx * 17364u) % 65521u) * (1.0f / 65521.0f);
-    return frac(base + kLat + 0.6180339887f * fmod(frameOff + float(seqIdx) * 0.381966f, 256.0f));
+    const float tShift = frac(0.6180339887f * float(fi & 4095u) + frac(0.6180339887f * 4096.0f) * float((fi >> 12u) & 4095u) + float(seqIdx) * 0.3819660113f);
+    return frac(base + kLat + tShift);
 }
 
 // Tokuyoshi & Eto (AMD, I3D 2024, MAT-05) Bounded VNDF + Dupuy & Benyoub (HPG 2023, MAT-06) Spherical Cap GGX Sampling:
@@ -340,6 +350,13 @@ void main(uint3 id : SV_DispatchThreadID) {
                         sSample = isInterior ? pow(saturate(h.t / aoLen), 1.35f)
                                              : saturate(h.t / 110.0f) * 0.42f;
                         bSample = radianceAt(h, o, sd, rs.yx, true, hn);
+                        // Smooth energy-conserving bounce shoulder (knee 1.05, ceiling 2.10): prevents bright on-screen
+                        // emissives/flames/sky edges from injecting runaway glow into the persistent world radiance cache!
+                        const float bPeakS = max(bSample.r, max(bSample.g, bSample.b));
+                        if (bPeakS > 1.05f) {
+                            const float bSoft = 1.05f + (bPeakS - 1.05f) / (1.0f + (bPeakS - 1.05f) * 0.95f);
+                            bSample *= min(bSoft, 2.10f) / bPeakS;
+                        }
                         if (si == 0u && doCache2) {
                             cacheFromHit(o + sd * h.t, hn, frac(rs * 1.618f + 0.31f), isInterior);
                         }
@@ -349,14 +366,18 @@ void main(uint3 id : SV_DispatchThreadID) {
                 bounceSum += bSample;
             }
             const float invSpp = 1.0f / float(giSpp);
-            sky = invSpp * skySum;
-            bounce = invSpp * bounceSum;
-            // In converged low-entropy corridors, stabilize 1-spp trace with 28% converged world oracle prior:
+            const float rawSky = invSpp * skySum;
+            const float3 rawBounce = invSpp * bounceSum;
+            // Write ONLY raw unbiased traced bounce into the world radiance cache BEFORE blending oracleVal
+            // (eliminates recursive oracle-blended positive feedback glow runaway!).
+            if ((giFlags & GI_CACHE) != 0u) { cacheAddWave(p, n, rawBounce, rawSky, minFreeHit); }
+            sky = rawSky;
+            bounce = rawBounce;
+            // In converged low-entropy corridors, gently stabilize 1-spp output with 22% converged world oracle prior:
             if (calmCorridor) {
-                bounce = lerp(bounce, oracleVal.rgb, 0.28f);
-                sky = lerp(sky, oracleVal.a, 0.28f);
+                bounce = lerp(bounce, oracleVal.rgb, 0.22f);
+                sky = lerp(sky, oracleVal.a, 0.22f);
             }
-            if ((giFlags & GI_CACHE) != 0u) { cacheAddWave(p, n, bounce, sky, minFreeHit); }
         }
         // The three lights that would light this pixel most (colour luminance x window x n.l).
         uint best[3] = {~0u, ~0u, ~0u};
@@ -552,7 +573,13 @@ void main(uint3 id : SV_DispatchThreadID) {
                         float3 offRad = radianceAt(h, o, rd, rr, true, hn);
                         if ((giFlags & GI_CACHE) != 0u) {
                             float4 cacheVal = 0.0f.xxxx;
-                            if (cacheRead(hitP, hn, 0.0f.xxx, cacheVal)) { offRad = max(offRad, cacheVal.rgb * 0.85f); }
+                            if (cacheRead(hitP, hn, 0.0f.xxx, cacheVal)) { offRad = max(offRad, cacheVal.rgb * 0.72f); }
+                        }
+                        // Energy-conserving reflection firefly shoulder (knee 1.80, cap 3.60) prevents glossy RT glow spikes!
+                        const float rPk = max(offRad.r, max(offRad.g, offRad.b));
+                        if (rPk > 1.80f) {
+                            const float rSoft = 1.80f + (rPk - 1.80f) / (1.0f + (rPk - 1.80f) * 0.65f);
+                            offRad *= min(rSoft, 3.60f) / rPk;
                         }
                         reflSum += offRad; reflHitW += 1.0f;
                     }
@@ -689,12 +716,12 @@ void main(uint3 id : SV_DispatchThreadID) {
         refl = float4(dbg, 1.0f);
     }
 #endif
-    // Glossy pixels not traced this frame keep last frame's reflection; every other pixel clears.
-    const float4 sp0 = d < 1.0f ? Spec.Load(ip) : 0.0f;
-    const bool glossy = reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u && (base == 2u || (sp0.y > 0.14f && sp0.x > 0.04f) || wetGloss);
-    if (reflTraced || !glossy || reflectLength < 0.0f) { Refl[id.xy] = refl; }
+    // Always write Refl[id.xy] unconditionally (fixes stale previous-frame ghosting on pixels between glossy thresholds!).
+    Refl[id.xy] = refl;
     Vis[id.xy] = vis;
     Lights[id.xy] = float4(idx.xyz, sky);
-    if (skyLength > 0.0f && skyTurn(id.xy)) { SkyRaw[id.xy] = float4(bounce, sky + restCode); }
+    // Always write fresh SkyRaw for every traced non-LOD pixel (eliminates 3/4 stale unreprojected SkyRaw pixels
+    // that previously caused RtSkyFilter::meanAround to smear ghosted GI & shadow trails across moving objects!).
+    if (skyLength > 0.0f && (base != 7u || skyTurn(id.xy))) { SkyRaw[id.xy] = float4(bounce, sky + restCode); }
 }
 #endif

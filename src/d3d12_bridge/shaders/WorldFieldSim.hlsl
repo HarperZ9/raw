@@ -87,7 +87,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     float snow = cStat.a;   // snowpack stays stationary in toroidal world space
 
     if (proj.z < 1.5f) {
-        snow = saturate(weather.z * 0.65f);
+        // Wave 31: ALWAYS seed deformable snowpack canvas (0.58 baseline) so walking across Skyrim's permanent snow
+        // biomes carves deep 3D tracks & pushed-up berms even on clear sunny days when weather.z == 0!
+        snow = max(0.58f, saturate(weather.z * 0.85f));
         h = 0.0f; v = 0.0f; foam = 0.0f;
     }
 
@@ -98,8 +100,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float sU = PrevField.SampleLevel(Lin, frac(uv + float2(0.0f,  invRes.y)), 0.0f).a;
     const float lapSnow = (sL + sR + sD + sU) * 0.25f - snow;
     // Angle-of-repose slumping: steep snow gradients relax smoothly into realistic soft rounded drifts & berms!
-    if (abs(lapSnow) > 0.035f) {
-        snow = saturate(snow + lapSnow * 0.12f);
+    if (abs(lapSnow) > 0.045f) {
+        snow = saturate(snow + lapSnow * 0.08f);
     }
     if (weather.z > 0.04f) {
         // Wind-transported snow-drift deposition (builds thick wind-sculpted snowbanks up to full volumetric depth):
@@ -107,9 +109,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float windAdvS = PrevField.SampleLevel(Lin, frac(uv - windDir * (invRes * 0.35f)), 0.0f).a;
         snow = saturate(lerp(snow, windAdvS, weather.z * 0.018f) + weather.z * 0.00135f * driftNoise);
     } else if (weather.w > 0.05f) {
-        snow = saturate(snow - weather.w * 0.0018f);
+        snow = saturate(max(snow - weather.w * 0.0018f, 0.0f));
         foam = saturate(foam + weather.w * 0.0035f);
     } else {
+        // Slowly heal old tracks back toward 0.58 deformable snow baseline on dry days:
+        snow = lerp(snow, 0.58f, 0.00035f);
         foam = saturate(foam - 0.00045f);
     }
 

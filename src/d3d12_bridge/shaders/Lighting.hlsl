@@ -450,8 +450,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             }
         }
         // Persistent 512x512 Toroidal World-Locked GPU PDE WorldField (exact frac(worldXY/2048) matches WorldFieldSim.hlsl!):
-        // True 3D Volumetric Snowpack Relief: accumulates snowdrifts on upward terrain/rocks/roofs (base==4 || base==1)
-        // with deep ray-marched boot-trench shadows, pushed-up snow berms, and crisp crystalline drift normals!
+        // Wave 31: Detects Skyrim's permanent linear-RGB snow terrain (min > 0.16, neutral chroma) in addition to live snowfall
+        // so walking across Bleak Falls Barrow / Windhelm / High Hrothgar ALWAYS carves deep shaded 3D snow trenches & berms!
+        const float aMinS = min(albedo.r, min(albedo.g, albedo.b));
+        const float aMaxS = max(albedo.r, max(albedo.g, albedo.b));
+        const float permSnowGround = (base == 4u || base == 1u)
+            ? smoothstep(0.15f, 0.32f, aMinS) * (1.0f - smoothstep(0.08f, 0.22f, aMaxS - aMinS)) * smoothstep(0.32f, 0.70f, s.n.z)
+            : 0.0f;
         if ((base == 4u || base == 1u) && z < 1600.0f && s.n.z > 0.38f) {
             const float2 simUv = frac((p.xy + camPosW.xy) / 2048.0f);
             const float4 wf = WorldField.SampleLevel(Lin, simUv, 0.0f);
@@ -461,17 +466,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float sR = WorldField.SampleLevel(Lin, frac(simUv + float2( 1.0f / 512.0f, 0.0f)), 0.0f).a;
             const float sD = WorldField.SampleLevel(Lin, frac(simUv + float2(0.0f, -1.0f / 512.0f)), 0.0f).a;
             const float sU = WorldField.SampleLevel(Lin, frac(simUv + float2(0.0f,  1.0f / 512.0f)), 0.0f).a;
-            if (simSnow > 0.04f) {
-                const float snowFade = smoothstep(1600.0f, 180.0f, z);
-                const float slopeSnow = smoothstep(0.38f, 0.78f, s.n.z);
+            const float activeSnowMask = max(permSnowGround, weather.z > 0.04f ? saturate(simSnow) : 0.0f);
+            if (activeSnowMask > 0.06f) {
+                const float snowFade = smoothstep(1600.0f, 160.0f, z);
+                const float slopeSnow = smoothstep(0.38f, 0.75f, s.n.z);
                 const float avgNeighbor = (sL + sR + sD + sU) * 0.25f;
-                const float trenchDip = saturate((avgNeighbor - simSnow) * 5.2f);
-                const float bermLift  = saturate((simSnow - avgNeighbor) * 4.5f);
-                wet.snow = max(wet.snow, simSnow * slopeSnow);
-                s.n = normalize(s.n + float3((sL - sR) * 1.15f, (sD - sU) * 1.15f, 0.0f) * (slopeSnow * snowFade));
-                // Deepen carved snow boot-trenches with subtle glacial blue shadow + brighten pushed-up berm crests:
-                albedo = lerp(albedo, albedo * float3(0.76f, 0.84f, 0.94f), trenchDip * slopeSnow * snowFade * 0.72f);
-                albedo = min(albedo * (1.0f + bermLift * slopeSnow * snowFade * 0.14f), float3(0.84f, 0.88f, 0.92f));
+                const float trenchDip = saturate((avgNeighbor - simSnow) * 9.5f);
+                const float bermLift  = saturate((simSnow - avgNeighbor) * 7.5f);
+                if (weather.z > 0.04f) { wet.snow = max(wet.snow, simSnow * slopeSnow); }
+                s.n = normalize(s.n + float3((sL - sR) * 2.45f, (sD - sU) * 2.45f, 0.0f) * (activeSnowMask * slopeSnow * snowFade));
+                // Deepen carved snow boot-trenches with unmistakable glacial blue shadow + crisp pushed-up berm crests:
+                albedo = lerp(albedo, albedo * float3(0.56f, 0.68f, 0.86f), trenchDip * activeSnowMask * slopeSnow * snowFade * 0.85f);
+                albedo = min(albedo * (1.0f + bermLift * activeSnowMask * slopeSnow * snowFade * 0.18f), float3(0.86f, 0.90f, 0.94f));
             }
             if (weather.w > 0.05f) { wet.wet = max(wet.wet, simWet * (1.0f - wet.snow) * 0.55f); }
         }
@@ -510,21 +516,22 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             s.n = normalize(s.n + float3(mx, my, 0.0f) * mFade);
         }
         // Wind-swept glacial sastrugi snowdrift relief + discrete world-locked snow/mud footprints (footTrail[0..31]):
-        const float natSnow = (base == 4u || base == 1u) ? saturate((min(albedo.r, min(albedo.g, albedo.b)) - 0.46f) * 4.5f) * saturate(s.n.z * 1.4f - 0.35f) : 0.0f;
+        // Linear-RGB snow detection (permSnowGround) works on ALL Skyrim snow biomes even in clear dry weather!
+        const float natSnow = permSnowGround;
         const float snowAmt = max(wet.snow, natSnow);
         const float mudAmt = (base == 4u && weather.w > 0.08f) ? max(wet.wet, wet.puddle) * (1.0f - snowAmt) : 0.0f;
-        if (snowAmt > 0.25f && z < 3200.0f && s.n.z > 0.45f) {
+        if (snowAmt > 0.18f && z < 3200.0f && s.n.z > 0.45f) {
             const float3 wpSn = p + camPosW.xyz;
             const float2 wDirS = normalize(cloudWind.xy + float2(1.0f, 0.35f));
             const float2 wPerpS = float2(-wDirS.y, wDirS.x);
             const float2 sUv = float2(dot(wpSn.xy, wDirS) * 0.012f, dot(wpSn.xy, wPerpS) * 0.036f);
             const float sDx = (cNoise(float3(sUv + float2(0.15f, 0.0f), 2.1f)) - cNoise(float3(sUv - float2(0.15f, 0.0f), 2.1f))) * 0.16f;
             const float sDy = (cNoise(float3(sUv + float2(0.0f, 0.15f), 2.1f)) - cNoise(float3(sUv - float2(0.0f, 0.15f), 2.1f))) * 0.16f;
-            const float driftFade = saturate((snowAmt - 0.25f) * 1.6f) * smoothstep(3200.0f, 240.0f, z);
+            const float driftFade = saturate((snowAmt - 0.18f) * 1.6f) * smoothstep(3200.0f, 240.0f, z);
             s.n = normalize(s.n + float3(wDirS * sDx + wPerpS * sDy, 0.0f) * driftFade);
             s.alpha = max(s.alpha, lerp(0.58f, 0.74f, driftFade));
         }
-        if ((snowAmt > 0.25f || mudAmt > 0.30f) && z < 1800.0f && s.n.z > 0.55f) {
+        if ((snowAmt > 0.15f || mudAmt > 0.30f) && z < 1800.0f && s.n.z > 0.45f) {
             const float3 wpAbs = p + camPosW.xyz;
             float maxDep = 0.0f, maxRim = 0.0f;
             float2 bestRad = 0.0f.xx;
@@ -533,18 +540,20 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 if (ft.w <= 0.01f) { continue; }
                 const float3 fd = wpAbs - ft.xyz;
                 const float r2 = dot(fd.xy, fd.xy);
-                if (r2 < 169.0f && abs(fd.z) < 120.0f) {
+                if (r2 < 256.0f && abs(fd.z) < 160.0f) {
                     const float rr = sqrt(r2);
-                    const float dep = exp(-r2 / 48.0f) * ft.w;
-                    const float rim = exp(-pow(rr - 9.0f, 2.0f) / 14.0f) * ft.w;
+                    const float dep = exp(-r2 / 64.0f) * ft.w;
+                    const float rim = exp(-pow(rr - 10.5f, 2.0f) / 18.0f) * ft.w;
                     if (dep > maxDep) { maxDep = dep; bestRad = fd.xy / max(rr, 0.5f); }
                     maxRim = max(maxRim, rim);
                 }
             }
             if (maxDep > 0.03f || maxRim > 0.03f) {
                 const float deformStr = max(snowAmt, mudAmt * 0.75f);
-                s.n = normalize(s.n + float3(bestRad * (maxDep * 0.34f - maxRim * 0.20f), 0.0f) * deformStr);
-                albedo *= lerp(1.0f, snowAmt >= mudAmt ? 0.84f : 0.76f, saturate(maxDep * deformStr * 0.75f));
+                s.n = normalize(s.n + float3(bestRad * (maxDep * 0.68f - maxRim * 0.42f), 0.0f) * deformStr);
+                const float3 trackTint = snowAmt >= mudAmt ? float3(0.58f, 0.70f, 0.88f) : float3(0.62f, 0.56f, 0.50f);
+                albedo = lerp(albedo, albedo * trackTint, saturate(maxDep * deformStr * 0.85f));
+                albedo = min(albedo * (1.0f + saturate(maxRim * deformStr * 0.16f)), 0.90f.xxx);
             }
         }
     }
@@ -983,7 +992,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 spectralPenShift = float3(0.055f, 0.022f, -0.028f) * outerLimb
                                       + float3(-0.022f, 0.008f, 0.048f) * innerRayleigh;
         const float3 sunSh = skin && !match
-            ? pow(saturate(sunShadow).xxx, float3(0.72f, 0.92f, 1.04f))
+            ? pow(saturate(sunShadow).xxx, float3(0.88f, 0.96f, 1.02f))
             : max(sunShadow.xxx + float3(0.022f, 0.012f, -0.008f) * penumbraBand + spectralPenShift, 0.0f.xxx);
         // True engine-synchronized Sun vs Moon direct-lighting separation driven by Sky::currentGameHour (+0x1B0, astroSunElev):
         // Prevents ShadowSceneNode->sunLight's night-time Moon flip from ever receiving daytime D65 sunlight gain/color,
@@ -1256,7 +1265,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (match) {
             bounce = rawB;
         } else {
-            const float bGain = isExterior ? 2.15f : 2.35f;
+            const float bGain = isExterior ? (skin ? 1.45f : 2.15f) : (skin ? 1.25f : 1.75f);
             const float overhangLift = 1.0f + saturate(-s.n.z) * 0.45f;
             const float3 bScaled = rawB * (bGain * overhangLift);
             const float bLum = dot(bScaled, float3(0.2126f, 0.7152f, 0.0722f));
@@ -1278,19 +1287,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float ambL = max(dot(amb, float3(0.2126f, 0.7152f, 0.0722f)), 0.02f);
             const float hemiL = max(dot(skyHemi, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
             const float inShadow = 1.0f - saturate(sunShadow);
-            // Weight blue sky-ambient tint by skyVis so open shadows catch cerulean sky while covered porches stay warm neutral.
-            amb = lerp(amb, skyHemi * (ambL / hemiL), dayAmbW * skyVis * lerp(0.20f, 0.34f, inShadow));
+            // Weight blue sky-ambient tint by skyVis, and cap tightly on skin (0.08x) so shaded human faces
+            // never turn corpse blue-purple (fixes Hilde 23.50.29.60.png)!
+            const float skinSkyCap = skin ? 0.08f : 1.0f;
+            amb = lerp(amb, skyHemi * (ambL / hemiL), dayAmbW * skyVis * lerp(0.20f, 0.34f, inShadow) * skinSkyCap);
         }
     } else if (!match && !isExterior) {
         // Exterior Time-of-Day Interior Lighting Coupling (driven by live gameHour / sunElev in timeEnv.xy):
-        // interior ambient shifts naturally across golden dawn -> crisp daylight -> amber dusk -> cool nocturnal indigo.
+        // Disciplined interior ambient floor on skin (0.76x) so warm hearth/candle directional light sculpts faces!
         const float sunE = timeEnv.y;
         const float dayInt = smoothstep(-0.14f, 0.28f, sunE);
         const float goldInt = smoothstep(-0.14f, 0.10f, sunE) * (1.0f - smoothstep(0.18f, 0.52f, sunE));
         const float outCool = saturate(clouds.x * 0.6f + weather.w * 0.5f);
         const float3 todIntTint = lerp(float3(0.76f, 0.86f, 1.14f),
                                        lerp(float3(1.04f, 1.05f, 1.08f), float3(1.18f, 0.92f, 0.72f), goldInt), dayInt);
-        const float todIntGain = lerp(0.78f, 1.12f, dayInt);
+        const float todIntGain = lerp(0.78f, 1.08f, dayInt) * (skin ? 0.76f : 1.0f);
         amb *= lerp(todIntTint, float3(0.88f, 0.95f, 1.06f), outCool * 0.35f) * todIntGain;
     }
     // Wave 29 Reciprocal Cross-Material Contact Empathy + Environmental Asymmetry Breaking:
@@ -1333,10 +1344,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 waterContact = max(waterContact, smoothstep(34.0f, 0.0f, max(aboveW, 0.0f)) * smoothstep(-6.0f, 1.0f, aboveW));
             }
         }
-        if (skin && skinContact > 0.02f) {
-            // Hemoglobin warm subsurface bleed under hairlines & collars (replaces dead grey SSAO crease):
-            amb += max(diff + amb, 0.04f.xxx) * float3(0.28f, 0.065f, 0.030f) * (skinContact * 0.45f);
-        }
+        // Removed orange-blotch skinContact ambient dump on neck/collar seams (23.50.29.60.png Hilde neck artifact!).
+        // Keep subtle warm dermal balance only in neutral shadowed skin without hard seam spikes.
         if (waterContact > 0.02f) {
             // Capillary pore-darkening + wet clearcoat meniscus reflection:
             albedo *= lerp(1.0f, 0.62f, waterContact * 0.85f);

@@ -114,26 +114,27 @@ float organicFroth(float2 p, float t) {
     return smoothstep(0.46f, 0.80f, fbm);
 }
 
-// Omnidirectional 6-mode Golden-Angle 3D Gerstner Wave Heightfield (kills parallel corduroy zebra stripes seen in 13.17.04!):
+// Wave 31 Physical Deep-Water JONSWAP/Trochoidal 6-Mode Gerstner Swell Field:
+// Calibrated physical gravity dispersion (0.42x omega eliminates rapid conveyor-belt rush!) with steep sculptural crests.
 float evalWaterWaveHeight(float2 xy, float wt, float2 flowDir, float2 flowPerp, float ampScale, out float2 outGrad, out float outFold) {
     float h = 0.0f;
     outGrad = 0.0f.xx;
     outFold = 0.0f;
     static const float kAng[6] = { -1.32f, -0.68f, -0.18f, 0.34f, 0.88f, 1.46f };
-    static const float kFreq[6] = { 0.0085f, 0.0137f, 0.0211f, 0.0329f, 0.0513f, 0.0791f };
-    static const float kAmp[6]  = { 3.6f, 2.5f, 1.75f, 1.15f, 0.72f, 0.44f };
+    static const float kFreq[6] = { 0.0072f, 0.0124f, 0.0198f, 0.0315f, 0.0495f, 0.0760f };
+    static const float kAmp[6]  = { 4.8f, 3.2f, 2.15f, 1.40f, 0.88f, 0.52f };
     [unroll] for (int wi = 0; wi < 6; ++wi) {
         const float kRad = kFreq[wi];
         const float kM = kRad * 70.0f;
-        const float omega = sqrt(9.81f * kM) * 1.28f;
+        const float omega = sqrt(9.81f * kM) * 0.42f;
         const float2 dirW = normalize(flowDir * cos(kAng[wi]) + flowPerp * sin(kAng[wi]));
         const float ampH = kAmp[wi] * ampScale;
         const float ph = dot(xy, dirW) * kRad - wt * omega + float(wi) * 2.39996f;
         const float s = sin(ph);
         const float c = cos(ph);
-        h += ampH * (s + 0.16f * (s * s - 0.5f));
-        outGrad += dirW * (ampH * kRad * (c * (1.0f + 0.32f * s)));
-        outFold += max(s, 0.0f) * (ampH * kRad * 2.4f);
+        h += ampH * (s + 0.26f * (s * s - 0.5f));
+        outGrad += dirW * (ampH * kRad * (c * (1.0f + 0.52f * s)));
+        outFold += max(s, 0.0f) * (ampH * kRad * 2.8f);
     }
     return h;
 }
@@ -273,18 +274,18 @@ void water(uint3 id : SV_DispatchThreadID) {
                 }
                 waveHeight3D = evalWaterWaveHeight(evalXY, wt, flowDir, flowPerp, ampScale, waveG, jacobianFold);
 
-                // Aperiodic 2-octave traveling fine liquid capillary ripples (flowing cleanly along flowDir!):
-                const float2 rUv1 = (evalXY - flowDir * (wt * 36.0f)) * 0.042f;
-                const float2 rUv2 = (evalXY - flowDir * (wt * 22.0f) + flowPerp * (wt * 14.0f)) * 0.095f;
-                const float rDx = (vNoise2D(rUv1 + float2(0.18f, 0.0f)) - vNoise2D(rUv1 - float2(0.18f, 0.0f))) * 0.075f
-                                + (vNoise2D(rUv2 + float2(0.18f, 0.0f)) - vNoise2D(rUv2 - float2(0.18f, 0.0f))) * 0.038f;
-                const float rDy = (vNoise2D(rUv1 + float2(0.0f, 0.18f)) - vNoise2D(rUv1 - float2(0.0f, 0.18f))) * 0.075f
-                                + (vNoise2D(rUv2 + float2(0.0f, 0.18f)) - vNoise2D(rUv2 - float2(0.0f, 0.18f))) * 0.038f;
-                const float nearRip = smoothstep(3800.0f, 180.0f, wDist) * ampScale;
+                // Calm physical capillary liquid ripples (7.5 u/s gentle stream drift instead of 36 u/s rapid conveyor rush!):
+                const float2 rUv1 = (evalXY - flowDir * (wt * 7.5f)) * 0.038f;
+                const float2 rUv2 = (evalXY - flowDir * (wt * 4.2f) + flowPerp * (wt * 2.8f)) * 0.088f;
+                const float rDx = (vNoise2D(rUv1 + float2(0.18f, 0.0f)) - vNoise2D(rUv1 - float2(0.18f, 0.0f))) * 0.095f
+                                + (vNoise2D(rUv2 + float2(0.18f, 0.0f)) - vNoise2D(rUv2 - float2(0.18f, 0.0f))) * 0.048f;
+                const float rDy = (vNoise2D(rUv1 + float2(0.0f, 0.18f)) - vNoise2D(rUv1 - float2(0.0f, 0.18f))) * 0.095f
+                                + (vNoise2D(rUv2 + float2(0.0f, 0.18f)) - vNoise2D(rUv2 - float2(0.0f, 0.18f))) * 0.048f;
+                const float nearRip = smoothstep(4200.0f, 180.0f, wDist) * ampScale;
                 waveG += float2(rDx, rDy) * nearRip;
-                // Grazing-angle anisotropic Nyquist normal filter: bold rolling swells + crisp motion with zero shimmer!
-                const float grazingSmooth = smoothstep(0.04f, 0.40f, saturate(v.z));
-                n = normalize(float3(-waveG.x, -waveG.y, 1.0f / lerp(0.55f, 1.05f, grazingSmooth)));
+                // Grazing-angle anisotropic Nyquist normal filter: deep physical wave relief with zero shimmer!
+                const float grazingSmooth = smoothstep(0.04f, 0.42f, saturate(v.z));
+                n = normalize(float3(-waveG.x, -waveG.y, 1.0f / lerp(0.68f, 1.22f, grazingSmooth)));
                 // Dynamic player/actor wading wake ripples driven by the persistent 32-slot footTrail ring buffer.
                 if (wDist < 1600.0f) {
                     float2 wakeG = 0.0f.xx;
@@ -477,7 +478,15 @@ void water(uint3 id : SV_DispatchThreadID) {
             // Refraction through the bed's own colour, from the frame RAW lit before the game composited its water: the
             // bed seen through the surface, bent by the wave normal in proportion to the depth, dimmed per channel
             // (red first) and filled in by light the water scatters (its tint under the sky's ambient).
-            float3 body = game.rgb;
+            // Wave 31 Continuous Deep-Water Optical Body (kills the razor-straight cell-boundary seam in 23.51.58.69.png
+            // when an adjacent cell lacks riverbed depth dBed == 1.0 by evaluating continuous Beer-Lambert scatter!):
+            const bool isExtBody0 = (sunColour.w > 0.5f);
+            const float3 deepScatter0 = (isExtBody0 ? float3(0.015f, 0.025f, 0.031f) : float3(0.004f, 0.006f, 0.007f))
+                                      * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), float3(0.035f, 0.045f, 0.062f))
+                                      * (isExtBody0 ? 1.15f : 0.65f);
+            const float waveFacet0 = lerp(0.74f, 1.26f, saturate(dot(n, normalize(float3(0.35f, 0.25f, 0.90f)))));
+            const float troughW0 = lerp(0.86f, 1.14f, saturate(0.45f + jacobianFold * 0.65f));
+            float3 body = deepScatter0 * (waveFacet0 * troughW0);
             const bool refr = skyLength > 0.5f && dBed < 1.0f && waterB.z > 0.0f;
             if (refr) {
                 const float3 pb = worldAt(px, dBed);

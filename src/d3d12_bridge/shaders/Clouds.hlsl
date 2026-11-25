@@ -59,23 +59,24 @@ float cloudDensityVol(float3 pa, bool detail) {
     const float alt = length(float3(dxy.x, dxy.y, R + pa.z)) - R;
     const float h = (alt - clouds.y) / clouds.z;
     if (h <= 0.0f || h >= 1.0f) { return 0.0f; }
-    // Altitude-layered Ekman wind advection (base moves slower, upper turrets & anvils veer & shear faster!).
-    const float2 wLayer = ekmanWind(h * 0.55f);
-    const float3 wind = float3(wLayer * camPosW.w, 0.0f);
-    const float3 sheared = pa + wind + float3(wLayer, 0.0f) * (h * 14.0f);
+    // Gentle physical anvil tilt (kills the 4,900u diagonal zebra-stripe shear seen in 23.49.30.10.png!):
+    const float2 wLayer = ekmanWind(h * 0.28f);
+    const float2 wUnit = normalize(wLayer + float2(1.0e-3f, 0.0f));
+    const float3 wind = float3(wLayer * (camPosW.w * 0.35f), 0.0f);
+    const float3 sheared = pa + wind + float3(wUnit, 0.0f) * (h * h * 650.0f);
     const float cover = saturate(clouds.x);
     const float stormType = saturate(weather.w * 1.4f + max(cover - 0.78f, 0.0f) * 2.5f);
 
-    // 2D continental weather map + Navier-Stokes 2-octave curl-vortex convective metamorphosis with Kolmogorov damping:
-    const float tMorph = camPosW.w * 0.0032f;
-    const float2 wUv = sheared.xy / 54000.0f;
-    const float2 curl1 = detail ? (cloudCurl2D(wUv * 1.35f, tMorph * 0.65f) * 0.24f) : 0.0f.xx;
-    const float2 curl2 = detail ? (cloudCurl2D(wUv * 2.85f + curl1 * 0.55f, tMorph * 1.15f) * 0.10f) : 0.0f.xx;
-    const float2 curlW = clamp(curl1 + curl2, -0.38f.xx, 0.38f.xx);
+    // 2D continental weather map + isotropic curl-vortex convective metamorphosis (billowy cumulus, never diagonal bars!):
+    const float tMorph = camPosW.w * 0.0022f;
+    const float2 wUv = sheared.xy / 46000.0f;
+    const float2 curl1 = detail ? (cloudCurl2D(wUv * 1.35f, tMorph * 0.65f) * 0.18f) : 0.0f.xx;
+    const float2 curl2 = detail ? (cloudCurl2D(wUv * 2.85f + curl1 * 0.55f, tMorph * 1.15f) * 0.08f) : 0.0f.xx;
+    const float2 curlW = clamp(curl1 + curl2, -0.28f.xx, 0.28f.xx);
     const float wCov = cNoise(float3(wUv + curlW, 1.3f + tMorph)) * 0.62f
                      + cNoise(float3((wUv - curlW * 0.6f) * 2.35f + 7.1f, 3.7f - tMorph * 0.8f)) * 0.38f;
     const float wHeight = saturate(cNoise(float3(wUv * 1.45f + 19.3f + curlW * 0.5f, 5.1f + tMorph * 0.5f)) * 0.70f + stormType * 0.45f);
-    const float topCap = lerp(0.42f, 0.96f, wHeight);
+    const float topCap = lerp(0.45f, 0.96f, wHeight);
     // Crisp flat cumulus condensation base (0..0.08) + rounded vertical cauliflower dome + storm virga rain-curtains beneath base!
     const float baseGrad = smoothstep(0.0f, 0.08f, h);
     const float topGrad  = 1.0f - smoothstep(topCap * 0.45f, topCap, h);
@@ -84,9 +85,9 @@ float cloudDensityVol(float3 pa, bool detail) {
     const float hGrad = saturate(baseGrad * topGrad + anvilSpread + virgaCurtain);
     if (hGrad <= 0.001f) { return 0.0f; }
 
-    // Sculptural 64^3 Periodic 3D Perlin-Worley Cumulus (tighter 42k towers + crisp 6.8k cauliflower billow erosion):
-    const float tEvo = camPosW.w * 0.0045f;
-    const float3 baseUvw = float3(sheared.x / 42000.0f, sheared.y / 42000.0f, (alt - clouds.y) / 36000.0f - tEvo * 0.14f);
+    // Sculptural 64^3 Periodic 3D Perlin-Worley Cumulus (isotropic 30k cauliflower towers + crisp 5.4k billow erosion):
+    const float tEvo = camPosW.w * 0.0030f;
+    const float3 baseUvw = float3(sheared.x / 30000.0f, sheared.y / 30000.0f, (alt - clouds.y) / 18000.0f - tEvo * 0.12f);
     const float4 vol0 = sampleCloudVol(baseUvw);
     const float lowWorley = vol0.g * 0.625f + vol0.b * 0.25f + vol0.a * 0.125f;
     const float baseShape = cRemap(vol0.r, -(1.0f - lowWorley) * 0.55f, 1.0f, 0.0f, 1.0f);

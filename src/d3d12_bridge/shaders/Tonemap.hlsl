@@ -349,15 +349,11 @@ float4 main(In i) : SV_Target {
         }
         const float3 locSurr = surrAcc / max(surrW, 1.0e-4f);
         const float lSurr = max(dot(locSurr, W), 1.0e-5f);
-        // 1) Local Mesopic Purkinje rod/cone response: deep dark surrounds (< 0.035) shift softly toward cool scotopic 507nm:
-        const float scotopicW = (1.0f - smoothstep(0.006f, 0.048f, max(lSelf, lSurr * 0.65f))) * saturate(1.0f - saturate((xIn.r - xIn.b) * 3.5f));
+        // 1) Local Mesopic Purkinje rod/cone response: strictly deep nocturnal near-black (< 0.008 linear)
+        // so shaded daytime faces (Hilde 23.50.29.60.png) NEVER shift into blue-purple!
+        const float scotopicW = (1.0f - smoothstep(0.001f, 0.009f, max(lSelf, lSurr * 0.85f))) * saturate(1.0f - saturate((xIn.r - xIn.b) * 4.5f));
         const float rodL = dot(xIn, float3(0.06f, 0.62f, 0.32f));
-        xIn = lerp(xIn, rodL * float3(0.76f, 0.90f, 1.18f), scotopicW * 0.24f);
-        // 2) Opponent Simultaneous Contrast: warm surround gently induces cooler shadow opposition (and vice versa):
-        const float3 bloomSurr = max(bloom, 0.0f.xxx) * exposure * RB.z;
-        const float surrWarmth = clamp((bloomSurr.r - bloomSurr.b) / max(dot(bloomSurr, W) + 0.12f, 0.12f), -0.65f, 0.65f);
-        const float oppGate = smoothstep(0.008f, 0.12f, lSelf) * (1.0f - smoothstep(0.45f, 1.25f, lSelf));
-        xIn *= (1.0f.xxx + float3(-0.045f, 0.005f, 0.055f) * (surrWarmth * oppGate));
+        xIn = lerp(xIn, rodL * float3(0.84f, 0.94f, 1.10f), scotopicW * 0.12f);
         // Photographic C2 Soft-Curve Rolling Highlights & Velvety Shadow Toe:
         const float lPost = max(dot(xIn, W), 1.0e-5f);
         const float rollKnee = max(RC.w * 0.35f, 0.85f);

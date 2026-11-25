@@ -205,4 +205,25 @@ struct SaveHealthReport {
 };
 SaveHealthReport InspectSaveHealth(const char* savesDirPath);
 
+// Wave 23 Deterministic Boruvka-Contraction Minimum Spanning Tree (inspired by Khanna-Putterman-Song O(m) MST):
+// Halves active components every round to build minimal spatial connectivity trees over NPC squads & light clusters.
+struct MstEdge {
+    uint32_t u = 0;
+    uint32_t v = 0;
+    float    weight = 0.0f;
+};
+struct BoruvkaMstResult {
+    std::vector<MstEdge> treeEdges;
+    float    totalWeight   = 0.0f;
+    uint32_t components    = 0;
+    uint32_t rounds        = 0;
+};
+BoruvkaMstResult ComputeBoruvkaMst(uint32_t nodeCount, const std::vector<MstEdge>& edges);
+
+// Wave 23 Quadratic-Reciprocity Legendre Character (a | p) CPU reference (matches RawTensorMath.hlsli::rawLegendreChar):
+int LegendreSymbol(int a, int oddPrimeP);
+
+// Wave 23 LoopCD / Richardson Iterative Contrast CPU reference (matches RawTensorMath.hlsli::rawLoopCdContrast):
+void EvaluateLoopCdContrast(const float passEarly[3], const float passRefined[3], float omega, float outRgb[3]);
+
 }  // namespace raw::rt

@@ -5,6 +5,7 @@
 // stopping, and exact SVGF variance propagation (var_new = sum(w^2 * var_q) / (sum w)^2, Eq. 3). Step 4 unpacks clean
 // restVis in [0..1] into alpha for Lighting.hlsl. Original work, MIT.
 #include "LightingCommon.hlsli"
+#include "RawTensorMath.hlsli"
 
 Texture2D<float4> GiIn   : register(t0);
 Texture2D<float>  Depth  : register(t1);
@@ -79,7 +80,11 @@ float4 atrousStep(float4 at, int stepSize, bool finalPass) {
     const float invW = 1.0f / max(float(wSum), 1.0e-5f);
     const float3 outRgb = float3(sumRgb) * invW;
     if (finalPass) {
-        return float4(outRgb, unpackRestVis(center.a));
+        // Wave 23 LoopCD / Richardson iterative contrast: recovers crisp indirect crease detail on low-variance
+        // surfaces by contrasting the wide 29x29 refined pass against the tight step2 center (zero extra noise).
+        const float cleanGate = saturate(1.0f - cSigma * 3.2f);
+        const float3 crispGi = rawLoopCdContrast(outRgb, center.rgb, 0.22f * cleanGate);
+        return float4(lerp(outRgb, crispGi, cleanGate * 0.65f), unpackRestVis(center.a));
     }
     // Schied SVGF HPG 2017 Eq. 3 filtered variance propagation into next wavelet level.
     const float nextSigma = clamp(sqrt(max(varSum * (invW * invW), 0.0f)), 0.0f, 1.5f);

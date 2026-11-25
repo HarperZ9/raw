@@ -44,7 +44,9 @@ struct RawWorldSimTelemetry {
     uint32_t totalSavesFound   = 0;
     uint8_t  camLockedOn       = 0;
     uint8_t  saveBloatWarn     = 0;
-    uint8_t  _padTel2[2]       = {};
+    uint8_t  squadMstComps     = 0;
+    uint8_t  squadMstRounds    = 0;
+    float    squadSpanLengthU  = 0.0f;
 };
 
 void WorldSimInit(const Image& img, const std::string& gameDir);

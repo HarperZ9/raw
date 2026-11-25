@@ -140,6 +140,29 @@ RawWorldSimTelemetry StepWorldSimSnapshot(const float playerPos[3], float gameHo
     const auto camLock = SolveSmoothCameraLockOn(playerPos, playerPos, playerPos, lockTarget, 80.0f, 14.0f, physPlan.clampedFrameDt);
     out.camLockedOn  = camLock.lockedOn ? 1u : 0u;
     out.lockOnFovDeg = camLock.dynamicFovDeg;
+
+    // 8. Wave 23 Deterministic Boruvka MST over active squad positions (detects formation cohesion vs split flanks)
+    if (squad.size() >= 2u) {
+        std::vector<MstEdge> edges;
+        edges.reserve(squad.size() * (squad.size() - 1u) / 2u);
+        for (size_t i = 0; i < squad.size(); ++i) {
+            for (size_t j = i + 1; j < squad.size(); ++j) {
+                const float dx = squad[i].pos[0] - squad[j].pos[0];
+                const float dy = squad[i].pos[1] - squad[j].pos[1];
+                const float dz = squad[i].pos[2] - squad[j].pos[2];
+                const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+                if (dist < 1400.0f) edges.push_back({uint32_t(i), uint32_t(j), dist});
+            }
+        }
+        const auto mst = ComputeBoruvkaMst(uint32_t(squad.size()), edges);
+        out.squadSpanLengthU = mst.totalWeight;
+        out.squadMstComps    = static_cast<uint8_t>(std::min<uint32_t>(mst.components, 255u));
+        out.squadMstRounds   = static_cast<uint8_t>(std::min<uint32_t>(mst.rounds, 255u));
+    } else {
+        out.squadSpanLengthU = 0.0f;
+        out.squadMstComps    = static_cast<uint8_t>(squad.size());
+        out.squadMstRounds   = 0u;
+    }
     return out;
 }
 

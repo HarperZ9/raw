@@ -497,4 +497,77 @@ SaveHealthReport InspectSaveHealth(const char* savesDirPath) {
     return r;
 }
 
+BoruvkaMstResult ComputeBoruvkaMst(uint32_t nodeCount, const std::vector<MstEdge>& edges) {
+    BoruvkaMstResult res{};
+    if (nodeCount == 0u) return res;
+    std::vector<uint32_t> parent(nodeCount);
+    for (uint32_t i = 0; i < nodeCount; ++i) parent[i] = i;
+    auto findRoot = [&](uint32_t x) {
+        while (parent[x] != x) {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        return x;
+    };
+    uint32_t comps = nodeCount;
+    std::vector<int32_t> cheapest(nodeCount, -1);
+    while (comps > 1u) {
+        std::fill(cheapest.begin(), cheapest.end(), -1);
+        for (int32_t ei = 0; ei < static_cast<int32_t>(edges.size()); ++ei) {
+            const auto& e = edges[size_t(ei)];
+            if (e.u >= nodeCount || e.v >= nodeCount) continue;
+            const uint32_t ru = findRoot(e.u);
+            const uint32_t rv = findRoot(e.v);
+            if (ru == rv) continue;
+            if (cheapest[ru] < 0 || e.weight < edges[size_t(cheapest[ru])].weight) cheapest[ru] = ei;
+            if (cheapest[rv] < 0 || e.weight < edges[size_t(cheapest[rv])].weight) cheapest[rv] = ei;
+        }
+        bool mergedAny = false;
+        for (uint32_t i = 0; i < nodeCount; ++i) {
+            const int32_t ei = cheapest[i];
+            if (ei < 0) continue;
+            const auto& e = edges[size_t(ei)];
+            const uint32_t ru = findRoot(e.u);
+            const uint32_t rv = findRoot(e.v);
+            if (ru == rv) continue;
+            parent[rv] = ru;
+            res.treeEdges.push_back(e);
+            res.totalWeight += e.weight;
+            --comps;
+            mergedAny = true;
+        }
+        ++res.rounds;
+        if (!mergedAny) break;
+    }
+    res.components = comps;
+    return res;
+}
+
+int LegendreSymbol(int a, int oddPrimeP) {
+    if (oddPrimeP <= 2 || (oddPrimeP & 1) == 0) return 0;
+    int m = a % oddPrimeP;
+    if (m < 0) m += oddPrimeP;
+    if (m == 0) return 0;
+    int64_t res = 1;
+    int64_t base = m;
+    int exp = (oddPrimeP - 1) >> 1;
+    while (exp > 0) {
+        if (exp & 1) res = (res * base) % oddPrimeP;
+        base = (base * base) % oddPrimeP;
+        exp >>= 1;
+    }
+    return (res == 1) ? 1 : -1;
+}
+
+void EvaluateLoopCdContrast(const float passEarly[3], const float passRefined[3], float omega, float outRgb[3]) {
+    if (!passEarly || !passRefined || !outRgb) return;
+    const float w = std::clamp(omega, 0.0f, 0.50f);
+    for (int i = 0; i < 3; ++i) {
+        const float extrap = passRefined[i] + (passRefined[i] - passEarly[i]) * w;
+        const float lo = std::max(0.0f, std::min(passEarly[i], passRefined[i]) * 0.85f);
+        const float hi = std::max(passEarly[i], passRefined[i]) * 1.15f + 0.02f;
+        outRgb[i] = std::clamp(extrap, lo, hi);
+    }
+}
+
 }  // namespace raw::rt

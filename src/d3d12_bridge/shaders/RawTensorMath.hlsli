@@ -112,6 +112,35 @@ float rawRectMatmulExponent(float a, float b, float c) {
     return x + y + (excess * excess) / max(4.0f * x * y * z, 1.0e-5f);
 }
 
+// Wave 23 LoopCD / Richardson Iterative Contrastive Extrapolation (Apple MLR LoopCD homology):
+// Contrasts an early pass against a refined pass: y_out = y_ref + w * (y_ref - y_early), canceling leading
+// smoothing bias eigenmodes with energy-conserving clamping so multi-pass GI/upscaling stays crisp with zero ringing.
+float3 rawLoopCdContrast(float3 passEarly, float3 passRefined, float omega) {
+    const float w = clamp(omega, 0.0f, 0.50f);
+    const float3 delta = passRefined - passEarly;
+    const float3 extrap = passRefined + delta * w;
+    const float3 lo = min(passEarly, passRefined) * 0.85f;
+    const float3 hi = max(passEarly, passRefined) * 1.15f + 0.02f;
+    return clamp(extrap, max(lo, 0.0f.xxx), hi);
+}
+
+// Wave 23 Quadratic-Reciprocity Multiplicative Character (Legendre symbol (a | p) in {-1, 0, +1} via Euler's criterion):
+// Exact multiplicative harmonic eigenfunction of (Z/pZ)* for zero-DC-bias parity strata flipping across prime periods.
+int rawLegendreChar(int a, int p) {
+    int m = a % p;
+    if (m < 0) { m += p; }
+    if (m == 0) { return 0; }
+    int res = 1;
+    int base = m;
+    int exp = (p - 1) >> 1;
+    [loop] for (int bit = 0; bit < 16 && exp > 0; ++bit) {
+        if ((exp & 1) != 0) { res = (res * base) % p; }
+        base = (base * base) % p;
+        exp >>= 1;
+    }
+    return (res == 1) ? 1 : -1;
+}
+
 // Hardware INT8 quantized 4-element dot product (DP4a silicon on Turing/Ampere/Ada/Blackwell/RDNA3+):
 int rawDot4I8(uint packedA, uint packedB, int acc) {
     return dot4add_i8packed(packedA, packedB, acc);

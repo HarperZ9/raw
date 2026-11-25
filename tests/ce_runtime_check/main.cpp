@@ -641,6 +641,35 @@ void main() {
     const auto saveMissing = raw::rt::InspectSaveHealth("Z:\\nonexistent_raw_saves_dir_check");
     Check(saveMissing.totalSaves == 0 && !saveMissing.bloatWarning && saveMissing.largestSaveMb == 0.0f,
           "save_health_guard_missing_control");
+
+    // 12) Wave 23 Deterministic Boruvka MST + Quadratic Reciprocity Legendre Law + LoopCD Extrapolation
+    std::vector<raw::rt::MstEdge> mstEdges = {
+        {0, 1, 4.0f}, {0, 2, 1.0f}, {1, 2, 2.0f}, {1, 3, 5.0f}, {2, 3, 8.0f}, {3, 4, 3.0f}, {2, 4, 10.0f}
+    };
+    const auto mst = raw::rt::ComputeBoruvkaMst(5, mstEdges);
+    Check(mst.components == 1 && mst.treeEdges.size() == 4 && std::fabs(mst.totalWeight - 11.0f) < 1e-4f &&
+          mst.rounds <= 3 && wsWave21.squadMstComps == 1 && wsWave21.squadSpanLengthU > 50.0f,
+          "boruvka_deterministic_mst_kernel");
+
+    // Verify Gauss's Law of Quadratic Reciprocity across odd prime pairs: (p|q)(q|p) = (-1)^(((p-1)/2)*((q-1)/2))
+    static constexpr int kOddPrimes[] = {3, 5, 7, 11, 13, 17, 19, 23, 29, 31};
+    bool qrOk = (raw::rt::LegendreSymbol(0, 7) == 0 && raw::rt::LegendreSymbol(5, 2) == 0);
+    for (int i = 0; i < 10; ++i) {
+        for (int j = i + 1; j < 10; ++j) {
+            const int p = kOddPrimes[i], q = kOddPrimes[j];
+            const int lhs = raw::rt::LegendreSymbol(p, q) * raw::rt::LegendreSymbol(q, p);
+            const int rhs = ((((p - 1) >> 1) * ((q - 1) >> 1)) & 1) ? -1 : 1;
+            if (lhs != rhs) qrOk = false;
+        }
+    }
+    Check(qrOk, "legendre_quadratic_reciprocity_law");
+
+    const float lcEarly[3] = {0.40f, 0.50f, 0.60f};
+    const float lcRef[3]   = {0.50f, 0.50f, 0.40f};
+    float lcOut[3] = {};
+    raw::rt::EvaluateLoopCdContrast(lcEarly, lcRef, 0.25f, lcOut);
+    Check(lcOut[0] > 0.52f && std::fabs(lcOut[1] - 0.50f) < 1e-4f && lcOut[2] < 0.38f && lcOut[2] >= 0.34f,
+          "loopcd_contrastive_extrapolation");
 }
 
 }  // namespace

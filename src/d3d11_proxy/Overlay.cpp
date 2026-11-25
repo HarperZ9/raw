@@ -379,7 +379,8 @@ std::vector<raw::ui::StudioRow> BuildRows(int tab)
             uint8_t  physicsSubsteps, acousticEnvClass, freezingRisk, marketTier;
             float    economyBuyMult, lockOnFovDeg, largestSaveMb;
             uint32_t totalSavesFound;
-            uint8_t  camLockedOn, saveBloatWarn, _padTel2[2];
+            uint8_t  camLockedOn, saveBloatWarn, squadMstComps, squadMstRounds;
+            float    squadSpanLengthU;
         };
         using SimTelFn = int(*)(WorldSimTelPod*);
         static SimTelFn s_simTel = nullptr;
@@ -402,6 +403,7 @@ std::vector<raw::ui::StudioRow> BuildRows(int tab)
             AddCycle(rows, "Physics Substep Gov", FmtI("%dx @ ", int(wtel.physicsSubsteps)) + Fmt("%.2f ms", wtel.physicsSubstepMs), true);
             AddCycle(rows, "3D Acoustic Reverb", std::string(kAcEnv[std::min<int>(wtel.acousticEnvClass, 4)]) + Fmt(" | RT60 %.2fs", wtel.acousticRt60Sec), true);
             AddCycle(rows, "Hold Economy & Cam", std::string(kMkt[wtel.marketTier & 3u]) + Fmt(" %.2fx | ", wtel.economyBuyMult) + Fmt("FOV %.0f", wtel.lockOnFovDeg), wtel.camLockedOn != 0);
+            AddCycle(rows, "Squad Boruvka MST", Fmt("%.0f u | ", wtel.squadSpanLengthU) + FmtI("%d grp / ", int(wtel.squadMstComps)) + FmtI("%d rnd", int(wtel.squadMstRounds)), wtel.squadMstComps > 0);
             AddCycle(rows, "Save Health Guard", FmtI("%d saves | ", int(wtel.totalSavesFound)) + Fmt("Max %.1f MB", wtel.largestSaveMb) + (wtel.saveBloatWarn ? " [BLOAT]" : " [OK]"), wtel.saveBloatWarn != 0);
         } else {
             AddCycle(rows, "Runtime Autonomy", "Zero SKSE / Native raw_engine.dll", true);

@@ -34,6 +34,9 @@ float g_snowAccumU = 0.0f;
 float g_coreWarmth = 85.0f;
 uint32_t g_tickCounter = 0;
 uint64_t g_lastTickUs = 0;
+uint32_t g_saveCount = 0;
+float g_largestSaveMb = 0.0f;
+bool g_saveBloatWarn = false;
 
 }  // namespace
 
@@ -128,6 +131,15 @@ RawWorldSimTelemetry StepWorldSimSnapshot(const float playerPos[3], float gameHo
     out.acousticRt60Sec   = ac.rt60Sec;
     out.acousticLowPassHz = ac.lowPassHz;
     out.acousticEnvClass  = static_cast<uint8_t>(ac.envClass);
+
+    // 7. Dynamic hold economy scarcity + smooth-follow combat camera FOV lock-on solver
+    const auto econ = EvaluateDynamicEconomy(std::max(rain01, snow01), out.snowDepthU, gameHour, actorCount, inInterior);
+    out.marketTier     = econ.marketTier;
+    out.economyBuyMult = econ.buyPriceMult;
+    const float* lockTarget = (!squad.empty()) ? squad[0].pos : nullptr;
+    const auto camLock = SolveSmoothCameraLockOn(playerPos, playerPos, playerPos, lockTarget, 80.0f, 14.0f, physPlan.clampedFrameDt);
+    out.camLockedOn  = camLock.lockedOn ? 1u : 0u;
+    out.lockOnFovDeg = camLock.dynamicFovDeg;
     return out;
 }
 
@@ -154,6 +166,19 @@ void WorldSimInit(const Image&, const std::string& gameDir) {
             g_tel.navTrisLoaded   = tSum;
             g_tel.navReady        = 1u;
             g_navLoaded.store(true, std::memory_order_release);
+        }
+        // Background save-file health & bloat scan (zero main-thread I/O):
+        char userProf[MAX_PATH]{};
+        if (GetEnvironmentVariableA("USERPROFILE", userProf, MAX_PATH) > 0) {
+            const std::string savesDir = std::string(userProf) + "\\Documents\\My Games\\Skyrim Special Edition\\Saves";
+            const auto sh = InspectSaveHealth(savesDir.c_str());
+            std::lock_guard<std::mutex> lk(g_simMu);
+            g_saveCount = sh.totalSaves;
+            g_largestSaveMb = sh.largestSaveMb;
+            g_saveBloatWarn = sh.bloatWarning;
+            g_tel.totalSavesFound = sh.totalSaves;
+            g_tel.largestSaveMb   = sh.largestSaveMb;
+            g_tel.saveBloatWarn   = sh.bloatWarning ? 1u : 0u;
         }
         ThreadEnd();
     }).detach();
@@ -201,6 +226,9 @@ void WorldSimOnPresent() {
         tickDtSec * 0.5f, g_coreWarmth);
     snap.simTicks = g_tickCounter / 2u;
     if (!inInt) snap.snowDepthU = std::max(snap.snowDepthU, g_snowAccumU);
+    snap.totalSavesFound = g_saveCount;
+    snap.largestSaveMb   = g_largestSaveMb;
+    snap.saveBloatWarn   = g_saveBloatWarn ? 1u : 0u;
     g_coreWarmth = snap.coreWarmth;
     g_shiverAtomic.store(snap.shiverIntensity, std::memory_order_relaxed);
 

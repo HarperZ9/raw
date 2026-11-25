@@ -175,4 +175,34 @@ AcousticReverbState ComputeAcousticReverb(bool inInterior, float enclosureRadius
                                           float snowCover01, float rain01,
                                           float windSpeed, bool underwater);
 
+// Critically-Damped 3D Camera Smooth-Follow & Target Lock-On Solver (replaces SmoothCam / True Directional Movement):
+struct SmoothCameraLockResult {
+    float smoothedPos[3] = {};
+    float lockYawRad     = 0.0f;
+    float lockPitchRad   = 0.0f;
+    float dynamicFovDeg  = 80.0f;
+    bool  lockedOn       = false;
+};
+SmoothCameraLockResult SolveSmoothCameraLockOn(const float prevCamPos[3], const float desiredCamPos[3],
+                                               const float playerPos[3], const float* lockTargetPos,
+                                               float baseFovDeg, float springOmega, float dtSec);
+
+// Dynamic Living-World Hold Economy & Supply Scarcity Model (replaces Trade Routes / Supply & Demand):
+struct DynamicEconomyState {
+    float buyPriceMult  = 1.0f;
+    float sellPriceMult = 1.0f;
+    float scarcityIndex = 0.0f;   // 0 (surplus) .. 1 (severe storm shortage)
+    uint8_t marketTier  = 1;      // 0=Surplus, 1=Balanced, 2=Tight, 3=Crisis
+};
+DynamicEconomyState EvaluateDynamicEconomy(float storm01, float snowDepthU, float gameHour,
+                                           uint32_t nearbyActors, bool inInterior);
+
+// Save-File Bloat & String-Table Safety Inspector (replaces external save-bloat warning monitors):
+struct SaveHealthReport {
+    uint32_t totalSaves    = 0;
+    float    largestSaveMb = 0.0f;
+    bool     bloatWarning  = false;   // true when largest .ess exceeds 18 MB
+};
+SaveHealthReport InspectSaveHealth(const char* savesDirPath);
+
 }  // namespace raw::rt

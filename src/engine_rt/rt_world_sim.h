@@ -37,7 +37,14 @@ struct RawWorldSimTelemetry {
     uint8_t  physicsSubsteps   = 2;
     uint8_t  acousticEnvClass  = 0;
     uint8_t  freezingRisk      = 0;
-    uint8_t  _padTel           = 0;
+    uint8_t  marketTier        = 1;
+    float    economyBuyMult    = 1.0f;
+    float    lockOnFovDeg      = 80.0f;
+    float    largestSaveMb     = 0.0f;
+    uint32_t totalSavesFound   = 0;
+    uint8_t  camLockedOn       = 0;
+    uint8_t  saveBloatWarn     = 0;
+    uint8_t  _padTel2[2]       = {};
 };
 
 void WorldSimInit(const Image& img, const std::string& gameDir);

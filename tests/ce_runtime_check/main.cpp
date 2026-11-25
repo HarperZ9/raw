@@ -614,13 +614,33 @@ void main() {
           "acoustic_room_reverb_estimator");
 
     const float alpinePos[3] = {100.0f, 200.0f, 4200.0f};
+    const float alpineNpcs[12] = {180.0f, 200.0f, 4200.0f, 1.0f,  240.0f, 260.0f, 4200.0f, 1.0f,  40.0f, 340.0f, 4200.0f, 1.0f};
     const auto wsWave21 = raw::rt::StepWorldSimSnapshot(
-        alpinePos, 14.0f, 0.0f, 0.95f, 180.0f, false, npcs, 3, 8, 2072, 2219, 1.0f / 60.0f, 32.0f);
+        alpinePos, 14.0f, 0.0f, 0.95f, 180.0f, false, alpineNpcs, 3, 8, 2072, 2219, 1.0f / 60.0f, 32.0f);
     Check(wsWave21.ambientTempC < 0.0f && wsWave21.coreWarmth < 32.0f && wsWave21.shiverIntensity > 0.20f &&
           wsWave21.physicsSubsteps == 2 && wsWave21.physicsSubstepMs <= 8.4f &&
           wsWave21.acousticEnvClass == uint8_t(raw::rt::AcousticEnvClass::AlpineValley) &&
-          wsWave21.acousticRt60Sec > 0.05f && wsWave21.acousticLowPassHz < 16000.0f,
+          wsWave21.acousticRt60Sec > 0.05f && wsWave21.acousticLowPassHz < 16000.0f &&
+          wsWave21.camLockedOn == 1 && wsWave21.lockOnFovDeg > 80.0f && wsWave21.economyBuyMult > 1.05f,
           "world_sim_wave21_telemetry");
+
+    // 11) Wave 22 Smooth Camera Lock-On + Dynamic Hold Economy + Save-Bloat Health Guard
+    const float camPrev[3] = {0.0f, 0.0f, 100.0f}, camWant[3] = {100.0f, 0.0f, 100.0f}, lockTgt[3] = {100.0f, 220.0f, 120.0f};
+    const auto camLock = raw::rt::SolveSmoothCameraLockOn(camPrev, camWant, camPrev, lockTgt, 80.0f, 14.0f, 1.0f / 60.0f);
+    const auto camFree = raw::rt::SolveSmoothCameraLockOn(camPrev, camWant, camPrev, nullptr, 80.0f, 14.0f, 1.0f / 60.0f);
+    Check(camLock.lockedOn && camLock.smoothedPos[0] > 10.0f && camLock.smoothedPos[0] < 90.0f &&
+          camLock.dynamicFovDeg > 80.5f && !camFree.lockedOn && std::fabs(camFree.dynamicFovDeg - 80.0f) < 1e-3f,
+          "smooth_camera_lockon_solver");
+
+    const auto econCalm  = raw::rt::EvaluateDynamicEconomy(0.0f, 0.0f, 13.0f, 12, false);
+    const auto econStorm = raw::rt::EvaluateDynamicEconomy(1.0f, 32.0f, 23.0f, 1, false);
+    Check(econCalm.marketTier < econStorm.marketTier && econStorm.buyPriceMult > econCalm.buyPriceMult + 0.25f &&
+          econStorm.scarcityIndex > 0.75f,
+          "dynamic_hold_economy_scarcity");
+
+    const auto saveMissing = raw::rt::InspectSaveHealth("Z:\\nonexistent_raw_saves_dir_check");
+    Check(saveMissing.totalSaves == 0 && !saveMissing.bloatWarning && saveMissing.largestSaveMb == 0.0f,
+          "save_health_guard_missing_control");
 }
 
 }  // namespace

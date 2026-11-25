@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 
 namespace raw::rt {
 
@@ -424,6 +425,76 @@ AcousticReverbState ComputeAcousticReverb(bool inInterior, float enclosureRadius
     a.lowPassHz = std::clamp(19500.0f - snow * 5800.0f - rain * 3200.0f - std::min(wind * 12.0f, 3500.0f), 4500.0f, 20000.0f);
     a.airAbsorbDbPerM = 0.004f + snow * 0.012f + rain * 0.009f;
     return a;
+}
+
+SmoothCameraLockResult SolveSmoothCameraLockOn(const float prevCamPos[3], const float desiredCamPos[3],
+                                               const float playerPos[3], const float* lockTargetPos,
+                                               float baseFovDeg, float springOmega, float dtSec) {
+    SmoothCameraLockResult out{};
+    const float dt = std::clamp(dtSec, 1.0e-4f, 0.1f);
+    const float w = std::clamp(springOmega, 2.0f, 35.0f);
+    // Exact exponential critically-damped follow factor (framerate-independent 30..360 Hz):
+    const float alpha = 1.0f - std::exp(-w * dt);
+    if (prevCamPos && desiredCamPos) {
+        for (int i = 0; i < 3; ++i) {
+            out.smoothedPos[i] = prevCamPos[i] + (desiredCamPos[i] - prevCamPos[i]) * alpha;
+        }
+    }
+    const float clampedBase = std::clamp(baseFovDeg, 60.0f, 110.0f);
+    out.dynamicFovDeg = clampedBase;
+    if (playerPos && lockTargetPos) {
+        const float dx = lockTargetPos[0] - playerPos[0];
+        const float dy = lockTargetPos[1] - playerPos[1];
+        const float dz = lockTargetPos[2] - playerPos[2];
+        const float horiz = std::sqrt(dx * dx + dy * dy);
+        const float dist = std::sqrt(horiz * horiz + dz * dz);
+        if (dist > 25.0f && dist < 1600.0f) {
+            out.lockedOn = true;
+            out.lockYawRad = std::atan2(dx, dy);
+            out.lockPitchRad = std::clamp(std::atan2(dz, std::max(horiz, 1.0f)), -1.15f, 1.15f);
+            // Pull combat FOV subtly wider at close range (+6 deg) for clean melee spatial awareness:
+            const float closePull = std::clamp(1.0f - (dist - 120.0f) / 700.0f, 0.0f, 1.0f);
+            out.dynamicFovDeg = std::clamp(clampedBase + closePull * 6.0f, 65.0f, 115.0f);
+        }
+    }
+    return out;
+}
+
+DynamicEconomyState EvaluateDynamicEconomy(float storm01, float snowDepthU, float gameHour,
+                                           uint32_t nearbyActors, bool inInterior) {
+    DynamicEconomyState e{};
+    const float storm = std::clamp(storm01, 0.0f, 1.0f);
+    const float snowScarcity = std::clamp(snowDepthU / 36.0f, 0.0f, 1.0f);
+    const bool lateNight = (gameHour < 6.0f || gameHour >= 21.0f);
+    const float crowdRelief = std::clamp(float(nearbyActors) / 24.0f, 0.0f, 0.30f);
+    e.scarcityIndex = std::clamp(storm * 0.55f + snowScarcity * 0.35f + (lateNight ? 0.12f : 0.0f) - crowdRelief + (inInterior ? -0.05f : 0.0f), 0.0f, 1.0f);
+    e.buyPriceMult  = std::clamp(0.92f + e.scarcityIndex * 0.42f, 0.85f, 1.45f);
+    e.sellPriceMult = std::clamp(0.95f + e.scarcityIndex * 0.28f, 0.85f, 1.30f);
+    if (e.scarcityIndex < 0.20f) e.marketTier = 0;
+    else if (e.scarcityIndex < 0.48f) e.marketTier = 1;
+    else if (e.scarcityIndex < 0.75f) e.marketTier = 2;
+    else e.marketTier = 3;
+    return e;
+}
+
+SaveHealthReport InspectSaveHealth(const char* savesDirPath) {
+    SaveHealthReport r{};
+    if (!savesDirPath || !*savesDirPath) return r;
+    std::error_code ec;
+    if (!std::filesystem::exists(savesDirPath, ec)) return r;
+    uint64_t maxBytes = 0;
+    for (const auto& ent : std::filesystem::directory_iterator(savesDirPath, ec)) {
+        if (!ent.is_regular_file(ec)) continue;
+        const auto ext = ent.path().extension().string();
+        if (ext == ".ess" || ext == ".ESS") {
+            ++r.totalSaves;
+            const uint64_t sz = ent.file_size(ec);
+            if (sz > maxBytes) maxBytes = sz;
+        }
+    }
+    r.largestSaveMb = float(double(maxBytes) / (1024.0 * 1024.0));
+    r.bloatWarning = (r.largestSaveMb >= 18.0f);
+    return r;
 }
 
 }  // namespace raw::rt

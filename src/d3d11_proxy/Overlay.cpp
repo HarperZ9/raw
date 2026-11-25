@@ -376,7 +376,10 @@ std::vector<raw::ui::StudioRow> BuildRows(int tab)
             float    expectedPayoff, strideDampMult, snowDepthU, windSpeed;
             float    ambientTempC, coreWarmth, shiverIntensity, staminaRegenMult;
             float    physicsSubstepMs, acousticRt60Sec, acousticLowPassHz;
-            uint8_t  physicsSubsteps, acousticEnvClass, freezingRisk, _padTel;
+            uint8_t  physicsSubsteps, acousticEnvClass, freezingRisk, marketTier;
+            float    economyBuyMult, lockOnFovDeg, largestSaveMb;
+            uint32_t totalSavesFound;
+            uint8_t  camLockedOn, saveBloatWarn, _padTel2[2];
         };
         using SimTelFn = int(*)(WorldSimTelPod*);
         static SimTelFn s_simTel = nullptr;
@@ -391,12 +394,15 @@ std::vector<raw::ui::StudioRow> BuildRows(int tab)
             static const char* kDirs[5] = {"Routine", "SeekShelter", "WarmBrazier", "EquipTorch", "AlertPatrol"};
             static const char* kActs[4] = {"PressAttack", "FlankCircle", "GuardParry", "Retreat"};
             static const char* kAcEnv[5] = {"OpenSky", "AlpineValley", "StoneInterior", "CavernVault", "Underwater"};
+            static const char* kMkt[4] = {"Surplus", "Balanced", "Tight", "Crisis"};
             AddCycle(rows, "Live NavMesh Cache", FmtI("%d cells / ", int(wtel.navMeshesLoaded)) + FmtI("%d tris", int(wtel.navTrisLoaded)), wtel.navReady != 0);
             AddCycle(rows, "Live Squad & Policy", FmtI("%d actors | ", int(wtel.actorsTracked)) + std::string(kActs[wtel.tacticalAction & 3u]), wtel.actorsTracked > 0);
             AddCycle(rows, "World Ecosystem", std::string(kDirs[std::min<int>(wtel.activeDirective, 4)]) + Fmt(" | Stride %.2fx", wtel.strideDampMult), true);
             AddCycle(rows, "Thermal Survival", Fmt("%.1fC | ", wtel.ambientTempC) + Fmt("Warm %.0f%% | ", wtel.coreWarmth) + Fmt("Stam %.2fx", wtel.staminaRegenMult), wtel.freezingRisk != 0);
             AddCycle(rows, "Physics Substep Gov", FmtI("%dx @ ", int(wtel.physicsSubsteps)) + Fmt("%.2f ms", wtel.physicsSubstepMs), true);
             AddCycle(rows, "3D Acoustic Reverb", std::string(kAcEnv[std::min<int>(wtel.acousticEnvClass, 4)]) + Fmt(" | RT60 %.2fs", wtel.acousticRt60Sec), true);
+            AddCycle(rows, "Hold Economy & Cam", std::string(kMkt[wtel.marketTier & 3u]) + Fmt(" %.2fx | ", wtel.economyBuyMult) + Fmt("FOV %.0f", wtel.lockOnFovDeg), wtel.camLockedOn != 0);
+            AddCycle(rows, "Save Health Guard", FmtI("%d saves | ", int(wtel.totalSavesFound)) + Fmt("Max %.1f MB", wtel.largestSaveMb) + (wtel.saveBloatWarn ? " [BLOAT]" : " [OK]"), wtel.saveBloatWarn != 0);
         } else {
             AddCycle(rows, "Runtime Autonomy", "Zero SKSE / Native raw_engine.dll", true);
         }

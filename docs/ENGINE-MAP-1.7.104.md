@@ -31,7 +31,7 @@ SkyrimSE.exe 1.7.104.0 Memory
   |-- PlayerCamera / TESObjectCELL / UI::Singleton (rt_view.cpp)
   |     TESCamera +0x28 -> +0x18 camStateId   --> engineWorld.y (0=1st, 1=3rd)
   |     TESObjectCELL +0x40 cellFlags bit 0   --> isInterior (true engine cell ownership, zero cascade flicker)
-  |     TESObjectCELL +0x70 float waterHeight --> engineWorld.x (capillary wet-shoreline wicking)
+  |     TESObjectCELL +0x78 float waterHeight / TESWorldSpace +0x214 --> engineWorld.x (capillary wet-shoreline wicking)
   |     UI::Singleton +0x160 numPausesGame    --> timeEnv.w (isolates Map/Inventory from DoF/Froxels)
   |
   |-- D3D11 -> raw::tx -> D3D12Bridge Shared Surfaces (Zero-Copy Shared Handles)
@@ -56,7 +56,7 @@ SkyrimSE.exe 1.7.104.0 Memory
 | `ShadowSceneNode` | `+0x200` | `BSLight*` | **Day=Sun, Night=Moon**; elevation clamped `>15°` | `sunDir.xyz` (shadows & lunar beams) |
 | `BSLight -> NiLight` | `+0x48` | `NiLight*` | `NiAVObject +0x7C` rot col0 = dir; `+0xA0` = world pos | `rt_livestate.cpp` |
 | `NiLight` | `+0x11C/+0x128/+0x134` | `float[3]/f/f` | `color = diffuse * fade`; `radius > 0` | `SceneLights.cpp` |
-| `TESObjectCELL` | `+0x40` / `+0x70` | `uint16_t` / `float` | Bit 0 = `IsInterior`; `waterHeight` (e.g. `65.2u`) | `engineWorld.x/z` |
+| `TESObjectCELL` | `+0x40` / `+0x78` | `uint16_t` / `float` | Bit 0 = `IsInterior`, Bit 1 = `HasWater`; `waterHeight` (`+0x70` is `CELL_DATA*`; `TESWorldSpace +0x214` is `defaultWaterHeight`) | `engineWorld.x/z` |
 | `TESCamera` | `+0x28 -> +0x18` | `uint32_t` | `0`=1st, `1`=3rd, `<=16` valid | `engineWorld.y` |
 | `UI::Singleton` | `+0x160` | `uint32_t` | `numPausesGame > 0` in Menu/Map/Inventory | `timeEnv.w` |
 | `BGSDecalManager` | `0x21A3DF8` | Singleton* | Live `audit`: `decal_mgr: true` | `rt_audit.cpp` / `rt_settings.cpp` |

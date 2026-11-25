@@ -77,11 +77,15 @@ bool SehWriteCellWaterIfMatch(uintptr_t cellAddr, uint32_t expectedFormId, float
         if (!cellAddr || !expectedFormId || !std::isfinite(newWaterHeight)) return false;
         auto* cell = reinterpret_cast<uint8_t*>(cellAddr);
         if (At<uint32_t>(cell, 0x14) != expectedFormId) return false;
-        if ((At<uint16_t>(cell, 0x40) & 1u) != 0u) return false;
-        const float cur = At<float>(cell, 0x70);
-        if (!std::isfinite(cur) || cur <= -13999.0f || cur >= 50000.0f || cur == 0.0f) return false;
+        const uint16_t flags = At<uint16_t>(cell, 0x40);
+        if ((flags & 1u) != 0u || (flags & 2u) == 0u) return false; // exterior + HasWater required
+        // Binary-verified SkyrimSE 1.7.104 TESObjectCELL::GetExteriorWaterHeight (RVA 0x2BEE00):
+        //   +0x70 = CELL_DATA* (EXTERIOR_DATA* pointer - NEVER touch!)
+        //   +0x78 = float waterHeight (sentinel 2147483648.0f when inheriting worldspace default)
+        const float cur = At<float>(cell, 0x78);
+        if (!std::isfinite(cur) || cur <= -50000.0f || cur >= 50000.0f) return false;
         if (std::fabs(cur - newWaterHeight) > 0.02f) {
-            std::memcpy(cell + 0x70, &newWaterHeight, sizeof(float));
+            std::memcpy(cell + 0x78, &newWaterHeight, sizeof(float));
         }
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -98,26 +102,29 @@ bool ReadCell(EngineView* v, uintptr_t* outExtCellAddr, bool* outCellWhValid) {
         const uint8_t* cell = At<const uint8_t*>(pc, 0x60);
         if (!cell) return false;
         v->cellFormId = At<uint32_t>(cell, 0x14);
-        v->interior = At<uint16_t>(cell, 0x40) & 1u;
-        // TESObjectCELL::waterHeight (+0x70 on 1.6.1170/1.7.104) with TESWorldSpace::defaultWaterHeight (+0x150) fallback.
+        const uint16_t cellFlags = At<uint16_t>(cell, 0x40);
+        v->interior = cellFlags & 1u;
+        const bool hasWater = (cellFlags & 2u) != 0u;
+        // Binary-verified SkyrimSE 1.7.104 offsets:
+        //   TESObjectCELL::waterHeight (+0x78, sentinel 2147483648.0f when inheriting worldspace)
+        //   TESWorldSpace::defaultWaterHeight (+0x214, RVA 0x30DE80)
         v->waterHeight = -14000.0f;
-        const float cellWh = At<float>(cell, 0x70);
-        const bool cellWhValid = std::isfinite(cellWh) && cellWh > -13999.0f && cellWh < 50000.0f && cellWh != 0.0f;
+        const float cellWh = At<float>(cell, 0x78);
+        const bool cellWhValid = hasWater && std::isfinite(cellWh) && cellWh > -50000.0f && cellWh < 50000.0f;
         if (cellWhValid) v->waterHeight = cellWh;
         if (!v->interior && cellWhValid && outExtCellAddr && outCellWhValid) {
             *outExtCellAddr = reinterpret_cast<uintptr_t>(cell);
             *outCellWhValid = true;
         }
-        // the worldspace: off:TESObjectCELL::worldSpace (+0x128 on 1.6.1170, a cell dump in game, ec7-2; CommonLib's
-        // +0x120 held zero), checked by its form type (TESWorldSpace, 71)
+        // the worldspace: off:TESObjectCELL::worldSpace (+0x128 on 1.6.1170/1.7.104), checked by form type (71)
         v->worldspaceFormId = 0;
         for (uint32_t off : {kWorldSpace, 0x128u, 0x120u}) {
             if (!off) continue;
             const uint8_t* ws = v->interior ? nullptr : At<const uint8_t*>(cell, off);
             if (ws && ws[0x1A] == 71) {
                 v->worldspaceFormId = At<uint32_t>(ws, 0x14);
-                if (!cellWhValid) {
-                    const float wsWh = At<float>(ws, 0x150);
+                if (hasWater && !cellWhValid) {
+                    const float wsWh = At<float>(ws, 0x214);
                     if (std::isfinite(wsWh) && wsWh > -50000.0f && wsWh < 50000.0f) v->waterHeight = wsWh;
                 }
                 break;

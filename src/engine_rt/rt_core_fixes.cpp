@@ -149,22 +149,30 @@ std::string CoreFixesApplyEngine(const Image& img, const std::vector<RefTarget>&
     }
 
     if (prof.gen == raw::versions::EngineGen::CE1_DX11) {
-        // Wave 35 Structural Creation Engine 1 (Skyrim SE/AE/VR) Forest, Grass, Terrain LOD & Shadow Stability Unlocks:
-        // Lifts 2011 console-era 3D tree, grass-fade, terrain block-LOD, sun-shadow stepping, and particle ceilings natively!
-        static const KV kCe1World[] = {
+        // Wave 35 Structural Creation Engine 1 (Skyrim SE/AE/VR) Shadow Stability & Particle Unlocks:
+        // Respects EngineFixes.dll guard on grass/tree/terrain LOD distances so modded 32 GB lists never OOM at save load!
+        const bool hasEngineFixes = GetModuleHandleA("EngineFixes.dll") != nullptr;
+        static const KV kCe1Safe[] = {
             {"fSunUpdateThreshold:Display", "0.002"},
             {"fSunShadowUpdateTime:Display", "0.0"},
-            {"fTreesMidLODSwitchDist:Display", "10000000.0"},
-            {"uiMaxSkinnedTreesToRender:Trees", "200"},
-            {"fGrassStartFadeDistance:Grass", "9500.0"},
-            {"fGrassMaxStartFadeDistance:Grass", "11000.0"},
-            {"fBlockLevel0Distance:TerrainManager", "60000.0"},
-            {"fBlockLevel1Distance:TerrainManager", "110000.0"},
-            {"fSplitDistanceMult:TerrainManager", "1.5"},
             {"iMaxDesired:Particles", "6000"},
         };
-        for (const auto& kv : kCe1World) {
+        for (const auto& kv : kCe1Safe) {
             if (SetSetting(img, refs, kv.k, kv.v)) ++applied;
+        }
+        if (!hasEngineFixes) {
+            static const KV kCe1Lod[] = {
+                {"fTreesMidLODSwitchDist:Display", "10000000.0"},
+                {"uiMaxSkinnedTreesToRender:Trees", "200"},
+                {"fGrassStartFadeDistance:Grass", "9500.0"},
+                {"fGrassMaxStartFadeDistance:Grass", "11000.0"},
+                {"fBlockLevel0Distance:TerrainManager", "60000.0"},
+                {"fBlockLevel1Distance:TerrainManager", "110000.0"},
+                {"fSplitDistanceMult:TerrainManager", "1.5"},
+            };
+            for (const auto& kv : kCe1Lod) {
+                if (SetSetting(img, refs, kv.k, kv.v)) ++applied;
+            }
         }
     } else if (prof.gen == raw::versions::EngineGen::CE1_5_FO4_DX11) {
         // Fallout 4 / FO4VR safe core upgrades (strictly preserves PreVis/Precombines - never disables bUseCombinedObjects!):
